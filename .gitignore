@@ -1,0 +1,48 @@
+# Visual Studio
+.vs/
+*.VC.db
+*.VC.opendb
+
+# Jetstream?
+.idea
+
+# Unreal Engine build artifacts
+.idea/
+Build/
+DerivedDataCache/
+Intermediate/
+Saved/
+.vscode/
+.idea/
+FileOpenOrder/
+
+# Unreal Engine assets (exclude Content)
+Content/
+
+# User-specific files
+*.sln
+*.suo
+*.user
+*.userprefs
+*.opensdf
+*.sdf
+*.ipch
+*.log
+*.tlog
+
+# Build results
+*.obj
+*.pch
+*.pdb
+*.exe
+*.dll
+*.lib
+*.app
+*.dylib
+*.so
+
+# --- Plugins 예외 처리 ---
+# ! 규칙은 파일 맨 마지막에 두어야 합니다.
+# Plugins/ 폴더 내의 모든 것은 무시하지 않도록 강제합니다.
+Plugins/*/Binaries/
+Plugins/*/Intermediate/

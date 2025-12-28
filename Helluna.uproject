@@ -1,0 +1,22 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "{7F538DF0-482A-AEA7-69C5-C78BA7B91825}",
+	"Category": "",
+	"Description": "",
+	"Modules": [
+		{
+			"Name": "Helluna",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "ModelingToolsEditorMode",
+			"Enabled": true,
+			"TargetAllowList": [
+				"Editor"
+			]
+		}
+	]
+}
