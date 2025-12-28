@@ -46,9 +46,3 @@ Config/
 *.app
 *.dylib
 *.so
-
-# --- Plugins 예외 처리 ---
-# ! 규칙은 파일 맨 마지막에 두어야 합니다.
-# Plugins/ 폴더 내의 모든 것은 무시하지 않도록 강제합니다.
-Plugins/*/Binaries/
-Plugins/*/Intermediate/
