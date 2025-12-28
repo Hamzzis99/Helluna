@@ -1,3 +1,4 @@
+Plugins/Developer/
 # Visual Studio
 .vs/
 *.VC.db
@@ -22,7 +23,7 @@ Saved/
 .idea/
 FileOpenOrder/
 Config/
-Developer/
+
 
 # User-specific files
 *.sln
