@@ -12,6 +12,8 @@ Content/Developers/
 Content/Migration/
 Content/InventoryAssets/
 
+Plugins/Developer/RiderLink
+
 # Unreal Engine build artifacts
 Build/
 DerivedDataCache/
@@ -20,7 +22,6 @@ Saved/
 .vscode/
 .idea/
 FileOpenOrder/
-
 
 # User-specific files
 *.sln
