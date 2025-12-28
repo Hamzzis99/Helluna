@@ -6,8 +6,13 @@
 # Jetstream?
 .idea
 
+# Content Folder
+Content/Collections/
+Content/Developers/
+Content/Migration/
+Content/InventoryAssets/
+
 # Unreal Engine build artifacts
-.idea/
 Build/
 DerivedDataCache/
 Intermediate/
@@ -15,6 +20,8 @@ Saved/
 .vscode/
 .idea/
 FileOpenOrder/
+Config/
+Plugins/Developer/
 
 # Unreal Engine assets (exclude Content)
 Content/
