@@ -1,4 +1,3 @@
-Plugins/Developer/
 # Visual Studio
 .vs/
 *.VC.db
@@ -13,6 +12,7 @@ Content/Developers/
 Content/Migration/
 Content/InventoryAssets/
 
+Plugins/Developer/
 
 # Unreal Engine build artifacts
 Build/
