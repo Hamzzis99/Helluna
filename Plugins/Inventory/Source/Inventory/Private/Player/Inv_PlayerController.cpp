@@ -12,10 +12,10 @@
 
 AInv_PlayerController::AInv_PlayerController()
 {
-	// ÃßÀû±æÀÌ ÃÊ±âÈ­ (ÃßÀû±æÀÌ¶õ? ³» ½ÃÁ¡¿¡¼­ ¾ó¸¶¸¸Å­ °Å¸®¸¦ µÎ°í ¶óÀÎÆ®·¹ÀÌ½º¸¦ ÇÒ °ÍÀÎÁö)
+	// ì¶”ì ê¸¸ì´ ì´ˆê¸°í™” (ì¶”ì ê¸¸ì´ë€? ë‚´ ì‹œì ì—ì„œ ì–¼ë§ˆë§Œí¼ ê±°ë¦¬ë¥¼ ë‘ê³  ë¼ì¸íŠ¸ë ˆì´ìŠ¤ë¥¼ í•  ê²ƒì¸ì§€)
 	PrimaryActorTick.bCanEverTick = true;
 	TraceLength = 500.0;
-	ItemTraceChannel = ECC_GameTraceChannel1; //Ä¿½ºÅÒ Ã¤³Î 1¹øÀ» »ç¿ë
+	ItemTraceChannel = ECC_GameTraceChannel1; //ì»¤ìŠ¤í…€ ì±„ë„ 1ë²ˆì„ ì‚¬ìš©
 }
 
 void AInv_PlayerController::Tick(float DeltaSeconds)
@@ -27,7 +27,7 @@ void AInv_PlayerController::Tick(float DeltaSeconds)
 
 void AInv_PlayerController::ToggleInventory()
 {
-	//¾àÇÑ Æ÷ÀÎÅÍ°¡ À¯È¿ÇÑÁö? ÀÌ°Å·Î ÂüÁ¶ÇÏ¿© ¸Ş´º¸¦ ¸¸µç´Ù? WeakPtrÀº Á» °øºÎ¸¦ ÇØ¾ß°Ú´Ù.
+	//ì•½í•œ í¬ì¸í„°ê°€ ìœ íš¨í•œì§€? ì´ê±°ë¡œ ì°¸ì¡°í•˜ì—¬ ë©”ë‰´ë¥¼ ë§Œë“ ë‹¤? WeakPtrì€ ì¢€ ê³µë¶€ë¥¼ í•´ì•¼ê² ë‹¤.
 	if (!InventoryComponent.IsValid()) return;
 	InventoryComponent->ToggleInventoryMenu();
 }
@@ -46,7 +46,7 @@ void AInv_PlayerController::BeginPlay()
 	}
 
 	InventoryComponent = FindComponentByClass<UInv_InventoryComponent>();
-	CreateHUDWidget(); // À§Á¬ »ı¼º È£Ãâ
+	CreateHUDWidget(); // ìœ„ì ¯ ìƒì„± í˜¸ì¶œ
 }
 
 void AInv_PlayerController::SetupInputComponent()
@@ -55,7 +55,7 @@ void AInv_PlayerController::SetupInputComponent()
 
 	UEnhancedInputComponent* EnhancedInputComponent = CastChecked<UEnhancedInputComponent>(InputComponent);
 
-	//Å° È°¼º ¹ÙÀÎµù ºÎºĞ.
+	//í‚¤ í™œì„± ë°”ì¸ë”© ë¶€ë¶„.
 	EnhancedInputComponent->BindAction(PrimaryInteractAction, ETriggerEvent::Started, this, &AInv_PlayerController::PrimaryInteract);
 	EnhancedInputComponent->BindAction(ToggleInventoryAction, ETriggerEvent::Started, this, &AInv_PlayerController::ToggleInventory);
 }
@@ -64,7 +64,7 @@ void AInv_PlayerController::PrimaryInteract()
 {
 	if (!ThisActor.IsValid()) return;
 
-	//ÀÌ°Ô ¹¹ÇÏ´Â ºÎºĞÀÌÁö?
+	//ì´ê²Œ ë­í•˜ëŠ” ë¶€ë¶„ì´ì§€?
 	UInv_ItemComponent* ItemComp = ThisActor->FindComponentByClass<UInv_ItemComponent>();
 	if (!IsValid(ItemComp) || !InventoryComponent.IsValid()) return;
 
@@ -72,7 +72,7 @@ void AInv_PlayerController::PrimaryInteract()
 }
 
 
-void AInv_PlayerController::CreateHUDWidget() // À§Á¬ »ı¼º ºÎºĞ
+void AInv_PlayerController::CreateHUDWidget() // ìœ„ì ¯ ìƒì„± ë¶€ë¶„
 {
 	if (!IsLocalController()) return;
 	HUDWidget = CreateWidget<UInv_HUDWidget>(this, HUDWidgetClass);
@@ -84,29 +84,29 @@ void AInv_PlayerController::CreateHUDWidget() // À§Á¬ »ı¼º ºÎºĞ
 
 void AInv_PlayerController::TraceForItem()
 {
-	// ¹Ù¶óº¸´Â ºäÆ÷Æ® ÁÂÇ¥ ¹İÈ¯
+	// ë°”ë¼ë³´ëŠ” ë·°í¬íŠ¸ ì¢Œí‘œ ë°˜í™˜
 	if (!IsValid(GEngine) || !IsValid(GEngine->GameViewport)) return;
 	FVector2D ViewportSize;
 	GEngine->GameViewport->GetViewportSize(ViewportSize);
-	const FVector2D ViewportCenter = ViewportSize / 2.f; // ºäÆ÷Æ® Áß¾Ó ÁÂÇ¥
+	const FVector2D ViewportCenter = ViewportSize / 2.f; // ë·°í¬íŠ¸ ì¤‘ì•™ ì¢Œí‘œ
 
 	FVector TraceStart;
-	FVector Forward; //´ç¿¬È÷ ¹ı¼±º¤ÅÍ
+	FVector Forward; //ë‹¹ì—°íˆ ë²•ì„ ë²¡í„°
 	if (!UGameplayStatics::DeprojectScreenToWorld(this, ViewportCenter, TraceStart, Forward)) return;
 	 
-	const FVector TraceEnd = TraceStart + (Forward * TraceLength); //°ıÈ£´Â ½±°Ô º¯°æÇÒ ¼ö ÀÖ´Â ¸Å°³º¯¼ö	
+	const FVector TraceEnd = TraceStart + (Forward * TraceLength); //ê´„í˜¸ëŠ” ì‰½ê²Œ ë³€ê²½í•  ìˆ˜ ìˆëŠ” ë§¤ê°œë³€ìˆ˜	
 	FHitResult HitResult;
-	//¶óÀÎÆ®·¹ÀÌ½º´Â ÇÑ ¹ø ºÁ¾ß°ÚÀ½
-	//¼± ÃßÀûºÎºĞ ±â¾ïÇÏÁö ÀÌÁ¦ ¸Å ÇÁ·¹ÀÓ¸¶´Ù ¶óÀÎÆ®·¹ÀÌ½º¸¦ ÇÑ´Ù. (ToonTanks Ã³·³) 
+	//ë¼ì¸íŠ¸ë ˆì´ìŠ¤ëŠ” í•œ ë²ˆ ë´ì•¼ê² ìŒ
+	//ì„  ì¶”ì ë¶€ë¶„ ê¸°ì–µí•˜ì§€ ì´ì œ ë§¤ í”„ë ˆì„ë§ˆë‹¤ ë¼ì¸íŠ¸ë ˆì´ìŠ¤ë¥¼ í•œë‹¤. (ToonTanks ì²˜ëŸ¼) 
 	GetWorld()->LineTraceSingleByChannel(HitResult, TraceStart, TraceEnd, ItemTraceChannel);
 
 	LastActor = ThisActor;
 	ThisActor = HitResult.GetActor();
 
-	//ÇÈ¾÷ ºÎºĞ °ü·ÃÀÇ ÄÚµåµé.
+	//í”½ì—… ë¶€ë¶„ ê´€ë ¨ì˜ ì½”ë“œë“¤.
 	if (!ThisActor.IsValid())
 	{
-		if (IsValid(HUDWidget)) HUDWidget->HidePickupMessage(); //ºí·çÇÁ¸°Æ®¿¡¼­ ±¸ÇöÇÒ °Íµé.
+		if (IsValid(HUDWidget)) HUDWidget->HidePickupMessage(); //ë¸”ë£¨í”„ë¦°íŠ¸ì—ì„œ êµ¬í˜„í•  ê²ƒë“¤.
 	}
 
 	if (ThisActor == LastActor) return;
@@ -115,13 +115,13 @@ void AInv_PlayerController::TraceForItem()
 	{
 		if (UActorComponent* Highlightable = ThisActor->FindComponentByInterface(UInv_Highlightable::StaticClass()); IsValid(Highlightable))
 		{
-			IInv_Highlightable::Execute_Highlight(Highlightable); //¹è¿ì ÄÄÆ÷³ÍÆ®?
+			IInv_Highlightable::Execute_Highlight(Highlightable); //ë°°ìš° ì»´í¬ë„ŒíŠ¸?
 		}
 
 		UInv_ItemComponent* ItemComponent = ThisActor->FindComponentByClass<UInv_ItemComponent>();
 		if (!IsValid(ItemComponent)) return;
 
-		if (IsValid(HUDWidget)) HUDWidget->ShowPickupMessage(ItemComponent->GetPickupMessage()); //ºí·çÇÁ¸°Æ®¿¡¼­ ±¸ÇöÇÒ °Íµé.
+		if (IsValid(HUDWidget)) HUDWidget->ShowPickupMessage(ItemComponent->GetPickupMessage()); //ë¸”ë£¨í”„ë¦°íŠ¸ì—ì„œ êµ¬í˜„í•  ê²ƒë“¤.
 		UE_LOG(LogTemp, Warning, TEXT("Started tracing"))
 	}
 
@@ -129,7 +129,7 @@ void AInv_PlayerController::TraceForItem()
 	{
 		if (UActorComponent* Highlightable = LastActor->FindComponentByInterface(UInv_Highlightable::StaticClass()); IsValid(Highlightable))
 		{
-			IInv_Highlightable::Execute_UnHighlight(Highlightable); //¹è¿ì ÄÄÆ÷³ÍÆ®?
+			IInv_Highlightable::Execute_UnHighlight(Highlightable); //ë°°ìš° ì»´í¬ë„ŒíŠ¸?
 		}
 	}
 }

@@ -1,0 +1,45 @@
+// Fill out your copyright notice in the Description page of Project Settings.
+
+#pragma once
+
+#include "NativeGameplayTags.h"
+
+namespace HellunaGameplayTags
+{
+	/** Input Tags **/
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Move);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Look);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Jump);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Aim);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Shoot);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Run);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_SpawnWeapon);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_ChangeWeapon);
+
+	/** Player Ability tags **/
+
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_Ability_Jump);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_Ability_Aim);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_Ability_Shoot);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_Ability_Run);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_Ability_SpawnWeapon);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_Ability_ChangeWeapon);
+
+	/** Player Status tags **/
+
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_status_Aim);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_status_Run);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_status_Shoot);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_status_Can_Shoot);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_status_Can_AutoShoot);
+
+
+	/** Enemy tags **/
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Enemy_Ability_Melee);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Enemy_Ability_Ranged);
+
+
+
+
+
+}

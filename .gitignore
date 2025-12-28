@@ -5,13 +5,14 @@ Plugins/Developer/
 
 # Jetstream?
 .idea
+Helluna.uproject
 
 # Content Folder
 Content/Collections/
 Content/Developers/
 Content/Migration/
 Content/InventoryAssets/
-
+Content/Fab
 Plugins/Developer/
 
 # Unreal Engine build artifacts
