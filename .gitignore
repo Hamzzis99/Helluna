@@ -23,9 +23,6 @@ FileOpenOrder/
 Config/
 Plugins/Developer/
 
-# Unreal Engine assets (exclude Content)
-Content/
-
 # User-specific files
 *.sln
 *.suo
