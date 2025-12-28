@@ -1,11 +1,10 @@
+Plugins/Developer/
+
 # Visual Studio
 .vs/
 
 # Jetstream?
 .idea
-
-Plugins/Developer/
-Config/
 
 # Content Folder
 Content/Collections/
