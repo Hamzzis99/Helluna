@@ -1,18 +1,17 @@
 # Visual Studio
 .vs/
-*.VC.db
-*.VC.opendb
 
 # Jetstream?
 .idea
+
+Plugins/Developer/
+Config/
 
 # Content Folder
 Content/Collections/
 Content/Developers/
 Content/Migration/
 Content/InventoryAssets/
-
-Plugins/Developer/
 
 # Unreal Engine build artifacts
 Build/
@@ -22,7 +21,6 @@ Saved/
 .vscode/
 .idea/
 FileOpenOrder/
-Config/
 
 
 # User-specific files
