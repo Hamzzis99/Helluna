@@ -12,6 +12,7 @@ Content/Developers/
 Content/Migration/
 Content/InventoryAssets/
 
+
 # Unreal Engine build artifacts
 Build/
 DerivedDataCache/
@@ -21,7 +22,7 @@ Saved/
 .idea/
 FileOpenOrder/
 Config/
-Plugins/Developer/
+Developer/
 
 # User-specific files
 *.sln
