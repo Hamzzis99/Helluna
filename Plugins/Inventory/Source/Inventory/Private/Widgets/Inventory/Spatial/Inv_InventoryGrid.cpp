@@ -18,6 +18,7 @@
 #include "Widgets/Inventory/SlottedItems/Inv_SlottedItem.h"
 #include "Widgets/ItemPopUp/Inv_ItemPopUp.h"
 
+// 인벤토리 바인딩 메뉴
 void UInv_InventoryGrid::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
@@ -27,6 +28,7 @@ void UInv_InventoryGrid::NativeOnInitialized()
 	InventoryComponent = UInv_InventoryStatics::GetInventoryComponent(GetOwningPlayer()); // 플레이어의 인벤토리 컴포넌트를 가져온다.
 	InventoryComponent->OnItemAdded.AddDynamic(this, &ThisClass::AddItem); // 델리게이트 바인딩 
 	InventoryComponent->OnStackChange.AddDynamic(this, &ThisClass::AddStacks); // 스택 변경 델리게이트 바인딩
+	InventoryComponent->OnInventoryMenuToggled.AddDynamic(this, &ThisClass::OnInventoryMenuToggled);
 }
 
 // 매 프레임마다 호출되는 틱 함수 (마우스 Hover에 사용)
@@ -290,12 +292,12 @@ FInv_SlotAvailabilityResult UInv_InventoryGrid::HasRoomForItem(const UInv_ItemCo
 	return HasRoomForItem(ItemComponent->GetItemManifest());
 }
 
-FInv_SlotAvailabilityResult UInv_InventoryGrid::HasRoomForItem(const UInv_InventoryItem* Item)
+FInv_SlotAvailabilityResult UInv_InventoryGrid::HasRoomForItem(const UInv_InventoryItem* Item, const int32 StackAmountOverride)
 {
-	return HasRoomForItem(Item->GetItemManifest());
+	return HasRoomForItem(Item->GetItemManifest(), StackAmountOverride);
 }
 
-FInv_SlotAvailabilityResult UInv_InventoryGrid::HasRoomForItem(const FInv_ItemManifest& Manifest)
+FInv_SlotAvailabilityResult UInv_InventoryGrid::HasRoomForItem(const FInv_ItemManifest& Manifest, const int32 StackAmountOverride)
 {
 	FInv_SlotAvailabilityResult Result; // GridTypes.h에서 참고해야할 구조체.
 	
@@ -308,7 +310,11 @@ FInv_SlotAvailabilityResult UInv_InventoryGrid::HasRoomForItem(const FInv_ItemMa
 	// Determine how many stacks to add.
 	const int32 MaxStackSize = StackableFragment ? StackableFragment->GetMaxStackSize() : 1; // 스택 최대 크기 얻기
 	int32 AmountToFill = StackableFragment ? StackableFragment->GetStackCount() : 1; // 널포인트가 아니면 스택을 쌓아준다. 다만 이쪽은 변경 가능하게. 채울 양을 업데이트 해야하니.
-
+	if (StackAmountOverride != -1 && Result.bStackable)
+	{
+		AmountToFill = StackAmountOverride;
+	}
+	
 	TSet<int32> CheckedIndices; // 이미 확인한 인덱스 집합
 	//그리드 슬롯을 반복하여서 확인하기.
 	// For each Grid Slot:
@@ -565,6 +571,10 @@ void UInv_InventoryGrid::AssignHoverItem(UInv_InventoryItem* InventoryItem) // �
 	GetOwningPlayer()->SetMouseCursorWidget(EMouseCursor::Default, HoverItem); // 마우스 커서 위젯 설정
 }
 
+void UInv_InventoryGrid::OnHide()
+{
+	PutHoverItemBack();
+}
 
 
 // 같은 아이템이면 수량 쌓기
@@ -593,7 +603,7 @@ void UInv_InventoryGrid::AddStacks(const FInv_SlotAvailabilityResult& Result)
 void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEvent& MouseEvent)
 {
 	// 마우스를 가장자리 넘을 때 언호버 처리 해서 자연스러운 아이템 Detail칸 열게 하기
-	UInv_InventoryStatics::ItemUnHovered(GetOwningPlayer()); // 아이템 언호버 처리
+	UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer()); // 아이템 언호버 처리
 	
 	//UE_LOG(LogTemp, Warning, TEXT("Clicked on item at index %d"), GridIndex); // 아이템 클릭 디버깅입니다.
 	check(GridSlots.IsValidIndex(GridIndex)); // 유효한 인덱스인지 확인
@@ -663,9 +673,17 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 			return;
 		}
 	}
-	// 호버 아이템과 교체(Swap)하기
-	// Swap with the hover item.
-	SwapWithHoverItem(ClickedInventoryItem, GridIndex);
+	
+	// Make sure we can swap with a valid item
+	// 유효한 항목과 교체할 수 있는지 확인
+	if (CurrentQueryResult.ValidItem.IsValid())
+	{
+		// 호버 아이템과 교체(Swap)하기
+		// Swap with the hover item.
+		SwapWithHoverItem(ClickedInventoryItem, GridIndex);
+	}
+	
+
 }
 
 //우클릭 팝업을 생성하는 함수를 만드는 부분. (아이템 디테일 부분들) 
@@ -708,6 +726,17 @@ void UInv_InventoryGrid::CreateItemPopUp(const int32 GridIndex)
 	}
 }
 
+void UInv_InventoryGrid::PutHoverItemBack()
+{
+	if (!IsValid(HoverItem)) return;
+	
+	FInv_SlotAvailabilityResult Result = HasRoomForItem(HoverItem->GetInventoryItem(), HoverItem->GetStackCount());
+	Result.Item = HoverItem->GetInventoryItem();
+	
+	AddStacks(Result);
+	ClearHoverItem();
+}
+
 void UInv_InventoryGrid::DropItem()
 {
 	//위젯 쪽에서 먼저 처리하게 하기
@@ -725,6 +754,12 @@ void UInv_InventoryGrid::DropItem()
 bool UInv_InventoryGrid::HasHoverItem() const // 호버 아이템이 있는지 확인
 {
 	return IsValid(HoverItem); // 호버 아이템이 유효한지 확인
+}
+
+// 호버 아이템 반환 <- 장비 슬롯
+UInv_HoverItem* UInv_InventoryGrid::GetHoverItem() const 
+{
+	return HoverItem;
 }
 
 // 인벤토리 스택 쌓는 부분.
@@ -1110,6 +1145,15 @@ void UInv_InventoryGrid::OnPopUpMenuConsume(int32 Index)
 	if (NewStackCount <= 0)
 	{
 		RemoveItemFromGrid(RightClickedItem, Index); // 그리드에서 아이템 제거
+	}
+}
+
+// 아이템을 들고 있을 때 다른 UI를 건드리지 못하게 하는 것.
+void UInv_InventoryGrid::OnInventoryMenuToggled(bool bOpen)
+{
+	if (!bOpen)
+	{
+		PutHoverItemBack();
 	}
 }
 

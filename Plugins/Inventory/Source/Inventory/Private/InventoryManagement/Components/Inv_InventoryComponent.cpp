@@ -52,7 +52,7 @@ void UInv_InventoryComponent::TryAddItem(UInv_ItemComponent* ItemComponent)
 	else if (Result.TotalRoomToFill > 0)
 	{
 		// This item type dosen't exist in the inventory. Create a new one and update all partient slots.
-		Server_AddNewItem(ItemComponent, Result.bStackable ?  Result.TotalRoomToFill : 0); //쌓을 수 있다면 채울 수 있는 공간 이런 문법은 또 처음 보네
+		Server_AddNewItem(ItemComponent, Result.bStackable ? Result.TotalRoomToFill : 0); //쌓을 수 있다면 채울 수 있는 공간 이런 문법은 또 처음 보네
 	}
 }
 
@@ -98,7 +98,7 @@ void UInv_InventoryComponent::Server_DropItem_Implementation(UInv_InventoryItem*
 {
 	//단순히 항목을 제거하는지 단순 업데이트를 하는지
 	const int32 NewStackCount = Item->GetTotalStackCount() - StackCount;
-	if (NewStackCount<=0) // 스택 카운트가 0일시.
+	if (NewStackCount <= 0)
 	{
 		InventoryList.RemoveEntry(Item);
 	}
@@ -106,7 +106,7 @@ void UInv_InventoryComponent::Server_DropItem_Implementation(UInv_InventoryItem*
 	{
 		Item->SetTotalStackCount(NewStackCount);
 	}
-	
+
 	SpawnDroppedItem(Item, StackCount); // 떨어진 아이템 생성 함수 호출
 	
 }
@@ -156,6 +156,21 @@ void UInv_InventoryComponent::Server_ConsumeItem_Implementation(UInv_InventoryIt
 	}
 }
 
+// 아이템 장착 상호작용을 누른 뒤 서버에서 어떻게 처리를 할지.
+void UInv_InventoryComponent::Server_EquipSlotClicked_Implementation(UInv_InventoryItem* ItemToEquip, UInv_InventoryItem* ItemToUnequip)
+{
+	Multicast_EquipSlotClicked(ItemToEquip, ItemToUnequip); // 멀티캐스트로 모든 클라이언트에 알리는 부분.
+}
+
+// 멀티캐스트로 아이템 장착 상호작용을 모든 클라이언트에 알리는 부분.
+void UInv_InventoryComponent::Multicast_EquipSlotClicked_Implementation(UInv_InventoryItem* ItemToEquip, UInv_InventoryItem* ItemToUnequip)
+{
+	// Equipment Component will listen to these delegates
+	// 장비 컴포넌트가 이 델리게이트를 수신 대기합니다.
+	OnItemEquipped.Broadcast(ItemToEquip);
+	OnItemUnequipped.Broadcast(ItemToUnequip);
+}
+
 void UInv_InventoryComponent::ToggleInventoryMenu()
 {
 	if (bInventoryMenuOpen)
@@ -166,6 +181,7 @@ void UInv_InventoryComponent::ToggleInventoryMenu()
 	{
 		OpenInventoryMenu();
 	}
+	OnInventoryMenuToggled.Broadcast(bInventoryMenuOpen); // 인벤토리 메뉴 토글 방송
 }
 
 void UInv_InventoryComponent::AddRepSubObj(UObject* SubObj)

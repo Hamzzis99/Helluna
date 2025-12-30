@@ -6,11 +6,15 @@
 #include "Widgets/Inventory/InventoryBase/Inv_InventoryBase.h"
 #include "Inv_SpatialInventory.generated.h"
 
+struct FGameplayTag;
 class UInv_ItemDescription;
 class UInv_InventoryGrid;
 class UWidgetSwitcher;
 class UButton;
 class UCanvasPanel;
+class UInv_HoverItem;
+class UInv_EquippedGridSlot;
+
 // UI 연동 부분들
 
 /**
@@ -32,8 +36,15 @@ public:
 	virtual void OnItemHovered(UInv_InventoryItem* Item) override;
 	virtual void OnItemUnHovered() override;
 	virtual bool HasHoverItem() const override;
+	virtual UInv_HoverItem* GetHoverItem() const override;
+	virtual float GetTileSize() const override;
 	
-private: // 여기 있는 UPROPERTY와 위젯과의 이름이 동일해야만함.
+private: 
+	// 여기 있는 UPROPERTY와 위젯과의 이름이 동일해야만함.
+	
+	//장착 슬롯 늘리는 부분
+	UPROPERTY()
+	TArray<TObjectPtr<UInv_EquippedGridSlot>> EquippedGridSlots;
 	
 	//어떤 캔버스 패널일까? 아 아이템 튤팁 공간
 	UPROPERTY(meta = (BindWidget))
@@ -84,9 +95,21 @@ private: // 여기 있는 UPROPERTY와 위젯과의 이름이 동일해야만함
 	UFUNCTION()
 	void ShowCraftables();
 	
+	UFUNCTION()
+	void EquippedGridSlotClicked(UInv_EquippedGridSlot* EquippedGridSlot, const FGameplayTag& EquipmentTypeTag); // 마우스를 갖다댈 시 백함수 
+	
+	UFUNCTION()
+	void EquippedSlottedItemClicked(UInv_EquippedSlottedItem* EquippedSlottedItem); // 장착된 슬롯 아이템 클릭 시 호출되는 함수
+	
 	void DisableButton(UButton* Button);
 	void SetActiveGrid(UInv_InventoryGrid* Grid, UButton* Button);
 	void SetItemDescriptionSizeAndPosition(UInv_ItemDescription* Description, UCanvasPanel* Canvas) const; // 아이템 설명 크기 및 위치 설정
+	bool CanEquipHoverItem(UInv_EquippedGridSlot* EquippedGridSlot, const FGameplayTag& EquipmentTypeTag) const; // 호버 아이템 장착 가능 여부 확인 게임태그도 참조해야 낄 수 있게.
+	UInv_EquippedGridSlot* FindSlotWithEquippedItem(UInv_InventoryItem* EquippedItem) const; // 캡처한 포인터와 동일한 인벤토리 항목에 있는지 확인하는 것.
+	void ClearSlotOfItem(UInv_EquippedGridSlot* EquippedGridSlot); // 장착된 아이템을 그리드 슬롯에서 제거
+	void RemoveEquippedSlottedItem(UInv_EquippedSlottedItem* EquippedSlottedItem); // 장착된 슬롯 아이템 제거
+	void MakeEquippedSlottedItem(UInv_EquippedSlottedItem* EquippedSlottedItem, UInv_EquippedGridSlot* EquippedGridSlot, UInv_InventoryItem* ItemToEquip); // 장착된 슬롯 아이템 만들기
+	void BroadcastSlotClickedDelegates(UInv_InventoryItem* ItemToEquip, UInv_InventoryItem* ItemToUnequip) const; // 슬롯 클릭 델리게이트 방송
 	
 	TWeakObjectPtr<UInv_InventoryGrid> ActiveGrid; // 활성 그리드가 생기면 늘 활성해주는 포인터.
 };

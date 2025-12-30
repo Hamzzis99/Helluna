@@ -36,13 +36,34 @@ void UInv_InventoryStatics::ItemHovered(APlayerController* PC, UInv_InventoryIte
 }
 
 
-void UInv_InventoryStatics::ItemUnHovered(APlayerController* PC)
+void UInv_InventoryStatics::ItemUnhovered(APlayerController* PC)
 {
 	UInv_InventoryComponent* IC = GetInventoryComponent(PC);
 	if (!IsValid(IC)) return;
-	
+
 	UInv_InventoryBase* InventoryBase = IC->GetInventoryMenu();
 	if (!IsValid(InventoryBase)) return;
-	
+
 	InventoryBase->OnItemUnHovered();
+}
+
+// 인벤토리 그리드의 통계 부분을 확인해주는 것 (?) <- 추후 분석 필요
+UInv_HoverItem* UInv_InventoryStatics::GetHoverItem(APlayerController* PC)
+{
+	UInv_InventoryComponent* IC = GetInventoryComponent(PC);
+	if (!IsValid(IC)) return nullptr;
+	
+	UInv_InventoryBase* InventoryBase = IC->GetInventoryMenu();
+	if (!IsValid(InventoryBase)) return nullptr;
+	
+	return InventoryBase->GetHoverItem();
+}
+
+// 인벤토리 위젯 가져오기
+UInv_InventoryBase* UInv_InventoryStatics::GetInventoryWidget(APlayerController* PC)
+{
+	UInv_InventoryComponent* IC = GetInventoryComponent(PC);
+	if (!IsValid(IC)) return nullptr;
+	
+	return IC->GetInventoryMenu();
 }

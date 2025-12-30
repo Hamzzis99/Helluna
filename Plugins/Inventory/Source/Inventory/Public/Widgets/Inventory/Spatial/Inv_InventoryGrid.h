@@ -39,7 +39,11 @@ public:
 	void SetOwningCanvas(UCanvasPanel* OwningCanvas); // 장비 튤팁 캔버스 설정 부분
 	void DropItem(); // 아이템 버리기 함수
 	bool HasHoverItem() const; // 호버 아이템이 있는지 확인하는 함수
-	
+	UInv_HoverItem* GetHoverItem() const; // 호버 아이템 가져오기 함수
+	float GetTileSize() const{return TileSize;}; // 타일 크기 가져오기 함수
+	void ClearHoverItem(); // 호버 아이템 지우기
+	void AssignHoverItem(UInv_InventoryItem* InventoryItem); // 장착 아이템 기반 호버 아이템 할당
+	void OnHide(); // 인벤토리 숨기기 처리 함수
 	
 	UFUNCTION()
 	void AddItem(UInv_InventoryItem* Item); // 아이템 추가
@@ -50,8 +54,8 @@ private:
 	TWeakObjectPtr<UCanvasPanel> OwningCanvasPanel;
 	
 	void ConstructGrid();
-	FInv_SlotAvailabilityResult HasRoomForItem(const UInv_InventoryItem* Item); // 인벤토리 항목으로 item이 있는 공간이 있을 수 있어서 만드는 것?
-	FInv_SlotAvailabilityResult HasRoomForItem(const FInv_ItemManifest& Manifest); // 나중에 Builds 만들 때 사용하는 공간인가?
+	FInv_SlotAvailabilityResult HasRoomForItem(const UInv_InventoryItem* Item, const int32 StackAmountOverride = -1); // 인벤토리 항목으로 item이 있는 공간이 있을 수 있어서 만드는 것?
+	FInv_SlotAvailabilityResult HasRoomForItem(const FInv_ItemManifest& Manifest, const int32 StackAmountOverride = -1); // 나중에 Builds 만들 때 사용하는 공간인가?
 	void AddItemToIndices(const FInv_SlotAvailabilityResult& Result, UInv_InventoryItem* NewItem); // 아이템을 인덱스에 추가
 	bool MatchesCategory(const UInv_InventoryItem* Item) const; // 카테고리 일치 여부 확인
 	FVector2D GetDrawSize(const FInv_GridFragment* GridFragment) const; // 그리드 조각의 그리기 크기 가져오기
@@ -91,7 +95,6 @@ private:
 	bool IsRightClick(const FPointerEvent& MouseEvent) const;
 	bool IsLeftClick(const FPointerEvent& MouseEvent) const;
 	void PickUp(UInv_InventoryItem* ClickedInventoryItem, const int32 GridIndex); // 이 픽업은 마우스로 아이템을 잡을 때
-	void AssignHoverItem(UInv_InventoryItem* InventoryItem); // 아이템 기반 호버 아이템 할당
 	void AssignHoverItem(UInv_InventoryItem* InventoryItem, const int32 GridIndex, const int32 PreviousGridIndex); // 인덱스 기반 호버 아이템 할당
 	void RemoveItemFromGrid(UInv_InventoryItem* InventoryItem, const int32 GridIndex); // 그리드에서 아이템 제거
 	void UpdateTileParameters(const FVector2D& CanvasPosition, const FVector2D& MousePosition); // 타일 매개변수 업데이트
@@ -105,7 +108,6 @@ private:
 	void UnHighlightSlots(const int32 Index, const FIntPoint& Dimensions); // 슬롯 숨기기
 	void ChangeHoverType(const int32 Index, const FIntPoint& Dimensions, EInv_GridSlotState GridSlotState);
 	void PutDownOnIndex(const int32 Index); // 인덱스에 내려놓기
-	void ClearHoverItem(); // 호버 아이템 지우기
 	UUserWidget* GetHiddenCursorWidget(); // 마우스 커서 비활성화 하는 함수
 	bool IsSameStackable(const UInv_InventoryItem* ClickedInventoryItem) const; // 같은 아이템이라 스택 가능한지 확인하는 함수
 	void SwapWithHoverItem(UInv_InventoryItem* ClickedInventoryItem, const int32 GridIndex); // 호버 아이템과 교체하는 함수
@@ -116,6 +118,7 @@ private:
 	bool ShouldFillInStack(const int32 RoomInClickedSlot, const int32 HoveredStackCount) const; // 클릭된 아이템의 스택을 채워야 하는지 확인하는 함수
 	void FillInStack(const int32 FillAmount, const int32 Remainder, const int32 Index); // 스택 채우기 함수
 	void CreateItemPopUp(const int32 GridIndex); // 아이템 팝업 생성 함수
+	void PutHoverItemBack(); // 호버 아이템 다시 놓기 함수
 	
 	UPROPERTY(EditAnywhere, Category = "Inventory")
 	TSubclassOf<UInv_ItemPopUp> ItemPopUpClass; // 아이템 팝업 클래스
@@ -159,6 +162,9 @@ private:
 	// 사용하기 버튼 상호작용
 	UFUNCTION()
 	void OnPopUpMenuConsume(int32 Index);
+	
+	UFUNCTION()
+	void OnInventoryMenuToggled(bool bOpen); // 인벤토리 메뉴 토글 (내가 뭔가 들 때 bool 값 반환하는 함수)
 	
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"), Category = "Inventory")
 	EInv_ItemCategory ItemCategory;

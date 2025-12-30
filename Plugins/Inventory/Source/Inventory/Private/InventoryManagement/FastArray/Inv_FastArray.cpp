@@ -23,7 +23,7 @@ void FInv_InventoryFastArray::PreReplicatedRemove(const TArrayView<int32> Remove
 
 	for (int32 Index : RemovedIndices)
 	{
-		IC->OnItemRemoved.Broadcast(Entries[Index].Item); // ¾ÆÀÌÅÛ Á¦°Å µ¨¸®°ÔÀÌÆ® ºê·ÎµåÄ³½ºÆ® Ç×¸ñ¿¡ Á¢±Ù?
+		IC->OnItemRemoved.Broadcast(Entries[Index].Item); // ì•„ì´í…œ ì œê±° ë¸ë¦¬ê²Œì´íŠ¸ ë¸Œë¡œë“œìºìŠ¤íŠ¸ í•­ëª©ì— ì ‘ê·¼?
 	}
 }
 
@@ -32,54 +32,54 @@ void FInv_InventoryFastArray::PostReplicatedAdd(const TArrayView<int32> AddedInd
 	UInv_InventoryComponent* IC = Cast<UInv_InventoryComponent>(OwnerComponent);
 	if (!IsValid(IC)) return;
 
-	// ÀÎº¥Åä¸® ÄÄÆ÷³ÍÆ®¿¡ ÀÖ´Â ¾ÆÀÌÅÛÀ» ¼­¹ö¿¡¼­ Å¬¶óÀÌ¾ğÆ®·Î ¹Ş´Â °Å?
+	// ì¸ë²¤í† ë¦¬ ì»´í¬ë„ŒíŠ¸ì— ìˆëŠ” ì•„ì´í…œì„ ì„œë²„ì—ì„œ í´ë¼ì´ì–¸íŠ¸ë¡œ ë°›ëŠ” ê±°?
 	for (int32 Index : AddedIndices) // 
 	{
-		IC->OnItemAdded.Broadcast(Entries[Index].Item); // ºê·ÎµåÄ³½ºÆ®°¡ ¹¹¿´Áö? ±î¸Ô¾ú¾î ToonTanks ´Ù½Ã ºÁ¾ßÇØ?
+		IC->OnItemAdded.Broadcast(Entries[Index].Item); // ë¸Œë¡œë“œìºìŠ¤íŠ¸ê°€ ë­ì˜€ì§€? ê¹Œë¨¹ì—ˆì–´ ToonTanks ë‹¤ì‹œ ë´ì•¼í•´?
 	}
 }
 
-// FastArray¿¡ Ç×¸ñÀ» Ãß°¡ÇØÁÖ´Â ±â´Éµé.
+// FastArrayì— í•­ëª©ì„ ì¶”ê°€í•´ì£¼ëŠ” ê¸°ëŠ¥ë“¤.
 UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_ItemComponent* ItemComponent) 
 {
 	//TODO : Implement once ItemComponent is more complete 
-	check(OwnerComponent); // ¼ÒÀ¯ÀÚ ÄÄÆ÷³ÍÆ® È®ÀÎ (¼ÒÀ¯Àç°í È®ÀÎ)
-	AActor* OwningActor = OwnerComponent->GetOwner(); // ¼ÒÀ¯ÀÚ È®º¸
-	check(OwningActor->HasAuthority()); // ±ÇÇÑÀÌ ÀÖ´ÂÁö È®ÀÎ
-	UInv_InventoryComponent* IC = Cast<UInv_InventoryComponent>(OwnerComponent); // ¼ÒÀ¯ÀÚ ÄÄÆ÷³ÍÆ®¸¦ ÀÎº¥Åä¸® ÄÄÆ÷³ÍÆ®·Î Ä³½ºÆÃ
+	check(OwnerComponent); // ì†Œìœ ì ì»´í¬ë„ŒíŠ¸ í™•ì¸ (ì†Œìœ ì¬ê³  í™•ì¸)
+	AActor* OwningActor = OwnerComponent->GetOwner(); // ì†Œìœ ì í™•ë³´
+	check(OwningActor->HasAuthority()); // ê¶Œí•œì´ ìˆëŠ”ì§€ í™•ì¸
+	UInv_InventoryComponent* IC = Cast<UInv_InventoryComponent>(OwnerComponent); // ì†Œìœ ì ì»´í¬ë„ŒíŠ¸ë¥¼ ì¸ë²¤í† ë¦¬ ì»´í¬ë„ŒíŠ¸ë¡œ ìºìŠ¤íŒ…
 	if (!IsValid(IC)) return nullptr;
 
-	FInv_InventoryEntry& NewEntry = Entries.AddDefaulted_GetRef(); // »õ Ç×¸ñ Ãß°¡
-	NewEntry.Item = ItemComponent->GetItemManifest().Manifest(OwningActor); // Ç×¸ñ ¸Å´ÏÆä½ºÆ®¿¡¼­ Ç×¸ñ °¡Á®¿À±â (»õ·Î »ı¼ºµÈ ¾ÆÀÌÅÛÀÇ ¼ÒÀ¯ÀÚ ÁöÁ¤)
+	FInv_InventoryEntry& NewEntry = Entries.AddDefaulted_GetRef(); // ìƒˆ í•­ëª© ì¶”ê°€
+	NewEntry.Item = ItemComponent->GetItemManifest().Manifest(OwningActor); // í•­ëª© ë§¤ë‹ˆí˜ìŠ¤íŠ¸ì—ì„œ í•­ëª© ê°€ì ¸ì˜¤ê¸° (ìƒˆë¡œ ìƒì„±ëœ ì•„ì´í…œì˜ ì†Œìœ ì ì§€ì •)
 
-	IC->AddRepSubObj(NewEntry.Item); // º¹Á¦ ÇÏÀ§ °´Ã¼·Î Ç×¸ñ Ãß°¡
-	MarkItemDirty(NewEntry); // º¹Á¦µÇ¾î¾ß ÇÔÀ» ¾Ë·ÁÁÖ´Â °Í.
+	IC->AddRepSubObj(NewEntry.Item); // ë³µì œ í•˜ìœ„ ê°ì²´ë¡œ í•­ëª© ì¶”ê°€
+	MarkItemDirty(NewEntry); // ë³µì œë˜ì–´ì•¼ í•¨ì„ ì•Œë ¤ì£¼ëŠ” ê²ƒ.
 
-	return NewEntry.Item; // »õ·Î Ãß°¡µÈ Ç×¸ñ ¹İÈ¯
+	return NewEntry.Item; // ìƒˆë¡œ ì¶”ê°€ëœ í•­ëª© ë°˜í™˜
 }
 
 UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_InventoryItem* Item)
 {
-	//ºü¸¥ ¹è¿­ Á÷·ÄÈ­ ¹æÄ§ÀÌ ÀÖ´Ù°í? °­»ç´Ô ÀÔÀå¿¡¼±? ¼­¹ö¿¡ ÀÌ º¹Á¦µÈ ¹è¿­À» µ¤¾î¾º¿î´Ù.
+	//ë¹ ë¥¸ ë°°ì—´ ì§ë ¬í™” ë°©ì¹¨ì´ ìˆë‹¤ê³ ? ê°•ì‚¬ë‹˜ ì…ì¥ì—ì„ ? ì„œë²„ì— ì´ ë³µì œëœ ë°°ì—´ì„ ë®ì–´ì”Œìš´ë‹¤.
 	check(OwnerComponent);
 	AActor* OwningActor = OwnerComponent->GetOwner();
-	check(OwningActor->HasAuthority()); // ±ÇÇÑÀÌ ÀÖ´ÂÁö È®ÀÎ 
+	check(OwningActor->HasAuthority()); // ê¶Œí•œì´ ìˆëŠ”ì§€ í™•ì¸ 
 
 	FInv_InventoryEntry& NewEntry = Entries.AddDefaulted_GetRef();
 	NewEntry.Item = Item;
 
-	MarkItemDirty(NewEntry); // º¹Á¦µÇ¾î¾ß ÇÔÀ» ¾Ë·ÁÁÖ´Â °Í.
+	MarkItemDirty(NewEntry); // ë³µì œë˜ì–´ì•¼ í•¨ì„ ì•Œë ¤ì£¼ëŠ” ê²ƒ.
 	return Item;
 }
 
 void FInv_InventoryFastArray::RemoveEntry(UInv_InventoryItem* Item)
 {
-	for (auto EntryIt = Entries.CreateIterator(); EntryIt; ++EntryIt) // ¹İº¹ÀÚ°¡ °¡¸®Å°´Â Ç×¸ñ?
+	for (auto EntryIt = Entries.CreateIterator(); EntryIt; ++EntryIt) // ë°˜ë³µìê°€ ê°€ë¦¬í‚¤ëŠ” í•­ëª©?
 	{
 		FInv_InventoryEntry& Entry = *EntryIt;
 		if (Entry.Item == Item)
 		{
-			EntryIt.RemoveCurrent(); // ÇöÀç Ç×¸ñ Á¦°Å
+			EntryIt.RemoveCurrent(); // í˜„ì¬ í•­ëª© ì œê±°
 			MarkArrayDirty(); 
 		}
 	}
@@ -87,10 +87,10 @@ void FInv_InventoryFastArray::RemoveEntry(UInv_InventoryItem* Item)
 
 UInv_InventoryItem* FInv_InventoryFastArray::FindFirstItemByType(const FGameplayTag& ItemType)
 {
-	auto* FoundItem = Entries.FindByPredicate([ItemType = ItemType](const FInv_InventoryEntry& Entry) // ÇÁ·¹µğÄÉÀÌÆ®´Â ºÎ¸¦ ¼ö ÀÖ´ÂÁö È®ÀÎÇÏ´Â °Å¶ó°í?
+	auto* FoundItem = Entries.FindByPredicate([ItemType = ItemType](const FInv_InventoryEntry& Entry) // í”„ë ˆë””ì¼€ì´íŠ¸ëŠ” ë¶€ë¥¼ ìˆ˜ ìˆëŠ”ì§€ í™•ì¸í•˜ëŠ” ê±°ë¼ê³ ?
 	{
-		// ¶÷´ÙÇÔ¼ö ÄÚµù
-		//°ÔÀÓ ÇÃ·¹ÀÌ ÅÂ±×¸¸ È®ÀÎÇÏ´Â ºÎºĞ
+		// ëŒë‹¤í•¨ìˆ˜ ì½”ë”©
+		//ê²Œì„ í”Œë ˆì´ íƒœê·¸ë§Œ í™•ì¸í•˜ëŠ” ë¶€ë¶„
 		return IsValid(Entry.Item) && Entry.Item->GetItemManifest().GetItemType().MatchesTagExact(ItemType);
 	});
 	return FoundItem ? FoundItem->Item : nullptr;

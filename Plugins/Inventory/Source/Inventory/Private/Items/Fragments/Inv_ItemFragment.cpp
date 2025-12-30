@@ -125,3 +125,52 @@ void FInv_ManaPotionFragment::OnConsume(APlayerController* PC)
 	GEngine->AddOnScreenDebugMessage(-1,5.f,FColor::Blue,
 		FString::Printf(TEXT("Consumed Mana Potion! Healed for %f HP"), GetValue()));
 }
+
+//장비 장착 관련
+void FInv_StrengthModifier::OnEquip(APlayerController* PC)
+{
+	//디버그 메시지
+	GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Green, 
+		FString::Printf(TEXT("장비를 장착한 아이템 힘 증가 테스트ㅣ (Strength increased by : %f"), GetValue()));
+}
+
+void FInv_StrengthModifier::OnUnequip(APlayerController* PC)
+{
+	//디버그 메시지
+	GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Green, 
+		FString::Printf(TEXT("장비를 해제한 아이템 힘 증가 테스트 (Item unequipped. Strength decreased by : %f"), GetValue()));
+}
+
+// 장착 해제 부분들
+void FInv_EquipmentFragment::OnEquip(APlayerController* PC)
+{
+	if (bEquipped) return;
+	bEquipped = true;
+	for (auto& Modifier : EquipModifiers)
+	{
+		auto& ModRef = Modifier.GetMutable(); // 수정 가능한 참조 얻기
+		ModRef.OnEquip(PC); // 장착 함수 호출
+	}
+}
+
+void FInv_EquipmentFragment::OnUnequip(APlayerController* PC)
+{
+	if (!bEquipped) return;
+	bEquipped = false;
+	for (auto& Modifier : EquipModifiers)
+	{
+		auto& ModRef = Modifier.GetMutable(); // 수정 가능한 참조 얻기
+		ModRef.OnUnequip(PC); // 해제 함수 호출
+	}
+}
+
+// 장비를 뭘 꼇는지 확인하고 이것으로 부터 장착을 시켜주는 것.
+void FInv_EquipmentFragment::Assimilate(UInv_CompositeBase* Composite) const
+{
+	FInv_InventoryItemFragment::Assimilate(Composite);
+	for (const auto& Modifier : EquipModifiers)
+	{
+		const auto& ModRef = Modifier.Get(); // 수정 가능한 참조 얻기
+		ModRef.Assimilate(Composite);
+	}
+}

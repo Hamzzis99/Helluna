@@ -22,7 +22,7 @@ void UInv_SlottedItem::NativeOnMouseEnter(const FGeometry& MyGeometry, const FPo
 // 아이템 Description 설명 부분들 아이템을 마우스 땔 때
 void UInv_SlottedItem::NativeOnMouseLeave(const FPointerEvent& MouseEvent)
 {
-	UInv_InventoryStatics::ItemUnHovered(GetOwningPlayer());
+	UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
 }
 
 void UInv_SlottedItem::SetInventoryItem(UInv_InventoryItem* Item)

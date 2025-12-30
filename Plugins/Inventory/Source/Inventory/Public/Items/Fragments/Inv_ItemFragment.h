@@ -213,3 +213,40 @@ struct FInv_ManaPotionFragment : public FInv_ConsumeModifier
 	
 	virtual void OnConsume(APlayerController* PC) override;
 };
+
+// Equipment 
+// 장비 프래그먼트
+
+USTRUCT(BlueprintType)
+struct FInv_EquipModifier : public FInv_LabeledNumberFragment // 장비를 안 보이게 해주는 역할인가? 나중에 분석 필요.
+{
+	GENERATED_BODY()
+
+	virtual void OnEquip(APlayerController* PC) {}
+	virtual void OnUnequip(APlayerController* PC) {}
+};
+
+USTRUCT(BlueprintType)
+struct FInv_StrengthModifier : public FInv_EquipModifier // 힘 스탯 관련 <- 이거 나중에 쓸 수 있곘다
+{
+	GENERATED_BODY()
+
+	virtual void OnEquip(APlayerController* PC) override;
+	virtual void OnUnequip(APlayerController* PC) override;
+};
+
+
+USTRUCT(BlueprintType)
+struct FInv_EquipmentFragment : public FInv_InventoryItemFragment
+{
+	GENERATED_BODY()
+	
+	bool bEquipped{false}; //장착 여부
+	void OnEquip(APlayerController* PC);
+	void OnUnequip(APlayerController* PC);
+	virtual void Assimilate(UInv_CompositeBase* Composite) const override;
+	
+private:
+	UPROPERTY(EditAnywhere, Category = "Inventory") // 인벤토리 장착 아이템
+	TArray<TInstancedStruct<FInv_EquipModifier>> EquipModifiers;
+};

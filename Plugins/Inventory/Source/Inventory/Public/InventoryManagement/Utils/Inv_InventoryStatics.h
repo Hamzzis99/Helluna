@@ -10,6 +10,9 @@
 /**
  *
  */
+class UInv_HoverItem;
+class UInv_InventoryBase;
+
 UCLASS()
 class INVENTORY_API UInv_InventoryStatics : public UBlueprintFunctionLibrary
 {
@@ -30,13 +33,18 @@ public:
 	static void ItemHovered(APlayerController* PC, UInv_InventoryItem* Item);
 	
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
-	static void ItemUnHovered(APlayerController* PC);
+	static void ItemUnhovered(APlayerController* PC);
+	
+	UFUNCTION(BlueprintCallable, Category = "Inventory")
+	static UInv_HoverItem* GetHoverItem(APlayerController* PC);
+	
+	static UInv_InventoryBase* GetInventoryWidget(APlayerController* PC);
 };
 
 
 //여기 부분 왜 static 부분이 빨간줄이지? 나중에 분석을 할 필요가 있음.
 template<typename T, typename FuncT>
-static void UInv_InventoryStatics::ForEach2D(TArray<T>& Array, int32 Index, const FIntPoint& Range2D, int32 GridColumns, const FuncT& Function) // 알고리즘 부분.
+void UInv_InventoryStatics::ForEach2D(TArray<T>& Array, int32 Index, const FIntPoint& Range2D, int32 GridColumns, const FuncT& Function) // 알고리즘 부분.
 {
 	for (int32 j = 0; j < Range2D.Y; ++j)
 	{
