@@ -1,5 +1,6 @@
 #include "Items/Fragments/Inv_ItemFragment.h"
 
+#include "EquipmentManagement/EquipActor/Inv_EquipActor.h"
 #include "Widgets/Composite/Inv_CompositeBase.h"
 #include "Widgets/Composite/Inv_Leaf_Image.h"
 #include "Widgets/Composite/Inv_Leaf_LabeledValue.h"
@@ -130,15 +131,23 @@ void FInv_ManaPotionFragment::OnConsume(APlayerController* PC)
 void FInv_StrengthModifier::OnEquip(APlayerController* PC)
 {
 	//디버그 메시지
-	GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Green, 
-		FString::Printf(TEXT("장비를 장착한 아이템 힘 증가 테스트ㅣ (Strength increased by : %f"), GetValue()));
+	GEngine->AddOnScreenDebugMessage(
+		-1,
+		5.f,
+		FColor::Green,
+		FString::Printf(TEXT("Strength increased by: %f"),
+			GetValue()));
 }
 
 void FInv_StrengthModifier::OnUnequip(APlayerController* PC)
 {
 	//디버그 메시지
-	GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Green, 
-		FString::Printf(TEXT("장비를 해제한 아이템 힘 증가 테스트 (Item unequipped. Strength decreased by : %f"), GetValue()));
+	GEngine->AddOnScreenDebugMessage(
+		-1,
+		5.f,
+		FColor::Red,
+		FString::Printf(TEXT("Item unequipped. Strength decreased by: %f"),
+			GetValue()));
 }
 
 // 장착 해제 부분들
@@ -173,4 +182,40 @@ void FInv_EquipmentFragment::Assimilate(UInv_CompositeBase* Composite) const
 		const auto& ModRef = Modifier.Get(); // 수정 가능한 참조 얻기
 		ModRef.Assimilate(Composite);
 	}
+}
+
+void FInv_EquipmentFragment::Manifest()
+{
+	FInv_InventoryItemFragment::Manifest();
+	for (auto& Modifier : EquipModifiers)
+	{
+		auto& ModRef = Modifier.GetMutable();
+		ModRef.Manifest();
+	}
+}
+
+// 장비 아이템을 장착 시 캐릭터에 장착 시켜주는 것.
+AInv_EquipActor* FInv_EquipmentFragment::SpawnAttachedActor(USkeletalMeshComponent* AttachMesh) const
+{
+	if (!IsValid(EquipActorClass) || !IsValid(AttachMesh)) return nullptr;
+
+	AInv_EquipActor* SpawnedActor = AttachMesh->GetWorld()->SpawnActor<AInv_EquipActor>(EquipActorClass);
+	if (!IsValid(SpawnedActor)) return nullptr; // 장착 아이템이 없을 시 크래쉬 예외 처리 제거
+	
+	SpawnedActor->AttachToComponent(AttachMesh, FAttachmentTransformRules::SnapToTargetNotIncludingScale, SocketAttachPoint);
+
+	return SpawnedActor;
+}
+
+void FInv_EquipmentFragment::DestroyAttachedActor() const
+{
+	if (EquippedActor.IsValid())
+	{
+		EquippedActor->Destroy();
+	}
+}
+
+void FInv_EquipmentFragment::SetEquippedActor(AInv_EquipActor* EquipActor)
+{
+	EquippedActor = EquipActor;
 }

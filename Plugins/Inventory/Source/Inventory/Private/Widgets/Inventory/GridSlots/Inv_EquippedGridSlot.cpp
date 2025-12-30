@@ -33,6 +33,8 @@ void UInv_EquippedGridSlot::NativeOnMouseLeave(const FPointerEvent& InMouseEvent
 	if (!IsAvailable()) return;
 	UInv_HoverItem* HoverItem = UInv_InventoryStatics::GetHoverItem(GetOwningPlayer());
 	if (!IsValid(HoverItem)) return;
+	
+	if (IsValid(EquippedSlottedItem)) return; // 이미 장착된 아이템이 있으면 패스 (그렇게 되면 자연스러운 장착 애니메이션 보임)
 
 	if (HoverItem->GetItemType().MatchesTag(EquipmentTypeTag))
 	{

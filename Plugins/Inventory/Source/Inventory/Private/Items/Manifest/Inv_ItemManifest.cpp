@@ -34,19 +34,17 @@ void FInv_ItemManifest::AssimilateInventoryFragments(UInv_CompositeBase* Composi
 	}
 }
 
-
 // 아이템 픽업 액터 생성
 void FInv_ItemManifest::SpawnPickupActor(const UObject* WorldContextObject, const FVector& SpawnLocation, const FRotator& SpawnRotation)
 {
-	// TODO : 아이템 픽업 액터 생성 로직 구현
-	if (!(PickupActorClass) || !IsValid(WorldContextObject)) return; // 픽업 액터 클래스가 유효하지 않거나 월드 컨텍스트 객체가 유효하지 않으면 반환
+	if (!IsValid(PickupActorClass) || !IsValid(WorldContextObject)) return; // 픽업 액터 클래스가 유효하지 않거나 월드 컨텍스트 객체가 유효하지 않으면 반환
 
-	AActor* SpawnActor = WorldContextObject->GetWorld()->SpawnActor<AActor>(PickupActorClass, SpawnLocation, SpawnRotation); // 픽업 액터 생성
-	if (!IsValid(SpawnActor)) return;
+	AActor* SpawnedActor = WorldContextObject->GetWorld()->SpawnActor<AActor>(PickupActorClass, SpawnLocation, SpawnRotation); // 픽업 액터 생성
+	if (!IsValid(SpawnedActor)) return; 
 
 	// Set the item manifest, item category, item type, etc.
 	// 아이템 매니페스트, 아이템 카테고리, 아이템 타입 등을 설정하는 부분
-	UInv_ItemComponent* ItemComp = SpawnActor->FindComponentByClass<UInv_ItemComponent>();
+	UInv_ItemComponent* ItemComp = SpawnedActor->FindComponentByClass<UInv_ItemComponent>();
 	check(ItemComp); // ItemComp가 유효한지 확인
 
 	ItemComp->InitItemManifest(*this); // 아이템 매니페스트 초기화
