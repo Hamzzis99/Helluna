@@ -917,6 +917,8 @@ void UInv_InventoryGrid::OnGridSlotClicked(int32 GridIndex, const FPointerEvent&
 		return;
 	}
 	
+	
+	if (!IsInGridBounds(ItemDropIndex, HoverItem->GetGridDimensions())) return; // 그리드 경계 내에 있는지 확인
 	auto GridSlot = GridSlots[ItemDropIndex];
 	if (!GridSlot->GetInventoryItem().IsValid()) // 그리드 슬롯에 아이템이 없다면
 	{

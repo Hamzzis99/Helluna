@@ -25,11 +25,22 @@ void AInv_PlayerController::Tick(float DeltaSeconds)
 	TraceForItem();
 }
 
+// I키를 누르면 점을 삭제 시키는 것인데. 
 void AInv_PlayerController::ToggleInventory()
 {
 	//약한 포인터가 유효한지? 이거로 참조하여 메뉴를 만든다? WeakPtr은 좀 공부를 해야겠다.
 	if (!InventoryComponent.IsValid()) return;
 	InventoryComponent->ToggleInventoryMenu();
+	
+	if (InventoryComponent->IsMenuOpen())
+	{
+		HUDWidget->SetVisibility(ESlateVisibility::Hidden);
+	}
+	else
+	{
+		HUDWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+	
 }
 
 void AInv_PlayerController::BeginPlay()

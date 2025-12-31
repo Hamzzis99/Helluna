@@ -7,6 +7,7 @@
 #include "Inv_ItemFragment.generated.h"
 
 class APlayerController;
+class AInv_EquipActor;
 
 USTRUCT(BlueprintType)
 struct FInv_ItemFragment
@@ -222,6 +223,7 @@ struct FInv_EquipModifier : public FInv_LabeledNumberFragment // 장비를 안 �
 {
 	GENERATED_BODY()
 
+	// 장착과 해제 가상함수들
 	virtual void OnEquip(APlayerController* PC) {}
 	virtual void OnUnequip(APlayerController* PC) {}
 };
@@ -245,8 +247,27 @@ struct FInv_EquipmentFragment : public FInv_InventoryItemFragment
 	void OnEquip(APlayerController* PC);
 	void OnUnequip(APlayerController* PC);
 	virtual void Assimilate(UInv_CompositeBase* Composite) const override;
+	virtual void Manifest() override;
+	
+	AInv_EquipActor* SpawnAttachedActor(USkeletalMeshComponent* AttachMesh) const; // 장착 장비 스폰
+	void DestroyAttachedActor() const; // 장착 장비 파괴 (해제)
+	FGameplayTag GetEquipmentType() const {return EquipmentType;}
+	void SetEquippedActor(AInv_EquipActor* EquipActor);
 	
 private:
 	UPROPERTY(EditAnywhere, Category = "Inventory") // 인벤토리 장착 아이템
 	TArray<TInstancedStruct<FInv_EquipModifier>> EquipModifiers;
+	
+	//장착장비 변수들
+	UPROPERTY(EditAnywhere, Category = "Inventory")
+	TSubclassOf<AInv_EquipActor> EquipActorClass = nullptr; // 장착 장비 클래스
+	
+	TWeakObjectPtr<AInv_EquipActor> EquippedActor = nullptr; // 장착 장비 포인터 (플레이어 Pawn을 말하는 것인가)
+	
+	//장비 부착물 지정?
+	UPROPERTY(EditAnywhere, Category = "Inventory")
+	FName SocketAttachPoint{NAME_None}; // Mesh의 소켓 부착 지점
+	
+	UPROPERTY(EditAnywhere, Category = "Inventory")
+	FGameplayTag EquipmentType = FGameplayTag::EmptyTag; // 장비 타입 태그
 };

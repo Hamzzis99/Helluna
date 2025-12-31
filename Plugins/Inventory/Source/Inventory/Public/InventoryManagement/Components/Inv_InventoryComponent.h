@@ -36,7 +36,7 @@ public:
 
 	//서버 부분 RPC로 만들 것
 	UFUNCTION(Server, Reliable) // 신뢰하는 것? 서버에 전달하는 것?
-	void Server_AddNewItem(UInv_ItemComponent* ItemComponent, int32 StackCount);
+	void Server_AddNewItem(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder);
 
 	UFUNCTION(Server, Reliable) // 신뢰하는 것? 서버에 전달하는 것?
 	void Server_AddStacksToItem(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder);
@@ -60,6 +60,7 @@ public:
 	void AddRepSubObj(UObject* SubObj); //복제 하위 객체 추가 함수
 	void SpawnDroppedItem(UInv_InventoryItem* Item, int32 StackCount); // 떨어진 아이템 생성 함수
 	UInv_InventoryBase* GetInventoryMenu() const {return InventoryMenu;};
+	bool IsMenuOpen() const { return bInventoryMenuOpen; }
 	
 	// 서버 브로드캐스트 함수들.
 	FInventoryItemChange OnItemAdded;
