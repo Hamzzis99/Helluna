@@ -15,6 +15,7 @@
 #include "Widgets/ItemDescription/Inv_ItemDescription.h"
 #include "Blueprint/WidgetTree.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
+#include "Items/Fragments/Inv_ItemFragment.h"
 #include "Widgets/Inventory/GridSlots/Inv_EquippedGridSlot.h"
 #include "Widgets/Inventory/HoverItem/Inv_HoverItem.h"
 #include "Widgets/Inventory/SlottedItems/Inv_EquippedSlottedItem.h"
@@ -142,6 +143,7 @@ void UInv_SpatialInventory::NativeTick(const FGeometry& MyGeometry, float InDelt
 	
 	if (!IsValid(ItemDescription)) return; // 아이템 설명 위젯이 유효하지 않으면 반환
 	SetItemDescriptionSizeAndPosition(ItemDescription, CanvasPanel); // 아이템 설명 크기 및 위치 설정
+	SetEquippedItemDescriptionSizeAndPosition(ItemDescription, EquippedItemDescription, CanvasPanel);
 }
 
 // 마우스를 올려둘 때 뜨는 아이템 설명 크기 및 위치 설정
@@ -159,6 +161,25 @@ void UInv_SpatialInventory::SetItemDescriptionSizeAndPosition(UInv_ItemDescripti
 		UWidgetLayoutLibrary::GetMousePositionOnViewport(GetOwningPlayer()));
 
 	ItemDescriptionCPS->SetPosition(ClampedPosition);
+}
+
+void UInv_SpatialInventory::SetEquippedItemDescriptionSizeAndPosition(UInv_ItemDescription* Description, UInv_ItemDescription* EquippedDescription, UCanvasPanel* Canvas) const
+{
+	UCanvasPanelSlot* ItemDescriptionCPS = UWidgetLayoutLibrary::SlotAsCanvasSlot(Description);
+	UCanvasPanelSlot* EquippedItemDescriptionCPS = UWidgetLayoutLibrary::SlotAsCanvasSlot(EquippedDescription);
+	if (!IsValid(ItemDescriptionCPS) || !IsValid(EquippedItemDescriptionCPS)) return;
+
+	const FVector2D ItemDescriptionSize = Description->GetBoxSize();
+	const FVector2D EquippedItemDescriptionSize = EquippedDescription->GetBoxSize();
+
+	FVector2D ClampedPosition = UInv_WidgetUtils::GetClampedWidgetPosition(
+		UInv_WidgetUtils::GetWidgetSize(Canvas),
+		ItemDescriptionSize,
+		UWidgetLayoutLibrary::GetMousePositionOnViewport(GetOwningPlayer()));
+	ClampedPosition.X -= EquippedItemDescriptionSize.X; 
+
+	EquippedItemDescriptionCPS->SetSize(EquippedItemDescriptionSize);
+	EquippedItemDescriptionCPS->SetPosition(ClampedPosition);
 }
 
 // 호버 아이템 장착 가능 여부 확인 게임태그도 참조해야 낄 수 있게.
@@ -266,14 +287,21 @@ void UInv_SpatialInventory::OnItemHovered(UInv_InventoryItem* Item)
 	DescriptionWidget->SetVisibility(ESlateVisibility::Collapsed);
 	
 	GetOwningPlayer()->GetWorldTimerManager().ClearTimer(DescriptionTimer); // 기존 타이머 클리어
+	GetOwningPlayer()->GetWorldTimerManager().ClearTimer(EquippedDescriptionTimer); // 두 번째 장비 보이는 것. (장착 장비)
 	
 	FTimerDelegate DescriptionTimerDelegate;
-	DescriptionTimerDelegate.BindLambda([this, &Manifest, DescriptionWidget]()
+	DescriptionTimerDelegate.BindLambda([this, Item, &Manifest, DescriptionWidget]()
 	{
 		// Assimalate the manifest into the Item Description widget.
 		// 아이템 설명 위젯에 매니페스트 동화
 		GetItemDescription()->SetVisibility(ESlateVisibility::HitTestInvisible); // 설명 위젯 보이기
 		Manifest.AssimilateInventoryFragments(DescriptionWidget);
+		
+		// For the second item description, showing the equipped item of this type.
+		// 두 번째 아이템 설명의 경우, 이 유형의 장착된 아이템을 보여줌.
+		FTimerDelegate EquippedDescriptionTimerDelegate;
+		EquippedDescriptionTimerDelegate.BindUObject(this, &ThisClass::ShowEquippedItemDescription, Item);
+		GetOwningPlayer()->GetWorldTimerManager().SetTimer(EquippedDescriptionTimer, EquippedDescriptionTimerDelegate, EquippedDescriptionTimerDelay, false);
 	});
 	
 	// 타이머 설정
@@ -285,6 +313,8 @@ void UInv_SpatialInventory::OnItemUnHovered()
 {
 	GetItemDescription()->SetVisibility(ESlateVisibility::Collapsed); // 설명 위젯 숨기기
 	GetOwningPlayer()->GetWorldTimerManager().ClearTimer(DescriptionTimer); // 타이머 클리어
+	GetEquippedItemDescription()->SetVisibility(ESlateVisibility::Collapsed);
+	GetOwningPlayer()->GetWorldTimerManager().ClearTimer(EquippedDescriptionTimer);
 }
 
 bool UInv_SpatialInventory::HasHoverItem() const // UI 마우스 호버 부분들
@@ -308,6 +338,44 @@ float UInv_SpatialInventory::GetTileSize() const
 	return Grid_Equippables->GetTileSize(); // 장비 그리드의 타일 크기 반환
 }
 
+void UInv_SpatialInventory::ShowEquippedItemDescription(UInv_InventoryItem* Item)
+{
+	const auto& Manifest = Item->GetItemManifest();
+	const FInv_EquipmentFragment* EquipmentFragment = Manifest.GetFragmentOfType<FInv_EquipmentFragment>();
+	if (!EquipmentFragment) return;
+
+	const FGameplayTag HoveredEquipmentType = EquipmentFragment->GetEquipmentType();
+	
+	auto EquippedGridSlot = EquippedGridSlots.FindByPredicate([Item](const UInv_EquippedGridSlot* GridSlot)
+	{
+		return GridSlot->GetInventoryItem() == Item;
+	});
+	if (EquippedGridSlot != nullptr) return; // The hovered item is already equipped, we're already showing its Item Description
+
+	// It's not equipped, so find the equipped item with the same equipment type
+	auto FoundEquippedSlot = EquippedGridSlots.FindByPredicate([HoveredEquipmentType](const UInv_EquippedGridSlot* GridSlot)
+	{
+		UInv_InventoryItem* InventoryItem = GridSlot->GetInventoryItem().Get();
+		return IsValid(InventoryItem) ? InventoryItem->GetItemManifest().GetFragmentOfType<FInv_EquipmentFragment>()->GetEquipmentType() == HoveredEquipmentType : false ;
+	});
+	UInv_EquippedGridSlot* EquippedSlot = FoundEquippedSlot ? *FoundEquippedSlot : nullptr;
+	if (!IsValid(EquippedSlot)) return; // No equipped item with the same equipment type
+
+	UInv_InventoryItem* EquippedItem = EquippedSlot->GetInventoryItem().Get();
+	if (!IsValid(EquippedItem)) return;
+
+	const auto& EquippedItemManifest = EquippedItem->GetItemManifest();
+	UInv_ItemDescription* DescriptionWidget = GetEquippedItemDescription();
+
+	//장비 비교하기 칸을 조절하려면 이 칸을 조절하면 됨. (장비 비교)
+	auto EquippedDescriptionWidget = GetEquippedItemDescription();
+	
+	EquippedDescriptionWidget->Collapse();
+	DescriptionWidget->SetVisibility(ESlateVisibility::HitTestInvisible);	
+	EquippedItemManifest.AssimilateInventoryFragments(EquippedDescriptionWidget);
+	// 여기까지 장비 비교 칸 조절.
+}
+
 UInv_ItemDescription* UInv_SpatialInventory::GetItemDescription() // 아이템 설명 위젯 가져오기
 {
 	if (!IsValid(ItemDescription))
@@ -316,6 +384,16 @@ UInv_ItemDescription* UInv_SpatialInventory::GetItemDescription() // 아이템 �
 		CanvasPanel->AddChild(ItemDescription);
 	}
 	return ItemDescription;
+}
+
+UInv_ItemDescription* UInv_SpatialInventory::GetEquippedItemDescription()
+{
+	if (!IsValid(EquippedItemDescription))
+	{
+		EquippedItemDescription = CreateWidget<UInv_ItemDescription>(GetOwningPlayer(), EquippedItemDescriptionClass);
+		CanvasPanel->AddChild(EquippedItemDescription);
+	}
+	return EquippedItemDescription;
 }
 
 void UInv_SpatialInventory::ShowEquippables()

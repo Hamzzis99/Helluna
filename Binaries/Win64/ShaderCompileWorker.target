@@ -617,10 +617,6 @@
 	],
 	"RuntimeDependencies": [
 		{
-			"Path": "$(ProjectDir)/Helluna.uproject",
-			"Type": "UFS"
-		},
-		{
 			"Path": "$(EngineDir)/Binaries/ThirdParty/DbgHelp/dbghelp.dll",
 			"Type": "NonUFS"
 		},
@@ -3759,6 +3755,10 @@
 		{
 			"Path": "$(EngineDir)/Extras/GPUDumpViewer/OpenGPUDumpViewer.sh",
 			"Type": "DebugNonUFS"
+		},
+		{
+			"Path": "$(ProjectDir)/Helluna.uproject",
+			"Type": "UFS"
 		}
 	],
 	"AdditionalProperties": [

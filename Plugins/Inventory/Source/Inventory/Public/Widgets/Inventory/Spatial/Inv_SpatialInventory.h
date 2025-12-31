@@ -79,12 +79,26 @@ private:
 	UPROPERTY()
 	TObjectPtr<UInv_ItemDescription> ItemDescription;
 	
+	UPROPERTY(EditAnywhere, Category = "Inventory")
+	TSubclassOf<UInv_ItemDescription> EquippedItemDescriptionClass;
+
+	UPROPERTY()
+	TObjectPtr<UInv_ItemDescription> EquippedItemDescription;
+	
 	FTimerHandle DescriptionTimer;
+	FTimerHandle EquippedDescriptionTimer;
+
+	UFUNCTION()
+	void ShowEquippedItemDescription(UInv_InventoryItem* Item);
 	
 	UPROPERTY(EditAnywhere, Category = "Inventory")
 	float DescriptionTimerDelay = 0.5f; // 설명 타이머 지연 시간 설정
 	
+	UPROPERTY(EditAnywhere, Category = "Inventory")
+	float EquippedDescriptionTimerDelay = 0.5f;
+	
 	UInv_ItemDescription* GetItemDescription();
+	UInv_ItemDescription* GetEquippedItemDescription();
 	
 	UFUNCTION()
 	void ShowEquippables();
@@ -104,6 +118,7 @@ private:
 	void DisableButton(UButton* Button);
 	void SetActiveGrid(UInv_InventoryGrid* Grid, UButton* Button);
 	void SetItemDescriptionSizeAndPosition(UInv_ItemDescription* Description, UCanvasPanel* Canvas) const; // 아이템 설명 크기 및 위치 설정
+	void SetEquippedItemDescriptionSizeAndPosition(UInv_ItemDescription* Description, UInv_ItemDescription* EquippedDescription, UCanvasPanel* Canvas) const; // 장착된 아이템 설명 크기 및 위치 설정 (비교하는 함수)
 	bool CanEquipHoverItem(UInv_EquippedGridSlot* EquippedGridSlot, const FGameplayTag& EquipmentTypeTag) const; // 호버 아이템 장착 가능 여부 확인 게임태그도 참조해야 낄 수 있게.
 	UInv_EquippedGridSlot* FindSlotWithEquippedItem(UInv_InventoryItem* EquippedItem) const; // 캡처한 포인터와 동일한 인벤토리 항목에 있는지 확인하는 것.
 	void ClearSlotOfItem(UInv_EquippedGridSlot* EquippedGridSlot); // 장착된 아이템을 그리드 슬롯에서 제거
