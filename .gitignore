@@ -19,6 +19,8 @@ Saved/
 .vscode/
 .idea/
 FileOpenOrder/
+Binaries/*
+Plugins/*/Binaries/*
 
 # User-specific files
 *.sln
