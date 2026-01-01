@@ -13,6 +13,7 @@ Plugins/Developer/
 Plugins/Inventory/Content/InventoryAssets/
 # Unreal Engine build artifacts
 Build/
+Builds/
 DerivedDataCache/
 Intermediate/
 Saved/
