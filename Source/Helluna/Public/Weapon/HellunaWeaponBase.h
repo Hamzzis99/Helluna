@@ -22,6 +22,7 @@ public:
 
 protected:
 
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapons")
 	UStaticMeshComponent* WeaponMesh;
 
