@@ -22,6 +22,7 @@ Saved/
 FileOpenOrder/
 Binaries/*
 Plugins/*/Binaries/*
+Plugins/*/Intermediate/
 
 # User-specific files
 *.sln
