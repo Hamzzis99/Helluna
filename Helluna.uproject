@@ -43,11 +43,16 @@
 			"Enabled": true
 		},
 		{
+ HEAD
 			"Name": "VisualStudioTools",
 			"Enabled": true,
 			"SupportedTargetPlatforms": [
 				"Win64"
 			]
+
+			"Name": "AIAssistant",
+			"Enabled": true
+ ba1ebea4f6a22e752acdaac7ce910df4c39f685f
 		}
 	]
 }
