@@ -1,6 +1,6 @@
 {
 	"FileVersion": 3,
-	"EngineAssociation": "UE5_Helluna",
+	"EngineAssociation": "5.7",
 	"Category": "",
 	"Description": "",
 	"Modules": [
@@ -46,7 +46,9 @@
 			"Name": "VisualStudioTools",
 			"Enabled": true,
 			"Optional": true,
-			"SupportedTargetPlatforms": [ "Win64" ]
+			"SupportedTargetPlatforms": [
+				"Win64"
+			]
 		},
 		{
 			"Name": "AIAssistant",
