@@ -35,6 +35,8 @@ public:
 
 	virtual void BeginPlay() override;
 
+	virtual void PostLogin(APlayerController* NewPlayer) override;
+
 	// ===== 외부에서 "조건 달성" 신호 주기 =====
 	UFUNCTION(BlueprintCallable, Category = "Defense|Condition")
 	void SetBossReady(bool bReady);

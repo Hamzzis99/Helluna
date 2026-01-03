@@ -15,6 +15,7 @@ namespace HellunaGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(InputTag_Run, "InputTag.Run");
 	UE_DEFINE_GAMEPLAY_TAG(InputTag_SpawnWeapon, "InputTag.SpawnWeapon");
 	UE_DEFINE_GAMEPLAY_TAG(InputTag_ChangeWeapon, "InputTag.ChangeWeapon");
+	UE_DEFINE_GAMEPLAY_TAG(InputTag_Repair, "InputTag.Repair");
 
 	/** Player Ability tags **/
 
@@ -24,6 +25,8 @@ namespace HellunaGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Player_Ability_Run, "Player.Ability.Run");
 	UE_DEFINE_GAMEPLAY_TAG(Player_Ability_SpawnWeapon, "Player.Ability.SpawnWeapon");
 	UE_DEFINE_GAMEPLAY_TAG(Player_Ability_ChangeWeapon, "Player.Ability.ChangeWeapon");
+	UE_DEFINE_GAMEPLAY_TAG(Player_Ability_InRepair, "Player.Ability.InRepair");
+	UE_DEFINE_GAMEPLAY_TAG(Player_Ability_Repair, "Player.Ability.Repair");
 
 	/** Player Status tags **/
 
@@ -32,6 +35,7 @@ namespace HellunaGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Player_status_Run, "Player.status.Run");
 	UE_DEFINE_GAMEPLAY_TAG(Player_status_Can_Shoot, "Player.status.Can.Shoot");
 	UE_DEFINE_GAMEPLAY_TAG(Player_status_Can_AutoShoot, "Player.status.Can.AutoShoot");
+	UE_DEFINE_GAMEPLAY_TAG(Player_status_Can_Repair, "Player.status.Can.Repair");
 
 
 	/** Enemy tags **/

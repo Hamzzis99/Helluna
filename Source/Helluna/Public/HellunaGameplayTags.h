@@ -15,6 +15,7 @@ namespace HellunaGameplayTags
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Run);
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_SpawnWeapon);
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_ChangeWeapon);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Repair);
 
 	/** Player Ability tags **/
 
@@ -24,6 +25,8 @@ namespace HellunaGameplayTags
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_Ability_Run);
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_Ability_SpawnWeapon);
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_Ability_ChangeWeapon);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_Ability_InRepair);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_Ability_Repair);
 
 	/** Player Status tags **/
 
@@ -32,6 +35,7 @@ namespace HellunaGameplayTags
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_status_Shoot);
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_status_Can_Shoot);
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_status_Can_AutoShoot);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_status_Can_Repair);
 
 
 	/** Enemy tags **/

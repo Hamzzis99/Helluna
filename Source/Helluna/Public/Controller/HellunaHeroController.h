@@ -24,4 +24,6 @@ public:
 
 private:
 	FGenericTeamId HeroTeamID;
+
+
 };

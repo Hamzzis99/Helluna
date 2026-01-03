@@ -5,6 +5,10 @@
 
 #include "Engine/TargetPoint.h"
 #include "Kismet/GameplayStatics.h"
+#include "EngineUtils.h"                 
+#include "GameFramework/PlayerController.h"
+
+#include "debughelper.h"
 
 AHellunaDefenseGameMode::AHellunaDefenseGameMode()
 {
@@ -152,7 +156,6 @@ void AHellunaDefenseGameMode::TrySummonBoss()
 	{
 		SetState(EDefenseGameModeState::BossSpawned);
 
-		// 한 번 소환하면 다시 소환 안 되게
 		bBossReady = false;
 	}
 }
@@ -180,8 +183,11 @@ void AHellunaDefenseGameMode::RestartCurrentLevelForAll()
 {
 	if (!HasAuthority()) return;
 
-	if (UWorld* World = GetWorld())
-	{
-		World->ServerTravel(TEXT("?restart"));
-	}
+	GetWorld()->ServerTravel(TEXT("/Game/Minwoo/MinwooTestMap?listen"));
+}
+
+void AHellunaDefenseGameMode::PostLogin(APlayerController* NewPlayer)
+{
+	Super::PostLogin(NewPlayer);
+	RestartPlayer(NewPlayer); // 최대한 빨리 Pawn 스폰/포제션
 }
