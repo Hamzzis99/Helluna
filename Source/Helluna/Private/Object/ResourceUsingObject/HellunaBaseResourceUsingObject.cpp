@@ -14,10 +14,17 @@ AHellunaBaseResourceUsingObject::AHellunaBaseResourceUsingObject()
 	ResouceUsingCollisionBox = CreateDefaultSubobject<UBoxComponent>(TEXT("ResouceUsingCollisionBox"));
 	ResouceUsingCollisionBox->SetupAttachment(ResouceUsingMesh);
 	ResouceUsingCollisionBox->OnComponentBeginOverlap.AddUniqueDynamic(this, &ThisClass::CollisionBoxBeginOverlap);
+	ResouceUsingCollisionBox->OnComponentEndOverlap.AddUniqueDynamic(this, &ThisClass::CollisionBoxEndOverlap);
+
 
 }
 
 void AHellunaBaseResourceUsingObject::CollisionBoxBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
+{
+
+}
+
+void AHellunaBaseResourceUsingObject::CollisionBoxEndOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex)
 {
 
 }

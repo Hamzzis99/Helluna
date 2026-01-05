@@ -9,6 +9,10 @@
 /**
  * 
  */
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnRepairProgressChanged, int32, Current, int32, Need);
+
+
 UCLASS()
 class HELLUNA_API AResourceUsingObject_SpaceShip : public AHellunaBaseResourceUsingObject
 {
@@ -17,6 +21,28 @@ class HELLUNA_API AResourceUsingObject_SpaceShip : public AHellunaBaseResourceUs
 protected:
 	virtual void CollisionBoxBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult) override;
 
-	
+	virtual void CollisionBoxEndOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex) override;
+
+public:
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Repair")
+    int32 NeedResource = 5;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Repair")
+    int32 CurrentResource = 0;
+
+    UPROPERTY(BlueprintAssignable, Category = "Repair")
+    FOnRepairProgressChanged OnRepairProgressChanged;
+
+    UFUNCTION(BlueprintCallable, Category = "Repair")
+    bool AddRepairResource(int32 Amount);
+        
+    UFUNCTION(BlueprintPure, Category = "Repair")
+    float GetRepairPercent() const
+    {
+        return NeedResource > 0 ? (float)CurrentResource / (float)NeedResource : 1.f;
+    }
+
+    UFUNCTION(BlueprintPure, Category = "Repair")
+    bool IsRepaired() const { return CurrentResource >= NeedResource; }
 	
 };

@@ -5,6 +5,7 @@
 #include "HellunaGameplayTags.h"
 #include "AbilitySystem/HellunaHeroGameplayAbility.h"
 
+#include "DebugHelper.h"
 
 bool UHellunaAbilitySystemComponent::TryActivateAbilityByTag(FGameplayTag AbilityTagToActivate)
 {
@@ -42,6 +43,7 @@ void UHellunaAbilitySystemComponent::OnAbilityInputPressed(const FGameplayTag& I
 
 	for (const FGameplayAbilitySpec& AbilitySpec : GetActivatableAbilities())
 	{
+
 		if (!AbilitySpec.DynamicAbilityTags.HasTagExact(InInputTag)) continue;
 
 		const UHellunaHeroGameplayAbility* HellunaGA = Cast<UHellunaHeroGameplayAbility>(AbilitySpec.Ability);
@@ -57,6 +59,7 @@ void UHellunaAbilitySystemComponent::OnAbilityInputPressed(const FGameplayTag& I
 		else // Trigger
 		{
 			TryActivateAbility(AbilitySpec.Handle);
+			return;
 		}
 	}
 }
@@ -102,4 +105,28 @@ void UHellunaAbilitySystemComponent::OnAbilityInputReleased(const FGameplayTag& 
 			);
 		}
 	}
+}
+
+bool UHellunaAbilitySystemComponent::CancelAbilityByTag(const FGameplayTag AbilityTagToCancel)  //어빌리티 취소 
+{
+	check(AbilityTagToCancel.IsValid());
+
+	TArray<FGameplayAbilitySpec*> FoundAbilitySpecs;
+	GetActivatableGameplayAbilitySpecsByAllMatchingTags(
+		AbilityTagToCancel.GetSingleTagContainer(),
+		FoundAbilitySpecs
+	);
+
+	bool bCanceledAny = false;
+
+	for (FGameplayAbilitySpec* SpecToCancel : FoundAbilitySpecs)
+	{
+		if (!SpecToCancel) continue;
+		if (!SpecToCancel->IsActive()) continue;
+
+		CancelAbilityHandle(SpecToCancel->Handle);
+		bCanceledAny = true;
+	}
+
+	return bCanceledAny;
 }
