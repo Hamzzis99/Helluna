@@ -3,6 +3,7 @@
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
 #include "Items/Inv_InventoryItem.h"
 #include "Items/Components/Inv_ItemComponent.h"
+#include "Types/Inv_GridTypes.h"
 
 TArray<UInv_InventoryItem*> FInv_InventoryFastArray::GetAllItems() const
 {
@@ -36,6 +37,28 @@ void FInv_InventoryFastArray::PostReplicatedAdd(const TArrayView<int32> AddedInd
 	for (int32 Index : AddedIndices) // 
 	{
 		IC->OnItemAdded.Broadcast(Entries[Index].Item); // 브로드캐스트가 뭐였지? 까먹었어 ToonTanks 다시 봐야해?
+	}
+}
+
+void FInv_InventoryFastArray::PostReplicatedChange(const TArrayView<int32> ChangedIndices, int32 FinalSize)
+{
+	UInv_InventoryComponent* IC = Cast<UInv_InventoryComponent>(OwnerComponent);
+	if (!IsValid(IC)) return;
+
+	// 변경된 아이템들에 대해 스택 변경 델리게이트 브로드캐스트
+	for (int32 Index : ChangedIndices)
+	{
+		if (Entries.IsValidIndex(Index) && IsValid(Entries[Index].Item))
+		{
+			FInv_SlotAvailabilityResult Result;
+			Result.Item = Entries[Index].Item;
+			Result.bStackable = true;
+			Result.TotalRoomToFill = Entries[Index].Item->GetTotalStackCount();
+			
+			IC->OnStackChange.Broadcast(Result);
+			UE_LOG(LogTemp, Warning, TEXT("PostReplicatedChange: 아이템 스택 변경 브로드캐스트 (Index: %d, NewCount: %d)"), 
+				Index, Result.TotalRoomToFill);
+		}
 	}
 }
 
@@ -87,7 +110,7 @@ void FInv_InventoryFastArray::RemoveEntry(UInv_InventoryItem* Item)
 
 UInv_InventoryItem* FInv_InventoryFastArray::FindFirstItemByType(const FGameplayTag& ItemType)
 {
-	auto* FoundItem = Entries.FindByPredicate([ItemType = ItemType](const FInv_InventoryEntry& Entry) // 프레디케이트는 부를 수 있는지 확인하는 거라고?
+	auto* FoundItem = Entries.FindByPredicate([ItemType = ItemType](const FInv_InventoryEntry& Entry)// 프레디케이트는 부를 수 있는지 확인하는 거라고?
 	{
 		// 람다함수 코딩
 		//게임 플레이 태그만 확인하는 부분

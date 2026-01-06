@@ -46,6 +46,9 @@ public:
 	
 	UFUNCTION(Server, Reliable) // 신뢰하는 것? 서버에 전달하는 것?
 	void Server_ConsumeItem(UInv_InventoryItem* Item);
+
+	UFUNCTION(Server, Reliable) // 재료 소비 (Building 시스템용)
+	void Server_ConsumeMaterials(const FGameplayTag& MaterialTag, int32 Amount);
 	
 	UFUNCTION(Server, Reliable) // 신뢰하는 것? 서버에 전달하는 것?
 	void Server_EquipSlotClicked(UInv_InventoryItem* ItemToEquip, UInv_InventoryItem* ItemToUnequip);
@@ -61,6 +64,10 @@ public:
 	void SpawnDroppedItem(UInv_InventoryItem* Item, int32 StackCount); // 떨어진 아이템 생성 함수
 	UInv_InventoryBase* GetInventoryMenu() const {return InventoryMenu;};
 	bool IsMenuOpen() const { return bInventoryMenuOpen; }
+
+	// InventoryList 접근용 (재료 체크 등에 사용)
+	const FInv_InventoryFastArray& GetInventoryList() const { return InventoryList; }
+	FInv_InventoryFastArray& GetInventoryList() { return InventoryList; } // non-const 오버로드
 	
 	// 서버 브로드캐스트 함수들.
 	FInventoryItemChange OnItemAdded;

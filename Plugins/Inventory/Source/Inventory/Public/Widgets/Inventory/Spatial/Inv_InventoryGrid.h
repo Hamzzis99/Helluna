@@ -47,6 +47,9 @@ public:
 	
 	UFUNCTION()
 	void AddItem(UInv_InventoryItem* Item); // 아이템 추가
+
+	UFUNCTION()
+	void RemoveItem(UInv_InventoryItem* Item); // 아이템 제거 (UI에서 삭제)
 	
 private:
 

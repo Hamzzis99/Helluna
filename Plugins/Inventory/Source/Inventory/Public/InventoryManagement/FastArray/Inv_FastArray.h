@@ -48,6 +48,7 @@ struct FInv_InventoryFastArray : public FFastArraySerializer
 	// FFastArraySerializer contract
 	void PreReplicatedRemove(const TArrayView<int32> RemovedIndices, int32 FinalSize); // 제거 전 처리
 	void PostReplicatedAdd(const TArrayView<int32> AddedIndices, int32 FinalSize);
+	void PostReplicatedChange(const TArrayView<int32> ChangedIndices, int32 FinalSize); // 변경 후 처리
 	// End of FFastArraySerializer contract
 	
 	bool NetDeltaSerialize(FNetDeltaSerializeInfo& DeltaParams)
@@ -61,7 +62,7 @@ struct FInv_InventoryFastArray : public FFastArraySerializer
 	UInv_InventoryItem* AddEntry(UInv_ItemComponent* ItemComponent); // 인벤토리 항목 추가
 	UInv_InventoryItem* AddEntry(UInv_InventoryItem* Item);
 	void RemoveEntry(UInv_InventoryItem* Item); // 인벤토리 항목 제거
-	UInv_InventoryItem* FindFirstItemByType(const FGameplayTag& ItemType); // 
+	UInv_InventoryItem* FindFirstItemByType(const FGameplayTag& ItemType);
 
 private:
 	//아니 구조체인데 왜 friend를 선언하냐고!!! 야!!
