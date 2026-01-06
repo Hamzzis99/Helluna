@@ -30,6 +30,7 @@ void UInv_InventoryGrid::NativeOnInitialized()
 	InventoryComponent->OnStackChange.AddDynamic(this, &ThisClass::AddStacks); // 스택 변경 델리게이트 바인딩
 	InventoryComponent->OnInventoryMenuToggled.AddDynamic(this, &ThisClass::OnInventoryMenuToggled);
 	InventoryComponent->OnItemRemoved.AddDynamic(this, &ThisClass::RemoveItem); // 아이템 제거 델리게이트 바인딩
+	InventoryComponent->OnMaterialStacksChanged.AddDynamic(this, &ThisClass::UpdateMaterialStacksByTag); // Building 재료 업데이트 바인딩
 }
 
 // 매 프레임마다 호출되는 틱 함수 (마우스 Hover에 사용)
@@ -586,25 +587,138 @@ void UInv_InventoryGrid::AddStacks(const FInv_SlotAvailabilityResult& Result)
 	// SlotAvailabilities가 비어있으면 Item으로 슬롯을 직접 찾아서 업데이트
 	if (Result.SlotAvailabilities.Num() == 0 && Result.Item.IsValid())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("AddStacks: SlotAvailabilities 비어있음. Item으로 슬롯 검색..."));
+		UE_LOG(LogTemp, Warning, TEXT("=== AddStacks 호출 (Split 대응) ==="));
+		UE_LOG(LogTemp, Warning, TEXT("📥 [클라이언트] Item포인터: %p, ItemType: %s, 서버 총량: %d"), 
+			Result.Item.Get(), *Result.Item->GetItemManifest().GetItemType().ToString(), Result.TotalRoomToFill);
 		
-		// SlottedItems에서 해당 Item을 가진 슬롯 찾기
+		// 🔍 디버깅: UI 상태 확인 (업데이트 전)
+		UE_LOG(LogTemp, Warning, TEXT("🔍 [클라이언트] UI 슬롯 상태 (업데이트 전):"));
+		int32 UITotalBefore = 0;
 		for (const auto& [Index, SlottedItem] : SlottedItems)
 		{
-			if (GridSlots.IsValidIndex(Index) && GridSlots[Index]->GetInventoryItem() == Result.Item)
+			if (!GridSlots.IsValidIndex(Index)) continue;
+			UInv_InventoryItem* GridSlotItem = GridSlots[Index]->GetInventoryItem().Get();
+			if (GridSlotItem == Result.Item)
 			{
-				UE_LOG(LogTemp, Warning, TEXT("슬롯 찾음! Index: %d, 새로운 스택 개수: %d"), Index, Result.TotalRoomToFill);
-				
-				// GridSlot과 SlottedItem 둘 다 업데이트
-				GridSlots[Index]->SetStackCount(Result.TotalRoomToFill);
-				SlottedItem->UpdateStackCount(Result.TotalRoomToFill);
-				
-				UE_LOG(LogTemp, Warning, TEXT("UI 스택 개수 업데이트 완료!"));
-				return; // 찾았으면 종료
+				int32 SlotCount = GridSlots[Index]->GetStackCount();
+				UITotalBefore += SlotCount;
+				UE_LOG(LogTemp, Warning, TEXT("  슬롯[%d]: Item포인터=%p, StackCount=%d"), 
+					Index, GridSlotItem, SlotCount);
+			}
+		}
+		UE_LOG(LogTemp, Warning, TEXT("🔍 [클라이언트] UI 총량 (업데이트 전): %d"), UITotalBefore);
+		UE_LOG(LogTemp, Warning, TEXT("🔍 [클라이언트] 차감량: %d - %d = %d"), 
+			UITotalBefore, Result.TotalRoomToFill, UITotalBefore - Result.TotalRoomToFill);
+		
+		// ⭐ 1단계: 같은 Item을 가진 모든 슬롯 찾기 (Split 대응!)
+		TArray<int32> MatchedIndices;
+		int32 TotalUICount = 0;
+		
+		for (const auto& [Index, SlottedItem] : SlottedItems)
+		{
+			UInv_InventoryItem* GridSlotItem = GridSlots[Index]->GetInventoryItem().Get();
+			
+			if (GridSlots.IsValidIndex(Index) && GridSlotItem == Result.Item)
+			{
+				MatchedIndices.Add(Index);
+				TotalUICount += GridSlots[Index]->GetStackCount();
+				UE_LOG(LogTemp, Warning, TEXT("📌 [클라이언트] 매칭된 슬롯 발견: Index=%d, CurrentCount=%d, Item포인터=%p"), 
+					Index, GridSlots[Index]->GetStackCount(), GridSlotItem);
 			}
 		}
 		
-		UE_LOG(LogTemp, Error, TEXT("AddStacks: Item에 해당하는 슬롯을 찾지 못함!"));
+		if (MatchedIndices.Num() == 0)
+		{
+			UE_LOG(LogTemp, Error, TEXT("❌ [클라이언트] AddStacks: Item에 해당하는 슬롯을 찾지 못함! Item포인터: %p"), Result.Item.Get());
+			return;
+		}
+		
+		UE_LOG(LogTemp, Warning, TEXT("📊 [클라이언트] 총 %d개 슬롯 매칭됨, UI 총량: %d → 서버 총량: %d"), 
+			MatchedIndices.Num(), TotalUICount, Result.TotalRoomToFill);
+		
+		// ⭐ 1.5단계: 큰 스택부터 처리하도록 정렬 (안정적인 분배를 위해)
+		MatchedIndices.Sort([this](int32 A, int32 B) {
+			return GridSlots[A]->GetStackCount() > GridSlots[B]->GetStackCount();
+		});
+		
+		UE_LOG(LogTemp, Warning, TEXT("🔀 [클라이언트] 슬롯 정렬 완료 (큰 스택부터):"));
+		for (int32 Index : MatchedIndices)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("  슬롯[%d]: StackCount=%d"), Index, GridSlots[Index]->GetStackCount());
+		}
+		
+		// ⭐ 2단계: 서버 총량을 슬롯들에 분배
+		int32 RemainingToDistribute = Result.TotalRoomToFill;
+		TArray<int32> IndicesToRemove;
+		
+		UE_LOG(LogTemp, Warning, TEXT("🔧 [클라이언트] 슬롯별 분배 시작 (RemainingToDistribute=%d):"), RemainingToDistribute);
+		
+		for (int32 Index : MatchedIndices)
+		{
+			int32 OldCount = GridSlots[Index]->GetStackCount();
+			int32 NewCount = FMath::Min(OldCount, RemainingToDistribute);
+			RemainingToDistribute -= NewCount;
+			
+			UE_LOG(LogTemp, Warning, TEXT("  슬롯[%d]: OldCount=%d, NewCount=%d, Remaining=%d → %d"), 
+				Index, OldCount, NewCount, RemainingToDistribute + NewCount, RemainingToDistribute);
+			
+			if (NewCount <= 0)
+			{
+				// 이 슬롯은 제거해야 함
+				IndicesToRemove.Add(Index);
+				UE_LOG(LogTemp, Warning, TEXT("  ❌ 슬롯[%d]: 제거 예약 (%d → 0)"), Index, OldCount);
+			}
+			else
+			{
+				// 개수 업데이트
+				GridSlots[Index]->SetStackCount(NewCount);
+				if (SlottedItems.Contains(Index) && IsValid(SlottedItems[Index]))
+				{
+					SlottedItems[Index]->UpdateStackCount(NewCount);
+				}
+				UE_LOG(LogTemp, Warning, TEXT("  ✅ 슬롯[%d]: UI 업데이트 (%d → %d)"), Index, OldCount, NewCount);
+			}
+		}
+		
+		// ⭐ 3단계: 제거할 슬롯들 제거
+		UE_LOG(LogTemp, Warning, TEXT("🗑️ [클라이언트] 제거할 슬롯 개수: %d"), IndicesToRemove.Num());
+		for (int32 IndexToRemove : IndicesToRemove)
+		{
+			if (GridSlots.IsValidIndex(IndexToRemove))
+			{
+				UInv_InventoryItem* ItemToRemove = GridSlots[IndexToRemove]->GetInventoryItem().Get();
+				if (IsValid(ItemToRemove))
+				{
+					RemoveItemFromGrid(ItemToRemove, IndexToRemove);
+					UE_LOG(LogTemp, Warning, TEXT("  ✅ 슬롯[%d]: UI에서 제거 완료 (Item포인터=%p)"), IndexToRemove, ItemToRemove);
+				}
+			}
+		}
+		
+		// 🔍 디버깅: UI 상태 확인 (업데이트 후)
+		UE_LOG(LogTemp, Warning, TEXT("🔍 [클라이언트] UI 슬롯 상태 (업데이트 후):"));
+		int32 UITotalAfter = 0;
+		for (const auto& [Index, SlottedItem] : SlottedItems)
+		{
+			if (!GridSlots.IsValidIndex(Index)) continue;
+			UInv_InventoryItem* GridSlotItem = GridSlots[Index]->GetInventoryItem().Get();
+			if (GridSlotItem == Result.Item)
+			{
+				int32 SlotCount = GridSlots[Index]->GetStackCount();
+				UITotalAfter += SlotCount;
+				UE_LOG(LogTemp, Warning, TEXT("  슬롯[%d]: Item포인터=%p, StackCount=%d"), 
+					Index, GridSlotItem, SlotCount);
+			}
+		}
+		UE_LOG(LogTemp, Warning, TEXT("🔍 [클라이언트] UI 총량 (업데이트 후): %d (예상: %d)"), UITotalAfter, Result.TotalRoomToFill);
+		
+		if (UITotalAfter != Result.TotalRoomToFill)
+		{
+			UE_LOG(LogTemp, Error, TEXT("⚠️ [클라이언트] UI 총량이 서버 총량과 일치하지 않습니다! UI=%d, 서버=%d"), 
+				UITotalAfter, Result.TotalRoomToFill);
+		}
+		
+		UE_LOG(LogTemp, Warning, TEXT("=== AddStacks 완료 ==="));
 		return;
 	}
 
@@ -845,6 +959,213 @@ void UInv_InventoryGrid::RemoveItem(UInv_InventoryItem* Item)
 	UE_LOG(LogTemp, Warning, TEXT("RemoveItem: UI에서 아이템 제거 완료!"));
 }
 
+// GameplayTag로 모든 스택을 찾아서 업데이트 (Building 시스템용 - Split된 스택 처리)
+void UInv_InventoryGrid::UpdateMaterialStacksByTag(const FGameplayTag& MaterialTag)
+{
+	if (!MaterialTag.IsValid())
+	{
+		UE_LOG(LogTemp, Error, TEXT("UpdateMaterialStacksByTag: Invalid MaterialTag!"));
+		return;
+	}
+
+	if (!InventoryComponent.IsValid())
+	{
+		UE_LOG(LogTemp, Error, TEXT("UpdateMaterialStacksByTag: InventoryComponent is invalid!"));
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("=== UpdateMaterialStacksByTag 호출 ==="));
+	UE_LOG(LogTemp, Warning, TEXT("MaterialTag: %s"), *MaterialTag.ToString());
+
+	// 1단계: InventoryList에서 실제 총량 계산
+	const FInv_InventoryFastArray& InventoryList = InventoryComponent->GetInventoryList();
+	TArray<UInv_InventoryItem*> AllItems = InventoryList.GetAllItems();
+	
+	int32 TotalCountInInventory = 0;
+	for (UInv_InventoryItem* Item : AllItems)
+	{
+		if (IsValid(Item) && Item->GetItemManifest().GetItemType().MatchesTagExact(MaterialTag))
+		{
+			TotalCountInInventory += Item->GetTotalStackCount();
+		}
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("InventoryList 총량: %d"), TotalCountInInventory);
+
+	// 2단계: UI의 같은 타입 모든 슬롯 찾기
+	TArray<TPair<int32, int32>> SlotsWithCounts; // <Index, CurrentCount>
+	
+	for (const auto& [Index, SlottedItem] : SlottedItems)
+	{
+		if (!GridSlots.IsValidIndex(Index)) continue;
+		
+		UInv_InventoryItem* GridItem = GridSlots[Index]->GetInventoryItem().Get();
+		if (!IsValid(GridItem)) continue;
+		
+		if (GridItem->GetItemManifest().GetItemType().MatchesTagExact(MaterialTag))
+		{
+			int32 CurrentCount = GridSlots[Index]->GetStackCount();
+			SlotsWithCounts.Add(TPair<int32, int32>(Index, CurrentCount));
+			UE_LOG(LogTemp, Warning, TEXT("슬롯 %d 발견: 현재 개수 %d"), Index, CurrentCount);
+		}
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("발견된 슬롯 개수: %d"), SlotsWithCounts.Num());
+	
+	// 3단계: 총량을 슬롯에 분배 (순차적으로 채우기)
+	int32 RemainingTotal = TotalCountInInventory;
+	TArray<int32> IndicesToRemove;
+	
+	for (const auto& [Index, OldCount] : SlotsWithCounts)
+	{
+		if (RemainingTotal <= 0)
+		{
+			// 남은 총량이 0 → 이 슬롯은 삭제
+			IndicesToRemove.Add(Index);
+			UE_LOG(LogTemp, Warning, TEXT("슬롯 %d: 총량 소진, 제거 예약"), Index);
+		}
+		else
+		{
+			// 이 슬롯에 최대한 채우기
+			int32 NewCount = FMath::Min(OldCount, RemainingTotal);
+			RemainingTotal -= NewCount;
+			
+			if (NewCount <= 0)
+			{
+				// 0개가 됨 → 삭제
+				IndicesToRemove.Add(Index);
+				UE_LOG(LogTemp, Warning, TEXT("슬롯 %d: 0개 됨, 제거 예약 (%d → 0)"), Index, OldCount);
+			}
+			else if (NewCount != OldCount)
+			{
+				// 개수 변경 → 업데이트
+				GridSlots[Index]->SetStackCount(NewCount);
+				SlottedItems[Index]->UpdateStackCount(NewCount);
+				UE_LOG(LogTemp, Warning, TEXT("슬롯 %d: UI 업데이트 (%d → %d)"), Index, OldCount, NewCount);
+			}
+			else
+			{
+				// 변경 없음
+				UE_LOG(LogTemp, Log, TEXT("슬롯 %d: 변경 없음 (유지: %d)"), Index, NewCount);
+			}
+		}
+	}
+	
+	// 4단계: 제거 예약된 슬롯들 실제 제거
+	for (int32 IndexToRemove : IndicesToRemove)
+	{
+		if (!GridSlots.IsValidIndex(IndexToRemove)) continue;
+		
+		UInv_InventoryItem* ItemToRemove = GridSlots[IndexToRemove]->GetInventoryItem().Get();
+		if (IsValid(ItemToRemove))
+		{
+			RemoveItemFromGrid(ItemToRemove, IndexToRemove);
+			UE_LOG(LogTemp, Warning, TEXT("슬롯 %d: UI에서 제거 완료"), IndexToRemove);
+		}
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("=== UpdateMaterialStacksByTag 완료 ==="));
+}
+
+// GridSlot을 직접 순회하며 재료 차감 (Split된 스택 처리)
+void UInv_InventoryGrid::ConsumeItemsByTag(const FGameplayTag& MaterialTag, int32 AmountToConsume)
+{
+	if (!MaterialTag.IsValid() || AmountToConsume <= 0)
+	{
+		UE_LOG(LogTemp, Error, TEXT("ConsumeItemsByTag: Invalid MaterialTag or Amount!"));
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("=== ConsumeItemsByTag 시작 ==="));
+	UE_LOG(LogTemp, Warning, TEXT("MaterialTag: %s, AmountToConsume: %d"), *MaterialTag.ToString(), AmountToConsume);
+
+	int32 RemainingToConsume = AmountToConsume;
+	TArray<int32> IndicesToRemove; // 제거할 슬롯 인덱스 목록
+
+	// ⭐ GridSlot을 인덱스 순서대로 정렬하여 순회 (일관성 있는 차감)
+	TArray<int32> SortedIndices;
+	for (const auto& [Index, SlottedItem] : SlottedItems)
+	{
+		SortedIndices.Add(Index);
+	}
+	SortedIndices.Sort(); // 인덱스 정렬
+
+	// GridSlot 순회하며 차감
+	for (int32 Index : SortedIndices)
+	{
+		if (RemainingToConsume <= 0)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("✅ 차감 완료! RemainingToConsume이 0 이하입니다. 순회 종료."));
+			break; // 다 차감했으면 종료
+		}
+
+		if (!GridSlots.IsValidIndex(Index)) continue;
+
+		UInv_InventoryItem* GridItem = GridSlots[Index]->GetInventoryItem().Get();
+		if (!IsValid(GridItem)) continue;
+
+		// 같은 타입인지 확인
+		if (!GridItem->GetItemManifest().GetItemType().MatchesTagExact(MaterialTag)) continue;
+
+		// 현재 슬롯의 개수
+		int32 CurrentCount = GridSlots[Index]->GetStackCount();
+		
+		// 이 슬롯에서 차감할 개수 (최대 CurrentCount까지만)
+		int32 ToConsume = FMath::Min(CurrentCount, RemainingToConsume);
+		
+		UE_LOG(LogTemp, Warning, TEXT("슬롯 %d: CurrentCount=%d, ToConsume=%d, RemainingBefore=%d"), Index, CurrentCount, ToConsume, RemainingToConsume);
+
+		RemainingToConsume -= ToConsume; // ⭐ 차감!
+		int32 NewCount = CurrentCount - ToConsume;
+
+		UE_LOG(LogTemp, Warning, TEXT("슬롯 %d: 차감 후 RemainingToConsume=%d, NewCount=%d"), Index, RemainingToConsume, NewCount);
+
+		if (NewCount <= 0)
+		{
+			// 이 슬롯을 전부 소비 → 제거 예약
+			IndicesToRemove.Add(Index);
+			UE_LOG(LogTemp, Warning, TEXT("슬롯 %d: 전부 소비! 제거 예약 (%d → 0)"), Index, CurrentCount);
+		}
+		else
+		{
+			// 슬롯 개수만 감소
+			GridSlots[Index]->SetStackCount(NewCount);
+			
+			if (SlottedItems.Contains(Index) && IsValid(SlottedItems[Index]))
+			{
+				SlottedItems[Index]->UpdateStackCount(NewCount);
+			}
+			
+			UE_LOG(LogTemp, Warning, TEXT("슬롯 %d: UI 업데이트 (%d → %d)"), Index, CurrentCount, NewCount);
+		}
+	}
+
+	// 제거 예약된 슬롯들 실제 제거
+	for (int32 IndexToRemove : IndicesToRemove)
+	{
+		if (!GridSlots.IsValidIndex(IndexToRemove)) continue;
+
+		UInv_InventoryItem* ItemToRemove = GridSlots[IndexToRemove]->GetInventoryItem().Get();
+		if (IsValid(ItemToRemove))
+		{
+			RemoveItemFromGrid(ItemToRemove, IndexToRemove);
+			UE_LOG(LogTemp, Warning, TEXT("슬롯 %d: UI에서 제거 완료"), IndexToRemove);
+		}
+	}
+
+	if (RemainingToConsume > 0)
+	{
+		UE_LOG(LogTemp, Error, TEXT("❌ 재료가 부족합니다! 남은 차감량: %d"), RemainingToConsume);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("✅ 재료 차감 완료! MaterialTag: %s, Amount: %d"), *MaterialTag.ToString(), AmountToConsume);
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("=== ConsumeItemsByTag 완료 ==="));
+}
+
+
 
 void UInv_InventoryGrid::AddItemToIndices(const FInv_SlotAvailabilityResult& Result, UInv_InventoryItem* NewItem) 
 {
@@ -1000,8 +1321,29 @@ void UInv_InventoryGrid::OnGridSlotClicked(int32 GridIndex, const FPointerEvent&
 
 void UInv_InventoryGrid::PutDownOnIndex(const int32 Index) // 집은 아이템을 다시 내려놓을 때 사용되는 함수.
 {
-	AddItemAtIndex(HoverItem->GetInventoryItem(), Index, HoverItem->IsStackable(), HoverItem->GetStackCount()); // 인덱스에 아이템 추가
-	UpdateGridSlots(HoverItem->GetInventoryItem(), Index, HoverItem->IsStackable(), HoverItem->GetStackCount()); // 그리드 슬롯 업데이트
+	UInv_InventoryItem* ItemToPutDown = HoverItem->GetInventoryItem();
+	const bool bIsStackable = HoverItem->IsStackable();
+	const int32 StackCount = HoverItem->GetStackCount();
+	
+	AddItemAtIndex(ItemToPutDown, Index, bIsStackable, StackCount); // 인덱스에 아이템 추가
+	UpdateGridSlots(ItemToPutDown, Index, bIsStackable, StackCount); // 그리드 슬롯 업데이트
+	
+	// ⭐⭐⭐ Split 후 PutDown 시 서버 동기화는 불필요!
+	// 이유:
+	// 1. Split은 UI 전용 작업 (서버 InventoryList는 변경 없음)
+	// 2. 서버의 TotalStackCount는 이미 정확한 총량을 유지하고 있음
+	// 3. PutDown은 단순히 HoverItem을 다른 슬롯으로 이동하는 것 (총량 변화 없음!)
+	//
+	// 예: 20개 Split → 9개(슬롯A) + 11개(HoverItem)
+	// - 서버 InventoryList: TotalStackCount=20 (정확!)
+	// - PutDown 시 슬롯B로 이동 → 서버는 여전히 20개 (변경 불필요!)
+	//
+	// ⚠️ 기존 코드 문제:
+	// NewTotalStackCount = 20 + 11 = 31 (중복 추가!)
+	
+	UE_LOG(LogTemp, Verbose, TEXT("✅ PutDown: Index=%d, StackCount=%d (서버 동기화 불필요 - Split은 UI 전용)"), 
+		Index, StackCount);
+	
 	ClearHoverItem();
 }
 
@@ -1210,40 +1552,30 @@ void UInv_InventoryGrid::OnPopUpMenuSplit(int32 SplitAmount, int32 Index) // 아
 	
 	const int32 UpperLeftIndex = GridSlots[Index]->GetUpperLeftIndex(); // 그리드 슬롯의 왼쪽 위 인덱스 가져오기
 	UInv_GridSlot* UpperLeftGridSlot = GridSlots[UpperLeftIndex]; // 왼쪽 위 그리드 슬롯 가져오기
-	const int32 StackCount = UpperLeftGridSlot -> GetStackCount(); // 스택 수 가져오기
-	const int32 NewStackCount = StackCount - SplitAmount; // 새로운 스택 수 계산 <- 분할된 양을 빼주는 것
+	const int32 OriginalStackCount = UpperLeftGridSlot->GetStackCount(); // 원본 스택 수 가져오기
+	const int32 NewStackCount = OriginalStackCount - SplitAmount; // 새로운 스택 수 계산 <- 분할된 양을 빼주는 것
 	
-	// UI 먼저 업데이트 (빠른 반응성)
+	UE_LOG(LogTemp, Warning, TEXT("🔀 Split 시작: 원본 %d개 → 원본 슬롯 %d개 + HoverItem %d개"), 
+		OriginalStackCount, NewStackCount, SplitAmount);
+	
+	// 1단계: UI 업데이트 (빠른 반응성)
 	UpperLeftGridSlot->SetStackCount(NewStackCount); // 그리드 슬롯 스택 수 업데이트
 	SlottedItems.FindChecked(UpperLeftIndex)->UpdateStackCount(NewStackCount); // 슬로티드 아이템 스택 수 업데이트
 	
 	AssignHoverItem(RightClickedItem, UpperLeftIndex, UpperLeftIndex); // 호버 아이템 할당
 	HoverItem->UpdateStackCount(SplitAmount); // 호버 아이템 스택 수 업데이트
 	
-	// 서버에 스택 변경 알림
-	if (InventoryComponent.IsValid())
-	{
-		// 서버에서 실제 아이템의 TotalStackCount 업데이트
-		// Server_ConsumeMaterials 대신 직접 SetTotalStackCount를 서버에서 호출
-		// 하지만 더 안전하게 하려면 새로운 RPC를 만들거나
-		// 기존 로직을 활용할 수 있음
-		
-		// 간단한 방법: GetOwningPlayer()가 Authority를 가지고 있으면 직접 설정
-		// 그렇지 않으면 서버 RPC 호출 필요
-		if (GetOwningPlayer()->HasAuthority())
-		{
-			// ListenServer: 직접 설정
-			RightClickedItem->SetTotalStackCount(NewStackCount);
-			UE_LOG(LogTemp, Warning, TEXT("Split (Authority): 아이템 스택 %d로 설정"), NewStackCount);
-		}
-		else
-		{
-			// Client: 서버 RPC로 알림 (Server_ConsumeMaterials 재활용)
-			const FGameplayTag& ItemType = RightClickedItem->GetItemManifest().GetItemType();
-			InventoryComponent->Server_ConsumeMaterials(ItemType, SplitAmount);
-			UE_LOG(LogTemp, Warning, TEXT("Split (Client): 서버에 %d 소비 알림"), SplitAmount);
-		}
-	}
+	// ⭐⭐⭐ 2단계: 서버의 TotalStackCount는 원본 그대로 유지!
+	// 핵심 개념:
+	// - UI: 9개(슬롯) + 11개(HoverItem) = 2개로 나눠짐
+	// - 서버 InventoryList: 여전히 1개 Entry, TotalStackCount=20 (변경 없음!)
+	// - GetTotalMaterialCount(): InventoryList 합산 → 20개 (정확!)
+	//
+	// Split은 "UI 전용 작업"이므로 서버 데이터는 변경하지 않음!
+	// PutDown 시에도 서버 TotalStackCount는 그대로 유지됨
+	
+	UE_LOG(LogTemp, Warning, TEXT("✅ Split 완료: 서버 TotalStackCount는 %d로 유지됨 (UI만 %d + %d로 나눠짐)"), 
+		OriginalStackCount, NewStackCount, SplitAmount);
 }
 
 void UInv_InventoryGrid::OnPopUpMenuDrop(int32 Index) // 아이템 버리기 함수
@@ -1291,5 +1623,43 @@ void UInv_InventoryGrid::OnInventoryMenuToggled(bool bOpen)
 bool UInv_InventoryGrid::MatchesCategory(const UInv_InventoryItem* Item) const
 {
 	return Item->GetItemManifest().GetItemCategory() == ItemCategory; // 아이템 카테고리 비교
+}
+
+// ⭐ UI GridSlots 기반 재료 개수 세기 (Split 대응!)
+int32 UInv_InventoryGrid::GetTotalMaterialCountFromSlots(const FGameplayTag& MaterialTag) const
+{
+	if (!MaterialTag.IsValid()) return 0;
+
+	int32 TotalCount = 0;
+	TSet<int32> CountedUpperLeftIndices; // 중복 카운트 방지
+
+	// 모든 GridSlot 순회
+	for (const auto& GridSlot : GridSlots)
+	{
+		if (!IsValid(GridSlot)) continue;
+		if (!GridSlot->GetInventoryItem().IsValid()) continue;
+
+		// 이미 카운트한 아이템인지 확인 (같은 아이템이 여러 슬롯에 걸쳐있을 수 있음)
+		const int32 UpperLeftIndex = GridSlot->GetUpperLeftIndex();
+		if (CountedUpperLeftIndices.Contains(UpperLeftIndex)) continue;
+
+		// 아이템 타입 확인
+		UInv_InventoryItem* Item = GridSlot->GetInventoryItem().Get();
+		if (Item->GetItemManifest().GetItemType().MatchesTagExact(MaterialTag))
+		{
+			// ⭐ UI의 StackCount 읽기 (Split된 스택 반영!)
+			const int32 StackCount = GridSlots[UpperLeftIndex]->GetStackCount();
+			TotalCount += StackCount;
+
+			// 중복 카운트 방지
+			CountedUpperLeftIndices.Add(UpperLeftIndex);
+
+			UE_LOG(LogTemp, Verbose, TEXT("GridSlot[%d]: %s x %d (누적: %d)"), 
+				UpperLeftIndex, *MaterialTag.ToString(), StackCount, TotalCount);
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("GetTotalMaterialCountFromSlots(%s) = %d"), *MaterialTag.ToString(), TotalCount);
+	return TotalCount;
 }
 

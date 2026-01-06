@@ -45,21 +45,43 @@ void FInv_InventoryFastArray::PostReplicatedChange(const TArrayView<int32> Chang
 	UInv_InventoryComponent* IC = Cast<UInv_InventoryComponent>(OwnerComponent);
 	if (!IsValid(IC)) return;
 
-	// 변경된 아이템들에 대해 스택 변경 델리게이트 브로드캐스트
+	UE_LOG(LogTemp, Warning, TEXT("=== PostReplicatedChange 호출됨 (FastArray) ==="));
+	UE_LOG(LogTemp, Warning, TEXT("📋 변경된 항목 개수: %d / 전체 Entry 수: %d"), ChangedIndices.Num(), Entries.Num());
+
+	// ⭐ 변경된 모든 Entry 처리 (멀티스택 UI 업데이트 지원!)
 	for (int32 Index : ChangedIndices)
 	{
-		if (Entries.IsValidIndex(Index) && IsValid(Entries[Index].Item))
+		if (!Entries.IsValidIndex(Index))
 		{
-			FInv_SlotAvailabilityResult Result;
-			Result.Item = Entries[Index].Item;
-			Result.bStackable = true;
-			Result.TotalRoomToFill = Entries[Index].Item->GetTotalStackCount();
-			
-			IC->OnStackChange.Broadcast(Result);
-			UE_LOG(LogTemp, Warning, TEXT("PostReplicatedChange: 아이템 스택 변경 브로드캐스트 (Index: %d, NewCount: %d)"), 
-				Index, Result.TotalRoomToFill);
+			UE_LOG(LogTemp, Error, TEXT("❌ 잘못된 Index: %d (전체: %d)"), Index, Entries.Num());
+			continue;
 		}
+
+		UInv_InventoryItem* ChangedItem = Entries[Index].Item;
+		if (!IsValid(ChangedItem))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("⚠️ Entry[%d]: Item이 nullptr (제거됨)"), Index);
+			continue;
+		}
+
+		int32 NewStackCount = ChangedItem->GetTotalStackCount();
+		
+		UE_LOG(LogTemp, Warning, TEXT("📦 FastArray 변경 감지 [%d]: Item포인터=%p, ItemType=%s, NewStackCount=%d"), 
+			Index, ChangedItem, *ChangedItem->GetItemManifest().GetItemType().ToString(), NewStackCount);
+		
+		// OnStackChange 델리게이트 브로드캐스트 → InventoryGrid::AddStacks 호출!
+		FInv_SlotAvailabilityResult Result;
+		Result.Item = ChangedItem;
+		Result.bStackable = true;
+		Result.TotalRoomToFill = NewStackCount;
+		
+		IC->OnStackChange.Broadcast(Result);
+		
+		UE_LOG(LogTemp, Warning, TEXT("✅ OnStackChange 브로드캐스트 완료! UI 업데이트 요청됨 (Entry[%d], NewCount: %d)"), 
+			Index, NewStackCount);
 	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("=== PostReplicatedChange 완료 (총 %d개 Entry 처리됨) ==="), ChangedIndices.Num());
 }
 
 // FastArray에 항목을 추가해주는 기능들.

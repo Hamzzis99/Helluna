@@ -20,6 +20,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FNoRoomInInventory);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FStackChange, const FInv_SlotAvailabilityResult&, Result);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FItemEquipStatusChanged, UInv_InventoryItem*, Item);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInventoryMenuToggled, bool, bOpen);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FMaterialStacksChanged, const FGameplayTag&, MaterialTag); // Building 시스템용
 
 UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent), Blueprintable ) // Blueprintable : 블루프린트에서 상속
 class INVENTORY_API UInv_InventoryComponent : public UActorComponent
@@ -49,6 +50,19 @@ public:
 
 	UFUNCTION(Server, Reliable) // 재료 소비 (Building 시스템용)
 	void Server_ConsumeMaterials(const FGameplayTag& MaterialTag, int32 Amount);
+
+	UFUNCTION(Server, Reliable) // 재료 소비 - 여러 스택에서 차감 (Building 시스템용)
+	void Server_ConsumeMaterialsMultiStack(const FGameplayTag& MaterialTag, int32 Amount);
+
+	UFUNCTION(Server, Reliable) // Split 시 서버의 TotalStackCount 업데이트
+	void Server_UpdateItemStackCount(UInv_InventoryItem* Item, int32 NewStackCount);
+
+	UFUNCTION(NetMulticast, Reliable) // 모든 클라이언트의 UI 업데이트 (Building 재료 차감)
+	void Multicast_ConsumeMaterialsUI(const FGameplayTag& MaterialTag, int32 Amount);
+
+	// 같은 타입의 모든 스택 개수 합산 (Building UI용)
+	UFUNCTION(BlueprintCallable, Category = "Inventory")
+	int32 GetTotalMaterialCount(const FGameplayTag& MaterialTag) const;
 	
 	UFUNCTION(Server, Reliable) // 신뢰하는 것? 서버에 전달하는 것?
 	void Server_EquipSlotClicked(UInv_InventoryItem* ItemToEquip, UInv_InventoryItem* ItemToUnequip);
@@ -77,6 +91,7 @@ public:
 	FItemEquipStatusChanged OnItemEquipped;
 	FItemEquipStatusChanged OnItemUnequipped;
 	FInventoryMenuToggled OnInventoryMenuToggled;
+	FMaterialStacksChanged OnMaterialStacksChanged; // Building 시스템용
 	
 	
 protected:

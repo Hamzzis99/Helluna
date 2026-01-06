@@ -50,6 +50,15 @@ public:
 
 	UFUNCTION()
 	void RemoveItem(UInv_InventoryItem* Item); // 아이템 제거 (UI에서 삭제)
+
+	UFUNCTION()
+	void UpdateMaterialStacksByTag(const FGameplayTag& MaterialTag); // GameplayTag로 모든 스택 업데이트 (Building용)
+
+	// GridSlot을 직접 순회하며 재료 차감 (Split된 스택 처리)
+	void ConsumeItemsByTag(const FGameplayTag& MaterialTag, int32 AmountToConsume);
+
+	// ⭐ UI GridSlots 기반 재료 개수 세기 (Split 대응!)
+	int32 GetTotalMaterialCountFromSlots(const FGameplayTag& MaterialTag) const;
 	
 private:
 

@@ -41,6 +41,9 @@ void UInv_BuildingButton::NativeConstruct()
 		Image_Icon->SetBrushFromTexture(BuildingIcon);
 	}
 
+	// 델리게이트 바인딩 (인벤토리 변경 감지)
+	BindInventoryDelegates();
+
 	// 초기 버튼 상태 업데이트
 	UpdateButtonState();
 }
@@ -112,8 +115,8 @@ void UInv_BuildingButton::NativeTick(const FGeometry& MyGeometry, float InDeltaT
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
 
-	// 매 프레임 버튼 상태 업데이트 (재료 개수 변경 감지)
-	UpdateButtonState();
+	// 매 프레임 업데이트 제거 → 델리게이트로 대체
+	// 성능 최적화: 인벤토리 변경 시에만 UpdateButtonState() 호출됨
 }
 
 bool UInv_BuildingButton::HasRequiredMaterials()
@@ -126,40 +129,24 @@ bool UInv_BuildingButton::HasRequiredMaterials()
 	UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
 	if (!IsValid(InvComp)) return false;
 
-	FInv_InventoryFastArray& InventoryList = InvComp->GetInventoryList();
-
-	// === 재료 1 체크 ===
+	// === 재료 1 체크 (모든 스택 합산!) ===
 	if (RequiredMaterialTag.IsValid() && RequiredAmount > 0)
 	{
-		UInv_InventoryItem* Item1 = InventoryList.FindFirstItemByType(RequiredMaterialTag);
-		if (!Item1) 
+		int32 TotalAmount1 = InvComp->GetTotalMaterialCount(RequiredMaterialTag);
+		if (TotalAmount1 < RequiredAmount)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("재료1 부족: %s"), *RequiredMaterialTag.ToString());
-			return false; // 재료1 없음
-		}
-
-		int32 CurrentAmount1 = Item1->GetTotalStackCount();
-		if (CurrentAmount1 < RequiredAmount)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("재료1 개수 부족: %d/%d"), CurrentAmount1, RequiredAmount);
+			UE_LOG(LogTemp, Warning, TEXT("재료1 부족: %d/%d (%s)"), TotalAmount1, RequiredAmount, *RequiredMaterialTag.ToString());
 			return false; // 재료1 개수 부족
 		}
 	}
 
-	// === 재료 2 체크 (태그가 None이 아니고, 개수가 0보다 클 때만) ===
+	// === 재료 2 체크 (모든 스택 합산!) ===
 	if (RequiredMaterialTag2.IsValid() && RequiredAmount2 > 0)
 	{
-		UInv_InventoryItem* Item2 = InventoryList.FindFirstItemByType(RequiredMaterialTag2);
-		if (!Item2) 
+		int32 TotalAmount2 = InvComp->GetTotalMaterialCount(RequiredMaterialTag2);
+		if (TotalAmount2 < RequiredAmount2)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("재료2 부족: %s"), *RequiredMaterialTag2.ToString());
-			return false; // 재료2 없음
-		}
-
-		int32 CurrentAmount2 = Item2->GetTotalStackCount();
-		if (CurrentAmount2 < RequiredAmount2)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("재료2 개수 부족: %d/%d"), CurrentAmount2, RequiredAmount2);
+			UE_LOG(LogTemp, Warning, TEXT("재료2 부족: %d/%d (%s)"), TotalAmount2, RequiredAmount2, *RequiredMaterialTag2.ToString());
 			return false; // 재료2 개수 부족
 		}
 	}
@@ -185,4 +172,93 @@ void UInv_BuildingButton::UpdateButtonState()
 		Text_BuildingName->SetColorAndOpacity(FSlateColor(TextColor));
 	}
 }
+
+void UInv_BuildingButton::NativeDestruct()
+{
+	// 델리게이트 언바인딩 (메모리 누수 방지)
+	UnbindInventoryDelegates();
+
+	Super::NativeDestruct();
+}
+
+void UInv_BuildingButton::BindInventoryDelegates()
+{
+	// PlayerController 가져오기
+	APlayerController* PC = GetOwningPlayer();
+	if (!IsValid(PC)) return;
+
+	// InventoryComponent 가져오기
+	UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
+	if (!IsValid(InvComp)) return;
+
+	// 델리게이트 바인딩 (이미 바인딩되어 있으면 건너뜀)
+	if (!InvComp->OnItemAdded.IsAlreadyBound(this, &ThisClass::OnInventoryItemAdded))
+	{
+		InvComp->OnItemAdded.AddDynamic(this, &ThisClass::OnInventoryItemAdded);
+		UE_LOG(LogTemp, Log, TEXT("BuildingButton: OnItemAdded 델리게이트 바인딩 완료"));
+	}
+
+	if (!InvComp->OnItemRemoved.IsAlreadyBound(this, &ThisClass::OnInventoryItemRemoved))
+	{
+		InvComp->OnItemRemoved.AddDynamic(this, &ThisClass::OnInventoryItemRemoved);
+		UE_LOG(LogTemp, Log, TEXT("BuildingButton: OnItemRemoved 델리게이트 바인딩 완료"));
+	}
+
+	if (!InvComp->OnStackChange.IsAlreadyBound(this, &ThisClass::OnInventoryStackChanged))
+	{
+		InvComp->OnStackChange.AddDynamic(this, &ThisClass::OnInventoryStackChanged);
+		UE_LOG(LogTemp, Log, TEXT("BuildingButton: OnStackChange 델리게이트 바인딩 완료"));
+	}
+}
+
+void UInv_BuildingButton::UnbindInventoryDelegates()
+{
+	// PlayerController 가져오기
+	APlayerController* PC = GetOwningPlayer();
+	if (!IsValid(PC)) return;
+
+	// InventoryComponent 가져오기
+	UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
+	if (!IsValid(InvComp)) return;
+
+	// 델리게이트 언바인딩
+	if (InvComp->OnItemAdded.IsAlreadyBound(this, &ThisClass::OnInventoryItemAdded))
+	{
+		InvComp->OnItemAdded.RemoveDynamic(this, &ThisClass::OnInventoryItemAdded);
+	}
+
+	if (InvComp->OnItemRemoved.IsAlreadyBound(this, &ThisClass::OnInventoryItemRemoved))
+	{
+		InvComp->OnItemRemoved.RemoveDynamic(this, &ThisClass::OnInventoryItemRemoved);
+	}
+
+	if (InvComp->OnStackChange.IsAlreadyBound(this, &ThisClass::OnInventoryStackChanged))
+	{
+		InvComp->OnStackChange.RemoveDynamic(this, &ThisClass::OnInventoryStackChanged);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("BuildingButton: 모든 델리게이트 언바인딩 완료"));
+}
+
+void UInv_BuildingButton::OnInventoryItemAdded(UInv_InventoryItem* Item)
+{
+	// 아이템이 추가되었을 때 (픽업, PutDown 포함)
+	UE_LOG(LogTemp, Log, TEXT("BuildingButton: 아이템 추가됨! 버튼 상태 재계산..."));
+	UpdateButtonState();
+}
+
+void UInv_BuildingButton::OnInventoryItemRemoved(UInv_InventoryItem* Item)
+{
+	// 아이템이 제거되었을 때 (드롭, 소비 포함)
+	UE_LOG(LogTemp, Log, TEXT("BuildingButton: 아이템 제거됨! 버튼 상태 재계산..."));
+	UpdateButtonState();
+}
+
+void UInv_BuildingButton::OnInventoryStackChanged(const FInv_SlotAvailabilityResult& Result)
+{
+	// 아이템 스택이 변경되었을 때 (Split, Combine 포함)
+	UE_LOG(LogTemp, Log, TEXT("BuildingButton: 스택 변경됨! 버튼 상태 재계산..."));
+	UpdateButtonState();
+}
+
 

@@ -5,6 +5,8 @@
 
 #include "Items/Components/Inv_ItemComponent.h"
 #include "Widgets/Inventory/InventoryBase/Inv_InventoryBase.h"
+#include "Widgets/Inventory/Spatial/Inv_SpatialInventory.h"
+#include "Widgets/Inventory/Spatial/Inv_InventoryGrid.h"
 #include "Net/UnrealNetwork.h"
 #include "Items/Inv_InventoryItem.h"
 #include "Items/Fragments/Inv_ItemFragment.h"
@@ -239,6 +241,259 @@ void UInv_InventoryComponent::Server_ConsumeMaterials_Implementation(const FGame
 		OnStackChange.Broadcast(Result);
 		UE_LOG(LogTemp, Warning, TEXT("OnStackChange 브로드캐스트 완료 (NewCount: %d)"), NewCount);
 	}
+
+	UE_LOG(LogTemp, Warning, TEXT("=== Server_ConsumeMaterials 완료 ==="));
+}
+
+// 같은 타입의 모든 스택 개수 합산 (Building UI용)
+int32 UInv_InventoryComponent::GetTotalMaterialCount(const FGameplayTag& MaterialTag) const
+{
+	if (!MaterialTag.IsValid()) return 0;
+
+	// ⭐ InventoryList에서 읽기 (Split 대응: 같은 ItemType의 모든 Entry 합산!)
+	int32 TotalCount = 0;
+	
+	UE_LOG(LogTemp, Verbose, TEXT("🔍 GetTotalMaterialCount(%s) 시작:"), *MaterialTag.ToString());
+	
+	for (const auto& Entry : InventoryList.Entries)
+	{
+		if (!IsValid(Entry.Item)) continue;
+
+		if (Entry.Item->GetItemManifest().GetItemType().MatchesTagExact(MaterialTag))
+		{
+			int32 EntryCount = Entry.Item->GetTotalStackCount();
+			TotalCount += EntryCount;
+			
+			UE_LOG(LogTemp, Verbose, TEXT("  Entry 발견: Item포인터=%p, TotalStackCount=%d, 누적합=%d"), 
+				Entry.Item.Get(), EntryCount, TotalCount);
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("✅ GetTotalMaterialCount(%s) = %d (InventoryList 전체 합산)"), 
+		*MaterialTag.ToString(), TotalCount);
+	return TotalCount;
+}
+
+// 재료 소비 - 여러 스택에서 차감 (Building 시스템용)
+void UInv_InventoryComponent::Server_ConsumeMaterialsMultiStack_Implementation(const FGameplayTag& MaterialTag, int32 Amount)
+{
+	if (!MaterialTag.IsValid() || Amount <= 0) return;
+
+	UE_LOG(LogTemp, Warning, TEXT("=== Server_ConsumeMaterialsMultiStack 호출됨 ==="));
+	UE_LOG(LogTemp, Warning, TEXT("MaterialTag: %s, Amount: %d"), *MaterialTag.ToString(), Amount);
+
+	// 🔍 디버깅: 차감 전 서버 상태 확인
+	UE_LOG(LogTemp, Warning, TEXT("🔍 [서버] 차감 전 InventoryList.Entries 상태:"));
+	int32 ServerTotalBefore = 0;
+	for (int32 i = 0; i < InventoryList.Entries.Num(); ++i)
+	{
+		const auto& Entry = InventoryList.Entries[i];
+		if (IsValid(Entry.Item) && Entry.Item->GetItemManifest().GetItemType().MatchesTagExact(MaterialTag))
+		{
+			int32 Count = Entry.Item->GetTotalStackCount();
+			ServerTotalBefore += Count;
+			UE_LOG(LogTemp, Warning, TEXT("  Entry[%d]: Item포인터=%p, TotalStackCount=%d"), 
+				i, Entry.Item.Get(), Count);
+		}
+	}
+	UE_LOG(LogTemp, Warning, TEXT("🔍 [서버] 차감 전 총량: %d"), ServerTotalBefore);
+
+	// 1단계: 데이터(TotalStackCount) 차감 및 동기화
+	int32 RemainingAmount = Amount;
+	TArray<FInv_InventoryEntry*> EntriesToRemove;
+
+	for (auto& Entry : InventoryList.Entries)
+	{
+		if (RemainingAmount <= 0) break;
+
+		if (!IsValid(Entry.Item)) continue;
+
+		// 같은 타입인지 확인
+		if (!Entry.Item->GetItemManifest().GetItemType().MatchesTagExact(MaterialTag)) continue;
+
+		int32 CurrentCount = Entry.Item->GetTotalStackCount();
+		int32 AmountToConsume = FMath::Min(CurrentCount, RemainingAmount);
+
+		UE_LOG(LogTemp, Warning, TEXT("🔧 [서버] 차감 시도: Item포인터=%p, CurrentCount=%d, AmountToConsume=%d, RemainingBefore=%d"), 
+			Entry.Item.Get(), CurrentCount, AmountToConsume, RemainingAmount);
+
+		RemainingAmount -= AmountToConsume;
+		int32 NewCount = CurrentCount - AmountToConsume;
+
+		UE_LOG(LogTemp, Warning, TEXT("🔧 [서버] 차감 계산: %d - %d = %d, RemainingAfter=%d"), 
+			CurrentCount, AmountToConsume, NewCount, RemainingAmount);
+
+		if (NewCount <= 0)
+		{
+			// 제거 예약
+			EntriesToRemove.Add(&Entry);
+			UE_LOG(LogTemp, Warning, TEXT("❌ [서버] Entry 제거 예약: Item포인터=%p"), Entry.Item.Get());
+		}
+		else
+		{
+			// TotalStackCount 업데이트
+			Entry.Item->SetTotalStackCount(NewCount);
+
+			// StackableFragment도 업데이트
+			FInv_ItemManifest& ItemManifest = Entry.Item->GetItemManifestMutable();
+			if (FInv_StackableFragment* StackableFragment = ItemManifest.GetFragmentOfTypeMutable<FInv_StackableFragment>())
+			{
+				StackableFragment->SetStackCount(NewCount);
+			}
+
+			// FastArray에 변경 알림
+			InventoryList.MarkItemDirty(Entry);
+
+			UE_LOG(LogTemp, Warning, TEXT("✅ [서버] Entry 업데이트 완료: %d → %d (Item포인터=%p)"), 
+				CurrentCount, NewCount, Entry.Item.Get());
+		}
+	}
+
+	// 🔍 디버깅: 차감 후 서버 상태 확인 (제거 전)
+	UE_LOG(LogTemp, Warning, TEXT("🔍 [서버] 차감 후 InventoryList.Entries 상태 (제거 전):"));
+	int32 ServerTotalAfter = 0;
+	for (int32 i = 0; i < InventoryList.Entries.Num(); ++i)
+	{
+		const auto& Entry = InventoryList.Entries[i];
+		if (IsValid(Entry.Item) && Entry.Item->GetItemManifest().GetItemType().MatchesTagExact(MaterialTag))
+		{
+			int32 Count = Entry.Item->GetTotalStackCount();
+			ServerTotalAfter += Count;
+			UE_LOG(LogTemp, Warning, TEXT("  Entry[%d]: Item포인터=%p, TotalStackCount=%d"), 
+				i, Entry.Item.Get(), Count);
+		}
+	}
+	UE_LOG(LogTemp, Warning, TEXT("🔍 [서버] 차감 후 총량 (제거 전): %d (예상: %d)"), ServerTotalAfter, ServerTotalBefore - Amount);
+
+	// 제거 예약된 아이템들 실제 제거
+	for (FInv_InventoryEntry* EntryPtr : EntriesToRemove)
+	{
+		UInv_InventoryItem* ItemToRemove = EntryPtr->Item;
+		InventoryList.RemoveEntry(ItemToRemove);
+		
+		UE_LOG(LogTemp, Warning, TEXT("InventoryList에서 제거됨: %s"), *MaterialTag.ToString());
+	}
+
+	// ⭐ FastArray 리플리케이션이 자동으로 PostReplicatedChange를 호출하여 UI를 업데이트합니다!
+	// Multicast_ConsumeMaterialsUI 호출 제거 - 이중 차감 방지!
+
+	if (RemainingAmount > 0)
+	{
+		UE_LOG(LogTemp, Error, TEXT("재료가 부족합니다! 남은 차감량: %d"), RemainingAmount);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("✅ 재료 차감 완료! MaterialTag: %s, Amount: %d"), *MaterialTag.ToString(), Amount);
+		UE_LOG(LogTemp, Warning, TEXT("FastArray 리플리케이션이 자동으로 클라이언트 UI를 업데이트합니다."));
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("=== Server_ConsumeMaterialsMultiStack 완료 ==="));
+}
+
+// Split 시 서버의 TotalStackCount 업데이트
+void UInv_InventoryComponent::Server_UpdateItemStackCount_Implementation(UInv_InventoryItem* Item, int32 NewStackCount)
+{
+	if (!IsValid(Item))
+	{
+		UE_LOG(LogTemp, Error, TEXT("Server_UpdateItemStackCount: Item is invalid!"));
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("🔧 [서버] Server_UpdateItemStackCount 호출됨"));
+	UE_LOG(LogTemp, Warning, TEXT("  Item포인터: %p, ItemType: %s"), Item, *Item->GetItemManifest().GetItemType().ToString());
+	UE_LOG(LogTemp, Warning, TEXT("  이전 TotalStackCount: %d → 새로운 값: %d"), Item->GetTotalStackCount(), NewStackCount);
+
+	// 1단계: TotalStackCount 업데이트
+	Item->SetTotalStackCount(NewStackCount);
+
+	// 2단계: StackableFragment도 업데이트
+	FInv_ItemManifest& ItemManifest = Item->GetItemManifestMutable();
+	if (FInv_StackableFragment* StackableFragment = ItemManifest.GetFragmentOfTypeMutable<FInv_StackableFragment>())
+	{
+		StackableFragment->SetStackCount(NewStackCount);
+		UE_LOG(LogTemp, Warning, TEXT("  StackableFragment도 %d로 업데이트됨"), NewStackCount);
+	}
+
+	// ⭐⭐⭐ 3단계: FastArray에 변경 알림 (리플리케이션 트리거!)
+	for (auto& Entry : InventoryList.Entries)
+	{
+		if (Entry.Item == Item)
+		{
+			InventoryList.MarkItemDirty(Entry);
+			UE_LOG(LogTemp, Warning, TEXT("✅ FastArray에 Item 변경 알림 완료! 클라이언트로 리플리케이션됩니다."));
+			break;
+		}
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("✅ [서버] %s의 TotalStackCount를 %d로 업데이트 완료 (FastArray 갱신됨)"), 
+		*Item->GetItemManifest().GetItemType().ToString(), NewStackCount);
+}
+
+// Multicast: 모든 클라이언트의 UI 업데이트
+void UInv_InventoryComponent::Multicast_ConsumeMaterialsUI_Implementation(const FGameplayTag& MaterialTag, int32 Amount)
+{
+	UE_LOG(LogTemp, Warning, TEXT("=== Multicast_ConsumeMaterialsUI 호출됨 ==="));
+	UE_LOG(LogTemp, Warning, TEXT("MaterialTag: %s, Amount: %d"), *MaterialTag.ToString(), Amount);
+
+	if (!IsValid(InventoryMenu))
+	{
+		UE_LOG(LogTemp, Error, TEXT("InventoryMenu is invalid!"));
+		return;
+	}
+
+	// SpatialInventory의 해당 카테고리 Grid 찾아서 ConsumeItemsByTag 호출
+	UInv_SpatialInventory* SpatialInv = Cast<UInv_SpatialInventory>(InventoryMenu);
+	if (!IsValid(SpatialInv))
+	{
+		UE_LOG(LogTemp, Error, TEXT("SpatialInventory cast failed!"));
+		return;
+	}
+
+	// 모든 그리드를 순회하되, 실제로 해당 아이템이 있는 Grid에서만 차감
+	TArray<UInv_InventoryGrid*> AllGrids = {
+		SpatialInv->GetGrid_Equippables(),
+		SpatialInv->GetGrid_Consumables(),
+		SpatialInv->GetGrid_Craftables()
+	};
+
+	int32 RemainingToConsume = Amount;
+	
+	for (UInv_InventoryGrid* Grid : AllGrids)
+	{
+		if (!IsValid(Grid)) continue;
+		if (RemainingToConsume <= 0) break; // 이미 다 차감했으면 종료
+
+		// 이 Grid의 카테고리 확인
+		EInv_ItemCategory GridCategory = Grid->GetItemCategory();
+		
+		// MaterialTag가 이 Grid의 카테고리에 속하는지 확인
+		// 예: GameItems.Craftables.FireFernFruit → Craftables 카테고리
+		bool bMatchesCategory = false;
+		
+		if (MaterialTag.MatchesTag(FGameplayTag::RequestGameplayTag(FName("GameItems.Craftables"))))
+		{
+			bMatchesCategory = (GridCategory == EInv_ItemCategory::Craftable);
+		}
+		else if (MaterialTag.MatchesTag(FGameplayTag::RequestGameplayTag(FName("GameItems.Consumables"))))
+		{
+			bMatchesCategory = (GridCategory == EInv_ItemCategory::Consumable);
+		}
+		else if (MaterialTag.MatchesTag(FGameplayTag::RequestGameplayTag(FName("GameItems.Equippables"))))
+		{
+			bMatchesCategory = (GridCategory == EInv_ItemCategory::Equippable);
+		}
+
+		// 카테고리가 맞으면 이 Grid에서만 차감
+		if (bMatchesCategory)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Grid 카테고리 매칭! GridCategory: %d"), (int32)GridCategory);
+			Grid->ConsumeItemsByTag(MaterialTag, RemainingToConsume);
+			break; // 한 Grid에서만 차감!
+		}
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("✅ UI(GridSlot) 차감 완료!"));
+	UE_LOG(LogTemp, Warning, TEXT("=== Multicast_ConsumeMaterialsUI 완료 ==="));
 }
 
 // 아이템 장착 상호작용을 누른 뒤 서버에서 어떻게 처리를 할지.
