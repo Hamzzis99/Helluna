@@ -119,7 +119,7 @@ void UInv_InventoryComponent::Server_DropItem_Implementation(UInv_InventoryItem*
 	
 }
 
-//무언가를 떨어뜨렸기 때문에 아이템도 생성 및 이벤트 효과들 보이게 하는 부분의 코드들
+// 무언가를 떨어뜨렸기 때문에 아이템도 생성 및 이벤트 효과들 보이게 하는 부분의 코드들
 void UInv_InventoryComponent::SpawnDroppedItem(UInv_InventoryItem* Item, int32 StackCount)
 {
 	// TODO : 아이템을 버릴 시 월드에 소환하게 하는 부분 만들기
