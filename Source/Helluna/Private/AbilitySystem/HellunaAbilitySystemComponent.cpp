@@ -20,10 +20,8 @@ bool UHellunaAbilitySystemComponent::TryActivateAbilityByTag(FGameplayTag Abilit
 		{
 			if (!SpecToActivate) continue;
 
-			// 이미 켜져있으면 스킵 (취향)
 			if (SpecToActivate->IsActive()) continue;
 
-			// 이게 성공하는 놈(=상태태그 조건 만족하는 놈) 나오면 바로 끝
 			if (TryActivateAbility(SpecToActivate->Handle))
 			{
 				return true;

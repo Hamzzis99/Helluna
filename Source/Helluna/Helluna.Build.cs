@@ -9,8 +9,9 @@ public class Helluna : ModuleRules
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
         PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput" ,
-            "GameplayAbilities", "GameplayTags","GameplayTasks", "AIModule", "NavigationSystem","AnimGraphRuntime", "MotionWarping", "DeveloperSettings", "Inventory",
-            "MassEntity","MassSpawner","MassRepresentation","MassActors","MassMovement","MassLOD", "MassCrowd"});
+            "GameplayAbilities", "GameplayTags","GameplayTasks", "AIModule", "NavigationSystem","AnimGraphRuntime", "MotionWarping",
+            "DeveloperSettings", "Inventory", "UMG","Slate","SlateCore", "MassEntity","MassSpawner","MassRepresentation","MassActors",
+            "MassMovement","MassLOD", "MassCrowd"});
         PrivateDependencyModuleNames.AddRange(new string[] { });
 
         // Uncomment if you are using Slate UI

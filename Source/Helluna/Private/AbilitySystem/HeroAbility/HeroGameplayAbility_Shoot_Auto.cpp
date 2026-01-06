@@ -35,10 +35,8 @@ void UHeroGameplayAbility_Shoot_Auto::StartAutoShoot()
 	if (GetWorld()->GetTimerManager().IsTimerActive(ShootTimerHandle))
 		return;
 
-	// 즉시 1발
 	Shoot();
 
-	// 연사 타이머
 	GetWorld()->GetTimerManager().SetTimer(
 		ShootTimerHandle,
 		this,

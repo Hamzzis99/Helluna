@@ -47,7 +47,6 @@ void AHellunaHeroCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// 여기에 필요한 로직 작성
 }
 
 void AHellunaHeroCharacter::Input_Move(const FInputActionValue& InputActionValue)
@@ -77,10 +76,10 @@ void AHellunaHeroCharacter::Input_Look(const FInputActionValue& InputActionValue
 
 	float SensitivityScale = 1.f;
 
-	const float DefaultFov = 120.f;   // 네 기본 FOV 값
-	const float AimFov = GetFollowCamera()->FieldOfView;   // 네 Aim FOV 값
+	const float DefaultFov = 120.f;  
+	const float AimFov = GetFollowCamera()->FieldOfView;  
 
-	SensitivityScale = AimFov / DefaultFov; // 예: 0.66
+	SensitivityScale = AimFov / DefaultFov; 
 
 	if (LookAxisVector.X != 0.f)
 	{

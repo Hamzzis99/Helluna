@@ -23,11 +23,15 @@ protected:
 
 	virtual void CollisionBoxEndOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex) override;
 
+    virtual void BeginPlay() override;
+
+    AResourceUsingObject_SpaceShip();
+
 public:
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Repair")
     int32 NeedResource = 5;
 
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Repair")
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, ReplicatedUsing = OnRep_CurrentResource, Category = "Repair")
     int32 CurrentResource = 0;
 
     UPROPERTY(BlueprintAssignable, Category = "Repair")
@@ -36,13 +40,21 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Repair")
     bool AddRepairResource(int32 Amount);
         
+    UFUNCTION(BlueprintPure, Category = "Repair")  //UI위해 수리도를 퍼센트로 변환
+    float GetRepairPercent() const;
+
+
+    UFUNCTION(BlueprintPure, Category = "Repair")  
+    bool IsRepaired() const;
+
+    UFUNCTION()
+    void OnRep_CurrentResource();
+
+public:
     UFUNCTION(BlueprintPure, Category = "Repair")
-    float GetRepairPercent() const
-    {
-        return NeedResource > 0 ? (float)CurrentResource / (float)NeedResource : 1.f;
-    }
+    int32 GetCurrentResource() const { return CurrentResource; }
 
     UFUNCTION(BlueprintPure, Category = "Repair")
-    bool IsRepaired() const { return CurrentResource >= NeedResource; }
+    int32 GetNeedResource() const { return NeedResource; }
 	
 };
