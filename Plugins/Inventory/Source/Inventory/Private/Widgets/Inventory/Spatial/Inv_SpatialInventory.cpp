@@ -435,3 +435,26 @@ void UInv_SpatialInventory::SetActiveGrid(UInv_InventoryGrid* Grid, UButton* But
 	DisableButton(Button);
 	Switcher->SetActiveWidget(Grid);
 }
+
+// ⭐ UI 기반 재료 개수 세기 (Split된 스택도 정확히 계산!)
+int32 UInv_SpatialInventory::GetTotalMaterialCountFromUI(const FGameplayTag& MaterialTag) const
+{
+	if (!MaterialTag.IsValid()) return 0;
+
+	int32 TotalCount = 0;
+
+	// 모든 그리드 순회 (Craftables가 재료 그리드)
+	TArray<UInv_InventoryGrid*> GridsToCheck = { Grid_Craftables, Grid_Consumables };
+
+	for (UInv_InventoryGrid* Grid : GridsToCheck)
+	{
+		if (!IsValid(Grid)) continue;
+
+		// Grid의 GridSlots를 직접 읽어서 개수 합산
+		TotalCount += Grid->GetTotalMaterialCountFromSlots(MaterialTag);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("GetTotalMaterialCountFromUI(%s) = %d (모든 그리드 합산)"), *MaterialTag.ToString(), TotalCount);
+	return TotalCount;
+}
+

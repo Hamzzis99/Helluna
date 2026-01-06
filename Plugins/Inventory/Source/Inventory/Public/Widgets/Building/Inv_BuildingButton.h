@@ -27,6 +27,7 @@ public:
 protected:
 	virtual void NativeOnInitialized() override;
 	virtual void NativeConstruct() override;
+	virtual void NativeDestruct() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 private:
@@ -37,6 +38,20 @@ private:
 	// 재료 체크 함수
 	bool HasRequiredMaterials(); // const 제거
 	void UpdateButtonState();
+
+	// 델리게이트 바인딩/언바인딩
+	void BindInventoryDelegates();
+	void UnbindInventoryDelegates();
+
+	// 인벤토리 변경 시 호출될 콜백 함수들
+	UFUNCTION()
+	void OnInventoryItemAdded(UInv_InventoryItem* Item);
+
+	UFUNCTION()
+	void OnInventoryItemRemoved(UInv_InventoryItem* Item);
+
+	UFUNCTION()
+	void OnInventoryStackChanged(const FInv_SlotAvailabilityResult& Result);
 
 	// === 블루프린트에서 바인딩할 위젯들 (meta = (BindWidget)) ===
 	

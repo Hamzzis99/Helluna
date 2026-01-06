@@ -38,6 +38,14 @@ public:
 	virtual bool HasHoverItem() const override;
 	virtual UInv_HoverItem* GetHoverItem() const override;
 	virtual float GetTileSize() const override;
+
+	// Grid Getter 함수들 (Building 재료 차감용)
+	UInv_InventoryGrid* GetGrid_Equippables() const { return Grid_Equippables; }
+	UInv_InventoryGrid* GetGrid_Consumables() const { return Grid_Consumables; }
+	UInv_InventoryGrid* GetGrid_Craftables() const { return Grid_Craftables; }
+
+	// ⭐ UI 기반 재료 개수 세기 (Split된 스택도 정확히 계산!)
+	int32 GetTotalMaterialCountFromUI(const FGameplayTag& MaterialTag) const;
 	
 private: 
 	// 여기 있는 UPROPERTY와 위젯과의 이름이 동일해야만함.

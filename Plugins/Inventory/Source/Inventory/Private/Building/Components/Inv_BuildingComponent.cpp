@@ -448,25 +448,36 @@ void UInv_BuildingComponent::Server_PlaceBuilding_Implementation(
 
 	UE_LOG(LogTemp, Warning, TEXT("=== SERVER PLACING BUILDING ==="));
 
-	// 서버에서 재료 다시 체크 (보안 - 클라이언트 조작 방지)
-	// 재료 1 체크
+	// ⭐⭐⭐ 서버에서 재료 검증 (반드시 통과해야 건설!)
+	// GetTotalMaterialCount는 멀티스택을 모두 합산하므로 정확함
+	
+	// 재료 1 검증 (필수)
 	if (MaterialTag1.IsValid() && MaterialAmount1 > 0)
 	{
 		if (!HasRequiredMaterials(MaterialTag1, MaterialAmount1))
 		{
-			UE_LOG(LogTemp, Error, TEXT("Server: 재료1 부족! 배치 차단."));
-			return; // 재료 없으면 배치 차단!
+			UE_LOG(LogTemp, Error, TEXT("❌ Server: 재료1 부족! 건설 차단. (Tag: %s, 필요: %d)"), 
+				*MaterialTag1.ToString(), MaterialAmount1);
+			
+			// 클라이언트에게 실패 알림 (옵션)
+			// Client_OnBuildingFailed(TEXT("재료가 부족합니다!"));
+			return; // 건설 중단!
 		}
+		UE_LOG(LogTemp, Warning, TEXT("✅ Server: 재료1 검증 통과 (Tag: %s, 필요: %d)"), 
+			*MaterialTag1.ToString(), MaterialAmount1);
 	}
 
-	// 재료 2 체크
+	// 재료 2 검증 (필수)
 	if (MaterialTag2.IsValid() && MaterialAmount2 > 0)
 	{
 		if (!HasRequiredMaterials(MaterialTag2, MaterialAmount2))
 		{
-			UE_LOG(LogTemp, Error, TEXT("Server: 재료2 부족! 배치 차단."));
-			return; // 재료 없으면 배치 차단!
+			UE_LOG(LogTemp, Error, TEXT("❌ Server: 재료2 부족! 건설 차단. (Tag: %s, 필요: %d)"), 
+				*MaterialTag2.ToString(), MaterialAmount2);
+			return; // 건설 중단!
 		}
+		UE_LOG(LogTemp, Warning, TEXT("✅ Server: 재료2 검증 통과 (Tag: %s, 필요: %d)"), 
+			*MaterialTag2.ToString(), MaterialAmount2);
 	}
 	
 	// 서버에서 실제 건물 액터 스폰
@@ -544,14 +555,9 @@ bool UInv_BuildingComponent::HasRequiredMaterials(const FGameplayTag& MaterialTa
 	UInv_InventoryComponent* InvComp = OwningPC->FindComponentByClass<UInv_InventoryComponent>();
 	if (!IsValid(InvComp)) return false;
 
-	// 재료 찾기
-	FInv_InventoryFastArray& InventoryList = InvComp->GetInventoryList();
-	UInv_InventoryItem* Item = InventoryList.FindFirstItemByType(MaterialTag);
-	if (!Item) return false; // 재료 없음
-
-	// GetTotalStackCount() 사용 (Server_DropItem과 동일!)
-	int32 CurrentAmount = Item->GetTotalStackCount();
-	return CurrentAmount >= RequiredAmount;
+	// 모든 스택 합산하여 체크 (멀티스택 지원!)
+	int32 TotalAmount = InvComp->GetTotalMaterialCount(MaterialTag);
+	return TotalAmount >= RequiredAmount;
 }
 
 void UInv_BuildingComponent::ConsumeMaterials(const FGameplayTag& MaterialTag, int32 Amount)
@@ -579,10 +585,10 @@ void UInv_BuildingComponent::ConsumeMaterials(const FGameplayTag& MaterialTag, i
 		return;
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("InventoryComponent 찾음! Server_ConsumeMaterials RPC 호출..."));
+	UE_LOG(LogTemp, Warning, TEXT("InventoryComponent 찾음! Server_ConsumeMaterialsMultiStack RPC 호출..."));
 
-	// InventoryComponent의 Server RPC로 위임 (FastArray 리플리케이션 지원!)
-	InvComp->Server_ConsumeMaterials(MaterialTag, Amount);
+	// 멀티스택 차감 RPC 호출 (여러 스택에서 차감 지원!)
+	InvComp->Server_ConsumeMaterialsMultiStack(MaterialTag, Amount);
 
 	UE_LOG(LogTemp, Warning, TEXT("=== ConsumeMaterials 완료 ==="));
 }
