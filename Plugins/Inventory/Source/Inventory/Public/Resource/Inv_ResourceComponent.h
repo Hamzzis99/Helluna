@@ -103,9 +103,10 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Resource|Sound", meta = (DisplayName = "파괴 사운드 (파괴음)"))
 	USoundBase* DestroySound = nullptr;
 
-	// 사운드가 들리는 거리 (블루프린트에서 조절 가능)
-	UPROPERTY(EditAnywhere, Category = "Resource|Sound", meta = (DisplayName = "사운드 거리", ClampMin = "100.0", ClampMax = "10000.0"))
-	float SoundAttenuationDistance = 2000.f;
+	// 3D 사운드 거리 감쇠 설정 (블루프린트에서 선택 가능)
+	// Content Browser에서 우클릭 → Sounds → Sound Attenuation으로 생성
+	UPROPERTY(EditAnywhere, Category = "Resource|Sound", meta = (DisplayName = "사운드 감쇠 설정 (거리 조절)"))
+	class USoundAttenuation* SoundAttenuation = nullptr;
 
 	// 사운드 볼륨 배율
 	UPROPERTY(EditAnywhere, Category = "Resource|Sound", meta = (DisplayName = "사운드 볼륨", ClampMin = "0.0", ClampMax = "2.0"))
@@ -119,5 +120,9 @@ private:
 	
 	// 사운드 재생 (자원 위치에서 3D 사운드)
 	void PlaySoundAtResource(USoundBase* Sound);
+	
+	// Multicast RPC: 모든 클라이언트에 사운드 전파
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_PlaySoundAtLocation(USoundBase* Sound, FVector Location);
 };
 

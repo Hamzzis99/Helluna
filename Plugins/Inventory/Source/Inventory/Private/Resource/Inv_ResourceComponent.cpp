@@ -383,37 +383,50 @@ void UInv_ResourceComponent::PlaySoundAtResource(USoundBase* Sound)
 		return;
 	}
 
-	const bool bIsServer = Owner->HasAuthority();
-	const FString RoleStr = bIsServer ? TEXT("🔴 서버") : TEXT("🔵 클라이언트");
-
 	// 사운드가 설정되지 않았으면 재생 안 함
 	if (!Sound)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[자원 사운드 %s] ⚠️ 사운드가 설정되지 않음 (nullptr)"), *RoleStr);
+		UE_LOG(LogTemp, Warning, TEXT("[자원 사운드] ⚠️ 사운드가 설정되지 않음 (nullptr)"));
 		return;
 	}
 
-	// 자원 위치에서 3D 사운드 재생
 	const FVector SoundLocation = Owner->GetActorLocation();
-	
+
+	// 서버에서만 Multicast RPC 호출 (서버 + 모든 클라이언트에 전파)
+	if (Owner->HasAuthority())
+	{
+		Multicast_PlaySoundAtLocation(Sound, SoundLocation);
+	}
+}
+
+void UInv_ResourceComponent::Multicast_PlaySoundAtLocation_Implementation(USoundBase* Sound, FVector Location)
+{
+	// 사운드가 유효한지 다시 확인 (네트워크 전송 후)
+	if (!Sound || !GetWorld())
+	{
+		UE_LOG(LogTemp, Error, TEXT("[자원 사운드 Multicast] ❌ Sound 또는 World가 유효하지 않음!"));
+		return;
+	}
+
+	const bool bIsServer = GetOwner() && GetOwner()->HasAuthority();
+	const FString RoleStr = bIsServer ? TEXT("🔴 서버") : TEXT("🔵 클라이언트");
+
 	UE_LOG(LogTemp, Warning, TEXT("========================================"));
-	UE_LOG(LogTemp, Warning, TEXT("[자원 사운드 %s] 🔊 사운드 재생 시도!"), *RoleStr);
+	UE_LOG(LogTemp, Warning, TEXT("[자원 사운드 %s] 🔊 3D 사운드 재생!"), *RoleStr);
 	UE_LOG(LogTemp, Warning, TEXT("  - 사운드: %s"), *Sound->GetName());
-	UE_LOG(LogTemp, Warning, TEXT("  - 위치: %s"), *SoundLocation.ToString());
+	UE_LOG(LogTemp, Warning, TEXT("  - 위치: %s"), *Location.ToString());
 	UE_LOG(LogTemp, Warning, TEXT("  - 볼륨: %.2f"), SoundVolumeMultiplier);
-	UE_LOG(LogTemp, Warning, TEXT("  - 거리: %.1f"), SoundAttenuationDistance);
-	UE_LOG(LogTemp, Warning, TEXT("  - World 유효: %s"), GetWorld() ? TEXT("✅ YES") : TEXT("❌ NO"));
-	
-	// 서버/클라이언트 모두에서 사운드 재생 (로컬 사운드)
-	// 멀티플레이 환경에서는 각자의 클라이언트에서 들어야 함!
+	UE_LOG(LogTemp, Warning, TEXT("  - Attenuation: %s"), SoundAttenuation ? *SoundAttenuation->GetName() : TEXT("기본값 (먼 곳에서도 들릴 수 있음)"));
+
+	// 서버/클라이언트 모두에서 3D 사운드 재생
 	UGameplayStatics::PlaySoundAtLocation(
 		GetWorld(),                    // World Context
 		Sound,                         // 재생할 사운드
-		SoundLocation,                 // 재생 위치
+		Location,                      // 재생 위치 (자원 액터 위치)
 		SoundVolumeMultiplier,         // 볼륨 배율
 		1.0f,                          // 피치 배율 (음높이)
 		0.0f,                          // 시작 시간
-		nullptr,                       // Sound Attenuation (nullptr = 기본 거리 감쇠)
+		SoundAttenuation,              // ✅ 블루프린트에서 설정한 거리 감쇠 (nullptr = 기본값)
 		nullptr                        // Sound Concurrency (nullptr = 제한 없음)
 	);
 
