@@ -57,6 +57,9 @@ public:
 	UFUNCTION(Server, Reliable) // Split 시 서버의 TotalStackCount 업데이트
 	void Server_UpdateItemStackCount(UInv_InventoryItem* Item, int32 NewStackCount);
 
+	UFUNCTION(Server, Reliable) // 크래프팅: 서버에서 아이템 생성 및 인벤토리 추가
+	void Server_CraftItem(TSubclassOf<AActor> ItemActorClass);
+
 	UFUNCTION(NetMulticast, Reliable) // 모든 클라이언트의 UI 업데이트 (Building 재료 차감)
 	void Multicast_ConsumeMaterialsUI(const FGameplayTag& MaterialTag, int32 Amount);
 
@@ -116,6 +119,7 @@ private:
 	bool bInventoryMenuOpen; //인벤토리 메뉴 열림 여부
 	void OpenInventoryMenu();
 	void CloseInventoryMenu();
+	void CloseOtherMenus(); // BuildMenu와 CraftingMenu 닫기
 	
 	//아이템 드롭 시 빙글빙글 돌아요
 	UPROPERTY(EditAnywhere, Category = "Inventory")

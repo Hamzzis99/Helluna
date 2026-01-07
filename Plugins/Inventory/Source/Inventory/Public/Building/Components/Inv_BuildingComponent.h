@@ -40,6 +40,9 @@ public:
 		int32 MaterialAmount2
 	);
 
+	// 빌드 메뉴 닫기 (외부에서 호출 가능 - 인벤토리 닫을 때 사용)
+	void CloseBuildMenu();
+
 private:
 	// 빌드 모드 시작/종료 함수
 	void StartBuildMode();
@@ -49,7 +52,9 @@ private:
 	// 빌드 메뉴 토글 함수
 	void ToggleBuildMenu();
 	void OpenBuildMenu();
-	void CloseBuildMenu();
+	
+	// Crafting Menu 닫기 (B키 눌렀을 때)
+	void CloseCraftingMenuIfOpen();
 	
 	// 설치 액션 함수
 	void TryPlaceBuilding();

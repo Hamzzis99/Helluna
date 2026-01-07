@@ -33,11 +33,32 @@ void FInv_InventoryFastArray::PostReplicatedAdd(const TArrayView<int32> AddedInd
 	UInv_InventoryComponent* IC = Cast<UInv_InventoryComponent>(OwnerComponent);
 	if (!IsValid(IC)) return;
 
+	UE_LOG(LogTemp, Warning, TEXT("=== PostReplicatedAdd 호출됨! (FastArray) ==="));
+	UE_LOG(LogTemp, Warning, TEXT("추가된 항목 개수: %d / 전체 Entry 수: %d"), AddedIndices.Num(), Entries.Num());
+
 	// 인벤토리 컴포넌트에 있는 아이템을 서버에서 클라이언트로 받는 거?
-	for (int32 Index : AddedIndices) // 
+	for (int32 Index : AddedIndices) 
 	{
-		IC->OnItemAdded.Broadcast(Entries[Index].Item); // 브로드캐스트가 뭐였지? 까먹었어 ToonTanks 다시 봐야해?
+		UE_LOG(LogTemp, Warning, TEXT("[PostReplicatedAdd] 처리 중: Index=%d"), Index);
+		
+		if (!Entries.IsValidIndex(Index))
+		{
+			UE_LOG(LogTemp, Error, TEXT("[PostReplicatedAdd] ❌ Index %d는 유효하지 않음! Entries.Num()=%d"), Index, Entries.Num());
+			continue;
+		}
+		
+		if (!IsValid(Entries[Index].Item))
+		{
+			UE_LOG(LogTemp, Error, TEXT("[PostReplicatedAdd] ❌ Index %d의 Item이 nullptr입니다!"), Index);
+			continue;
+		}
+		
+		UE_LOG(LogTemp, Warning, TEXT("[PostReplicatedAdd] Index: %d, ItemType: %s"), 
+			Index, *Entries[Index].Item->GetItemManifest().GetItemType().ToString());
+		IC->OnItemAdded.Broadcast(Entries[Index].Item);
 	}
+
+	UE_LOG(LogTemp, Warning, TEXT("=== PostReplicatedAdd 완료! ==="));
 }
 
 void FInv_InventoryFastArray::PostReplicatedChange(const TArrayView<int32> ChangedIndices, int32 FinalSize)
@@ -105,15 +126,19 @@ UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_ItemComponent* ItemCo
 
 UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_InventoryItem* Item)
 {
-	//빠른 배열 직렬화 방침이 있다고? 강사님 입장에선? 서버에 이 복제된 배열을 덮어씌운다.
 	check(OwnerComponent);
 	AActor* OwningActor = OwnerComponent->GetOwner();
-	check(OwningActor->HasAuthority()); // 권한이 있는지 확인 
+	check(OwningActor->HasAuthority());
+	
+	UInv_InventoryComponent* IC = Cast<UInv_InventoryComponent>(OwnerComponent);
+	if (!IsValid(IC)) return nullptr;
 
 	FInv_InventoryEntry& NewEntry = Entries.AddDefaulted_GetRef();
 	NewEntry.Item = Item;
 
-	MarkItemDirty(NewEntry); // 복제되어야 함을 알려주는 것.
+	IC->AddRepSubObj(NewEntry.Item); // 리플리케이션 등록 (크래프팅 아이템도 클라이언트로 전송!)
+	MarkItemDirty(NewEntry);
+	
 	return Item;
 }
 

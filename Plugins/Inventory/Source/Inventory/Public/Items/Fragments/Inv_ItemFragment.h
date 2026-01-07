@@ -237,6 +237,24 @@ struct FInv_StrengthModifier : public FInv_EquipModifier // 힘 스탯 관련 <-
 	virtual void OnUnequip(APlayerController* PC) override;
 };
 
+// 무기 장비 부분들
+USTRUCT(BlueprintType)
+struct FInv_ArmorModifier : public FInv_EquipModifier
+{
+	GENERATED_BODY()
+
+	virtual void OnEquip(APlayerController* PC) override;
+	virtual void OnUnequip(APlayerController* PC) override;
+};
+
+USTRUCT(BlueprintType)
+struct FInv_DamageModifier : public FInv_EquipModifier
+{
+	GENERATED_BODY()
+
+	virtual void OnEquip(APlayerController* PC) override;
+	virtual void OnUnequip(APlayerController* PC) override;
+};
 
 USTRUCT(BlueprintType)
 struct FInv_EquipmentFragment : public FInv_InventoryItemFragment

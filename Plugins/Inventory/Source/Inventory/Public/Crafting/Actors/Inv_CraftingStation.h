@@ -45,13 +45,27 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crafting")
 	float InteractionDistance = 300.0f;
 
+	// 거리 체크 간격 (초 단위)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crafting", meta = (ClampMin = "0.1", ClampMax = "5.0"))
+	float DistanceCheckInterval = 0.5f;
+
 	// 스테이션 메시 (외형)
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> StationMesh;
 
 private:
-	// 현재 열려있는 크래프팅 메뉴 참조
+	// 플레이어별 크래프팅 메뉴 맵 (멀티플레이 지원)
 	UPROPERTY()
-	TObjectPtr<UUserWidget> CurrentCraftingMenu;
+	TMap<TObjectPtr<APlayerController>, TObjectPtr<UUserWidget>> PlayerMenuMap;
+
+	// 플레이어별 거리 체크 타이머 맵
+	TMap<TObjectPtr<APlayerController>, FTimerHandle> PlayerTimerMap;
+
+	// 특정 플레이어의 거리 체크 함수
+	UFUNCTION()
+	void CheckDistanceToPlayer(APlayerController* PC);
+
+	// 특정 플레이어의 메뉴를 강제로 닫는 함수
+	void ForceCloseMenu(APlayerController* PC);
 };
 

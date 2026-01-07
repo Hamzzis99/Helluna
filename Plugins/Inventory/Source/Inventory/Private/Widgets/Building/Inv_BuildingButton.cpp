@@ -4,9 +4,9 @@
 #include "Components/Button.h"
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
+#include "Components/HorizontalBox.h"
 #include "Building/Components/Inv_BuildingComponent.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
-#include "InventoryManagement/FastArray/Inv_FastArray.h"
 #include "Items/Inv_InventoryItem.h"
 #include "Items/Fragments/Inv_ItemFragment.h"
 #include "GameFramework/PlayerController.h"
@@ -41,8 +41,27 @@ void UInv_BuildingButton::NativeConstruct()
 		Image_Icon->SetBrushFromTexture(BuildingIcon);
 	}
 
+	// 재료 아이콘 초기 설정 (Blueprint에서 설정한 값 사용)
+	if (IsValid(Image_Material1) && IsValid(MaterialIcon1))
+	{
+		Image_Material1->SetBrushFromTexture(MaterialIcon1);
+	}
+
+	if (IsValid(Image_Material2) && IsValid(MaterialIcon2))
+	{
+		Image_Material2->SetBrushFromTexture(MaterialIcon2);
+	}
+
+	if (IsValid(Image_Material3) && IsValid(MaterialIcon3))
+	{
+		Image_Material3->SetBrushFromTexture(MaterialIcon3);
+	}
+
 	// 델리게이트 바인딩 (인벤토리 변경 감지)
 	BindInventoryDelegates();
+
+	// 재료 UI 업데이트 (이미지 표시/숨김)
+	UpdateMaterialUI();
 
 	// 초기 버튼 상태 업데이트
 	UpdateButtonState();
@@ -151,6 +170,17 @@ bool UInv_BuildingButton::HasRequiredMaterials()
 		}
 	}
 
+	// === 재료 3 체크 (모든 스택 합산!) ===
+	if (RequiredMaterialTag3.IsValid() && RequiredAmount3 > 0)
+	{
+		int32 TotalAmount3 = InvComp->GetTotalMaterialCount(RequiredMaterialTag3);
+		if (TotalAmount3 < RequiredAmount3)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("재료3 부족: %d/%d (%s)"), TotalAmount3, RequiredAmount3, *RequiredMaterialTag3.ToString());
+			return false; // 재료3 개수 부족
+		}
+	}
+
 	// 모든 재료 충족!
 	UE_LOG(LogTemp, Log, TEXT("모든 재료 충족!"));
 	return true;
@@ -244,6 +274,7 @@ void UInv_BuildingButton::OnInventoryItemAdded(UInv_InventoryItem* Item)
 {
 	// 아이템이 추가되었을 때 (픽업, PutDown 포함)
 	UE_LOG(LogTemp, Log, TEXT("BuildingButton: 아이템 추가됨! 버튼 상태 재계산..."));
+	UpdateMaterialUI(); // 재료 UI 업데이트
 	UpdateButtonState();
 }
 
@@ -251,6 +282,7 @@ void UInv_BuildingButton::OnInventoryItemRemoved(UInv_InventoryItem* Item)
 {
 	// 아이템이 제거되었을 때 (드롭, 소비 포함)
 	UE_LOG(LogTemp, Log, TEXT("BuildingButton: 아이템 제거됨! 버튼 상태 재계산..."));
+	UpdateMaterialUI(); // 재료 UI 업데이트
 	UpdateButtonState();
 }
 
@@ -258,7 +290,132 @@ void UInv_BuildingButton::OnInventoryStackChanged(const FInv_SlotAvailabilityRes
 {
 	// 아이템 스택이 변경되었을 때 (Split, Combine 포함)
 	UE_LOG(LogTemp, Log, TEXT("BuildingButton: 스택 변경됨! 버튼 상태 재계산..."));
+	UpdateMaterialUI(); // 재료 UI 업데이트
 	UpdateButtonState();
+}
+
+void UInv_BuildingButton::UpdateMaterialUI()
+{
+	APlayerController* PC = GetOwningPlayer();
+	if (!IsValid(PC)) return;
+
+	UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
+
+	// === 재료 1 UI 업데이트 ===
+	if (RequiredMaterialTag.IsValid() && RequiredAmount > 0)
+	{
+		// 컨테이너 Visible
+		if (IsValid(HorizontalBox_Material1))
+		{
+			HorizontalBox_Material1->SetVisibility(ESlateVisibility::Visible);
+		}
+
+		// 개수 텍스트 업데이트 (실시간!)
+		if (IsValid(Text_Material1Amount))
+		{
+			int32 CurrentAmount = 0;
+			
+			if (IsValid(InvComp))
+			{
+				const auto& AllItems = InvComp->GetInventoryList().GetAllItems();
+				for (UInv_InventoryItem* Item : AllItems)
+				{
+					if (!IsValid(Item)) continue;
+					if (!Item->GetItemManifest().GetItemType().MatchesTagExact(RequiredMaterialTag)) continue;
+					CurrentAmount += Item->GetTotalStackCount();
+				}
+			}
+			
+			FString AmountText = FString::Printf(TEXT("%d/%d"), CurrentAmount, RequiredAmount);
+			Text_Material1Amount->SetText(FText::FromString(AmountText));
+		}
+	}
+	else
+	{
+		// Material Tag가 없으면 컨테이너 Hidden
+		if (IsValid(HorizontalBox_Material1))
+		{
+			HorizontalBox_Material1->SetVisibility(ESlateVisibility::Hidden);
+		}
+	}
+
+	// === 재료 2 UI 업데이트 ===
+	if (RequiredMaterialTag2.IsValid() && RequiredAmount2 > 0)
+	{
+		// 컨테이너 Visible
+		if (IsValid(HorizontalBox_Material2))
+		{
+			HorizontalBox_Material2->SetVisibility(ESlateVisibility::Visible);
+		}
+
+		// 개수 텍스트 업데이트
+		if (IsValid(Text_Material2Amount))
+		{
+			int32 CurrentAmount = 0;
+			
+			if (IsValid(InvComp))
+			{
+				const auto& AllItems = InvComp->GetInventoryList().GetAllItems();
+				for (UInv_InventoryItem* Item : AllItems)
+				{
+					if (!IsValid(Item)) continue;
+					if (!Item->GetItemManifest().GetItemType().MatchesTagExact(RequiredMaterialTag2)) continue;
+					CurrentAmount += Item->GetTotalStackCount();
+				}
+			}
+			
+			FString AmountText = FString::Printf(TEXT("%d/%d"), CurrentAmount, RequiredAmount2);
+			Text_Material2Amount->SetText(FText::FromString(AmountText));
+		}
+	}
+	else
+	{
+		// Material Tag2가 없으면 컨테이너 Hidden
+		if (IsValid(HorizontalBox_Material2))
+		{
+			HorizontalBox_Material2->SetVisibility(ESlateVisibility::Hidden);
+		}
+	}
+
+	// === 재료 3 UI 업데이트 ===
+	if (RequiredMaterialTag3.IsValid() && RequiredAmount3 > 0)
+	{
+		// 컨테이너 Visible
+		if (IsValid(HorizontalBox_Material3))
+		{
+			HorizontalBox_Material3->SetVisibility(ESlateVisibility::Visible);
+		}
+
+		// 개수 텍스트 업데이트
+		if (IsValid(Text_Material3Amount))
+		{
+			int32 CurrentAmount = 0;
+			
+			if (IsValid(InvComp))
+			{
+				const auto& AllItems = InvComp->GetInventoryList().GetAllItems();
+				for (UInv_InventoryItem* Item : AllItems)
+				{
+					if (!IsValid(Item)) continue;
+					if (!Item->GetItemManifest().GetItemType().MatchesTagExact(RequiredMaterialTag3)) continue;
+					CurrentAmount += Item->GetTotalStackCount();
+				}
+			}
+			
+			FString AmountText = FString::Printf(TEXT("%d/%d"), CurrentAmount, RequiredAmount3);
+			Text_Material3Amount->SetText(FText::FromString(AmountText));
+		}
+	}
+	else
+	{
+		// Material Tag3가 없으면 컨테이너 Hidden
+		if (IsValid(HorizontalBox_Material3))
+		{
+			HorizontalBox_Material3->SetVisibility(ESlateVisibility::Hidden);
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("BuildingButton: 재료 UI 업데이트 완료"));
 }
 
 

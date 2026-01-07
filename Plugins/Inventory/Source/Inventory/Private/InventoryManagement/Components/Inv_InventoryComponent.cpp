@@ -10,6 +10,7 @@
 #include "Net/UnrealNetwork.h"
 #include "Items/Inv_InventoryItem.h"
 #include "Items/Fragments/Inv_ItemFragment.h"
+#include "Building/Components/Inv_BuildingComponent.h"
 
 UInv_InventoryComponent::UInv_InventoryComponent() : InventoryList(this)
 {
@@ -28,6 +29,33 @@ void UInv_InventoryComponent::GetLifetimeReplicatedProps(TArray<FLifetimePropert
 
 void UInv_InventoryComponent::TryAddItem(UInv_ItemComponent* ItemComponent)
 {
+	UE_LOG(LogTemp, Warning, TEXT("=== [PICKUP] TryAddItem 시작 ==="));
+	
+	// 디버깅: ItemComponent 정보 출력
+	if (!IsValid(ItemComponent))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[PICKUP] ItemComponent가 nullptr입니다!"));
+		return;
+	}
+
+	AActor* OwnerActor = ItemComponent->GetOwner();
+	if (IsValid(OwnerActor))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PICKUP] 픽업할 Actor: %s"), *OwnerActor->GetName());
+		UE_LOG(LogTemp, Warning, TEXT("[PICKUP] Actor Blueprint 클래스: %s"), *OwnerActor->GetClass()->GetName());
+	}
+
+	const FInv_ItemManifest& Manifest = ItemComponent->GetItemManifest();
+	UE_LOG(LogTemp, Warning, TEXT("[PICKUP] 아이템 정보:"));
+	UE_LOG(LogTemp, Warning, TEXT("[PICKUP]   - ItemType (GameplayTag): %s"), *Manifest.GetItemType().ToString());
+	UE_LOG(LogTemp, Warning, TEXT("[PICKUP]   - ItemCategory: %d"), (int32)Manifest.GetItemCategory());
+	UE_LOG(LogTemp, Warning, TEXT("[PICKUP]   - PickupMessage: %s"), *ItemComponent->GetPickupMessage());
+	
+	// PickupActorClass 정보 추가 (크래프팅에서 사용할 Blueprint 확인용!)
+	UE_LOG(LogTemp, Warning, TEXT("[PICKUP] 📦 이 아이템의 PickupActorClass (크래프팅에 사용해야 하는 Blueprint):"));
+	UE_LOG(LogTemp, Warning, TEXT("[PICKUP]    Blueprint 클래스: %s"), *OwnerActor->GetClass()->GetName());
+	UE_LOG(LogTemp, Warning, TEXT("[PICKUP]    전체 경로: %s"), *OwnerActor->GetClass()->GetPathName());
+
 	FInv_SlotAvailabilityResult Result = InventoryMenu->HasRoomForItem(ItemComponent); // 인벤토리에 아이템을 추가할 수 있는지 확인하는 부분.
 
 	UInv_InventoryItem* FoundItem = InventoryList.FindFirstItemByType(ItemComponent->GetItemManifest().GetItemType()); // 동일한 유형의 아이템이 이미 있는지 확인하는 부분.
@@ -35,49 +63,95 @@ void UInv_InventoryComponent::TryAddItem(UInv_ItemComponent* ItemComponent)
 
 	if (Result.TotalRoomToFill == 0)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[PICKUP] 인벤토리에 공간이 없습니다!"));
 		NoRoomInInventory.Broadcast(); // 나 인벤토리 꽉찼어! 이걸 알려주는거야! 방송 삐용삐용 모두 알아둬라!
 		return;
 	}
-	// TODO : 실제로 인벤토리에 추가하는 부분을 만들 것. (일단 나중에)
 
 	// 아이템 스택 가능 정보를 전달하는 것? 서버 RPC로 해보자.
 	if (Result.Item.IsValid() && Result.bStackable) // 유효한지 검사하는 작업. 쌓을 수 있다면 다음 부분들을 진행.
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[PICKUP] 스택 가능 아이템! 기존 스택에 추가합니다."));
+		UE_LOG(LogTemp, Warning, TEXT("[PICKUP]   - 추가할 개수: %d"), Result.TotalRoomToFill);
+		UE_LOG(LogTemp, Warning, TEXT("[PICKUP]   - 남은 개수: %d"), Result.Remainder);
+		
 		// 이미 존재하는 아이템에 스택을 추가하는 부분. 
-		// 슬롯 가능 여부 결과를 방송할 위임자를 만들기 (Broadcast)
-		// Add stacks to an item that already exists in the inventory. We only want to update the stack count,
-		// not create a new item of this type.
 		OnStackChange.Broadcast(Result); // 스택 변경 사항 방송
 		Server_AddStacksToItem(ItemComponent, Result.TotalRoomToFill, Result.Remainder); // 아이템을 추가하는 부분.
 	}
-	// 서버에서 아이템 등록 우와.... 자살하고 싶어진다.
+	// 서버에서 아이템 등록
 	else if (Result.TotalRoomToFill > 0)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[PICKUP] 새로운 아이템 추가!"));
+		UE_LOG(LogTemp, Warning, TEXT("[PICKUP]   - 스택 개수: %d"), Result.bStackable ? Result.TotalRoomToFill : 0);
+		UE_LOG(LogTemp, Warning, TEXT("[PICKUP]   - 남은 개수: %d"), Result.Remainder);
+		
 		// This item type dosen't exist in the inventory. Create a new one and update all partient slots.
 		Server_AddNewItem(ItemComponent, Result.bStackable ? Result.TotalRoomToFill : 0, Result.Remainder); //쌓을 수 있다면 채울 수 있는 공간 이런 문법은 또 처음 보네
 	}
+
+	UE_LOG(LogTemp, Warning, TEXT("=== [PICKUP] TryAddItem 완료 ==="));
 }
 
 void UInv_InventoryComponent::Server_AddNewItem_Implementation(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder) // 서버에서 새로운 아이템 추가 구현
 {
+	UE_LOG(LogTemp, Warning, TEXT("=== [SERVER PICKUP] Server_AddNewItem_Implementation 시작 ==="));
+	
+	if (!IsValid(ItemComponent))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[SERVER PICKUP] ItemComponent가 nullptr입니다!"));
+		return;
+	}
+
+	AActor* OwnerActor = ItemComponent->GetOwner();
+	if (IsValid(OwnerActor))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[SERVER PICKUP] Actor: %s (Class: %s)"), 
+			*OwnerActor->GetName(), *OwnerActor->GetClass()->GetName());
+	}
+
+	const FInv_ItemManifest& Manifest = ItemComponent->GetItemManifest();
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER PICKUP] 아이템 정보:"));
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER PICKUP]   - GameplayTag: %s"), *Manifest.GetItemType().ToString());
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER PICKUP]   - Category: %d"), (int32)Manifest.GetItemCategory());
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER PICKUP]   - StackCount: %d"), StackCount);
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER PICKUP]   - Remainder: %d"), Remainder);
+
 	UInv_InventoryItem* NewItem = InventoryList.AddEntry(ItemComponent); // 여기서 아이템을정상적으로 줍게 된다면? 추가를 한다.
+	
+	if (!IsValid(NewItem))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[SERVER PICKUP] InventoryList.AddEntry 실패!"));
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER PICKUP] InventoryList.AddEntry 성공! NewItem 생성됨"));
+	
 	NewItem->SetTotalStackCount(StackCount);
 
 	if (GetOwner()->GetNetMode() == NM_ListenServer || GetOwner()->GetNetMode() == NM_Standalone) // 이 부분이 복제할 클라이언트가 없기 때문에 배열 복제 안 되는 거 (데디 서버로 변경할 때 참고해라)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[SERVER PICKUP] ListenServer/Standalone 모드 - OnItemAdded 델리게이트 브로드캐스트"));
 		OnItemAdded.Broadcast(NewItem);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[SERVER PICKUP] Dedicated Server 모드 - FastArray 리플리케이션에 의존"));
 	}
 
 	// 아이템 개수가 인벤토리 개수보다 많아져도 파괴되지 않게 안전장치를 걸기.
 	if (Remainder == 0)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[SERVER PICKUP] Remainder == 0, ItemComponent->PickedUp() 호출 (Actor 파괴)"));
 		ItemComponent->PickedUp();
 	}
 	else if (FInv_StackableFragment* StackableFragment = ItemComponent->GetItemManifestMutable().GetFragmentOfTypeMutable<FInv_StackableFragment>()) // 복사본이 아니라 실제 참조본을 가져오는 것.
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[SERVER PICKUP] Remainder > 0 (%d), StackCount 업데이트"), Remainder);
 		StackableFragment->SetStackCount(Remainder);
 	}
-	
+
+	UE_LOG(LogTemp, Warning, TEXT("=== [SERVER PICKUP] Server_AddNewItem_Implementation 완료 ==="));
 }
 
 void UInv_InventoryComponent::Server_AddStacksToItem_Implementation(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder) // 서버에서 아이템 스택 개수를 세어주는 역할.
@@ -154,16 +228,151 @@ void UInv_InventoryComponent::Server_ConsumeItem_Implementation(UInv_InventoryIt
 		Item->SetTotalStackCount(NewStackCount);
 	}
 	
-	// TODO: Get the consumable fragment and call Consume()
 	// 소비 프래그먼트를 가져와서 소비 함수 호출 (소비할 때 실제로 일어나는 일을 구현하자!)
-	// (Actually create the Consumable Fragment)
-	// (소모 프래그먼트 실제로 만들기) 
-	
-	// 아이템 매니페스트에서 소비 프래그먼트 가져오기
 	if (FInv_ConsumableFragment* ConsumableFragment = Item->GetItemManifestMutable().GetFragmentOfTypeMutable<FInv_ConsumableFragment>())
 	{
-		ConsumableFragment->OnConsume(OwningController.Get()); // 소비 함수 호출
+		ConsumableFragment->OnConsume(OwningController.Get());
 	}
+}
+
+// 크래프팅: 서버에서 아이템 생성 및 인벤토리 추가 (ItemManifest 직접 사용!)
+void UInv_InventoryComponent::Server_CraftItem_Implementation(TSubclassOf<AActor> ItemActorClass)
+{
+	UE_LOG(LogTemp, Warning, TEXT("=== [SERVER CRAFT] Server_CraftItem_Implementation 시작 ==="));
+
+	// 서버 권한 체크
+	if (!GetOwner()->HasAuthority())
+	{
+		UE_LOG(LogTemp, Error, TEXT("[SERVER CRAFT] 권한 없음! 서버에서만 실행 가능!"));
+		return;
+	}
+
+	// ItemActorClass 유효성 체크
+	if (!ItemActorClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[SERVER CRAFT] ItemActorClass가 nullptr입니다!"));
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] 제작할 아이템 Blueprint: %s"), *ItemActorClass->GetName());
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ItemActorClass 전체 경로: %s"), *ItemActorClass->GetPathName());
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ItemActorClass 클래스 이름: %s"), *ItemActorClass.Get()->GetName());
+
+	// Blueprint 컴포넌트 접근을 위해 임시 인스턴스 생성
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	SpawnParams.bNoFail = true;
+	
+	FVector TempLocation = FVector(0, 0, -50000); // 매우 아래쪽
+	FRotator TempRotation = FRotator::ZeroRotator;
+	FTransform TempTransform(TempRotation, TempLocation);
+	
+	AActor* TempActor = GetWorld()->SpawnActorDeferred<AActor>(ItemActorClass, TempTransform, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (!IsValid(TempActor))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[SERVER CRAFT] 임시 인스턴스 생성 실패!"));
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] 임시 인스턴스 생성 성공: %s"), *TempActor->GetName());
+	
+	// FinishSpawning 호출 - Blueprint 컴포넌트 초기화! (BeginPlay는 호출되지 않음)
+	TempActor->FinishSpawning(TempTransform);
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] FinishSpawning 호출 완료 - 컴포넌트 초기화됨!"));
+
+	// ItemComponent 찾기 (Blueprint 컴포넌트 포함)
+	UInv_ItemComponent* DefaultItemComp = nullptr;
+	
+	// 방법 1: FindComponentByClass
+	DefaultItemComp = TempActor->FindComponentByClass<UInv_ItemComponent>();
+	
+	if (!IsValid(DefaultItemComp))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] FindComponentByClass 실패, GetComponents로 재시도..."));
+		
+		// 방법 2: GetComponents (Blueprint 컴포넌트 포함)
+		TArray<UInv_ItemComponent*> ItemComponents;
+		TempActor->GetComponents<UInv_ItemComponent>(ItemComponents);
+		
+		UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] GetComponents 결과: %d개 컴포넌트 발견"), ItemComponents.Num());
+		
+		if (ItemComponents.Num() > 0)
+		{
+			DefaultItemComp = ItemComponents[0];
+			UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ItemComponent 찾음! (GetComponents 사용)"));
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ItemComponent 찾음! (FindComponentByClass 사용)"));
+	}
+
+	// 최종 검증
+	if (!IsValid(DefaultItemComp))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[SERVER CRAFT] ❌ ItemComponent를 찾을 수 없습니다!"));
+		UE_LOG(LogTemp, Error, TEXT("[SERVER CRAFT] Blueprint: %s"), *ItemActorClass->GetName());
+		
+		// 모든 컴포넌트 목록 출력 (디버깅)
+		TArray<UActorComponent*> AllComponents;
+		TempActor->GetComponents(AllComponents);
+		UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] 전체 컴포넌트 목록 (%d개):"), AllComponents.Num());
+		for (UActorComponent* Comp : AllComponents)
+		{
+			if (IsValid(Comp))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("  - %s (클래스: %s)"), *Comp->GetName(), *Comp->GetClass()->GetName());
+			}
+		}
+		
+		// 임시 인스턴스 파괴
+		TempActor->Destroy();
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ItemComponent: %s (클래스: %s)"), 
+		*DefaultItemComp->GetName(), *DefaultItemComp->GetClass()->GetName());
+
+	// ItemManifest 복사
+	FInv_ItemManifest ItemManifest = DefaultItemComp->GetItemManifest();
+
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ItemManifest 가져옴!"));
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] 제작할 아이템 정보:"));
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT]   - 아이템 타입 (GameplayTag): %s"), *ItemManifest.GetItemType().ToString());
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT]   - 아이템 카테고리: %d"), (int32)ItemManifest.GetItemCategory());
+
+	// 임시 인스턴스 파괴 (ItemManifest 복사 완료!)
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] 임시 인스턴스 파괴 중..."));
+	TempActor->Destroy();
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] 임시 인스턴스 파괴 완료!"));
+
+	// InventoryList에 직접 추가 (PickUp 방식과 동일!)
+	UInv_InventoryItem* NewItem = ItemManifest.Manifest(GetOwner());
+	if (!IsValid(NewItem))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[SERVER CRAFT] ItemManifest.Manifest() 실패!"));
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] UInv_InventoryItem 생성 성공!"));
+
+	// FastArray에 추가 (PickUp의 AddEntry(ItemComponent)와 동일한 방식!)
+	InventoryList.AddEntry(NewItem);
+
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] InventoryList.AddEntry 완료!"));
+
+	// ListenServer/Standalone에서는 델리게이트 브로드캐스트
+	if (GetOwner()->GetNetMode() == NM_ListenServer || GetOwner()->GetNetMode() == NM_Standalone)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ListenServer/Standalone 모드 - OnItemAdded 델리게이트 브로드캐스트"));
+		OnItemAdded.Broadcast(NewItem);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] Dedicated Server 모드 - FastArray 리플리케이션에 의존"));
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("=== [SERVER CRAFT] 인벤토리에 아이템 추가 완료! (임시 Actor 스폰 없음!) ==="));
 }
 
 // 재료 소비 (Building 시스템용) - Server_DropItem과 동일한 로직 사용
@@ -577,9 +786,28 @@ void UInv_InventoryComponent::CloseInventoryMenu()
 	InventoryMenu->SetVisibility(ESlateVisibility::Collapsed);
 	bInventoryMenuOpen = false;
 
+	// ⭐ BuildMenu와 CraftingMenu도 함께 닫기
+	CloseOtherMenus();
+
 	if (!OwningController.IsValid()) return;
 
 	FInputModeGameOnly InputMode;
 	OwningController->SetInputMode(InputMode);
 	OwningController->SetShowMouseCursor(false);
 }
+
+void UInv_InventoryComponent::CloseOtherMenus()
+{
+	if (!OwningController.IsValid() || !GetWorld()) return;
+
+	// BuildMenu 닫기
+	UInv_BuildingComponent* BuildingComp = OwningController->FindComponentByClass<UInv_BuildingComponent>();
+	if (IsValid(BuildingComp))
+	{
+		BuildingComp->CloseBuildMenu();
+		UE_LOG(LogTemp, Log, TEXT("인벤토리 닫힘: BuildMenu도 함께 닫힘"));
+	}
+
+	// CraftingMenu는 거리 체크로 자동으로 닫힘 (Timer 방식)
+}
+

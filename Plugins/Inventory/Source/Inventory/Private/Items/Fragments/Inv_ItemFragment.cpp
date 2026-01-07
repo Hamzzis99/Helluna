@@ -150,7 +150,52 @@ void FInv_StrengthModifier::OnUnequip(APlayerController* PC)
 			GetValue()));
 }
 
-// 장착 해제 부분들
+
+// 각 장비마다 방어구 장비 관련 장착 아이템들
+void FInv_ArmorModifier::OnEquip(APlayerController* PC)
+{
+	GEngine->AddOnScreenDebugMessage(
+		-1,
+		5.f,
+		FColor::Green,
+		FString::Printf(TEXT("Item equipped. Armor increased by: %f"),
+			GetValue()));
+}
+
+void FInv_ArmorModifier::OnUnequip(APlayerController* PC)
+{
+	GEngine->AddOnScreenDebugMessage(
+		-1,
+		5.f,
+		FColor::Red,
+		FString::Printf(TEXT("Item unequipped. Armor decreased by: %f"),
+			GetValue()));
+}
+
+//무기 장비 관련 장착 아이템들
+void FInv_DamageModifier::OnEquip(APlayerController* PC)
+{
+	GEngine->AddOnScreenDebugMessage(
+		-1,
+		5.f,
+		FColor::Green,
+		FString::Printf(TEXT("Item equipped. Damage increased by: %f"),
+			GetValue()));
+}
+
+void FInv_DamageModifier::OnUnequip(APlayerController* PC)
+{
+	GEngine->AddOnScreenDebugMessage(
+		-1,
+		5.f,
+		FColor::Red,
+		FString::Printf(TEXT("Item equipped. Damage increased by: %f"),
+			GetValue()));
+}
+// 여기까지가 무기 관련 장착 장비들
+
+
+// 전체적인 장비 장착 메인 부분
 void FInv_EquipmentFragment::OnEquip(APlayerController* PC)
 {
 	if (bEquipped) return;
@@ -161,7 +206,7 @@ void FInv_EquipmentFragment::OnEquip(APlayerController* PC)
 		ModRef.OnEquip(PC); // 장착 함수 호출
 	}
 }
-
+// 장비 장착 해제 부분들
 void FInv_EquipmentFragment::OnUnequip(APlayerController* PC)
 {
 	if (!bEquipped) return;
