@@ -11,7 +11,7 @@ void UInv_HUDWidget::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
 
-	//ÇÃ·¹ÀÌ¾î ÄÁÆ®·Ñ·¯¸¦ °Ë»öÇØ¼­ ÇÏ´Â ºÎºÐ? ÀÌ ÇÃ·¯±×ÀÎ¿¡¼­ ÀÚÁÖ ÇØÁà¾ß ÇÏ´Â °Í.
+	// ë¸ë¦¬ê²Œì´íŠ¸ ë°”ì¸ë”© (ì¸ë²¤í† ë¦¬ ê½‰ì°¸ ì•Œë¦¼) 
 	UInv_InventoryComponent* InventoryComponent = UInv_InventoryStatics::GetInventoryComponent(GetOwningPlayer());
 	if (IsValid(InventoryComponent))
 	{
@@ -24,3 +24,6 @@ void UInv_HUDWidget::OnNoRoom()
 	if (!IsValid(InfoMessage)) return;
 	InfoMessage->SetMessage(FText::FromString("No Room In Inventory."));
 }
+
+
+

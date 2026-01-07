@@ -3,6 +3,8 @@
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "Interaction/Inv_Highlightable.h"
+#include "Crafting/Interfaces/Inv_CraftingInterface.h"
+#include "Crafting/Actors/Inv_CraftingStation.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
 #include "Items/Components/Inv_ItemComponent.h"
 #include "Kismet/GameplayStatics.h"
@@ -22,7 +24,7 @@ void AInv_PlayerController::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
-	TraceForItem();
+	TraceForInteractables(); // 아이템과 크래프팅 스테이션 통합 감지
 }
 
 // I키를 누르면 점을 삭제 시키는 것인데. 
@@ -75,7 +77,20 @@ void AInv_PlayerController::PrimaryInteract()
 {
 	if (!ThisActor.IsValid()) return;
 
-	//이게 뭐하는 부분이지?
+	// 1순위: 크래프팅 스테이션 상호작용
+	if (CurrentCraftingStation.IsValid() && CurrentCraftingStation == ThisActor)
+	{
+		if (ThisActor->Implements<UInv_CraftingInterface>())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("=== E키로 크래프팅 스테이션 상호작용! ==="));
+			UE_LOG(LogTemp, Warning, TEXT("Station: %s"), *ThisActor->GetName());
+			
+			IInv_CraftingInterface::Execute_OnInteract(ThisActor.Get(), this);
+			return;
+		}
+	}
+
+	// 2순위: 아이템 줍기
 	UInv_ItemComponent* ItemComp = ThisActor->FindComponentByClass<UInv_ItemComponent>();
 	if (!IsValid(ItemComp) || !InventoryComponent.IsValid()) return;
 
@@ -93,7 +108,7 @@ void AInv_PlayerController::CreateHUDWidget() // 위젯 생성 부분
 	}
 }
 
-void AInv_PlayerController::TraceForItem()
+void AInv_PlayerController::TraceForInteractables()
 {
 	// 바라보는 뷰포트 좌표 반환
 	if (!IsValid(GEngine) || !IsValid(GEngine->GameViewport)) return;
@@ -114,33 +129,71 @@ void AInv_PlayerController::TraceForItem()
 	LastActor = ThisActor;
 	ThisActor = HitResult.GetActor();
 
-	//픽업 부분 관련의 코드들.
+	// 1단계: 크래프팅 스테이션 확인
+	bool bIsCraftingStation = false;
+	if (ThisActor.IsValid() && ThisActor->Implements<UInv_CraftingInterface>())
+	{
+		CurrentCraftingStation = ThisActor;
+		bIsCraftingStation = true;
+	}
+	else
+	{
+		CurrentCraftingStation = nullptr;
+	}
+
+	// 2단계: UI 메시지 처리 - 아무것도 감지되지 않을 때
 	if (!ThisActor.IsValid())
 	{
-		if (IsValid(HUDWidget)) HUDWidget->HidePickupMessage(); //블루프린트에서 구현할 것들.
+		if (IsValid(HUDWidget))
+		{
+			HUDWidget->HidePickupMessage();
+		}
+		return;
 	}
 
 	if (ThisActor == LastActor) return;
 
 	if (ThisActor.IsValid())
 	{
+		// 하이라이트 처리
 		if (UActorComponent* Highlightable = ThisActor->FindComponentByInterface(UInv_Highlightable::StaticClass()); IsValid(Highlightable))
 		{
-			IInv_Highlightable::Execute_Highlight(Highlightable); //배우 컴포넌트?
+			IInv_Highlightable::Execute_Highlight(Highlightable);
 		}
 
-		UInv_ItemComponent* ItemComponent = ThisActor->FindComponentByClass<UInv_ItemComponent>();
-		if (!IsValid(ItemComponent)) return;
-
-		if (IsValid(HUDWidget)) HUDWidget->ShowPickupMessage(ItemComponent->GetPickupMessage()); //블루프린트에서 구현할 것들.
-		UE_LOG(LogTemp, Warning, TEXT("Started tracing"))
+		// UI 메시지 표시
+		if (IsValid(HUDWidget))
+		{
+			if (bIsCraftingStation)
+			{
+				// ⭐ Crafting 메시지 표시 (ShowPickupMessage 재사용)
+				AInv_CraftingStation* CraftingStation = Cast<AInv_CraftingStation>(ThisActor.Get());
+				if (IsValid(CraftingStation))
+				{
+					HUDWidget->ShowPickupMessage(CraftingStation->GetPickupMessage());
+					UE_LOG(LogTemp, Log, TEXT("크래프팅 스테이션 감지: %s"), *ThisActor->GetName());
+				}
+			}
+			else
+			{
+				// 아이템 픽업 메시지 표시
+				UInv_ItemComponent* ItemComponent = ThisActor->FindComponentByClass<UInv_ItemComponent>();
+				if (IsValid(ItemComponent))
+				{
+					HUDWidget->ShowPickupMessage(ItemComponent->GetPickupMessage());
+					UE_LOG(LogTemp, Warning, TEXT("Started tracing"))
+				}
+			}
+		}
 	}
 
 	if (LastActor.IsValid())
 	{
 		if (UActorComponent* Highlightable = LastActor->FindComponentByInterface(UInv_Highlightable::StaticClass()); IsValid(Highlightable))
 		{
-			IInv_Highlightable::Execute_UnHighlight(Highlightable); //배우 컴포넌트?
+			IInv_Highlightable::Execute_UnHighlight(Highlightable);
 		}
 	}
 }
+
+

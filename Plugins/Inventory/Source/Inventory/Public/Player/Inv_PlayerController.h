@@ -32,7 +32,7 @@ private:
 	//키 등록들?
 	void PrimaryInteract();
 	void CreateHUDWidget(); // 위젯 생성 함수 선언
-	void TraceForItem(); // 아이템 등록
+	void TraceForInteractables(); // 아이템 & 크래프팅 스테이션 통합 감지
 	
 	//블루프린트에서 인벤토리 컴포넌트를 열기 위해 WeakObjectPtr(참조)를 선언했다고? 이유가 뭘까?
 	TWeakObjectPtr<UInv_InventoryComponent> InventoryComponent;
@@ -46,6 +46,7 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory")
 	TObjectPtr<UInputAction> ToggleInventoryAction; // 인벤토리 키 누르는 액션
 
+
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory")
 	TSubclassOf<UInv_HUDWidget> HUDWidgetClass; // 위젯 선언
 
@@ -58,6 +59,10 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory")	
 	TEnumAsByte<ECollisionChannel> ItemTraceChannel; // 추적 채널? 충동 채널? 왜 굳이 Enum을 쓰는지 보자
 
+
 	TWeakObjectPtr<AActor> ThisActor; // 객체에 대한 포인터는 유지하지만 가비지 컬렉션엔 영향은 없음
 	TWeakObjectPtr<AActor> LastActor; // 마지막으로 상호작용한 액터
+	
+	// ⭐ 현재 감지된 크래프팅 스테이션
+	TWeakObjectPtr<AActor> CurrentCraftingStation;
 };
