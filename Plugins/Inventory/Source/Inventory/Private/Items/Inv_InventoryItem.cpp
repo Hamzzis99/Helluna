@@ -12,6 +12,7 @@ void UInv_InventoryItem::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 
 	DOREPLIFETIME(ThisClass, ItemManifest);
 	DOREPLIFETIME(ThisClass, TotalStackCount);
+	DOREPLIFETIME(ThisClass, GridPosition);  // ⭐ Grid 위치 동기화!
 }
 
 void UInv_InventoryItem::SetItemManifest(const FInv_ItemManifest& Manifest)

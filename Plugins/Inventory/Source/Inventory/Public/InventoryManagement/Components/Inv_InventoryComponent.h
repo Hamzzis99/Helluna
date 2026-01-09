@@ -8,11 +8,14 @@
 //#include "Widgets/Inventory/InventoryBase/Inv_InventoryBase.h"
 #include "Components/ActorComponent.h"
 #include "InventoryManagement/FastArray/Inv_FastArray.h"
+#include "Items/Fragments/Inv_ItemFragment.h"
 #include "Inv_InventoryComponent.generated.h"
 
 class UInv_ItemComponent;
 class UInv_InventoryItem;
 class UInv_InventoryBase;
+class UInv_InventoryGrid;  // ⭐ Forward declaration 추가
+struct FInv_ItemManifest;
 
 //델리게이트
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInventoryItemChange, UInv_InventoryItem*, Item);
@@ -60,6 +63,13 @@ public:
 	UFUNCTION(Server, Reliable) // 크래프팅: 서버에서 아이템 생성 및 인벤토리 추가
 	void Server_CraftItem(TSubclassOf<AActor> ItemActorClass);
 
+	// ⭐ 크래프팅 통합 RPC: 공간 체크 → 재료 차감 → 아이템 생성
+	UFUNCTION(Server, Reliable)
+	void Server_CraftItemWithMaterials(TSubclassOf<AActor> ItemActorClass,
+		const FGameplayTag& MaterialTag1, int32 Amount1,
+		const FGameplayTag& MaterialTag2, int32 Amount2,
+		const FGameplayTag& MaterialTag3, int32 Amount3);
+
 	UFUNCTION(NetMulticast, Reliable) // 모든 클라이언트의 UI 업데이트 (Building 재료 차감)
 	void Multicast_ConsumeMaterialsUI(const FGameplayTag& MaterialTag, int32 Amount);
 
@@ -101,11 +111,26 @@ protected:
 	// Called when the game starts
 	virtual void BeginPlay() override;
 
+	// ⭐ Blueprint에서 인벤토리 Grid 크기 참조 (모든 카테고리 공통 사용)
+	// WBP_SpatialInventory의 Grid_Equippables를 선택하면 Rows/Columns 자동 참조!
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "인벤토리|그리드 설정", meta = (DisplayName = "인벤토리 그리드 (크기 자동 참조)"))
+	TObjectPtr<UInv_InventoryGrid> InventoryGridReference = nullptr;
+
 private:
 
 	TWeakObjectPtr<APlayerController> OwningController;
 
 	void ConstructInventory();
+	
+	// ⭐ Blueprint Widget의 Grid 크기를 Component 설정으로 동기화
+	void SyncGridSizesFromWidget();
+
+	// ⭐ 서버 전용: InventoryList 기반 공간 체크 (UI 없이 작동!)
+	bool HasRoomInInventoryList(const FInv_ItemManifest& Manifest) const;
+
+	// ⭐ Grid 크기 (BeginPlay 시 Widget에서 자동 설정됨 - 모든 카테고리 공통 사용)
+	int32 GridRows = 6;
+	int32 GridColumns = 8;
 
 	UPROPERTY(Replicated)
 	FInv_InventoryFastArray InventoryList; // 인벤토리 

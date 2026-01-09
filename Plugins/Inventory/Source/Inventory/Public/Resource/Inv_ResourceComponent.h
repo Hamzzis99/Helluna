@@ -17,6 +17,9 @@ public:
 	UInv_ResourceComponent();
 
 	virtual void BeginPlay() override;
+	
+	// 리플리케이션 속성 등록 (UE 5.7.1)
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	// Owner 액터가 데미지를 받을 때 호출
 	UFUNCTION()
@@ -30,14 +33,20 @@ private:
 	float MaxHealth = 100.f;
 
 	// 현재 체력 (내부 사용, BeginPlay에서 자동으로 기본 체력으로 설정됨)
+	// 서버에서 클라이언트로 복제됨 (네트워크 동기화)
+	UPROPERTY(Replicated)
 	float CurrentHealth = 0.f;
 
 	// HP가 이 값만큼 감소할 때마다 아이템 드롭 (0 = 파괴 시에만 드롭)
 	UPROPERTY(EditAnywhere, Category = "Resource|Health", meta = (ClampMin = "0.0", DisplayName = "드롭 HP 간격 (0=파괴시만)"))
 	float DropHealthInterval = 0.f;
 
-	// 마지막으로 드롭한 HP 지점
+	// 마지막으로 드롭한 HP 지점 (서버 전용, 드롭 간격 추적용)
+	UPROPERTY(Replicated)
 	float LastDropHealth;
+
+	// 파괴 진행 중 플래그 (중복 데미지/파괴 방지)
+	bool bIsDestroyed = false;
 
 	// ========== 드롭 아이템 설정 ==========
 	

@@ -32,7 +32,6 @@ public:
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override; // 매 프레임마다 호출되는 틱 함수 (마우스 Hover에 사용)
 
 	EInv_ItemCategory GetItemCategory() const { return ItemCategory; }
-	FInv_SlotAvailabilityResult HasRoomForItem(const UInv_ItemComponent* ItemComponent); // 아이템을 위한 공간이 있는지 확인
 
 	void ShowCursor();
 	void HideCursor();
@@ -60,14 +59,25 @@ public:
 	// ⭐ UI GridSlots 기반 재료 개수 세기 (Split 대응!)
 	int32 GetTotalMaterialCountFromSlots(const FGameplayTag& MaterialTag) const;
 	
+	// ⭐ Grid 크기 정보 가져오기 (공간 체크용)
+	FORCEINLINE int32 GetMaxSlots() const { return Rows * Columns; }
+	FORCEINLINE int32 GetRows() const { return Rows; }
+	FORCEINLINE int32 GetColumns() const { return Columns; }
+	
+	// ⭐ 공간 체크 함수 (public - InventoryComponent에서 사용)
+	FInv_SlotAvailabilityResult HasRoomForItem(const UInv_ItemComponent* ItemComponent);
+	FInv_SlotAvailabilityResult HasRoomForItem(const UInv_InventoryItem* Item, const int32 StackAmountOverride = -1);
+	FInv_SlotAvailabilityResult HasRoomForItem(const FInv_ItemManifest& Manifest, const int32 StackAmountOverride = -1);
+
+	// ⭐ 실제 UI Grid 상태 확인 (크래프팅 공간 체크용)
+	bool HasRoomInActualGrid(const FInv_ItemManifest& Manifest) const;
+	
 private:
 
 	TWeakObjectPtr<UInv_InventoryComponent> InventoryComponent;
 	TWeakObjectPtr<UCanvasPanel> OwningCanvasPanel;
 	
 	void ConstructGrid();
-	FInv_SlotAvailabilityResult HasRoomForItem(const UInv_InventoryItem* Item, const int32 StackAmountOverride = -1); // 인벤토리 항목으로 item이 있는 공간이 있을 수 있어서 만드는 것?
-	FInv_SlotAvailabilityResult HasRoomForItem(const FInv_ItemManifest& Manifest, const int32 StackAmountOverride = -1); // 나중에 Builds 만들 때 사용하는 공간인가?
 	void AddItemToIndices(const FInv_SlotAvailabilityResult& Result, UInv_InventoryItem* NewItem); // 아이템을 인덱스에 추가
 	bool MatchesCategory(const UInv_InventoryItem* Item) const; // 카테고리 일치 여부 확인
 	FVector2D GetDrawSize(const FInv_GridFragment* GridFragment) const; // 그리드 조각의 그리기 크기 가져오기

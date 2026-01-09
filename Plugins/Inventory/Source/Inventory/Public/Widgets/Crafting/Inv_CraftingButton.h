@@ -165,6 +165,7 @@ class UImage;
 class UTextBlock;
 class UHorizontalBox;
 class UInv_InventoryItem;
+class UInv_InfoMessage;  // ⭐ 메시지 위젯
 
 /**
  * 크래프팅 메뉴에서 개별 아이템 제작 버튼 위젯
@@ -217,6 +218,10 @@ private:
 
 	UFUNCTION()
 	void OnInventoryStackChanged(const FInv_SlotAvailabilityResult& Result);
+
+	// ⭐ Tag 기반 재료 변경 콜백 (Dangling Pointer 방지!)
+	UFUNCTION()
+	void OnMaterialStacksChanged(const FGameplayTag& MaterialTag);
 
 	// === 블루프린트에서 바인딩할 위젯들 (meta = (BindWidget)) ===
 	
@@ -324,8 +329,16 @@ private:
 
 	// === 버튼 쿨다운 (연타 방지) ===
 
-	// 제작 쿨다운 시간 (초 단위, 블루프린트에서 수정 가능)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crafting|Settings", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", ClampMax = "5.0"))
+	// ⭐ 제작 쿨다운 시간 (초 단위) - Blueprint에서 수정 가능!
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "제작|쿨다운", meta = (
+		AllowPrivateAccess = "true", 
+		DisplayName = "제작 쿨다운 시간 (초)", 
+		ToolTip = "제작 버튼 연타 방지를 위한 쿨다운 시간입니다. 0.5초 권장 (0.1 ~ 5.0초 범위)",
+		ClampMin = "0.1", 
+		ClampMax = "5.0",
+		UIMin = "0.1",
+		UIMax = "2.0"
+	))
 	float CraftingCooldown = 0.5f;
 
 	// 마지막 제작 시간 (내부 사용)

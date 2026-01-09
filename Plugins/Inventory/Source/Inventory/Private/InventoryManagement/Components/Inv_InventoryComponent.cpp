@@ -341,7 +341,26 @@ void UInv_InventoryComponent::Server_CraftItem_Implementation(TSubclassOf<AActor
 	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT]   - 아이템 타입 (GameplayTag): %s"), *ItemManifest.GetItemType().ToString());
 	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT]   - 아이템 카테고리: %d"), (int32)ItemManifest.GetItemCategory());
 
-	// 임시 인스턴스 파괴 (ItemManifest 복사 완료!)
+	// ⭐ 공간 체크 (InventoryList 기반 - UI 없이 작동!)
+	bool bHasRoom = HasRoomInInventoryList(ItemManifest);
+	
+	if (!bHasRoom)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ❌ 인벤토리에 공간이 없습니다!"));
+		UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] 제작 취소! NoRoomInInventory 델리게이트 브로드캐스트"));
+		
+		// 임시 인스턴스 파괴
+		TempActor->Destroy();
+		
+		// NoRoomInInventory 델리게이트 재사용!
+		NoRoomInInventory.Broadcast();
+		return;
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ✅ 인벤토리에 공간 있음!"))
+
+
+	// 임시 인스턴스 파괴 (ItemManifest 복사 완료 & 공간 체크 완료!)
 	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] 임시 인스턴스 파괴 중..."));
 	TempActor->Destroy();
 	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] 임시 인스턴스 파괴 완료!"));
@@ -373,6 +392,113 @@ void UInv_InventoryComponent::Server_CraftItem_Implementation(TSubclassOf<AActor
 	}
 
 	UE_LOG(LogTemp, Warning, TEXT("=== [SERVER CRAFT] 인벤토리에 아이템 추가 완료! (임시 Actor 스폰 없음!) ==="));
+}
+
+// ⭐ 크래프팅 통합 RPC: 공간 체크 → 재료 차감 → 아이템 생성
+void UInv_InventoryComponent::Server_CraftItemWithMaterials_Implementation(
+	TSubclassOf<AActor> ItemActorClass,
+	const FGameplayTag& MaterialTag1, int32 Amount1,
+	const FGameplayTag& MaterialTag2, int32 Amount2,
+	const FGameplayTag& MaterialTag3, int32 Amount3)
+{
+	UE_LOG(LogTemp, Warning, TEXT("=== [SERVER CRAFT WITH MATERIALS] 시작 ==="));
+
+	// 서버 권한 체크
+	if (!GetOwner()->HasAuthority())
+	{
+		UE_LOG(LogTemp, Error, TEXT("[SERVER CRAFT] 권한 없음!"));
+		return;
+	}
+
+	if (!ItemActorClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[SERVER CRAFT] ItemActorClass가 nullptr!"));
+		return;
+	}
+
+	// ========== 1단계: 임시 Actor 스폰 및 ItemManifest 추출 ==========
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	SpawnParams.bNoFail = true;
+	
+	FVector TempLocation = FVector(0, 0, -50000);
+	FRotator TempRotation = FRotator::ZeroRotator;
+	FTransform TempTransform(TempRotation, TempLocation);
+	
+	AActor* TempActor = GetWorld()->SpawnActorDeferred<AActor>(ItemActorClass, TempTransform, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (!IsValid(TempActor))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[SERVER CRAFT] 임시 Actor 생성 실패!"));
+		return;
+	}
+
+	TempActor->FinishSpawning(TempTransform);
+
+	UInv_ItemComponent* DefaultItemComp = TempActor->FindComponentByClass<UInv_ItemComponent>();
+	if (!IsValid(DefaultItemComp))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[SERVER CRAFT] ItemComponent를 찾을 수 없음!"));
+		TempActor->Destroy();
+		return;
+	}
+
+	FInv_ItemManifest ItemManifest = DefaultItemComp->GetItemManifest();
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] 제작할 아이템: %s (카테고리: %d)"), 
+		*ItemManifest.GetItemType().ToString(), (int32)ItemManifest.GetItemCategory());
+
+	// ========== 2단계: 공간 체크 ==========
+	bool bHasRoom = HasRoomInInventoryList(ItemManifest);
+	
+	if (!bHasRoom)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ❌ 인벤토리에 공간이 없습니다!"));
+		TempActor->Destroy();
+		NoRoomInInventory.Broadcast();
+		return; // ⭐ 재료 차감 없이 중단!
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ✅ 인벤토리에 공간 있음!"));
+
+	// 임시 Actor 파괴
+	TempActor->Destroy();
+
+	// ========== 3단계: 재료 차감 (공간 확인 후!) ==========
+	if (MaterialTag1.IsValid() && Amount1 > 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] 재료1 차감: %s x %d"), *MaterialTag1.ToString(), Amount1);
+		Server_ConsumeMaterialsMultiStack_Implementation(MaterialTag1, Amount1);
+	}
+
+	if (MaterialTag2.IsValid() && Amount2 > 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] 재료2 차감: %s x %d"), *MaterialTag2.ToString(), Amount2);
+		Server_ConsumeMaterialsMultiStack_Implementation(MaterialTag2, Amount2);
+	}
+
+	if (MaterialTag3.IsValid() && Amount3 > 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] 재료3 차감: %s x %d"), *MaterialTag3.ToString(), Amount3);
+		Server_ConsumeMaterialsMultiStack_Implementation(MaterialTag3, Amount3);
+	}
+
+	// ========== 4단계: 아이템 생성 ==========
+	UInv_InventoryItem* NewItem = ItemManifest.Manifest(GetOwner());
+	if (!IsValid(NewItem))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[SERVER CRAFT] ItemManifest.Manifest() 실패!"));
+		return;
+	}
+
+	InventoryList.AddEntry(NewItem);
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ✅ 제작 완료! 아이템 추가됨"));
+
+	// ListenServer/Standalone에서는 델리게이트 브로드캐스트
+	if (GetOwner()->GetNetMode() == NM_ListenServer || GetOwner()->GetNetMode() == NM_Standalone)
+	{
+		OnItemAdded.Broadcast(NewItem);
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("=== [SERVER CRAFT WITH MATERIALS] 완료 ==="));
 }
 
 // 재료 소비 (Building 시스템용) - Server_DropItem과 동일한 로직 사용
@@ -748,6 +874,51 @@ void UInv_InventoryComponent::BeginPlay()
 
 	ConstructInventory();
 	
+	// ⭐ InventoryMenu의 Grid 크기를 Component 설정에 동기화 (Blueprint Widget → Component)
+	SyncGridSizesFromWidget();
+}
+
+// ⭐ Blueprint Widget의 Grid 크기를 Component 설정으로 가져오기
+void UInv_InventoryComponent::SyncGridSizesFromWidget()
+{
+	UE_LOG(LogTemp, Warning, TEXT("========================================"));
+	UE_LOG(LogTemp, Warning, TEXT("[Grid 동기화] Grid 크기 참조 시작..."));
+	
+	// ⭐ 1순위: Blueprint에서 직접 선택한 Widget 참조
+	if (IsValid(InventoryGridReference))
+	{
+		GridRows = InventoryGridReference->GetRows();
+		GridColumns = InventoryGridReference->GetColumns();
+		
+		UE_LOG(LogTemp, Warning, TEXT("[Grid 동기화] ✅ Grid (Blueprint 직접 참조): %d x %d = %d칸"), 
+			GridRows, GridColumns, GridRows * GridColumns);
+	}
+	// 2순위: InventoryMenu에서 자동으로 가져오기 (Grid_Equippables 사용)
+	else if (IsValid(InventoryMenu))
+	{
+		UInv_SpatialInventory* SpatialInv = Cast<UInv_SpatialInventory>(InventoryMenu);
+		if (IsValid(SpatialInv) && IsValid(SpatialInv->GetGrid_Equippables()))
+		{
+			GridRows = SpatialInv->GetGrid_Equippables()->GetRows();
+			GridColumns = SpatialInv->GetGrid_Equippables()->GetColumns();
+			
+			UE_LOG(LogTemp, Warning, TEXT("[Grid 동기화] ✅ Grid (InventoryMenu 자동 - Grid_Equippables): %d x %d = %d칸"), 
+				GridRows, GridColumns, GridRows * GridColumns);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[Grid 동기화] ⚠️ Grid 참조 없음 - 기본값 사용: %d x %d = %d칸"), 
+				GridRows, GridColumns, GridRows * GridColumns);
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Grid 동기화] ⚠️ InventoryMenu 없음 - 기본값 사용: %d x %d = %d칸"), 
+			GridRows, GridColumns, GridRows * GridColumns);
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("[Grid 동기화] 완료! 모든 카테고리(Equippables/Consumables/Craftables)가 동일한 크기 사용"));
+	UE_LOG(LogTemp, Warning, TEXT("========================================"));
 }
 
 
@@ -811,3 +982,288 @@ void UInv_InventoryComponent::CloseOtherMenus()
 	// CraftingMenu는 거리 체크로 자동으로 닫힘 (Timer 방식)
 }
 
+// ⭐ InventoryList 기반 공간 체크 (서버 전용, UI 없이 작동!)
+bool UInv_InventoryComponent::HasRoomInInventoryList(const FInv_ItemManifest& Manifest) const
+{
+	EInv_ItemCategory Category = Manifest.GetItemCategory();
+	FGameplayTag ItemType = Manifest.GetItemType();
+	
+	// GridFragment에서 아이템 크기 가져오기
+	const FInv_GridFragment* GridFragment = Manifest.GetFragmentOfType<FInv_GridFragment>();
+	FIntPoint ItemSize = GridFragment ? GridFragment->GetGridSize() : FIntPoint(1, 1);
+	
+	UE_LOG(LogTemp, Warning, TEXT("========================================"));
+	UE_LOG(LogTemp, Warning, TEXT("[공간체크] 제작할 아이템: %s"), *ItemType.ToString());
+	UE_LOG(LogTemp, Warning, TEXT("[공간체크] 아이템 카테고리: %d"), (int32)Category);
+	UE_LOG(LogTemp, Warning, TEXT("[공간체크] 아이템 크기: %d x %d"), ItemSize.X, ItemSize.Y);
+
+	// ⭐ Grid 크기 설정 (Component 설정에서 가져오기)
+	int32 LocalGridRows = GridRows;  // ⭐ 지역 변수로 복사 (const 함수에서 수정 가능)
+	int32 LocalGridColumns = GridColumns;
+	int32 MaxSlots = LocalGridRows * LocalGridColumns;
+	UInv_InventoryGrid* TargetGrid = nullptr;
+	
+	UE_LOG(LogTemp, Warning, TEXT("[공간체크] Component 설정: %d x %d = %d칸 (모든 카테고리 공통)"), 
+		LocalGridRows, LocalGridColumns, MaxSlots);
+	
+	// ⭐ InventoryMenu가 있으면 실제 Grid의 HasRoomForItem 사용 (더 정확함!)
+	if (IsValid(InventoryMenu))
+	{
+		UInv_SpatialInventory* SpatialInv = Cast<UInv_SpatialInventory>(InventoryMenu);
+		if (IsValid(SpatialInv))
+		{
+			switch (Category)
+			{
+			case EInv_ItemCategory::Equippable:
+				TargetGrid = SpatialInv->GetGrid_Equippables();
+				break;
+			case EInv_ItemCategory::Consumable:
+				TargetGrid = SpatialInv->GetGrid_Consumables();
+				break;
+			case EInv_ItemCategory::Craftable:
+				TargetGrid = SpatialInv->GetGrid_Craftables();
+				break;
+			default:
+				UE_LOG(LogTemp, Warning, TEXT("[공간체크] ⚠️ 알 수 없는 카테고리: %d"), (int32)Category);
+				break;
+			}
+			
+			if (IsValid(TargetGrid))
+			{
+				LocalGridRows = TargetGrid->GetRows();  // ⭐ 지역 변수 사용
+				LocalGridColumns = TargetGrid->GetColumns();
+				MaxSlots = TargetGrid->GetMaxSlots();
+
+				UE_LOG(LogTemp, Warning, TEXT("[공간체크] Grid 설정: %d x %d = %d칸"),
+					LocalGridRows, LocalGridColumns, MaxSlots);
+
+				// ⭐⭐⭐ 실제 UI GridSlots 상태 기반 공간 체크! (플레이어가 옮긴 위치 반영!)
+				bool bHasRoom = TargetGrid->HasRoomInActualGrid(Manifest);
+
+				UE_LOG(LogTemp, Warning, TEXT("[공간체크] 🔍 Grid->HasRoomInActualGrid() 결과: %s"),
+					bHasRoom ? TEXT("✅ 실제 UI Grid에 공간 있음!") : TEXT("❌ UI Grid 꽉 참!"));
+				UE_LOG(LogTemp, Warning, TEXT("========================================"));
+
+				return bHasRoom;
+			}
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[공간체크] ⚠️ InventoryMenu가 nullptr - Fallback 로직 사용"));
+	}
+
+	// ========== Fallback: Virtual Grid 시뮬레이션 (서버 전용) ==========
+	UE_LOG(LogTemp, Warning, TEXT("[공간체크] Fallback 모드: Virtual Grid 시뮬레이션 시작"));
+	UE_LOG(LogTemp, Warning, TEXT("[공간체크] Grid 크기: %d x %d = %d칸"), LocalGridRows, LocalGridColumns, MaxSlots);
+	
+	// Virtual Grid 생성 (0 = 빈 칸, 1~ = 아이템 인덱스)
+	TArray<int32> VirtualGrid;
+	VirtualGrid.SetNum(MaxSlots);
+	for (int32 i = 0; i < MaxSlots; i++)
+	{
+		VirtualGrid[i] = 0; // 모두 빈 칸으로 초기화
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("[공간체크] 📋 Virtual Grid 초기화 완료 (%dx%d)"), LocalGridRows, LocalGridColumns);
+	
+	// 1. 현재 인벤토리의 아이템들을 Virtual Grid에 배치
+	UE_LOG(LogTemp, Warning, TEXT("[공간체크] 현재 인벤토리 내용을 Grid에 배치 중..."));
+	
+	int32 ItemIndex = 1; // 0은 빈 칸이므로 1부터 시작
+	int32 CurrentItemCount = 0;
+	
+	for (const auto& Entry : InventoryList.Entries)
+	{
+		if (!IsValid(Entry.Item)) continue;
+		
+		if (Entry.Item->GetItemManifest().GetItemCategory() == Category)
+		{
+			const FInv_GridFragment* ItemGridFragment = Entry.Item->GetItemManifest().GetFragmentOfType<FInv_GridFragment>();
+			FIntPoint ExistingItemSize = ItemGridFragment ? ItemGridFragment->GetGridSize() : FIntPoint(1, 1);
+			
+			FGameplayTag EntryType = Entry.Item->GetItemManifest().GetItemType();
+			int32 StackCount = Entry.Item->GetTotalStackCount();
+			
+			// ⭐ 실제 Grid 위치 사용! (없으면 순차 배치 Fallback)
+			FIntPoint ActualPos = Entry.Item->GetGridPosition();
+			
+			UE_LOG(LogTemp, Warning, TEXT("[공간체크]   - [%d] %s x%d (크기: %dx%d, 실제위치: [%d,%d])"), 
+				CurrentItemCount, *EntryType.ToString(), StackCount, ExistingItemSize.X, ExistingItemSize.Y,
+				ActualPos.X, ActualPos.Y);
+			
+			// Virtual Grid에 배치
+			bool bPlaced = false;
+			
+			// ⭐ 실제 위치가 있으면 그대로 사용!
+			if (ActualPos.X >= 0 && ActualPos.Y >= 0 &&
+				ActualPos.X + ExistingItemSize.X <= LocalGridColumns &&
+				ActualPos.Y + ExistingItemSize.Y <= LocalGridRows)
+			{
+				// 실제 위치에 배치 가능한지 체크
+				bool bCanPlace = true;
+				for (int32 y = 0; y < ExistingItemSize.Y && bCanPlace; y++)
+				{
+					for (int32 x = 0; x < ExistingItemSize.X && bCanPlace; x++)
+					{
+						int32 CheckIndex = (ActualPos.Y + y) * LocalGridColumns + (ActualPos.X + x);
+						if (VirtualGrid[CheckIndex] != 0) // 이미 점유됨
+						{
+							bCanPlace = false;
+						}
+					}
+				}
+				
+				if (bCanPlace)
+				{
+					// 실제 위치에 배치!
+					for (int32 y = 0; y < ExistingItemSize.Y; y++)
+					{
+						for (int32 x = 0; x < ExistingItemSize.X; x++)
+						{
+							int32 PlaceIndex = (ActualPos.Y + y) * LocalGridColumns + (ActualPos.X + x);
+							VirtualGrid[PlaceIndex] = ItemIndex;
+						}
+					}
+					bPlaced = true;
+					UE_LOG(LogTemp, Warning, TEXT("[공간체크]     → ✅ 실제 위치 Grid[%d,%d]에 배치됨"), ActualPos.X, ActualPos.Y);
+				}
+			}
+			
+			// ⚠️ 실제 위치가 없거나 배치 실패하면 순차 배치 시도 (Fallback)
+			if (!bPlaced)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[공간체크]     → ⚠️ 실제 위치 사용 불가! Fallback 순차 배치 시도..."));
+				
+				for (int32 Row = 0; Row <= LocalGridRows - ExistingItemSize.Y && !bPlaced; Row++)
+				{
+					for (int32 Col = 0; Col <= LocalGridColumns - ExistingItemSize.X && !bPlaced; Col++)
+					{
+						int32 StartIndex = Row * LocalGridColumns + Col;
+						
+						// 이 위치에 배치 가능한지 체크
+						bool bCanPlace = true;
+						for (int32 y = 0; y < ExistingItemSize.Y && bCanPlace; y++)
+						{
+							for (int32 x = 0; x < ExistingItemSize.X && bCanPlace; x++)
+							{
+								int32 CheckIndex = (Row + y) * LocalGridColumns + (Col + x);
+								if (VirtualGrid[CheckIndex] != 0) // 이미 점유됨
+								{
+									bCanPlace = false;
+								}
+							}
+						}
+						
+						// 배치 가능하면 Grid에 표시
+						if (bCanPlace)
+						{
+							for (int32 y = 0; y < ExistingItemSize.Y; y++)
+							{
+								for (int32 x = 0; x < ExistingItemSize.X; x++)
+								{
+									int32 PlaceIndex = (Row + y) * LocalGridColumns + (Col + x);
+									VirtualGrid[PlaceIndex] = ItemIndex;
+								}
+							}
+							bPlaced = true;
+							UE_LOG(LogTemp, Warning, TEXT("[공간체크]     → Fallback Grid[%d,%d]에 배치됨"), Col, Row);
+						}
+					}
+				}
+			}
+			
+			if (!bPlaced)
+			{
+				UE_LOG(LogTemp, Error, TEXT("[공간체크]     → ❌ 배치 실패! (Grid 시뮬레이션 오류 가능성)"));
+			}
+			
+			ItemIndex++;
+			CurrentItemCount++;
+		}
+	}
+	
+	// 2. Virtual Grid 상태 출력
+	UE_LOG(LogTemp, Warning, TEXT("[공간체크] 📊 현재 Virtual Grid 상태:"));
+	for (int32 Row = 0; Row < LocalGridRows; Row++)
+	{
+		FString RowStr = TEXT("  ");
+		for (int32 Col = 0; Col < LocalGridColumns; Col++)
+		{
+			int32 Value = VirtualGrid[Row * LocalGridColumns + Col];
+			RowStr += FString::Printf(TEXT("[%d]"), Value);
+		}
+		UE_LOG(LogTemp, Warning, TEXT("%s"), *RowStr);
+	}
+	
+	// 3. 스택 가능 여부 체크
+	const FInv_StackableFragment* StackableFragment = Manifest.GetFragmentOfType<FInv_StackableFragment>();
+	bool bStackable = (StackableFragment != nullptr);
+
+	if (bStackable)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[공간체크] 🔍 스택 가능 아이템 - 기존 스택 찾기 중..."));
+		for (const auto& Entry : InventoryList.Entries)
+		{
+			if (!IsValid(Entry.Item)) continue;
+			
+			if (Entry.Item->GetItemManifest().GetItemType().MatchesTagExact(ItemType) &&
+				Entry.Item->GetItemManifest().GetItemCategory() == Category)
+			{
+				int32 CurrentStack = Entry.Item->GetTotalStackCount();
+				int32 MaxStack = StackableFragment->GetMaxStackSize();
+				
+				if (CurrentStack < MaxStack)
+				{
+					UE_LOG(LogTemp, Warning, TEXT("[공간체크] ✅ 스택 가능! (현재: %d / 최대: %d)"), CurrentStack, MaxStack);
+					UE_LOG(LogTemp, Warning, TEXT("========================================"));
+					return true;
+				}
+			}
+		}
+		UE_LOG(LogTemp, Warning, TEXT("[공간체크] ⚠️ 스택 여유 없음 - 새 슬롯 필요"));
+	}
+
+	// 4. 새로운 아이템을 배치할 수 있는지 체크
+	UE_LOG(LogTemp, Warning, TEXT("[공간체크] 🔍 새 아이템 배치 가능 여부 체크 (크기: %dx%d)"), ItemSize.X, ItemSize.Y);
+	
+	bool bHasRoom = false;
+	for (int32 Row = 0; Row <= LocalGridRows - ItemSize.Y && !bHasRoom; Row++)
+	{
+		for (int32 Col = 0; Col <= LocalGridColumns - ItemSize.X && !bHasRoom; Col++)
+		{
+			bool bCanPlace = true;
+			
+			// 이 위치에 배치 가능한지 체크
+			for (int32 y = 0; y < ItemSize.Y && bCanPlace; y++)
+			{
+				for (int32 x = 0; x < ItemSize.X && bCanPlace; x++)
+				{
+					int32 CheckIndex = (Row + y) * LocalGridColumns + (Col + x);
+					if (VirtualGrid[CheckIndex] != 0) // 이미 점유됨
+					{
+						bCanPlace = false;
+					}
+				}
+			}
+			
+			if (bCanPlace)
+			{
+				bHasRoom = true;
+				UE_LOG(LogTemp, Warning, TEXT("[공간체크] ✅ 배치 가능! Grid[%d,%d]부터 %dx%d 공간 확보됨"), 
+					Col, Row, ItemSize.X, ItemSize.Y);
+			}
+		}
+	}
+	
+	if (!bHasRoom)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[공간체크] ❌ Grid 꽉 참! %dx%d 크기의 빈 공간 없음"), ItemSize.X, ItemSize.Y);
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("[공간체크] Virtual Grid 결과: %s"), 
+		bHasRoom ? TEXT("✅ 공간 있음") : TEXT("❌ 공간 없음"));
+	UE_LOG(LogTemp, Warning, TEXT("========================================"));
+
+	return bHasRoom;
+}

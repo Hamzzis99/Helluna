@@ -1,5 +1,39 @@
 // Gihyeon's Inventory Project
 
+// [SERVER] Server_CraftItem()
+// ├─ 1. 임시 Actor 스폰 (TempActor)
+// ├─ 2. ItemManifest 추출
+// ├─ 3. TempActor 파괴
+// ├─ 4. ItemManifest.Manifest(Owner) → UInv_InventoryItem 생성
+// ├─ 5. InventoryList.AddEntry(NewItem) ← FastArray에 추가!
+// │   ├─ Entries.AddDefaulted_GetRef()
+// │   ├─ Entry.Item = NewItem
+// │   ├─ AddRepSubObj(NewItem) ← 리플리케이션 등록!
+// │   └─ MarkItemDirty(Entry) ← 자동 네트워크 전송!
+// │
+// └─ [네트워크 전송] ────────────────────────────► [CLIENT]
+//
+// [CLIENT] PostReplicatedAdd() ← 자동 호출!
+// ├─ OnItemAdded.Broadcast(NewItem) ← 델리게이트 발동!
+// │
+// └─ [InventoryGrid] OnItemAdded 수신
+//     └─ AddItem(NewItem) 호출
+//         ├─ HasRoomForItem(NewItem) ← 🔍 공간 체크!
+//         │   └─ Result.SlotAvailabilities 계산
+//         │
+//         └─ AddItemToIndices(Result, NewItem)
+//             └─ for (Availability : Result.SlotAvailabilities)
+//                 ├─ AddItemAtIndex(NewItem, Index, ...)
+//                 │   ├─ CreateSlottedItem() ← UI 위젯 생성!
+//                 │   │   └─ UInv_SlottedItem 생성
+//                 │   ├─ AddSlottedItemToCanvas() ← Canvas에 추가!
+//                 │   │   └─ CanvasPanel->AddChild(SlottedItem)
+//                 │   └─ SlottedItems.Add(Index, SlottedItem)
+//                 │
+//                 └─ UpdateGridSlots(NewItem, Index, ...)
+//                     └─ GridSlots[Index]->SetInventoryItem(NewItem)
+
+
 #include "Widgets/Crafting/Inv_CraftingButton.h"
 #include "Components/Button.h"
 #include "Components/Image.h"
@@ -10,6 +44,9 @@
 #include "Items/Inv_InventoryItem.h"
 #include "Items/Components/Inv_ItemComponent.h"
 #include "Items/Fragments/Inv_ItemFragment.h"
+#include "Widgets/Inventory/InventoryBase/Inv_InventoryBase.h"  // ⭐ 공간 체크용
+#include "Widgets/Inventory/Spatial/Inv_SpatialInventory.h"     // ⭐ Grid 접근용
+#include "Widgets/Inventory/Spatial/Inv_InventoryGrid.h"        // ⭐ HasRoomInActualGrid용
 
 void UInv_CraftingButton::NativeOnInitialized()
 {
@@ -95,8 +132,16 @@ void UInv_CraftingButton::SetCraftingInfo(const FText& Name, UTexture2D* Icon, T
 
 void UInv_CraftingButton::OnButtonClicked()
 {
-	// 쿨다운 체크 (연타 방지)
-	const float CurrentTime = GetWorld()->GetTimeSeconds();
+	// ⭐ World 유효성 체크
+	UWorld* World = GetWorld();
+	if (!IsValid(World))
+	{
+		UE_LOG(LogTemp, Error, TEXT("❌ GetWorld() 실패!"));
+		return;
+	}
+
+	// ⭐ 쿨다운 체크 (연타 방지)
+	const float CurrentTime = World->GetTimeSeconds();
 	if (CurrentTime - LastCraftTime < CraftingCooldown)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("⏱️ 제작 쿨다운 중! 남은 시간: %.2f초"), CraftingCooldown - (CurrentTime - LastCraftTime));
@@ -105,37 +150,46 @@ void UInv_CraftingButton::OnButtonClicked()
 
 	if (!HasRequiredMaterials())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("재료가 부족합니다!"));
+		UE_LOG(LogTemp, Warning, TEXT("❌ 재료가 부족합니다!"));
 		return;
 	}
 
-	// 쿨다운 시간 기록
+	// ⭐ 쿨다운 시간 기록
 	LastCraftTime = CurrentTime;
 
 	UE_LOG(LogTemp, Warning, TEXT("=== 아이템 제작 시작! ==="));
 	UE_LOG(LogTemp, Warning, TEXT("아이템: %s"), *ItemName.ToString());
 
-	// 재료 소비
-	ConsumeMaterials();
+	// ⚠️ 재료 차감은 서버에서 공간 체크 후 수행!
+	// ConsumeMaterials(); ← 제거! 서버에서 처리!
 
-	// 제작 완료 후 인벤토리에 아이템 추가
-	AddCraftedItemToInventory();
-
-	// 즉시 버튼 비활성화 (서버 응답 기다리지 않고)
+	// ⭐ 즉시 버튼 비활성화 (연타 방지 - 쿨다운 동안 강제 비활성화)
 	if (IsValid(Button_Main))
 	{
 		Button_Main->SetIsEnabled(false);
 		UE_LOG(LogTemp, Log, TEXT("제작 버튼 즉시 비활성화 (중복 클릭 방지)"));
 	}
 
-	// 0.5초 후 강제로 UI 업데이트 (서버 동기화 대기)
-	FTimerHandle UpdateTimerHandle;
-	GetWorld()->GetTimerManager().SetTimer(UpdateTimerHandle, [this]()
-	{
-		UE_LOG(LogTemp, Warning, TEXT("타이머: 강제 UI 업데이트 실행!"));
-		UpdateMaterialUI();
-		UpdateButtonState();
-	}, 0.5f, false);
+	// ⭐ 쿨다운 후 버튼 상태 재검사 타이머 설정
+	FTimerHandle CooldownTimerHandle;
+	World->GetTimerManager().SetTimer(
+		CooldownTimerHandle,
+		[this]()
+		{
+			// ⭐ 쿨다운 종료 후 재료 UI 강제 업데이트 (10/10 버그 방지!)
+			UpdateMaterialUI();
+			
+			// 쿨다운 종료 후 재료 다시 체크해서 버튼 상태 업데이트
+			UpdateButtonState();
+			UE_LOG(LogTemp, Log, TEXT("제작 쿨다운 완료! 버튼 상태 재계산"));
+		},
+		CraftingCooldown,
+		false
+	);
+
+	// 제작 완료 후 인벤토리에 아이템 추가 (서버에서 재료 차감도 함께 처리)
+	AddCraftedItemToInventory();
+
 
 	UE_LOG(LogTemp, Warning, TEXT("제작 완료!"));
 }
@@ -376,6 +430,12 @@ void UInv_CraftingButton::BindInventoryDelegates()
 		InvComp->OnStackChange.AddDynamic(this, &ThisClass::OnInventoryStackChanged);
 	}
 
+	// ⭐ OnMaterialStacksChanged 델리게이트 바인딩 (Tag 기반 - 안전!)
+	if (!InvComp->OnMaterialStacksChanged.IsAlreadyBound(this, &ThisClass::OnMaterialStacksChanged))
+	{
+		InvComp->OnMaterialStacksChanged.AddDynamic(this, &ThisClass::OnMaterialStacksChanged);
+	}
+
 	UE_LOG(LogTemp, Log, TEXT("CraftingButton: 인벤토리 델리게이트 바인딩 완료"));
 }
 
@@ -387,6 +447,7 @@ void UInv_CraftingButton::UnbindInventoryDelegates()
 	InvComp->OnItemAdded.RemoveDynamic(this, &ThisClass::OnInventoryItemAdded);
 	InvComp->OnItemRemoved.RemoveDynamic(this, &ThisClass::OnInventoryItemRemoved);
 	InvComp->OnStackChange.RemoveDynamic(this, &ThisClass::OnInventoryStackChanged);
+	InvComp->OnMaterialStacksChanged.RemoveDynamic(this, &ThisClass::OnMaterialStacksChanged);
 }
 
 void UInv_CraftingButton::OnInventoryItemAdded(UInv_InventoryItem* Item)
@@ -413,6 +474,21 @@ void UInv_CraftingButton::OnInventoryStackChanged(const FInv_SlotAvailabilityRes
 	UE_LOG(LogTemp, Log, TEXT("CraftingButton: 스택 변경됨! 버튼 상태 재계산..."));
 	UpdateMaterialUI(); // 재료 UI 업데이트
 	UpdateButtonState();
+}
+
+void UInv_CraftingButton::OnMaterialStacksChanged(const FGameplayTag& MaterialTag)
+{
+	// ⭐ Tag 기반이므로 Dangling Pointer 걱정 없음!
+	UE_LOG(LogTemp, Log, TEXT("CraftingButton: 재료 변경됨! (Tag: %s)"), *MaterialTag.ToString());
+	
+	// 이 버튼이 사용하는 재료인지 체크
+	if (RequiredMaterialTag.MatchesTagExact(MaterialTag) ||
+		RequiredMaterialTag2.MatchesTagExact(MaterialTag) ||
+		RequiredMaterialTag3.MatchesTagExact(MaterialTag))
+	{
+		UpdateMaterialUI(); // 재료 UI 즉시 업데이트
+		UpdateButtonState();
+	}
 }
 
 void UInv_CraftingButton::ConsumeMaterials()
@@ -479,8 +555,127 @@ void UInv_CraftingButton::AddCraftedItemToInventory()
 	// 디버깅: Blueprint 정보 출력
 	UE_LOG(LogTemp, Warning, TEXT("[CLIENT] 제작할 아이템 Blueprint: %s"), *ItemActorClass->GetName());
 
-	// 서버 RPC 호출 (서버에서 안전하게 스폰)
-	InvComp->Server_CraftItem(ItemActorClass);
+	// ⭐⭐⭐ 클라이언트 측 공간 체크 (서버 RPC 전에!)
+	// 임시 Actor 스폰하여 ItemManifest 추출
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	SpawnParams.bNoFail = true;
+
+	FVector TempLocation = FVector(0, 0, -50000); // 매우 아래쪽
+	FRotator TempRotation = FRotator::ZeroRotator;
+	FTransform TempTransform(TempRotation, TempLocation);
+
+	UWorld* World = GetWorld();
+	if (!IsValid(World))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[CLIENT] World가 유효하지 않습니다!"));
+		return;
+	}
+
+	AActor* TempActor = World->SpawnActorDeferred<AActor>(ItemActorClass, TempTransform, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (!IsValid(TempActor))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[CLIENT] 임시 Actor 스폰 실패!"));
+		return;
+	}
+
+	TempActor->FinishSpawning(TempTransform);
+
+	UInv_ItemComponent* ItemComp = TempActor->FindComponentByClass<UInv_ItemComponent>();
+	if (!IsValid(ItemComp))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[CLIENT] ItemComponent를 찾을 수 없습니다!"));
+		TempActor->Destroy();
+		return;
+	}
+
+	FInv_ItemManifest ItemManifest = ItemComp->GetItemManifest();
+	EInv_ItemCategory Category = ItemManifest.GetItemCategory();
+
+	// 임시 Actor 파괴
+	TempActor->Destroy();
+
+	// InventoryMenu 가져오기
+	UInv_InventoryBase* InventoryMenu = InvComp->GetInventoryMenu();
+	if (!IsValid(InventoryMenu))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[CLIENT] InventoryMenu가 nullptr - 공간 체크 스킵하고 서버로 전송"));
+		// Fallback: 서버에서 체크하도록 RPC 전송
+		InvComp->Server_CraftItemWithMaterials(
+			ItemActorClass,
+			RequiredMaterialTag, RequiredAmount,
+			RequiredMaterialTag2, RequiredAmount2,
+			RequiredMaterialTag3, RequiredAmount3
+		);
+		return;
+	}
+
+	// SpatialInventory 캐스팅
+	UInv_SpatialInventory* SpatialInv = Cast<UInv_SpatialInventory>(InventoryMenu);
+	if (!IsValid(SpatialInv))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[CLIENT] SpatialInventory 캐스팅 실패 - 공간 체크 스킵"));
+		InvComp->Server_CraftItemWithMaterials(
+			ItemActorClass,
+			RequiredMaterialTag, RequiredAmount,
+			RequiredMaterialTag2, RequiredAmount2,
+			RequiredMaterialTag3, RequiredAmount3
+		);
+		return;
+	}
+
+	// 카테고리에 맞는 Grid 가져오기
+	UInv_InventoryGrid* TargetGrid = nullptr;
+	switch (Category)
+	{
+	case EInv_ItemCategory::Equippable:
+		TargetGrid = SpatialInv->GetGrid_Equippables();
+		break;
+	case EInv_ItemCategory::Consumable:
+		TargetGrid = SpatialInv->GetGrid_Consumables();
+		break;
+	case EInv_ItemCategory::Craftable:
+		TargetGrid = SpatialInv->GetGrid_Craftables();
+		break;
+	default:
+		UE_LOG(LogTemp, Warning, TEXT("[CLIENT] 알 수 없는 카테고리: %d"), (int32)Category);
+		break;
+	}
+
+	if (!IsValid(TargetGrid))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[CLIENT] TargetGrid가 nullptr - 공간 체크 스킵"));
+		InvComp->Server_CraftItemWithMaterials(
+			ItemActorClass,
+			RequiredMaterialTag, RequiredAmount,
+			RequiredMaterialTag2, RequiredAmount2,
+			RequiredMaterialTag3, RequiredAmount3
+		);
+		return;
+	}
+
+	// ⭐⭐⭐ 실제 UI Grid 상태 기반 공간 체크!
+	bool bHasRoom = TargetGrid->HasRoomInActualGrid(ItemManifest);
+
+	UE_LOG(LogTemp, Warning, TEXT("[CLIENT] 클라이언트 공간 체크 결과: %s"),
+		bHasRoom ? TEXT("✅ 공간 있음") : TEXT("❌ 공간 없음"));
+
+	if (!bHasRoom)
+	{
+		// 공간 없음! NoRoomInInventory 델리게이트 호출 (서버 RPC 전송 X)
+		UE_LOG(LogTemp, Warning, TEXT("[CLIENT] ❌ 인벤토리 공간 부족! 제작 취소"));
+		InvComp->NoRoomInInventory.Broadcast();
+		return; // ⭐ 서버 RPC 호출 없이 리턴!
+	}
+
+	// 공간 있음! 서버 RPC 호출
+	UE_LOG(LogTemp, Warning, TEXT("[CLIENT] ✅ 공간 확인됨! 서버로 제작 요청 전송"));
+	InvComp->Server_CraftItemWithMaterials(
+		ItemActorClass,
+		RequiredMaterialTag, RequiredAmount,
+		RequiredMaterialTag2, RequiredAmount2,
+		RequiredMaterialTag3, RequiredAmount3
+	);
 
 	UE_LOG(LogTemp, Warning, TEXT("=== [CLIENT] 서버에 제작 요청 전송 완료 ==="));
 }

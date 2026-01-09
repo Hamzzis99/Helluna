@@ -4,11 +4,22 @@
 #include "GameFramework/Actor.h"
 #include "Kismet/GameplayStatics.h"
 #include "Sound/SoundBase.h"
+#include "Net/UnrealNetwork.h" // DOREPLIFETIME 매크로 사용 (UE 5.7.1)
 
 UInv_ResourceComponent::UInv_ResourceComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
 	SetIsReplicatedByDefault(true);
+}
+
+void UInv_ResourceComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	
+	// 데디케이티드 서버 최적화: 변경 시에만 복제 (UE 5.7.1)
+	// InitialOrOwner: 초기값 + 변경 시에만 전송 (대역폭 절약)
+	DOREPLIFETIME_CONDITION(UInv_ResourceComponent, CurrentHealth, COND_InitialOrOwner);
+	DOREPLIFETIME_CONDITION(UInv_ResourceComponent, LastDropHealth, COND_InitialOrOwner);
 }
 
 void UInv_ResourceComponent::BeginPlay()
@@ -24,8 +35,11 @@ void UInv_ResourceComponent::BeginPlay()
 
 	// Owner 액터의 OnTakeAnyDamage 델리게이트에 바인딩
 	AActor* Owner = GetOwner();
-	if (IsValid(Owner))
+	if (!IsValid(Owner))
 	{
+		UE_LOG(LogTemp, Error, TEXT("[자원 컴포넌트] Owner가 유효하지 않습니다! 컴포넌트가 제대로 붙지 않았을 수 있습니다."));
+		return;
+	}
 		// Owner 액터의 리플리케이션 강제 활성화 (네트워크 동기화 필수)
 		if (!Owner->GetIsReplicated())
 		{
@@ -69,15 +83,17 @@ void UInv_ResourceComponent::BeginPlay()
 			UE_LOG(LogTemp, Error, TEXT("[자원] Owner 액터가 데미지를 받을 수 없음! bCanBeDamaged를 true로 설정합니다."));
 			Owner->SetCanBeDamaged(true);
 		}
-	}
-	else
-	{
-		UE_LOG(LogTemp, Error, TEXT("[자원 컴포넌트] Owner가 없습니다! 컴포넌트가 제대로 붙지 않았을 수 있습니다."));
-	}
 }
 
 void UInv_ResourceComponent::OnOwnerTakeDamage(AActor* DamagedActor, float Damage, const UDamageType* DamageType, AController* InstigatedBy, AActor* DamageCauser)
 {
+	// 파괴 진행 중이면 처리하지 않음 (중복 데미지 방지)
+	if (bIsDestroyed)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[자원] 이미 파괴 진행 중이므로 데미지 무시"));
+		return;
+	}
+
 	const bool bIsServer = GetOwner()->HasAuthority();
 	const FString RoleStr = bIsServer ? TEXT("🔴 서버") : TEXT("🔵 클라이언트");
 	
@@ -121,6 +137,9 @@ void UInv_ResourceComponent::OnOwnerTakeDamage(AActor* DamagedActor, float Damag
 	// 파괴 시 최종 드롭
 	if (CurrentHealth <= 0.f)
 	{
+		// 파괴 플래그 즉시 설정 (중복 처리 방지)
+		bIsDestroyed = true;
+		
 		// HP를 0으로 고정 (음수 방지)
 		CurrentHealth = 0.f;
 		
@@ -159,7 +178,20 @@ void UInv_ResourceComponent::OnOwnerTakeDamage(AActor* DamagedActor, float Damag
 
 void UInv_ResourceComponent::SpawnDroppedResources()
 {
-	if (!GetOwner()->HasAuthority()) return;
+	// 데디케이티드 서버 전용: 클라이언트는 실행하지 않음
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[자원 드롭] 클라이언트이므로 드롭 생략 (서버에서만 실행)"));
+		return;
+	}
+	
+	// World 유효성 검사 (UE 5.7.1 안전성)
+	UWorld* World = GetWorld();
+	if (!IsValid(World))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[자원] GetWorld()가 nullptr입니다! 드롭 취소"));
+		return;
+	}
 	
 	// 드롭 아이템 배열 체크
 	if (DropItemClasses.Num() == 0) 
@@ -203,7 +235,7 @@ void UInv_ResourceComponent::SpawnDroppedResources()
 		FActorSpawnParameters SpawnParams;
 		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
 
-		AActor* SpawnedItem = GetWorld()->SpawnActor<AActor>(
+		AActor* SpawnedItem = World->SpawnActor<AActor>(
 			SelectedItemClass, 
 			SpawnLocation, 
 			SpawnRotation, 
@@ -250,7 +282,7 @@ void UInv_ResourceComponent::SpawnDroppedResources()
 					const float LaunchDistance = FMath::FRandRange(DropSpawnDistanceMin, DropSpawnDistanceMax);
 					
 					// 포물선 공식: V = sqrt(g * d / sin(2θ))
-					const float Gravity = FMath::Abs(GetWorld()->GetGravityZ()); // 중력 (양수)
+					const float Gravity = FMath::Abs(World->GetGravityZ()); // 중력 (양수)
 					const float BaseSpeed = FMath::Sqrt(
 						(Gravity * LaunchDistance) / FMath::Sin(2.f * LaunchAngleRadians)
 					);
@@ -278,8 +310,11 @@ void UInv_ResourceComponent::SpawnDroppedResources()
 					// 언리얼 엔진 중력 조정 (올바른 API 사용)
 					if (FBodyInstance* BodyInst = MeshComp->GetBodyInstance())
 					{
-						BodyInst->bEnableGravity = true;
-						BodyInst->SetMassOverride(1.0f); // 질량 1kg
+						if (BodyInst) // nullptr 체크
+						{
+							BodyInst->bEnableGravity = true;
+							BodyInst->SetMassOverride(1.0f); // 질량 1kg
+						}
 					}
 					
 					// 중력 배율 적용 (SetLinearDamping으로 떨어지는 속도 조절)
@@ -316,13 +351,17 @@ void UInv_ResourceComponent::SpawnDroppedResources()
 void UInv_ResourceComponent::DestroyOwnerActor()
 {
 	AActor* Owner = GetOwner();
-	if (IsValid(Owner))
+	if (!IsValid(Owner))
 	{
-		const bool bIsServer = Owner->HasAuthority();
-		const FString RoleStr = bIsServer ? TEXT("🔴 서버") : TEXT("🔵 클라이언트");
-		
-		UE_LOG(LogTemp, Warning, TEXT("========================================"));
-		UE_LOG(LogTemp, Warning, TEXT("[자원 %s] Owner 액터 파괴 시작: %s"), *RoleStr, *Owner->GetName());
+		UE_LOG(LogTemp, Error, TEXT("[자원] DestroyOwnerActor: Owner가 이미 유효하지 않음!"));
+		return;
+	}
+	
+	const bool bIsServer = Owner->HasAuthority();
+	const FString RoleStr = bIsServer ? TEXT("🔴 서버") : TEXT("🔵 클라이언트");
+	
+	UE_LOG(LogTemp, Warning, TEXT("========================================"));
+	UE_LOG(LogTemp, Warning, TEXT("[자원 %s] Owner 액터 파괴 시작: %s"), *RoleStr, *Owner->GetName());
 		
 		// 1. 즉시 데미지 받기 비활성화 (중복 데미지 방지)
 		Owner->SetCanBeDamaged(false);
@@ -355,23 +394,22 @@ void UInv_ResourceComponent::DestroyOwnerActor()
 		Owner->SetActorHiddenInGame(true);
 		UE_LOG(LogTemp, Warning, TEXT("[자원 %s] 4. 액터 숨김 처리 완료"), *RoleStr);
 		
-		// 5. 네트워크 동기화 파괴 설정 (서버만)
-		if (bIsServer)
-		{
-			// SetReplicates(false) 대신 SetLifeSpan 사용 (네트워크 동기화 보장)
-			Owner->SetLifeSpan(0.01f); // 0.01초 후 자동 파괴 (클라이언트까지 동기화)
-			UE_LOG(LogTemp, Warning, TEXT("[자원 %s] 5. LifeSpan 0.01초 설정 (네트워크 동기화 파괴)"), *RoleStr);
-		}
-		else
-		{
-			// 클라이언트는 즉시 파괴
-			Owner->Destroy();
-			UE_LOG(LogTemp, Warning, TEXT("[자원 %s] 5. 클라이언트 즉시 파괴"), *RoleStr);
-		}
+	// 5. 네트워크 동기화 파괴 설정 (데디케이티드 서버 전용)
+	if (bIsServer)
+	{
+		// SetReplicates(false) 대신 SetLifeSpan 사용 (네트워크 동기화 보장)
+		Owner->SetLifeSpan(0.1f); // 0.1초 후 자동 파괴 (클라이언트까지 리플리케이션 동기화)
+		UE_LOG(LogTemp, Warning, TEXT("[자원 %s] 5. LifeSpan 0.1초 설정 (네트워크 동기화 파괴)"), *RoleStr);
+	}
+	else
+	{
+		// 데디케이티드 서버 환경: 클라이언트는 파괴하지 않음 (서버의 리플리케이션 대기)
+		UE_LOG(LogTemp, Warning, TEXT("[자원 %s] 5. 클라이언트: 서버 리플리케이션 대기 중 (파괴 안 함)"), *RoleStr);
+		// 참고: 서버가 SetLifeSpan으로 파괴하면 자동으로 클라이언트에도 파괴가 복제됨
+	}
 		
 		UE_LOG(LogTemp, Warning, TEXT("[자원 %s] ✅ 메시 숨김 + 충돌 비활성화 완료. 파괴 대기중..."), *RoleStr);
 		UE_LOG(LogTemp, Warning, TEXT("========================================"));
-	}
 }
 
 void UInv_ResourceComponent::PlaySoundAtResource(USoundBase* Sound)
@@ -401,10 +439,16 @@ void UInv_ResourceComponent::PlaySoundAtResource(USoundBase* Sound)
 
 void UInv_ResourceComponent::Multicast_PlaySoundAtLocation_Implementation(USoundBase* Sound, FVector Location)
 {
-	// 사운드가 유효한지 다시 확인 (네트워크 전송 후)
-	if (!Sound || !GetWorld())
+	// 데디케이티드 서버는 사운드를 재생하지 않음 (헤드리스 환경)
+	if (!GetWorld() || GetWorld()->GetNetMode() == NM_DedicatedServer)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[자원 사운드 Multicast] ❌ Sound 또는 World가 유효하지 않음!"));
+		return; // 서버에서는 즉시 리턴 (사운드 재생 불필요)
+	}
+
+	// 사운드가 유효한지 확인 (클라이언트만)
+	if (!Sound)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[자원 사운드 Multicast] ❌ Sound가 유효하지 않음!"));
 		return;
 	}
 
@@ -418,7 +462,7 @@ void UInv_ResourceComponent::Multicast_PlaySoundAtLocation_Implementation(USound
 	UE_LOG(LogTemp, Warning, TEXT("  - 볼륨: %.2f"), SoundVolumeMultiplier);
 	UE_LOG(LogTemp, Warning, TEXT("  - Attenuation: %s"), SoundAttenuation ? *SoundAttenuation->GetName() : TEXT("기본값 (먼 곳에서도 들릴 수 있음)"));
 
-	// 서버/클라이언트 모두에서 3D 사운드 재생
+	// 클라이언트에서만 3D 사운드 재생
 	UGameplayStatics::PlaySoundAtLocation(
 		GetWorld(),                    // World Context
 		Sound,                         // 재생할 사운드
