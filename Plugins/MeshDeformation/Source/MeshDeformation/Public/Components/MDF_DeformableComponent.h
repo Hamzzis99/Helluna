@@ -80,9 +80,9 @@ protected:
      * [Step 8 변경 - 2. 이펙트 동기화 (Track A)]
      * 기존의 ApplyDeformation을 PlayEffects로 변경합니다.
      * 총을 쏘는 그 순간에만 실행되며, 오직 사운드와 나이아가라 이펙트만 담당합니다. (모양 변형 X)
-     * Reliable: 이펙트도 중요하므로 Reliable 유지
+     * [최적화] Reliable -> Unreliable 변경 (기관총 연사 시 네트워크 부하 방지)
      */
-    UFUNCTION(NetMulticast, Reliable)
+    UFUNCTION(NetMulticast, Unreliable)
     void NetMulticast_PlayEffects(const TArray<FMDFHitData>& NewHits);
 
 public:
@@ -139,6 +139,22 @@ public:
     /** [MeshDeformation|설정] 근접 공격 판정용 클래스 */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|설정")
     TSubclassOf<UDamageType> MeleeDamageType;
+
+    // -------------------------------------------------------------------------
+    // [Step 9: 월드 파티션 영속성 지원]
+    // -------------------------------------------------------------------------
+
+    /** [Step 9] GameState에 내 데이터를 맡길 때 사용하는 고유 ID (신분증) */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MeshDeformation|설정", meta = (DisplayName = "고유 식별자(GUID)"))
+    FGuid ComponentGuid;
+
+    // -------------------------------------------------------------------------
+    // [Step 10: 수리 시스템]
+    // -------------------------------------------------------------------------
+
+    /** [Step 10] 메쉬를 원상복구(수리)하고 히스토리를 초기화합니다. (서버 전용) */ 
+    UFUNCTION(BlueprintCallable, Category = "MeshDeformation|수리", meta = (DisplayName = "메시 수리(RepairMesh)"))
+    void RepairMesh();
     
 private:
     /** [Step 6] 1프레임 동안 쌓인 타격 지점 리스트 (배칭 큐) */

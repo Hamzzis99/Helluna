@@ -11,7 +11,8 @@ public class Helluna : ModuleRules
         PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput" ,
             "GameplayAbilities", "GameplayTags","GameplayTasks", "AIModule", "NavigationSystem","AnimGraphRuntime", "MotionWarping",
             "DeveloperSettings", "Inventory", "UMG","Slate","SlateCore", "MassEntity","MassSpawner","MassRepresentation","MassActors",
-            "MassMovement","MassLOD", "MassCrowd"});
+            "MassMovement","MassLOD", "MassCrowd", "MeshDeformation", "Inventory"
+        });
         PrivateDependencyModuleNames.AddRange(new string[] { });
 
         // Uncomment if you are using Slate UI
