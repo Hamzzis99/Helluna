@@ -18,7 +18,6 @@ void UHeroGameplayAbility_Repair::ActivateAbility(const FGameplayAbilitySpecHand
 void UHeroGameplayAbility_Repair::EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled)
 {
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
-
 }
 
 void UHeroGameplayAbility_Repair::Repair(const FGameplayAbilityActorInfo* ActorInfo)
@@ -36,7 +35,7 @@ void UHeroGameplayAbility_Repair::Repair(const FGameplayAbilityActorInfo* ActorI
 	{
 		if (AResourceUsingObject_SpaceShip* Ship = GS->GetSpaceShip())
 		{
-			Ship->AddRepairResource(2); // ¼ö¸®¼öÄ¡ ÈÄ¿¡ Á¶Àý°¡´ÉÇÏµµ·Ï
+			Ship->AddRepairResource(2); // ìš°ì£¼ì„ ì— ìžì› ë“¤ì–´ê°€ëŠ” ë¡œì§
 		}
 	}
 

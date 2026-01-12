@@ -1,5 +1,5 @@
 // Fill out your copyright notice in the Description page of Project Settings.
-
+// 범위 방식
 
 #include "AbilitySystem/HeroAbility/HeroGameplayAbility_InRepair.h"
 #include "Blueprint/UserWidget.h"

@@ -78,7 +78,7 @@ void AHellunaDefenseGameMode::RestartGame()
 	if (!HasAuthority())
 		return;
 
-	GetWorld()->ServerTravel(TEXT("/Game/Minwoo/MinwooTestMap?listen"));       //ÈÄ¿¡ ¼öÁ¤ÇØ¾ßÇÒ µí?
+	GetWorld()->ServerTravel(TEXT("/Game/Minwoo/MinwooTestMap?listen"));       //ï¿½Ä¿ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Ø¾ï¿½ï¿½ï¿½ ï¿½ï¿½?
 }
 
 void AHellunaDefenseGameMode::SetBossReady(bool bReady)

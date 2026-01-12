@@ -450,21 +450,21 @@ void UInv_CraftingButton::UnbindInventoryDelegates()
 	InvComp->OnMaterialStacksChanged.RemoveDynamic(this, &ThisClass::OnMaterialStacksChanged);
 }
 
-void UInv_CraftingButton::OnInventoryItemAdded(UInv_InventoryItem* Item)
+void UInv_CraftingButton::OnInventoryItemAdded(UInv_InventoryItem* Item, int32 EntryIndex)
 {
-	UE_LOG(LogTemp, Log, TEXT("CraftingButton: 아이템 추가됨! 버튼 상태 재계산..."));
+	UE_LOG(LogTemp, Log, TEXT("CraftingButton: 아이템 추가됨! EntryIndex=%d, 버튼 상태 재계산..."), EntryIndex);
 	UpdateMaterialUI(); // 재료 UI 업데이트
 	UpdateButtonState();
 }
 
-void UInv_CraftingButton::OnInventoryItemRemoved(UInv_InventoryItem* Item)
+void UInv_CraftingButton::OnInventoryItemRemoved(UInv_InventoryItem* Item, int32 EntryIndex)
 {
-	UE_LOG(LogTemp, Warning, TEXT("=== CraftingButton: 아이템 제거됨! ==="));
+	UE_LOG(LogTemp, Warning, TEXT("=== CraftingButton: 아이템 제거됨! EntryIndex=%d ==="), EntryIndex);
 	if (IsValid(Item))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("제거된 아이템: %s"), *Item->GetItemManifest().GetItemType().ToString());
 	}
-	
+
 	UpdateMaterialUI(); // 재료 UI 업데이트
 	UpdateButtonState();
 }

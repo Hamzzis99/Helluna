@@ -34,6 +34,10 @@ public:
 	UInv_InventoryItem* GetInventoryItem() const;
 	void SetInventoryItem(UInv_InventoryItem* Item);
 
+	// ⭐ FastArray Entry Index (서버-클라이언트 포인터 불일치 해결용)
+	int32 GetEntryIndex() const { return EntryIndex; }
+	void SetEntryIndex(int32 Index) { EntryIndex = Index; }
+
 private:
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UImage> Image_Icon;
@@ -43,6 +47,7 @@ private:
 
 	//이전 그리드 인덱스를 알아내는 변수 우리가 Grid에서 알아내야 할 변수들
 	int32 PreviousGridIndex;
+	int32 EntryIndex{ INDEX_NONE }; // ⭐ FastArray Entry Index
 	FIntPoint GridDimensions;
 	TWeakObjectPtr<UInv_InventoryItem> InventoryItem;
 	bool bIsStackable{ false };

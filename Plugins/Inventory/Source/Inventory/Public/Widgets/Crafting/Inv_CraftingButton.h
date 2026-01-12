@@ -211,10 +211,10 @@ private:
 
 	// 인벤토리 변경 시 호출될 콜백 함수들
 	UFUNCTION()
-	void OnInventoryItemAdded(UInv_InventoryItem* Item);
+	void OnInventoryItemAdded(UInv_InventoryItem* Item, int32 EntryIndex);
 
 	UFUNCTION()
-	void OnInventoryItemRemoved(UInv_InventoryItem* Item);
+	void OnInventoryItemRemoved(UInv_InventoryItem* Item, int32 EntryIndex);
 
 	UFUNCTION()
 	void OnInventoryStackChanged(const FInv_SlotAvailabilityResult& Result);

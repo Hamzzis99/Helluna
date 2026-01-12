@@ -35,11 +35,12 @@ struct FInv_SlotAvailabilityResult
 
 	FInv_SlotAvailabilityResult() {} //엥 왜 재귀적인 방법을 쓰지?
 
-	
+
 	TWeakObjectPtr<UInv_InventoryItem> Item; // 아이템이 유효한지 확인하는 부분.
 	int32 TotalRoomToFill{ 0 }; // 채울 수 있는 공간 (0개면 불가능)
 	int32 Remainder{ 0 };
 	bool bStackable = {false }; // 쌓을 수 있는지
+	int32 EntryIndex{ INDEX_NONE }; // ⭐ FastArray Entry Index (서버-클라이언트 동기화용)
 	TArray<FInv_SlotAvailability> SlotAvailabilities; //슬롯 가능 여부를 만드는 것.
 };
 

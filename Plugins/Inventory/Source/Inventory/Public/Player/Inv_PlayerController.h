@@ -59,6 +59,10 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory")	
 	TEnumAsByte<ECollisionChannel> ItemTraceChannel; // 추적 채널? 충동 채널? 왜 굳이 Enum을 쓰는지 보자
 
+	// [추가] 문 작동 요청을 서버로 보내는 함수
+	UFUNCTION(Server, Reliable)
+	void Server_Interact(AActor* TargetActor);
+	
 
 	TWeakObjectPtr<AActor> ThisActor; // 객체에 대한 포인터는 유지하지만 가비지 컬렉션엔 영향은 없음
 	TWeakObjectPtr<AActor> LastActor; // 마지막으로 상호작용한 액터

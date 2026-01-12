@@ -270,18 +270,18 @@ void UInv_BuildingButton::UnbindInventoryDelegates()
 	UE_LOG(LogTemp, Log, TEXT("BuildingButton: 모든 델리게이트 언바인딩 완료"));
 }
 
-void UInv_BuildingButton::OnInventoryItemAdded(UInv_InventoryItem* Item)
+void UInv_BuildingButton::OnInventoryItemAdded(UInv_InventoryItem* Item, int32 EntryIndex)
 {
 	// 아이템이 추가되었을 때 (픽업, PutDown 포함)
-	UE_LOG(LogTemp, Log, TEXT("BuildingButton: 아이템 추가됨! 버튼 상태 재계산..."));
+	UE_LOG(LogTemp, Log, TEXT("BuildingButton: 아이템 추가됨! EntryIndex=%d, 버튼 상태 재계산..."), EntryIndex);
 	UpdateMaterialUI(); // 재료 UI 업데이트
 	UpdateButtonState();
 }
 
-void UInv_BuildingButton::OnInventoryItemRemoved(UInv_InventoryItem* Item)
+void UInv_BuildingButton::OnInventoryItemRemoved(UInv_InventoryItem* Item, int32 EntryIndex)
 {
 	// 아이템이 제거되었을 때 (드롭, 소비 포함)
-	UE_LOG(LogTemp, Log, TEXT("BuildingButton: 아이템 제거됨! 버튼 상태 재계산..."));
+	UE_LOG(LogTemp, Log, TEXT("BuildingButton: 아이템 제거됨! EntryIndex=%d, 버튼 상태 재계산..."), EntryIndex);
 	UpdateMaterialUI(); // 재료 UI 업데이트
 	UpdateButtonState();
 }

@@ -40,7 +40,7 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Repair")
     bool AddRepairResource(int32 Amount);
         
-    UFUNCTION(BlueprintPure, Category = "Repair")  //UIÀ§ÇØ ¼ö¸®µµ¸¦ ÆÛ¼¾Æ®·Î º¯È¯
+    UFUNCTION(BlueprintPure, Category = "Repair")  //UIï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Û¼ï¿½Æ®ï¿½ï¿½ ï¿½ï¿½È¯
     float GetRepairPercent() const;
 
 

@@ -9,7 +9,7 @@
 #include "Items/Components/Inv_ItemComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "Widgets/HUD/Inv_HUDWidget.h"
-
+#include "Interfaces/Inv_Interface_Primary.cpp"
 
 
 AInv_PlayerController::AInv_PlayerController()
@@ -77,6 +77,18 @@ void AInv_PlayerController::PrimaryInteract()
 {
 	if (!ThisActor.IsValid()) return;
 
+	// ==========================================================
+	// [0순위] 단순 상호작용 (인터페이스 검사) -> [수정] 서버 RPC 호출
+	// ==========================================================
+	if (ThisActor->Implements<UInv_Interface_Primary>())
+	{
+		// "서버야, 이 문 좀 열어줘!" (여기서 서버로 보냄)
+		Server_Interact(ThisActor.Get());
+       
+		// 서버로 보냈으니 클라이언트는 할 일 끝! 종료.
+		return; 
+	}
+	
 	// 1순위: 크래프팅 스테이션 상호작용
 	if (CurrentCraftingStation.IsValid() && CurrentCraftingStation == ThisActor)
 	{
@@ -97,6 +109,20 @@ void AInv_PlayerController::PrimaryInteract()
 	InventoryComponent->TryAddItem(ItemComp);
 }
 
+// 서버에서 실행되는 함수 구현 (맵 변경 함수)
+void AInv_PlayerController::Server_Interact_Implementation(AActor* TargetActor)
+{
+	if (!TargetActor) return;
+
+	// 서버가 다시 한 번 확인 (인터페이스가 있는지?)
+	if (TargetActor->Implements<UInv_Interface_Primary>())
+	{
+		// 이제 '서버'에서 실행되므로 MoveMapActor::Interact() 내부의 권한 체크를 통과합니다!
+		IInv_Interface_Primary::Execute_ExecuteInteract(TargetActor, this);
+        
+		UE_LOG(LogTemp, Log, TEXT("[Server] 문 상호작용 성공: %s"), *TargetActor->GetName());
+	}
+}
 
 void AInv_PlayerController::CreateHUDWidget() // 위젯 생성 부분
 {

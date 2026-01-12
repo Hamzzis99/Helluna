@@ -42,13 +42,20 @@ void FInv_InventoryFastArray::PreReplicatedRemove(const TArrayView<int32> Remove
 			UE_LOG(LogTemp, Warning, TEXT("🗑️ 제거될 아이템: %s (Index: %d)"), 
 				*ItemType.ToString(), Index);
 			
-			// ⭐ OnItemRemoved 델리게이트 브로드캐스트 (삭제 전이므로 안전)
-			IC->OnItemRemoved.Broadcast(RemovedItem);
-			
-			// ⭐ OnMaterialStacksChanged 델리게이트 브로드캐스트 (Tag 기반 - 안전!)
-			IC->OnMaterialStacksChanged.Broadcast(ItemType);
-			
-			UE_LOG(LogTemp, Warning, TEXT("✅ OnItemRemoved & OnMaterialStacksChanged 브로드캐스트 완료!"));
+			// ⭐ OnItemRemoved 델리게이트 브로드캐스트 (모든 아이템)
+			IC->OnItemRemoved.Broadcast(RemovedItem, Index);
+
+			// ⭐⭐⭐ Stackable 아이템만 OnMaterialStacksChanged 호출!
+			// Non-stackable(장비)은 UpdateMaterialStacksByTag 실행 안 함 (GameplayTag 기반 삭제 방지)
+			if (RemovedItem->IsStackable())
+			{
+				IC->OnMaterialStacksChanged.Broadcast(ItemType);
+				UE_LOG(LogTemp, Warning, TEXT("✅ OnItemRemoved & OnMaterialStacksChanged 브로드캐스트 완료 (Stackable)"));
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("✅ OnItemRemoved 브로드캐스트 완료 (Non-stackable, OnMaterialStacksChanged 스킵)"));
+			}
 		}
 		else
 		{
@@ -84,9 +91,10 @@ void FInv_InventoryFastArray::PostReplicatedAdd(const TArrayView<int32> AddedInd
 			continue;
 		}
 		
-		UE_LOG(LogTemp, Warning, TEXT("[PostReplicatedAdd] Index: %d, ItemType: %s"), 
+		UE_LOG(LogTemp, Warning, TEXT("[PostReplicatedAdd] Index: %d, ItemType: %s"),
 			Index, *Entries[Index].Item->GetItemManifest().GetItemType().ToString());
-		IC->OnItemAdded.Broadcast(Entries[Index].Item);
+		// ⭐ Entry Index도 함께 전달하여 클라이언트에서 저장 가능!
+		IC->OnItemAdded.Broadcast(Entries[Index].Item, Index);
 	}
 
 	UE_LOG(LogTemp, Warning, TEXT("=== PostReplicatedAdd 완료! ==="));

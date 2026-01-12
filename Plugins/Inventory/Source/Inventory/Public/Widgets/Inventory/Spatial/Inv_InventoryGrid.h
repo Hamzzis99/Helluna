@@ -45,10 +45,10 @@ public:
 	void OnHide(); // 인벤토리 숨기기 처리 함수
 	
 	UFUNCTION()
-	void AddItem(UInv_InventoryItem* Item); // 아이템 추가
+	void AddItem(UInv_InventoryItem* Item, int32 EntryIndex); // 아이템 추가 (EntryIndex 포함)
 
 	UFUNCTION()
-	void RemoveItem(UInv_InventoryItem* Item); // 아이템 제거 (UI에서 삭제)
+	void RemoveItem(UInv_InventoryItem* Item, int32 EntryIndex); // 아이템 제거 (EntryIndex로 정확히 매칭)
 
 	UFUNCTION()
 	void UpdateMaterialStacksByTag(const FGameplayTag& MaterialTag); // GameplayTag로 모든 스택 업데이트 (Building용)
@@ -82,7 +82,7 @@ private:
 	bool MatchesCategory(const UInv_InventoryItem* Item) const; // 카테고리 일치 여부 확인
 	FVector2D GetDrawSize(const FInv_GridFragment* GridFragment) const; // 그리드 조각의 그리기 크기 가져오기
 	void SetSlottedItemImage(const UInv_SlottedItem* SlottedItem, const FInv_GridFragment* GridFragment, const FInv_ImageFragment* ImageFragment) const; // 슬로티드 아이템 이미지 설정
-	void AddItemAtIndex(UInv_InventoryItem* Item, const int32 Index, const bool bStackable, const int32 StackAmount); // 인덱스에 아이템 추가
+	void AddItemAtIndex(UInv_InventoryItem* Item, const int32 Index, const bool bStackable, const int32 StackAmount, const int32 EntryIndex); // 인덱스에 아이템 추가
 	UInv_SlottedItem* CreateSlottedItem(UInv_InventoryItem* Item,
 		const bool bStackable,
 		const int32 StackAmount,

@@ -524,6 +524,9 @@ void UInv_InventoryGrid::AssignHoverItem(UInv_InventoryItem* InventoryItem, cons
 
 void UInv_InventoryGrid::RemoveItemFromGrid(UInv_InventoryItem* InventoryItem, const int32 GridIndex) // 아이템을 Hover 한 뒤로.
 {
+	UE_LOG(LogTemp, Warning, TEXT("[RemoveItemFromGrid] 호출됨: GridIndex=%d, Item=%s"),
+		GridIndex, IsValid(InventoryItem) ? *InventoryItem->GetItemManifest().GetItemType().ToString() : TEXT("NULL"));
+
 	const FInv_GridFragment* GridFragment = GetFragment<FInv_GridFragment>(InventoryItem, FragmentTags::GridFragment);
 	if (!GridFragment) return;
 
@@ -541,7 +544,14 @@ void UInv_InventoryGrid::RemoveItemFromGrid(UInv_InventoryItem* InventoryItem, c
 	{
 		TObjectPtr<UInv_SlottedItem> FoundSlottedItem;
 		SlottedItems.RemoveAndCopyValue(GridIndex, FoundSlottedItem);
+
+		UE_LOG(LogTemp, Log, TEXT("[RemoveItemFromGrid] SlottedItem 삭제: GridIndex=%d"), GridIndex);
+
 		FoundSlottedItem->RemoveFromParent();
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[RemoveItemFromGrid] GridIndex=%d는 SlottedItems에 없음"), GridIndex);
 	}
 }
 
@@ -734,7 +744,7 @@ void UInv_InventoryGrid::AddStacks(const FInv_SlotAvailabilityResult& Result)
 		}
 		else // 해당 인덱스에 아이템이 없는 경우
 		{
-			AddItemAtIndex(Result.Item.Get(), Availability.Index, Result.bStackable, Availability.AmountToFill); // 인덱스에 아이템 추가
+			AddItemAtIndex(Result.Item.Get(), Availability.Index, Result.bStackable, Availability.AmountToFill, Result.EntryIndex); // 인덱스에 아이템 추가
 			UpdateGridSlots(Result.Item.Get(), Availability.Index, Result.bStackable, Availability.AmountToFill); // 그리드 슬롯 업데이트
 		}
 	}
@@ -904,59 +914,81 @@ UInv_HoverItem* UInv_InventoryGrid::GetHoverItem() const
 }
 
 // 인벤토리 스택 쌓는 부분.
-void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item)
+void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 {
 	//아이템 그리드 체크 부분?
-	if (!MatchesCategory(Item)) return;
+	if (!MatchesCategory(Item))
+	{
+		UE_LOG(LogTemp, Log, TEXT("[AddItem] 카테고리 불일치: %s, Grid=%d"),
+			*Item->GetItemManifest().GetItemType().ToString(), (int32)ItemCategory);
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("========== [AddItem] 아이템 추가 시작 =========="));
+	UE_LOG(LogTemp, Warning, TEXT("[AddItem] Item=%s, EntryIndex=%d, Grid=%d"),
+		*Item->GetItemManifest().GetItemType().ToString(), EntryIndex, (int32)ItemCategory);
 
 	//공간이 있다고 부르는 부분.
 	FInv_SlotAvailabilityResult Result = HasRoomForItem(Item);
+	Result.EntryIndex = EntryIndex; // ⭐ Entry Index 저장
+
+	UE_LOG(LogTemp, Warning, TEXT("[AddItem] Result.EntryIndex=%d로 설정됨"), Result.EntryIndex);
 
 	// Create a widget to show the item icon and add it to the correct spot on the grid.
 	// 아이콘을 보여주고 그리드의 올바른 위치에 추가하는 위젯을 만듭니다.
 	AddItemToIndices(Result, Item);
 
+	UE_LOG(LogTemp, Warning, TEXT("========== [AddItem] 아이템 추가 완료 =========="));
 }
 
 // 인벤토리에서 아이템 제거 시 UI에서도 삭제
-void UInv_InventoryGrid::RemoveItem(UInv_InventoryItem* Item)
+// ⭐ 핵심 변경: EntryIndex는 로그용으로만 사용, 실제 매칭은 포인터 + ItemManifest로!
+void UInv_InventoryGrid::RemoveItem(UInv_InventoryItem* Item, int32 EntryIndex)
 {
 	if (!IsValid(Item))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("RemoveItem: Item is invalid!"));
+		UE_LOG(LogTemp, Warning, TEXT("[RemoveItem] Item is invalid!"));
 		return;
 	}
 
-	// 이 그리드 카테고리와 맞는지 확인
-	if (!MatchesCategory(Item))
-	{
-		UE_LOG(LogTemp, Warning, TEXT("RemoveItem: Item category doesn't match this grid."));
-		return;
-	}
+	UE_LOG(LogTemp, Warning, TEXT("[RemoveItem] ========== 제거 요청 시작 =========="));
+	UE_LOG(LogTemp, Warning, TEXT("[RemoveItem] ItemType=%s, EntryIndex=%d, Grid=%d"),
+		*Item->GetItemManifest().GetItemType().ToString(), EntryIndex, (int32)ItemCategory);
 
-	UE_LOG(LogTemp, Warning, TEXT("RemoveItem: 아이템 제거 시작 - %s"), *Item->GetItemManifest().GetItemType().ToString());
-
-	// SlottedItems에서 해당 Item을 가진 슬롯 찾기
+	// ⭐ 핵심 변경: EntryIndex는 로그용으로만 사용, 실제 매칭은 포인터 + ItemManifest로!
 	int32 FoundIndex = INDEX_NONE;
-	for (const auto& [Index, SlottedItem] : SlottedItems)
+
+	for (const auto& [GridIndex, SlottedItem] : SlottedItems)
 	{
-		if (GridSlots.IsValidIndex(Index) && GridSlots[Index]->GetInventoryItem() == Item)
+		if (!IsValid(SlottedItem)) continue;
+
+		UInv_InventoryItem* GridSlotItem = SlottedItem->GetInventoryItem();
+		if (!IsValid(GridSlotItem)) continue;
+
+		// 1차 검증: 포인터 비교
+		if (GridSlotItem == Item)
 		{
-			FoundIndex = Index;
-			UE_LOG(LogTemp, Warning, TEXT("RemoveItem: 슬롯 찾음! Index: %d"), Index);
-			break;
+			// 2차 검증: ItemManifest 비교 (안전장치)
+			if (GridSlotItem->GetItemManifest().GetItemType().MatchesTagExact(
+				Item->GetItemManifest().GetItemType()))
+			{
+				FoundIndex = GridIndex;
+				UE_LOG(LogTemp, Warning, TEXT("[RemoveItem] ✅ 슬롯 찾음! GridIndex=%d (포인터 일치 + Manifest 일치)"), GridIndex);
+				break;
+			}
 		}
 	}
 
 	if (FoundIndex == INDEX_NONE)
 	{
-		UE_LOG(LogTemp, Error, TEXT("RemoveItem: Item에 해당하는 슬롯을 찾지 못함!"));
+		UE_LOG(LogTemp, Warning, TEXT("[RemoveItem] ❌ Item을 찾지 못함 (다른 그리드에 있을 수 있음)"));
+		UE_LOG(LogTemp, Warning, TEXT("[RemoveItem] ========== 제거 요청 종료 (실패) =========="));
 		return;
 	}
 
-	// RemoveItemFromGrid 함수로 UI 삭제
 	RemoveItemFromGrid(Item, FoundIndex);
-	UE_LOG(LogTemp, Warning, TEXT("RemoveItem: UI에서 아이템 제거 완료!"));
+	UE_LOG(LogTemp, Warning, TEXT("[RemoveItem] ✅ 제거 완료! GridIndex=%d"), FoundIndex);
+	UE_LOG(LogTemp, Warning, TEXT("[RemoveItem] ========== 제거 요청 종료 (성공) =========="));
 }
 
 // GameplayTag로 모든 스택을 찾아서 업데이트 (Building 시스템용 - Split된 스택 처리)
@@ -1167,12 +1199,13 @@ void UInv_InventoryGrid::ConsumeItemsByTag(const FGameplayTag& MaterialTag, int3
 
 
 
-void UInv_InventoryGrid::AddItemToIndices(const FInv_SlotAvailabilityResult& Result, UInv_InventoryItem* NewItem) 
+void UInv_InventoryGrid::AddItemToIndices(const FInv_SlotAvailabilityResult& Result, UInv_InventoryItem* NewItem)
 {
 	for (const auto& Availability : Result.SlotAvailabilities)
 	{
-		AddItemAtIndex(NewItem, Availability.Index, Result.bStackable, Availability.AmountToFill);// 인덱스에 아이템 추가
-		UpdateGridSlots(NewItem, Availability.Index, Result.bStackable, Availability.AmountToFill);//그리드 슬롯 업데이트 부분
+		// ⭐ EntryIndex도 함께 전달하여 SlottedItem에 저장
+		AddItemAtIndex(NewItem, Availability.Index, Result.bStackable, Availability.AmountToFill, Result.EntryIndex);
+		UpdateGridSlots(NewItem, Availability.Index, Result.bStackable, Availability.AmountToFill);
 	}
 }
 
@@ -1193,8 +1226,11 @@ void UInv_InventoryGrid::SetSlottedItemImage(const UInv_SlottedItem* SlottedItem
 	SlottedItem->SetImageBrush(Brush); // 슬로티드 아이템에 브러시 설정
 }
 
-void UInv_InventoryGrid::AddItemAtIndex(UInv_InventoryItem* Item, const int32 Index, const bool bStackable, const int32 StackAmount)
+void UInv_InventoryGrid::AddItemAtIndex(UInv_InventoryItem* Item, const int32 Index, const bool bStackable, const int32 StackAmount, const int32 EntryIndex)
 {
+	UE_LOG(LogTemp, Log, TEXT("[AddItemAtIndex] GridIndex=%d, Item=%s"),
+		Index, *Item->GetItemManifest().GetItemType().ToString());
+
 	//격자의 크기를 얻어오자. 게임플레이 태그로 말야
 	// Get Grid Fragment so we know how many grid spaces the item takes.
 	// 텍스처와 아이콘도 여기서 얻어온다는건가?
@@ -1206,11 +1242,12 @@ void UInv_InventoryGrid::AddItemAtIndex(UInv_InventoryItem* Item, const int32 In
 	// Add the slotted item to the canvas panel.
 	// 슬롯 아이템을 캔버스 패널에 그려주는 곳. 또한 그리드 슬롯을 관리해주는 곳.
 	UInv_SlottedItem* SlottedItem = CreateSlottedItem(Item, bStackable, StackAmount, GridFragment, ImageFragment, Index);
+
 	AddSlottedItemToCanvas(Index, GridFragment, SlottedItem); // 캔버스에 슬로티드 아이템 추가하는 부분
 
 	// 삭제 소비 파괴 했을 때 이곳에.
 	// Store the new widget in a container.
-	SlottedItems.Add(Index, SlottedItem); // 인덱스와 슬로티드 아 이템 매핑
+	SlottedItems.Add(Index, SlottedItem); // 인덱스와 슬로티드 아이템 매핑
 }
 
 UInv_SlottedItem* UInv_InventoryGrid::CreateSlottedItem(UInv_InventoryItem* Item, const bool bStackable, const int32 StackAmount, const FInv_GridFragment* GridFragment, const FInv_ImageFragment* ImageFragment, const int32 Index)
@@ -1331,8 +1368,9 @@ void UInv_InventoryGrid::PutDownOnIndex(const int32 Index) // 집은 아이템�
 	UInv_InventoryItem* ItemToPutDown = HoverItem->GetInventoryItem();
 	const bool bIsStackable = HoverItem->IsStackable();
 	const int32 StackCount = HoverItem->GetStackCount();
-	
-	AddItemAtIndex(ItemToPutDown, Index, bIsStackable, StackCount); // 인덱스에 아이템 추가
+	const int32 EntryIndex = HoverItem->GetEntryIndex(); // ⭐ HoverItem에서 EntryIndex 가져오기
+
+	AddItemAtIndex(ItemToPutDown, Index, bIsStackable, StackCount, EntryIndex); // 인덱스에 아이템 추가
 	UpdateGridSlots(ItemToPutDown, Index, bIsStackable, StackCount); // 그리드 슬롯 업데이트
 	
 	// ⭐⭐⭐ Split 후 PutDown 시 서버 동기화는 불필요!
@@ -1402,17 +1440,18 @@ bool UInv_InventoryGrid::IsSameStackable(const UInv_InventoryItem* ClickedInvent
 void UInv_InventoryGrid::SwapWithHoverItem(UInv_InventoryItem* ClickedInventoryItem, const int32 GridIndex)
 {
 	if (!IsValid(HoverItem)) return; // 호버 아이템이 유효하다면 리턴
-	
+
 	// 임시로 저장해서 할당하는 이유가 뭘까?
 	UInv_InventoryItem* TempInventoryItem = HoverItem->GetInventoryItem(); // 호버 아이템 임시 저장
 	const int32 TempStackCount = HoverItem->GetStackCount(); // 호버 아이템 스택 수 임시 저장
 	const bool bTempIsStackable = HoverItem->IsStackable(); // 호버 아이템 스택 가능 여부 임시 저장
-	
+	const int32 TempEntryIndex = HoverItem->GetEntryIndex(); // ⭐ 호버 아이템 EntryIndex 임시 저장
+
 	// 이전 격자 인덱스를 유지시켜야 하는 부분.
 	// Keep the same previous grid index.
 	AssignHoverItem(ClickedInventoryItem, GridIndex, HoverItem->GetPreviousGridIndex()); // 클릭된 아이템을 호버 아이템으로 할당
 	RemoveItemFromGrid(ClickedInventoryItem, GridIndex); // 그리드에서 클릭된 아이템 제거
-	AddItemAtIndex(TempInventoryItem, ItemDropIndex, bTempIsStackable, TempStackCount); // 임시 저장된 아이템을 인덱스에 추가
+	AddItemAtIndex(TempInventoryItem, ItemDropIndex, bTempIsStackable, TempStackCount, TempEntryIndex); // 임시 저장된 아이템을 인덱스에 추가
 	UpdateGridSlots(TempInventoryItem, ItemDropIndex, bTempIsStackable, TempStackCount); // 그리드 슬롯 업데이트
 }
 
