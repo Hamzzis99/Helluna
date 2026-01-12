@@ -69,7 +69,8 @@ public:
 	void Server_CraftItemWithMaterials(TSubclassOf<AActor> ItemActorClass,
 		const FGameplayTag& MaterialTag1, int32 Amount1,
 		const FGameplayTag& MaterialTag2, int32 Amount2,
-		const FGameplayTag& MaterialTag3, int32 Amount3);
+		const FGameplayTag& MaterialTag3, int32 Amount3,
+		int32 CraftedAmount = 1);  // ⭐ 제작 개수 (기본값 1)
 
 	UFUNCTION(NetMulticast, Reliable) // 모든 클라이언트의 UI 업데이트 (Building 재료 차감)
 	void Multicast_ConsumeMaterialsUI(const FGameplayTag& MaterialTag, int32 Amount);

@@ -426,9 +426,11 @@ void UInv_InventoryComponent::Server_CraftItemWithMaterials_Implementation(
 	TSubclassOf<AActor> ItemActorClass,
 	const FGameplayTag& MaterialTag1, int32 Amount1,
 	const FGameplayTag& MaterialTag2, int32 Amount2,
-	const FGameplayTag& MaterialTag3, int32 Amount3)
+	const FGameplayTag& MaterialTag3, int32 Amount3,
+	int32 CraftedAmount)  // ⭐ 제작 개수 파라미터 추가!
 {
 	UE_LOG(LogTemp, Warning, TEXT("=== [SERVER CRAFT WITH MATERIALS] 시작 ==="));
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] 제작 개수: %d"), CraftedAmount);
 
 	// 서버 권한 체크
 	if (!GetOwner()->HasAuthority())
@@ -524,7 +526,145 @@ void UInv_InventoryComponent::Server_CraftItemWithMaterials_Implementation(
 		Server_ConsumeMaterialsMultiStack_Implementation(MaterialTag3, Amount3);
 	}
 
-	// ========== 5단계: 아이템 생성 ==========
+	// ========== 5단계: 아이템 생성 (⭐ 스택 검색 로직 추가!) ==========
+	FGameplayTag ItemType = ItemManifest.GetItemType();
+
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] 🔍 기존 스택 검색 시작: ItemType=%s"), *ItemType.ToString());
+
+	// ⭐ 픽업 로직과 동일하게: 기존 스택이 있는지 먼저 확인!
+	UInv_InventoryItem* ExistingItem = InventoryList.FindFirstItemByType(ItemType);
+
+	if (IsValid(ExistingItem))
+	{
+		int32 CurrentCount = ExistingItem->GetTotalStackCount();
+		bool bStackable = ExistingItem->IsStackable();
+
+		UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT]   ✅ 기존 스택 발견!"));
+		UE_LOG(LogTemp, Warning, TEXT("    Item포인터: %p"), ExistingItem);
+		UE_LOG(LogTemp, Warning, TEXT("    TotalStackCount: %d"), CurrentCount);
+		UE_LOG(LogTemp, Warning, TEXT("    IsStackable: %d"), bStackable);
+
+		// ⭐ Fragment와 비교
+		const FInv_StackableFragment* StackableFragment = ExistingItem->GetItemManifest().GetFragmentOfType<FInv_StackableFragment>();
+		if (StackableFragment)
+		{
+			int32 FragmentCount = StackableFragment->GetStackCount();
+			int32 MaxStackSize = StackableFragment->GetMaxStackSize();
+
+			UE_LOG(LogTemp, Warning, TEXT("    Fragment->GetStackCount(): %d"), FragmentCount);
+			UE_LOG(LogTemp, Warning, TEXT("    Fragment->GetMaxStackSize(): %d"), MaxStackSize);
+
+			if (CurrentCount != FragmentCount)
+			{
+				UE_LOG(LogTemp, Error, TEXT("    ❌ 불일치! TotalStackCount(%d) != Fragment.StackCount(%d)"),
+					CurrentCount, FragmentCount);
+			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("    ❌ StackableFragment가 없습니다!"));
+		}
+
+		if (bStackable)
+		{
+			int32 MaxStackSize = StackableFragment ? StackableFragment->GetMaxStackSize() : 1;
+
+			UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT]   스택 정보: %d / %d (MaxStackSize)"), CurrentCount, MaxStackSize);
+
+			if (CurrentCount < MaxStackSize)
+			{
+				// ⭐ 기존 스택에 CraftedAmount만큼 추가! (MaxStackSize 초과 방지)
+				int32 NewCount = FMath::Min(CurrentCount + CraftedAmount, MaxStackSize);
+
+				UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT]   ⭐ 기존 스택에 추가! %d → %d (추가량: %d)"),
+					CurrentCount, NewCount, CraftedAmount);
+
+				ExistingItem->SetTotalStackCount(NewCount);
+
+				// StackableFragment도 업데이트
+				FInv_ItemManifest& ExistingManifest = ExistingItem->GetItemManifestMutable();
+				if (FInv_StackableFragment* MutableStackFrag = ExistingManifest.GetFragmentOfTypeMutable<FInv_StackableFragment>())
+				{
+					MutableStackFrag->SetStackCount(NewCount);
+					UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT]   ✅ StackableFragment도 업데이트: %d"), MutableStackFrag->GetStackCount());
+				}
+				else
+				{
+					UE_LOG(LogTemp, Error, TEXT("[SERVER CRAFT]   ❌ MutableStackFragment를 가져올 수 없습니다!"));
+				}
+
+				// ⭐ 최종 확인 로그
+				int32 FinalTotalCount = ExistingItem->GetTotalStackCount();
+				const FInv_StackableFragment* FinalFragment = ExistingItem->GetItemManifest().GetFragmentOfType<FInv_StackableFragment>();
+				int32 FinalFragmentCount = FinalFragment ? FinalFragment->GetStackCount() : -1;
+				UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT]   📊 최종 확인: TotalStackCount=%d, Fragment.StackCount=%d"),
+					FinalTotalCount, FinalFragmentCount);
+
+				// FastArray에 변경 알림 (리플리케이션!)
+				for (auto& Entry : InventoryList.Entries)
+				{
+					if (Entry.Item == ExistingItem)
+					{
+						InventoryList.MarkItemDirty(Entry);
+						UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT]   ✅ MarkItemDirty 호출! 리플리케이션 활성화"));
+						break;
+					}
+				}
+
+				// ListenServer/Standalone에서는 OnItemAdded 델리게이트 브로드캐스트 (Non-Craftable용)
+				if (GetOwner()->GetNetMode() == NM_ListenServer || GetOwner()->GetNetMode() == NM_Standalone)
+				{
+					// Entry Index 찾기
+					int32 EntryIndex = INDEX_NONE;
+					for (int32 i = 0; i < InventoryList.Entries.Num(); ++i)
+					{
+						if (InventoryList.Entries[i].Item == ExistingItem)
+						{
+							EntryIndex = i;
+							break;
+						}
+					}
+
+					// ⭐ OnItemAdded로 직접 UI 업데이트 (AddItem이 기존 슬롯 감지)
+					OnItemAdded.Broadcast(ExistingItem, EntryIndex);
+					UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT]   ✅ OnItemAdded 브로드캐스트 완료! (EntryIndex=%d)"), EntryIndex);
+				}
+
+				UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ✅ 제작 완료! 기존 스택에 추가됨 (새 Entry 생성 안 함!)"));
+				UE_LOG(LogTemp, Warning, TEXT("=== [SERVER CRAFT WITH MATERIALS] 완료 ==="));
+				return; // ⭐ 여기서 리턴! 새 Entry 생성하지 않음!
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT]   ⚠️ 스택 가득 참 (%d/%d), 새 Entry 생성 필요"), CurrentCount, MaxStackSize);
+			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT]   ⚠️ 스택 불가능 아이템, 새 Entry 생성"));
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT]   ❌ 기존 스택 없음, 새 Entry 생성"));
+	}
+
+	// ========== 기존 스택이 없거나 가득 찬 경우: 새 Entry 생성 ==========
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] 🆕 새 Entry 생성: ItemType=%s"), *ItemType.ToString());
+
+	// ⭐ Manifest 전 ItemManifest 상태 확인
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] 📋 ItemManifest 상태 (Manifest 전):"));
+	const FInv_StackableFragment* PreManifestFragment = ItemManifest.GetFragmentOfType<FInv_StackableFragment>();
+	if (PreManifestFragment)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("    Fragment->GetStackCount(): %d"), PreManifestFragment->GetStackCount());
+		UE_LOG(LogTemp, Warning, TEXT("    Fragment->GetMaxStackSize(): %d"), PreManifestFragment->GetMaxStackSize());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("    StackableFragment 없음 (Non-stackable?)"));
+	}
+
 	UInv_InventoryItem* NewItem = ItemManifest.Manifest(GetOwner());
 	if (!IsValid(NewItem))
 	{
@@ -533,8 +673,53 @@ void UInv_InventoryComponent::Server_CraftItemWithMaterials_Implementation(
 		return;
 	}
 
+	// ⭐ 새 Item 생성 후 상태 확인
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] 🆕 새 Entry 생성 완료!"));
+	UE_LOG(LogTemp, Warning, TEXT("    Item포인터: %p"), NewItem);
+	UE_LOG(LogTemp, Warning, TEXT("    ItemType: %s"), *NewItem->GetItemManifest().GetItemType().ToString());
+
+	int32 InitialCount = NewItem->GetTotalStackCount();
+	UE_LOG(LogTemp, Warning, TEXT("    TotalStackCount (초기값): %d"), InitialCount);
+
+	const FInv_StackableFragment* NewItemFragment = NewItem->GetItemManifest().GetFragmentOfType<FInv_StackableFragment>();
+	if (NewItemFragment)
+	{
+		int32 FragmentCount = NewItemFragment->GetStackCount();
+		int32 MaxStackSize = NewItemFragment->GetMaxStackSize();
+
+		UE_LOG(LogTemp, Warning, TEXT("    StackableFragment 발견!"));
+		UE_LOG(LogTemp, Warning, TEXT("      Fragment->GetStackCount(): %d"), FragmentCount);
+		UE_LOG(LogTemp, Warning, TEXT("      Fragment->GetMaxStackSize(): %d"), MaxStackSize);
+
+		if (InitialCount != FragmentCount)
+		{
+			UE_LOG(LogTemp, Error, TEXT("    ❌ 불일치! TotalStackCount(%d) != Fragment.StackCount(%d)"),
+				InitialCount, FragmentCount);
+		}
+
+		// ⭐ 스택을 CraftedAmount로 초기화!
+		if (InitialCount == 0 || InitialCount != CraftedAmount)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("    ⭐ TotalStackCount를 CraftedAmount(%d)로 초기화!"), CraftedAmount);
+			NewItem->SetTotalStackCount(CraftedAmount);
+
+			// Fragment도 업데이트
+			FInv_ItemManifest& NewItemManifest = NewItem->GetItemManifestMutable();
+			if (FInv_StackableFragment* MutableFrag = NewItemManifest.GetFragmentOfTypeMutable<FInv_StackableFragment>())
+			{
+				MutableFrag->SetStackCount(CraftedAmount);
+			}
+
+			UE_LOG(LogTemp, Warning, TEXT("    최종 TotalStackCount: %d"), NewItem->GetTotalStackCount());
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("    ❌ StackableFragment가 없습니다 (Non-stackable 아이템)"));
+	}
+
 	InventoryList.AddEntry(NewItem);
-	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ✅ 제작 완료! 아이템 추가됨"));
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ✅ 제작 완료! 새 Entry 추가됨"));
 
 	// ListenServer/Standalone에서는 델리게이트 브로드캐스트
 	if (GetOwner()->GetNetMode() == NM_ListenServer || GetOwner()->GetNetMode() == NM_Standalone)

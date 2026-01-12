@@ -924,9 +924,37 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 		return;
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("========== [AddItem] 아이템 추가 시작 =========="));
+	UE_LOG(LogTemp, Warning, TEXT("========== [AddItem] 아이템 추가/업데이트 시작 =========="));
 	UE_LOG(LogTemp, Warning, TEXT("[AddItem] Item=%s, EntryIndex=%d, Grid=%d"),
 		*Item->GetItemManifest().GetItemType().ToString(), EntryIndex, (int32)ItemCategory);
+
+	// ⭐⭐⭐ 먼저 기존 슬롯에서 같은 Item 포인터를 찾음 (스택 업데이트용)
+	for (const auto& [Index, SlottedItem] : SlottedItems)
+	{
+		if (!GridSlots.IsValidIndex(Index)) continue;
+
+		UInv_InventoryItem* GridSlotItem = GridSlots[Index]->GetInventoryItem().Get();
+		if (GridSlotItem == Item) // ⭐ 포인터 비교로 같은 아이템인지 확인
+		{
+			// ✅ 기존 아이템 발견! 스택 카운트만 업데이트
+			int32 NewStackCount = Item->GetTotalStackCount();
+			int32 OldStackCount = GridSlots[Index]->GetStackCount();
+
+			UE_LOG(LogTemp, Warning, TEXT("[AddItem] ⭐ 기존 슬롯 발견! GridIndex=%d"), Index);
+			UE_LOG(LogTemp, Warning, TEXT("[AddItem]   스택 업데이트: %d → %d"), OldStackCount, NewStackCount);
+
+			GridSlots[Index]->SetStackCount(NewStackCount);
+			if (IsValid(SlottedItem))
+			{
+				SlottedItem->UpdateStackCount(NewStackCount);
+			}
+
+			UE_LOG(LogTemp, Warning, TEXT("========== [AddItem] 스택 업데이트 완료! =========="));
+			return; // ⭐ 새 슬롯 추가 필요 없음!
+		}
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[AddItem] 기존 슬롯 없음, 새 슬롯 생성..."));
 
 	//공간이 있다고 부르는 부분.
 	FInv_SlotAvailabilityResult Result = HasRoomForItem(Item);

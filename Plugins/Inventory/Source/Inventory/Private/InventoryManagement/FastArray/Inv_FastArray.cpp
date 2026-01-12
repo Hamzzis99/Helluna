@@ -108,7 +108,6 @@ void FInv_InventoryFastArray::PostReplicatedChange(const TArrayView<int32> Chang
 	UE_LOG(LogTemp, Warning, TEXT("=== PostReplicatedChange 호출됨 (FastArray) ==="));
 	UE_LOG(LogTemp, Warning, TEXT("📋 변경된 항목 개수: %d / 전체 Entry 수: %d"), ChangedIndices.Num(), Entries.Num());
 
-	// ⭐ 변경된 모든 Entry 처리 (멀티스택 UI 업데이트 지원!)
 	for (int32 Index : ChangedIndices)
 	{
 		if (!Entries.IsValidIndex(Index))
@@ -125,22 +124,50 @@ void FInv_InventoryFastArray::PostReplicatedChange(const TArrayView<int32> Chang
 		}
 
 		int32 NewStackCount = ChangedItem->GetTotalStackCount();
-		
-		UE_LOG(LogTemp, Warning, TEXT("📦 FastArray 변경 감지 [%d]: Item포인터=%p, ItemType=%s, NewStackCount=%d"), 
-			Index, ChangedItem, *ChangedItem->GetItemManifest().GetItemType().ToString(), NewStackCount);
-		
-		// OnStackChange 델리게이트 브로드캐스트 → InventoryGrid::AddStacks 호출!
-		FInv_SlotAvailabilityResult Result;
-		Result.Item = ChangedItem;
-		Result.bStackable = true;
-		Result.TotalRoomToFill = NewStackCount;
-		
-		IC->OnStackChange.Broadcast(Result);
-		
-		UE_LOG(LogTemp, Warning, TEXT("✅ OnStackChange 브로드캐스트 완료! UI 업데이트 요청됨 (Entry[%d], NewCount: %d)"), 
-			Index, NewStackCount);
+		EInv_ItemCategory Category = ChangedItem->GetItemManifest().GetItemCategory();
+
+		UE_LOG(LogTemp, Warning, TEXT("📦 FastArray 변경 감지 [%d]: Item포인터=%p, ItemType=%s, Category=%d, NewStackCount=%d"),
+			Index, ChangedItem, *ChangedItem->GetItemManifest().GetItemType().ToString(),
+			(int32)Category, NewStackCount);
+
+		// ⭐⭐⭐ Craftables(재료)만 AddStacks() 호출! (차감 로직)
+		if (Category == EInv_ItemCategory::Craftable)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("  → Craftable 재료: OnStackChange 호출 (차감/분배 로직)"));
+
+			FInv_SlotAvailabilityResult Result;
+			Result.Item = ChangedItem;
+			Result.bStackable = true;
+			Result.TotalRoomToFill = NewStackCount;
+			Result.EntryIndex = Index;
+
+			IC->OnStackChange.Broadcast(Result);  // AddStacks() 호출
+
+			UE_LOG(LogTemp, Warning, TEXT("✅ OnStackChange 브로드캐스트 완료! (Entry[%d], NewCount: %d)"),
+				Index, NewStackCount);
+		}
+		else
+		{
+			// ⭐⭐⭐ Equippables, Consumables는 직접 UI 업데이트!
+			UE_LOG(LogTemp, Warning, TEXT("  → Non-Craftable (Category=%d): OnItemStackChanged 호출 (직접 UI 업데이트)"),
+				(int32)Category);
+
+			// ⭐ OnStackChange 대신 OnItemStackChanged 브로드캐스트 (스택 증가 전용!)
+			// EntryIndex와 NewStackCount를 포함한 Result 생성
+			FInv_SlotAvailabilityResult Result;
+			Result.Item = ChangedItem;
+			Result.bStackable = true;
+			Result.TotalRoomToFill = NewStackCount;
+			Result.EntryIndex = Index;
+
+			// ⭐ 새로운 델리게이트 대신 기존 OnItemAdded 재사용 (UI가 아이템 찾아서 업데이트)
+			IC->OnItemAdded.Broadcast(ChangedItem, Index);
+
+			UE_LOG(LogTemp, Warning, TEXT("✅ OnItemAdded 브로드캐스트 완료! (Entry[%d], NewCount: %d)"),
+				Index, NewStackCount);
+		}
 	}
-	
+
 	UE_LOG(LogTemp, Warning, TEXT("=== PostReplicatedChange 완료 (총 %d개 Entry 처리됨) ==="), ChangedIndices.Num());
 }
 

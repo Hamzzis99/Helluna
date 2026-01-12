@@ -592,6 +592,21 @@ void UInv_CraftingButton::AddCraftedItemToInventory()
 	FInv_ItemManifest ItemManifest = ItemComp->GetItemManifest();
 	EInv_ItemCategory Category = ItemManifest.GetItemCategory();
 
+	// ⭐⭐⭐ StackableFragment에서 제작 개수 자동 읽기!
+	int32 CraftedAmount = 1;  // 기본값 1개
+
+	const FInv_StackableFragment* StackableFragment = ItemManifest.GetFragmentOfType<FInv_StackableFragment>();
+	if (StackableFragment)
+	{
+		CraftedAmount = StackableFragment->GetStackCount();
+		UE_LOG(LogTemp, Warning, TEXT("[CLIENT] ✅ StackableFragment 자동 감지! CraftedAmount=%d (MaxStack=%d)"),
+			CraftedAmount, StackableFragment->GetMaxStackSize());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[CLIENT] ⚠️ StackableFragment 없음 (Non-stackable), 기본값 1 사용"));
+	}
+
 	// 임시 Actor 파괴
 	TempActor->Destroy();
 
@@ -605,7 +620,8 @@ void UInv_CraftingButton::AddCraftedItemToInventory()
 			ItemActorClass,
 			RequiredMaterialTag, RequiredAmount,
 			RequiredMaterialTag2, RequiredAmount2,
-			RequiredMaterialTag3, RequiredAmount3
+			RequiredMaterialTag3, RequiredAmount3,
+			CraftedAmount  // ⭐ 제작 개수 전달!
 		);
 		return;
 	}
@@ -619,7 +635,8 @@ void UInv_CraftingButton::AddCraftedItemToInventory()
 			ItemActorClass,
 			RequiredMaterialTag, RequiredAmount,
 			RequiredMaterialTag2, RequiredAmount2,
-			RequiredMaterialTag3, RequiredAmount3
+			RequiredMaterialTag3, RequiredAmount3,
+			CraftedAmount  // ⭐ 제작 개수 전달!
 		);
 		return;
 	}
@@ -649,7 +666,8 @@ void UInv_CraftingButton::AddCraftedItemToInventory()
 			ItemActorClass,
 			RequiredMaterialTag, RequiredAmount,
 			RequiredMaterialTag2, RequiredAmount2,
-			RequiredMaterialTag3, RequiredAmount3
+			RequiredMaterialTag3, RequiredAmount3,
+			CraftedAmount  // ⭐ 제작 개수 전달!
 		);
 		return;
 	}
@@ -669,12 +687,13 @@ void UInv_CraftingButton::AddCraftedItemToInventory()
 	}
 
 	// 공간 있음! 서버 RPC 호출
-	UE_LOG(LogTemp, Warning, TEXT("[CLIENT] ✅ 공간 확인됨! 서버로 제작 요청 전송"));
+	UE_LOG(LogTemp, Warning, TEXT("[CLIENT] ✅ 공간 확인됨! 서버로 제작 요청 전송 (개수: %d)"), CraftedAmount);
 	InvComp->Server_CraftItemWithMaterials(
 		ItemActorClass,
 		RequiredMaterialTag, RequiredAmount,
 		RequiredMaterialTag2, RequiredAmount2,
-		RequiredMaterialTag3, RequiredAmount3
+		RequiredMaterialTag3, RequiredAmount3,
+		CraftedAmount  // ⭐ 제작 개수 전달!
 	);
 
 	UE_LOG(LogTemp, Warning, TEXT("=== [CLIENT] 서버에 제작 요청 전송 완료 ==="));
