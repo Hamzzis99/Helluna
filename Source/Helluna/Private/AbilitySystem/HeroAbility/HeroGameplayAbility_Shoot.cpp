@@ -33,10 +33,16 @@ void UHeroGameplayAbility_Shoot::Shoot()
 	AHellunaHeroWeapon* Weapon = Hero->GetCurrentWeapon();
 	if (!Weapon) return;
 
+	AController* Controller = Hero->GetController();
+	if (Controller)
+	{
+		Weapon->Fire(Controller);
+	}
+
 	// 위로 튀는 반동
 	const float PitchKick = Weapon->ReboundUp;
 	const float YawKick = FMath::RandRange(-Weapon->ReboundLeftRight, Weapon->ReboundLeftRight);
 
 	Character->AddControllerPitchInput(-PitchKick);
-	Character->AddControllerYawInput(YawKick);
+	Character->AddControllerYawInput(YawKick);	
 }
