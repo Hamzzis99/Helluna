@@ -75,7 +75,12 @@ void UHeroGameplayAbility_Repair::Repair(const FGameplayAbilityActorInfo* ActorI
 						Widget->InitializeWidget(RepairComp, InvComp);
 						Widget->AddToViewport(100);  // 최상위 Z-Order
 
+						// ⭐ 마우스 커서 표시 및 입력 모드 변경
+						PC->SetInputMode(FInputModeUIOnly());
+						PC->bShowMouseCursor = true;
+
 						UE_LOG(LogTemp, Warning, TEXT("  ✅ RepairMaterial Widget 생성 완료!"));
+						UE_LOG(LogTemp, Warning, TEXT("  🖱️ 마우스 커서 활성화!"));
 					}
 				}
 				else
