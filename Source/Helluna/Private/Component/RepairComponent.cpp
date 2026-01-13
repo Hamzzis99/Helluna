@@ -1,0 +1,367 @@
+// Fill out your copyright notice in the Description page of Project Settings.
+
+#include "Component/RepairComponent.h"
+#include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
+#include "Character/HellunaHeroCharacter.h"
+#include "InventoryManagement/Components/Inv_InventoryComponent.h"
+#include "InventoryManagement/Utils/Inv_InventoryStatics.h"  // ⭐ 추가!
+#include "GameMode/HellunaDefenseGameMode.h"  // ⭐ 추가!
+#include "Kismet/GameplayStatics.h"
+#include "Particles/ParticleSystem.h"
+#include "Sound/SoundBase.h"
+#include "Net/UnrealNetwork.h"
+#include "TimerManager.h"
+
+#include "DebugHelper.h"
+
+URepairComponent::URepairComponent()
+{
+	PrimaryComponentTick.bCanEverTick = false;
+	SetIsReplicatedByDefault(true);
+}
+
+void URepairComponent::BeginPlay()
+{
+	Super::BeginPlay();
+
+	UE_LOG(LogTemp, Warning, TEXT("[RepairComponent] BeginPlay - Owner: %s"), *GetOwner()->GetName());
+}
+
+void URepairComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(URepairComponent, RepairQueue);
+	DOREPLIFETIME(URepairComponent, bProcessingRepair);
+}
+
+// ========================================
+// [서버 RPC] Repair 요청 처리
+// ========================================
+
+void URepairComponent::Server_ProcessRepairRequest_Implementation(
+	APlayerController* PlayerController,
+	FGameplayTag Material1Tag,
+	int32 Material1Amount,
+	FGameplayTag Material2Tag,
+	int32 Material2Amount)
+{
+	UE_LOG(LogTemp, Warning, TEXT("=== [Server_ProcessRepairRequest] 시작 ==="));
+	UE_LOG(LogTemp, Warning, TEXT("  Player: %s"), PlayerController ? *PlayerController->GetName() : TEXT("nullptr"));
+	UE_LOG(LogTemp, Warning, TEXT("  Material1: %s x %d"), *Material1Tag.ToString(), Material1Amount);
+	UE_LOG(LogTemp, Warning, TEXT("  Material2: %s x %d"), *Material2Tag.ToString(), Material2Amount);
+
+	// 서버가 아니면 실행 금지
+	if (!GetOwner()->HasAuthority())
+	{
+		UE_LOG(LogTemp, Error, TEXT("  ❌ 서버가 아님! 실행 중단"));
+		return;
+	}
+
+	// 유효성 검증
+	if (!PlayerController)
+	{
+		UE_LOG(LogTemp, Error, TEXT("  ❌ PlayerController가 nullptr!"));
+		return;
+	}
+
+	// 요청 생성
+	FRepairRequest NewRequest;
+	NewRequest.PlayerController = PlayerController;
+	NewRequest.Material1Tag = Material1Tag;
+	NewRequest.Material1Amount = Material1Amount;
+	NewRequest.Material2Tag = Material2Tag;
+	NewRequest.Material2Amount = Material2Amount;
+
+	// 큐에 추가
+	RepairQueue.Add(NewRequest);
+	UE_LOG(LogTemp, Warning, TEXT("  ✅ Repair 요청 큐에 추가됨! 큐 크기: %d"), RepairQueue.Num());
+
+	// 현재 처리 중이 아니면 즉시 처리 시작
+	if (!bProcessingRepair)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("  🔧 즉시 처리 시작!"));
+		ProcessNextRepairRequest();
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("  ⏳ 다른 Repair 처리 중... 큐에서 대기"));
+	}
+}
+
+// ========================================
+// [내부 함수] 다음 Repair 요청 처리
+// ========================================
+
+void URepairComponent::ProcessNextRepairRequest()
+{
+	UE_LOG(LogTemp, Warning, TEXT("=== [ProcessNextRepairRequest] 시작 ==="));
+
+	// 큐가 비어있으면 종료
+	if (RepairQueue.Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("  ✅ Repair 큐 비어있음. 처리 완료!"));
+		bProcessingRepair = false;
+		return;
+	}
+
+	bProcessingRepair = true;
+
+	// 큐에서 첫 번째 요청 가져오기
+	FRepairRequest Request = RepairQueue[0];
+	RepairQueue.RemoveAt(0);
+
+	UE_LOG(LogTemp, Warning, TEXT("  📋 처리할 요청: Player=%s, Material1=%s x %d, Material2=%s x %d"),
+		Request.PlayerController ? *Request.PlayerController->GetName() : TEXT("nullptr"),
+		*Request.Material1Tag.ToString(), Request.Material1Amount,
+		*Request.Material2Tag.ToString(), Request.Material2Amount);
+
+	// ========================================
+	// 1. 재료 유효성 검증
+	// ========================================
+
+	bool bMaterial1Valid = false;
+	bool bMaterial2Valid = false;
+
+	if (Request.Material1Amount > 0 && Request.Material1Tag.IsValid())
+	{
+		bMaterial1Valid = ValidateMaterial(Request.PlayerController, Request.Material1Tag, Request.Material1Amount);
+		if (!bMaterial1Valid)
+		{
+			UE_LOG(LogTemp, Error, TEXT("  ❌ 재료 1 유효성 검증 실패!"));
+		}
+	}
+
+	if (Request.Material2Amount > 0 && Request.Material2Tag.IsValid())
+	{
+		bMaterial2Valid = ValidateMaterial(Request.PlayerController, Request.Material2Tag, Request.Material2Amount);
+		if (!bMaterial2Valid)
+		{
+			UE_LOG(LogTemp, Error, TEXT("  ❌ 재료 2 유효성 검증 실패!"));
+		}
+	}
+
+	// 하나라도 유효하면 진행
+	if (!bMaterial1Valid && !bMaterial2Valid)
+	{
+		UE_LOG(LogTemp, Error, TEXT("  ❌ 모든 재료 유효성 검증 실패! 다음 요청으로 넘어감"));
+		ProcessNextRepairRequest();
+		return;
+	}
+
+	// ========================================
+	// 2. 인벤토리에서 재료 소비
+	// ========================================
+
+	int32 TotalResource = 0;
+
+	if (bMaterial1Valid)
+	{
+		ConsumeMaterialFromInventory(Request.PlayerController, Request.Material1Tag, Request.Material1Amount);
+		TotalResource += Request.Material1Amount * MaterialToResourceRatio;
+		UE_LOG(LogTemp, Warning, TEXT("  ✅ 재료 1 소비 완료! 자원: +%d"), Request.Material1Amount * MaterialToResourceRatio);
+	}
+
+	if (bMaterial2Valid)
+	{
+		ConsumeMaterialFromInventory(Request.PlayerController, Request.Material2Tag, Request.Material2Amount);
+		TotalResource += Request.Material2Amount * MaterialToResourceRatio;
+		UE_LOG(LogTemp, Warning, TEXT("  ✅ 재료 2 소비 완료! 자원: +%d"), Request.Material2Amount * MaterialToResourceRatio);
+	}
+
+	// ========================================
+	// 3. SpaceShip에 자원 추가
+	// ========================================
+
+	AddResourceToTarget(TotalResource);
+	UE_LOG(LogTemp, Warning, TEXT("  ✅ SpaceShip에 자원 추가 완료! 총 자원: %d"), TotalResource);
+
+	// ========================================
+	// 4. 애니메이션 재생 (멀티캐스트)
+	// ========================================
+
+	int32 TotalAmount = (bMaterial1Valid ? Request.Material1Amount : 0) + (bMaterial2Valid ? Request.Material2Amount : 0);
+	FVector OwnerLocation = GetOwner()->GetActorLocation();
+
+	Multicast_PlayRepairAnimation(OwnerLocation, TotalAmount);
+	UE_LOG(LogTemp, Warning, TEXT("  🎬 애니메이션 재생 요청! 총 개수: %d"), TotalAmount);
+
+	// ========================================
+	// 5. 다음 요청 처리 (애니메이션 시간 후)
+	// ========================================
+
+	float AnimationDuration = MaterialInsertDelay * TotalAmount;
+	FTimerHandle NextRequestTimerHandle;
+
+	GetWorld()->GetTimerManager().SetTimer(
+		NextRequestTimerHandle,
+		this,
+		&URepairComponent::ProcessNextRepairRequest,
+		AnimationDuration,
+		false
+	);
+
+	UE_LOG(LogTemp, Warning, TEXT("  ⏱️ 다음 요청 처리 예약: %.2f초 후"), AnimationDuration);
+	UE_LOG(LogTemp, Warning, TEXT("=== [ProcessNextRepairRequest] 완료 ==="));
+}
+
+// ========================================
+// [내부 함수] 재료 유효성 검증
+// ========================================
+
+bool URepairComponent::ValidateMaterial(APlayerController* PlayerController, FGameplayTag MaterialTag, int32 Amount)
+{
+	// 1. AllowedMaterialTags에 포함되어 있는지 확인
+	if (AllowedMaterialTags.Num() > 0 && !AllowedMaterialTags.Contains(MaterialTag))
+	{
+		UE_LOG(LogTemp, Error, TEXT("  ❌ 허용되지 않은 재료: %s"), *MaterialTag.ToString());
+		return false;
+	}
+
+	// 2. PlayerController에서 Inventory Component 가져오기 (UInv_InventoryStatics 사용!)
+	UInv_InventoryComponent* InvComp = UInv_InventoryStatics::GetInventoryComponent(PlayerController);
+	if (!InvComp)
+	{
+		UE_LOG(LogTemp, Error, TEXT("  ❌ Inventory Component를 찾을 수 없음!"));
+		return false;
+	}
+
+	// 3. 인벤토리에 재료가 충분한지 확인
+	int32 AvailableAmount = InvComp->GetTotalMaterialCount(MaterialTag);
+	if (AvailableAmount < Amount)
+	{
+		UE_LOG(LogTemp, Error, TEXT("  ❌ 재료 부족! 필요: %d, 보유: %d"), Amount, AvailableAmount);
+		return false;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("  ✅ 재료 유효성 검증 통과! %s x %d (보유: %d)"), *MaterialTag.ToString(), Amount, AvailableAmount);
+	return true;
+}
+
+// ========================================
+// [내부 함수] 인벤토리에서 재료 소비
+// ========================================
+
+void URepairComponent::ConsumeMaterialFromInventory(APlayerController* PlayerController, FGameplayTag MaterialTag, int32 Amount)
+{
+	// PlayerController에서 Inventory Component 가져오기 (UInv_InventoryStatics 사용!)
+	UInv_InventoryComponent* InvComp = UInv_InventoryStatics::GetInventoryComponent(PlayerController);
+	if (!InvComp)
+		return;
+
+	UE_LOG(LogTemp, Warning, TEXT("  🔧 인벤토리에서 재료 소비: %s x %d"), *MaterialTag.ToString(), Amount);
+
+	// ⭐ Inventory의 Server RPC 호출 (FastArray 리플리케이션 자동 실행!)
+	InvComp->Server_ConsumeMaterialsMultiStack(MaterialTag, Amount);
+
+	UE_LOG(LogTemp, Warning, TEXT("  ✅ 재료 소비 완료! FastArray 리플리케이션 자동 실행됨"));
+}
+
+// ========================================
+// [내부 함수] SpaceShip에 자원 추가
+// ========================================
+
+void URepairComponent::AddResourceToTarget(int32 TotalResource)
+{
+	// Owner가 SpaceShip인지 확인
+	AResourceUsingObject_SpaceShip* SpaceShip = Cast<AResourceUsingObject_SpaceShip>(GetOwner());
+	if (!SpaceShip)
+	{
+		UE_LOG(LogTemp, Error, TEXT("  ❌ Owner가 SpaceShip이 아님!"));
+		return;
+	}
+
+	// SpaceShip에 자원 추가
+	SpaceShip->AddRepairResource(TotalResource);
+
+	UE_LOG(LogTemp, Warning, TEXT("  ✅ SpaceShip에 자원 추가 완료! +%d"), TotalResource);
+}
+
+// ========================================
+// [멀티캐스트] 애니메이션 재생
+// ========================================
+
+void URepairComponent::Multicast_PlayRepairAnimation_Implementation(FVector RepairLocation, int32 TotalAmount)
+{
+	UE_LOG(LogTemp, Warning, TEXT("=== [Multicast_PlayRepairAnimation] 시작 ==="));
+	UE_LOG(LogTemp, Warning, TEXT("  위치: %s, 개수: %d"), *RepairLocation.ToString(), TotalAmount);
+
+	// 애니메이션 설정
+	AnimationLocation = RepairLocation;
+	CurrentAnimationCount = 0;
+	TargetAnimationCount = TotalAmount;
+
+	// 타이머 시작
+	if (TargetAnimationCount > 0)
+	{
+		GetWorld()->GetTimerManager().SetTimer(
+			AnimationTimerHandle,
+			this,
+			&URepairComponent::PlayMaterialInsertAnimationStep,
+			MaterialInsertDelay,
+			true  // 반복
+		);
+	}
+}
+
+// ========================================
+// [내부 함수] 애니메이션 단계별 재생
+// ========================================
+
+void URepairComponent::PlayMaterialInsertAnimationStep()
+{
+	if (CurrentAnimationCount >= TargetAnimationCount)
+	{
+		// 애니메이션 완료
+		GetWorld()->GetTimerManager().ClearTimer(AnimationTimerHandle);
+		OnAnimationComplete();
+		return;
+	}
+
+	CurrentAnimationCount++;
+
+	UE_LOG(LogTemp, Log, TEXT("  🎬 애니메이션 재생: %d/%d"), CurrentAnimationCount, TargetAnimationCount);
+
+	// 파티클 이펙트 재생
+	if (RepairParticleEffect)
+	{
+		UGameplayStatics::SpawnEmitterAtLocation(
+			GetWorld(),
+			RepairParticleEffect,
+			AnimationLocation
+		);
+	}
+
+	// 사운드 재생
+	if (RepairSound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(
+			GetWorld(),
+			RepairSound,
+			AnimationLocation
+		);
+	}
+}
+
+// ========================================
+// [내부 함수] 애니메이션 완료
+// ========================================
+
+void URepairComponent::OnAnimationComplete()
+{
+	UE_LOG(LogTemp, Warning, TEXT("  ✅ 애니메이션 완료!"));
+	UE_LOG(LogTemp, Warning, TEXT("=== [Multicast_PlayRepairAnimation] 완료 ==="));
+}
+
+// ========================================
+// [Public Functions]
+// ========================================
+
+bool URepairComponent::IsMaterialAllowed(FGameplayTag MaterialTag) const
+{
+	// AllowedMaterialTags가 비어있으면 모든 재료 허용
+	if (AllowedMaterialTags.Num() == 0)
+		return true;
+
+	return AllowedMaterialTags.Contains(MaterialTag);
+}

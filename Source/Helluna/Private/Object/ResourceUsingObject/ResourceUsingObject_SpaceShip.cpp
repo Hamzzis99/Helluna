@@ -13,7 +13,7 @@
 #include "debughelper.h"
 
 
-// ¹Ú½º ¹üÀ§³»¿¡ µé¾î¿Ã½Ã ¼ö¸® °¡´É ¹üÀ§ ´É·Â È°¼ºÈ­(UI)
+// ë°•ìŠ¤ ë²”ìœ„ë‚´ì— ë“¤ì–´ì˜¬ì‹œ ìˆ˜ë¦¬ ê°€ëŠ¥ ë²”ìœ„ ëŠ¥ë ¥ í™œì„±í™”(UI)
 void AResourceUsingObject_SpaceShip::CollisionBoxBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
 {
 	TArray<AActor*> Overlaps;
@@ -26,7 +26,7 @@ void AResourceUsingObject_SpaceShip::CollisionBoxBeginOverlap(UPrimitiveComponen
 
 }
 
-// ¹Ú½º ¹üÀ§³»¿¡¼­ ¹ş¾î³¯½Ã ¼ö¸® °¡´É ¹üÀ§ ´É·Â ºñÈ°¼ºÈ­(UI)
+// ë°•ìŠ¤ ë²”ìœ„ë‚´ì—ì„œ ë²—ì–´ë‚ ì‹œ ìˆ˜ë¦¬ ê°€ëŠ¥ ë²”ìœ„ ëŠ¥ë ¥ ë¹„í™œì„±í™”(UI)
 void AResourceUsingObject_SpaceShip::CollisionBoxEndOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex)
 {
 	if (AHellunaHeroCharacter* OverlappedHeroCharacter = Cast<AHellunaHeroCharacter>(OtherActor))
@@ -36,7 +36,7 @@ void AResourceUsingObject_SpaceShip::CollisionBoxEndOverlap(UPrimitiveComponent*
 
 }
 
-//ÀÚ¿ø·®À» ´õÇÏ´Â ÇÔ¼ö
+//ìì›ëŸ‰ì„ ë”í•˜ëŠ” í•¨ìˆ˜
 bool AResourceUsingObject_SpaceShip::AddRepairResource(int32 Amount)
 {
 	if (!HasAuthority())
@@ -48,28 +48,35 @@ bool AResourceUsingObject_SpaceShip::AddRepairResource(int32 Amount)
 
 	OnRepairProgressChanged.Broadcast(CurrentResource, NeedResource);
 
+	// ìˆ˜ë¦¬ ì™„ë£Œ ì²´í¬!
+	if (IsRepaired())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("=== ğŸ‰ SpaceShip ìˆ˜ë¦¬ ì™„ë£Œ! CurrentResource: %d / NeedResource: %d ==="), CurrentResource, NeedResource);
+		OnRepairCompleted();
+	}
+
 	return true;
 }
 
-// UIÀ§ÇØ ¼ö¸®µµ¸¦ ÆÛ¼¾Æ®·Î º¯È¯
+// UIìœ„í•´ ìˆ˜ë¦¬ë„ë¥¼ í¼ì„¼íŠ¸ë¡œ ë³€í™˜
 float AResourceUsingObject_SpaceShip::GetRepairPercent() const
 {
 	return NeedResource > 0 ? (float)CurrentResource / (float)NeedResource : 1.f;
 }
 
-// ¼ö¸® ¿Ï·á ¿©ºÎ
+// ìˆ˜ë¦¬ ì™„ë£Œ ì—¬ë¶€
 bool AResourceUsingObject_SpaceShip::IsRepaired() const
 { 
 	return CurrentResource >= NeedResource;
 }
 
-// ÇöÀç ¼ö¸®·®ÀÌ º¯°æÀÌ ½ÅÈ£¸¦ ÁÖ´Â ÇÔ¼ö
+// í˜„ì¬ ìˆ˜ë¦¬ëŸ‰ì´ ë³€ê²½ì´ ì‹ í˜¸ë¥¼ ì£¼ëŠ” í•¨ìˆ˜
 void AResourceUsingObject_SpaceShip::OnRep_CurrentResource()
 {
 	OnRepairProgressChanged.Broadcast(CurrentResource, NeedResource);
 }
 
-//¼­¹ö¿¡¼­ ¼ö¸®·®ÀÌ ¹Ù²î¸é Å¬¶óÀÌ¾ğÆ® °»½Å
+//ì„œë²„ì—ì„œ ìˆ˜ë¦¬ëŸ‰ì´ ë°”ë€Œë©´ í´ë¼ì´ì–¸íŠ¸ ê°±ì‹ 
 void AResourceUsingObject_SpaceShip::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
@@ -77,14 +84,14 @@ void AResourceUsingObject_SpaceShip::GetLifetimeReplicatedProps(TArray<FLifetime
 	DOREPLIFETIME(AResourceUsingObject_SpaceShip, CurrentResource);
 }
 
-//»ı¼ºÀÚ º¹Á¦(¼­¹ö¿¡¼­ »ı¼º½Ã Å¬¶ó¿¡¼­µµ »ı¼º)
+//ìƒì„±ì ë³µì œ(ì„œë²„ì—ì„œ ìƒì„±ì‹œ í´ë¼ì—ì„œë„ ìƒì„±)
 AResourceUsingObject_SpaceShip::AResourceUsingObject_SpaceShip()
 {
 	bReplicates = true;
 	bAlwaysRelevant = true;
 }
 
-// °ÔÀÓ ½ÃÀÛ½Ã °ÔÀÓ »óÅÂ¿¡ ¿ìÁÖ¼± µî·Ï
+// ê²Œì„ ì‹œì‘ì‹œ ê²Œì„ ìƒíƒœì— ìš°ì£¼ì„  ë“±ë¡
 void AResourceUsingObject_SpaceShip::BeginPlay()
 {
 	Super::BeginPlay();
@@ -96,4 +103,23 @@ void AResourceUsingObject_SpaceShip::BeginPlay()
 	{
 		GS->RegisterSpaceShip(this);
 	}
+}
+
+// ìƒˆë¡œ ì¶”ê°€: ìˆ˜ë¦¬ ì™„ë£Œ ì²˜ë¦¬
+void AResourceUsingObject_SpaceShip::OnRepairCompleted_Implementation()
+{
+	UE_LOG(LogTemp, Warning, TEXT("=== [OnRepairCompleted] ìˆ˜ë¦¬ ì™„ë£Œ ì´ë²¤íŠ¸ ì‹¤í–‰ ==="));
+
+	// â­ 1. ë¸ë¦¬ê²Œì´íŠ¸ ë¸Œë¡œë“œìºìŠ¤íŠ¸ (UIì—ì„œ ìŠ¹ë¦¬ í™”ë©´ í‘œì‹œ)
+	OnRepairCompleted_Delegate.Broadcast();
+	UE_LOG(LogTemp, Warning, TEXT("  ğŸ“¢ OnRepairCompleted_Delegate ë¸Œë¡œë“œìºìŠ¤íŠ¸!"));
+
+	// â­ 2. GameModeì— ì•Œë¦¼ (ë³´ìŠ¤ ì†Œí™˜)
+	if (AHellunaDefenseGameMode* GameMode = GetWorld()->GetAuthGameMode<AHellunaDefenseGameMode>())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("  ğŸ”¥ GameModeì— ì•Œë¦¼: ë³´ìŠ¤ ì†Œí™˜ ì¤€ë¹„!"));
+		GameMode->SetBossReady(true);  // â† ê¸°ì¡´ í•¨ìˆ˜ ì‚¬ìš©! (ì¦‰ì‹œ ë³´ìŠ¤ ì†Œí™˜)
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("=== [OnRepairCompleted] ì™„ë£Œ ==="));
 }

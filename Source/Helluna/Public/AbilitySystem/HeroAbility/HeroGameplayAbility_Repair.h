@@ -6,6 +6,8 @@
 #include "AbilitySystem/HellunaHeroGameplayAbility.h"
 #include "HeroGameplayAbility_Repair.generated.h"
 
+class URepairMaterialWidget;
+
 /**
  * 
  */
@@ -21,6 +23,9 @@ protected:
 
 private:
 	void Repair(const FGameplayAbilityActorInfo* ActorInfo);
-	
+
+	// ⭐ Blueprint에서 설정할 Widget 클래스
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Repair|Widget", meta = (AllowPrivateAccess = "true"))
+	TSubclassOf<URepairMaterialWidget> RepairMaterialWidgetClass;
 	
 };

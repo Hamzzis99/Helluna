@@ -28,7 +28,7 @@
 
 		FVector ViewLoc;
 		FRotator ViewRot;
-		InstigatorController->GetPlayerViewPoint(ViewLoc, ViewRot);  //Ä«¸Ş¶ó ±âÁØ ½ÃÁ¡À¸·Î ¹ß»ç
+		InstigatorController->GetPlayerViewPoint(ViewLoc, ViewRot);  //ì¹´ë©”ë¼ ê¸°ì¤€ ì‹œì ìœ¼ë¡œ ë°œì‚¬
 
 		const FVector TraceStart = ViewLoc;
 		const FVector TraceEnd = TraceStart + (ViewRot.Vector() * Range);
@@ -39,7 +39,7 @@
 		}	
 		else
 		{
-			ServerFire(InstigatorController, TraceStart, TraceEnd);  //¼­¹ö¿¡ ¹ß»ç ¿äÃ»
+			ServerFire(InstigatorController, TraceStart, TraceEnd);  //ì„œë²„ì— ë°œì‚¬ ìš”ì²­
 		}
 	}
 
@@ -50,7 +50,7 @@
 
 	void AHeroWeapon_AssaultRifle::DoLineTraceAndDamage(AController* InstigatorController, const FVector& TraceStart, const FVector& TraceEnd)
 	{
-		// ¡°½ÇÁ¦ È÷Æ®ÆÇÁ¤ + µ¥¹ÌÁö Àû¿ë¡± ÇÙ½É ÇÔ¼ö
+		// â€œì‹¤ì œ íˆíŠ¸íŒì • + ë°ë¯¸ì§€ ì ìš©â€ í•µì‹¬ í•¨ìˆ˜
 
 		UWorld* World = GetWorld();
 		if (!World || !InstigatorController)
@@ -62,7 +62,7 @@
 		APawn* Pawn = InstigatorController->GetPawn();
 		if (Pawn)
 		{
-			Params.AddIgnoredActor(Pawn); // ÀÚ±â ÀÚ½Å(¹ß»çÀÚ) ¸Â´Â °Í ¹æÁö
+			Params.AddIgnoredActor(Pawn); // ìê¸° ìì‹ (ë°œì‚¬ì) ë§ëŠ” ê²ƒ ë°©ì§€
 		}
 
 		FHitResult Hit;
@@ -74,7 +74,7 @@
 			Params
 		);
 
-		// ¸Â¾ÒÀ¸¸é È÷Æ® À§Ä¡, ¾Æ´Ï¸é ³¡Á¡
+		// ë§ì•˜ìœ¼ë©´ íˆíŠ¸ ìœ„ì¹˜, ì•„ë‹ˆë©´ ëì 
 		const FVector HitLocation = bHit ? Hit.ImpactPoint : TraceEnd;
 
 		if (bHit)
@@ -94,14 +94,14 @@
 			}
 		}
 
-		// ¼­¹ö¿¡¼­ FX µ¿±âÈ­ È£Ãâ (Unreliable: ÃÑ¾Ë FX´Â ¼Õ½ÇµÅµµ Å« ¹®Á¦ ¾øÀ½)
+		// ì„œë²„ì—ì„œ FX ë™ê¸°í™” í˜¸ì¶œ (Unreliable: ì´ì•Œ FXëŠ” ì†ì‹¤ë¼ë„ í° ë¬¸ì œ ì—†ìŒ)
 		MulticastFireFX(TraceStart, TraceEnd, bHit, HitLocation);
 
 	}
 
 	void AHeroWeapon_AssaultRifle::MulticastFireFX_Implementation(FVector_NetQuantize TraceStart, FVector_NetQuantize TraceEnd, bool bHit, FVector_NetQuantize HitLocation)
 	{
-		// ¡°¸ğµç Å¬¶óÀÌ¾ğÆ®¿¡¼­ º¸ÀÌ´Â ¿¬Ãâ¡± Àü¿ë
+		// â€œëª¨ë“  í´ë¼ì´ì–¸íŠ¸ì—ì„œ ë³´ì´ëŠ” ì—°ì¶œâ€ ì „ìš©
 
 		const FVector SpawnLoc = bHit ? (FVector)HitLocation : (FVector)TraceEnd;
 		if (ImpactFX)
@@ -111,7 +111,7 @@
 				ImpactFX,
 				SpawnLoc,
 				FRotator::ZeroRotator,
-				ImpactFXScale,   // ¿¡µğÅÍ¿¡¼­ Á¶Àı °¡´É
+				ImpactFXScale,   // ì—ë””í„°ì—ì„œ ì¡°ì ˆ ê°€ëŠ¥
 				true,
 				true,
 				ENCPoolMethod::AutoRelease

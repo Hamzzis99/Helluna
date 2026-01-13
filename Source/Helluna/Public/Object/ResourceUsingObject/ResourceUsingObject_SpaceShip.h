@@ -12,6 +12,9 @@
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnRepairProgressChanged, int32, Current, int32, Need);
 
+// ⭐ 새로 추가: 수리 완료 델리게이트
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnSpaceShipRepairCompleted);
+
 
 UCLASS()
 class HELLUNA_API AResourceUsingObject_SpaceShip : public AHellunaBaseResourceUsingObject
@@ -37,6 +40,10 @@ public:
     UPROPERTY(BlueprintAssignable, Category = "Repair")
     FOnRepairProgressChanged OnRepairProgressChanged;
 
+    // ⭐ 새로 추가: 수리 완료 델리게이트
+    UPROPERTY(BlueprintAssignable, Category = "Repair")
+    FOnSpaceShipRepairCompleted OnRepairCompleted_Delegate;
+
     UFUNCTION(BlueprintCallable, Category = "Repair")
     bool AddRepairResource(int32 Amount);
         
@@ -56,5 +63,9 @@ public:
 
     UFUNCTION(BlueprintPure, Category = "Repair")
     int32 GetNeedResource() const { return NeedResource; }
+
+    // ⭐ 새로 추가: 수리 완료 이벤트 (Blueprint에서도 오버라이드 가능)
+    UFUNCTION(BlueprintNativeEvent, Category = "Repair")
+    void OnRepairCompleted();
 	
 };
