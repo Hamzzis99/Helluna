@@ -15,6 +15,7 @@
 AHellunaDefenseGameMode::AHellunaDefenseGameMode()
 {
 	PrimaryActorTick.bCanEverTick = false;
+	bUseSeamlessTravel = true; // 모두가 맵이동을 할 시 같이 이동하게 설정하는 것.
 }
 
 void AHellunaDefenseGameMode::BeginPlay()
