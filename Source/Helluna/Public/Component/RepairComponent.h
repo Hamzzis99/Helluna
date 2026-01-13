@@ -53,7 +53,7 @@ struct FRepairRequest
  * - Inventory의 Craftable 재료를 소비하여 자원 추가
  * - 멀티플레이 환경에서 동시 Repair 요청을 큐로 처리
  */
-UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
+UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent), Blueprintable)
 class HELLUNA_API URepairComponent : public UActorComponent
 {
 	GENERATED_BODY()
@@ -99,6 +99,13 @@ public:
 	UFUNCTION(NetMulticast, Reliable, Category = "Repair")
 	void Multicast_PlayRepairAnimation(FVector RepairLocation, int32 TotalAmount);
 
+	/**
+	 * ⭐ 단일 이펙트/사운드 재생 (재료 개수와 무관하게 1번만 재생)
+	 * @param RepairLocation - 이펙트 재생 위치
+	 */
+	UFUNCTION(NetMulticast, Reliable, Category = "Repair")
+	void Multicast_PlaySingleRepairEffect(FVector RepairLocation);
+
 	// ========================================
 	// [Blueprint에서 설정 가능]
 	// ========================================
@@ -136,10 +143,34 @@ public:
 	bool IsMaterialAllowed(FGameplayTag MaterialTag) const;
 
 	/**
+	 * ⭐ 재료의 표시 이름 가져오기 (UI용)
+	 * @param MaterialTag - 확인할 재료 GameplayTag
+	 * @return 표시 이름 (없으면 GameplayTag 문자열)
+	 */
+	UFUNCTION(BlueprintPure, Category = "Repair")
+	FText GetMaterialDisplayName(FGameplayTag MaterialTag) const;
+
+	/**
 	 * 현재 Repair 진행 중인지 확인
 	 */
 	UFUNCTION(BlueprintPure, Category = "Repair")
 	bool IsProcessingRepair() const { return bProcessingRepair; }
+
+	/**
+	 * ⭐ 테스트용: 단순 재료 소비 (Server RPC)
+	 * @param PlayerController - 플레이어
+	 * @param MaterialTag - 소비할 재료 Tag
+	 * @param Amount - 소비할 개수
+	 */
+	UFUNCTION(Server, Reliable, BlueprintCallable, Category = "Repair|Test")
+	void Server_TestConsumeMaterial(APlayerController* PlayerController, FGameplayTag MaterialTag, int32 Amount);
+
+	/**
+	 * ⭐ 재료 소비 후 자원 추가 (클라이언트에서 서버 RPC 호출)
+	 * @param TotalResource - 추가할 자원 개수
+	 */
+	UFUNCTION(Server, Reliable, BlueprintCallable, Category = "Repair")
+	void Server_AddRepairResourceFromMaterials(int32 TotalResource);
 
 private:
 	// ========================================
@@ -164,6 +195,13 @@ private:
 	/** 애니메이션 완료 후 호출 */
 	void OnAnimationComplete();
 
+	// ⭐ 모든 플레이어의 InventoryComponent에 델리게이트 바인딩
+	void BindToAllPlayerInventories();
+
+	// ⭐ InventoryComponent의 OnMaterialStacksChanged 델리게이트 콜백
+	UFUNCTION()
+	void OnMaterialConsumed(const FGameplayTag& MaterialTag);
+
 	// ========================================
 	// [멤버 변수]
 	// ========================================
@@ -187,4 +225,11 @@ private:
 
 	/** 애니메이션 재생 위치 */
 	FVector AnimationLocation = FVector::ZeroVector;
+
+	/** 플레이어 체크 타이머 핸들 (새 플레이어 접속 감지용) */
+	FTimerHandle PlayerCheckTimerHandle;
+
+	/** 바인딩된 InventoryComponent 목록 (중복 바인딩 방지) */
+	UPROPERTY()
+	TSet<TObjectPtr<UInv_InventoryComponent>> BoundInventoryComponents;
 };

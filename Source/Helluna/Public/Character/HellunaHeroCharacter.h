@@ -85,4 +85,7 @@ public:
 	AHellunaHeroWeapon* GetCurrentWeapon() const { return CurrentWeapon; }
 	void SetCurrentWeapon(AHellunaHeroWeapon* NewWeapon) { CurrentWeapon = NewWeapon; }
 
+	// ⭐ SpaceShip 수리 RPC (PlayerController가 소유하므로 작동!)
+	UFUNCTION(Server, Reliable, BlueprintCallable, Category = "Repair")
+	void Server_RepairSpaceShip(int32 TotalResource);
 };

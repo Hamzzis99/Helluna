@@ -3,10 +3,13 @@
 #include "Widgets/RepairMaterialWidget.h"
 #include "Component/RepairComponent.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
+#include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
+#include "Character/HellunaHeroCharacter.h"
 #include "Components/Button.h"
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
 #include "Components/Slider.h"
+#include "Kismet/GameplayStatics.h"
 
 #include "DebugHelper.h"
 
@@ -173,33 +176,65 @@ void URepairMaterialWidget::OnConfirmClicked()
 	UE_LOG(LogTemp, Warning, TEXT("    - 재료 1: %s x %d"), *Material1Tag.ToString(), Material1UseAmount);
 	UE_LOG(LogTemp, Warning, TEXT("    - 재료 2: %s x %d"), *Material2Tag.ToString(), Material2UseAmount);
 
-	// PlayerController 가져오기
-	APlayerController* PC = GetOwningPlayer();
-	if (!PC)
+	// ⭐⭐⭐ CraftingButton 방식: InventoryComponent를 통한 재료 차감!
+	if (!InventoryComponent)
 	{
-		UE_LOG(LogTemp, Error, TEXT("  ❌ PlayerController를 찾을 수 없음!"));
+		UE_LOG(LogTemp, Error, TEXT("  ❌ InventoryComponent가 nullptr!"));
 		return;
 	}
 
-	// ⭐ RepairComponent의 Server RPC 호출!
-	RepairComponent->Server_ProcessRepairRequest(
-		PC,
-		Material1Tag,
-		Material1UseAmount,
-		Material2Tag,
-		Material2UseAmount
-	);
+	UE_LOG(LogTemp, Warning, TEXT("  🧪 재료 차감: InventoryComponent->Server_ConsumeMaterialsMultiStack 호출"));
+	
+	if (Material1UseAmount > 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("    📤 재료 1 차감: %s x %d"), *Material1Tag.ToString(), Material1UseAmount);
+		InventoryComponent->Server_ConsumeMaterialsMultiStack(Material1Tag, Material1UseAmount);
+	}
+	
+	if (Material2UseAmount > 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("    📤 재료 2 차감: %s x %d"), *Material2Tag.ToString(), Material2UseAmount);
+		InventoryComponent->Server_ConsumeMaterialsMultiStack(Material2Tag, Material2UseAmount);
+	}
 
-	UE_LOG(LogTemp, Warning, TEXT("  ✅ Repair 요청 전송 완료!"));
+	UE_LOG(LogTemp, Warning, TEXT("  ✅ 재료 차감 요청 전송 완료!"));
+
+	// ⭐ HeroCharacter의 Server RPC 호출 (PlayerController 소유!)
+	int32 TotalResourceAdded = Material1UseAmount + Material2UseAmount;
+	UE_LOG(LogTemp, Warning, TEXT("  📤 SpaceShip에 자원 추가 요청: +%d"), TotalResourceAdded);
+
+	// PlayerController에서 HeroCharacter 가져오기
+	if (APlayerController* PC = GetOwningPlayer())
+	{
+		if (AHellunaHeroCharacter* HeroCharacter = Cast<AHellunaHeroCharacter>(PC->GetPawn()))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("  ✅ HeroCharacter 찾음: %s"), *HeroCharacter->GetName());
+			UE_LOG(LogTemp, Warning, TEXT("  🔧 HeroCharacter->Server_RepairSpaceShip(%d) 호출"), TotalResourceAdded);
+			
+			// HeroCharacter는 PlayerController가 소유 → Server RPC 작동! ✅
+			HeroCharacter->Server_RepairSpaceShip(TotalResourceAdded);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("  ❌ HeroCharacter 캐스팅 실패!"));
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("  ❌ PlayerController를 찾을 수 없음!"));
+	}
 
 	// ⭐ 입력 모드 복원 (게임 모드로 전환)
-	PC->SetInputMode(FInputModeGameOnly());
-	PC->bShowMouseCursor = false;
+	APlayerController* PC = GetOwningPlayer();
+	if (PC)
+	{
+		PC->SetInputMode(FInputModeGameOnly());
+		PC->bShowMouseCursor = false;
+		UE_LOG(LogTemp, Warning, TEXT("  🖱️ 마우스 커서 비활성화!"));
+	}
 
 	// Widget 닫기
 	RemoveFromParent();
-
-	UE_LOG(LogTemp, Warning, TEXT("  🖱️ 마우스 커서 비활성화!"));
 }
 
 void URepairMaterialWidget::OnCancelClicked()

@@ -11,6 +11,7 @@
 #include "Items/Inv_InventoryItem.h"
 #include "Items/Fragments/Inv_ItemFragment.h"
 #include "Building/Components/Inv_BuildingComponent.h"
+#include "Kismet/GameplayStatics.h"
 
 UInv_InventoryComponent::UInv_InventoryComponent() : InventoryList(this)
 {

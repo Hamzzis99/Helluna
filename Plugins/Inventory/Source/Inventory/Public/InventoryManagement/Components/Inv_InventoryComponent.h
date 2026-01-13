@@ -14,7 +14,7 @@
 class UInv_ItemComponent;
 class UInv_InventoryItem;
 class UInv_InventoryBase;
-class UInv_InventoryGrid;  // ⭐ Forward declaration 추가
+class UInv_InventoryGrid;
 struct FInv_ItemManifest;
 
 //델리게이트

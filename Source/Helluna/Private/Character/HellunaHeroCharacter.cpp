@@ -13,7 +13,9 @@
 #include "AbilitySystem/HellunaAbilitySystemComponent.h"
 #include "DataAsset/DataAsset_HeroStartUpData.h"
 #include "Conponent/HeroCombatComponent.h"
-
+#include "Kismet/GameplayStatics.h"
+#include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
+#include "Component/RepairComponent.h"
 
 #include "DebugHelper.h"
 
@@ -145,5 +147,69 @@ void AHellunaHeroCharacter::Input_AbilityInputReleased(FGameplayTag InInputTag)
 		HellunaAbilitySystemComponent->OnAbilityInputReleased(InInputTag);
 	}
 
+}
+
+// ⭐ SpaceShip 수리 Server RPC
+void AHellunaHeroCharacter::Server_RepairSpaceShip_Implementation(int32 TotalResource)
+{
+	UE_LOG(LogTemp, Warning, TEXT("=== [HeroCharacter::Server_RepairSpaceShip] 호출됨! ==="));
+	UE_LOG(LogTemp, Warning, TEXT("  추가할 자원: %d"), TotalResource);
+	UE_LOG(LogTemp, Warning, TEXT("  서버 여부: %s"), HasAuthority() ? TEXT("서버 ✅") : TEXT("클라이언트 ❌"));
+
+	// 서버 권한 체크
+	if (!HasAuthority())
+	{
+		UE_LOG(LogTemp, Error, TEXT("  ❌ 서버가 아님!"));
+		return;
+	}
+
+	// 자원이 0 이하면 무시
+	if (TotalResource <= 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("  ⚠️ 자원이 0 이하! 무시"));
+		return;
+	}
+
+	// World에서 "SpaceShip" 태그를 가진 Actor 찾기
+	TArray<AActor*> FoundActors;
+	UGameplayStatics::GetAllActorsWithTag(GetWorld(), FName("SpaceShip"), FoundActors);
+
+	if (FoundActors.Num() == 0)
+	{
+		UE_LOG(LogTemp, Error, TEXT("  ❌ SpaceShip을 찾을 수 없음! 'SpaceShip' 태그 확인 필요"));
+		return;
+	}
+
+	// SpaceShip 찾음
+	if (AResourceUsingObject_SpaceShip* SpaceShip = Cast<AResourceUsingObject_SpaceShip>(FoundActors[0]))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("  ✅ SpaceShip 찾음: %s"), *SpaceShip->GetName());
+		
+		// ⭐ RepairComponent 가져오기
+		URepairComponent* RepairComp = SpaceShip->FindComponentByClass<URepairComponent>();
+		if (RepairComp)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("  ✅ RepairComponent 찾음!"));
+			
+			// ⭐⭐⭐ 1. 애니메이션/사운드를 **한 번만** 재생 (멀티캐스트)
+			FVector SpaceShipLocation = SpaceShip->GetActorLocation();
+			RepairComp->Multicast_PlaySingleRepairEffect(SpaceShipLocation);
+			UE_LOG(LogTemp, Warning, TEXT("  🎬 애니메이션/사운드 한 번 재생 요청!"));
+		}
+		
+		// 2. 자원 추가
+		UE_LOG(LogTemp, Warning, TEXT("  🔧 SpaceShip->AddRepairResource(%d) 호출"), TotalResource);
+		bool bSuccess = SpaceShip->AddRepairResource(TotalResource);
+		
+		UE_LOG(LogTemp, Warning, TEXT("  🔧 AddRepairResource 결과: %s"), bSuccess ? TEXT("성공 ✅") : TEXT("실패 ❌"));
+		UE_LOG(LogTemp, Warning, TEXT("  📊 현재 수리 진행도: %d / %d"), 
+			SpaceShip->GetCurrentResource(), SpaceShip->GetNeedResource());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("  ❌ SpaceShip 캐스팅 실패!"));
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("=== [HeroCharacter::Server_RepairSpaceShip] 완료! ==="));
 }
 

@@ -4,8 +4,8 @@
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 #include "Character/HellunaHeroCharacter.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
-#include "InventoryManagement/Utils/Inv_InventoryStatics.h"  // ⭐ 추가!
-#include "GameMode/HellunaDefenseGameMode.h"  // ⭐ 추가!
+#include "InventoryManagement/Utils/Inv_InventoryStatics.h"
+#include "GameMode/HellunaDefenseGameMode.h"
 #include "Kismet/GameplayStatics.h"
 #include "Particles/ParticleSystem.h"
 #include "Sound/SoundBase.h"
@@ -13,6 +13,8 @@
 #include "TimerManager.h"
 
 #include "DebugHelper.h"
+#include "Items/Components/Inv_ItemComponent.h"
+#include "Items/Manifest/Inv_ItemManifest.h"
 
 URepairComponent::URepairComponent()
 {
@@ -25,6 +27,22 @@ void URepairComponent::BeginPlay()
 	Super::BeginPlay();
 
 	UE_LOG(LogTemp, Warning, TEXT("[RepairComponent] BeginPlay - Owner: %s"), *GetOwner()->GetName());
+
+	// ⭐ 서버에서만 델리게이트 바인딩
+	if (GetOwner()->HasAuthority())
+	{
+		// ⭐ 모든 플레이어의 InventoryComponent 찾기 및 델리게이트 바인딩
+		BindToAllPlayerInventories();
+		
+		// ⭐ 새 플레이어 접속 시 자동 바인딩 (타이머로 주기적 체크)
+		GetWorld()->GetTimerManager().SetTimer(
+			PlayerCheckTimerHandle,
+			this,
+			&URepairComponent::BindToAllPlayerInventories,
+			5.0f,  // 5초마다 체크
+			true   // 반복
+		);
+	}
 }
 
 void URepairComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -247,14 +265,34 @@ void URepairComponent::ConsumeMaterialFromInventory(APlayerController* PlayerCon
 	// PlayerController에서 Inventory Component 가져오기 (UInv_InventoryStatics 사용!)
 	UInv_InventoryComponent* InvComp = UInv_InventoryStatics::GetInventoryComponent(PlayerController);
 	if (!InvComp)
+	{
+		UE_LOG(LogTemp, Error, TEXT("  ❌ ConsumeMaterial: InventoryComponent를 찾을 수 없음!"));
 		return;
+	}
 
-	UE_LOG(LogTemp, Warning, TEXT("  🔧 인벤토리에서 재료 소비: %s x %d"), *MaterialTag.ToString(), Amount);
+	UE_LOG(LogTemp, Warning, TEXT("  🔧 인벤토리에서 재료 소비 시작: %s x %d"), *MaterialTag.ToString(), Amount);
+	
+	// ⭐ Component는 GetOwner()->HasAuthority()로 체크!
+	AActor* Owner = GetOwner();
+	bool bIsServer = Owner && Owner->HasAuthority();
+	UE_LOG(LogTemp, Warning, TEXT("      서버 여부: %s"), bIsServer ? TEXT("서버 ✅") : TEXT("클라이언트 ❌"));
+
+	// ⭐ 소비 전 보유량 확인 (로그용)
+	int32 BeforeAmount = InvComp->GetTotalMaterialCount(MaterialTag);
+	UE_LOG(LogTemp, Warning, TEXT("      소비 전 보유량: %d"), BeforeAmount);
 
 	// ⭐ Inventory의 Server RPC 호출 (FastArray 리플리케이션 자동 실행!)
 	InvComp->Server_ConsumeMaterialsMultiStack(MaterialTag, Amount);
 
-	UE_LOG(LogTemp, Warning, TEXT("  ✅ 재료 소비 완료! FastArray 리플리케이션 자동 실행됨"));
+	// ⭐ 소비 후 보유량 확인 (로그용) - 서버에서만 즉시 반영됨
+	if (bIsServer)
+	{
+		int32 AfterAmount = InvComp->GetTotalMaterialCount(MaterialTag);
+		UE_LOG(LogTemp, Warning, TEXT("      소비 후 보유량: %d"), AfterAmount);
+		UE_LOG(LogTemp, Warning, TEXT("      실제 소비량: %d"), BeforeAmount - AfterAmount);
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("  ✅ 재료 소비 RPC 호출 완료! (FastArray 리플리케이션 자동 실행 예정)"));
 }
 
 // ========================================
@@ -263,18 +301,66 @@ void URepairComponent::ConsumeMaterialFromInventory(APlayerController* PlayerCon
 
 void URepairComponent::AddResourceToTarget(int32 TotalResource)
 {
+	UE_LOG(LogTemp, Warning, TEXT("=== [AddResourceToTarget] 호출됨! ==="));
+	UE_LOG(LogTemp, Warning, TEXT("  추가할 자원: %d"), TotalResource);
+	
 	// Owner가 SpaceShip인지 확인
 	AResourceUsingObject_SpaceShip* SpaceShip = Cast<AResourceUsingObject_SpaceShip>(GetOwner());
 	if (!SpaceShip)
 	{
-		UE_LOG(LogTemp, Error, TEXT("  ❌ Owner가 SpaceShip이 아님!"));
+		UE_LOG(LogTemp, Error, TEXT("  ❌ Owner가 SpaceShip이 아님! Owner: %s"), GetOwner() ? *GetOwner()->GetName() : TEXT("nullptr"));
 		return;
 	}
 
+	UE_LOG(LogTemp, Warning, TEXT("  ✅ SpaceShip 찾음: %s"), *SpaceShip->GetName());
+	UE_LOG(LogTemp, Warning, TEXT("  🔧 AddRepairResource(%d) 호출 전"), TotalResource);
+	
 	// SpaceShip에 자원 추가
-	SpaceShip->AddRepairResource(TotalResource);
+	bool bSuccess = SpaceShip->AddRepairResource(TotalResource);
 
-	UE_LOG(LogTemp, Warning, TEXT("  ✅ SpaceShip에 자원 추가 완료! +%d"), TotalResource);
+	UE_LOG(LogTemp, Warning, TEXT("  🔧 AddRepairResource 호출 후! 결과: %s"), bSuccess ? TEXT("성공 ✅") : TEXT("실패 ❌"));
+	UE_LOG(LogTemp, Warning, TEXT("  📊 현재 수리 진행도: %d / %d"), SpaceShip->GetCurrentResource(), SpaceShip->GetNeedResource());
+	UE_LOG(LogTemp, Warning, TEXT("=== [AddResourceToTarget] 완료! ==="));
+}
+
+// ========================================
+// [멀티캐스트] 단일 이펙트/사운드 재생
+// ========================================
+
+void URepairComponent::Multicast_PlaySingleRepairEffect_Implementation(FVector RepairLocation)
+{
+	UE_LOG(LogTemp, Warning, TEXT("=== [Multicast_PlaySingleRepairEffect] 시작 ==="));
+	UE_LOG(LogTemp, Warning, TEXT("  위치: %s"), *RepairLocation.ToString());
+
+	// 파티클 이펙트 재생 (1회)
+	if (RepairParticleEffect)
+	{
+		UGameplayStatics::SpawnEmitterAtLocation(
+			GetWorld(),
+			RepairParticleEffect,
+			RepairLocation
+		);
+		UE_LOG(LogTemp, Warning, TEXT("  🎨 파티클 이펙트 재생!"));
+	}
+
+	// 3D 사운드 재생 (1회)
+	if (RepairSound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(
+			GetWorld(),
+			RepairSound,
+			RepairLocation,
+			1.0f,  // VolumeMultiplier
+			1.0f,  // PitchMultiplier
+			0.0f,  // StartTime
+			nullptr,  // AttenuationSettings (3D 사운드 자동 적용)
+			nullptr,  // ConcurrencySettings
+			nullptr   // InitialOwner
+		);
+		UE_LOG(LogTemp, Warning, TEXT("  🔊 3D 사운드 재생!"));
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("=== [Multicast_PlaySingleRepairEffect] 완료 ==="));
 }
 
 // ========================================
@@ -364,4 +450,217 @@ bool URepairComponent::IsMaterialAllowed(FGameplayTag MaterialTag) const
 		return true;
 
 	return AllowedMaterialTags.Contains(MaterialTag);
+}
+
+// ========================================
+// [Public Functions] 재료 표시 이름 가져오기
+// ========================================
+
+FText URepairComponent::GetMaterialDisplayName(FGameplayTag MaterialTag) const
+{
+	// 월드 가져오기
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return FText::FromString(MaterialTag.ToString());
+	}
+
+	// 모든 액터에서 ItemComponent 찾기
+	TArray<AActor*> AllActors;
+	UGameplayStatics::GetAllActorsOfClass(World, AActor::StaticClass(), AllActors);
+
+	for (AActor* Actor : AllActors)
+	{
+		// ItemComponent 가져오기
+		UInv_ItemComponent* ItemComp = Actor->FindComponentByClass<UInv_ItemComponent>();
+		if (!ItemComp) continue;
+
+		// Manifest 가져오기
+		FInv_ItemManifest Manifest = ItemComp->GetItemManifest();
+		
+		// ItemType이 일치하는지 확인
+		if (Manifest.GetItemType() == MaterialTag)
+		{
+			// DisplayName이 비어있지 않으면 반환
+			FText DisplayName = Manifest.GetDisplayName();
+			if (!DisplayName.IsEmpty())
+			{
+				return DisplayName;
+			}
+			
+			// DisplayName이 비어있으면 GameplayTag 반환
+			break;
+		}
+	}
+
+	// 찾지 못했거나 DisplayName이 비어있으면 GameplayTag 반환
+	return FText::FromString(MaterialTag.ToString());
+}
+
+// ========================================
+// [테스트용 단순 재료 소비]
+// ========================================
+
+void URepairComponent::Server_TestConsumeMaterial_Implementation(APlayerController* PlayerController, FGameplayTag MaterialTag, int32 Amount)
+{
+	UE_LOG(LogTemp, Warning, TEXT("=== [Server_TestConsumeMaterial] 테스트 시작 ==="));
+	UE_LOG(LogTemp, Warning, TEXT("  PlayerController: %s"), PlayerController ? *PlayerController->GetName() : TEXT("nullptr"));
+	UE_LOG(LogTemp, Warning, TEXT("  MaterialTag: %s"), *MaterialTag.ToString());
+	UE_LOG(LogTemp, Warning, TEXT("  Amount: %d"), Amount);
+
+	// ⭐ Component는 GetOwner()->HasAuthority()로 체크!
+	AActor* Owner = GetOwner();
+	if (!Owner || !Owner->HasAuthority())
+	{
+		UE_LOG(LogTemp, Error, TEXT("  ❌ 서버가 아님!"));
+		return;
+	}
+
+	if (!PlayerController)
+	{
+		UE_LOG(LogTemp, Error, TEXT("  ❌ PlayerController가 nullptr!"));
+		return;
+	}
+
+	// InventoryComponent 가져오기
+	UInv_InventoryComponent* InvComp = UInv_InventoryStatics::GetInventoryComponent(PlayerController);
+	if (!InvComp)
+	{
+		UE_LOG(LogTemp, Error, TEXT("  ❌ InventoryComponent를 찾을 수 없음!"));
+		return;
+	}
+
+	// 소비 전 보유량
+	int32 BeforeAmount = InvComp->GetTotalMaterialCount(MaterialTag);
+	UE_LOG(LogTemp, Warning, TEXT("  📦 소비 전 보유량: %d"), BeforeAmount);
+
+	if (BeforeAmount < Amount)
+	{
+		UE_LOG(LogTemp, Error, TEXT("  ❌ 재료 부족! 필요: %d, 보유: %d"), Amount, BeforeAmount);
+		return;
+	}
+
+	// ⭐ 재료 소비 RPC 호출
+	UE_LOG(LogTemp, Warning, TEXT("  🔧 Server_ConsumeMaterialsMultiStack() 호출..."));
+	InvComp->Server_ConsumeMaterialsMultiStack(MaterialTag, Amount);
+
+	// 소비 후 보유량 (서버에서만 즉시 확인 가능)
+	int32 AfterAmount = InvComp->GetTotalMaterialCount(MaterialTag);
+	UE_LOG(LogTemp, Warning, TEXT("  📦 소비 후 보유량: %d"), AfterAmount);
+	UE_LOG(LogTemp, Warning, TEXT("  ✅ 실제 소비량: %d"), BeforeAmount - AfterAmount);
+
+	UE_LOG(LogTemp, Warning, TEXT("=== [Server_TestConsumeMaterial] 완료 ==="));
+}
+
+// ========================================
+// [델리게이트 바인딩] 모든 플레이어 Inventory 감지
+// ========================================
+
+void URepairComponent::BindToAllPlayerInventories()
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return; // 서버에서만 실행
+	}
+
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	// 모든 PlayerController 찾기
+	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+	{
+		APlayerController* PC = It->Get();
+		if (!IsValid(PC)) continue;
+
+		// InventoryComponent 가져오기
+		UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
+		if (!IsValid(InvComp)) continue;
+
+		// 이미 바인딩되어 있으면 스킵
+		if (BoundInventoryComponents.Contains(InvComp))
+		{
+			continue;
+		}
+
+		// ⭐ OnMaterialStacksChanged 델리게이트 바인딩!
+		if (!InvComp->OnMaterialStacksChanged.IsAlreadyBound(this, &URepairComponent::OnMaterialConsumed))
+		{
+			InvComp->OnMaterialStacksChanged.AddDynamic(this, &URepairComponent::OnMaterialConsumed);
+			BoundInventoryComponents.Add(InvComp);
+			
+			UE_LOG(LogTemp, Warning, TEXT("[RepairComponent] ✅ InventoryComponent 델리게이트 바인딩 완료! (Player: %s)"), 
+				*PC->GetName());
+		}
+	}
+}
+
+// ========================================
+// [델리게이트 콜백] 재료 소비 감지
+// ========================================
+
+void URepairComponent::OnMaterialConsumed(const FGameplayTag& MaterialTag)
+{
+	// 서버에서만 실행
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("=== [RepairComponent] OnMaterialConsumed 호출됨! ==="));
+	UE_LOG(LogTemp, Warning, TEXT("  재료 Tag: %s"), *MaterialTag.ToString());
+
+	// ⭐ 허용된 재료인지 체크
+	if (!IsMaterialAllowed(MaterialTag))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("  ⚠️ 허용되지 않은 재료입니다. 스킵"));
+		return;
+	}
+
+	// ⭐⭐⭐ 문제: 재료가 얼마나 소비되었는지 알 수 없음!
+	// 해결책: RepairMaterialWidget에서 재료 차감 시 개수도 함께 전달해야 함
+	// 일단은 1:1로 처리 (MaterialToResourceRatio 적용)
+	int32 ResourceToAdd = MaterialToResourceRatio;
+
+	UE_LOG(LogTemp, Warning, TEXT("  🔧 SpaceShip에 자원 추가: +%d"), ResourceToAdd);
+
+	// SpaceShip에 자원 추가
+	AddResourceToTarget(ResourceToAdd);
+
+	UE_LOG(LogTemp, Warning, TEXT("=== [RepairComponent] OnMaterialConsumed 완료! ==="));
+}
+
+// ========================================
+// [Server RPC] 재료로부터 자원 추가
+// ========================================
+
+void URepairComponent::Server_AddRepairResourceFromMaterials_Implementation(int32 TotalResource)
+{
+	UE_LOG(LogTemp, Warning, TEXT("=== [Server_AddRepairResourceFromMaterials] 호출됨! ==="));
+	UE_LOG(LogTemp, Warning, TEXT("  추가할 자원: %d"), TotalResource);
+	UE_LOG(LogTemp, Warning, TEXT("  서버 여부: %s"), GetOwner()->HasAuthority() ? TEXT("서버 ✅") : TEXT("클라이언트 ❌"));
+
+	// 서버 권한 체크
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		UE_LOG(LogTemp, Error, TEXT("  ❌ 서버가 아님!"));
+		return;
+	}
+
+	// 자원이 0 이하면 무시
+	if (TotalResource <= 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("  ⚠️ 자원이 0 이하! 무시"));
+		return;
+	}
+
+	// MaterialToResourceRatio 적용
+	int32 FinalResource = TotalResource * MaterialToResourceRatio;
+	UE_LOG(LogTemp, Warning, TEXT("  MaterialToResourceRatio 적용: %d x %d = %d"), 
+		TotalResource, MaterialToResourceRatio, FinalResource);
+
+	// SpaceShip에 자원 추가
+	AddResourceToTarget(FinalResource);
+
+	UE_LOG(LogTemp, Warning, TEXT("  ✅ SpaceShip에 자원 추가 완료!"));
+	UE_LOG(LogTemp, Warning, TEXT("=== [Server_AddRepairResourceFromMaterials] 완료! ==="));
 }

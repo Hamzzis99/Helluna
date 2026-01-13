@@ -24,6 +24,7 @@ struct INVENTORY_API FInv_ItemManifest
 	UInv_InventoryItem* Manifest(UObject* NewOuter); //새로운 인벤토리 아이템 만들 때?
 	EInv_ItemCategory GetItemCategory() const { return ItemCategory; } // 아이템 카테고리 얻기
 	FGameplayTag GetItemType() const { return ItemType; } // 아이템 타입 얻기
+	FText GetDisplayName() const { return DisplayName; } // ⭐ 표시 이름 얻기
 	void AssimilateInventoryFragments(UInv_CompositeBase* Composite) const; // 인벤토리 구성요소 동화
 
 	template <typename T>  requires std::derived_from<T, FInv_ItemFragment>// T타입만 전달하도록 강제하는 방법은? C++20
@@ -50,6 +51,10 @@ private:
 	// 게임플레이 태그 부분
 	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (Categories ="GameItems"))
 	FGameplayTag ItemType;
+
+	// ⭐ 표시 이름 (UI에서 사용)
+	UPROPERTY(EditAnywhere, Category = "Inventory")
+	FText DisplayName;
 
 	// 아이템 픽업 액터 클래스
 	UPROPERTY(EditAnywhere, Category = "Inventory")
