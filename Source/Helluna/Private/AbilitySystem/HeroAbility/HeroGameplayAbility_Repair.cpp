@@ -32,9 +32,18 @@ void UHeroGameplayAbility_Repair::Repair(const FGameplayAbilityActorInfo* ActorI
 		return;
 	}
 
-	// ⭐ 로컬 플레이어만 Widget 열기
+	// ⭐ 로컬 플레이어만 Widget 열기/닫기
 	if (Hero->IsLocallyControlled())
 	{
+		// ⭐⭐⭐ F키 토글: Widget이 이미 열려있으면 닫기!
+		if (CurrentWidget && CurrentWidget->IsInViewport())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("=== [Repair Ability] Widget이 이미 열려있음! 닫기 ==="));
+			CurrentWidget->CloseWidget();
+			CurrentWidget = nullptr;
+			return;
+		}
+
 		UE_LOG(LogTemp, Warning, TEXT("=== [Repair Ability] Widget 열기 시작 ==="));
 
 		// GameState에서 SpaceShip 가져오기
@@ -69,11 +78,11 @@ void UHeroGameplayAbility_Repair::Repair(const FGameplayAbilityActorInfo* ActorI
 				// ⭐ Widget 생성 및 표시
 				if (RepairMaterialWidgetClass)
 				{
-					URepairMaterialWidget* Widget = CreateWidget<URepairMaterialWidget>(PC, RepairMaterialWidgetClass);
-					if (Widget)
+					CurrentWidget = CreateWidget<URepairMaterialWidget>(PC, RepairMaterialWidgetClass);
+					if (CurrentWidget)
 					{
-						Widget->InitializeWidget(RepairComp, InvComp);
-						Widget->AddToViewport(100);  // 최상위 Z-Order
+						CurrentWidget->InitializeWidget(RepairComp, InvComp);
+						CurrentWidget->AddToViewport(100);  // 최상위 Z-Order
 
 						// ⭐ 마우스 커서 표시 및 입력 모드 변경
 						PC->SetInputMode(FInputModeUIOnly());

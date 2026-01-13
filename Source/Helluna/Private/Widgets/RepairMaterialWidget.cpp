@@ -192,13 +192,28 @@ void URepairMaterialWidget::OnConfirmClicked()
 
 	UE_LOG(LogTemp, Warning, TEXT("  ✅ Repair 요청 전송 완료!"));
 
+	// ⭐ 입력 모드 복원 (게임 모드로 전환)
+	PC->SetInputMode(FInputModeGameOnly());
+	PC->bShowMouseCursor = false;
+
 	// Widget 닫기
 	RemoveFromParent();
+
+	UE_LOG(LogTemp, Warning, TEXT("  🖱️ 마우스 커서 비활성화!"));
 }
 
 void URepairMaterialWidget::OnCancelClicked()
 {
 	UE_LOG(LogTemp, Warning, TEXT("=== [OnCancelClicked] 취소 버튼 클릭! ==="));
+
+	// ⭐ 입력 모드 복원 (게임 모드로 전환)
+	APlayerController* PC = GetOwningPlayer();
+	if (PC)
+	{
+		PC->SetInputMode(FInputModeGameOnly());
+		PC->bShowMouseCursor = false;
+		UE_LOG(LogTemp, Warning, TEXT("  🖱️ 마우스 커서 비활성화!"));
+	}
 
 	// Widget 닫기
 	RemoveFromParent();
@@ -217,6 +232,27 @@ void URepairMaterialWidget::OnMaterial1SliderChanged(float Value)
 	UpdateTotalResourceUI();
 }
 
+// ========================================
+// [Public Functions - Close]
+// ========================================
+
+void URepairMaterialWidget::CloseWidget()
+{
+	UE_LOG(LogTemp, Warning, TEXT("=== [CloseWidget] Widget 닫기 ==="));
+
+	// 입력 모드 복원
+	APlayerController* PC = GetOwningPlayer();
+	if (PC)
+	{
+		PC->SetInputMode(FInputModeGameOnly());
+		PC->bShowMouseCursor = false;
+		UE_LOG(LogTemp, Warning, TEXT("  🖱️ 마우스 커서 비활성화!"));
+	}
+
+	// Widget 제거
+	RemoveFromParent();
+}
+
 void URepairMaterialWidget::OnMaterial2SliderChanged(float Value)
 {
 	Material2UseAmount = FMath::FloorToInt(Value);
@@ -229,6 +265,7 @@ void URepairMaterialWidget::OnMaterial2SliderChanged(float Value)
 
 	UpdateTotalResourceUI();
 }
+
 
 void URepairMaterialWidget::UpdateTotalResourceUI()
 {

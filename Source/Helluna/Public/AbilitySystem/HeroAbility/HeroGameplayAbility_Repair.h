@@ -27,5 +27,9 @@ private:
 	// ⭐ Blueprint에서 설정할 Widget 클래스
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Repair|Widget", meta = (AllowPrivateAccess = "true"))
 	TSubclassOf<URepairMaterialWidget> RepairMaterialWidgetClass;
+
+	// ⭐ 현재 열려있는 Widget 참조 (F키 토글용)
+	UPROPERTY()
+	TObjectPtr<URepairMaterialWidget> CurrentWidget;
 	
 };

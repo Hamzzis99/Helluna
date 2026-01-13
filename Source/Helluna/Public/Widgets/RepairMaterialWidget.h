@@ -40,6 +40,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Repair")
 	void InitializeWidget(URepairComponent* InRepairComponent, UInv_InventoryComponent* InInventoryComponent);
 
+	/**
+	 * Widget 강제 닫기 (외부에서 호출 가능)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Repair")
+	void CloseWidget();
+
 private:
 	// ========================================
 	// [이벤트 핸들러]
