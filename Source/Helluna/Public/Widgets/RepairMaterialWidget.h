@@ -92,14 +92,6 @@ private:
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<USlider> Slider_Material1;
 
-	/** 재료 1 사용량 컨테이너 (HorizontalBox) */
-	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<UHorizontalBox> HorizontalBox_Material1Use;
-
-	/** 재료 1 사용량 아이콘 (작은 아이콘) */
-	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<UImage> Image_Material1Use_Icon;
-
 	/** 재료 1 사용량 텍스트 (예: "사용: 10") */
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UTextBlock> Text_Material1Use;
@@ -129,14 +121,6 @@ private:
 	/** 재료 2 사용량 슬라이더 */
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<USlider> Slider_Material2;
-
-	/** 재료 2 사용량 컨테이너 (HorizontalBox) */
-	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<UHorizontalBox> HorizontalBox_Material2Use;
-
-	/** 재료 2 사용량 아이콘 (작은 아이콘) */
-	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<UImage> Image_Material2Use_Icon;
 
 	/** 재료 2 사용량 텍스트 */
 	UPROPERTY(meta = (BindWidget))

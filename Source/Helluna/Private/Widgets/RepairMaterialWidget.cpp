@@ -102,11 +102,6 @@ void URepairMaterialWidget::InitializeWidget(URepairComponent* InRepairComponent
 		Image_Material1Available_Icon->SetBrushFromTexture(DefaultMaterial1Icon);
 	}
 
-	if (Image_Material1Use_Icon && DefaultMaterial1Icon)
-	{
-		Image_Material1Use_Icon->SetBrushFromTexture(DefaultMaterial1Icon);
-	}
-
 	// ========================================
 	// 재료 2 초기화
 	// ========================================
@@ -144,11 +139,6 @@ void URepairMaterialWidget::InitializeWidget(URepairComponent* InRepairComponent
 	if (Image_Material2Available_Icon && DefaultMaterial2Icon)
 	{
 		Image_Material2Available_Icon->SetBrushFromTexture(DefaultMaterial2Icon);
-	}
-
-	if (Image_Material2Use_Icon && DefaultMaterial2Icon)
-	{
-		Image_Material2Use_Icon->SetBrushFromTexture(DefaultMaterial2Icon);
 	}
 
 	// 총 자원량 초기화
