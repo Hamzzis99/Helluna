@@ -138,12 +138,5 @@ void AResourceUsingObject_SpaceShip::OnRepairCompleted_Implementation()
 	OnRepairCompleted_Delegate.Broadcast();
 	UE_LOG(LogTemp, Warning, TEXT("  📢 OnRepairCompleted_Delegate 브로드캐스트!"));
 
-	// ⭐ 2. GameMode에 알림 (보스 소환)
-	if (AHellunaDefenseGameMode* GameMode = GetWorld()->GetAuthGameMode<AHellunaDefenseGameMode>())
-	{
-		UE_LOG(LogTemp, Warning, TEXT("  🔥 GameMode에 알림: 보스 소환 준비!"));
-		GameMode->SetBossReady(true);  // ← 기존 함수 사용! (즉시 보스 소환)
-	}
-
 	UE_LOG(LogTemp, Warning, TEXT("=== [OnRepairCompleted] 완료 ==="));
 }
