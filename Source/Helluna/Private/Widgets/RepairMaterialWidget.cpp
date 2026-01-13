@@ -91,8 +91,19 @@ void URepairMaterialWidget::InitializeWidget(URepairComponent* InRepairComponent
 	if (Slider_Material1)
 	{
 		Slider_Material1->SetMinValue(0.0f);
-		Slider_Material1->SetMaxValue(FMath::Max(1.0f, (float)Material1MaxAvailable));
+		Slider_Material1->SetMaxValue((float)FMath::Max(0, Material1MaxAvailable));
 		Slider_Material1->SetValue(0.0f);
+		
+		// ⭐ 보유량이 0이면 슬라이더 비활성화
+		if (Material1MaxAvailable <= 0)
+		{
+			Slider_Material1->SetIsEnabled(false);
+			UE_LOG(LogTemp, Warning, TEXT("  ⚠️ 재료 1 보유량 0 → 슬라이더 비활성화"));
+		}
+		else
+		{
+			Slider_Material1->SetIsEnabled(true);
+		}
 	}
 
 	if (Image_Material1 && DefaultMaterial1Icon)
@@ -131,8 +142,19 @@ void URepairMaterialWidget::InitializeWidget(URepairComponent* InRepairComponent
 	if (Slider_Material2)
 	{
 		Slider_Material2->SetMinValue(0.0f);
-		Slider_Material2->SetMaxValue(FMath::Max(1.0f, (float)Material2MaxAvailable));
+		Slider_Material2->SetMaxValue((float)FMath::Max(0, Material2MaxAvailable));
 		Slider_Material2->SetValue(0.0f);
+		
+		// ⭐ 보유량이 0이면 슬라이더 비활성화
+		if (Material2MaxAvailable <= 0)
+		{
+			Slider_Material2->SetIsEnabled(false);
+			UE_LOG(LogTemp, Warning, TEXT("  ⚠️ 재료 2 보유량 0 → 슬라이더 비활성화"));
+		}
+		else
+		{
+			Slider_Material2->SetIsEnabled(true);
+		}
 	}
 
 	if (Image_Material2 && DefaultMaterial2Icon)
