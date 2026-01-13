@@ -27,6 +27,8 @@ public:
 	UImage* GetImageIcon() const {return Image_Icon;} // 아이콘 이미지 가져오기
 	void SetGridIndex(int32 Index) { GridIndex = Index; } // 그리드 인덱스 설정
 	int32 GetGridIndex() const { return GridIndex; } // 그리드 인덱스 가져오기
+	void SetEntryIndex(int32 Index) { EntryIndex = Index; } // ⭐ Entry 인덱스 설정
+	int32 GetEntryIndex() const { return EntryIndex; } // ⭐ Entry 인덱스 가져오기
 	void SetGridDimensions(const FIntPoint& Dimensions) { GridDimensions = Dimensions; } // 그리드 크기 설정
 	FIntPoint GetGridDimensions() const { return GridDimensions; } // 그리드 크기 가져오기
 	void SetInventoryItem(UInv_InventoryItem* Item); // 인벤토리 아이템 설정
@@ -43,7 +45,8 @@ private:
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UTextBlock> Text_StackCount;
 
-	int32 GridIndex;
+	int32 GridIndex{ -1 }; // 그리드 인덱스 (-1 = 미설정)
+	int32 EntryIndex{ -1 }; // ⭐ Entry Index 저장 (-1 = 미설정)
 	FIntPoint GridDimensions;
 	TWeakObjectPtr<UInv_InventoryItem> InventoryItem;
 	bool bIsStackable{ false };

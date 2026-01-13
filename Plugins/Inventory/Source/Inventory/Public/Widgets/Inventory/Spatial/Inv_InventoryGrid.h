@@ -88,7 +88,8 @@ private:
 		const int32 StackAmount,
 		const FInv_GridFragment* GridFragment,
 		const FInv_ImageFragment* ImageFragment,
-		const int32 Index); // 슬로티드 아이템 생성
+		const int32 Index,
+		const int32 EntryIndex); // ⭐ EntryIndex 추가
 	void AddSlottedItemToCanvas(const int32 Index, const FInv_GridFragment* GridFragment, UInv_SlottedItem* SlottedItem) const;
 	void UpdateGridSlots(UInv_InventoryItem* NewItem, const int32 Index, bool bStackableItem, const int32 StackAmount); // 그리드 슬롯 업데이트
 	bool IsIndexClaimed(const TSet<int32>& CheckedIndices, const int32 Index) const; // 인덱스가 이미 점유되었는지 확인

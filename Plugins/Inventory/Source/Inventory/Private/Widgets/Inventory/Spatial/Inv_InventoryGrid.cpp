@@ -516,6 +516,13 @@ void UInv_InventoryGrid::PickUp(UInv_InventoryItem* ClickedInventoryItem, const 
 // 호버 아이템 할당 부분
 void UInv_InventoryGrid::AssignHoverItem(UInv_InventoryItem* InventoryItem, const int32 GridIndex, const int32 PreviousGridIndex)
 {
+	// ⭐ Nullptr 체크 (EXCEPTION_ACCESS_VIOLATION 방지)
+	if (!IsValid(InventoryItem))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[AssignHoverItem] ❌ InventoryItem이 nullptr입니다! GridIndex=%d"), GridIndex);
+		return;
+	}
+
 	AssignHoverItem(InventoryItem);
 
 	HoverItem->SetPreviousGridIndex(PreviousGridIndex);
@@ -558,6 +565,13 @@ void UInv_InventoryGrid::RemoveItemFromGrid(UInv_InventoryItem* InventoryItem, c
 
 void UInv_InventoryGrid::AssignHoverItem(UInv_InventoryItem* InventoryItem) // 이걸 참조하면 나중에 그걸 만들 수 있겠지? 창고
 {
+	// ⭐ Nullptr 체크 (EXCEPTION_ACCESS_VIOLATION 방지)
+	if (!IsValid(InventoryItem))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[AssignHoverItem] ❌ InventoryItem이 nullptr입니다!"));
+		HoverItem->SetVisibility(ESlateVisibility::Hidden);
+		return;
+	}
 	if (!IsValid(HoverItem))
 	{
 		HoverItem = CreateWidget<UInv_HoverItem>(GetOwningPlayer(), HoverItemClass);
@@ -927,8 +941,68 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 	UE_LOG(LogTemp, Warning, TEXT("========== [AddItem] 아이템 추가/업데이트 시작 =========="));
 	UE_LOG(LogTemp, Warning, TEXT("[AddItem] Item=%s, EntryIndex=%d, Grid=%d"),
 		*Item->GetItemManifest().GetItemType().ToString(), EntryIndex, (int32)ItemCategory);
+	UE_LOG(LogTemp, Warning, TEXT("[AddItem] 찾을 Item포인터: %p, TotalStackCount: %d"), Item, Item->GetTotalStackCount());
 
-	// ⭐⭐⭐ 먼저 기존 슬롯에서 같은 Item 포인터를 찾음 (스택 업데이트용)
+	// 🔍 디버깅: 현재 Grid 슬롯 상태 출력
+	UE_LOG(LogTemp, Warning, TEXT("[AddItem] 🔍 현재 Grid 슬롯 상태 (SlottedItems 개수: %d):"), SlottedItems.Num());
+	for (const auto& [Index, SlottedItem] : SlottedItems)
+	{
+		if (!GridSlots.IsValidIndex(Index)) continue;
+		UInv_InventoryItem* GridSlotItem = GridSlots[Index]->GetInventoryItem().Get();
+		if (GridSlotItem)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("  슬롯[%d]: Item포인터=%p, StackCount=%d, Type=%s"),
+				Index, GridSlotItem, GridSlots[Index]->GetStackCount(),
+				*GridSlotItem->GetItemManifest().GetItemType().ToString());
+		}
+	}
+
+	// ⭐⭐⭐ 1단계: EntryIndex로 우선 검색 (더 정확함!)
+	UE_LOG(LogTemp, Warning, TEXT("[AddItem] 🔍 1단계: EntryIndex=%d 로 검색 시작..."), EntryIndex);
+
+	for (const auto& [Index, SlottedItem] : SlottedItems)
+	{
+		if (!IsValid(SlottedItem)) continue;
+
+		// 🔍 디버깅: 각 슬롯의 EntryIndex 상태 확인
+		int32 SlotEntryIndex = SlottedItem->GetEntryIndex();
+		UE_LOG(LogTemp, Warning, TEXT("[AddItem] 슬롯[%d] 검사: SlottedItem.EntryIndex=%d, 찾는값=%d, 매칭=%s"),
+			Index, SlotEntryIndex, EntryIndex, (SlotEntryIndex == EntryIndex) ? TEXT("YES") : TEXT("NO"));
+
+		// ⚠️ EntryIndex가 -1이면 아직 설정되지 않은 상태
+		if (SlotEntryIndex == -1 || SlotEntryIndex == 0)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[AddItem] ⚠️ 슬롯[%d]의 EntryIndex가 초기값(%d)! SetEntryIndex() 호출 누락 의심"), Index, SlotEntryIndex);
+		}
+
+		// ⭐ EntryIndex로 매칭!
+		if (SlotEntryIndex == EntryIndex)
+		{
+			// ✅ EntryIndex 매칭 발견! 스택 카운트만 업데이트
+			int32 NewStackCount = Item->GetTotalStackCount();
+			int32 OldStackCount = GridSlots[Index]->GetStackCount();
+
+			UE_LOG(LogTemp, Warning, TEXT("[AddItem] ⭐ EntryIndex 매칭! GridIndex=%d, EntryIndex=%d"), Index, EntryIndex);
+			UE_LOG(LogTemp, Warning, TEXT("[AddItem]   스택 업데이트: %d → %d"), OldStackCount, NewStackCount);
+
+			// Item 포인터도 업데이트 (리플리케이션 후 포인터가 바뀔 수 있음)
+			GridSlots[Index]->SetInventoryItem(Item);
+			GridSlots[Index]->SetStackCount(NewStackCount);
+			if (IsValid(SlottedItem))
+			{
+				SlottedItem->UpdateStackCount(NewStackCount);
+			}
+
+			UE_LOG(LogTemp, Warning, TEXT("========== [AddItem] 스택 업데이트 완료! (EntryIndex 매칭) =========="));
+			return; // ⭐ 새 슬롯 추가 필요 없음!
+		}
+	}
+
+	// ⚠️ 1단계 검색 실패!
+	UE_LOG(LogTemp, Warning, TEXT("[AddItem] ❌ 1단계 실패: EntryIndex=%d 를 가진 SlottedItem을 찾지 못함! 2단계(포인터 검색)으로 진행..."), EntryIndex);
+
+	// ⭐⭐⭐ 2단계: Item 포인터로 검색 (Fallback)
+	UE_LOG(LogTemp, Warning, TEXT("[AddItem] 🔍 2단계: Item 포인터=%p 로 검색 시작..."), Item);
 	for (const auto& [Index, SlottedItem] : SlottedItems)
 	{
 		if (!GridSlots.IsValidIndex(Index)) continue;
@@ -940,7 +1014,7 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 			int32 NewStackCount = Item->GetTotalStackCount();
 			int32 OldStackCount = GridSlots[Index]->GetStackCount();
 
-			UE_LOG(LogTemp, Warning, TEXT("[AddItem] ⭐ 기존 슬롯 발견! GridIndex=%d"), Index);
+			UE_LOG(LogTemp, Warning, TEXT("[AddItem] ⭐ Item 포인터 매칭! GridIndex=%d"), Index);
 			UE_LOG(LogTemp, Warning, TEXT("[AddItem]   스택 업데이트: %d → %d"), OldStackCount, NewStackCount);
 
 			GridSlots[Index]->SetStackCount(NewStackCount);
@@ -949,22 +1023,104 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 				SlottedItem->UpdateStackCount(NewStackCount);
 			}
 
-			UE_LOG(LogTemp, Warning, TEXT("========== [AddItem] 스택 업데이트 완료! =========="));
+			UE_LOG(LogTemp, Warning, TEXT("========== [AddItem] 스택 업데이트 완료! (Item 포인터 매칭) =========="));
 			return; // ⭐ 새 슬롯 추가 필요 없음!
 		}
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("[AddItem] 기존 슬롯 없음, 새 슬롯 생성..."));
+	UE_LOG(LogTemp, Warning, TEXT("[AddItem] ❌ 기존 슬롯 못 찾음 (EntryIndex/포인터 모두 실패), 새 슬롯 생성..."));
 
+	// ⭐⭐⭐ 3단계: 빈 슬롯 찾기 (PostReplicatedAdd/Change 순서 문제 해결!)
+	// PostReplicatedAdd가 먼저 실행되어 Grid[0]을 차지한 경우,
+	// PostReplicatedChange가 Grid[0]을 찾지 못해 중복 배치되는 문제 방지
+	UE_LOG(LogTemp, Warning, TEXT("[AddItem] 🔍 3단계: 빈 슬롯 검색 시작 (HasRoomForItem 재사용)"));
+	
 	//공간이 있다고 부르는 부분.
 	FInv_SlotAvailabilityResult Result = HasRoomForItem(Item);
 	Result.EntryIndex = EntryIndex; // ⭐ Entry Index 저장
 
 	UE_LOG(LogTemp, Warning, TEXT("[AddItem] Result.EntryIndex=%d로 설정됨"), Result.EntryIndex);
+	UE_LOG(LogTemp, Warning, TEXT("[AddItem] HasRoomForItem 반환: %d개 슬롯"), Result.SlotAvailabilities.Num());
 
-	// Create a widget to show the item icon and add it to the correct spot on the grid.
-	// 아이콘을 보여주고 그리드의 올바른 위치에 추가하는 위젯을 만듭니다.
-	AddItemToIndices(Result, Item);
+	// ⭐⭐⭐ 필터링: 이미 차지된 슬롯 제외! (중복 배치 방지)
+	TArray<FInv_SlotAvailability> ActuallyEmptySlots;
+	for (const FInv_SlotAvailability& SlotAvail : Result.SlotAvailabilities)
+	{
+		if (!SlottedItems.Contains(SlotAvail.Index))
+		{
+			ActuallyEmptySlots.Add(SlotAvail);
+			UE_LOG(LogTemp, Warning, TEXT("[AddItem]   슬롯[%d]: 실제로 비어있음 ✅"), SlotAvail.Index);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[AddItem]   슬롯[%d]: 이미 차지됨, 건너뜀 ⚠️"), SlotAvail.Index);
+		}
+	}
+
+	if (ActuallyEmptySlots.Num() > 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[AddItem] ✅ 실제 빈 슬롯 발견! 개수: %d"), ActuallyEmptySlots.Num());
+		
+		// 실제로 비어있는 슬롯만 사용
+		Result.SlotAvailabilities = ActuallyEmptySlots;
+		
+		// Create a widget to show the item icon and add it to the correct spot on the grid.
+		// 아이콘을 보여주고 그리드의 올바른 위치에 추가하는 위젯을 만듭니다.
+		AddItemToIndices(Result, Item);
+		
+		UE_LOG(LogTemp, Warning, TEXT("[AddItem] ✅ 빈 슬롯에 배치 완료! EntryIndex=%d"), EntryIndex);
+		UE_LOG(LogTemp, Warning, TEXT("========== [AddItem] 아이템 추가 완료 =========="));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[AddItem] ⚠️ 필터링 후 빈 슬롯 없음 (기존 스택 제외)"));
+		UE_LOG(LogTemp, Warning, TEXT("[AddItem] 🔍 4단계: 완전히 새로운 빈 슬롯 재검색 (스택 무시)"));
+		
+		// ⭐⭐⭐ 4단계: 스택 가능 여부 무시하고 완전히 빈 슬롯 찾기
+		// HasRoomForItem은 스택 가능 아이템의 경우 기존 스택을 우선 반환하므로,
+		// 기존 스택이 모두 차지된 경우 새로운 빈 슬롯을 찾지 못할 수 있음.
+		
+		TArray<FInv_SlotAvailability> CompletelyEmptySlots;
+		
+		// Grid 전체를 순회하며 완전히 비어있는 슬롯 찾기
+		for (int32 Index = 0; Index < GridSlots.Num(); ++Index)
+		{
+			// 이미 SlottedItems에 등록된 슬롯은 건너뜀
+			if (SlottedItems.Contains(Index))
+			{
+				continue;
+			}
+			
+			// GridSlot도 비어있는지 확인
+			if (GridSlots.IsValidIndex(Index) && IsValid(GridSlots[Index]))
+			{
+				if (!GridSlots[Index]->GetInventoryItem().IsValid())
+				{
+					// 완전히 비어있는 슬롯 발견!
+					FInv_SlotAvailability NewSlot(Index, Item->GetTotalStackCount(), false);
+					CompletelyEmptySlots.Add(NewSlot);
+					UE_LOG(LogTemp, Warning, TEXT("[AddItem]   슬롯[%d]: 완전히 비어있음 ✅"), Index);
+					break; // 하나만 찾으면 충분 (1x1 아이템)
+				}
+			}
+		}
+		
+		if (CompletelyEmptySlots.Num() > 0)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[AddItem] ✅ 완전히 빈 슬롯 발견! 개수: %d"), CompletelyEmptySlots.Num());
+			
+			Result.SlotAvailabilities = CompletelyEmptySlots;
+			AddItemToIndices(Result, Item);
+			
+			UE_LOG(LogTemp, Warning, TEXT("[AddItem] ✅ 새 빈 슬롯에 배치 완료! EntryIndex=%d"), EntryIndex);
+			UE_LOG(LogTemp, Warning, TEXT("========== [AddItem] 아이템 추가 완료 =========="));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("[AddItem] ❌ 완전히 빈 슬롯도 찾지 못했습니다! 인벤토리가 가득 참!"));
+			UE_LOG(LogTemp, Warning, TEXT("========== [AddItem] 아이템 추가 실패 =========="));
+		}
+	}
 
 	UE_LOG(LogTemp, Warning, TEXT("========== [AddItem] 아이템 추가 완료 =========="));
 }
@@ -1269,7 +1425,7 @@ void UInv_InventoryGrid::AddItemAtIndex(UInv_InventoryItem* Item, const int32 In
 
 	// Add the slotted item to the canvas panel.
 	// 슬롯 아이템을 캔버스 패널에 그려주는 곳. 또한 그리드 슬롯을 관리해주는 곳.
-	UInv_SlottedItem* SlottedItem = CreateSlottedItem(Item, bStackable, StackAmount, GridFragment, ImageFragment, Index);
+	UInv_SlottedItem* SlottedItem = CreateSlottedItem(Item, bStackable, StackAmount, GridFragment, ImageFragment, Index, EntryIndex);
 
 	AddSlottedItemToCanvas(Index, GridFragment, SlottedItem); // 캔버스에 슬로티드 아이템 추가하는 부분
 
@@ -1278,13 +1434,14 @@ void UInv_InventoryGrid::AddItemAtIndex(UInv_InventoryItem* Item, const int32 In
 	SlottedItems.Add(Index, SlottedItem); // 인덱스와 슬로티드 아이템 매핑
 }
 
-UInv_SlottedItem* UInv_InventoryGrid::CreateSlottedItem(UInv_InventoryItem* Item, const bool bStackable, const int32 StackAmount, const FInv_GridFragment* GridFragment, const FInv_ImageFragment* ImageFragment, const int32 Index)
+UInv_SlottedItem* UInv_InventoryGrid::CreateSlottedItem(UInv_InventoryItem* Item, const bool bStackable, const int32 StackAmount, const FInv_GridFragment* GridFragment, const FInv_ImageFragment* ImageFragment, const int32 Index, const int32 EntryIndex)
 {
 	// Create a widget to add to the grid
 	UInv_SlottedItem* SlottedItem = CreateWidget<UInv_SlottedItem>(GetOwningPlayer(), SlottedItemClass);
 	SlottedItem->SetInventoryItem(Item);
 	SetSlottedItemImage(SlottedItem, GridFragment, ImageFragment);
 	SlottedItem->SetGridIndex(Index);
+	SlottedItem->SetEntryIndex(EntryIndex); // ⭐ EntryIndex 설정!
 	SlottedItem->SetIsStackable(bStackable);
 	const int32 StackUpdateAmount = bStackable ? StackAmount : 0;
 	SlottedItem->UpdateStackCount(StackUpdateAmount);
