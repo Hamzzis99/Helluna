@@ -24,5 +24,8 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Stats")
 	float ReboundLeftRight = 0.5f;
+
+	UFUNCTION(BlueprintCallable, Category = "Weapon|Fire")
+	virtual void Fire(AController* InstigatorController);
 	
 };
