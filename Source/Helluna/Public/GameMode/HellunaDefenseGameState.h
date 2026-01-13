@@ -5,63 +5,105 @@
 #include "CoreMinimal.h"
 #include "GameFramework/GameStateBase.h"
 
-// [MDF 추가] 플러그인 인터페이스 헤더 포함
+// [MDF 추가] 플러그인 인터페이스 및 컴포넌트 헤더
 #include "Interface/MDF_GameStateInterface.h"
+#include "Components/MDF_DeformableComponent.h"
 
 #include "HellunaDefenseGameState.generated.h"
 
-/**
- * */
+// =========================================================================================
+// [김기현 작업 영역 시작] 구조체 정의
+// 언리얼 엔진의 TMap은 TArray를 값(Value)으로 직접 가질 수 없습니다.
+// 따라서 TArray를 감싸주는 구조체(Wrapper)를 정의하여 사용합니다.
+// =========================================================================================
+USTRUCT(BlueprintType)
+struct FMDFHitHistoryWrapper
+{
+    GENERATED_BODY()
+
+public:
+    UPROPERTY()
+    TArray<FMDFHitData> History;
+};
+// =========================================================================================
 
 UENUM(BlueprintType)
 enum class EDefensePhase : uint8
 {
-	Day,
-	Night
+    Day,
+    Night
 };
 
 class AResourceUsingObject_SpaceShip;
 
-// [MDF 수정] public IMDF_GameStateInterface 추가 찌그러진 함수가
 UCLASS()
 class HELLUNA_API AHellunaDefenseGameState : public AGameStateBase, public IMDF_GameStateInterface
 {
-	GENERATED_BODY()
+    GENERATED_BODY()
     
 public:
-	UFUNCTION(BlueprintPure, Category = "Defense")
-	AResourceUsingObject_SpaceShip* GetSpaceShip() const { return SpaceShip; }
+    // =========================================================================================
+    // [민우님 작업 영역] 기존 팀원 코드 (우주선 및 페이즈 관리)
+    // =========================================================================================
+    UFUNCTION(BlueprintPure, Category = "Defense")
+    AResourceUsingObject_SpaceShip* GetSpaceShip() const { return SpaceShip; }
 
-	void RegisterSpaceShip(AResourceUsingObject_SpaceShip* InShip);
+    void RegisterSpaceShip(AResourceUsingObject_SpaceShip* InShip);
 
-	UFUNCTION(BlueprintPure, Category = "Defense")
-	EDefensePhase GetPhase() const { return Phase; }
+    UFUNCTION(BlueprintPure, Category = "Defense")
+    EDefensePhase GetPhase() const { return Phase; }
 
-	void SetPhase(EDefensePhase NewPhase);
+    void SetPhase(EDefensePhase NewPhase);
 
-	UFUNCTION(NetMulticast, Reliable)
-	void MulticastPrintNight(int32 Current, int32 Need);
+    UFUNCTION(NetMulticast, Reliable)
+    void MulticastPrintNight(int32 Current, int32 Need);
 
-	UFUNCTION(NetMulticast, Reliable)
-	void MulticastPrintDay();
-	
-	// =============================================================================================================================
-	// [기현 추가] MDF Interface 구현 (SaveMDFData / LoadMDFData) (아직 프로토타입 단계 문제 생길 시 김기현에게 문의 및 주석 처리 하세요!!!)
-	// =============================================================================================================================
-	virtual void SaveMDFData(const FGuid& ID, const TArray<FMDFHitData>& Data) override; // 상속 받는 개념이라 주석 처리 해도 코드 잘 작동 합니다!
-	virtual bool LoadMDFData(const FGuid& ID, TArray<FMDFHitData>& OutData) override; // 상속 받는 개념이라 주석 처리 해도 코드 잘 작동 합니다!
+    UFUNCTION(NetMulticast, Reliable)
+    void MulticastPrintDay();
 
-protected:
-	/** [MDF 컴포넌트 서버 전용 저장소] */
-	TMap<FGuid, TArray<FMDFHitData>> SavedDeformationMap;
     
+    // =========================================================================================
+    // [김기현 작업 영역 시작] MDF Interface 구현 및 시스템 함수
+    // (MDF: Mesh Deformation System - 구조물 변형 상태 저장 관리)
+    // =========================================================================================
+    
+    virtual void BeginPlay() override;
+    virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
+    // [MDF Interface] 데이터 저장 (메모리 갱신)
+    virtual void SaveMDFData(const FGuid& ID, const TArray<FMDFHitData>& Data) override; 
+    
+    // [MDF Interface] 데이터 로드 (메모리 조회)
+    virtual bool LoadMDFData(const FGuid& ID, TArray<FMDFHitData>& OutData) override;
+
+    // [서버 전용] 현재 상태를 파일로 저장하고, 다음 레벨로 이동합니다. (MoveMapActor가 호출)
+    UFUNCTION(BlueprintCallable, Category="Helluna|MDF|System")
+    void Server_SaveAndMoveLevel(FName NextLevelName);
+
 protected:
-	// [팀원 코드 유지]
-	UPROPERTY(Replicated)
-	TObjectPtr<AResourceUsingObject_SpaceShip> SpaceShip;
+    // 현재 데이터를 실제 디스크 파일(.sav)로 저장하는 함수
+    void WriteDataToDisk();
 
-	UPROPERTY(Replicated)
-	EDefensePhase Phase = EDefensePhase::Day;
+    // 세이브 파일 슬롯 이름
+    FString SaveSlotName = TEXT("MDF_SaveSlot");
 
-	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+    // [MDF 컴포넌트 서버 전용 저장소]
+    // TArray 직접 중첩 불가 이슈 해결을 위해 Wrapper 구조체 사용
+    UPROPERTY()
+    TMap<FGuid, FMDFHitHistoryWrapper> SavedDeformationMap;
+    
+    // =========================================================================================
+    // [김기현 작업 영역 끝]
+    // =========================================================================================
+
+
+protected:
+    // [팀원 코드 유지]
+    UPROPERTY(Replicated)
+    TObjectPtr<AResourceUsingObject_SpaceShip> SpaceShip;
+
+    UPROPERTY(Replicated)
+    EDefensePhase Phase = EDefensePhase::Day;
+
+    virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 };
