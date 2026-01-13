@@ -456,45 +456,18 @@ bool URepairComponent::IsMaterialAllowed(FGameplayTag MaterialTag) const
 // [Public Functions] 재료 표시 이름 가져오기
 // ========================================
 
-FText URepairComponent::GetMaterialDisplayName(FGameplayTag MaterialTag) const
+FText URepairComponent::GetMaterialDisplayName(int32 MaterialIndex) const
 {
-	// 월드 가져오기
-	UWorld* World = GetWorld();
-	if (!World)
+	if (MaterialIndex == 1)
 	{
-		return FText::FromString(MaterialTag.ToString());
+		return Material1DisplayName;
+	}
+	else if (MaterialIndex == 2)
+	{
+		return Material2DisplayName;
 	}
 
-	// 모든 액터에서 ItemComponent 찾기
-	TArray<AActor*> AllActors;
-	UGameplayStatics::GetAllActorsOfClass(World, AActor::StaticClass(), AllActors);
-
-	for (AActor* Actor : AllActors)
-	{
-		// ItemComponent 가져오기
-		UInv_ItemComponent* ItemComp = Actor->FindComponentByClass<UInv_ItemComponent>();
-		if (!ItemComp) continue;
-
-		// Manifest 가져오기
-		FInv_ItemManifest Manifest = ItemComp->GetItemManifest();
-		
-		// ItemType이 일치하는지 확인
-		if (Manifest.GetItemType() == MaterialTag)
-		{
-			// DisplayName이 비어있지 않으면 반환
-			FText DisplayName = Manifest.GetDisplayName();
-			if (!DisplayName.IsEmpty())
-			{
-				return DisplayName;
-			}
-			
-			// DisplayName이 비어있으면 GameplayTag 반환
-			break;
-		}
-	}
-
-	// 찾지 못했거나 DisplayName이 비어있으면 GameplayTag 반환
-	return FText::FromString(MaterialTag.ToString());
+	return FText::FromString(TEXT("알 수 없는 재료"));
 }
 
 // ========================================

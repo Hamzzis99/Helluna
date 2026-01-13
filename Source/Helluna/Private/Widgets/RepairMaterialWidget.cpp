@@ -79,7 +79,8 @@ void URepairMaterialWidget::InitializeWidget(URepairComponent* InRepairComponent
 	// UI 업데이트
 	if (Text_Material1Name)
 	{
-		Text_Material1Name->SetText(FText::FromString(Material1Tag.GetTagName().ToString()));
+		// ⭐ Blueprint에서 설정한 DisplayName 사용!
+		Text_Material1Name->SetText(Material1DisplayName);
 	}
 
 	if (Text_Material1Available)
@@ -118,7 +119,8 @@ void URepairMaterialWidget::InitializeWidget(URepairComponent* InRepairComponent
 	// UI 업데이트
 	if (Text_Material2Name)
 	{
-		Text_Material2Name->SetText(FText::FromString(Material2Tag.GetTagName().ToString()));
+		// ⭐ Blueprint에서 설정한 DisplayName 사용!
+		Text_Material2Name->SetText(Material2DisplayName);
 	}
 
 	if (Text_Material2Available)

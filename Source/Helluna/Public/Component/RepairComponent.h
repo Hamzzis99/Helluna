@@ -114,6 +114,14 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Repair|Settings", meta = (Categories = "GameItems.Craftables"))
 	TArray<FGameplayTag> AllowedMaterialTags;
 
+	/** ⭐ 재료 1 표시 이름 (Blueprint에서 직접 설정) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Repair|Material Names")
+	FText Material1DisplayName = FText::FromString(TEXT("재료 1"));
+
+	/** ⭐ 재료 2 표시 이름 (Blueprint에서 직접 설정) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Repair|Material Names")
+	FText Material2DisplayName = FText::FromString(TEXT("재료 2"));
+
 	/** Repair 애니메이션 이펙트 (Niagara/Particle) */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Repair|VFX")
 	TObjectPtr<UParticleSystem> RepairParticleEffect;
@@ -143,12 +151,12 @@ public:
 	bool IsMaterialAllowed(FGameplayTag MaterialTag) const;
 
 	/**
-	 * ⭐ 재료의 표시 이름 가져오기 (UI용)
-	 * @param MaterialTag - 확인할 재료 GameplayTag
-	 * @return 표시 이름 (없으면 GameplayTag 문자열)
+	 * ⭐ 재료의 표시 이름 가져오기 (Blueprint에서 설정한 이름 반환)
+	 * @param MaterialIndex - 1 = Material1, 2 = Material2
+	 * @return 표시 이름
 	 */
 	UFUNCTION(BlueprintPure, Category = "Repair")
-	FText GetMaterialDisplayName(FGameplayTag MaterialTag) const;
+	FText GetMaterialDisplayName(int32 MaterialIndex) const;
 
 	/**
 	 * 현재 Repair 진행 중인지 확인
