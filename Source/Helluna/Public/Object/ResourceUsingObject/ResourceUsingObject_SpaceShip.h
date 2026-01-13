@@ -44,8 +44,13 @@ public:
     UPROPERTY(BlueprintAssignable, Category = "Repair")
     FOnSpaceShipRepairCompleted OnRepairCompleted_Delegate;
 
+    /**
+     * 수리 자원 추가
+     * @param Amount - 추가할 자원 양
+     * @return 실제로 추가된 자원 양 (NeedResource 초과분은 추가되지 않음)
+     */
     UFUNCTION(BlueprintCallable, Category = "Repair")
-    bool AddRepairResource(int32 Amount);
+    int32 AddRepairResource(int32 Amount);
         
     UFUNCTION(BlueprintPure, Category = "Repair")  //UI���� �������� �ۼ�Ʈ�� ��ȯ
     float GetRepairPercent() const;

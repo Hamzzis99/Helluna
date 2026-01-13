@@ -315,10 +315,10 @@ void URepairComponent::AddResourceToTarget(int32 TotalResource)
 	UE_LOG(LogTemp, Warning, TEXT("  ✅ SpaceShip 찾음: %s"), *SpaceShip->GetName());
 	UE_LOG(LogTemp, Warning, TEXT("  🔧 AddRepairResource(%d) 호출 전"), TotalResource);
 	
-	// SpaceShip에 자원 추가
-	bool bSuccess = SpaceShip->AddRepairResource(TotalResource);
+	// SpaceShip에 자원 추가 (실제 추가된 양 반환)
+	int32 ActualAdded = SpaceShip->AddRepairResource(TotalResource);
 
-	UE_LOG(LogTemp, Warning, TEXT("  🔧 AddRepairResource 호출 후! 결과: %s"), bSuccess ? TEXT("성공 ✅") : TEXT("실패 ❌"));
+	UE_LOG(LogTemp, Warning, TEXT("  🔧 AddRepairResource 호출 후! 실제 추가: %d"), ActualAdded);
 	UE_LOG(LogTemp, Warning, TEXT("  📊 현재 수리 진행도: %d / %d"), SpaceShip->GetCurrentResource(), SpaceShip->GetNeedResource());
 	UE_LOG(LogTemp, Warning, TEXT("=== [AddResourceToTarget] 완료! ==="));
 }
