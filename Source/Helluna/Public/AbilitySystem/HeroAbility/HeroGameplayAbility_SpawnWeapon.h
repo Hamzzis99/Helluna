@@ -7,7 +7,9 @@
 #include "AbilitySystem/HellunaHeroGameplayAbility.h"
 #include "HeroGameplayAbility_SpawnWeapon.generated.h"
 
+
 class AHellunaHeroWeapon;
+class UAbilityTask_PlayMontageAndWait;
 /**
  * 
  */
@@ -21,17 +23,24 @@ protected:
 	virtual void ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData) override;
 	virtual void EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled) override;
 
-	void SpawnWeapon();
+	UFUNCTION()
+	void OnEquipFinished();
+
+	UFUNCTION()
+	void OnEquipInterrupted();
 
 
-	// ½ºÆùÇÒ ¹«±â(¿¡µğÅÍ¿¡¼­ ÁöÁ¤)
+	// ìŠ¤í°í•  ë¬´ê¸°(ì—ë””í„°ì—ì„œ ì§€ì •)
 	UPROPERTY(EditDefaultsOnly, Category = "Helluna|Weapon")
 	TSubclassOf<AHellunaHeroWeapon> WeaponClass;
 
-	// ÀåÂø ¼ÒÄÏ ÀÌ¸§(¿¡µğÅÍ¿¡¼­ ÁöÁ¤)
+	// ì¥ì°© ì†Œì¼“ ì´ë¦„(ì—ë””í„°ì—ì„œ ì§€ì •)
 	UPROPERTY(EditDefaultsOnly, Category = "Helluna|Weapon")
 	FName AttachSocketName = TEXT("WeaponSocket");
 
+private:
 
+	UPROPERTY()
+	TObjectPtr<UAbilityTask_PlayMontageAndWait> EquipTask = nullptr;
 		
 };

@@ -16,6 +16,7 @@ namespace HellunaGameplayTags
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_SpawnWeapon);
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_ChangeWeapon);
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Repair);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Farming);
 
 	/** Player Ability tags **/
 
@@ -27,6 +28,7 @@ namespace HellunaGameplayTags
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_Ability_ChangeWeapon);
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_Ability_InRepair);
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_Ability_Repair);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_Ability_Farming);
 
 	/** Player Status tags **/
 

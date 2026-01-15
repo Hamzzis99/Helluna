@@ -88,4 +88,11 @@ public:
 	// ⭐ SpaceShip 수리 RPC (PlayerController가 소유하므로 작동!)
 	UFUNCTION(Server, Reliable, BlueprintCallable, Category = "Repair")
 	void Server_RepairSpaceShip(int32 TotalResource);
+
+	// 무기 스폰 RPC
+	UFUNCTION(Server, Reliable)  
+	void Server_RequestSpawnWeapon(TSubclassOf<class AHellunaHeroWeapon> InWeaponClass, FName InAttachSocket, UAnimMontage* EquipMontage);
+
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_PlayEquipMontageExceptOwner(UAnimMontage* Montage);
 };
