@@ -9,6 +9,17 @@
 /**
  * 
  */
+USTRUCT(BlueprintType)
+struct FWeaponAnimationSet
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditDefaultsOnly)
+	UAnimMontage* Equip;
+
+};
+
+
 UCLASS()
 class HELLUNA_API AHellunaHeroWeapon : public AHellunaWeaponBase
 {
@@ -17,7 +28,7 @@ class HELLUNA_API AHellunaHeroWeapon : public AHellunaWeaponBase
 public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Stats")
-	float AttackSpeed = 0.1f; // ø¨ªÁº”µµ
+	float AttackSpeed = 0.1f; // Ïó∞ÏÇ¨ÏÜçÎèÑ
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Stats")
 	float ReboundUp = 0.5f;
@@ -27,5 +38,10 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Weapon|Fire")
 	virtual void Fire(AController* InstigatorController);
+
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Animation")
+	FWeaponAnimationSet AnimSet;
+
+	const FWeaponAnimationSet& GetAnimSet() const { return AnimSet; }
 	
 };

@@ -91,5 +91,14 @@ public:
 	// @param Material2Tag - 재료 2 태그
 	// @param Material2Amount - 재료 2 개수
 	UFUNCTION(Server, Reliable, BlueprintCallable, Category = "Repair")
+	void Server_RepairSpaceShip(int32 TotalResource);
+
+	// 무기 스폰 RPC
+	UFUNCTION(Server, Reliable)  
+	void Server_RequestSpawnWeapon(TSubclassOf<class AHellunaHeroWeapon> InWeaponClass, FName InAttachSocket, UAnimMontage* EquipMontage);
+
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_PlayEquipMontageExceptOwner(UAnimMontage* Montage);
+
 	void Server_RepairSpaceShip(FGameplayTag Material1Tag, int32 Material1Amount, FGameplayTag Material2Tag, int32 Material2Amount);
 };

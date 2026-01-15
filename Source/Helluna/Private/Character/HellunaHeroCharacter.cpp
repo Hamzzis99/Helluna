@@ -9,6 +9,7 @@
 #include "EnhancedInputSubsystems.h"
 #include "DataAsset/DataAsset_InputConfig.h"
 #include "Conponent/HellunaInputComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "HellunaGameplayTags.h"
 #include "AbilitySystem/HellunaAbilitySystemComponent.h"
 #include "DataAsset/DataAsset_HeroStartUpData.h"
@@ -16,6 +17,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 #include "Component/RepairComponent.h"
+#include "Weapon/HellunaHeroWeapon.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
 #include "InventoryManagement/Utils/Inv_InventoryStatics.h"
 
@@ -275,3 +277,55 @@ void AHellunaHeroCharacter::Server_RepairSpaceShip_Implementation(FGameplayTag M
 	UE_LOG(LogTemp, Warning, TEXT("=== [HeroCharacter::Server_RepairSpaceShip] 완료! ==="));
 }
 
+void AHellunaHeroCharacter::Server_RequestSpawnWeapon_Implementation(TSubclassOf<AHellunaHeroWeapon> InWeaponClass,	FName InAttachSocket, UAnimMontage* EquipMontage) // ga에서 신호받아 무기 생성
+{
+	// 1) 다른 클라(B 등)에게만 애니 보여주기
+	Multicast_PlayEquipMontageExceptOwner(EquipMontage);
+
+	// 2) 서버 권한으로 무기 스폰/부착
+	if (!InWeaponClass) return;
+
+	USkeletalMeshComponent* CharacterMesh = GetMesh();
+	if (!CharacterMesh) return;
+
+	if (!CharacterMesh->DoesSocketExist(InAttachSocket)) return;
+
+	const FTransform SocketTM = CharacterMesh->GetSocketTransform(InAttachSocket);
+
+	FActorSpawnParameters Params;
+	Params.Owner = this;
+	Params.Instigator = this;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	AHellunaHeroWeapon* NewWeapon = GetWorld()->SpawnActor<AHellunaHeroWeapon>(InWeaponClass, SocketTM, Params);
+	if (!NewWeapon) return;
+
+	NewWeapon->AttachToComponent(CharacterMesh,
+		FAttachmentTransformRules::SnapToTargetNotIncludingScale,
+		InAttachSocket);
+
+	SetCurrentWeapon(NewWeapon);
+
+	NewWeapon->ForceNetUpdate();
+	ForceNetUpdate();
+}
+
+void AHellunaHeroCharacter::Multicast_PlayEquipMontageExceptOwner_Implementation(UAnimMontage* Montage)
+{
+	if (!Montage) return;
+
+	// ✅ 소유 클라이언트(=클라 A)는 GA가 이미 재생하니 스킵
+	// OwningClient는 이 Pawn이 "자기 것"이면 IsLocallyControlled()가 true
+	if (IsLocallyControlled())
+	{
+		return;
+	}
+
+	USkeletalMeshComponent* CharacterMesh = GetMesh();
+	if (!CharacterMesh) return;
+
+	UAnimInstance* AnimInst = CharacterMesh->GetAnimInstance();
+	if (!AnimInst) return;
+
+	PlayAnimMontage(Montage);
+}
