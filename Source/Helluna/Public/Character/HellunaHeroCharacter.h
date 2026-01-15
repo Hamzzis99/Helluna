@@ -86,6 +86,10 @@ public:
 	void SetCurrentWeapon(AHellunaHeroWeapon* NewWeapon) { CurrentWeapon = NewWeapon; }
 
 	// ⭐ SpaceShip 수리 RPC (PlayerController가 소유하므로 작동!)
+	// @param Material1Tag - 재료 1 태그
+	// @param Material1Amount - 재료 1 개수
+	// @param Material2Tag - 재료 2 태그
+	// @param Material2Amount - 재료 2 개수
 	UFUNCTION(Server, Reliable, BlueprintCallable, Category = "Repair")
 	void Server_RepairSpaceShip(int32 TotalResource);
 
@@ -95,4 +99,6 @@ public:
 
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayEquipMontageExceptOwner(UAnimMontage* Montage);
+
+	void Server_RepairSpaceShip(FGameplayTag Material1Tag, int32 Material1Amount, FGameplayTag Material2Tag, int32 Material2Amount);
 };

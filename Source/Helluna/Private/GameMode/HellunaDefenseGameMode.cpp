@@ -85,8 +85,7 @@ void AHellunaDefenseGameMode::SetBossReady(bool bReady)
 {
 	if (!HasAuthority())
 		return;
-
-	// ⭐ 중복 호출 방지
+	
 	if (bBossReady == bReady)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[SetBossReady] 이미 동일한 상태입니다. bBossReady=%s, 요청=%s"), 

@@ -180,23 +180,37 @@ private:
 	// [Blueprint에서 설정 가능]
 	// ========================================
 
-	/** 재료 1 기본 Tag (Blueprint에서 설정) */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Repair|Settings", meta = (AllowPrivateAccess = "true", Categories = "GameItems.Craftables"))
+	// ==================== 재료 1 ====================
+	
+	/** 재료 1 GameplayTag */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Repair|Settings|Material 1", meta = (AllowPrivateAccess = "true", Categories = "GameItems.Craftables", DisplayName = "게임플레이 태그"))
 	FGameplayTag DefaultMaterial1Tag;
 
-	/** 재료 1 기본 아이콘 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Repair|Settings", meta = (AllowPrivateAccess = "true"))
+	/** 재료 1 아이콘 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Repair|Settings|Material 1", meta = (AllowPrivateAccess = "true", DisplayName = "아이콘"))
 	TObjectPtr<UTexture2D> DefaultMaterial1Icon;
 
-	/** 재료 2 기본 Tag (Blueprint에서 설정) */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Repair|Settings", meta = (AllowPrivateAccess = "true", Categories = "GameItems.Craftables"))
+	/** ⭐ 재료 1 표시 이름 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Repair|Settings|Material 1", meta = (AllowPrivateAccess = "true", DisplayName = "표시 이름"))
+	FText Material1DisplayName = FText::FromString(TEXT("재료 1"));
+
+	// ==================== 재료 2 ====================
+
+	/** 재료 2 GameplayTag */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Repair|Settings|Material 2", meta = (AllowPrivateAccess = "true", Categories = "GameItems.Craftables", DisplayName = "게임플레이 태그"))
 	FGameplayTag DefaultMaterial2Tag;
 
-	/** 재료 2 기본 아이콘 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Repair|Settings", meta = (AllowPrivateAccess = "true"))
+	/** 재료 2 아이콘 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Repair|Settings|Material 2", meta = (AllowPrivateAccess = "true", DisplayName = "아이콘"))
 	TObjectPtr<UTexture2D> DefaultMaterial2Icon;
 
+	/** ⭐ 재료 2 표시 이름 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Repair|Settings|Material 2", meta = (AllowPrivateAccess = "true", DisplayName = "표시 이름"))
+	FText Material2DisplayName = FText::FromString(TEXT("재료 2"));
+
+	// ==================== 기타 ====================
+
 	/** 빈 슬롯 기본 이미지 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Repair|Settings", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Repair|Settings", meta = (AllowPrivateAccess = "true", DisplayName = "빈 슬롯 아이콘"))
 	TObjectPtr<UTexture2D> EmptySlotIcon;
 };

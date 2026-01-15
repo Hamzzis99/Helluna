@@ -36,37 +36,43 @@ void AResourceUsingObject_SpaceShip::CollisionBoxEndOverlap(UPrimitiveComponent*
 
 }
 
-//자원량을 더하는 함수
-bool AResourceUsingObject_SpaceShip::AddRepairResource(int32 Amount)
+//자원량을 더하는 함수 (실제 추가된 양 반환)
+int32 AResourceUsingObject_SpaceShip::AddRepairResource(int32 Amount)
 {
 	UE_LOG(LogTemp, Warning, TEXT("=== [SpaceShip::AddRepairResource] 호출됨! ==="));
-	UE_LOG(LogTemp, Warning, TEXT("  추가할 자원: %d"), Amount);
+	UE_LOG(LogTemp, Warning, TEXT("  추가 요청 자원: %d"), Amount);
 	UE_LOG(LogTemp, Warning, TEXT("  현재 상태: %d / %d"), CurrentResource, NeedResource);
 	UE_LOG(LogTemp, Warning, TEXT("  서버 여부: %s"), HasAuthority() ? TEXT("서버 ✅") : TEXT("클라이언트 ❌"));
 
 	if (!HasAuthority())
 	{
 		UE_LOG(LogTemp, Warning, TEXT("  ⚠️ 서버가 아니므로 종료!"));
-		return false;
+		return 0;
 	}
 	
 	if (Amount <= 0)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("  ⚠️ Amount가 0 이하!"));
-		return false;
+		return 0;
 	}
 	
 	if (IsRepaired())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("  ⚠️ 이미 수리 완료됨!"));
-		return false;
+		UE_LOG(LogTemp, Warning, TEXT("  ⚠️ 이미 수리 완료됨! 추가 불가"));
+		return 0;
 	}
 
-	int32 OldResource = CurrentResource;
-	CurrentResource = FMath::Clamp(CurrentResource + Amount, 0, NeedResource);
+	// ⭐ 실제로 추가 가능한 양 계산
+	int32 RemainingSpace = NeedResource - CurrentResource;
+	int32 ActualAddAmount = FMath::Min(Amount, RemainingSpace);
 
-	UE_LOG(LogTemp, Warning, TEXT("  ✅ 자원 추가 완료! %d → %d (변화량: +%d)"), 
-		OldResource, CurrentResource, CurrentResource - OldResource);
+	UE_LOG(LogTemp, Warning, TEXT("  📊 남은 공간: %d, 실제 추가량: %d"), RemainingSpace, ActualAddAmount);
+
+	int32 OldResource = CurrentResource;
+	CurrentResource += ActualAddAmount;
+
+	UE_LOG(LogTemp, Warning, TEXT("  ✅ 자원 추가 완료! %d → %d (실제 추가: +%d)"), 
+		OldResource, CurrentResource, ActualAddAmount);
 
 	OnRepairProgressChanged.Broadcast(CurrentResource, NeedResource);
 	UE_LOG(LogTemp, Warning, TEXT("  📢 OnRepairProgressChanged 델리게이트 브로드캐스트!"));
@@ -78,8 +84,9 @@ bool AResourceUsingObject_SpaceShip::AddRepairResource(int32 Amount)
 		OnRepairCompleted();
 	}
 
+	UE_LOG(LogTemp, Warning, TEXT("  📤 실제 추가된 자원: %d 반환"), ActualAddAmount);
 	UE_LOG(LogTemp, Warning, TEXT("=== [SpaceShip::AddRepairResource] 완료! ==="));
-	return true;
+	return ActualAddAmount;
 }
 
 // UI위해 수리도를 퍼센트로 변환

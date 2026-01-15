@@ -52,8 +52,8 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (Categories ="GameItems"))
 	FGameplayTag ItemType;
 
-	// ⭐ 표시 이름 (UI에서 사용)
-	UPROPERTY(EditAnywhere, Category = "Inventory")
+	// ⭐ 표시 이름 (UI에서 사용되는 한글 이름)
+	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "표시 이름"))
 	FText DisplayName;
 
 	// 아이템 픽업 액터 클래스

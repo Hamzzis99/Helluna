@@ -18,6 +18,8 @@
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 #include "Component/RepairComponent.h"
 #include "Weapon/HellunaHeroWeapon.h"
+#include "InventoryManagement/Components/Inv_InventoryComponent.h"
+#include "InventoryManagement/Utils/Inv_InventoryStatics.h"
 
 #include "DebugHelper.h"
 
@@ -151,11 +153,12 @@ void AHellunaHeroCharacter::Input_AbilityInputReleased(FGameplayTag InInputTag)
 
 }
 
-// ⭐ SpaceShip 수리 Server RPC
-void AHellunaHeroCharacter::Server_RepairSpaceShip_Implementation(int32 TotalResource)
+// ⭐ SpaceShip 수리 Server RPC (재료 개별 전달)
+void AHellunaHeroCharacter::Server_RepairSpaceShip_Implementation(FGameplayTag Material1Tag, int32 Material1Amount, FGameplayTag Material2Tag, int32 Material2Amount)
 {
 	UE_LOG(LogTemp, Warning, TEXT("=== [HeroCharacter::Server_RepairSpaceShip] 호출됨! ==="));
-	UE_LOG(LogTemp, Warning, TEXT("  추가할 자원: %d"), TotalResource);
+	UE_LOG(LogTemp, Warning, TEXT("  재료 1: %s x %d"), *Material1Tag.ToString(), Material1Amount);
+	UE_LOG(LogTemp, Warning, TEXT("  재료 2: %s x %d"), *Material2Tag.ToString(), Material2Amount);
 	UE_LOG(LogTemp, Warning, TEXT("  서버 여부: %s"), HasAuthority() ? TEXT("서버 ✅") : TEXT("클라이언트 ❌"));
 
 	// 서버 권한 체크
@@ -164,6 +167,9 @@ void AHellunaHeroCharacter::Server_RepairSpaceShip_Implementation(int32 TotalRes
 		UE_LOG(LogTemp, Error, TEXT("  ❌ 서버가 아님!"));
 		return;
 	}
+
+	// 총 자원 계산
+	int32 TotalResource = Material1Amount + Material2Amount;
 
 	// 자원이 0 이하면 무시
 	if (TotalResource <= 0)
@@ -193,19 +199,75 @@ void AHellunaHeroCharacter::Server_RepairSpaceShip_Implementation(int32 TotalRes
 		{
 			UE_LOG(LogTemp, Warning, TEXT("  ✅ RepairComponent 찾음!"));
 			
-			// ⭐⭐⭐ 1. 애니메이션/사운드를 **한 번만** 재생 (멀티캐스트)
+			// ⭐ 애니메이션/사운드를 **한 번만** 재생 (멀티캐스트)
 			FVector SpaceShipLocation = SpaceShip->GetActorLocation();
 			RepairComp->Multicast_PlaySingleRepairEffect(SpaceShipLocation);
 			UE_LOG(LogTemp, Warning, TEXT("  🎬 애니메이션/사운드 한 번 재생 요청!"));
 		}
 		
-		// 2. 자원 추가
-		UE_LOG(LogTemp, Warning, TEXT("  🔧 SpaceShip->AddRepairResource(%d) 호출"), TotalResource);
-		bool bSuccess = SpaceShip->AddRepairResource(TotalResource);
-		
-		UE_LOG(LogTemp, Warning, TEXT("  🔧 AddRepairResource 결과: %s"), bSuccess ? TEXT("성공 ✅") : TEXT("실패 ❌"));
-		UE_LOG(LogTemp, Warning, TEXT("  📊 현재 수리 진행도: %d / %d"), 
-			SpaceShip->GetCurrentResource(), SpaceShip->GetNeedResource());
+		// ⭐⭐⭐ SpaceShip에 자원 추가 (실제 추가된 양 반환)
+		int32 ActualAdded = SpaceShip->AddRepairResource(TotalResource);
+		UE_LOG(LogTemp, Warning, TEXT("  📊 SpaceShip->AddRepairResource(%d) 호출 → 실제 추가: %d"), TotalResource, ActualAdded);
+
+		// ⭐⭐⭐ 실제 추가된 양만큼만 인벤토리에서 차감!
+		if (ActualAdded > 0)
+		{
+			// ⭐ PlayerController 가져오기
+			APlayerController* PC = Cast<APlayerController>(GetController());
+			if (!PC)
+			{
+				UE_LOG(LogTemp, Error, TEXT("  ❌ PlayerController를 찾을 수 없음!"));
+				return;
+			}
+
+			// ⭐ InventoryComponent 가져오기 (Statics 사용!)
+			UInv_InventoryComponent* InvComp = UInv_InventoryStatics::GetInventoryComponent(PC);
+			if (!InvComp)
+			{
+				UE_LOG(LogTemp, Error, TEXT("  ❌ InventoryComponent를 찾을 수 없음!"));
+				return;
+			}
+
+			UE_LOG(LogTemp, Warning, TEXT("  ✅ InventoryComponent 찾음!"));
+
+			// 실제 차감량 계산 (비율로 분배)
+			int32 ActualMaterial1 = 0;
+			int32 ActualMaterial2 = 0;
+
+			if (TotalResource > 0)
+			{
+				// 비율 계산: (요청량 / 총량) * 실제추가량
+				float Ratio1 = (float)Material1Amount / (float)TotalResource;
+				float Ratio2 = (float)Material2Amount / (float)TotalResource;
+
+				ActualMaterial1 = FMath::RoundToInt(Ratio1 * ActualAdded);
+				ActualMaterial2 = ActualAdded - ActualMaterial1; // 나머지는 재료2에
+
+				UE_LOG(LogTemp, Warning, TEXT("  📊 비율 계산:"));
+				UE_LOG(LogTemp, Warning, TEXT("    - 재료1 비율: %.2f → 차감: %d"), Ratio1, ActualMaterial1);
+				UE_LOG(LogTemp, Warning, TEXT("    - 재료2 비율: %.2f → 차감: %d"), Ratio2, ActualMaterial2);
+			}
+
+			// 재료 1 차감
+			if (ActualMaterial1 > 0 && Material1Tag.IsValid())
+			{
+				UE_LOG(LogTemp, Warning, TEXT("  🧪 재료 1 차감: %s x %d"), *Material1Tag.ToString(), ActualMaterial1);
+				InvComp->Server_ConsumeMaterialsMultiStack(Material1Tag, ActualMaterial1);
+			}
+
+			// 재료 2 차감
+			if (ActualMaterial2 > 0 && Material2Tag.IsValid())
+			{
+				UE_LOG(LogTemp, Warning, TEXT("  🧪 재료 2 차감: %s x %d"), *Material2Tag.ToString(), ActualMaterial2);
+				InvComp->Server_ConsumeMaterialsMultiStack(Material2Tag, ActualMaterial2);
+			}
+
+			UE_LOG(LogTemp, Warning, TEXT("  ✅ 실제 차감 완료! 총 차감: %d"), ActualAdded);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("  ⚠️ SpaceShip에 추가된 자원이 없음! (이미 만원일 수 있음)"));
+		}
 	}
 	else
 	{
