@@ -38,6 +38,7 @@ namespace HellunaGameplayTags
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_status_Can_Shoot);
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_status_Can_AutoShoot);
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_status_Can_Repair);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_status_Can_Farming);
 
 
 	/** Enemy tags **/

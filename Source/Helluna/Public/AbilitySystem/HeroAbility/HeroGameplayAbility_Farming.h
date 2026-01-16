@@ -23,14 +23,14 @@ protected:
 	virtual void EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled) override;
 
 private:
-	// ÁÖº¯¿¡ ±¤¹°(È¤Àº Ã¤Áı ´ë»ó)ÀÌ ÀÖ´ÂÁö Ã£±â À§ÇÑ Æ®·¹ÀÌ½º ¼³Á¤
+	// ì£¼ë³€ì— ê´‘ë¬¼(í˜¹ì€ ì±„ì§‘ ëŒ€ìƒ)ì´ ìˆëŠ”ì§€ ì°¾ê¸° ìœ„í•œ íŠ¸ë ˆì´ìŠ¤ ì„¤ì •
 	UPROPERTY(EditDefaultsOnly, Category = "Farming|Trace")
 	float TraceRadius = 250.f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Farming|Trace")
 	float TraceDistance = 300.f;
 
-	// Ã¤Áı ´ë»ó(±¤¹°) Actor Tag (¿¹: "Ore")
+	// ì±„ì§‘ ëŒ€ìƒ(ê´‘ë¬¼) Actor Tag (ì˜ˆ: "Ore")
 	UPROPERTY(EditDefaultsOnly, Category = "Farming|Target")
 	FName FarmTargetTag = TEXT("Ore");
 	
@@ -40,11 +40,11 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Farming|Debug")
 	bool bDrawDebug = false; 
 
-	// ºü¸£°Ô È¸ÀüÇÏ´Â ½Ã°£(ÃÊ) - 0.08~0.15 ÃßÃµ
+	// ë¹ ë¥´ê²Œ íšŒì „í•˜ëŠ” ì‹œê°„(ì´ˆ) - 0.08~0.15 ì¶”ì²œ
 	UPROPERTY(EditDefaultsOnly, Category = "Farming|Look")
 	float LookInterpDuration = 0.10f;
 
-	// Å¸°ÙÀ» ¼±ÅÃÇÒ ¶§ ¡°½Ã¾ß ÄÜ¡± ¹İ°¢(µµ) - 8~15 ÃßÃµ
+	// íƒ€ê²Ÿì„ ì„ íƒí•  ë•Œ â€œì‹œì•¼ ì½˜â€ ë°˜ê°(ë„) - 8~15 ì¶”ì²œ
 	UPROPERTY(EditDefaultsOnly, Category = "Farming|Look")
 	float ViewConeHalfAngleDeg = 12.f;
 

@@ -20,6 +20,7 @@
 #include "Weapon/HellunaHeroWeapon.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
 #include "InventoryManagement/Utils/Inv_InventoryStatics.h"
+#include "Character/HeroComponent/Helluna_FindResourceComponent.h"
 
 #include "DebugHelper.h"
 
@@ -47,6 +48,9 @@ AHellunaHeroCharacter::AHellunaHeroCharacter()
 	GetCharacterMovement()->BrakingDecelerationWalking = 2000.f;
 
 	HeroCombatComponent = CreateDefaultSubobject<UHeroCombatComponent>(TEXT("HeroCombatComponent"));
+
+	FindResourceComponent =	CreateDefaultSubobject<UHelluna_FindResourceComponent>(TEXT("FindResourceComponent"));
+
 }
 
 void AHellunaHeroCharacter::BeginPlay()

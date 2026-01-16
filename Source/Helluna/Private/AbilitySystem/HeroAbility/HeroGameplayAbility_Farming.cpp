@@ -1,4 +1,4 @@
-﻿// Capstone Project Helluna
+// Capstone Project Helluna
 
 
 #include "AbilitySystem/HeroAbility/HeroGameplayAbility_Farming.h"
@@ -7,6 +7,9 @@
 #include "Kismet/KismetMathLibrary.h"
 #include "Kismet/GameplayStatics.h"
 #include "DrawDebugHelpers.h"
+#include "HellunaGameplayTags.h"
+
+#include "Character/HeroComponent/Helluna_FindResourceComponent.h"
 
 #include "DebugHelper.h"
 
@@ -18,11 +21,12 @@ UHeroGameplayAbility_Farming::UHeroGameplayAbility_Farming()
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::LocalPredicted;
 }
 
-void UHeroGameplayAbility_Farming::ActivateAbility(	const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData)
+void UHeroGameplayAbility_Farming::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData)
 {
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
 
 	Debug::Print(TEXT("장상작동"), FColor::Red);
+
 
 	if (!ActorInfo || !ActorInfo->AvatarActor.IsValid())
 	{
@@ -64,7 +68,7 @@ void UHeroGameplayAbility_Farming::ActivateAbility(	const FGameplayAbilitySpecHa
 
 		Debug::Print(TEXT("파밍 성공!"), FColor::Green);
 	}
-	
+
 }
 
 void UHeroGameplayAbility_Farming::EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled)
@@ -145,7 +149,7 @@ bool UHeroGameplayAbility_Farming::FindFarmingTarget(const FGameplayAbilityActor
 	return bFoundOre;
 }
 
-void UHeroGameplayAbility_Farming::FaceToTarget_LocalOnly( const FGameplayAbilityActorInfo* ActorInfo, const FVector& TargetLocation) const
+void UHeroGameplayAbility_Farming::FaceToTarget_LocalOnly(const FGameplayAbilityActorInfo* ActorInfo, const FVector& TargetLocation) const
 {
 
 	if (!ActorInfo || !ActorInfo->AvatarActor.IsValid())

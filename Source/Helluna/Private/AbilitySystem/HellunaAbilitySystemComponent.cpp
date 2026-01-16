@@ -105,7 +105,7 @@ void UHellunaAbilitySystemComponent::OnAbilityInputReleased(const FGameplayTag& 
 	}
 }
 
-bool UHellunaAbilitySystemComponent::CancelAbilityByTag(const FGameplayTag AbilityTagToCancel)  //¾îºô¸®Æ¼ Ãë¼Ò 
+bool UHellunaAbilitySystemComponent::CancelAbilityByTag(const FGameplayTag AbilityTagToCancel)  //ì–´ë¹Œë¦¬í‹° ì·¨ì†Œ 
 {
 	check(AbilityTagToCancel.IsValid());
 
@@ -127,4 +127,22 @@ bool UHellunaAbilitySystemComponent::CancelAbilityByTag(const FGameplayTag Abili
 	}
 
 	return bCanceledAny;
+}
+
+void UHellunaAbilitySystemComponent::AddStateTag(const FGameplayTag& Tag)
+{
+	if (!Tag.IsValid()) return;
+	AddLooseGameplayTag(Tag);
+}
+
+void UHellunaAbilitySystemComponent::RemoveStateTag(const FGameplayTag& Tag)
+{
+	if (!Tag.IsValid()) return;
+	RemoveLooseGameplayTag(Tag);
+}
+
+bool UHellunaAbilitySystemComponent::HasStateTag(const FGameplayTag& Tag) const
+{
+	if (!Tag.IsValid()) return false;
+	return HasMatchingGameplayTag(Tag);
 }
