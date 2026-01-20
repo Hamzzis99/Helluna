@@ -19,19 +19,19 @@ class HELLUNA_API AHeroWeapon_AssaultRifle : public AHellunaHeroWeapon
 public:
 	AHeroWeapon_AssaultRifle();
 
-	// GA(¶Ç´Â Ä³¸¯ÅÍ)¿¡¼­ È£ÃâÇÏ´Â ¡°Å¬¶ó ÁøÀÔÁ¡¡±
+	// GA(ë˜ëŠ” ìºë¦­í„°)ì—ì„œ í˜¸ì¶œí•˜ëŠ” â€œí´ë¼ ì§„ì…ì â€
 	virtual void Fire(AController* InstigatorController) override;
 
 protected:
-	// ¼­¹ö¿¡¼­ ½ÇÁ¦ È÷Æ®ÆÇÁ¤/µ¥¹ÌÁö ¼öÇà
+	// ì„œë²„ì—ì„œ ì‹¤ì œ íˆíŠ¸íŒì •/ë°ë¯¸ì§€ ìˆ˜í–‰
 	UFUNCTION(Server, Reliable)
 	void ServerFire(AController* InstigatorController, FVector_NetQuantize TraceStart, FVector_NetQuantize TraceEnd);
 
-	// (¼±ÅÃ) ÀÌÆåÆ®/»ç¿îµå µ¿±âÈ­¿ë
+	// (ì„ íƒ) ì´í™íŠ¸/ì‚¬ìš´ë“œ ë™ê¸°í™”ìš©
 	UFUNCTION(NetMulticast, Unreliable)
 	void MulticastFireFX(FVector_NetQuantize TraceStart, FVector_NetQuantize TraceEnd, bool bHit, FVector_NetQuantize HitLocation);
 
-	// ½ÇÁ¦ ¶óÀÎÆ®·¹ÀÌ½º + µ¥¹ÌÁö Àû¿ë
+	// ì‹¤ì œ ë¼ì¸íŠ¸ë ˆì´ìŠ¤ + ë°ë¯¸ì§€ ì ìš©
 	void DoLineTraceAndDamage(AController* InstigatorController, const FVector& TraceStart, const FVector& TraceEnd);
 
 protected:
@@ -39,7 +39,7 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Stats")
 	float Range = 20000.f;
 
-	// Æ®·¹ÀÌ½º Ã¤³Î
+	// íŠ¸ë ˆì´ìŠ¤ ì±„ë„
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Trace")
 	TEnumAsByte<ECollisionChannel> TraceChannel = ECC_Visibility;
 
