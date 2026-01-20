@@ -11,11 +11,6 @@
 #include "NiagaraFunctionLibrary.h"			
 #include "NiagaraSystem.h"
 
-	AHeroWeapon_AssaultRifle::AHeroWeapon_AssaultRifle()
-	{
-		bReplicates = true;
-		SetReplicateMovement(true);
-	}
 
 	void AHeroWeapon_AssaultRifle::Fire(AController* InstigatorController)
 	{

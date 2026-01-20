@@ -42,12 +42,12 @@ void AHellunaDefenseGameState::SetPhase(EDefensePhase NewPhase)
 
 void AHellunaDefenseGameState::MulticastPrintNight_Implementation(int32 Current, int32 Need)
 {
-    Debug::Print(FString::Printf(TEXT("Night! SpaceShip Repair: %d / %d"), Current, Need));
+    //Debug::Print(FString::Printf(TEXT("Night! SpaceShip Repair: %d / %d"), Current, Need));
 }
 
 void AHellunaDefenseGameState::MulticastPrintDay_Implementation()
 {
-    Debug::Print(TEXT("Day!"));
+    //Debug::Print(TEXT("Day!"));
 }
 
 // =============================================================================================================================

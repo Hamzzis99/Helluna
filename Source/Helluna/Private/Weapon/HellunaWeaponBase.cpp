@@ -19,6 +19,8 @@ AHellunaWeaponBase::AHellunaWeaponBase()
 	WeaponCollisionBox->SetBoxExtent(FVector(20.f));
 	WeaponCollisionBox->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
+	bReplicates = true;
+	SetReplicateMovement(true);
 
 }
 

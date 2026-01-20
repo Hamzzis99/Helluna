@@ -40,6 +40,9 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Resource", meta = (AllowPrivateAccess = "true"))
 	UHelluna_FindResourceComponent* FindResourceComponent;
 
+
+
+
 private:
 
 #pragma region Components
@@ -54,10 +57,10 @@ private:
 	UHeroCombatComponent* HeroCombatComponent;
 
 
-	UPROPERTY(VisibleInstanceOnly, Category = "Weapon")
+	UPROPERTY(Replicated, VisibleInstanceOnly, Category = "Weapon")
 	TObjectPtr<AHellunaHeroWeapon> CurrentWeapon;
 
-	
+
 	
 
 
@@ -103,5 +106,5 @@ public:
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayEquipMontageExceptOwner(UAnimMontage* Montage);
 
-	
+
 };

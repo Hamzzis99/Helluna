@@ -56,6 +56,8 @@ void UHellunaAbilitySystemComponent::OnAbilityInputPressed(const FGameplayTag& I
 		}
 		else // Trigger
 		{
+			if (AbilitySpec.IsActive()) continue;  // 이미 활성화된 어빌리티는 무시
+
 			TryActivateAbility(AbilitySpec.Handle);
 			return;
 		}

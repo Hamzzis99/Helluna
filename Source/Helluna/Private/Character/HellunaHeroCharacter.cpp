@@ -21,6 +21,7 @@
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
 #include "InventoryManagement/Utils/Inv_InventoryStatics.h"
 #include "Character/HeroComponent/Helluna_FindResourceComponent.h"
+#include "Net/UnrealNetwork.h"
 
 #include "DebugHelper.h"
 
@@ -49,7 +50,7 @@ AHellunaHeroCharacter::AHellunaHeroCharacter()
 
 	HeroCombatComponent = CreateDefaultSubobject<UHeroCombatComponent>(TEXT("HeroCombatComponent"));
 
-	FindResourceComponent =	CreateDefaultSubobject<UHelluna_FindResourceComponent>(TEXT("FindResourceComponent"));
+	FindResourceComponent = CreateDefaultSubobject<UHelluna_FindResourceComponent>(TEXT("파밍 자원 찾기 컴포넌트"));
 
 }
 
@@ -332,4 +333,11 @@ void AHellunaHeroCharacter::Multicast_PlayEquipMontageExceptOwner_Implementation
 	if (!AnimInst) return;
 
 	PlayAnimMontage(Montage);
+}
+
+void AHellunaHeroCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const //서버에서 클라로 복제
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(AHellunaHeroCharacter, CurrentWeapon);
 }
