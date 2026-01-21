@@ -23,5 +23,8 @@ public:
 	void OnAbilityInputPressed(const FGameplayTag& InInputTag);
 	void OnAbilityInputReleased(const FGameplayTag& InInputTag);
 
+	void AddStateTag(const FGameplayTag& Tag);
+	void RemoveStateTag(const FGameplayTag& Tag);
+	bool HasStateTag(const FGameplayTag& Tag) const;
 
 };

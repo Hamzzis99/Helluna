@@ -17,7 +17,6 @@ class HELLUNA_API AHeroWeapon_AssaultRifle : public AHellunaHeroWeapon
 	GENERATED_BODY()
 
 public:
-	AHeroWeapon_AssaultRifle();
 
 	// GA(또는 캐릭터)에서 호출하는 “클라 진입점”
 	virtual void Fire(AController* InstigatorController) override;

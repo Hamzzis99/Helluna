@@ -7,8 +7,12 @@
 #include "HeroGameplayAbility_Farming.generated.h"
 
 /**
- * 
+ * FindResourceComponentê°€ ì´ë¯¸ FocusedActor(íŒŒë° ëŒ€ìƒ)ë¥¼ ì •í•´ì£¼ë¯€ë¡œ
+ * GAì—ì„œëŠ” "í¬ì»¤ìŠ¤ ëŒ€ìƒ ê°€ì ¸ì˜¤ê¸° + ì„œë²„ì—ì„œ ë°ë¯¸ì§€ ì ìš©"ë§Œ ìˆ˜í–‰í•œë‹¤.
  */
+class AActor;
+class UAbilityTask_PlayMontageAndWait;
+
 UCLASS()
 class HELLUNA_API UHeroGameplayAbility_Farming : public UHellunaHeroGameplayAbility
 {
@@ -18,47 +22,30 @@ public:
 	UHeroGameplayAbility_Farming();
 
 protected:
+	virtual void ActivateAbility(
+		const FGameplayAbilitySpecHandle Handle,
+		const FGameplayAbilityActorInfo* ActorInfo,
+		const FGameplayAbilityActivationInfo ActivationInfo,
+		const FGameplayEventData* TriggerEventData) override;
 
-	virtual void ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData) override;
-	virtual void EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled) override;
+	UFUNCTION()
+	void OnFarmingFinished();
+
+	UFUNCTION()
+	void OnFarmingInterrupted();
 
 private:
-	// ÁÖº¯¿¡ ±¤¹°(È¤Àº Ã¤Áı ´ë»ó)ÀÌ ÀÖ´ÂÁö Ã£±â À§ÇÑ Æ®·¹ÀÌ½º ¼³Á¤
-	UPROPERTY(EditDefaultsOnly, Category = "Farming|Trace")
-	float TraceRadius = 250.f;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Farming|Trace")
-	float TraceDistance = 300.f;
+	// âœ… ë¡œì»¬ì´ë©´ FocusedActor, ì„œë²„ë©´ ServerFarmingTargetì„ ê°€ì ¸ì˜¨ë‹¤
+	AActor* GetFarmingTarget(const FGameplayAbilityActorInfo* ActorInfo) const;
 
-	// Ã¤Áı ´ë»ó(±¤¹°) Actor Tag (¿¹: "Ore")
-	UPROPERTY(EditDefaultsOnly, Category = "Farming|Target")
-	FName FarmTargetTag = TEXT("Ore");
-	
-	UPROPERTY(EditDefaultsOnly, Category = "Farming|Damage")
-	float FarmingDamage = 30.f;
+	// âœ… ë¡œì»¬ ì²´ê°: ì¦‰ì‹œ Yawë§Œ íšŒì „
+	void FaceToTarget_InstantLocalOnly(const FGameplayAbilityActorInfo* ActorInfo, const FVector& TargetLocation) const;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Farming|Debug")
-	bool bDrawDebug = false; 
+	UPROPERTY(EditDefaultsOnly, Category = "Farming|Look")  // í¬ë¡œìŠ¤í—¤ì–´ X ìœ„ì¹˜ ê¸°ì¤€ (0.0 ~ 1.0) 
+	float CrosshairXNormalized = 0.57f;
 
-	// ºü¸£°Ô È¸ÀüÇÏ´Â ½Ã°£(ÃÊ) - 0.08~0.15 ÃßÃµ
-	UPROPERTY(EditDefaultsOnly, Category = "Farming|Look")
-	float LookInterpDuration = 0.10f;
-
-	// Å¸°ÙÀ» ¼±ÅÃÇÒ ¶§ ¡°½Ã¾ß ÄÜ¡± ¹İ°¢(µµ) - 8~15 ÃßÃµ
-	UPROPERTY(EditDefaultsOnly, Category = "Farming|Look")
-	float ViewConeHalfAngleDeg = 12.f;
-
-	bool FindFarmingTarget(const FGameplayAbilityActorInfo* ActorInfo, AActor*& OutTarget, FHitResult& OutHit) const;
-	void FaceToTarget_LocalOnly(const FGameplayAbilityActorInfo* ActorInfo, const FVector& TargetLocation) const;
-
-	FTimerHandle LookInterpTimerHandle;
-	TWeakObjectPtr<APlayerController> CachedPC;
-
-	float LookElapsed = 0.f;
-	float LookStartYaw = 0.f;
-	float LookTargetYaw = 0.f;
-
-	void StartSmoothLookAt(APlayerController* PC, float TargetYaw);
-	void TickSmoothLook();
+	UPROPERTY()
+	TObjectPtr<UAbilityTask_PlayMontageAndWait> FarmingTask = nullptr;
 };
 	

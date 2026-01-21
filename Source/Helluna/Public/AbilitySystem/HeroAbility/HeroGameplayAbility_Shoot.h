@@ -16,6 +16,8 @@ class HELLUNA_API UHeroGameplayAbility_Shoot : public UHellunaHeroGameplayAbilit
 	
 protected:
 
+	UHeroGameplayAbility_Shoot();
+
 	virtual void ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData) override;
 	virtual void EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled) override;
 
@@ -23,11 +25,6 @@ protected:
 
 private:
 
-	UPROPERTY(EditDefaultsOnly, Category = "Shoot")
-	float ReboundUp = 0.3f;
-
-	UPROPERTY(EditDefaultsOnly, Category = "Shoot")
-	float ReboundLeftRight = 0.2f;
-
+	FTimerHandle AutoFireTimerHandle;
 
 };

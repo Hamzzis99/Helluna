@@ -15,7 +15,7 @@ class UDataAsset_InputConfig;
 class UHeroCombatComponent;
 class AHellunaHeroWeapon;
 struct FInputActionValue;
-
+class UHelluna_FindResourceComponent;
 
 
 /**
@@ -37,6 +37,12 @@ protected:
 
 	virtual void PossessedBy(AController* NewController) override;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Resource", meta = (AllowPrivateAccess = "true"))
+	UHelluna_FindResourceComponent* FindResourceComponent;
+
+
+
+
 private:
 
 #pragma region Components
@@ -51,10 +57,10 @@ private:
 	UHeroCombatComponent* HeroCombatComponent;
 
 
-	UPROPERTY(VisibleInstanceOnly, Category = "Weapon")
+	UPROPERTY(Replicated, VisibleInstanceOnly, Category = "Weapon")
 	TObjectPtr<AHellunaHeroWeapon> CurrentWeapon;
 
-	
+
 	
 
 
@@ -91,7 +97,7 @@ public:
 	// @param Material2Tag - 재료 2 태그
 	// @param Material2Amount - 재료 2 개수
 	UFUNCTION(Server, Reliable, BlueprintCallable, Category = "Repair")
-	void Server_RepairSpaceShip(int32 TotalResource);
+	void Server_RepairSpaceShip(FGameplayTag Material1Tag, int32 Material1Amount, FGameplayTag Material2Tag, int32 Material2Amount);
 
 	// 무기 스폰 RPC
 	UFUNCTION(Server, Reliable)  
@@ -100,5 +106,5 @@ public:
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayEquipMontageExceptOwner(UAnimMontage* Montage);
 
-	void Server_RepairSpaceShip(FGameplayTag Material1Tag, int32 Material1Amount, FGameplayTag Material2Tag, int32 Material2Amount);
+
 };

@@ -56,6 +56,8 @@ void UHellunaAbilitySystemComponent::OnAbilityInputPressed(const FGameplayTag& I
 		}
 		else // Trigger
 		{
+			if (AbilitySpec.IsActive()) continue;  // 이미 활성화된 어빌리티는 무시
+
 			TryActivateAbility(AbilitySpec.Handle);
 			return;
 		}
@@ -105,7 +107,7 @@ void UHellunaAbilitySystemComponent::OnAbilityInputReleased(const FGameplayTag& 
 	}
 }
 
-bool UHellunaAbilitySystemComponent::CancelAbilityByTag(const FGameplayTag AbilityTagToCancel)  //�����Ƽ ��� 
+bool UHellunaAbilitySystemComponent::CancelAbilityByTag(const FGameplayTag AbilityTagToCancel)  //어빌리티 취소 
 {
 	check(AbilityTagToCancel.IsValid());
 
@@ -127,4 +129,22 @@ bool UHellunaAbilitySystemComponent::CancelAbilityByTag(const FGameplayTag Abili
 	}
 
 	return bCanceledAny;
+}
+
+void UHellunaAbilitySystemComponent::AddStateTag(const FGameplayTag& Tag)
+{
+	if (!Tag.IsValid()) return;
+	AddLooseGameplayTag(Tag);
+}
+
+void UHellunaAbilitySystemComponent::RemoveStateTag(const FGameplayTag& Tag)
+{
+	if (!Tag.IsValid()) return;
+	RemoveLooseGameplayTag(Tag);
+}
+
+bool UHellunaAbilitySystemComponent::HasStateTag(const FGameplayTag& Tag) const
+{
+	if (!Tag.IsValid()) return false;
+	return HasMatchingGameplayTag(Tag);
 }
