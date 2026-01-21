@@ -6,6 +6,7 @@
 #include "Crafting/Interfaces/Inv_CraftingInterface.h"
 #include "Crafting/Actors/Inv_CraftingStation.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
+#include "EquipmentManagement/Components/Inv_EquipmentComponent.h"
 #include "Items/Components/Inv_ItemComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "Widgets/HUD/Inv_HUDWidget.h"
@@ -59,6 +60,20 @@ void AInv_PlayerController::BeginPlay()
 	}
 
 	InventoryComponent = FindComponentByClass<UInv_InventoryComponent>();
+	
+	// ============================================
+	// ⭐ [WeaponBridge] EquipmentComponent 참조 가져오기
+	// ============================================
+	EquipmentComponent = FindComponentByClass<UInv_EquipmentComponent>();
+	if (EquipmentComponent.IsValid())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] PlayerController - EquipmentComponent 찾음"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] PlayerController - EquipmentComponent 없음!"));
+	}
+	
 	CreateHUDWidget(); // 위젯 생성 호출
 }
 
@@ -71,6 +86,19 @@ void AInv_PlayerController::SetupInputComponent()
 	//키 활성 바인딩 부분.
 	EnhancedInputComponent->BindAction(PrimaryInteractAction, ETriggerEvent::Started, this, &AInv_PlayerController::PrimaryInteract);
 	EnhancedInputComponent->BindAction(ToggleInventoryAction, ETriggerEvent::Started, this, &AInv_PlayerController::ToggleInventory);
+	
+	// ============================================
+	// ⭐ [WeaponBridge] 주무기 전환 InputAction 바인딩
+	// ============================================
+	if (PrimaryWeaponAction)
+	{
+		EnhancedInputComponent->BindAction(PrimaryWeaponAction, ETriggerEvent::Started, this, &AInv_PlayerController::HandlePrimaryWeapon);
+		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 주무기 전환 액션 바인딩 완료"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 주무기 전환 액션이 설정되지 않음 - Blueprint에서 지정 필요"));
+	}
 }
 
 void AInv_PlayerController::PrimaryInteract()
@@ -219,6 +247,24 @@ void AInv_PlayerController::TraceForInteractables()
 		{
 			IInv_Highlightable::Execute_UnHighlight(Highlightable);
 		}
+	}
+}
+
+// ============================================
+// ⭐ [WeaponBridge] 주무기 입력 처리 함수
+// ⭐ 1키 입력 시 호출됨
+// ============================================
+void AInv_PlayerController::HandlePrimaryWeapon()
+{
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] PlayerController - HandlePrimaryWeapon 호출됨 (1키 입력)"));
+	
+	if (EquipmentComponent.IsValid())
+	{
+		EquipmentComponent->HandlePrimaryWeaponInput();
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] PlayerController - EquipmentComponent 없음! 주무기 전환 불가"));
 	}
 }
 

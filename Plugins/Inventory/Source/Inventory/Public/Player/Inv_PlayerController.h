@@ -8,6 +8,7 @@
  * 
  */
 class UInv_InventoryComponent;
+class UInv_EquipmentComponent;
 class UInputMappingContext;
 class UInputAction;
 class UInv_HUDWidget;
@@ -37,26 +38,42 @@ private:
 	//블루프린트에서 인벤토리 컴포넌트를 열기 위해 WeakObjectPtr(참조)를 선언했다고? 이유가 뭘까?
 	TWeakObjectPtr<UInv_InventoryComponent> InventoryComponent;
 
+	// ============================================
+	// ⭐ [WeaponBridge] EquipmentComponent 참조
+	// ============================================
+	TWeakObjectPtr<UInv_EquipmentComponent> EquipmentComponent;
+
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory")
 	TArray<TObjectPtr<UInputMappingContext>> DefaultIMCs; // TArray로부터 단일 포인터를 배열화 시켜가지고 여러개 복수 포인터로 만들 수 있다! 으하하
 
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory")
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory", meta = (DisplayName = "상호작용 액션"))
 	TObjectPtr<UInputAction> PrimaryInteractAction; // 상호작용 액션
 
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory")
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory", meta = (DisplayName = "인벤토리 토글 액션"))
 	TObjectPtr<UInputAction> ToggleInventoryAction; // 인벤토리 키 누르는 액션
 
+	// ============================================
+	// ⭐ [WeaponBridge] 주무기 전환 InputAction
+	// ⭐ Blueprint에서 지정 (1키)
+	// ============================================
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Weapon", meta = (DisplayName = "주무기 전환 액션"))
+	TObjectPtr<UInputAction> PrimaryWeaponAction;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory")
+	// ============================================
+	// ⭐ [WeaponBridge] 주무기 입력 처리 함수
+	// ============================================
+	void HandlePrimaryWeapon();
+
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory", meta = (DisplayName = "HUD 위젯 클래스"))
 	TSubclassOf<UInv_HUDWidget> HUDWidgetClass; // 위젯 선언
 
 	UPROPERTY()
 	TObjectPtr<UInv_HUDWidget> HUDWidget; // 위젯 인스턴스
 
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory")	
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory", meta = (DisplayName = "추적 길이"))	
 	double TraceLength; // 추적 길이
 
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory")	
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory", meta = (DisplayName = "아이템 추적 채널"))	
 	TEnumAsByte<ECollisionChannel> ItemTraceChannel; // 추적 채널? 충동 채널? 왜 굳이 Enum을 쓰는지 보자
 
 	// [추가] 문 작동 요청을 서버로 보내는 함수
