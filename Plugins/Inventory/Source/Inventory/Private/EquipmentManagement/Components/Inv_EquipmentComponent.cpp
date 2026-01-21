@@ -11,6 +11,7 @@
 #include "InventoryManagement/Utils/Inv_InventoryStatics.h"
 #include "Items/Inv_InventoryItem.h"
 #include "Items/Fragments/Inv_ItemFragment.h"
+#include "Abilities/GameplayAbility.h"
 
 //프록시 매시 부분
 void UInv_EquipmentComponent::SetOwningSkeletalMesh(USkeletalMeshComponent* OwningMesh)
@@ -240,22 +241,22 @@ void UInv_EquipmentComponent::EquipWeapon()
 	WeaponActor->SetActorHiddenInGame(true);
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 등 무기 Hidden 처리 완료"));
 	
-	// 손 무기 클래스 확인
-	TSubclassOf<AActor> HandWeaponClass = WeaponActor->GetHandWeaponClass();
-	if (!HandWeaponClass)
+	// 무기 스폰 GA 확인
+	TSubclassOf<UGameplayAbility> SpawnWeaponAbility = WeaponActor->GetSpawnWeaponAbility();
+	if (!SpawnWeaponAbility)
 	{
-		UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] HandWeaponClass가 설정되지 않음!"));
+		UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] SpawnWeaponAbility가 설정되지 않음!"));
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] HandWeaponClass: %s"), *HandWeaponClass->GetName());
+		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] SpawnWeaponAbility: %s"), *SpawnWeaponAbility->GetName());
 	}
 	
 	// 델리게이트 브로드캐스트 (Helluna에서 수신)
 	OnWeaponEquipRequested.Broadcast(
 		WeaponActor->GetEquipmentType(),
 		WeaponActor,
-		HandWeaponClass,
+		SpawnWeaponAbility,
 		true  // bEquip = true (꺼내기)
 	);
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 델리게이트 브로드캐스트 완료 (bEquip = true)"));

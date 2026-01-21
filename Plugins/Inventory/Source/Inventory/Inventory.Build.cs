@@ -29,6 +29,7 @@ public class Inventory : ModuleRules
 				"NetCore",
 				"StructUtils",
 				"GameplayTags",
+				"GameplayAbilities",
 				// ... add other public dependencies that you statically link with here ...
 			}
 			);

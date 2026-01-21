@@ -15,6 +15,7 @@ class UInv_InventoryItem;
 class UInv_InventoryComponent;
 class APlayerController;
 class USkeletalMeshComponent;
+class UGameplayAbility;
 
 // ============================================
 // ⭐ [WeaponBridge] 활성 무기 슬롯 상태
@@ -33,13 +34,13 @@ enum class EInv_ActiveWeaponSlot : uint8
 // ⭐ Inventory 플러그인 → Helluna 모듈로 신호 전달
 // @param WeaponTag - 무기 종류 태그
 // @param BackWeaponActor - 등 무기 Actor (Hidden 처리용)
-// @param HandWeaponClass - 손 무기 BP 클래스
+// @param SpawnWeaponAbility - 무기 스폰 GA 클래스
 // @param bEquip - true: 꺼내기, false: 집어넣기
 // ============================================
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FOnWeaponEquipRequested,
 	const FGameplayTag&, WeaponTag,
 	AInv_EquipActor*, BackWeaponActor,
-	TSubclassOf<AActor>, HandWeaponClass,
+	TSubclassOf<UGameplayAbility>, SpawnWeaponAbility,
 	bool, bEquip);
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent), Blueprintable)
