@@ -22,6 +22,8 @@
 #include "InventoryManagement/Utils/Inv_InventoryStatics.h"
 #include "Character/HeroComponent/Helluna_FindResourceComponent.h"
 #include "Net/UnrealNetwork.h"
+// ⭐ [WeaponBridge] 추가
+#include "Component/WeaponBridgeComponent.h"
 
 #include "DebugHelper.h"
 
@@ -52,6 +54,10 @@ AHellunaHeroCharacter::AHellunaHeroCharacter()
 
 	FindResourceComponent = CreateDefaultSubobject<UHelluna_FindResourceComponent>(TEXT("파밍 자원 찾기 컴포넌트"));
 
+	// ============================================
+	// ⭐ [WeaponBridge] Inventory 연동 컴포넌트 생성
+	// ============================================
+	WeaponBridgeComponent = CreateDefaultSubobject<UWeaponBridgeComponent>(TEXT("WeaponBridgeComponent"));
 }
 
 void AHellunaHeroCharacter::BeginPlay()

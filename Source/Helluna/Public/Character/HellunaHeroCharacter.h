@@ -16,6 +16,7 @@ class UHeroCombatComponent;
 class AHellunaHeroWeapon;
 struct FInputActionValue;
 class UHelluna_FindResourceComponent;
+class UWeaponBridgeComponent;
 
 
 /**
@@ -56,6 +57,13 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat", meta = (AllowPrivateAccess = "true"))
 	UHeroCombatComponent* HeroCombatComponent;
 
+	// ============================================
+	// ⭐ [WeaponBridge] Inventory 연동 컴포넌트
+	// ⭐ Inventory 플러그인의 EquipmentComponent와 통신
+	// ⭐ 무기 꺼내기/집어넣기 처리
+	// ============================================
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon", meta = (AllowPrivateAccess = "true", DisplayName = "무기 브릿지 컴포넌트"))
+	UWeaponBridgeComponent* WeaponBridgeComponent;
 
 	UPROPERTY(Replicated, VisibleInstanceOnly, Category = "Weapon")
 	TObjectPtr<AHellunaHeroWeapon> CurrentWeapon;
