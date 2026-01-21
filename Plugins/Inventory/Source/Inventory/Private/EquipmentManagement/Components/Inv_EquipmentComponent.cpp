@@ -115,32 +115,65 @@ void UInv_EquipmentComponent::RemoveEquippedActor(const FGameplayTag& EquipmentT
 // 아이템 장착 시 호출되는 함수
 void UInv_EquipmentComponent::OnItemEquipped(UInv_InventoryItem* EquippedItem)
 {
-	UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] OnItemEquipped 호출됨"));
+	// ⭐ 서버/클라이언트 확인
+	AActor* OwnerActor = GetOwner();
+	bool bIsServer = OwnerActor ? OwnerActor->HasAuthority() : false;
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] OnItemEquipped 호출됨 - %s (Owner: %s)"), 
+		bIsServer ? TEXT("서버") : TEXT("클라이언트"),
+		OwnerActor ? *OwnerActor->GetName() : TEXT("nullptr"));
 	
 	if (!IsValid(EquippedItem)) return;
-	if (!OwningPlayerController->HasAuthority()) return;
+	
+	// ============================================
+	// ⭐ [WeaponBridge 수정] 서버에서만 액터 스폰
+	// ⭐ 하지만 클라이언트도 EquippedActors에 추가 필요!
+	// ============================================
 
 	FInv_ItemManifest& ItemManifest = EquippedItem->GetItemManifestMutable();
 	FInv_EquipmentFragment* EquipmentFragment = ItemManifest.GetFragmentOfTypeMutable<FInv_EquipmentFragment>();
 	if (!EquipmentFragment) return;
 	
-	if (!bIsProxy) // 프록시 부분
+	// ⭐ 서버에서만 OnEquip 콜백과 액터 스폰 실행
+	if (bIsServer)
 	{
-		EquipmentFragment->OnEquip(OwningPlayerController.Get());
-	}
-	
-	if (!OwningSkeletalMesh.IsValid()) return;
-	AInv_EquipActor* SpawnedEquipActor = SpawnEquippedActor(EquipmentFragment, ItemManifest, OwningSkeletalMesh.Get()); // 장비 아이템을 장착하면서 필요 조건들 
-	
-	if (IsValid(SpawnedEquipActor))
-	{
-		EquippedActors.Add(SpawnedEquipActor); // 장착된 장비를 착용시켜주는 것. (태그를 찾고)
-		UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] EquippedActors에 추가됨: %s (총 %d개)"), 
-			*SpawnedEquipActor->GetName(), EquippedActors.Num());
+		if (!bIsProxy)
+		{
+			EquipmentFragment->OnEquip(OwningPlayerController.Get());
+		}
+		
+		if (!OwningSkeletalMesh.IsValid()) return;
+		AInv_EquipActor* SpawnedEquipActor = SpawnEquippedActor(EquipmentFragment, ItemManifest, OwningSkeletalMesh.Get());
+		
+		if (IsValid(SpawnedEquipActor))
+		{
+			EquippedActors.Add(SpawnedEquipActor);
+			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] 서버: EquippedActors에 추가됨: %s (총 %d개) - this: %p"), 
+				*SpawnedEquipActor->GetName(), EquippedActors.Num(), this);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("⭐ [EquipmentComponent] 서버: SpawnedEquipActor가 null!"));
+		}
 	}
 	else
 	{
-		UE_LOG(LogTemp, Error, TEXT("⭐ [EquipmentComponent] SpawnedEquipActor가 null!"));
+		// ============================================
+		// ⭐ [WeaponBridge 수정] 클라이언트: 이미 스폰된 액터 찾아서 추가
+		// ⭐ 서버에서 스폰 후 리플리케이트된 액터를 찾음
+		// ============================================
+		
+		// EquipmentFragment에서 이미 설정된 EquippedActor 가져오기
+		AInv_EquipActor* ReplicatedActor = EquipmentFragment->GetEquippedActor();
+		if (IsValid(ReplicatedActor))
+		{
+			EquippedActors.Add(ReplicatedActor);
+			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] 클라이언트: 리플리케이트된 액터 추가: %s (총 %d개) - this: %p"), 
+				*ReplicatedActor->GetName(), EquippedActors.Num(), this);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] 클라이언트: EquippedActor 아직 없음 - 나중에 추가될 예정"));
+		}
 	}
 }
 
@@ -263,26 +296,59 @@ void UInv_EquipmentComponent::UnequipWeapon()
 
 AInv_EquipActor* UInv_EquipmentComponent::FindWeaponActor()
 {
-	// EquippedActors에서 무기 찾기 (현재는 첫 번째 무기)
-	// TODO: 나중에 슬롯별로 구분 필요 (주무기/보조무기)
+	// ============================================
+	// ⭐ [WeaponBridge] EquippedActors에서 무기 찾기
+	// ⭐ 서버/클라이언트 동기화 문제로 인해 월드에서 직접 검색 추가
+	// ============================================
 	
-	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] FindWeaponActor - EquippedActors 개수: %d"), EquippedActors.Num());
+	AActor* OwnerActor = GetOwner();
+	bool bIsServer = OwnerActor ? OwnerActor->HasAuthority() : false;
+	
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] FindWeaponActor 시작 - %s - this: %p"), 
+		bIsServer ? TEXT("서버") : TEXT("클라이언트"), this);
+	
+	// 1단계: EquippedActors 배열에서 찾기 (서버에서는 이게 동작)
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 1단계: EquippedActors 배열 검색 (개수: %d)"), EquippedActors.Num());
 	
 	for (int32 i = 0; i < EquippedActors.Num(); i++)
 	{
 		AInv_EquipActor* Actor = EquippedActors[i];
 		if (IsValid(Actor))
 		{
-			UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] FindWeaponActor - [%d] 찾음: %s"), i, *Actor->GetName());
+			UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 1단계 성공! [%d] 찾음: %s"), i, *Actor->GetName());
 			return Actor;
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] FindWeaponActor - [%d] Invalid Actor"), i);
 		}
 	}
 	
-	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] FindWeaponActor - 장착된 무기 없음 (배열 비어있음)"));
+	// 2단계: 클라이언트에서 배열이 비어있으면 월드에서 직접 검색
+	// 서버에서 스폰된 EquipActor가 리플리케이트되어 있을 것
+	if (!bIsServer && OwningSkeletalMesh.IsValid())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 2단계: 클라이언트 - 스켈레탈 메시에 부착된 액터 검색"));
+		
+		// 스켈레탈 메시에 부착된 모든 자식 액터 검색
+		TArray<AActor*> AttachedActors;
+		if (AActor* MeshOwner = OwningSkeletalMesh->GetOwner())
+		{
+			MeshOwner->GetAttachedActors(AttachedActors, true);
+			
+			UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 부착된 액터 개수: %d"), AttachedActors.Num());
+			
+			for (AActor* AttachedActor : AttachedActors)
+			{
+				if (AInv_EquipActor* EquipActor = Cast<AInv_EquipActor>(AttachedActor))
+				{
+					UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 2단계 성공! EquipActor 찾음: %s"), *EquipActor->GetName());
+					
+					// 배열에 추가해두기 (다음에 빠르게 찾을 수 있도록)
+					EquippedActors.Add(EquipActor);
+					return EquipActor;
+				}
+			}
+		}
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] FindWeaponActor - 무기 없음 (1,2단계 모두 실패)"));
 	return nullptr;
 }
 

@@ -272,6 +272,12 @@ struct FInv_EquipmentFragment : public FInv_InventoryItemFragment
 	FGameplayTag GetEquipmentType() const {return EquipmentType;}
 	void SetEquippedActor(AInv_EquipActor* EquipActor);
 	
+	// ============================================
+	// ⭐ [WeaponBridge] EquippedActor Getter 추가
+	// ⭐ 클라이언트에서 리플리케이트된 액터 접근용
+	// ============================================
+	AInv_EquipActor* GetEquippedActor() const { return EquippedActor.Get(); }
+	
 private:
 	UPROPERTY(EditAnywhere, Category = "Inventory") // 인벤토리 장착 아이템
 	TArray<TInstancedStruct<FInv_EquipModifier>> EquipModifiers;
