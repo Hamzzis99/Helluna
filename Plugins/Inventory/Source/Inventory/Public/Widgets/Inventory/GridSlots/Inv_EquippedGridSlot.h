@@ -27,9 +27,23 @@ public:
 
 	FEquippedGridSlotClicked EquippedGridSlotClicked; // 장착된 그리드 슬롯 클릭 이벤트 델리게이트
 
+	// ============================================
+	// ⭐ [WeaponBridge] 무기 슬롯 인덱스 Getter
+	// ⭐ 0 = 주무기, 1 = 보조무기
+	// ============================================
+	int32 GetWeaponSlotIndex() const { return WeaponSlotIndex; }
+
 private:
 	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (Categories = "GameItem.Equipment"))
 	FGameplayTag EquipmentTypeTag; // 장착된 아이템의 타입을 나타내는 게임플레이 태그
+
+	// ============================================
+	// ⭐ [WeaponBridge] 무기 슬롯 인덱스
+	// ⭐ 블루프린트에서 설정 (0 = 주무기, 1 = 보조무기)
+	// ⭐ 무기 슬롯이 아닌 경우 -1
+	// ============================================
+	UPROPERTY(EditAnywhere, Category = "Inventory|Weapon", meta = (DisplayName = "무기 슬롯 인덱스"))
+	int32 WeaponSlotIndex = -1;
 
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UImage> Image_GrayedOutIcon; // 호버했을 때 상황

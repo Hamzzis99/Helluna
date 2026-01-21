@@ -114,14 +114,15 @@ void UInv_EquipmentComponent::RemoveEquippedActor(const FGameplayTag& EquipmentT
 }
 
 // 아이템 장착 시 호출되는 함수
-void UInv_EquipmentComponent::OnItemEquipped(UInv_InventoryItem* EquippedItem)
+void UInv_EquipmentComponent::OnItemEquipped(UInv_InventoryItem* EquippedItem, int32 WeaponSlotIndex)
 {
 	// ⭐ 서버/클라이언트 확인
 	AActor* OwnerActor = GetOwner();
 	bool bIsServer = OwnerActor ? OwnerActor->HasAuthority() : false;
-	UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] OnItemEquipped 호출됨 - %s (Owner: %s)"), 
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] OnItemEquipped 호출됨 - %s (Owner: %s, WeaponSlotIndex: %d)"), 
 		bIsServer ? TEXT("서버") : TEXT("클라이언트"),
-		OwnerActor ? *OwnerActor->GetName() : TEXT("nullptr"));
+		OwnerActor ? *OwnerActor->GetName() : TEXT("nullptr"),
+		WeaponSlotIndex);
 	
 	if (!IsValid(EquippedItem)) return;
 	
@@ -147,6 +148,10 @@ void UInv_EquipmentComponent::OnItemEquipped(UInv_InventoryItem* EquippedItem)
 		
 		if (IsValid(SpawnedEquipActor))
 		{
+			// ⭐ [WeaponBridge] 무기 슬롯 인덱스 설정
+			SpawnedEquipActor->SetWeaponSlotIndex(WeaponSlotIndex);
+			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] SpawnedEquipActor WeaponSlotIndex 설정: %d"), WeaponSlotIndex);
+			
 			EquippedActors.Add(SpawnedEquipActor);
 			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] 서버: EquippedActors에 추가됨: %s (총 %d개) - this: %p"), 
 				*SpawnedEquipActor->GetName(), EquippedActors.Num(), this);
@@ -179,7 +184,7 @@ void UInv_EquipmentComponent::OnItemEquipped(UInv_InventoryItem* EquippedItem)
 }
 
 // 아이템 해제 시 호출되는 함수
-void UInv_EquipmentComponent::OnItemUnequipped(UInv_InventoryItem* UnequippedItem)
+void UInv_EquipmentComponent::OnItemUnequipped(UInv_InventoryItem* UnequippedItem, int32 WeaponSlotIndex)
 {
 	if (!IsValid(UnequippedItem)) return;
 	if (!OwningPlayerController->HasAuthority()) return;
@@ -389,8 +394,9 @@ void UInv_EquipmentComponent::UnequipWeapon()
 AInv_EquipActor* UInv_EquipmentComponent::FindPrimaryWeaponActor()
 {
 	// ============================================
-	// ⭐ [WeaponBridge] 주무기 찾기 (첫 번째 무기)
-	// ⭐ EquippedActors 배열에서 Weapons 태그를 가진 첫 번째 액터
+	// ⭐ [WeaponBridge] 주무기 찾기
+	// ⭐ 1순위: WeaponSlotIndex == 0
+	// ⭐ 2순위: WeaponSlotIndex == -1 (미설정)인 첫 번째 무기
 	// ============================================
 	
 	AActor* OwnerActor = GetOwner();
@@ -401,14 +407,35 @@ AInv_EquipActor* UInv_EquipmentComponent::FindPrimaryWeaponActor()
 	
 	FGameplayTag WeaponsTag = FGameplayTag::RequestGameplayTag(FName("GameItems.Equipment.Weapons"));
 	
-	// 1단계: EquippedActors 배열에서 첫 번째 무기 찾기
+	// 1단계: EquippedActors 배열에서 찾기
+	AInv_EquipActor* FirstWeaponWithUnsetIndex = nullptr;
+	
 	for (AInv_EquipActor* Actor : EquippedActors)
 	{
 		if (IsValid(Actor) && Actor->GetEquipmentType().MatchesTag(WeaponsTag))
 		{
-			UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 주무기 찾음: %s"), *Actor->GetName());
-			return Actor;
+			int32 SlotIndex = Actor->GetWeaponSlotIndex();
+			
+			// 정확히 SlotIndex == 0인 무기 (1순위)
+			if (SlotIndex == 0)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 주무기 찾음 (SlotIndex=0): %s"), *Actor->GetName());
+				return Actor;
+			}
+			
+			// SlotIndex == -1 (미설정)인 첫 번째 무기 기억 (2순위)
+			if (SlotIndex == -1 && !FirstWeaponWithUnsetIndex)
+			{
+				FirstWeaponWithUnsetIndex = Actor;
+			}
 		}
+	}
+	
+	// SlotIndex == 0인 무기가 없으면 미설정(-1)인 첫 번째 무기 반환
+	if (FirstWeaponWithUnsetIndex)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 주무기 찾음 (SlotIndex 미설정, 첫 번째): %s"), *FirstWeaponWithUnsetIndex->GetName());
+		return FirstWeaponWithUnsetIndex;
 	}
 	
 	// 2단계: 클라이언트에서 월드 검색
@@ -425,9 +452,18 @@ AInv_EquipActor* UInv_EquipmentComponent::FindPrimaryWeaponActor()
 				{
 					if (EquipActor->GetEquipmentType().MatchesTag(WeaponsTag))
 					{
-						UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 2단계 - 주무기 찾음: %s"), *EquipActor->GetName());
-						EquippedActors.Add(EquipActor);
-						return EquipActor;
+						int32 SlotIndex = EquipActor->GetWeaponSlotIndex();
+						
+						// SlotIndex == 0 또는 -1(미설정)인 첫 번째 무기
+						if (SlotIndex == 0 || SlotIndex == -1)
+						{
+							UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 2단계 - 주무기 찾음 (SlotIndex=%d): %s"), SlotIndex, *EquipActor->GetName());
+							if (!EquippedActors.Contains(EquipActor))
+							{
+								EquippedActors.Add(EquipActor);
+							}
+							return EquipActor;
+						}
 					}
 				}
 			}
@@ -441,8 +477,9 @@ AInv_EquipActor* UInv_EquipmentComponent::FindPrimaryWeaponActor()
 AInv_EquipActor* UInv_EquipmentComponent::FindSecondaryWeaponActor()
 {
 	// ============================================
-	// ⭐ [WeaponBridge] 보조무기 찾기 (두 번째 무기)
-	// ⭐ EquippedActors 배열에서 Weapons 태그를 가진 두 번째 액터
+	// ⭐ [WeaponBridge] 보조무기 찾기
+	// ⭐ 1순위: WeaponSlotIndex == 1
+	// ⭐ 2순위: WeaponSlotIndex == -1 (미설정)인 두 번째 무기
 	// ============================================
 	
 	AActor* OwnerActor = GetOwner();
@@ -453,19 +490,40 @@ AInv_EquipActor* UInv_EquipmentComponent::FindSecondaryWeaponActor()
 	
 	FGameplayTag WeaponsTag = FGameplayTag::RequestGameplayTag(FName("GameItems.Equipment.Weapons"));
 	
-	// 1단계: EquippedActors 배열에서 두 번째 무기 찾기
-	int32 WeaponCount = 0;
+	// 1단계: EquippedActors 배열에서 찾기
+	int32 UnsetWeaponCount = 0;
+	AInv_EquipActor* SecondWeaponWithUnsetIndex = nullptr;
+	
 	for (AInv_EquipActor* Actor : EquippedActors)
 	{
 		if (IsValid(Actor) && Actor->GetEquipmentType().MatchesTag(WeaponsTag))
 		{
-			WeaponCount++;
-			if (WeaponCount == 2)  // 두 번째 무기
+			int32 SlotIndex = Actor->GetWeaponSlotIndex();
+			
+			// 정확히 SlotIndex == 1인 무기 (1순위)
+			if (SlotIndex == 1)
 			{
-				UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 보조무기 찾음: %s"), *Actor->GetName());
+				UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 보조무기 찾음 (SlotIndex=1): %s"), *Actor->GetName());
 				return Actor;
 			}
+			
+			// SlotIndex == -1 (미설정)인 무기 카운트
+			if (SlotIndex == -1)
+			{
+				UnsetWeaponCount++;
+				if (UnsetWeaponCount == 2)
+				{
+					SecondWeaponWithUnsetIndex = Actor;
+				}
+			}
 		}
+	}
+	
+	// SlotIndex == 1인 무기가 없으면 미설정(-1)인 두 번째 무기 반환
+	if (SecondWeaponWithUnsetIndex)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 보조무기 찾음 (SlotIndex 미설정, 두 번째): %s"), *SecondWeaponWithUnsetIndex->GetName());
+		return SecondWeaponWithUnsetIndex;
 	}
 	
 	// 2단계: 클라이언트에서 월드 검색
@@ -476,24 +534,39 @@ AInv_EquipActor* UInv_EquipmentComponent::FindSecondaryWeaponActor()
 		{
 			MeshOwner->GetAttachedActors(AttachedActors, true);
 			
-			WeaponCount = 0;
+			UnsetWeaponCount = 0;
 			for (AActor* AttachedActor : AttachedActors)
 			{
 				if (AInv_EquipActor* EquipActor = Cast<AInv_EquipActor>(AttachedActor))
 				{
 					if (EquipActor->GetEquipmentType().MatchesTag(WeaponsTag))
 					{
-						// 이미 배열에 있는지 확인
-						if (!EquippedActors.Contains(EquipActor))
+						int32 SlotIndex = EquipActor->GetWeaponSlotIndex();
+						
+						// SlotIndex == 1인 무기
+						if (SlotIndex == 1)
 						{
-							EquippedActors.Add(EquipActor);
+							UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 2단계 - 보조무기 찾음 (SlotIndex=1): %s"), *EquipActor->GetName());
+							if (!EquippedActors.Contains(EquipActor))
+							{
+								EquippedActors.Add(EquipActor);
+							}
+							return EquipActor;
 						}
 						
-						WeaponCount++;
-						if (WeaponCount == 2)
+						// SlotIndex == -1 (미설정)인 두 번째 무기
+						if (SlotIndex == -1)
 						{
-							UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 2단계 - 보조무기 찾음: %s"), *EquipActor->GetName());
-							return EquipActor;
+							if (!EquippedActors.Contains(EquipActor))
+							{
+								EquippedActors.Add(EquipActor);
+							}
+							UnsetWeaponCount++;
+							if (UnsetWeaponCount == 2)
+							{
+								UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 2단계 - 보조무기 찾음 (SlotIndex 미설정, 두 번째): %s"), *EquipActor->GetName());
+								return EquipActor;
+							}
 						}
 					}
 				}

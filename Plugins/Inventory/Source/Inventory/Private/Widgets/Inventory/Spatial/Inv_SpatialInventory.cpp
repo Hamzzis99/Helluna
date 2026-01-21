@@ -74,13 +74,17 @@ void UInv_SpatialInventory::EquippedGridSlotClicked(UInv_EquippedGridSlot* Equip
 	UInv_InventoryComponent* InventoryComponent = UInv_InventoryStatics::GetInventoryComponent(GetOwningPlayer());
 	check(IsValid(InventoryComponent)); 
 	
+	// ⭐ [WeaponBridge] 무기 슬롯 인덱스 전달
+	int32 WeaponSlotIndex = EquippedGridSlot->GetWeaponSlotIndex();
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [SpatialInventory] 장착 슬롯 클릭 - WeaponSlotIndex: %d"), WeaponSlotIndex);
+	
 	//장착된 곳에 서버RPC를 생성하는 부분
-	InventoryComponent->Server_EquipSlotClicked(HoverItem->GetInventoryItem(), nullptr);
+	InventoryComponent->Server_EquipSlotClicked(HoverItem->GetInventoryItem(), nullptr, WeaponSlotIndex);
 	
 	//데디케이티드 서버 제약 조건 설정 (민우님에게도 알려줄 것.)
 	if (GetOwningPlayer()->GetNetMode() != NM_DedicatedServer)
 	{
-		InventoryComponent->OnItemEquipped.Broadcast(HoverItem->GetInventoryItem()); // 아이템 장착 델리게이트 방송
+		InventoryComponent->OnItemEquipped.Broadcast(HoverItem->GetInventoryItem(), WeaponSlotIndex); // 아이템 장착 델리게이트 방송
 	}
 	
 	// Clear the Hover item
@@ -248,17 +252,17 @@ void UInv_SpatialInventory::MakeEquippedSlottedItem(UInv_EquippedSlottedItem* Eq
 	EquippedGridSlot->SetEquippedSlottedItem(SlottedItem);
 }
 
-void UInv_SpatialInventory::BroadcastSlotClickedDelegates(UInv_InventoryItem* ItemToEquip, UInv_InventoryItem* ItemToUnequip) const
+void UInv_SpatialInventory::BroadcastSlotClickedDelegates(UInv_InventoryItem* ItemToEquip, UInv_InventoryItem* ItemToUnequip, int32 WeaponSlotIndex) const
 {
 	UInv_InventoryComponent* InventoryComponent = UInv_InventoryStatics::GetInventoryComponent(GetOwningPlayer());
 	check(IsValid(InventoryComponent));
-	InventoryComponent->Server_EquipSlotClicked(ItemToEquip, ItemToUnequip);
+	InventoryComponent->Server_EquipSlotClicked(ItemToEquip, ItemToUnequip, WeaponSlotIndex);
 	
 	// 데디서버일경우는 이런 걸 걱정 할 필요 없다.
 	if (GetOwningPlayer()->GetNetMode() != NM_DedicatedServer)
 	{
-		InventoryComponent->OnItemEquipped.Broadcast(ItemToEquip);
-		InventoryComponent->OnItemUnequipped.Broadcast(ItemToUnequip);
+		InventoryComponent->OnItemEquipped.Broadcast(ItemToEquip, WeaponSlotIndex);
+		InventoryComponent->OnItemUnequipped.Broadcast(ItemToUnequip, WeaponSlotIndex);
 	}
 }
 

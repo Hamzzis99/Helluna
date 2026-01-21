@@ -2,6 +2,7 @@
 
 
 #include "EquipmentManagement/EquipActor/Inv_EquipActor.h"
+#include "Net/UnrealNetwork.h"
 
 
 AInv_EquipActor::AInv_EquipActor()
@@ -11,4 +12,11 @@ AInv_EquipActor::AInv_EquipActor()
 	bReplicates = true; // 서버하고 교환해야 하니 RPC를 켜야겠지?
 }
 
+void AInv_EquipActor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	
+	// ⭐ [WeaponBridge] WeaponSlotIndex 리플리케이트
+	DOREPLIFETIME(AInv_EquipActor, WeaponSlotIndex);
+}
 

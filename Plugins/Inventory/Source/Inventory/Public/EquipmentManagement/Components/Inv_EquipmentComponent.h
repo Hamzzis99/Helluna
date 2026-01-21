@@ -91,10 +91,10 @@ private:
 	
 	// 델리게이트 바인딩을 대비하기 위한 함수들 콜백 함수들 
 	UFUNCTION()
-	void OnItemEquipped(UInv_InventoryItem* EquippedItem);
+	void OnItemEquipped(UInv_InventoryItem* EquippedItem, int32 WeaponSlotIndex);
 
 	UFUNCTION()
-	void OnItemUnequipped(UInv_InventoryItem* UnequippedItem);
+	void OnItemUnequipped(UInv_InventoryItem* UnequippedItem, int32 WeaponSlotIndex);
 	
 	void InitPlayerController(); //멀티플레이
 	void InitInventoryComponent();
