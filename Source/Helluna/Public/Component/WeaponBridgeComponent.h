@@ -76,12 +76,14 @@ private:
 	// @param BackWeaponActor: 등에 붙은 무기 Actor
 	// @param SpawnWeaponAbility: 활성화할 GA 클래스 (팀원의 GA_SpawnWeapon)
 	// @param bEquip: true=꺼내기, false=집어넣기
+	// @param WeaponSlotIndex: 무기 슬롯 인덱스 (0=주무기, 1=보조무기)
 	UFUNCTION()
 	void OnWeaponEquipRequested(
 		const FGameplayTag& WeaponTag,
 		AInv_EquipActor* BackWeaponActor,
 		TSubclassOf<UGameplayAbility> SpawnWeaponAbility,
-		bool bEquip
+		bool bEquip,
+		int32 WeaponSlotIndex
 	);
 	
 	// ============================================

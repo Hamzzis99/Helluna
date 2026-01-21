@@ -114,12 +114,14 @@ void UWeaponBridgeComponent::InitializeWeaponBridge()
 // ⭐ @param BackWeaponActor: 등에 붙은 무기 Actor (Hidden 처리용)
 // ⭐ @param SpawnWeaponAbility: 활성화할 GA 클래스 (팀원의 GA_SpawnWeapon)
 // ⭐ @param bEquip: true=꺼내기, false=집어넣기
+// ⭐ @param WeaponSlotIndex: 무기 슬롯 인덱스 (0=주무기, 1=보조무기)
 // ============================================
 void UWeaponBridgeComponent::OnWeaponEquipRequested(
 	const FGameplayTag& WeaponTag,
 	AInv_EquipActor* BackWeaponActor,
 	TSubclassOf<UGameplayAbility> SpawnWeaponAbility,
-	bool bEquip)
+	bool bEquip,
+	int32 WeaponSlotIndex)
 {
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] OnWeaponEquipRequested 수신!"));
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] - WeaponTag: %s"), *WeaponTag.ToString());
@@ -128,6 +130,8 @@ void UWeaponBridgeComponent::OnWeaponEquipRequested(
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] - SpawnWeaponAbility: %s"), 
 		SpawnWeaponAbility ? *SpawnWeaponAbility->GetName() : TEXT("nullptr"));
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] - bEquip: %s"), bEquip ? TEXT("true (꺼내기)") : TEXT("false (집어넣기)"));
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] - WeaponSlotIndex: %d (%s)"), 
+		WeaponSlotIndex, WeaponSlotIndex == 0 ? TEXT("주무기") : TEXT("보조무기"));
 	
 	if (bEquip)
 	{

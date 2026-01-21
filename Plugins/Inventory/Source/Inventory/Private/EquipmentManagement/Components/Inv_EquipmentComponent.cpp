@@ -214,14 +214,15 @@ void UInv_EquipmentComponent::OnItemUnequipped(UInv_InventoryItem* UnequippedIte
 		
 		if (bIsActiveWeapon)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] 손에 든 무기 해제 - 델리게이트 브로드캐스트"));
+			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] 손에 든 무기 해제 - 델리게이트 브로드캐스트 (SlotIndex: %d)"), WeaponSlotIndex);
 			
 			// 손 무기 파괴 델리게이트 브로드캐스트 (클라이언트에서 UI와 연결된 캐릭터에 전달)
 			OnWeaponEquipRequested.Broadcast(
 				EquipmentFragment->GetEquipmentType(),
 				nullptr,  // 이미 파괴될 예정이므로 nullptr
 				nullptr,
-				false  // bEquip = false (집어넣기/파괴)
+				false,  // bEquip = false (집어넣기/파괴)
+				WeaponSlotIndex  // 해제되는 슬롯 인덱스
 			);
 			
 			// 활성 슬롯 초기화
@@ -343,9 +344,10 @@ void UInv_EquipmentComponent::EquipPrimaryWeapon()
 		WeaponActor->GetEquipmentType(),
 		WeaponActor,
 		SpawnWeaponAbility,
-		true  // bEquip = true (꺼내기)
+		true,  // bEquip = true (꺼내기)
+		0      // WeaponSlotIndex = 0 (주무기)
 	);
-	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 델리게이트 브로드캐스트 완료 (bEquip = true)"));
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 델리게이트 브로드캐스트 완료 (bEquip = true, SlotIndex = 0)"));
 	
 	// 상태 변경
 	ActiveWeaponSlot = EInv_ActiveWeaponSlot::Primary;
@@ -383,9 +385,10 @@ void UInv_EquipmentComponent::EquipSecondaryWeapon()
 		WeaponActor->GetEquipmentType(),
 		WeaponActor,
 		SpawnWeaponAbility,
-		true  // bEquip = true (꺼내기)
+		true,  // bEquip = true (꺼내기)
+		1      // WeaponSlotIndex = 1 (보조무기)
 	);
-	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 델리게이트 브로드캐스트 완료 (bEquip = true)"));
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 델리게이트 브로드캐스트 완료 (bEquip = true, SlotIndex = 1)"));
 	
 	// 상태 변경
 	ActiveWeaponSlot = EInv_ActiveWeaponSlot::Secondary;
@@ -396,13 +399,17 @@ void UInv_EquipmentComponent::UnequipWeapon()
 {
 	// 현재 활성 슬롯에 따라 해당 무기 찾기
 	AInv_EquipActor* WeaponActor = nullptr;
+	int32 SlotIndex = -1;
+	
 	if (ActiveWeaponSlot == EInv_ActiveWeaponSlot::Primary)
 	{
 		WeaponActor = FindPrimaryWeaponActor();
+		SlotIndex = 0;
 	}
 	else if (ActiveWeaponSlot == EInv_ActiveWeaponSlot::Secondary)
 	{
 		WeaponActor = FindSecondaryWeaponActor();
+		SlotIndex = 1;
 	}
 	
 	if (!IsValid(WeaponActor))
@@ -411,16 +418,17 @@ void UInv_EquipmentComponent::UnequipWeapon()
 		return;
 	}
 	
-	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 무기 집어넣기 시작 - %s"), *WeaponActor->GetName());
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 무기 집어넣기 시작 - %s (SlotIndex: %d)"), *WeaponActor->GetName(), SlotIndex);
 	
 	// 델리게이트 브로드캐스트 (Helluna에서 손 무기 Destroy)
 	OnWeaponEquipRequested.Broadcast(
 		WeaponActor->GetEquipmentType(),
 		WeaponActor,
 		nullptr,  // 집어넣기라 GA 필요 없음
-		false     // bEquip = false (집어넣기)
+		false,    // bEquip = false (집어넣기)
+		SlotIndex // WeaponSlotIndex
 	);
-	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 델리게이트 브로드캐스트 완료 (bEquip = false)"));
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 델리게이트 브로드캐스트 완료 (bEquip = false, SlotIndex = %d)"), SlotIndex);
 	
 	// 등 무기 다시 보이기 (리플리케이트)
 	WeaponActor->SetWeaponHidden(false);

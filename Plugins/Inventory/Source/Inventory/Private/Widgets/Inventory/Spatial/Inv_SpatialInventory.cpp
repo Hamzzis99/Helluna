@@ -265,8 +265,15 @@ void UInv_SpatialInventory::BroadcastSlotClickedDelegates(UInv_InventoryItem* It
 	// 데디서버일경우는 이런 걸 걱정 할 필요 없다.
 	if (GetOwningPlayer()->GetNetMode() != NM_DedicatedServer)
 	{
-		InventoryComponent->OnItemEquipped.Broadcast(ItemToEquip, WeaponSlotIndex);
-		InventoryComponent->OnItemUnequipped.Broadcast(ItemToUnequip, WeaponSlotIndex);
+		// ⭐ [WeaponBridge] 유효한 아이템이 있을 때만 브로드캐스트
+		if (IsValid(ItemToEquip))
+		{
+			InventoryComponent->OnItemEquipped.Broadcast(ItemToEquip, WeaponSlotIndex);
+		}
+		if (IsValid(ItemToUnequip))
+		{
+			InventoryComponent->OnItemUnequipped.Broadcast(ItemToUnequip, WeaponSlotIndex);
+		}
 	}
 }
 

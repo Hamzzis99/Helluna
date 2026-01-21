@@ -36,12 +36,14 @@ enum class EInv_ActiveWeaponSlot : uint8
 // @param BackWeaponActor - 등 무기 Actor (Hidden 처리용)
 // @param SpawnWeaponAbility - 무기 스폰 GA 클래스
 // @param bEquip - true: 꺼내기, false: 집어넣기
+// @param WeaponSlotIndex - 무기 슬롯 인덱스 (0=주무기, 1=보조무기)
 // ============================================
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FOnWeaponEquipRequested,
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_FiveParams(FOnWeaponEquipRequested,
 	const FGameplayTag&, WeaponTag,
 	AInv_EquipActor*, BackWeaponActor,
 	TSubclassOf<UGameplayAbility>, SpawnWeaponAbility,
-	bool, bEquip);
+	bool, bEquip,
+	int32, WeaponSlotIndex);
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent), Blueprintable)
 class INVENTORY_API UInv_EquipmentComponent : public UActorComponent
