@@ -185,19 +185,60 @@ void UInv_EquipmentComponent::OnItemEquipped(UInv_InventoryItem* EquippedItem, i
 // 아이템 해제 시 호출되는 함수
 void UInv_EquipmentComponent::OnItemUnequipped(UInv_InventoryItem* UnequippedItem, int32 WeaponSlotIndex)
 {
+	AActor* OwnerActor = GetOwner();
+	bool bIsServer = OwnerActor ? OwnerActor->HasAuthority() : false;
+	
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] OnItemUnequipped 호출됨 - %s (WeaponSlotIndex: %d)"),
+		bIsServer ? TEXT("서버") : TEXT("클라이언트"), WeaponSlotIndex);
+	
 	if (!IsValid(UnequippedItem)) return;
-	if (!OwningPlayerController->HasAuthority()) return;
 
 	FInv_ItemManifest& ItemManifest = UnequippedItem->GetItemManifestMutable();
 	FInv_EquipmentFragment* EquipmentFragment = ItemManifest.GetFragmentOfTypeMutable<FInv_EquipmentFragment>();
 	if (!EquipmentFragment) return;
+	
+	// ⭐ [WeaponBridge] 무기 해제 시 손에 들고 있는 무기도 처리 (클라이언트에서 실행)
+	FGameplayTag WeaponsTag = FGameplayTag::RequestGameplayTag(FName("GameItems.Equipment.Weapons"));
+	if (EquipmentFragment->GetEquipmentType().MatchesTag(WeaponsTag))
+	{
+		// 현재 손에 무기를 들고 있고, 해제하는 무기가 해당 슬롯이면 손 무기도 파괴
+		bool bIsActiveWeapon = false;
+		if (WeaponSlotIndex == 0 && ActiveWeaponSlot == EInv_ActiveWeaponSlot::Primary)
+		{
+			bIsActiveWeapon = true;
+		}
+		else if (WeaponSlotIndex == 1 && ActiveWeaponSlot == EInv_ActiveWeaponSlot::Secondary)
+		{
+			bIsActiveWeapon = true;
+		}
+		
+		if (bIsActiveWeapon)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] 손에 든 무기 해제 - 델리게이트 브로드캐스트"));
+			
+			// 손 무기 파괴 델리게이트 브로드캐스트 (클라이언트에서 UI와 연결된 캐릭터에 전달)
+			OnWeaponEquipRequested.Broadcast(
+				EquipmentFragment->GetEquipmentType(),
+				nullptr,  // 이미 파괴될 예정이므로 nullptr
+				nullptr,
+				false  // bEquip = false (집어넣기/파괴)
+			);
+			
+			// 활성 슬롯 초기화
+			ActiveWeaponSlot = EInv_ActiveWeaponSlot::None;
+			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] ActiveWeaponSlot = None으로 초기화"));
+		}
+	}
 
+	// ⭐ 서버에서만 장비 제거 및 Destroy 실행
+	if (!bIsServer) return;
+	
 	if (!bIsProxy) // 프록시 부분
 	{
 		EquipmentFragment->OnUnequip(OwningPlayerController.Get());
 	}
 	
-	//장비 제거하는 부분
+	//장비 제거하는 부분 (등 무기 Destroy)
 	RemoveEquippedActor(EquipmentFragment->GetEquipmentType());
 }
 

@@ -112,6 +112,10 @@ void UInv_SpatialInventory::EquippedSlottedItemClicked(UInv_EquippedSlottedItem*
 	// 이 아이템을 보유한 장착된 그리드 슬롯 가져오기
 	UInv_EquippedGridSlot* EquippedGridSlot = FindSlotWithEquippedItem(ItemToUnequip);
 	
+	// ⭐ [WeaponBridge] 장착 해제 시 WeaponSlotIndex 가져오기
+	int32 WeaponSlotIndex = IsValid(EquippedGridSlot) ? EquippedGridSlot->GetWeaponSlotIndex() : -1;
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [SpatialInventory] 장착 슬롯 아이템 클릭 (해제) - WeaponSlotIndex: %d"), WeaponSlotIndex);
+	
 	// Clear the equipped slot of this item (set it's inventory item to nullptr)
 	// 이 아이템의 슬롯을 지우기
 	ClearSlotOfItem(EquippedGridSlot);
@@ -130,7 +134,7 @@ void UInv_SpatialInventory::EquippedSlottedItemClicked(UInv_EquippedSlottedItem*
 	
 	// Broadcast delegates for OnItemEquipped/OnItemUnequipped (from the IC)
 	// IC에서 OnItemEquipped/OnItemUnequipped에 대한 델리게이트 방송
-	BroadcastSlotClickedDelegates(ItemToEquip, ItemToUnequip);
+	BroadcastSlotClickedDelegates(ItemToEquip, ItemToUnequip, WeaponSlotIndex);
 }
 
 // 마우스 버튼 다운 이벤트 처리 인벤토리 아이템 드롭
