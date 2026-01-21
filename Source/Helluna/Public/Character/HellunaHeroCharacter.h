@@ -111,6 +111,13 @@ public:
 	UFUNCTION(Server, Reliable)  
 	void Server_RequestSpawnWeapon(TSubclassOf<class AHellunaHeroWeapon> InWeaponClass, FName InAttachSocket, UAnimMontage* EquipMontage);
 
+	// ============================================
+	// ⭐ [WeaponBridge] 무기 제거 RPC
+	// ⭐ 클라이언트에서 호출 → 서버에서 CurrentWeapon Destroy
+	// ============================================
+	UFUNCTION(Server, Reliable)
+	void Server_RequestDestroyWeapon();
+
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayEquipMontageExceptOwner(UAnimMontage* Montage);
 

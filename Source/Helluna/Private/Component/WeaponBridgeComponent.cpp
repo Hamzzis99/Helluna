@@ -190,7 +190,7 @@ void UWeaponBridgeComponent::SpawnHandWeapon(TSubclassOf<UGameplayAbility> Spawn
 // ============================================
 // ⭐ DestroyHandWeapon
 // ⭐ 손에 든 무기를 제거하는 함수
-// ⭐ CurrentWeapon을 Destroy하고 nullptr로 설정
+// ⭐ Server RPC를 통해 서버에서 CurrentWeapon Destroy
 // ⭐ 
 // ⭐ [호출 시점]
 // ⭐ - 무기 집어넣기 (1키 다시 누름)
@@ -206,20 +206,10 @@ void UWeaponBridgeComponent::DestroyHandWeapon()
 		return;
 	}
 	
-	// ⭐ CurrentWeapon Destroy
-	// CurrentWeapon은 HellunaHeroCharacter에서 관리하는 현재 손에 든 무기
-	AHellunaHeroWeapon* CurrentWeapon = OwningCharacter->GetCurrentWeapon();
-	if (IsValid(CurrentWeapon))
-	{
-		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] CurrentWeapon Destroy: %s"), *CurrentWeapon->GetName());
-		
-		CurrentWeapon->Destroy();
-		OwningCharacter->SetCurrentWeapon(nullptr);
-		
-		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 손 무기 Destroy 완료!"));
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] CurrentWeapon이 이미 null - Destroy 불필요"));
-	}
+	// ⭐ Server RPC 호출하여 서버에서 Destroy
+	// CurrentWeapon은 서버에서 스폰되어 리플리케이트된 액터이므로 서버에서만 Destroy 가능
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] Server_RequestDestroyWeapon 호출"));
+	OwningCharacter->Server_RequestDestroyWeapon();
+	
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] DestroyHandWeapon 완료"));
 }

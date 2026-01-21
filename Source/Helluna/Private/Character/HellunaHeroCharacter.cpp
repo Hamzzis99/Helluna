@@ -341,6 +341,26 @@ void AHellunaHeroCharacter::Multicast_PlayEquipMontageExceptOwner_Implementation
 	PlayAnimMontage(Montage);
 }
 
+// ============================================
+// ⭐ [WeaponBridge] 무기 제거 Server RPC
+// ⭐ 클라이언트에서 호출 → 서버에서 CurrentWeapon Destroy
+// ============================================
+void AHellunaHeroCharacter::Server_RequestDestroyWeapon_Implementation()
+{
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [HeroCharacter] Server_RequestDestroyWeapon 호출됨 (서버)"));
+	
+	if (IsValid(CurrentWeapon))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("⭐ [HeroCharacter] CurrentWeapon Destroy: %s"), *CurrentWeapon->GetName());
+		CurrentWeapon->Destroy();
+		CurrentWeapon = nullptr;
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("⭐ [HeroCharacter] CurrentWeapon이 이미 null"));
+	}
+}
+
 void AHellunaHeroCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const //서버에서 클라로 복제
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
