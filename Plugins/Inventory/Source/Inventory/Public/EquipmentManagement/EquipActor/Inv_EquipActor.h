@@ -44,16 +44,20 @@ public:
 	}
 
 	// ============================================
-	// ⭐ [WeaponBridge] 무기 숨김/표시 (리플리케이트)
-	// ⭐ 손에 무기를 들면 등 무기 숨김
+	// ⭐ [WeaponBridge] 무기 숨김/표시 (서버 RPC + 리플리케이트)
+	// ⭐ 클라이언트에서 호출 → 서버로 RPC → 리플리케이트
 	// ============================================
-	void SetWeaponHidden(bool bHidden);
+	void SetWeaponHidden(bool bNewHidden);
 	bool IsWeaponHidden() const { return bIsWeaponHidden; }
 
 protected:
 	// ⭐ [WeaponBridge] Hidden 상태 변경 시 호출 (리플리케이션)
 	UFUNCTION()
 	void OnRep_IsWeaponHidden();
+	
+	// ⭐ [WeaponBridge] 서버 RPC - 클라이언트→서버
+	UFUNCTION(Server, Reliable)
+	void Server_SetWeaponHidden(bool bNewHidden);
 
 private:
 
