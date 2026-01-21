@@ -240,14 +240,29 @@ void FInv_EquipmentFragment::Manifest()
 }
 
 // 장비 아이템을 장착 시 캐릭터에 장착 시켜주는 것.
-AInv_EquipActor* FInv_EquipmentFragment::SpawnAttachedActor(USkeletalMeshComponent* AttachMesh) const
+AInv_EquipActor* FInv_EquipmentFragment::SpawnAttachedActor(USkeletalMeshComponent* AttachMesh, int32 WeaponSlotIndex) const
 {
 	if (!IsValid(EquipActorClass) || !IsValid(AttachMesh)) return nullptr;
 
 	AInv_EquipActor* SpawnedActor = AttachMesh->GetWorld()->SpawnActor<AInv_EquipActor>(EquipActorClass);
 	if (!IsValid(SpawnedActor)) return nullptr; // 장착 아이템이 없을 시 크래쉬 예외 처리 제거
 	
-	SpawnedActor->AttachToComponent(AttachMesh, FAttachmentTransformRules::SnapToTargetNotIncludingScale, SocketAttachPoint);
+	// ⭐ [WeaponBridge] WeaponSlotIndex 설정
+	SpawnedActor->SetWeaponSlotIndex(WeaponSlotIndex);
+	
+	// ⭐ [WeaponBridge] 소켓 결정: WeaponSlotIndex에 따라 등 소켓 선택
+	FName ActualSocket = SpawnedActor->GetBackSocketName();
+	
+	// 기본값(-1)이거나 무기가 아닌 경우 기존 SocketAttachPoint 사용
+	if (WeaponSlotIndex < 0 || ActualSocket.IsNone())
+	{
+		ActualSocket = SocketAttachPoint;
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentFragment] SpawnAttachedActor - WeaponSlotIndex: %d, Socket: %s"), 
+		WeaponSlotIndex, *ActualSocket.ToString());
+	
+	SpawnedActor->AttachToComponent(AttachMesh, FAttachmentTransformRules::SnapToTargetNotIncludingScale, ActualSocket);
 
 	return SpawnedActor;
 }

@@ -83,9 +83,9 @@ void UInv_EquipmentComponent::InitInventoryComponent()
 }
 
 // 장착된 액터 스폰
-AInv_EquipActor* UInv_EquipmentComponent::SpawnEquippedActor(FInv_EquipmentFragment* EquipmentFragment, const FInv_ItemManifest& Manifest, USkeletalMeshComponent* AttachMesh)
+AInv_EquipActor* UInv_EquipmentComponent::SpawnEquippedActor(FInv_EquipmentFragment* EquipmentFragment, const FInv_ItemManifest& Manifest, USkeletalMeshComponent* AttachMesh, int32 WeaponSlotIndex)
 {
-	AInv_EquipActor* SpawnedEquipActor = EquipmentFragment->SpawnAttachedActor(AttachMesh); // 장착된 액터 스폰
+	AInv_EquipActor* SpawnedEquipActor = EquipmentFragment->SpawnAttachedActor(AttachMesh, WeaponSlotIndex); // 장착된 액터 스폰 (WeaponSlotIndex 전달)
 	if (!IsValid(SpawnedEquipActor)) return nullptr; // 장착 아이템이 없을 시 크래쉬 예외 처리 제거
 	
 	SpawnedEquipActor->SetEquipmentType(EquipmentFragment->GetEquipmentType()); // 장비 타입 설정 (게임플레이 태그)
@@ -144,13 +144,12 @@ void UInv_EquipmentComponent::OnItemEquipped(UInv_InventoryItem* EquippedItem, i
 		}
 		
 		if (!OwningSkeletalMesh.IsValid()) return;
-		AInv_EquipActor* SpawnedEquipActor = SpawnEquippedActor(EquipmentFragment, ItemManifest, OwningSkeletalMesh.Get());
+		AInv_EquipActor* SpawnedEquipActor = SpawnEquippedActor(EquipmentFragment, ItemManifest, OwningSkeletalMesh.Get(), WeaponSlotIndex);
 		
 		if (IsValid(SpawnedEquipActor))
 		{
-			// ⭐ [WeaponBridge] 무기 슬롯 인덱스 설정
-			SpawnedEquipActor->SetWeaponSlotIndex(WeaponSlotIndex);
-			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] SpawnedEquipActor WeaponSlotIndex 설정: %d"), WeaponSlotIndex);
+			// WeaponSlotIndex는 이미 SpawnAttachedActor에서 설정됨
+			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] SpawnedEquipActor WeaponSlotIndex: %d"), SpawnedEquipActor->GetWeaponSlotIndex());
 			
 			EquippedActors.Add(SpawnedEquipActor);
 			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] 서버: EquippedActors에 추가됨: %s (총 %d개) - this: %p"), 

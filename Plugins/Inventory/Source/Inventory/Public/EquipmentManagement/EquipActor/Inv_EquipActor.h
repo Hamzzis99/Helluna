@@ -34,6 +34,15 @@ public:
 	int32 GetWeaponSlotIndex() const { return WeaponSlotIndex; }
 	void SetWeaponSlotIndex(int32 Index) { WeaponSlotIndex = Index; }
 
+	// ============================================
+	// ⭐ [WeaponBridge] 등 소켓 이름 Getter
+	// ⭐ WeaponSlotIndex에 따라 적절한 소켓 반환
+	// ============================================
+	FName GetBackSocketName() const
+	{
+		return (WeaponSlotIndex == 1) ? SecondaryBackSocket : PrimaryBackSocket;
+	}
+
 private:
 
 	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "장비 타입 태그"))
@@ -55,4 +64,18 @@ private:
 	// ============================================
 	UPROPERTY(Replicated, VisibleAnywhere, Category = "Inventory|Weapon", meta = (DisplayName = "무기 슬롯 인덱스"))
 	int32 WeaponSlotIndex = -1;
+
+	// ============================================
+	// ⭐ [WeaponBridge] 등 장착 소켓 (블루프린트에서 설정)
+	// ⭐ 주무기(SlotIndex=0)일 때 사용할 소켓
+	// ============================================
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory|Weapon|Socket", meta = (AllowPrivateAccess = "true", DisplayName = "주무기 등 소켓"))
+	FName PrimaryBackSocket = TEXT("WeaponSocket_Primary");
+
+	// ============================================
+	// ⭐ [WeaponBridge] 등 장착 소켓 (블루프린트에서 설정)
+	// ⭐ 보조무기(SlotIndex=1)일 때 사용할 소켓
+	// ============================================
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory|Weapon|Socket", meta = (AllowPrivateAccess = "true", DisplayName = "보조무기 등 소켓"))
+	FName SecondaryBackSocket = TEXT("WeaponSocket_Secondary");
 };
