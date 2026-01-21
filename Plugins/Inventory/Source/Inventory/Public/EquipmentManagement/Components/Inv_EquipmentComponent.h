@@ -24,9 +24,9 @@ class UGameplayAbility;
 UENUM(BlueprintType)
 enum class EInv_ActiveWeaponSlot : uint8
 {
-	None      UMETA(DisplayName = "없음"),      // 맨손 (무기가 등에 있음)
-	Primary   UMETA(DisplayName = "주무기")     // 주무기 손에 듦
-	// Secondary - 보조무기 나중에 추가
+	None      UMETA(DisplayName = "없음"),       // 맨손 (무기가 등에 있음)
+	Primary   UMETA(DisplayName = "주무기"),     // 주무기 손에 듦
+	Secondary UMETA(DisplayName = "보조무기")    // 보조무기 손에 듦
 };
 
 // ============================================
@@ -66,6 +66,13 @@ public:
 	// ============================================
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Weapon", meta = (DisplayName = "주무기 입력 처리"))
 	void HandlePrimaryWeaponInput();
+
+	// ============================================
+	// ⭐ [WeaponBridge] 보조무기 입력 처리
+	// ⭐ PlayerController에서 호출됨 (2키 입력)
+	// ============================================
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Weapon", meta = (DisplayName = "보조무기 입력 처리"))
+	void HandleSecondaryWeaponInput();
 
 	// ============================================
 	// ⭐ [WeaponBridge] 현재 활성 무기 슬롯 Getter
@@ -116,12 +123,18 @@ private:
 	// ⭐ [WeaponBridge] 무기 꺼내기/집어넣기 내부 함수
 	// ============================================
 	
-	// 무기 꺼내기 (등 → 손)
-	void EquipWeapon();
+	// 주무기 꺼내기 (등 → 손)
+	void EquipPrimaryWeapon();
+	
+	// 보조무기 꺼내기 (등 → 손)
+	void EquipSecondaryWeapon();
 	
 	// 무기 집어넣기 (손 → 등)
 	void UnequipWeapon();
 	
-	// 무기 Actor 찾기 (EquippedActors에서)
-	AInv_EquipActor* FindWeaponActor();
+	// 주무기 Actor 찾기 (EquippedActors에서)
+	AInv_EquipActor* FindPrimaryWeaponActor();
+	
+	// 보조무기 Actor 찾기 (EquippedActors에서)
+	AInv_EquipActor* FindSecondaryWeaponActor();
 };

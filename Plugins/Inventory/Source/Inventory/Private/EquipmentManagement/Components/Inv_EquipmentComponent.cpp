@@ -203,39 +203,80 @@ void UInv_EquipmentComponent::OnItemUnequipped(UInv_InventoryItem* UnequippedIte
 
 void UInv_EquipmentComponent::HandlePrimaryWeaponInput()
 {
-	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] HandlePrimaryWeaponInput 호출됨"));
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] HandlePrimaryWeaponInput 호출됨 (1키)"));
 	
-	// 무기가 없으면 무시
-	AInv_EquipActor* WeaponActor = FindWeaponActor();
+	// 주무기가 없으면 무시
+	AInv_EquipActor* WeaponActor = FindPrimaryWeaponActor();
 	if (!IsValid(WeaponActor))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 장착된 무기 없음 - 입력 무시"));
+		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 장착된 주무기 없음 - 입력 무시"));
 		return;
 	}
 	
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 현재 활성 슬롯: %d"), static_cast<int32>(ActiveWeaponSlot));
 	
-	// 현재 상태에 따라 토글
+	// 현재 상태에 따라 분기
 	if (ActiveWeaponSlot == EInv_ActiveWeaponSlot::None)
 	{
-		EquipWeapon();
+		// 맨손 → 주무기 꺼내기
+		EquipPrimaryWeapon();
 	}
 	else if (ActiveWeaponSlot == EInv_ActiveWeaponSlot::Primary)
 	{
+		// 주무기 들고 있음 → 집어넣기
 		UnequipWeapon();
+	}
+	else if (ActiveWeaponSlot == EInv_ActiveWeaponSlot::Secondary)
+	{
+		// 보조무기 들고 있음 → 보조무기 집어넣고 주무기 꺼내기
+		UnequipWeapon();
+		EquipPrimaryWeapon();
 	}
 }
 
-void UInv_EquipmentComponent::EquipWeapon()
+void UInv_EquipmentComponent::HandleSecondaryWeaponInput()
 {
-	AInv_EquipActor* WeaponActor = FindWeaponActor();
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] HandleSecondaryWeaponInput 호출됨 (2키)"));
+	
+	// 보조무기가 없으면 무시
+	AInv_EquipActor* WeaponActor = FindSecondaryWeaponActor();
 	if (!IsValid(WeaponActor))
 	{
-		UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] EquipWeapon 실패 - WeaponActor 없음"));
+		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 장착된 보조무기 없음 - 입력 무시"));
 		return;
 	}
 	
-	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 무기 꺼내기 시작 - %s"), *WeaponActor->GetName());
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 현재 활성 슬롯: %d"), static_cast<int32>(ActiveWeaponSlot));
+	
+	// 현재 상태에 따라 분기
+	if (ActiveWeaponSlot == EInv_ActiveWeaponSlot::None)
+	{
+		// 맨손 → 보조무기 꺼내기
+		EquipSecondaryWeapon();
+	}
+	else if (ActiveWeaponSlot == EInv_ActiveWeaponSlot::Secondary)
+	{
+		// 보조무기 들고 있음 → 집어넣기
+		UnequipWeapon();
+	}
+	else if (ActiveWeaponSlot == EInv_ActiveWeaponSlot::Primary)
+	{
+		// 주무기 들고 있음 → 주무기 집어넣고 보조무기 꺼내기
+		UnequipWeapon();
+		EquipSecondaryWeapon();
+	}
+}
+
+void UInv_EquipmentComponent::EquipPrimaryWeapon()
+{
+	AInv_EquipActor* WeaponActor = FindPrimaryWeaponActor();
+	if (!IsValid(WeaponActor))
+	{
+		UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] EquipPrimaryWeapon 실패 - WeaponActor 없음"));
+		return;
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 주무기 꺼내기 시작 - %s"), *WeaponActor->GetName());
 	
 	// 등 무기 숨기기
 	WeaponActor->SetActorHiddenInGame(true);
@@ -263,12 +304,62 @@ void UInv_EquipmentComponent::EquipWeapon()
 	
 	// 상태 변경
 	ActiveWeaponSlot = EInv_ActiveWeaponSlot::Primary;
-	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 무기 꺼내기 완료 - ActiveWeaponSlot = Primary"));
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 주무기 꺼내기 완료 - ActiveWeaponSlot = Primary"));
+}
+
+void UInv_EquipmentComponent::EquipSecondaryWeapon()
+{
+	AInv_EquipActor* WeaponActor = FindSecondaryWeaponActor();
+	if (!IsValid(WeaponActor))
+	{
+		UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] EquipSecondaryWeapon 실패 - WeaponActor 없음"));
+		return;
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 보조무기 꺼내기 시작 - %s"), *WeaponActor->GetName());
+	
+	// 등 무기 숨기기
+	WeaponActor->SetActorHiddenInGame(true);
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 등 무기 Hidden 처리 완료"));
+	
+	// 무기 스폰 GA 확인
+	TSubclassOf<UGameplayAbility> SpawnWeaponAbility = WeaponActor->GetSpawnWeaponAbility();
+	if (!SpawnWeaponAbility)
+	{
+		UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] SpawnWeaponAbility가 설정되지 않음!"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] SpawnWeaponAbility: %s"), *SpawnWeaponAbility->GetName());
+	}
+	
+	// 델리게이트 브로드캐스트 (Helluna에서 수신)
+	OnWeaponEquipRequested.Broadcast(
+		WeaponActor->GetEquipmentType(),
+		WeaponActor,
+		SpawnWeaponAbility,
+		true  // bEquip = true (꺼내기)
+	);
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 델리게이트 브로드캐스트 완료 (bEquip = true)"));
+	
+	// 상태 변경
+	ActiveWeaponSlot = EInv_ActiveWeaponSlot::Secondary;
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 보조무기 꺼내기 완료 - ActiveWeaponSlot = Secondary"));
 }
 
 void UInv_EquipmentComponent::UnequipWeapon()
 {
-	AInv_EquipActor* WeaponActor = FindWeaponActor();
+	// 현재 활성 슬롯에 따라 해당 무기 찾기
+	AInv_EquipActor* WeaponActor = nullptr;
+	if (ActiveWeaponSlot == EInv_ActiveWeaponSlot::Primary)
+	{
+		WeaponActor = FindPrimaryWeaponActor();
+	}
+	else if (ActiveWeaponSlot == EInv_ActiveWeaponSlot::Secondary)
+	{
+		WeaponActor = FindSecondaryWeaponActor();
+	}
+	
 	if (!IsValid(WeaponActor))
 	{
 		UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] UnequipWeapon 실패 - WeaponActor 없음"));
@@ -281,7 +372,7 @@ void UInv_EquipmentComponent::UnequipWeapon()
 	OnWeaponEquipRequested.Broadcast(
 		WeaponActor->GetEquipmentType(),
 		WeaponActor,
-		nullptr,  // 집어넣기라 HandWeaponClass 필요 없음
+		nullptr,  // 집어넣기라 GA 필요 없음
 		false     // bEquip = false (집어넣기)
 	);
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 델리게이트 브로드캐스트 완료 (bEquip = false)"));
@@ -295,61 +386,122 @@ void UInv_EquipmentComponent::UnequipWeapon()
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 무기 집어넣기 완료 - ActiveWeaponSlot = None"));
 }
 
-AInv_EquipActor* UInv_EquipmentComponent::FindWeaponActor()
+AInv_EquipActor* UInv_EquipmentComponent::FindPrimaryWeaponActor()
 {
 	// ============================================
-	// ⭐ [WeaponBridge] EquippedActors에서 무기 찾기
-	// ⭐ 서버/클라이언트 동기화 문제로 인해 월드에서 직접 검색 추가
+	// ⭐ [WeaponBridge] 주무기 찾기 (첫 번째 무기)
+	// ⭐ EquippedActors 배열에서 Weapons 태그를 가진 첫 번째 액터
 	// ============================================
 	
 	AActor* OwnerActor = GetOwner();
 	bool bIsServer = OwnerActor ? OwnerActor->HasAuthority() : false;
 	
-	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] FindWeaponActor 시작 - %s - this: %p"), 
-		bIsServer ? TEXT("서버") : TEXT("클라이언트"), this);
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] FindPrimaryWeaponActor 시작 - %s"), 
+		bIsServer ? TEXT("서버") : TEXT("클라이언트"));
 	
-	// 1단계: EquippedActors 배열에서 찾기 (서버에서는 이게 동작)
-	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 1단계: EquippedActors 배열 검색 (개수: %d)"), EquippedActors.Num());
+	FGameplayTag WeaponsTag = FGameplayTag::RequestGameplayTag(FName("GameItems.Equipment.Weapons"));
 	
-	for (int32 i = 0; i < EquippedActors.Num(); i++)
+	// 1단계: EquippedActors 배열에서 첫 번째 무기 찾기
+	for (AInv_EquipActor* Actor : EquippedActors)
 	{
-		AInv_EquipActor* Actor = EquippedActors[i];
-		if (IsValid(Actor))
+		if (IsValid(Actor) && Actor->GetEquipmentType().MatchesTag(WeaponsTag))
 		{
-			UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 1단계 성공! [%d] 찾음: %s"), i, *Actor->GetName());
+			UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 주무기 찾음: %s"), *Actor->GetName());
 			return Actor;
 		}
 	}
 	
-	// 2단계: 클라이언트에서 배열이 비어있으면 월드에서 직접 검색
-	// 서버에서 스폰된 EquipActor가 리플리케이트되어 있을 것
+	// 2단계: 클라이언트에서 월드 검색
 	if (!bIsServer && OwningSkeletalMesh.IsValid())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 2단계: 클라이언트 - 스켈레탈 메시에 부착된 액터 검색"));
-		
-		// 스켈레탈 메시에 부착된 모든 자식 액터 검색
 		TArray<AActor*> AttachedActors;
 		if (AActor* MeshOwner = OwningSkeletalMesh->GetOwner())
 		{
 			MeshOwner->GetAttachedActors(AttachedActors, true);
 			
-			UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 부착된 액터 개수: %d"), AttachedActors.Num());
-			
 			for (AActor* AttachedActor : AttachedActors)
 			{
 				if (AInv_EquipActor* EquipActor = Cast<AInv_EquipActor>(AttachedActor))
 				{
-					UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 2단계 성공! EquipActor 찾음: %s"), *EquipActor->GetName());
-					
-					// 배열에 추가해두기 (다음에 빠르게 찾을 수 있도록)
-					EquippedActors.Add(EquipActor);
-					return EquipActor;
+					if (EquipActor->GetEquipmentType().MatchesTag(WeaponsTag))
+					{
+						UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 2단계 - 주무기 찾음: %s"), *EquipActor->GetName());
+						EquippedActors.Add(EquipActor);
+						return EquipActor;
+					}
 				}
 			}
 		}
 	}
 	
-	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] FindWeaponActor - 무기 없음 (1,2단계 모두 실패)"));
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 주무기 없음"));
+	return nullptr;
+}
+
+AInv_EquipActor* UInv_EquipmentComponent::FindSecondaryWeaponActor()
+{
+	// ============================================
+	// ⭐ [WeaponBridge] 보조무기 찾기 (두 번째 무기)
+	// ⭐ EquippedActors 배열에서 Weapons 태그를 가진 두 번째 액터
+	// ============================================
+	
+	AActor* OwnerActor = GetOwner();
+	bool bIsServer = OwnerActor ? OwnerActor->HasAuthority() : false;
+	
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] FindSecondaryWeaponActor 시작 - %s"), 
+		bIsServer ? TEXT("서버") : TEXT("클라이언트"));
+	
+	FGameplayTag WeaponsTag = FGameplayTag::RequestGameplayTag(FName("GameItems.Equipment.Weapons"));
+	
+	// 1단계: EquippedActors 배열에서 두 번째 무기 찾기
+	int32 WeaponCount = 0;
+	for (AInv_EquipActor* Actor : EquippedActors)
+	{
+		if (IsValid(Actor) && Actor->GetEquipmentType().MatchesTag(WeaponsTag))
+		{
+			WeaponCount++;
+			if (WeaponCount == 2)  // 두 번째 무기
+			{
+				UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 보조무기 찾음: %s"), *Actor->GetName());
+				return Actor;
+			}
+		}
+	}
+	
+	// 2단계: 클라이언트에서 월드 검색
+	if (!bIsServer && OwningSkeletalMesh.IsValid())
+	{
+		TArray<AActor*> AttachedActors;
+		if (AActor* MeshOwner = OwningSkeletalMesh->GetOwner())
+		{
+			MeshOwner->GetAttachedActors(AttachedActors, true);
+			
+			WeaponCount = 0;
+			for (AActor* AttachedActor : AttachedActors)
+			{
+				if (AInv_EquipActor* EquipActor = Cast<AInv_EquipActor>(AttachedActor))
+				{
+					if (EquipActor->GetEquipmentType().MatchesTag(WeaponsTag))
+					{
+						// 이미 배열에 있는지 확인
+						if (!EquippedActors.Contains(EquipActor))
+						{
+							EquippedActors.Add(EquipActor);
+						}
+						
+						WeaponCount++;
+						if (WeaponCount == 2)
+						{
+							UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 2단계 - 보조무기 찾음: %s"), *EquipActor->GetName());
+							return EquipActor;
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 보조무기 없음"));
 	return nullptr;
 }
 

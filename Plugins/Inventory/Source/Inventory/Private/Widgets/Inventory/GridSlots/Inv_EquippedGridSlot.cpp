@@ -53,8 +53,9 @@ FReply UInv_EquippedGridSlot::NativeOnMouseButtonDown(const FGeometry& InGeometr
 UInv_EquippedSlottedItem* UInv_EquippedGridSlot::OnItemEquipped(UInv_InventoryItem* Item, const FGameplayTag& EquipmentTag, float TileSize)
 {
 	// Check the Equipment Type Tag
-	// 장비 유형 태그 확인
-	if (!EquipmentTag.MatchesTagExact(EquipmentTypeTag)) return nullptr;
+	// 장비 유형 태그 확인 (MatchesTag로 변경 - 하위 태그도 허용)
+	// 예: 슬롯이 GameItems.Equipment.Weapons면 GameItems.Equipment.Weapons.Axe도 장착 가능
+	if (!EquipmentTag.MatchesTag(EquipmentTypeTag)) return nullptr;
 	
 	// Get Grid Dimensions
 	// 그리드 크기 가져오기

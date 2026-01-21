@@ -60,9 +60,21 @@ private:
 	TObjectPtr<UInputAction> PrimaryWeaponAction;
 
 	// ============================================
+	// ⭐ [WeaponBridge] 보조무기 전환 InputAction
+	// ⭐ Blueprint에서 지정 (2키)
+	// ============================================
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Weapon", meta = (DisplayName = "보조무기 전환 액션"))
+	TObjectPtr<UInputAction> SecondaryWeaponAction;
+
+	// ============================================
 	// ⭐ [WeaponBridge] 주무기 입력 처리 함수
 	// ============================================
 	void HandlePrimaryWeapon();
+
+	// ============================================
+	// ⭐ [WeaponBridge] 보조무기 입력 처리 함수
+	// ============================================
+	void HandleSecondaryWeapon();
 
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory", meta = (DisplayName = "HUD 위젯 클래스"))
 	TSubclassOf<UInv_HUDWidget> HUDWidgetClass; // 위젯 선언

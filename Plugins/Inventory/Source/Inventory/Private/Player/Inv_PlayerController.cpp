@@ -99,6 +99,19 @@ void AInv_PlayerController::SetupInputComponent()
 	{
 		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 주무기 전환 액션이 설정되지 않음 - Blueprint에서 지정 필요"));
 	}
+
+	// ============================================
+	// ⭐ [WeaponBridge] 보조무기 전환 InputAction 바인딩
+	// ============================================
+	if (SecondaryWeaponAction)
+	{
+		EnhancedInputComponent->BindAction(SecondaryWeaponAction, ETriggerEvent::Started, this, &AInv_PlayerController::HandleSecondaryWeapon);
+		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 보조무기 전환 액션 바인딩 완료"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 보조무기 전환 액션이 설정되지 않음 - Blueprint에서 지정 필요"));
+	}
 }
 
 void AInv_PlayerController::PrimaryInteract()
@@ -265,6 +278,24 @@ void AInv_PlayerController::HandlePrimaryWeapon()
 	else
 	{
 		UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] PlayerController - EquipmentComponent 없음! 주무기 전환 불가"));
+	}
+}
+
+// ============================================
+// ⭐ [WeaponBridge] 보조무기 입력 처리 함수
+// ⭐ 2키 입력 시 호출됨
+// ============================================
+void AInv_PlayerController::HandleSecondaryWeapon()
+{
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] PlayerController - HandleSecondaryWeapon 호출됨 (2키 입력)"));
+	
+	if (EquipmentComponent.IsValid())
+	{
+		EquipmentComponent->HandleSecondaryWeaponInput();
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] PlayerController - EquipmentComponent 없음! 보조무기 전환 불가"));
 	}
 }
 
