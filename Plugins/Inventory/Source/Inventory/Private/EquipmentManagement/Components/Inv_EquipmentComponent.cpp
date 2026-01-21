@@ -152,6 +152,120 @@ void UInv_EquipmentComponent::OnItemUnequipped(UInv_InventoryItem* UnequippedIte
 	RemoveEquippedActor(EquipmentFragment->GetEquipmentType());
 }
 
+// ============================================
+// ⭐ [WeaponBridge] 무기 꺼내기/집어넣기 구현
+// ============================================
+
+void UInv_EquipmentComponent::HandlePrimaryWeaponInput()
+{
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] HandlePrimaryWeaponInput 호출됨"));
+	
+	// 무기가 없으면 무시
+	AInv_EquipActor* WeaponActor = FindWeaponActor();
+	if (!IsValid(WeaponActor))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 장착된 무기 없음 - 입력 무시"));
+		return;
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 현재 활성 슬롯: %d"), static_cast<int32>(ActiveWeaponSlot));
+	
+	// 현재 상태에 따라 토글
+	if (ActiveWeaponSlot == EInv_ActiveWeaponSlot::None)
+	{
+		EquipWeapon();
+	}
+	else if (ActiveWeaponSlot == EInv_ActiveWeaponSlot::Primary)
+	{
+		UnequipWeapon();
+	}
+}
+
+void UInv_EquipmentComponent::EquipWeapon()
+{
+	AInv_EquipActor* WeaponActor = FindWeaponActor();
+	if (!IsValid(WeaponActor))
+	{
+		UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] EquipWeapon 실패 - WeaponActor 없음"));
+		return;
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 무기 꺼내기 시작 - %s"), *WeaponActor->GetName());
+	
+	// 등 무기 숨기기
+	WeaponActor->SetActorHiddenInGame(true);
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 등 무기 Hidden 처리 완료"));
+	
+	// 손 무기 클래스 확인
+	TSubclassOf<AActor> HandWeaponClass = WeaponActor->GetHandWeaponClass();
+	if (!HandWeaponClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] HandWeaponClass가 설정되지 않음!"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] HandWeaponClass: %s"), *HandWeaponClass->GetName());
+	}
+	
+	// 델리게이트 브로드캐스트 (Helluna에서 수신)
+	OnWeaponEquipRequested.Broadcast(
+		WeaponActor->GetEquipmentType(),
+		WeaponActor,
+		HandWeaponClass,
+		true  // bEquip = true (꺼내기)
+	);
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 델리게이트 브로드캐스트 완료 (bEquip = true)"));
+	
+	// 상태 변경
+	ActiveWeaponSlot = EInv_ActiveWeaponSlot::Primary;
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 무기 꺼내기 완료 - ActiveWeaponSlot = Primary"));
+}
+
+void UInv_EquipmentComponent::UnequipWeapon()
+{
+	AInv_EquipActor* WeaponActor = FindWeaponActor();
+	if (!IsValid(WeaponActor))
+	{
+		UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] UnequipWeapon 실패 - WeaponActor 없음"));
+		return;
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 무기 집어넣기 시작 - %s"), *WeaponActor->GetName());
+	
+	// 델리게이트 브로드캐스트 (Helluna에서 손 무기 Destroy)
+	OnWeaponEquipRequested.Broadcast(
+		WeaponActor->GetEquipmentType(),
+		WeaponActor,
+		nullptr,  // 집어넣기라 HandWeaponClass 필요 없음
+		false     // bEquip = false (집어넣기)
+	);
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 델리게이트 브로드캐스트 완료 (bEquip = false)"));
+	
+	// 등 무기 다시 보이기
+	WeaponActor->SetActorHiddenInGame(false);
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 등 무기 Visible 처리 완료"));
+	
+	// 상태 변경
+	ActiveWeaponSlot = EInv_ActiveWeaponSlot::None;
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 무기 집어넣기 완료 - ActiveWeaponSlot = None"));
+}
+
+AInv_EquipActor* UInv_EquipmentComponent::FindWeaponActor()
+{
+	// EquippedActors에서 무기 찾기 (현재는 첫 번째 무기)
+	// TODO: 나중에 슬롯별로 구분 필요 (주무기/보조무기)
+	for (AInv_EquipActor* Actor : EquippedActors)
+	{
+		if (IsValid(Actor))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] FindWeaponActor - 찾음: %s"), *Actor->GetName());
+			return Actor;
+		}
+	}
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] FindWeaponActor - 장착된 무기 없음"));
+	return nullptr;
+}
+
 
 
 
