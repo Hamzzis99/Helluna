@@ -323,8 +323,8 @@ void UInv_EquipmentComponent::EquipPrimaryWeapon()
 	
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 주무기 꺼내기 시작 - %s"), *WeaponActor->GetName());
 	
-	// 등 무기 숨기기
-	WeaponActor->SetActorHiddenInGame(true);
+	// 등 무기 숨기기 (리플리케이트)
+	WeaponActor->SetWeaponHidden(true);
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 등 무기 Hidden 처리 완료"));
 	
 	// 무기 스폰 GA 확인
@@ -363,8 +363,8 @@ void UInv_EquipmentComponent::EquipSecondaryWeapon()
 	
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 보조무기 꺼내기 시작 - %s"), *WeaponActor->GetName());
 	
-	// 등 무기 숨기기
-	WeaponActor->SetActorHiddenInGame(true);
+	// 등 무기 숨기기 (리플리케이트)
+	WeaponActor->SetWeaponHidden(true);
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 등 무기 Hidden 처리 완료"));
 	
 	// 무기 스폰 GA 확인
@@ -422,8 +422,8 @@ void UInv_EquipmentComponent::UnequipWeapon()
 	);
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 델리게이트 브로드캐스트 완료 (bEquip = false)"));
 	
-	// 등 무기 다시 보이기
-	WeaponActor->SetActorHiddenInGame(false);
+	// 등 무기 다시 보이기 (리플리케이트)
+	WeaponActor->SetWeaponHidden(false);
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 등 무기 Visible 처리 완료"));
 	
 	// 상태 변경

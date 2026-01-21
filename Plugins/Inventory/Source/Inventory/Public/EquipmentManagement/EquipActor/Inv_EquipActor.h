@@ -43,6 +43,18 @@ public:
 		return (WeaponSlotIndex == 1) ? SecondaryBackSocket : PrimaryBackSocket;
 	}
 
+	// ============================================
+	// ⭐ [WeaponBridge] 무기 숨김/표시 (리플리케이트)
+	// ⭐ 손에 무기를 들면 등 무기 숨김
+	// ============================================
+	void SetWeaponHidden(bool bHidden);
+	bool IsWeaponHidden() const { return bIsWeaponHidden; }
+
+protected:
+	// ⭐ [WeaponBridge] Hidden 상태 변경 시 호출 (리플리케이션)
+	UFUNCTION()
+	void OnRep_IsWeaponHidden();
+
 private:
 
 	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "장비 타입 태그"))
@@ -64,6 +76,13 @@ private:
 	// ============================================
 	UPROPERTY(Replicated, VisibleAnywhere, Category = "Inventory|Weapon", meta = (DisplayName = "무기 슬롯 인덱스"))
 	int32 WeaponSlotIndex = -1;
+
+	// ============================================
+	// ⭐ [WeaponBridge] 무기 숨김 상태 (리플리케이트)
+	// ⭐ 손에 무기를 들면 true, 집어넣으면 false
+	// ============================================
+	UPROPERTY(ReplicatedUsing = OnRep_IsWeaponHidden, VisibleAnywhere, Category = "Inventory|Weapon")
+	bool bIsWeaponHidden = false;
 
 	// ============================================
 	// ⭐ [WeaponBridge] 등 장착 소켓 (블루프린트에서 설정)
