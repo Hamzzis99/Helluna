@@ -115,6 +115,8 @@ void UInv_EquipmentComponent::RemoveEquippedActor(const FGameplayTag& EquipmentT
 // 아이템 장착 시 호출되는 함수
 void UInv_EquipmentComponent::OnItemEquipped(UInv_InventoryItem* EquippedItem)
 {
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] OnItemEquipped 호출됨"));
+	
 	if (!IsValid(EquippedItem)) return;
 	if (!OwningPlayerController->HasAuthority()) return;
 
@@ -130,7 +132,16 @@ void UInv_EquipmentComponent::OnItemEquipped(UInv_InventoryItem* EquippedItem)
 	if (!OwningSkeletalMesh.IsValid()) return;
 	AInv_EquipActor* SpawnedEquipActor = SpawnEquippedActor(EquipmentFragment, ItemManifest, OwningSkeletalMesh.Get()); // 장비 아이템을 장착하면서 필요 조건들 
 	
-	EquippedActors.Add(SpawnedEquipActor); // 장착된 장비를 착용시켜주는 것. (태그를 찾고)
+	if (IsValid(SpawnedEquipActor))
+	{
+		EquippedActors.Add(SpawnedEquipActor); // 장착된 장비를 착용시켜주는 것. (태그를 찾고)
+		UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] EquippedActors에 추가됨: %s (총 %d개)"), 
+			*SpawnedEquipActor->GetName(), EquippedActors.Num());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("⭐ [EquipmentComponent] SpawnedEquipActor가 null!"));
+	}
 }
 
 // 아이템 해제 시 호출되는 함수
@@ -254,15 +265,24 @@ AInv_EquipActor* UInv_EquipmentComponent::FindWeaponActor()
 {
 	// EquippedActors에서 무기 찾기 (현재는 첫 번째 무기)
 	// TODO: 나중에 슬롯별로 구분 필요 (주무기/보조무기)
-	for (AInv_EquipActor* Actor : EquippedActors)
+	
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] FindWeaponActor - EquippedActors 개수: %d"), EquippedActors.Num());
+	
+	for (int32 i = 0; i < EquippedActors.Num(); i++)
 	{
+		AInv_EquipActor* Actor = EquippedActors[i];
 		if (IsValid(Actor))
 		{
-			UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] FindWeaponActor - 찾음: %s"), *Actor->GetName());
+			UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] FindWeaponActor - [%d] 찾음: %s"), i, *Actor->GetName());
 			return Actor;
 		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] FindWeaponActor - [%d] Invalid Actor"), i);
+		}
 	}
-	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] FindWeaponActor - 장착된 무기 없음"));
+	
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] FindWeaponActor - 장착된 무기 없음 (배열 비어있음)"));
 	return nullptr;
 }
 
