@@ -8,6 +8,7 @@
 
 #include "Login/HellunaLoginController.h"
 #include "Login/HellunaLoginWidget.h"
+#include "Login/HellunaLoginGameMode.h"
 #include "Blueprint/UserWidget.h"
 
 AHellunaLoginController::AHellunaLoginController()
@@ -21,6 +22,23 @@ AHellunaLoginController::AHellunaLoginController()
 void AHellunaLoginController::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// ============================================
+	// 📌 필수 설정 체크
+	// LoginWidgetClass가 설정되지 않으면 에러!
+	// ============================================
+	if (!LoginWidgetClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[LoginController] ❌ LoginWidgetClass가 설정되지 않았습니다! Blueprint에서 반드시 설정해주세요!"));
+		
+		// 에디터에서 경고 메시지 박스 표시
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Red, 
+				TEXT("❌ [LoginController] LoginWidgetClass가 설정되지 않았습니다! Blueprint에서 설정해주세요!"));
+		}
+		return;
+	}
 
 	// ============================================
 	// 📌 클라이언트에서만 UI 표시
@@ -105,16 +123,16 @@ void AHellunaLoginController::Server_RequestLogin_Implementation(const FString& 
 	// ============================================
 	UE_LOG(LogTemp, Log, TEXT("[LoginController] Server_RequestLogin: 서버에서 로그인 요청 수신 - ID: %s"), *PlayerId);
 
-	// TODO: GameMode의 로그인 검증 함수 호출
-	// AHellunaLoginGameMode* GameMode = Cast<AHellunaLoginGameMode>(GetWorld()->GetAuthGameMode());
-	// if (GameMode)
-	// {
-	//     GameMode->ProcessLogin(this, PlayerId, Password);
-	// }
-
-	// 임시: 무조건 성공 응답 (테스트용)
-	// 나중에 GameMode 연동 후 제거
-	Client_LoginResult(true, TEXT(""));
+	AHellunaLoginGameMode* LoginGameMode = Cast<AHellunaLoginGameMode>(GetWorld()->GetAuthGameMode());
+	if (LoginGameMode)
+	{
+		LoginGameMode->ProcessLogin(this, PlayerId, Password);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("[LoginController] Server_RequestLogin: LoginGameMode를 찾을 수 없습니다!"));
+		Client_LoginResult(false, TEXT("서버 오류: GameMode를 찾을 수 없습니다."));
+	}
 }
 
 void AHellunaLoginController::Client_LoginResult_Implementation(bool bSuccess, const FString& ErrorMessage)

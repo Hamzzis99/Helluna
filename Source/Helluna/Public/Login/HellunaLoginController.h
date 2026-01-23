@@ -101,8 +101,8 @@ protected:
 	// 📌 위젯 클래스 (Blueprint에서 설정)
 	// ============================================
 
-	/** 로그인 위젯 클래스 (BP에서 설정) */
-	UPROPERTY(EditDefaultsOnly, Category = "Login|UI")
+	/** 로그인 위젯 클래스 (BP에서 필수 설정!) */
+	UPROPERTY(EditDefaultsOnly, Category = "Login|UI", meta = (DisplayName = "로그인 위젯 클래스"))
 	TSubclassOf<UHellunaLoginWidget> LoginWidgetClass;
 
 	/** 현재 생성된 로그인 위젯 인스턴스 */
