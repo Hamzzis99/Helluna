@@ -1,3 +1,8 @@
+<details> <summary>🖥️ (로그인창) 전체 구현 로드맵</summary>
+
+
+Note: 이 섹션은 서버 접속부터 로그인 검증, 게임 진입까지의 전 과정을 포함합니다.
+
 <details> <summary>📂 Phase 1: 기본 구조 세팅 (완료)</summary>
 
 [x] Step 1. LoginLevel 맵 생성
@@ -103,5 +108,7 @@ LoggedInPlayerIds 제거 및 데이터 저장 (인벤토리 연동 대비)
 [ ] Step 19. 멀티 클라이언트 (3인 동시 접속 및 중복 ID 차단)
 
 [ ] Step 20. 데이터 영속성 (서버 재시작 후 계정 유지 확인)
+
+</details>
 
 </details>
