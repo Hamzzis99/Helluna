@@ -2,7 +2,7 @@
 // 로그인 레벨 전용 GameMode 구현
 // 
 // ============================================
-// 📌 작성자: Claude & Gihyeon
+// 📌 작성자: Gihyeon
 // 📌 작성일: 2025-01-23
 // ============================================
 
@@ -143,6 +143,7 @@ void AHellunaLoginGameMode::OnLoginSuccess(AHellunaLoginController* LoginControl
 
 	// ============================================
 	// 📌 PlayerState에 로그인 정보 저장
+	// Seamless Travel 시에도 유지됨
 	// ============================================
 	if (AHellunaPlayerState* PS = LoginController->GetPlayerState<AHellunaPlayerState>())
 	{
@@ -157,11 +158,11 @@ void AHellunaLoginGameMode::OnLoginSuccess(AHellunaLoginController* LoginControl
 	UE_LOG(LogTemp, Log, TEXT("[LoginGameMode] OnLoginSuccess: 로그인 성공 - ID: %s (접속자 %d명)"), *PlayerId, LoggedInPlayerIds.Num());
 
 	// ============================================
-	// 📌 TODO: 모든 플레이어가 로그인하면 맵 이동
+	// 📌 게임 맵으로 이동
 	// 현재는 단일 플레이어 테스트용으로 바로 이동
-	// 나중에 "준비 완료" 버튼 등으로 변경 가능
+	// TODO: 나중에 "준비 완료" 버튼 또는 모든 플레이어 대기 후 이동으로 변경
 	// ============================================
-	// TravelToGameMap();
+	TravelToGameMap();
 }
 
 void AHellunaLoginGameMode::OnLoginFailed(AHellunaLoginController* LoginController, const FString& ErrorMessage)

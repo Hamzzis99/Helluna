@@ -12,7 +12,7 @@
 // - LoginLevel에서만 사용
 // - HellunaLoginGameMode에서 PlayerControllerClass로 지정
 // 
-// 📌 작성자: Claude & Gihyeon
+// 📌 작성자: Gihyeon
 // 📌 작성일: 2025-01-23
 // ============================================
 

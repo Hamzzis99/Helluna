@@ -2,7 +2,7 @@
 // 로그인 UI 위젯 구현
 // 
 // ============================================
-// 📌 작성자: Claude & Gihyeon
+// 📌 작성자: Gihyeon
 // 📌 작성일: 2025-01-23
 // ============================================
 
@@ -97,11 +97,29 @@ void UHellunaLoginWidget::NativeConstruct()
 	}
 
 	// ============================================
-	// 📌 초기 상태: 서버 접속 패널만 표시
+	// 📌 초기 상태 결정
+	// NetMode에 따라 표시할 패널 결정
+	// - NM_Client: 이미 서버에 접속한 상태 → 로그인 패널
+	// - NM_Standalone: 로컬 단독 실행 → 서버 접속 패널
+	// - NM_ListenServer: Listen 서버 → 로그인 패널
+	// - NM_DedicatedServer: 데디케이티드 서버 (UI 없음)
 	// ============================================
-	ShowServerConnectPanel();
+	ENetMode NetMode = GetWorld()->GetNetMode();
+	
+	if (NetMode == NM_Client || NetMode == NM_ListenServer)
+	{
+		// 이미 서버에 접속한 상태 → 바로 로그인 패널 표시
+		ShowLoginPanel();
+		UE_LOG(LogTemp, Log, TEXT("[LoginWidget] NativeConstruct: 서버 접속 상태 감지 - 로그인 패널 표시"));
+	}
+	else
+	{
+		// 로컬 단독 실행 → 서버 접속 패널 표시
+		ShowServerConnectPanel();
+		UE_LOG(LogTemp, Log, TEXT("[LoginWidget] NativeConstruct: 로컬 실행 - 서버 접속 패널 표시"));
+	}
 
-	UE_LOG(LogTemp, Log, TEXT("[LoginWidget] NativeConstruct: 초기화 완료"));
+	UE_LOG(LogTemp, Log, TEXT("[LoginWidget] NativeConstruct: 초기화 완료 (NetMode: %d)"), static_cast<int32>(NetMode));
 }
 
 void UHellunaLoginWidget::OnConnectButtonClicked()

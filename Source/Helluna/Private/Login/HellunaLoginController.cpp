@@ -2,7 +2,7 @@
 // 로그인 레벨 전용 PlayerController 구현
 // 
 // ============================================
-// 📌 작성자: Claude & Gihyeon
+// 📌 작성자: Gihyeon
 // 📌 작성일: 2025-01-23
 // ============================================
 
@@ -140,23 +140,33 @@ void AHellunaLoginController::Client_LoginResult_Implementation(bool bSuccess, c
 	// ============================================
 	// 📌 클라이언트에서 실행됨
 	// 로그인 결과에 따라 UI 업데이트
+	// 
+	// 성공 시: 성공 메시지 표시 → 맵 이동 대기
+	// 실패 시: 에러 메시지 표시 → 재시도 가능
 	// ============================================
 	if (bSuccess)
 	{
 		UE_LOG(LogTemp, Log, TEXT("[LoginController] Client_LoginResult: 로그인 성공!"));
 
-		// TODO: 로딩 화면 표시 후 맵 이동
-		// HideLoginWidget();
-		// ShowLoadingScreen();
+		// UI에 성공 메시지 표시
+		if (LoginWidget)
+		{
+			LoginWidget->ShowMessage(TEXT("로그인 성공! 게임 맵으로 이동 중..."), false);
+			LoginWidget->SetLoadingState(true);
+		}
+
+		// 맵 이동은 서버에서 처리 (ServerTravel)
+		// 클라이언트는 대기 상태
 	}
 	else
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[LoginController] Client_LoginResult: 로그인 실패 - %s"), *ErrorMessage);
 
-		// TODO: UI에 에러 메시지 표시
-		// if (LoginWidget)
-		// {
-		//     LoginWidget->ShowErrorMessage(ErrorMessage);
-		// }
+		// UI에 에러 메시지 표시
+		if (LoginWidget)
+		{
+			LoginWidget->ShowMessage(ErrorMessage, true);
+			LoginWidget->SetLoadingState(false);
+		}
 	}
 }
