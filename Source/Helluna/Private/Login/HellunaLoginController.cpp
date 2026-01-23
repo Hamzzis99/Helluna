@@ -1,0 +1,144 @@
+// HellunaLoginController.cpp
+// 로그인 레벨 전용 PlayerController 구현
+// 
+// ============================================
+// 📌 작성자: Claude & Gihyeon
+// 📌 작성일: 2025-01-23
+// ============================================
+
+#include "Login/HellunaLoginController.h"
+#include "Login/HellunaLoginWidget.h"
+#include "Blueprint/UserWidget.h"
+
+AHellunaLoginController::AHellunaLoginController()
+{
+	// 마우스 커서 표시 (UI 조작용)
+	bShowMouseCursor = true;
+	bEnableClickEvents = true;
+	bEnableMouseOverEvents = true;
+}
+
+void AHellunaLoginController::BeginPlay()
+{
+	Super::BeginPlay();
+
+	// ============================================
+	// 📌 클라이언트에서만 UI 표시
+	// 서버에서는 UI가 필요 없음
+	// ============================================
+	if (IsLocalController())
+	{
+		// 입력 모드를 UI + Game으로 설정
+		FInputModeUIOnly InputMode;
+		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+		SetInputMode(InputMode);
+
+		// 로그인 위젯 표시
+		ShowLoginWidget();
+
+		UE_LOG(LogTemp, Log, TEXT("[LoginController] BeginPlay: 로그인 UI 표시"));
+	}
+}
+
+void AHellunaLoginController::ShowLoginWidget()
+{
+	// ============================================
+	// 📌 로그인 위젯 생성 및 표시
+	// ============================================
+	if (!LoginWidgetClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[LoginController] ShowLoginWidget: LoginWidgetClass가 설정되지 않았습니다!"));
+		return;
+	}
+
+	if (!LoginWidget)
+	{
+		LoginWidget = CreateWidget<UHellunaLoginWidget>(this, LoginWidgetClass);
+	}
+
+	if (LoginWidget && !LoginWidget->IsInViewport())
+	{
+		LoginWidget->AddToViewport();
+		UE_LOG(LogTemp, Log, TEXT("[LoginController] ShowLoginWidget: 로그인 위젯 표시됨"));
+	}
+}
+
+void AHellunaLoginController::HideLoginWidget()
+{
+	if (LoginWidget && LoginWidget->IsInViewport())
+	{
+		LoginWidget->RemoveFromParent();
+		UE_LOG(LogTemp, Log, TEXT("[LoginController] HideLoginWidget: 로그인 위젯 숨김"));
+	}
+}
+
+void AHellunaLoginController::OnLoginButtonClicked(const FString& PlayerId, const FString& Password)
+{
+	// ============================================
+	// 📌 입력 유효성 검사
+	// ============================================
+	if (PlayerId.IsEmpty())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[LoginController] OnLoginButtonClicked: 아이디가 비어있습니다."));
+		// TODO: UI에 에러 메시지 표시
+		return;
+	}
+
+	if (Password.IsEmpty())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[LoginController] OnLoginButtonClicked: 비밀번호가 비어있습니다."));
+		// TODO: UI에 에러 메시지 표시
+		return;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[LoginController] OnLoginButtonClicked: 로그인 요청 - ID: %s"), *PlayerId);
+
+	// 서버에 로그인 요청
+	Server_RequestLogin(PlayerId, Password);
+}
+
+void AHellunaLoginController::Server_RequestLogin_Implementation(const FString& PlayerId, const FString& Password)
+{
+	// ============================================
+	// 📌 서버에서 실행됨
+	// GameMode에서 실제 검증 로직 수행
+	// ============================================
+	UE_LOG(LogTemp, Log, TEXT("[LoginController] Server_RequestLogin: 서버에서 로그인 요청 수신 - ID: %s"), *PlayerId);
+
+	// TODO: GameMode의 로그인 검증 함수 호출
+	// AHellunaLoginGameMode* GameMode = Cast<AHellunaLoginGameMode>(GetWorld()->GetAuthGameMode());
+	// if (GameMode)
+	// {
+	//     GameMode->ProcessLogin(this, PlayerId, Password);
+	// }
+
+	// 임시: 무조건 성공 응답 (테스트용)
+	// 나중에 GameMode 연동 후 제거
+	Client_LoginResult(true, TEXT(""));
+}
+
+void AHellunaLoginController::Client_LoginResult_Implementation(bool bSuccess, const FString& ErrorMessage)
+{
+	// ============================================
+	// 📌 클라이언트에서 실행됨
+	// 로그인 결과에 따라 UI 업데이트
+	// ============================================
+	if (bSuccess)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[LoginController] Client_LoginResult: 로그인 성공!"));
+
+		// TODO: 로딩 화면 표시 후 맵 이동
+		// HideLoginWidget();
+		// ShowLoadingScreen();
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[LoginController] Client_LoginResult: 로그인 실패 - %s"), *ErrorMessage);
+
+		// TODO: UI에 에러 메시지 표시
+		// if (LoginWidget)
+		// {
+		//     LoginWidget->ShowErrorMessage(ErrorMessage);
+		// }
+	}
+}
