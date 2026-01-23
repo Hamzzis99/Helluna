@@ -50,15 +50,15 @@ protected:
 	// ============================================
 
 	/** 서버 접속 패널 (IP 입력 영역) */
-	UPROPERTY(BlueprintReadOnly, meta = (BindWidget), Category = "Login|UI")
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidget, DisplayName = "서버 접속 패널"), Category = "Login|UI")
 	TObjectPtr<UCanvasPanel> ServerConnectPanel;
 
 	/** IP 입력 텍스트박스 */
-	UPROPERTY(BlueprintReadOnly, meta = (BindWidget), Category = "Login|UI")
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidget, DisplayName = "IP 입력창"), Category = "Login|UI")
 	TObjectPtr<UEditableTextBox> IPInputTextBox;
 
 	/** 서버 접속 버튼 */
-	UPROPERTY(BlueprintReadOnly, meta = (BindWidget), Category = "Login|UI")
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidget, DisplayName = "서버 접속 버튼"), Category = "Login|UI")
 	TObjectPtr<UButton> ConnectButton;
 
 	// ============================================
@@ -66,19 +66,19 @@ protected:
 	// ============================================
 
 	/** 로그인 패널 (ID/PW 입력 영역) */
-	UPROPERTY(BlueprintReadOnly, meta = (BindWidget), Category = "Login|UI")
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidget, DisplayName = "로그인 패널"), Category = "Login|UI")
 	TObjectPtr<UCanvasPanel> LoginPanel;
 
 	/** 아이디 입력 텍스트박스 */
-	UPROPERTY(BlueprintReadOnly, meta = (BindWidget), Category = "Login|UI")
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidget, DisplayName = "아이디 입력창"), Category = "Login|UI")
 	TObjectPtr<UEditableTextBox> IDInputTextBox;
 
 	/** 비밀번호 입력 텍스트박스 */
-	UPROPERTY(BlueprintReadOnly, meta = (BindWidget), Category = "Login|UI")
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidget, DisplayName = "비밀번호 입력창"), Category = "Login|UI")
 	TObjectPtr<UEditableTextBox> PasswordInputTextBox;
 
 	/** 로그인 버튼 */
-	UPROPERTY(BlueprintReadOnly, meta = (BindWidget), Category = "Login|UI")
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidget, DisplayName = "로그인 버튼"), Category = "Login|UI")
 	TObjectPtr<UButton> LoginButton;
 
 	// ============================================
@@ -86,7 +86,7 @@ protected:
 	// ============================================
 
 	/** 상태 메시지 텍스트 */
-	UPROPERTY(BlueprintReadOnly, meta = (BindWidget), Category = "Login|UI")
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidget, DisplayName = "메시지 텍스트"), Category = "Login|UI")
 	TObjectPtr<UTextBlock> MessageText;
 
 	// ============================================

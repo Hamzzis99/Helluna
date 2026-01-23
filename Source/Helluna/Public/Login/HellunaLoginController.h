@@ -106,6 +106,6 @@ protected:
 	TSubclassOf<UHellunaLoginWidget> LoginWidgetClass;
 
 	/** 현재 생성된 로그인 위젯 인스턴스 */
-	UPROPERTY()
+	UPROPERTY(meta = (DisplayName = "로그인 위젯 인스턴스"))
 	TObjectPtr<UHellunaLoginWidget> LoginWidget;
 };

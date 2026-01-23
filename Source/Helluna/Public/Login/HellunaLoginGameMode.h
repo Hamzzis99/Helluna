@@ -115,10 +115,10 @@ protected:
 	// ============================================
 
 	/** 현재 접속 중인 플레이어 ID 목록 */
-	UPROPERTY()
+	UPROPERTY(meta = (DisplayName = "접속 중인 플레이어 목록"))
 	TSet<FString> LoggedInPlayerIds;
 
 	/** 계정 데이터 (SaveGame) */
-	UPROPERTY()
+	UPROPERTY(meta = (DisplayName = "계정 저장 데이터"))
 	TObjectPtr<UHellunaAccountSaveGame> AccountSaveGame;
 };
