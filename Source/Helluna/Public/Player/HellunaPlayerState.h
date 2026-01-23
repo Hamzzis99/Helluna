@@ -43,7 +43,7 @@ public:
 	 * 로그인 전: 빈 문자열 ""
 	 * 로그인 후: 사용자가 입력한 아이디
 	 */
-	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Login")
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Login", meta = (DisplayName = "플레이어 고유 ID"))
 	FString PlayerUniqueId;
 
 	/**
@@ -51,7 +51,7 @@ public:
 	 * 로그인 전: false
 	 * 로그인 후: true
 	 */
-	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Login")
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Login", meta = (DisplayName = "로그인 여부"))
 	bool bIsLoggedIn;
 
 	// ============================================

@@ -46,11 +46,11 @@ struct FHellunaAccountData
 	}
 
 	/** 플레이어 아이디 (고유 식별자) */
-	UPROPERTY(SaveGame, BlueprintReadOnly, Category = "Account")
+	UPROPERTY(SaveGame, BlueprintReadOnly, Category = "Account", meta = (DisplayName = "플레이어 아이디"))
 	FString PlayerId;
 
 	/** 비밀번호 (평문 저장 - 졸업작품용) */
-	UPROPERTY(SaveGame, BlueprintReadOnly, Category = "Account")
+	UPROPERTY(SaveGame, BlueprintReadOnly, Category = "Account", meta = (DisplayName = "비밀번호"))
 	FString Password;
 };
 
