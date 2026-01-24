@@ -62,6 +62,10 @@ void UHeroGameplayAbility_Shoot::ActivateAbility(const FGameplayAbilitySpecHandl
 
 void UHeroGameplayAbility_Shoot::EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled)
 {
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(AutoFireTimerHandle);
+	}
 
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 
@@ -70,13 +74,12 @@ void UHeroGameplayAbility_Shoot::EndAbility(const FGameplayAbilitySpecHandle Han
 void UHeroGameplayAbility_Shoot::Shoot()
 {
 
-	ACharacter* Character = Cast<ACharacter>(GetAvatarActorFromActorInfo());
 	AHellunaHeroCharacter* Hero = GetHeroCharacterFromActorInfo();
-	AHellunaHeroWeapon* Weapon = Hero->GetCurrentWeapon();
-	if (!Weapon) {
-		Debug::Print(TEXT("Shoot Failed: No Weapon"), FColor::Red);
-		return;
-	}
+	if (!Hero) return;
+
+	AHellunaHeroWeapon* Weapon = Hero->GetCurrentWeapon(); if (!Weapon) { Debug::Print(TEXT("Shoot Failed: No Weapon"), FColor::Red); return; }
+
+	ACharacter* Character = Cast<ACharacter>(GetAvatarActorFromActorInfo());
 
 	if (UAnimMontage* AttackMontage = Weapon->AnimSet.Attack)
 	{
@@ -100,18 +103,26 @@ void UHeroGameplayAbility_Shoot::Shoot()
 		}
 	}
 
-	// 2) 실제 발사 로직
-	if (AController* Controller = Hero->GetController())
+	// 1) 로컬 코스메틱(몽타주/반동)
+	if (Hero->IsLocallyControlled())
 	{
-		Weapon->Fire(Controller);
+		const float PitchKick = Weapon->ReboundUp;
+		const float YawKick = FMath::RandRange(-Weapon->ReboundLeftRight, Weapon->ReboundLeftRight);
+
+		Character->AddControllerPitchInput(-PitchKick);
+		Character->AddControllerYawInput(YawKick);
 	}
 
+	// 2) ✅ 데미지/히트판정은 “권한 실행”에서만
+	const bool bAuthorityExecution =
+		(GetCurrentActivationInfo().ActivationMode == EGameplayAbilityActivationMode::Authority);
 
+	if (bAuthorityExecution)
+	{
+		if (AController* Controller = Hero->GetController())
+		{
+			Weapon->Fire(Controller);  // 여기서 ApplyPointDamage + MulticastFireFX
+		}
+	}
 
-	// 3) 반동
-	const float PitchKick = Weapon->ReboundUp;
-	const float YawKick = FMath::RandRange(-Weapon->ReboundLeftRight, Weapon->ReboundLeftRight);
-
-	Character->AddControllerPitchInput(-PitchKick);
-	Character->AddControllerYawInput(YawKick);
 }

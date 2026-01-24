@@ -35,11 +35,12 @@ namespace HellunaGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Player_status_Aim, "Player.status.Aim");
 	UE_DEFINE_GAMEPLAY_TAG(Player_status_Shoot, "Player.status.Shoot");
 	UE_DEFINE_GAMEPLAY_TAG(Player_status_Run, "Player.status.Run");
-	UE_DEFINE_GAMEPLAY_TAG(Player_status_Can_Shoot, "Player.status.Can.Shoot");
-	UE_DEFINE_GAMEPLAY_TAG(Player_status_Can_AutoShoot, "Player.status.Can.AutoShoot");
 	UE_DEFINE_GAMEPLAY_TAG(Player_status_Can_Repair, "Player.status.Can.Repair");
 	UE_DEFINE_GAMEPLAY_TAG(Player_status_Can_Farming, "Player.status.Can.Farming");
 
+	/** Player Weapon tags **/
+	UE_DEFINE_GAMEPLAY_TAG(Player_Weapon_Aim, "Player.Weapon.Gun");
+	UE_DEFINE_GAMEPLAY_TAG(Player_Weapon_Shoot, "Player.Weapon.Farming");
 
 	/** Enemy tags **/
 

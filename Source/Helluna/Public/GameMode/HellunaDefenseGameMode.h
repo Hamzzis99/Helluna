@@ -62,4 +62,43 @@ protected:
 
 	void CacheBossSpawnPoints();
 	void TrySummonBoss();
+
+	//==============몬스터 개체 수 조건으로 낮, 밤 전환================
+
+protected:
+	// 살아있는 몬스터 수
+	UPROPERTY()
+	TSet<TWeakObjectPtr<AActor>> AliveMonsters;
+
+public:
+	// ✅ 몬스터가 스폰될 때 “살아있는 몬스터”로 등록
+	UFUNCTION(BlueprintCallable, Category = "Defense|Monster")
+	void RegisterAliveMonster(AActor* Monster);
+
+	// - AliveMonsters에서 제거하고, 0이면 낮 전환 예약
+	UFUNCTION(BlueprintCallable, Category = "Defense|Monster")
+	void NotifyMonsterDied(AActor* DeadMonster);
+
+	// ✅ 디버그/확인용(서버에서만 의미가 큼)
+	UFUNCTION(BlueprintPure, Category = "Defense|Monster")
+	int32 GetAliveMonsterCount() const { return AliveMonsters.Num(); }
+
+	UPROPERTY(EditDefaultsOnly, Category = "Defense|Monster|Test")
+	TSubclassOf<APawn> TestMonsterClass;
+
+	// ✅ 몬스터 스폰 위치로 쓸 TargetPoint 태그
+	UPROPERTY(EditDefaultsOnly, Category = "Defense|Monster|Test")
+	FName MonsterSpawnPointTag = TEXT("MonsterSpawn");
+
+	// ✅ 밤마다 소환할 몬스터 수 (기본 3)
+	UPROPERTY(EditDefaultsOnly, Category = "Defense|Monster|Test", meta = (ClampMin = "0"))
+	int32 TestMonsterSpawnCount = 3;
+
+	// ✅ 스폰 포인트 목록 캐싱
+	UPROPERTY()
+	TArray<ATargetPoint*> MonsterSpawnPoints;
+
+	void CacheMonsterSpawnPoints();
+	void SpawnTestMonsters();
+
 };

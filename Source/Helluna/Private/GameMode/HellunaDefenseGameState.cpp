@@ -5,7 +5,7 @@
 #include "Net/UnrealNetwork.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 #include "DebugHelper.h"
-
+#include "TimerManager.h"
 // [김기현 추가] 저장 시스템 및 게임 인스턴스 헤더
 #include "Kismet/GameplayStatics.h"
 #include "Engine/World.h"
@@ -30,6 +30,7 @@ void AHellunaDefenseGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProper
 
     DOREPLIFETIME(AHellunaDefenseGameState, SpaceShip);
     DOREPLIFETIME(AHellunaDefenseGameState, Phase);
+    DOREPLIFETIME(AHellunaDefenseGameState, AliveMonsterCount);
 }
 
 void AHellunaDefenseGameState::SetPhase(EDefensePhase NewPhase)
@@ -42,12 +43,48 @@ void AHellunaDefenseGameState::SetPhase(EDefensePhase NewPhase)
 
 void AHellunaDefenseGameState::MulticastPrintNight_Implementation(int32 Current, int32 Need)
 {
-    //Debug::Print(FString::Printf(TEXT("Night! SpaceShip Repair: %d / %d"), Current, Need));
+    Debug::Print(FString::Printf(TEXT("Night! SpaceShip Repair: %d / %d"), Current, Need));
+
+
+    // 디버그용 
+
+    GetWorldTimerManager().ClearTimer(TimerHandle_NightDebug);
+
+    PrintNightDebug();
+
+    GetWorldTimerManager().SetTimer(
+        TimerHandle_NightDebug,
+        this,
+        &ThisClass::PrintNightDebug,
+        NightDebugInterval,
+        true
+    );
 }
+
+void AHellunaDefenseGameState::PrintNightDebug()
+{
+    // ✅ 여기서 "현재 복제된 몬스터 수"를 출력
+    // AliveMonsterCount가 멤버면 그대로 쓰면 되고,
+    // Getter가 있으면 GetAliveMonsterCount()로 바꿔도 됨.
+
+    Debug::Print(FString::Printf(
+        TEXT("Night Debug | AliveMonsters: %d"),
+        AliveMonsterCount
+    ));
+}
+
 
 void AHellunaDefenseGameState::MulticastPrintDay_Implementation()
 {
-    //Debug::Print(TEXT("Day!"));
+    Debug::Print(TEXT("Day!"));
+}
+
+void AHellunaDefenseGameState::SetAliveMonsterCount(int32 NewCount)
+{
+    if (!HasAuthority()) return;
+
+    // ✅ 음수 방지(안전)
+    AliveMonsterCount = FMath::Max(0, NewCount);
 }
 
 // =============================================================================================================================
