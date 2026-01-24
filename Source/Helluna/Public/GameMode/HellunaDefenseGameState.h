@@ -61,6 +61,12 @@ public:
     UFUNCTION(NetMulticast, Reliable)
     void MulticastPrintDay();
 
+    // ✅ UI에서 “남은 몬스터 수” 읽어오기 용도
+    UFUNCTION(BlueprintPure, Category = "Defense|Monster")
+    int32 GetAliveMonsterCount() const { return AliveMonsterCount; }
+
+    // ✅ 서버(GameMode)에서만 값을 갱신하도록 하는 Setter
+    void SetAliveMonsterCount(int32 NewCount);
     
     // =========================================================================================
     // [김기현 작업 영역 시작] MDF Interface 구현 및 시스템 함수
@@ -106,4 +112,18 @@ protected:
     EDefensePhase Phase = EDefensePhase::Day;
 
     virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+	//몬스터 생존 개수 관리, GameMode는 서버에만 있으니, UI/디버그를 위해 GameState에서 복제(Replicate)로 공유
+    UPROPERTY(Replicated, BlueprintReadOnly, Category = "Defense|Monster")
+    int32 AliveMonsterCount = 0;
+
+
+    // 디버그용
+    FTimerHandle TimerHandle_NightDebug;
+
+    // ✅ 출력 간격(원인 파악 끝나면 지우기 쉬움)
+    float NightDebugInterval = 5.f;
+
+    // ✅ 2.5초마다 호출될 함수(몹 수 출력)
+    void PrintNightDebug();
 };

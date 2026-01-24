@@ -7,6 +7,7 @@
 #include "HellunaEnemyCharacter.generated.h"
 
 class UEnemyCombatComponent;
+class UHellunaHealthComponent;
 /**
  * 
  */
@@ -19,10 +20,20 @@ public:
 	AHellunaEnemyCharacter();
 
 protected:
+	virtual void BeginPlay() override;
+
 	virtual void PossessedBy(AController* NewController) override;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
 	UEnemyCombatComponent* EnemyCombatComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Component")
+	UHellunaHealthComponent* HealthComponent;
+
+	UFUNCTION()
+	void OnMonsterHealthChanged(UActorComponent* MonsterHealthComponent, float OldHealth, float NewHealth, AActor* InstigatorActor);
+
+	void OnMonsterDeath(AActor* DeadActor, AActor* KillerActor);
 
 private:
 	void InitEnemyStartUpData();

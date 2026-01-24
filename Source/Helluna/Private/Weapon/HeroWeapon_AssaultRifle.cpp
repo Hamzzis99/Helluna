@@ -11,6 +11,7 @@
 #include "NiagaraFunctionLibrary.h"			
 #include "NiagaraSystem.h"
 
+#include "DebugHelper.h"	
 
 	void AHeroWeapon_AssaultRifle::Fire(AController* InstigatorController)
 	{
