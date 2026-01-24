@@ -103,13 +103,39 @@ AInv_EquipActor* UInv_EquipmentComponent::FindEquippedActor(const FGameplayTag& 
 	return FoundActor ? *FoundActor : nullptr; // 액터를 찾았으면? 찾아서 제거를 시킨다. (에러 날 수도 있음.)
 }
 
-// 이거는 하나에만 있다는 가정하에 있는 것. 만약 무기를 두 개 만들 시 왼손 오른손 두 개로 나워야함.
-void UInv_EquipmentComponent::RemoveEquippedActor(const FGameplayTag& EquipmentTypeTag)
+// ⭐ [WeaponBridge] WeaponSlotIndex를 고려하여 정확한 무기 제거
+void UInv_EquipmentComponent::RemoveEquippedActor(const FGameplayTag& EquipmentTypeTag, int32 WeaponSlotIndex)
 {
-	if (AInv_EquipActor* EquippedActor = FindEquippedActor(EquipmentTypeTag); IsValid(EquippedActor)) // 이걸 잘 활용해서 무기를 두 개 장착할 수 있게 해보자.
+	AInv_EquipActor* ActorToRemove = nullptr;
+	
+	if (WeaponSlotIndex >= 0)
 	{
-		EquippedActors.Remove(EquippedActor);
-		EquippedActor->Destroy();
+		// ⭐ 태그 + SlotIndex로 정확한 무기 찾기 (무기류)
+		for (AInv_EquipActor* Actor : EquippedActors)
+		{
+			if (IsValid(Actor) && 
+				Actor->GetEquipmentType().MatchesTagExact(EquipmentTypeTag) &&
+				Actor->GetWeaponSlotIndex() == WeaponSlotIndex)
+			{
+				ActorToRemove = Actor;
+				break;
+			}
+		}
+		UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] RemoveEquippedActor - Tag: %s, SlotIndex: %d, Found: %s"), 
+			*EquipmentTypeTag.ToString(), WeaponSlotIndex, 
+			ActorToRemove ? *ActorToRemove->GetName() : TEXT("nullptr"));
+	}
+	else
+	{
+		// ⭐ 기존 동작: 태그만으로 찾기 (비무기류 장비용)
+		ActorToRemove = FindEquippedActor(EquipmentTypeTag);
+	}
+	
+	if (IsValid(ActorToRemove))
+	{
+		EquippedActors.Remove(ActorToRemove);
+		ActorToRemove->Destroy();
+		UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] 액터 제거 완료: %s"), *ActorToRemove->GetName());
 	}
 }
 
@@ -239,8 +265,9 @@ void UInv_EquipmentComponent::OnItemUnequipped(UInv_InventoryItem* UnequippedIte
 		EquipmentFragment->OnUnequip(OwningPlayerController.Get());
 	}
 	
-	//장비 제거하는 부분 (등 무기 Destroy)
-	RemoveEquippedActor(EquipmentFragment->GetEquipmentType());
+	// ⭐ [WeaponBridge] 장비 제거하는 부분 (등 무기 Destroy)
+	// ⭐ WeaponSlotIndex를 전달하여 정확한 무기만 제거
+	RemoveEquippedActor(EquipmentFragment->GetEquipmentType(), WeaponSlotIndex);
 }
 
 // ============================================
