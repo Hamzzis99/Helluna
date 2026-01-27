@@ -65,15 +65,15 @@ C++ 클래스 상속 및 UI 스타일링
 
 <details open> <summary>🔗 Phase 4: 로직 연결 (진행 중)</summary>
 
-[ ] Step 10. IP 입력 → 서버 접속 로직
+[x] Step 10. IP 입력 → 서버 접속 로직
 
 Open IP:Port 콘솔 명령 실행 및 접속 상태 감지
 
-[ ] Step 11. 로그인 버튼 → 검증 로직
+[x] Step 11. 로그인 버튼 → 검증 로직
 
 Server_RequestLogin() 호출 → GameMode 데이터 검증
 
-[ ] Step 12. 로그인 성공 → 맵 이동
+[x] Step 12. 로그인 성공 → 맵 이동
 
 ServerTravel("GihyeonMap") 실행 및 데이터 유지 확인
 
@@ -81,13 +81,13 @@ ServerTravel("GihyeonMap") 실행 및 데이터 유지 확인
 
 <details> <summary>🎮 Phase 5: 게임 맵 연동</summary>
 
-[ ] Step 13. GihyeonMap 설정
+[x] Step 13. GihyeonMap 설정
 
 PlayerStart 배치 및 HellunaDefenseGameMode 할당
 
-[ ] Step 14. 캐릭터 스폰 확인
+[x] Step 14. 캐릭터 스폰 확인
 
-[ ] Step 15. Logout 처리
+[x] Step 15. Logout 처리
 
 LoggedInPlayerIds 제거 및 데이터 저장 (인벤토리 연동 대비)
 
