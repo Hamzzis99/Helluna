@@ -63,7 +63,7 @@ C++ 클래스 상속 및 UI 스타일링
 
 </details>
 
-<details open> <summary>🔗 Phase 4: 로직 연결 (진행 중)</summary>
+<details open> <summary>🔗 Phase 4: 로직 연결 (완료)</summary>
 
 [ ] Step 10. IP 입력 → 서버 접속 로직
 
@@ -79,7 +79,7 @@ ServerTravel("GihyeonMap") 실행 및 데이터 유지 확인
 
 </details>
 
-<details> <summary>🎮 Phase 5: 게임 맵 연동</summary>
+<details> <summary>🎮 Phase 5: 게임 맵 연동(완료)</summary>
 
 [ ] Step 13. GihyeonMap 설정
 
