@@ -33,6 +33,12 @@ void AHellunaDefenseGameMode::BeginPlay()
 	if (!HasAuthority())
 		return;
 
+	// ============================================
+	// 📌 디버그: 현재 GameMode의 PlayerStateClass 확인
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] BeginPlay - PlayerStateClass: %s"), 
+		PlayerStateClass ? *PlayerStateClass->GetName() : TEXT("nullptr"));
+
 	CacheBossSpawnPoints();
 
 	CacheMonsterSpawnPoints();
@@ -48,18 +54,22 @@ void AHellunaDefenseGameMode::Logout(AController* Exiting)
 	// ============================================
 	UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] ★★★ Logout 호출됨! Exiting: %s"), Exiting ? *GetNameSafe(Exiting) : TEXT("nullptr"));
 	
-	if (GEngine)
-	{
-		GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Yellow,
-			FString::Printf(TEXT("★ Logout 호출: %s"), Exiting ? *GetNameSafe(Exiting) : TEXT("nullptr")));
-	}
-
 	if (Exiting)
 	{
+		// PlayerState 타입 확인
+		APlayerState* RawPS = Exiting->GetPlayerState<APlayerState>();
+		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] RawPlayerState: %s (Class: %s)"), 
+			RawPS ? *GetNameSafe(RawPS) : TEXT("nullptr"),
+			RawPS ? *RawPS->GetClass()->GetName() : TEXT("N/A"));
+
 		if (AHellunaPlayerState* PS = Exiting->GetPlayerState<AHellunaPlayerState>())
 		{
 			FString PlayerId = PS->GetPlayerUniqueId();
-			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] PlayerState에서 ID 가져옴: %s"), *PlayerId);
+			bool bIsLoggedIn = PS->IsLoggedIn();
+			
+			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] HellunaPlayerState 찾음!"));
+			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   - PlayerId: '%s'"), *PlayerId);
+			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   - bIsLoggedIn: %s"), bIsLoggedIn ? TEXT("TRUE") : TEXT("FALSE"));
 			
 			if (!PlayerId.IsEmpty())
 			{
@@ -75,16 +85,55 @@ void AHellunaDefenseGameMode::Logout(AController* Exiting)
 			}
 			else
 			{
-				UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] ⚠️ PlayerId가 비어있음 (로그인 안 된 상태?)"));
+				UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] ⚠️ PlayerId가 비어있음!"));
 			}
 		}
 		else
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] ⚠️ HellunaPlayerState를 찾을 수 없음"));
+			UE_LOG(LogTemp, Error, TEXT("[DefenseGameMode] ❌ HellunaPlayerState로 Cast 실패! (다른 PlayerState 사용 중)"));
 		}
 	}
 
 	Super::Logout(Exiting);
+}
+
+void AHellunaDefenseGameMode::HandleSeamlessTravelPlayer(AController*& C)
+{
+	// ============================================
+	// 📌 SeamlessTravel 시 플레이어 정보 확인
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] ★ HandleSeamlessTravelPlayer 호출됨!"));
+	
+	if (C)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   Controller: %s"), *GetNameSafe(C));
+		
+		if (AHellunaPlayerState* PS = C->GetPlayerState<AHellunaPlayerState>())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   PlayerState: %s"), *GetNameSafe(PS));
+			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   PlayerId: '%s'"), *PS->GetPlayerUniqueId());
+			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   bIsLoggedIn: %s"), PS->IsLoggedIn() ? TEXT("TRUE") : TEXT("FALSE"));
+		}
+		else
+		{
+			APlayerState* RawPS = C->GetPlayerState<APlayerState>();
+			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   ⚠️ HellunaPlayerState 아님! RawPS: %s (Class: %s)"),
+				RawPS ? *GetNameSafe(RawPS) : TEXT("nullptr"),
+				RawPS ? *RawPS->GetClass()->GetName() : TEXT("N/A"));
+		}
+	}
+
+	Super::HandleSeamlessTravelPlayer(C);
+	
+	// Super 호출 후 다시 확인
+	if (C)
+	{
+		if (AHellunaPlayerState* PS = C->GetPlayerState<AHellunaPlayerState>())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] (Super 후) PlayerId: '%s', bIsLoggedIn: %s"), 
+				*PS->GetPlayerUniqueId(), PS->IsLoggedIn() ? TEXT("TRUE") : TEXT("FALSE"));
+		}
+	}
 }
 
 void AHellunaDefenseGameMode::CacheBossSpawnPoints()

@@ -28,6 +28,12 @@ public:
 	// ============================================
 	virtual void Logout(AController* Exiting) override;
 
+	// ============================================
+	// 📌 SeamlessTravel 플레이어 처리
+	// PlayerState 데이터 유지 확인용
+	// ============================================
+	virtual void HandleSeamlessTravelPlayer(AController*& C) override;
+
 	UFUNCTION(BlueprintCallable, Category = "Defense|Restart")
 	void RestartGame();
 
