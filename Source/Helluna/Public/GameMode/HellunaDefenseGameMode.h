@@ -22,6 +22,12 @@ public:
 
 	virtual void BeginPlay() override;
 
+	// ============================================
+	// 📌 플레이어 로그아웃 처리
+	// 접속 종료 시 GameInstance에서 로그인 정보 제거
+	// ============================================
+	virtual void Logout(AController* Exiting) override;
+
 	UFUNCTION(BlueprintCallable, Category = "Defense|Restart")
 	void RestartGame();
 

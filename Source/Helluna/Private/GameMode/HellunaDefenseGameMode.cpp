@@ -9,6 +9,8 @@
 #include "GameFramework/PlayerController.h"
 #include "GameMode/HellunaDefenseGameState.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
+#include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
+#include "Player/HellunaPlayerState.h"
 
 #include "debughelper.h"
 
@@ -16,6 +18,12 @@ AHellunaDefenseGameMode::AHellunaDefenseGameMode()
 {
 	PrimaryActorTick.bCanEverTick = false;
 	bUseSeamlessTravel = true; // 모두가 맵이동을 할 시 같이 이동하게 설정하는 것.
+
+	// ============================================
+	// 📌 로그인 시스템용 PlayerState 클래스 설정
+	// Seamless Travel 후에도 로그인 정보 유지를 위해 필수!
+	// ============================================
+	PlayerStateClass = AHellunaPlayerState::StaticClass();
 }
 
 void AHellunaDefenseGameMode::BeginPlay()
@@ -30,6 +38,53 @@ void AHellunaDefenseGameMode::BeginPlay()
 	CacheMonsterSpawnPoints();
 
 	EnterDay();
+}
+
+void AHellunaDefenseGameMode::Logout(AController* Exiting)
+{
+	// ============================================
+	// 📌 플레이어 로그아웃 처리
+	// PlayerState에서 ID 가져와서 GameInstance에서 제거
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] ★★★ Logout 호출됨! Exiting: %s"), Exiting ? *GetNameSafe(Exiting) : TEXT("nullptr"));
+	
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Yellow,
+			FString::Printf(TEXT("★ Logout 호출: %s"), Exiting ? *GetNameSafe(Exiting) : TEXT("nullptr")));
+	}
+
+	if (Exiting)
+	{
+		if (AHellunaPlayerState* PS = Exiting->GetPlayerState<AHellunaPlayerState>())
+		{
+			FString PlayerId = PS->GetPlayerUniqueId();
+			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] PlayerState에서 ID 가져옴: %s"), *PlayerId);
+			
+			if (!PlayerId.IsEmpty())
+			{
+				if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(UGameplayStatics::GetGameInstance(GetWorld())))
+				{
+					GI->RegisterLogout(PlayerId);
+					UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] ✅ 로그아웃 완료 - ID: %s"), *PlayerId);
+				}
+				else
+				{
+					UE_LOG(LogTemp, Error, TEXT("[DefenseGameMode] ❌ GameInstance를 찾을 수 없음!"));
+				}
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] ⚠️ PlayerId가 비어있음 (로그인 안 된 상태?)"));
+			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] ⚠️ HellunaPlayerState를 찾을 수 없음"));
+		}
+	}
+
+	Super::Logout(Exiting);
 }
 
 void AHellunaDefenseGameMode::CacheBossSpawnPoints()
