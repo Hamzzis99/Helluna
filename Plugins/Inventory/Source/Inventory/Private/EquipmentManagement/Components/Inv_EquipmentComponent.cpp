@@ -13,6 +13,7 @@
 #include "Items/Fragments/Inv_ItemFragment.h"
 #include "Abilities/GameplayAbility.h"
 
+
 //프록시 매시 부분
 void UInv_EquipmentComponent::SetOwningSkeletalMesh(USkeletalMeshComponent* OwningMesh)
 {
@@ -302,7 +303,8 @@ void UInv_EquipmentComponent::HandlePrimaryWeaponInput()
 	else if (ActiveWeaponSlot == EInv_ActiveWeaponSlot::Secondary)
 	{
 		// 보조무기 들고 있음 → 보조무기 집어넣고 주무기 꺼내기
-		UnequipWeapon();
+		// 김민우 수정 - GA_SpawnWeapon에서 교체 처리를 하도록 수정하였습니다! 중복 호출을 막기 위해서 여기서는 UnequipWeapon 호출을 주석처리 하였습니다.
+		//UnequipWeapon();
 		EquipPrimaryWeapon();
 	}
 }
@@ -335,7 +337,8 @@ void UInv_EquipmentComponent::HandleSecondaryWeaponInput()
 	else if (ActiveWeaponSlot == EInv_ActiveWeaponSlot::Primary)
 	{
 		// 주무기 들고 있음 → 주무기 집어넣고 보조무기 꺼내기
-		UnequipWeapon();
+		// 김민우 수정 - GA_SpawnWeapon에서 교체 처리를 하도록 수정하였습니다! 중복 호출을 막기 위해서 여기서는 UnequipWeapon 호출을 주석처리 하였습니다.
+		//UnequipWeapon();
 		EquipSecondaryWeapon();
 	}
 }
@@ -653,8 +656,20 @@ AInv_EquipActor* UInv_EquipmentComponent::FindSecondaryWeaponActor()
 	return nullptr;
 }
 
+//================== 김민우 수정 =====================
+//		UnequipWeapon(); 외부에서 호출하는 함수	추가
+//==================================================
 
+void UInv_EquipmentComponent::ActiveUnequipWeapon()
+{
+	// 이미 맨손이면 아무것도 안 함
+	if (ActiveWeaponSlot == EInv_ActiveWeaponSlot::None)
+	{
+		return;
+	}
 
-
+	// 핵심: 입력 토글이 아니라 "언이큅"만 강제
+	UnequipWeapon();
+}
 
 

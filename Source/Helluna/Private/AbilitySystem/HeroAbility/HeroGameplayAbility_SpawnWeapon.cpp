@@ -7,6 +7,8 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 
+#include "EquipmentManagement/Components/Inv_EquipmentComponent.h"
+
 #include "DebugHelper.h"
 
 UHeroGameplayAbility_SpawnWeapon::UHeroGameplayAbility_SpawnWeapon()
@@ -93,6 +95,17 @@ void UHeroGameplayAbility_SpawnWeapon::ActivateAbility(
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
+
+	
+
+	if (APlayerController* PC = Cast<APlayerController>(Hero->GetController()))
+	{
+		if (UInv_EquipmentComponent* EquipComp = PC->FindComponentByClass<UInv_EquipmentComponent>())
+		{
+			EquipComp->ActiveUnequipWeapon();
+		}
+	}
+
 
 	// 2) 서버에게: 스폰 + "다른 클라에게만" 애니 재생시키기
 	Hero->Server_RequestSpawnWeapon(WeaponClass, SocketToAttach, EquipMontage);

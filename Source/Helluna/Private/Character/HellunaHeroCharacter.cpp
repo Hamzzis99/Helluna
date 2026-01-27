@@ -356,6 +356,17 @@ void AHellunaHeroCharacter::Server_RequestSpawnWeapon_Implementation(
 	AHellunaHeroWeapon* OldWeapon = GetCurrentWeapon();
 	const FGameplayTag OldTag = (bHasASC && IsValid(OldWeapon)) ? OldWeapon->GetWeaponTag() : FGameplayTag();
 
+	if (IsValid(OldWeapon))
+	{
+		// (선택) 같은 무기 클래스면 유지하고 싶으면 아래처럼 조건을 걸어도 됨:
+		// if (OldWeapon->GetClass() != InWeaponClass)
+
+		OldWeapon->Destroy();
+		SetCurrentWeapon(nullptr);            // SetCurrentWeapon이 nullptr 허용해야 함
+		// CurrentWeaponTag는 아래 NewTag 세팅에서 갱신되거나,
+		// 스폰 실패 시 아래 실패 처리에서 비워짐.
+	}
+
 	// ------------------------------------------------------------------------
 	// 새 무기 스폰
 	// - 스폰 위치/회전은 소켓 트랜스폼을 사용(부착 직후 Snap 규칙이라 큰 의미는 없지만,
