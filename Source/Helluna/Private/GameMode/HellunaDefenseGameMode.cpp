@@ -112,13 +112,14 @@ void AHellunaDefenseGameMode::HandleSeamlessTravelPlayer(AController*& C)
 	
 	if (C)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   Controller: %s"), *GetNameSafe(C));
+		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   (전) Controller: %s"), *GetNameSafe(C));
 		
 		if (AHellunaPlayerState* OldPS = C->GetPlayerState<AHellunaPlayerState>())
 		{
 			SavedPlayerId = OldPS->GetPlayerUniqueId();
 			bSavedIsLoggedIn = OldPS->IsLoggedIn();
 			
+			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   (전) PlayerState: %s"), *GetNameSafe(OldPS));
 			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   (저장) PlayerId: '%s', bIsLoggedIn: %s"), 
 				*SavedPlayerId, bSavedIsLoggedIn ? TEXT("TRUE") : TEXT("FALSE"));
 		}
@@ -127,18 +128,34 @@ void AHellunaDefenseGameMode::HandleSeamlessTravelPlayer(AController*& C)
 	// 부모 클래스 호출 (여기서 Controller 교체 발생)
 	Super::HandleSeamlessTravelPlayer(C);
 	
+	// Super 호출 후 상태 확인
+	UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   (후) Controller: %s"), C ? *GetNameSafe(C) : TEXT("nullptr"));
+	
 	// 새 PlayerState에 로그인 정보 복원
 	if (C && !SavedPlayerId.IsEmpty())
 	{
 		if (AHellunaPlayerState* NewPS = C->GetPlayerState<AHellunaPlayerState>())
 		{
+			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   (후) PlayerState: %s"), *GetNameSafe(NewPS));
+			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   (후) 복원 전 PlayerId: '%s'"), *NewPS->GetPlayerUniqueId());
+			
 			NewPS->SetLoginInfo(SavedPlayerId);
-			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   (복원) PlayerId: '%s' → 새 PlayerState에 복원 완료!"), *SavedPlayerId);
+			
+			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   (후) 복원 후 PlayerId: '%s'"), *NewPS->GetPlayerUniqueId());
+			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   ✅ '%s' → %s에 복원 완료!"), *SavedPlayerId, *GetNameSafe(NewPS));
 		}
 		else
 		{
-			UE_LOG(LogTemp, Error, TEXT("[DefenseGameMode]   ❌ 새 HellunaPlayerState를 찾을 수 없음!"));
+			APlayerState* RawPS = C->GetPlayerState<APlayerState>();
+			UE_LOG(LogTemp, Error, TEXT("[DefenseGameMode]   ❌ HellunaPlayerState 아님! RawPS: %s (Class: %s)"),
+				RawPS ? *GetNameSafe(RawPS) : TEXT("nullptr"),
+				RawPS ? *RawPS->GetClass()->GetName() : TEXT("N/A"));
 		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   ⚠️ 복원 스킵 (C=%s, SavedPlayerId='%s')"), 
+			C ? TEXT("valid") : TEXT("nullptr"), *SavedPlayerId);
 	}
 }
 
