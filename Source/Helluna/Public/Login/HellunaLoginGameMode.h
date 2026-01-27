@@ -72,7 +72,7 @@ public:
 	void ProcessLogout(const FString& PlayerId);
 
 	/**
-	 * 동시 접속 여부 확인
+	 * 동시 접속 여부 확인 (GameInstance에서 확인)
 	 * @param PlayerId - 확인할 아이디
 	 * @return 이미 접속 중이면 true
 	 */
@@ -117,11 +117,13 @@ protected:
 	// 📌 데이터
 	// ============================================
 
-	/** 현재 접속 중인 플레이어 ID 목록 */
-	UPROPERTY(meta = (DisplayName = "접속 중인 플레이어 목록"))
-	TSet<FString> LoggedInPlayerIds;
-
-	/** 계정 데이터 (SaveGame) */
+	/** 
+	 * 계정 데이터 (SaveGame)
+	 * 아이디/비밀번호 저장
+	 */
 	UPROPERTY(meta = (DisplayName = "계정 저장 데이터"))
 	TObjectPtr<UHellunaAccountSaveGame> AccountSaveGame;
+
+	// ※ LoggedInPlayerIds는 MDF_GameInstance에서 관리
+	//    → Seamless Travel 후에도 유지됨!
 };

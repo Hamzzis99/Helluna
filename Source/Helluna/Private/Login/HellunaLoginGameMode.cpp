@@ -10,6 +10,8 @@
 #include "Login/HellunaLoginController.h"
 #include "Login/HellunaAccountSaveGame.h"
 #include "Player/HellunaPlayerState.h"
+#include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
+#include "Kismet/GameplayStatics.h"
 
 AHellunaLoginGameMode::AHellunaLoginGameMode()
 {
@@ -67,7 +69,7 @@ void AHellunaLoginGameMode::ProcessLogin(AHellunaLoginController* LoginControlle
 	UE_LOG(LogTemp, Log, TEXT("[LoginGameMode] ProcessLogin: 로그인 시도 - ID: %s"), *PlayerId);
 
 	// ============================================
-	// 📌 1단계: 동시 접속 체크
+	// 📌 1단계: 동시 접속 체크 (GameInstance 사용)
 	// ============================================
 	if (IsPlayerLoggedIn(PlayerId))
 	{
@@ -122,24 +124,33 @@ void AHellunaLoginGameMode::ProcessLogin(AHellunaLoginController* LoginControlle
 
 void AHellunaLoginGameMode::ProcessLogout(const FString& PlayerId)
 {
-	if (LoggedInPlayerIds.Contains(PlayerId))
+	// GameInstance에서 로그아웃 처리
+	if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(UGameplayStatics::GetGameInstance(GetWorld())))
 	{
-		LoggedInPlayerIds.Remove(PlayerId);
-		UE_LOG(LogTemp, Log, TEXT("[LoginGameMode] ProcessLogout: 로그아웃 - ID: %s (접속자 %d명)"), *PlayerId, LoggedInPlayerIds.Num());
+		GI->RegisterLogout(PlayerId);
 	}
 }
 
 bool AHellunaLoginGameMode::IsPlayerLoggedIn(const FString& PlayerId) const
 {
-	return LoggedInPlayerIds.Contains(PlayerId);
+	// GameInstance에서 확인
+	if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(UGameplayStatics::GetGameInstance(GetWorld())))
+	{
+		return GI->IsPlayerLoggedIn(PlayerId);
+	}
+	return false;
 }
 
 void AHellunaLoginGameMode::OnLoginSuccess(AHellunaLoginController* LoginController, const FString& PlayerId)
 {
 	// ============================================
-	// 📌 접속자 목록에 추가
+	// 📌 GameInstance에 로그인 등록
+	// Seamless Travel 후에도 유지됨!
 	// ============================================
-	LoggedInPlayerIds.Add(PlayerId);
+	if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(UGameplayStatics::GetGameInstance(GetWorld())))
+	{
+		GI->RegisterLogin(PlayerId);
+	}
 
 	// ============================================
 	// 📌 PlayerState에 로그인 정보 저장
@@ -155,7 +166,7 @@ void AHellunaLoginGameMode::OnLoginSuccess(AHellunaLoginController* LoginControl
 	// ============================================
 	LoginController->Client_LoginResult(true, TEXT(""));
 
-	UE_LOG(LogTemp, Log, TEXT("[LoginGameMode] OnLoginSuccess: 로그인 성공 - ID: %s (접속자 %d명)"), *PlayerId, LoggedInPlayerIds.Num());
+	UE_LOG(LogTemp, Log, TEXT("[LoginGameMode] OnLoginSuccess: 로그인 성공 - ID: %s"), *PlayerId);
 
 	// ============================================
 	// 📌 게임 맵으로 이동
