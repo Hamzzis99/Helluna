@@ -106,9 +106,12 @@ protected:
 	// 📌 설정 (Blueprint에서 변경 가능)
 	// ============================================
 
-	/** 로그인 성공 후 이동할 맵 이름 */
-	UPROPERTY(EditDefaultsOnly, Category = "Login|Map", meta = (DisplayName = "게임 맵 이름"))
-	FString GameMapName = TEXT("GihyeonMap");
+	/** 
+	 * 로그인 성공 후 이동할 게임 맵
+	 * Blueprint에서 드롭다운으로 선택 가능
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Login|Map", meta = (DisplayName = "게임 맵"))
+	TSoftObjectPtr<UWorld> GameMap;
 
 	// ============================================
 	// 📌 데이터
