@@ -10,9 +10,13 @@
 
 UHellunaAbilitySystemComponent* UHellunaFunctionLibrary::NativeGetHellunaASCFromActor(AActor* InActor)
 {
-    check(InActor);
+    if (!IsValid(InActor))
+    {
+        return nullptr;
+    }
 
-    return CastChecked<UHellunaAbilitySystemComponent>(UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(InActor));
+    UAbilitySystemComponent* ASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(InActor);
+    return Cast<UHellunaAbilitySystemComponent>(ASC); // ✅ CastChecked → Cast
 }
 
 void UHellunaFunctionLibrary::AddGameplayTagToActorIfNone(AActor* InActor, FGameplayTag TagToAdd)

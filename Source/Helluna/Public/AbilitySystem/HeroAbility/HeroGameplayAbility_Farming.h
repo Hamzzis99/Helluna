@@ -21,6 +21,9 @@ class HELLUNA_API UHeroGameplayAbility_Farming : public UHellunaHeroGameplayAbil
 public:
 	UHeroGameplayAbility_Farming();
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Farming|Snap", meta = (DisplayName = "파밍시 고정될 거리"))
+	float FarmingSnapDistance = 130.f;
+
 protected:
 	virtual void ActivateAbility(
 		const FGameplayAbilitySpecHandle Handle,
@@ -33,6 +36,11 @@ protected:
 
 	UFUNCTION()
 	void OnFarmingInterrupted();
+
+	// ✅ 파밍 대상과 플레이어 사이의 거리 고정
+	bool SnapHeroToFarmingDistance(const FGameplayAbilityActorInfo* ActorInfo) const;
+
+
 
 private:
 

@@ -85,6 +85,9 @@ void UHeroGameplayAbility_Farming::ActivateAbility(
 		return;
 	}
 
+	// ✅ [추가] 오버랩 방지: 타겟과 일정 거리로 스냅
+	SnapHeroToFarmingDistance(ActorInfo);
+
 	// ✅ 로컬 체감: 고개 바로 돌아가게 (클라에서만)
 	FaceToTarget_InstantLocalOnly(ActorInfo, Target->GetActorLocation());
 
@@ -97,6 +100,9 @@ void UHeroGameplayAbility_Farming::ActivateAbility(
 			Pickaxe->Farm(Hero->GetController(), Target);
 		}
 	}
+	
+	Hero->LockMoveInput();
+	Hero->LockLookInput();
 
 	FarmingTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, FarmingMontage, 1.f);
 
@@ -192,10 +198,63 @@ void UHeroGameplayAbility_Farming::FaceToTarget_InstantLocalOnly(
 
 void UHeroGameplayAbility_Farming::OnFarmingFinished()
 {
+	AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(GetAvatarActorFromActorInfo());
+	Hero->UnlockMoveInput();
+	Hero->UnlockLookInput();
 	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
 }
 
 void UHeroGameplayAbility_Farming::OnFarmingInterrupted()
 {
+	AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(GetAvatarActorFromActorInfo());
+	Hero->UnlockMoveInput();
+	Hero->UnlockLookInput();
 	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+}
+
+bool UHeroGameplayAbility_Farming::SnapHeroToFarmingDistance(
+	const FGameplayAbilityActorInfo* ActorInfo
+) const
+{
+	AActor* Target = GetFarmingTarget(ActorInfo);
+
+	AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(ActorInfo->AvatarActor.Get());
+	const FVector HeroLoc = Hero->GetActorLocation();
+	const FVector TargetLoc = Target->GetActorLocation();
+	const float DesiredDistance = FarmingSnapDistance;
+	FVector Dir = (HeroLoc - TargetLoc);
+	Dir.Z = 0.f;
+
+	// 완전 겹쳤으면 뒤로 빠지게 (현재 바라보는 반대 방향)
+	if (Dir.IsNearlyZero())
+	{
+		Dir = -Hero->GetActorForwardVector();
+		Dir.Z = 0.f;
+	}
+
+	Dir = Dir.GetSafeNormal();
+	if (Dir.IsNearlyZero())
+	{
+		return false;
+	}
+
+	// ✅ 목표 위치: 타겟에서 DesiredDistance만큼 떨어진 지점
+	FVector DesiredLoc = TargetLoc + Dir * DesiredDistance;
+
+	// Z는 현재 유지 (바닥 스냅은 나중에 필요하면 추가)
+	DesiredLoc.Z = HeroLoc.Z;
+
+	// ✅ 서버 권위 + 로컬 체감 둘 다에서만 실행
+	if (!(Hero->HasAuthority() || ActorInfo->IsLocallyControlled()))
+	{
+		return false;
+	}
+
+	FHitResult Hit;
+	return Hero->SetActorLocation(
+		DesiredLoc,
+		true,  // bSweep: 캡슐 충돌만 사용
+		&Hit,
+		ETeleportType::TeleportPhysics
+	);
 }
