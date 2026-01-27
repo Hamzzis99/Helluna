@@ -100,38 +100,44 @@ void AHellunaDefenseGameMode::Logout(AController* Exiting)
 void AHellunaDefenseGameMode::HandleSeamlessTravelPlayer(AController*& C)
 {
 	// ============================================
-	// 📌 SeamlessTravel 시 플레이어 정보 확인
+	// 📌 SeamlessTravel 시 플레이어 정보 보존
+	// LoginController → GameController로 교체될 때
+	// PlayerState의 로그인 정보를 유지해야 함!
 	// ============================================
 	UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] ★ HandleSeamlessTravelPlayer 호출됨!"));
+	
+	// 기존 로그인 정보 저장
+	FString SavedPlayerId;
+	bool bSavedIsLoggedIn = false;
 	
 	if (C)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   Controller: %s"), *GetNameSafe(C));
 		
-		if (AHellunaPlayerState* PS = C->GetPlayerState<AHellunaPlayerState>())
+		if (AHellunaPlayerState* OldPS = C->GetPlayerState<AHellunaPlayerState>())
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   PlayerState: %s"), *GetNameSafe(PS));
-			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   PlayerId: '%s'"), *PS->GetPlayerUniqueId());
-			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   bIsLoggedIn: %s"), PS->IsLoggedIn() ? TEXT("TRUE") : TEXT("FALSE"));
-		}
-		else
-		{
-			APlayerState* RawPS = C->GetPlayerState<APlayerState>();
-			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   ⚠️ HellunaPlayerState 아님! RawPS: %s (Class: %s)"),
-				RawPS ? *GetNameSafe(RawPS) : TEXT("nullptr"),
-				RawPS ? *RawPS->GetClass()->GetName() : TEXT("N/A"));
+			SavedPlayerId = OldPS->GetPlayerUniqueId();
+			bSavedIsLoggedIn = OldPS->IsLoggedIn();
+			
+			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   (저장) PlayerId: '%s', bIsLoggedIn: %s"), 
+				*SavedPlayerId, bSavedIsLoggedIn ? TEXT("TRUE") : TEXT("FALSE"));
 		}
 	}
 
+	// 부모 클래스 호출 (여기서 Controller 교체 발생)
 	Super::HandleSeamlessTravelPlayer(C);
 	
-	// Super 호출 후 다시 확인
-	if (C)
+	// 새 PlayerState에 로그인 정보 복원
+	if (C && !SavedPlayerId.IsEmpty())
 	{
-		if (AHellunaPlayerState* PS = C->GetPlayerState<AHellunaPlayerState>())
+		if (AHellunaPlayerState* NewPS = C->GetPlayerState<AHellunaPlayerState>())
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] (Super 후) PlayerId: '%s', bIsLoggedIn: %s"), 
-				*PS->GetPlayerUniqueId(), PS->IsLoggedIn() ? TEXT("TRUE") : TEXT("FALSE"));
+			NewPS->SetLoginInfo(SavedPlayerId);
+			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   (복원) PlayerId: '%s' → 새 PlayerState에 복원 완료!"), *SavedPlayerId);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("[DefenseGameMode]   ❌ 새 HellunaPlayerState를 찾을 수 없음!"));
 		}
 	}
 }
