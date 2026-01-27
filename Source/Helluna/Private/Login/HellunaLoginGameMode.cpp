@@ -177,15 +177,28 @@ void AHellunaLoginGameMode::TravelToGameMap()
 	// ============================================
 	// 📌 Seamless Travel로 게임 맵 이동
 	// PlayerState가 유지됨!
+	// 
+	// TSoftObjectPtr<UWorld>에서 맵 경로를 가져와서
+	// ServerTravel 실행
 	// ============================================
-	if (GameMapName.IsEmpty())
+	if (GameMap.IsNull())
 	{
-		UE_LOG(LogTemp, Error, TEXT("[LoginGameMode] TravelToGameMap: GameMapName이 설정되지 않았습니다!"));
+		UE_LOG(LogTemp, Error, TEXT("[LoginGameMode] TravelToGameMap: GameMap이 설정되지 않았습니다! Blueprint에서 맵을 선택해주세요."));
+		
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Red,
+				TEXT("❌ [LoginGameMode] GameMap이 설정되지 않았습니다! Blueprint에서 맵을 선택해주세요."));
+		}
 		return;
 	}
 
-	FString TravelURL = FString::Printf(TEXT("/Game/Maps/%s?listen"), *GameMapName);
+	// TSoftObjectPtr에서 맵 경로 추출
+	// 예: /Game/Gihyeon/GihyeonMap.GihyeonMap → /Game/Gihyeon/GihyeonMap
+	FString MapPath = GameMap.GetLongPackageName();
+	FString TravelURL = FString::Printf(TEXT("%s?listen"), *MapPath);
+	
+	UE_LOG(LogTemp, Log, TEXT("[LoginGameMode] TravelToGameMap: %s 로 이동 시작"), *TravelURL);
+	
 	GetWorld()->ServerTravel(TravelURL);
-
-	UE_LOG(LogTemp, Log, TEXT("[LoginGameMode] TravelToGameMap: %s로 이동"), *GameMapName);
 }
