@@ -6,7 +6,6 @@
 #include "GameFramework/Actor.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "DrawDebugHelpers.h"
-#include "HellunaGameplayTags.h"
 #include "Weapon/HellunaFarmingWeapon.h"
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 
@@ -101,14 +100,16 @@ void UHeroGameplayAbility_Farming::ActivateAbility(
 		}
 	}
 	
-	Hero->LockMoveInput();
-	Hero->LockLookInput();
+	if (ActorInfo->IsLocallyControlled())
+	{
+		Hero->LockMoveInput();
+		Hero->LockLookInput();
+	}
 
 	FarmingTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, FarmingMontage, 1.f);
 
 	if (!FarmingTask)
 	{
-		Debug::Print(TEXT("애니 몬타지 없음"), FColor::Red);
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
@@ -198,17 +199,13 @@ void UHeroGameplayAbility_Farming::FaceToTarget_InstantLocalOnly(
 
 void UHeroGameplayAbility_Farming::OnFarmingFinished()
 {
-	AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(GetAvatarActorFromActorInfo());
-	Hero->UnlockMoveInput();
-	Hero->UnlockLookInput();
+
 	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
 }
 
 void UHeroGameplayAbility_Farming::OnFarmingInterrupted()
 {
-	AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(GetAvatarActorFromActorInfo());
-	Hero->UnlockMoveInput();
-	Hero->UnlockLookInput();
+
 	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
 }
 
@@ -257,4 +254,22 @@ bool UHeroGameplayAbility_Farming::SnapHeroToFarmingDistance(
 		&Hit,
 		ETeleportType::TeleportPhysics
 	);
+}
+
+void UHeroGameplayAbility_Farming::EndAbility(
+	const FGameplayAbilitySpecHandle Handle,
+	const FGameplayAbilityActorInfo* ActorInfo,
+	const FGameplayAbilityActivationInfo ActivationInfo,
+	bool bReplicateEndAbility,
+	bool bWasCancelled)
+{
+	if (AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(GetAvatarActorFromActorInfo()))
+	{
+		if (CurrentActorInfo && CurrentActorInfo->IsLocallyControlled())
+		{
+			Hero->UnlockMoveInput();
+			Hero->UnlockLookInput();
+		}
+	}
+	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }

@@ -18,7 +18,7 @@ class AHellunaHeroWeapon;
 struct FInputActionValue;
 class UHelluna_FindResourceComponent;
 class UWeaponBridgeComponent;
-
+class AHeroWeapon_GunBase;
 
 /**
  * 
@@ -119,6 +119,11 @@ public:
 
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayEquipMontageExceptOwner(UAnimMontage* Montage);
+	
+	// 서버에 애니 재생 요청
+	UFUNCTION(Server, Reliable)
+	void Server_RequestPlayMontageExceptOwner(UAnimMontage* Montage);
+
 
 	// 이동,카메라 입력 잠금/해제에 관한 함수들 ====================
 	void LockMoveInput();
@@ -144,6 +149,7 @@ public:
 	UPROPERTY(ReplicatedUsing = OnRep_CurrentWeaponTag)
 	FGameplayTag CurrentWeaponTag;
 
+
 private:
 	// ✅ ASC를 캐릭터가 소유하도록 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "GAS", meta = (AllowPrivateAccess = "true"))
@@ -159,5 +165,7 @@ protected:
 
 	// ✅ 클라에서 “이전에 적용했던 태그” 저장용 (RepNotify에서 Old 값을 못 받는 경우 대비)
 	FGameplayTag LastAppliedWeaponTag;
+
+	
 
 };

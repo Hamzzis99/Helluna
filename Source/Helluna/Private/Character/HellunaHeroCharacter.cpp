@@ -23,6 +23,7 @@
 #include "InventoryManagement/Utils/Inv_InventoryStatics.h"
 #include "Character/HeroComponent/Helluna_FindResourceComponent.h"
 #include "Net/UnrealNetwork.h"
+#include "Weapon/HeroWeapon_GunBase.h"
 // ⭐ [WeaponBridge] 추가
 #include "Component/WeaponBridgeComponent.h"
 
@@ -611,4 +612,10 @@ void AHellunaHeroCharacter::UnlockLookInput()
 	{
 		Controller->SetIgnoreLookInput(false);
 	}
+}
+
+// 클라에서 실행되는 코드에서 다른 클라로 애니메이션 재생할 때 사용
+void AHellunaHeroCharacter::Server_RequestPlayMontageExceptOwner_Implementation(UAnimMontage* Montage)
+{
+	Multicast_PlayEquipMontageExceptOwner(Montage);
 }
