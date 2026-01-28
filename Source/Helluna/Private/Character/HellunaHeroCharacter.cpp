@@ -113,7 +113,17 @@ void AHellunaHeroCharacter::Input_Look(const FInputActionValue& InputActionValue
 
 void AHellunaHeroCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
-	checkf(InputConfigDataAsset, TEXT("Forgot to assign a valid data asset as input config"));
+	// ============================================
+	// ⭐ 로컬에서 제어하는 캐릭터만 입력 바인딩!
+	// ⭐ 서버에서 클라이언트 캐릭터에 잘못 바인딩되는 것 방지
+	// ============================================
+	if (!IsLocallyControlled())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[HeroCharacter] SetupPlayerInputComponent 스킵 - 로컬 캐릭터 아님 (서버에서 원격 캐릭터)"));
+		return;
+	}
+	
+	checkf(InputConfigDataAsset, TEXT("InputConfigDataAsset이 설정되지 않았습니다!"));
 
 	ULocalPlayer* LocalPlayer = GetController<APlayerController>()->GetLocalPlayer();
 
