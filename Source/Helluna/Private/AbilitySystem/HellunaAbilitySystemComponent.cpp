@@ -40,6 +40,20 @@ void UHellunaAbilitySystemComponent::OnAbilityInputPressed(const FGameplayTag& I
 		return;
 	}
 
+	// ============================================
+	// ⭐ [멀티플레이 버그 수정] 로컬 제어 캐릭터만 입력 처리
+	// ⭐ 서버에서 다른 클라이언트의 입력이 잘못 처리되는 것 방지
+	// ============================================
+	AActor* AvatarActor = GetAvatarActor();
+	if (APawn* Pawn = Cast<APawn>(AvatarActor))
+	{
+		if (!Pawn->IsLocallyControlled())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("⭐ [ASC] OnAbilityInputPressed 스킵 - 로컬 제어 캐릭터 아님: %s"), *Pawn->GetName());
+			return;
+		}
+	}
+
 	for (const FGameplayAbilitySpec& AbilitySpec : GetActivatableAbilities())
 	{
 
@@ -70,6 +84,20 @@ void UHellunaAbilitySystemComponent::OnAbilityInputReleased(const FGameplayTag& 
 	if (!InInputTag.IsValid())
 	{
 		return;
+	}
+
+	// ============================================
+	// ⭐ [멀티플레이 버그 수정] 로컬 제어 캐릭터만 입력 처리
+	// ⭐ 서버에서 다른 클라이언트의 입력이 잘못 처리되는 것 방지
+	// ============================================
+	AActor* AvatarActor = GetAvatarActor();
+	if (APawn* Pawn = Cast<APawn>(AvatarActor))
+	{
+		if (!Pawn->IsLocallyControlled())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("⭐ [ASC] OnAbilityInputReleased 스킵 - 로컬 제어 캐릭터 아님: %s"), *Pawn->GetName());
+			return;
+		}
 	}
 
 	for (FGameplayAbilitySpec& AbilitySpec : GetActivatableAbilities())
