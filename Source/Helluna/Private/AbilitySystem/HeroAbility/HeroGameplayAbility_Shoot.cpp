@@ -4,7 +4,7 @@
 #include "AbilitySystem/HeroAbility/HeroGameplayAbility_Shoot.h"
 #include "AbilitySystemComponent.h"
 #include "Character/HellunaHeroCharacter.h"
-#include "Weapon/HellunaHeroWeapon.h"
+#include "Weapon/HeroWeapon_GunBase.h"
 
 #include "DebugHelper.h"
 
@@ -28,10 +28,17 @@ void UHeroGameplayAbility_Shoot::ActivateAbility(const FGameplayAbilitySpecHandl
 		return;
 	}
 
-	AHellunaHeroWeapon* Weapon = Hero->GetCurrentWeapon();
+	AHeroWeapon_GunBase* Weapon = Cast<AHeroWeapon_GunBase>(Hero->GetCurrentWeapon());
 	if (!Weapon)
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+
+	if (!Weapon->CanFire())
+	{
+		// (선택) 0일 때는 자동으로 장전 유도 UI만 보이게 하고 싶다면 여기서 끝.
+		 Debug::Print(TEXT("No Mag"), FColor::Red);
 		return;
 	}
 
@@ -77,7 +84,7 @@ void UHeroGameplayAbility_Shoot::Shoot()
 	AHellunaHeroCharacter* Hero = GetHeroCharacterFromActorInfo();
 	if (!Hero) return;
 
-	AHellunaHeroWeapon* Weapon = Hero->GetCurrentWeapon(); if (!Weapon) { Debug::Print(TEXT("Shoot Failed: No Weapon"), FColor::Red); return; }
+	AHeroWeapon_GunBase* Weapon = Cast<AHeroWeapon_GunBase>(Hero->GetCurrentWeapon()); if (!Weapon) { Debug::Print(TEXT("Shoot Failed: No Weapon"), FColor::Red); return; }
 
 	ACharacter* Character = Cast<ACharacter>(GetAvatarActorFromActorInfo());
 
@@ -122,6 +129,13 @@ void UHeroGameplayAbility_Shoot::Shoot()
 		if (AController* Controller = Hero->GetController())
 		{
 			Weapon->Fire(Controller);  // 여기서 ApplyPointDamage + MulticastFireFX
+
+			Debug::Print(FString::Printf(
+				TEXT("weapon name : %s, mag : %d/%d"),
+				*GetNameSafe(Weapon),
+				Weapon->CurrentMag,
+				Weapon->MaxMag
+			));
 		}
 	}
 

@@ -17,6 +17,7 @@ namespace HellunaGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(InputTag_SpawnWeapon2, "InputTag.SpawnWeapon2");
 	UE_DEFINE_GAMEPLAY_TAG(InputTag_Repair, "InputTag.Repair");
 	UE_DEFINE_GAMEPLAY_TAG(InputTag_Farming, "InputTag.Farming");
+	UE_DEFINE_GAMEPLAY_TAG(InputTag_Reload, "InputTag.Reload");
 
 	/** Player Ability tags **/
 
@@ -29,6 +30,7 @@ namespace HellunaGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Player_Ability_InRepair, "Player.Ability.InRepair");
 	UE_DEFINE_GAMEPLAY_TAG(Player_Ability_Repair, "Player.Ability.Repair");
 	UE_DEFINE_GAMEPLAY_TAG(Player_Ability_Farming, "Player.Ability.Farming");
+	UE_DEFINE_GAMEPLAY_TAG(Player_Ability_Reload, "Player.Ability.Reload")
 
 	/** Player Status tags **/
 

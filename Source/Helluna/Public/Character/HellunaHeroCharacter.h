@@ -6,6 +6,7 @@
 #include "Character/HellunaBaseCharacter.h"
 #include "GameplayTagContainer.h"
 #include "AbilitySystem/HellunaGameplayAbility.h"
+#include "AbilitySystemInterface.h"
 #include "HellunaHeroCharacter.generated.h"
 
 
@@ -17,7 +18,7 @@ class AHellunaHeroWeapon;
 struct FInputActionValue;
 class UHelluna_FindResourceComponent;
 class UWeaponBridgeComponent;
-
+class AHeroWeapon_GunBase;
 
 /**
  * 
@@ -69,8 +70,6 @@ private:
 	TObjectPtr<AHellunaHeroWeapon> CurrentWeapon;
 
 
-	
-
 
 #pragma endregion
 
@@ -120,6 +119,53 @@ public:
 
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayEquipMontageExceptOwner(UAnimMontage* Montage);
+	
+	// 서버에 애니 재생 요청
+	UFUNCTION(Server, Reliable)
+	void Server_RequestPlayMontageExceptOwner(UAnimMontage* Montage);
 
+
+	// 이동,카메라 입력 잠금/해제에 관한 함수들 ====================
+	void LockMoveInput();
+	void UnlockMoveInput();
+	void LockLookInput();
+	void UnlockLookInput();
+
+private:
+	UPROPERTY(VisibleAnywhere, Category = "Input")
+	bool bMoveInputLocked = false;
+
+	UPROPERTY(VisibleAnywhere, Category = "Input")
+	bool bLookInputLocked = false;
+
+	FRotator CachedLockedControlRotation = FRotator::ZeroRotator;
+
+	// ============================================
+	// ✅ GAS: Ability System Interface 구현 -> 웨폰태그 적용
+
+public:
+
+	// ✅ 현재 무기 태그(서버가 결정 → 클라로 복제)
+	UPROPERTY(ReplicatedUsing = OnRep_CurrentWeaponTag)
+	FGameplayTag CurrentWeaponTag;
+
+
+private:
+	// ✅ ASC를 캐릭터가 소유하도록 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "GAS", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UHellunaAbilitySystemComponent> AbilitySystemComponent; // ✅ 추가
+
+protected:
+	// ✅ OnRep: 클라에서 태그를 ASC에 적용
+	UFUNCTION()
+	void OnRep_CurrentWeaponTag();
+
+	// ✅ 서버/클라 공통으로 태그 적용 유틸
+	void ApplyTagToASC(const FGameplayTag& OldTag, const FGameplayTag& NewTag);
+
+	// ✅ 클라에서 “이전에 적용했던 태그” 저장용 (RepNotify에서 Old 값을 못 받는 경우 대비)
+	FGameplayTag LastAppliedWeaponTag;
+
+	
 
 };

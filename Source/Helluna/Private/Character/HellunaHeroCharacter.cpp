@@ -2,6 +2,7 @@
 
 
 #include "Character/HellunaHeroCharacter.h"
+
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Camera/CameraComponent.h"
@@ -22,6 +23,7 @@
 #include "InventoryManagement/Utils/Inv_InventoryStatics.h"
 #include "Character/HeroComponent/Helluna_FindResourceComponent.h"
 #include "Net/UnrealNetwork.h"
+#include "Weapon/HeroWeapon_GunBase.h"
 // ⭐ [WeaponBridge] 추가
 #include "Component/WeaponBridgeComponent.h"
 
@@ -54,6 +56,7 @@ AHellunaHeroCharacter::AHellunaHeroCharacter()
 
 	FindResourceComponent = CreateDefaultSubobject<UHelluna_FindResourceComponent>(TEXT("파밍 자원 찾기 컴포넌트"));
 
+
 	// ============================================
 	// ⭐ [WeaponBridge] Inventory 연동 컴포넌트 생성
 	// ============================================
@@ -68,6 +71,11 @@ void AHellunaHeroCharacter::BeginPlay()
 
 void AHellunaHeroCharacter::Input_Move(const FInputActionValue& InputActionValue)
 {
+	if (bMoveInputLocked)
+	{
+		return;
+	}
+
 	const FVector2D MovementVector = InputActionValue.Get<FVector2D>();
 
 	const FRotator MovementRotation(0.f, Controller->GetControlRotation().Yaw, 0.f);
@@ -89,6 +97,13 @@ void AHellunaHeroCharacter::Input_Move(const FInputActionValue& InputActionValue
 
 void AHellunaHeroCharacter::Input_Look(const FInputActionValue& InputActionValue)
 {
+	// ✅ [추가] 락 중이면 룩 입력 무시
+	if (bLookInputLocked)
+	{
+		return;
+	}
+
+
 	const FVector2D LookAxisVector = InputActionValue.Get<FVector2D>();
 
 	float SensitivityScale = 1.f;
@@ -319,19 +334,76 @@ void AHellunaHeroCharacter::Server_RepairSpaceShip_Implementation(FGameplayTag M
 	UE_LOG(LogTemp, Warning, TEXT("=== [HeroCharacter::Server_RepairSpaceShip] 완료! ==="));
 }
 
-void AHellunaHeroCharacter::Server_RequestSpawnWeapon_Implementation(TSubclassOf<AHellunaHeroWeapon> InWeaponClass,	FName InAttachSocket, UAnimMontage* EquipMontage) // ga에서 신호받아 무기 생성
+// ============================================================================
+// 서버 RPC: 손에 드는 무기(손 무기)를 스폰해서 지정 소켓에 부착한다.
+// - 서버에서만 스폰/부착을 수행하고, 무기 태그(WeaponTag)는 ASC(AbilitySystemComponent)에 반영한다.
+// - 기존 무기를 파괴하지 않는 구조(등/허리 슬롯 등 다른 시스템에서 관리 가능).
+// - EquipMontage는 서버에서 멀티캐스트로 "소유자 제외" 재생을 요청한다.
+// ============================================================================
+
+void AHellunaHeroCharacter::Server_RequestSpawnWeapon_Implementation(
+	TSubclassOf<AHellunaHeroWeapon> InWeaponClass,
+	FName InAttachSocket,
+	UAnimMontage* EquipMontage)
 {
-	// 1) 다른 클라(B 등)에게만 애니 보여주기
+	// 서버에서만 실행 (권한 없는 클라가 직접 실행 못 함)
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	// 다른 클라이언트들에게만 장착 애니 재생(소유자 제외)
+	// - 소유자는 로컬에서 이미 처리하거나, 별도 흐름에서 재생할 수 있음
 	Multicast_PlayEquipMontageExceptOwner(EquipMontage);
 
-	// 2) 서버 권한으로 무기 스폰/부착
-	if (!InWeaponClass) return;
+	// 스폰할 무기 클래스가 없으면 종료
+	if (!InWeaponClass)
+	{
+		return;
+	}
 
+	// 캐릭터 메쉬가 없으면 소켓 부착이 불가하므로 종료
 	USkeletalMeshComponent* CharacterMesh = GetMesh();
-	if (!CharacterMesh) return;
+	if (!CharacterMesh)
+	{
+		return;
+	}
 
-	if (!CharacterMesh->DoesSocketExist(InAttachSocket)) return;
+	// 소켓 유효성 검사(없거나 이름이 None이면 부착 불가)
+	if (InAttachSocket.IsNone() || !CharacterMesh->DoesSocketExist(InAttachSocket))
+	{
+		return;
+	}
 
+	// ------------------------------------------------------------------------
+	// ✅ ASC(AbilitySystemComponent) 연동 여부 확인
+	// - 테스트/안전성 목적: ASC가 없더라도 "무기 스폰/부착 자체"는 진행 가능하게 함.
+	// - 단, ASC가 없으면 무기태그(LooseGameplayTag) 반영은 스킵.
+	// ------------------------------------------------------------------------
+	UHellunaAbilitySystemComponent* ASC = GetHellunaAbilitySystemComponent();
+	const bool bHasASC = (ASC != nullptr);
+
+	// 기존 손 무기(현재 무기)의 태그를 가져온다.
+	// - 태그 교체(Old 제거 + New 추가) 목적
+	AHellunaHeroWeapon* OldWeapon = GetCurrentWeapon();
+	const FGameplayTag OldTag = (bHasASC && IsValid(OldWeapon)) ? OldWeapon->GetWeaponTag() : FGameplayTag();
+
+	if (IsValid(OldWeapon))
+	{
+		// (선택) 같은 무기 클래스면 유지하고 싶으면 아래처럼 조건을 걸어도 됨:
+		// if (OldWeapon->GetClass() != InWeaponClass)
+
+		OldWeapon->Destroy();
+		SetCurrentWeapon(nullptr);            // SetCurrentWeapon이 nullptr 허용해야 함
+		// CurrentWeaponTag는 아래 NewTag 세팅에서 갱신되거나,
+		// 스폰 실패 시 아래 실패 처리에서 비워짐.
+	}
+
+	// ------------------------------------------------------------------------
+	// 새 무기 스폰
+	// - 스폰 위치/회전은 소켓 트랜스폼을 사용(부착 직후 Snap 규칙이라 큰 의미는 없지만,
+	//   초기 스폰 안정성/디버그에 유리)
+	// ------------------------------------------------------------------------
 	const FTransform SocketTM = CharacterMesh->GetSocketTransform(InAttachSocket);
 
 	FActorSpawnParameters Params;
@@ -340,16 +412,95 @@ void AHellunaHeroCharacter::Server_RequestSpawnWeapon_Implementation(TSubclassOf
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
 	AHellunaHeroWeapon* NewWeapon = GetWorld()->SpawnActor<AHellunaHeroWeapon>(InWeaponClass, SocketTM, Params);
-	if (!NewWeapon) return;
+	if (!IsValid(NewWeapon))
+	{
+		// 스폰 실패 시:
+		// - ASC가 있으면 "기존 태그만 제거"하고 상태를 초기화
+		// - ASC가 없으면 태그 처리 자체를 하지 않고 종료
+		if (bHasASC)
+		{
+			ApplyTagToASC(OldTag, FGameplayTag());
+			CurrentWeaponTag = FGameplayTag();
+			LastAppliedWeaponTag = FGameplayTag();
+		}
+		return;
+	}
 
-	NewWeapon->AttachToComponent(CharacterMesh,
+	// 새 무기를 메쉬 소켓에 부착(Snap)
+	NewWeapon->AttachToComponent(
+		CharacterMesh,
 		FAttachmentTransformRules::SnapToTargetNotIncludingScale,
-		InAttachSocket);
+		InAttachSocket
+	);
 
+	// 현재 손에 든 무기 포인터 갱신
 	SetCurrentWeapon(NewWeapon);
 
+	// ------------------------------------------------------------------------
+	// ✅ 무기 태그 처리(ASC가 있을 때만)
+	// - OldTag 제거, NewTag 추가
+	// - CurrentWeaponTag는 복제 변수로 가정(클라에서 OnRep로 태그 반영)
+	// ------------------------------------------------------------------------
+	if (bHasASC)
+	{
+		const FGameplayTag NewTag = NewWeapon->GetWeaponTag();
+		ApplyTagToASC(OldTag, NewTag);
+
+		// 서버에서 현재 태그 갱신 → 클라에서 OnRep_CurrentWeaponTag()로 반영
+		CurrentWeaponTag = NewTag;
+	}
+
+	// 네트워크 업데이트 힌트(즉시 반영에 도움)
 	NewWeapon->ForceNetUpdate();
 	ForceNetUpdate();
+}
+
+
+
+// ============================================================================
+// ASC에 무기 태그를 반영하는 공용 함수
+// - LooseGameplayTag 방식(상태/장비 태그 토글용)
+// - OldTag 제거 후 NewTag 추가
+// - 즉시 반영을 위해 ForceReplication/ForceNetUpdate 호출
+// ============================================================================
+
+void AHellunaHeroCharacter::ApplyTagToASC(const FGameplayTag& OldTag, const FGameplayTag& NewTag)
+{
+	UHellunaAbilitySystemComponent* ASC = GetHellunaAbilitySystemComponent();
+	if (!ASC)
+		return;
+
+	// 이전 무기 태그 제거
+	if (OldTag.IsValid())
+	{
+		ASC->RemoveLooseGameplayTag(OldTag);
+	}
+
+	// 새 무기 태그 추가
+	if (NewTag.IsValid())
+	{
+		ASC->AddLooseGameplayTag(NewTag);
+	}
+
+	// 태그 변경을 네트워크에 빠르게 반영(가능하면 도움)
+	ASC->ForceReplication();
+	ForceNetUpdate();
+}
+
+
+// ============================================================================
+// RepNotify: CurrentWeaponTag가 클라이언트로 복제되었을 때 호출됨
+// - 클라 측에서도 ASC 태그 상태를 서버와 동일하게 맞춰준다.
+// - LastAppliedWeaponTag를 사용해 "이전 태그 제거 → 새 태그 추가"를 정확히 수행.
+// ============================================================================
+
+void AHellunaHeroCharacter::OnRep_CurrentWeaponTag()
+{
+	// 클라에서: 이전 태그 제거 + 새 태그 추가
+	ApplyTagToASC(LastAppliedWeaponTag, CurrentWeaponTag);
+
+	// 다음 OnRep에서 이전값을 알 수 있도록 캐시 갱신
+	LastAppliedWeaponTag = CurrentWeaponTag;
 }
 
 void AHellunaHeroCharacter::Multicast_PlayEquipMontageExceptOwner_Implementation(UAnimMontage* Montage)
@@ -390,6 +541,15 @@ void AHellunaHeroCharacter::Server_RequestDestroyWeapon_Implementation()
 	{
 		UE_LOG(LogTemp, Warning, TEXT("⭐ [HeroCharacter] CurrentWeapon이 이미 null"));
 	}
+
+	//== 김민우 수정(디스트로이 웨폰을 할 때 무기 태그 제거) ==
+	if (CurrentWeaponTag.IsValid())
+	{
+		ApplyTagToASC(CurrentWeaponTag, FGameplayTag());  // Old 제거, New 없음
+		LastAppliedWeaponTag = CurrentWeaponTag;          // (서버 쪽 캐시가 필요하면 유지)
+		CurrentWeaponTag = FGameplayTag();                // ✅ 클라로 "태그 비워짐" 복제
+	}
+
 }
 
 void AHellunaHeroCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const //서버에서 클라로 복제
@@ -397,4 +557,96 @@ void AHellunaHeroCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
 	DOREPLIFETIME(AHellunaHeroCharacter, CurrentWeapon);
+	DOREPLIFETIME(AHellunaHeroCharacter, CurrentWeaponTag);
+}
+
+
+
+void AHellunaHeroCharacter::LockMoveInput()
+{
+	if (bMoveInputLocked)
+	{
+		return;
+	}
+
+	bMoveInputLocked = true;
+
+	// 1) 앞으로 들어오는 이동 입력 무시
+	if (AController* C = GetController())
+	{
+		C->SetIgnoreMoveInput(true);
+	}
+
+	// 2) 이미 쌓인 이동 입력 제거
+	// - 엔진 버전에 따라 ClearPendingMovementInputVector()가 없을 수 있어서
+	//   ConsumeMovementInputVector()를 함께 사용 (호출 자체는 안전)
+	ConsumeMovementInputVector();
+
+	// 3) 현재 속도/가속 즉시 정지 (미끄러짐 방지)
+	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
+	{
+		MoveComp->StopMovementImmediately();
+	}
+}
+
+// ✅ [추가] 이동 입력 잠금 해제
+void AHellunaHeroCharacter::UnlockMoveInput()
+{
+	if (!bMoveInputLocked)
+	{
+		return;
+	}
+
+	bMoveInputLocked = false;
+
+	if (AController* C = GetController())
+	{
+		C->SetIgnoreMoveInput(false);
+	}
+}
+
+void AHellunaHeroCharacter::LockLookInput()
+{
+	if (bLookInputLocked)
+	{
+		return;
+	}
+
+	bLookInputLocked = true;
+
+	if (!Controller)
+	{
+		return;
+	}
+
+	// 1) 현재 회전 캐싱
+	CachedLockedControlRotation = Controller->GetControlRotation();
+
+	// 2) 앞으로 들어오는 Look 입력 무시
+	Controller->SetIgnoreLookInput(true);
+
+	// 3) 락 걸리는 프레임에 이미 살짝 돌아간 것처럼 보이는 걸 방지 (즉시 복구)
+	Controller->SetControlRotation(CachedLockedControlRotation);
+}
+
+// ✅ [추가] Look 입력 잠금 해제
+void AHellunaHeroCharacter::UnlockLookInput()
+{
+	if (!bLookInputLocked)
+	{
+		return;
+	}
+
+	bLookInputLocked = false;
+
+	if (Controller)
+	{
+		Controller->SetIgnoreLookInput(false);
+	}
+}
+
+// 클라에서 실행되는 코드에서 다른 클라로 애니메이션 재생할 때 사용
+void AHellunaHeroCharacter::Server_RequestPlayMontageExceptOwner_Implementation(UAnimMontage* Montage)
+{
+	Multicast_PlayEquipMontageExceptOwner(Montage);
 }

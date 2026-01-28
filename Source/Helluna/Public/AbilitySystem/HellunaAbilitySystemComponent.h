@@ -16,6 +16,7 @@ class HELLUNA_API UHellunaAbilitySystemComponent : public UAbilitySystemComponen
 	GENERATED_BODY()
 
 public:
+
 	UFUNCTION(BlueprintCallable, Category = "Helluna|Ability")
 	bool TryActivateAbilityByTag(FGameplayTag AbilityTagToActivate);
 	bool CancelAbilityByTag(const FGameplayTag AbilityTagToCancel);
