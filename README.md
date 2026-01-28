@@ -115,149 +115,176 @@ LoggedInPlayerIds 제거 및 데이터 저장 (인벤토리 연동 대비)
 </details>
 
 </details>
+<details> <summary>📦 (인벤토리 저장) 전체 구현 로드맵</summary>
 
-📦 인벤토리 저장 시스템 - 전체 구현 로드맵
-로그인 성공 후 인벤토리 로드부터, 로그아웃/맵 이동 시 저장까지의 전 과정을 포함합니다.
+Note: 이 섹션은 로그인 성공 후 인벤토리 로드부터, 로그아웃/맵 이동 시 저장까지의 전 과정을 포함합니다.
 
-📂 Phase 0: 사전 분석 (완료)
-[x] Step 0-1. 로그인 시스템 전체 구조 분석 (PlayerUniqueId를 저장 키로 사용)
+<details> <summary>📂 Phase 0: 사전 분석 (완료)</summary>
 
-[x] Step 0-2. InventoryComponent 구조 분석 (InventoryList FastArray, 서버-클라이언트 동기화)
+[x] Step 0-1. 로그인 시스템 전체 구조 분석
 
-[x] Step 0-3. FastArray 리플리케이션 메커니즘 분석 (FInv_InventoryEntry)
+PlayerUniqueId가 인벤토리 저장 키로 사용됨
 
-[x] Step 0-4. Grid 위치 동기화 문제점 파악 (서버는 실제 Grid 위치를 모름 → 인벤토리 닫을 때 동기화 필요)
+[x] Step 0-2. InventoryComponent 구조 분석
 
-[x] Step 0-5. 기존 아이템 목록 확인 (Axe, Potion(Red/Blue), FireFern, LuminDaisy)
+InventoryList (FastArray), 서버-클라이언트 동기화 구조 파악
 
-[x] Step 0-6. GameplayTag 구조 확인 (GameItems.Equipment... 등)
+[x] Step 0-3. FastArray 리플리케이션 메커니즘 분석
 
-📂 Phase 1: DataTable 매핑 시스템
-목표: ItemType(GameplayTag) ↔ Actor Blueprint Class 매핑 구현
+FInv_InventoryEntry (Item, GridIndex, GridCategory)
+
+[x] Step 0-4. Grid 위치 동기화 문제점 파악
+
+서버는 실제 Grid 위치를 모름 → 인벤토리 닫을 때 동기화 필요 확인
+
+[x] Step 0-5. 기존 아이템 목록 확인
+
+Axe, Potion(Blue/Red), FireFern, LuminDaisy
+
+[x] Step 0-6. GameplayTag 구조 확인
+
+GameItems.Equipment.Weapons.Axe 등 계층 구조 확인
+
+</details>
+
+<details> <summary>📂 Phase 1: DataTable 매핑 시스템</summary>
 
 [ ] Step 1-1. 구조체 정의 (FItemTypeToActorMapping)
 
-파일: HellunaItemTypeMapping.h
+HellunaItemTypeMapping.h 작성
 
-[ ] Step 1-2. 조회 함수 구현 (GetActorClassFromItemType)
+[ ] Step 1-2. 조회 함수 구현
 
-파일: HellunaItemTypeMapping.cpp
+GetActorClassFromItemType() 구현
 
 [ ] Step 1-3. DataTable 에셋 생성
 
-위치: Content/Data/Inventory/DT_ItemTypeMapping
+Content/Data/Inventory/DT_ItemTypeMapping 생성
 
 [ ] Step 1-4. 기존 5개 아이템 행 추가
 
-Axe, PotionBlue, PotionRed, FireFern, LuminDaisy
+태그와 액터 클래스(BP) 1:1 매핑
 
-[ ] Step 1-5. 테스트 (태그 → 클래스 매핑 정상 동작 확인)
+[ ] Step 1-5. 매핑 테스트
 
-📂 Phase 2: SaveGame 클래스
-목표: 인벤토리 데이터 저장용 구조체 및 SaveGame 클래스 정의
+태그 입력 시 올바른 액터 클래스 반환 확인
+
+</details>
+
+<details> <summary>⚙️ Phase 2: SaveGame 클래스 생성</summary>
 
 [ ] Step 2-1. 아이템 저장 구조체 정의 (FHellunaItemSaveData)
 
-속성: ItemType, StackCount, GridPosition, GridCategory, bEquipped, WeaponSlotIndex
+ItemType, StackCount, GridPosition, Equipped 여부 등 포함
 
 [ ] Step 2-2. 플레이어별 데이터 구조체 정의 (FHellunaPlayerInventoryData)
 
-속성: Items (Array), ActiveWeaponSlot
+Items 배열, ActiveWeaponSlot 저장
 
 [ ] Step 2-3. SaveGame 클래스 구현 (UHellunaInventorySaveGame)
 
-파일: HellunaInventorySaveGame.h/cpp
+SlotName: "Inventory_{PlayerId}"
 
 [ ] Step 2-4. Save/Load 헬퍼 함수 구현
 
-SavePlayerInventory, LoadPlayerInventory, DoesSaveExist
+SavePlayerInventory(), LoadPlayerInventory() 작성
 
-[ ] Step 2-5. 테스트 (빈 데이터 저장 및 로드 확인)
+[ ] Step 2-5. 데이터 저장 테스트
 
-📂 Phase 3: Grid 위치 동기화 RPC
-목표: 클라이언트 UI상의 실제 Grid 위치를 서버로 전송하여 저장 준비
+빈 데이터 저장 및 파일 생성 확인
+
+</details>
+
+<details> <summary>🔗 Phase 3: Grid 위치 동기화 RPC</summary>
 
 [ ] Step 3-1. 동기화용 구조체 정의 (FItemGridSyncData)
 
-파일: Inv_GridTypes.h
+EntryIndex, GridPosition 매칭용
 
-[ ] Step 3-2. Server RPC 선언 (Server_SyncGridPositionsForSave)
+[ ] Step 3-2. Server RPC 선언
 
-파일: Inv_InventoryComponent.h
+Server_SyncGridPositionsForSave() 작성
 
-[ ] Step 3-3. CollectAllGridPositions() 구현 (SpatialInventory 순회 및 위치 추출)
+[ ] Step 3-3. CollectAllGridPositions() 구현
 
-[ ] Step 3-4. CloseInventoryMenu() 수정 (인벤토리 닫을 때 RPC 호출)
+SpatialInventory 순회하며 실제 위치 추출
 
-[ ] Step 3-5. 테스트 (인벤토리 닫을 때 서버 로그로 위치 수신 확인)
+[ ] Step 3-4. CloseInventoryMenu() 연동
 
-📂 Phase 4: 저장 함수 구현
-목표: 주요 시점(로그아웃, 맵 이동, 자동저장)에 서버 데이터 저장
+인벤토리 닫을 때 RPC 호출하여 서버에 위치 전송
+
+</details>
+
+<details> <summary>💾 Phase 4: 저장 함수 구현</summary>
 
 [ ] Step 4-1. SavePlayerInventory() 함수 작성 (GameMode)
 
-PlayerUniqueId 기반 파일 생성 로직
+InventoryList 데이터 → SaveGame 구조체 변환 및 저장
 
-[ ] Step 4-2. Logout() 오버라이드 (접속 종료 시 저장)
+[ ] Step 4-2. Logout() 오버라이드
 
-[ ] Step 4-3. Server_SaveAndMoveLevel() 연동 (맵 이동 시 전원 저장)
+플레이어 접속 종료 시 자동 저장
+
+[ ] Step 4-3. Server_SaveAndMoveLevel() 연동
+
+맵 이동 시 모든 플레이어 저장
 
 [ ] Step 4-4. 자동저장 타이머 구현
 
-주기: 기본 300초 (Blueprint 설정 가능)
+300초 주기 자동 저장 로직 추가
 
-[ ] Step 4-5. 테스트 (로그아웃 후 Saved 폴더에 .sav 파일 생성 확인)
+</details>
 
-📂 Phase 5: 로드 함수 구현
-목표: 로그인 시 저장된 데이터를 기반으로 인벤토리 복원
+<details> <summary>📥 Phase 5: 로드 함수 구현</summary>
 
 [ ] Step 5-1. LoadPlayerInventory() 함수 작성 (GameMode)
 
-[ ] Step 5-2. SaveGame 로드 및 유효성 검사
+SaveGame 로드 및 유효성 검사
 
-[ ] Step 5-3. DataTable 조회 (ItemType → ActorClass)
+[ ] Step 5-2. 아이템 복원 로직 구현
 
-[ ] Step 5-4. 임시 Actor 스폰 및 Manifest 추출 (SpawnActorDeferred 활용)
+DataTable 조회 → 임시 액터 스폰 → Manifest 추출 → AddEntry
 
-[ ] Step 5-5. InventoryItem 생성 및 리스트 추가 (AddEntry)
+[ ] Step 5-3. SpawnHeroCharacter() 연동
 
-[ ] Step 5-6. SpawnHeroCharacter() 연동 (캐릭터 스폰 직후 로드 호출)
+캐릭터 스폰 직후 인벤토리 복원 호출
 
-[ ] Step 5-7. 테스트 (재접속 시 아이템 복구 확인)
+</details>
 
-📂 Phase 6: 장착 상태 복원
-목표: 무기 장착 상태(등/허리 부착) 유지 및 복원
+<details> <summary>⚔️ Phase 6: 장착 상태 복원</summary>
 
-[ ] Step 6-1. 저장 로직 업데이트 (bEquipped, WeaponSlotIndex 저장)
+[ ] Step 6-1. 저장 로직 업데이트
 
-[ ] Step 6-2. 로드 로직 업데이트 (아이템 생성 후 장착 처리 루프 추가)
+bEquipped, WeaponSlotIndex 정보 저장 추가
 
-[ ] Step 6-3. ActiveWeaponSlot 저장/복원 (선택 사항)
+[ ] Step 6-2. 로드 로직 업데이트
 
-[ ] Step 6-4. 테스트 (무기를 등에 멘 상태로 재접속 확인)
+아이템 생성 루프에서 장착 대상 식별 및 처리
 
-🧪 Phase 7: 통합 테스트 (QA)
-[ ] Step 7-1. 단일 플레이어 기본 저장/로드 (획득 → 재접속 → 유지)
+[ ] Step 6-3. ActiveWeaponSlot 복원
 
-[ ] Step 7-2. Grid 위치 정합성 (특정 칸 배치 → 재접속 → 같은 칸 확인)
+손에 든 무기 상태 동기화
 
-[ ] Step 7-3. 스택 아이템 확인 (수량 유지 확인)
+</details>
 
-[ ] Step 7-4. 장착 상태 확인 (도끼 장착 상태 유지)
+<details> <summary>🧪 Phase 7: 통합 테스트</summary>
 
-[ ] Step 7-5. 멀티플레이어 독립성 (Player A/B 데이터 섞임 방지)
+[ ] Step 7-1. 단일 플레이어 사이클 테스트
 
-[ ] Step 7-6. 맵 이동 시 유지 확인
+획득 → 로그아웃 → 재접속 → 유지 확인
 
-[ ] Step 7-7. 자동저장 동작 확인
+[ ] Step 7-2. Grid 위치 정합성 테스트
 
-[ ] Step 7-8. 비정상 종료 복구 (인벤토리 닫은 직후 강제 종료 → 복구)
+특정 칸 배치 후 재접속 시 위치 유지 확인
 
-⚠️ Phase 8: 예외 처리 및 최적화
-[ ] Step 8-1. DataTable 매핑 실패 예외 처리 (로그 경고, 해당 아이템 Skip)
+[ ] Step 7-3. 멀티플레이어 독립성 테스트
 
-[ ] Step 8-2. SaveGame 파일 손상/버전 불일치 처리
+서로 다른 플레이어의 인벤토리가 섞이지 않는지 확인
 
-[ ] Step 8-3. 인벤토리 공간 초과 처리 (Grid 변경 시 복원 불가 아이템 처리)
+[ ] Step 7-4. 예외 처리 및 복구 테스트
 
-[ ] Step 8-4. 최적화: Dirty Flag 도입 (변경점 없을 시 자동저장 Skip)
+비정상 종료 시 데이터 보존 여부 확인
+
+</details>
+
+</details>
