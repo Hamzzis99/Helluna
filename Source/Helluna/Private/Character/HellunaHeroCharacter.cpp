@@ -114,12 +114,33 @@ void AHellunaHeroCharacter::Input_Look(const FInputActionValue& InputActionValue
 void AHellunaHeroCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
 	// ============================================
+	// ⭐ 디버깅: 입력 바인딩 상태 확인
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║     [HeroCharacter] SetupPlayerInputComponent              ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ 캐릭터: %s"), *GetName());
+	UE_LOG(LogTemp, Warning, TEXT("║ IsLocallyControlled: %s"), IsLocallyControlled() ? TEXT("TRUE ✅") : TEXT("FALSE ❌"));
+	UE_LOG(LogTemp, Warning, TEXT("║ HasAuthority: %s"), HasAuthority() ? TEXT("TRUE (서버)") : TEXT("FALSE (클라이언트)"));
+	UE_LOG(LogTemp, Warning, TEXT("║ GetLocalRole: %d"), (int32)GetLocalRole());
+	UE_LOG(LogTemp, Warning, TEXT("║ Controller: %s"), GetController() ? *GetController()->GetName() : TEXT("nullptr"));
+	
+	if (APlayerController* PC = GetController<APlayerController>())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("║ PC->IsLocalController: %s"), PC->IsLocalController() ? TEXT("TRUE ✅") : TEXT("FALSE ❌"));
+		UE_LOG(LogTemp, Warning, TEXT("║ PC->GetLocalPlayer: %s"), PC->GetLocalPlayer() ? TEXT("Valid") : TEXT("nullptr"));
+	}
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+	UE_LOG(LogTemp, Warning, TEXT(""));
+
+	// ============================================
 	// ⭐ 로컬에서 제어하는 캐릭터만 입력 바인딩!
 	// ⭐ 서버에서 클라이언트 캐릭터에 잘못 바인딩되는 것 방지
 	// ============================================
 	if (!IsLocallyControlled())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[HeroCharacter] SetupPlayerInputComponent 스킵 - 로컬 캐릭터 아님 (서버에서 원격 캐릭터)"));
+		UE_LOG(LogTemp, Warning, TEXT("[HeroCharacter] 입력 바인딩 스킵 - 로컬 캐릭터 아님"));
 		return;
 	}
 	
