@@ -4,6 +4,7 @@
 // ============================================
 // 📌 작성자: Gihyeon
 // 📌 작성일: 2025-01-23
+// 📌 수정일: 2025-01-28 (Phase B - 로그인 로직을 DefenseGameMode로 이동)
 // ============================================
 
 #include "Login/HellunaLoginGameMode.h"
@@ -22,7 +23,10 @@ AHellunaLoginGameMode::AHellunaLoginGameMode()
 	PlayerControllerClass = AHellunaLoginController::StaticClass();
 	PlayerStateClass = AHellunaPlayerState::StaticClass();
 
-	// Pawn은 사용하지 않음 (UI만 표시)
+	// ============================================
+	// 📌 [Phase B] Pawn 설정
+	// LoginLevel에서는 Pawn 사용 안 함 (IP 입력 UI만)
+	// ============================================
 	DefaultPawnClass = nullptr;
 
 	// Seamless Travel 활성화 (PlayerState 유지)
@@ -36,6 +40,7 @@ void AHellunaLoginGameMode::BeginPlay()
 	// ============================================
 	// 📌 계정 데이터 로드
 	// 서버 시작 시 기존 계정 정보 불러오기
+	// ※ DefenseGameMode에서도 사용할 수 있도록 유지
 	// ============================================
 	AccountSaveGame = UHellunaAccountSaveGame::LoadOrCreate();
 
@@ -47,88 +52,59 @@ void AHellunaLoginGameMode::BeginPlay()
 	{
 		UE_LOG(LogTemp, Error, TEXT("[LoginGameMode] BeginPlay: 계정 데이터 로드 실패!"));
 	}
+
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("========================================"));
+	UE_LOG(LogTemp, Warning, TEXT("[LoginGameMode] Phase B: IP 접속 전용 모드"));
+	UE_LOG(LogTemp, Warning, TEXT("[LoginGameMode] 클라이언트 접속 시 바로 GihyeonMap으로 이동"));
+	UE_LOG(LogTemp, Warning, TEXT("[LoginGameMode] 로그인은 GihyeonMap에서 처리됨!"));
+	UE_LOG(LogTemp, Warning, TEXT("========================================"));
+	UE_LOG(LogTemp, Warning, TEXT(""));
 }
 
-void AHellunaLoginGameMode::ProcessLogin(AHellunaLoginController* LoginController, const FString& PlayerId, const FString& Password)
+void AHellunaLoginGameMode::PostLogin(APlayerController* NewPlayer)
 {
+	Super::PostLogin(NewPlayer);
+
 	// ============================================
-	// 📌 서버에서만 실행되어야 함
+	// 📌 [Phase B] 플레이어 접속 시 바로 게임 맵으로 이동
+	// 
+	// 흐름:
+	// 1. 클라이언트가 IP로 서버에 접속
+	// 2. PostLogin 호출됨
+	// 3. 첫 번째 플레이어일 경우 ServerTravel로 GihyeonMap 이동
+	// 4. 이후 플레이어는 GihyeonMap으로 직접 접속됨
+	// 5. GihyeonMap에서 로그인 UI 표시 (DefenseGameMode)
 	// ============================================
+
 	if (!HasAuthority())
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[LoginGameMode] ProcessLogin: 서버에서만 호출 가능!"));
 		return;
-	}
 
-	if (!LoginController)
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("========================================"));
+	UE_LOG(LogTemp, Warning, TEXT("[LoginGameMode] ★ PostLogin 호출됨!"));
+	UE_LOG(LogTemp, Warning, TEXT("[LoginGameMode] 접속자: %s"), *GetNameSafe(NewPlayer));
+	UE_LOG(LogTemp, Warning, TEXT("========================================"));
+
+	// 첫 번째 플레이어 접속 시에만 맵 이동
+	if (!bHasFirstPlayerJoined)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[LoginGameMode] ProcessLogin: LoginController가 nullptr!"));
-		return;
-	}
-
-	UE_LOG(LogTemp, Log, TEXT("[LoginGameMode] ProcessLogin: 로그인 시도 - ID: %s"), *PlayerId);
-
-	// ============================================
-	// 📌 1단계: 동시 접속 체크 (GameInstance 사용)
-	// ============================================
-	if (IsPlayerLoggedIn(PlayerId))
-	{
-		OnLoginFailed(LoginController, TEXT("이미 접속 중인 계정입니다."));
-		return;
-	}
-
-	// ============================================
-	// 📌 2단계: 계정 존재 여부 확인
-	// ============================================
-	if (!AccountSaveGame)
-	{
-		OnLoginFailed(LoginController, TEXT("서버 오류: 계정 데이터를 불러올 수 없습니다."));
-		return;
-	}
-
-	if (AccountSaveGame->HasAccount(PlayerId))
-	{
-		// ============================================
-		// 📌 기존 계정: 비밀번호 검증
-		// ============================================
-		if (AccountSaveGame->ValidatePassword(PlayerId, Password))
-		{
-			// 비밀번호 일치 → 로그인 성공
-			OnLoginSuccess(LoginController, PlayerId);
-		}
-		else
-		{
-			// 비밀번호 불일치 → 로그인 실패
-			OnLoginFailed(LoginController, TEXT("아이디가 이미 존재합니다. 비밀번호를 확인해주세요."));
-		}
+		bHasFirstPlayerJoined = true;
+		
+		UE_LOG(LogTemp, Warning, TEXT("[LoginGameMode] ★ 첫 번째 플레이어 접속!"));
+		UE_LOG(LogTemp, Warning, TEXT("[LoginGameMode] → GihyeonMap으로 ServerTravel 시작"));
+		
+		// 약간의 딜레이 후 맵 이동 (클라이언트가 완전히 로드될 때까지 대기)
+		FTimerHandle TimerHandle;
+		GetWorldTimerManager().SetTimer(TimerHandle, this, &AHellunaLoginGameMode::TravelToGameMap, 0.5f, false);
 	}
 	else
 	{
-		// ============================================
-		// 📌 새 계정: 자동 생성
-		// ============================================
-		if (AccountSaveGame->CreateAccount(PlayerId, Password))
-		{
-			// 계정 생성 성공 → 저장 후 로그인
-			UHellunaAccountSaveGame::Save(AccountSaveGame);
-			OnLoginSuccess(LoginController, PlayerId);
-
-			UE_LOG(LogTemp, Log, TEXT("[LoginGameMode] ProcessLogin: 새 계정 생성됨 - ID: %s"), *PlayerId);
-		}
-		else
-		{
-			OnLoginFailed(LoginController, TEXT("계정 생성에 실패했습니다."));
-		}
+		UE_LOG(LogTemp, Warning, TEXT("[LoginGameMode] 추가 플레이어 접속 - 이미 맵 이동 예정"));
 	}
-}
 
-void AHellunaLoginGameMode::ProcessLogout(const FString& PlayerId)
-{
-	// GameInstance에서 로그아웃 처리
-	if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(UGameplayStatics::GetGameInstance(GetWorld())))
-	{
-		GI->RegisterLogout(PlayerId);
-	}
+	UE_LOG(LogTemp, Warning, TEXT("========================================"));
+	UE_LOG(LogTemp, Warning, TEXT(""));
 }
 
 bool AHellunaLoginGameMode::IsPlayerLoggedIn(const FString& PlayerId) const
@@ -141,56 +117,13 @@ bool AHellunaLoginGameMode::IsPlayerLoggedIn(const FString& PlayerId) const
 	return false;
 }
 
-void AHellunaLoginGameMode::OnLoginSuccess(AHellunaLoginController* LoginController, const FString& PlayerId)
-{
-	// ============================================
-	// 📌 GameInstance에 로그인 등록
-	// Seamless Travel 후에도 유지됨!
-	// ============================================
-	if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(UGameplayStatics::GetGameInstance(GetWorld())))
-	{
-		GI->RegisterLogin(PlayerId);
-	}
-
-	// ============================================
-	// 📌 PlayerState에 로그인 정보 저장
-	// Seamless Travel 시에도 유지됨
-	// ============================================
-	if (AHellunaPlayerState* PS = LoginController->GetPlayerState<AHellunaPlayerState>())
-	{
-		PS->SetLoginInfo(PlayerId);
-	}
-
-	// ============================================
-	// 📌 클라이언트에 성공 알림
-	// ============================================
-	LoginController->Client_LoginResult(true, TEXT(""));
-
-	UE_LOG(LogTemp, Log, TEXT("[LoginGameMode] OnLoginSuccess: 로그인 성공 - ID: %s"), *PlayerId);
-
-	// ============================================
-	// 📌 게임 맵으로 이동
-	// 현재는 단일 플레이어 테스트용으로 바로 이동
-	// TODO: 나중에 "준비 완료" 버튼 또는 모든 플레이어 대기 후 이동으로 변경
-	// ============================================
-	TravelToGameMap();
-}
-
-void AHellunaLoginGameMode::OnLoginFailed(AHellunaLoginController* LoginController, const FString& ErrorMessage)
-{
-	LoginController->Client_LoginResult(false, ErrorMessage);
-
-	UE_LOG(LogTemp, Warning, TEXT("[LoginGameMode] OnLoginFailed: %s"), *ErrorMessage);
-}
-
 void AHellunaLoginGameMode::TravelToGameMap()
 {
 	// ============================================
-	// 📌 Seamless Travel로 게임 맵 이동
-	// PlayerState가 유지됨!
+	// 📌 [Phase B] Seamless Travel로 게임 맵 이동
 	// 
-	// TSoftObjectPtr<UWorld>에서 맵 경로를 가져와서
-	// ServerTravel 실행
+	// ※ 로그인 없이 바로 이동!
+	// ※ 로그인은 GihyeonMap에서 처리됨!
 	// ============================================
 	if (GameMap.IsNull())
 	{
@@ -205,11 +138,16 @@ void AHellunaLoginGameMode::TravelToGameMap()
 	}
 
 	// TSoftObjectPtr에서 맵 경로 추출
-	// 예: /Game/Gihyeon/GihyeonMap.GihyeonMap → /Game/Gihyeon/GihyeonMap
 	FString MapPath = GameMap.GetLongPackageName();
 	FString TravelURL = FString::Printf(TEXT("%s?listen"), *MapPath);
 	
-	UE_LOG(LogTemp, Log, TEXT("[LoginGameMode] TravelToGameMap: %s 로 이동 시작"), *TravelURL);
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("========================================"));
+	UE_LOG(LogTemp, Warning, TEXT("[LoginGameMode] ★ ServerTravel 실행!"));
+	UE_LOG(LogTemp, Warning, TEXT("[LoginGameMode] 목적지: %s"), *TravelURL);
+	UE_LOG(LogTemp, Warning, TEXT("[LoginGameMode] ※ 로그인 없이 이동! (로그인은 GihyeonMap에서)"));
+	UE_LOG(LogTemp, Warning, TEXT("========================================"));
+	UE_LOG(LogTemp, Warning, TEXT(""));
 	
 	GetWorld()->ServerTravel(TravelURL);
 }

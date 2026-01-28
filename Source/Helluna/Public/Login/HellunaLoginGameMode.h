@@ -2,26 +2,23 @@
 // 로그인 레벨 전용 GameMode
 // 
 // ============================================
-// 📌 역할:
-// - 로그인 검증 로직 (계정 확인, 비밀번호 체크)
-// - 동시 접속 체크 (같은 ID 접속 거부)
-// - 계정 자동 생성 (새 아이디면 생성)
-// - 로그인 성공 시 맵 이동 (ServerTravel)
-// - PlayerState, PlayerController 클래스 지정
+// 📌 역할 (Phase B 변경):
+// - IP 접속만 담당 (서버 연결)
+// - 서버 접속 성공 시 바로 GihyeonMap으로 이동
+// - ※ 로그인 로직은 HellunaDefenseGameMode로 이동됨!
 // 
 // 📌 사용 위치:
 // - LoginLevel에서 GameMode Override로 지정
 // 
-// 📌 로그인 흐름:
-// 1. 동시 접속 체크 → 이미 접속 중이면 거부
-// 2. 계정 존재 여부 확인
-//    - 있으면: 비밀번호 검증
-//    - 없으면: 새 계정 생성
-// 3. 로그인 성공 시 PlayerState에 ID 저장
-// 4. 게임 맵으로 ServerTravel
+// 📌 접속 흐름 (Phase B):
+// 1. 클라이언트가 IP 입력 후 서버에 접속
+// 2. LoginGameMode::PostLogin() 호출됨
+// 3. 바로 GihyeonMap으로 ServerTravel
+// 4. GihyeonMap에서 로그인 UI 표시 (DefenseGameMode)
 // 
 // 📌 작성자: Gihyeon
 // 📌 작성일: 2025-01-23
+// 📌 수정일: 2025-01-28 (Phase B - 로그인 로직을 DefenseGameMode로 이동)
 // ============================================
 
 #pragma once
@@ -35,7 +32,7 @@ class AHellunaLoginController;
 
 /**
  * 로그인 레벨 전용 GameMode
- * 로그인 검증 및 계정 관리 담당
+ * Phase B: IP 접속만 담당, 로그인은 DefenseGameMode에서 처리
  */
 UCLASS()
 class HELLUNA_API AHellunaLoginGameMode : public AGameModeBase
@@ -48,28 +45,18 @@ public:
 protected:
 	virtual void BeginPlay() override;
 
+	// ============================================
+	// 📌 플레이어 접속 시 바로 GihyeonMap으로 이동
+	// Phase B: 로그인 없이 바로 게임 맵으로!
+	// ============================================
+	virtual void PostLogin(APlayerController* NewPlayer) override;
+
 public:
 	// ============================================
-	// 📌 로그인 처리 함수 (서버에서만 호출)
+	// 📌 [Phase B 유지] 계정 관련 함수
+	// DefenseGameMode에서 사용하기 위해 유지
+	// 나중에 DefenseGameMode로 완전히 이동 가능
 	// ============================================
-
-	/**
-	 * 로그인 요청 처리
-	 * LoginController에서 호출됨
-	 * @param LoginController - 요청한 컨트롤러
-	 * @param PlayerId - 입력한 아이디
-	 * @param Password - 입력한 비밀번호
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Login")
-	void ProcessLogin(AHellunaLoginController* LoginController, const FString& PlayerId, const FString& Password);
-
-	/**
-	 * 플레이어 로그아웃 처리
-	 * 접속 종료 시 호출
-	 * @param PlayerId - 로그아웃할 플레이어 ID
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Login")
-	void ProcessLogout(const FString& PlayerId);
 
 	/**
 	 * 동시 접속 여부 확인 (GameInstance에서 확인)
@@ -79,22 +66,17 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Login")
 	bool IsPlayerLoggedIn(const FString& PlayerId) const;
 
+	/**
+	 * 계정 SaveGame 가져오기
+	 * DefenseGameMode에서 계정 검증용으로 사용 가능
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Login")
+	UHellunaAccountSaveGame* GetAccountSaveGame() const { return AccountSaveGame; }
+
 protected:
 	// ============================================
 	// 📌 내부 함수
 	// ============================================
-
-	/**
-	 * 로그인 성공 처리
-	 * PlayerState에 ID 저장 + 맵 이동
-	 */
-	void OnLoginSuccess(AHellunaLoginController* LoginController, const FString& PlayerId);
-
-	/**
-	 * 로그인 실패 처리
-	 * 클라이언트에 에러 메시지 전송
-	 */
-	void OnLoginFailed(AHellunaLoginController* LoginController, const FString& ErrorMessage);
 
 	/**
 	 * 게임 맵으로 이동
@@ -107,7 +89,7 @@ protected:
 	// ============================================
 
 	/** 
-	 * 로그인 성공 후 이동할 게임 맵
+	 * 서버 접속 후 이동할 게임 맵
 	 * Blueprint에서 드롭다운으로 선택 가능
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Login|Map", meta = (DisplayName = "게임 맵"))
@@ -120,10 +102,11 @@ protected:
 	/** 
 	 * 계정 데이터 (SaveGame)
 	 * 아이디/비밀번호 저장
+	 * ※ DefenseGameMode에서도 접근 가능하도록 유지
 	 */
 	UPROPERTY(meta = (DisplayName = "계정 저장 데이터"))
 	TObjectPtr<UHellunaAccountSaveGame> AccountSaveGame;
 
-	// ※ LoggedInPlayerIds는 MDF_GameInstance에서 관리
-	//    → Seamless Travel 후에도 유지됨!
+	/** 첫 번째 플레이어 접속 여부 (맵 이동 트리거) */
+	bool bHasFirstPlayerJoined = false;
 };

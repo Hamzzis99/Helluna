@@ -18,61 +18,64 @@ void UHellunaLoginWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
 
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("========================================"));
+	UE_LOG(LogTemp, Warning, TEXT("[LoginWidget] ★ NativeConstruct 호출됨!"));
+	UE_LOG(LogTemp, Warning, TEXT("========================================"));
+
 	// ============================================
 	// 📌 필수 위젯 체크
-	// BindWidget으로 지정된 위젯이 없으면 에러!
 	// ============================================
 	bool bHasError = false;
 
 	if (!ServerConnectPanel)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[LoginWidget] ❌ 'ServerConnectPanel' 위젯이 없습니다! Blueprint에서 추가해주세요."));
+		UE_LOG(LogTemp, Error, TEXT("[LoginWidget] ❌ 'ServerConnectPanel' 위젯이 없습니다!"));
 		bHasError = true;
 	}
 
 	if (!IPInputTextBox)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[LoginWidget] ❌ 'IPInputTextBox' 위젯이 없습니다! Blueprint에서 추가해주세요."));
+		UE_LOG(LogTemp, Error, TEXT("[LoginWidget] ❌ 'IPInputTextBox' 위젯이 없습니다!"));
 		bHasError = true;
 	}
 
 	if (!ConnectButton)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[LoginWidget] ❌ 'ConnectButton' 위젯이 없습니다! Blueprint에서 추가해주세요."));
+		UE_LOG(LogTemp, Error, TEXT("[LoginWidget] ❌ 'ConnectButton' 위젯이 없습니다!"));
 		bHasError = true;
 	}
 
 	if (!LoginPanel)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[LoginWidget] ❌ 'LoginPanel' 위젯이 없습니다! Blueprint에서 추가해주세요."));
+		UE_LOG(LogTemp, Error, TEXT("[LoginWidget] ❌ 'LoginPanel' 위젯이 없습니다!"));
 		bHasError = true;
 	}
 
 	if (!IDInputTextBox)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[LoginWidget] ❌ 'IDInputTextBox' 위젯이 없습니다! Blueprint에서 추가해주세요."));
+		UE_LOG(LogTemp, Error, TEXT("[LoginWidget] ❌ 'IDInputTextBox' 위젯이 없습니다!"));
 		bHasError = true;
 	}
 
 	if (!PasswordInputTextBox)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[LoginWidget] ❌ 'PasswordInputTextBox' 위젯이 없습니다! Blueprint에서 추가해주세요."));
+		UE_LOG(LogTemp, Error, TEXT("[LoginWidget] ❌ 'PasswordInputTextBox' 위젯이 없습니다!"));
 		bHasError = true;
 	}
 
 	if (!LoginButton)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[LoginWidget] ❌ 'LoginButton' 위젯이 없습니다! Blueprint에서 추가해주세요."));
+		UE_LOG(LogTemp, Error, TEXT("[LoginWidget] ❌ 'LoginButton' 위젯이 없습니다!"));
 		bHasError = true;
 	}
 
 	if (!MessageText)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[LoginWidget] ❌ 'MessageText' 위젯이 없습니다! Blueprint에서 추가해주세요."));
+		UE_LOG(LogTemp, Error, TEXT("[LoginWidget] ❌ 'MessageText' 위젯이 없습니다!"));
 		bHasError = true;
 	}
 
-	// 에러가 있으면 화면에도 표시
 	if (bHasError)
 	{
 		if (GEngine)
@@ -83,43 +86,74 @@ void UHellunaLoginWidget::NativeConstruct()
 		return;
 	}
 
+	UE_LOG(LogTemp, Warning, TEXT("[LoginWidget] ✅ 모든 필수 위젯 확인 완료"));
+
 	// ============================================
 	// 📌 버튼 클릭 이벤트 바인딩
 	// ============================================
 	if (ConnectButton)
 	{
 		ConnectButton->OnClicked.AddDynamic(this, &UHellunaLoginWidget::OnConnectButtonClicked);
+		UE_LOG(LogTemp, Warning, TEXT("[LoginWidget] ConnectButton 바인딩 완료"));
 	}
 
 	if (LoginButton)
 	{
 		LoginButton->OnClicked.AddDynamic(this, &UHellunaLoginWidget::OnLoginButtonClicked);
+		UE_LOG(LogTemp, Warning, TEXT("[LoginWidget] LoginButton 바인딩 완료"));
 	}
 
 	// ============================================
-	// 📌 초기 상태 결정
-	// NetMode에 따라 표시할 패널 결정
-	// - NM_Client: 이미 서버에 접속한 상태 → 로그인 패널
-	// - NM_Standalone: 로컬 단독 실행 → 서버 접속 패널
-	// - NM_ListenServer: Listen 서버 → 로그인 패널
-	// - NM_DedicatedServer: 데디케이티드 서버 (UI 없음)
+	// 📌 [Phase B] 현재 맵에 따라 표시할 패널 결정
+	// 
+	// LoginLevel: ServerConnectPanel만 표시 (IP 입력)
+	// GihyeonMap: LoginPanel만 표시 (로그인 입력)
+	// 
+	// Phase B에서는:
+	// - LoginLevel에서 IP 접속만 하고 바로 GihyeonMap으로 이동
+	// - GihyeonMap에서 로그인 UI 표시
 	// ============================================
 	ENetMode NetMode = GetWorld()->GetNetMode();
+	FString MapName = GetWorld()->GetMapName();
 	
-	if (NetMode == NM_Client || NetMode == NM_ListenServer)
+	UE_LOG(LogTemp, Warning, TEXT("[LoginWidget] NetMode: %d"), static_cast<int32>(NetMode));
+	UE_LOG(LogTemp, Warning, TEXT("[LoginWidget] MapName: %s"), *MapName);
+
+	// 맵 이름으로 판단
+	if (MapName.Contains(TEXT("LoginLevel")))
 	{
-		// 이미 서버에 접속한 상태 → 바로 로그인 패널 표시
-		ShowLoginPanel();
-		UE_LOG(LogTemp, Log, TEXT("[LoginWidget] NativeConstruct: 서버 접속 상태 감지 - 로그인 패널 표시"));
+		// ============================================
+		// 📌 [Phase B] LoginLevel → IP 접속 패널만!
+		// ============================================
+		UE_LOG(LogTemp, Warning, TEXT("[LoginWidget] LoginLevel 감지 → ServerConnectPanel 표시"));
+		
+		if (NetMode == NM_Client)
+		{
+			// 이미 서버에 접속한 상태 → 대기 메시지
+			UE_LOG(LogTemp, Warning, TEXT("[LoginWidget] 이미 서버 접속됨 → GihyeonMap으로 이동 대기"));
+			ShowMessage(TEXT("서버 접속 완료! 게임 맵으로 이동 중..."), false);
+			SetLoadingState(true);
+			
+			// ServerConnectPanel 표시 (로딩 상태)
+			ShowServerConnectPanel();
+		}
+		else
+		{
+			// 아직 서버에 접속 안 함 → IP 입력 패널
+			ShowServerConnectPanel();
+		}
 	}
 	else
 	{
-		// 로컬 단독 실행 → 서버 접속 패널 표시
-		ShowServerConnectPanel();
-		UE_LOG(LogTemp, Log, TEXT("[LoginWidget] NativeConstruct: 로컬 실행 - 서버 접속 패널 표시"));
+		// ============================================
+		// 📌 [Phase B] GihyeonMap 또는 다른 맵 → 로그인 패널!
+		// ============================================
+		UE_LOG(LogTemp, Warning, TEXT("[LoginWidget] 게임 맵 감지 → LoginPanel 표시"));
+		ShowLoginPanel();
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[LoginWidget] NativeConstruct: 초기화 완료 (NetMode: %d)"), static_cast<int32>(NetMode));
+	UE_LOG(LogTemp, Warning, TEXT("========================================"));
+	UE_LOG(LogTemp, Warning, TEXT(""));
 }
 
 void UHellunaLoginWidget::OnConnectButtonClicked()
