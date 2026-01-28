@@ -12,10 +12,18 @@
 
 void UHeroGameplayAbility_InRepair::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData)
 {
+	UE_LOG(LogTemp, Warning, TEXT("[InRepair] ActivateAbility 호출됨"));
+	
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
 
 	if (!ActorInfo || !ActorInfo->IsLocallyControlled())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[InRepair] IsLocallyControlled = FALSE, return"));
 		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[InRepair] ShowRepairUI 호출 전, RepairWidgetInstance = %s"), 
+		RepairWidgetInstance ? TEXT("EXISTS") : TEXT("nullptr"));
 
 	ShowRepairUI(ActorInfo);
 
@@ -30,8 +38,12 @@ void UHeroGameplayAbility_InRepair::ActivateAbility(const FGameplayAbilitySpecHa
 
 void UHeroGameplayAbility_InRepair::EndAbility(	const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled)
 {
+	UE_LOG(LogTemp, Warning, TEXT("[InRepair] EndAbility 호출됨, bWasCancelled = %s"), 
+		bWasCancelled ? TEXT("TRUE") : TEXT("FALSE"));
+
 	if (ActorInfo && ActorInfo->IsLocallyControlled())
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[InRepair] RemoveRepairUI 호출"));
 		RemoveRepairUI();
 	}
 
@@ -40,28 +52,42 @@ void UHeroGameplayAbility_InRepair::EndAbility(	const FGameplayAbilitySpecHandle
 
 void UHeroGameplayAbility_InRepair::ShowRepairUI(const FGameplayAbilityActorInfo* ActorInfo)
 {
+	UE_LOG(LogTemp, Warning, TEXT("[InRepair] ShowRepairUI - RepairWidgetClass=%s, RepairWidgetInstance=%s"),
+		RepairWidgetClass ? TEXT("Valid") : TEXT("nullptr"),
+		RepairWidgetInstance ? TEXT("EXISTS ❌") : TEXT("nullptr ✅"));
+
 	if (!RepairWidgetClass || RepairWidgetInstance || !ActorInfo)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[InRepair] ShowRepairUI 조건 불충족! return"));
 		return;
+	}
 
 	APawn* Pawn = Cast<APawn>(ActorInfo->AvatarActor.Get());
 	APlayerController* PC = Pawn ? Cast<APlayerController>(Pawn->GetController()) : nullptr;
 	if (!PC)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[InRepair] PC nullptr! return"));
 		return;
+	}
 
 	RepairWidgetInstance = CreateWidget<UUserWidget>(PC, RepairWidgetClass);
 	if (RepairWidgetInstance)
 	{
 		RepairWidgetInstance->AddToViewport();
+		UE_LOG(LogTemp, Warning, TEXT("[InRepair] ✅ 위젯 생성 및 Viewport 추가 완료"));
 	}
-
 }
 
 void UHeroGameplayAbility_InRepair::RemoveRepairUI()
 {
+	UE_LOG(LogTemp, Warning, TEXT("[InRepair] RemoveRepairUI - RepairWidgetInstance=%s"),
+		RepairWidgetInstance ? TEXT("EXISTS") : TEXT("nullptr"));
+
 	if (RepairWidgetInstance)
 	{
 		RepairWidgetInstance->RemoveFromParent();
 		RepairWidgetInstance = nullptr;
+		UE_LOG(LogTemp, Warning, TEXT("[InRepair] ✅ 위젯 제거 완료, RepairWidgetInstance = nullptr"));
 	}
 }
 
