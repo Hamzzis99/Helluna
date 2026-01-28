@@ -102,6 +102,7 @@
 // 📌 인벤토리 저장 시스템 관련 헤더
 // ============================================
 #include "Inventory/HellunaItemTypeMapping.h"  // Phase 1: DataTable 매핑
+#include "Inventory/HellunaInventorySaveGame.h" // Phase 2: SaveGame 클래스
 #include "Engine/DataTable.h"                   // DataTable 사용
 #include "GameplayTagContainer.h"               // FGameplayTag                 
 #include "GameFramework/PlayerController.h"
@@ -133,6 +134,9 @@ void AHellunaDefenseGameMode::BeginPlay()
 
 	// 계정 데이터 로드
 	AccountSaveGame = UHellunaAccountSaveGame::LoadOrCreate();
+
+	// 인벤토리 데이터 로드
+	InventorySaveGame = UHellunaInventorySaveGame::LoadOrCreate();
 
 	// 스폰 포인트 캐싱 (미리 해둠)
 	CacheBossSpawnPoints();
@@ -188,6 +192,34 @@ void AHellunaDefenseGameMode::BeginPlay()
 		UE_LOG(LogTemp, Warning, TEXT("⚠️ [자동 테스트] ItemTypeMappingDataTable 미설정!"));
 		UE_LOG(LogTemp, Warning, TEXT("   → BP_DefenseGameMode에서 DataTable 설정 필요"));
 		UE_LOG(LogTemp, Warning, TEXT("   → 설정 후 PIE 재시작하면 자동 테스트 실행됨"));
+		UE_LOG(LogTemp, Warning, TEXT(""));
+	}
+
+	// ============================================
+	// 📦 [Phase 2] SaveGame 자동 테스트
+	// ============================================
+	// 
+	// PIE 시작 시 자동으로 저장/로드 테스트 실행
+	// Output Log에서 결과 확인!
+	// 
+	// ▶ 테스트 내용:
+	//    - 더미 데이터로 저장 테스트
+	//    - 로드 후 데이터 검증
+	//    - 파일 생성 확인 (Saved/SaveGames/HellunaInventory.sav)
+	// ============================================
+	if (IsValid(InventorySaveGame))
+	{
+		UE_LOG(LogTemp, Warning, TEXT(""));
+		UE_LOG(LogTemp, Warning, TEXT("🔧 [자동 테스트] SaveGame 저장/로드 테스트 시작..."));
+		UE_LOG(LogTemp, Warning, TEXT("   (이 메시지는 에디터에서만 표시됩니다)"));
+		UE_LOG(LogTemp, Warning, TEXT(""));
+		
+		DebugTestInventorySaveGame();
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT(""));
+		UE_LOG(LogTemp, Warning, TEXT("⚠️ [자동 테스트] InventorySaveGame 로드 실패!"));
 		UE_LOG(LogTemp, Warning, TEXT(""));
 	}
 #endif
@@ -1259,4 +1291,231 @@ void AHellunaDefenseGameMode::DebugPrintAllItemMappings()
 
 	// 유틸리티 함수 호출 (HellunaItemTypeMapping.cpp에 구현됨)
 	UHellunaItemTypeMapping::DebugPrintAllMappings(ItemTypeMappingDataTable);
+}
+
+// ============================================
+// 📦 [Phase 2] SaveGame 테스트 함수
+// ============================================
+// 
+// DebugTestInventorySaveGame
+// 
+// 인벤토리 SaveGame의 저장/로드 기능을 테스트합니다.
+// 더미 데이터를 생성하여 저장 후 로드하여 검증합니다.
+// 
+// ▶ 테스트 내용:
+//    1. 더미 플레이어 데이터 생성
+//    2. SavePlayerInventory()로 저장
+//    3. Save()로 파일에 기록
+//    4. LoadPlayerInventory()로 로드
+//    5. 데이터 검증
+// 
+// ▶ 파일 생성 위치:
+//    Saved/SaveGames/HellunaInventory.sav
+// 
+// ▶ 호출 방법 (에디터 콘솔):
+//    ~ 키 → "ke * DebugTestInventorySaveGame" 입력
+// ============================================
+void AHellunaDefenseGameMode::DebugTestInventorySaveGame()
+{
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║   [Phase 2] SaveGame 저장/로드 테스트 시작                 ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+
+	// ============================================
+	// 1단계: SaveGame 인스턴스 확인
+	// ============================================
+	if (!IsValid(InventorySaveGame))
+	{
+		UE_LOG(LogTemp, Error, TEXT("❌ InventorySaveGame이 nullptr입니다!"));
+		UE_LOG(LogTemp, Error, TEXT("   → BeginPlay에서 LoadOrCreate() 확인 필요"));
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("✅ InventorySaveGame 유효!"));
+	UE_LOG(LogTemp, Warning, TEXT("   현재 저장된 플레이어: %d명"), InventorySaveGame->GetPlayerCount());
+
+	// ============================================
+	// 2단계: 테스트용 더미 데이터 생성
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("📦 테스트 데이터 생성 중..."));
+
+	const FString TestPlayerId = TEXT("TestPlayer_Phase2");
+
+	FHellunaPlayerInventoryData TestData;
+	TestData.SaveVersion = 1;
+
+	// 더미 아이템 1: 도끼
+	FHellunaInventoryItemData Item1;
+	Item1.ItemType = FGameplayTag::RequestGameplayTag(FName("GameItems.Equipment.Weapons.Axe"), false);
+	Item1.StackCount = 1;
+	Item1.GridPosition = FIntPoint(0, 0);
+	Item1.EquipSlotIndex = 0;  // 장착 슬롯 0
+	TestData.Items.Add(Item1);
+
+	// 더미 아이템 2: 빨간 포션 3개
+	FHellunaInventoryItemData Item2;
+	Item2.ItemType = FGameplayTag::RequestGameplayTag(FName("GameItems.Consumables.Potions.Red.Small"), false);
+	Item2.StackCount = 3;
+	Item2.GridPosition = FIntPoint(1, 0);
+	Item2.EquipSlotIndex = -1;  // 미장착
+	TestData.Items.Add(Item2);
+
+	// 더미 아이템 3: 파란 포션 5개
+	FHellunaInventoryItemData Item3;
+	Item3.ItemType = FGameplayTag::RequestGameplayTag(FName("GameItems.Consumables.Potions.Blue.Small"), false);
+	Item3.StackCount = 5;
+	Item3.GridPosition = FIntPoint(2, 0);
+	Item3.EquipSlotIndex = -1;
+	TestData.Items.Add(Item3);
+
+	// 더미 아이템 4: 불꽃 과일 2개
+	FHellunaInventoryItemData Item4;
+	Item4.ItemType = FGameplayTag::RequestGameplayTag(FName("GameItems.Craftables.FireFernFruit"), false);
+	Item4.StackCount = 2;
+	Item4.GridPosition = FIntPoint(0, 1);
+	Item4.EquipSlotIndex = -1;
+	TestData.Items.Add(Item4);
+
+	UE_LOG(LogTemp, Warning, TEXT("   생성된 아이템: %d개"), TestData.Items.Num());
+	for (int32 i = 0; i < TestData.Items.Num(); i++)
+	{
+		const FHellunaInventoryItemData& Item = TestData.Items[i];
+		UE_LOG(LogTemp, Warning, TEXT("   [%d] %s x%d @ (%d,%d) 장착:%d"),
+			i, *Item.ItemType.ToString(), Item.StackCount,
+			Item.GridPosition.X, Item.GridPosition.Y, Item.EquipSlotIndex);
+	}
+
+	// ============================================
+	// 3단계: 저장 테스트
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("💾 저장 테스트..."));
+
+	InventorySaveGame->SavePlayerInventory(TestPlayerId, TestData);
+	bool bSaveSuccess = UHellunaInventorySaveGame::Save(InventorySaveGame);
+
+	if (bSaveSuccess)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("   ✅ 파일 저장 성공!"));
+		UE_LOG(LogTemp, Warning, TEXT("   📁 위치: Saved/SaveGames/HellunaInventory.sav"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("   ❌ 파일 저장 실패!"));
+		return;
+	}
+
+	// ============================================
+	// 4단계: 로드 테스트
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("📂 로드 테스트..."));
+
+	FHellunaPlayerInventoryData LoadedData;
+	bool bLoadSuccess = InventorySaveGame->LoadPlayerInventory(TestPlayerId, LoadedData);
+
+	if (bLoadSuccess)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("   ✅ 로드 성공!"));
+		UE_LOG(LogTemp, Warning, TEXT("   로드된 아이템: %d개"), LoadedData.Items.Num());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("   ❌ 로드 실패!"));
+		return;
+	}
+
+	// ============================================
+	// 5단계: 데이터 검증
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("🔍 데이터 검증..."));
+
+	bool bVerifySuccess = true;
+
+	// 아이템 개수 확인
+	if (LoadedData.Items.Num() != TestData.Items.Num())
+	{
+		UE_LOG(LogTemp, Error, TEXT("   ❌ 아이템 개수 불일치! (저장:%d, 로드:%d)"),
+			TestData.Items.Num(), LoadedData.Items.Num());
+		bVerifySuccess = false;
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("   ✅ 아이템 개수 일치: %d개"), LoadedData.Items.Num());
+	}
+
+	// 각 아이템 데이터 검증
+	for (int32 i = 0; i < FMath::Min(TestData.Items.Num(), LoadedData.Items.Num()); i++)
+	{
+		const FHellunaInventoryItemData& Original = TestData.Items[i];
+		const FHellunaInventoryItemData& Loaded = LoadedData.Items[i];
+
+		bool bItemMatch = true;
+		if (Original.ItemType != Loaded.ItemType)
+		{
+			UE_LOG(LogTemp, Error, TEXT("   ❌ [%d] ItemType 불일치"), i);
+			bItemMatch = false;
+		}
+		if (Original.StackCount != Loaded.StackCount)
+		{
+			UE_LOG(LogTemp, Error, TEXT("   ❌ [%d] StackCount 불일치 (저장:%d, 로드:%d)"),
+				i, Original.StackCount, Loaded.StackCount);
+			bItemMatch = false;
+		}
+		if (Original.GridPosition != Loaded.GridPosition)
+		{
+			UE_LOG(LogTemp, Error, TEXT("   ❌ [%d] GridPosition 불일치"), i);
+			bItemMatch = false;
+		}
+		if (Original.EquipSlotIndex != Loaded.EquipSlotIndex)
+		{
+			UE_LOG(LogTemp, Error, TEXT("   ❌ [%d] EquipSlotIndex 불일치"), i);
+			bItemMatch = false;
+		}
+
+		if (bItemMatch)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("   ✅ [%d] %s - 검증 통과"),
+				i, *Loaded.ItemType.ToString());
+		}
+		else
+		{
+			bVerifySuccess = false;
+		}
+	}
+
+	// ============================================
+	// 6단계: 최종 결과
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("────────────────────────────────────────────────────────────"));
+	UE_LOG(LogTemp, Warning, TEXT("📊 Phase 2 테스트 결과:"));
+
+	if (bSaveSuccess && bLoadSuccess && bVerifySuccess)
+	{
+		UE_LOG(LogTemp, Warning, TEXT(""));
+		UE_LOG(LogTemp, Warning, TEXT("   🎉 모든 테스트 통과! Phase 2 완료!"));
+		UE_LOG(LogTemp, Warning, TEXT("   → Phase 3 (Grid 위치 동기화 RPC) 진행 가능"));
+		UE_LOG(LogTemp, Warning, TEXT("   → 또는 Phase 4 (저장 함수 구현) 바로 진행"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT(""));
+		UE_LOG(LogTemp, Error, TEXT("   ⚠️ 일부 테스트 실패!"));
+		UE_LOG(LogTemp, Error, TEXT("   저장: %s"), bSaveSuccess ? TEXT("✅") : TEXT("❌"));
+		UE_LOG(LogTemp, Error, TEXT("   로드: %s"), bLoadSuccess ? TEXT("✅") : TEXT("❌"));
+		UE_LOG(LogTemp, Error, TEXT("   검증: %s"), bVerifySuccess ? TEXT("✅") : TEXT("❌"));
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║   [Phase 2] SaveGame 테스트 완료                           ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+	UE_LOG(LogTemp, Warning, TEXT(""));
+
+	// 전체 저장 데이터 출력 (디버그)
+	InventorySaveGame->DebugPrintAllData();
 }

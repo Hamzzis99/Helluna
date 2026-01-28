@@ -6,6 +6,7 @@
 
 class ATargetPoint;
 class UHellunaAccountSaveGame;
+class UHellunaInventorySaveGame;
 class AHellunaPlayerState;
 class AHellunaLoginController;
 class UDataTable;
@@ -140,6 +141,13 @@ protected:
 	 */
 	UPROPERTY()
 	TObjectPtr<UHellunaAccountSaveGame> AccountSaveGame;
+
+	/**
+	 * 인벤토리 저장 데이터 (BeginPlay에서 로드)
+	 * 플레이어별 아이템/수량/위치 저장
+	 */
+	UPROPERTY()
+	TObjectPtr<UHellunaInventorySaveGame> InventorySaveGame;
 
 	/** 
 	 * 로그인 타임아웃 타이머 맵
@@ -324,6 +332,25 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Helluna|Inventory|Debug")
 	void DebugPrintAllItemMappings();
+
+	// ============================================
+	// 📌 [Phase 2] SaveGame 테스트
+	// ============================================
+	
+	/**
+	 * [디버깅] InventorySaveGame 저장/로드 테스트
+	 * 
+	 * 테스트 내용:
+	 * 1. SaveGame 로드 또는 생성
+	 * 2. 더미 데이터로 저장 테스트
+	 * 3. 로드 테스트
+	 * 4. 파일 생성 확인 (Saved/SaveGames/HellunaInventory.sav)
+	 * 
+	 * Output Log에서 확인할 것:
+	 * - "[InventorySaveGame]" 로그 메시지들
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Helluna|Inventory|Debug")
+	void DebugTestInventorySaveGame();
 
 protected:
 	// ============================================
