@@ -159,6 +159,91 @@ void AHellunaDefenseGameMode::HandleSeamlessTravelPlayer(AController*& C)
 	}
 }
 
+void AHellunaDefenseGameMode::PostLogin(APlayerController* NewPlayer)
+{
+	// ============================================
+	// 📌 Phase 6: 중도 참여자 로그인 체크
+	// GihyeonMap에 직접 접속하는 플레이어가
+	// 로그인 되어있는지 확인하고, 안 되어있으면 킥
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("========================================"));
+	UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] ★★ PostLogin 호출됨!"));
+	UE_LOG(LogTemp, Warning, TEXT("========================================"));
+	
+	if (!NewPlayer)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[DefenseGameMode] PostLogin: NewPlayer가 nullptr!"));
+		Super::PostLogin(NewPlayer);
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] PostLogin - Controller: %s"), *GetNameSafe(NewPlayer));
+
+	// PlayerState 확인
+	AHellunaPlayerState* PS = NewPlayer->GetPlayerState<AHellunaPlayerState>();
+	
+	if (PS)
+	{
+		FString PlayerId = PS->GetPlayerUniqueId();
+		bool bIsLoggedIn = PS->IsLoggedIn();
+		
+		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] PostLogin - PlayerState: %s"), *GetNameSafe(PS));
+		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] PostLogin - PlayerId: '%s'"), *PlayerId);
+		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] PostLogin - bIsLoggedIn: %s"), bIsLoggedIn ? TEXT("TRUE") : TEXT("FALSE"));
+
+		if (bIsLoggedIn && !PlayerId.IsEmpty())
+		{
+			// ✅ 로그인 된 상태 - 정상 진입
+			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] PostLogin - ✅ 로그인 확인됨! '%s' 정상 진입"), *PlayerId);
+		}
+		else
+		{
+			// ❌ 로그인 안 된 상태 - 킥!
+			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] PostLogin - ❌ 로그인 안 됨! 킥 처리"));
+			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] PostLogin - 킥 대상: %s"), *GetNameSafe(NewPlayer));
+			
+			// GameInstance에서 혹시 등록되어 있으면 제거
+			if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(UGameplayStatics::GetGameInstance(GetWorld())))
+			{
+				if (!PlayerId.IsEmpty())
+				{
+					GI->RegisterLogout(PlayerId);
+					UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] PostLogin - GameInstance에서 '%s' 제거"), *PlayerId);
+				}
+			}
+
+			// 킥 메시지와 함께 연결 종료
+			if (NewPlayer->GetNetConnection())
+			{
+				FString KickReason = TEXT("로그인이 필요합니다. LoginLevel에서 로그인 후 접속해주세요.");
+				UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] PostLogin - 킥 실행! 사유: %s"), *KickReason);
+				
+				// 클라이언트에 메시지 전송 후 킥
+				NewPlayer->ClientReturnToMainMenuWithTextReason(FText::FromString(KickReason));
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] PostLogin - NetConnection 없음, 로컬 플레이어?"));
+			}
+		}
+	}
+	else
+	{
+		// PlayerState가 HellunaPlayerState가 아닌 경우
+		APlayerState* RawPS = NewPlayer->GetPlayerState<APlayerState>();
+		UE_LOG(LogTemp, Error, TEXT("[DefenseGameMode] PostLogin - ❌ HellunaPlayerState 아님!"));
+		UE_LOG(LogTemp, Error, TEXT("[DefenseGameMode] PostLogin - RawPS: %s (Class: %s)"),
+			RawPS ? *GetNameSafe(RawPS) : TEXT("nullptr"),
+			RawPS ? *RawPS->GetClass()->GetName() : TEXT("N/A"));
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("========================================"));
+	UE_LOG(LogTemp, Warning, TEXT(""));
+
+	Super::PostLogin(NewPlayer);
+}
+
 void AHellunaDefenseGameMode::CacheBossSpawnPoints()
 {
 	BossSpawnPoints.Empty();
