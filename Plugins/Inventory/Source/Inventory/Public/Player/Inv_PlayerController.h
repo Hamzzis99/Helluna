@@ -5,97 +5,140 @@
 #include "Inv_PlayerController.generated.h"
 
 /**
+ * ============================================
+ * 📌 Inv_PlayerController
  * 
+ * [Phase B 역할]:
+ * - 게임 플레이 중 플레이어 입력 처리
+ * - 인벤토리, 장비, 상호작용
+ * - 로그인 UI 표시 및 로그인 RPC 처리
+ * 
+ * [로그인 흐름]:
+ * 1. GihyeonMap에서 BeginPlay 호출
+ * 2. 로그인 여부 체크 (PlayerState)
+ * 3. 로그인 안 됨 → 로그인 UI 표시
+ * 4. 로그인 버튼 클릭 → Server_RequestLogin RPC
+ * 5. 서버에서 검증 → Client_LoginResult RPC
+ * 6. 로그인 성공 → UI 숨기고 HeroCharacter 소환 (GameMode)
+ * ============================================
  */
+
 class UInv_InventoryComponent;
 class UInv_EquipmentComponent;
 class UInputMappingContext;
 class UInputAction;
 class UInv_HUDWidget;
-
+class UHellunaLoginWidget;
 
 UCLASS()
 class INVENTORY_API AInv_PlayerController : public APlayerController
 {
 	GENERATED_BODY()
+	
 public:
 	AInv_PlayerController();
 	virtual void Tick(float DeltaSeconds) override;
 
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
-	void ToggleInventory(); // 인벤토리 토글 함수
+	void ToggleInventory();
+
+	// ============================================
+	// 📌 [Phase B] 로그인 관련 함수
+	// ============================================
+
+	/** 로그인 UI에서 버튼 클릭 시 호출 */
+	UFUNCTION(BlueprintCallable, Category = "Login")
+	void OnLoginButtonClicked(const FString& PlayerId, const FString& Password);
+
+	/** 로그인 UI 표시 */
+	UFUNCTION(BlueprintCallable, Category = "Login")
+	void ShowLoginUI();
+
+	/** 로그인 UI 숨기기 */
+	UFUNCTION(BlueprintCallable, Category = "Login")
+	void HideLoginUI();
 
 protected:
 	virtual void BeginPlay() override;
 	virtual void SetupInputComponent() override;
 
-private:
-	//키 등록들?
-	void PrimaryInteract();
-	void CreateHUDWidget(); // 위젯 생성 함수 선언
-	void TraceForInteractables(); // 아이템 & 크래프팅 스테이션 통합 감지
-	
-	//블루프린트에서 인벤토리 컴포넌트를 열기 위해 WeakObjectPtr(참조)를 선언했다고? 이유가 뭘까?
-	TWeakObjectPtr<UInv_InventoryComponent> InventoryComponent;
+	// ============================================
+	// 📌 [Phase B] 로그인 RPC
+	// ============================================
+
+	/** 서버에 로그인 요청 (Server RPC) */
+	UFUNCTION(Server, Reliable)
+	void Server_RequestLogin(const FString& PlayerId, const FString& Password);
+
+	/** 로그인 결과 수신 (Client RPC) */
+	UFUNCTION(Client, Reliable)
+	void Client_LoginResult(bool bSuccess, const FString& ErrorMessage);
+
+	/** 로그인 UI 표시 요청 (Client RPC) */
+	UFUNCTION(Client, Reliable)
+	void Client_ShowLoginUI();
 
 	// ============================================
-	// ⭐ [WeaponBridge] EquipmentComponent 참조
+	// 📌 [Phase B] 로그인 위젯 설정
 	// ============================================
+
+	/** 
+	 * 로그인 위젯 클래스
+	 * Blueprint에서 WBP_HellunaLoginWidget 설정
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Login", meta = (DisplayName = "로그인 위젯 클래스"))
+	TSubclassOf<UHellunaLoginWidget> LoginWidgetClass;
+
+	/** 로그인 위젯 인스턴스 */
+	UPROPERTY()
+	TObjectPtr<UHellunaLoginWidget> LoginWidget;
+
+private:
+	// ============================================
+	// 📌 인벤토리 & 상호작용
+	// ============================================
+	
+	void PrimaryInteract();
+	void CreateHUDWidget();
+	void TraceForInteractables();
+	
+	TWeakObjectPtr<UInv_InventoryComponent> InventoryComponent;
 	TWeakObjectPtr<UInv_EquipmentComponent> EquipmentComponent;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory")
-	TArray<TObjectPtr<UInputMappingContext>> DefaultIMCs; // TArray로부터 단일 포인터를 배열화 시켜가지고 여러개 복수 포인터로 만들 수 있다! 으하하
+	TArray<TObjectPtr<UInputMappingContext>> DefaultIMCs;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory", meta = (DisplayName = "상호작용 액션"))
-	TObjectPtr<UInputAction> PrimaryInteractAction; // 상호작용 액션
+	TObjectPtr<UInputAction> PrimaryInteractAction;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory", meta = (DisplayName = "인벤토리 토글 액션"))
-	TObjectPtr<UInputAction> ToggleInventoryAction; // 인벤토리 키 누르는 액션
+	TObjectPtr<UInputAction> ToggleInventoryAction;
 
-	// ============================================
-	// ⭐ [WeaponBridge] 주무기 전환 InputAction
-	// ⭐ Blueprint에서 지정 (1키)
-	// ============================================
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Weapon", meta = (DisplayName = "주무기 전환 액션"))
 	TObjectPtr<UInputAction> PrimaryWeaponAction;
 
-	// ============================================
-	// ⭐ [WeaponBridge] 보조무기 전환 InputAction
-	// ⭐ Blueprint에서 지정 (2키)
-	// ============================================
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Weapon", meta = (DisplayName = "보조무기 전환 액션"))
 	TObjectPtr<UInputAction> SecondaryWeaponAction;
 
-	// ============================================
-	// ⭐ [WeaponBridge] 주무기 입력 처리 함수
-	// ============================================
 	void HandlePrimaryWeapon();
-
-	// ============================================
-	// ⭐ [WeaponBridge] 보조무기 입력 처리 함수
-	// ============================================
 	void HandleSecondaryWeapon();
 
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory", meta = (DisplayName = "HUD 위젯 클래스"))
-	TSubclassOf<UInv_HUDWidget> HUDWidgetClass; // 위젯 선언
+	TSubclassOf<UInv_HUDWidget> HUDWidgetClass;
 
 	UPROPERTY()
-	TObjectPtr<UInv_HUDWidget> HUDWidget; // 위젯 인스턴스
+	TObjectPtr<UInv_HUDWidget> HUDWidget;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory", meta = (DisplayName = "추적 길이"))	
-	double TraceLength; // 추적 길이
+	double TraceLength;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory", meta = (DisplayName = "아이템 추적 채널"))	
-	TEnumAsByte<ECollisionChannel> ItemTraceChannel; // 추적 채널? 충동 채널? 왜 굳이 Enum을 쓰는지 보자
+	TEnumAsByte<ECollisionChannel> ItemTraceChannel;
 
-	// [추가] 문 작동 요청을 서버로 보내는 함수
 	UFUNCTION(Server, Reliable)
 	void Server_Interact(AActor* TargetActor);
-	
 
-	TWeakObjectPtr<AActor> ThisActor; // 객체에 대한 포인터는 유지하지만 가비지 컬렉션엔 영향은 없음
-	TWeakObjectPtr<AActor> LastActor; // 마지막으로 상호작용한 액터
-	
-	// ⭐ 현재 감지된 크래프팅 스테이션
+	TWeakObjectPtr<AActor> ThisActor;
+	TWeakObjectPtr<AActor> LastActor;
 	TWeakObjectPtr<AActor> CurrentCraftingStation;
 };

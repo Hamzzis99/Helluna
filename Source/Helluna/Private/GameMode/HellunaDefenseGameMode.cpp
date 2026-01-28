@@ -20,6 +20,12 @@
 #include "Login/HellunaAccountSaveGame.h"
 #include "GameFramework/SpectatorPawn.h"
 
+// ============================================
+// 📌 [Phase B] Inv_PlayerController include
+// Client RPC 호출을 위해 필요
+// ============================================
+#include "Player/Inv_PlayerController.h"
+
 #include "debughelper.h"
 
 AHellunaDefenseGameMode::AHellunaDefenseGameMode()
@@ -284,7 +290,12 @@ void AHellunaDefenseGameMode::ProcessLogin(APlayerController* PlayerController, 
 // ============================================
 void AHellunaDefenseGameMode::OnLoginSuccess(APlayerController* PlayerController, const FString& PlayerId)
 {
-	UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] ✅ OnLoginSuccess - ID: '%s'"), *PlayerId);
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║         [DefenseGameMode] OnLoginSuccess                   ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ PlayerId: '%s'"), *PlayerId);
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 
 	// ============================================
 	// 📌 1. 타임아웃 타이머 취소
@@ -293,7 +304,7 @@ void AHellunaDefenseGameMode::OnLoginSuccess(APlayerController* PlayerController
 	{
 		GetWorldTimerManager().ClearTimer(*TimerHandle);
 		LoginTimeoutTimers.Remove(PlayerController);
-		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   - 타임아웃 타이머 취소됨"));
+		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] ✅ 타임아웃 타이머 취소됨"));
 	}
 
 	// ============================================
@@ -302,7 +313,7 @@ void AHellunaDefenseGameMode::OnLoginSuccess(APlayerController* PlayerController
 	if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(UGameplayStatics::GetGameInstance(GetWorld())))
 	{
 		GI->RegisterLogin(PlayerId);
-		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   - GameInstance에 등록됨"));
+		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] ✅ GameInstance에 등록됨"));
 	}
 
 	// ============================================
@@ -311,16 +322,21 @@ void AHellunaDefenseGameMode::OnLoginSuccess(APlayerController* PlayerController
 	if (AHellunaPlayerState* PS = PlayerController->GetPlayerState<AHellunaPlayerState>())
 	{
 		PS->SetLoginInfo(PlayerId);
-		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   - PlayerState에 저장됨"));
+		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] ✅ PlayerState에 저장됨"));
 	}
 
 	// ============================================
-	// 📌 4. 클라이언트에 성공 알림
-	// 
-	// [TODO] Client RPC 추가 필요
-	// 예: PlayerController->Client_LoginResult(true, TEXT(""));
+	// 📌 4. 클라이언트에 성공 알림 (Client RPC)
 	// ============================================
-	UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   - [TODO] 클라이언트에 성공 알림 RPC 필요"));
+	if (AInv_PlayerController* InvPC = Cast<AInv_PlayerController>(PlayerController))
+	{
+		InvPC->Client_LoginResult(true, TEXT(""));
+		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] ✅ Client_LoginResult(true) 호출됨"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] ⚠️ Inv_PlayerController 아님 - Client RPC 스킵"));
+	}
 
 	// ============================================
 	// 📌 5. HeroCharacter 소환
@@ -329,14 +345,13 @@ void AHellunaDefenseGameMode::OnLoginSuccess(APlayerController* PlayerController
 	// 여기서 바로 SpawnHeroCharacter를 호출하지 않고,
 	// 캐릭터 선택 UI를 표시한 후
 	// 선택 완료 시 SpawnHeroCharacter 호출
-	// 
-	// 예:
-	// PlayerController->Client_ShowCharacterSelectUI();
 	// ============================================
-	UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   - HeroCharacter 소환 시작..."));
-	UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   - [TODO] 캐릭터 선택창 구현 시 여기서 UI 표시!"));
+	UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] → HeroCharacter 소환 시작..."));
+	UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] [TODO] 캐릭터 선택창 구현 시 여기서 UI 표시!"));
 	
 	SpawnHeroCharacter(PlayerController);
+
+	UE_LOG(LogTemp, Warning, TEXT(""));
 }
 
 // ============================================
@@ -344,15 +359,27 @@ void AHellunaDefenseGameMode::OnLoginSuccess(APlayerController* PlayerController
 // ============================================
 void AHellunaDefenseGameMode::OnLoginFailed(APlayerController* PlayerController, const FString& ErrorMessage)
 {
-	UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] ❌ OnLoginFailed - 사유: %s"), *ErrorMessage);
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║         [DefenseGameMode] OnLoginFailed                    ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ ErrorMessage: '%s'"), *ErrorMessage);
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 
 	// ============================================
-	// 📌 클라이언트에 실패 알림
-	// 
-	// [TODO] Client RPC 추가 필요
-	// 예: PlayerController->Client_LoginResult(false, ErrorMessage);
+	// 📌 클라이언트에 실패 알림 (Client RPC)
 	// ============================================
-	UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode]   - [TODO] 클라이언트에 실패 알림 RPC 필요"));
+	if (AInv_PlayerController* InvPC = Cast<AInv_PlayerController>(PlayerController))
+	{
+		InvPC->Client_LoginResult(false, ErrorMessage);
+		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] ✅ Client_LoginResult(false) 호출됨"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] ⚠️ Inv_PlayerController 아님 - Client RPC 스킵"));
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT(""));
 }
 
 // ============================================

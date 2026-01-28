@@ -45,6 +45,12 @@ public class Inventory : ModuleRules
 				"EnhancedInput", 
 				"UMG",
 				"InputCore",
+				
+				// ============================================
+				// 📌 [Phase B] Helluna 모듈 의존성 추가
+				// Inv_PlayerController에서 로그인 시스템 사용
+				// ============================================
+				"Helluna",
 				// ... add private dependencies that you statically link with here ...	
 			}
 			);
