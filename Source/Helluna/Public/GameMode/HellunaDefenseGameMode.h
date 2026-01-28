@@ -67,6 +67,13 @@ protected:
 	void OnLoginFailed(APlayerController* PlayerController, const FString& ErrorMessage);
 	void OnLoginTimeout(APlayerController* PlayerController);
 
+	/** 
+	 * LoginController → GameController 교체
+	 * @param LoginController 로그인 완료된 LoginController
+	 * @param PlayerId 로그인한 플레이어 ID
+	 */
+	void SwapToGameController(AHellunaLoginController* LoginController, const FString& PlayerId);
+
 	/** HeroCharacter 소환 및 Possess */
 	void SpawnHeroCharacter(APlayerController* PlayerController);
 

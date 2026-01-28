@@ -262,11 +262,22 @@ void AHellunaDefenseGameMode::OnLoginSuccess(APlayerController* PlayerController
 
 	// HeroCharacter 소환 (딜레이)
 	FTimerHandle TimerHandle;
-	GetWorldTimerManager().SetTimer(TimerHandle, [this, PlayerController]()
+	GetWorldTimerManager().SetTimer(TimerHandle, [this, PlayerController, PlayerId]()
 	{
 		if (IsValid(PlayerController))
 		{
-			SpawnHeroCharacter(PlayerController);
+			// LoginController인 경우 GameController로 교체
+			AHellunaLoginController* LoginController = Cast<AHellunaLoginController>(PlayerController);
+			if (LoginController && LoginController->GetGameControllerClass())
+			{
+				SwapToGameController(LoginController, PlayerId);
+			}
+			else
+			{
+				// GameControllerClass 미설정 시 기존 방식 사용
+				UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] GameControllerClass 미설정! 기존 방식으로 소환"));
+				SpawnHeroCharacter(PlayerController);
+			}
 		}
 	}, 0.5f, false);
 
@@ -310,6 +321,81 @@ void AHellunaDefenseGameMode::OnLoginTimeout(APlayerController* PlayerController
 		FString KickReason = FString::Printf(TEXT("로그인 타임아웃 (%.0f초)"), LoginTimeoutSeconds);
 		PlayerController->ClientReturnToMainMenuWithTextReason(FText::FromString(KickReason));
 	}
+
+	UE_LOG(LogTemp, Warning, TEXT(""));
+}
+
+void AHellunaDefenseGameMode::SwapToGameController(AHellunaLoginController* LoginController, const FString& PlayerId)
+{
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║     [DefenseGameMode] SwapToGameController 🔄              ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ PlayerId: '%s'"), *PlayerId);
+	UE_LOG(LogTemp, Warning, TEXT("║ LoginController: %s"), *GetNameSafe(LoginController));
+
+	if (!LoginController)
+	{
+		UE_LOG(LogTemp, Error, TEXT("║ ❌ LoginController nullptr!                                ║"));
+		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+		return;
+	}
+
+	TSubclassOf<APlayerController> GameControllerClass = LoginController->GetGameControllerClass();
+	if (!GameControllerClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("║ ❌ GameControllerClass 미설정!                             ║"));
+		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+		SpawnHeroCharacter(LoginController);
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("║ GameControllerClass: %s"), *GameControllerClass->GetName());
+
+	// 1. 새 GameController 스폰
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	SpawnParams.Owner = this;
+
+	FVector SpawnLocation = LoginController->GetFocalLocation();
+	FRotator SpawnRotation = LoginController->GetControlRotation();
+
+	APlayerController* NewController = GetWorld()->SpawnActor<APlayerController>(
+		GameControllerClass,
+		SpawnLocation,
+		SpawnRotation,
+		SpawnParams
+	);
+
+	if (!NewController)
+	{
+		UE_LOG(LogTemp, Error, TEXT("║ ❌ 새 Controller 스폰 실패!                                ║"));
+		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+		SpawnHeroCharacter(LoginController);
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("║ NewController: %s"), *NewController->GetName());
+
+	// 2. LoginController의 로그인 UI 정리
+	LoginController->Client_PrepareControllerSwap();
+
+	// 3. SwapPlayerControllers로 안전하게 교체
+	UE_LOG(LogTemp, Warning, TEXT("║ → SwapPlayerControllers 호출...                            ║"));
+	SwapPlayerControllers(LoginController, NewController);
+
+	UE_LOG(LogTemp, Warning, TEXT("║ ✅ Controller 교체 완료!                                   ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+
+	// 4. HeroCharacter 소환 (새 Controller로)
+	FTimerHandle TimerHandle;
+	GetWorldTimerManager().SetTimer(TimerHandle, [this, NewController]()
+	{
+		if (IsValid(NewController))
+		{
+			SpawnHeroCharacter(NewController);
+		}
+	}, 0.3f, false);
 
 	UE_LOG(LogTemp, Warning, TEXT(""));
 }
