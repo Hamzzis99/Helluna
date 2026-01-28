@@ -8,9 +8,47 @@
 // - 서버 ↔ 클라이언트 간 Replicated (동기화)
 // - Seamless Travel 시에도 유지됨
 // 
+// ============================================
+// 📌 핵심 변수:
+// ============================================
+// 
+// FString PlayerUniqueId (Replicated)
+//   - 로그인한 플레이어의 고유 ID
+//   - 로그인 전: "" (빈 문자열)
+//   - 로그인 후: 사용자가 입력한 아이디 (예: "test123")
+//   - ★ 인벤토리 저장 시 이 ID를 키로 사용함!
+// 
+// bool bIsLoggedIn (Replicated)
+//   - 로그인 상태 플래그
+//   - 로그인 전: false
+//   - 로그인 후: true
+// 
+// ============================================
 // 📌 사용 위치:
-// - LoginLevel: 로그인 성공 시 ID 설정
-// - GihyeonMap: 인벤토리 저장/복원 시 플레이어 식별
+// ============================================
+// 
+// [로그인 성공 시] - DefenseGameMode::OnLoginSuccess()
+//   PlayerState->SetLoginInfo(PlayerId);
+//   → PlayerUniqueId = "test123", bIsLoggedIn = true
+// 
+// [로그아웃 시] - DefenseGameMode::Logout()
+//   PlayerState->ClearLoginInfo();
+//   → PlayerUniqueId = "", bIsLoggedIn = false
+// 
+// [인벤토리 저장 시]
+//   FString PlayerId = PlayerState->GetPlayerUniqueId();
+//   InventorySaveGame->SavePlayerInventory(PlayerId, InventoryComponent);
+// 
+// [인벤토리 로드 시]
+//   FString PlayerId = PlayerState->GetPlayerUniqueId();
+//   InventorySaveGame->LoadPlayerInventory(PlayerId, InventoryComponent);
+// 
+// ============================================
+// 📌 주의사항:
+// ============================================
+// - SetLoginInfo(), ClearLoginInfo()는 서버에서만 호출해야 함
+// - Replicated이므로 클라이언트에서 값을 변경해도 서버에 반영 안 됨
+// - HasAuthority() 체크 후 호출할 것
 // 
 // 📌 작성자: Gihyeon
 // 📌 작성일: 2025-01-23

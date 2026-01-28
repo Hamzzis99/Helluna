@@ -1,3 +1,97 @@
+// HellunaDefenseGameMode.cpp
+// GihyeonMap 전용 GameMode 구현
+// 
+// ============================================
+// 📌 파일 구조 (팀원 참고용)
+// ============================================
+// 
+// 이 파일은 크게 두 부분으로 나뉩니다:
+// 
+// ┌─────────────────────────────────────────────────────────────┐
+// │ 🔐 로그인 시스템 (Line ~30 ~ ~550)                          │
+// │   - PostLogin() : 플레이어 접속 시 호출                     │
+// │   - ProcessLogin() : 아이디/비밀번호 검증                   │
+// │   - OnLoginSuccess() : 로그인 성공 처리                     │
+// │   - OnLoginFailed() : 로그인 실패 처리                      │
+// │   - OnLoginTimeout() : 로그인 타임아웃 처리                 │
+// │   - SwapToGameController() : Controller 교체                │
+// │   - SpawnHeroCharacter() : 캐릭터 소환                      │
+// │   - Logout() : 로그아웃 (연결 끊김)                         │
+// │   - HandleSeamlessTravelPlayer() : 맵 이동 후 로그인 유지   │
+// │                                                              │
+// │ 🎮 게임 로직 (Line ~550 이후)                               │
+// │   - EnterDay() : 낮 시작                                    │
+// │   - EnterNight() : 밤 시작                                  │
+// │   - SpawnTestMonsters() : 몬스터 스폰                       │
+// │   - TrySummonBoss() : 보스 소환                             │
+// │   - NotifyMonsterDied() : 몬스터 사망 처리                  │
+// │   - etc...                                                   │
+// └─────────────────────────────────────────────────────────────┘
+// 
+// ============================================
+// 📌 로그인 흐름 상세
+// ============================================
+// 
+// [1] 플레이어 접속
+//     PostLogin() 호출 → 로그인 타임아웃 타이머 시작 (60초)
+// 
+// [2] 로그인 UI에서 ID/PW 입력
+//     LoginWidget → LoginController::OnLoginButtonClicked()
+// 
+// [3] Server RPC 호출
+//     LoginController::Server_RequestLogin() → ProcessLogin()
+// 
+// [4] 계정 검증
+//     ProcessLogin()에서:
+//     ├─ GameInstance.IsPlayerLoggedIn() : 동시 접속 체크
+//     ├─ AccountSaveGame.HasAccount() : 계정 존재 확인
+//     ├─ AccountSaveGame.ValidatePassword() : 비밀번호 검증
+//     └─ AccountSaveGame.CreateAccount() : 새 계정 생성
+// 
+// [5] 로그인 성공
+//     OnLoginSuccess()에서:
+//     ├─ GameInstance.RegisterLogin() : 접속자 목록 추가
+//     ├─ PlayerState.SetLoginInfo() : PlayerUniqueId 설정
+//     │   ★ 이 PlayerUniqueId가 인벤토리 저장의 키로 사용됨!
+//     └─ Client_LoginResult(true) : 클라이언트에 결과 전달
+// 
+// [6] Controller 교체
+//     SwapToGameController()에서:
+//     ├─ LoginController 파괴
+//     ├─ GameController 생성 (BP_InvPlayerController 등)
+//     └─ SpawnHeroCharacter() 호출
+// 
+// [7] 캐릭터 소환
+//     SpawnHeroCharacter()에서:
+//     ├─ HeroCharacter 스폰
+//     ├─ Controller.Possess(캐릭터)
+//     └─ 첫 플레이어면 InitializeGame() (게임 시작!)
+// 
+// [8] 로그아웃 (연결 끊김)
+//     Logout()에서:
+//     ├─ PlayerState.ClearLoginInfo() : 로그인 정보 초기화
+//     └─ GameInstance.RegisterLogout() : 접속자 목록에서 제거
+// 
+// ============================================
+// 📌 관련 클래스
+// ============================================
+// - UHellunaAccountSaveGame : 계정 데이터 저장 (ID/PW)
+// - AHellunaLoginController : 로그인 UI + RPC
+// - UHellunaLoginWidget : 로그인 UI (ID/PW 입력)
+// - AHellunaPlayerState : 로그인된 플레이어 ID 저장 (Replicated)
+// - UMDF_GameInstance : 접속자 목록 관리 (동시접속 체크)
+// 
+// ============================================
+// 📌 인벤토리 시스템과의 연계
+// ============================================
+// - 로그인 성공 시 PlayerState.PlayerUniqueId에 ID 저장
+// - 인벤토리 저장/로드 시 이 ID를 키로 사용
+// - 예: InventorySaveGame->SavePlayerInventory(PlayerUniqueId, Inventory)
+// 
+// 📌 작성자: Gihyeon
+// 📌 작성일: 2025-01-23
+// ============================================
+
 #include "GameMode/HellunaDefenseGameMode.h"
 
 #include "Engine/TargetPoint.h"
@@ -83,6 +177,23 @@ void AHellunaDefenseGameMode::InitializeGame()
 	EnterDay();
 }
 
+// ============================================
+// 🔐 로그인 시스템 - PostLogin
+// ============================================
+// 
+// 📌 호출 시점: 플레이어가 서버에 접속했을 때 (엔진에서 자동 호출)
+// 
+// 📌 처리 흐름:
+//    1. PlayerState 확인
+//    2. 이미 로그인됨? (SeamlessTravel로 이동한 경우)
+//       → YES: 바로 캐릭터 소환 (SpawnHeroCharacter)
+//       → NO: 로그인 타임아웃 타이머 시작
+//    3. 로그인 UI가 자동으로 표시됨 (LoginController.BeginPlay에서)
+// 
+// 📌 주의: 
+//    - PlayerControllerClass가 LoginController로 설정되어 있어야 함
+//    - DefaultPawnClass는 SpectatorPawn (캐릭터는 로그인 후 소환)
+// ============================================
 void AHellunaDefenseGameMode::PostLogin(APlayerController* NewPlayer)
 {
 	UE_LOG(LogTemp, Warning, TEXT(""));
@@ -150,6 +261,28 @@ void AHellunaDefenseGameMode::PostLogin(APlayerController* NewPlayer)
 	Super::PostLogin(NewPlayer);
 }
 
+// ============================================
+// 🔐 로그인 시스템 - ProcessLogin
+// ============================================
+// 
+// 📌 호출 시점: LoginController.Server_RequestLogin() RPC에서 호출
+// 
+// 📌 매개변수:
+//    - PlayerController: 로그인 요청한 플레이어
+//    - PlayerId: 입력한 아이디
+//    - Password: 입력한 비밀번호
+// 
+// 📌 처리 흐름:
+//    1. 동시 접속 체크 (GameInstance.IsPlayerLoggedIn)
+//       → 이미 접속 중인 ID면 거부
+//    2. 계정 존재 확인 (AccountSaveGame.HasAccount)
+//       → 있으면 비밀번호 검증
+//       → 없으면 새 계정 생성
+//    3. OnLoginSuccess() 또는 OnLoginFailed() 호출
+// 
+// 📌 계정 데이터 저장 위치:
+//    Saved/SaveGames/HellunaAccounts.sav
+// ============================================
 void AHellunaDefenseGameMode::ProcessLogin(APlayerController* PlayerController, const FString& PlayerId, const FString& Password)
 {
 	UE_LOG(LogTemp, Warning, TEXT(""));
@@ -218,6 +351,24 @@ void AHellunaDefenseGameMode::ProcessLogin(APlayerController* PlayerController, 
 	UE_LOG(LogTemp, Warning, TEXT(""));
 }
 
+// ============================================
+// 🔐 로그인 시스템 - OnLoginSuccess
+// ============================================
+// 
+// 📌 호출 시점: ProcessLogin()에서 계정 검증 성공 시
+// 
+// 📌 처리 흐름:
+//    1. 로그인 타임아웃 타이머 취소
+//    2. GameInstance.RegisterLogin() - 접속자 목록에 추가
+//    3. PlayerState.SetLoginInfo() - PlayerUniqueId 설정
+//       ★★★ 이 PlayerUniqueId가 인벤토리 저장 키로 사용됨! ★★★
+//    4. Client_LoginResult(true) RPC - 클라이언트에 성공 알림
+//    5. 0.5초 후 SwapToGameController() 호출
+// 
+// 📌 PlayerState.PlayerUniqueId 용도:
+//    - 인벤토리 저장: InventorySaveGame[PlayerUniqueId] = 인벤토리데이터
+//    - 인벤토리 로드: 인벤토리데이터 = InventorySaveGame[PlayerUniqueId]
+// ============================================
 void AHellunaDefenseGameMode::OnLoginSuccess(APlayerController* PlayerController, const FString& PlayerId)
 {
 	UE_LOG(LogTemp, Warning, TEXT(""));
@@ -284,6 +435,12 @@ void AHellunaDefenseGameMode::OnLoginSuccess(APlayerController* PlayerController
 	UE_LOG(LogTemp, Warning, TEXT(""));
 }
 
+// ============================================
+// 🔐 로그인 시스템 - OnLoginFailed
+// ============================================
+// 📌 역할: 로그인 실패 시 클라이언트에 에러 메시지 전달
+// 📌 실패 사유: "이미 접속 중", "비밀번호 불일치", "서버 오류" 등
+// ============================================
 void AHellunaDefenseGameMode::OnLoginFailed(APlayerController* PlayerController, const FString& ErrorMessage)
 {
 	UE_LOG(LogTemp, Warning, TEXT(""));
@@ -302,6 +459,14 @@ void AHellunaDefenseGameMode::OnLoginFailed(APlayerController* PlayerController,
 	UE_LOG(LogTemp, Warning, TEXT(""));
 }
 
+// ============================================
+// 🔐 로그인 시스템 - OnLoginTimeout
+// ============================================
+// 📌 역할: 로그인 타임아웃 시 플레이어 킥
+// 📌 타임아웃 시간: LoginTimeoutSeconds (기본 60초)
+// 📌 타이머 시작: PostLogin()에서 로그인 필요한 경우
+// 📌 타이머 취소: OnLoginSuccess()에서 로그인 성공 시
+// ============================================
 void AHellunaDefenseGameMode::OnLoginTimeout(APlayerController* PlayerController)
 {
 	UE_LOG(LogTemp, Warning, TEXT(""));
@@ -325,6 +490,31 @@ void AHellunaDefenseGameMode::OnLoginTimeout(APlayerController* PlayerController
 	UE_LOG(LogTemp, Warning, TEXT(""));
 }
 
+// ============================================
+// 🔐 로그인 시스템 - SwapToGameController
+// ============================================
+// 
+// 📌 역할: LoginController → GameController 교체
+// 
+// 📌 호출 시점: OnLoginSuccess() 0.5초 후
+// 
+// 📌 왜 Controller를 교체하나?
+//    - LoginController는 로그인 UI만 담당
+//    - 실제 게임 플레이는 GameController (BP_InvPlayerController 등)가 담당
+//    - 로그인 성공 후 UI 전용 Controller를 게임용으로 교체
+// 
+// 📌 처리 흐름:
+//    1. LoginController의 PlayerState 정리 (중복 로그아웃 방지)
+//    2. 새 GameController 스폰
+//    3. Client_PrepareControllerSwap() - 로그인 UI 숨김
+//    4. SwapPlayerControllers() - 안전한 교체 (PlayerState 전이)
+//    5. 새 Controller의 PlayerState에 PlayerId 복원
+//    6. SpawnHeroCharacter() 호출
+// 
+// 📌 주의:
+//    - LoginController.GameControllerClass가 BP에서 설정되어 있어야 함
+//    - 미설정 시 Controller 교체 없이 기존 방식으로 캐릭터 소환
+// ============================================
 void AHellunaDefenseGameMode::SwapToGameController(AHellunaLoginController* LoginController, const FString& PlayerId)
 {
 	UE_LOG(LogTemp, Warning, TEXT(""));
@@ -420,6 +610,31 @@ void AHellunaDefenseGameMode::SwapToGameController(AHellunaLoginController* Logi
 	UE_LOG(LogTemp, Warning, TEXT(""));
 }
 
+// ============================================
+// 🔐 로그인 시스템 - SpawnHeroCharacter
+// ============================================
+// 
+// 📌 역할: 플레이어 캐릭터(HeroCharacter) 소환 및 Possess
+// 
+// 📌 호출 시점:
+//    - SwapToGameController() 0.3초 후
+//    - 또는 SeamlessTravel로 이미 로그인된 경우 PostLogin()에서
+// 
+// 📌 처리 흐름:
+//    1. 기존 Pawn 제거 (SpectatorPawn 등)
+//    2. PlayerStart 위치 찾기
+//    3. HeroCharacter 스폰
+//    4. Controller.Possess(캐릭터)
+//    5. 첫 플레이어인 경우 InitializeGame() 호출 (게임 시작!)
+// 
+// 📌 BP 설정 필수:
+//    - HeroCharacterClass가 설정되어 있어야 함
+//    - 맵에 PlayerStart가 배치되어 있어야 함 (없으면 0,0,200 위치에 소환)
+// 
+// 📌 첫 플레이어 소환 후:
+//    - InitializeGame()에서 낮/밤 사이클 시작
+//    - 몬스터 스포너 활성화
+// ============================================
 void AHellunaDefenseGameMode::SpawnHeroCharacter(APlayerController* PlayerController)
 {
 	UE_LOG(LogTemp, Warning, TEXT(""));
@@ -530,6 +745,33 @@ bool AHellunaDefenseGameMode::IsPlayerLoggedIn(const FString& PlayerId) const
 	return false;
 }
 
+// ============================================
+// 🔐 로그인 시스템 - Logout
+// ============================================
+// 
+// 📌 호출 시점: 플레이어가 서버에서 나갈 때 (엔진에서 자동 호출)
+//    - 클라이언트 종료
+//    - 네트워크 연결 끊김
+//    - 타임아웃 킥
+// 
+// 📌 처리 흐름:
+//    1. 로그인 타임아웃 타이머 취소 (있는 경우)
+//    2. PlayerState에서 PlayerId 가져오기
+//    3. GameInstance.RegisterLogout() - 접속자 목록에서 제거
+//       → 다른 클라이언트가 같은 ID로 로그인 가능해짐
+// 
+// 📌 TODO: 여기에 인벤토리 저장 로직 추가 예정
+//    if (!PlayerId.IsEmpty())
+//    {
+//        // 인벤토리 저장
+//        InventorySaveGame->SavePlayerInventory(PlayerId, InventoryComponent);
+//    }
+// 
+// 📌 주의:
+//    - SwapToGameController()에서 LoginController 파괴 시에도 호출됨
+//    - 중복 로그아웃 방지를 위해 SwapToGameController()에서 
+//      미리 PlayerState.ClearLoginInfo() 호출함
+// ============================================
 void AHellunaDefenseGameMode::Logout(AController* Exiting)
 {
 	UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] Logout: %s"), *GetNameSafe(Exiting));
@@ -562,6 +804,24 @@ void AHellunaDefenseGameMode::Logout(AController* Exiting)
 	Super::Logout(Exiting);
 }
 
+// ============================================
+// 🔐 로그인 시스템 - HandleSeamlessTravelPlayer
+// ============================================
+// 
+// 📌 호출 시점: SeamlessTravel(맵 이동) 완료 후
+// 
+// 📌 역할: 맵 이동 후에도 로그인 상태 유지
+// 
+// 📌 처리 흐름:
+//    1. 이전 PlayerState에서 PlayerId와 로그인 상태 저장
+//    2. Super::HandleSeamlessTravelPlayer() 호출 (새 PlayerState 생성)
+//    3. 새 PlayerState에 PlayerId 복원
+// 
+// 📌 SeamlessTravel이란?
+//    - 연결 끊김 없이 맵 이동
+//    - bUseSeamlessTravel = true 설정 필요
+//    - PlayerState는 새로 생성되지만 로그인 정보는 복원해야 함
+// ============================================
 void AHellunaDefenseGameMode::HandleSeamlessTravelPlayer(AController*& C)
 {
 	UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] HandleSeamlessTravelPlayer"));
@@ -593,7 +853,18 @@ void AHellunaDefenseGameMode::HandleSeamlessTravelPlayer(AController*& C)
 }
 
 // ============================================
-// 게임 로직
+// 🎮 게임 로직 시작 (비로그인 관련)
+// ============================================
+// 
+// 아래 함수들은 로그인과 무관한 게임 로직입니다:
+// - CacheBossSpawnPoints() : 보스 스폰 포인트 캐싱
+// - CacheMonsterSpawnPoints() : 몬스터 스폰 포인트 캐싱
+// - SpawnTestMonsters() : 테스트 몬스터 스폰
+// - TrySummonBoss() : 보스 소환
+// - RestartGame() : 게임 재시작
+// - SetBossReady() : 보스 준비 상태 설정
+// - EnterDay() / EnterNight() : 낮/밤 사이클
+// - RegisterAliveMonster() / NotifyMonsterDied() : 몬스터 카운트
 // ============================================
 
 void AHellunaDefenseGameMode::CacheBossSpawnPoints()

@@ -13,7 +13,68 @@
 // Saved/SaveGames/HellunaAccounts.sav
 // 
 // 📌 사용 위치:
-// - HellunaLoginGameMode에서 로그인 검증 시 사용
+// - HellunaDefenseGameMode::BeginPlay() 에서 LoadOrCreate()로 로드
+// - HellunaDefenseGameMode::ProcessLogin() 에서 계정 검증/생성
+// 
+// ============================================
+// 📌 로그인 시스템 전체 흐름:
+// ============================================
+// 
+// [1단계: 클라이언트 → 서버 로그인 요청]
+// ┌─────────────────────────────────────────────────────────────┐
+// │ LoginWidget (UI)                                             │
+// │   ↓ 사용자가 ID/PW 입력 후 로그인 버튼 클릭                 │
+// │ LoginController::OnLoginButtonClicked()                      │
+// │   ↓ Server RPC 호출                                          │
+// │ LoginController::Server_RequestLogin()  ──────────────────→  │
+// └─────────────────────────────────────────────────────────────┘
+// 
+// [2단계: 서버에서 계정 검증]
+// ┌─────────────────────────────────────────────────────────────┐
+// │ DefenseGameMode::ProcessLogin()                              │
+// │   ├─ AccountSaveGame->HasAccount() : 계정 존재 확인          │
+// │   ├─ AccountSaveGame->ValidatePassword() : 비밀번호 검증     │
+// │   └─ AccountSaveGame->CreateAccount() : 새 계정 생성         │
+// │                                                               │
+// │ 로그인 성공 시:                                               │
+// │   ├─ GameInstance->RegisterLogin() : 접속자 목록에 추가      │
+// │   ├─ PlayerState->SetLoginInfo() : ID를 PlayerState에 저장   │
+// │   └─ Client RPC로 결과 전달                                   │
+// └─────────────────────────────────────────────────────────────┘
+// 
+// [3단계: 캐릭터 소환]
+// ┌─────────────────────────────────────────────────────────────┐
+// │ DefenseGameMode::SwapToGameController()                      │
+// │   ↓ LoginController → GameController 교체                   │
+// │ DefenseGameMode::SpawnHeroCharacter()                        │
+// │   ↓ 캐릭터 스폰 및 Possess                                   │
+// │ DefenseGameMode::InitializeGame()                            │
+// │   ↓ 첫 플레이어 소환 후 게임 시작                            │
+// └─────────────────────────────────────────────────────────────┘
+// 
+// [로그아웃 시]
+// ┌─────────────────────────────────────────────────────────────┐
+// │ DefenseGameMode::Logout()                                    │
+// │   ├─ PlayerState->ClearLoginInfo() : 로그인 정보 초기화      │
+// │   └─ GameInstance->RegisterLogout() : 접속자 목록에서 제거   │
+// └─────────────────────────────────────────────────────────────┘
+// 
+// ============================================
+// 📌 관련 클래스:
+// ============================================
+// - UHellunaAccountSaveGame : 계정 데이터 저장 (이 파일)
+// - AHellunaLoginController : 로그인 UI + RPC 처리
+// - UHellunaLoginWidget : ID/PW 입력 UI
+// - AHellunaPlayerState : 로그인된 ID 저장 (Replicated)
+// - UMDF_GameInstance : 현재 접속자 목록 관리
+// - AHellunaDefenseGameMode : 로그인 검증 + 캐릭터 소환
+// 
+// ============================================
+// 📌 인벤토리 세이브 시스템과의 연계:
+// ============================================
+// - PlayerState->PlayerUniqueId 를 키로 사용하여 인벤토리 저장/로드
+// - 동일한 SaveGame 패턴 사용 (LoadOrCreate, Save)
+// - 저장 파일: HellunaInventory.sav (별도 파일)
 // 
 // 📌 작성자: Gihyeon
 // 📌 작성일: 2025-01-23

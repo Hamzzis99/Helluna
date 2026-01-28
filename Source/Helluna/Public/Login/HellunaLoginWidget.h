@@ -9,8 +9,54 @@ class UTextBlock;
 class UButton;
 
 /**
- * GihyeonMap 전용 로그인 위젯
- * ID/PW 입력 및 로그인 버튼
+ * ============================================
+ * 📌 HellunaLoginWidget
+ * ============================================
+ * 
+ * 로그인 UI 위젯
+ * ID/PW 입력 필드와 로그인 버튼을 포함
+ * 
+ * ============================================
+ * 📌 역할:
+ * ============================================
+ * 1. 사용자 입력 받기 (ID, 비밀번호)
+ * 2. 로그인 버튼 클릭 이벤트 처리
+ * 3. 로그인 결과 메시지 표시
+ * 4. 로딩 상태 관리 (버튼 비활성화)
+ * 
+ * ============================================
+ * 📌 필수 바인딩 (BP에서 설정):
+ * ============================================
+ * - IDInputTextBox : 아이디 입력 필드 (EditableTextBox)
+ * - PasswordInputTextBox : 비밀번호 입력 필드 (EditableTextBox)
+ * - LoginButton : 로그인 버튼 (Button)
+ * - MessageText : 결과 메시지 텍스트 (TextBlock)
+ * 
+ * ============================================
+ * 📌 사용 흐름:
+ * ============================================
+ * 
+ * [위젯 생성]
+ * LoginController::ShowLoginWidget()
+ *   └─ CreateWidget<UHellunaLoginWidget>()
+ * 
+ * [로그인 버튼 클릭]
+ * OnLoginButtonClicked()
+ *   ├─ GetPlayerId(), GetPassword() 로 입력값 가져옴
+ *   ├─ 유효성 검사 (빈 값 체크)
+ *   └─ LoginController->OnLoginButtonClicked(PlayerId, Password)
+ * 
+ * [결과 표시]
+ * ShowMessage(Message, bIsError)
+ *   └─ MessageText에 메시지 표시 (에러 시 빨간색)
+ * 
+ * [로딩 상태]
+ * SetLoadingState(true)
+ *   └─ 로그인 버튼 비활성화
+ * SetLoadingState(false)
+ *   └─ 로그인 버튼 활성화
+ * 
+ * 📌 작성자: Gihyeon
  */
 UCLASS()
 class HELLUNA_API UHellunaLoginWidget : public UUserWidget
@@ -21,32 +67,62 @@ protected:
 	virtual void NativeConstruct() override;
 
 public:
+	// ============================================
+	// 📌 외부 호출 함수 (LoginController에서 호출)
+	// ============================================
+	
+	/**
+	 * 메시지 표시
+	 * 
+	 * @param Message - 표시할 메시지
+	 * @param bIsError - true면 빨간색, false면 흰색
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Login")
 	void ShowMessage(const FString& Message, bool bIsError);
 
+	/**
+	 * 로딩 상태 설정
+	 * 
+	 * @param bLoading - true면 버튼 비활성화
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Login")
 	void SetLoadingState(bool bLoading);
 
+	/** 입력된 아이디 반환 */
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Login")
 	FString GetPlayerId() const;
 
+	/** 입력된 비밀번호 반환 */
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Login")
 	FString GetPassword() const;
 
 protected:
+	// ============================================
+	// 📌 내부 이벤트 핸들러
+	// ============================================
+	
+	/** 로그인 버튼 클릭 시 호출 */
 	UFUNCTION()
 	void OnLoginButtonClicked();
 
 protected:
+	// ============================================
+	// 📌 UI 바인딩 (BP에서 동일한 이름으로 설정 필수!)
+	// ============================================
+	
+	/** 아이디 입력 필드 */
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UEditableTextBox> IDInputTextBox;
 
+	/** 비밀번호 입력 필드 */
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UEditableTextBox> PasswordInputTextBox;
 
+	/** 로그인 버튼 */
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UButton> LoginButton;
 
+	/** 결과 메시지 텍스트 */
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UTextBlock> MessageText;
 };
