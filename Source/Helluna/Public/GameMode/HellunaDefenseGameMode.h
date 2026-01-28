@@ -33,6 +33,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Defense|Boss")
 	void SetBossReady(bool bReady);
 
+	// ============================================
+	// 📌 게임 초기화 (캐릭터 소환 후 호출)
+	// ============================================
+	
+	/** 게임이 초기화되었는지 여부 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Defense")
+	bool IsGameInitialized() const { return bGameInitialized; }
+
+	/** 게임 초기화 (첫 플레이어 캐릭터 소환 후 호출) */
+	UFUNCTION(BlueprintCallable, Category = "Defense")
+	void InitializeGame();
+
 protected:
 	/** 로그인 성공 후 소환할 캐릭터 */
 	UPROPERTY(EditDefaultsOnly, Category = "Login", meta = (DisplayName = "히어로 캐릭터 클래스"))
@@ -47,17 +59,16 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Login", meta = (DisplayName = "로그인 타임아웃 (초)"))
 	float LoginTimeoutSeconds = 60.0f;
 
+	/** 게임 초기화 여부 (첫 플레이어 캐릭터 소환 후 true) */
+	UPROPERTY(BlueprintReadOnly, Category = "Defense")
+	bool bGameInitialized = false;
+
 	void OnLoginSuccess(APlayerController* PlayerController, const FString& PlayerId);
 	void OnLoginFailed(APlayerController* PlayerController, const FString& ErrorMessage);
 	void OnLoginTimeout(APlayerController* PlayerController);
 
-	/**
-	 * Controller 교체 + HeroCharacter 소환
-	 * LoginController → GameController(BP에서 설정) + HeroCharacter
-	 */
-	void SwapToGameController(AHellunaLoginController* LoginController, const FString& PlayerId);
-
-	void SpawnHeroCharacter(APlayerController* NewController);
+	/** HeroCharacter 소환 및 Possess */
+	void SpawnHeroCharacter(APlayerController* PlayerController);
 
 	// 보스 관련
 	UPROPERTY(EditDefaultsOnly, Category = "Defense|Boss")

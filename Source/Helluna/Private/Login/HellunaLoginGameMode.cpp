@@ -25,27 +25,12 @@ void AHellunaLoginGameMode::BeginPlay()
 	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
 	UE_LOG(LogTemp, Warning, TEXT("║ PlayerControllerClass: %s"), PlayerControllerClass ? *PlayerControllerClass->GetName() : TEXT("nullptr"));
 	UE_LOG(LogTemp, Warning, TEXT("║ GameMap: %s"), GameMap.IsNull() ? TEXT("미설정!") : *GameMap.GetAssetName());
-	UE_LOG(LogTemp, Warning, TEXT("║ NetMode: %d"), static_cast<int32>(GetNetMode()));
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
-
-	// Dedicated Server는 UI가 없으므로 자동으로 게임 맵으로 이동
-	if (GetNetMode() == NM_DedicatedServer)
-	{
-		UE_LOG(LogTemp, Warning, TEXT(""));
-		UE_LOG(LogTemp, Warning, TEXT("┌────────────────────────────────────────────────────────────┐"));
-		UE_LOG(LogTemp, Warning, TEXT("│ [LoginGameMode] Dedicated Server 감지!                     │"));
-		UE_LOG(LogTemp, Warning, TEXT("│ → 자동으로 GameMap으로 이동합니다...                       │"));
-		UE_LOG(LogTemp, Warning, TEXT("└────────────────────────────────────────────────────────────┘"));
-		UE_LOG(LogTemp, Warning, TEXT(""));
-		
-		TravelToGameMap();
-		return;
-	}
-
 	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ [사용법]                                                   ║"));
+	UE_LOG(LogTemp, Warning, TEXT("║ [사용법] (클라이언트 전용)                                 ║"));
 	UE_LOG(LogTemp, Warning, TEXT("║ • IP 빈칸 → '시작' 버튼 → 호스트로 서버 시작              ║"));
 	UE_LOG(LogTemp, Warning, TEXT("║ • IP 입력 → '접속' 버튼 → 클라이언트로 서버 접속          ║"));
+	UE_LOG(LogTemp, Warning, TEXT("║                                                            ║"));
+	UE_LOG(LogTemp, Warning, TEXT("║ ※ Dedicated Server는 GihyeonMap에서 바로 시작합니다      ║"));
 	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 	UE_LOG(LogTemp, Warning, TEXT(""));
 }
