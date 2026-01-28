@@ -192,12 +192,28 @@ void AHellunaHeroCharacter::PossessedBy(AController* NewController)
 
 void AHellunaHeroCharacter::Input_AbilityInputPressed(FGameplayTag InInputTag)
 {
+	// ============================================
+	// 🔍 [디버깅] 입력 처리 추적
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔══════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║  🎮 [HeroCharacter] Input_AbilityInputPressed 호출           ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠══════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ 캐릭터: %s"), *GetName());
+	UE_LOG(LogTemp, Warning, TEXT("║ InputTag: %s"), *InInputTag.ToString());
+	UE_LOG(LogTemp, Warning, TEXT("║ IsLocallyControlled: %s"), IsLocallyControlled() ? TEXT("TRUE ✅") : TEXT("FALSE ❌"));
+	UE_LOG(LogTemp, Warning, TEXT("║ HasAuthority: %s"), HasAuthority() ? TEXT("TRUE (서버)") : TEXT("FALSE (클라)"));
+	UE_LOG(LogTemp, Warning, TEXT("║ ASC 유효: %s"), HellunaAbilitySystemComponent ? TEXT("TRUE ✅") : TEXT("FALSE ❌"));
+	UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════╝"));
 
 	if (HellunaAbilitySystemComponent)
 	{	
 		HellunaAbilitySystemComponent->OnAbilityInputPressed(InInputTag);
 	}
-
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("⛔ [HeroCharacter] ASC가 nullptr!"));
+	}
 }
 
 void AHellunaHeroCharacter::Input_AbilityInputReleased(FGameplayTag InInputTag)
