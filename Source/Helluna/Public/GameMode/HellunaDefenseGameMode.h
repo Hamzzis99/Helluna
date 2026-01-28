@@ -8,6 +8,7 @@ class ATargetPoint;
 class UHellunaAccountSaveGame;
 class AHellunaPlayerState;
 class AHellunaLoginController;
+class UDataTable;
 
 /**
  * ============================================
@@ -278,4 +279,92 @@ public:
 
 	void CacheMonsterSpawnPoints();
 	void SpawnTestMonsters();
+
+	// ============================================
+	// 📌 인벤토리 저장 시스템 (Phase 1~6)
+	// ============================================
+	// 
+	// 인벤토리 저장/로드에 필요한 변수와 함수들
+	// 
+	// ▶ 저장 시점:
+	//   1. Logout() - 플레이어 연결 끊김
+	//   2. 맵 이동 - Server_SaveAndMoveLevel()
+	//   3. 자동저장 - AutoSaveIntervalSeconds 마다
+	// 
+	// ▶ 로드 시점:
+	//   1. SpawnHeroCharacter() 직후
+	// 
+	// ============================================
+
+public:
+	// ============================================
+	// 📌 [Phase 1] DataTable 매핑 테스트
+	// ============================================
+	
+	/**
+	 * [디버깅] ItemType → ActorClass 매핑 테스트
+	 * 
+	 * 콘솔에서 호출 방법:
+	 * 1. 에디터에서 ~ 키로 콘솔 열기
+	 * 2. "ke * DebugTestItemTypeMapping" 입력
+	 * 
+	 * Output Log에서 확인할 것:
+	 * - "[ItemTypeMapping] 매핑 성공" 메시지
+	 * - 5개 아이템 모두 매핑 성공해야 함
+	 * - 매핑 실패 시 DataTable 행 추가 확인!
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Helluna|Inventory|Debug")
+	void DebugTestItemTypeMapping();
+
+	/**
+	 * [디버깅] DataTable의 모든 매핑 출력
+	 * 
+	 * 콘솔에서 호출 방법:
+	 * "ke * DebugPrintAllItemMappings"
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Helluna|Inventory|Debug")
+	void DebugPrintAllItemMappings();
+
+protected:
+	// ============================================
+	// 📌 [Phase 1] DataTable 참조
+	// ============================================
+	
+	/**
+	 * ItemType(GameplayTag) → Actor Blueprint 클래스 매핑 테이블
+	 * 
+	 * ▶ 설정 방법 (BP에서):
+	 *   1. BP_DefenseGameMode 열기
+	 *   2. Details 패널에서 "Item Type Mapping Data Table" 찾기
+	 *   3. DT_ItemTypeMapping 선택
+	 * 
+	 * ▶ 사용 목적:
+	 *   - 인벤토리 로드 시 GameplayTag로 Actor 클래스 조회
+	 *   - Actor를 임시 스폰하여 ItemManifest 추출
+	 * 
+	 * ▶ DataTable 위치: Content/Data/Inventory/DT_ItemTypeMapping
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Helluna|Inventory", 
+		meta = (DisplayName = "아이템 타입 매핑 DataTable"))
+	TObjectPtr<UDataTable> ItemTypeMappingDataTable;
+
+	// ============================================
+	// 📌 [Phase 4] 자동저장 설정
+	// ============================================
+	
+	/**
+	 * 자동저장 주기 (초 단위)
+	 * 
+	 * ▶ 기본값: 300초 (5분)
+	 * ▶ BP에서 수정 가능
+	 * ▶ 0으로 설정 시 자동저장 비활성화
+	 * 
+	 * 예: 60.0f = 1분마다 자동저장
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Helluna|Inventory|AutoSave",
+		meta = (DisplayName = "자동저장 주기 (초)", ClampMin = "0", UIMin = "0"))
+	float AutoSaveIntervalSeconds = 300.0f;
+
+	/** 자동저장 타이머 핸들 */
+	FTimerHandle AutoSaveTimerHandle;
 };

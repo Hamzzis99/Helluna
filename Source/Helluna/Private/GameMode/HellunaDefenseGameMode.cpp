@@ -96,7 +96,14 @@
 
 #include "Engine/TargetPoint.h"
 #include "Kismet/GameplayStatics.h"
-#include "EngineUtils.h"                 
+#include "EngineUtils.h"
+
+// ============================================
+// 📌 인벤토리 저장 시스템 관련 헤더
+// ============================================
+#include "Inventory/HellunaItemTypeMapping.h"  // Phase 1: DataTable 매핑
+#include "Engine/DataTable.h"                   // DataTable 사용
+#include "GameplayTagContainer.h"               // FGameplayTag                 
 #include "GameFramework/PlayerController.h"
 #include "GameMode/HellunaDefenseGameState.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
@@ -148,6 +155,42 @@ void AHellunaDefenseGameMode::BeginPlay()
 
 	// ※ EnterDay() 여기서 호출 안함!
 	// ※ 첫 플레이어 캐릭터 소환 후 InitializeGame()에서 호출
+
+	// ============================================
+	// 📦 [Phase 1] DataTable 매핑 자동 테스트
+	// ============================================
+	// 
+	// PIE 시작 시 자동으로 매핑 테스트 실행
+	// Output Log에서 결과 확인!
+	// 
+	// ▶ 테스트 조건: 
+	//    - 서버에서만 실행 (HasAuthority)
+	//    - ItemTypeMappingDataTable이 설정되어 있을 때만
+	// 
+	// ▶ 테스트 비활성화 방법:
+	//    - BP_DefenseGameMode에서 DataTable 설정 해제
+	//    - 또는 아래 코드 주석 처리
+	// ============================================
+#if WITH_EDITOR
+	if (IsValid(ItemTypeMappingDataTable))
+	{
+		UE_LOG(LogTemp, Warning, TEXT(""));
+		UE_LOG(LogTemp, Warning, TEXT("🔧 [자동 테스트] DataTable 매핑 테스트 시작..."));
+		UE_LOG(LogTemp, Warning, TEXT("   (이 메시지는 에디터에서만 표시됩니다)"));
+		UE_LOG(LogTemp, Warning, TEXT(""));
+		
+		// 테스트 함수 호출
+		DebugTestItemTypeMapping();
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT(""));
+		UE_LOG(LogTemp, Warning, TEXT("⚠️ [자동 테스트] ItemTypeMappingDataTable 미설정!"));
+		UE_LOG(LogTemp, Warning, TEXT("   → BP_DefenseGameMode에서 DataTable 설정 필요"));
+		UE_LOG(LogTemp, Warning, TEXT("   → 설정 후 PIE 재시작하면 자동 테스트 실행됨"));
+		UE_LOG(LogTemp, Warning, TEXT(""));
+	}
+#endif
 }
 
 void AHellunaDefenseGameMode::InitializeGame()
@@ -1045,4 +1088,175 @@ void AHellunaDefenseGameMode::NotifyMonsterDied(AActor* DeadMonster)
 		GetWorldTimerManager().ClearTimer(TimerHandle_ToDay);
 		GetWorldTimerManager().SetTimer(TimerHandle_ToDay, this, &ThisClass::EnterDay, TestNightFailToDayDelay, false);
 	}
+}
+
+// ============================================
+// ============================================
+// 
+// 📦 인벤토리 저장 시스템 구현
+// 
+// ============================================
+// ============================================
+
+// ============================================
+// 📌 [Phase 1] DataTable 매핑 테스트
+// ============================================
+
+/**
+ * DebugTestItemTypeMapping
+ * 
+ * 현재 등록된 5개 아이템의 GameplayTag → Actor 클래스 매핑이
+ * 올바르게 작동하는지 테스트합니다.
+ * 
+ * ▶ 호출 방법 (에디터 콘솔):
+ *   ~ 키 → "ke * DebugTestItemTypeMapping" 입력
+ * 
+ * ▶ Output Log에서 확인할 것:
+ *   1. "[ItemTypeMapping] 매핑 성공: GameItems.xxx → BP_Inv_xxx" 메시지
+ *   2. 5개 모두 성공해야 함
+ *   3. 실패 시 DataTable에 해당 행이 있는지 확인!
+ * 
+ * ▶ 테스트 대상 아이템:
+ *   - GameItems.Equipment.Weapons.Axe
+ *   - GameItems.Consumables.Potions.Blue.Small
+ *   - GameItems.Consumables.Potions.Red.Small
+ *   - GameItems.Craftables.FireFernFruit
+ *   - GameItems.Craftables.LuminDaisy
+ */
+void AHellunaDefenseGameMode::DebugTestItemTypeMapping()
+{
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║   [Phase 1] DataTable 매핑 테스트 시작                     ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+
+	// ============================================
+	// 1단계: DataTable 유효성 검사
+	// ============================================
+	if (!IsValid(ItemTypeMappingDataTable))
+	{
+		UE_LOG(LogTemp, Error, TEXT(""));
+		UE_LOG(LogTemp, Error, TEXT("❌ [테스트 실패] ItemTypeMappingDataTable이 설정되지 않았습니다!"));
+		UE_LOG(LogTemp, Error, TEXT(""));
+		UE_LOG(LogTemp, Error, TEXT("📋 해결 방법:"));
+		UE_LOG(LogTemp, Error, TEXT("   1. BP_DefenseGameMode 열기"));
+		UE_LOG(LogTemp, Error, TEXT("   2. Details 패널에서 '아이템 타입 매핑 DataTable' 찾기"));
+		UE_LOG(LogTemp, Error, TEXT("   3. DT_ItemTypeMapping 선택"));
+		UE_LOG(LogTemp, Error, TEXT(""));
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("✅ DataTable 유효! (%s)"), *ItemTypeMappingDataTable->GetName());
+	UE_LOG(LogTemp, Warning, TEXT(""));
+
+	// ============================================
+	// 2단계: 테스트할 GameplayTag 목록
+	// ============================================
+	// 
+	// 이 태그들은 Inv_ItemTags.cpp에 정의되어 있음
+	// 새 아이템 추가 시 여기에도 추가하면 테스트 가능!
+	// 
+	TArray<FString> TestTags = {
+		TEXT("GameItems.Equipment.Weapons.Axe"),           // 도끼 (장비)
+		TEXT("GameItems.Consumables.Potions.Blue.Small"),  // 파란 포션 (소비)
+		TEXT("GameItems.Consumables.Potions.Red.Small"),   // 빨간 포션 (소비)
+		TEXT("GameItems.Craftables.FireFernFruit"),        // 불꽃 열매 (재료)
+		TEXT("GameItems.Craftables.LuminDaisy"),           // 빛나는 꽃 (재료)
+	};
+
+	UE_LOG(LogTemp, Warning, TEXT("📋 테스트 대상: %d개 아이템"), TestTags.Num());
+	UE_LOG(LogTemp, Warning, TEXT("────────────────────────────────────────────────────────────"));
+
+	// ============================================
+	// 3단계: 각 태그별 매핑 테스트
+	// ============================================
+	int32 SuccessCount = 0;
+	int32 FailCount = 0;
+
+	for (const FString& TagString : TestTags)
+	{
+		// GameplayTag 생성
+		FGameplayTag TestTag = FGameplayTag::RequestGameplayTag(FName(*TagString), false);
+		
+		if (!TestTag.IsValid())
+		{
+			UE_LOG(LogTemp, Error, TEXT("❌ [%d] 태그 생성 실패: %s"), FailCount + SuccessCount + 1, *TagString);
+			UE_LOG(LogTemp, Error, TEXT("      → GameplayTag가 등록되지 않았습니다! (Inv_ItemTags.cpp 확인)"));
+			FailCount++;
+			continue;
+		}
+
+		// DataTable에서 Actor 클래스 조회
+		TSubclassOf<AActor> FoundClass = UHellunaItemTypeMapping::GetActorClassFromItemType(
+			ItemTypeMappingDataTable, 
+			TestTag
+		);
+
+		if (FoundClass)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("✅ [%d] 매핑 성공!"), SuccessCount + FailCount + 1);
+			UE_LOG(LogTemp, Warning, TEXT("      태그: %s"), *TagString);
+			UE_LOG(LogTemp, Warning, TEXT("      클래스: %s"), *FoundClass->GetName());
+			SuccessCount++;
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("❌ [%d] 매핑 실패!"), SuccessCount + FailCount + 1);
+			UE_LOG(LogTemp, Error, TEXT("      태그: %s"), *TagString);
+			UE_LOG(LogTemp, Error, TEXT("      → DataTable에 이 태그의 행이 없습니다!"));
+			FailCount++;
+		}
+	}
+
+	// ============================================
+	// 4단계: 테스트 결과 요약
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("────────────────────────────────────────────────────────────"));
+	UE_LOG(LogTemp, Warning, TEXT("📊 테스트 결과:"));
+	UE_LOG(LogTemp, Warning, TEXT("   ✅ 성공: %d개"), SuccessCount);
+	UE_LOG(LogTemp, Warning, TEXT("   ❌ 실패: %d개"), FailCount);
+	UE_LOG(LogTemp, Warning, TEXT(""));
+
+	if (FailCount == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("🎉 모든 매핑 테스트 통과! Phase 1 완료!"));
+		UE_LOG(LogTemp, Warning, TEXT("   → Phase 2 (SaveGame 클래스) 진행 가능"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("⚠️ 일부 매핑 실패! DataTable 확인 필요!"));
+		UE_LOG(LogTemp, Error, TEXT(""));
+		UE_LOG(LogTemp, Error, TEXT("📋 해결 방법:"));
+		UE_LOG(LogTemp, Error, TEXT("   1. DT_ItemTypeMapping 열기"));
+		UE_LOG(LogTemp, Error, TEXT("   2. 실패한 태그에 해당하는 행 추가"));
+		UE_LOG(LogTemp, Error, TEXT("   3. ItemType에 정확한 GameplayTag 입력"));
+		UE_LOG(LogTemp, Error, TEXT("   4. ItemActorClass에 해당 BP 선택"));
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║   [Phase 1] DataTable 매핑 테스트 완료                     ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+	UE_LOG(LogTemp, Warning, TEXT(""));
+}
+
+/**
+ * DebugPrintAllItemMappings
+ * 
+ * DataTable에 등록된 모든 매핑을 Output Log에 출력합니다.
+ * 어떤 아이템들이 등록되어 있는지 한눈에 확인할 때 사용!
+ * 
+ * ▶ 호출 방법 (에디터 콘솔):
+ *   ~ 키 → "ke * DebugPrintAllItemMappings" 입력
+ */
+void AHellunaDefenseGameMode::DebugPrintAllItemMappings()
+{
+	if (!IsValid(ItemTypeMappingDataTable))
+	{
+		UE_LOG(LogTemp, Error, TEXT("❌ ItemTypeMappingDataTable이 설정되지 않았습니다!"));
+		return;
+	}
+
+	// 유틸리티 함수 호출 (HellunaItemTypeMapping.cpp에 구현됨)
+	UHellunaItemTypeMapping::DebugPrintAllMappings(ItemTypeMappingDataTable);
 }
