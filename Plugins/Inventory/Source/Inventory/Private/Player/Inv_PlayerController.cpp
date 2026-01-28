@@ -1,9 +1,3 @@
-// Inv_PlayerController.cpp
-// 
-// ============================================
-// 📌 수정일: 2025-01-28 (Phase B - 로그인 RPC 추가)
-// ============================================
-
 #include "Player/Inv_PlayerController.h"
 
 #include "EnhancedInputComponent.h"
@@ -18,24 +12,11 @@
 #include "Widgets/HUD/Inv_HUDWidget.h"
 #include "Interfaces/Inv_Interface_Primary.cpp"
 
-// ============================================
-// 📌 [Phase B] 로그인 관련 include
-// ============================================
-#include "Login/HellunaLoginWidget.h"
-#include "GameMode/HellunaDefenseGameMode.h"
-#include "Player/HellunaPlayerState.h"
-
 AInv_PlayerController::AInv_PlayerController()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	TraceLength = 500.0;
 	ItemTraceChannel = ECC_GameTraceChannel1;
-
-	// ============================================
-	// 📌 [Phase B] 마우스 커서 설정
-	// 기본은 숨김, 로그인 UI 표시 시 보임
-	// ============================================
-	bShowMouseCursor = false;
 }
 
 void AInv_PlayerController::Tick(float DeltaSeconds)
@@ -67,11 +48,13 @@ void AInv_PlayerController::BeginPlay()
 	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
 	UE_LOG(LogTemp, Warning, TEXT("║         [Inv_PlayerController] BeginPlay                   ║"));
 	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ Controller: %s"), *GetName());
 	UE_LOG(LogTemp, Warning, TEXT("║ IsLocalController: %s"), IsLocalController() ? TEXT("TRUE") : TEXT("FALSE"));
 	UE_LOG(LogTemp, Warning, TEXT("║ NetMode: %d"), static_cast<int32>(GetNetMode()));
+	UE_LOG(LogTemp, Warning, TEXT("║ Pawn: %s"), GetPawn() ? *GetPawn()->GetName() : TEXT("nullptr"));
 	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+	UE_LOG(LogTemp, Warning, TEXT(""));
 
-	// Input 설정
 	UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer());
 	if (IsValid(Subsystem))
 	{
@@ -89,48 +72,7 @@ void AInv_PlayerController::BeginPlay()
 		UE_LOG(LogTemp, Warning, TEXT("[Inv_PlayerController] EquipmentComponent 찾음"));
 	}
 
-	// ============================================
-	// 📌 [Phase B] 로그인 체크 및 UI 표시
-	// 클라이언트에서만 실행
-	// ============================================
-	if (IsLocalController())
-	{
-		// PlayerState에서 로그인 여부 확인
-		AHellunaPlayerState* PS = GetPlayerState<AHellunaPlayerState>();
-		
-		bool bIsLoggedIn = false;
-		if (PS)
-		{
-			bIsLoggedIn = PS->IsLoggedIn();
-			UE_LOG(LogTemp, Warning, TEXT("[Inv_PlayerController] PlayerState 로그인 상태: %s"), bIsLoggedIn ? TEXT("TRUE") : TEXT("FALSE"));
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("[Inv_PlayerController] HellunaPlayerState 없음!"));
-		}
-
-		if (!bIsLoggedIn)
-		{
-			// ============================================
-			// 📌 로그인 안 됨 → 로그인 UI 표시
-			// ============================================
-			UE_LOG(LogTemp, Warning, TEXT("[Inv_PlayerController] → 로그인 필요! 로그인 UI 표시"));
-			
-			// 약간 딜레이 후 UI 표시 (네트워크 안정화)
-			FTimerHandle TimerHandle;
-			GetWorldTimerManager().SetTimer(TimerHandle, this, &AInv_PlayerController::ShowLoginUI, 0.5f, false);
-		}
-		else
-		{
-			// ============================================
-			// 📌 로그인 됨 → HUD 위젯 생성
-			// ============================================
-			UE_LOG(LogTemp, Warning, TEXT("[Inv_PlayerController] → 로그인 완료! HUD 생성"));
-			CreateHUDWidget();
-		}
-	}
-
-	UE_LOG(LogTemp, Warning, TEXT(""));
+	CreateHUDWidget();
 }
 
 void AInv_PlayerController::SetupInputComponent()
@@ -152,181 +94,6 @@ void AInv_PlayerController::SetupInputComponent()
 		EnhancedInputComponent->BindAction(SecondaryWeaponAction, ETriggerEvent::Started, this, &AInv_PlayerController::HandleSecondaryWeapon);
 	}
 }
-
-// ============================================
-// 📌 [Phase B] 로그인 UI 표시
-// ============================================
-void AInv_PlayerController::ShowLoginUI()
-{
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("┌────────────────────────────────────────────────────────────┐"));
-	UE_LOG(LogTemp, Warning, TEXT("│ [Inv_PlayerController] ShowLoginUI                         │"));
-	UE_LOG(LogTemp, Warning, TEXT("└────────────────────────────────────────────────────────────┘"));
-
-	if (!IsLocalController())
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[Inv_PlayerController] 로컬 컨트롤러 아님 → UI 표시 안 함"));
-		return;
-	}
-
-	if (!LoginWidgetClass)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[Inv_PlayerController] ❌ LoginWidgetClass가 설정되지 않았습니다!"));
-		UE_LOG(LogTemp, Error, TEXT("[Inv_PlayerController] BP_Inv_PlayerController에서 'Login Widget Class' 설정 필요!"));
-		
-		if (GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Red,
-				TEXT("❌ LoginWidgetClass가 설정되지 않았습니다! BP_Inv_PlayerController에서 설정 필요"));
-		}
-		return;
-	}
-
-	if (!LoginWidget)
-	{
-		LoginWidget = CreateWidget<UHellunaLoginWidget>(this, LoginWidgetClass);
-		UE_LOG(LogTemp, Warning, TEXT("[Inv_PlayerController] 로그인 위젯 생성됨"));
-	}
-
-	if (LoginWidget && !LoginWidget->IsInViewport())
-	{
-		LoginWidget->AddToViewport(100);  // 높은 Z-Order로 다른 UI 위에 표시
-		UE_LOG(LogTemp, Warning, TEXT("[Inv_PlayerController] ✅ 로그인 위젯 표시됨"));
-
-		// UI 모드로 전환
-		FInputModeUIOnly InputMode;
-		InputMode.SetWidgetToFocus(LoginWidget->TakeWidget());
-		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-		SetInputMode(InputMode);
-		bShowMouseCursor = true;
-	}
-
-	UE_LOG(LogTemp, Warning, TEXT(""));
-}
-
-// ============================================
-// 📌 [Phase B] 로그인 UI 숨기기
-// ============================================
-void AInv_PlayerController::HideLoginUI()
-{
-	UE_LOG(LogTemp, Warning, TEXT("[Inv_PlayerController] HideLoginUI"));
-
-	if (LoginWidget && LoginWidget->IsInViewport())
-	{
-		LoginWidget->RemoveFromParent();
-		UE_LOG(LogTemp, Warning, TEXT("[Inv_PlayerController] ✅ 로그인 위젯 숨김"));
-	}
-
-	// 게임 모드로 전환
-	FInputModeGameOnly InputMode;
-	SetInputMode(InputMode);
-	bShowMouseCursor = false;
-
-	// HUD 위젯 생성
-	CreateHUDWidget();
-}
-
-// ============================================
-// 📌 [Phase B] 로그인 버튼 클릭 시 호출
-// ============================================
-void AInv_PlayerController::OnLoginButtonClicked(const FString& PlayerId, const FString& Password)
-{
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║         [Inv_PlayerController] OnLoginButtonClicked        ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ PlayerId: '%s'"), *PlayerId);
-	UE_LOG(LogTemp, Warning, TEXT("║ → Server_RequestLogin RPC 호출                             ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
-
-	// 서버에 로그인 요청
-	Server_RequestLogin(PlayerId, Password);
-
-	UE_LOG(LogTemp, Warning, TEXT(""));
-}
-
-// ============================================
-// 📌 [Phase B] Server RPC - 로그인 요청
-// ============================================
-void AInv_PlayerController::Server_RequestLogin_Implementation(const FString& PlayerId, const FString& Password)
-{
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║         [Inv_PlayerController] Server_RequestLogin (서버)  ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ PlayerId: '%s'"), *PlayerId);
-	UE_LOG(LogTemp, Warning, TEXT("║ → DefenseGameMode::ProcessLogin 호출                       ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
-
-	// DefenseGameMode에서 로그인 처리
-	AHellunaDefenseGameMode* GameMode = Cast<AHellunaDefenseGameMode>(GetWorld()->GetAuthGameMode());
-	if (GameMode)
-	{
-		GameMode->ProcessLogin(this, PlayerId, Password);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Error, TEXT("[Inv_PlayerController] ❌ DefenseGameMode를 찾을 수 없습니다!"));
-		Client_LoginResult(false, TEXT("서버 오류: GameMode를 찾을 수 없습니다."));
-	}
-
-	UE_LOG(LogTemp, Warning, TEXT(""));
-}
-
-// ============================================
-// 📌 [Phase B] Client RPC - 로그인 결과
-// ============================================
-void AInv_PlayerController::Client_LoginResult_Implementation(bool bSuccess, const FString& ErrorMessage)
-{
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║         [Inv_PlayerController] Client_LoginResult          ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ bSuccess: %s"), bSuccess ? TEXT("TRUE ✅") : TEXT("FALSE ❌"));
-	UE_LOG(LogTemp, Warning, TEXT("║ ErrorMessage: '%s'"), *ErrorMessage);
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
-
-	if (bSuccess)
-	{
-		// 로그인 성공 → UI 숨기기
-		UE_LOG(LogTemp, Warning, TEXT("[Inv_PlayerController] ✅ 로그인 성공! UI 숨기기"));
-
-		if (LoginWidget)
-		{
-			LoginWidget->ShowMessage(TEXT("로그인 성공!"), false);
-		}
-
-		// 약간의 딜레이 후 UI 숨기기
-		FTimerHandle TimerHandle;
-		GetWorldTimerManager().SetTimer(TimerHandle, this, &AInv_PlayerController::HideLoginUI, 0.5f, false);
-	}
-	else
-	{
-		// 로그인 실패 → 에러 메시지 표시
-		UE_LOG(LogTemp, Warning, TEXT("[Inv_PlayerController] ❌ 로그인 실패: %s"), *ErrorMessage);
-
-		if (LoginWidget)
-		{
-			LoginWidget->ShowMessage(ErrorMessage, true);
-			LoginWidget->SetLoadingState(false);
-		}
-	}
-
-	UE_LOG(LogTemp, Warning, TEXT(""));
-}
-
-// ============================================
-// 📌 [Phase B] Client RPC - 로그인 UI 표시 요청
-// ============================================
-void AInv_PlayerController::Client_ShowLoginUI_Implementation()
-{
-	UE_LOG(LogTemp, Warning, TEXT("[Inv_PlayerController] Client_ShowLoginUI 호출됨"));
-	ShowLoginUI();
-}
-
-// ============================================
-// 📌 기존 함수들
-// ============================================
 
 void AInv_PlayerController::PrimaryInteract()
 {
@@ -379,7 +146,7 @@ void AInv_PlayerController::CreateHUDWidget()
 		if (IsValid(HUDWidget))
 		{
 			HUDWidget->AddToViewport();
-			UE_LOG(LogTemp, Warning, TEXT("[Inv_PlayerController] ✅ HUD 위젯 생성됨"));
+			UE_LOG(LogTemp, Warning, TEXT("[Inv_PlayerController] HUD 위젯 생성됨"));
 		}
 	}
 }
