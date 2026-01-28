@@ -352,6 +352,17 @@ void AHellunaDefenseGameMode::SwapToGameController(AHellunaLoginController* Logi
 
 	UE_LOG(LogTemp, Warning, TEXT("║ GameControllerClass: %s"), *GameControllerClass->GetName());
 
+	// ============================================
+	// ⭐ 중요: LoginController의 PlayerState 정리
+	// SwapPlayerControllers 후 LoginController가 파괴될 때
+	// Logout에서 중복으로 로그아웃 처리되는 것을 방지
+	// ============================================
+	if (AHellunaPlayerState* OldPS = LoginController->GetPlayerState<AHellunaPlayerState>())
+	{
+		OldPS->ClearLoginInfo();
+		UE_LOG(LogTemp, Warning, TEXT("║ LoginController PlayerState 정리됨 (중복 로그아웃 방지)   ║"));
+	}
+
 	// 1. 새 GameController 스폰
 	FActorSpawnParameters SpawnParams;
 	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
@@ -381,13 +392,22 @@ void AHellunaDefenseGameMode::SwapToGameController(AHellunaLoginController* Logi
 	LoginController->Client_PrepareControllerSwap();
 
 	// 3. SwapPlayerControllers로 안전하게 교체
+	// ⭐ PlayerState도 새 Controller로 전이됨!
 	UE_LOG(LogTemp, Warning, TEXT("║ → SwapPlayerControllers 호출...                            ║"));
 	SwapPlayerControllers(LoginController, NewController);
 
 	UE_LOG(LogTemp, Warning, TEXT("║ ✅ Controller 교체 완료!                                   ║"));
+
+	// 4. 새 Controller의 PlayerState에 PlayerId 복원
+	if (AHellunaPlayerState* NewPS = NewController->GetPlayerState<AHellunaPlayerState>())
+	{
+		NewPS->SetLoginInfo(PlayerId);
+		UE_LOG(LogTemp, Warning, TEXT("║ 새 Controller PlayerState에 PlayerId 복원: '%s'           ║"), *PlayerId);
+	}
+
 	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 
-	// 4. HeroCharacter 소환 (새 Controller로)
+	// 5. HeroCharacter 소환 (새 Controller로)
 	FTimerHandle TimerHandle;
 	GetWorldTimerManager().SetTimer(TimerHandle, [this, NewController]()
 	{

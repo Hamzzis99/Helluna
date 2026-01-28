@@ -16,7 +16,14 @@ void UMDF_GameInstance::RegisterLogin(const FString& PlayerId)
 	if (!PlayerId.IsEmpty())
 	{
 		LoggedInPlayerIds.Add(PlayerId);
-		UE_LOG(LogTemp, Log, TEXT("[GameInstance] RegisterLogin: %s (접속자 %d명)"), *PlayerId, LoggedInPlayerIds.Num());
+		UE_LOG(LogTemp, Warning, TEXT("[GameInstance] ★ RegisterLogin: '%s' (현재 접속자 %d명)"), *PlayerId, LoggedInPlayerIds.Num());
+		
+		// 디버깅: 현재 접속자 목록 출력
+		UE_LOG(LogTemp, Warning, TEXT("[GameInstance] 접속자 목록:"));
+		for (const FString& Id : LoggedInPlayerIds)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[GameInstance]   - '%s'"), *Id);
+		}
 	}
 }
 
@@ -25,13 +32,16 @@ void UMDF_GameInstance::RegisterLogout(const FString& PlayerId)
 	if (LoggedInPlayerIds.Contains(PlayerId))
 	{
 		LoggedInPlayerIds.Remove(PlayerId);
-		UE_LOG(LogTemp, Log, TEXT("[GameInstance] RegisterLogout: %s (접속자 %d명)"), *PlayerId, LoggedInPlayerIds.Num());
+		UE_LOG(LogTemp, Warning, TEXT("[GameInstance] ★ RegisterLogout: '%s' (현재 접속자 %d명)"), *PlayerId, LoggedInPlayerIds.Num());
 	}
 }
 
 bool UMDF_GameInstance::IsPlayerLoggedIn(const FString& PlayerId) const
 {
-	return LoggedInPlayerIds.Contains(PlayerId);
+	bool bResult = LoggedInPlayerIds.Contains(PlayerId);
+	UE_LOG(LogTemp, Warning, TEXT("[GameInstance] IsPlayerLoggedIn('%s') = %s (접속자 %d명)"), 
+		*PlayerId, bResult ? TEXT("TRUE") : TEXT("FALSE"), LoggedInPlayerIds.Num());
+	return bResult;
 }
 
 int32 UMDF_GameInstance::GetLoggedInPlayerCount() const
