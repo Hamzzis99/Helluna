@@ -1,6 +1,7 @@
 #include "Login/HellunaLoginController.h"
 #include "Login/HellunaLoginWidget.h"
 #include "GameMode/HellunaDefenseGameMode.h"
+#include "GameFramework/PlayerState.h"
 #include "Blueprint/UserWidget.h"
 
 AHellunaLoginController::AHellunaLoginController()
@@ -24,7 +25,10 @@ void AHellunaLoginController::BeginPlay()
 	UE_LOG(LogTemp, Warning, TEXT("║ HasAuthority: %s"), HasAuthority() ? TEXT("TRUE") : TEXT("FALSE"));
 	UE_LOG(LogTemp, Warning, TEXT("║ NetMode: %d"), static_cast<int32>(GetNetMode()));
 	UE_LOG(LogTemp, Warning, TEXT("║ NetConnection: %s"), GetNetConnection() ? TEXT("Valid") : TEXT("nullptr"));
-	UE_LOG(LogTemp, Warning, TEXT("║ PlayerState: %s"), GetPlayerState<APlayerState>() ? *GetPlayerState<APlayerState>()->GetName() : TEXT("nullptr"));
+	
+	APlayerState* PS = GetPlayerState<APlayerState>();
+	UE_LOG(LogTemp, Warning, TEXT("║ PlayerState: %s"), PS ? *PS->GetName() : TEXT("nullptr"));
+	
 	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
 	UE_LOG(LogTemp, Warning, TEXT("║ LoginWidgetClass: %s"), LoginWidgetClass ? *LoginWidgetClass->GetName() : TEXT("미설정!"));
 	UE_LOG(LogTemp, Warning, TEXT("║ GameControllerClass: %s"), GameControllerClass ? *GameControllerClass->GetName() : TEXT("미설정!"));
@@ -56,7 +60,6 @@ void AHellunaLoginController::BeginPlay()
 		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 		SetInputMode(InputMode);
 
-		// 약간 딜레이 후 UI 표시 (네트워크 안정화)
 		FTimerHandle TimerHandle;
 		GetWorldTimerManager().SetTimer(TimerHandle, this, &AHellunaLoginController::ShowLoginWidget, 0.3f, false);
 	}
@@ -177,10 +180,8 @@ void AHellunaLoginController::Client_PrepareControllerSwap_Implementation()
 	UE_LOG(LogTemp, Warning, TEXT("║ UI 정리 시작                                               ║"));
 	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 
-	// UI 정리
 	HideLoginWidget();
 
-	// 입력 모드 초기화
 	FInputModeGameOnly InputMode;
 	SetInputMode(InputMode);
 	bShowMouseCursor = false;
@@ -196,7 +197,6 @@ void AHellunaLoginController::ShowLoginResult(bool bSuccess, const FString& Mess
 	if (bSuccess)
 	{
 		LoginWidget->ShowMessage(TEXT("로그인 성공!"), false);
-		// 로딩 상태 유지 (Controller 교체 대기)
 	}
 	else
 	{

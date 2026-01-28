@@ -328,14 +328,14 @@ void AHellunaDefenseGameMode::SwapToGameController(AHellunaLoginController* Logi
 		UE_LOG(LogTemp, Warning, TEXT("║ OldPawn UnPossess: %s"), *OldPawn->GetName());
 	}
 
-	// 새 Controller 스폰
+	// 새 Controller 스폰 (기본 위치에)
 	FActorSpawnParameters SpawnParams;
 	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 	
 	APlayerController* NewController = GetWorld()->SpawnActor<APlayerController>(
 		GameControllerClass,
-		LoginController->GetActorLocation(),
-		LoginController->GetActorRotation(),
+		FVector::ZeroVector,
+		FRotator::ZeroRotator,
 		SpawnParams
 	);
 

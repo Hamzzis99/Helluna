@@ -43,7 +43,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Login")
 	void ShowLoginResult(bool bSuccess, const FString& Message);
 
-protected:
+	// ============================================
+	// RPC (DefenseGameMode에서 호출하므로 public)
+	// ============================================
+
 	UFUNCTION(Server, Reliable)
 	void Server_RequestLogin(const FString& PlayerId, const FString& Password);
 
