@@ -623,6 +623,7 @@ void UInv_InventoryGrid::AddStacks(const FInv_SlotAvailabilityResult& Result)
 		{
 			if (!GridSlots.IsValidIndex(Index)) continue;
 			UInv_InventoryItem* GridSlotItem = GridSlots[Index]->GetInventoryItem().Get();
+			// ⭐ Phase 7 롤백: 포인터 비교로 복원 (태그 매칭은 다른 Entry의 슬롯까지 영향을 줌)
 			if (GridSlotItem == Result.Item)
 			{
 				int32 SlotCount = GridSlots[Index]->GetStackCount();
@@ -643,6 +644,7 @@ void UInv_InventoryGrid::AddStacks(const FInv_SlotAvailabilityResult& Result)
 		{
 			UInv_InventoryItem* GridSlotItem = GridSlots[Index]->GetInventoryItem().Get();
 			
+			// ⭐ Phase 7 롤백: 포인터 비교로 복원
 			if (GridSlots.IsValidIndex(Index) && GridSlotItem == Result.Item)
 			{
 				MatchedIndices.Add(Index);
@@ -727,6 +729,7 @@ void UInv_InventoryGrid::AddStacks(const FInv_SlotAvailabilityResult& Result)
 		{
 			if (!GridSlots.IsValidIndex(Index)) continue;
 			UInv_InventoryItem* GridSlotItem = GridSlots[Index]->GetInventoryItem().Get();
+			// ⭐ Phase 7 롤백: 포인터 비교로 복원
 			if (GridSlotItem == Result.Item)
 			{
 				int32 SlotCount = GridSlots[Index]->GetStackCount();
@@ -1160,6 +1163,13 @@ void UInv_InventoryGrid::RemoveItem(UInv_InventoryItem* Item, int32 EntryIndex)
 		// 1차 검증: 포인터 비교
 		if (GridSlotItem == Item)
 		{
+			// ⭐ Phase 7: EntryIndex로 정확한 슬롯 매칭 (Split 후 포인터 공유 문제 해결)
+			if (SlottedItem->GetEntryIndex() != EntryIndex)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[RemoveItem] ⚠️ 포인터 일치하지만 EntryIndex 불일치: SlotEntry=%d, 찾는Entry=%d, 스킵!"), 
+					SlottedItem->GetEntryIndex(), EntryIndex);
+				continue;
+			}
 			// 2차 검증: ItemManifest 비교 (안전장치)
 			if (GridSlotItem->GetItemManifest().GetItemType().MatchesTagExact(
 				Item->GetItemManifest().GetItemType()))
