@@ -61,6 +61,9 @@ public:
 	UFUNCTION(Server, Reliable) // Split 시 서버의 TotalStackCount 업데이트
 	void Server_UpdateItemStackCount(UInv_InventoryItem* Item, int32 NewStackCount);
 
+	UFUNCTION(Server, Reliable) // ⭐ Phase 8: Split 시 서버에서 새 Entry 생성 (포인터 분리)
+	void Server_SplitItemEntry(UInv_InventoryItem* OriginalItem, int32 OriginalNewStackCount, int32 SplitStackCount);
+
 	UFUNCTION(Server, Reliable) // 크래프팅: 서버에서 아이템 생성 및 인벤토리 추가
 	void Server_CraftItem(TSubclassOf<AActor> ItemActorClass);
 
