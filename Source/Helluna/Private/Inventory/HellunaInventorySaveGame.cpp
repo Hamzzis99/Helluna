@@ -190,10 +190,15 @@ void UHellunaInventorySaveGame::DebugPrintAllData() const
 				? FString::Printf(TEXT("장착[%d]"), Item.EquipSlotIndex)
 				: TEXT("미장착");
 			
-			UE_LOG(LogTemp, Warning, TEXT("      [%d] %s x%d @ (%d,%d) %s"),
+			const TCHAR* CategoryNames[] = { TEXT("장비"), TEXT("소모품"), TEXT("재료") };
+			const TCHAR* CategoryName = Item.GridCategory < 3 ? CategoryNames[Item.GridCategory] : TEXT("???");
+			
+			UE_LOG(LogTemp, Warning, TEXT("      [%d] %s x%d @ Grid%d(%s) (%d,%d) %s"),
 				i,
 				*Item.ItemType.ToString(),
 				Item.StackCount,
+				Item.GridCategory,
+				CategoryName,
 				Item.GridPosition.X, Item.GridPosition.Y,
 				*EquipStatus);
 		}

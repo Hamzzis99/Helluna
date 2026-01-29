@@ -101,14 +101,16 @@ struct FHellunaInventoryItemData
 		: ItemType(FGameplayTag::EmptyTag)
 		, StackCount(1)
 		, GridPosition(FIntPoint(-1, -1))
+		, GridCategory(0)
 		, EquipSlotIndex(-1)
 	{
 	}
 
-	FHellunaInventoryItemData(const FGameplayTag& InItemType, int32 InStackCount, const FIntPoint& InGridPosition, int32 InEquipSlotIndex = -1)
+	FHellunaInventoryItemData(const FGameplayTag& InItemType, int32 InStackCount, const FIntPoint& InGridPosition, uint8 InGridCategory = 0, int32 InEquipSlotIndex = -1)
 		: ItemType(InItemType)
 		, StackCount(InStackCount)
 		, GridPosition(InGridPosition)
+		, GridCategory(InGridCategory)
 		, EquipSlotIndex(InEquipSlotIndex)
 	{
 	}
@@ -137,6 +139,15 @@ struct FHellunaInventoryItemData
 	FIntPoint GridPosition;
 
 	/**
+	 * 인벤토리 Grid 카테고리
+	 * 0 = Equippables (장비)
+	 * 1 = Consumables (소모품)
+	 * 2 = Craftables (재료)
+	 */
+	UPROPERTY(SaveGame, BlueprintReadWrite, Category = "Inventory")
+	uint8 GridCategory;
+
+	/**
 	 * 장착 슬롯 인덱스
 	 * -1 = 미장착 (인벤토리에만 있음)
 	 * 0~5 = 장착 슬롯 번호 (Phase 6에서 사용)
@@ -153,9 +164,14 @@ struct FHellunaInventoryItemData
 	/** 디버그 문자열 반환 */
 	FString ToString() const
 	{
-		return FString::Printf(TEXT("[%s x%d @ (%d,%d) Slot:%d]"),
+		const TCHAR* CategoryNames[] = { TEXT("Equip"), TEXT("Consume"), TEXT("Craft") };
+		const TCHAR* CategoryName = GridCategory < 3 ? CategoryNames[GridCategory] : TEXT("Unknown");
+		
+		return FString::Printf(TEXT("[%s x%d @ Grid%d(%s) (%d,%d) Slot:%d]"),
 			*ItemType.ToString(),
 			StackCount,
+			GridCategory,
+			CategoryName,
 			GridPosition.X, GridPosition.Y,
 			EquipSlotIndex);
 	}
