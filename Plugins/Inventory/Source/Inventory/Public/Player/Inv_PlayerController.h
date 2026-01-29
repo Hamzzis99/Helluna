@@ -14,6 +14,8 @@ class UInv_HUDWidget;
 // ============================================
 // 📦 인벤토리 저장용 순수 데이터 구조체
 // ============================================
+// ⚠️ 주의: 이 구조체는 델리게이트보다 먼저 선언되어야 합니다!
+// ============================================
 /**
  * 단일 아이템의 저장 데이터 (플러그인 전용, Helluna 의존성 없음)
  * 
@@ -140,6 +142,24 @@ struct INVENTORY_API FInv_SavedItemData
 	}
 };
 
+// ============================================
+// 📌 델리게이트 선언 (Phase 4)
+// ============================================
+// ⚠️ 주의: FInv_SavedItemData 구조체 정의 이후에 선언해야 합니다!
+// ============================================
+/**
+ * 서버에서 클라이언트로부터 인벤토리 상태를 수신했을 때 브로드캐스트
+ * GameMode에서 바인딩하여 저장 처리
+ * 
+ * @param PlayerController - 데이터를 보낸 플레이어
+ * @param SavedItems - 수신된 인벤토리 데이터
+ */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
+	FOnInventoryStateReceived,
+	AInv_PlayerController*, PlayerController,
+	const TArray<FInv_SavedItemData>&, SavedItems
+);
+
 UCLASS()
 class INVENTORY_API AInv_PlayerController : public APlayerController
 {
@@ -207,6 +227,38 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Save")
 	void RestoreInventoryFromState(const TArray<FInv_SavedItemData>& SavedItems);
+
+	// ============================================
+	// 📌 인벤토리 저장 RPC (Phase 4)
+	// ============================================
+	
+	/**
+	 * [서버 → 클라이언트] 인벤토리 상태 요청
+	 * 
+	 * 서버에서 자동저장 타이머 또는 로그아웃 시 호출
+	 * 클라이언트는 이 RPC를 받으면 CollectInventoryGridState()로 수집 후
+	 * Server_ReceiveInventoryState()로 서버에 전송
+	 */
+	UFUNCTION(Client, Reliable)
+	void Client_RequestInventoryState();
+
+	/**
+	 * [클라이언트 → 서버] 수집된 인벤토리 상태 전송
+	 * 
+	 * Client_RequestInventoryState() 수신 후 호출됨
+	 * 서버에서 OnInventoryStateReceived 델리게이트 브로드캐스트
+	 * 
+	 * @param SavedItems - 클라이언트에서 수집한 인벤토리 데이터
+	 */
+	UFUNCTION(Server, Reliable)
+	void Server_ReceiveInventoryState(const TArray<FInv_SavedItemData>& SavedItems);
+
+	/**
+	 * 서버에서 인벤토리 상태 수신 시 브로드캐스트되는 델리게이트
+	 * GameMode에서 바인딩하여 저장 처리
+	 */
+	UPROPERTY(BlueprintAssignable, Category = "Inventory|Save")
+	FOnInventoryStateReceived OnInventoryStateReceived;
 
 protected:
 	virtual void BeginPlay() override;

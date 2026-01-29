@@ -2,6 +2,8 @@
 
 #include "CoreMinimal.h"
 #include "GameMode/HellunaBaseGameMode.h"
+#include "Player/Inv_PlayerController.h"
+#include "Inventory/HellunaInventorySaveGame.h"  // FHellunaPlayerInventoryData 사용을 위해 필요
 #include "HellunaDefenseGameMode.generated.h"
 
 class ATargetPoint;
@@ -394,4 +396,85 @@ protected:
 
 	/** 자동저장 타이머 핸들 */
 	FTimerHandle AutoSaveTimerHandle;
+
+	/**
+	 * 플레이어별 마지막 인벤토리 상태 캐시
+	 * 
+	 * Key: PlayerUniqueId
+	 * Value: 마지막으로 수신한 인벤토리 데이터
+	 * 
+	 * 용도:
+	 * - Logout 시 클라이언트 연결 끊긴 상태에서도 저장 가능
+	 * - 자동저장 시 업데이트됨
+	 */
+	UPROPERTY()
+	TMap<FString, FHellunaPlayerInventoryData> CachedPlayerInventoryData;
+
+	// ============================================
+	// 📌 [Phase 4] 자동저장 함수
+	// ============================================
+
+	/**
+	 * 자동저장 타이머 시작
+	 * BeginPlay() 또는 첫 플레이어 로그인 시 호출
+	 */
+	void StartAutoSaveTimer();
+
+	/**
+	 * 자동저장 타이머 정지
+	 * EndPlay() 시 호출
+	 */
+	void StopAutoSaveTimer();
+
+	/**
+	 * 자동저장 타이머 콜백
+	 * AutoSaveIntervalSeconds마다 호출됨
+	 */
+	void OnAutoSaveTimer();
+
+	/**
+	 * 모든 플레이어의 인벤토리 저장 요청
+	 * 각 플레이어에게 Client_RequestInventoryState() RPC 전송
+	 */
+	void RequestAllPlayersInventoryState();
+
+	/**
+	 * 개별 플레이어 인벤토리 저장 요청
+	 * @param PC - 대상 PlayerController
+	 */
+	void RequestPlayerInventoryState(APlayerController* PC);
+
+	/**
+	 * 인벤토리 상태 수신 콜백 (델리게이트 바인딩)
+	 * PlayerController에서 Server_ReceiveInventoryState() 호출 시 실행됨
+	 * 
+	 * @param PlayerController - 데이터를 보낸 플레이어
+	 * @param SavedItems - 수신된 인벤토리 데이터
+	 */
+	UFUNCTION()
+	void OnPlayerInventoryStateReceived(AInv_PlayerController* PlayerController, const TArray<FInv_SavedItemData>& SavedItems);
+
+public:
+	// ============================================
+	// 📌 [Phase 4] 디버그 함수
+	// ============================================
+
+	/**
+	 * [디버깅] 수동으로 모든 플레이어 인벤토리 저장 요청
+	 * 
+	 * 콘솔에서 호출 방법:
+	 * "ke * DebugRequestSaveAllInventory"
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Helluna|Inventory|Debug")
+	void DebugRequestSaveAllInventory();
+
+	/**
+	 * [디버깅] 자동저장 타이머 강제 실행 (테스트용)
+	 * AutoSaveIntervalSeconds를 짧게 설정하지 않아도 즉시 저장 테스트 가능
+	 * 
+	 * 콘솔에서 호출 방법:
+	 * "ke * DebugForceAutoSave"
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Helluna|Inventory|Debug")
+	void DebugForceAutoSave();
 };

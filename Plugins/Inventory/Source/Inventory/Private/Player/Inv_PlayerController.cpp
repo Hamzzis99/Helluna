@@ -462,3 +462,82 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 	UE_LOG(LogTemp, Warning, TEXT("   현재는 FastArray 리플리케이션으로 자동 배치됨 (위치 복원 없음)"));
 	UE_LOG(LogTemp, Warning, TEXT(""));
 }
+
+// ============================================
+// 📌 인벤토리 저장 RPC 구현 (Phase 4)
+// ============================================
+
+/**
+ * [서버 → 클라이언트] 인벤토리 상태 요청
+ */
+void AInv_PlayerController::Client_RequestInventoryState_Implementation()
+{
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔══════════════════════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║      [Phase 4] Client_RequestInventoryState - 서버로부터 요청 수신           ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠══════════════════════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ 📍 실행 위치: 클라이언트                                                      ║"));
+	UE_LOG(LogTemp, Warning, TEXT("║ 📍 요청자: 서버 (자동저장/로그아웃)                                           ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════════════════════╝"));
+
+	// Step 1: 인벤토리 상태 수집
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("▶ [Step 1] CollectInventoryGridState() 호출하여 UI 상태 수집..."));
+	
+	TArray<FInv_SavedItemData> CollectedData = CollectInventoryGridState();
+
+	// Step 2: 서버로 전송
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("▶ [Step 2] Server_ReceiveInventoryState() RPC로 서버에 전송..."));
+	UE_LOG(LogTemp, Warning, TEXT("   전송할 아이템: %d개"), CollectedData.Num());
+
+	Server_ReceiveInventoryState(CollectedData);
+
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("✅ 클라이언트 → 서버 전송 완료!"));
+	UE_LOG(LogTemp, Warning, TEXT("════════════════════════════════════════════════════════════════════════════════"));
+}
+
+/**
+ * [클라이언트 → 서버] 수집된 인벤토리 상태 전송
+ */
+void AInv_PlayerController::Server_ReceiveInventoryState_Implementation(const TArray<FInv_SavedItemData>& SavedItems)
+{
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔══════════════════════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║      [Phase 4] Server_ReceiveInventoryState - 클라이언트로부터 수신          ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠══════════════════════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ 📍 실행 위치: 서버                                                            ║"));
+	UE_LOG(LogTemp, Warning, TEXT("║ 📍 전송자: 클라이언트 (%s)                                                    "), *GetName());
+	UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════════════════════╝"));
+
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("▶ 수신된 아이템: %d개"), SavedItems.Num());
+	UE_LOG(LogTemp, Warning, TEXT("  ┌─────────────────────────────────────────────────────────────┐"));
+
+	for (int32 i = 0; i < SavedItems.Num(); ++i)
+	{
+		const FInv_SavedItemData& Item = SavedItems[i];
+		UE_LOG(LogTemp, Warning, TEXT("  │ [%02d] %s"), i, *Item.ToString());
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("  └─────────────────────────────────────────────────────────────┘"));
+
+	// 델리게이트 브로드캐스트 (GameMode에서 바인딩하여 저장 처리)
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("▶ OnInventoryStateReceived 델리게이트 브로드캐스트..."));
+	
+	if (OnInventoryStateReceived.IsBound())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("   ✅ 델리게이트 바인딩됨! 브로드캐스트 실행"));
+		OnInventoryStateReceived.Broadcast(this, SavedItems);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("   ⚠️ 델리게이트 바인딩 안 됨! (GameMode에서 바인딩 필요)"));
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("✅ 서버 수신 처리 완료!"));
+	UE_LOG(LogTemp, Warning, TEXT("════════════════════════════════════════════════════════════════════════════════"));
+}

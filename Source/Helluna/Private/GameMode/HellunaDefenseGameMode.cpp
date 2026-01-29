@@ -245,11 +245,17 @@ void AHellunaDefenseGameMode::InitializeGame()
 	UE_LOG(LogTemp, Warning, TEXT("║ • 낮/밤 사이클 시작                                        ║"));
 	UE_LOG(LogTemp, Warning, TEXT("║ • 몬스터 스포너 활성화                                     ║"));
 	UE_LOG(LogTemp, Warning, TEXT("║ • 보스 시스템 대기                                         ║"));
+	UE_LOG(LogTemp, Warning, TEXT("║ • 🔄 자동저장 타이머 시작 (Phase 4)                        ║"));
 	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 	UE_LOG(LogTemp, Warning, TEXT(""));
 
 	// 낮/밤 사이클 시작!
 	EnterDay();
+
+	// ============================================
+	// 📦 [Phase 4] 자동저장 타이머 시작
+	// ============================================
+	StartAutoSaveTimer();
 }
 
 // ============================================
@@ -849,7 +855,12 @@ bool AHellunaDefenseGameMode::IsPlayerLoggedIn(const FString& PlayerId) const
 // ============================================
 void AHellunaDefenseGameMode::Logout(AController* Exiting)
 {
-	UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] Logout: %s"), *GetNameSafe(Exiting));
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║     [DefenseGameMode] Logout                               ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ Controller: %s"), *GetNameSafe(Exiting));
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 	
 	if (Exiting)
 	{
@@ -867,14 +878,56 @@ void AHellunaDefenseGameMode::Logout(AController* Exiting)
 			FString PlayerId = PS->GetPlayerUniqueId();
 			if (!PlayerId.IsEmpty())
 			{
+				// ============================================
+				// 📦 [Phase 4] Logout 시 인벤토리 저장
+				// ============================================
+				UE_LOG(LogTemp, Warning, TEXT(""));
+				UE_LOG(LogTemp, Warning, TEXT("▶ [Phase 4] Logout 시 인벤토리 저장 시도..."));
+				UE_LOG(LogTemp, Warning, TEXT("   PlayerId: %s"), *PlayerId);
+
+				// 캐시된 데이터가 있으면 저장
+				if (FHellunaPlayerInventoryData* CachedData = CachedPlayerInventoryData.Find(PlayerId))
+				{
+					UE_LOG(LogTemp, Warning, TEXT("   ✅ 캐시된 인벤토리 데이터 발견! (%d개 아이템)"), CachedData->Items.Num());
+					
+					// 저장 시간 업데이트
+					CachedData->LastSaveTime = FDateTime::Now();
+
+					// SaveGame에 저장
+					if (IsValid(InventorySaveGame))
+					{
+						InventorySaveGame->SavePlayerInventory(PlayerId, *CachedData);
+						
+						if (UHellunaInventorySaveGame::Save(InventorySaveGame))
+						{
+							UE_LOG(LogTemp, Warning, TEXT("   🎉 Logout 저장 성공!"));
+						}
+						else
+						{
+							UE_LOG(LogTemp, Error, TEXT("   ❌ Logout 저장 실패!"));
+						}
+					}
+
+					// 캐시에서 제거
+					CachedPlayerInventoryData.Remove(PlayerId);
+				}
+				else
+				{
+					UE_LOG(LogTemp, Warning, TEXT("   ⚠️ 캐시된 데이터 없음 (자동저장 이전에 로그아웃?)"));
+					UE_LOG(LogTemp, Warning, TEXT("      → 이전 세션의 저장 데이터 유지됨"));
+				}
+
+				// GameInstance에서 로그아웃 처리
 				if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(UGameplayStatics::GetGameInstance(GetWorld())))
 				{
 					GI->RegisterLogout(PlayerId);
-					UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] 로그아웃: '%s'"), *PlayerId);
+					UE_LOG(LogTemp, Warning, TEXT("   ✅ 로그아웃 처리 완료: '%s'"), *PlayerId);
 				}
 			}
 		}
 	}
+
+	UE_LOG(LogTemp, Warning, TEXT(""));
 
 	Super::Logout(Exiting);
 }
@@ -1518,4 +1571,237 @@ void AHellunaDefenseGameMode::DebugTestInventorySaveGame()
 
 	// 전체 저장 데이터 출력 (디버그)
 	InventorySaveGame->DebugPrintAllData();
+}
+
+// ============================================
+// 📌 [Phase 4] 자동저장 시스템 구현
+// ============================================
+
+void AHellunaDefenseGameMode::StartAutoSaveTimer()
+{
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔══════════════════════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║      [Phase 4] StartAutoSaveTimer - 자동저장 타이머 시작                      ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════════════════════╝"));
+
+	if (AutoSaveIntervalSeconds <= 0.0f)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("⚠️ AutoSaveIntervalSeconds = 0 → 자동저장 비활성화"));
+		return;
+	}
+
+	// 기존 타이머 정리
+	StopAutoSaveTimer();
+
+	// 새 타이머 시작
+	GetWorldTimerManager().SetTimer(
+		AutoSaveTimerHandle,
+		this,
+		&AHellunaDefenseGameMode::OnAutoSaveTimer,
+		AutoSaveIntervalSeconds,
+		true  // 반복
+	);
+
+	UE_LOG(LogTemp, Warning, TEXT("✅ 자동저장 타이머 시작! (주기: %.0f초)"), AutoSaveIntervalSeconds);
+	UE_LOG(LogTemp, Warning, TEXT("════════════════════════════════════════════════════════════════════════════════"));
+}
+
+void AHellunaDefenseGameMode::StopAutoSaveTimer()
+{
+	if (AutoSaveTimerHandle.IsValid())
+	{
+		GetWorldTimerManager().ClearTimer(AutoSaveTimerHandle);
+		UE_LOG(LogTemp, Warning, TEXT("[Phase 4] 자동저장 타이머 정지됨"));
+	}
+}
+
+void AHellunaDefenseGameMode::OnAutoSaveTimer()
+{
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔══════════════════════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║      [Phase 4] OnAutoSaveTimer - 자동저장 타이머 발동!                        ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠══════════════════════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ 📍 실행 위치: 서버                                                            ║"));
+	UE_LOG(LogTemp, Warning, TEXT("║ 📍 목적: 모든 플레이어에게 인벤토리 상태 요청                                  ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════════════════════╝"));
+
+	RequestAllPlayersInventoryState();
+}
+
+void AHellunaDefenseGameMode::RequestAllPlayersInventoryState()
+{
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("▶ 모든 플레이어에게 인벤토리 상태 요청 중..."));
+
+	int32 RequestCount = 0;
+
+	// 모든 PlayerController 순회
+	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	{
+		APlayerController* PC = It->Get();
+		if (!IsValid(PC)) continue;
+
+		// Inv_PlayerController로 캐스트
+		AInv_PlayerController* InvPC = Cast<AInv_PlayerController>(PC);
+		if (!IsValid(InvPC))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("   ⚠️ %s: Inv_PlayerController 아님, 건너뜀"), *PC->GetName());
+			continue;
+		}
+
+		// 델리게이트 바인딩 (아직 안 되어 있으면)
+		if (!InvPC->OnInventoryStateReceived.IsBound())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("   📌 %s: 델리게이트 바인딩 중..."), *PC->GetName());
+			InvPC->OnInventoryStateReceived.AddDynamic(this, &AHellunaDefenseGameMode::OnPlayerInventoryStateReceived);
+		}
+
+		RequestPlayerInventoryState(PC);
+		RequestCount++;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("✅ 총 %d명에게 요청 전송 완료!"), RequestCount);
+}
+
+void AHellunaDefenseGameMode::RequestPlayerInventoryState(APlayerController* PC)
+{
+	if (!IsValid(PC)) return;
+
+	AInv_PlayerController* InvPC = Cast<AInv_PlayerController>(PC);
+	if (!IsValid(InvPC))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("   ⚠️ %s: Inv_PlayerController 아님"), *PC->GetName());
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("   → %s: Client_RequestInventoryState() RPC 전송"), *PC->GetName());
+	InvPC->Client_RequestInventoryState();
+}
+
+void AHellunaDefenseGameMode::OnPlayerInventoryStateReceived(
+	AInv_PlayerController* PlayerController, 
+	const TArray<FInv_SavedItemData>& SavedItems)
+{
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔══════════════════════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║      [Phase 4] OnPlayerInventoryStateReceived - 인벤토리 데이터 수신          ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠══════════════════════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ 📍 실행 위치: 서버 (GameMode)                                                 ║"));
+	UE_LOG(LogTemp, Warning, TEXT("║ 📍 플레이어: %s"), *PlayerController->GetName());
+	UE_LOG(LogTemp, Warning, TEXT("║ 📍 수신된 아이템: %d개                                                        "), SavedItems.Num());
+	UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════════════════════╝"));
+
+	// ============================================
+	// Step 1: PlayerUniqueId 가져오기
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("▶ [Step 1] PlayerUniqueId 가져오기..."));
+
+	AHellunaPlayerState* PS = PlayerController->GetPlayerState<AHellunaPlayerState>();
+	if (!IsValid(PS))
+	{
+		UE_LOG(LogTemp, Error, TEXT("   ❌ PlayerState가 없습니다!"));
+		return;
+	}
+
+	FString PlayerUniqueId = PS->GetPlayerUniqueId();
+	if (PlayerUniqueId.IsEmpty())
+	{
+		UE_LOG(LogTemp, Error, TEXT("   ❌ PlayerUniqueId가 비어있습니다! (로그인 안 됨?)"));
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("   ✅ PlayerUniqueId: %s"), *PlayerUniqueId);
+
+	// ============================================
+	// Step 2: FInv_SavedItemData → FHellunaInventoryItemData 변환
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("▶ [Step 2] 데이터 변환 (FInv_SavedItemData → FHellunaInventoryItemData)..."));
+
+	FHellunaPlayerInventoryData PlayerData;
+	PlayerData.LastSaveTime = FDateTime::Now();
+	PlayerData.SaveVersion = 1;
+
+	for (const FInv_SavedItemData& SourceItem : SavedItems)
+	{
+		FHellunaInventoryItemData DestItem;
+		DestItem.ItemType = SourceItem.ItemType;
+		DestItem.StackCount = SourceItem.StackCount;
+		DestItem.GridPosition = SourceItem.GridPosition;
+		DestItem.GridCategory = SourceItem.GridCategory;
+		DestItem.EquipSlotIndex = -1;  // TODO: 장착 정보는 Phase 6에서
+
+		PlayerData.Items.Add(DestItem);
+
+		UE_LOG(LogTemp, Warning, TEXT("   [%d] %s"), 
+			PlayerData.Items.Num() - 1, *DestItem.ToString());
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("   ✅ 변환 완료: %d개 아이템"), PlayerData.Items.Num());
+
+	// ============================================
+	// Step 2.5: 캐시에 저장 (Logout 대비)
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("▶ [Step 2.5] 캐시에 저장 (Logout 대비)..."));
+	
+	CachedPlayerInventoryData.Add(PlayerUniqueId, PlayerData);
+	UE_LOG(LogTemp, Warning, TEXT("   ✅ 캐시 업데이트 완료 (PlayerId: %s)"), *PlayerUniqueId);
+
+	// ============================================
+	// Step 3: SaveGame에 저장
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("▶ [Step 3] SaveGame에 저장..."));
+
+	if (!IsValid(InventorySaveGame))
+	{
+		UE_LOG(LogTemp, Error, TEXT("   ❌ InventorySaveGame이 nullptr!"));
+		return;
+	}
+
+	InventorySaveGame->SavePlayerInventory(PlayerUniqueId, PlayerData);
+
+	// ============================================
+	// Step 4: 파일에 저장
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("▶ [Step 4] 파일에 저장..."));
+
+	bool bSaveSuccess = UHellunaInventorySaveGame::Save(InventorySaveGame);
+
+	if (bSaveSuccess)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("   ✅ 저장 성공!"));
+		UE_LOG(LogTemp, Warning, TEXT("   📁 위치: Saved/SaveGames/HellunaInventory.sav"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("   ❌ 저장 실패!"));
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("════════════════════════════════════════════════════════════════════════════════"));
+	UE_LOG(LogTemp, Warning, TEXT("🎉 [Phase 4] 플레이어 %s 인벤토리 저장 완료!"), *PlayerUniqueId);
+	UE_LOG(LogTemp, Warning, TEXT("════════════════════════════════════════════════════════════════════════════════"));
+}
+
+// ============================================
+// 📌 [Phase 4] 디버그 함수
+// ============================================
+
+void AHellunaDefenseGameMode::DebugRequestSaveAllInventory()
+{
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("🔧 [디버그] 수동으로 모든 플레이어 인벤토리 저장 요청"));
+	RequestAllPlayersInventoryState();
+}
+
+void AHellunaDefenseGameMode::DebugForceAutoSave()
+{
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("🔧 [디버그] 자동저장 강제 실행"));
+	OnAutoSaveTimer();
 }
