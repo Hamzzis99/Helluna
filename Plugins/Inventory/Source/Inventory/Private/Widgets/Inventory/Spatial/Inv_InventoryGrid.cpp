@@ -1631,9 +1631,12 @@ bool UInv_InventoryGrid::IsSameStackable(const UInv_InventoryItem* ClickedInvent
 		return false;
 	}
 	
-	const bool bIsSameItem = ClickedInventoryItem == HoverItem->GetInventoryItem();
+	// ⭐ 포인터 비교 제거! 같은 종류의 아이템이면 합칠 수 있도록 태그로만 비교
+	// 기존: const bool bIsSameItem = ClickedInventoryItem == HoverItem->GetInventoryItem();
+	// 문제: Split으로 나눈 아이템들은 같은 종류여도 다른 인스턴스라서 합쳐지지 않음
+	const bool bIsSameType = HoverItem->GetItemType().MatchesTagExact(ClickedInventoryItem->GetItemManifest().GetItemType());
 	const bool bIsStackable = ClickedInventoryItem->IsStackable();
-	return bIsSameItem && bIsStackable && HoverItem->GetItemType().MatchesTagExact(ClickedInventoryItem->GetItemManifest().GetItemType());
+	return bIsSameType && bIsStackable;
 }
 
 void UInv_InventoryGrid::SwapWithHoverItem(UInv_InventoryItem* ClickedInventoryItem, const int32 GridIndex)
