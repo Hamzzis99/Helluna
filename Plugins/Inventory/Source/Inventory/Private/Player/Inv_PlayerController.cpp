@@ -457,9 +457,13 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 
 	if (!InventoryComponent.IsValid())
 	{
-		UE_LOG(LogTemp, Error, TEXT("   ❌ InventoryComponent가 유효하지 않습니다!"));
+		UE_LOG(LogTemp, Error, TEXT("   ❌ [실패] InventoryComponent가 유효하지 않습니다!"));
+		UE_LOG(LogTemp, Error, TEXT("         Controller: %s"), *GetName());
+		UE_LOG(LogTemp, Error, TEXT("         → BeginPlay()에서 InventoryComponent 초기화 확인"));
+		UE_LOG(LogTemp, Error, TEXT("         → PlayerController BP에 Component 추가 확인"));
 		return;
 	}
+	UE_LOG(LogTemp, Warning, TEXT("   ✅ InventoryComponent 유효함"));
 
 	// ============================================
 	// Step 2: SpatialInventory 접근
@@ -470,14 +474,18 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 	UInv_InventoryBase* InventoryMenu = InventoryComponent->GetInventoryMenu();
 	if (!IsValid(InventoryMenu))
 	{
-		UE_LOG(LogTemp, Error, TEXT("   ❌ InventoryMenu가 nullptr!"));
+		UE_LOG(LogTemp, Error, TEXT("   ❌ [실패] InventoryMenu가 nullptr!"));
+		UE_LOG(LogTemp, Error, TEXT("         → InventoryComponent::BeginPlay()에서 위젯 생성 확인"));
+		UE_LOG(LogTemp, Error, TEXT("         → InventoryMenuClass가 설정되어 있는지 확인"));
 		return;
 	}
 
 	UInv_SpatialInventory* SpatialInventory = Cast<UInv_SpatialInventory>(InventoryMenu);
 	if (!IsValid(SpatialInventory))
 	{
-		UE_LOG(LogTemp, Error, TEXT("   ❌ SpatialInventory로 캐스트 실패!"));
+		UE_LOG(LogTemp, Error, TEXT("   ❌ [실패] SpatialInventory로 캐스트 실패!"));
+		UE_LOG(LogTemp, Error, TEXT("         InventoryMenu 클래스: %s"), *InventoryMenu->GetClass()->GetName());
+		UE_LOG(LogTemp, Error, TEXT("         → InventoryMenu가 UInv_SpatialInventory 상속 확인"));
 		return;
 	}
 
@@ -522,15 +530,16 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 	}
 
 	// ============================================
-	// 최종 결과
+	// 최종 결과 요약
 	// ============================================
 	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔══════════════════════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║                        📊 복원 결과 요약                                      ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╠══════════════════════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ 요청: %d개 아이템                                                             "), SavedItems.Num());
-	UE_LOG(LogTemp, Warning, TEXT("║ 복원: %d개 성공                                                               "), TotalRestored);
-	UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════════════════════╝"));
+	UE_LOG(LogTemp, Warning, TEXT("  ┌─────────────────────────────────────────────────────────────┐"));
+	UE_LOG(LogTemp, Warning, TEXT("  │ 📊 [Phase 5] Grid 위치 복원 결과                            │"));
+	UE_LOG(LogTemp, Warning, TEXT("  ├─────────────────────────────────────────────────────────────┤"));
+	UE_LOG(LogTemp, Warning, TEXT("  │ 요청: %3d개 아이템                                          │"), SavedItems.Num());
+	UE_LOG(LogTemp, Warning, TEXT("  │ 복원: %3d개 성공 ✅                                         │"), TotalRestored);
+	UE_LOG(LogTemp, Warning, TEXT("  │ 실패: %3d개 ❌                                              │"), SavedItems.Num() - TotalRestored);
+	UE_LOG(LogTemp, Warning, TEXT("  └─────────────────────────────────────────────────────────────┘"));
 	UE_LOG(LogTemp, Warning, TEXT(""));
 }
 

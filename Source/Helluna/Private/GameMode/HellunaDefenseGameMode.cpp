@@ -2011,8 +2011,15 @@ void AHellunaDefenseGameMode::LoadAndSendInventoryToClient(APlayerController* PC
 		// SpawnedActor->Destroy();  // 필요 시 활성화
 	}
 
+	// Step 3 결과 요약
 	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("   📊 결과: 성공 %d개, 실패 %d개"), SpawnedCount, FailedCount);
+	UE_LOG(LogTemp, Warning, TEXT("  ┌─────────────────────────────────────────────────────────────┐"));
+	UE_LOG(LogTemp, Warning, TEXT("  │ 📊 Step 3 결과: 아이템 스폰                                 │"));
+	UE_LOG(LogTemp, Warning, TEXT("  ├─────────────────────────────────────────────────────────────┤"));
+	UE_LOG(LogTemp, Warning, TEXT("  │ 요청: %3d개                                                 │"), LoadedData.Items.Num());
+	UE_LOG(LogTemp, Warning, TEXT("  │ 성공: %3d개 ✅                                              │"), SpawnedCount);
+	UE_LOG(LogTemp, Warning, TEXT("  │ 실패: %3d개 ❌                                              │"), FailedCount);
+	UE_LOG(LogTemp, Warning, TEXT("  └─────────────────────────────────────────────────────────────┘"));
 
 	// ============================================
 	// Step 4: Client RPC로 Grid 위치 데이터 전송
@@ -2038,15 +2045,31 @@ void AHellunaDefenseGameMode::LoadAndSendInventoryToClient(APlayerController* PC
 	if (IsValid(InvPC))
 	{
 		InvPC->Client_ReceiveInventoryData(SavedItemsForClient);
-		UE_LOG(LogTemp, Warning, TEXT("   ✅ Client RPC 전송 완료! (%d개 아이템)"), SavedItemsForClient.Num());
+		UE_LOG(LogTemp, Warning, TEXT("   ✅ Client RPC 전송 완료!"));
+		UE_LOG(LogTemp, Warning, TEXT("         전송 아이템: %d개"), SavedItemsForClient.Num());
+		UE_LOG(LogTemp, Warning, TEXT("         수신자: %s"), *InvPC->GetName());
 	}
 	else
 	{
 		UE_LOG(LogTemp, Warning, TEXT("   ⚠️ Inv_PlayerController 아님, Grid 위치 복원 생략"));
+		UE_LOG(LogTemp, Warning, TEXT("         PC 클래스: %s"), *PC->GetClass()->GetName());
 	}
 
+	// ============================================
+	// 최종 결과 요약
+	// ============================================
 	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("════════════════════════════════════════════════════════════════════════════════"));
+	UE_LOG(LogTemp, Warning, TEXT("  ┌─────────────────────────────────────────────────────────────┐"));
+	UE_LOG(LogTemp, Warning, TEXT("  │ 📊 [Phase 5] 인벤토리 로드 최종 결과                        │"));
+	UE_LOG(LogTemp, Warning, TEXT("  ├─────────────────────────────────────────────────────────────┤"));
+	UE_LOG(LogTemp, Warning, TEXT("  │ 플레이어: %-40s │"), *PlayerUniqueId);
+	UE_LOG(LogTemp, Warning, TEXT("  │ 저장된 아이템: %3d개                                        │"), LoadedData.Items.Num());
+	UE_LOG(LogTemp, Warning, TEXT("  │ 스폰 성공: %3d개 ✅                                         │"), SpawnedCount);
+	UE_LOG(LogTemp, Warning, TEXT("  │ 스폰 실패: %3d개 ❌                                         │"), FailedCount);
+	UE_LOG(LogTemp, Warning, TEXT("  │ Client RPC: %-42s │"), IsValid(InvPC) ? TEXT("전송됨") : TEXT("생략됨"));
+	UE_LOG(LogTemp, Warning, TEXT("  └─────────────────────────────────────────────────────────────┘"));
+
+	UE_LOG(LogTemp, Warning, TEXT(""));
 	UE_LOG(LogTemp, Warning, TEXT("🎉 [Phase 5] 플레이어 %s 인벤토리 로드 완료!"), *PlayerUniqueId);
 	UE_LOG(LogTemp, Warning, TEXT("════════════════════════════════════════════════════════════════════════════════"));
 }
