@@ -99,7 +99,8 @@ public:
 	bool MoveItemToPosition(const FGameplayTag& ItemType, const FIntPoint& TargetPosition, int32 StackCount);
 	
 	// [Phase 5] 현재 GridIndex 기반으로 아이템을 목표 위치로 이동 (순서 기반 복원용)
-	bool MoveItemByCurrentIndex(int32 CurrentIndex, const FIntPoint& TargetPosition);
+	// ⭐ Phase 5: SavedStackCount 파라미터 추가 - 로드 시 저장된 StackCount를 전달받음
+	bool MoveItemByCurrentIndex(int32 CurrentIndex, const FIntPoint& TargetPosition, int32 SavedStackCount = -1);
 
 private:
 

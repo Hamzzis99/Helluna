@@ -2151,7 +2151,8 @@ int32 UInv_InventoryGrid::RestoreItemPositions(const TArray<FInv_SavedItemData>&
 			SavedItem.GridPosition.X, SavedItem.GridPosition.Y);
 
 		// 현재 GridIndex의 아이템을 저장된 위치로 이동
-		if (MoveItemByCurrentIndex(CurrentGridIndex, SavedItem.GridPosition))
+		// ⭐ Phase 5: SavedItem.StackCount를 세 번째 파라미터로 전달!
+		if (MoveItemByCurrentIndex(CurrentGridIndex, SavedItem.GridPosition, SavedItem.StackCount))
 		{
 			UE_LOG(LogTemp, Warning, TEXT("    │     ✅ 복원 성공!"));
 			RestoredCount++;
@@ -2320,7 +2321,7 @@ bool UInv_InventoryGrid::MoveItemToPosition(const FGameplayTag& ItemType, const 
 //   - 현재 GridIndex를 직접 지정하여 정확한 아이템 이동
 // ============================================
 
-bool UInv_InventoryGrid::MoveItemByCurrentIndex(int32 CurrentIndex, const FIntPoint& TargetPosition)
+bool UInv_InventoryGrid::MoveItemByCurrentIndex(int32 CurrentIndex, const FIntPoint& TargetPosition, int32 SavedStackCount)
 {
 	const int32 TargetIndex = UInv_WidgetUtils::GetIndexFromPosition(TargetPosition, Columns);
 
@@ -2380,8 +2381,9 @@ bool UInv_InventoryGrid::MoveItemByCurrentIndex(int32 CurrentIndex, const FIntPo
 	// ============================================
 	// ⭐ Step 4.5: 기존 위치의 StackCount 저장 (핵심 수정!)
 	// ============================================
-	const int32 OriginalStackCount = GridSlots[CurrentIndex]->GetStackCount();
-	UE_LOG(LogTemp, Warning, TEXT("    │     📦 기존 StackCount: %d"), OriginalStackCount);
+	// ⭐ Phase 5: SavedStackCount가 전달되면 그 값을 사용, 아니면 현재 슬롯의 StackCount 사용
+	const int32 OriginalStackCount = (SavedStackCount > 0) ? SavedStackCount : GridSlots[CurrentIndex]->GetStackCount();
+	UE_LOG(LogTemp, Warning, TEXT("    │     📦 기존 StackCount: %d (SavedStackCount=%d)"), OriginalStackCount, SavedStackCount);
 
 	// ============================================
 	// Step 5: 원래 위치의 GridSlots 해제 (+ 텍스처/상태 복원!)
