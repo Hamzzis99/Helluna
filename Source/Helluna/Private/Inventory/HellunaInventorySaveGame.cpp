@@ -147,12 +147,44 @@ bool UHellunaInventorySaveGame::Save(UHellunaInventorySaveGame* InventorySaveGam
 
 	if (bSuccess)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[InventorySaveGame] Save: 저장 성공 (플레이어 %d명)"),
-			InventorySaveGame->PlayerInventories.Num());
+		// ============================================
+		// 📌 저장 성공 로그 (눈에 잘 띄게!)
+		// ============================================
+		UE_LOG(LogTemp, Warning, TEXT(""));
+		UE_LOG(LogTemp, Warning, TEXT("💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾"));
+		UE_LOG(LogTemp, Warning, TEXT("💾  [InventorySaveGame] 파일 저장 완료!"));
+		UE_LOG(LogTemp, Warning, TEXT("💾  플레이어: %d명"), InventorySaveGame->PlayerInventories.Num());
+		UE_LOG(LogTemp, Warning, TEXT("💾  파일: Saved/SaveGames/%s.sav"), *SaveSlotName);
+		UE_LOG(LogTemp, Warning, TEXT("💾  시간: %s"), *FDateTime::Now().ToString());
+		UE_LOG(LogTemp, Warning, TEXT("💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾"));
+		UE_LOG(LogTemp, Warning, TEXT(""));
+
+		// 화면에도 메시지 표시 (5초간)
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(
+				-1,  // Key (-1 = 고유 ID 자동 생성)
+				5.0f,  // 표시 시간 (초)
+				FColor::Green,
+				FString::Printf(TEXT("💾 인벤토리 저장 완료! (플레이어 %d명)"), 
+					InventorySaveGame->PlayerInventories.Num())
+			);
+		}
 	}
 	else
 	{
-		UE_LOG(LogTemp, Error, TEXT("[InventorySaveGame] Save: 저장 실패!"));
+		UE_LOG(LogTemp, Error, TEXT(""));
+		UE_LOG(LogTemp, Error, TEXT("❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌"));
+		UE_LOG(LogTemp, Error, TEXT("❌  [InventorySaveGame] 파일 저장 실패!"));
+		UE_LOG(LogTemp, Error, TEXT("❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌"));
+		UE_LOG(LogTemp, Error, TEXT(""));
+
+		// 화면에도 에러 표시
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Red,
+				TEXT("❌ 인벤토리 저장 실패!"));
+		}
 	}
 
 	return bSuccess;
