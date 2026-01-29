@@ -2435,7 +2435,9 @@ bool UInv_InventoryGrid::MoveItemByCurrentIndex(int32 CurrentIndex, const FIntPo
 	// 문제: SlottedItem 클릭 시 저장된 GridIndex를 Broadcast함
 	// 해결: 새 위치의 GridIndex로 업데이트해야 클릭이 정상 동작
 	FoundSlottedItem->SetGridIndex(TargetIndex);
-	UE_LOG(LogTemp, Warning, TEXT("    │     🔧 SlottedItem.GridIndex=%d로 업데이트"), TargetIndex);
+	// ⭐ Phase 5: SlottedItem UI 텍스트도 업데이트 (로드 후 "1"로 표시되는 버그 수정)
+	FoundSlottedItem->UpdateStackCount(OriginalStackCount);
+	UE_LOG(LogTemp, Warning, TEXT("    │     🔧 SlottedItem.GridIndex=%d로 업데이트, UI StackCount=%d"), TargetIndex, OriginalStackCount);
 
 	// ============================================
 	// Step 8: 위젯 위치 업데이트
