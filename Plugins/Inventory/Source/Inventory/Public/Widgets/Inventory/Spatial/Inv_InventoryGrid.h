@@ -97,6 +97,9 @@ public:
 	 * @return 이동 성공 여부
 	 */
 	bool MoveItemToPosition(const FGameplayTag& ItemType, const FIntPoint& TargetPosition, int32 StackCount);
+	
+	// [Phase 5] 현재 GridIndex 기반으로 아이템을 목표 위치로 이동 (순서 기반 복원용)
+	bool MoveItemByCurrentIndex(int32 CurrentIndex, const FIntPoint& TargetPosition);
 
 private:
 

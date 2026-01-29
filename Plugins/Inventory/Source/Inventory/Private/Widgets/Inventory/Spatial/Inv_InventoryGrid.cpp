@@ -774,6 +774,13 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 	//UE_LOG(LogTemp, Warning, TEXT("Clicked on item at index %d"), GridIndex); // 아이템 클릭 디버깅입니다.
 	check(GridSlots.IsValidIndex(GridIndex)); // 유효한 인덱스인지 확인
 	UInv_InventoryItem* ClickedInventoryItem = GridSlots[GridIndex]->GetInventoryItem().Get(); // 클릭한 아이템 가져오기
+	
+	// ⭐ nullptr 체크 추가 (MoveItemByCurrentIndex 후 원래 위치 클릭 시 크래시 방지)
+	if (!IsValid(ClickedInventoryItem))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[OnSlottedItemClicked] ⚠️ GridIndex=%d에 InventoryItem 없음, 무시"), GridIndex);
+		return;
+	}
 
 	//좌클릭을 눌렀을 때 실행되는 호버 부분 실행 부분
 	if (!IsValid(HoverItem) && IsLeftClick(MouseEvent))
@@ -1618,6 +1625,12 @@ UUserWidget* UInv_InventoryGrid::GetHiddenCursorWidget()
 
 bool UInv_InventoryGrid::IsSameStackable(const UInv_InventoryItem* ClickedInventoryItem) const
 {
+	// ⭐ nullptr 체크 추가 (크래시 방지!)
+	if (!IsValid(ClickedInventoryItem) || !IsValid(HoverItem) || !IsValid(HoverItem->GetInventoryItem()))
+	{
+		return false;
+	}
+	
 	const bool bIsSameItem = ClickedInventoryItem == HoverItem->GetInventoryItem();
 	const bool bIsStackable = ClickedInventoryItem->IsStackable();
 	return bIsSameItem && bIsStackable && HoverItem->GetItemType().MatchesTagExact(ClickedInventoryItem->GetItemManifest().GetItemType());
@@ -2093,31 +2106,56 @@ int32 UInv_InventoryGrid::RestoreItemPositions(const TArray<FInv_SavedItemData>&
 	UE_LOG(LogTemp, Warning, TEXT("    ┌─── [RestoreItemPositions] Grid %d (%s) ───┐"), CategoryIndex, GridCategoryStr);
 	UE_LOG(LogTemp, Warning, TEXT("    │ 복원할 아이템: %d개"), SavedItems.Num());
 
-	int32 RestoredCount = 0;
+	// ============================================
+	// 🔧 [핵심 수정] 순서 기반 이동으로 변경
+	// ============================================
+	// 문제: ItemType + StackCount로 찾으면 같은 타입/수량의 아이템이 
+	//       여러 개 있을 때 첫 번째 것만 계속 찾음
+	// 해결: 저장된 순서와 현재 SlottedItems 순서를 1:1 매칭
+	// ============================================
 
-	// 이 Grid 카테고리에 해당하는 아이템만 필터링
+	// 1. 이 Grid 카테고리에 해당하는 저장 데이터만 필터링
+	TArray<FInv_SavedItemData> FilteredSavedItems;
 	for (const FInv_SavedItemData& SavedItem : SavedItems)
 	{
-		// 카테고리 체크
-		if (SavedItem.GridCategory != static_cast<uint8>(ItemCategory))
+		if (SavedItem.GridCategory == static_cast<uint8>(ItemCategory))
 		{
-			continue;  // 다른 Grid 카테고리는 건너뜀
+			FilteredSavedItems.Add(SavedItem);
 		}
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("    │ 이 Grid 카테고리 아이템: %d개"), FilteredSavedItems.Num());
+
+	// 2. 현재 SlottedItems의 키(GridIndex)를 정렬하여 배열로 만듦
+	TArray<int32> SortedKeys;
+	SlottedItems.GetKeys(SortedKeys);
+	SortedKeys.Sort();  // 오름차순 정렬 (저장 시 순회 순서와 동일)
+
+	UE_LOG(LogTemp, Warning, TEXT("    │ 현재 SlottedItems 개수: %d"), SortedKeys.Num());
+
+	// 3. 1:1 매칭하여 이동
+	int32 RestoredCount = 0;
+	const int32 MatchCount = FMath::Min(SortedKeys.Num(), FilteredSavedItems.Num());
+
+	for (int32 i = 0; i < MatchCount; i++)
+	{
+		const int32 CurrentGridIndex = SortedKeys[i];
+		const FInv_SavedItemData& SavedItem = FilteredSavedItems[i];
 
 		UE_LOG(LogTemp, Warning, TEXT("    │"));
 		UE_LOG(LogTemp, Warning, TEXT("    │ [%d] %s x%d → Pos(%d,%d)"),
-			RestoredCount, *SavedItem.ItemType.ToString(), SavedItem.StackCount,
+			i, *SavedItem.ItemType.ToString(), SavedItem.StackCount,
 			SavedItem.GridPosition.X, SavedItem.GridPosition.Y);
 
-		// 위치 복원 시도
-		if (MoveItemToPosition(SavedItem.ItemType, SavedItem.GridPosition, SavedItem.StackCount))
+		// 현재 GridIndex의 아이템을 저장된 위치로 이동
+		if (MoveItemByCurrentIndex(CurrentGridIndex, SavedItem.GridPosition))
 		{
 			UE_LOG(LogTemp, Warning, TEXT("    │     ✅ 복원 성공!"));
 			RestoredCount++;
 		}
 		else
 		{
-			UE_LOG(LogTemp, Warning, TEXT("    │     ⚠️ 복원 실패 (아이템 없거나 위치 사용 중)"));
+			UE_LOG(LogTemp, Warning, TEXT("    │     ⚠️ 복원 실패"));
 		}
 	}
 
@@ -2130,58 +2168,292 @@ int32 UInv_InventoryGrid::RestoreItemPositions(const TArray<FInv_SavedItemData>&
 
 bool UInv_InventoryGrid::MoveItemToPosition(const FGameplayTag& ItemType, const FIntPoint& TargetPosition, int32 StackCount)
 {
-	// 목표 Grid 인덱스 계산
-	const int32 TargetIndex = TargetPosition.Y * Columns + TargetPosition.X;
+	// ============================================
+	// 📦 [Phase 5] Grid 위치 복원 - 완전한 이동 로직
+	// ============================================
+	// 
+	// 이동 순서:
+	// 1. ItemType + StackCount로 SlottedItem 찾기
+	// 2. 현재 위치가 목표 위치면 스킵
+	// 3. 목표 위치가 비어있는지 확인
+	// 4. 원래 위치의 GridSlots 해제
+	// 5. SlottedItems 맵 키 변경
+	// 6. 새 위치의 GridSlots 점유
+	// 7. 위젯 위치 업데이트
+	// ============================================
 
-	// 범위 체크
-	if (TargetIndex < 0 || TargetIndex >= GridSlots.Num())
+	const int32 TargetIndex = UInv_WidgetUtils::GetIndexFromPosition(TargetPosition, Columns);
+
+	// ============================================
+	// Step 1: ItemType + StackCount로 SlottedItem 찾기
+	// ============================================
+	UInv_SlottedItem* FoundSlottedItem = nullptr;
+	int32 CurrentIndex = INDEX_NONE;
+
+	for (const auto& Pair : SlottedItems)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("         ❌ 목표 인덱스(%d)가 범위 밖 (Grid 크기: %d)"), TargetIndex, GridSlots.Num());
+		UInv_SlottedItem* SlottedItem = Pair.Value;
+		if (!IsValid(SlottedItem)) continue;
+
+		UInv_InventoryItem* Item = SlottedItem->GetInventoryItem();
+		if (!Item) continue;
+
+		// ItemType 매칭
+		if (Item->GetItemManifest().GetItemType() != ItemType) continue;
+
+		// StackCount 매칭 (TotalStackCount 사용)
+		if (Item->GetTotalStackCount() != StackCount) continue;
+
+		// 첫 번째 매칭 선택
+		FoundSlottedItem = SlottedItem;
+		CurrentIndex = Pair.Key;
+		break;
+	}
+
+	if (!FoundSlottedItem || CurrentIndex == INDEX_NONE)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("    │     ⚠️ [MoveItemToPosition] 매칭되는 아이템 없음"));
+		UE_LOG(LogTemp, Warning, TEXT("    │         ItemType: %s, StackCount: %d"), *ItemType.ToString(), StackCount);
 		return false;
 	}
 
-	// 현재 SlottedItems에서 해당 ItemType을 가진 아이템 찾기
-	// (아직 위치가 복원되지 않은 아이템)
-	for (auto& Pair : SlottedItems)
+	// ============================================
+	// Step 2: 현재 위치가 목표 위치면 스킵
+	// ============================================
+	if (CurrentIndex == TargetIndex)
 	{
-		const int32 CurrentIndex = Pair.Key;
-		UInv_SlottedItem* SlottedItem = Pair.Value;
-
-		if (!IsValid(SlottedItem))
-		{
-			continue;
-		}
-
-		UInv_InventoryItem* Item = SlottedItem->GetInventoryItem();
-		if (!IsValid(Item))
-		{
-			continue;
-		}
-
-		// ItemType 매칭
-		if (Item->GetItemManifest().GetItemType() != ItemType)
-		{
-			continue;
-		}
-
-		// 이미 목표 위치에 있으면 성공으로 처리
-		if (CurrentIndex == TargetIndex)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("         ℹ️ 이미 목표 위치에 있음 (Index=%d)"), TargetIndex);
-			return true;
-		}
-
-		// TODO: 실제 위치 이동 로직
-		// 현재 구조에서는 SlottedItems의 키(Index)를 변경하는 것이 복잡하므로
-		// Phase 5에서는 이미 올바른 위치에 아이템이 추가되었다고 가정합니다.
-		// (서버에서 저장 순서대로 추가하면 대부분 맞음)
-
-		UE_LOG(LogTemp, Warning, TEXT("         ℹ️ 현재 위치: %d, 목표 위치: %d (이동은 Phase 6에서 구현)"), CurrentIndex, TargetIndex);
-		return true;  // 일단 아이템을 찾았으면 성공으로 처리
+		UE_LOG(LogTemp, Warning, TEXT("    │     ✅ [MoveItemToPosition] 이미 목표 위치에 있음 (Index=%d)"), CurrentIndex);
+		return true;
 	}
 
-	// 아이템을 찾지 못함
-	UE_LOG(LogTemp, Warning, TEXT("         ❌ ItemType '%s'를 가진 아이템을 찾지 못함"), *ItemType.ToString());
-	return false;
+	// ============================================
+	// Step 3: 목표 위치가 비어있는지 확인
+	// ============================================
+	if (!GridSlots.IsValidIndex(TargetIndex))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("    │     ⚠️ [MoveItemToPosition] 유효하지 않은 목표 Index: %d"), TargetIndex);
+		return false;
+	}
+
+	// 목표 슬롯이 이미 점유되어 있는지 확인
+	if (GridSlots[TargetIndex]->GetInventoryItem().IsValid())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("    │     ⚠️ [MoveItemToPosition] 목표 위치가 이미 점유됨 (Index=%d)"), TargetIndex);
+		return false;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("    │     🔄 [MoveItemToPosition] 이동 시작: Index %d → %d"), CurrentIndex, TargetIndex);
+
+	// ============================================
+	// Step 4: 원래 위치의 GridSlots 해제
+	// ============================================
+	UInv_InventoryItem* InventoryItem = FoundSlottedItem->GetInventoryItem();
+	const FInv_GridFragment* GridFragment = GetFragment<FInv_GridFragment>(InventoryItem, FragmentTags::GridFragment);
+	FIntPoint Dimensions = FIntPoint(1, 1);
+	if (GridFragment)
+	{
+		Dimensions = GridFragment->GetGridSize();
+	}
+
+	// 원래 위치의 모든 GridSlot 해제 (다차원 아이템 지원)
+	UInv_InventoryStatics::ForEach2D(GridSlots, CurrentIndex, Dimensions, Columns, [&](UInv_GridSlot* GridSlot)
+	{
+		if (GridSlot)
+		{
+			GridSlot->SetInventoryItem(nullptr);
+		}
+	});
+
+	// ============================================
+	// Step 5: SlottedItems 맵 키 변경
+	// ============================================
+	SlottedItems.Remove(CurrentIndex);
+	SlottedItems.Add(TargetIndex, FoundSlottedItem);
+
+	// ============================================
+	// Step 6: 새 위치의 GridSlots 점유
+	// ============================================
+	UInv_InventoryStatics::ForEach2D(GridSlots, TargetIndex, Dimensions, Columns, [&](UInv_GridSlot* GridSlot)
+	{
+		if (GridSlot)
+		{
+			GridSlot->SetInventoryItem(InventoryItem);
+			GridSlot->SetUpperLeftIndex(TargetIndex);
+			GridSlot->SetOccupiedTexture();
+		}
+	});
+
+	// ============================================
+	// Step 7: 위젯 위치 업데이트
+	// ============================================
+	UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(FoundSlottedItem->Slot);
+	if (CanvasSlot)
+	{
+		// 기존 AddItemAtIndex 로직과 동일한 방식으로 위치 계산
+		const FVector2D DrawPos = FVector2D(TargetPosition.X * TileSize, TargetPosition.Y * TileSize);
+		float ItemPadding = 0.0f;
+		if (GridFragment)
+		{
+			ItemPadding = GridFragment->GetGridPadding();
+		}
+		const FVector2D DrawPosWithPadding = DrawPos + FVector2D(ItemPadding);
+		CanvasSlot->SetPosition(DrawPosWithPadding);
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("    │     ✅ [MoveItemToPosition] 이동 완료!"));
+	UE_LOG(LogTemp, Warning, TEXT("    │         %s x%d: Index %d → %d, Pos(%d,%d)"),
+		*ItemType.ToString(), StackCount, CurrentIndex, TargetIndex, TargetPosition.X, TargetPosition.Y);
+
+	return true;
 }
+
+// ============================================
+// 📦 [Phase 5] Grid Index 기반 위치 이동 함수
+// ============================================
+// MoveItemToPosition의 문제점:
+//   - ItemType + StackCount로 찾으면 같은 타입/수량의 아이템이
+//     여러 개 있을 때 첫 번째 것만 계속 찾음
+// 해결:
+//   - 현재 GridIndex를 직접 지정하여 정확한 아이템 이동
+// ============================================
+
+bool UInv_InventoryGrid::MoveItemByCurrentIndex(int32 CurrentIndex, const FIntPoint& TargetPosition)
+{
+	const int32 TargetIndex = UInv_WidgetUtils::GetIndexFromPosition(TargetPosition, Columns);
+
+	// ============================================
+	// Step 1: 현재 위치가 목표 위치면 스킵
+	// ============================================
+	if (CurrentIndex == TargetIndex)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("    │     ✅ [MoveItemByCurrentIndex] 이미 목표 위치에 있음 (Index=%d)"), CurrentIndex);
+		return true;
+	}
+
+	// ============================================
+	// Step 2: CurrentIndex에 SlottedItem이 있는지 확인
+	// ============================================
+	UInv_SlottedItem* FoundSlottedItem = SlottedItems.FindRef(CurrentIndex);
+	if (!IsValid(FoundSlottedItem))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("    │     ⚠️ [MoveItemByCurrentIndex] CurrentIndex=%d에 SlottedItem 없음"), CurrentIndex);
+		return false;
+	}
+
+	UInv_InventoryItem* InventoryItem = FoundSlottedItem->GetInventoryItem();
+	if (!InventoryItem)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("    │     ⚠️ [MoveItemByCurrentIndex] InventoryItem이 nullptr"));
+		return false;
+	}
+
+	// ============================================
+	// Step 3: 목표 위치가 비어있는지 확인
+	// ============================================
+	if (!GridSlots.IsValidIndex(TargetIndex))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("    │     ⚠️ [MoveItemByCurrentIndex] 유효하지 않은 목표 Index: %d"), TargetIndex);
+		return false;
+	}
+
+	if (GridSlots[TargetIndex]->GetInventoryItem().IsValid())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("    │     ⚠️ [MoveItemByCurrentIndex] 목표 위치가 이미 점유됨 (Index=%d)"), TargetIndex);
+		return false;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("    │     🔄 [MoveItemByCurrentIndex] 이동 시작: Index %d → %d"), CurrentIndex, TargetIndex);
+
+	// ============================================
+	// Step 4: 아이템 크기 정보 가져오기
+	// ============================================
+	const FInv_GridFragment* GridFragment = GetFragment<FInv_GridFragment>(InventoryItem, FragmentTags::GridFragment);
+	FIntPoint Dimensions = FIntPoint(1, 1);
+	if (GridFragment)
+	{
+		Dimensions = GridFragment->GetGridSize();
+	}
+
+	// ============================================
+	// ⭐ Step 4.5: 기존 위치의 StackCount 저장 (핵심 수정!)
+	// ============================================
+	const int32 OriginalStackCount = GridSlots[CurrentIndex]->GetStackCount();
+	UE_LOG(LogTemp, Warning, TEXT("    │     📦 기존 StackCount: %d"), OriginalStackCount);
+
+	// ============================================
+	// Step 5: 원래 위치의 GridSlots 해제 (+ 텍스처/상태 복원!)
+	// ============================================
+	UInv_InventoryStatics::ForEach2D(GridSlots, CurrentIndex, Dimensions, Columns, [&](UInv_GridSlot* GridSlot)
+	{
+		if (GridSlot)
+		{
+			GridSlot->SetInventoryItem(nullptr);
+			GridSlot->SetUpperLeftIndex(INDEX_NONE);  // ⭐ UpperLeftIndex도 초기화
+			GridSlot->SetStackCount(0);  // ⭐ StackCount 초기화
+			GridSlot->SetAvailable(true);  // ⭐ 핵심 수정: 슬롯을 사용 가능으로 설정! (Hover 애니메이션 복원)
+			GridSlot->SetUnoccupiedTexture();
+		}
+	});
+
+	// ============================================
+	// Step 6: SlottedItems 맵 키 변경
+	// ============================================
+	SlottedItems.Remove(CurrentIndex);
+	SlottedItems.Add(TargetIndex, FoundSlottedItem);
+
+	// ============================================
+	// Step 7: 새 위치의 GridSlots 점유
+	// ============================================
+	bool bIsFirstSlot = true;
+	UInv_InventoryStatics::ForEach2D(GridSlots, TargetIndex, Dimensions, Columns, [&](UInv_GridSlot* GridSlot)
+	{
+		if (GridSlot)
+		{
+			GridSlot->SetInventoryItem(InventoryItem);
+			GridSlot->SetUpperLeftIndex(TargetIndex);
+			GridSlot->SetOccupiedTexture();
+			GridSlot->SetAvailable(false);  // ⭐ 핵심 수정: 슬롯을 사용 불가능으로 설정!
+			
+			// ⭐ 핵심 수정: 첫 번째 슬롯(UpperLeft)에만 StackCount 설정
+			if (bIsFirstSlot)
+			{
+				GridSlot->SetStackCount(OriginalStackCount);
+				bIsFirstSlot = false;
+				UE_LOG(LogTemp, Warning, TEXT("    │     📦 새 위치에 StackCount=%d 설정"), OriginalStackCount);
+			}
+		}
+	});
+
+	// ============================================
+	// ⭐ Step 7.5: SlottedItem 위젯의 GridIndex 업데이트 (핵심 수정!)
+	// ============================================
+	// 문제: SlottedItem 클릭 시 저장된 GridIndex를 Broadcast함
+	// 해결: 새 위치의 GridIndex로 업데이트해야 클릭이 정상 동작
+	FoundSlottedItem->SetGridIndex(TargetIndex);
+	UE_LOG(LogTemp, Warning, TEXT("    │     🔧 SlottedItem.GridIndex=%d로 업데이트"), TargetIndex);
+
+	// ============================================
+	// Step 8: 위젯 위치 업데이트
+	// ============================================
+	UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(FoundSlottedItem->Slot);
+	if (CanvasSlot)
+	{
+		const FVector2D DrawPos = FVector2D(TargetPosition.X * TileSize, TargetPosition.Y * TileSize);
+		float ItemPadding = 0.0f;
+		if (GridFragment)
+		{
+			ItemPadding = GridFragment->GetGridPadding();
+		}
+		const FVector2D DrawPosWithPadding = DrawPos + FVector2D(ItemPadding);
+		CanvasSlot->SetPosition(DrawPosWithPadding);
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("    │     ✅ [MoveItemByCurrentIndex] 이동 완료!"));
+	UE_LOG(LogTemp, Warning, TEXT("    │         %s: Index %d → %d, Pos(%d,%d)"),
+		*InventoryItem->GetItemManifest().GetItemType().ToString(),
+		CurrentIndex, TargetIndex, TargetPosition.X, TargetPosition.Y);
+
+	return true;
+}
+
 
