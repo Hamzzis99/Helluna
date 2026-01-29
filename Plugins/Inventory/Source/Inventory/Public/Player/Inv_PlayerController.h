@@ -260,6 +260,29 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Inventory|Save")
 	FOnInventoryStateReceived OnInventoryStateReceived;
 
+	// ============================================
+	// 📌 인벤토리 로드 RPC (Phase 5)
+	// ============================================
+
+	/**
+	 * [서버 → 클라이언트] 저장된 인벤토리 데이터 전송
+	 *
+	 * 서버에서 로그인 성공 후 저장된 인벤토리 데이터를 로드하여
+	 * 이 RPC로 클라이언트에 전송함
+	 *
+	 * 클라이언트는 수신된 데이터로 Grid 위치 복원
+	 *
+	 * @param SavedItems - 복원할 인벤토리 데이터
+	 */
+	UFUNCTION(Client, Reliable)
+	void Client_ReceiveInventoryData(const TArray<FInv_SavedItemData>& SavedItems);
+
+	/**
+	 * 인벤토리 로드 완료 대기 후 Grid 복원
+	 * FastArray 리플리케이션 완료 대기를 위한 딜레이 처리
+	 */
+	void DelayedRestoreGridPositions(const TArray<FInv_SavedItemData>& SavedItems);
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void SetupInputComponent() override;

@@ -104,7 +104,9 @@
 #include "Inventory/HellunaItemTypeMapping.h"  // Phase 1: DataTable 매핑
 #include "Inventory/HellunaInventorySaveGame.h" // Phase 2: SaveGame 클래스
 #include "Engine/DataTable.h"                   // DataTable 사용
-#include "GameplayTagContainer.h"               // FGameplayTag                 
+#include "GameplayTagContainer.h"               // FGameplayTag
+#include "Items/Components/Inv_ItemComponent.h" // Phase 5: 아이템 스폰용
+#include "InventoryManagement/Components/Inv_InventoryComponent.h" // Phase 5: 인벤토리 컴포넌트                 
 #include "GameFramework/PlayerController.h"
 #include "GameMode/HellunaDefenseGameState.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
@@ -196,17 +198,14 @@ void AHellunaDefenseGameMode::BeginPlay()
 	}
 
 	// ============================================
-	// 📦 [Phase 2] SaveGame 자동 테스트
+	// 📦 [Phase 2] SaveGame 자동 테스트 (비활성화됨)
 	// ============================================
 	// 
-	// PIE 시작 시 자동으로 저장/로드 테스트 실행
-	// Output Log에서 결과 확인!
+	// ✅ Phase 2 테스트 완료! 더미 데이터 생성 방지를 위해 비활성화
 	// 
-	// ▶ 테스트 내용:
-	//    - 더미 데이터로 저장 테스트
-	//    - 로드 후 데이터 검증
-	//    - 파일 생성 확인 (Saved/SaveGames/HellunaInventory.sav)
+	// 다시 테스트하려면 아래 주석 해제:
 	// ============================================
+	/*
 	if (IsValid(InventorySaveGame))
 	{
 		UE_LOG(LogTemp, Warning, TEXT(""));
@@ -222,7 +221,22 @@ void AHellunaDefenseGameMode::BeginPlay()
 		UE_LOG(LogTemp, Warning, TEXT("⚠️ [자동 테스트] InventorySaveGame 로드 실패!"));
 		UE_LOG(LogTemp, Warning, TEXT(""));
 	}
+	*/
 #endif
+
+	// ============================================
+	// 📦 [Phase 4] 자동저장 타이머 시작 (BeginPlay에서도!)
+	// ============================================
+	// 
+	// ⚠️ Listen Server나 로그인 없는 테스트 환경에서는
+	//    InitializeGame()이 호출되지 않을 수 있음.
+	//    그래서 BeginPlay에서도 타이머를 시작함.
+	// 
+	// ▶ StartAutoSaveTimer()는 내부적으로 중복 시작 방지됨
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("🔄 [Phase 4] BeginPlay에서 자동저장 타이머 시작..."));
+	StartAutoSaveTimer();
 }
 
 void AHellunaDefenseGameMode::InitializeGame()
@@ -789,7 +803,7 @@ void AHellunaDefenseGameMode::SpawnHeroCharacter(APlayerController* PlayerContro
 
 	// Possess
 	PlayerController->Possess(NewPawn);
-	
+
 	// 로그인 UI 숨기기
 	AHellunaLoginController* LoginController = Cast<AHellunaLoginController>(PlayerController);
 	if (LoginController)
@@ -810,9 +824,25 @@ void AHellunaDefenseGameMode::SpawnHeroCharacter(APlayerController* PlayerContro
 		UE_LOG(LogTemp, Warning, TEXT("│ 🎮 첫 플레이어 캐릭터 소환 완료!                          │"));
 		UE_LOG(LogTemp, Warning, TEXT("│ → 게임 초기화 시작...                                      │"));
 		UE_LOG(LogTemp, Warning, TEXT("└────────────────────────────────────────────────────────────┘"));
-		
+
 		InitializeGame();
 	}
+
+	// ============================================
+	// 📦 [Phase 5] 저장된 인벤토리 로드
+	// ============================================
+	// 캐릭터 소환 완료 후 약간의 딜레이를 두고 인벤토리 로드
+	// (InventoryComponent 초기화 완료 대기)
+	FTimerHandle InventoryLoadTimer;
+	GetWorldTimerManager().SetTimer(InventoryLoadTimer, [this, PlayerController]()
+	{
+		if (IsValid(PlayerController))
+		{
+			UE_LOG(LogTemp, Warning, TEXT(""));
+			UE_LOG(LogTemp, Warning, TEXT("📦 [Phase 5] 캐릭터 소환 완료 → 인벤토리 로드 시작"));
+			LoadAndSendInventoryToClient(PlayerController);
+		}
+	}, 1.0f, false);  // 1초 딜레이 (InventoryComponent 초기화 대기)
 
 	UE_LOG(LogTemp, Warning, TEXT(""));
 }
@@ -1804,4 +1834,238 @@ void AHellunaDefenseGameMode::DebugForceAutoSave()
 	UE_LOG(LogTemp, Warning, TEXT(""));
 	UE_LOG(LogTemp, Warning, TEXT("🔧 [디버그] 자동저장 강제 실행"));
 	OnAutoSaveTimer();
+}
+
+// ============================================
+// 📌 [Phase 5] 인벤토리 로드 함수
+// ============================================
+
+void AHellunaDefenseGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
+{
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔══════════════════════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║      [Phase 5] LoadAndSendInventoryToClient - 인벤토리 로드 및 전송          ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠══════════════════════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ 📍 실행 위치: 서버                                                            ║"));
+	UE_LOG(LogTemp, Warning, TEXT("║ 📍 PlayerController: %s"), PC ? *PC->GetName() : TEXT("nullptr"));
+	UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════════════════════╝"));
+
+	if (!HasAuthority())
+	{
+		UE_LOG(LogTemp, Error, TEXT("   ❌ 서버 권한 없음!"));
+		return;
+	}
+
+	if (!IsValid(PC))
+	{
+		UE_LOG(LogTemp, Error, TEXT("   ❌ PlayerController가 nullptr!"));
+		return;
+	}
+
+	// ============================================
+	// Step 1: PlayerUniqueId 가져오기
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("▶ [Step 1] PlayerUniqueId 가져오기..."));
+
+	AHellunaPlayerState* PS = PC->GetPlayerState<AHellunaPlayerState>();
+	if (!IsValid(PS))
+	{
+		UE_LOG(LogTemp, Error, TEXT("   ❌ PlayerState가 없습니다!"));
+		return;
+	}
+
+	FString PlayerUniqueId = PS->GetPlayerUniqueId();
+	if (PlayerUniqueId.IsEmpty())
+	{
+		UE_LOG(LogTemp, Error, TEXT("   ❌ PlayerUniqueId가 비어있습니다! (로그인 안 됨?)"));
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("   ✅ PlayerUniqueId: %s"), *PlayerUniqueId);
+
+	// ============================================
+	// Step 2: SaveGame에서 데이터 로드
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("▶ [Step 2] SaveGame에서 인벤토리 데이터 로드..."));
+
+	if (!IsValid(InventorySaveGame))
+	{
+		UE_LOG(LogTemp, Error, TEXT("   ❌ InventorySaveGame이 nullptr!"));
+		return;
+	}
+
+	FHellunaPlayerInventoryData LoadedData;
+	bool bDataFound = InventorySaveGame->LoadPlayerInventory(PlayerUniqueId, LoadedData);
+
+	if (!bDataFound || LoadedData.Items.Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("   ⚠️ 저장된 인벤토리 데이터가 없습니다. (신규 플레이어)"));
+		UE_LOG(LogTemp, Warning, TEXT("════════════════════════════════════════════════════════════════════════════════"));
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("   ✅ 로드 성공! %d개 아이템"), LoadedData.Items.Num());
+	UE_LOG(LogTemp, Warning, TEXT("   📅 마지막 저장: %s"), *LoadedData.LastSaveTime.ToString());
+
+	// ============================================
+	// Step 3: 아이템 스폰 및 인벤토리에 추가 (서버)
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("▶ [Step 3] 아이템 스폰 및 인벤토리에 추가..."));
+
+	// InventoryComponent 찾기
+	UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
+	if (!IsValid(InvComp))
+	{
+		UE_LOG(LogTemp, Error, TEXT("   ❌ InventoryComponent를 찾을 수 없습니다!"));
+		return;
+	}
+
+	// DataTable 체크
+	if (!IsValid(ItemTypeMappingDataTable))
+	{
+		UE_LOG(LogTemp, Error, TEXT("   ❌ ItemTypeMappingDataTable이 설정되지 않았습니다!"));
+		UE_LOG(LogTemp, Error, TEXT("      → BP_DefenseGameMode에서 DataTable 설정 필요"));
+		return;
+	}
+
+	int32 SpawnedCount = 0;
+	int32 FailedCount = 0;
+
+	for (const FHellunaInventoryItemData& ItemData : LoadedData.Items)
+	{
+		if (!ItemData.ItemType.IsValid())
+		{
+			UE_LOG(LogTemp, Error, TEXT("   ❌ [실패 %d] 유효하지 않은 ItemType!"), FailedCount + 1);
+			UE_LOG(LogTemp, Error, TEXT("         인덱스: %d"), FailedCount + SpawnedCount);
+			UE_LOG(LogTemp, Error, TEXT("         → ItemType 태그가 비어있거나 유효하지 않음"));
+			FailedCount++;
+			continue;
+		}
+
+		// DataTable에서 ActorClass 조회
+		TSubclassOf<AActor> ActorClass = UHellunaItemTypeMapping::GetActorClassFromItemType(
+			ItemTypeMappingDataTable, ItemData.ItemType);
+
+		if (!ActorClass)
+		{
+			UE_LOG(LogTemp, Error, TEXT("   ❌ [실패 %d] ActorClass 조회 실패!"), FailedCount + 1);
+			UE_LOG(LogTemp, Error, TEXT("         태그: %s"), *ItemData.ItemType.ToString());
+			UE_LOG(LogTemp, Error, TEXT("         → DataTable에 해당 태그 매핑이 없음"));
+			UE_LOG(LogTemp, Error, TEXT("         → DT_ItemTypeMapping에서 확인 필요"));
+			FailedCount++;
+			continue;
+		}
+
+		// 임시 위치에 Actor 스폰
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+		// 임시 위치 (월드 밖, 나중에 파괴될 예정)
+		FVector TempSpawnLocation = FVector(0.f, 0.f, -10000.f);
+
+		AActor* SpawnedActor = GetWorld()->SpawnActor<AActor>(ActorClass, TempSpawnLocation, FRotator::ZeroRotator, SpawnParams);
+
+		if (!IsValid(SpawnedActor))
+		{
+			UE_LOG(LogTemp, Error, TEXT("   ❌ [실패 %d] Actor 스폰 실패!"), FailedCount + 1);
+			UE_LOG(LogTemp, Error, TEXT("         태그: %s"), *ItemData.ItemType.ToString());
+			UE_LOG(LogTemp, Error, TEXT("         클래스: %s"), *ActorClass->GetName());
+			UE_LOG(LogTemp, Error, TEXT("         → World->SpawnActor 실패"));
+			FailedCount++;
+			continue;
+		}
+
+		// ItemComponent 가져오기
+		UInv_ItemComponent* ItemComp = SpawnedActor->FindComponentByClass<UInv_ItemComponent>();
+		if (!IsValid(ItemComp))
+		{
+			UE_LOG(LogTemp, Error, TEXT("   ❌ [실패 %d] ItemComponent 없음!"), FailedCount + 1);
+			UE_LOG(LogTemp, Error, TEXT("         태그: %s"), *ItemData.ItemType.ToString());
+			UE_LOG(LogTemp, Error, TEXT("         Actor: %s"), *SpawnedActor->GetName());
+			UE_LOG(LogTemp, Error, TEXT("         → 해당 Actor에 UInv_ItemComponent가 없음"));
+			UE_LOG(LogTemp, Error, TEXT("         → 아이템 BP 확인 필요"));
+			SpawnedActor->Destroy();
+			FailedCount++;
+			continue;
+		}
+
+		// StackCount 설정 (ItemComponent에 직접 설정하거나 TryAddItem에서 처리)
+		// 여기서는 서버 RPC를 사용하여 아이템 추가
+		// Server_AddNewItem은 StackCount를 처리하므로 직접 호출
+		InvComp->Server_AddNewItem(ItemComp, ItemData.StackCount, 0);
+
+		SpawnedCount++;
+		UE_LOG(LogTemp, Warning, TEXT("   [%d] ✅ 스폰 성공!"),
+			SpawnedCount);
+		UE_LOG(LogTemp, Warning, TEXT("         태그: %s"), *ItemData.ItemType.ToString());
+		UE_LOG(LogTemp, Warning, TEXT("         수량: %d"), ItemData.StackCount);
+		UE_LOG(LogTemp, Warning, TEXT("         Grid: %d, 위치: (%d, %d)"), 
+			ItemData.GridCategory, ItemData.GridPosition.X, ItemData.GridPosition.Y);
+		UE_LOG(LogTemp, Warning, TEXT("         스폰된 Actor: %s"), *SpawnedActor->GetName());
+
+		// 임시 Actor 파괴 (아이템 데이터는 이미 InventoryComponent에 복사됨)
+		// ⚠️ 주의: 일부 시스템에서는 Actor를 유지해야 할 수도 있음
+		// SpawnedActor->Destroy();  // 필요 시 활성화
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("   📊 결과: 성공 %d개, 실패 %d개"), SpawnedCount, FailedCount);
+
+	// ============================================
+	// Step 4: Client RPC로 Grid 위치 데이터 전송
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("▶ [Step 4] Client RPC로 Grid 위치 데이터 전송..."));
+
+	// FHellunaInventoryItemData → FInv_SavedItemData 변환
+	TArray<FInv_SavedItemData> SavedItemsForClient;
+	for (const FHellunaInventoryItemData& ItemData : LoadedData.Items)
+	{
+		FInv_SavedItemData ClientData;
+		ClientData.ItemType = ItemData.ItemType;
+		ClientData.StackCount = ItemData.StackCount;
+		ClientData.GridPosition = ItemData.GridPosition;
+		ClientData.GridCategory = ItemData.GridCategory;
+
+		SavedItemsForClient.Add(ClientData);
+	}
+
+	// Inv_PlayerController로 캐스트하여 Client RPC 호출
+	AInv_PlayerController* InvPC = Cast<AInv_PlayerController>(PC);
+	if (IsValid(InvPC))
+	{
+		InvPC->Client_ReceiveInventoryData(SavedItemsForClient);
+		UE_LOG(LogTemp, Warning, TEXT("   ✅ Client RPC 전송 완료! (%d개 아이템)"), SavedItemsForClient.Num());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("   ⚠️ Inv_PlayerController 아님, Grid 위치 복원 생략"));
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("════════════════════════════════════════════════════════════════════════════════"));
+	UE_LOG(LogTemp, Warning, TEXT("🎉 [Phase 5] 플레이어 %s 인벤토리 로드 완료!"), *PlayerUniqueId);
+	UE_LOG(LogTemp, Warning, TEXT("════════════════════════════════════════════════════════════════════════════════"));
+}
+
+void AHellunaDefenseGameMode::DebugTestLoadInventory()
+{
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("🔧 [디버그] 첫 번째 플레이어의 인벤토리 로드 테스트"));
+
+	// 첫 번째 PlayerController 찾기
+	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	{
+		APlayerController* PC = It->Get();
+		if (IsValid(PC))
+		{
+			LoadAndSendInventoryToClient(PC);
+			return;
+		}
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("   ⚠️ 플레이어를 찾을 수 없습니다!"));
 }

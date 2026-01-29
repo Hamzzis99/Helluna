@@ -471,10 +471,47 @@ public:
 	/**
 	 * [디버깅] 자동저장 타이머 강제 실행 (테스트용)
 	 * AutoSaveIntervalSeconds를 짧게 설정하지 않아도 즉시 저장 테스트 가능
-	 * 
+	 *
 	 * 콘솔에서 호출 방법:
 	 * "ke * DebugForceAutoSave"
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Helluna|Inventory|Debug")
 	void DebugForceAutoSave();
+
+	// ============================================
+	// 📌 [Phase 5] 인벤토리 로드 함수
+	// ============================================
+
+	/**
+	 * 저장된 인벤토리 데이터를 로드하여 클라이언트에 전송
+	 *
+	 * ============================================
+	 * 📌 호출 시점:
+	 * ============================================
+	 * - SpawnHeroCharacter() 완료 직후
+	 * - 플레이어가 게임에 처음 입장했을 때
+	 *
+	 * ============================================
+	 * 📌 처리 흐름:
+	 * ============================================
+	 * 1. PlayerState에서 PlayerUniqueId 가져오기
+	 * 2. InventorySaveGame->LoadPlayerInventory()로 데이터 로드
+	 * 3. 각 아이템에 대해:
+	 *    a. DataTable에서 ItemType → ActorClass 조회
+	 *    b. 서버에서 Actor 스폰 → ItemComponent 추출
+	 *    c. InventoryComponent에 아이템 추가
+	 * 4. Client RPC로 Grid 위치 복원 데이터 전송
+	 *
+	 * @param PC - 인벤토리를 로드할 PlayerController
+	 */
+	void LoadAndSendInventoryToClient(APlayerController* PC);
+
+	/**
+	 * [디버깅] 수동으로 인벤토리 로드 테스트
+	 *
+	 * 콘솔에서 호출 방법:
+	 * "ke * DebugTestLoadInventory"
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Helluna|Inventory|Debug")
+	void DebugTestLoadInventory();
 };

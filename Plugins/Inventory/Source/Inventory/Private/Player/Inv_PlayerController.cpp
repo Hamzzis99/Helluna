@@ -424,13 +424,19 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 {
 	UE_LOG(LogTemp, Warning, TEXT(""));
 	UE_LOG(LogTemp, Warning, TEXT("╔══════════════════════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║          [Phase 3] RestoreInventoryFromState() - 인벤토리 상태 복원           ║"));
+	UE_LOG(LogTemp, Warning, TEXT("║          [Phase 5] RestoreInventoryFromState() - 인벤토리 상태 복원           ║"));
 	UE_LOG(LogTemp, Warning, TEXT("╠══════════════════════════════════════════════════════════════════════════════╣"));
 	UE_LOG(LogTemp, Warning, TEXT("║ 📍 호출 위치: 클라이언트                                                      ║"));
 	UE_LOG(LogTemp, Warning, TEXT("║ 📍 목적: 저장된 Grid 위치로 아이템 배치 복원                                   ║"));
-	UE_LOG(LogTemp, Warning, TEXT("║ 📍 상태: ⚠️ Phase 5에서 실제 로직 구현 예정                                   ║"));
 	UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════════════════════╝"));
-	
+
+	if (SavedItems.Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT(""));
+		UE_LOG(LogTemp, Warning, TEXT("⚠️ 복원할 아이템이 없습니다."));
+		return;
+	}
+
 	UE_LOG(LogTemp, Warning, TEXT(""));
 	UE_LOG(LogTemp, Warning, TEXT("▶ 복원할 아이템 목록 (%d개):"), SavedItems.Num());
 	UE_LOG(LogTemp, Warning, TEXT("  ┌─────────────────────────────────────────────────────────────┐"));
@@ -442,24 +448,89 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 	}
 
 	UE_LOG(LogTemp, Warning, TEXT("  └─────────────────────────────────────────────────────────────┘"));
-	
-	// ============================================
-	// Phase 5에서 구현할 내용:
-	// ============================================
-	// 1. InventoryComponent → SpatialInventory 접근
-	// 2. 각 SavedItem 순회:
-	//    a. GridCategory로 해당 Grid 선택
-	//       - 0 → Grid_Equippables
-	//       - 1 → Grid_Consumables
-	//       - 2 → Grid_Craftables
-	//    b. ItemType으로 현재 UI에서 해당 아이템 찾기
-	//    c. 아이템을 GridPosition으로 이동
-	//    d. StackCount 설정 (Split 복원)
-	// 3. 충돌 처리 (이미 다른 아이템이 있는 경우)
 
+	// ============================================
+	// Step 1: InventoryComponent 접근
+	// ============================================
 	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("⚠️ [TODO] Phase 5에서 실제 복원 로직 구현 예정"));
-	UE_LOG(LogTemp, Warning, TEXT("   현재는 FastArray 리플리케이션으로 자동 배치됨 (위치 복원 없음)"));
+	UE_LOG(LogTemp, Warning, TEXT("▶ [Step 1] InventoryComponent 접근"));
+
+	if (!InventoryComponent.IsValid())
+	{
+		UE_LOG(LogTemp, Error, TEXT("   ❌ InventoryComponent가 유효하지 않습니다!"));
+		return;
+	}
+
+	// ============================================
+	// Step 2: SpatialInventory 접근
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("▶ [Step 2] SpatialInventory 접근"));
+
+	UInv_InventoryBase* InventoryMenu = InventoryComponent->GetInventoryMenu();
+	if (!IsValid(InventoryMenu))
+	{
+		UE_LOG(LogTemp, Error, TEXT("   ❌ InventoryMenu가 nullptr!"));
+		return;
+	}
+
+	UInv_SpatialInventory* SpatialInventory = Cast<UInv_SpatialInventory>(InventoryMenu);
+	if (!IsValid(SpatialInventory))
+	{
+		UE_LOG(LogTemp, Error, TEXT("   ❌ SpatialInventory로 캐스트 실패!"));
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("   ✅ SpatialInventory 접근 성공"));
+
+	// ============================================
+	// Step 3: 각 Grid에 위치 복원 요청
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("▶ [Step 3] 각 Grid에 위치 복원 요청"));
+
+	int32 TotalRestored = 0;
+
+	// Grid 배열 구성
+	struct FGridRestoreInfo
+	{
+		UInv_InventoryGrid* Grid;
+		const TCHAR* Name;
+	};
+
+	FGridRestoreInfo Grids[] = {
+		{ SpatialInventory->GetGrid_Equippables(),  TEXT("Grid_Equippables (장비)") },
+		{ SpatialInventory->GetGrid_Consumables(), TEXT("Grid_Consumables (소모품)") },
+		{ SpatialInventory->GetGrid_Craftables(),  TEXT("Grid_Craftables (재료)") }
+	};
+
+	for (const FGridRestoreInfo& GridInfo : Grids)
+	{
+		UE_LOG(LogTemp, Warning, TEXT(""));
+		UE_LOG(LogTemp, Warning, TEXT("   📦 %s"), GridInfo.Name);
+
+		if (!IsValid(GridInfo.Grid))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("      ⚠️ Grid가 nullptr! 건너뜀"));
+			continue;
+		}
+
+		int32 RestoredInGrid = GridInfo.Grid->RestoreItemPositions(SavedItems);
+		TotalRestored += RestoredInGrid;
+
+		UE_LOG(LogTemp, Warning, TEXT("      → %d개 복원됨"), RestoredInGrid);
+	}
+
+	// ============================================
+	// 최종 결과
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔══════════════════════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║                        📊 복원 결과 요약                                      ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠══════════════════════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ 요청: %d개 아이템                                                             "), SavedItems.Num());
+	UE_LOG(LogTemp, Warning, TEXT("║ 복원: %d개 성공                                                               "), TotalRestored);
+	UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════════════════════╝"));
 	UE_LOG(LogTemp, Warning, TEXT(""));
 }
 
@@ -526,7 +597,7 @@ void AInv_PlayerController::Server_ReceiveInventoryState_Implementation(const TA
 	// 델리게이트 브로드캐스트 (GameMode에서 바인딩하여 저장 처리)
 	UE_LOG(LogTemp, Warning, TEXT(""));
 	UE_LOG(LogTemp, Warning, TEXT("▶ OnInventoryStateReceived 델리게이트 브로드캐스트..."));
-	
+
 	if (OnInventoryStateReceived.IsBound())
 	{
 		UE_LOG(LogTemp, Warning, TEXT("   ✅ 델리게이트 바인딩됨! 브로드캐스트 실행"));
@@ -539,5 +610,85 @@ void AInv_PlayerController::Server_ReceiveInventoryState_Implementation(const TA
 
 	UE_LOG(LogTemp, Warning, TEXT(""));
 	UE_LOG(LogTemp, Warning, TEXT("✅ 서버 수신 처리 완료!"));
+	UE_LOG(LogTemp, Warning, TEXT("════════════════════════════════════════════════════════════════════════════════"));
+}
+
+// ============================================
+// 📌 인벤토리 로드 RPC 구현 (Phase 5)
+// ============================================
+
+/**
+ * [서버 → 클라이언트] 저장된 인벤토리 데이터 수신
+ */
+void AInv_PlayerController::Client_ReceiveInventoryData_Implementation(const TArray<FInv_SavedItemData>& SavedItems)
+{
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔══════════════════════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║      [Phase 5] Client_ReceiveInventoryData - 서버로부터 인벤토리 데이터 수신  ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠══════════════════════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ 📍 실행 위치: 클라이언트                                                      ║"));
+	UE_LOG(LogTemp, Warning, TEXT("║ 📍 수신된 아이템: %d개                                                        "), SavedItems.Num());
+	UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════════════════════╝"));
+
+	if (SavedItems.Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT(""));
+		UE_LOG(LogTemp, Warning, TEXT("⚠️ 저장된 인벤토리 데이터가 없습니다. (신규 플레이어?)"));
+		UE_LOG(LogTemp, Warning, TEXT("════════════════════════════════════════════════════════════════════════════════"));
+		return;
+	}
+
+	// 수신된 아이템 목록 출력
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("▶ 수신된 아이템 목록:"));
+	UE_LOG(LogTemp, Warning, TEXT("  ┌─────────────────────────────────────────────────────────────┐"));
+
+	for (int32 i = 0; i < SavedItems.Num(); ++i)
+	{
+		const FInv_SavedItemData& Item = SavedItems[i];
+		UE_LOG(LogTemp, Warning, TEXT("  │ [%02d] %s"), i, *Item.ToString());
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("  └─────────────────────────────────────────────────────────────┘"));
+
+	// ============================================
+	// FastArray 리플리케이션 완료 대기 후 Grid 위치 복원
+	// ============================================
+	// 서버에서 아이템이 추가되면 FastArray가 클라이언트로 리플리케이트됨
+	// 리플리케이션 완료 후 Grid 위치를 복원해야 하므로 딜레이 필요
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("▶ 0.5초 후 Grid 위치 복원 예약..."));
+	UE_LOG(LogTemp, Warning, TEXT("   (FastArray 리플리케이션 완료 대기)"));
+
+	// SavedItems 복사본 생성 (타이머 람다에서 사용)
+	TArray<FInv_SavedItemData> SavedItemsCopy = SavedItems;
+
+	FTimerHandle TimerHandle;
+	GetWorldTimerManager().SetTimer(TimerHandle, [this, SavedItemsCopy]()
+	{
+		DelayedRestoreGridPositions(SavedItemsCopy);
+	}, 0.5f, false);
+
+	UE_LOG(LogTemp, Warning, TEXT("════════════════════════════════════════════════════════════════════════════════"));
+}
+
+/**
+ * FastArray 리플리케이션 완료 후 Grid 위치 복원
+ */
+void AInv_PlayerController::DelayedRestoreGridPositions(const TArray<FInv_SavedItemData>& SavedItems)
+{
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔══════════════════════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║      [Phase 5] DelayedRestoreGridPositions - Grid 위치 복원 시작             ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠══════════════════════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ 📍 실행 위치: 클라이언트                                                      ║"));
+	UE_LOG(LogTemp, Warning, TEXT("║ 📍 복원할 아이템: %d개                                                        "), SavedItems.Num());
+	UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════════════════════╝"));
+
+	// RestoreInventoryFromState 호출하여 Grid 위치 복원
+	RestoreInventoryFromState(SavedItems);
+
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("🎉 [Phase 5] 인벤토리 로드 완료!"));
 	UE_LOG(LogTemp, Warning, TEXT("════════════════════════════════════════════════════════════════════════════════"));
 }

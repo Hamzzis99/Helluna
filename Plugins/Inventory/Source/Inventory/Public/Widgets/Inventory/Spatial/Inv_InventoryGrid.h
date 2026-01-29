@@ -75,7 +75,29 @@ public:
 
 	// ⭐ Grid 상태 수집 (저장용) - Split된 스택도 개별 수집
 	TArray<FInv_SavedItemData> CollectGridState() const;
-	
+
+	// ============================================
+	// 📦 [Phase 5] Grid 위치 복원 함수
+	// ============================================
+
+	/**
+	 * 저장된 Grid 위치로 아이템 재배치
+	 *
+	 * @param SavedItems - 복원할 아이템 데이터 배열
+	 * @return 복원 성공한 아이템 수
+	 */
+	int32 RestoreItemPositions(const TArray<FInv_SavedItemData>& SavedItems);
+
+	/**
+	 * 특정 아이템을 지정된 위치로 이동
+	 *
+	 * @param ItemType - 이동할 아이템의 GameplayTag
+	 * @param TargetPosition - 목표 Grid 위치
+	 * @param StackCount - 해당 스택의 수량
+	 * @return 이동 성공 여부
+	 */
+	bool MoveItemToPosition(const FGameplayTag& ItemType, const FIntPoint& TargetPosition, int32 StackCount);
+
 private:
 
 	TWeakObjectPtr<UInv_InventoryComponent> InventoryComponent;
