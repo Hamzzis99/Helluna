@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
 #include "Types/Inv_GridTypes.h"
+#include "Player/Inv_PlayerController.h"
 
 #include "Inv_InventoryGrid.generated.h"
 
@@ -71,6 +72,9 @@ public:
 
 	// ⭐ 실제 UI Grid 상태 확인 (크래프팅 공간 체크용)
 	bool HasRoomInActualGrid(const FInv_ItemManifest& Manifest) const;
+
+	// ⭐ Grid 상태 수집 (저장용) - Split된 스택도 개별 수집
+	TArray<FInv_SavedItemData> CollectGridState() const;
 	
 private:
 

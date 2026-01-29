@@ -11,6 +11,7 @@
 #include "Items/Components/Inv_ItemComponent.h"
 #include "Items/Fragments/Inv_FragmentTags.h"
 #include "Items/Fragments/Inv_ItemFragment.h"
+#include "Player/Inv_PlayerController.h"
 #include "Widgets/Inventory/GridSlots/Inv_GridSlot.h"
 #include "Widgets/Utils/Inv_WidgetUtils.h"
 #include "Items/Manifest/Inv_ItemManifest.h"
@@ -1958,5 +1959,123 @@ bool UInv_InventoryGrid::HasRoomInActualGrid(const FInv_ItemManifest& Manifest) 
 
 	UE_LOG(LogTemp, Warning, TEXT("[ACTUAL GRID CHECK] ❌ 공간 없음!"));
 	return false; // 공간 없음
+}
+
+// ============================================
+// 📌 Grid 상태 수집 (저장용) - Phase 3
+// ============================================
+/**
+ * Grid의 모든 아이템 상태를 수집
+ * Split된 스택도 개별 항목으로 수집됨
+ * 
+ * 📌 수집 과정:
+ * 1. SlottedItems 맵 순회 (GridIndex → SlottedItem)
+ * 2. GridSlot에서 StackCount 읽기 (⭐ Split 반영!)
+ * 3. GridIndex → GridPosition 변환
+ * 4. FInv_SavedItemData 생성
+ */
+TArray<FInv_SavedItemData> UInv_InventoryGrid::CollectGridState() const
+{
+	TArray<FInv_SavedItemData> Result;
+
+	// 카테고리 이름 변환
+	const TCHAR* CategoryNames[] = { TEXT("장비"), TEXT("소모품"), TEXT("재료") };
+	const int32 CategoryIndex = static_cast<int32>(ItemCategory);
+	const TCHAR* CategoryName = (CategoryIndex >= 0 && CategoryIndex < 3) ? CategoryNames[CategoryIndex] : TEXT("???");
+
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("    ┌─── [CollectGridState] Grid %d (%s) ───┐"), CategoryIndex, CategoryName);
+	UE_LOG(LogTemp, Warning, TEXT("    │ Grid 크기: %d x %d (총 %d 슬롯)"), Columns, Rows, Columns * Rows);
+	UE_LOG(LogTemp, Warning, TEXT("    │ SlottedItems 개수: %d"), SlottedItems.Num());
+
+	if (SlottedItems.Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("    │ → 수집할 아이템 없음 (빈 Grid)"));
+		UE_LOG(LogTemp, Warning, TEXT("    └────────────────────────────────────────┘"));
+		return Result;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("    │"));
+	UE_LOG(LogTemp, Warning, TEXT("    │ ▶ SlottedItems 순회 시작:"));
+
+	// SlottedItems 순회 (각 GridIndex에 있는 아이템)
+	int32 ItemIndex = 0;
+	for (const auto& Pair : SlottedItems)
+	{
+		const int32 GridIndex = Pair.Key;
+		const UInv_SlottedItem* SlottedItem = Pair.Value;
+
+		UE_LOG(LogTemp, Warning, TEXT("    │"));
+		UE_LOG(LogTemp, Warning, TEXT("    │   [%d] GridIndex=%d"), ItemIndex, GridIndex);
+
+		// SlottedItem 유효성 검사
+		if (!IsValid(SlottedItem))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("    │       ⚠️ SlottedItem이 nullptr! 건너뜀"));
+			continue;
+		}
+
+		// InventoryItem 가져오기
+		UInv_InventoryItem* Item = SlottedItem->GetInventoryItem();
+		if (!IsValid(Item))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("    │       ⚠️ InventoryItem이 nullptr! 건너뜀"));
+			continue;
+		}
+
+		// GridSlot 유효성 검사
+		if (!GridSlots.IsValidIndex(GridIndex))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("    │       ⚠️ GridIndex(%d)가 범위 밖! (GridSlots.Num=%d) 건너뜀"), 
+				GridIndex, GridSlots.Num());
+			continue;
+		}
+
+		// ============================================
+		// ⭐ 핵심: GridSlot에서 StackCount 읽기
+		// ============================================
+		// 서버의 TotalStackCount가 아니라 UI 슬롯의 개별 스택 수량!
+		// Split 시: 서버(20개) → UI슬롯1(9개) + UI슬롯2(11개)
+		const int32 StackCount = GridSlots[GridIndex]->GetStackCount();
+		const int32 ServerStackCount = Item->GetTotalStackCount();
+
+		UE_LOG(LogTemp, Warning, TEXT("    │       ItemType: %s"), *Item->GetItemManifest().GetItemType().ToString());
+		UE_LOG(LogTemp, Warning, TEXT("    │       UI StackCount: %d (⭐ 저장할 값)"), StackCount);
+		UE_LOG(LogTemp, Warning, TEXT("    │       서버 TotalStackCount: %d (참고용)"), ServerStackCount);
+
+		// Split 감지 로그
+		if (StackCount != ServerStackCount && ServerStackCount > 0)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("    │       🔀 Split 감지! UI(%d) ≠ 서버(%d)"), StackCount, ServerStackCount);
+		}
+
+		// ============================================
+		// GridIndex → GridPosition 변환
+		// ============================================
+		const FIntPoint GridPosition = UInv_WidgetUtils::GetPositionFromIndex(GridIndex, Columns);
+		UE_LOG(LogTemp, Warning, TEXT("    │       GridIndex(%d) → Position(%d, %d)"), 
+			GridIndex, GridPosition.X, GridPosition.Y);
+
+		// ============================================
+		// 저장 데이터 생성
+		// ============================================
+		FInv_SavedItemData SavedData;
+		SavedData.ItemType = Item->GetItemManifest().GetItemType();
+		SavedData.StackCount = StackCount > 0 ? StackCount : 1;  // Non-stackable은 1
+		SavedData.GridPosition = GridPosition;
+		SavedData.GridCategory = static_cast<uint8>(ItemCategory);
+
+		Result.Add(SavedData);
+
+		UE_LOG(LogTemp, Warning, TEXT("    │       ✅ 수집 완료: %s"), *SavedData.ToString());
+
+		ItemIndex++;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("    │"));
+	UE_LOG(LogTemp, Warning, TEXT("    │ 📦 Grid %d 수집 결과: %d개 아이템"), CategoryIndex, Result.Num());
+	UE_LOG(LogTemp, Warning, TEXT("    └────────────────────────────────────────┘"));
+
+	return Result;
 }
 
