@@ -40,6 +40,17 @@ void AInv_PlayerController::ToggleInventory()
 	else
 	{
 		HUDWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+		
+		// ============================================
+		// ⭐ [Phase 3 테스트] 인벤토리 닫을 때 Grid 상태 수집
+		// ============================================
+		// TODO: Phase 4 완료 후 이 코드 제거 (RPC로 대체)
+		UE_LOG(LogTemp, Warning, TEXT(""));
+		UE_LOG(LogTemp, Warning, TEXT("🧪 [Phase 3 테스트] 인벤토리 닫힘 → CollectInventoryGridState() 호출"));
+		
+		TArray<FInv_SavedItemData> CollectedData = CollectInventoryGridState();
+		
+		UE_LOG(LogTemp, Warning, TEXT("🧪 [Phase 3 테스트] 수집 완료! %d개 아이템"), CollectedData.Num());
 	}
 }
 

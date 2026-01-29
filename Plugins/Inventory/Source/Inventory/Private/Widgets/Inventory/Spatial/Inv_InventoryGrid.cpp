@@ -1979,12 +1979,12 @@ TArray<FInv_SavedItemData> UInv_InventoryGrid::CollectGridState() const
 	TArray<FInv_SavedItemData> Result;
 
 	// 카테고리 이름 변환
-	const TCHAR* CategoryNames[] = { TEXT("장비"), TEXT("소모품"), TEXT("재료") };
+	const TCHAR* GridCategoryNames[] = { TEXT("장비"), TEXT("소모품"), TEXT("재료") };
 	const int32 CategoryIndex = static_cast<int32>(ItemCategory);
-	const TCHAR* CategoryName = (CategoryIndex >= 0 && CategoryIndex < 3) ? CategoryNames[CategoryIndex] : TEXT("???");
+	const TCHAR* GridCategoryStr = (CategoryIndex >= 0 && CategoryIndex < 3) ? GridCategoryNames[CategoryIndex] : TEXT("???");
 
 	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("    ┌─── [CollectGridState] Grid %d (%s) ───┐"), CategoryIndex, CategoryName);
+	UE_LOG(LogTemp, Warning, TEXT("    ┌─── [CollectGridState] Grid %d (%s) ───┐"), CategoryIndex, GridCategoryStr);
 	UE_LOG(LogTemp, Warning, TEXT("    │ Grid 크기: %d x %d (총 %d 슬롯)"), Columns, Rows, Columns * Rows);
 	UE_LOG(LogTemp, Warning, TEXT("    │ SlottedItems 개수: %d"), SlottedItems.Num());
 
