@@ -29,6 +29,7 @@
 
 #include "DebugHelper.h"
 
+
 AHellunaHeroCharacter::AHellunaHeroCharacter()
 {
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.f);
@@ -368,6 +369,7 @@ void AHellunaHeroCharacter::Server_RequestSpawnWeapon_Implementation(
 		return;
 	}
 
+
 	// 다른 클라이언트들에게만 장착 애니 재생(소유자 제외)
 	// - 소유자는 로컬에서 이미 처리하거나, 별도 흐름에서 재생할 수 있음
 	Multicast_PlayEquipMontageExceptOwner(EquipMontage);
@@ -466,6 +468,11 @@ void AHellunaHeroCharacter::Server_RequestSpawnWeapon_Implementation(
 		CurrentWeaponTag = NewTag;
 	}
 
+
+	TArray<AActor*> Attached;
+	GetAttachedActors(Attached, true);
+
+
 	// 네트워크 업데이트 힌트(즉시 반영에 도움)
 	NewWeapon->ForceNetUpdate();
 	ForceNetUpdate();
@@ -497,6 +504,8 @@ void AHellunaHeroCharacter::ApplyTagToASC(const FGameplayTag& OldTag, const FGam
 	{
 		ASC->AddLooseGameplayTag(NewTag);
 	}
+
+	
 
 	// 태그 변경을 네트워크에 빠르게 반영(가능하면 도움)
 	ASC->ForceReplication();
@@ -546,13 +555,15 @@ void AHellunaHeroCharacter::Multicast_PlayEquipMontageExceptOwner_Implementation
 void AHellunaHeroCharacter::Server_RequestDestroyWeapon_Implementation()
 {
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [HeroCharacter] Server_RequestDestroyWeapon 호출됨 (서버)"));
-	
+
+
 	if (IsValid(CurrentWeapon))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("⭐ [HeroCharacter] CurrentWeapon Destroy: %s"), *CurrentWeapon->GetName());
 		CurrentWeapon->Destroy();
 		CurrentWeapon = nullptr;
 	}
+
 	else
 	{
 		UE_LOG(LogTemp, Warning, TEXT("⭐ [HeroCharacter] CurrentWeapon이 이미 null"));

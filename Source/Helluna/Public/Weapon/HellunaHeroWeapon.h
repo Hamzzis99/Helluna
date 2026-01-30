@@ -43,14 +43,14 @@ public:
 	const FWeaponAnimationSet& GetAnimSet() const { return AnimSet; }
 
 	// 소켓 관련 함수
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Attach", meta = (DisplayName = "장착 소켓"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Stats", meta = (DisplayName = "장착 소켓"))
 	FName EquipSocketName = TEXT("WeaponSocket");
 
 	UFUNCTION(BlueprintPure, Category = "Weapon|Attach")
 	FName GetEquipSocketName() const { return EquipSocketName; }
 
 	//웨폰 태그 함수
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Tags", meta = (DisplayName = "무기 태그"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Stats", meta = (DisplayName = "무기 태그"))
 	FGameplayTag WeaponTag;
 
 	UFUNCTION(BlueprintPure, Category = "Weapon|Tags")

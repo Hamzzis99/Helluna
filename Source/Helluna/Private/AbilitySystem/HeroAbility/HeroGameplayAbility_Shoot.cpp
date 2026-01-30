@@ -34,13 +34,29 @@ void UHeroGameplayAbility_Shoot::ActivateAbility(const FGameplayAbilitySpecHandl
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
+	
 
 	if (!Weapon->CanFire())
 	{
 		// (선택) 0일 때는 자동으로 장전 유도 UI만 보이게 하고 싶다면 여기서 끝.
-		 Debug::Print(TEXT("No Mag"), FColor::Red);
+		Debug::Print(TEXT("No Mag"), FColor::Red);
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
+
+	UWorld* World = GetWorld();
+	const float Now = World ? World->GetTimeSeconds() : 0.f;
+	const float Interval = FMath::Max(Weapon->AttackSpeed, 0.01f);
+
+	// =========================================================
+	// [MOD] ✅ 발사 간격(=연사 제한) : FireMode 상관없이 무조건 적용
+	// =========================================================
+	if (!Weapon->CanFireByRate(Now, Interval))
+	{
+		// 너무 자주 클릭했거나(단발/연발 공통), 타이머가 아주 미세하게 빨리 불린 경우
+		return;
+	}
+	Weapon->ConsumeFireByRate(Now, Interval);
 
 	if (Weapon->FireMode == EWeaponFireMode::SemiAuto) // 단발일 떄는 한번 발사하고 종료
 	{
@@ -51,8 +67,8 @@ void UHeroGameplayAbility_Shoot::ActivateAbility(const FGameplayAbilitySpecHandl
 	// 연발일 때는 타이머로 자동 발사 시작
 	Shoot();
 
-	const float Interval = Weapon->AttackSpeed;
-	if (UWorld* World = GetWorld())
+	//const float Interval = Weapon->AttackSpeed;
+	if (World)
 	{
 		World->GetTimerManager().SetTimer(
 			AutoFireTimerHandle,
@@ -88,36 +104,28 @@ void UHeroGameplayAbility_Shoot::Shoot()
 
 	ACharacter* Character = Cast<ACharacter>(GetAvatarActorFromActorInfo());
 
+	if (!Weapon->CanFire())
+	{
+		// (선택) 0일 때는 자동으로 장전 유도 UI만 보이게 하고 싶다면 여기서 끝.
+		return;
+	}
+
 	if (UAnimMontage* AttackMontage = Weapon->AnimSet.Attack)
 	{
 		if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
 		{
-			// ✅ 자동연사에서 매 발마다 몽타주가 "다시 시작"되는 걸 막고 싶으면 이 체크 유지
-			bool bShouldPlay = true;
-
-			if (USkeletalMeshComponent* Mesh = Character->GetMesh())
-			{
-				if (UAnimInstance* AnimInst = Mesh->GetAnimInstance())
-				{
-					bShouldPlay = !AnimInst->Montage_IsPlaying(AttackMontage);
-				}
-			}
-
-			if (bShouldPlay)
-			{
-				ASC->PlayMontage(this, GetCurrentActivationInfo(), AttackMontage, 1.0f);
-			}
+			ASC->PlayMontage(this, GetCurrentActivationInfo(), AttackMontage, 1.f);
 		}
 	}
 
 	// 1) 로컬 코스메틱(몽타주/반동)
 	if (Hero->IsLocallyControlled())
 	{
-		const float PitchKick = Weapon->ReboundUp;
-		const float YawKick = FMath::RandRange(-Weapon->ReboundLeftRight, Weapon->ReboundLeftRight);
+		//const float PitchKick = Weapon->ReboundUp;
+		//const float YawKick = FMath::RandRange(-Weapon->ReboundLeftRight, Weapon->ReboundLeftRight);
 
-		Character->AddControllerPitchInput(-PitchKick);
-		Character->AddControllerYawInput(YawKick);
+		Weapon->ApplyRecoil(Hero);
+
 	}
 
 	// 2) ✅ 데미지/히트판정은 “권한 실행”에서만
@@ -140,3 +148,4 @@ void UHeroGameplayAbility_Shoot::Shoot()
 	}
 
 }
+

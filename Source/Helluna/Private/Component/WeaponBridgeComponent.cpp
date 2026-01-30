@@ -1,4 +1,4 @@
-﻿// ============================================
+// ============================================
 // ⭐ WeaponBridgeComponent
 // ⭐ 작성자: Gihyeon
 // ⭐ 목적: Inventory 플러그인 ↔ Helluna 무기 시스템 브릿지
@@ -123,6 +123,7 @@ void UWeaponBridgeComponent::OnWeaponEquipRequested(
 	bool bEquip,
 	int32 WeaponSlotIndex)
 {
+
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] OnWeaponEquipRequested 수신!"));
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] - WeaponTag: %s"), *WeaponTag.ToString());
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] - BackWeaponActor: %s"), 

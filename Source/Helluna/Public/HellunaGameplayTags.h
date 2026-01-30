@@ -42,6 +42,7 @@ namespace HellunaGameplayTags
 
 	/** Player Weapon tags **/
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_Weapon_Gun);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_Weapon_Gun_Sniper);
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_Weapon_Farming);
 
 	/** Enemy tags **/

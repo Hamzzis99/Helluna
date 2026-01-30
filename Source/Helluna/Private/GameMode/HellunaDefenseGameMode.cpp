@@ -146,6 +146,7 @@ void AHellunaDefenseGameMode::BeginPlay()
 	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 	UE_LOG(LogTemp, Warning, TEXT(""));
 
+	Debug::Print(TEXT("[DefenseGameMode] BeginPlay"), FColor::Yellow);
 	// ※ EnterDay() 여기서 호출 안함!
 	// ※ 첫 플레이어 캐릭터 소환 후 InitializeGame()에서 호출
 }
@@ -173,6 +174,7 @@ void AHellunaDefenseGameMode::InitializeGame()
 	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 	UE_LOG(LogTemp, Warning, TEXT(""));
 
+	Debug::Print(TEXT("[DefenseGameMode] InitializeGame"), FColor::Yellow);
 	// 낮/밤 사이클 시작!
 	EnterDay();
 }
@@ -258,6 +260,8 @@ void AHellunaDefenseGameMode::PostLogin(APlayerController* NewPlayer)
 
 	UE_LOG(LogTemp, Warning, TEXT(""));
 
+	Debug::Print(TEXT("[DefenseGameMode] Login"), FColor::Yellow);
+
 	Super::PostLogin(NewPlayer);
 }
 
@@ -285,6 +289,8 @@ void AHellunaDefenseGameMode::PostLogin(APlayerController* NewPlayer)
 // ============================================
 void AHellunaDefenseGameMode::ProcessLogin(APlayerController* PlayerController, const FString& PlayerId, const FString& Password)
 {
+	Debug::Print(TEXT("[DefenseGameMode] ProcessLogin"), FColor::Yellow);
+
 	UE_LOG(LogTemp, Warning, TEXT(""));
 	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
 	UE_LOG(LogTemp, Warning, TEXT("║     [DefenseGameMode] ProcessLogin                         ║"));
@@ -371,6 +377,8 @@ void AHellunaDefenseGameMode::ProcessLogin(APlayerController* PlayerController, 
 // ============================================
 void AHellunaDefenseGameMode::OnLoginSuccess(APlayerController* PlayerController, const FString& PlayerId)
 {
+	Debug::Print(TEXT("[DefenseGameMode] Login Success"), FColor::Yellow);
+
 	UE_LOG(LogTemp, Warning, TEXT(""));
 	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
 	UE_LOG(LogTemp, Warning, TEXT("║     [DefenseGameMode] OnLoginSuccess ✅                    ║"));
@@ -961,11 +969,12 @@ void AHellunaDefenseGameMode::EnterDay()
 {
 	if (!bGameInitialized)
 	{
+		
 		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] EnterDay 스킵 - 게임 미초기화"));
 		return;
 	}
 
-	AliveMonsters.Empty();
+	AliveMonsters.Empty();;
 
 	if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
 	{

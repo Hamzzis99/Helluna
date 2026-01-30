@@ -35,13 +35,13 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Helluna|Weapon")
 	TSubclassOf<AHellunaHeroWeapon> WeaponClass;
 
-	// 장착 소켓 이름(에디터에서 지정)
-	UPROPERTY(EditDefaultsOnly, Category = "Helluna|Weapon")
 	FName AttachSocketName = TEXT("WeaponSocket");
 
 private:
 
 	UPROPERTY()
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> EquipTask = nullptr;
+
+
 		
 };

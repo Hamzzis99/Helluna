@@ -14,6 +14,9 @@
 #include "Abilities/GameplayAbility.h"
 
 
+//디버그용
+#include "Engine/Engine.h"
+
 //프록시 매시 부분
 void UInv_EquipmentComponent::SetOwningSkeletalMesh(USkeletalMeshComponent* OwningMesh)
 {
@@ -467,6 +470,8 @@ void UInv_EquipmentComponent::UnequipWeapon()
 	// 상태 변경
 	ActiveWeaponSlot = EInv_ActiveWeaponSlot::None;
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 무기 집어넣기 완료 - ActiveWeaponSlot = None"));
+
+
 }
 
 AInv_EquipActor* UInv_EquipmentComponent::FindPrimaryWeaponActor()

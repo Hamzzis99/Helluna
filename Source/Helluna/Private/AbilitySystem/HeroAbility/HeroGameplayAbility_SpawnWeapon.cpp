@@ -16,6 +16,11 @@ UHeroGameplayAbility_SpawnWeapon::UHeroGameplayAbility_SpawnWeapon()
 	AbilityActivationPolicy = EHellunaAbilityActivationPolicy::OnTriggered;
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::LocalOnly;
+
+	BlockAbilitiesWithTag.AddTag(FGameplayTag::RequestGameplayTag(TEXT("Player.Ability.Reload")));
+	BlockAbilitiesWithTag.AddTag(FGameplayTag::RequestGameplayTag(TEXT("Player.Ability.Shoot")));
+	BlockAbilitiesWithTag.AddTag(FGameplayTag::RequestGameplayTag(TEXT("Player.Ability.SpawnWeapon")));
+	BlockAbilitiesWithTag.AddTag(FGameplayTag::RequestGameplayTag(TEXT("Player.Ability.SpawnWeapon2")));
 }
 
 void UHeroGameplayAbility_SpawnWeapon::ActivateAbility(
