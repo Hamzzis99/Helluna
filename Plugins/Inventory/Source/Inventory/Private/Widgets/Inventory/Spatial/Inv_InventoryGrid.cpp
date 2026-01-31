@@ -1405,9 +1405,16 @@ void UInv_InventoryGrid::AddItemToIndices(const FInv_SlotAvailabilityResult& Res
 {
 	for (const auto& Availability : Result.SlotAvailabilities)
 	{
-		// ⭐ EntryIndex도 함께 전달하여 SlottedItem에 저장
-		AddItemAtIndex(NewItem, Availability.Index, Result.bStackable, Availability.AmountToFill, Result.EntryIndex);
-		UpdateGridSlots(NewItem, Availability.Index, Result.bStackable, Availability.AmountToFill);
+		// ⭐ 빈 슬롯에 새 아이템 배치 시: 실제 TotalStackCount 사용
+		// Availability.AmountToFill은 HasRoomForItem에서 MaxStackSize로 제한된 값이라 사용 불가
+		// 리플리케이션된 아이템의 실제 스택 수를 그대로 반영해야 함
+		const int32 ActualStackCount = NewItem->GetTotalStackCount();
+
+		UE_LOG(LogTemp, Warning, TEXT("[AddItemToIndices] 빈 슬롯 배치: Index=%d, AmountToFill=%d (무시), ActualStackCount=%d (사용)"),
+			Availability.Index, Availability.AmountToFill, ActualStackCount);
+
+		AddItemAtIndex(NewItem, Availability.Index, Result.bStackable, ActualStackCount, Result.EntryIndex);
+		UpdateGridSlots(NewItem, Availability.Index, Result.bStackable, ActualStackCount);
 	}
 }
 
@@ -1566,33 +1573,33 @@ void UInv_InventoryGrid::OnGridSlotClicked(int32 GridIndex, const FPointerEvent&
 
 
 
-void UInv_InventoryGrid::PutDownOnIndex(const int32 Index) // 집은 아이템을 다시 내려놓을 때 사용되는 함수.
+void UInv_InventoryGrid::PutDownOnIndex(const int32 Index)
 {
-	UInv_InventoryItem* ItemToPutDown = HoverItem->GetInventoryItem();
-	const bool bIsStackable = HoverItem->IsStackable();
-	const int32 StackCount = HoverItem->GetStackCount();
-	const int32 EntryIndex = HoverItem->GetEntryIndex(); // ⭐ HoverItem에서 EntryIndex 가져오기
+    UInv_InventoryItem* ItemToPutDown = HoverItem->GetInventoryItem();
+    const bool bIsStackable = HoverItem->IsStackable();
+    const int32 StackCount = HoverItem->GetStackCount();
+    const int32 EntryIndex = HoverItem->GetEntryIndex();
 
-	AddItemAtIndex(ItemToPutDown, Index, bIsStackable, StackCount, EntryIndex); // 인덱스에 아이템 추가
-	UpdateGridSlots(ItemToPutDown, Index, bIsStackable, StackCount); // 그리드 슬롯 업데이트
-	
-	// ⭐⭐⭐ Split 후 PutDown 시 서버 동기화는 불필요!
-	// 이유:
-	// 1. Split은 UI 전용 작업 (서버 InventoryList는 변경 없음)
-	// 2. 서버의 TotalStackCount는 이미 정확한 총량을 유지하고 있음
-	// 3. PutDown은 단순히 HoverItem을 다른 슬롯으로 이동하는 것 (총량 변화 없음!)
-	//
-	// 예: 20개 Split → 9개(슬롯A) + 11개(HoverItem)
-	// - 서버 InventoryList: TotalStackCount=20 (정확!)
-	// - PutDown 시 슬롯B로 이동 → 서버는 여전히 20개 (변경 불필요!)
-	//
-	// ⚠️ 기존 코드 문제:
-	// NewTotalStackCount = 20 + 11 = 31 (중복 추가!)
-	
-	UE_LOG(LogTemp, Verbose, TEXT("✅ PutDown: Index=%d, StackCount=%d (서버 동기화 불필요 - Split은 UI 전용)"), 
-		Index, StackCount);
-	
-	ClearHoverItem();
+    // Phase 8.1: Split 아이템이면 UI 배치 건너뛰기
+    if (HoverItem->IsSplitItem())
+    {
+        UInv_InventoryItem* OriginalItem = HoverItem->GetOriginalSplitItem();
+        if (IsValid(OriginalItem) && InventoryComponent.IsValid())
+        {
+            int32 OriginalNewStackCount = OriginalItem->GetTotalStackCount() - StackCount;
+            UE_LOG(LogTemp, Warning, TEXT("[Phase 8.1] Split PutDown - UI 배치 스킵, 서버 RPC만 호출"));
+            UE_LOG(LogTemp, Warning, TEXT("  원본 TotalStackCount: %d, 새 개수: %d, Split 개수: %d"),
+                OriginalItem->GetTotalStackCount(), OriginalNewStackCount, StackCount);
+            InventoryComponent.Get()->Server_SplitItemEntry(OriginalItem, OriginalNewStackCount, StackCount);
+        }
+        ClearHoverItem();
+        return;
+    }
+
+    AddItemAtIndex(ItemToPutDown, Index, bIsStackable, StackCount, EntryIndex);
+    UpdateGridSlots(ItemToPutDown, Index, bIsStackable, StackCount);
+    UE_LOG(LogTemp, Verbose, TEXT("PutDown: Index=%d, StackCount=%d"), Index, StackCount);
+    ClearHoverItem();
 }
 
 void UInv_InventoryGrid::ClearHoverItem() // 호버(잡는모션) 아이템 초기화
@@ -1603,6 +1610,10 @@ void UInv_InventoryGrid::ClearHoverItem() // 호버(잡는모션) 아이템 초�
 	HoverItem->SetIsStackable(false); // 호버 아이템의 스택 가능 여부 초기화
 	HoverItem->SetPreviousGridIndex(INDEX_NONE); // 이전 그리드 인덱스 초기화
 	HoverItem->UpdateStackCount(0); // 스택 수 초기화
+	
+	// ⭐ Phase 8: Split 플래그 초기화
+	HoverItem->SetIsSplitItem(false);
+	HoverItem->SetOriginalSplitItem(nullptr);
 	HoverItem->SetImageBrush(FSlateNoResource()); // 이미지 브러시 초기화 FSlateNoResource <- 모든 것을 지운다고 하네
 
 	
@@ -1813,7 +1824,7 @@ void UInv_InventoryGrid::OnPopUpMenuSplit(int32 SplitAmount, int32 Index) // 아
 	const int32 OriginalStackCount = UpperLeftGridSlot->GetStackCount(); // 원본 스택 수 가져오기
 	const int32 NewStackCount = OriginalStackCount - SplitAmount; // 새로운 스택 수 계산 <- 분할된 양을 빼주는 것
 	
-	UE_LOG(LogTemp, Warning, TEXT("🔀 Split 시작: 원본 %d개 → 원본 슬롯 %d개 + HoverItem %d개"), 
+	UE_LOG(LogTemp, Warning, TEXT("🔀 Split 시작: 원본 %d개 → 원본 슬롯 %d개 + 새 Entry %d개"), 
 		OriginalStackCount, NewStackCount, SplitAmount);
 	
 	// 1단계: UI 업데이트 (빠른 반응성)
@@ -1822,6 +1833,10 @@ void UInv_InventoryGrid::OnPopUpMenuSplit(int32 SplitAmount, int32 Index) // 아
 	
 	AssignHoverItem(RightClickedItem, UpperLeftIndex, UpperLeftIndex); // 호버 아이템 할당
 	HoverItem->UpdateStackCount(SplitAmount); // 호버 아이템 스택 수 업데이트
+	
+	// ⭐ Phase 8: Split 플래그 설정 (PutDown 시 서버에 새 Entry 생성 필요)
+	HoverItem->SetIsSplitItem(true);
+	HoverItem->SetOriginalSplitItem(RightClickedItem); // 원본 아이템 참조 저장
 	
 	// ⭐⭐⭐ 2단계: 서버의 TotalStackCount는 원본 그대로 유지!
 	// 핵심 개념:

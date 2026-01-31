@@ -1259,6 +1259,78 @@ void UInv_InventoryComponent::CloseOtherMenus()
 }
 
 // ⭐ InventoryList 기반 공간 체크 (서버 전용, UI 없이 작동!)
+// ⭐ Phase 8: Split 시 서버에서 새 Entry 생성 (포인터 분리)
+void UInv_InventoryComponent::Server_SplitItemEntry_Implementation(UInv_InventoryItem* OriginalItem, int32 OriginalNewStackCount, int32 SplitStackCount)
+{
+	UE_LOG(LogTemp, Warning, TEXT("╔══════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║     [SERVER] Server_SplitItemEntry_Implementation           ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠══════════════════════════════════════════════════════════════╣"));
+	
+	if (!IsValid(OriginalItem))
+	{
+		UE_LOG(LogTemp, Error, TEXT("║ ❌ OriginalItem이 유효하지 않음!"));
+		UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════╝"));
+		return;
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("║ 원본 Item: %s"), *OriginalItem->GetItemManifest().GetItemType().ToString());
+	UE_LOG(LogTemp, Warning, TEXT("║ 원본 현재 개수: %d"), OriginalItem->GetTotalStackCount());
+	UE_LOG(LogTemp, Warning, TEXT("║ 원본 새 개수: %d"), OriginalNewStackCount);
+	UE_LOG(LogTemp, Warning, TEXT("║ Split할 개수: %d"), SplitStackCount);
+	
+	// 1. 원본 Entry의 TotalStackCount 감소
+	OriginalItem->SetTotalStackCount(OriginalNewStackCount);
+	
+	// 2. 원본 Entry 찾아서 MarkItemDirty
+	int32 OriginalEntryIndex = -1;
+	for (int32 i = 0; i < InventoryList.Entries.Num(); i++)
+	{
+		if (InventoryList.Entries[i].Item == OriginalItem)
+		{
+			OriginalEntryIndex = i;
+			InventoryList.MarkItemDirty(InventoryList.Entries[i]);
+			UE_LOG(LogTemp, Warning, TEXT("║ ✅ 원본 Entry[%d] MarkItemDirty 완료"), i);
+			break;
+		}
+	}
+	
+	if (OriginalEntryIndex < 0)
+	{
+		UE_LOG(LogTemp, Error, TEXT("║ ❌ 원본 Entry를 찾지 못함!"));
+		UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════╝"));
+		return;
+	}
+	
+	// 3. 새 Item 생성 (새 포인터!)
+	UInv_InventoryItem* NewItem = NewObject<UInv_InventoryItem>(this);
+	if (!IsValid(NewItem))
+	{
+		UE_LOG(LogTemp, Error, TEXT("║ ❌ 새 Item 생성 실패!"));
+		UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════╝"));
+		return;
+	}
+	
+	// 4. 새 Item 초기화 (원본 Manifest 복사)
+	NewItem->SetItemManifest(OriginalItem->GetItemManifest());
+	NewItem->SetTotalStackCount(SplitStackCount);
+	
+	// 5. 새 Entry를 FastArray에 추가 (AddEntry 사용)
+	InventoryList.AddEntry(NewItem);
+	
+	// 6. 복제 하위 객체 등록
+	AddRepSubObj(NewItem);
+	
+	int32 NewEntryIndex = InventoryList.Entries.Num() - 1;
+	
+	UE_LOG(LogTemp, Warning, TEXT("║ ✅ 새 Entry[%d] 생성 완료!"), NewEntryIndex);
+	UE_LOG(LogTemp, Warning, TEXT("║    새 Item 포인터: %p"), NewItem);
+	UE_LOG(LogTemp, Warning, TEXT("║    새 Item 개수: %d"), SplitStackCount);
+	UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════╝"));
+	
+	// 7. OnItemAdded 브로드캐스트 (클라이언트 UI 업데이트용)
+	OnItemAdded.Broadcast(NewItem, NewEntryIndex);
+}
+
 bool UInv_InventoryComponent::HasRoomInInventoryList(const FInv_ItemManifest& Manifest) const
 {
 	EInv_ItemCategory Category = Manifest.GetItemCategory();

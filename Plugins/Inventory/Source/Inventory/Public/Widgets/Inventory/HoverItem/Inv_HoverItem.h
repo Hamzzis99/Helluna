@@ -38,6 +38,14 @@ public:
 	int32 GetEntryIndex() const { return EntryIndex; }
 	void SetEntryIndex(int32 Index) { EntryIndex = Index; }
 
+	// ⭐ Phase 8: Split 아이템 플래그 (서버에 새 Entry 생성 필요 여부)
+	bool IsSplitItem() const { return bIsSplitItem; }
+	void SetIsSplitItem(bool bValue) { bIsSplitItem = bValue; }
+	
+	// ⭐ Phase 8: Split 시 원본 아이템 (서버 RPC용)
+	UInv_InventoryItem* GetOriginalSplitItem() const { return OriginalSplitItem.Get(); }
+	void SetOriginalSplitItem(UInv_InventoryItem* Item) { OriginalSplitItem = Item; }
+
 private:
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UImage> Image_Icon;
@@ -52,5 +60,9 @@ private:
 	TWeakObjectPtr<UInv_InventoryItem> InventoryItem;
 	bool bIsStackable{ false };
 	int32 StackCount{ 0 };
+	
+	// ⭐ Phase 8: Split 관련 변수
+	bool bIsSplitItem{ false }; // Split으로 생성된 HoverItem인지 플래그
+	TWeakObjectPtr<UInv_InventoryItem> OriginalSplitItem; // Split 시 원본 아이템 (서버 RPC용)
 
 };
