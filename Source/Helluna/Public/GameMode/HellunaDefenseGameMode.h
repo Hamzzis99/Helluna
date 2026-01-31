@@ -410,6 +410,20 @@ protected:
 	UPROPERTY()
 	TMap<FString, FHellunaPlayerInventoryData> CachedPlayerInventoryData;
 
+	/**
+	 * Controller → PlayerId 매핑
+	 * 
+	 * 용도:
+	 * - Controller EndPlay 시점에 PlayerState가 이미 파괴되어 있을 수 있음
+	 * - 이 매핑을 통해 Controller에서 PlayerId를 직접 조회
+	 * 
+	 * 추가 시점: SwapToGameController() 
+	 * 사용 시점: OnInvControllerEndPlay()
+	 * 삭제 시점: OnInvControllerEndPlay() (저장 완료 후)
+	 */
+	UPROPERTY()
+	TMap<AController*, FString> ControllerToPlayerIdMap;
+
 	// ============================================
 	// 📌 [Phase 4] 자동저장 함수
 	// ============================================

@@ -695,6 +695,10 @@ void AHellunaDefenseGameMode::SwapToGameController(AHellunaLoginController* Logi
 		{
 			InvPC->OnControllerEndPlay.AddDynamic(this, &AHellunaDefenseGameMode::OnInvControllerEndPlay);
 			UE_LOG(LogTemp, Warning, TEXT("║ ✅ OnControllerEndPlay 델리게이트 바인딩 완료                ║"));
+			
+			// ⭐ Controller → PlayerId 매핑 저장 (EndPlay 시점에 PlayerState가 이미 파괴될 수 있음)
+			ControllerToPlayerIdMap.Add(InvPC, PlayerId);
+			UE_LOG(LogTemp, Warning, TEXT("║ ✅ Controller→PlayerId 매핑 저장: '%s'                        ║"), *PlayerId);
 		}
 	}
 
@@ -2301,17 +2305,29 @@ void AHellunaDefenseGameMode::OnInvControllerEndPlay(AInv_PlayerController* Play
 		return;
 	}
 
-	// PlayerState에서 PlayerId 가져오기
+	// ⭐ 먼저 매핑에서 PlayerId 조회 (PlayerState가 이미 파괴된 경우를 위해)
 	FString PlayerId;
-	AHellunaPlayerState* PS = PlayerController->GetPlayerState<AHellunaPlayerState>();
-	if (IsValid(PS))
+	if (FString* FoundPlayerId = ControllerToPlayerIdMap.Find(PlayerController))
 	{
-		PlayerId = PS->GetPlayerUniqueId();
-		UE_LOG(LogTemp, Warning, TEXT("   PlayerId: '%s'"), *PlayerId);
+		PlayerId = *FoundPlayerId;
+		UE_LOG(LogTemp, Warning, TEXT("   ✅ 매핑에서 PlayerId 찾음: '%s'"), *PlayerId);
+		
+		// 매핑에서 삭제 (더 이상 필요 없음)
+		ControllerToPlayerIdMap.Remove(PlayerController);
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("   ⚠️ PlayerState가 nullptr, PlayerId를 찾을 수 없음"));
+		// 매핑에 없으면 PlayerState에서 시도 (폴백)
+		AHellunaPlayerState* PS = PlayerController->GetPlayerState<AHellunaPlayerState>();
+		if (IsValid(PS))
+		{
+			PlayerId = PS->GetPlayerUniqueId();
+			UE_LOG(LogTemp, Warning, TEXT("   ✅ PlayerState에서 PlayerId 찾음: '%s'"), *PlayerId);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("   ⚠️ PlayerId를 찾을 수 없음 (매핑/PlayerState 모두 실패)"));
+		}
 	}
 
 	// ============================================
@@ -2336,7 +2352,8 @@ void AHellunaDefenseGameMode::OnInvControllerEndPlay(AInv_PlayerController* Play
 		UE_LOG(LogTemp, Warning, TEXT(""));
 		UE_LOG(LogTemp, Warning, TEXT("▶ [Step 2] 로그아웃 처리 중..."));
 
-		// PlayerState 정리
+		// PlayerState 정리 (아직 유효하면)
+		AHellunaPlayerState* PS = PlayerController->GetPlayerState<AHellunaPlayerState>();
 		if (IsValid(PS) && PS->IsLoggedIn())
 		{
 			PS->ClearLoginInfo();
