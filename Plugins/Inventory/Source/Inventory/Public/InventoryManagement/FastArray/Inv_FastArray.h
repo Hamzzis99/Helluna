@@ -27,6 +27,7 @@ private:
 	//아니 당초에 구조체인데 왜 굴이 private 섹션을 만들어서 friend를 선언하지? 진짜 모르겠네
 	friend struct FInv_InventoryFastArray;
 	friend UInv_InventoryComponent;
+	friend class UInv_InventoryGrid; // ⭐ TargetGridIndex 접근용
 
 	UPROPERTY()
 	TObjectPtr<UInv_InventoryItem> Item = nullptr; // 아이템은 초기화 해야지 당연히
@@ -39,6 +40,11 @@ private:
 	// ⭐ 어느 Grid에 속하는지 (Equippables=0, Consumables=1, Craftables=2)
 	UPROPERTY()
 	uint8 GridCategory = 0;
+
+	// ⭐ Split 아이템의 목표 Grid 위치 (클라이언트에서 마우스 위치에 배치하기 위함)
+	// INDEX_NONE = 첫 번째 빈 슬롯에 자동 배치, 유효한 값 = 해당 위치에 배치
+	UPROPERTY()
+	int32 TargetGridIndex = INDEX_NONE;
 };
 
 /* List of inventory Items 
@@ -74,8 +80,8 @@ struct FInv_InventoryFastArray : public FFastArraySerializer
 	UInv_InventoryItem* FindFirstItemByType(const FGameplayTag& ItemType);
 
 private:
-	//아니 구조체인데 왜 friend를 선언하냐고!!! 야!!
 	friend UInv_InventoryComponent;
+	friend class UInv_InventoryGrid; // ⭐ Entries 접근용
 
 	// Replicated list of items 
 	UPROPERTY()

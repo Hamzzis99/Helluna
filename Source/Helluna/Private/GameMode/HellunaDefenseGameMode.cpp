@@ -890,71 +890,123 @@ void AHellunaDefenseGameMode::Logout(AController* Exiting)
 	UE_LOG(LogTemp, Warning, TEXT("║     [DefenseGameMode] Logout                               ║"));
 	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
 	UE_LOG(LogTemp, Warning, TEXT("║ Controller: %s"), *GetNameSafe(Exiting));
+	
+	if (!Exiting)
+	{
+		UE_LOG(LogTemp, Error, TEXT("║ ❌ Exiting Controller가 nullptr!                          ║"));
+		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+		Super::Logout(Exiting);
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("║ ControllerClass: %s"), *Exiting->GetClass()->GetName());
 	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 	
-	if (Exiting)
+	// 타임아웃 타이머 정리
+	if (APlayerController* PC = Cast<APlayerController>(Exiting))
 	{
-		if (APlayerController* PC = Cast<APlayerController>(Exiting))
+		if (FTimerHandle* Timer = LoginTimeoutTimers.Find(PC))
 		{
-			if (FTimerHandle* Timer = LoginTimeoutTimers.Find(PC))
-			{
-				GetWorldTimerManager().ClearTimer(*Timer);
-				LoginTimeoutTimers.Remove(PC);
-			}
+			GetWorldTimerManager().ClearTimer(*Timer);
+			LoginTimeoutTimers.Remove(PC);
+			UE_LOG(LogTemp, Warning, TEXT("[Logout] 타임아웃 타이머 제거됨"));
 		}
+	}
 
-		if (AHellunaPlayerState* PS = Exiting->GetPlayerState<AHellunaPlayerState>())
+	// ============================================
+	// ⭐ PlayerState에서 PlayerId 가져오기 시도
+	// ============================================
+	AHellunaPlayerState* PS = Exiting->GetPlayerState<AHellunaPlayerState>();
+	
+	UE_LOG(LogTemp, Warning, TEXT("[Logout] PlayerState: %s"), PS ? *PS->GetName() : TEXT("nullptr ❌"));
+	
+	FString PlayerId;
+	
+	if (PS)
+	{
+		PlayerId = PS->GetPlayerUniqueId();
+		UE_LOG(LogTemp, Warning, TEXT("[Logout] PlayerState.PlayerId: '%s'"), *PlayerId);
+		UE_LOG(LogTemp, Warning, TEXT("[Logout] PlayerState.bIsLoggedIn: %s"), PS->IsLoggedIn() ? TEXT("true") : TEXT("false"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Logout] ❌ PlayerState가 nullptr! (이미 파괴됨?)"));
+	}
+
+	// ============================================
+	// ⭐ PlayerId가 비어있으면 CachedPlayerInventoryData에서 찾기
+	// ============================================
+	if (PlayerId.IsEmpty())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Logout] ⚠️ PlayerId가 비어있음! 캐시에서 검색 시도..."));
+		
+		// Controller의 UniqueID로 매칭 시도 (최후의 수단)
+		// 일단 캐시된 모든 플레이어 목록 출력
+		UE_LOG(LogTemp, Warning, TEXT("[Logout] 현재 캐시된 플레이어 목록:"));
+		for (const auto& Pair : CachedPlayerInventoryData)
 		{
-			FString PlayerId = PS->GetPlayerUniqueId();
-			if (!PlayerId.IsEmpty())
+			UE_LOG(LogTemp, Warning, TEXT("[Logout]   - '%s' (%d개 아이템)"), *Pair.Key, Pair.Value.Items.Num());
+		}
+	}
+
+	// ============================================
+	// ⭐ RegisterLogout 호출
+	// ============================================
+	if (!PlayerId.IsEmpty())
+	{
+		// 인벤토리 저장
+		UE_LOG(LogTemp, Warning, TEXT(""));
+		UE_LOG(LogTemp, Warning, TEXT("▶ [Phase 4] Logout 시 인벤토리 저장 시도..."));
+		UE_LOG(LogTemp, Warning, TEXT("   PlayerId: %s"), *PlayerId);
+
+		if (FHellunaPlayerInventoryData* CachedData = CachedPlayerInventoryData.Find(PlayerId))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("   ✅ 캐시된 인벤토리 데이터 발견! (%d개 아이템)"), CachedData->Items.Num());
+			
+			CachedData->LastSaveTime = FDateTime::Now();
+
+			if (IsValid(InventorySaveGame))
 			{
-				// ============================================
-				// 📦 [Phase 4] Logout 시 인벤토리 저장
-				// ============================================
-				UE_LOG(LogTemp, Warning, TEXT(""));
-				UE_LOG(LogTemp, Warning, TEXT("▶ [Phase 4] Logout 시 인벤토리 저장 시도..."));
-				UE_LOG(LogTemp, Warning, TEXT("   PlayerId: %s"), *PlayerId);
-
-				// 캐시된 데이터가 있으면 저장
-				if (FHellunaPlayerInventoryData* CachedData = CachedPlayerInventoryData.Find(PlayerId))
+				InventorySaveGame->SavePlayerInventory(PlayerId, *CachedData);
+				
+				if (UHellunaInventorySaveGame::Save(InventorySaveGame))
 				{
-					UE_LOG(LogTemp, Warning, TEXT("   ✅ 캐시된 인벤토리 데이터 발견! (%d개 아이템)"), CachedData->Items.Num());
-					
-					// 저장 시간 업데이트
-					CachedData->LastSaveTime = FDateTime::Now();
-
-					// SaveGame에 저장
-					if (IsValid(InventorySaveGame))
-					{
-						InventorySaveGame->SavePlayerInventory(PlayerId, *CachedData);
-						
-						if (UHellunaInventorySaveGame::Save(InventorySaveGame))
-						{
-							UE_LOG(LogTemp, Warning, TEXT("   🎉 Logout 저장 성공!"));
-						}
-						else
-						{
-							UE_LOG(LogTemp, Error, TEXT("   ❌ Logout 저장 실패!"));
-						}
-					}
-
-					// 캐시에서 제거
-					CachedPlayerInventoryData.Remove(PlayerId);
+					UE_LOG(LogTemp, Warning, TEXT("   🎉 Logout 저장 성공!"));
 				}
 				else
 				{
-					UE_LOG(LogTemp, Warning, TEXT("   ⚠️ 캐시된 데이터 없음 (자동저장 이전에 로그아웃?)"));
-					UE_LOG(LogTemp, Warning, TEXT("      → 이전 세션의 저장 데이터 유지됨"));
-				}
-
-				// GameInstance에서 로그아웃 처리
-				if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(UGameplayStatics::GetGameInstance(GetWorld())))
-				{
-					GI->RegisterLogout(PlayerId);
-					UE_LOG(LogTemp, Warning, TEXT("   ✅ 로그아웃 처리 완료: '%s'"), *PlayerId);
+					UE_LOG(LogTemp, Error, TEXT("   ❌ Logout 저장 실패!"));
 				}
 			}
+
+			CachedPlayerInventoryData.Remove(PlayerId);
 		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("   ⚠️ 캐시된 데이터 없음"));
+		}
+
+		// ⭐⭐⭐ 핵심: GameInstance에서 로그아웃 처리
+		if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(UGameplayStatics::GetGameInstance(GetWorld())))
+		{
+			GI->RegisterLogout(PlayerId);
+			UE_LOG(LogTemp, Warning, TEXT("   ✅ RegisterLogout 호출됨: '%s'"), *PlayerId);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("   ❌ GameInstance를 가져올 수 없음!"));
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT(""));
+		UE_LOG(LogTemp, Error, TEXT("╔════════════════════════════════════════════════════════════╗"));
+		UE_LOG(LogTemp, Error, TEXT("║ ❌❌❌ RegisterLogout 호출 실패! ❌❌❌                    ║"));
+		UE_LOG(LogTemp, Error, TEXT("╠════════════════════════════════════════════════════════════╣"));
+		UE_LOG(LogTemp, Error, TEXT("║ 원인: PlayerId가 비어있음                                  ║"));
+		UE_LOG(LogTemp, Error, TEXT("║ 결과: 다음 로그인 시 '이미 접속 중' 에러 발생 가능!       ║"));
+		UE_LOG(LogTemp, Error, TEXT("╚════════════════════════════════════════════════════════════╝"));
+		UE_LOG(LogTemp, Error, TEXT(""));
 	}
 
 	UE_LOG(LogTemp, Warning, TEXT(""));

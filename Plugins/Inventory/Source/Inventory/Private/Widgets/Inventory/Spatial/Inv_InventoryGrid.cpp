@@ -1041,11 +1041,53 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 
 	UE_LOG(LogTemp, Warning, TEXT("[AddItem] ❌ 기존 슬롯 못 찾음 (EntryIndex/포인터 모두 실패), 새 슬롯 생성..."));
 
+	// ⭐⭐⭐ 2.5단계: TargetGridIndex 체크 (Split 아이템의 마우스 위치 배치!)
+	// Entry에 TargetGridIndex가 설정되어 있으면 해당 위치에 직접 배치
+	UE_LOG(LogTemp, Warning, TEXT("[AddItem] 🔍 2.5단계 조건 체크 시작"));
+	UE_LOG(LogTemp, Warning, TEXT("[AddItem]   InventoryComponent.IsValid()=%s"), InventoryComponent.IsValid() ? TEXT("true") : TEXT("false"));
+
+	if (InventoryComponent.IsValid())
+	{
+		FInv_InventoryFastArray& InventoryList = InventoryComponent->GetInventoryList();
+		UE_LOG(LogTemp, Warning, TEXT("[AddItem]   Entries.Num()=%d, EntryIndex=%d, IsValidIndex=%s"), 
+			InventoryList.Entries.Num(), EntryIndex, 
+			InventoryList.Entries.IsValidIndex(EntryIndex) ? TEXT("true") : TEXT("false"));
+
+		if (InventoryList.Entries.IsValidIndex(EntryIndex))
+		{
+			int32 TargetGridIndex = InventoryList.Entries[EntryIndex].TargetGridIndex;
+			UE_LOG(LogTemp, Warning, TEXT("[AddItem] 🔍 2.5단계: Entry[%d]의 TargetGridIndex=%d 체크"), EntryIndex, TargetGridIndex);
+
+			// TargetGridIndex가 유효하고, 해당 슬롯이 비어있으면 직접 배치
+			if (TargetGridIndex != INDEX_NONE && GridSlots.IsValidIndex(TargetGridIndex) && !SlottedItems.Contains(TargetGridIndex))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[AddItem] ✅ TargetGridIndex=%d가 유효하고 비어있음! 직접 배치 진행"), TargetGridIndex);
+
+				// 직접 배치
+				const int32 ActualStackCount = Item->GetTotalStackCount();
+				const bool bStackable = Item->IsStackable();
+				AddItemAtIndex(Item, TargetGridIndex, bStackable, ActualStackCount, EntryIndex);
+				UpdateGridSlots(Item, TargetGridIndex, bStackable, ActualStackCount);
+
+				// ⭐ 배치 후 TargetGridIndex 초기화 (재사용 방지)
+				InventoryList.Entries[EntryIndex].TargetGridIndex = INDEX_NONE;
+
+				UE_LOG(LogTemp, Warning, TEXT("[AddItem] ✅ TargetGridIndex=%d에 배치 완료! (Split 아이템 마우스 위치)"), TargetGridIndex);
+				UE_LOG(LogTemp, Warning, TEXT("========== [AddItem] 아이템 추가 완료 =========="));
+				return;
+			}
+			else if (TargetGridIndex != INDEX_NONE)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[AddItem] ⚠️ TargetGridIndex=%d가 유효하지 않거나 이미 차지됨, 기본 로직으로 진행"), TargetGridIndex);
+			}
+		}
+	}
+
 	// ⭐⭐⭐ 3단계: 빈 슬롯 찾기 (PostReplicatedAdd/Change 순서 문제 해결!)
 	// PostReplicatedAdd가 먼저 실행되어 Grid[0]을 차지한 경우,
 	// PostReplicatedChange가 Grid[0]을 찾지 못해 중복 배치되는 문제 방지
 	UE_LOG(LogTemp, Warning, TEXT("[AddItem] 🔍 3단계: 빈 슬롯 검색 시작 (HasRoomForItem 재사용)"));
-	
+
 	//공간이 있다고 부르는 부분.
 	FInv_SlotAvailabilityResult Result = HasRoomForItem(Item);
 	Result.EntryIndex = EntryIndex; // ⭐ Entry Index 저장
@@ -1071,14 +1113,14 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 	if (ActuallyEmptySlots.Num() > 0)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[AddItem] ✅ 실제 빈 슬롯 발견! 개수: %d"), ActuallyEmptySlots.Num());
-		
+
 		// 실제로 비어있는 슬롯만 사용
 		Result.SlotAvailabilities = ActuallyEmptySlots;
-		
+
 		// Create a widget to show the item icon and add it to the correct spot on the grid.
 		// 아이콘을 보여주고 그리드의 올바른 위치에 추가하는 위젯을 만듭니다.
 		AddItemToIndices(Result, Item);
-		
+
 		UE_LOG(LogTemp, Warning, TEXT("[AddItem] ✅ 빈 슬롯에 배치 완료! EntryIndex=%d"), EntryIndex);
 		UE_LOG(LogTemp, Warning, TEXT("========== [AddItem] 아이템 추가 완료 =========="));
 	}
@@ -1580,7 +1622,7 @@ void UInv_InventoryGrid::PutDownOnIndex(const int32 Index)
     const int32 StackCount = HoverItem->GetStackCount();
     const int32 EntryIndex = HoverItem->GetEntryIndex();
 
-    // Phase 8.1: Split 아이템이면 UI 배치 건너뛰기
+    // Phase 8.1: Split 아이템이면 UI 배치 건너뛰기, 서버 RPC로 처리
     if (HoverItem->IsSplitItem())
     {
         UInv_InventoryItem* OriginalItem = HoverItem->GetOriginalSplitItem();
@@ -1588,9 +1630,10 @@ void UInv_InventoryGrid::PutDownOnIndex(const int32 Index)
         {
             int32 OriginalNewStackCount = OriginalItem->GetTotalStackCount() - StackCount;
             UE_LOG(LogTemp, Warning, TEXT("[Phase 8.1] Split PutDown - UI 배치 스킵, 서버 RPC만 호출"));
-            UE_LOG(LogTemp, Warning, TEXT("  원본 TotalStackCount: %d, 새 개수: %d, Split 개수: %d"),
-                OriginalItem->GetTotalStackCount(), OriginalNewStackCount, StackCount);
-            InventoryComponent.Get()->Server_SplitItemEntry(OriginalItem, OriginalNewStackCount, StackCount);
+            UE_LOG(LogTemp, Warning, TEXT("  원본 TotalStackCount: %d, 새 개수: %d, Split 개수: %d, 목표 Index: %d"),
+                OriginalItem->GetTotalStackCount(), OriginalNewStackCount, StackCount, Index);
+            // ⭐ Index(마우스 위치)를 서버에 전달하여 해당 위치에 배치되도록 함
+            InventoryComponent.Get()->Server_SplitItemEntry(OriginalItem, OriginalNewStackCount, StackCount, Index);
         }
         ClearHoverItem();
         return;
