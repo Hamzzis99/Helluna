@@ -89,6 +89,50 @@ void AInv_PlayerController::BeginPlay()
 	CreateHUDWidget();
 }
 
+void AInv_PlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║ [Inv_PlayerController] EndPlay                             ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ Controller: %s"), *GetName());
+	UE_LOG(LogTemp, Warning, TEXT("║ EndPlayReason: %d"), static_cast<int32>(EndPlayReason));
+	UE_LOG(LogTemp, Warning, TEXT("║ HasAuthority: %s"), HasAuthority() ? TEXT("TRUE") : TEXT("FALSE"));
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+
+	// ⭐ 서버에서만 처리 (인벤토리 저장 + 로그아웃)
+	if (HasAuthority())
+	{
+		// 인벤토리 데이터 수집
+		TArray<FInv_SavedItemData> CollectedData;
+		
+		if (InventoryComponent.IsValid())
+		{
+			CollectedData = InventoryComponent->CollectInventoryDataForSave();
+			UE_LOG(LogTemp, Warning, TEXT("[EndPlay] ✅ InventoryComponent에서 %d개 아이템 수집"), CollectedData.Num());
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[EndPlay] ⚠️ InventoryComponent가 nullptr"));
+		}
+
+		// 델리게이트 브로드캐스트 (GameMode에서 저장 + 로그아웃 처리)
+		if (OnControllerEndPlay.IsBound())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[EndPlay] ✅ OnControllerEndPlay 델리게이트 브로드캐스트"));
+			OnControllerEndPlay.Broadcast(this, CollectedData);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[EndPlay] ⚠️ OnControllerEndPlay 바인딩 안 됨"));
+		}
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT(""));
+
+	Super::EndPlay(EndPlayReason);
+}
+
 void AInv_PlayerController::SetupInputComponent()
 {
 	Super::SetupInputComponent();

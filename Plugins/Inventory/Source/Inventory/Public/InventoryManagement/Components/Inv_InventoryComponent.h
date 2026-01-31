@@ -9,6 +9,7 @@
 #include "Components/ActorComponent.h"
 #include "InventoryManagement/FastArray/Inv_FastArray.h"
 #include "Items/Fragments/Inv_ItemFragment.h"
+#include "Player/Inv_PlayerController.h"  // FInv_SavedItemData 사용
 #include "Inv_InventoryComponent.generated.h"
 
 class UInv_ItemComponent;
@@ -100,6 +101,10 @@ public:
 	// InventoryList 접근용 (재료 체크 등에 사용)
 	const FInv_InventoryFastArray& GetInventoryList() const { return InventoryList; }
 	FInv_InventoryFastArray& GetInventoryList() { return InventoryList; } // non-const 오버로드
+
+	// ⭐ [Phase 4 개선] 서버에서 직접 인벤토리 데이터 수집 (Logout 시 저장용)
+	// RPC 없이 서버의 FastArray에서 직접 읽어서 반환
+	TArray<FInv_SavedItemData> CollectInventoryDataForSave() const;
 	
 	// 서버 브로드캐스트 함수들.
 	FInventoryItemChange OnItemAdded;

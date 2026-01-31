@@ -26,6 +26,10 @@
 #include "Weapon/HeroWeapon_GunBase.h"
 // ⭐ [WeaponBridge] 추가
 #include "Component/WeaponBridgeComponent.h"
+// ⭐ [Phase 4 개선] EndPlay 인벤토리 저장용
+#include "Player/HellunaPlayerState.h"
+#include "GameMode/HellunaDefenseGameMode.h"
+#include "Player/Inv_PlayerController.h"  // FInv_SavedItemData
 
 #include "DebugHelper.h"
 
@@ -67,6 +71,77 @@ void AHellunaHeroCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
+}
+
+// ============================================
+// ⭐ [Phase 4 개선] EndPlay - 인벤토리 자동 저장
+// ============================================
+// 
+// 📌 호출 시점:
+//    - 플레이어 연결 끊김 (Logout 전!)
+//    - 캐릭터 사망
+//    - 맵 이동 (SeamlessTravel)
+// 
+// 📌 목적:
+//    - Pawn이 파괴되기 전에 인벤토리 저장
+//    - Logout()에서는 Pawn이 이미 nullptr이 됨
+// 
+// ============================================
+void AHellunaHeroCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║ [HeroCharacter] EndPlay - 인벤토리 저장 시도               ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ Character: %s"), *GetName());
+	UE_LOG(LogTemp, Warning, TEXT("║ EndPlayReason: %d"), (int32)EndPlayReason);
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+
+	// 서버에서만 저장 처리
+	if (HasAuthority())
+	{
+		// ⭐ PlayerController에서 InventoryComponent 찾기 (Character가 아님!)
+		APlayerController* PC = Cast<APlayerController>(GetController());
+		UInv_InventoryComponent* InvComp = PC ? PC->FindComponentByClass<UInv_InventoryComponent>() : nullptr;
+		
+		if (InvComp)
+		{
+			// PlayerController에서 PlayerId 가져오기
+			AHellunaPlayerState* PS = PC ? PC->GetPlayerState<AHellunaPlayerState>() : nullptr;
+			FString PlayerId = PS ? PS->GetPlayerUniqueId() : TEXT("");
+
+			if (!PlayerId.IsEmpty())
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[EndPlay] ✅ PlayerId: %s"), *PlayerId);
+				UE_LOG(LogTemp, Warning, TEXT("[EndPlay] ✅ InventoryComponent 발견! 직접 저장 시작..."));
+
+				// 인벤토리 데이터 수집
+				TArray<FInv_SavedItemData> CollectedItems = InvComp->CollectInventoryDataForSave();
+
+				// GameMode 가져와서 저장 요청
+				AHellunaDefenseGameMode* GM = Cast<AHellunaDefenseGameMode>(UGameplayStatics::GetGameMode(GetWorld()));
+				if (GM)
+				{
+					GM->SaveInventoryFromCharacterEndPlay(PlayerId, CollectedItems);
+				}
+				else
+				{
+					UE_LOG(LogTemp, Error, TEXT("[EndPlay] ❌ GameMode를 찾을 수 없음!"));
+				}
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[EndPlay] ⚠️ PlayerId가 비어있음 (저장 생략)"));
+			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[EndPlay] ⚠️ InventoryComponent 없음 (PC: %s)"), 
+				PC ? TEXT("Valid") : TEXT("nullptr"));
+		}
+	}
+
+	Super::EndPlay(EndPlayReason);
 }
 
 void AHellunaHeroCharacter::Input_Move(const FInputActionValue& InputActionValue)

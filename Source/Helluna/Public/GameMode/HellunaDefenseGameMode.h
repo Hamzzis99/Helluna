@@ -507,6 +507,29 @@ public:
 	void LoadAndSendInventoryToClient(APlayerController* PC);
 
 	/**
+	 * [Phase 4 개선] Character EndPlay에서 호출되는 인벤토리 저장
+	 *
+	 * 📌 호출 시점: HeroCharacter::EndPlay() (Pawn 파괴 직전)
+	 * 📌 목적: Logout()에서 Pawn이 이미 nullptr이므로, 미리 저장
+	 *
+	 * @param PlayerId - 플레이어 고유 ID
+	 * @param CollectedItems - InventoryComponent에서 수집한 아이템 데이터
+	 */
+	void SaveInventoryFromCharacterEndPlay(const FString& PlayerId, const TArray<FInv_SavedItemData>& CollectedItems);
+
+	/**
+	 * ⭐ [Phase 4 개선] Inv_PlayerController EndPlay 델리게이트 핸들러
+	 *
+	 * 📌 호출 시점: Inv_PlayerController::EndPlay() (Controller 파괴 직전)
+	 * 📌 장점: Controller에 InventoryComponent가 있으므로 확실히 접근 가능!
+	 *
+	 * @param PlayerController - 종료되는 PlayerController
+	 * @param SavedItems - 수집된 인벤토리 데이터
+	 */
+	UFUNCTION()
+	void OnInvControllerEndPlay(AInv_PlayerController* PlayerController, const TArray<FInv_SavedItemData>& SavedItems);
+
+	/**
 	 * [디버깅] 수동으로 인벤토리 로드 테스트
 	 *
 	 * 콘솔에서 호출 방법:

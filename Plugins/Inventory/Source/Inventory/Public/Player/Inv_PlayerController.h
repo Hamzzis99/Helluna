@@ -160,6 +160,19 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	const TArray<FInv_SavedItemData>&, SavedItems
 );
 
+/**
+ * ⭐ [Phase 4 개선] PlayerController EndPlay 시 브로드캐스트
+ * Helluna GameMode에서 바인딩하여 인벤토리 저장 및 로그아웃 처리
+ * 
+ * @param PlayerController - 종료되는 PlayerController
+ * @param SavedItems - 수집된 인벤토리 데이터 (서버에서만 유효)
+ */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
+	FOnInvControllerEndPlay,
+	AInv_PlayerController*, PlayerController,
+	const TArray<FInv_SavedItemData>&, SavedItems
+);
+
 UCLASS()
 class INVENTORY_API AInv_PlayerController : public APlayerController
 {
@@ -260,6 +273,15 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Inventory|Save")
 	FOnInventoryStateReceived OnInventoryStateReceived;
 
+	/**
+	 * ⭐ [Phase 4 개선] Controller EndPlay 시 브로드캐스트
+	 * GameMode에서 바인딩하여 인벤토리 저장 및 로그아웃 처리
+	 * 
+	 * 장점: Controller가 EndPlay될 때 InventoryComponent가 아직 유효함!
+	 */
+	UPROPERTY(BlueprintAssignable, Category = "Inventory|Save")
+	FOnInvControllerEndPlay OnControllerEndPlay;
+
 	// ============================================
 	// 📌 인벤토리 로드 RPC (Phase 5)
 	// ============================================
@@ -285,6 +307,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;  // ⭐ [Phase 4 개선] 인벤토리 저장 및 로그아웃
 	virtual void SetupInputComponent() override;
 
 private:

@@ -688,6 +688,14 @@ void AHellunaDefenseGameMode::SwapToGameController(AHellunaLoginController* Logi
 	{
 		NewPS->SetLoginInfo(PlayerId);
 		UE_LOG(LogTemp, Warning, TEXT("║ 새 Controller PlayerState에 PlayerId 복원: '%s'           ║"), *PlayerId);
+
+		// ⭐ [Phase 4 개선] OnControllerEndPlay 델리게이트 바인딩
+		AInv_PlayerController* InvPC = Cast<AInv_PlayerController>(NewController);
+		if (IsValid(InvPC))
+		{
+			InvPC->OnControllerEndPlay.AddDynamic(this, &AHellunaDefenseGameMode::OnInvControllerEndPlay);
+			UE_LOG(LogTemp, Warning, TEXT("║ ✅ OnControllerEndPlay 델리게이트 바인딩 완료                ║"));
+		}
 	}
 
 	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
@@ -954,37 +962,100 @@ void AHellunaDefenseGameMode::Logout(AController* Exiting)
 	// ============================================
 	if (!PlayerId.IsEmpty())
 	{
-		// 인벤토리 저장
+		// ============================================
+		// ⭐⭐⭐ [Phase 4 개선] 서버에서 직접 인벤토리 수집 및 저장
+		// ============================================
+		// 
+		// 기존 문제: 캐시에 의존 → 자동저장 전에 나가면 손실
+		// 해결책: InventoryComponent에서 직접 읽어서 저장!
+		// 
 		UE_LOG(LogTemp, Warning, TEXT(""));
-		UE_LOG(LogTemp, Warning, TEXT("▶ [Phase 4] Logout 시 인벤토리 저장 시도..."));
+		UE_LOG(LogTemp, Warning, TEXT("▶ [Phase 4 개선] Logout 시 인벤토리 직접 수집 및 저장..."));
 		UE_LOG(LogTemp, Warning, TEXT("   PlayerId: %s"), *PlayerId);
 
-		if (FHellunaPlayerInventoryData* CachedData = CachedPlayerInventoryData.Find(PlayerId))
-		{
-			UE_LOG(LogTemp, Warning, TEXT("   ✅ 캐시된 인벤토리 데이터 발견! (%d개 아이템)"), CachedData->Items.Num());
-			
-			CachedData->LastSaveTime = FDateTime::Now();
+		bool bSaveSuccess = false;
 
-			if (IsValid(InventorySaveGame))
+		// Step 1: Pawn에서 InventoryComponent 가져오기
+		APawn* Pawn = Exiting->GetPawn();
+		UInv_InventoryComponent* InvComp = Pawn ? Pawn->FindComponentByClass<UInv_InventoryComponent>() : nullptr;
+
+		if (InvComp)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("   ✅ InventoryComponent 발견! 직접 수집 시작..."));
+
+			// Step 2: 서버에서 직접 인벤토리 데이터 수집 (RPC 없이!)
+			TArray<FInv_SavedItemData> CollectedItems = InvComp->CollectInventoryDataForSave();
+
+			// Step 3: FInv_SavedItemData → FHellunaInventoryItemData 변환
+			FHellunaPlayerInventoryData SaveData;
+			SaveData.LastSaveTime = FDateTime::Now();
+
+			for (const FInv_SavedItemData& Item : CollectedItems)
 			{
-				InventorySaveGame->SavePlayerInventory(PlayerId, *CachedData);
-				
+				FHellunaInventoryItemData DestItem;
+				DestItem.ItemType = Item.ItemType;
+				DestItem.StackCount = Item.StackCount;
+				DestItem.GridPosition = Item.GridPosition;
+				DestItem.GridCategory = Item.GridCategory;
+				DestItem.EquipSlotIndex = -1;  // TODO: Phase 6에서 장착 정보 추가
+				SaveData.Items.Add(DestItem);
+			}
+
+			// Step 4: SaveGame에 저장
+			if (IsValid(InventorySaveGame) && SaveData.Items.Num() > 0)
+			{
+				InventorySaveGame->SavePlayerInventory(PlayerId, SaveData);
+
 				if (UHellunaInventorySaveGame::Save(InventorySaveGame))
 				{
-					UE_LOG(LogTemp, Warning, TEXT("   🎉 Logout 저장 성공!"));
+					UE_LOG(LogTemp, Warning, TEXT("   🎉 직접 수집 저장 성공! (%d개 아이템)"), CollectedItems.Num());
+					bSaveSuccess = true;
 				}
 				else
 				{
-					UE_LOG(LogTemp, Error, TEXT("   ❌ Logout 저장 실패!"));
+					UE_LOG(LogTemp, Error, TEXT("   ❌ 파일 저장 실패!"));
 				}
 			}
-
-			CachedPlayerInventoryData.Remove(PlayerId);
+			else if (SaveData.Items.Num() == 0)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("   ⚠️ 인벤토리가 비어있음 (저장할 아이템 없음)"));
+				bSaveSuccess = true;  // 빈 인벤토리도 정상 처리
+			}
 		}
 		else
 		{
-			UE_LOG(LogTemp, Warning, TEXT("   ⚠️ 캐시된 데이터 없음"));
+			UE_LOG(LogTemp, Warning, TEXT("   ⚠️ InventoryComponent 없음 (Pawn: %s)"), Pawn ? *Pawn->GetName() : TEXT("nullptr"));
+			
+			// 캐시 폴백 (기존 로직)
+			if (FHellunaPlayerInventoryData* CachedData = CachedPlayerInventoryData.Find(PlayerId))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("   📦 캐시 폴백: 캐시된 데이터로 저장 시도 (%d개 아이템)"), CachedData->Items.Num());
+				
+				CachedData->LastSaveTime = FDateTime::Now();
+
+				if (IsValid(InventorySaveGame))
+				{
+					InventorySaveGame->SavePlayerInventory(PlayerId, *CachedData);
+					
+					if (UHellunaInventorySaveGame::Save(InventorySaveGame))
+					{
+						UE_LOG(LogTemp, Warning, TEXT("   🎉 캐시 폴백 저장 성공!"));
+						bSaveSuccess = true;
+					}
+					else
+					{
+						UE_LOG(LogTemp, Error, TEXT("   ❌ 캐시 폴백 저장 실패!"));
+					}
+				}
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("   ⚠️ 캐시된 데이터도 없음"));
+			}
 		}
+
+		// 캐시 정리
+		CachedPlayerInventoryData.Remove(PlayerId);
 
 		// ⭐⭐⭐ 핵심: GameInstance에서 로그아웃 처리
 		if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(UGameplayStatics::GetGameInstance(GetWorld())))
@@ -2123,6 +2194,169 @@ void AHellunaDefenseGameMode::LoadAndSendInventoryToClient(APlayerController* PC
 
 	UE_LOG(LogTemp, Warning, TEXT(""));
 	UE_LOG(LogTemp, Warning, TEXT("🎉 [Phase 5] 플레이어 %s 인벤토리 로드 완료!"), *PlayerUniqueId);
+	UE_LOG(LogTemp, Warning, TEXT("════════════════════════════════════════════════════════════════════════════════"));
+}
+
+// ============================================
+// ⭐ [Phase 4 개선] Character EndPlay에서 호출되는 저장
+// ============================================
+// 
+// 📌 호출 시점: HeroCharacter::EndPlay() (Pawn 파괴 직전)
+// 📌 목적: Logout()에서 Pawn이 이미 nullptr이므로, 미리 저장
+// 
+// ============================================
+void AHellunaDefenseGameMode::SaveInventoryFromCharacterEndPlay(const FString& PlayerId, const TArray<FInv_SavedItemData>& CollectedItems)
+{
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║ [Phase 4] SaveInventoryFromCharacterEndPlay                ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ PlayerId: %s"), *PlayerId);
+	UE_LOG(LogTemp, Warning, TEXT("║ 아이템 수: %d개"), CollectedItems.Num());
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+
+	if (PlayerId.IsEmpty())
+	{
+		UE_LOG(LogTemp, Error, TEXT("   ❌ PlayerId가 비어있음! 저장 취소."));
+		return;
+	}
+
+	if (CollectedItems.Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("   ⚠️ 인벤토리가 비어있음 (저장할 아이템 없음)"));
+		// 빈 인벤토리도 저장 (기존 데이터 유지하기 위해 여기서 리턴)
+		return;
+	}
+
+	// FInv_SavedItemData → FHellunaInventoryItemData 변환
+	FHellunaPlayerInventoryData SaveData;
+	SaveData.LastSaveTime = FDateTime::Now();
+
+	for (const FInv_SavedItemData& Item : CollectedItems)
+	{
+		FHellunaInventoryItemData DestItem;
+		DestItem.ItemType = Item.ItemType;
+		DestItem.StackCount = Item.StackCount;
+		DestItem.GridPosition = Item.GridPosition;
+		DestItem.GridCategory = Item.GridCategory;
+		DestItem.EquipSlotIndex = -1;  // TODO: Phase 6에서 장착 정보 추가
+
+		SaveData.Items.Add(DestItem);
+
+		UE_LOG(LogTemp, Warning, TEXT("   [%d] %s x%d @ Grid%d (%d,%d)"),
+			SaveData.Items.Num() - 1,
+			*Item.ItemType.ToString(),
+			Item.StackCount,
+			Item.GridCategory,
+			Item.GridPosition.X, Item.GridPosition.Y);
+	}
+
+	// SaveGame에 저장
+	if (IsValid(InventorySaveGame))
+	{
+		InventorySaveGame->SavePlayerInventory(PlayerId, SaveData);
+
+		if (UHellunaInventorySaveGame::Save(InventorySaveGame))
+		{
+			UE_LOG(LogTemp, Warning, TEXT(""));
+			UE_LOG(LogTemp, Warning, TEXT("   🎉 EndPlay 저장 성공! (%d개 아이템)"), CollectedItems.Num());
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("   ❌ 파일 저장 실패!"));
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("   ❌ InventorySaveGame이 nullptr!"));
+	}
+
+	// 캐시도 업데이트 (혹시 Logout에서 사용할 경우 대비)
+	CachedPlayerInventoryData.Add(PlayerId, SaveData);
+	UE_LOG(LogTemp, Warning, TEXT("   ✅ 캐시 업데이트 완료"));
+	UE_LOG(LogTemp, Warning, TEXT("════════════════════════════════════════════════════════════════════════════════"));
+}
+
+// ============================================
+// ⭐ [Phase 4 개선] Inv_PlayerController EndPlay 델리게이트 핸들러
+// ============================================
+// 
+// 📌 호출 시점: Inv_PlayerController::EndPlay() (Controller 파괴 직전)
+// 📌 장점: Controller에 InventoryComponent가 있으므로 확실히 접근 가능!
+// 
+// ============================================
+void AHellunaDefenseGameMode::OnInvControllerEndPlay(AInv_PlayerController* PlayerController, const TArray<FInv_SavedItemData>& SavedItems)
+{
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║ [Phase 4] OnInvControllerEndPlay - Controller 종료 처리    ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ Controller: %s"), PlayerController ? *PlayerController->GetName() : TEXT("nullptr"));
+	UE_LOG(LogTemp, Warning, TEXT("║ 아이템 수: %d개"), SavedItems.Num());
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+
+	if (!IsValid(PlayerController))
+	{
+		UE_LOG(LogTemp, Error, TEXT("   ❌ PlayerController가 nullptr!"));
+		return;
+	}
+
+	// PlayerState에서 PlayerId 가져오기
+	FString PlayerId;
+	AHellunaPlayerState* PS = PlayerController->GetPlayerState<AHellunaPlayerState>();
+	if (IsValid(PS))
+	{
+		PlayerId = PS->GetPlayerUniqueId();
+		UE_LOG(LogTemp, Warning, TEXT("   PlayerId: '%s'"), *PlayerId);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("   ⚠️ PlayerState가 nullptr, PlayerId를 찾을 수 없음"));
+	}
+
+	// ============================================
+	// Step 1: 인벤토리 저장
+	// ============================================
+	if (!PlayerId.IsEmpty() && SavedItems.Num() > 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT(""));
+		UE_LOG(LogTemp, Warning, TEXT("▶ [Step 1] 인벤토리 저장 중..."));
+		SaveInventoryFromCharacterEndPlay(PlayerId, SavedItems);
+	}
+	else if (SavedItems.Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("   ⚠️ 인벤토리가 비어있음 (저장 생략)"));
+	}
+
+	// ============================================
+	// Step 2: 로그아웃 처리 (GameInstance에서 제거)
+	// ============================================
+	if (!PlayerId.IsEmpty())
+	{
+		UE_LOG(LogTemp, Warning, TEXT(""));
+		UE_LOG(LogTemp, Warning, TEXT("▶ [Step 2] 로그아웃 처리 중..."));
+
+		// PlayerState 정리
+		if (IsValid(PS) && PS->IsLoggedIn())
+		{
+			PS->ClearLoginInfo();
+			UE_LOG(LogTemp, Warning, TEXT("   ✅ PlayerState 정리 완료"));
+		}
+
+		// GameInstance에서 제거
+		if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(UGameplayStatics::GetGameInstance(GetWorld())))
+		{
+			GI->RegisterLogout(PlayerId);
+			UE_LOG(LogTemp, Warning, TEXT("   ✅ RegisterLogout 호출됨: '%s'"), *PlayerId);
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("   ⚠️ PlayerId가 비어있어 로그아웃 처리 생략"));
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("🎉 [Phase 4] Controller EndPlay 처리 완료!"));
 	UE_LOG(LogTemp, Warning, TEXT("════════════════════════════════════════════════════════════════════════════════"));
 }
 

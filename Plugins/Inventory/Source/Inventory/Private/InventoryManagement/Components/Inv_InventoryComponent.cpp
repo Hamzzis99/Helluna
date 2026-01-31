@@ -12,6 +12,7 @@
 #include "Items/Fragments/Inv_ItemFragment.h"
 #include "Building/Components/Inv_BuildingComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "Player/Inv_PlayerController.h"  // FInv_SavedItemData 사용
 
 UInv_InventoryComponent::UInv_InventoryComponent() : InventoryList(this)
 {
@@ -1623,4 +1624,88 @@ bool UInv_InventoryComponent::HasRoomInInventoryList(const FInv_ItemManifest& Ma
 	UE_LOG(LogTemp, Warning, TEXT("========================================"));
 
 	return bHasRoom;
+}
+
+// ============================================
+// ⭐ [Phase 4 개선] 서버에서 직접 인벤토리 데이터 수집
+// ============================================
+// 
+// 📌 목적: Logout 시 RPC 없이 즉시 저장 가능하게!
+// 
+// 📌 기존 문제점:
+//    - 캐시에 의존 → 자동저장 전에 나가면 저장 안 됨
+//    - Client RPC 필요 → 연결 끊기면 못 받음
+// 
+// 📌 해결책:
+//    - 서버의 FastArray에서 직접 데이터 읽기
+//    - GridIndex, GridCategory 모두 서버에 있음!
+// 
+// ============================================
+TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave() const
+{
+	TArray<FInv_SavedItemData> Result;
+
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║ [Phase 4] CollectInventoryDataForSave - 서버 직접 수집     ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+
+	// FastArray의 Entries 순회
+	const TArray<FInv_InventoryEntry>& Entries = InventoryList.Entries;
+	
+	UE_LOG(LogTemp, Warning, TEXT("║ Entry 개수: %d                                             ║"), Entries.Num());
+	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+
+	for (int32 i = 0; i < Entries.Num(); i++)
+	{
+		const FInv_InventoryEntry& Entry = Entries[i];
+		
+		// Item 유효성 체크
+		if (!Entry.Item)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("║ [%d] ⚠️ Item nullptr - 스킵                               ║"), i);
+			continue;
+		}
+
+		// Item 데이터 추출
+		const FInv_ItemManifest& Manifest = Entry.Item->GetItemManifest();
+		FGameplayTag ItemType = Manifest.GetItemType();
+		int32 StackCount = Entry.Item->GetTotalStackCount();
+		int32 GridIndex = Entry.GridIndex;
+		uint8 GridCategory = Entry.GridCategory;
+
+		// GridIndex → GridPosition 변환 (Column = X, Row = Y)
+		// 기본값 8 columns 사용 (서버에서는 실제 Grid 크기를 모를 수 있음)
+		int32 LocalGridColumns = GridColumns > 0 ? GridColumns : 8;
+		FIntPoint GridPosition;
+		
+		if (GridIndex != INDEX_NONE && GridIndex >= 0)
+		{
+			GridPosition.X = GridIndex % LocalGridColumns;  // Column
+			GridPosition.Y = GridIndex / LocalGridColumns;  // Row
+		}
+		else
+		{
+			GridPosition = FIntPoint(-1, -1);  // 미배치
+		}
+
+		// FInv_SavedItemData 생성
+		FInv_SavedItemData SavedItem(ItemType, StackCount, GridPosition, GridCategory);
+		Result.Add(SavedItem);
+
+		UE_LOG(LogTemp, Warning, TEXT("║ [%d] %s x%d @ Grid%d [%d,%d] (Cat:%d)"), 
+			i,
+			*ItemType.ToString(),
+			StackCount,
+			GridIndex,
+			GridPosition.X, GridPosition.Y,
+			GridCategory);
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ ✅ 수집 완료! 총 %d개 아이템                                ║"), Result.Num());
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+	UE_LOG(LogTemp, Warning, TEXT(""));
+
+	return Result;
 }
