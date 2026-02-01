@@ -454,6 +454,17 @@ TArray<FInv_SavedItemData> AInv_PlayerController::CollectInventoryGridState()
 			UE_LOG(LogTemp, Warning, TEXT("  │ [%d] ✅ WeaponSlot=%d │ %s"), 
 				i, WeaponSlotIndex, *ItemType.ToString());
 			EquippedItemCount++;
+
+			// ============================================
+			// 🆕 Phase 6: 장착 아이템을 Result에 추가
+			// ============================================
+			FInv_SavedItemData EquippedData(
+				Item->GetItemManifest().GetItemType(),
+				1,  // 장비는 스택 1
+				Slot->GetWeaponSlotIndex()
+			);
+			Result.Add(EquippedData);
+			UE_LOG(LogTemp, Warning, TEXT("  │      → ✅ Result에 추가됨!"));
 		}
 		else
 		{
@@ -463,8 +474,8 @@ TArray<FInv_SavedItemData> AInv_PlayerController::CollectInventoryGridState()
 	}
 
 	UE_LOG(LogTemp, Warning, TEXT("  ├─────────────────────────────────────────────────────────────┤"));
-	UE_LOG(LogTemp, Warning, TEXT("  │ 📊 장착된 아이템: %d개 (Grid에서 수집 안 됨!)               │"), EquippedItemCount);
-	UE_LOG(LogTemp, Warning, TEXT("  │ ⚠️ 현재 저장 로직에서 누락됨 → Phase 6에서 수정 필요       │"));
+	UE_LOG(LogTemp, Warning, TEXT("  │ 📊 장착된 아이템: %d개 → Result에 추가됨!                    │"), EquippedItemCount);
+	UE_LOG(LogTemp, Warning, TEXT("  │ ✅ Phase 6 완료: 장착 아이템 저장 로직 구현됨                 │"));
 	UE_LOG(LogTemp, Warning, TEXT("  └─────────────────────────────────────────────────────────────┘"));
 
 	// ============================================

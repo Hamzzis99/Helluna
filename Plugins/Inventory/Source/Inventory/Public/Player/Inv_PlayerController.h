@@ -60,14 +60,32 @@ struct INVENTORY_API FInv_SavedItemData
 		, StackCount(0)
 		, GridPosition(FIntPoint(-1, -1))
 		, GridCategory(0)
+		, bEquipped(false)
+		, WeaponSlotIndex(-1)
 	{
 	}
 
+	// Grid 아이템용 생성자
 	FInv_SavedItemData(const FGameplayTag& InItemType, int32 InStackCount, const FIntPoint& InGridPosition, uint8 InGridCategory)
 		: ItemType(InItemType)
 		, StackCount(InStackCount)
 		, GridPosition(InGridPosition)
 		, GridCategory(InGridCategory)
+		, bEquipped(false)
+		, WeaponSlotIndex(-1)
+	{
+	}
+
+	// ============================================
+	// 🆕 Phase 6: 장착 아이템용 생성자
+	// ============================================
+	FInv_SavedItemData(const FGameplayTag& InItemType, int32 InStackCount, int32 InWeaponSlotIndex)
+		: ItemType(InItemType)
+		, StackCount(InStackCount)
+		, GridPosition(FIntPoint(-1, -1))  // 장착된 아이템은 Grid에 없음
+		, GridCategory(0)  // 장비 카테고리
+		, bEquipped(true)
+		, WeaponSlotIndex(InWeaponSlotIndex)
 	{
 	}
 
@@ -112,6 +130,29 @@ struct INVENTORY_API FInv_SavedItemData
 	UPROPERTY(BlueprintReadWrite, Category = "Inventory|Save")
 	uint8 GridCategory;
 
+	// ============================================
+	// 🆕 Phase 6: 장착 상태 필드
+	// ============================================
+
+	/**
+	 * 장착 여부
+	 * 
+	 * true = 장착 슬롯에 있음 (Grid에 없음)
+	 * false = Grid에 있음 (기본값)
+	 */
+	UPROPERTY(BlueprintReadWrite, Category = "Inventory|Save")
+	bool bEquipped;
+
+	/**
+	 * 무기 슬롯 인덱스 (장착된 경우에만 유효)
+	 * 
+	 * -1 = 미장착 (Grid에 있음)
+	 *  0 = 주무기 슬롯
+	 *  1 = 보조무기 슬롯
+	 */
+	UPROPERTY(BlueprintReadWrite, Category = "Inventory|Save")
+	int32 WeaponSlotIndex;
+
 	/** 유효한 데이터인지 확인 */
 	bool IsValid() const
 	{
@@ -133,6 +174,13 @@ struct INVENTORY_API FInv_SavedItemData
 	/** 디버그 문자열 */
 	FString ToString() const
 	{
+		if (bEquipped)
+		{
+			return FString::Printf(TEXT("[%s x%d @ ⚔️장착슬롯(%d)]"),
+				*ItemType.ToString(), 
+				StackCount, 
+				WeaponSlotIndex);
+		}
 		return FString::Printf(TEXT("[%s x%d @ Grid%d(%s) Pos(%d,%d)]"),
 			*ItemType.ToString(), 
 			StackCount, 

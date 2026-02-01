@@ -1009,7 +1009,7 @@ void AHellunaDefenseGameMode::Logout(AController* Exiting)
 				DestItem.StackCount = Item.StackCount;
 				DestItem.GridPosition = Item.GridPosition;
 				DestItem.GridCategory = Item.GridCategory;
-				DestItem.EquipSlotIndex = -1;  // TODO: Phase 6에서 장착 정보 추가
+				DestItem.EquipSlotIndex = Item.bEquipped ? Item.WeaponSlotIndex : -1;
 				SaveData.Items.Add(DestItem);
 			}
 
@@ -1897,7 +1897,7 @@ void AHellunaDefenseGameMode::OnPlayerInventoryStateReceived(
 		DestItem.StackCount = SourceItem.StackCount;
 		DestItem.GridPosition = SourceItem.GridPosition;
 		DestItem.GridCategory = SourceItem.GridCategory;
-		DestItem.EquipSlotIndex = -1;  // TODO: 장착 정보는 Phase 6에서
+		DestItem.EquipSlotIndex = SourceItem.bEquipped ? SourceItem.WeaponSlotIndex : -1;
 
 		PlayerData.Items.Add(DestItem);
 
@@ -2260,7 +2260,7 @@ void AHellunaDefenseGameMode::SaveInventoryFromCharacterEndPlay(const FString& P
 		DestItem.StackCount = Item.StackCount;
 		DestItem.GridPosition = Item.GridPosition;
 		DestItem.GridCategory = Item.GridCategory;
-		DestItem.EquipSlotIndex = -1;  // TODO: Phase 6에서 장착 정보 추가
+		DestItem.EquipSlotIndex = Item.bEquipped ? Item.WeaponSlotIndex : -1;
 
 		SaveData.Items.Add(DestItem);
 
