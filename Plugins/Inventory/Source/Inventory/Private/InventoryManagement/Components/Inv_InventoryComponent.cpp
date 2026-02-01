@@ -1386,6 +1386,33 @@ void UInv_InventoryComponent::Server_SplitItemEntry_Implementation(UInv_Inventor
 	OnItemAdded.Broadcast(NewItem, NewEntryIndex);
 }
 
+// ⭐ [Phase 4 방법2] 클라이언트 Grid 위치를 서버 Entry에 동기화
+void UInv_InventoryComponent::Server_UpdateItemGridPosition_Implementation(UInv_InventoryItem* Item, int32 GridIndex, uint8 GridCategory)
+{
+	if (!IsValid(Item))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Server_UpdateItemGridPosition] Item이 유효하지 않음!"));
+		return;
+	}
+
+	// Entry 찾아서 GridIndex, GridCategory 업데이트
+	for (int32 i = 0; i < InventoryList.Entries.Num(); i++)
+	{
+		if (InventoryList.Entries[i].Item == Item)
+		{
+			InventoryList.Entries[i].GridIndex = GridIndex;
+			InventoryList.Entries[i].GridCategory = GridCategory;
+			InventoryList.MarkItemDirty(InventoryList.Entries[i]);
+			
+			UE_LOG(LogTemp, Log, TEXT("[Server_UpdateItemGridPosition] Entry[%d] 업데이트: %s → Grid%d Index=%d"),
+				i, *Item->GetItemManifest().GetItemType().ToString(), GridCategory, GridIndex);
+			return;
+		}
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[Server_UpdateItemGridPosition] Entry를 찾지 못함: %s"), *Item->GetItemManifest().GetItemType().ToString());
+}
+
 bool UInv_InventoryComponent::HasRoomInInventoryList(const FInv_ItemManifest& Manifest) const
 {
 	EInv_ItemCategory Category = Manifest.GetItemCategory();
@@ -1685,6 +1712,26 @@ bool UInv_InventoryComponent::HasRoomInInventoryList(const FInv_ItemManifest& Ma
 //    - 서버의 FastArray에서 직접 데이터 읽기
 //    - GridIndex, GridCategory 모두 서버에 있음!
 // 
+// ============================================
+// ⭐ [Phase 5 Fix] 마지막으로 추가된 Entry의 Grid 위치 설정
+// 로드 시 저장된 위치를 Entry에 미리 설정하여 클라이언트가 올바른 위치에 배치하도록 함
+// ============================================
+void UInv_InventoryComponent::SetLastEntryGridPosition(int32 GridIndex, uint8 GridCategory)
+{
+	if (InventoryList.Entries.Num() > 0)
+	{
+		int32 LastEntryIndex = InventoryList.Entries.Num() - 1;
+		FInv_InventoryEntry& Entry = InventoryList.Entries[LastEntryIndex];
+		
+		Entry.GridIndex = GridIndex;
+		Entry.GridCategory = GridCategory;
+		InventoryList.MarkItemDirty(Entry);
+		
+		UE_LOG(LogTemp, Log, TEXT("[Phase 5 Fix] Entry[%d] GridIndex=%d, Category=%d set (saved pos)"),
+			LastEntryIndex, GridIndex, GridCategory);
+	}
+}
+
 // ============================================
 TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave() const
 {

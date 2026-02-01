@@ -2124,6 +2124,14 @@ void AHellunaDefenseGameMode::LoadAndSendInventoryToClient(APlayerController* PC
 		// Server_AddNewItem은 StackCount를 처리하므로 직접 호출
 		InvComp->Server_AddNewItem(ItemComp, ItemData.StackCount, 0);
 
+		// [Phase 5 Fix] Set GridIndex/GridCategory for the newly added Entry
+		// This allows the client to place items at the correct position when FastArray replicates
+		{
+			const int32 Columns = 8;
+			int32 SavedGridIndex = ItemData.GridPosition.Y * Columns + ItemData.GridPosition.X;
+			InvComp->SetLastEntryGridPosition(SavedGridIndex, ItemData.GridCategory);
+		}
+
 		SpawnedCount++;
 		UE_LOG(LogTemp, Warning, TEXT("   [%d] ✅ 스폰 성공!"),
 			SpawnedCount);

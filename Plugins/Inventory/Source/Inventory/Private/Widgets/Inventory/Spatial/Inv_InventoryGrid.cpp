@@ -1041,6 +1041,41 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 
 	UE_LOG(LogTemp, Warning, TEXT("[AddItem] ❌ 기존 슬롯 못 찾음 (EntryIndex/포인터 모두 실패), 새 슬롯 생성..."));
 
+	// ⭐ [Phase 5 Fix] 2.4단계: GridIndex 체크 (로드 시 저장된 위치로 배치!)
+	// Entry에 GridIndex가 설정되어 있고 카테고리가 일치하면 해당 위치에 배치
+	if (InventoryComponent.IsValid())
+	{
+		FInv_InventoryFastArray& InventoryList = InventoryComponent->GetInventoryList();
+		if (InventoryList.Entries.IsValidIndex(EntryIndex))
+		{
+			int32 SavedGridIndex = InventoryList.Entries[EntryIndex].GridIndex;
+			uint8 SavedGridCategory = InventoryList.Entries[EntryIndex].GridCategory;
+			
+			// 이 Grid의 카테고리와 일치하고, GridIndex가 유효한 경우
+			if (SavedGridCategory == static_cast<uint8>(ItemCategory) && 
+				SavedGridIndex >= 0 && 
+				GridSlots.IsValidIndex(SavedGridIndex) && 
+				!SlottedItems.Contains(SavedGridIndex))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[AddItem] [Phase 5 Fix] Entry[%d] GridIndex=%d (saved pos), placing..."), 
+					EntryIndex, SavedGridIndex);
+				
+				const int32 ActualStackCount = Item->GetTotalStackCount();
+				const bool bStackable = Item->IsStackable();
+				AddItemAtIndex(Item, SavedGridIndex, bStackable, ActualStackCount, EntryIndex);
+				
+				// ⭐ [Phase 5 Fix] 로드 시에는 Server_UpdateItemGridPosition RPC 스킵!
+				bSuppressServerSync = true;
+				UpdateGridSlots(Item, SavedGridIndex, bStackable, ActualStackCount);
+				bSuppressServerSync = false;
+				
+				UE_LOG(LogTemp, Warning, TEXT("[AddItem] [Phase 5 Fix] Placed at saved GridIndex=%d (no RPC)"), SavedGridIndex);
+				UE_LOG(LogTemp, Warning, TEXT("========== [AddItem] 아이템 추가 완료 =========="));
+				return;
+			}
+		}
+	}
+
 	// ⭐⭐⭐ 2.5단계: TargetGridIndex 체크 (Split 아이템의 마우스 위치 배치!)
 	// Entry에 TargetGridIndex가 설정되어 있으면 해당 위치에 직접 배치
 	UE_LOG(LogTemp, Warning, TEXT("[AddItem] 🔍 2.5단계 조건 체크 시작"));
@@ -1544,8 +1579,16 @@ void UInv_InventoryGrid::UpdateGridSlots(UInv_InventoryItem* NewItem, const int3
 	FIntPoint GridPos = UInv_WidgetUtils::GetPositionFromIndex(Index, Columns);
 	NewItem->SetGridPosition(GridPos);
 	
-	UE_LOG(LogTemp, Log, TEXT("[UpdateGridSlots] 아이템 %s를 Grid[%d,%d]에 배치 (Index=%d)"), 
-		*NewItem->GetItemManifest().GetItemType().ToString(), GridPos.X, GridPos.Y, Index);
+	// ⭐ [Phase 4 방법2] 서버에 Grid 위치 동기화
+	// ⭐ [Phase 4 Fix] 로드 중에는 RPC 스킵 (잘못된 위치로 덮어쓰기 방지)
+	if (InventoryComponent.IsValid() && !bSuppressServerSync)
+	{
+		uint8 GridCategoryValue = static_cast<uint8>(ItemCategory);
+		InventoryComponent->Server_UpdateItemGridPosition(NewItem, Index, GridCategoryValue);
+	}
+	
+	UE_LOG(LogTemp, Log, TEXT("[UpdateGridSlots] 아이템 %s를 Grid[%d,%d]에 배치 (Index=%d, Category=%d)"), 
+		*NewItem->GetItemManifest().GetItemType().ToString(), GridPos.X, GridPos.Y, Index, static_cast<int32>(ItemCategory));
 
 	//2D 격자 순회하면서 그리드 슬롯 업데이트
 	UInv_InventoryStatics::ForEach2D(GridSlots, Index, Dimensions, Columns, [&](UInv_GridSlot* GridSlot) // [&] 이건 뭔데?
@@ -2236,6 +2279,44 @@ int32 UInv_InventoryGrid::RestoreItemPositions(const TArray<FInv_SavedItemData>&
 	UE_LOG(LogTemp, Warning, TEXT("    └────────────────────────────────────────┘"));
 
 	return RestoredCount;
+}
+
+// ============================================
+// ⭐ [Phase 4 Fix] 복원 완료 후 서버에 올바른 위치 전송
+// ============================================
+void UInv_InventoryGrid::SendAllItemPositionsToServer()
+{
+	if (!InventoryComponent.IsValid())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[SendAllItemPositionsToServer] InventoryComponent 없음, 스킵"));
+		return;
+	}
+
+	const int32 CategoryIndex = static_cast<int32>(ItemCategory);
+	const uint8 GridCategoryValue = static_cast<uint8>(ItemCategory);
+	
+	int32 SentCount = 0;
+	
+	for (const auto& Pair : SlottedItems)
+	{
+		const int32 GridIndex = Pair.Key;
+		UInv_SlottedItem* SlottedItem = Pair.Value;
+		
+		if (!IsValid(SlottedItem)) continue;
+		
+		UInv_InventoryItem* Item = SlottedItem->GetInventoryItem();
+		if (!IsValid(Item)) continue;
+		
+		// 서버에 올바른 위치 전송
+		InventoryComponent->Server_UpdateItemGridPosition(Item, GridIndex, GridCategoryValue);
+		SentCount++;
+		
+		UE_LOG(LogTemp, Log, TEXT("[SendAllItemPositionsToServer] Grid%d: %s → Index=%d"), 
+			CategoryIndex, *Item->GetItemManifest().GetItemType().ToString(), GridIndex);
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("[SendAllItemPositionsToServer] Grid%d: %d개 아이템 위치 전송 완료"), 
+		CategoryIndex, SentCount);
 }
 
 bool UInv_InventoryGrid::MoveItemToPosition(const FGameplayTag& ItemType, const FIntPoint& TargetPosition, int32 StackCount)

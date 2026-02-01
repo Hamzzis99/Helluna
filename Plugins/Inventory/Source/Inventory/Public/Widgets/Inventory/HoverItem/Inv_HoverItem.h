@@ -44,7 +44,7 @@ public:
 	
 	// ⭐ Phase 8: Split 시 원본 아이템 (서버 RPC용)
 	UInv_InventoryItem* GetOriginalSplitItem() const { return OriginalSplitItem.Get(); }
-	void SetOriginalSplitItem(UInv_InventoryItem* Item) { OriginalSplitItem = Item; }
+	void SetOriginalSplitItem(UInv_InventoryItem* Item);
 
 private:
 	UPROPERTY(meta = (BindWidget))

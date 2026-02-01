@@ -65,6 +65,11 @@ public:
 	UFUNCTION(Server, Reliable) // ⭐ Phase 8: Split 시 서버에서 새 Entry 생성 (포인터 분리)
 	void Server_SplitItemEntry(UInv_InventoryItem* OriginalItem, int32 OriginalNewStackCount, int32 SplitStackCount, int32 TargetGridIndex = INDEX_NONE);
 
+	// ⭐ [Phase 4 방법2] 클라이언트 Grid 위치를 서버 Entry에 동기화
+	// 클라이언트에서 아이템을 Grid에 배치/이동할 때 호출
+	UFUNCTION(Server, Reliable)
+	void Server_UpdateItemGridPosition(UInv_InventoryItem* Item, int32 GridIndex, uint8 GridCategory);
+
 	UFUNCTION(Server, Reliable) // 크래프팅: 서버에서 아이템 생성 및 인벤토리 추가
 	void Server_CraftItem(TSubclassOf<AActor> ItemActorClass);
 
@@ -101,6 +106,9 @@ public:
 	// InventoryList 접근용 (재료 체크 등에 사용)
 	const FInv_InventoryFastArray& GetInventoryList() const { return InventoryList; }
 	FInv_InventoryFastArray& GetInventoryList() { return InventoryList; } // non-const 오버로드
+
+	// ⭐ [Phase 5 Fix] 마지막으로 추가된 Entry의 Grid 위치 설정 (로드 시 사용)
+	void SetLastEntryGridPosition(int32 GridIndex, uint8 GridCategory);
 
 	// ⭐ [Phase 4 개선] 서버에서 직접 인벤토리 데이터 수집 (Logout 시 저장용)
 	// RPC 없이 서버의 FastArray에서 직접 읽어서 반환

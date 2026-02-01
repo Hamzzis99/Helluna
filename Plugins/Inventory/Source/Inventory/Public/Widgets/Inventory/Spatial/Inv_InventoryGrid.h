@@ -102,7 +102,26 @@ public:
 	// ⭐ Phase 5: SavedStackCount 파라미터 추가 - 로드 시 저장된 StackCount를 전달받음
 	bool MoveItemByCurrentIndex(int32 CurrentIndex, const FIntPoint& TargetPosition, int32 SavedStackCount = -1);
 
+	// ============================================
+	// ⭐ [Phase 4 방법2 Fix] 인벤토리 로드 시 RPC 스킵 플래그
+	// ============================================
+	
+	/**
+	 * 로드 중 Server_UpdateItemGridPosition RPC 전송 억제
+	 * true일 때 UpdateGridSlots에서 RPC를 보내지 않음
+	 */
+	void SetSuppressServerSync(bool bSuppress) { bSuppressServerSync = bSuppress; }
+	bool IsSuppressServerSync() const { return bSuppressServerSync; }
+	
+	/**
+	 * 현재 Grid의 모든 아이템 위치를 서버에 전송
+	 * 복원 완료 후 호출하여 올바른 위치로 동기화
+	 */
+	void SendAllItemPositionsToServer();
+
 private:
+	// ⭐ 로드 중 RPC 억제 플래그
+	bool bSuppressServerSync = false;
 
 	TWeakObjectPtr<UInv_InventoryComponent> InventoryComponent;
 	TWeakObjectPtr<UCanvasPanel> OwningCanvasPanel;
