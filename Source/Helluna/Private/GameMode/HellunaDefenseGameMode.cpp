@@ -2180,6 +2180,9 @@ void AHellunaDefenseGameMode::LoadAndSendInventoryToClient(APlayerController* PC
 		ClientData.StackCount = ItemData.StackCount;
 		ClientData.GridPosition = ItemData.GridPosition;
 		ClientData.GridCategory = ItemData.GridCategory;
+		// 🆕 [Phase 6] 장착 상태 변환
+		ClientData.bEquipped = (ItemData.EquipSlotIndex >= 0);
+		ClientData.WeaponSlotIndex = ItemData.EquipSlotIndex;
 
 		SavedItemsForClient.Add(ClientData);
 	}
