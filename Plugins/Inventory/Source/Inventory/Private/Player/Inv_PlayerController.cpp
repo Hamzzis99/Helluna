@@ -647,7 +647,24 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 	// 🆕 [Phase 6] 장착 아이템 복원
 	// ============================================
 	UE_LOG(LogTemp, Warning, TEXT("  ├─────────────────────────────────────────────────────────────┤"));
-	UE_LOG(LogTemp, Warning, TEXT("  │ ⚔️ 장착 아이템 복원 시작...                                  │"));
+	UE_LOG(LogTemp, Warning, TEXT("  │ ⚔️ [Phase 6] 장착 아이템 복원 시작...                        │"));
+	
+	// 🔍 디버깅: 전체 SavedItems에서 bEquipped 상태 확인
+	UE_LOG(LogTemp, Warning, TEXT("  │                                                              │"));
+	UE_LOG(LogTemp, Warning, TEXT("  │ 🔍 [디버깅] SavedItems bEquipped 상태:                       │"));
+	int32 EquippedCount = 0;
+	for (int32 i = 0; i < SavedItems.Num(); ++i)
+	{
+		const FInv_SavedItemData& Item = SavedItems[i];
+		UE_LOG(LogTemp, Warning, TEXT("  │   [%d] %s"), i, *Item.ItemType.ToString());
+		UE_LOG(LogTemp, Warning, TEXT("  │       bEquipped=%s, WeaponSlotIndex=%d, GridPos=(%d,%d)"),
+			Item.bEquipped ? TEXT("TRUE ✅") : TEXT("false"),
+			Item.WeaponSlotIndex,
+			Item.GridPosition.X, Item.GridPosition.Y);
+		if (Item.bEquipped) EquippedCount++;
+	}
+	UE_LOG(LogTemp, Warning, TEXT("  │ 🔍 bEquipped=true 아이템: %d개                              │"), EquippedCount);
+	UE_LOG(LogTemp, Warning, TEXT("  │                                                              │"));
 	
 	int32 EquippedRestored = 0;
 	
@@ -656,13 +673,28 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 	if (IsValid(SpatialInventory))
 	{
 		const TArray<TObjectPtr<UInv_EquippedGridSlot>>& EquippedSlots = SpatialInventory->GetEquippedGridSlots();
+		UE_LOG(LogTemp, Warning, TEXT("  │ 🔍 EquippedSlots 개수: %d                                   │"), EquippedSlots.Num());
 		
 		for (const FInv_SavedItemData& ItemData : SavedItems)
 		{
-			if (!ItemData.bEquipped) continue;  // Grid 아이템 건너뛰기
-			if (ItemData.WeaponSlotIndex < 0) continue;  // 유효하지 않은 슬롯
+			// 🔍 디버깅: 각 아이템의 bEquipped 체크
+			UE_LOG(LogTemp, Warning, TEXT("  │                                                              │"));
+			UE_LOG(LogTemp, Warning, TEXT("  │   📌 처리 중: %s"), *ItemData.ItemType.ToString());
+			UE_LOG(LogTemp, Warning, TEXT("  │       bEquipped=%s, WeaponSlotIndex=%d"),
+				ItemData.bEquipped ? TEXT("TRUE") : TEXT("FALSE"), ItemData.WeaponSlotIndex);
 			
-			UE_LOG(LogTemp, Warning, TEXT("  │   → 장착 복원 시도: %s (슬롯 %d)"), 
+			if (!ItemData.bEquipped)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("  │       → 건너뜀 (Grid 아이템)"));
+				continue;  // Grid 아이템 건너뛰기
+			}
+			if (ItemData.WeaponSlotIndex < 0)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("  │       → 건너뜀 (유효하지 않은 슬롯 인덱스)"));
+				continue;  // 유효하지 않은 슬롯
+			}
+			
+			UE_LOG(LogTemp, Warning, TEXT("  │   → ⚔️ 장착 복원 시도: %s (슬롯 %d)"), 
 				*ItemData.ItemType.ToString(), ItemData.WeaponSlotIndex);
 			
 			// 해당 WeaponSlotIndex를 가진 장착 슬롯 찾기
@@ -681,19 +713,30 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 				UE_LOG(LogTemp, Warning, TEXT("  │   ❌ WeaponSlot %d를 찾을 수 없음!"), ItemData.WeaponSlotIndex);
 				continue;
 			}
+			UE_LOG(LogTemp, Warning, TEXT("  │       ✅ TargetSlot 찾음: %s"), *TargetSlot->GetName());
 			
 			// InventoryComponent에서 해당 ItemType 아이템 찾기
+			UE_LOG(LogTemp, Warning, TEXT("  │       🔍 FindItemByType 호출: %s"), *ItemData.ItemType.ToString());
 			UInv_InventoryItem* FoundItem = InventoryComponent->FindItemByType(ItemData.ItemType);
 			if (!IsValid(FoundItem))
 			{
 				UE_LOG(LogTemp, Warning, TEXT("  │   ❌ 아이템을 찾을 수 없음: %s"), *ItemData.ItemType.ToString());
 				continue;
 			}
+			UE_LOG(LogTemp, Warning, TEXT("  │       ✅ FoundItem: %s"), *FoundItem->GetItemManifest().GetItemType().ToString());
 			
 			// 장착 슬롯에 아이템 배치
-			float TileSize = UInv_InventoryStatics::GetInventoryWidget(this)->GetTileSize();
+			UInv_InventoryBase* InvWidget = UInv_InventoryStatics::GetInventoryWidget(this);
+			if (!IsValid(InvWidget))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("  │   ❌ InventoryWidget을 찾을 수 없음!"));
+				continue;
+			}
+			
+			float TileSize = InvWidget->GetTileSize();
 			FGameplayTag EquipmentTag = FoundItem->GetItemManifest().GetItemType();
 			
+			UE_LOG(LogTemp, Warning, TEXT("  │       🔧 OnItemEquipped 호출 (TileSize=%.1f)"), TileSize);
 			UInv_EquippedSlottedItem* EquippedSlottedItem = TargetSlot->OnItemEquipped(FoundItem, EquipmentTag, TileSize);
 			if (IsValid(EquippedSlottedItem))
 			{
@@ -702,7 +745,12 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 					*ItemData.ItemType.ToString(), ItemData.WeaponSlotIndex);
 				
 				// 장착 델리게이트 브로드캐스트 (무기 Actor 스폰용)
+				UE_LOG(LogTemp, Warning, TEXT("  │       📡 OnItemEquipped 브로드캐스트 (WeaponSlotIndex=%d)"), ItemData.WeaponSlotIndex);
 				InventoryComponent->OnItemEquipped.Broadcast(FoundItem, ItemData.WeaponSlotIndex);
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("  │   ❌ OnItemEquipped 실패 (EquippedSlottedItem=nullptr)"));
 			}
 		}
 	}
@@ -711,7 +759,8 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 		UE_LOG(LogTemp, Warning, TEXT("  │   ⚠️ SpatialInventory를 찾을 수 없음!"));
 	}
 	
-	UE_LOG(LogTemp, Warning, TEXT("  │ ⚔️ 장착 아이템 복원 완료: %d개                               │"), EquippedRestored);
+	UE_LOG(LogTemp, Warning, TEXT("  │                                                              │"));
+	UE_LOG(LogTemp, Warning, TEXT("  │ ⚔️ 장착 아이템 복원 완료: %d개 (예상: %d개)                    │"), EquippedRestored, EquippedCount);
 	UE_LOG(LogTemp, Warning, TEXT("  │ 실패: %3d개 ❌                                              │"), SavedItems.Num() - TotalRestored);
 	UE_LOG(LogTemp, Warning, TEXT("  └─────────────────────────────────────────────────────────────┘"));
 	UE_LOG(LogTemp, Warning, TEXT(""));
