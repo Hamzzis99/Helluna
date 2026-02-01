@@ -781,19 +781,9 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 			}
 			UE_LOG(LogTemp, Warning, TEXT("  │       ✅ FoundItem: %s"), *FoundItem->GetItemManifest().GetItemType().ToString());
 			
-			// 장착 슬롯에 아이템 배치
-			UInv_InventoryBase* InvWidget = UInv_InventoryStatics::GetInventoryWidget(this);
-			if (!IsValid(InvWidget))
-			{
-				UE_LOG(LogTemp, Warning, TEXT("  │   ❌ InventoryWidget을 찾을 수 없음!"));
-				continue;
-			}
-			
-			float TileSize = InvWidget->GetTileSize();
-			FGameplayTag EquipmentTag = FoundItem->GetItemManifest().GetItemType();
-			
-			UE_LOG(LogTemp, Warning, TEXT("  │       🔧 OnItemEquipped 호출 (TileSize=%.1f)"), TileSize);
-			UInv_EquippedSlottedItem* EquippedSlottedItem = TargetSlot->OnItemEquipped(FoundItem, EquipmentTag, TileSize);
+			// 🆕 [Phase 6] SpatialInventory의 RestoreEquippedItem 사용 (델리게이트 바인딩 포함)
+			UE_LOG(LogTemp, Warning, TEXT("  │       🔧 RestoreEquippedItem 호출 (델리게이트 바인딩 포함)"));
+			UInv_EquippedSlottedItem* EquippedSlottedItem = SpatialInventory->RestoreEquippedItem(TargetSlot, FoundItem);
 			if (IsValid(EquippedSlottedItem))
 			{
 				EquippedRestored++;

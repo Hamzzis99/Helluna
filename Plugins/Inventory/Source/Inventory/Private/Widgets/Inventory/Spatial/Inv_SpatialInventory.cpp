@@ -256,6 +256,38 @@ void UInv_SpatialInventory::MakeEquippedSlottedItem(UInv_EquippedSlottedItem* Eq
 	EquippedGridSlot->SetEquippedSlottedItem(SlottedItem);
 }
 
+// ============================================
+// 🆕 [Phase 6] 장착 아이템 복원 (델리게이트 바인딩 포함)
+// ============================================
+UInv_EquippedSlottedItem* UInv_SpatialInventory::RestoreEquippedItem(UInv_EquippedGridSlot* EquippedGridSlot, UInv_InventoryItem* ItemToEquip)
+{
+	if (!IsValid(EquippedGridSlot) || !IsValid(ItemToEquip))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[RestoreEquippedItem] 유효하지 않은 인자!"));
+		return nullptr;
+	}
+	
+	// TileSize 가져오기
+	const float TileSize = UInv_InventoryStatics::GetInventoryWidget(GetOwningPlayer())->GetTileSize();
+	
+	// 장착 아이템의 태그 가져오기
+	FGameplayTag EquipmentTag = ItemToEquip->GetItemManifest().GetItemType();
+	
+	// 장착 슬롯에 아이템 배치 (UI 위젯 생성)
+	UInv_EquippedSlottedItem* EquippedSlottedItem = EquippedGridSlot->OnItemEquipped(ItemToEquip, EquipmentTag, TileSize);
+	
+	if (IsValid(EquippedSlottedItem))
+	{
+		// ⚠️ 핵심: 클릭 델리게이트 바인딩 (드래그&드롭 장착 해제용)
+		EquippedSlottedItem->OnEquippedSlottedItemClicked.AddDynamic(this, &ThisClass::EquippedSlottedItemClicked);
+		
+		UE_LOG(LogTemp, Warning, TEXT("[RestoreEquippedItem] ✅ 델리게이트 바인딩 완료: %s → 슬롯 %d"), 
+			*EquipmentTag.ToString(), EquippedGridSlot->GetWeaponSlotIndex());
+	}
+	
+	return EquippedSlottedItem;
+}
+
 void UInv_SpatialInventory::BroadcastSlotClickedDelegates(UInv_InventoryItem* ItemToEquip, UInv_InventoryItem* ItemToUnequip, int32 WeaponSlotIndex) const
 {
 	UInv_InventoryComponent* InventoryComponent = UInv_InventoryStatics::GetInventoryComponent(GetOwningPlayer());

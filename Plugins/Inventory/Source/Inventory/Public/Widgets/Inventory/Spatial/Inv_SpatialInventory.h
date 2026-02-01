@@ -49,6 +49,9 @@ public:
 
 	// ⭐ [Phase 6] 장착 슬롯 배열 Getter (저장 시 장착된 아이템 수집용)
 	const TArray<TObjectPtr<UInv_EquippedGridSlot>>& GetEquippedGridSlots() const { return EquippedGridSlots; }
+
+	// 🆕 [Phase 6] 장착 아이템 복원 (델리게이트 바인딩 포함)
+	UInv_EquippedSlottedItem* RestoreEquippedItem(UInv_EquippedGridSlot* EquippedGridSlot, UInv_InventoryItem* ItemToEquip);
 	
 private: 
 	// 여기 있는 UPROPERTY와 위젯과의 이름이 동일해야만함.
