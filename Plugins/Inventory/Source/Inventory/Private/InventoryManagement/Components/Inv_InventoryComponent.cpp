@@ -1733,6 +1733,14 @@ void UInv_InventoryComponent::SetLastEntryGridPosition(int32 GridIndex, uint8 Gr
 }
 
 // ============================================
+// ============================================
+// 🆕 [Phase 6] ItemType으로 아이템 찾기
+// ============================================
+UInv_InventoryItem* UInv_InventoryComponent::FindItemByType(const FGameplayTag& ItemType)
+{
+	return InventoryList.FindFirstItemByType(ItemType);
+}
+
 TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave() const
 {
 	TArray<FInv_SavedItemData> Result;

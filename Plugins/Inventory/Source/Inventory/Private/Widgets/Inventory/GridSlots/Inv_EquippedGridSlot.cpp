@@ -117,3 +117,15 @@ UInv_EquippedSlottedItem* UInv_EquippedGridSlot::OnItemEquipped(UInv_InventoryIt
 	// 장착된 슬롯 아이템 반환
 	return EquippedSlottedItem;
 }
+
+// ============================================
+// 🆕 [Phase 6] 장착된 아이템 가져오기
+// ============================================
+UInv_InventoryItem* UInv_EquippedGridSlot::GetEquippedInventoryItem() const
+{
+	if (IsValid(EquippedSlottedItem))
+	{
+		return EquippedSlottedItem->GetInventoryItem();
+	}
+	return nullptr;
+}

@@ -14,6 +14,9 @@
 #include "Widgets/Inventory/Spatial/Inv_SpatialInventory.h"
 #include "Widgets/Inventory/Spatial/Inv_InventoryGrid.h"
 #include "Widgets/Inventory/GridSlots/Inv_EquippedGridSlot.h"
+#include "Items/Inv_InventoryItem.h"
+#include "Widgets/Inventory/SlottedItems/Inv_EquippedSlottedItem.h"
+#include "InventoryManagement/Utils/Inv_InventoryStatics.h"
 #include "Interfaces/Inv_Interface_Primary.cpp"
 
 AInv_PlayerController::AInv_PlayerController()
@@ -459,7 +462,7 @@ TArray<FInv_SavedItemData> AInv_PlayerController::CollectInventoryGridState()
 			// 🆕 Phase 6: 장착 아이템을 Result에 추가
 			// ============================================
 			FInv_SavedItemData EquippedData(
-				Item->GetItemManifest().GetItemType(),
+				EquippedItem->GetItemManifest().GetItemType(),
 				1,  // 장비는 스택 1
 				Slot->GetWeaponSlotIndex()
 			);
@@ -639,6 +642,76 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 	UE_LOG(LogTemp, Warning, TEXT("  ├─────────────────────────────────────────────────────────────┤"));
 	UE_LOG(LogTemp, Warning, TEXT("  │ 요청: %3d개 아이템                                          │"), SavedItems.Num());
 	UE_LOG(LogTemp, Warning, TEXT("  │ 복원: %3d개 성공 ✅                                         │"), TotalRestored);
+
+	// ============================================
+	// 🆕 [Phase 6] 장착 아이템 복원
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT("  ├─────────────────────────────────────────────────────────────┤"));
+	UE_LOG(LogTemp, Warning, TEXT("  │ ⚔️ 장착 아이템 복원 시작...                                  │"));
+	
+	int32 EquippedRestored = 0;
+	
+	// SpatialInventory에서 장착 슬롯 가져오기
+	// SpatialInventory는 이미 위에서 선언됨 - 유효성만 체크
+	if (IsValid(SpatialInventory))
+	{
+		const TArray<TObjectPtr<UInv_EquippedGridSlot>>& EquippedSlots = SpatialInventory->GetEquippedGridSlots();
+		
+		for (const FInv_SavedItemData& ItemData : SavedItems)
+		{
+			if (!ItemData.bEquipped) continue;  // Grid 아이템 건너뛰기
+			if (ItemData.WeaponSlotIndex < 0) continue;  // 유효하지 않은 슬롯
+			
+			UE_LOG(LogTemp, Warning, TEXT("  │   → 장착 복원 시도: %s (슬롯 %d)"), 
+				*ItemData.ItemType.ToString(), ItemData.WeaponSlotIndex);
+			
+			// 해당 WeaponSlotIndex를 가진 장착 슬롯 찾기
+			UInv_EquippedGridSlot* TargetSlot = nullptr;
+			for (const TObjectPtr<UInv_EquippedGridSlot>& Slot : EquippedSlots)
+			{
+				if (IsValid(Slot) && Slot->GetWeaponSlotIndex() == ItemData.WeaponSlotIndex)
+				{
+					TargetSlot = Slot.Get();
+					break;
+				}
+			}
+			
+			if (!IsValid(TargetSlot))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("  │   ❌ WeaponSlot %d를 찾을 수 없음!"), ItemData.WeaponSlotIndex);
+				continue;
+			}
+			
+			// InventoryComponent에서 해당 ItemType 아이템 찾기
+			UInv_InventoryItem* FoundItem = InventoryComponent->FindItemByType(ItemData.ItemType);
+			if (!IsValid(FoundItem))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("  │   ❌ 아이템을 찾을 수 없음: %s"), *ItemData.ItemType.ToString());
+				continue;
+			}
+			
+			// 장착 슬롯에 아이템 배치
+			float TileSize = UInv_InventoryStatics::GetInventoryWidget(this)->GetTileSize();
+			FGameplayTag EquipmentTag = FoundItem->GetItemManifest().GetItemType();
+			
+			UInv_EquippedSlottedItem* EquippedSlottedItem = TargetSlot->OnItemEquipped(FoundItem, EquipmentTag, TileSize);
+			if (IsValid(EquippedSlottedItem))
+			{
+				EquippedRestored++;
+				UE_LOG(LogTemp, Warning, TEXT("  │   ✅ 장착 복원 성공: %s → 슬롯 %d"), 
+					*ItemData.ItemType.ToString(), ItemData.WeaponSlotIndex);
+				
+				// 장착 델리게이트 브로드캐스트 (무기 Actor 스폰용)
+				InventoryComponent->OnItemEquipped.Broadcast(FoundItem, ItemData.WeaponSlotIndex);
+			}
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("  │   ⚠️ SpatialInventory를 찾을 수 없음!"));
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("  │ ⚔️ 장착 아이템 복원 완료: %d개                               │"), EquippedRestored);
 	UE_LOG(LogTemp, Warning, TEXT("  │ 실패: %3d개 ❌                                              │"), SavedItems.Num() - TotalRestored);
 	UE_LOG(LogTemp, Warning, TEXT("  └─────────────────────────────────────────────────────────────┘"));
 	UE_LOG(LogTemp, Warning, TEXT(""));

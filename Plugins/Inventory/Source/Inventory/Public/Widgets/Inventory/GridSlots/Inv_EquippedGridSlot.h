@@ -33,6 +33,11 @@ public:
 	// ============================================
 	int32 GetWeaponSlotIndex() const { return WeaponSlotIndex; }
 
+	// ============================================
+	// 🆕 [Phase 6] 장착된 아이템 가져오기
+	// ============================================
+	UInv_InventoryItem* GetEquippedInventoryItem() const;
+
 private:
 	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (Categories = "GameItem.Equipment"))
 	FGameplayTag EquipmentTypeTag; // 장착된 아이템의 타입을 나타내는 게임플레이 태그
