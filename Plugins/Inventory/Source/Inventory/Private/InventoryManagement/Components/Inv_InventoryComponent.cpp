@@ -164,13 +164,58 @@ void UInv_InventoryComponent::Server_AddStacksToItem_Implementation(UInv_ItemCom
 	UInv_InventoryItem* Item = InventoryList.FindFirstItemByType(ItemType); // 동일한 유형의 아이템 찾기
 	if (!IsValid(Item)) return;
 
-	//아이템 스택수 불러오기 (이미 있는 항목에 추가로 등록)
-	Item->SetTotalStackCount(Item->GetTotalStackCount() + StackCount);
+	// ⭐ [MaxStackSize 검증] 초과분을 새 슬롯에 추가하도록 개선
+	const int32 CurrentStack = Item->GetTotalStackCount();
+	int32 MaxStackSize = 999; // 기본값
+	
+	// MaxStackSize 가져오기
+	if (const FInv_StackableFragment* StackableFragment = Item->GetItemManifest().GetFragmentOfType<FInv_StackableFragment>())
+	{
+		MaxStackSize = StackableFragment->GetMaxStackSize();
+	}
+	
+	const int32 RoomInCurrentStack = MaxStackSize - CurrentStack; // 현재 스택에 추가 가능한 양
+	const int32 AmountToAddToCurrentStack = FMath::Min(StackCount, RoomInCurrentStack); // 현재 스택에 실제로 추가할 양
+	const int32 Overflow = StackCount - AmountToAddToCurrentStack; // 초과분 (새 슬롯으로 가야 함)
+	
+	UE_LOG(LogTemp, Warning, TEXT("[Server_AddStacksToItem] 현재: %d, 추가요청: %d, Max: %d, 추가가능: %d, 초과분: %d"),
+		CurrentStack, StackCount, MaxStackSize, AmountToAddToCurrentStack, Overflow);
+
+	// 1. 현재 스택에 추가 (MaxStackSize까지만)
+	if (AmountToAddToCurrentStack > 0)
+	{
+		Item->SetTotalStackCount(CurrentStack + AmountToAddToCurrentStack);
+		UE_LOG(LogTemp, Warning, TEXT("[Server_AddStacksToItem] ✅ 기존 스택에 %d개 추가 → 총 %d개"),
+			AmountToAddToCurrentStack, Item->GetTotalStackCount());
+	}
+
+	// 2. 초과분이 있으면 새 슬롯에 추가
+	if (Overflow > 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Server_AddStacksToItem] ⚠️ 초과분 %d개 → 새 슬롯에 추가!"), Overflow);
+		
+		// 새 아이템 생성 (기존 ItemComponent의 Manifest 사용)
+		UInv_InventoryItem* NewItem = InventoryList.AddEntry(ItemComponent);
+		if (IsValid(NewItem))
+		{
+			NewItem->SetTotalStackCount(Overflow);
+			
+			// ListenServer/Standalone에서는 델리게이트 브로드캐스트
+			if (GetOwner()->GetNetMode() == NM_ListenServer || GetOwner()->GetNetMode() == NM_Standalone)
+			{
+				int32 NewEntryIndex = InventoryList.Entries.Num() - 1;
+				OnItemAdded.Broadcast(NewItem, NewEntryIndex);
+			}
+			
+			UE_LOG(LogTemp, Warning, TEXT("[Server_AddStacksToItem] ✅ 새 슬롯에 %d개 추가 완료!"), Overflow);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("[Server_AddStacksToItem] ❌ 새 슬롯 생성 실패! %d개 손실!"), Overflow);
+		}
+	}
 
 	//0가 되면 아이템 파괴하는 부분
-	// TODO : Destroy the item if the Remainder is zero.
-	// Otherwise, update the stack count for the item pickup.
-
 	if (Remainder == 0)
 	{
 		ItemComponent->PickedUp();

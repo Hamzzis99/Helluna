@@ -30,3 +30,23 @@ bool UInv_InventoryItem::IsConsumable() const // 아이템이 소비 가능한�
 {
 	return GetItemManifest().GetItemCategory() == EInv_ItemCategory::Consumable;
 }
+
+void UInv_InventoryItem::SetTotalStackCount(int32 Count)
+{
+	// MaxStackSize 검증!
+	if (const FInv_StackableFragment* StackableFragment = GetItemManifest().GetFragmentOfType<FInv_StackableFragment>())
+	{
+		const int32 MaxStack = StackableFragment->GetMaxStackSize();
+		if (Count > MaxStack)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[SetTotalStackCount] ⚠️ MaxStackSize 초과! 요청: %d, Max: %d → %d로 클램프"), 
+				Count, MaxStack, MaxStack);
+		}
+		TotalStackCount = FMath::Clamp(Count, 0, MaxStack);
+	}
+	else
+	{
+		// Stackable Fragment가 없으면 스택 불가 아이템 (1개만 가능)
+		TotalStackCount = FMath::Clamp(Count, 0, 1);
+	}
+}
