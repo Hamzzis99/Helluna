@@ -46,6 +46,9 @@ public:
 
 	// ⭐ UI 기반 재료 개수 세기 (Split된 스택도 정확히 계산!)
 	int32 GetTotalMaterialCountFromUI(const FGameplayTag& MaterialTag) const;
+
+	// ⭐ [Phase 6] 장착 슬롯 배열 Getter (저장 시 장착된 아이템 수집용)
+	const TArray<TObjectPtr<UInv_EquippedGridSlot>>& GetEquippedGridSlots() const { return EquippedGridSlots; }
 	
 private: 
 	// 여기 있는 UPROPERTY와 위젯과의 이름이 동일해야만함.

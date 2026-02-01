@@ -13,6 +13,7 @@
 #include "Widgets/Inventory/InventoryBase/Inv_InventoryBase.h"
 #include "Widgets/Inventory/Spatial/Inv_SpatialInventory.h"
 #include "Widgets/Inventory/Spatial/Inv_InventoryGrid.h"
+#include "Widgets/Inventory/GridSlots/Inv_EquippedGridSlot.h"
 #include "Interfaces/Inv_Interface_Primary.cpp"
 
 AInv_PlayerController::AInv_PlayerController()
@@ -419,6 +420,51 @@ TArray<FInv_SavedItemData> AInv_PlayerController::CollectInventoryGridState()
 	}
 
 	UE_LOG(LogTemp, Warning, TEXT("  │"));
+	UE_LOG(LogTemp, Warning, TEXT("  └─────────────────────────────────────────────────────────────┘"));
+
+	// ============================================
+	// Step 5: 장착 슬롯(EquippedGridSlots) 상태 디버깅
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("▶ [Step 5] 장착 슬롯(EquippedGridSlots) 상태 확인"));
+	UE_LOG(LogTemp, Warning, TEXT("  ┌─────────────────────────────────────────────────────────────┐"));
+	UE_LOG(LogTemp, Warning, TEXT("  │ ⚔️ 장착 슬롯 디버깅 (Phase 6 준비)                          │"));
+	UE_LOG(LogTemp, Warning, TEXT("  ├─────────────────────────────────────────────────────────────┤"));
+
+	const TArray<TObjectPtr<UInv_EquippedGridSlot>>& EquippedSlots = SpatialInventory->GetEquippedGridSlots();
+	UE_LOG(LogTemp, Warning, TEXT("  │ 총 장착 슬롯 개수: %d                                       │"), EquippedSlots.Num());
+	UE_LOG(LogTemp, Warning, TEXT("  ├─────────────────────────────────────────────────────────────┤"));
+
+	int32 EquippedItemCount = 0;
+	for (int32 i = 0; i < EquippedSlots.Num(); ++i)
+	{
+		UInv_EquippedGridSlot* Slot = EquippedSlots[i].Get();
+		if (!IsValid(Slot))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("  │ [%d] ❌ 슬롯 nullptr                                       │"), i);
+			continue;
+		}
+
+		int32 WeaponSlotIndex = Slot->GetWeaponSlotIndex();
+		UInv_InventoryItem* EquippedItem = Slot->GetInventoryItem().Get();
+
+		if (IsValid(EquippedItem))
+		{
+			FGameplayTag ItemType = EquippedItem->GetItemManifest().GetItemType();
+			UE_LOG(LogTemp, Warning, TEXT("  │ [%d] ✅ WeaponSlot=%d │ %s"), 
+				i, WeaponSlotIndex, *ItemType.ToString());
+			EquippedItemCount++;
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("  │ [%d] ⬜ WeaponSlot=%d │ (비어있음)                        │"), 
+				i, WeaponSlotIndex);
+		}
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("  ├─────────────────────────────────────────────────────────────┤"));
+	UE_LOG(LogTemp, Warning, TEXT("  │ 📊 장착된 아이템: %d개 (Grid에서 수집 안 됨!)               │"), EquippedItemCount);
+	UE_LOG(LogTemp, Warning, TEXT("  │ ⚠️ 현재 저장 로직에서 누락됨 → Phase 6에서 수정 필요       │"));
 	UE_LOG(LogTemp, Warning, TEXT("  └─────────────────────────────────────────────────────────────┘"));
 
 	// ============================================
