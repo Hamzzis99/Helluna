@@ -50,6 +50,9 @@ public:
 
 	UFUNCTION()
 	void RemoveItem(UInv_InventoryItem* Item, int32 EntryIndex); // 아이템 제거 (EntryIndex로 정확히 매칭)
+	
+	// 🆕 [Phase 6] 포인터만으로 아이템 제거 (장착 복원 시 Grid에서 제거용)
+	bool RemoveSlottedItemByPointer(UInv_InventoryItem* Item);
 
 	UFUNCTION()
 	void UpdateMaterialStacksByTag(const FGameplayTag& MaterialTag); // GameplayTag로 모든 스택 업데이트 (Building용)

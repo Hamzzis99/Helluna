@@ -1898,6 +1898,13 @@ void AHellunaDefenseGameMode::OnPlayerInventoryStateReceived(
 		DestItem.GridPosition = SourceItem.GridPosition;
 		DestItem.GridCategory = SourceItem.GridCategory;
 		DestItem.EquipSlotIndex = SourceItem.bEquipped ? SourceItem.WeaponSlotIndex : -1;
+		
+		// 🔍 디버깅 로그: 저장 변환 전후 값 출력
+		UE_LOG(LogTemp, Warning, TEXT("   📌 [%d] %s"), PlayerData.Items.Num(), *SourceItem.ItemType.ToString());
+		UE_LOG(LogTemp, Warning, TEXT("       입력→ bEquipped=%s, WeaponSlotIndex=%d"),
+			SourceItem.bEquipped ? TEXT("TRUE ✅") : TEXT("FALSE"),
+			SourceItem.WeaponSlotIndex);
+		UE_LOG(LogTemp, Warning, TEXT("       저장→ EquipSlotIndex: %d"), DestItem.EquipSlotIndex);
 
 		PlayerData.Items.Add(DestItem);
 
@@ -2180,9 +2187,16 @@ void AHellunaDefenseGameMode::LoadAndSendInventoryToClient(APlayerController* PC
 		ClientData.StackCount = ItemData.StackCount;
 		ClientData.GridPosition = ItemData.GridPosition;
 		ClientData.GridCategory = ItemData.GridCategory;
-		// 🆕 [Phase 6] 장착 상태 변환
+		// 🆕 [Phase 6] 장착 상태 변환 + 디버깅
 		ClientData.bEquipped = (ItemData.EquipSlotIndex >= 0);
 		ClientData.WeaponSlotIndex = ItemData.EquipSlotIndex;
+		
+		// 🔍 디버깅 로그: 변환 전후 값 출력
+		UE_LOG(LogTemp, Warning, TEXT("   📌 [%d] %s"), SavedItemsForClient.Num(), *ItemData.ItemType.ToString());
+		UE_LOG(LogTemp, Warning, TEXT("       파일→EquipSlotIndex: %d"), ItemData.EquipSlotIndex);
+		UE_LOG(LogTemp, Warning, TEXT("       변환→ bEquipped=%s, WeaponSlotIndex=%d"),
+			ClientData.bEquipped ? TEXT("TRUE ✅") : TEXT("FALSE"),
+			ClientData.WeaponSlotIndex);
 
 		SavedItemsForClient.Add(ClientData);
 	}

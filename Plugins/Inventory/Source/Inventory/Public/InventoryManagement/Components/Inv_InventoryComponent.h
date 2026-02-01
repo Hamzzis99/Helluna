@@ -111,6 +111,9 @@ public:
 	// 🆕 [Phase 6] ItemType으로 아이템 찾기
 	// ============================================
 	UInv_InventoryItem* FindItemByType(const FGameplayTag& ItemType);
+	
+	// 🆕 [Phase 6] 제외 목록을 사용한 아이템 검색 (같은 타입 다중 장착 지원)
+	UInv_InventoryItem* FindItemByTypeExcluding(const FGameplayTag& ItemType, const TSet<UInv_InventoryItem*>& ExcludeItems);
 
 	// ⭐ [Phase 5 Fix] 마지막으로 추가된 Entry의 Grid 위치 설정 (로드 시 사용)
 	void SetLastEntryGridPosition(int32 GridIndex, uint8 GridCategory);

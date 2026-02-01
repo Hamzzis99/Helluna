@@ -7,6 +7,7 @@
 #include "Crafting/Actors/Inv_CraftingStation.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
 #include "EquipmentManagement/Components/Inv_EquipmentComponent.h"
+#include "EquipmentManagement/EquipActor/Inv_EquipActor.h"
 #include "Items/Components/Inv_ItemComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "Widgets/HUD/Inv_HUDWidget.h"
@@ -114,6 +115,60 @@ void AInv_PlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		{
 			CollectedData = InventoryComponent->CollectInventoryDataForSave();
 			UE_LOG(LogTemp, Warning, TEXT("[EndPlay] ✅ InventoryComponent에서 %d개 아이템 수집"), CollectedData.Num());
+			
+			// ============================================
+			// 🆕 [Phase 6] EquipmentComponent에서 장착 상태 추가
+			// ============================================
+			if (EquipmentComponent.IsValid())
+			{
+				// 🔧 수정: SlotIndex → ItemType 맵 (같은 타입 다중 장착 지원)
+				TMap<int32, FGameplayTag> SlotToItemMap;
+				const TArray<TObjectPtr<AInv_EquipActor>>& EquippedActors = EquipmentComponent->GetEquippedActors();
+				
+				UE_LOG(LogTemp, Warning, TEXT("[EndPlay] 🔍 [Phase 6] EquippedActors 개수: %d"), EquippedActors.Num());
+				
+				for (const TObjectPtr<AInv_EquipActor>& EquipActor : EquippedActors)
+				{
+					if (EquipActor.Get())
+					{
+						FGameplayTag ItemType = EquipActor->GetEquipmentType();
+						int32 SlotIndex = EquipActor->GetWeaponSlotIndex();
+						SlotToItemMap.Add(SlotIndex, ItemType);
+						
+						UE_LOG(LogTemp, Warning, TEXT("[EndPlay]    ⚔️ 장착됨: Slot %d → %s"), 
+							SlotIndex, *ItemType.ToString());
+					}
+				}
+				
+				// CollectedData에 장착 상태 추가 (슬롯별로 매칭)
+				int32 EquippedCount = 0;
+				for (auto& Pair : SlotToItemMap)
+				{
+					int32 SlotIndex = Pair.Key;
+					FGameplayTag& ItemType = Pair.Value;
+					
+					// 같은 ItemType이고 아직 장착 표시 안 된 아이템 찾기
+					for (FInv_SavedItemData& Item : CollectedData)
+					{
+						if (Item.ItemType == ItemType && !Item.bEquipped)
+						{
+							Item.bEquipped = true;
+							Item.WeaponSlotIndex = SlotIndex;
+							EquippedCount++;
+							
+							UE_LOG(LogTemp, Warning, TEXT("[EndPlay]    ✅ %s → bEquipped=true, WeaponSlotIndex=%d"),
+								*Item.ItemType.ToString(), SlotIndex);
+							break;  // 하나만 매칭하고 다음 슬롯으로
+						}
+					}
+				}
+				
+				UE_LOG(LogTemp, Warning, TEXT("[EndPlay] 🆕 [Phase 6] 장착 상태 추가 완료: %d개"), EquippedCount);
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[EndPlay] ⚠️ EquipmentComponent가 nullptr - 장착 상태 추가 불가"));
+			}
 		}
 		else
 		{
@@ -743,6 +798,21 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 				EquippedRestored++;
 				UE_LOG(LogTemp, Warning, TEXT("  │   ✅ 장착 복원 성공: %s → 슬롯 %d"), 
 					*ItemData.ItemType.ToString(), ItemData.WeaponSlotIndex);
+				
+				// 🆕 [Phase 6] Grid에서 장착된 아이템 제거 (중복 저장 방지)
+				UInv_InventoryGrid* EquipGrid = SpatialInventory->GetGrid_Equippables();
+				if (IsValid(EquipGrid))
+				{
+					bool bRemoved = EquipGrid->RemoveSlottedItemByPointer(FoundItem);
+					if (bRemoved)
+					{
+						UE_LOG(LogTemp, Warning, TEXT("  │       🗑️ Grid에서 장착 아이템 제거 완료"));
+					}
+					else
+					{
+						UE_LOG(LogTemp, Warning, TEXT("  │       ⚠️ Grid에서 아이템 제거 실패 (이미 없음?)"));
+					}
+				}
 				
 				// 장착 델리게이트 브로드캐스트 (무기 Actor 스폰용)
 				UE_LOG(LogTemp, Warning, TEXT("  │       📡 OnItemEquipped 브로드캐스트 (WeaponSlotIndex=%d)"), ItemData.WeaponSlotIndex);

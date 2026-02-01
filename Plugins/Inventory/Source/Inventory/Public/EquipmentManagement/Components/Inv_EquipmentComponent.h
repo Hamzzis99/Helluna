@@ -146,5 +146,11 @@ private:
 public:
 	void ActiveUnequipWeapon();
 
+	// ============================================
+	// 🆕 [Phase 6] 장착된 액터 목록 Getter
+	// ⭐ 저장 시 장착 상태 확인용
+	// ============================================
+	const TArray<TObjectPtr<AInv_EquipActor>>& GetEquippedActors() const { return EquippedActors; }
+
 };
 

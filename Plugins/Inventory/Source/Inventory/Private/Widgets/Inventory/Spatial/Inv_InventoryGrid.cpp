@@ -1270,6 +1270,45 @@ void UInv_InventoryGrid::RemoveItem(UInv_InventoryItem* Item, int32 EntryIndex)
 	UE_LOG(LogTemp, Warning, TEXT("[RemoveItem] ========== 제거 요청 종료 (성공) =========="));
 }
 
+// 🆕 [Phase 6] 포인터만으로 아이템 제거 (장착 복원 시 Grid에서 제거용)
+bool UInv_InventoryGrid::RemoveSlottedItemByPointer(UInv_InventoryItem* Item)
+{
+	if (!IsValid(Item))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[RemoveSlottedItemByPointer] Item is invalid!"));
+		return false;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[RemoveSlottedItemByPointer] 🔍 포인터로 아이템 검색: %s"), 
+		*Item->GetItemManifest().GetItemType().ToString());
+
+	// SlottedItems를 순회해서 같은 포인터를 가진 슬롯 찾기
+	int32 FoundGridIndex = INDEX_NONE;
+	for (const auto& [GridIndex, SlottedItem] : SlottedItems)
+	{
+		if (!IsValid(SlottedItem)) continue;
+
+		UInv_InventoryItem* GridSlotItem = SlottedItem->GetInventoryItem();
+		if (GridSlotItem == Item)
+		{
+			FoundGridIndex = GridIndex;
+			UE_LOG(LogTemp, Warning, TEXT("[RemoveSlottedItemByPointer] ✅ 찾음! GridIndex=%d"), GridIndex);
+			break;
+		}
+	}
+
+	if (FoundGridIndex == INDEX_NONE)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[RemoveSlottedItemByPointer] ❌ 해당 아이템을 Grid에서 찾을 수 없음"));
+		return false;
+	}
+
+	// Grid에서 제거
+	RemoveItemFromGrid(Item, FoundGridIndex);
+	UE_LOG(LogTemp, Warning, TEXT("[RemoveSlottedItemByPointer] ✅ Grid에서 제거 완료! GridIndex=%d"), FoundGridIndex);
+	return true;
+}
+
 // GameplayTag로 모든 스택을 찾아서 업데이트 (Building 시스템용 - Split된 스택 처리)
 void UInv_InventoryGrid::UpdateMaterialStacksByTag(const FGameplayTag& MaterialTag)
 {
