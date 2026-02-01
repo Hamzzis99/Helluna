@@ -103,9 +103,21 @@ UInv_EquippedSlottedItem* UInv_EquippedGridSlot::OnItemEquipped(UInv_InventoryIt
 	// Add the Slotted Item as a child to this widget's Overlay
 	// 이 위젯의 오버레이에 슬롯 아이템을 자식으로 추가
 	Overlay_Root->AddChildToOverlay(EquippedSlottedItem);
+	
+	// 🆕 [Phase 6] 레이아웃 강제 업데이트 (복원 시 Geometry가 캐시되지 않은 문제 해결)
+	Overlay_Root->ForceLayoutPrepass();
+	
 	FGeometry OverlayGeometry = Overlay_Root->GetCachedGeometry();
 	auto OverlayPos = OverlayGeometry.Position;
 	auto OverlaySize = OverlayGeometry.Size;
+	
+	// 🆕 [Phase 6] Geometry가 여전히 유효하지 않으면 DesiredSize 사용
+	if (OverlaySize.IsNearlyZero())
+	{
+		OverlaySize = Overlay_Root->GetDesiredSize();
+		UE_LOG(LogTemp, Warning, TEXT("[OnItemEquipped] CachedGeometry 무효 → DesiredSize 사용: (%.1f, %.1f)"), 
+			OverlaySize.X, OverlaySize.Y);
+	}
 
 	const float LeftPadding = OverlaySize.X / 2.f - DrawSize.X / 2.f;
 	const float TopPadding = OverlaySize.Y / 2.f - DrawSize.Y / 2.f;
