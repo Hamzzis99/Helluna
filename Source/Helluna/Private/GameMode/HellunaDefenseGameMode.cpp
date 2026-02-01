@@ -2173,6 +2173,40 @@ void AHellunaDefenseGameMode::LoadAndSendInventoryToClient(APlayerController* PC
 	UE_LOG(LogTemp, Warning, TEXT("  └─────────────────────────────────────────────────────────────┘"));
 
 	// ============================================
+	// 🆕 Step 3.5: 서버에서 장착 아이템 복원
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("▶ [Step 3.5] 서버에서 장착 아이템 복원..."));
+	
+	int32 ServerEquipRestored = 0;
+	TSet<UInv_InventoryItem*> ServerProcessedItems;
+	
+	for (const FHellunaInventoryItemData& ItemData : LoadedData.Items)
+	{
+		if (ItemData.EquipSlotIndex < 0) continue;
+		
+		UE_LOG(LogTemp, Warning, TEXT("   📌 장착 복원 시도: %s → 슬롯 %d"), 
+			*ItemData.ItemType.ToString(), ItemData.EquipSlotIndex);
+		
+		UInv_InventoryItem* FoundItem = InvComp->FindItemByTypeExcluding(ItemData.ItemType, ServerProcessedItems);
+		if (FoundItem == nullptr)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("      ❌ 아이템을 찾을 수 없음!"));
+			continue;
+		}
+		
+		UE_LOG(LogTemp, Warning, TEXT("      🔧 서버 OnItemEquipped.Broadcast (WeaponSlotIndex=%d)"), ItemData.EquipSlotIndex);
+		InvComp->OnItemEquipped.Broadcast(FoundItem, ItemData.EquipSlotIndex);
+		
+		ServerProcessedItems.Add(FoundItem);
+		ServerEquipRestored++;
+		
+		UE_LOG(LogTemp, Warning, TEXT("      ✅ 서버 장착 복원 성공!"));
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("   📊 서버 장착 복원 결과: %d개"), ServerEquipRestored);
+
+	// ============================================
 	// Step 4: Client RPC로 Grid 위치 데이터 전송
 	// ============================================
 	UE_LOG(LogTemp, Warning, TEXT(""));
