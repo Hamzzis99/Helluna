@@ -51,3 +51,8 @@ void UInv_HoverItem::SetInventoryItem(UInv_InventoryItem* Item)
 {
 	InventoryItem = Item;
 }
+
+void UInv_HoverItem::SetOriginalSplitItem(UInv_InventoryItem* Item)
+{
+	OriginalSplitItem = Item;
+}

@@ -12,6 +12,7 @@
 #include "Items/Fragments/Inv_ItemFragment.h"
 #include "Building/Components/Inv_BuildingComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "Player/Inv_PlayerController.h"  // FInv_SavedItemData 사용
 
 UInv_InventoryComponent::UInv_InventoryComponent() : InventoryList(this)
 {
@@ -163,13 +164,58 @@ void UInv_InventoryComponent::Server_AddStacksToItem_Implementation(UInv_ItemCom
 	UInv_InventoryItem* Item = InventoryList.FindFirstItemByType(ItemType); // 동일한 유형의 아이템 찾기
 	if (!IsValid(Item)) return;
 
-	//아이템 스택수 불러오기 (이미 있는 항목에 추가로 등록)
-	Item->SetTotalStackCount(Item->GetTotalStackCount() + StackCount);
+	// ⭐ [MaxStackSize 검증] 초과분을 새 슬롯에 추가하도록 개선
+	const int32 CurrentStack = Item->GetTotalStackCount();
+	int32 MaxStackSize = 999; // 기본값
+	
+	// MaxStackSize 가져오기
+	if (const FInv_StackableFragment* StackableFragment = Item->GetItemManifest().GetFragmentOfType<FInv_StackableFragment>())
+	{
+		MaxStackSize = StackableFragment->GetMaxStackSize();
+	}
+	
+	const int32 RoomInCurrentStack = MaxStackSize - CurrentStack; // 현재 스택에 추가 가능한 양
+	const int32 AmountToAddToCurrentStack = FMath::Min(StackCount, RoomInCurrentStack); // 현재 스택에 실제로 추가할 양
+	const int32 Overflow = StackCount - AmountToAddToCurrentStack; // 초과분 (새 슬롯으로 가야 함)
+	
+	UE_LOG(LogTemp, Warning, TEXT("[Server_AddStacksToItem] 현재: %d, 추가요청: %d, Max: %d, 추가가능: %d, 초과분: %d"),
+		CurrentStack, StackCount, MaxStackSize, AmountToAddToCurrentStack, Overflow);
+
+	// 1. 현재 스택에 추가 (MaxStackSize까지만)
+	if (AmountToAddToCurrentStack > 0)
+	{
+		Item->SetTotalStackCount(CurrentStack + AmountToAddToCurrentStack);
+		UE_LOG(LogTemp, Warning, TEXT("[Server_AddStacksToItem] ✅ 기존 스택에 %d개 추가 → 총 %d개"),
+			AmountToAddToCurrentStack, Item->GetTotalStackCount());
+	}
+
+	// 2. 초과분이 있으면 새 슬롯에 추가
+	if (Overflow > 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Server_AddStacksToItem] ⚠️ 초과분 %d개 → 새 슬롯에 추가!"), Overflow);
+		
+		// 새 아이템 생성 (기존 ItemComponent의 Manifest 사용)
+		UInv_InventoryItem* NewItem = InventoryList.AddEntry(ItemComponent);
+		if (IsValid(NewItem))
+		{
+			NewItem->SetTotalStackCount(Overflow);
+			
+			// ListenServer/Standalone에서는 델리게이트 브로드캐스트
+			if (GetOwner()->GetNetMode() == NM_ListenServer || GetOwner()->GetNetMode() == NM_Standalone)
+			{
+				int32 NewEntryIndex = InventoryList.Entries.Num() - 1;
+				OnItemAdded.Broadcast(NewItem, NewEntryIndex);
+			}
+			
+			UE_LOG(LogTemp, Warning, TEXT("[Server_AddStacksToItem] ✅ 새 슬롯에 %d개 추가 완료!"), Overflow);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("[Server_AddStacksToItem] ❌ 새 슬롯 생성 실패! %d개 손실!"), Overflow);
+		}
+	}
 
 	//0가 되면 아이템 파괴하는 부분
-	// TODO : Destroy the item if the Remainder is zero.
-	// Otherwise, update the stack count for the item pickup.
-
 	if (Remainder == 0)
 	{
 		ItemComponent->PickedUp();
@@ -1259,6 +1305,114 @@ void UInv_InventoryComponent::CloseOtherMenus()
 }
 
 // ⭐ InventoryList 기반 공간 체크 (서버 전용, UI 없이 작동!)
+// ⭐ Phase 8: Split 시 서버에서 새 Entry 생성 (포인터 분리)
+void UInv_InventoryComponent::Server_SplitItemEntry_Implementation(UInv_InventoryItem* OriginalItem, int32 OriginalNewStackCount, int32 SplitStackCount, int32 TargetGridIndex)
+{
+	UE_LOG(LogTemp, Warning, TEXT("╔══════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║     [SERVER] Server_SplitItemEntry_Implementation           ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠══════════════════════════════════════════════════════════════╣"));
+
+	if (!IsValid(OriginalItem))
+	{
+		UE_LOG(LogTemp, Error, TEXT("║ ❌ OriginalItem이 유효하지 않음!"));
+		UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════╝"));
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("║ 원본 Item: %s"), *OriginalItem->GetItemManifest().GetItemType().ToString());
+	UE_LOG(LogTemp, Warning, TEXT("║ 원본 현재 개수: %d"), OriginalItem->GetTotalStackCount());
+	UE_LOG(LogTemp, Warning, TEXT("║ 원본 새 개수: %d"), OriginalNewStackCount);
+	UE_LOG(LogTemp, Warning, TEXT("║ Split할 개수: %d"), SplitStackCount);
+	UE_LOG(LogTemp, Warning, TEXT("║ ⭐ 목표 Grid 위치: %d"), TargetGridIndex);
+
+	// 1. 원본 Entry의 TotalStackCount 감소
+	OriginalItem->SetTotalStackCount(OriginalNewStackCount);
+
+	// 2. 원본 Entry 찾아서 MarkItemDirty
+	int32 OriginalEntryIndex = -1;
+	for (int32 i = 0; i < InventoryList.Entries.Num(); i++)
+	{
+		if (InventoryList.Entries[i].Item == OriginalItem)
+		{
+			OriginalEntryIndex = i;
+			InventoryList.MarkItemDirty(InventoryList.Entries[i]);
+			UE_LOG(LogTemp, Warning, TEXT("║ ✅ 원본 Entry[%d] MarkItemDirty 완료"), i);
+			break;
+		}
+	}
+
+	if (OriginalEntryIndex < 0)
+	{
+		UE_LOG(LogTemp, Error, TEXT("║ ❌ 원본 Entry를 찾지 못함!"));
+		UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════╝"));
+		return;
+	}
+
+	// 3. 새 Item 생성 (새 포인터!)
+	UInv_InventoryItem* NewItem = NewObject<UInv_InventoryItem>(this);
+	if (!IsValid(NewItem))
+	{
+		UE_LOG(LogTemp, Error, TEXT("║ ❌ 새 Item 생성 실패!"));
+		UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════╝"));
+		return;
+	}
+
+	// 4. 새 Item 초기화 (원본 Manifest 복사)
+	NewItem->SetItemManifest(OriginalItem->GetItemManifest());
+	NewItem->SetTotalStackCount(SplitStackCount);
+
+	// 5. 새 Entry를 FastArray에 추가 (AddEntry 사용)
+	InventoryList.AddEntry(NewItem);
+
+	// 6. 복제 하위 객체 등록
+	AddRepSubObj(NewItem);
+
+	int32 NewEntryIndex = InventoryList.Entries.Num() - 1;
+
+	// ⭐ 7. 새 Entry에 TargetGridIndex 설정 (클라이언트에서 마우스 위치에 배치하기 위함)
+	if (InventoryList.Entries.IsValidIndex(NewEntryIndex))
+	{
+		InventoryList.Entries[NewEntryIndex].TargetGridIndex = TargetGridIndex;
+		InventoryList.MarkItemDirty(InventoryList.Entries[NewEntryIndex]);
+		UE_LOG(LogTemp, Warning, TEXT("║ ✅ 새 Entry[%d]에 TargetGridIndex=%d 설정 완료"), NewEntryIndex, TargetGridIndex);
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("║ ✅ 새 Entry[%d] 생성 완료!"), NewEntryIndex);
+	UE_LOG(LogTemp, Warning, TEXT("║    새 Item 포인터: %p"), NewItem);
+	UE_LOG(LogTemp, Warning, TEXT("║    새 Item 개수: %d"), SplitStackCount);
+	UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════╝"));
+
+	// 8. OnItemAdded 브로드캐스트 (클라이언트 UI 업데이트용)
+	OnItemAdded.Broadcast(NewItem, NewEntryIndex);
+}
+
+// ⭐ [Phase 4 방법2] 클라이언트 Grid 위치를 서버 Entry에 동기화
+void UInv_InventoryComponent::Server_UpdateItemGridPosition_Implementation(UInv_InventoryItem* Item, int32 GridIndex, uint8 GridCategory)
+{
+	if (!IsValid(Item))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Server_UpdateItemGridPosition] Item이 유효하지 않음!"));
+		return;
+	}
+
+	// Entry 찾아서 GridIndex, GridCategory 업데이트
+	for (int32 i = 0; i < InventoryList.Entries.Num(); i++)
+	{
+		if (InventoryList.Entries[i].Item == Item)
+		{
+			InventoryList.Entries[i].GridIndex = GridIndex;
+			InventoryList.Entries[i].GridCategory = GridCategory;
+			InventoryList.MarkItemDirty(InventoryList.Entries[i]);
+			
+			UE_LOG(LogTemp, Log, TEXT("[Server_UpdateItemGridPosition] Entry[%d] 업데이트: %s → Grid%d Index=%d"),
+				i, *Item->GetItemManifest().GetItemType().ToString(), GridCategory, GridIndex);
+			return;
+		}
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[Server_UpdateItemGridPosition] Entry를 찾지 못함: %s"), *Item->GetItemManifest().GetItemType().ToString());
+}
+
 bool UInv_InventoryComponent::HasRoomInInventoryList(const FInv_ItemManifest& Manifest) const
 {
 	EInv_ItemCategory Category = Manifest.GetItemCategory();
@@ -1542,4 +1696,108 @@ bool UInv_InventoryComponent::HasRoomInInventoryList(const FInv_ItemManifest& Ma
 	UE_LOG(LogTemp, Warning, TEXT("========================================"));
 
 	return bHasRoom;
+}
+
+// ============================================
+// ⭐ [Phase 4 개선] 서버에서 직접 인벤토리 데이터 수집
+// ============================================
+// 
+// 📌 목적: Logout 시 RPC 없이 즉시 저장 가능하게!
+// 
+// 📌 기존 문제점:
+//    - 캐시에 의존 → 자동저장 전에 나가면 저장 안 됨
+//    - Client RPC 필요 → 연결 끊기면 못 받음
+// 
+// 📌 해결책:
+//    - 서버의 FastArray에서 직접 데이터 읽기
+//    - GridIndex, GridCategory 모두 서버에 있음!
+// 
+// ============================================
+// ⭐ [Phase 5 Fix] 마지막으로 추가된 Entry의 Grid 위치 설정
+// 로드 시 저장된 위치를 Entry에 미리 설정하여 클라이언트가 올바른 위치에 배치하도록 함
+// ============================================
+void UInv_InventoryComponent::SetLastEntryGridPosition(int32 GridIndex, uint8 GridCategory)
+{
+	if (InventoryList.Entries.Num() > 0)
+	{
+		int32 LastEntryIndex = InventoryList.Entries.Num() - 1;
+		FInv_InventoryEntry& Entry = InventoryList.Entries[LastEntryIndex];
+		
+		Entry.GridIndex = GridIndex;
+		Entry.GridCategory = GridCategory;
+		InventoryList.MarkItemDirty(Entry);
+		
+		UE_LOG(LogTemp, Log, TEXT("[Phase 5 Fix] Entry[%d] GridIndex=%d, Category=%d set (saved pos)"),
+			LastEntryIndex, GridIndex, GridCategory);
+	}
+}
+
+// ============================================
+TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave() const
+{
+	TArray<FInv_SavedItemData> Result;
+
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║ [Phase 4] CollectInventoryDataForSave - 서버 직접 수집     ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+
+	// FastArray의 Entries 순회
+	const TArray<FInv_InventoryEntry>& Entries = InventoryList.Entries;
+	
+	UE_LOG(LogTemp, Warning, TEXT("║ Entry 개수: %d                                             ║"), Entries.Num());
+	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+
+	for (int32 i = 0; i < Entries.Num(); i++)
+	{
+		const FInv_InventoryEntry& Entry = Entries[i];
+		
+		// Item 유효성 체크
+		if (!Entry.Item)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("║ [%d] ⚠️ Item nullptr - 스킵                               ║"), i);
+			continue;
+		}
+
+		// Item 데이터 추출
+		const FInv_ItemManifest& Manifest = Entry.Item->GetItemManifest();
+		FGameplayTag ItemType = Manifest.GetItemType();
+		int32 StackCount = Entry.Item->GetTotalStackCount();
+		int32 GridIndex = Entry.GridIndex;
+		uint8 GridCategory = Entry.GridCategory;
+
+		// GridIndex → GridPosition 변환 (Column = X, Row = Y)
+		// 기본값 8 columns 사용 (서버에서는 실제 Grid 크기를 모를 수 있음)
+		int32 LocalGridColumns = GridColumns > 0 ? GridColumns : 8;
+		FIntPoint GridPosition;
+		
+		if (GridIndex != INDEX_NONE && GridIndex >= 0)
+		{
+			GridPosition.X = GridIndex % LocalGridColumns;  // Column
+			GridPosition.Y = GridIndex / LocalGridColumns;  // Row
+		}
+		else
+		{
+			GridPosition = FIntPoint(-1, -1);  // 미배치
+		}
+
+		// FInv_SavedItemData 생성
+		FInv_SavedItemData SavedItem(ItemType, StackCount, GridPosition, GridCategory);
+		Result.Add(SavedItem);
+
+		UE_LOG(LogTemp, Warning, TEXT("║ [%d] %s x%d @ Grid%d [%d,%d] (Cat:%d)"), 
+			i,
+			*ItemType.ToString(),
+			StackCount,
+			GridIndex,
+			GridPosition.X, GridPosition.Y,
+			GridCategory);
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ ✅ 수집 완료! 총 %d개 아이템                                ║"), Result.Num());
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+	UE_LOG(LogTemp, Warning, TEXT(""));
+
+	return Result;
 }
