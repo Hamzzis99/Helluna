@@ -1741,6 +1741,28 @@ UInv_InventoryItem* UInv_InventoryComponent::FindItemByType(const FGameplayTag& 
 	return InventoryList.FindFirstItemByType(ItemType);
 }
 
+// 🆕 [Phase 6] 제외 목록을 사용한 아이템 검색 (같은 타입 다중 장착 지원)
+UInv_InventoryItem* UInv_InventoryComponent::FindItemByTypeExcluding(const FGameplayTag& ItemType, const TSet<UInv_InventoryItem*>& ExcludeItems)
+{
+	const TArray<FInv_InventoryEntry>& Entries = InventoryList.Entries;
+	
+	for (const FInv_InventoryEntry& Entry : Entries)
+	{
+		if (!Entry.Item) continue;
+		
+		// 제외 목록에 있는 아이템은 건너뜀
+		if (ExcludeItems.Contains(Entry.Item)) continue;
+		
+		// 타입 매칭
+		if (Entry.Item->GetItemManifest().GetItemType().MatchesTagExact(ItemType))
+		{
+			return Entry.Item;
+		}
+	}
+	
+	return nullptr;
+}
+
 TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave() const
 {
 	TArray<FInv_SavedItemData> Result;

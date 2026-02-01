@@ -722,6 +722,7 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 	UE_LOG(LogTemp, Warning, TEXT("  │                                                              │"));
 	
 	int32 EquippedRestored = 0;
+	TSet<UInv_InventoryItem*> ProcessedEquipItems;  // 🆕 이미 장착 처리한 아이템 추적
 	
 	// SpatialInventory에서 장착 슬롯 가져오기
 	// SpatialInventory는 이미 위에서 선언됨 - 유효성만 체크
@@ -772,7 +773,7 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 			
 			// InventoryComponent에서 해당 ItemType 아이템 찾기
 			UE_LOG(LogTemp, Warning, TEXT("  │       🔍 FindItemByType 호출: %s"), *ItemData.ItemType.ToString());
-			UInv_InventoryItem* FoundItem = InventoryComponent->FindItemByType(ItemData.ItemType);
+			UInv_InventoryItem* FoundItem = InventoryComponent->FindItemByTypeExcluding(ItemData.ItemType, ProcessedEquipItems);
 			if (!IsValid(FoundItem))
 			{
 				UE_LOG(LogTemp, Warning, TEXT("  │   ❌ 아이템을 찾을 수 없음: %s"), *ItemData.ItemType.ToString());
@@ -817,6 +818,9 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 				// 장착 델리게이트 브로드캐스트 (무기 Actor 스폰용)
 				UE_LOG(LogTemp, Warning, TEXT("  │       📡 OnItemEquipped 브로드캐스트 (WeaponSlotIndex=%d)"), ItemData.WeaponSlotIndex);
 				InventoryComponent->OnItemEquipped.Broadcast(FoundItem, ItemData.WeaponSlotIndex);
+				
+				// 🆕 이미 처리한 아이템으로 표시 (같은 타입 다중 장착 시 다른 아이템 찾기 위함)
+				ProcessedEquipItems.Add(FoundItem);
 			}
 			else
 			{
