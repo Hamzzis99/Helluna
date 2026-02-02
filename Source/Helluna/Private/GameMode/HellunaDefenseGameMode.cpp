@@ -327,14 +327,28 @@ void AHellunaDefenseGameMode::PostLogin(APlayerController* NewPlayer)
 	// 이미 로그인된 상태 (SeamlessTravel 등)
 	if (PS && PS->IsLoggedIn() && !PS->GetPlayerUniqueId().IsEmpty())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] 이미 로그인됨! → HeroCharacter 소환"));
+		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] 이미 로그인됨! → Controller 확인 후 처리"));
+		
+		FString PlayerId = PS->GetPlayerUniqueId();
 		
 		FTimerHandle TimerHandle;
-		GetWorldTimerManager().SetTimer(TimerHandle, [this, NewPlayer]()
+		GetWorldTimerManager().SetTimer(TimerHandle, [this, NewPlayer, PlayerId]()
 		{
 			if (IsValid(NewPlayer))
 			{
-				SpawnHeroCharacter(NewPlayer);
+				// LoginController면 SwapToGameController 거쳐야 함
+				AHellunaLoginController* LoginController = Cast<AHellunaLoginController>(NewPlayer);
+				if (LoginController && LoginController->GetGameControllerClass())
+				{
+					UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] SeamlessTravel: LoginController → SwapToGameController"));
+					SwapToGameController(LoginController, PlayerId);
+				}
+				else
+				{
+					// 이미 GameController면 바로 소환
+					UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] SeamlessTravel: 이미 GameController → SpawnHeroCharacter"));
+					SpawnHeroCharacter(NewPlayer);
+				}
 			}
 		}, 0.5f, false);
 	}
