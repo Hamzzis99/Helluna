@@ -96,6 +96,30 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Login")
 	FString GetPassword() const;
 
+	// ============================================
+	// 🎭 캐릭터 선택 시스템 (Phase 3)
+	// ============================================
+	
+	/**
+	 * 캐릭터 선택 UI 표시 (BP에서 구현)
+	 * 로그인 성공 후 서버에서 Client_ShowCharacterSelectUI RPC로 호출됨
+	 * 
+	 * @param AvailableCharacters - 각 캐릭터의 선택 가능 여부
+	 *                              Index 0: Lui, 1: Luna, 2: Liam
+	 *                              true: 선택 가능, false: 다른 플레이어가 사용 중
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "Login|CharacterSelect")
+	void ShowCharacterSelection(const TArray<bool>& AvailableCharacters);
+
+	/**
+	 * 캐릭터 선택 완료 시 호출 (BP에서 호출)
+	 * 선택된 캐릭터 인덱스를 서버로 전송
+	 * 
+	 * @param CharacterIndex - 선택한 캐릭터 인덱스 (0: Lui, 1: Luna, 2: Liam)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Login|CharacterSelect")
+	void OnCharacterSelected(int32 CharacterIndex);
+
 protected:
 	// ============================================
 	// 📌 내부 이벤트 핸들러

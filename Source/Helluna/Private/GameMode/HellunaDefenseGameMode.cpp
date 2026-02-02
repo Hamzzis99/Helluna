@@ -603,13 +603,13 @@ void AHellunaDefenseGameMode::ProcessLogin(APlayerController* PlayerController, 
 // 
 // 📌 호출 시점: ProcessLogin()에서 계정 검증 성공 시
 // 
-// 📌 처리 흐름:
+// 📌 처리 흐름 (Phase 3 변경):
 //    1. 로그인 타임아웃 타이머 취소
 //    2. GameInstance.RegisterLogin() - 접속자 목록에 추가
 //    3. PlayerState.SetLoginInfo() - PlayerUniqueId 설정
-//       ★★★ 이 PlayerUniqueId가 인벤토리 저장 키로 사용됨! ★★★
 //    4. Client_LoginResult(true) RPC - 클라이언트에 성공 알림
-//    5. 0.5초 후 SwapToGameController() 호출
+//    5. 🎭 Client_ShowCharacterSelectUI() RPC - 캐릭터 선택 UI 표시
+//       (캐릭터 선택 완료 후 ProcessCharacterSelection → SwapToGameController)
 // 
 // 📌 PlayerState.PlayerUniqueId 용도:
 //    - 인벤토리 저장: InventorySaveGame[PlayerUniqueId] = 인벤토리데이터
@@ -651,36 +651,141 @@ void AHellunaDefenseGameMode::OnLoginSuccess(APlayerController* PlayerController
 		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] PlayerState에 저장됨"));
 	}
 
-	// Client RPC로 결과 전달
+	// Client RPC로 로그인 성공 알림
 	AHellunaLoginController* LoginController = Cast<AHellunaLoginController>(PlayerController);
 	if (LoginController)
 	{
 		LoginController->Client_LoginResult(true, TEXT(""));
 		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] Client_LoginResult(true) 호출됨"));
+
+		// ============================================
+		// 🎭 Phase 3: 캐릭터 선택 UI 표시
+		// ============================================
+		// 로그인 성공 후 바로 SwapToGameController 호출하지 않음!
+		// 캐릭터 선택 완료 후 ProcessCharacterSelection에서 호출
+		// ============================================
+		TArray<bool> AvailableCharacters = GetAvailableCharacters();
+		LoginController->Client_ShowCharacterSelectUI(AvailableCharacters);
+		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] 🎭 Client_ShowCharacterSelectUI 호출됨"));
+		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] 🎭 캐릭터 선택 대기 중..."));
 	}
 
-	// HeroCharacter 소환 (딜레이)
-	FTimerHandle TimerHandle;
-	GetWorldTimerManager().SetTimer(TimerHandle, [this, PlayerController, PlayerId]()
+	UE_LOG(LogTemp, Warning, TEXT(""));
+}
+
+// ============================================
+// 🎭 캐릭터 선택 시스템 - ProcessCharacterSelection (Phase 3)
+// ============================================
+// 
+// 📌 호출 시점: LoginController::Server_SelectCharacter RPC에서 호출
+// 
+// 📌 처리 흐름:
+//    1. 캐릭터 인덱스 유효성 검사
+//    2. 중복 선택 체크 (IsCharacterInUse)
+//    3. 성공 시:
+//       - PlayerState.SelectedCharacterIndex 설정
+//       - UsedCharacterMap에 등록
+//       - Client_CharacterSelectionResult(true) RPC
+//       - SwapToGameController → SpawnHeroCharacter
+//    4. 실패 시:
+//       - Client_CharacterSelectionResult(false, 에러메시지) RPC
+// ============================================
+void AHellunaDefenseGameMode::ProcessCharacterSelection(APlayerController* PlayerController, int32 CharacterIndex)
+{
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║  🎭 [DefenseGameMode] ProcessCharacterSelection            ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ CharacterIndex: %d"), CharacterIndex);
+	UE_LOG(LogTemp, Warning, TEXT("║ Controller: %s"), *GetNameSafe(PlayerController));
+
+	if (!PlayerController)
 	{
-		if (IsValid(PlayerController))
+		UE_LOG(LogTemp, Error, TEXT("║ ❌ PlayerController nullptr!"));
+		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+		return;
+	}
+
+	AHellunaLoginController* LoginController = Cast<AHellunaLoginController>(PlayerController);
+	
+	// 1. 인덱스 유효성 검사
+	if (CharacterIndex < 0 || CharacterIndex >= HeroCharacterClasses.Num())
+	{
+		UE_LOG(LogTemp, Error, TEXT("║ ❌ 유효하지 않은 캐릭터 인덱스! (범위: 0~%d)"), HeroCharacterClasses.Num() - 1);
+		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+		if (LoginController)
 		{
-			// LoginController인 경우 GameController로 교체
-			AHellunaLoginController* LoginController = Cast<AHellunaLoginController>(PlayerController);
-			if (LoginController && LoginController->GetGameControllerClass())
+			LoginController->Client_CharacterSelectionResult(false, TEXT("유효하지 않은 캐릭터입니다."));
+		}
+		return;
+	}
+
+	// 2. 중복 선택 체크
+	if (IsCharacterInUse(CharacterIndex))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("║ ❌ 캐릭터 이미 사용 중! (Index: %d)"), CharacterIndex);
+		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+		if (LoginController)
+		{
+			LoginController->Client_CharacterSelectionResult(false, TEXT("다른 플레이어가 사용 중인 캐릭터입니다."));
+		}
+		return;
+	}
+
+	// 3. PlayerState에서 PlayerId 가져오기
+	FString PlayerId;
+	AHellunaPlayerState* PS = PlayerController->GetPlayerState<AHellunaPlayerState>();
+	if (PS)
+	{
+		PlayerId = PS->GetPlayerUniqueId();
+		// SelectedCharacterIndex 설정
+		PS->SetSelectedCharacterIndex(CharacterIndex);
+		UE_LOG(LogTemp, Warning, TEXT("║ ✅ PlayerState.SelectedCharacterIndex = %d"), CharacterIndex);
+	}
+
+	if (PlayerId.IsEmpty())
+	{
+		UE_LOG(LogTemp, Error, TEXT("║ ❌ PlayerId가 비어있음!"));
+		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+		if (LoginController)
+		{
+			LoginController->Client_CharacterSelectionResult(false, TEXT("로그인 정보 오류"));
+		}
+		return;
+	}
+
+	// 4. UsedCharacterMap에 등록
+	RegisterCharacterUse(CharacterIndex, PlayerId);
+	UE_LOG(LogTemp, Warning, TEXT("║ ✅ RegisterCharacterUse(%d, '%s')"), CharacterIndex, *PlayerId);
+
+	// 5. 선택 결과 전달
+	if (LoginController)
+	{
+		LoginController->Client_CharacterSelectionResult(true, TEXT(""));
+		UE_LOG(LogTemp, Warning, TEXT("║ ✅ Client_CharacterSelectionResult(true) 호출됨"));
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("║ 🎭 캐릭터 선택 완료! → SwapToGameController 호출"));
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+
+	// 6. SwapToGameController 호출 (캐릭터 스폰까지 이어짐)
+	if (LoginController && LoginController->GetGameControllerClass())
+	{
+		FTimerHandle TimerHandle;
+		GetWorldTimerManager().SetTimer(TimerHandle, [this, LoginController, PlayerId]()
+		{
+			if (IsValid(LoginController))
 			{
 				SwapToGameController(LoginController, PlayerId);
 			}
-			else
-			{
-				// GameControllerClass 미설정 시 기존 방식 사용
-				UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] GameControllerClass 미설정! 기존 방식으로 소환"));
-				SpawnHeroCharacter(PlayerController);
-			}
-		}
-	}, 0.5f, false);
-
-	UE_LOG(LogTemp, Warning, TEXT(""));
+		}, 0.3f, false);
+	}
+	else
+	{
+		// GameControllerClass 미설정 시 기존 방식
+		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] GameControllerClass 미설정! 기존 방식으로 소환"));
+		SpawnHeroCharacter(PlayerController);
+	}
 }
 
 // ============================================
@@ -910,19 +1015,44 @@ void AHellunaDefenseGameMode::SpawnHeroCharacter(APlayerController* PlayerContro
 		return;
 	}
 
-	if (!HeroCharacterClass)
+	// ============================================
+	// 🎭 캐릭터 클래스 결정 (Phase 2: 캐릭터 선택 시스템)
+	// ============================================
+	TSubclassOf<APawn> SpawnClass = nullptr;
+	int32 CharacterIndex = -1;
+
+	// PlayerState에서 SelectedCharacterIndex 확인
+	if (AHellunaPlayerState* PS = PlayerController->GetPlayerState<AHellunaPlayerState>())
 	{
-		UE_LOG(LogTemp, Error, TEXT("║ ❌ HeroCharacterClass 미설정!                              ║"));
+		CharacterIndex = PS->GetSelectedCharacterIndex();
+		UE_LOG(LogTemp, Warning, TEXT("║ 🎭 SelectedCharacterIndex: %d"), CharacterIndex);
+	}
+
+	// 캐릭터 클래스 선택
+	if (CharacterIndex >= 0 && CharacterIndex < HeroCharacterClasses.Num())
+	{
+		// 선택된 캐릭터 사용
+		SpawnClass = HeroCharacterClasses[CharacterIndex];
+		UE_LOG(LogTemp, Warning, TEXT("║ 🎭 선택된 캐릭터: [%d] %s"), CharacterIndex, SpawnClass ? *SpawnClass->GetName() : TEXT("nullptr"));
+	}
+	else if (HeroCharacterClass)
+	{
+		// 폴백: 기존 단일 캐릭터 클래스 (미선택 또는 범위 초과)
+		SpawnClass = HeroCharacterClass;
+		UE_LOG(LogTemp, Warning, TEXT("║ 🎭 폴백 캐릭터: %s (Index=%d)"), *SpawnClass->GetName(), CharacterIndex);
+	}
+
+	if (!SpawnClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("║ ❌ SpawnClass nullptr! (HeroCharacterClasses/HeroCharacterClass 모두 미설정)"));
 		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 		if (GEngine)
 		{
 			GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Red,
-				TEXT("HeroCharacterClass 미설정! GameMode BP에서 설정 필요"));
+				TEXT("캐릭터 클래스 미설정! GameMode BP에서 설정 필요"));
 		}
 		return;
 	}
-
-	UE_LOG(LogTemp, Warning, TEXT("║ HeroCharacterClass: %s"), *HeroCharacterClass->GetName());
 
 	// 기존 Pawn 제거
 	APawn* OldPawn = PlayerController->GetPawn();
@@ -950,12 +1080,12 @@ void AHellunaDefenseGameMode::SpawnHeroCharacter(APlayerController* PlayerContro
 		UE_LOG(LogTemp, Warning, TEXT("║ SpawnLocation: Default (%s)"), *SpawnLocation.ToString());
 	}
 
-	// HeroCharacter 스폰
+	// HeroCharacter 스폰 (선택된 캐릭터 또는 폴백)
 	FActorSpawnParameters SpawnParams;
 	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
 	SpawnParams.Owner = PlayerController;
 
-	APawn* NewPawn = GetWorld()->SpawnActor<APawn>(HeroCharacterClass, SpawnLocation, SpawnRotation, SpawnParams);
+	APawn* NewPawn = GetWorld()->SpawnActor<APawn>(SpawnClass, SpawnLocation, SpawnRotation, SpawnParams);
 
 	if (!NewPawn)
 	{

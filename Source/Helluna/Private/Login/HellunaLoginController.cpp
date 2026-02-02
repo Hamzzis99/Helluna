@@ -303,3 +303,73 @@ void AHellunaLoginController::ShowLoginResult(bool bSuccess, const FString& Mess
 		LoginWidget->SetLoadingState(false);
 	}
 }
+
+// ============================================
+// 🎭 캐릭터 선택 시스템 (Phase 3)
+// ============================================
+
+void AHellunaLoginController::Server_SelectCharacter_Implementation(int32 CharacterIndex)
+{
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║  🎭 [LoginController] Server_SelectCharacter (서버)        ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ CharacterIndex: %d"), CharacterIndex);
+	UE_LOG(LogTemp, Warning, TEXT("║ Controller: %s"), *GetName());
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+
+	AHellunaDefenseGameMode* GM = Cast<AHellunaDefenseGameMode>(GetWorld()->GetAuthGameMode());
+	if (GM)
+	{
+		GM->ProcessCharacterSelection(this, CharacterIndex);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("[LoginController] DefenseGameMode 없음!"));
+		Client_CharacterSelectionResult(false, TEXT("서버 오류"));
+	}
+}
+
+void AHellunaLoginController::Client_CharacterSelectionResult_Implementation(bool bSuccess, const FString& ErrorMessage)
+{
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║  🎭 [LoginController] Client_CharacterSelectionResult      ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ bSuccess: %s"), bSuccess ? TEXT("TRUE ✅") : TEXT("FALSE ❌"));
+	UE_LOG(LogTemp, Warning, TEXT("║ ErrorMessage: '%s'"), *ErrorMessage);
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+
+	if (LoginWidget)
+	{
+		if (bSuccess)
+		{
+			LoginWidget->ShowMessage(TEXT("캐릭터 선택 완료! 게임 시작..."), false);
+		}
+		else
+		{
+			LoginWidget->ShowMessage(ErrorMessage, true);
+			LoginWidget->SetLoadingState(false);
+		}
+	}
+}
+
+void AHellunaLoginController::Client_ShowCharacterSelectUI_Implementation(const TArray<bool>& AvailableCharacters)
+{
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║  🎭 [LoginController] Client_ShowCharacterSelectUI         ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ 선택 가능한 캐릭터:"));
+	for (int32 i = 0; i < AvailableCharacters.Num(); i++)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("║   [%d] %s"), i, AvailableCharacters[i] ? TEXT("✅ 선택 가능") : TEXT("❌ 사용 중"));
+	}
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+
+	// LoginWidget에 캐릭터 선택 UI 표시 요청
+	if (LoginWidget)
+	{
+		LoginWidget->ShowCharacterSelection(AvailableCharacters);
+	}
+}
