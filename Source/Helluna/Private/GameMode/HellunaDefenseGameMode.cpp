@@ -1131,32 +1131,138 @@ void AHellunaDefenseGameMode::Logout(AController* Exiting)
 // ============================================
 void AHellunaDefenseGameMode::HandleSeamlessTravelPlayer(AController*& C)
 {
-	UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] HandleSeamlessTravelPlayer"));
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║     [DefenseGameMode] HandleSeamlessTravelPlayer 시작      ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ Controller: %s"), C ? *C->GetName() : TEXT("nullptr"));
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 	
 	FString SavedPlayerId;
 	bool bSavedIsLoggedIn = false;
 	
+	// ============================================
+	// 📌 1단계: 이전 PlayerState에서 로그인 정보 저장
+	// ============================================
+	// Super 호출 전에 기존 PlayerState의 정보를 백업해둠
+	// Super 호출 후 새 PlayerState가 생성되므로 미리 저장 필수!
+	// ============================================
 	if (C)
 	{
 		if (AHellunaPlayerState* OldPS = C->GetPlayerState<AHellunaPlayerState>())
 		{
 			SavedPlayerId = OldPS->GetPlayerUniqueId();
 			bSavedIsLoggedIn = OldPS->IsLoggedIn();
-			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] 저장: PlayerId='%s', IsLoggedIn=%s"), 
-				*SavedPlayerId, bSavedIsLoggedIn ? TEXT("TRUE") : TEXT("FALSE"));
+			UE_LOG(LogTemp, Warning, TEXT("[1단계] 이전 PlayerState 정보 저장 완료"));
+			UE_LOG(LogTemp, Warning, TEXT("  - PlayerId: '%s'"), *SavedPlayerId);
+			UE_LOG(LogTemp, Warning, TEXT("  - 로그인 상태: %s"), bSavedIsLoggedIn ? TEXT("로그인됨") : TEXT("미로그인"));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[1단계] OldPS가 nullptr!"));
 		}
 	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[1단계] Controller가 nullptr!"));
+	}
 
+	// ============================================
+	// 📌 2단계: Super 호출 (새 Controller 생성됨)
+	// ============================================
+	// Super::HandleSeamlessTravelPlayer()가 PlayerControllerClass를 사용해
+	// 새 Controller를 생성함 (우리의 경우 LoginController)
+	// 이 시점에 LoginController::BeginPlay()도 호출됨!
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT("[2단계] Super 호출 전..."));
 	Super::HandleSeamlessTravelPlayer(C);
+	UE_LOG(LogTemp, Warning, TEXT("[2단계] Super 호출 완료 - 새 Controller: %s"), C ? *C->GetName() : TEXT("nullptr"));
 	
+	// ============================================
+	// 📌 3단계: 새 PlayerState에 로그인 정보 복원
+	// ============================================
 	if (C && !SavedPlayerId.IsEmpty())
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[3단계] PlayerId 복원 시작"));
+		
 		if (AHellunaPlayerState* NewPS = C->GetPlayerState<AHellunaPlayerState>())
 		{
 			NewPS->SetLoginInfo(SavedPlayerId);
-			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] 복원: '%s' → %s"), *SavedPlayerId, *NewPS->GetName());
+			UE_LOG(LogTemp, Warning, TEXT("[3단계] PlayerId 복원 완료: '%s' -> %s"), *SavedPlayerId, *NewPS->GetName());
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[3단계] NewPS가 nullptr!"));
+		}
+		
+		// ============================================
+		// 📌 4단계: 이미 로그인된 플레이어 처리
+		// ============================================
+		// SeamlessTravel 전에 이미 로그인했던 플레이어는
+		// LoginController -> GameController로 스왑 필요!
+		// 
+		// 0.5초 딜레이: LoginController 초기화 완료 대기
+		// ============================================
+		UE_LOG(LogTemp, Warning, TEXT("[4단계] 로그인 상태 확인: %s"), bSavedIsLoggedIn ? TEXT("로그인됨") : TEXT("미로그인"));
+		
+		if (bSavedIsLoggedIn)
+		{
+			UE_LOG(LogTemp, Warning, TEXT(""));
+			UE_LOG(LogTemp, Warning, TEXT("★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★"));
+			UE_LOG(LogTemp, Warning, TEXT("[4단계] 이미 로그인된 플레이어! -> 0.5초 후 Controller 스왑"));
+			UE_LOG(LogTemp, Warning, TEXT("★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★"));
+			
+			APlayerController* TraveledPC = Cast<APlayerController>(C);
+			
+			if (TraveledPC)
+			{
+				FTimerHandle TimerHandle;
+				GetWorldTimerManager().SetTimer(TimerHandle, [this, TraveledPC, SavedPlayerId]()
+				{
+					UE_LOG(LogTemp, Warning, TEXT(""));
+					UE_LOG(LogTemp, Warning, TEXT("[타이머] Controller 스왑 실행!"));
+					
+					if (IsValid(TraveledPC))
+					{
+						AHellunaLoginController* LoginController = Cast<AHellunaLoginController>(TraveledPC);
+						if (LoginController && LoginController->GetGameControllerClass())
+						{
+							UE_LOG(LogTemp, Warning, TEXT("  -> LoginController -> SwapToGameController"));
+							SwapToGameController(LoginController, SavedPlayerId);
+						}
+						else
+						{
+							UE_LOG(LogTemp, Warning, TEXT("  -> 이미 GameController -> SpawnHeroCharacter"));
+							SpawnHeroCharacter(TraveledPC);
+						}
+					}
+					else
+					{
+						UE_LOG(LogTemp, Warning, TEXT("  -> TraveledPC 무효!"));
+					}
+				}, 0.5f, false);
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[4단계] TraveledPC 캐스트 실패!"));
+			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[4단계] 미로그인 상태 -> 로그인 UI 표시됨"));
 		}
 	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[3단계] 조건 미충족 - C: %s, PlayerId 비어있음: %s"), 
+			C ? TEXT("유효") : TEXT("nullptr"), 
+			SavedPlayerId.IsEmpty() ? TEXT("예") : TEXT("아니오"));
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║     [DefenseGameMode] HandleSeamlessTravelPlayer 종료      ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 }
 
 // ============================================

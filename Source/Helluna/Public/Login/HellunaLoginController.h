@@ -119,6 +119,15 @@ public:
 	UFUNCTION(Server, Reliable)
 	void Server_RequestLogin(const FString& PlayerId, const FString& Password);
 
+	// ============================================
+	// 📌 SeamlessTravel 후 Controller 스왑 요청
+	// ============================================
+	// ShowLoginWidget()에서 이미 로그인된 상태 감지 시 호출
+	// 서버에서 SwapToGameController() 실행
+	// ============================================
+	UFUNCTION(Server, Reliable)
+	void Server_RequestSwapAfterTravel();
+
 	/**
 	 * [서버 → 클라이언트] 로그인 결과 전달
 	 * 

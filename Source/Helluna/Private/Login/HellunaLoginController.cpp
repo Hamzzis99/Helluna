@@ -2,7 +2,9 @@
 #include "Login/HellunaLoginWidget.h"
 #include "GameMode/HellunaDefenseGameMode.h"
 #include "GameFramework/PlayerState.h"
+#include "Player/HellunaPlayerState.h"
 #include "Blueprint/UserWidget.h"
+#include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
 
 AHellunaLoginController::AHellunaLoginController()
 {
@@ -74,6 +76,56 @@ void AHellunaLoginController::ShowLoginWidget()
 	UE_LOG(LogTemp, Warning, TEXT("│ [LoginController] ShowLoginWidget                          │"));
 	UE_LOG(LogTemp, Warning, TEXT("└────────────────────────────────────────────────────────────┘"));
 
+	// ========================================
+	// ⭐ [Fix 1] SeamlessTravel 중이면 UI 표시 안 함
+	// ========================================
+	// 
+	// SeamlessTravel 시:
+	// 1. GameState::Server_SaveAndMoveLevel에서 bIsMapTransitioning = true 설정
+	// 2. Super::HandleSeamlessTravelPlayer() 내부에서 새 LoginController 생성
+	// 3. LoginController::BeginPlay() → ShowLoginWidget() 호출 (이 시점)
+	//    → 아직 PlayerState에 PlayerId 복원 안 됨!
+	// 4. Super 반환 후 PlayerState에 PlayerId 복원
+	// 5. 0.5초 후 HandleSeamlessTravelPlayer() 타이머 → SwapToGameController()
+	// 
+	// 문제: PlayerState 복원 전에 ShowLoginWidget이 먼저 호출됨
+	// 해결: bIsMapTransitioning 플래그로 SeamlessTravel 상황 감지
+	// ========================================
+	if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance()))
+	{
+		if (GI->bIsMapTransitioning)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[LoginController] ⚠️ SeamlessTravel 진행 중 (bIsMapTransitioning=true) → UI 표시 스킵!"));
+			
+			// PlayerState에서 PlayerId 확인 (디버깅용)
+			if (AHellunaPlayerState* PS = GetPlayerState<AHellunaPlayerState>())
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[LoginController]    PlayerId: '%s'"), *PS->GetPlayerUniqueId());
+			}
+			
+			// ⭐ Controller 스왑 요청! (서버에서 SwapToGameController 실행)
+			UE_LOG(LogTemp, Warning, TEXT("[LoginController] → Server_RequestSwapAfterTravel() 호출!"));
+			Server_RequestSwapAfterTravel();
+			return;
+		}
+	}
+
+	// ========================================
+	// ⭐ [Fix 2] 이미 로그인된 상태면 UI 표시 안 함
+	// ========================================
+	// 
+	// (기존 체크 유지 - PlayerState 복원 후 호출되는 경우 대비)
+	// ========================================
+	if (AHellunaPlayerState* PS = GetPlayerState<AHellunaPlayerState>())
+	{
+		if (PS->IsLoggedIn() && !PS->GetPlayerUniqueId().IsEmpty())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[LoginController] ⚠️ 이미 로그인됨 (SeamlessTravel) → UI 표시 스킵!"));
+			UE_LOG(LogTemp, Warning, TEXT("[LoginController]    PlayerId: '%s'"), *PS->GetPlayerUniqueId());
+			return;
+		}
+	}
+
 	if (!LoginWidgetClass)
 	{
 		UE_LOG(LogTemp, Error, TEXT("[LoginController] LoginWidgetClass가 nullptr!"));
@@ -126,6 +178,53 @@ void AHellunaLoginController::OnLoginButtonClicked(const FString& PlayerId, cons
 	Server_RequestLogin(PlayerId, Password);
 
 	UE_LOG(LogTemp, Warning, TEXT(""));
+}
+
+// ============================================
+// 📌 SeamlessTravel 후 Controller 스왑 요청
+// ============================================
+// ShowLoginWidget()에서 이미 로그인된 상태 감지 시 호출
+// 서버에서 SwapToGameController() 실행
+// ============================================
+void AHellunaLoginController::Server_RequestSwapAfterTravel_Implementation()
+{
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║  [LoginController] Server_RequestSwapAfterTravel (서버)    ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ Controller: %s"), *GetName());
+	
+	// PlayerState에서 PlayerId 가져오기
+	FString PlayerId;
+	if (AHellunaPlayerState* PS = GetPlayerState<AHellunaPlayerState>())
+	{
+		PlayerId = PS->GetPlayerUniqueId();
+		UE_LOG(LogTemp, Warning, TEXT("║ PlayerId: '%s'"), *PlayerId);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("║ ⚠️ PlayerState nullptr!"));
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+	
+	// GameMode에서 SwapToGameController 호출
+	if (AHellunaDefenseGameMode* GM = GetWorld()->GetAuthGameMode<AHellunaDefenseGameMode>())
+	{
+		if (!PlayerId.IsEmpty())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[LoginController] → GameMode::SwapToGameController 호출!"));
+			GM->SwapToGameController(this, PlayerId);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("[LoginController] ⚠️ PlayerId가 비어있어 Controller 스왑 불가!"));
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("[LoginController] ⚠️ GameMode를 찾을 수 없음!"));
+	}
 }
 
 void AHellunaLoginController::Server_RequestLogin_Implementation(const FString& PlayerId, const FString& Password)
