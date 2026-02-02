@@ -133,14 +133,22 @@ void AHellunaDefenseGameMode::BeginPlay()
 	UE_LOG(LogTemp, Warning, TEXT("║ AccountCount: %d"), AccountSaveGame ? AccountSaveGame->GetAccountCount() : 0);
 	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
 	UE_LOG(LogTemp, Warning, TEXT("║ 🎭 캐릭터 선택 시스템:                                     ║"));
-	UE_LOG(LogTemp, Warning, TEXT("║ HeroCharacterClasses 배열: %d개"), HeroCharacterClasses.Num());
-	for (int32 i = 0; i < HeroCharacterClasses.Num(); i++)
+	UE_LOG(LogTemp, Warning, TEXT("║ HeroCharacterMap: %d개 매핑됨"), HeroCharacterMap.Num());
+	for (const auto& Pair : HeroCharacterMap)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("║   [%d] %s"), i, HeroCharacterClasses[i] ? *HeroCharacterClasses[i]->GetName() : TEXT("미설정!"));
+		FString TypeName;
+		switch (Pair.Key)
+		{
+		case EHellunaHeroType::Lui:  TypeName = TEXT("Lui (루이)"); break;
+		case EHellunaHeroType::Luna: TypeName = TEXT("Luna (루나)"); break;
+		case EHellunaHeroType::Liam: TypeName = TEXT("Liam (리암)"); break;
+		default: TypeName = TEXT("Unknown"); break;
+		}
+		UE_LOG(LogTemp, Warning, TEXT("║   %s → %s"), *TypeName, Pair.Value ? *Pair.Value->GetName() : TEXT("미설정!"));
 	}
-	if (HeroCharacterClasses.Num() != 3)
+	if (HeroCharacterMap.Num() != 3)
 	{
-		UE_LOG(LogTemp, Error, TEXT("║ ⚠️ HeroCharacterClasses 배열이 3개가 아닙니다! BP 설정 필요!"));
+		UE_LOG(LogTemp, Error, TEXT("║ ⚠️ HeroCharacterMap이 3개가 아닙니다! BP 설정 필요!"));
 	}
 	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
 	UE_LOG(LogTemp, Warning, TEXT("║ ※ 게임 초기화 대기 중...                                  ║"));
@@ -1053,7 +1061,7 @@ void AHellunaDefenseGameMode::SpawnHeroCharacter(APlayerController* PlayerContro
 
 	if (!SpawnClass)
 	{
-		UE_LOG(LogTemp, Error, TEXT("║ ❌ SpawnClass nullptr! (HeroCharacterClasses/HeroCharacterClass 모두 미설정)"));
+		UE_LOG(LogTemp, Error, TEXT("║ ❌ SpawnClass nullptr! (HeroCharacterMap/HeroCharacterClass 모두 미설정)"));
 		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 		if (GEngine)
 		{

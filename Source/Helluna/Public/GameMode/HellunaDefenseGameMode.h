@@ -142,14 +142,6 @@ protected:
 	TMap<EHellunaHeroType, TSubclassOf<APawn>> HeroCharacterMap;
 
 	/**
-	 * [Deprecated] 기존 배열 방식 - 호환성 유지용
-	 * HeroCharacterMap 사용 권장!
-	 */
-	UPROPERTY(EditDefaultsOnly, Category = "Character Select (캐릭터 선택)", 
-		meta = (DisplayName = "[구버전] 히어로 캐릭터 클래스 배열", DeprecatedProperty))
-	TArray<TSubclassOf<APawn>> HeroCharacterClasses;
-
-	/**
 	 * 현재 사용 중인 캐릭터 맵
 	 * Key: EHellunaHeroType
 	 * Value: 사용 중인 플레이어 ID
