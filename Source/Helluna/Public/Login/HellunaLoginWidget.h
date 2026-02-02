@@ -112,7 +112,7 @@ public:
 	 *                              Index 0: Lui, 1: Luna, 2: Liam
 	 *                              true: 선택 가능, false: 다른 플레이어가 사용 중
 	 */
-	UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "Login|CharacterSelect")
+	UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "Login|Character Select (캐릭터 선택)")
 	void ShowCharacterSelection(const TArray<bool>& AvailableCharacters);
 
 	/**
@@ -121,13 +121,13 @@ public:
 	 * 
 	 * @param CharacterIndex - 선택한 캐릭터 인덱스 (0: Lui, 1: Luna, 2: Liam)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Login|CharacterSelect")
+	UFUNCTION(BlueprintCallable, Category = "Login|Character Select (캐릭터 선택)")
 	void OnCharacterSelected(int32 CharacterIndex);
 
 	/**
 	 * 현재 활성화된 캐릭터 선택 위젯 반환
 	 */
-	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Login|CharacterSelect")
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Login|Character Select (캐릭터 선택)")
 	UHellunaCharacterSelectWidget* GetCharacterSelectWidget() const { return CharacterSelectWidget; }
 
 protected:
@@ -168,7 +168,7 @@ protected:
 	 * 캐릭터 선택 위젯 클래스 (BP에서 설정!)
 	 * 로그인 성공 후 이 위젯이 생성됨
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Login|CharacterSelect")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Login|Character Select (캐릭터 선택)", meta = (DisplayName = "캐릭터 선택 위젯 클래스"))
 	TSubclassOf<UHellunaCharacterSelectWidget> CharacterSelectWidgetClass;
 
 	/** 현재 활성화된 캐릭터 선택 위젯 */

@@ -52,7 +52,7 @@ public:
 	 * 
 	 * @param AvailableCharacters - [0]=Lui, [1]=Luna, [2]=Liam 선택 가능 여부
 	 */
-	UFUNCTION(BlueprintCallable, Category = "CharacterSelect")
+	UFUNCTION(BlueprintCallable, Category = "Character Select (캐릭터 선택)")
 	void SetAvailableCharacters(const TArray<bool>& AvailableCharacters);
 
 	/**
@@ -60,19 +60,19 @@ public:
 	 * @param Message - 표시할 메시지
 	 * @param bIsError - 에러 메시지 여부 (빨간색)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "CharacterSelect")
+	UFUNCTION(BlueprintCallable, Category = "Character Select (캐릭터 선택)")
 	void ShowMessage(const FString& Message, bool bIsError);
 
 	/**
 	 * 로딩 상태 설정 (모든 버튼 비활성화)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "CharacterSelect")
+	UFUNCTION(BlueprintCallable, Category = "Character Select (캐릭터 선택)")
 	void SetLoadingState(bool bLoading);
 
 	/**
 	 * 캐릭터 선택 결과 처리 (LoginController에서 호출)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "CharacterSelect")
+	UFUNCTION(BlueprintCallable, Category = "Character Select (캐릭터 선택)")
 	void OnSelectionResult(bool bSuccess, const FString& ErrorMessage);
 
 protected:
@@ -98,19 +98,19 @@ protected:
 	// ============================================
 
 	/** Lui 캐릭터 선택 버튼 (Index 0) - 필수! */
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidget, DisplayName = "루이 버튼"))
 	TObjectPtr<UButton> LuiButton;
 
 	/** Luna 캐릭터 선택 버튼 (Index 1) - 필수! */
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidget, DisplayName = "루나 버튼"))
 	TObjectPtr<UButton> LunaButton;
 
 	/** Liam 캐릭터 선택 버튼 (Index 2) - 필수! */
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidget, DisplayName = "리암 버튼"))
 	TObjectPtr<UButton> LiamButton;
 
 	/** 상태 메시지 텍스트 (선택사항) */
-	UPROPERTY(meta = (BindWidgetOptional))
+	UPROPERTY(meta = (BindWidgetOptional, DisplayName = "메시지 텍스트"))
 	TObjectPtr<UTextBlock> MessageText;
 
 	// ============================================

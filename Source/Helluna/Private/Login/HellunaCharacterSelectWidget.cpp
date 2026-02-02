@@ -99,7 +99,10 @@ void UHellunaCharacterSelectWidget::OnSelectionResult(bool bSuccess, const FStri
 	if (bSuccess)
 	{
 		ShowMessage(TEXT("캐릭터 선택 완료! 게임 시작..."), false);
-		// 위젯은 LoginController에서 제거할 예정
+		
+		// ✅ UI 제거!
+		UE_LOG(LogTemp, Warning, TEXT("[CharacterSelectWidget] ✅ 위젯 제거 (RemoveFromParent)"));
+		RemoveFromParent();
 	}
 	else
 	{
