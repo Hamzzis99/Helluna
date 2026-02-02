@@ -2644,15 +2644,70 @@ void AHellunaDefenseGameMode::OnInvControllerEndPlay(AInv_PlayerController* Play
 	}
 
 	// ============================================
+	// Step 0.5: 장착 정보 누락 시 캐시에서 복원 (서버 종료 대비)
+	// ============================================
+	// EquipmentComponent가 nullptr이면 장착 정보가 누락됨
+	// 이 경우 마지막 자동저장 캐시에서 장착 정보를 복원
+	TArray<FInv_SavedItemData> MergedItems = SavedItems;  // 복사본 생성
+	
+	// 현재 데이터에 장착 정보가 있는지 확인
+	int32 EquippedCount = 0;
+	for (const FInv_SavedItemData& Item : MergedItems)
+	{
+		if (Item.bEquipped) EquippedCount++;
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("🔍 [Step 0.5] 장착 정보 확인: %d개"), EquippedCount);
+	
+	// 장착 정보가 없으면 캐시에서 복원 시도
+	if (EquippedCount == 0 && !PlayerId.IsEmpty())
+	{
+		if (FHellunaPlayerInventoryData* CachedData = CachedPlayerInventoryData.Find(PlayerId))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("   ⚠️ 장착 정보 누락! 캐시에서 복원 시도..."));
+			UE_LOG(LogTemp, Warning, TEXT("   📦 캐시된 아이템: %d개"), CachedData->Items.Num());
+			
+			// 캐시에서 장착된 아이템 찾기
+			for (const FHellunaInventoryItemData& CachedItem : CachedData->Items)
+			{
+				if (CachedItem.EquipSlotIndex >= 0)  // 장착된 아이템
+				{
+					UE_LOG(LogTemp, Warning, TEXT("   🔧 캐시에서 장착 아이템 발견: %s → Slot %d"),
+						*CachedItem.ItemType.ToString(), CachedItem.EquipSlotIndex);
+					
+					// MergedItems에서 같은 타입의 아이템 찾아서 장착 정보 적용
+					for (FInv_SavedItemData& Item : MergedItems)
+					{
+						if (Item.ItemType == CachedItem.ItemType && !Item.bEquipped)
+						{
+							Item.bEquipped = true;
+							Item.WeaponSlotIndex = CachedItem.EquipSlotIndex;
+							
+							UE_LOG(LogTemp, Warning, TEXT("   ✅ 장착 정보 복원: %s → bEquipped=true, Slot=%d"),
+								*Item.ItemType.ToString(), Item.WeaponSlotIndex);
+							break;  // 하나만 매칭
+						}
+					}
+				}
+			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("   ⚠️ 캐시된 데이터 없음 (첫 접속 후 바로 서버 종료?)"));
+		}
+	}
+
+	// ============================================
 	// Step 1: 인벤토리 저장
 	// ============================================
-	if (!PlayerId.IsEmpty() && SavedItems.Num() > 0)
+	if (!PlayerId.IsEmpty() && MergedItems.Num() > 0)
 	{
 		UE_LOG(LogTemp, Warning, TEXT(""));
 		UE_LOG(LogTemp, Warning, TEXT("▶ [Step 1] 인벤토리 저장 중..."));
-		SaveInventoryFromCharacterEndPlay(PlayerId, SavedItems);
+		SaveInventoryFromCharacterEndPlay(PlayerId, MergedItems);  // MergedItems 사용!
 	}
-	else if (SavedItems.Num() == 0)
+	else if (MergedItems.Num() == 0)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("   ⚠️ 인벤토리가 비어있음 (저장 생략)"));
 	}
