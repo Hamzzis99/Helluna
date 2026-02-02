@@ -1,5 +1,6 @@
 #include "Login/HellunaLoginWidget.h"
 #include "Login/HellunaLoginController.h"
+#include "Login/HellunaCharacterSelectWidget.h"
 #include "Components/EditableTextBox.h"
 #include "Components/TextBlock.h"
 #include "Components/Button.h"
@@ -113,21 +114,59 @@ FString UHellunaLoginWidget::GetPassword() const
 
 void UHellunaLoginWidget::ShowCharacterSelection_Implementation(const TArray<bool>& AvailableCharacters)
 {
-	// 기본 구현: 로그만 출력
-	// 실제 UI 표시는 BP에서 구현
 	UE_LOG(LogTemp, Warning, TEXT(""));
 	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║  🎭 [LoginWidget] ShowCharacterSelection (기본 구현)       ║"));
+	UE_LOG(LogTemp, Warning, TEXT("║  🎭 [LoginWidget] ShowCharacterSelection                   ║"));
 	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ ※ BP에서 이 함수를 오버라이드하여 캐릭터 선택 UI 구현     ║"));
-	UE_LOG(LogTemp, Warning, TEXT("║ 선택 가능한 캐릭터:"));
-	for (int32 i = 0; i < AvailableCharacters.Num(); i++)
+
+	// 1. CharacterSelectWidgetClass 체크
+	if (!CharacterSelectWidgetClass)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("║   [%d] %s"), i, AvailableCharacters[i] ? TEXT("✅ 선택 가능") : TEXT("❌ 사용 중"));
+		UE_LOG(LogTemp, Error, TEXT("║ ❌ CharacterSelectWidgetClass가 설정되지 않음!"));
+		UE_LOG(LogTemp, Error, TEXT("║    → BP에서 CharacterSelectWidgetClass 설정 필요"));
+		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+		
+		ShowMessage(TEXT("캐릭터 선택 위젯 설정 오류!"), true);
+		return;
 	}
+
+	UE_LOG(LogTemp, Warning, TEXT("║ CharacterSelectWidgetClass: %s"), *CharacterSelectWidgetClass->GetName());
+
+	// 2. 로그인 UI 숨김
+	UE_LOG(LogTemp, Warning, TEXT("║ → 로그인 UI 숨김"));
+	SetVisibility(ESlateVisibility::Collapsed);
+
+	// 3. 캐릭터 선택 위젯 생성
+	APlayerController* PC = UGameplayStatics::GetPlayerController(GetWorld(), 0);
+	if (!PC)
+	{
+		UE_LOG(LogTemp, Error, TEXT("║ ❌ PlayerController 없음!"));
+		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+		return;
+	}
+
+	CharacterSelectWidget = CreateWidget<UHellunaCharacterSelectWidget>(PC, CharacterSelectWidgetClass);
+	if (!CharacterSelectWidget)
+	{
+		UE_LOG(LogTemp, Error, TEXT("║ ❌ 캐릭터 선택 위젯 생성 실패!"));
+		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+		
+		SetVisibility(ESlateVisibility::Visible);
+		ShowMessage(TEXT("캐릭터 선택 위젯 생성 실패!"), true);
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("║ → 캐릭터 선택 위젯 생성 완료"));
+
+	// 4. 뷰포트에 추가
+	CharacterSelectWidget->AddToViewport(100);  // 높은 ZOrder
+	UE_LOG(LogTemp, Warning, TEXT("║ → 뷰포트에 추가 완료"));
+
+	// 5. 선택 가능 캐릭터 설정
+	CharacterSelectWidget->SetAvailableCharacters(AvailableCharacters);
+
 	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
-	
-	ShowMessage(TEXT("캐릭터를 선택하세요"), false);
+	UE_LOG(LogTemp, Warning, TEXT(""));
 }
 
 void UHellunaLoginWidget::OnCharacterSelected(int32 CharacterIndex)

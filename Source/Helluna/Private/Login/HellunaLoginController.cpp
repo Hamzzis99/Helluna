@@ -1,5 +1,6 @@
 #include "Login/HellunaLoginController.h"
 #include "Login/HellunaLoginWidget.h"
+#include "Login/HellunaCharacterSelectWidget.h"
 #include "GameMode/HellunaDefenseGameMode.h"
 #include "GameFramework/PlayerState.h"
 #include "Player/HellunaPlayerState.h"
@@ -340,16 +341,13 @@ void AHellunaLoginController::Client_CharacterSelectionResult_Implementation(boo
 	UE_LOG(LogTemp, Warning, TEXT("║ ErrorMessage: '%s'"), *ErrorMessage);
 	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 
+	// CharacterSelectWidget에 결과 전달
 	if (LoginWidget)
 	{
-		if (bSuccess)
+		UHellunaCharacterSelectWidget* CharSelectWidget = LoginWidget->GetCharacterSelectWidget();
+		if (CharSelectWidget)
 		{
-			LoginWidget->ShowMessage(TEXT("캐릭터 선택 완료! 게임 시작..."), false);
-		}
-		else
-		{
-			LoginWidget->ShowMessage(ErrorMessage, true);
-			LoginWidget->SetLoadingState(false);
+			CharSelectWidget->OnSelectionResult(bSuccess, ErrorMessage);
 		}
 	}
 }
