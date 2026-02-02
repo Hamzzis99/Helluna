@@ -25,6 +25,16 @@ void UInv_SpatialInventory::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
 
+	// 🔍 [디버깅] 현재 맵 이름 출력
+	FString CurrentMapName = GetWorld() ? GetWorld()->GetMapName() : TEXT("Unknown");
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║ [SpatialInventory] NativeOnInitialized                     ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ 📍 현재 맵: %s"), *CurrentMapName);
+	UE_LOG(LogTemp, Warning, TEXT("║ 📍 위젯 클래스: %s"), *GetClass()->GetName());
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+
 	//인벤토리 장비 칸들
 	Button_Equippables->OnClicked.AddDynamic(this, &ThisClass::ShowEquippables);
 	Button_Consumables->OnClicked.AddDynamic(this, &ThisClass::ShowConsumables);
@@ -37,15 +47,49 @@ void UInv_SpatialInventory::NativeOnInitialized()
 
 	ShowEquippables(); // 기본값으로 장비창을 보여주자.
 	
-	WidgetTree->ForEachWidget([this](UWidget* Widget) // 위젯 트리의 각 위젯에 대해 반복
+	// 🔍 [디버깅] WidgetTree 순회 전 상태
+	UE_LOG(LogTemp, Warning, TEXT("▶ [NativeOnInitialized] WidgetTree에서 EquippedGridSlot 수집 시작..."));
+	
+	CollectEquippedGridSlots();
+	
+	UE_LOG(LogTemp, Warning, TEXT(""));
+}
+
+// ============================================
+// 🆕 [Phase 7] EquippedGridSlots 수집 함수 분리
+// ============================================
+void UInv_SpatialInventory::CollectEquippedGridSlots()
+{
+	// 이미 수집되었으면 스킵
+	if (EquippedGridSlots.Num() > 0)
 	{
-		UInv_EquippedGridSlot* EquippedGridSlot = Cast<UInv_EquippedGridSlot>(Widget); // 장착된 그리드 슬롯으로 캐스팅
+		UE_LOG(LogTemp, Warning, TEXT("   ⏭️ EquippedGridSlots 이미 수집됨: %d개"), EquippedGridSlots.Num());
+		return;
+	}
+	
+	WidgetTree->ForEachWidget([this](UWidget* Widget)
+	{
+		UInv_EquippedGridSlot* EquippedGridSlot = Cast<UInv_EquippedGridSlot>(Widget);
 		if (IsValid(EquippedGridSlot))
 		{
-			EquippedGridSlots.Add(EquippedGridSlot); // 장착된 그리드 슬롯을 배열에 추가
-			EquippedGridSlot->EquippedGridSlotClicked.AddDynamic(this, &ThisClass::EquippedGridSlotClicked); // 클릭 이벤트 바인딩
+			EquippedGridSlots.Add(EquippedGridSlot);
+			
+			// 델리게이트 중복 바인딩 방지
+			if (!EquippedGridSlot->EquippedGridSlotClicked.IsAlreadyBound(this, &ThisClass::EquippedGridSlotClicked))
+			{
+				EquippedGridSlot->EquippedGridSlotClicked.AddDynamic(this, &ThisClass::EquippedGridSlotClicked);
+			}
+			
+			UE_LOG(LogTemp, Warning, TEXT("   ✅ EquippedGridSlot 발견: %s (WeaponSlotIndex=%d)"), 
+				*EquippedGridSlot->GetName(), EquippedGridSlot->GetWeaponSlotIndex());
 		}
 	});
+	
+	UE_LOG(LogTemp, Warning, TEXT("▶ EquippedGridSlots 수집 완료: 총 %d개"), EquippedGridSlots.Num());
+	if (EquippedGridSlots.Num() == 0)
+	{
+		UE_LOG(LogTemp, Error, TEXT("   ❌ [경고] EquippedGridSlots가 비어있음!"));
+	}
 }
 
 // 장착된 그리드 슬롯이 클릭되었을 때 호출되는 함수

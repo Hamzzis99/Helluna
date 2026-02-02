@@ -728,8 +728,17 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 	// SpatialInventory는 이미 위에서 선언됨 - 유효성만 체크
 	if (IsValid(SpatialInventory))
 	{
+		// 🆕 [Phase 7] EquippedGridSlots가 비어있으면 강제 수집
+		SpatialInventory->CollectEquippedGridSlots();
+		
 		const TArray<TObjectPtr<UInv_EquippedGridSlot>>& EquippedSlots = SpatialInventory->GetEquippedGridSlots();
 		UE_LOG(LogTemp, Warning, TEXT("  │ 🔍 EquippedSlots 개수: %d                                   │"), EquippedSlots.Num());
+		
+		// 🆕 [Phase 7] 디버깅: EquippedSlots가 비어있으면 경고
+		if (EquippedSlots.Num() == 0)
+		{
+			UE_LOG(LogTemp, Error, TEXT("  │ ❌❌❌ [Phase 7] EquippedSlots가 비어있음! 위젯 초기화 문제! ❌❌❌ │"));
+		}
 		
 		for (const FInv_SavedItemData& ItemData : SavedItems)
 		{

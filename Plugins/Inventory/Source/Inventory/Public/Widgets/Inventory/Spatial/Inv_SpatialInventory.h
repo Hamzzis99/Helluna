@@ -52,6 +52,9 @@ public:
 
 	// 🆕 [Phase 6] 장착 아이템 복원 (델리게이트 바인딩 포함)
 	UInv_EquippedSlottedItem* RestoreEquippedItem(UInv_EquippedGridSlot* EquippedGridSlot, UInv_InventoryItem* ItemToEquip);
+
+	// 🆕 [Phase 7] EquippedGridSlots 수집 (복원 시 재호출 가능)
+	void CollectEquippedGridSlots();
 	
 private: 
 	// 여기 있는 UPROPERTY와 위젯과의 이름이 동일해야만함.
