@@ -53,6 +53,7 @@ AHellunaPlayerState::AHellunaPlayerState()
 	// 기본값 초기화
 	PlayerUniqueId = TEXT("");
 	bIsLoggedIn = false;
+	SelectedCharacterIndex = -1;  // -1 = 미선택
 }
 
 void AHellunaPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -65,6 +66,7 @@ void AHellunaPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& 
 	// ============================================
 	DOREPLIFETIME(AHellunaPlayerState, PlayerUniqueId);
 	DOREPLIFETIME(AHellunaPlayerState, bIsLoggedIn);
+	DOREPLIFETIME(AHellunaPlayerState, SelectedCharacterIndex);
 }
 
 // ============================================
@@ -136,4 +138,51 @@ void AHellunaPlayerState::ClearLoginInfo()
 
 	PlayerUniqueId = TEXT("");
 	bIsLoggedIn = false;
+}
+
+// ============================================
+// 🎭 SetSelectedCharacterIndex - 캐릭터 선택 인덱스 설정
+// ============================================
+// 
+// 📌 호출 시점: 캐릭터 선택 UI에서 선택 완료 시
+// 
+// 📌 매개변수:
+//    - InIndex: 캐릭터 인덱스 (0=Liam, 1=Lui, 2=Luna)
+// 
+// 📌 SeamlessTravel:
+//    - Replicated이므로 맵 이동 후에도 유지됨
+//    - HandleSeamlessTravelPlayer에서 백업/복원 처리
+// ============================================
+void AHellunaPlayerState::SetSelectedCharacterIndex(int32 InIndex)
+{
+	if (!HasAuthority())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[HellunaPlayerState] SetSelectedCharacterIndex는 서버에서만 호출해야 합니다!"));
+		return;
+	}
+
+	SelectedCharacterIndex = InIndex;
+	UE_LOG(LogTemp, Log, TEXT("[HellunaPlayerState] 캐릭터 선택: Index = %d"), SelectedCharacterIndex);
+}
+
+// ============================================
+// 🎭 ClearSelectedCharacter - 캐릭터 선택 초기화
+// ============================================
+// 
+// 📌 호출 시점: 로그아웃 시 (ClearLoginInfo와 함께)
+// 
+// 📌 역할:
+//    - SelectedCharacterIndex = -1로 초기화
+//    - 다음 로그인 시 캐릭터 선택 UI 다시 표시
+// ============================================
+void AHellunaPlayerState::ClearSelectedCharacter()
+{
+	if (!HasAuthority())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[HellunaPlayerState] ClearSelectedCharacter는 서버에서만 호출해야 합니다!"));
+		return;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[HellunaPlayerState] 캐릭터 선택 초기화 (이전: %d)"), SelectedCharacterIndex);
+	SelectedCharacterIndex = -1;
 }

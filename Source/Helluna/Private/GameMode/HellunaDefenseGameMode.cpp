@@ -132,6 +132,17 @@ void AHellunaDefenseGameMode::BeginPlay()
 	UE_LOG(LogTemp, Warning, TEXT("║ HeroCharacterClass: %s"), HeroCharacterClass ? *HeroCharacterClass->GetName() : TEXT("미설정!"));
 	UE_LOG(LogTemp, Warning, TEXT("║ AccountCount: %d"), AccountSaveGame ? AccountSaveGame->GetAccountCount() : 0);
 	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ 🎭 캐릭터 선택 시스템:                                     ║"));
+	UE_LOG(LogTemp, Warning, TEXT("║ HeroCharacterClasses 배열: %d개"), HeroCharacterClasses.Num());
+	for (int32 i = 0; i < HeroCharacterClasses.Num(); i++)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("║   [%d] %s"), i, HeroCharacterClasses[i] ? *HeroCharacterClasses[i]->GetName() : TEXT("미설정!"));
+	}
+	if (HeroCharacterClasses.Num() != 3)
+	{
+		UE_LOG(LogTemp, Error, TEXT("║ ⚠️ HeroCharacterClasses 배열이 3개가 아닙니다! BP 설정 필요!"));
+	}
+	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
 	UE_LOG(LogTemp, Warning, TEXT("║ ※ 게임 초기화 대기 중...                                  ║"));
 	UE_LOG(LogTemp, Warning, TEXT("║ ※ 첫 플레이어가 로그인 + 캐릭터 소환되면 게임 시작!       ║"));
 	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
@@ -1213,6 +1224,10 @@ void AHellunaDefenseGameMode::Logout(AController* Exiting)
 		{
 			UE_LOG(LogTemp, Error, TEXT("   ❌ GameInstance를 가져올 수 없음!"));
 		}
+
+		// ⭐ 캐릭터 사용 해제 (다른 플레이어가 선택 가능해짐)
+		UnregisterCharacterUse(PlayerId);
+		UE_LOG(LogTemp, Warning, TEXT("   ✅ UnregisterCharacterUse 호출됨: '%s'"), *PlayerId);
 	}
 	else
 	{
@@ -1229,6 +1244,107 @@ void AHellunaDefenseGameMode::Logout(AController* Exiting)
 	UE_LOG(LogTemp, Warning, TEXT(""));
 
 	Super::Logout(Exiting);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 🎭 캐릭터 선택 시스템 함수
+// ════════════════════════════════════════════════════════════════════════════════
+
+// ============================================
+// 🎭 RegisterCharacterUse - 캐릭터 사용 등록
+// ============================================
+// 
+// 📌 호출 시점: 캐릭터 선택 완료 후 (ProcessCharacterSelect에서)
+// 
+// 📌 역할:
+//    - UsedCharacterMap에 캐릭터 인덱스 → PlayerId 매핑 저장
+//    - 다른 플레이어가 같은 캐릭터 선택 방지
+// ============================================
+void AHellunaDefenseGameMode::RegisterCharacterUse(int32 CharacterIndex, const FString& PlayerId)
+{
+	if (!HasAuthority()) return;
+
+	// 기존에 해당 플레이어가 다른 캐릭터를 사용 중이었다면 해제
+	UnregisterCharacterUse(PlayerId);
+
+	// 새 캐릭터 등록
+	UsedCharacterMap.Add(CharacterIndex, PlayerId);
+
+	UE_LOG(LogTemp, Warning, TEXT("[CharacterSelect] 캐릭터 사용 등록: Index=%d, PlayerId='%s'"), CharacterIndex, *PlayerId);
+	UE_LOG(LogTemp, Warning, TEXT("[CharacterSelect] 현재 UsedCharacterMap:"));
+	for (const auto& Pair : UsedCharacterMap)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("  [%d] → '%s'"), Pair.Key, *Pair.Value);
+	}
+}
+
+// ============================================
+// 🎭 UnregisterCharacterUse - 캐릭터 사용 해제
+// ============================================
+// 
+// 📌 호출 시점: 로그아웃 시 (Logout에서)
+// 
+// 📌 역할:
+//    - UsedCharacterMap에서 해당 PlayerId의 캐릭터 해제
+//    - 다른 플레이어가 해당 캐릭터 선택 가능해짐
+// ============================================
+void AHellunaDefenseGameMode::UnregisterCharacterUse(const FString& PlayerId)
+{
+	if (!HasAuthority()) return;
+
+	if (PlayerId.IsEmpty()) return;
+
+	// PlayerId로 캐릭터 인덱스 찾아서 제거
+	int32 FoundIndex = -1;
+	for (const auto& Pair : UsedCharacterMap)
+	{
+		if (Pair.Value == PlayerId)
+		{
+			FoundIndex = Pair.Key;
+			break;
+		}
+	}
+
+	if (FoundIndex >= 0)
+	{
+		UsedCharacterMap.Remove(FoundIndex);
+		UE_LOG(LogTemp, Warning, TEXT("[CharacterSelect] 캐릭터 사용 해제: Index=%d, PlayerId='%s'"), FoundIndex, *PlayerId);
+	}
+}
+
+// ============================================
+// 🎭 IsCharacterInUse - 캐릭터 사용 중 확인
+// ============================================
+bool AHellunaDefenseGameMode::IsCharacterInUse(int32 CharacterIndex) const
+{
+	return UsedCharacterMap.Contains(CharacterIndex);
+}
+
+// ============================================
+// 🎭 GetAvailableCharacters - 사용 가능한 캐릭터 목록 (UI용)
+// ============================================
+// 
+// 📌 반환값: [Liam 가능여부, Lui 가능여부, Luna 가능여부]
+//    - true: 사용 가능 (버튼 활성화)
+//    - false: 사용 중 (버튼 비활성화, 회색 표시)
+// ============================================
+TArray<bool> AHellunaDefenseGameMode::GetAvailableCharacters() const
+{
+	TArray<bool> Result;
+	
+	// 캐릭터 3개 기준
+	for (int32 i = 0; i < 3; i++)
+	{
+		bool bAvailable = !IsCharacterInUse(i);
+		Result.Add(bAvailable);
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[CharacterSelect] GetAvailableCharacters: Liam=%s, Lui=%s, Luna=%s"),
+		Result[0] ? TEXT("O") : TEXT("X"),
+		Result[1] ? TEXT("O") : TEXT("X"),
+		Result[2] ? TEXT("O") : TEXT("X"));
+
+	return Result;
 }
 
 // ============================================

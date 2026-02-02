@@ -93,6 +93,22 @@ public:
 	bool bIsLoggedIn;
 
 	// ============================================
+	// 📌 캐릭터 선택 시스템
+	// ============================================
+	
+	/**
+	 * 선택한 캐릭터 인덱스
+	 * -1: 아직 캐릭터 미선택 (캐릭터 선택 UI 필요)
+	 *  0: Liam
+	 *  1: Lui
+	 *  2: Luna
+	 * 
+	 * SeamlessTravel 시에도 유지됨 (맵 이동 후 같은 캐릭터로 스폰)
+	 */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "CharacterSelect", meta = (DisplayName = "선택한 캐릭터 인덱스"))
+	int32 SelectedCharacterIndex;
+
+	// ============================================
 	// 📌 유틸리티 함수
 	// ============================================
 
@@ -122,6 +138,37 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Login")
 	FString GetPlayerUniqueId() const { return PlayerUniqueId; }
+
+	// ============================================
+	// 📌 캐릭터 선택 관련 함수
+	// ============================================
+
+	/**
+	 * 선택한 캐릭터 인덱스 설정 (서버에서만 호출)
+	 * @param InIndex - 캐릭터 인덱스 (0=Liam, 1=Lui, 2=Luna)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "CharacterSelect")
+	void SetSelectedCharacterIndex(int32 InIndex);
+
+	/**
+	 * 선택한 캐릭터 인덱스 반환
+	 * @return 캐릭터 인덱스 (-1이면 미선택)
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "CharacterSelect")
+	int32 GetSelectedCharacterIndex() const { return SelectedCharacterIndex; }
+
+	/**
+	 * 캐릭터가 선택되었는지 확인
+	 * @return 캐릭터가 선택되었으면 true
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "CharacterSelect")
+	bool HasSelectedCharacter() const { return SelectedCharacterIndex >= 0; }
+
+	/**
+	 * 캐릭터 선택 초기화 (로그아웃 시 호출)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "CharacterSelect")
+	void ClearSelectedCharacter();
 
 protected:
 	// ============================================
