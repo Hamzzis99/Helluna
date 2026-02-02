@@ -353,7 +353,12 @@ void AHellunaDefenseGameMode::PostLogin(APlayerController* NewPlayer)
 				if (LoginController && LoginController->GetGameControllerClass())
 				{
 					UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] SeamlessTravel: LoginController → SwapToGameController"));
-					SwapToGameController(LoginController, PlayerId);
+					int32 CharIdx = -1;
+					if (AHellunaPlayerState* TempPS = NewPlayer->GetPlayerState<AHellunaPlayerState>())
+					{
+						CharIdx = TempPS->GetSelectedCharacterIndex();
+					}
+					SwapToGameController(LoginController, PlayerId, IndexToHeroType(CharIdx));
 				}
 				else
 				{
@@ -690,13 +695,13 @@ void AHellunaDefenseGameMode::OnLoginSuccess(APlayerController* PlayerController
 //    4. 실패 시:
 //       - Client_CharacterSelectionResult(false, 에러메시지) RPC
 // ============================================
-void AHellunaDefenseGameMode::ProcessCharacterSelection(APlayerController* PlayerController, int32 CharacterIndex)
+void AHellunaDefenseGameMode::ProcessCharacterSelection(APlayerController* PlayerController, EHellunaHeroType HeroType)
 {
 	UE_LOG(LogTemp, Warning, TEXT(""));
 	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
 	UE_LOG(LogTemp, Warning, TEXT("║  🎭 [DefenseGameMode] ProcessCharacterSelection            ║"));
 	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ CharacterIndex: %d"), CharacterIndex);
+	UE_LOG(LogTemp, Warning, TEXT("║ HeroType: %s"), *UEnum::GetValueAsString(HeroType));
 	UE_LOG(LogTemp, Warning, TEXT("║ Controller: %s"), *GetNameSafe(PlayerController));
 
 	if (!PlayerController)
@@ -708,10 +713,10 @@ void AHellunaDefenseGameMode::ProcessCharacterSelection(APlayerController* Playe
 
 	AHellunaLoginController* LoginController = Cast<AHellunaLoginController>(PlayerController);
 	
-	// 1. 인덱스 유효성 검사
-	if (CharacterIndex < 0 || CharacterIndex >= HeroCharacterClasses.Num())
+	// 1. HeroType 유효성 검사
+	if (HeroType == EHellunaHeroType::None || !HeroCharacterMap.Contains(HeroType))
 	{
-		UE_LOG(LogTemp, Error, TEXT("║ ❌ 유효하지 않은 캐릭터 인덱스! (범위: 0~%d)"), HeroCharacterClasses.Num() - 1);
+		UE_LOG(LogTemp, Error, TEXT("║ ❌ 유효하지 않은 캐릭터 타입! HeroType: %s"), *UEnum::GetValueAsString(HeroType));
 		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 		if (LoginController)
 		{
@@ -721,9 +726,9 @@ void AHellunaDefenseGameMode::ProcessCharacterSelection(APlayerController* Playe
 	}
 
 	// 2. 중복 선택 체크
-	if (IsCharacterInUse(CharacterIndex))
+	if (IsCharacterInUse(HeroType))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("║ ❌ 캐릭터 이미 사용 중! (Index: %d)"), CharacterIndex);
+		UE_LOG(LogTemp, Warning, TEXT("║ ❌ 캐릭터 이미 사용 중! HeroType: %s"), *UEnum::GetValueAsString(HeroType));
 		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 		if (LoginController)
 		{
@@ -738,9 +743,9 @@ void AHellunaDefenseGameMode::ProcessCharacterSelection(APlayerController* Playe
 	if (PS)
 	{
 		PlayerId = PS->GetPlayerUniqueId();
-		// SelectedCharacterIndex 설정
-		PS->SetSelectedCharacterIndex(CharacterIndex);
-		UE_LOG(LogTemp, Warning, TEXT("║ ✅ PlayerState.SelectedCharacterIndex = %d"), CharacterIndex);
+		// SelectedHeroType 설정
+		PS->SetSelectedHeroType(HeroType);
+		UE_LOG(LogTemp, Warning, TEXT("║ ✅ PlayerState.SelectedHeroType = %s"), *UEnum::GetValueAsString(HeroType));
 	}
 
 	if (PlayerId.IsEmpty())
@@ -755,8 +760,8 @@ void AHellunaDefenseGameMode::ProcessCharacterSelection(APlayerController* Playe
 	}
 
 	// 4. UsedCharacterMap에 등록
-	RegisterCharacterUse(CharacterIndex, PlayerId);
-	UE_LOG(LogTemp, Warning, TEXT("║ ✅ RegisterCharacterUse(%d, '%s')"), CharacterIndex, *PlayerId);
+	RegisterCharacterUse(HeroType, PlayerId);
+	UE_LOG(LogTemp, Warning, TEXT("║ ✅ RegisterCharacterUse(%s, '%s')"), *UEnum::GetValueAsString(HeroType), *PlayerId);
 
 	// 5. 선택 결과 전달
 	if (LoginController)
@@ -772,11 +777,11 @@ void AHellunaDefenseGameMode::ProcessCharacterSelection(APlayerController* Playe
 	if (LoginController && LoginController->GetGameControllerClass())
 	{
 		FTimerHandle TimerHandle;
-		GetWorldTimerManager().SetTimer(TimerHandle, [this, LoginController, PlayerId]()
+		GetWorldTimerManager().SetTimer(TimerHandle, [this, LoginController, PlayerId, HeroType]()
 		{
 			if (IsValid(LoginController))
 			{
-				SwapToGameController(LoginController, PlayerId);
+				SwapToGameController(LoginController, PlayerId, HeroType);
 			}
 		}, 0.3f, false);
 	}
@@ -868,7 +873,7 @@ void AHellunaDefenseGameMode::OnLoginTimeout(APlayerController* PlayerController
 //    - LoginController.GameControllerClass가 BP에서 설정되어 있어야 함
 //    - 미설정 시 Controller 교체 없이 기존 방식으로 캐릭터 소환
 // ============================================
-void AHellunaDefenseGameMode::SwapToGameController(AHellunaLoginController* LoginController, const FString& PlayerId)
+void AHellunaDefenseGameMode::SwapToGameController(AHellunaLoginController* LoginController, const FString& PlayerId, EHellunaHeroType SelectedHeroType)
 {
 	UE_LOG(LogTemp, Warning, TEXT(""));
 	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
@@ -945,7 +950,9 @@ void AHellunaDefenseGameMode::SwapToGameController(AHellunaLoginController* Logi
 	if (AHellunaPlayerState* NewPS = NewController->GetPlayerState<AHellunaPlayerState>())
 	{
 		NewPS->SetLoginInfo(PlayerId);
+		NewPS->SetSelectedHeroType(SelectedHeroType);  // 🎭 캐릭터 선택도 복원!
 		UE_LOG(LogTemp, Warning, TEXT("║ 새 Controller PlayerState에 PlayerId 복원: '%s'           ║"), *PlayerId);
+		UE_LOG(LogTemp, Warning, TEXT("║ 새 Controller PlayerState에 SelectedHeroType 복원: %s ║"), *UEnum::GetValueAsString(SelectedHeroType));
 
 		// ⭐ [Phase 4 개선] OnControllerEndPlay 델리게이트 바인딩
 		AInv_PlayerController* InvPC = Cast<AInv_PlayerController>(NewController);
@@ -1029,10 +1036,12 @@ void AHellunaDefenseGameMode::SpawnHeroCharacter(APlayerController* PlayerContro
 	}
 
 	// 캐릭터 클래스 선택
-	if (CharacterIndex >= 0 && CharacterIndex < HeroCharacterClasses.Num())
+	if (CharacterIndex >= 0 && HeroCharacterMap.Contains(IndexToHeroType(CharacterIndex)))
 	{
 		// 선택된 캐릭터 사용
-		SpawnClass = HeroCharacterClasses[CharacterIndex];
+		SpawnClass = HeroCharacterMap.Contains(IndexToHeroType(CharacterIndex)) 
+			? HeroCharacterMap[IndexToHeroType(CharacterIndex)] 
+			: nullptr;
 		UE_LOG(LogTemp, Warning, TEXT("║ 🎭 선택된 캐릭터: [%d] %s"), CharacterIndex, SpawnClass ? *SpawnClass->GetName() : TEXT("nullptr"));
 	}
 	else if (HeroCharacterClass)
@@ -1390,7 +1399,7 @@ void AHellunaDefenseGameMode::Logout(AController* Exiting)
 //    - UsedCharacterMap에 캐릭터 인덱스 → PlayerId 매핑 저장
 //    - 다른 플레이어가 같은 캐릭터 선택 방지
 // ============================================
-void AHellunaDefenseGameMode::RegisterCharacterUse(int32 CharacterIndex, const FString& PlayerId)
+void AHellunaDefenseGameMode::RegisterCharacterUse(EHellunaHeroType HeroType, const FString& PlayerId)
 {
 	if (!HasAuthority()) return;
 
@@ -1398,9 +1407,9 @@ void AHellunaDefenseGameMode::RegisterCharacterUse(int32 CharacterIndex, const F
 	UnregisterCharacterUse(PlayerId);
 
 	// 새 캐릭터 등록
-	UsedCharacterMap.Add(CharacterIndex, PlayerId);
+	UsedCharacterMap.Add(HeroType, PlayerId);
 
-	UE_LOG(LogTemp, Warning, TEXT("[CharacterSelect] 캐릭터 사용 등록: Index=%d, PlayerId='%s'"), CharacterIndex, *PlayerId);
+	UE_LOG(LogTemp, Warning, TEXT("[CharacterSelect] 캐릭터 사용 등록: Type=%s, PlayerId='%s'"), *UEnum::GetValueAsString(HeroType), *PlayerId);
 	UE_LOG(LogTemp, Warning, TEXT("[CharacterSelect] 현재 UsedCharacterMap:"));
 	for (const auto& Pair : UsedCharacterMap)
 	{
@@ -1424,30 +1433,32 @@ void AHellunaDefenseGameMode::UnregisterCharacterUse(const FString& PlayerId)
 
 	if (PlayerId.IsEmpty()) return;
 
-	// PlayerId로 캐릭터 인덱스 찾아서 제거
-	int32 FoundIndex = -1;
+	// PlayerId로 캐릭터 타입 찾아서 제거
+	EHellunaHeroType FoundType = EHellunaHeroType::None;
 	for (const auto& Pair : UsedCharacterMap)
 	{
 		if (Pair.Value == PlayerId)
 		{
-			FoundIndex = Pair.Key;
+			FoundType = Pair.Key;
+			FoundType = Pair.Key;
 			break;
 		}
 	}
 
-	if (FoundIndex >= 0)
+	if (FoundType != EHellunaHeroType::None)
 	{
-		UsedCharacterMap.Remove(FoundIndex);
-		UE_LOG(LogTemp, Warning, TEXT("[CharacterSelect] 캐릭터 사용 해제: Index=%d, PlayerId='%s'"), FoundIndex, *PlayerId);
+		UsedCharacterMap.Remove(FoundType);
+		UE_LOG(LogTemp, Warning, TEXT("[CharacterSelect] 캐릭터 사용 해제: Type=%d, PlayerId='%s'"), 
+			static_cast<int32>(FoundType), *PlayerId);
 	}
 }
 
 // ============================================
 // 🎭 IsCharacterInUse - 캐릭터 사용 중 확인
 // ============================================
-bool AHellunaDefenseGameMode::IsCharacterInUse(int32 CharacterIndex) const
+bool AHellunaDefenseGameMode::IsCharacterInUse(EHellunaHeroType HeroType) const
 {
-	return UsedCharacterMap.Contains(CharacterIndex);
+	return UsedCharacterMap.Contains(HeroType);
 }
 
 // ============================================
@@ -1465,7 +1476,7 @@ TArray<bool> AHellunaDefenseGameMode::GetAvailableCharacters() const
 	// 캐릭터 3개 기준
 	for (int32 i = 0; i < 3; i++)
 	{
-		bool bAvailable = !IsCharacterInUse(i);
+		bool bAvailable = !IsCharacterInUse(IndexToHeroType(i));
 		Result.Add(bAvailable);
 	}
 
@@ -1474,6 +1485,25 @@ TArray<bool> AHellunaDefenseGameMode::GetAvailableCharacters() const
 		Result[1] ? TEXT("O") : TEXT("X"),
 		Result[2] ? TEXT("O") : TEXT("X"));
 
+	return Result;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 🎭 GetAvailableCharactersMap - 사용 가능한 캐릭터 맵 (TMap 버전)
+// ════════════════════════════════════════════════════════════════════════════════
+TMap<EHellunaHeroType, bool> AHellunaDefenseGameMode::GetAvailableCharactersMap() const
+{
+	TMap<EHellunaHeroType, bool> Result;
+	
+	Result.Add(EHellunaHeroType::Lui, !IsCharacterInUse(EHellunaHeroType::Lui));
+	Result.Add(EHellunaHeroType::Luna, !IsCharacterInUse(EHellunaHeroType::Luna));
+	Result.Add(EHellunaHeroType::Liam, !IsCharacterInUse(EHellunaHeroType::Liam));
+	
+	UE_LOG(LogTemp, Warning, TEXT("[CharacterSelect] GetAvailableCharactersMap: Lui=%s, Luna=%s, Liam=%s"),
+		Result[EHellunaHeroType::Lui] ? TEXT("O") : TEXT("X"),
+		Result[EHellunaHeroType::Luna] ? TEXT("O") : TEXT("X"),
+		Result[EHellunaHeroType::Liam] ? TEXT("O") : TEXT("X"));
+	
 	return Result;
 }
 

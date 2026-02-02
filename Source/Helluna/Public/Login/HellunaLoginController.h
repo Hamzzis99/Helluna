@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
+#include "HellunaTypes.h"
 #include "HellunaLoginController.generated.h"
 
 class UHellunaLoginWidget;

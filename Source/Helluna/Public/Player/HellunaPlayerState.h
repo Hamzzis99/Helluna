@@ -58,6 +58,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerState.h"
+#include "HellunaTypes.h"
 #include "HellunaPlayerState.generated.h"
 
 /**
@@ -97,16 +98,15 @@ public:
 	// ============================================
 	
 	/**
-	 * 선택한 캐릭터 인덱스
-	 * -1: 아직 캐릭터 미선택 (캐릭터 선택 UI 필요)
-	 *  0: Liam
-	 *  1: Lui
-	 *  2: Luna
+	 * 선택한 캐릭터 타입
+	 * None: 아직 캐릭터 미선택 (캐릭터 선택 UI 필요)
+	 * Lui/Luna/Liam: 해당 캐릭터 선택됨
 	 * 
 	 * SeamlessTravel 시에도 유지됨 (맵 이동 후 같은 캐릭터로 스폰)
 	 */
-	UPROPERTY(Replicated, BlueprintReadOnly, Category = "CharacterSelect", meta = (DisplayName = "선택한 캐릭터 인덱스"))
-	int32 SelectedCharacterIndex;
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Character Select (캐릭터 선택)", 
+		meta = (DisplayName = "선택한 캐릭터 타입"))
+	EHellunaHeroType SelectedHeroType;
 
 	// ============================================
 	// 📌 유틸리티 함수
@@ -144,31 +144,49 @@ public:
 	// ============================================
 
 	/**
-	 * 선택한 캐릭터 인덱스 설정 (서버에서만 호출)
-	 * @param InIndex - 캐릭터 인덱스 (0=Liam, 1=Lui, 2=Luna)
+	 * 선택한 캐릭터 타입 설정 (서버에서만 호출)
+	 * @param InHeroType - 캐릭터 타입 (EHellunaHeroType)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "CharacterSelect")
-	void SetSelectedCharacterIndex(int32 InIndex);
+	UFUNCTION(BlueprintCallable, Category = "Character Select (캐릭터 선택)")
+	void SetSelectedHeroType(EHellunaHeroType InHeroType);
 
 	/**
-	 * 선택한 캐릭터 인덱스 반환
-	 * @return 캐릭터 인덱스 (-1이면 미선택)
+	 * 선택한 캐릭터 타입 반환
+	 * @return 캐릭터 타입 (None이면 미선택)
 	 */
-	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "CharacterSelect")
-	int32 GetSelectedCharacterIndex() const { return SelectedCharacterIndex; }
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Character Select (캐릭터 선택)")
+	EHellunaHeroType GetSelectedHeroType() const { return SelectedHeroType; }
 
 	/**
 	 * 캐릭터가 선택되었는지 확인
 	 * @return 캐릭터가 선택되었으면 true
 	 */
-	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "CharacterSelect")
-	bool HasSelectedCharacter() const { return SelectedCharacterIndex >= 0; }
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Character Select (캐릭터 선택)")
+	bool HasSelectedCharacter() const { return SelectedHeroType != EHellunaHeroType::None; }
 
 	/**
 	 * 캐릭터 선택 초기화 (로그아웃 시 호출)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "CharacterSelect")
+	UFUNCTION(BlueprintCallable, Category = "Character Select (캐릭터 선택)")
 	void ClearSelectedCharacter();
+
+	// ============================================
+	// 📌 [호환성] 기존 Index 기반 함수
+	// ============================================
+	
+	/**
+	 * [호환성] 선택한 캐릭터 인덱스 설정
+	 * 내부적으로 EHellunaHeroType으로 변환됨
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Character Select (캐릭터 선택)")
+	void SetSelectedCharacterIndex(int32 InIndex);
+
+	/**
+	 * [호환성] 선택한 캐릭터 인덱스 반환
+	 * @return 캐릭터 인덱스 (-1이면 미선택, 0=Lui, 1=Luna, 2=Liam)
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Character Select (캐릭터 선택)")
+	int32 GetSelectedCharacterIndex() const;
 
 protected:
 	// ============================================

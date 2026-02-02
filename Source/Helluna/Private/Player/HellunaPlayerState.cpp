@@ -46,6 +46,7 @@
 // ============================================
 
 #include "Player/HellunaPlayerState.h"
+#include "HellunaTypes.h"
 #include "Net/UnrealNetwork.h"
 
 AHellunaPlayerState::AHellunaPlayerState()
@@ -53,7 +54,7 @@ AHellunaPlayerState::AHellunaPlayerState()
 	// 기본값 초기화
 	PlayerUniqueId = TEXT("");
 	bIsLoggedIn = false;
-	SelectedCharacterIndex = -1;  // -1 = 미선택
+	SelectedHeroType = EHellunaHeroType::None;  // None = 미선택
 }
 
 void AHellunaPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -66,7 +67,7 @@ void AHellunaPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& 
 	// ============================================
 	DOREPLIFETIME(AHellunaPlayerState, PlayerUniqueId);
 	DOREPLIFETIME(AHellunaPlayerState, bIsLoggedIn);
-	DOREPLIFETIME(AHellunaPlayerState, SelectedCharacterIndex);
+	DOREPLIFETIME(AHellunaPlayerState, SelectedHeroType);
 }
 
 // ============================================
@@ -141,28 +142,41 @@ void AHellunaPlayerState::ClearLoginInfo()
 }
 
 // ============================================
-// 🎭 SetSelectedCharacterIndex - 캐릭터 선택 인덱스 설정
+// 🎭 SetSelectedHeroType - 캐릭터 타입 설정
 // ============================================
-// 
-// 📌 호출 시점: 캐릭터 선택 UI에서 선택 완료 시
-// 
-// 📌 매개변수:
-//    - InIndex: 캐릭터 인덱스 (0=Liam, 1=Lui, 2=Luna)
-// 
-// 📌 SeamlessTravel:
-//    - Replicated이므로 맵 이동 후에도 유지됨
-//    - HandleSeamlessTravelPlayer에서 백업/복원 처리
-// ============================================
-void AHellunaPlayerState::SetSelectedCharacterIndex(int32 InIndex)
+void AHellunaPlayerState::SetSelectedHeroType(EHellunaHeroType InHeroType)
 {
 	if (!HasAuthority())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[HellunaPlayerState] SetSelectedCharacterIndex는 서버에서만 호출해야 합니다!"));
+		UE_LOG(LogTemp, Warning, TEXT("[HellunaPlayerState] SetSelectedHeroType는 서버에서만 호출해야 합니다!"));
 		return;
 	}
 
-	SelectedCharacterIndex = InIndex;
-	UE_LOG(LogTemp, Log, TEXT("[HellunaPlayerState] 캐릭터 선택: Index = %d"), SelectedCharacterIndex);
+	SelectedHeroType = InHeroType;
+	UE_LOG(LogTemp, Log, TEXT("[HellunaPlayerState] 캐릭터 선택: %s (Index: %d)"), 
+		*UEnum::GetValueAsString(SelectedHeroType), HeroTypeToIndex(SelectedHeroType));
+}
+
+// ============================================
+// 🎭 SetSelectedCharacterIndex - [호환성] 인덱스로 캐릭터 설정
+// ============================================
+// 
+// 📌 호출 시점: 기존 코드와의 호환성을 위해 유지
+// 
+// 📌 매개변수:
+//    - InIndex: 캐릭터 인덱스 (0=Lui, 1=Luna, 2=Liam)
+// ============================================
+void AHellunaPlayerState::SetSelectedCharacterIndex(int32 InIndex)
+{
+	SetSelectedHeroType(IndexToHeroType(InIndex));
+}
+
+// ============================================
+// 🎭 GetSelectedCharacterIndex - [호환성] 인덱스로 반환
+// ============================================
+int32 AHellunaPlayerState::GetSelectedCharacterIndex() const
+{
+	return HeroTypeToIndex(SelectedHeroType);
 }
 
 // ============================================
@@ -172,7 +186,7 @@ void AHellunaPlayerState::SetSelectedCharacterIndex(int32 InIndex)
 // 📌 호출 시점: 로그아웃 시 (ClearLoginInfo와 함께)
 // 
 // 📌 역할:
-//    - SelectedCharacterIndex = -1로 초기화
+//    - SelectedHeroType = None으로 초기화
 //    - 다음 로그인 시 캐릭터 선택 UI 다시 표시
 // ============================================
 void AHellunaPlayerState::ClearSelectedCharacter()
@@ -183,6 +197,7 @@ void AHellunaPlayerState::ClearSelectedCharacter()
 		return;
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[HellunaPlayerState] 캐릭터 선택 초기화 (이전: %d)"), SelectedCharacterIndex);
-	SelectedCharacterIndex = -1;
+	UE_LOG(LogTemp, Log, TEXT("[HellunaPlayerState] 캐릭터 선택 초기화 (이전: %s)"), 
+		*UEnum::GetValueAsString(SelectedHeroType));
+	SelectedHeroType = EHellunaHeroType::None;
 }

@@ -46,6 +46,7 @@
 #include "GameMode/HellunaBaseGameMode.h"
 #include "Player/Inv_PlayerController.h"
 #include "Inventory/HellunaInventorySaveGame.h"
+#include "HellunaTypes.h"
 #include "HellunaDefenseGameMode.generated.h"
 
 class ATargetPoint;
@@ -110,9 +111,9 @@ protected:
 	// 🎭 캐릭터 선택 시스템 (CHARACTER SELECT SYSTEM)
 	// ═══════════════════════════════════════════════════════════════════════════════
 	// 
-	// 📌 구조:
-	//    - HeroCharacterClasses: [0]=Liam, [1]=Lui, [2]=Luna
-	//    - UsedCharacterMap: 현재 사용 중인 캐릭터 추적 (인덱스 → PlayerId)
+	// 📌 구조 (Enum + TMap 방식):
+	//    - HeroCharacterMap: EHellunaHeroType → 캐릭터 클래스 (명확한 매핑!)
+	//    - UsedCharacterMap: 현재 사용 중인 캐릭터 추적 (타입 → PlayerId)
 	// 
 	// 📌 흐름:
 	//    1. 로그인 성공 → 캐릭터 선택 UI 표시
@@ -120,30 +121,44 @@ protected:
 	//    3. 선택 → UsedCharacterMap에 등록 → SpawnHeroCharacter
 	//    4. 로그아웃 → UsedCharacterMap에서 해제
 	// 
-	// 📌 SeamlessTravel:
-	//    - PlayerState.SelectedCharacterIndex로 캐릭터 유지
-	//    - 맵 이동 후 같은 캐릭터로 스폰 (캐릭터 선택 UI 스킵)
+	// 📌 BP 설정:
+	//    HeroCharacterMap에서 각 캐릭터 타입에 클래스 매핑
+	//    예: Lui → BP_HellunaHero_Lui
 	// 
 	// ═══════════════════════════════════════════════════════════════════════════════
 
 	/** 
-	 * 선택 가능한 히어로 캐릭터 클래스 배열
-	 * [0] = Liam, [1] = Lui, [2] = Luna
-	 * BP에서 3개 설정 필수!
+	 * 🎭 히어로 캐릭터 클래스 매핑 (TMap)
+	 * 
+	 * BP에서 설정:
+	 *   - Lui  → BP_HellunaHero_Lui
+	 *   - Luna → BP_HellunaHero_Luna
+	 *   - Liam → BP_HellunaHero_Liam
+	 * 
+	 * 순서 상관없이 명확하게 매핑됨!
 	 */
-	UPROPERTY(EditDefaultsOnly, Category = "CharacterSelect", meta = (DisplayName = "히어로 캐릭터 클래스 배열"))
+	UPROPERTY(EditDefaultsOnly, Category = "Character Select (캐릭터 선택)", 
+		meta = (DisplayName = "히어로 캐릭터 클래스 매핑"))
+	TMap<EHellunaHeroType, TSubclassOf<APawn>> HeroCharacterMap;
+
+	/**
+	 * [Deprecated] 기존 배열 방식 - 호환성 유지용
+	 * HeroCharacterMap 사용 권장!
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Character Select (캐릭터 선택)", 
+		meta = (DisplayName = "[구버전] 히어로 캐릭터 클래스 배열", DeprecatedProperty))
 	TArray<TSubclassOf<APawn>> HeroCharacterClasses;
 
 	/**
 	 * 현재 사용 중인 캐릭터 맵
-	 * Key: 캐릭터 인덱스 (0, 1, 2)
+	 * Key: EHellunaHeroType
 	 * Value: 사용 중인 플레이어 ID
 	 * 
 	 * 로그인 중인 플레이어만 등록됨
 	 * 로그아웃 시 자동 해제
 	 */
 	UPROPERTY()
-	TMap<int32, FString> UsedCharacterMap;
+	TMap<EHellunaHeroType, FString> UsedCharacterMap;
 
 	/** 계정 데이터 (ID/PW 저장) */
 	UPROPERTY()
@@ -168,7 +183,7 @@ protected:
 	void OnLoginSuccess(APlayerController* PlayerController, const FString& PlayerId);
 	void OnLoginFailed(APlayerController* PlayerController, const FString& ErrorMessage);
 	void OnLoginTimeout(APlayerController* PlayerController);
-	void SwapToGameController(AHellunaLoginController* LoginController, const FString& PlayerId);
+	void SwapToGameController(AHellunaLoginController* LoginController, const FString& PlayerId, EHellunaHeroType SelectedHeroType = EHellunaHeroType::None);
 	void SpawnHeroCharacter(APlayerController* PlayerController);
 
 	// ─────────────────────────────────────────────────────────────────────────────
@@ -180,12 +195,12 @@ protected:
 	 * LoginController::Server_SelectCharacter RPC에서 호출
 	 * 
 	 * @param PlayerController - 선택 요청한 Controller
-	 * @param CharacterIndex - 선택한 캐릭터 인덱스 (0: Lui, 1: Luna, 2: Liam)
+	 * @param HeroType - 선택한 캐릭터 타입 (EHellunaHeroType)
 	 * 
-	 * 성공 시: SelectedCharacterIndex 설정 → SwapToGameController → SpawnHeroCharacter
+	 * 성공 시: SelectedHeroType 설정 → SwapToGameController → SpawnHeroCharacter
 	 * 실패 시: Client_CharacterSelectionResult(false, ErrorMessage) RPC
 	 */
-	void ProcessCharacterSelection(APlayerController* PlayerController, int32 CharacterIndex);
+	void ProcessCharacterSelection(APlayerController* PlayerController, EHellunaHeroType HeroType);
 
 	// ─────────────────────────────────────────────────────────────────────────────
 	// 🎭 캐릭터 선택 관련 함수
@@ -193,10 +208,10 @@ protected:
 
 	/**
 	 * 캐릭터 사용 등록
-	 * @param CharacterIndex - 캐릭터 인덱스 (0=Liam, 1=Lui, 2=Luna)
+	 * @param HeroType - 캐릭터 타입
 	 * @param PlayerId - 사용할 플레이어 ID
 	 */
-	void RegisterCharacterUse(int32 CharacterIndex, const FString& PlayerId);
+	void RegisterCharacterUse(EHellunaHeroType HeroType, const FString& PlayerId);
 
 	/**
 	 * 캐릭터 사용 해제 (로그아웃 시 호출)
@@ -206,17 +221,31 @@ protected:
 
 	/**
 	 * 특정 캐릭터가 사용 중인지 확인
-	 * @param CharacterIndex - 확인할 캐릭터 인덱스
+	 * @param HeroType - 확인할 캐릭터 타입
 	 * @return 사용 중이면 true
 	 */
-	bool IsCharacterInUse(int32 CharacterIndex) const;
+	bool IsCharacterInUse(EHellunaHeroType HeroType) const;
+
+	/**
+	 * HeroType으로 캐릭터 클래스 가져오기
+	 * @param HeroType - 캐릭터 타입
+	 * @return 캐릭터 클래스 (없으면 nullptr)
+	 */
+	TSubclassOf<APawn> GetHeroCharacterClass(EHellunaHeroType HeroType) const;
 
 public:
 	/**
 	 * 사용 가능한 캐릭터 목록 반환 (UI용)
-	 * @return 각 캐릭터의 사용 가능 여부 배열 [Liam, Lui, Luna]
+	 * @return 각 캐릭터 타입의 사용 가능 여부 맵
 	 */
-	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "CharacterSelect")
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Character Select (캐릭터 선택)")
+	TMap<EHellunaHeroType, bool> GetAvailableCharactersMap() const;
+
+	/**
+	 * [호환성] 사용 가능한 캐릭터 목록 반환 (배열 버전)
+	 * @return 각 캐릭터의 사용 가능 여부 배열 [Lui, Luna, Liam]
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Character Select (캐릭터 선택)")
 	TArray<bool> GetAvailableCharacters() const;
 
 	// ════════════════════════════════════════════════════════════════════════════════

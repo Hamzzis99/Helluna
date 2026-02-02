@@ -322,7 +322,10 @@ void AHellunaLoginController::Server_SelectCharacter_Implementation(int32 Charac
 	AHellunaDefenseGameMode* GM = Cast<AHellunaDefenseGameMode>(GetWorld()->GetAuthGameMode());
 	if (GM)
 	{
-		GM->ProcessCharacterSelection(this, CharacterIndex);
+		// int32 → EHellunaHeroType 변환
+		EHellunaHeroType HeroType = IndexToHeroType(CharacterIndex);
+		UE_LOG(LogTemp, Warning, TEXT("[LoginController] 🎭 HeroType: %s"), *UEnum::GetValueAsString(HeroType));
+		GM->ProcessCharacterSelection(this, HeroType);
 	}
 	else
 	{
