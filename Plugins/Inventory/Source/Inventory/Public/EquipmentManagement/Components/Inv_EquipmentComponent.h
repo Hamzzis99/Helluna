@@ -85,6 +85,9 @@ public:
 protected:
 
 	virtual void BeginPlay() override;
+	
+	// 🆕 [Phase 6] 컴포넌트 파괴 시 장착 액터 정리
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
 	TWeakObjectPtr<UInv_InventoryComponent> InventoryComponent;

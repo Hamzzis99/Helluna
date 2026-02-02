@@ -41,6 +41,37 @@ void UInv_EquipmentComponent::BeginPlay()
 	InitPlayerController();
 }
 
+// ============================================
+// 🆕 [Phase 6] 컴포넌트 파괴 시 장착 액터 정리
+// ============================================
+void UInv_EquipmentComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔══════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║ [EquipmentComponent] EndPlay - 장착 액터 정리                 ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠══════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ EndPlayReason: %d"), static_cast<int32>(EndPlayReason));
+	UE_LOG(LogTemp, Warning, TEXT("║ EquippedActors 개수: %d"), EquippedActors.Num());
+	UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════╝"));
+
+	// 모든 장착 액터 파괴
+	for (TObjectPtr<AInv_EquipActor>& EquipActor : EquippedActors)
+	{
+		if (EquipActor.Get() && IsValid(EquipActor.Get()))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("   🗑️ 장착 액터 파괴: %s (Slot: %d)"), 
+				*EquipActor->GetName(), EquipActor->GetWeaponSlotIndex());
+			EquipActor->Destroy();
+		}
+	}
+	EquippedActors.Empty();
+	
+	UE_LOG(LogTemp, Warning, TEXT("   ✅ 장착 액터 정리 완료!"));
+	UE_LOG(LogTemp, Warning, TEXT(""));
+
+	Super::EndPlay(EndPlayReason);
+}
+
 // 플레이어 컨트롤러 초기화
 void UInv_EquipmentComponent::InitPlayerController()
 {
