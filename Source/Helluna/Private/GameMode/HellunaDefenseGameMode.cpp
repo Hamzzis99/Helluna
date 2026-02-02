@@ -1543,6 +1543,7 @@ void AHellunaDefenseGameMode::HandleSeamlessTravelPlayer(AController*& C)
 	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 	
 	FString SavedPlayerId;
+	EHellunaHeroType SavedHeroType = EHellunaHeroType::None;
 	bool bSavedIsLoggedIn = false;
 	
 	// ============================================
@@ -1556,6 +1557,7 @@ void AHellunaDefenseGameMode::HandleSeamlessTravelPlayer(AController*& C)
 		if (AHellunaPlayerState* OldPS = C->GetPlayerState<AHellunaPlayerState>())
 		{
 			SavedPlayerId = OldPS->GetPlayerUniqueId();
+			SavedHeroType = OldPS->GetSelectedHeroType();
 			bSavedIsLoggedIn = OldPS->IsLoggedIn();
 			UE_LOG(LogTemp, Warning, TEXT("[1단계] 이전 PlayerState 정보 저장 완료"));
 			UE_LOG(LogTemp, Warning, TEXT("  - PlayerId: '%s'"), *SavedPlayerId);
@@ -1592,6 +1594,8 @@ void AHellunaDefenseGameMode::HandleSeamlessTravelPlayer(AController*& C)
 		if (AHellunaPlayerState* NewPS = C->GetPlayerState<AHellunaPlayerState>())
 		{
 			NewPS->SetLoginInfo(SavedPlayerId);
+			NewPS->SetSelectedHeroType(SavedHeroType);
+			UE_LOG(LogTemp, Warning, TEXT("║ SeamlessTravel: SelectedHeroType 복원: %s"), *UEnum::GetValueAsString(SavedHeroType));
 			UE_LOG(LogTemp, Warning, TEXT("[3단계] PlayerId 복원 완료: '%s' -> %s"), *SavedPlayerId, *NewPS->GetName());
 		}
 		else
@@ -1621,7 +1625,7 @@ void AHellunaDefenseGameMode::HandleSeamlessTravelPlayer(AController*& C)
 			if (TraveledPC)
 			{
 				FTimerHandle TimerHandle;
-				GetWorldTimerManager().SetTimer(TimerHandle, [this, TraveledPC, SavedPlayerId]()
+				GetWorldTimerManager().SetTimer(TimerHandle, [this, TraveledPC, SavedPlayerId, SavedHeroType]()
 				{
 					UE_LOG(LogTemp, Warning, TEXT(""));
 					UE_LOG(LogTemp, Warning, TEXT("[타이머] Controller 스왑 실행!"));
@@ -1632,7 +1636,7 @@ void AHellunaDefenseGameMode::HandleSeamlessTravelPlayer(AController*& C)
 						if (LoginController && LoginController->GetGameControllerClass())
 						{
 							UE_LOG(LogTemp, Warning, TEXT("  -> LoginController -> SwapToGameController"));
-							SwapToGameController(LoginController, SavedPlayerId);
+							SwapToGameController(LoginController, SavedPlayerId, SavedHeroType);
 						}
 						else
 						{
