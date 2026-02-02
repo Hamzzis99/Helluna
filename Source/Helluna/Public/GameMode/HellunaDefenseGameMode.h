@@ -72,6 +72,9 @@ class HELLUNA_API AHellunaDefenseGameMode : public AHellunaBaseGameMode
 {
 	GENERATED_BODY()
 	
+	// LoginController에서 SwapToGameController 접근 허용
+	friend class AHellunaLoginController;
+	
 public:
 	AHellunaDefenseGameMode();
 	virtual void BeginPlay() override;
