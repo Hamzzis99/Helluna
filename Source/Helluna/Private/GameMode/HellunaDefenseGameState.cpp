@@ -2,6 +2,7 @@
 
 
 #include "GameMode/HellunaDefenseGameState.h"
+#include "GameMode/HellunaDefenseGameMode.h"
 #include "Net/UnrealNetwork.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 #include "DebugHelper.h"
@@ -211,6 +212,18 @@ void AHellunaDefenseGameState::Server_SaveAndMoveLevel(FName NextLevelName)
     }
 
     UE_LOG(LogTemp, Warning, TEXT("[HellunaGameState] 맵 이동 요청(%s). 저장 및 플래그 설정..."), *NextLevelName.ToString());
+
+    // ============================================
+    // 0. 모든 플레이어 인벤토리 저장 (맵 이동 전!)
+    // ============================================
+    if (AHellunaDefenseGameMode* GM = GetWorld()->GetAuthGameMode<AHellunaDefenseGameMode>())
+    {
+        GM->SaveAllPlayersInventory();
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[HellunaGameState] ⚠️ GameMode 없음 - 인벤토리 저장 생략"));
+    }
 
     // 1. 이동 전 현재 상태를 디스크에 저장
     WriteDataToDisk();

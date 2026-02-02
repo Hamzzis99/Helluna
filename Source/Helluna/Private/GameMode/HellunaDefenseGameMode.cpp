@@ -107,6 +107,8 @@
 #include "GameplayTagContainer.h"               // FGameplayTag
 #include "Items/Components/Inv_ItemComponent.h" // Phase 5: 아이템 스폰용
 #include "InventoryManagement/Components/Inv_InventoryComponent.h" // Phase 5: 인벤토리 컴포넌트                 
+#include "EquipmentManagement/Components/Inv_EquipmentComponent.h" // Phase 6: 장착 컴포넌트
+#include "EquipmentManagement/EquipActor/Inv_EquipActor.h"         // Phase 6: 장착 액터
 #include "GameFramework/PlayerController.h"
 #include "GameMode/HellunaDefenseGameState.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
@@ -396,6 +398,125 @@ void AHellunaDefenseGameMode::PostLogin(APlayerController* NewPlayer)
 // 📌 계정 데이터 저장 위치:
 //    Saved/SaveGames/HellunaAccounts.sav
 // ============================================
+// ============================================
+// 📌 모든 플레이어 인벤토리 저장 (맵 이동 전 호출)
+// ============================================
+// 
+// 📌 호출 시점: Server_SaveAndMoveLevel에서 ServerTravel 전
+// 
+// 📌 목적: SeamlessTravel 중에는 EndPlay가 정상 작동 안 하므로
+//         미리 모든 플레이어의 인벤토리를 저장
+// ============================================
+int32 AHellunaDefenseGameMode::SaveAllPlayersInventory()
+{
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║  [GameMode] SaveAllPlayersInventory - 맵 이동 전 저장      ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+
+	int32 SavedCount = 0;
+
+	// 모든 PlayerController 순회
+	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	{
+		APlayerController* PC = It->Get();
+		if (!IsValid(PC))
+		{
+			continue;
+		}
+
+		// PlayerState에서 PlayerId 가져오기
+		AHellunaPlayerState* PS = PC->GetPlayerState<AHellunaPlayerState>();
+		if (!PS || !PS->IsLoggedIn())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("  ⚠️ PC '%s' - 미로그인 상태 (건너뜀)"), *PC->GetName());
+			continue;
+		}
+
+		FString PlayerId = PS->GetPlayerUniqueId();
+		if (PlayerId.IsEmpty())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("  ⚠️ PC '%s' - PlayerId 없음 (건너뜀)"), *PC->GetName());
+			continue;
+		}
+
+		// InventoryComponent 찾기
+		UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
+		if (!InvComp)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("  ⚠️ PC '%s' - InventoryComponent 없음 (건너뜀)"), *PC->GetName());
+			continue;
+		}
+
+		// 인벤토리 데이터 수집
+		TArray<FInv_SavedItemData> CollectedItems = InvComp->CollectInventoryDataForSave();
+		
+		// ============================================
+		// 🆕 [Phase 6] EquipmentComponent에서 장착 상태 추가
+		// ============================================
+		UInv_EquipmentComponent* EquipComp = PC->FindComponentByClass<UInv_EquipmentComponent>();
+		if (EquipComp)
+		{
+			TMap<int32, FGameplayTag> SlotToItemMap;
+			const TArray<TObjectPtr<AInv_EquipActor>>& EquippedActors = EquipComp->GetEquippedActors();
+			
+			UE_LOG(LogTemp, Warning, TEXT("  ⚔️ [Phase 6] EquippedActors: %d개"), EquippedActors.Num());
+			
+			for (const TObjectPtr<AInv_EquipActor>& EquipActor : EquippedActors)
+			{
+				if (EquipActor.Get())
+				{
+					FGameplayTag ItemType = EquipActor->GetEquipmentType();
+					int32 SlotIndex = EquipActor->GetWeaponSlotIndex();
+					SlotToItemMap.Add(SlotIndex, ItemType);
+					
+					UE_LOG(LogTemp, Warning, TEXT("       장착됨: Slot %d → %s"), SlotIndex, *ItemType.ToString());
+				}
+			}
+			
+			// CollectedItems에 장착 상태 추가
+			int32 EquippedCount = 0;
+			for (auto& Pair : SlotToItemMap)
+			{
+				int32 SlotIndex = Pair.Key;
+				FGameplayTag& ItemType = Pair.Value;
+				
+				for (FInv_SavedItemData& Item : CollectedItems)
+				{
+					if (Item.ItemType == ItemType && !Item.bEquipped)
+					{
+						Item.bEquipped = true;
+						Item.WeaponSlotIndex = SlotIndex;
+						EquippedCount++;
+						
+						UE_LOG(LogTemp, Warning, TEXT("       ✅ %s → bEquipped=true, WeaponSlotIndex=%d"),
+							*Item.ItemType.ToString(), SlotIndex);
+						break;
+					}
+				}
+			}
+			
+			UE_LOG(LogTemp, Warning, TEXT("  ⚔️ [Phase 6] 장착 상태 추가 완료: %d개"), EquippedCount);
+		}
+		
+		UE_LOG(LogTemp, Warning, TEXT("  ✅ PlayerId: '%s' - %d개 아이템 수집"), *PlayerId, CollectedItems.Num());
+
+		// 저장
+		if (CollectedItems.Num() > 0)
+		{
+			SaveInventoryFromCharacterEndPlay(PlayerId, CollectedItems);
+			SavedCount++;
+		}
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║  📊 저장 완료: %d명의 인벤토리 저장됨                       "), SavedCount);
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+
+	return SavedCount;
+}
+
 void AHellunaDefenseGameMode::ProcessLogin(APlayerController* PlayerController, const FString& PlayerId, const FString& Password)
 {
 	Debug::Print(TEXT("[DefenseGameMode] ProcessLogin"), FColor::Yellow);
@@ -2435,12 +2556,16 @@ void AHellunaDefenseGameMode::SaveInventoryFromCharacterEndPlay(const FString& P
 
 		SaveData.Items.Add(DestItem);
 
-		UE_LOG(LogTemp, Warning, TEXT("   [%d] %s x%d @ Grid%d (%d,%d)"),
+		// 🆕 장착 상태 디버그 로그 추가
+		UE_LOG(LogTemp, Warning, TEXT("   [%d] %s x%d @ Grid%d (%d,%d) | bEquipped=%s, SlotIdx=%d → EquipSlotIndex=%d"),
 			SaveData.Items.Num() - 1,
 			*Item.ItemType.ToString(),
 			Item.StackCount,
 			Item.GridCategory,
-			Item.GridPosition.X, Item.GridPosition.Y);
+			Item.GridPosition.X, Item.GridPosition.Y,
+			Item.bEquipped ? TEXT("TRUE ✅") : TEXT("FALSE"),
+			Item.WeaponSlotIndex,
+			DestItem.EquipSlotIndex);
 	}
 
 	// SaveGame에 저장

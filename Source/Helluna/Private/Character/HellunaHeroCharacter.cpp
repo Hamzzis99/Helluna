@@ -30,6 +30,8 @@
 #include "Player/HellunaPlayerState.h"
 #include "GameMode/HellunaDefenseGameMode.h"
 #include "Player/Inv_PlayerController.h"  // FInv_SavedItemData
+// ⭐ [Phase 6 Fix] 맵 이동 중 저장 스킵용
+#include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
 
 #include "DebugHelper.h"
 
@@ -101,6 +103,15 @@ void AHellunaHeroCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	// 서버에서만 저장 처리
 	if (HasAuthority())
 	{
+		// ⭐ [Phase 6 Fix] 맵 이동 중이면 저장 스킵 (SaveAllPlayersInventory에서 이미 저장했음!)
+		UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(UGameplayStatics::GetGameInstance(GetWorld()));
+		if (GI && GI->bIsMapTransitioning)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[EndPlay] ⚠️ 맵 이동 중! SaveAllPlayersInventory에서 이미 저장했으므로 스킵"));
+			Super::EndPlay(EndPlayReason);
+			return;
+		}
+		
 		// ⭐ PlayerController에서 InventoryComponent 찾기 (Character가 아님!)
 		APlayerController* PC = Cast<APlayerController>(GetController());
 		UInv_InventoryComponent* InvComp = PC ? PC->FindComponentByClass<UInv_InventoryComponent>() : nullptr;

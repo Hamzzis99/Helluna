@@ -102,6 +102,19 @@ public:
 	void ProcessLogin(APlayerController* PlayerController, const FString& PlayerId, const FString& Password);
 
 	/**
+	 * 모든 플레이어의 인벤토리 저장 (맵 이동 전 호출)
+	 * 
+	 * @return 저장된 플레이어 수
+	 * 
+	 * 내부 동작:
+	 * 1. 모든 PlayerController 순회
+	 * 2. 각 플레이어의 InventoryComponent에서 아이템 수집
+	 * 3. SaveInventoryFromCharacterEndPlay() 호출
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Inventory")
+	int32 SaveAllPlayersInventory();
+
+	/**
 	 * 특정 플레이어가 현재 접속 중인지 확인
 	 * 
 	 * @param PlayerId - 확인할 플레이어 ID
