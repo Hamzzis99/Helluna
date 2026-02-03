@@ -2,6 +2,7 @@
 
 
 #include "Widgets/Inventory/GridSlots/Inv_EquippedGridSlot.h"
+#include "Inventory.h"
 
 #include "Blueprint/WidgetLayoutLibrary.h"
 #include "Components/Image.h"
@@ -52,6 +53,7 @@ FReply UInv_EquippedGridSlot::NativeOnMouseButtonDown(const FGeometry& InGeometr
 // 아이템 장착 시 호출되는 상황들. 단계별로.
 UInv_EquippedSlottedItem* UInv_EquippedGridSlot::OnItemEquipped(UInv_InventoryItem* Item, const FGameplayTag& EquipmentTag, float TileSize)
 {
+#if INV_DEBUG_EQUIP
 	// 🔍 [Phase 8] 디버깅 로그 시작
 	UE_LOG(LogTemp, Warning, TEXT("╔══════════════════════════════════════════════════════════════╗"));
 	UE_LOG(LogTemp, Warning, TEXT("║  🔧 [OnItemEquipped] 장착 위젯 생성 시작                      ║"));
@@ -61,48 +63,63 @@ UInv_EquippedSlottedItem* UInv_EquippedGridSlot::OnItemEquipped(UInv_InventoryIt
 	UE_LOG(LogTemp, Warning, TEXT("║ EquipmentTypeTag(슬롯): %s"), *EquipmentTypeTag.ToString());
 	UE_LOG(LogTemp, Warning, TEXT("║ TileSize: %.1f"), TileSize);
 	UE_LOG(LogTemp, Warning, TEXT("║ WeaponSlotIndex: %d"), WeaponSlotIndex);
+#endif
 	
 	// Check the Equipment Type Tag
 	// 장비 유형 태그 확인 (MatchesTag로 변경 - 하위 태그도 허용)
 	// 예: 슬롯이 GameItems.Equipment.Weapons면 GameItems.Equipment.Weapons.Axe도 장착 가능
 	if (!EquipmentTag.MatchesTag(EquipmentTypeTag))
 	{
+#if INV_DEBUG_EQUIP
 		UE_LOG(LogTemp, Error, TEXT("║ ❌ 태그 불일치! 장착 실패"));
 		UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════╝"));
+#endif
 		return nullptr;
 	}
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("║ ✅ 태그 매칭 성공!"));
+#endif
 	
 	// Get Grid Dimensions
 	// 그리드 크기 가져오기
 	const FInv_GridFragment* GridFragment = GetFragment<FInv_GridFragment>(Item, FragmentTags::GridFragment);
 	if (!GridFragment)
 	{
+#if INV_DEBUG_EQUIP
 		UE_LOG(LogTemp, Error, TEXT("║ ❌ GridFragment nullptr!"));
 		UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════╝"));
+#endif
 		return nullptr;
 	}
 	const FIntPoint GridDimensions = GridFragment->GetGridSize();
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("║ GridDimensions: (%d, %d)"), GridDimensions.X, GridDimensions.Y);
 	UE_LOG(LogTemp, Warning, TEXT("║ GridPadding: %.1f"), GridFragment->GetGridPadding());
+#endif
 	
 	// Calculate the Draw Size for the Equipped Slotted Item
 	// 장착된 슬롯 아이템의 그리기 크기 계산
 	const float IconTileWidth = TileSize - GridFragment->GetGridPadding() * 2;
 	const FVector2D DrawSize = GridDimensions * IconTileWidth;
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("║ IconTileWidth: %.1f"), IconTileWidth);
 	UE_LOG(LogTemp, Warning, TEXT("║ DrawSize: (%.1f, %.1f)"), DrawSize.X, DrawSize.Y);
+#endif
 	
 	// Create the Equipped Slotted Item Widget
 	// 장착된 슬롯 아이템 위젯 생성
 	EquippedSlottedItem = CreateWidget<UInv_EquippedSlottedItem>(GetOwningPlayer(), EquippedSlottedItemClass);
 	if (!IsValid(EquippedSlottedItem))
 	{
+#if INV_DEBUG_EQUIP
 		UE_LOG(LogTemp, Error, TEXT("║ ❌ EquippedSlottedItem 생성 실패!"));
 		UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════╝"));
+#endif
 		return nullptr;
 	}
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("║ ✅ EquippedSlottedItem 생성 성공!"));
+#endif
 	
 	// Set the Slotted Item's Inventory Item
 	// 슬롯 아이템의 인벤토리 아이템 설정
@@ -125,12 +142,16 @@ UInv_EquippedSlottedItem* UInv_EquippedGridSlot::OnItemEquipped(UInv_InventoryIt
 	const FInv_ImageFragment* ImageFragment = GetFragment<FInv_ImageFragment>(Item, FragmentTags::IconFragment);
 	if (!ImageFragment)
 	{
+#if INV_DEBUG_EQUIP
 		UE_LOG(LogTemp, Error, TEXT("║ ❌ ImageFragment nullptr!"));
 		UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════╝"));
+#endif
 		return nullptr;
 	}
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("║ ✅ ImageFragment 유효!"));
 	UE_LOG(LogTemp, Warning, TEXT("║ Icon: %s"), ImageFragment->GetIcon() ? *ImageFragment->GetIcon()->GetName() : TEXT("nullptr"));
+#endif
 
 	FSlateBrush Brush;
 	Brush.SetResourceObject(ImageFragment->GetIcon());
@@ -138,7 +159,9 @@ UInv_EquippedSlottedItem* UInv_EquippedGridSlot::OnItemEquipped(UInv_InventoryIt
 	Brush.ImageSize = DrawSize;
 	
 	EquippedSlottedItem->SetImageBrush(Brush);
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("║ ✅ 이미지 브러시 설정 완료!"));
+#endif
 	
 	// 🆕 [Phase 8] DrawSize 캐시 (RefreshLayout용)
 	CachedDrawSize = DrawSize;
@@ -146,16 +169,20 @@ UInv_EquippedSlottedItem* UInv_EquippedGridSlot::OnItemEquipped(UInv_InventoryIt
 	// Add the Slotted Item as a child to this widget's Overlay
 	// 이 위젯의 오버레이에 슬롯 아이템을 자식으로 추가
 	Overlay_Root->AddChildToOverlay(EquippedSlottedItem);
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("║ ✅ Overlay에 추가 완료!"));
+#endif
 	
 	// 🆕 [Phase 8] Alignment를 Center로 설정 (Padding 계산 대신 - 더 안정적!)
 	UOverlaySlot* OverlaySlot = UWidgetLayoutLibrary::SlotAsOverlaySlot(EquippedSlottedItem);
 	OverlaySlot->SetHorizontalAlignment(EHorizontalAlignment::HAlign_Center);
 	OverlaySlot->SetVerticalAlignment(EVerticalAlignment::VAlign_Center);
 	
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("║ ✅ Alignment Center 설정 완료!"));
 	UE_LOG(LogTemp, Warning, TEXT("║ EquippedSlottedItem Visibility: %d"), (int32)EquippedSlottedItem->GetVisibility());
 	UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════╝"));
+#endif
 	
 	// Return the Equipped Slotted Item
 	// 장착된 슬롯 아이템 반환
@@ -196,7 +223,9 @@ void UInv_EquippedGridSlot::RefreshLayout()
 	
 	if (OverlaySize.IsNearlyZero())
 	{
+#if INV_DEBUG_EQUIP
 		UE_LOG(LogTemp, Warning, TEXT("[RefreshLayout] OverlaySize가 여전히 0, 스킵"));
+#endif
 		return;
 	}
 	
@@ -208,7 +237,9 @@ void UInv_EquippedGridSlot::RefreshLayout()
 	if (OverlaySlot)
 	{
 		OverlaySlot->SetPadding(FMargin(LeftPadding, TopPadding));
+#if INV_DEBUG_EQUIP
 		UE_LOG(LogTemp, Warning, TEXT("[RefreshLayout] 슬롯 %d: Padding 재설정 (%.1f, %.1f)"), 
 			WeaponSlotIndex, LeftPadding, TopPadding);
+#endif
 	}
 }

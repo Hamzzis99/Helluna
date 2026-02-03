@@ -1,4 +1,5 @@
 #include "Items/Fragments/Inv_ItemFragment.h"
+#include "Inventory.h"
 
 #include "EquipmentManagement/EquipActor/Inv_EquipActor.h"
 #include "Widgets/Composite/Inv_CompositeBase.h"
@@ -242,6 +243,7 @@ void FInv_EquipmentFragment::Manifest()
 // 장비 아이템을 장착 시 캐릭터에 장착 시켜주는 것.
 AInv_EquipActor* FInv_EquipmentFragment::SpawnAttachedActor(USkeletalMeshComponent* AttachMesh, int32 WeaponSlotIndex) const
 {
+#if INV_DEBUG_EQUIP
 	// ============================================
 	// 🔍 [Phase 6 디버깅] 장착 스폰 추적
 	// ============================================
@@ -253,13 +255,16 @@ AInv_EquipActor* FInv_EquipmentFragment::SpawnAttachedActor(USkeletalMeshCompone
 	UE_LOG(LogTemp, Warning, TEXT("║ EquipActorClass: %s"), EquipActorClass ? *EquipActorClass->GetName() : TEXT("nullptr ❌"));
 	UE_LOG(LogTemp, Warning, TEXT("║ AttachMesh: %s"), AttachMesh ? *AttachMesh->GetName() : TEXT("nullptr ❌"));
 	UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════╝"));
+#endif
 
 	if (!IsValid(EquipActorClass) || !IsValid(AttachMesh)) return nullptr;
 
 	AInv_EquipActor* SpawnedActor = AttachMesh->GetWorld()->SpawnActor<AInv_EquipActor>(EquipActorClass);
 	if (!IsValid(SpawnedActor)) return nullptr; // 장착 아이템이 없을 시 크래쉬 예외 처리 제거
 	
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("   ✅ SpawnedActor: %s"), *SpawnedActor->GetName());
+#endif
 	
 	// ⭐ [WeaponBridge] WeaponSlotIndex 설정
 	SpawnedActor->SetWeaponSlotIndex(WeaponSlotIndex);
@@ -273,12 +278,16 @@ AInv_EquipActor* FInv_EquipmentFragment::SpawnAttachedActor(USkeletalMeshCompone
 		ActualSocket = SocketAttachPoint;
 	}
 	
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("   📍 ActualSocket: %s"), *ActualSocket.ToString());
+#endif
 	
 	SpawnedActor->AttachToComponent(AttachMesh, FAttachmentTransformRules::SnapToTargetNotIncludingScale, ActualSocket);
 
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("   🎉 장착 스폰 완료!"));
 	UE_LOG(LogTemp, Warning, TEXT(""));
+#endif
 
 	return SpawnedActor;
 }
