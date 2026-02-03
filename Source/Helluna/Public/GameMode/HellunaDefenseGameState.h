@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "GameFramework/GameStateBase.h"
+#include "GameFramework/GameState.h"
 
 // [MDF 추가] 플러그인 인터페이스 및 컴포넌트 헤더
 #include "Interface/MDF_GameStateInterface.h"
@@ -38,7 +38,7 @@ enum class EDefensePhase : uint8
 class AResourceUsingObject_SpaceShip;
 
 UCLASS()
-class HELLUNA_API AHellunaDefenseGameState : public AGameStateBase, public IMDF_GameStateInterface
+class HELLUNA_API AHellunaDefenseGameState : public AGameState, public IMDF_GameStateInterface
 {
     GENERATED_BODY()
     

@@ -1,7 +1,7 @@
 #include "Login/HellunaLoginController.h"
 #include "Login/HellunaLoginWidget.h"
 #include "Login/HellunaCharacterSelectWidget.h"
-#include "GameMode/HellunaDefenseGameMode.h"
+#include "GameMode/HellunaBaseGameMode.h"
 #include "GameFramework/PlayerState.h"
 #include "Player/HellunaPlayerState.h"
 #include "Blueprint/UserWidget.h"
@@ -18,20 +18,23 @@ void AHellunaLoginController::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// 📌 디버깅: 클라이언트/서버 구분을 위한 태그
+	FString RoleTag = HasAuthority() ? TEXT("SERVER") : TEXT("CLIENT");
+
 	UE_LOG(LogTemp, Warning, TEXT(""));
 	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║     [LoginController] BeginPlay                            ║"));
+	UE_LOG(LogTemp, Warning, TEXT("║     [LoginController] BeginPlay [%s]                  ║"), *RoleTag);
 	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
 	UE_LOG(LogTemp, Warning, TEXT("║ Controller: %s"), *GetName());
 	UE_LOG(LogTemp, Warning, TEXT("║ ControllerID: %d"), GetUniqueID());
-	UE_LOG(LogTemp, Warning, TEXT("║ IsLocalController: %s"), IsLocalController() ? TEXT("TRUE") : TEXT("FALSE"));
+	UE_LOG(LogTemp, Warning, TEXT("║ IsLocalController: %s"), IsLocalController() ? TEXT("TRUE ✅") : TEXT("FALSE"));
 	UE_LOG(LogTemp, Warning, TEXT("║ HasAuthority: %s"), HasAuthority() ? TEXT("TRUE") : TEXT("FALSE"));
-	UE_LOG(LogTemp, Warning, TEXT("║ NetMode: %d"), static_cast<int32>(GetNetMode()));
+	UE_LOG(LogTemp, Warning, TEXT("║ NetMode: %d (0=Standalone, 1=DedicatedServer, 2=ListenServer, 3=Client)"), static_cast<int32>(GetNetMode()));
 	UE_LOG(LogTemp, Warning, TEXT("║ NetConnection: %s"), GetNetConnection() ? TEXT("Valid") : TEXT("nullptr"));
-	
+
 	APlayerState* PS = GetPlayerState<APlayerState>();
 	UE_LOG(LogTemp, Warning, TEXT("║ PlayerState: %s"), PS ? *PS->GetName() : TEXT("nullptr"));
-	
+
 	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
 	UE_LOG(LogTemp, Warning, TEXT("║ LoginWidgetClass: %s"), LoginWidgetClass ? *LoginWidgetClass->GetName() : TEXT("미설정!"));
 	UE_LOG(LogTemp, Warning, TEXT("║ GameControllerClass: %s"), GameControllerClass ? *GameControllerClass->GetName() : TEXT("미설정!"));
@@ -39,7 +42,7 @@ void AHellunaLoginController::BeginPlay()
 
 	if (!LoginWidgetClass)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[LoginController] LoginWidgetClass 미설정!"));
+		UE_LOG(LogTemp, Error, TEXT("[LoginController][%s] LoginWidgetClass 미설정!"), *RoleTag);
 		if (GEngine)
 		{
 			GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Red,
@@ -49,7 +52,7 @@ void AHellunaLoginController::BeginPlay()
 
 	if (!GameControllerClass)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[LoginController] GameControllerClass 미설정!"));
+		UE_LOG(LogTemp, Error, TEXT("[LoginController][%s] GameControllerClass 미설정!"), *RoleTag);
 		if (GEngine)
 		{
 			GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Red,
@@ -57,8 +60,18 @@ void AHellunaLoginController::BeginPlay()
 		}
 	}
 
+	// 📌 클라이언트에서만 위젯 표시
 	if (IsLocalController() && LoginWidgetClass)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[LoginController][%s] ⭐ IsLocalController=TRUE! 위젯 타이머 시작!"), *RoleTag);
+
+		// 📌 화면에 디버그 메시지 표시 (클라이언트에서만 보임)
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Green,
+				FString::Printf(TEXT("✅ LoginController BeginPlay - 위젯 타이머 시작! (IsLocal: TRUE)")));
+		}
+
 		FInputModeUIOnly InputMode;
 		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 		SetInputMode(InputMode);
@@ -66,15 +79,36 @@ void AHellunaLoginController::BeginPlay()
 		FTimerHandle TimerHandle;
 		GetWorldTimerManager().SetTimer(TimerHandle, this, &AHellunaLoginController::ShowLoginWidget, 0.3f, false);
 	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[LoginController][%s] 위젯 표시 스킵 (IsLocalController=%s, LoginWidgetClass=%s)"),
+			*RoleTag,
+			IsLocalController() ? TEXT("TRUE") : TEXT("FALSE"),
+			LoginWidgetClass ? TEXT("Valid") : TEXT("nullptr"));
+
+		// 📌 화면에 디버그 메시지 표시 (왜 스킵되는지 확인)
+		if (GEngine && !HasAuthority())  // 클라이언트에서만 표시
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Red,
+				FString::Printf(TEXT("❌ LoginController: 위젯 스킵! IsLocal=%s, WidgetClass=%s"),
+					IsLocalController() ? TEXT("T") : TEXT("F"),
+					LoginWidgetClass ? TEXT("OK") : TEXT("NULL")));
+		}
+	}
 
 	UE_LOG(LogTemp, Warning, TEXT(""));
 }
 
 void AHellunaLoginController::ShowLoginWidget()
 {
+	FString RoleTag = HasAuthority() ? TEXT("SERVER") : TEXT("CLIENT");
+
 	UE_LOG(LogTemp, Warning, TEXT(""));
 	UE_LOG(LogTemp, Warning, TEXT("┌────────────────────────────────────────────────────────────┐"));
-	UE_LOG(LogTemp, Warning, TEXT("│ [LoginController] ShowLoginWidget                          │"));
+	UE_LOG(LogTemp, Warning, TEXT("│ [LoginController][%s] ShowLoginWidget 호출됨!         │"), *RoleTag);
+	UE_LOG(LogTemp, Warning, TEXT("├────────────────────────────────────────────────────────────┤"));
+	UE_LOG(LogTemp, Warning, TEXT("│ IsLocalController: %s"), IsLocalController() ? TEXT("TRUE ✅") : TEXT("FALSE"));
+	UE_LOG(LogTemp, Warning, TEXT("│ LoginWidgetClass: %s"), LoginWidgetClass ? *LoginWidgetClass->GetName() : TEXT("nullptr"));
 	UE_LOG(LogTemp, Warning, TEXT("└────────────────────────────────────────────────────────────┘"));
 
 	// ========================================
@@ -136,13 +170,40 @@ void AHellunaLoginController::ShowLoginWidget()
 	if (!LoginWidget)
 	{
 		LoginWidget = CreateWidget<UHellunaLoginWidget>(this, LoginWidgetClass);
-		UE_LOG(LogTemp, Warning, TEXT("[LoginController] 위젯 생성됨: %s"), LoginWidget ? *LoginWidget->GetName() : TEXT("실패"));
+		UE_LOG(LogTemp, Warning, TEXT("[LoginController] 위젯 생성: %s"), LoginWidget ? TEXT("✅ 성공") : TEXT("❌ 실패"));
+
+		if (GEngine)
+		{
+			if (LoginWidget)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Cyan,
+					FString::Printf(TEXT("로그인 위젯 생성됨: %s"), *LoginWidget->GetName()));
+			}
+			else
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Red,
+					TEXT("❌ 로그인 위젯 생성 실패!"));
+			}
+		}
 	}
 
 	if (LoginWidget && !LoginWidget->IsInViewport())
 	{
 		LoginWidget->AddToViewport(100);
-		UE_LOG(LogTemp, Warning, TEXT("[LoginController] 위젯 Viewport에 추가됨"));
+		UE_LOG(LogTemp, Warning, TEXT("[LoginController] ✅ 위젯 Viewport에 추가됨!"));
+
+		// 📌 화면에 성공 메시지 표시
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Green,
+				TEXT("✅ 로그인 위젯이 Viewport에 추가됨!"));
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[LoginController] ⚠️ 위젯 추가 실패 또는 이미 Viewport에 있음 (LoginWidget=%s, IsInViewport=%s)"),
+			LoginWidget ? TEXT("Valid") : TEXT("nullptr"),
+			(LoginWidget && LoginWidget->IsInViewport()) ? TEXT("TRUE") : TEXT("FALSE"));
 	}
 
 	UE_LOG(LogTemp, Warning, TEXT(""));
@@ -210,7 +271,7 @@ void AHellunaLoginController::Server_RequestSwapAfterTravel_Implementation()
 	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 	
 	// GameMode에서 SwapToGameController 호출
-	if (AHellunaDefenseGameMode* GM = GetWorld()->GetAuthGameMode<AHellunaDefenseGameMode>())
+	if (AHellunaBaseGameMode* GM = GetWorld()->GetAuthGameMode<AHellunaBaseGameMode>())
 	{
 		if (!PlayerId.IsEmpty())
 		{
@@ -240,14 +301,14 @@ void AHellunaLoginController::Server_RequestLogin_Implementation(const FString& 
 	UE_LOG(LogTemp, Warning, TEXT("║ → DefenseGameMode::ProcessLogin 호출!                      ║"));
 	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 
-	AHellunaDefenseGameMode* GM = Cast<AHellunaDefenseGameMode>(GetWorld()->GetAuthGameMode());
+	AHellunaBaseGameMode* GM = Cast<AHellunaBaseGameMode>(GetWorld()->GetAuthGameMode());
 	if (GM)
 	{
 		GM->ProcessLogin(this, PlayerId, Password);
 	}
 	else
 	{
-		UE_LOG(LogTemp, Error, TEXT("[LoginController] DefenseGameMode 없음!"));
+		UE_LOG(LogTemp, Error, TEXT("[LoginController] BaseGameMode 없음!"));
 		Client_LoginResult(false, TEXT("서버 오류: GameMode를 찾을 수 없습니다."));
 	}
 
@@ -319,17 +380,17 @@ void AHellunaLoginController::Server_SelectCharacter_Implementation(int32 Charac
 	UE_LOG(LogTemp, Warning, TEXT("║ Controller: %s"), *GetName());
 	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 
-	AHellunaDefenseGameMode* GM = Cast<AHellunaDefenseGameMode>(GetWorld()->GetAuthGameMode());
+	AHellunaBaseGameMode* GM = Cast<AHellunaBaseGameMode>(GetWorld()->GetAuthGameMode());
 	if (GM)
 	{
 		// int32 → EHellunaHeroType 변환
-		EHellunaHeroType HeroType = IndexToHeroType(CharacterIndex);
+		EHellunaHeroType HeroType = AHellunaBaseGameMode::IndexToHeroType(CharacterIndex);
 		UE_LOG(LogTemp, Warning, TEXT("[LoginController] 🎭 HeroType: %s"), *UEnum::GetValueAsString(HeroType));
 		GM->ProcessCharacterSelection(this, HeroType);
 	}
 	else
 	{
-		UE_LOG(LogTemp, Error, TEXT("[LoginController] DefenseGameMode 없음!"));
+		UE_LOG(LogTemp, Error, TEXT("[LoginController] BaseGameMode 없음!"));
 		Client_CharacterSelectionResult(false, TEXT("서버 오류"));
 	}
 }

@@ -91,7 +91,7 @@ AHellunaBaseGameMode::AHellunaBaseGameMode()
 	PrimaryActorTick.bCanEverTick = false;
 	bUseSeamlessTravel = true;
 	PlayerStateClass = AHellunaPlayerState::StaticClass();
-	PlayerControllerClass = AHellunaLoginController::StaticClass();
+	PlayerControllerClass = AHellunaLoginController::StaticClass();  // ⭐ 기존처럼 C++에서 직접 설정!
 	DefaultPawnClass = ASpectatorPawn::StaticClass();
 }
 
@@ -575,10 +575,15 @@ void AHellunaBaseGameMode::SpawnHeroCharacter(APlayerController* PlayerControlle
 	UE_LOG(LogTemp, Warning, TEXT("║ Possess 완료!"));
 	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 
+	// ════════════════════════════════════════════════════════════════════════════════
+	// 📌 첫 플레이어 캐릭터 소환 → 게임 초기화!
+	// ════════════════════════════════════════════════════════════════════════════════
+	// ⚠️ 주의: bGameInitialized는 InitializeGame() 내부에서 설정됨!
+	//          여기서 미리 설정하면 자식 클래스의 InitializeGame()이 스킵됨!
+	// ════════════════════════════════════════════════════════════════════════════════
 	if (!bGameInitialized)
 	{
-		bGameInitialized = true;
-		InitializeGame();
+		InitializeGame();  // InitializeGame() 내부에서 bGameInitialized = true 설정
 	}
 
 	FTimerHandle InventoryLoadTimer;

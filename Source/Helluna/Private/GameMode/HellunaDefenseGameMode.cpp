@@ -11,7 +11,6 @@
 //    - SpawnTestMonsters() : 몬스터 스폰
 //    - TrySummonBoss() : 보스 소환
 //
-// 📌 작성자: Gihyeon
 // ════════════════════════════════════════════════════════════════════════════════
 
 #include "GameMode/HellunaDefenseGameMode.h"
@@ -25,6 +24,10 @@
 AHellunaDefenseGameMode::AHellunaDefenseGameMode()
 {
     // BaseGameMode에서 기본 설정 처리됨
+    // ⚠️ BP에서 덮어쓰는 문제 방지를 위해 로그 추가
+    UE_LOG(LogTemp, Warning, TEXT("⭐ [DefenseGameMode] Constructor 호출!"));
+    UE_LOG(LogTemp, Warning, TEXT("⭐ PlayerControllerClass: %s"), PlayerControllerClass ? *PlayerControllerClass->GetName() : TEXT("nullptr"));
+    UE_LOG(LogTemp, Warning, TEXT("⭐ DefaultPawnClass: %s"), DefaultPawnClass ? *DefaultPawnClass->GetName() : TEXT("nullptr"));
 }
 
 void AHellunaDefenseGameMode::BeginPlay()
