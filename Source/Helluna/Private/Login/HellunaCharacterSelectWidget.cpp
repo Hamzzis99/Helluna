@@ -3,6 +3,7 @@
 #include "Components/Button.h"
 #include "Components/TextBlock.h"
 #include "Kismet/GameplayStatics.h"
+#include "GameMode/HellunaDefenseGameState.h"
 
 void UHellunaCharacterSelectWidget::NativeConstruct()
 {
@@ -19,6 +20,22 @@ void UHellunaCharacterSelectWidget::NativeConstruct()
 	LiamButton->OnClicked.AddDynamic(this, &UHellunaCharacterSelectWidget::OnLiamButtonClicked);
 
 	UE_LOG(LogTemp, Warning, TEXT("[CharacterSelectWidget] 버튼 바인딩 완료: Lui, Luna, Liam"));
+
+	// ════════════════════════════════════════════════════════════════════════════════
+	// 🎭 GameState 델리게이트 바인딩 - 다른 플레이어 캐릭터 선택 시 UI 자동 갱신
+	// ════════════════════════════════════════════════════════════════════════════════
+	if (AHellunaDefenseGameState* GS = GetWorld()->GetGameState<AHellunaDefenseGameState>())
+	{
+		GS->OnUsedCharactersChanged.AddDynamic(this, &UHellunaCharacterSelectWidget::OnCharacterAvailabilityChanged);
+		UE_LOG(LogTemp, Warning, TEXT("[CharacterSelectWidget] ✅ GameState 델리게이트 바인딩 완료"));
+
+		// 초기 상태 동기화
+		RefreshAvailableCharacters();
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[CharacterSelectWidget] ⚠️ GameState 없음 - 델리게이트 바인딩 스킵"));
+	}
 
 	ShowMessage(TEXT("캐릭터를 선택하세요"), false);
 
@@ -161,4 +178,46 @@ void UHellunaCharacterSelectWidget::SelectCharacter(int32 CharacterIndex)
 		ShowMessage(TEXT("컨트롤러 오류"), true);
 		SetLoadingState(false);
 	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 🎭 GameState 델리게이트 핸들러 - 실시간 UI 동기화
+// ════════════════════════════════════════════════════════════════════════════════
+
+void UHellunaCharacterSelectWidget::OnCharacterAvailabilityChanged()
+{
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║  🔄 [CharacterSelectWidget] OnCharacterAvailabilityChanged ║"));
+	UE_LOG(LogTemp, Warning, TEXT("║     다른 플레이어가 캐릭터를 선택/해제함!                  ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+
+	RefreshAvailableCharacters();
+}
+
+void UHellunaCharacterSelectWidget::RefreshAvailableCharacters()
+{
+	AHellunaDefenseGameState* GS = GetWorld()->GetGameState<AHellunaDefenseGameState>();
+	if (!GS)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[CharacterSelectWidget] ⚠️ RefreshAvailableCharacters - GameState 없음"));
+		return;
+	}
+
+	// GameState에서 사용 중인 캐릭터 목록 가져와서 AvailableCharacters 배열 생성
+	TArray<bool> AvailableCharacters;
+
+	// 캐릭터 인덱스 → HeroType 매핑 (0=Lui, 1=Luna, 2=Liam)
+	// HellunaTypes.h의 EHellunaHeroType 순서와 일치해야 함
+	AvailableCharacters.Add(!GS->IsCharacterUsed(EHellunaHeroType::Lui));   // Index 0
+	AvailableCharacters.Add(!GS->IsCharacterUsed(EHellunaHeroType::Luna));  // Index 1
+	AvailableCharacters.Add(!GS->IsCharacterUsed(EHellunaHeroType::Liam));  // Index 2
+
+	UE_LOG(LogTemp, Warning, TEXT("[CharacterSelectWidget] 🔄 UI 갱신: Lui=%s, Luna=%s, Liam=%s"),
+		AvailableCharacters[0] ? TEXT("✅") : TEXT("❌"),
+		AvailableCharacters[1] ? TEXT("✅") : TEXT("❌"),
+		AvailableCharacters[2] ? TEXT("✅") : TEXT("❌"));
+
+	// 기존 SetAvailableCharacters 함수 재사용
+	SetAvailableCharacters(AvailableCharacters);
 }

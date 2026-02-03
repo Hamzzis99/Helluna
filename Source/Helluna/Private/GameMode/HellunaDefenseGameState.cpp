@@ -32,6 +32,7 @@ void AHellunaDefenseGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProper
     DOREPLIFETIME(AHellunaDefenseGameState, SpaceShip);
     DOREPLIFETIME(AHellunaDefenseGameState, Phase);
     DOREPLIFETIME(AHellunaDefenseGameState, AliveMonsterCount);
+    DOREPLIFETIME(AHellunaDefenseGameState, UsedCharacters);
 }
 
 void AHellunaDefenseGameState::SetPhase(EDefensePhase NewPhase)
@@ -292,4 +293,53 @@ void AHellunaDefenseGameState::WriteDataToDisk()
             UE_LOG(LogTemp, Error, TEXT("[HellunaGameState] 디스크 저장 실패!"));
         }
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🎭 캐릭터 선택 시스템 - 실시간 UI 갱신 (김기현)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void AHellunaDefenseGameState::OnRep_UsedCharacters()
+{
+	UE_LOG(LogTemp, Warning, TEXT("[GameState] OnRep_UsedCharacters - 사용 중인 캐릭터: %d명"), UsedCharacters.Num());
+	
+	// 델리게이트 브로드캐스트 → 모든 바인딩된 UI 갱신!
+	OnUsedCharactersChanged.Broadcast();
+}
+
+bool AHellunaDefenseGameState::IsCharacterUsed(EHellunaHeroType HeroType) const
+{
+	return UsedCharacters.Contains(HeroType);
+}
+
+void AHellunaDefenseGameState::AddUsedCharacter(EHellunaHeroType HeroType)
+{
+	if (!HasAuthority()) return;
+	
+	if (HeroType == EHellunaHeroType::None) return;
+	
+	if (!UsedCharacters.Contains(HeroType))
+	{
+		UsedCharacters.Add(HeroType);
+		UE_LOG(LogTemp, Warning, TEXT("[GameState] 캐릭터 사용 등록: %s (총 %d명)"), 
+			*UEnum::GetValueAsString(HeroType), UsedCharacters.Num());
+		
+		// 서버에서도 델리게이트 호출 (Listen Server용)
+		OnUsedCharactersChanged.Broadcast();
+	}
+}
+
+void AHellunaDefenseGameState::RemoveUsedCharacter(EHellunaHeroType HeroType)
+{
+	if (!HasAuthority()) return;
+	
+	if (UsedCharacters.Contains(HeroType))
+	{
+		UsedCharacters.Remove(HeroType);
+		UE_LOG(LogTemp, Warning, TEXT("[GameState] 캐릭터 사용 해제: %s (총 %d명)"), 
+			*UEnum::GetValueAsString(HeroType), UsedCharacters.Num());
+		
+		// 서버에서도 델리게이트 호출 (Listen Server용)
+		OnUsedCharactersChanged.Broadcast();
+	}
 }

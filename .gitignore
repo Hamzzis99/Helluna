@@ -2,6 +2,7 @@ Plugins/Developer/
 
 # Visual Studio
 .vs/
+.claude/
 
 # Content Folder
 Content/Collections/

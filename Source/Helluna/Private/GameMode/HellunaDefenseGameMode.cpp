@@ -1416,6 +1416,12 @@ void AHellunaDefenseGameMode::RegisterCharacterUse(EHellunaHeroType HeroType, co
 
 	// 새 캐릭터 등록
 	UsedCharacterMap.Add(HeroType, PlayerId);
+	
+	// 🎭 GameState에도 알림 (클라이언트 UI 실시간 갱신용)
+	if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
+	{
+		GS->AddUsedCharacter(HeroType);
+	}
 
 	UE_LOG(LogTemp, Warning, TEXT("[CharacterSelect] 캐릭터 사용 등록: Type=%s, PlayerId='%s'"), *UEnum::GetValueAsString(HeroType), *PlayerId);
 	UE_LOG(LogTemp, Warning, TEXT("[CharacterSelect] 현재 UsedCharacterMap:"));
@@ -1456,8 +1462,15 @@ void AHellunaDefenseGameMode::UnregisterCharacterUse(const FString& PlayerId)
 	if (FoundType != EHellunaHeroType::None)
 	{
 		UsedCharacterMap.Remove(FoundType);
-		UE_LOG(LogTemp, Warning, TEXT("[CharacterSelect] 캐릭터 사용 해제: Type=%d, PlayerId='%s'"), 
-			static_cast<int32>(FoundType), *PlayerId);
+
+		// 🎭 GameState에도 알림 (클라이언트 UI 실시간 갱신용)
+		if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
+		{
+			GS->RemoveUsedCharacter(FoundType);
+		}
+
+		UE_LOG(LogTemp, Warning, TEXT("[CharacterSelect] 캐릭터 사용 해제: Type=%s, PlayerId='%s'"),
+			*UEnum::GetValueAsString(FoundType), *PlayerId);
 	}
 }
 

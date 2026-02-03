@@ -22,7 +22,7 @@
 #define INV_DEBUG_CRAFT 0
 
 // 건설 시스템 (BuildingButton, BuildingComponent)
-#define INV_DEBUG_BUILD 0
+#define INV_DEBUG_BUILD 1
 
 // 자원 시스템 (ResourceComponent)
 #define INV_DEBUG_RESOURCE 0

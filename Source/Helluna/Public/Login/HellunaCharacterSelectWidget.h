@@ -92,6 +92,13 @@ protected:
 	/** 캐릭터 선택 처리 (공통) */
 	void SelectCharacter(int32 CharacterIndex);
 
+	/** GameState 델리게이트 핸들러 - 다른 플레이어 캐릭터 선택 시 UI 갱신 */
+	UFUNCTION()
+	void OnCharacterAvailabilityChanged();
+
+	/** GameState에서 현재 사용 가능한 캐릭터 목록 가져와서 UI 갱신 */
+	void RefreshAvailableCharacters();
+
 protected:
 	// ============================================
 	// 📌 UI 바인딩 (BP에서 동일한 이름으로 설정!)
