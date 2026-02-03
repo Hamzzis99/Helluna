@@ -55,6 +55,9 @@ public:
 
 	// 🆕 [Phase 7] EquippedGridSlots 수집 (복원 시 재호출 가능)
 	void CollectEquippedGridSlots();
+
+	// 🆕 [Phase 8] 인벤토리 열릴 때 장착 슬롯 레이아웃 갱신
+	void RefreshEquippedSlotLayouts();
 	
 private: 
 	// 여기 있는 UPROPERTY와 위젯과의 이름이 동일해야만함.

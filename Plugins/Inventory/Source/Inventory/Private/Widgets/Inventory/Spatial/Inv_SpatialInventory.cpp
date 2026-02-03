@@ -92,6 +92,24 @@ void UInv_SpatialInventory::CollectEquippedGridSlots()
 	}
 }
 
+// ============================================
+// 🆕 [Phase 8] 인벤토리 열릴 때 장착 슬롯 레이아웃 갱신
+// ============================================
+void UInv_SpatialInventory::RefreshEquippedSlotLayouts()
+{
+	UE_LOG(LogTemp, Warning, TEXT("[RefreshEquippedSlotLayouts] 장착 슬롯 레이아웃 갱신 시작 (%d개 슬롯)"), EquippedGridSlots.Num());
+	
+	for (UInv_EquippedGridSlot* EquippedGridSlot : EquippedGridSlots)
+	{
+		if (IsValid(EquippedGridSlot))
+		{
+			EquippedGridSlot->RefreshLayout();
+		}
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("[RefreshEquippedSlotLayouts] 갱신 완료!"));
+}
+
 // 장착된 그리드 슬롯이 클릭되었을 때 호출되는 함수
 void UInv_SpatialInventory::EquippedGridSlotClicked(UInv_EquippedGridSlot* EquippedGridSlot, const FGameplayTag& EquipmentTypeTag) // 콜백함수 
 {

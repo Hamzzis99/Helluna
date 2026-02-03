@@ -140,6 +140,9 @@ UInv_EquippedSlottedItem* UInv_EquippedGridSlot::OnItemEquipped(UInv_InventoryIt
 	EquippedSlottedItem->SetImageBrush(Brush);
 	UE_LOG(LogTemp, Warning, TEXT("║ ✅ 이미지 브러시 설정 완료!"));
 	
+	// 🆕 [Phase 8] DrawSize 캐시 (RefreshLayout용)
+	CachedDrawSize = DrawSize;
+	
 	// Add the Slotted Item as a child to this widget's Overlay
 	// 이 위젯의 오버레이에 슬롯 아이템을 자식으로 추가
 	Overlay_Root->AddChildToOverlay(EquippedSlottedItem);
@@ -188,4 +191,43 @@ UInv_InventoryItem* UInv_EquippedGridSlot::GetEquippedInventoryItem() const
 		return EquippedSlottedItem->GetInventoryItem();
 	}
 	return nullptr;
+}
+
+// ============================================
+// 🆕 [Phase 8] 레이아웃 갱신 (인벤토리 열릴 때 호출)
+// ============================================
+void UInv_EquippedGridSlot::RefreshLayout()
+{
+	if (!IsValid(EquippedSlottedItem) || CachedDrawSize.IsNearlyZero())
+	{
+		return; // 장착된 아이템이 없거나 DrawSize가 없으면 스킵
+	}
+	
+	// 레이아웃 강제 갱신
+	Overlay_Root->ForceLayoutPrepass();
+	
+	// Geometry 다시 가져오기
+	FVector2D OverlaySize = Overlay_Root->GetCachedGeometry().Size;
+	if (OverlaySize.IsNearlyZero())
+	{
+		OverlaySize = Overlay_Root->GetDesiredSize();
+	}
+	
+	if (OverlaySize.IsNearlyZero())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[RefreshLayout] OverlaySize가 여전히 0, 스킵"));
+		return;
+	}
+	
+	// Padding 재계산
+	const float LeftPadding = OverlaySize.X / 2.f - CachedDrawSize.X / 2.f;
+	const float TopPadding = OverlaySize.Y / 2.f - CachedDrawSize.Y / 2.f;
+	
+	UOverlaySlot* OverlaySlot = UWidgetLayoutLibrary::SlotAsOverlaySlot(EquippedSlottedItem);
+	if (OverlaySlot)
+	{
+		OverlaySlot->SetPadding(FMargin(LeftPadding, TopPadding));
+		UE_LOG(LogTemp, Warning, TEXT("[RefreshLayout] 슬롯 %d: Padding 재설정 (%.1f, %.1f)"), 
+			WeaponSlotIndex, LeftPadding, TopPadding);
+	}
 }
