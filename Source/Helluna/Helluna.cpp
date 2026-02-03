@@ -1,6 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "CoreMinimal.h"
 #include "Helluna.h"
 #include "Modules/ModuleManager.h"
 
