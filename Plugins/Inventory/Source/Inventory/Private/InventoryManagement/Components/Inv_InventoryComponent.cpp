@@ -1265,12 +1265,6 @@ void UInv_InventoryComponent::OpenInventoryMenu()
 	InventoryMenu->SetVisibility(ESlateVisibility::Visible);
 	bInventoryMenuOpen = true;
 
-	// 🆕 [Phase 8] 장착 슬롯 레이아웃 갱신 (인벤토리가 닫혀있을 때 복원된 경우 대비)
-	if (UInv_SpatialInventory* SpatialInv = Cast<UInv_SpatialInventory>(InventoryMenu))
-	{
-		SpatialInv->RefreshEquippedSlotLayouts();
-	}
-
 	if (!OwningController.IsValid()) return;
 
 	FInputModeGameAndUI InputMode;

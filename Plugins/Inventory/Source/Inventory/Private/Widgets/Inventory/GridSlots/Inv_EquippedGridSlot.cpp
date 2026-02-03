@@ -148,31 +148,12 @@ UInv_EquippedSlottedItem* UInv_EquippedGridSlot::OnItemEquipped(UInv_InventoryIt
 	Overlay_Root->AddChildToOverlay(EquippedSlottedItem);
 	UE_LOG(LogTemp, Warning, TEXT("║ ✅ Overlay에 추가 완료!"));
 	
-	// 🆕 [Phase 6] 레이아웃 강제 업데이트 (복원 시 Geometry가 캐시되지 않은 문제 해결)
-	Overlay_Root->ForceLayoutPrepass();
-	
-	FGeometry OverlayGeometry = Overlay_Root->GetCachedGeometry();
-	auto OverlayPos = OverlayGeometry.Position;
-	auto OverlaySize = OverlayGeometry.Size;
-	
-	// 🆕 [Phase 6] Geometry가 여전히 유효하지 않으면 DesiredSize 사용
-	if (OverlaySize.IsNearlyZero())
-	{
-		OverlaySize = Overlay_Root->GetDesiredSize();
-		UE_LOG(LogTemp, Warning, TEXT("[OnItemEquipped] CachedGeometry 무효 → DesiredSize 사용: (%.1f, %.1f)"), 
-			OverlaySize.X, OverlaySize.Y);
-	}
-
-	const float LeftPadding = OverlaySize.X / 2.f - DrawSize.X / 2.f;
-	const float TopPadding = OverlaySize.Y / 2.f - DrawSize.Y / 2.f;
-	UE_LOG(LogTemp, Warning, TEXT("║ OverlaySize: (%.1f, %.1f)"), OverlaySize.X, OverlaySize.Y);
-	UE_LOG(LogTemp, Warning, TEXT("║ Padding: (Left=%.1f, Top=%.1f)"), LeftPadding, TopPadding);
-
+	// 🆕 [Phase 8] Alignment를 Center로 설정 (Padding 계산 대신 - 더 안정적!)
 	UOverlaySlot* OverlaySlot = UWidgetLayoutLibrary::SlotAsOverlaySlot(EquippedSlottedItem);
-	OverlaySlot->SetPadding(FMargin(LeftPadding, TopPadding));
+	OverlaySlot->SetHorizontalAlignment(EHorizontalAlignment::HAlign_Center);
+	OverlaySlot->SetVerticalAlignment(EVerticalAlignment::VAlign_Center);
 	
-	// 🔍 [Phase 8] 최종 결과 확인
-	UE_LOG(LogTemp, Warning, TEXT("║ ✅ Padding 설정 완료!"));
+	UE_LOG(LogTemp, Warning, TEXT("║ ✅ Alignment Center 설정 완료!"));
 	UE_LOG(LogTemp, Warning, TEXT("║ EquippedSlottedItem Visibility: %d"), (int32)EquippedSlottedItem->GetVisibility());
 	UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════╝"));
 	
