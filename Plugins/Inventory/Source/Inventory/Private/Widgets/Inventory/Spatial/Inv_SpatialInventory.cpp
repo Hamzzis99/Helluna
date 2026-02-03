@@ -312,7 +312,22 @@ UInv_EquippedSlottedItem* UInv_SpatialInventory::RestoreEquippedItem(UInv_Equipp
 	}
 	
 	// TileSize 가져오기
-	const float TileSize = UInv_InventoryStatics::GetInventoryWidget(GetOwningPlayer())->GetTileSize();
+	auto* InventoryWidget = UInv_InventoryStatics::GetInventoryWidget(GetOwningPlayer());
+	if (!IsValid(InventoryWidget))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[RestoreEquippedItem] ❌ InventoryWidget이 nullptr!"));
+		return nullptr;
+	}
+	const float TileSize = InventoryWidget->GetTileSize();
+	
+	// 🔍 [Phase 8] TileSize 디버깅
+	UE_LOG(LogTemp, Warning, TEXT("[RestoreEquippedItem] InventoryWidget: %s, TileSize: %.1f"), 
+		*InventoryWidget->GetName(), TileSize);
+	
+	if (TileSize <= 0.f)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[RestoreEquippedItem] ❌ TileSize가 0 이하! 위젯이 안 보일 수 있음!"));
+	}
 	
 	// 장착 아이템의 태그 가져오기
 	FGameplayTag EquipmentTag = ItemToEquip->GetItemManifest().GetItemType();
