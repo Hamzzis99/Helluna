@@ -520,7 +520,9 @@ void UInv_InventoryGrid::AssignHoverItem(UInv_InventoryItem* InventoryItem, cons
 	// ⭐ Nullptr 체크 (EXCEPTION_ACCESS_VIOLATION 방지)
 	if (!IsValid(InventoryItem))
 	{
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Error, TEXT("[AssignHoverItem] ❌ InventoryItem이 nullptr입니다! GridIndex=%d"), GridIndex);
+#endif
 		return;
 	}
 
@@ -532,8 +534,10 @@ void UInv_InventoryGrid::AssignHoverItem(UInv_InventoryItem* InventoryItem, cons
 
 void UInv_InventoryGrid::RemoveItemFromGrid(UInv_InventoryItem* InventoryItem, const int32 GridIndex) // 아이템을 Hover 한 뒤로.
 {
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("[RemoveItemFromGrid] 호출됨: GridIndex=%d, Item=%s"),
 		GridIndex, IsValid(InventoryItem) ? *InventoryItem->GetItemManifest().GetItemType().ToString() : TEXT("NULL"));
+#endif
 
 	const FInv_GridFragment* GridFragment = GetFragment<FInv_GridFragment>(InventoryItem, FragmentTags::GridFragment);
 	if (!GridFragment) return;
@@ -553,13 +557,17 @@ void UInv_InventoryGrid::RemoveItemFromGrid(UInv_InventoryItem* InventoryItem, c
 		TObjectPtr<UInv_SlottedItem> FoundSlottedItem;
 		SlottedItems.RemoveAndCopyValue(GridIndex, FoundSlottedItem);
 
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Log, TEXT("[RemoveItemFromGrid] SlottedItem 삭제: GridIndex=%d"), GridIndex);
+#endif
 
 		FoundSlottedItem->RemoveFromParent();
 	}
 	else
 	{
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("[RemoveItemFromGrid] GridIndex=%d는 SlottedItems에 없음"), GridIndex);
+#endif
 	}
 }
 
@@ -569,7 +577,9 @@ void UInv_InventoryGrid::AssignHoverItem(UInv_InventoryItem* InventoryItem) // �
 	// ⭐ Nullptr 체크 (EXCEPTION_ACCESS_VIOLATION 방지)
 	if (!IsValid(InventoryItem))
 	{
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Error, TEXT("[AssignHoverItem] ❌ InventoryItem이 nullptr입니다!"));
+#endif
 		HoverItem->SetVisibility(ESlateVisibility::Hidden);
 		return;
 	}
@@ -612,12 +622,14 @@ void UInv_InventoryGrid::AddStacks(const FInv_SlotAvailabilityResult& Result)
 	// SlotAvailabilities가 비어있으면 Item으로 슬롯을 직접 찾아서 업데이트
 	if (Result.SlotAvailabilities.Num() == 0 && Result.Item.IsValid())
 	{
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("=== AddStacks 호출 (Split 대응) ==="));
-		UE_LOG(LogTemp, Warning, TEXT("📥 [클라이언트] Item포인터: %p, ItemType: %s, 서버 총량: %d"), 
+		UE_LOG(LogTemp, Warning, TEXT("📥 [클라이언트] Item포인터: %p, ItemType: %s, 서버 총량: %d"),
 			Result.Item.Get(), *Result.Item->GetItemManifest().GetItemType().ToString(), Result.TotalRoomToFill);
-		
+
 		// 🔍 디버깅: UI 상태 확인 (업데이트 전)
 		UE_LOG(LogTemp, Warning, TEXT("🔍 [클라이언트] UI 슬롯 상태 (업데이트 전):"));
+#endif
 		int32 UITotalBefore = 0;
 		for (const auto& [Index, SlottedItem] : SlottedItems)
 		{
@@ -628,72 +640,90 @@ void UInv_InventoryGrid::AddStacks(const FInv_SlotAvailabilityResult& Result)
 			{
 				int32 SlotCount = GridSlots[Index]->GetStackCount();
 				UITotalBefore += SlotCount;
-				UE_LOG(LogTemp, Warning, TEXT("  슬롯[%d]: Item포인터=%p, StackCount=%d"), 
+#if INV_DEBUG_WIDGET
+				UE_LOG(LogTemp, Warning, TEXT("  슬롯[%d]: Item포인터=%p, StackCount=%d"),
 					Index, GridSlotItem, SlotCount);
+#endif
 			}
 		}
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("🔍 [클라이언트] UI 총량 (업데이트 전): %d"), UITotalBefore);
-		UE_LOG(LogTemp, Warning, TEXT("🔍 [클라이언트] 차감량: %d - %d = %d"), 
+		UE_LOG(LogTemp, Warning, TEXT("🔍 [클라이언트] 차감량: %d - %d = %d"),
 			UITotalBefore, Result.TotalRoomToFill, UITotalBefore - Result.TotalRoomToFill);
+#endif
 		
 		// ⭐ 1단계: 같은 Item을 가진 모든 슬롯 찾기 (Split 대응!)
 		TArray<int32> MatchedIndices;
 		int32 TotalUICount = 0;
-		
+
 		for (const auto& [Index, SlottedItem] : SlottedItems)
 		{
 			UInv_InventoryItem* GridSlotItem = GridSlots[Index]->GetInventoryItem().Get();
-			
+
 			// ⭐ Phase 7 롤백: 포인터 비교로 복원
 			if (GridSlots.IsValidIndex(Index) && GridSlotItem == Result.Item)
 			{
 				MatchedIndices.Add(Index);
 				TotalUICount += GridSlots[Index]->GetStackCount();
-				UE_LOG(LogTemp, Warning, TEXT("📌 [클라이언트] 매칭된 슬롯 발견: Index=%d, CurrentCount=%d, Item포인터=%p"), 
+#if INV_DEBUG_WIDGET
+				UE_LOG(LogTemp, Warning, TEXT("📌 [클라이언트] 매칭된 슬롯 발견: Index=%d, CurrentCount=%d, Item포인터=%p"),
 					Index, GridSlots[Index]->GetStackCount(), GridSlotItem);
+#endif
 			}
 		}
-		
+
 		if (MatchedIndices.Num() == 0)
 		{
+#if INV_DEBUG_WIDGET
 			UE_LOG(LogTemp, Error, TEXT("❌ [클라이언트] AddStacks: Item에 해당하는 슬롯을 찾지 못함! Item포인터: %p"), Result.Item.Get());
+#endif
 			return;
 		}
-		
-		UE_LOG(LogTemp, Warning, TEXT("📊 [클라이언트] 총 %d개 슬롯 매칭됨, UI 총량: %d → 서버 총량: %d"), 
+
+#if INV_DEBUG_WIDGET
+		UE_LOG(LogTemp, Warning, TEXT("📊 [클라이언트] 총 %d개 슬롯 매칭됨, UI 총량: %d → 서버 총량: %d"),
 			MatchedIndices.Num(), TotalUICount, Result.TotalRoomToFill);
+#endif
 		
 		// ⭐ 1.5단계: 큰 스택부터 처리하도록 정렬 (안정적인 분배를 위해)
 		MatchedIndices.Sort([this](int32 A, int32 B) {
 			return GridSlots[A]->GetStackCount() > GridSlots[B]->GetStackCount();
 		});
-		
+
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("🔀 [클라이언트] 슬롯 정렬 완료 (큰 스택부터):"));
 		for (int32 Index : MatchedIndices)
 		{
 			UE_LOG(LogTemp, Warning, TEXT("  슬롯[%d]: StackCount=%d"), Index, GridSlots[Index]->GetStackCount());
 		}
-		
+#endif
+
 		// ⭐ 2단계: 서버 총량을 슬롯들에 분배
 		int32 RemainingToDistribute = Result.TotalRoomToFill;
 		TArray<int32> IndicesToRemove;
-		
+
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("🔧 [클라이언트] 슬롯별 분배 시작 (RemainingToDistribute=%d):"), RemainingToDistribute);
+#endif
 		
 		for (int32 Index : MatchedIndices)
 		{
 			int32 OldCount = GridSlots[Index]->GetStackCount();
 			int32 NewCount = FMath::Min(OldCount, RemainingToDistribute);
 			RemainingToDistribute -= NewCount;
-			
-			UE_LOG(LogTemp, Warning, TEXT("  슬롯[%d]: OldCount=%d, NewCount=%d, Remaining=%d → %d"), 
+
+#if INV_DEBUG_WIDGET
+			UE_LOG(LogTemp, Warning, TEXT("  슬롯[%d]: OldCount=%d, NewCount=%d, Remaining=%d → %d"),
 				Index, OldCount, NewCount, RemainingToDistribute + NewCount, RemainingToDistribute);
-			
+#endif
+
 			if (NewCount <= 0)
 			{
 				// 이 슬롯은 제거해야 함
 				IndicesToRemove.Add(Index);
+#if INV_DEBUG_WIDGET
 				UE_LOG(LogTemp, Warning, TEXT("  ❌ 슬롯[%d]: 제거 예약 (%d → 0)"), Index, OldCount);
+#endif
 			}
 			else
 			{
@@ -703,12 +733,16 @@ void UInv_InventoryGrid::AddStacks(const FInv_SlotAvailabilityResult& Result)
 				{
 					SlottedItems[Index]->UpdateStackCount(NewCount);
 				}
+#if INV_DEBUG_WIDGET
 				UE_LOG(LogTemp, Warning, TEXT("  ✅ 슬롯[%d]: UI 업데이트 (%d → %d)"), Index, OldCount, NewCount);
+#endif
 			}
 		}
 		
 		// ⭐ 3단계: 제거할 슬롯들 제거
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("🗑️ [클라이언트] 제거할 슬롯 개수: %d"), IndicesToRemove.Num());
+#endif
 		for (int32 IndexToRemove : IndicesToRemove)
 		{
 			if (GridSlots.IsValidIndex(IndexToRemove))
@@ -717,13 +751,17 @@ void UInv_InventoryGrid::AddStacks(const FInv_SlotAvailabilityResult& Result)
 				if (IsValid(ItemToRemove))
 				{
 					RemoveItemFromGrid(ItemToRemove, IndexToRemove);
+#if INV_DEBUG_WIDGET
 					UE_LOG(LogTemp, Warning, TEXT("  ✅ 슬롯[%d]: UI에서 제거 완료 (Item포인터=%p)"), IndexToRemove, ItemToRemove);
+#endif
 				}
 			}
 		}
-		
+
+#if INV_DEBUG_WIDGET
 		// 🔍 디버깅: UI 상태 확인 (업데이트 후)
 		UE_LOG(LogTemp, Warning, TEXT("🔍 [클라이언트] UI 슬롯 상태 (업데이트 후):"));
+#endif
 		int32 UITotalAfter = 0;
 		for (const auto& [Index, SlottedItem] : SlottedItems)
 		{
@@ -734,19 +772,23 @@ void UInv_InventoryGrid::AddStacks(const FInv_SlotAvailabilityResult& Result)
 			{
 				int32 SlotCount = GridSlots[Index]->GetStackCount();
 				UITotalAfter += SlotCount;
-				UE_LOG(LogTemp, Warning, TEXT("  슬롯[%d]: Item포인터=%p, StackCount=%d"), 
+#if INV_DEBUG_WIDGET
+				UE_LOG(LogTemp, Warning, TEXT("  슬롯[%d]: Item포인터=%p, StackCount=%d"),
 					Index, GridSlotItem, SlotCount);
+#endif
 			}
 		}
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("🔍 [클라이언트] UI 총량 (업데이트 후): %d (예상: %d)"), UITotalAfter, Result.TotalRoomToFill);
-		
+
 		if (UITotalAfter != Result.TotalRoomToFill)
 		{
-			UE_LOG(LogTemp, Error, TEXT("⚠️ [클라이언트] UI 총량이 서버 총량과 일치하지 않습니다! UI=%d, 서버=%d"), 
+			UE_LOG(LogTemp, Error, TEXT("⚠️ [클라이언트] UI 총량이 서버 총량과 일치하지 않습니다! UI=%d, 서버=%d"),
 				UITotalAfter, Result.TotalRoomToFill);
 		}
-		
+
 		UE_LOG(LogTemp, Warning, TEXT("=== AddStacks 완료 ==="));
+#endif
 		return;
 	}
 
@@ -781,7 +823,9 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 	// ⭐ nullptr 체크 추가 (MoveItemByCurrentIndex 후 원래 위치 클릭 시 크래시 방지)
 	if (!IsValid(ClickedInventoryItem))
 	{
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("[OnSlottedItemClicked] ⚠️ GridIndex=%d에 InventoryItem 없음, 무시"), GridIndex);
+#endif
 		return;
 	}
 
@@ -944,11 +988,14 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 	//아이템 그리드 체크 부분?
 	if (!MatchesCategory(Item))
 	{
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Log, TEXT("[AddItem] 카테고리 불일치: %s, Grid=%d"),
 			*Item->GetItemManifest().GetItemType().ToString(), (int32)ItemCategory);
+#endif
 		return;
 	}
 
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("========== [AddItem] 아이템 추가/업데이트 시작 =========="));
 	UE_LOG(LogTemp, Warning, TEXT("[AddItem] Item=%s, EntryIndex=%d, Grid=%d"),
 		*Item->GetItemManifest().GetItemType().ToString(), EntryIndex, (int32)ItemCategory);
@@ -970,6 +1017,7 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 
 	// ⭐⭐⭐ 1단계: EntryIndex로 우선 검색 (더 정확함!)
 	UE_LOG(LogTemp, Warning, TEXT("[AddItem] 🔍 1단계: EntryIndex=%d 로 검색 시작..."), EntryIndex);
+#endif
 
 	for (const auto& [Index, SlottedItem] : SlottedItems)
 	{
@@ -977,13 +1025,17 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 
 		// 🔍 디버깅: 각 슬롯의 EntryIndex 상태 확인
 		int32 SlotEntryIndex = SlottedItem->GetEntryIndex();
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("[AddItem] 슬롯[%d] 검사: SlottedItem.EntryIndex=%d, 찾는값=%d, 매칭=%s"),
 			Index, SlotEntryIndex, EntryIndex, (SlotEntryIndex == EntryIndex) ? TEXT("YES") : TEXT("NO"));
+#endif
 
 		// ⚠️ EntryIndex가 -1이면 아직 설정되지 않은 상태
 		if (SlotEntryIndex == -1 || SlotEntryIndex == 0)
 		{
+#if INV_DEBUG_WIDGET
 			UE_LOG(LogTemp, Warning, TEXT("[AddItem] ⚠️ 슬롯[%d]의 EntryIndex가 초기값(%d)! SetEntryIndex() 호출 누락 의심"), Index, SlotEntryIndex);
+#endif
 		}
 
 		// ⭐ EntryIndex로 매칭!
@@ -993,8 +1045,10 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 			int32 NewStackCount = Item->GetTotalStackCount();
 			int32 OldStackCount = GridSlots[Index]->GetStackCount();
 
+#if INV_DEBUG_WIDGET
 			UE_LOG(LogTemp, Warning, TEXT("[AddItem] ⭐ EntryIndex 매칭! GridIndex=%d, EntryIndex=%d"), Index, EntryIndex);
 			UE_LOG(LogTemp, Warning, TEXT("[AddItem]   스택 업데이트: %d → %d"), OldStackCount, NewStackCount);
+#endif
 
 			// Item 포인터도 업데이트 (리플리케이션 후 포인터가 바뀔 수 있음)
 			GridSlots[Index]->SetInventoryItem(Item);
@@ -1004,16 +1058,20 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 				SlottedItem->UpdateStackCount(NewStackCount);
 			}
 
+#if INV_DEBUG_WIDGET
 			UE_LOG(LogTemp, Warning, TEXT("========== [AddItem] 스택 업데이트 완료! (EntryIndex 매칭) =========="));
+#endif
 			return; // ⭐ 새 슬롯 추가 필요 없음!
 		}
 	}
 
+#if INV_DEBUG_WIDGET
 	// ⚠️ 1단계 검색 실패!
 	UE_LOG(LogTemp, Warning, TEXT("[AddItem] ❌ 1단계 실패: EntryIndex=%d 를 가진 SlottedItem을 찾지 못함! 2단계(포인터 검색)으로 진행..."), EntryIndex);
 
 	// ⭐⭐⭐ 2단계: Item 포인터로 검색 (Fallback)
 	UE_LOG(LogTemp, Warning, TEXT("[AddItem] 🔍 2단계: Item 포인터=%p 로 검색 시작..."), Item);
+#endif
 	for (const auto& [Index, SlottedItem] : SlottedItems)
 	{
 		if (!GridSlots.IsValidIndex(Index)) continue;
@@ -1025,8 +1083,10 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 			int32 NewStackCount = Item->GetTotalStackCount();
 			int32 OldStackCount = GridSlots[Index]->GetStackCount();
 
+#if INV_DEBUG_WIDGET
 			UE_LOG(LogTemp, Warning, TEXT("[AddItem] ⭐ Item 포인터 매칭! GridIndex=%d"), Index);
 			UE_LOG(LogTemp, Warning, TEXT("[AddItem]   스택 업데이트: %d → %d"), OldStackCount, NewStackCount);
+#endif
 
 			GridSlots[Index]->SetStackCount(NewStackCount);
 			if (IsValid(SlottedItem))
@@ -1034,12 +1094,16 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 				SlottedItem->UpdateStackCount(NewStackCount);
 			}
 
+#if INV_DEBUG_WIDGET
 			UE_LOG(LogTemp, Warning, TEXT("========== [AddItem] 스택 업데이트 완료! (Item 포인터 매칭) =========="));
+#endif
 			return; // ⭐ 새 슬롯 추가 필요 없음!
 		}
 	}
 
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("[AddItem] ❌ 기존 슬롯 못 찾음 (EntryIndex/포인터 모두 실패), 새 슬롯 생성..."));
+#endif
 
 	// ⭐ [Phase 5 Fix] 2.4단계: GridIndex 체크 (로드 시 저장된 위치로 배치!)
 	// Entry에 GridIndex가 설정되어 있고 카테고리가 일치하면 해당 위치에 배치
@@ -1052,25 +1116,29 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 			uint8 SavedGridCategory = InventoryList.Entries[EntryIndex].GridCategory;
 			
 			// 이 Grid의 카테고리와 일치하고, GridIndex가 유효한 경우
-			if (SavedGridCategory == static_cast<uint8>(ItemCategory) && 
-				SavedGridIndex >= 0 && 
-				GridSlots.IsValidIndex(SavedGridIndex) && 
+			if (SavedGridCategory == static_cast<uint8>(ItemCategory) &&
+				SavedGridIndex >= 0 &&
+				GridSlots.IsValidIndex(SavedGridIndex) &&
 				!SlottedItems.Contains(SavedGridIndex))
 			{
-				UE_LOG(LogTemp, Warning, TEXT("[AddItem] [Phase 5 Fix] Entry[%d] GridIndex=%d (saved pos), placing..."), 
+#if INV_DEBUG_WIDGET
+				UE_LOG(LogTemp, Warning, TEXT("[AddItem] [Phase 5 Fix] Entry[%d] GridIndex=%d (saved pos), placing..."),
 					EntryIndex, SavedGridIndex);
-				
+#endif
+
 				const int32 ActualStackCount = Item->GetTotalStackCount();
 				const bool bStackable = Item->IsStackable();
 				AddItemAtIndex(Item, SavedGridIndex, bStackable, ActualStackCount, EntryIndex);
-				
+
 				// ⭐ [Phase 5 Fix] 로드 시에는 Server_UpdateItemGridPosition RPC 스킵!
 				bSuppressServerSync = true;
 				UpdateGridSlots(Item, SavedGridIndex, bStackable, ActualStackCount);
 				bSuppressServerSync = false;
-				
+
+#if INV_DEBUG_WIDGET
 				UE_LOG(LogTemp, Warning, TEXT("[AddItem] [Phase 5 Fix] Placed at saved GridIndex=%d (no RPC)"), SavedGridIndex);
 				UE_LOG(LogTemp, Warning, TEXT("========== [AddItem] 아이템 추가 완료 =========="));
+#endif
 				return;
 			}
 		}
@@ -1078,25 +1146,33 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 
 	// ⭐⭐⭐ 2.5단계: TargetGridIndex 체크 (Split 아이템의 마우스 위치 배치!)
 	// Entry에 TargetGridIndex가 설정되어 있으면 해당 위치에 직접 배치
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("[AddItem] 🔍 2.5단계 조건 체크 시작"));
 	UE_LOG(LogTemp, Warning, TEXT("[AddItem]   InventoryComponent.IsValid()=%s"), InventoryComponent.IsValid() ? TEXT("true") : TEXT("false"));
+#endif
 
 	if (InventoryComponent.IsValid())
 	{
 		FInv_InventoryFastArray& InventoryList = InventoryComponent->GetInventoryList();
-		UE_LOG(LogTemp, Warning, TEXT("[AddItem]   Entries.Num()=%d, EntryIndex=%d, IsValidIndex=%s"), 
-			InventoryList.Entries.Num(), EntryIndex, 
+#if INV_DEBUG_WIDGET
+		UE_LOG(LogTemp, Warning, TEXT("[AddItem]   Entries.Num()=%d, EntryIndex=%d, IsValidIndex=%s"),
+			InventoryList.Entries.Num(), EntryIndex,
 			InventoryList.Entries.IsValidIndex(EntryIndex) ? TEXT("true") : TEXT("false"));
+#endif
 
 		if (InventoryList.Entries.IsValidIndex(EntryIndex))
 		{
 			int32 TargetGridIndex = InventoryList.Entries[EntryIndex].TargetGridIndex;
+#if INV_DEBUG_WIDGET
 			UE_LOG(LogTemp, Warning, TEXT("[AddItem] 🔍 2.5단계: Entry[%d]의 TargetGridIndex=%d 체크"), EntryIndex, TargetGridIndex);
+#endif
 
 			// TargetGridIndex가 유효하고, 해당 슬롯이 비어있으면 직접 배치
 			if (TargetGridIndex != INDEX_NONE && GridSlots.IsValidIndex(TargetGridIndex) && !SlottedItems.Contains(TargetGridIndex))
 			{
+#if INV_DEBUG_WIDGET
 				UE_LOG(LogTemp, Warning, TEXT("[AddItem] ✅ TargetGridIndex=%d가 유효하고 비어있음! 직접 배치 진행"), TargetGridIndex);
+#endif
 
 				// 직접 배치
 				const int32 ActualStackCount = Item->GetTotalStackCount();
@@ -1107,13 +1183,17 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 				// ⭐ 배치 후 TargetGridIndex 초기화 (재사용 방지)
 				InventoryList.Entries[EntryIndex].TargetGridIndex = INDEX_NONE;
 
+#if INV_DEBUG_WIDGET
 				UE_LOG(LogTemp, Warning, TEXT("[AddItem] ✅ TargetGridIndex=%d에 배치 완료! (Split 아이템 마우스 위치)"), TargetGridIndex);
 				UE_LOG(LogTemp, Warning, TEXT("========== [AddItem] 아이템 추가 완료 =========="));
+#endif
 				return;
 			}
 			else if (TargetGridIndex != INDEX_NONE)
 			{
+#if INV_DEBUG_WIDGET
 				UE_LOG(LogTemp, Warning, TEXT("[AddItem] ⚠️ TargetGridIndex=%d가 유효하지 않거나 이미 차지됨, 기본 로직으로 진행"), TargetGridIndex);
+#endif
 			}
 		}
 	}
@@ -1121,14 +1201,18 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 	// ⭐⭐⭐ 3단계: 빈 슬롯 찾기 (PostReplicatedAdd/Change 순서 문제 해결!)
 	// PostReplicatedAdd가 먼저 실행되어 Grid[0]을 차지한 경우,
 	// PostReplicatedChange가 Grid[0]을 찾지 못해 중복 배치되는 문제 방지
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("[AddItem] 🔍 3단계: 빈 슬롯 검색 시작 (HasRoomForItem 재사용)"));
+#endif
 
 	//공간이 있다고 부르는 부분.
 	FInv_SlotAvailabilityResult Result = HasRoomForItem(Item);
 	Result.EntryIndex = EntryIndex; // ⭐ Entry Index 저장
 
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("[AddItem] Result.EntryIndex=%d로 설정됨"), Result.EntryIndex);
 	UE_LOG(LogTemp, Warning, TEXT("[AddItem] HasRoomForItem 반환: %d개 슬롯"), Result.SlotAvailabilities.Num());
+#endif
 
 	// ⭐⭐⭐ 필터링: 이미 차지된 슬롯 제외! (중복 배치 방지)
 	TArray<FInv_SlotAvailability> ActuallyEmptySlots;
@@ -1137,17 +1221,23 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 		if (!SlottedItems.Contains(SlotAvail.Index))
 		{
 			ActuallyEmptySlots.Add(SlotAvail);
+#if INV_DEBUG_WIDGET
 			UE_LOG(LogTemp, Warning, TEXT("[AddItem]   슬롯[%d]: 실제로 비어있음 ✅"), SlotAvail.Index);
+#endif
 		}
 		else
 		{
+#if INV_DEBUG_WIDGET
 			UE_LOG(LogTemp, Warning, TEXT("[AddItem]   슬롯[%d]: 이미 차지됨, 건너뜀 ⚠️"), SlotAvail.Index);
+#endif
 		}
 	}
 
 	if (ActuallyEmptySlots.Num() > 0)
 	{
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("[AddItem] ✅ 실제 빈 슬롯 발견! 개수: %d"), ActuallyEmptySlots.Num());
+#endif
 
 		// 실제로 비어있는 슬롯만 사용
 		Result.SlotAvailabilities = ActuallyEmptySlots;
@@ -1156,13 +1246,17 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 		// 아이콘을 보여주고 그리드의 올바른 위치에 추가하는 위젯을 만듭니다.
 		AddItemToIndices(Result, Item);
 
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("[AddItem] ✅ 빈 슬롯에 배치 완료! EntryIndex=%d"), EntryIndex);
 		UE_LOG(LogTemp, Warning, TEXT("========== [AddItem] 아이템 추가 완료 =========="));
+#endif
 	}
 	else
 	{
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("[AddItem] ⚠️ 필터링 후 빈 슬롯 없음 (기존 스택 제외)"));
 		UE_LOG(LogTemp, Warning, TEXT("[AddItem] 🔍 4단계: 완전히 새로운 빈 슬롯 재검색 (스택 무시)"));
+#endif
 		
 		// ⭐⭐⭐ 4단계: 스택 가능 여부 무시하고 완전히 빈 슬롯 찾기
 		// HasRoomForItem은 스택 가능 아이템의 경우 기존 스택을 우선 반환하므로,
@@ -1187,30 +1281,40 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 					// 완전히 비어있는 슬롯 발견!
 					FInv_SlotAvailability NewSlot(Index, Item->GetTotalStackCount(), false);
 					CompletelyEmptySlots.Add(NewSlot);
+#if INV_DEBUG_WIDGET
 					UE_LOG(LogTemp, Warning, TEXT("[AddItem]   슬롯[%d]: 완전히 비어있음 ✅"), Index);
+#endif
 					break; // 하나만 찾으면 충분 (1x1 아이템)
 				}
 			}
 		}
-		
+
 		if (CompletelyEmptySlots.Num() > 0)
 		{
+#if INV_DEBUG_WIDGET
 			UE_LOG(LogTemp, Warning, TEXT("[AddItem] ✅ 완전히 빈 슬롯 발견! 개수: %d"), CompletelyEmptySlots.Num());
-			
+#endif
+
 			Result.SlotAvailabilities = CompletelyEmptySlots;
 			AddItemToIndices(Result, Item);
-			
+
+#if INV_DEBUG_WIDGET
 			UE_LOG(LogTemp, Warning, TEXT("[AddItem] ✅ 새 빈 슬롯에 배치 완료! EntryIndex=%d"), EntryIndex);
 			UE_LOG(LogTemp, Warning, TEXT("========== [AddItem] 아이템 추가 완료 =========="));
+#endif
 		}
 		else
 		{
+#if INV_DEBUG_WIDGET
 			UE_LOG(LogTemp, Error, TEXT("[AddItem] ❌ 완전히 빈 슬롯도 찾지 못했습니다! 인벤토리가 가득 참!"));
 			UE_LOG(LogTemp, Warning, TEXT("========== [AddItem] 아이템 추가 실패 =========="));
+#endif
 		}
 	}
 
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("========== [AddItem] 아이템 추가 완료 =========="));
+#endif
 }
 
 // 인벤토리에서 아이템 제거 시 UI에서도 삭제
@@ -1219,13 +1323,17 @@ void UInv_InventoryGrid::RemoveItem(UInv_InventoryItem* Item, int32 EntryIndex)
 {
 	if (!IsValid(Item))
 	{
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("[RemoveItem] Item is invalid!"));
+#endif
 		return;
 	}
 
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("[RemoveItem] ========== 제거 요청 시작 =========="));
 	UE_LOG(LogTemp, Warning, TEXT("[RemoveItem] ItemType=%s, EntryIndex=%d, Grid=%d"),
 		*Item->GetItemManifest().GetItemType().ToString(), EntryIndex, (int32)ItemCategory);
+#endif
 
 	// ⭐ 핵심 변경: EntryIndex는 로그용으로만 사용, 실제 매칭은 포인터 + ItemManifest로!
 	int32 FoundIndex = INDEX_NONE;
@@ -1243,8 +1351,10 @@ void UInv_InventoryGrid::RemoveItem(UInv_InventoryItem* Item, int32 EntryIndex)
 			// ⭐ Phase 7: EntryIndex로 정확한 슬롯 매칭 (Split 후 포인터 공유 문제 해결)
 			if (SlottedItem->GetEntryIndex() != EntryIndex)
 			{
-				UE_LOG(LogTemp, Warning, TEXT("[RemoveItem] ⚠️ 포인터 일치하지만 EntryIndex 불일치: SlotEntry=%d, 찾는Entry=%d, 스킵!"), 
+#if INV_DEBUG_WIDGET
+				UE_LOG(LogTemp, Warning, TEXT("[RemoveItem] ⚠️ 포인터 일치하지만 EntryIndex 불일치: SlotEntry=%d, 찾는Entry=%d, 스킵!"),
 					SlottedItem->GetEntryIndex(), EntryIndex);
+#endif
 				continue;
 			}
 			// 2차 검증: ItemManifest 비교 (안전장치)
@@ -1252,7 +1362,9 @@ void UInv_InventoryGrid::RemoveItem(UInv_InventoryItem* Item, int32 EntryIndex)
 				Item->GetItemManifest().GetItemType()))
 			{
 				FoundIndex = GridIndex;
+#if INV_DEBUG_WIDGET
 				UE_LOG(LogTemp, Warning, TEXT("[RemoveItem] ✅ 슬롯 찾음! GridIndex=%d (포인터 일치 + Manifest 일치)"), GridIndex);
+#endif
 				break;
 			}
 		}
@@ -1260,14 +1372,18 @@ void UInv_InventoryGrid::RemoveItem(UInv_InventoryItem* Item, int32 EntryIndex)
 
 	if (FoundIndex == INDEX_NONE)
 	{
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("[RemoveItem] ❌ Item을 찾지 못함 (다른 그리드에 있을 수 있음)"));
 		UE_LOG(LogTemp, Warning, TEXT("[RemoveItem] ========== 제거 요청 종료 (실패) =========="));
+#endif
 		return;
 	}
 
 	RemoveItemFromGrid(Item, FoundIndex);
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("[RemoveItem] ✅ 제거 완료! GridIndex=%d"), FoundIndex);
 	UE_LOG(LogTemp, Warning, TEXT("[RemoveItem] ========== 제거 요청 종료 (성공) =========="));
+#endif
 }
 
 // 🆕 [Phase 6] 포인터만으로 아이템 제거 (장착 복원 시 Grid에서 제거용)
@@ -1275,12 +1391,16 @@ bool UInv_InventoryGrid::RemoveSlottedItemByPointer(UInv_InventoryItem* Item)
 {
 	if (!IsValid(Item))
 	{
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("[RemoveSlottedItemByPointer] Item is invalid!"));
+#endif
 		return false;
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("[RemoveSlottedItemByPointer] 🔍 포인터로 아이템 검색: %s"), 
+#if INV_DEBUG_WIDGET
+	UE_LOG(LogTemp, Warning, TEXT("[RemoveSlottedItemByPointer] 🔍 포인터로 아이템 검색: %s"),
 		*Item->GetItemManifest().GetItemType().ToString());
+#endif
 
 	// SlottedItems를 순회해서 같은 포인터를 가진 슬롯 찾기
 	int32 FoundGridIndex = INDEX_NONE;
@@ -1292,20 +1412,26 @@ bool UInv_InventoryGrid::RemoveSlottedItemByPointer(UInv_InventoryItem* Item)
 		if (GridSlotItem == Item)
 		{
 			FoundGridIndex = GridIndex;
+#if INV_DEBUG_WIDGET
 			UE_LOG(LogTemp, Warning, TEXT("[RemoveSlottedItemByPointer] ✅ 찾음! GridIndex=%d"), GridIndex);
+#endif
 			break;
 		}
 	}
 
 	if (FoundGridIndex == INDEX_NONE)
 	{
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("[RemoveSlottedItemByPointer] ❌ 해당 아이템을 Grid에서 찾을 수 없음"));
+#endif
 		return false;
 	}
 
 	// Grid에서 제거
 	RemoveItemFromGrid(Item, FoundGridIndex);
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("[RemoveSlottedItemByPointer] ✅ Grid에서 제거 완료! GridIndex=%d"), FoundGridIndex);
+#endif
 	return true;
 }
 
@@ -1314,18 +1440,24 @@ void UInv_InventoryGrid::UpdateMaterialStacksByTag(const FGameplayTag& MaterialT
 {
 	if (!MaterialTag.IsValid())
 	{
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Error, TEXT("UpdateMaterialStacksByTag: Invalid MaterialTag!"));
+#endif
 		return;
 	}
 
 	if (!InventoryComponent.IsValid())
 	{
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Error, TEXT("UpdateMaterialStacksByTag: InventoryComponent is invalid!"));
+#endif
 		return;
 	}
 
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("=== UpdateMaterialStacksByTag 호출 ==="));
 	UE_LOG(LogTemp, Warning, TEXT("MaterialTag: %s"), *MaterialTag.ToString());
+#endif
 
 	// 1단계: InventoryList에서 실제 총량 계산
 	const FInv_InventoryFastArray& InventoryList = InventoryComponent->GetInventoryList();
@@ -1339,8 +1471,10 @@ void UInv_InventoryGrid::UpdateMaterialStacksByTag(const FGameplayTag& MaterialT
 			TotalCountInInventory += Item->GetTotalStackCount();
 		}
 	}
-	
+
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("InventoryList 총량: %d"), TotalCountInInventory);
+#endif
 
 	// 2단계: UI의 같은 타입 모든 슬롯 찾기
 	TArray<TPair<int32, int32>> SlotsWithCounts; // <Index, CurrentCount>
@@ -1356,11 +1490,15 @@ void UInv_InventoryGrid::UpdateMaterialStacksByTag(const FGameplayTag& MaterialT
 		{
 			int32 CurrentCount = GridSlots[Index]->GetStackCount();
 			SlotsWithCounts.Add(TPair<int32, int32>(Index, CurrentCount));
+#if INV_DEBUG_WIDGET
 			UE_LOG(LogTemp, Warning, TEXT("슬롯 %d 발견: 현재 개수 %d"), Index, CurrentCount);
+#endif
 		}
 	}
-	
+
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("발견된 슬롯 개수: %d"), SlotsWithCounts.Num());
+#endif
 	
 	// 3단계: 총량을 슬롯에 분배 (순차적으로 채우기)
 	int32 RemainingTotal = TotalCountInInventory;
@@ -1372,31 +1510,39 @@ void UInv_InventoryGrid::UpdateMaterialStacksByTag(const FGameplayTag& MaterialT
 		{
 			// 남은 총량이 0 → 이 슬롯은 삭제
 			IndicesToRemove.Add(Index);
+#if INV_DEBUG_WIDGET
 			UE_LOG(LogTemp, Warning, TEXT("슬롯 %d: 총량 소진, 제거 예약"), Index);
+#endif
 		}
 		else
 		{
 			// 이 슬롯에 최대한 채우기
 			int32 NewCount = FMath::Min(OldCount, RemainingTotal);
 			RemainingTotal -= NewCount;
-			
+
 			if (NewCount <= 0)
 			{
 				// 0개가 됨 → 삭제
 				IndicesToRemove.Add(Index);
+#if INV_DEBUG_WIDGET
 				UE_LOG(LogTemp, Warning, TEXT("슬롯 %d: 0개 됨, 제거 예약 (%d → 0)"), Index, OldCount);
+#endif
 			}
 			else if (NewCount != OldCount)
 			{
 				// 개수 변경 → 업데이트
 				GridSlots[Index]->SetStackCount(NewCount);
 				SlottedItems[Index]->UpdateStackCount(NewCount);
+#if INV_DEBUG_WIDGET
 				UE_LOG(LogTemp, Warning, TEXT("슬롯 %d: UI 업데이트 (%d → %d)"), Index, OldCount, NewCount);
+#endif
 			}
 			else
 			{
+#if INV_DEBUG_WIDGET
 				// 변경 없음
 				UE_LOG(LogTemp, Log, TEXT("슬롯 %d: 변경 없음 (유지: %d)"), Index, NewCount);
+#endif
 			}
 		}
 	}
@@ -1405,16 +1551,20 @@ void UInv_InventoryGrid::UpdateMaterialStacksByTag(const FGameplayTag& MaterialT
 	for (int32 IndexToRemove : IndicesToRemove)
 	{
 		if (!GridSlots.IsValidIndex(IndexToRemove)) continue;
-		
+
 		UInv_InventoryItem* ItemToRemove = GridSlots[IndexToRemove]->GetInventoryItem().Get();
 		if (IsValid(ItemToRemove))
 		{
 			RemoveItemFromGrid(ItemToRemove, IndexToRemove);
+#if INV_DEBUG_WIDGET
 			UE_LOG(LogTemp, Warning, TEXT("슬롯 %d: UI에서 제거 완료"), IndexToRemove);
+#endif
 		}
 	}
-	
+
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("=== UpdateMaterialStacksByTag 완료 ==="));
+#endif
 }
 
 // GridSlot을 직접 순회하며 재료 차감 (Split된 스택 처리)
@@ -1422,12 +1572,16 @@ void UInv_InventoryGrid::ConsumeItemsByTag(const FGameplayTag& MaterialTag, int3
 {
 	if (!MaterialTag.IsValid() || AmountToConsume <= 0)
 	{
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Error, TEXT("ConsumeItemsByTag: Invalid MaterialTag or Amount!"));
+#endif
 		return;
 	}
 
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("=== ConsumeItemsByTag 시작 ==="));
 	UE_LOG(LogTemp, Warning, TEXT("MaterialTag: %s, AmountToConsume: %d"), *MaterialTag.ToString(), AmountToConsume);
+#endif
 
 	int32 RemainingToConsume = AmountToConsume;
 	TArray<int32> IndicesToRemove; // 제거할 슬롯 인덱스 목록
@@ -1445,7 +1599,9 @@ void UInv_InventoryGrid::ConsumeItemsByTag(const FGameplayTag& MaterialTag, int3
 	{
 		if (RemainingToConsume <= 0)
 		{
+#if INV_DEBUG_WIDGET
 			UE_LOG(LogTemp, Warning, TEXT("✅ 차감 완료! RemainingToConsume이 0 이하입니다. 순회 종료."));
+#endif
 			break; // 다 차감했으면 종료
 		}
 
@@ -1459,34 +1615,42 @@ void UInv_InventoryGrid::ConsumeItemsByTag(const FGameplayTag& MaterialTag, int3
 
 		// 현재 슬롯의 개수
 		int32 CurrentCount = GridSlots[Index]->GetStackCount();
-		
+
 		// 이 슬롯에서 차감할 개수 (최대 CurrentCount까지만)
 		int32 ToConsume = FMath::Min(CurrentCount, RemainingToConsume);
-		
+
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("슬롯 %d: CurrentCount=%d, ToConsume=%d, RemainingBefore=%d"), Index, CurrentCount, ToConsume, RemainingToConsume);
+#endif
 
 		RemainingToConsume -= ToConsume; // ⭐ 차감!
 		int32 NewCount = CurrentCount - ToConsume;
 
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("슬롯 %d: 차감 후 RemainingToConsume=%d, NewCount=%d"), Index, RemainingToConsume, NewCount);
+#endif
 
 		if (NewCount <= 0)
 		{
 			// 이 슬롯을 전부 소비 → 제거 예약
 			IndicesToRemove.Add(Index);
+#if INV_DEBUG_WIDGET
 			UE_LOG(LogTemp, Warning, TEXT("슬롯 %d: 전부 소비! 제거 예약 (%d → 0)"), Index, CurrentCount);
+#endif
 		}
 		else
 		{
 			// 슬롯 개수만 감소
 			GridSlots[Index]->SetStackCount(NewCount);
-			
+
 			if (SlottedItems.Contains(Index) && IsValid(SlottedItems[Index]))
 			{
 				SlottedItems[Index]->UpdateStackCount(NewCount);
 			}
-			
+
+#if INV_DEBUG_WIDGET
 			UE_LOG(LogTemp, Warning, TEXT("슬롯 %d: UI 업데이트 (%d → %d)"), Index, CurrentCount, NewCount);
+#endif
 		}
 	}
 
@@ -1499,10 +1663,13 @@ void UInv_InventoryGrid::ConsumeItemsByTag(const FGameplayTag& MaterialTag, int3
 		if (IsValid(ItemToRemove))
 		{
 			RemoveItemFromGrid(ItemToRemove, IndexToRemove);
+#if INV_DEBUG_WIDGET
 			UE_LOG(LogTemp, Warning, TEXT("슬롯 %d: UI에서 제거 완료"), IndexToRemove);
+#endif
 		}
 	}
 
+#if INV_DEBUG_WIDGET
 	if (RemainingToConsume > 0)
 	{
 		UE_LOG(LogTemp, Error, TEXT("❌ 재료가 부족합니다! 남은 차감량: %d"), RemainingToConsume);
@@ -1513,6 +1680,7 @@ void UInv_InventoryGrid::ConsumeItemsByTag(const FGameplayTag& MaterialTag, int3
 	}
 
 	UE_LOG(LogTemp, Warning, TEXT("=== ConsumeItemsByTag 완료 ==="));
+#endif
 }
 
 
@@ -1526,8 +1694,10 @@ void UInv_InventoryGrid::AddItemToIndices(const FInv_SlotAvailabilityResult& Res
 		// 리플리케이션된 아이템의 실제 스택 수를 그대로 반영해야 함
 		const int32 ActualStackCount = NewItem->GetTotalStackCount();
 
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("[AddItemToIndices] 빈 슬롯 배치: Index=%d, AmountToFill=%d (무시), ActualStackCount=%d (사용)"),
 			Availability.Index, Availability.AmountToFill, ActualStackCount);
+#endif
 
 		AddItemAtIndex(NewItem, Availability.Index, Result.bStackable, ActualStackCount, Result.EntryIndex);
 		UpdateGridSlots(NewItem, Availability.Index, Result.bStackable, ActualStackCount);
@@ -1553,8 +1723,10 @@ void UInv_InventoryGrid::SetSlottedItemImage(const UInv_SlottedItem* SlottedItem
 
 void UInv_InventoryGrid::AddItemAtIndex(UInv_InventoryItem* Item, const int32 Index, const bool bStackable, const int32 StackAmount, const int32 EntryIndex)
 {
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Log, TEXT("[AddItemAtIndex] GridIndex=%d, Item=%s"),
 		Index, *Item->GetItemManifest().GetItemType().ToString());
+#endif
 
 	//격자의 크기를 얻어오자. 게임플레이 태그로 말야
 	// Get Grid Fragment so we know how many grid spaces the item takes.
@@ -1625,9 +1797,11 @@ void UInv_InventoryGrid::UpdateGridSlots(UInv_InventoryItem* NewItem, const int3
 		uint8 GridCategoryValue = static_cast<uint8>(ItemCategory);
 		InventoryComponent->Server_UpdateItemGridPosition(NewItem, Index, GridCategoryValue);
 	}
-	
-	UE_LOG(LogTemp, Log, TEXT("[UpdateGridSlots] 아이템 %s를 Grid[%d,%d]에 배치 (Index=%d, Category=%d)"), 
+
+#if INV_DEBUG_WIDGET
+	UE_LOG(LogTemp, Log, TEXT("[UpdateGridSlots] 아이템 %s를 Grid[%d,%d]에 배치 (Index=%d, Category=%d)"),
 		*NewItem->GetItemManifest().GetItemType().ToString(), GridPos.X, GridPos.Y, Index, static_cast<int32>(ItemCategory));
+#endif
 
 	//2D 격자 순회하면서 그리드 슬롯 업데이트
 	UInv_InventoryStatics::ForEach2D(GridSlots, Index, Dimensions, Columns, [&](UInv_GridSlot* GridSlot) // [&] 이건 뭔데?
@@ -1711,9 +1885,11 @@ void UInv_InventoryGrid::PutDownOnIndex(const int32 Index)
         if (IsValid(OriginalItem) && InventoryComponent.IsValid())
         {
             int32 OriginalNewStackCount = OriginalItem->GetTotalStackCount() - StackCount;
+#if INV_DEBUG_WIDGET
             UE_LOG(LogTemp, Warning, TEXT("[Phase 8.1] Split PutDown - UI 배치 스킵, 서버 RPC만 호출"));
             UE_LOG(LogTemp, Warning, TEXT("  원본 TotalStackCount: %d, 새 개수: %d, Split 개수: %d, 목표 Index: %d"),
                 OriginalItem->GetTotalStackCount(), OriginalNewStackCount, StackCount, Index);
+#endif
             // ⭐ Index(마우스 위치)를 서버에 전달하여 해당 위치에 배치되도록 함
             InventoryComponent.Get()->Server_SplitItemEntry(OriginalItem, OriginalNewStackCount, StackCount, Index);
         }
@@ -1723,7 +1899,9 @@ void UInv_InventoryGrid::PutDownOnIndex(const int32 Index)
 
     AddItemAtIndex(ItemToPutDown, Index, bIsStackable, StackCount, EntryIndex);
     UpdateGridSlots(ItemToPutDown, Index, bIsStackable, StackCount);
+#if INV_DEBUG_WIDGET
     UE_LOG(LogTemp, Verbose, TEXT("PutDown: Index=%d, StackCount=%d"), Index, StackCount);
+#endif
     ClearHoverItem();
 }
 
@@ -1845,13 +2023,15 @@ void UInv_InventoryGrid::ConsumeHoverItemStacks(const int32 ClickedStackCount, c
 			{
 				// ListenServer: 직접 설정
 				ClickedItem->SetTotalStackCount(NewClickedStackCount);
+#if INV_DEBUG_WIDGET
 				UE_LOG(LogTemp, Warning, TEXT("ConsumeHoverStacks (Authority): 스택 %d로 설정"), NewClickedStackCount);
+#endif
 			}
 			// Client는 리플리케이션으로 자동 업데이트됨
 			// (HoverItem을 소비했으므로 추가 RPC 불필요)
 		}
 	}
-	
+
 	ClearHoverItem(); // 호버 아이템 초기화
 	ShowCursor(); // 마우스 커서 보이게 하기
 	
@@ -1889,7 +2069,9 @@ void UInv_InventoryGrid::FillInStack(const int32 FillAmount, const int32 Remaind
 			{
 				// ListenServer: 직접 설정
 				ClickedItem->SetTotalStackCount(NewStackCount);
+#if INV_DEBUG_WIDGET
 				UE_LOG(LogTemp, Warning, TEXT("FillInStack (Authority): 스택 %d로 설정"), NewStackCount);
+#endif
 			}
 			// Client는 리플리케이션으로 자동 업데이트
 		}
@@ -1949,9 +2131,11 @@ void UInv_InventoryGrid::OnPopUpMenuSplit(int32 SplitAmount, int32 Index) // 아
 	const int32 OriginalStackCount = UpperLeftGridSlot->GetStackCount(); // 원본 스택 수 가져오기
 	const int32 NewStackCount = OriginalStackCount - SplitAmount; // 새로운 스택 수 계산 <- 분할된 양을 빼주는 것
 	
-	UE_LOG(LogTemp, Warning, TEXT("🔀 Split 시작: 원본 %d개 → 원본 슬롯 %d개 + 새 Entry %d개"), 
+#if INV_DEBUG_WIDGET
+	UE_LOG(LogTemp, Warning, TEXT("🔀 Split 시작: 원본 %d개 → 원본 슬롯 %d개 + 새 Entry %d개"),
 		OriginalStackCount, NewStackCount, SplitAmount);
-	
+#endif
+
 	// 1단계: UI 업데이트 (빠른 반응성)
 	UpperLeftGridSlot->SetStackCount(NewStackCount); // 그리드 슬롯 스택 수 업데이트
 	SlottedItems.FindChecked(UpperLeftIndex)->UpdateStackCount(NewStackCount); // 슬로티드 아이템 스택 수 업데이트
@@ -1971,9 +2155,11 @@ void UInv_InventoryGrid::OnPopUpMenuSplit(int32 SplitAmount, int32 Index) // 아
 	//
 	// Split은 "UI 전용 작업"이므로 서버 데이터는 변경하지 않음!
 	// PutDown 시에도 서버 TotalStackCount는 그대로 유지됨
-	
-	UE_LOG(LogTemp, Warning, TEXT("✅ Split 완료: 서버 TotalStackCount는 %d로 유지됨 (UI만 %d + %d로 나눠짐)"), 
+
+#if INV_DEBUG_WIDGET
+	UE_LOG(LogTemp, Warning, TEXT("✅ Split 완료: 서버 TotalStackCount는 %d로 유지됨 (UI만 %d + %d로 나눠짐)"),
 		OriginalStackCount, NewStackCount, SplitAmount);
+#endif
 }
 
 void UInv_InventoryGrid::OnPopUpMenuDrop(int32 Index) // 아이템 버리기 함수
@@ -2052,12 +2238,16 @@ int32 UInv_InventoryGrid::GetTotalMaterialCountFromSlots(const FGameplayTag& Mat
 			// 중복 카운트 방지
 			CountedUpperLeftIndices.Add(UpperLeftIndex);
 
-			UE_LOG(LogTemp, Verbose, TEXT("GridSlot[%d]: %s x %d (누적: %d)"), 
+#if INV_DEBUG_WIDGET
+			UE_LOG(LogTemp, Verbose, TEXT("GridSlot[%d]: %s x %d (누적: %d)"),
 				UpperLeftIndex, *MaterialTag.ToString(), StackCount, TotalCount);
+#endif
 		}
 	}
 
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Log, TEXT("GetTotalMaterialCountFromSlots(%s) = %d"), *MaterialTag.ToString(), TotalCount);
+#endif
 	return TotalCount;
 }
 

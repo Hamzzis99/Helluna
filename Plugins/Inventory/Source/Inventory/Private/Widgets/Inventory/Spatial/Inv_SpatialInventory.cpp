@@ -27,6 +27,7 @@ void UInv_SpatialInventory::NativeOnInitialized()
 
 	// 🔍 [디버깅] 현재 맵 이름 출력
 	FString CurrentMapName = GetWorld() ? GetWorld()->GetMapName() : TEXT("Unknown");
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT(""));
 	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
 	UE_LOG(LogTemp, Warning, TEXT("║ [SpatialInventory] NativeOnInitialized                     ║"));
@@ -34,6 +35,7 @@ void UInv_SpatialInventory::NativeOnInitialized()
 	UE_LOG(LogTemp, Warning, TEXT("║ 📍 현재 맵: %s"), *CurrentMapName);
 	UE_LOG(LogTemp, Warning, TEXT("║ 📍 위젯 클래스: %s"), *GetClass()->GetName());
 	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
 
 	//인벤토리 장비 칸들
 	Button_Equippables->OnClicked.AddDynamic(this, &ThisClass::ShowEquippables);
@@ -46,13 +48,17 @@ void UInv_SpatialInventory::NativeOnInitialized()
 	Grid_Craftables->SetOwningCanvas(CanvasPanel);
 
 	ShowEquippables(); // 기본값으로 장비창을 보여주자.
-	
+
 	// 🔍 [디버깅] WidgetTree 순회 전 상태
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("▶ [NativeOnInitialized] WidgetTree에서 EquippedGridSlot 수집 시작..."));
-	
+#endif
+
 	CollectEquippedGridSlots();
-	
+
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT(""));
+#endif
 }
 
 // ============================================
@@ -63,33 +69,39 @@ void UInv_SpatialInventory::CollectEquippedGridSlots()
 	// 이미 수집되었으면 스킵
 	if (EquippedGridSlots.Num() > 0)
 	{
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("   ⏭️ EquippedGridSlots 이미 수집됨: %d개"), EquippedGridSlots.Num());
+#endif
 		return;
 	}
-	
+
 	WidgetTree->ForEachWidget([this](UWidget* Widget)
 	{
 		UInv_EquippedGridSlot* EquippedGridSlot = Cast<UInv_EquippedGridSlot>(Widget);
 		if (IsValid(EquippedGridSlot))
 		{
 			EquippedGridSlots.Add(EquippedGridSlot);
-			
+
 			// 델리게이트 중복 바인딩 방지
 			if (!EquippedGridSlot->EquippedGridSlotClicked.IsAlreadyBound(this, &ThisClass::EquippedGridSlotClicked))
 			{
 				EquippedGridSlot->EquippedGridSlotClicked.AddDynamic(this, &ThisClass::EquippedGridSlotClicked);
 			}
-			
-			UE_LOG(LogTemp, Warning, TEXT("   ✅ EquippedGridSlot 발견: %s (WeaponSlotIndex=%d)"), 
+
+#if INV_DEBUG_WIDGET
+			UE_LOG(LogTemp, Warning, TEXT("   ✅ EquippedGridSlot 발견: %s (WeaponSlotIndex=%d)"),
 				*EquippedGridSlot->GetName(), EquippedGridSlot->GetWeaponSlotIndex());
+#endif
 		}
 	});
-	
+
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("▶ EquippedGridSlots 수집 완료: 총 %d개"), EquippedGridSlots.Num());
 	if (EquippedGridSlots.Num() == 0)
 	{
 		UE_LOG(LogTemp, Error, TEXT("   ❌ [경고] EquippedGridSlots가 비어있음!"));
 	}
+#endif
 }
 
 // ============================================
@@ -97,8 +109,10 @@ void UInv_SpatialInventory::CollectEquippedGridSlots()
 // ============================================
 void UInv_SpatialInventory::RefreshEquippedSlotLayouts()
 {
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("[RefreshEquippedSlotLayouts] 장착 슬롯 레이아웃 갱신 시작 (%d개 슬롯)"), EquippedGridSlots.Num());
-	
+#endif
+
 	for (UInv_EquippedGridSlot* EquippedGridSlot : EquippedGridSlots)
 	{
 		if (IsValid(EquippedGridSlot))
@@ -106,8 +120,10 @@ void UInv_SpatialInventory::RefreshEquippedSlotLayouts()
 			EquippedGridSlot->RefreshLayout();
 		}
 	}
-	
+
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("[RefreshEquippedSlotLayouts] 갱신 완료!"));
+#endif
 }
 
 // 장착된 그리드 슬롯이 클릭되었을 때 호출되는 함수
@@ -138,7 +154,9 @@ void UInv_SpatialInventory::EquippedGridSlotClicked(UInv_EquippedGridSlot* Equip
 	
 	// ⭐ [WeaponBridge] 무기 슬롯 인덱스 전달
 	int32 WeaponSlotIndex = EquippedGridSlot->GetWeaponSlotIndex();
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [SpatialInventory] 장착 슬롯 클릭 - WeaponSlotIndex: %d"), WeaponSlotIndex);
+#endif
 	
 	//장착된 곳에 서버RPC를 생성하는 부분
 	InventoryComponent->Server_EquipSlotClicked(HoverItem->GetInventoryItem(), nullptr, WeaponSlotIndex);
@@ -176,7 +194,9 @@ void UInv_SpatialInventory::EquippedSlottedItemClicked(UInv_EquippedSlottedItem*
 	
 	// ⭐ [WeaponBridge] 장착 해제 시 WeaponSlotIndex 가져오기
 	int32 WeaponSlotIndex = IsValid(EquippedGridSlot) ? EquippedGridSlot->GetWeaponSlotIndex() : -1;
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [SpatialInventory] 장착 슬롯 아이템 클릭 (해제) - WeaponSlotIndex: %d"), WeaponSlotIndex);
+#endif
 	
 	// Clear the equipped slot of this item (set it's inventory item to nullptr)
 	// 이 아이템의 슬롯을 지우기
@@ -325,27 +345,33 @@ UInv_EquippedSlottedItem* UInv_SpatialInventory::RestoreEquippedItem(UInv_Equipp
 {
 	if (!IsValid(EquippedGridSlot) || !IsValid(ItemToEquip))
 	{
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("[RestoreEquippedItem] 유효하지 않은 인자!"));
+#endif
 		return nullptr;
 	}
-	
+
 	// TileSize 가져오기
 	auto* InventoryWidget = UInv_InventoryStatics::GetInventoryWidget(GetOwningPlayer());
 	if (!IsValid(InventoryWidget))
 	{
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Error, TEXT("[RestoreEquippedItem] ❌ InventoryWidget이 nullptr!"));
+#endif
 		return nullptr;
 	}
 	const float TileSize = InventoryWidget->GetTileSize();
-	
+
+#if INV_DEBUG_WIDGET
 	// 🔍 [Phase 8] TileSize 디버깅
-	UE_LOG(LogTemp, Warning, TEXT("[RestoreEquippedItem] InventoryWidget: %s, TileSize: %.1f"), 
+	UE_LOG(LogTemp, Warning, TEXT("[RestoreEquippedItem] InventoryWidget: %s, TileSize: %.1f"),
 		*InventoryWidget->GetName(), TileSize);
-	
+
 	if (TileSize <= 0.f)
 	{
 		UE_LOG(LogTemp, Error, TEXT("[RestoreEquippedItem] ❌ TileSize가 0 이하! 위젯이 안 보일 수 있음!"));
 	}
+#endif
 	
 	// 장착 아이템의 태그 가져오기
 	FGameplayTag EquipmentTag = ItemToEquip->GetItemManifest().GetItemType();
@@ -357,11 +383,13 @@ UInv_EquippedSlottedItem* UInv_SpatialInventory::RestoreEquippedItem(UInv_Equipp
 	{
 		// ⚠️ 핵심: 클릭 델리게이트 바인딩 (드래그&드롭 장착 해제용)
 		EquippedSlottedItem->OnEquippedSlottedItemClicked.AddDynamic(this, &ThisClass::EquippedSlottedItemClicked);
-		
-		UE_LOG(LogTemp, Warning, TEXT("[RestoreEquippedItem] ✅ 델리게이트 바인딩 완료: %s → 슬롯 %d"), 
+
+#if INV_DEBUG_WIDGET
+		UE_LOG(LogTemp, Warning, TEXT("[RestoreEquippedItem] ✅ 델리게이트 바인딩 완료: %s → 슬롯 %d"),
 			*EquipmentTag.ToString(), EquippedGridSlot->GetWeaponSlotIndex());
+#endif
 	}
-	
+
 	return EquippedSlottedItem;
 }
 
@@ -578,7 +606,9 @@ int32 UInv_SpatialInventory::GetTotalMaterialCountFromUI(const FGameplayTag& Mat
 		TotalCount += Grid->GetTotalMaterialCountFromSlots(MaterialTag);
 	}
 
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Log, TEXT("GetTotalMaterialCountFromUI(%s) = %d (모든 그리드 합산)"), *MaterialTag.ToString(), TotalCount);
+#endif
 	return TotalCount;
 }
 
