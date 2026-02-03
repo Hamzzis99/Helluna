@@ -19,6 +19,7 @@
 // ════════════════════════════════════════════════════════════════════════════════
 
 #include "GameMode/HellunaBaseGameMode.h"
+#include "Helluna.h"  // 전처리기 플래그
 #include "GameMode/HellunaDefenseGameState.h"
 #include "Login/HellunaLoginController.h"
 #include "Login/HellunaAccountSaveGame.h"
@@ -105,19 +106,21 @@ void AHellunaBaseGameMode::BeginPlay()
 	AccountSaveGame = UHellunaAccountSaveGame::LoadOrCreate();
 	InventorySaveGame = UHellunaInventorySaveGame::LoadOrCreate();
 
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║     [BaseGameMode] BeginPlay                               ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ PlayerControllerClass: %s"), PlayerControllerClass ? *PlayerControllerClass->GetName() : TEXT("nullptr"));
-	UE_LOG(LogTemp, Warning, TEXT("║ PlayerStateClass: %s"), PlayerStateClass ? *PlayerStateClass->GetName() : TEXT("nullptr"));
-	UE_LOG(LogTemp, Warning, TEXT("║ DefaultPawnClass: %s"), DefaultPawnClass ? *DefaultPawnClass->GetName() : TEXT("nullptr"));
-	UE_LOG(LogTemp, Warning, TEXT("║ HeroCharacterClass: %s"), HeroCharacterClass ? *HeroCharacterClass->GetName() : TEXT("미설정!"));
-	UE_LOG(LogTemp, Warning, TEXT("║ AccountCount: %d"), AccountSaveGame ? AccountSaveGame->GetAccountCount() : 0);
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ HeroCharacterMap: %d개 매핑됨"), HeroCharacterMap.Num());
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
-	UE_LOG(LogTemp, Warning, TEXT(""));
+#if HELLUNA_DEBUG_GAMEMODE
+	UE_LOG(LogHelluna, Warning, TEXT(""));
+	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogHelluna, Warning, TEXT("║     [BaseGameMode] BeginPlay                               ║"));
+	UE_LOG(LogHelluna, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogHelluna, Warning, TEXT("║ PlayerControllerClass: %s"), PlayerControllerClass ? *PlayerControllerClass->GetName() : TEXT("nullptr"));
+	UE_LOG(LogHelluna, Warning, TEXT("║ PlayerStateClass: %s"), PlayerStateClass ? *PlayerStateClass->GetName() : TEXT("nullptr"));
+	UE_LOG(LogHelluna, Warning, TEXT("║ DefaultPawnClass: %s"), DefaultPawnClass ? *DefaultPawnClass->GetName() : TEXT("nullptr"));
+	UE_LOG(LogHelluna, Warning, TEXT("║ HeroCharacterClass: %s"), HeroCharacterClass ? *HeroCharacterClass->GetName() : TEXT("미설정!"));
+	UE_LOG(LogHelluna, Warning, TEXT("║ AccountCount: %d"), AccountSaveGame ? AccountSaveGame->GetAccountCount() : 0);
+	UE_LOG(LogHelluna, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogHelluna, Warning, TEXT("║ HeroCharacterMap: %d개 매핑됨"), HeroCharacterMap.Num());
+	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+	UE_LOG(LogHelluna, Warning, TEXT(""));
+#endif
 
 #if WITH_EDITOR
 	if (IsValid(ItemTypeMappingDataTable))
@@ -131,7 +134,9 @@ void AHellunaBaseGameMode::BeginPlay()
 
 void AHellunaBaseGameMode::InitializeGame()
 {
-	UE_LOG(LogTemp, Warning, TEXT("[BaseGameMode] InitializeGame - 기본 구현 (override 필요)"));
+#if HELLUNA_DEBUG_GAMEMODE
+	UE_LOG(LogHelluna, Warning, TEXT("[BaseGameMode] InitializeGame - 기본 구현 (override 필요)"));
+#endif
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -150,25 +155,27 @@ void AHellunaBaseGameMode::InitializeGame()
 // ════════════════════════════════════════════════════════════════════════════════
 void AHellunaBaseGameMode::PostLogin(APlayerController* NewPlayer)
 {
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║     [BaseGameMode] PostLogin                               ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ Controller: %s"), *GetNameSafe(NewPlayer));
-	UE_LOG(LogTemp, Warning, TEXT("║ ControllerClass: %s"), NewPlayer ? *NewPlayer->GetClass()->GetName() : TEXT("nullptr"));
-	UE_LOG(LogTemp, Warning, TEXT("║ GameInitialized: %s"), bGameInitialized ? TEXT("TRUE") : TEXT("FALSE"));
+#if HELLUNA_DEBUG_GAMEMODE
+	UE_LOG(LogHelluna, Warning, TEXT(""));
+	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogHelluna, Warning, TEXT("║     [BaseGameMode] PostLogin                               ║"));
+	UE_LOG(LogHelluna, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogHelluna, Warning, TEXT("║ Controller: %s"), *GetNameSafe(NewPlayer));
+	UE_LOG(LogHelluna, Warning, TEXT("║ ControllerClass: %s"), NewPlayer ? *NewPlayer->GetClass()->GetName() : TEXT("nullptr"));
+	UE_LOG(LogHelluna, Warning, TEXT("║ GameInitialized: %s"), bGameInitialized ? TEXT("TRUE") : TEXT("FALSE"));
 
 	if (NewPlayer)
 	{
 		AHellunaPlayerState* PS = NewPlayer->GetPlayerState<AHellunaPlayerState>();
-		UE_LOG(LogTemp, Warning, TEXT("║ PlayerState: %s"), PS ? *PS->GetName() : TEXT("nullptr"));
+		UE_LOG(LogHelluna, Warning, TEXT("║ PlayerState: %s"), PS ? *PS->GetName() : TEXT("nullptr"));
 		if (PS)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("║   - PlayerId: '%s'"), *PS->GetPlayerUniqueId());
-			UE_LOG(LogTemp, Warning, TEXT("║   - IsLoggedIn: %s"), PS->IsLoggedIn() ? TEXT("TRUE") : TEXT("FALSE"));
+			UE_LOG(LogHelluna, Warning, TEXT("║   - PlayerId: '%s'"), *PS->GetPlayerUniqueId());
+			UE_LOG(LogHelluna, Warning, TEXT("║   - IsLoggedIn: %s"), PS->IsLoggedIn() ? TEXT("TRUE") : TEXT("FALSE"));
 		}
 	}
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
 
 	if (!NewPlayer)
 	{
@@ -180,7 +187,9 @@ void AHellunaBaseGameMode::PostLogin(APlayerController* NewPlayer)
 
 	if (PS && PS->IsLoggedIn() && !PS->GetPlayerUniqueId().IsEmpty())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[BaseGameMode] 이미 로그인됨! → Controller 확인 후 처리"));
+#if HELLUNA_DEBUG_GAMEMODE
+		UE_LOG(LogHelluna, Warning, TEXT("[BaseGameMode] 이미 로그인됨! → Controller 확인 후 처리"));
+#endif
 		FString PlayerId = PS->GetPlayerUniqueId();
 
 		FTimerHandle TimerHandle;
@@ -207,7 +216,9 @@ void AHellunaBaseGameMode::PostLogin(APlayerController* NewPlayer)
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[BaseGameMode] 로그인 필요! 타임아웃: %.0f초"), LoginTimeoutSeconds);
+#if HELLUNA_DEBUG_GAMEMODE
+		UE_LOG(LogHelluna, Warning, TEXT("[BaseGameMode] 로그인 필요! 타임아웃: %.0f초"), LoginTimeoutSeconds);
+#endif
 		FTimerHandle& TimeoutTimer = LoginTimeoutTimers.FindOrAdd(NewPlayer);
 		GetWorldTimerManager().SetTimer(TimeoutTimer, [this, NewPlayer]()
 		{
@@ -242,36 +253,40 @@ void AHellunaBaseGameMode::ProcessLogin(APlayerController* PlayerController, con
 {
 	Debug::Print(TEXT("[BaseGameMode] ProcessLogin"), FColor::Yellow);
 
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║     [BaseGameMode] ProcessLogin                            ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ PlayerId: '%s'"), *PlayerId);
-	UE_LOG(LogTemp, Warning, TEXT("║ Controller: %s"), *GetNameSafe(PlayerController));
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#if HELLUNA_DEBUG_LOGIN
+	UE_LOG(LogHelluna, Warning, TEXT(""));
+	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogHelluna, Warning, TEXT("║     [BaseGameMode] ProcessLogin                            ║"));
+	UE_LOG(LogHelluna, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogHelluna, Warning, TEXT("║ PlayerId: '%s'"), *PlayerId);
+	UE_LOG(LogHelluna, Warning, TEXT("║ Controller: %s"), *GetNameSafe(PlayerController));
+	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
 
 	if (!HasAuthority())
 	{
-		UE_LOG(LogTemp, Error, TEXT("[BaseGameMode] 서버 권한 없음!"));
+		UE_LOG(LogHelluna, Error, TEXT("[BaseGameMode] 서버 권한 없음!"));
 		return;
 	}
 
 	if (!PlayerController)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[BaseGameMode] PlayerController nullptr!"));
+		UE_LOG(LogHelluna, Error, TEXT("[BaseGameMode] PlayerController nullptr!"));
 		return;
 	}
 
 	if (IsPlayerLoggedIn(PlayerId))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[BaseGameMode] 동시 접속 거부: '%s'"), *PlayerId);
+#if HELLUNA_DEBUG_LOGIN
+		UE_LOG(LogHelluna, Warning, TEXT("[BaseGameMode] 동시 접속 거부: '%s'"), *PlayerId);
+#endif
 		OnLoginFailed(PlayerController, TEXT("이미 접속 중인 계정입니다."));
 		return;
 	}
 
 	if (!AccountSaveGame)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[BaseGameMode] AccountSaveGame nullptr!"));
+		UE_LOG(LogHelluna, Error, TEXT("[BaseGameMode] AccountSaveGame nullptr!"));
 		OnLoginFailed(PlayerController, TEXT("서버 오류"));
 		return;
 	}
@@ -280,12 +295,16 @@ void AHellunaBaseGameMode::ProcessLogin(APlayerController* PlayerController, con
 	{
 		if (AccountSaveGame->ValidatePassword(PlayerId, Password))
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[BaseGameMode] 비밀번호 일치!"));
+#if HELLUNA_DEBUG_LOGIN
+			UE_LOG(LogHelluna, Warning, TEXT("[BaseGameMode] 비밀번호 일치!"));
+#endif
 			OnLoginSuccess(PlayerController, PlayerId);
 		}
 		else
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[BaseGameMode] 비밀번호 불일치!"));
+#if HELLUNA_DEBUG_LOGIN
+			UE_LOG(LogHelluna, Warning, TEXT("[BaseGameMode] 비밀번호 불일치!"));
+#endif
 			OnLoginFailed(PlayerController, TEXT("비밀번호를 확인해주세요."));
 		}
 	}
@@ -294,7 +313,9 @@ void AHellunaBaseGameMode::ProcessLogin(APlayerController* PlayerController, con
 		if (AccountSaveGame->CreateAccount(PlayerId, Password))
 		{
 			UHellunaAccountSaveGame::Save(AccountSaveGame);
-			UE_LOG(LogTemp, Warning, TEXT("[BaseGameMode] 새 계정 생성: '%s'"), *PlayerId);
+#if HELLUNA_DEBUG_LOGIN
+			UE_LOG(LogHelluna, Warning, TEXT("[BaseGameMode] 새 계정 생성: '%s'"), *PlayerId);
+#endif
 			OnLoginSuccess(PlayerController, PlayerId);
 		}
 		else
@@ -320,12 +341,14 @@ void AHellunaBaseGameMode::OnLoginSuccess(APlayerController* PlayerController, c
 {
 	Debug::Print(TEXT("[BaseGameMode] Login Success"), FColor::Yellow);
 
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║     [BaseGameMode] OnLoginSuccess                          ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ PlayerId: '%s'"), *PlayerId);
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#if HELLUNA_DEBUG_LOGIN
+	UE_LOG(LogHelluna, Warning, TEXT(""));
+	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogHelluna, Warning, TEXT("║     [BaseGameMode] OnLoginSuccess                          ║"));
+	UE_LOG(LogHelluna, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogHelluna, Warning, TEXT("║ PlayerId: '%s'"), *PlayerId);
+	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
 
 	if (!PlayerController) return;
 
@@ -356,12 +379,14 @@ void AHellunaBaseGameMode::OnLoginSuccess(APlayerController* PlayerController, c
 
 void AHellunaBaseGameMode::OnLoginFailed(APlayerController* PlayerController, const FString& ErrorMessage)
 {
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║     [BaseGameMode] OnLoginFailed                           ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ ErrorMessage: '%s'"), *ErrorMessage);
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#if HELLUNA_DEBUG_LOGIN
+	UE_LOG(LogHelluna, Warning, TEXT(""));
+	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogHelluna, Warning, TEXT("║     [BaseGameMode] OnLoginFailed                           ║"));
+	UE_LOG(LogHelluna, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogHelluna, Warning, TEXT("║ ErrorMessage: '%s'"), *ErrorMessage);
+	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
 
 	AHellunaLoginController* LoginController = Cast<AHellunaLoginController>(PlayerController);
 	if (LoginController)
@@ -372,12 +397,14 @@ void AHellunaBaseGameMode::OnLoginFailed(APlayerController* PlayerController, co
 
 void AHellunaBaseGameMode::OnLoginTimeout(APlayerController* PlayerController)
 {
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║     [BaseGameMode] OnLoginTimeout                          ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ Controller: %s"), *GetNameSafe(PlayerController));
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#if HELLUNA_DEBUG_LOGIN
+	UE_LOG(LogHelluna, Warning, TEXT(""));
+	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogHelluna, Warning, TEXT("║     [BaseGameMode] OnLoginTimeout                          ║"));
+	UE_LOG(LogHelluna, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogHelluna, Warning, TEXT("║ Controller: %s"), *GetNameSafe(PlayerController));
+	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
 
 	if (!PlayerController) return;
 	LoginTimeoutTimers.Remove(PlayerController);
@@ -408,25 +435,31 @@ void AHellunaBaseGameMode::OnLoginTimeout(APlayerController* PlayerController)
 // ════════════════════════════════════════════════════════════════════════════════
 void AHellunaBaseGameMode::SwapToGameController(AHellunaLoginController* LoginController, const FString& PlayerId, EHellunaHeroType SelectedHeroType)
 {
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║     [BaseGameMode] SwapToGameController                    ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ PlayerId: '%s'"), *PlayerId);
-	UE_LOG(LogTemp, Warning, TEXT("║ LoginController: %s"), *GetNameSafe(LoginController));
+#if HELLUNA_DEBUG_GAMEMODE
+	UE_LOG(LogHelluna, Warning, TEXT(""));
+	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogHelluna, Warning, TEXT("║     [BaseGameMode] SwapToGameController                    ║"));
+	UE_LOG(LogHelluna, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogHelluna, Warning, TEXT("║ PlayerId: '%s'"), *PlayerId);
+	UE_LOG(LogHelluna, Warning, TEXT("║ LoginController: %s"), *GetNameSafe(LoginController));
+#endif
 
 	if (!LoginController)
 	{
-		UE_LOG(LogTemp, Error, TEXT("║ LoginController nullptr!"));
-		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+		UE_LOG(LogHelluna, Error, TEXT("[BaseGameMode] SwapToGameController - LoginController nullptr!"));
+#if HELLUNA_DEBUG_GAMEMODE
+		UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
 		return;
 	}
 
 	TSubclassOf<APlayerController> GameControllerClass = LoginController->GetGameControllerClass();
 	if (!GameControllerClass)
 	{
-		UE_LOG(LogTemp, Error, TEXT("║ GameControllerClass 미설정!"));
-		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+		UE_LOG(LogHelluna, Error, TEXT("[BaseGameMode] SwapToGameController - GameControllerClass 미설정!"));
+#if HELLUNA_DEBUG_GAMEMODE
+		UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
 		SpawnHeroCharacter(LoginController);
 		return;
 	}
@@ -448,8 +481,10 @@ void AHellunaBaseGameMode::SwapToGameController(AHellunaLoginController* LoginCo
 
 	if (!NewController)
 	{
-		UE_LOG(LogTemp, Error, TEXT("║ 새 Controller 스폰 실패!"));
-		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+		UE_LOG(LogHelluna, Error, TEXT("[BaseGameMode] SwapToGameController - 새 Controller 스폰 실패!"));
+#if HELLUNA_DEBUG_GAMEMODE
+		UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
 		SpawnHeroCharacter(LoginController);
 		return;
 	}
@@ -470,8 +505,10 @@ void AHellunaBaseGameMode::SwapToGameController(AHellunaLoginController* LoginCo
 		}
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("║ Controller 교체 완료!"));
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#if HELLUNA_DEBUG_GAMEMODE
+	UE_LOG(LogHelluna, Warning, TEXT("║ Controller 교체 완료!"));
+	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
 
 	FTimerHandle TimerHandle;
 	GetWorldTimerManager().SetTimer(TimerHandle, [this, NewController]()
@@ -497,16 +534,20 @@ void AHellunaBaseGameMode::SwapToGameController(AHellunaLoginController* LoginCo
 // ════════════════════════════════════════════════════════════════════════════════
 void AHellunaBaseGameMode::SpawnHeroCharacter(APlayerController* PlayerController)
 {
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║     [BaseGameMode] SpawnHeroCharacter                      ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ Controller: %s"), *GetNameSafe(PlayerController));
+#if HELLUNA_DEBUG_GAMEMODE
+	UE_LOG(LogHelluna, Warning, TEXT(""));
+	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogHelluna, Warning, TEXT("║     [BaseGameMode] SpawnHeroCharacter                      ║"));
+	UE_LOG(LogHelluna, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogHelluna, Warning, TEXT("║ Controller: %s"), *GetNameSafe(PlayerController));
+#endif
 
 	if (!PlayerController)
 	{
-		UE_LOG(LogTemp, Error, TEXT("║ Controller nullptr!"));
-		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+		UE_LOG(LogHelluna, Error, TEXT("[BaseGameMode] SpawnHeroCharacter - Controller nullptr!"));
+#if HELLUNA_DEBUG_GAMEMODE
+		UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
 		return;
 	}
 
@@ -529,8 +570,10 @@ void AHellunaBaseGameMode::SpawnHeroCharacter(APlayerController* PlayerControlle
 
 	if (!SpawnClass)
 	{
-		UE_LOG(LogTemp, Error, TEXT("║ SpawnClass nullptr!"));
-		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+		UE_LOG(LogHelluna, Error, TEXT("[BaseGameMode] SpawnHeroCharacter - SpawnClass nullptr!"));
+#if HELLUNA_DEBUG_GAMEMODE
+		UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
 		return;
 	}
 
@@ -559,8 +602,10 @@ void AHellunaBaseGameMode::SpawnHeroCharacter(APlayerController* PlayerControlle
 
 	if (!NewPawn)
 	{
-		UE_LOG(LogTemp, Error, TEXT("║ HeroCharacter 스폰 실패!"));
-		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+		UE_LOG(LogHelluna, Error, TEXT("[BaseGameMode] SpawnHeroCharacter - HeroCharacter 스폰 실패!"));
+#if HELLUNA_DEBUG_GAMEMODE
+		UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
 		return;
 	}
 
@@ -572,8 +617,10 @@ void AHellunaBaseGameMode::SpawnHeroCharacter(APlayerController* PlayerControlle
 		LoginController->Client_PrepareControllerSwap();
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("║ Possess 완료!"));
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#if HELLUNA_DEBUG_GAMEMODE
+	UE_LOG(LogHelluna, Warning, TEXT("║ Possess 완료!"));
+	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
 
 	// ════════════════════════════════════════════════════════════════════════════════
 	// 📌 첫 플레이어 캐릭터 소환 → 게임 초기화!
@@ -619,12 +666,14 @@ bool AHellunaBaseGameMode::IsPlayerLoggedIn(const FString& PlayerId) const
 // ════════════════════════════════════════════════════════════════════════════════
 void AHellunaBaseGameMode::Logout(AController* Exiting)
 {
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║     [BaseGameMode] Logout                                  ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ Controller: %s"), *GetNameSafe(Exiting));
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#if HELLUNA_DEBUG_GAMEMODE
+	UE_LOG(LogHelluna, Warning, TEXT(""));
+	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogHelluna, Warning, TEXT("║     [BaseGameMode] Logout                                  ║"));
+	UE_LOG(LogHelluna, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogHelluna, Warning, TEXT("║ Controller: %s"), *GetNameSafe(Exiting));
+	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
 
 	if (!Exiting)
 	{
@@ -704,10 +753,12 @@ void AHellunaBaseGameMode::Logout(AController* Exiting)
 
 void AHellunaBaseGameMode::HandleSeamlessTravelPlayer(AController*& C)
 {
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║     [BaseGameMode] HandleSeamlessTravelPlayer              ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#if HELLUNA_DEBUG_GAMEMODE
+	UE_LOG(LogHelluna, Warning, TEXT(""));
+	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogHelluna, Warning, TEXT("║     [BaseGameMode] HandleSeamlessTravelPlayer              ║"));
+	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
 
 	FString SavedPlayerId;
 	EHellunaHeroType SavedHeroType = EHellunaHeroType::None;
@@ -774,12 +825,14 @@ void AHellunaBaseGameMode::HandleSeamlessTravelPlayer(AController*& C)
 // ════════════════════════════════════════════════════════════════════════════════
 void AHellunaBaseGameMode::ProcessCharacterSelection(APlayerController* PlayerController, EHellunaHeroType HeroType)
 {
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║  [BaseGameMode] ProcessCharacterSelection                  ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ HeroType: %s"), *UEnum::GetValueAsString(HeroType));
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#if HELLUNA_DEBUG_CHARACTER_SELECT
+	UE_LOG(LogHelluna, Warning, TEXT(""));
+	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogHelluna, Warning, TEXT("║  [BaseGameMode] ProcessCharacterSelection                  ║"));
+	UE_LOG(LogHelluna, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogHelluna, Warning, TEXT("║ HeroType: %s"), *UEnum::GetValueAsString(HeroType));
+	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
 
 	if (!PlayerController) return;
 
@@ -948,7 +1001,9 @@ EHellunaHeroType AHellunaBaseGameMode::IndexToHeroType(int32 Index)
 // ════════════════════════════════════════════════════════════════════════════════
 int32 AHellunaBaseGameMode::SaveAllPlayersInventory()
 {
-	UE_LOG(LogTemp, Warning, TEXT("[BaseGameMode] SaveAllPlayersInventory"));
+#if HELLUNA_DEBUG_INVENTORY_SAVE
+	UE_LOG(LogHelluna, Warning, TEXT("[BaseGameMode] SaveAllPlayersInventory"));
+#endif
 
 	int32 SavedCount = 0;
 
@@ -1016,7 +1071,9 @@ int32 AHellunaBaseGameMode::SaveAllPlayersInventory()
 // ════════════════════════════════════════════════════════════════════════════════
 void AHellunaBaseGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
 {
-	UE_LOG(LogTemp, Warning, TEXT("[BaseGameMode] LoadAndSendInventoryToClient"));
+#if HELLUNA_DEBUG_INVENTORY_SAVE
+	UE_LOG(LogHelluna, Warning, TEXT("[BaseGameMode] LoadAndSendInventoryToClient"));
+#endif
 
 	if (!HasAuthority() || !IsValid(PC)) return;
 
@@ -1183,7 +1240,9 @@ void AHellunaBaseGameMode::StartAutoSaveTimer()
 		true
 	);
 
-	UE_LOG(LogTemp, Warning, TEXT("[BaseGameMode] AutoSave Timer Started (%.0fs)"), AutoSaveIntervalSeconds);
+#if HELLUNA_DEBUG_INVENTORY_SAVE
+	UE_LOG(LogHelluna, Warning, TEXT("[BaseGameMode] AutoSave Timer Started (%.0fs)"), AutoSaveIntervalSeconds);
+#endif
 }
 
 void AHellunaBaseGameMode::StopAutoSaveTimer()
@@ -1302,7 +1361,7 @@ void AHellunaBaseGameMode::DebugTestItemTypeMapping()
 {
 	if (!IsValid(ItemTypeMappingDataTable))
 	{
-		UE_LOG(LogTemp, Error, TEXT("[BaseGameMode] ItemTypeMappingDataTable not set!"));
+		UE_LOG(LogHelluna, Error, TEXT("[BaseGameMode] ItemTypeMappingDataTable not set!"));
 		return;
 	}
 
@@ -1326,7 +1385,9 @@ void AHellunaBaseGameMode::DebugTestItemTypeMapping()
 		}
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("[BaseGameMode] ItemTypeMapping Test: %d/%d passed"), SuccessCount, TestTags.Num());
+#if HELLUNA_DEBUG_GAMEMODE
+	UE_LOG(LogHelluna, Warning, TEXT("[BaseGameMode] ItemTypeMapping Test: %d/%d passed"), SuccessCount, TestTags.Num());
+#endif
 }
 
 void AHellunaBaseGameMode::DebugPrintAllItemMappings()
@@ -1341,7 +1402,7 @@ void AHellunaBaseGameMode::DebugTestInventorySaveGame()
 {
 	if (!IsValid(InventorySaveGame))
 	{
-		UE_LOG(LogTemp, Error, TEXT("[BaseGameMode] InventorySaveGame is nullptr!"));
+		UE_LOG(LogHelluna, Error, TEXT("[BaseGameMode] InventorySaveGame is nullptr!"));
 		return;
 	}
 
@@ -1363,9 +1424,11 @@ void AHellunaBaseGameMode::DebugTestInventorySaveGame()
 	FHellunaPlayerInventoryData LoadedData;
 	bool bLoadSuccess = InventorySaveGame->LoadPlayerInventory(TestPlayerId, LoadedData);
 
-	UE_LOG(LogTemp, Warning, TEXT("[BaseGameMode] SaveGame Test: Save=%s, Load=%s"),
+#if HELLUNA_DEBUG_INVENTORY_SAVE
+	UE_LOG(LogHelluna, Warning, TEXT("[BaseGameMode] SaveGame Test: Save=%s, Load=%s"),
 		bSaveSuccess ? TEXT("OK") : TEXT("FAIL"),
 		bLoadSuccess ? TEXT("OK") : TEXT("FAIL"));
+#endif
 }
 
 void AHellunaBaseGameMode::DebugRequestSaveAllInventory()
