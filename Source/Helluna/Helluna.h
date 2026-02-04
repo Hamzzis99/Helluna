@@ -7,10 +7,16 @@
 // 출시 전에 모두 0으로 변경하세요!
 // ════════════════════════════════════════════════════════════════════════════════
 
-// 🔐 로그인 시스템 (LoginController, ProcessLogin, OnLoginSuccess 등)
+// 🌐 서버 접속 (LoginGameMode, ServerConnectController - 서버 시작/접속)
+#define HELLUNA_DEBUG_SERVERCONNECTION 1
+
+// 🔐 로그인 컨트롤러 (HellunaLoginController - BeginPlay, 위젯 생성, RPC 등)
+#define HELLUNA_DEBUG_LOGINCONTROLLER 1
+
+// 🔐 로그인 처리 (BaseGameMode - ProcessLogin, OnLoginSuccess 등)
 #define HELLUNA_DEBUG_LOGIN 0
 
-// 🎮 게임모드 (BaseGameMode, PostLogin, SpawnHeroCharacter 등)
+// 🎮 게임모드 (BaseGameMode - PostLogin, SpawnHeroCharacter 등)
 #define HELLUNA_DEBUG_GAMEMODE 0
 
 // 🎭 캐릭터 선택 (ProcessCharacterSelection, RegisterCharacterUse 등)

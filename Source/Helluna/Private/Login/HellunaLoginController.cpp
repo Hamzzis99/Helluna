@@ -22,7 +22,7 @@ void AHellunaLoginController::BeginPlay()
 	// 📌 디버깅: 클라이언트/서버 구분을 위한 태그
 	FString RoleTag = HasAuthority() ? TEXT("SERVER") : TEXT("CLIENT");
 
-#if HELLUNA_DEBUG_LOGIN
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 	UE_LOG(LogHelluna, Warning, TEXT(""));
 	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
 	UE_LOG(LogHelluna, Warning, TEXT("║     [LoginController] BeginPlay [%s]                  ║"), *RoleTag);
@@ -66,7 +66,7 @@ void AHellunaLoginController::BeginPlay()
 	// 📌 클라이언트에서만 위젯 표시
 	if (IsLocalController() && LoginWidgetClass)
 	{
-#if HELLUNA_DEBUG_LOGIN
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 		UE_LOG(LogHelluna, Warning, TEXT("[LoginController][%s] ⭐ IsLocalController=TRUE! 위젯 타이머 시작!"), *RoleTag);
 #endif
 
@@ -86,7 +86,7 @@ void AHellunaLoginController::BeginPlay()
 	}
 	else
 	{
-#if HELLUNA_DEBUG_LOGIN
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 		UE_LOG(LogHelluna, Warning, TEXT("[LoginController][%s] 위젯 표시 스킵 (IsLocalController=%s, LoginWidgetClass=%s)"),
 			*RoleTag,
 			IsLocalController() ? TEXT("TRUE") : TEXT("FALSE"),
@@ -103,7 +103,7 @@ void AHellunaLoginController::BeginPlay()
 		}
 	}
 
-#if HELLUNA_DEBUG_LOGIN
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 	UE_LOG(LogHelluna, Warning, TEXT(""));
 #endif
 }
@@ -112,7 +112,7 @@ void AHellunaLoginController::ShowLoginWidget()
 {
 	FString RoleTag = HasAuthority() ? TEXT("SERVER") : TEXT("CLIENT");
 
-#if HELLUNA_DEBUG_LOGIN
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 	UE_LOG(LogHelluna, Warning, TEXT(""));
 	UE_LOG(LogHelluna, Warning, TEXT("┌────────────────────────────────────────────────────────────┐"));
 	UE_LOG(LogHelluna, Warning, TEXT("│ [LoginController][%s] ShowLoginWidget 호출됨!         │"), *RoleTag);
@@ -141,7 +141,7 @@ void AHellunaLoginController::ShowLoginWidget()
 	{
 		if (GI->bIsMapTransitioning)
 		{
-#if HELLUNA_DEBUG_LOGIN
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 			UE_LOG(LogHelluna, Warning, TEXT("[LoginController] ⚠️ SeamlessTravel 진행 중 (bIsMapTransitioning=true) → UI 표시 스킵!"));
 
 			// PlayerState에서 PlayerId 확인 (디버깅용)
@@ -168,7 +168,7 @@ void AHellunaLoginController::ShowLoginWidget()
 	{
 		if (PS->IsLoggedIn() && !PS->GetPlayerUniqueId().IsEmpty())
 		{
-#if HELLUNA_DEBUG_LOGIN
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 			UE_LOG(LogHelluna, Warning, TEXT("[LoginController] ⚠️ 이미 로그인됨 (SeamlessTravel) → UI 표시 스킵!"));
 			UE_LOG(LogHelluna, Warning, TEXT("[LoginController]    PlayerId: '%s'"), *PS->GetPlayerUniqueId());
 #endif
@@ -185,7 +185,7 @@ void AHellunaLoginController::ShowLoginWidget()
 	if (!LoginWidget)
 	{
 		LoginWidget = CreateWidget<UHellunaLoginWidget>(this, LoginWidgetClass);
-#if HELLUNA_DEBUG_LOGIN
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 		UE_LOG(LogHelluna, Warning, TEXT("[LoginController] 위젯 생성: %s"), LoginWidget ? TEXT("✅ 성공") : TEXT("❌ 실패"));
 #endif
 
@@ -207,7 +207,7 @@ void AHellunaLoginController::ShowLoginWidget()
 	if (LoginWidget && !LoginWidget->IsInViewport())
 	{
 		LoginWidget->AddToViewport(100);
-#if HELLUNA_DEBUG_LOGIN
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 		UE_LOG(LogHelluna, Warning, TEXT("[LoginController] ✅ 위젯 Viewport에 추가됨!"));
 #endif
 
@@ -220,28 +220,28 @@ void AHellunaLoginController::ShowLoginWidget()
 	}
 	else
 	{
-#if HELLUNA_DEBUG_LOGIN
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 		UE_LOG(LogHelluna, Warning, TEXT("[LoginController] ⚠️ 위젯 추가 실패 또는 이미 Viewport에 있음 (LoginWidget=%s, IsInViewport=%s)"),
 			LoginWidget ? TEXT("Valid") : TEXT("nullptr"),
 			(LoginWidget && LoginWidget->IsInViewport()) ? TEXT("TRUE") : TEXT("FALSE"));
 #endif
 	}
 
-#if HELLUNA_DEBUG_LOGIN
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 	UE_LOG(LogHelluna, Warning, TEXT(""));
 #endif
 }
 
 void AHellunaLoginController::HideLoginWidget()
 {
-#if HELLUNA_DEBUG_LOGIN
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 	UE_LOG(LogHelluna, Warning, TEXT("[LoginController] HideLoginWidget"));
 #endif
 
 	if (LoginWidget && LoginWidget->IsInViewport())
 	{
 		LoginWidget->RemoveFromParent();
-#if HELLUNA_DEBUG_LOGIN
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 		UE_LOG(LogHelluna, Warning, TEXT("[LoginController] 위젯 숨김"));
 #endif
 	}
@@ -249,7 +249,7 @@ void AHellunaLoginController::HideLoginWidget()
 
 void AHellunaLoginController::OnLoginButtonClicked(const FString& PlayerId, const FString& Password)
 {
-#if HELLUNA_DEBUG_LOGIN
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 	UE_LOG(LogHelluna, Warning, TEXT(""));
 	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
 	UE_LOG(LogHelluna, Warning, TEXT("║     [LoginController] OnLoginButtonClicked                 ║"));
@@ -268,7 +268,7 @@ void AHellunaLoginController::OnLoginButtonClicked(const FString& PlayerId, cons
 
 	Server_RequestLogin(PlayerId, Password);
 
-#if HELLUNA_DEBUG_LOGIN
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 	UE_LOG(LogHelluna, Warning, TEXT(""));
 #endif
 }
@@ -281,7 +281,7 @@ void AHellunaLoginController::OnLoginButtonClicked(const FString& PlayerId, cons
 // ============================================
 void AHellunaLoginController::Server_RequestSwapAfterTravel_Implementation()
 {
-#if HELLUNA_DEBUG_LOGIN
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 	UE_LOG(LogHelluna, Warning, TEXT(""));
 	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
 	UE_LOG(LogHelluna, Warning, TEXT("║  [LoginController] Server_RequestSwapAfterTravel (서버)    ║"));
@@ -294,18 +294,18 @@ void AHellunaLoginController::Server_RequestSwapAfterTravel_Implementation()
 	if (AHellunaPlayerState* PS = GetPlayerState<AHellunaPlayerState>())
 	{
 		PlayerId = PS->GetPlayerUniqueId();
-#if HELLUNA_DEBUG_LOGIN
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 		UE_LOG(LogHelluna, Warning, TEXT("║ PlayerId: '%s'"), *PlayerId);
 #endif
 	}
 	else
 	{
-#if HELLUNA_DEBUG_LOGIN
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 		UE_LOG(LogHelluna, Warning, TEXT("║ ⚠️ PlayerState nullptr!"));
 #endif
 	}
 
-#if HELLUNA_DEBUG_LOGIN
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 #endif
 
@@ -314,7 +314,7 @@ void AHellunaLoginController::Server_RequestSwapAfterTravel_Implementation()
 	{
 		if (!PlayerId.IsEmpty())
 		{
-#if HELLUNA_DEBUG_LOGIN
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 			UE_LOG(LogHelluna, Warning, TEXT("[LoginController] → GameMode::SwapToGameController 호출!"));
 #endif
 			GM->SwapToGameController(this, PlayerId);
@@ -332,7 +332,7 @@ void AHellunaLoginController::Server_RequestSwapAfterTravel_Implementation()
 
 void AHellunaLoginController::Server_RequestLogin_Implementation(const FString& PlayerId, const FString& Password)
 {
-#if HELLUNA_DEBUG_LOGIN
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 	UE_LOG(LogHelluna, Warning, TEXT(""));
 	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
 	UE_LOG(LogHelluna, Warning, TEXT("║     [LoginController] Server_RequestLogin (서버)           ║"));
@@ -355,14 +355,14 @@ void AHellunaLoginController::Server_RequestLogin_Implementation(const FString& 
 		Client_LoginResult(false, TEXT("서버 오류: GameMode를 찾을 수 없습니다."));
 	}
 
-#if HELLUNA_DEBUG_LOGIN
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 	UE_LOG(LogHelluna, Warning, TEXT(""));
 #endif
 }
 
 void AHellunaLoginController::Client_LoginResult_Implementation(bool bSuccess, const FString& ErrorMessage)
 {
-#if HELLUNA_DEBUG_LOGIN
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 	UE_LOG(LogHelluna, Warning, TEXT(""));
 	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
 	UE_LOG(LogHelluna, Warning, TEXT("║     [LoginController] Client_LoginResult (클라이언트)      ║"));
@@ -375,14 +375,14 @@ void AHellunaLoginController::Client_LoginResult_Implementation(bool bSuccess, c
 
 	ShowLoginResult(bSuccess, ErrorMessage);
 
-#if HELLUNA_DEBUG_LOGIN
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 	UE_LOG(LogHelluna, Warning, TEXT(""));
 #endif
 }
 
 void AHellunaLoginController::Client_PrepareControllerSwap_Implementation()
 {
-#if HELLUNA_DEBUG_LOGIN
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 	UE_LOG(LogHelluna, Warning, TEXT(""));
 	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
 	UE_LOG(LogHelluna, Warning, TEXT("║     [LoginController] Client_PrepareControllerSwap         ║"));
@@ -398,7 +398,7 @@ void AHellunaLoginController::Client_PrepareControllerSwap_Implementation()
 	SetInputMode(InputMode);
 	bShowMouseCursor = false;
 
-#if HELLUNA_DEBUG_LOGIN
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 	UE_LOG(LogHelluna, Warning, TEXT("[LoginController] UI 정리 완료, Controller 교체 대기"));
 	UE_LOG(LogHelluna, Warning, TEXT(""));
 #endif
