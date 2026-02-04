@@ -46,3 +46,4 @@ Plugins/*/Intermediate/
 *.app
 *.dylib
 *.so
+nul
