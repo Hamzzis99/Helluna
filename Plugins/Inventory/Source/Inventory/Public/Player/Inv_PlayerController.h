@@ -95,7 +95,7 @@ struct INVENTORY_API FInv_SavedItemData
 	 * 
 	 * 로드 시 이 태그로 DataTable에서 Actor 클래스를 조회함
 	 */
-	UPROPERTY(BlueprintReadWrite, Category = "Inventory|Save")
+	UPROPERTY(BlueprintReadWrite, Category = "Inventory|Save", meta = (DisplayName = "ItemType (아이템 타입)", Tooltip = "아이템 종류를 나타내는 GameplayTag"))
 	FGameplayTag ItemType;
 
 	/**
@@ -105,7 +105,7 @@ struct INVENTORY_API FInv_SavedItemData
 	 * Split 시: 서버 Entry(20개) → UI 슬롯1(9개) + UI 슬롯2(11개)
 	 *           → FInv_SavedItemData 2개 생성 (9, 11)
 	 */
-	UPROPERTY(BlueprintReadWrite, Category = "Inventory|Save")
+	UPROPERTY(BlueprintReadWrite, Category = "Inventory|Save", meta = (DisplayName = "StackCount (스택 수량)", Tooltip = "스택 수량 (Split된 개별 스택 수량)"))
 	int32 StackCount;
 
 	/**
@@ -117,7 +117,7 @@ struct INVENTORY_API FInv_SavedItemData
 	 * 
 	 * 예: Columns=8, GridIndex=19 → X=3, Y=2 → (3, 2)
 	 */
-	UPROPERTY(BlueprintReadWrite, Category = "Inventory|Save")
+	UPROPERTY(BlueprintReadWrite, Category = "Inventory|Save", meta = (DisplayName = "GridPosition (그리드 위치)", Tooltip = "Grid 내 위치 (X=Column, Y=Row)"))
 	FIntPoint GridPosition;
 
 	/** 
@@ -127,7 +127,7 @@ struct INVENTORY_API FInv_SavedItemData
 	 * 1 = Grid_Consumables (소모품) - EInv_ItemCategory::Consumable
 	 * 2 = Grid_Craftables (재료)    - EInv_ItemCategory::Craftable
 	 */
-	UPROPERTY(BlueprintReadWrite, Category = "Inventory|Save")
+	UPROPERTY(BlueprintReadWrite, Category = "Inventory|Save", meta = (DisplayName = "GridCategory (그리드 카테고리)", Tooltip = "Grid 카테고리 (0=장비, 1=소모품, 2=재료)"))
 	uint8 GridCategory;
 
 	// ============================================
@@ -140,7 +140,7 @@ struct INVENTORY_API FInv_SavedItemData
 	 * true = 장착 슬롯에 있음 (Grid에 없음)
 	 * false = Grid에 있음 (기본값)
 	 */
-	UPROPERTY(BlueprintReadWrite, Category = "Inventory|Save")
+	UPROPERTY(BlueprintReadWrite, Category = "Inventory|Save", meta = (DisplayName = "bEquipped (장착 여부)", Tooltip = "장착 여부 (true=장착 슬롯, false=Grid)"))
 	bool bEquipped;
 
 	/**
@@ -150,7 +150,7 @@ struct INVENTORY_API FInv_SavedItemData
 	 *  0 = 주무기 슬롯
 	 *  1 = 보조무기 슬롯
 	 */
-	UPROPERTY(BlueprintReadWrite, Category = "Inventory|Save")
+	UPROPERTY(BlueprintReadWrite, Category = "Inventory|Save", meta = (DisplayName = "WeaponSlotIndex (무기 슬롯 인덱스)", Tooltip = "무기 슬롯 인덱스 (-1=미장착, 0=주무기, 1=보조무기)"))
 	int32 WeaponSlotIndex;
 
 	/** 유효한 데이터인지 확인 */
@@ -318,7 +318,7 @@ public:
 	 * 서버에서 인벤토리 상태 수신 시 브로드캐스트되는 델리게이트
 	 * GameMode에서 바인딩하여 저장 처리
 	 */
-	UPROPERTY(BlueprintAssignable, Category = "Inventory|Save")
+	UPROPERTY(BlueprintAssignable, Category = "Inventory|Save", meta = (DisplayName = "OnInventoryStateReceived (인벤토리 상태 수신 이벤트)"))
 	FOnInventoryStateReceived OnInventoryStateReceived;
 
 	/**
@@ -327,7 +327,7 @@ public:
 	 * 
 	 * 장점: Controller가 EndPlay될 때 InventoryComponent가 아직 유효함!
 	 */
-	UPROPERTY(BlueprintAssignable, Category = "Inventory|Save")
+	UPROPERTY(BlueprintAssignable, Category = "Inventory|Save", meta = (DisplayName = "OnControllerEndPlay (컨트롤러 종료 이벤트)"))
 	FOnInvControllerEndPlay OnControllerEndPlay;
 
 	// ============================================
@@ -366,34 +366,34 @@ private:
 	TWeakObjectPtr<UInv_InventoryComponent> InventoryComponent;
 	TWeakObjectPtr<UInv_EquipmentComponent> EquipmentComponent;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory")
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory", meta = (DisplayName = "DefaultIMCs (기본 입력 매핑 컨텍스트)", Tooltip = "기본 입력 매핑 컨텍스트 배열"))
 	TArray<TObjectPtr<UInputMappingContext>> DefaultIMCs;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory", meta = (DisplayName = "상호작용 액션"))
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory", meta = (DisplayName = "PrimaryInteractAction (상호작용 액션)", Tooltip = "상호작용 입력 액션"))
 	TObjectPtr<UInputAction> PrimaryInteractAction;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory", meta = (DisplayName = "인벤토리 토글 액션"))
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory", meta = (DisplayName = "ToggleInventoryAction (인벤토리 토글 액션)", Tooltip = "인벤토리 열기/닫기 입력 액션"))
 	TObjectPtr<UInputAction> ToggleInventoryAction;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Weapon", meta = (DisplayName = "주무기 전환 액션"))
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Weapon", meta = (DisplayName = "PrimaryWeaponAction (주무기 전환 액션)", Tooltip = "주무기 슬롯 전환 입력 액션"))
 	TObjectPtr<UInputAction> PrimaryWeaponAction;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Weapon", meta = (DisplayName = "보조무기 전환 액션"))
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Weapon", meta = (DisplayName = "SecondaryWeaponAction (보조무기 전환 액션)", Tooltip = "보조무기 슬롯 전환 입력 액션"))
 	TObjectPtr<UInputAction> SecondaryWeaponAction;
 
 	void HandlePrimaryWeapon();
 	void HandleSecondaryWeapon();
 
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory", meta = (DisplayName = "HUD 위젯 클래스"))
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory", meta = (DisplayName = "HUDWidgetClass (HUD 위젯 클래스)", Tooltip = "HUD 위젯 블루프린트 클래스"))
 	TSubclassOf<UInv_HUDWidget> HUDWidgetClass;
 
 	UPROPERTY()
 	TObjectPtr<UInv_HUDWidget> HUDWidget;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory", meta = (DisplayName = "추적 길이"))	
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory", meta = (DisplayName = "TraceLength (추적 길이)", Tooltip = "상호작용 가능 대상 탐지 거리"))
 	double TraceLength;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory", meta = (DisplayName = "아이템 추적 채널"))	
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory", meta = (DisplayName = "ItemTraceChannel (아이템 추적 채널)", Tooltip = "아이템 탐지용 콜리전 채널"))
 	TEnumAsByte<ECollisionChannel> ItemTraceChannel;
 
 	UFUNCTION(Server, Reliable)
