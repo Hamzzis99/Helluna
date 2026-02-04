@@ -348,21 +348,21 @@ private:
 	 * @brief 투표 진행 중 여부
 	 * @note  Replicated - 모든 클라이언트에 복제됨
 	 */
-	UPROPERTY(Replicated, Category = "Vote")
+	UPROPERTY(Replicated)
 	bool bIsVoteInProgress = false;
 
 	/**
 	 * @brief 현재 투표 요청 정보
 	 * @note  Replicated - 모든 클라이언트에 복제됨
 	 */
-	UPROPERTY(Replicated, Category = "Vote")
+	UPROPERTY(Replicated)
 	FVoteRequest CurrentRequest;
 
 	/**
 	 * @brief 남은 시간 (초)
 	 * @note  Replicated - 모든 클라이언트에 복제됨
 	 */
-	UPROPERTY(Replicated, Category = "Vote")
+	UPROPERTY(Replicated)
 	float RemainingTime = 0.0f;
 
 	// ========================================================================
