@@ -6,6 +6,9 @@
 #include "Utils/Vote/VoteTypes.h"
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerState.h"
+#include "UI/Vote/VoteWidget.h"
+#include "Blueprint/UserWidget.h"
+#include "TimerManager.h"
 
 
 
@@ -29,6 +32,76 @@ void AHellunaHeroController::BeginPlay()
 
 	UE_LOG(LogHellunaVote, Log, TEXT("[HellunaHeroController] BeginPlay - %s"),
 		IsLocalController() ? TEXT("로컬") : TEXT("서버"));
+
+	// 로컬 플레이어만 투표 위젯 생성
+	if (IsLocalController() && VoteWidgetClass)
+	{
+		// GameState 복제 대기 후 위젯 초기화 (0.5초 딜레이)
+		GetWorldTimerManager().SetTimer(
+			VoteWidgetInitTimerHandle,
+			this,
+			&AHellunaHeroController::InitializeVoteWidget,
+			0.5f,
+			false
+		);
+
+		UE_LOG(LogHellunaVote, Log, TEXT("[HellunaHeroController] 투표 위젯 초기화 타이머 설정 (0.5초)"));
+	}
+}
+
+// ============================================================================
+// [투표 시스템] 위젯 자동 초기화
+// ============================================================================
+
+void AHellunaHeroController::InitializeVoteWidget()
+{
+	UE_LOG(LogHellunaVote, Log, TEXT("[HellunaHeroController] InitializeVoteWidget 진입"));
+
+	// 1. 위젯 생성
+	VoteWidgetInstance = CreateWidget<UVoteWidget>(this, VoteWidgetClass);
+	if (!VoteWidgetInstance)
+	{
+		UE_LOG(LogHellunaVote, Error, TEXT("[HellunaHeroController] 투표 위젯 생성 실패!"));
+		return;
+	}
+
+	// 2. 뷰포트에 추가
+	VoteWidgetInstance->AddToViewport();
+
+	// 3. GameState에서 VoteManager 가져오기
+	AGameStateBase* GameState = GetWorld()->GetGameState();
+	if (!GameState)
+	{
+		UE_LOG(LogHellunaVote, Warning, TEXT("[HellunaHeroController] GameState가 아직 없음 - 재시도"));
+		// GameState가 아직 복제 안 됐으면 0.5초 후 재시도
+		GetWorldTimerManager().SetTimer(
+			VoteWidgetInitTimerHandle,
+			this,
+			&AHellunaHeroController::InitializeVoteWidget,
+			0.5f,
+			false
+		);
+		return;
+	}
+
+	UVoteManagerComponent* VoteManager = GameState->FindComponentByClass<UVoteManagerComponent>();
+	if (!VoteManager)
+	{
+		UE_LOG(LogHellunaVote, Warning, TEXT("[HellunaHeroController] VoteManager가 아직 없음 - 재시도"));
+		GetWorldTimerManager().SetTimer(
+			VoteWidgetInitTimerHandle,
+			this,
+			&AHellunaHeroController::InitializeVoteWidget,
+			0.5f,
+			false
+		);
+		return;
+	}
+
+	// 4. 위젯에 VoteManager 바인딩
+	VoteWidgetInstance->InitializeVoteWidget(VoteManager);
+
+	UE_LOG(LogHellunaVote, Log, TEXT("[HellunaHeroController] 투표 위젯 초기화 완료!"));
 }
 
 // ============================================================================
