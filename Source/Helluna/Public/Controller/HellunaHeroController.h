@@ -7,8 +7,6 @@
 #include "GenericTeamAgentInterface.h"
 #include "HellunaHeroController.generated.h"
 
-class UVoteInputComponent;
-
 /**
  * @brief   Helluna 영웅 전용 PlayerController
  * @details AInv_PlayerController를 상속받아 인벤토리 기능을 유지하면서
@@ -34,15 +32,8 @@ public:
 	//~ End IGenericTeamAgentInterface Interface
 
 	// =========================================================================================
-	// [투표 시스템] (김기현)
+	// [투표 시스템] Server RPC (김기현)
 	// =========================================================================================
-
-	/**
-	 * @brief 투표 입력 처리 컴포넌트 (F1: 찬성, F2: 반대)
-	 * @note  투표 시작 시 자동으로 입력 활성화, 종료 시 비활성화
-	 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Vote")
-	TObjectPtr<UVoteInputComponent> VoteInputComponent;
 
 	/**
 	 * @brief   투표 제출 Server RPC (클라이언트 → 서버)

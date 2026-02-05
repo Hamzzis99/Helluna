@@ -91,27 +91,27 @@ protected:
 	// ========================================================================
 
 	/** 투표 제목 (예: "맵 이동 투표") */
-	UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
+	UPROPERTY(BlueprintReadWrite, meta = (BindWidget, DisplayName = "Vote Title Text (투표 제목)"))
 	TObjectPtr<UTextBlock> Text_VoteTitle;
 
 	/** 투표 대상 (예: "→ TestMap") */
-	UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
+	UPROPERTY(BlueprintReadWrite, meta = (BindWidget, DisplayName = "Vote Target Text (투표 대상)"))
 	TObjectPtr<UTextBlock> Text_VoteTarget;
 
 	/** 찬성 카운트 (예: "찬성: 2 / 4") */
-	UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
+	UPROPERTY(BlueprintReadWrite, meta = (BindWidget, DisplayName = "Agree Count Text (찬성 수)"))
 	TObjectPtr<UTextBlock> Text_AgreeCount;
 
 	/** 반대 카운트 (예: "반대: 1 / 4") */
-	UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
+	UPROPERTY(BlueprintReadWrite, meta = (BindWidget, DisplayName = "Disagree Count Text (반대 수)"))
 	TObjectPtr<UTextBlock> Text_DisagreeCount;
 
 	/** 남은 시간 (예: "남은 시간: 25초") */
-	UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
+	UPROPERTY(BlueprintReadWrite, meta = (BindWidget, DisplayName = "Remaining Time Text (남은 시간)"))
 	TObjectPtr<UTextBlock> Text_RemainingTime;
 
 	/** 시간 프로그레스 바 (선택적) */
-	UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+	UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional, DisplayName = "Time Progress Bar (시간 프로그레스 바)"))
 	TObjectPtr<UProgressBar> ProgressBar_Time;
 
 	// ========================================================================

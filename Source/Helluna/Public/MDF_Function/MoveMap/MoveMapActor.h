@@ -37,7 +37,7 @@ public:
 
 public:
     // 에디터에서 이동할 맵 이름을 적으세요 (예: LobbyMap, GameMap)
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Map Settings", meta = (ExposeOnSpawn = "true", DisplayName = "이동할 맵 이름"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Map Settings", meta = (ExposeOnSpawn = "true", DisplayName = "Next Level Name (이동할 맵 이름)"))
     FName NextLevelName;
 
     // =========================================================================================
@@ -45,15 +45,15 @@ public:
     // =========================================================================================
 
     /** 투표 조건 (만장일치 / 과반수) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vote Settings", meta = (DisplayName = "투표 조건"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vote Settings", meta = (DisplayName = "Vote Condition (투표 조건)"))
     EVoteCondition VoteCondition = EVoteCondition::Majority;
 
     /** 투표 제한 시간 (초) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vote Settings", meta = (DisplayName = "투표 제한 시간", ClampMin = "10.0", ClampMax = "120.0"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vote Settings", meta = (DisplayName = "Vote Timeout (투표 제한 시간)", ClampMin = "10.0", ClampMax = "120.0"))
     float VoteTimeout = 30.0f;
 
     /** 중도 퇴장 시 정책 */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vote Settings", meta = (DisplayName = "퇴장 시 정책"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vote Settings", meta = (DisplayName = "Disconnect Policy (퇴장 시 정책)"))
     EVoteDisconnectPolicy DisconnectPolicy = EVoteDisconnectPolicy::ExcludeAndContinue;
 
     // =========================================================================================

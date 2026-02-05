@@ -114,7 +114,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnVoteEnded, EVoteType, VoteType
  * @details GameState에 부착되어 멀티플레이어 투표 시스템을 관리합니다.
  *          서버에서 투표 로직을 처리하고, 클라이언트로 상태를 복제합니다.
  */
-UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
+UCLASS(Blueprintable, ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
 class HELLUNA_API UVoteManagerComponent : public UActorComponent
 {
 	GENERATED_BODY()
@@ -130,21 +130,21 @@ public:
 	 * @brief 투표 시작 시 호출되는 델리게이트
 	 * @note  클라이언트에서 UI 표시에 사용
 	 */
-	UPROPERTY(BlueprintAssignable, Category = "Vote")
+	UPROPERTY(BlueprintAssignable, Category = "Vote", meta = (DisplayName = "On Vote Started (투표 시작 이벤트)"))
 	FOnVoteStarted OnVoteStarted;
 
 	/**
 	 * @brief 투표 현황 업데이트 시 호출되는 델리게이트
 	 * @note  클라이언트에서 UI 갱신에 사용
 	 */
-	UPROPERTY(BlueprintAssignable, Category = "Vote")
+	UPROPERTY(BlueprintAssignable, Category = "Vote", meta = (DisplayName = "On Vote Updated (투표 업데이트 이벤트)"))
 	FOnVoteUpdated OnVoteUpdated;
 
 	/**
 	 * @brief 투표 종료 시 호출되는 델리게이트
 	 * @note  클라이언트에서 UI 숨김에 사용
 	 */
-	UPROPERTY(BlueprintAssignable, Category = "Vote")
+	UPROPERTY(BlueprintAssignable, Category = "Vote", meta = (DisplayName = "On Vote Ended (투표 종료 이벤트)"))
 	FOnVoteEnded OnVoteEnded;
 
 	// ========================================================================

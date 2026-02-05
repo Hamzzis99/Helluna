@@ -2,7 +2,6 @@
 
 
 #include "Controller/HellunaHeroController.h"
-#include "Utils/Vote/VoteInputComponent.h"
 #include "Utils/Vote/VoteManagerComponent.h"
 #include "Utils/Vote/VoteTypes.h"
 #include "GameFramework/GameStateBase.h"
@@ -13,13 +12,6 @@
 AHellunaHeroController::AHellunaHeroController()
 {
 	HeroTeamID = FGenericTeamId(0);
-
-	// =========================================================================================
-	// [투표 시스템] VoteInputComponent 생성 (김기현)
-	// =========================================================================================
-	VoteInputComponent = CreateDefaultSubobject<UVoteInputComponent>(TEXT("VoteInputComponent"));
-
-	UE_LOG(LogHellunaVote, Log, TEXT("[HellunaHeroController] 생성자 - VoteInputComponent 생성됨"));
 }
 
 FGenericTeamId AHellunaHeroController::GetGenericTeamId() const

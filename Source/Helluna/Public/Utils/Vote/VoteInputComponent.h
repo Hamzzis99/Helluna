@@ -44,7 +44,7 @@ struct FInputActionValue;
  *          VoteManager의 델리게이트에 바인딩하여 투표 시작/종료에 맞춰
  *          자동으로 입력 매핑 컨텍스트를 활성화/비활성화합니다.
  */
-UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
+UCLASS(Blueprintable, ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
 class HELLUNA_API UVoteInputComponent : public UActorComponent
 {
 	GENERATED_BODY()
@@ -60,14 +60,14 @@ public:
 	 * @brief 찬성 입력 액션 (예: F1)
 	 * @note  BP에서 IA_VoteAgree 에셋 지정
 	 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Vote|Input")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Vote|Input", meta = (DisplayName = "Vote Agree Action (투표 동의 액션)"))
 	TObjectPtr<UInputAction> VoteAgreeAction;
 
 	/**
 	 * @brief 반대 입력 액션 (예: F2)
 	 * @note  BP에서 IA_VoteDisagree 에셋 지정
 	 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Vote|Input")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Vote|Input", meta = (DisplayName = "Vote Disagree Action (투표 반대 액션)"))
 	TObjectPtr<UInputAction> VoteDisagreeAction;
 
 	/**
@@ -75,7 +75,7 @@ public:
 	 * @note  BP에서 IMC_Vote 에셋 지정
 	 * @note  F1 → VoteAgreeAction, F2 → VoteDisagreeAction 매핑 포함
 	 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Vote|Input")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Vote|Input", meta = (DisplayName = "Vote Mapping Context (투표 입력 매핑)"))
 	TObjectPtr<UInputMappingContext> VoteMappingContext;
 
 	/**
@@ -83,7 +83,7 @@ public:
 	 * @note  다른 입력 컨텍스트와의 우선순위 설정
 	 * @note  높을수록 우선 처리
 	 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Vote|Input")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Vote|Input", meta = (DisplayName = "Mapping Context Priority (매핑 우선순위)"))
 	int32 MappingContextPriority = 1;
 
 	// ========================================================================
