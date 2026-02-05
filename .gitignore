@@ -2,6 +2,7 @@ Plugins/Developer/
 
 # Visual Studio
 .vs/
+.claude/
 
 # Content Folder
 Content/Collections/
@@ -45,3 +46,4 @@ Plugins/*/Intermediate/
 *.app
 *.dylib
 *.so
+nul

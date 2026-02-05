@@ -2,6 +2,7 @@
 
 
 #include "EquipmentManagement/EquipActor/Inv_EquipActor.h"
+#include "Inventory.h"
 #include "Net/UnrealNetwork.h"
 
 
@@ -32,7 +33,9 @@ void AInv_EquipActor::SetWeaponHidden(bool bNewHidden)
 		// 서버에서 호출됨 - 직접 실행
 		bIsWeaponHidden = bNewHidden;
 		SetActorHiddenInGame(bNewHidden);
+#if INV_DEBUG_EQUIP
 		UE_LOG(LogTemp, Warning, TEXT("⭐ [Inv_EquipActor] SetWeaponHidden (서버): %s"), bNewHidden ? TEXT("Hidden") : TEXT("Visible"));
+#endif
 	}
 	else
 	{
@@ -40,7 +43,9 @@ void AInv_EquipActor::SetWeaponHidden(bool bNewHidden)
 		Server_SetWeaponHidden(bNewHidden);
 		// 로컬에서도 즉시 적용 (반응성을 위해)
 		SetActorHiddenInGame(bNewHidden);
+#if INV_DEBUG_EQUIP
 		UE_LOG(LogTemp, Warning, TEXT("⭐ [Inv_EquipActor] SetWeaponHidden (클라이언트→서버 RPC): %s"), bNewHidden ? TEXT("Hidden") : TEXT("Visible"));
+#endif
 	}
 }
 
@@ -50,12 +55,16 @@ void AInv_EquipActor::Server_SetWeaponHidden_Implementation(bool bNewHidden)
 	// 서버에서 실행됨
 	bIsWeaponHidden = bNewHidden;
 	SetActorHiddenInGame(bNewHidden);
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [Inv_EquipActor] Server_SetWeaponHidden (서버 RPC 수신): %s"), bNewHidden ? TEXT("Hidden") : TEXT("Visible"));
+#endif
 }
 
 // ⭐ [WeaponBridge] 클라이언트에서 리플리케이션 수신 시 호출
 void AInv_EquipActor::OnRep_IsWeaponHidden()
 {
 	SetActorHiddenInGame(bIsWeaponHidden);
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [Inv_EquipActor] OnRep_IsWeaponHidden: %s"), bIsWeaponHidden ? TEXT("Hidden") : TEXT("Visible"));
+#endif
 }

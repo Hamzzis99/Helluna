@@ -1,4 +1,5 @@
-﻿#include "Login/HellunaServerConnectController.h"
+#include "Login/HellunaServerConnectController.h"
+#include "Helluna.h"  // 전처리기 플래그
 #include "Login/HellunaServerConnectWidget.h"
 #include "Login/HellunaLoginGameMode.h"
 #include "Blueprint/UserWidget.h"
@@ -15,18 +16,20 @@ void AHellunaServerConnectController::BeginPlay()
 {
 	Super::BeginPlay();
 
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║     [ServerConnectController] BeginPlay                    ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ Controller: %s"), *GetName());
-	UE_LOG(LogTemp, Warning, TEXT("║ IsLocalController: %s"), IsLocalController() ? TEXT("TRUE") : TEXT("FALSE"));
-	UE_LOG(LogTemp, Warning, TEXT("║ NetMode: %d"), static_cast<int32>(GetNetMode()));
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#if HELLUNA_DEBUG_SERVERCONNECTION
+	UE_LOG(LogHelluna, Warning, TEXT(""));
+	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogHelluna, Warning, TEXT("║     [ServerConnectController] BeginPlay                    ║"));
+	UE_LOG(LogHelluna, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogHelluna, Warning, TEXT("║ Controller: %s"), *GetName());
+	UE_LOG(LogHelluna, Warning, TEXT("║ IsLocalController: %s"), IsLocalController() ? TEXT("TRUE") : TEXT("FALSE"));
+	UE_LOG(LogHelluna, Warning, TEXT("║ NetMode: %d"), static_cast<int32>(GetNetMode()));
+	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
 
 	if (!ConnectWidgetClass)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[ServerConnectController] ConnectWidgetClass 미설정!"));
+		UE_LOG(LogHelluna, Error, TEXT("[ServerConnectController] ConnectWidgetClass 미설정!"));
 		if (GEngine)
 		{
 			GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Red,
@@ -44,16 +47,20 @@ void AHellunaServerConnectController::BeginPlay()
 		ShowConnectWidget();
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT(""));
+#if HELLUNA_DEBUG_SERVERCONNECTION
+	UE_LOG(LogHelluna, Warning, TEXT(""));
+#endif
 }
 
 void AHellunaServerConnectController::ShowConnectWidget()
 {
-	UE_LOG(LogTemp, Warning, TEXT("[ServerConnectController] ShowConnectWidget"));
+#if HELLUNA_DEBUG_SERVERCONNECTION
+	UE_LOG(LogHelluna, Warning, TEXT("[ServerConnectController] ShowConnectWidget"));
+#endif
 
 	if (!ConnectWidgetClass)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[ServerConnectController] ConnectWidgetClass가 nullptr!"));
+		UE_LOG(LogHelluna, Error, TEXT("[ServerConnectController] ConnectWidgetClass가 nullptr!"));
 		return;
 	}
 
@@ -65,7 +72,9 @@ void AHellunaServerConnectController::ShowConnectWidget()
 	if (ConnectWidget && !ConnectWidget->IsInViewport())
 	{
 		ConnectWidget->AddToViewport();
-		UE_LOG(LogTemp, Warning, TEXT("[ServerConnectController] 위젯 표시됨"));
+#if HELLUNA_DEBUG_SERVERCONNECTION
+		UE_LOG(LogHelluna, Warning, TEXT("[ServerConnectController] 위젯 표시됨"));
+#endif
 	}
 }
 
@@ -74,23 +83,29 @@ void AHellunaServerConnectController::HideConnectWidget()
 	if (ConnectWidget && ConnectWidget->IsInViewport())
 	{
 		ConnectWidget->RemoveFromParent();
-		UE_LOG(LogTemp, Warning, TEXT("[ServerConnectController] 위젯 숨김"));
+#if HELLUNA_DEBUG_SERVERCONNECTION
+		UE_LOG(LogHelluna, Warning, TEXT("[ServerConnectController] 위젯 숨김"));
+#endif
 	}
 }
 
 void AHellunaServerConnectController::OnConnectButtonClicked(const FString& IPAddress)
 {
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║     [ServerConnectController] OnConnectButtonClicked       ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ IP: '%s'"), *IPAddress);
+#if HELLUNA_DEBUG_SERVERCONNECTION
+	UE_LOG(LogHelluna, Warning, TEXT(""));
+	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogHelluna, Warning, TEXT("║     [ServerConnectController] OnConnectButtonClicked       ║"));
+	UE_LOG(LogHelluna, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogHelluna, Warning, TEXT("║ IP: '%s'"), *IPAddress);
+#endif
 
 	if (IPAddress.IsEmpty())
 	{
 		// 호스트 모드: 서버 시작
-		UE_LOG(LogTemp, Warning, TEXT("║ → 호스트 모드: 서버 시작!                                  ║"));
-		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#if HELLUNA_DEBUG_SERVERCONNECTION
+		UE_LOG(LogHelluna, Warning, TEXT("║ → 호스트 모드: 서버 시작!                                  ║"));
+		UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
 
 		if (ConnectWidget)
 		{
@@ -105,7 +120,7 @@ void AHellunaServerConnectController::OnConnectButtonClicked(const FString& IPAd
 		}
 		else
 		{
-			UE_LOG(LogTemp, Error, TEXT("[ServerConnectController] LoginGameMode 없음!"));
+			UE_LOG(LogHelluna, Error, TEXT("[ServerConnectController] LoginGameMode 없음!"));
 			if (ConnectWidget)
 			{
 				ConnectWidget->ShowMessage(TEXT("GameMode 오류!"), true);
@@ -116,8 +131,10 @@ void AHellunaServerConnectController::OnConnectButtonClicked(const FString& IPAd
 	else
 	{
 		// 클라이언트 모드: 서버 접속
-		UE_LOG(LogTemp, Warning, TEXT("║ → 클라이언트 모드: %s 에 접속!"), *IPAddress);
-		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#if HELLUNA_DEBUG_SERVERCONNECTION
+		UE_LOG(LogHelluna, Warning, TEXT("║ → 클라이언트 모드: %s 에 접속!"), *IPAddress);
+		UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
 
 		if (ConnectWidget)
 		{
@@ -126,9 +143,13 @@ void AHellunaServerConnectController::OnConnectButtonClicked(const FString& IPAd
 		}
 
 		FString Command = FString::Printf(TEXT("open %s"), *IPAddress);
-		UE_LOG(LogTemp, Warning, TEXT("[ServerConnectController] 명령: %s"), *Command);
+#if HELLUNA_DEBUG_SERVERCONNECTION
+		UE_LOG(LogHelluna, Warning, TEXT("[ServerConnectController] 명령: %s"), *Command);
+#endif
 		ConsoleCommand(Command);
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT(""));
+#if HELLUNA_DEBUG_SERVERCONNECTION
+	UE_LOG(LogHelluna, Warning, TEXT(""));
+#endif
 }

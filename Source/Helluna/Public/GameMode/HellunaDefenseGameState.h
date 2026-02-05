@@ -3,12 +3,13 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "GameFramework/GameStateBase.h"
+#include "GameFramework/GameState.h"
 
 // [MDF 추가] 플러그인 인터페이스 및 컴포넌트 헤더
 #include "Interface/MDF_GameStateInterface.h"
 #include "Components/MDF_DeformableComponent.h"
 
+#include "HellunaTypes.h"
 #include "HellunaDefenseGameState.generated.h"
 
 // =========================================================================================
@@ -37,7 +38,7 @@ enum class EDefensePhase : uint8
 class AResourceUsingObject_SpaceShip;
 
 UCLASS()
-class HELLUNA_API AHellunaDefenseGameState : public AGameStateBase, public IMDF_GameStateInterface
+class HELLUNA_API AHellunaDefenseGameState : public AGameState, public IMDF_GameStateInterface
 {
     GENERATED_BODY()
     
@@ -116,6 +117,45 @@ protected:
 	//몬스터 생존 개수 관리, GameMode는 서버에만 있으니, UI/디버그를 위해 GameState에서 복제(Replicate)로 공유
     UPROPERTY(Replicated, BlueprintReadOnly, Category = "Defense|Monster")
     int32 AliveMonsterCount = 0;
+
+	// ═══════════════════════════════════════════════════════════════════════════════
+	// 🎭 캐릭터 선택 시스템 - 실시간 UI 갱신용 (김기현)
+	// ═══════════════════════════════════════════════════════════════════════════════
+	// 
+	// 📌 목적: 다른 플레이어가 캐릭터 선택 시 모든 클라이언트 UI 자동 갱신
+	// 📌 구조: UsedCharacters 배열이 변경되면 OnRep → 델리게이트 브로드캐스트
+	// 
+	// ═══════════════════════════════════════════════════════════════════════════════
+
+public:
+	/** 캐릭터 사용 상태 변경 델리게이트 (UI 바인딩용) */
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnUsedCharactersChanged);
+	
+	UPROPERTY(BlueprintAssignable, Category = "Character Select")
+	FOnUsedCharactersChanged OnUsedCharactersChanged;
+
+	/** 특정 캐릭터가 사용 중인지 확인 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Character Select")
+	bool IsCharacterUsed(EHellunaHeroType HeroType) const;
+
+	/** 사용 중인 캐릭터 목록 반환 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Character Select")
+	TArray<EHellunaHeroType> GetUsedCharacters() const { return UsedCharacters; }
+
+	/** [서버 전용] 캐릭터 사용 등록 */
+	void AddUsedCharacter(EHellunaHeroType HeroType);
+
+	/** [서버 전용] 캐릭터 사용 해제 */
+	void RemoveUsedCharacter(EHellunaHeroType HeroType);
+
+protected:
+	/** 현재 사용 중인 캐릭터 목록 (Replicated) */
+	UPROPERTY(ReplicatedUsing = OnRep_UsedCharacters)
+	TArray<EHellunaHeroType> UsedCharacters;
+
+	/** 캐릭터 목록 변경 시 클라이언트에서 호출 */
+	UFUNCTION()
+	void OnRep_UsedCharacters();
 
 
     // 디버그용

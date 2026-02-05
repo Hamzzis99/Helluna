@@ -3,6 +3,7 @@
 //플레이어 컨트롤러와 관련이 있네?
 
 #include "EquipmentManagement/Components/Inv_EquipmentComponent.h"
+#include "Inventory.h"
 
 #include "EquipmentManagement/EquipActor/Inv_EquipActor.h"
 #include "GameFramework/Character.h"
@@ -39,6 +40,43 @@ void UInv_EquipmentComponent::BeginPlay()
 	Super::BeginPlay();
 	
 	InitPlayerController();
+}
+
+// ============================================
+// 🆕 [Phase 6] 컴포넌트 파괴 시 장착 액터 정리
+// ============================================
+void UInv_EquipmentComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+#if INV_DEBUG_EQUIP
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔══════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║ [EquipmentComponent] EndPlay - 장착 액터 정리                 ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠══════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ EndPlayReason: %d"), static_cast<int32>(EndPlayReason));
+	UE_LOG(LogTemp, Warning, TEXT("║ EquippedActors 개수: %d"), EquippedActors.Num());
+	UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════╝"));
+#endif
+
+	// 모든 장착 액터 파괴
+	for (TObjectPtr<AInv_EquipActor>& EquipActor : EquippedActors)
+	{
+		if (EquipActor.Get() && IsValid(EquipActor.Get()))
+		{
+#if INV_DEBUG_EQUIP
+			UE_LOG(LogTemp, Warning, TEXT("   🗑️ 장착 액터 파괴: %s (Slot: %d)"), 
+				*EquipActor->GetName(), EquipActor->GetWeaponSlotIndex());
+#endif
+			EquipActor->Destroy();
+		}
+	}
+	EquippedActors.Empty();
+	
+#if INV_DEBUG_EQUIP
+	UE_LOG(LogTemp, Warning, TEXT("   ✅ 장착 액터 정리 완료!"));
+	UE_LOG(LogTemp, Warning, TEXT(""));
+#endif
+
+	Super::EndPlay(EndPlayReason);
 }
 
 // 플레이어 컨트롤러 초기화
@@ -125,9 +163,11 @@ void UInv_EquipmentComponent::RemoveEquippedActor(const FGameplayTag& EquipmentT
 				break;
 			}
 		}
+#if INV_DEBUG_EQUIP
 		UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] RemoveEquippedActor - Tag: %s, SlotIndex: %d, Found: %s"), 
 			*EquipmentTypeTag.ToString(), WeaponSlotIndex, 
 			ActorToRemove ? *ActorToRemove->GetName() : TEXT("nullptr"));
+#endif
 	}
 	else
 	{
@@ -139,7 +179,9 @@ void UInv_EquipmentComponent::RemoveEquippedActor(const FGameplayTag& EquipmentT
 	{
 		EquippedActors.Remove(ActorToRemove);
 		ActorToRemove->Destroy();
+#if INV_DEBUG_EQUIP
 		UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] 액터 제거 완료: %s"), *ActorToRemove->GetName());
+#endif
 	}
 }
 
@@ -149,10 +191,12 @@ void UInv_EquipmentComponent::OnItemEquipped(UInv_InventoryItem* EquippedItem, i
 	// ⭐ 서버/클라이언트 확인
 	AActor* OwnerActor = GetOwner();
 	bool bIsServer = OwnerActor ? OwnerActor->HasAuthority() : false;
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] OnItemEquipped 호출됨 - %s (Owner: %s, WeaponSlotIndex: %d)"), 
 		bIsServer ? TEXT("서버") : TEXT("클라이언트"),
 		OwnerActor ? *OwnerActor->GetName() : TEXT("nullptr"),
 		WeaponSlotIndex);
+#endif
 	
 	if (!IsValid(EquippedItem)) return;
 	
@@ -178,16 +222,22 @@ void UInv_EquipmentComponent::OnItemEquipped(UInv_InventoryItem* EquippedItem, i
 		
 		if (IsValid(SpawnedEquipActor))
 		{
+#if INV_DEBUG_EQUIP
 			// WeaponSlotIndex는 이미 SpawnAttachedActor에서 설정됨
 			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] SpawnedEquipActor WeaponSlotIndex: %d"), SpawnedEquipActor->GetWeaponSlotIndex());
+#endif
 			
 			EquippedActors.Add(SpawnedEquipActor);
+#if INV_DEBUG_EQUIP
 			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] 서버: EquippedActors에 추가됨: %s (총 %d개) - this: %p"), 
 				*SpawnedEquipActor->GetName(), EquippedActors.Num(), this);
+#endif
 		}
 		else
 		{
+#if INV_DEBUG_EQUIP
 			UE_LOG(LogTemp, Error, TEXT("⭐ [EquipmentComponent] 서버: SpawnedEquipActor가 null!"));
+#endif
 		}
 	}
 	else
@@ -202,12 +252,16 @@ void UInv_EquipmentComponent::OnItemEquipped(UInv_InventoryItem* EquippedItem, i
 		if (IsValid(ReplicatedActor))
 		{
 			EquippedActors.Add(ReplicatedActor);
+#if INV_DEBUG_EQUIP
 			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] 클라이언트: 리플리케이트된 액터 추가: %s (총 %d개) - this: %p"), 
 				*ReplicatedActor->GetName(), EquippedActors.Num(), this);
+#endif
 		}
 		else
 		{
+#if INV_DEBUG_EQUIP
 			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] 클라이언트: EquippedActor 아직 없음 - 나중에 추가될 예정"));
+#endif
 		}
 	}
 }
@@ -218,8 +272,10 @@ void UInv_EquipmentComponent::OnItemUnequipped(UInv_InventoryItem* UnequippedIte
 	AActor* OwnerActor = GetOwner();
 	bool bIsServer = OwnerActor ? OwnerActor->HasAuthority() : false;
 	
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] OnItemUnequipped 호출됨 - %s (WeaponSlotIndex: %d)"),
 		bIsServer ? TEXT("서버") : TEXT("클라이언트"), WeaponSlotIndex);
+#endif
 	
 	if (!IsValid(UnequippedItem)) return;
 
@@ -244,7 +300,9 @@ void UInv_EquipmentComponent::OnItemUnequipped(UInv_InventoryItem* UnequippedIte
 		
 		if (bIsActiveWeapon)
 		{
+#if INV_DEBUG_EQUIP
 			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] 손에 든 무기 해제 - 델리게이트 브로드캐스트 (SlotIndex: %d)"), WeaponSlotIndex);
+#endif
 			
 			// 손 무기 파괴 델리게이트 브로드캐스트 (클라이언트에서 UI와 연결된 캐릭터에 전달)
 			OnWeaponEquipRequested.Broadcast(
@@ -257,7 +315,9 @@ void UInv_EquipmentComponent::OnItemUnequipped(UInv_InventoryItem* UnequippedIte
 			
 			// 활성 슬롯 초기화
 			ActiveWeaponSlot = EInv_ActiveWeaponSlot::None;
+#if INV_DEBUG_EQUIP
 			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] ActiveWeaponSlot = None으로 초기화"));
+#endif
 		}
 	}
 
@@ -280,17 +340,23 @@ void UInv_EquipmentComponent::OnItemUnequipped(UInv_InventoryItem* UnequippedIte
 
 void UInv_EquipmentComponent::HandlePrimaryWeaponInput()
 {
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] HandlePrimaryWeaponInput 호출됨 (1키)"));
+#endif
 	
 	// 주무기가 없으면 무시
 	AInv_EquipActor* WeaponActor = FindPrimaryWeaponActor();
 	if (!IsValid(WeaponActor))
 	{
+#if INV_DEBUG_EQUIP
 		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 장착된 주무기 없음 - 입력 무시"));
+#endif
 		return;
 	}
 	
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 현재 활성 슬롯: %d"), static_cast<int32>(ActiveWeaponSlot));
+#endif
 	
 	// 현재 상태에 따라 분기
 	if (ActiveWeaponSlot == EInv_ActiveWeaponSlot::None)
@@ -314,17 +380,23 @@ void UInv_EquipmentComponent::HandlePrimaryWeaponInput()
 
 void UInv_EquipmentComponent::HandleSecondaryWeaponInput()
 {
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] HandleSecondaryWeaponInput 호출됨 (2키)"));
+#endif
 	
 	// 보조무기가 없으면 무시
 	AInv_EquipActor* WeaponActor = FindSecondaryWeaponActor();
 	if (!IsValid(WeaponActor))
 	{
+#if INV_DEBUG_EQUIP
 		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 장착된 보조무기 없음 - 입력 무시"));
+#endif
 		return;
 	}
 	
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 현재 활성 슬롯: %d"), static_cast<int32>(ActiveWeaponSlot));
+#endif
 	
 	// 현재 상태에 따라 분기
 	if (ActiveWeaponSlot == EInv_ActiveWeaponSlot::None)
@@ -351,18 +423,25 @@ void UInv_EquipmentComponent::EquipPrimaryWeapon()
 	AInv_EquipActor* WeaponActor = FindPrimaryWeaponActor();
 	if (!IsValid(WeaponActor))
 	{
+#if INV_DEBUG_EQUIP
 		UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] EquipPrimaryWeapon 실패 - WeaponActor 없음"));
+#endif
 		return;
 	}
 	
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 주무기 꺼내기 시작 - %s"), *WeaponActor->GetName());
+#endif
 	
 	// 등 무기 숨기기 (리플리케이트)
 	WeaponActor->SetWeaponHidden(true);
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 등 무기 Hidden 처리 완료"));
+#endif
 	
 	// 무기 스폰 GA 확인
 	TSubclassOf<UGameplayAbility> SpawnWeaponAbility = WeaponActor->GetSpawnWeaponAbility();
+#if INV_DEBUG_EQUIP
 	if (!SpawnWeaponAbility)
 	{
 		UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] SpawnWeaponAbility가 설정되지 않음!"));
@@ -371,6 +450,7 @@ void UInv_EquipmentComponent::EquipPrimaryWeapon()
 	{
 		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] SpawnWeaponAbility: %s"), *SpawnWeaponAbility->GetName());
 	}
+#endif
 	
 	// 델리게이트 브로드캐스트 (Helluna에서 수신)
 	OnWeaponEquipRequested.Broadcast(
@@ -380,11 +460,15 @@ void UInv_EquipmentComponent::EquipPrimaryWeapon()
 		true,  // bEquip = true (꺼내기)
 		0      // WeaponSlotIndex = 0 (주무기)
 	);
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 델리게이트 브로드캐스트 완료 (bEquip = true, SlotIndex = 0)"));
+#endif
 	
 	// 상태 변경
 	ActiveWeaponSlot = EInv_ActiveWeaponSlot::Primary;
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 주무기 꺼내기 완료 - ActiveWeaponSlot = Primary"));
+#endif
 }
 
 void UInv_EquipmentComponent::EquipSecondaryWeapon()
@@ -392,18 +476,25 @@ void UInv_EquipmentComponent::EquipSecondaryWeapon()
 	AInv_EquipActor* WeaponActor = FindSecondaryWeaponActor();
 	if (!IsValid(WeaponActor))
 	{
+#if INV_DEBUG_EQUIP
 		UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] EquipSecondaryWeapon 실패 - WeaponActor 없음"));
+#endif
 		return;
 	}
 	
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 보조무기 꺼내기 시작 - %s"), *WeaponActor->GetName());
+#endif
 	
 	// 등 무기 숨기기 (리플리케이트)
 	WeaponActor->SetWeaponHidden(true);
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 등 무기 Hidden 처리 완료"));
+#endif
 	
 	// 무기 스폰 GA 확인
 	TSubclassOf<UGameplayAbility> SpawnWeaponAbility = WeaponActor->GetSpawnWeaponAbility();
+#if INV_DEBUG_EQUIP
 	if (!SpawnWeaponAbility)
 	{
 		UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] SpawnWeaponAbility가 설정되지 않음!"));
@@ -412,6 +503,7 @@ void UInv_EquipmentComponent::EquipSecondaryWeapon()
 	{
 		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] SpawnWeaponAbility: %s"), *SpawnWeaponAbility->GetName());
 	}
+#endif
 	
 	// 델리게이트 브로드캐스트 (Helluna에서 수신)
 	OnWeaponEquipRequested.Broadcast(
@@ -421,11 +513,15 @@ void UInv_EquipmentComponent::EquipSecondaryWeapon()
 		true,  // bEquip = true (꺼내기)
 		1      // WeaponSlotIndex = 1 (보조무기)
 	);
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 델리게이트 브로드캐스트 완료 (bEquip = true, SlotIndex = 1)"));
+#endif
 	
 	// 상태 변경
 	ActiveWeaponSlot = EInv_ActiveWeaponSlot::Secondary;
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 보조무기 꺼내기 완료 - ActiveWeaponSlot = Secondary"));
+#endif
 }
 
 void UInv_EquipmentComponent::UnequipWeapon()
@@ -447,11 +543,15 @@ void UInv_EquipmentComponent::UnequipWeapon()
 	
 	if (!IsValid(WeaponActor))
 	{
+#if INV_DEBUG_EQUIP
 		UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] UnequipWeapon 실패 - WeaponActor 없음"));
+#endif
 		return;
 	}
 	
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 무기 집어넣기 시작 - %s (SlotIndex: %d)"), *WeaponActor->GetName(), SlotIndex);
+#endif
 	
 	// 델리게이트 브로드캐스트 (Helluna에서 손 무기 Destroy)
 	OnWeaponEquipRequested.Broadcast(
@@ -461,15 +561,21 @@ void UInv_EquipmentComponent::UnequipWeapon()
 		false,    // bEquip = false (집어넣기)
 		SlotIndex // WeaponSlotIndex
 	);
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 델리게이트 브로드캐스트 완료 (bEquip = false, SlotIndex = %d)"), SlotIndex);
+#endif
 	
 	// 등 무기 다시 보이기 (리플리케이트)
 	WeaponActor->SetWeaponHidden(false);
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 등 무기 Visible 처리 완료"));
+#endif
 	
 	// 상태 변경
 	ActiveWeaponSlot = EInv_ActiveWeaponSlot::None;
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 무기 집어넣기 완료 - ActiveWeaponSlot = None"));
+#endif
 
 
 }
@@ -485,8 +591,10 @@ AInv_EquipActor* UInv_EquipmentComponent::FindPrimaryWeaponActor()
 	AActor* OwnerActor = GetOwner();
 	bool bIsServer = OwnerActor ? OwnerActor->HasAuthority() : false;
 	
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] FindPrimaryWeaponActor 시작 - %s"), 
 		bIsServer ? TEXT("서버") : TEXT("클라이언트"));
+#endif
 	
 	FGameplayTag WeaponsTag = FGameplayTag::RequestGameplayTag(FName("GameItems.Equipment.Weapons"));
 	
@@ -502,7 +610,9 @@ AInv_EquipActor* UInv_EquipmentComponent::FindPrimaryWeaponActor()
 			// 정확히 SlotIndex == 0인 무기 (1순위)
 			if (SlotIndex == 0)
 			{
+#if INV_DEBUG_EQUIP
 				UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 주무기 찾음 (SlotIndex=0): %s"), *Actor->GetName());
+#endif
 				return Actor;
 			}
 			
@@ -517,7 +627,9 @@ AInv_EquipActor* UInv_EquipmentComponent::FindPrimaryWeaponActor()
 	// SlotIndex == 0인 무기가 없으면 미설정(-1)인 첫 번째 무기 반환
 	if (FirstWeaponWithUnsetIndex)
 	{
+#if INV_DEBUG_EQUIP
 		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 주무기 찾음 (SlotIndex 미설정, 첫 번째): %s"), *FirstWeaponWithUnsetIndex->GetName());
+#endif
 		return FirstWeaponWithUnsetIndex;
 	}
 	
@@ -540,7 +652,9 @@ AInv_EquipActor* UInv_EquipmentComponent::FindPrimaryWeaponActor()
 						// SlotIndex == 0 또는 -1(미설정)인 첫 번째 무기
 						if (SlotIndex == 0 || SlotIndex == -1)
 						{
+#if INV_DEBUG_EQUIP
 							UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 2단계 - 주무기 찾음 (SlotIndex=%d): %s"), SlotIndex, *EquipActor->GetName());
+#endif
 							if (!EquippedActors.Contains(EquipActor))
 							{
 								EquippedActors.Add(EquipActor);
@@ -553,7 +667,9 @@ AInv_EquipActor* UInv_EquipmentComponent::FindPrimaryWeaponActor()
 		}
 	}
 	
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 주무기 없음"));
+#endif
 	return nullptr;
 }
 
@@ -568,8 +684,10 @@ AInv_EquipActor* UInv_EquipmentComponent::FindSecondaryWeaponActor()
 	AActor* OwnerActor = GetOwner();
 	bool bIsServer = OwnerActor ? OwnerActor->HasAuthority() : false;
 	
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] FindSecondaryWeaponActor 시작 - %s"), 
 		bIsServer ? TEXT("서버") : TEXT("클라이언트"));
+#endif
 	
 	FGameplayTag WeaponsTag = FGameplayTag::RequestGameplayTag(FName("GameItems.Equipment.Weapons"));
 	
@@ -586,7 +704,9 @@ AInv_EquipActor* UInv_EquipmentComponent::FindSecondaryWeaponActor()
 			// 정확히 SlotIndex == 1인 무기 (1순위)
 			if (SlotIndex == 1)
 			{
+#if INV_DEBUG_EQUIP
 				UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 보조무기 찾음 (SlotIndex=1): %s"), *Actor->GetName());
+#endif
 				return Actor;
 			}
 			
@@ -605,7 +725,9 @@ AInv_EquipActor* UInv_EquipmentComponent::FindSecondaryWeaponActor()
 	// SlotIndex == 1인 무기가 없으면 미설정(-1)인 두 번째 무기 반환
 	if (SecondWeaponWithUnsetIndex)
 	{
+#if INV_DEBUG_EQUIP
 		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 보조무기 찾음 (SlotIndex 미설정, 두 번째): %s"), *SecondWeaponWithUnsetIndex->GetName());
+#endif
 		return SecondWeaponWithUnsetIndex;
 	}
 	
@@ -629,7 +751,9 @@ AInv_EquipActor* UInv_EquipmentComponent::FindSecondaryWeaponActor()
 						// SlotIndex == 1인 무기
 						if (SlotIndex == 1)
 						{
+#if INV_DEBUG_EQUIP
 							UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 2단계 - 보조무기 찾음 (SlotIndex=1): %s"), *EquipActor->GetName());
+#endif
 							if (!EquippedActors.Contains(EquipActor))
 							{
 								EquippedActors.Add(EquipActor);
@@ -647,7 +771,9 @@ AInv_EquipActor* UInv_EquipmentComponent::FindSecondaryWeaponActor()
 							UnsetWeaponCount++;
 							if (UnsetWeaponCount == 2)
 							{
+#if INV_DEBUG_EQUIP
 								UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 2단계 - 보조무기 찾음 (SlotIndex 미설정, 두 번째): %s"), *EquipActor->GetName());
+#endif
 								return EquipActor;
 							}
 						}
@@ -657,7 +783,9 @@ AInv_EquipActor* UInv_EquipmentComponent::FindSecondaryWeaponActor()
 		}
 	}
 	
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 보조무기 없음"));
+#endif
 	return nullptr;
 }
 

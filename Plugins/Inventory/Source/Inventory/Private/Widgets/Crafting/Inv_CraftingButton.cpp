@@ -35,6 +35,7 @@
 
 
 #include "Widgets/Crafting/Inv_CraftingButton.h"
+#include "Inventory.h"
 #include "Components/Button.h"
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
@@ -136,7 +137,9 @@ void UInv_CraftingButton::OnButtonClicked()
 	UWorld* World = GetWorld();
 	if (!IsValid(World))
 	{
+#if INV_DEBUG_CRAFT
 		UE_LOG(LogTemp, Error, TEXT("❌ GetWorld() 실패!"));
+#endif
 		return;
 	}
 
@@ -144,21 +147,27 @@ void UInv_CraftingButton::OnButtonClicked()
 	const float CurrentTime = World->GetTimeSeconds();
 	if (CurrentTime - LastCraftTime < CraftingCooldown)
 	{
+#if INV_DEBUG_CRAFT
 		UE_LOG(LogTemp, Warning, TEXT("⏱️ 제작 쿨다운 중! 남은 시간: %.2f초"), CraftingCooldown - (CurrentTime - LastCraftTime));
+#endif
 		return;
 	}
 
 	if (!HasRequiredMaterials())
 	{
+#if INV_DEBUG_CRAFT
 		UE_LOG(LogTemp, Warning, TEXT("❌ 재료가 부족합니다!"));
+#endif
 		return;
 	}
 
 	// ⭐ 쿨다운 시간 기록
 	LastCraftTime = CurrentTime;
 
+#if INV_DEBUG_CRAFT
 	UE_LOG(LogTemp, Warning, TEXT("=== 아이템 제작 시작! ==="));
 	UE_LOG(LogTemp, Warning, TEXT("아이템: %s"), *ItemName.ToString());
+#endif
 
 	// ⚠️ 재료 차감은 서버에서 공간 체크 후 수행!
 	// ConsumeMaterials(); ← 제거! 서버에서 처리!
@@ -167,7 +176,9 @@ void UInv_CraftingButton::OnButtonClicked()
 	if (IsValid(Button_Main))
 	{
 		Button_Main->SetIsEnabled(false);
+#if INV_DEBUG_CRAFT
 		UE_LOG(LogTemp, Log, TEXT("제작 버튼 즉시 비활성화 (중복 클릭 방지)"));
+#endif
 	}
 
 	// ⭐ 쿨다운 후 버튼 상태 재검사 타이머 설정
@@ -181,7 +192,9 @@ void UInv_CraftingButton::OnButtonClicked()
 			
 			// 쿨다운 종료 후 재료 다시 체크해서 버튼 상태 업데이트
 			UpdateButtonState();
+#if INV_DEBUG_CRAFT
 			UE_LOG(LogTemp, Log, TEXT("제작 쿨다운 완료! 버튼 상태 재계산"));
+#endif
 		},
 		CraftingCooldown,
 		false
@@ -191,7 +204,9 @@ void UInv_CraftingButton::OnButtonClicked()
 	AddCraftedItemToInventory();
 
 
+#if INV_DEBUG_CRAFT
 	UE_LOG(LogTemp, Warning, TEXT("제작 완료!"));
+#endif
 }
 
 bool UInv_CraftingButton::HasRequiredMaterials()
@@ -215,7 +230,9 @@ bool UInv_CraftingButton::HasRequiredMaterials()
 
 		if (TotalCount < RequiredAmount)
 		{
+#if INV_DEBUG_CRAFT
 			UE_LOG(LogTemp, Log, TEXT("재료1 부족: %d/%d (%s)"), TotalCount, RequiredAmount, *RequiredMaterialTag.ToString());
+#endif
 			return false;
 		}
 	}
@@ -225,18 +242,20 @@ bool UInv_CraftingButton::HasRequiredMaterials()
 	{
 		int32 TotalCount = 0;
 		const auto& AllItems = InvComp->GetInventoryList().GetAllItems();
-		
+
 		for (UInv_InventoryItem* Item : AllItems)
 		{
 			if (!IsValid(Item)) continue;
 			if (!Item->GetItemManifest().GetItemType().MatchesTagExact(RequiredMaterialTag2)) continue;
-			
+
 			TotalCount += Item->GetTotalStackCount();
 		}
 
 		if (TotalCount < RequiredAmount2)
 		{
+#if INV_DEBUG_CRAFT
 			UE_LOG(LogTemp, Log, TEXT("재료2 부족: %d/%d (%s)"), TotalCount, RequiredAmount2, *RequiredMaterialTag2.ToString());
+#endif
 			return false;
 		}
 	}
@@ -246,18 +265,20 @@ bool UInv_CraftingButton::HasRequiredMaterials()
 	{
 		int32 TotalCount = 0;
 		const auto& AllItems = InvComp->GetInventoryList().GetAllItems();
-		
+
 		for (UInv_InventoryItem* Item : AllItems)
 		{
 			if (!IsValid(Item)) continue;
 			if (!Item->GetItemManifest().GetItemType().MatchesTagExact(RequiredMaterialTag3)) continue;
-			
+
 			TotalCount += Item->GetTotalStackCount();
 		}
 
 		if (TotalCount < RequiredAmount3)
 		{
+#if INV_DEBUG_CRAFT
 			UE_LOG(LogTemp, Log, TEXT("재료3 부족: %d/%d (%s)"), TotalCount, RequiredAmount3, *RequiredMaterialTag3.ToString());
+#endif
 			return false;
 		}
 	}
@@ -272,7 +293,9 @@ void UInv_CraftingButton::UpdateButtonState()
 	const bool bHasMaterials = HasRequiredMaterials();
 	Button_Main->SetIsEnabled(bHasMaterials);
 
+#if INV_DEBUG_CRAFT
 	UE_LOG(LogTemp, Log, TEXT("CraftingButton: 버튼 상태 업데이트 - %s"), bHasMaterials ? TEXT("활성화") : TEXT("비활성화"));
+#endif
 }
 
 void UInv_CraftingButton::UpdateMaterialUI()
@@ -311,7 +334,9 @@ void UInv_CraftingButton::UpdateMaterialUI()
 			// 아이템이 없으면 CurrentAmount = 0 (위에서 초기화됨)
 			FString AmountText = FString::Printf(TEXT("%d/%d"), CurrentAmount, RequiredAmount);
 			Text_Material1Amount->SetText(FText::FromString(AmountText));
+#if INV_DEBUG_CRAFT
 			UE_LOG(LogTemp, Log, TEXT("재료1 UI 업데이트: %s"), *AmountText);
+#endif
 		}
 	}
 	else
@@ -407,7 +432,9 @@ void UInv_CraftingButton::UpdateMaterialUI()
 		}
 	}
 
+#if INV_DEBUG_CRAFT
 	UE_LOG(LogTemp, Log, TEXT("CraftingButton: 재료 UI 업데이트 완료"));
+#endif
 }
 
 void UInv_CraftingButton::BindInventoryDelegates()
@@ -436,7 +463,9 @@ void UInv_CraftingButton::BindInventoryDelegates()
 		InvComp->OnMaterialStacksChanged.AddDynamic(this, &ThisClass::OnMaterialStacksChanged);
 	}
 
+#if INV_DEBUG_CRAFT
 	UE_LOG(LogTemp, Log, TEXT("CraftingButton: 인벤토리 델리게이트 바인딩 완료"));
+#endif
 }
 
 void UInv_CraftingButton::UnbindInventoryDelegates()
@@ -452,18 +481,22 @@ void UInv_CraftingButton::UnbindInventoryDelegates()
 
 void UInv_CraftingButton::OnInventoryItemAdded(UInv_InventoryItem* Item, int32 EntryIndex)
 {
+#if INV_DEBUG_CRAFT
 	UE_LOG(LogTemp, Log, TEXT("CraftingButton: 아이템 추가됨! EntryIndex=%d, 버튼 상태 재계산..."), EntryIndex);
+#endif
 	UpdateMaterialUI(); // 재료 UI 업데이트
 	UpdateButtonState();
 }
 
 void UInv_CraftingButton::OnInventoryItemRemoved(UInv_InventoryItem* Item, int32 EntryIndex)
 {
+#if INV_DEBUG_CRAFT
 	UE_LOG(LogTemp, Warning, TEXT("=== CraftingButton: 아이템 제거됨! EntryIndex=%d ==="), EntryIndex);
 	if (IsValid(Item))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("제거된 아이템: %s"), *Item->GetItemManifest().GetItemType().ToString());
 	}
+#endif
 
 	UpdateMaterialUI(); // 재료 UI 업데이트
 	UpdateButtonState();
@@ -471,7 +504,9 @@ void UInv_CraftingButton::OnInventoryItemRemoved(UInv_InventoryItem* Item, int32
 
 void UInv_CraftingButton::OnInventoryStackChanged(const FInv_SlotAvailabilityResult& Result)
 {
+#if INV_DEBUG_CRAFT
 	UE_LOG(LogTemp, Log, TEXT("CraftingButton: 스택 변경됨! 버튼 상태 재계산..."));
+#endif
 	UpdateMaterialUI(); // 재료 UI 업데이트
 	UpdateButtonState();
 }
@@ -479,8 +514,10 @@ void UInv_CraftingButton::OnInventoryStackChanged(const FInv_SlotAvailabilityRes
 void UInv_CraftingButton::OnMaterialStacksChanged(const FGameplayTag& MaterialTag)
 {
 	// ⭐ Tag 기반이므로 Dangling Pointer 걱정 없음!
+#if INV_DEBUG_CRAFT
 	UE_LOG(LogTemp, Log, TEXT("CraftingButton: 재료 변경됨! (Tag: %s)"), *MaterialTag.ToString());
-	
+#endif
+
 	// 이 버튼이 사용하는 재료인지 체크
 	if (RequiredMaterialTag.MatchesTagExact(MaterialTag) ||
 		RequiredMaterialTag2.MatchesTagExact(MaterialTag) ||
@@ -493,47 +530,63 @@ void UInv_CraftingButton::OnMaterialStacksChanged(const FGameplayTag& MaterialTa
 
 void UInv_CraftingButton::ConsumeMaterials()
 {
+#if INV_DEBUG_CRAFT
 	UE_LOG(LogTemp, Warning, TEXT("=== ConsumeMaterials 호출됨 ==="));
+#endif
 
 	UInv_InventoryComponent* InvComp = UInv_InventoryStatics::GetInventoryComponent(GetOwningPlayer());
 	if (!IsValid(InvComp))
 	{
+#if INV_DEBUG_CRAFT
 		UE_LOG(LogTemp, Error, TEXT("ConsumeMaterials: InventoryComponent not found!"));
+#endif
 		return;
 	}
 
 	// 재료 1 차감
 	if (RequiredMaterialTag.IsValid() && RequiredAmount > 0)
 	{
+#if INV_DEBUG_CRAFT
 		UE_LOG(LogTemp, Warning, TEXT("재료1 차감: %s x %d"), *RequiredMaterialTag.ToString(), RequiredAmount);
+#endif
 		InvComp->Server_ConsumeMaterialsMultiStack(RequiredMaterialTag, RequiredAmount);
 	}
 
 	// 재료 2 차감
 	if (RequiredMaterialTag2.IsValid() && RequiredAmount2 > 0)
 	{
+#if INV_DEBUG_CRAFT
 		UE_LOG(LogTemp, Warning, TEXT("재료2 차감: %s x %d"), *RequiredMaterialTag2.ToString(), RequiredAmount2);
+#endif
 		InvComp->Server_ConsumeMaterialsMultiStack(RequiredMaterialTag2, RequiredAmount2);
 	}
 
 	// 재료 3 차감
 	if (RequiredMaterialTag3.IsValid() && RequiredAmount3 > 0)
 	{
+#if INV_DEBUG_CRAFT
 		UE_LOG(LogTemp, Warning, TEXT("재료3 차감: %s x %d"), *RequiredMaterialTag3.ToString(), RequiredAmount3);
+#endif
 		InvComp->Server_ConsumeMaterialsMultiStack(RequiredMaterialTag3, RequiredAmount3);
 	}
 
+#if INV_DEBUG_CRAFT
 	UE_LOG(LogTemp, Warning, TEXT("=== ConsumeMaterials 완료 ==="));
+#endif
 }
 
 void UInv_CraftingButton::AddCraftedItemToInventory()
 {
+#if INV_DEBUG_CRAFT
 	UE_LOG(LogTemp, Warning, TEXT("=== [CLIENT] AddCraftedItemToInventory 시작 ==="));
+#endif
 
 	// ItemActorClass 확인
 	if (!ItemActorClass)
 	{
+#if INV_DEBUG_CRAFT
 		UE_LOG(LogTemp, Error, TEXT("[CLIENT] ItemActorClass가 설정되지 않았습니다! Blueprint에서 제작할 아이템을 설정하세요."));
+#endif
 		return;
 	}
 
@@ -541,19 +594,25 @@ void UInv_CraftingButton::AddCraftedItemToInventory()
 	APlayerController* PC = GetOwningPlayer();
 	if (!IsValid(PC))
 	{
+#if INV_DEBUG_CRAFT
 		UE_LOG(LogTemp, Error, TEXT("[CLIENT] PlayerController를 찾을 수 없습니다!"));
+#endif
 		return;
 	}
 
 	UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
 	if (!IsValid(InvComp))
 	{
+#if INV_DEBUG_CRAFT
 		UE_LOG(LogTemp, Error, TEXT("[CLIENT] InventoryComponent를 찾을 수 없습니다!"));
+#endif
 		return;
 	}
 
 	// 디버깅: Blueprint 정보 출력
+#if INV_DEBUG_CRAFT
 	UE_LOG(LogTemp, Warning, TEXT("[CLIENT] 제작할 아이템 Blueprint: %s"), *ItemActorClass->GetName());
+#endif
 
 	// ⭐⭐⭐ 클라이언트 측 공간 체크 (서버 RPC 전에!)
 	// 임시 Actor 스폰하여 ItemManifest 추출
@@ -568,14 +627,18 @@ void UInv_CraftingButton::AddCraftedItemToInventory()
 	UWorld* World = GetWorld();
 	if (!IsValid(World))
 	{
+#if INV_DEBUG_CRAFT
 		UE_LOG(LogTemp, Error, TEXT("[CLIENT] World가 유효하지 않습니다!"));
+#endif
 		return;
 	}
 
 	AActor* TempActor = World->SpawnActorDeferred<AActor>(ItemActorClass, TempTransform, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
 	if (!IsValid(TempActor))
 	{
+#if INV_DEBUG_CRAFT
 		UE_LOG(LogTemp, Error, TEXT("[CLIENT] 임시 Actor 스폰 실패!"));
+#endif
 		return;
 	}
 
@@ -584,7 +647,9 @@ void UInv_CraftingButton::AddCraftedItemToInventory()
 	UInv_ItemComponent* ItemComp = TempActor->FindComponentByClass<UInv_ItemComponent>();
 	if (!IsValid(ItemComp))
 	{
+#if INV_DEBUG_CRAFT
 		UE_LOG(LogTemp, Error, TEXT("[CLIENT] ItemComponent를 찾을 수 없습니다!"));
+#endif
 		TempActor->Destroy();
 		return;
 	}
@@ -599,12 +664,16 @@ void UInv_CraftingButton::AddCraftedItemToInventory()
 	if (StackableFragment)
 	{
 		CraftedAmount = StackableFragment->GetStackCount();
+#if INV_DEBUG_CRAFT
 		UE_LOG(LogTemp, Warning, TEXT("[CLIENT] ✅ StackableFragment 자동 감지! CraftedAmount=%d (MaxStack=%d)"),
 			CraftedAmount, StackableFragment->GetMaxStackSize());
+#endif
 	}
 	else
 	{
+#if INV_DEBUG_CRAFT
 		UE_LOG(LogTemp, Warning, TEXT("[CLIENT] ⚠️ StackableFragment 없음 (Non-stackable), 기본값 1 사용"));
+#endif
 	}
 
 	// 임시 Actor 파괴
@@ -614,7 +683,9 @@ void UInv_CraftingButton::AddCraftedItemToInventory()
 	UInv_InventoryBase* InventoryMenu = InvComp->GetInventoryMenu();
 	if (!IsValid(InventoryMenu))
 	{
+#if INV_DEBUG_CRAFT
 		UE_LOG(LogTemp, Warning, TEXT("[CLIENT] InventoryMenu가 nullptr - 공간 체크 스킵하고 서버로 전송"));
+#endif
 		// Fallback: 서버에서 체크하도록 RPC 전송
 		InvComp->Server_CraftItemWithMaterials(
 			ItemActorClass,
@@ -630,7 +701,9 @@ void UInv_CraftingButton::AddCraftedItemToInventory()
 	UInv_SpatialInventory* SpatialInv = Cast<UInv_SpatialInventory>(InventoryMenu);
 	if (!IsValid(SpatialInv))
 	{
+#if INV_DEBUG_CRAFT
 		UE_LOG(LogTemp, Warning, TEXT("[CLIENT] SpatialInventory 캐스팅 실패 - 공간 체크 스킵"));
+#endif
 		InvComp->Server_CraftItemWithMaterials(
 			ItemActorClass,
 			RequiredMaterialTag, RequiredAmount,
@@ -655,13 +728,17 @@ void UInv_CraftingButton::AddCraftedItemToInventory()
 		TargetGrid = SpatialInv->GetGrid_Craftables();
 		break;
 	default:
+#if INV_DEBUG_CRAFT
 		UE_LOG(LogTemp, Warning, TEXT("[CLIENT] 알 수 없는 카테고리: %d"), (int32)Category);
+#endif
 		break;
 	}
 
 	if (!IsValid(TargetGrid))
 	{
+#if INV_DEBUG_CRAFT
 		UE_LOG(LogTemp, Warning, TEXT("[CLIENT] TargetGrid가 nullptr - 공간 체크 스킵"));
+#endif
 		InvComp->Server_CraftItemWithMaterials(
 			ItemActorClass,
 			RequiredMaterialTag, RequiredAmount,
@@ -675,19 +752,25 @@ void UInv_CraftingButton::AddCraftedItemToInventory()
 	// ⭐⭐⭐ 실제 UI Grid 상태 기반 공간 체크!
 	bool bHasRoom = TargetGrid->HasRoomInActualGrid(ItemManifest);
 
+#if INV_DEBUG_CRAFT
 	UE_LOG(LogTemp, Warning, TEXT("[CLIENT] 클라이언트 공간 체크 결과: %s"),
 		bHasRoom ? TEXT("✅ 공간 있음") : TEXT("❌ 공간 없음"));
+#endif
 
 	if (!bHasRoom)
 	{
 		// 공간 없음! NoRoomInInventory 델리게이트 호출 (서버 RPC 전송 X)
+#if INV_DEBUG_CRAFT
 		UE_LOG(LogTemp, Warning, TEXT("[CLIENT] ❌ 인벤토리 공간 부족! 제작 취소"));
+#endif
 		InvComp->NoRoomInInventory.Broadcast();
 		return; // ⭐ 서버 RPC 호출 없이 리턴!
 	}
 
 	// 공간 있음! 서버 RPC 호출
+#if INV_DEBUG_CRAFT
 	UE_LOG(LogTemp, Warning, TEXT("[CLIENT] ✅ 공간 확인됨! 서버로 제작 요청 전송 (개수: %d)"), CraftedAmount);
+#endif
 	InvComp->Server_CraftItemWithMaterials(
 		ItemActorClass,
 		RequiredMaterialTag, RequiredAmount,
@@ -696,7 +779,9 @@ void UInv_CraftingButton::AddCraftedItemToInventory()
 		CraftedAmount  // ⭐ 제작 개수 전달!
 	);
 
+#if INV_DEBUG_CRAFT
 	UE_LOG(LogTemp, Warning, TEXT("=== [CLIENT] 서버에 제작 요청 전송 완료 ==="));
+#endif
 }
 
 

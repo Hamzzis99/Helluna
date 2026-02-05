@@ -36,6 +36,7 @@ public:
 protected:
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;  // ⭐ 인벤토리 저장용
 
 	virtual void PossessedBy(AController* NewController) override;
 

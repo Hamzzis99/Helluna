@@ -7,6 +7,7 @@
 class UEditableTextBox;
 class UTextBlock;
 class UButton;
+class UHellunaCharacterSelectWidget;
 
 /**
  * ============================================
@@ -23,6 +24,7 @@ class UButton;
  * 2. 로그인 버튼 클릭 이벤트 처리
  * 3. 로그인 결과 메시지 표시
  * 4. 로딩 상태 관리 (버튼 비활성화)
+ * 5. 로그인 성공 시 캐릭터 선택 UI로 전환
  * 
  * ============================================
  * 📌 필수 바인딩 (BP에서 설정):
@@ -31,6 +33,11 @@ class UButton;
  * - PasswordInputTextBox : 비밀번호 입력 필드 (EditableTextBox)
  * - LoginButton : 로그인 버튼 (Button)
  * - MessageText : 결과 메시지 텍스트 (TextBlock)
+ * 
+ * ============================================
+ * 📌 BP에서 설정 필수 (캐릭터 선택):
+ * ============================================
+ * - CharacterSelectWidgetClass : 캐릭터 선택 위젯 클래스 지정
  * 
  * ============================================
  * 📌 사용 흐름:
@@ -46,15 +53,11 @@ class UButton;
  *   ├─ 유효성 검사 (빈 값 체크)
  *   └─ LoginController->OnLoginButtonClicked(PlayerId, Password)
  * 
- * [결과 표시]
- * ShowMessage(Message, bIsError)
- *   └─ MessageText에 메시지 표시 (에러 시 빨간색)
- * 
- * [로딩 상태]
- * SetLoadingState(true)
- *   └─ 로그인 버튼 비활성화
- * SetLoadingState(false)
- *   └─ 로그인 버튼 활성화
+ * [로그인 성공]
+ * ShowCharacterSelection()
+ *   ├─ 로그인 UI 숨김
+ *   ├─ CharacterSelectWidgetClass로 새 위젯 생성
+ *   └─ SetAvailableCharacters() 호출
  * 
  * 📌 작성자: Gihyeon
  */
@@ -96,6 +99,37 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Login")
 	FString GetPassword() const;
 
+	// ============================================
+	// 🎭 캐릭터 선택 시스템 (Phase 3)
+	// ============================================
+	
+	/**
+	 * 캐릭터 선택 UI 표시
+	 * 로그인 성공 후 서버에서 Client_ShowCharacterSelectUI RPC로 호출됨
+	 * CharacterSelectWidgetClass로 새 위젯을 생성하여 표시
+	 * 
+	 * @param AvailableCharacters - 각 캐릭터의 선택 가능 여부
+	 *                              Index 0: Lui, 1: Luna, 2: Liam
+	 *                              true: 선택 가능, false: 다른 플레이어가 사용 중
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "Login|Character Select (캐릭터 선택)")
+	void ShowCharacterSelection(const TArray<bool>& AvailableCharacters);
+
+	/**
+	 * 캐릭터 선택 완료 시 호출 (BP에서 호출)
+	 * 선택된 캐릭터 인덱스를 서버로 전송
+	 * 
+	 * @param CharacterIndex - 선택한 캐릭터 인덱스 (0: Lui, 1: Luna, 2: Liam)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Login|Character Select (캐릭터 선택)")
+	void OnCharacterSelected(int32 CharacterIndex);
+
+	/**
+	 * 현재 활성화된 캐릭터 선택 위젯 반환
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Login|Character Select (캐릭터 선택)")
+	UHellunaCharacterSelectWidget* GetCharacterSelectWidget() const { return CharacterSelectWidget; }
+
 protected:
 	// ============================================
 	// 📌 내부 이벤트 핸들러
@@ -125,4 +159,19 @@ protected:
 	/** 결과 메시지 텍스트 */
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UTextBlock> MessageText;
+
+	// ============================================
+	// 🎭 캐릭터 선택 위젯 설정
+	// ============================================
+
+	/**
+	 * 캐릭터 선택 위젯 클래스 (BP에서 설정!)
+	 * 로그인 성공 후 이 위젯이 생성됨
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Login|Character Select (캐릭터 선택)", meta = (DisplayName = "캐릭터 선택 위젯 클래스"))
+	TSubclassOf<UHellunaCharacterSelectWidget> CharacterSelectWidgetClass;
+
+	/** 현재 활성화된 캐릭터 선택 위젯 */
+	UPROPERTY()
+	TObjectPtr<UHellunaCharacterSelectWidget> CharacterSelectWidget;
 };

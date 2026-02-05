@@ -1,1057 +1,315 @@
+// ════════════════════════════════════════════════════════════════════════════════
 // HellunaDefenseGameMode.cpp
-// GihyeonMap 전용 GameMode 구현
-// 
-// ============================================
-// 📌 파일 구조 (팀원 참고용)
-// ============================================
-// 
-// 이 파일은 크게 두 부분으로 나뉩니다:
-// 
-// ┌─────────────────────────────────────────────────────────────┐
-// │ 🔐 로그인 시스템 (Line ~30 ~ ~550)                          │
-// │   - PostLogin() : 플레이어 접속 시 호출                     │
-// │   - ProcessLogin() : 아이디/비밀번호 검증                   │
-// │   - OnLoginSuccess() : 로그인 성공 처리                     │
-// │   - OnLoginFailed() : 로그인 실패 처리                      │
-// │   - OnLoginTimeout() : 로그인 타임아웃 처리                 │
-// │   - SwapToGameController() : Controller 교체                │
-// │   - SpawnHeroCharacter() : 캐릭터 소환                      │
-// │   - Logout() : 로그아웃 (연결 끊김)                         │
-// │   - HandleSeamlessTravelPlayer() : 맵 이동 후 로그인 유지   │
-// │                                                              │
-// │ 🎮 게임 로직 (Line ~550 이후)                               │
-// │   - EnterDay() : 낮 시작                                    │
-// │   - EnterNight() : 밤 시작                                  │
-// │   - SpawnTestMonsters() : 몬스터 스폰                       │
-// │   - TrySummonBoss() : 보스 소환                             │
-// │   - NotifyMonsterDied() : 몬스터 사망 처리                  │
-// │   - etc...                                                   │
-// └─────────────────────────────────────────────────────────────┘
-// 
-// ============================================
-// 📌 로그인 흐름 상세
-// ============================================
-// 
-// [1] 플레이어 접속
-//     PostLogin() 호출 → 로그인 타임아웃 타이머 시작 (60초)
-// 
-// [2] 로그인 UI에서 ID/PW 입력
-//     LoginWidget → LoginController::OnLoginButtonClicked()
-// 
-// [3] Server RPC 호출
-//     LoginController::Server_RequestLogin() → ProcessLogin()
-// 
-// [4] 계정 검증
-//     ProcessLogin()에서:
-//     ├─ GameInstance.IsPlayerLoggedIn() : 동시 접속 체크
-//     ├─ AccountSaveGame.HasAccount() : 계정 존재 확인
-//     ├─ AccountSaveGame.ValidatePassword() : 비밀번호 검증
-//     └─ AccountSaveGame.CreateAccount() : 새 계정 생성
-// 
-// [5] 로그인 성공
-//     OnLoginSuccess()에서:
-//     ├─ GameInstance.RegisterLogin() : 접속자 목록 추가
-//     ├─ PlayerState.SetLoginInfo() : PlayerUniqueId 설정
-//     │   ★ 이 PlayerUniqueId가 인벤토리 저장의 키로 사용됨!
-//     └─ Client_LoginResult(true) : 클라이언트에 결과 전달
-// 
-// [6] Controller 교체
-//     SwapToGameController()에서:
-//     ├─ LoginController 파괴
-//     ├─ GameController 생성 (BP_InvPlayerController 등)
-//     └─ SpawnHeroCharacter() 호출
-// 
-// [7] 캐릭터 소환
-//     SpawnHeroCharacter()에서:
-//     ├─ HeroCharacter 스폰
-//     ├─ Controller.Possess(캐릭터)
-//     └─ 첫 플레이어면 InitializeGame() (게임 시작!)
-// 
-// [8] 로그아웃 (연결 끊김)
-//     Logout()에서:
-//     ├─ PlayerState.ClearLoginInfo() : 로그인 정보 초기화
-//     └─ GameInstance.RegisterLogout() : 접속자 목록에서 제거
-// 
-// ============================================
-// 📌 관련 클래스
-// ============================================
-// - UHellunaAccountSaveGame : 계정 데이터 저장 (ID/PW)
-// - AHellunaLoginController : 로그인 UI + RPC
-// - UHellunaLoginWidget : 로그인 UI (ID/PW 입력)
-// - AHellunaPlayerState : 로그인된 플레이어 ID 저장 (Replicated)
-// - UMDF_GameInstance : 접속자 목록 관리 (동시접속 체크)
-// 
-// ============================================
-// 📌 인벤토리 시스템과의 연계
-// ============================================
-// - 로그인 성공 시 PlayerState.PlayerUniqueId에 ID 저장
-// - 인벤토리 저장/로드 시 이 ID를 키로 사용
-// - 예: InventorySaveGame->SavePlayerInventory(PlayerUniqueId, Inventory)
-// 
-// 📌 작성자: Gihyeon
-// 📌 작성일: 2025-01-23
-// ============================================
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 게임 로직 전용 GameMode
+// 로그인/인벤토리 시스템은 HellunaBaseGameMode.cpp 참고
+//
+// 🎮 이 파일의 역할:
+//    - InitializeGame() : 게임 시작
+//    - EnterDay() / EnterNight() : 낮밤 전환
+//    - SpawnTestMonsters() : 몬스터 스폰
+//    - TrySummonBoss() : 보스 소환
+//
+// ════════════════════════════════════════════════════════════════════════════════
 
 #include "GameMode/HellunaDefenseGameMode.h"
-
-#include "Engine/TargetPoint.h"
-#include "Kismet/GameplayStatics.h"
-#include "EngineUtils.h"                 
-#include "GameFramework/PlayerController.h"
 #include "GameMode/HellunaDefenseGameState.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
-#include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
-#include "Player/HellunaPlayerState.h"
-#include "Login/HellunaAccountSaveGame.h"
-#include "Login/HellunaLoginController.h"
-#include "GameFramework/SpectatorPawn.h"
-
+#include "Engine/TargetPoint.h"
+#include "Kismet/GameplayStatics.h"
+#include "EngineUtils.h"
 #include "debughelper.h"
 
 AHellunaDefenseGameMode::AHellunaDefenseGameMode()
 {
-	PrimaryActorTick.bCanEverTick = false;
-	bUseSeamlessTravel = true;
-	PlayerStateClass = AHellunaPlayerState::StaticClass();
-	PlayerControllerClass = AHellunaLoginController::StaticClass();
-	DefaultPawnClass = ASpectatorPawn::StaticClass();
+    // BaseGameMode에서 기본 설정 처리됨
+    // ⚠️ BP에서 덮어쓰는 문제 방지를 위해 로그 추가
+    UE_LOG(LogTemp, Warning, TEXT("⭐ [DefenseGameMode] Constructor 호출!"));
+    UE_LOG(LogTemp, Warning, TEXT("⭐ PlayerControllerClass: %s"), PlayerControllerClass ? *PlayerControllerClass->GetName() : TEXT("nullptr"));
+    UE_LOG(LogTemp, Warning, TEXT("⭐ DefaultPawnClass: %s"), DefaultPawnClass ? *DefaultPawnClass->GetName() : TEXT("nullptr"));
 }
 
 void AHellunaDefenseGameMode::BeginPlay()
 {
-	Super::BeginPlay();
+    Super::BeginPlay();  // BaseGameMode의 로그인/인벤토리 초기화 호출
 
-	if (!HasAuthority())
-		return;
+    if (!HasAuthority())
+        return;
 
-	// 계정 데이터 로드
-	AccountSaveGame = UHellunaAccountSaveGame::LoadOrCreate();
+    // 게임 로직 초기화만
+    CacheBossSpawnPoints();
+    CacheMonsterSpawnPoints();
 
-	// 스폰 포인트 캐싱 (미리 해둠)
-	CacheBossSpawnPoints();
-	CacheMonsterSpawnPoints();
-
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║     [DefenseGameMode] BeginPlay                            ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ PlayerControllerClass: %s"), PlayerControllerClass ? *PlayerControllerClass->GetName() : TEXT("nullptr"));
-	UE_LOG(LogTemp, Warning, TEXT("║ PlayerStateClass: %s"), PlayerStateClass ? *PlayerStateClass->GetName() : TEXT("nullptr"));
-	UE_LOG(LogTemp, Warning, TEXT("║ DefaultPawnClass: %s"), DefaultPawnClass ? *DefaultPawnClass->GetName() : TEXT("nullptr"));
-	UE_LOG(LogTemp, Warning, TEXT("║ HeroCharacterClass: %s"), HeroCharacterClass ? *HeroCharacterClass->GetName() : TEXT("미설정!"));
-	UE_LOG(LogTemp, Warning, TEXT("║ AccountCount: %d"), AccountSaveGame ? AccountSaveGame->GetAccountCount() : 0);
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ ※ 게임 초기화 대기 중...                                  ║"));
-	UE_LOG(LogTemp, Warning, TEXT("║ ※ 첫 플레이어가 로그인 + 캐릭터 소환되면 게임 시작!       ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
-	UE_LOG(LogTemp, Warning, TEXT(""));
-
-	Debug::Print(TEXT("[DefenseGameMode] BeginPlay"), FColor::Yellow);
-	// ※ EnterDay() 여기서 호출 안함!
-	// ※ 첫 플레이어 캐릭터 소환 후 InitializeGame()에서 호출
+    UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] BeginPlay - 게임 로직 초기화 완료"));
+    UE_LOG(LogTemp, Warning, TEXT("  - BossSpawnPoints: %d개"), BossSpawnPoints.Num());
+    UE_LOG(LogTemp, Warning, TEXT("  - MonsterSpawnPoints: %d개"), MonsterSpawnPoints.Num());
 }
 
+// ════════════════════════════════════════════════════════════════════════════════
+// ⭐⭐⭐ InitializeGame - 게임 로직 시작점 ⭐⭐⭐
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 📌 호출 시점: 첫 번째 플레이어가 로그인 + 캐릭터 소환 완료 후
+//
+// 📌 이 함수가 호출되면:
+//    - 게임이 본격적으로 시작됨
+//    - EnterDay()가 호출되어 낮/밤 사이클 시작
+//
+// ✅ 팀원 작업: 게임 시작 시 필요한 초기화 로직을 여기에 추가하세요!
+//    예시:
+//    - 배경음악 재생
+//    - 튜토리얼 시작
+//    - UI 표시
+//    - 환경 초기화
+//
+// ════════════════════════════════════════════════════════════════════════════════
 void AHellunaDefenseGameMode::InitializeGame()
 {
-	if (bGameInitialized)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] 이미 초기화됨, 스킵"));
-		return;
-	}
+    if (bGameInitialized)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] 이미 초기화됨, 스킵"));
+        return;
+    }
 
-	bGameInitialized = true;
+    bGameInitialized = true;
 
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║     [DefenseGameMode] InitializeGame 🎮                    ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ 첫 플레이어 캐릭터 소환 완료!                              ║"));
-	UE_LOG(LogTemp, Warning, TEXT("║ → 게임 환경 초기화 시작...                                 ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ • 낮/밤 사이클 시작                                        ║"));
-	UE_LOG(LogTemp, Warning, TEXT("║ • 몬스터 스포너 활성화                                     ║"));
-	UE_LOG(LogTemp, Warning, TEXT("║ • 보스 시스템 대기                                         ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
-	UE_LOG(LogTemp, Warning, TEXT(""));
+    UE_LOG(LogTemp, Warning, TEXT(""));
+    UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+    UE_LOG(LogTemp, Warning, TEXT("║     [DefenseGameMode] InitializeGame 🎮                    ║"));
+    UE_LOG(LogTemp, Warning, TEXT("║     첫 플레이어 캐릭터 소환 완료! 게임 시작!               ║"));
+    UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+    UE_LOG(LogTemp, Warning, TEXT(""));
 
-	Debug::Print(TEXT("[DefenseGameMode] InitializeGame"), FColor::Yellow);
-	// 낮/밤 사이클 시작!
-	EnterDay();
+    Debug::Print(TEXT("[DefenseGameMode] InitializeGame - 게임 시작!"), FColor::Green);
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // ✅ 팀원 작업 영역 - 게임 시작 시 초기화 로직 추가
+    // ════════════════════════════════════════════════════════════════════════════
+    //
+    // 여기에 게임 시작 시 필요한 코드를 추가하세요!
+    //
+    // 예시:
+    // PlayBackgroundMusic();
+    // ShowTutorialWidget();
+    // InitializeEnvironment();
+    //
+    // ════════════════════════════════════════════════════════════════════════════
+
+    // 낮/밤 사이클 시작
+    EnterDay();
+
+    // 자동저장 타이머 시작
+    StartAutoSaveTimer();
 }
 
-// ============================================
-// 🔐 로그인 시스템 - PostLogin
-// ============================================
-// 
-// 📌 호출 시점: 플레이어가 서버에 접속했을 때 (엔진에서 자동 호출)
-// 
-// 📌 처리 흐름:
-//    1. PlayerState 확인
-//    2. 이미 로그인됨? (SeamlessTravel로 이동한 경우)
-//       → YES: 바로 캐릭터 소환 (SpawnHeroCharacter)
-//       → NO: 로그인 타임아웃 타이머 시작
-//    3. 로그인 UI가 자동으로 표시됨 (LoginController.BeginPlay에서)
-// 
-// 📌 주의: 
-//    - PlayerControllerClass가 LoginController로 설정되어 있어야 함
-//    - DefaultPawnClass는 SpectatorPawn (캐릭터는 로그인 후 소환)
-// ============================================
-void AHellunaDefenseGameMode::PostLogin(APlayerController* NewPlayer)
-{
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║     [DefenseGameMode] PostLogin                            ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ Controller: %s"), *GetNameSafe(NewPlayer));
-	UE_LOG(LogTemp, Warning, TEXT("║ ControllerClass: %s"), NewPlayer ? *NewPlayer->GetClass()->GetName() : TEXT("nullptr"));
-	UE_LOG(LogTemp, Warning, TEXT("║ ControllerID: %d"), NewPlayer ? NewPlayer->GetUniqueID() : -1);
-	UE_LOG(LogTemp, Warning, TEXT("║ NetConnection: %s"), (NewPlayer && NewPlayer->GetNetConnection()) ? TEXT("Valid") : TEXT("nullptr (ListenServer)"));
-	UE_LOG(LogTemp, Warning, TEXT("║ GameInitialized: %s"), bGameInitialized ? TEXT("TRUE") : TEXT("FALSE"));
-
-	if (NewPlayer)
-	{
-		AHellunaPlayerState* PS = NewPlayer->GetPlayerState<AHellunaPlayerState>();
-		UE_LOG(LogTemp, Warning, TEXT("║ PlayerState: %s"), PS ? *PS->GetName() : TEXT("nullptr"));
-		
-		if (PS)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("║   - PlayerId: '%s'"), *PS->GetPlayerUniqueId());
-			UE_LOG(LogTemp, Warning, TEXT("║   - IsLoggedIn: %s"), PS->IsLoggedIn() ? TEXT("TRUE") : TEXT("FALSE"));
-		}
-	}
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
-
-	if (!NewPlayer)
-	{
-		Super::PostLogin(NewPlayer);
-		return;
-	}
-
-	AHellunaPlayerState* PS = NewPlayer->GetPlayerState<AHellunaPlayerState>();
-	
-	// 이미 로그인된 상태 (SeamlessTravel 등)
-	if (PS && PS->IsLoggedIn() && !PS->GetPlayerUniqueId().IsEmpty())
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] 이미 로그인됨! → HeroCharacter 소환"));
-		
-		FTimerHandle TimerHandle;
-		GetWorldTimerManager().SetTimer(TimerHandle, [this, NewPlayer]()
-		{
-			if (IsValid(NewPlayer))
-			{
-				SpawnHeroCharacter(NewPlayer);
-			}
-		}, 0.5f, false);
-	}
-	else
-	{
-		// 로그인 필요 → 타임아웃 타이머 시작
-		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] 로그인 필요! 타임아웃: %.0f초"), LoginTimeoutSeconds);
-		
-		FTimerHandle& TimeoutTimer = LoginTimeoutTimers.FindOrAdd(NewPlayer);
-		GetWorldTimerManager().SetTimer(TimeoutTimer, [this, NewPlayer]()
-		{
-			if (IsValid(NewPlayer))
-			{
-				OnLoginTimeout(NewPlayer);
-			}
-		}, LoginTimeoutSeconds, false);
-	}
-
-	UE_LOG(LogTemp, Warning, TEXT(""));
-
-	Debug::Print(TEXT("[DefenseGameMode] Login"), FColor::Yellow);
-
-	Super::PostLogin(NewPlayer);
-}
-
-// ============================================
-// 🔐 로그인 시스템 - ProcessLogin
-// ============================================
-// 
-// 📌 호출 시점: LoginController.Server_RequestLogin() RPC에서 호출
-// 
-// 📌 매개변수:
-//    - PlayerController: 로그인 요청한 플레이어
-//    - PlayerId: 입력한 아이디
-//    - Password: 입력한 비밀번호
-// 
-// 📌 처리 흐름:
-//    1. 동시 접속 체크 (GameInstance.IsPlayerLoggedIn)
-//       → 이미 접속 중인 ID면 거부
-//    2. 계정 존재 확인 (AccountSaveGame.HasAccount)
-//       → 있으면 비밀번호 검증
-//       → 없으면 새 계정 생성
-//    3. OnLoginSuccess() 또는 OnLoginFailed() 호출
-// 
-// 📌 계정 데이터 저장 위치:
-//    Saved/SaveGames/HellunaAccounts.sav
-// ============================================
-void AHellunaDefenseGameMode::ProcessLogin(APlayerController* PlayerController, const FString& PlayerId, const FString& Password)
-{
-	Debug::Print(TEXT("[DefenseGameMode] ProcessLogin"), FColor::Yellow);
-
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║     [DefenseGameMode] ProcessLogin                         ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ PlayerId: '%s'"), *PlayerId);
-	UE_LOG(LogTemp, Warning, TEXT("║ Controller: %s (ID: %d)"), *GetNameSafe(PlayerController), PlayerController ? PlayerController->GetUniqueID() : -1);
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
-
-	if (!HasAuthority())
-	{
-		UE_LOG(LogTemp, Error, TEXT("[DefenseGameMode] 서버 권한 없음!"));
-		return;
-	}
-
-	if (!PlayerController)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[DefenseGameMode] PlayerController nullptr!"));
-		return;
-	}
-
-	// 동시 접속 체크
-	if (IsPlayerLoggedIn(PlayerId))
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] 동시 접속 거부: '%s'"), *PlayerId);
-		OnLoginFailed(PlayerController, TEXT("이미 접속 중인 계정입니다."));
-		return;
-	}
-
-	if (!AccountSaveGame)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[DefenseGameMode] AccountSaveGame nullptr!"));
-		OnLoginFailed(PlayerController, TEXT("서버 오류"));
-		return;
-	}
-
-	// 계정 검증
-	if (AccountSaveGame->HasAccount(PlayerId))
-	{
-		if (AccountSaveGame->ValidatePassword(PlayerId, Password))
-		{
-			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] 비밀번호 일치!"));
-			OnLoginSuccess(PlayerController, PlayerId);
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] 비밀번호 불일치!"));
-			OnLoginFailed(PlayerController, TEXT("비밀번호를 확인해주세요."));
-		}
-	}
-	else
-	{
-		if (AccountSaveGame->CreateAccount(PlayerId, Password))
-		{
-			UHellunaAccountSaveGame::Save(AccountSaveGame);
-			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] 새 계정 생성: '%s'"), *PlayerId);
-			OnLoginSuccess(PlayerController, PlayerId);
-		}
-		else
-		{
-			OnLoginFailed(PlayerController, TEXT("계정 생성 실패"));
-		}
-	}
-
-	UE_LOG(LogTemp, Warning, TEXT(""));
-}
-
-// ============================================
-// 🔐 로그인 시스템 - OnLoginSuccess
-// ============================================
-// 
-// 📌 호출 시점: ProcessLogin()에서 계정 검증 성공 시
-// 
-// 📌 처리 흐름:
-//    1. 로그인 타임아웃 타이머 취소
-//    2. GameInstance.RegisterLogin() - 접속자 목록에 추가
-//    3. PlayerState.SetLoginInfo() - PlayerUniqueId 설정
-//       ★★★ 이 PlayerUniqueId가 인벤토리 저장 키로 사용됨! ★★★
-//    4. Client_LoginResult(true) RPC - 클라이언트에 성공 알림
-//    5. 0.5초 후 SwapToGameController() 호출
-// 
-// 📌 PlayerState.PlayerUniqueId 용도:
-//    - 인벤토리 저장: InventorySaveGame[PlayerUniqueId] = 인벤토리데이터
-//    - 인벤토리 로드: 인벤토리데이터 = InventorySaveGame[PlayerUniqueId]
-// ============================================
-void AHellunaDefenseGameMode::OnLoginSuccess(APlayerController* PlayerController, const FString& PlayerId)
-{
-	Debug::Print(TEXT("[DefenseGameMode] Login Success"), FColor::Yellow);
-
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║     [DefenseGameMode] OnLoginSuccess ✅                    ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ PlayerId: '%s'"), *PlayerId);
-	UE_LOG(LogTemp, Warning, TEXT("║ Controller: %s (ID: %d)"), *GetNameSafe(PlayerController), PlayerController ? PlayerController->GetUniqueID() : -1);
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
-
-	if (!PlayerController) return;
-
-	// 타임아웃 타이머 취소
-	if (FTimerHandle* Timer = LoginTimeoutTimers.Find(PlayerController))
-	{
-		GetWorldTimerManager().ClearTimer(*Timer);
-		LoginTimeoutTimers.Remove(PlayerController);
-		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] 타임아웃 타이머 취소됨"));
-	}
-
-	// GameInstance에 등록
-	if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(UGameplayStatics::GetGameInstance(GetWorld())))
-	{
-		GI->RegisterLogin(PlayerId);
-		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] GameInstance에 등록됨"));
-	}
-
-	// PlayerState에 저장
-	if (AHellunaPlayerState* PS = PlayerController->GetPlayerState<AHellunaPlayerState>())
-	{
-		PS->SetLoginInfo(PlayerId);
-		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] PlayerState에 저장됨"));
-	}
-
-	// Client RPC로 결과 전달
-	AHellunaLoginController* LoginController = Cast<AHellunaLoginController>(PlayerController);
-	if (LoginController)
-	{
-		LoginController->Client_LoginResult(true, TEXT(""));
-		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] Client_LoginResult(true) 호출됨"));
-	}
-
-	// HeroCharacter 소환 (딜레이)
-	FTimerHandle TimerHandle;
-	GetWorldTimerManager().SetTimer(TimerHandle, [this, PlayerController, PlayerId]()
-	{
-		if (IsValid(PlayerController))
-		{
-			// LoginController인 경우 GameController로 교체
-			AHellunaLoginController* LoginController = Cast<AHellunaLoginController>(PlayerController);
-			if (LoginController && LoginController->GetGameControllerClass())
-			{
-				SwapToGameController(LoginController, PlayerId);
-			}
-			else
-			{
-				// GameControllerClass 미설정 시 기존 방식 사용
-				UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] GameControllerClass 미설정! 기존 방식으로 소환"));
-				SpawnHeroCharacter(PlayerController);
-			}
-		}
-	}, 0.5f, false);
-
-	UE_LOG(LogTemp, Warning, TEXT(""));
-}
-
-// ============================================
-// 🔐 로그인 시스템 - OnLoginFailed
-// ============================================
-// 📌 역할: 로그인 실패 시 클라이언트에 에러 메시지 전달
-// 📌 실패 사유: "이미 접속 중", "비밀번호 불일치", "서버 오류" 등
-// ============================================
-void AHellunaDefenseGameMode::OnLoginFailed(APlayerController* PlayerController, const FString& ErrorMessage)
-{
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║     [DefenseGameMode] OnLoginFailed ❌                     ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ ErrorMessage: '%s'"), *ErrorMessage);
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
-
-	AHellunaLoginController* LoginController = Cast<AHellunaLoginController>(PlayerController);
-	if (LoginController)
-	{
-		LoginController->Client_LoginResult(false, ErrorMessage);
-	}
-
-	UE_LOG(LogTemp, Warning, TEXT(""));
-}
-
-// ============================================
-// 🔐 로그인 시스템 - OnLoginTimeout
-// ============================================
-// 📌 역할: 로그인 타임아웃 시 플레이어 킥
-// 📌 타임아웃 시간: LoginTimeoutSeconds (기본 60초)
-// 📌 타이머 시작: PostLogin()에서 로그인 필요한 경우
-// 📌 타이머 취소: OnLoginSuccess()에서 로그인 성공 시
-// ============================================
-void AHellunaDefenseGameMode::OnLoginTimeout(APlayerController* PlayerController)
-{
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║     [DefenseGameMode] OnLoginTimeout ⏰                    ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ Controller: %s"), *GetNameSafe(PlayerController));
-	UE_LOG(LogTemp, Warning, TEXT("║ → 킥 처리!                                                 ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
-
-	if (!PlayerController) return;
-
-	LoginTimeoutTimers.Remove(PlayerController);
-
-	if (PlayerController->GetNetConnection())
-	{
-		FString KickReason = FString::Printf(TEXT("로그인 타임아웃 (%.0f초)"), LoginTimeoutSeconds);
-		PlayerController->ClientReturnToMainMenuWithTextReason(FText::FromString(KickReason));
-	}
-
-	UE_LOG(LogTemp, Warning, TEXT(""));
-}
-
-// ============================================
-// 🔐 로그인 시스템 - SwapToGameController
-// ============================================
-// 
-// 📌 역할: LoginController → GameController 교체
-// 
-// 📌 호출 시점: OnLoginSuccess() 0.5초 후
-// 
-// 📌 왜 Controller를 교체하나?
-//    - LoginController는 로그인 UI만 담당
-//    - 실제 게임 플레이는 GameController (BP_InvPlayerController 등)가 담당
-//    - 로그인 성공 후 UI 전용 Controller를 게임용으로 교체
-// 
-// 📌 처리 흐름:
-//    1. LoginController의 PlayerState 정리 (중복 로그아웃 방지)
-//    2. 새 GameController 스폰
-//    3. Client_PrepareControllerSwap() - 로그인 UI 숨김
-//    4. SwapPlayerControllers() - 안전한 교체 (PlayerState 전이)
-//    5. 새 Controller의 PlayerState에 PlayerId 복원
-//    6. SpawnHeroCharacter() 호출
-// 
-// 📌 주의:
-//    - LoginController.GameControllerClass가 BP에서 설정되어 있어야 함
-//    - 미설정 시 Controller 교체 없이 기존 방식으로 캐릭터 소환
-// ============================================
-void AHellunaDefenseGameMode::SwapToGameController(AHellunaLoginController* LoginController, const FString& PlayerId)
-{
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║     [DefenseGameMode] SwapToGameController 🔄              ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ PlayerId: '%s'"), *PlayerId);
-	UE_LOG(LogTemp, Warning, TEXT("║ LoginController: %s"), *GetNameSafe(LoginController));
-
-	if (!LoginController)
-	{
-		UE_LOG(LogTemp, Error, TEXT("║ ❌ LoginController nullptr!                                ║"));
-		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
-		return;
-	}
-
-	TSubclassOf<APlayerController> GameControllerClass = LoginController->GetGameControllerClass();
-	if (!GameControllerClass)
-	{
-		UE_LOG(LogTemp, Error, TEXT("║ ❌ GameControllerClass 미설정!                             ║"));
-		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
-		SpawnHeroCharacter(LoginController);
-		return;
-	}
-
-	UE_LOG(LogTemp, Warning, TEXT("║ GameControllerClass: %s"), *GameControllerClass->GetName());
-
-	// ============================================
-	// ⭐ 중요: LoginController의 PlayerState 정리
-	// SwapPlayerControllers 후 LoginController가 파괴될 때
-	// Logout에서 중복으로 로그아웃 처리되는 것을 방지
-	// ============================================
-	if (AHellunaPlayerState* OldPS = LoginController->GetPlayerState<AHellunaPlayerState>())
-	{
-		OldPS->ClearLoginInfo();
-		UE_LOG(LogTemp, Warning, TEXT("║ LoginController PlayerState 정리됨 (중복 로그아웃 방지)   ║"));
-	}
-
-	// 1. 새 GameController 스폰
-	FActorSpawnParameters SpawnParams;
-	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	SpawnParams.Owner = this;
-
-	FVector SpawnLocation = LoginController->GetFocalLocation();
-	FRotator SpawnRotation = LoginController->GetControlRotation();
-
-	APlayerController* NewController = GetWorld()->SpawnActor<APlayerController>(
-		GameControllerClass,
-		SpawnLocation,
-		SpawnRotation,
-		SpawnParams
-	);
-
-	if (!NewController)
-	{
-		UE_LOG(LogTemp, Error, TEXT("║ ❌ 새 Controller 스폰 실패!                                ║"));
-		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
-		SpawnHeroCharacter(LoginController);
-		return;
-	}
-
-	UE_LOG(LogTemp, Warning, TEXT("║ NewController: %s"), *NewController->GetName());
-
-	// 2. LoginController의 로그인 UI 정리
-	LoginController->Client_PrepareControllerSwap();
-
-	// 3. SwapPlayerControllers로 안전하게 교체
-	// ⭐ PlayerState도 새 Controller로 전이됨!
-	UE_LOG(LogTemp, Warning, TEXT("║ → SwapPlayerControllers 호출...                            ║"));
-	SwapPlayerControllers(LoginController, NewController);
-
-	UE_LOG(LogTemp, Warning, TEXT("║ ✅ Controller 교체 완료!                                   ║"));
-
-	// 4. 새 Controller의 PlayerState에 PlayerId 복원
-	if (AHellunaPlayerState* NewPS = NewController->GetPlayerState<AHellunaPlayerState>())
-	{
-		NewPS->SetLoginInfo(PlayerId);
-		UE_LOG(LogTemp, Warning, TEXT("║ 새 Controller PlayerState에 PlayerId 복원: '%s'           ║"), *PlayerId);
-	}
-
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
-
-	// 5. HeroCharacter 소환 (새 Controller로)
-	FTimerHandle TimerHandle;
-	GetWorldTimerManager().SetTimer(TimerHandle, [this, NewController]()
-	{
-		if (IsValid(NewController))
-		{
-			SpawnHeroCharacter(NewController);
-		}
-	}, 0.3f, false);
-
-	UE_LOG(LogTemp, Warning, TEXT(""));
-}
-
-// ============================================
-// 🔐 로그인 시스템 - SpawnHeroCharacter
-// ============================================
-// 
-// 📌 역할: 플레이어 캐릭터(HeroCharacter) 소환 및 Possess
-// 
-// 📌 호출 시점:
-//    - SwapToGameController() 0.3초 후
-//    - 또는 SeamlessTravel로 이미 로그인된 경우 PostLogin()에서
-// 
-// 📌 처리 흐름:
-//    1. 기존 Pawn 제거 (SpectatorPawn 등)
-//    2. PlayerStart 위치 찾기
-//    3. HeroCharacter 스폰
-//    4. Controller.Possess(캐릭터)
-//    5. 첫 플레이어인 경우 InitializeGame() 호출 (게임 시작!)
-// 
-// 📌 BP 설정 필수:
-//    - HeroCharacterClass가 설정되어 있어야 함
-//    - 맵에 PlayerStart가 배치되어 있어야 함 (없으면 0,0,200 위치에 소환)
-// 
-// 📌 첫 플레이어 소환 후:
-//    - InitializeGame()에서 낮/밤 사이클 시작
-//    - 몬스터 스포너 활성화
-// ============================================
-void AHellunaDefenseGameMode::SpawnHeroCharacter(APlayerController* PlayerController)
-{
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║     [DefenseGameMode] SpawnHeroCharacter                   ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ Controller: %s (ID: %d)"), *GetNameSafe(PlayerController), PlayerController ? PlayerController->GetUniqueID() : -1);
-
-	if (!PlayerController)
-	{
-		UE_LOG(LogTemp, Error, TEXT("║ ❌ Controller nullptr!                                     ║"));
-		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
-		return;
-	}
-
-	if (!HeroCharacterClass)
-	{
-		UE_LOG(LogTemp, Error, TEXT("║ ❌ HeroCharacterClass 미설정!                              ║"));
-		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
-		if (GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Red,
-				TEXT("HeroCharacterClass 미설정! GameMode BP에서 설정 필요"));
-		}
-		return;
-	}
-
-	UE_LOG(LogTemp, Warning, TEXT("║ HeroCharacterClass: %s"), *HeroCharacterClass->GetName());
-
-	// 기존 Pawn 제거
-	APawn* OldPawn = PlayerController->GetPawn();
-	if (OldPawn)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("║ OldPawn 제거: %s"), *OldPawn->GetName());
-		PlayerController->UnPossess();
-		OldPawn->Destroy();
-	}
-
-	// 스폰 위치
-	FVector SpawnLocation = FVector::ZeroVector;
-	FRotator SpawnRotation = FRotator::ZeroRotator;
-
-	AActor* PlayerStart = FindPlayerStart(PlayerController);
-	if (PlayerStart)
-	{
-		SpawnLocation = PlayerStart->GetActorLocation();
-		SpawnRotation = PlayerStart->GetActorRotation();
-		UE_LOG(LogTemp, Warning, TEXT("║ SpawnLocation: PlayerStart (%s)"), *SpawnLocation.ToString());
-	}
-	else
-	{
-		SpawnLocation = FVector(0.f, 0.f, 200.f);
-		UE_LOG(LogTemp, Warning, TEXT("║ SpawnLocation: Default (%s)"), *SpawnLocation.ToString());
-	}
-
-	// HeroCharacter 스폰
-	FActorSpawnParameters SpawnParams;
-	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
-	SpawnParams.Owner = PlayerController;
-
-	APawn* NewPawn = GetWorld()->SpawnActor<APawn>(HeroCharacterClass, SpawnLocation, SpawnRotation, SpawnParams);
-
-	if (!NewPawn)
-	{
-		UE_LOG(LogTemp, Error, TEXT("║ ❌ HeroCharacter 스폰 실패!                                ║"));
-		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
-		return;
-	}
-
-	UE_LOG(LogTemp, Warning, TEXT("║ NewPawn: %s"), *NewPawn->GetName());
-
-	// Possess
-	PlayerController->Possess(NewPawn);
-	
-	// 로그인 UI 숨기기
-	AHellunaLoginController* LoginController = Cast<AHellunaLoginController>(PlayerController);
-	if (LoginController)
-	{
-		LoginController->Client_PrepareControllerSwap();
-	}
-
-	UE_LOG(LogTemp, Warning, TEXT("║ ✅ Possess 완료!                                           ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
-
-	// ============================================
-	// 📌 첫 플레이어 캐릭터 소환 → 게임 초기화!
-	// ============================================
-	if (!bGameInitialized)
-	{
-		UE_LOG(LogTemp, Warning, TEXT(""));
-		UE_LOG(LogTemp, Warning, TEXT("┌────────────────────────────────────────────────────────────┐"));
-		UE_LOG(LogTemp, Warning, TEXT("│ 🎮 첫 플레이어 캐릭터 소환 완료!                          │"));
-		UE_LOG(LogTemp, Warning, TEXT("│ → 게임 초기화 시작...                                      │"));
-		UE_LOG(LogTemp, Warning, TEXT("└────────────────────────────────────────────────────────────┘"));
-		
-		InitializeGame();
-	}
-
-	UE_LOG(LogTemp, Warning, TEXT(""));
-}
-
-bool AHellunaDefenseGameMode::IsPlayerLoggedIn(const FString& PlayerId) const
-{
-	if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(UGameplayStatics::GetGameInstance(GetWorld())))
-	{
-		return GI->IsPlayerLoggedIn(PlayerId);
-	}
-	return false;
-}
-
-// ============================================
-// 🔐 로그인 시스템 - Logout
-// ============================================
-// 
-// 📌 호출 시점: 플레이어가 서버에서 나갈 때 (엔진에서 자동 호출)
-//    - 클라이언트 종료
-//    - 네트워크 연결 끊김
-//    - 타임아웃 킥
-// 
-// 📌 처리 흐름:
-//    1. 로그인 타임아웃 타이머 취소 (있는 경우)
-//    2. PlayerState에서 PlayerId 가져오기
-//    3. GameInstance.RegisterLogout() - 접속자 목록에서 제거
-//       → 다른 클라이언트가 같은 ID로 로그인 가능해짐
-// 
-// 📌 TODO: 여기에 인벤토리 저장 로직 추가 예정
-//    if (!PlayerId.IsEmpty())
-//    {
-//        // 인벤토리 저장
-//        InventorySaveGame->SavePlayerInventory(PlayerId, InventoryComponent);
-//    }
-// 
-// 📌 주의:
-//    - SwapToGameController()에서 LoginController 파괴 시에도 호출됨
-//    - 중복 로그아웃 방지를 위해 SwapToGameController()에서 
-//      미리 PlayerState.ClearLoginInfo() 호출함
-// ============================================
-void AHellunaDefenseGameMode::Logout(AController* Exiting)
-{
-	UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] Logout: %s"), *GetNameSafe(Exiting));
-	
-	if (Exiting)
-	{
-		if (APlayerController* PC = Cast<APlayerController>(Exiting))
-		{
-			if (FTimerHandle* Timer = LoginTimeoutTimers.Find(PC))
-			{
-				GetWorldTimerManager().ClearTimer(*Timer);
-				LoginTimeoutTimers.Remove(PC);
-			}
-		}
-
-		if (AHellunaPlayerState* PS = Exiting->GetPlayerState<AHellunaPlayerState>())
-		{
-			FString PlayerId = PS->GetPlayerUniqueId();
-			if (!PlayerId.IsEmpty())
-			{
-				if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(UGameplayStatics::GetGameInstance(GetWorld())))
-				{
-					GI->RegisterLogout(PlayerId);
-					UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] 로그아웃: '%s'"), *PlayerId);
-				}
-			}
-		}
-	}
-
-	Super::Logout(Exiting);
-}
-
-// ============================================
-// 🔐 로그인 시스템 - HandleSeamlessTravelPlayer
-// ============================================
-// 
-// 📌 호출 시점: SeamlessTravel(맵 이동) 완료 후
-// 
-// 📌 역할: 맵 이동 후에도 로그인 상태 유지
-// 
-// 📌 처리 흐름:
-//    1. 이전 PlayerState에서 PlayerId와 로그인 상태 저장
-//    2. Super::HandleSeamlessTravelPlayer() 호출 (새 PlayerState 생성)
-//    3. 새 PlayerState에 PlayerId 복원
-// 
-// 📌 SeamlessTravel이란?
-//    - 연결 끊김 없이 맵 이동
-//    - bUseSeamlessTravel = true 설정 필요
-//    - PlayerState는 새로 생성되지만 로그인 정보는 복원해야 함
-// ============================================
-void AHellunaDefenseGameMode::HandleSeamlessTravelPlayer(AController*& C)
-{
-	UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] HandleSeamlessTravelPlayer"));
-	
-	FString SavedPlayerId;
-	bool bSavedIsLoggedIn = false;
-	
-	if (C)
-	{
-		if (AHellunaPlayerState* OldPS = C->GetPlayerState<AHellunaPlayerState>())
-		{
-			SavedPlayerId = OldPS->GetPlayerUniqueId();
-			bSavedIsLoggedIn = OldPS->IsLoggedIn();
-			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] 저장: PlayerId='%s', IsLoggedIn=%s"), 
-				*SavedPlayerId, bSavedIsLoggedIn ? TEXT("TRUE") : TEXT("FALSE"));
-		}
-	}
-
-	Super::HandleSeamlessTravelPlayer(C);
-	
-	if (C && !SavedPlayerId.IsEmpty())
-	{
-		if (AHellunaPlayerState* NewPS = C->GetPlayerState<AHellunaPlayerState>())
-		{
-			NewPS->SetLoginInfo(SavedPlayerId);
-			UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] 복원: '%s' → %s"), *SavedPlayerId, *NewPS->GetName());
-		}
-	}
-}
-
-// ============================================
-// 🎮 게임 로직 시작 (비로그인 관련)
-// ============================================
-// 
-// 아래 함수들은 로그인과 무관한 게임 로직입니다:
-// - CacheBossSpawnPoints() : 보스 스폰 포인트 캐싱
-// - CacheMonsterSpawnPoints() : 몬스터 스폰 포인트 캐싱
-// - SpawnTestMonsters() : 테스트 몬스터 스폰
-// - TrySummonBoss() : 보스 소환
-// - RestartGame() : 게임 재시작
-// - SetBossReady() : 보스 준비 상태 설정
-// - EnterDay() / EnterNight() : 낮/밤 사이클
-// - RegisterAliveMonster() / NotifyMonsterDied() : 몬스터 카운트
-// ============================================
+// ════════════════════════════════════════════════════════════════════════════════
+// 🗺️ 스폰 포인트 캐싱
+// ════════════════════════════════════════════════════════════════════════════════
 
 void AHellunaDefenseGameMode::CacheBossSpawnPoints()
 {
-	BossSpawnPoints.Empty();
-	TArray<AActor*> Found;
-	UGameplayStatics::GetAllActorsOfClass(this, ATargetPoint::StaticClass(), Found);
+    BossSpawnPoints.Empty();
+    TArray<AActor*> Found;
+    UGameplayStatics::GetAllActorsOfClass(this, ATargetPoint::StaticClass(), Found);
 
-	for (AActor* A : Found)
-	{
-		if (ATargetPoint* TP = Cast<ATargetPoint>(A))
-		{
-			if (TP->ActorHasTag(BossSpawnPointTag))
-				BossSpawnPoints.Add(TP);
-		}
-	}
+    for (AActor* A : Found)
+    {
+        if (ATargetPoint* TP = Cast<ATargetPoint>(A))
+        {
+            if (TP->ActorHasTag(BossSpawnPointTag))
+                BossSpawnPoints.Add(TP);
+        }
+    }
 }
 
 void AHellunaDefenseGameMode::CacheMonsterSpawnPoints()
 {
-	MonsterSpawnPoints.Empty();
-	TArray<AActor*> Found;
-	UGameplayStatics::GetAllActorsOfClass(this, ATargetPoint::StaticClass(), Found);
+    MonsterSpawnPoints.Empty();
+    TArray<AActor*> Found;
+    UGameplayStatics::GetAllActorsOfClass(this, ATargetPoint::StaticClass(), Found);
 
-	for (AActor* A : Found)
-	{
-		if (ATargetPoint* TP = Cast<ATargetPoint>(A))
-		{
-			if (TP->ActorHasTag(MonsterSpawnPointTag))
-				MonsterSpawnPoints.Add(TP);
-		}
-	}
+    for (AActor* A : Found)
+    {
+        if (ATargetPoint* TP = Cast<ATargetPoint>(A))
+        {
+            if (TP->ActorHasTag(MonsterSpawnPointTag))
+                MonsterSpawnPoints.Add(TP);
+        }
+    }
 }
 
+// ════════════════════════════════════════════════════════════════════════════════
+// 🌅🌙 낮/밤 시스템
+// ════════════════════════════════════════════════════════════════════════════════
+
+// 🌅 EnterDay - 낮 시작
+void AHellunaDefenseGameMode::EnterDay()
+{
+    if (!bGameInitialized)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] EnterDay 스킵 - 게임 미초기화"));
+        return;
+    }
+
+    Debug::Print(TEXT("[DefenseGameMode] EnterDay - 낮 시작!"), FColor::Yellow);
+
+    AliveMonsters.Empty();
+
+    if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
+    {
+        GS->SetPhase(EDefensePhase::Day);
+        GS->SetAliveMonsterCount(0);
+        GS->MulticastPrintDay();
+    }
+
+    GetWorldTimerManager().ClearTimer(TimerHandle_ToNight);
+    GetWorldTimerManager().SetTimer(TimerHandle_ToNight, this, &ThisClass::EnterNight, TestDayDuration, false);
+}
+
+// 🌙 EnterNight - 밤 시작
+void AHellunaDefenseGameMode::EnterNight()
+{
+    if (!HasAuthority() || !bGameInitialized) return;
+
+    Debug::Print(TEXT("[DefenseGameMode] EnterNight - 밤 시작!"), FColor::Purple);
+
+    AliveMonsters.Empty();
+
+    if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
+    {
+        GS->SetPhase(EDefensePhase::Night);
+        GS->SetAliveMonsterCount(0);
+    }
+
+    int32 Current = 0, Need = 0;
+    if (IsSpaceShipFullyRepaired(Current, Need))
+    {
+        SetBossReady(true);
+        return;
+    }
+
+    SpawnTestMonsters();
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 👾 몬스터/보스 스폰
+// ════════════════════════════════════════════════════════════════════════════════
+
+// 👾 SpawnTestMonsters - 몬스터 스폰
 void AHellunaDefenseGameMode::SpawnTestMonsters()
 {
-	if (!HasAuthority() || !bGameInitialized) return;
+    if (!HasAuthority() || !bGameInitialized) return;
 
-	if (!TestMonsterClass)
-	{
-		Debug::Print(TEXT("[Defense] TestMonsterClass is null"), FColor::Red);
-		return;
-	}
+    if (!TestMonsterClass)
+    {
+        Debug::Print(TEXT("[Defense] TestMonsterClass is null"), FColor::Red);
+        return;
+    }
 
-	if (MonsterSpawnPoints.IsEmpty())
-	{
-		Debug::Print(TEXT("[Defense] No MonsterSpawn TargetPoints"), FColor::Red);
-		return;
-	}
+    if (MonsterSpawnPoints.IsEmpty())
+    {
+        Debug::Print(TEXT("[Defense] No MonsterSpawn TargetPoints"), FColor::Red);
+        return;
+    }
 
-	for (int32 i = 0; i < TestMonsterSpawnCount; ++i)
-	{
-		ATargetPoint* TP = MonsterSpawnPoints[FMath::RandRange(0, MonsterSpawnPoints.Num() - 1)];
-		if (!TP) continue;
+    for (int32 i = 0; i < TestMonsterSpawnCount; ++i)
+    {
+        ATargetPoint* TP = MonsterSpawnPoints[FMath::RandRange(0, MonsterSpawnPoints.Num() - 1)];
+        if (!TP) continue;
 
-		FActorSpawnParameters Param;
-		Param.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+        FActorSpawnParameters Param;
+        Param.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
 
-		GetWorld()->SpawnActor<APawn>(TestMonsterClass, TP->GetActorLocation(), TP->GetActorRotation(), Param);
-	}
+        GetWorld()->SpawnActor<APawn>(TestMonsterClass, TP->GetActorLocation(), TP->GetActorRotation(), Param);
+    }
 }
 
 void AHellunaDefenseGameMode::TrySummonBoss()
 {
-	if (!HasAuthority() || !bGameInitialized || !BossClass || BossSpawnPoints.IsEmpty())
-		return;
+    if (!HasAuthority() || !bGameInitialized || !BossClass || BossSpawnPoints.IsEmpty())
+        return;
 
-	ATargetPoint* TP = BossSpawnPoints[FMath::RandRange(0, BossSpawnPoints.Num() - 1)];
-	const FVector SpawnLoc = TP->GetActorLocation() + FVector(0, 0, SpawnZOffset);
+    ATargetPoint* TP = BossSpawnPoints[FMath::RandRange(0, BossSpawnPoints.Num() - 1)];
+    const FVector SpawnLoc = TP->GetActorLocation() + FVector(0, 0, SpawnZOffset);
 
-	FActorSpawnParameters Param;
-	Param.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+    FActorSpawnParameters Param;
+    Param.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
 
-	APawn* Boss = GetWorld()->SpawnActor<APawn>(BossClass, SpawnLoc, TP->GetActorRotation(), Param);
-	if (Boss) bBossReady = false;
-}
-
-void AHellunaDefenseGameMode::RestartGame()
-{
-	if (!HasAuthority()) return;
-	
-	bGameInitialized = false; // 리셋
-	GetWorld()->ServerTravel(TEXT("/Game/Minwoo/MinwooTestMap?listen"));
+    APawn* Boss = GetWorld()->SpawnActor<APawn>(BossClass, SpawnLoc, TP->GetActorRotation(), Param);
+    if (Boss) bBossReady = false;
 }
 
 void AHellunaDefenseGameMode::SetBossReady(bool bReady)
 {
-	if (!HasAuthority() || bBossReady == bReady) return;
-	bBossReady = bReady;
-	if (bBossReady) TrySummonBoss();
+    if (!HasAuthority() || bBossReady == bReady) return;
+    bBossReady = bReady;
+    if (bBossReady) TrySummonBoss();
 }
 
-void AHellunaDefenseGameMode::EnterDay()
-{
-	if (!bGameInitialized)
-	{
-		
-		UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] EnterDay 스킵 - 게임 미초기화"));
-		return;
-	}
-
-	AliveMonsters.Empty();;
-
-	if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
-	{
-		GS->SetPhase(EDefensePhase::Day);
-		GS->SetAliveMonsterCount(0);
-		GS->MulticastPrintDay();
-	}
-
-	GetWorldTimerManager().ClearTimer(TimerHandle_ToNight);
-	GetWorldTimerManager().SetTimer(TimerHandle_ToNight, this, &ThisClass::EnterNight, TestDayDuration, false);
-}
-
-void AHellunaDefenseGameMode::EnterNight()
-{
-	if (!HasAuthority() || !bGameInitialized) return;
-
-	AliveMonsters.Empty();
-
-	if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
-	{
-		GS->SetPhase(EDefensePhase::Night);
-		GS->SetAliveMonsterCount(0);
-	}
-
-	int32 Current = 0, Need = 0;
-	if (IsSpaceShipFullyRepaired(Current, Need))
-	{
-		SetBossReady(true);
-		return;
-	}
-
-	SpawnTestMonsters();
-}
-
-bool AHellunaDefenseGameMode::IsSpaceShipFullyRepaired(int32& OutCurrent, int32& OutNeed) const
-{
-	OutCurrent = 0;
-	OutNeed = 0;
-
-	const AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>();
-	if (!GS) return false;
-
-	AResourceUsingObject_SpaceShip* Ship = GS->GetSpaceShip();
-	if (!Ship) return false;
-
-	OutCurrent = Ship->GetCurrentResource();
-	OutNeed = Ship->GetNeedResource();
-
-	return (OutNeed > 0) && (OutCurrent >= OutNeed);
-}
+// ════════════════════════════════════════════════════════════════════════════════
+// 📊 몬스터 관리
+// ════════════════════════════════════════════════════════════════════════════════
 
 void AHellunaDefenseGameMode::RegisterAliveMonster(AActor* Monster)
 {
-	if (!HasAuthority() || !Monster || !bGameInitialized) return;
+    if (!HasAuthority() || !Monster || !bGameInitialized) return;
 
-	AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>();
-	if (!GS || GS->GetPhase() != EDefensePhase::Night) return;
+    AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>();
+    if (!GS || GS->GetPhase() != EDefensePhase::Night) return;
 
-	if (AliveMonsters.Contains(Monster)) return;
+    if (AliveMonsters.Contains(Monster)) return;
 
-	AliveMonsters.Add(Monster);
-	GS->SetAliveMonsterCount(AliveMonsters.Num());
+    AliveMonsters.Add(Monster);
+    GS->SetAliveMonsterCount(AliveMonsters.Num());
 }
 
 void AHellunaDefenseGameMode::NotifyMonsterDied(AActor* DeadMonster)
 {
-	if (!HasAuthority() || !DeadMonster || !bGameInitialized) return;
+    if (!HasAuthority() || !DeadMonster || !bGameInitialized) return;
 
-	AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>();
-	if (!GS) return;
+    AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>();
+    if (!GS) return;
 
-	AliveMonsters.Remove(TWeakObjectPtr<AActor>(DeadMonster));
-	GS->SetAliveMonsterCount(AliveMonsters.Num());
+    AliveMonsters.Remove(TWeakObjectPtr<AActor>(DeadMonster));
+    GS->SetAliveMonsterCount(AliveMonsters.Num());
 
-	if (AliveMonsters.Num() <= 0)
-	{
-		GetWorldTimerManager().ClearTimer(TimerHandle_ToDay);
-		GetWorldTimerManager().SetTimer(TimerHandle_ToDay, this, &ThisClass::EnterDay, TestNightFailToDayDelay, false);
-	}
+    if (AliveMonsters.Num() <= 0)
+    {
+        GetWorldTimerManager().ClearTimer(TimerHandle_ToDay);
+        GetWorldTimerManager().SetTimer(TimerHandle_ToDay, this, &ThisClass::EnterDay, TestNightFailToDayDelay, false);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 🚀 우주선 상태 체크
+// ════════════════════════════════════════════════════════════════════════════════
+
+bool AHellunaDefenseGameMode::IsSpaceShipFullyRepaired(int32& OutCurrent, int32& OutNeed) const
+{
+    OutCurrent = 0;
+    OutNeed = 0;
+
+    const AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>();
+    if (!GS) return false;
+
+    AResourceUsingObject_SpaceShip* Ship = GS->GetSpaceShip();
+    if (!Ship) return false;
+
+    OutCurrent = Ship->GetCurrentResource();
+    OutNeed = Ship->GetNeedResource();
+
+    return (OutNeed > 0) && (OutCurrent >= OutNeed);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 🔄 게임 재시작
+// ════════════════════════════════════════════════════════════════════════════════
+
+void AHellunaDefenseGameMode::RestartGame()
+{
+    if (!HasAuthority()) return;
+
+    bGameInitialized = false; // 리셋
+    GetWorld()->ServerTravel(TEXT("/Game/Minwoo/MinwooTestMap?listen"));
 }

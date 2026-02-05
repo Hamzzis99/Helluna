@@ -46,6 +46,18 @@ public:
 
 	// ⭐ UI 기반 재료 개수 세기 (Split된 스택도 정확히 계산!)
 	int32 GetTotalMaterialCountFromUI(const FGameplayTag& MaterialTag) const;
+
+	// ⭐ [Phase 6] 장착 슬롯 배열 Getter (저장 시 장착된 아이템 수집용)
+	const TArray<TObjectPtr<UInv_EquippedGridSlot>>& GetEquippedGridSlots() const { return EquippedGridSlots; }
+
+	// 🆕 [Phase 6] 장착 아이템 복원 (델리게이트 바인딩 포함)
+	UInv_EquippedSlottedItem* RestoreEquippedItem(UInv_EquippedGridSlot* EquippedGridSlot, UInv_InventoryItem* ItemToEquip);
+
+	// 🆕 [Phase 7] EquippedGridSlots 수집 (복원 시 재호출 가능)
+	void CollectEquippedGridSlots();
+
+	// 🆕 [Phase 8] 인벤토리 열릴 때 장착 슬롯 레이아웃 갱신
+	void RefreshEquippedSlotLayouts();
 	
 private: 
 	// 여기 있는 UPROPERTY와 위젯과의 이름이 동일해야만함.

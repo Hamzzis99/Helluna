@@ -33,6 +33,16 @@ public:
 	// ============================================
 	int32 GetWeaponSlotIndex() const { return WeaponSlotIndex; }
 
+	// ============================================
+	// 🆕 [Phase 6] 장착된 아이템 가져오기
+	// ============================================
+	UInv_InventoryItem* GetEquippedInventoryItem() const;
+
+	// ============================================
+	// 🆕 [Phase 8] 레이아웃 갱신 (인벤토리 열릴 때 호출)
+	// ============================================
+	void RefreshLayout();
+
 private:
 	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (Categories = "GameItem.Equipment"))
 	FGameplayTag EquipmentTypeTag; // 장착된 아이템의 타입을 나타내는 게임플레이 태그
@@ -56,4 +66,7 @@ private:
 
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UOverlay> Overlay_Root; // 오버레이 루트 위젯
+
+	// 🆕 [Phase 8] 레이아웃 갱신용 캐시
+	FVector2D CachedDrawSize = FVector2D::ZeroVector;
 };

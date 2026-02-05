@@ -44,24 +44,27 @@ void UInv_BuildingComponent::BeginPlay()
 	// 로컬 플레이어만 입력 등록
 	if (!OwningPC->IsLocalController()) return;
 
-	// Enhanced Input Subsystem에 Mapping Context 추가
-	UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(OwningPC->GetLocalPlayer());
-	if (IsValid(Subsystem) && IsValid(BuildingMappingContext))
+	// ★ BuildingMenuMappingContext만 여기서 추가 (B키 - 항상 활성화)
+	// ★ BuildingActionMappingContext는 BuildMode 진입 시에만 동적으로 추가됨
+	if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(OwningPC->GetLocalPlayer()))
 	{
-		Subsystem->AddMappingContext(BuildingMappingContext, 0);
-		UE_LOG(LogTemp, Warning, TEXT("Building Mapping Context added successfully."));
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("Building Mapping Context is not set or Subsystem is invalid."));
+		if (IsValid(BuildingMenuMappingContext))
+		{
+			Subsystem->AddMappingContext(BuildingMenuMappingContext, 0);
+			UE_LOG(LogTemp, Warning, TEXT("BuildingMenuMappingContext added (B키 - 항상 활성화)"));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("BuildingMenuMappingContext is not set!"));
+		}
 	}
 
-	// Input Component 바인딩
+	// Input Component 바인딩 - B키(빌드 메뉴 토글)만 항상 활성화
 	if (UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(OwningPC->InputComponent))
 	{
 		if (IsValid(IA_Building))
 		{
-			// B키: 빌드 메뉴 토글
+			// B키: 빌드 메뉴 토글 (항상 활성화)
 			EnhancedInputComponent->BindAction(IA_Building, ETriggerEvent::Started, this, &UInv_BuildingComponent::ToggleBuildMenu);
 			UE_LOG(LogTemp, Warning, TEXT("IA_Building bound to ToggleBuildMenu."));
 		}
@@ -70,26 +73,8 @@ void UInv_BuildingComponent::BeginPlay()
 			UE_LOG(LogTemp, Warning, TEXT("IA_Building is not set."));
 		}
 
-		if (IsValid(IA_BuildingAction))
-		{
-			EnhancedInputComponent->BindAction(IA_BuildingAction, ETriggerEvent::Started, this, &UInv_BuildingComponent::TryPlaceBuilding);
-			UE_LOG(LogTemp, Warning, TEXT("IA_BuildingAction action bound successfully."));
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("IA_BuildingAction is not set."));
-		}
-
-		if (IsValid(IA_CancelBuilding))
-		{
-			// 우클릭: 빌드 모드 취소
-			EnhancedInputComponent->BindAction(IA_CancelBuilding, ETriggerEvent::Started, this, &UInv_BuildingComponent::CancelBuildMode);
-			UE_LOG(LogTemp, Warning, TEXT("IA_CancelBuilding bound to CancelBuildMode."));
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("IA_CancelBuilding is not set."));
-		}
+		// ★ IA_BuildingAction, IA_CancelBuilding은 여기서 바인딩하지 않음!
+		// ★ BuildMode 진입 시에만 동적으로 바인딩됨 (EnableBuildModeInput)
 	}
 	else
 	{
@@ -166,6 +151,9 @@ void UInv_BuildingComponent::StartBuildMode()
 		return;
 	}
 
+	// ★ BuildMode 진입 시 입력 활성화 (IMC 추가 + 바인딩)
+	EnableBuildModeInput();
+
 	// 이미 고스트 액터가 있다면 제거
 	if (IsValid(GhostActorInstance))
 	{
@@ -201,6 +189,9 @@ void UInv_BuildingComponent::EndBuildMode()
 {
 	bIsInBuildMode = false;
 	UE_LOG(LogTemp, Warning, TEXT("=== Build Mode ENDED ==="));
+
+	// ★ BuildMode 종료 시 입력 비활성화 (IMC 제거 + 바인딩 해제)
+	DisableBuildModeInput();
 
 	// 고스트 메시 제거
 	if (IsValid(GhostActorInstance))
@@ -614,5 +605,83 @@ void UInv_BuildingComponent::ConsumeMaterials(const FGameplayTag& MaterialTag, i
 	InvComp->Server_ConsumeMaterialsMultiStack(MaterialTag, Amount);
 
 	UE_LOG(LogTemp, Warning, TEXT("=== ConsumeMaterials 완료 ==="));
+}
+
+void UInv_BuildingComponent::EnableBuildModeInput()
+{
+	if (!OwningPC.IsValid()) return;
+
+	UE_LOG(LogTemp, Warning, TEXT("=== EnableBuildModeInput: 빌드 모드 입력 활성화 ==="));
+
+	// 1. BuildingActionMappingContext 추가 (높은 우선순위로 GA 입력보다 먼저 처리)
+	if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(OwningPC->GetLocalPlayer()))
+	{
+		if (IsValid(BuildingActionMappingContext))
+		{
+			Subsystem->AddMappingContext(BuildingActionMappingContext, BuildingMappingContextPriority);
+			UE_LOG(LogTemp, Warning, TEXT("BuildingActionMappingContext ADDED (Priority: %d)"), BuildingMappingContextPriority);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("BuildingActionMappingContext is not set!"));
+		}
+	}
+
+	// 2. 동적 액션 바인딩
+	if (UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(OwningPC->InputComponent))
+	{
+		// 좌클릭: 건물 배치 (중복 방지)
+		if (IsValid(IA_BuildingAction) && BuildActionBindingHandle == 0)
+		{
+			BuildActionBindingHandle = EnhancedInputComponent->BindAction(
+				IA_BuildingAction, ETriggerEvent::Started, this, &UInv_BuildingComponent::TryPlaceBuilding
+			).GetHandle();
+			UE_LOG(LogTemp, Warning, TEXT("IA_BuildingAction BOUND (Handle: %u)"), BuildActionBindingHandle);
+		}
+
+		// 우클릭: 빌드 모드 취소 (중복 방지)
+		if (IsValid(IA_CancelBuilding) && CancelBuildingBindingHandle == 0)
+		{
+			CancelBuildingBindingHandle = EnhancedInputComponent->BindAction(
+				IA_CancelBuilding, ETriggerEvent::Started, this, &UInv_BuildingComponent::CancelBuildMode
+			).GetHandle();
+			UE_LOG(LogTemp, Warning, TEXT("IA_CancelBuilding BOUND (Handle: %u)"), CancelBuildingBindingHandle);
+		}
+	}
+}
+
+void UInv_BuildingComponent::DisableBuildModeInput()
+{
+	if (!OwningPC.IsValid()) return;
+
+	UE_LOG(LogTemp, Warning, TEXT("=== DisableBuildModeInput: 빌드 모드 입력 비활성화 ==="));
+
+	// 1. BuildingActionMappingContext 제거
+	if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(OwningPC->GetLocalPlayer()))
+	{
+		if (IsValid(BuildingActionMappingContext))
+		{
+			Subsystem->RemoveMappingContext(BuildingActionMappingContext);
+			UE_LOG(LogTemp, Warning, TEXT("BuildingActionMappingContext REMOVED"));
+		}
+	}
+
+	// 2. 동적 바인딩 해제
+	if (UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(OwningPC->InputComponent))
+	{
+		if (BuildActionBindingHandle != 0)
+		{
+			EnhancedInputComponent->RemoveBindingByHandle(BuildActionBindingHandle);
+			UE_LOG(LogTemp, Warning, TEXT("IA_BuildingAction UNBOUND (Handle: %u)"), BuildActionBindingHandle);
+			BuildActionBindingHandle = 0;
+		}
+
+		if (CancelBuildingBindingHandle != 0)
+		{
+			EnhancedInputComponent->RemoveBindingByHandle(CancelBuildingBindingHandle);
+			UE_LOG(LogTemp, Warning, TEXT("IA_CancelBuilding UNBOUND (Handle: %u)"), CancelBuildingBindingHandle);
+			CancelBuildingBindingHandle = 0;
+		}
+	}
 }
 

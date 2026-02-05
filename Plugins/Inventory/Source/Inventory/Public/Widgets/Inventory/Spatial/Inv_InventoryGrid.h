@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
 #include "Types/Inv_GridTypes.h"
+#include "Player/Inv_PlayerController.h"
 
 #include "Inv_InventoryGrid.generated.h"
 
@@ -49,6 +50,9 @@ public:
 
 	UFUNCTION()
 	void RemoveItem(UInv_InventoryItem* Item, int32 EntryIndex); // 아이템 제거 (EntryIndex로 정확히 매칭)
+	
+	// 🆕 [Phase 6] 포인터만으로 아이템 제거 (장착 복원 시 Grid에서 제거용)
+	bool RemoveSlottedItemByPointer(UInv_InventoryItem* Item);
 
 	UFUNCTION()
 	void UpdateMaterialStacksByTag(const FGameplayTag& MaterialTag); // GameplayTag로 모든 스택 업데이트 (Building용)
@@ -71,8 +75,56 @@ public:
 
 	// ⭐ 실제 UI Grid 상태 확인 (크래프팅 공간 체크용)
 	bool HasRoomInActualGrid(const FInv_ItemManifest& Manifest) const;
+
+	// ⭐ Grid 상태 수집 (저장용) - Split된 스택도 개별 수집
+	TArray<FInv_SavedItemData> CollectGridState() const;
+
+	// ============================================
+	// 📦 [Phase 5] Grid 위치 복원 함수
+	// ============================================
+
+	/**
+	 * 저장된 Grid 위치로 아이템 재배치
+	 *
+	 * @param SavedItems - 복원할 아이템 데이터 배열
+	 * @return 복원 성공한 아이템 수
+	 */
+	int32 RestoreItemPositions(const TArray<FInv_SavedItemData>& SavedItems);
+
+	/**
+	 * 특정 아이템을 지정된 위치로 이동
+	 *
+	 * @param ItemType - 이동할 아이템의 GameplayTag
+	 * @param TargetPosition - 목표 Grid 위치
+	 * @param StackCount - 해당 스택의 수량
+	 * @return 이동 성공 여부
+	 */
+	bool MoveItemToPosition(const FGameplayTag& ItemType, const FIntPoint& TargetPosition, int32 StackCount);
 	
+	// [Phase 5] 현재 GridIndex 기반으로 아이템을 목표 위치로 이동 (순서 기반 복원용)
+	// ⭐ Phase 5: SavedStackCount 파라미터 추가 - 로드 시 저장된 StackCount를 전달받음
+	bool MoveItemByCurrentIndex(int32 CurrentIndex, const FIntPoint& TargetPosition, int32 SavedStackCount = -1);
+
+	// ============================================
+	// ⭐ [Phase 4 방법2 Fix] 인벤토리 로드 시 RPC 스킵 플래그
+	// ============================================
+	
+	/**
+	 * 로드 중 Server_UpdateItemGridPosition RPC 전송 억제
+	 * true일 때 UpdateGridSlots에서 RPC를 보내지 않음
+	 */
+	void SetSuppressServerSync(bool bSuppress) { bSuppressServerSync = bSuppress; }
+	bool IsSuppressServerSync() const { return bSuppressServerSync; }
+	
+	/**
+	 * 현재 Grid의 모든 아이템 위치를 서버에 전송
+	 * 복원 완료 후 호출하여 올바른 위치로 동기화
+	 */
+	void SendAllItemPositionsToServer();
+
 private:
+	// ⭐ 로드 중 RPC 억제 플래그
+	bool bSuppressServerSync = false;
 
 	TWeakObjectPtr<UInv_InventoryComponent> InventoryComponent;
 	TWeakObjectPtr<UCanvasPanel> OwningCanvasPanel;

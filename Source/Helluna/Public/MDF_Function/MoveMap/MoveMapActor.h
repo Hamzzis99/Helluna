@@ -27,6 +27,10 @@ public:
     // [인터페이스 구현] PlayerController가 호출하는 상호작용 함수
     virtual bool ExecuteInteract_Implementation(APlayerController* Controller) override;
 
+    // ⭐ [추가] 클라이언트 → 서버 RPC (맵 이동은 서버에서만 가능)
+    UFUNCTION(Server, Reliable)
+    void Server_RequestInteract();
+
 public:
     // 에디터에서 이동할 맵 이름을 적으세요 (예: LobbyMap, GameMap)
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Map Settings", meta = (ExposeOnSpawn = "true", DisplayName = "이동할 맵 이름"))
