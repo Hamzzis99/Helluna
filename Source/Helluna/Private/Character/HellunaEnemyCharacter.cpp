@@ -74,6 +74,7 @@ void AHellunaEnemyCharacter::BeginPlay()
 		// ✅ 죽음 이벤트를 받아서 GameMode에 “죽었다” 통지
 	if (HealthComponent)
 	{
+		HealthComponent->OnHealthChanged.AddDynamic(this, &AHellunaEnemyCharacter::OnMonsterHealthChanged);
 		HealthComponent->OnDeath.RemoveDynamic(this, &ThisClass::OnMonsterDeath);
 		HealthComponent->OnDeath.AddUniqueDynamic(this, &ThisClass::OnMonsterDeath);
 	}
@@ -92,15 +93,11 @@ void AHellunaEnemyCharacter::OnMonsterHealthChanged(
 	if (!HasAuthority())
 		return;
 
-	const float Max = HealthComponent ? HealthComponent->GetMaxHealth() : 0.f;
+	const float Delta = OldHealth - NewHealth;
 
 	const FString Msg = FString::Printf(
-		TEXT("[MonsterHP] %s : %.0f -> %.0f / %.0f | Instigator: %s"),
-		*GetNameSafe(this),
-		OldHealth,
-		NewHealth,
-		Max,
-		*GetNameSafe(InstigatorActor)
+		TEXT("[MonsterHP] -%.0f"),
+		Delta
 	);
 
 	Debug::Print(Msg);

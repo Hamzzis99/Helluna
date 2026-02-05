@@ -173,7 +173,6 @@ void AHeroWeapon_GunBase::DoLineTraceAndDamage(AController* InstigatorController
 void AHeroWeapon_GunBase::MulticastFireFX_Implementation(FVector_NetQuantize TraceStart, FVector_NetQuantize TraceEnd, bool bHit, FVector_NetQuantize HitLocation)
 {
 	// “모든 클라이언트에서 보이는 연출” 전용
-
 	const FVector SpawnLoc = bHit ? (FVector)HitLocation : (FVector)TraceEnd;
 	if (ImpactFX)
 	{

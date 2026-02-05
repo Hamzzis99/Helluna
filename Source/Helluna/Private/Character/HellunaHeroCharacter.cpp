@@ -408,9 +408,7 @@ void AHellunaHeroCharacter::Server_RequestSpawnWeapon_Implementation(
 
 	if (IsValid(OldWeapon))
 	{
-		// (선택) 같은 무기 클래스면 유지하고 싶으면 아래처럼 조건을 걸어도 됨:
-		// if (OldWeapon->GetClass() != InWeaponClass)
-
+		SaveCurrentMagByClass(CurrentWeapon);
 		OldWeapon->Destroy();
 		SetCurrentWeapon(nullptr);            // SetCurrentWeapon이 nullptr 허용해야 함
 		// CurrentWeaponTag는 아래 NewTag 세팅에서 갱신되거나,
@@ -453,6 +451,8 @@ void AHellunaHeroCharacter::Server_RequestSpawnWeapon_Implementation(
 
 	// 현재 손에 든 무기 포인터 갱신
 	SetCurrentWeapon(NewWeapon);
+
+	ApplySavedCurrentMagByClass(NewWeapon); // [ADD]
 
 	// ------------------------------------------------------------------------
 	// ✅ 무기 태그 처리(ASC가 있을 때만)
@@ -557,9 +557,16 @@ void AHellunaHeroCharacter::Server_RequestDestroyWeapon_Implementation()
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [HeroCharacter] Server_RequestDestroyWeapon 호출됨 (서버)"));
 
 
+
 	if (IsValid(CurrentWeapon))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("⭐ [HeroCharacter] CurrentWeapon Destroy: %s"), *CurrentWeapon->GetName());
+
+		if (AHeroWeapon_GunBase* Gun = Cast<AHeroWeapon_GunBase>(CurrentWeapon))
+		{
+			SaveCurrentMagByClass(CurrentWeapon);
+		}
+
 		CurrentWeapon->Destroy();
 		CurrentWeapon = nullptr;
 	}
@@ -676,4 +683,37 @@ void AHellunaHeroCharacter::UnlockLookInput()
 void AHellunaHeroCharacter::Server_RequestPlayMontageExceptOwner_Implementation(UAnimMontage* Montage)
 {
 	Multicast_PlayEquipMontageExceptOwner(Montage);
+}
+
+void AHellunaHeroCharacter::SaveCurrentMagByClass(AHellunaHeroWeapon* Weapon)
+{
+	if (!HasAuthority()) return;
+	if (!IsValid(Weapon)) return;
+
+	AHeroWeapon_GunBase* Gun = Cast<AHeroWeapon_GunBase>(Weapon);
+	if (!Gun) return;
+
+	TSubclassOf<AHellunaHeroWeapon> WeaponClass = Weapon->GetClass();
+	if (!WeaponClass) return;
+
+	SavedMagByWeaponClass.FindOrAdd(WeaponClass) = FMath::Clamp(Gun->CurrentMag, 0, Gun->MaxMag);
+}
+
+void AHellunaHeroCharacter::ApplySavedCurrentMagByClass(AHellunaHeroWeapon* Weapon)
+{
+	if (!HasAuthority()) return;
+	if (!IsValid(Weapon)) return;
+
+	AHeroWeapon_GunBase* Gun = Cast<AHeroWeapon_GunBase>(Weapon);
+	if (!Gun) return;
+
+	TSubclassOf<AHellunaHeroWeapon> WeaponClass = Weapon->GetClass();
+	if (!WeaponClass) return;
+
+	const int32* SavedMag = SavedMagByWeaponClass.Find(WeaponClass);
+	if (!SavedMag)
+		return;
+
+	Gun->CurrentMag = FMath::Clamp(*SavedMag, 0, Gun->MaxMag);
+	Gun->ForceNetUpdate();
 }

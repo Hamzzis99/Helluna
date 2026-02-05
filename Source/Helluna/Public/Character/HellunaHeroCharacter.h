@@ -166,6 +166,13 @@ protected:
 	// ✅ 클라에서 “이전에 적용했던 태그” 저장용 (RepNotify에서 Old 값을 못 받는 경우 대비)
 	FGameplayTag LastAppliedWeaponTag;
 
-	
+// 총알 개수 저장
+// UPROPERTY()
+private:
+	UPROPERTY()
+	TMap<TObjectPtr<UClass>, int32> SavedMagByWeaponClass;
+
+	void SaveCurrentMagByClass(AHellunaHeroWeapon* Weapon);
+	void ApplySavedCurrentMagByClass(AHellunaHeroWeapon* Weapon);
 
 };
