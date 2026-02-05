@@ -394,6 +394,12 @@ private:
 	 */
 	FTimerHandle VoteTimerHandle;
 
+	/** 투표 통과 후 결과 실행 딜레이 타이머 */
+	FTimerHandle VoteResultDelayTimerHandle;
+
+	/** 딜레이 후 Handler->ExecuteVoteResult 호출 */
+	void ExecuteVoteResultAfterDelay();
+
 	/** 마지막 UI 업데이트 이후 경과 시간 (1초 간격 업데이트용) */
 	float TimeSinceLastUpdate = 0.0f;
 

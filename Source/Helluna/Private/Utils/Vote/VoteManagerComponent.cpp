@@ -524,8 +524,38 @@ void UVoteManagerComponent::EndVote(bool bPassed, const FString& Reason)
 	{
 		if (bPassed)
 		{
-			UE_LOG(LogHellunaVote, Log, TEXT("[VoteManager] Handler->ExecuteVoteResult 호출"));
-			IVoteHandler::Execute_ExecuteVoteResult(CurrentHandler.GetObject(), CurrentRequest);
+			// 투표 통과: 2초 딜레이 후 ExecuteVoteResult 호출
+			UE_LOG(LogHellunaVote, Log, TEXT("[VoteManager] 투표 통과 - 2초 후 결과 실행 예정"));
+
+			// 저장할 값 (Multicast 전에 저장)
+			const EVoteType EndedVoteType = CurrentRequest.VoteType;
+
+			// 모든 클라이언트에 종료 알림 (딜레이 전에 먼저 알림)
+			Multicast_NotifyVoteEnded(EndedVoteType, bPassed, Reason);
+
+			// Tick 비활성화
+			SetComponentTickEnabled(false);
+			TimeSinceLastUpdate = 0.0f;
+
+			// 투표 진행 상태만 해제 (Handler와 Request는 딜레이 후 사용해야 하므로 유지)
+			bIsVoteInProgress = false;
+			PlayerVotes.Empty();
+			RemainingTime = 0.0f;
+
+			// 2초 딜레이 타이머 설정
+			if (UWorld* World = GetWorld())
+			{
+				World->GetTimerManager().SetTimer(
+					VoteResultDelayTimerHandle,
+					this,
+					&UVoteManagerComponent::ExecuteVoteResultAfterDelay,
+					2.0f,
+					false
+				);
+			}
+
+			UE_LOG(LogHellunaVote, Log, TEXT("[VoteManager] EndVote 완료 - 투표 종료됨 (결과 실행 대기 중)"));
+			return;
 		}
 		else
 		{
@@ -552,6 +582,30 @@ void UVoteManagerComponent::EndVote(bool bPassed, const FString& Reason)
 	RemainingTime = 0.0f;
 
 	UE_LOG(LogHellunaVote, Log, TEXT("[VoteManager] EndVote 완료 - 투표 종료됨"));
+}
+
+// ============================================================================
+// 내부 로직 - 투표 통과 후 딜레이 실행
+// ============================================================================
+
+void UVoteManagerComponent::ExecuteVoteResultAfterDelay()
+{
+	UE_LOG(LogHellunaVote, Log, TEXT("[VoteManager] ExecuteVoteResultAfterDelay - 2초 경과, 결과 실행"));
+
+	if (CurrentHandler.GetObject())
+	{
+		IVoteHandler::Execute_ExecuteVoteResult(CurrentHandler.GetObject(), CurrentRequest);
+	}
+	else
+	{
+		UE_LOG(LogHellunaVote, Warning, TEXT("[VoteManager] ExecuteVoteResultAfterDelay - Handler가 유효하지 않음"));
+	}
+
+	// 최종 상태 초기화
+	CurrentRequest = FVoteRequest();
+	CurrentHandler = nullptr;
+
+	UE_LOG(LogHellunaVote, Log, TEXT("[VoteManager] 결과 실행 완료 - 상태 초기화됨"));
 }
 
 // ============================================================================
