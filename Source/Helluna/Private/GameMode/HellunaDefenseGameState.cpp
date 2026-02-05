@@ -14,6 +14,18 @@
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h" // 이사 확인증 확인용
 
 // =========================================================================================
+// 생성자 (김기현)
+// =========================================================================================
+
+AHellunaDefenseGameState::AHellunaDefenseGameState()
+{
+    // ========== 투표 시스템 컴포넌트 생성 ==========
+    VoteManagerComponent = CreateDefaultSubobject<UVoteManagerComponent>(TEXT("VoteManagerComponent"));
+
+    UE_LOG(LogHellunaVote, Log, TEXT("[HellunaGameState] 생성자 - VoteManagerComponent 생성됨"));
+}
+
+// =========================================================================================
 // [민우님 작업 영역] 기존 팀원 코드
 // =========================================================================================
 

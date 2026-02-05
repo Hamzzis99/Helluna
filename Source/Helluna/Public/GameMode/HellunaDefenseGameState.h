@@ -9,6 +9,9 @@
 #include "Interface/MDF_GameStateInterface.h"
 #include "Components/MDF_DeformableComponent.h"
 
+// [투표 시스템] VoteManagerComponent 헤더 (김기현)
+#include "Utils/Vote/VoteManagerComponent.h"
+
 #include "HellunaTypes.h"
 #include "HellunaDefenseGameState.generated.h"
 
@@ -41,8 +44,26 @@ UCLASS()
 class HELLUNA_API AHellunaDefenseGameState : public AGameState, public IMDF_GameStateInterface
 {
     GENERATED_BODY()
-    
+
 public:
+    /** 생성자 */
+    AHellunaDefenseGameState();
+
+    // =========================================================================================
+    // [투표 시스템] VoteManagerComponent (김기현)
+    // =========================================================================================
+    //
+    // 📌 역할: 멀티플레이어 투표 시스템 관리 (맵 이동, 강퇴, 난이도 변경 등)
+    // 📌 사용: MoveMapActor 등에서 StartVote() 호출하여 투표 시작
+    // 📌 복제: 컴포넌트 자체가 복제되어 클라이언트에서도 상태 확인 가능
+    //
+    // =========================================================================================
+
+    /** 투표 관리 컴포넌트 (맵 이동, 강퇴 등 투표 처리) */
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Vote")
+    TObjectPtr<UVoteManagerComponent> VoteManagerComponent;
+
+
     // =========================================================================================
     // [민우님 작업 영역] 기존 팀원 코드 (우주선 및 페이즈 관리)
     // =========================================================================================

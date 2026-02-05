@@ -4,6 +4,7 @@
 #include "MDF_Function/MoveMap/MoveMapActor.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameMode/HellunaDefenseGameState.h"
+#include "Utils/Vote/VoteManagerComponent.h"
 
 AMoveMapActor::AMoveMapActor()
 {
@@ -26,58 +27,148 @@ bool AMoveMapActor::ExecuteInteract_Implementation(APlayerController* Controller
     if (HasAuthority())
     {
         // 서버 (Listen Server 호스트 또는 Dedicated Server)
-        UE_LOG(LogTemp, Warning, TEXT("[MoveMapActor] 서버에서 직접 Interact() 호출"));
-        Interact();
+        UE_LOG(LogHellunaVote, Log, TEXT("[MoveMapActor] 서버에서 직접 Interact() 호출"));
+        Interact(Controller);
     }
     else
     {
         // 클라이언트 → Server RPC로 요청
-        UE_LOG(LogTemp, Warning, TEXT("[MoveMapActor] 클라이언트 → Server_RequestInteract() RPC 호출"));
-        Server_RequestInteract();
+        UE_LOG(LogHellunaVote, Log, TEXT("[MoveMapActor] 클라이언트 → Server_RequestInteract() RPC 호출"));
+        Server_RequestInteract(Controller);
     }
-    return true; 
+    return true;
 }
 
 // ⭐ [추가] Server RPC 구현
-void AMoveMapActor::Server_RequestInteract_Implementation()
+void AMoveMapActor::Server_RequestInteract_Implementation(APlayerController* RequestingController)
 {
-    UE_LOG(LogTemp, Warning, TEXT("[MoveMapActor] Server RPC 수신 → Interact() 호출"));
-    Interact();
+    UE_LOG(LogHellunaVote, Log, TEXT("[MoveMapActor] Server RPC 수신 → Interact() 호출"));
+    Interact(RequestingController);
 }
 
-void AMoveMapActor::Interact()
+// =========================================================================================
+// [투표 시스템] Interact() - 투표 시작 (김기현)
+// =========================================================================================
+
+void AMoveMapActor::Interact(APlayerController* InstigatorController)
 {
-    // 1. 서버 권한 확인 (맵 이동은 서버만 가능)
-    if (!HasAuthority()) 
+    UE_LOG(LogHellunaVote, Log, TEXT("[MoveMapActor] Interact 진입"));
+
+    // 1. 서버 권한 확인
+    if (!HasAuthority())
     {
-        UE_LOG(LogTemp, Warning, TEXT("[MoveMapActor] ⚠️ 서버 권한 없음 - Interact() 중단"));
+        UE_LOG(LogHellunaVote, Warning, TEXT("[MoveMapActor] 서버 권한 없음 - Interact() 중단"));
         return;
     }
 
     // 2. 맵 이름 체크
     if (NextLevelName.IsNone())
     {
-        UE_LOG(LogTemp, Error, TEXT("[MoveMapActor] 이동할 맵 이름이 설정되지 않았습니다!"));
+        UE_LOG(LogHellunaVote, Error, TEXT("[MoveMapActor] 이동할 맵 이름이 설정되지 않았습니다!"));
         return;
     }
 
-    // 3. GameState 가져오기
-    AGameStateBase* GS = UGameplayStatics::GetGameState(this);
-    
-    // [수정됨] TestGameState가 아닌, 실제 'HellunaDefenseGameState'로 캐스팅합니다.
-    AHellunaDefenseGameState* HellunaGS = Cast<AHellunaDefenseGameState>(GS);
-
-    if (HellunaGS)
+    // 3. GameState에서 VoteManager 가져오기
+    AHellunaDefenseGameState* GameState = Cast<AHellunaDefenseGameState>(UGameplayStatics::GetGameState(this));
+    if (!GameState)
     {
-        // ★ 핵심: GameState야, 데이터(MDF) 저장 좀 하고 맵 이동 시켜줘!
-        UE_LOG(LogTemp, Warning, TEXT("[MoveMapActor] ✅ GameState에게 저장 및 이동 요청: %s"), *NextLevelName.ToString());
-       
-        // HellunaGameState에 우리가 추가한 함수 호출
-        HellunaGS->Server_SaveAndMoveLevel(NextLevelName);
+        UE_LOG(LogHellunaVote, Error, TEXT("[MoveMapActor] GameState를 찾을 수 없습니다!"));
+        return;
+    }
+
+    UVoteManagerComponent* VoteManager = GameState->VoteManagerComponent;
+    if (!VoteManager)
+    {
+        UE_LOG(LogHellunaVote, Error, TEXT("[MoveMapActor] VoteManagerComponent를 찾을 수 없습니다!"));
+        return;
+    }
+
+    // 4. 이미 투표 진행 중이면 무시
+    if (VoteManager->IsVoteInProgress())
+    {
+        UE_LOG(LogHellunaVote, Warning, TEXT("[MoveMapActor] 이미 투표가 진행 중입니다"));
+        return;
+    }
+
+    // 5. Initiator PlayerState 가져오기
+    APlayerState* InitiatorPS = nullptr;
+    if (InstigatorController)
+    {
+        InitiatorPS = InstigatorController->GetPlayerState<APlayerState>();
+    }
+
+    if (!InitiatorPS)
+    {
+        UE_LOG(LogHellunaVote, Error, TEXT("[MoveMapActor] Initiator PlayerState를 찾을 수 없습니다!"));
+        return;
+    }
+
+    // 6. 투표 요청 생성
+    FVoteRequest Request;
+    Request.VoteType = EVoteType::MapMove;
+    Request.Condition = VoteCondition;
+    Request.Timeout = VoteTimeout;
+    Request.DisconnectPolicy = DisconnectPolicy;
+    Request.TargetMapName = NextLevelName;
+    Request.Initiator = InitiatorPS;
+
+    UE_LOG(LogHellunaVote, Log, TEXT("[MoveMapActor] 투표 시작 요청 - %s"), *Request.ToString());
+
+    // 7. 투표 시작
+    bool bStarted = VoteManager->StartVote(Request, TScriptInterface<IVoteHandler>(this));
+
+    if (bStarted)
+    {
+        UE_LOG(LogHellunaVote, Log, TEXT("[MoveMapActor] 투표 시작됨!"));
     }
     else
     {
-        // 만약 Cast 실패 시 로그 출력 (프로젝트 세팅의 GameStateClass 확인 필요)
-        UE_LOG(LogTemp, Error, TEXT("[MoveMapActor] HellunaDefenseGameState를 찾을 수 없습니다! 캐스팅 실패."));
+        UE_LOG(LogHellunaVote, Warning, TEXT("[MoveMapActor] 투표 시작 실패"));
+    }
+}
+
+// =========================================================================================
+// [IVoteHandler 구현] 투표 시작 전 검증
+// =========================================================================================
+
+bool AMoveMapActor::OnVoteStarting_Implementation(const FVoteRequest& Request)
+{
+    // 맵 이름이 설정되어 있으면 투표 허용
+    if (Request.TargetMapName.IsNone())
+    {
+        UE_LOG(LogHellunaVote, Warning, TEXT("[MoveMapActor] OnVoteStarting - 대상 맵 이름이 없음, 투표 거부"));
+        return false;
+    }
+
+    UE_LOG(LogHellunaVote, Log, TEXT("[MoveMapActor] OnVoteStarting - 검증 통과, 투표 허용 (대상: %s)"),
+        *Request.TargetMapName.ToString());
+    return true;
+}
+
+// =========================================================================================
+// [IVoteHandler 구현] 투표 통과 시 호출
+// =========================================================================================
+
+void AMoveMapActor::ExecuteVoteResult_Implementation(const FVoteRequest& Request)
+{
+    UE_LOG(LogHellunaVote, Log, TEXT("[MoveMapActor] ExecuteVoteResult - 투표 통과! 맵 이동 실행"));
+
+    // 서버 권한 확인
+    if (!HasAuthority())
+    {
+        UE_LOG(LogHellunaVote, Warning, TEXT("[MoveMapActor] ExecuteVoteResult - 서버 권한 없음"));
+        return;
+    }
+
+    // GameState를 통해 맵 이동
+    AHellunaDefenseGameState* GameState = Cast<AHellunaDefenseGameState>(UGameplayStatics::GetGameState(this));
+    if (GameState)
+    {
+        UE_LOG(LogHellunaVote, Log, TEXT("[MoveMapActor] GameState->Server_SaveAndMoveLevel(%s) 호출"), *Request.TargetMapName.ToString());
+        GameState->Server_SaveAndMoveLevel(Request.TargetMapName);
+    }
+    else
+    {
+        UE_LOG(LogHellunaVote, Error, TEXT("[MoveMapActor] ExecuteVoteResult - GameState를 찾을 수 없습니다!"));
     }
 }
