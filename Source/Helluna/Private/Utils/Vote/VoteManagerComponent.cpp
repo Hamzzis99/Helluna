@@ -152,9 +152,13 @@ bool UVoteManagerComponent::StartVote(const FVoteRequest& Request, TScriptInterf
 	}
 
 	// 핸들러의 시작 전 검증
+	UE_LOG(LogHellunaVote, Log, TEXT("[VoteManager] Handler->OnVoteStarting() 호출 - Handler: %s"),
+		*Handler.GetObject()->GetName());
 	if (!IVoteHandler::Execute_OnVoteStarting(Handler.GetObject(), Request))
 	{
-		UE_LOG(LogHellunaVote, Warning, TEXT("[VoteManager] StartVote 실패 - Handler->OnVoteStarting() 반환값 false"));
+		UE_LOG(LogHellunaVote, Warning,
+			TEXT("[VoteManager] StartVote 실패 - Handler->OnVoteStarting() 반환값 false. ")
+			TEXT("Handler 클래스에서 OnVoteStarting_Implementation을 오버라이드하여 true를 반환하는지 확인하세요."));
 		return false;
 	}
 

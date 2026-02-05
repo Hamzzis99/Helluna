@@ -128,6 +128,24 @@ void AMoveMapActor::Interact(APlayerController* InstigatorController)
 }
 
 // =========================================================================================
+// [IVoteHandler 구현] 투표 시작 전 검증
+// =========================================================================================
+
+bool AMoveMapActor::OnVoteStarting_Implementation(const FVoteRequest& Request)
+{
+    // 맵 이름이 설정되어 있으면 투표 허용
+    if (Request.TargetMapName.IsNone())
+    {
+        UE_LOG(LogHellunaVote, Warning, TEXT("[MoveMapActor] OnVoteStarting - 대상 맵 이름이 없음, 투표 거부"));
+        return false;
+    }
+
+    UE_LOG(LogHellunaVote, Log, TEXT("[MoveMapActor] OnVoteStarting - 검증 통과, 투표 허용 (대상: %s)"),
+        *Request.TargetMapName.ToString());
+    return true;
+}
+
+// =========================================================================================
 // [IVoteHandler 구현] 투표 통과 시 호출
 // =========================================================================================
 

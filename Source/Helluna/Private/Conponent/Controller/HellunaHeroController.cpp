@@ -57,18 +57,22 @@ void AHellunaHeroController::InitializeVoteWidget()
 {
 	UE_LOG(LogHellunaVote, Log, TEXT("[HellunaHeroController] InitializeVoteWidget 진입"));
 
-	// 1. 위젯 생성
-	VoteWidgetInstance = CreateWidget<UVoteWidget>(this, VoteWidgetClass);
+	// 1. 위젯이 아직 없으면 생성 (재시도 시 중복 생성 방지)
 	if (!VoteWidgetInstance)
 	{
-		UE_LOG(LogHellunaVote, Error, TEXT("[HellunaHeroController] 투표 위젯 생성 실패!"));
-		return;
+		VoteWidgetInstance = CreateWidget<UVoteWidget>(this, VoteWidgetClass);
+		if (!VoteWidgetInstance)
+		{
+			UE_LOG(LogHellunaVote, Error, TEXT("[HellunaHeroController] 투표 위젯 생성 실패!"));
+			return;
+		}
+
+		// 뷰포트에 추가
+		VoteWidgetInstance->AddToViewport();
+		UE_LOG(LogHellunaVote, Log, TEXT("[HellunaHeroController] 투표 위젯 생성 및 Viewport 추가 완료"));
 	}
 
-	// 2. 뷰포트에 추가
-	VoteWidgetInstance->AddToViewport();
-
-	// 3. GameState에서 VoteManager 가져오기
+	// 2. GameState에서 VoteManager 가져오기
 	AGameStateBase* GameState = GetWorld()->GetGameState();
 	if (!GameState)
 	{

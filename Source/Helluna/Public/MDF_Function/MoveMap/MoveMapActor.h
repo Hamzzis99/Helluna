@@ -60,6 +60,9 @@ public:
     // [IVoteHandler 인터페이스 구현]
     // =========================================================================================
 
+    /** 투표 시작 전 검증 - 맵 이름 유효성 체크 */
+    virtual bool OnVoteStarting_Implementation(const FVoteRequest& Request) override;
+
     /** 투표 통과 시 맵 이동 실행 */
     virtual void ExecuteVoteResult_Implementation(const FVoteRequest& Request) override;
 
