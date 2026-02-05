@@ -26,14 +26,14 @@ protected:
 public:
     // 실제 이동 로직을 수행하는 함수 (서버에서만 실행됨)
     UFUNCTION(BlueprintCallable, Category = "Helluna|Interaction")
-    void Interact();
+    void Interact(APlayerController* InstigatorController = nullptr);
 
     // [인터페이스 구현] PlayerController가 호출하는 상호작용 함수
     virtual bool ExecuteInteract_Implementation(APlayerController* Controller) override;
 
     // ⭐ [추가] 클라이언트 → 서버 RPC (맵 이동은 서버에서만 가능)
     UFUNCTION(Server, Reliable)
-    void Server_RequestInteract();
+    void Server_RequestInteract(APlayerController* RequestingController);
 
 public:
     // 에디터에서 이동할 맵 이름을 적으세요 (예: LobbyMap, GameMap)

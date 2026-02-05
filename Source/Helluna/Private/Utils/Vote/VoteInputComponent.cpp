@@ -14,6 +14,7 @@
 #include "Utils/Vote/VoteInputComponent.h"
 #include "Utils/Vote/VoteManagerComponent.h"
 #include "Utils/Vote/VoteTypes.h"
+#include "Controller/HellunaHeroController.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "InputAction.h"
@@ -224,7 +225,7 @@ void UVoteInputComponent::SubmitVote(bool bAgree)
 		return;
 	}
 
-	// VoteManager 가져오기
+	// VoteManager 가져오기 (투표 진행 중 체크용)
 	UVoteManagerComponent* VoteManager = GetVoteManager();
 	if (!VoteManager)
 	{
@@ -239,19 +240,18 @@ void UVoteInputComponent::SubmitVote(bool bAgree)
 		return;
 	}
 
-	// PlayerState 가져오기
-	APlayerState* MyPS = GetLocalPlayerState();
-	if (!MyPS)
+	// HeroController를 통해 Server RPC 호출
+	AHellunaHeroController* HeroController = Cast<AHellunaHeroController>(GetOwner());
+	if (!HeroController)
 	{
-		UE_LOG(LogHellunaVote, Warning, TEXT("[VoteInput] SubmitVote 실패 - PlayerState를 찾을 수 없음"));
+		UE_LOG(LogHellunaVote, Warning, TEXT("[VoteInput] SubmitVote 실패 - Owner가 HellunaHeroController가 아님"));
 		return;
 	}
 
-	// Server RPC 호출
-	VoteManager->Server_SubmitVote(MyPS, bAgree);
+	// Server RPC 호출 (PlayerController 소유 → NetConnection 보장)
+	HeroController->Server_SubmitVote(bAgree);
 
-	UE_LOG(LogHellunaVote, Log, TEXT("[VoteInput] SubmitVote 완료 - %s가 %s 투표 제출"),
-		*MyPS->GetPlayerName(),
+	UE_LOG(LogHellunaVote, Log, TEXT("[VoteInput] SubmitVote 완료 - %s 투표 제출"),
 		bAgree ? TEXT("찬성") : TEXT("반대"));
 }
 

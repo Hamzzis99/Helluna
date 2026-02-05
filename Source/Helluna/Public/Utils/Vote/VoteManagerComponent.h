@@ -173,21 +173,20 @@ public:
 	// ========================================================================
 
 	/**
-	 * @brief   플레이어 투표 제출 (클라이언트 → 서버)
+	 * @brief   플레이어 투표 수신 (서버 전용 일반 함수)
 	 *
-	 * @details 지정된 플레이어의 투표를 서버에 제출합니다.
+	 * @details 지정된 플레이어의 투표를 서버에서 처리합니다.
 	 *          이미 투표한 플레이어가 다시 호출하면 무시됩니다 (변경 불가).
 	 *
 	 * @param   Voter  - 투표하는 플레이어의 PlayerState
 	 * @param   bAgree - true: 찬성, false: 반대
 	 *
-	 * @note    VoteInputComponent에서 호출
+	 * @note    HeroController::Server_SubmitVote() → 이 함수 순서로 호출됨
 	 * @note    Voter가 null이거나 참여자가 아니면 무시됨
-	 * @note    Server RPC - 클라이언트에서 호출, 서버에서 실행
-	 * @note    Reliable - 신뢰성 보장 (반드시 서버에 도달)
+	 * @note    Server RPC가 아님 - PlayerController를 통해 라우팅됨
 	 */
-	UFUNCTION(Server, Reliable, BlueprintCallable, Category = "Vote")
-	void Server_SubmitVote(APlayerState* Voter, bool bAgree);
+	UFUNCTION(BlueprintCallable, Category = "Vote")
+	void ReceiveVote(APlayerState* Voter, bool bAgree);
 
 	// ========================================================================
 	// Public 함수 - 투표 취소
@@ -206,6 +205,21 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Vote")
 	void CancelVote(const FString& Reason);
+
+	/**
+	 * @brief   플레이어 퇴장 처리
+	 *
+	 * @details 투표 진행 중 플레이어가 퇴장하면 호출됩니다.
+	 *          DisconnectPolicy에 따라 처리합니다:
+	 *          - ExcludeAndContinue: 해당 플레이어 제외 후 계속
+	 *          - CancelVote: 투표 취소
+	 *
+	 * @param   ExitingPlayer - 퇴장하는 플레이어
+	 *
+	 * @note    서버에서만 호출됩니다. GameMode::Logout()에서 호출.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Vote")
+	void HandlePlayerDisconnect(APlayerState* ExitingPlayer);
 
 	// ========================================================================
 	// Public 함수 - 상태 조회
@@ -253,6 +267,9 @@ protected:
 	/** 컴포넌트 종료 시 호출 */
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
+	/** 매 프레임 호출 - 남은 시간 갱신용 */
+	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+
 	/** 복제할 프로퍼티 등록 */
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
@@ -294,20 +311,6 @@ protected:
 	 * @note    서버에서만 호출됩니다.
 	 */
 	void EndVote(bool bPassed, const FString& Reason);
-
-	/**
-	 * @brief   플레이어 퇴장 처리
-	 *
-	 * @details 투표 진행 중 플레이어가 퇴장하면 호출됩니다.
-	 *          DisconnectPolicy에 따라 처리합니다:
-	 *          - ExcludeAndContinue: 해당 플레이어 제외 후 계속
-	 *          - CancelVote: 투표 취소
-	 *
-	 * @param   ExitingPlayer - 퇴장하는 플레이어
-	 *
-	 * @note    서버에서만 호출됩니다.
-	 */
-	void HandlePlayerDisconnect(APlayerState* ExitingPlayer);
 
 	// ========================================================================
 	// Multicast RPC (서버 → 모든 클라이언트)
@@ -390,4 +393,10 @@ private:
 	 * @note  복제 안 함 - 서버에서만 사용
 	 */
 	FTimerHandle VoteTimerHandle;
+
+	/** 마지막 UI 업데이트 이후 경과 시간 (1초 간격 업데이트용) */
+	float TimeSinceLastUpdate = 0.0f;
+
+	/** UI 업데이트 간격 (초) */
+	static constexpr float UpdateInterval = 1.0f;
 };

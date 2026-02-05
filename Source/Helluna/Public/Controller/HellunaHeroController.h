@@ -3,15 +3,26 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "GameFramework/PlayerController.h"
+#include "Player/Inv_PlayerController.h"
 #include "GenericTeamAgentInterface.h"
 #include "HellunaHeroController.generated.h"
 
+class UVoteInputComponent;
+
 /**
- * 
+ * @brief   Helluna 영웅 전용 PlayerController
+ * @details AInv_PlayerController를 상속받아 인벤토리 기능을 유지하면서
+ *          팀 시스템(IGenericTeamAgentInterface)을 제공합니다.
+ *          GAS(HellunaHeroGameplayAbility)에서 Cast 대상으로 사용됩니다.
+ *
+ *          상속 구조:
+ *          APlayerController
+ *            └── AInv_PlayerController (인벤토리/장비)
+ *                  └── AHellunaHeroController (팀ID, GAS, 투표 시스템)
+ *                        └── BP_HellunaHeroController (에디터 BP)
  */
 UCLASS()
-class HELLUNA_API AHellunaHeroController : public APlayerController, public IGenericTeamAgentInterface
+class HELLUNA_API AHellunaHeroController : public AInv_PlayerController, public IGenericTeamAgentInterface
 {
 	GENERATED_BODY()
 
@@ -22,8 +33,32 @@ public:
 	virtual FGenericTeamId GetGenericTeamId() const override;
 	//~ End IGenericTeamAgentInterface Interface
 
+	// =========================================================================================
+	// [투표 시스템] (김기현)
+	// =========================================================================================
+
+	/**
+	 * @brief 투표 입력 처리 컴포넌트 (F1: 찬성, F2: 반대)
+	 * @note  투표 시작 시 자동으로 입력 활성화, 종료 시 비활성화
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Vote")
+	TObjectPtr<UVoteInputComponent> VoteInputComponent;
+
+	/**
+	 * @brief   투표 제출 Server RPC (클라이언트 → 서버)
+	 *
+	 * @details PlayerController는 클라이언트의 NetConnection을 소유하므로
+	 *          Server RPC가 정상 작동합니다.
+	 *          내부에서 VoteManagerComponent::ReceiveVote()를 호출합니다.
+	 *
+	 * @param   bAgree - true: 찬성, false: 반대
+	 */
+	UFUNCTION(Server, Reliable)
+	void Server_SubmitVote(bool bAgree);
+
+protected:
+	virtual void BeginPlay() override;
+
 private:
 	FGenericTeamId HeroTeamID;
-
-
 };

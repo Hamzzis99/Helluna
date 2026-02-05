@@ -22,7 +22,7 @@ AHellunaDefenseGameState::AHellunaDefenseGameState()
     // ========== 투표 시스템 컴포넌트 생성 ==========
     VoteManagerComponent = CreateDefaultSubobject<UVoteManagerComponent>(TEXT("VoteManagerComponent"));
 
-    UE_LOG(LogTemp, Log, TEXT("[HellunaGameState] 생성자 - VoteManagerComponent 생성됨"));
+    UE_LOG(LogHellunaVote, Log, TEXT("[HellunaGameState] 생성자 - VoteManagerComponent 생성됨"));
 }
 
 // =========================================================================================

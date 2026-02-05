@@ -8,7 +8,7 @@
  *
  *          주요 함수:
  *          - StartVote(): 투표 시작 (서버)
- *          - Server_SubmitVote(): 투표 제출 (클라→서버 RPC)
+ *          - ReceiveVote(): 투표 수신 (서버 전용, HeroController에서 호출)
  *          - CheckVoteResult(): 투표 결과 판정 (서버)
  *          - EndVote(): 투표 종료 처리 (서버)
  *          - Multicast_*(): 클라이언트 알림 (서버→클라 RPC)
@@ -38,6 +38,10 @@ UVoteManagerComponent::UVoteManagerComponent()
 
 	// 자동 활성화
 	bAutoActivate = true;
+
+	// Tick 활성화 - RemainingTime 갱신용 (투표 시작 시에만 활성화)
+	PrimaryComponentTick.bCanEverTick = true;
+	PrimaryComponentTick.bStartWithTickEnabled = false;
 
 	UE_LOG(LogHellunaVote, Log, TEXT("[VoteManager] 생성자 호출 - 컴포넌트 생성됨"));
 }
@@ -78,6 +82,28 @@ void UVoteManagerComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	}
 
 	Super::EndPlay(EndPlayReason);
+}
+
+void UVoteManagerComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
+{
+	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+
+	// 서버에서만 시간 갱신
+	if (!GetOwner()->HasAuthority() || !bIsVoteInProgress)
+	{
+		return;
+	}
+
+	// 남은 시간 갱신
+	RemainingTime = FMath::Max(0.0f, RemainingTime - DeltaTime);
+
+	// 1초 간격으로 클라이언트에 현황 업데이트
+	TimeSinceLastUpdate += DeltaTime;
+	if (TimeSinceLastUpdate >= UpdateInterval)
+	{
+		TimeSinceLastUpdate = 0.0f;
+		Multicast_NotifyVoteUpdated(GetCurrentStatus());
+	}
 }
 
 void UVoteManagerComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -176,8 +202,15 @@ bool UVoteManagerComponent::StartVote(const FVoteRequest& Request, TScriptInterf
 		UE_LOG(LogHellunaVote, Log, TEXT("[VoteManager] 타이머 시작 - %.1f초"), Request.Timeout);
 	}
 
+	// Tick 활성화 (RemainingTime 갱신 시작)
+	SetComponentTickEnabled(true);
+	TimeSinceLastUpdate = 0.0f;
+
 	// 모든 클라이언트에 투표 시작 알림
 	Multicast_NotifyVoteStarted(Request);
+
+	// [수정] 초기 투표 현황 전달 (시작자 자동 찬성 1표 반영)
+	Multicast_NotifyVoteUpdated(GetCurrentStatus());
 
 	UE_LOG(LogHellunaVote, Log, TEXT("[VoteManager] StartVote 완료 - 투표 시작됨, 참여자: %d명"), PlayerVotes.Num());
 
@@ -191,30 +224,30 @@ bool UVoteManagerComponent::StartVote(const FVoteRequest& Request, TScriptInterf
 // 투표 제출
 // ============================================================================
 
-void UVoteManagerComponent::Server_SubmitVote_Implementation(APlayerState* Voter, bool bAgree)
+void UVoteManagerComponent::ReceiveVote(APlayerState* Voter, bool bAgree)
 {
-	UE_LOG(LogHellunaVote, Log, TEXT("[VoteManager] Server_SubmitVote 진입 - Voter: %s, bAgree: %s"),
+	UE_LOG(LogHellunaVote, Log, TEXT("[VoteManager] ReceiveVote 진입 - Voter: %s, bAgree: %s"),
 		Voter ? *Voter->GetPlayerName() : TEXT("null"),
 		bAgree ? TEXT("찬성") : TEXT("반대"));
 
 	// 투표 진행 중 체크
 	if (!bIsVoteInProgress)
 	{
-		UE_LOG(LogHellunaVote, Warning, TEXT("[VoteManager] Server_SubmitVote 실패 - 진행 중인 투표 없음"));
+		UE_LOG(LogHellunaVote, Warning, TEXT("[VoteManager] ReceiveVote 실패 - 진행 중인 투표 없음"));
 		return;
 	}
 
 	// Voter 유효성 체크
 	if (!Voter)
 	{
-		UE_LOG(LogHellunaVote, Warning, TEXT("[VoteManager] Server_SubmitVote 실패 - Voter가 null"));
+		UE_LOG(LogHellunaVote, Warning, TEXT("[VoteManager] ReceiveVote 실패 - Voter가 null"));
 		return;
 	}
 
 	// 투표 참여자인지 체크
 	if (!PlayerVotes.Contains(Voter))
 	{
-		UE_LOG(LogHellunaVote, Warning, TEXT("[VoteManager] Server_SubmitVote 실패 - %s는 투표 참여자 아님"),
+		UE_LOG(LogHellunaVote, Warning, TEXT("[VoteManager] ReceiveVote 실패 - %s는 투표 참여자 아님"),
 			*Voter->GetPlayerName());
 		return;
 	}
@@ -222,7 +255,7 @@ void UVoteManagerComponent::Server_SubmitVote_Implementation(APlayerState* Voter
 	// 이미 투표했는지 체크
 	if (PlayerVotes[Voter] != EVoteResult::NotVoted)
 	{
-		UE_LOG(LogHellunaVote, Warning, TEXT("[VoteManager] Server_SubmitVote 무시 - %s 이미 투표함"),
+		UE_LOG(LogHellunaVote, Warning, TEXT("[VoteManager] ReceiveVote 무시 - %s 이미 투표함"),
 			*Voter->GetPlayerName());
 		return;
 	}
@@ -502,6 +535,10 @@ void UVoteManagerComponent::EndVote(bool bPassed, const FString& Reason)
 
 	// 모든 클라이언트에 종료 알림
 	Multicast_NotifyVoteEnded(EndedVoteType, bPassed, Reason);
+
+	// Tick 비활성화
+	SetComponentTickEnabled(false);
+	TimeSinceLastUpdate = 0.0f;
 
 	// 상태 초기화
 	bIsVoteInProgress = false;
