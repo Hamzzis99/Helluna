@@ -11,8 +11,7 @@
 #include "UI/Vote/VoteResultWidget.h"
 #include "Components/TextBlock.h"
 #include "TimerManager.h"
-
-DECLARE_LOG_CATEGORY_EXTERN(LogHellunaVote, Log, All);
+#include "Utils/Vote/VoteTypes.h"
 
 // ============================================================================
 // 라이프사이클
