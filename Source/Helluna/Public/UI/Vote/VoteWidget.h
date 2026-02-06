@@ -32,6 +32,7 @@
 class UTextBlock;
 class UProgressBar;
 class UVoteManagerComponent;
+class UVoteResultWidget;
 
 /**
  * @brief   투표 UI 위젯 베이스 클래스
@@ -113,6 +114,17 @@ protected:
 	/** 시간 프로그레스 바 (선택적) */
 	UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional, DisplayName = "Time Progress Bar (시간 프로그레스 바)"))
 	TObjectPtr<UProgressBar> ProgressBar_Time;
+
+	// ========================================================================
+	// 결과 위젯 설정
+	// ========================================================================
+
+	/**
+	 * @brief   투표 결과 위젯 클래스 (BP에서 WBP_VoteResultWidget 지정)
+	 * @note    None이면 결과 메시지를 표시하지 않고 즉시 숨김
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Vote|UI", meta = (DisplayName = "Vote Result Widget Class (투표 결과 위젯 클래스)"))
+	TSubclassOf<UVoteResultWidget> VoteResultWidgetClass;
 
 	// ========================================================================
 	// 헬퍼 함수

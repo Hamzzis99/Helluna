@@ -12,6 +12,7 @@
  */
 
 #include "UI/Vote/VoteWidget.h"
+#include "UI/Vote/VoteResultWidget.h"
 #include "Utils/Vote/VoteManagerComponent.h"
 #include "Utils/Vote/VoteTypes.h"
 #include "Components/TextBlock.h"
@@ -135,8 +136,30 @@ void UVoteWidget::OnVoteEnded_Implementation(EVoteType VoteType, bool bPassed, c
 	UE_LOG(LogHellunaVote, Log, TEXT("[VoteWidget] OnVoteEnded - Passed: %s, Reason: %s"),
 		bPassed ? TEXT("true") : TEXT("false"), *Reason);
 
-	// 잠시 결과 표시 후 숨김 (BP에서 애니메이션 추가 가능)
+	// 투표 진행 UI 숨김
 	SetVisibility(ESlateVisibility::Collapsed);
+
+	// 결과 위젯 생성 및 표시
+	if (VoteResultWidgetClass)
+	{
+		APlayerController* PC = GetOwningPlayer();
+		if (PC)
+		{
+			UVoteResultWidget* ResultWidget = CreateWidget<UVoteResultWidget>(PC, VoteResultWidgetClass);
+			if (ResultWidget)
+			{
+				ResultWidget->AddToViewport(10); // 높은 ZOrder로 최상단 표시
+				ResultWidget->ShowResult(bPassed);
+
+				UE_LOG(LogHellunaVote, Log, TEXT("[VoteWidget] 결과 위젯 생성 완료 - %s"),
+					bPassed ? TEXT("통과") : TEXT("부결"));
+			}
+		}
+	}
+	else
+	{
+		UE_LOG(LogHellunaVote, Log, TEXT("[VoteWidget] VoteResultWidgetClass 미설정 - 결과 메시지 생략"));
+	}
 }
 
 // ============================================================================
