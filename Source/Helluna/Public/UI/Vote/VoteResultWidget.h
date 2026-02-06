@@ -37,27 +37,27 @@ class HELLUNA_API UVoteResultWidget : public UUserWidget
 
 public:
 	// ========================================================================
-	// BP에서 설정할 메시지
+	// BP에서 설정할 메시지 [Settings] (설정)
 	// ========================================================================
 
-	/** 투표 통과 시 표시할 메시지 */
+	/** [Settings] 투표 통과 시 표시할 메시지 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vote|Result", meta = (DisplayName = "Vote Passed Message (투표 통과 메시지)"))
 	FText VotePassedMessage = FText::FromString(TEXT("잠시 후 다음 맵으로 넘어갑니다!"));
 
-	/** 투표 부결 시 표시할 메시지 */
+	/** [Settings] 투표 부결 시 표시할 메시지 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vote|Result", meta = (DisplayName = "Vote Failed Message (투표 부결 메시지)"))
 	FText VoteFailedMessage = FText::FromString(TEXT("투표가 부결되었습니다."));
 
-	/** 결과 메시지 표시 시간 (초) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vote|Result", meta = (DisplayName = "Display Duration (표시 시간)", ClampMin = "1.0", ClampMax = "10.0"))
+	/** [Settings] 결과 메시지 표시 시간 (초) - 부결 시 사용. 통과 시에는 VoteResultDelay와 동기화 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vote|Result", meta = (DisplayName = "Display Duration (부결 시 표시 시간)", ClampMin = "1.0", ClampMax = "10.0"))
 	float DisplayDuration = 3.0f;
 
 	// ========================================================================
-	// 외부 호출 함수
+	// 외부 호출 함수 [Action] (기능)
 	// ========================================================================
 
 	/**
-	 * @brief   결과 메시지 표시
+	 * @brief   [Action] 결과 메시지 표시
 	 * @param   bPassed  - true: 통과 메시지, false: 부결 메시지
 	 * @param   Duration - 표시 시간 (초). 0 이하이면 DisplayDuration 기본값 사용
 	 */
@@ -72,14 +72,14 @@ protected:
 	// UI 요소 (BP에서 바인딩)
 	// ========================================================================
 
-	/** 결과 메시지 텍스트 */
+	/** [Result] 결과 메시지 텍스트 (예: "잠시 후 다음 맵으로 넘어갑니다!") - 필수 */
 	UPROPERTY(BlueprintReadWrite, meta = (BindWidget, DisplayName = "Result Message Text (결과 메시지)"))
 	TObjectPtr<UTextBlock> Text_ResultMessage;
 
 private:
-	/** 자동 숨김 타이머 */
+	/** [Internal] 자동 숨김 타이머 */
 	FTimerHandle HideTimerHandle;
 
-	/** 타이머 콜백 - 위젯 제거 */
+	/** [Internal] 타이머 콜백 - 위젯 제거 */
 	void OnHideTimerExpired();
 };
