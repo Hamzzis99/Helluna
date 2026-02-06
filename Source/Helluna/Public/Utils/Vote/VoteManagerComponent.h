@@ -256,6 +256,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Vote")
 	EVoteResult GetPlayerVoteResult(APlayerState* PlayerState) const;
 
+	/**
+	 * @brief   투표 결과 딜레이 시간 반환
+	 * @return  투표 통과 후 결과 실행까지 대기 시간 (초)
+	 */
+	UFUNCTION(BlueprintPure, Category = "Vote")
+	float GetVoteResultDelay() const { return VoteResultDelay; }
+
 protected:
 	// ========================================================================
 	// 라이프사이클 오버라이드

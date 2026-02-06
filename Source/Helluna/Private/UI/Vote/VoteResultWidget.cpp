@@ -42,8 +42,11 @@ void UVoteResultWidget::NativeDestruct()
 // 결과 표시
 // ============================================================================
 
-void UVoteResultWidget::ShowResult(bool bPassed)
+void UVoteResultWidget::ShowResult(bool bPassed, float Duration)
 {
+	// Duration이 0 이하이면 기본값 사용
+	const float ActualDuration = (Duration > 0.0f) ? Duration : DisplayDuration;
+
 	// 메시지 설정
 	const FText& Message = bPassed ? VotePassedMessage : VoteFailedMessage;
 
@@ -55,7 +58,7 @@ void UVoteResultWidget::ShowResult(bool bPassed)
 	UE_LOG(LogHellunaVote, Log, TEXT("[VoteResultWidget] ShowResult - %s: %s (%.1f초 후 숨김)"),
 		bPassed ? TEXT("통과") : TEXT("부결"),
 		*Message.ToString(),
-		DisplayDuration);
+		ActualDuration);
 
 	// 위젯 표시
 	SetVisibility(ESlateVisibility::HitTestInvisible);
@@ -67,7 +70,7 @@ void UVoteResultWidget::ShowResult(bool bPassed)
 			HideTimerHandle,
 			this,
 			&UVoteResultWidget::OnHideTimerExpired,
-			DisplayDuration,
+			ActualDuration,
 			false
 		);
 	}

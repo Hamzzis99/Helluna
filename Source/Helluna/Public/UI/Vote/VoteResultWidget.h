@@ -58,10 +58,11 @@ public:
 
 	/**
 	 * @brief   결과 메시지 표시
-	 * @param   bPassed - true: 통과 메시지, false: 부결 메시지
+	 * @param   bPassed  - true: 통과 메시지, false: 부결 메시지
+	 * @param   Duration - 표시 시간 (초). 0 이하이면 DisplayDuration 기본값 사용
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Vote|Result")
-	void ShowResult(bool bPassed);
+	void ShowResult(bool bPassed, float Duration = 0.0f);
 
 protected:
 	virtual void NativeConstruct() override;

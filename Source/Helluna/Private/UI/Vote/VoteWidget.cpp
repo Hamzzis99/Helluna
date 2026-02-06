@@ -149,10 +149,19 @@ void UVoteWidget::OnVoteEnded_Implementation(EVoteType VoteType, bool bPassed, c
 			if (ResultWidget)
 			{
 				ResultWidget->AddToViewport(10); // 높은 ZOrder로 최상단 표시
-				ResultWidget->ShowResult(bPassed);
 
-				UE_LOG(LogHellunaVote, Log, TEXT("[VoteWidget] 결과 위젯 생성 완료 - %s"),
-					bPassed ? TEXT("통과") : TEXT("부결"));
+				// 통과 시: VoteManager의 딜레이 값과 동기화
+				// 부결 시: 결과 위젯의 기본 DisplayDuration 사용 (0 전달)
+				float ResultDuration = 0.0f;
+				if (bPassed && CachedVoteManager.IsValid())
+				{
+					ResultDuration = CachedVoteManager->GetVoteResultDelay();
+				}
+
+				ResultWidget->ShowResult(bPassed, ResultDuration);
+
+				UE_LOG(LogHellunaVote, Log, TEXT("[VoteWidget] 결과 위젯 생성 완료 - %s (Duration: %.1f)"),
+					bPassed ? TEXT("통과") : TEXT("부결"), ResultDuration);
 			}
 		}
 	}
