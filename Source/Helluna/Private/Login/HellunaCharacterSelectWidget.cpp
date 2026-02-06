@@ -3,7 +3,7 @@
 #include "Components/Button.h"
 #include "Components/TextBlock.h"
 #include "Kismet/GameplayStatics.h"
-#include "GameMode/HellunaDefenseGameState.h"
+#include "GameMode/HellunaBaseGameState.h"
 
 void UHellunaCharacterSelectWidget::NativeConstruct()
 {
@@ -24,7 +24,7 @@ void UHellunaCharacterSelectWidget::NativeConstruct()
 	// ════════════════════════════════════════════════════════════════════════════════
 	// 🎭 GameState 델리게이트 바인딩 - 다른 플레이어 캐릭터 선택 시 UI 자동 갱신
 	// ════════════════════════════════════════════════════════════════════════════════
-	if (AHellunaDefenseGameState* GS = GetWorld()->GetGameState<AHellunaDefenseGameState>())
+	if (AHellunaBaseGameState* GS = GetWorld()->GetGameState<AHellunaBaseGameState>())
 	{
 		GS->OnUsedCharactersChanged.AddDynamic(this, &UHellunaCharacterSelectWidget::OnCharacterAvailabilityChanged);
 		UE_LOG(LogTemp, Warning, TEXT("[CharacterSelectWidget] ✅ GameState 델리게이트 바인딩 완료"));
@@ -197,7 +197,7 @@ void UHellunaCharacterSelectWidget::OnCharacterAvailabilityChanged()
 
 void UHellunaCharacterSelectWidget::RefreshAvailableCharacters()
 {
-	AHellunaDefenseGameState* GS = GetWorld()->GetGameState<AHellunaDefenseGameState>();
+	AHellunaBaseGameState* GS = GetWorld()->GetGameState<AHellunaBaseGameState>();
 	if (!GS)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[CharacterSelectWidget] ⚠️ RefreshAvailableCharacters - GameState 없음"));

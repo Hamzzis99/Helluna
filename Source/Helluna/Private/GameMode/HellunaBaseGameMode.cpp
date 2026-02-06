@@ -23,7 +23,7 @@
 
 #include "GameMode/HellunaBaseGameMode.h"
 #include "Helluna.h"  // 전처리기 플래그
-#include "GameMode/HellunaDefenseGameState.h"
+#include "GameMode/HellunaBaseGameState.h"
 #include "Login/HellunaLoginController.h"
 #include "Login/HellunaAccountSaveGame.h"
 #include "Player/HellunaPlayerState.h"
@@ -1100,7 +1100,7 @@ void AHellunaBaseGameMode::Logout(AController* Exiting)
 		APlayerState* ExitingPS = Exiting->GetPlayerState<APlayerState>();
 		if (ExitingPS)
 		{
-			if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
+			if (AHellunaBaseGameState* GS = GetGameState<AHellunaBaseGameState>())
 			{
 				if (UVoteManagerComponent* VoteMgr = GS->VoteManagerComponent)
 				{
@@ -1346,7 +1346,7 @@ void AHellunaBaseGameMode::RegisterCharacterUse(EHellunaHeroType HeroType, const
 	UsedCharacterMap.Add(HeroType, PlayerId);
 
 	// GameState에 알림 (클라이언트 UI 갱신용)
-	if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
+	if (AHellunaBaseGameState* GS = GetGameState<AHellunaBaseGameState>())
 	{
 		GS->AddUsedCharacter(HeroType);
 	}
@@ -1394,7 +1394,7 @@ void AHellunaBaseGameMode::UnregisterCharacterUse(const FString& PlayerId)
 		UsedCharacterMap.Remove(FoundType);
 
 		// GameState에 알림 (클라이언트 UI 갱신용)
-		if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
+		if (AHellunaBaseGameState* GS = GetGameState<AHellunaBaseGameState>())
 		{
 			GS->RemoveUsedCharacter(FoundType);
 		}

@@ -3,7 +3,7 @@
 
 #include "MDF_Function/MoveMap/MoveMapActor.h"
 #include "Kismet/GameplayStatics.h"
-#include "GameMode/HellunaDefenseGameState.h"
+#include "GameMode/HellunaBaseGameState.h"
 #include "Utils/Vote/VoteManagerComponent.h"
 
 AMoveMapActor::AMoveMapActor()
@@ -69,7 +69,7 @@ void AMoveMapActor::Interact(APlayerController* InstigatorController)
     }
 
     // 3. GameState에서 VoteManager 가져오기
-    AHellunaDefenseGameState* GameState = Cast<AHellunaDefenseGameState>(UGameplayStatics::GetGameState(this));
+    AHellunaBaseGameState* GameState = Cast<AHellunaBaseGameState>(UGameplayStatics::GetGameState(this));
     if (!GameState)
     {
         UE_LOG(LogHellunaVote, Error, TEXT("[MoveMapActor] GameState를 찾을 수 없습니다!"));
@@ -161,7 +161,7 @@ void AMoveMapActor::ExecuteVoteResult_Implementation(const FVoteRequest& Request
     }
 
     // GameState를 통해 맵 이동
-    AHellunaDefenseGameState* GameState = Cast<AHellunaDefenseGameState>(UGameplayStatics::GetGameState(this));
+    AHellunaBaseGameState* GameState = Cast<AHellunaBaseGameState>(UGameplayStatics::GetGameState(this));
     if (GameState)
     {
         UE_LOG(LogHellunaVote, Log, TEXT("[MoveMapActor] GameState->Server_SaveAndMoveLevel(%s) 호출"), *Request.TargetMapName.ToString());

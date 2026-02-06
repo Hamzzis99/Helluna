@@ -19,10 +19,7 @@
 
 AHellunaDefenseGameState::AHellunaDefenseGameState()
 {
-    // ========== 투표 시스템 컴포넌트 생성 ==========
-    VoteManagerComponent = CreateDefaultSubobject<UVoteManagerComponent>(TEXT("VoteManagerComponent"));
-
-    UE_LOG(LogHellunaVote, Log, TEXT("[HellunaGameState] 생성자 - VoteManagerComponent 생성됨"));
+    // VoteManagerComponent는 Base(AHellunaBaseGameState)에서 생성됨
 }
 
 // =========================================================================================
@@ -41,10 +38,10 @@ void AHellunaDefenseGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProper
 {
     Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
+    // UsedCharacters는 Base(AHellunaBaseGameState)에서 복제됨
     DOREPLIFETIME(AHellunaDefenseGameState, SpaceShip);
     DOREPLIFETIME(AHellunaDefenseGameState, Phase);
     DOREPLIFETIME(AHellunaDefenseGameState, AliveMonsterCount);
-    DOREPLIFETIME(AHellunaDefenseGameState, UsedCharacters);
 }
 
 void AHellunaDefenseGameState::SetPhase(EDefensePhase NewPhase)
@@ -214,52 +211,11 @@ bool AHellunaDefenseGameState::LoadMDFData(const FGuid& ID, TArray<FMDFHitData>&
     return false;
 }
 
-void AHellunaDefenseGameState::Server_SaveAndMoveLevel(FName NextLevelName)
+// Server_SaveAndMoveLevel()은 Base(AHellunaBaseGameState)로 이동됨
+
+void AHellunaDefenseGameState::OnPreMapTransition()
 {
-    if (!HasAuthority()) return;
-
-    if (NextLevelName.IsNone())
-    {
-        UE_LOG(LogTemp, Error, TEXT("[HellunaGameState] 이동할 맵 이름이 없습니다!"));
-        return;
-    }
-
-    UE_LOG(LogTemp, Warning, TEXT("[HellunaGameState] 맵 이동 요청(%s). 저장 및 플래그 설정..."), *NextLevelName.ToString());
-
-    // ============================================
-    // 0. 모든 플레이어 인벤토리 저장 (맵 이동 전!)
-    // ============================================
-    if (AHellunaDefenseGameMode* GM = GetWorld()->GetAuthGameMode<AHellunaDefenseGameMode>())
-    {
-        GM->SaveAllPlayersInventory();
-    }
-    else
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[HellunaGameState] ⚠️ GameMode 없음 - 인벤토리 저장 생략"));
-    }
-
-    // 1. 이동 전 현재 상태를 디스크에 저장
     WriteDataToDisk();
-
-    // 2. GameInstance에 "나 이사 간다!" 플래그 설정
-    UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance());
-    if (GI)
-    {
-        GI->bIsMapTransitioning = true;
-        UE_LOG(LogTemp, Warning, TEXT("[HellunaGameState] 이사 확인증 발급 완료 (bIsMapTransitioning = true)"));
-    }
-    else
-    {
-        UE_LOG(LogTemp, Error, TEXT("[HellunaGameState] GameInstance 형변환 실패! 프로젝트 설정을 확인하세요."));
-    }
-
-    // 3. ServerTravel 실행
-    UWorld* World = GetWorld();
-    if (World)
-    {
-        FString TravelURL = FString::Printf(TEXT("%s?listen"), *NextLevelName.ToString());
-        World->ServerTravel(TravelURL, true, false); 
-    }
 }
 
 void AHellunaDefenseGameState::WriteDataToDisk()
@@ -308,50 +264,5 @@ void AHellunaDefenseGameState::WriteDataToDisk()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 🎭 캐릭터 선택 시스템 - 실시간 UI 갱신 (김기현)
+// 🎭 캐릭터 선택 시스템은 Base(AHellunaBaseGameState)로 이동됨
 // ═══════════════════════════════════════════════════════════════════════════════
-
-void AHellunaDefenseGameState::OnRep_UsedCharacters()
-{
-	UE_LOG(LogTemp, Warning, TEXT("[GameState] OnRep_UsedCharacters - 사용 중인 캐릭터: %d명"), UsedCharacters.Num());
-	
-	// 델리게이트 브로드캐스트 → 모든 바인딩된 UI 갱신!
-	OnUsedCharactersChanged.Broadcast();
-}
-
-bool AHellunaDefenseGameState::IsCharacterUsed(EHellunaHeroType HeroType) const
-{
-	return UsedCharacters.Contains(HeroType);
-}
-
-void AHellunaDefenseGameState::AddUsedCharacter(EHellunaHeroType HeroType)
-{
-	if (!HasAuthority()) return;
-	
-	if (HeroType == EHellunaHeroType::None) return;
-	
-	if (!UsedCharacters.Contains(HeroType))
-	{
-		UsedCharacters.Add(HeroType);
-		UE_LOG(LogTemp, Warning, TEXT("[GameState] 캐릭터 사용 등록: %s (총 %d명)"), 
-			*UEnum::GetValueAsString(HeroType), UsedCharacters.Num());
-		
-		// 서버에서도 델리게이트 호출 (Listen Server용)
-		OnUsedCharactersChanged.Broadcast();
-	}
-}
-
-void AHellunaDefenseGameState::RemoveUsedCharacter(EHellunaHeroType HeroType)
-{
-	if (!HasAuthority()) return;
-	
-	if (UsedCharacters.Contains(HeroType))
-	{
-		UsedCharacters.Remove(HeroType);
-		UE_LOG(LogTemp, Warning, TEXT("[GameState] 캐릭터 사용 해제: %s (총 %d명)"), 
-			*UEnum::GetValueAsString(HeroType), UsedCharacters.Num());
-		
-		// 서버에서도 델리게이트 호출 (Listen Server용)
-		OnUsedCharactersChanged.Broadcast();
-	}
-}
