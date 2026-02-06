@@ -525,7 +525,7 @@ void UVoteManagerComponent::EndVote(bool bPassed, const FString& Reason)
 		if (bPassed)
 		{
 			// 투표 통과: 2초 딜레이 후 ExecuteVoteResult 호출
-			UE_LOG(LogHellunaVote, Log, TEXT("[VoteManager] 투표 통과 - 2초 후 결과 실행 예정"));
+			UE_LOG(LogHellunaVote, Log, TEXT("[VoteManager] 투표 통과 - %.1f초 후 결과 실행 예정"), VoteResultDelay);
 
 			// 저장할 값 (Multicast 전에 저장)
 			const EVoteType EndedVoteType = CurrentRequest.VoteType;
@@ -549,7 +549,7 @@ void UVoteManagerComponent::EndVote(bool bPassed, const FString& Reason)
 					VoteResultDelayTimerHandle,
 					this,
 					&UVoteManagerComponent::ExecuteVoteResultAfterDelay,
-					2.0f,
+					VoteResultDelay,
 					false
 				);
 			}
@@ -590,7 +590,7 @@ void UVoteManagerComponent::EndVote(bool bPassed, const FString& Reason)
 
 void UVoteManagerComponent::ExecuteVoteResultAfterDelay()
 {
-	UE_LOG(LogHellunaVote, Log, TEXT("[VoteManager] ExecuteVoteResultAfterDelay - 2초 경과, 결과 실행"));
+	UE_LOG(LogHellunaVote, Log, TEXT("[VoteManager] ExecuteVoteResultAfterDelay - 딜레이 경과, 결과 실행"));
 
 	if (CurrentHandler.GetObject())
 	{

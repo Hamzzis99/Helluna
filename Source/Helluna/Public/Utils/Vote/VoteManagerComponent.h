@@ -394,6 +394,10 @@ private:
 	 */
 	FTimerHandle VoteTimerHandle;
 
+	/** 투표 통과 후 결과 실행까지 대기 시간 (초) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Vote", meta = (DisplayName = "Vote Result Delay (투표 결과 딜레이)", ClampMin = "0.0", ClampMax = "10.0", AllowPrivateAccess = "true"))
+	float VoteResultDelay = 2.0f;
+
 	/** 투표 통과 후 결과 실행 딜레이 타이머 */
 	FTimerHandle VoteResultDelayTimerHandle;
 
