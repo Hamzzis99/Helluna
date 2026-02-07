@@ -33,7 +33,7 @@ struct FMassEntityTemplateBuildContext;
  * MassEntityConfig 에셋에서 에디터로 설정하는 커스텀 Trait.
  * Mass Entity 아키타입에 적 스폰 관련 Fragment를 추가한다.
  */
-UCLASS(DisplayName = "Enemy Mass Trait (Hybrid ECS)")
+UCLASS(DisplayName = "Enemy Mass Trait (ECS 적 스폰)")
 class HELLUNA_API UEnemyMassTrait : public UMassEntityTraitBase
 {
 	GENERATED_BODY()
@@ -50,11 +50,11 @@ public:
 protected:
 	/** 스폰할 적 블루프린트 클래스. 에디터에서 BP_HellunaEnemyCharacter 등을 지정 */
 	UPROPERTY(EditAnywhere, Category = "Enemy Spawn Config",
-		meta = (AllowAbstract = "false"))
+		meta = (DisplayName = "Enemy Class (적 블루프린트)", AllowAbstract = "false"))
 	TSubclassOf<AHellunaEnemyCharacter> EnemyClass;
 
 	/** Actor 전환 거리 임계값 (단위: cm). 기본값 8000cm = 80m */
 	UPROPERTY(EditAnywhere, Category = "Enemy Spawn Config",
-		meta = (ClampMin = "100.0", ClampMax = "100000.0", UIMin = "100.0", UIMax = "50000.0"))
+		meta = (DisplayName = "Spawn Threshold (전환 거리 cm)", ClampMin = "100.0", ClampMax = "100000.0", UIMin = "100.0", UIMax = "50000.0"))
 	float SpawnThreshold = 8000.f;
 };
