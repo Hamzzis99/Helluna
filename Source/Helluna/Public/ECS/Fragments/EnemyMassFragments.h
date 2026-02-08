@@ -74,6 +74,10 @@ struct HELLUNA_API FEnemyDataFragment : public FMassFragment
 	UPROPERTY()
 	int32 MaxConcurrentActors = 50;
 
+	/** Actor Pool 크기. MaxConcurrentActors + 버퍼. Phase 2 최적화용 */
+	UPROPERTY()
+	int32 PoolSize = 60;
+
 	// === 거리별 Tick 빈도 (Trait에서 복사) ===
 
 	/** 근거리 기준 (cm). 이 이내 = NearTickInterval 적용 */

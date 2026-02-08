@@ -1,0 +1,399 @@
+/**
+ * EnemyActorPool.cpp
+ *
+ * Actor Object Pooling 구현체.
+ *
+ * ■ 이 파일이 뭔가요? (팀원용)
+ *   적 Actor "대여소"의 실제 동작 코드입니다.
+ *   미리 만들어둔 Actor를 꺼내 쓰고(Activate) 돌려놓는(Deactivate) 로직,
+ *   그리고 전투 사망으로 파괴된 Actor를 보충하는(Replenish) 로직이 들어 있습니다.
+ *
+ * ■ 시스템 내 위치
+ *   - 의존: AHellunaEnemyCharacter, UHellunaHealthComponent,
+ *           UStateTreeComponent, AController, UWorld
+ *   - 피의존: UEnemyActorSpawnProcessor (TrySpawnActor/DespawnActorToEntity에서 호출)
+ *
+ * ■ 디버깅 팁
+ *   - LogECSPool 카테고리로 모든 Pool 이벤트 로깅
+ *   - 초기화: "[Pool] 초기화 완료!" / Activate: "[Pool] Activate!" / Deactivate: "[Pool] Deactivate!"
+ *   - 보충: "[Pool] Replenish!" (파괴된 Actor 수 + 보충 수)
+ *   - 에러: "[Pool] CreatePooledActor 실패!" → EnemyClass 또는 World 확인
+ */
+
+// File: Source/Helluna/Private/ECS/Pool/EnemyActorPool.cpp
+
+#include "ECS/Pool/EnemyActorPool.h"
+
+#include "Character/HellunaEnemyCharacter.h"
+#include "Character/EnemyComponent/HellunaHealthComponent.h"
+#include "Components/StateTreeComponent.h"
+
+#include "GameFramework/Controller.h"
+#include "Engine/World.h"
+
+DEFINE_LOG_CATEGORY_STATIC(LogECSPool, Log, All);
+
+/** Pool Actor 보관용 숨김 위치 (맵 아래 Z=-50000, 플레이어/물리/렌더링 범위 밖) */
+const FVector UEnemyActorPool::PoolHiddenLocation = FVector(0.0, 0.0, -50000.0);
+
+// ============================================================================
+// ShouldCreateSubsystem: 서브시스템 생성 여부
+// ============================================================================
+// ■ 쉬운 설명: 모든 월드에서 Pool 서브시스템을 자동 생성한다.
+// ■ 반환값: 항상 true
+// ============================================================================
+bool UEnemyActorPool::ShouldCreateSubsystem(UObject* Outer) const
+{
+	return true;
+}
+
+// ============================================================================
+// Deinitialize: 월드 소멸 시 정리
+// ============================================================================
+// ■ 쉬운 설명: 게임 종료 또는 맵 전환 시 Pool의 모든 Actor를 파괴한다.
+// ■ 주의사항: UWorldSubsystem이 자동 호출. 수동 호출 금지.
+// ============================================================================
+void UEnemyActorPool::Deinitialize()
+{
+	for (AHellunaEnemyCharacter* Actor : InactiveActors)
+	{
+		if (IsValid(Actor))
+		{
+			Actor->Destroy();
+		}
+	}
+	for (AHellunaEnemyCharacter* Actor : ActiveActors)
+	{
+		if (IsValid(Actor))
+		{
+			Actor->Destroy();
+		}
+	}
+
+	UE_LOG(LogECSPool, Log,
+		TEXT("[Pool] Deinitialize - 모든 Pool Actor 파괴 완료 (Inactive: %d, Active: %d)"),
+		InactiveActors.Num(), ActiveActors.Num());
+
+	InactiveActors.Empty();
+	ActiveActors.Empty();
+	bInitialized = false;
+}
+
+// ============================================================================
+// InitializePool: Pool 사전 생성
+// ============================================================================
+// ■ 쉬운 설명: 적 Actor를 미리 60개 만들어 "대기열"에 넣어둔다.
+//   전부 숨김(Hidden) + 비활성(TickOff) 상태로, 필요할 때 꺼내 쓴다.
+// ■ 매개변수:
+//   - EnemyClass: 스폰할 적 블루프린트 (Trait의 EnemyClass)
+//   - InPoolSize: 사전 생성 수 (Trait의 PoolSize, 기본 60)
+// ■ 주의사항:
+//   - 중복 호출 시 무시 (Warning 로그)
+//   - EnemyClass가 null이면 Error 로그 후 실패
+//   - 60개 동시 생성 = 첫 틱 ~120ms 소요 가능
+// ■ 관련 함수: CreatePooledActor()
+// ============================================================================
+void UEnemyActorPool::InitializePool(
+	TSubclassOf<AHellunaEnemyCharacter> EnemyClass,
+	int32 InPoolSize)
+{
+	if (bInitialized)
+	{
+		UE_LOG(LogECSPool, Warning, TEXT("[Pool] 이미 초기화됨. 중복 호출 무시."));
+		return;
+	}
+
+	if (!EnemyClass)
+	{
+		UE_LOG(LogECSPool, Error, TEXT("[Pool] EnemyClass가 null! Trait에서 EnemyClass를 설정하세요."));
+		return;
+	}
+
+	CachedEnemyClass = EnemyClass;
+	DesiredPoolSize = InPoolSize;
+
+	InactiveActors.Reserve(InPoolSize);
+
+	int32 SuccessCount = 0;
+	for (int32 i = 0; i < InPoolSize; ++i)
+	{
+		AHellunaEnemyCharacter* Actor = CreatePooledActor();
+		if (Actor)
+		{
+			InactiveActors.Add(Actor);
+			SuccessCount++;
+		}
+	}
+
+	bInitialized = true;
+
+	UE_LOG(LogECSPool, Log,
+		TEXT("[Pool] 초기화 완료! Class: %s, 요청: %d, 성공: %d, 실패: %d"),
+		*EnemyClass->GetName(), InPoolSize, SuccessCount, InPoolSize - SuccessCount);
+}
+
+// ============================================================================
+// ActivateActor: Pool에서 Actor 꺼내기 (Entity → Actor 전환)
+// ============================================================================
+// ■ 쉬운 설명: "대기열"에서 적 하나를 꺼내 월드에 배치한다.
+//   위치 설정 → 보이기 → AI 시작 → HP 복원 → 네트워크 동기화.
+//   SpawnActor(~2ms) 대신 이 함수(~0.1ms)를 사용하여 성능 향상.
+// ■ 매개변수:
+//   - SpawnTransform: 배치할 위치/회전 (Fragment의 Transform)
+//   - CurrentHP: 복원할 HP (-1이면 풀 HP = 첫 스폰)
+//   - MaxHP: 최대 HP (로그용)
+// ■ 반환값: 활성화된 Actor. Pool이 비어있으면 nullptr.
+// ■ 주의사항:
+//   - Pool이 비면 "[Pool] 비활성 Actor 없음!" 경고 → PoolSize 늘리기
+//   - Pool Actor는 이미 AutoPossessAI 완료 상태 → 0.2초 타이머 불필요
+//   - RestartLogic()은 Controller의 StateTree를 즉시 재시작
+// ■ 관련 함수: DeactivateActor(), TrySpawnActor() (Processor에서 호출)
+// ============================================================================
+AHellunaEnemyCharacter* UEnemyActorPool::ActivateActor(
+	const FTransform& SpawnTransform,
+	float CurrentHP,
+	float MaxHP)
+{
+	if (InactiveActors.IsEmpty())
+	{
+		UE_LOG(LogECSPool, Warning,
+			TEXT("[Pool] 비활성 Actor 없음! Pool 소진. Active: %d, PoolSize: %d"),
+			ActiveActors.Num(), DesiredPoolSize);
+		return nullptr;
+	}
+
+	AHellunaEnemyCharacter* Actor = InactiveActors.Pop();
+	ActiveActors.Add(Actor);
+
+	// 1. 위치 설정 (Pool의 숨김 위치 → 실제 전투 위치)
+	Actor->SetActorTransform(SpawnTransform);
+
+	// 2. 보이기 + 활성화
+	Actor->SetActorHiddenInGame(false);
+	Actor->SetActorEnableCollision(true);
+	Actor->SetActorTickEnabled(true);
+	Actor->SetReplicates(true);
+
+	// 3. AI Controller + StateTree 재시작
+	// Pool Actor는 초기 생성 시 AutoPossessAI가 완료된 상태이므로
+	// Controller가 이미 Pawn을 Possess하고 있다.
+	// Phase 1의 0.2초 타이머 불필요 → RestartLogic 즉시 호출 안전.
+	if (APawn* Pawn = Cast<APawn>(Actor))
+	{
+		if (AController* Controller = Pawn->GetController())
+		{
+			Controller->SetActorTickEnabled(true);
+
+			if (UStateTreeComponent* STComp = Controller->FindComponentByClass<UStateTreeComponent>())
+			{
+				STComp->SetComponentTickEnabled(true);
+				STComp->RestartLogic();
+			}
+		}
+	}
+
+	// 4. HP 복원 (CurrentHP > 0이면 역변환된 적의 이전 HP, -1이면 풀 HP = 첫 스폰)
+	if (CurrentHP > 0.f)
+	{
+		if (UHellunaHealthComponent* HC = Actor->FindComponentByClass<UHellunaHealthComponent>())
+		{
+			HC->SetHealth(CurrentHP);
+		}
+	}
+
+	// TODO: GameMode->RegisterAliveMonster(Actor) 호출 필요
+	// BeginPlay에서 이미 등록되었지만, Pool 재활성화 시 재등록이 필요할 수 있음.
+	// 웨이브 시스템 연동 시 함께 구현 예정.
+
+	UE_LOG(LogECSPool, Log,
+		TEXT("[Pool] Activate! Actor: %s, 위치: %s, HP: %.1f, Active: %d, Inactive: %d"),
+		*Actor->GetName(),
+		*SpawnTransform.GetLocation().ToString(),
+		CurrentHP > 0.f ? CurrentHP : MaxHP,
+		ActiveActors.Num(), InactiveActors.Num());
+
+	return Actor;
+}
+
+// ============================================================================
+// DeactivateActor: Actor를 Pool에 반납 (Actor → Entity 복귀)
+// ============================================================================
+// ■ 쉬운 설명: 사용 끝난 적 Actor를 "대기열"에 돌려놓는다.
+//   AI 정지 → 숨기기 → 비활성화 → 네트워크 차단 → 숨김 위치 이동.
+//   Destroy(GC 스파이크) 대신 이 함수를 사용하여 성능 향상.
+// ■ 매개변수:
+//   - Actor: 비활성화할 Actor (nullptr/무효이면 무시)
+// ■ 주의사항:
+//   - HP/위치 저장은 DespawnActorToEntity가 이 함수 호출 전에 수행
+//   - Controller는 Possess 유지 (재활성화 시 즉시 사용 가능)
+//   - Destroy와 달리 Actor 인스턴스는 살아있음 (IsValid = true)
+// ■ 관련 함수: ActivateActor(), DespawnActorToEntity() (Processor에서 호출)
+// ============================================================================
+void UEnemyActorPool::DeactivateActor(AHellunaEnemyCharacter* Actor)
+{
+	if (!IsValid(Actor))
+	{
+		return;
+	}
+
+	// 1. AI 정지 (StateTree StopLogic + Controller Tick Off)
+	if (APawn* Pawn = Cast<APawn>(Actor))
+	{
+		if (AController* Controller = Pawn->GetController())
+		{
+			if (UStateTreeComponent* STComp = Controller->FindComponentByClass<UStateTreeComponent>())
+			{
+				STComp->StopLogic(TEXT("Pool deactivation"));
+				STComp->SetComponentTickEnabled(false);
+			}
+			Controller->SetActorTickEnabled(false);
+		}
+	}
+
+	// 2. 숨기기 + 비활성화 + 네트워크 차단
+	Actor->SetActorTickEnabled(false);
+	Actor->SetActorHiddenInGame(true);
+	Actor->SetActorEnableCollision(false);
+	Actor->SetReplicates(false);
+
+	// 3. 숨김 위치로 이동 (물리/렌더링/Perception 범위 밖)
+	Actor->SetActorLocation(PoolHiddenLocation);
+
+	// 4. Pool 목록 갱신 (Active → Inactive)
+	ActiveActors.Remove(Actor);
+	InactiveActors.Add(Actor);
+
+	UE_LOG(LogECSPool, Log,
+		TEXT("[Pool] Deactivate! Actor: %s, Active: %d, Inactive: %d"),
+		*Actor->GetName(), ActiveActors.Num(), InactiveActors.Num());
+}
+
+// ============================================================================
+// CleanupAndReplenish: 파괴된 Actor 정리 + Pool 보충
+// ============================================================================
+// ■ 쉬운 설명: 전투 중 죽은 적의 "빈 자리"를 새 Actor로 채운다.
+//   전투 사망 = Actor가 외부에서 Destroy됨 → Pool에 빈 슬롯 발생
+//   이 함수가 빈 슬롯을 감지하고 새 Actor를 생성하여 Pool 크기를 유지한다.
+// ■ 주의사항:
+//   - Processor에서 60프레임마다 호출 (매 틱 호출 시 성능 낭비)
+//   - 파괴된 Actor가 없으면 early return (비용 0)
+//   - 새로 생성된 Actor도 0.3초 타이머로 AI 정지됨 (CreatePooledActor)
+// ■ 관련 함수: CreatePooledActor()
+// ============================================================================
+void UEnemyActorPool::CleanupAndReplenish()
+{
+	// 파괴된 Actor 제거 (IsValid가 false인 항목)
+	const int32 RemovedInactive = InactiveActors.RemoveAll(
+		[](const TObjectPtr<AHellunaEnemyCharacter>& Actor) { return !IsValid(Actor); });
+	const int32 RemovedActive = ActiveActors.RemoveAll(
+		[](const TObjectPtr<AHellunaEnemyCharacter>& Actor) { return !IsValid(Actor); });
+
+	if (RemovedInactive + RemovedActive == 0)
+	{
+		return;  // 파괴된 Actor 없음 → 정리/보충 불필요
+	}
+
+	// 부족분 보충 (DesiredPoolSize 유지)
+	const int32 TotalActors = InactiveActors.Num() + ActiveActors.Num();
+	const int32 ToCreate = DesiredPoolSize - TotalActors;
+
+	int32 Created = 0;
+	for (int32 i = 0; i < ToCreate; ++i)
+	{
+		AHellunaEnemyCharacter* NewActor = CreatePooledActor();
+		if (NewActor)
+		{
+			InactiveActors.Add(NewActor);
+			Created++;
+		}
+	}
+
+	UE_LOG(LogECSPool, Log,
+		TEXT("[Pool] Replenish! 제거: %d (Inactive: %d, Active: %d), 보충: %d/%d, Total: %d/%d"),
+		RemovedInactive + RemovedActive, RemovedInactive, RemovedActive,
+		Created, ToCreate,
+		InactiveActors.Num() + ActiveActors.Num(), DesiredPoolSize);
+}
+
+// ============================================================================
+// CreatePooledActor: 단일 Pool Actor 사전 생성
+// ============================================================================
+// ■ 쉬운 설명: 적 Actor 1마리를 만들어 바로 숨기고 재우는 함수.
+//   SpawnActor → 즉시 Hidden+TickOff+CollisionOff+ReplicateOff
+//   → 0.3초 후 타이머로 AI Controller + StateTree 정지.
+// ■ 반환값: 생성된 Actor. 실패 시 nullptr.
+// ■ 주의사항:
+//   - 숨김 위치(Z=-50000)에 생성하여 플레이어에게 안 보임
+//   - AutoPossessAI가 자동으로 Controller를 생성+Possess
+//   - 0.3초 대기 이유: AutoPossessAI → Possess → StateTree 초기화 완료 대기
+//   - 타이머 안전장치: Actor가 이미 ActivateActor로 활성화되었으면 타이머 스킵
+//     (IsHidden() == false이면 이미 활성화된 것 → StopLogic 호출하면 안 됨!)
+// ■ 관련 함수: InitializePool(), CleanupAndReplenish()
+// ============================================================================
+AHellunaEnemyCharacter* UEnemyActorPool::CreatePooledActor()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogECSPool, Error, TEXT("[Pool] CreatePooledActor 실패! World가 null."));
+		return nullptr;
+	}
+	if (!CachedEnemyClass)
+	{
+		UE_LOG(LogECSPool, Error, TEXT("[Pool] CreatePooledActor 실패! CachedEnemyClass가 null."));
+		return nullptr;
+	}
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	const FTransform HiddenTransform(FRotator::ZeroRotator, PoolHiddenLocation);
+
+	AHellunaEnemyCharacter* Actor = Cast<AHellunaEnemyCharacter>(
+		World->SpawnActor(CachedEnemyClass, &HiddenTransform, SpawnParams));
+
+	if (!Actor)
+	{
+		UE_LOG(LogECSPool, Error, TEXT("[Pool] CreatePooledActor 실패! SpawnActor 반환 null. Class: %s"),
+			*CachedEnemyClass->GetName());
+		return nullptr;
+	}
+
+	// 즉시 숨기기 + 비활성화 (렌더링/리플리케이션 전, 같은 프레임 내)
+	Actor->SetActorHiddenInGame(true);
+	Actor->SetActorEnableCollision(false);
+	Actor->SetActorTickEnabled(false);
+	Actor->SetReplicates(false);
+
+	// AutoPossessAI 완료 후 AI Controller + StateTree 정지 (0.3초 대기)
+	// 왜 즉시 안 하나: SpawnActor 내부에서 AutoPossessAI가 동기적으로 실행되지만,
+	// StateTree 초기화는 BeginPlay 이후 몇 프레임 걸릴 수 있다.
+	// 0.3초 후에 확실하게 정지시킨다.
+	TWeakObjectPtr<AActor> WeakActor = Actor;
+	FTimerHandle TimerHandle;
+	World->GetTimerManager().SetTimer(TimerHandle, [WeakActor]()
+	{
+		AActor* A = WeakActor.Get();
+		if (!A) return;
+
+		// 안전장치: 이미 ActivateActor로 활성화된 Actor면 건너뜀
+		// (활성화된 Actor의 AI를 정지시키면 안 됨!)
+		if (!A->IsHidden()) return;
+
+		APawn* Pawn = Cast<APawn>(A);
+		if (!Pawn) return;
+
+		AController* Controller = Pawn->GetController();
+		if (!Controller) return;
+
+		Controller->SetActorTickEnabled(false);
+
+		if (UStateTreeComponent* STComp = Controller->FindComponentByClass<UStateTreeComponent>())
+		{
+			STComp->StopLogic(TEXT("Pool initial deactivation"));
+			STComp->SetComponentTickEnabled(false);
+		}
+	}, 0.3f, false);
+
+	return Actor;
+}

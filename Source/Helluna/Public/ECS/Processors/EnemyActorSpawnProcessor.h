@@ -1,23 +1,45 @@
 /**
  * EnemyActorSpawnProcessor.h
  *
- * 하이브리드 ECS 핵심 Processor (Phase 1 최적화 적용).
+ * 하이브리드 ECS 핵심 Processor (Phase 1 + Phase 2 최적화 적용).
  *
- * [매 틱 실행 흐름]
- * 1. 플레이어 위치 수집
- * 2. 엔티티 순회:
- *    a) 스폰된 Actor 중 파괴된 것 → 상태 정리
- *    b) 스폰된 Actor가 DespawnThreshold 밖 → 역변환 (HP/위치 보존 후 Destroy)
- *    c) 스폰된 Actor가 범위 내 → 거리별 Tick 빈도 조절
- *    d) 미스폰 Entity가 SpawnThreshold 내 → Actor 스폰 (MaxConcurrentActors 미만일 때)
- * 3. Soft Cap (30프레임마다): 초과분 중 가장 먼 Actor부터 Destroy
+ * ■ 이 파일이 뭔가요? (팀원용)
+ *   매 틱마다 "이 적, Actor로 만들어야 하나? Entity로 돌려야 하나?"를 판단하는 두뇌입니다.
+ *   플레이어와 적 사이 거리를 측정하여, 가까우면 Pool에서 Actor를 꺼내고,
+ *   멀어지면 HP/위치를 저장한 뒤 Pool에 반납합니다.
  *
- * [UE 5.7.2 API]
- * - ConfigureQueries(const TSharedRef<FMassEntityManager>&)
- * - Execute(FMassEntityManager&, FMassExecutionContext&)
- * - ForEachEntityChunk(Context, lambda)
- * - RegisterQuery(생성자), RegisterWithProcessor(ConfigureQueries)
- * - bRequiresGameThreadExecution = true
+ * ■ 시스템 내 위치
+ *   - 의존: FEnemySpawnStateFragment, FEnemyDataFragment, FTransformFragment (Fragment),
+ *           UEnemyActorPool (Pool), AHellunaEnemyCharacter, UHellunaHealthComponent
+ *   - 피의존: MassSimulation 서브시스템이 매 틱 자동 호출
+ *   - 실행: 서버 + 스탠드얼론만 (클라이언트 X), 게임 스레드 필수
+ *
+ * ■ 매 틱 실행 흐름
+ *   0. Pool 초기화 (첫 틱만): Fragment에서 EnemyClass/PoolSize 읽어 Pool 사전 생성
+ *   1. 플레이어 위치 수집
+ *   1.5. Pool 유지보수 (60프레임마다): 전투 사망 Actor 정리 + 보충
+ *   2. 엔티티 순회 (ForEachEntityChunk):
+ *      A) 이미 Actor: 파괴됨(bDead) / 멀어짐(역변환) / 범위 내(Tick 조절)
+ *      B) 아직 Entity: 가까우면 Pool에서 Actor 꺼내기
+ *   3. Soft Cap (30프레임마다): 초과분 중 가장 먼 Actor부터 Pool 반납
+ *
+ * ■ Phase 2 변경점
+ *   - SpawnActor() → Pool->ActivateActor() (비용 ~2ms → ~0.1ms)
+ *   - Destroy() → Pool->DeactivateActor() (GC 스파이크 제거)
+ *   - Soft Cap: Fragment 포인터 직접 접근 → HP/위치 보존 후 Pool 반납
+ *   - StateTree 0.2초 타이머 제거 (Pool Actor는 이미 Possess 완료 상태)
+ *
+ * ■ 디버깅 팁
+ *   - LogECSEnemy 카테고리로 모든 스폰/디스폰/Soft Cap 이벤트 로깅
+ *   - 300프레임마다 상태 로그: "[Status] 활성 Actor: N/M, Pool(Active: X, Inactive: Y)"
+ *   - 문제별 대응은 .cpp 파일 하단 참조
+ *
+ * ■ UE 5.7.2 API (버전 고정)
+ *   - ConfigureQueries(const TSharedRef<FMassEntityManager>&)
+ *   - Execute(FMassEntityManager&, FMassExecutionContext&)
+ *   - ForEachEntityChunk(Context, lambda)
+ *   - RegisterQuery(생성자), RegisterWithProcessor(ConfigureQueries)
+ *   - bRequiresGameThreadExecution = true
  */
 
 // File: Source/Helluna/Public/ECS/Processors/EnemyActorSpawnProcessor.h
@@ -32,6 +54,7 @@
 struct FEnemySpawnStateFragment;
 struct FEnemyDataFragment;
 struct FTransformFragment;
+class UEnemyActorPool;
 
 UCLASS()
 class HELLUNA_API UEnemyActorSpawnProcessor : public UMassProcessor
@@ -53,22 +76,23 @@ private:
 	/** 주어진 위치에서 모든 플레이어까지의 최소 제곱 거리 */
 	static float CalcMinDistSq(const FVector& Location, const TArray<FVector>& PlayerLocations);
 
-	/** Actor->Entity 역변환: HP/위치 보존 후 Controller+Actor 파괴 */
+	/** Actor->Entity 역변환: HP/위치 보존 후 Pool에 반납 */
 	static void DespawnActorToEntity(
 		FEnemySpawnStateFragment& SpawnState,
 		FEnemyDataFragment& Data,
 		FTransformFragment& Transform,
-		AActor* Actor);
+		AActor* Actor,
+		UEnemyActorPool* Pool);
 
 	/** 거리별 Actor/Controller Tick 빈도 조절 */
 	static void UpdateActorTickRate(AActor* Actor, float Distance, const FEnemyDataFragment& Data);
 
-	/** Entity->Actor 스폰. HP 복원 포함. 성공 시 true */
+	/** Pool에서 Actor 꺼내기. HP 복원 포함. 성공 시 true */
 	static bool TrySpawnActor(
 		FEnemySpawnStateFragment& SpawnState,
 		FEnemyDataFragment& Data,
 		const FTransformFragment& Transform,
-		UWorld* World);
+		UEnemyActorPool* Pool);
 };
 
 // ============================================================================
@@ -115,30 +139,4 @@ private:
 // - GameMode에 추가:
 //   int32 CurrentWave, TotalEnemiesThisWave, KilledEnemiesThisWave
 //   TArray<FWaveConfig> WaveConfigs (DataAsset에서 로드)
-// ============================================================================
-
-// ============================================================================
-// [TODO] Actor Pooling - Phase 2 최적화
-// ============================================================================
-//
-// 현재: SpawnActor() / Destroy()로 Actor 생성/파괴 (비용 높음)
-// 추후: 미리 생성된 Pool에서 Activate/Deactivate (비용 거의 0)
-//
-// [구현 계획]
-// - EnemyActorPool 클래스 신규 생성 (UActorComponent 또는 독립 UObject)
-// - BeginPlay 시 PoolSize(60)개 Actor 사전 생성 → Hidden + Tick Off + Collision Off
-// - Entity→Actor 전환 시: Pool에서 꺼내기 (Activate)
-//   SetActorHiddenInGame(false), SetActorEnableCollision(true),
-//   SetActorTickInterval(0), AIController->StartLogic(), SetReplicates(true)
-// - Actor→Entity 복귀 시: Pool에 반납 (Deactivate)
-//   SetActorHiddenInGame(true), SetActorEnableCollision(false),
-//   SetActorTickEnabled(false), AIController->StopLogic(), SetReplicates(false)
-//
-// [Pool 크기]
-// PoolSize = MaxConcurrentActors + 버퍼 = 50 + 10 = 60
-//
-// [역변환(Phase 1)과의 관계]
-// Phase 1: SpawnActor/Destroy 사용 (현재 구현)
-// Phase 2: Pool의 Activate/Deactivate로 대체 (성능 업그레이드)
-// → Phase 1의 스폰/디스폰 호출부만 Pool 호출로 교체하면 됨
 // ============================================================================

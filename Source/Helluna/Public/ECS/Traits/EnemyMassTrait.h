@@ -70,6 +70,13 @@ protected:
 			ClampMin = "1", ClampMax = "500", UIMin = "10", UIMax = "200"))
 	int32 MaxConcurrentActors = 50;
 
+	/** Actor Pool 크기 (Phase 2 최적화) */
+	UPROPERTY(EditAnywhere, Category = "Enemy Spawn Config|Actor 제한",
+		meta = (DisplayName = "Pool Size (사전 생성할 Actor Pool 크기)",
+			ToolTip = "게임 시작 시 사전 생성할 Actor의 수입니다.\nMaxConcurrentActors + 버퍼로 설정하세요.\n\n[작동 방식]\n- 게임 시작 시 PoolSize개의 Actor를 Hidden 상태로 사전 생성\n- Entity→Actor 전환 시 SpawnActor 대신 Pool에서 꺼내 Activate\n- Actor→Entity 복귀 시 Destroy 대신 Deactivate 후 Pool에 반납\n- SpawnActor/Destroy 비용이 거의 0으로 감소\n\n[크기 가이드]\n- MaxConcurrentActors + 10이 기본값 (버퍼 = Soft Cap 발동 전 초과분 흡수)\n- 너무 크면 초기 로딩 시간 증가 + 메모리 낭비\n- 너무 작으면 Pool 소진 시 새 Actor를 런타임에 생성해야 함\n\n예: 60 = MaxActors(50) + 버퍼(10)",
+			ClampMin = "1", ClampMax = "500", UIMin = "10", UIMax = "300"))
+	int32 PoolSize = 60;
+
 	// =================================================================
 	// Tick 최적화 (거리별 AI 업데이트 빈도 조절)
 	// =================================================================

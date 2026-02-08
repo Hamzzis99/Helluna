@@ -35,6 +35,7 @@ void UEnemyMassTrait::BuildTemplate(
 
 	// --- Actor 제한 ---
 	Data.MaxConcurrentActors = MaxConcurrentActors;
+	Data.PoolSize = PoolSize;
 
 	// --- Tick 최적화 ---
 	Data.NearDistance = NearDistance;
