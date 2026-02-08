@@ -10,6 +10,8 @@
 #include "Kismet/GameplayStatics.h"
 #include "GameMode/HellunaDefenseGameMode.h"
 
+#include "Components/StateTreeComponent.h"
+
 #include "DebugHelper.h"
 
 
@@ -37,6 +39,16 @@ void AHellunaEnemyCharacter::PossessedBy(AController* NewController)
 	Super::PossessedBy(NewController);
 
 	InitEnemyStartUpData();
+
+	// 델리게이트 바인딩 (BeginPlay에서 이동)
+	// Normal actor: PossessedBy가 BeginPlay 전에 호출됨 → 여기서 바인딩
+	// Pool actor: ActivateActor → SpawnDefaultController → PossessedBy → 여기서 바인딩
+	if (HealthComponent)
+	{
+		HealthComponent->OnHealthChanged.AddUniqueDynamic(this, &AHellunaEnemyCharacter::OnMonsterHealthChanged);
+		HealthComponent->OnDeath.RemoveDynamic(this, &ThisClass::OnMonsterDeath);
+		HealthComponent->OnDeath.AddUniqueDynamic(this, &ThisClass::OnMonsterDeath);
+	}
 }
 
 void AHellunaEnemyCharacter::InitEnemyStartUpData()
@@ -62,24 +74,31 @@ void AHellunaEnemyCharacter::InitEnemyStartUpData()
 
 void AHellunaEnemyCharacter::BeginPlay()
 {
+	// Pool 생성 상태(Controller 없음)면 StateTree 자동 시작 방지
+	// Super::BeginPlay() → Component BeginPlay → StateTreeComponent::StartTree() 호출됨
+	// Controller 없으면 Pawn 컨텍스트 못 찾아서 에러 60×3줄 스팸 발생
+	// → ActivateActor에서 SpawnDefaultController 후 수동 시작
+	if (!GetController())
+	{
+		if (UStateTreeComponent* STComp = FindComponentByClass<UStateTreeComponent>())
+		{
+			STComp->SetComponentTickEnabled(false);
+		}
+	}
+
 	Super::BeginPlay();
 
 	if (!HasAuthority()) return;
-	
+
+	// Pool 생성 상태(Controller 없음)면 GameMode 등록 스킵
+	// → ActivateActor에서 등록 예정 (TODO)
+	if (!GetController()) return;
+
 	if (AHellunaDefenseGameMode* GM = Cast<AHellunaDefenseGameMode>(UGameplayStatics::GetGameMode(this)))
 	{
-		// ✅ 스폰 직후 “살아있는 몬스터”로 등록
 		GM->RegisterAliveMonster(this);
 	}
-		// ✅ 죽음 이벤트를 받아서 GameMode에 “죽었다” 통지
-	if (HealthComponent)
-	{
-		HealthComponent->OnHealthChanged.AddDynamic(this, &AHellunaEnemyCharacter::OnMonsterHealthChanged);
-		HealthComponent->OnDeath.RemoveDynamic(this, &ThisClass::OnMonsterDeath);
-		HealthComponent->OnDeath.AddUniqueDynamic(this, &ThisClass::OnMonsterDeath);
-	}
-
-};
+}
 
 void AHellunaEnemyCharacter::OnMonsterHealthChanged(
 	UActorComponent* MonsterHealthComponent,

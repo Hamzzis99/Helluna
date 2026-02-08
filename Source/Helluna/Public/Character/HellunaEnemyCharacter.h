@@ -33,6 +33,7 @@ protected:
 	UFUNCTION()
 	void OnMonsterHealthChanged(UActorComponent* MonsterHealthComponent, float OldHealth, float NewHealth, AActor* InstigatorActor);
 
+	UFUNCTION()
 	void OnMonsterDeath(AActor* DeadActor, AActor* KillerActor);
 
 private:

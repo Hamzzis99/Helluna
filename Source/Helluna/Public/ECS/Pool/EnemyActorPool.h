@@ -16,11 +16,15 @@
  *
  * ■ 작동 원리
  *   1. Processor 첫 틱: InitializePool() → PoolSize(60)개 Actor 사전 생성
- *      - Hidden + TickOff + CollisionOff + ReplicateOff 상태로 대기
+ *      - Hidden + TickOff + CollisionOff + ReplicateOff, Controller 없음 (AutoPossessAI 꺼짐)
  *   2. Entity→Actor 전환: ActivateActor()
- *      - Pool에서 꺼내기 → 위치/HP 설정 → 보이기 → AI RestartLogic → 리플리케이션 On
+ *      - Pool에서 꺼내기 → 위치/HP 설정 → 보이기
+ *      - 첫 활성화: SpawnDefaultController() → Possess → StateTree 자동 시작 (에러 0)
+ *      - 재활성화: Controller 존재 → RestartLogic만 호출
+ *      - 리플리케이션 On
  *   3. Actor→Entity 복귀: DeactivateActor()
  *      - AI StopLogic → 숨기기 → TickOff + CollisionOff + ReplicateOff → Pool 반납
+ *      - Controller는 Possess 유지 (재활성화 시 즉시 사용 가능)
  *   4. 전투 사망: Actor가 외부에서 Destroy됨 → CleanupAndReplenish()가 Pool 보충
  *
  * ■ Phase 1과의 관계
@@ -154,7 +158,8 @@ private:
 	/**
 	 * 단일 Actor를 사전 생성한다.
 	 * Hidden + TickOff + CollisionOff + ReplicateOff 상태로 생성.
-	 * AutoPossessAI 완료 후(0.3초 타이머) AI Controller + StateTree 정지.
+	 * AutoPossessAI = Disabled로 Controller를 만들지 않는다 (StateTree 에러 방지).
+	 * Controller는 ActivateActor 첫 호출 시 SpawnDefaultController()로 생성.
 	 */
 	AHellunaEnemyCharacter* CreatePooledActor();
 
@@ -200,8 +205,9 @@ private:
 //      파괴된 Actor를 목록에서 제거하고 새 Actor를 Pool에 보충합니다.
 //
 //   Q: ActivateActor 시 0.2초 타이머가 필요한가요?
-//   A: 아닙니다. Pool Actor는 초기 생성 시 이미 AutoPossessAI가 완료되어
-//      Controller가 Pawn을 Possess한 상태입니다. RestartLogic을 즉시 호출해도 안전합니다.
+//   A: 아닙니다. 첫 활성화 시 SpawnDefaultController()가 동기적으로 Controller를 생성하고
+//      Possess합니다. Pawn이 이미 올바른 위치에 있고 보이므로 StateTree가 즉시 시작됩니다.
+//      두 번째 이후: DeactivateActor가 Controller를 유지하므로 RestartLogic만 호출합니다.
 //
 //   Q: Pool이 비어서 nullptr가 반환되면?
 //   A: 로그 "[Pool] 비활성 Actor 없음! Pool 소진."이 출력됩니다.
@@ -223,10 +229,10 @@ private:
 //
 // ■ 증상: Activate 후 AI가 동작하지 않음
 //   1. Controller가 Pawn을 Possess하고 있는지 확인 (GetController() != nullptr)
-//   2. StateTreeComponent가 Controller에 있는지 확인
-//   3. RestartLogic() 후 IsRunning() 확인
-//   → 해결: CreatePooledActor의 0.3초 타이머가 올바르게 StopLogic 호출했는지 확인
-//           ActivateActor에서 RestartLogic 호출 순서 확인
+//   2. 첫 활성화: SpawnDefaultController()가 호출되었는지 확인
+//   3. StateTreeComponent가 Controller에 있는지 확인
+//   4. RestartLogic() 후 IsRunning() 확인
+//   → 해결: ActivateActor 로그 확인, Controller가 null이면 SpawnDefaultController 호출 확인
 //
 // ■ 증상: Deactivate 후에도 Actor가 보임
 //   1. SetActorHiddenInGame(true) 호출 확인

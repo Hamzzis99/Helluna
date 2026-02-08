@@ -151,7 +151,7 @@ void UEnemyActorSpawnProcessor::DespawnActorToEntity(
 	SpawnState.bHasSpawnedActor = false;
 	SpawnState.SpawnedActor = nullptr;
 
-	UE_LOG(LogECSEnemy, Log,
+	UE_LOG(LogECSEnemy, Verbose,
 		TEXT("[Despawn] Actor->Entity 복귀 (Pool 반납)! HP: %.1f/%.1f, 위치: %s"),
 		Data.CurrentHP, Data.MaxHP,
 		*Transform.GetTransform().GetLocation().ToString());
@@ -227,8 +227,8 @@ bool UEnemyActorSpawnProcessor::TrySpawnActor(
 	SpawnState.bHasSpawnedActor = true;
 	SpawnState.SpawnedActor = SpawnedActor;
 
-	UE_LOG(LogECSEnemy, Log,
-		TEXT("===== Actor 활성화 성공! (Pool) 클래스: %s, 위치: %s, HP: %.1f ====="),
+	UE_LOG(LogECSEnemy, Verbose,
+		TEXT("[Spawn] Actor 활성화 성공 (Pool). 클래스: %s, 위치: %s, HP: %.1f"),
 		*SpawnedActor->GetClass()->GetName(),
 		*SpawnTransform.GetLocation().ToString(),
 		Data.CurrentHP > 0.f ? Data.CurrentHP : Data.MaxHP);

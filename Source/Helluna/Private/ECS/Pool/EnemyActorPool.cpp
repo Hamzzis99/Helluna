@@ -29,6 +29,7 @@
 #include "Components/StateTreeComponent.h"
 
 #include "GameFramework/Controller.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "Engine/World.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogECSPool, Log, All);
@@ -174,13 +175,30 @@ AHellunaEnemyCharacter* UEnemyActorPool::ActivateActor(
 	Actor->SetActorTickEnabled(true);
 	Actor->SetReplicates(true);
 
-	// 3. AI Controller + StateTree 재시작
-	// Pool Actor는 초기 생성 시 AutoPossessAI가 완료된 상태이므로
-	// Controller가 이미 Pawn을 Possess하고 있다.
-	// Phase 1의 0.2초 타이머 불필요 → RestartLogic 즉시 호출 안전.
+	// CharacterMovement 재활성화 (DeactivateActor/CreatePooledActor에서 꺼둔 것)
+	if (UCharacterMovementComponent* MoveComp = Actor->GetCharacterMovement())
+	{
+		MoveComp->SetComponentTickEnabled(true);
+	}
+
+	// 3. AI Controller + StateTree 시작
+	// CreatePooledActor에서 AutoPossessAI를 끈 상태로 생성했으므로
+	// 첫 활성화 시 Controller가 없다. SpawnDefaultController()로 수동 생성.
+	// 두 번째 이후 활성화: DeactivateActor가 Controller를 살려뒀으므로 RestartLogic만 호출.
 	if (APawn* Pawn = Cast<APawn>(Actor))
 	{
-		if (AController* Controller = Pawn->GetController())
+		AController* Controller = Pawn->GetController();
+
+		// 첫 활성화: Controller 없음 → 수동 생성 + Possess
+		// Pawn이 이미 올바른 위치에 있고 보이는 상태이므로
+		// StateTree가 Pawn 컨텍스트를 정상적으로 찾는다 → 에러 0
+		if (!Controller)
+		{
+			Pawn->SpawnDefaultController();
+			Controller = Pawn->GetController();
+		}
+
+		if (Controller)
 		{
 			Controller->SetActorTickEnabled(true);
 
@@ -205,7 +223,7 @@ AHellunaEnemyCharacter* UEnemyActorPool::ActivateActor(
 	// BeginPlay에서 이미 등록되었지만, Pool 재활성화 시 재등록이 필요할 수 있음.
 	// 웨이브 시스템 연동 시 함께 구현 예정.
 
-	UE_LOG(LogECSPool, Log,
+	UE_LOG(LogECSPool, Verbose,
 		TEXT("[Pool] Activate! Actor: %s, 위치: %s, HP: %.1f, Active: %d, Inactive: %d"),
 		*Actor->GetName(),
 		*SpawnTransform.GetLocation().ToString(),
@@ -250,20 +268,27 @@ void UEnemyActorPool::DeactivateActor(AHellunaEnemyCharacter* Actor)
 		}
 	}
 
-	// 2. 숨기기 + 비활성화 + 네트워크 차단
+	// 2. CharacterMovement 정지 (SetActorTickEnabled만으로는 부족 — 별도 Tick 보유)
+	if (UCharacterMovementComponent* MoveComp = Actor->GetCharacterMovement())
+	{
+		MoveComp->StopMovementImmediately();
+		MoveComp->SetComponentTickEnabled(false);
+	}
+
+	// 3. 숨기기 + 비활성화 + 네트워크 차단
 	Actor->SetActorTickEnabled(false);
 	Actor->SetActorHiddenInGame(true);
 	Actor->SetActorEnableCollision(false);
 	Actor->SetReplicates(false);
 
-	// 3. 숨김 위치로 이동 (물리/렌더링/Perception 범위 밖)
+	// 4. 숨김 위치로 이동 (물리/렌더링/Perception 범위 밖)
 	Actor->SetActorLocation(PoolHiddenLocation);
 
-	// 4. Pool 목록 갱신 (Active → Inactive)
+	// 5. Pool 목록 갱신 (Active → Inactive)
 	ActiveActors.Remove(Actor);
 	InactiveActors.Add(Actor);
 
-	UE_LOG(LogECSPool, Log,
+	UE_LOG(LogECSPool, Verbose,
 		TEXT("[Pool] Deactivate! Actor: %s, Active: %d, Inactive: %d"),
 		*Actor->GetName(), ActiveActors.Num(), InactiveActors.Num());
 }
@@ -319,15 +344,15 @@ void UEnemyActorPool::CleanupAndReplenish()
 // CreatePooledActor: 단일 Pool Actor 사전 생성
 // ============================================================================
 // ■ 쉬운 설명: 적 Actor 1마리를 만들어 바로 숨기고 재우는 함수.
-//   SpawnActor → 즉시 Hidden+TickOff+CollisionOff+ReplicateOff
-//   → 0.3초 후 타이머로 AI Controller + StateTree 정지.
+//   SpawnActorDeferred → AutoPossessAI 끄기 → FinishSpawning → 숨기기.
+//   Controller는 생성하지 않는다 (ActivateActor에서 첫 호출 시 생성).
 // ■ 반환값: 생성된 Actor. 실패 시 nullptr.
 // ■ 주의사항:
 //   - 숨김 위치(Z=-50000)에 생성하여 플레이어에게 안 보임
-//   - AutoPossessAI가 자동으로 Controller를 생성+Possess
-//   - 0.3초 대기 이유: AutoPossessAI → Possess → StateTree 초기화 완료 대기
-//   - 타이머 안전장치: Actor가 이미 ActivateActor로 활성화되었으면 타이머 스킵
-//     (IsHidden() == false이면 이미 활성화된 것 → StopLogic 호출하면 안 됨!)
+//   - AutoPossessAI = Disabled → Controller 없음 → StateTree 에러 0
+//   - ActivateActor 첫 호출 시 SpawnDefaultController()로 Controller 생성
+//     → Pawn이 이미 올바른 위치+보이는 상태 → StateTree 정상 시작
+//   - 두 번째 이후: DeactivateActor가 Controller 유지 → RestartLogic만 호출
 // ■ 관련 함수: InitializePool(), CleanupAndReplenish()
 // ============================================================================
 AHellunaEnemyCharacter* UEnemyActorPool::CreatePooledActor()
@@ -344,56 +369,44 @@ AHellunaEnemyCharacter* UEnemyActorPool::CreatePooledActor()
 		return nullptr;
 	}
 
-	FActorSpawnParameters SpawnParams;
-	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
 	const FTransform HiddenTransform(FRotator::ZeroRotator, PoolHiddenLocation);
 
-	AHellunaEnemyCharacter* Actor = Cast<AHellunaEnemyCharacter>(
-		World->SpawnActor(CachedEnemyClass, &HiddenTransform, SpawnParams));
+	// SpawnActorDeferred 사용: BeginPlay 전에 AutoPossessAI를 끌 수 있다.
+	// 왜: AutoPossessAI가 켜져 있으면 SpawnActor 즉시 Possess → StateTree::StartTree
+	//     → 아직 Pawn 컨텍스트가 없어서 에러 60×3줄 스팸.
+	// 해결: Deferred 스폰 → AutoPossess 끄기 → FinishSpawning → 에러 0
+	//       Possess는 ActivateActor에서 SpawnDefaultController() 호출 시 수행.
+	AHellunaEnemyCharacter* Actor = World->SpawnActorDeferred<AHellunaEnemyCharacter>(
+		CachedEnemyClass, HiddenTransform, nullptr, nullptr,
+		ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
 
 	if (!Actor)
 	{
-		UE_LOG(LogECSPool, Error, TEXT("[Pool] CreatePooledActor 실패! SpawnActor 반환 null. Class: %s"),
+		UE_LOG(LogECSPool, Error, TEXT("[Pool] CreatePooledActor 실패! SpawnActorDeferred 반환 null. Class: %s"),
 			*CachedEnemyClass->GetName());
 		return nullptr;
 	}
 
-	// 즉시 숨기기 + 비활성화 (렌더링/리플리케이션 전, 같은 프레임 내)
+	// BeginPlay 전에 AutoPossessAI 비활성화 (StateTree 에러 방지)
+	Actor->AutoPossessAI = EAutoPossessAI::Disabled;
+
+	// FinishSpawning → BeginPlay 호출되지만 AutoPossess 꺼져있으므로
+	// Controller 생성 안 됨 → StateTree 시작 안 됨 → 에러 0
+	Actor->FinishSpawning(HiddenTransform);
+
+	// 즉시 숨기기 + 비활성화
 	Actor->SetActorHiddenInGame(true);
 	Actor->SetActorEnableCollision(false);
 	Actor->SetActorTickEnabled(false);
 	Actor->SetReplicates(false);
 
-	// AutoPossessAI 완료 후 AI Controller + StateTree 정지 (0.3초 대기)
-	// 왜 즉시 안 하나: SpawnActor 내부에서 AutoPossessAI가 동기적으로 실행되지만,
-	// StateTree 초기화는 BeginPlay 이후 몇 프레임 걸릴 수 있다.
-	// 0.3초 후에 확실하게 정지시킨다.
-	TWeakObjectPtr<AActor> WeakActor = Actor;
-	FTimerHandle TimerHandle;
-	World->GetTimerManager().SetTimer(TimerHandle, [WeakActor]()
+	// CharacterMovement도 꺼야 stuck 로그 방지
+	// SetActorTickEnabled만으로는 CharacterMovementComponent의 자체 Tick이 꺼지지 않음
+	if (UCharacterMovementComponent* MoveComp = Actor->GetCharacterMovement())
 	{
-		AActor* A = WeakActor.Get();
-		if (!A) return;
-
-		// 안전장치: 이미 ActivateActor로 활성화된 Actor면 건너뜀
-		// (활성화된 Actor의 AI를 정지시키면 안 됨!)
-		if (!A->IsHidden()) return;
-
-		APawn* Pawn = Cast<APawn>(A);
-		if (!Pawn) return;
-
-		AController* Controller = Pawn->GetController();
-		if (!Controller) return;
-
-		Controller->SetActorTickEnabled(false);
-
-		if (UStateTreeComponent* STComp = Controller->FindComponentByClass<UStateTreeComponent>())
-		{
-			STComp->StopLogic(TEXT("Pool initial deactivation"));
-			STComp->SetComponentTickEnabled(false);
-		}
-	}, 0.3f, false);
+		MoveComp->StopMovementImmediately();
+		MoveComp->SetComponentTickEnabled(false);
+	}
 
 	return Actor;
 }

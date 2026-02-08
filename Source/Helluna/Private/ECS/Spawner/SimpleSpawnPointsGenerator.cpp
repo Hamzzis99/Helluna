@@ -56,10 +56,6 @@ void USimpleSpawnPointsGenerator::Generate(
 		Point.Z += ZOffset;
 
 		Locations.Add(Point);
-
-		UE_LOG(LogSimpleSpawnGen, Log,
-			TEXT("  포인트[%d]: X=%.1f Y=%.1f Z=%.1f"),
-			i, Point.X, Point.Y, Point.Z);
 	}
 
 	// ------------------------------------------------------------------
