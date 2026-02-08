@@ -15,6 +15,7 @@
 #include "ECS/Traits/EnemyMassTrait.h"
 #include "ECS/Fragments/EnemyMassFragments.h"
 #include "MassEntityTemplateRegistry.h"
+#include "MassCommonFragments.h"        // FTransformFragment
 #include "Character/HellunaEnemyCharacter.h"
 
 void UEnemyMassTrait::BuildTemplate(
@@ -22,25 +23,25 @@ void UEnemyMassTrait::BuildTemplate(
 	const UWorld& World) const
 {
 	// ------------------------------------------------------------------
+	// 0단계: FTransformFragment 추가 (필수!)
+	// MassSpawnLocationProcessor가 스폰 위치를 기록하고,
+	// EnemyActorSpawnProcessor가 위치를 읽기 위해 반드시 필요하다.
+	// 이것이 없으면 Processor 쿼리가 매칭되지 않아 Execute가 호출되지 않는다!
+	// ------------------------------------------------------------------
+	BuildContext.AddFragment<FTransformFragment>();
+
+	// ------------------------------------------------------------------
 	// 1단계: 스폰 상태 추적용 per-entity Fragment 추가
-	// 각 Mass Entity마다 독립적인 스폰 상태(bHasSpawnedActor 등)를 추적한다.
-	// 초기값은 기본 생성자로 충분 (bHasSpawnedActor = false)
 	// ------------------------------------------------------------------
 	BuildContext.AddFragment<FEnemySpawnStateFragment>();
 
 	// ------------------------------------------------------------------
 	// 2단계: 적 데이터 Fragment 추가 + 에디터 설정값으로 초기화
-	// AddFragment_GetRef<T>(): Fragment를 아키타입에 등록하고 동시에
-	// 참조를 반환하여 초기값을 설정할 수 있게 해주는 UE 5.7.2 API.
-	// 이 값들은 이 MassEntityConfig에서 생성되는 모든 엔티티에 복사된다.
 	// ------------------------------------------------------------------
 	FEnemyDataFragment& DataFragment = BuildContext.AddFragment_GetRef<FEnemyDataFragment>();
 	DataFragment.EnemyClass = EnemyClass;
 	DataFragment.SpawnThreshold = SpawnThreshold;
 
-	// ------------------------------------------------------------------
-	// 빌드 결과 로그 출력 (에디터/쿠킹 시 확인용)
-	// ------------------------------------------------------------------
 	UE_LOG(LogTemp, Log, TEXT("[EnemyMassTrait] BuildTemplate - EnemyClass: %s, SpawnThreshold: %.1f"),
 		EnemyClass ? *EnemyClass->GetName() : TEXT("None"), SpawnThreshold);
 }

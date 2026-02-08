@@ -6,6 +6,7 @@
 #include "Perception/AIPerceptionComponent.h"
 #include "Perception/AISenseConfig_Sight.h"
 #include "BehaviorTree/BlackboardComponent.h"
+#include "Components/StateTreeAIComponent.h"
 
 #include "DebugHelper.h"
 
@@ -24,6 +25,11 @@ AHellunaAIController::AHellunaAIController(const FObjectInitializer& ObjectIniti
 	EnemyPerceptionComponent->ConfigureSense(*AISenseConfig_Sight);
 	EnemyPerceptionComponent->SetDominantSense(UAISenseConfig_Sight::StaticClass());
 	EnemyPerceptionComponent->OnTargetPerceptionUpdated.AddUniqueDynamic(this, &ThisClass::OnEnemyPerceptionUpdated);
+
+	// StateTree AI 컴포넌트 생성
+	// bStartLogicAutomatically = true (기본값) → Possess 후 자동 실행
+	// 에디터에서 StateTree 에셋만 할당하면 바로 동작
+	StateTreeAIComponent = CreateDefaultSubobject<UStateTreeAIComponent>("StateTreeAIComponent");
 
 	SetGenericTeamId(FGenericTeamId(1));
 

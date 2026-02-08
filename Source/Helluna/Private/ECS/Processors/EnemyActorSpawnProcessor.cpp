@@ -88,6 +88,11 @@ void UEnemyActorSpawnProcessor::ConfigureQueries(const TSharedRef<FMassEntityMan
 	// ※ RegisterQuery는 생성자에서 이미 호출됨 (CallInitialize 초기화 순서 때문)
 	// ------------------------------------------------------------------
 
+	// UE 5.7.2: ForEachEntityChunk 사용 시 반드시 RegisterWithProcessor 필요
+	// RegisterQuery(생성자)는 OwnedQueries에 추가만 하고,
+	// RegisterWithProcessor는 bRegistered 플래그를 설정하여 실행 시 assert 방지
+	EntityQuery.RegisterWithProcessor(*this);
+
 	// FTransformFragment: 엔티티의 월드 위치/회전 (ReadOnly - 위치만 읽음)
 	EntityQuery.AddRequirement<FTransformFragment>(EMassFragmentAccess::ReadOnly);
 
@@ -119,6 +124,17 @@ void UEnemyActorSpawnProcessor::Execute(
 		return;
 	}
 
+	// 디버그: Execute 진입 확인
+	static uint64 LastLogFrame = 0;
+	uint64 CurrentFrame = GFrameCounter;
+	if (CurrentFrame != LastLogFrame && (CurrentFrame % 300 == 0)) // ~5초마다 1회
+	{
+		UE_LOG(LogECSEnemy, Warning, TEXT("[Execute] ▶ 진입! World: %s, IsServer: %s"),
+			*World->GetName(),
+			World->IsNetMode(NM_DedicatedServer) || World->IsNetMode(NM_ListenServer) ? TEXT("YES") : TEXT("NO"));
+		LastLogFrame = CurrentFrame;
+	}
+
 	// ------------------------------------------------------------------
 	// Step 1: 서버의 모든 플레이어 위치 수집
 	// 서버의 PlayerController를 순회하여 Pawn의 위치를 캐싱한다.
@@ -141,10 +157,11 @@ void UEnemyActorSpawnProcessor::Execute(
 	// 플레이어가 없으면 거리 비교 불가 -> 조기 종료
 	if (PlayerLocations.IsEmpty())
 	{
+		UE_LOG(LogECSEnemy, Warning, TEXT("[Execute] 플레이어가 없어서 조기 종료!"));
 		return;
 	}
 
-	UE_LOG(LogECSEnemy, Verbose, TEXT("[Execute] 플레이어 %d명 위치 수집 완료"), PlayerLocations.Num());
+	UE_LOG(LogECSEnemy, Warning, TEXT("[Execute] 플레이어 %d명 위치 수집 완료"), PlayerLocations.Num());
 
 	// ------------------------------------------------------------------
 	// Step 2-3: 엔티티 청크 순회 + 거리 비교 + Actor 스폰
@@ -159,6 +176,8 @@ void UEnemyActorSpawnProcessor::Execute(
 			auto SpawnStateList = Context.GetMutableFragmentView<FEnemySpawnStateFragment>();
 			const auto DataList = Context.GetFragmentView<FEnemyDataFragment>();
 			const int32 NumEntities = Context.GetNumEntities();
+
+			UE_LOG(LogECSEnemy, Warning, TEXT("[Execute] 청크 순회 - 엔티티 %d개 발견"), NumEntities);
 
 			// 각 엔티티 순회
 			for (int32 i = 0; i < NumEntities; ++i)
@@ -193,6 +212,11 @@ void UEnemyActorSpawnProcessor::Execute(
 
 				// SpawnThreshold도 제곱하여 비교 (Sqrt 없이 판단)
 				const float ThresholdSq = Data.SpawnThreshold * Data.SpawnThreshold;
+
+				// 디버그: 거리 출력
+				UE_LOG(LogECSEnemy, Warning, TEXT("  엔티티[%d] 위치: X=%.1f Y=%.1f Z=%.1f, 최소거리: %.1f cm, 임계값: %.1f cm"),
+					i, EntityLocation.X, EntityLocation.Y, EntityLocation.Z,
+					FMath::Sqrt(MinDistSq), Data.SpawnThreshold);
 
 				// ----------------------------------------------------------
 				// Step 3: 거리 < SpawnThreshold이면 Actor 스폰

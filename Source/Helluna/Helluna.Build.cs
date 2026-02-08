@@ -23,6 +23,7 @@ public class Helluna : ModuleRules
             "MassAIBehavior",     // StateTree + Mass 연동 (UMassStateTreeTrait 등)
             "MassNavigation",     // Mass 네비게이션 (이동/회피)
             "StateTreeModule",    // StateTree 런타임 (StateTree 에셋 실행)
+            "GameplayStateTreeModule", // StateTreeAIComponent (Actor용 StateTree)
             "NetCore",            // 네트워크 코어 (리플리케이션 기반 - 향후 MassReplication 대비)
 
             //김기현이 따로 추가한 파일들
