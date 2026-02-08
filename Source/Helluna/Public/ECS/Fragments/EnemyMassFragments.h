@@ -3,18 +3,11 @@
  *
  * 하이브리드 ECS 시스템에서 사용하는 Mass Entity Fragment 정의.
  *
- * 1) FEnemySpawnStateFragment (FMassFragment)
- *    - 각 Mass Entity별로 Actor 전환 여부를 추적하는 per-entity 상태 데이터.
- *    - Processor가 매 틱 읽어서 이미 전환된 엔티티는 스킵한다.
+ * 1) FEnemySpawnStateFragment - 각 Entity의 Actor 전환 상태 추적
+ * 2) FEnemyDataFragment - 스폰/디스폰/틱 최적화 설정 + HP 보존 데이터
  *
- * 2) FEnemyDataFragment (FMassFragment)
- *    - Mass Entity가 Actor로 전환될 때 필요한 설정 데이터.
- *    - 스폰할 적 클래스, 전환 거리 임계값 등을 담는다.
- *    - UEnemyMassTrait::BuildTemplate에서 AddFragment_GetRef<T>()로 초기값 설정.
- *
- * ※ AIControllerClass 필드는 의도적으로 생략.
- *   AHellunaEnemyCharacter 생성자에 AutoPossessAI = PlacedInWorldOrSpawned가 설정되어 있어
- *   SpawnActor만 하면 엔진이 자동으로 AIController를 스폰+Possess 해준다.
+ * 모든 설정값은 UEnemyMassTrait에서 에디터로 설정하고,
+ * BuildTemplate에서 AddFragment_GetRef<T>()로 Fragment에 복사된다.
  */
 
 // File: Source/Helluna/Public/ECS/Fragments/EnemyMassFragments.h
@@ -25,62 +18,94 @@
 #include "MassEntityTypes.h"
 #include "EnemyMassFragments.generated.h"
 
-// 전방선언 - 실제 include는 Processor의 cpp에서 수행
 class AHellunaEnemyCharacter;
 
-/**
- * FEnemySpawnStateFragment
- *
- * 각 Mass Entity의 Actor 전환 상태를 추적하는 per-entity Fragment.
- * Processor가 매 틱 이 Fragment를 읽어서 이미 전환된 엔티티는 스킵한다.
- */
+// ============================================================================
+// FEnemySpawnStateFragment
+// 각 Mass Entity의 Actor 전환 상태를 추적하는 per-entity Fragment.
+// ============================================================================
 USTRUCT()
 struct HELLUNA_API FEnemySpawnStateFragment : public FMassFragment
 {
 	GENERATED_BODY()
 
-	/** Actor로 전환 완료 여부. true이면 이미 AHellunaEnemyCharacter가 스폰된 상태 */
+	/** Actor로 전환 완료 여부. true이면 AHellunaEnemyCharacter가 스폰된 상태 */
 	UPROPERTY()
 	bool bHasSpawnedActor = false;
 
-	/** 스폰된 Actor에 대한 약한 참조. 역전환(Actor->Mass) 또는 Actor 파괴 추적 시 사용 */
+	/** 스폰된 Actor에 대한 약한 참조. 역전환/파괴 추적 시 사용 */
 	UPROPERTY()
 	TWeakObjectPtr<AActor> SpawnedActor;
 };
 
-/**
- * FEnemyDataFragment
- *
- * Mass Entity가 Actor로 전환될 때 필요한 설정 데이터를 담는 per-entity Fragment.
- * UEnemyMassTrait의 BuildTemplate에서 AddFragment_GetRef<T>()를 통해 초기값이 설정된다.
- *
- * ※ AIControllerClass 필드 미포함 이유:
- *   AHellunaEnemyCharacter 생성자에 AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned
- *   가 이미 설정되어 있어, SpawnActor 호출만으로 엔진이 자동으로
- *   BP/CDO에 지정된 AIController를 스폰하고 Possess한다.
- *   PossessedBy()에서 InitEnemyStartUpData()가 호출되어 GAS도 자동 초기화된다.
- */
+// ============================================================================
+// FEnemyDataFragment
+// 스폰/디스폰 설정 + 거리별 틱 최적화 + HP 보존 데이터.
+// Trait에서 설정하는 값과 런타임 상태가 공존한다.
+// ============================================================================
 USTRUCT()
 struct HELLUNA_API FEnemyDataFragment : public FMassFragment
 {
 	GENERATED_BODY()
 
-	/** 스폰할 적 블루프린트 클래스 (예: BP_HellunaEnemyCharacter) */
+	// === 스폰 설정 (Trait에서 복사) ===
+
+	/** 스폰할 적 블루프린트 클래스 */
 	UPROPERTY()
 	TSubclassOf<AHellunaEnemyCharacter> EnemyClass;
 
-	/** Actor 전환 거리 임계값 (단위: cm). 80m = 8000cm */
+	// === 거리 설정 (Trait에서 복사) ===
+
+	/** Entity->Actor 전환 거리 (cm). 기본 50m */
 	UPROPERTY()
-	float SpawnThreshold = 8000.f;
+	float SpawnThreshold = 5000.f;
+
+	/** Actor->Entity 복귀 거리 (cm). 기본 60m. 반드시 SpawnThreshold보다 커야 함 (히스테리시스) */
+	UPROPERTY()
+	float DespawnThreshold = 6000.f;
+
+	// === Actor 제한 (Trait에서 복사) ===
+
+	/** 동시 최대 Actor 수 (Soft Cap). 초과 시 먼 Actor부터 Entity로 복귀 */
+	UPROPERTY()
+	int32 MaxConcurrentActors = 50;
+
+	// === 거리별 Tick 빈도 (Trait에서 복사) ===
+
+	/** 근거리 기준 (cm). 이 이내 = NearTickInterval 적용 */
+	UPROPERTY()
+	float NearDistance = 2000.f;
+
+	/** 중거리 기준 (cm). Near~Mid = MidTickInterval 적용 */
+	UPROPERTY()
+	float MidDistance = 4000.f;
+
+	/** 근거리 Tick 간격 (초). 0 = 매 틱 */
+	UPROPERTY()
+	float NearTickInterval = 0.f;
+
+	/** 중거리 Tick 간격 (초). ~12Hz */
+	UPROPERTY()
+	float MidTickInterval = 0.08f;
+
+	/** 원거리 Tick 간격 (초). ~4Hz. Mid~Despawn 구간 */
+	UPROPERTY()
+	float FarTickInterval = 0.25f;
+
+	// === HP 보존 (런타임 상태 - Trait에서 설정하지 않음) ===
+
+	/** 현재 HP. -1 = 아직 스폰 안 됨. Actor->Entity 복귀 시 저장, 재스폰 시 복원 */
+	UPROPERTY()
+	float CurrentHP = -1.f;
+
+	/** 최대 HP. Actor에서 읽어서 저장 */
+	UPROPERTY()
+	float MaxHP = 100.f;
 };
 
 // ============================================================================
 // TMassFragmentTraits 특수화
-//
-// UE 5.x에서 TSubclassOf<T>는 내부적으로 TObjectPtr<UClass>를 사용하고,
-// TWeakObjectPtr<T>도 non-trivial 복사 생성자를 가진다.
-// Mass Entity Fragment는 기본적으로 trivially copyable을 요구하므로,
-// 이를 충족하지 못하는 Fragment에 대해 명시적으로 opt-out 해야 한다.
+// TSubclassOf, TWeakObjectPtr는 non-trivially copyable이므로 명시적 opt-out 필요.
 // ============================================================================
 
 template<>

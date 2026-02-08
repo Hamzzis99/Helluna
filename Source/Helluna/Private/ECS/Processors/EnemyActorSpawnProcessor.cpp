@@ -1,45 +1,27 @@
 /**
  * EnemyActorSpawnProcessor.cpp
  *
- * 하이브리드 ECS 시스템의 핵심 Processor 구현.
- * 서버에서 Mass Entity와 플레이어 간 거리를 계산하여
- * 가까운 엔티티를 AHellunaEnemyCharacter로 전환한다.
- *
- * SpawnActor 호출만으로 기존 시스템이 모두 자동 초기화된다:
- * - AutoPossessAI = PlacedInWorldOrSpawned
- *   -> 엔진이 AIController 자동 스폰 + Possess
- * - PossessedBy() -> InitEnemyStartUpData()
- *   -> GAS/어빌리티 자동 초기화
- * - bReplicates = true (ACharacter 기본)
- *   -> 클라이언트에 자동 복제
- *
- * [UE 5.7.2 API 적용 사항]
- * - ConfigureQueries(const TSharedRef<FMassEntityManager>&) 사용
- * - ForEachEntityChunk(Context, ...) 사용 (EntityManager 버전은 deprecated)
- * - Context.GetWorld()로 월드 참조 획득
- * - RegisterQuery(EntityQuery) 필수 호출
- * - 거리 비교는 DistSquared로 수행 (Sqrt 호출 최소화)
+ * Phase 1 최적화 적용:
+ * - 역변환 (Actor->Entity): HP/위치 보존 후 Destroy
+ * - 거리별 Tick 빈도 조절: Near/Mid/Far 구간
+ * - Soft Cap: MaxConcurrentActors 초과 시 먼 Actor부터 Destroy
+ * - HP 복원: Entity->Actor 재스폰 시 이전 HP 복원
  */
 
 // File: Source/Helluna/Private/ECS/Processors/EnemyActorSpawnProcessor.cpp
 
 #include "ECS/Processors/EnemyActorSpawnProcessor.h"
 
-// Mass Entity 관련
-#include "MassCommonFragments.h"        // FTransformFragment
-#include "MassExecutionContext.h"        // FMassExecutionContext
-
-// 커스텀 Fragment
+#include "MassCommonFragments.h"
+#include "MassExecutionContext.h"
 #include "ECS/Fragments/EnemyMassFragments.h"
-
-// 기존 Helluna 클래스 (수정하지 않음, include만)
 #include "Character/HellunaEnemyCharacter.h"
+#include "Character/EnemyComponent/HellunaHealthComponent.h"
 
-// UE 유틸리티
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/Controller.h"
 
-// 커스텀 로그 카테고리: 모든 ECS 하이브리드 시스템 로그에 사용
 DEFINE_LOG_CATEGORY_STATIC(LogECSEnemy, Log, All);
 
 // ============================================================================
@@ -47,62 +29,181 @@ DEFINE_LOG_CATEGORY_STATIC(LogECSEnemy, Log, All);
 // ============================================================================
 UEnemyActorSpawnProcessor::UEnemyActorSpawnProcessor()
 {
-	// ------------------------------------------------------------------
-	// 실행 플래그 설정
-	// Server: 데디케이티드 서버에서 실행
-	// Standalone: 에디터 PIE/Standalone 테스트에서 실행
-	// Client는 제외: Mass Entity 시뮬레이션은 서버에서만 수행하고
-	//               클라이언트는 Actor 리플리케이션으로 받으므로 불필요
-	// ------------------------------------------------------------------
 	ExecutionFlags = (uint8)(EProcessorExecutionFlags::Server | EProcessorExecutionFlags::Standalone);
-
-	// ------------------------------------------------------------------
-	// SpawnActor는 반드시 게임 스레드에서만 호출 가능.
-	// Mass Processor는 기본적으로 멀티스레드에서 실행될 수 있으므로
-	// 이 플래그를 true로 설정하여 게임 스레드 실행을 보장한다.
-	// ------------------------------------------------------------------
 	bRequiresGameThreadExecution = true;
-
-	// ProcessingPhase는 기본값 EMassProcessingPhase::PrePhysics 사용
-
-	// ------------------------------------------------------------------
-	// ⚠️ RegisterQuery는 반드시 생성자에서 호출해야 한다!
-	// CallInitialize 흐름:
-	//   1) OwnedQueries 순회 → Query->Initialize(EntityManager) → bInitialized = true
-	//   2) ConfigureQueries() 호출 → AddRequirement 사용 가능
-	// 생성자에서 RegisterQuery를 안 하면 Step 1에서 OwnedQueries가 비어있어
-	// 쿼리가 Initialize되지 않고, AddRequirement에서 assert 발생!
-	// ------------------------------------------------------------------
 	RegisterQuery(EntityQuery);
 }
 
 // ============================================================================
-// ConfigureQueries: Fragment 요구사항 등록
-// UE 5.7.2 시그니처: const TSharedRef<FMassEntityManager>& 파라미터 필수
+// ConfigureQueries
 // ============================================================================
 void UEnemyActorSpawnProcessor::ConfigureQueries(const TSharedRef<FMassEntityManager>& EntityManager)
 {
-	// ------------------------------------------------------------------
-	// EntityQuery에 필요한 Fragment를 등록한다.
-	// 이 쿼리를 만족하는 엔티티만 ForEachEntityChunk에서 순회된다.
-	// ※ RegisterQuery는 생성자에서 이미 호출됨 (CallInitialize 초기화 순서 때문)
-	// ------------------------------------------------------------------
-
-	// UE 5.7.2: ForEachEntityChunk 사용 시 반드시 RegisterWithProcessor 필요
-	// RegisterQuery(생성자)는 OwnedQueries에 추가만 하고,
-	// RegisterWithProcessor는 bRegistered 플래그를 설정하여 실행 시 assert 방지
 	EntityQuery.RegisterWithProcessor(*this);
 
-	// FTransformFragment: 엔티티의 월드 위치/회전 (ReadOnly - 위치만 읽음)
-	EntityQuery.AddRequirement<FTransformFragment>(EMassFragmentAccess::ReadOnly);
+	// FTransformFragment: ReadWrite (역변환 시 위치 갱신)
+	EntityQuery.AddRequirement<FTransformFragment>(EMassFragmentAccess::ReadWrite);
 
-	// FEnemySpawnStateFragment: 전환 상태 추적 (ReadWrite - bHasSpawnedActor를 갱신해야 함)
+	// FEnemySpawnStateFragment: ReadWrite (bHasSpawnedActor 갱신)
 	EntityQuery.AddRequirement<FEnemySpawnStateFragment>(EMassFragmentAccess::ReadWrite);
 
-	// FEnemyDataFragment: 스폰 설정 데이터 (ReadOnly - EnemyClass, SpawnThreshold 읽기)
-	EntityQuery.AddRequirement<FEnemyDataFragment>(EMassFragmentAccess::ReadOnly);
+	// FEnemyDataFragment: ReadWrite (역변환 시 HP 저장)
+	EntityQuery.AddRequirement<FEnemyDataFragment>(EMassFragmentAccess::ReadWrite);
 
-	UE_LOG(LogECSEnemy, Log, TEXT("[EnemyActorSpawnProcessor] ConfigureQueries 완료 - 쿼리 등록됨"));
+	UE_LOG(LogECSEnemy, Log, TEXT("[EnemyActorSpawnProcessor] ConfigureQueries 완료"));
+}
+
+// ============================================================================
+// 헬퍼: 최소 제곱 거리 계산
+// ============================================================================
+float UEnemyActorSpawnProcessor::CalcMinDistSq(
+	const FVector& Location,
+	const TArray<FVector>& PlayerLocations)
+{
+	float MinDistSq = MAX_FLT;
+	for (const FVector& PlayerLoc : PlayerLocations)
+	{
+		const float DistSq = FVector::DistSquared(Location, PlayerLoc);
+		if (DistSq < MinDistSq)
+		{
+			MinDistSq = DistSq;
+		}
+	}
+	return MinDistSq;
+}
+
+// ============================================================================
+// 헬퍼: Actor->Entity 역변환
+// HP와 위치를 Fragment에 보존한 후 Controller+Actor를 파괴한다.
+// ============================================================================
+void UEnemyActorSpawnProcessor::DespawnActorToEntity(
+	FEnemySpawnStateFragment& SpawnState,
+	FEnemyDataFragment& Data,
+	FTransformFragment& Transform,
+	AActor* Actor)
+{
+	// 1. HP 보존
+	if (UHellunaHealthComponent* HC = Actor->FindComponentByClass<UHellunaHealthComponent>())
+	{
+		Data.CurrentHP = HC->GetHealth();
+		Data.MaxHP = HC->GetMaxHealth();
+	}
+
+	// 2. 위치 보존 (Fragment에 현재 Actor 위치 기록)
+	Transform.SetTransform(Actor->GetActorTransform());
+
+	// 3. AI Controller 정리 (고아 Controller 방지)
+	if (APawn* Pawn = Cast<APawn>(Actor))
+	{
+		if (AController* Controller = Pawn->GetController())
+		{
+			Controller->UnPossess();
+			Controller->Destroy();
+		}
+	}
+
+	// 4. Actor 파괴
+	Actor->Destroy();
+
+	// 5. 상태 초기화
+	SpawnState.bHasSpawnedActor = false;
+	SpawnState.SpawnedActor = nullptr;
+
+	UE_LOG(LogECSEnemy, Log,
+		TEXT("[Despawn] Actor->Entity 복귀! HP: %.1f/%.1f, 위치: %s"),
+		Data.CurrentHP, Data.MaxHP,
+		*Transform.GetTransform().GetLocation().ToString());
+}
+
+// ============================================================================
+// 헬퍼: 거리별 Tick 빈도 조절
+// Actor와 AIController의 TickInterval을 동시에 변경한다.
+// ============================================================================
+void UEnemyActorSpawnProcessor::UpdateActorTickRate(
+	AActor* Actor,
+	float Distance,
+	const FEnemyDataFragment& Data)
+{
+	float TickInterval;
+	if (Distance < Data.NearDistance)
+	{
+		TickInterval = Data.NearTickInterval;   // 근거리: 매 틱
+	}
+	else if (Distance < Data.MidDistance)
+	{
+		TickInterval = Data.MidTickInterval;    // 중거리: ~12Hz
+	}
+	else
+	{
+		TickInterval = Data.FarTickInterval;    // 원거리: ~4Hz
+	}
+
+	Actor->SetActorTickInterval(TickInterval);
+
+	// AIController의 Tick도 함께 조절
+	if (APawn* Pawn = Cast<APawn>(Actor))
+	{
+		if (AController* Controller = Pawn->GetController())
+		{
+			Controller->SetActorTickInterval(TickInterval);
+		}
+	}
+}
+
+// ============================================================================
+// 헬퍼: Entity->Actor 스폰
+// HP 복원 포함. AutoPossessAI가 자동으로 AI/GAS 초기화 처리.
+// ============================================================================
+bool UEnemyActorSpawnProcessor::TrySpawnActor(
+	FEnemySpawnStateFragment& SpawnState,
+	FEnemyDataFragment& Data,
+	const FTransformFragment& Transform,
+	UWorld* World)
+{
+	if (!Data.EnemyClass)
+	{
+		UE_LOG(LogECSEnemy, Error, TEXT("[Spawn] EnemyClass가 null! Trait에서 설정하세요."));
+		return false;
+	}
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	const FTransform SpawnTransform = Transform.GetTransform();
+
+	AHellunaEnemyCharacter* SpawnedActor = Cast<AHellunaEnemyCharacter>(
+		World->SpawnActor(Data.EnemyClass, &SpawnTransform, SpawnParams));
+
+	if (!SpawnedActor)
+	{
+		UE_LOG(LogECSEnemy, Error,
+			TEXT("[Spawn] Actor 스폰 실패! 클래스: %s, 위치: %s"),
+			*Data.EnemyClass->GetName(),
+			*SpawnTransform.GetLocation().ToString());
+		return false;
+	}
+
+	// HP 복원 (이전에 역변환으로 저장된 HP가 있으면)
+	if (Data.CurrentHP > 0.f)
+	{
+		if (UHellunaHealthComponent* HC = SpawnedActor->FindComponentByClass<UHellunaHealthComponent>())
+		{
+			HC->SetHealth(Data.CurrentHP);
+		}
+	}
+
+	// 전환 완료 표시
+	SpawnState.bHasSpawnedActor = true;
+	SpawnState.SpawnedActor = SpawnedActor;
+
+	UE_LOG(LogECSEnemy, Log,
+		TEXT("===== Actor 스폰 성공! 클래스: %s, 위치: %s, HP: %.1f, bReplicates: %s ====="),
+		*SpawnedActor->GetClass()->GetName(),
+		*SpawnTransform.GetLocation().ToString(),
+		Data.CurrentHP > 0.f ? Data.CurrentHP : Data.MaxHP,
+		SpawnedActor->GetIsReplicated() ? TEXT("true") : TEXT("false"));
+
+	return true;
 }
 
 // ============================================================================
@@ -113,35 +214,19 @@ void UEnemyActorSpawnProcessor::Execute(
 	FMassExecutionContext& Context)
 {
 	// ------------------------------------------------------------------
-	// Step 0: World 유효성 검사
-	// UMassProcessor는 UObject 상속이라 GetWorld()가 불안정하다.
-	// 반드시 Context.GetWorld()를 사용해야 한다.
+	// Step 0: World 검증
 	// ------------------------------------------------------------------
 	UWorld* World = Context.GetWorld();
 	if (!World)
 	{
-		UE_LOG(LogECSEnemy, Error, TEXT("[Execute] World가 null입니다!"));
 		return;
 	}
 
-	// 디버그: Execute 진입 확인
-	static uint64 LastLogFrame = 0;
-	uint64 CurrentFrame = GFrameCounter;
-	if (CurrentFrame != LastLogFrame && (CurrentFrame % 300 == 0)) // ~5초마다 1회
-	{
-		UE_LOG(LogECSEnemy, Warning, TEXT("[Execute] ▶ 진입! World: %s, IsServer: %s"),
-			*World->GetName(),
-			World->IsNetMode(NM_DedicatedServer) || World->IsNetMode(NM_ListenServer) ? TEXT("YES") : TEXT("NO"));
-		LastLogFrame = CurrentFrame;
-	}
-
 	// ------------------------------------------------------------------
-	// Step 1: 서버의 모든 플레이어 위치 수집
-	// 서버의 PlayerController를 순회하여 Pawn의 위치를 캐싱한다.
-	// 매 틱 한 번만 수집하고, 엔티티 순회 시 재사용한다.
+	// Step 1: 플레이어 위치 수집
 	// ------------------------------------------------------------------
 	TArray<FVector> PlayerLocations;
-	PlayerLocations.Reserve(4); // 일반적인 플레이어 수를 고려한 예약
+	PlayerLocations.Reserve(4);
 
 	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
 	{
@@ -154,139 +239,159 @@ void UEnemyActorSpawnProcessor::Execute(
 		}
 	}
 
-	// 플레이어가 없으면 거리 비교 불가 -> 조기 종료
 	if (PlayerLocations.IsEmpty())
 	{
-		UE_LOG(LogECSEnemy, Warning, TEXT("[Execute] 플레이어가 없어서 조기 종료!"));
 		return;
 	}
 
-	UE_LOG(LogECSEnemy, Warning, TEXT("[Execute] 플레이어 %d명 위치 수집 완료"), PlayerLocations.Num());
+	// ------------------------------------------------------------------
+	// Step 2: 엔티티 순회 준비
+	// ------------------------------------------------------------------
+
+	// 청크 간 공유 카운터 (람다에서 참조 캡처)
+	int32 ActiveActorCount = 0;
+	int32 MaxConcurrentActorsValue = 50;
+
+	// Soft Cap용: 스폰된 Actor 정보 수집
+	struct FSoftCapEntry
+	{
+		TWeakObjectPtr<AActor> Actor;
+		float DistSq;
+	};
+	TArray<FSoftCapEntry> SoftCapCandidates;
 
 	// ------------------------------------------------------------------
-	// Step 2-3: 엔티티 청크 순회 + 거리 비교 + Actor 스폰
-	// UE 5.7.2 API: ForEachEntityChunk(Context, lambda)
-	// (EntityManager를 넘기는 버전은 UE 5.6에서 deprecated)
+	// Step 3: ForEachEntityChunk - 스폰/디스폰/틱 처리
 	// ------------------------------------------------------------------
 	EntityQuery.ForEachEntityChunk(Context,
-		[this, World, &PlayerLocations](FMassExecutionContext& Context)
+		[&](FMassExecutionContext& ChunkCtx)
 		{
-			// Fragment 배열 뷰 획득
-			const auto TransformList = Context.GetFragmentView<FTransformFragment>();
-			auto SpawnStateList = Context.GetMutableFragmentView<FEnemySpawnStateFragment>();
-			const auto DataList = Context.GetFragmentView<FEnemyDataFragment>();
-			const int32 NumEntities = Context.GetNumEntities();
+			auto TransformList = ChunkCtx.GetMutableFragmentView<FTransformFragment>();
+			auto SpawnStateList = ChunkCtx.GetMutableFragmentView<FEnemySpawnStateFragment>();
+			auto DataList = ChunkCtx.GetMutableFragmentView<FEnemyDataFragment>();
+			const int32 NumEntities = ChunkCtx.GetNumEntities();
 
-			UE_LOG(LogECSEnemy, Warning, TEXT("[Execute] 청크 순회 - 엔티티 %d개 발견"), NumEntities);
-
-			// 각 엔티티 순회
 			for (int32 i = 0; i < NumEntities; ++i)
 			{
 				FEnemySpawnStateFragment& SpawnState = SpawnStateList[i];
+				FEnemyDataFragment& Data = DataList[i];
+				FTransformFragment& Transform = TransformList[i];
 
-				// ----------------------------------------------------------
-				// 이미 Actor로 전환된 엔티티는 스킵
-				// ----------------------------------------------------------
+				// MaxConcurrentActors는 모든 엔티티가 동일 (같은 EntityConfig)
+				MaxConcurrentActorsValue = Data.MaxConcurrentActors;
+
+				// ================================================
+				// A) 이미 Actor로 전환된 엔티티 처리
+				// ================================================
 				if (SpawnState.bHasSpawnedActor)
 				{
-					continue;
-				}
+					AActor* Actor = SpawnState.SpawnedActor.Get();
 
-				const FTransformFragment& Transform = TransformList[i];
-				const FEnemyDataFragment& Data = DataList[i];
-				const FVector EntityLocation = Transform.GetTransform().GetLocation();
-
-				// ----------------------------------------------------------
-				// 모든 플레이어와의 최소 제곱 거리 계산
-				// DistSquared를 사용하여 Sqrt 호출을 피한다 (성능 최적화)
-				// ----------------------------------------------------------
-				float MinDistSq = MAX_FLT;
-				for (const FVector& PlayerLoc : PlayerLocations)
-				{
-					const float DistSq = FVector::DistSquared(EntityLocation, PlayerLoc);
-					if (DistSq < MinDistSq)
+					// A-1) Actor가 이미 파괴됨 (전투 사망 등) -> 상태 정리
+					if (!IsValid(Actor))
 					{
-						MinDistSq = DistSq;
+						SpawnState.bHasSpawnedActor = false;
+						SpawnState.SpawnedActor = nullptr;
+						Data.CurrentHP = -1.f;
+						continue;
 					}
+
+					const float MinDistSq = CalcMinDistSq(Actor->GetActorLocation(), PlayerLocations);
+					const float DespawnSq = Data.DespawnThreshold * Data.DespawnThreshold;
+
+					// A-2) 거리 > DespawnThreshold -> 역변환 (HP/위치 보존 후 Destroy)
+					if (MinDistSq > DespawnSq)
+					{
+						DespawnActorToEntity(SpawnState, Data, Transform, Actor);
+						continue;
+					}
+
+					// A-3) 범위 내 -> Tick 빈도 조절
+					const float ActualDist = FMath::Sqrt(MinDistSq);
+					UpdateActorTickRate(Actor, ActualDist, Data);
+
+					// 활성 Actor 카운트 증가
+					ActiveActorCount++;
+
+					// Soft Cap 후보 수집
+					SoftCapCandidates.Add({SpawnState.SpawnedActor, MinDistSq});
 				}
-
-				// SpawnThreshold도 제곱하여 비교 (Sqrt 없이 판단)
-				const float ThresholdSq = Data.SpawnThreshold * Data.SpawnThreshold;
-
-				// 디버그: 거리 출력
-				UE_LOG(LogECSEnemy, Warning, TEXT("  엔티티[%d] 위치: X=%.1f Y=%.1f Z=%.1f, 최소거리: %.1f cm, 임계값: %.1f cm"),
-					i, EntityLocation.X, EntityLocation.Y, EntityLocation.Z,
-					FMath::Sqrt(MinDistSq), Data.SpawnThreshold);
-
-				// ----------------------------------------------------------
-				// Step 3: 거리 < SpawnThreshold이면 Actor 스폰
-				// ----------------------------------------------------------
-				if (MinDistSq >= ThresholdSq)
-				{
-					// 아직 멀어서 스폰하지 않음
-					continue;
-				}
-
-				// EnemyClass Null 체크 (에디터 설정 누락 방지)
-				if (!Data.EnemyClass)
-				{
-					UE_LOG(LogECSEnemy, Error,
-						TEXT("[Execute] EnemyClass가 null! 엔티티 %d번 스폰 불가. Trait에서 클래스를 설정하세요."), i);
-					continue;
-				}
-
-				// ----------------------------------------------------------
-				// SpawnActor로 AHellunaEnemyCharacter 생성
-				// SpawnActor 호출만으로 기존 시스템이 모두 자동 초기화된다:
-				// 1. AutoPossessAI = PlacedInWorldOrSpawned
-				//    -> 엔진이 AHellunaAIController 자동 스폰 + Possess
-				// 2. PossessedBy() -> InitEnemyStartUpData()
-				//    -> GAS/어빌리티 자동 초기화
-				// 3. bReplicates = true (ACharacter 기본)
-				//    -> 클라이언트에 자동 복제
-				// 별도의 AI 컨트롤러 스폰 코드나 GAS 초기화 코드 불필요!
-				// ----------------------------------------------------------
-				FActorSpawnParameters SpawnParams;
-				SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
-				// 비템플릿 UWorld::SpawnActor(UClass*, const FTransform*, FActorSpawnParameters)를 사용.
-				// UE 5.7.2에서 SpawnActor<T> 템플릿 오버로드 해석 문제를 회피하기 위해
-				// 비템플릿 버전 호출 후 Cast<>로 타입 변환한다.
-				const FTransform SpawnTransform = Transform.GetTransform();
-
-				AHellunaEnemyCharacter* SpawnedActor = Cast<AHellunaEnemyCharacter>(
-					World->SpawnActor(Data.EnemyClass, &SpawnTransform, SpawnParams));
-
-				if (SpawnedActor)
-				{
-					// 전환 완료 표시
-					SpawnState.bHasSpawnedActor = true;
-					SpawnState.SpawnedActor = SpawnedActor;
-
-					// 스폰 성공 로그 (실제 거리는 여기서만 Sqrt 호출)
-					UE_LOG(LogECSEnemy, Log,
-						TEXT("===== Actor 스폰 성공! ====="));
-					UE_LOG(LogECSEnemy, Log,
-						TEXT("  클래스: %s"),
-						*SpawnedActor->GetClass()->GetName());
-					UE_LOG(LogECSEnemy, Log,
-						TEXT("  위치: X=%.1f Y=%.1f Z=%.1f"),
-						EntityLocation.X, EntityLocation.Y, EntityLocation.Z);
-					UE_LOG(LogECSEnemy, Log,
-						TEXT("  최소 거리: %.1f cm (임계값: %.1f cm)"),
-						FMath::Sqrt(MinDistSq), Data.SpawnThreshold);
-					UE_LOG(LogECSEnemy, Log,
-						TEXT("  bReplicates: %s"),
-						SpawnedActor->GetIsReplicated() ? TEXT("true") : TEXT("false"));
-				}
+				// ================================================
+				// B) 아직 Actor로 전환되지 않은 엔티티 처리
+				// ================================================
 				else
 				{
-					UE_LOG(LogECSEnemy, Error,
-						TEXT("Actor 스폰 실패! 클래스: %s, 위치: X=%.1f Y=%.1f Z=%.1f"),
-						*Data.EnemyClass->GetName(),
-						EntityLocation.X, EntityLocation.Y, EntityLocation.Z);
+					const FVector EntityLocation = Transform.GetTransform().GetLocation();
+					const float MinDistSq = CalcMinDistSq(EntityLocation, PlayerLocations);
+					const float SpawnSq = Data.SpawnThreshold * Data.SpawnThreshold;
+
+					// B-1) 거리 < SpawnThreshold && Actor 수 미초과 -> 스폰
+					if (MinDistSq < SpawnSq && ActiveActorCount < MaxConcurrentActorsValue)
+					{
+						if (TrySpawnActor(SpawnState, Data, Transform, World))
+						{
+							ActiveActorCount++;
+						}
+					}
 				}
 			}
 		}
 	);
+
+	// ------------------------------------------------------------------
+	// Step 4: Soft Cap (30프레임마다)
+	// 활성 Actor가 MaxConcurrentActors를 초과하면 가장 먼 Actor부터 Destroy.
+	// Fragment 상태는 다음 틱에서 A-1(파괴된 Actor 정리)로 자동 정리된다.
+	// ------------------------------------------------------------------
+	static uint64 LastSoftCapFrame = 0;
+	const uint64 CurrentFrame = GFrameCounter;
+
+	if (CurrentFrame - LastSoftCapFrame >= 30 && ActiveActorCount > MaxConcurrentActorsValue)
+	{
+		LastSoftCapFrame = CurrentFrame;
+
+		// 거리 내림차순 정렬 (가장 먼 Actor가 앞에)
+		SoftCapCandidates.Sort([](const FSoftCapEntry& A, const FSoftCapEntry& B)
+		{
+			return A.DistSq > B.DistSq;
+		});
+
+		const int32 ToRemove = ActiveActorCount - MaxConcurrentActorsValue;
+		int32 Removed = 0;
+
+		for (int32 k = 0; k < ToRemove && k < SoftCapCandidates.Num(); ++k)
+		{
+			AActor* Actor = SoftCapCandidates[k].Actor.Get();
+			if (!IsValid(Actor))
+			{
+				continue;
+			}
+
+			// Controller 정리 후 Actor 파괴
+			if (APawn* Pawn = Cast<APawn>(Actor))
+			{
+				if (AController* Controller = Pawn->GetController())
+				{
+					Controller->UnPossess();
+					Controller->Destroy();
+				}
+			}
+			Actor->Destroy();
+			Removed++;
+		}
+
+		UE_LOG(LogECSEnemy, Warning,
+			TEXT("[SoftCap] Actor %d마리 -> %d마리로 축소 (%d마리 제거)"),
+			ActiveActorCount, ActiveActorCount - Removed, Removed);
+	}
+
+	// 디버그 로그 (300프레임마다)
+	static uint64 LastDebugFrame = 0;
+	if (CurrentFrame - LastDebugFrame >= 300)
+	{
+		LastDebugFrame = CurrentFrame;
+		UE_LOG(LogECSEnemy, Log,
+			TEXT("[Status] 활성 Actor: %d/%d, 플레이어: %d명"),
+			ActiveActorCount, MaxConcurrentActorsValue, PlayerLocations.Num());
+	}
 }

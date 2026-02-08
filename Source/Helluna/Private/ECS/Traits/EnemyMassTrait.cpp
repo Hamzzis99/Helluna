@@ -1,13 +1,8 @@
 /**
  * EnemyMassTrait.cpp
  *
- * UEnemyMassTrait의 BuildTemplate 구현.
- * Mass Entity 아키타입에 FEnemySpawnStateFragment와 FEnemyDataFragment를 등록하고,
- * AddFragment_GetRef<T>()를 사용하여 에디터에서 설정한 값을 Fragment에 주입한다.
- *
- * ※ AddFragment_GetRef<T>()는 UE 5.7.2 FMassEntityTemplateBuildContext의 실제 API.
- *   (GetMutableFragmentTemplate<T>() 같은 함수는 존재하지 않는다!)
- * ※ FMassEntityTemplateBuildContext의 실제 정의는 "MassEntityTemplateRegistry.h"에 있다.
+ * BuildTemplate에서 모든 Trait UPROPERTY 값을 FEnemyDataFragment에 복사한다.
+ * CurrentHP/MaxHP는 런타임 상태이므로 기본값(-1/100) 유지.
  */
 
 // File: Source/Helluna/Private/ECS/Traits/EnemyMassTrait.cpp
@@ -15,33 +10,43 @@
 #include "ECS/Traits/EnemyMassTrait.h"
 #include "ECS/Fragments/EnemyMassFragments.h"
 #include "MassEntityTemplateRegistry.h"
-#include "MassCommonFragments.h"        // FTransformFragment
+#include "MassCommonFragments.h"
 #include "Character/HellunaEnemyCharacter.h"
 
 void UEnemyMassTrait::BuildTemplate(
 	FMassEntityTemplateBuildContext& BuildContext,
 	const UWorld& World) const
 {
-	// ------------------------------------------------------------------
-	// 0단계: FTransformFragment 추가 (필수!)
-	// MassSpawnLocationProcessor가 스폰 위치를 기록하고,
-	// EnemyActorSpawnProcessor가 위치를 읽기 위해 반드시 필요하다.
-	// 이것이 없으면 Processor 쿼리가 매칭되지 않아 Execute가 호출되지 않는다!
-	// ------------------------------------------------------------------
+	// FTransformFragment (Processor가 위치를 읽고 역변환 시 갱신)
 	BuildContext.AddFragment<FTransformFragment>();
 
-	// ------------------------------------------------------------------
-	// 1단계: 스폰 상태 추적용 per-entity Fragment 추가
-	// ------------------------------------------------------------------
+	// 스폰 상태 추적용 (bHasSpawnedActor, SpawnedActor)
 	BuildContext.AddFragment<FEnemySpawnStateFragment>();
 
-	// ------------------------------------------------------------------
-	// 2단계: 적 데이터 Fragment 추가 + 에디터 설정값으로 초기화
-	// ------------------------------------------------------------------
-	FEnemyDataFragment& DataFragment = BuildContext.AddFragment_GetRef<FEnemyDataFragment>();
-	DataFragment.EnemyClass = EnemyClass;
-	DataFragment.SpawnThreshold = SpawnThreshold;
+	// 설정 데이터 Fragment + 에디터 값 복사
+	FEnemyDataFragment& Data = BuildContext.AddFragment_GetRef<FEnemyDataFragment>();
 
-	UE_LOG(LogTemp, Log, TEXT("[EnemyMassTrait] BuildTemplate - EnemyClass: %s, SpawnThreshold: %.1f"),
-		EnemyClass ? *EnemyClass->GetName() : TEXT("None"), SpawnThreshold);
+	// --- 스폰 설정 ---
+	Data.EnemyClass = EnemyClass;
+
+	// --- 거리 설정 ---
+	Data.SpawnThreshold = SpawnThreshold;
+	Data.DespawnThreshold = DespawnThreshold;
+
+	// --- Actor 제한 ---
+	Data.MaxConcurrentActors = MaxConcurrentActors;
+
+	// --- Tick 최적화 ---
+	Data.NearDistance = NearDistance;
+	Data.MidDistance = MidDistance;
+	Data.NearTickInterval = NearTickInterval;
+	Data.MidTickInterval = MidTickInterval;
+	Data.FarTickInterval = FarTickInterval;
+
+	// CurrentHP(-1), MaxHP(100)은 런타임 상태이므로 기본값 유지
+
+	UE_LOG(LogTemp, Log,
+		TEXT("[EnemyMassTrait] BuildTemplate - Class: %s, Spawn: %.0f, Despawn: %.0f, MaxActors: %d"),
+		EnemyClass ? *EnemyClass->GetName() : TEXT("None"),
+		SpawnThreshold, DespawnThreshold, MaxConcurrentActors);
 }
