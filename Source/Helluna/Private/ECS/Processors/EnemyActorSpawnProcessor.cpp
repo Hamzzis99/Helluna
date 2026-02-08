@@ -230,6 +230,14 @@ bool UEnemyActorSpawnProcessor::TrySpawnActor(
 		return false;
 	}
 
+	// ★ MassAgentComponent 즉시 제거 (클라이언트 리플리케이션 크래시 방지)
+	// BP에 UMassAgentComponent가 붙어있으면 클라이언트에서 PuppetPendingReplication 상태로
+	// Actor Destroy 시 assert 터짐. 스폰 직후 제거하면 클라이언트에도 없는 상태로 복제됨.
+	if (UMassAgentComponent* MassAgentComp = SpawnedActor->FindComponentByClass<UMassAgentComponent>())
+	{
+		MassAgentComp->DestroyComponent();
+	}
+
 	// HP 복원: 역변환(Soft Cap 등)으로 Entity가 된 적이 다시 Actor로 돌아올 때
 	// 저장된 HP를 복원한다. CurrentHP == -1이면 처음 스폰이므로 건너뛴다.
 	// (처음 스폰 시 HP는 HellunaHealthComponent의 기본값 사용)
