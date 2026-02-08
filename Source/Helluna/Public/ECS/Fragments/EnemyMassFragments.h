@@ -33,6 +33,10 @@ struct HELLUNA_API FEnemySpawnStateFragment : public FMassFragment
 	UPROPERTY()
 	bool bHasSpawnedActor = false;
 
+	/** 이 Entity의 적이 사망했는지 여부. true이면 다시는 Actor로 전환하지 않는다 */
+	UPROPERTY()
+	bool bDead = false;
+
 	/** 스폰된 Actor에 대한 약한 참조. 역전환/파괴 추적 시 사용 */
 	UPROPERTY()
 	TWeakObjectPtr<AActor> SpawnedActor;

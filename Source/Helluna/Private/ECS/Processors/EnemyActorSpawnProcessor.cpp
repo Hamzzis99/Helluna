@@ -102,8 +102,17 @@ float UEnemyActorSpawnProcessor::CalcMinDistSq(
 }
 
 // ============================================================================
-// 헬퍼: Actor->Entity 역변환
-// HP와 위치를 Fragment에 보존한 후 Controller+Actor를 파괴한다.
+// 헬퍼: Actor → Entity 역변환
+// ============================================================================
+// "죽인 게 아니라 잠시 꺼두는 것"
+//
+// Actor를 파괴하되, HP와 위치를 Fragment에 보존한다.
+// 나중에 TrySpawnActor에서 이 데이터로 Actor를 재생성하면
+// 플레이어 입장에서는 "적이 계속 거기 있었던 것"처럼 보인다.
+//
+// Controller도 함께 파괴하는 이유:
+// AutoPossessAI로 생성된 AIController는 Actor와 별개 UObject이므로
+// Actor만 Destroy하면 Controller가 고아 객체로 남아 메모리 누수 발생.
 // ============================================================================
 void UEnemyActorSpawnProcessor::DespawnActorToEntity(
 	FEnemySpawnStateFragment& SpawnState,
@@ -212,7 +221,9 @@ bool UEnemyActorSpawnProcessor::TrySpawnActor(
 		return false;
 	}
 
-	// HP 복원 (이전에 역변환으로 저장된 HP가 있으면)
+	// HP 복원: 역변환(Soft Cap 등)으로 Entity가 된 적이 다시 Actor로 돌아올 때
+	// 저장된 HP를 복원한다. CurrentHP == -1이면 처음 스폰이므로 건너뛴다.
+	// (처음 스폰 시 HP는 HellunaHealthComponent의 기본값 사용)
 	if (Data.CurrentHP > 0.f)
 	{
 		if (UHellunaHealthComponent* HC = SpawnedActor->FindComponentByClass<UHellunaHealthComponent>())
@@ -242,6 +253,40 @@ void UEnemyActorSpawnProcessor::Execute(
 	FMassEntityManager& EntityManager,
 	FMassExecutionContext& Context)
 {
+	// ============================================================================
+	// [핵심 개념] 하이브리드 ECS의 Actor ↔ Entity 전환 흐름
+	// ============================================================================
+	//
+	// 이 게임은 기지 방어 게임이다. 밤에 적이 기지로 몰려온다.
+	// 적은 처음에 Mass Entity(가벼운 데이터)로 생성되고,
+	// 플레이어 근처에 왔을 때만 Actor(무거운 전체 기능)로 전환된다.
+	//
+	// [왜 역변환이 필요한가?]
+	// Actor는 비싸다 (AI, 물리, 애니메이션, 네트워크). 100마리 전부 Actor면 30FPS.
+	// 그래서 동시 Actor 수를 50마리(MaxConcurrentActors)로 제한하고,
+	// 초과분은 Entity로 되돌린다 (역변환 = Despawn).
+	//
+	// [Soft Cap이 만드는 자연스러운 전투 흐름]
+	// 100마리가 기지로 몰려올 때:
+	//   - 가까운 50마리 → Actor (전투 가능)
+	//   - 뒤쪽 50마리 → Entity (대기, 비용 거의 0)
+	//   - 앞의 적이 죽으면 → Actor 슬롯이 빈다
+	//   - 뒤의 Entity가 자연스럽게 Actor로 전환됨
+	//   = 킬링플로어처럼 "다음 투입"이 코드 없이 자동 발생!
+	//
+	// [HP 복원이 필요한 이유]
+	// Soft Cap에 의해 Actor→Entity 역변환된 적은 "죽은 게 아니다".
+	// 예: 50마리 꽉 찬 상태에서 51번째 적이 Soft Cap으로 역변환됨
+	//   → 앞의 적이 죽어서 슬롯이 빔
+	//   → 51번째 적이 다시 Actor로 전환됨
+	//   → 이때 HP가 풀로 차있으면 이상하다! (때리던 적이었을 수도 있으니까)
+	//   → 그래서 역변환 시 HP를 Fragment에 저장하고, 재스폰 시 복원한다.
+	//
+	// [죽은 적 vs 역변환된 적]
+	// - 죽은 적: bDead = true → 영구적으로 다시 스폰 안 함
+	// - 역변환된 적: bDead = false, CurrentHP > 0 → 슬롯 나면 재스폰 (HP 유지)
+	// ============================================================================
+
 	// ------------------------------------------------------------------
 	// Step 0: World 검증
 	// ------------------------------------------------------------------
@@ -316,11 +361,16 @@ void UEnemyActorSpawnProcessor::Execute(
 				{
 					AActor* Actor = SpawnState.SpawnedActor.Get();
 
-					// A-1) Actor가 이미 파괴됨 (전투 사망 등) -> 상태 정리
+					// A-1) Actor가 외부에서 파괴됨 (전투 사망, 환경 데미지 등)
+					// ※ 역변환(DespawnActorToEntity)은 bHasSpawnedActor=false로 설정하므로
+					//    여기 도달하는 경우 = 우리 코드가 아닌 외부에서 Actor가 파괴된 것.
+					//    즉 전투 중 사망 → bDead = true → 이 Entity는 영구 퇴장.
+					//    다시는 Actor로 전환되지 않으며, 웨이브 전멸 카운트에 반영된다.
 					if (!IsValid(Actor))
 					{
 						SpawnState.bHasSpawnedActor = false;
 						SpawnState.SpawnedActor = nullptr;
+						SpawnState.bDead = true;  // 죽은 적은 다시 스폰하지 않음!
 						Data.CurrentHP = -1.f;
 						continue;
 					}
@@ -328,7 +378,11 @@ void UEnemyActorSpawnProcessor::Execute(
 					const float MinDistSq = CalcMinDistSq(Actor->GetActorLocation(), PlayerLocations);
 					const float DespawnSq = Data.DespawnThreshold * Data.DespawnThreshold;
 
-					// A-2) 거리 > DespawnThreshold -> 역변환 (HP/위치 보존 후 Destroy)
+					// A-2) 거리 > DespawnThreshold → 역변환 (Actor→Entity 복귀)
+					// 적이 죽은 게 아니라, 플레이어에게서 멀어졌거나 Soft Cap 대상이 된 것.
+					// HP와 위치를 Fragment에 저장한 뒤 Actor를 파괴한다.
+					// 나중에 플레이어가 다시 접근하거나 Soft Cap 슬롯이 나면
+					// 저장된 HP로 Actor가 재생성된다 (풀피로 부활하는 게 아님!).
 					if (MinDistSq > DespawnSq)
 					{
 						DespawnActorToEntity(SpawnState, Data, Transform, Actor);
@@ -350,11 +404,22 @@ void UEnemyActorSpawnProcessor::Execute(
 				// ================================================
 				else
 				{
+					// 죽은 적은 다시 스폰하지 않음
+					if (SpawnState.bDead)
+					{
+						continue;
+					}
+
 					const FVector EntityLocation = Transform.GetTransform().GetLocation();
 					const float MinDistSq = CalcMinDistSq(EntityLocation, PlayerLocations);
 					const float SpawnSq = Data.SpawnThreshold * Data.SpawnThreshold;
 
-					// B-1) 거리 < SpawnThreshold && Actor 수 미초과 -> 스폰
+					// B-1) 거리 < SpawnThreshold && Actor 슬롯 여유 있음 → Actor 스폰
+					// 이 Entity는 두 가지 경우일 수 있다:
+					//   a) 처음 스폰: CurrentHP == -1 → 풀 HP로 생성
+					//   b) 역변환 후 재스폰: CurrentHP > 0 → 이전 HP로 복원
+					// Soft Cap이 이 흐름을 자동 관리:
+					//   앞의 적 사망 → ActiveActorCount 감소 → 여기서 다음 적이 스폰됨
 					if (MinDistSq < SpawnSq && ActiveActorCount < MaxConcurrentActorsValue)
 					{
 						if (TrySpawnActor(SpawnState, Data, Transform, World))
@@ -368,10 +433,22 @@ void UEnemyActorSpawnProcessor::Execute(
 	);
 
 	// ------------------------------------------------------------------
-	// Step 4: Soft Cap (30프레임마다)
-	// 활성 Actor가 MaxConcurrentActors를 초과하면 가장 먼 Actor부터 Destroy.
-	// Fragment 상태는 다음 틱에서 A-1(파괴된 Actor 정리)로 자동 정리된다.
+	// Step 4: Soft Cap 관리 (30프레임마다)
 	// ------------------------------------------------------------------
+	// 활성 Actor가 MaxConcurrentActors(기본 50)를 초과하면 가장 먼 Actor부터 역변환.
+	//
+	// [왜 초과가 발생하는가?]
+	// Step 3에서 스폰 시 ActiveActorCount < Max 체크를 하지만,
+	// 같은 틱에 여러 Entity가 동시에 SpawnThreshold에 진입할 수 있다.
+	// 또한 플레이어가 여러 명이면 각자 주변에 Actor가 생기므로 합산 초과 가능.
+	//
+	// [30프레임마다인 이유]
+	// 매 틱 정렬+Destroy는 비싸다. 0.5초 주기면 체감 차이 없이 성능 절약.
+	//
+	// [역변환 순서: 가장 먼 Actor부터]
+	// 플레이어에게서 가장 먼 Actor는 전투 참여 가능성이 낮으므로
+	// 역변환해도 플레이어가 눈치채지 못한다.
+	// Fragment 상태(bHasSpawnedActor)는 다음 틱 A-1에서 자동 정리.
 	static uint64 LastSoftCapFrame = 0;
 	const uint64 CurrentFrame = GFrameCounter;
 
