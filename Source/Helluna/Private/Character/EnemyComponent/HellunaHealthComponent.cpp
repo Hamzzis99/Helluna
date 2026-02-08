@@ -150,7 +150,10 @@ void UHellunaHealthComponent::HandleDeath(AActor* KillerActor)
 			GM->NotifyMonsterDied(Owner);
 		}
 	}
-
+	if (AHellunaEnemyCharacter* Enemy = Cast<AHellunaEnemyCharacter>(Owner))
+	{
+		Enemy->DespawnMassEntityOnServer(TEXT("HealthComponent::HandleDeath"));
+	}
 	// ✅ (옵션) 자동 파괴
 	if (bAutoDestroyOwnerOnDeath)
 	{
