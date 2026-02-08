@@ -190,6 +190,13 @@ void UEnemyActorSpawnProcessor::UpdateActorTickRate(
 			Controller->SetActorTickInterval(TickInterval);
 		}
 	}
+
+	// Phase 3-1: 거리 기반 애니메이션/그림자 LOD (@author 김기현)
+	// 카메라 거리 기준으로 근거리=풀품질+그림자On, 중거리=그림자Off, 원거리=최소 업데이트
+	if (AHellunaEnemyCharacter* Enemy = Cast<AHellunaEnemyCharacter>(Actor))
+	{
+		Enemy->UpdateAnimationLOD(Distance);
+	}
 }
 
 // ============================================================================

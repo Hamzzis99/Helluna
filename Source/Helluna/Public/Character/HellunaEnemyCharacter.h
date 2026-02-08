@@ -41,5 +41,15 @@ private:
 
 public:
 	FORCEINLINE UEnemyCombatComponent* GetEnemyCombatComponent() const { return EnemyCombatComponent; }
+
+	/**
+	 * 거리 기반 애니메이션/그림자 품질 조절.
+	 * 카메라 거리 기준으로 근/중/원거리 LOD를 적용한다.
+	 * Processor의 UpdateActorTickRate에서 매 틱 호출.
+	 *
+	 * @param DistanceToCamera  카메라(또는 플레이어)와의 거리 (cm 단위)
+	 * @author 김기현
+	 */
+	void UpdateAnimationLOD(float DistanceToCamera);
 };
 	

@@ -264,6 +264,16 @@ AHellunaEnemyCharacter* UEnemyActorPool::ActivateActor(
 		}
 	}
 
+	// === Animation URO 리셋 ===
+	// Pool에서 꺼낸 Actor의 SkeletalMesh를 즉시 풀 업데이트 상태로 복원.
+	// DeactivateActor/CreatePooledActor에서 꺼뒀던 애니메이션을 재시작한다.
+	if (USkeletalMeshComponent* SkelMesh = Actor->GetMesh())
+	{
+		SkelMesh->SetComponentTickEnabled(true);
+		SkelMesh->bPauseAnims = false;       // 애니메이션 재개
+		SkelMesh->bNoSkeletonUpdate = false;  // 스켈레톤 업데이트 재개
+	}
+
 	// TODO: GameMode->RegisterAliveMonster(Actor) 호출 필요
 	// BeginPlay에서 이미 등록되었지만, Pool 재활성화 시 재등록이 필요할 수 있음.
 	// 웨이브 시스템 연동 시 함께 구현 예정.
@@ -318,6 +328,16 @@ void UEnemyActorPool::DeactivateActor(AHellunaEnemyCharacter* Actor)
 	{
 		MoveComp->StopMovementImmediately();
 		MoveComp->SetComponentTickEnabled(false);
+	}
+
+	// 2-1. Animation 완전 정지 (CPU 절약)
+	// Pool 반납 시 SkeletalMesh 업데이트를 완전 정지.
+	// Hidden 상태에서도 기본적으로 본 변환이 계속되므로 명시적으로 꺼야 한다.
+	if (USkeletalMeshComponent* SkelMesh = Actor->GetMesh())
+	{
+		SkelMesh->bPauseAnims = true;         // 애니메이션 평가 정지
+		SkelMesh->bNoSkeletonUpdate = true;   // 스켈레톤 본 업데이트 정지
+		SkelMesh->SetComponentTickEnabled(false);  // 컴포넌트 Tick 정지
 	}
 
 	// 3. 숨기기 + 비활성화 + 네트워크 차단
@@ -451,6 +471,16 @@ AHellunaEnemyCharacter* UEnemyActorPool::CreatePooledActor()
 	{
 		MoveComp->StopMovementImmediately();
 		MoveComp->SetComponentTickEnabled(false);
+	}
+
+	// Pool 생성 시 Animation 정지
+	// 사전 생성된 Actor는 Hidden이지만 애니메이션이 기본으로 돌아간다.
+	// 60개 Actor의 애니메이션이 불필요하게 돌면 초기 CPU 낭비 (~3ms).
+	if (USkeletalMeshComponent* SkelMesh = Actor->GetMesh())
+	{
+		SkelMesh->bPauseAnims = true;
+		SkelMesh->bNoSkeletonUpdate = true;
+		SkelMesh->SetComponentTickEnabled(false);
 	}
 
 	return Actor;
