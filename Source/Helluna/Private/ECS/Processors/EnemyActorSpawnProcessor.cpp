@@ -10,6 +10,35 @@
 
 // File: Source/Helluna/Private/ECS/Processors/EnemyActorSpawnProcessor.cpp
 
+// ============================================================================
+// [TODO] EnemyEntityMovementProcessor - Entity 상태에서 기지 방향 직선 이동
+// ============================================================================
+//
+// 현재 Entity는 스폰 위치에서 가만히 대기하다가 플레이어가 접근하면 Actor로 전환된다.
+// 추후 기지 방어 시스템 구현 시, Entity 상태에서도 기지를 향해 이동해야 한다.
+//
+// [구현 계획]
+// - 별도 UMassProcessor 서브클래스: UEnemyEntityMovementProcessor
+// - 매 틱: Entity Transform 위치를 기지 방향으로 이동
+//   EntityLocation += (BaseLocation - EntityLocation).GetSafeNormal() * MoveSpeed * DeltaTime
+// - NavMesh 불필요 (먼 거리에서는 직선 이동으로 충분)
+// - Actor 전환 후에는 StateTree의 MoveTo가 NavMesh 기반 정밀 이동 담당
+//
+// [필요한 Fragment 추가]
+// - FEnemyDataFragment에 추가:
+//   float EntityMoveSpeed = 300.f;  // Entity 상태 이동 속도 (cm/s)
+//   FVector TargetBaseLocation;     // 기지 위치 (GameMode에서 설정)
+//
+// [실행 흐름]
+// Entity (먼 거리) → 직선 이동 (이 Processor) → 50m 이내 → Actor 전환 → NavMesh 이동 (StateTree)
+//
+// [주의사항]
+// - bHasSpawnedActor == true인 Entity는 스킵 (이미 Actor가 이동 중)
+// - FTransformFragment를 ReadWrite로 사용해야 함 (위치 갱신)
+// - ProcessingPhase는 PrePhysics (EnemyActorSpawnProcessor보다 먼저 실행)
+// - 장애물 충돌 없음 (Entity는 물리 없음). 기지 근처에서 Actor 전환 후 NavMesh가 처리
+// ============================================================================
+
 #include "ECS/Processors/EnemyActorSpawnProcessor.h"
 
 #include "MassCommonFragments.h"
@@ -90,7 +119,7 @@ void UEnemyActorSpawnProcessor::DespawnActorToEntity(
 	}
 
 	// 2. 위치 보존 (Fragment에 현재 Actor 위치 기록)
-	Transform.SetTransform(Actor->GetActorTransform());
+	Transform.GetMutableTransform() = Actor->GetActorTransform();
 
 	// 3. AI Controller 정리 (고아 Controller 방지)
 	if (APawn* Pawn = Cast<APawn>(Actor))
