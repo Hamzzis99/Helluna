@@ -56,10 +56,23 @@ bool UEnemyActorPool::ShouldCreateSubsystem(UObject* Outer) const
 // ============================================================================
 void UEnemyActorPool::Deinitialize()
 {
+	// 비활성 Actor: Controller가 Possess 중이지만 StateTree는 Stop 상태.
+	// Destroy 시 StopLogic이 다시 불려 Warning 발생 → UnPossess 먼저 수행.
 	for (AHellunaEnemyCharacter* Actor : InactiveActors)
 	{
 		if (IsValid(Actor))
 		{
+			if (APawn* Pawn = Cast<APawn>(Actor))
+			{
+				if (AController* Controller = Pawn->GetController())
+				{
+					if (UStateTreeComponent* STComp = Controller->FindComponentByClass<UStateTreeComponent>())
+					{
+						STComp->SetComponentTickEnabled(false);
+					}
+					Controller->UnPossess();
+				}
+			}
 			Actor->Destroy();
 		}
 	}
@@ -189,13 +202,43 @@ AHellunaEnemyCharacter* UEnemyActorPool::ActivateActor(
 	{
 		AController* Controller = Pawn->GetController();
 
-		// 첫 활성화: Controller 없음 → 수동 생성 + Possess
-		// Pawn이 이미 올바른 위치에 있고 보이는 상태이므로
-		// StateTree가 Pawn 컨텍스트를 정상적으로 찾는다 → 에러 0
+		// 첫 활성화: Controller 없음 → Deferred Spawn으로 수동 생성
+		// SpawnDefaultController()는 내부에서 BeginPlay → StateTree::StartTree가
+		// Possess보다 먼저 실행되어 에러 발생 (Actor당 3줄 × 50마리 = 150줄).
+		// 수동으로: Deferred Spawn → StateTree 끄기 → FinishSpawning → Possess → StateTree 시작
 		if (!Controller)
 		{
-			Pawn->SpawnDefaultController();
-			Controller = Pawn->GetController();
+			UWorld* World = Actor->GetWorld();
+			TSubclassOf<AController> AIControllerClass = Actor->AIControllerClass;
+
+			if (World && AIControllerClass)
+			{
+				AController* NewController = World->SpawnActorDeferred<AController>(
+					AIControllerClass,
+					Actor->GetActorTransform(),
+					nullptr, nullptr,
+					ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+
+				if (NewController)
+				{
+					// ★ 핵심: BeginPlay에서 StateTree 자동 시작을 막는다.
+					// UStateTreeComponent::BeginPlay()는 bStartLogicAutomatically가 true이면
+					// StartLogic() → StartTree()를 호출한다. Possess 전이라 Pawn 컨텍스트 없음 → 에러.
+					// SetStartLogicAutomatically(false)로 자동 시작을 건너뛴다.
+					if (UStateTreeComponent* STComp = NewController->FindComponentByClass<UStateTreeComponent>())
+					{
+						STComp->SetStartLogicAutomatically(false);
+					}
+
+					// FinishSpawning → BeginPlay 호출되지만 자동 시작 꺼져있으므로 에러 0
+					NewController->FinishSpawning(Actor->GetActorTransform());
+
+					// Possess: Controller가 Pawn을 소유 → Pawn 컨텍스트 설정됨
+					NewController->Possess(Pawn);
+
+					Controller = NewController;
+				}
+			}
 		}
 
 		if (Controller)
@@ -204,6 +247,8 @@ AHellunaEnemyCharacter* UEnemyActorPool::ActivateActor(
 
 			if (UStateTreeComponent* STComp = Controller->FindComponentByClass<UStateTreeComponent>())
 			{
+				// 첫 활성화 시 꺼둔 자동 시작 복원 (재활성화 시에도 안전)
+				STComp->SetStartLogicAutomatically(true);
 				STComp->SetComponentTickEnabled(true);
 				STComp->RestartLogic();
 			}
