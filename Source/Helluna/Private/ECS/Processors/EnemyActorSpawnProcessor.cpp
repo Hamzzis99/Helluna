@@ -46,8 +46,6 @@
 #include "ECS/Fragments/EnemyMassFragments.h"
 #include "Character/HellunaEnemyCharacter.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
-#include "MassAgentComponent.h"
-#include "Components/StateTreeComponent.h"
 
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
@@ -132,15 +130,7 @@ void UEnemyActorSpawnProcessor::DespawnActorToEntity(
 	// 2. 위치 보존 (Fragment에 현재 Actor 위치 기록)
 	Transform.GetMutableTransform() = Actor->GetActorTransform();
 
-	// 3. MassAgentComponent 안전 제거 (클라이언트 리플리케이션 크래시 방지)
-	// BP에 UMassAgentComponent가 붙어있으면 PuppetPendingReplication 상태에서
-	// Destroy 시 클라이언트에서 assert 터짐. Destroy 전에 먼저 제거한다.
-	if (UMassAgentComponent* MassAgent = Actor->FindComponentByClass<UMassAgentComponent>())
-	{
-		MassAgent->DestroyComponent();
-	}
-
-	// 4. AI Controller 정리 (고아 Controller 방지)
+	// 3. AI Controller 정리 (고아 Controller 방지)
 	if (APawn* Pawn = Cast<APawn>(Actor))
 	{
 		if (AController* Controller = Pawn->GetController())
@@ -150,10 +140,10 @@ void UEnemyActorSpawnProcessor::DespawnActorToEntity(
 		}
 	}
 
-	// 5. Actor 파괴
+	// 4. Actor 파괴
 	Actor->Destroy();
 
-	// 6. 상태 초기화
+	// 5. 상태 초기화
 	SpawnState.bHasSpawnedActor = false;
 	SpawnState.SpawnedActor = nullptr;
 
@@ -229,31 +219,6 @@ bool UEnemyActorSpawnProcessor::TrySpawnActor(
 			*Data.EnemyClass->GetName(),
 			*SpawnTransform.GetLocation().ToString());
 		return false;
-	}
-
-	// ★ MassAgentComponent 즉시 제거 (클라이언트 리플리케이션 크래시 방지)
-	// MassEntity 시스템이 Actor 스폰 시 자동으로 MassAgentComponent를 추가함.
-	// 이 컴포넌트가 있으면 역변환(Destroy) 시 클라이언트에서 PuppetPendingReplication
-	// 상태 불일치로 assert 크래시 발생. 스폰 직후 제거하면 처음부터 없는 상태로 복제됨.
-	if (UMassAgentComponent* MassAgentComp = SpawnedActor->FindComponentByClass<UMassAgentComponent>())
-	{
-		MassAgentComp->DestroyComponent();
-	}
-
-	// ★ StateTree 재시작 (Pawn 컨텍스트 에러 수정)
-	// SpawnActor 직후에는 AIController가 아직 Possess하지 않은 상태일 수 있음.
-	// AutoPossessAI가 설정되어 있어도 BeginPlay 순서에 의해
-	// StateTree가 먼저 초기화되면 Pawn 컨텍스트를 못 찾아서 실패함.
-	// 해결: SpawnDefaultController로 즉시 Possess 보장 후, StateTree를 수동 재시작.
-	if (!SpawnedActor->GetController())
-	{
-		SpawnedActor->SpawnDefaultController();
-	}
-
-	// StateTreeComponent 찾아서 재시작
-	if (UStateTreeComponent* STComp = SpawnedActor->FindComponentByClass<UStateTreeComponent>())
-	{
-		STComp->RestartLogic();
 	}
 
 	// HP 복원: 역변환(Soft Cap 등)으로 Entity가 된 적이 다시 Actor로 돌아올 때
@@ -506,12 +471,6 @@ void UEnemyActorSpawnProcessor::Execute(
 			if (!IsValid(Actor))
 			{
 				continue;
-			}
-
-			// MassAgentComponent 안전 제거 (클라이언트 크래시 방지)
-			if (UMassAgentComponent* MassAgent = Actor->FindComponentByClass<UMassAgentComponent>())
-			{
-				MassAgent->DestroyComponent();
 			}
 
 			// Controller 정리 후 Actor 파괴
