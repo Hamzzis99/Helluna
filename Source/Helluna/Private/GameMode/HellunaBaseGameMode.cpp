@@ -23,7 +23,7 @@
 
 #include "GameMode/HellunaBaseGameMode.h"
 #include "Helluna.h"  // 전처리기 플래그
-#include "GameMode/HellunaDefenseGameState.h"
+#include "GameMode/HellunaBaseGameState.h"
 #include "Login/HellunaLoginController.h"
 #include "Login/HellunaAccountSaveGame.h"
 #include "Player/HellunaPlayerState.h"
@@ -40,6 +40,9 @@
 #include "Engine/DataTable.h"
 #include "GameplayTagContainer.h"
 #include "debughelper.h"
+
+// [투표 시스템] 플레이어 퇴장 시 투표 처리 (김기현)
+#include "Utils/Vote/VoteManagerComponent.h"
 
 // ════════════════════════════════════════════════════════════════════════════════
 // 📌 팀원 가이드 - 이 파일 전체 구조
@@ -1086,6 +1089,30 @@ void AHellunaBaseGameMode::Logout(AController* Exiting)
 		UnregisterCharacterUse(PlayerId);
 	}
 
+	// =========================================================================================
+	// [투표 시스템] 퇴장 플레이어 투표 처리 (김기현)
+	// =========================================================================================
+	// 투표 진행 중 플레이어가 퇴장하면 DisconnectPolicy에 따라 처리:
+	// - ExcludeAndContinue: 해당 플레이어 제외 후 남은 인원으로 재판정
+	// - CancelVote: 투표 취소
+	// =========================================================================================
+	{
+		APlayerState* ExitingPS = Exiting->GetPlayerState<APlayerState>();
+		if (ExitingPS)
+		{
+			if (AHellunaBaseGameState* GS = GetGameState<AHellunaBaseGameState>())
+			{
+				if (UVoteManagerComponent* VoteMgr = GS->VoteManagerComponent)
+				{
+					if (VoteMgr->IsVoteInProgress())
+					{
+						VoteMgr->HandlePlayerDisconnect(ExitingPS);
+					}
+				}
+			}
+		}
+	}
+
 	Super::Logout(Exiting);
 }
 
@@ -1319,7 +1346,7 @@ void AHellunaBaseGameMode::RegisterCharacterUse(EHellunaHeroType HeroType, const
 	UsedCharacterMap.Add(HeroType, PlayerId);
 
 	// GameState에 알림 (클라이언트 UI 갱신용)
-	if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
+	if (AHellunaBaseGameState* GS = GetGameState<AHellunaBaseGameState>())
 	{
 		GS->AddUsedCharacter(HeroType);
 	}
@@ -1367,7 +1394,7 @@ void AHellunaBaseGameMode::UnregisterCharacterUse(const FString& PlayerId)
 		UsedCharacterMap.Remove(FoundType);
 
 		// GameState에 알림 (클라이언트 UI 갱신용)
-		if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
+		if (AHellunaBaseGameState* GS = GetGameState<AHellunaBaseGameState>())
 		{
 			GS->RemoveUsedCharacter(FoundType);
 		}

@@ -3,13 +3,12 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "GameFramework/GameState.h"
+#include "GameMode/HellunaBaseGameState.h"
 
 // [MDF 추가] 플러그인 인터페이스 및 컴포넌트 헤더
 #include "Interface/MDF_GameStateInterface.h"
 #include "Components/MDF_DeformableComponent.h"
 
-#include "HellunaTypes.h"
 #include "HellunaDefenseGameState.generated.h"
 
 // =========================================================================================
@@ -38,11 +37,14 @@ enum class EDefensePhase : uint8
 class AResourceUsingObject_SpaceShip;
 
 UCLASS()
-class HELLUNA_API AHellunaDefenseGameState : public AGameState, public IMDF_GameStateInterface
+class HELLUNA_API AHellunaDefenseGameState : public AHellunaBaseGameState, public IMDF_GameStateInterface
 {
     GENERATED_BODY()
-    
+
 public:
+    /** 생성자 */
+    AHellunaDefenseGameState();
+
     // =========================================================================================
     // [민우님 작업 영역] 기존 팀원 코드 (우주선 및 페이즈 관리)
     // =========================================================================================
@@ -62,32 +64,31 @@ public:
     UFUNCTION(NetMulticast, Reliable)
     void MulticastPrintDay();
 
-    // ✅ UI에서 “남은 몬스터 수” 읽어오기 용도
+    // ✅ UI에서 "남은 몬스터 수" 읽어오기 용도
     UFUNCTION(BlueprintPure, Category = "Defense|Monster")
     int32 GetAliveMonsterCount() const { return AliveMonsterCount; }
 
     // ✅ 서버(GameMode)에서만 값을 갱신하도록 하는 Setter
     void SetAliveMonsterCount(int32 NewCount);
-    
+
     // =========================================================================================
     // [김기현 작업 영역 시작] MDF Interface 구현 및 시스템 함수
     // (MDF: Mesh Deformation System - 구조물 변형 상태 저장 관리)
     // =========================================================================================
-    
+
     virtual void BeginPlay() override;
     virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
     // [MDF Interface] 데이터 저장 (메모리 갱신)
-    virtual void SaveMDFData(const FGuid& ID, const TArray<FMDFHitData>& Data) override; 
-    
+    virtual void SaveMDFData(const FGuid& ID, const TArray<FMDFHitData>& Data) override;
+
     // [MDF Interface] 데이터 로드 (메모리 조회)
     virtual bool LoadMDFData(const FGuid& ID, TArray<FMDFHitData>& OutData) override;
 
-    // [서버 전용] 현재 상태를 파일로 저장하고, 다음 레벨로 이동합니다. (MoveMapActor가 호출)
-    UFUNCTION(BlueprintCallable, Category="Helluna|MDF|System")
-    void Server_SaveAndMoveLevel(FName NextLevelName);
-
 protected:
+    /** MDF 데이터 디스크 저장 (맵 이동 전) */
+    virtual void OnPreMapTransition() override;
+
     // 현재 데이터를 실제 디스크 파일(.sav)로 저장하는 함수
     void WriteDataToDisk();
 
@@ -98,7 +99,7 @@ protected:
     // TArray 직접 중첩 불가 이슈 해결을 위해 Wrapper 구조체 사용
     UPROPERTY()
     TMap<FGuid, FMDFHitHistoryWrapper> SavedDeformationMap;
-    
+
     // =========================================================================================
     // [김기현 작업 영역 끝]
     // =========================================================================================
@@ -117,46 +118,6 @@ protected:
 	//몬스터 생존 개수 관리, GameMode는 서버에만 있으니, UI/디버그를 위해 GameState에서 복제(Replicate)로 공유
     UPROPERTY(Replicated, BlueprintReadOnly, Category = "Defense|Monster")
     int32 AliveMonsterCount = 0;
-
-	// ═══════════════════════════════════════════════════════════════════════════════
-	// 🎭 캐릭터 선택 시스템 - 실시간 UI 갱신용 (김기현)
-	// ═══════════════════════════════════════════════════════════════════════════════
-	// 
-	// 📌 목적: 다른 플레이어가 캐릭터 선택 시 모든 클라이언트 UI 자동 갱신
-	// 📌 구조: UsedCharacters 배열이 변경되면 OnRep → 델리게이트 브로드캐스트
-	// 
-	// ═══════════════════════════════════════════════════════════════════════════════
-
-public:
-	/** 캐릭터 사용 상태 변경 델리게이트 (UI 바인딩용) */
-	DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnUsedCharactersChanged);
-	
-	UPROPERTY(BlueprintAssignable, Category = "Character Select")
-	FOnUsedCharactersChanged OnUsedCharactersChanged;
-
-	/** 특정 캐릭터가 사용 중인지 확인 */
-	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Character Select")
-	bool IsCharacterUsed(EHellunaHeroType HeroType) const;
-
-	/** 사용 중인 캐릭터 목록 반환 */
-	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Character Select")
-	TArray<EHellunaHeroType> GetUsedCharacters() const { return UsedCharacters; }
-
-	/** [서버 전용] 캐릭터 사용 등록 */
-	void AddUsedCharacter(EHellunaHeroType HeroType);
-
-	/** [서버 전용] 캐릭터 사용 해제 */
-	void RemoveUsedCharacter(EHellunaHeroType HeroType);
-
-protected:
-	/** 현재 사용 중인 캐릭터 목록 (Replicated) */
-	UPROPERTY(ReplicatedUsing = OnRep_UsedCharacters)
-	TArray<EHellunaHeroType> UsedCharacters;
-
-	/** 캐릭터 목록 변경 시 클라이언트에서 호출 */
-	UFUNCTION()
-	void OnRep_UsedCharacters();
-
 
     // 디버그용
     FTimerHandle TimerHandle_NightDebug;
