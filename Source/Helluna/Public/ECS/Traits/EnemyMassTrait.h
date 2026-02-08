@@ -36,24 +36,26 @@ protected:
 
 	/** 스폰할 적 블루프린트 클래스 */
 	UPROPERTY(EditAnywhere, Category = "Enemy Spawn Config",
-		meta = (DisplayName = "Enemy Class (적 블루프린트)", AllowAbstract = "false"))
+		meta = (DisplayName = "Enemy Class (스폰할 적 블루프린트 클래스)",
+			ToolTip = "Entity가 Actor로 전환될 때 스폰할 적 캐릭터 블루프린트입니다.\n예: BP_MeleeEnemy, BP_RangedEnemy 등.\nAHellunaEnemyCharacter를 상속한 블루프린트만 선택 가능합니다.",
+			AllowAbstract = "false"))
 	TSubclassOf<AHellunaEnemyCharacter> EnemyClass;
 
 	// =================================================================
 	// 거리 설정
 	// =================================================================
 
-	/** Entity->Actor 전환 거리. 플레이어가 이 거리 안에 들어오면 Actor로 전환 */
+	/** Entity->Actor 전환 거리 */
 	UPROPERTY(EditAnywhere, Category = "Enemy Spawn Config|거리 설정",
-		meta = (DisplayName = "Spawn Threshold (전환 거리 cm)",
-			ToolTip = "플레이어가 이 거리(cm) 안에 들어오면 Mass Entity를 Actor로 전환합니다. DespawnThreshold보다 작아야 합니다.",
+		meta = (DisplayName = "Spawn Threshold (Entity→Actor 전환 거리, cm)",
+			ToolTip = "플레이어와 Entity 사이 거리가 이 값(cm) 이내로 들어오면 Actor로 전환합니다.\n\n[주의] 반드시 Despawn Threshold보다 작아야 합니다.\n같거나 크면 전환/복귀가 매 틱 반복되는 핑퐁 현상이 발생합니다.\n\n[설정 팁] 무기 최대 사거리보다 크게 설정하세요.\n50m 밖의 적은 Actor가 없어 히트 판정이 불가합니다.\n\n예: 5000 = 50m, 8000 = 80m",
 			ClampMin = "100.0", ClampMax = "50000.0", UIMin = "500.0", UIMax = "20000.0"))
 	float SpawnThreshold = 5000.f;
 
-	/** Actor->Entity 복귀 거리. 플레이어가 이 거리 밖으로 나가면 Actor를 Entity로 복귀 */
+	/** Actor->Entity 복귀 거리 */
 	UPROPERTY(EditAnywhere, Category = "Enemy Spawn Config|거리 설정",
-		meta = (DisplayName = "Despawn Threshold (복귀 거리 cm)",
-			ToolTip = "플레이어가 이 거리(cm) 밖으로 나가면 Actor를 Mass Entity로 복귀시킵니다. SpawnThreshold보다 커야 합니다 (히스테리시스).",
+		meta = (DisplayName = "Despawn Threshold (Actor→Entity 복귀 거리, cm)",
+			ToolTip = "플레이어와 Actor 사이 거리가 이 값(cm) 밖으로 나가면 Actor를 파괴하고 Entity로 되돌립니다.\nHP와 위치는 자동 보존되며, 다시 가까이 가면 이전 상태 그대로 재스폰됩니다.\n\n[주의] 반드시 Spawn Threshold보다 커야 합니다 (히스테리시스).\n차이가 클수록 전환이 덜 빈번합니다. 최소 1000cm(10m) 차이를 권장합니다.\n\n예: 6000 = 60m → Spawn 50m / Despawn 60m = 10m 버퍼",
 			ClampMin = "200.0", ClampMax = "100000.0", UIMin = "1000.0", UIMax = "30000.0"))
 	float DespawnThreshold = 6000.f;
 
@@ -61,49 +63,49 @@ protected:
 	// Actor 제한
 	// =================================================================
 
-	/** 동시 최대 Actor 수 (Soft Cap). 초과 시 먼 Actor부터 Entity로 복귀 */
+	/** 동시 최대 Actor 수 (Soft Cap) */
 	UPROPERTY(EditAnywhere, Category = "Enemy Spawn Config|Actor 제한",
-		meta = (DisplayName = "Max Concurrent Actors (최대 동시 Actor)",
-			ToolTip = "동시에 존재할 수 있는 최대 Actor 수입니다. 초과하면 가장 먼 Actor부터 Entity로 복귀합니다.",
+		meta = (DisplayName = "Max Concurrent Actors (동시 존재 가능한 최대 Actor 수)",
+			ToolTip = "월드에 동시에 존재할 수 있는 적 Actor의 최대 수입니다.\n초과하면 플레이어에게서 가장 먼 Actor부터 Entity로 복귀시킵니다 (Soft Cap).\n\n[작동 방식]\n- 50마리 Actor가 있고 앞의 적 1마리가 죽으면 → 슬롯 1개 빔\n- 대기 중인 Entity 중 가장 가까운 1마리가 자동으로 Actor 전환\n- 디펜스 게임의 '다음 투입' 흐름이 자동으로 만들어짐\n\n[성능 가이드]\n- 30~50: 일반적인 디펜스 모드 권장\n- 100+: 고사양 PC 또는 보스전 등 특수 상황\n- 낮을수록 CPU 부하 감소, 높을수록 전투 밀도 증가",
 			ClampMin = "1", ClampMax = "500", UIMin = "10", UIMax = "200"))
 	int32 MaxConcurrentActors = 50;
 
 	// =================================================================
-	// Tick 최적화
+	// Tick 최적화 (거리별 AI 업데이트 빈도 조절)
 	// =================================================================
 
-	/** 근거리 기준. 이 거리 이내의 Actor는 NearTickInterval로 동작 */
+	/** 근거리 구간 경계 */
 	UPROPERTY(EditAnywhere, Category = "Enemy Spawn Config|Tick 최적화",
-		meta = (DisplayName = "Near Distance (근거리 기준 cm)",
-			ToolTip = "이 거리(cm) 이내의 Actor는 매 틱(또는 NearTickInterval) 실행됩니다.",
+		meta = (DisplayName = "Near Distance (근거리 구간 경계, cm)",
+			ToolTip = "이 거리(cm) 이내의 Actor는 '근거리'로 분류되어 가장 빈번하게 업데이트됩니다.\n전투 중인 적이 여기에 해당하므로 반응성이 중요합니다.\n\n[구간 구조]\n0 ~ Near: 근거리 (NearTickInterval 적용)\nNear ~ Mid: 중거리 (MidTickInterval 적용)\nMid ~ Despawn: 원거리 (FarTickInterval 적용)\n\n예: 2000 = 20m",
 			ClampMin = "100.0", ClampMax = "20000.0", UIMin = "500.0", UIMax = "10000.0"))
 	float NearDistance = 2000.f;
 
-	/** 중거리 기준. Near~Mid 구간은 MidTickInterval, Mid~Despawn은 FarTickInterval */
+	/** 중거리 구간 경계 */
 	UPROPERTY(EditAnywhere, Category = "Enemy Spawn Config|Tick 최적화",
-		meta = (DisplayName = "Mid Distance (중거리 기준 cm)",
-			ToolTip = "Near~Mid 구간은 MidTickInterval, Mid~Despawn 구간은 FarTickInterval로 동작합니다.",
+		meta = (DisplayName = "Mid Distance (중거리 구간 경계, cm)",
+			ToolTip = "Near ~ Mid 사이의 Actor는 '중거리'로, Mid ~ Despawn 사이는 '원거리'로 분류됩니다.\n반드시 Near Distance보다 크고 Spawn Threshold보다 작아야 합니다.\n\n예: 4000 = 40m → 20~40m 구간이 중거리, 40~50m 구간이 원거리",
 			ClampMin = "200.0", ClampMax = "40000.0", UIMin = "1000.0", UIMax = "15000.0"))
 	float MidDistance = 4000.f;
 
-	/** 근거리 Tick 간격 (초). 0 = 매 틱 (최대 프레임레이트) */
+	/** 근거리 Tick 간격 */
 	UPROPERTY(EditAnywhere, Category = "Enemy Spawn Config|Tick 최적화",
-		meta = (DisplayName = "Near Tick Interval (근거리 틱 간격 초)",
-			ToolTip = "근거리 Actor의 Tick 간격(초). 0이면 매 프레임 실행됩니다.",
+		meta = (DisplayName = "Near Tick Interval (근거리 AI 업데이트 간격, 초)",
+			ToolTip = "근거리 구간 Actor의 Tick 간격(초)입니다.\n0이면 매 프레임 실행 (60FPS = 초당 60회).\n전투 중 적이므로 0 또는 매우 작은 값을 권장합니다.\n\n예: 0 = 매 프레임, 0.016 = ~60Hz, 0.033 = ~30Hz",
 			ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "0.5"))
 	float NearTickInterval = 0.f;
 
-	/** 중거리 Tick 간격 (초). ~12Hz 권장 */
+	/** 중거리 Tick 간격 */
 	UPROPERTY(EditAnywhere, Category = "Enemy Spawn Config|Tick 최적화",
-		meta = (DisplayName = "Mid Tick Interval (중거리 틱 간격 초)",
-			ToolTip = "중거리 Actor의 Tick 간격(초). 0.08 = 약 12Hz.",
+		meta = (DisplayName = "Mid Tick Interval (중거리 AI 업데이트 간격, 초)",
+			ToolTip = "중거리 구간 Actor의 Tick 간격(초)입니다.\n접근 중이지만 아직 전투 거리가 아닌 적에 해당합니다.\n약간 느려도 체감 차이가 거의 없습니다.\n\n예: 0.08 = ~12Hz (권장), 0.05 = ~20Hz, 0.1 = ~10Hz",
 			ClampMin = "0.0", ClampMax = "2.0", UIMin = "0.0", UIMax = "0.5"))
 	float MidTickInterval = 0.08f;
 
-	/** 원거리 Tick 간격 (초). ~4Hz 권장. Mid~Despawn 구간에 적용 */
+	/** 원거리 Tick 간격 */
 	UPROPERTY(EditAnywhere, Category = "Enemy Spawn Config|Tick 최적화",
-		meta = (DisplayName = "Far Tick Interval (원거리 틱 간격 초)",
-			ToolTip = "원거리 Actor의 Tick 간격(초). 0.25 = 약 4Hz.",
+		meta = (DisplayName = "Far Tick Interval (원거리 AI 업데이트 간격, 초)",
+			ToolTip = "원거리 구간 (Mid ~ Despawn) Actor의 Tick 간격(초)입니다.\n플레이어에게서 멀리 있어 행동이 잘 안 보이는 적입니다.\n느리게 업데이트해도 체감 차이가 없으며 CPU를 크게 절약합니다.\n\n예: 0.25 = ~4Hz (권장), 0.5 = ~2Hz, 0.1 = ~10Hz",
 			ClampMin = "0.0", ClampMax = "5.0", UIMin = "0.0", UIMax = "1.0"))
 	float FarTickInterval = 0.25f;
 };
