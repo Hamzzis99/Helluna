@@ -46,6 +46,7 @@
 #include "ECS/Fragments/EnemyMassFragments.h"
 #include "Character/HellunaEnemyCharacter.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
+#include "MassAgentComponent.h"
 
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
@@ -130,7 +131,15 @@ void UEnemyActorSpawnProcessor::DespawnActorToEntity(
 	// 2. 위치 보존 (Fragment에 현재 Actor 위치 기록)
 	Transform.GetMutableTransform() = Actor->GetActorTransform();
 
-	// 3. AI Controller 정리 (고아 Controller 방지)
+	// 3. MassAgentComponent 안전 제거 (클라이언트 리플리케이션 크래시 방지)
+	// BP에 UMassAgentComponent가 붙어있으면 PuppetPendingReplication 상태에서
+	// Destroy 시 클라이언트에서 assert 터짐. Destroy 전에 먼저 제거한다.
+	if (UMassAgentComponent* MassAgent = Actor->FindComponentByClass<UMassAgentComponent>())
+	{
+		MassAgent->DestroyComponent();
+	}
+
+	// 4. AI Controller 정리 (고아 Controller 방지)
 	if (APawn* Pawn = Cast<APawn>(Actor))
 	{
 		if (AController* Controller = Pawn->GetController())
@@ -140,10 +149,10 @@ void UEnemyActorSpawnProcessor::DespawnActorToEntity(
 		}
 	}
 
-	// 4. Actor 파괴
+	// 5. Actor 파괴
 	Actor->Destroy();
 
-	// 5. 상태 초기화
+	// 6. 상태 초기화
 	SpawnState.bHasSpawnedActor = false;
 	SpawnState.SpawnedActor = nullptr;
 
@@ -471,6 +480,12 @@ void UEnemyActorSpawnProcessor::Execute(
 			if (!IsValid(Actor))
 			{
 				continue;
+			}
+
+			// MassAgentComponent 안전 제거 (클라이언트 크래시 방지)
+			if (UMassAgentComponent* MassAgent = Actor->FindComponentByClass<UMassAgentComponent>())
+			{
+				MassAgent->DestroyComponent();
 			}
 
 			// Controller 정리 후 Actor 파괴
