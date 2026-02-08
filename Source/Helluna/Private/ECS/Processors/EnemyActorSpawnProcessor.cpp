@@ -47,6 +47,7 @@
 #include "Character/HellunaEnemyCharacter.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
 #include "MassAgentComponent.h"
+#include "Components/StateTreeComponent.h"
 
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
@@ -231,11 +232,28 @@ bool UEnemyActorSpawnProcessor::TrySpawnActor(
 	}
 
 	// ★ MassAgentComponent 즉시 제거 (클라이언트 리플리케이션 크래시 방지)
-	// BP에 UMassAgentComponent가 붙어있으면 클라이언트에서 PuppetPendingReplication 상태로
-	// Actor Destroy 시 assert 터짐. 스폰 직후 제거하면 클라이언트에도 없는 상태로 복제됨.
+	// MassEntity 시스템이 Actor 스폰 시 자동으로 MassAgentComponent를 추가함.
+	// 이 컴포넌트가 있으면 역변환(Destroy) 시 클라이언트에서 PuppetPendingReplication
+	// 상태 불일치로 assert 크래시 발생. 스폰 직후 제거하면 처음부터 없는 상태로 복제됨.
 	if (UMassAgentComponent* MassAgentComp = SpawnedActor->FindComponentByClass<UMassAgentComponent>())
 	{
 		MassAgentComp->DestroyComponent();
+	}
+
+	// ★ StateTree 재시작 (Pawn 컨텍스트 에러 수정)
+	// SpawnActor 직후에는 AIController가 아직 Possess하지 않은 상태일 수 있음.
+	// AutoPossessAI가 설정되어 있어도 BeginPlay 순서에 의해
+	// StateTree가 먼저 초기화되면 Pawn 컨텍스트를 못 찾아서 실패함.
+	// 해결: SpawnDefaultController로 즉시 Possess 보장 후, StateTree를 수동 재시작.
+	if (!SpawnedActor->GetController())
+	{
+		SpawnedActor->SpawnDefaultController();
+	}
+
+	// StateTreeComponent 찾아서 재시작
+	if (UStateTreeComponent* STComp = SpawnedActor->FindComponentByClass<UStateTreeComponent>())
+	{
+		STComp->RestartLogic();
 	}
 
 	// HP 복원: 역변환(Soft Cap 등)으로 Entity가 된 적이 다시 Actor로 돌아올 때
