@@ -46,6 +46,7 @@
 #include "ECS/Fragments/EnemyMassFragments.h"
 #include "Character/HellunaEnemyCharacter.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
+#include "Components/StateTreeComponent.h"
 
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
@@ -219,6 +220,35 @@ bool UEnemyActorSpawnProcessor::TrySpawnActor(
 			*Data.EnemyClass->GetName(),
 			*SpawnTransform.GetLocation().ToString());
 		return false;
+	}
+
+	// StateTree 재시작: AutoPossessAI가 Possess 완료되기 전에 StateTree가 시작되면
+	// "Could not find context actor of type Pawn" 에러로 tick이 비활성화된다.
+	// 짧은 딜레이 후 RestartLogic을 호출해서 Pawn 컨텍스트가 준비된 후 재시작.
+	{
+		TWeakObjectPtr<AActor> WeakActor = SpawnedActor;
+		FTimerHandle TimerHandle;
+		World->GetTimerManager().SetTimer(TimerHandle, [WeakActor]()
+		{
+			AActor* Actor = WeakActor.Get();
+			if (!Actor) return;
+
+			APawn* Pawn = Cast<APawn>(Actor);
+			if (!Pawn) return;
+
+			AController* Controller = Pawn->GetController();
+			if (!Controller) return;
+
+			UStateTreeComponent* STComp = Controller->FindComponentByClass<UStateTreeComponent>();
+			if (!STComp) return;
+
+			STComp->SetComponentTickEnabled(true);
+			STComp->RestartLogic();
+
+			UE_LOG(LogECSEnemy, Log, TEXT("[StateTree] RestartLogic 완료, IsRunning=%s, Actor: %s"),
+				STComp->IsRunning() ? TEXT("TRUE") : TEXT("FALSE"),
+				*Actor->GetName());
+		}, 0.2f, false);
 	}
 
 	// HP 복원: 역변환(Soft Cap 등)으로 Entity가 된 적이 다시 Actor로 돌아올 때
