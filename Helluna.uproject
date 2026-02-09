@@ -55,6 +55,10 @@
 		{
 			"Name": "AIAssistant",
 			"Enabled": true
+		},
+		{
+			"Name": "PythonAutomationTest",
+			"Enabled": true
 		}
 	]
 }
