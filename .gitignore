@@ -3,6 +3,7 @@ Plugins/Developer/
 # Visual Studio
 .vs/
 .claude/
+UltraDynamicSky/
 
 # Content Folder
 Content/Collections/
@@ -25,6 +26,7 @@ Binaries/*
 Plugins/*/Binaries/*
 Plugins/*/Intermediate/
 Plugins/UnrealMCP
+
 
 # User-specific files
 *.sln
