@@ -89,6 +89,7 @@ void UHeroGameplayAbility_Repair::Repair(const FGameplayAbilityActorInfo* ActorI
 						CurrentWidget->AddToViewport(100);  // 최상위 Z-Order
 
 						// ⭐ 마우스 커서 표시 및 입력 모드 변경
+						PC->FlushPressedKeys();
 						PC->SetInputMode(FInputModeUIOnly());
 						PC->bShowMouseCursor = true;
 
