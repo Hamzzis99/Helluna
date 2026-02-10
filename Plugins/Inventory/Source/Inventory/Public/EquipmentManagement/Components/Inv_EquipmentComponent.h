@@ -77,6 +77,17 @@ public:
 	void HandleSecondaryWeaponInput();
 
 	// ============================================
+	// ⭐ [WeaponBridge] 무기 장착 애니메이션 진행 중 플래그
+	// ⭐ true일 때 HandlePrimary/SecondaryWeaponInput 차단
+	// ⭐ WeaponBridgeComponent에서 SetWeaponEquipping()을 통해 제어
+	// ============================================
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Weapon", meta = (DisplayName = "무기 장착 중 설정"))
+	void SetWeaponEquipping(bool bNewEquipping);
+
+	UFUNCTION(BlueprintPure, Category = "Inventory|Weapon", meta = (DisplayName = "무기 장착 중 여부"))
+	bool IsWeaponEquipping() const { return bIsWeaponEquipping; }
+
+	// ============================================
 	// ⭐ [WeaponBridge] 현재 활성 무기 슬롯 Getter
 	// ============================================
 	UFUNCTION(BlueprintPure, Category = "Inventory|Weapon", meta = (DisplayName = "활성 무기 슬롯 가져오기"))
@@ -123,6 +134,10 @@ private:
 	// 현재 활성 무기 슬롯
 	UPROPERTY(VisibleAnywhere, Category = "Inventory|Weapon", meta = (DisplayName = "활성 무기 슬롯"))
 	EInv_ActiveWeaponSlot ActiveWeaponSlot = EInv_ActiveWeaponSlot::None;
+
+	// ⭐ 무기 장착 애니메이션 진행 중 플래그
+	UPROPERTY(VisibleAnywhere, Category = "Inventory|Weapon", meta = (DisplayName = "무기 장착 중"))
+	bool bIsWeaponEquipping = false;
 
 	// ============================================
 	// ⭐ [WeaponBridge] 무기 꺼내기/집어넣기 내부 함수

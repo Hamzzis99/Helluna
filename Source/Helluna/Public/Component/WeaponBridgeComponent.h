@@ -44,6 +44,21 @@ protected:
 
 private:
 	// ============================================
+	// ⭐ 장착 애니메이션 진행 중 플래그
+	// ⭐ true일 때 무기 전환 입력을 차단
+	// ============================================
+	bool bIsEquipping = false;
+
+public:
+	// ⭐ 장착 중 여부 Getter (Inv_EquipmentComponent에서 사용)
+	UFUNCTION(BlueprintPure, Category = "Weapon")
+	bool IsEquipping() const { return bIsEquipping; }
+
+	// ⭐ 장착 상태 Setter (GA_SpawnWeapon에서 호출)
+	void SetEquipping(bool bNewEquipping);
+
+private:
+	// ============================================
 	// ⭐ 참조 변수들
 	// ============================================
 	

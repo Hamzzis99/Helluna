@@ -348,6 +348,78 @@ void AHellunaBaseGameMode::PostLogin(APlayerController* NewPlayer)
 		}, 0.5f, false);
 	}
 	// ────────────────────────────────────────────────────────────────────────────
+	// 📌 개발자 모드: 로그인 스킵
+	// ────────────────────────────────────────────────────────────────────────────
+	// bDebugSkipLogin == true일 때:
+	//   디버그 GUID 자동 부여 → 타임아웃 없이 바로 게임 시작
+	//   OnLoginSuccess()가 하는 핵심 작업을 인라인으로 재현
+	// ────────────────────────────────────────────────────────────────────────────
+	else if (bDebugSkipLogin)
+	{
+#if WITH_EDITOR
+		FString DebugPlayerId = FString::Printf(TEXT("DEBUG_%s"), *FGuid::NewGuid().ToString());
+
+		UE_LOG(LogHelluna, Warning, TEXT(""));
+		UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+		UE_LOG(LogHelluna, Warning, TEXT("║  🔧 [BaseGameMode] 개발자 모드 - 로그인 스킵              ║"));
+		UE_LOG(LogHelluna, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+		UE_LOG(LogHelluna, Warning, TEXT("║ DebugPlayerId: %s"), *DebugPlayerId);
+		UE_LOG(LogHelluna, Warning, TEXT("║ Controller: %s"), *GetNameSafe(NewPlayer));
+		UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+
+		// 1. PlayerState에 GUID 부여
+		if (PS)
+		{
+			PS->SetLoginInfo(DebugPlayerId);
+		}
+
+		// 2. GameInstance에 로그인 등록
+		if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(UGameplayStatics::GetGameInstance(GetWorld())))
+		{
+			GI->RegisterLogin(DebugPlayerId);
+		}
+
+		// 3. ControllerToPlayerIdMap 등록 (Logout/인벤토리 저장 시 필요)
+		ControllerToPlayerIdMap.Add(NewPlayer, DebugPlayerId);
+
+		// 4. Controller EndPlay 델리게이트 바인딩 (인벤토리 저장용)
+		AInv_PlayerController* InvPC = Cast<AInv_PlayerController>(NewPlayer);
+		if (IsValid(InvPC))
+		{
+			InvPC->OnControllerEndPlay.AddDynamic(this, &AHellunaBaseGameMode::OnInvControllerEndPlay);
+		}
+
+		// 5. 게임 초기화 (첫 플레이어일 때)
+		if (!bGameInitialized)
+		{
+			InitializeGame();
+		}
+
+		// 6. 인벤토리 로드 (1초 딜레이 - 컴포넌트 초기화 대기)
+		FTimerHandle InventoryLoadTimer;
+		GetWorldTimerManager().SetTimer(InventoryLoadTimer, [this, NewPlayer]()
+		{
+			if (IsValid(NewPlayer))
+			{
+				LoadAndSendInventoryToClient(NewPlayer);
+			}
+		}, 1.0f, false);
+
+		// 타임아웃 타이머 시작하지 않음!
+#else
+		// 에디터 외 빌드에서는 개발자 모드 무시 → 정상 로그인 흐름
+		UE_LOG(LogHelluna, Error, TEXT("[BaseGameMode] bDebugSkipLogin은 에디터 전용입니다!"));
+		FTimerHandle& TimeoutTimer = LoginTimeoutTimers.FindOrAdd(NewPlayer);
+		GetWorldTimerManager().SetTimer(TimeoutTimer, [this, NewPlayer]()
+		{
+			if (IsValid(NewPlayer))
+			{
+				OnLoginTimeout(NewPlayer);
+			}
+		}, LoginTimeoutSeconds, false);
+#endif
+	}
+	// ────────────────────────────────────────────────────────────────────────────
 	// 📌 로그인 필요 (일반 접속)
 	// ────────────────────────────────────────────────────────────────────────────
 	// 타임아웃 타이머 시작 → 60초 내 로그인하지 않으면 킥
