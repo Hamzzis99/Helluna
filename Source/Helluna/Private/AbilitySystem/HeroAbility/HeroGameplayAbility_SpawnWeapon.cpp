@@ -8,6 +8,7 @@
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 
 #include "EquipmentManagement/Components/Inv_EquipmentComponent.h"
+#include "Component/WeaponBridgeComponent.h"
 
 #include "DebugHelper.h"
 
@@ -146,10 +147,28 @@ void UHeroGameplayAbility_SpawnWeapon::EndAbility(
 
 void UHeroGameplayAbility_SpawnWeapon::OnEquipFinished()
 {
+	// ⭐ 장착 애니메이션 완료 → 무기 전환 허용
+	if (AHellunaHeroCharacter* Hero = GetHeroCharacterFromActorInfo())
+	{
+		if (UWeaponBridgeComponent* WeaponBridge = Hero->FindComponentByClass<UWeaponBridgeComponent>())
+		{
+			WeaponBridge->SetEquipping(false);
+		}
+	}
+	
 	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
 }
 
 void UHeroGameplayAbility_SpawnWeapon::OnEquipInterrupted()
 {
+	// ⭐ 장착 애니메이션 중단 → 무기 전환 허용
+	if (AHellunaHeroCharacter* Hero = GetHeroCharacterFromActorInfo())
+	{
+		if (UWeaponBridgeComponent* WeaponBridge = Hero->FindComponentByClass<UWeaponBridgeComponent>())
+		{
+			WeaponBridge->SetEquipping(false);
+		}
+	}
+	
 	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
 }

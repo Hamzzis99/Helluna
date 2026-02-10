@@ -335,6 +335,18 @@ void UInv_EquipmentComponent::OnItemUnequipped(UInv_InventoryItem* UnequippedIte
 }
 
 // ============================================
+// ⭐ [WeaponBridge] 무기 장착 중 상태 설정
+// ============================================
+void UInv_EquipmentComponent::SetWeaponEquipping(bool bNewEquipping)
+{
+	bIsWeaponEquipping = bNewEquipping;
+#if INV_DEBUG_EQUIP
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] SetWeaponEquipping: %s"), 
+		bIsWeaponEquipping ? TEXT("true (장착 중 - 전환 차단)") : TEXT("false (장착 완료 - 전환 허용)"));
+#endif
+}
+
+// ============================================
 // ⭐ [WeaponBridge] 무기 꺼내기/집어넣기 구현
 // ============================================
 
@@ -343,6 +355,15 @@ void UInv_EquipmentComponent::HandlePrimaryWeaponInput()
 #if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] HandlePrimaryWeaponInput 호출됨 (1키)"));
 #endif
+	
+	// ⭐ 장착 애니메이션 진행 중이면 입력 무시
+	if (bIsWeaponEquipping)
+	{
+#if INV_DEBUG_EQUIP
+		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 장착 애니메이션 진행 중 - 입력 무시"));
+#endif
+		return;
+	}
 	
 	// 주무기가 없으면 무시
 	AInv_EquipActor* WeaponActor = FindPrimaryWeaponActor();
@@ -383,6 +404,15 @@ void UInv_EquipmentComponent::HandleSecondaryWeaponInput()
 #if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] HandleSecondaryWeaponInput 호출됨 (2키)"));
 #endif
+	
+	// ⭐ 장착 애니메이션 진행 중이면 입력 무시
+	if (bIsWeaponEquipping)
+	{
+#if INV_DEBUG_EQUIP
+		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 장착 애니메이션 진행 중 - 입력 무시"));
+#endif
+		return;
+	}
 	
 	// 보조무기가 없으면 무시
 	AInv_EquipActor* WeaponActor = FindSecondaryWeaponActor();

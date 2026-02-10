@@ -45,6 +45,26 @@ void UWeaponBridgeComponent::BeginPlay()
 }
 
 // ============================================
+// ⭐ SetEquipping
+// ⭐ 장착 애니메이션 진행 상태 변경
+// ⭐ true: 장착 중 (무기 전환 차단)
+// ⭐ false: 장착 완료 (무기 전환 허용)
+// ============================================
+void UWeaponBridgeComponent::SetEquipping(bool bNewEquipping)
+{
+	bIsEquipping = bNewEquipping;
+	
+	// ⭐ EquipmentComponent의 플래그도 동기화
+	if (EquipmentComponent.IsValid())
+	{
+		EquipmentComponent->SetWeaponEquipping(bNewEquipping);
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] SetEquipping: %s"), 
+		bIsEquipping ? TEXT("true (장착 중 - 전환 차단)") : TEXT("false (장착 완료 - 전환 허용)"));
+}
+
+// ============================================
 // ⭐ InitializeWeaponBridge
 // ⭐ Character, ASC, EquipmentComponent 참조 획득
 // ⭐ EquipmentComponent의 델리게이트에 바인딩
@@ -183,6 +203,15 @@ void UWeaponBridgeComponent::SpawnHandWeapon(TSubclassOf<UGameplayAbility> Spawn
 	if (bSuccess)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] GA 활성화 성공!"));
+		
+		// ⭐ 장착 애니메이션 시작 → 무기 전환 차단
+		// GA_SpawnWeapon::OnEquipFinished/OnEquipInterrupted에서 SetEquipping(false) 호출
+		bIsEquipping = true;
+		if (EquipmentComponent.IsValid())
+		{
+			EquipmentComponent->SetWeaponEquipping(true);
+		}
+		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] bIsEquipping = true (장착 중 - 전환 차단)"));
 	}
 	else
 	{
