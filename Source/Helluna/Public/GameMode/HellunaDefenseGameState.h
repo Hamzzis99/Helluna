@@ -58,6 +58,33 @@ public:
 
     void SetPhase(EDefensePhase NewPhase);
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 낮/밤 전환 이벤트 (BP에서 구현)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Phase 복제 콜백 - 클라이언트에서 Phase가 변경될 때 자동 호출
+     * 서버에서는 SetPhase() 내부에서 직접 호출
+     */
+    UFUNCTION()
+    void OnRep_Phase();
+
+    /**
+     * 낮 시작 시 호출 (BP에서 UDS/UDW 날씨 변경 구현)
+     * - 서버: SetPhase(Day) 시 직접 호출
+     * - 클라이언트: OnRep_Phase()에서 자동 호출
+     */
+    UFUNCTION(BlueprintImplementableEvent, Category = "Defense|DayNight")
+    void OnDayStarted();
+
+    /**
+     * 밤 시작 시 호출 (BP에서 UDS/UDW 날씨 변경 구현)
+     * - 서버: SetPhase(Night) 시 직접 호출
+     * - 클라이언트: OnRep_Phase()에서 자동 호출
+     */
+    UFUNCTION(BlueprintImplementableEvent, Category = "Defense|DayNight")
+    void OnNightStarted();
+
     UFUNCTION(NetMulticast, Reliable)
     void MulticastPrintNight(int32 Current, int32 Need);
 
@@ -110,7 +137,7 @@ protected:
     UPROPERTY(Replicated)
     TObjectPtr<AResourceUsingObject_SpaceShip> SpaceShip;
 
-    UPROPERTY(Replicated)
+    UPROPERTY(ReplicatedUsing = OnRep_Phase)
     EDefensePhase Phase = EDefensePhase::Day;
 
     virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;

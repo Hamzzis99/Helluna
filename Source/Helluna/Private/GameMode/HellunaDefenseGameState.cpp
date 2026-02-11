@@ -40,7 +40,7 @@ void AHellunaDefenseGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProper
 
     // UsedCharacters는 Base(AHellunaBaseGameState)에서 복제됨
     DOREPLIFETIME(AHellunaDefenseGameState, SpaceShip);
-    DOREPLIFETIME(AHellunaDefenseGameState, Phase);
+    DOREPLIFETIME_CONDITION_NOTIFY(AHellunaDefenseGameState, Phase, COND_None, REPNOTIFY_Always);
     DOREPLIFETIME(AHellunaDefenseGameState, AliveMonsterCount);
 }
 
@@ -50,6 +50,28 @@ void AHellunaDefenseGameState::SetPhase(EDefensePhase NewPhase)
        return;
 
     Phase = NewPhase;
+
+    // 서버에서는 OnRep이 자동 호출되지 않으므로 직접 호출
+    OnRep_Phase();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Phase RepNotify - 클라이언트에서 Phase 복제 시 자동 호출
+// 서버에서는 SetPhase() 내부에서 직접 호출
+// ═══════════════════════════════════════════════════════════════════════════════
+void AHellunaDefenseGameState::OnRep_Phase()
+{
+    switch (Phase)
+    {
+    case EDefensePhase::Day:
+        OnDayStarted();
+        break;
+    case EDefensePhase::Night:
+        OnNightStarted();
+        break;
+    default:
+        break;
+    }
 }
 
 void AHellunaDefenseGameState::MulticastPrintNight_Implementation(int32 Current, int32 Need)
