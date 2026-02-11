@@ -61,12 +61,17 @@ void AHellunaDefenseGameState::SetPhase(EDefensePhase NewPhase)
 // ═══════════════════════════════════════════════════════════════════════════════
 void AHellunaDefenseGameState::OnRep_Phase()
 {
+    UE_LOG(LogTemp, Warning, TEXT("[GameState] OnRep_Phase 호출됨! Phase=%d, HasAuthority=%d"),
+        (int32)Phase, HasAuthority());
+
     switch (Phase)
     {
     case EDefensePhase::Day:
+        UE_LOG(LogTemp, Warning, TEXT("[GameState] OnDayStarted 호출 시도"));
         OnDayStarted();
         break;
     case EDefensePhase::Night:
+        UE_LOG(LogTemp, Warning, TEXT("[GameState] OnNightStarted 호출 시도"));
         OnNightStarted();
         break;
     default:
