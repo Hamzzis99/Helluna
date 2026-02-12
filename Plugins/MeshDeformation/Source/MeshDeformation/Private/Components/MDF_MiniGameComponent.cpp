@@ -283,7 +283,9 @@ bool UMDF_MiniGameComponent::TryBreach(const FHitResult& HitInfo, float DamageAm
 
             if (WeakSpots[i].CurrentHP <= 0.0f)
             {
-                UE_LOG(LogMeshDeform, Error, TEXT("   >>> [DESTROY] 파괴 조건 달성! 절단 실행!"));
+#if MDF_DEBUG_MINIGAME
+                UE_LOG(LogMeshDeform, Warning, TEXT("   >>> [DESTROY] 파괴 조건 달성! 절단 실행!"));
+#endif
                 ExecuteDestruction(i);
             }
             return true;
