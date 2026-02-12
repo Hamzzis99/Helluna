@@ -158,11 +158,18 @@ void AHellunaDefenseGameMode::EnterDay()
 
     if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
     {
+        // Phase 전환 → OnDayStarted (BP: 밤→아침 빠른 전환 연출)
         GS->SetPhase(EDefensePhase::Day);
         GS->SetAliveMonsterCount(0);
         GS->MulticastPrintDay();
+
+        // 새벽 완료 신호 → OnDawnPassed (BP: UDS 비례 구동 시작)
+        // RoundDuration을 같이 보내서 BP에서 UDS 속도 계산에 사용
+        GS->NetMulticast_OnDawnPassed(TestDayDuration);
     }
 
+    // 라운드 타이머: OnDawnPassed 이후부터 카운트 시작
+    // (새벽 전환 연출 시간은 라운드 시간에 포함하지 않음)
     GetWorldTimerManager().ClearTimer(TimerHandle_ToNight);
     GetWorldTimerManager().SetTimer(TimerHandle_ToNight, this, &ThisClass::EnterNight, TestDayDuration, false);
 }

@@ -79,6 +79,15 @@ void AHellunaDefenseGameState::OnRep_Phase()
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// 새벽 완료 Multicast RPC — 모든 클라이언트에서 OnDawnPassed(BP) 호출
+// ═══════════════════════════════════════════════════════════════════════════════
+void AHellunaDefenseGameState::NetMulticast_OnDawnPassed_Implementation(float RoundDuration)
+{
+    UE_LOG(LogTemp, Warning, TEXT("[GameState] OnDawnPassed 호출! RoundDuration=%.1f초"), RoundDuration);
+    OnDawnPassed(RoundDuration);
+}
+
 void AHellunaDefenseGameState::MulticastPrintNight_Implementation(int32 Current, int32 Need)
 {
     Debug::Print(FString::Printf(TEXT("Night! SpaceShip Repair: %d / %d"), Current, Need));
