@@ -234,4 +234,13 @@ protected:
     // ═══════════════════════════════════════════════════════════════════════════
     FTimerHandle TimerHandle_UDSDebug;
     void PrintUDSDebug();
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ☀️ UDS 시간 제어 헬퍼
+    // ═══════════════════════════════════════════════════════════════════════════
+    UPROPERTY()
+    TWeakObjectPtr<AActor> CachedUDS;  // UDS 액터 캐시
+    
+    AActor* GetUDSActor();             // UDS 찾기 헬퍼
+    void SetUDSTimeOfDay(float Time);  // UDS Time of Day 세팅 헬퍼
 };
