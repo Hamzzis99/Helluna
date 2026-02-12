@@ -240,11 +240,22 @@ protected:
     // ═══════════════════════════════════════════════════════════════════════════
     
     /** 낮 시작 시간 (UDS 기준, 800 = 오전 8시) */
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Defense|DayNight", meta = (DisplayName = "낮 시작 시간"))
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤", meta = (DisplayName = "낮 시작 시간"))
     float DayStartTime = 800.f;
+
+    /** 밤→낮 새벽 전환 시간 (초) */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤", meta = (DisplayName = "새벽 전환 시간(초)"))
+    float DawnTransitionDuration = 5.f;
+
+    FTimerHandle TimerHandle_DawnTransition;
+    float DawnLerpStart = 0.f;          // 전환 시작 시 UDS 시간
+    float DawnLerpElapsed = 0.f;        // 경과 시간
+    float DawnTotalDistance = 0.f;       // 총 이동량 (순환 고려)
+    float PendingRoundDuration = 0.f;   // 새벽 완료 후 사용할 RoundDuration
+    void TickDawnTransition();           // 타이머 콜백 (매 프레임)
     
     /** 낮 종료 시간 (UDS 기준, 1800 = 오후 6시 일몰) */
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Defense|DayNight", meta = (DisplayName = "낮 종료 시간"))
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤", meta = (DisplayName = "낮 종료 시간"))
     float DayEndTime = 1800.f;
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -252,23 +263,23 @@ protected:
     // ═══════════════════════════════════════════════════════════════════════════
     
     /** 낮에 사용할 날씨 목록 (UDS Weather Type Data Asset) */
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Defense|Weather", meta = (DisplayName = "낮 날씨 배열"))
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|날씨", meta = (DisplayName = "낮 날씨 배열"))
     TArray<UObject*> DayWeatherTypes;
     
     /** 밤에 사용할 날씨 목록 (UDS Weather Type Data Asset) */
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Defense|Weather", meta = (DisplayName = "밤 날씨 배열"))
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|날씨", meta = (DisplayName = "밤 날씨 배열"))
     TArray<UObject*> NightWeatherTypes;
     
     /** 날씨 전환 시간 (초) */
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Defense|Weather", meta = (DisplayName = "날씨 전환 시간(초)"))
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|날씨", meta = (DisplayName = "날씨 전환 시간(초)"))
     float WeatherTransitionTime = 10.f;
     
     /** 현재 선택된 낮 날씨 (디버그/읽기용) */
-    UPROPERTY(BlueprintReadOnly, Category = "Defense|Weather", meta = (DisplayName = "현재 낮 날씨"))
+    UPROPERTY(BlueprintReadOnly, Category = "디펜스|날씨", meta = (DisplayName = "현재 낮 날씨"))
     UObject* CurrentDayWeather = nullptr;
     
     /** 현재 선택된 밤 날씨 (디버그/읽기용) */
-    UPROPERTY(BlueprintReadOnly, Category = "Defense|Weather", meta = (DisplayName = "현재 밤 날씨"))
+    UPROPERTY(BlueprintReadOnly, Category = "디펜스|날씨", meta = (DisplayName = "현재 밤 날씨"))
     UObject* CurrentNightWeather = nullptr;
     
     /** 배열에서 랜덤 날씨 선택 후 Change Weather 호출 */
@@ -290,4 +301,7 @@ protected:
     /** 데디서버에서 UDS/UDW가 존재하는지 (BeginPlay에서 1회 체크) */
     bool bHasUDS = false;
     bool bHasUDW = false;
+    
+    /** 밤을 한 번이라도 거쳤는지 (첫 시작 시 새벽 전환 방지) */
+    bool bHasBeenNight = false;
 };
