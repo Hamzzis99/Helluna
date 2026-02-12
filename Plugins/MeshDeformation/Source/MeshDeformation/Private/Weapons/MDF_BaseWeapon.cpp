@@ -48,7 +48,9 @@ void AMDF_BaseWeapon::StartFire()
     if (CurrentAmmo <= 0.0f)
     {
        // [한글 로그] 탄약 부족 알림
+#if MDF_DEBUG_WEAPON
        UE_LOG(LogMeshDeform, Warning, TEXT("[무기] 탄약이 부족합니다!"));
+#endif
        return;
     }
 
@@ -80,7 +82,9 @@ void AMDF_BaseWeapon::Fire()
     }
 
     // 3. 디버그 로그 (제대로 작동하는지 확인용)
+#if MDF_DEBUG_WEAPON
     UE_LOG(LogMeshDeform, Log, TEXT("[무기] 발사! 남은 탄약: %f"), CurrentAmmo);
+#endif
 }
 
 void AMDF_BaseWeapon::ConsumeAmmo()
@@ -91,6 +95,8 @@ void AMDF_BaseWeapon::ConsumeAmmo()
     {
        CurrentAmmo = 0.0f;
        StopFire(); // 탄약 다 떨어지면 강제 중지
+#if MDF_DEBUG_WEAPON
        UE_LOG(LogMeshDeform, Log, TEXT("[무기] 탄창이 비었습니다. 사격 중지."));
+#endif
     }
 }

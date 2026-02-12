@@ -25,7 +25,9 @@ void AMDF_LaserWeapon::StartFire()
 {
     if (CurrentAmmo <= 0.0f) return;
     SetActorTickEnabled(true);
+#if MDF_DEBUG_WEAPON
     UE_LOG(LogMeshDeform, Log, TEXT("[레이저] 가동 시작"));
+#endif
 }
 
 void AMDF_LaserWeapon::StopFire()
@@ -38,7 +40,9 @@ void AMDF_LaserWeapon::StopFire()
         CurrentTargetComp->EndMarking(LastHitLocation);
         CurrentTargetComp = nullptr;
     }
+#if MDF_DEBUG_WEAPON
     UE_LOG(LogMeshDeform, Log, TEXT("[레이저] 가동 중지"));
+#endif
 }
 
 void AMDF_LaserWeapon::Tick(float DeltaTime)

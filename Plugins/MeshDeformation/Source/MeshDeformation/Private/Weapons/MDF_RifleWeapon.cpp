@@ -57,7 +57,9 @@ void AMDF_RifleWeapon::Fire()
             DamageTypeToUse                                          // 데미지 타입
         );
 
+#if MDF_DEBUG_WEAPON
         UE_LOG(LogMeshDeform, Log, TEXT("[Rifle] 타격! Actor: %s, Damage: %.1f"), *HitResult.GetActor()->GetName(), DamagePerShot);
+#endif
     }
     else
     {

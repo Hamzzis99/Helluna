@@ -23,7 +23,9 @@ void UMDF_WeaponComponent::EquipWeaponByIndex(int32 SlotIndex)
     // 유효성 검사
     if (!WeaponSlots.IsValidIndex(SlotIndex))
     {
+#if MDF_DEBUG_WEAPON
         UE_LOG(LogMeshDeform, Warning, TEXT("[WeaponComp] 유효하지 않은 슬롯 인덱스: %d"), SlotIndex);
+#endif
         return;
     }
 
@@ -52,7 +54,9 @@ void UMDF_WeaponComponent::EquipWeaponByIndex(int32 SlotIndex)
             }
             
             CurrentWeaponIndex = SlotIndex; // 인덱스 갱신
+#if MDF_DEBUG_WEAPON
             UE_LOG(LogMeshDeform, Log, TEXT("[WeaponComp] 무기 장착 완료: %s (Slot: %d)"), *CurrentWeaponActor->GetName(), SlotIndex);
+#endif
         }
     }
 }
