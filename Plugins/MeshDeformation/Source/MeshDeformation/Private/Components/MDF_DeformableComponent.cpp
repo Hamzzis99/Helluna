@@ -202,6 +202,24 @@ void UMDF_DeformableComponent::ProcessDeformationBatch()
 
     // 5. 큐 비우기
     HitQueue.Empty();
+
+    // [디버그] 개발자 모드 자동 복구
+    if (bDevMode_AutoRepair)
+    {
+        // 기존 타이머가 있으면 리셋 (마지막 타격 기준으로 딜레이 재시작)
+        GetWorld()->GetTimerManager().ClearTimer(DevMode_RepairTimerHandle);
+
+        float Delay = FMath::Max(0.5f, DevMode_RepairDelay);
+        GetWorld()->GetTimerManager().SetTimer(
+            DevMode_RepairTimerHandle,
+            this,
+            &UMDF_DeformableComponent::RepairMesh,
+            Delay,
+            false // 반복 아님
+        );
+
+        UE_LOG(LogTemp, Log, TEXT("[MDF] [DevMode] %.1f초 후 자동 복구 예약됨"), Delay);
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -469,6 +487,12 @@ FVector UMDF_DeformableComponent::ConvertWorldDirectionToLocal(FVector WorldDire
 void UMDF_DeformableComponent::RepairMesh()
 {
     if (!GetOwner() || !GetOwner()->HasAuthority()) return;
+
+    // [디버그] 자동 복구 타이머 정리
+    if (DevMode_RepairTimerHandle.IsValid())
+    {
+        GetWorld()->GetTimerManager().ClearTimer(DevMode_RepairTimerHandle);
+    }
 
     // 히스토리 초기화
     HitHistory.Empty();

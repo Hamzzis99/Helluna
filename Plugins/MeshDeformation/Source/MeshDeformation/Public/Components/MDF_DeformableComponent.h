@@ -158,10 +158,22 @@ public:
     // [Step 10: 수리 시스템]
     // -------------------------------------------------------------------------
 
-    /** [Step 10] 메쉬를 원상복구(수리)하고 히스토리를 초기화합니다. (서버 전용) */ 
+    /** [Step 10] 메쉬를 원상복구(수리)하고 히스토리를 초기화합니다. (서버 전용) */
     UFUNCTION(BlueprintCallable, Category = "MeshDeformation|수리", meta = (DisplayName = "메시 수리(RepairMesh)"))
     void RepairMesh();
-    
+
+    // -------------------------------------------------------------------------
+    // [디버그] 개발자 모드 - 자동 메시 복구
+    // -------------------------------------------------------------------------
+
+    /** [디버그] 개발자 모드 활성화 - 체크 시 변형 후 자동으로 메시가 복구됩니다. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|디버그", meta = (DisplayName = "개발자 모드 (자동 복구)"))
+    bool bDevMode_AutoRepair = false;
+
+    /** [디버그] 자동 복구까지 대기 시간 (초) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|디버그", meta = (DisplayName = "자동 복구 대기 시간 (초)", EditCondition = "bDevMode_AutoRepair", ClampMin = "0.5", ClampMax = "60.0"))
+    float DevMode_RepairDelay = 5.0f;
+
 protected: 
     // [중요 수정] private -> protected로 변경
     // 자식 클래스(MiniGame)가 직접 데이터를 넣을 수 있게 허용합니다.
@@ -174,4 +186,7 @@ protected:
 
     /** 타이머 핸들 (중복 호출 방지용) */
     FTimerHandle BatchTimerHandle;
+
+    /** [디버그] 자동 복구 타이머 핸들 */
+    FTimerHandle DevMode_RepairTimerHandle;
 };
