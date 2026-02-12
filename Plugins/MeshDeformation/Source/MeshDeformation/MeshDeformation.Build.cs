@@ -33,6 +33,7 @@ public class MeshDeformation : ModuleRules
 				"DynamicMesh",
 				"GeometryScriptingCore",
 				"Niagara",
+				"NetCore",
 			}
 		);
 			
