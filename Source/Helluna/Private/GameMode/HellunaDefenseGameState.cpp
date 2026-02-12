@@ -70,10 +70,12 @@ void AHellunaDefenseGameState::OnRep_Phase()
     case EDefensePhase::Day:
         UE_LOG(LogTemp, Warning, TEXT("[GameState] OnDayStarted 호출 시도"));
         OnDayStarted();
+        ApplyRandomWeather(true);  // ★ 낮 랜덤 날씨
         break;
     case EDefensePhase::Night:
         UE_LOG(LogTemp, Warning, TEXT("[GameState] OnNightStarted 호출 시도"));
         OnNightStarted();
+        ApplyRandomWeather(false);  // ★ 밤 랜덤 날씨
         // ★ Animate OFF — 현재 시간에서 멈춤 (시간 점프 없음!)
         {
             AActor* UDS = GetUDSActor();
@@ -106,10 +108,13 @@ void AHellunaDefenseGameState::NetMulticast_OnDawnPassed_Implementation(float Ro
     AActor* UDS = GetUDSActor();
     if (UDS)
     {
-        float DayLength = RoundDuration / 32.5f;
+        // UDS Day Length = 일출(600)→일몰(1800) = 1200 단위 기준 (분 단위)
+        // 공식: DayLength(분) = 20 * RoundDuration(초) / TimeRange
+        float TimeRange = DayEndTime - DayStartTime;  // 기본: 1800-800 = 1000
+        float DayLength = 20.f * RoundDuration / TimeRange;
         
-        // 1) 시간을 800(아침)으로 세팅
-        SetUDSTimeOfDay(800.f);
+        // 1) 시간을 아침으로 세팅
+        SetUDSTimeOfDay(DayStartTime);
         
         // 2) Day Length 세팅
         if (FFloatProperty* DLProp = FindFProperty<FFloatProperty>(UDS->GetClass(), TEXT("Day Length")))
@@ -476,6 +481,65 @@ void AHellunaDefenseGameState::SetUDSTimeOfDay(float Time)
             Prop->SetPropertyValue_InContainer(UDS, Time);
         else if (FDoubleProperty* DProp = FindFProperty<FDoubleProperty>(UDS->GetClass(), TEXT("Time of Day")))
             DProp->SetPropertyValue_InContainer(UDS, (double)Time);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🌤️ 랜덤 날씨 시스템
+// ═══════════════════════════════════════════════════════════════════════════════
+void AHellunaDefenseGameState::ApplyRandomWeather(bool bIsDay)
+{
+    const TArray<UObject*>& WeatherArray = bIsDay ? DayWeatherTypes : NightWeatherTypes;
+    
+    if (WeatherArray.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[Weather] %s 날씨 배열이 비어있음! 기본 날씨 유지"), 
+            bIsDay ? TEXT("낮") : TEXT("밤"));
+        return;
+    }
+    
+    int32 RandomIdx = FMath::RandRange(0, WeatherArray.Num() - 1);
+    UObject* SelectedWeather = WeatherArray[RandomIdx];
+    
+    if (!SelectedWeather)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[Weather] 선택된 날씨가 nullptr! (인덱스: %d)"), RandomIdx);
+        return;
+    }
+    
+    if (bIsDay)
+        CurrentDayWeather = SelectedWeather;
+    else
+        CurrentNightWeather = SelectedWeather;
+    
+    for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+    {
+        if (It->GetName().Contains(TEXT("Ultra_Dynamic_Weather")))
+        {
+            AActor* UDW = *It;
+            UFunction* Func = UDW->FindFunction(TEXT("Change Weather"));
+            if (!Func)
+                Func = UDW->FindFunction(TEXT("ChangeWeather"));
+            
+            if (Func)
+            {
+                struct { UObject* NewWeatherType; float TransitionTime; } Params;
+                Params.NewWeatherType = SelectedWeather;
+                Params.TransitionTime = WeatherTransitionTime;
+                UDW->ProcessEvent(Func, &Params);
+                
+                UE_LOG(LogTemp, Warning, TEXT("[Weather] %s 날씨 변경 → %s (%d/%d, %.1f초)"),
+                    bIsDay ? TEXT("낮") : TEXT("밤"),
+                    *SelectedWeather->GetName(),
+                    RandomIdx, WeatherArray.Num(),
+                    WeatherTransitionTime);
+            }
+            else
+            {
+                UE_LOG(LogTemp, Error, TEXT("[Weather] UDW Change Weather 함수 없음!"));
+            }
+            break;
+        }
     }
 }
 

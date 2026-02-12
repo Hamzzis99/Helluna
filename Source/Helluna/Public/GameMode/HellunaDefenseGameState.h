@@ -236,11 +236,47 @@ protected:
     void PrintUDSDebug();
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // ☀️ UDS 시간 제어 헬퍼
+    // ☀️ UDS 시간 제어
     // ═══════════════════════════════════════════════════════════════════════════
-    UPROPERTY()
-    TWeakObjectPtr<AActor> CachedUDS;  // UDS 액터 캐시
     
-    AActor* GetUDSActor();             // UDS 찾기 헬퍼
-    void SetUDSTimeOfDay(float Time);  // UDS Time of Day 세팅 헬퍼
+    /** 낮 시작 시간 (UDS 기준, 800 = 오전 8시) */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Defense|DayNight", meta = (DisplayName = "낮 시작 시간"))
+    float DayStartTime = 800.f;
+    
+    /** 낮 종료 시간 (UDS 기준, 1800 = 오후 6시 일몰) */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Defense|DayNight", meta = (DisplayName = "낮 종료 시간"))
+    float DayEndTime = 1800.f;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 🌤️ 랜덤 날씨 시스템
+    // ═══════════════════════════════════════════════════════════════════════════
+    
+    /** 낮에 사용할 날씨 목록 (UDS Weather Type Data Asset) */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Defense|Weather", meta = (DisplayName = "낮 날씨 배열"))
+    TArray<UObject*> DayWeatherTypes;
+    
+    /** 밤에 사용할 날씨 목록 (UDS Weather Type Data Asset) */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Defense|Weather", meta = (DisplayName = "밤 날씨 배열"))
+    TArray<UObject*> NightWeatherTypes;
+    
+    /** 날씨 전환 시간 (초) */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Defense|Weather", meta = (DisplayName = "날씨 전환 시간(초)"))
+    float WeatherTransitionTime = 10.f;
+    
+    /** 현재 선택된 낮 날씨 (디버그/읽기용) */
+    UPROPERTY(BlueprintReadOnly, Category = "Defense|Weather", meta = (DisplayName = "현재 낮 날씨"))
+    UObject* CurrentDayWeather = nullptr;
+    
+    /** 현재 선택된 밤 날씨 (디버그/읽기용) */
+    UPROPERTY(BlueprintReadOnly, Category = "Defense|Weather", meta = (DisplayName = "현재 밤 날씨"))
+    UObject* CurrentNightWeather = nullptr;
+    
+    /** 배열에서 랜덤 날씨 선택 후 Change Weather 호출 */
+    void ApplyRandomWeather(bool bIsDay);
+
+    UPROPERTY()
+    TWeakObjectPtr<AActor> CachedUDS;
+    
+    AActor* GetUDSActor();
+    void SetUDSTimeOfDay(float Time);
 };
