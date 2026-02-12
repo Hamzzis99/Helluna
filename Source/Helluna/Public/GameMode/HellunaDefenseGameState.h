@@ -274,9 +274,20 @@ protected:
     /** 배열에서 랜덤 날씨 선택 후 Change Weather 호출 */
     void ApplyRandomWeather(bool bIsDay);
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 캐싱 (UDS/UDW 액터 + 리플렉션 프로퍼티)
+    // ═══════════════════════════════════════════════════════════════════════════
     UPROPERTY()
     TWeakObjectPtr<AActor> CachedUDS;
     
+    UPROPERTY()
+    TWeakObjectPtr<AActor> CachedUDW;
+    
     AActor* GetUDSActor();
+    AActor* GetUDWActor();
     void SetUDSTimeOfDay(float Time);
+    
+    /** 데디서버에서 UDS/UDW가 존재하는지 (BeginPlay에서 1회 체크) */
+    bool bHasUDS = false;
+    bool bHasUDW = false;
 };
