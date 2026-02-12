@@ -10,6 +10,7 @@
 // [김기현 추가] 저장 시스템 및 게임 인스턴스 헤더
 #include "Kismet/GameplayStatics.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"  // TActorIterator
 #include "Save/MDF_SaveActor.h"                    // 저장용 액터 클래스 (SaveGame)
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h" // 이사 확인증 확인용
 
@@ -69,14 +70,67 @@ void AHellunaDefenseGameState::OnRep_Phase()
     case EDefensePhase::Day:
         UE_LOG(LogTemp, Warning, TEXT("[GameState] OnDayStarted 호출 시도"));
         OnDayStarted();
+        ApplyRandomWeather(true);  // ★ 낮 랜덤 날씨
         break;
     case EDefensePhase::Night:
         UE_LOG(LogTemp, Warning, TEXT("[GameState] OnNightStarted 호출 시도"));
         OnNightStarted();
+        ApplyRandomWeather(false);  // ★ 밤 랜덤 날씨
+        // ★ Animate OFF — 현재 시간에서 멈춤 (시간 점프 없음!)
+        {
+            AActor* UDS = GetUDSActor();
+            if (UDS)
+            {
+                if (FBoolProperty* AnimProp = FindFProperty<FBoolProperty>(UDS->GetClass(), TEXT("Animate Time of Day")))
+                    AnimProp->SetPropertyValue_InContainer(UDS, false);
+            }
+            UE_LOG(LogTemp, Warning, TEXT("[GameState] ★ %s: Animate=OFF (Night, 시간 고정)"),
+                HasAuthority() ? TEXT("SERVER") : TEXT("CLIENT"));
+        }
         break;
     default:
         break;
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 새벽 완료 Multicast RPC — 모든 클라이언트에서 OnDawnPassed(BP) 호출
+// ═══════════════════════════════════════════════════════════════════════════════
+void AHellunaDefenseGameState::NetMulticast_OnDawnPassed_Implementation(float RoundDuration)
+{
+    UE_LOG(LogTemp, Warning, TEXT("[GameState] OnDawnPassed 호출! RoundDuration=%.1f초, HasAuthority=%d"), 
+        RoundDuration, HasAuthority());
+    
+    // BP 이벤트 호출 (날씨 전환 등)
+    OnDawnPassed(RoundDuration);
+    
+    // ★ 서버+클라 모두: UDS를 같은 조건으로 시작
+    AActor* UDS = GetUDSActor();
+    if (UDS)
+    {
+        // UDS Day Length = 일출(600)→일몰(1800) = 1200 단위 기준 (분 단위)
+        // 공식: DayLength(분) = 20 * RoundDuration(초) / TimeRange
+        float TimeRange = DayEndTime - DayStartTime;  // 기본: 1800-800 = 1000
+        float DayLength = 20.f * RoundDuration / TimeRange;
+        
+        // 1) 시간을 아침으로 세팅
+        SetUDSTimeOfDay(DayStartTime);
+        
+        // 2) Day Length 세팅
+        if (FFloatProperty* DLProp = FindFProperty<FFloatProperty>(UDS->GetClass(), TEXT("Day Length")))
+            DLProp->SetPropertyValue_InContainer(UDS, DayLength);
+        else if (FDoubleProperty* DLDProp = FindFProperty<FDoubleProperty>(UDS->GetClass(), TEXT("Day Length")))
+            DLDProp->SetPropertyValue_InContainer(UDS, (double)DayLength);
+        
+        // 3) Animate ON — 서버+클라 모두 독립적으로 부드럽게 진행
+        if (FBoolProperty* AnimProp = FindFProperty<FBoolProperty>(UDS->GetClass(), TEXT("Animate Time of Day")))
+            AnimProp->SetPropertyValue_InContainer(UDS, true);
+        
+        UE_LOG(LogTemp, Warning, TEXT("[GameState] ★ %s: DayLength=%.3f, Animate=ON, StartTime=800"),
+            HasAuthority() ? TEXT("SERVER") : TEXT("CLIENT"), DayLength);
+    }
+    
+    // 서버 Tick 방식 비활성화 (UDS 자체 Animate 사용)
 }
 
 void AHellunaDefenseGameState::MulticastPrintNight_Implementation(int32 Current, int32 Need)
@@ -111,6 +165,68 @@ void AHellunaDefenseGameState::PrintNightDebug()
     ));
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🔍 UDS 디버그: 1초마다 Time of Day, Animate 상태, Phase 출력
+// ═══════════════════════════════════════════════════════════════════════════════
+void AHellunaDefenseGameState::PrintUDSDebug()
+{
+    // UDS 액터 찾기 (이름으로 검색)
+    TArray<AActor*> FoundActors;
+    for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+    {
+        if (It->GetName().Contains(TEXT("Ultra_Dynamic_Sky")))
+        {
+            FoundActors.Add(*It);
+            break;
+        }
+    }
+
+    if (FoundActors.Num() > 0)
+    {
+        AActor* UDS = FoundActors[0];
+        
+        // 리플렉션으로 Time of Day 읽기
+        float TimeOfDay = -1.f;
+        bool bAnimate = false;
+        float DayLength = -1.f;
+        
+        if (FFloatProperty* Prop = FindFProperty<FFloatProperty>(UDS->GetClass(), TEXT("Time of Day")))
+        {
+            TimeOfDay = Prop->GetPropertyValue_InContainer(UDS);
+        }
+        // double 타입일 수도 있음
+        else if (FDoubleProperty* DProp = FindFProperty<FDoubleProperty>(UDS->GetClass(), TEXT("Time of Day")))
+        {
+            TimeOfDay = (float)DProp->GetPropertyValue_InContainer(UDS);
+        }
+        
+        if (FBoolProperty* AnimProp = FindFProperty<FBoolProperty>(UDS->GetClass(), TEXT("Animate Time of Day")))
+        {
+            bAnimate = AnimProp->GetPropertyValue_InContainer(UDS);
+        }
+        
+        if (FFloatProperty* DLProp = FindFProperty<FFloatProperty>(UDS->GetClass(), TEXT("Day Length")))
+        {
+            DayLength = DLProp->GetPropertyValue_InContainer(UDS);
+        }
+        else if (FDoubleProperty* DLDProp = FindFProperty<FDoubleProperty>(UDS->GetClass(), TEXT("Day Length")))
+        {
+            DayLength = (float)DLDProp->GetPropertyValue_InContainer(UDS);
+        }
+
+        UE_LOG(LogTemp, Warning, TEXT("[UDS Debug] %s | Phase=%s | TimeOfDay=%.2f | Animate=%s | DayLength=%.2f"),
+            HasAuthority() ? TEXT("SERVER") : TEXT("CLIENT"),
+            Phase == EDefensePhase::Day ? TEXT("Day") : TEXT("Night"),
+            TimeOfDay,
+            bAnimate ? TEXT("ON") : TEXT("OFF"),
+            DayLength);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[UDS Debug] UDS 액터를 찾을 수 없음!"));
+    }
+}
+
 
 void AHellunaDefenseGameState::MulticastPrintDay_Implementation()
 {
@@ -133,6 +249,16 @@ void AHellunaDefenseGameState::SetAliveMonsterCount(int32 NewCount)
 void AHellunaDefenseGameState::BeginPlay()
 {
     Super::BeginPlay();
+
+    // 🔍 UDS 디버그 타이머 (1초마다, 서버+클라 모두)
+    GetWorldTimerManager().SetTimer(
+        TimerHandle_UDSDebug,
+        this,
+        &ThisClass::PrintUDSDebug,
+        1.0f,
+        true,   // bLoop
+        2.0f    // 시작 2초 딜레이 (UDS 스폰 대기)
+    );
 
     // 데이터 관리는 오직 서버(Authority)에서만 수행합니다.
     if (HasAuthority())
@@ -286,6 +412,133 @@ void AHellunaDefenseGameState::WriteDataToDisk()
         else
         {
             UE_LOG(LogTemp, Error, TEXT("[HellunaGameState] 디스크 저장 실패!"));
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🎭 캐릭터 선택 시스템은 Base(AHellunaBaseGameState)로 이동됨
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ☀️ UDS 헬퍼 함수
+// ═══════════════════════════════════════════════════════════════════════════════
+AActor* AHellunaDefenseGameState::GetUDSActor()
+{
+    if (CachedUDS.IsValid())
+        return CachedUDS.Get();
+    
+    for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+    {
+        if (It->GetName().Contains(TEXT("Ultra_Dynamic_Sky")))
+        {
+            CachedUDS = *It;
+            return *It;
+        }
+    }
+    return nullptr;
+}
+
+void AHellunaDefenseGameState::SetUDSTimeOfDay(float Time)
+{
+    AActor* UDS = GetUDSActor();
+    if (!UDS) return;
+    
+    // UDS의 "Set Time Of Day" 함수 호출 시도
+    static bool bLoggedOnce = false;
+    UFunction* Func = UDS->FindFunction(TEXT("Set Time Of Day"));
+    
+    if (!Func)
+    {
+        // 공백 없는 이름도 시도
+        Func = UDS->FindFunction(TEXT("SetTimeOfDay"));
+    }
+    
+    if (!Func && !bLoggedOnce)
+    {
+        // 사용 가능한 함수 목록 출력 (한 번만)
+        bLoggedOnce = true;
+        UE_LOG(LogTemp, Warning, TEXT("[UDS] Set Time Of Day 함수를 찾을 수 없음. 사용 가능한 함수 목록:"));
+        for (TFieldIterator<UFunction> FuncIt(UDS->GetClass()); FuncIt; ++FuncIt)
+        {
+            if (FuncIt->GetName().Contains(TEXT("Time")))
+            {
+                UE_LOG(LogTemp, Warning, TEXT("  -> %s"), *FuncIt->GetName());
+            }
+        }
+    }
+    
+    if (Func)
+    {
+        struct { float TimeOfDay; } Params;
+        Params.TimeOfDay = Time;
+        UDS->ProcessEvent(Func, &Params);
+    }
+    else
+    {
+        // fallback: 프로퍼티 직접 세팅
+        if (FFloatProperty* Prop = FindFProperty<FFloatProperty>(UDS->GetClass(), TEXT("Time of Day")))
+            Prop->SetPropertyValue_InContainer(UDS, Time);
+        else if (FDoubleProperty* DProp = FindFProperty<FDoubleProperty>(UDS->GetClass(), TEXT("Time of Day")))
+            DProp->SetPropertyValue_InContainer(UDS, (double)Time);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🌤️ 랜덤 날씨 시스템
+// ═══════════════════════════════════════════════════════════════════════════════
+void AHellunaDefenseGameState::ApplyRandomWeather(bool bIsDay)
+{
+    const TArray<UObject*>& WeatherArray = bIsDay ? DayWeatherTypes : NightWeatherTypes;
+    
+    if (WeatherArray.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[Weather] %s 날씨 배열이 비어있음! 기본 날씨 유지"), 
+            bIsDay ? TEXT("낮") : TEXT("밤"));
+        return;
+    }
+    
+    int32 RandomIdx = FMath::RandRange(0, WeatherArray.Num() - 1);
+    UObject* SelectedWeather = WeatherArray[RandomIdx];
+    
+    if (!SelectedWeather)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[Weather] 선택된 날씨가 nullptr! (인덱스: %d)"), RandomIdx);
+        return;
+    }
+    
+    if (bIsDay)
+        CurrentDayWeather = SelectedWeather;
+    else
+        CurrentNightWeather = SelectedWeather;
+    
+    for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+    {
+        if (It->GetName().Contains(TEXT("Ultra_Dynamic_Weather")))
+        {
+            AActor* UDW = *It;
+            UFunction* Func = UDW->FindFunction(TEXT("Change Weather"));
+            if (!Func)
+                Func = UDW->FindFunction(TEXT("ChangeWeather"));
+            
+            if (Func)
+            {
+                struct { UObject* NewWeatherType; float TransitionTime; } Params;
+                Params.NewWeatherType = SelectedWeather;
+                Params.TransitionTime = WeatherTransitionTime;
+                UDW->ProcessEvent(Func, &Params);
+                
+                UE_LOG(LogTemp, Warning, TEXT("[Weather] %s 날씨 변경 → %s (%d/%d, %.1f초)"),
+                    bIsDay ? TEXT("낮") : TEXT("밤"),
+                    *SelectedWeather->GetName(),
+                    RandomIdx, WeatherArray.Num(),
+                    WeatherTransitionTime);
+            }
+            else
+            {
+                UE_LOG(LogTemp, Error, TEXT("[Weather] UDW Change Weather 함수 없음!"));
+            }
+            break;
         }
     }
 }

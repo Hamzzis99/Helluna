@@ -41,8 +41,6 @@ public class MeshDeformation : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
-				"CoreUObject",
-				"Engine",
 				"Slate",
 				"SlateCore"
 			}

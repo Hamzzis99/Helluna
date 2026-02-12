@@ -18,14 +18,8 @@ struct FMDFHistoryWrapper
 {
 	GENERATED_BODY()
 
-	// 1. 변형 히스토리 (기존)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MDF Data")
 	TArray<FMDFHitData> History;
-
-	// 2. [New] 저장된 체력 (HP)
-	// 기본값 0.0f (로드 시 데이터가 없으면 0으로 초기화됨을 방지하기 위해 로직에서 처리 필요)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MDF Data")
-	float SavedHP = 0.0f;
 };
 
 /**

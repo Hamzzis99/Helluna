@@ -9,7 +9,7 @@ AMDF_Actor::AMDF_Actor()
     PrimaryActorTick.bCanEverTick = false;
     
     // 1. 다이나믹 메시 컴포넌트 생성 및 루트 설정
-    DynamicMeshComponent = CreateDefaultSubobject<UDynamicMeshComponent>(TEXT("다이나믹메시컴포넌트 (DynamicMeshComponent)"));
+    DynamicMeshComponent = CreateDefaultSubobject<UDynamicMeshComponent>(TEXT("DynamicMeshComponent"));
     SetRootComponent(DynamicMeshComponent);
 
     // 2. 충돌(Collision) 및 물리 설정 자동화
@@ -32,7 +32,7 @@ AMDF_Actor::AMDF_Actor()
     }
 
     // 3. 변형 로직 컴포넌트 생성
-    DeformableComponent = CreateDefaultSubobject<UMDF_DeformableComponent>(TEXT("변형컴포넌트 (DeformableComponent)"));
+    DeformableComponent = CreateDefaultSubobject<UMDF_DeformableComponent>(TEXT("DeformableComponent"));
 
     // [Step 7 대비] 전용 서버 환경을 위한 네트워크 복제 설정
     bReplicates = true;

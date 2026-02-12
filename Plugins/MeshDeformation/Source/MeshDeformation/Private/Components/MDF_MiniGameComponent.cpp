@@ -2,6 +2,7 @@
 // File: Source/MeshDeformation/Components/MDF_MiniGameComponent.cpp
 
 #include "Components/MDF_MiniGameComponent.h"
+#include "MeshDeformation.h"
 #include "Components/DynamicMeshComponent.h"
 #include "UDynamicMesh.h"
 #include "DrawDebugHelpers.h"
@@ -57,7 +58,9 @@ void UMDF_MiniGameComponent::HandlePointDamage(AActor* DamagedActor, float Damag
 
     if (bHitWeakSpot)
     {
-        UE_LOG(LogTemp, Log, TEXT("[MDF Gatekeeper] 약점 명중! 찌그러짐 적용"));
+#if MDF_DEBUG_MINIGAME
+        UE_LOG(LogMeshDeform, Log, TEXT("[MDF Gatekeeper] 약점 명중! 찌그러짐 적용"));
+#endif
 
         // 3. 좌표 변환
         FVector LocalHitPos = GetLocalLocationFromWorld(HitLocation);
@@ -107,17 +110,19 @@ void UMDF_MiniGameComponent::StartMarking(FVector WorldLocation)
     // 시작점 기록
     LocalStartPoint = GetLocalLocationFromWorld(WorldLocation);
 
+#if MDF_DEBUG_MINIGAME
     // [디버그] 메쉬 바운드 확인
     UDynamicMeshComponent* DynComp = GetOwner() ? GetOwner()->FindComponentByClass<UDynamicMeshComponent>() : nullptr;
     if (DynComp && DynComp->GetDynamicMesh())
     {
         FBox MeshBounds = UGeometryScriptLibrary_MeshQueryFunctions::GetMeshBoundingBox(DynComp->GetDynamicMesh());
-        UE_LOG(LogTemp, Warning, TEXT("[MiniGame] 메쉬 바운드 - Min: %s, Max: %s"), *MeshBounds.Min.ToString(), *MeshBounds.Max.ToString());
-        UE_LOG(LogTemp, Warning, TEXT("[MiniGame] 메쉬 크기 - X: %.1f, Y: %.1f, Z: %.1f"), 
+        UE_LOG(LogMeshDeform, Warning, TEXT("[MiniGame] 메쉬 바운드 - Min: %s, Max: %s"), *MeshBounds.Min.ToString(), *MeshBounds.Max.ToString());
+        UE_LOG(LogMeshDeform, Warning, TEXT("[MiniGame] 메쉬 크기 - X: %.1f, Y: %.1f, Z: %.1f"),
             MeshBounds.GetSize().X, MeshBounds.GetSize().Y, MeshBounds.GetSize().Z);
     }
 
-    UE_LOG(LogTemp, Warning, TEXT("[MiniGame] 드래그 시작 (Local: %s)"), *LocalStartPoint.ToString());
+    UE_LOG(LogMeshDeform, Warning, TEXT("[MiniGame] 드래그 시작 (Local: %s)"), *LocalStartPoint.ToString());
+#endif
 }
 
 void UMDF_MiniGameComponent::UpdateMarking(FVector WorldLocation)
@@ -157,7 +162,9 @@ void UMDF_MiniGameComponent::UpdateMarking(FVector WorldLocation)
     if (DistanceFromBottom <= YAxisSnapThreshold && DistanceFromBottom >= 0.0f)
     {
         BottomZ = MeshBounds.Min.Z;  // 바닥까지 단두대!
-        UE_LOG(LogTemp, Log, TEXT("[MiniGame] Z축 보정 적용! 바닥까지 확장"));
+#if MDF_DEBUG_MINIGAME
+        UE_LOG(LogMeshDeform, Log, TEXT("[MiniGame] Z축 보정 적용! 바닥까지 확장"));
+#endif
     }
 
     CurrentPreviewBox = FBox(
@@ -166,8 +173,10 @@ void UMDF_MiniGameComponent::UpdateMarking(FVector WorldLocation)
     );
 
     // [디버그] 좌표 확인
-    UE_LOG(LogTemp, Log, TEXT("[MiniGame] Start: %s → Current: %s"), *PointA.ToString(), *PointB.ToString());
-    UE_LOG(LogTemp, Log, TEXT("[MiniGame] Box X(너비): %.1f ~ %.1f, Z(높이): %.1f ~ %.1f"), MinX, MaxX, BottomZ, TopZ);
+#if MDF_DEBUG_MINIGAME
+    UE_LOG(LogMeshDeform, Log, TEXT("[MiniGame] Start: %s → Current: %s"), *PointA.ToString(), *PointB.ToString());
+    UE_LOG(LogMeshDeform, Log, TEXT("[MiniGame] Box X(너비): %.1f ~ %.1f, Z(높이): %.1f ~ %.1f"), MinX, MaxX, BottomZ, TopZ);
+#endif
 
     // 유효성 검사: 최소 크기 체크 (X와 Z 기준)
     FVector BoxSize = CurrentPreviewBox.GetSize();
@@ -199,12 +208,16 @@ void UMDF_MiniGameComponent::EndMarking(FVector WorldLocation)
             Server_RequestCreateWeakSpot(CurrentPreviewBox.Min, CurrentPreviewBox.Max);
         }
         
-        UE_LOG(LogTemp, Display, TEXT("[MiniGame] 영역 확정! Box: %s ~ %s"), 
+#if MDF_DEBUG_MINIGAME
+        UE_LOG(LogMeshDeform, Display, TEXT("[MiniGame] 영역 확정! Box: %s ~ %s"),
             *CurrentPreviewBox.Min.ToString(), *CurrentPreviewBox.Max.ToString());
+#endif
     }
     else
     {
-        UE_LOG(LogTemp, Warning, TEXT("[MiniGame] 취소: 영역이 너무 작음"));
+#if MDF_DEBUG_MINIGAME
+        UE_LOG(LogMeshDeform, Warning, TEXT("[MiniGame] 취소: 영역이 너무 작음"));
+#endif
     }
 
     bIsMarking = false;
@@ -222,12 +235,16 @@ void UMDF_MiniGameComponent::Server_RequestCreateWeakSpot_Implementation(FVector
     FVector BoxSize = ReceivedBox.GetSize();
     if (BoxSize.GetMin() < 1.0f || BoxSize.GetMax() > 10000.0f)
     {
-        UE_LOG(LogTemp, Warning, TEXT("[MiniGame] 서버: 비정상적인 박스 크기 거부"));
+#if MDF_DEBUG_MINIGAME
+        UE_LOG(LogMeshDeform, Warning, TEXT("[MiniGame] 서버: 비정상적인 박스 크기 거부"));
+#endif
         return;
     }
 
     Internal_CreateWeakSpot(ReceivedBox);
-    UE_LOG(LogTemp, Log, TEXT("[MiniGame] 서버: 클라이언트 요청으로 약점 생성"));
+#if MDF_DEBUG_MINIGAME
+    UE_LOG(LogMeshDeform, Log, TEXT("[MiniGame] 서버: 클라이언트 요청으로 약점 생성"));
+#endif
 }
 
 void UMDF_MiniGameComponent::Internal_CreateWeakSpot(const FBox& LocalBox)
@@ -240,7 +257,9 @@ void UMDF_MiniGameComponent::Internal_CreateWeakSpot(const FBox& LocalBox)
     NewSpot.bIsBroken = false;
     
     WeakSpots.Add(NewSpot);
-    UE_LOG(LogTemp, Display, TEXT("[MiniGame] >> 영역 확정! HP: %.1f"), NewSpot.MaxHP);
+#if MDF_DEBUG_MINIGAME
+    UE_LOG(LogMeshDeform, Display, TEXT("[MiniGame] >> 영역 확정! HP: %.1f"), NewSpot.MaxHP);
+#endif
 }
 
 // -----------------------------------------------------------------------------
@@ -258,11 +277,15 @@ bool UMDF_MiniGameComponent::TryBreach(const FHitResult& HitInfo, float DamageAm
         if (WeakSpots[i].LocalBox.ExpandBy(5.0f).IsInside(LocalHit))
         {
             WeakSpots[i].CurrentHP -= DamageAmount;
-            UE_LOG(LogTemp, Display, TEXT("   >>> [HIT!] 약점 명중! (Index: %d, 남은HP: %.1f)"), i, WeakSpots[i].CurrentHP);
+#if MDF_DEBUG_MINIGAME
+            UE_LOG(LogMeshDeform, Display, TEXT("   >>> [HIT!] 약점 명중! (Index: %d, 남은HP: %.1f)"), i, WeakSpots[i].CurrentHP);
+#endif
 
             if (WeakSpots[i].CurrentHP <= 0.0f)
             {
-                UE_LOG(LogTemp, Error, TEXT("   >>> [DESTROY] 파괴 조건 달성! 절단 실행!"));
+#if MDF_DEBUG_MINIGAME
+                UE_LOG(LogMeshDeform, Warning, TEXT("   >>> [DESTROY] 파괴 조건 달성! 절단 실행!"));
+#endif
                 ExecuteDestruction(i);
             }
             return true;
@@ -291,7 +314,7 @@ void UMDF_MiniGameComponent::ApplyVisualMeshCut(int32 Index)
 
     UDynamicMesh* TargetMesh = DynComp->GetDynamicMesh();
 
-    UDynamicMesh* ToolMesh = NewObject<UDynamicMesh>(this); 
+    UDynamicMesh* ToolMesh = NewObject<UDynamicMesh>(GetTransientPackage());
     
     // [핵심] X축 좌/우, Z축 위/아래 방향으로 확장
     FBox OriginalBox = WeakSpots[Index].LocalBox;
@@ -341,11 +364,13 @@ void UMDF_MiniGameComponent::ApplyVisualMeshCut(int32 Index)
 
     if (ToolMesh)
     {
-        ToolMesh->MarkAsGarbage();
+        ToolMesh->ConditionalBeginDestroy();
     }
 
-    UE_LOG(LogTemp, Log, TEXT("[MDF] 절단 완료! X확장(좌/우): %.1f/%.1f, Z확장(아래/위): %.1f/%.1f (Index: %d)"), 
+#if MDF_DEBUG_MINIGAME
+    UE_LOG(LogMeshDeform, Log, TEXT("[MDF] 절단 완료! X확장(좌/우): %.1f/%.1f, Z확장(아래/위): %.1f/%.1f (Index: %d)"),
         CutXExpansionLeft, CutXExpansionRight, CutZExpansionDown, CutZExpansionUp, Index);
+#endif
 }
 
 // -----------------------------------------------------------------------------
@@ -364,6 +389,7 @@ void UMDF_MiniGameComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 {
     Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
+#if ENABLE_DRAW_DEBUG
     // 데디케이티드 서버에서는 디버그 드로잉 불필요
     if (IsRunningDedicatedServer()) return;
 
@@ -372,7 +398,7 @@ void UMDF_MiniGameComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 
     FTransform CompTrans = DynComp->GetComponentTransform();
     FVector WorldScale = CompTrans.GetScale3D();
-    
+
     FBox WallBounds = UGeometryScriptLibrary_MeshQueryFunctions::GetMeshBoundingBox(DynComp->GetDynamicMesh());
 
     for (const FWeakSpotData& Spot : WeakSpots)
@@ -390,4 +416,5 @@ void UMDF_MiniGameComponent::TickComponent(float DeltaTime, ELevelTick TickType,
         FVector ScaledExtent = VisualPreview.GetExtent() * WorldScale;
         DrawDebugBox(GetWorld(), CompTrans.TransformPosition(VisualPreview.GetCenter()), ScaledExtent, CompTrans.GetRotation(), DrawColor, false, -1.0f, 0, 3.0f);
     }
+#endif
 }

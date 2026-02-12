@@ -2,6 +2,7 @@
 // File: Source/MeshDeformation/Components/MDF_DeformableComponent.cpp
 
 #include "Components/MDF_DeformableComponent.h"
+#include "MeshDeformation.h"
 #include "GameFramework/Actor.h"
 #include "Engine/Engine.h"
 #include "DrawDebugHelpers.h"
@@ -157,8 +158,10 @@ void UMDF_DeformableComponent::BeginPlay()
 
             ComponentGuid = FGuid(HashA, HashB, HashA ^ 0x9E3779B9, HashB ^ 0x517CC1B7);
 
-            UE_LOG(LogTemp, Log, TEXT("[MDF] GUID 생성 (경로 해시): %s → %s"),
+#if MDF_DEBUG_DEFORM
+            UE_LOG(LogMeshDeform, Log, TEXT("[MDF] GUID 생성 (경로 해시): %s → %s"),
                 *StablePath, *ComponentGuid.ToString());
+#endif
         }
 
         // GameState에서 복원
@@ -176,7 +179,9 @@ void UMDF_DeformableComponent::BeginPlay()
                     HitHistoryArray.Items.Add(Hit);
                 }
                 HitHistoryArray.MarkArrayDirty();
-                UE_LOG(LogTemp, Log, TEXT("[MDF] GameState에서 데이터 복원 성공 (%d hit)"), HitHistoryArray.Items.Num());
+#if MDF_DEBUG_DEFORM
+                UE_LOG(LogMeshDeform, Log, TEXT("[MDF] GameState에서 데이터 복원 성공 (%d hit)"), HitHistoryArray.Items.Num());
+#endif
             }
         }
     }
@@ -298,8 +303,10 @@ void UMDF_DeformableComponent::ProcessDeformationBatch()
         // StartIndex 보정
         StartIndex = FMath::Max(0, StartIndex - RemoveCount);
 
-        UE_LOG(LogTemp, Log, TEXT("[MDF] 히스토리 캡 적용: %d개 제거, 현재 %d/%d"),
+#if MDF_DEBUG_DEFORM
+        UE_LOG(LogMeshDeform, Log, TEXT("[MDF] 히스토리 캡 적용: %d개 제거, 현재 %d/%d"),
             RemoveCount, HitHistoryArray.Items.Num(), MaxHitHistorySize);
+#endif
     }
 
     // GameState에 데이터 백업 (영속성 보장)
@@ -341,7 +348,9 @@ void UMDF_DeformableComponent::ProcessDeformationBatch()
             false // 반복 아님
         );
 
-        UE_LOG(LogTemp, Log, TEXT("[MDF] [DevMode] %.1f초 후 자동 복구 예약됨"), Delay);
+#if MDF_DEBUG_DEFORM
+        UE_LOG(LogMeshDeform, Log, TEXT("[MDF] [DevMode] %.1f초 후 자동 복구 예약됨"), Delay);
+#endif
     }
 }
 
@@ -377,9 +386,11 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
     int32 EndIndex = FMath::Min(StartIndex + Count, HitHistoryArray.Items.Num());
     if (StartIndex >= EndIndex) return;
 
-    UE_LOG(LogTemp, Warning, TEXT("[MDF Deform] ========== 변형 시작 =========="));
-    UE_LOG(LogTemp, Warning, TEXT("[MDF Deform] StartIndex: %d, EndIndex: %d"), StartIndex, EndIndex);
-    UE_LOG(LogTemp, Warning, TEXT("[MDF Deform] DeformRadius: %.1f, DeformStrength: %.1f"), DeformRadius, DeformStrength);
+#if MDF_DEBUG_DEFORM
+    UE_LOG(LogMeshDeform, Verbose, TEXT("[MDF Deform] ========== 변형 시작 =========="));
+    UE_LOG(LogMeshDeform, Verbose, TEXT("[MDF Deform] StartIndex: %d, EndIndex: %d"), StartIndex, EndIndex);
+    UE_LOG(LogMeshDeform, Verbose, TEXT("[MDF Deform] DeformRadius: %.1f, DeformStrength: %.1f"), DeformRadius, DeformStrength);
+#endif
 
     // 변형 계산 준비
     const double RadiusSq = FMath::Square((double)DeformRadius);
@@ -393,8 +404,10 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
     for (int32 i = StartIndex; i < EndIndex; ++i)
     {
         FVector WorldPos = MeshComp->GetComponentTransform().TransformPosition(HitHistoryArray.Items[i].LocalLocation);
-        UE_LOG(LogTemp, Warning, TEXT("[MDF Deform] Hit[%d] LocalPos: %s, Damage: %.1f"),
+#if MDF_DEBUG_DEFORM
+        UE_LOG(LogMeshDeform, Verbose, TEXT("[MDF Deform] Hit[%d] LocalPos: %s, Damage: %.1f"),
             i, *HitHistoryArray.Items[i].LocalLocation.ToString(), HitHistoryArray.Items[i].Damage);
+#endif
 
         if (bShowDebugPoints)
         {
@@ -455,16 +468,20 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
     }, EDynamicMeshChangeType::GeneralEdit);
 
     double MinDist = FMath::Sqrt(MinDebugDistSq);
-    UE_LOG(LogTemp, Warning, TEXT("[MDF Deform] 총 버텍스: %d, 수정된 버텍스: %d"), TotalVertexCount, ModifiedVertexCount);
-    UE_LOG(LogTemp, Warning, TEXT("[MDF Deform] 최소 거리: %.2f, 반경: %.1f"), (float)MinDist, DeformRadius);
+#if MDF_DEBUG_DEFORM
+    UE_LOG(LogMeshDeform, Verbose, TEXT("[MDF Deform] 총 버텍스: %d, 수정된 버텍스: %d"), TotalVertexCount, ModifiedVertexCount);
+    UE_LOG(LogMeshDeform, Verbose, TEXT("[MDF Deform] 최소 거리: %.2f, 반경: %.1f"), (float)MinDist, DeformRadius);
+#endif
 
     if (!bAnyModified)
     {
-        UE_LOG(LogTemp, Error, TEXT("[MDF Deform] >>> 변형 실패! 반경 내 버텍스 없음!"));
+        UE_LOG(LogMeshDeform, Error, TEXT("[MDF Deform] >>> 변형 실패! 반경 내 버텍스 없음!"));
     }
     else
     {
-        UE_LOG(LogTemp, Warning, TEXT("[MDF Deform] >>> 변형 성공! %d개 버텍스 이동"), ModifiedVertexCount);
+#if MDF_DEBUG_DEFORM
+        UE_LOG(LogMeshDeform, Log, TEXT("[MDF Deform] >>> 변형 성공! %d개 버텍스 이동"), ModifiedVertexCount);
+#endif
     }
 
     // 충돌 업데이트 (서버 + 클라 모두)
@@ -478,7 +495,9 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
         MeshComp->NotifyMeshUpdated();
     }
 
-    UE_LOG(LogTemp, Warning, TEXT("[MDF Deform] ========== 변형 완료 =========="));
+#if MDF_DEBUG_DEFORM
+    UE_LOG(LogMeshDeform, Verbose, TEXT("[MDF Deform] ========== 변형 완료 =========="));
+#endif
 }
 
 // -----------------------------------------------------------------------------
@@ -621,5 +640,7 @@ void UMDF_DeformableComponent::RepairMesh()
 
     // 메쉬 리셋
     InitializeDynamicMesh();
-    UE_LOG(LogTemp, Warning, TEXT("[MDF] [Server] 수리 완료! (히스토리 초기화됨)"));
+#if MDF_DEBUG_DEFORM
+    UE_LOG(LogMeshDeform, Log, TEXT("[MDF] [Server] 수리 완료! (히스토리 초기화됨)"));
+#endif
 }

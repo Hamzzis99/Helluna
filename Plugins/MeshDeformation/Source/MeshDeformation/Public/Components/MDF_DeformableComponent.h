@@ -188,9 +188,31 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|설정")
     TSubclassOf<UDamageType> MeleeDamageType;
 
-    //메시가 찌그러지지 않는다는 것을 반영하기 위한 데미지 타입
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|설정")
-    TSubclassOf<UDamageType> BreachDamageType; // 절단 전용 타입
+    /**
+     * [미래 확장용] 절단/관통 전용 데미지 타입
+     *
+     * 현재: 미사용 (선언만 존재)
+     * 계획: HandlePointDamage에서 DamageType 분기를 추가하여,
+     *       이 타입이 들어오면 기존 vertex displacement(찌그러짐) 대신
+     *       Boolean Subtract(MiniGameComponent의 ApplyVisualMeshCut 방식)로
+     *       타격 지점에 구멍을 뚫는 연출을 실행.
+     *
+     * 구현 시 주의:
+     *   - Boolean 연산은 vertex displacement 대비 10~50배 무거움
+     *   - 연사 무기 매 발마다 실행하면 프레임 드랍 발생
+     *   - 누적 데미지 임계값을 초과했을 때만 1회 실행하는 방식 권장
+     *   - Box 기반(현재 MiniGame) → Sphere 기반으로 변형하면 자연스러운 구멍 연출 가능
+     *
+     * 분기 예시:
+     *   if (DamageTypeClass->IsChildOf(BreachDamageType))
+     *       → Boolean Subtract (구멍)
+     *   else if (DamageTypeClass->IsChildOf(MeleeDamageType))
+     *       → vertex displacement × 1.5 (강한 찌그러짐)
+     *   else
+     *       → vertex displacement × 0.5 (일반 찌그러짐)
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|설정", meta = (DisplayName = "절단/관통 데미지 타입"))
+    TSubclassOf<UDamageType> BreachDamageType;
     // -------------------------------------------------------------------------
     // [Step 9: 월드 파티션 영속성 지원]
     // -------------------------------------------------------------------------
