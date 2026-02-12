@@ -341,19 +341,25 @@ void UMDF_DeformableComponent::OnRep_HitHistory()
     LastAppliedIndex = CurrentNum;
 
     // -------------------------------------------------------------------------
-    // [★핵심 렌더링 업데이트]
+    // [★핵심 업데이트]
     // -------------------------------------------------------------------------
-    
-    // 1. 법선(Normal) 재계산: 표면이 바라보는 방향 갱신
-    UGeometryScriptLibrary_MeshNormalsFunctions::RecomputeNormals(MeshComp->GetDynamicMesh(), FGeometryScriptCalculateNormalsOptions());
 
-    // 2. [★필수 추가] 탄젠트(Tangent) 재계산
-    // 움직이는 물체(Movable Actor)가 빛을 받을 때 투명해지거나 검게 나오는 것을 방지합니다.
-    UGeometryScriptLibrary_MeshNormalsFunctions::ComputeTangents(MeshComp->GetDynamicMesh(), FGeometryScriptTangentsOptions());
-
-    // 3. 충돌 및 렌더링 알림
+    // 충돌 업데이트 (서버 + 클라 모두)
     MeshComp->UpdateCollision();
-    MeshComp->NotifyMeshUpdated();
+
+    // 렌더링 업데이트 (클라이언트 전용)
+    if (!IsRunningDedicatedServer())
+    {
+        // 1. 법선(Normal) 재계산: 표면이 바라보는 방향 갱신
+        UGeometryScriptLibrary_MeshNormalsFunctions::RecomputeNormals(MeshComp->GetDynamicMesh(), FGeometryScriptCalculateNormalsOptions());
+
+        // 2. [★필수 추가] 탄젠트(Tangent) 재계산
+        // 움직이는 물체(Movable Actor)가 빛을 받을 때 투명해지거나 검게 나오는 것을 방지합니다.
+        UGeometryScriptLibrary_MeshNormalsFunctions::ComputeTangents(MeshComp->GetDynamicMesh(), FGeometryScriptTangentsOptions());
+
+        // 3. 렌더링 알림
+        MeshComp->NotifyMeshUpdated();
+    }
     
     UE_LOG(LogTemp, Warning, TEXT("[MDF Deform] ========== 변형 완료 =========="));
 }
@@ -415,17 +421,23 @@ void UMDF_DeformableComponent::InitializeDynamicMesh()
 
         if (Outcome == EGeometryScriptOutcomePins::Success)
         {
-            // 1. 법선 재계산
-            UGeometryScriptLibrary_MeshNormalsFunctions::RecomputeNormals(MeshComp->GetDynamicMesh(), FGeometryScriptCalculateNormalsOptions());
-            
-            // -------------------------------------------------------------------------
-            // [★핵심 추가] 초기화 시 탄젠트 재계산
-            // 처음 생성될 때부터 메쉬가 투명하게 보이지 않도록 합니다.
-            // -------------------------------------------------------------------------
-            UGeometryScriptLibrary_MeshNormalsFunctions::ComputeTangents(MeshComp->GetDynamicMesh(), FGeometryScriptTangentsOptions());
-            
-            MeshComp->UpdateCollision(); 
-            MeshComp->NotifyMeshUpdated();
+            // 충돌 업데이트 (서버 + 클라 모두)
+            MeshComp->UpdateCollision();
+
+            // 렌더링 업데이트 (클라이언트 전용)
+            if (!IsRunningDedicatedServer())
+            {
+                // 1. 법선 재계산
+                UGeometryScriptLibrary_MeshNormalsFunctions::RecomputeNormals(MeshComp->GetDynamicMesh(), FGeometryScriptCalculateNormalsOptions());
+
+                // -------------------------------------------------------------------------
+                // [★핵심 추가] 초기화 시 탄젠트 재계산
+                // 처음 생성될 때부터 메쉬가 투명하게 보이지 않도록 합니다.
+                // -------------------------------------------------------------------------
+                UGeometryScriptLibrary_MeshNormalsFunctions::ComputeTangents(MeshComp->GetDynamicMesh(), FGeometryScriptTangentsOptions());
+
+                MeshComp->NotifyMeshUpdated();
+            }
         }
     }
 }

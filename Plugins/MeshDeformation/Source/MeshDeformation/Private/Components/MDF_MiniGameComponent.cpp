@@ -318,20 +318,26 @@ void UMDF_MiniGameComponent::ApplyVisualMeshCut(int32 Index)
         EGeometryScriptBooleanOperation::Subtract, BoolOptions
     );
     
-    UGeometryScriptLibrary_MeshNormalsFunctions::RecomputeNormals(TargetMesh, FGeometryScriptCalculateNormalsOptions());
-    
-    FBox MeshBounds = UGeometryScriptLibrary_MeshQueryFunctions::GetMeshBoundingBox(TargetMesh);
-    FTransform BoxTransform = FTransform::Identity;
-    BoxTransform.SetTranslation(MeshBounds.GetCenter());
-    BoxTransform.SetScale3D(MeshBounds.GetSize());
+    // 충돌 업데이트 (서버 + 클라 모두)
+    DynComp->UpdateCollision(true);
 
-    UGeometryScriptLibrary_MeshUVFunctions::SetMeshUVsFromBoxProjection(TargetMesh, 0, BoxTransform, FGeometryScriptMeshSelection());
-    UGeometryScriptLibrary_MeshNormalsFunctions::ComputeTangents(TargetMesh, FGeometryScriptTangentsOptions());
-    
-    DynComp->MarkRenderTransformDirty(); 
-    DynComp->NotifyMeshUpdated();        
-    DynComp->UpdateCollision(true);      
-    DynComp->MarkRenderStateDirty();
+    // 렌더링 업데이트 (클라이언트 전용)
+    if (!IsRunningDedicatedServer())
+    {
+        UGeometryScriptLibrary_MeshNormalsFunctions::RecomputeNormals(TargetMesh, FGeometryScriptCalculateNormalsOptions());
+
+        FBox MeshBounds = UGeometryScriptLibrary_MeshQueryFunctions::GetMeshBoundingBox(TargetMesh);
+        FTransform BoxTransform = FTransform::Identity;
+        BoxTransform.SetTranslation(MeshBounds.GetCenter());
+        BoxTransform.SetScale3D(MeshBounds.GetSize());
+
+        UGeometryScriptLibrary_MeshUVFunctions::SetMeshUVsFromBoxProjection(TargetMesh, 0, BoxTransform, FGeometryScriptMeshSelection());
+        UGeometryScriptLibrary_MeshNormalsFunctions::ComputeTangents(TargetMesh, FGeometryScriptTangentsOptions());
+
+        DynComp->MarkRenderTransformDirty();
+        DynComp->NotifyMeshUpdated();
+        DynComp->MarkRenderStateDirty();
+    }
 
     if (ToolMesh)
     {
@@ -357,6 +363,9 @@ float UMDF_MiniGameComponent::CalculateHPFromBox(const FBox& Box) const
 void UMDF_MiniGameComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
     Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+
+    // 데디케이티드 서버에서는 디버그 드로잉 불필요
+    if (IsRunningDedicatedServer()) return;
 
     UDynamicMeshComponent* DynComp = GetOwner() ? GetOwner()->FindComponentByClass<UDynamicMeshComponent>() : nullptr;
     if (!DynComp) return;
