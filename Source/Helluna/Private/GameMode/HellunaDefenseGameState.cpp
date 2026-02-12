@@ -10,6 +10,7 @@
 // [김기현 추가] 저장 시스템 및 게임 인스턴스 헤더
 #include "Kismet/GameplayStatics.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"  // TActorIterator
 #include "Save/MDF_SaveActor.h"                    // 저장용 액터 클래스 (SaveGame)
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h" // 이사 확인증 확인용
 
@@ -120,6 +121,67 @@ void AHellunaDefenseGameState::PrintNightDebug()
     ));
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🔍 UDS 디버그: 1초마다 Time of Day, Animate 상태, Phase 출력
+// ═══════════════════════════════════════════════════════════════════════════════
+void AHellunaDefenseGameState::PrintUDSDebug()
+{
+    // UDS 액터 찾기 (이름으로 검색)
+    TArray<AActor*> FoundActors;
+    for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+    {
+        if (It->GetName().Contains(TEXT("Ultra_Dynamic_Sky")))
+        {
+            FoundActors.Add(*It);
+            break;
+        }
+    }
+
+    if (FoundActors.Num() > 0)
+    {
+        AActor* UDS = FoundActors[0];
+        
+        // 리플렉션으로 Time of Day 읽기
+        float TimeOfDay = -1.f;
+        bool bAnimate = false;
+        float DayLength = -1.f;
+        
+        if (FFloatProperty* Prop = FindFProperty<FFloatProperty>(UDS->GetClass(), TEXT("Time of Day")))
+        {
+            TimeOfDay = Prop->GetPropertyValue_InContainer(UDS);
+        }
+        // double 타입일 수도 있음
+        else if (FDoubleProperty* DProp = FindFProperty<FDoubleProperty>(UDS->GetClass(), TEXT("Time of Day")))
+        {
+            TimeOfDay = (float)DProp->GetPropertyValue_InContainer(UDS);
+        }
+        
+        if (FBoolProperty* AnimProp = FindFProperty<FBoolProperty>(UDS->GetClass(), TEXT("Animate Time of Day")))
+        {
+            bAnimate = AnimProp->GetPropertyValue_InContainer(UDS);
+        }
+        
+        if (FFloatProperty* DLProp = FindFProperty<FFloatProperty>(UDS->GetClass(), TEXT("Day Length")))
+        {
+            DayLength = DLProp->GetPropertyValue_InContainer(UDS);
+        }
+        else if (FDoubleProperty* DLDProp = FindFProperty<FDoubleProperty>(UDS->GetClass(), TEXT("Day Length")))
+        {
+            DayLength = (float)DLDProp->GetPropertyValue_InContainer(UDS);
+        }
+
+        UE_LOG(LogTemp, Warning, TEXT("[UDS Debug] Phase=%s | TimeOfDay=%.2f | Animate=%s | DayLength=%.2f"),
+            Phase == EDefensePhase::Day ? TEXT("Day") : TEXT("Night"),
+            TimeOfDay,
+            bAnimate ? TEXT("ON") : TEXT("OFF"),
+            DayLength);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[UDS Debug] UDS 액터를 찾을 수 없음!"));
+    }
+}
+
 
 void AHellunaDefenseGameState::MulticastPrintDay_Implementation()
 {
@@ -142,6 +204,16 @@ void AHellunaDefenseGameState::SetAliveMonsterCount(int32 NewCount)
 void AHellunaDefenseGameState::BeginPlay()
 {
     Super::BeginPlay();
+
+    // 🔍 UDS 디버그 타이머 (1초마다, 서버+클라 모두)
+    GetWorldTimerManager().SetTimer(
+        TimerHandle_UDSDebug,
+        this,
+        &ThisClass::PrintUDSDebug,
+        1.0f,
+        true,   // bLoop
+        2.0f    // 시작 2초 딜레이 (UDS 스폰 대기)
+    );
 
     // 데이터 관리는 오직 서버(Authority)에서만 수행합니다.
     if (HasAuthority())
