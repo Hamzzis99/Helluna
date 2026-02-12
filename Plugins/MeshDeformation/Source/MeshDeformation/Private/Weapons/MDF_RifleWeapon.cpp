@@ -2,6 +2,7 @@
 // File: Source/MeshDeformation/Weapon/MDF_RifleWeapon.cpp
 
 #include "Weapons/MDF_RifleWeapon.h"
+#include "MeshDeformation.h"
 #include "Kismet/GameplayStatics.h"
 #include "Engine/World.h"
 #include "DrawDebugHelpers.h"
@@ -56,7 +57,7 @@ void AMDF_RifleWeapon::Fire()
             DamageTypeToUse                                          // 데미지 타입
         );
 
-        UE_LOG(LogTemp, Log, TEXT("[Rifle] 타격! Actor: %s, Damage: %.1f"), *HitResult.GetActor()->GetName(), DamagePerShot);
+        UE_LOG(LogMeshDeform, Log, TEXT("[Rifle] 타격! Actor: %s, Damage: %.1f"), *HitResult.GetActor()->GetName(), DamagePerShot);
     }
     else
     {

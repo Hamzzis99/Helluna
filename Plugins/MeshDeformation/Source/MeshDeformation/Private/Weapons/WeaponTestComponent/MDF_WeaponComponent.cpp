@@ -2,6 +2,7 @@
 // File: Source/MeshDeformation/Weapons/WeaponTestComponent/MDF_WeaponComponent.cpp
 
 #include "Weapons/WeaponTestComponent/MDF_WeaponComponent.h" // 경로 확인하세요
+#include "MeshDeformation.h"
 #include "Weapons/MDF_BaseWeapon.h"
 #include "GameFramework/Character.h"
 #include "Engine/World.h"
@@ -22,7 +23,7 @@ void UMDF_WeaponComponent::EquipWeaponByIndex(int32 SlotIndex)
     // 유효성 검사
     if (!WeaponSlots.IsValidIndex(SlotIndex))
     {
-        UE_LOG(LogTemp, Warning, TEXT("[WeaponComp] 유효하지 않은 슬롯 인덱스: %d"), SlotIndex);
+        UE_LOG(LogMeshDeform, Warning, TEXT("[WeaponComp] 유효하지 않은 슬롯 인덱스: %d"), SlotIndex);
         return;
     }
 
@@ -51,7 +52,7 @@ void UMDF_WeaponComponent::EquipWeaponByIndex(int32 SlotIndex)
             }
             
             CurrentWeaponIndex = SlotIndex; // 인덱스 갱신
-            UE_LOG(LogTemp, Log, TEXT("[WeaponComp] 무기 장착 완료: %s (Slot: %d)"), *CurrentWeaponActor->GetName(), SlotIndex);
+            UE_LOG(LogMeshDeform, Log, TEXT("[WeaponComp] 무기 장착 완료: %s (Slot: %d)"), *CurrentWeaponActor->GetName(), SlotIndex);
         }
     }
 }

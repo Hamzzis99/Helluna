@@ -2,6 +2,7 @@
 // File: Source/MeshDeformation/Weapon/MDF_LaserWeapon.cpp
 
 #include "Weapons/MDF_LaserWeapon.h"
+#include "MeshDeformation.h"
 #include "Components/MDF_MiniGameComponent.h"
 #include "Engine/World.h"
 #include "DrawDebugHelpers.h"
@@ -24,7 +25,7 @@ void AMDF_LaserWeapon::StartFire()
 {
     if (CurrentAmmo <= 0.0f) return;
     SetActorTickEnabled(true);
-    UE_LOG(LogTemp, Log, TEXT("[레이저] 가동 시작"));
+    UE_LOG(LogMeshDeform, Log, TEXT("[레이저] 가동 시작"));
 }
 
 void AMDF_LaserWeapon::StopFire()
@@ -37,7 +38,7 @@ void AMDF_LaserWeapon::StopFire()
         CurrentTargetComp->EndMarking(LastHitLocation);
         CurrentTargetComp = nullptr;
     }
-    UE_LOG(LogTemp, Log, TEXT("[레이저] 가동 중지"));
+    UE_LOG(LogMeshDeform, Log, TEXT("[레이저] 가동 중지"));
 }
 
 void AMDF_LaserWeapon::Tick(float DeltaTime)

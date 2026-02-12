@@ -8,7 +8,7 @@
 
 AMDF_MiniGameActor::AMDF_MiniGameActor()
 {
-    PrimaryActorTick.bCanEverTick = true;
+    PrimaryActorTick.bCanEverTick = false;
 
     // 1. 루트 컴포넌트 설정
     DefaultSceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("DefaultSceneRoot"));
@@ -36,7 +36,7 @@ AMDF_MiniGameActor::AMDF_MiniGameActor()
        DynamicMeshComponent->SetAffectDistanceFieldLighting(false);
        DynamicMeshComponent->bAffectDynamicIndirectLighting = false;
        DynamicMeshComponent->SetCanEverAffectNavigation(false);
-       DynamicMeshComponent->bUseAsyncCooking = false; 
+       DynamicMeshComponent->bUseAsyncCooking = true;
 
        // [머티리얼] 오버레이 버그 방어 및 기본값 할당
        DynamicMeshComponent->SetOverlayMaterial(nullptr);
