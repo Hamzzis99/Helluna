@@ -1,21 +1,23 @@
-﻿// Gihyeon's Deformation Project (Helluna)
+// Gihyeon's Deformation Project (Helluna)
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "Net/Serialization/FastArraySerializer.h"
 #include "MDF_DeformableComponent.generated.h"
 
 class UDynamicMeshComponent;
 class UNiagaraSystem;
 class USoundBase;
+class UMDF_DeformableComponent;
 
-/** * [Step 6 최적화 -> Step 7-1 네트워크 확장] 
- * 타격 데이터를 임시 저장 및 네트워크 전송하기 위한 구조체 
- * TArray<FMDFHitData> 형태로 RPC 인자로 전달됩니다.
+/** * [Step 6 최적화 -> Step 7-1 네트워크 확장]
+ * 타격 데이터를 임시 저장 및 네트워크 전송하기 위한 구조체
+ * FFastArraySerializerItem을 상속하여 델타 복제를 지원합니다.
  */
 USTRUCT(BlueprintType)
-struct FMDFHitData
+struct FMDFHitData : public FFastArraySerializerItem
 {
     GENERATED_BODY()
 
@@ -32,8 +34,38 @@ struct FMDFHitData
     TSubclassOf<UDamageType> DamageTypeClass;
 
     FMDFHitData() : LocalLocation(FVector::ZeroVector), LocalDirection(FVector::ForwardVector), Damage(0.f), DamageTypeClass(nullptr) {}
-    FMDFHitData(FVector Loc, FVector Dir, float Dmg, TSubclassOf<UDamageType> DmgType) 
+    FMDFHitData(FVector Loc, FVector Dir, float Dmg, TSubclassOf<UDamageType> DmgType)
         : LocalLocation(Loc), LocalDirection(Dir), Damage(Dmg), DamageTypeClass(DmgType) {}
+
+    /** FFastArraySerializer에서 개별 아이템 변경 시 호출 */
+    void PostReplicatedAdd(const struct FMDFHitDataArray& InArraySerializer);
+    void PostReplicatedChange(const struct FMDFHitDataArray& InArraySerializer);
+    void PreReplicatedRemove(const struct FMDFHitDataArray& InArraySerializer);
+};
+
+USTRUCT(BlueprintType)
+struct FMDFHitDataArray : public FFastArraySerializer
+{
+    GENERATED_BODY()
+
+    UPROPERTY()
+    TArray<FMDFHitData> Items;
+
+    /** 소유 컴포넌트 (콜백에서 변형 적용 시 사용) */
+    UPROPERTY(NotReplicated)
+    TObjectPtr<UMDF_DeformableComponent> OwnerComponent = nullptr;
+
+    bool NetDeltaSerialize(FNetDeltaSerializeInfo& DeltaParms)
+    {
+        return FFastArraySerializer::FastArrayDeltaSerialize<FMDFHitData, FMDFHitDataArray>(Items, DeltaParms, *this);
+    }
+};
+
+/** NetDeltaSerialize 활성화 매크로 (구조체 정의 직후, UCLASS 바깥에 배치) */
+template<>
+struct TStructOpsTypeTraits<FMDFHitDataArray> : public TStructOpsTypeTraitsBase2<FMDFHitDataArray>
+{
+    enum { WithNetDeltaSerializer = true };
 };
 
 UCLASS(Blueprintable, ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
@@ -41,7 +73,7 @@ class MESHDEFORMATION_API UMDF_DeformableComponent : public UActorComponent
 {
     GENERATED_BODY()
 
-public: 
+public:
     UMDF_DeformableComponent();
 
     // [Step 8] 리플리케이션(동기화) 설정을 위해 필수 오버라이드
@@ -54,30 +86,21 @@ protected:
     UFUNCTION()
     virtual void HandlePointDamage(AActor* DamagedActor, float Damage, class AController* InstigatedBy, FVector HitLocation, class UPrimitiveComponent* FHitComponent, FName BoneName, FVector ShotFromDirection, const class UDamageType* DamageType, AActor* DamageCauser);
 
-    /** * [Step 6 최적화] 모인 타격 지점들을 한 프레임의 끝에서 한 번에 연산 
+    /** * [Step 6 최적화] 모인 타격 지점들을 한 프레임의 끝에서 한 번에 연산
      * (서버에서만 호출되어 RPC를 발송하는 역할로 변경 예정)
      */
     void ProcessDeformationBatch();
-    
+
     /** [자식 클래스용] 배칭 타이머를 시작하는 헬퍼 함수 */
     void StartBatchTimer();
 
     // -------------------------------------------------------------------------
-    // [Step 8 핵심: 데이터 동기화 분리]
+    // [Step 8 → FFastArraySerializer: 데이터 동기화]
     // -------------------------------------------------------------------------
 
-    /** * [1. 상태 동기화 (Track B)]
-     * 서버에 누적된 타격 히스토리. 늦게 들어온 유저에게 자동으로 전송됩니다.
-     * 값이 변경되거나 클라이언트가 처음 접속하면 OnRep_HitHistory가 실행됩니다.
-     */
-    UPROPERTY(ReplicatedUsing = OnRep_HitHistory)
-    TArray<FMDFHitData> HitHistory;
-
-    /** * 클라이언트에서 히스토리 데이터가 도착/변경되었을 때 호출됩니다.
-     * 여기서는 "모양 변형(Deformation)"만 수행하고 소리는 내지 않습니다.
-     */
-    UFUNCTION()
-    void OnRep_HitHistory();
+    /** [Step 8 → FFastArraySerializer] 델타 복제되는 히트 히스토리 */
+    UPROPERTY(Replicated)
+    FMDFHitDataArray HitHistoryArray;
 
     /**
      * [Step 8 변경 - 2. 이펙트 동기화 (Track A)]
@@ -89,14 +112,30 @@ protected:
     void NetMulticast_PlayEffects(const TArray<FMDFHitData>& NewHits);
 
 public:
+    /** 새로 추가된 히트 데이터에 대해 변형을 적용합니다. (FFastArray 콜백에서 호출) */
+    void ApplyDeformationForHits(int32 StartIndex, int32 Count);
+
+    /** 수리 명령 시 메쉬를 리셋합니다. */
+    void ResetDeformation();
+
+    /** FFastArray 콜백용: Remove 지연 처리 플래그 */
+    bool bPendingDeformationReset = false;
+
+    /** FFastArray 콜백용: Add 배치 처리 변수 */
+    int32 PendingAddStartIndex = INDEX_NONE;
+    int32 PendingAddCount = 0;
+
+    /** FFastArray 콜백용: 다음 틱 Lambda 중복 등록 방지 플래그 */
+    bool bFastArrayBatchPending = false;
+
     /** 원본으로 사용할 StaticMesh 에셋 */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|설정", meta = (DisplayName = "스태틱 메쉬(StaticMesh)"))
     TObjectPtr<UStaticMesh> SourceStaticMesh;
-    
+
     /** 에셋을 기반으로 DynamicMesh를 초기화하는 함수 */
     UFUNCTION(BlueprintCallable, Category = "MeshDeformation")
     void InitializeDynamicMesh();
-    
+
     /** 월드 좌표 -> 로컬 좌표 변환 */
     UFUNCTION(BlueprintCallable, Category = "MeshDeformation|수학")
     FVector ConvertWorldToLocal(FVector WorldLocation);
@@ -122,7 +161,13 @@ public:
     /** [Step 6 최적화] 타격 데이터를 모으는 시간 (초) */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|설정", meta = (DisplayName = "배칭 처리 대기 시간"))
     float BatchProcessDelay = 0.0f;
-    
+
+    /** [최적화] HitHistory 최대 크기. 초과 시 오래된 데이터부터 제거됩니다.
+     *  이미 메시에 적용된 변형은 유지되며, 늦게 접속한 클라이언트만 영향받습니다.
+     *  0 = 제한 없음 */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|설정", meta = (DisplayName = "히스토리 최대 크기", ClampMin = "0", ClampMax = "5000"))
+    int32 MaxHitHistorySize = 500;
+
     /** [MeshDeformation|Effect] 변형 시 발생할 나이아가라 파편 시스템 */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|설정", meta = (DisplayName = "파편 이펙트(Niagara)"))
     TObjectPtr<UNiagaraSystem> DebrisSystem;
@@ -130,11 +175,11 @@ public:
     /** [MeshDeformation|Effect] 피격 시 재생될 3D 사운드 */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|설정", meta = (DisplayName = "피격 사운드(3D)"))
     TObjectPtr<USoundBase> ImpactSound;
-    
+
     /** [MeshDeformation|Effect] 3D 사운드 거리 감쇄 설정 */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|설정", meta = (DisplayName = "사운드 감쇄 설정(3D Attenuation)"))
     TObjectPtr<USoundAttenuation> ImpactAttenuation;
-    
+
     /** [MeshDeformation|설정] 원거리 공격 판정용 클래스 */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|설정")
     TSubclassOf<UDamageType> RangedDamageType;
@@ -142,7 +187,7 @@ public:
     /** [MeshDeformation|설정] 근접 공격 판정용 클래스 */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|설정")
     TSubclassOf<UDamageType> MeleeDamageType;
-    
+
     //메시가 찌그러지지 않는다는 것을 반영하기 위한 데미지 타입
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|설정")
     TSubclassOf<UDamageType> BreachDamageType; // 절단 전용 타입
@@ -174,15 +219,12 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|디버그", meta = (DisplayName = "자동 복구 대기 시간 (초)", EditCondition = "bDevMode_AutoRepair", ClampMin = "0.5", ClampMax = "60.0"))
     float DevMode_RepairDelay = 5.0f;
 
-protected: 
+protected:
     // [중요 수정] private -> protected로 변경
     // 자식 클래스(MiniGame)가 직접 데이터를 넣을 수 있게 허용합니다.
-    
+
     /** [Step 6] 1프레임 동안 쌓인 타격 지점 리스트 (배칭 큐) */
     TArray<FMDFHitData> HitQueue;
-
-    /** [Step 8 최적화] 클라이언트가 어디까지 변형을 적용했는지 기억하는 인덱스 */
-    int32 LastAppliedIndex = 0;
 
     /** 타이머 핸들 (중복 호출 방지용) */
     FTimerHandle BatchTimerHandle;
