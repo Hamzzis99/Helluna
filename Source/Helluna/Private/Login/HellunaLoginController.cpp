@@ -2,11 +2,14 @@
 #include "Helluna.h"  // 전처리기 플래그
 #include "Login/HellunaLoginWidget.h"
 #include "Login/HellunaCharacterSelectWidget.h"
+#include "Login/HellunaCharacterPreviewActor.h"
 #include "GameMode/HellunaBaseGameMode.h"
 #include "GameFramework/PlayerState.h"
 #include "Player/HellunaPlayerState.h"
 #include "Blueprint/UserWidget.h"
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
+#include "Engine/TextureRenderTarget2D.h"
+#include "Engine/SkeletalMesh.h"
 
 AHellunaLoginController::AHellunaLoginController()
 {
@@ -473,6 +476,14 @@ void AHellunaLoginController::Client_CharacterSelectionResult_Implementation(boo
 			CharSelectWidget->OnSelectionResult(bSuccess, ErrorMessage);
 		}
 	}
+
+	// ════════════════════════════════════════════
+	// 📌 선택 성공 시 프리뷰 액터 파괴 (비용 0)
+	// ════════════════════════════════════════════
+	if (bSuccess)
+	{
+		DestroyPreviewActors();
+	}
 }
 
 void AHellunaLoginController::Client_ShowCharacterSelectUI_Implementation(const TArray<bool>& AvailableCharacters)
@@ -494,5 +505,35 @@ void AHellunaLoginController::Client_ShowCharacterSelectUI_Implementation(const 
 	if (LoginWidget)
 	{
 		LoginWidget->ShowCharacterSelection(AvailableCharacters);
+
+		// ════════════════════════════════════════════
+		// 📌 프리뷰 액터 스폰 및 위젯 연동
+		// ════════════════════════════════════════════
+		SpawnPreviewActors();
+
+		UHellunaCharacterSelectWidget* CharSelectWidget = LoginWidget->GetCharacterSelectWidget();
+		if (CharSelectWidget && SpawnedPreviewActors.Num() > 0)
+		{
+			// RenderTarget 배열 전달
+			TArray<UTextureRenderTarget2D*> RTs;
+			for (const TObjectPtr<UTextureRenderTarget2D>& RT : PreviewRenderTargets)
+			{
+				RTs.Add(RT.Get());
+			}
+			CharSelectWidget->SetupPreviewImages(RTs);
+
+			// PreviewActor 배열 전달 (Hover 바인딩용)
+			TArray<AHellunaCharacterPreviewActor*> Actors;
+			for (const TObjectPtr<AHellunaCharacterPreviewActor>& Actor : SpawnedPreviewActors)
+			{
+				Actors.Add(Actor.Get());
+			}
+			CharSelectWidget->SetPreviewActors(Actors);
+
+#if HELLUNA_DEBUG_CHARACTER_PREVIEW
+			UE_LOG(LogHelluna, Warning, TEXT("[LoginController] ✅ 프리뷰 시스템 위젯 연동 완료 (Actors: %d, RTs: %d)"),
+				Actors.Num(), RTs.Num());
+#endif
+		}
 	}
 }

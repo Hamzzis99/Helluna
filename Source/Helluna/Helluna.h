@@ -22,6 +22,9 @@
 // 🎭 캐릭터 선택 (ProcessCharacterSelection, RegisterCharacterUse 등)
 #define HELLUNA_DEBUG_CHARACTER_SELECT 0
 
+// 🎭 캐릭터 프리뷰 (PreviewActor 스폰/파괴, SceneCapture, Hover 등)
+#define HELLUNA_DEBUG_CHARACTER_PREVIEW 1
+
 // 📦 인벤토리 저장/로드 (SaveAllPlayersInventory, LoadAndSendInventoryToClient 등)
 #define HELLUNA_DEBUG_INVENTORY_SAVE 0
 
