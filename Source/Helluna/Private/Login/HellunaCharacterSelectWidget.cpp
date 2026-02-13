@@ -1,9 +1,15 @@
 ﻿#include "Login/HellunaCharacterSelectWidget.h"
 #include "Login/HellunaLoginController.h"
+#include "Login/HellunaCharacterPreviewActor.h"
+#include "Helluna.h"
 #include "Components/Button.h"
 #include "Components/TextBlock.h"
+#include "Components/Image.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameMode/HellunaBaseGameState.h"
+#include "Engine/TextureRenderTarget2D.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Materials/MaterialInterface.h"
 
 void UHellunaCharacterSelectWidget::NativeConstruct()
 {
@@ -220,4 +226,170 @@ void UHellunaCharacterSelectWidget::RefreshAvailableCharacters()
 
 	// 기존 SetAvailableCharacters 함수 재사용
 	SetAvailableCharacters(AvailableCharacters);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 📌 프리뷰 시스템
+// ════════════════════════════════════════════════════════════════════════════════
+
+void UHellunaCharacterSelectWidget::SetupPreviewImages(const TArray<UTextureRenderTarget2D*>& RenderTargets)
+{
+#if HELLUNA_DEBUG_CHARACTER_PREVIEW
+	UE_LOG(LogHelluna, Warning, TEXT(""));
+	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogHelluna, Warning, TEXT("║  🎭 [CharacterSelectWidget] SetupPreviewImages             ║"));
+	UE_LOG(LogHelluna, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogHelluna, Warning, TEXT("║ RenderTargets 수: %d"), RenderTargets.Num());
+	UE_LOG(LogHelluna, Warning, TEXT("║ PreviewCaptureMaterial: %s"), PreviewCaptureMaterial ? *PreviewCaptureMaterial->GetName() : TEXT("nullptr (엔진 기본 사용)"));
+#endif
+
+	PreviewMaterials.Empty();
+
+	// 각 프리뷰 이미지에 RenderTarget 적용
+	TArray<UImage*> PreviewImages = { PreviewImage_Lui, PreviewImage_Luna, PreviewImage_Liam };
+
+	for (int32 i = 0; i < PreviewImages.Num(); i++)
+	{
+		UImage* TargetImage = PreviewImages[i];
+		if (!TargetImage)
+		{
+			UE_LOG(LogHelluna, Error, TEXT("[CharacterSelectWidget] PreviewImage[%d]가 nullptr! BP에서 BindWidget 확인 필요"), i);
+			PreviewMaterials.Add(nullptr);
+			continue;
+		}
+
+		if (!RenderTargets.IsValidIndex(i) || !RenderTargets[i])
+		{
+			UE_LOG(LogHelluna, Warning, TEXT("[CharacterSelectWidget] RenderTarget[%d]가 없음 - 스킵"), i);
+			PreviewMaterials.Add(nullptr);
+			continue;
+		}
+
+		// MID 생성
+		UMaterialInterface* BaseMaterial = PreviewCaptureMaterial;
+		if (!BaseMaterial)
+		{
+			// 엔진 기본 Unlit 머티리얼 폴백
+			BaseMaterial = UMaterial::GetDefaultMaterial(MD_Surface);
+		}
+
+		UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(BaseMaterial, this);
+		if (!MID)
+		{
+			UE_LOG(LogHelluna, Error, TEXT("[CharacterSelectWidget] MID 생성 실패 [%d]"), i);
+			PreviewMaterials.Add(nullptr);
+			continue;
+		}
+
+		MID->SetTextureParameterValue(TEXT("Texture"), RenderTargets[i]);
+		TargetImage->SetBrushFromMaterial(MID);
+		PreviewMaterials.Add(MID);
+
+#if HELLUNA_DEBUG_CHARACTER_PREVIEW
+		UE_LOG(LogHelluna, Warning, TEXT("║ [%d] ✅ MID 생성 및 Image 적용 완료 (RT: %s)"), i, *RenderTargets[i]->GetName());
+#endif
+	}
+
+#if HELLUNA_DEBUG_CHARACTER_PREVIEW
+	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+	UE_LOG(LogHelluna, Warning, TEXT(""));
+#endif
+}
+
+void UHellunaCharacterSelectWidget::SetPreviewActors(const TArray<AHellunaCharacterPreviewActor*>& InPreviewActors)
+{
+#if HELLUNA_DEBUG_CHARACTER_PREVIEW
+	UE_LOG(LogHelluna, Warning, TEXT(""));
+	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogHelluna, Warning, TEXT("║  🎭 [CharacterSelectWidget] SetPreviewActors               ║"));
+	UE_LOG(LogHelluna, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogHelluna, Warning, TEXT("║ InPreviewActors 수: %d"), InPreviewActors.Num());
+#endif
+
+	// 액터 참조 저장
+	PreviewActors.Empty();
+	for (AHellunaCharacterPreviewActor* Actor : InPreviewActors)
+	{
+		PreviewActors.Add(Actor);
+	}
+
+	// ════════════════════════════════════════════
+	// 📌 Hover 델리게이트 바인딩
+	// ════════════════════════════════════════════
+
+	if (LuiButton)
+	{
+		LuiButton->OnHovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Lui);
+		LuiButton->OnUnhovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Lui);
+	}
+
+	if (LunaButton)
+	{
+		LunaButton->OnHovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Luna);
+		LunaButton->OnUnhovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Luna);
+	}
+
+	if (LiamButton)
+	{
+		LiamButton->OnHovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Liam);
+		LiamButton->OnUnhovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Liam);
+	}
+
+#if HELLUNA_DEBUG_CHARACTER_PREVIEW
+	UE_LOG(LogHelluna, Warning, TEXT("║ ✅ Hover 델리게이트 바인딩 완료"));
+	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+	UE_LOG(LogHelluna, Warning, TEXT(""));
+#endif
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 📌 프리뷰 Hover 이벤트 핸들러
+// ════════════════════════════════════════════════════════════════════════════════
+
+void UHellunaCharacterSelectWidget::OnPreviewHovered_Lui()
+{
+	if (PreviewActors.IsValidIndex(0) && IsValid(PreviewActors[0]))
+	{
+		PreviewActors[0]->SetHovered(true);
+	}
+}
+
+void UHellunaCharacterSelectWidget::OnPreviewUnhovered_Lui()
+{
+	if (PreviewActors.IsValidIndex(0) && IsValid(PreviewActors[0]))
+	{
+		PreviewActors[0]->SetHovered(false);
+	}
+}
+
+void UHellunaCharacterSelectWidget::OnPreviewHovered_Luna()
+{
+	if (PreviewActors.IsValidIndex(1) && IsValid(PreviewActors[1]))
+	{
+		PreviewActors[1]->SetHovered(true);
+	}
+}
+
+void UHellunaCharacterSelectWidget::OnPreviewUnhovered_Luna()
+{
+	if (PreviewActors.IsValidIndex(1) && IsValid(PreviewActors[1]))
+	{
+		PreviewActors[1]->SetHovered(false);
+	}
+}
+
+void UHellunaCharacterSelectWidget::OnPreviewHovered_Liam()
+{
+	if (PreviewActors.IsValidIndex(2) && IsValid(PreviewActors[2]))
+	{
+		PreviewActors[2]->SetHovered(true);
+	}
+}
+
+void UHellunaCharacterSelectWidget::OnPreviewUnhovered_Liam()
+{
+	if (PreviewActors.IsValidIndex(2) && IsValid(PreviewActors[2]))
+	{
+		PreviewActors[2]->SetHovered(false);
+	}
 }
