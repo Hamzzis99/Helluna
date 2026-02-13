@@ -18,6 +18,17 @@ AHellunaLoginController::AHellunaLoginController()
 	bEnableMouseOverEvents = true;
 }
 
+void AHellunaLoginController::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	// ════════════════════════════════════════════
+	// 📌 프리뷰 액터 안전 정리
+	// ════════════════════════════════════════════
+	// Controller 파괴 시 프리뷰 액터가 월드에 잔존하는 것을 방지
+	DestroyPreviewActors();
+
+	Super::EndPlay(EndPlayReason);
+}
+
 void AHellunaLoginController::BeginPlay()
 {
 	Super::BeginPlay();
@@ -531,7 +542,7 @@ void AHellunaLoginController::Client_ShowCharacterSelectUI_Implementation(const 
 			CharSelectWidget->SetPreviewActors(Actors);
 
 #if HELLUNA_DEBUG_CHARACTER_PREVIEW
-			UE_LOG(LogHelluna, Warning, TEXT("[LoginController] ✅ 프리뷰 시스템 위젯 연동 완료 (Actors: %d, RTs: %d)"),
+			UE_LOG(LogHelluna, Warning, TEXT("[로그인컨트롤러] ✅ 프리뷰 시스템 위젯 연동 완료 (Actors: %d, RTs: %d)"),
 				Actors.Num(), RTs.Num());
 #endif
 		}
@@ -551,32 +562,32 @@ void AHellunaLoginController::SpawnPreviewActors()
 	UWorld* World = GetWorld();
 	if (!World)
 	{
-		UE_LOG(LogHelluna, Error, TEXT("[LoginController] SpawnPreviewActors 실패 - World가 nullptr!"));
+		UE_LOG(LogHelluna, Error, TEXT("[로그인컨트롤러] 프리뷰 액터 스폰 실패 - World가 nullptr!"));
 		return;
 	}
 
 	if (World->GetNetMode() == NM_DedicatedServer)
 	{
-		UE_LOG(LogHelluna, Warning, TEXT("[LoginController] SpawnPreviewActors 스킵 - 데디케이티드 서버"));
+		UE_LOG(LogHelluna, Warning, TEXT("[로그인컨트롤러] 프리뷰 액터 스폰 스킵 - 데디케이티드 서버"));
 		return;
 	}
 
 	if (!PreviewActorClass)
 	{
-		UE_LOG(LogHelluna, Error, TEXT("[LoginController] SpawnPreviewActors 실패 - PreviewActorClass 미설정! BP에서 설정 필요"));
+		UE_LOG(LogHelluna, Error, TEXT("[로그인컨트롤러] 프리뷰 액터 스폰 실패 - PreviewActorClass 미설정! BP에서 설정 필요"));
 		return;
 	}
 
 	if (!PreviewAnimClass)
 	{
-		UE_LOG(LogHelluna, Error, TEXT("[LoginController] SpawnPreviewActors 실패 - PreviewAnimClass 미설정! BP에서 설정 필요"));
+		UE_LOG(LogHelluna, Error, TEXT("[로그인컨트롤러] 프리뷰 액터 스폰 실패 - PreviewAnimClass 미설정! BP에서 설정 필요"));
 		return;
 	}
 
 #if HELLUNA_DEBUG_CHARACTER_PREVIEW
 	UE_LOG(LogHelluna, Warning, TEXT(""));
 	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogHelluna, Warning, TEXT("║  🎭 [LoginController] SpawnPreviewActors                   ║"));
+	UE_LOG(LogHelluna, Warning, TEXT("║  🎭 [로그인컨트롤러] 프리뷰 액터 스폰                      ║"));
 	UE_LOG(LogHelluna, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
 	UE_LOG(LogHelluna, Warning, TEXT("║ PreviewActorClass: %s"), *PreviewActorClass->GetName());
 	UE_LOG(LogHelluna, Warning, TEXT("║ PreviewAnimClass: %s"), *PreviewAnimClass->GetName());
@@ -605,7 +616,7 @@ void AHellunaLoginController::SpawnPreviewActors()
 		const TSoftObjectPtr<USkeletalMesh>* MeshPtr = PreviewMeshMap.Find(HeroType);
 		if (!MeshPtr)
 		{
-			UE_LOG(LogHelluna, Warning, TEXT("[LoginController] ⚠️ PreviewMeshMap에 %s 타입 미등록 - 스킵"),
+			UE_LOG(LogHelluna, Warning, TEXT("[로그인컨트롤러] ⚠️ PreviewMeshMap에 %s 타입 미등록 - 스킵"),
 				*UEnum::GetValueAsString(HeroType));
 			SpawnedPreviewActors.Add(nullptr);
 			PreviewRenderTargets.Add(nullptr);
@@ -615,7 +626,7 @@ void AHellunaLoginController::SpawnPreviewActors()
 		USkeletalMesh* LoadedMesh = MeshPtr->LoadSynchronous();
 		if (!LoadedMesh)
 		{
-			UE_LOG(LogHelluna, Warning, TEXT("[LoginController] ⚠️ %s SkeletalMesh 로드 실패 - 스킵"),
+			UE_LOG(LogHelluna, Warning, TEXT("[로그인컨트롤러] ⚠️ %s SkeletalMesh 로드 실패 - 스킵"),
 				*UEnum::GetValueAsString(HeroType));
 			SpawnedPreviewActors.Add(nullptr);
 			PreviewRenderTargets.Add(nullptr);
@@ -624,21 +635,20 @@ void AHellunaLoginController::SpawnPreviewActors()
 
 		// 액터 스폰
 		FVector SpawnLocation = PreviewSpawnBaseLocation + FVector(i * PreviewSpawnSpacing, 0.f, 0.f);
-		FTransform SpawnTransform(FRotator::ZeroRotator, SpawnLocation);
 
-		AHellunaCharacterPreviewActor* PreviewActor = World->SpawnActorDeferred<AHellunaCharacterPreviewActor>(
-			PreviewActorClass, SpawnTransform);
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		AHellunaCharacterPreviewActor* PreviewActor = World->SpawnActor<AHellunaCharacterPreviewActor>(
+			PreviewActorClass, SpawnLocation, FRotator::ZeroRotator, SpawnParams);
 
 		if (!PreviewActor)
 		{
-			UE_LOG(LogHelluna, Error, TEXT("[LoginController] ❌ %s 프리뷰 액터 스폰 실패!"),
+			UE_LOG(LogHelluna, Error, TEXT("[로그인컨트롤러] ❌ %s 프리뷰 액터 스폰 실패!"),
 				*UEnum::GetValueAsString(HeroType));
 			SpawnedPreviewActors.Add(nullptr);
 			PreviewRenderTargets.Add(nullptr);
 			continue;
 		}
-
-		PreviewActor->FinishSpawning(SpawnTransform);
 
 		// RenderTarget 생성
 		UTextureRenderTarget2D* RT = NewObject<UTextureRenderTarget2D>(this);
@@ -670,7 +680,7 @@ void AHellunaLoginController::DestroyPreviewActors()
 #if HELLUNA_DEBUG_CHARACTER_PREVIEW
 	if (SpawnedPreviewActors.Num() > 0)
 	{
-		UE_LOG(LogHelluna, Warning, TEXT("[LoginController] 🗑️ DestroyPreviewActors - %d개 파괴"), SpawnedPreviewActors.Num());
+		UE_LOG(LogHelluna, Warning, TEXT("[로그인컨트롤러] 🗑️ 프리뷰 액터 파괴 - %d개"), SpawnedPreviewActors.Num());
 	}
 #endif
 

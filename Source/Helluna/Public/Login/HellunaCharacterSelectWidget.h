@@ -172,23 +172,23 @@ protected:
 	// 📌 프리뷰 이미지 바인딩 (BP에서 UImage 추가 필요!)
 	// ============================================
 
-	/** Lui 프리뷰 이미지 (Index 0) */
-	UPROPERTY(meta = (BindWidget, DisplayName = "루이 프리뷰 이미지"))
+	/** Lui 프리뷰 이미지 (Index 0) - 선택사항 */
+	UPROPERTY(meta = (BindWidgetOptional, DisplayName = "루이 프리뷰 이미지"))
 	TObjectPtr<UImage> PreviewImage_Lui;
 
-	/** Luna 프리뷰 이미지 (Index 1) */
-	UPROPERTY(meta = (BindWidget, DisplayName = "루나 프리뷰 이미지"))
+	/** Luna 프리뷰 이미지 (Index 1) - 선택사항 */
+	UPROPERTY(meta = (BindWidgetOptional, DisplayName = "루나 프리뷰 이미지"))
 	TObjectPtr<UImage> PreviewImage_Luna;
 
-	/** Liam 프리뷰 이미지 (Index 2) */
-	UPROPERTY(meta = (BindWidget, DisplayName = "리암 프리뷰 이미지"))
+	/** Liam 프리뷰 이미지 (Index 2) - 선택사항 */
+	UPROPERTY(meta = (BindWidgetOptional, DisplayName = "리암 프리뷰 이미지"))
 	TObjectPtr<UImage> PreviewImage_Liam;
 
 	// ============================================
 	// 📌 프리뷰 설정
 	// ============================================
 
-	/** 프리뷰 캡처용 Material (BP에서 세팅, nullptr이면 엔진 기본 사용) */
+	/** 프리뷰 캡처용 Material (BP에서 반드시 세팅! nullptr이면 프리뷰 표시 불가) */
 	UPROPERTY(EditDefaultsOnly, Category = "CharacterPreview (캐릭터 프리뷰)", meta = (DisplayName = "프리뷰 캡처 머티리얼"))
 	TObjectPtr<UMaterialInterface> PreviewCaptureMaterial;
 

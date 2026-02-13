@@ -53,19 +53,19 @@ void AHellunaCharacterPreviewActor::InitializePreview(USkeletalMesh* InMesh, TSu
 
 	if (!InMesh)
 	{
-		UE_LOG(LogHelluna, Error, TEXT("[CharacterPreviewActor] InitializePreview 실패 - InMesh가 nullptr!"));
+		UE_LOG(LogHelluna, Error, TEXT("[캐릭터프리뷰액터] 프리뷰 초기화 실패 - InMesh가 nullptr!"));
 		return;
 	}
 
 	if (!InAnimClass)
 	{
-		UE_LOG(LogHelluna, Error, TEXT("[CharacterPreviewActor] InitializePreview 실패 - InAnimClass가 nullptr!"));
+		UE_LOG(LogHelluna, Error, TEXT("[캐릭터프리뷰액터] 프리뷰 초기화 실패 - InAnimClass가 nullptr!"));
 		return;
 	}
 
 	if (!InRenderTarget)
 	{
-		UE_LOG(LogHelluna, Error, TEXT("[CharacterPreviewActor] InitializePreview 실패 - InRenderTarget이 nullptr!"));
+		UE_LOG(LogHelluna, Error, TEXT("[캐릭터프리뷰액터] 프리뷰 초기화 실패 - InRenderTarget이 nullptr!"));
 		return;
 	}
 
@@ -89,8 +89,8 @@ void AHellunaCharacterPreviewActor::InitializePreview(USkeletalMesh* InMesh, TSu
 	SceneCapture->ShowOnlyActors.Empty();
 	SceneCapture->ShowOnlyActors.Add(this);
 
-#if HELLUNA_DEBUG_CHARACTER_SELECT
-	UE_LOG(LogHelluna, Warning, TEXT("[CharacterPreviewActor] ✅ InitializePreview 완료"));
+#if HELLUNA_DEBUG_CHARACTER_PREVIEW
+	UE_LOG(LogHelluna, Warning, TEXT("[캐릭터프리뷰액터] ✅ 프리뷰 초기화 완료"));
 	UE_LOG(LogHelluna, Warning, TEXT("  Mesh: %s"), *InMesh->GetName());
 	UE_LOG(LogHelluna, Warning, TEXT("  AnimClass: %s"), *InAnimClass->GetName());
 	UE_LOG(LogHelluna, Warning, TEXT("  RenderTarget: %s (%dx%d)"), *InRenderTarget->GetName(), InRenderTarget->SizeX, InRenderTarget->SizeY);
@@ -108,21 +108,21 @@ void AHellunaCharacterPreviewActor::SetHovered(bool bHovered)
 {
 	if (!PreviewMesh)
 	{
-		UE_LOG(LogHelluna, Error, TEXT("[CharacterPreviewActor] SetHovered 실패 - PreviewMesh가 nullptr!"));
+		UE_LOG(LogHelluna, Error, TEXT("[캐릭터프리뷰액터] 호버 설정 실패 - PreviewMesh가 nullptr!"));
 		return;
 	}
 
 	UHellunaPreviewAnimInstance* AnimInst = Cast<UHellunaPreviewAnimInstance>(PreviewMesh->GetAnimInstance());
 	if (!AnimInst)
 	{
-		UE_LOG(LogHelluna, Error, TEXT("[CharacterPreviewActor] SetHovered 실패 - PreviewAnimInstance를 찾을 수 없음!"));
+		UE_LOG(LogHelluna, Error, TEXT("[캐릭터프리뷰액터] 호버 설정 실패 - PreviewAnimInstance를 찾을 수 없음!"));
 		return;
 	}
 
 	AnimInst->bIsHovered = bHovered;
 
-#if HELLUNA_DEBUG_CHARACTER_SELECT
-	UE_LOG(LogHelluna, Warning, TEXT("[CharacterPreviewActor] SetHovered: %s"), bHovered ? TEXT("TRUE") : TEXT("FALSE"));
+#if HELLUNA_DEBUG_CHARACTER_PREVIEW
+	UE_LOG(LogHelluna, Warning, TEXT("[캐릭터프리뷰액터] 호버 상태 변경: %s"), bHovered ? TEXT("TRUE") : TEXT("FALSE"));
 #endif
 }
 
