@@ -634,12 +634,12 @@ void AHellunaLoginController::SpawnPreviewActors()
 		}
 
 		// 액터 스폰
-		FVector SpawnLocation = PreviewSpawnBaseLocation + FVector(i * PreviewSpawnSpacing, 0.f, 0.f);
+		FVector PreviewSpawnLocation = PreviewSpawnBaseLocation + FVector(i * PreviewSpawnSpacing, 0.f, 0.f);
 
 		FActorSpawnParameters SpawnParams;
 		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 		AHellunaCharacterPreviewActor* PreviewActor = World->SpawnActor<AHellunaCharacterPreviewActor>(
-			PreviewActorClass, SpawnLocation, FRotator::ZeroRotator, SpawnParams);
+			PreviewActorClass, PreviewSpawnLocation, FRotator::ZeroRotator, SpawnParams);
 
 		if (!PreviewActor)
 		{
@@ -663,7 +663,7 @@ void AHellunaLoginController::SpawnPreviewActors()
 
 #if HELLUNA_DEBUG_CHARACTER_PREVIEW
 		UE_LOG(LogHelluna, Warning, TEXT("║ [%d] %s → ✅ 스폰 완료 (위치: %s)"),
-			i, *UEnum::GetValueAsString(HeroType), *SpawnLocation.ToString());
+			i, *UEnum::GetValueAsString(HeroType), *PreviewSpawnLocation.ToString());
 #endif
 	}
 
