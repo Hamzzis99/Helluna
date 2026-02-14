@@ -127,6 +127,18 @@ void AHellunaCharacterPreviewActor::SetHovered(bool bHovered)
 }
 
 // ============================================
+// 📌 ShowOnlyActors에 액터 추가
+// ============================================
+
+void AHellunaCharacterPreviewActor::AddShowOnlyActor(AActor* InActor)
+{
+	if (SceneCapture && InActor)
+	{
+		SceneCapture->ShowOnlyActors.AddUnique(InActor);
+	}
+}
+
+// ============================================
 // 📌 RenderTarget 반환
 // ============================================
 

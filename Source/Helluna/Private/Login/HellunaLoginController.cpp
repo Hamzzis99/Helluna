@@ -10,6 +10,7 @@
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/SkeletalMesh.h"
+#include "Kismet/GameplayStatics.h"
 
 AHellunaLoginController::AHellunaLoginController()
 {
@@ -578,9 +579,9 @@ void AHellunaLoginController::SpawnPreviewActors()
 		return;
 	}
 
-	if (!PreviewAnimClass)
+	if (PreviewAnimClassMap.Num() == 0)
 	{
-		UE_LOG(LogHelluna, Error, TEXT("[로그인컨트롤러] 프리뷰 액터 스폰 실패 - PreviewAnimClass 미설정! BP에서 설정 필요"));
+		UE_LOG(LogHelluna, Error, TEXT("[로그인컨트롤러] 프리뷰 액터 스폰 실패 - PreviewAnimClassMap 비어있음! BP에서 설정 필요"));
 		return;
 	}
 
@@ -590,7 +591,7 @@ void AHellunaLoginController::SpawnPreviewActors()
 	UE_LOG(LogHelluna, Warning, TEXT("║  🎭 [로그인컨트롤러] 프리뷰 액터 스폰                      ║"));
 	UE_LOG(LogHelluna, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
 	UE_LOG(LogHelluna, Warning, TEXT("║ PreviewActorClass: %s"), *PreviewActorClass->GetName());
-	UE_LOG(LogHelluna, Warning, TEXT("║ PreviewAnimClass: %s"), *PreviewAnimClass->GetName());
+	UE_LOG(LogHelluna, Warning, TEXT("║ PreviewAnimClassMap: %d개 등록"), PreviewAnimClassMap.Num());
 	UE_LOG(LogHelluna, Warning, TEXT("║ SpawnBase: %s"), *PreviewSpawnBaseLocation.ToString());
 	UE_LOG(LogHelluna, Warning, TEXT("║ Spacing: %.1f"), PreviewSpawnSpacing);
 	UE_LOG(LogHelluna, Warning, TEXT("║ RT Size: %dx%d"), PreviewRenderTargetSize.X, PreviewRenderTargetSize.Y);
@@ -633,6 +634,17 @@ void AHellunaLoginController::SpawnPreviewActors()
 			continue;
 		}
 
+		// AnimClass 조회 (캐릭터별 개별 AnimBP)
+		const TSubclassOf<UAnimInstance>* AnimClassPtr = PreviewAnimClassMap.Find(HeroType);
+		if (!AnimClassPtr || !*AnimClassPtr)
+		{
+			UE_LOG(LogHelluna, Warning, TEXT("[로그인컨트롤러] ⚠️ PreviewAnimClassMap에 %s 타입 미등록 - 스킵"),
+				*UEnum::GetValueAsString(HeroType));
+			SpawnedPreviewActors.Add(nullptr);
+			PreviewRenderTargets.Add(nullptr);
+			continue;
+		}
+
 		// 액터 스폰
 		FVector PreviewSpawnLocation = PreviewSpawnBaseLocation + FVector(i * PreviewSpawnSpacing, 0.f, 0.f);
 
@@ -656,7 +668,7 @@ void AHellunaLoginController::SpawnPreviewActors()
 		RT->UpdateResourceImmediate(true);
 
 		// 프리뷰 초기화
-		PreviewActor->InitializePreview(LoadedMesh, PreviewAnimClass, RT);
+		PreviewActor->InitializePreview(LoadedMesh, *AnimClassPtr, RT);
 
 		SpawnedPreviewActors.Add(PreviewActor);
 		PreviewRenderTargets.Add(RT);
@@ -665,6 +677,27 @@ void AHellunaLoginController::SpawnPreviewActors()
 		UE_LOG(LogHelluna, Warning, TEXT("║ [%d] %s → ✅ 스폰 완료 (위치: %s)"),
 			i, *UEnum::GetValueAsString(HeroType), *PreviewSpawnLocation.ToString());
 #endif
+	}
+
+	// ════════════════════════════════════════════
+	// 📌 배경 액터 검색 및 ShowOnlyList 등록
+	// ════════════════════════════════════════════
+
+	TArray<AActor*> BackgroundActors;
+	UGameplayStatics::GetAllActorsWithTag(World, PreviewBackgroundActorTag, BackgroundActors);
+
+#if HELLUNA_DEBUG_CHARACTER_PREVIEW
+	UE_LOG(LogHelluna, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogHelluna, Warning, TEXT("║ 배경 액터 (태그: %s): %d개 발견"), *PreviewBackgroundActorTag.ToString(), BackgroundActors.Num());
+#endif
+
+	for (AHellunaCharacterPreviewActor* PreviewActor : SpawnedPreviewActors)
+	{
+		if (!IsValid(PreviewActor)) continue;
+		for (AActor* BgActor : BackgroundActors)
+		{
+			PreviewActor->AddShowOnlyActor(BgActor);
+		}
 	}
 
 #if HELLUNA_DEBUG_CHARACTER_PREVIEW

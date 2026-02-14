@@ -229,9 +229,13 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "CharacterPreview (캐릭터 프리뷰)", meta = (DisplayName = "프리뷰 메시 맵"))
 	TMap<EHellunaHeroType, TSoftObjectPtr<USkeletalMesh>> PreviewMeshMap;
 
-	/** 프리뷰 전용 AnimInstance 클래스 (BP에서 ABP_CharacterPreview 세팅) */
-	UPROPERTY(EditDefaultsOnly, Category = "CharacterPreview (캐릭터 프리뷰)", meta = (DisplayName = "프리뷰 AnimClass"))
-	TSubclassOf<UAnimInstance> PreviewAnimClass;
+	/** 캐릭터 타입별 프리뷰 AnimInstance 클래스 매핑 (스켈레톤이 다르므로 개별 지정 필요) */
+	UPROPERTY(EditDefaultsOnly, Category = "CharacterPreview (캐릭터 프리뷰)", meta = (DisplayName = "프리뷰 AnimClass 맵"))
+	TMap<EHellunaHeroType, TSubclassOf<UAnimInstance>> PreviewAnimClassMap;
+
+	/** 프리뷰 배경으로 사용할 액터 태그 (이 태그를 가진 월드 액터를 SceneCapture ShowOnlyList에 추가) */
+	UPROPERTY(EditDefaultsOnly, Category = "CharacterPreview (캐릭터 프리뷰)", meta = (DisplayName = "프리뷰 배경 액터 태그"))
+	FName PreviewBackgroundActorTag = TEXT("PreviewBackground");
 
 	/** 월드 지하 스폰 기준 위치 */
 	UPROPERTY(EditDefaultsOnly, Category = "CharacterPreview (캐릭터 프리뷰)", meta = (DisplayName = "프리뷰 스폰 기준 위치"))

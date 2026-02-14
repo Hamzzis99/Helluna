@@ -85,6 +85,10 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Preview (프리뷰)")
 	UTextureRenderTarget2D* GetRenderTarget() const;
 
+	/** SceneCapture의 ShowOnlyActors에 액터 추가 */
+	UFUNCTION(BlueprintCallable, Category = "Preview (프리뷰)")
+	void AddShowOnlyActor(AActor* InActor);
+
 protected:
 	// ============================================
 	// 📌 컴포넌트
