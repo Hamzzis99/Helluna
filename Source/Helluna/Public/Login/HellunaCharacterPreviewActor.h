@@ -106,9 +106,13 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category = "Preview (프리뷰)")
 	TObjectPtr<USceneCaptureComponent2D> SceneCapture;
 
-	/** 프리뷰 조명 */
+	/** 프리뷰 메인 조명 */
 	UPROPERTY(VisibleAnywhere, Category = "Preview (프리뷰)")
 	TObjectPtr<UPointLightComponent> PreviewLight;
+
+	/** 프리뷰 보조 조명 (뒤쪽 Fill) */
+	UPROPERTY(VisibleAnywhere, Category = "Preview (프리뷰)")
+	TObjectPtr<UPointLightComponent> FillLight;
 
 	// ============================================
 	// 📌 BP 조절 가능 파라미터

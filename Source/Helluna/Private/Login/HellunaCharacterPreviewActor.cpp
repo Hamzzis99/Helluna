@@ -36,9 +36,15 @@ AHellunaCharacterPreviewActor::AHellunaCharacterPreviewActor()
 
 	PreviewLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("PreviewLight"));
 	PreviewLight->SetupAttachment(SceneRoot);
-	PreviewLight->SetIntensity(5000.f);
-	PreviewLight->SetAttenuationRadius(500.f);
-	PreviewLight->SetRelativeLocation(FVector(100.f, 100.f, 200.f));
+	PreviewLight->SetIntensity(50000.f);
+	PreviewLight->SetAttenuationRadius(1000.f);
+	PreviewLight->SetRelativeLocation(FVector(150.f, 0.f, 200.f));
+
+	FillLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("FillLight"));
+	FillLight->SetupAttachment(SceneRoot);
+	FillLight->SetIntensity(20000.f);
+	FillLight->SetAttenuationRadius(1000.f);
+	FillLight->SetRelativeLocation(FVector(-100.f, -150.f, 100.f));
 }
 
 // ============================================
