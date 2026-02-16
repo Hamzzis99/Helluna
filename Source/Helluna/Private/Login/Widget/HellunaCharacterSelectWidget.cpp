@@ -22,21 +22,30 @@ void UHellunaCharacterSelectWidget::NativeConstruct()
 #endif
 
 	// ════════════════════════════════════════════
-	// 📌 버튼 클릭 이벤트 바인딩 (BindWidget이므로 항상 존재)
+	// 📌 버튼 클릭 이벤트 바인딩 (중복 바인딩 방지)
 	// ════════════════════════════════════════════
-	LuiButton->OnClicked.AddDynamic(this, &UHellunaCharacterSelectWidget::OnLuiButtonClicked);
-	LunaButton->OnClicked.AddDynamic(this, &UHellunaCharacterSelectWidget::OnLunaButtonClicked);
-	LiamButton->OnClicked.AddDynamic(this, &UHellunaCharacterSelectWidget::OnLiamButtonClicked);
+	if (LuiButton && LunaButton && LiamButton
+		&& !LuiButton->OnClicked.IsAlreadyBound(this, &UHellunaCharacterSelectWidget::OnLuiButtonClicked))
+	{
+		LuiButton->OnClicked.AddDynamic(this, &UHellunaCharacterSelectWidget::OnLuiButtonClicked);
+		LunaButton->OnClicked.AddDynamic(this, &UHellunaCharacterSelectWidget::OnLunaButtonClicked);
+		LiamButton->OnClicked.AddDynamic(this, &UHellunaCharacterSelectWidget::OnLiamButtonClicked);
 
-	// ════════════════════════════════════════════
-	// 📌 호버 이벤트 바인딩 (베이스에서 한 번만)
-	// ════════════════════════════════════════════
-	LuiButton->OnHovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Lui);
-	LuiButton->OnUnhovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Lui);
-	LunaButton->OnHovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Luna);
-	LunaButton->OnUnhovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Luna);
-	LiamButton->OnHovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Liam);
-	LiamButton->OnUnhovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Liam);
+		// ════════════════════════════════════════════
+		// 📌 호버 이벤트 바인딩 (베이스에서 한 번만)
+		// ════════════════════════════════════════════
+		LuiButton->OnHovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Lui);
+		LuiButton->OnUnhovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Lui);
+		LunaButton->OnHovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Luna);
+		LunaButton->OnUnhovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Luna);
+		LiamButton->OnHovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Liam);
+		LiamButton->OnUnhovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Liam);
+	}
+	else if (!LuiButton || !LunaButton || !LiamButton)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[캐릭터선택위젯] 버튼 nullptr! Lui=%d, Luna=%d, Liam=%d"),
+			LuiButton != nullptr, LunaButton != nullptr, LiamButton != nullptr);
+	}
 
 #if HELLUNA_DEBUG_CHARACTER_SELECT
 	UE_LOG(LogHelluna, Warning, TEXT("[캐릭터선택위젯] 버튼 클릭/호버 바인딩 완료"));

@@ -706,9 +706,35 @@ void AHellunaLoginController::SpawnPreviewActors()
 		// ════════════════════════════════════════════
 		// 📌 하이라이트 오버레이 머티리얼 설정
 		// ════════════════════════════════════════════
+		UMaterialInterface* HighlightMat = nullptr;
+
+		// BP 맵에서 먼저 조회
 		if (const TObjectPtr<UMaterialInterface>* HighlightMatPtr = PreviewHighlightMaterialMap.Find(HeroType))
 		{
-			PreviewActor->SetHighlightMaterial(*HighlightMatPtr);
+			HighlightMat = *HighlightMatPtr;
+		}
+
+		// 맵이 비어있으면 하드코딩 경로로 폴백
+		if (!HighlightMat)
+		{
+			static const TMap<EHellunaHeroType, FString> HighlightPaths = {
+				{EHellunaHeroType::Lui,  TEXT("/Game/Login/Preview/Materials/M_Highlight_Lui.M_Highlight_Lui")},
+				{EHellunaHeroType::Luna, TEXT("/Game/Login/Preview/Materials/M_Highlight_Luna.M_Highlight_Luna")},
+				{EHellunaHeroType::Liam, TEXT("/Game/Login/Preview/Materials/M_Highlight_Liam.M_Highlight_Liam")}
+			};
+
+			if (const FString* Path = HighlightPaths.Find(HeroType))
+			{
+				HighlightMat = Cast<UMaterialInterface>(StaticLoadObject(UMaterialInterface::StaticClass(), nullptr, **Path));
+				UE_LOG(LogTemp, Warning, TEXT("[V1 Highlight Fallback] %s → %s"),
+					*UEnum::GetValueAsString(HeroType),
+					HighlightMat ? *HighlightMat->GetName() : TEXT("LOAD FAILED"));
+			}
+		}
+
+		if (HighlightMat)
+		{
+			PreviewActor->SetHighlightMaterial(HighlightMat);
 		}
 
 		SpawnedPreviewActors.Add(PreviewActor);

@@ -152,6 +152,10 @@ void AHellunaCharacterPreviewActor::SetHovered(bool bHovered)
 	// ════════════════════════════════════════════
 	// 📌 오버레이 하이라이트 머티리얼
 	// ════════════════════════════════════════════
+	UE_LOG(LogTemp, Warning, TEXT("[V1 SetHovered] bHovered=%s, HighlightMaterial=%s"),
+		bHovered ? TEXT("TRUE") : TEXT("FALSE"),
+		HighlightMaterial ? *HighlightMaterial->GetName() : TEXT("nullptr"));
+
 	PreviewMesh->SetOverlayMaterial(bHovered ? HighlightMaterial : nullptr);
 
 #if HELLUNA_DEBUG_CHARACTER_PREVIEW
@@ -168,6 +172,9 @@ void AHellunaCharacterPreviewActor::SetHovered(bool bHovered)
 void AHellunaCharacterPreviewActor::SetHighlightMaterial(UMaterialInterface* InMaterial)
 {
 	HighlightMaterial = InMaterial;
+
+	UE_LOG(LogTemp, Warning, TEXT("[V1 SetHighlightMaterial] Material=%s"),
+		InMaterial ? *InMaterial->GetName() : TEXT("nullptr"));
 
 #if HELLUNA_DEBUG_CHARACTER_PREVIEW
 	UE_LOG(LogHelluna, Warning, TEXT("[캐릭터프리뷰액터] 하이라이트 머티리얼 설정: %s"),
