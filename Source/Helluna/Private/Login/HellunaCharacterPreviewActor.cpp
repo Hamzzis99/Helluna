@@ -34,6 +34,7 @@ AHellunaCharacterPreviewActor::AHellunaCharacterPreviewActor()
 	SceneCapture->bCaptureEveryFrame = true;
 	SceneCapture->bCaptureOnMovement = false;
 	SceneCapture->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;
+	SceneCapture->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;  // 알파 채널 포함
 
 	// Lumen GI 없이도 캐릭터가 보이도록 ShowFlags 설정
 	SceneCapture->ShowFlags.SetAtmosphere(false);

@@ -662,9 +662,10 @@ void AHellunaLoginController::SpawnPreviewActors()
 			continue;
 		}
 
-		// RenderTarget 생성
+		// RenderTarget 생성 (RGBA - 알파 채널 포함으로 배경 투명화)
 		UTextureRenderTarget2D* RT = NewObject<UTextureRenderTarget2D>(this);
-		RT->InitAutoFormat(PreviewRenderTargetSize.X, PreviewRenderTargetSize.Y);
+		RT->InitCustomFormat(PreviewRenderTargetSize.X, PreviewRenderTargetSize.Y, PF_FloatRGBA, false);
+		RT->ClearColor = FLinearColor::Transparent;
 		RT->UpdateResourceImmediate(true);
 
 		// 프리뷰 초기화
