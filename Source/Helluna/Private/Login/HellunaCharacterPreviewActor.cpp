@@ -27,12 +27,29 @@ AHellunaCharacterPreviewActor::AHellunaCharacterPreviewActor()
 	PreviewMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("PreviewMesh"));
 	PreviewMesh->SetupAttachment(SceneRoot);
 	PreviewMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	PreviewMesh->SetRelativeRotation(FRotator(0.f, -90.f, 0.f));  // 카메라 정면을 바라보도록 회전
 
 	SceneCapture = CreateDefaultSubobject<USceneCaptureComponent2D>(TEXT("SceneCapture"));
 	SceneCapture->SetupAttachment(SceneRoot);
 	SceneCapture->bCaptureEveryFrame = true;
 	SceneCapture->bCaptureOnMovement = false;
 	SceneCapture->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;
+
+	// Lumen GI 없이도 캐릭터가 보이도록 ShowFlags 설정
+	SceneCapture->ShowFlags.SetAtmosphere(false);
+	SceneCapture->ShowFlags.SetFog(false);
+	SceneCapture->ShowFlags.SetVolumetricFog(false);
+	SceneCapture->ShowFlags.SetSkyLighting(false);
+	SceneCapture->ShowFlags.SetDynamicShadows(false);
+	SceneCapture->ShowFlags.SetGlobalIllumination(false);
+	SceneCapture->ShowFlags.SetScreenSpaceReflections(false);
+	SceneCapture->ShowFlags.SetAmbientOcclusion(false);
+	SceneCapture->ShowFlags.SetReflectionEnvironment(false);
+
+	// 기본 앰비언트 광원 확보 (ShowOnlyList에서 GI 없이도 밝게)
+	SceneCapture->PostProcessSettings.bOverride_AutoExposureBias = true;
+	SceneCapture->PostProcessSettings.AutoExposureBias = 3.0f;
+	SceneCapture->PostProcessBlendWeight = 1.0f;
 
 	PreviewLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("PreviewLight"));
 	PreviewLight->SetupAttachment(SceneRoot);

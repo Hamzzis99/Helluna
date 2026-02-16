@@ -69,7 +69,7 @@ public:
 	 * @param InAnimClass - 프리뷰 전용 AnimInstance 클래스
 	 * @param InRenderTarget - 캡처 결과를 저장할 RenderTarget
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Preview (프리뷰)")
+	UFUNCTION(BlueprintCallable, Category = "프리뷰")
 	void InitializePreview(USkeletalMesh* InMesh, TSubclassOf<UAnimInstance> InAnimClass, UTextureRenderTarget2D* InRenderTarget);
 
 	/**
@@ -78,15 +78,15 @@ public:
 	 *
 	 * @param bHovered - Hover 여부
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Preview (프리뷰)")
+	UFUNCTION(BlueprintCallable, Category = "프리뷰")
 	void SetHovered(bool bHovered);
 
 	/** 현재 RenderTarget 반환 */
-	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Preview (프리뷰)")
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "프리뷰")
 	UTextureRenderTarget2D* GetRenderTarget() const;
 
 	/** SceneCapture의 ShowOnlyActors에 액터 추가 */
-	UFUNCTION(BlueprintCallable, Category = "Preview (프리뷰)")
+	UFUNCTION(BlueprintCallable, Category = "프리뷰")
 	void AddShowOnlyActor(AActor* InActor);
 
 protected:
@@ -95,23 +95,23 @@ protected:
 	// ============================================
 
 	/** 루트 씬 컴포넌트 */
-	UPROPERTY(VisibleAnywhere, Category = "Preview (프리뷰)")
+	UPROPERTY(VisibleAnywhere, Category = "프리뷰")
 	TObjectPtr<USceneComponent> SceneRoot;
 
 	/** 캐릭터 SkeletalMesh */
-	UPROPERTY(VisibleAnywhere, Category = "Preview (프리뷰)")
+	UPROPERTY(VisibleAnywhere, Category = "프리뷰")
 	TObjectPtr<USkeletalMeshComponent> PreviewMesh;
 
 	/** 씬 캡처 컴포넌트 */
-	UPROPERTY(VisibleAnywhere, Category = "Preview (프리뷰)")
+	UPROPERTY(VisibleAnywhere, Category = "프리뷰")
 	TObjectPtr<USceneCaptureComponent2D> SceneCapture;
 
 	/** 프리뷰 메인 조명 */
-	UPROPERTY(VisibleAnywhere, Category = "Preview (프리뷰)")
+	UPROPERTY(VisibleAnywhere, Category = "프리뷰")
 	TObjectPtr<UPointLightComponent> PreviewLight;
 
 	/** 프리뷰 보조 조명 (뒤쪽 Fill) */
-	UPROPERTY(VisibleAnywhere, Category = "Preview (프리뷰)")
+	UPROPERTY(VisibleAnywhere, Category = "프리뷰")
 	TObjectPtr<UPointLightComponent> FillLight;
 
 	// ============================================
@@ -119,14 +119,14 @@ protected:
 	// ============================================
 
 	/** SceneCapture 위치 오프셋 (PreviewMesh 기준) */
-	UPROPERTY(EditDefaultsOnly, Category = "Preview (프리뷰)", meta = (DisplayName = "캡처 위치 오프셋"))
-	FVector CaptureOffset = FVector(0.f, 70.f, 85.f);
+	UPROPERTY(EditDefaultsOnly, Category = "프리뷰", meta = (DisplayName = "카메라 위치 오프셋"))
+	FVector CaptureOffset = FVector(350.f, 0.f, 85.f);
 
 	/** SceneCapture 회전 */
-	UPROPERTY(EditDefaultsOnly, Category = "Preview (프리뷰)", meta = (DisplayName = "캡처 회전"))
-	FRotator CaptureRotation = FRotator(-10.f, 180.f, 0.f);
+	UPROPERTY(EditDefaultsOnly, Category = "프리뷰", meta = (DisplayName = "카메라 회전"))
+	FRotator CaptureRotation = FRotator(-5.f, 180.f, 0.f);
 
 	/** SceneCapture 시야각 */
-	UPROPERTY(EditDefaultsOnly, Category = "Preview (프리뷰)", meta = (DisplayName = "캡처 FOV"))
-	float CaptureFOVAngle = 30.f;
+	UPROPERTY(EditDefaultsOnly, Category = "프리뷰", meta = (DisplayName = "카메라 시야각(FOV)"))
+	float CaptureFOVAngle = 40.f;
 };
