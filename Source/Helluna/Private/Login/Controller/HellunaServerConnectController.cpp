@@ -1,7 +1,7 @@
-#include "Login/HellunaServerConnectController.h"
+#include "Login/Controller/HellunaServerConnectController.h"
 #include "Helluna.h"  // 전처리기 플래그
-#include "Login/HellunaServerConnectWidget.h"
-#include "Login/HellunaLoginGameMode.h"
+#include "Login/Widget/HellunaServerConnectWidget.h"
+#include "Login/GameMode/HellunaLoginGameMode.h"
 #include "Blueprint/UserWidget.h"
 #include "Kismet/GameplayStatics.h"
 

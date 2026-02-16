@@ -6,6 +6,11 @@
 #include "HellunaLoginController.generated.h"
 
 class UHellunaLoginWidget;
+class AHellunaCharacterPreviewActor;
+class AHellunaCharacterSelectSceneV2;
+class UTextureRenderTarget2D;
+class USkeletalMesh;
+class UMaterialInterface;
 
 /**
  * ============================================
@@ -73,6 +78,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 public:
 	// ============================================
@@ -204,12 +210,102 @@ protected:
 	UPROPERTY()
 	TObjectPtr<UHellunaLoginWidget> LoginWidget;
 
-	/** 
+	/**
 	 * 로그인 성공 후 교체할 Controller 클래스
 	 * BP에서 BP_InvPlayerController 등으로 설정
-	 * 
+	 *
 	 * ※ 미설정 시 Controller 교체 없이 캐릭터만 소환됨
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Login", meta = (DisplayName = "게임 Controller 클래스"))
 	TSubclassOf<APlayerController> GameControllerClass;
+
+	// ============================================
+	// 📌 캐릭터 프리뷰 시스템
+	// ============================================
+
+	/** 프리뷰 액터 클래스 (BP에서 세팅) */
+	UPROPERTY(EditDefaultsOnly, Category = "CharacterPreview (캐릭터 프리뷰)", meta = (DisplayName = "프리뷰 액터 클래스"))
+	TSubclassOf<AHellunaCharacterPreviewActor> PreviewActorClass;
+
+	/** 캐릭터 타입별 SkeletalMesh 매핑 (BP에서 Lui/Luna/Liam 각각 지정) */
+	UPROPERTY(EditDefaultsOnly, Category = "CharacterPreview (캐릭터 프리뷰)", meta = (DisplayName = "프리뷰 메시 맵"))
+	TMap<EHellunaHeroType, TSoftObjectPtr<USkeletalMesh>> PreviewMeshMap;
+
+	/** 캐릭터 타입별 프리뷰 AnimInstance 클래스 매핑 (스켈레톤이 다르므로 개별 지정 필요) */
+	UPROPERTY(EditDefaultsOnly, Category = "CharacterPreview (캐릭터 프리뷰)", meta = (DisplayName = "프리뷰 AnimClass 맵"))
+	TMap<EHellunaHeroType, TSubclassOf<UAnimInstance>> PreviewAnimClassMap;
+
+	/** 프리뷰 배경으로 사용할 액터 태그 (이 태그를 가진 월드 액터를 SceneCapture ShowOnlyList에 추가) */
+	UPROPERTY(EditDefaultsOnly, Category = "CharacterPreview (캐릭터 프리뷰)", meta = (DisplayName = "프리뷰 배경 액터 태그"))
+	FName PreviewBackgroundActorTag = TEXT("PreviewBackground");
+
+	/** 월드 지하 스폰 기준 위치 */
+	UPROPERTY(EditDefaultsOnly, Category = "CharacterPreview (캐릭터 프리뷰)", meta = (DisplayName = "프리뷰 스폰 기준 위치"))
+	FVector PreviewSpawnBaseLocation = FVector(0.f, 0.f, -5000.f);
+
+	/** 캐릭터 간 X축 간격 */
+	UPROPERTY(EditDefaultsOnly, Category = "CharacterPreview (캐릭터 프리뷰)", meta = (DisplayName = "프리뷰 스폰 간격"))
+	float PreviewSpawnSpacing = 300.f;
+
+	/** 캐릭터 타입별 하이라이트 오버레이 머티리얼 (호버 시 Fresnel 윤곽선) */
+	UPROPERTY(EditDefaultsOnly, Category = "CharacterPreview (캐릭터 프리뷰)", meta = (DisplayName = "하이라이트 머티리얼 맵"))
+	TMap<EHellunaHeroType, TObjectPtr<UMaterialInterface>> PreviewHighlightMaterialMap;
+
+	/** RenderTarget 해상도 */
+	UPROPERTY(EditDefaultsOnly, Category = "CharacterPreview (캐릭터 프리뷰)", meta = (DisplayName = "렌더 타겟 해상도"))
+	FIntPoint PreviewRenderTargetSize = FIntPoint(1024, 1024);
+
+	// ============================================
+	// 📌 캐릭터 프리뷰 V2 시스템
+	// ============================================
+
+	/** V2 씬 액터 클래스 (BP에서 세팅, nullptr이면 V1 사용) */
+	UPROPERTY(EditDefaultsOnly, Category = "CharacterPreview V2 (캐릭터 프리뷰V2)", meta = (DisplayName = "V2 씬 액터 클래스"))
+	TSubclassOf<AHellunaCharacterSelectSceneV2> PreviewSceneV2Class;
+
+	/** V2 RenderTarget 해상도 */
+	UPROPERTY(EditDefaultsOnly, Category = "CharacterPreview V2 (캐릭터 프리뷰V2)", meta = (DisplayName = "V2 렌더 타겟 해상도"))
+	FIntPoint PreviewV2RenderTargetSize = FIntPoint(1920, 1080);
+
+	/** 스폰된 V2 씬 액터 */
+	UPROPERTY()
+	TObjectPtr<AHellunaCharacterSelectSceneV2> SpawnedPreviewSceneV2;
+
+	/** V2 RenderTarget (GC 방지) */
+	UPROPERTY()
+	TObjectPtr<UTextureRenderTarget2D> PreviewV2RenderTarget;
+
+	/** V2 프리뷰 씬 스폰 */
+	void SpawnPreviewSceneV2();
+
+	/** V2 프리뷰 씬 파괴 */
+	void DestroyPreviewSceneV2();
+
+	// ============================================
+	// 📌 캐릭터 프리뷰 내부 상태
+	// ============================================
+
+	/** 스폰된 프리뷰 액터 배열 */
+	UPROPERTY()
+	TArray<TObjectPtr<AHellunaCharacterPreviewActor>> SpawnedPreviewActors;
+
+	/** 생성된 RenderTarget 배열 (GC 방지) */
+	UPROPERTY()
+	TArray<TObjectPtr<UTextureRenderTarget2D>> PreviewRenderTargets;
+
+	// ============================================
+	// 📌 캐릭터 프리뷰 함수
+	// ============================================
+
+	/** 프리뷰 액터 3개 스폰 (클라이언트 전용) */
+	void SpawnPreviewActors();
+
+	/** 프리뷰 액터 전부 파괴 */
+	void DestroyPreviewActors();
+
+	/** 인덱스로 프리뷰 액터 반환 */
+	AHellunaCharacterPreviewActor* GetPreviewActor(int32 Index) const;
+
+	/** 인덱스로 RenderTarget 반환 */
+	UTextureRenderTarget2D* GetPreviewRenderTarget(int32 Index) const;
 };
