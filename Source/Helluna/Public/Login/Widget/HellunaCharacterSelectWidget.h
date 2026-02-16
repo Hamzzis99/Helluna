@@ -197,6 +197,10 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional, DisplayName = "리암 프리뷰 이미지"))
 	TObjectPtr<UImage> PreviewImage_Liam;
 
+	/** V2 전체 장면 프리뷰 이미지 (3캐릭터 한 장면) - V2 모드 전용 */
+	UPROPERTY(meta = (BindWidgetOptional, DisplayName = "V2 프리뷰 이미지"))
+	TObjectPtr<UImage> PreviewImage_V2;
+
 	// ============================================
 	// 📌 프리뷰 설정
 	// ============================================

@@ -129,10 +129,36 @@ void AHellunaCharacterSelectSceneV2::InitializeScene(
 		MeshComp->AttachToComponent(SceneRoot, FAttachmentTransformRules::KeepRelativeTransform);
 		MeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
-		// 중앙 정렬: i * Spacing - (Num-1) * Spacing * 0.5
-		const float XOffset = i * CharacterSpacing - (Num - 1) * CharacterSpacing * 0.5f;
-		MeshComp->SetRelativeLocation(FVector(XOffset, 0.f, 0.f));
-		MeshComp->SetRelativeRotation(FRotator(0.f, -90.f, 0.f));  // 카메라 정면
+		// ════════════════════════════════════════════
+		// 위치: CharacterOffsets 우선, 없으면 CharacterSpacing 균등 배치
+		// ════════════════════════════════════════════
+		FVector MeshLocation;
+		if (CharacterOffsets.IsValidIndex(i))
+		{
+			MeshLocation = CharacterOffsets[i];
+		}
+		else
+		{
+			const float XOffset = i * CharacterSpacing - (Num - 1) * CharacterSpacing * 0.5f;
+			MeshLocation = FVector(XOffset, 0.f, 0.f);
+		}
+		MeshComp->SetRelativeLocation(MeshLocation);
+
+		// ════════════════════════════════════════════
+		// 회전: CharacterRotations 우선, 없으면 기본 -90도 (카메라 정면)
+		// ════════════════════════════════════════════
+		FRotator MeshRotation = CharacterRotations.IsValidIndex(i)
+			? CharacterRotations[i]
+			: FRotator(0.f, -90.f, 0.f);
+		MeshComp->SetRelativeRotation(MeshRotation);
+
+		// ════════════════════════════════════════════
+		// 스케일: CharacterScales 우선, 없으면 기본 (1,1,1)
+		// ════════════════════════════════════════════
+		if (CharacterScales.IsValidIndex(i))
+		{
+			MeshComp->SetRelativeScale3D(CharacterScales[i]);
+		}
 
 		MeshComp->SetSkeletalMeshAsset(InMeshes[i]);
 		MeshComp->SetAnimInstanceClass(InAnimClasses[i]);
@@ -140,7 +166,8 @@ void AHellunaCharacterSelectSceneV2::InitializeScene(
 		PreviewMeshes.Add(MeshComp);
 
 #if HELLUNA_DEBUG_CHARACTER_PREVIEW_V2
-		UE_LOG(LogHelluna, Warning, TEXT("║ [%d] Mesh: %s, Offset: %.1f"), i, *InMeshes[i]->GetName(), XOffset);
+		UE_LOG(LogHelluna, Warning, TEXT("║ [%d] Mesh: %s, Loc: %s, Rot: %s"),
+			i, *InMeshes[i]->GetName(), *MeshLocation.ToString(), *MeshRotation.ToString());
 #endif
 	}
 

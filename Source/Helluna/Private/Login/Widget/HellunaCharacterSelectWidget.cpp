@@ -460,10 +460,11 @@ void UHellunaCharacterSelectWidget::SetupPreviewImageV2(UTextureRenderTarget2D* 
 		return;
 	}
 
-	// PreviewImage_Lui에 전체 장면 RenderTarget 적용 (V2에서는 하나의 이미지에 3캐릭터 모두 표시)
-	if (!PreviewImage_Lui)
+	// PreviewImage_V2에 전체 장면 RenderTarget 적용 (V2: 하나의 이미지에 3캐릭터 모두 표시)
+	UImage* TargetImage = PreviewImage_V2 ? PreviewImage_V2 : PreviewImage_Lui;
+	if (!TargetImage)
 	{
-		UE_LOG(LogHelluna, Error, TEXT("[캐릭터선택위젯] V2 프리뷰 설정 실패 - PreviewImage_Lui가 nullptr!"));
+		UE_LOG(LogHelluna, Error, TEXT("[캐릭터선택위젯] V2 프리뷰 설정 실패 - PreviewImage_V2/Lui 둘 다 nullptr!"));
 		return;
 	}
 
@@ -475,10 +476,20 @@ void UHellunaCharacterSelectWidget::SetupPreviewImageV2(UTextureRenderTarget2D* 
 	}
 
 	PreviewMaterialV2->SetTextureParameterValue(TEXT("Texture"), InRenderTarget);
-	PreviewImage_Lui->SetBrushFromMaterial(PreviewMaterialV2);
+	TargetImage->SetBrushFromMaterial(PreviewMaterialV2);
+	TargetImage->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+
+	// V1 개별 이미지 숨기기 (V2에서는 사용 안 함)
+	if (PreviewImage_V2)
+	{
+		if (PreviewImage_Lui) PreviewImage_Lui->SetVisibility(ESlateVisibility::Collapsed);
+		if (PreviewImage_Luna) PreviewImage_Luna->SetVisibility(ESlateVisibility::Collapsed);
+		if (PreviewImage_Liam) PreviewImage_Liam->SetVisibility(ESlateVisibility::Collapsed);
+	}
 
 #if HELLUNA_DEBUG_CHARACTER_PREVIEW_V2
-	UE_LOG(LogHelluna, Warning, TEXT("║ ✅ V2 프리뷰 이미지 설정 완료 (PreviewImage_Lui 사용)"));
+	UE_LOG(LogHelluna, Warning, TEXT("║ ✅ V2 프리뷰 이미지 설정 완료 (사용 이미지: %s)"),
+		PreviewImage_V2 ? TEXT("PreviewImage_V2") : TEXT("PreviewImage_Lui (fallback)"));
 	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 	UE_LOG(LogHelluna, Warning, TEXT(""));
 #endif

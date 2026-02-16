@@ -103,23 +103,47 @@ protected:
 	// BP 설정 UPROPERTY
 	// ============================================
 
-	/** 캐릭터 간 X축 간격 */
-	UPROPERTY(EditDefaultsOnly, Category = "프리뷰V2", meta = (DisplayName = "캐릭터 간격"))
+	/** 캐릭터 간 X축 간격 (CharacterTransforms 미설정 시 사용) */
+	UPROPERTY(EditDefaultsOnly, Category = "프리뷰V2|배치", meta = (DisplayName = "캐릭터 간격 (기본)"))
 	float CharacterSpacing = 200.f;
 
+	/**
+	 * 캐릭터별 개별 위치 오프셋 (씬 중앙 기준)
+	 * 배열 크기가 캐릭터 수와 일치하면 CharacterSpacing 대신 이 값 사용
+	 * Index 0=Lui, 1=Luna, 2=Liam
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "프리뷰V2|배치", meta = (DisplayName = "캐릭터별 위치 오프셋"))
+	TArray<FVector> CharacterOffsets;
+
+	/**
+	 * 캐릭터별 개별 회전
+	 * 배열 크기가 캐릭터 수와 일치하면 이 값 사용, 아니면 기본 -90도(카메라 정면)
+	 * Index 0=Lui, 1=Luna, 2=Liam
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "프리뷰V2|배치", meta = (DisplayName = "캐릭터별 회전"))
+	TArray<FRotator> CharacterRotations;
+
+	/**
+	 * 캐릭터별 스케일
+	 * 배열 크기가 캐릭터 수와 일치하면 이 값 사용, 아니면 기본 (1,1,1)
+	 * Index 0=Lui, 1=Luna, 2=Liam
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "프리뷰V2|배치", meta = (DisplayName = "캐릭터별 스케일"))
+	TArray<FVector> CharacterScales;
+
 	/** 카메라 위치 (씬 중앙 기준) */
-	UPROPERTY(EditDefaultsOnly, Category = "프리뷰V2", meta = (DisplayName = "카메라 오프셋"))
+	UPROPERTY(EditDefaultsOnly, Category = "프리뷰V2|카메라", meta = (DisplayName = "카메라 오프셋"))
 	FVector CameraOffset = FVector(500.f, 0.f, 90.f);
 
 	/** 카메라 회전 */
-	UPROPERTY(EditDefaultsOnly, Category = "프리뷰V2", meta = (DisplayName = "카메라 회전"))
+	UPROPERTY(EditDefaultsOnly, Category = "프리뷰V2|카메라", meta = (DisplayName = "카메라 회전"))
 	FRotator CameraRotation = FRotator(0.f, 180.f, 0.f);
 
 	/** 카메라 FOV */
-	UPROPERTY(EditDefaultsOnly, Category = "프리뷰V2", meta = (DisplayName = "카메라 FOV"))
+	UPROPERTY(EditDefaultsOnly, Category = "프리뷰V2|카메라", meta = (DisplayName = "카메라 FOV"))
 	float CameraFOV = 30.f;
 
 	/** 캐릭터별 오버레이 하이라이트 머티리얼 (Lui/Luna/Liam 순서) */
-	UPROPERTY(EditDefaultsOnly, Category = "프리뷰V2", meta = (DisplayName = "하이라이트 머티리얼"))
+	UPROPERTY(EditDefaultsOnly, Category = "프리뷰V2|하이라이트", meta = (DisplayName = "하이라이트 머티리얼"))
 	TArray<UMaterialInterface*> HighlightMaterials;
 };
