@@ -3,6 +3,7 @@
 #include "Login/Widget/HellunaLoginWidget.h"
 #include "Login/Widget/HellunaCharacterSelectWidget.h"
 #include "Login/Preview/HellunaCharacterPreviewActor.h"
+#include "Login/Preview/HellunaCharacterSelectSceneV2.h"
 #include "GameMode/HellunaBaseGameMode.h"
 #include "GameFramework/PlayerState.h"
 #include "Player/HellunaPlayerState.h"
@@ -26,6 +27,7 @@ void AHellunaLoginController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	// ════════════════════════════════════════════
 	// Controller 파괴 시 프리뷰 액터가 월드에 잔존하는 것을 방지
 	DestroyPreviewActors();
+	DestroyPreviewSceneV2();
 
 	Super::EndPlay(EndPlayReason);
 }
@@ -494,7 +496,8 @@ void AHellunaLoginController::Client_CharacterSelectionResult_Implementation(boo
 	// ════════════════════════════════════════════
 	if (bSuccess)
 	{
-		DestroyPreviewActors();
+		DestroyPreviewActors();   // V1
+		DestroyPreviewSceneV2();  // V2
 	}
 }
 
@@ -518,34 +521,55 @@ void AHellunaLoginController::Client_ShowCharacterSelectUI_Implementation(const 
 	{
 		LoginWidget->ShowCharacterSelection(AvailableCharacters);
 
-		// ════════════════════════════════════════════
-		// 📌 프리뷰 액터 스폰 및 위젯 연동
-		// ════════════════════════════════════════════
-		SpawnPreviewActors();
-
 		UHellunaCharacterSelectWidget* CharSelectWidget = LoginWidget->GetCharacterSelectWidget();
-		if (CharSelectWidget && SpawnedPreviewActors.Num() > 0)
-		{
-			// RenderTarget 배열 전달
-			TArray<UTextureRenderTarget2D*> RTs;
-			for (const TObjectPtr<UTextureRenderTarget2D>& RT : PreviewRenderTargets)
-			{
-				RTs.Add(RT.Get());
-			}
-			CharSelectWidget->SetupPreviewImages(RTs);
 
-			// PreviewActor 배열 전달 (Hover 바인딩용)
-			TArray<AHellunaCharacterPreviewActor*> Actors;
-			for (const TObjectPtr<AHellunaCharacterPreviewActor>& Actor : SpawnedPreviewActors)
+		// ════════════════════════════════════════════
+		// 📌 V2 사용 여부 판단 (PreviewSceneV2Class가 설정되어 있으면 V2)
+		// ════════════════════════════════════════════
+		if (PreviewSceneV2Class)
+		{
+			SpawnPreviewSceneV2();
+
+			if (CharSelectWidget && IsValid(SpawnedPreviewSceneV2))
 			{
-				Actors.Add(Actor.Get());
+				CharSelectWidget->SetupPreviewImageV2(PreviewV2RenderTarget);
+				CharSelectWidget->SetPreviewSceneV2(SpawnedPreviewSceneV2);
+
+#if HELLUNA_DEBUG_CHARACTER_PREVIEW_V2
+				UE_LOG(LogHelluna, Warning, TEXT("[로그인컨트롤러] ✅ V2 프리뷰 시스템 위젯 연동 완료"));
+#endif
 			}
-			CharSelectWidget->SetPreviewActors(Actors);
+		}
+		else
+		{
+			// ════════════════════════════════════════════
+			// 📌 V1 경로: 기존 코드 유지
+			// ════════════════════════════════════════════
+			SpawnPreviewActors();
+
+			if (CharSelectWidget && SpawnedPreviewActors.Num() > 0)
+			{
+				// RenderTarget 배열 전달
+				TArray<UTextureRenderTarget2D*> RTs;
+				for (const TObjectPtr<UTextureRenderTarget2D>& RT : PreviewRenderTargets)
+				{
+					RTs.Add(RT.Get());
+				}
+				CharSelectWidget->SetupPreviewImages(RTs);
+
+				// PreviewActor 배열 전달 (Hover 바인딩용)
+				TArray<AHellunaCharacterPreviewActor*> Actors;
+				for (const TObjectPtr<AHellunaCharacterPreviewActor>& Actor : SpawnedPreviewActors)
+				{
+					Actors.Add(Actor.Get());
+				}
+				CharSelectWidget->SetPreviewActors(Actors);
 
 #if HELLUNA_DEBUG_CHARACTER_PREVIEW
-			UE_LOG(LogHelluna, Warning, TEXT("[로그인컨트롤러] ✅ 프리뷰 시스템 위젯 연동 완료 (Actors: %d, RTs: %d)"),
-				Actors.Num(), RTs.Num());
+				UE_LOG(LogHelluna, Warning, TEXT("[로그인컨트롤러] ✅ V1 프리뷰 시스템 위젯 연동 완료 (Actors: %d, RTs: %d)"),
+					Actors.Num(), RTs.Num());
 #endif
+			}
 		}
 	}
 }
@@ -746,4 +770,139 @@ UTextureRenderTarget2D* AHellunaLoginController::GetPreviewRenderTarget(int32 In
 		return PreviewRenderTargets[Index];
 	}
 	return nullptr;
+}
+
+// ============================================
+// 📌 캐릭터 프리뷰 V2 시스템
+// ============================================
+
+void AHellunaLoginController::SpawnPreviewSceneV2()
+{
+	// ════════════════════════════════════════════
+	// 📌 네트워크 안전 - 클라이언트에서만 실행
+	// ════════════════════════════════════════════
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[로그인컨트롤러] V2 프리뷰 씬 스폰 실패 - World가 nullptr!"));
+		return;
+	}
+
+	if (World->GetNetMode() == NM_DedicatedServer)
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[로그인컨트롤러] V2 프리뷰 씬 스폰 스킵 - 데디케이티드 서버"));
+		return;
+	}
+
+	if (!PreviewSceneV2Class)
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[로그인컨트롤러] V2 프리뷰 씬 스폰 실패 - PreviewSceneV2Class 미설정!"));
+		return;
+	}
+
+	if (PreviewMeshMap.Num() == 0)
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[로그인컨트롤러] V2 프리뷰 씬 스폰 실패 - PreviewMeshMap 비어있음!"));
+		return;
+	}
+
+	if (PreviewAnimClassMap.Num() == 0)
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[로그인컨트롤러] V2 프리뷰 씬 스폰 실패 - PreviewAnimClassMap 비어있음!"));
+		return;
+	}
+
+#if HELLUNA_DEBUG_CHARACTER_PREVIEW_V2
+	UE_LOG(LogHelluna, Warning, TEXT(""));
+	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogHelluna, Warning, TEXT("║  [로그인컨트롤러] V2 프리뷰 씬 스폰                        ║"));
+	UE_LOG(LogHelluna, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogHelluna, Warning, TEXT("║ PreviewSceneV2Class: %s"), *PreviewSceneV2Class->GetName());
+	UE_LOG(LogHelluna, Warning, TEXT("║ SpawnBase: %s"), *PreviewSpawnBaseLocation.ToString());
+	UE_LOG(LogHelluna, Warning, TEXT("║ V2 RT Size: %dx%d"), PreviewV2RenderTargetSize.X, PreviewV2RenderTargetSize.Y);
+#endif
+
+	// ════════════════════════════════════════════
+	// 📌 기존 V2 정리 (중복 스폰 방지)
+	// ════════════════════════════════════════════
+	DestroyPreviewSceneV2();
+
+	// ════════════════════════════════════════════
+	// 📌 V2 씬 액터 스폰
+	// ════════════════════════════════════════════
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	SpawnedPreviewSceneV2 = World->SpawnActor<AHellunaCharacterSelectSceneV2>(
+		PreviewSceneV2Class, PreviewSpawnBaseLocation, FRotator::ZeroRotator, SpawnParams);
+
+	if (!SpawnedPreviewSceneV2)
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[로그인컨트롤러] ❌ V2 프리뷰 씬 액터 스폰 실패!"));
+		return;
+	}
+
+	// ════════════════════════════════════════════
+	// 📌 RenderTarget 1개 생성
+	// ════════════════════════════════════════════
+	PreviewV2RenderTarget = NewObject<UTextureRenderTarget2D>(this);
+	PreviewV2RenderTarget->InitCustomFormat(PreviewV2RenderTargetSize.X, PreviewV2RenderTargetSize.Y, PF_FloatRGBA, false);
+	PreviewV2RenderTarget->ClearColor = FLinearColor::Transparent;
+	PreviewV2RenderTarget->UpdateResourceImmediate(true);
+
+	// ════════════════════════════════════════════
+	// 📌 메시/애님 배열 구성
+	// ════════════════════════════════════════════
+	const TArray<EHellunaHeroType> HeroTypes = { EHellunaHeroType::Lui, EHellunaHeroType::Luna, EHellunaHeroType::Liam };
+
+	TArray<USkeletalMesh*> Meshes;
+	TArray<TSubclassOf<UAnimInstance>> AnimClasses;
+
+	for (const EHellunaHeroType HeroType : HeroTypes)
+	{
+		// 메시 로드
+		const TSoftObjectPtr<USkeletalMesh>* MeshPtr = PreviewMeshMap.Find(HeroType);
+		USkeletalMesh* LoadedMesh = MeshPtr ? MeshPtr->LoadSynchronous() : nullptr;
+		Meshes.Add(LoadedMesh);
+
+		// AnimClass 조회
+		const TSubclassOf<UAnimInstance>* AnimClassPtr = PreviewAnimClassMap.Find(HeroType);
+		AnimClasses.Add(AnimClassPtr ? *AnimClassPtr : nullptr);
+
+#if HELLUNA_DEBUG_CHARACTER_PREVIEW_V2
+		UE_LOG(LogHelluna, Warning, TEXT("║ %s → Mesh: %s, AnimClass: %s"),
+			*UEnum::GetValueAsString(HeroType),
+			LoadedMesh ? *LoadedMesh->GetName() : TEXT("nullptr"),
+			(AnimClassPtr && *AnimClassPtr) ? *(*AnimClassPtr)->GetName() : TEXT("nullptr"));
+#endif
+	}
+
+	// ════════════════════════════════════════════
+	// 📌 씬 초기화
+	// ════════════════════════════════════════════
+	SpawnedPreviewSceneV2->InitializeScene(Meshes, AnimClasses, PreviewV2RenderTarget);
+
+#if HELLUNA_DEBUG_CHARACTER_PREVIEW_V2
+	UE_LOG(LogHelluna, Warning, TEXT("║ ✅ V2 프리뷰 씬 스폰 및 초기화 완료"));
+	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+	UE_LOG(LogHelluna, Warning, TEXT(""));
+#endif
+}
+
+void AHellunaLoginController::DestroyPreviewSceneV2()
+{
+#if HELLUNA_DEBUG_CHARACTER_PREVIEW_V2
+	if (IsValid(SpawnedPreviewSceneV2))
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[로그인컨트롤러] 🗑️ V2 프리뷰 씬 파괴"));
+	}
+#endif
+
+	if (IsValid(SpawnedPreviewSceneV2))
+	{
+		SpawnedPreviewSceneV2->Destroy();
+		SpawnedPreviewSceneV2 = nullptr;
+	}
+
+	PreviewV2RenderTarget = nullptr;
 }

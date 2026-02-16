@@ -8,6 +8,7 @@ class UButton;
 class UTextBlock;
 class UImage;
 class AHellunaCharacterPreviewActor;
+class AHellunaCharacterSelectSceneV2;
 class UTextureRenderTarget2D;
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
@@ -100,6 +101,18 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Character Select (캐릭터 선택)")
 	void SetPreviewActors(const TArray<AHellunaCharacterPreviewActor*>& InPreviewActors);
+
+	// ============================================
+	// 📌 프리뷰 V2 공개 함수
+	// ============================================
+
+	/** V2 프리뷰 이미지 설정 (RenderTarget 1개 -> 전체 장면 이미지) */
+	UFUNCTION(BlueprintCallable, Category = "Character Select (캐릭터 선택)")
+	void SetupPreviewImageV2(UTextureRenderTarget2D* InRenderTarget);
+
+	/** V2 씬 액터 설정 및 Hover 바인딩 */
+	UFUNCTION(BlueprintCallable, Category = "Character Select (캐릭터 선택)")
+	void SetPreviewSceneV2(AHellunaCharacterSelectSceneV2* InScene);
 
 protected:
 	// ============================================
@@ -203,6 +216,18 @@ protected:
 	/** 동적 머티리얼 인스턴스 (GC 방지) */
 	UPROPERTY()
 	TArray<TObjectPtr<UMaterialInstanceDynamic>> PreviewMaterials;
+
+	// ============================================
+	// 📌 프리뷰 V2 내부 상태
+	// ============================================
+
+	/** V2 씬 액터 참조 */
+	UPROPERTY()
+	TObjectPtr<AHellunaCharacterSelectSceneV2> PreviewSceneV2;
+
+	/** V2 머티리얼 인스턴스 */
+	UPROPERTY()
+	TObjectPtr<UMaterialInstanceDynamic> PreviewMaterialV2;
 
 	// ============================================
 	// 📌 내부 상태

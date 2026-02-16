@@ -7,6 +7,7 @@
 
 class UHellunaLoginWidget;
 class AHellunaCharacterPreviewActor;
+class AHellunaCharacterSelectSceneV2;
 class UTextureRenderTarget2D;
 class USkeletalMesh;
 
@@ -248,6 +249,32 @@ protected:
 	/** RenderTarget 해상도 */
 	UPROPERTY(EditDefaultsOnly, Category = "CharacterPreview (캐릭터 프리뷰)", meta = (DisplayName = "렌더 타겟 해상도"))
 	FIntPoint PreviewRenderTargetSize = FIntPoint(1024, 1024);
+
+	// ============================================
+	// 📌 캐릭터 프리뷰 V2 시스템
+	// ============================================
+
+	/** V2 씬 액터 클래스 (BP에서 세팅, nullptr이면 V1 사용) */
+	UPROPERTY(EditDefaultsOnly, Category = "CharacterPreview V2 (캐릭터 프리뷰V2)", meta = (DisplayName = "V2 씬 액터 클래스"))
+	TSubclassOf<AHellunaCharacterSelectSceneV2> PreviewSceneV2Class;
+
+	/** V2 RenderTarget 해상도 */
+	UPROPERTY(EditDefaultsOnly, Category = "CharacterPreview V2 (캐릭터 프리뷰V2)", meta = (DisplayName = "V2 렌더 타겟 해상도"))
+	FIntPoint PreviewV2RenderTargetSize = FIntPoint(1920, 1080);
+
+	/** 스폰된 V2 씬 액터 */
+	UPROPERTY()
+	TObjectPtr<AHellunaCharacterSelectSceneV2> SpawnedPreviewSceneV2;
+
+	/** V2 RenderTarget (GC 방지) */
+	UPROPERTY()
+	TObjectPtr<UTextureRenderTarget2D> PreviewV2RenderTarget;
+
+	/** V2 프리뷰 씬 스폰 */
+	void SpawnPreviewSceneV2();
+
+	/** V2 프리뷰 씬 파괴 */
+	void DestroyPreviewSceneV2();
 
 	// ============================================
 	// 📌 캐릭터 프리뷰 내부 상태

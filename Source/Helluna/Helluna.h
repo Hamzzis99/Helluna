@@ -25,6 +25,9 @@
 // 🎭 캐릭터 프리뷰 (PreviewActor 스폰/파괴, SceneCapture, Hover 등)
 #define HELLUNA_DEBUG_CHARACTER_PREVIEW 1
 
+// 🎭 캐릭터 프리뷰 V2 (SceneV2 - 3캐릭터 1카메라, Overlay Highlight 등)
+#define HELLUNA_DEBUG_CHARACTER_PREVIEW_V2 1
+
 // ☀️ UDS 날씨/시간 디버그 (PrintUDSDebug - 1초마다 TimeOfDay, Animate, Phase 출력)
 #define HELLUNA_DEBUG_UDS 0
 
