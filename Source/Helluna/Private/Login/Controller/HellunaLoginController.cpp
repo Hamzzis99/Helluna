@@ -2,6 +2,8 @@
 #include "Helluna.h"  // 전처리기 플래그
 #include "Login/Widget/HellunaLoginWidget.h"
 #include "Login/Widget/HellunaCharacterSelectWidget.h"
+#include "Login/Widget/HellunaCharSelectWidget_V1.h"
+#include "Login/Widget/HellunaCharSelectWidget_V2.h"
 #include "Login/Preview/HellunaCharacterPreviewActor.h"
 #include "Login/Preview/HellunaCharacterSelectSceneV2.h"
 #include "GameMode/HellunaBaseGameMode.h"
@@ -517,60 +519,66 @@ void AHellunaLoginController::Client_ShowCharacterSelectUI_Implementation(const 
 #endif
 
 	// LoginWidget에 캐릭터 선택 UI 표시 요청
-	if (LoginWidget)
+	if (!LoginWidget) return;
+
+	LoginWidget->ShowCharacterSelection(AvailableCharacters);
+
+	UHellunaCharacterSelectWidget* CharSelectWidget = LoginWidget->GetCharacterSelectWidget();
+	if (!CharSelectWidget) return;
+
+	// ════════════════════════════════════════════
+	// 📌 위젯 타입으로 V1/V2 분기 (다형성)
+	// ════════════════════════════════════════════
+	if (UHellunaCharSelectWidget_V2* V2Widget = Cast<UHellunaCharSelectWidget_V2>(CharSelectWidget))
 	{
-		LoginWidget->ShowCharacterSelection(AvailableCharacters);
-
-		UHellunaCharacterSelectWidget* CharSelectWidget = LoginWidget->GetCharacterSelectWidget();
-
 		// ════════════════════════════════════════════
-		// 📌 V2 사용 여부 판단 (PreviewSceneV2Class가 설정되어 있으면 V2)
+		// 📌 V2 경로: 3캐릭터 1카메라 통합 씬
 		// ════════════════════════════════════════════
-		if (PreviewSceneV2Class)
+		SpawnPreviewSceneV2();
+
+		if (IsValid(SpawnedPreviewSceneV2))
 		{
-			SpawnPreviewSceneV2();
-
-			if (CharSelectWidget && IsValid(SpawnedPreviewSceneV2))
-			{
-				CharSelectWidget->SetupPreviewImageV2(PreviewV2RenderTarget);
-				CharSelectWidget->SetPreviewSceneV2(SpawnedPreviewSceneV2);
+			V2Widget->SetupPreviewV2(PreviewV2RenderTarget, SpawnedPreviewSceneV2);
 
 #if HELLUNA_DEBUG_CHARACTER_PREVIEW_V2
-				UE_LOG(LogHelluna, Warning, TEXT("[로그인컨트롤러] ✅ V2 프리뷰 시스템 위젯 연동 완료"));
+			UE_LOG(LogHelluna, Warning, TEXT("[로그인컨트롤러] V2 프리뷰 시스템 위젯 연동 완료"));
 #endif
-			}
 		}
-		else
+	}
+	else if (UHellunaCharSelectWidget_V1* V1Widget = Cast<UHellunaCharSelectWidget_V1>(CharSelectWidget))
+	{
+		// ════════════════════════════════════════════
+		// 📌 V1 경로: 캐릭터별 개별 프리뷰
+		// ════════════════════════════════════════════
+		SpawnPreviewActors();
+
+		if (SpawnedPreviewActors.Num() > 0)
 		{
-			// ════════════════════════════════════════════
-			// 📌 V1 경로: 기존 코드 유지
-			// ════════════════════════════════════════════
-			SpawnPreviewActors();
-
-			if (CharSelectWidget && SpawnedPreviewActors.Num() > 0)
+			TArray<UTextureRenderTarget2D*> RTs;
+			for (const TObjectPtr<UTextureRenderTarget2D>& RT : PreviewRenderTargets)
 			{
-				// RenderTarget 배열 전달
-				TArray<UTextureRenderTarget2D*> RTs;
-				for (const TObjectPtr<UTextureRenderTarget2D>& RT : PreviewRenderTargets)
-				{
-					RTs.Add(RT.Get());
-				}
-				CharSelectWidget->SetupPreviewImages(RTs);
+				RTs.Add(RT.Get());
+			}
 
-				// PreviewActor 배열 전달 (Hover 바인딩용)
-				TArray<AHellunaCharacterPreviewActor*> Actors;
-				for (const TObjectPtr<AHellunaCharacterPreviewActor>& Actor : SpawnedPreviewActors)
-				{
-					Actors.Add(Actor.Get());
-				}
-				CharSelectWidget->SetPreviewActors(Actors);
+			TArray<AHellunaCharacterPreviewActor*> Actors;
+			for (const TObjectPtr<AHellunaCharacterPreviewActor>& Actor : SpawnedPreviewActors)
+			{
+				Actors.Add(Actor.Get());
+			}
+
+			V1Widget->SetupPreviewV1(RTs, Actors);
 
 #if HELLUNA_DEBUG_CHARACTER_PREVIEW
-				UE_LOG(LogHelluna, Warning, TEXT("[로그인컨트롤러] ✅ V1 프리뷰 시스템 위젯 연동 완료 (Actors: %d, RTs: %d)"),
-					Actors.Num(), RTs.Num());
+			UE_LOG(LogHelluna, Warning, TEXT("[로그인컨트롤러] V1 프리뷰 시스템 위젯 연동 완료 (Actors: %d, RTs: %d)"),
+				Actors.Num(), RTs.Num());
 #endif
-			}
 		}
+	}
+	else
+	{
+#if HELLUNA_DEBUG_CHARACTER_SELECT
+		UE_LOG(LogHelluna, Warning, TEXT("[로그인컨트롤러] 위젯이 V1/V2 서브클래스가 아님 - 프리뷰 스킵"));
+#endif
 	}
 }
 

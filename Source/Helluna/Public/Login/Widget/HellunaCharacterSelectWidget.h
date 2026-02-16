@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
@@ -6,38 +6,41 @@
 
 class UButton;
 class UTextBlock;
-class UImage;
-class AHellunaCharacterPreviewActor;
-class AHellunaCharacterSelectSceneV2;
-class UTextureRenderTarget2D;
-class UMaterialInstanceDynamic;
 class UMaterialInterface;
 
 /**
  * ============================================
- * 🎭 HellunaCharacterSelectWidget
+ * UHellunaCharacterSelectWidget (베이스 클래스)
  * ============================================
- * 
- * 캐릭터 선택 UI 위젯
- * 로그인 성공 후 표시되어 플레이어가 캐릭터를 선택할 수 있게 함
- * 
+ *
+ * 캐릭터 선택 UI 위젯의 공통 로직을 담당하는 베이스 클래스
+ * 프리뷰 시스템(V1/V2)은 서브클래스에서 구현
+ *
  * ============================================
- * 📌 사용 흐름:
+ * 상속 구조:
  * ============================================
- * 
+ * UHellunaCharacterSelectWidget (베이스 - 공통 로직)
+ *   UHellunaCharSelectWidget_V1 (V1: 캐릭터별 1:1 프리뷰)
+ *   UHellunaCharSelectWidget_V2 (V2: 3캐릭터 1카메라 통합 프리뷰)
+ *
+ * ============================================
+ * 사용 흐름:
+ * ============================================
  * 1. LoginWidget에서 ShowCharacterSelection() 호출
- * 2. 이 위젯 생성 및 표시
+ * 2. CharacterSelectWidgetClass에 따라 V1/V2 위젯 생성
  * 3. SetAvailableCharacters()로 선택 가능 여부 설정
- * 4. 플레이어가 버튼 클릭
- * 5. OnCharacterButtonClicked() → LoginController::Server_SelectCharacter()
- * 
+ * 4. LoginController에서 Cast<V1/V2>하여 프리뷰 초기화
+ * 5. 버튼 호버 → OnCharacterHovered() (서브클래스 virtual)
+ * 6. 버튼 클릭 → Server_SelectCharacter() RPC
+ *
  * ============================================
- * 📌 BP 설정 필수 항목:
+ * BP 설정 필수 항목:
  * ============================================
- * - LuiButton, LunaButton, LiamButton: 캐릭터 선택 버튼
- * - MessageText: 상태 메시지 (선택사항)
- * 
- * 📌 작성자: Gihyeon
+ * - LuiButton, LunaButton, LiamButton: 캐릭터 선택 버튼 (BindWidget)
+ * - MessageText: 상태 메시지 (BindWidgetOptional)
+ * - PreviewCaptureMaterial: 프리뷰 캡처용 Material (EditDefaultsOnly)
+ *
+ * 작성자: Gihyeon
  */
 UCLASS()
 class HELLUNA_API UHellunaCharacterSelectWidget : public UUserWidget
@@ -49,13 +52,13 @@ protected:
 
 public:
 	// ============================================
-	// 📌 외부 호출 함수
+	// 📌 외부 호출 함수 (공통)
 	// ============================================
 
 	/**
 	 * 선택 가능한 캐릭터 설정
 	 * 서버에서 받은 AvailableCharacters 배열로 버튼 활성화/비활성화
-	 * 
+	 *
 	 * @param AvailableCharacters - [0]=Lui, [1]=Luna, [2]=Liam 선택 가능 여부
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Character Select (캐릭터 선택)")
@@ -69,52 +72,25 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Character Select (캐릭터 선택)")
 	void ShowMessage(const FString& Message, bool bIsError);
 
-	/**
-	 * 로딩 상태 설정 (모든 버튼 비활성화)
-	 */
+	/** 로딩 상태 설정 (모든 버튼 비활성화) */
 	UFUNCTION(BlueprintCallable, Category = "Character Select (캐릭터 선택)")
 	void SetLoadingState(bool bLoading);
 
-	/**
-	 * 캐릭터 선택 결과 처리 (LoginController에서 호출)
-	 */
+	/** 캐릭터 선택 결과 처리 (LoginController에서 호출) */
 	UFUNCTION(BlueprintCallable, Category = "Character Select (캐릭터 선택)")
 	void OnSelectionResult(bool bSuccess, const FString& ErrorMessage);
 
 	// ============================================
-	// 📌 프리뷰 시스템 공개 함수
+	// 📌 프리뷰 virtual 인터페이스 (서브클래스에서 구현)
 	// ============================================
 
-	/**
-	 * 프리뷰 이미지 설정
-	 * RenderTarget을 MID로 감싸서 UImage에 적용
-	 *
-	 * @param RenderTargets - Lui(0), Luna(1), Liam(2) 순서의 RenderTarget 배열
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Character Select (캐릭터 선택)")
-	void SetupPreviewImages(const TArray<UTextureRenderTarget2D*>& RenderTargets);
-
-	/**
-	 * 프리뷰 액터 배열 설정 및 Hover 델리게이트 바인딩
-	 *
-	 * @param InPreviewActors - Lui(0), Luna(1), Liam(2) 순서의 프리뷰 액터 배열
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Character Select (캐릭터 선택)")
-	void SetPreviewActors(const TArray<AHellunaCharacterPreviewActor*>& InPreviewActors);
-
-	// ============================================
-	// 📌 프리뷰 V2 공개 함수
-	// ============================================
-
-	/** V2 프리뷰 이미지 설정 (RenderTarget 1개 -> 전체 장면 이미지) */
-	UFUNCTION(BlueprintCallable, Category = "Character Select (캐릭터 선택)")
-	void SetupPreviewImageV2(UTextureRenderTarget2D* InRenderTarget);
-
-	/** V2 씬 액터 설정 및 Hover 바인딩 */
-	UFUNCTION(BlueprintCallable, Category = "Character Select (캐릭터 선택)")
-	void SetPreviewSceneV2(AHellunaCharacterSelectSceneV2* InScene);
+	/** 프리뷰 정리 — 서브클래스에서 override */
+	virtual void CleanupPreview() {}
 
 protected:
+	/** 캐릭터 호버 이벤트 — 서브클래스에서 override */
+	virtual void OnCharacterHovered(int32 Index, bool bHovered) {}
+
 	// ============================================
 	// 📌 내부 이벤트 핸들러
 	// ============================================
@@ -131,7 +107,7 @@ protected:
 	/** 캐릭터 선택 처리 (공통) */
 	void SelectCharacter(int32 CharacterIndex);
 
-	/** GameState 델리게이트 핸들러 - 다른 플레이어 캐릭터 선택 시 UI 갱신 */
+	/** GameState 델리게이트 핸들러 — 다른 플레이어 캐릭터 선택 시 UI 갱신 */
 	UFUNCTION()
 	void OnCharacterAvailabilityChanged();
 
@@ -139,7 +115,7 @@ protected:
 	void RefreshAvailableCharacters();
 
 	// ============================================
-	// 📌 프리뷰 Hover 이벤트 핸들러
+	// 📌 프리뷰 Hover 이벤트 핸들러 (OnCharacterHovered 호출)
 	// ============================================
 
 	UFUNCTION()
@@ -182,56 +158,12 @@ protected:
 	TObjectPtr<UTextBlock> MessageText;
 
 	// ============================================
-	// 📌 프리뷰 이미지 바인딩 (BP에서 UImage 추가 필요!)
-	// ============================================
-
-	/** Lui 프리뷰 이미지 (Index 0) - 선택사항 */
-	UPROPERTY(meta = (BindWidgetOptional, DisplayName = "루이 프리뷰 이미지"))
-	TObjectPtr<UImage> PreviewImage_Lui;
-
-	/** Luna 프리뷰 이미지 (Index 1) - 선택사항 */
-	UPROPERTY(meta = (BindWidgetOptional, DisplayName = "루나 프리뷰 이미지"))
-	TObjectPtr<UImage> PreviewImage_Luna;
-
-	/** Liam 프리뷰 이미지 (Index 2) - 선택사항 */
-	UPROPERTY(meta = (BindWidgetOptional, DisplayName = "리암 프리뷰 이미지"))
-	TObjectPtr<UImage> PreviewImage_Liam;
-
-	/** V2 전체 장면 프리뷰 이미지 (3캐릭터 한 장면) - V2 모드 전용 */
-	UPROPERTY(meta = (BindWidgetOptional, DisplayName = "V2 프리뷰 이미지"))
-	TObjectPtr<UImage> PreviewImage_V2;
-
-	// ============================================
-	// 📌 프리뷰 설정
+	// 📌 프리뷰 공통 설정
 	// ============================================
 
 	/** 프리뷰 캡처용 Material (BP에서 반드시 세팅! nullptr이면 프리뷰 표시 불가) */
 	UPROPERTY(EditDefaultsOnly, Category = "CharacterPreview (캐릭터 프리뷰)", meta = (DisplayName = "프리뷰 캡처 머티리얼"))
 	TObjectPtr<UMaterialInterface> PreviewCaptureMaterial;
-
-	// ============================================
-	// 📌 프리뷰 내부 상태
-	// ============================================
-
-	/** 프리뷰 액터 참조 (소유권은 LoginController) */
-	UPROPERTY()
-	TArray<TObjectPtr<AHellunaCharacterPreviewActor>> PreviewActors;
-
-	/** 동적 머티리얼 인스턴스 (GC 방지) */
-	UPROPERTY()
-	TArray<TObjectPtr<UMaterialInstanceDynamic>> PreviewMaterials;
-
-	// ============================================
-	// 📌 프리뷰 V2 내부 상태
-	// ============================================
-
-	/** V2 씬 액터 참조 */
-	UPROPERTY()
-	TObjectPtr<AHellunaCharacterSelectSceneV2> PreviewSceneV2;
-
-	/** V2 머티리얼 인스턴스 */
-	UPROPERTY()
-	TObjectPtr<UMaterialInstanceDynamic> PreviewMaterialV2;
 
 	// ============================================
 	// 📌 내부 상태

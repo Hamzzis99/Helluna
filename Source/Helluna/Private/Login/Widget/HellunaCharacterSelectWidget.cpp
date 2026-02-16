@@ -1,87 +1,114 @@
-﻿#include "Login/Widget/HellunaCharacterSelectWidget.h"
+#include "Login/Widget/HellunaCharacterSelectWidget.h"
 #include "Login/Controller/HellunaLoginController.h"
-#include "Login/Preview/HellunaCharacterPreviewActor.h"
-#include "Login/Preview/HellunaCharacterSelectSceneV2.h"
 #include "Helluna.h"
 #include "Components/Button.h"
 #include "Components/TextBlock.h"
-#include "Components/Image.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameMode/HellunaBaseGameState.h"
-#include "Engine/TextureRenderTarget2D.h"
-#include "Materials/MaterialInstanceDynamic.h"
-#include "Materials/MaterialInterface.h"
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 📌 NativeConstruct — 공통 초기화
+// ════════════════════════════════════════════════════════════════════════════════
 
 void UHellunaCharacterSelectWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
 
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║  🎭 [CharacterSelectWidget] NativeConstruct                ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#if HELLUNA_DEBUG_CHARACTER_SELECT
+	UE_LOG(LogHelluna, Warning, TEXT(""));
+	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogHelluna, Warning, TEXT("║  [캐릭터선택위젯] NativeConstruct (베이스)                  ║"));
+	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
 
-	// 버튼 이벤트 바인딩 (BindWidget이므로 버튼은 항상 존재)
+	// ════════════════════════════════════════════
+	// 📌 버튼 클릭 이벤트 바인딩 (BindWidget이므로 항상 존재)
+	// ════════════════════════════════════════════
 	LuiButton->OnClicked.AddDynamic(this, &UHellunaCharacterSelectWidget::OnLuiButtonClicked);
 	LunaButton->OnClicked.AddDynamic(this, &UHellunaCharacterSelectWidget::OnLunaButtonClicked);
 	LiamButton->OnClicked.AddDynamic(this, &UHellunaCharacterSelectWidget::OnLiamButtonClicked);
 
-	UE_LOG(LogTemp, Warning, TEXT("[CharacterSelectWidget] 버튼 바인딩 완료: Lui, Luna, Liam"));
+	// ════════════════════════════════════════════
+	// 📌 호버 이벤트 바인딩 (베이스에서 한 번만)
+	// ════════════════════════════════════════════
+	LuiButton->OnHovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Lui);
+	LuiButton->OnUnhovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Lui);
+	LunaButton->OnHovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Luna);
+	LunaButton->OnUnhovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Luna);
+	LiamButton->OnHovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Liam);
+	LiamButton->OnUnhovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Liam);
 
-	// ════════════════════════════════════════════════════════════════════════════════
-	// 🎭 GameState 델리게이트 바인딩 - 다른 플레이어 캐릭터 선택 시 UI 자동 갱신
-	// ════════════════════════════════════════════════════════════════════════════════
+#if HELLUNA_DEBUG_CHARACTER_SELECT
+	UE_LOG(LogHelluna, Warning, TEXT("[캐릭터선택위젯] 버튼 클릭/호버 바인딩 완료"));
+#endif
+
+	// ════════════════════════════════════════════
+	// 📌 GameState 델리게이트 바인딩 — 다른 플레이어 캐릭터 선택 시 UI 자동 갱신
+	// ════════════════════════════════════════════
 	if (AHellunaBaseGameState* GS = GetWorld()->GetGameState<AHellunaBaseGameState>())
 	{
 		GS->OnUsedCharactersChanged.AddDynamic(this, &UHellunaCharacterSelectWidget::OnCharacterAvailabilityChanged);
-		UE_LOG(LogTemp, Warning, TEXT("[CharacterSelectWidget] ✅ GameState 델리게이트 바인딩 완료"));
-
-		// 초기 상태 동기화
+#if HELLUNA_DEBUG_CHARACTER_SELECT
+		UE_LOG(LogHelluna, Warning, TEXT("[캐릭터선택위젯] GameState 델리게이트 바인딩 완료"));
+#endif
 		RefreshAvailableCharacters();
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[CharacterSelectWidget] ⚠️ GameState 없음 - 델리게이트 바인딩 스킵"));
+#if HELLUNA_DEBUG_CHARACTER_SELECT
+		UE_LOG(LogHelluna, Warning, TEXT("[캐릭터선택위젯] GameState 없음 - 델리게이트 바인딩 스킵"));
+#endif
 	}
 
 	ShowMessage(TEXT("캐릭터를 선택하세요"), false);
 
-	UE_LOG(LogTemp, Warning, TEXT("[CharacterSelectWidget] 초기화 완료"));
-	UE_LOG(LogTemp, Warning, TEXT(""));
+#if HELLUNA_DEBUG_CHARACTER_SELECT
+	UE_LOG(LogHelluna, Warning, TEXT("[캐릭터선택위젯] 초기화 완료"));
+#endif
 }
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 📌 공통 함수
+// ════════════════════════════════════════════════════════════════════════════════
 
 void UHellunaCharacterSelectWidget::SetAvailableCharacters(const TArray<bool>& AvailableCharacters)
 {
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║  🎭 [CharacterSelectWidget] SetAvailableCharacters         ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+#if HELLUNA_DEBUG_CHARACTER_SELECT
+	UE_LOG(LogHelluna, Warning, TEXT(""));
+	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogHelluna, Warning, TEXT("║  [캐릭터선택위젯] SetAvailableCharacters                   ║"));
+	UE_LOG(LogHelluna, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+#endif
 
 	CachedAvailableCharacters = AvailableCharacters;
 
-	// Lui (Index 0)
 	if (AvailableCharacters.IsValidIndex(0))
 	{
 		LuiButton->SetIsEnabled(AvailableCharacters[0]);
-		UE_LOG(LogTemp, Warning, TEXT("║   [0] Lui: %s"), AvailableCharacters[0] ? TEXT("✅ 선택 가능") : TEXT("❌ 사용 중"));
+#if HELLUNA_DEBUG_CHARACTER_SELECT
+		UE_LOG(LogHelluna, Warning, TEXT("║   [0] Lui: %s"), AvailableCharacters[0] ? TEXT("선택 가능") : TEXT("사용 중"));
+#endif
 	}
 
-	// Luna (Index 1)
 	if (AvailableCharacters.IsValidIndex(1))
 	{
 		LunaButton->SetIsEnabled(AvailableCharacters[1]);
-		UE_LOG(LogTemp, Warning, TEXT("║   [1] Luna: %s"), AvailableCharacters[1] ? TEXT("✅ 선택 가능") : TEXT("❌ 사용 중"));
+#if HELLUNA_DEBUG_CHARACTER_SELECT
+		UE_LOG(LogHelluna, Warning, TEXT("║   [1] Luna: %s"), AvailableCharacters[1] ? TEXT("선택 가능") : TEXT("사용 중"));
+#endif
 	}
 
-	// Liam (Index 2)
 	if (AvailableCharacters.IsValidIndex(2))
 	{
 		LiamButton->SetIsEnabled(AvailableCharacters[2]);
-		UE_LOG(LogTemp, Warning, TEXT("║   [2] Liam: %s"), AvailableCharacters[2] ? TEXT("✅ 선택 가능") : TEXT("❌ 사용 중"));
+#if HELLUNA_DEBUG_CHARACTER_SELECT
+		UE_LOG(LogHelluna, Warning, TEXT("║   [2] Liam: %s"), AvailableCharacters[2] ? TEXT("선택 가능") : TEXT("사용 중"));
+#endif
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
-	UE_LOG(LogTemp, Warning, TEXT(""));
+#if HELLUNA_DEBUG_CHARACTER_SELECT
+	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
 }
 
 void UHellunaCharacterSelectWidget::ShowMessage(const FString& Message, bool bIsError)
@@ -92,8 +119,10 @@ void UHellunaCharacterSelectWidget::ShowMessage(const FString& Message, bool bIs
 		MessageText->SetColorAndOpacity(FSlateColor(bIsError ? FLinearColor::Red : FLinearColor::White));
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("[CharacterSelectWidget] 메시지: %s (Error=%s)"), 
+#if HELLUNA_DEBUG_CHARACTER_SELECT
+	UE_LOG(LogHelluna, Warning, TEXT("[캐릭터선택위젯] 메시지: %s (Error=%s)"),
 		*Message, bIsError ? TEXT("YES") : TEXT("NO"));
+#endif
 }
 
 void UHellunaCharacterSelectWidget::SetLoadingState(bool bLoading)
@@ -104,52 +133,68 @@ void UHellunaCharacterSelectWidget::SetLoadingState(bool bLoading)
 	LunaButton->SetIsEnabled(!bLoading && CachedAvailableCharacters.IsValidIndex(1) && CachedAvailableCharacters[1]);
 	LiamButton->SetIsEnabled(!bLoading && CachedAvailableCharacters.IsValidIndex(2) && CachedAvailableCharacters[2]);
 
-	UE_LOG(LogTemp, Warning, TEXT("[CharacterSelectWidget] 로딩 상태: %s"), bLoading ? TEXT("ON") : TEXT("OFF"));
+#if HELLUNA_DEBUG_CHARACTER_SELECT
+	UE_LOG(LogHelluna, Warning, TEXT("[캐릭터선택위젯] 로딩 상태: %s"), bLoading ? TEXT("ON") : TEXT("OFF"));
+#endif
 }
 
 void UHellunaCharacterSelectWidget::OnSelectionResult(bool bSuccess, const FString& ErrorMessage)
 {
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║  🎭 [CharacterSelectWidget] OnSelectionResult              ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ Success: %s"), bSuccess ? TEXT("TRUE") : TEXT("FALSE"));
+#if HELLUNA_DEBUG_CHARACTER_SELECT
+	UE_LOG(LogHelluna, Warning, TEXT(""));
+	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogHelluna, Warning, TEXT("║  [캐릭터선택위젯] OnSelectionResult                        ║"));
+	UE_LOG(LogHelluna, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogHelluna, Warning, TEXT("║ Success: %s"), bSuccess ? TEXT("TRUE") : TEXT("FALSE"));
 	if (!bSuccess)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("║ Error: %s"), *ErrorMessage);
+		UE_LOG(LogHelluna, Warning, TEXT("║ Error: %s"), *ErrorMessage);
 	}
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
 
 	if (bSuccess)
 	{
 		ShowMessage(TEXT("캐릭터 선택 완료! 게임 시작..."), false);
-		
-		// ✅ UI 제거!
-		UE_LOG(LogTemp, Warning, TEXT("[CharacterSelectWidget] ✅ 위젯 제거 (RemoveFromParent)"));
+		CleanupPreview();
+
+#if HELLUNA_DEBUG_CHARACTER_SELECT
+		UE_LOG(LogHelluna, Warning, TEXT("[캐릭터선택위젯] 위젯 제거 (RemoveFromParent)"));
+#endif
 		RemoveFromParent();
 	}
 	else
 	{
 		ShowMessage(ErrorMessage.IsEmpty() ? TEXT("캐릭터 선택 실패") : ErrorMessage, true);
-		SetLoadingState(false);  // 다시 선택 가능하게
+		SetLoadingState(false);
 	}
 }
 
+// ════════════════════════════════════════════════════════════════════════════════
+// 📌 버튼 클릭 핸들러
+// ════════════════════════════════════════════════════════════════════════════════
+
 void UHellunaCharacterSelectWidget::OnLuiButtonClicked()
 {
-	UE_LOG(LogTemp, Warning, TEXT("[CharacterSelectWidget] 🔘 Lui 버튼 클릭됨"));
+#if HELLUNA_DEBUG_CHARACTER_SELECT
+	UE_LOG(LogHelluna, Warning, TEXT("[캐릭터선택위젯] Lui 버튼 클릭"));
+#endif
 	SelectCharacter(0);
 }
 
 void UHellunaCharacterSelectWidget::OnLunaButtonClicked()
 {
-	UE_LOG(LogTemp, Warning, TEXT("[CharacterSelectWidget] 🔘 Luna 버튼 클릭됨"));
+#if HELLUNA_DEBUG_CHARACTER_SELECT
+	UE_LOG(LogHelluna, Warning, TEXT("[캐릭터선택위젯] Luna 버튼 클릭"));
+#endif
 	SelectCharacter(1);
 }
 
 void UHellunaCharacterSelectWidget::OnLiamButtonClicked()
 {
-	UE_LOG(LogTemp, Warning, TEXT("[CharacterSelectWidget] 🔘 Liam 버튼 클릭됨"));
+#if HELLUNA_DEBUG_CHARACTER_SELECT
+	UE_LOG(LogHelluna, Warning, TEXT("[캐릭터선택위젯] Liam 버튼 클릭"));
+#endif
 	SelectCharacter(2);
 }
 
@@ -157,47 +202,53 @@ void UHellunaCharacterSelectWidget::SelectCharacter(int32 CharacterIndex)
 {
 	if (bIsLoading)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[CharacterSelectWidget] 이미 처리 중, 무시"));
+#if HELLUNA_DEBUG_CHARACTER_SELECT
+		UE_LOG(LogHelluna, Warning, TEXT("[캐릭터선택위젯] 이미 처리 중, 무시"));
+#endif
 		return;
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║  🎭 [CharacterSelectWidget] SelectCharacter                ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogTemp, Warning, TEXT("║ CharacterIndex: %d"), CharacterIndex);
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#if HELLUNA_DEBUG_CHARACTER_SELECT
+	UE_LOG(LogHelluna, Warning, TEXT(""));
+	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogHelluna, Warning, TEXT("║  [캐릭터선택위젯] SelectCharacter                          ║"));
+	UE_LOG(LogHelluna, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogHelluna, Warning, TEXT("║ CharacterIndex: %d"), CharacterIndex);
+	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
 
-	// 로딩 상태로 전환
 	SetLoadingState(true);
 	ShowMessage(TEXT("캐릭터 선택 중..."), false);
 
-	// LoginController를 통해 서버로 전송
 	APlayerController* PC = UGameplayStatics::GetPlayerController(GetWorld(), 0);
 	if (AHellunaLoginController* LoginController = Cast<AHellunaLoginController>(PC))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[CharacterSelectWidget] → Server_SelectCharacter(%d) RPC 호출"), CharacterIndex);
+#if HELLUNA_DEBUG_CHARACTER_SELECT
+		UE_LOG(LogHelluna, Warning, TEXT("[캐릭터선택위젯] Server_SelectCharacter(%d) RPC 호출"), CharacterIndex);
+#endif
 		LoginController->Server_SelectCharacter(CharacterIndex);
 	}
 	else
 	{
-		UE_LOG(LogTemp, Error, TEXT("[CharacterSelectWidget] ❌ LoginController를 찾을 수 없음!"));
+		UE_LOG(LogHelluna, Error, TEXT("[캐릭터선택위젯] LoginController를 찾을 수 없음!"));
 		ShowMessage(TEXT("컨트롤러 오류"), true);
 		SetLoadingState(false);
 	}
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
-// 🎭 GameState 델리게이트 핸들러 - 실시간 UI 동기화
+// 📌 GameState 델리게이트 핸들러 — 실시간 UI 동기화
 // ════════════════════════════════════════════════════════════════════════════════
 
 void UHellunaCharacterSelectWidget::OnCharacterAvailabilityChanged()
 {
-	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║  🔄 [CharacterSelectWidget] OnCharacterAvailabilityChanged ║"));
-	UE_LOG(LogTemp, Warning, TEXT("║     다른 플레이어가 캐릭터를 선택/해제함!                  ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#if HELLUNA_DEBUG_CHARACTER_SELECT
+	UE_LOG(LogHelluna, Warning, TEXT(""));
+	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogHelluna, Warning, TEXT("║  [캐릭터선택위젯] OnCharacterAvailabilityChanged           ║"));
+	UE_LOG(LogHelluna, Warning, TEXT("║     다른 플레이어가 캐릭터를 선택/해제함!                  ║"));
+	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
 
 	RefreshAvailableCharacters();
 }
@@ -207,334 +258,57 @@ void UHellunaCharacterSelectWidget::RefreshAvailableCharacters()
 	AHellunaBaseGameState* GS = GetWorld()->GetGameState<AHellunaBaseGameState>();
 	if (!GS)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[CharacterSelectWidget] ⚠️ RefreshAvailableCharacters - GameState 없음"));
+#if HELLUNA_DEBUG_CHARACTER_SELECT
+		UE_LOG(LogHelluna, Warning, TEXT("[캐릭터선택위젯] RefreshAvailableCharacters - GameState 없음"));
+#endif
 		return;
 	}
 
-	// GameState에서 사용 중인 캐릭터 목록 가져와서 AvailableCharacters 배열 생성
 	TArray<bool> AvailableCharacters;
+	AvailableCharacters.Add(!GS->IsCharacterUsed(EHellunaHeroType::Lui));
+	AvailableCharacters.Add(!GS->IsCharacterUsed(EHellunaHeroType::Luna));
+	AvailableCharacters.Add(!GS->IsCharacterUsed(EHellunaHeroType::Liam));
 
-	// 캐릭터 인덱스 → HeroType 매핑 (0=Lui, 1=Luna, 2=Liam)
-	// HellunaTypes.h의 EHellunaHeroType 순서와 일치해야 함
-	AvailableCharacters.Add(!GS->IsCharacterUsed(EHellunaHeroType::Lui));   // Index 0
-	AvailableCharacters.Add(!GS->IsCharacterUsed(EHellunaHeroType::Luna));  // Index 1
-	AvailableCharacters.Add(!GS->IsCharacterUsed(EHellunaHeroType::Liam));  // Index 2
+#if HELLUNA_DEBUG_CHARACTER_SELECT
+	UE_LOG(LogHelluna, Warning, TEXT("[캐릭터선택위젯] UI 갱신: Lui=%s, Luna=%s, Liam=%s"),
+		AvailableCharacters[0] ? TEXT("가능") : TEXT("사용중"),
+		AvailableCharacters[1] ? TEXT("가능") : TEXT("사용중"),
+		AvailableCharacters[2] ? TEXT("가능") : TEXT("사용중"));
+#endif
 
-	UE_LOG(LogTemp, Warning, TEXT("[CharacterSelectWidget] 🔄 UI 갱신: Lui=%s, Luna=%s, Liam=%s"),
-		AvailableCharacters[0] ? TEXT("✅") : TEXT("❌"),
-		AvailableCharacters[1] ? TEXT("✅") : TEXT("❌"),
-		AvailableCharacters[2] ? TEXT("✅") : TEXT("❌"));
-
-	// 기존 SetAvailableCharacters 함수 재사용
 	SetAvailableCharacters(AvailableCharacters);
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
-// 📌 프리뷰 시스템
-// ════════════════════════════════════════════════════════════════════════════════
-
-void UHellunaCharacterSelectWidget::SetupPreviewImages(const TArray<UTextureRenderTarget2D*>& RenderTargets)
-{
-#if HELLUNA_DEBUG_CHARACTER_PREVIEW
-	UE_LOG(LogHelluna, Warning, TEXT(""));
-	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogHelluna, Warning, TEXT("║  🎭 [캐릭터선택위젯] 프리뷰 이미지 설정                    ║"));
-	UE_LOG(LogHelluna, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogHelluna, Warning, TEXT("║ RenderTargets 수: %d"), RenderTargets.Num());
-	UE_LOG(LogHelluna, Warning, TEXT("║ PreviewCaptureMaterial: %s"), PreviewCaptureMaterial ? *PreviewCaptureMaterial->GetName() : TEXT("nullptr (미설정)"));
-#endif
-
-	PreviewMaterials.Empty();
-
-	// 각 프리뷰 이미지에 RenderTarget 적용
-	TArray<UImage*> PreviewImages = { PreviewImage_Lui, PreviewImage_Luna, PreviewImage_Liam };
-
-	for (int32 i = 0; i < PreviewImages.Num(); i++)
-	{
-		UImage* TargetImage = PreviewImages[i];
-		if (!TargetImage)
-		{
-			UE_LOG(LogHelluna, Warning, TEXT("[캐릭터선택위젯] PreviewImage[%d]가 nullptr (BindWidgetOptional - 위젯 미배치)"), i);
-			PreviewMaterials.Add(nullptr);
-			continue;
-		}
-
-		if (!RenderTargets.IsValidIndex(i) || !RenderTargets[i])
-		{
-			UE_LOG(LogHelluna, Warning, TEXT("[캐릭터선택위젯] RenderTarget[%d]가 없음 - 스킵"), i);
-			PreviewMaterials.Add(nullptr);
-			continue;
-		}
-
-		// MID 생성
-		UMaterialInterface* BaseMaterial = PreviewCaptureMaterial;
-		if (!BaseMaterial)
-		{
-			UE_LOG(LogHelluna, Error, TEXT("[캐릭터선택위젯] 프리뷰 캡처 머티리얼 미설정! BP에서 Unlit Material 세팅 필요"));
-			PreviewMaterials.Add(nullptr);
-			continue;
-		}
-
-		UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(BaseMaterial, this);
-		if (!MID)
-		{
-			UE_LOG(LogHelluna, Error, TEXT("[캐릭터선택위젯] MID 생성 실패 [%d]"), i);
-			PreviewMaterials.Add(nullptr);
-			continue;
-		}
-
-		MID->SetTextureParameterValue(TEXT("Texture"), RenderTargets[i]);
-		TargetImage->SetBrushFromMaterial(MID);
-		PreviewMaterials.Add(MID);
-
-#if HELLUNA_DEBUG_CHARACTER_PREVIEW
-		UE_LOG(LogHelluna, Warning, TEXT("║ [%d] ✅ MID 생성 및 이미지 적용 완료 (RT: %s)"), i, *RenderTargets[i]->GetName());
-#endif
-	}
-
-#if HELLUNA_DEBUG_CHARACTER_PREVIEW
-	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
-	UE_LOG(LogHelluna, Warning, TEXT(""));
-#endif
-}
-
-void UHellunaCharacterSelectWidget::SetPreviewActors(const TArray<AHellunaCharacterPreviewActor*>& InPreviewActors)
-{
-#if HELLUNA_DEBUG_CHARACTER_PREVIEW
-	UE_LOG(LogHelluna, Warning, TEXT(""));
-	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogHelluna, Warning, TEXT("║  🎭 [캐릭터선택위젯] 프리뷰 액터 설정                      ║"));
-	UE_LOG(LogHelluna, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogHelluna, Warning, TEXT("║ InPreviewActors 수: %d"), InPreviewActors.Num());
-#endif
-
-	// 액터 참조 저장
-	PreviewActors.Empty();
-	for (AHellunaCharacterPreviewActor* Actor : InPreviewActors)
-	{
-		PreviewActors.Add(Actor);
-	}
-
-	// ════════════════════════════════════════════
-	// 📌 호버 델리게이트 바인딩 (기존 해제 후 재등록 - 중복 방지)
-	// ════════════════════════════════════════════
-
-	if (LuiButton)
-	{
-		LuiButton->OnHovered.RemoveDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Lui);
-		LuiButton->OnUnhovered.RemoveDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Lui);
-		LuiButton->OnHovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Lui);
-		LuiButton->OnUnhovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Lui);
-	}
-
-	if (LunaButton)
-	{
-		LunaButton->OnHovered.RemoveDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Luna);
-		LunaButton->OnUnhovered.RemoveDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Luna);
-		LunaButton->OnHovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Luna);
-		LunaButton->OnUnhovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Luna);
-	}
-
-	if (LiamButton)
-	{
-		LiamButton->OnHovered.RemoveDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Liam);
-		LiamButton->OnUnhovered.RemoveDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Liam);
-		LiamButton->OnHovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Liam);
-		LiamButton->OnUnhovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Liam);
-	}
-
-#if HELLUNA_DEBUG_CHARACTER_PREVIEW
-	UE_LOG(LogHelluna, Warning, TEXT("║ ✅ 호버 델리게이트 바인딩 완료"));
-	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
-	UE_LOG(LogHelluna, Warning, TEXT(""));
-#endif
-}
-
-// ════════════════════════════════════════════════════════════════════════════════
-// 📌 프리뷰 Hover 이벤트 핸들러
+// 📌 프리뷰 Hover 이벤트 핸들러 → virtual OnCharacterHovered 호출
 // ════════════════════════════════════════════════════════════════════════════════
 
 void UHellunaCharacterSelectWidget::OnPreviewHovered_Lui()
 {
-	if (IsValid(PreviewSceneV2))
-	{
-		PreviewSceneV2->SetCharacterHovered(0, true);
-		return;
-	}
-	// V1 fallback
-	if (PreviewActors.IsValidIndex(0) && IsValid(PreviewActors[0]))
-	{
-		PreviewActors[0]->SetHovered(true);
-	}
+	OnCharacterHovered(0, true);
 }
 
 void UHellunaCharacterSelectWidget::OnPreviewUnhovered_Lui()
 {
-	if (IsValid(PreviewSceneV2))
-	{
-		PreviewSceneV2->SetCharacterHovered(0, false);
-		return;
-	}
-	if (PreviewActors.IsValidIndex(0) && IsValid(PreviewActors[0]))
-	{
-		PreviewActors[0]->SetHovered(false);
-	}
+	OnCharacterHovered(0, false);
 }
 
 void UHellunaCharacterSelectWidget::OnPreviewHovered_Luna()
 {
-	if (IsValid(PreviewSceneV2))
-	{
-		PreviewSceneV2->SetCharacterHovered(1, true);
-		return;
-	}
-	if (PreviewActors.IsValidIndex(1) && IsValid(PreviewActors[1]))
-	{
-		PreviewActors[1]->SetHovered(true);
-	}
+	OnCharacterHovered(1, true);
 }
 
 void UHellunaCharacterSelectWidget::OnPreviewUnhovered_Luna()
 {
-	if (IsValid(PreviewSceneV2))
-	{
-		PreviewSceneV2->SetCharacterHovered(1, false);
-		return;
-	}
-	if (PreviewActors.IsValidIndex(1) && IsValid(PreviewActors[1]))
-	{
-		PreviewActors[1]->SetHovered(false);
-	}
+	OnCharacterHovered(1, false);
 }
 
 void UHellunaCharacterSelectWidget::OnPreviewHovered_Liam()
 {
-	if (IsValid(PreviewSceneV2))
-	{
-		PreviewSceneV2->SetCharacterHovered(2, true);
-		return;
-	}
-	if (PreviewActors.IsValidIndex(2) && IsValid(PreviewActors[2]))
-	{
-		PreviewActors[2]->SetHovered(true);
-	}
+	OnCharacterHovered(2, true);
 }
 
 void UHellunaCharacterSelectWidget::OnPreviewUnhovered_Liam()
 {
-	if (IsValid(PreviewSceneV2))
-	{
-		PreviewSceneV2->SetCharacterHovered(2, false);
-		return;
-	}
-	if (PreviewActors.IsValidIndex(2) && IsValid(PreviewActors[2]))
-	{
-		PreviewActors[2]->SetHovered(false);
-	}
-}
-
-// ════════════════════════════════════════════════════════════════════════════════
-// 📌 프리뷰 V2 시스템
-// ════════════════════════════════════════════════════════════════════════════════
-
-void UHellunaCharacterSelectWidget::SetupPreviewImageV2(UTextureRenderTarget2D* InRenderTarget)
-{
-#if HELLUNA_DEBUG_CHARACTER_PREVIEW_V2
-	UE_LOG(LogHelluna, Warning, TEXT(""));
-	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogHelluna, Warning, TEXT("║  [캐릭터선택위젯] V2 프리뷰 이미지 설정                     ║"));
-	UE_LOG(LogHelluna, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogHelluna, Warning, TEXT("║ InRenderTarget: %s"), InRenderTarget ? *InRenderTarget->GetName() : TEXT("nullptr"));
-	UE_LOG(LogHelluna, Warning, TEXT("║ PreviewCaptureMaterial: %s"), PreviewCaptureMaterial ? *PreviewCaptureMaterial->GetName() : TEXT("nullptr"));
-#endif
-
-	if (!InRenderTarget)
-	{
-		UE_LOG(LogHelluna, Error, TEXT("[캐릭터선택위젯] V2 프리뷰 설정 실패 - InRenderTarget이 nullptr!"));
-		return;
-	}
-
-	if (!PreviewCaptureMaterial)
-	{
-		UE_LOG(LogHelluna, Error, TEXT("[캐릭터선택위젯] V2 프리뷰 설정 실패 - PreviewCaptureMaterial 미설정!"));
-		return;
-	}
-
-	// PreviewImage_V2에 전체 장면 RenderTarget 적용 (V2: 하나의 이미지에 3캐릭터 모두 표시)
-	UImage* TargetImage = PreviewImage_V2 ? PreviewImage_V2 : PreviewImage_Lui;
-	if (!TargetImage)
-	{
-		UE_LOG(LogHelluna, Error, TEXT("[캐릭터선택위젯] V2 프리뷰 설정 실패 - PreviewImage_V2/Lui 둘 다 nullptr!"));
-		return;
-	}
-
-	PreviewMaterialV2 = UMaterialInstanceDynamic::Create(PreviewCaptureMaterial, this);
-	if (!PreviewMaterialV2)
-	{
-		UE_LOG(LogHelluna, Error, TEXT("[캐릭터선택위젯] V2 MID 생성 실패!"));
-		return;
-	}
-
-	PreviewMaterialV2->SetTextureParameterValue(TEXT("Texture"), InRenderTarget);
-	TargetImage->SetBrushFromMaterial(PreviewMaterialV2);
-	TargetImage->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-
-	// V1 개별 이미지 숨기기 (V2에서는 사용 안 함)
-	if (PreviewImage_V2)
-	{
-		if (PreviewImage_Lui) PreviewImage_Lui->SetVisibility(ESlateVisibility::Collapsed);
-		if (PreviewImage_Luna) PreviewImage_Luna->SetVisibility(ESlateVisibility::Collapsed);
-		if (PreviewImage_Liam) PreviewImage_Liam->SetVisibility(ESlateVisibility::Collapsed);
-	}
-
-#if HELLUNA_DEBUG_CHARACTER_PREVIEW_V2
-	UE_LOG(LogHelluna, Warning, TEXT("║ ✅ V2 프리뷰 이미지 설정 완료 (사용 이미지: %s)"),
-		PreviewImage_V2 ? TEXT("PreviewImage_V2") : TEXT("PreviewImage_Lui (fallback)"));
-	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
-	UE_LOG(LogHelluna, Warning, TEXT(""));
-#endif
-}
-
-void UHellunaCharacterSelectWidget::SetPreviewSceneV2(AHellunaCharacterSelectSceneV2* InScene)
-{
-#if HELLUNA_DEBUG_CHARACTER_PREVIEW_V2
-	UE_LOG(LogHelluna, Warning, TEXT(""));
-	UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogHelluna, Warning, TEXT("║  [캐릭터선택위젯] V2 씬 액터 설정                           ║"));
-	UE_LOG(LogHelluna, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
-	UE_LOG(LogHelluna, Warning, TEXT("║ InScene: %s"), InScene ? *InScene->GetName() : TEXT("nullptr"));
-#endif
-
-	PreviewSceneV2 = InScene;
-
-	// 호버 델리게이트 바인딩 (V1 SetPreviewActors와 동일 패턴)
-	if (LuiButton)
-	{
-		LuiButton->OnHovered.RemoveDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Lui);
-		LuiButton->OnUnhovered.RemoveDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Lui);
-		LuiButton->OnHovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Lui);
-		LuiButton->OnUnhovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Lui);
-	}
-
-	if (LunaButton)
-	{
-		LunaButton->OnHovered.RemoveDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Luna);
-		LunaButton->OnUnhovered.RemoveDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Luna);
-		LunaButton->OnHovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Luna);
-		LunaButton->OnUnhovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Luna);
-	}
-
-	if (LiamButton)
-	{
-		LiamButton->OnHovered.RemoveDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Liam);
-		LiamButton->OnUnhovered.RemoveDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Liam);
-		LiamButton->OnHovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Liam);
-		LiamButton->OnUnhovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Liam);
-	}
-
-#if HELLUNA_DEBUG_CHARACTER_PREVIEW_V2
-	UE_LOG(LogHelluna, Warning, TEXT("║ ✅ V2 호버 델리게이트 바인딩 완료"));
-	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
-	UE_LOG(LogHelluna, Warning, TEXT(""));
-#endif
+	OnCharacterHovered(2, false);
 }
