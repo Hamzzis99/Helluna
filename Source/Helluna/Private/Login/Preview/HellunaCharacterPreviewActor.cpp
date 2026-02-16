@@ -6,6 +6,7 @@
 #include "Components/PointLightComponent.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/SkeletalMesh.h"
+#include "Materials/MaterialInterface.h"
 
 // ============================================
 // 📌 생성자
@@ -136,6 +137,9 @@ void AHellunaCharacterPreviewActor::SetHovered(bool bHovered)
 		return;
 	}
 
+	// ════════════════════════════════════════════
+	// 📌 AnimBP 호버 상태
+	// ════════════════════════════════════════════
 	UHellunaPreviewAnimInstance* AnimInst = Cast<UHellunaPreviewAnimInstance>(PreviewMesh->GetAnimInstance());
 	if (!AnimInst)
 	{
@@ -145,8 +149,29 @@ void AHellunaCharacterPreviewActor::SetHovered(bool bHovered)
 
 	AnimInst->bIsHovered = bHovered;
 
+	// ════════════════════════════════════════════
+	// 📌 오버레이 하이라이트 머티리얼
+	// ════════════════════════════════════════════
+	PreviewMesh->SetOverlayMaterial(bHovered ? HighlightMaterial : nullptr);
+
 #if HELLUNA_DEBUG_CHARACTER_PREVIEW
-	UE_LOG(LogHelluna, Warning, TEXT("[캐릭터프리뷰액터] 호버 상태 변경: %s"), bHovered ? TEXT("TRUE") : TEXT("FALSE"));
+	UE_LOG(LogHelluna, Warning, TEXT("[캐릭터프리뷰액터] 호버 상태 변경: %s (Highlight: %s)"),
+		bHovered ? TEXT("TRUE") : TEXT("FALSE"),
+		HighlightMaterial ? *HighlightMaterial->GetName() : TEXT("없음"));
+#endif
+}
+
+// ============================================
+// 📌 하이라이트 머티리얼 설정
+// ============================================
+
+void AHellunaCharacterPreviewActor::SetHighlightMaterial(UMaterialInterface* InMaterial)
+{
+	HighlightMaterial = InMaterial;
+
+#if HELLUNA_DEBUG_CHARACTER_PREVIEW
+	UE_LOG(LogHelluna, Warning, TEXT("[캐릭터프리뷰액터] 하이라이트 머티리얼 설정: %s"),
+		InMaterial ? *InMaterial->GetName() : TEXT("nullptr"));
 #endif
 }
 

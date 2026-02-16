@@ -10,6 +10,7 @@ class UPointLightComponent;
 class UTextureRenderTarget2D;
 class USkeletalMesh;
 class UHellunaPreviewAnimInstance;
+class UMaterialInterface;
 
 /**
  * ============================================
@@ -89,6 +90,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "프리뷰")
 	void AddShowOnlyActor(AActor* InActor);
 
+	/**
+	 * 하이라이트 오버레이 머티리얼 설정
+	 * LoginController에서 스폰 후 캐릭터별로 호출
+	 *
+	 * @param InMaterial - 호버 시 적용할 Fresnel 머티리얼
+	 */
+	UFUNCTION(BlueprintCallable, Category = "프리뷰")
+	void SetHighlightMaterial(UMaterialInterface* InMaterial);
+
 protected:
 	// ============================================
 	// 📌 컴포넌트
@@ -129,4 +139,12 @@ protected:
 	/** SceneCapture 시야각 */
 	UPROPERTY(EditDefaultsOnly, Category = "프리뷰", meta = (DisplayName = "카메라 시야각(FOV)"))
 	float CaptureFOVAngle = 40.f;
+
+	// ============================================
+	// 📌 하이라이트 오버레이
+	// ============================================
+
+	/** 호버 시 적용할 오버레이 머티리얼 (외부에서 SetHighlightMaterial로 설정) */
+	UPROPERTY()
+	TObjectPtr<UMaterialInterface> HighlightMaterial;
 };

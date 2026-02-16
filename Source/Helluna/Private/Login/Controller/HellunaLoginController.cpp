@@ -703,6 +703,14 @@ void AHellunaLoginController::SpawnPreviewActors()
 		// 프리뷰 초기화
 		PreviewActor->InitializePreview(LoadedMesh, *AnimClassPtr, RT);
 
+		// ════════════════════════════════════════════
+		// 📌 하이라이트 오버레이 머티리얼 설정
+		// ════════════════════════════════════════════
+		if (const TObjectPtr<UMaterialInterface>* HighlightMatPtr = PreviewHighlightMaterialMap.Find(HeroType))
+		{
+			PreviewActor->SetHighlightMaterial(*HighlightMatPtr);
+		}
+
 		SpawnedPreviewActors.Add(PreviewActor);
 		PreviewRenderTargets.Add(RT);
 

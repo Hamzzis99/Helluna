@@ -10,6 +10,7 @@ class AHellunaCharacterPreviewActor;
 class AHellunaCharacterSelectSceneV2;
 class UTextureRenderTarget2D;
 class USkeletalMesh;
+class UMaterialInterface;
 
 /**
  * ============================================
@@ -245,6 +246,10 @@ protected:
 	/** 캐릭터 간 X축 간격 */
 	UPROPERTY(EditDefaultsOnly, Category = "CharacterPreview (캐릭터 프리뷰)", meta = (DisplayName = "프리뷰 스폰 간격"))
 	float PreviewSpawnSpacing = 300.f;
+
+	/** 캐릭터 타입별 하이라이트 오버레이 머티리얼 (호버 시 Fresnel 윤곽선) */
+	UPROPERTY(EditDefaultsOnly, Category = "CharacterPreview (캐릭터 프리뷰)", meta = (DisplayName = "하이라이트 머티리얼 맵"))
+	TMap<EHellunaHeroType, TObjectPtr<UMaterialInterface>> PreviewHighlightMaterialMap;
 
 	/** RenderTarget 해상도 */
 	UPROPERTY(EditDefaultsOnly, Category = "CharacterPreview (캐릭터 프리뷰)", meta = (DisplayName = "렌더 타겟 해상도"))
