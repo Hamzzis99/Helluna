@@ -3,6 +3,7 @@
 
 #include "GameMode/HellunaDefenseGameState.h"
 #include "GameMode/HellunaDefenseGameMode.h"
+#include "Helluna.h"
 #include "Net/UnrealNetwork.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 #include "DebugHelper.h"
@@ -315,7 +316,7 @@ void AHellunaDefenseGameState::BeginPlay()
         UE_LOG(LogTemp, Warning, TEXT("[GameState] UDW 액터 없음 (데디서버 또는 미배치)"));
     }
 
-#if !UE_BUILD_SHIPPING
+#if !UE_BUILD_SHIPPING && HELLUNA_DEBUG_UDS
     // 디버그 빌드에서만 UDS 로깅 (1초 간격)
     if (bHasUDS)
     {
