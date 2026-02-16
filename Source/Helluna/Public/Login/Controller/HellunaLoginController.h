@@ -247,7 +247,7 @@ protected:
 
 	/** RenderTarget 해상도 */
 	UPROPERTY(EditDefaultsOnly, Category = "CharacterPreview (캐릭터 프리뷰)", meta = (DisplayName = "렌더 타겟 해상도"))
-	FIntPoint PreviewRenderTargetSize = FIntPoint(512, 512);
+	FIntPoint PreviewRenderTargetSize = FIntPoint(1024, 1024);
 
 	// ============================================
 	// 📌 캐릭터 프리뷰 내부 상태
