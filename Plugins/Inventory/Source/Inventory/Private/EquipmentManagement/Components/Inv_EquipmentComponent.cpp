@@ -280,6 +280,18 @@ void UInv_EquipmentComponent::OnItemEquipped(UInv_InventoryItem* EquippedItem, i
 							AttachableFrag->GetAttachOffset()
 						);
 					}
+
+					// ════════════════════════════════════════════════════════════════
+					// 📌 [Phase 7] 무기 장착 시 부착물 효과도 일괄 적용
+					// (소음기/스코프/레이저 등)
+					// ════════════════════════════════════════════════════════════════
+					if (AttachableFrag)
+					{
+						SpawnedEquipActor->ApplyAttachmentEffects(AttachableFrag);
+						UE_LOG(LogTemp, Warning, TEXT("📌 [Phase 7] 무기 장착 시 부착물 효과 적용: 슬롯 %d, bIsSuppressor=%s"),
+							AttachedData.SlotIndex,
+							AttachableFrag->GetIsSuppressor() ? TEXT("TRUE") : TEXT("FALSE"));
+					}
 				}
 			}
 		}
