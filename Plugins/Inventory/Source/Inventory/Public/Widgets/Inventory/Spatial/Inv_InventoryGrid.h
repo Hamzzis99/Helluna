@@ -132,9 +132,6 @@ public:
 	void CloseAttachmentPanel();
 	bool IsAttachmentPanelOpen() const;
 
-	// HoverItem을 부착물 패널 슬롯에 드롭 시도
-	bool TryDropOnAttachmentPanel();
-
 private:
 	// ⭐ 로드 중 RPC 억제 플래그
 	bool bSuppressServerSync = false;
@@ -315,19 +312,11 @@ private:
 	// 📌 [부착물 시스템 Phase 3] 부착물 패널 위젯
 	// ════════════════════════════════════════════════════════════════
 
-	UPROPERTY(EditAnywhere, Category = "Inventory|Attachment", meta = (DisplayName = "부착물 패널 클래스", Tooltip = "부착물 관리 패널 위젯 블루프린트 클래스"))
+	UPROPERTY(EditAnywhere, Category = "Attachment", meta = (DisplayName = "부착물 패널 클래스", Tooltip = "부착물 관리 패널 위젯 블루프린트 클래스"))
 	TSubclassOf<UInv_AttachmentPanel> AttachmentPanelClass;
 
 	UPROPERTY()
 	TObjectPtr<UInv_AttachmentPanel> AttachmentPanel;
-
-	// 부착물 분리 콜백 (패널에서 분리 요청 시)
-	UFUNCTION()
-	void OnAttachmentDetachRequested(int32 WeaponEntryIndex, int32 SlotIndex);
-
-	// 부착물 장착 콜백 (패널에 HoverItem 드롭 시)
-	UFUNCTION()
-	void OnAttachmentAttachRequested(int32 WeaponEntryIndex, int32 AttachmentEntryIndex, int32 SlotIndex);
 
 	// 부착물 패널 닫힘 콜백
 	UFUNCTION()

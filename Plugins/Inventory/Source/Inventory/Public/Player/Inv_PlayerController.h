@@ -11,6 +11,30 @@ class UInputMappingContext;
 class UInputAction;
 class UInv_HUDWidget;
 
+// ════════════════════════════════════════════════════════════════
+// 📌 [Phase 6] 부착물 저장 데이터
+// ════════════════════════════════════════════════════════════════
+// 무기에 장착된 부착물 1개의 저장 정보
+// FInv_SavedItemData 안에 TArray로 포함됨
+// ════════════════════════════════════════════════════════════════
+USTRUCT(BlueprintType)
+struct INVENTORY_API FInv_SavedAttachmentData
+{
+	GENERATED_BODY()
+
+	// 부착물 아이템 타입
+	UPROPERTY(BlueprintReadWrite, SaveGame, Category = "Inventory|Save", meta = (DisplayName = "AttachmentItemType (부착물 아이템 타입)"))
+	FGameplayTag AttachmentItemType;
+
+	// 장착된 슬롯 인덱스
+	UPROPERTY(BlueprintReadWrite, SaveGame, Category = "Inventory|Save", meta = (DisplayName = "SlotIndex (장착 슬롯 인덱스)"))
+	int32 SlotIndex = INDEX_NONE;
+
+	// 부착물의 AttachmentType 태그 (AttachableFragment의 AttachmentType)
+	UPROPERTY(BlueprintReadWrite, SaveGame, Category = "Inventory|Save", meta = (DisplayName = "AttachmentType (부착물 타입 태그)"))
+	FGameplayTag AttachmentType;
+};
+
 // ============================================
 // 📦 인벤토리 저장용 순수 데이터 구조체
 // ============================================
@@ -145,13 +169,23 @@ struct INVENTORY_API FInv_SavedItemData
 
 	/**
 	 * 무기 슬롯 인덱스 (장착된 경우에만 유효)
-	 * 
+	 *
 	 * -1 = 미장착 (Grid에 있음)
 	 *  0 = 주무기 슬롯
 	 *  1 = 보조무기 슬롯
 	 */
 	UPROPERTY(BlueprintReadWrite, Category = "Inventory|Save", meta = (DisplayName = "WeaponSlotIndex (무기 슬롯 인덱스)", Tooltip = "무기 슬롯 인덱스 (-1=미장착, 0=주무기, 1=보조무기)"))
 	int32 WeaponSlotIndex;
+
+	// ============================================
+	// 📌 [Phase 6 Attachment] 부착물 저장 데이터
+	// ============================================
+	// 무기 아이템인 경우, 장착된 부착물 목록
+	// 비무기 아이템이면 빈 배열
+	// ============================================
+	UPROPERTY(BlueprintReadWrite, SaveGame, Category = "Inventory|Save",
+		meta = (DisplayName = "Attachments (부착물 목록)"))
+	TArray<FInv_SavedAttachmentData> Attachments;
 
 	/** 유효한 데이터인지 확인 */
 	bool IsValid() const
@@ -174,19 +208,31 @@ struct INVENTORY_API FInv_SavedItemData
 	/** 디버그 문자열 */
 	FString ToString() const
 	{
+		FString Result;
 		if (bEquipped)
 		{
-			return FString::Printf(TEXT("[%s x%d @ ⚔️장착슬롯(%d)]"),
-				*ItemType.ToString(), 
-				StackCount, 
+			Result = FString::Printf(TEXT("[%s x%d @ 장착슬롯(%d)]"),
+				*ItemType.ToString(),
+				StackCount,
 				WeaponSlotIndex);
 		}
-		return FString::Printf(TEXT("[%s x%d @ Grid%d(%s) Pos(%d,%d)]"),
-			*ItemType.ToString(), 
-			StackCount, 
-			GridCategory,
-			*GetCategoryName(),
-			GridPosition.X, GridPosition.Y);
+		else
+		{
+			Result = FString::Printf(TEXT("[%s x%d @ Grid%d(%s) Pos(%d,%d)]"),
+				*ItemType.ToString(),
+				StackCount,
+				GridCategory,
+				*GetCategoryName(),
+				GridPosition.X, GridPosition.Y);
+		}
+
+		// 부착물 정보 추가
+		if (Attachments.Num() > 0)
+		{
+			Result += FString::Printf(TEXT(" +부착물%d개"), Attachments.Num());
+		}
+
+		return Result;
 	}
 };
 

@@ -101,4 +101,27 @@ private:
 	// ============================================
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory|Weapon|Socket", meta = (AllowPrivateAccess = "true", DisplayName = "보조무기 등 소켓"))
 	FName SecondaryBackSocket = TEXT("WeaponSocket_Secondary");
+
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [Phase 5] 부착물 메시 관리
+	// ════════════════════════════════════════════════════════════════
+	// 슬롯 인덱스 → 스폰된 StaticMeshComponent 매핑
+	UPROPERTY()
+	TMap<int32, TObjectPtr<UStaticMeshComponent>> AttachmentMeshComponents;
+
+public:
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [Phase 5] 부착물 메시 컴포넌트 스폰 및 소켓에 부착
+	// ════════════════════════════════════════════════════════════════
+	// @param SlotIndex  - 슬롯 인덱스 (AttachmentHostFragment의 슬롯 번호)
+	// @param Mesh       - 부착할 스태틱 메시
+	// @param SocketName - 부착할 소켓 이름 (SlotDef.AttachSocket)
+	// @param Offset     - 소켓 기준 오프셋 (AttachableFragment.AttachOffset)
+	void AttachMeshToSocket(int32 SlotIndex, UStaticMesh* Mesh, FName SocketName, const FTransform& Offset);
+
+	// 슬롯의 부착물 메시 제거
+	void DetachMeshFromSocket(int32 SlotIndex);
+
+	// 모든 부착물 메시 제거 (무기 해제 시)
+	void DetachAllMeshes();
 };

@@ -24,6 +24,7 @@
 #include "EquipmentManagement/Components/Inv_EquipmentComponent.h"
 #include "EquipmentManagement/EquipActor/Inv_EquipActor.h"
 #include "Items/Components/Inv_ItemComponent.h"
+#include "Items/Fragments/Inv_AttachmentFragments.h"
 #include "GameplayTagContainer.h"
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -322,7 +323,58 @@ void AInv_SaveGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
 			continue;
 		}
 
-		// 인벤토리에 추가
+		// ── [Phase 6 Attachment] 부착물 복원 ──
+		// 아이템을 인벤토리에 추가하기 전에, 저장된 부착물 데이터를
+		// ItemComponent의 Manifest에 주입하여 복원
+		if (ItemData.Attachments.Num() > 0)
+		{
+			FInv_ItemManifest WeaponManifest = ItemComp->GetItemManifest();
+			FInv_AttachmentHostFragment* HostFrag = WeaponManifest.GetFragmentOfTypeMutable<FInv_AttachmentHostFragment>();
+			if (HostFrag)
+			{
+				for (const FInv_SavedAttachmentData& AttSave : ItemData.Attachments)
+				{
+					// 부착물 아이템 액터를 임시 스폰하여 Manifest 복사
+					TSubclassOf<AActor> AttachClass = ResolveItemClass(AttSave.AttachmentItemType);
+					if (!AttachClass) continue;
+
+					AActor* TempActor = GetWorld()->SpawnActor<AActor>(
+						AttachClass,
+						FVector(0.f, 0.f, -10000.f),
+						FRotator::ZeroRotator,
+						SpawnParams);
+					if (!IsValid(TempActor)) continue;
+
+					UInv_ItemComponent* TempItemComp = TempActor->FindComponentByClass<UInv_ItemComponent>();
+					if (!IsValid(TempItemComp))
+					{
+						TempActor->Destroy();
+						continue;
+					}
+
+					// FInv_AttachedItemData 구성 → HostFragment에 부착
+					FInv_AttachedItemData AttachedData;
+					AttachedData.SlotIndex = AttSave.SlotIndex;
+					AttachedData.AttachmentItemType = AttSave.AttachmentItemType;
+					AttachedData.ItemManifestCopy = TempItemComp->GetItemManifest();
+
+					HostFrag->AttachItem(AttSave.SlotIndex, AttachedData);
+
+					UE_LOG(LogInventory, Log,
+						TEXT("[Attachment Save] 부착물 복원: %s → 슬롯 %d"),
+						*AttSave.AttachmentItemType.ToString(),
+						AttSave.SlotIndex);
+
+					// 임시 액터 정리
+					TempActor->Destroy();
+				}
+
+				// 수정된 Manifest를 ItemComponent에 반영
+				ItemComp->InitItemManifest(WeaponManifest);
+			}
+		}
+
+		// 인벤토리에 추가 (부착물 데이터가 이미 포함된 상태)
 		InvComp->Server_AddNewItem(ItemComp, ItemData.StackCount, 0);
 
 		// 그리드 위치 설정

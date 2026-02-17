@@ -141,6 +141,15 @@ struct FInv_AttachmentHostFragment : public FInv_ItemFragment
 	void OnEquipAllAttachments(APlayerController* PC);
 	void OnUnequipAllAttachments(APlayerController* PC);
 
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [Phase 4] Manifest 시 AttachedItems 보존
+	// ════════════════════════════════════════════════════════════════
+	// 기본 Manifest()는 Fragment를 초기화하지만
+	// AttachedItems는 런타임 장착 데이터이므로 보존해야 함
+	// 드롭/줍기 시 부착물 데이터가 유지됨
+	// ════════════════════════════════════════════════════════════════
+	virtual void Manifest() override;
+
 private:
 	// 에디터에서 정의하는 슬롯 배열 (예: 총은 [Scope, Muzzle, Grip] 3개)
 	UPROPERTY(EditAnywhere, Category = "Attachment", meta = (DisplayName = "SlotDefinitions (슬롯 정의 배열)", Tooltip = "이 무기가 가진 부착물 슬롯 목록"))

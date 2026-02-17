@@ -18,7 +18,7 @@
 #include "Widgets/Inventory/HoverItem/Inv_HoverItem.h"
 #include "Widgets/Inventory/SlottedItems/Inv_SlottedItem.h"
 #include "Widgets/ItemPopUp/Inv_ItemPopUp.h"
-#include "Widgets/Inventory/Attachment/Inv_AttachmentPanel.h"
+#include "Widgets/Inventory/AttachmentSlots/Inv_AttachmentPanel.h"
 #include "Items/Fragments/Inv_AttachmentFragments.h"
 
 // 인벤토리 바인딩 메뉴
@@ -2223,6 +2223,12 @@ void UInv_InventoryGrid::OnInventoryMenuToggled(bool bOpen)
 // ════════════════════════════════════════════════════════════════
 // 📌 [부착물 시스템 Phase 3] 부착물 관리 팝업 버튼 클릭 핸들러
 // ════════════════════════════════════════════════════════════════
+// 호출 경로: ItemPopUp의 Button_Attachment 클릭 → OnAttachment 델리게이트 → 이 함수
+// 처리 흐름:
+//   1. GridSlots[Index]에서 우클릭된 아이템 가져오기
+//   2. SlottedItem에서 EntryIndex 가져오기 (없으면 FindEntryIndexForItem 검색)
+//   3. OpenAttachmentPanel 호출
+// ════════════════════════════════════════════════════════════════
 void UInv_InventoryGrid::OnPopUpMenuAttachment(int32 Index)
 {
 	UInv_InventoryItem* RightClickedItem = GridSlots[Index]->GetInventoryItem().Get();
@@ -2246,35 +2252,46 @@ void UInv_InventoryGrid::OnPopUpMenuAttachment(int32 Index)
 
 	if (EntryIndex == INDEX_NONE)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[AttachmentPanel] EntryIndex를 찾을 수 없음!"));
+		UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] EntryIndex를 찾을 수 없음!"));
 		return;
 	}
 
 	OpenAttachmentPanel(RightClickedItem, EntryIndex);
 }
 
+// ════════════════════════════════════════════════════════════════
+// 📌 OpenAttachmentPanel — 부착물 관리 패널 열기
+// ════════════════════════════════════════════════════════════════
+// 호출 경로: OnPopUpMenuAttachment → 이 함수
+// 처리 흐름:
+//   1. AttachmentPanelClass 유효성 체크
+//   2. 기존 패널 열려있으면 닫기
+//   3. 패널 위젯 없으면 생성 + OwningCanvasPanel에 추가 + 위치 설정
+//   4. SetInventoryComponent / SetOwningGrid 참조 설정
+//   5. OpenForWeapon 호출
+// ════════════════════════════════════════════════════════════════
 void UInv_InventoryGrid::OpenAttachmentPanel(UInv_InventoryItem* WeaponItem, int32 WeaponEntryIndex)
 {
 	if (!IsValid(WeaponItem) || !InventoryComponent.IsValid()) return;
 	if (!AttachmentPanelClass)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[InventoryGrid] AttachmentPanelClass가 설정되지 않음!"));
+		UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] AttachmentPanelClass가 설정되지 않음!"));
 		return;
 	}
 
-	// 기존 패널이 있으면 닫기
-	if (IsValid(AttachmentPanel) && AttachmentPanel->IsPanelOpen())
+	// 기존 패널이 열려있으면 닫기
+	if (IsValid(AttachmentPanel) && AttachmentPanel->IsOpen())
 	{
 		AttachmentPanel->ClosePanel();
 	}
 
-	// 패널 위젯 생성
+	// 패널 위젯 생성 (처음 한 번만)
 	if (!IsValid(AttachmentPanel))
 	{
 		AttachmentPanel = CreateWidget<UInv_AttachmentPanel>(this, AttachmentPanelClass);
 		if (!IsValid(AttachmentPanel))
 		{
-			UE_LOG(LogTemp, Error, TEXT("[InventoryGrid] AttachmentPanel 생성 실패!"));
+			UE_LOG(LogTemp, Error, TEXT("[Attachment UI] AttachmentPanel 생성 실패!"));
 			return;
 		}
 
@@ -2293,75 +2310,46 @@ void UInv_InventoryGrid::OpenAttachmentPanel(UInv_InventoryItem* WeaponItem, int
 				CanvasSlot->SetAutoSize(true);
 			}
 		}
+
+		// 패널 닫힘 콜백 바인딩
+		AttachmentPanel->OnPanelClosed.AddDynamic(this, &ThisClass::OnAttachmentPanelClosed);
 	}
 
-	// 분리 / 부착 델리게이트 바인딩
-	AttachmentPanel->OnDetachRequested.BindDynamic(this, &ThisClass::OnAttachmentDetachRequested);
-	AttachmentPanel->OnAttachRequested.BindDynamic(this, &ThisClass::OnAttachmentAttachRequested);
-	AttachmentPanel->OnPanelClosed.AddDynamic(this, &ThisClass::OnAttachmentPanelClosed);
+	// 참조 설정 (패널이 직접 Server RPC 호출)
+	AttachmentPanel->SetInventoryComponent(InventoryComponent.Get());
+	AttachmentPanel->SetOwningGrid(this);
 
 	// 패널 열기
-	AttachmentPanel->OpenPanel(WeaponItem, WeaponEntryIndex, InventoryComponent.Get());
+	AttachmentPanel->OpenForWeapon(WeaponItem, WeaponEntryIndex);
 
-	UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] 부착물 패널 열림: WeaponEntry=%d"), WeaponEntryIndex);
+	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 패널 열림: WeaponEntry=%d"), WeaponEntryIndex);
 }
 
+// ════════════════════════════════════════════════════════════════
+// 📌 CloseAttachmentPanel — 부착물 패널 닫기
+// ════════════════════════════════════════════════════════════════
 void UInv_InventoryGrid::CloseAttachmentPanel()
 {
-	if (IsValid(AttachmentPanel) && AttachmentPanel->IsPanelOpen())
+	if (IsValid(AttachmentPanel) && AttachmentPanel->IsOpen())
 	{
 		AttachmentPanel->ClosePanel();
 	}
 }
 
+// ════════════════════════════════════════════════════════════════
+// 📌 IsAttachmentPanelOpen — 부착물 패널이 열려있는지 확인
+// ════════════════════════════════════════════════════════════════
 bool UInv_InventoryGrid::IsAttachmentPanelOpen() const
 {
-	return IsValid(AttachmentPanel) && AttachmentPanel->IsPanelOpen();
+	return IsValid(AttachmentPanel) && AttachmentPanel->IsOpen();
 }
 
-bool UInv_InventoryGrid::TryDropOnAttachmentPanel()
-{
-	if (!IsAttachmentPanelOpen()) return false;
-	if (!IsValid(HoverItem)) return false;
-
-	return AttachmentPanel->TryDropHoverItemOnSlot(HoverItem);
-}
-
-void UInv_InventoryGrid::OnAttachmentDetachRequested(int32 WeaponEntryIndex, int32 SlotIndex)
-{
-	if (!InventoryComponent.IsValid()) return;
-
-	UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] 부착물 분리 요청: WeaponEntry=%d, Slot=%d"), WeaponEntryIndex, SlotIndex);
-
-	// 서버 RPC 호출
-	InventoryComponent->Server_DetachItemFromWeapon(WeaponEntryIndex, SlotIndex);
-
-	// 패널 새로고침 (서버에서 MarkItemDirty 후 리플리케이션으로 갱신됨)
-	// 일단 패널을 닫고, 다시 열면 서버 데이터가 반영됨
-	CloseAttachmentPanel();
-}
-
-void UInv_InventoryGrid::OnAttachmentAttachRequested(int32 WeaponEntryIndex, int32 AttachmentEntryIndex, int32 SlotIndex)
-{
-	if (!InventoryComponent.IsValid()) return;
-
-	UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] 부착물 장착 요청: WeaponEntry=%d, AttachmentEntry=%d, Slot=%d"),
-		WeaponEntryIndex, AttachmentEntryIndex, SlotIndex);
-
-	// 서버 RPC 호출
-	InventoryComponent->Server_AttachItemToWeapon(WeaponEntryIndex, AttachmentEntryIndex, SlotIndex);
-
-	// HoverItem 정리
-	ClearHoverItem();
-	ShowCursor();
-
-	// 패널 닫기 (리플리케이션 후 다시 열면 최신 상태 반영)
-	CloseAttachmentPanel();
-}
-
+// ════════════════════════════════════════════════════════════════
+// 📌 OnAttachmentPanelClosed — 패널 닫힘 콜백
+// ════════════════════════════════════════════════════════════════
 void UInv_InventoryGrid::OnAttachmentPanelClosed()
 {
-	UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] 부착물 패널 닫힘 콜백"));
+	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 패널 닫힘 콜백 (InventoryGrid)"));
 }
 
 bool UInv_InventoryGrid::MatchesCategory(const UInv_InventoryItem* Item) const

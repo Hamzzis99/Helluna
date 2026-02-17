@@ -242,12 +242,46 @@ void UInv_EquipmentComponent::OnItemEquipped(UInv_InventoryItem* EquippedItem, i
 			// WeaponSlotIndex는 이미 SpawnAttachedActor에서 설정됨
 			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] SpawnedEquipActor WeaponSlotIndex: %d"), SpawnedEquipActor->GetWeaponSlotIndex());
 #endif
-			
+
 			EquippedActors.Add(SpawnedEquipActor);
 #if INV_DEBUG_EQUIP
-			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] 서버: EquippedActors에 추가됨: %s (총 %d개) - this: %p"), 
+			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] 서버: EquippedActors에 추가됨: %s (총 %d개) - this: %p"),
 				*SpawnedEquipActor->GetName(), EquippedActors.Num(), this);
 #endif
+
+			// ════════════════════════════════════════════════════════════════
+			// 📌 [Phase 5] 무기 장착 시 부착물 메시도 함께 스폰
+			// 처리 흐름:
+			//   1. AttachmentHostFragment의 AttachedItems 순회
+			//   2. 각 부착물의 AttachableFragment에서 Mesh, Socket, Offset 가져오기
+			//   3. EquipActor->AttachMeshToSocket 호출
+			// ════════════════════════════════════════════════════════════════
+			FInv_AttachmentHostFragment* AttachHostFrag = ItemManifest.GetFragmentOfTypeMutable<FInv_AttachmentHostFragment>();
+			if (AttachHostFrag)
+			{
+				const TArray<FInv_AttachmentSlotDef>& SlotDefs = AttachHostFrag->GetSlotDefinitions();
+				for (const FInv_AttachedItemData& AttachedData : AttachHostFrag->GetAttachedItems())
+				{
+					// 부착물의 AttachableFragment에서 메시 정보 가져오기
+					const FInv_AttachableFragment* AttachableFrag = AttachedData.ItemManifestCopy.GetFragmentOfType<FInv_AttachableFragment>();
+					if (AttachableFrag && AttachableFrag->GetAttachmentMesh())
+					{
+						// 슬롯 정의에서 소켓 이름 가져오기
+						FName SocketName = NAME_None;
+						if (SlotDefs.IsValidIndex(AttachedData.SlotIndex))
+						{
+							SocketName = SlotDefs[AttachedData.SlotIndex].AttachSocket;
+						}
+
+						SpawnedEquipActor->AttachMeshToSocket(
+							AttachedData.SlotIndex,
+							AttachableFrag->GetAttachmentMesh(),
+							SocketName,
+							AttachableFrag->GetAttachOffset()
+						);
+					}
+				}
+			}
 		}
 		else
 		{
@@ -360,6 +394,17 @@ void UInv_EquipmentComponent::OnItemUnequipped(UInv_InventoryItem* UnequippedIte
 		EquipmentFragment->OnUnequip(OwningPlayerController.Get());
 	}
 	
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [Phase 5] 무기 해제 시 부착물 메시도 함께 제거
+	// ════════════════════════════════════════════════════════════════
+	{
+		AInv_EquipActor* WeaponActor = FindEquippedActor(EquipmentFragment->GetEquipmentType());
+		if (IsValid(WeaponActor))
+		{
+			WeaponActor->DetachAllMeshes();
+		}
+	}
+
 	// ⭐ [WeaponBridge] 장비 제거하는 부분 (등 무기 Destroy)
 	// ⭐ WeaponSlotIndex를 전달하여 정확한 무기만 제거
 	RemoveEquippedActor(EquipmentFragment->GetEquipmentType(), WeaponSlotIndex);

@@ -25,6 +25,8 @@
 #include "Items/Inv_InventoryItem.h"
 #include "Items/Fragments/Inv_ItemFragment.h"
 #include "Building/Components/Inv_BuildingComponent.h"
+#include "EquipmentManagement/Components/Inv_EquipmentComponent.h"
+#include "EquipmentManagement/EquipActor/Inv_EquipActor.h"
 #include "Kismet/GameplayStatics.h"
 #include "Player/Inv_PlayerController.h"  // FInv_SavedItemData 사용
 
@@ -1689,6 +1691,23 @@ void UInv_InventoryComponent::Server_AttachItemToWeapon_Implementation(int32 Wea
 				MutableAttachable->OnEquip(OwningController.Get());
 			}
 		}
+
+		// ════════════════════════════════════════════════════════════════
+		// 📌 [Phase 5] 실시간 부착물 메시 추가 (무기가 장착 중일 때만)
+		// ════════════════════════════════════════════════════════════════
+		AInv_EquipActor* EquipActor = EquipFragment->GetEquippedActor();
+		if (IsValid(EquipActor) && AttachableFragment->GetAttachmentMesh())
+		{
+			const FInv_AttachmentSlotDef* MeshSlotDef = HostFragment->GetSlotDef(SlotIndex);
+			FName MeshSocketName = MeshSlotDef ? MeshSlotDef->AttachSocket : NAME_None;
+			EquipActor->AttachMeshToSocket(
+				SlotIndex,
+				AttachableFragment->GetAttachmentMesh(),
+				MeshSocketName,
+				AttachableFragment->GetAttachOffset()
+			);
+			UE_LOG(LogTemp, Log, TEXT("[Attachment Visual] 실시간 부착물 메시 추가: 슬롯 %d"), SlotIndex);
+		}
 	}
 }
 
@@ -1766,6 +1785,16 @@ void UInv_InventoryComponent::Server_DetachItemFromWeapon_Implementation(int32 W
 		if (MutableAttachable)
 		{
 			MutableAttachable->OnUnequip(OwningController.Get());
+		}
+
+		// ════════════════════════════════════════════════════════════════
+		// 📌 [Phase 5] 실시간 부착물 메시 제거 (무기가 장착 중일 때만)
+		// ════════════════════════════════════════════════════════════════
+		AInv_EquipActor* EquipActor = EquipFragment->GetEquippedActor();
+		if (IsValid(EquipActor))
+		{
+			EquipActor->DetachMeshFromSocket(SlotIndex);
+			UE_LOG(LogTemp, Log, TEXT("[Attachment Visual] 실시간 부착물 메시 제거: 슬롯 %d"), SlotIndex);
 		}
 	}
 
@@ -2598,6 +2627,38 @@ TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave(
 
 		// FInv_SavedItemData 생성
 		FInv_SavedItemData SavedItem(ItemType, StackCount, GridPosition, GridCategory);
+
+		// ── [Phase 6 Attachment] 부착물 데이터 수집 ──
+		// 무기 아이템인 경우 AttachmentHostFragment의 AttachedItems 수집
+		if (Entry.Item->HasAttachmentSlots())
+		{
+			const FInv_ItemManifest& ItemManifest = Entry.Item->GetItemManifest();
+			const FInv_AttachmentHostFragment* HostFrag = ItemManifest.GetFragmentOfType<FInv_AttachmentHostFragment>();
+			if (HostFrag)
+			{
+				for (const FInv_AttachedItemData& Attached : HostFrag->GetAttachedItems())
+				{
+					FInv_SavedAttachmentData AttSave;
+					AttSave.AttachmentItemType = Attached.AttachmentItemType;
+					AttSave.SlotIndex = Attached.SlotIndex;
+
+					// AttachableFragment에서 AttachmentType 추출
+					const FInv_AttachableFragment* AttachableFrag =
+						Attached.ItemManifestCopy.GetFragmentOfType<FInv_AttachableFragment>();
+					if (AttachableFrag)
+					{
+						AttSave.AttachmentType = AttachableFrag->GetAttachmentType();
+					}
+
+					SavedItem.Attachments.Add(AttSave);
+				}
+
+#if INV_DEBUG_INVENTORY
+				UE_LOG(LogTemp, Warning, TEXT("║ [%d]   → 부착물 %d개 수집"), i, SavedItem.Attachments.Num());
+#endif
+			}
+		}
+
 		Result.Add(SavedItem);
 
 #if INV_DEBUG_INVENTORY

@@ -42,6 +42,7 @@
 //    - GridCategory (uint8): 0=장비, 1=소모품, 2=재료
 //    - bEquipped (bool): 장착 여부
 //    - WeaponSlotIndex (int32): 장착 슬롯 번호 (미장착 시 -1)
+//    - Attachments (TArray<FInv_SavedAttachmentData>): 무기 부착물 목록 (v2+)
 //
 // ════════════════════════════════════════════════════════════════════════════════
 USTRUCT(BlueprintType)
@@ -59,10 +60,15 @@ struct INVENTORY_API FInv_PlayerSaveData
 		meta = (DisplayName = "마지막 저장 시간(LastSaveTime)"))
 	FDateTime LastSaveTime = FDateTime::MinValue();
 
-	/** 저장 데이터 버전 — 나중에 데이터 구조 변경 시 마이그레이션용 */
+	/**
+	 * 저장 데이터 버전 — 데이터 구조 변경 시 마이그레이션용
+	 *
+	 * Version 1: 기본 인벤토리 (아이템 + 장착 상태)
+	 * Version 2: 부착물 시스템 추가 (FInv_SavedAttachmentData)
+	 */
 	UPROPERTY(SaveGame, BlueprintReadWrite, Category = "인벤토리 저장",
 		meta = (DisplayName = "저장 버전(SaveVersion)"))
-	int32 SaveVersion = 1;
+	int32 SaveVersion = 2;
 
 	/** 비어있는지 확인 */
 	bool IsEmpty() const { return Items.Num() == 0; }

@@ -1,0 +1,516 @@
+// Gihyeon's Inventory Project
+//
+// ════════════════════════════════════════════════════════════════════════════════
+// 📌 부착물 패널 위젯 (Attachment Panel) — Phase 3 구현
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 📌 핵심 흐름:
+//    OpenForWeapon → BuildSlotWidgets → UniformGridPanel에 2열 배치
+//    좌클릭 → TryAttachHoverItem → Server_AttachItemToWeapon
+//    우클릭 → TryDetachItem → Server_DetachItemFromWeapon
+//    NativeTick → UpdateSlotHighlights → HoverItem 호환 슬롯 하이라이트
+//    ClosePanel → ClearSlotWidgets → 패널 숨기기
+//
+// ════════════════════════════════════════════════════════════════════════════════
+
+#include "Widgets/Inventory/AttachmentSlots/Inv_AttachmentPanel.h"
+
+#include "Widgets/Inventory/AttachmentSlots/Inv_AttachmentSlotWidget.h"
+#include "Widgets/Inventory/Spatial/Inv_InventoryGrid.h"
+#include "Widgets/Inventory/HoverItem/Inv_HoverItem.h"
+#include "Items/Inv_InventoryItem.h"
+#include "Items/Fragments/Inv_AttachmentFragments.h"
+#include "Items/Fragments/Inv_ItemFragment.h"
+#include "InventoryManagement/Components/Inv_InventoryComponent.h"
+#include "Components/Button.h"
+#include "Components/TextBlock.h"
+#include "Components/Image.h"
+#include "Components/UniformGridPanel.h"
+
+// ════════════════════════════════════════════════════════════════
+// 📌 NativeOnInitialized — 위젯 초기화
+// ════════════════════════════════════════════════════════════════
+void UInv_AttachmentPanel::NativeOnInitialized()
+{
+	Super::NativeOnInitialized();
+
+	// 닫기 버튼 클릭 바인딩
+	if (IsValid(Button_Close))
+	{
+		Button_Close->OnClicked.AddDynamic(this, &ThisClass::OnCloseButtonClicked);
+	}
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 NativeTick — 매 프레임 호출 (HoverItem 호환 슬롯 하이라이트)
+// ════════════════════════════════════════════════════════════════
+// 호출 경로: UMG 틱 → 이 함수
+// 처리 흐름:
+//   1. 패널이 열려있으면 UpdateSlotHighlights() 호출
+// Phase 연결: Phase 3 UI — 실시간 호환성 표시
+// ════════════════════════════════════════════════════════════════
+void UInv_AttachmentPanel::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+
+	if (bIsOpen)
+	{
+		UpdateSlotHighlights();
+	}
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 SetInventoryComponent — 인벤토리 컴포넌트 참조 설정
+// ════════════════════════════════════════════════════════════════
+void UInv_AttachmentPanel::SetInventoryComponent(UInv_InventoryComponent* InvComp)
+{
+	InventoryComponent = InvComp;
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 SetOwningGrid — 소유 Grid 참조 설정
+// ════════════════════════════════════════════════════════════════
+void UInv_AttachmentPanel::SetOwningGrid(UInv_InventoryGrid* Grid)
+{
+	OwningGrid = Grid;
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 OpenForWeapon — 무기 아이템의 부착물 슬롯을 패널에 표시
+// ════════════════════════════════════════════════════════════════
+// 호출 경로: InventoryGrid::OpenAttachmentPanel → 이 함수
+// 처리 흐름:
+//   1. CurrentWeaponItem, CurrentWeaponEntryIndex 캐시
+//   2. 무기 아이콘 → Image_WeaponIcon 설정
+//   3. 무기 이름 → Text_WeaponName 설정
+//   4. BuildSlotWidgets() 호출
+//   5. SetVisibility(Visible), bIsOpen = true
+// 실패 조건: WeaponItem이 nullptr이거나 부착물 슬롯이 없을 때
+// ════════════════════════════════════════════════════════════════
+void UInv_AttachmentPanel::OpenForWeapon(UInv_InventoryItem* WeaponItem, int32 WeaponEntryIndex)
+{
+	if (!IsValid(WeaponItem))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] OpenForWeapon 실패: WeaponItem이 nullptr"));
+		return;
+	}
+
+	if (!WeaponItem->HasAttachmentSlots())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] OpenForWeapon 실패: 부착물 슬롯이 없는 아이템"));
+		return;
+	}
+
+	CurrentWeaponItem = WeaponItem;
+	CurrentWeaponEntryIndex = WeaponEntryIndex;
+
+	// 무기 아이콘 설정
+	const FInv_ImageFragment* ImageFrag = WeaponItem->GetItemManifest().GetFragmentOfType<FInv_ImageFragment>();
+	if (ImageFrag && IsValid(Image_WeaponIcon))
+	{
+		UTexture2D* Icon = ImageFrag->GetIcon();
+		if (IsValid(Icon))
+		{
+			FSlateBrush WeaponBrush;
+			WeaponBrush.SetResourceObject(Icon);
+			WeaponBrush.ImageSize = FVector2D(48.f, 48.f);
+			Image_WeaponIcon->SetBrush(WeaponBrush);
+		}
+	}
+
+	// 무기 이름 설정
+	if (IsValid(Text_WeaponName))
+	{
+		const FInv_TextFragment* TextFrag = WeaponItem->GetItemManifest().GetFragmentOfType<FInv_TextFragment>();
+		if (TextFrag)
+		{
+			Text_WeaponName->SetText(TextFrag->GetText());
+		}
+		else
+		{
+			Text_WeaponName->SetText(FText::FromString(TEXT("무기")));
+		}
+	}
+
+	// 슬롯 위젯 생성
+	BuildSlotWidgets();
+
+	// 패널 보이기
+	SetVisibility(ESlateVisibility::Visible);
+	bIsOpen = true;
+
+	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 패널 열림: 무기=%s, 슬롯=%d개, EntryIndex=%d"),
+		*WeaponItem->GetItemManifest().GetItemType().ToString(),
+		WeaponItem->GetAttachmentSlotCount(),
+		WeaponEntryIndex);
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 ClosePanel — 패널 닫기 및 정리
+// ════════════════════════════════════════════════════════════════
+// 호출 경로: OnCloseButtonClicked / InventoryGrid::CloseAttachmentPanel → 이 함수
+// 처리 흐름:
+//   1. ClearSlotWidgets() — 슬롯 위젯 정리
+//   2. 상태 초기화
+//   3. SetVisibility(Collapsed)
+//   4. OnPanelClosed 브로드캐스트
+// ════════════════════════════════════════════════════════════════
+void UInv_AttachmentPanel::ClosePanel()
+{
+	ClearSlotWidgets();
+	bIsOpen = false;
+	CurrentWeaponItem.Reset();
+	CurrentWeaponEntryIndex = INDEX_NONE;
+
+	SetVisibility(ESlateVisibility::Collapsed);
+
+	OnPanelClosed.Broadcast();
+
+	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 패널 닫힘"));
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 BuildSlotWidgets — 슬롯 위젯 생성 및 UniformGridPanel에 2열 배치
+// ════════════════════════════════════════════════════════════════
+// 호출 경로: OpenForWeapon → 이 함수
+// 처리 흐름:
+//   1. ClearSlotWidgets() — 기존 위젯 정리
+//   2. AttachmentHostFragment에서 SlotDefinitions 가져오기
+//   3. 각 슬롯에 대해 CreateWidget → InitSlot → 델리게이트 바인딩
+//   4. UniformGridPanel에 Row=i/2, Col=i%2로 추가 (2열 자동 격자)
+// ════════════════════════════════════════════════════════════════
+void UInv_AttachmentPanel::BuildSlotWidgets()
+{
+	ClearSlotWidgets();
+
+	if (!CurrentWeaponItem.IsValid()) return;
+	if (!AttachmentSlotWidgetClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Attachment UI] AttachmentSlotWidgetClass가 설정되지 않음!"));
+		return;
+	}
+
+	// 무기의 AttachmentHostFragment 가져오기
+	const FInv_AttachmentHostFragment* HostFrag = CurrentWeaponItem->GetItemManifest().GetFragmentOfType<FInv_AttachmentHostFragment>();
+	if (!HostFrag)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Attachment UI] AttachmentHostFragment를 찾을 수 없음!"));
+		return;
+	}
+
+	const TArray<FInv_AttachmentSlotDef>& SlotDefs = HostFrag->GetSlotDefinitions();
+
+	for (int32 i = 0; i < SlotDefs.Num(); ++i)
+	{
+		UInv_AttachmentSlotWidget* SlotWidget = CreateWidget<UInv_AttachmentSlotWidget>(this, AttachmentSlotWidgetClass);
+		if (!IsValid(SlotWidget)) continue;
+
+		// 장착된 부착물 데이터 확인
+		const FInv_AttachedItemData* AttachedData = HostFrag->GetAttachedItemData(i);
+
+		// 슬롯 초기화 (장착 데이터 있으면 전달)
+		SlotWidget->InitSlot(i, SlotDefs[i], AttachedData);
+
+		// 슬롯 클릭 델리게이트 바인딩
+		SlotWidget->OnSlotClicked.AddDynamic(this, &ThisClass::OnSlotClicked);
+
+		// UniformGridPanel에 2열 격자로 추가
+		if (IsValid(UniformGridPanel_Slots))
+		{
+			UniformGridPanel_Slots->AddChildToUniformGrid(SlotWidget, i / 2, i % 2);
+		}
+
+		SlotWidgets.Add(SlotWidget);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 슬롯 위젯 %d개 생성 완료"), SlotWidgets.Num());
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 ClearSlotWidgets — 모든 슬롯 위젯 제거
+// ════════════════════════════════════════════════════════════════
+void UInv_AttachmentPanel::ClearSlotWidgets()
+{
+	for (TObjectPtr<UInv_AttachmentSlotWidget>& Widget : SlotWidgets)
+	{
+		if (IsValid(Widget))
+		{
+			Widget->RemoveFromParent();
+		}
+	}
+	SlotWidgets.Empty();
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 RefreshSlotStates — 슬롯 상태 새로고침
+// ════════════════════════════════════════════════════════════════
+// 호출 경로: TryAttachHoverItem / TryDetachItem → 이 함수
+// 처리 흐름:
+//   1. 무기의 AttachmentHostFragment 재조회
+//   2. 각 SlotWidget에 대해 AttachedItemData 유무로 SetOccupied/SetEmpty 호출
+// ════════════════════════════════════════════════════════════════
+void UInv_AttachmentPanel::RefreshSlotStates()
+{
+	if (!CurrentWeaponItem.IsValid()) return;
+
+	const FInv_AttachmentHostFragment* HostFrag = CurrentWeaponItem->GetItemManifest().GetFragmentOfType<FInv_AttachmentHostFragment>();
+	if (!HostFrag) return;
+
+	for (int32 i = 0; i < SlotWidgets.Num(); ++i)
+	{
+		if (!IsValid(SlotWidgets[i])) continue;
+
+		const FInv_AttachedItemData* AttachedData = HostFrag->GetAttachedItemData(i);
+		if (AttachedData)
+		{
+			SlotWidgets[i]->SetOccupied(*AttachedData);
+		}
+		else
+		{
+			SlotWidgets[i]->SetEmpty();
+		}
+	}
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 UpdateSlotHighlights — HoverItem 호환 슬롯 실시간 하이라이트
+// ════════════════════════════════════════════════════════════════
+// 호출 경로: NativeTick → 이 함수
+// 처리 흐름:
+//   1. OwningGrid에 HoverItem이 있는지 확인
+//   2. HoverItem의 아이템이 부착물인지 확인 (IsAttachableItem)
+//   3. 부착물이면 각 SlotWidget의 SlotType과 AttachmentType 비교
+//   4. 호환이면 SetHighlighted(true), 아니면 SetHighlighted(false)
+//   5. HoverItem 없으면 모든 SlotWidget SetHighlighted(false)
+// Phase 연결: Phase 3 UI — 드래그 중 호환 슬롯 표시
+// ════════════════════════════════════════════════════════════════
+void UInv_AttachmentPanel::UpdateSlotHighlights()
+{
+	// Grid에서 HoverItem 확인
+	if (!OwningGrid.IsValid())
+	{
+		return;
+	}
+
+	UInv_HoverItem* HoverItem = OwningGrid->GetHoverItem();
+
+	if (IsValid(HoverItem))
+	{
+		UInv_InventoryItem* HoverInvItem = HoverItem->GetInventoryItem();
+		if (IsValid(HoverInvItem) && HoverInvItem->IsAttachableItem())
+		{
+			// 부착물의 AttachableFragment에서 AttachmentType 가져오기
+			const FInv_AttachableFragment* AttachableFrag = HoverInvItem->GetItemManifest().GetFragmentOfType<FInv_AttachableFragment>();
+			if (AttachableFrag)
+			{
+				const FGameplayTag AttachType = AttachableFrag->GetAttachmentType();
+
+				// 각 슬롯과 호환성 비교
+				for (TObjectPtr<UInv_AttachmentSlotWidget>& SlotWidget : SlotWidgets)
+				{
+					if (!IsValid(SlotWidget)) continue;
+
+					// 슬롯이 비어있고, 호환 타입이면 하이라이트
+					const bool bCompatible = !SlotWidget->IsOccupied() && SlotWidget->GetSlotType().MatchesTag(AttachType);
+					SlotWidget->SetHighlighted(bCompatible);
+				}
+				return;
+			}
+		}
+	}
+
+	// HoverItem 없거나 부착물이 아닌 경우: 모든 하이라이트 끄기
+	for (TObjectPtr<UInv_AttachmentSlotWidget>& SlotWidget : SlotWidgets)
+	{
+		if (IsValid(SlotWidget))
+		{
+			SlotWidget->SetHighlighted(false);
+		}
+	}
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 OnSlotClicked — 슬롯 클릭 콜백 (좌클릭=장착, 우클릭=분리 분기)
+// ════════════════════════════════════════════════════════════════
+// 호출 경로: SlotWidget::NativeOnMouseButtonDown → OnSlotClicked 델리게이트 → 이 함수
+// 처리 흐름:
+//   1. 우클릭 + 슬롯 Occupied → TryDetachItem
+//   2. 좌클릭 + OwningGrid에 HoverItem 있음 → TryAttachHoverItem
+//   3. 그 외 → 로그만 출력
+// ════════════════════════════════════════════════════════════════
+void UInv_AttachmentPanel::OnSlotClicked(int32 SlotIndex, const FPointerEvent& MouseEvent)
+{
+	const bool bIsRightClick = MouseEvent.GetEffectingButton() == EKeys::RightMouseButton;
+	const bool bIsLeftClick = MouseEvent.GetEffectingButton() == EKeys::LeftMouseButton;
+
+	// 슬롯 인덱스 유효성 검사
+	if (SlotIndex < 0 || SlotIndex >= SlotWidgets.Num())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] 유효하지 않은 슬롯 인덱스: %d"), SlotIndex);
+		return;
+	}
+
+	const bool bSlotOccupied = IsValid(SlotWidgets[SlotIndex]) && SlotWidgets[SlotIndex]->IsOccupied();
+
+	if (bIsRightClick && bSlotOccupied)
+	{
+		// 우클릭 + 점유된 슬롯 → 분리
+		TryDetachItem(SlotIndex);
+	}
+	else if (bIsLeftClick && OwningGrid.IsValid() && OwningGrid->HasHoverItem())
+	{
+		// 좌클릭 + HoverItem 있음 → 장착 시도
+		TryAttachHoverItem(SlotIndex);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 슬롯 %d 클릭됨 — 조건 미충족 (우클릭=%s, 좌클릭=%s, 점유=%s, HoverItem=%s)"),
+			SlotIndex,
+			bIsRightClick ? TEXT("O") : TEXT("X"),
+			bIsLeftClick ? TEXT("O") : TEXT("X"),
+			bSlotOccupied ? TEXT("O") : TEXT("X"),
+			(OwningGrid.IsValid() && OwningGrid->HasHoverItem()) ? TEXT("O") : TEXT("X"));
+	}
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 TryAttachHoverItem — HoverItem을 슬롯에 장착 시도
+// ════════════════════════════════════════════════════════════════
+// 호출 경로: OnSlotClicked (좌클릭) → 이 함수
+// 처리 흐름:
+//   1. HoverItem에서 InventoryItem 가져오기
+//   2. 부착물의 EntryIndex → FindEntryIndexForItem으로 재검색
+//   3. WeaponEntryIndex → FindCurrentWeaponEntryIndex로 재검색
+//   4. CanAttachToWeapon 체크
+//   5. 통과 → Server_AttachItemToWeapon RPC + ClearHoverItem + RefreshSlotStates
+//   6. 실패 → 경고 로그
+// ⚠️ EntryIndex 밀림 대비: 포인터로 현재 인덱스 재검색
+// ════════════════════════════════════════════════════════════════
+void UInv_AttachmentPanel::TryAttachHoverItem(int32 SlotIndex)
+{
+	if (!OwningGrid.IsValid() || !InventoryComponent.IsValid()) return;
+
+	UInv_HoverItem* HoverItem = OwningGrid->GetHoverItem();
+	if (!IsValid(HoverItem)) return;
+
+	UInv_InventoryItem* AttachmentItem = HoverItem->GetInventoryItem();
+	if (!IsValid(AttachmentItem)) return;
+
+	// 부착물 아이템인지 확인
+	if (!AttachmentItem->IsAttachableItem())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] 장착 실패: 부착물이 아닌 아이템"));
+		return;
+	}
+
+	// ⚠️ EntryIndex 밀림 대비: 포인터로 현재 인덱스 재검색
+	const int32 AttachmentEntryIndex = InventoryComponent->FindEntryIndexForItem(AttachmentItem);
+	const int32 WeaponEntryIndex = FindCurrentWeaponEntryIndex();
+
+	if (AttachmentEntryIndex == INDEX_NONE)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Attachment UI] 장착 실패: 부착물 EntryIndex를 찾을 수 없음"));
+		return;
+	}
+	if (WeaponEntryIndex == INDEX_NONE)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Attachment UI] 장착 실패: 무기 EntryIndex를 찾을 수 없음"));
+		return;
+	}
+
+	// 호환성 체크
+	if (!InventoryComponent->CanAttachToWeapon(WeaponEntryIndex, AttachmentEntryIndex, SlotIndex))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] 장착 실패: 호환 안 됨 (슬롯=%d)"), SlotIndex);
+		return;
+	}
+
+	// 서버 RPC 호출
+	InventoryComponent->Server_AttachItemToWeapon(WeaponEntryIndex, AttachmentEntryIndex, SlotIndex);
+
+	// HoverItem 정리 및 커서 복원
+	OwningGrid->ClearHoverItem();
+	OwningGrid->ShowCursor();
+
+	// 슬롯 상태 갱신
+	RefreshSlotStates();
+
+	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 장착 성공: 슬롯 %d에 %s (WeaponEntry=%d, AttachEntry=%d)"),
+		SlotIndex,
+		*AttachmentItem->GetItemManifest().GetItemType().ToString(),
+		WeaponEntryIndex,
+		AttachmentEntryIndex);
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 TryDetachItem — 점유된 슬롯에서 부착물 분리
+// ════════════════════════════════════════════════════════════════
+// 호출 경로: OnSlotClicked (우클릭) → 이 함수
+// 처리 흐름:
+//   1. WeaponEntryIndex 재검색 (밀림 대비)
+//   2. Server_DetachItemFromWeapon RPC 호출
+//   3. RefreshSlotStates
+// ════════════════════════════════════════════════════════════════
+void UInv_AttachmentPanel::TryDetachItem(int32 SlotIndex)
+{
+	if (!InventoryComponent.IsValid()) return;
+
+	// ⚠️ EntryIndex 밀림 대비: 포인터로 재검색
+	const int32 WeaponEntryIndex = FindCurrentWeaponEntryIndex();
+	if (WeaponEntryIndex == INDEX_NONE)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Attachment UI] 분리 실패: 무기 EntryIndex를 찾을 수 없음"));
+		return;
+	}
+
+	// 서버 RPC 호출
+	InventoryComponent->Server_DetachItemFromWeapon(WeaponEntryIndex, SlotIndex);
+
+	// 슬롯 상태 갱신
+	RefreshSlotStates();
+
+	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 분리 완료: 슬롯 %d (WeaponEntry=%d)"),
+		SlotIndex, WeaponEntryIndex);
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 OnCloseButtonClicked — 닫기 버튼 클릭 핸들러
+// ════════════════════════════════════════════════════════════════
+void UInv_AttachmentPanel::OnCloseButtonClicked()
+{
+	ClosePanel();
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 FindCurrentWeaponEntryIndex — 무기 포인터로 현재 EntryIndex 재검색
+// ════════════════════════════════════════════════════════════════
+// 호출 경로: TryAttachHoverItem / TryDetachItem → 이 함수
+// 처리 흐름:
+//   1. InventoryComponent의 FindEntryIndexForItem 호출
+//   2. 못 찾으면 INDEX_NONE + 에러 로그
+// ⚠️ 부착물 분리 시 InventoryList에 아이템이 추가되어 EntryIndex 밀림 가능
+// ════════════════════════════════════════════════════════════════
+int32 UInv_AttachmentPanel::FindCurrentWeaponEntryIndex() const
+{
+	if (!InventoryComponent.IsValid() || !CurrentWeaponItem.IsValid())
+	{
+		return INDEX_NONE;
+	}
+
+	const int32 FoundIndex = InventoryComponent->FindEntryIndexForItem(CurrentWeaponItem.Get());
+	if (FoundIndex == INDEX_NONE)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Attachment UI] 무기 EntryIndex 검색 실패! CurrentWeaponItem 포인터가 InventoryList에 없음"));
+	}
+	else
+	{
+		// 캐시된 값과 달라졌으면 로그
+		if (FoundIndex != CurrentWeaponEntryIndex)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] EntryIndex 밀림 감지: 캐시=%d → 실제=%d"),
+				CurrentWeaponEntryIndex, FoundIndex);
+		}
+	}
+
+	return FoundIndex;
+}
