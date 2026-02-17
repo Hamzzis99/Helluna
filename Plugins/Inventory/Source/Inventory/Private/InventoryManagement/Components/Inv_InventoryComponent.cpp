@@ -1658,6 +1658,30 @@ void UInv_InventoryComponent::Server_AttachItemToWeapon_Implementation(int32 Wea
 
 	InventoryList.RemoveEntry(AttachmentItem);
 
+	// ⭐ [디버그] RemoveEntry 후 WeaponItem 및 HostFragment 데이터 일관성 확인
+	// 가능성 A 검증: FastArray RemoveEntry가 WeaponItem 포인터를 무효화하는지
+	if (IsValid(WeaponItem))
+	{
+		FInv_AttachmentHostFragment* DebugHostFrag =
+			WeaponItem->GetItemManifestMutable().GetFragmentOfTypeMutable<FInv_AttachmentHostFragment>();
+		if (DebugHostFrag)
+		{
+			const FInv_AttachedItemData* DebugData = DebugHostFrag->GetAttachedItemData(SlotIndex);
+			UE_LOG(LogTemp, Warning, TEXT("[Attachment 디버그] RemoveEntry 후: WeaponItem 유효, 슬롯 %d 데이터=%s, AttachedItems 총 %d개"),
+				SlotIndex,
+				DebugData ? TEXT("있음") : TEXT("없음"),
+				DebugHostFrag->GetAttachedItems().Num());
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("[Attachment 디버그] RemoveEntry 후: WeaponItem 유효하지만 HostFragment가 nullptr!"));
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Attachment 디버그] RemoveEntry 후: WeaponItem이 무효화됨!"));
+	}
+
 	// 리슨서버 호스트: 부착물이 Grid에서 사라졌으므로 OnItemRemoved 방송
 	if (IsListenServerOrStandalone())
 	{

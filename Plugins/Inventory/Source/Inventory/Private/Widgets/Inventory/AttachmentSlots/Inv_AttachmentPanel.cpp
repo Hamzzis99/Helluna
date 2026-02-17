@@ -428,6 +428,17 @@ void UInv_AttachmentPanel::TryAttachHoverItem(int32 SlotIndex)
 		return;
 	}
 
+	// ⭐ [낙관적 UI 갱신] RPC 완료를 기다리지 않고 즉시 슬롯 상태 업데이트
+	// Standalone/ListenServer에서 RPC가 동기 실행되어도 UI는 즉시 반영됨
+	if (SlotWidgets.IsValidIndex(SlotIndex) && IsValid(SlotWidgets[SlotIndex]))
+	{
+		FInv_AttachedItemData PreviewData;
+		PreviewData.SlotIndex = SlotIndex;
+		PreviewData.AttachmentItemType = AttachmentItem->GetItemManifest().GetItemType();
+		PreviewData.ItemManifestCopy = AttachmentItem->GetItemManifest();
+		SlotWidgets[SlotIndex]->SetOccupied(PreviewData);
+	}
+
 	// 서버 RPC 호출
 	InventoryComponent->Server_AttachItemToWeapon(WeaponEntryIndex, AttachmentEntryIndex, SlotIndex);
 
@@ -435,8 +446,8 @@ void UInv_AttachmentPanel::TryAttachHoverItem(int32 SlotIndex)
 	OwningGrid->ClearHoverItem();
 	OwningGrid->ShowCursor();
 
-	// ⚠️ Server RPC는 리슨서버에서도 비동기 처리될 수 있음
-	// RefreshSlotStates를 다음 프레임으로 지연하여 RPC 처리 후 읽도록 함
+	// ⭐ NextTick에서 서버 실제 상태와 동기화 (안전망)
+	// 낙관적 UI와 서버 상태가 다를 경우 보정
 	if (UWorld* World = GetWorld())
 	{
 		FTimerHandle TimerHandle;
@@ -477,10 +488,16 @@ void UInv_AttachmentPanel::TryDetachItem(int32 SlotIndex)
 		return;
 	}
 
+	// ⭐ [낙관적 UI 갱신] 즉시 슬롯을 비운 상태로 표시
+	if (SlotWidgets.IsValidIndex(SlotIndex) && IsValid(SlotWidgets[SlotIndex]))
+	{
+		SlotWidgets[SlotIndex]->SetEmpty();
+	}
+
 	// 서버 RPC 호출
 	InventoryComponent->Server_DetachItemFromWeapon(WeaponEntryIndex, SlotIndex);
 
-	// ⚠️ Server RPC 처리 완료 후 슬롯 상태 갱신 (다음 프레임)
+	// ⭐ NextTick에서 서버 실제 상태와 동기화 (안전망)
 	if (UWorld* World = GetWorld())
 	{
 		FTimerHandle TimerHandle;

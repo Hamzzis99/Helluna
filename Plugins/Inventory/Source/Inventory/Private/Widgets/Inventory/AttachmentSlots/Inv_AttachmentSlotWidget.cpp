@@ -89,8 +89,24 @@ void UInv_AttachmentSlotWidget::SetOccupied(const FInv_AttachedItemData& Data)
 		}
 	}
 
+	// AttachmentItemType이 비어있을 때 AttachableFragment의 타입을 대신 표시 (방어 코드)
+	FString DisplayName = Data.AttachmentItemType.ToString();
+	if (!Data.AttachmentItemType.IsValid())
+	{
+		const FInv_AttachableFragment* AttachFrag = Data.ItemManifestCopy.GetFragmentOfType<FInv_AttachableFragment>();
+		if (AttachFrag)
+		{
+			DisplayName = FString::Printf(TEXT("(타입:%s)"), *AttachFrag->GetAttachmentType().ToString());
+		}
+		else
+		{
+			DisplayName = TEXT("(태그 미설정)");
+		}
+		UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] ⚠️ 슬롯 %d: AttachmentItemType이 비어있음! BP에서 태그 재설정 필요"), SlotIndex);
+	}
+
 	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 슬롯 %d 점유됨: %s"),
-		SlotIndex, *Data.AttachmentItemType.ToString());
+		SlotIndex, *DisplayName);
 }
 
 // ════════════════════════════════════════════════════════════════
