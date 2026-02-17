@@ -100,7 +100,7 @@ void AHellunaDefenseGameMode::InitializeGame()
     EnterDay();
 
     // 자동저장 타이머 시작
-    StartAutoSaveTimer();
+    StartAutoSave();
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
