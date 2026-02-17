@@ -157,6 +157,17 @@ private:
 	// ⭐ [SERVER-ONLY] 서버의 InventoryList를 기준으로 실제 재료 보유 여부를 확인합니다.
 	bool HasRequiredMaterialsOnServer(const FGameplayTag& MaterialTag, int32 RequiredAmount) const;
 
+	/**
+	 * 리슨서버 호스트 또는 스탠드얼론인지 확인
+	 *
+	 * 📌 용도:
+	 *    FastArray 리플리케이션이 자기 자신에게 안 되는 환경에서
+	 *    직접 UI 갱신이 필요한지 판단
+	 *
+	 * @return true = 리슨서버 호스트 또는 스탠드얼론 (직접 UI 갱신 필요)
+	 */
+	bool IsListenServerOrStandalone() const;
+
 	// ⭐ Grid 크기 (BeginPlay 시 Widget에서 자동 설정됨 - 모든 카테고리 공통 사용)
 	int32 GridRows = 6;
 	int32 GridColumns = 8;

@@ -1,5 +1,17 @@
 // Gihyeon's Inventory Project
 
+// ════════════════════════════════════════════════════════════════
+// 📌 리슨서버 호환 수정 이력
+// ════════════════════════════════════════════════════════════════
+// [2026-02-17] 작업자: 김기현
+//   - IsListenServerOrStandalone() 헬퍼 함수 추가
+//   - Server_ConsumeMaterialsMultiStack: 리슨서버 호스트 UI 갱신 추가
+//   - Server_ConsumeItem: 리슨서버 호스트 OnItemRemoved/OnItemAdded 추가
+//   - Server_AddStacksToItem: 기존 스택 추가 시 리슨서버 호스트 OnItemAdded 추가
+//   - Server_SplitItemEntry: 원본 아이템 스택 변경 시 리슨서버 호스트 OnItemAdded 추가
+//   - Server_UpdateItemStackCount: 리슨서버 호스트 OnItemAdded 추가
+//   - 기존 NM_ListenServer 분기를 IsListenServerOrStandalone()으로 통합
+// ════════════════════════════════════════════════════════════════
 
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
 
@@ -14,6 +26,26 @@
 #include "Building/Components/Inv_BuildingComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "Player/Inv_PlayerController.h"  // FInv_SavedItemData 사용
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 📌 IsListenServerOrStandalone
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 📌 용도:
+//    FastArray 리플리케이션이 자기 자신(리슨서버 호스트)에게 안 되는 환경에서
+//    직접 UI 갱신 Broadcast가 필요한지 판단하는 헬퍼
+//
+// 📌 호출 위치:
+//    Server_AddNewItem, Server_AddStacksToItem, Server_ConsumeMaterialsMultiStack,
+//    Server_CraftItemWithMaterials, Server_ConsumeItem 등 서버 RPC 구현부
+//
+// ════════════════════════════════════════════════════════════════════════════════
+bool UInv_InventoryComponent::IsListenServerOrStandalone() const
+{
+	return GetOwner() &&
+		(GetOwner()->GetNetMode() == NM_ListenServer ||
+		 GetOwner()->GetNetMode() == NM_Standalone);
+}
 
 UInv_InventoryComponent::UInv_InventoryComponent() : InventoryList(this)
 {
@@ -158,7 +190,11 @@ void UInv_InventoryComponent::Server_AddNewItem_Implementation(UInv_ItemComponen
 
 	NewItem->SetTotalStackCount(StackCount);
 
-	if (GetOwner()->GetNetMode() == NM_ListenServer || GetOwner()->GetNetMode() == NM_Standalone) // 이 부분이 복제할 클라이언트가 없기 때문에 배열 복제 안 되는 거 (데디 서버로 변경할 때 참고해라)
+	// ── 리슨서버/스탠드얼론 전용: FastArray 자기 자신 리플리케이션 우회 ──
+	// 데디서버에서는 FastArray가 자동으로 클라이언트에 리플리케이션 → PostReplicatedAdd 콜백 → UI 갱신
+	// 리슨서버 호스트는 서버=클라이언트이므로 자기 자신에게 리플리케이션이 안 됨
+	// → 직접 OnItemAdded.Broadcast()로 UI에 알려야 함
+	if (IsListenServerOrStandalone())
 	{
 		// ⭐ Entry Index 계산 (새로 추가된 항목은 맨 뒤)
 		int32 NewEntryIndex = InventoryList.Entries.Num() - 1;
@@ -224,6 +260,40 @@ void UInv_InventoryComponent::Server_AddStacksToItem_Implementation(UInv_ItemCom
 	if (AmountToAddToCurrentStack > 0)
 	{
 		Item->SetTotalStackCount(CurrentStack + AmountToAddToCurrentStack);
+
+		// ════════════════════════════════════════════════════════════════
+		// 🔧 리슨서버 호환 수정
+		// ════════════════════════════════════════════════════════════════
+		//
+		// 📌 문제:
+		//    기존 스택에 수량을 추가할 때 SetTotalStackCount만 호출
+		//    리슨서버 호스트는 FastArray 콜백이 안 와서 UI 갱신 안 됨
+		//
+		// 📌 해결:
+		//    리슨서버/스탠드얼론에서 OnItemAdded Broadcast로 UI에 알림
+		//
+		// 📌 데디서버 영향:
+		//    없음 — FastArray 리플리케이션이 자동 처리
+		//
+		// ════════════════════════════════════════════════════════════════
+		if (IsListenServerOrStandalone())
+		{
+			int32 EntryIndex = INDEX_NONE;
+			for (int32 i = 0; i < InventoryList.Entries.Num(); ++i)
+			{
+				if (InventoryList.Entries[i].Item == Item)
+				{
+					EntryIndex = i;
+					break;
+				}
+			}
+			OnItemAdded.Broadcast(Item, EntryIndex);
+#if INV_DEBUG_INVENTORY
+			UE_LOG(LogTemp, Warning, TEXT("🔧 리슨서버 호스트: OnItemAdded 브로드캐스트 (기존 스택에 %d개 추가, EntryIndex=%d)"),
+				AmountToAddToCurrentStack, EntryIndex);
+#endif
+		}
+
 #if INV_DEBUG_INVENTORY
 		UE_LOG(LogTemp, Warning, TEXT("[Server_AddStacksToItem] ✅ 기존 스택에 %d개 추가 → 총 %d개"),
 			AmountToAddToCurrentStack, Item->GetTotalStackCount());
@@ -243,8 +313,8 @@ void UInv_InventoryComponent::Server_AddStacksToItem_Implementation(UInv_ItemCom
 		{
 			NewItem->SetTotalStackCount(Overflow);
 
-			// ListenServer/Standalone에서는 델리게이트 브로드캐스트
-			if (GetOwner()->GetNetMode() == NM_ListenServer || GetOwner()->GetNetMode() == NM_Standalone)
+			// ── 리슨서버/스탠드얼론: 초과분 새 Entry → FastArray 콜백 우회 ──
+			if (IsListenServerOrStandalone())
 			{
 				int32 NewEntryIndex = InventoryList.Entries.Num() - 1;
 				OnItemAdded.Broadcast(NewItem, NewEntryIndex);
@@ -315,15 +385,63 @@ void UInv_InventoryComponent::SpawnDroppedItem(UInv_InventoryItem* Item, int32 S
 void UInv_InventoryComponent::Server_ConsumeItem_Implementation(UInv_InventoryItem* Item)
 {
 	const int32 NewStackCount = Item->GetTotalStackCount() - 1;
+
+	// ── Entry Index를 미리 찾아두기 (RemoveEntry 전에!) ──
+	int32 ItemEntryIndex = INDEX_NONE;
+	if (IsListenServerOrStandalone())
+	{
+		for (int32 i = 0; i < InventoryList.Entries.Num(); ++i)
+		{
+			if (InventoryList.Entries[i].Item == Item)
+			{
+				ItemEntryIndex = i;
+				break;
+			}
+		}
+	}
+
 	if (NewStackCount <= 0) // 스택 카운트가 0일시.
 	{
 		InventoryList.RemoveEntry(Item);
+
+		// ════════════════════════════════════════════════════════════════
+		// 🔧 리슨서버 호환 수정
+		// ════════════════════════════════════════════════════════════════
+		//
+		// 📌 문제:
+		//    리슨서버 호스트는 자기 자신에게 FastArray 리플리케이션이 안 됨
+		//    → PostReplicatedRemove 콜백이 불리지 않음
+		//    → UI(Grid)에서 아이템이 사라지지 않음
+		//
+		// 📌 해결:
+		//    리슨서버/스탠드얼론에서 OnItemRemoved를 직접 Broadcast
+		//
+		// 📌 데디서버 영향:
+		//    없음 — FastArray가 자동으로 PostReplicatedRemove 호출
+		//
+		// ════════════════════════════════════════════════════════════════
+		if (IsListenServerOrStandalone())
+		{
+			OnItemRemoved.Broadcast(Item, ItemEntryIndex);
+#if INV_DEBUG_INVENTORY
+			UE_LOG(LogTemp, Warning, TEXT("🔧 리슨서버 호스트: OnItemRemoved 브로드캐스트 (소비로 아이템 제거)"));
+#endif
+		}
 	}
 	else
 	{
 		Item->SetTotalStackCount(NewStackCount);
+
+		// ── 리슨서버 호스트: 스택 수량 변경 UI 갱신 ──
+		if (IsListenServerOrStandalone())
+		{
+			OnItemAdded.Broadcast(Item, ItemEntryIndex);
+#if INV_DEBUG_INVENTORY
+			UE_LOG(LogTemp, Warning, TEXT("🔧 리슨서버 호스트: OnItemAdded 브로드캐스트 (소비로 스택 수량 %d)"), NewStackCount);
+#endif
+		}
 	}
-	
+
 	// 소비 프래그먼트를 가져와서 소비 함수 호출 (소비할 때 실제로 일어나는 일을 구현하자!)
 	if (FInv_ConsumableFragment* ConsumableFragment = Item->GetItemManifestMutable().GetFragmentOfTypeMutable<FInv_ConsumableFragment>())
 	{
@@ -515,10 +633,10 @@ void UInv_InventoryComponent::Server_CraftItem_Implementation(TSubclassOf<AActor
 	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] InventoryList.AddEntry 완료!"));
 #endif
 
-	// ListenServer/Standalone에서는 델리게이트 브로드캐스트
-	if (GetOwner()->GetNetMode() == NM_ListenServer || GetOwner()->GetNetMode() == NM_Standalone)
+	// ── 리슨서버/스탠드얼론: 새 크래프팅 Entry → FastArray 콜백 우회 ──
+	if (IsListenServerOrStandalone())
 	{
-		// ⭐ Entry Index 계산 (새로 추가된 항목은 맨 뒤)
+		// Entry Index 계산 (새로 추가된 항목은 맨 뒤)
 		int32 NewEntryIndex = InventoryList.Entries.Num() - 1;
 #if INV_DEBUG_INVENTORY
 		UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ListenServer/Standalone 모드 - OnItemAdded 델리게이트 브로드캐스트 (EntryIndex=%d)"), NewEntryIndex);
@@ -836,8 +954,8 @@ void UInv_InventoryComponent::Server_CraftItemWithMaterials_Implementation(
 			UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ✅ Overflow Entry 추가 완료!"));
 #endif
 
-			// ListenServer/Standalone에서는 OnItemAdded 델리게이트 브로드캐스트
-			if (GetOwner()->GetNetMode() == NM_ListenServer || GetOwner()->GetNetMode() == NM_Standalone)
+			// ── 리슨서버/스탠드얼론: Overflow 새 Entry → FastArray 콜백 우회 ──
+			if (IsListenServerOrStandalone())
 			{
 				int32 OverflowEntryIndex = InventoryList.Entries.Num() - 1;
 				OnItemAdded.Broadcast(OverflowItem, OverflowEntryIndex);
@@ -847,8 +965,8 @@ void UInv_InventoryComponent::Server_CraftItemWithMaterials_Implementation(
 			}
 		}
 
-		// ListenServer/Standalone에서는 기존 스택 업데이트도 브로드캐스트
-		if (GetOwner()->GetNetMode() == NM_ListenServer || GetOwner()->GetNetMode() == NM_Standalone)
+		// ── 리슨서버/스탠드얼론: 기존 스택 수량 변경 → MarkDirty 콜백 우회 ──
+		if (IsListenServerOrStandalone())
 		{
 			// Entry Index 찾기
 			int32 EntryIndex = INDEX_NONE;
@@ -972,10 +1090,9 @@ void UInv_InventoryComponent::Server_CraftItemWithMaterials_Implementation(
 	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ✅ 제작 완료! 새 Entry 추가됨"));
 #endif
 
-	// ListenServer/Standalone에서는 델리게이트 브로드캐스트
-	if (GetOwner()->GetNetMode() == NM_ListenServer || GetOwner()->GetNetMode() == NM_Standalone)
+	// ── 리슨서버/스탠드얼론: 새 Entry 추가 → FastArray 콜백 우회 ──
+	if (IsListenServerOrStandalone())
 	{
-		// ⭐ Entry Index 계산 (새로 추가된 항목은 맨 뒤)
 		int32 NewEntryIndex = InventoryList.Entries.Num() - 1;
 		OnItemAdded.Broadcast(NewItem, NewEntryIndex);
 	}
@@ -1245,8 +1362,33 @@ void UInv_InventoryComponent::Server_ConsumeMaterialsMultiStack_Implementation(c
 #endif
 	}
 
-	// ⭐ FastArray 리플리케이션이 자동으로 PostReplicatedChange를 호출하여 UI를 업데이트합니다!
-	// Multicast_ConsumeMaterialsUI 호출 제거 - 이중 차감 방지!
+	// ════════════════════════════════════════════════════════════════
+	// 🔧 리슨서버 호환 수정
+	// ════════════════════════════════════════════════════════════════
+	//
+	// 📌 문제:
+	//    리슨서버 호스트는 자기 자신에게 FastArray 리플리케이션이 안 됨
+	//    → PostReplicatedChange 콜백이 불리지 않음
+	//    → UI(Grid)에 재료 수량 변경이 반영되지 않음
+	//
+	// 📌 해결:
+	//    NM_ListenServer || NM_Standalone일 때
+	//    Multicast_ConsumeMaterialsUI_Implementation을 직접 호출하여 UI 갱신
+	//
+	// 📌 데디서버 영향:
+	//    없음 — 데디서버에서는 FastArray 리플리케이션이 자동으로
+	//    PostReplicatedChange를 호출하여 UI를 업데이트함
+	//
+	// ════════════════════════════════════════════════════════════════
+	if (IsListenServerOrStandalone())
+	{
+		// 리슨서버 호스트의 UI에 재료 차감 반영
+		Multicast_ConsumeMaterialsUI_Implementation(MaterialTag, Amount);
+#if INV_DEBUG_INVENTORY
+		UE_LOG(LogTemp, Warning, TEXT("🔧 리슨서버 호스트 UI 갱신: Multicast_ConsumeMaterialsUI_Implementation(%s, %d)"),
+			*MaterialTag.ToString(), Amount);
+#endif
+	}
 
 #if INV_DEBUG_INVENTORY
 	if (RemainingAmount > 0)
@@ -1256,7 +1398,6 @@ void UInv_InventoryComponent::Server_ConsumeMaterialsMultiStack_Implementation(c
 	else
 	{
 		UE_LOG(LogTemp, Warning, TEXT("✅ 재료 차감 완료! MaterialTag: %s, Amount: %d"), *MaterialTag.ToString(), Amount);
-		UE_LOG(LogTemp, Warning, TEXT("FastArray 리플리케이션이 자동으로 클라이언트 UI를 업데이트합니다."));
 	}
 
 	UE_LOG(LogTemp, Warning, TEXT("=== Server_ConsumeMaterialsMultiStack 완료 ==="));
@@ -1294,16 +1435,30 @@ void UInv_InventoryComponent::Server_UpdateItemStackCount_Implementation(UInv_In
 	}
 
 	// ⭐⭐⭐ 3단계: FastArray에 변경 알림 (리플리케이션 트리거!)
-	for (auto& Entry : InventoryList.Entries)
+	int32 ItemEntryIndex = INDEX_NONE;
+	for (int32 i = 0; i < InventoryList.Entries.Num(); ++i)
 	{
-		if (Entry.Item == Item)
+		if (InventoryList.Entries[i].Item == Item)
 		{
-			InventoryList.MarkItemDirty(Entry);
+			ItemEntryIndex = i;
+			InventoryList.MarkItemDirty(InventoryList.Entries[i]);
 #if INV_DEBUG_INVENTORY
 			UE_LOG(LogTemp, Warning, TEXT("✅ FastArray에 Item 변경 알림 완료! 클라이언트로 리플리케이션됩니다."));
 #endif
 			break;
 		}
+	}
+
+	// ── 리슨서버 호스트: 스택 수량 변경 UI 갱신 ──
+	// MarkItemDirty는 리모트 클라이언트에만 리플리케이션됨
+	// 리슨서버 호스트에서는 직접 Broadcast하여 UI 갱신
+	if (IsListenServerOrStandalone())
+	{
+		OnItemAdded.Broadcast(Item, ItemEntryIndex);
+#if INV_DEBUG_INVENTORY
+		UE_LOG(LogTemp, Warning, TEXT("🔧 리슨서버 호스트: OnItemAdded 브로드캐스트 (스택 수량 %d, EntryIndex=%d)"),
+			NewStackCount, ItemEntryIndex);
+#endif
 	}
 
 #if INV_DEBUG_INVENTORY
@@ -1604,6 +1759,18 @@ void UInv_InventoryComponent::Server_SplitItemEntry_Implementation(UInv_Inventor
 		UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════╝"));
 #endif
 		return;
+	}
+
+	// ── 리슨서버 호스트: 원본 아이템 스택 수량 변경 UI 갱신 ──
+	// MarkItemDirty는 데디서버 클라이언트에게는 리플리케이션되지만,
+	// 리슨서버 호스트에게는 안 되므로 직접 Broadcast 필요
+	if (IsListenServerOrStandalone())
+	{
+		OnItemAdded.Broadcast(OriginalItem, OriginalEntryIndex);
+#if INV_DEBUG_INVENTORY
+		UE_LOG(LogTemp, Warning, TEXT("║ 🔧 리슨서버 호스트: 원본 아이템 스택 변경 OnItemAdded 브로드캐스트 (EntryIndex=%d, NewCount=%d)"),
+			OriginalEntryIndex, OriginalNewStackCount);
+#endif
 	}
 
 	// 3. 새 Item 생성 (새 포인터!)
