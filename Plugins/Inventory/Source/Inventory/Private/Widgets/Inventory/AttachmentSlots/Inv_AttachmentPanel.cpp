@@ -26,7 +26,6 @@
 #include "Components/TextBlock.h"
 #include "Components/Image.h"
 #include "Components/UniformGridPanel.h"
-#include "TimerManager.h"
 
 // ════════════════════════════════════════════════════════════════
 // 📌 NativeOnInitialized — 위젯 초기화
@@ -446,20 +445,6 @@ void UInv_AttachmentPanel::TryAttachHoverItem(int32 SlotIndex)
 	OwningGrid->ClearHoverItem();
 	OwningGrid->ShowCursor();
 
-	// ⭐ NextTick에서 서버 실제 상태와 동기화 (안전망)
-	// 낙관적 UI와 서버 상태가 다를 경우 보정
-	if (UWorld* World = GetWorld())
-	{
-		FTimerHandle TimerHandle;
-		World->GetTimerManager().SetTimerForNextTick([WeakThis = TWeakObjectPtr<UInv_AttachmentPanel>(this)]()
-		{
-			if (WeakThis.IsValid() && WeakThis->bIsOpen)
-			{
-				WeakThis->RefreshSlotStates();
-			}
-		});
-	}
-
 	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 장착 성공: 슬롯 %d에 %s (WeaponEntry=%d, AttachEntry=%d)"),
 		SlotIndex,
 		*AttachmentItem->GetItemManifest().GetItemType().ToString(),
@@ -496,19 +481,6 @@ void UInv_AttachmentPanel::TryDetachItem(int32 SlotIndex)
 
 	// 서버 RPC 호출
 	InventoryComponent->Server_DetachItemFromWeapon(WeaponEntryIndex, SlotIndex);
-
-	// ⭐ NextTick에서 서버 실제 상태와 동기화 (안전망)
-	if (UWorld* World = GetWorld())
-	{
-		FTimerHandle TimerHandle;
-		World->GetTimerManager().SetTimerForNextTick([WeakThis = TWeakObjectPtr<UInv_AttachmentPanel>(this)]()
-		{
-			if (WeakThis.IsValid() && WeakThis->bIsOpen)
-			{
-				WeakThis->RefreshSlotStates();
-			}
-		});
-	}
 
 	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 분리 완료: 슬롯 %d (WeaponEntry=%d)"),
 		SlotIndex, WeaponEntryIndex);
