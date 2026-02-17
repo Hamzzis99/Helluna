@@ -1701,6 +1701,19 @@ void UInv_InventoryComponent::Server_AttachItemToWeapon_Implementation(int32 Wea
 
 	// ── 7. 무기가 장비 슬롯에 장착 중이면 부착물 스탯 적용 ──
 	const FInv_EquipmentFragment* EquipFragment = WeaponManifest.GetFragmentOfType<FInv_EquipmentFragment>();
+
+	// ⭐ [Phase 7 디버그] bEquipped 상태 확인
+	UE_LOG(LogTemp, Warning, TEXT("[Attachment Phase7 디버그] EquipFragment=%s, bEquipped=%s"),
+		EquipFragment ? TEXT("있음") : TEXT("없음"),
+		(EquipFragment && EquipFragment->bEquipped) ? TEXT("TRUE ✅") : TEXT("FALSE ❌"));
+	if (EquipFragment)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Attachment Phase7 디버그] EquippedActor=%s"),
+			IsValid(EquipFragment->GetEquippedActor()) ? *EquipFragment->GetEquippedActor()->GetName() : TEXT("nullptr"));
+	}
+	UE_LOG(LogTemp, Warning, TEXT("[Attachment Phase7 디버그] AttachableFragment->bIsSuppressor=%s"),
+		AttachableFragment->GetIsSuppressor() ? TEXT("TRUE ✅") : TEXT("FALSE ❌"));
+
 	if (EquipFragment && EquipFragment->bEquipped)
 	{
 		// 방금 장착한 부착물의 스탯만 적용 (ManifestCopy에서 가져옴)
