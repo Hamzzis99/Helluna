@@ -226,6 +226,83 @@ void AHellunaBaseGameMode::BeginPlay()
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
+// 📌 EndPlay - 리슨서버 호스트 종료 시 인벤토리 강제 저장
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaBaseGameMode::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	// 리슨서버 호스트 종료 시 모든 플레이어 인벤토리 강제 저장
+	if (GetNetMode() == NM_ListenServer || EndPlayReason == EEndPlayReason::Quit)
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[BaseGameMode] EndPlay - 리슨서버 종료 감지, 인벤토리 강제 저장 시작"));
+
+		for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+		{
+			APlayerController* PC = It->Get();
+			if (!IsValid(PC)) continue;
+
+			// PlayerId 확인
+			FString PlayerId;
+			if (AHellunaPlayerState* PS = PC->GetPlayerState<AHellunaPlayerState>())
+			{
+				PlayerId = PS->GetPlayerUniqueId();
+			}
+			// ControllerToPlayerIdMap 폴백
+			if (PlayerId.IsEmpty())
+			{
+				if (const FString* Found = ControllerToPlayerIdMap.Find(PC))
+				{
+					PlayerId = *Found;
+				}
+			}
+			if (PlayerId.IsEmpty()) continue;
+
+			// InventoryComponent에서 데이터 수집 (Controller에 붙어있음)
+			UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
+			if (!IsValid(InvComp)) continue;
+
+			TArray<FInv_SavedItemData> CollectedItems = InvComp->CollectInventoryDataForSave();
+
+			// EquipmentComponent에서 장착 상태 수집
+			UInv_EquipmentComponent* EquipComp = PC->FindComponentByClass<UInv_EquipmentComponent>();
+			if (IsValid(EquipComp))
+			{
+				const TArray<TObjectPtr<AInv_EquipActor>>& EquippedActors = EquipComp->GetEquippedActors();
+				TMap<int32, FGameplayTag> SlotToItemMap;
+				for (const TObjectPtr<AInv_EquipActor>& EquipActor : EquippedActors)
+				{
+					if (EquipActor.Get())
+					{
+						SlotToItemMap.Add(EquipActor->GetWeaponSlotIndex(), EquipActor->GetEquipmentType());
+					}
+				}
+				for (const auto& Pair : SlotToItemMap)
+				{
+					for (FInv_SavedItemData& Item : CollectedItems)
+					{
+						if (Item.ItemType == Pair.Value && !Item.bEquipped)
+						{
+							Item.bEquipped = true;
+							Item.WeaponSlotIndex = Pair.Key;
+							break;
+						}
+					}
+				}
+			}
+
+			if (CollectedItems.Num() > 0)
+			{
+				SaveInventoryFromCharacterEndPlay(PlayerId, CollectedItems);
+				UE_LOG(LogHelluna, Warning, TEXT("[BaseGameMode] EndPlay - %s 인벤토리 저장 완료 (%d개)"),
+					*PlayerId, CollectedItems.Num());
+			}
+		}
+	}
+
+	StopAutoSaveTimer();
+	Super::EndPlay(EndPlayReason);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
 // 📌 InitializeGame - 게임 초기화 (Virtual)
 // ════════════════════════════════════════════════════════════════════════════════
 //
@@ -383,10 +460,17 @@ void AHellunaBaseGameMode::PostLogin(APlayerController* NewPlayer)
 		ControllerToPlayerIdMap.Add(NewPlayer, DebugPlayerId);
 
 		// 4. Controller EndPlay 델리게이트 바인딩 (인벤토리 저장용)
+		// 주의: bDebugSkipLogin 경로에서 NewPlayer는 LoginController이므로 InvPC 캐스트 실패할 수 있음
+		// → 로그 경고 추가, EndPlay 저장은 GameMode::EndPlay에서 커버됨
 		AInv_PlayerController* InvPC = Cast<AInv_PlayerController>(NewPlayer);
 		if (IsValid(InvPC))
 		{
 			InvPC->OnControllerEndPlay.AddDynamic(this, &AHellunaBaseGameMode::OnInvControllerEndPlay);
+		}
+		else
+		{
+			UE_LOG(LogHelluna, Warning, TEXT("[BaseGameMode] DebugSkipLogin: InvPC 캐스트 실패 - Controller=%s (EndPlay 저장은 GameMode::EndPlay에서 처리)"),
+				*GetNameSafe(NewPlayer));
 		}
 
 		// 5. 게임 초기화 (첫 플레이어일 때)
@@ -1107,8 +1191,16 @@ void AHellunaBaseGameMode::Logout(AController* Exiting)
 		// ────────────────────────────────────────────────────────────────────────
 		// 📌 인벤토리 저장
 		// ────────────────────────────────────────────────────────────────────────
-		APawn* Pawn = Exiting->GetPawn();
-		UInv_InventoryComponent* InvComp = Pawn ? Pawn->FindComponentByClass<UInv_InventoryComponent>() : nullptr;
+		// InventoryComponent는 PlayerController에 붙어있으므로 Controller에서 검색
+		APlayerController* ExitingPC = Cast<APlayerController>(Exiting);
+		UInv_InventoryComponent* InvComp = IsValid(ExitingPC) ? ExitingPC->FindComponentByClass<UInv_InventoryComponent>() : nullptr;
+
+		// Controller에서 못 찾으면 Pawn에서도 시도 (폴백)
+		if (!IsValid(InvComp))
+		{
+			APawn* Pawn = Exiting->GetPawn();
+			InvComp = IsValid(Pawn) ? Pawn->FindComponentByClass<UInv_InventoryComponent>() : nullptr;
+		}
 
 		if (InvComp)
 		{
@@ -1148,8 +1240,15 @@ void AHellunaBaseGameMode::Logout(AController* Exiting)
 			}
 		}
 
-		// 캐시 데이터 제거
-		CachedPlayerInventoryData.Remove(PlayerId);
+		// CachedPlayerInventoryData는 OnInvControllerEndPlay()에서 장착 정보 병합에 필요하므로
+		// Logout 시점에서 즉시 삭제하지 않고, 타이머로 지연 삭제
+		// (EndPlay가 완료된 후 정리되도록)
+		FString PlayerIdCopy = PlayerId;
+		FTimerHandle CacheCleanupTimer;
+		GetWorldTimerManager().SetTimer(CacheCleanupTimer, [this, PlayerIdCopy]()
+		{
+			CachedPlayerInventoryData.Remove(PlayerIdCopy);
+		}, 2.0f, false);
 
 		// GameInstance에서 로그아웃 처리
 		if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(UGameplayStatics::GetGameInstance(GetWorld())))
@@ -1767,7 +1866,12 @@ void AHellunaBaseGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
 		UInv_InventoryItem* FoundItem = InvComp->FindItemByTypeExcluding(ItemData.ItemType, ServerProcessedItems);
 		if (FoundItem)
 		{
-			InvComp->OnItemEquipped.Broadcast(FoundItem, ItemData.EquipSlotIndex);
+			// 데디서버에서만 서버측 장착 브로드캐스트 실행
+			// 리슨서버 호스트는 Client_ReceiveInventoryData → RestoreInventoryFromState에서 처리
+			if (GetNetMode() == NM_DedicatedServer)
+			{
+				InvComp->OnItemEquipped.Broadcast(FoundItem, ItemData.EquipSlotIndex);
+			}
 			ServerProcessedItems.Add(FoundItem);
 		}
 	}
