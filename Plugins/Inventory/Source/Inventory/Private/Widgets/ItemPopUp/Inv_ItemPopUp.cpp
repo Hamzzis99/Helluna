@@ -16,6 +16,7 @@ void UInv_ItemPopUp::NativeOnInitialized()
 	Button_Split->OnClicked.AddDynamic(this, &ThisClass::SplitButtonClicked);
 	Button_Drop->OnClicked.AddDynamic(this, &ThisClass::DropButtonClicked);
 	Button_Consume->OnClicked.AddDynamic(this, &ThisClass::ConsumeButtonClicked);
+	Button_Attachment->OnClicked.AddDynamic(this, &ThisClass::AttachmentButtonClicked);
 	Slider_Split->OnValueChanged.AddDynamic(this, &ThisClass::SliderValueChanged);
 }
 
@@ -68,7 +69,20 @@ void UInv_ItemPopUp::CollapseSplitButton() const
 
 void UInv_ItemPopUp::CollapseConsumeButton() const
 {
-	Button_Consume->SetVisibility(ESlateVisibility::Collapsed); // 
+	Button_Consume->SetVisibility(ESlateVisibility::Collapsed); //
+}
+
+void UInv_ItemPopUp::CollapseAttachmentButton() const
+{
+	Button_Attachment->SetVisibility(ESlateVisibility::Collapsed); // 부착물 관리 버튼 숨기기
+}
+
+void UInv_ItemPopUp::AttachmentButtonClicked()
+{
+	if (OnAttachment.ExecuteIfBound(GridIndex))
+	{
+		RemoveFromParent(); // 위젯 제거
+	}
 }
 
 void UInv_ItemPopUp::SetSliderParams(const float Max, const float Value) const

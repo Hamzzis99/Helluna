@@ -18,6 +18,8 @@
 #include "Widgets/Inventory/HoverItem/Inv_HoverItem.h"
 #include "Widgets/Inventory/SlottedItems/Inv_SlottedItem.h"
 #include "Widgets/ItemPopUp/Inv_ItemPopUp.h"
+#include "Widgets/Inventory/Attachment/Inv_AttachmentPanel.h"
+#include "Items/Fragments/Inv_AttachmentFragments.h"
 
 // 인벤토리 바인딩 메뉴
 void UInv_InventoryGrid::NativeOnInitialized()
@@ -943,6 +945,19 @@ void UInv_InventoryGrid::CreateItemPopUp(const int32 GridIndex)
 	else
 	{
 		ItemPopUp->CollapseConsumeButton();
+	}
+
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [부착물 시스템 Phase 3] 부착물 관리 버튼
+	// 부착물 슬롯이 있는 호스트 아이템(무기)에만 표시
+	// ════════════════════════════════════════════════════════════════
+	if (RightClickedItem->HasAttachmentSlots())
+	{
+		ItemPopUp->OnAttachment.BindDynamic(this, &ThisClass::OnPopUpMenuAttachment);
+	}
+	else
+	{
+		ItemPopUp->CollapseAttachmentButton();
 	}
 }
 
@@ -2201,7 +2216,152 @@ void UInv_InventoryGrid::OnInventoryMenuToggled(bool bOpen)
 	if (!bOpen)
 	{
 		PutHoverItemBack();
+		CloseAttachmentPanel(); // 인벤토리 닫을 때 부착물 패널도 닫기
 	}
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 [부착물 시스템 Phase 3] 부착물 관리 팝업 버튼 클릭 핸들러
+// ════════════════════════════════════════════════════════════════
+void UInv_InventoryGrid::OnPopUpMenuAttachment(int32 Index)
+{
+	UInv_InventoryItem* RightClickedItem = GridSlots[Index]->GetInventoryItem().Get();
+	if (!IsValid(RightClickedItem)) return;
+	if (!RightClickedItem->HasAttachmentSlots()) return;
+
+	// SlottedItem에서 EntryIndex 가져오기
+	const int32 UpperLeftIndex = GridSlots[Index]->GetUpperLeftIndex();
+	int32 EntryIndex = INDEX_NONE;
+
+	if (SlottedItems.Contains(UpperLeftIndex))
+	{
+		EntryIndex = SlottedItems[UpperLeftIndex]->GetEntryIndex();
+	}
+
+	// EntryIndex가 유효하지 않으면 InventoryComponent에서 검색
+	if (EntryIndex == INDEX_NONE && InventoryComponent.IsValid())
+	{
+		EntryIndex = InventoryComponent->FindEntryIndexForItem(RightClickedItem);
+	}
+
+	if (EntryIndex == INDEX_NONE)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[AttachmentPanel] EntryIndex를 찾을 수 없음!"));
+		return;
+	}
+
+	OpenAttachmentPanel(RightClickedItem, EntryIndex);
+}
+
+void UInv_InventoryGrid::OpenAttachmentPanel(UInv_InventoryItem* WeaponItem, int32 WeaponEntryIndex)
+{
+	if (!IsValid(WeaponItem) || !InventoryComponent.IsValid()) return;
+	if (!AttachmentPanelClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[InventoryGrid] AttachmentPanelClass가 설정되지 않음!"));
+		return;
+	}
+
+	// 기존 패널이 있으면 닫기
+	if (IsValid(AttachmentPanel) && AttachmentPanel->IsPanelOpen())
+	{
+		AttachmentPanel->ClosePanel();
+	}
+
+	// 패널 위젯 생성
+	if (!IsValid(AttachmentPanel))
+	{
+		AttachmentPanel = CreateWidget<UInv_AttachmentPanel>(this, AttachmentPanelClass);
+		if (!IsValid(AttachmentPanel))
+		{
+			UE_LOG(LogTemp, Error, TEXT("[InventoryGrid] AttachmentPanel 생성 실패!"));
+			return;
+		}
+
+		// OwningCanvasPanel에 추가
+		if (OwningCanvasPanel.IsValid())
+		{
+			OwningCanvasPanel->AddChild(AttachmentPanel);
+
+			// 캔버스 패널 슬롯 위치 설정 (Grid 오른쪽에 배치)
+			UCanvasPanelSlot* CanvasSlot = UWidgetLayoutLibrary::SlotAsCanvasSlot(AttachmentPanel);
+			if (CanvasSlot)
+			{
+				// Grid 오른쪽에 배치 (Columns * TileSize + 여백)
+				const float PanelX = Columns * TileSize + 20.f;
+				CanvasSlot->SetPosition(FVector2D(PanelX, 0.f));
+				CanvasSlot->SetAutoSize(true);
+			}
+		}
+	}
+
+	// 분리 / 부착 델리게이트 바인딩
+	AttachmentPanel->OnDetachRequested.BindDynamic(this, &ThisClass::OnAttachmentDetachRequested);
+	AttachmentPanel->OnAttachRequested.BindDynamic(this, &ThisClass::OnAttachmentAttachRequested);
+	AttachmentPanel->OnPanelClosed.AddDynamic(this, &ThisClass::OnAttachmentPanelClosed);
+
+	// 패널 열기
+	AttachmentPanel->OpenPanel(WeaponItem, WeaponEntryIndex, InventoryComponent.Get());
+
+	UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] 부착물 패널 열림: WeaponEntry=%d"), WeaponEntryIndex);
+}
+
+void UInv_InventoryGrid::CloseAttachmentPanel()
+{
+	if (IsValid(AttachmentPanel) && AttachmentPanel->IsPanelOpen())
+	{
+		AttachmentPanel->ClosePanel();
+	}
+}
+
+bool UInv_InventoryGrid::IsAttachmentPanelOpen() const
+{
+	return IsValid(AttachmentPanel) && AttachmentPanel->IsPanelOpen();
+}
+
+bool UInv_InventoryGrid::TryDropOnAttachmentPanel()
+{
+	if (!IsAttachmentPanelOpen()) return false;
+	if (!IsValid(HoverItem)) return false;
+
+	return AttachmentPanel->TryDropHoverItemOnSlot(HoverItem);
+}
+
+void UInv_InventoryGrid::OnAttachmentDetachRequested(int32 WeaponEntryIndex, int32 SlotIndex)
+{
+	if (!InventoryComponent.IsValid()) return;
+
+	UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] 부착물 분리 요청: WeaponEntry=%d, Slot=%d"), WeaponEntryIndex, SlotIndex);
+
+	// 서버 RPC 호출
+	InventoryComponent->Server_DetachItemFromWeapon(WeaponEntryIndex, SlotIndex);
+
+	// 패널 새로고침 (서버에서 MarkItemDirty 후 리플리케이션으로 갱신됨)
+	// 일단 패널을 닫고, 다시 열면 서버 데이터가 반영됨
+	CloseAttachmentPanel();
+}
+
+void UInv_InventoryGrid::OnAttachmentAttachRequested(int32 WeaponEntryIndex, int32 AttachmentEntryIndex, int32 SlotIndex)
+{
+	if (!InventoryComponent.IsValid()) return;
+
+	UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] 부착물 장착 요청: WeaponEntry=%d, AttachmentEntry=%d, Slot=%d"),
+		WeaponEntryIndex, AttachmentEntryIndex, SlotIndex);
+
+	// 서버 RPC 호출
+	InventoryComponent->Server_AttachItemToWeapon(WeaponEntryIndex, AttachmentEntryIndex, SlotIndex);
+
+	// HoverItem 정리
+	ClearHoverItem();
+	ShowCursor();
+
+	// 패널 닫기 (리플리케이션 후 다시 열면 최신 상태 반영)
+	CloseAttachmentPanel();
+}
+
+void UInv_InventoryGrid::OnAttachmentPanelClosed()
+{
+	UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] 부착물 패널 닫힘 콜백"));
 }
 
 bool UInv_InventoryGrid::MatchesCategory(const UInv_InventoryItem* Item) const

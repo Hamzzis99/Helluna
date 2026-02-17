@@ -134,6 +134,13 @@ public:
 	// ⭐ [Phase 5 Fix] 마지막으로 추가된 Entry의 Grid 위치 설정 (로드 시 사용)
 	void SetLastEntryGridPosition(int32 GridIndex, uint8 GridCategory);
 
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [부착물 시스템 Phase 3] Entry Index 검색 헬퍼
+	// ════════════════════════════════════════════════════════════════
+	// 아이템 포인터로 현재 InventoryList의 Entry Index를 찾는다.
+	// Entry가 추가/제거되면 인덱스가 변하므로, 캐시된 값 대신 이 함수를 사용할 것.
+	int32 FindEntryIndexForItem(const UInv_InventoryItem* Item) const;
+
 	// ⭐ [Phase 4 개선] 서버에서 직접 인벤토리 데이터 수집 (Logout 시 저장용)
 	// RPC 없이 서버의 FastArray에서 직접 읽어서 반환
 	TArray<FInv_SavedItemData> CollectInventoryDataForSave() const;

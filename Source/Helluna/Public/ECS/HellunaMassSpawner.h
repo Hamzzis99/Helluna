@@ -14,20 +14,20 @@ class HELLUNA_API AHellunaMassSpawner : public AMassSpawner
 {
 	GENERATED_BODY()
 public:
-	virtual void DoSpawning() override;
+	void DoSpawning();
 
 protected:
-	
+
 	virtual void BeginPlay() override;
 
-	virtual void OnSpawnDataGenerationFinished(
+	void OnSpawnDataGenerationFinished(
 		TConstArrayView<FMassEntitySpawnDataGeneratorResult> Results,
 		FMassSpawnDataGenerator* FinishedGenerator
-	) override;
+	);
 
-	virtual void SpawnGeneratedEntities(
+	void SpawnGeneratedEntities(
 		TConstArrayView<FMassEntitySpawnDataGeneratorResult> Results
-	) override;
+	);
 
 private:
 	UPROPERTY(EditAnywhere, Category = "Mass|Debug")

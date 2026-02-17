@@ -2494,6 +2494,23 @@ void UInv_InventoryComponent::SetLastEntryGridPosition(int32 GridIndex, uint8 Gr
 	}
 }
 
+// ════════════════════════════════════════════════════════════════
+// 📌 [부착물 시스템 Phase 3] Entry Index 검색 헬퍼
+// ════════════════════════════════════════════════════════════════
+int32 UInv_InventoryComponent::FindEntryIndexForItem(const UInv_InventoryItem* Item) const
+{
+	if (!IsValid(Item)) return INDEX_NONE;
+
+	for (int32 i = 0; i < InventoryList.Entries.Num(); ++i)
+	{
+		if (InventoryList.Entries[i].Item == Item)
+		{
+			return i;
+		}
+	}
+	return INDEX_NONE;
+}
+
 // ============================================
 // ============================================
 // 🆕 [Phase 6] ItemType으로 아이템 찾기
