@@ -8,6 +8,8 @@
 #include "Inv_EquipActor.generated.h"
 
 class UGameplayAbility;
+class USoundBase;
+struct FInv_AttachableFragment;
 
 UCLASS()
 class INVENTORY_API AInv_EquipActor : public AActor
@@ -59,6 +61,13 @@ protected:
 	UFUNCTION(Server, Reliable)
 	void Server_SetWeaponHidden(bool bNewHidden);
 
+	// [Phase 7] 리플리케이션 콜백
+	UFUNCTION()
+	void OnRep_bSuppressed();
+
+	UFUNCTION()
+	void OnRep_bLaserActive();
+
 private:
 
 	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "장비 타입 태그"))
@@ -103,6 +112,50 @@ private:
 	FName SecondaryBackSocket = TEXT("WeaponSocket_Secondary");
 
 	// ════════════════════════════════════════════════════════════════
+	// [Phase 7] 부착물 효과 오버라이드 시스템
+	// ════════════════════════════════════════════════════════════════
+	// 부착물이 EquipActor의 상태를 변경하고,
+	// 발사 GA/카메라 시스템은 EquipActor의 getter로 현재 값을 읽는다.
+	// GA 수정 없이 부착물 효과를 추가할 수 있다.
+	//
+	// 사용법 (팀원 GA 측):
+	//   발사 시: USoundBase* Sound = EquipActor->GetFireSound();
+	//   조준 시: float FOV = EquipActor->GetZoomFOV();
+	//   레이저: 장착 시 자동으로 Visibility 변경.
+	// ════════════════════════════════════════════════════════════════
+
+	// -- 소음기 --
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory|Attachment|Effects",
+		meta = (AllowPrivateAccess = "true", DisplayName = "기본 발사 사운드"))
+	TObjectPtr<USoundBase> DefaultFireSound = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory|Attachment|Effects",
+		meta = (AllowPrivateAccess = "true", DisplayName = "소음기 발사 사운드"))
+	TObjectPtr<USoundBase> SuppressedFireSound = nullptr;
+
+	UPROPERTY(ReplicatedUsing = OnRep_bSuppressed, VisibleAnywhere, Category = "Inventory|Attachment|Effects")
+	bool bSuppressed = false;
+
+	// -- 스코프 --
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory|Attachment|Effects",
+		meta = (AllowPrivateAccess = "true", DisplayName = "기본 줌 FOV",
+				ClampMin = 10.0, ClampMax = 120.0))
+	float DefaultZoomFOV = 90.f;
+
+	UPROPERTY(Replicated, VisibleAnywhere, Category = "Inventory|Attachment|Effects")
+	float OverrideZoomFOV = 0.f;
+
+	// -- 레이저 --
+	UPROPERTY(ReplicatedUsing = OnRep_bLaserActive, VisibleAnywhere, Category = "Inventory|Attachment|Effects")
+	bool bLaserActive = false;
+
+	// 레이저 비주얼 컴포넌트. 무기 BP에서 직접 추가하고 이 변수에 바인딩한다.
+	// nullptr이어도 안전하다 (IsValid 체크).
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory|Attachment|Effects",
+		meta = (AllowPrivateAccess = "true", DisplayName = "레이저 컴포넌트 (BP에서 설정)"))
+	TObjectPtr<UStaticMeshComponent> LaserBeamComponent = nullptr;
+
+	// ════════════════════════════════════════════════════════════════
 	// 📌 [Phase 5] 부착물 메시 관리
 	// ════════════════════════════════════════════════════════════════
 	// 슬롯 인덱스 → 스폰된 StaticMeshComponent 매핑
@@ -110,6 +163,40 @@ private:
 	TMap<int32, TObjectPtr<UStaticMeshComponent>> AttachmentMeshComponents;
 
 public:
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 7] 효과 Getter — 발사 GA / 카메라 시스템에서 호출
+	// ════════════════════════════════════════════════════════════════
+
+	// 현재 사용할 발사 사운드 반환 (소음기 장착 여부에 따라 분기)
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Attachment")
+	USoundBase* GetFireSound() const;
+
+	// 현재 사용할 줌 FOV 반환 (스코프 장착 여부에 따라 분기)
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Attachment")
+	float GetZoomFOV() const;
+
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Attachment")
+	bool IsSuppressed() const { return bSuppressed; }
+
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Attachment")
+	bool IsLaserActive() const { return bLaserActive; }
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 7] 효과 Setter — 부착물 장착/분리 시 호출
+	// ════════════════════════════════════════════════════════════════
+
+	void SetSuppressed(bool bNewSuppressed);
+	void SetZoomFOVOverride(float NewFOV);
+	void ClearZoomFOVOverride();
+	void SetLaserActive(bool bNewActive);
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 7] 부착물 효과 일괄 적용/해제
+	// ════════════════════════════════════════════════════════════════
+	// AttachableFragment의 플래그를 읽어서 EquipActor 상태를 변경한다.
+	void ApplyAttachmentEffects(const FInv_AttachableFragment* AttachableFrag);
+	void RemoveAttachmentEffects(const FInv_AttachableFragment* AttachableFrag);
+
 	// ════════════════════════════════════════════════════════════════
 	// 📌 [Phase 5] 부착물 메시 컴포넌트 스폰 및 소켓에 부착
 	// ════════════════════════════════════════════════════════════════

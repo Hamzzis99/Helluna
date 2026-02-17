@@ -4,6 +4,8 @@
 #include "EquipmentManagement/EquipActor/Inv_EquipActor.h"
 #include "Inventory.h"
 #include "Net/UnrealNetwork.h"
+#include "Items/Fragments/Inv_AttachmentFragments.h"
+#include "Sound/SoundBase.h"
 
 
 AInv_EquipActor::AInv_EquipActor()
@@ -22,6 +24,11 @@ void AInv_EquipActor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutL
 	
 	// ⭐ [WeaponBridge] bIsWeaponHidden 리플리케이트
 	DOREPLIFETIME(AInv_EquipActor, bIsWeaponHidden);
+
+	// [Phase 7] 부착물 효과 리플리케이션
+	DOREPLIFETIME(AInv_EquipActor, bSuppressed);
+	DOREPLIFETIME(AInv_EquipActor, OverrideZoomFOV);
+	DOREPLIFETIME(AInv_EquipActor, bLaserActive);
 }
 
 // ⭐ [WeaponBridge] 무기 숨김/표시 설정
@@ -163,5 +170,114 @@ void AInv_EquipActor::DetachAllMeshes()
 	if (Count > 0)
 	{
 		UE_LOG(LogTemp, Log, TEXT("[Attachment Visual] 모든 부착물 메시 분리 (%d개)"), Count);
+	}
+}
+
+// ════════════════════════════════════════════════════════════════
+// [Phase 7] 부착물 효과 시스템 구현
+// ════════════════════════════════════════════════════════════════
+
+// -- Getter --
+
+USoundBase* AInv_EquipActor::GetFireSound() const
+{
+	if (bSuppressed && IsValid(SuppressedFireSound))
+	{
+		return SuppressedFireSound;
+	}
+	return DefaultFireSound;
+}
+
+float AInv_EquipActor::GetZoomFOV() const
+{
+	return (OverrideZoomFOV > 0.f) ? OverrideZoomFOV : DefaultZoomFOV;
+}
+
+// -- Setter --
+
+void AInv_EquipActor::SetSuppressed(bool bNewSuppressed)
+{
+	bSuppressed = bNewSuppressed;
+	UE_LOG(LogTemp, Log, TEXT("[Attachment Effect] 소음기 %s"), bSuppressed ? TEXT("ON") : TEXT("OFF"));
+}
+
+void AInv_EquipActor::SetZoomFOVOverride(float NewFOV)
+{
+	OverrideZoomFOV = NewFOV;
+	UE_LOG(LogTemp, Log, TEXT("[Attachment Effect] 줌 FOV 오버라이드: %.1f"), OverrideZoomFOV);
+}
+
+void AInv_EquipActor::ClearZoomFOVOverride()
+{
+	OverrideZoomFOV = 0.f;
+	UE_LOG(LogTemp, Log, TEXT("[Attachment Effect] 줌 FOV 오버라이드 해제 -> 기본값 %.1f"), DefaultZoomFOV);
+}
+
+void AInv_EquipActor::SetLaserActive(bool bNewActive)
+{
+	bLaserActive = bNewActive;
+	if (IsValid(LaserBeamComponent))
+	{
+		LaserBeamComponent->SetVisibility(bNewActive);
+	}
+	UE_LOG(LogTemp, Log, TEXT("[Attachment Effect] 레이저 %s"), bLaserActive ? TEXT("ON") : TEXT("OFF"));
+}
+
+// -- 리플리케이션 콜백 --
+
+void AInv_EquipActor::OnRep_bSuppressed()
+{
+	// 사운드는 발사 시점에 GetFireSound()로 읽으므로 추가 처리 불필요
+	UE_LOG(LogTemp, Log, TEXT("[Attachment Effect] OnRep: 소음기 %s"), bSuppressed ? TEXT("ON") : TEXT("OFF"));
+}
+
+void AInv_EquipActor::OnRep_bLaserActive()
+{
+	if (IsValid(LaserBeamComponent))
+	{
+		LaserBeamComponent->SetVisibility(bLaserActive);
+	}
+	UE_LOG(LogTemp, Log, TEXT("[Attachment Effect] OnRep: 레이저 %s"), bLaserActive ? TEXT("ON") : TEXT("OFF"));
+}
+
+// -- 일괄 적용/해제 --
+
+void AInv_EquipActor::ApplyAttachmentEffects(const FInv_AttachableFragment* AttachableFrag)
+{
+	if (!AttachableFrag) return;
+
+	if (AttachableFrag->GetIsSuppressor())
+	{
+		SetSuppressed(true);
+	}
+
+	if (AttachableFrag->GetZoomFOVOverride() > 0.f)
+	{
+		SetZoomFOVOverride(AttachableFrag->GetZoomFOVOverride());
+	}
+
+	if (AttachableFrag->GetIsLaser())
+	{
+		SetLaserActive(true);
+	}
+}
+
+void AInv_EquipActor::RemoveAttachmentEffects(const FInv_AttachableFragment* AttachableFrag)
+{
+	if (!AttachableFrag) return;
+
+	if (AttachableFrag->GetIsSuppressor())
+	{
+		SetSuppressed(false);
+	}
+
+	if (AttachableFrag->GetZoomFOVOverride() > 0.f)
+	{
+		ClearZoomFOVOverride();
+	}
+
+	if (AttachableFrag->GetIsLaser())
+	{
+		SetLaserActive(false);
 	}
 }

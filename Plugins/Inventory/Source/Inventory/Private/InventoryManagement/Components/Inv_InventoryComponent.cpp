@@ -1732,6 +1732,14 @@ void UInv_InventoryComponent::Server_AttachItemToWeapon_Implementation(int32 Wea
 			);
 			UE_LOG(LogTemp, Log, TEXT("[Attachment Visual] 실시간 부착물 메시 추가: 슬롯 %d"), SlotIndex);
 		}
+
+		// ════════════════════════════════════════════════════════════════
+		// [Phase 7] 부착물 효과 적용 (소음기/스코프/레이저)
+		// ════════════════════════════════════════════════════════════════
+		if (IsValid(EquipActor))
+		{
+			EquipActor->ApplyAttachmentEffects(AttachableFragment);
+		}
 	}
 }
 
@@ -1815,6 +1823,21 @@ void UInv_InventoryComponent::Server_DetachItemFromWeapon_Implementation(int32 W
 		// 📌 [Phase 5] 실시간 부착물 메시 제거 (무기가 장착 중일 때만)
 		// ════════════════════════════════════════════════════════════════
 		AInv_EquipActor* EquipActor = EquipFragment->GetEquippedActor();
+
+		// ════════════════════════════════════════════════════════════════
+		// [Phase 7] 부착물 효과 해제 (분리 전, AttachedData가 아직 유효할 때)
+		// ════════════════════════════════════════════════════════════════
+		if (IsValid(EquipActor))
+		{
+			const FInv_AttachableFragment* DetachingAttachable =
+				AttachedData->ItemManifestCopy.GetFragmentOfType<FInv_AttachableFragment>();
+			if (DetachingAttachable)
+			{
+				EquipActor->RemoveAttachmentEffects(DetachingAttachable);
+			}
+		}
+
+		// [Phase 5] 실시간 부착물 메시 제거
 		if (IsValid(EquipActor))
 		{
 			EquipActor->DetachMeshFromSocket(SlotIndex);
