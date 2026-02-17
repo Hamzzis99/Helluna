@@ -8,6 +8,7 @@
 
 class UEnemyCombatComponent;
 class UHellunaHealthComponent;
+class UMassAgentComponent;	
 /**
  * 
  */
@@ -41,6 +42,17 @@ private:
 
 public:
 	FORCEINLINE UEnemyCombatComponent* GetEnemyCombatComponent() const { return EnemyCombatComponent; }
+
+
+// ECS 관련 함수
+public:
+	// ✅ 사망 시 서버에서 호출: Mass 엔티티 자체를 제거해서 “재생성” 방지
+	void DespawnMassEntityOnServer(const TCHAR* Where);
+
+protected:
+	// MassAgent가 이미 달려있다고 했으니 캐싱(없으면 FindComponentByClass로 찾아도 됨)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Mass")
+	TObjectPtr<UMassAgentComponent> MassAgentComp = nullptr;
 
 	/**
 	 * 거리 기반 애니메이션/그림자 품질 조절.

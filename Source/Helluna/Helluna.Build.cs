@@ -13,6 +13,13 @@ public class Helluna : ModuleRules
 
         PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput" , "StructUtils", 
             "GameplayAbilities", "GameplayTags","GameplayTasks", "AIModule", "NavigationSystem","AnimGraphRuntime", "MotionWarping",
+
+            "DeveloperSettings", "UMG", "Slate","SlateCore", 
+
+            //Mass 관련 모듈들
+            "MassMovement","MassLOD", "MassCrowd","MassEntity","MassSpawner","MassRepresentation","MassActors", "MassSimulation",
+            
+
             "DeveloperSettings", "UMG", "Slate","SlateCore", "MassEntity","MassSpawner","MassRepresentation","MassActors",
             "MassMovement","MassLOD", "MassCrowd",
 

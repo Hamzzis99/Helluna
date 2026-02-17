@@ -108,6 +108,10 @@ void AHellunaEnemyCharacter::BeginPlay()
 
 	Super::BeginPlay();
 
+	Debug::Print(FString::Printf(TEXT("[Enemy] BeginPlay Auth=%d NetMode=%d"),
+		HasAuthority() ? 1 : 0, (int32)GetNetMode()));
+
+
 	if (!HasAuthority()) return;
 
 	// Pool 생성 상태(Controller 없음)면 GameMode 등록 스킵
@@ -118,7 +122,18 @@ void AHellunaEnemyCharacter::BeginPlay()
 	{
 		GM->RegisterAliveMonster(this);
 	}
+		// ✅ 죽음 이벤트를 받아서 GameMode에 “죽었다” 통지
+	if (HealthComponent)
+	{
+		HealthComponent->OnHealthChanged.AddDynamic(this, &AHellunaEnemyCharacter::OnMonsterHealthChanged);
+		HealthComponent->OnDeath.RemoveDynamic(this, &ThisClass::OnMonsterDeath);
+		HealthComponent->OnDeath.AddUniqueDynamic(this, &ThisClass::OnMonsterDeath);
+	}
+
+	Debug::Print(TEXT("[HellunaEnemyCharacter] BeginPlay - Monster Registered"));
+
 }
+
 
 void AHellunaEnemyCharacter::OnMonsterHealthChanged(
 	UActorComponent* MonsterHealthComponent,
@@ -197,4 +212,54 @@ void AHellunaEnemyCharacter::OnMonsterDeath(AActor* DeadActor, AActor* KillerAct
 	{
 		GM->NotifyMonsterDied(this);
 	}
+}
+
+
+#include "MassAgentComponent.h"
+#include "MassEntitySubsystem.h"
+#include "MassEntityManager.h"
+
+void AHellunaEnemyCharacter::DespawnMassEntityOnServer(const TCHAR* Where)
+{
+	// ✅ 서버에서만 엔티티 제거
+	if (!HasAuthority())
+		return;
+
+	if (!MassAgentComp)
+	{
+		MassAgentComp = FindComponentByClass<UMassAgentComponent>();
+	}
+
+	if (!MassAgentComp)
+	{
+		Debug::Print(FString::Printf(TEXT("[MassDespawn] %s | No MassAgentComp"), Where), FColor::Red);
+		return;
+	}
+
+	// UE 버전에 따라 함수명이 조금씩 다를 수 있음
+	const FMassEntityHandle Entity = MassAgentComp->GetEntityHandle();
+
+	if (!Entity.IsValid())
+	{
+		Debug::Print(FString::Printf(TEXT("[MassDespawn] %s | Invalid EntityHandle"), Where), FColor::Red);
+		return;
+	}
+
+	UWorld* W = GetWorld();
+	if (!W)
+		return;
+
+	UMassEntitySubsystem* ES = W->GetSubsystem<UMassEntitySubsystem>();
+	if (!ES)
+	{
+		Debug::Print(FString::Printf(TEXT("[MassDespawn] %s | No MassEntitySubsystem"), Where), FColor::Red);
+		return;
+	}
+
+	// ✅ 엔티티 자체 제거 (이게 핵심: Actor만 죽이면 다시 생성됨)
+	FMassEntityManager& EM = ES->GetMutableEntityManager();
+	EM.DestroyEntity(Entity);
+
+	Debug::Print(FString::Printf(TEXT("[MassDespawn] %s | DestroyEntity OK"), Where), FColor::Green);
+
 }
