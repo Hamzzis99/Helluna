@@ -30,6 +30,13 @@ void FInventoryModule::StartupModule()
 	TagManager.AddNativeGameplayTag(FName("AttachmentSlot.Magazine"), TEXT("탄창 슬롯"));
 	TagManager.AddNativeGameplayTag(FName("AttachmentSlot.Stock"),    TEXT("개머리판 슬롯"));
 	TagManager.AddNativeGameplayTag(FName("AttachmentSlot.Laser"),    TEXT("레이저/조명 슬롯"));
+
+	// ════════════════════════════════════════════════════════════════
+	// 📌 부착물 아이템 타입 태그 (ItemType 용)
+	// ════════════════════════════════════════════════════════════════
+	TagManager.AddNativeGameplayTag(FName("GameItems.Equipment.Attachments.Scope"),  TEXT("스코프 부착물 아이템"));
+	TagManager.AddNativeGameplayTag(FName("GameItems.Equipment.Attachments.Muzzle"), TEXT("소음기 부착물 아이템"));
+	TagManager.AddNativeGameplayTag(FName("GameItems.Equipment.Attachments.Grip"),   TEXT("그립 부착물 아이템"));
 }
 
 void FInventoryModule::ShutdownModule()

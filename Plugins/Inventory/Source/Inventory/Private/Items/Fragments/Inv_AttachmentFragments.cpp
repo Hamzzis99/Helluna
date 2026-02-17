@@ -163,7 +163,11 @@ void FInv_AttachmentHostFragment::OnUnequipAllAttachments(APlayerController* PC)
 // Phase 2의 Server_AttachItemToWeapon에서 AttachItem 호출 전에 검증용
 bool FInv_AttachableFragment::CanAttachToSlot(const FInv_AttachmentSlotDef& SlotDef) const
 {
-	return AttachmentType.MatchesTagExact(SlotDef.SlotType);
+	const bool bResult = AttachmentType.MatchesTagExact(SlotDef.SlotType);
+	UE_LOG(LogTemp, Log, TEXT("[Attachment] CanAttachToSlot: 부착물=%s, 슬롯=%s → %s"),
+		*AttachmentType.ToString(), *SlotDef.SlotType.ToString(),
+		bResult ? TEXT("호환") : TEXT("불일치"));
+	return bResult;
 }
 
 // 부착물 장착 시 스탯 적용 — 기존 FInv_EquipmentFragment::OnEquip과 동일한 패턴

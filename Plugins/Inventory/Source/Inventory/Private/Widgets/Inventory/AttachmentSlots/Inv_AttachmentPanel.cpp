@@ -26,6 +26,7 @@
 #include "Components/TextBlock.h"
 #include "Components/Image.h"
 #include "Components/UniformGridPanel.h"
+#include "TimerManager.h"
 
 // ════════════════════════════════════════════════════════════════
 // 📌 NativeOnInitialized — 위젯 초기화
@@ -419,6 +420,8 @@ void UInv_AttachmentPanel::TryAttachHoverItem(int32 SlotIndex)
 	}
 
 	// 호환성 체크
+	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] CanAttach 체크: WeaponEntry=%d, AttachEntry=%d, Slot=%d"),
+		WeaponEntryIndex, AttachmentEntryIndex, SlotIndex);
 	if (!InventoryComponent->CanAttachToWeapon(WeaponEntryIndex, AttachmentEntryIndex, SlotIndex))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] 장착 실패: 호환 안 됨 (슬롯=%d)"), SlotIndex);
@@ -432,8 +435,19 @@ void UInv_AttachmentPanel::TryAttachHoverItem(int32 SlotIndex)
 	OwningGrid->ClearHoverItem();
 	OwningGrid->ShowCursor();
 
-	// 슬롯 상태 갱신
-	RefreshSlotStates();
+	// ⚠️ Server RPC는 리슨서버에서도 비동기 처리될 수 있음
+	// RefreshSlotStates를 다음 프레임으로 지연하여 RPC 처리 후 읽도록 함
+	if (UWorld* World = GetWorld())
+	{
+		FTimerHandle TimerHandle;
+		World->GetTimerManager().SetTimerForNextTick([WeakThis = TWeakObjectPtr<UInv_AttachmentPanel>(this)]()
+		{
+			if (WeakThis.IsValid() && WeakThis->bIsOpen)
+			{
+				WeakThis->RefreshSlotStates();
+			}
+		});
+	}
 
 	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 장착 성공: 슬롯 %d에 %s (WeaponEntry=%d, AttachEntry=%d)"),
 		SlotIndex,
@@ -466,8 +480,18 @@ void UInv_AttachmentPanel::TryDetachItem(int32 SlotIndex)
 	// 서버 RPC 호출
 	InventoryComponent->Server_DetachItemFromWeapon(WeaponEntryIndex, SlotIndex);
 
-	// 슬롯 상태 갱신
-	RefreshSlotStates();
+	// ⚠️ Server RPC 처리 완료 후 슬롯 상태 갱신 (다음 프레임)
+	if (UWorld* World = GetWorld())
+	{
+		FTimerHandle TimerHandle;
+		World->GetTimerManager().SetTimerForNextTick([WeakThis = TWeakObjectPtr<UInv_AttachmentPanel>(this)]()
+		{
+			if (WeakThis.IsValid() && WeakThis->bIsOpen)
+			{
+				WeakThis->RefreshSlotStates();
+			}
+		});
+	}
 
 	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 분리 완료: 슬롯 %d (WeaponEntry=%d)"),
 		SlotIndex, WeaponEntryIndex);
