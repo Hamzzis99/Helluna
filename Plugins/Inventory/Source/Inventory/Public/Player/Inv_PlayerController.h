@@ -7,6 +7,7 @@
 
 class UInv_InventoryComponent;
 class UInv_EquipmentComponent;
+class AInv_EquipActor;
 class UInputMappingContext;
 class UInputAction;
 class UInv_HUDWidget;
@@ -278,6 +279,44 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
 	void ToggleInventory();
+
+	// ============================================
+	// 🆕 [Phase 7.5] 현재 활성 무기의 EquipActor 반환
+	// ============================================
+	// [2026-02-18] 작업자: 김기현
+	// ────────────────────────────────────────────
+	// 목적:
+	//   팀원의 GA/무기 코드(Helluna 모듈)에서
+	//   인벤토리 플러그인 내부 구조를 모르더라도
+	//   EquipActor에 접근할 수 있는 단일 진입점 제공
+	//
+	// 접근 경로:
+	//   [팀원 코드]
+	//     AInv_PlayerController* PC = Cast<AInv_PlayerController>(Hero->GetController());
+	//     AInv_EquipActor* EA = PC ? PC->GetCurrentEquipActor() : nullptr;
+	//
+	//   [내부 동작]
+	//     this->EquipmentComponent->GetActiveWeaponActor()
+	//       → ActiveWeaponSlot 기반 분기
+	//       → AInv_EquipActor* 반환
+	//
+	// 반환값:
+	//   - 현재 손에 든 무기의 AInv_EquipActor 포인터
+	//   - 맨손이거나 EquipmentComponent가 없으면 nullptr
+	//
+	// 사용 예시 (팀원 코드):
+	//   // 소음기 장착 시 소음 사운드 사용
+	//   USoundBase* Sound = EA ? EA->GetFireSound() : DefaultSound;
+	//
+	//   // 스코프 장착 시 줌 FOV 오버라이드
+	//   float FOV = EA ? EA->GetZoomFOV() : DefaultFOV;
+	//
+	// 전제조건:
+	//   BP_HellunaCharacterController가 AInv_PlayerController의 자식이므로
+	//   Cast<AInv_PlayerController>는 항상 성공함
+	// ============================================
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Weapon", meta = (DisplayName = "현재 활성 EquipActor 가져오기"))
+	AInv_EquipActor* GetCurrentEquipActor() const;
 
 	// ============================================
 	// 📌 인벤토리 저장/로드용 함수 (Phase 3)

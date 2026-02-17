@@ -911,4 +911,35 @@ void UInv_EquipmentComponent::ActiveUnequipWeapon()
 	UnequipWeapon();
 }
 
+// ════════════════════════════════════════════════════════════════
+// 🆕 [Phase 7.5] 현재 활성 무기의 EquipActor 반환
+// ════════════════════════════════════════════════════════════════
+// [2026-02-18] 작업자: 김기현
+// ────────────────────────────────────────────────────────────────
+// ActiveWeaponSlot 열거형에 따라 현재 손에 들고 있는 무기의
+// EquipActor를 반환한다.
+//
+// - EInv_ActiveWeaponSlot::Primary   → FindPrimaryWeaponActor()
+// - EInv_ActiveWeaponSlot::Secondary → FindSecondaryWeaponActor()
+// - EInv_ActiveWeaponSlot::None      → nullptr (맨손 상태)
+//
+// FindPrimaryWeaponActor() / FindSecondaryWeaponActor()는
+// 기존 private 함수를 그대로 활용하므로 추가 구현 불필요.
+// ════════════════════════════════════════════════════════════════
+AInv_EquipActor* UInv_EquipmentComponent::GetActiveWeaponActor()
+{
+	switch (ActiveWeaponSlot)
+	{
+	case EInv_ActiveWeaponSlot::Primary:
+		return FindPrimaryWeaponActor();
+
+	case EInv_ActiveWeaponSlot::Secondary:
+		return FindSecondaryWeaponActor();
+
+	default:
+		// None = 맨손 상태 → EquipActor 없음
+		return nullptr;
+	}
+}
+
 

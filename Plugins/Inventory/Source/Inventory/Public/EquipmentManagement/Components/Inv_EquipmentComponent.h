@@ -165,6 +165,35 @@ public:
 	void ActiveUnequipWeapon();
 
 	// ============================================
+	// 🆕 [Phase 7.5] 현재 활성 무기의 EquipActor 반환
+	// ============================================
+	// [2026-02-18] 작업자: 김기현
+	// ────────────────────────────────────────────
+	// 목적:
+	//   팀원의 GA/무기 코드(Helluna 모듈)에서 EquipActor의
+	//   Phase 7 프로퍼티(GetFireSound, GetZoomFOV 등)를 읽기 위한
+	//   public 접근 경로 제공
+	//
+	// 동작:
+	//   ActiveWeaponSlot 값에 따라 분기하여
+	//   Primary → FindPrimaryWeaponActor()
+	//   Secondary → FindSecondaryWeaponActor()
+	//   None → nullptr 반환
+	//
+	// 호출 경로:
+	//   AInv_PlayerController::GetCurrentEquipActor()
+	//     → UInv_EquipmentComponent::GetActiveWeaponActor()  ← 이 함수
+	//       → AInv_EquipActor* 반환
+	//
+	// 사용 예시 (팀원 코드):
+	//   AInv_PlayerController* PC = Cast<AInv_PlayerController>(Hero->GetController());
+	//   AInv_EquipActor* EA = PC ? PC->GetCurrentEquipActor() : nullptr;
+	//   USoundBase* Sound = EA ? EA->GetFireSound() : nullptr;
+	// ============================================
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Weapon", meta = (DisplayName = "활성 무기 EquipActor 가져오기"))
+	AInv_EquipActor* GetActiveWeaponActor();
+
+	// ============================================
 	// 🆕 [Phase 6] 장착된 액터 목록 Getter
 	// ⭐ 저장 시 장착 상태 확인용
 	// ============================================

@@ -158,6 +158,15 @@ void AHeroWeapon_Shotgun::MulticastFireShotgunFX_Implementation(
 	const TArray<FVector_NetQuantize>& HitLocations
 )
 {
+	// ════════════════════════════════════════════
+	// [Phase 7.5] 발사 사운드는 1회만 재생
+	// ════════════════════════════════════════════
+	// Super::MulticastFireFX_Implementation을 루프 안에서 호출하면
+	// 펠릿 수만큼 사운드가 중복 재생되는 문제 방지.
+	// 사운드 1회 + Niagara FX N회로 분리.
+	// ════════════════════════════════════════════
+	PlayEquipActorFireSound();
+
 	const int32 Count = TraceEnds.Num();
 
 	for (int32 i = 0; i < Count; ++i)
@@ -166,8 +175,8 @@ void AHeroWeapon_Shotgun::MulticastFireShotgunFX_Implementation(
 		const bool bHit = HitFlags.IsValidIndex(i) ? (HitFlags[i] != 0) : false;
 		const FVector HitLoc = HitLocations.IsValidIndex(i) ? (FVector)HitLocations[i] : End;
 
-		// ✅ 기존 GunBase의 FX 로직을 그대로 “로컬로” 실행
-		// (GunBase에 NetMulticast로 선언된 MulticastFireFX의 실제 구현부를 호출)
-		Super::MulticastFireFX_Implementation(TraceStart, End, bHit, HitLoc);
+		// Niagara 임팩트 FX만 펠릿 수만큼 스폰 (사운드 제외)
+		const FVector SpawnLoc = bHit ? HitLoc : End;
+		SpawnImpactFX(SpawnLoc);
 	}
 }

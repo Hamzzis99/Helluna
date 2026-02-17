@@ -172,16 +172,68 @@ void AHeroWeapon_GunBase::DoLineTraceAndDamage(AController* InstigatorController
 
 void AHeroWeapon_GunBase::MulticastFireFX_Implementation(FVector_NetQuantize TraceStart, FVector_NetQuantize TraceEnd, bool bHit, FVector_NetQuantize HitLocation)
 {
-	// “모든 클라이언트에서 보이는 연출” 전용
+	// ════════════════════════════════════════════
+	// [Phase 7.5] 발사 사운드 (소음기 자동 분기)
+	// ════════════════════════════════════════════
+	// 모든 GunBase 자식이 자동으로 상속받음.
+	// Shotgun은 자체 Multicast에서 사운드 1회 + FX 루프로 분리 호출.
+	// ════════════════════════════════════════════
+	PlayEquipActorFireSound();
+
+	// 임팩트 FX
 	const FVector SpawnLoc = bHit ? (FVector)HitLocation : (FVector)TraceEnd;
+	SpawnImpactFX(SpawnLoc);
+}
+
+// ════════════════════════════════════════════════════════════════
+// [Phase 7.5] PlayEquipActorFireSound — 발사 사운드 1회 재생
+// ════════════════════════════════════════════════════════════════
+// [2026-02-18] 작업자: 김기현
+// ────────────────────────────────────────────────────────────────
+// EquipActor의 GetFireSound()가 소음기 여부를 자동 분기:
+//   bSuppressed == true  → SuppressedFireSound (펑...)
+//   bSuppressed == false → DefaultFireSound    (탕!)
+//
+// 접근 경로:
+//   Owner(Pawn) → GetController() → Cast<AInv_PlayerController>
+//   → GetCurrentEquipActor() → GetFireSound()
+//
+// 안전성:
+//   모든 단계에서 nullptr 체크. 맨손이면 사운드 없음.
+// ════════════════════════════════════════════════════════════════
+void AHeroWeapon_GunBase::PlayEquipActorFireSound()
+{
+	APawn* OwnerPawn = Cast<APawn>(GetOwner());
+	if (!OwnerPawn) return;
+
+	AInv_PlayerController* PC = Cast<AInv_PlayerController>(OwnerPawn->GetController());
+	if (!PC) return;
+
+	AInv_EquipActor* EA = PC->GetCurrentEquipActor();
+	if (!EA) return;
+
+	USoundBase* FireSound = EA->GetFireSound();
+	if (!FireSound) return;
+
+	UGameplayStatics::PlaySoundAtLocation(this, FireSound, GetActorLocation());
+}
+
+// ════════════════════════════════════════════════════════════════
+// [Phase 7.5] SpawnImpactFX — 임팩트 FX 1회 스폰
+// ════════════════════════════════════════════════════════════════
+// 기존 Niagara 로직을 분리하여 Shotgun 등 자식이
+// 펠릿 수만큼 호출 가능하게 함.
+// ════════════════════════════════════════════════════════════════
+void AHeroWeapon_GunBase::SpawnImpactFX(const FVector& SpawnLocation)
+{
 	if (ImpactFX)
 	{
 		UNiagaraFunctionLibrary::SpawnSystemAtLocation(
 			this,
 			ImpactFX,
-			SpawnLoc,
+			SpawnLocation,
 			FRotator::ZeroRotator,
-			ImpactFXScale,   // 에디터에서 조절 가능
+			ImpactFXScale,
 			true,
 			true,
 			ENCPoolMethod::AutoRelease
