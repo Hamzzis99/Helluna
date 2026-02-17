@@ -90,6 +90,22 @@ public:
 	
 	UFUNCTION(Server, Reliable) // 신뢰하는 것? 서버에 전달하는 것?
 	void Server_EquipSlotClicked(UInv_InventoryItem* ItemToEquip, UInv_InventoryItem* ItemToUnequip, int32 WeaponSlotIndex = -1);
+
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [부착물 시스템 Phase 2] 부착/분리 Server RPC
+	// ════════════════════════════════════════════════════════════════
+
+	// 부착물 장착: 인벤토리 Grid에서 부착물을 무기 슬롯에 장착
+	UFUNCTION(Server, Reliable)
+	void Server_AttachItemToWeapon(int32 WeaponEntryIndex, int32 AttachmentEntryIndex, int32 SlotIndex);
+
+	// 부착물 분리: 무기 슬롯에서 부착물을 분리하여 인벤토리 Grid로 복귀
+	UFUNCTION(Server, Reliable)
+	void Server_DetachItemFromWeapon(int32 WeaponEntryIndex, int32 SlotIndex);
+
+	// 호환성 체크 (UI에서 드래그 중 슬롯 하이라이트용, 읽기 전용)
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Attachment")
+	bool CanAttachToWeapon(int32 WeaponEntryIndex, int32 AttachmentEntryIndex, int32 SlotIndex) const;
 	
 	UFUNCTION(NetMulticast, Reliable) // 멀티캐스트 함수 (서버에서 모든 클라이언트로 호출)
 	void Multicast_EquipSlotClicked(UInv_InventoryItem* ItemToEquip, UInv_InventoryItem* ItemToUnequip, int32 WeaponSlotIndex = -1);

@@ -12,6 +12,7 @@
 #include "InventoryManagement/Utils/Inv_InventoryStatics.h"
 #include "Items/Inv_InventoryItem.h"
 #include "Items/Fragments/Inv_ItemFragment.h"
+#include "Items/Fragments/Inv_AttachmentFragments.h"
 #include "Abilities/GameplayAbility.h"
 
 
@@ -214,7 +215,22 @@ void UInv_EquipmentComponent::OnItemEquipped(UInv_InventoryItem* EquippedItem, i
 	{
 		if (!bIsProxy)
 		{
+			// 무기 자체의 EquipModifiers 적용
 			EquipmentFragment->OnEquip(OwningPlayerController.Get());
+
+			// ════════════════════════════════════════════════════════════════
+			// 📌 [부착물 시스템 Phase 2] 무기에 달린 부착물들의 스탯도 일괄 적용
+			// 순서: 무기 스탯 OnEquip → 부착물 스탯 OnEquip
+			// ════════════════════════════════════════════════════════════════
+			FInv_AttachmentHostFragment* HostFragment = ItemManifest.GetFragmentOfTypeMutable<FInv_AttachmentHostFragment>();
+			if (HostFragment && HostFragment->GetAttachedItems().Num() > 0)
+			{
+				HostFragment->OnEquipAllAttachments(OwningPlayerController.Get());
+#if INV_DEBUG_EQUIP
+				UE_LOG(LogTemp, Warning, TEXT("📌 [Attachment] 무기 장착 시 부착물 스탯 %d개 일괄 적용"),
+					HostFragment->GetAttachedItems().Num());
+#endif
+			}
 		}
 		
 		if (!OwningSkeletalMesh.IsValid()) return;
@@ -323,9 +339,24 @@ void UInv_EquipmentComponent::OnItemUnequipped(UInv_InventoryItem* UnequippedIte
 
 	// ⭐ 서버에서만 장비 제거 및 Destroy 실행
 	if (!bIsServer) return;
-	
+
 	if (!bIsProxy) // 프록시 부분
 	{
+		// ════════════════════════════════════════════════════════════════
+		// 📌 [부착물 시스템 Phase 2] 부착물 스탯 일괄 해제 → 무기 스탯 해제
+		// 순서: 부착물 스탯 OnUnequip → 무기 스탯 OnUnequip
+		// ════════════════════════════════════════════════════════════════
+		FInv_AttachmentHostFragment* HostFragment = ItemManifest.GetFragmentOfTypeMutable<FInv_AttachmentHostFragment>();
+		if (HostFragment && HostFragment->GetAttachedItems().Num() > 0)
+		{
+			HostFragment->OnUnequipAllAttachments(OwningPlayerController.Get());
+#if INV_DEBUG_EQUIP
+			UE_LOG(LogTemp, Warning, TEXT("📌 [Attachment] 무기 해제 시 부착물 스탯 %d개 일괄 해제"),
+				HostFragment->GetAttachedItems().Num());
+#endif
+		}
+
+		// 무기 자체의 EquipModifiers 해제
 		EquipmentFragment->OnUnequip(OwningPlayerController.Get());
 	}
 	

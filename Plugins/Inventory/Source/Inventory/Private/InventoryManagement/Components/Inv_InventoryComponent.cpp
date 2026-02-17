@@ -17,6 +17,7 @@
 
 #include "Inventory.h"  // INV_DEBUG_INVENTORY 매크로 정의
 #include "Items/Components/Inv_ItemComponent.h"
+#include "Items/Fragments/Inv_AttachmentFragments.h"
 #include "Widgets/Inventory/InventoryBase/Inv_InventoryBase.h"
 #include "Widgets/Inventory/Spatial/Inv_SpatialInventory.h"
 #include "Widgets/Inventory/Spatial/Inv_InventoryGrid.h"
@@ -1557,6 +1558,290 @@ void UInv_InventoryComponent::Multicast_EquipSlotClicked_Implementation(UInv_Inv
 	// 장비 컴포넌트가 이 델리게이트를 수신 대기합니다.
 	OnItemEquipped.Broadcast(ItemToEquip, WeaponSlotIndex);
 	OnItemUnequipped.Broadcast(ItemToUnequip, WeaponSlotIndex);
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 [부착물 시스템 Phase 2] 부착물 장착 Server RPC
+// ════════════════════════════════════════════════════════════════
+// 호출 경로: Phase 3 UI → 드래그 앤 드롭 → 이 RPC
+// 처리 흐름:
+//   1. InventoryList에서 무기/부착물 아이템 찾기
+//   2. 유효성 검증 (Fragment, 슬롯, 타입 호환)
+//   3. 부착물 Manifest 사본 → 무기에 장착
+//   4. InventoryList에서 부착물 제거
+//   5. 무기 장비 슬롯 장착 중이면 부착물 스탯 적용
+//   6. 리플리케이션 (MarkItemDirty + 리슨서버 분기)
+// ════════════════════════════════════════════════════════════════
+void UInv_InventoryComponent::Server_AttachItemToWeapon_Implementation(int32 WeaponEntryIndex, int32 AttachmentEntryIndex, int32 SlotIndex)
+{
+	UE_LOG(LogTemp, Log, TEXT("[Attachment] Server_AttachItemToWeapon: WeaponEntry=%d, AttachmentEntry=%d, Slot=%d"),
+		WeaponEntryIndex, AttachmentEntryIndex, SlotIndex);
+
+	// ── 1. 아이템 찾기 ──
+	if (!InventoryList.Entries.IsValidIndex(WeaponEntryIndex))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Attachment] 장착 실패: 잘못된 WeaponEntryIndex %d"), WeaponEntryIndex);
+		return;
+	}
+	if (!InventoryList.Entries.IsValidIndex(AttachmentEntryIndex))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Attachment] 장착 실패: 잘못된 AttachmentEntryIndex %d"), AttachmentEntryIndex);
+		return;
+	}
+
+	UInv_InventoryItem* WeaponItem = InventoryList.Entries[WeaponEntryIndex].Item;
+	UInv_InventoryItem* AttachmentItem = InventoryList.Entries[AttachmentEntryIndex].Item;
+
+	if (!IsValid(WeaponItem) || !IsValid(AttachmentItem))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Attachment] 장착 실패: 아이템이 유효하지 않음"));
+		return;
+	}
+
+	// ── 2. Fragment 유효성 검증 ──
+	FInv_ItemManifest& WeaponManifest = WeaponItem->GetItemManifestMutable();
+	FInv_AttachmentHostFragment* HostFragment = WeaponManifest.GetFragmentOfTypeMutable<FInv_AttachmentHostFragment>();
+	if (!HostFragment)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Attachment] 장착 실패: 무기에 AttachmentHostFragment 없음"));
+		return;
+	}
+
+	const FInv_ItemManifest& AttachManifest = AttachmentItem->GetItemManifest();
+	const FInv_AttachableFragment* AttachableFragment = AttachManifest.GetFragmentOfType<FInv_AttachableFragment>();
+	if (!AttachableFragment)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Attachment] 장착 실패: 부착물에 AttachableFragment 없음"));
+		return;
+	}
+
+	// ── 3. 슬롯 유효성 검증 ──
+	const FInv_AttachmentSlotDef* SlotDef = HostFragment->GetSlotDef(SlotIndex);
+	if (!SlotDef)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Attachment] 장착 실패: 잘못된 SlotIndex %d (슬롯 수: %d)"),
+			SlotIndex, HostFragment->GetSlotCount());
+		return;
+	}
+
+	// 슬롯이 이미 점유되었는지 확인
+	if (HostFragment->IsSlotOccupied(SlotIndex))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Attachment] 장착 실패: 슬롯 %d 이미 점유됨"), SlotIndex);
+		return;
+	}
+
+	// 부착물 타입과 슬롯 타입이 일치하는지 확인
+	if (!AttachableFragment->CanAttachToSlot(*SlotDef))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Attachment] 장착 실패: 타입 불일치 (부착물=%s, 슬롯=%s)"),
+			*AttachableFragment->GetAttachmentType().ToString(), *SlotDef->SlotType.ToString());
+		return;
+	}
+
+	// ── 4. 부착물 Manifest 사본 생성 → 무기에 장착 ──
+	FInv_AttachedItemData AttachedData;
+	AttachedData.SlotIndex = SlotIndex;
+	AttachedData.AttachmentItemType = AttachManifest.GetItemType();
+	AttachedData.ItemManifestCopy = AttachManifest; // Manifest 전체 사본
+
+	HostFragment->AttachItem(SlotIndex, AttachedData);
+
+	UE_LOG(LogTemp, Log, TEXT("[Attachment] 부착물 장착 성공: %s → 슬롯 %d"),
+		*AttachedData.AttachmentItemType.ToString(), SlotIndex);
+
+	// ── 5. InventoryList에서 부착물 아이템 제거 ──
+	// 제거 전에 리슨서버용 Entry Index 기억
+	int32 RemovedEntryIndex = AttachmentEntryIndex;
+
+	InventoryList.RemoveEntry(AttachmentItem);
+
+	// 리슨서버 호스트: 부착물이 Grid에서 사라졌으므로 OnItemRemoved 방송
+	if (IsListenServerOrStandalone())
+	{
+		OnItemRemoved.Broadcast(AttachmentItem, RemovedEntryIndex);
+	}
+
+	// ── 6. 무기 Entry를 dirty로 표시 (리플리케이션) ──
+	// 부착물 제거로 인해 Entry 인덱스가 변경되었을 수 있음
+	for (int32 i = 0; i < InventoryList.Entries.Num(); ++i)
+	{
+		if (InventoryList.Entries[i].Item == WeaponItem)
+		{
+			InventoryList.MarkItemDirty(InventoryList.Entries[i]);
+			break;
+		}
+	}
+
+	// ── 7. 무기가 장비 슬롯에 장착 중이면 부착물 스탯 적용 ──
+	const FInv_EquipmentFragment* EquipFragment = WeaponManifest.GetFragmentOfType<FInv_EquipmentFragment>();
+	if (EquipFragment && EquipFragment->bEquipped)
+	{
+		// 방금 장착한 부착물의 스탯만 적용 (ManifestCopy에서 가져옴)
+		const FInv_AttachedItemData* JustAttached = HostFragment->GetAttachedItemData(SlotIndex);
+		if (JustAttached)
+		{
+			FInv_AttachableFragment* MutableAttachable =
+				const_cast<FInv_ItemManifest&>(JustAttached->ItemManifestCopy)
+					.GetFragmentOfTypeMutable<FInv_AttachableFragment>();
+			if (MutableAttachable)
+			{
+				MutableAttachable->OnEquip(OwningController.Get());
+			}
+		}
+	}
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 [부착물 시스템 Phase 2] 부착물 분리 Server RPC
+// ════════════════════════════════════════════════════════════════
+// 호출 경로: Phase 3 UI → 슬롯 우클릭 → 이 RPC
+// 처리 흐름:
+//   1. InventoryList에서 무기 아이템 찾기
+//   2. 유효성 검증 (Fragment, 슬롯 점유 여부, Grid 빈 공간)
+//   3. 무기에서 부착물 분리 → ManifestCopy 반환
+//   4. ManifestCopy로 새 인벤토리 아이템 생성 (스탯 재랜덤 방지)
+//   5. InventoryList에 추가
+//   6. 무기 장비 슬롯 장착 중이면 부착물 스탯 해제
+//   7. 리플리케이션
+// ════════════════════════════════════════════════════════════════
+void UInv_InventoryComponent::Server_DetachItemFromWeapon_Implementation(int32 WeaponEntryIndex, int32 SlotIndex)
+{
+	UE_LOG(LogTemp, Log, TEXT("[Attachment] Server_DetachItemFromWeapon: WeaponEntry=%d, Slot=%d"),
+		WeaponEntryIndex, SlotIndex);
+
+	// ── 1. 무기 아이템 찾기 ──
+	if (!InventoryList.Entries.IsValidIndex(WeaponEntryIndex))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Attachment] 분리 실패: 잘못된 WeaponEntryIndex %d"), WeaponEntryIndex);
+		return;
+	}
+
+	UInv_InventoryItem* WeaponItem = InventoryList.Entries[WeaponEntryIndex].Item;
+	if (!IsValid(WeaponItem))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Attachment] 분리 실패: 무기 아이템 유효하지 않음"));
+		return;
+	}
+
+	// ── 2. Fragment 유효성 검증 ──
+	FInv_ItemManifest& WeaponManifest = WeaponItem->GetItemManifestMutable();
+	FInv_AttachmentHostFragment* HostFragment = WeaponManifest.GetFragmentOfTypeMutable<FInv_AttachmentHostFragment>();
+	if (!HostFragment)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Attachment] 분리 실패: 무기에 AttachmentHostFragment 없음"));
+		return;
+	}
+
+	// 해당 SlotIndex에 부착물이 있는지 확인
+	if (!HostFragment->IsSlotOccupied(SlotIndex))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Attachment] 분리 실패: 슬롯 %d에 부착물 없음"), SlotIndex);
+		return;
+	}
+
+	// ── 3. 인벤토리 Grid에 빈 공간 확인 ──
+	// 분리될 부착물의 Manifest로 공간 체크
+	const FInv_AttachedItemData* AttachedData = HostFragment->GetAttachedItemData(SlotIndex);
+	if (!AttachedData)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Attachment] 분리 실패: 슬롯 %d 데이터를 찾을 수 없음"), SlotIndex);
+		return;
+	}
+
+	if (!HasRoomInInventoryList(AttachedData->ItemManifestCopy))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Attachment] 분리 실패: 인벤토리 공간 부족"));
+		NoRoomInInventory.Broadcast();
+		return;
+	}
+
+	// ── 4. 무기가 장비 슬롯에 장착 중이면 부착물 스탯 해제 (분리 전에!) ──
+	const FInv_EquipmentFragment* EquipFragment = WeaponManifest.GetFragmentOfType<FInv_EquipmentFragment>();
+	if (EquipFragment && EquipFragment->bEquipped)
+	{
+		FInv_AttachableFragment* MutableAttachable =
+			const_cast<FInv_ItemManifest&>(AttachedData->ItemManifestCopy)
+				.GetFragmentOfTypeMutable<FInv_AttachableFragment>();
+		if (MutableAttachable)
+		{
+			MutableAttachable->OnUnequip(OwningController.Get());
+		}
+	}
+
+	// ── 5. 무기에서 부착물 분리 → FInv_AttachedItemData 반환 ──
+	FInv_AttachedItemData DetachedData = HostFragment->DetachItem(SlotIndex);
+
+	UE_LOG(LogTemp, Log, TEXT("[Attachment] 부착물 분리 성공: %s (슬롯 %d)"),
+		*DetachedData.AttachmentItemType.ToString(), SlotIndex);
+
+	// ── 6. ManifestCopy로 새 인벤토리 아이템 생성 ──
+	// bRandomizeOnManifest는 이미 false이므로 스탯이 재랜덤되지 않음
+	UInv_InventoryItem* RestoredItem = DetachedData.ItemManifestCopy.Manifest(GetOwner());
+	if (!IsValid(RestoredItem))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Attachment] 분리 실패: ManifestCopy.Manifest() 실패"));
+		return;
+	}
+
+	// ── 7. InventoryList에 추가 ──
+	InventoryList.AddEntry(RestoredItem);
+
+	// 리슨서버 호스트: 새 아이템이 Grid에 추가되었으므로 OnItemAdded 방송
+	if (IsListenServerOrStandalone())
+	{
+		int32 NewEntryIndex = InventoryList.Entries.Num() - 1;
+		OnItemAdded.Broadcast(RestoredItem, NewEntryIndex);
+	}
+
+	// ── 8. 무기 Entry를 dirty로 표시 (리플리케이션) ──
+	for (int32 i = 0; i < InventoryList.Entries.Num(); ++i)
+	{
+		if (InventoryList.Entries[i].Item == WeaponItem)
+		{
+			InventoryList.MarkItemDirty(InventoryList.Entries[i]);
+			break;
+		}
+	}
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 [부착물 시스템 Phase 2] 호환성 체크 (읽기 전용)
+// ════════════════════════════════════════════════════════════════
+// 호출 경로: Phase 3 UI → 드래그 중 슬롯 하이라이트
+// 장착 가능 여부만 확인 (실제 장착은 안 함)
+// ════════════════════════════════════════════════════════════════
+bool UInv_InventoryComponent::CanAttachToWeapon(int32 WeaponEntryIndex, int32 AttachmentEntryIndex, int32 SlotIndex) const
+{
+	// 무기 Entry 유효성
+	if (!InventoryList.Entries.IsValidIndex(WeaponEntryIndex)) return false;
+
+	// 부착물 Entry 유효성
+	if (!InventoryList.Entries.IsValidIndex(AttachmentEntryIndex)) return false;
+
+	const UInv_InventoryItem* WeaponItem = InventoryList.Entries[WeaponEntryIndex].Item;
+	const UInv_InventoryItem* AttachmentItem = InventoryList.Entries[AttachmentEntryIndex].Item;
+	if (!IsValid(WeaponItem) || !IsValid(AttachmentItem)) return false;
+
+	// 무기에 AttachmentHostFragment 있는지
+	const FInv_AttachmentHostFragment* HostFragment =
+		WeaponItem->GetItemManifest().GetFragmentOfType<FInv_AttachmentHostFragment>();
+	if (!HostFragment) return false;
+
+	// 부착물에 AttachableFragment 있는지
+	const FInv_AttachableFragment* AttachableFragment =
+		AttachmentItem->GetItemManifest().GetFragmentOfType<FInv_AttachableFragment>();
+	if (!AttachableFragment) return false;
+
+	// SlotIndex 유효한지
+	const FInv_AttachmentSlotDef* SlotDef = HostFragment->GetSlotDef(SlotIndex);
+	if (!SlotDef) return false;
+
+	// 슬롯이 비어있는지
+	if (HostFragment->IsSlotOccupied(SlotIndex)) return false;
+
+	// 타입 호환되는지
+	return AttachableFragment->CanAttachToSlot(*SlotDef);
 }
 
 void UInv_InventoryComponent::ToggleInventoryMenu()
