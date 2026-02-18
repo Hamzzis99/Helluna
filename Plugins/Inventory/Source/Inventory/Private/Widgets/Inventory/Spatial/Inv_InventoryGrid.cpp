@@ -2622,6 +2622,42 @@ TArray<FInv_SavedItemData> UInv_InventoryGrid::CollectGridState() const
 			}
 		}
 
+		// ════════════════════════════════════════════════════════════════
+		// 📌 [Phase 1 최적화] Fragment 직렬화 — 랜덤 스탯 보존
+		// ════════════════════════════════════════════════════════════════
+		{
+			const FInv_ItemManifest& ItemManifest = Item->GetItemManifest();
+			SavedData.SerializedManifest = ItemManifest.SerializeFragments();
+
+#if INV_DEBUG_SAVE
+			UE_LOG(LogTemp, Warning,
+				TEXT("    │       📦 [Phase 1 최적화] Fragment 직렬화 (클라이언트): %s → %d바이트"),
+				*SavedData.ItemType.ToString(), SavedData.SerializedManifest.Num());
+#endif
+
+			// 부착물의 Fragment도 각각 직렬화
+			const FInv_AttachmentHostFragment* SerializeHostFrag = ItemManifest.GetFragmentOfType<FInv_AttachmentHostFragment>();
+			if (SerializeHostFrag)
+			{
+				for (int32 AttIdx = 0; AttIdx < SavedData.Attachments.Num(); ++AttIdx)
+				{
+					FInv_SavedAttachmentData& AttSave = SavedData.Attachments[AttIdx];
+					const FInv_AttachedItemData* AttachedData = SerializeHostFrag->GetAttachedItemData(AttSave.SlotIndex);
+					if (AttachedData)
+					{
+						AttSave.SerializedManifest = AttachedData->ItemManifestCopy.SerializeFragments();
+
+#if INV_DEBUG_SAVE
+						UE_LOG(LogTemp, Warning,
+							TEXT("    │         📦 부착물[%d] Fragment 직렬화: %s → %d바이트"),
+							AttIdx, *AttSave.AttachmentItemType.ToString(),
+							AttSave.SerializedManifest.Num());
+#endif
+					}
+				}
+			}
+		}
+
 		Result.Add(SavedData);
 
 		UE_LOG(LogTemp, Warning, TEXT("    │       ✅ 수집 완료: %s"), *SavedData.ToString());

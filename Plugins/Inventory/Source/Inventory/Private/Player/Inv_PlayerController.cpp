@@ -660,6 +660,50 @@ TArray<FInv_SavedItemData> AInv_PlayerController::CollectInventoryGridState()
 				1,  // 장비는 스택 1
 				Slot->GetWeaponSlotIndex()
 			);
+
+			// ════════════════════════════════════════════════════════════════
+			// 📌 [Phase 1 최적화] 장착 아이템 Fragment 직렬화
+			// ════════════════════════════════════════════════════════════════
+			{
+				const FInv_ItemManifest& EquipManifest = EquippedItem->GetItemManifest();
+				EquippedData.SerializedManifest = EquipManifest.SerializeFragments();
+
+#if INV_DEBUG_SAVE
+				UE_LOG(LogTemp, Warning,
+					TEXT("  │      📦 [Phase 1 최적화] 장착 아이템 Fragment 직렬화 (클라이언트): %s → %d바이트"),
+					*EquippedData.ItemType.ToString(), EquippedData.SerializedManifest.Num());
+#endif
+
+				// 부착물 데이터 수집 + 직렬화
+				const FInv_AttachmentHostFragment* HostFrag = EquipManifest.GetFragmentOfType<FInv_AttachmentHostFragment>();
+				if (HostFrag)
+				{
+					for (const FInv_AttachedItemData& Attached : HostFrag->GetAttachedItems())
+					{
+						FInv_SavedAttachmentData AttSave;
+						AttSave.AttachmentItemType = Attached.AttachmentItemType;
+						AttSave.SlotIndex = Attached.SlotIndex;
+
+						const FInv_AttachableFragment* AttachableFrag =
+							Attached.ItemManifestCopy.GetFragmentOfType<FInv_AttachableFragment>();
+						if (AttachableFrag)
+						{
+							AttSave.AttachmentType = AttachableFrag->GetAttachmentType();
+						}
+
+						AttSave.SerializedManifest = Attached.ItemManifestCopy.SerializeFragments();
+
+#if INV_DEBUG_SAVE
+						UE_LOG(LogTemp, Warning,
+							TEXT("  │        📦 부착물 Fragment 직렬화: %s → %d바이트"),
+							*AttSave.AttachmentItemType.ToString(), AttSave.SerializedManifest.Num());
+#endif
+
+						EquippedData.Attachments.Add(AttSave);
+					}
+				}
+			}
+
 			Result.Add(EquippedData);
 #if INV_DEBUG_PLAYER
 			UE_LOG(LogTemp, Warning, TEXT("  │      → ✅ Result에 추가됨!"));
