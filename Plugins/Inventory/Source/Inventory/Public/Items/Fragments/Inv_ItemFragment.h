@@ -8,6 +8,7 @@
 
 class APlayerController;
 class AInv_EquipActor;
+class UStaticMesh;
 
 // ════════════════════════════════════════════════════════════════════════════════
 // 📌 FInv_ItemFragment - 아이템 프래그먼트 기본 구조체
@@ -327,6 +328,22 @@ struct FInv_EquipmentFragment : public FInv_InventoryItemFragment
 	// ============================================
 	AInv_EquipActor* GetEquippedActor() const { return EquippedActor.Get(); }
 
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [Phase 8] 프리뷰 메시 Getter
+	// ════════════════════════════════════════════════════════════════
+	// 사용처: Inv_AttachmentPanel::OpenForWeapon()
+	//   → EquipFrag->HasPreviewMesh()로 3D 프리뷰 가능 여부 판단
+	//   → EquipFrag->GetPreviewStaticMesh().LoadSynchronous()로 메시 로드
+	// ════════════════════════════════════════════════════════════════
+
+	TSoftObjectPtr<UStaticMesh> GetPreviewStaticMesh() const { return PreviewStaticMesh; }
+	FRotator GetPreviewRotationOffset() const { return PreviewRotationOffset; }
+	float GetPreviewCameraDistance() const { return PreviewCameraDistance; }
+
+	// 프리뷰 메시가 설정되어 있는지 확인
+	// Null이면 AttachmentPanel에서 2D 아이콘으로 폴백
+	bool HasPreviewMesh() const { return !PreviewStaticMesh.IsNull(); }
+
 private:
 	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (ExcludeBaseStruct, DisplayName = "EquipModifiers (장비 효과 목록)", Tooltip = "장착 시 적용될 스탯 효과들 (공격력, 방어력 등)"))
 	TArray<TInstancedStruct<FInv_EquipModifier>> EquipModifiers;
@@ -343,4 +360,157 @@ private:
 
 	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "EquipmentType (장비 타입 태그)", Tooltip = "장비 종류를 구분하는 GameplayTag (예: Weapon.Sword, Armor.Helmet)"))
 	FGameplayTag EquipmentType = FGameplayTag::EmptyTag; // 장비 타입 태그
+
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [Phase 8] 무기 3D 프리뷰 설정
+	// ════════════════════════════════════════════════════════════════
+	// 부착물 패널 중앙에 SceneCaptureComponent2D로 촬영하여 표시할 메시.
+	//
+	// TSoftObjectPtr 사용 이유:
+	//   - 하드 참조(TObjectPtr)를 쓰면 아이템 Manifest 로드 시 메시도 동시 로드됨
+	//   - 인벤토리에 무기 20개 있으면 20개 메시가 전부 메모리에 올라감
+	//   - TSoftObjectPtr은 경로만 저장, 실제 메시는 LoadSynchronous() 시점에만 로드
+	//   - 부착물 패널을 열 때만 로드 → 메모리 효율적
+	//
+	// BP 설정 방법:
+	//   BP_Inv_Rifle → ItemManifest → Fragments → EquipmentFragment
+	//   → "프리뷰 메시" 슬롯에 SM_Rifle_Preview 에셋 드래그&드롭
+	//
+	// 미설정 시 동작:
+	//   PreviewStaticMesh이 Null이면 기존 Image_WeaponIcon(2D 아이콘)으로 대체 표시
+	//   AttachmentPanel::OpenForWeapon()에서 HasPreviewMesh() 체크 후 분기
+	// ════════════════════════════════════════════════════════════════
+
+	// 부착물 패널 중앙에 표시할 StaticMesh
+	// 에셋 경로만 저장하고, 패널을 열 때 LoadSynchronous()로 로드
+	UPROPERTY(EditAnywhere, Category = "Inventory|Preview",
+		meta = (DisplayName = "프리뷰 메시 (StaticMesh)",
+				Tooltip = "부착물 패널 중앙에 3D로 표시할 메시. 미설정 시 2D 아이콘으로 대체."))
+	TSoftObjectPtr<UStaticMesh> PreviewStaticMesh;
+
+	// 프리뷰 표시 시 초기 회전 (총구 방향, 기울기 조정용)
+	// 예: 총구가 오른쪽을 향하게 하려면 Yaw = -90
+	UPROPERTY(EditAnywhere, Category = "Inventory|Preview",
+		meta = (DisplayName = "프리뷰 회전 오프셋",
+				Tooltip = "프리뷰 메시의 초기 회전. 총구 방향 조정에 사용. 예: Yaw=-90으로 총구를 오른쪽으로."))
+	FRotator PreviewRotationOffset = FRotator::ZeroRotator;
+
+	// SceneCapture 카메라와 메시 사이 거리
+	// 0이면 메시의 BoundingSphere 기준으로 자동 계산
+	// 큰 무기(런처)는 값을 크게, 작은 무기(권총)는 작게 조정
+	UPROPERTY(EditAnywhere, Category = "Inventory|Preview",
+		meta = (DisplayName = "프리뷰 카메라 거리",
+				Tooltip = "SceneCapture 카메라에서 메시까지 거리. 0이면 메시 크기 기반 자동 계산.",
+				ClampMin = 0.0))
+	float PreviewCameraDistance = 0.f;
 };
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 🔮 [미래 기능] 아이템 등급/레어리티 시스템
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// ⚠️ 주의: 이 기능은 아직 구현하지 않음!
+//    "등급 / 레어리티" 만들어줘  ← 이 명령어가 올 때만 구현할 것
+//    그 전까지는 절대 코드를 작성하지 말 것
+//
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 📌 개요:
+//    FInv_LabeledValueFragment의 랜덤 스탯 값(Min~Max)을 기반으로
+//    아이템 등급(레어리티)을 자동 산정하는 시스템
+//
+// 📌 등급 정의 (UENUM):
+//    enum class EInv_ItemRarity : uint8
+//    {
+//        Common     = 0,   // 일반   — 회색/흰색
+//        Uncommon   = 1,   // 고급   — 초록색
+//        Rare       = 2,   // 희귀   — 파란색
+//        Epic       = 3,   // 영웅   — 보라색
+//        Legendary  = 4,   // 전설   — 주황색/금색
+//    };
+//
+// 📌 등급 산정 로직 (FInv_RarityFragment):
+//
+//    1. 아이템의 모든 FInv_LabeledValueFragment를 수집
+//    2. 각 Fragment의 Value가 Min~Max 범위에서 어디에 위치하는지 백분율 계산:
+//       float Ratio = (Value - Min) / (Max - Min);   // 0.0 ~ 1.0
+//    3. 전체 Fragment의 Ratio 평균을 구함:
+//       float AverageRatio = Sum(Ratio) / FragmentCount;
+//    4. 평균 비율로 등급 결정:
+//       0.0  ~ 0.2  → Common     (하위 20%)
+//       0.2  ~ 0.4  → Uncommon
+//       0.4  ~ 0.6  → Rare
+//       0.6  ~ 0.8  → Epic
+//       0.8  ~ 1.0  → Legendary  (상위 20%)
+//
+//    ⚠️ 예시: 무기에 "공격력(10~50)", "치명타(1~10)" 두 Fragment가 있을 때
+//       공격력 Value=45 → Ratio = (45-10)/(50-10) = 0.875
+//       치명타 Value=3  → Ratio = (3-1)/(10-1) = 0.222
+//       AverageRatio = (0.875 + 0.222) / 2 = 0.548 → Rare 등급
+//
+// 📌 새로 만들 Fragment:
+//
+//    USTRUCT(BlueprintType)
+//    struct FInv_RarityFragment : public FInv_ItemFragment
+//    {
+//        GENERATED_BODY()
+//
+//        EInv_ItemRarity GetRarity() const { return CachedRarity; }
+//        FLinearColor GetRarityColor() const;       // 등급별 테두리 색상 반환
+//        FText GetRarityDisplayName() const;        // "전설", "희귀" 등 텍스트
+//
+//        // Manifest() 시점에 호출 — 같은 Manifest 내 LabeledValueFragment들을 읽어서 등급 계산
+//        virtual void Manifest() override;
+//
+//    private:
+//        EInv_ItemRarity CachedRarity = EInv_ItemRarity::Common;
+//
+//        // 등급 임계값 (BP에서 커스터마이즈 가능)
+//        UPROPERTY(EditAnywhere) float UncommonThreshold = 0.2f;
+//        UPROPERTY(EditAnywhere) float RareThreshold     = 0.4f;
+//        UPROPERTY(EditAnywhere) float EpicThreshold     = 0.6f;
+//        UPROPERTY(EditAnywhere) float LegendaryThreshold= 0.8f;
+//    };
+//
+// 📌 Manifest() 구현 핵심:
+//    - FInv_ItemManifest::Manifest()에서 각 Fragment의 Manifest()를 호출함
+//    - FInv_RarityFragment::Manifest()가 호출될 때,
+//      부모 Manifest의 GetAllFragmentsOfType<FInv_LabeledValueFragment>()로
+//      스탯 Fragment들을 읽어서 위 로직으로 등급 계산
+//    - ⚠️ 순서 의존성: RarityFragment는 LabeledValueFragment보다 뒤에 와야 함
+//      (LabeledValueFragment의 Manifest()가 먼저 Value를 랜덤 확정해야 하므로)
+//    - Fragments 배열에서 RarityFragment를 마지막에 배치하면 해결됨
+//
+// 📌 수정 필요 파일:
+//    1. Inv_ItemFragment.h   — FInv_RarityFragment 구조체 추가 (이 파일)
+//    2. Inv_ItemManifest.h   — GetRarity() 헬퍼 함수 추가
+//       EInv_ItemRarity GetRarity() const {
+//           if (auto* Frag = GetFragmentOfType<FInv_RarityFragment>())
+//               return Frag->GetRarity();
+//           return EInv_ItemRarity::Common;
+//       }
+//    3. Inv_GridSlot.h/.cpp  — 등급별 테두리 색상 적용
+//       SetRarityBorderColor(Item->GetItemManifest().GetRarity());
+//       → Brush TintColor를 등급 색상으로 변경
+//    4. Inv_ItemDescription.h/.cpp — 등급 텍스트 표시
+//       "⚔️ 전설 등급" 같은 텍스트를 아이템 설명 팝업 상단에 추가
+//    5. Inv_HoverItem.h/.cpp — 드래그 중 아이템에도 등급 테두리 반영
+//
+// 📌 등급별 색상 맵 (GetRarityColor 구현):
+//    Common    → FLinearColor(0.5, 0.5, 0.5, 1)   // 회색
+//    Uncommon  → FLinearColor(0.1, 0.8, 0.2, 1)   // 초록
+//    Rare      → FLinearColor(0.2, 0.4, 1.0, 1)   // 파랑
+//    Epic      → FLinearColor(0.6, 0.2, 0.9, 1)   // 보라
+//    Legendary → FLinearColor(1.0, 0.6, 0.0, 1)   // 주황/금
+//
+// 📌 저장/로드 영향:
+//    CachedRarity는 SerializedManifest에 자동 포함됨
+//    (기존 Phase 3 직렬화 시스템이 Fragment 전체를 저장하므로)
+//    → 추가 저장 로직 불필요
+//
+// 📌 리플리케이션 영향:
+//    FastArray의 UInv_InventoryItem이 Manifest를 들고 있으므로
+//    MarkItemDirty() 시 자동 리플리케이션됨
+//    → 추가 리플리케이션 로직 불필요
+//
+// ════════════════════════════════════════════════════════════════════════════════

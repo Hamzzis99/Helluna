@@ -1,15 +1,15 @@
 // Gihyeon's Inventory Project
 //
 // ════════════════════════════════════════════════════════════════════════════════
-// 📌 부착물 패널 위젯 (Attachment Panel) — Phase 3 구현
+// 📌 부착물 패널 위젯 (Attachment Panel) — Phase 8 리뉴얼
 // ════════════════════════════════════════════════════════════════════════════════
 //
 // 📌 핵심 흐름:
-//    OpenForWeapon → BuildSlotWidgets → UniformGridPanel에 2열 배치
+//    OpenForWeapon → SetupWeaponPreview + BuildSlotWidgets → 십자형 배치
 //    좌클릭 → TryAttachHoverItem → Server_AttachItemToWeapon
 //    우클릭 → TryDetachItem → Server_DetachItemFromWeapon
-//    NativeTick → UpdateSlotHighlights → HoverItem 호환 슬롯 하이라이트
-//    ClosePanel → ClearSlotWidgets → 패널 숨기기
+//    NativeTick → UpdateSlotHighlights + 드래그 회전
+//    ClosePanel → CleanupWeaponPreview + ClearSlotWidgets → 패널 숨기기
 //
 // ════════════════════════════════════════════════════════════════════════════════
 
@@ -26,7 +26,11 @@
 #include "Components/Button.h"
 #include "Components/TextBlock.h"
 #include "Components/Image.h"
-#include "Components/UniformGridPanel.h"
+#include "Components/VerticalBox.h"
+#include "Blueprint/WidgetLayoutLibrary.h"
+#include "Interaction/Preview/Inv_WeaponPreviewActor.h"
+#include "Engine/TextureRenderTarget2D.h"
+#include "Engine/StaticMesh.h"
 
 // ════════════════════════════════════════════════════════════════
 // 📌 NativeOnInitialized — 위젯 초기화
@@ -43,20 +47,27 @@ void UInv_AttachmentPanel::NativeOnInitialized()
 }
 
 // ════════════════════════════════════════════════════════════════
-// 📌 NativeTick — 매 프레임 호출 (HoverItem 호환 슬롯 하이라이트)
-// ════════════════════════════════════════════════════════════════
-// 호출 경로: UMG 틱 → 이 함수
-// 처리 흐름:
-//   1. 패널이 열려있으면 UpdateSlotHighlights() 호출
-// Phase 연결: Phase 3 UI — 실시간 호환성 표시
+// 📌 NativeTick — 매 프레임 호출 (하이라이트 + 드래그 회전)
 // ════════════════════════════════════════════════════════════════
 void UInv_AttachmentPanel::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
 
-	if (bIsOpen)
+	if (!bIsOpen) return;
+
+	UpdateSlotHighlights();
+
+	// Phase 8: 드래그 회전 처리
+	if (bIsDragging && WeaponPreviewActor.IsValid())
 	{
-		UpdateSlotHighlights();
+		DragLastPosition = DragCurrentPosition;
+		DragCurrentPosition = UWidgetLayoutLibrary::GetMousePositionOnViewport(GetOwningPlayer());
+
+		const float HorizontalDelta = DragLastPosition.X - DragCurrentPosition.X;
+		if (!FMath::IsNearlyZero(HorizontalDelta))
+		{
+			WeaponPreviewActor->RotatePreview(HorizontalDelta);
+		}
 	}
 }
 
@@ -136,6 +147,9 @@ void UInv_AttachmentPanel::OpenForWeapon(UInv_InventoryItem* WeaponItem, int32 W
 	// 슬롯 위젯 생성
 	BuildSlotWidgets();
 
+	// Phase 8: 3D 무기 프리뷰 설정
+	SetupWeaponPreview();
+
 	// 패널 보이기
 	SetVisibility(ESlateVisibility::Visible);
 	bIsOpen = true;
@@ -171,7 +185,9 @@ void UInv_AttachmentPanel::OpenForWeapon(UInv_InventoryItem* WeaponItem, int32 W
 // ════════════════════════════════════════════════════════════════
 void UInv_AttachmentPanel::ClosePanel()
 {
+	CleanupWeaponPreview();
 	ClearSlotWidgets();
+	bIsDragging = false;
 	bIsOpen = false;
 	CurrentWeaponItem.Reset();
 	CurrentWeaponEntryIndex = INDEX_NONE;
@@ -186,18 +202,19 @@ void UInv_AttachmentPanel::ClosePanel()
 }
 
 // ════════════════════════════════════════════════════════════════
-// 📌 BuildSlotWidgets — 슬롯 위젯 생성 및 UniformGridPanel에 2열 배치
+// 📌 BuildSlotWidgets — 슬롯 위젯 생성 및 십자형 레이아웃에 배치
 // ════════════════════════════════════════════════════════════════
 // 호출 경로: OpenForWeapon → 이 함수
 // 처리 흐름:
 //   1. ClearSlotWidgets() — 기존 위젯 정리
 //   2. AttachmentHostFragment에서 SlotDefinitions 가져오기
 //   3. 각 슬롯에 대해 CreateWidget → InitSlot → 델리게이트 바인딩
-//   4. UniformGridPanel에 Row=i/2, Col=i%2로 추가 (2열 자동 격자)
+//   4. SlotPosition에 따라 Top/Bottom/Left/Right VerticalBox에 분배
 // ════════════════════════════════════════════════════════════════
 void UInv_AttachmentPanel::BuildSlotWidgets()
 {
 	ClearSlotWidgets();
+	ClearAllSlotContainers();
 
 	if (!CurrentWeaponItem.IsValid()) return;
 	if (!AttachmentSlotWidgetClass)
@@ -215,7 +232,6 @@ void UInv_AttachmentPanel::BuildSlotWidgets()
 	}
 
 #if INV_DEBUG_ATTACHMENT
-	// ★ [부착진단-패널] BuildSlotWidgets: WeaponItem 부착물 데이터 상태 확인 ★
 	{
 		UE_LOG(LogTemp, Error, TEXT("[부착진단-패널] BuildSlotWidgets: WeaponItem=%s, HostFrag=%s, SlotDefs=%d, AttachedItems=%d"),
 			*CurrentWeaponItem->GetItemManifest().GetItemType().ToString(),
@@ -231,7 +247,6 @@ void UInv_AttachmentPanel::BuildSlotWidgets()
 		}
 	}
 #endif
-	// 실패 로그 — 부착물 데이터 유실 경고 (가드 없이 유지)
 	if (HostFrag->GetAttachedItems().Num() == 0)
 	{
 		UE_LOG(LogTemp, Error, TEXT("[부착진단-패널]   AttachedItems가 비어있음! 부착물 데이터 유실 의심"));
@@ -253,17 +268,18 @@ void UInv_AttachmentPanel::BuildSlotWidgets()
 		// 슬롯 클릭 델리게이트 바인딩
 		SlotWidget->OnSlotClicked.AddDynamic(this, &ThisClass::OnSlotClicked);
 
-		// UniformGridPanel에 2열 격자로 추가
-		if (IsValid(UniformGridPanel_Slots))
+		// Phase 8: SlotPosition에 따라 해당 VerticalBox에 배치
+		UVerticalBox* Container = GetContainerForPosition(SlotDefs[i].SlotPosition);
+		if (IsValid(Container))
 		{
-			UniformGridPanel_Slots->AddChildToUniformGrid(SlotWidget, i / 2, i % 2);
+			Container->AddChildToVerticalBox(SlotWidget);
 		}
 
 		SlotWidgets.Add(SlotWidget);
 	}
 
 #if INV_DEBUG_ATTACHMENT
-	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 슬롯 위젯 %d개 생성 완료"), SlotWidgets.Num());
+	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 슬롯 위젯 %d개 생성 완료 (십자형 배치)"), SlotWidgets.Num());
 #endif
 }
 
@@ -577,4 +593,193 @@ int32 UInv_AttachmentPanel::FindCurrentWeaponEntryIndex() const
 	}
 
 	return FoundIndex;
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 ClearAllSlotContainers — 4방향 VerticalBox 자식 위젯 전부 제거
+// ════════════════════════════════════════════════════════════════
+void UInv_AttachmentPanel::ClearAllSlotContainers()
+{
+	if (IsValid(VerticalBox_Top))    VerticalBox_Top->ClearChildren();
+	if (IsValid(VerticalBox_Bottom)) VerticalBox_Bottom->ClearChildren();
+	if (IsValid(VerticalBox_Left))   VerticalBox_Left->ClearChildren();
+	if (IsValid(VerticalBox_Right))  VerticalBox_Right->ClearChildren();
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 GetContainerForPosition — SlotPosition → VerticalBox 매핑
+// ════════════════════════════════════════════════════════════════
+UVerticalBox* UInv_AttachmentPanel::GetContainerForPosition(EInv_AttachmentSlotPosition Position) const
+{
+	switch (Position)
+	{
+	case EInv_AttachmentSlotPosition::Top:    return VerticalBox_Top;
+	case EInv_AttachmentSlotPosition::Bottom: return VerticalBox_Bottom;
+	case EInv_AttachmentSlotPosition::Left:   return VerticalBox_Left;
+	case EInv_AttachmentSlotPosition::Right:  return VerticalBox_Right;
+	default:                                  return VerticalBox_Top;
+	}
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 SetupWeaponPreview — 3D 무기 프리뷰 액터 스폰 및 설정
+// ════════════════════════════════════════════════════════════════
+// 호출 경로: OpenForWeapon → 이 함수
+// 처리 흐름:
+//   1. EquipmentFragment에서 PreviewStaticMesh 확인
+//   2. 없으면 2D 아이콘 폴백 (Image_WeaponIcon 유지)
+//   3. 있으면 WeaponPreviewActor 스폰 → SetPreviewMesh
+//   4. RenderTarget으로 Image_WeaponPreview에 Material 연결
+// ════════════════════════════════════════════════════════════════
+void UInv_AttachmentPanel::SetupWeaponPreview()
+{
+	if (!CurrentWeaponItem.IsValid()) return;
+
+	// EquipmentFragment에서 프리뷰 메시 정보 가져오기
+	const FInv_EquipmentFragment* EquipFrag = CurrentWeaponItem->GetItemManifest().GetFragmentOfType<FInv_EquipmentFragment>();
+	if (!EquipFrag || !EquipFrag->HasPreviewMesh())
+	{
+		// 프리뷰 메시 없음 → Image_WeaponPreview 숨기고 2D 아이콘 사용
+		if (IsValid(Image_WeaponPreview))
+		{
+			Image_WeaponPreview->SetVisibility(ESlateVisibility::Collapsed);
+		}
+#if INV_DEBUG_ATTACHMENT
+		UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 프리뷰 메시 없음 → 2D 아이콘 폴백"));
+#endif
+		return;
+	}
+
+	// 프리뷰 메시 동기 로드
+	UStaticMesh* PreviewMesh = EquipFrag->GetPreviewStaticMesh().LoadSynchronous();
+	if (!IsValid(PreviewMesh))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] 프리뷰 메시 로드 실패!"));
+		if (IsValid(Image_WeaponPreview))
+		{
+			Image_WeaponPreview->SetVisibility(ESlateVisibility::Collapsed);
+		}
+		return;
+	}
+
+	// 프리뷰 액터 스폰
+	UWorld* World = GetWorld();
+	if (!IsValid(World)) return;
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	AInv_WeaponPreviewActor* NewPreview = World->SpawnActor<AInv_WeaponPreviewActor>(
+		AInv_WeaponPreviewActor::StaticClass(),
+		FVector(0.f, 0.f, PreviewSpawnZ),
+		FRotator::ZeroRotator,
+		SpawnParams
+	);
+
+	if (!IsValid(NewPreview))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Attachment UI] WeaponPreviewActor 스폰 실패!"));
+		return;
+	}
+
+	WeaponPreviewActor = NewPreview;
+
+	// 프리뷰 메시 설정 (회전 오프셋 + 카메라 거리)
+	NewPreview->SetPreviewMesh(
+		PreviewMesh,
+		EquipFrag->GetPreviewRotationOffset(),
+		EquipFrag->GetPreviewCameraDistance()
+	);
+
+	// RenderTarget → Image_WeaponPreview에 연결
+	UTextureRenderTarget2D* RT = NewPreview->GetRenderTarget();
+	if (IsValid(RT) && IsValid(Image_WeaponPreview))
+	{
+		FSlateBrush PreviewBrush;
+		PreviewBrush.SetResourceObject(RT);
+		PreviewBrush.ImageSize = FVector2D(512.f, 512.f);
+		Image_WeaponPreview->SetBrush(PreviewBrush);
+		Image_WeaponPreview->SetVisibility(ESlateVisibility::Visible);
+	}
+
+#if INV_DEBUG_ATTACHMENT
+	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 3D 프리뷰 설정 완료: Mesh=%s"),
+		*PreviewMesh->GetName());
+#endif
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 CleanupWeaponPreview — 프리뷰 액터 파괴 및 정리
+// ════════════════════════════════════════════════════════════════
+void UInv_AttachmentPanel::CleanupWeaponPreview()
+{
+	if (WeaponPreviewActor.IsValid())
+	{
+		WeaponPreviewActor->Destroy();
+		WeaponPreviewActor.Reset();
+	}
+
+	// Image_WeaponPreview 브러시 초기화
+	if (IsValid(Image_WeaponPreview))
+	{
+		Image_WeaponPreview->SetBrush(FSlateBrush());
+		Image_WeaponPreview->SetVisibility(ESlateVisibility::Collapsed);
+	}
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 NativeOnMouseButtonDown — 드래그 시작 (Phase 8)
+// ════════════════════════════════════════════════════════════════
+// 호출 경로: UMG 마우스 이벤트 → 이 함수
+// 처리 흐름:
+//   1. 좌클릭 감지
+//   2. HoverItem 들고 있는지 확인
+//      → 들고 있으면: 드래그 시작하지 않음 (Super 호출로 슬롯까지 이벤트 전파)
+//      → 비어 있으면: 드래그 시작 (FReply::Handled로 이벤트 소비)
+//   3. 좌클릭 외 → Super 호출
+//
+// ⚠️ HoverItem 우선 이유:
+//    FReply::Handled()가 이벤트를 소비하면 자식 슬롯 위젯까지
+//    이벤트가 전파되지 않음. HoverItem 들고 있을 때는 장착이 우선이므로
+//    Super()로 넘겨서 슬롯 위젯의 OnSlotClicked까지 도달하게 해야 함.
+//
+// Phase 연결: Phase 8 — CharacterDisplay 동일 드래그 패턴 + HoverItem 가드
+// ════════════════════════════════════════════════════════════════
+FReply UInv_AttachmentPanel::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
+	{
+		// ⭐ HoverItem 들고 있으면 드래그 대신 슬롯 장착이 우선
+		// Super() 호출로 이벤트를 자식 위젯(슬롯)까지 전파시킴
+		if (OwningGrid.IsValid() && OwningGrid->HasHoverItem())
+		{
+			return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
+		}
+
+		// HoverItem 없으면 드래그 회전 시작
+		DragCurrentPosition = UWidgetLayoutLibrary::GetMousePositionOnViewport(GetOwningPlayer());
+		DragLastPosition = DragCurrentPosition;
+		bIsDragging = true;
+		return FReply::Handled();
+	}
+
+	return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 NativeOnMouseButtonUp — 드래그 종료
+// ════════════════════════════════════════════════════════════════
+FReply UInv_AttachmentPanel::NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	bIsDragging = false;
+	return Super::NativeOnMouseButtonUp(InGeometry, InMouseEvent);
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 NativeOnMouseLeave — 마우스가 패널을 벗어나면 드래그 중지
+// ════════════════════════════════════════════════════════════════
+void UInv_AttachmentPanel::NativeOnMouseLeave(const FPointerEvent& InMouseEvent)
+{
+	Super::NativeOnMouseLeave(InMouseEvent);
+	bIsDragging = false;
 }
