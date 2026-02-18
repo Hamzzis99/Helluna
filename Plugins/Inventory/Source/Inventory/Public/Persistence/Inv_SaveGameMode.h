@@ -302,6 +302,40 @@ public:
 		meta = (DisplayName = "리슨서버 종료 시 강제저장(bForceSaveOnListenServerShutdown)"))
 	bool bForceSaveOnListenServerShutdown = true;
 
+	// ════════════════════════════════════════════════════════════════
+	// 🆕 [Phase 5] 서버 권위 자동저장
+	// ════════════════════════════════════════════════════════════════
+
+	/**
+	 * [Phase 5] 서버 직접 수집 자동저장 활성화
+	 *
+	 * true = 자동저장 시 RPC 없이 서버 Entry의 GridIndex/GridCategory 사용
+	 * false = 기존 방식 (클라이언트 RPC 왕복)
+	 *
+	 * 📌 장점:
+	 *   - 자동저장 시 RPC 0회 (네트워크 부하 제거)
+	 *   - 클라이언트 응답 대기 불필요 (타임아웃 문제 없음)
+	 *   - 미응답 플레이어 데이터 손실 없음
+	 *
+	 * 📌 전제조건:
+	 *   - 아이템 이동/Split 시 Server_UpdateItemGridPosition RPC로 서버 동기화 필수
+	 *   - UI에서 Grid 위치 변경 시마다 RPC 호출되어야 함
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "인벤토리 저장",
+		meta = (DisplayName = "[Phase 5] 서버 직접 저장(bUseServerDirectSave)"))
+	bool bUseServerDirectSave = true;
+
+	/**
+	 * [Phase 5] 서버에서 직접 인벤토리 수집 후 저장
+	 *
+	 * RPC 없이 서버의 InventoryComponent->CollectInventoryDataForSave()를 직접 호출.
+	 * Entry에 저장된 GridIndex/GridCategory를 사용하므로
+	 * 클라이언트에서 Server_UpdateItemGridPosition RPC로 미리 동기화되어 있어야 함.
+	 *
+	 * @return 저장된 플레이어 수
+	 */
+	int32 SaveAllPlayersInventoryDirect();
+
 private:
 	// ── 자동저장 내부 ──
 
