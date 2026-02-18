@@ -433,7 +433,7 @@ public:
 	 * 
 	 * @param SavedItems - 클라이언트에서 수집한 인벤토리 데이터
 	 */
-	UFUNCTION(Server, Reliable)
+	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_ReceiveInventoryState(const TArray<FInv_SavedItemData>& SavedItems);
 
 	/**

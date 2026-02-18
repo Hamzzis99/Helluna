@@ -1157,6 +1157,20 @@ void AInv_PlayerController::Client_RequestInventoryState_Implementation()
 }
 
 /**
+ * [클라이언트 → 서버] Server RPC 검증 함수
+ */
+bool AInv_PlayerController::Server_ReceiveInventoryState_Validate(const TArray<FInv_SavedItemData>& SavedItems)
+{
+	// 기본 검증: 데이터 크기 제한 (악의적 대량 전송 방지)
+	if (SavedItems.Num() > 1000)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Server_ReceiveInventoryState_Validate] 아이템 수 초과: %d"), SavedItems.Num());
+		return false;
+	}
+	return true;
+}
+
+/**
  * [클라이언트 → 서버] 수집된 인벤토리 상태 전송
  */
 void AInv_PlayerController::Server_ReceiveInventoryState_Implementation(const TArray<FInv_SavedItemData>& SavedItems)
