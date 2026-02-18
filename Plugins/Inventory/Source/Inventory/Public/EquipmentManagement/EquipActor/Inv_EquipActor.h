@@ -7,7 +7,7 @@
 #include "GameplayTagContainer.h"
 #include "Inv_EquipActor.generated.h"
 
-class UGameplayAbility;
+class UGameplayAbility; // TODO: [독립화] 졸작 후 삭제. GAS 의존 제거.
 class USoundBase;
 struct FInv_AttachableFragment;
 
@@ -28,6 +28,8 @@ public:
 	// ⭐ [WeaponBridge] 무기 스폰 GA 클래스 Getter
 	// ⭐ 팀원의 GA_SpawnWeapon을 직접 호출하기 위함
 	// ============================================
+	// TODO: [독립화] 졸작 후 삭제. GA 매핑은 게임 모듈(WeaponBridgeComponent)로 이전.
+	// WeaponGAMap: TMap<FGameplayTag, TSubclassOf<UGameplayAbility>>으로 게임에서 관리.
 	TSubclassOf<UGameplayAbility> GetSpawnWeaponAbility() const { return SpawnWeaponAbility; }
 
 	// ============================================
@@ -79,6 +81,8 @@ private:
 	// ⭐ 1키 입력 시 이 GA를 활성화하여 무기 스폰
 	// ⭐ 예: GA_Hero_SpawnWeapon (도끼), GA_Hero_SpawnWeapon2 (총) 등
 	// ============================================
+	// TODO: [독립화] 졸작 후 삭제. 이 값을 WeaponBridgeComponent의 WeaponGAMap으로 이전.
+	// 삭제 전 반드시 BP에 설정된 GA 클래스 값을 기록해둘 것.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory|Weapon", meta = (AllowPrivateAccess = "true", DisplayName = "무기 스폰 GA"))
 	TSubclassOf<UGameplayAbility> SpawnWeaponAbility;
 
@@ -110,6 +114,22 @@ private:
 	// ============================================
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory|Weapon|Socket", meta = (AllowPrivateAccess = "true", DisplayName = "보조무기 등 소켓"))
 	FName SecondaryBackSocket = TEXT("WeaponSocket_Secondary");
+
+	// ════════════════════════════════════════════════════════════════
+	// TODO: [독립화] 졸작 후 여기에 HandSocket 프로퍼티 추가
+	//
+	// UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory|Weapon|Socket",
+	//     meta = (AllowPrivateAccess = "true", DisplayName = "손 소켓"))
+	// FName HandSocket = TEXT("weapon_r");
+	//
+	// + public에 Getter/함수 추가:
+	//   FName GetHandSocket() const { return HandSocket; }
+	//   void AttachToHand(USkeletalMeshComponent* AttachMesh);
+	//   void AttachToBack(USkeletalMeshComponent* AttachMesh);
+	//
+	// AttachToHand: DetachFromActor → AttachToComponent(HandSocket, Snap) → SetWeaponHidden(false)
+	// AttachToBack: DetachFromActor → AttachToComponent(GetBackSocketName(), Snap) → SetWeaponHidden(false)
+	// ════════════════════════════════════════════════════════════════
 
 	// ════════════════════════════════════════════════════════════════
 	// [Phase 7] 부착물 효과 오버라이드 시스템

@@ -15,7 +15,7 @@ class UInv_InventoryItem;
 class UInv_InventoryComponent;
 class APlayerController;
 class USkeletalMeshComponent;
-class UGameplayAbility;
+class UGameplayAbility; // TODO: [독립화] 졸작 후 삭제
 
 // ============================================
 // ⭐ [WeaponBridge] 활성 무기 슬롯 상태
@@ -38,6 +38,14 @@ enum class EInv_ActiveWeaponSlot : uint8
 // @param bEquip - true: 꺼내기, false: 집어넣기
 // @param WeaponSlotIndex - 무기 슬롯 인덱스 (0=주무기, 1=보조무기)
 // ============================================
+// TODO: [독립화] 졸작 후 5파라미터 → 4파라미터로 변경
+// TSubclassOf<UGameplayAbility> SpawnWeaponAbility 파라미터 삭제
+// 변경 후:
+// DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FOnWeaponEquipRequested,
+//     const FGameplayTag&, WeaponTag,
+//     AInv_EquipActor*, BackWeaponActor,
+//     bool, bEquip,
+//     int32, WeaponSlotIndex);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_FiveParams(FOnWeaponEquipRequested,
 	const FGameplayTag&, WeaponTag,
 	AInv_EquipActor*, BackWeaponActor,
@@ -138,6 +146,17 @@ private:
 	// ⭐ 무기 장착 애니메이션 진행 중 플래그
 	UPROPERTY(VisibleAnywhere, Category = "Inventory|Weapon", meta = (DisplayName = "무기 장착 중"))
 	bool bIsWeaponEquipping = false;
+
+	// ════════════════════════════════════════════════════════════════
+	// TODO: [독립화] 졸작 후 여기에 내장 HandWeapon 모드 플래그 추가
+	//
+	// UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory|Weapon",
+	//     meta = (DisplayName = "내장 HandWeapon 모드"))
+	// bool bUseBuiltInHandWeapon = true;
+	//
+	// true: 플러그인이 EquipActor를 등/손 소켓 간 직접 이동 (게임 코드 불필요)
+	// false: 델리게이트만 발사, 게임에서 별도 손 무기 스폰/파괴 (현재 Helluna 방식)
+	// ════════════════════════════════════════════════════════════════
 
 	// ============================================
 	// ⭐ [WeaponBridge] 무기 꺼내기/집어넣기 내부 함수

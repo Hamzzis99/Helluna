@@ -13,7 +13,7 @@
 #include "Items/Inv_InventoryItem.h"
 #include "Items/Fragments/Inv_ItemFragment.h"
 #include "Items/Fragments/Inv_AttachmentFragments.h"
-#include "Abilities/GameplayAbility.h"
+#include "Abilities/GameplayAbility.h" // TODO: [독립화] 졸작 후 삭제
 
 
 //디버그용
@@ -368,6 +368,7 @@ void UInv_EquipmentComponent::OnItemUnequipped(UInv_InventoryItem* UnequippedIte
 			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] 손에 든 무기 해제 - 델리게이트 브로드캐스트 (SlotIndex: %d)"), WeaponSlotIndex);
 #endif
 			
+			// TODO: [독립화] 졸작 후 nullptr(SpawnWeaponAbility) 파라미터 삭제 → 4파라미터
 			// 손 무기 파괴 델리게이트 브로드캐스트 (클라이언트에서 UI와 연결된 캐릭터에 전달)
 			OnWeaponEquipRequested.Broadcast(
 				EquipmentFragment->GetEquipmentType(),
@@ -560,6 +561,11 @@ void UInv_EquipmentComponent::EquipPrimaryWeapon()
 #endif
 	
 	// 무기 스폰 GA 확인
+	// TODO: [독립화] 졸작 후 아래 SpawnWeaponAbility 관련 코드 삭제.
+	// bUseBuiltInHandWeapon 분기 추가:
+	//   true  → WeaponActor->AttachToHand(OwningSkeletalMesh.Get())
+	//   false → WeaponActor->SetWeaponHidden(true) (현재 동작 유지)
+	// Broadcast도 4파라미터로 변경.
 	TSubclassOf<UGameplayAbility> SpawnWeaponAbility = WeaponActor->GetSpawnWeaponAbility();
 #if INV_DEBUG_EQUIP
 	if (!SpawnWeaponAbility)
@@ -571,7 +577,7 @@ void UInv_EquipmentComponent::EquipPrimaryWeapon()
 		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] SpawnWeaponAbility: %s"), *SpawnWeaponAbility->GetName());
 	}
 #endif
-	
+
 	// 델리게이트 브로드캐스트 (Helluna에서 수신)
 	OnWeaponEquipRequested.Broadcast(
 		WeaponActor->GetEquipmentType(),
@@ -583,7 +589,7 @@ void UInv_EquipmentComponent::EquipPrimaryWeapon()
 #if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 델리게이트 브로드캐스트 완료 (bEquip = true, SlotIndex = 0)"));
 #endif
-	
+
 	// 상태 변경
 	ActiveWeaponSlot = EInv_ActiveWeaponSlot::Primary;
 #if INV_DEBUG_EQUIP
@@ -613,6 +619,7 @@ void UInv_EquipmentComponent::EquipSecondaryWeapon()
 #endif
 	
 	// 무기 스폰 GA 확인
+	// TODO: [독립화] 졸작 후 EquipPrimaryWeapon과 동일하게 변경
 	TSubclassOf<UGameplayAbility> SpawnWeaponAbility = WeaponActor->GetSpawnWeaponAbility();
 #if INV_DEBUG_EQUIP
 	if (!SpawnWeaponAbility)
@@ -624,7 +631,7 @@ void UInv_EquipmentComponent::EquipSecondaryWeapon()
 		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] SpawnWeaponAbility: %s"), *SpawnWeaponAbility->GetName());
 	}
 #endif
-	
+
 	// 델리게이트 브로드캐스트 (Helluna에서 수신)
 	OnWeaponEquipRequested.Broadcast(
 		WeaponActor->GetEquipmentType(),
@@ -673,6 +680,10 @@ void UInv_EquipmentComponent::UnequipWeapon()
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 무기 집어넣기 시작 - %s (SlotIndex: %d)"), *WeaponActor->GetName(), SlotIndex);
 #endif
 	
+	// TODO: [독립화] 졸작 후 Broadcast를 4파라미터로 변경 (SpawnWeaponAbility 파라미터 삭제)
+	// bUseBuiltInHandWeapon 분기 추가:
+	//   true  → WeaponActor->AttachToBack(OwningSkeletalMesh.Get())
+	//   false → WeaponActor->SetWeaponHidden(false) (현재 동작 유지)
 	// 델리게이트 브로드캐스트 (Helluna에서 손 무기 Destroy)
 	OnWeaponEquipRequested.Broadcast(
 		WeaponActor->GetEquipmentType(),
