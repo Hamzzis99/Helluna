@@ -6,6 +6,7 @@
 #include "Widgets/Composite/Inv_CompositeBase.h"
 #include "Serialization/MemoryWriter.h"
 #include "Serialization/MemoryReader.h"
+#include "Serialization/ObjectAndNameAsStringProxyArchive.h"
 #include "Inventory.h"
 
 UInv_InventoryItem* FInv_ItemManifest::Manifest(UObject* NewOuter) // 인벤토리의 인터페이스? 복사본이라고?
@@ -104,7 +105,12 @@ TArray<uint8> FInv_ItemManifest::SerializeFragments() const
 
 	// ── FMemoryWriter로 직렬화 ──
 	// bIsPersistent = true: SaveGame용 영속 직렬화
-	FMemoryWriter Writer(OutData, /*bIsPersistent=*/ true);
+	FMemoryWriter MemWriter(OutData, /*bIsPersistent=*/ true);
+
+	// FObjectAndNameAsStringProxyArchive로 감싸서 UObject 포인터를 패키지 경로 문자열로 변환
+	// Fragment 안의 TObjectPtr<UTexture2D>, TSubclassOf<AInv_EquipActor> 등을 처리
+	FObjectAndNameAsStringProxyArchive Writer(MemWriter, /*bInLoadingPhase=*/ false);
+	Writer.SetIsPersistent(true);
 
 	// Fragment 개수 먼저 기록
 	int32 FragmentCount = Fragments.Num();
@@ -164,7 +170,11 @@ bool FInv_ItemManifest::DeserializeAndApplyFragments(const TArray<uint8>& InData
 	}
 
 	// ── FMemoryReader로 역직렬화 ──
-	FMemoryReader Reader(InData, /*bIsPersistent=*/ true);
+	FMemoryReader MemReader(InData, /*bIsPersistent=*/ true);
+
+	// FObjectAndNameAsStringProxyArchive로 감싸서 패키지 경로 문자열 → UObject 포인터 복원
+	FObjectAndNameAsStringProxyArchive Reader(MemReader, /*bInLoadingPhase=*/ true);
+	Reader.SetIsPersistent(true);
 
 	// Fragment 개수 읽기
 	int32 FragmentCount = 0;
