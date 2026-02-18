@@ -518,7 +518,7 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory", meta = (DisplayName = "ItemTraceChannel (아이템 추적 채널)", Tooltip = "아이템 탐지용 콜리전 채널"))
 	TEnumAsByte<ECollisionChannel> ItemTraceChannel;
 
-	UFUNCTION(Server, Reliable)
+	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_Interact(AActor* TargetActor);
 
 	TWeakObjectPtr<AActor> ThisActor;

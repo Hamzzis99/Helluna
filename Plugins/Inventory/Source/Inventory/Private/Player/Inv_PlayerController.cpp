@@ -301,6 +301,13 @@ void AInv_PlayerController::PrimaryInteract()
 	InventoryComponent->TryAddItem(ItemComp);
 }
 
+bool AInv_PlayerController::Server_Interact_Validate(AActor* TargetActor)
+{
+	// 기본 검증: nullptr은 허용 (함수 내에서 처리)
+	// 추가 검증이 필요하면 여기에 추가
+	return true;
+}
+
 void AInv_PlayerController::Server_Interact_Implementation(AActor* TargetActor)
 {
 	if (!TargetActor) return;
