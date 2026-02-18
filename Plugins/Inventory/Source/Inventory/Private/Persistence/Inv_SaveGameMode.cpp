@@ -184,7 +184,12 @@ int32 AInv_SaveGameMode::SaveAllPlayersInventory()
 // ════════════════════════════════════════════════════════════════════════════════
 void AInv_SaveGameMode::OnPlayerInventoryLogout(const FString& PlayerId, APlayerController* PC)
 {
-	if (PlayerId.IsEmpty()) return;
+	if (PlayerId.IsEmpty())
+	{
+		UE_LOG(LogTemp, Error, TEXT("🔍 [SavePipeline] ❌ PlayerId 비어있음! 저장 중단!"));
+		return;
+	}
+	UE_LOG(LogTemp, Error, TEXT("🔍 [SavePipeline] PlayerId='%s' 찾음!"), *PlayerId);
 
 	// 인벤토리 저장
 	SavePlayerInventory(PlayerId, PC);
@@ -211,6 +216,9 @@ void AInv_SaveGameMode::OnInventoryControllerEndPlay(
 {
 	if (!IsValid(PlayerController)) return;
 
+	UE_LOG(LogTemp, Error, TEXT("🔍 [SavePipeline] OnInventoryControllerEndPlay 진입! Controller=%s, SavedItems=%d"),
+		*GetNameSafe(PlayerController), SavedItems.Num());
+
 	// ── PlayerId 찾기 ──
 	FString PlayerId;
 	if (FString* FoundPlayerId = ControllerToPlayerIdMap.Find(PlayerController))
@@ -223,7 +231,12 @@ void AInv_SaveGameMode::OnInventoryControllerEndPlay(
 		PlayerId = GetPlayerSaveId(PlayerController);
 	}
 
-	if (PlayerId.IsEmpty()) return;
+	if (PlayerId.IsEmpty())
+	{
+		UE_LOG(LogTemp, Error, TEXT("🔍 [SavePipeline] ❌ PlayerId 비어있음! 저장 중단!"));
+		return;
+	}
+	UE_LOG(LogTemp, Error, TEXT("🔍 [SavePipeline] PlayerId='%s' 찾음!"), *PlayerId);
 
 	// ── 장착 정보 병합 ──
 	// SavedItems에 장착 정보가 없으면 캐시된 데이터에서 복원
@@ -288,7 +301,12 @@ void AInv_SaveGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
 	if (!HasAuthority() || !IsValid(PC)) return;
 
 	FString PlayerId = GetPlayerSaveId(PC);
-	if (PlayerId.IsEmpty()) return;
+	if (PlayerId.IsEmpty())
+	{
+		UE_LOG(LogTemp, Error, TEXT("🔍 [SavePipeline] ❌ PlayerId 비어있음! 저장 중단!"));
+		return;
+	}
+	UE_LOG(LogTemp, Error, TEXT("🔍 [SavePipeline] PlayerId='%s' 찾음!"), *PlayerId);
 
 	if (!IsValid(InventorySaveGame)) return;
 
@@ -563,7 +581,12 @@ void AInv_SaveGameMode::OnPlayerInventoryStateReceived(
 	const TArray<FInv_SavedItemData>& SavedItems)
 {
 	FString PlayerId = GetPlayerSaveId(PlayerController);
-	if (PlayerId.IsEmpty()) return;
+	if (PlayerId.IsEmpty())
+	{
+		UE_LOG(LogTemp, Error, TEXT("🔍 [SavePipeline] ❌ PlayerId 비어있음! 저장 중단!"));
+		return;
+	}
+	UE_LOG(LogTemp, Error, TEXT("🔍 [SavePipeline] PlayerId='%s' 찾음!"), *PlayerId);
 
 	SaveCollectedItems(PlayerId, SavedItems);
 }

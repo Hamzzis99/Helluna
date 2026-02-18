@@ -13,7 +13,7 @@
 #define INV_DEBUG_EQUIP 0
 
 // 인벤토리 관리 (InventoryComponent, FastArray)
-#define INV_DEBUG_INVENTORY 0
+#define INV_DEBUG_INVENTORY 1
 
 // UI 위젯 (SpatialInventory, InventoryGrid, HUD)
 #define INV_DEBUG_WIDGET 0
@@ -28,7 +28,7 @@
 #define INV_DEBUG_RESOURCE 0
 
 // 플레이어 (PlayerController)
-#define INV_DEBUG_PLAYER 0
+#define INV_DEBUG_PLAYER 1
 
 // ============================================
 

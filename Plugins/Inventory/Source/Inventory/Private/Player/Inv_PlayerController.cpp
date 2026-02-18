@@ -17,6 +17,7 @@
 #include "Widgets/Inventory/Spatial/Inv_InventoryGrid.h"
 #include "Widgets/Inventory/GridSlots/Inv_EquippedGridSlot.h"
 #include "Items/Inv_InventoryItem.h"
+#include "Items/Fragments/Inv_AttachmentFragments.h"
 #include "Widgets/Inventory/SlottedItems/Inv_EquippedSlottedItem.h"
 #include "InventoryManagement/Utils/Inv_InventoryStatics.h"
 #include "Interfaces/Inv_Interface_Primary.cpp"
@@ -42,6 +43,36 @@ void AInv_PlayerController::ToggleInventory()
 	if (InventoryComponent->IsMenuOpen())
 	{
 		HUDWidget->SetVisibility(ESlateVisibility::Hidden);
+
+		// ★ [부착진단-UI] 인벤토리 열기 시 InventoryList 아이템 부착물 상태 확인 ★
+		{
+			TArray<UInv_InventoryItem*> DiagAllItems = InventoryComponent->GetInventoryList().GetAllItems();
+			UE_LOG(LogTemp, Error, TEXT("[부착진단-UI] 인벤토리 열기: InventoryList 총 아이템=%d"), DiagAllItems.Num());
+			for (int32 d = 0; d < DiagAllItems.Num(); d++)
+			{
+				UInv_InventoryItem* DiagItem = DiagAllItems[d];
+				if (!IsValid(DiagItem)) continue;
+				if (!DiagItem->HasAttachmentSlots()) continue;
+
+				const FInv_AttachmentHostFragment* DiagHost =
+					DiagItem->GetItemManifest().GetFragmentOfType<FInv_AttachmentHostFragment>();
+				UE_LOG(LogTemp, Error, TEXT("[부착진단-UI]   [%d] %s, HasSlots=Y, HostFrag=%s, AttachedItems=%d"),
+					d,
+					*DiagItem->GetItemManifest().GetItemType().ToString(),
+					DiagHost ? TEXT("유효") : TEXT("nullptr"),
+					DiagHost ? DiagHost->GetAttachedItems().Num() : -1);
+				if (DiagHost)
+				{
+					for (int32 a = 0; a < DiagHost->GetAttachedItems().Num(); a++)
+					{
+						const FInv_AttachedItemData& DiagData = DiagHost->GetAttachedItems()[a];
+						UE_LOG(LogTemp, Error, TEXT("[부착진단-UI]     [%d] Type=%s (Slot=%d), ManifestCopy.ItemType=%s"),
+							a, *DiagData.AttachmentItemType.ToString(), DiagData.SlotIndex,
+							*DiagData.ItemManifestCopy.GetItemType().ToString());
+					}
+				}
+			}
+		}
 	}
 	else
 	{

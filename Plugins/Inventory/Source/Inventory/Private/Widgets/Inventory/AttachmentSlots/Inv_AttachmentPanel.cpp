@@ -139,6 +139,17 @@ void UInv_AttachmentPanel::OpenForWeapon(UInv_InventoryItem* WeaponItem, int32 W
 	SetVisibility(ESlateVisibility::Visible);
 	bIsOpen = true;
 
+	// ★ [부착진단-패널] OpenForWeapon: 패널 열기 시 부착물 데이터 상태 ★
+	{
+		const FInv_AttachmentHostFragment* DiagHost =
+			WeaponItem->GetItemManifest().GetFragmentOfType<FInv_AttachmentHostFragment>();
+		UE_LOG(LogTemp, Error, TEXT("[부착진단-패널] OpenForWeapon: WeaponItem=%s, HostFrag=%s, AttachedItems=%d, EntryIndex=%d"),
+			*WeaponItem->GetItemManifest().GetItemType().ToString(),
+			DiagHost ? TEXT("유효") : TEXT("nullptr"),
+			DiagHost ? DiagHost->GetAttachedItems().Num() : -1,
+			WeaponEntryIndex);
+	}
+
 	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 패널 열림: 무기=%s, 슬롯=%d개, EntryIndex=%d"),
 		*WeaponItem->GetItemManifest().GetItemType().ToString(),
 		WeaponItem->GetAttachmentSlotCount(),
@@ -196,6 +207,26 @@ void UInv_AttachmentPanel::BuildSlotWidgets()
 	{
 		UE_LOG(LogTemp, Error, TEXT("[Attachment UI] AttachmentHostFragment를 찾을 수 없음!"));
 		return;
+	}
+
+	// ★ [부착진단-패널] BuildSlotWidgets: WeaponItem 부착물 데이터 상태 확인 ★
+	{
+		UE_LOG(LogTemp, Error, TEXT("[부착진단-패널] BuildSlotWidgets: WeaponItem=%s, HostFrag=%s, SlotDefs=%d, AttachedItems=%d"),
+			*CurrentWeaponItem->GetItemManifest().GetItemType().ToString(),
+			HostFrag ? TEXT("유효") : TEXT("nullptr"),
+			HostFrag->GetSlotDefinitions().Num(),
+			HostFrag->GetAttachedItems().Num());
+		for (int32 d = 0; d < HostFrag->GetAttachedItems().Num(); d++)
+		{
+			const FInv_AttachedItemData& DiagData = HostFrag->GetAttachedItems()[d];
+			UE_LOG(LogTemp, Error, TEXT("[부착진단-패널]   [%d] Type=%s (Slot=%d), ManifestCopy.ItemType=%s"),
+				d, *DiagData.AttachmentItemType.ToString(), DiagData.SlotIndex,
+				*DiagData.ItemManifestCopy.GetItemType().ToString());
+		}
+		if (HostFrag->GetAttachedItems().Num() == 0)
+		{
+			UE_LOG(LogTemp, Error, TEXT("[부착진단-패널]   AttachedItems가 비어있음! 부착물 데이터 유실 의심"));
+		}
 	}
 
 	const TArray<FInv_AttachmentSlotDef>& SlotDefs = HostFrag->GetSlotDefinitions();
