@@ -346,14 +346,26 @@ void AInv_SaveGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
 		// ItemComponent의 Manifest에 주입하여 복원
 		if (ItemData.Attachments.Num() > 0)
 		{
+			UE_LOG(LogTemp, Error, TEXT("[로드복원] 부착물 복원 시작: 무기=%s, 부착물=%d개"),
+				*ItemData.ItemType.ToString(), ItemData.Attachments.Num());
+
 			FInv_ItemManifest WeaponManifest = ItemComp->GetItemManifest();
 			FInv_AttachmentHostFragment* HostFrag = WeaponManifest.GetFragmentOfTypeMutable<FInv_AttachmentHostFragment>();
+
+			UE_LOG(LogTemp, Error, TEXT("[로드복원] HostFrag=%s"),
+				HostFrag ? TEXT("유효") : TEXT("nullptr — 복원 불가!"));
+
 			if (HostFrag)
 			{
 				for (const FInv_SavedAttachmentData& AttSave : ItemData.Attachments)
 				{
 					// 부착물 아이템 액터를 임시 스폰하여 Manifest 복사
 					TSubclassOf<AActor> AttachClass = ResolveItemClass(AttSave.AttachmentItemType);
+
+					UE_LOG(LogTemp, Error, TEXT("[로드복원]   부착물[%d] Type=%s, ResolveClass=%s"),
+						AttSave.SlotIndex, *AttSave.AttachmentItemType.ToString(),
+						AttachClass ? TEXT("성공") : TEXT("실패! — DataTable 매핑 없음"));
+
 					if (!AttachClass) continue;
 
 					AActor* TempActor = GetWorld()->SpawnActor<AActor>(
@@ -378,6 +390,10 @@ void AInv_SaveGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
 
 					HostFrag->AttachItem(AttSave.SlotIndex, AttachedData);
 
+					UE_LOG(LogTemp, Error, TEXT("[로드복원]   부착물 복원 완료: %s → 슬롯 %d (현재 AttachedItems=%d)"),
+						*AttSave.AttachmentItemType.ToString(), AttSave.SlotIndex,
+						HostFrag->GetAttachedItems().Num());
+
 					UE_LOG(LogInventory, Log,
 						TEXT("[Attachment Save] 부착물 복원: %s → 슬롯 %d"),
 						*AttSave.AttachmentItemType.ToString(),
@@ -389,6 +405,15 @@ void AInv_SaveGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
 
 				// 수정된 Manifest를 ItemComponent에 반영
 				ItemComp->InitItemManifest(WeaponManifest);
+
+				// 복원 후 검증: InitItemManifest 후에도 부착물이 유지되는지 확인
+				{
+					const FInv_AttachmentHostFragment* VerifyHost =
+						ItemComp->GetItemManifest().GetFragmentOfType<FInv_AttachmentHostFragment>();
+					UE_LOG(LogTemp, Error, TEXT("[로드복원] InitItemManifest 후 검증: HostFrag=%s, AttachedItems=%d"),
+						VerifyHost ? TEXT("유효") : TEXT("nullptr"),
+						VerifyHost ? VerifyHost->GetAttachedItems().Num() : -1);
+				}
 			}
 		}
 

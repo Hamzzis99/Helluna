@@ -1604,8 +1604,19 @@ void AHellunaBaseGameMode::OnInvControllerEndPlay(
 // ════════════════════════════════════════════════════════════════════════════════
 TSubclassOf<AActor> AHellunaBaseGameMode::ResolveItemClass(const FGameplayTag& ItemType)
 {
-	if (!IsValid(ItemTypeMappingDataTable)) return nullptr;
-	return UHellunaItemTypeMapping::GetActorClassFromItemType(ItemTypeMappingDataTable, ItemType);
+	if (!IsValid(ItemTypeMappingDataTable))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[ItemTypeMapping] ItemTypeMappingDataTable이 설정되지 않음!"));
+		return nullptr;
+	}
+
+	TSubclassOf<AActor> Result = UHellunaItemTypeMapping::GetActorClassFromItemType(ItemTypeMappingDataTable, ItemType);
+	if (!Result)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[ItemTypeMapping] '%s' 매핑 실패! DT_ItemTypeMapping에 행 추가 필요"),
+			*ItemType.ToString());
+	}
+	return Result;
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -1664,6 +1675,7 @@ void AHellunaBaseGameMode::DebugTestItemTypeMapping()
 		TEXT("GameItems.Consumables.Potions.Red.Small"),
 		TEXT("GameItems.Craftables.FireFernFruit"),
 		TEXT("GameItems.Craftables.LuminDaisy"),
+		TEXT("GameItems.Equipment.Attachments.Muzzle"),
 	};
 
 	int32 SuccessCount = 0;
@@ -1674,7 +1686,14 @@ void AHellunaBaseGameMode::DebugTestItemTypeMapping()
 		{
 			TSubclassOf<AActor> FoundClass = UHellunaItemTypeMapping::GetActorClassFromItemType(
 				ItemTypeMappingDataTable, TestTag);
-			if (FoundClass) SuccessCount++;
+			if (FoundClass)
+			{
+				SuccessCount++;
+			}
+			else
+			{
+				UE_LOG(LogHelluna, Error, TEXT("[ItemTypeMapping] 매핑 실패: %s — DataTable에 행 추가 필요!"), *TagString);
+			}
 		}
 	}
 
