@@ -80,6 +80,9 @@ public:
 	// ⭐ Grid 상태 수집 (저장용) - Split된 스택도 개별 수집
 	TArray<FInv_SavedItemData> CollectGridState() const;
 
+	// 🔍 [진단] SlottedItems 개수 조회 (디버그용)
+	FORCEINLINE int32 GetSlottedItemCount() const { return SlottedItems.Num(); }
+
 	// ============================================
 	// 📦 [Phase 5] Grid 위치 복원 함수
 	// ============================================

@@ -1000,6 +1000,24 @@ UInv_HoverItem* UInv_InventoryGrid::GetHoverItem() const
 // 인벤토리 스택 쌓는 부분.
 void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 {
+	// 🔍 [진단] AddItem 시 Grid 주소 및 SlottedItems 상태 확인
+	UE_LOG(LogTemp, Error, TEXT("🔍 [AddItem 진단] Grid주소=%p, Category=%d, SlottedItems=%d, Item=%s, EntryIndex=%d"),
+		this, (int32)ItemCategory, SlottedItems.Num(),
+		Item ? *Item->GetItemManifest().GetItemType().ToString() : TEXT("nullptr"), EntryIndex);
+
+	// 🔍 [진단] 중복 아이템 존재 여부 확인
+	for (const auto& [DiagIdx, DiagSlotted] : SlottedItems)
+	{
+		if (!IsValid(DiagSlotted)) continue;
+		UInv_InventoryItem* DiagItem = DiagSlotted->GetInventoryItem();
+		if (DiagItem == Item)
+		{
+			UE_LOG(LogTemp, Error, TEXT("🔍 [AddItem 진단] ⚠️ 중복 감지: Item=%s(ptr=%p)가 이미 GridIndex=%d에 있음! (기존 EntryIndex=%d, 새 EntryIndex=%d)"),
+				*Item->GetItemManifest().GetItemType().ToString(), Item, DiagIdx,
+				DiagSlotted->GetEntryIndex(), EntryIndex);
+		}
+	}
+
 	//아이템 그리드 체크 부분?
 	if (!MatchesCategory(Item))
 	{
@@ -1343,6 +1361,14 @@ void UInv_InventoryGrid::RemoveItem(UInv_InventoryItem* Item, int32 EntryIndex)
 #endif
 		return;
 	}
+
+	// 🔍 [진단] RemoveItem 호출 컨텍스트 확인 (항상 출력)
+	UE_LOG(LogTemp, Error, TEXT("🔍 [RemoveItem 진단] Grid=%p, Category=%d, SlottedItems=%d, ItemType=%s, EntryIndex=%d"),
+		this, (int32)ItemCategory, SlottedItems.Num(),
+		*Item->GetItemManifest().GetItemType().ToString(), EntryIndex);
+
+	// 콜스택 출력 (어디서 호출되는지 확인)
+	FDebug::DumpStackTraceToLog(ELogVerbosity::Error);
 
 #if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("[RemoveItem] ========== 제거 요청 시작 =========="));
@@ -2568,6 +2594,33 @@ TArray<FInv_SavedItemData> UInv_InventoryGrid::CollectGridState() const
 		SavedData.StackCount = StackCount > 0 ? StackCount : 1;  // Non-stackable은 1
 		SavedData.GridPosition = GridPosition;
 		SavedData.GridCategory = static_cast<uint8>(ItemCategory);
+
+		// ── [Phase 6 Attachment] 부착물 데이터 수집 ──
+		// 무기 아이템인 경우 AttachmentHostFragment의 AttachedItems 수집
+		if (Item->HasAttachmentSlots())
+		{
+			const FInv_ItemManifest& ItemManifest = Item->GetItemManifest();
+			const FInv_AttachmentHostFragment* HostFrag = ItemManifest.GetFragmentOfType<FInv_AttachmentHostFragment>();
+			if (HostFrag)
+			{
+				for (const FInv_AttachedItemData& Attached : HostFrag->GetAttachedItems())
+				{
+					FInv_SavedAttachmentData AttSave;
+					AttSave.AttachmentItemType = Attached.AttachmentItemType;
+					AttSave.SlotIndex = Attached.SlotIndex;
+
+					// AttachableFragment에서 AttachmentType 추출
+					const FInv_AttachableFragment* AttachableFrag =
+						Attached.ItemManifestCopy.GetFragmentOfType<FInv_AttachableFragment>();
+					if (AttachableFrag)
+					{
+						AttSave.AttachmentType = AttachableFrag->GetAttachmentType();
+					}
+
+					SavedData.Attachments.Add(AttSave);
+				}
+			}
+		}
 
 		Result.Add(SavedData);
 

@@ -23,6 +23,18 @@ void FInv_InventoryFastArray::PreReplicatedRemove(const TArrayView<int32> Remove
 	UInv_InventoryComponent* IC = Cast<UInv_InventoryComponent>(OwnerComponent);
 	if (!IsValid(IC)) return;
 
+	// 🔍 [진단] PreReplicatedRemove 호출 컨텍스트 (항상 출력)
+	UE_LOG(LogTemp, Error, TEXT("🔍 [PreReplicatedRemove 진단] RemovedIndices=%d, FinalSize=%d, Entries=%d"),
+		RemovedIndices.Num(), FinalSize, Entries.Num());
+	for (int32 DiagIdx : RemovedIndices)
+	{
+		if (Entries.IsValidIndex(DiagIdx) && IsValid(Entries[DiagIdx].Item))
+		{
+			UE_LOG(LogTemp, Error, TEXT("🔍 [PreReplicatedRemove 진단] Index=%d, ItemType=%s"),
+				DiagIdx, *Entries[DiagIdx].Item->GetItemManifest().GetItemType().ToString());
+		}
+	}
+
 #if INV_DEBUG_INVENTORY
 	UE_LOG(LogTemp, Warning, TEXT("=== PreReplicatedRemove 호출됨! (FastArray) ==="));
 	UE_LOG(LogTemp, Warning, TEXT("제거된 항목 개수: %d / 최종 크기: %d"), RemovedIndices.Num(), FinalSize);
@@ -131,6 +143,19 @@ void FInv_InventoryFastArray::PostReplicatedChange(const TArrayView<int32> Chang
 {
 	UInv_InventoryComponent* IC = Cast<UInv_InventoryComponent>(OwnerComponent);
 	if (!IsValid(IC)) return;
+
+	// 🔍 [진단] PostReplicatedChange 호출 컨텍스트 (항상 출력)
+	UE_LOG(LogTemp, Error, TEXT("🔍 [PostReplicatedChange 진단] ChangedIndices=%d, FinalSize=%d, Entries=%d"),
+		ChangedIndices.Num(), FinalSize, Entries.Num());
+	for (int32 DiagIdx : ChangedIndices)
+	{
+		if (Entries.IsValidIndex(DiagIdx) && IsValid(Entries[DiagIdx].Item))
+		{
+			UE_LOG(LogTemp, Error, TEXT("🔍 [PostReplicatedChange 진단] Index=%d, ItemType=%s, Category=%d"),
+				DiagIdx, *Entries[DiagIdx].Item->GetItemManifest().GetItemType().ToString(),
+				(int32)Entries[DiagIdx].Item->GetItemManifest().GetItemCategory());
+		}
+	}
 
 #if INV_DEBUG_INVENTORY
 	UE_LOG(LogTemp, Warning, TEXT("=== PostReplicatedChange 호출됨 (FastArray) ==="));

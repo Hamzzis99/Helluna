@@ -407,6 +407,39 @@ TArray<FInv_SavedItemData> AInv_PlayerController::CollectInventoryGridState()
 {
 	TArray<FInv_SavedItemData> Result;
 
+	// ── 🔍 [진단] CollectGridState 호출 컨텍스트 확인 ──
+	UE_LOG(LogTemp, Error, TEXT("🔍 [CollectGridState 진단] Controller=%s, IsLocal=%s, HasAuth=%s, Role=%d"),
+		*GetName(),
+		IsLocalController() ? TEXT("TRUE") : TEXT("FALSE"),
+		HasAuthority() ? TEXT("TRUE") : TEXT("FALSE"),
+		(int32)GetLocalRole());
+
+	if (InventoryComponent.IsValid())
+	{
+		UInv_InventoryBase* DiagMenu = InventoryComponent->GetInventoryMenu();
+		UE_LOG(LogTemp, Error, TEXT("🔍 [진단] InvComp=유효, Menu=%s, Menu주소=%p"),
+			IsValid(DiagMenu) ? *DiagMenu->GetName() : TEXT("nullptr"), DiagMenu);
+
+		if (IsValid(DiagMenu))
+		{
+			UInv_SpatialInventory* DiagSpatial = Cast<UInv_SpatialInventory>(DiagMenu);
+			if (IsValid(DiagSpatial))
+			{
+				UInv_InventoryGrid* DG0 = DiagSpatial->GetGrid_Equippables();
+				UInv_InventoryGrid* DG1 = DiagSpatial->GetGrid_Consumables();
+				UInv_InventoryGrid* DG2 = DiagSpatial->GetGrid_Craftables();
+				UE_LOG(LogTemp, Error, TEXT("🔍 [진단] Grid_Equippables=%p SlottedItems=%d, Grid_Consumables=%p SlottedItems=%d, Grid_Craftables=%p SlottedItems=%d"),
+					DG0, DG0 ? DG0->GetSlottedItemCount() : -1,
+					DG1, DG1 ? DG1->GetSlottedItemCount() : -1,
+					DG2, DG2 ? DG2->GetSlottedItemCount() : -1);
+			}
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("🔍 [진단] InventoryComponent=INVALID ❌"));
+	}
+
 #if INV_DEBUG_PLAYER
 	UE_LOG(LogTemp, Warning, TEXT(""));
 	UE_LOG(LogTemp, Warning, TEXT("╔══════════════════════════════════════════════════════════════════════════════╗"));
