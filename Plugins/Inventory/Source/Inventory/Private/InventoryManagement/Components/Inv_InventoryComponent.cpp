@@ -1694,7 +1694,50 @@ void UInv_InventoryComponent::Server_AttachItemToWeapon_Implementation(int32 Wea
 	{
 		if (InventoryList.Entries[i].Item == WeaponItem)
 		{
+			// ★ [부착진단-MarkDirty] MarkItemDirty 직전 Entry 상태 ★
+			{
+				UE_LOG(LogTemp, Error, TEXT("[부착진단-MarkDirty] MarkItemDirty 호출 직전"));
+				UE_LOG(LogTemp, Error, TEXT("[부착진단-MarkDirty]   EntryIndex=%d, Item=%s"),
+					i, *WeaponItem->GetItemManifest().GetItemType().ToString());
+				const FInv_AttachmentHostFragment* PreHost =
+					WeaponItem->GetItemManifest().GetFragmentOfType<FInv_AttachmentHostFragment>();
+				UE_LOG(LogTemp, Error, TEXT("[부착진단-MarkDirty]   HostFrag=%s, AttachedItems=%d"),
+					PreHost ? TEXT("유효") : TEXT("nullptr"),
+					PreHost ? PreHost->GetAttachedItems().Num() : -1);
+				if (PreHost)
+				{
+					for (int32 d = 0; d < PreHost->GetAttachedItems().Num(); d++)
+					{
+						const FInv_AttachedItemData& DiagData = PreHost->GetAttachedItems()[d];
+						UE_LOG(LogTemp, Error, TEXT("[부착진단-MarkDirty]     [%d] Type=%s (Slot=%d), ManifestCopy.ItemType=%s"),
+							d, *DiagData.AttachmentItemType.ToString(), DiagData.SlotIndex,
+							*DiagData.ItemManifestCopy.GetItemType().ToString());
+					}
+				}
+			}
+
 			InventoryList.MarkItemDirty(InventoryList.Entries[i]);
+
+			// ★ [부착진단-서버] 부착 완료 후 서버 상태 확인 ★
+			{
+				const FInv_AttachmentHostFragment* DiagHost =
+					WeaponItem->GetItemManifest().GetFragmentOfType<FInv_AttachmentHostFragment>();
+				UE_LOG(LogTemp, Error, TEXT("[부착진단-서버] 부착 완료 후 MarkItemDirty 직후: WeaponItem=%s, HostFrag=%s, AttachedItems=%d"),
+					*WeaponItem->GetItemManifest().GetItemType().ToString(),
+					DiagHost ? TEXT("유효") : TEXT("nullptr"),
+					DiagHost ? DiagHost->GetAttachedItems().Num() : -1);
+				if (DiagHost)
+				{
+					for (int32 d = 0; d < DiagHost->GetAttachedItems().Num(); d++)
+					{
+						const FInv_AttachedItemData& DiagData = DiagHost->GetAttachedItems()[d];
+						UE_LOG(LogTemp, Error, TEXT("[부착진단-서버]   [%d] Type=%s (Slot=%d), ManifestCopy.ItemType=%s"),
+							d, *DiagData.AttachmentItemType.ToString(), DiagData.SlotIndex,
+							*DiagData.ItemManifestCopy.GetItemType().ToString());
+					}
+				}
+			}
+
 			break;
 		}
 	}
@@ -2692,10 +2735,12 @@ TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave(
 		// 무기 아이템인 경우 AttachmentHostFragment의 AttachedItems 수집
 		if (Entry.Item->HasAttachmentSlots())
 		{
+			UE_LOG(LogTemp, Error, TEXT("🔍 [SaveDiag] Entry[%d] %s - HasAttachmentSlots=TRUE"), i, *ItemType.ToString());
 			const FInv_ItemManifest& ItemManifest = Entry.Item->GetItemManifest();
 			const FInv_AttachmentHostFragment* HostFrag = ItemManifest.GetFragmentOfType<FInv_AttachmentHostFragment>();
 			if (HostFrag)
 			{
+				UE_LOG(LogTemp, Error, TEXT("🔍 [SaveDiag] Entry[%d] HostFrag 유효! AttachedItems=%d"), i, HostFrag->GetAttachedItems().Num());
 				for (const FInv_AttachedItemData& Attached : HostFrag->GetAttachedItems())
 				{
 					FInv_SavedAttachmentData AttSave;
