@@ -121,10 +121,12 @@ void AInv_EquipActor::AttachMeshToSocket(int32 SlotIndex, UStaticMesh* Mesh, FNa
 	// 맵에 등록
 	AttachmentMeshComponents.Add(SlotIndex, MeshComp);
 
+#if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment Visual] 슬롯 %d에 메시 부착: %s → 소켓 %s"),
 		SlotIndex,
 		*Mesh->GetName(),
 		*SocketName.ToString());
+#endif
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -141,7 +143,9 @@ void AInv_EquipActor::DetachMeshFromSocket(int32 SlotIndex)
 	if (Found && IsValid(*Found))
 	{
 		(*Found)->DestroyComponent();
+#if INV_DEBUG_ATTACHMENT
 		UE_LOG(LogTemp, Log, TEXT("[Attachment Visual] 슬롯 %d 메시 분리"), SlotIndex);
+#endif
 	}
 	AttachmentMeshComponents.Remove(SlotIndex);
 }
@@ -167,10 +171,12 @@ void AInv_EquipActor::DetachAllMeshes()
 	}
 	AttachmentMeshComponents.Empty();
 
+#if INV_DEBUG_ATTACHMENT
 	if (Count > 0)
 	{
 		UE_LOG(LogTemp, Log, TEXT("[Attachment Visual] 모든 부착물 메시 분리 (%d개)"), Count);
 	}
+#endif
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -198,19 +204,25 @@ float AInv_EquipActor::GetZoomFOV() const
 void AInv_EquipActor::SetSuppressed(bool bNewSuppressed)
 {
 	bSuppressed = bNewSuppressed;
+#if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment Effect] 소음기 %s"), bSuppressed ? TEXT("ON") : TEXT("OFF"));
+#endif
 }
 
 void AInv_EquipActor::SetZoomFOVOverride(float NewFOV)
 {
 	OverrideZoomFOV = NewFOV;
+#if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment Effect] 줌 FOV 오버라이드: %.1f"), OverrideZoomFOV);
+#endif
 }
 
 void AInv_EquipActor::ClearZoomFOVOverride()
 {
 	OverrideZoomFOV = 0.f;
+#if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment Effect] 줌 FOV 오버라이드 해제 -> 기본값 %.1f"), DefaultZoomFOV);
+#endif
 }
 
 void AInv_EquipActor::SetLaserActive(bool bNewActive)
@@ -220,7 +232,9 @@ void AInv_EquipActor::SetLaserActive(bool bNewActive)
 	{
 		LaserBeamComponent->SetVisibility(bNewActive);
 	}
+#if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment Effect] 레이저 %s"), bLaserActive ? TEXT("ON") : TEXT("OFF"));
+#endif
 }
 
 // -- 리플리케이션 콜백 --
@@ -228,7 +242,9 @@ void AInv_EquipActor::SetLaserActive(bool bNewActive)
 void AInv_EquipActor::OnRep_bSuppressed()
 {
 	// 사운드는 발사 시점에 GetFireSound()로 읽으므로 추가 처리 불필요
+#if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment Effect] OnRep: 소음기 %s"), bSuppressed ? TEXT("ON") : TEXT("OFF"));
+#endif
 }
 
 void AInv_EquipActor::OnRep_bLaserActive()
@@ -237,7 +253,9 @@ void AInv_EquipActor::OnRep_bLaserActive()
 	{
 		LaserBeamComponent->SetVisibility(bLaserActive);
 	}
+#if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment Effect] OnRep: 레이저 %s"), bLaserActive ? TEXT("ON") : TEXT("OFF"));
+#endif
 }
 
 // -- 일괄 적용/해제 --

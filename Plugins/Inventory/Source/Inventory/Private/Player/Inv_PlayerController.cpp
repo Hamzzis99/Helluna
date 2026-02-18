@@ -44,6 +44,7 @@ void AInv_PlayerController::ToggleInventory()
 	{
 		HUDWidget->SetVisibility(ESlateVisibility::Hidden);
 
+#if INV_DEBUG_ATTACHMENT
 		// ★ [부착진단-UI] 인벤토리 열기 시 InventoryList 아이템 부착물 상태 확인 ★
 		{
 			TArray<UInv_InventoryItem*> DiagAllItems = InventoryComponent->GetInventoryList().GetAllItems();
@@ -73,6 +74,7 @@ void AInv_PlayerController::ToggleInventory()
 				}
 			}
 		}
+#endif
 	}
 	else
 	{

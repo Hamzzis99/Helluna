@@ -288,9 +288,11 @@ void UInv_EquipmentComponent::OnItemEquipped(UInv_InventoryItem* EquippedItem, i
 					if (AttachableFrag)
 					{
 						SpawnedEquipActor->ApplyAttachmentEffects(AttachableFrag);
+#if INV_DEBUG_ATTACHMENT
 						UE_LOG(LogTemp, Warning, TEXT("📌 [Phase 7] 무기 장착 시 부착물 효과 적용: 슬롯 %d, bIsSuppressor=%s"),
 							AttachedData.SlotIndex,
 							AttachableFrag->GetIsSuppressor() ? TEXT("TRUE") : TEXT("FALSE"));
+#endif
 					}
 				}
 			}

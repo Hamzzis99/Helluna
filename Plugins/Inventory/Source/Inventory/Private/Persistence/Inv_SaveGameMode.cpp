@@ -59,7 +59,9 @@ void AInv_SaveGameMode::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	if (bForceSaveOnListenServerShutdown &&
 		(GetNetMode() == NM_ListenServer || EndPlayReason == EEndPlayReason::Quit))
 	{
+#if INV_DEBUG_SAVE
 		UE_LOG(LogInventory, Warning, TEXT("[SaveGameMode] EndPlay - 리슨서버 종료 감지, 인벤토리 강제 저장 시작"));
+#endif
 		SaveAllPlayersInventory();
 	}
 
@@ -189,7 +191,9 @@ void AInv_SaveGameMode::OnPlayerInventoryLogout(const FString& PlayerId, APlayer
 		UE_LOG(LogTemp, Error, TEXT("🔍 [SavePipeline] ❌ PlayerId 비어있음! 저장 중단!"));
 		return;
 	}
+#if INV_DEBUG_SAVE
 	UE_LOG(LogTemp, Error, TEXT("🔍 [SavePipeline] PlayerId='%s' 찾음!"), *PlayerId);
+#endif
 
 	// 인벤토리 저장
 	SavePlayerInventory(PlayerId, PC);
@@ -216,8 +220,10 @@ void AInv_SaveGameMode::OnInventoryControllerEndPlay(
 {
 	if (!IsValid(PlayerController)) return;
 
+#if INV_DEBUG_SAVE
 	UE_LOG(LogTemp, Error, TEXT("🔍 [SavePipeline] OnInventoryControllerEndPlay 진입! Controller=%s, SavedItems=%d"),
 		*GetNameSafe(PlayerController), SavedItems.Num());
+#endif
 
 	// ── PlayerId 찾기 ──
 	FString PlayerId;
@@ -236,7 +242,9 @@ void AInv_SaveGameMode::OnInventoryControllerEndPlay(
 		UE_LOG(LogTemp, Error, TEXT("🔍 [SavePipeline] ❌ PlayerId 비어있음! 저장 중단!"));
 		return;
 	}
+#if INV_DEBUG_SAVE
 	UE_LOG(LogTemp, Error, TEXT("🔍 [SavePipeline] PlayerId='%s' 찾음!"), *PlayerId);
+#endif
 
 	// ── 장착 정보 병합 ──
 	// SavedItems에 장착 정보가 없으면 캐시된 데이터에서 복원
@@ -306,7 +314,9 @@ void AInv_SaveGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
 		UE_LOG(LogTemp, Error, TEXT("🔍 [SavePipeline] ❌ PlayerId 비어있음! 저장 중단!"));
 		return;
 	}
+#if INV_DEBUG_SAVE
 	UE_LOG(LogTemp, Error, TEXT("🔍 [SavePipeline] PlayerId='%s' 찾음!"), *PlayerId);
+#endif
 
 	if (!IsValid(InventorySaveGame)) return;
 
@@ -346,8 +356,10 @@ void AInv_SaveGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
 		// ItemComponent의 Manifest에 주입하여 복원
 		if (ItemData.Attachments.Num() > 0)
 		{
-			UE_LOG(LogTemp, Error, TEXT("[로드복원] 부착물 복원 시작: 무기=%s, 부착물=%d개"),
+	#if INV_DEBUG_ATTACHMENT
+		UE_LOG(LogTemp, Error, TEXT("[로드복원] 부착물 복원 시작: 무기=%s, 부착물=%d개"),
 				*ItemData.ItemType.ToString(), ItemData.Attachments.Num());
+#endif
 
 			FInv_ItemManifest WeaponManifest = ItemComp->GetItemManifest();
 			FInv_AttachmentHostFragment* HostFrag = WeaponManifest.GetFragmentOfTypeMutable<FInv_AttachmentHostFragment>();
@@ -390,7 +402,8 @@ void AInv_SaveGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
 
 					HostFrag->AttachItem(AttSave.SlotIndex, AttachedData);
 
-					UE_LOG(LogTemp, Error, TEXT("[로드복원]   부착물 복원 완료: %s → 슬롯 %d (현재 AttachedItems=%d)"),
+	#if INV_DEBUG_ATTACHMENT
+				UE_LOG(LogTemp, Error, TEXT("[로드복원]   부착물 복원 완료: %s → 슬롯 %d (현재 AttachedItems=%d)"),
 						*AttSave.AttachmentItemType.ToString(), AttSave.SlotIndex,
 						HostFrag->GetAttachedItems().Num());
 
@@ -398,6 +411,7 @@ void AInv_SaveGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
 						TEXT("[Attachment Save] 부착물 복원: %s → 슬롯 %d"),
 						*AttSave.AttachmentItemType.ToString(),
 						AttSave.SlotIndex);
+#endif
 
 					// 임시 액터 정리
 					TempActor->Destroy();
@@ -406,7 +420,8 @@ void AInv_SaveGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
 				// 수정된 Manifest를 ItemComponent에 반영
 				ItemComp->InitItemManifest(WeaponManifest);
 
-				// 복원 후 검증: InitItemManifest 후에도 부착물이 유지되는지 확인
+	#if INV_DEBUG_ATTACHMENT
+			// 복원 후 검증: InitItemManifest 후에도 부착물이 유지되는지 확인
 				{
 					const FInv_AttachmentHostFragment* VerifyHost =
 						ItemComp->GetItemManifest().GetFragmentOfType<FInv_AttachmentHostFragment>();
@@ -414,6 +429,7 @@ void AInv_SaveGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
 						VerifyHost ? TEXT("유효") : TEXT("nullptr"),
 						VerifyHost ? VerifyHost->GetAttachedItems().Num() : -1);
 				}
+#endif
 			}
 		}
 
@@ -611,7 +627,9 @@ void AInv_SaveGameMode::OnPlayerInventoryStateReceived(
 		UE_LOG(LogTemp, Error, TEXT("🔍 [SavePipeline] ❌ PlayerId 비어있음! 저장 중단!"));
 		return;
 	}
+#if INV_DEBUG_SAVE
 	UE_LOG(LogTemp, Error, TEXT("🔍 [SavePipeline] PlayerId='%s' 찾음!"), *PlayerId);
+#endif
 
 	SaveCollectedItems(PlayerId, SavedItems);
 }

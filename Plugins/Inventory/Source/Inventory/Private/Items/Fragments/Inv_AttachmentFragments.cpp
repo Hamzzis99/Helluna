@@ -30,6 +30,7 @@
 // ════════════════════════════════════════════════════════════════════════════════
 
 #include "Items/Fragments/Inv_AttachmentFragments.h"
+#include "Inventory.h"  // INV_DEBUG_ATTACHMENT 매크로
 #include "Widgets/Composite/Inv_CompositeBase.h"
 
 
@@ -118,8 +119,10 @@ void FInv_AttachmentHostFragment::Manifest()
 	// 드롭/줍기 시 부착물 데이터가 보존되어야 함
 	// SlotDefinitions는 에디터 데이터이므로 변경 불필요
 
+#if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment Drop] AttachmentHostFragment::Manifest() — AttachedItems %d개 보존"),
 		AttachedItems.Num());
+#endif
 }
 
 // 무기 장착 시 모든 부착물의 스탯 일괄 적용
@@ -164,9 +167,11 @@ void FInv_AttachmentHostFragment::OnUnequipAllAttachments(APlayerController* PC)
 bool FInv_AttachableFragment::CanAttachToSlot(const FInv_AttachmentSlotDef& SlotDef) const
 {
 	const bool bResult = AttachmentType.MatchesTagExact(SlotDef.SlotType);
+#if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment] CanAttachToSlot: 부착물=%s, 슬롯=%s → %s"),
 		*AttachmentType.ToString(), *SlotDef.SlotType.ToString(),
 		bResult ? TEXT("호환") : TEXT("불일치"));
+#endif
 	return bResult;
 }
 

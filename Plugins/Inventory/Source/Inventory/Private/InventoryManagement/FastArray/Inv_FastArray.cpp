@@ -131,6 +131,7 @@ void FInv_InventoryFastArray::PostReplicatedAdd(const TArrayView<int32> AddedInd
 		UE_LOG(LogTemp, Warning, TEXT("[PostReplicatedAdd] Index: %d, ItemType: %s"),
 			Index, *Entries[Index].Item->GetItemManifest().GetItemType().ToString());
 #endif
+#if INV_DEBUG_ATTACHMENT
 		// ★ [부착진단-클라] PostReplicatedAdd 수신 데이터 확인 ★
 		{
 			const FInv_AttachmentHostFragment* DiagHost =
@@ -150,6 +151,7 @@ void FInv_InventoryFastArray::PostReplicatedAdd(const TArrayView<int32> AddedInd
 					DiagHost ? DiagHost->GetAttachedItems().Num() : -1);
 			}
 		}
+#endif
 
 		// ⭐ Entry Index도 함께 전달하여 클라이언트에서 저장 가능!
 		IC->OnItemAdded.Broadcast(Entries[Index].Item, Index);
@@ -202,6 +204,7 @@ void FInv_InventoryFastArray::PostReplicatedChange(const TArrayView<int32> Chang
 			continue;
 		}
 
+#if INV_DEBUG_ATTACHMENT
 		// ★ [부착진단-클라] 리플리케이션 수신 데이터 확인 ★
 		{
 			const FInv_AttachmentHostFragment* DiagHost =
@@ -228,6 +231,7 @@ void FInv_InventoryFastArray::PostReplicatedChange(const TArrayView<int32> Chang
 					DiagHost ? DiagHost->GetAttachedItems().Num() : -1);
 			}
 		}
+#endif
 
 		int32 NewStackCount = ChangedItem->GetTotalStackCount();
 		EInv_ItemCategory Category = ChangedItem->GetItemManifest().GetItemCategory();
