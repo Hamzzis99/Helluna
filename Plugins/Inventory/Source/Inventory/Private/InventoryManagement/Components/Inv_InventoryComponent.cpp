@@ -28,6 +28,7 @@
 #include "EquipmentManagement/Components/Inv_EquipmentComponent.h"
 #include "EquipmentManagement/EquipActor/Inv_EquipActor.h"
 #include "Kismet/GameplayStatics.h"
+#include "Persistence/Inv_SaveGameMode.h"  // [최적화] FindItemComponentTemplate 사용
 #include "Player/Inv_PlayerController.h"  // FInv_SavedItemData 사용
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -523,110 +524,36 @@ void UInv_InventoryComponent::Server_CraftItem_Implementation(TSubclassOf<AActor
 
 #if INV_DEBUG_INVENTORY
 	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] 제작할 아이템 Blueprint: %s"), *ItemActorClass->GetName());
-	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ItemActorClass 전체 경로: %s"), *ItemActorClass->GetPathName());
-	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ItemActorClass 클래스 이름: %s"), *ItemActorClass.Get()->GetName());
 #endif
 
-	// Blueprint 컴포넌트 접근을 위해 임시 인스턴스 생성
-	FActorSpawnParameters SpawnParams;
-	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	SpawnParams.bNoFail = true;
-	
-	FVector TempLocation = FVector(0, 0, -50000); // 매우 아래쪽
-	FRotator TempRotation = FRotator::ZeroRotator;
-	FTransform TempTransform(TempRotation, TempLocation);
-	
-	AActor* TempActor = GetWorld()->SpawnActorDeferred<AActor>(ItemActorClass, TempTransform, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
-	if (!IsValid(TempActor))
-	{
-#if INV_DEBUG_INVENTORY
-		UE_LOG(LogTemp, Error, TEXT("[SERVER CRAFT] 임시 인스턴스 생성 실패!"));
-#endif
-		return;
-	}
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [최적화] CDO/SCS 기반 — SpawnActor 제거
+	// ════════════════════════════════════════════════════════════════
+	// 이전: SpawnActorDeferred → FinishSpawning → Destroy (매번 액터 생성/파괴)
+	// 이후: FindItemComponentTemplate(CDO) → Manifest 복사 (액터 생성 없음)
+	// ════════════════════════════════════════════════════════════════
 
-#if INV_DEBUG_INVENTORY
-	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] 임시 인스턴스 생성 성공: %s"), *TempActor->GetName());
-#endif
-
-	// FinishSpawning 호출 - Blueprint 컴포넌트 초기화! (BeginPlay는 호출되지 않음)
-	TempActor->FinishSpawning(TempTransform);
-#if INV_DEBUG_INVENTORY
-	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] FinishSpawning 호출 완료 - 컴포넌트 초기화됨!"));
-#endif
-
-	// ItemComponent 찾기 (Blueprint 컴포넌트 포함)
-	UInv_ItemComponent* DefaultItemComp = nullptr;
-
-	// 방법 1: FindComponentByClass
-	DefaultItemComp = TempActor->FindComponentByClass<UInv_ItemComponent>();
+	UInv_ItemComponent* DefaultItemComp = AInv_SaveGameMode::FindItemComponentTemplate(ItemActorClass);
 
 	if (!IsValid(DefaultItemComp))
 	{
 #if INV_DEBUG_INVENTORY
-		UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] FindComponentByClass 실패, GetComponents로 재시도..."));
-#endif
-
-		// 방법 2: GetComponents (Blueprint 컴포넌트 포함)
-		TArray<UInv_ItemComponent*> ItemComponents;
-		TempActor->GetComponents<UInv_ItemComponent>(ItemComponents);
-
-#if INV_DEBUG_INVENTORY
-		UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] GetComponents 결과: %d개 컴포넌트 발견"), ItemComponents.Num());
-#endif
-
-		if (ItemComponents.Num() > 0)
-		{
-			DefaultItemComp = ItemComponents[0];
-#if INV_DEBUG_INVENTORY
-			UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ItemComponent 찾음! (GetComponents 사용)"));
-#endif
-		}
-	}
-#if INV_DEBUG_INVENTORY
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ItemComponent 찾음! (FindComponentByClass 사용)"));
-	}
-#endif
-
-	// 최종 검증
-	if (!IsValid(DefaultItemComp))
-	{
-#if INV_DEBUG_INVENTORY
-		UE_LOG(LogTemp, Error, TEXT("[SERVER CRAFT] ❌ ItemComponent를 찾을 수 없습니다!"));
+		UE_LOG(LogTemp, Error, TEXT("[SERVER CRAFT] ❌ CDO/SCS에서 ItemComponent를 찾을 수 없습니다!"));
 		UE_LOG(LogTemp, Error, TEXT("[SERVER CRAFT] Blueprint: %s"), *ItemActorClass->GetName());
-
-		// 모든 컴포넌트 목록 출력 (디버깅)
-		TArray<UActorComponent*> AllComponents;
-		TempActor->GetComponents(AllComponents);
-		UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] 전체 컴포넌트 목록 (%d개):"), AllComponents.Num());
-		for (UActorComponent* Comp : AllComponents)
-		{
-			if (IsValid(Comp))
-			{
-				UE_LOG(LogTemp, Warning, TEXT("  - %s (클래스: %s)"), *Comp->GetName(), *Comp->GetClass()->GetName());
-			}
-		}
 #endif
-
-		// 임시 인스턴스 파괴
-		TempActor->Destroy();
 		return;
 	}
 
 #if INV_DEBUG_INVENTORY
-	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ItemComponent: %s (클래스: %s)"),
-		*DefaultItemComp->GetName(), *DefaultItemComp->GetClass()->GetName());
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ✅ CDO에서 ItemComponent 찾음! (SpawnActor 없음)"));
 #endif
 
-	// ItemManifest 복사
+	// ItemManifest 복사 (CDO 템플릿은 수정 금지!)
 	FInv_ItemManifest ItemManifest = DefaultItemComp->GetItemManifest();
 
 #if INV_DEBUG_INVENTORY
-	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ItemManifest 가져옴!"));
-	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] 제작할 아이템 정보:"));
-	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT]   - 아이템 타입 (GameplayTag): %s"), *ItemManifest.GetItemType().ToString());
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ItemManifest 복사 완료!"));
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT]   - 아이템 타입: %s"), *ItemManifest.GetItemType().ToString());
 	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT]   - 아이템 카테고리: %d"), (int32)ItemManifest.GetItemCategory());
 #endif
 
@@ -637,26 +564,13 @@ void UInv_InventoryComponent::Server_CraftItem_Implementation(TSubclassOf<AActor
 	{
 #if INV_DEBUG_INVENTORY
 		UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ❌ 인벤토리에 공간이 없습니다!"));
-		UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] 제작 취소! NoRoomInInventory 델리게이트 브로드캐스트"));
 #endif
-
-		// 임시 인스턴스 파괴
-		TempActor->Destroy();
-
-		// NoRoomInInventory 델리게이트 재사용!
 		NoRoomInInventory.Broadcast();
 		return;
 	}
 
 #if INV_DEBUG_INVENTORY
-	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ✅ 인벤토리에 공간 있음!"))
-
-	// 임시 인스턴스 파괴 (ItemManifest 복사 완료 & 공간 체크 완료!)
-	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] 임시 인스턴스 파괴 중..."));
-#endif
-	TempActor->Destroy();
-#if INV_DEBUG_INVENTORY
-	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] 임시 인스턴스 파괴 완료!"));
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ✅ 인벤토리에 공간 있음!"));
 #endif
 
 	// InventoryList에 직접 추가 (PickUp 방식과 동일!)
@@ -669,34 +583,25 @@ void UInv_InventoryComponent::Server_CraftItem_Implementation(TSubclassOf<AActor
 		return;
 	}
 
-#if INV_DEBUG_INVENTORY
-	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] UInv_InventoryItem 생성 성공!"));
-#endif
-
-	// FastArray에 추가 (PickUp의 AddEntry(ItemComponent)와 동일한 방식!)
+	// FastArray에 추가
 	InventoryList.AddEntry(NewItem);
 
 #if INV_DEBUG_INVENTORY
 	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] InventoryList.AddEntry 완료!"));
 #endif
 
-	// ── 리슨서버/스탠드얼론: 새 크래프팅 Entry → FastArray 콜백 우회 ──
+	// ── 리슨서버/스탠드얼론: FastArray 콜백 우회 ──
 	if (IsListenServerOrStandalone())
 	{
-		// Entry Index 계산 (새로 추가된 항목은 맨 뒤)
 		int32 NewEntryIndex = InventoryList.Entries.Num() - 1;
 #if INV_DEBUG_INVENTORY
-		UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ListenServer/Standalone 모드 - OnItemAdded 델리게이트 브로드캐스트 (EntryIndex=%d)"), NewEntryIndex);
+		UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ListenServer/Standalone - OnItemAdded 브로드캐스트 (EntryIndex=%d)"), NewEntryIndex);
 #endif
 		OnItemAdded.Broadcast(NewItem, NewEntryIndex);
 	}
-#if INV_DEBUG_INVENTORY
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] Dedicated Server 모드 - FastArray 리플리케이션에 의존"));
-	}
 
-	UE_LOG(LogTemp, Warning, TEXT("=== [SERVER CRAFT] 인벤토리에 아이템 추가 완료! (임시 Actor 스폰 없음!) ==="));
+#if INV_DEBUG_INVENTORY
+	UE_LOG(LogTemp, Warning, TEXT("=== [SERVER CRAFT] 크래프팅 완료! (CDO 기반 - SpawnActor 없음!) ==="));
 #endif
 }
 
@@ -773,35 +678,21 @@ void UInv_InventoryComponent::Server_CraftItemWithMaterials_Implementation(
 #endif
 
 
-	// ========== 2단계: 임시 Actor 스폰 및 ItemManifest 추출 ==========
-	FActorSpawnParameters SpawnParams;
-	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	SpawnParams.bNoFail = true;
-	
-	FVector TempLocation = FVector(0, 0, -50000);
-	FRotator TempRotation = FRotator::ZeroRotator;
-	FTransform TempTransform(TempRotation, TempLocation);
-	
-	AActor* TempActor = GetWorld()->SpawnActorDeferred<AActor>(ItemActorClass, TempTransform, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
-	if (!IsValid(TempActor))
-	{
-#if INV_DEBUG_INVENTORY
-		UE_LOG(LogTemp, Error, TEXT("[SERVER CRAFT] 임시 Actor 생성 실패!"));
-#endif
-		return;
-	}
-
-	TempActor->FinishSpawning(TempTransform);
-
-	UInv_ItemComponent* DefaultItemComp = TempActor->FindComponentByClass<UInv_ItemComponent>();
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [최적화] 2단계: CDO/SCS 기반 — SpawnActor 제거
+	// ════════════════════════════════════════════════════════════════
+	UInv_ItemComponent* DefaultItemComp = AInv_SaveGameMode::FindItemComponentTemplate(ItemActorClass);
 	if (!IsValid(DefaultItemComp))
 	{
 #if INV_DEBUG_INVENTORY
-		UE_LOG(LogTemp, Error, TEXT("[SERVER CRAFT] ItemComponent를 찾을 수 없음!"));
+		UE_LOG(LogTemp, Error, TEXT("[SERVER CRAFT] ❌ CDO/SCS에서 ItemComponent를 찾을 수 없음!"));
 #endif
-		TempActor->Destroy();
 		return;
 	}
+
+#if INV_DEBUG_INVENTORY
+	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ✅ CDO에서 ItemComponent 찾음! (SpawnActor 없음)"));
+#endif
 
 	FInv_ItemManifest ItemManifest = DefaultItemComp->GetItemManifest();
 #if INV_DEBUG_INVENTORY
@@ -817,7 +708,6 @@ void UInv_InventoryComponent::Server_CraftItemWithMaterials_Implementation(
 #if INV_DEBUG_INVENTORY
 		UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ❌ 인벤토리에 공간이 없습니다!"));
 #endif
-		TempActor->Destroy();
 		NoRoomInInventory.Broadcast(); // 클라이언트에 공간 없음 알림
 		return; // 재료 차감 없이 중단!
 	}
@@ -826,8 +716,6 @@ void UInv_InventoryComponent::Server_CraftItemWithMaterials_Implementation(
 	UE_LOG(LogTemp, Warning, TEXT("[SERVER CRAFT] ✅ 인벤토리에 공간 있음!"));
 #endif
 
-	// 임시 Actor 파괴
-	TempActor->Destroy();
 
 	// ========== 4단계: 재료 차감 (모든 검증 통과 후!) ==========
 	// Server_ConsumeMaterialsMultiStack은 서버에서만 호출 가능한 RPC이므로,

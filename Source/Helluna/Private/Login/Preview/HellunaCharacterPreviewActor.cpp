@@ -99,7 +99,7 @@ void AHellunaCharacterPreviewActor::InitializePreview(USkeletalMesh* InMesh, TSu
 	// ════════════════════════════════════════════
 
 	PreviewMesh->SetSkeletalMeshAsset(InMesh);
-	PreviewMesh->SetAnimClass(InAnimClass);
+	PreviewMesh->SetAnimInstanceClass(InAnimClass);  // SetAnimClass는 deprecated
 
 	// ════════════════════════════════════════════
 	// 📌 SceneCapture 세팅
