@@ -641,11 +641,12 @@ void AInv_SaveGameMode::OnAutoSaveTimer()
 // ════════════════════════════════════════════════════════════════════════════════
 void AInv_SaveGameMode::RequestAllPlayersInventoryState()
 {
-	// ── Phase 1: 이미 배칭 중이면 중복 실행 방지 ──
-	if (bAutoSaveBatchInProgress)
+	// ── Phase 1+2: 배칭 중이거나 비동기 저장 중이면 중복 실행 방지 ──
+	if (bAutoSaveBatchInProgress || bAsyncSaveInProgress)
 	{
 #if INV_DEBUG_SAVE
-		UE_LOG(LogTemp, Warning, TEXT("[Phase 1 배칭] ⚠️ 이미 배칭 진행 중 — 스킵"));
+		UE_LOG(LogTemp, Warning, TEXT("[Phase 1 배칭] ⚠️ %s — 스킵"),
+			bAutoSaveBatchInProgress ? TEXT("배칭 진행 중") : TEXT("비동기 저장 진행 중"));
 #endif
 		return;
 	}
@@ -810,15 +811,37 @@ void AInv_SaveGameMode::FlushAutoSaveBatch()
 	bAutoSaveBatchInProgress = false;
 	PendingAutoSaveCount = 0;
 
-	// ── 디스크 1회 쓰기 ──
+	// ── Phase 2: 비동기 디스크 쓰기 ──
 	if (IsValid(InventorySaveGame))
 	{
-		bool bSuccess = UInv_InventorySaveGame::SaveToDisk(InventorySaveGame, InventorySaveSlotName);
+		if (bAsyncSaveInProgress)
+		{
+#if INV_DEBUG_SAVE
+			UE_LOG(LogTemp, Warning, TEXT("[Phase 2 비동기] ⚠️ 이전 비동기 저장 진행 중 — 스킵"));
+#endif
+			return;
+		}
+
+		bAsyncSaveInProgress = true;
 
 #if INV_DEBUG_SAVE
-		UE_LOG(LogTemp, Warning, TEXT("[Phase 1 배칭] 💾 디스크 저장 완료! (성공=%s)"),
-			bSuccess ? TEXT("Y") : TEXT("N"));
+		UE_LOG(LogTemp, Warning, TEXT("[Phase 2 비동기] 🚀 비동기 디스크 저장 시작!"));
 #endif
+
+		TWeakObjectPtr<AInv_SaveGameMode> WeakThis(this);
+		UInv_InventorySaveGame::AsyncSaveToDisk(InventorySaveGame, InventorySaveSlotName,
+			[WeakThis](bool bSuccess)
+			{
+				if (WeakThis.IsValid())
+				{
+					WeakThis->bAsyncSaveInProgress = false;
+				}
+
+#if INV_DEBUG_SAVE
+				UE_LOG(LogTemp, Warning, TEXT("[Phase 2 비동기] 💾 비동기 저장 완료! (성공=%s)"),
+					bSuccess ? TEXT("Y") : TEXT("N"));
+#endif
+			});
 	}
 }
 

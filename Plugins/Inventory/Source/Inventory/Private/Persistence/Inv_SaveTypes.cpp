@@ -109,3 +109,43 @@ bool UInv_InventorySaveGame::SaveToDisk(UInv_InventorySaveGame* SaveGame, const 
 	if (!IsValid(SaveGame)) return false;
 	return UGameplayStatics::SaveGameToSlot(SaveGame, SlotName, 0);
 }
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 📌 AsyncSaveToDisk — .sav 파일에 비동기 저장
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 📌 처리:
+//    UGameplayStatics::AsyncSaveGameToSlot() → 백그라운드 스레드에서 디스크 쓰기
+//    완료 시 OnComplete 콜백 호출 (게임 스레드에서)
+//
+// 📌 호출 시점:
+//    FlushAutoSaveBatch()에서 자동저장 배칭 완료 시
+//
+// 📌 주의:
+//    로그아웃/EndPlay 경로에서는 사용하지 않음 (월드 파괴 전 저장 완료 보장 필요)
+//
+// ════════════════════════════════════════════════════════════════════════════════
+void UInv_InventorySaveGame::AsyncSaveToDisk(UInv_InventorySaveGame* SaveGame, const FString& SlotName, TFunction<void(bool bSuccess)> OnComplete)
+{
+	if (!IsValid(SaveGame))
+	{
+		if (OnComplete) OnComplete(false);
+		return;
+	}
+
+	FAsyncSaveGameToSlotDelegate AsyncDelegate;
+	AsyncDelegate.BindLambda([OnComplete](const FString& SavedSlotName, const int32 UserIndex, bool bSuccess)
+	{
+#if INV_DEBUG_SAVE
+		UE_LOG(LogTemp, Warning, TEXT("[Phase 2 비동기] 💾 AsyncSave 완료! Slot=%s (성공=%s)"),
+			*SavedSlotName, bSuccess ? TEXT("Y") : TEXT("N"));
+#endif
+		if (OnComplete) OnComplete(bSuccess);
+	});
+
+	UGameplayStatics::AsyncSaveGameToSlot(SaveGame, SlotName, 0, AsyncDelegate);
+
+#if INV_DEBUG_SAVE
+	UE_LOG(LogTemp, Warning, TEXT("[Phase 2 비동기] 🚀 AsyncSave 요청됨! Slot=%s"), *SlotName);
+#endif
+}

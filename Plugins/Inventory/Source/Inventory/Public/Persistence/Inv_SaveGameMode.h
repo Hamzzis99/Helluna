@@ -349,4 +349,9 @@ private:
 
 	/** 배칭 타임아웃 콜백 */
 	void OnAutoSaveBatchTimeout();
+
+	// ── Phase 2: 비동기 저장 중복 방지 ──
+
+	/** 비동기 디스크 저장이 진행 중인지 여부 */
+	bool bAsyncSaveInProgress = false;
 };

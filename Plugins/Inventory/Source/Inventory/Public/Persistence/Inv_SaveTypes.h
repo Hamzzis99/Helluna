@@ -145,6 +145,9 @@ public:
 	/** .sav 파일에서 로드. 없으면 새 인스턴스 생성 */
 	static UInv_InventorySaveGame* LoadOrCreate(const FString& SlotName);
 
-	/** .sav 파일에 저장 */
+	/** .sav 파일에 저장 (동기 — 게임 스레드 블로킹) */
 	static bool SaveToDisk(UInv_InventorySaveGame* SaveGame, const FString& SlotName);
+
+	/** .sav 파일에 비동기 저장 (게임 스레드 블로킹 없음) */
+	static void AsyncSaveToDisk(UInv_InventorySaveGame* SaveGame, const FString& SlotName, TFunction<void(bool bSuccess)> OnComplete = nullptr);
 };
