@@ -234,6 +234,50 @@ void UInv_InventoryComponent::Server_AddNewItem_Implementation(UInv_ItemComponen
 #endif
 }
 
+// ════════════════════════════════════════════════════════════════════════════════
+// 📌 [Phase 4] AddItemFromManifest — Manifest에서 직접 아이템 추가 (SpawnActor 불필요)
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 📌 패턴 근거:
+//    Server_CraftItem_Implementation (line 618-648)에서 검증된 동일 패턴:
+//    Manifest(Owner) → AddEntry(Item*) → SetTotalStackCount → OnItemAdded.Broadcast
+//
+// 📌 호출 시점:
+//    LoadAndSendInventoryToClient()에서 CDO 경로로 아이템 추가 시
+//
+// ════════════════════════════════════════════════════════════════════════════════
+UInv_InventoryItem* UInv_InventoryComponent::AddItemFromManifest(FInv_ItemManifest& ManifestCopy, int32 StackCount)
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return nullptr;
+	}
+
+	// Manifest() → UInv_InventoryItem 생성
+	// Fragment.Manifest() 호출 시 bRandomizeOnManifest=false면 값 유지
+	// 호출 후 ManifestCopy의 Fragments는 ClearFragments()로 비워짐
+	UInv_InventoryItem* NewItem = ManifestCopy.Manifest(GetOwner());
+	if (!IsValid(NewItem))
+	{
+		return nullptr;
+	}
+
+	// FastArray에 추가 (AddEntry(UInv_InventoryItem*) 오버로드 — RepSubObj + MarkItemDirty 처리)
+	InventoryList.AddEntry(NewItem);
+
+	// 스택 수량 설정
+	NewItem->SetTotalStackCount(StackCount);
+
+	// 리슨서버/스탠드얼론: FastArray 자기 자신 리플리케이션 우회
+	if (IsListenServerOrStandalone())
+	{
+		int32 NewEntryIndex = InventoryList.Entries.Num() - 1;
+		OnItemAdded.Broadcast(NewItem, NewEntryIndex);
+	}
+
+	return NewItem;
+}
+
 void UInv_InventoryComponent::Server_AddStacksToItem_Implementation(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder) // 서버에서 아이템 스택 개수를 세어주는 역할.
 {
 	const FGameplayTag& ItemType = IsValid(ItemComponent) ? ItemComponent->GetItemManifest().GetItemType() : FGameplayTag::EmptyTag; // 아이템 유형 가져오기

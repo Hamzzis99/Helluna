@@ -134,6 +134,19 @@ public:
 	// ⭐ [Phase 5 Fix] 마지막으로 추가된 Entry의 Grid 위치 설정 (로드 시 사용)
 	void SetLastEntryGridPosition(int32 GridIndex, uint8 GridCategory);
 
+	/**
+	 * [Phase 4 CDO 최적화] Manifest로부터 직접 인벤토리 아이템 추가
+	 *
+	 * SpawnActor 없이 CDO/SCS에서 추출한 Manifest를 사용하여 아이템 생성.
+	 * Server_CraftItem_Implementation (line 618-648)과 동일한 검증된 패턴.
+	 *
+	 * @param ManifestCopy  아이템 Manifest 복사본 (Fragment 역직렬화 완료 상태)
+	 *                      ⚠️ Manifest() 호출 시 ClearFragments()로 파괴됨
+	 * @param StackCount    스택 수량
+	 * @return 생성된 UInv_InventoryItem, 실패 시 nullptr
+	 */
+	UInv_InventoryItem* AddItemFromManifest(FInv_ItemManifest& ManifestCopy, int32 StackCount);
+
 	// ════════════════════════════════════════════════════════════════
 	// 📌 [부착물 시스템 Phase 3] Entry Index 검색 헬퍼
 	// ════════════════════════════════════════════════════════════════

@@ -27,6 +27,11 @@
 #include "Items/Fragments/Inv_AttachmentFragments.h"
 #include "GameplayTagContainer.h"
 
+// [Phase 4] CDO/SCS 컴포넌트 템플릿 접근용
+#include "Engine/BlueprintGeneratedClass.h"
+#include "Engine/SimpleConstructionScript.h"
+#include "Engine/SCS_Node.h"
+
 // ════════════════════════════════════════════════════════════════════════════════
 // 📌 생성자
 // ════════════════════════════════════════════════════════════════════════════════
@@ -328,81 +333,86 @@ void AInv_SaveGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
 	UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
 	if (!IsValid(InvComp)) return;
 
-	// ── 아이템 액터 스폰 및 인벤토리 추가 ──
+	// ════════════════════════════════════════════════════════════════════════════
+	// 📌 [Phase 4] CDO 기반 아이템 복원 — SpawnActor 제거
+	// ════════════════════════════════════════════════════════════════════════════
+	//
+	// 📌 이전 방식 (Phase 3까지):
+	//    SpawnActor → FindComponentByClass → Manifest 추출 → Destroy
+	//    부착물마다 추가 SpawnActor + Destroy
+	//
+	// 📌 새 방식 (Phase 4):
+	//    FindItemComponentTemplate(CDO/SCS) → GetItemManifest()(복사)
+	//    SpawnActor/Destroy 완전 제거
+	//
+	// ════════════════════════════════════════════════════════════════════════════
 	for (const FInv_SavedItemData& ItemData : LoadedData.Items)
 	{
 		if (!ItemData.ItemType.IsValid()) continue;
 
-		// ItemType → ActorClass 변환 (게임별 override)
+		// ── Step 1: ItemType → ActorClass 변환 (게임별 override) ──
 		TSubclassOf<AActor> ActorClass = ResolveItemClass(ItemData.ItemType);
 		if (!ActorClass) continue;
 
-		// 아이템 액터 스폰 (맵 아래 안 보이는 곳)
-		FActorSpawnParameters SpawnParams;
-		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
-		AActor* SpawnedActor = GetWorld()->SpawnActor<AActor>(ActorClass, FVector(0.f, 0.f, -10000.f), FRotator::ZeroRotator, SpawnParams);
-		if (!IsValid(SpawnedActor)) continue;
-
-		UInv_ItemComponent* ItemComp = SpawnedActor->FindComponentByClass<UInv_ItemComponent>();
-		if (!IsValid(ItemComp))
+		// ── Step 2: CDO/SCS에서 ItemComponent 템플릿 추출 (SpawnActor 없음!) ──
+		UInv_ItemComponent* Template = FindItemComponentTemplate(ActorClass);
+		if (!Template)
 		{
-			SpawnedActor->Destroy();
+			UE_LOG(LogTemp, Warning,
+				TEXT("[Phase 4] FindItemComponentTemplate 실패: %s — 스킵"),
+				*ItemData.ItemType.ToString());
 			continue;
 		}
 
-		// ── [Phase 6 Attachment] 부착물 복원 ──
-		// 아이템을 인벤토리에 추가하기 전에, 저장된 부착물 데이터를
-		// ItemComponent의 Manifest에 주입하여 복원
+		// ── Step 3: Manifest 복사 (CDO 템플릿은 수정 금지!) ──
+		FInv_ItemManifest ManifestCopy = Template->GetItemManifest();
+
+		// ── Step 4: 부착물 복원 (CDO 기반 — SpawnActor 없음!) ──
 		if (ItemData.Attachments.Num() > 0)
 		{
-	#if INV_DEBUG_ATTACHMENT
-		UE_LOG(LogTemp, Error, TEXT("[로드복원] 부착물 복원 시작: 무기=%s, 부착물=%d개"),
+#if INV_DEBUG_ATTACHMENT
+			UE_LOG(LogTemp, Error, TEXT("[로드복원] 부착물 복원 시작: 무기=%s, 부착물=%d개"),
 				*ItemData.ItemType.ToString(), ItemData.Attachments.Num());
 #endif
 
-			FInv_ItemManifest WeaponManifest = ItemComp->GetItemManifest();
-			FInv_AttachmentHostFragment* HostFrag = WeaponManifest.GetFragmentOfTypeMutable<FInv_AttachmentHostFragment>();
+			FInv_AttachmentHostFragment* HostFrag = ManifestCopy.GetFragmentOfTypeMutable<FInv_AttachmentHostFragment>();
 
+#if INV_DEBUG_ATTACHMENT
 			UE_LOG(LogTemp, Error, TEXT("[로드복원] HostFrag=%s"),
 				HostFrag ? TEXT("유효") : TEXT("nullptr — 복원 불가!"));
+#endif
 
 			if (HostFrag)
 			{
 				for (const FInv_SavedAttachmentData& AttSave : ItemData.Attachments)
 				{
-					// 부착물 아이템 액터를 임시 스폰하여 Manifest 복사
 					TSubclassOf<AActor> AttachClass = ResolveItemClass(AttSave.AttachmentItemType);
 
+#if INV_DEBUG_ATTACHMENT
 					UE_LOG(LogTemp, Error, TEXT("[로드복원]   부착물[%d] Type=%s, ResolveClass=%s"),
 						AttSave.SlotIndex, *AttSave.AttachmentItemType.ToString(),
 						AttachClass ? TEXT("성공") : TEXT("실패! — DataTable 매핑 없음"));
+#endif
 
 					if (!AttachClass) continue;
 
-					AActor* TempActor = GetWorld()->SpawnActor<AActor>(
-						AttachClass,
-						FVector(0.f, 0.f, -10000.f),
-						FRotator::ZeroRotator,
-						SpawnParams);
-					if (!IsValid(TempActor)) continue;
-
-					UInv_ItemComponent* TempItemComp = TempActor->FindComponentByClass<UInv_ItemComponent>();
-					if (!IsValid(TempItemComp))
+					// CDO/SCS에서 부착물 Manifest 추출 (SpawnActor 없음!)
+					UInv_ItemComponent* AttachTemplate = FindItemComponentTemplate(AttachClass);
+					if (!AttachTemplate)
 					{
-						TempActor->Destroy();
+						UE_LOG(LogTemp, Warning,
+							TEXT("[Phase 4] 부착물 CDO 추출 실패: %s — 스킵"),
+							*AttSave.AttachmentItemType.ToString());
 						continue;
 					}
 
-					// FInv_AttachedItemData 구성 → HostFragment에 부착
+					// FInv_AttachedItemData 구성
 					FInv_AttachedItemData AttachedData;
 					AttachedData.SlotIndex = AttSave.SlotIndex;
 					AttachedData.AttachmentItemType = AttSave.AttachmentItemType;
-					AttachedData.ItemManifestCopy = TempItemComp->GetItemManifest();
+					AttachedData.ItemManifestCopy = AttachTemplate->GetItemManifest(); // 값 복사
 
-					// ════════════════════════════════════════════════════════════════
-					// 📌 [Phase 1 최적화] 부착물 Fragment 역직렬화
-					// ════════════════════════════════════════════════════════════════
+					// 부착물 Fragment 역직렬화
 					if (AttSave.SerializedManifest.Num() > 0)
 					{
 						if (AttachedData.ItemManifestCopy.DeserializeAndApplyFragments(AttSave.SerializedManifest))
@@ -423,85 +433,48 @@ void AInv_SaveGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
 
 					HostFrag->AttachItem(AttSave.SlotIndex, AttachedData);
 
-	#if INV_DEBUG_ATTACHMENT
-				UE_LOG(LogTemp, Error, TEXT("[로드복원]   부착물 복원 완료: %s → 슬롯 %d (현재 AttachedItems=%d)"),
+#if INV_DEBUG_ATTACHMENT
+					UE_LOG(LogTemp, Error, TEXT("[로드복원]   부착물 복원 완료: %s → 슬롯 %d (현재 AttachedItems=%d)"),
 						*AttSave.AttachmentItemType.ToString(), AttSave.SlotIndex,
 						HostFrag->GetAttachedItems().Num());
-
-					UE_LOG(LogInventory, Log,
-						TEXT("[Attachment Save] 부착물 복원: %s → 슬롯 %d"),
-						*AttSave.AttachmentItemType.ToString(),
-						AttSave.SlotIndex);
 #endif
-
-					// 임시 액터 정리
-					TempActor->Destroy();
 				}
-
-				// 수정된 Manifest를 ItemComponent에 반영
-				ItemComp->InitItemManifest(WeaponManifest);
-
-	#if INV_DEBUG_ATTACHMENT
-			// 복원 후 검증: InitItemManifest 후에도 부착물이 유지되는지 확인
-				{
-					const FInv_AttachmentHostFragment* VerifyHost =
-						ItemComp->GetItemManifest().GetFragmentOfType<FInv_AttachmentHostFragment>();
-					UE_LOG(LogTemp, Error, TEXT("[로드복원] InitItemManifest 후 검증: HostFrag=%s, AttachedItems=%d"),
-						VerifyHost ? TEXT("유효") : TEXT("nullptr"),
-						VerifyHost ? VerifyHost->GetAttachedItems().Num() : -1);
-				}
-#endif
 			}
 		}
 
-		// ════════════════════════════════════════════════════════════════
-		// 📌 [Phase 1 최적화] Fragment 역직렬화 — 랜덤 스탯 복원
-		// ════════════════════════════════════════════════════════════════
-		// 저장된 바이너리 데이터에서 Fragment 값을 복원
-		//
-		// 처리 순서가 중요:
-		//   1. SpawnActor → CDO의 기본 Manifest (에셋 참조 포함)
-		//   2. [부착물 복원] → AttachedItems 주입
-		//   3. [여기] → Fragment 값 덮어쓰기 (랜덤 스탯 복원)
-		//   4. Server_AddNewItem → Manifest() → bRandomize=false이므로 값 유지
-		// ════════════════════════════════════════════════════════════════
+		// ── Step 5: 메인 아이템 Fragment 역직렬화 ──
 		if (ItemData.SerializedManifest.Num() > 0)
 		{
-			FInv_ItemManifest RestoredManifest = ItemComp->GetItemManifest();
-
-			if (RestoredManifest.DeserializeAndApplyFragments(ItemData.SerializedManifest))
+			if (ManifestCopy.DeserializeAndApplyFragments(ItemData.SerializedManifest))
 			{
-				// 역직렬화 성공 → ItemComponent에 반영
-				ItemComp->InitItemManifest(RestoredManifest);
-
 #if INV_DEBUG_SAVE
 				UE_LOG(LogTemp, Warning,
-					TEXT("[로드복원] ✅ [Phase 1 최적화] Fragment 역직렬화 성공: %s (%d바이트)"),
+					TEXT("[로드복원] ✅ [Phase 4] Fragment 역직렬화 성공: %s (%d바이트)"),
 					*ItemData.ItemType.ToString(), ItemData.SerializedManifest.Num());
 #endif
 			}
 			else
 			{
-				// 역직렬화 실패 → CDO 기본값 사용 (재랜덤)
 				UE_LOG(LogTemp, Error,
-					TEXT("[로드복원] ❌ [Phase 1 최적화] Fragment 역직렬화 실패: %s — CDO 기본값 사용"),
+					TEXT("[로드복원] ❌ [Phase 4] Fragment 역직렬화 실패: %s — CDO 기본값 사용"),
 					*ItemData.ItemType.ToString());
 			}
 		}
+#if INV_DEBUG_SAVE
 		else
 		{
-#if INV_DEBUG_SAVE
-			// SaveVersion 2 이하 데이터 — SerializedManifest 없음 → 하위 호환 (CDO 기본값)
+			// SaveVersion 2 이하 데이터 — CDO 기본값 사용 (Manifest() 에서 재랜덤)
 			UE_LOG(LogTemp, Warning,
-				TEXT("[로드복원] ℹ️ [Phase 1 최적화] SerializedManifest 없음 (v2 하위호환): %s"),
+				TEXT("[로드복원] ℹ️ [Phase 4] SerializedManifest 없음 (v2 하위호환): %s"),
 				*ItemData.ItemType.ToString());
-#endif
 		}
+#endif
 
-		// 인벤토리에 추가 (부착물 데이터가 이미 포함된 상태)
-		InvComp->Server_AddNewItem(ItemComp, ItemData.StackCount, 0);
+		// ── Step 6: 인벤토리에 추가 (SpawnActor/Server_AddNewItem 없음!) ──
+		UInv_InventoryItem* NewItem = InvComp->AddItemFromManifest(ManifestCopy, ItemData.StackCount);
+		if (!NewItem) continue;
 
-		// 그리드 위치 설정
+		// ── Step 7: 그리드 위치 복원 ──
 		const int32 Columns = 8;
 		int32 SavedGridIndex = ItemData.GridPosition.Y * Columns + ItemData.GridPosition.X;
 		InvComp->SetLastEntryGridPosition(SavedGridIndex, ItemData.GridCategory);
@@ -945,4 +918,50 @@ void AInv_SaveGameMode::RegisterControllerPlayerId(AController* Controller, cons
 	{
 		ControllerToPlayerIdMap.Add(Controller, PlayerId);
 	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 📌 [Phase 4] FindItemComponentTemplate — CDO/SCS에서 ItemComponent 템플릿 추출
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 📌 처리 흐름:
+//    1. Blueprint 클래스 계층을 상위로 탐색
+//    2. 각 BlueprintGeneratedClass의 SCS 노드에서 UInv_ItemComponent 검색
+//    3. 찾으면 해당 ComponentTemplate 반환 (CDO 소유)
+//    4. SCS에서 못 찾으면 CDO->FindComponentByClass() 폴백 (C++ 컴포넌트용)
+//
+// 📌 주의:
+//    반환된 포인터는 CDO/SCS가 소유 — 절대 수정 금지!
+//    GetItemManifest()로 값 복사를 받아서 사용할 것
+//
+// ════════════════════════════════════════════════════════════════════════════════
+UInv_ItemComponent* AInv_SaveGameMode::FindItemComponentTemplate(TSubclassOf<AActor> ActorClass)
+{
+	if (!ActorClass) return nullptr;
+
+	// ── SCS 탐색 (Blueprint 에디터에서 추가된 컴포넌트) ──
+	for (UClass* CurrentClass = ActorClass; CurrentClass; CurrentClass = CurrentClass->GetSuperClass())
+	{
+		UBlueprintGeneratedClass* BPGC = Cast<UBlueprintGeneratedClass>(CurrentClass);
+		if (!BPGC || !BPGC->SimpleConstructionScript) continue;
+
+		for (USCS_Node* Node : BPGC->SimpleConstructionScript->GetAllNodes())
+		{
+			if (!Node || !Node->ComponentTemplate) continue;
+
+			if (UInv_ItemComponent* ItemComp = Cast<UInv_ItemComponent>(Node->ComponentTemplate))
+			{
+				return ItemComp;
+			}
+		}
+	}
+
+	// ── 폴백: CDO 직접 접근 (C++ 생성자에서 추가된 컴포넌트) ──
+	AActor* CDO = ActorClass->GetDefaultObject<AActor>();
+	if (CDO)
+	{
+		return CDO->FindComponentByClass<UInv_ItemComponent>();
+	}
+
+	return nullptr;
 }
