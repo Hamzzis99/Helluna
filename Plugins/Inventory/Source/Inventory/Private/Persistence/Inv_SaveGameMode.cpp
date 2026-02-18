@@ -400,6 +400,27 @@ void AInv_SaveGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
 					AttachedData.AttachmentItemType = AttSave.AttachmentItemType;
 					AttachedData.ItemManifestCopy = TempItemComp->GetItemManifest();
 
+					// ════════════════════════════════════════════════════════════════
+					// 📌 [Phase 1 최적화] 부착물 Fragment 역직렬화
+					// ════════════════════════════════════════════════════════════════
+					if (AttSave.SerializedManifest.Num() > 0)
+					{
+						if (AttachedData.ItemManifestCopy.DeserializeAndApplyFragments(AttSave.SerializedManifest))
+						{
+#if INV_DEBUG_SAVE
+							UE_LOG(LogTemp, Warning,
+								TEXT("[로드복원]   ✅ 부착물 Fragment 역직렬화 성공: %s (%d바이트)"),
+								*AttSave.AttachmentItemType.ToString(), AttSave.SerializedManifest.Num());
+#endif
+						}
+						else
+						{
+							UE_LOG(LogTemp, Error,
+								TEXT("[로드복원]   ❌ 부착물 Fragment 역직렬화 실패: %s — CDO 기본값 사용"),
+								*AttSave.AttachmentItemType.ToString());
+						}
+					}
+
 					HostFrag->AttachItem(AttSave.SlotIndex, AttachedData);
 
 	#if INV_DEBUG_ATTACHMENT
@@ -431,6 +452,50 @@ void AInv_SaveGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
 				}
 #endif
 			}
+		}
+
+		// ════════════════════════════════════════════════════════════════
+		// 📌 [Phase 1 최적화] Fragment 역직렬화 — 랜덤 스탯 복원
+		// ════════════════════════════════════════════════════════════════
+		// 저장된 바이너리 데이터에서 Fragment 값을 복원
+		//
+		// 처리 순서가 중요:
+		//   1. SpawnActor → CDO의 기본 Manifest (에셋 참조 포함)
+		//   2. [부착물 복원] → AttachedItems 주입
+		//   3. [여기] → Fragment 값 덮어쓰기 (랜덤 스탯 복원)
+		//   4. Server_AddNewItem → Manifest() → bRandomize=false이므로 값 유지
+		// ════════════════════════════════════════════════════════════════
+		if (ItemData.SerializedManifest.Num() > 0)
+		{
+			FInv_ItemManifest RestoredManifest = ItemComp->GetItemManifest();
+
+			if (RestoredManifest.DeserializeAndApplyFragments(ItemData.SerializedManifest))
+			{
+				// 역직렬화 성공 → ItemComponent에 반영
+				ItemComp->InitItemManifest(RestoredManifest);
+
+#if INV_DEBUG_SAVE
+				UE_LOG(LogTemp, Warning,
+					TEXT("[로드복원] ✅ [Phase 1 최적화] Fragment 역직렬화 성공: %s (%d바이트)"),
+					*ItemData.ItemType.ToString(), ItemData.SerializedManifest.Num());
+#endif
+			}
+			else
+			{
+				// 역직렬화 실패 → CDO 기본값 사용 (재랜덤)
+				UE_LOG(LogTemp, Error,
+					TEXT("[로드복원] ❌ [Phase 1 최적화] Fragment 역직렬화 실패: %s — CDO 기본값 사용"),
+					*ItemData.ItemType.ToString());
+			}
+		}
+		else
+		{
+#if INV_DEBUG_SAVE
+			// SaveVersion 2 이하 데이터 — SerializedManifest 없음 → 하위 호환 (CDO 기본값)
+			UE_LOG(LogTemp, Warning,
+				TEXT("[로드복원] ℹ️ [Phase 1 최적화] SerializedManifest 없음 (v2 하위호환): %s"),
+				*ItemData.ItemType.ToString());
+#endif
 		}
 
 		// 인벤토리에 추가 (부착물 데이터가 이미 포함된 상태)

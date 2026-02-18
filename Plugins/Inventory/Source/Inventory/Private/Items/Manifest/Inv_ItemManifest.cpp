@@ -4,6 +4,9 @@
 #include "Items/Components/Inv_ItemComponent.h"
 #include "Items/Fragments/Inv_ItemFragment.h"
 #include "Widgets/Composite/Inv_CompositeBase.h"
+#include "Serialization/MemoryWriter.h"
+#include "Serialization/MemoryReader.h"
+#include "Inventory.h"
 
 UInv_InventoryItem* FInv_ItemManifest::Manifest(UObject* NewOuter) // 인벤토리의 인터페이스? 복사본이라고?
 {
@@ -57,4 +60,172 @@ void FInv_ItemManifest::ClearFragments()
 		Fragment.Reset();
 	}
 	Fragments.Empty();
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 📌 [Phase 1 최적화] Manifest Fragment 직렬화
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 📌 직렬화 포맷 (바이너리 구조):
+//    [4바이트: Fragment 개수 (int32)]
+//    [Fragment 0: TInstancedStruct의 네이티브 직렬화]
+//    [Fragment 1: TInstancedStruct의 네이티브 직렬화]
+//    ...
+//
+// 📌 TInstancedStruct의 네이티브 직렬화가 포함하는 것:
+//    - UScriptStruct 포인터 (어떤 USTRUCT인지)
+//    - 해당 USTRUCT의 모든 UPROPERTY 값
+//    → FInv_LabeledNumberFragment의 Value, Min, Max, bRandomizeOnManifest 등
+//    → FInv_AttachmentHostFragment의 SlotDefinitions, AttachedItems 등
+//    → FInv_EquipmentFragment의 EquipModifiers, EquipActorClass 등
+//
+// 📌 주의사항:
+//    - UObject 포인터(예: UStaticMesh*)는 패키지 경로로 직렬화됨
+//      → 해당 에셋이 존재해야 역직렬화 성공
+//    - SaveVersion 불일치 시 역직렬화 실패 가능
+//      → DeserializeAndApplyFragments에서 실패 시 기존 Fragment 유지
+//
+// ════════════════════════════════════════════════════════════════════════════════
+
+TArray<uint8> FInv_ItemManifest::SerializeFragments() const
+{
+	TArray<uint8> OutData;
+
+	// ── 빈 Fragment 체크 ──
+	if (Fragments.Num() == 0)
+	{
+#if INV_DEBUG_SAVE
+		UE_LOG(LogTemp, Warning,
+			TEXT("[ManifestSerialize] SerializeFragments: Fragment 0개 — 빈 배열 반환. ItemType=%s"),
+			*ItemType.ToString());
+#endif
+		return OutData;
+	}
+
+	// ── FMemoryWriter로 직렬화 ──
+	// bIsPersistent = true: SaveGame용 영속 직렬화
+	FMemoryWriter Writer(OutData, /*bIsPersistent=*/ true);
+
+	// Fragment 개수 먼저 기록
+	int32 FragmentCount = Fragments.Num();
+	Writer << FragmentCount;
+
+	// 각 TInstancedStruct를 네이티브 직렬화
+	for (const TInstancedStruct<FInv_ItemFragment>& Fragment : Fragments)
+	{
+		// TInstancedStruct는 const_cast 없이 직렬화 불가 (FArchive::operator<<는 non-const)
+		// UE 내부적으로도 Save 시 동일 패턴 사용
+		TInstancedStruct<FInv_ItemFragment>& MutableFragment =
+			const_cast<TInstancedStruct<FInv_ItemFragment>&>(Fragment);
+		MutableFragment.Serialize(Writer);
+	}
+
+#if INV_DEBUG_SAVE
+	UE_LOG(LogTemp, Warning,
+		TEXT("[ManifestSerialize] SerializeFragments 완료: ItemType=%s, Fragment=%d개, 바이트=%d"),
+		*ItemType.ToString(), FragmentCount, OutData.Num());
+#endif
+
+	return OutData;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 📌 [Phase 1 최적화] Manifest Fragment 역직렬화
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 📌 처리 흐름:
+//    1. 바이트 배열에서 Fragment 개수 읽기
+//    2. 각 TInstancedStruct 역직렬화
+//    3. 현재 Fragments 배열을 역직렬화된 것으로 교체
+//
+// 📌 실패 시 동작:
+//    - 기존 Fragments 유지 (CDO 기본값)
+//    - false 반환 → 호출자가 로그 출력
+//
+// 📌 성공 시 동작:
+//    - 기존 Fragments 배열을 완전히 교체
+//    - bRandomizeOnManifest가 false로 저장되어 있으므로
+//      이후 Manifest() 호출되어도 재랜덤 안 됨
+//    - 부착물 데이터(AttachmentHostFragment의 AttachedItems)도 복원됨
+//
+// ════════════════════════════════════════════════════════════════════════════════
+
+bool FInv_ItemManifest::DeserializeAndApplyFragments(const TArray<uint8>& InData)
+{
+	// ── 빈 데이터 체크 ──
+	if (InData.Num() == 0)
+	{
+#if INV_DEBUG_SAVE
+		UE_LOG(LogTemp, Warning,
+			TEXT("[ManifestSerialize] DeserializeAndApplyFragments: 빈 데이터 — 기존 Fragment 유지. ItemType=%s"),
+			*ItemType.ToString());
+#endif
+		return false;
+	}
+
+	// ── FMemoryReader로 역직렬화 ──
+	FMemoryReader Reader(InData, /*bIsPersistent=*/ true);
+
+	// Fragment 개수 읽기
+	int32 FragmentCount = 0;
+	Reader << FragmentCount;
+
+	// 개수 유효성 검증 (음수이거나 비정상적으로 크면 거부)
+	if (FragmentCount < 0 || FragmentCount > 100)
+	{
+		UE_LOG(LogTemp, Error,
+			TEXT("[ManifestSerialize] ❌ DeserializeAndApplyFragments: 비정상 FragmentCount=%d — 역직렬화 중단. ItemType=%s"),
+			FragmentCount, *ItemType.ToString());
+		return false;
+	}
+
+	// 임시 배열에 역직렬화 (실패 시 원본 보호)
+	TArray<TInstancedStruct<FInv_ItemFragment>> TempFragments;
+	TempFragments.Reserve(FragmentCount);
+
+	for (int32 i = 0; i < FragmentCount; ++i)
+	{
+		TInstancedStruct<FInv_ItemFragment> NewFragment;
+		NewFragment.Serialize(Reader);
+
+		// 역직렬화된 Fragment의 ScriptStruct가 유효한지 검증
+		if (!NewFragment.IsValid())
+		{
+			UE_LOG(LogTemp, Error,
+				TEXT("[ManifestSerialize] ❌ Fragment[%d] 역직렬화 실패 (IsValid=false) — 전체 복원 중단. ItemType=%s"),
+				i, *ItemType.ToString());
+			return false;
+		}
+
+		TempFragments.Add(MoveTemp(NewFragment));
+	}
+
+	// Reader에 에러가 있었는지 확인
+	if (Reader.IsError())
+	{
+		UE_LOG(LogTemp, Error,
+			TEXT("[ManifestSerialize] ❌ FMemoryReader 에러 발생 — 전체 복원 중단. ItemType=%s"),
+			*ItemType.ToString());
+		return false;
+	}
+
+	// ── 성공: 기존 Fragments를 교체 ──
+	Fragments = MoveTemp(TempFragments);
+
+#if INV_DEBUG_SAVE
+	UE_LOG(LogTemp, Warning,
+		TEXT("[ManifestSerialize] ✅ DeserializeAndApplyFragments 성공: ItemType=%s, Fragment=%d개 복원"),
+		*ItemType.ToString(), Fragments.Num());
+
+	// 복원된 Fragment 타입 목록 출력
+	for (int32 i = 0; i < Fragments.Num(); ++i)
+	{
+		const UScriptStruct* ScriptStruct = Fragments[i].GetScriptStruct();
+		UE_LOG(LogTemp, Warning,
+			TEXT("[ManifestSerialize]   [%d] %s"),
+			i, ScriptStruct ? *ScriptStruct->GetName() : TEXT("nullptr"));
+	}
+#endif
+
+	return true;
 }

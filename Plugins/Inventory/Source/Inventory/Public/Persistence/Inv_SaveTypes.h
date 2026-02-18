@@ -65,10 +65,13 @@ struct INVENTORY_API FInv_PlayerSaveData
 	 *
 	 * Version 1: 기본 인벤토리 (아이템 + 장착 상태)
 	 * Version 2: 부착물 시스템 추가 (FInv_SavedAttachmentData)
+	 * Version 3: Manifest Fragment 직렬화 추가 (SerializedManifest)
+	 *            → 랜덤 스탯/부착물 Modifier 값 보존
+	 *            → v1/v2 하위 호환: SerializedManifest가 빈 배열이면 CDO 기본값 사용
 	 */
 	UPROPERTY(SaveGame, BlueprintReadWrite, Category = "인벤토리 저장",
 		meta = (DisplayName = "저장 버전(SaveVersion)"))
-	int32 SaveVersion = 2;
+	int32 SaveVersion = 3;
 
 	/** 비어있는지 확인 */
 	bool IsEmpty() const { return Items.Num() == 0; }

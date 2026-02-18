@@ -34,6 +34,17 @@ struct INVENTORY_API FInv_SavedAttachmentData
 	// 부착물의 AttachmentType 태그 (AttachableFragment의 AttachmentType)
 	UPROPERTY(BlueprintReadWrite, SaveGame, Category = "Inventory|Save", meta = (DisplayName = "AttachmentType (부착물 타입 태그)"))
 	FGameplayTag AttachmentType;
+
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [Phase 1 최적화] 부착물 Fragment 직렬화 데이터
+	// ════════════════════════════════════════════════════════════════
+	// 부착물의 전체 Fragment 데이터를 바이너리로 보존
+	// 로드 시 랜덤 스탯 재결정 방지
+	// 빈 배열이면 SaveVersion 2 이하 데이터 (하위 호환)
+	// ════════════════════════════════════════════════════════════════
+	UPROPERTY(BlueprintReadWrite, SaveGame, Category = "Inventory|Save",
+		meta = (DisplayName = "SerializedManifest (부착물 직렬화 데이터)"))
+	TArray<uint8> SerializedManifest;
 };
 
 // ============================================
@@ -188,6 +199,26 @@ struct INVENTORY_API FInv_SavedItemData
 		meta = (DisplayName = "Attachments (부착물 목록)"))
 	TArray<FInv_SavedAttachmentData> Attachments;
 
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [Phase 1 최적화] 아이템 Fragment 직렬화 데이터
+	// ════════════════════════════════════════════════════════════════
+	// 아이템의 전체 Fragment 데이터(랜덤 스탯, 장비 정보 등)를 바이너리로 보존
+	//
+	// 포함되는 데이터 예시:
+	//   - FInv_LabeledNumberFragment의 Value (랜덤 결정된 스탯값)
+	//   - FInv_EquipmentFragment의 EquipModifiers (장비 효과)
+	//   - FInv_AttachmentHostFragment의 AttachedItems (부착물 목록)
+	//   - FInv_StackableFragment의 StackCount
+	//   - 기타 모든 Fragment의 UPROPERTY 값
+	//
+	// 빈 배열이면 SaveVersion 2 이하 데이터 → CDO 기본값 사용 (하위 호환)
+	//
+	// 직렬화/역직렬화: FInv_ItemManifest::SerializeFragments() / DeserializeAndApplyFragments()
+	// ════════════════════════════════════════════════════════════════
+	UPROPERTY(BlueprintReadWrite, SaveGame, Category = "Inventory|Save",
+		meta = (DisplayName = "SerializedManifest (아이템 직렬화 데이터)"))
+	TArray<uint8> SerializedManifest;
+
 	/** 유효한 데이터인지 확인 */
 	bool IsValid() const
 	{
@@ -231,6 +262,12 @@ struct INVENTORY_API FInv_SavedItemData
 		if (Attachments.Num() > 0)
 		{
 			Result += FString::Printf(TEXT(" +부착물%d개"), Attachments.Num());
+		}
+
+		// 직렬화 데이터 크기 표시
+		if (SerializedManifest.Num() > 0)
+		{
+			Result += FString::Printf(TEXT(" [Manifest=%dB]"), SerializedManifest.Num());
 		}
 
 		return Result;
