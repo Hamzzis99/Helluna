@@ -367,6 +367,13 @@ void AInv_PlayerController::TraceForInteractables()
 
 	if (!ThisActor.IsValid())
 	{
+		if (LastActor.IsValid())
+		{
+			if (UActorComponent* Highlightable = LastActor->FindComponentByInterface(UInv_Highlightable::StaticClass()); IsValid(Highlightable))
+			{
+				IInv_Highlightable::Execute_UnHighlight(Highlightable);
+			}
+		}
 		if (IsValid(HUDWidget))
 		{
 			HUDWidget->HidePickupMessage();
