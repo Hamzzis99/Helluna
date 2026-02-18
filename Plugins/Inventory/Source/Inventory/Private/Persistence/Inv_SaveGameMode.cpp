@@ -632,15 +632,27 @@ void AInv_SaveGameMode::OnAutoSaveTimer()
 // 📌 RequestAllPlayersInventoryState — 전체 플레이어 인벤토리 상태 요청
 // ════════════════════════════════════════════════════════════════════════════════
 //
-// 📌 처리 흐름:
-//    1. 모든 PlayerController 순회
-//    2. Inv_PlayerController로 캐스트
-//    3. 델리게이트 바인딩 (OnInventoryStateReceived)
-//    4. Client_RequestInventoryState() RPC 호출
+// 📌 처리 흐름 (Phase 1 배칭):
+//    1. 이미 배칭 중이면 중복 실행 방지
+//    2. 모든 PlayerController 순회 → RPC 발송 + RequestCount 카운트
+//    3. bAutoSaveBatchInProgress = true, PendingAutoSaveCount = RequestCount
+//    4. 타임아웃 타이머 시작 (5초) → 미응답 플레이어 무시하고 FlushAutoSaveBatch()
 //
 // ════════════════════════════════════════════════════════════════════════════════
 void AInv_SaveGameMode::RequestAllPlayersInventoryState()
 {
+	// ── Phase 1: 이미 배칭 중이면 중복 실행 방지 ──
+	if (bAutoSaveBatchInProgress)
+	{
+#if INV_DEBUG_SAVE
+		UE_LOG(LogTemp, Warning, TEXT("[Phase 1 배칭] ⚠️ 이미 배칭 진행 중 — 스킵"));
+#endif
+		return;
+	}
+
+	// 응답 대기할 플레이어 수 카운트
+	int32 RequestCount = 0;
+
 	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
 	{
 		APlayerController* PC = It->Get();
@@ -656,6 +668,26 @@ void AInv_SaveGameMode::RequestAllPlayersInventoryState()
 		}
 
 		RequestPlayerInventoryState(PC);
+		RequestCount++;
+	}
+
+	if (RequestCount > 0)
+	{
+		bAutoSaveBatchInProgress = true;
+		PendingAutoSaveCount = RequestCount;
+
+#if INV_DEBUG_SAVE
+		UE_LOG(LogTemp, Warning, TEXT("[Phase 1 배칭] 🚀 배칭 시작: %d명 응답 대기"), RequestCount);
+#endif
+
+		// 타임아웃 타이머 설정 — 미응답 플레이어가 있어도 일정 시간 후 강제 저장
+		GetWorldTimerManager().SetTimer(
+			AutoSaveBatchTimeoutHandle,
+			this,
+			&AInv_SaveGameMode::OnAutoSaveBatchTimeout,
+			AutoSaveBatchTimeoutSeconds,
+			false  // 1회성
+		);
 	}
 }
 
@@ -677,9 +709,9 @@ void AInv_SaveGameMode::RequestPlayerInventoryState(APlayerController* PC)
 // 📌 OnPlayerInventoryStateReceived — 클라이언트로부터 인벤토리 상태 수신
 // ════════════════════════════════════════════════════════════════════════════════
 //
-// 📌 처리 흐름:
-//    1. GetPlayerSaveId(PlayerController) → PlayerId
-//    2. SaveCollectedItems(PlayerId, SavedItems) → 디스크 저장
+// 📌 처리 흐름 (Phase 1 배칭):
+//    배칭 중: 메모리에만 저장 + 캐시 갱신 → 카운터 감소 → 0이면 FlushAutoSaveBatch()
+//    배칭 아님: 기존처럼 SaveCollectedItems() → 즉시 디스크 쓰기
 //
 // ════════════════════════════════════════════════════════════════════════════════
 void AInv_SaveGameMode::OnPlayerInventoryStateReceived(
@@ -690,13 +722,55 @@ void AInv_SaveGameMode::OnPlayerInventoryStateReceived(
 	if (PlayerId.IsEmpty())
 	{
 		UE_LOG(LogTemp, Error, TEXT("🔍 [SavePipeline] ❌ PlayerId 비어있음! 저장 중단!"));
+		// 배칭 카운터는 여전히 감소시켜야 함 (응답은 왔으므로)
+		if (bAutoSaveBatchInProgress)
+		{
+			PendingAutoSaveCount--;
+			if (PendingAutoSaveCount <= 0)
+			{
+				FlushAutoSaveBatch();
+			}
+		}
 		return;
 	}
+
 #if INV_DEBUG_SAVE
 	UE_LOG(LogTemp, Error, TEXT("🔍 [SavePipeline] PlayerId='%s' 찾음!"), *PlayerId);
 #endif
 
-	SaveCollectedItems(PlayerId, SavedItems);
+	if (bAutoSaveBatchInProgress)
+	{
+		// ── Phase 1 배칭 중: 메모리에만 저장 (디스크 쓰기 안 함) ──
+		FInv_PlayerSaveData SaveData;
+		SaveData.Items = SavedItems;
+		SaveData.LastSaveTime = FDateTime::Now();
+
+		if (IsValid(InventorySaveGame))
+		{
+			InventorySaveGame->SavePlayer(PlayerId, SaveData);
+		}
+
+		// 캐시 갱신
+		CachePlayerData(PlayerId, SaveData);
+
+		// 카운터 감소
+		PendingAutoSaveCount--;
+
+#if INV_DEBUG_SAVE
+		UE_LOG(LogTemp, Warning, TEXT("[Phase 1 배칭] 📥 응답 수신: %s (남은 대기: %d)"),
+			*PlayerId, PendingAutoSaveCount);
+#endif
+
+		if (PendingAutoSaveCount <= 0)
+		{
+			FlushAutoSaveBatch();
+		}
+	}
+	else
+	{
+		// 배칭 중이 아닌 경우 (개별 저장) → 기존처럼 즉시 디스크 쓰기
+		SaveCollectedItems(PlayerId, SavedItems);
+	}
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -711,6 +785,60 @@ void AInv_SaveGameMode::CachePlayerData(const FString& PlayerId, const FInv_Play
 FInv_PlayerSaveData* AInv_SaveGameMode::GetCachedData(const FString& PlayerId)
 {
 	return CachedPlayerData.Find(PlayerId);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 📌 FlushAutoSaveBatch — 배칭된 데이터를 디스크에 1회 기록
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 📌 호출 시점:
+//    1. 모든 플레이어 응답 수신 완료 (PendingAutoSaveCount <= 0)
+//    2. 타임아웃 (미응답 플레이어 무시)
+//
+// 📌 처리:
+//    타임아웃 타이머 클리어 → 배칭 상태 해제 → SaveToDisk() 1회
+//
+// ════════════════════════════════════════════════════════════════════════════════
+void AInv_SaveGameMode::FlushAutoSaveBatch()
+{
+	// 타임아웃 타이머 클리어
+	if (AutoSaveBatchTimeoutHandle.IsValid())
+	{
+		GetWorldTimerManager().ClearTimer(AutoSaveBatchTimeoutHandle);
+	}
+
+	bAutoSaveBatchInProgress = false;
+	PendingAutoSaveCount = 0;
+
+	// ── 디스크 1회 쓰기 ──
+	if (IsValid(InventorySaveGame))
+	{
+		bool bSuccess = UInv_InventorySaveGame::SaveToDisk(InventorySaveGame, InventorySaveSlotName);
+
+#if INV_DEBUG_SAVE
+		UE_LOG(LogTemp, Warning, TEXT("[Phase 1 배칭] 💾 디스크 저장 완료! (성공=%s)"),
+			bSuccess ? TEXT("Y") : TEXT("N"));
+#endif
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 📌 OnAutoSaveBatchTimeout — 배칭 타임아웃 콜백
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 📌 역할:
+//    AutoSaveBatchTimeoutSeconds(5초) 내에 응답이 오지 않은 플레이어가 있으면
+//    미응답 무시하고 현재까지 수신된 데이터만으로 디스크 저장
+//
+// ════════════════════════════════════════════════════════════════════════════════
+void AInv_SaveGameMode::OnAutoSaveBatchTimeout()
+{
+#if INV_DEBUG_SAVE
+	UE_LOG(LogTemp, Warning, TEXT("[Phase 1 배칭] ⏰ 타임아웃! 미응답 %d명 무시하고 강제 저장"),
+		PendingAutoSaveCount);
+#endif
+
+	FlushAutoSaveBatch();
 }
 
 // ════════════════════════════════════════════════════════════════════════════════

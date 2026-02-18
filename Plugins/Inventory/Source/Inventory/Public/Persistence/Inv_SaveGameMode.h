@@ -329,4 +329,24 @@ protected:
 private:
 	/** 자동저장 타이머 핸들 */
 	FTimerHandle AutoSaveTimerHandle;
+
+	// ── Phase 1: 자동저장 배칭 ──
+
+	/** 자동저장 배칭 진행 중 여부 */
+	bool bAutoSaveBatchInProgress = false;
+
+	/** 아직 응답을 받지 못한 플레이어 수 */
+	int32 PendingAutoSaveCount = 0;
+
+	/** 배칭 타임아웃 타이머 핸들 */
+	FTimerHandle AutoSaveBatchTimeoutHandle;
+
+	/** 배칭 타임아웃 시간 (초) — 이 시간 안에 미응답 플레이어는 무시 */
+	static constexpr float AutoSaveBatchTimeoutSeconds = 5.0f;
+
+	/** 배칭된 데이터를 디스크에 1회 기록 */
+	void FlushAutoSaveBatch();
+
+	/** 배칭 타임아웃 콜백 */
+	void OnAutoSaveBatchTimeout();
 };
