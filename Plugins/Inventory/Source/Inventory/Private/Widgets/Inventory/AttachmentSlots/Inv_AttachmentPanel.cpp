@@ -14,6 +14,7 @@
 // ════════════════════════════════════════════════════════════════════════════════
 
 #include "Widgets/Inventory/AttachmentSlots/Inv_AttachmentPanel.h"
+#include "Inventory.h"  // INV_DEBUG_ATTACHMENT 매크로
 
 #include "Widgets/Inventory/AttachmentSlots/Inv_AttachmentSlotWidget.h"
 #include "Widgets/Inventory/Spatial/Inv_InventoryGrid.h"
@@ -139,10 +140,23 @@ void UInv_AttachmentPanel::OpenForWeapon(UInv_InventoryItem* WeaponItem, int32 W
 	SetVisibility(ESlateVisibility::Visible);
 	bIsOpen = true;
 
+#if INV_DEBUG_ATTACHMENT
+	// ★ [부착진단-패널] OpenForWeapon: 패널 열기 시 부착물 데이터 상태 ★
+	{
+		const FInv_AttachmentHostFragment* DiagHost =
+			WeaponItem->GetItemManifest().GetFragmentOfType<FInv_AttachmentHostFragment>();
+		UE_LOG(LogTemp, Error, TEXT("[부착진단-패널] OpenForWeapon: WeaponItem=%s, HostFrag=%s, AttachedItems=%d, EntryIndex=%d"),
+			*WeaponItem->GetItemManifest().GetItemType().ToString(),
+			DiagHost ? TEXT("유효") : TEXT("nullptr"),
+			DiagHost ? DiagHost->GetAttachedItems().Num() : -1,
+			WeaponEntryIndex);
+	}
+
 	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 패널 열림: 무기=%s, 슬롯=%d개, EntryIndex=%d"),
 		*WeaponItem->GetItemManifest().GetItemType().ToString(),
 		WeaponItem->GetAttachmentSlotCount(),
 		WeaponEntryIndex);
+#endif
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -166,7 +180,9 @@ void UInv_AttachmentPanel::ClosePanel()
 
 	OnPanelClosed.Broadcast();
 
+#if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 패널 닫힘"));
+#endif
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -198,6 +214,29 @@ void UInv_AttachmentPanel::BuildSlotWidgets()
 		return;
 	}
 
+#if INV_DEBUG_ATTACHMENT
+	// ★ [부착진단-패널] BuildSlotWidgets: WeaponItem 부착물 데이터 상태 확인 ★
+	{
+		UE_LOG(LogTemp, Error, TEXT("[부착진단-패널] BuildSlotWidgets: WeaponItem=%s, HostFrag=%s, SlotDefs=%d, AttachedItems=%d"),
+			*CurrentWeaponItem->GetItemManifest().GetItemType().ToString(),
+			HostFrag ? TEXT("유효") : TEXT("nullptr"),
+			HostFrag->GetSlotDefinitions().Num(),
+			HostFrag->GetAttachedItems().Num());
+		for (int32 d = 0; d < HostFrag->GetAttachedItems().Num(); d++)
+		{
+			const FInv_AttachedItemData& DiagData = HostFrag->GetAttachedItems()[d];
+			UE_LOG(LogTemp, Error, TEXT("[부착진단-패널]   [%d] Type=%s (Slot=%d), ManifestCopy.ItemType=%s"),
+				d, *DiagData.AttachmentItemType.ToString(), DiagData.SlotIndex,
+				*DiagData.ItemManifestCopy.GetItemType().ToString());
+		}
+	}
+#endif
+	// 실패 로그 — 부착물 데이터 유실 경고 (가드 없이 유지)
+	if (HostFrag->GetAttachedItems().Num() == 0)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[부착진단-패널]   AttachedItems가 비어있음! 부착물 데이터 유실 의심"));
+	}
+
 	const TArray<FInv_AttachmentSlotDef>& SlotDefs = HostFrag->GetSlotDefinitions();
 
 	for (int32 i = 0; i < SlotDefs.Num(); ++i)
@@ -223,7 +262,9 @@ void UInv_AttachmentPanel::BuildSlotWidgets()
 		SlotWidgets.Add(SlotWidget);
 	}
 
+#if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 슬롯 위젯 %d개 생성 완료"), SlotWidgets.Num());
+#endif
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -364,12 +405,14 @@ void UInv_AttachmentPanel::OnSlotClicked(int32 SlotIndex, const FPointerEvent& M
 	}
 	else
 	{
+#if INV_DEBUG_ATTACHMENT
 		UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 슬롯 %d 클릭됨 — 조건 미충족 (우클릭=%s, 좌클릭=%s, 점유=%s, HoverItem=%s)"),
 			SlotIndex,
 			bIsRightClick ? TEXT("O") : TEXT("X"),
 			bIsLeftClick ? TEXT("O") : TEXT("X"),
 			bSlotOccupied ? TEXT("O") : TEXT("X"),
 			(OwningGrid.IsValid() && OwningGrid->HasHoverItem()) ? TEXT("O") : TEXT("X"));
+#endif
 	}
 }
 
@@ -419,8 +462,10 @@ void UInv_AttachmentPanel::TryAttachHoverItem(int32 SlotIndex)
 	}
 
 	// 호환성 체크
+#if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] CanAttach 체크: WeaponEntry=%d, AttachEntry=%d, Slot=%d"),
 		WeaponEntryIndex, AttachmentEntryIndex, SlotIndex);
+#endif
 	if (!InventoryComponent->CanAttachToWeapon(WeaponEntryIndex, AttachmentEntryIndex, SlotIndex))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] 장착 실패: 호환 안 됨 (슬롯=%d)"), SlotIndex);
@@ -445,11 +490,13 @@ void UInv_AttachmentPanel::TryAttachHoverItem(int32 SlotIndex)
 	OwningGrid->ClearHoverItem();
 	OwningGrid->ShowCursor();
 
+#if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 장착 성공: 슬롯 %d에 %s (WeaponEntry=%d, AttachEntry=%d)"),
 		SlotIndex,
 		*AttachmentItem->GetItemManifest().GetItemType().ToString(),
 		WeaponEntryIndex,
 		AttachmentEntryIndex);
+#endif
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -482,8 +529,10 @@ void UInv_AttachmentPanel::TryDetachItem(int32 SlotIndex)
 	// 서버 RPC 호출
 	InventoryComponent->Server_DetachItemFromWeapon(WeaponEntryIndex, SlotIndex);
 
+#if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 분리 완료: 슬롯 %d (WeaponEntry=%d)"),
 		SlotIndex, WeaponEntryIndex);
+#endif
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -517,12 +566,14 @@ int32 UInv_AttachmentPanel::FindCurrentWeaponEntryIndex() const
 	}
 	else
 	{
+#if INV_DEBUG_ATTACHMENT
 		// 캐시된 값과 달라졌으면 로그
 		if (FoundIndex != CurrentWeaponEntryIndex)
 		{
 			UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] EntryIndex 밀림 감지: 캐시=%d → 실제=%d"),
 				CurrentWeaponEntryIndex, FoundIndex);
 		}
+#endif
 	}
 
 	return FoundIndex;

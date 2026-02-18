@@ -1576,8 +1576,10 @@ void UInv_InventoryComponent::Multicast_EquipSlotClicked_Implementation(UInv_Inv
 // ════════════════════════════════════════════════════════════════
 void UInv_InventoryComponent::Server_AttachItemToWeapon_Implementation(int32 WeaponEntryIndex, int32 AttachmentEntryIndex, int32 SlotIndex)
 {
+#if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment] Server_AttachItemToWeapon: WeaponEntry=%d, AttachmentEntry=%d, Slot=%d"),
 		WeaponEntryIndex, AttachmentEntryIndex, SlotIndex);
+#endif
 
 	// ── 1. 아이템 찾기 ──
 	if (!InventoryList.Entries.IsValidIndex(WeaponEntryIndex))
@@ -1649,8 +1651,10 @@ void UInv_InventoryComponent::Server_AttachItemToWeapon_Implementation(int32 Wea
 
 	HostFragment->AttachItem(SlotIndex, AttachedData);
 
+#if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment] 부착물 장착 성공: %s → 슬롯 %d"),
 		*AttachedData.AttachmentItemType.ToString(), SlotIndex);
+#endif
 
 	// ── 5. InventoryList에서 부착물 아이템 제거 ──
 	// 제거 전에 리슨서버용 Entry Index 기억
@@ -1667,10 +1671,12 @@ void UInv_InventoryComponent::Server_AttachItemToWeapon_Implementation(int32 Wea
 		if (DebugHostFrag)
 		{
 			const FInv_AttachedItemData* DebugData = DebugHostFrag->GetAttachedItemData(SlotIndex);
+#if INV_DEBUG_ATTACHMENT
 			UE_LOG(LogTemp, Warning, TEXT("[Attachment 디버그] RemoveEntry 후: WeaponItem 유효, 슬롯 %d 데이터=%s, AttachedItems 총 %d개"),
 				SlotIndex,
 				DebugData ? TEXT("있음") : TEXT("없음"),
 				DebugHostFrag->GetAttachedItems().Num());
+#endif
 		}
 		else
 		{
@@ -1694,7 +1700,54 @@ void UInv_InventoryComponent::Server_AttachItemToWeapon_Implementation(int32 Wea
 	{
 		if (InventoryList.Entries[i].Item == WeaponItem)
 		{
+#if INV_DEBUG_ATTACHMENT
+			// ★ [부착진단-MarkDirty] MarkItemDirty 직전 Entry 상태 ★
+			{
+				UE_LOG(LogTemp, Error, TEXT("[부착진단-MarkDirty] MarkItemDirty 호출 직전"));
+				UE_LOG(LogTemp, Error, TEXT("[부착진단-MarkDirty]   EntryIndex=%d, Item=%s"),
+					i, *WeaponItem->GetItemManifest().GetItemType().ToString());
+				const FInv_AttachmentHostFragment* PreHost =
+					WeaponItem->GetItemManifest().GetFragmentOfType<FInv_AttachmentHostFragment>();
+				UE_LOG(LogTemp, Error, TEXT("[부착진단-MarkDirty]   HostFrag=%s, AttachedItems=%d"),
+					PreHost ? TEXT("유효") : TEXT("nullptr"),
+					PreHost ? PreHost->GetAttachedItems().Num() : -1);
+				if (PreHost)
+				{
+					for (int32 d = 0; d < PreHost->GetAttachedItems().Num(); d++)
+					{
+						const FInv_AttachedItemData& DiagData = PreHost->GetAttachedItems()[d];
+						UE_LOG(LogTemp, Error, TEXT("[부착진단-MarkDirty]     [%d] Type=%s (Slot=%d), ManifestCopy.ItemType=%s"),
+							d, *DiagData.AttachmentItemType.ToString(), DiagData.SlotIndex,
+							*DiagData.ItemManifestCopy.GetItemType().ToString());
+					}
+				}
+			}
+#endif
+
 			InventoryList.MarkItemDirty(InventoryList.Entries[i]);
+
+#if INV_DEBUG_ATTACHMENT
+			// ★ [부착진단-서버] 부착 완료 후 서버 상태 확인 ★
+			{
+				const FInv_AttachmentHostFragment* DiagHost =
+					WeaponItem->GetItemManifest().GetFragmentOfType<FInv_AttachmentHostFragment>();
+				UE_LOG(LogTemp, Error, TEXT("[부착진단-서버] 부착 완료 후 MarkItemDirty 직후: WeaponItem=%s, HostFrag=%s, AttachedItems=%d"),
+					*WeaponItem->GetItemManifest().GetItemType().ToString(),
+					DiagHost ? TEXT("유효") : TEXT("nullptr"),
+					DiagHost ? DiagHost->GetAttachedItems().Num() : -1);
+				if (DiagHost)
+				{
+					for (int32 d = 0; d < DiagHost->GetAttachedItems().Num(); d++)
+					{
+						const FInv_AttachedItemData& DiagData = DiagHost->GetAttachedItems()[d];
+						UE_LOG(LogTemp, Error, TEXT("[부착진단-서버]   [%d] Type=%s (Slot=%d), ManifestCopy.ItemType=%s"),
+							d, *DiagData.AttachmentItemType.ToString(), DiagData.SlotIndex,
+							*DiagData.ItemManifestCopy.GetItemType().ToString());
+					}
+				}
+			}
+#endif
+
 			break;
 		}
 	}
@@ -1702,6 +1755,7 @@ void UInv_InventoryComponent::Server_AttachItemToWeapon_Implementation(int32 Wea
 	// ── 7. 무기가 장비 슬롯에 장착 중이면 부착물 스탯 적용 ──
 	const FInv_EquipmentFragment* EquipFragment = WeaponManifest.GetFragmentOfType<FInv_EquipmentFragment>();
 
+#if INV_DEBUG_ATTACHMENT
 	// ⭐ [Phase 7 디버그] bEquipped 상태 확인
 	UE_LOG(LogTemp, Warning, TEXT("[Attachment Phase7 디버그] EquipFragment=%s, bEquipped=%s"),
 		EquipFragment ? TEXT("있음") : TEXT("없음"),
@@ -1713,6 +1767,7 @@ void UInv_InventoryComponent::Server_AttachItemToWeapon_Implementation(int32 Wea
 	}
 	UE_LOG(LogTemp, Warning, TEXT("[Attachment Phase7 디버그] AttachableFragment->bIsSuppressor=%s"),
 		AttachableFragment->GetIsSuppressor() ? TEXT("TRUE ✅") : TEXT("FALSE ❌"));
+#endif
 
 	if (EquipFragment && EquipFragment->bEquipped)
 	{
@@ -1743,7 +1798,9 @@ void UInv_InventoryComponent::Server_AttachItemToWeapon_Implementation(int32 Wea
 				MeshSocketName,
 				AttachableFragment->GetAttachOffset()
 			);
+#if INV_DEBUG_ATTACHMENT
 			UE_LOG(LogTemp, Log, TEXT("[Attachment Visual] 실시간 부착물 메시 추가: 슬롯 %d"), SlotIndex);
+#endif
 		}
 
 		// ════════════════════════════════════════════════════════════════
@@ -1771,8 +1828,10 @@ void UInv_InventoryComponent::Server_AttachItemToWeapon_Implementation(int32 Wea
 // ════════════════════════════════════════════════════════════════
 void UInv_InventoryComponent::Server_DetachItemFromWeapon_Implementation(int32 WeaponEntryIndex, int32 SlotIndex)
 {
+#if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment] Server_DetachItemFromWeapon: WeaponEntry=%d, Slot=%d"),
 		WeaponEntryIndex, SlotIndex);
+#endif
 
 	// ── 1. 무기 아이템 찾기 ──
 	if (!InventoryList.Entries.IsValidIndex(WeaponEntryIndex))
@@ -1854,15 +1913,19 @@ void UInv_InventoryComponent::Server_DetachItemFromWeapon_Implementation(int32 W
 		if (IsValid(EquipActor))
 		{
 			EquipActor->DetachMeshFromSocket(SlotIndex);
+#if INV_DEBUG_ATTACHMENT
 			UE_LOG(LogTemp, Log, TEXT("[Attachment Visual] 실시간 부착물 메시 제거: 슬롯 %d"), SlotIndex);
+#endif
 		}
 	}
 
 	// ── 5. 무기에서 부착물 분리 → FInv_AttachedItemData 반환 ──
 	FInv_AttachedItemData DetachedData = HostFragment->DetachItem(SlotIndex);
 
+#if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment] 부착물 분리 성공: %s (슬롯 %d)"),
 		*DetachedData.AttachmentItemType.ToString(), SlotIndex);
+#endif
 
 	// ── 6. ManifestCopy로 새 인벤토리 아이템 생성 ──
 	// bRandomizeOnManifest는 이미 false이므로 스탯이 재랜덤되지 않음
@@ -2692,10 +2755,12 @@ TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave(
 		// 무기 아이템인 경우 AttachmentHostFragment의 AttachedItems 수집
 		if (Entry.Item->HasAttachmentSlots())
 		{
+			UE_LOG(LogTemp, Error, TEXT("🔍 [SaveDiag] Entry[%d] %s - HasAttachmentSlots=TRUE"), i, *ItemType.ToString());
 			const FInv_ItemManifest& ItemManifest = Entry.Item->GetItemManifest();
 			const FInv_AttachmentHostFragment* HostFrag = ItemManifest.GetFragmentOfType<FInv_AttachmentHostFragment>();
 			if (HostFrag)
 			{
+				UE_LOG(LogTemp, Error, TEXT("🔍 [SaveDiag] Entry[%d] HostFrag 유효! AttachedItems=%d"), i, HostFrag->GetAttachedItems().Num());
 				for (const FInv_AttachedItemData& Attached : HostFrag->GetAttachedItems())
 				{
 					FInv_SavedAttachmentData AttSave;
