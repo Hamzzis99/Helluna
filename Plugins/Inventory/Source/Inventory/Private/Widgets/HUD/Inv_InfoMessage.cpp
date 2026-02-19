@@ -1,4 +1,3 @@
-//아 왜 안 돼
 #include "Widgets/HUD/Inv_InfoMessage.h"
 
 #include "Components/TextBlock.h"
@@ -21,9 +20,9 @@ void UInv_InfoMessage::SetMessage(const FText& Message)
 	}
 	bIsMessageActive = true;
 
-	GetWorld()->GetTimerManager().SetTimer(MessageTimer, [this]() //람다를 써서 과부화를 줄이는 것.
+	GetWorld()->GetTimerManager().SetTimer(MessageTimer, [this]()
 		{
 			MessageHide();
 			bIsMessageActive = false;
-		}, MessageLifetime, false); // 수명 이후 사라지게 만드는 것.
+		}, MessageLifetime, false);
 }

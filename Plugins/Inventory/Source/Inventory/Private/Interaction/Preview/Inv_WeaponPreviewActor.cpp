@@ -18,6 +18,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Components/SceneCaptureComponent2D.h"
 #include "Components/DirectionalLightComponent.h"
+#include "Components/PointLightComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/StaticMesh.h"
@@ -86,10 +87,19 @@ AInv_WeaponPreviewActor::AInv_WeaponPreviewActor()
 
 	// 배경을 깔끔하게 하기 위해 안개/대기 효과 제거
 	SceneCapture->ShowFlags.SetFog(false);
-	SceneCapture->ShowFlags.SetAtmosphericFog(false);
 	SceneCapture->ShowFlags.SetVolumetricFog(false);
 
-	// ── 프리뷰 전용 조명 (Channel 1 전용 → 월드 오브젝트에 영향 안 줌) ──
+	// ════════════════════════════════════════════════════════════════
+	// 📌 3점 조명 시스템 (모두 Channel 1 전용 → 월드 무관)
+	// ════════════════════════════════════════════════════════════════
+	// 밤낮 순환하는 월드 조명(Channel 0)과 완전 분리.
+	// 프리뷰 메시는 항상 동일한 조명 조건에서 렌더링됨.
+	//
+	// Key Light (DirectionalLight): 주 광원, 왼쪽 상단 45도
+	// Fill Light (PointLight): 반대편 보조광, 그림자 면 밝힘
+	// Rim Light (PointLight): 뒤쪽 상단, 실루엣 가장자리 강조
+
+	// ── Key Light (메인 조명) ──
 	PreviewLight = CreateDefaultSubobject<UDirectionalLightComponent>(TEXT("PreviewLight"));
 	PreviewLight->SetupAttachment(SceneRoot);
 	PreviewLight->SetRelativeRotation(FRotator(-45.f, -45.f, 0.f));
@@ -97,6 +107,26 @@ AInv_WeaponPreviewActor::AInv_WeaponPreviewActor()
 	PreviewLight->CastShadows = false;
 	PreviewLight->LightingChannels.bChannel0 = false;
 	PreviewLight->LightingChannels.bChannel1 = true;
+
+	// ── Fill Light (보조 조명 — 반대편에서 그림자 면 밝힘) ──
+	FillLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("FillLight"));
+	FillLight->SetupAttachment(SceneRoot);
+	FillLight->SetRelativeLocation(FVector(80.f, 100.f, 30.f));
+	FillLight->Intensity = 3000.f;  // PointLight는 루멘 단위
+	FillLight->AttenuationRadius = 500.f;
+	FillLight->CastShadows = false;
+	FillLight->LightingChannels.bChannel0 = false;
+	FillLight->LightingChannels.bChannel1 = true;
+
+	// ── Rim Light (윤곽 조명 — 뒤쪽 상단에서 실루엣 강조) ──
+	RimLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("RimLight"));
+	RimLight->SetupAttachment(SceneRoot);
+	RimLight->SetRelativeLocation(FVector(-100.f, 0.f, 80.f));
+	RimLight->Intensity = 5000.f;
+	RimLight->AttenuationRadius = 500.f;
+	RimLight->CastShadows = false;
+	RimLight->LightingChannels.bChannel0 = false;
+	RimLight->LightingChannels.bChannel1 = true;
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -150,9 +180,8 @@ void AInv_WeaponPreviewActor::SetPreviewMesh(UStaticMesh* InMesh, const FRotator
 		}
 	}
 
-	// RenderTarget 준비 및 캡처
+	// RenderTarget 준비 (bCaptureEveryFrame=true이므로 수동 캡처 불필요)
 	EnsureRenderTarget();
-	CaptureNow();
 
 #if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Weapon Preview] 메시 설정 완료: %s, ArmLength=%.1f, Rotation=%s"),
@@ -176,7 +205,7 @@ void AInv_WeaponPreviewActor::RotatePreview(float YawDelta)
 	if (!IsValid(PreviewMeshComponent)) return;
 
 	PreviewMeshComponent->AddRelativeRotation(FRotator(0.f, YawDelta, 0.f));
-	CaptureNow();
+	// bCaptureEveryFrame=true이므로 수동 캡처 불필요 — 다음 프레임에 자동 반영
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -235,6 +264,8 @@ void AInv_WeaponPreviewActor::EnsureRenderTarget()
 	}
 
 	// 512x512 해상도 — UI 프리뷰 용도로 충분
+	// ClearColor: 짙은 회색 배경 (패널 배경과 구분 가능, 메시 대비 확보)
+	RenderTarget->ClearColor = FLinearColor(0.08f, 0.07f, 0.06f, 1.f);
 	RenderTarget->InitAutoFormat(512, 512);
 	RenderTarget->UpdateResourceImmediate(true);
 

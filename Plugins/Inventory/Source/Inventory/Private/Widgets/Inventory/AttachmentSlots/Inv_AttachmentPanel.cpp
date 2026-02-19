@@ -740,13 +740,32 @@ void UInv_AttachmentPanel::SetupWeaponPreview()
 		FSlateBrush PreviewBrush;
 		PreviewBrush.SetResourceObject(RT);
 		PreviewBrush.ImageSize = FVector2D(512.f, 512.f);
+		// Stretch: 위젯 크기에 맞춰 RenderTarget 이미지를 늘림
+		PreviewBrush.DrawAs = ESlateBrushDrawType::Image;
+		PreviewBrush.Tiling = ESlateBrushTileType::NoTile;
 		Image_WeaponPreview->SetBrush(PreviewBrush);
 		Image_WeaponPreview->SetVisibility(ESlateVisibility::Visible);
+
+		// 핵심: Image 위젯이 HorizontalBox 안에서 Auto Size일 때
+		// Brush만으로는 크기가 0이 될 수 있음 → 강제 크기 지정
+		Image_WeaponPreview->SetDesiredSizeOverride(FVector2D(300.f, 300.f));
 	}
 
 #if INV_DEBUG_ATTACHMENT
-	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 3D 프리뷰 설정 완료: Mesh=%s"),
-		*PreviewMesh->GetName());
+	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 3D 프리뷰 설정 완료: Mesh=%s"), *PreviewMesh->GetName());
+	if (IsValid(Image_WeaponPreview))
+	{
+		const FVector2D DesiredSize = Image_WeaponPreview->GetDesiredSize();
+		UE_LOG(LogTemp, Error, TEXT("[Weapon Preview] Image_WeaponPreview DesiredSize=(%.1f, %.1f), Visibility=%d"),
+			DesiredSize.X, DesiredSize.Y,
+			(int32)Image_WeaponPreview->GetVisibility());
+	}
+	if (IsValid(RT))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Weapon Preview] RenderTarget: %dx%d, Format=%d, ClearColor=(%.2f,%.2f,%.2f)"),
+			RT->SizeX, RT->SizeY, (int32)RT->GetFormat(),
+			RT->ClearColor.R, RT->ClearColor.G, RT->ClearColor.B);
+	}
 #endif
 }
 
@@ -761,10 +780,11 @@ void UInv_AttachmentPanel::CleanupWeaponPreview()
 		WeaponPreviewActor.Reset();
 	}
 
-	// Image_WeaponPreview 브러시 초기화
+	// Image_WeaponPreview 정리
 	if (IsValid(Image_WeaponPreview))
 	{
 		Image_WeaponPreview->SetBrush(FSlateBrush());
+		Image_WeaponPreview->SetDesiredSizeOverride(FVector2D::ZeroVector);
 		Image_WeaponPreview->SetVisibility(ESlateVisibility::Collapsed);
 	}
 }

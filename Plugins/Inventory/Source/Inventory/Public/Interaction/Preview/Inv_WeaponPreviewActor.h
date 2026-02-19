@@ -57,6 +57,7 @@ class UStaticMeshComponent;
 class USpringArmComponent;
 class USceneCaptureComponent2D;
 class UDirectionalLightComponent;
+class UPointLightComponent;
 class UTextureRenderTarget2D;
 class UStaticMesh;
 
@@ -119,6 +120,15 @@ private:
 
 	UPROPERTY(VisibleAnywhere, Category = "Preview")
 	TObjectPtr<UDirectionalLightComponent> PreviewLight;
+
+	// ── 프리뷰 전용 보조 조명 (Channel 1 전용) ──
+	// FillLight: 메인 조명 반대편 → 그림자 면 밝힘 (반사광 역할)
+	UPROPERTY(VisibleAnywhere, Category = "Preview")
+	TObjectPtr<UPointLightComponent> FillLight;
+
+	// RimLight: 뒤쪽 상단 → 가장자리 윤곽 강조 (실루엣 분리)
+	UPROPERTY(VisibleAnywhere, Category = "Preview")
+	TObjectPtr<UPointLightComponent> RimLight;
 
 	// ── RenderTarget ──
 
