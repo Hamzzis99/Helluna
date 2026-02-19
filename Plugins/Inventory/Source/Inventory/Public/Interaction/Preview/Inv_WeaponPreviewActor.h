@@ -56,7 +56,7 @@
 class UStaticMeshComponent;
 class USpringArmComponent;
 class USceneCaptureComponent2D;
-class UDirectionalLightComponent;
+class USpotLightComponent;
 class UPointLightComponent;
 class UTextureRenderTarget2D;
 class UStaticMesh;
@@ -118,8 +118,10 @@ private:
 	UPROPERTY(VisibleAnywhere, Category = "Preview")
 	TObjectPtr<USceneCaptureComponent2D> SceneCapture;
 
+	// Key Light: SpotLight (범위 제한 → 월드 조명 오염 방지)
+	// ※ DirectionalLight는 Deferred에서 LightingChannels를 무시하므로 사용 금지
 	UPROPERTY(VisibleAnywhere, Category = "Preview")
-	TObjectPtr<UDirectionalLightComponent> PreviewLight;
+	TObjectPtr<USpotLightComponent> PreviewLight;
 
 	// ── 프리뷰 전용 보조 조명 (Channel 1 전용) ──
 	// FillLight: 메인 조명 반대편 → 그림자 면 밝힘 (반사광 역할)

@@ -17,7 +17,7 @@
 
 #include "Components/StaticMeshComponent.h"
 #include "Components/SceneCaptureComponent2D.h"
-#include "Components/DirectionalLightComponent.h"
+#include "Components/SpotLightComponent.h"
 #include "Components/PointLightComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Engine/TextureRenderTarget2D.h"
@@ -90,38 +90,49 @@ AInv_WeaponPreviewActor::AInv_WeaponPreviewActor()
 	SceneCapture->ShowFlags.SetVolumetricFog(false);
 
 	// ════════════════════════════════════════════════════════════════
-	// 📌 3점 조명 시스템 (모두 Channel 1 전용 → 월드 무관)
+	// 📌 3점 조명 시스템 — 물리적 범위 격리
 	// ════════════════════════════════════════════════════════════════
-	// 밤낮 순환하는 월드 조명(Channel 0)과 완전 분리.
-	// 프리뷰 메시는 항상 동일한 조명 조건에서 렌더링됨.
+	// ⚠️ DirectionalLight 사용 금지:
+	//    Deferred Rendering에서 DirectionalLight는 LightingChannels를 무시하고
+	//    전역 적용됨 → 월드 밤낮 조명을 오염시킴.
+	//    SpotLight/PointLight만 사용하여 AttenuationRadius로 물리적 격리.
 	//
-	// Key Light (DirectionalLight): 주 광원, 왼쪽 상단 45도
-	// Fill Light (PointLight): 반대편 보조광, 그림자 면 밝힘
-	// Rim Light (PointLight): 뒤쪽 상단, 실루엣 가장자리 강조
+	// 격리 보장 (3중):
+	//   1차: AttenuationRadius=500 → 빛이 500유닛 밖으로 안 나감
+	//   2차: LightingChannels=Channel1 → Channel0(월드) 불간섭
+	//   3차: Z=-10000 + 월드(Z=0) → 거리 10000 >> 500
+	//
+	// Key Light (SpotLight): 정면 상단 → 메시 직접 조명
+	// Fill Light (PointLight): 반대편 → 그림자 면 밝힘
+	// Rim Light (PointLight): 뒤쪽 상단 → 실루엣 윤곽 강조
 
-	// ── Key Light (메인 조명) ──
-	PreviewLight = CreateDefaultSubobject<UDirectionalLightComponent>(TEXT("PreviewLight"));
+	// ── Key Light (메인 조명 — SpotLight) ──
+	PreviewLight = CreateDefaultSubobject<USpotLightComponent>(TEXT("PreviewLight"));
 	PreviewLight->SetupAttachment(SceneRoot);
-	PreviewLight->SetRelativeRotation(FRotator(-45.f, -45.f, 0.f));
-	PreviewLight->Intensity = 8.f;
+	PreviewLight->SetRelativeLocation(FVector(150.f, -100.f, 120.f));
+	PreviewLight->SetRelativeRotation(FRotator(-35.f, -30.f, 0.f));
+	PreviewLight->Intensity = 8000.f;          // SpotLight 루멘 단위
+	PreviewLight->AttenuationRadius = 500.f;    // 물리적 범위 제한
+	PreviewLight->SetInnerConeAngle(30.f);      // 중심 밝은 영역
+	PreviewLight->SetOuterConeAngle(60.f);      // 빛 감쇠 경계
 	PreviewLight->CastShadows = false;
 	PreviewLight->LightingChannels.bChannel0 = false;
 	PreviewLight->LightingChannels.bChannel1 = true;
 
-	// ── Fill Light (보조 조명 — 반대편에서 그림자 면 밝힘) ──
+	// ── Fill Light (보조 조명 — 그림자 면 밝힘) ──
 	FillLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("FillLight"));
 	FillLight->SetupAttachment(SceneRoot);
-	FillLight->SetRelativeLocation(FVector(80.f, 100.f, 30.f));
-	FillLight->Intensity = 3000.f;  // PointLight는 루멘 단위
+	FillLight->SetRelativeLocation(FVector(-80.f, 100.f, 30.f));
+	FillLight->Intensity = 3000.f;
 	FillLight->AttenuationRadius = 500.f;
 	FillLight->CastShadows = false;
 	FillLight->LightingChannels.bChannel0 = false;
 	FillLight->LightingChannels.bChannel1 = true;
 
-	// ── Rim Light (윤곽 조명 — 뒤쪽 상단에서 실루엣 강조) ──
+	// ── Rim Light (윤곽 조명 — 뒤쪽 상단 실루엣 강조) ──
 	RimLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("RimLight"));
 	RimLight->SetupAttachment(SceneRoot);
-	RimLight->SetRelativeLocation(FVector(-100.f, 0.f, 80.f));
+	RimLight->SetRelativeLocation(FVector(-100.f, 0.f, 100.f));
 	RimLight->Intensity = 5000.f;
 	RimLight->AttenuationRadius = 500.f;
 	RimLight->CastShadows = false;
