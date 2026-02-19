@@ -28,63 +28,75 @@
 // 처리 흐름:
 //   1. 리플리케이션 비활성화 (로컬 전용 UI 보조 액터)
 //   2. SceneRoot 생성 → RootComponent
-//   3. PreviewMeshComponent 생성 → Root에 부착
-//   4. CameraBoom(SpringArm) 생성 → Root에 부착
-//   5. SceneCapture 생성 → CameraBoom에 부착
-//   6. PreviewLight 생성 → Root에 부착
-//   7. SceneCapture 설정:
-//      - bCaptureEveryFrame = false (수동)
-//      - bCaptureOnMovement = false
-//      - PrimitiveRenderMode = UseShowOnlyList
-//      - ShowOnlyComponents에 PreviewMeshComponent 추가
+//   3. PreviewMeshComponent 생성 → LightingChannel 1 전용
+//   4. CameraBoom(SpringArm) 생성
+//   5. SceneCapture 생성 → PRM_RenderScenePrimitives + MaxViewDistance 제한
+//   6. PreviewLight 생성 → LightingChannel 1 전용 (월드 조명 오염 방지)
+//
+// LightingChannels 격리 전략:
+//   - 월드 오브젝트/라이트: Channel 0 (기본)
+//   - 프리뷰 메시/라이트:  Channel 1 전용
+//   - Channel이 다르면 서로 영향을 주지 않음
+//   - 엔진 소스: Engine/Source/Runtime/Engine/Private/Components/LightComponent.cpp
+//     → AffectsChannel()에서 LightingChannels 비트 AND 비교
 // ════════════════════════════════════════════════════════════════
 AInv_WeaponPreviewActor::AInv_WeaponPreviewActor()
 {
 	PrimaryActorTick.bCanEverTick = false;
-	SetReplicates(false); // 프리뷰 액터는 로컬 전용 — 서버에 보낼 필요 없음
+	SetReplicates(false);
 
 	// ── Root ──
 	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
 	RootComponent = SceneRoot;
 
-	// ── 무기 메시 ──
+	// ── 무기 메시 (Channel 1 전용 → 월드 라이트 영향 안 받음) ──
 	PreviewMeshComponent = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PreviewMesh"));
 	PreviewMeshComponent->SetupAttachment(SceneRoot);
 	PreviewMeshComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	PreviewMeshComponent->CastShadow = false; // 그림자 비활성화 (프리뷰에 불필요)
+	PreviewMeshComponent->CastShadow = false;
+	PreviewMeshComponent->LightingChannels.bChannel0 = false;
+	PreviewMeshComponent->LightingChannels.bChannel1 = true;
 
 	// ── 카메라 붐 (스프링 암) ──
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
 	CameraBoom->SetupAttachment(SceneRoot);
-	CameraBoom->TargetArmLength = 150.f; // 기본값, SetPreviewMesh에서 재설정
-	CameraBoom->bDoCollisionTest = false; // 월드 충돌 무시
-	CameraBoom->SetRelativeRotation(FRotator(-15.f, 0.f, 0.f)); // 약간 위에서 내려다보는 각도
+	CameraBoom->TargetArmLength = 150.f;
+	CameraBoom->bDoCollisionTest = false;
+	CameraBoom->SetRelativeRotation(FRotator(-15.f, 0.f, 0.f));
 
 	// ── SceneCapture ──
 	SceneCapture = CreateDefaultSubobject<USceneCaptureComponent2D>(TEXT("SceneCapture"));
 	SceneCapture->SetupAttachment(CameraBoom);
 
-	// 핵심 설정: 매 프레임 캡처하지 않음 → CaptureScene() 수동 호출
-	SceneCapture->bCaptureEveryFrame = false;
-	SceneCapture->bCaptureOnMovement = false;
+	// PRM_RenderScenePrimitives: 카메라 시야 내 모든 프리미티브 렌더
+	// Z=-10000이므로 월드 오브젝트는 시야에 안 잡힘
+	// ShowOnlyList 사용 시 라이트가 제외되어 메시가 검정으로 렌더되는 문제 해결
+	SceneCapture->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_RenderScenePrimitives;
 
-	// 핵심 설정: ShowOnlyList에 등록된 컴포넌트만 촬영
-	// → 월드 배경, 다른 액터 제외하고 무기 메시만 찍힘
-	SceneCapture->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;
-	SceneCapture->ShowOnlyComponents.Add(PreviewMeshComponent);
+	// 매 프레임 캡처 (회전, 부착물 변경 실시간 반영)
+	SceneCapture->bCaptureEveryFrame = true;
+	SceneCapture->bCaptureOnMovement = true;
 
-	// 캡처 소스: 최종 색상 (포스트프로세싱 포함)
+	// 최종 톤매핑 포함 색상
 	SceneCapture->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;
-
-	// 프레임 간 렌더링 상태 유지 (깜빡임 방지)
 	SceneCapture->bAlwaysPersistRenderingState = true;
 
-	// ── 프리뷰 전용 조명 ──
+	// 시야 거리 제한: 프리뷰 메시(~100유닛) 외 원거리 오브젝트 캡처 방지
+	SceneCapture->MaxViewDistanceOverride = 500.f;
+
+	// 배경을 깔끔하게 하기 위해 안개/대기 효과 제거
+	SceneCapture->ShowFlags.SetFog(false);
+	SceneCapture->ShowFlags.SetAtmosphericFog(false);
+	SceneCapture->ShowFlags.SetVolumetricFog(false);
+
+	// ── 프리뷰 전용 조명 (Channel 1 전용 → 월드 오브젝트에 영향 안 줌) ──
 	PreviewLight = CreateDefaultSubobject<UDirectionalLightComponent>(TEXT("PreviewLight"));
 	PreviewLight->SetupAttachment(SceneRoot);
-	PreviewLight->SetRelativeRotation(FRotator(-45.f, -45.f, 0.f)); // 좌상단에서 비추는 조명
-	PreviewLight->Intensity = 8.f; // 프리뷰 밝기 (월드 아래쪽이라 조명이 없으므로)
-	PreviewLight->CastShadows = false; // 프리뷰에서 그림자 불필요
+	PreviewLight->SetRelativeRotation(FRotator(-45.f, -45.f, 0.f));
+	PreviewLight->Intensity = 8.f;
+	PreviewLight->CastShadows = false;
+	PreviewLight->LightingChannels.bChannel0 = false;
+	PreviewLight->LightingChannels.bChannel1 = true;
 }
 
 // ════════════════════════════════════════════════════════════════

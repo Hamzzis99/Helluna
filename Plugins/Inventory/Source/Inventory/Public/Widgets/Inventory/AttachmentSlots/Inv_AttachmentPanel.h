@@ -43,6 +43,7 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "GameplayTagContainer.h"
 #include "Inv_AttachmentPanel.generated.h"
 
 class UInv_InventoryItem;
@@ -167,6 +168,9 @@ private:
 
 	// SlotPosition에 해당하는 VerticalBox 반환
 	UVerticalBox* GetContainerForPosition(EInv_AttachmentSlotPosition Position) const;
+
+	// SlotType 태그에서 UI 배치 위치 자동 추론
+	EInv_AttachmentSlotPosition DerivePositionFromSlotType(const FGameplayTag& SlotType) const;
 
 	// 무기 3D 프리뷰 설정/정리
 	void SetupWeaponPreview();

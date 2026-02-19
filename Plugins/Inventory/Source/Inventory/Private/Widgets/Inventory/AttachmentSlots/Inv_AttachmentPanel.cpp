@@ -276,12 +276,14 @@ void UInv_AttachmentPanel::BuildSlotWidgets()
 		// 슬롯 클릭 델리게이트 바인딩
 		SlotWidget->OnSlotClicked.AddDynamic(this, &ThisClass::OnSlotClicked);
 
-		// Phase 8: SlotPosition에 따라 해당 VerticalBox에 배치
-		UVerticalBox* Container = GetContainerForPosition(SlotDefs[i].SlotPosition);
-		UE_LOG(LogTemp, Error, TEXT("[Attachment UI] 슬롯[%d] Position=%d, Container=%s (%s)"),
-			i, (int32)SlotDefs[i].SlotPosition,
-			Container ? *Container->GetName() : TEXT("nullptr"),
-			IsValid(Container) ? TEXT("유효") : TEXT("무효"));
+		// Phase 8: SlotType 태그로 UI 위치 자동 결정 (항상 태그 기반)
+		EInv_AttachmentSlotPosition ResolvedPosition = DerivePositionFromSlotType(SlotDefs[i].SlotType);
+
+		UVerticalBox* Container = GetContainerForPosition(ResolvedPosition);
+		UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 슬롯[%d] %s → Position=%d, Container=%s"),
+			i, *SlotDefs[i].SlotType.ToString(),
+			(int32)ResolvedPosition,
+			Container ? *Container->GetName() : TEXT("nullptr"));
 		if (IsValid(Container))
 		{
 			Container->AddChildToVerticalBox(SlotWidget);
@@ -631,6 +633,34 @@ UVerticalBox* UInv_AttachmentPanel::GetContainerForPosition(EInv_AttachmentSlotP
 	case EInv_AttachmentSlotPosition::Right:  return VerticalBox_Right;
 	default:                                  return VerticalBox_Top;
 	}
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 DerivePositionFromSlotType — SlotType 태그 → UI 위치 자동 매핑
+// ════════════════════════════════════════════════════════════════
+// BP의 SlotPosition이 기본값(Top=0)일 때 SlotType 태그로 위치를 추론
+// 매핑:
+//   AttachmentSlot.Scope    → Top    (스코프는 무기 위)
+//   AttachmentSlot.Muzzle   → Right  (총구는 오른쪽)
+//   AttachmentSlot.Magazine → Bottom (탄창은 아래)
+//   AttachmentSlot.Laser    → Left   (레이저는 왼쪽)
+//   AttachmentSlot.Stock    → Left   (개머리판은 왼쪽)
+//   AttachmentSlot.Grip     → Left   (그립은 왼쪽)
+//   기타                    → Top    (기본 폴백)
+// ════════════════════════════════════════════════════════════════
+EInv_AttachmentSlotPosition UInv_AttachmentPanel::DerivePositionFromSlotType(const FGameplayTag& SlotType) const
+{
+	const FString TagStr = SlotType.ToString();
+
+	if (TagStr.Contains(TEXT("Scope")))        return EInv_AttachmentSlotPosition::Top;
+	if (TagStr.Contains(TEXT("Muzzle")))       return EInv_AttachmentSlotPosition::Right;
+	if (TagStr.Contains(TEXT("Magazine")))      return EInv_AttachmentSlotPosition::Bottom;
+	if (TagStr.Contains(TEXT("Laser")))         return EInv_AttachmentSlotPosition::Left;
+	if (TagStr.Contains(TEXT("Stock")))         return EInv_AttachmentSlotPosition::Left;
+	if (TagStr.Contains(TEXT("Grip")))          return EInv_AttachmentSlotPosition::Left;
+
+	UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] 알 수 없는 SlotType=%s → Top 기본 배치"), *TagStr);
+	return EInv_AttachmentSlotPosition::Top;
 }
 
 // ════════════════════════════════════════════════════════════════
