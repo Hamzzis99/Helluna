@@ -216,6 +216,14 @@ void UInv_AttachmentPanel::BuildSlotWidgets()
 	ClearSlotWidgets();
 	ClearAllSlotContainers();
 
+	// ★ [디버그] BindWidget 연결 상태 확인
+	UE_LOG(LogTemp, Error, TEXT("[Attachment UI] BindWidget 상태: Top=%s, Bottom=%s, Left=%s, Right=%s, Preview=%s"),
+		IsValid(VerticalBox_Top) ? TEXT("✅") : TEXT("❌nullptr"),
+		IsValid(VerticalBox_Bottom) ? TEXT("✅") : TEXT("❌nullptr"),
+		IsValid(VerticalBox_Left) ? TEXT("✅") : TEXT("❌nullptr"),
+		IsValid(VerticalBox_Right) ? TEXT("✅") : TEXT("❌nullptr"),
+		IsValid(Image_WeaponPreview) ? TEXT("✅") : TEXT("❌nullptr"));
+
 	if (!CurrentWeaponItem.IsValid()) return;
 	if (!AttachmentSlotWidgetClass)
 	{
@@ -270,6 +278,10 @@ void UInv_AttachmentPanel::BuildSlotWidgets()
 
 		// Phase 8: SlotPosition에 따라 해당 VerticalBox에 배치
 		UVerticalBox* Container = GetContainerForPosition(SlotDefs[i].SlotPosition);
+		UE_LOG(LogTemp, Error, TEXT("[Attachment UI] 슬롯[%d] Position=%d, Container=%s (%s)"),
+			i, (int32)SlotDefs[i].SlotPosition,
+			Container ? *Container->GetName() : TEXT("nullptr"),
+			IsValid(Container) ? TEXT("유효") : TEXT("무효"));
 		if (IsValid(Container))
 		{
 			Container->AddChildToVerticalBox(SlotWidget);

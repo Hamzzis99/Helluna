@@ -304,3 +304,22 @@ void FInv_EquipmentFragment::SetEquippedActor(AInv_EquipActor* EquipActor)
 {
 	EquippedActor = EquipActor;
 }
+
+// ════════════════════════════════════════════════════════════════
+// 📌 [Phase 8] RestoreDesignTimePreview — 세이브/로드 후 프리뷰 설정 복원
+// ════════════════════════════════════════════════════════════════
+// 호출 경로: Inv_SaveGameMode::LoadAndSendInventoryToClient → 이 함수
+// 처리 흐름:
+//   CDO의 EquipmentFragment에서 디자인타임 프리뷰 값을 복사
+//   (TSoftObjectPtr 경로, 회전 오프셋, 카메라 거리)
+//
+// ⚠️ 이유: 프리뷰 필드는 에디터에서 설정하는 디자인타임 값이지만
+//    직렬화 시 TSoftObjectPtr 경로가 유실될 수 있으므로
+//    로드 후 CDO에서 복원한다 (SlotPosition 복원과 동일 패턴)
+// ════════════════════════════════════════════════════════════════
+void FInv_EquipmentFragment::RestoreDesignTimePreview(const FInv_EquipmentFragment& CDOEquip)
+{
+	PreviewStaticMesh = CDOEquip.PreviewStaticMesh;
+	PreviewRotationOffset = CDOEquip.PreviewRotationOffset;
+	PreviewCameraDistance = CDOEquip.PreviewCameraDistance;
+}

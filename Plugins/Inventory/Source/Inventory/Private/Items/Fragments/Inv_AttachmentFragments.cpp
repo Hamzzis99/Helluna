@@ -125,6 +125,32 @@ void FInv_AttachmentHostFragment::Manifest()
 #endif
 }
 
+// ════════════════════════════════════════════════════════════════
+// 📌 [Phase 8] RestoreDesignTimeSlotPositions
+// ════════════════════════════════════════════════════════════════
+// 세이브/로드 시 역직렬화된 SlotDefinitions에
+// CDO(BP 에디터)의 최신 SlotPosition 값을 다시 적용
+//
+// 이유: DeserializeAndApplyFragments()가 Fragments 전체를 교체하므로
+//       BP 수정 후 저장된 옛날 데이터의 SlotPosition이 그대로 남음
+//       SlotPosition은 런타임에 변경되지 않는 디자인타임 전용 값
+// ════════════════════════════════════════════════════════════════
+void FInv_AttachmentHostFragment::RestoreDesignTimeSlotPositions(const TArray<FInv_AttachmentSlotDef>& CDOSlotDefs)
+{
+	// SlotType 태그 기준으로 매칭하여 SlotPosition 복원
+	for (FInv_AttachmentSlotDef& LoadedSlot : SlotDefinitions)
+	{
+		for (const FInv_AttachmentSlotDef& CDOSlot : CDOSlotDefs)
+		{
+			if (LoadedSlot.SlotType.MatchesTagExact(CDOSlot.SlotType))
+			{
+				LoadedSlot.SlotPosition = CDOSlot.SlotPosition;
+				break;
+			}
+		}
+	}
+}
+
 // 무기 장착 시 모든 부착물의 스탯 일괄 적용
 // Phase 2에서 EquipmentComponent::OnItemEquipped() 확장 시 호출
 // 흐름: 무기 OnEquip → OnEquipAllAttachments → 각 부착물 Modifier OnEquip

@@ -3,6 +3,7 @@
 #include "Items/Inv_InventoryItem.h"
 #include "Items/Components/Inv_ItemComponent.h"
 #include "Items/Fragments/Inv_ItemFragment.h"
+#include "Items/Fragments/Inv_AttachmentFragments.h"
 #include "Widgets/Composite/Inv_CompositeBase.h"
 #include "Serialization/MemoryWriter.h"
 #include "Serialization/MemoryReader.h"
@@ -13,8 +14,50 @@ UInv_InventoryItem* FInv_ItemManifest::Manifest(UObject* NewOuter) // 인벤토�
 {
 	UInv_InventoryItem* Item = NewObject<UInv_InventoryItem>(NewOuter, UInv_InventoryItem::StaticClass()); // 새로운 객체는 뭐가 될지 Input 파라미터
 
+	// ★ [Phase 8 진단] Manifest 복사 전 — 원본 SlotPosition 확인
+	{
+		const FInv_AttachmentHostFragment* DiagHost = GetFragmentOfType<FInv_AttachmentHostFragment>();
+		if (DiagHost)
+		{
+			const auto& DiagSlots = DiagHost->GetSlotDefinitions();
+			UE_LOG(LogTemp, Error, TEXT("[Phase8진단] Manifest 복사 전: SlotDefs=%d"), DiagSlots.Num());
+			for (int32 d = 0; d < DiagSlots.Num(); ++d)
+			{
+				UE_LOG(LogTemp, Error, TEXT("[Phase8진단]   [%d] %s → Position=%d"), d,
+					*DiagSlots[d].SlotType.ToString(), (int32)DiagSlots[d].SlotPosition);
+			}
+		}
+		const FInv_EquipmentFragment* DiagEquip = GetFragmentOfType<FInv_EquipmentFragment>();
+		if (DiagEquip)
+		{
+			UE_LOG(LogTemp, Error, TEXT("[Phase8진단] Manifest 복사 전: PreviewMesh=%s"),
+				DiagEquip->HasPreviewMesh() ? TEXT("있음") : TEXT("없음"));
+		}
+	}
+
 	//재고 항목
 	Item->SetItemManifest(*this); // 이 매니페스트로 아이템 매니페스트 설정
+
+	// ★ [Phase 8 진단] Manifest 복사 후 — 복사본 SlotPosition 확인
+	{
+		const FInv_AttachmentHostFragment* DiagHost = Item->GetItemManifest().GetFragmentOfType<FInv_AttachmentHostFragment>();
+		if (DiagHost)
+		{
+			const auto& DiagSlots = DiagHost->GetSlotDefinitions();
+			UE_LOG(LogTemp, Error, TEXT("[Phase8진단] Manifest 복사 후: SlotDefs=%d"), DiagSlots.Num());
+			for (int32 d = 0; d < DiagSlots.Num(); ++d)
+			{
+				UE_LOG(LogTemp, Error, TEXT("[Phase8진단]   [%d] %s → Position=%d"), d,
+					*DiagSlots[d].SlotType.ToString(), (int32)DiagSlots[d].SlotPosition);
+			}
+		}
+		const FInv_EquipmentFragment* DiagEquip = Item->GetItemManifest().GetFragmentOfType<FInv_EquipmentFragment>();
+		if (DiagEquip)
+		{
+			UE_LOG(LogTemp, Error, TEXT("[Phase8진단] Manifest 복사 후: PreviewMesh=%s"),
+				DiagEquip->HasPreviewMesh() ? TEXT("있음") : TEXT("없음"));
+		}
+	}
 
 	//비어있더라도 호출 해주는 함수
 	for (auto& Fragment : Item->GetItemManifestMutable().GetFragmentsMutable()) // 각 프래그먼트에 대해

@@ -344,6 +344,9 @@ struct FInv_EquipmentFragment : public FInv_InventoryItemFragment
 	// Null이면 AttachmentPanel에서 2D 아이콘으로 폴백
 	bool HasPreviewMesh() const { return !PreviewStaticMesh.IsNull(); }
 
+	// ── 디자인타임 값 복원 (세이브/로드 후) ──
+	void RestoreDesignTimePreview(const FInv_EquipmentFragment& CDOEquip);
+
 private:
 	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (ExcludeBaseStruct, DisplayName = "EquipModifiers (장비 효과 목록)", Tooltip = "장착 시 적용될 스탯 효과들 (공격력, 방어력 등)"))
 	TArray<TInstancedStruct<FInv_EquipModifier>> EquipModifiers;

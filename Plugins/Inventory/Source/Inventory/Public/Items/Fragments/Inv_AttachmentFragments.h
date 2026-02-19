@@ -174,6 +174,9 @@ struct FInv_AttachmentHostFragment : public FInv_ItemFragment
 	void AttachItem(int32 SlotIndex, const FInv_AttachedItemData& Data);
 	FInv_AttachedItemData DetachItem(int32 SlotIndex);
 
+	// ── 디자인타임 값 복원 (세이브/로드 후) ──
+	void RestoreDesignTimeSlotPositions(const TArray<FInv_AttachmentSlotDef>& CDOSlotDefs);
+
 	// ── 부착물 스탯 일괄 적용/해제 ──
 
 	void OnEquipAllAttachments(APlayerController* PC);

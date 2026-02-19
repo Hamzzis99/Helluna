@@ -584,6 +584,37 @@ void AInv_SaveGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
 		}
 #endif
 
+		// ════════════════════════════════════════════════════════════════════════
+		// 📌 [Phase 8] 디자인타임 전용 값 복원
+		// ════════════════════════════════════════════════════════════════════════
+		// 문제: DeserializeAndApplyFragments()가 Fragments 배열 전체를 교체하므로
+		//       BP 에디터에서 나중에 변경한 디자인타임 전용 값이 옛날 세이브 데이터로 덮어씌워짐
+		// 해결: CDO 템플릿에서 디자인타임 전용 값만 추출하여 역직렬화된 데이터에 다시 적용
+		//
+		// 대상 필드:
+		//   - AttachmentHostFragment::SlotDefinitions[].SlotPosition (UI 배치 위치)
+		//   - EquipmentFragment::PreviewStaticMesh, PreviewRotationOffset, PreviewCameraDistance
+		// ════════════════════════════════════════════════════════════════════════
+		{
+			const FInv_ItemManifest& CDOManifest = Template->GetItemManifest();
+
+			// ── SlotPosition 복원 ──
+			const FInv_AttachmentHostFragment* CDOHost = CDOManifest.GetFragmentOfType<FInv_AttachmentHostFragment>();
+			FInv_AttachmentHostFragment* LoadedHost = ManifestCopy.GetFragmentOfTypeMutable<FInv_AttachmentHostFragment>();
+			if (CDOHost && LoadedHost)
+			{
+				LoadedHost->RestoreDesignTimeSlotPositions(CDOHost->GetSlotDefinitions());
+			}
+
+			// ── PreviewMesh 복원 ──
+			const FInv_EquipmentFragment* CDOEquip = CDOManifest.GetFragmentOfType<FInv_EquipmentFragment>();
+			FInv_EquipmentFragment* LoadedEquip = ManifestCopy.GetFragmentOfTypeMutable<FInv_EquipmentFragment>();
+			if (CDOEquip && LoadedEquip)
+			{
+				LoadedEquip->RestoreDesignTimePreview(*CDOEquip);
+			}
+		}
+
 		// ── Step 6: 인벤토리에 추가 (SpawnActor/Server_AddNewItem 없음!) ──
 		UInv_InventoryItem* NewItem = InvComp->AddItemFromManifest(ManifestCopy, ItemData.StackCount);
 		if (!NewItem) continue;
