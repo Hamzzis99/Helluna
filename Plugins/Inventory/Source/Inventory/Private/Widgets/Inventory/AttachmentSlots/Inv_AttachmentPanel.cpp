@@ -31,6 +31,7 @@
 #include "Interaction/Preview/Inv_WeaponPreviewActor.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/StaticMesh.h"
+#include "Materials/MaterialInstanceDynamic.h"
 
 // ════════════════════════════════════════════════════════════════
 // 📌 NativeOnInitialized — 위젯 초기화
@@ -253,6 +254,41 @@ void UInv_AttachmentPanel::BuildSlotWidgets()
 				d, *DiagData.AttachmentItemType.ToString(), DiagData.SlotIndex,
 				*DiagData.ItemManifestCopy.GetItemType().ToString());
 		}
+	}
+
+	// ★ 진단: CurrentWeaponItem 포인터와 FastArray 내 아이템 포인터 비교
+	{
+		UE_LOG(LogTemp, Error, TEXT("[부착진단-패널] BuildSlotWidgets 진입:"));
+		UE_LOG(LogTemp, Error, TEXT("[부착진단-패널]   CurrentWeaponItem ptr=%p"),
+			CurrentWeaponItem.IsValid() ? (void*)CurrentWeaponItem.Get() : nullptr);
+		UE_LOG(LogTemp, Error, TEXT("[부착진단-패널]   CurrentWeaponEntryIndex=%d"), CurrentWeaponEntryIndex);
+
+		// FastArray에서 모든 아이템 조회하여 비교
+		if (InventoryComponent.IsValid())
+		{
+			TArray<UInv_InventoryItem*> AllItems = InventoryComponent->GetInventoryList().GetAllItems();
+			UE_LOG(LogTemp, Error, TEXT("[부착진단-패널]   FastArray AllItems 총 %d개"), AllItems.Num());
+			for (int32 e = 0; e < AllItems.Num(); ++e)
+			{
+				UInv_InventoryItem* Item = AllItems[e];
+				if (!IsValid(Item)) continue;
+
+				const FInv_AttachmentHostFragment* EntryHost =
+					Item->GetItemManifest().GetFragmentOfType<FInv_AttachmentHostFragment>();
+				const int32 EntryIdx = InventoryComponent->FindEntryIndexForItem(Item);
+				UE_LOG(LogTemp, Error, TEXT("[部착진단-패널]   Item[%d] ptr=%p, EntryIdx=%d, Type=%s, HostFrag=%s, AttachedItems=%d"),
+					e,
+					(void*)Item,
+					EntryIdx,
+					*Item->GetItemManifest().GetItemType().ToString(),
+					EntryHost ? TEXT("유효") : TEXT("없음"),
+					EntryHost ? EntryHost->GetAttachedItems().Num() : -1);
+			}
+		}
+
+		// 현재 HostFrag 포인터와 AttachedItems 수
+		UE_LOG(LogTemp, Error, TEXT("[부착진단-패널]   현재 HostFrag ptr=%p, AttachedItems=%d"),
+			(const void*)HostFrag, HostFrag ? HostFrag->GetAttachedItems().Num() : -1);
 	}
 #endif
 	if (HostFrag->GetAttachedItems().Num() == 0)
@@ -733,22 +769,35 @@ void UInv_AttachmentPanel::SetupWeaponPreview()
 		EquipFrag->GetPreviewCameraDistance()
 	);
 
-	// RenderTarget → Image_WeaponPreview에 연결
+	// RenderTarget → Material → Image_WeaponPreview 연결
+	// SCS_FinalColorLDR은 알파=0을 출력하므로, Material에서 RGB만 사용하고
+	// Opacity=1로 강제하여 불투명 렌더링 보장
 	UTextureRenderTarget2D* RT = NewPreview->GetRenderTarget();
 	if (IsValid(RT) && IsValid(Image_WeaponPreview))
 	{
-		FSlateBrush PreviewBrush;
-		PreviewBrush.SetResourceObject(RT);
-		PreviewBrush.ImageSize = FVector2D(512.f, 512.f);
-		// Stretch: 위젯 크기에 맞춰 RenderTarget 이미지를 늘림
-		PreviewBrush.DrawAs = ESlateBrushDrawType::Image;
-		PreviewBrush.Tiling = ESlateBrushTileType::NoTile;
-		Image_WeaponPreview->SetBrush(PreviewBrush);
-		Image_WeaponPreview->SetVisibility(ESlateVisibility::Visible);
+		UMaterialInterface* PreviewMat = LoadObject<UMaterialInterface>(
+			nullptr, TEXT("/Game/UI/Materials/M_WeaponPreview"));
 
-		// 핵심: Image 위젯이 HorizontalBox 안에서 Auto Size일 때
-		// Brush만으로는 크기가 0이 될 수 있음 → 강제 크기 지정
+		if (IsValid(PreviewMat))
+		{
+			UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(PreviewMat, this);
+			MID->SetTextureParameterValue(TEXT("PreviewTexture"), RT);
+			Image_WeaponPreview->SetBrushFromMaterial(MID);
+		}
+		else
+		{
+			// 폴백: Material 로드 실패 시 기존 방식 (알파 문제 있을 수 있음)
+			UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] M_WeaponPreview 로드 실패! FSlateBrush 폴백"));
+			FSlateBrush PreviewBrush;
+			PreviewBrush.SetResourceObject(RT);
+			PreviewBrush.ImageSize = FVector2D(512.f, 512.f);
+			PreviewBrush.DrawAs = ESlateBrushDrawType::Image;
+			PreviewBrush.Tiling = ESlateBrushTileType::NoTile;
+			Image_WeaponPreview->SetBrush(PreviewBrush);
+		}
+
 		Image_WeaponPreview->SetDesiredSizeOverride(FVector2D(300.f, 300.f));
+		Image_WeaponPreview->SetVisibility(ESlateVisibility::Visible);
 	}
 
 #if INV_DEBUG_ATTACHMENT

@@ -78,7 +78,7 @@ AInv_WeaponPreviewActor::AInv_WeaponPreviewActor()
 	SceneCapture->bCaptureEveryFrame = true;
 	SceneCapture->bCaptureOnMovement = true;
 
-	// 최종 톤매핑 포함 색상
+	// 최종 톤매핑 포함 색상 (Material에서 Opacity=1 강제하므로 알파=0 문제 없음)
 	SceneCapture->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;
 	SceneCapture->bAlwaysPersistRenderingState = true;
 
@@ -275,7 +275,7 @@ void AInv_WeaponPreviewActor::EnsureRenderTarget()
 	}
 
 	// 512x512 해상도 — UI 프리뷰 용도로 충분
-	// ClearColor: 짙은 회색 배경 (패널 배경과 구분 가능, 메시 대비 확보)
+	// ClearColor: 짙은 회색 배경 (T_Pop_Up 배경과 조화, 메시 대비 확보)
 	RenderTarget->ClearColor = FLinearColor(0.08f, 0.07f, 0.06f, 1.f);
 	RenderTarget->InitAutoFormat(512, 512);
 	RenderTarget->UpdateResourceImmediate(true);
