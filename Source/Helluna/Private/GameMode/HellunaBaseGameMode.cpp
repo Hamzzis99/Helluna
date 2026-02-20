@@ -24,10 +24,9 @@
 #include "GameMode/HellunaBaseGameMode.h"
 #include "Helluna.h"  // 전처리기 플래그
 #include "GameMode/HellunaBaseGameState.h"
-#include "Login/HellunaLoginController.h"
-#include "Login/HellunaAccountSaveGame.h"
+#include "Login/Controller/HellunaLoginController.h"
+#include "Login/Save/HellunaAccountSaveGame.h"
 #include "Player/HellunaPlayerState.h"
-#include "Inventory/HellunaInventorySaveGame.h"
 #include "Inventory/HellunaItemTypeMapping.h"
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
 #include "Player/Inv_PlayerController.h"
@@ -197,7 +196,6 @@ void AHellunaBaseGameMode::BeginPlay()
 		return;
 
 	AccountSaveGame = UHellunaAccountSaveGame::LoadOrCreate();
-	InventorySaveGame = UHellunaInventorySaveGame::LoadOrCreate();
 
 #if HELLUNA_DEBUG_GAMEMODE
 	UE_LOG(LogHelluna, Warning, TEXT(""));
@@ -222,7 +220,22 @@ void AHellunaBaseGameMode::BeginPlay()
 	}
 #endif
 
-	StartAutoSaveTimer();
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 📌 EndPlay — 부모(AInv_SaveGameMode)에게 인벤토리 강제저장 위임
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 📌 부모(AInv_SaveGameMode::EndPlay)가 처리하는 것:
+//    - 리슨서버 종료 감지 시 SaveAllPlayersInventory() 자동 호출
+//    - 자동저장 타이머 정리 (StopAutoSave)
+//
+// 📌 이 클래스에서 추가할 것이 없으면 Super::EndPlay()만 호출
+//
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaBaseGameMode::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	Super::EndPlay(EndPlayReason);
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -380,13 +393,20 @@ void AHellunaBaseGameMode::PostLogin(APlayerController* NewPlayer)
 		}
 
 		// 3. ControllerToPlayerIdMap 등록 (Logout/인벤토리 저장 시 필요)
-		ControllerToPlayerIdMap.Add(NewPlayer, DebugPlayerId);
+		RegisterControllerPlayerId(NewPlayer, DebugPlayerId);
 
 		// 4. Controller EndPlay 델리게이트 바인딩 (인벤토리 저장용)
+		// 주의: bDebugSkipLogin 경로에서 NewPlayer는 LoginController이므로 InvPC 캐스트 실패할 수 있음
+		// → EndPlay 저장은 부모 GameMode::EndPlay에서 커버됨
 		AInv_PlayerController* InvPC = Cast<AInv_PlayerController>(NewPlayer);
 		if (IsValid(InvPC))
 		{
 			InvPC->OnControllerEndPlay.AddDynamic(this, &AHellunaBaseGameMode::OnInvControllerEndPlay);
+		}
+		else
+		{
+			UE_LOG(LogHelluna, Warning, TEXT("[BaseGameMode] DebugSkipLogin: InvPC 캐스트 실패 - Controller=%s (EndPlay 저장은 GameMode::EndPlay에서 처리)"),
+				*GetNameSafe(NewPlayer));
 		}
 
 		// 5. 게임 초기화 (첫 플레이어일 때)
@@ -831,7 +851,7 @@ void AHellunaBaseGameMode::SwapToGameController(AHellunaLoginController* LoginCo
 		if (IsValid(InvPC))
 		{
 			InvPC->OnControllerEndPlay.AddDynamic(this, &AHellunaBaseGameMode::OnInvControllerEndPlay);
-			ControllerToPlayerIdMap.Add(InvPC, PlayerId);
+			RegisterControllerPlayerId(InvPC, PlayerId);
 		}
 	}
 
@@ -1105,51 +1125,10 @@ void AHellunaBaseGameMode::Logout(AController* Exiting)
 	if (!PlayerId.IsEmpty())
 	{
 		// ────────────────────────────────────────────────────────────────────────
-		// 📌 인벤토리 저장
+		// 📌 인벤토리 저장 (부모에게 위임)
 		// ────────────────────────────────────────────────────────────────────────
-		APawn* Pawn = Exiting->GetPawn();
-		UInv_InventoryComponent* InvComp = Pawn ? Pawn->FindComponentByClass<UInv_InventoryComponent>() : nullptr;
-
-		if (InvComp)
-		{
-			// 현재 인벤토리 수집 후 저장
-			TArray<FInv_SavedItemData> CollectedItems = InvComp->CollectInventoryDataForSave();
-			FHellunaPlayerInventoryData SaveData;
-			SaveData.LastSaveTime = FDateTime::Now();
-
-			for (const FInv_SavedItemData& Item : CollectedItems)
-			{
-				FHellunaInventoryItemData DestItem;
-				DestItem.ItemType = Item.ItemType;
-				DestItem.StackCount = Item.StackCount;
-				DestItem.GridPosition = Item.GridPosition;
-				DestItem.GridCategory = Item.GridCategory;
-				DestItem.EquipSlotIndex = Item.bEquipped ? Item.WeaponSlotIndex : -1;
-				SaveData.Items.Add(DestItem);
-			}
-
-			if (IsValid(InventorySaveGame) && SaveData.Items.Num() > 0)
-			{
-				InventorySaveGame->SavePlayerInventory(PlayerId, SaveData);
-				UHellunaInventorySaveGame::Save(InventorySaveGame);
-			}
-		}
-		else
-		{
-			// 캐시된 데이터 저장 (InvComp 없는 경우)
-			if (FHellunaPlayerInventoryData* CachedData = CachedPlayerInventoryData.Find(PlayerId))
-			{
-				CachedData->LastSaveTime = FDateTime::Now();
-				if (IsValid(InventorySaveGame))
-				{
-					InventorySaveGame->SavePlayerInventory(PlayerId, *CachedData);
-					UHellunaInventorySaveGame::Save(InventorySaveGame);
-				}
-			}
-		}
-
-		// 캐시 데이터 제거
-		CachedPlayerInventoryData.Remove(PlayerId);
+		APlayerController* ExitingPC = Cast<APlayerController>(Exiting);
+		OnPlayerInventoryLogout(PlayerId, ExitingPC);
 
 		// GameInstance에서 로그아웃 처리
 		if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(UGameplayStatics::GetGameInstance(GetWorld())))
@@ -1579,564 +1558,32 @@ EHellunaHeroType AHellunaBaseGameMode::IndexToHeroType(int32 Index)
 // 📦 인벤토리 시스템
 // ════════════════════════════════════════════════════════════════════════════════
 
-// ════════════════════════════════════════════════════════════════════════════════
-// 📌 SaveAllPlayersInventory - 모든 플레이어 인벤토리 저장
-// ════════════════════════════════════════════════════════════════════════════════
-//
-// 📌 호출 시점:
-//    - 맵 이동 전 (ServerTravel 호출 전)
-//    - 외부에서 직접 호출 (예: 라운드 종료 시)
-//
-// 📌 처리 흐름:
-//    1. 모든 PlayerController 순회
-//    2. 로그인 상태 확인
-//    3. InventoryComponent에서 아이템 데이터 수집
-//    4. EquipmentComponent에서 장착 상태 추가
-//    5. SaveInventoryFromCharacterEndPlay() 호출 → 파일 저장
-//
-// 📌 반환값:
-//    저장된 플레이어 수
-//
-// 📌 저장 위치:
-//    Saved/SaveGames/HellunaInventory.sav
-//
-// ════════════════════════════════════════════════════════════════════════════════
-int32 AHellunaBaseGameMode::SaveAllPlayersInventory()
-{
-#if HELLUNA_DEBUG_INVENTORY_SAVE
-	UE_LOG(LogHelluna, Warning, TEXT("[BaseGameMode] SaveAllPlayersInventory"));
-#endif
 
-	int32 SavedCount = 0;
 
-	// 모든 PlayerController 순회
-	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
-	{
-		APlayerController* PC = It->Get();
-		if (!IsValid(PC)) continue;
 
-		// 로그인 상태 확인
-		AHellunaPlayerState* PS = PC->GetPlayerState<AHellunaPlayerState>();
-		if (!PS || !PS->IsLoggedIn()) continue;
 
-		FString PlayerId = PS->GetPlayerUniqueId();
-		if (PlayerId.IsEmpty()) continue;
-
-		// InventoryComponent에서 데이터 수집
-		UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
-		if (!InvComp) continue;
-
-		TArray<FInv_SavedItemData> CollectedItems = InvComp->CollectInventoryDataForSave();
-
-		// ────────────────────────────────────────────────────────────────────────
-		// 📌 장착 상태 추가
-		// ────────────────────────────────────────────────────────────────────────
-		// EquipmentComponent에서 장착 중인 아이템 정보를 가져와
-		// 해당 아이템의 bEquipped, WeaponSlotIndex 설정
-		// ────────────────────────────────────────────────────────────────────────
-		UInv_EquipmentComponent* EquipComp = PC->FindComponentByClass<UInv_EquipmentComponent>();
-		if (EquipComp)
-		{
-			const TArray<TObjectPtr<AInv_EquipActor>>& EquippedActors = EquipComp->GetEquippedActors();
-			for (const TObjectPtr<AInv_EquipActor>& EquipActor : EquippedActors)
-			{
-				if (EquipActor.Get())
-				{
-					FGameplayTag ItemType = EquipActor->GetEquipmentType();
-					int32 SlotIndex = EquipActor->GetWeaponSlotIndex();
-					for (FInv_SavedItemData& Item : CollectedItems)
-					{
-						if (Item.ItemType == ItemType && !Item.bEquipped)
-						{
-							Item.bEquipped = true;
-							Item.WeaponSlotIndex = SlotIndex;
-							break;
-						}
-					}
-				}
-			}
-		}
-
-		// 파일 저장
-		if (CollectedItems.Num() > 0)
-		{
-			SaveInventoryFromCharacterEndPlay(PlayerId, CollectedItems);
-			SavedCount++;
-		}
-	}
-
-	return SavedCount;
-}
 
 // ════════════════════════════════════════════════════════════════════════════════
-// 📌 LoadAndSendInventoryToClient - 인벤토리 로드 후 클라이언트 전송
+// 📌 OnInvControllerEndPlay — 부모 + 게임별 로직 분리
 // ════════════════════════════════════════════════════════════════════════════════
 //
-// 📌 호출 시점:
-//    SpawnHeroCharacter()에서 캐릭터 소환 후 (1초 딜레이)
+// 📌 변경 전:
+//    저장 + 캐시 병합 + 로그아웃 처리 (~60줄) 전부 여기
 //
-// 📌 매개변수:
-//    - PC: 인벤토리를 로드할 플레이어의 Controller
-//
-// 📌 처리 흐름:
-//    1. PlayerState에서 PlayerId 가져오기
-//    2. InventorySaveGame에서 저장된 데이터 로드
-//    3. 아이템 액터 스폰 (서버) - ItemTypeMappingDataTable 사용
-//    4. InventoryComponent에 아이템 추가
-//    5. 그리드 위치 설정
-//    6. 장착 상태 복원 (OnItemEquipped 브로드캐스트)
-//    7. 클라이언트에 데이터 전송 (Client_ReceiveInventoryData RPC)
-//
-// 📌 로드 위치:
-//    Saved/SaveGames/HellunaInventory.sav
-//
-// 📌 아이템 스폰 위치:
-//    FVector(0.f, 0.f, -10000.f) - 맵 아래 안 보이는 곳
+// 📌 변경 후:
+//    저장+캐시 병합 → Super::OnInventoryControllerEndPlay()
+//    로그아웃 처리(PlayerState, GameInstance) → 여기서 직접
 //
 // ════════════════════════════════════════════════════════════════════════════════
-void AHellunaBaseGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
-{
-#if HELLUNA_DEBUG_INVENTORY_SAVE
-	UE_LOG(LogHelluna, Warning, TEXT("[BaseGameMode] LoadAndSendInventoryToClient"));
-#endif
-
-	if (!HasAuthority() || !IsValid(PC)) return;
-
-	AHellunaPlayerState* PS = PC->GetPlayerState<AHellunaPlayerState>();
-	if (!IsValid(PS)) return;
-
-	FString PlayerUniqueId = PS->GetPlayerUniqueId();
-	if (PlayerUniqueId.IsEmpty()) return;
-
-	if (!IsValid(InventorySaveGame)) return;
-
-	// ────────────────────────────────────────────────────────────────────────
-	// 📌 저장된 데이터 로드
-	// ────────────────────────────────────────────────────────────────────────
-	FHellunaPlayerInventoryData LoadedData;
-	bool bDataFound = InventorySaveGame->LoadPlayerInventory(PlayerUniqueId, LoadedData);
-
-	if (!bDataFound || LoadedData.Items.Num() == 0) return;
-
-	UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
-	if (!IsValid(InvComp) || !IsValid(ItemTypeMappingDataTable)) return;
-
-	// ────────────────────────────────────────────────────────────────────────
-	// 📌 아이템 액터 스폰 및 인벤토리 추가
-	// ────────────────────────────────────────────────────────────────────────
-	for (const FHellunaInventoryItemData& ItemData : LoadedData.Items)
-	{
-		if (!ItemData.ItemType.IsValid()) continue;
-
-		// ItemType → ActorClass 변환
-		TSubclassOf<AActor> ActorClass = UHellunaItemTypeMapping::GetActorClassFromItemType(
-			ItemTypeMappingDataTable, ItemData.ItemType);
-		if (!ActorClass) continue;
-
-		// 아이템 액터 스폰 (맵 아래 안 보이는 곳)
-		FActorSpawnParameters SpawnParams;
-		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
-		AActor* SpawnedActor = GetWorld()->SpawnActor<AActor>(ActorClass, FVector(0.f, 0.f, -10000.f), FRotator::ZeroRotator, SpawnParams);
-		if (!IsValid(SpawnedActor)) continue;
-
-		UInv_ItemComponent* ItemComp = SpawnedActor->FindComponentByClass<UInv_ItemComponent>();
-		if (!IsValid(ItemComp))
-		{
-			SpawnedActor->Destroy();
-			continue;
-		}
-
-		// 인벤토리에 추가
-		InvComp->Server_AddNewItem(ItemComp, ItemData.StackCount, 0);
-
-		// 그리드 위치 설정
-		const int32 Columns = 8;
-		int32 SavedGridIndex = ItemData.GridPosition.Y * Columns + ItemData.GridPosition.X;
-		InvComp->SetLastEntryGridPosition(SavedGridIndex, ItemData.GridCategory);
-	}
-
-	// ────────────────────────────────────────────────────────────────────────
-	// 📌 장착 상태 복원
-	// ────────────────────────────────────────────────────────────────────────
-	TSet<UInv_InventoryItem*> ServerProcessedItems;
-	for (const FHellunaInventoryItemData& ItemData : LoadedData.Items)
-	{
-		if (ItemData.EquipSlotIndex < 0) continue;
-
-		UInv_InventoryItem* FoundItem = InvComp->FindItemByTypeExcluding(ItemData.ItemType, ServerProcessedItems);
-		if (FoundItem)
-		{
-			InvComp->OnItemEquipped.Broadcast(FoundItem, ItemData.EquipSlotIndex);
-			ServerProcessedItems.Add(FoundItem);
-		}
-	}
-
-	// ────────────────────────────────────────────────────────────────────────
-	// 📌 클라이언트에 데이터 전송
-	// ────────────────────────────────────────────────────────────────────────
-	TArray<FInv_SavedItemData> SavedItemsForClient;
-	for (const FHellunaInventoryItemData& ItemData : LoadedData.Items)
-	{
-		FInv_SavedItemData ClientData;
-		ClientData.ItemType = ItemData.ItemType;
-		ClientData.StackCount = ItemData.StackCount;
-		ClientData.GridPosition = ItemData.GridPosition;
-		ClientData.GridCategory = ItemData.GridCategory;
-		ClientData.bEquipped = (ItemData.EquipSlotIndex >= 0);
-		ClientData.WeaponSlotIndex = ItemData.EquipSlotIndex;
-		SavedItemsForClient.Add(ClientData);
-	}
-
-	AInv_PlayerController* InvPC = Cast<AInv_PlayerController>(PC);
-	if (IsValid(InvPC))
-	{
-		InvPC->Client_ReceiveInventoryData(SavedItemsForClient);
-	}
-}
-
-// ════════════════════════════════════════════════════════════════════════════════
-// 📌 SaveInventoryFromCharacterEndPlay - 인벤토리 저장 (내부 함수)
-// ════════════════════════════════════════════════════════════════════════════════
-//
-// 📌 역할:
-//    수집된 인벤토리 데이터를 SaveGame에 저장
-//
-// 📌 호출 시점:
-//    - SaveAllPlayersInventory()
-//    - Logout()
-//    - OnInvControllerEndPlay()
-//
-// 📌 매개변수:
-//    - PlayerId: 저장할 플레이어 아이디
-//    - CollectedItems: 저장할 아이템 데이터 배열
-//
-// 📌 처리 흐름:
-//    1. FInv_SavedItemData → FHellunaInventoryItemData 변환
-//    2. InventorySaveGame.SavePlayerInventory() 호출
-//    3. 파일 저장 (UHellunaInventorySaveGame::Save)
-//    4. 캐시에 저장 (CachedPlayerInventoryData)
-//
-// ════════════════════════════════════════════════════════════════════════════════
-void AHellunaBaseGameMode::SaveInventoryFromCharacterEndPlay(const FString& PlayerId, const TArray<FInv_SavedItemData>& CollectedItems)
-{
-	if (PlayerId.IsEmpty() || CollectedItems.Num() == 0) return;
-
-	// 데이터 변환
-	FHellunaPlayerInventoryData SaveData;
-	SaveData.LastSaveTime = FDateTime::Now();
-
-	for (const FInv_SavedItemData& Item : CollectedItems)
-	{
-		FHellunaInventoryItemData DestItem;
-		DestItem.ItemType = Item.ItemType;
-		DestItem.StackCount = Item.StackCount;
-		DestItem.GridPosition = Item.GridPosition;
-		DestItem.GridCategory = Item.GridCategory;
-		DestItem.EquipSlotIndex = Item.bEquipped ? Item.WeaponSlotIndex : -1;
-		SaveData.Items.Add(DestItem);
-	}
-
-	// 파일 저장
-	if (IsValid(InventorySaveGame))
-	{
-		InventorySaveGame->SavePlayerInventory(PlayerId, SaveData);
-		UHellunaInventorySaveGame::Save(InventorySaveGame);
-	}
-
-	// 캐시에 저장 (로그아웃 시 사용)
-	CachedPlayerInventoryData.Add(PlayerId, SaveData);
-}
-
-// ════════════════════════════════════════════════════════════════════════════════
-// 📌 OnPlayerInventoryStateReceived - 클라이언트로부터 인벤토리 상태 수신
-// ════════════════════════════════════════════════════════════════════════════════
-//
-// 📌 호출 시점:
-//    RequestAllPlayersInventoryState() 후 클라이언트가 응답할 때
-//    (Server_SendInventoryState RPC → 이 함수 호출)
-//
-// 📌 매개변수:
-//    - PlayerController: 응답한 플레이어의 Controller
-//    - SavedItems: 클라이언트의 현재 인벤토리 상태
-//
-// 📌 처리 흐름:
-//    1. PlayerId 가져오기
-//    2. 데이터 변환 (FInv_SavedItemData → FHellunaInventoryItemData)
-//    3. 캐시에 저장
-//    4. 파일 저장
-//
-// ════════════════════════════════════════════════════════════════════════════════
-void AHellunaBaseGameMode::OnPlayerInventoryStateReceived(
+void AHellunaBaseGameMode::OnInvControllerEndPlay(
 	AInv_PlayerController* PlayerController,
 	const TArray<FInv_SavedItemData>& SavedItems)
 {
-	AHellunaPlayerState* PS = PlayerController->GetPlayerState<AHellunaPlayerState>();
-	if (!IsValid(PS)) return;
+	// ── 인벤토리 저장 (부모가 캐시 병합 + 디스크 저장 전부 처리) ──
+	OnInventoryControllerEndPlay(PlayerController, SavedItems);
 
-	FString PlayerUniqueId = PS->GetPlayerUniqueId();
-	if (PlayerUniqueId.IsEmpty()) return;
-
-	// 데이터 변환
-	FHellunaPlayerInventoryData PlayerData;
-	PlayerData.LastSaveTime = FDateTime::Now();
-	PlayerData.SaveVersion = 1;
-
-	for (const FInv_SavedItemData& SourceItem : SavedItems)
-	{
-		FHellunaInventoryItemData DestItem;
-		DestItem.ItemType = SourceItem.ItemType;
-		DestItem.StackCount = SourceItem.StackCount;
-		DestItem.GridPosition = SourceItem.GridPosition;
-		DestItem.GridCategory = SourceItem.GridCategory;
-		DestItem.EquipSlotIndex = SourceItem.bEquipped ? SourceItem.WeaponSlotIndex : -1;
-		PlayerData.Items.Add(DestItem);
-	}
-
-	// 캐시에 저장
-	CachedPlayerInventoryData.Add(PlayerUniqueId, PlayerData);
-
-	// 파일 저장
-	if (IsValid(InventorySaveGame))
-	{
-		InventorySaveGame->SavePlayerInventory(PlayerUniqueId, PlayerData);
-		UHellunaInventorySaveGame::Save(InventorySaveGame);
-	}
-}
-
-// ════════════════════════════════════════════════════════════════════════════════
-// 📦 자동저장 시스템
-// ════════════════════════════════════════════════════════════════════════════════
-//
-// 📌 동작 방식:
-//    BeginPlay() → StartAutoSaveTimer() 호출
-//                      ↓
-//    AutoSaveIntervalSeconds(기본 300초=5분)마다 OnAutoSaveTimer() 호출
-//                      ↓
-//    RequestAllPlayersInventoryState() → 모든 플레이어에게 인벤토리 상태 요청
-//                      ↓
-//    클라이언트가 Server_SendInventoryState() RPC로 응답
-//                      ↓
-//    OnPlayerInventoryStateReceived() → InventorySaveGame에 저장
-//
-// ════════════════════════════════════════════════════════════════════════════════
-
-// ════════════════════════════════════════════════════════════════════════════════
-// 📌 StartAutoSaveTimer - 자동저장 타이머 시작
-// ════════════════════════════════════════════════════════════════════════════════
-//
-// 📌 호출 시점:
-//    BeginPlay()에서 호출
-//
-// 📌 처리 흐름:
-//    1. AutoSaveIntervalSeconds 확인 (0 이하면 비활성화)
-//    2. 기존 타이머 정리 (StopAutoSaveTimer)
-//    3. 새 타이머 시작 (Looping = true)
-//
-// 📌 타이머 주기:
-//    AutoSaveIntervalSeconds (기본 300초 = 5분)
-//
-// ════════════════════════════════════════════════════════════════════════════════
-void AHellunaBaseGameMode::StartAutoSaveTimer()
-{
-	if (AutoSaveIntervalSeconds <= 0.0f) return;
-
-	StopAutoSaveTimer();
-
-	GetWorldTimerManager().SetTimer(
-		AutoSaveTimerHandle,
-		this,
-		&AHellunaBaseGameMode::OnAutoSaveTimer,
-		AutoSaveIntervalSeconds,
-		true  // Looping
-	);
-
-#if HELLUNA_DEBUG_INVENTORY_SAVE
-	UE_LOG(LogHelluna, Warning, TEXT("[BaseGameMode] AutoSave Timer Started (%.0fs)"), AutoSaveIntervalSeconds);
-#endif
-}
-
-// ════════════════════════════════════════════════════════════════════════════════
-// 📌 StopAutoSaveTimer - 자동저장 타이머 중지
-// ════════════════════════════════════════════════════════════════════════════════
-void AHellunaBaseGameMode::StopAutoSaveTimer()
-{
-	if (AutoSaveTimerHandle.IsValid())
-	{
-		GetWorldTimerManager().ClearTimer(AutoSaveTimerHandle);
-	}
-}
-
-// ════════════════════════════════════════════════════════════════════════════════
-// 📌 OnAutoSaveTimer - 자동저장 실행
-// ════════════════════════════════════════════════════════════════════════════════
-//
-// 📌 호출 시점:
-//    자동저장 타이머 만료 시 (기본 5분마다)
-//
-// 📌 처리:
-//    RequestAllPlayersInventoryState() 호출
-//    → 모든 플레이어에게 인벤토리 상태 요청
-//
-// ════════════════════════════════════════════════════════════════════════════════
-void AHellunaBaseGameMode::OnAutoSaveTimer()
-{
-	RequestAllPlayersInventoryState();
-}
-
-// ════════════════════════════════════════════════════════════════════════════════
-// 📌 RequestAllPlayersInventoryState - 모든 플레이어 인벤토리 상태 요청
-// ════════════════════════════════════════════════════════════════════════════════
-//
-// 📌 호출 시점:
-//    - OnAutoSaveTimer() (자동저장)
-//    - DebugRequestSaveAllInventory() (디버그)
-//
-// 📌 처리 흐름:
-//    1. 모든 PlayerController 순회
-//    2. Inv_PlayerController인지 확인
-//    3. 델리게이트 바인딩 (OnInventoryStateReceived)
-//    4. Client_RequestInventoryState() RPC 호출
-//
-// 📌 응답 처리:
-//    클라이언트가 Server_SendInventoryState() RPC로 응답
-//    → OnPlayerInventoryStateReceived() 호출됨
-//
-// ════════════════════════════════════════════════════════════════════════════════
-void AHellunaBaseGameMode::RequestAllPlayersInventoryState()
-{
-	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
-	{
-		APlayerController* PC = It->Get();
-		if (!IsValid(PC)) continue;
-
-		AInv_PlayerController* InvPC = Cast<AInv_PlayerController>(PC);
-		if (!IsValid(InvPC)) continue;
-
-		// 델리게이트 바인딩 (중복 방지)
-		if (!InvPC->OnInventoryStateReceived.IsBound())
-		{
-			InvPC->OnInventoryStateReceived.AddDynamic(this, &AHellunaBaseGameMode::OnPlayerInventoryStateReceived);
-		}
-
-		RequestPlayerInventoryState(PC);
-	}
-}
-
-// ════════════════════════════════════════════════════════════════════════════════
-// 📌 RequestPlayerInventoryState - 단일 플레이어 인벤토리 상태 요청
-// ════════════════════════════════════════════════════════════════════════════════
-//
-// 📌 매개변수:
-//    - PC: 요청할 플레이어의 Controller
-//
-// 📌 처리:
-//    Client_RequestInventoryState() RPC 호출
-//    → 클라이언트가 현재 인벤토리 상태를 수집하여 응답
-//
-// ════════════════════════════════════════════════════════════════════════════════
-void AHellunaBaseGameMode::RequestPlayerInventoryState(APlayerController* PC)
-{
-	if (!IsValid(PC)) return;
-
-	AInv_PlayerController* InvPC = Cast<AInv_PlayerController>(PC);
-	if (IsValid(InvPC))
-	{
-		InvPC->Client_RequestInventoryState();
-	}
-}
-
-// ════════════════════════════════════════════════════════════════════════════════
-// 📌 OnInvControllerEndPlay - Controller EndPlay 델리게이트 핸들러
-// ════════════════════════════════════════════════════════════════════════════════
-//
-// 📌 호출 시점:
-//    Inv_PlayerController가 파괴될 때 (OnControllerEndPlay 델리게이트)
-//
-// 📌 역할:
-//    Controller 파괴 전 인벤토리 저장
-//
-// 📌 매개변수:
-//    - PlayerController: 파괴되는 Controller
-//    - SavedItems: 컨트롤러가 수집한 인벤토리 데이터
-//
-// 📌 처리 흐름:
-//    1. ControllerToPlayerIdMap에서 PlayerId 찾기
-//    2. 장착 정보 병합 (SavedItems에 없으면 캐시에서 복원)
-//    3. SaveInventoryFromCharacterEndPlay() 호출
-//    4. PlayerState 로그인 정보 초기화
-//    5. GameInstance.RegisterLogout() 호출
-//
-// ════════════════════════════════════════════════════════════════════════════════
-void AHellunaBaseGameMode::OnInvControllerEndPlay(AInv_PlayerController* PlayerController, const TArray<FInv_SavedItemData>& SavedItems)
-{
-	if (!IsValid(PlayerController)) return;
-
-	// ────────────────────────────────────────────────────────────────────────
-	// 📌 PlayerId 찾기
-	// ────────────────────────────────────────────────────────────────────────
-	// ControllerToPlayerIdMap: SwapToGameController()에서 등록됨
-	// EndPlay 시점에 PlayerState가 유효하지 않을 수 있어 미리 매핑해둠
-	// ────────────────────────────────────────────────────────────────────────
-	FString PlayerId;
-	if (FString* FoundPlayerId = ControllerToPlayerIdMap.Find(PlayerController))
-	{
-		PlayerId = *FoundPlayerId;
-		ControllerToPlayerIdMap.Remove(PlayerController);
-	}
-	else
-	{
-		AHellunaPlayerState* PS = PlayerController->GetPlayerState<AHellunaPlayerState>();
-		if (IsValid(PS))
-		{
-			PlayerId = PS->GetPlayerUniqueId();
-		}
-	}
-
-	// ────────────────────────────────────────────────────────────────────────
-	// 📌 장착 정보 병합
-	// ────────────────────────────────────────────────────────────────────────
-	// SavedItems에 장착 정보가 없으면 캐시된 데이터에서 복원
-	// (EndPlay 시점에 EquipmentComponent가 이미 파괴되어 정보 유실 가능)
-	// ────────────────────────────────────────────────────────────────────────
-	TArray<FInv_SavedItemData> MergedItems = SavedItems;
-
-	int32 EquippedCount = 0;
-	for (const FInv_SavedItemData& Item : MergedItems)
-	{
-		if (Item.bEquipped) EquippedCount++;
-	}
-
-	// 장착 정보가 없으면 캐시에서 복원
-	if (EquippedCount == 0 && !PlayerId.IsEmpty())
-	{
-		if (FHellunaPlayerInventoryData* CachedData = CachedPlayerInventoryData.Find(PlayerId))
-		{
-			for (const FHellunaInventoryItemData& CachedItem : CachedData->Items)
-			{
-				if (CachedItem.EquipSlotIndex >= 0)
-				{
-					for (FInv_SavedItemData& Item : MergedItems)
-					{
-						if (Item.ItemType == CachedItem.ItemType && !Item.bEquipped)
-						{
-							Item.bEquipped = true;
-							Item.WeaponSlotIndex = CachedItem.EquipSlotIndex;
-							break;
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// 인벤토리 저장
-	if (!PlayerId.IsEmpty() && MergedItems.Num() > 0)
-	{
-		SaveInventoryFromCharacterEndPlay(PlayerId, MergedItems);
-	}
-
-	// 로그아웃 처리
+	// ── 게임별 로그아웃 처리 ──
+	FString PlayerId = GetPlayerSaveId(PlayerController);
 	if (!PlayerId.IsEmpty())
 	{
 		AHellunaPlayerState* PS = PlayerController->GetPlayerState<AHellunaPlayerState>();
@@ -2150,6 +1597,49 @@ void AHellunaBaseGameMode::OnInvControllerEndPlay(AInv_PlayerController* PlayerC
 			GI->RegisterLogout(PlayerId);
 		}
 	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 📌 ResolveItemClass — DataTable로 아이템 클래스 결정
+// ════════════════════════════════════════════════════════════════════════════════
+TSubclassOf<AActor> AHellunaBaseGameMode::ResolveItemClass(const FGameplayTag& ItemType)
+{
+	if (!IsValid(ItemTypeMappingDataTable))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[ItemTypeMapping] ItemTypeMappingDataTable이 설정되지 않음!"));
+		return nullptr;
+	}
+
+	TSubclassOf<AActor> Result = UHellunaItemTypeMapping::GetActorClassFromItemType(ItemTypeMappingDataTable, ItemType);
+	if (!Result)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[ItemTypeMapping] '%s' 매핑 실패! DT_ItemTypeMapping에 행 추가 필요"),
+			*ItemType.ToString());
+	}
+	return Result;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 📌 GetPlayerSaveId — HellunaPlayerState에서 고유 ID 가져오기
+// ════════════════════════════════════════════════════════════════════════════════
+FString AHellunaBaseGameMode::GetPlayerSaveId(APlayerController* PC) const
+{
+	if (!IsValid(PC)) return FString();
+
+	// 1순위: HellunaPlayerState에서 로그인 ID
+	if (AHellunaPlayerState* PS = PC->GetPlayerState<AHellunaPlayerState>())
+	{
+		FString Id = PS->GetPlayerUniqueId();
+		if (!Id.IsEmpty()) return Id;
+	}
+
+	// 2순위: 미리 등록된 맵에서 검색
+	if (const FString* Found = ControllerToPlayerIdMap.Find(PC))
+	{
+		return *Found;
+	}
+
+	return FString();
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -2185,6 +1675,7 @@ void AHellunaBaseGameMode::DebugTestItemTypeMapping()
 		TEXT("GameItems.Consumables.Potions.Red.Small"),
 		TEXT("GameItems.Craftables.FireFernFruit"),
 		TEXT("GameItems.Craftables.LuminDaisy"),
+		TEXT("GameItems.Equipment.Attachments.Muzzle"),
 	};
 
 	int32 SuccessCount = 0;
@@ -2195,7 +1686,14 @@ void AHellunaBaseGameMode::DebugTestItemTypeMapping()
 		{
 			TSubclassOf<AActor> FoundClass = UHellunaItemTypeMapping::GetActorClassFromItemType(
 				ItemTypeMappingDataTable, TestTag);
-			if (FoundClass) SuccessCount++;
+			if (FoundClass)
+			{
+				SuccessCount++;
+			}
+			else
+			{
+				UE_LOG(LogHelluna, Error, TEXT("[ItemTypeMapping] 매핑 실패: %s — DataTable에 행 추가 필요!"), *TagString);
+			}
 		}
 	}
 
@@ -2220,49 +1718,29 @@ void AHellunaBaseGameMode::DebugPrintAllItemMappings()
 // ════════════════════════════════════════════════════════════════════════════════
 //
 // 📌 역할:
-//    InventorySaveGame의 저장/로드 기능 테스트
-//
-// 📌 테스트 내용:
-//    1. 테스트 플레이어 데이터 생성 (TestPlayer_Debug)
-//    2. 저장 테스트
-//    3. 로드 테스트
-//    4. 결과 출력
+//    부모 클래스의 SaveCollectedItems → InventorySaveGame 저장 흐름 테스트
 //
 // ════════════════════════════════════════════════════════════════════════════════
 void AHellunaBaseGameMode::DebugTestInventorySaveGame()
 {
-	if (!IsValid(InventorySaveGame))
-	{
-		UE_LOG(LogHelluna, Error, TEXT("[BaseGameMode] InventorySaveGame is nullptr!"));
-		return;
-	}
-
 	const FString TestPlayerId = TEXT("TestPlayer_Debug");
 
 	// 테스트 데이터 생성
-	FHellunaPlayerInventoryData TestData;
-	TestData.SaveVersion = 1;
+	FInv_SavedItemData TestItem;
+	TestItem.ItemType = FGameplayTag::RequestGameplayTag(FName("GameItems.Equipment.Weapons.Axe"), false);
+	TestItem.StackCount = 1;
+	TestItem.GridPosition = FIntPoint(0, 0);
+	TestItem.bEquipped = true;
+	TestItem.WeaponSlotIndex = 0;
 
-	FHellunaInventoryItemData Item1;
-	Item1.ItemType = FGameplayTag::RequestGameplayTag(FName("GameItems.Equipment.Weapons.Axe"), false);
-	Item1.StackCount = 1;
-	Item1.GridPosition = FIntPoint(0, 0);
-	Item1.EquipSlotIndex = 0;
-	TestData.Items.Add(Item1);
+	TArray<FInv_SavedItemData> TestItems;
+	TestItems.Add(TestItem);
 
-	// 저장 테스트
-	InventorySaveGame->SavePlayerInventory(TestPlayerId, TestData);
-	bool bSaveSuccess = UHellunaInventorySaveGame::Save(InventorySaveGame);
+	// 부모의 SaveCollectedItems로 저장 테스트
+	SaveCollectedItems(TestPlayerId, TestItems);
 
-	// 로드 테스트
-	FHellunaPlayerInventoryData LoadedData;
-	bool bLoadSuccess = InventorySaveGame->LoadPlayerInventory(TestPlayerId, LoadedData);
-
-#if HELLUNA_DEBUG_INVENTORY_SAVE
-	UE_LOG(LogHelluna, Warning, TEXT("[BaseGameMode] SaveGame Test: Save=%s, Load=%s"),
-		bSaveSuccess ? TEXT("OK") : TEXT("FAIL"),
-		bLoadSuccess ? TEXT("OK") : TEXT("FAIL"));
-#endif
+	UE_LOG(LogHelluna, Warning, TEXT("[BaseGameMode] DebugTestInventorySaveGame: SaveCollectedItems 호출 완료 (PlayerId=%s, Items=%d)"),
+		*TestPlayerId, TestItems.Num());
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -2270,7 +1748,7 @@ void AHellunaBaseGameMode::DebugTestInventorySaveGame()
 // ════════════════════════════════════════════════════════════════════════════════
 void AHellunaBaseGameMode::DebugRequestSaveAllInventory()
 {
-	RequestAllPlayersInventoryState();
+	ForceAutoSave();
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -2278,7 +1756,7 @@ void AHellunaBaseGameMode::DebugRequestSaveAllInventory()
 // ════════════════════════════════════════════════════════════════════════════════
 void AHellunaBaseGameMode::DebugForceAutoSave()
 {
-	OnAutoSaveTimer();
+	ForceAutoSave();
 }
 
 // ════════════════════════════════════════════════════════════════════════════════

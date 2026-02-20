@@ -145,7 +145,7 @@ void AHellunaHeroCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 				AHellunaDefenseGameMode* GM = Cast<AHellunaDefenseGameMode>(UGameplayStatics::GetGameMode(GetWorld()));
 				if (GM)
 				{
-					GM->SaveInventoryFromCharacterEndPlay(PlayerId, CollectedItems);
+					GM->SaveCollectedItems(PlayerId, CollectedItems);
 				}
 				else
 				{

@@ -12,7 +12,8 @@
 #include "InventoryManagement/Utils/Inv_InventoryStatics.h"
 #include "Items/Inv_InventoryItem.h"
 #include "Items/Fragments/Inv_ItemFragment.h"
-#include "Abilities/GameplayAbility.h"
+#include "Items/Fragments/Inv_AttachmentFragments.h"
+#include "Abilities/GameplayAbility.h" // TODO: [독립화] 졸작 후 삭제
 
 
 //디버그용
@@ -214,7 +215,22 @@ void UInv_EquipmentComponent::OnItemEquipped(UInv_InventoryItem* EquippedItem, i
 	{
 		if (!bIsProxy)
 		{
+			// 무기 자체의 EquipModifiers 적용
 			EquipmentFragment->OnEquip(OwningPlayerController.Get());
+
+			// ════════════════════════════════════════════════════════════════
+			// 📌 [부착물 시스템 Phase 2] 무기에 달린 부착물들의 스탯도 일괄 적용
+			// 순서: 무기 스탯 OnEquip → 부착물 스탯 OnEquip
+			// ════════════════════════════════════════════════════════════════
+			FInv_AttachmentHostFragment* HostFragment = ItemManifest.GetFragmentOfTypeMutable<FInv_AttachmentHostFragment>();
+			if (HostFragment && HostFragment->GetAttachedItems().Num() > 0)
+			{
+				HostFragment->OnEquipAllAttachments(OwningPlayerController.Get());
+#if INV_DEBUG_EQUIP
+				UE_LOG(LogTemp, Warning, TEXT("📌 [Attachment] 무기 장착 시 부착물 스탯 %d개 일괄 적용"),
+					HostFragment->GetAttachedItems().Num());
+#endif
+			}
 		}
 		
 		if (!OwningSkeletalMesh.IsValid()) return;
@@ -226,12 +242,60 @@ void UInv_EquipmentComponent::OnItemEquipped(UInv_InventoryItem* EquippedItem, i
 			// WeaponSlotIndex는 이미 SpawnAttachedActor에서 설정됨
 			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] SpawnedEquipActor WeaponSlotIndex: %d"), SpawnedEquipActor->GetWeaponSlotIndex());
 #endif
-			
+
 			EquippedActors.Add(SpawnedEquipActor);
 #if INV_DEBUG_EQUIP
-			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] 서버: EquippedActors에 추가됨: %s (총 %d개) - this: %p"), 
+			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] 서버: EquippedActors에 추가됨: %s (총 %d개) - this: %p"),
 				*SpawnedEquipActor->GetName(), EquippedActors.Num(), this);
 #endif
+
+			// ════════════════════════════════════════════════════════════════
+			// 📌 [Phase 5] 무기 장착 시 부착물 메시도 함께 스폰
+			// 처리 흐름:
+			//   1. AttachmentHostFragment의 AttachedItems 순회
+			//   2. 각 부착물의 AttachableFragment에서 Mesh, Socket, Offset 가져오기
+			//   3. EquipActor->AttachMeshToSocket 호출
+			// ════════════════════════════════════════════════════════════════
+			FInv_AttachmentHostFragment* AttachHostFrag = ItemManifest.GetFragmentOfTypeMutable<FInv_AttachmentHostFragment>();
+			if (AttachHostFrag)
+			{
+				const TArray<FInv_AttachmentSlotDef>& SlotDefs = AttachHostFrag->GetSlotDefinitions();
+				for (const FInv_AttachedItemData& AttachedData : AttachHostFrag->GetAttachedItems())
+				{
+					// 부착물의 AttachableFragment에서 메시 정보 가져오기
+					const FInv_AttachableFragment* AttachableFrag = AttachedData.ItemManifestCopy.GetFragmentOfType<FInv_AttachableFragment>();
+					if (AttachableFrag && AttachableFrag->GetAttachmentMesh())
+					{
+						// 슬롯 정의에서 소켓 이름 가져오기
+						FName SocketName = NAME_None;
+						if (SlotDefs.IsValidIndex(AttachedData.SlotIndex))
+						{
+							SocketName = SlotDefs[AttachedData.SlotIndex].AttachSocket;
+						}
+
+						SpawnedEquipActor->AttachMeshToSocket(
+							AttachedData.SlotIndex,
+							AttachableFrag->GetAttachmentMesh(),
+							SocketName,
+							AttachableFrag->GetAttachOffset()
+						);
+					}
+
+					// ════════════════════════════════════════════════════════════════
+					// 📌 [Phase 7] 무기 장착 시 부착물 효과도 일괄 적용
+					// (소음기/스코프/레이저 등)
+					// ════════════════════════════════════════════════════════════════
+					if (AttachableFrag)
+					{
+						SpawnedEquipActor->ApplyAttachmentEffects(AttachableFrag);
+#if INV_DEBUG_ATTACHMENT
+						UE_LOG(LogTemp, Warning, TEXT("📌 [Phase 7] 무기 장착 시 부착물 효과 적용: 슬롯 %d, bIsSuppressor=%s"),
+							AttachedData.SlotIndex,
+							AttachableFrag->GetIsSuppressor() ? TEXT("TRUE") : TEXT("FALSE"));
+#endif
+					}
+				}
+			}
 		}
 		else
 		{
@@ -304,6 +368,7 @@ void UInv_EquipmentComponent::OnItemUnequipped(UInv_InventoryItem* UnequippedIte
 			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] 손에 든 무기 해제 - 델리게이트 브로드캐스트 (SlotIndex: %d)"), WeaponSlotIndex);
 #endif
 			
+			// TODO: [독립화] 졸작 후 nullptr(SpawnWeaponAbility) 파라미터 삭제 → 4파라미터
 			// 손 무기 파괴 델리게이트 브로드캐스트 (클라이언트에서 UI와 연결된 캐릭터에 전달)
 			OnWeaponEquipRequested.Broadcast(
 				EquipmentFragment->GetEquipmentType(),
@@ -323,12 +388,38 @@ void UInv_EquipmentComponent::OnItemUnequipped(UInv_InventoryItem* UnequippedIte
 
 	// ⭐ 서버에서만 장비 제거 및 Destroy 실행
 	if (!bIsServer) return;
-	
+
 	if (!bIsProxy) // 프록시 부분
 	{
+		// ════════════════════════════════════════════════════════════════
+		// 📌 [부착물 시스템 Phase 2] 부착물 스탯 일괄 해제 → 무기 스탯 해제
+		// 순서: 부착물 스탯 OnUnequip → 무기 스탯 OnUnequip
+		// ════════════════════════════════════════════════════════════════
+		FInv_AttachmentHostFragment* HostFragment = ItemManifest.GetFragmentOfTypeMutable<FInv_AttachmentHostFragment>();
+		if (HostFragment && HostFragment->GetAttachedItems().Num() > 0)
+		{
+			HostFragment->OnUnequipAllAttachments(OwningPlayerController.Get());
+#if INV_DEBUG_EQUIP
+			UE_LOG(LogTemp, Warning, TEXT("📌 [Attachment] 무기 해제 시 부착물 스탯 %d개 일괄 해제"),
+				HostFragment->GetAttachedItems().Num());
+#endif
+		}
+
+		// 무기 자체의 EquipModifiers 해제
 		EquipmentFragment->OnUnequip(OwningPlayerController.Get());
 	}
 	
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [Phase 5] 무기 해제 시 부착물 메시도 함께 제거
+	// ════════════════════════════════════════════════════════════════
+	{
+		AInv_EquipActor* WeaponActor = FindEquippedActor(EquipmentFragment->GetEquipmentType());
+		if (IsValid(WeaponActor))
+		{
+			WeaponActor->DetachAllMeshes();
+		}
+	}
+
 	// ⭐ [WeaponBridge] 장비 제거하는 부분 (등 무기 Destroy)
 	// ⭐ WeaponSlotIndex를 전달하여 정확한 무기만 제거
 	RemoveEquippedActor(EquipmentFragment->GetEquipmentType(), WeaponSlotIndex);
@@ -470,6 +561,11 @@ void UInv_EquipmentComponent::EquipPrimaryWeapon()
 #endif
 	
 	// 무기 스폰 GA 확인
+	// TODO: [독립화] 졸작 후 아래 SpawnWeaponAbility 관련 코드 삭제.
+	// bUseBuiltInHandWeapon 분기 추가:
+	//   true  → WeaponActor->AttachToHand(OwningSkeletalMesh.Get())
+	//   false → WeaponActor->SetWeaponHidden(true) (현재 동작 유지)
+	// Broadcast도 4파라미터로 변경.
 	TSubclassOf<UGameplayAbility> SpawnWeaponAbility = WeaponActor->GetSpawnWeaponAbility();
 #if INV_DEBUG_EQUIP
 	if (!SpawnWeaponAbility)
@@ -481,7 +577,7 @@ void UInv_EquipmentComponent::EquipPrimaryWeapon()
 		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] SpawnWeaponAbility: %s"), *SpawnWeaponAbility->GetName());
 	}
 #endif
-	
+
 	// 델리게이트 브로드캐스트 (Helluna에서 수신)
 	OnWeaponEquipRequested.Broadcast(
 		WeaponActor->GetEquipmentType(),
@@ -493,7 +589,7 @@ void UInv_EquipmentComponent::EquipPrimaryWeapon()
 #if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 델리게이트 브로드캐스트 완료 (bEquip = true, SlotIndex = 0)"));
 #endif
-	
+
 	// 상태 변경
 	ActiveWeaponSlot = EInv_ActiveWeaponSlot::Primary;
 #if INV_DEBUG_EQUIP
@@ -523,6 +619,7 @@ void UInv_EquipmentComponent::EquipSecondaryWeapon()
 #endif
 	
 	// 무기 스폰 GA 확인
+	// TODO: [독립화] 졸작 후 EquipPrimaryWeapon과 동일하게 변경
 	TSubclassOf<UGameplayAbility> SpawnWeaponAbility = WeaponActor->GetSpawnWeaponAbility();
 #if INV_DEBUG_EQUIP
 	if (!SpawnWeaponAbility)
@@ -534,7 +631,7 @@ void UInv_EquipmentComponent::EquipSecondaryWeapon()
 		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] SpawnWeaponAbility: %s"), *SpawnWeaponAbility->GetName());
 	}
 #endif
-	
+
 	// 델리게이트 브로드캐스트 (Helluna에서 수신)
 	OnWeaponEquipRequested.Broadcast(
 		WeaponActor->GetEquipmentType(),
@@ -583,6 +680,10 @@ void UInv_EquipmentComponent::UnequipWeapon()
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 무기 집어넣기 시작 - %s (SlotIndex: %d)"), *WeaponActor->GetName(), SlotIndex);
 #endif
 	
+	// TODO: [독립화] 졸작 후 Broadcast를 4파라미터로 변경 (SpawnWeaponAbility 파라미터 삭제)
+	// bUseBuiltInHandWeapon 분기 추가:
+	//   true  → WeaponActor->AttachToBack(OwningSkeletalMesh.Get())
+	//   false → WeaponActor->SetWeaponHidden(false) (현재 동작 유지)
 	// 델리게이트 브로드캐스트 (Helluna에서 손 무기 Destroy)
 	OnWeaponEquipRequested.Broadcast(
 		WeaponActor->GetEquipmentType(),
@@ -833,6 +934,37 @@ void UInv_EquipmentComponent::ActiveUnequipWeapon()
 
 	// 핵심: 입력 토글이 아니라 "언이큅"만 강제
 	UnequipWeapon();
+}
+
+// ════════════════════════════════════════════════════════════════
+// 🆕 [Phase 7.5] 현재 활성 무기의 EquipActor 반환
+// ════════════════════════════════════════════════════════════════
+// [2026-02-18] 작업자: 김기현
+// ────────────────────────────────────────────────────────────────
+// ActiveWeaponSlot 열거형에 따라 현재 손에 들고 있는 무기의
+// EquipActor를 반환한다.
+//
+// - EInv_ActiveWeaponSlot::Primary   → FindPrimaryWeaponActor()
+// - EInv_ActiveWeaponSlot::Secondary → FindSecondaryWeaponActor()
+// - EInv_ActiveWeaponSlot::None      → nullptr (맨손 상태)
+//
+// FindPrimaryWeaponActor() / FindSecondaryWeaponActor()는
+// 기존 private 함수를 그대로 활용하므로 추가 구현 불필요.
+// ════════════════════════════════════════════════════════════════
+AInv_EquipActor* UInv_EquipmentComponent::GetActiveWeaponActor()
+{
+	switch (ActiveWeaponSlot)
+	{
+	case EInv_ActiveWeaponSlot::Primary:
+		return FindPrimaryWeaponActor();
+
+	case EInv_ActiveWeaponSlot::Secondary:
+		return FindSecondaryWeaponActor();
+
+	default:
+		// None = 맨손 상태 → EquipActor 없음
+		return nullptr;
+	}
 }
 
 

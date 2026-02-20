@@ -18,6 +18,8 @@
 #include "Widgets/Inventory/HoverItem/Inv_HoverItem.h"
 #include "Widgets/Inventory/SlottedItems/Inv_SlottedItem.h"
 #include "Widgets/ItemPopUp/Inv_ItemPopUp.h"
+#include "Widgets/Inventory/AttachmentSlots/Inv_AttachmentPanel.h"
+#include "Items/Fragments/Inv_AttachmentFragments.h"
 
 // 인벤토리 바인딩 메뉴
 void UInv_InventoryGrid::NativeOnInitialized()
@@ -944,6 +946,19 @@ void UInv_InventoryGrid::CreateItemPopUp(const int32 GridIndex)
 	{
 		ItemPopUp->CollapseConsumeButton();
 	}
+
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [부착물 시스템 Phase 3] 부착물 관리 버튼
+	// 부착물 슬롯이 있는 호스트 아이템(무기)에만 표시
+	// ════════════════════════════════════════════════════════════════
+	if (RightClickedItem->HasAttachmentSlots())
+	{
+		ItemPopUp->OnAttachment.BindDynamic(this, &ThisClass::OnPopUpMenuAttachment);
+	}
+	else
+	{
+		ItemPopUp->CollapseAttachmentButton();
+	}
 }
 
 void UInv_InventoryGrid::PutHoverItemBack()
@@ -985,6 +1000,24 @@ UInv_HoverItem* UInv_InventoryGrid::GetHoverItem() const
 // 인벤토리 스택 쌓는 부분.
 void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 {
+	// 🔍 [진단] AddItem 시 Grid 주소 및 SlottedItems 상태 확인
+	UE_LOG(LogTemp, Error, TEXT("🔍 [AddItem 진단] Grid주소=%p, Category=%d, SlottedItems=%d, Item=%s, EntryIndex=%d"),
+		this, (int32)ItemCategory, SlottedItems.Num(),
+		Item ? *Item->GetItemManifest().GetItemType().ToString() : TEXT("nullptr"), EntryIndex);
+
+	// 🔍 [진단] 중복 아이템 존재 여부 확인
+	for (const auto& [DiagIdx, DiagSlotted] : SlottedItems)
+	{
+		if (!IsValid(DiagSlotted)) continue;
+		UInv_InventoryItem* DiagItem = DiagSlotted->GetInventoryItem();
+		if (DiagItem == Item)
+		{
+			UE_LOG(LogTemp, Error, TEXT("🔍 [AddItem 진단] ⚠️ 중복 감지: Item=%s(ptr=%p)가 이미 GridIndex=%d에 있음! (기존 EntryIndex=%d, 새 EntryIndex=%d)"),
+				*Item->GetItemManifest().GetItemType().ToString(), Item, DiagIdx,
+				DiagSlotted->GetEntryIndex(), EntryIndex);
+		}
+	}
+
 	//아이템 그리드 체크 부분?
 	if (!MatchesCategory(Item))
 	{
@@ -1328,6 +1361,14 @@ void UInv_InventoryGrid::RemoveItem(UInv_InventoryItem* Item, int32 EntryIndex)
 #endif
 		return;
 	}
+
+	// 🔍 [진단] RemoveItem 호출 컨텍스트 확인 (항상 출력)
+	UE_LOG(LogTemp, Error, TEXT("🔍 [RemoveItem 진단] Grid=%p, Category=%d, SlottedItems=%d, ItemType=%s, EntryIndex=%d"),
+		this, (int32)ItemCategory, SlottedItems.Num(),
+		*Item->GetItemManifest().GetItemType().ToString(), EntryIndex);
+
+	// 콜스택 출력 (어디서 호출되는지 확인)
+	FDebug::DumpStackTraceToLog(ELogVerbosity::Error);
 
 #if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("[RemoveItem] ========== 제거 요청 시작 =========="));
@@ -2201,7 +2242,140 @@ void UInv_InventoryGrid::OnInventoryMenuToggled(bool bOpen)
 	if (!bOpen)
 	{
 		PutHoverItemBack();
+		CloseAttachmentPanel(); // 인벤토리 닫을 때 부착물 패널도 닫기
 	}
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 [부착물 시스템 Phase 3] 부착물 관리 팝업 버튼 클릭 핸들러
+// ════════════════════════════════════════════════════════════════
+// 호출 경로: ItemPopUp의 Button_Attachment 클릭 → OnAttachment 델리게이트 → 이 함수
+// 처리 흐름:
+//   1. GridSlots[Index]에서 우클릭된 아이템 가져오기
+//   2. SlottedItem에서 EntryIndex 가져오기 (없으면 FindEntryIndexForItem 검색)
+//   3. OpenAttachmentPanel 호출
+// ════════════════════════════════════════════════════════════════
+void UInv_InventoryGrid::OnPopUpMenuAttachment(int32 Index)
+{
+	UInv_InventoryItem* RightClickedItem = GridSlots[Index]->GetInventoryItem().Get();
+	if (!IsValid(RightClickedItem)) return;
+	if (!RightClickedItem->HasAttachmentSlots()) return;
+
+	// SlottedItem에서 EntryIndex 가져오기
+	const int32 UpperLeftIndex = GridSlots[Index]->GetUpperLeftIndex();
+	int32 EntryIndex = INDEX_NONE;
+
+	if (SlottedItems.Contains(UpperLeftIndex))
+	{
+		EntryIndex = SlottedItems[UpperLeftIndex]->GetEntryIndex();
+	}
+
+	// EntryIndex가 유효하지 않으면 InventoryComponent에서 검색
+	if (EntryIndex == INDEX_NONE && InventoryComponent.IsValid())
+	{
+		EntryIndex = InventoryComponent->FindEntryIndexForItem(RightClickedItem);
+	}
+
+	if (EntryIndex == INDEX_NONE)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] EntryIndex를 찾을 수 없음!"));
+		return;
+	}
+
+	OpenAttachmentPanel(RightClickedItem, EntryIndex);
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 OpenAttachmentPanel — 부착물 관리 패널 열기
+// ════════════════════════════════════════════════════════════════
+// 호출 경로: OnPopUpMenuAttachment → 이 함수
+// 처리 흐름:
+//   1. AttachmentPanelClass 유효성 체크
+//   2. 기존 패널 열려있으면 닫기
+//   3. 패널 위젯 없으면 생성 + OwningCanvasPanel에 추가 + 위치 설정
+//   4. SetInventoryComponent / SetOwningGrid 참조 설정
+//   5. OpenForWeapon 호출
+// ════════════════════════════════════════════════════════════════
+void UInv_InventoryGrid::OpenAttachmentPanel(UInv_InventoryItem* WeaponItem, int32 WeaponEntryIndex)
+{
+	if (!IsValid(WeaponItem) || !InventoryComponent.IsValid()) return;
+	if (!AttachmentPanelClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] AttachmentPanelClass가 설정되지 않음!"));
+		return;
+	}
+
+	// 기존 패널이 열려있으면 닫기
+	if (IsValid(AttachmentPanel) && AttachmentPanel->IsOpen())
+	{
+		AttachmentPanel->ClosePanel();
+	}
+
+	// 패널 위젯 생성 (처음 한 번만)
+	if (!IsValid(AttachmentPanel))
+	{
+		AttachmentPanel = CreateWidget<UInv_AttachmentPanel>(this, AttachmentPanelClass);
+		if (!IsValid(AttachmentPanel))
+		{
+			UE_LOG(LogTemp, Error, TEXT("[Attachment UI] AttachmentPanel 생성 실패!"));
+			return;
+		}
+
+		// OwningCanvasPanel에 추가
+		if (OwningCanvasPanel.IsValid())
+		{
+			OwningCanvasPanel->AddChild(AttachmentPanel);
+
+			// 캔버스 패널 슬롯 위치 설정 (Grid 오른쪽에 배치)
+			UCanvasPanelSlot* CanvasSlot = UWidgetLayoutLibrary::SlotAsCanvasSlot(AttachmentPanel);
+			if (CanvasSlot)
+			{
+				// Grid 오른쪽에 배치 (Columns * TileSize + 여백)
+				const float PanelX = Columns * TileSize + 20.f;
+				CanvasSlot->SetPosition(FVector2D(PanelX, 0.f));
+				CanvasSlot->SetAutoSize(true);
+			}
+		}
+
+		// 패널 닫힘 콜백 바인딩
+		AttachmentPanel->OnPanelClosed.AddDynamic(this, &ThisClass::OnAttachmentPanelClosed);
+	}
+
+	// 참조 설정 (패널이 직접 Server RPC 호출)
+	AttachmentPanel->SetInventoryComponent(InventoryComponent.Get());
+	AttachmentPanel->SetOwningGrid(this);
+
+	// 패널 열기
+	AttachmentPanel->OpenForWeapon(WeaponItem, WeaponEntryIndex);
+
+	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 패널 열림: WeaponEntry=%d"), WeaponEntryIndex);
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 CloseAttachmentPanel — 부착물 패널 닫기
+// ════════════════════════════════════════════════════════════════
+void UInv_InventoryGrid::CloseAttachmentPanel()
+{
+	if (IsValid(AttachmentPanel) && AttachmentPanel->IsOpen())
+	{
+		AttachmentPanel->ClosePanel();
+	}
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 IsAttachmentPanelOpen — 부착물 패널이 열려있는지 확인
+// ════════════════════════════════════════════════════════════════
+bool UInv_InventoryGrid::IsAttachmentPanelOpen() const
+{
+	return IsValid(AttachmentPanel) && AttachmentPanel->IsOpen();
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 OnAttachmentPanelClosed — 패널 닫힘 콜백
+// ════════════════════════════════════════════════════════════════
+void UInv_InventoryGrid::OnAttachmentPanelClosed()
+{
+	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 패널 닫힘 콜백 (InventoryGrid)"));
 }
 
 bool UInv_InventoryGrid::MatchesCategory(const UInv_InventoryItem* Item) const
@@ -2420,6 +2594,69 @@ TArray<FInv_SavedItemData> UInv_InventoryGrid::CollectGridState() const
 		SavedData.StackCount = StackCount > 0 ? StackCount : 1;  // Non-stackable은 1
 		SavedData.GridPosition = GridPosition;
 		SavedData.GridCategory = static_cast<uint8>(ItemCategory);
+
+		// ── [Phase 6 Attachment] 부착물 데이터 수집 ──
+		// 무기 아이템인 경우 AttachmentHostFragment의 AttachedItems 수집
+		if (Item->HasAttachmentSlots())
+		{
+			const FInv_ItemManifest& ItemManifest = Item->GetItemManifest();
+			const FInv_AttachmentHostFragment* HostFrag = ItemManifest.GetFragmentOfType<FInv_AttachmentHostFragment>();
+			if (HostFrag)
+			{
+				for (const FInv_AttachedItemData& Attached : HostFrag->GetAttachedItems())
+				{
+					FInv_SavedAttachmentData AttSave;
+					AttSave.AttachmentItemType = Attached.AttachmentItemType;
+					AttSave.SlotIndex = Attached.SlotIndex;
+
+					// AttachableFragment에서 AttachmentType 추출
+					const FInv_AttachableFragment* AttachableFrag =
+						Attached.ItemManifestCopy.GetFragmentOfType<FInv_AttachableFragment>();
+					if (AttachableFrag)
+					{
+						AttSave.AttachmentType = AttachableFrag->GetAttachmentType();
+					}
+
+					SavedData.Attachments.Add(AttSave);
+				}
+			}
+		}
+
+		// ════════════════════════════════════════════════════════════════
+		// 📌 [Phase 1 최적화] Fragment 직렬화 — 랜덤 스탯 보존
+		// ════════════════════════════════════════════════════════════════
+		{
+			const FInv_ItemManifest& ItemManifest = Item->GetItemManifest();
+			SavedData.SerializedManifest = ItemManifest.SerializeFragments();
+
+#if INV_DEBUG_SAVE
+			UE_LOG(LogTemp, Warning,
+				TEXT("    │       📦 [Phase 1 최적화] Fragment 직렬화 (클라이언트): %s → %d바이트"),
+				*SavedData.ItemType.ToString(), SavedData.SerializedManifest.Num());
+#endif
+
+			// 부착물의 Fragment도 각각 직렬화
+			const FInv_AttachmentHostFragment* SerializeHostFrag = ItemManifest.GetFragmentOfType<FInv_AttachmentHostFragment>();
+			if (SerializeHostFrag)
+			{
+				for (int32 AttIdx = 0; AttIdx < SavedData.Attachments.Num(); ++AttIdx)
+				{
+					FInv_SavedAttachmentData& AttSave = SavedData.Attachments[AttIdx];
+					const FInv_AttachedItemData* AttachedData = SerializeHostFrag->GetAttachedItemData(AttSave.SlotIndex);
+					if (AttachedData)
+					{
+						AttSave.SerializedManifest = AttachedData->ItemManifestCopy.SerializeFragments();
+
+#if INV_DEBUG_SAVE
+						UE_LOG(LogTemp, Warning,
+							TEXT("    │         📦 부착물[%d] Fragment 직렬화: %s → %d바이트"),
+							AttIdx, *AttSave.AttachmentItemType.ToString(),
+							AttSave.SerializedManifest.Num());
+#endif
+					}
+				}
+			}
+		}
 
 		Result.Add(SavedData);
 

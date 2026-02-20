@@ -2,8 +2,12 @@
 // HellunaBaseGameMode.h
 // ════════════════════════════════════════════════════════════════════════════════
 //
-// 로그인/인벤토리 시스템을 담당하는 Base GameMode
+// 로그인/캐릭터 선택 시스템을 담당하는 Base GameMode
+// 인벤토리 저장/로드는 부모 AInv_SaveGameMode가 처리
 // DefenseGameMode는 이 클래스를 상속받아 게임 로직만 구현
+//
+// 📌 상속 구조:
+//    AGameMode → AInv_SaveGameMode → AHellunaBaseGameMode → AHellunaDefenseGameMode
 //
 // 📌 작성자: Gihyeon
 // ════════════════════════════════════════════════════════════════════════════════
@@ -11,9 +15,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "GameFramework/GameMode.h"
+#include "Persistence/Inv_SaveGameMode.h"
 #include "HellunaTypes.h"
-#include "Inventory/HellunaInventorySaveGame.h"  // FHellunaPlayerInventoryData 필요
 #include "HellunaBaseGameMode.generated.h"
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -27,10 +30,9 @@ class UHellunaAccountSaveGame;
 class AHellunaLoginController;
 class AInv_PlayerController;
 class UDataTable;
-struct FInv_SavedItemData;
 
 UCLASS()
-class HELLUNA_API AHellunaBaseGameMode : public AGameMode
+class HELLUNA_API AHellunaBaseGameMode : public AInv_SaveGameMode
 {
 	GENERATED_BODY()
 
@@ -41,6 +43,11 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
+	// ── 부모 Override (인벤토리 저장/로드) ──
+	virtual TSubclassOf<AActor> ResolveItemClass(const FGameplayTag& ItemType) override;
+	virtual FString GetPlayerSaveId(APlayerController* PC) const override;
 
 public:
 	virtual void PostLogin(APlayerController* NewPlayer) override;
@@ -66,7 +73,7 @@ public:
 	 * ⭐ 디버그: 로그인 절차 스킵
 	 * true 시 PostLogin에서 자동으로 디버그 GUID 부여 → 타임아웃 없이 바로 플레이 가능
 	 * BP_DefenseGameMode 등에서 에디터 체크박스로 On/Off
-	 * 
+	 *
 	 * ⚠️ 릴리즈 빌드에서는 반드시 false!
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Debug(디버그)", meta = (DisplayName = "개발자 모드(로그인 장면 스킵)"))
@@ -134,33 +141,14 @@ public:
 	static EHellunaHeroType IndexToHeroType(int32 Index);
 
 	// ════════════════════════════════════════════════════════════════════════════════
-	// 📦 인벤토리 시스템
+	// 📦 인벤토리 시스템 — Controller EndPlay 핸들러
 	// ════════════════════════════════════════════════════════════════════════════════
 public:
-	/** 모든 플레이어의 인벤토리 저장 */
-	UFUNCTION(BlueprintCallable, Category = "Inventory(인벤토리)")
-	int32 SaveAllPlayersInventory();
-
-	/** 인벤토리 데이터 로드 후 클라이언트로 전송 */
-	void LoadAndSendInventoryToClient(APlayerController* PC);
-
-	/** 캐릭터 EndPlay 시 인벤토리 저장 */
-	void SaveInventoryFromCharacterEndPlay(const FString& PlayerId, const TArray<FInv_SavedItemData>& CollectedItems);
-
-protected:
-	// ───────────────────────────────────────────────────────────────────────────────
-	// 자동저장
-	// ───────────────────────────────────────────────────────────────────────────────
-	void StartAutoSaveTimer();
-	void StopAutoSaveTimer();
-	void OnAutoSaveTimer();
-	void RequestAllPlayersInventoryState();
-	void RequestPlayerInventoryState(APlayerController* PC);
-
-	UFUNCTION()
-	void OnPlayerInventoryStateReceived(AInv_PlayerController* PlayerController, const TArray<FInv_SavedItemData>& SavedItems);
-
-public:
+	/**
+	 * Controller EndPlay 시 인벤토리 저장 + 게임별 로그아웃 처리
+	 * 저장은 Super::OnInventoryControllerEndPlay()에 위임
+	 * 게임별 로그아웃(PlayerState, GameInstance)은 여기서 직접 처리
+	 */
 	UFUNCTION()
 	void OnInvControllerEndPlay(AInv_PlayerController* PlayerController, const TArray<FInv_SavedItemData>& SavedItems);
 
@@ -195,14 +183,11 @@ protected:
 	bool bGameInitialized = false;
 
 	// ════════════════════════════════════════════════════════════════════════════════
-	// 계정/인벤토리 SaveGame
+	// 계정 SaveGame
 	// ════════════════════════════════════════════════════════════════════════════════
 
 	UPROPERTY()
 	TObjectPtr<UHellunaAccountSaveGame> AccountSaveGame;
-
-	UPROPERTY()
-	TObjectPtr<UHellunaInventorySaveGame> InventorySaveGame;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory(인벤토리)", meta = (DisplayName = "아이템 타입 매핑 테이블"))
 	TObjectPtr<UDataTable> ItemTypeMappingDataTable;
@@ -232,23 +217,4 @@ protected:
 	/** 현재 사용 중인 캐릭터 맵 (타입 → PlayerId) */
 	UPROPERTY()
 	TMap<EHellunaHeroType, FString> UsedCharacterMap;
-
-	// ════════════════════════════════════════════════════════════════════════════════
-	// 인벤토리 캐시
-	// ════════════════════════════════════════════════════════════════════════════════
-
-	UPROPERTY()
-	TMap<FString, FHellunaPlayerInventoryData> CachedPlayerInventoryData;
-
-	UPROPERTY()
-	TMap<AController*, FString> ControllerToPlayerIdMap;
-
-	// ════════════════════════════════════════════════════════════════════════════════
-	// 자동저장
-	// ════════════════════════════════════════════════════════════════════════════════
-
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory(인벤토리)", meta = (DisplayName = "자동저장 주기(초)"))
-	float AutoSaveIntervalSeconds = 300.0f;
-
-	FTimerHandle AutoSaveTimerHandle;
 };

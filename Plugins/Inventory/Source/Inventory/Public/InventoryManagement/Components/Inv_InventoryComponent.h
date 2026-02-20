@@ -90,6 +90,22 @@ public:
 	
 	UFUNCTION(Server, Reliable) // 신뢰하는 것? 서버에 전달하는 것?
 	void Server_EquipSlotClicked(UInv_InventoryItem* ItemToEquip, UInv_InventoryItem* ItemToUnequip, int32 WeaponSlotIndex = -1);
+
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [부착물 시스템 Phase 2] 부착/분리 Server RPC
+	// ════════════════════════════════════════════════════════════════
+
+	// 부착물 장착: 인벤토리 Grid에서 부착물을 무기 슬롯에 장착
+	UFUNCTION(Server, Reliable)
+	void Server_AttachItemToWeapon(int32 WeaponEntryIndex, int32 AttachmentEntryIndex, int32 SlotIndex);
+
+	// 부착물 분리: 무기 슬롯에서 부착물을 분리하여 인벤토리 Grid로 복귀
+	UFUNCTION(Server, Reliable)
+	void Server_DetachItemFromWeapon(int32 WeaponEntryIndex, int32 SlotIndex);
+
+	// 호환성 체크 (UI에서 드래그 중 슬롯 하이라이트용, 읽기 전용)
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Attachment")
+	bool CanAttachToWeapon(int32 WeaponEntryIndex, int32 AttachmentEntryIndex, int32 SlotIndex) const;
 	
 	UFUNCTION(NetMulticast, Reliable) // 멀티캐스트 함수 (서버에서 모든 클라이언트로 호출)
 	void Multicast_EquipSlotClicked(UInv_InventoryItem* ItemToEquip, UInv_InventoryItem* ItemToUnequip, int32 WeaponSlotIndex = -1);
@@ -117,6 +133,26 @@ public:
 
 	// ⭐ [Phase 5 Fix] 마지막으로 추가된 Entry의 Grid 위치 설정 (로드 시 사용)
 	void SetLastEntryGridPosition(int32 GridIndex, uint8 GridCategory);
+
+	/**
+	 * [Phase 4 CDO 최적화] Manifest로부터 직접 인벤토리 아이템 추가
+	 *
+	 * SpawnActor 없이 CDO/SCS에서 추출한 Manifest를 사용하여 아이템 생성.
+	 * Server_CraftItem_Implementation (line 618-648)과 동일한 검증된 패턴.
+	 *
+	 * @param ManifestCopy  아이템 Manifest 복사본 (Fragment 역직렬화 완료 상태)
+	 *                      ⚠️ Manifest() 호출 시 ClearFragments()로 파괴됨
+	 * @param StackCount    스택 수량
+	 * @return 생성된 UInv_InventoryItem, 실패 시 nullptr
+	 */
+	UInv_InventoryItem* AddItemFromManifest(FInv_ItemManifest& ManifestCopy, int32 StackCount);
+
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [부착물 시스템 Phase 3] Entry Index 검색 헬퍼
+	// ════════════════════════════════════════════════════════════════
+	// 아이템 포인터로 현재 InventoryList의 Entry Index를 찾는다.
+	// Entry가 추가/제거되면 인덱스가 변하므로, 캐시된 값 대신 이 함수를 사용할 것.
+	int32 FindEntryIndexForItem(const UInv_InventoryItem* Item) const;
 
 	// ⭐ [Phase 4 개선] 서버에서 직접 인벤토리 데이터 수집 (Logout 시 저장용)
 	// RPC 없이 서버의 FastArray에서 직접 읽어서 반환
@@ -156,6 +192,17 @@ private:
 
 	// ⭐ [SERVER-ONLY] 서버의 InventoryList를 기준으로 실제 재료 보유 여부를 확인합니다.
 	bool HasRequiredMaterialsOnServer(const FGameplayTag& MaterialTag, int32 RequiredAmount) const;
+
+	/**
+	 * 리슨서버 호스트 또는 스탠드얼론인지 확인
+	 *
+	 * 📌 용도:
+	 *    FastArray 리플리케이션이 자기 자신에게 안 되는 환경에서
+	 *    직접 UI 갱신이 필요한지 판단
+	 *
+	 * @return true = 리슨서버 호스트 또는 스탠드얼론 (직접 UI 갱신 필요)
+	 */
+	bool IsListenServerOrStandalone() const;
 
 	// ⭐ Grid 크기 (BeginPlay 시 Widget에서 자동 설정됨 - 모든 카테고리 공통 사용)
 	int32 GridRows = 6;

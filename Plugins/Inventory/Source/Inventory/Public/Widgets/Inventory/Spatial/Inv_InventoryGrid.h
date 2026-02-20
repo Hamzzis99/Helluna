@@ -17,6 +17,7 @@ struct FInv_ItemManifest;
 class UCanvasPanel;
 class UInv_GridSlot;
 class UInv_InventoryComponent;
+class UInv_AttachmentPanel;
 struct FGameplayTag;
 enum class EInv_GridSlotState : uint8;
 
@@ -79,6 +80,9 @@ public:
 	// ⭐ Grid 상태 수집 (저장용) - Split된 스택도 개별 수집
 	TArray<FInv_SavedItemData> CollectGridState() const;
 
+	// 🔍 [진단] SlottedItems 개수 조회 (디버그용)
+	FORCEINLINE int32 GetSlottedItemCount() const { return SlottedItems.Num(); }
+
 	// ============================================
 	// 📦 [Phase 5] Grid 위치 복원 함수
 	// ============================================
@@ -121,6 +125,15 @@ public:
 	 * 복원 완료 후 호출하여 올바른 위치로 동기화
 	 */
 	void SendAllItemPositionsToServer();
+
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [부착물 시스템 Phase 3] 부착물 패널 관련
+	// ════════════════════════════════════════════════════════════════
+
+	// 부착물 패널 열기/닫기
+	void OpenAttachmentPanel(UInv_InventoryItem* WeaponItem, int32 WeaponEntryIndex);
+	void CloseAttachmentPanel();
+	bool IsAttachmentPanelOpen() const;
 
 private:
 	// ⭐ 로드 중 RPC 억제 플래그
@@ -237,7 +250,11 @@ private:
 	// 사용하기 버튼 상호작용
 	UFUNCTION()
 	void OnPopUpMenuConsume(int32 Index);
-	
+
+	// 부착물 관리 버튼 상호작용
+	UFUNCTION()
+	void OnPopUpMenuAttachment(int32 Index);
+
 	UFUNCTION()
 	void OnInventoryMenuToggled(bool bOpen); // 인벤토리 메뉴 토글 (내가 뭔가 들 때 bool 값 반환하는 함수)
 	
@@ -293,6 +310,19 @@ private:
 	bool bLastMouseWithinCanvas;
 	int32 LastHighlightedIndex;
 	FIntPoint LastHighlightedDimensions;
-	
+
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [부착물 시스템 Phase 3] 부착물 패널 위젯
+	// ════════════════════════════════════════════════════════════════
+
+	UPROPERTY(EditAnywhere, Category = "Attachment", meta = (DisplayName = "부착물 패널 클래스", Tooltip = "부착물 관리 패널 위젯 블루프린트 클래스"))
+	TSubclassOf<UInv_AttachmentPanel> AttachmentPanelClass;
+
+	UPROPERTY()
+	TObjectPtr<UInv_AttachmentPanel> AttachmentPanel;
+
+	// 부착물 패널 닫힘 콜백
+	UFUNCTION()
+	void OnAttachmentPanelClosed();
 };
 

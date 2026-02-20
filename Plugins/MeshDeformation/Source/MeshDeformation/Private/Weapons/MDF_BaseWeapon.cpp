@@ -1,6 +1,7 @@
 ﻿// Gihyeon's MeshDeformation Project
 
 #include "Weapons/MDF_BaseWeapon.h"
+#include "MeshDeformation.h"
 
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h" // [New] 스태틱 메시 헤더 추가
@@ -46,21 +47,33 @@ void AMDF_BaseWeapon::StartFire()
     // 탄약이 없으면 발사 불가
     if (CurrentAmmo <= 0.0f)
     {
-       // [한글 로그] 탄약 부족 알림
-       UE_LOG(LogTemp, Warning, TEXT("[무기] 탄약이 부족합니다!"));
+#if MDF_DEBUG_WEAPON
+       UE_LOG(LogMeshDeform, Warning, TEXT("[무기] 탄약이 부족합니다!"));
+#endif
        return;
     }
 
-    // 첫 발 즉시 발사
-    Fire();
+    // [네트워크] 원격 클라이언트 → 서버로 위임
+    if (!HasAuthority())
+    {
+        Server_StartFire();
+        return;
+    }
 
-    // 두 번째 발부터는 타이머로 연사 (FireRate 간격)
+    // 서버/스탠드얼론: 직접 실행
+    Fire();
     GetWorld()->GetTimerManager().SetTimer(FireTimerHandle, this, &AMDF_BaseWeapon::Fire, FireRate, true);
 }
 
 void AMDF_BaseWeapon::StopFire()
 {
-    // 타이머 정지 (사격 중지)
+    // [네트워크] 원격 클라이언트 → 서버로 위임
+    if (!HasAuthority())
+    {
+        Server_StopFire();
+        return;
+    }
+
     GetWorld()->GetTimerManager().ClearTimer(FireTimerHandle);
 }
 
@@ -79,7 +92,22 @@ void AMDF_BaseWeapon::Fire()
     }
 
     // 3. 디버그 로그 (제대로 작동하는지 확인용)
-    UE_LOG(LogTemp, Log, TEXT("[무기] 발사! 남은 탄약: %f"), CurrentAmmo);
+#if MDF_DEBUG_WEAPON
+    UE_LOG(LogMeshDeform, Log, TEXT("[무기] 발사! 남은 탄약: %f"), CurrentAmmo);
+#endif
+}
+
+// -----------------------------------------------------------------------------
+// [네트워크] Server RPC 구현
+// -----------------------------------------------------------------------------
+void AMDF_BaseWeapon::Server_StartFire_Implementation()
+{
+    StartFire();
+}
+
+void AMDF_BaseWeapon::Server_StopFire_Implementation()
+{
+    StopFire();
 }
 
 void AMDF_BaseWeapon::ConsumeAmmo()
@@ -90,6 +118,8 @@ void AMDF_BaseWeapon::ConsumeAmmo()
     {
        CurrentAmmo = 0.0f;
        StopFire(); // 탄약 다 떨어지면 강제 중지
-       UE_LOG(LogTemp, Log, TEXT("[무기] 탄창이 비었습니다. 사격 중지."));
+#if MDF_DEBUG_WEAPON
+       UE_LOG(LogMeshDeform, Log, TEXT("[무기] 탄창이 비었습니다. 사격 중지."));
+#endif
     }
 }

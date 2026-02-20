@@ -5,6 +5,9 @@
 #include "CoreMinimal.h"
 #include "Weapon/HellunaHeroWeapon.h"
 #include "NiagaraSystem.h"
+// [Phase 7.5] EquipActor 발사 사운드용
+#include "Player/Inv_PlayerController.h"
+#include "EquipmentManagement/EquipActor/Inv_EquipActor.h"
 #include "HeroWeapon_GunBase.generated.h"
 
 /**
@@ -115,6 +118,31 @@ protected:
 	// (선택) 이펙트/사운드 동기화용
 	UFUNCTION(NetMulticast, Unreliable)
 	void MulticastFireFX(FVector_NetQuantize TraceStart, FVector_NetQuantize TraceEnd, bool bHit, FVector_NetQuantize HitLocation);
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 7.5] 발사 사운드/FX 헬퍼 (자식 클래스에서도 사용)
+	// ════════════════════════════════════════════════════════════════
+	// [2026-02-18] 작업자: 김기현
+	// ────────────────────────────────────────────────────────────────
+	// 사운드와 FX를 분리하여 Shotgun 등 자식 클래스가
+	// 사운드는 1회, FX는 펠릿 수만큼 호출 가능하게 함.
+	//
+	// PlayEquipActorFireSound():
+	//   EquipActor의 GetFireSound() → 소음기 여부 자동 분기
+	//   소음기 장착 시 → SuppressedFireSound
+	//   소음기 미장착 시 → DefaultFireSound
+	//   BP에서 변경 불가 — EquipActor의 UPROPERTY는 private
+	//   (EquipActor BP 디테일 패널에서 무기별 사운드 에셋 설정)
+	//
+	// SpawnImpactFX(Location):
+	//   기존 Niagara 임팩트 이펙트 로직 분리
+	// ════════════════════════════════════════════════════════════════
+
+	// 발사 사운드 1회 재생 (EquipActor 기반, 소음기 자동 분기)
+	void PlayEquipActorFireSound();
+
+	// 임팩트 FX 1회 스폰 (Niagara)
+	void SpawnImpactFX(const FVector& SpawnLocation);
 
 	// 실제 라인트레이스 + 데미지 적용
 	void DoLineTraceAndDamage(AController* InstigatorController, const FVector& TraceStart, const FVector& TraceEnd);

@@ -33,6 +33,7 @@ public class MeshDeformation : ModuleRules
 				"DynamicMesh",
 				"GeometryScriptingCore",
 				"Niagara",
+				"NetCore",
 			}
 		);
 			
@@ -40,8 +41,6 @@ public class MeshDeformation : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
-				"CoreUObject",
-				"Engine",
 				"Slate",
 				"SlateCore"
 			}

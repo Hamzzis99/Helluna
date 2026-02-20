@@ -92,6 +92,28 @@ private:
 	// @param SpawnWeaponAbility: 활성화할 GA 클래스 (팀원의 GA_SpawnWeapon)
 	// @param bEquip: true=꺼내기, false=집어넣기
 	// @param WeaponSlotIndex: 무기 슬롯 인덱스 (0=주무기, 1=보조무기)
+	// ════════════════════════════════════════════════════════════════
+	// TODO: [독립화] 졸작 후 변경 사항
+	//
+	// 1) 콜백 시그니처에서 SpawnWeaponAbility 파라미터 삭제:
+	//    void OnWeaponEquipRequested(
+	//        const FGameplayTag& WeaponTag,
+	//        AInv_EquipActor* BackWeaponActor,
+	//        bool bEquip,
+	//        int32 WeaponSlotIndex);
+	//
+	// 2) WeaponGAMap 프로퍼티 추가 (private):
+	//    UPROPERTY(EditAnywhere, Category = "Weapon",
+	//        meta = (DisplayName = "무기 태그 -> GA 매핑"))
+	//    TMap<FGameplayTag, TSubclassOf<UGameplayAbility>> WeaponGAMap;
+	//
+	// 3) OnWeaponEquipRequested 내부에서:
+	//    기존: SpawnHandWeapon(SpawnWeaponAbility) — 델리게이트에서 GA를 직접 받음
+	//    변경: SpawnHandWeapon(WeaponGAMap.FindRef(WeaponTag)) — 자체 매핑에서 GA 획득
+	//
+	// 4) EquipmentComponent의 bUseBuiltInHandWeapon = false 설정 필수
+	//    (Helluna는 커스텀 모드 사용)
+	// ════════════════════════════════════════════════════════════════
 	UFUNCTION()
 	void OnWeaponEquipRequested(
 		const FGameplayTag& WeaponTag,

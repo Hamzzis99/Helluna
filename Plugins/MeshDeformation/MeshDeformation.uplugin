@@ -29,10 +29,6 @@
 		{
 			"Name": "GeometryScripting",
 			"Enabled": true
-		},
-		{
-			"Name": "Avalanche",
-			"Enabled": true
 		}
 	]
 }

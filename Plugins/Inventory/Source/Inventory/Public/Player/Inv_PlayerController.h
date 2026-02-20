@@ -7,9 +7,45 @@
 
 class UInv_InventoryComponent;
 class UInv_EquipmentComponent;
+class AInv_EquipActor;
 class UInputMappingContext;
 class UInputAction;
 class UInv_HUDWidget;
+
+// ════════════════════════════════════════════════════════════════
+// 📌 [Phase 6] 부착물 저장 데이터
+// ════════════════════════════════════════════════════════════════
+// 무기에 장착된 부착물 1개의 저장 정보
+// FInv_SavedItemData 안에 TArray로 포함됨
+// ════════════════════════════════════════════════════════════════
+USTRUCT(BlueprintType)
+struct INVENTORY_API FInv_SavedAttachmentData
+{
+	GENERATED_BODY()
+
+	// 부착물 아이템 타입
+	UPROPERTY(BlueprintReadWrite, SaveGame, Category = "Inventory|Save", meta = (DisplayName = "AttachmentItemType (부착물 아이템 타입)"))
+	FGameplayTag AttachmentItemType;
+
+	// 장착된 슬롯 인덱스
+	UPROPERTY(BlueprintReadWrite, SaveGame, Category = "Inventory|Save", meta = (DisplayName = "SlotIndex (장착 슬롯 인덱스)"))
+	int32 SlotIndex = INDEX_NONE;
+
+	// 부착물의 AttachmentType 태그 (AttachableFragment의 AttachmentType)
+	UPROPERTY(BlueprintReadWrite, SaveGame, Category = "Inventory|Save", meta = (DisplayName = "AttachmentType (부착물 타입 태그)"))
+	FGameplayTag AttachmentType;
+
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [Phase 1 최적화] 부착물 Fragment 직렬화 데이터
+	// ════════════════════════════════════════════════════════════════
+	// 부착물의 전체 Fragment 데이터를 바이너리로 보존
+	// 로드 시 랜덤 스탯 재결정 방지
+	// 빈 배열이면 SaveVersion 2 이하 데이터 (하위 호환)
+	// ════════════════════════════════════════════════════════════════
+	UPROPERTY(BlueprintReadWrite, SaveGame, Category = "Inventory|Save",
+		meta = (DisplayName = "SerializedManifest (부착물 직렬화 데이터)"))
+	TArray<uint8> SerializedManifest;
+};
 
 // ============================================
 // 📦 인벤토리 저장용 순수 데이터 구조체
@@ -145,13 +181,43 @@ struct INVENTORY_API FInv_SavedItemData
 
 	/**
 	 * 무기 슬롯 인덱스 (장착된 경우에만 유효)
-	 * 
+	 *
 	 * -1 = 미장착 (Grid에 있음)
 	 *  0 = 주무기 슬롯
 	 *  1 = 보조무기 슬롯
 	 */
 	UPROPERTY(BlueprintReadWrite, Category = "Inventory|Save", meta = (DisplayName = "WeaponSlotIndex (무기 슬롯 인덱스)", Tooltip = "무기 슬롯 인덱스 (-1=미장착, 0=주무기, 1=보조무기)"))
 	int32 WeaponSlotIndex;
+
+	// ============================================
+	// 📌 [Phase 6 Attachment] 부착물 저장 데이터
+	// ============================================
+	// 무기 아이템인 경우, 장착된 부착물 목록
+	// 비무기 아이템이면 빈 배열
+	// ============================================
+	UPROPERTY(BlueprintReadWrite, SaveGame, Category = "Inventory|Save",
+		meta = (DisplayName = "Attachments (부착물 목록)"))
+	TArray<FInv_SavedAttachmentData> Attachments;
+
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [Phase 1 최적화] 아이템 Fragment 직렬화 데이터
+	// ════════════════════════════════════════════════════════════════
+	// 아이템의 전체 Fragment 데이터(랜덤 스탯, 장비 정보 등)를 바이너리로 보존
+	//
+	// 포함되는 데이터 예시:
+	//   - FInv_LabeledNumberFragment의 Value (랜덤 결정된 스탯값)
+	//   - FInv_EquipmentFragment의 EquipModifiers (장비 효과)
+	//   - FInv_AttachmentHostFragment의 AttachedItems (부착물 목록)
+	//   - FInv_StackableFragment의 StackCount
+	//   - 기타 모든 Fragment의 UPROPERTY 값
+	//
+	// 빈 배열이면 SaveVersion 2 이하 데이터 → CDO 기본값 사용 (하위 호환)
+	//
+	// 직렬화/역직렬화: FInv_ItemManifest::SerializeFragments() / DeserializeAndApplyFragments()
+	// ════════════════════════════════════════════════════════════════
+	UPROPERTY(BlueprintReadWrite, SaveGame, Category = "Inventory|Save",
+		meta = (DisplayName = "SerializedManifest (아이템 직렬화 데이터)"))
+	TArray<uint8> SerializedManifest;
 
 	/** 유효한 데이터인지 확인 */
 	bool IsValid() const
@@ -174,19 +240,37 @@ struct INVENTORY_API FInv_SavedItemData
 	/** 디버그 문자열 */
 	FString ToString() const
 	{
+		FString Result;
 		if (bEquipped)
 		{
-			return FString::Printf(TEXT("[%s x%d @ ⚔️장착슬롯(%d)]"),
-				*ItemType.ToString(), 
-				StackCount, 
+			Result = FString::Printf(TEXT("[%s x%d @ 장착슬롯(%d)]"),
+				*ItemType.ToString(),
+				StackCount,
 				WeaponSlotIndex);
 		}
-		return FString::Printf(TEXT("[%s x%d @ Grid%d(%s) Pos(%d,%d)]"),
-			*ItemType.ToString(), 
-			StackCount, 
-			GridCategory,
-			*GetCategoryName(),
-			GridPosition.X, GridPosition.Y);
+		else
+		{
+			Result = FString::Printf(TEXT("[%s x%d @ Grid%d(%s) Pos(%d,%d)]"),
+				*ItemType.ToString(),
+				StackCount,
+				GridCategory,
+				*GetCategoryName(),
+				GridPosition.X, GridPosition.Y);
+		}
+
+		// 부착물 정보 추가
+		if (Attachments.Num() > 0)
+		{
+			Result += FString::Printf(TEXT(" +부착물%d개"), Attachments.Num());
+		}
+
+		// 직렬화 데이터 크기 표시
+		if (SerializedManifest.Num() > 0)
+		{
+			Result += FString::Printf(TEXT(" [Manifest=%dB]"), SerializedManifest.Num());
+		}
+
+		return Result;
 	}
 };
 
@@ -232,6 +316,44 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
 	void ToggleInventory();
+
+	// ============================================
+	// 🆕 [Phase 7.5] 현재 활성 무기의 EquipActor 반환
+	// ============================================
+	// [2026-02-18] 작업자: 김기현
+	// ────────────────────────────────────────────
+	// 목적:
+	//   팀원의 GA/무기 코드(Helluna 모듈)에서
+	//   인벤토리 플러그인 내부 구조를 모르더라도
+	//   EquipActor에 접근할 수 있는 단일 진입점 제공
+	//
+	// 접근 경로:
+	//   [팀원 코드]
+	//     AInv_PlayerController* PC = Cast<AInv_PlayerController>(Hero->GetController());
+	//     AInv_EquipActor* EA = PC ? PC->GetCurrentEquipActor() : nullptr;
+	//
+	//   [내부 동작]
+	//     this->EquipmentComponent->GetActiveWeaponActor()
+	//       → ActiveWeaponSlot 기반 분기
+	//       → AInv_EquipActor* 반환
+	//
+	// 반환값:
+	//   - 현재 손에 든 무기의 AInv_EquipActor 포인터
+	//   - 맨손이거나 EquipmentComponent가 없으면 nullptr
+	//
+	// 사용 예시 (팀원 코드):
+	//   // 소음기 장착 시 소음 사운드 사용
+	//   USoundBase* Sound = EA ? EA->GetFireSound() : DefaultSound;
+	//
+	//   // 스코프 장착 시 줌 FOV 오버라이드
+	//   float FOV = EA ? EA->GetZoomFOV() : DefaultFOV;
+	//
+	// 전제조건:
+	//   BP_HellunaCharacterController가 AInv_PlayerController의 자식이므로
+	//   Cast<AInv_PlayerController>는 항상 성공함
+	// ============================================
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Weapon", meta = (DisplayName = "현재 활성 EquipActor 가져오기"))
+	AInv_EquipActor* GetCurrentEquipActor() const;
 
 	// ============================================
 	// 📌 인벤토리 저장/로드용 함수 (Phase 3)

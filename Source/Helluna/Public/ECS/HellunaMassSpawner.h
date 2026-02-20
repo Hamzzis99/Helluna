@@ -14,17 +14,18 @@ class HELLUNA_API AHellunaMassSpawner : public AMassSpawner
 {
 	GENERATED_BODY()
 public:
+	void DoSpawning();
 
 protected:
-	
+
 	virtual void BeginPlay() override;
 
-	virtual void OnSpawnDataGenerationFinished(
+	void OnSpawnDataGenerationFinished(
 		TConstArrayView<FMassEntitySpawnDataGeneratorResult> Results,
 		FMassSpawnDataGenerator* FinishedGenerator
 	);
 
-	virtual void SpawnGeneratedEntities(
+	void SpawnGeneratedEntities(
 		TConstArrayView<FMassEntitySpawnDataGeneratorResult> Results
 	);
 

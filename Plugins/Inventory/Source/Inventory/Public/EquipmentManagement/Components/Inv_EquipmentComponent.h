@@ -15,7 +15,7 @@ class UInv_InventoryItem;
 class UInv_InventoryComponent;
 class APlayerController;
 class USkeletalMeshComponent;
-class UGameplayAbility;
+class UGameplayAbility; // TODO: [독립화] 졸작 후 삭제
 
 // ============================================
 // ⭐ [WeaponBridge] 활성 무기 슬롯 상태
@@ -38,6 +38,14 @@ enum class EInv_ActiveWeaponSlot : uint8
 // @param bEquip - true: 꺼내기, false: 집어넣기
 // @param WeaponSlotIndex - 무기 슬롯 인덱스 (0=주무기, 1=보조무기)
 // ============================================
+// TODO: [독립화] 졸작 후 5파라미터 → 4파라미터로 변경
+// TSubclassOf<UGameplayAbility> SpawnWeaponAbility 파라미터 삭제
+// 변경 후:
+// DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FOnWeaponEquipRequested,
+//     const FGameplayTag&, WeaponTag,
+//     AInv_EquipActor*, BackWeaponActor,
+//     bool, bEquip,
+//     int32, WeaponSlotIndex);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_FiveParams(FOnWeaponEquipRequested,
 	const FGameplayTag&, WeaponTag,
 	AInv_EquipActor*, BackWeaponActor,
@@ -139,6 +147,17 @@ private:
 	UPROPERTY(VisibleAnywhere, Category = "Inventory|Weapon", meta = (DisplayName = "무기 장착 중"))
 	bool bIsWeaponEquipping = false;
 
+	// ════════════════════════════════════════════════════════════════
+	// TODO: [독립화] 졸작 후 여기에 내장 HandWeapon 모드 플래그 추가
+	//
+	// UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory|Weapon",
+	//     meta = (DisplayName = "내장 HandWeapon 모드"))
+	// bool bUseBuiltInHandWeapon = true;
+	//
+	// true: 플러그인이 EquipActor를 등/손 소켓 간 직접 이동 (게임 코드 불필요)
+	// false: 델리게이트만 발사, 게임에서 별도 손 무기 스폰/파괴 (현재 Helluna 방식)
+	// ════════════════════════════════════════════════════════════════
+
 	// ============================================
 	// ⭐ [WeaponBridge] 무기 꺼내기/집어넣기 내부 함수
 	// ============================================
@@ -163,6 +182,35 @@ private:
 	//==================================================
 public:
 	void ActiveUnequipWeapon();
+
+	// ============================================
+	// 🆕 [Phase 7.5] 현재 활성 무기의 EquipActor 반환
+	// ============================================
+	// [2026-02-18] 작업자: 김기현
+	// ────────────────────────────────────────────
+	// 목적:
+	//   팀원의 GA/무기 코드(Helluna 모듈)에서 EquipActor의
+	//   Phase 7 프로퍼티(GetFireSound, GetZoomFOV 등)를 읽기 위한
+	//   public 접근 경로 제공
+	//
+	// 동작:
+	//   ActiveWeaponSlot 값에 따라 분기하여
+	//   Primary → FindPrimaryWeaponActor()
+	//   Secondary → FindSecondaryWeaponActor()
+	//   None → nullptr 반환
+	//
+	// 호출 경로:
+	//   AInv_PlayerController::GetCurrentEquipActor()
+	//     → UInv_EquipmentComponent::GetActiveWeaponActor()  ← 이 함수
+	//       → AInv_EquipActor* 반환
+	//
+	// 사용 예시 (팀원 코드):
+	//   AInv_PlayerController* PC = Cast<AInv_PlayerController>(Hero->GetController());
+	//   AInv_EquipActor* EA = PC ? PC->GetCurrentEquipActor() : nullptr;
+	//   USoundBase* Sound = EA ? EA->GetFireSound() : nullptr;
+	// ============================================
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Weapon", meta = (DisplayName = "활성 무기 EquipActor 가져오기"))
+	AInv_EquipActor* GetActiveWeaponActor();
 
 	// ============================================
 	// 🆕 [Phase 6] 장착된 액터 목록 Getter

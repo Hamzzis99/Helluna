@@ -17,6 +17,7 @@
 #include "Widgets/Inventory/Spatial/Inv_InventoryGrid.h"
 #include "Widgets/Inventory/GridSlots/Inv_EquippedGridSlot.h"
 #include "Items/Inv_InventoryItem.h"
+#include "Items/Fragments/Inv_AttachmentFragments.h"
 #include "Widgets/Inventory/SlottedItems/Inv_EquippedSlottedItem.h"
 #include "InventoryManagement/Utils/Inv_InventoryStatics.h"
 #include "Interfaces/Inv_Interface_Primary.cpp"
@@ -42,6 +43,38 @@ void AInv_PlayerController::ToggleInventory()
 	if (InventoryComponent->IsMenuOpen())
 	{
 		HUDWidget->SetVisibility(ESlateVisibility::Hidden);
+
+#if INV_DEBUG_ATTACHMENT
+		// ★ [부착진단-UI] 인벤토리 열기 시 InventoryList 아이템 부착물 상태 확인 ★
+		{
+			TArray<UInv_InventoryItem*> DiagAllItems = InventoryComponent->GetInventoryList().GetAllItems();
+			UE_LOG(LogTemp, Error, TEXT("[부착진단-UI] 인벤토리 열기: InventoryList 총 아이템=%d"), DiagAllItems.Num());
+			for (int32 d = 0; d < DiagAllItems.Num(); d++)
+			{
+				UInv_InventoryItem* DiagItem = DiagAllItems[d];
+				if (!IsValid(DiagItem)) continue;
+				if (!DiagItem->HasAttachmentSlots()) continue;
+
+				const FInv_AttachmentHostFragment* DiagHost =
+					DiagItem->GetItemManifest().GetFragmentOfType<FInv_AttachmentHostFragment>();
+				UE_LOG(LogTemp, Error, TEXT("[부착진단-UI]   [%d] %s, HasSlots=Y, HostFrag=%s, AttachedItems=%d"),
+					d,
+					*DiagItem->GetItemManifest().GetItemType().ToString(),
+					DiagHost ? TEXT("유효") : TEXT("nullptr"),
+					DiagHost ? DiagHost->GetAttachedItems().Num() : -1);
+				if (DiagHost)
+				{
+					for (int32 a = 0; a < DiagHost->GetAttachedItems().Num(); a++)
+					{
+						const FInv_AttachedItemData& DiagData = DiagHost->GetAttachedItems()[a];
+						UE_LOG(LogTemp, Error, TEXT("[부착진단-UI]     [%d] Type=%s (Slot=%d), ManifestCopy.ItemType=%s"),
+							a, *DiagData.AttachmentItemType.ToString(), DiagData.SlotIndex,
+							*DiagData.ItemManifestCopy.GetItemType().ToString());
+					}
+				}
+			}
+		}
+#endif
 	}
 	else
 	{
@@ -334,6 +367,13 @@ void AInv_PlayerController::TraceForInteractables()
 
 	if (!ThisActor.IsValid())
 	{
+		if (LastActor.IsValid())
+		{
+			if (UActorComponent* Highlightable = LastActor->FindComponentByInterface(UInv_Highlightable::StaticClass()); IsValid(Highlightable))
+			{
+				IInv_Highlightable::Execute_UnHighlight(Highlightable);
+			}
+		}
 		if (IsValid(HUDWidget))
 		{
 			HUDWidget->HidePickupMessage();
@@ -406,6 +446,39 @@ void AInv_PlayerController::HandleSecondaryWeapon()
 TArray<FInv_SavedItemData> AInv_PlayerController::CollectInventoryGridState()
 {
 	TArray<FInv_SavedItemData> Result;
+
+	// ── 🔍 [진단] CollectGridState 호출 컨텍스트 확인 ──
+	UE_LOG(LogTemp, Error, TEXT("🔍 [CollectGridState 진단] Controller=%s, IsLocal=%s, HasAuth=%s, Role=%d"),
+		*GetName(),
+		IsLocalController() ? TEXT("TRUE") : TEXT("FALSE"),
+		HasAuthority() ? TEXT("TRUE") : TEXT("FALSE"),
+		(int32)GetLocalRole());
+
+	if (InventoryComponent.IsValid())
+	{
+		UInv_InventoryBase* DiagMenu = InventoryComponent->GetInventoryMenu();
+		UE_LOG(LogTemp, Error, TEXT("🔍 [진단] InvComp=유효, Menu=%s, Menu주소=%p"),
+			IsValid(DiagMenu) ? *DiagMenu->GetName() : TEXT("nullptr"), DiagMenu);
+
+		if (IsValid(DiagMenu))
+		{
+			UInv_SpatialInventory* DiagSpatial = Cast<UInv_SpatialInventory>(DiagMenu);
+			if (IsValid(DiagSpatial))
+			{
+				UInv_InventoryGrid* DG0 = DiagSpatial->GetGrid_Equippables();
+				UInv_InventoryGrid* DG1 = DiagSpatial->GetGrid_Consumables();
+				UInv_InventoryGrid* DG2 = DiagSpatial->GetGrid_Craftables();
+				UE_LOG(LogTemp, Error, TEXT("🔍 [진단] Grid_Equippables=%p SlottedItems=%d, Grid_Consumables=%p SlottedItems=%d, Grid_Craftables=%p SlottedItems=%d"),
+					DG0, DG0 ? DG0->GetSlottedItemCount() : -1,
+					DG1, DG1 ? DG1->GetSlottedItemCount() : -1,
+					DG2, DG2 ? DG2->GetSlottedItemCount() : -1);
+			}
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("🔍 [진단] InventoryComponent=INVALID ❌"));
+	}
 
 #if INV_DEBUG_PLAYER
 	UE_LOG(LogTemp, Warning, TEXT(""));
@@ -594,6 +667,50 @@ TArray<FInv_SavedItemData> AInv_PlayerController::CollectInventoryGridState()
 				1,  // 장비는 스택 1
 				Slot->GetWeaponSlotIndex()
 			);
+
+			// ════════════════════════════════════════════════════════════════
+			// 📌 [Phase 1 최적화] 장착 아이템 Fragment 직렬화
+			// ════════════════════════════════════════════════════════════════
+			{
+				const FInv_ItemManifest& EquipManifest = EquippedItem->GetItemManifest();
+				EquippedData.SerializedManifest = EquipManifest.SerializeFragments();
+
+#if INV_DEBUG_SAVE
+				UE_LOG(LogTemp, Warning,
+					TEXT("  │      📦 [Phase 1 최적화] 장착 아이템 Fragment 직렬화 (클라이언트): %s → %d바이트"),
+					*EquippedData.ItemType.ToString(), EquippedData.SerializedManifest.Num());
+#endif
+
+				// 부착물 데이터 수집 + 직렬화
+				const FInv_AttachmentHostFragment* HostFrag = EquipManifest.GetFragmentOfType<FInv_AttachmentHostFragment>();
+				if (HostFrag)
+				{
+					for (const FInv_AttachedItemData& Attached : HostFrag->GetAttachedItems())
+					{
+						FInv_SavedAttachmentData AttSave;
+						AttSave.AttachmentItemType = Attached.AttachmentItemType;
+						AttSave.SlotIndex = Attached.SlotIndex;
+
+						const FInv_AttachableFragment* AttachableFrag =
+							Attached.ItemManifestCopy.GetFragmentOfType<FInv_AttachableFragment>();
+						if (AttachableFrag)
+						{
+							AttSave.AttachmentType = AttachableFrag->GetAttachmentType();
+						}
+
+						AttSave.SerializedManifest = Attached.ItemManifestCopy.SerializeFragments();
+
+#if INV_DEBUG_SAVE
+						UE_LOG(LogTemp, Warning,
+							TEXT("  │        📦 부착물 Fragment 직렬화: %s → %d바이트"),
+							*AttSave.AttachmentItemType.ToString(), AttSave.SerializedManifest.Num());
+#endif
+
+						EquippedData.Attachments.Add(AttSave);
+					}
+				}
+			}
+
 			Result.Add(EquippedData);
 #if INV_DEBUG_PLAYER
 			UE_LOG(LogTemp, Warning, TEXT("  │      → ✅ Result에 추가됨!"));
@@ -1185,4 +1302,25 @@ void AInv_PlayerController::DelayedRestoreGridPositions(const TArray<FInv_SavedI
 	UE_LOG(LogTemp, Warning, TEXT("🎉 [Phase 5] 인벤토리 로드 완료!"));
 	UE_LOG(LogTemp, Warning, TEXT("════════════════════════════════════════════════════════════════════════════════"));
 #endif
+}
+
+// ════════════════════════════════════════════════════════════════
+// 🆕 [Phase 7.5] 현재 활성 무기의 EquipActor 반환
+// ════════════════════════════════════════════════════════════════
+// [2026-02-18] 작업자: 김기현
+// ────────────────────────────────────────────────────────────────
+// EquipmentComponent가 유효한 경우에만 GetActiveWeaponActor()를 호출.
+// EquipmentComponent는 BeginPlay에서 FindComponentByClass로 캐싱됨.
+//
+// 반환값:
+//   - 현재 손에 든 무기의 AInv_EquipActor* (소음기/스코프/레이저 효과 프로퍼티 포함)
+//   - EquipmentComponent가 없거나 맨손이면 nullptr
+// ════════════════════════════════════════════════════════════════
+AInv_EquipActor* AInv_PlayerController::GetCurrentEquipActor() const
+{
+	if (EquipmentComponent.IsValid())
+	{
+		return EquipmentComponent->GetActiveWeaponActor();
+	}
+	return nullptr;
 }
