@@ -49,6 +49,7 @@ namespace HellunaGameplayTags
 
 	UE_DEFINE_GAMEPLAY_TAG(Enemy_Ability_Melee, "Enemy.Ability.Melee");
 	UE_DEFINE_GAMEPLAY_TAG(Enemy_Ability_Ranged, "Enemy.Ability.Ranged");
-
+	UE_DEFINE_GAMEPLAY_TAG(Enemy_State_Death, "Enemy.State.Death");
+	UE_DEFINE_GAMEPLAY_TAG(Enemy_State_Attacking, "Enemy.State.Attacking");
 
 }

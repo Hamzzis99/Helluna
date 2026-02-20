@@ -41,6 +41,8 @@ protected:
 			AllowAbstract = "false"))
 	TSubclassOf<AHellunaEnemyCharacter> EnemyClass;
 
+	
+	
 	// =================================================================
 	// 거리 설정
 	// =================================================================
@@ -115,4 +117,52 @@ protected:
 			ToolTip = "원거리 구간 (Mid ~ Despawn) Actor의 Tick 간격(초)입니다.\n플레이어에게서 멀리 있어 행동이 잘 안 보이는 적입니다.\n느리게 업데이트해도 체감 차이가 없으며 CPU를 크게 절약합니다.\n\n예: 0.25 = ~4Hz (권장), 0.5 = ~2Hz, 0.1 = ~10Hz",
 			ClampMin = "0.0", ClampMax = "5.0", UIMin = "0.0", UIMax = "1.0"))
 	float FarTickInterval = 0.25f;
+
+	// =================================================================
+	// Entity 시각화
+	// =================================================================
+	/** Entity 상태일 때 표시할 Static Mesh (간단한 모델) */
+	UPROPERTY(EditAnywhere, Category = "Enemy Spawn Config|Entity 시각화",
+		meta = (DisplayName = "Entity Visualization Mesh",
+			ToolTip = "Entity 상태(먼 거리)에서 표시할 간단한 Static Mesh입니다.\n\n[권장]\n- 낮은 폴리곤 메시 사용 (100~500 tris)\n- LOD 없는 단순 모델\n- 예: 구체, 캡슐, 간단한 실루엣\n\n비워두면 Entity 상태에서 보이지 않습니다."))
+	TObjectPtr<UStaticMesh> EntityVisualizationMesh;
+
+	/** Entity Mesh의 스케일 */
+	UPROPERTY(EditAnywhere, Category = "Enemy Spawn Config|Entity 시각화",
+		meta = (DisplayName = "Entity Mesh Scale",
+			ToolTip = "Entity 시각화 메시의 크기 배율입니다.\n\n예: (1.0, 1.0, 2.0) = 세로로 2배 늘림"))
+	FVector EntityMeshScale = FVector(1.0f, 1.0f, 1.0f);
+
+	/** Entity Mesh의 Z축 오프셋 */
+	UPROPERTY(EditAnywhere, Category = "Enemy Spawn Config|Entity 시각화",
+		meta = (DisplayName = "Entity Mesh Z Offset (cm)",
+			ToolTip = "Entity 메시의 Z축 위치 조정값(cm)입니다.\n메시가 공중에 떠 있거나 땅에 묻힐 때 사용합니다.\n\n양수 = 위로, 음수 = 아래로\n예: -50 = 50cm 아래로 이동"))
+	float EntityMeshZOffset = 0.0f;
+
+	/** Entity 상태에서 시각화 표시 여부 */
+	UPROPERTY(EditAnywhere, Category = "Enemy Spawn Config|Entity 시각화",
+		meta = (DisplayName = "Show Entity Visualization",
+			ToolTip = "체크 시 Entity 상태에서도 간단한 메시를 표시합니다.\n체크 해제 시 Entity는 보이지 않습니다 (성능 최적화)."))
+	bool bShowEntityVisualization = true;
+
+	// =================================================================
+	// Entity 이동
+	// =================================================================
+	UPROPERTY(EditAnywhere, Category="Enemy Spawn Config|이동",
+	meta=(DisplayName="Goal Actor Tag (우주선 태그)"))
+	FName GoalActorTag = TEXT("SpaceShip");
+
+	UPROPERTY(EditAnywhere, Category="Enemy Spawn Config|이동",
+		meta=(DisplayName="Entity Move Speed (cm/s)", ClampMin="0.0", UIMin="0.0", UIMax="2000.0"))
+	float EntityMoveSpeed = 300.f;
+
+	UPROPERTY(EditAnywhere, Category="Enemy Spawn Config|이동",
+		meta=(DisplayName="Entity Separation Radius (cm)",
+			ToolTip="Entity끼리 이 반지름*2 이하로 가까워지면 서로 밀어냅니다.\n캐릭터 캡슐 반지름과 비슷하게 설정하세요.",
+			ClampMin="10.0", UIMin="10.0", UIMax="500.0"))
+	float EntitySeparationRadius = 50.f;
+
+	UPROPERTY(EditAnywhere, Category="Enemy Spawn Config|이동",
+		meta=(DisplayName="Move 2D Only"))
+	bool bMove2DOnly = true;
 };

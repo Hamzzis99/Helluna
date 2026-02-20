@@ -14,7 +14,6 @@ class HELLUNA_API AHellunaMassSpawner : public AMassSpawner
 {
 	GENERATED_BODY()
 public:
-	virtual void DoSpawning() override;
 
 protected:
 	
@@ -23,11 +22,11 @@ protected:
 	virtual void OnSpawnDataGenerationFinished(
 		TConstArrayView<FMassEntitySpawnDataGeneratorResult> Results,
 		FMassSpawnDataGenerator* FinishedGenerator
-	) override;
+	);
 
 	virtual void SpawnGeneratedEntities(
 		TConstArrayView<FMassEntitySpawnDataGeneratorResult> Results
-	) override;
+	);
 
 private:
 	UPROPERTY(EditAnywhere, Category = "Mass|Debug")

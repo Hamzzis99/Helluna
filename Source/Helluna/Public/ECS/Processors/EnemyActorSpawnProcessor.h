@@ -12,7 +12,8 @@
  *   - 의존: FEnemySpawnStateFragment, FEnemyDataFragment, FTransformFragment (Fragment),
  *           UEnemyActorPool (Pool), AHellunaEnemyCharacter, UHellunaHealthComponent
  *   - 피의존: MassSimulation 서브시스템이 매 틱 자동 호출
- *   - 실행: 서버 + 스탠드얼론만 (클라이언트 X), 게임 스레드 필수
+ *   - 실행: Server | Standalone | Client (ExecutionFlags::All)
+ *     → 스폰/디스폰은 서버 전용, 시각화는 서버/클라 공통
  *
  * ■ 매 틱 실행 흐름
  *   0. Pool 초기화 (첫 틱만): Fragment에서 EnemyClass/PoolSize 읽어 Pool 사전 생성
@@ -22,27 +23,13 @@
  *      A) 이미 Actor: 파괴됨(bDead) / 멀어짐(역변환) / 범위 내(Tick 조절)
  *      B) 아직 Entity: 가까우면 Pool에서 Actor 꺼내기
  *   3. Soft Cap (30프레임마다): 초과분 중 가장 먼 Actor부터 Pool 반납
- *
- * ■ Phase 2 변경점
- *   - SpawnActor() → Pool->ActivateActor() (비용 ~2ms → ~0.1ms)
- *   - Destroy() → Pool->DeactivateActor() (GC 스파이크 제거)
- *   - Soft Cap: Fragment 포인터 직접 접근 → HP/위치 보존 후 Pool 반납
- *   - StateTree 0.2초 타이머 제거 (Pool Actor는 이미 Possess 완료 상태)
+ *   4. 시각화: 서버/클라 공통으로 Entity ISMC 갱신
  *
  * ■ 디버깅 팁
  *   - LogECSEnemy 카테고리로 모든 스폰/디스폰/Soft Cap 이벤트 로깅
  *   - 300프레임마다 상태 로그: "[Status] 활성 Actor: N/M, Pool(Active: X, Inactive: Y)"
  *   - 문제별 대응은 .cpp 파일 하단 참조
- *
- * ■ UE 5.7.2 API (버전 고정)
- *   - ConfigureQueries(const TSharedRef<FMassEntityManager>&)
- *   - Execute(FMassEntityManager&, FMassExecutionContext&)
- *   - ForEachEntityChunk(Context, lambda)
- *   - RegisterQuery(생성자), RegisterWithProcessor(ConfigureQueries)
- *   - bRequiresGameThreadExecution = true
  */
-
-// File: Source/Helluna/Public/ECS/Processors/EnemyActorSpawnProcessor.h
 
 #pragma once
 
@@ -50,11 +37,23 @@
 #include "MassProcessor.h"
 #include "EnemyActorSpawnProcessor.generated.h"
 
-// 전방선언 (헤더 경량화)
+// 전방선언
 struct FEnemySpawnStateFragment;
 struct FEnemyDataFragment;
 struct FTransformFragment;
 class UEnemyActorPool;
+class USceneComponent;
+class UInstancedStaticMeshComponent;
+
+// ============================================================================
+// Entity별 ISMC 인스턴스 참조 (스왑 삭제 대응)
+// ============================================================================
+struct FEntityInstanceRef
+{
+	TObjectPtr<UStaticMesh> Mesh = nullptr;
+	int32 Index = INDEX_NONE;
+};
+
 
 UCLASS()
 class HELLUNA_API UEnemyActorSpawnProcessor : public UMassProcessor
@@ -71,7 +70,9 @@ protected:
 private:
 	FMassEntityQuery EntityQuery;
 
-	// === 헬퍼 함수 ===
+	// =========================================================
+	// 서버 전용 헬퍼
+	// =========================================================
 
 	/** 주어진 위치에서 모든 플레이어까지의 최소 제곱 거리 */
 	static float CalcMinDistSq(const FVector& Location, const TArray<FVector>& PlayerLocations);
@@ -93,50 +94,46 @@ private:
 		FEnemyDataFragment& Data,
 		const FTransformFragment& Transform,
 		UEnemyActorPool* Pool);
-};
 
-// ============================================================================
-// [TODO] 웨이브 시스템 연동 - GameMode 기반 밤/웨이브 스폰
-// ============================================================================
-//
-// 현재: HellunaEnemyMassSpawner가 BeginPlay 시 고정 N마리를 한번에 스폰.
-// 추후: GameMode가 밤 시작 시 웨이브별로 스폰 트리거.
-//
-// [웨이브 구조 (킬링플로어 + 하이브리드 ECS)]
-//
-//   밤 시작 → GameMode::StartNightWave(WaveIndex)
-//     │
-//     ▼
-//   [웨이브 1] 총 60마리
-//     → HellunaEnemyMassSpawner::DoSpawning() 호출 (60 Entity 한번에 생성)
-//     → Entity들이 기지 방향으로 이동 (EntityMovementProcessor)
-//     → 50m 이내 진입 시 Actor 전환 (Soft Cap 50마리 제한)
-//     → 플레이어가 전투 → 적 사망 → GameMode::NotifyMonsterDied()
-//     → 60마리 전멸 확인 → 다음 웨이브
-//     │
-//     ▼
-//   [웨이브 2] 총 100마리
-//     → 더 강한 적, 더 많은 수
-//     → 동일 흐름
-//
-// [핵심 포인트]
-// - Entity 60마리 한번에 생성해도 메모리 ~10KB (Actor 대비 300배 가벼움)
-// - Soft Cap이 자동으로 "몰려오는 느낌" 연출:
-//   앞의 적이 죽으면 → Actor 슬롯 빈다 → 뒤의 Entity가 자연스럽게 Actor 전환
-//   = 킬링플로어의 "다음 투입" 효과가 코드 없이 자동 발생!
-// - 웨이브별 스폰 설정은 DataTable 또는 DataAsset으로 관리 예정
-//
-// [GameMode 연동 인터페이스]
-// - HellunaEnemyMassSpawner::DoSpawning()  // 이미 존재 (부모 AMassSpawner)
-// - HellunaEnemyMassSpawner::DoDespawning() // 이미 존재
-// - GameMode::RegisterAliveMonster()  // 이미 존재 (AHellunaEnemyCharacter::BeginPlay)
-// - GameMode::NotifyMonsterDied()     // 이미 존재 (AHellunaEnemyCharacter::OnMonsterDeath)
-//
-// [웨이브 관리에 필요한 추가 데이터]
-// - FEnemySpawnStateFragment에 추가:
-//   int32 WaveIndex = 0;        // 이 Entity가 속한 웨이브 번호
-//   bool bDead = false;         // Entity 대응 Actor가 사망했는지 (전멸 체크용)
-// - GameMode에 추가:
-//   int32 CurrentWave, TotalEnemiesThisWave, KilledEnemiesThisWave
-//   TArray<FWaveConfig> WaveConfigs (DataAsset에서 로드)
-// ============================================================================
+	// =========================================================
+	// 시각화용 멤버 변수 (서버/클라 공통)
+	// =========================================================
+
+	/** ISMC를 붙이는 Root Actor */
+	UPROPERTY(Transient)
+	TObjectPtr<AActor> EntityVisualizationRoot;
+
+	/** Root의 SceneComponent (ISMC Attach 대상) */
+	UPROPERTY(Transient)
+	TObjectPtr<USceneComponent> EntityVisualizationRootComp;
+
+	/** Mesh별 ISMC 맵 */
+	UPROPERTY(Transient)
+	TMap<TObjectPtr<UStaticMesh>, TObjectPtr<UInstancedStaticMeshComponent>> MeshToISMC;
+
+	/** ISMC 인스턴스 인덱스 → Entity 역추적 (스왑 삭제 대응) */
+	TMap<TObjectPtr<UStaticMesh>, TArray<FMassEntityHandle>> MeshToInstanceEntities;
+
+	/** Entity → 인스턴스 참조 */
+	TMap<FMassEntityHandle, FEntityInstanceRef> EntityToInstanceRef;
+
+	// =========================================================
+	// 시각화 헬퍼
+	// =========================================================
+
+	/** Root Actor + SceneComponent 보장 (없으면 생성) */
+	void EnsureVisualizationRoot(UWorld* World);
+
+	/** Mesh에 대한 ISMC 반환 (없으면 생성 후 Root에 Attach) */
+	UInstancedStaticMeshComponent* GetOrCreateISMC(UStaticMesh* Mesh);
+
+	/** Entity 시각화 업데이트 (서버/클라 공통) */
+	void UpdateEntityVisualization(
+		const FMassEntityHandle Entity,
+		const FTransformFragment& Transform,
+		const FEnemyDataFragment& Data,
+		const FEnemySpawnStateFragment& SpawnState);
+
+	/** ISMC 인스턴스 제거 (스왑 방식으로 인덱스 매핑 유지) */
+	void CleanupEntityVisualization(const FMassEntityHandle Entity);
+};

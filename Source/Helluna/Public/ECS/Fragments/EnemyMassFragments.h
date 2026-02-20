@@ -19,7 +19,8 @@
 #include "EnemyMassFragments.generated.h"
 
 class AHellunaEnemyCharacter;
-
+class AActor;
+class UStateTree;
 // ============================================================================
 // FEnemySpawnStateFragment
 // 각 Mass Entity의 Actor 전환 상태를 추적하는 per-entity Fragment.
@@ -58,7 +59,23 @@ struct HELLUNA_API FEnemyDataFragment : public FMassFragment
 	UPROPERTY()
 	TSubclassOf<AHellunaEnemyCharacter> EnemyClass;
 
-	// === 거리 설정 (Trait에서 복사) ===
+	// === Entity 시각화 설정 (NEW!) ===
+	
+	/** Entity 상태일 때 표시할 Static Mesh */
+	UPROPERTY()
+	TObjectPtr<UStaticMesh> EntityVisualizationMesh;
+	
+	/** Entity Mesh의 스케일 */
+	UPROPERTY()
+	FVector EntityMeshScale = FVector(1.0f, 1.0f, 1.0f);
+
+	/** Entity Mesh의 Z축 오프셋 (cm). 메시가 공중에 떠 있을 때 사용 */
+	UPROPERTY()
+	float EntityMeshZOffset = 0.0f;
+	
+	/** Entity 상태에서도 보일지 여부 */
+	UPROPERTY()
+	bool bShowEntityVisualization = true;
 
 	/** Entity->Actor 전환 거리 (cm). 기본 50m */
 	UPROPERTY()
@@ -109,6 +126,36 @@ struct HELLUNA_API FEnemyDataFragment : public FMassFragment
 	/** 최대 HP. Actor에서 읽어서 저장 */
 	UPROPERTY()
 	float MaxHP = 100.f;
+	
+	// === Entity 이동(우주선 고정 목표) ===
+
+	/** 우주선(목표) 액터 태그. 시작 시 1회 찾아서 위치 캐싱 */
+	UPROPERTY()
+	FName GoalActorTag = TEXT("SpaceShip");
+
+	/** 캐싱된 우주선 위치 (월드 좌표) */
+	UPROPERTY()
+	FVector GoalLocation = FVector::ZeroVector;
+
+	/** GoalLocation이 유효하게 채워졌는지 */
+	UPROPERTY()
+	bool bGoalLocationCached = false;
+
+	/** Entity 상태에서 마지막으로 이동한 방향 (Actor 전환 시 초기 방향으로 사용) */
+	UPROPERTY()
+	FVector LastMoveDirection = FVector::ForwardVector;
+
+	/** Entity 상태에서 목표로 이동 속도 (cm/s) */
+	UPROPERTY()
+	float EntityMoveSpeed = 300.f;
+
+	/** Entity 간 분리에 사용할 반지름 (cm). 이 값*2 이하로 가까워지면 밀어냄 */
+	UPROPERTY()
+	float EntitySeparationRadius = 50.f;
+
+	/** XY 이동 무시하고 XY 평면에서만 이동 */
+	UPROPERTY()
+	bool bMove2DOnly = true;
 };
 
 // ============================================================================
