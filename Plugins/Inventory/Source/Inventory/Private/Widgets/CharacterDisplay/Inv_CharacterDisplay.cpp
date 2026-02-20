@@ -4,7 +4,7 @@
 #include "Widgets/CharacterDisplay/Inv_CharacterDisplay.h"
 
 #include "Blueprint/WidgetLayoutLibrary.h"
-#include "EquipmentManagement/ProxyMesh/Inv_ProxyMesh.h"
+#include "Interaction/ProxyMesh/Inv_ProxyMesh.h"
 #include "Kismet/GameplayStatics.h"
 
 FReply UInv_CharacterDisplay::NativeOnMouseButtonDown(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)

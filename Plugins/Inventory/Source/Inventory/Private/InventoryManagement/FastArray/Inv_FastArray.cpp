@@ -303,8 +303,45 @@ UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_ItemComponent* ItemCo
 	UInv_InventoryComponent* IC = Cast<UInv_InventoryComponent>(OwnerComponent); // 소유자 컴포넌트를 인벤토리 컴포넌트로 캐스팅
 	if (!IsValid(IC)) return nullptr;
 
+	// ★ [Phase8진단] ItemComponent의 원본 Manifest에서 SlotPosition 확인 ★
+	{
+		FInv_ItemManifest SrcManifest = ItemComponent->GetItemManifest();
+		const FInv_AttachmentHostFragment* SrcHost = SrcManifest.GetFragmentOfType<FInv_AttachmentHostFragment>();
+		if (SrcHost)
+		{
+			const auto& SrcSlots = SrcHost->GetSlotDefinitions();
+			UE_LOG(LogTemp, Error, TEXT("[Phase8진단-AddEntry] ItemComponent 원본 SlotDefs=%d"), SrcSlots.Num());
+			for (int32 d = 0; d < SrcSlots.Num(); ++d)
+			{
+				UE_LOG(LogTemp, Error, TEXT("[Phase8진단-AddEntry]   [%d] %s → Position=%d"),
+					d, *SrcSlots[d].SlotType.ToString(), (int32)SrcSlots[d].SlotPosition);
+			}
+		}
+		const FInv_EquipmentFragment* SrcEquip = SrcManifest.GetFragmentOfType<FInv_EquipmentFragment>();
+		if (SrcEquip)
+		{
+			UE_LOG(LogTemp, Error, TEXT("[Phase8진단-AddEntry] PreviewMesh=%s"),
+				SrcEquip->HasPreviewMesh() ? TEXT("있음") : TEXT("없음(null)"));
+		}
+	}
+
 	FInv_InventoryEntry& NewEntry = Entries.AddDefaulted_GetRef(); // 새 항목 추가
 	NewEntry.Item = ItemComponent->GetItemManifest().Manifest(OwningActor); // 항목 매니페스트에서 항목 가져오기 (새로 생성된 아이템의 소유자 지정)
+
+	// ★ [Phase8진단] 생성된 아이템의 SlotPosition 확인 ★
+	{
+		const FInv_AttachmentHostFragment* NewHost = NewEntry.Item->GetItemManifest().GetFragmentOfType<FInv_AttachmentHostFragment>();
+		if (NewHost)
+		{
+			const auto& NewSlots = NewHost->GetSlotDefinitions();
+			UE_LOG(LogTemp, Error, TEXT("[Phase8진단-AddEntry] 생성된 아이템 SlotDefs=%d"), NewSlots.Num());
+			for (int32 d = 0; d < NewSlots.Num(); ++d)
+			{
+				UE_LOG(LogTemp, Error, TEXT("[Phase8진단-AddEntry]   [%d] %s → Position=%d"),
+					d, *NewSlots[d].SlotType.ToString(), (int32)NewSlots[d].SlotPosition);
+			}
+		}
+	}
 
 	IC->AddRepSubObj(NewEntry.Item); // 복제 하위 객체로 항목 추가
 	MarkItemDirty(NewEntry); // 복제되어야 함을 알려주는 것.

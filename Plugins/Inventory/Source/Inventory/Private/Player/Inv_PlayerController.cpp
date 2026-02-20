@@ -301,6 +301,13 @@ void AInv_PlayerController::PrimaryInteract()
 	InventoryComponent->TryAddItem(ItemComp);
 }
 
+bool AInv_PlayerController::Server_Interact_Validate(AActor* TargetActor)
+{
+	// 기본 검증: nullptr은 허용 (함수 내에서 처리)
+	// 추가 검증이 필요하면 여기에 추가
+	return true;
+}
+
 void AInv_PlayerController::Server_Interact_Implementation(AActor* TargetActor)
 {
 	if (!TargetActor) return;
@@ -1154,6 +1161,20 @@ void AInv_PlayerController::Client_RequestInventoryState_Implementation()
 	UE_LOG(LogTemp, Warning, TEXT("✅ 클라이언트 → 서버 전송 완료!"));
 	UE_LOG(LogTemp, Warning, TEXT("════════════════════════════════════════════════════════════════════════════════"));
 #endif
+}
+
+/**
+ * [클라이언트 → 서버] Server RPC 검증 함수
+ */
+bool AInv_PlayerController::Server_ReceiveInventoryState_Validate(const TArray<FInv_SavedItemData>& SavedItems)
+{
+	// 기본 검증: 데이터 크기 제한 (악의적 대량 전송 방지)
+	if (SavedItems.Num() > 1000)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Server_ReceiveInventoryState_Validate] 아이템 수 초과: %d"), SavedItems.Num());
+		return false;
+	}
+	return true;
 }
 
 /**

@@ -52,6 +52,32 @@ class UStaticMesh;
 class APlayerController;
 
 // ════════════════════════════════════════════════════════════════════════════════
+// 📌 EInv_AttachmentSlotPosition — 부착물 슬롯 UI 배치 위치
+// ════════════════════════════════════════════════════════════════════════════════
+// Phase 8: 십자형 레이아웃에서 슬롯이 표시될 방향
+// AttachmentPanel의 GridPanel에서 이 값을 읽어 Top/Left/Right/Bottom에 분배
+//
+// 사용처:
+//   - FInv_AttachmentSlotDef::SlotPosition (BP 에디터에서 설정)
+//   - Inv_AttachmentPanel::BuildSlotWidgets() (슬롯 배치 분기)
+//
+// BP 설정 예시:
+//   BP_Inv_Rifle의 AttachmentHostFragment → SlotDefinitions:
+//     [0] Scope  → SlotPosition = Top
+//     [1] Grip   → SlotPosition = Left
+//     [2] Laser  → SlotPosition = Right
+//     [3] Magazine → SlotPosition = Bottom
+// ════════════════════════════════════════════════════════════════════════════════
+UENUM(BlueprintType)
+enum class EInv_AttachmentSlotPosition : uint8
+{
+	Top     UMETA(DisplayName = "상단 (스코프 등)"),
+	Bottom  UMETA(DisplayName = "하단 (탄창 등)"),
+	Left    UMETA(DisplayName = "좌측 (그립 등)"),
+	Right   UMETA(DisplayName = "우측 (조명/레이저 등)"),
+};
+
+// ════════════════════════════════════════════════════════════════════════════════
 // 📌 FInv_AttachmentSlotDef - 부착물 슬롯 정의
 // ════════════════════════════════════════════════════════════════════════════════
 // 부착물 슬롯 1개의 정의 (Fragment가 아닌 순수 데이터)
@@ -77,6 +103,18 @@ struct FInv_AttachmentSlotDef
 	// 이 슬롯에 장착 가능한 부착물 수 (보통 1)
 	UPROPERTY(EditAnywhere, Category = "Attachment", meta = (DisplayName = "MaxCount (최대 장착 수)", Tooltip = "이 슬롯에 동시에 장착 가능한 부착물 수", ClampMin = 1))
 	int32 MaxCount{1};
+
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [Phase 8] 슬롯 UI 배치 위치
+	// ════════════════════════════════════════════════════════════════
+	// 십자형 레이아웃에서 이 슬롯이 표시될 방향
+	// Top = 무기 위(스코프), Bottom = 아래(탄창), Left/Right = 좌우(그립/조명)
+	// AttachmentPanel::BuildSlotWidgets()에서 이 값으로 VerticalBox 분배
+	// ════════════════════════════════════════════════════════════════
+	UPROPERTY(EditAnywhere, Category = "Attachment",
+		meta = (DisplayName = "SlotPosition (슬롯 UI 위치)",
+				Tooltip = "십자형 부착물 패널에서 이 슬롯이 표시될 방향. Top=상단(스코프), Bottom=하단(탄창), Left=좌측(그립), Right=우측(조명)"))
+	EInv_AttachmentSlotPosition SlotPosition = EInv_AttachmentSlotPosition::Top;
 };
 
 
@@ -135,6 +173,9 @@ struct FInv_AttachmentHostFragment : public FInv_ItemFragment
 
 	void AttachItem(int32 SlotIndex, const FInv_AttachedItemData& Data);
 	FInv_AttachedItemData DetachItem(int32 SlotIndex);
+
+	// ── 디자인타임 값 복원 (세이브/로드 후) ──
+	void RestoreDesignTimeSlotPositions(const TArray<FInv_AttachmentSlotDef>& CDOSlotDefs);
 
 	// ── 부착물 스탯 일괄 적용/해제 ──
 

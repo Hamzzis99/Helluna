@@ -433,7 +433,7 @@ public:
 	 * 
 	 * @param SavedItems - 클라이언트에서 수집한 인벤토리 데이터
 	 */
-	UFUNCTION(Server, Reliable)
+	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_ReceiveInventoryState(const TArray<FInv_SavedItemData>& SavedItems);
 
 	/**
@@ -518,7 +518,7 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory", meta = (DisplayName = "ItemTraceChannel (아이템 추적 채널)", Tooltip = "아이템 탐지용 콜리전 채널"))
 	TEnumAsByte<ECollisionChannel> ItemTraceChannel;
 
-	UFUNCTION(Server, Reliable)
+	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_Interact(AActor* TargetActor);
 
 	TWeakObjectPtr<AActor> ThisActor;

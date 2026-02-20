@@ -15,6 +15,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Helluna.h"  // 디버그 매크로 정의 (HELLUNA_DEBUG_LOGIN 등)
 #include "Persistence/Inv_SaveGameMode.h"
 #include "HellunaTypes.h"
 #include "HellunaBaseGameMode.generated.h"
@@ -22,8 +23,9 @@
 // ════════════════════════════════════════════════════════════════════════════════
 // 전처리기 - 디버그 로그 제어
 // ════════════════════════════════════════════════════════════════════════════════
-#define HELLUNA_DEBUG_LOGIN 1
-#define HELLUNA_DEBUG_INVENTORY 1
+// 📌 HELLUNA_DEBUG_LOGIN, HELLUNA_DEBUG_INVENTORY 등은 Helluna.h에서 정의됨
+// 📌 여기서 재정의하지 않음 (중복 정의 경고 방지)
+// ════════════════════════════════════════════════════════════════════════════════
 
 // 전방 선언
 class UHellunaAccountSaveGame;

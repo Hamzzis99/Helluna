@@ -214,73 +214,77 @@ bool UInv_CraftingButton::HasRequiredMaterials()
 	UInv_InventoryComponent* InvComp = UInv_InventoryStatics::GetInventoryComponent(GetOwningPlayer());
 	if (!IsValid(InvComp)) return false;
 
-	// 재료 1 체크
-	if (RequiredMaterialTag.IsValid() && RequiredAmount > 0)
-	{
-		int32 TotalCount = 0;
-		const auto& AllItems = InvComp->GetInventoryList().GetAllItems();
-		
-		for (UInv_InventoryItem* Item : AllItems)
-		{
-			if (!IsValid(Item)) continue;
-			if (!Item->GetItemManifest().GetItemType().MatchesTagExact(RequiredMaterialTag)) continue;
-			
-			TotalCount += Item->GetTotalStackCount();
-		}
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [최적화] GetAllItems() 1번만 호출, 루프 1번만 순회
+	// ════════════════════════════════════════════════════════════════
+	// 이전: GetAllItems() 3번 호출 + 루프 3번 순회
+	// 이후: GetAllItems() 1번 호출 + 루프 1번 순회 (약 66% 연산량 감소)
+	// ════════════════════════════════════════════════════════════════
 
-		if (TotalCount < RequiredAmount)
+	const bool bNeedMaterial1 = RequiredMaterialTag.IsValid() && RequiredAmount > 0;
+	const bool bNeedMaterial2 = RequiredMaterialTag2.IsValid() && RequiredAmount2 > 0;
+	const bool bNeedMaterial3 = RequiredMaterialTag3.IsValid() && RequiredAmount3 > 0;
+
+	// 필요한 재료가 없으면 바로 true 반환
+	if (!bNeedMaterial1 && !bNeedMaterial2 && !bNeedMaterial3)
+	{
+		return true;
+	}
+
+	// 1번만 GetAllItems() 호출
+	const TArray<UInv_InventoryItem*> AllItems = InvComp->GetInventoryList().GetAllItems();
+
+	int32 TotalCount1 = 0;
+	int32 TotalCount2 = 0;
+	int32 TotalCount3 = 0;
+
+	// 1번만 루프 순회하면서 3개 재료 모두 카운트
+	for (UInv_InventoryItem* Item : AllItems)
+	{
+		if (!IsValid(Item)) continue;
+
+		const FGameplayTag ItemType = Item->GetItemManifest().GetItemType();
+		const int32 StackCount = Item->GetTotalStackCount();
+
+		if (bNeedMaterial1 && ItemType.MatchesTagExact(RequiredMaterialTag))
 		{
-#if INV_DEBUG_CRAFT
-			UE_LOG(LogTemp, Log, TEXT("재료1 부족: %d/%d (%s)"), TotalCount, RequiredAmount, *RequiredMaterialTag.ToString());
-#endif
-			return false;
+			TotalCount1 += StackCount;
 		}
+		if (bNeedMaterial2 && ItemType.MatchesTagExact(RequiredMaterialTag2))
+		{
+			TotalCount2 += StackCount;
+		}
+		if (bNeedMaterial3 && ItemType.MatchesTagExact(RequiredMaterialTag3))
+		{
+			TotalCount3 += StackCount;
+		}
+	}
+
+	// 재료 1 체크
+	if (bNeedMaterial1 && TotalCount1 < RequiredAmount)
+	{
+#if INV_DEBUG_CRAFT
+		UE_LOG(LogTemp, Log, TEXT("재료1 부족: %d/%d (%s)"), TotalCount1, RequiredAmount, *RequiredMaterialTag.ToString());
+#endif
+		return false;
 	}
 
 	// 재료 2 체크
-	if (RequiredMaterialTag2.IsValid() && RequiredAmount2 > 0)
+	if (bNeedMaterial2 && TotalCount2 < RequiredAmount2)
 	{
-		int32 TotalCount = 0;
-		const auto& AllItems = InvComp->GetInventoryList().GetAllItems();
-
-		for (UInv_InventoryItem* Item : AllItems)
-		{
-			if (!IsValid(Item)) continue;
-			if (!Item->GetItemManifest().GetItemType().MatchesTagExact(RequiredMaterialTag2)) continue;
-
-			TotalCount += Item->GetTotalStackCount();
-		}
-
-		if (TotalCount < RequiredAmount2)
-		{
 #if INV_DEBUG_CRAFT
-			UE_LOG(LogTemp, Log, TEXT("재료2 부족: %d/%d (%s)"), TotalCount, RequiredAmount2, *RequiredMaterialTag2.ToString());
+		UE_LOG(LogTemp, Log, TEXT("재료2 부족: %d/%d (%s)"), TotalCount2, RequiredAmount2, *RequiredMaterialTag2.ToString());
 #endif
-			return false;
-		}
+		return false;
 	}
 
 	// 재료 3 체크
-	if (RequiredMaterialTag3.IsValid() && RequiredAmount3 > 0)
+	if (bNeedMaterial3 && TotalCount3 < RequiredAmount3)
 	{
-		int32 TotalCount = 0;
-		const auto& AllItems = InvComp->GetInventoryList().GetAllItems();
-
-		for (UInv_InventoryItem* Item : AllItems)
-		{
-			if (!IsValid(Item)) continue;
-			if (!Item->GetItemManifest().GetItemType().MatchesTagExact(RequiredMaterialTag3)) continue;
-
-			TotalCount += Item->GetTotalStackCount();
-		}
-
-		if (TotalCount < RequiredAmount3)
-		{
 #if INV_DEBUG_CRAFT
-			UE_LOG(LogTemp, Log, TEXT("재료3 부족: %d/%d (%s)"), TotalCount, RequiredAmount3, *RequiredMaterialTag3.ToString());
+		UE_LOG(LogTemp, Log, TEXT("재료3 부족: %d/%d (%s)"), TotalCount3, RequiredAmount3, *RequiredMaterialTag3.ToString());
 #endif
-			return false;
-		}
+		return false;
 	}
 
 	return true;

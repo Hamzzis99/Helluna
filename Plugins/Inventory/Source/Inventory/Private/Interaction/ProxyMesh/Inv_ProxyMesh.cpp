@@ -1,7 +1,7 @@
 // Gihyeon's Inventory Project
 
 
-#include "EquipmentManagement/ProxyMesh/Inv_ProxyMesh.h"
+#include "Interaction/ProxyMesh/Inv_ProxyMesh.h"
 
 #include "EquipmentManagement/Components/Inv_EquipmentComponent.h"
 #include "GameFramework/Character.h"

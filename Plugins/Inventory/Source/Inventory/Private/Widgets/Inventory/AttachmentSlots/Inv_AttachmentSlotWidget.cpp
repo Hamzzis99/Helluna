@@ -83,7 +83,7 @@ void UInv_AttachmentSlotWidget::SetOccupied(const FInv_AttachedItemData& Data)
 		{
 			FSlateBrush IconBrush;
 			IconBrush.SetResourceObject(Icon);
-			IconBrush.ImageSize = FVector2D(44.f, 44.f); // TileSize 기준 패딩 적용
+			IconBrush.ImageSize = IconSize;
 			Image_ItemIcon->SetBrush(IconBrush);
 			Image_ItemIcon->SetVisibility(ESlateVisibility::Visible); // 아이콘 보이기
 		}

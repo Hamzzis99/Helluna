@@ -176,6 +176,120 @@ int32 AInv_SaveGameMode::SaveAllPlayersInventory()
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
+// 📌 [Phase 5] SaveAllPlayersInventoryDirect — 서버 직접 수집 저장
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 📌 처리 흐름:
+//    1. 전체 PlayerController 순회
+//    2. InventoryComponent->CollectInventoryDataForSave() 직접 호출
+//    3. MergeEquipmentState()로 장착 정보 병합
+//    4. InventorySaveGame->SavePlayer()로 메모리 저장 (반복)
+//    5. AsyncSaveToDisk() 1회 호출 (Phase 2 비동기 저장)
+//
+// 📌 장점:
+//    - RPC 왕복 없음 (네트워크 부하 제거)
+//    - 클라이언트 응답 대기 없음 (타임아웃 불필요)
+//    - 미응답 플레이어 데이터 손실 없음
+//
+// 📌 전제조건:
+//    - 아이템 이동 시 Server_UpdateItemGridPosition RPC로 서버 Entry 갱신 필수
+//
+// ════════════════════════════════════════════════════════════════════════════════
+int32 AInv_SaveGameMode::SaveAllPlayersInventoryDirect()
+{
+	if (!HasAuthority()) return 0;
+
+#if INV_DEBUG_SAVE
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║ [Phase 5] SaveAllPlayersInventoryDirect — 서버 직접 저장   ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
+
+	// Phase 2: 비동기 저장 중이면 스킵
+	if (bAsyncSaveInProgress)
+	{
+#if INV_DEBUG_SAVE
+		UE_LOG(LogTemp, Warning, TEXT("[Phase 5] ⚠️ 비동기 저장 진행 중 — 스킵"));
+#endif
+		return 0;
+	}
+
+	int32 SavedCount = 0;
+
+	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	{
+		APlayerController* PC = It->Get();
+		if (!IsValid(PC)) continue;
+
+		FString PlayerId = GetPlayerSaveId(PC);
+		if (PlayerId.IsEmpty()) continue;
+
+		// ── Step 1: InventoryComponent에서 직접 수집 ──
+		UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
+		if (!IsValid(InvComp)) continue;
+
+		TArray<FInv_SavedItemData> CollectedItems = InvComp->CollectInventoryDataForSave();
+
+		// ── Step 2: EquipmentComponent에서 장착 상태 병합 ──
+		MergeEquipmentState(PC, CollectedItems);
+
+		if (CollectedItems.Num() == 0) continue;
+
+		// ── Step 3: 메모리에만 저장 (디스크 쓰기는 마지막에 1회) ──
+		FInv_PlayerSaveData SaveData;
+		SaveData.Items = CollectedItems;
+		SaveData.LastSaveTime = FDateTime::Now();
+
+		if (IsValid(InventorySaveGame))
+		{
+			InventorySaveGame->SavePlayer(PlayerId, SaveData);
+		}
+
+		// 캐시 갱신
+		CachePlayerData(PlayerId, SaveData);
+
+		SavedCount++;
+
+#if INV_DEBUG_SAVE
+		UE_LOG(LogTemp, Warning, TEXT("[Phase 5] ✅ %s: %d개 아이템 수집 완료"),
+			*PlayerId, CollectedItems.Num());
+#endif
+	}
+
+	// ── Step 4: Phase 2 비동기 디스크 저장 (1회) ──
+	if (SavedCount > 0 && IsValid(InventorySaveGame))
+	{
+		bAsyncSaveInProgress = true;
+
+#if INV_DEBUG_SAVE
+		UE_LOG(LogTemp, Warning, TEXT("[Phase 5] 🚀 비동기 디스크 저장 시작! (%d명)"), SavedCount);
+#endif
+
+		TWeakObjectPtr<AInv_SaveGameMode> WeakThis(this);
+		UInv_InventorySaveGame::AsyncSaveToDisk(InventorySaveGame, InventorySaveSlotName,
+			[WeakThis, SavedCount](bool bSuccess)
+			{
+				if (WeakThis.IsValid())
+				{
+					WeakThis->bAsyncSaveInProgress = false;
+				}
+
+#if INV_DEBUG_SAVE
+				UE_LOG(LogTemp, Warning, TEXT("[Phase 5] 💾 비동기 저장 완료! %d명 (성공=%s)"),
+					SavedCount, bSuccess ? TEXT("Y") : TEXT("N"));
+#endif
+			});
+	}
+
+#if INV_DEBUG_SAVE
+	UE_LOG(LogTemp, Warning, TEXT("[Phase 5] 서버 직접 저장 완료: %d명"), SavedCount);
+#endif
+
+	return SavedCount;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
 // 📌 OnPlayerInventoryLogout — 플레이어 로그아웃 시 저장 처리
 // ════════════════════════════════════════════════════════════════════════════════
 //
@@ -470,6 +584,37 @@ void AInv_SaveGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
 		}
 #endif
 
+		// ════════════════════════════════════════════════════════════════════════
+		// 📌 [Phase 8] 디자인타임 전용 값 복원
+		// ════════════════════════════════════════════════════════════════════════
+		// 문제: DeserializeAndApplyFragments()가 Fragments 배열 전체를 교체하므로
+		//       BP 에디터에서 나중에 변경한 디자인타임 전용 값이 옛날 세이브 데이터로 덮어씌워짐
+		// 해결: CDO 템플릿에서 디자인타임 전용 값만 추출하여 역직렬화된 데이터에 다시 적용
+		//
+		// 대상 필드:
+		//   - AttachmentHostFragment::SlotDefinitions[].SlotPosition (UI 배치 위치)
+		//   - EquipmentFragment::PreviewStaticMesh, PreviewRotationOffset, PreviewCameraDistance
+		// ════════════════════════════════════════════════════════════════════════
+		{
+			const FInv_ItemManifest& CDOManifest = Template->GetItemManifest();
+
+			// ── SlotPosition 복원 ──
+			const FInv_AttachmentHostFragment* CDOHost = CDOManifest.GetFragmentOfType<FInv_AttachmentHostFragment>();
+			FInv_AttachmentHostFragment* LoadedHost = ManifestCopy.GetFragmentOfTypeMutable<FInv_AttachmentHostFragment>();
+			if (CDOHost && LoadedHost)
+			{
+				LoadedHost->RestoreDesignTimeSlotPositions(CDOHost->GetSlotDefinitions());
+			}
+
+			// ── PreviewMesh 복원 ──
+			const FInv_EquipmentFragment* CDOEquip = CDOManifest.GetFragmentOfType<FInv_EquipmentFragment>();
+			FInv_EquipmentFragment* LoadedEquip = ManifestCopy.GetFragmentOfTypeMutable<FInv_EquipmentFragment>();
+			if (CDOEquip && LoadedEquip)
+			{
+				LoadedEquip->RestoreDesignTimePreview(*CDOEquip);
+			}
+		}
+
 		// ── Step 6: 인벤토리에 추가 (SpawnActor/Server_AddNewItem 없음!) ──
 		UInv_InventoryItem* NewItem = InvComp->AddItemFromManifest(ManifestCopy, ItemData.StackCount);
 		if (!NewItem) continue;
@@ -598,7 +743,19 @@ void AInv_SaveGameMode::ForceAutoSave()
 // ════════════════════════════════════════════════════════════════════════════════
 void AInv_SaveGameMode::OnAutoSaveTimer()
 {
-	RequestAllPlayersInventoryState();
+	// ════════════════════════════════════════════════════════════════════════════
+	// 📌 [Phase 5] 서버 직접 저장 vs 기존 RPC 방식 분기
+	// ════════════════════════════════════════════════════════════════════════════
+	if (bUseServerDirectSave)
+	{
+		// Phase 5: 서버에서 직접 수집 (RPC 없음!)
+		SaveAllPlayersInventoryDirect();
+	}
+	else
+	{
+		// 기존 방식: 클라이언트 RPC 왕복
+		RequestAllPlayersInventoryState();
+	}
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
