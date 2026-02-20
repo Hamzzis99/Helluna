@@ -203,34 +203,28 @@ void UInv_AttachmentPanel::ClosePanel()
 }
 
 // ════════════════════════════════════════════════════════════════
-// 📌 BuildSlotWidgets — 슬롯 위젯 생성 및 십자형 레이아웃에 배치
+// 📌 BuildSlotWidgets — WBP BindWidget 슬롯을 무기 데이터로 초기화
 // ════════════════════════════════════════════════════════════════
 // 호출 경로: OpenForWeapon → 이 함수
 // 처리 흐름:
-//   1. ClearSlotWidgets() — 기존 위젯 정리
-//   2. AttachmentHostFragment에서 SlotDefinitions 가져오기
-//   3. 각 슬롯에 대해 CreateWidget → InitSlot → 델리게이트 바인딩
-//   4. SlotPosition에 따라 Top/Bottom/Left/Right VerticalBox에 분배
+//   1. ClearSlotWidgets() — 이전 델리게이트 해제
+//   2. ResetAllSlots() — 4개 슬롯 전부 Hidden + SetEmpty
+//   3. SlotDef의 SlotType → DerivePositionFromSlotType → GetSlotWidgetForPosition
+//   4. 해당 BindWidget 슬롯이 있으면 InitSlot + Visible + 델리게이트 바인딩
 // ════════════════════════════════════════════════════════════════
 void UInv_AttachmentPanel::BuildSlotWidgets()
 {
 	ClearSlotWidgets();
-	ClearAllSlotContainers();
+	ResetAllSlots();
 
 	// ★ [디버그] BindWidget 연결 상태 확인
-	UE_LOG(LogTemp, Error, TEXT("[Attachment UI] BindWidget 상태: Top=%s, Bottom=%s, Left=%s, Right=%s, Preview=%s"),
-		IsValid(VerticalBox_Top) ? TEXT("✅") : TEXT("❌nullptr"),
-		IsValid(VerticalBox_Bottom) ? TEXT("✅") : TEXT("❌nullptr"),
-		IsValid(VerticalBox_Left) ? TEXT("✅") : TEXT("❌nullptr"),
-		IsValid(VerticalBox_Right) ? TEXT("✅") : TEXT("❌nullptr"),
-		IsValid(Image_WeaponPreview) ? TEXT("✅") : TEXT("❌nullptr"));
+	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] Slot BindWidget: Top=%s, Bottom=%s, Left=%s, Right=%s"),
+		IsValid(Slot_Top) ? TEXT("✅") : TEXT("❌없음"),
+		IsValid(Slot_Bottom) ? TEXT("✅") : TEXT("❌없음"),
+		IsValid(Slot_Left) ? TEXT("✅") : TEXT("❌없음"),
+		IsValid(Slot_Right) ? TEXT("✅") : TEXT("❌없음"));
 
 	if (!CurrentWeaponItem.IsValid()) return;
-	if (!AttachmentSlotWidgetClass)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[Attachment UI] AttachmentSlotWidgetClass가 설정되지 않음!"));
-		return;
-	}
 
 	// 무기의 AttachmentHostFragment 가져오기
 	const FInv_AttachmentHostFragment* HostFrag = CurrentWeaponItem->GetItemManifest().GetFragmentOfType<FInv_AttachmentHostFragment>();
@@ -255,94 +249,62 @@ void UInv_AttachmentPanel::BuildSlotWidgets()
 				*DiagData.ItemManifestCopy.GetItemType().ToString());
 		}
 	}
-
-	// ★ 진단: CurrentWeaponItem 포인터와 FastArray 내 아이템 포인터 비교
-	{
-		UE_LOG(LogTemp, Error, TEXT("[부착진단-패널] BuildSlotWidgets 진입:"));
-		UE_LOG(LogTemp, Error, TEXT("[부착진단-패널]   CurrentWeaponItem ptr=%p"),
-			CurrentWeaponItem.IsValid() ? (void*)CurrentWeaponItem.Get() : nullptr);
-		UE_LOG(LogTemp, Error, TEXT("[부착진단-패널]   CurrentWeaponEntryIndex=%d"), CurrentWeaponEntryIndex);
-
-		// FastArray에서 모든 아이템 조회하여 비교
-		if (InventoryComponent.IsValid())
-		{
-			TArray<UInv_InventoryItem*> AllItems = InventoryComponent->GetInventoryList().GetAllItems();
-			UE_LOG(LogTemp, Error, TEXT("[부착진단-패널]   FastArray AllItems 총 %d개"), AllItems.Num());
-			for (int32 e = 0; e < AllItems.Num(); ++e)
-			{
-				UInv_InventoryItem* Item = AllItems[e];
-				if (!IsValid(Item)) continue;
-
-				const FInv_AttachmentHostFragment* EntryHost =
-					Item->GetItemManifest().GetFragmentOfType<FInv_AttachmentHostFragment>();
-				const int32 EntryIdx = InventoryComponent->FindEntryIndexForItem(Item);
-				UE_LOG(LogTemp, Error, TEXT("[部착진단-패널]   Item[%d] ptr=%p, EntryIdx=%d, Type=%s, HostFrag=%s, AttachedItems=%d"),
-					e,
-					(void*)Item,
-					EntryIdx,
-					*Item->GetItemManifest().GetItemType().ToString(),
-					EntryHost ? TEXT("유효") : TEXT("없음"),
-					EntryHost ? EntryHost->GetAttachedItems().Num() : -1);
-			}
-		}
-
-		// 현재 HostFrag 포인터와 AttachedItems 수
-		UE_LOG(LogTemp, Error, TEXT("[부착진단-패널]   현재 HostFrag ptr=%p, AttachedItems=%d"),
-			(const void*)HostFrag, HostFrag ? HostFrag->GetAttachedItems().Num() : -1);
-	}
 #endif
-	if (HostFrag->GetAttachedItems().Num() == 0)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[부착진단-패널]   AttachedItems가 비어있음! 부착물 데이터 유실 의심"));
-	}
 
 	const TArray<FInv_AttachmentSlotDef>& SlotDefs = HostFrag->GetSlotDefinitions();
 
 	for (int32 i = 0; i < SlotDefs.Num(); ++i)
 	{
-		UInv_AttachmentSlotWidget* SlotWidget = CreateWidget<UInv_AttachmentSlotWidget>(this, AttachmentSlotWidgetClass);
-		if (!IsValid(SlotWidget)) continue;
+		// SlotType 태그로 UI 위치 결정
+		EInv_AttachmentSlotPosition ResolvedPosition = DerivePositionFromSlotType(SlotDefs[i].SlotType);
+
+		// 해당 위치의 BindWidget 슬롯 가져오기
+		UInv_AttachmentSlotWidget* SlotWidget = GetSlotWidgetForPosition(ResolvedPosition);
+		if (!IsValid(SlotWidget))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] 슬롯[%d] %s → Position=%d: WBP에 해당 슬롯 위젯 없음 (건너뜀)"),
+				i, *SlotDefs[i].SlotType.ToString(), (int32)ResolvedPosition);
+			// SlotWidgets 배열에 nullptr 추가 (인덱스 유지 중요!)
+			SlotWidgets.Add(nullptr);
+			continue;
+		}
 
 		// 장착된 부착물 데이터 확인
 		const FInv_AttachedItemData* AttachedData = HostFrag->GetAttachedItemData(i);
 
-		// 슬롯 초기화 (장착 데이터 있으면 전달)
+		// 슬롯 초기화
 		SlotWidget->InitSlot(i, SlotDefs[i], AttachedData);
 
 		// 슬롯 클릭 델리게이트 바인딩
 		SlotWidget->OnSlotClicked.AddDynamic(this, &ThisClass::OnSlotClicked);
 
-		// Phase 8: SlotType 태그로 UI 위치 자동 결정 (항상 태그 기반)
-		EInv_AttachmentSlotPosition ResolvedPosition = DerivePositionFromSlotType(SlotDefs[i].SlotType);
+		// 슬롯 보이기
+		SlotWidget->SetVisibility(ESlateVisibility::Visible);
 
-		UVerticalBox* Container = GetContainerForPosition(ResolvedPosition);
-		UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 슬롯[%d] %s → Position=%d, Container=%s"),
+		UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 슬롯[%d] %s → Position=%d, Widget=%s"),
 			i, *SlotDefs[i].SlotType.ToString(),
 			(int32)ResolvedPosition,
-			Container ? *Container->GetName() : TEXT("nullptr"));
-		if (IsValid(Container))
-		{
-			Container->AddChildToVerticalBox(SlotWidget);
-		}
+			*SlotWidget->GetName());
 
 		SlotWidgets.Add(SlotWidget);
 	}
 
 #if INV_DEBUG_ATTACHMENT
-	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 슬롯 위젯 %d개 생성 완료 (십자형 배치)"), SlotWidgets.Num());
+	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 슬롯 위젯 %d개 초기화 완료 (BindWidget 방식)"), SlotWidgets.Num());
 #endif
 }
 
 // ════════════════════════════════════════════════════════════════
-// 📌 ClearSlotWidgets — 모든 슬롯 위젯 제거
+// 📌 ClearSlotWidgets — 델리게이트 해제 및 배열 정리
 // ════════════════════════════════════════════════════════════════
+// BindWidget 슬롯은 WBP 소유이므로 RemoveFromParent 하지 않음
 void UInv_AttachmentPanel::ClearSlotWidgets()
 {
 	for (TObjectPtr<UInv_AttachmentSlotWidget>& Widget : SlotWidgets)
 	{
 		if (IsValid(Widget))
 		{
-			Widget->RemoveFromParent();
+			Widget->OnSlotClicked.RemoveAll(this);
 		}
 	}
 	SlotWidgets.Empty();
@@ -646,14 +608,37 @@ int32 UInv_AttachmentPanel::FindCurrentWeaponEntryIndex() const
 }
 
 // ════════════════════════════════════════════════════════════════
-// 📌 ClearAllSlotContainers — 4방향 VerticalBox 자식 위젯 전부 제거
+// 📌 ResetAllSlots — 4방향 슬롯 전부 Hidden + SetEmpty (초기화)
 // ════════════════════════════════════════════════════════════════
-void UInv_AttachmentPanel::ClearAllSlotContainers()
+void UInv_AttachmentPanel::ResetAllSlots()
 {
-	if (IsValid(VerticalBox_Top))    VerticalBox_Top->ClearChildren();
-	if (IsValid(VerticalBox_Bottom)) VerticalBox_Bottom->ClearChildren();
-	if (IsValid(VerticalBox_Left))   VerticalBox_Left->ClearChildren();
-	if (IsValid(VerticalBox_Right))  VerticalBox_Right->ClearChildren();
+	TArray<UInv_AttachmentSlotWidget*> AllSlots = { Slot_Top, Slot_Bottom, Slot_Left, Slot_Right };
+
+	for (UInv_AttachmentSlotWidget* SlotWidget : AllSlots)
+	{
+		if (IsValid(SlotWidget))
+		{
+			SlotWidget->SetEmpty();
+			SlotWidget->SetHighlighted(false);
+			SlotWidget->SetVisibility(ESlateVisibility::Hidden);
+			SlotWidget->OnSlotClicked.RemoveAll(this);
+		}
+	}
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 GetSlotWidgetForPosition — 위치 → BindWidget 슬롯 매핑
+// ════════════════════════════════════════════════════════════════
+UInv_AttachmentSlotWidget* UInv_AttachmentPanel::GetSlotWidgetForPosition(EInv_AttachmentSlotPosition Position) const
+{
+	switch (Position)
+	{
+	case EInv_AttachmentSlotPosition::Top:    return Slot_Top;
+	case EInv_AttachmentSlotPosition::Bottom: return Slot_Bottom;
+	case EInv_AttachmentSlotPosition::Left:   return Slot_Left;
+	case EInv_AttachmentSlotPosition::Right:  return Slot_Right;
+	default:                                  return nullptr;
+	}
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -796,7 +781,7 @@ void UInv_AttachmentPanel::SetupWeaponPreview()
 			Image_WeaponPreview->SetBrush(PreviewBrush);
 		}
 
-		Image_WeaponPreview->SetDesiredSizeOverride(FVector2D(300.f, 300.f));
+		Image_WeaponPreview->SetDesiredSizeOverride(PreviewImageSize);
 		Image_WeaponPreview->SetVisibility(ESlateVisibility::Visible);
 	}
 

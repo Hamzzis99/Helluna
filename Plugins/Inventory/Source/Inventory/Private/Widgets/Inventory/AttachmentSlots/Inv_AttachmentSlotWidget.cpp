@@ -83,7 +83,7 @@ void UInv_AttachmentSlotWidget::SetOccupied(const FInv_AttachedItemData& Data)
 		{
 			FSlateBrush IconBrush;
 			IconBrush.SetResourceObject(Icon);
-			IconBrush.ImageSize = FVector2D(64.f, 64.f); // 슬롯 80x80 기준 패딩 8px
+			IconBrush.ImageSize = IconSize;
 			Image_ItemIcon->SetBrush(IconBrush);
 			Image_ItemIcon->SetVisibility(ESlateVisibility::Visible); // 아이콘 보이기
 		}

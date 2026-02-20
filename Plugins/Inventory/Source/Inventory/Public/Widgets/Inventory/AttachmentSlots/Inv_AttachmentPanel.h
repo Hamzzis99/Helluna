@@ -100,37 +100,47 @@ public:
 
 private:
 	// ── BindWidget ──
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> Text_WeaponName;
 
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UImage> Image_WeaponIcon;
 
 	// ── Phase 8: 십자형 레이아웃 BindWidget ──
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UVerticalBox> VerticalBox_Top;
 
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UVerticalBox> VerticalBox_Bottom;
 
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UVerticalBox> VerticalBox_Left;
 
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UVerticalBox> VerticalBox_Right;
 
 	// 중앙 무기 3D 프리뷰 이미지
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UImage> Image_WeaponPreview;
 
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Button_Close;
 
-	// 슬롯 위젯 클래스 (WBP에서 할당)
-	UPROPERTY(EditAnywhere, Category = "Attachment", meta = (DisplayName = "슬롯 위젯 클래스", Tooltip = "WBP_Inv_AttachmentSlotWidget 블루프린트 클래스"))
-	TSubclassOf<UInv_AttachmentSlotWidget> AttachmentSlotWidgetClass;
+	// ── Phase 8: 4방향 슬롯 위젯 (WBP에서 직접 배치) ──
+	// WBP에 위젯이 있으면 해당 방향 슬롯 활성화, 없으면 비활성화
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UInv_AttachmentSlotWidget> Slot_Top;
 
-	// 생성된 슬롯 위젯 배열
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UInv_AttachmentSlotWidget> Slot_Bottom;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UInv_AttachmentSlotWidget> Slot_Left;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UInv_AttachmentSlotWidget> Slot_Right;
+
+	// 생성된 슬롯 위젯 배열 (인덱스 = SlotDef 인덱스)
 	UPROPERTY()
 	TArray<TObjectPtr<UInv_AttachmentSlotWidget>> SlotWidgets;
 
@@ -146,6 +156,10 @@ private:
 	// ── Phase 8: 3D 프리뷰 ──
 	UPROPERTY()
 	TWeakObjectPtr<AInv_WeaponPreviewActor> WeaponPreviewActor;
+
+	// ── 프리뷰 설정 (WBP Class Defaults에서 조절) ──
+	UPROPERTY(EditAnywhere, Category = "Attachment|Preview", meta = (DisplayName = "프리뷰 이미지 크기"))
+	FVector2D PreviewImageSize = FVector2D(300.f, 300.f);
 
 	// 프리뷰 액터 스폰 Z 위치 (월드 아래쪽, 카메라에 안 잡힘)
 	static constexpr float PreviewSpawnZ = -10000.f;
@@ -163,8 +177,11 @@ private:
 	// 슬롯 위젯 전부 정리
 	void ClearSlotWidgets();
 
-	// 4방향 VerticalBox 자식 전부 정리
-	void ClearAllSlotContainers();
+	// 4방향 슬롯 전부 Hidden + SetEmpty (패널 열 때 초기화용)
+	void ResetAllSlots();
+
+	// SlotPosition → 해당 방향 BindWidget 슬롯 반환 (없으면 nullptr)
+	UInv_AttachmentSlotWidget* GetSlotWidgetForPosition(EInv_AttachmentSlotPosition Position) const;
 
 	// SlotPosition에 해당하는 VerticalBox 반환
 	UVerticalBox* GetContainerForPosition(EInv_AttachmentSlotPosition Position) const;
