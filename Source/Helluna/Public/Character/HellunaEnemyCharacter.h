@@ -110,6 +110,17 @@ public:
 			ToolTip = "적이 플레이어 또는 우주선을 타격했을 때 재생할 사운드입니다.\n비워두면 사운드가 재생되지 않습니다."))
 	TObjectPtr<USoundBase> HitSound = nullptr;
 
+	/**
+	 * 타격 사운드 거리 감쇠 설정.
+	 * 이 설정이 없으면 거리와 관계없이 동일한 볼륨으로 재생된다.
+	 * SoundAttenuation 에셋을 생성해서 연결하거나,
+	 * HitSound 에셋 자체에 Attenuation을 설정하면 된다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Combat|Effect",
+		meta = (DisplayName = "타격 사운드 감쇠 설정",
+			ToolTip = "타격 사운드의 거리 감쇠(Attenuation) 설정입니다.\n비워두면 HitSound 에셋 자체의 Attenuation 설정을 사용합니다.\nHitSound 에셋에도 설정이 없으면 거리에 관계없이 들립니다."))
+	TObjectPtr<USoundAttenuation> HitSoundAttenuation = nullptr;
+
 	// =========================================================
 	// 공격 트레이스 시스템 (타이머 기반 - 성능 최적화)
 	// =========================================================
@@ -203,7 +214,16 @@ public:
 	// ✅ 서버에서만: 공격 중에만 포즈/본 갱신을 강제하기 위한 토글
 	UFUNCTION(BlueprintCallable)
 	void SetServerAttackPoseTickEnabled(bool bEnable);
-	// 원복용 저장값
+
+	void LockMovementAndFaceTarget(AActor* TargetActor);
+
+	/** 이동 잠금 해제 (EndAbility에서 호출) */
+	void UnlockMovement();
+
+private:
+	float SavedMaxWalkSpeed = 300.f;
+	bool bMovementLocked = false;
+
 	EVisibilityBasedAnimTickOption SavedAnimTickOption = EVisibilityBasedAnimTickOption::OnlyTickPoseWhenRendered;
 
 	UPROPERTY(Transient)

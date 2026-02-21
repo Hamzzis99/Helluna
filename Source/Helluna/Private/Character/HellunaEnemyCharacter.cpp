@@ -30,6 +30,8 @@
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
+#include "Components/AudioComponent.h"
+#include "Sound/SoundAttenuation.h"
 
 AHellunaEnemyCharacter::AHellunaEnemyCharacter()
 {
@@ -411,41 +413,31 @@ void AHellunaEnemyCharacter::PerformAttackTrace()
 		{
 			AActor* HitActor = Hit.GetActor();
 			
-			// Null 체크
-			if (!IsValid(HitActor))
-			{
-				continue;
-			}
-			
-			// 이미 맞은 대상 제외
-			if (HitActorsThisAttack.Contains(HitActor))
-			{
-				continue;
-			}
-			
-			// 자신 제외
-			if (HitActor == this)
-			{
-				continue;
-			}
-			
-			// 플레이어 캐릭터만 감지
+			if (!IsValid(HitActor)) continue;
+			if (HitActor == this) continue;
+
+			// 플레이어 또는 우주선인지 확인
+			// ★ GetRootActor()를 사용해 트리거 컴포넌트 히트 시에도 루트 액터를 가져옴
+			// 우주선의 트리거 콜리전과 본체 콜리전이 별개로 감지되더라도
+			// 같은 액터로 처리되어 중복 데미지를 방지한다.
 			AHellunaHeroCharacter* HeroCharacter = Cast<AHellunaHeroCharacter>(HitActor);
 			AResourceUsingObject_SpaceShip* SpaceShip = Cast<AResourceUsingObject_SpaceShip>(HitActor);
 
-			if (!HeroCharacter && !SpaceShip)
-			continue;
+			if (!HeroCharacter && !SpaceShip) continue;
+
+			// 이미 이번 공격에서 데미지를 준 대상 제외 (중복 타격 방지)
+			if (HitActorsThisAttack.Contains(HitActor)) continue;
 
 			// 히트 대상 기록
 			HitActorsThisAttack.Add(HitActor);
 			
-			if (HasAuthority())
-			{
-				ServerApplyDamage(HitActor, CurrentDamageAmount, Hit.Location);
-			}
-			
-			StopAttackTrace();
-			return;
+			ServerApplyDamage(HitActor, CurrentDamageAmount, Hit.Location);
+
+			// ★ StopAttackTrace 제거: 첫 히트 후 즉시 종료하지 않음
+			// 이유: 우주선처럼 콜리전이 여러 개인 경우 트리거 콜리전이 먼저 감지되고
+			//       StopAttackTrace()가 호출되면 본체 콜리전은 처리되지 않는 문제가 있었음.
+			// 대신 HitActorsThisAttack으로 같은 대상에게 중복 데미지만 방지한다.
+			// 트레이스는 AnimNotify_AttackCollisionEnd에서 명시적으로 정지된다.
 		}
 	}
 }
@@ -457,54 +449,38 @@ void AHellunaEnemyCharacter::PerformAttackTrace()
 void AHellunaEnemyCharacter::ServerApplyDamage_Implementation(AActor* Target, float DamageAmount, 
 	const FVector& HitLocation)
 {
-	if (!HasAuthority())
-		return;
-	
-	if (!IsValid(Target))
-		return;
+	if (!HasAuthority()) return;
+	if (!IsValid(Target)) return;
 	
 	// 거리 검증 (안티 치트)
-	const float Distance = FVector::Dist(GetActorLocation(), Target->GetActorLocation());
-	const float MaxAttackDistance = 500.0f;
+	// 우주선처럼 큰 오브젝트는 중심까지의 거리가 멀어도 표면은 가까울 수 있으므로
+	// HitLocation(실제 충돌 지점)과 자신의 거리로 검증한다.
+	const float DistanceToHit = FVector::Dist(GetActorLocation(), HitLocation);
+	const float MaxAttackDistance = 600.0f;
 	
-	if (Distance > MaxAttackDistance)
+	if (DistanceToHit > MaxAttackDistance)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[ServerApplyDamage] Hit too far: %.1f cm (max %.1f)"),
+			DistanceToHit, MaxAttackDistance);
 		return;
+	}
 	
-	// 데미지 적용
-	UGameplayStatics::ApplyDamage(
-		Target,
-		DamageAmount,
-		GetController(),
-		this,
-		UDamageType::StaticClass()
-	);
-
+	UGameplayStatics::ApplyDamage(Target, DamageAmount, GetController(), this, UDamageType::StaticClass());
 	UE_LOG(LogTemp, Log, TEXT("[Damage] %.1f -> %s"), DamageAmount, *GetNameSafe(Target));
-	
 	MulticastPlayHitEffect(HitLocation, HitEffectScale);
 }
 
 bool AHellunaEnemyCharacter::ServerApplyDamage_Validate(AActor* Target, float DamageAmount, 
 	const FVector& HitLocation)
 {
-	// 데미지 범위 검증
-	if (DamageAmount < 0.0f || DamageAmount > 1000.0f)
+	if (DamageAmount < 0.0f || DamageAmount > 1000.0f) return false;
+	if (!IsValid(Target)) return false;
+
+	// HitLocation 기준 거리 검증 (우주선 등 큰 오브젝트 대응)
+	const float DistanceToHit = FVector::Dist(GetActorLocation(), HitLocation);
+	if (DistanceToHit > 600.0f)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[ServerApplyDamage_Validate] Invalid damage: %.1f"), DamageAmount);
-		return false;
-	}
-	
-	// 타겟 유효성 검증
-	if (!IsValid(Target))
-	{
-		return false;
-	}
-	
-	// 거리 검증
-	float Distance = FVector::Dist(GetActorLocation(), Target->GetActorLocation());
-	if (Distance > 500.0f)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[ServerApplyDamage_Validate] Target too far: %.1f cm"), Distance);
+		UE_LOG(LogTemp, Warning, TEXT("[Validate] Hit too far: %.1f cm"), DistanceToHit);
 		return false;
 	}
 	
@@ -534,14 +510,54 @@ void AHellunaEnemyCharacter::MulticastPlayHitEffect_Implementation(const FVector
 	}
 
 	// 사운드 재생
+	// AttenuationSettings가 사운드 에셋에 설정되어 있어야 거리 감쇠가 적용된다.
+	// 설정되지 않은 경우를 대비해 SpawnSoundAtLocation으로 재생하고
+	// 사운드 컴포넌트에 직접 감쇠 설정을 적용한다.
 	if (HitSound)
 	{
-		UGameplayStatics::PlaySoundAtLocation(
+		if (UAudioComponent* AudioComp = UGameplayStatics::SpawnSoundAtLocation(
 			this,
 			HitSound,
-			HitLocation
-		);
+			HitLocation))
+		{
+			// Attenuation이 없는 사운드에 대한 안전장치:
+			// 사운드 에셋에 Attenuation이 이미 설정되어 있다면 이 설정은 무시된다.
+			if (HitSoundAttenuation)
+			{
+				AudioComp->AttenuationSettings = HitSoundAttenuation;
+			}
+		}
 	}
+}
+
+void AHellunaEnemyCharacter::LockMovementAndFaceTarget(AActor* TargetActor)
+{
+	if (!HasAuthority()) return;
+
+	UCharacterMovementComponent* MoveComp = GetCharacterMovement();
+	if (!MoveComp) return;
+
+	// 이동 잠금: MaxWalkSpeed를 0으로 설정
+	// 중복 호출을 대비해 이미 잠긴 상태면 SavedMaxWalkSpeed를 덮어쓰지 않는다.
+	if (!bMovementLocked)
+	{
+		SavedMaxWalkSpeed = MoveComp->MaxWalkSpeed;
+		bMovementLocked = true;
+	}
+	MoveComp->MaxWalkSpeed = 0.f;
+}
+
+void AHellunaEnemyCharacter::UnlockMovement()
+{
+	if (!HasAuthority()) return;
+	if (!bMovementLocked) return;
+
+	UCharacterMovementComponent* MoveComp = GetCharacterMovement();
+	if (!MoveComp) return;
+
+	// MaxWalkSpeed를 잠금 전 원래 값으로 복원
+	MoveComp->MaxWalkSpeed = SavedMaxWalkSpeed;
+	bMovementLocked = false;
 }
 
 void AHellunaEnemyCharacter::SetServerAttackPoseTickEnabled(bool bEnable)
@@ -555,8 +571,15 @@ void AHellunaEnemyCharacter::SetServerAttackPoseTickEnabled(bool bEnable)
 
 	if (bEnable)
 	{
+		// ★ 공격 몽타주 시작 시 호출
+		// 서버는 카메라에서 멀리 있으면 VisibilityBasedAnimTickOption에 의해
+		// 애니메이션 업데이트가 생략될 수 있다.
+		// 소켓 위치 기반 AttackTrace가 정확하려면 본(Bone) 위치가 매 프레임 갱신되어야
+		// 하므로, 공격 중에는 강제로 AlwaysTickPoseAndRefreshBones로 전환한다.
+		// URO(Update Rate Optimization)도 함께 비활성화해 프레임 스킵을 방지한다.
 		if (!bPoseTickSaved)
 		{
+			// 원래 설정 저장 (공격 종료 시 복원용)
 			SavedAnimTickOption = M->VisibilityBasedAnimTickOption;
 			bSavedURO = M->bEnableUpdateRateOptimizations;
 			bPoseTickSaved = true;
@@ -567,12 +590,14 @@ void AHellunaEnemyCharacter::SetServerAttackPoseTickEnabled(bool bEnable)
 	}
 	else
 	{
+		// ★ 공격 몽타주 종료 시 호출 (EndAbility에서 호출)
+		// 저장해둔 원래 설정으로 복원해 불필요한 CPU 사용을 줄인다.
+		// bPoseTickSaved가 false면 Enable이 호출된 적 없는 것이므로 복원 불필요.
 		if (!bPoseTickSaved)
 			return;
 
 		M->VisibilityBasedAnimTickOption = SavedAnimTickOption;
 		M->bEnableUpdateRateOptimizations = bSavedURO;
 		bPoseTickSaved = false;
-
 	}
 }

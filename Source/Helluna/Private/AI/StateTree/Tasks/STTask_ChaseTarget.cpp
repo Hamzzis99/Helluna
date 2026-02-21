@@ -1,12 +1,6 @@
 ﻿/**
  * STTask_ChaseTarget.cpp
  *
- * [방안 C 적용]
- * 우주선: 고정 오브젝트이므로 타겟 변경 시에만 MoveTo 재발행.
- *         이후 Tick에서는 RVO(CrowdFollowingComponent)에 회피 위임.
- * 플레이어: 움직이는 대상이므로 RepathInterval 재발행 유지.
- * Stuck 판단: Idle + 저속 + 거리 3중 조건으로 RVO 조정 중 오탐 방지.
- *
  * @author 김민우
  */
 
@@ -19,25 +13,38 @@
 #include "Navigation/PathFollowingComponent.h"
 #include "NavigationSystem.h"
 #include "AITypes.h"
+#include "EnvironmentQuery/EnvQueryManager.h"
+#include "EnvironmentQuery/EnvQueryTypes.h"
+#include "GameFramework/Pawn.h"
 
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 
 // ============================================================================
-// 우주선 주변 "도달 가능한 점" 하나 뽑기
+// 헬퍼: 위치로 이동 명령
 // ============================================================================
-static bool FindShipApproachPoint(
-	UWorld* World,
-	const FVector& ShipCenter,
-	float Radius,
-	FVector& OutPoint
-)
+static void IssueMoveToLocation(AAIController* AIController, const FVector& Goal, float AcceptanceRadius)
 {
-	if (!World)
-		return false;
+	if (!AIController) return;
 
+	FAIMoveRequest Req;
+	Req.SetGoalLocation(Goal);
+	Req.SetAcceptanceRadius(AcceptanceRadius);
+	Req.SetReachTestIncludesAgentRadius(false);
+	Req.SetReachTestIncludesGoalRadius(false);
+	Req.SetUsePathfinding(true);
+	Req.SetAllowPartialPath(true);
+	Req.SetCanStrafe(false);
+	AIController->MoveTo(Req);
+}
+
+// ============================================================================
+// 헬퍼: 우주선 주변 NavMesh 위 랜덤 접근 위치 반환
+// ============================================================================
+static bool FindShipApproachPoint(UWorld* World, const FVector& ShipCenter, float Radius, FVector& OutPoint)
+{
+	if (!World) return false;
 	UNavigationSystemV1* NavSys = UNavigationSystemV1::GetCurrent(World);
-	if (!NavSys)
-		return false;
+	if (!NavSys) return false;
 
 	FNavLocation NavLoc;
 	if (!NavSys->GetRandomReachablePointInRadius(ShipCenter, Radius, NavLoc))
@@ -48,27 +55,57 @@ static bool FindShipApproachPoint(
 }
 
 // ============================================================================
-// MoveToLocation (우주선 분산 접근용)
+// 헬퍼: EQS 실행 후 결과 위치로 이동 (플레이어 전용)
 // ============================================================================
-static void IssueMoveToLocation(
+static void RunAttackPositionEQS(
+	UEnvQuery* Query,
 	AAIController* AIController,
-	const FVector& Goal,
-	float AcceptanceRadius
-)
+	float AcceptanceRadius,
+	AActor* FallbackTarget)
 {
-	if (!AIController)
-		return;
+	if (!Query || !AIController) return;
 
-	FAIMoveRequest Req;
-	Req.SetGoalLocation(Goal);
-	Req.SetAcceptanceRadius(AcceptanceRadius);
-	Req.SetReachTestIncludesAgentRadius(false);
-	Req.SetReachTestIncludesGoalRadius(false);
-	Req.SetUsePathfinding(true);
-	Req.SetAllowPartialPath(true);
-	Req.SetCanStrafe(false);
+	APawn* Pawn = AIController->GetPawn();
+	if (!Pawn) return;
 
-	AIController->MoveTo(Req);
+	UWorld* World = Pawn->GetWorld();
+	if (!World) return;
+
+	UEnvQueryManager* EQSManager = UEnvQueryManager::GetCurrent(World);
+	if (!EQSManager) return;
+
+	TWeakObjectPtr<AAIController> WeakController = AIController;
+	TWeakObjectPtr<AActor> WeakFallback = FallbackTarget;
+
+	FEnvQueryRequest Request(Query, Pawn);
+	Request.Execute(EEnvQueryRunMode::SingleResult,
+		FQueryFinishedSignature::CreateLambda(
+			[WeakController, WeakFallback, AcceptanceRadius](TSharedPtr<FEnvQueryResult> Result)
+			{
+				AAIController* Ctrl = WeakController.Get();
+				if (!Ctrl) return;
+
+				if (Result.IsValid() && !Result->IsAborted() && Result->Items.Num() > 0)
+				{
+					IssueMoveToLocation(Ctrl, Result->GetItemAsLocation(0), AcceptanceRadius);
+				}
+				else if (AActor* Fallback = WeakFallback.Get())
+				{
+					Ctrl->MoveToActor(Fallback, AcceptanceRadius, true, true, false, nullptr, true);
+				}
+			}));
+}
+
+// ============================================================================
+// 우주선 이동 명령 발행 헬퍼
+// ============================================================================
+static void IssueShipMove(AAIController* AIController, AActor* ShipActor, float AcceptanceRadius)
+{
+	FVector Goal;
+	if (FindShipApproachPoint(AIController->GetWorld(), ShipActor->GetActorLocation(), 800.f, Goal))
+		IssueMoveToLocation(AIController, Goal, AcceptanceRadius);
+	else
+		AIController->MoveToActor(ShipActor, AcceptanceRadius, true, true, false, nullptr, true);
 }
 
 // ============================================================================
@@ -82,39 +119,38 @@ EStateTreeRunStatus FSTTask_ChaseTarget::EnterState(
 
 	AAIController* AIController = InstanceData.AIController;
 	if (!AIController)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("STTask_ChaseTarget: AIController is null"));
 		return EStateTreeRunStatus::Failed;
-	}
 
 	const FHellunaAITargetData& TargetData = InstanceData.TargetData;
 	if (!TargetData.IsValid())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("STTask_ChaseTarget: TargetData invalid"));
-		return EStateTreeRunStatus::Failed;
+		// Evaluator가 아직 첫 Tick을 안 돌았을 수 있음
+		// Failed 대신 Running 반환 → Tick에서 타겟 생기면 이동 명령 발행
+		InstanceData.LastMoveTarget  = nullptr;
+		InstanceData.TimeSinceRepath = 0.f;
+		InstanceData.TimeUntilNextEQS = 0.f;
+		return EStateTreeRunStatus::Running;
 	}
 
 	AActor* TargetActor = TargetData.TargetActor.Get();
 	const bool bIsSpaceShip = (Cast<AResourceUsingObject_SpaceShip>(TargetActor) != nullptr);
 
+	InstanceData.TimeSinceRepath  = 0.f;
+	InstanceData.TimeUntilNextEQS = 0.f;
+
 	if (bIsSpaceShip)
 	{
-		const float ApproachRadius = 800.f;
-		const float LocAcceptance  = 100.f;
-
-		FVector Goal;
-		if (FindShipApproachPoint(AIController->GetWorld(), TargetActor->GetActorLocation(), ApproachRadius, Goal))
-			IssueMoveToLocation(AIController, Goal, LocAcceptance);
-		else
-			AIController->MoveToActor(TargetActor, AcceptanceRadius, true, true, false, nullptr, true);
+		// 우주선: FindShipApproachPoint로 NavMesh 위 랜덤 접근 위치로 이동
+		IssueShipMove(AIController, TargetActor, AcceptanceRadius);
 	}
 	else
 	{
+		// 플레이어: 직접 추적 시작
 		AIController->MoveToActor(TargetActor, AcceptanceRadius, true, true, false, nullptr, true);
 	}
 
-	InstanceData.LastMoveTarget  = TargetData.TargetActor;
-	InstanceData.TimeSinceRepath = 0.f;
+	// 이동 명령 후에 설정해야 Tick에서 bTargetChanged가 정상 동작
+	InstanceData.LastMoveTarget = TargetData.TargetActor;
 
 	return EStateTreeRunStatus::Running;
 }
@@ -129,77 +165,103 @@ EStateTreeRunStatus FSTTask_ChaseTarget::Tick(
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
 
 	AAIController* AIController = InstanceData.AIController;
-	if (!AIController)
-		return EStateTreeRunStatus::Failed;
+	if (!AIController) return EStateTreeRunStatus::Failed;
 
 	const FHellunaAITargetData& TargetData = InstanceData.TargetData;
-	if (!TargetData.IsValid())
-		return EStateTreeRunStatus::Failed;
+	if (!TargetData.IsValid()) return EStateTreeRunStatus::Failed;
+
+	APawn* Pawn = AIController->GetPawn();
+	if (!Pawn) return EStateTreeRunStatus::Failed;
+
+	AActor* TargetActor = TargetData.TargetActor.Get();
 
 	// 공격 중이면 이동 정지
-	if (APawn* Pawn = AIController->GetPawn())
+	if (IAbilitySystemInterface* ASI = Cast<IAbilitySystemInterface>(Pawn))
 	{
-		if (IAbilitySystemInterface* ASI = Cast<IAbilitySystemInterface>(Pawn))
+		if (UAbilitySystemComponent* ASC = ASI->GetAbilitySystemComponent())
 		{
-			if (UAbilitySystemComponent* ASC = ASI->GetAbilitySystemComponent())
+			FGameplayTag AttackingTag = FGameplayTag::RequestGameplayTag(FName("State.Enemy.Attacking"), false);
+			if (AttackingTag.IsValid() && ASC->HasMatchingGameplayTag(AttackingTag))
 			{
-				FGameplayTag AttackingTag = FGameplayTag::RequestGameplayTag(FName("State.Enemy.Attacking"), false);
-				if (AttackingTag.IsValid() && ASC->HasMatchingGameplayTag(AttackingTag))
-				{
-					AIController->StopMovement();
-					return EStateTreeRunStatus::Running;
-				}
+				AIController->StopMovement();
+				return EStateTreeRunStatus::Running;
 			}
 		}
 	}
 
-	InstanceData.TimeSinceRepath += DeltaTime;
+	InstanceData.TimeSinceRepath  += DeltaTime;
+	InstanceData.TimeUntilNextEQS -= DeltaTime;
 
 	const bool bTargetChanged = InstanceData.LastMoveTarget != TargetData.TargetActor;
-	const bool bIsSpaceShip   = (Cast<AResourceUsingObject_SpaceShip>(TargetData.TargetActor.Get()) != nullptr);
-	AActor* TargetActor = TargetData.TargetActor.Get();
+	const bool bIsSpaceShip   = (Cast<AResourceUsingObject_SpaceShip>(TargetActor) != nullptr);
 
 	if (bIsSpaceShip)
 	{
-		// 우주선: 타겟 변경 시에만 MoveTo 재발행, 이후 RVO에 위임
-		if (bTargetChanged)
+		// ── 우주선 ──────────────────────────────────────────────
+		// EQS 사용 안 함. FindShipApproachPoint로 NavMesh 위 접근 위치 사용.
+		// Stuck: Moving 중인데 속도가 거의 없을 때만 재발행
+		bool bStuck = false;
+		if (UPathFollowingComponent* PFC = AIController->GetPathFollowingComponent())
 		{
-			const float ApproachRadius = 800.f;
-			const float LocAcceptance  = 100.f;
+			const bool bMoving = (PFC->GetStatus() == EPathFollowingStatus::Moving);
+			const bool bSlow   = (Pawn->GetVelocity().SizeSquared2D() < 30.f * 30.f);
+			const bool bFar    = (TargetData.DistanceToTarget > AcceptanceRadius + 200.f);
+			bStuck = bMoving && bSlow && bFar;
+		}
 
-			FVector Goal;
-			if (FindShipApproachPoint(AIController->GetWorld(), TargetActor->GetActorLocation(), ApproachRadius, Goal))
-				IssueMoveToLocation(AIController, Goal, LocAcceptance);
-			else
-				AIController->MoveToActor(TargetActor, AcceptanceRadius, true, true, false, nullptr, true);
+		// Idle이고 멀리 있으면 이동 명령 재발행 (EnterState 실패 대비)
+		bool bNeedMove = false;
+		if (UPathFollowingComponent* PFC = AIController->GetPathFollowingComponent())
+		{
+			const bool bIdle = (PFC->GetStatus() == EPathFollowingStatus::Idle);
+			const bool bFar  = (TargetData.DistanceToTarget > AcceptanceRadius + 200.f);
+			bNeedMove = bIdle && bFar;
+		}
 
+		if (bTargetChanged || bStuck || bNeedMove)
+		{
+			IssueShipMove(AIController, TargetActor, AcceptanceRadius);
 			InstanceData.LastMoveTarget  = TargetData.TargetActor;
 			InstanceData.TimeSinceRepath = 0.f;
 		}
 	}
 	else
 	{
-		// 플레이어: 주기적 재탐색 유지
+		// ── 플레이어 ────────────────────────────────────────────
 		const bool bRepathDue = InstanceData.TimeSinceRepath >= RepathInterval;
 
 		bool bStuck = false;
 		if (UPathFollowingComponent* PFC = AIController->GetPathFollowingComponent())
 		{
-			if (APawn* Pawn = AIController->GetPawn())
-			{
-				const bool bIdle = (PFC->GetStatus() == EPathFollowingStatus::Idle);
-				const bool bSlow = (Pawn->GetVelocity().SizeSquared2D() < 50.f * 50.f);
-				const bool bFar  = (TargetData.DistanceToTarget > (AcceptanceRadius + 150.f));
-				bStuck = bIdle && bSlow && bFar;
-			}
+			const bool bIdle = (PFC->GetStatus() == EPathFollowingStatus::Idle);
+			const bool bSlow = (Pawn->GetVelocity().SizeSquared2D() < 50.f * 50.f);
+			const bool bFar  = (TargetData.DistanceToTarget > (AcceptanceRadius + 150.f));
+			bStuck = bIdle && bSlow && bFar;
 		}
 
 		if (bTargetChanged || bRepathDue || bStuck)
 		{
-			AIController->MoveToActor(TargetActor, AcceptanceRadius, true, true, false, nullptr, true);
+			if (AttackPositionQuery && InstanceData.TimeUntilNextEQS <= 0.f)
+			{
+				RunAttackPositionEQS(AttackPositionQuery, AIController, AcceptanceRadius, TargetActor);
+				InstanceData.TimeUntilNextEQS = EQSInterval;
+			}
+			else
+			{
+				AIController->MoveToActor(TargetActor, AcceptanceRadius, true, true, false, nullptr, true);
+			}
 
 			InstanceData.LastMoveTarget  = TargetData.TargetActor;
 			InstanceData.TimeSinceRepath = 0.f;
+		}
+
+		// 플레이어를 향해 회전
+		const FVector ToTarget = (TargetActor->GetActorLocation() - Pawn->GetActorLocation()).GetSafeNormal2D();
+		if (!ToTarget.IsNearlyZero())
+		{
+			const FRotator CurrentRot = Pawn->GetActorRotation();
+			const FRotator TargetRot  = FRotator(0.f, ToTarget.Rotation().Yaw, 0.f);
+			Pawn->SetActorRotation(FMath::RInterpTo(CurrentRot, TargetRot, DeltaTime, 5.f));
 		}
 	}
 
@@ -214,7 +276,6 @@ void FSTTask_ChaseTarget::ExitState(
 	const FStateTreeTransitionResult& Transition) const
 {
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
-
 	if (AAIController* AIController = InstanceData.AIController)
 		AIController->StopMovement();
 }

@@ -7,6 +7,7 @@
 #include "GameplayTagContainer.h"
 
 #include "Character/HellunaEnemyCharacter.h"
+#include "GameFramework/CharacterMovementComponent.h"
 
 UEnemyGameplayAbility_Attack::UEnemyGameplayAbility_Attack()
 {
@@ -45,6 +46,10 @@ void UEnemyGameplayAbility_Attack::ActivateAbility(
 		return;
 	}
 	Enemy->SetServerAttackPoseTickEnabled(true);
+
+	// ★ 몽타주 시작 즉시 이동만 잠금 (nullptr 전달 → 회전 없음)
+	// 회전은 몽타주가 완전히 끝난 OnMontageCompleted에서 처리한다.
+	Enemy->LockMovementAndFaceTarget(nullptr);
 	
 	UAbilityTask_PlayMontageAndWait* MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
 		this, NAME_None, AttackMontage, 1.f, NAME_None, false
@@ -65,34 +70,74 @@ void UEnemyGameplayAbility_Attack::ActivateAbility(
 
 void UEnemyGameplayAbility_Attack::OnMontageCompleted()
 {
-	HandleAttackFinished();
-
-	// 몽타주 완료 후 딜레이 후 태그 제거 (이동 재개)
 	AHellunaEnemyCharacter* Enemy = GetEnemyCharacterFromActorInfo();
-	if (!Enemy) return;
+	if (!Enemy)
+	{
+		HandleAttackFinished();
+		return;
+	}
 
 	UWorld* World = Enemy->GetWorld();
-	if (World)
+	if (!World)
 	{
-		World->GetTimerManager().SetTimer(
-			DelayedReleaseTimerHandle,
-			[this]()
-			{
-				if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
-				{
-					FGameplayTagContainer AttackingTag;
-					AttackingTag.AddTag(FGameplayTag::RequestGameplayTag(FName("State.Enemy.Attacking")));
-					ASC->RemoveLooseGameplayTags(AttackingTag);
-				}
-			},
-			AttackRecoveryDelay,
-			false
-		);
+		HandleAttackFinished();
+		return;
 	}
+
+	// 몽타주 완료 후 AttackRecoveryDelay 동안 대기
+	// 이 대기 시간 동안 RotationRate를 PostAttackRotationRate로 높여서
+	// 타겟 방향으로 빠르게 회전하게 한다.
+	// 대기가 끝나면 원래 RotationRate로 복원 후 이동 잠금 해제.
+	UCharacterMovementComponent* MoveComp = Enemy->GetCharacterMovement();
+	if (MoveComp && PostAttackRotationRate > 0.f)
+	{
+		// 원래 RotationRate 저장 후 빠른 회전 속도 적용
+		SavedRotationRate = MoveComp->RotationRate;
+		MoveComp->RotationRate = FRotator(0.f, PostAttackRotationRate, 0.f);
+	}
+
+	World->GetTimerManager().SetTimer(
+		DelayedReleaseTimerHandle,
+		[this]()
+		{
+			AHellunaEnemyCharacter* DelayedEnemy = GetEnemyCharacterFromActorInfo();
+			if (!DelayedEnemy)
+			{
+				HandleAttackFinished();
+				return;
+			}
+
+			// RotationRate 원복
+			if (UCharacterMovementComponent* MoveComp = DelayedEnemy->GetCharacterMovement())
+			{
+				if (PostAttackRotationRate > 0.f)
+				{
+					MoveComp->RotationRate = SavedRotationRate;
+				}
+			}
+
+			DelayedEnemy->UnlockMovement();
+			HandleAttackFinished();
+		},
+		AttackRecoveryDelay,
+		false
+	);
 }
 
 void UEnemyGameplayAbility_Attack::OnMontageCancelled()
 {
+	// 취소 시에도 RotationRate 복원
+	if (AHellunaEnemyCharacter* Enemy = GetEnemyCharacterFromActorInfo())
+	{
+		if (UCharacterMovementComponent* MoveComp = Enemy->GetCharacterMovement())
+		{
+			if (PostAttackRotationRate > 0.f)
+			{
+				MoveComp->RotationRate = SavedRotationRate;
+			}
+		}
+	}
+
 	const FGameplayAbilitySpecHandle Handle = GetCurrentAbilitySpecHandle();
 	const FGameplayAbilityActorInfo* ActorInfo = GetCurrentActorInfo();
 	const FGameplayAbilityActivationInfo ActivationInfo = GetCurrentActivationInfo();
@@ -117,19 +162,22 @@ void UEnemyGameplayAbility_Attack::EndAbility(
 	bool bReplicateEndAbility,
 	bool bWasCancelled)
 {
-	
-	// 타이머 정리
 	if (AHellunaEnemyCharacter* Enemy = GetEnemyCharacterFromActorInfo())
 	{
 		Enemy->SetServerAttackPoseTickEnabled(false);
-		
-		if (UWorld* World = Enemy->GetWorld())
+		Enemy->UnlockMovement();
+
+		if (bWasCancelled)
 		{
-			World->GetTimerManager().ClearTimer(DelayedReleaseTimerHandle);
+			if (UWorld* World = Enemy->GetWorld())
+			{
+				World->GetTimerManager().ClearTimer(DelayedReleaseTimerHandle);
+			}
 		}
 	}
 
-	// 공격 중 상태 태그 제거
+	// ★ State.Enemy.Attacking 태그 제거
+	// 이 태그가 제거되어야 StateTree가 Attack → Run(Chase) 전환을 허용한다.
 	if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
 	{
 		FGameplayTagContainer AttackingTag;

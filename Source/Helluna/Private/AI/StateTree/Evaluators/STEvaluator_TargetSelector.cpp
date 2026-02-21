@@ -67,6 +67,8 @@ void FSTEvaluator_TargetSelector::Tick(FStateTreeExecutionContext& Context, cons
 		TargetData.TargetType         = EHellunaTargetType::Player;
 		TargetData.DistanceToTarget   = FMath::Sqrt(NearestDistSq);
 		InstanceData.bTargetingPlayer = true;
+
+		const_cast<AAIController*>(AIController)->SetFocus(NearestPlayer);
 		return;
 	}
 
@@ -84,6 +86,8 @@ void FSTEvaluator_TargetSelector::Tick(FStateTreeExecutionContext& Context, cons
 			TargetData.TargetActor      = *It;
 			TargetData.TargetType       = EHellunaTargetType::SpaceShip;
 			TargetData.DistanceToTarget = FVector::Dist(PawnLocation, It->GetActorLocation());
+
+			const_cast<AAIController*>(AIController)->SetFocus(*It);
 			break;
 		}
 	}
