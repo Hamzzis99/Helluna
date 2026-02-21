@@ -83,7 +83,7 @@ void UInv_AttachmentSlotWidget::SetOccupied(const FInv_AttachedItemData& Data)
 		{
 			FSlateBrush IconBrush;
 			IconBrush.SetResourceObject(Icon);
-			IconBrush.ImageSize = IconSize;
+			// 크기는 WBP의 SizeBox 레이아웃이 결정 — C++에서 강제하지 않음
 			Image_ItemIcon->SetBrush(IconBrush);
 			Image_ItemIcon->SetVisibility(ESlateVisibility::Visible); // 아이콘 보이기
 		}

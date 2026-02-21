@@ -137,10 +137,6 @@ private:
 	UPROPERTY()
 	TWeakObjectPtr<AInv_WeaponPreviewActor> WeaponPreviewActor;
 
-	// ── 프리뷰 설정 (WBP Class Defaults에서 조절) ──
-	UPROPERTY(EditAnywhere, Category = "부착물|프리뷰", meta = (DisplayName = "프리뷰 이미지 크기"))
-	FVector2D PreviewImageSize = FVector2D(300.f, 300.f);
-
 	// 프리뷰 액터 스폰 Z 위치 (월드 아래쪽, 카메라에 안 잡힘)
 	static constexpr float PreviewSpawnZ = -10000.f;
 

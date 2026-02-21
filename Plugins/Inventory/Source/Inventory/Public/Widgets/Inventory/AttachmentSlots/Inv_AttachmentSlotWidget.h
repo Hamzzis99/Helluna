@@ -115,10 +115,6 @@ private:
 	UPROPERTY(EditAnywhere, Category = "부착물|스타일", meta = (DisplayName = "하이라이트 브러시", Tooltip = "T_Selected_Square"))
 	FSlateBrush Brush_Highlight;
 
-	// ── 크기 설정 (WBP Class Defaults에서 조절) ──
-	UPROPERTY(EditAnywhere, Category = "부착물|스타일", meta = (DisplayName = "아이콘 크기"))
-	FVector2D IconSize = FVector2D(64.f, 64.f);
-
 	// ── 슬롯 상태 ──
 	int32 SlotIndex = INDEX_NONE;
 	bool bIsOccupied = false;

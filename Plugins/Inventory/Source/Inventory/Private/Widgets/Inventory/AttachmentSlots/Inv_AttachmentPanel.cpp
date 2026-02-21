@@ -776,7 +776,7 @@ void UInv_AttachmentPanel::SetupWeaponPreview()
 			Image_WeaponPreview->SetBrush(PreviewBrush);
 		}
 
-		Image_WeaponPreview->SetDesiredSizeOverride(PreviewImageSize);
+		// 크기는 WBP 디자이너에서 설정한 레이아웃을 그대로 사용
 		Image_WeaponPreview->SetVisibility(ESlateVisibility::Visible);
 	}
 
@@ -813,7 +813,6 @@ void UInv_AttachmentPanel::CleanupWeaponPreview()
 	if (IsValid(Image_WeaponPreview))
 	{
 		Image_WeaponPreview->SetBrush(FSlateBrush());
-		Image_WeaponPreview->SetDesiredSizeOverride(FVector2D::ZeroVector);
 		Image_WeaponPreview->SetVisibility(ESlateVisibility::Collapsed);
 	}
 }
