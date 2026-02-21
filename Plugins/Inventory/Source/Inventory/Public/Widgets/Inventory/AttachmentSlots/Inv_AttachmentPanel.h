@@ -17,20 +17,23 @@
 //    6. NativeTick → UpdateSlotHighlights + 드래그 회전 처리
 //    7. 닫기 버튼 → ClosePanel() → CleanupWeaponPreview
 //
-// 📌 계층 구조 (WBP에서 생성):
-//    Border_Background                ← UBorder (배경)
-//     └─ VerticalBox_Main             ← UVerticalBox
-//          ├─ HorizontalBox_Header    ← UHorizontalBox
-//          │    ├─ Image_WeaponIcon     ← UImage ★ BindWidget
-//          │    ├─ Text_WeaponName      ← UTextBlock ★ BindWidget
-//          │    └─ Button_Close         ← UButton ★ BindWidget
-//          │
-//          ├─ VerticalBox_Top           ← UVerticalBox (상단 슬롯 컨테이너)
-//          ├─ HorizontalBox_Middle      ← UHorizontalBox
-//          │    ├─ VerticalBox_Left       ← UVerticalBox (좌측 슬롯 컨테이너)
-//          │    ├─ Image_WeaponPreview    ← UImage ★ BindWidget (3D 프리뷰)
-//          │    └─ VerticalBox_Right      ← UVerticalBox (우측 슬롯 컨테이너)
-//          └─ VerticalBox_Bottom        ← UVerticalBox (하단 슬롯 컨테이너)
+// 📌 계층 구조 (WBP에서 생성 — 배그 스타일 가로형):
+//    CanvasPanel (Root)               ← 화면 내 위치 제어 (앵커 + 오프셋)
+//     └─ Overlay                      ← 배경 + 콘텐츠 겹치기
+//          ├─ Image "Border_Background"  ← 배경 텍스처 (Fill/Fill)
+//          └─ VerticalBox_Main           ← 전체 콘텐츠
+//               ├─ HorizontalBox_Header  ← 헤더
+//               │    ├─ Image_WeaponIcon   ★ BindWidget
+//               │    ├─ Text_WeaponName    ★ BindWidget
+//               │    └─ Button_Close       ★ BindWidget
+//               │
+//               └─ HorizontalBox_Body    ← 좌: 슬롯 리스트 / 우: 3D 프리뷰
+//                    ├─ VerticalBox_Slots   ← 부착물 슬롯 세로 배치
+//                    │    ├─ SlotWidget (Scope)
+//                    │    ├─ SlotWidget (Muzzle)
+//                    │    ├─ SlotWidget (Grip)
+//                    │    └─ SlotWidget (Magazine)
+//                    └─ Image_WeaponPreview ★ BindWidget (3D 프리뷰, Fill)
 //
 //    ※ WBP에 배치된 UInv_AttachmentSlotWidget을 WidgetTree에서 자동 수집
 //      각 슬롯 위젯의 Details에서 SlotType(GameplayTag) 설정 필요

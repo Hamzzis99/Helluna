@@ -68,10 +68,12 @@ void UInv_AttachmentSlotWidget::SetOccupied(const FInv_AttachedItemData& Data)
 {
 	bIsOccupied = true;
 
-	// 배경 브러시를 점유 상태로 변경
+	// 배경 브러시를 점유 상태로 변경 (ImageSize 보존)
 	if (IsValid(Image_Background))
 	{
-		Image_Background->SetBrush(Brush_Occupied);
+		FSlateBrush NewBrush = Brush_Occupied;
+		NewBrush.SetImageSize(FVector2f(SlotSize, SlotSize));
+		Image_Background->SetBrush(NewBrush);
 	}
 
 	// 부착물의 아이콘 표시
@@ -121,10 +123,12 @@ void UInv_AttachmentSlotWidget::SetEmpty()
 {
 	bIsOccupied = false;
 
-	// 배경 브러시를 빈 상태로 변경
+	// 배경 브러시를 빈 상태로 변경 (ImageSize 보존)
 	if (IsValid(Image_Background))
 	{
-		Image_Background->SetBrush(Brush_Empty);
+		FSlateBrush NewBrush = Brush_Empty;
+		NewBrush.SetImageSize(FVector2f(SlotSize, SlotSize));
+		Image_Background->SetBrush(NewBrush);
 	}
 
 	// 아이콘 숨기기

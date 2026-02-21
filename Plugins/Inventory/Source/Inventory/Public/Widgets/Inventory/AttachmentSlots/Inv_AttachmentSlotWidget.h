@@ -115,6 +115,10 @@ private:
 	UPROPERTY(EditAnywhere, Category = "부착물|스타일", meta = (DisplayName = "하이라이트 브러시", Tooltip = "호환 가능한 슬롯이 강조 표시될 때 사용되는 브러시입니다. 기본: T_Selected_Square"))
 	FSlateBrush Brush_Highlight;
 
+	// ── 슬롯 크기 (에디터에서 설정) ──
+	UPROPERTY(EditAnywhere, Category = "부착물|스타일", meta = (DisplayName = "슬롯 크기", Tooltip = "슬롯의 가로세로 크기 (픽셀)"))
+	float SlotSize = 64.f;
+
 	// ── 슬롯 상태 ──
 	int32 SlotIndex = INDEX_NONE;
 	bool bIsOccupied = false;

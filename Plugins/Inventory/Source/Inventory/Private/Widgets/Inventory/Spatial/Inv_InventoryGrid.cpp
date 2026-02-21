@@ -1459,7 +1459,7 @@ void UInv_InventoryGrid::RemoveItem(UInv_InventoryItem* Item, int32 EntryIndex)
 		*Item->GetItemManifest().GetItemType().ToString(), EntryIndex);
 
 	// 콜스택 출력 (어디서 호출되는지 확인)
-	FDebug::DumpStackTraceToLog(ELogVerbosity::Error);
+	// FDebug::DumpStackTraceToLog(ELogVerbosity::Error); // 비활성화: 그리드당 ~15ms 렉 유발
 
 #if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("[RemoveItem] ========== 제거 요청 시작 =========="));
