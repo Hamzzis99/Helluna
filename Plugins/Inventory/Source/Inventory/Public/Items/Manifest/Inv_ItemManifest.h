@@ -41,6 +41,10 @@ struct INVENTORY_API FInv_ItemManifest
 	
 	void SpawnPickupActor(const UObject* WorldContextObject, const FVector& SpawnLocation, const FRotator& SpawnRotation); // 아이템 픽업 액터 생성
 
+	// ⭐ [최적화 #3] Fragment 타입 캐시 구축
+	// Manifest() 완료 후, DeserializeAndApplyFragments() 후 호출
+	void BuildFragmentCache();
+
 	// ════════════════════════════════════════════════════════════════
 	// 📌 [Phase 1 최적화] Manifest Fragment 직렬화/역직렬화
 	// ════════════════════════════════════════════════════════════════
@@ -101,7 +105,12 @@ private:
 	// 아이템 픽업 액터 클래스
 	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "픽업 액터 클래스", Tooltip = "월드에 드롭될 때 생성되는 액터 클래스 (장착 BP말고 현재 작성중인 BP로 설정하세요!)"))
 	TSubclassOf<AActor> PickupActorClass;
-	
+
+	// ⭐ [최적화 #3] Fragment 타입별 인덱스 캐시
+	// BuildFragmentCache() 호출 시 구축. GetFragmentOfType<T>()에서 O(1) 조회에 사용.
+	// Key = Fragment의 UScriptStruct*, Value = Fragments 배열 인덱스
+	TMap<const UScriptStruct*, int32> FragmentTypeCache;
+
 	void ClearFragments();
 };
 
@@ -124,6 +133,20 @@ const T* FInv_ItemManifest::GetFragmentOfTypeWithTag(const FGameplayTag& Fragmen
 template <typename T> requires std::derived_from<T, FInv_ItemFragment>
 const T* FInv_ItemManifest::GetFragmentOfType() const
 {
+	// ⭐ [최적화 #3] 캐시가 구축되어 있으면 O(1) 조회
+	if (FragmentTypeCache.Num() > 0)
+	{
+		if (const int32* Idx = FragmentTypeCache.Find(T::StaticStruct()))
+		{
+			if (Fragments.IsValidIndex(*Idx))
+			{
+				return Fragments[*Idx].GetPtr<T>();
+			}
+		}
+		return nullptr;
+	}
+
+	// 캐시 미구축 시 기존 O(n) 폴백
 	for (const TInstancedStruct<FInv_ItemFragment>& Fragment : Fragments) // 여러개를 찾는 과정
 	{
 		if (const T* FragmentPtr = Fragment.GetPtr<T>())
@@ -138,6 +161,20 @@ const T* FInv_ItemManifest::GetFragmentOfType() const
 template <typename T> requires std::derived_from<T, FInv_ItemFragment>
 T* FInv_ItemManifest::GetFragmentOfTypeMutable()
 {
+	// ⭐ [최적화 #3] 캐시가 구축되어 있으면 O(1) 조회
+	if (FragmentTypeCache.Num() > 0)
+	{
+		if (const int32* Idx = FragmentTypeCache.Find(T::StaticStruct()))
+		{
+			if (Fragments.IsValidIndex(*Idx))
+			{
+				return Fragments[*Idx].GetMutablePtr<T>();
+			}
+		}
+		return nullptr;
+	}
+
+	// 캐시 미구축 시 기존 O(n) 폴백
 	for (TInstancedStruct<FInv_ItemFragment>& Fragment : Fragments) // 여러개를 찾는 과정
 	{
 		if (T* FragmentPtr = Fragment.GetMutablePtr<T>()) // 포인터는 상수로 변환
