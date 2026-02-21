@@ -1,4 +1,5 @@
 #include "Items/Fragments/Inv_ItemFragment.h"
+#include "Inventory.h"
 
 #include "EquipmentManagement/EquipActor/Inv_EquipActor.h"
 #include "Widgets/Composite/Inv_CompositeBase.h"
@@ -240,14 +241,53 @@ void FInv_EquipmentFragment::Manifest()
 }
 
 // 장비 아이템을 장착 시 캐릭터에 장착 시켜주는 것.
-AInv_EquipActor* FInv_EquipmentFragment::SpawnAttachedActor(USkeletalMeshComponent* AttachMesh) const
+AInv_EquipActor* FInv_EquipmentFragment::SpawnAttachedActor(USkeletalMeshComponent* AttachMesh, int32 WeaponSlotIndex) const
 {
+#if INV_DEBUG_EQUIP
+	// ============================================
+	// 🔍 [Phase 6 디버깅] 장착 스폰 추적
+	// ============================================
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔══════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║  🔍 [EquipmentFragment] SpawnAttachedActor 호출             ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠══════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ WeaponSlotIndex: %d"), WeaponSlotIndex);
+	UE_LOG(LogTemp, Warning, TEXT("║ EquipActorClass: %s"), EquipActorClass ? *EquipActorClass->GetName() : TEXT("nullptr ❌"));
+	UE_LOG(LogTemp, Warning, TEXT("║ AttachMesh: %s"), AttachMesh ? *AttachMesh->GetName() : TEXT("nullptr ❌"));
+	UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════╝"));
+#endif
+
 	if (!IsValid(EquipActorClass) || !IsValid(AttachMesh)) return nullptr;
 
 	AInv_EquipActor* SpawnedActor = AttachMesh->GetWorld()->SpawnActor<AInv_EquipActor>(EquipActorClass);
 	if (!IsValid(SpawnedActor)) return nullptr; // 장착 아이템이 없을 시 크래쉬 예외 처리 제거
 	
-	SpawnedActor->AttachToComponent(AttachMesh, FAttachmentTransformRules::SnapToTargetNotIncludingScale, SocketAttachPoint);
+#if INV_DEBUG_EQUIP
+	UE_LOG(LogTemp, Warning, TEXT("   ✅ SpawnedActor: %s"), *SpawnedActor->GetName());
+#endif
+	
+	// ⭐ [WeaponBridge] WeaponSlotIndex 설정
+	SpawnedActor->SetWeaponSlotIndex(WeaponSlotIndex);
+	
+	// ⭐ [WeaponBridge] 소켓 결정: WeaponSlotIndex에 따라 등 소켓 선택
+	FName ActualSocket = SpawnedActor->GetBackSocketName();
+	
+	// 기본값(-1)이거나 무기가 아닌 경우 기존 SocketAttachPoint 사용
+	if (WeaponSlotIndex < 0 || ActualSocket.IsNone())
+	{
+		ActualSocket = SocketAttachPoint;
+	}
+	
+#if INV_DEBUG_EQUIP
+	UE_LOG(LogTemp, Warning, TEXT("   📍 ActualSocket: %s"), *ActualSocket.ToString());
+#endif
+	
+	SpawnedActor->AttachToComponent(AttachMesh, FAttachmentTransformRules::SnapToTargetNotIncludingScale, ActualSocket);
+
+#if INV_DEBUG_EQUIP
+	UE_LOG(LogTemp, Warning, TEXT("   🎉 장착 스폰 완료!"));
+	UE_LOG(LogTemp, Warning, TEXT(""));
+#endif
 
 	return SpawnedActor;
 }
@@ -263,4 +303,23 @@ void FInv_EquipmentFragment::DestroyAttachedActor() const
 void FInv_EquipmentFragment::SetEquippedActor(AInv_EquipActor* EquipActor)
 {
 	EquippedActor = EquipActor;
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 [Phase 8] RestoreDesignTimePreview — 세이브/로드 후 프리뷰 설정 복원
+// ════════════════════════════════════════════════════════════════
+// 호출 경로: Inv_SaveGameMode::LoadAndSendInventoryToClient → 이 함수
+// 처리 흐름:
+//   CDO의 EquipmentFragment에서 디자인타임 프리뷰 값을 복사
+//   (TSoftObjectPtr 경로, 회전 오프셋, 카메라 거리)
+//
+// ⚠️ 이유: 프리뷰 필드는 에디터에서 설정하는 디자인타임 값이지만
+//    직렬화 시 TSoftObjectPtr 경로가 유실될 수 있으므로
+//    로드 후 CDO에서 복원한다 (SlotPosition 복원과 동일 패턴)
+// ════════════════════════════════════════════════════════════════
+void FInv_EquipmentFragment::RestoreDesignTimePreview(const FInv_EquipmentFragment& CDOEquip)
+{
+	PreviewStaticMesh = CDOEquip.PreviewStaticMesh;
+	PreviewRotationOffset = CDOEquip.PreviewRotationOffset;
+	PreviewCameraDistance = CDOEquip.PreviewCameraDistance;
 }

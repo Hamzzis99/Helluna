@@ -41,23 +41,65 @@ struct INVENTORY_API FInv_ItemManifest
 	
 	void SpawnPickupActor(const UObject* WorldContextObject, const FVector& SpawnLocation, const FRotator& SpawnRotation); // 아이템 픽업 액터 생성
 
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [Phase 1 최적화] Manifest Fragment 직렬화/역직렬화
+	// ════════════════════════════════════════════════════════════════
+	// 목적: 저장/로드 시 Fragment 데이터(랜덤 스탯 등)를 바이너리로 보존
+	//
+	// 사용 흐름:
+	//   [저장] CollectInventoryDataForSave() → SerializeFragments() → TArray<uint8>에 저장
+	//   [로드] LoadAndSendInventoryToClient() → DeserializeAndApplyFragments() → Fragment 복원
+	//
+	// 직렬화 대상: Fragments 배열 (TArray<TInstancedStruct<FInv_ItemFragment>>)
+	// 직렬화 미대상: ItemCategory, ItemType, DisplayName, PickupActorClass
+	//   → 이것들은 CDO(BP 기본값)에서 가져오므로 저장 불필요
+	//
+	// 기술 근거:
+	//   TInstancedStruct는 FArchive 기반 Serialize()를 네이티브 지원
+	//   이미 UInv_InventoryItem::ItemManifest가 Replicated로 사용 중
+	//   → 동일한 직렬화 경로를 SaveGame에도 적용
+	// ════════════════════════════════════════════════════════════════
+
+	/**
+	 * 현재 Fragments 배열을 바이너리로 직렬화
+	 *
+	 * @return 직렬화된 바이트 배열. 실패 시 빈 배열 반환.
+	 *
+	 * 호출 시점: 저장 데이터 수집 시 (CollectInventoryDataForSave)
+	 * 스레드 안전성: GameThread에서만 호출할 것
+	 */
+	TArray<uint8> SerializeFragments() const;
+
+	/**
+	 * 바이너리 데이터에서 Fragments 배열을 역직렬화하여 현재 Manifest에 적용
+	 *
+	 * @param InData 직렬화된 바이트 배열 (SerializeFragments의 출력)
+	 * @return true = 역직렬화 성공, false = 실패 (기존 Fragment 유지)
+	 *
+	 * 호출 시점: 로드 후 아이템 복원 시 (LoadAndSendInventoryToClient)
+	 * 주의: 이 함수 호출 후 Manifest()를 호출하면 값이 다시 초기화됨!
+	 *       → 로드 시에는 Manifest() 호출을 건너뛰거나,
+	 *         DeserializeAndApplyFragments를 Manifest() 이후에 호출할 것
+	 */
+	bool DeserializeAndApplyFragments(const TArray<uint8>& InData);
+
 private:
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (ExcludeBaseStruct)) 
+	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "Fragments (프래그먼트 배열)", Tooltip = "인벤토리 아이템의 구성요소 배열", ExcludeBaseStruct))
 	TArray<TInstancedStruct<FInv_ItemFragment>> Fragments; // 인벤토리 아이템 배열 공간들.
 
-	UPROPERTY(EditAnywhere, Category = "Inventory")
+	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "ItemCategory (아이템 카테고리)", Tooltip = "아이템 분류 (장비/소모품/재료)"))
 	EInv_ItemCategory ItemCategory{ EInv_ItemCategory::None }; // 개별 구성요소?
 
 	// 게임플레이 태그 부분
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (Categories ="GameItems"))
+	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "ItemType (아이템 타입)", Tooltip = "아이템 종류를 나타내는 GameplayTag", Categories ="GameItems"))
 	FGameplayTag ItemType;
 
 	// ⭐ 표시 이름 (UI에서 사용되는 한글 이름)
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "표시 이름"))
+	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "DisplayName (표시 이름)", Tooltip = "UI에서 표시되는 아이템 이름"))
 	FText DisplayName;
 
 	// 아이템 픽업 액터 클래스
-	UPROPERTY(EditAnywhere, Category = "Inventory")
+	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "PickupActorClass (픽업 액터 클래스)", Tooltip = "월드에 드롭될 때 생성되는 액터 클래스 (장착 BP말고 현재 작성중인 BP로 설정하세요!)"))
 	TSubclassOf<AActor> PickupActorClass;
 	
 	void ClearFragments();

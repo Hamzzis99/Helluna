@@ -1,6 +1,7 @@
 // Gihyeon's Inventory Project
 
 #include "Widgets/Building/Inv_BuildingButton.h"
+#include "Inventory.h"
 #include "Components/Button.h"
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
@@ -22,7 +23,9 @@ void UInv_BuildingButton::NativeOnInitialized()
 	}
 	else
 	{
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Error, TEXT("Inv_BuildingButton: Button_Main is not bound! Make sure the widget has a Button named 'Button_Main'."));
+#endif
 	}
 }
 
@@ -89,15 +92,19 @@ void UInv_BuildingButton::SetBuildingInfo(const FText& Name, UTexture2D* Icon, T
 
 void UInv_BuildingButton::OnButtonClicked()
 {
+#if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("=== BUILDING BUTTON CLICKED ==="));
 	UE_LOG(LogTemp, Warning, TEXT("Building Name: %s"), *BuildingName.ToString());
 	UE_LOG(LogTemp, Warning, TEXT("Building ID: %d"), BuildingID);
+#endif
 
 	// 재료 체크
 	if (!HasRequiredMaterials())
 	{
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Warning, TEXT("=== 재료가 부족합니다! ==="));
 		UE_LOG(LogTemp, Warning, TEXT("필요한 재료: %s x %d"), *RequiredMaterialTag.ToString(), RequiredAmount);
+#endif
 		// TODO: UI 팝업 표시
 		return;
 	}
@@ -106,7 +113,9 @@ void UInv_BuildingButton::OnButtonClicked()
 	APlayerController* PC = GetOwningPlayer();
 	if (!IsValid(PC))
 	{
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Error, TEXT("Inv_BuildingButton: Owning Player is invalid!"));
+#endif
 		return;
 	}
 
@@ -114,7 +123,9 @@ void UInv_BuildingButton::OnButtonClicked()
 	UInv_BuildingComponent* BuildingComp = PC->FindComponentByClass<UInv_BuildingComponent>();
 	if (!IsValid(BuildingComp))
 	{
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Error, TEXT("Inv_BuildingButton: BuildingComponent not found on Player Controller!"));
+#endif
 		return;
 	}
 
@@ -154,7 +165,9 @@ bool UInv_BuildingButton::HasRequiredMaterials()
 		int32 TotalAmount1 = InvComp->GetTotalMaterialCount(RequiredMaterialTag);
 		if (TotalAmount1 < RequiredAmount)
 		{
+#if INV_DEBUG_BUILD
 			UE_LOG(LogTemp, Warning, TEXT("재료1 부족: %d/%d (%s)"), TotalAmount1, RequiredAmount, *RequiredMaterialTag.ToString());
+#endif
 			return false; // 재료1 개수 부족
 		}
 	}
@@ -165,7 +178,9 @@ bool UInv_BuildingButton::HasRequiredMaterials()
 		int32 TotalAmount2 = InvComp->GetTotalMaterialCount(RequiredMaterialTag2);
 		if (TotalAmount2 < RequiredAmount2)
 		{
+#if INV_DEBUG_BUILD
 			UE_LOG(LogTemp, Warning, TEXT("재료2 부족: %d/%d (%s)"), TotalAmount2, RequiredAmount2, *RequiredMaterialTag2.ToString());
+#endif
 			return false; // 재료2 개수 부족
 		}
 	}
@@ -176,13 +191,17 @@ bool UInv_BuildingButton::HasRequiredMaterials()
 		int32 TotalAmount3 = InvComp->GetTotalMaterialCount(RequiredMaterialTag3);
 		if (TotalAmount3 < RequiredAmount3)
 		{
+#if INV_DEBUG_BUILD
 			UE_LOG(LogTemp, Warning, TEXT("재료3 부족: %d/%d (%s)"), TotalAmount3, RequiredAmount3, *RequiredMaterialTag3.ToString());
+#endif
 			return false; // 재료3 개수 부족
 		}
 	}
 
 	// 모든 재료 충족!
+#if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Log, TEXT("모든 재료 충족!"));
+#endif
 	return true;
 }
 
@@ -225,19 +244,25 @@ void UInv_BuildingButton::BindInventoryDelegates()
 	if (!InvComp->OnItemAdded.IsAlreadyBound(this, &ThisClass::OnInventoryItemAdded))
 	{
 		InvComp->OnItemAdded.AddDynamic(this, &ThisClass::OnInventoryItemAdded);
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Log, TEXT("BuildingButton: OnItemAdded 델리게이트 바인딩 완료"));
+#endif
 	}
 
 	if (!InvComp->OnItemRemoved.IsAlreadyBound(this, &ThisClass::OnInventoryItemRemoved))
 	{
 		InvComp->OnItemRemoved.AddDynamic(this, &ThisClass::OnInventoryItemRemoved);
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Log, TEXT("BuildingButton: OnItemRemoved 델리게이트 바인딩 완료"));
+#endif
 	}
 
 	if (!InvComp->OnStackChange.IsAlreadyBound(this, &ThisClass::OnInventoryStackChanged))
 	{
 		InvComp->OnStackChange.AddDynamic(this, &ThisClass::OnInventoryStackChanged);
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Log, TEXT("BuildingButton: OnStackChange 델리게이트 바인딩 완료"));
+#endif
 	}
 }
 
@@ -267,13 +292,17 @@ void UInv_BuildingButton::UnbindInventoryDelegates()
 		InvComp->OnStackChange.RemoveDynamic(this, &ThisClass::OnInventoryStackChanged);
 	}
 
+#if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Log, TEXT("BuildingButton: 모든 델리게이트 언바인딩 완료"));
+#endif
 }
 
 void UInv_BuildingButton::OnInventoryItemAdded(UInv_InventoryItem* Item, int32 EntryIndex)
 {
 	// 아이템이 추가되었을 때 (픽업, PutDown 포함)
+#if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Log, TEXT("BuildingButton: 아이템 추가됨! EntryIndex=%d, 버튼 상태 재계산..."), EntryIndex);
+#endif
 	UpdateMaterialUI(); // 재료 UI 업데이트
 	UpdateButtonState();
 }
@@ -281,7 +310,9 @@ void UInv_BuildingButton::OnInventoryItemAdded(UInv_InventoryItem* Item, int32 E
 void UInv_BuildingButton::OnInventoryItemRemoved(UInv_InventoryItem* Item, int32 EntryIndex)
 {
 	// 아이템이 제거되었을 때 (드롭, 소비 포함)
+#if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Log, TEXT("BuildingButton: 아이템 제거됨! EntryIndex=%d, 버튼 상태 재계산..."), EntryIndex);
+#endif
 	UpdateMaterialUI(); // 재료 UI 업데이트
 	UpdateButtonState();
 }
@@ -289,7 +320,9 @@ void UInv_BuildingButton::OnInventoryItemRemoved(UInv_InventoryItem* Item, int32
 void UInv_BuildingButton::OnInventoryStackChanged(const FInv_SlotAvailabilityResult& Result)
 {
 	// 아이템 스택이 변경되었을 때 (Split, Combine 포함)
+#if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Log, TEXT("BuildingButton: 스택 변경됨! 버튼 상태 재계산..."));
+#endif
 	UpdateMaterialUI(); // 재료 UI 업데이트
 	UpdateButtonState();
 }
@@ -415,7 +448,9 @@ void UInv_BuildingButton::UpdateMaterialUI()
 		}
 	}
 
+#if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Log, TEXT("BuildingButton: 재료 UI 업데이트 완료"));
+#endif
 }
 
 

@@ -8,6 +8,7 @@
 
 class UAIPerceptionComponent;
 class UAISenseConfig_Sight;
+class UStateTreeAIComponent;
 
 /**
  * 
@@ -32,6 +33,10 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
 	UAISenseConfig_Sight* AISenseConfig_Sight;
+
+	/** StateTree AI 컴포넌트 - 에디터에서 StateTree 에셋 할당 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|StateTree")
+	UStateTreeAIComponent* StateTreeAIComponent;
 
 	UFUNCTION()
 	virtual void OnEnemyPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus);

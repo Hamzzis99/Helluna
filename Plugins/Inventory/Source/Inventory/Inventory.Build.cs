@@ -10,18 +10,14 @@ public class Inventory : ModuleRules
 		
 		PublicIncludePaths.AddRange(
 			new string[] {
-				// ... add public include paths required here ...
 			}
 			);
 				
-		
 		PrivateIncludePaths.AddRange(
 			new string[] {
-				// ... add other private include paths required here ...
 			}
 			);
 			
-		
 		PublicDependencyModuleNames.AddRange(
 			new string[]
 			{
@@ -29,30 +25,26 @@ public class Inventory : ModuleRules
 				"NetCore",
 				"StructUtils",
 				"GameplayTags",
-				// ... add other public dependencies that you statically link with here ...
+				"GameplayAbilities", // TODO: [독립화] 졸작 후 삭제. GAS 미사용 프로젝트에서도 플러그인 사용 가능하게.
 			}
 			);
 			
-		
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
 				"CoreUObject",
 				"Engine",
 				"Slate",
-                "SlateCore", 
+				"SlateCore", 
 				"EnhancedInput", 
 				"UMG",
 				"InputCore",
-				// ... add private dependencies that you statically link with here ...	
 			}
 			);
-		
 		
 		DynamicallyLoadedModuleNames.AddRange(
 			new string[]
 			{
-				// ... add any modules that your module loads dynamically here ...
 			}
 			);
 	}

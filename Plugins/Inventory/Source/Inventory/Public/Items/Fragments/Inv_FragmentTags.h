@@ -24,4 +24,8 @@ namespace FragmentTags
 		UE_DECLARE_GAMEPLAY_TAG_EXTERN(StatMod_2)
 		UE_DECLARE_GAMEPLAY_TAG_EXTERN(StatMod_3)
 	}
+
+	// 부착물 시스템 태그
+	UE_DECLARE_GAMEPLAY_TAG_EXTERN(AttachmentHostFragment)
+	UE_DECLARE_GAMEPLAY_TAG_EXTERN(AttachableFragment)
 }

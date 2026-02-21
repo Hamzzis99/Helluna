@@ -4,8 +4,9 @@
 #include "AbilitySystem/HellunaAbilitySystemComponent.h"
 #include "HellunaGameplayTags.h"
 #include "AbilitySystem/HellunaHeroGameplayAbility.h"
-
+#include "Helluna.h"
 #include "DebugHelper.h"
+
 
 bool UHellunaAbilitySystemComponent::TryActivateAbilityByTag(FGameplayTag AbilityTagToActivate)
 {
@@ -34,15 +35,83 @@ bool UHellunaAbilitySystemComponent::TryActivateAbilityByTag(FGameplayTag Abilit
 
 void UHellunaAbilitySystemComponent::OnAbilityInputPressed(const FGameplayTag& InInputTag)
 {
+#if HELLUNA_DEBUG_ASC
+	// ============================================
+	// 🔍 [디버깅] 상세 로그 - 입력 시작
+	// ============================================
+	AActor* MyAvatarActor = GetAvatarActor();
+	AActor* MyOwnerActor = GetOwner();
+	
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("╔══════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║  🎮 [ASC] OnAbilityInputPressed 호출                         ║"));
+	UE_LOG(LogTemp, Warning, TEXT("╠══════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ InputTag: %s"), *InInputTag.ToString());
+	UE_LOG(LogTemp, Warning, TEXT("║ AvatarActor: %s"), MyAvatarActor ? *MyAvatarActor->GetName() : TEXT("nullptr"));
+	UE_LOG(LogTemp, Warning, TEXT("║ OwnerActor: %s"), MyOwnerActor ? *MyOwnerActor->GetName() : TEXT("nullptr"));
+	
+	if (APawn* Pawn = Cast<APawn>(MyAvatarActor))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("║ IsLocallyControlled: %s"), Pawn->IsLocallyControlled() ? TEXT("TRUE ✅") : TEXT("FALSE ❌"));
+		UE_LOG(LogTemp, Warning, TEXT("║ HasAuthority: %s"), Pawn->HasAuthority() ? TEXT("TRUE (서버)") : TEXT("FALSE (클라)"));
+		UE_LOG(LogTemp, Warning, TEXT("║ GetLocalRole: %d"), (int32)Pawn->GetLocalRole());
+		
+		if (AController* Controller = Pawn->GetController())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("║ Controller: %s"), *Controller->GetName());
+			if (APlayerController* PC = Cast<APlayerController>(Controller))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("║ PC->IsLocalController: %s"), PC->IsLocalController() ? TEXT("TRUE ✅") : TEXT("FALSE ❌"));
+			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("║ Controller: nullptr ⚠️"));
+		}
+	}
+	UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════╝"));
+#endif
+	
 	if (!InInputTag.IsValid())
 	{
+#if HELLUNA_DEBUG_ASC
+		UE_LOG(LogTemp, Warning, TEXT("⛔ [ASC] InputTag 유효하지 않음 - 리턴"));
+#endif
 		return;
 	}
 
+	// ============================================
+	// ⭐ [멀티플레이 버그 수정] 로컬 제어 캐릭터만 입력 처리
+	// ============================================
+	AActor* MyAvatarActor = GetAvatarActor();
+	if (APawn* Pawn = Cast<APawn>(MyAvatarActor))
+	{
+		if (!Pawn->IsLocallyControlled())
+		{
+#if HELLUNA_DEBUG_ASC
+			UE_LOG(LogTemp, Error, TEXT("⛔⛔⛔ [ASC] 로컬 캐릭터 아님! 입력 무시! Pawn: %s ⛔⛔⛔"), *Pawn->GetName());
+#endif
+			return;
+		}
+#if HELLUNA_DEBUG_ASC
+		UE_LOG(LogTemp, Warning, TEXT("✅ [ASC] 로컬 캐릭터 확인됨 - 입력 처리 진행"));
+#endif
+	}
+
+#if HELLUNA_DEBUG_ASC
+	int32 AbilityCount = 0;
+#endif
 	for (const FGameplayAbilitySpec& AbilitySpec : GetActivatableAbilities())
 	{
-
+#if HELLUNA_DEBUG_ASC
+		AbilityCount++;
+#endif
+		
 		if (!AbilitySpec.DynamicAbilityTags.HasTagExact(InInputTag)) continue;
+
+#if HELLUNA_DEBUG_ASC
+		UE_LOG(LogTemp, Warning, TEXT("🎯 [ASC] 매칭된 어빌리티 발견: %s"), AbilitySpec.Ability ? *AbilitySpec.Ability->GetName() : TEXT("nullptr"));
+#endif
 
 		const UHellunaHeroGameplayAbility* HellunaGA = Cast<UHellunaHeroGameplayAbility>(AbilitySpec.Ability);
 		const EHellunaInputActionPolicy Policy = HellunaGA ? HellunaGA->InputActionPolicy : EHellunaInputActionPolicy::Trigger;
@@ -52,14 +121,28 @@ void UHellunaAbilitySystemComponent::OnAbilityInputPressed(const FGameplayTag& I
 			if (AbilitySpec.IsActive()) 
 				CancelAbilityHandle(AbilitySpec.Handle);
 			else 
+			{
+#if HELLUNA_DEBUG_ASC
+				UE_LOG(LogTemp, Warning, TEXT("🚀 [ASC] TryActivateAbility 호출 (Toggle)"));
+#endif
 				TryActivateAbility(AbilitySpec.Handle);
+			}
 		}
 		else // Trigger
 		{
+			if (AbilitySpec.IsActive()) continue;
+
+#if HELLUNA_DEBUG_ASC
+			UE_LOG(LogTemp, Warning, TEXT("🚀 [ASC] TryActivateAbility 호출 (Trigger)"));
+#endif
 			TryActivateAbility(AbilitySpec.Handle);
 			return;
 		}
 	}
+	
+#if HELLUNA_DEBUG_ASC
+	UE_LOG(LogTemp, Warning, TEXT("📊 [ASC] 총 어빌리티 수: %d"), AbilityCount);
+#endif
 }
 
 void UHellunaAbilitySystemComponent::OnAbilityInputReleased(const FGameplayTag& InInputTag)
@@ -67,6 +150,22 @@ void UHellunaAbilitySystemComponent::OnAbilityInputReleased(const FGameplayTag& 
 	if (!InInputTag.IsValid())
 	{
 		return;
+	}
+
+	// ============================================
+	// ⭐ [멀티플레이 버그 수정] 로컬 제어 캐릭터만 입력 처리
+	// ⭐ 서버에서 다른 클라이언트의 입력이 잘못 처리되는 것 방지
+	// ============================================
+	AActor* MyAvatarActor = GetAvatarActor();
+	if (APawn* Pawn = Cast<APawn>(MyAvatarActor))
+	{
+		if (!Pawn->IsLocallyControlled())
+		{
+#if HELLUNA_DEBUG_ASC
+			UE_LOG(LogTemp, Warning, TEXT("⭐ [ASC] OnAbilityInputReleased 스킵 - 로컬 제어 캐릭터 아님: %s"), *Pawn->GetName());
+#endif
+			return;
+		}
 	}
 
 	for (FGameplayAbilitySpec& AbilitySpec : GetActivatableAbilities())

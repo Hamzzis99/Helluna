@@ -1,6 +1,42 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
-
 #pragma once
 
 #include "CoreMinimal.h"
 
+// ════════════════════════════════════════════════════════════════════════════════
+// 🔧 Helluna 디버깅 로그 전처리기 플래그
+// 출시 전에 모두 0으로 변경하세요!
+// ════════════════════════════════════════════════════════════════════════════════
+
+// 🌐 서버 접속 (LoginGameMode, ServerConnectController - 서버 시작/접속)
+#define HELLUNA_DEBUG_SERVERCONNECTION 1
+
+// 🔐 로그인 컨트롤러 (HellunaLoginController - BeginPlay, 위젯 생성, RPC 등)
+#define HELLUNA_DEBUG_LOGINCONTROLLER 1
+
+// 🔐 로그인 처리 (BaseGameMode - ProcessLogin, OnLoginSuccess 등)
+#define HELLUNA_DEBUG_LOGIN 0
+
+// 🎮 게임모드 (BaseGameMode - PostLogin, SpawnHeroCharacter 등)
+#define HELLUNA_DEBUG_GAMEMODE 0
+
+// 🎭 캐릭터 선택 (ProcessCharacterSelection, RegisterCharacterUse 등)
+#define HELLUNA_DEBUG_CHARACTER_SELECT 0
+
+// 🎭 캐릭터 프리뷰 (PreviewActor 스폰/파괴, SceneCapture, Hover 등)
+#define HELLUNA_DEBUG_CHARACTER_PREVIEW 1
+
+// 🎭 캐릭터 프리뷰 V2 (SceneV2 - 3캐릭터 1카메라, Overlay Highlight 등)
+#define HELLUNA_DEBUG_CHARACTER_PREVIEW_V2 1
+
+// ☀️ UDS 날씨/시간 디버그 (PrintUDSDebug - 1초마다 TimeOfDay, Animate, Phase 출력)
+#define HELLUNA_DEBUG_UDS 0
+
+// 🎮 어빌리티 시스템 (ASC - OnAbilityInputPressed/Released, TryActivateAbility 등)
+#define HELLUNA_DEBUG_ASC 0
+
+// 📦 인벤토리 저장/로드 (SaveAllPlayersInventory, LoadAndSendInventoryToClient 등)
+#define HELLUNA_DEBUG_INVENTORY_SAVE 0
+
+// ════════════════════════════════════════════════════════════════════════════════
+
+DECLARE_LOG_CATEGORY_EXTERN(LogHelluna, Log, All);

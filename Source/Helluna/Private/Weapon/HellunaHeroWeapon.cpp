@@ -3,7 +3,3 @@
 
 #include "Weapon/HellunaHeroWeapon.h"
 
-void AHellunaHeroWeapon::Fire(AController* InstigatorController)
-{
-
-}	

@@ -8,6 +8,8 @@
 
 class UBoxComponent;
 
+
+
 UCLASS()
 class HELLUNA_API AHellunaWeaponBase : public AActor
 {
@@ -17,8 +19,11 @@ public:
 
 	AHellunaWeaponBase();
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Stats")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Stats", meta = (DisplayName = "데미지"))
 	float Damage = 20.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Stats", meta = (DisplayName = "공격 간격(n초에 1번 공격)"))
+	float AttackSpeed = 0.1f;
 
 protected:
 
@@ -32,5 +37,8 @@ protected:
 public:	
 
 	FORCEINLINE UBoxComponent* GetWeaponCollisionBox() const { return WeaponCollisionBox; }
+
+
+
 
 };

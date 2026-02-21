@@ -13,9 +13,13 @@
 
 void UHeroGameplayAbility_Repair::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData)
 {
+	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
+
 	Repair(ActorInfo);
 
-	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
+	// ⭐ Widget 열고 바로 종료! (Widget은 독립적으로 동작)
+	// 이렇게 해야 다음에 다시 활성화 가능
+	EndAbility(Handle, ActorInfo, ActivationInfo, false, false);
 }
 
 void UHeroGameplayAbility_Repair::EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled)
@@ -85,6 +89,7 @@ void UHeroGameplayAbility_Repair::Repair(const FGameplayAbilityActorInfo* ActorI
 						CurrentWidget->AddToViewport(100);  // 최상위 Z-Order
 
 						// ⭐ 마우스 커서 표시 및 입력 모드 변경
+						PC->FlushPressedKeys();
 						PC->SetInputMode(FInputModeUIOnly());
 						PC->bShowMouseCursor = true;
 

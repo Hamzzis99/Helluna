@@ -122,11 +122,15 @@ private:
 
 	// === Input Mapping Context ===
 
-	// Input Mapping Context
+	// 빌드 메뉴 토글용 IMC (항상 활성화 - B키)
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Building|Input", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<UInputMappingContext> BuildingMappingContext;
+	TObjectPtr<UInputMappingContext> BuildingMenuMappingContext;
 
-	// 빌드 모드 토글 액션 (빌드 메뉴 열기/닫기)
+	// 빌드 액션용 IMC (BuildMode일 때만 활성화 - 좌클릭/우클릭)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Building|Input", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UInputMappingContext> BuildingActionMappingContext;
+
+	// 빌드 모드 토글 액션 (빌드 메뉴 열기/닫기 - B키)
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Building|Input", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UInputAction> IA_Building;
 
@@ -159,4 +163,18 @@ private:
 	// 최대 허용 바닥 각도 (이보다 가파르면 설치 불가)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building|Settings", meta = (AllowPrivateAccess = "true"))
 	float MaxGroundAngle = 45.0f;
+
+	// === 동적 입력 바인딩 관리 ===
+	
+	// 빌드 모드 입력 활성화/비활성화
+	void EnableBuildModeInput();
+	void DisableBuildModeInput();
+
+	// 동적 바인딩 핸들 (제거용)
+	uint32 BuildActionBindingHandle = 0;
+	uint32 CancelBuildingBindingHandle = 0;
+
+	// 빌드 모드 IMC 우선순위 (Combat IMC보다 높게 설정)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building|Input", meta = (AllowPrivateAccess = "true"))
+	int32 BuildingMappingContextPriority = 10;
 };

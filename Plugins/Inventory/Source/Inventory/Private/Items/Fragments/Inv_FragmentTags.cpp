@@ -23,4 +23,8 @@ namespace FragmentTags
 		UE_DEFINE_GAMEPLAY_TAG(StatMod_2, "FragmentTags.StatMod.2")
 		UE_DEFINE_GAMEPLAY_TAG(StatMod_3, "FragmentTags.StatMod.3")
 	}
+
+	// 부착물 시스템 태그
+	UE_DEFINE_GAMEPLAY_TAG(AttachmentHostFragment, "FragmentTags.AttachmentHost")
+	UE_DEFINE_GAMEPLAY_TAG(AttachableFragment, "FragmentTags.Attachable")
 }

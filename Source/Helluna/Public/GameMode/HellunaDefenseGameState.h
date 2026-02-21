@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "GameFramework/GameStateBase.h"
+#include "GameMode/HellunaBaseGameState.h"
 
 // [MDF 추가] 플러그인 인터페이스 및 컴포넌트 헤더
 #include "Interface/MDF_GameStateInterface.h"
@@ -37,11 +37,14 @@ enum class EDefensePhase : uint8
 class AResourceUsingObject_SpaceShip;
 
 UCLASS()
-class HELLUNA_API AHellunaDefenseGameState : public AGameStateBase, public IMDF_GameStateInterface
+class HELLUNA_API AHellunaDefenseGameState : public AHellunaBaseGameState, public IMDF_GameStateInterface
 {
     GENERATED_BODY()
-    
+
 public:
+    /** 생성자 */
+    AHellunaDefenseGameState();
+
     // =========================================================================================
     // [민우님 작업 영역] 기존 팀원 코드 (우주선 및 페이즈 관리)
     // =========================================================================================
@@ -55,32 +58,138 @@ public:
 
     void SetPhase(EDefensePhase NewPhase);
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 낮/밤 전환 이벤트 (BP에서 구현)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Phase 복제 콜백 - 클라이언트에서 Phase가 변경될 때 자동 호출
+     * 서버에서는 SetPhase() 내부에서 직접 호출
+     */
+    UFUNCTION()
+    void OnRep_Phase();
+
+    /**
+     * 낮 시작 시 호출 (BP에서 UDS/UDW 날씨 변경 구현)
+     * - 서버: SetPhase(Day) 시 직접 호출
+     * - 클라이언트: OnRep_Phase()에서 자동 호출
+     */
+    UFUNCTION(BlueprintImplementableEvent, Category = "Defense|DayNight")
+    void OnDayStarted();
+
+    /**
+     * 밤 시작 시 호출 (BP에서 UDS/UDW 날씨 변경 구현)
+     * - 서버: SetPhase(Night) 시 직접 호출
+     * - 클라이언트: OnRep_Phase()에서 자동 호출
+     */
+    UFUNCTION(BlueprintImplementableEvent, Category = "Defense|DayNight")
+    void OnNightStarted();
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 새벽 완료 → 라운드 시작 (UDS 비례 구동 트리거)
+    // ═══════════════════════════════════════════════════════════════════════════
+    //
+    // [호출 흐름]
+    //   GameMode::EnterDay()
+    //     → SetPhase(Day) → OnDayStarted() (밤→아침 빠른 전환 연출, ~5초)
+    //     → NetMulticast_OnDawnPassed(TestDayDuration) (새벽 끝, 라운드 시작)
+    //       → OnDawnPassed(RoundDuration) (BP에서 UDS 비례 구동 시작)
+    //     → TimerHandle_ToNight 시작 (RoundDuration 후 EnterNight)
+    //
+    // [BP 구현 가이드]
+    //   OnDawnPassed에서 받은 RoundDuration을 이용하여:
+    //     UDS Time of Day 속도 = (2100 - 800) / RoundDuration
+    //   이 속도로 UDS를 800(아침)에서 2100(밤)까지 자연스럽게 진행
+    //
+    // ─────────────────────────────────────────────────────────────────────────
+    // [향후 개선안: A방식 — Dawn Phase 도입]
+    //
+    // 현재(B방식): Phase는 Day/Night 2단계. 새벽 전환은 Multicast RPC로 처리.
+    //   - 장점: GameMode 수정 최소화, 빠른 테스트 가능
+    //   - 단점: 새벽 중 Phase가 이미 Day라서, 새벽 전환 중인지 구분 불가
+    //
+    // A방식: EDefensePhase에 Dawn을 추가하여 3단계로 운용
+    //   enum class EDefensePhase : uint8 { Night, Dawn, Day };
+    //
+    //   GameMode 흐름:
+    //     EnterDay()
+    //       → SetPhase(Dawn)           ← 새벽 전환 시작
+    //       → 5초 타이머
+    //       → SetPhase(Day)            ← 새벽 완료, 라운드 시작
+    //       → TimerHandle_ToNight 시작
+    //       → EnterNight()
+    //
+    //   GameState OnRep_Phase 분기:
+    //     case Dawn:  OnDawnStarted()   → BP: 밤→아침 빠른 전환 연출
+    //     case Day:   OnDayStarted()    → BP: UDS 비례 구동 시작
+    //     case Night: OnNightStarted()  → BP: UDS 밤 고정
+    //
+    //   장점: Phase 리플리케이션으로 모든 상태가 자동 동기화.
+    //         중간 접속 클라이언트도 현재 Phase만 보면 올바른 UDS 상태 적용 가능.
+    //         게임플레이 규칙(새벽엔 몬스터 안 나옴 등) 분기 용이.
+    //
+    //   구현 시 필요한 변경:
+    //     1. EDefensePhase에 Dawn 추가
+    //     2. OnRep_Phase()에 Dawn case 추가
+    //     3. OnDawnStarted() BlueprintImplementableEvent 추가
+    //     4. GameMode::EnterDay()에서 SetPhase(Dawn) → 타이머 → SetPhase(Day) 순서로 변경
+    //     5. NetMulticast_OnDawnPassed 제거 가능 (Phase 리플리케이션이 대체)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * [Multicast RPC] 새벽 전환 완료 → 라운드 시작 신호
+     *
+     * GameMode::EnterDay()에서 호출.
+     * 모든 클라이언트에서 OnDawnPassed()를 발동시킨다.
+     *
+     * @param RoundDuration  라운드 지속 시간(초). UDS 비례 구동 속도 계산에 사용.
+     */
+    UFUNCTION(NetMulticast, Reliable)
+    void NetMulticast_OnDawnPassed(float RoundDuration);
+
+    /**
+     * 새벽 완료 시 호출 (BP에서 UDS 비례 구동 구현)
+     *
+     * NetMulticast_OnDawnPassed → 이 함수 호출.
+     * BP에서 RoundDuration을 이용해 UDS Time of Day를
+     * 800(아침) → 2100(밤)으로 비례 구동한다.
+     *
+     * @param RoundDuration  라운드 지속 시간(초)
+     */
+    UFUNCTION(BlueprintImplementableEvent, Category = "Defense|DayNight")
+    void OnDawnPassed(float RoundDuration);
+
     UFUNCTION(NetMulticast, Reliable)
     void MulticastPrintNight(int32 Current, int32 Need);
 
     UFUNCTION(NetMulticast, Reliable)
     void MulticastPrintDay();
 
-    
+    // ✅ UI에서 "남은 몬스터 수" 읽어오기 용도
+    UFUNCTION(BlueprintPure, Category = "Defense|Monster")
+    int32 GetAliveMonsterCount() const { return AliveMonsterCount; }
+
+    // ✅ 서버(GameMode)에서만 값을 갱신하도록 하는 Setter
+    void SetAliveMonsterCount(int32 NewCount);
+
     // =========================================================================================
     // [김기현 작업 영역 시작] MDF Interface 구현 및 시스템 함수
     // (MDF: Mesh Deformation System - 구조물 변형 상태 저장 관리)
     // =========================================================================================
-    
+
     virtual void BeginPlay() override;
     virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
     // [MDF Interface] 데이터 저장 (메모리 갱신)
-    virtual void SaveMDFData(const FGuid& ID, const TArray<FMDFHitData>& Data) override; 
-    
+    virtual void SaveMDFData(const FGuid& ID, const TArray<FMDFHitData>& Data) override;
+
     // [MDF Interface] 데이터 로드 (메모리 조회)
     virtual bool LoadMDFData(const FGuid& ID, TArray<FMDFHitData>& OutData) override;
 
-    // [서버 전용] 현재 상태를 파일로 저장하고, 다음 레벨로 이동합니다. (MoveMapActor가 호출)
-    UFUNCTION(BlueprintCallable, Category="Helluna|MDF|System")
-    void Server_SaveAndMoveLevel(FName NextLevelName);
-
 protected:
+    /** MDF 데이터 디스크 저장 (맵 이동 전) */
+    virtual void OnPreMapTransition() override;
+
     // 현재 데이터를 실제 디스크 파일(.sav)로 저장하는 함수
     void WriteDataToDisk();
 
@@ -91,7 +200,7 @@ protected:
     // TArray 직접 중첩 불가 이슈 해결을 위해 Wrapper 구조체 사용
     UPROPERTY()
     TMap<FGuid, FMDFHitHistoryWrapper> SavedDeformationMap;
-    
+
     // =========================================================================================
     // [김기현 작업 영역 끝]
     // =========================================================================================
@@ -102,8 +211,97 @@ protected:
     UPROPERTY(Replicated)
     TObjectPtr<AResourceUsingObject_SpaceShip> SpaceShip;
 
-    UPROPERTY(Replicated)
+    UPROPERTY(ReplicatedUsing = OnRep_Phase)
     EDefensePhase Phase = EDefensePhase::Day;
 
     virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+	//몬스터 생존 개수 관리, GameMode는 서버에만 있으니, UI/디버그를 위해 GameState에서 복제(Replicate)로 공유
+    UPROPERTY(Replicated, BlueprintReadOnly, Category = "Defense|Monster")
+    int32 AliveMonsterCount = 0;
+
+    // 디버그용
+    FTimerHandle TimerHandle_NightDebug;
+
+    // ✅ 출력 간격(원인 파악 끝나면 지우기 쉬움)
+    float NightDebugInterval = 5.f;
+
+    // ✅ 2.5초마다 호출될 함수(몹 수 출력)
+    void PrintNightDebug();
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 🔍 UDS 디버그 타이머 (1초마다 Time of Day 로깅)
+    // ═══════════════════════════════════════════════════════════════════════════
+    FTimerHandle TimerHandle_UDSDebug;
+    void PrintUDSDebug();
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ☀️ UDS 시간 제어
+    // ═══════════════════════════════════════════════════════════════════════════
+    
+    /** 낮 시작 시간 (UDS 기준, 800 = 오전 8시) */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤", meta = (DisplayName = "낮 시작 시간"))
+    float DayStartTime = 800.f;
+
+    /** 밤→낮 새벽 전환 시간 (초) */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤", meta = (DisplayName = "새벽 전환 시간(초)"))
+    float DawnTransitionDuration = 5.f;
+
+    FTimerHandle TimerHandle_DawnTransition;
+    float DawnLerpStart = 0.f;          // 전환 시작 시 UDS 시간
+    float DawnLerpElapsed = 0.f;        // 경과 시간
+    float DawnTotalDistance = 0.f;       // 총 이동량 (순환 고려)
+    float PendingRoundDuration = 0.f;   // 새벽 완료 후 사용할 RoundDuration
+    void TickDawnTransition();           // 타이머 콜백 (매 프레임)
+    
+    /** 낮 종료 시간 (UDS 기준, 1800 = 오후 6시 일몰) */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤", meta = (DisplayName = "낮 종료 시간"))
+    float DayEndTime = 1800.f;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 🌤️ 랜덤 날씨 시스템
+    // ═══════════════════════════════════════════════════════════════════════════
+    
+    /** 낮에 사용할 날씨 목록 (UDS Weather Type Data Asset) */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|날씨", meta = (DisplayName = "낮 날씨 배열"))
+    TArray<UObject*> DayWeatherTypes;
+    
+    /** 밤에 사용할 날씨 목록 (UDS Weather Type Data Asset) */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|날씨", meta = (DisplayName = "밤 날씨 배열"))
+    TArray<UObject*> NightWeatherTypes;
+    
+    /** 날씨 전환 시간 (초) */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|날씨", meta = (DisplayName = "날씨 전환 시간(초)"))
+    float WeatherTransitionTime = 10.f;
+    
+    /** 현재 선택된 낮 날씨 (디버그/읽기용) */
+    UPROPERTY(BlueprintReadOnly, Category = "디펜스|날씨", meta = (DisplayName = "현재 낮 날씨"))
+    UObject* CurrentDayWeather = nullptr;
+    
+    /** 현재 선택된 밤 날씨 (디버그/읽기용) */
+    UPROPERTY(BlueprintReadOnly, Category = "디펜스|날씨", meta = (DisplayName = "현재 밤 날씨"))
+    UObject* CurrentNightWeather = nullptr;
+    
+    /** 배열에서 랜덤 날씨 선택 후 Change Weather 호출 */
+    void ApplyRandomWeather(bool bIsDay);
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 캐싱 (UDS/UDW 액터 + 리플렉션 프로퍼티)
+    // ═══════════════════════════════════════════════════════════════════════════
+    UPROPERTY()
+    TWeakObjectPtr<AActor> CachedUDS;
+    
+    UPROPERTY()
+    TWeakObjectPtr<AActor> CachedUDW;
+    
+    AActor* GetUDSActor();
+    AActor* GetUDWActor();
+    void SetUDSTimeOfDay(float Time);
+    
+    /** 데디서버에서 UDS/UDW가 존재하는지 (BeginPlay에서 1회 체크) */
+    bool bHasUDS = false;
+    bool bHasUDW = false;
+    
+    /** 밤을 한 번이라도 거쳤는지 (첫 시작 시 새벽 전환 방지) */
+    bool bHasBeenNight = false;
 };

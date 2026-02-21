@@ -3,6 +3,5 @@
 
 #include "Save/MDF_SaveActor.h"
 
-// SaveGame 클래스는 데이터 저장용 '틀(Data Object)'이므로
+// SaveGame 클래스는 데이터 저장용 '틀'이므로
 // 별도의 로직 구현 없이 비워두셔도 정상 작동합니다.
-// 우주선 추가할 때도 딱히 건드릴 부분은 없습니다.

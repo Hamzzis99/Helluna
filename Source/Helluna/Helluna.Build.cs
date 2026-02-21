@@ -8,11 +8,31 @@ public class Helluna : ModuleRules
     {
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
+        // 모듈 루트 폴더를 include 경로에 추가 (Helluna.h 접근용)
+        PublicIncludePaths.Add(ModuleDirectory);
+
         PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput" , "StructUtils", 
             "GameplayAbilities", "GameplayTags","GameplayTasks", "AIModule", "NavigationSystem","AnimGraphRuntime", "MotionWarping",
-            "DeveloperSettings", "UMG", "Slate","SlateCore", "MassEntity","MassSpawner","MassRepresentation","MassActors",
-            "MassMovement","MassLOD", "MassCrowd", 
+
+            "DeveloperSettings", "UMG", "Slate","SlateCore", 
+
+            //Mass 관련 모듈들
+            "MassMovement","MassLOD", "MassCrowd","MassEntity","MassSpawner","MassRepresentation","MassActors", "MassSimulation",
             
+
+            "DeveloperSettings", "UMG", "Slate","SlateCore", "MassEntity","MassSpawner","MassRepresentation","MassActors",
+            "MassMovement","MassLOD", "MassCrowd",
+
+            // === ECS 하이브리드 시스템용 모듈 (Mass Entity + Actor 전환) ===
+            "MassCommon",         // Mass 공통 Fragment, 유틸리티 (FTransformFragment 등)
+            "MassSimulation",     // Mass 시뮬레이션 서브시스템 (Processor 실행 관리)
+            "MassSignals",        // Mass Signal 시스템 (StateTree 깨우기, 엔티티 간 신호)
+            "MassAIBehavior",     // StateTree + Mass 연동 (UMassStateTreeTrait 등)
+            "MassNavigation",     // Mass 네비게이션 (이동/회피)
+            "StateTreeModule",    // StateTree 런타임 (StateTree 에셋 실행)
+            "GameplayStateTreeModule", // StateTreeAIComponent (Actor용 StateTree)
+            "NetCore",            // 네트워크 코어 (리플리케이션 기반 - 향후 MassReplication 대비)
+
             //김기현이 따로 추가한 파일들
             "MeshDeformation", "Inventory", "Niagara", "GeometryFramework"
         });
