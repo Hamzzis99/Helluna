@@ -308,6 +308,8 @@ private:
 	FInv_SpaceQueryResult CurrentQueryResult; // 현재 쿼리 결과
 	bool bMouseWithinCanvas;
 	bool bLastMouseWithinCanvas;
+	// [최적화] HoverItem을 들고 있을 때만 true → NativeTick에서 계산 수행
+	bool bShouldTickForHover = false;
 	int32 LastHighlightedIndex;
 	FIntPoint LastHighlightedDimensions;
 

@@ -41,6 +41,9 @@ void UInv_InventoryGrid::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
 
+	// [최적화] HoverItem을 들고 있지 않으면 마우스 추적 스킵
+	if (!bShouldTickForHover) return;
+
 	//캔버스가 시작하는 왼쪽 모서리 점을 알아보자.
 	const FVector2D CanvasPosition = UInv_WidgetUtils::GetWidgetPosition(CanvasPanel); // 캔2버스 패널의 위치 가져오기
 	const FVector2D MousePosition = UWidgetLayoutLibrary::GetMousePositionOnViewport(GetOwningPlayer()); // 뷰포트에서 마우스 위치 가져오기
@@ -608,11 +611,13 @@ void UInv_InventoryGrid::AssignHoverItem(UInv_InventoryItem* InventoryItem) // �
 	HoverItem->SetIsStackable(InventoryItem->IsStackable());
 
 	GetOwningPlayer()->SetMouseCursorWidget(EMouseCursor::Default, HoverItem); // 마우스 커서 위젯 설정
+	bShouldTickForHover = true; // [최적화] Tick 활성화
 }
 
 void UInv_InventoryGrid::OnHide()
 {
 	PutHoverItemBack();
+	bShouldTickForHover = false; // [최적화] 인벤토리 닫힘 → Tick 확실히 비활성화
 }
 
 
@@ -1948,6 +1953,7 @@ void UInv_InventoryGrid::PutDownOnIndex(const int32 Index)
 
 void UInv_InventoryGrid::ClearHoverItem() // 호버(잡는모션) 아이템 초기화
 {
+	bShouldTickForHover = false; // [최적화] Tick 비활성화
 	if (!IsValid(HoverItem)) return;
 
 	HoverItem->SetInventoryItem(nullptr); // 호버 아이템의 인벤토리 아이템 초기화
