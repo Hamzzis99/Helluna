@@ -106,21 +106,26 @@ private:
 	TObjectPtr<UTextBlock> Text_SlotName;
 
 	// ── 브러시 (에디터에서 설정, 기존 GridSlot 텍스처 재사용) ──
-	UPROPERTY(EditAnywhere, Category = "Attachment|Style", meta = (DisplayName = "빈 슬롯 브러시", Tooltip = "T_Unoccupied_Square"))
+	UPROPERTY(EditAnywhere, Category = "부착물|스타일", meta = (DisplayName = "빈 슬롯 브러시", Tooltip = "T_Unoccupied_Square"))
 	FSlateBrush Brush_Empty;
 
-	UPROPERTY(EditAnywhere, Category = "Attachment|Style", meta = (DisplayName = "점유 슬롯 브러시", Tooltip = "T_Occupied_Square"))
+	UPROPERTY(EditAnywhere, Category = "부착물|스타일", meta = (DisplayName = "점유 슬롯 브러시", Tooltip = "T_Occupied_Square"))
 	FSlateBrush Brush_Occupied;
 
-	UPROPERTY(EditAnywhere, Category = "Attachment|Style", meta = (DisplayName = "하이라이트 브러시", Tooltip = "T_Selected_Square"))
+	UPROPERTY(EditAnywhere, Category = "부착물|스타일", meta = (DisplayName = "하이라이트 브러시", Tooltip = "T_Selected_Square"))
 	FSlateBrush Brush_Highlight;
 
 	// ── 크기 설정 (WBP Class Defaults에서 조절) ──
-	UPROPERTY(EditAnywhere, Category = "Attachment|Style", meta = (DisplayName = "아이콘 크기"))
+	UPROPERTY(EditAnywhere, Category = "부착물|스타일", meta = (DisplayName = "아이콘 크기"))
 	FVector2D IconSize = FVector2D(64.f, 64.f);
 
 	// ── 슬롯 상태 ──
 	int32 SlotIndex = INDEX_NONE;
 	bool bIsOccupied = false;
-	FGameplayTag SlotType;  // 호환성 체크용 캐시
+
+	// ── 슬롯 타입 (WBP 디자이너에서 인스턴스별 설정) ──
+	// WBP_Inv_AttachmentPanel에 배치한 뒤, 각 슬롯 위젯 Details에서 GameplayTag 드롭다운으로 선택
+	// 예: AttachmentSlot.Scope, AttachmentSlot.Muzzle, AttachmentSlot.Magazine 등
+	UPROPERTY(EditAnywhere, Category = "부착물|설정", meta = (DisplayName = "슬롯 타입", Categories = "AttachmentSlot"))
+	FGameplayTag SlotType;
 };

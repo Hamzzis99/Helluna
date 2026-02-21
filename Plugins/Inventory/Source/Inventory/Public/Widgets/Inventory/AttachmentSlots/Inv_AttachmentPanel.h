@@ -25,12 +25,15 @@
 //          │    ├─ Text_WeaponName      ← UTextBlock ★ BindWidget
 //          │    └─ Button_Close         ← UButton ★ BindWidget
 //          │
-//          ├─ VerticalBox_Top           ← UVerticalBox ★ BindWidget (상단 슬롯: 스코프)
+//          ├─ VerticalBox_Top           ← UVerticalBox (상단 슬롯 컨테이너)
 //          ├─ HorizontalBox_Middle      ← UHorizontalBox
-//          │    ├─ VerticalBox_Left       ← UVerticalBox ★ BindWidget (좌측: 그립)
+//          │    ├─ VerticalBox_Left       ← UVerticalBox (좌측 슬롯 컨테이너)
 //          │    ├─ Image_WeaponPreview    ← UImage ★ BindWidget (3D 프리뷰)
-//          │    └─ VerticalBox_Right      ← UVerticalBox ★ BindWidget (우측: 레이저)
-//          └─ VerticalBox_Bottom        ← UVerticalBox ★ BindWidget (하단: 탄창)
+//          │    └─ VerticalBox_Right      ← UVerticalBox (우측 슬롯 컨테이너)
+//          └─ VerticalBox_Bottom        ← UVerticalBox (하단 슬롯 컨테이너)
+//
+//    ※ WBP에 배치된 UInv_AttachmentSlotWidget을 WidgetTree에서 자동 수집
+//      각 슬롯 위젯의 Details에서 SlotType(GameplayTag) 설정 필요
 //
 // 📌 3D 프리뷰:
 //    AInv_WeaponPreviewActor를 Z=-10000에 스폰
@@ -56,7 +59,6 @@ class UImage;
 class UButton;
 class UTextBlock;
 class AInv_WeaponPreviewActor;
-enum class EInv_AttachmentSlotPosition : uint8;
 
 // 패널 닫기 델리게이트 (InventoryGrid에서 정리 작업용)
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FAttachmentPanelClosed);
@@ -106,19 +108,6 @@ private:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UImage> Image_WeaponIcon;
 
-	// ── Phase 8: 십자형 레이아웃 BindWidget ──
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UVerticalBox> VerticalBox_Top;
-
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UVerticalBox> VerticalBox_Bottom;
-
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UVerticalBox> VerticalBox_Left;
-
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UVerticalBox> VerticalBox_Right;
-
 	// 중앙 무기 3D 프리뷰 이미지
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UImage> Image_WeaponPreview;
@@ -126,19 +115,10 @@ private:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Button_Close;
 
-	// ── Phase 8: 4방향 슬롯 위젯 (WBP에서 직접 배치) ──
-	// WBP에 위젯이 있으면 해당 방향 슬롯 활성화, 없으면 비활성화
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UInv_AttachmentSlotWidget> Slot_Top;
-
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UInv_AttachmentSlotWidget> Slot_Bottom;
-
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UInv_AttachmentSlotWidget> Slot_Left;
-
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UInv_AttachmentSlotWidget> Slot_Right;
+	// WidgetTree에서 수집한 전체 슬롯 위젯 (NativeOnInitialized에서 1회 수집)
+	// WBP에 배치된 UInv_AttachmentSlotWidget을 자동으로 찾아 저장
+	UPROPERTY()
+	TArray<TObjectPtr<UInv_AttachmentSlotWidget>> CollectedSlotWidgets;
 
 	// 생성된 슬롯 위젯 배열 (인덱스 = SlotDef 인덱스)
 	UPROPERTY()
@@ -158,7 +138,7 @@ private:
 	TWeakObjectPtr<AInv_WeaponPreviewActor> WeaponPreviewActor;
 
 	// ── 프리뷰 설정 (WBP Class Defaults에서 조절) ──
-	UPROPERTY(EditAnywhere, Category = "Attachment|Preview", meta = (DisplayName = "프리뷰 이미지 크기"))
+	UPROPERTY(EditAnywhere, Category = "부착물|프리뷰", meta = (DisplayName = "프리뷰 이미지 크기"))
 	FVector2D PreviewImageSize = FVector2D(300.f, 300.f);
 
 	// 프리뷰 액터 스폰 Z 위치 (월드 아래쪽, 카메라에 안 잡힘)
@@ -177,17 +157,14 @@ private:
 	// 슬롯 위젯 전부 정리
 	void ClearSlotWidgets();
 
-	// 4방향 슬롯 전부 Hidden + SetEmpty (패널 열 때 초기화용)
+	// 수집된 슬롯 전부 Hidden + SetEmpty (패널 열 때 초기화용)
 	void ResetAllSlots();
 
-	// SlotPosition → 해당 방향 BindWidget 슬롯 반환 (없으면 nullptr)
-	UInv_AttachmentSlotWidget* GetSlotWidgetForPosition(EInv_AttachmentSlotPosition Position) const;
+	// WidgetTree 순회하여 UInv_AttachmentSlotWidget 전부 수집
+	void CollectSlotWidgetsFromTree();
 
-	// SlotPosition에 해당하는 VerticalBox 반환
-	UVerticalBox* GetContainerForPosition(EInv_AttachmentSlotPosition Position) const;
-
-	// SlotType 태그에서 UI 배치 위치 자동 추론
-	EInv_AttachmentSlotPosition DerivePositionFromSlotType(const FGameplayTag& SlotType) const;
+	// SlotType 태그로 수집된 슬롯 위젯 검색 (없으면 nullptr)
+	UInv_AttachmentSlotWidget* FindSlotWidgetByTag(const FGameplayTag& SlotType) const;
 
 	// 무기 3D 프리뷰 설정/정리
 	void SetupWeaponPreview();

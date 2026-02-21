@@ -28,6 +28,7 @@
 #include "Components/Image.h"
 #include "Components/VerticalBox.h"
 #include "Blueprint/WidgetLayoutLibrary.h"
+#include "Blueprint/WidgetTree.h"
 #include "Interaction/Preview/Inv_WeaponPreviewActor.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/StaticMesh.h"
@@ -45,6 +46,9 @@ void UInv_AttachmentPanel::NativeOnInitialized()
 	{
 		Button_Close->OnClicked.AddDynamic(this, &ThisClass::OnCloseButtonClicked);
 	}
+
+	// WBP에 배치된 슬롯 위젯 자동 수집
+	CollectSlotWidgetsFromTree();
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -217,12 +221,16 @@ void UInv_AttachmentPanel::BuildSlotWidgets()
 	ClearSlotWidgets();
 	ResetAllSlots();
 
-	// ★ [디버그] BindWidget 연결 상태 확인
-	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] Slot BindWidget: Top=%s, Bottom=%s, Left=%s, Right=%s"),
-		IsValid(Slot_Top) ? TEXT("✅") : TEXT("❌없음"),
-		IsValid(Slot_Bottom) ? TEXT("✅") : TEXT("❌없음"),
-		IsValid(Slot_Left) ? TEXT("✅") : TEXT("❌없음"),
-		IsValid(Slot_Right) ? TEXT("✅") : TEXT("❌없음"));
+	// ★ [디버그] 수집된 슬롯 위젯 상태 확인
+	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 수집된 슬롯 위젯: %d개"), CollectedSlotWidgets.Num());
+	for (const auto& Collected : CollectedSlotWidgets)
+	{
+		if (IsValid(Collected))
+		{
+			UE_LOG(LogTemp, Log, TEXT("[Attachment UI]   - %s (Tag: %s)"),
+				*Collected->GetName(), *Collected->GetSlotType().ToString());
+		}
+	}
 
 	if (!CurrentWeaponItem.IsValid()) return;
 
@@ -255,16 +263,12 @@ void UInv_AttachmentPanel::BuildSlotWidgets()
 
 	for (int32 i = 0; i < SlotDefs.Num(); ++i)
 	{
-		// SlotType 태그로 UI 위치 결정
-		EInv_AttachmentSlotPosition ResolvedPosition = DerivePositionFromSlotType(SlotDefs[i].SlotType);
-
-		// 해당 위치의 BindWidget 슬롯 가져오기
-		UInv_AttachmentSlotWidget* SlotWidget = GetSlotWidgetForPosition(ResolvedPosition);
+		// SlotDef의 SlotType ↔ WBP 슬롯 위젯의 SlotType 태그 매칭
+		UInv_AttachmentSlotWidget* SlotWidget = FindSlotWidgetByTag(SlotDefs[i].SlotType);
 		if (!IsValid(SlotWidget))
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] 슬롯[%d] %s → Position=%d: WBP에 해당 슬롯 위젯 없음 (건너뜀)"),
-				i, *SlotDefs[i].SlotType.ToString(), (int32)ResolvedPosition);
-			// SlotWidgets 배열에 nullptr 추가 (인덱스 유지 중요!)
+			UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] 슬롯[%d] %s: WBP에 해당 태그의 슬롯 위젯 없음 (건너뜀)"),
+				i, *SlotDefs[i].SlotType.ToString());
 			SlotWidgets.Add(nullptr);
 			continue;
 		}
@@ -281,16 +285,15 @@ void UInv_AttachmentPanel::BuildSlotWidgets()
 		// 슬롯 보이기
 		SlotWidget->SetVisibility(ESlateVisibility::Visible);
 
-		UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 슬롯[%d] %s → Position=%d, Widget=%s"),
+		UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 슬롯[%d] %s → Widget=%s"),
 			i, *SlotDefs[i].SlotType.ToString(),
-			(int32)ResolvedPosition,
 			*SlotWidget->GetName());
 
 		SlotWidgets.Add(SlotWidget);
 	}
 
 #if INV_DEBUG_ATTACHMENT
-	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 슬롯 위젯 %d개 초기화 완료 (BindWidget 방식)"), SlotWidgets.Num());
+	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 슬롯 위젯 %d개 초기화 완료 (WidgetTree 태그 매칭)"), SlotWidgets.Num());
 #endif
 }
 
@@ -608,13 +611,11 @@ int32 UInv_AttachmentPanel::FindCurrentWeaponEntryIndex() const
 }
 
 // ════════════════════════════════════════════════════════════════
-// 📌 ResetAllSlots — 4방향 슬롯 전부 Hidden + SetEmpty (초기화)
+// 📌 ResetAllSlots — 수집된 슬롯 전부 Hidden + SetEmpty (초기화)
 // ════════════════════════════════════════════════════════════════
 void UInv_AttachmentPanel::ResetAllSlots()
 {
-	TArray<UInv_AttachmentSlotWidget*> AllSlots = { Slot_Top, Slot_Bottom, Slot_Left, Slot_Right };
-
-	for (UInv_AttachmentSlotWidget* SlotWidget : AllSlots)
+	for (const TObjectPtr<UInv_AttachmentSlotWidget>& SlotWidget : CollectedSlotWidgets)
 	{
 		if (IsValid(SlotWidget))
 		{
@@ -627,61 +628,55 @@ void UInv_AttachmentPanel::ResetAllSlots()
 }
 
 // ════════════════════════════════════════════════════════════════
-// 📌 GetSlotWidgetForPosition — 위치 → BindWidget 슬롯 매핑
+// 📌 CollectSlotWidgetsFromTree — WidgetTree에서 슬롯 위젯 자동 수집
 // ════════════════════════════════════════════════════════════════
-UInv_AttachmentSlotWidget* UInv_AttachmentPanel::GetSlotWidgetForPosition(EInv_AttachmentSlotPosition Position) const
+// 호출 경로: NativeOnInitialized → 이 함수 (1회)
+// 처리 흐름:
+//   1. WidgetTree->ForEachWidget으로 전체 순회
+//   2. UInv_AttachmentSlotWidget으로 Cast 성공한 위젯만 수집
+//   3. SlotType이 유효한지 검증 (미설정 경고)
+// 성능: 위젯 수 20개 미만, 초기화 시 1회만 실행 — 부하 무시 가능
+// ════════════════════════════════════════════════════════════════
+void UInv_AttachmentPanel::CollectSlotWidgetsFromTree()
 {
-	switch (Position)
+	CollectedSlotWidgets.Empty();
+
+	if (!WidgetTree)
 	{
-	case EInv_AttachmentSlotPosition::Top:    return Slot_Top;
-	case EInv_AttachmentSlotPosition::Bottom: return Slot_Bottom;
-	case EInv_AttachmentSlotPosition::Left:   return Slot_Left;
-	case EInv_AttachmentSlotPosition::Right:  return Slot_Right;
-	default:                                  return nullptr;
+		UE_LOG(LogTemp, Error, TEXT("[Attachment UI] WidgetTree가 nullptr — 슬롯 수집 불가"));
+		return;
 	}
+
+	WidgetTree->ForEachWidget([this](UWidget* Widget)
+	{
+		UInv_AttachmentSlotWidget* SlotWidget = Cast<UInv_AttachmentSlotWidget>(Widget);
+		if (IsValid(SlotWidget))
+		{
+			if (!SlotWidget->GetSlotType().IsValid())
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] 슬롯 위젯 '%s'에 SlotType이 설정되지 않음! WBP에서 태그 지정 필요"),
+					*SlotWidget->GetName());
+			}
+			CollectedSlotWidgets.Add(SlotWidget);
+		}
+	});
+
+	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] WidgetTree에서 슬롯 위젯 %d개 수집 완료"), CollectedSlotWidgets.Num());
 }
 
 // ════════════════════════════════════════════════════════════════
-// 📌 GetContainerForPosition — SlotPosition → VerticalBox 매핑
+// 📌 FindSlotWidgetByTag — SlotType GameplayTag로 슬롯 위젯 검색
 // ════════════════════════════════════════════════════════════════
-UVerticalBox* UInv_AttachmentPanel::GetContainerForPosition(EInv_AttachmentSlotPosition Position) const
+UInv_AttachmentSlotWidget* UInv_AttachmentPanel::FindSlotWidgetByTag(const FGameplayTag& SlotType) const
 {
-	switch (Position)
+	for (const TObjectPtr<UInv_AttachmentSlotWidget>& SlotWidget : CollectedSlotWidgets)
 	{
-	case EInv_AttachmentSlotPosition::Top:    return VerticalBox_Top;
-	case EInv_AttachmentSlotPosition::Bottom: return VerticalBox_Bottom;
-	case EInv_AttachmentSlotPosition::Left:   return VerticalBox_Left;
-	case EInv_AttachmentSlotPosition::Right:  return VerticalBox_Right;
-	default:                                  return VerticalBox_Top;
+		if (IsValid(SlotWidget) && SlotWidget->GetSlotType().MatchesTagExact(SlotType))
+		{
+			return SlotWidget;
+		}
 	}
-}
-
-// ════════════════════════════════════════════════════════════════
-// 📌 DerivePositionFromSlotType — SlotType 태그 → UI 위치 자동 매핑
-// ════════════════════════════════════════════════════════════════
-// BP의 SlotPosition이 기본값(Top=0)일 때 SlotType 태그로 위치를 추론
-// 매핑:
-//   AttachmentSlot.Scope    → Top    (스코프는 무기 위)
-//   AttachmentSlot.Muzzle   → Right  (총구는 오른쪽)
-//   AttachmentSlot.Magazine → Bottom (탄창은 아래)
-//   AttachmentSlot.Laser    → Left   (레이저는 왼쪽)
-//   AttachmentSlot.Stock    → Left   (개머리판은 왼쪽)
-//   AttachmentSlot.Grip     → Left   (그립은 왼쪽)
-//   기타                    → Top    (기본 폴백)
-// ════════════════════════════════════════════════════════════════
-EInv_AttachmentSlotPosition UInv_AttachmentPanel::DerivePositionFromSlotType(const FGameplayTag& SlotType) const
-{
-	const FString TagStr = SlotType.ToString();
-
-	if (TagStr.Contains(TEXT("Scope")))        return EInv_AttachmentSlotPosition::Top;
-	if (TagStr.Contains(TEXT("Muzzle")))       return EInv_AttachmentSlotPosition::Right;
-	if (TagStr.Contains(TEXT("Magazine")))      return EInv_AttachmentSlotPosition::Bottom;
-	if (TagStr.Contains(TEXT("Laser")))         return EInv_AttachmentSlotPosition::Left;
-	if (TagStr.Contains(TEXT("Stock")))         return EInv_AttachmentSlotPosition::Left;
-	if (TagStr.Contains(TEXT("Grip")))          return EInv_AttachmentSlotPosition::Left;
-
-	UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] 알 수 없는 SlotType=%s → Top 기본 배치"), *TagStr);
-	return EInv_AttachmentSlotPosition::Top;
+	return nullptr;
 }
 
 // ════════════════════════════════════════════════════════════════

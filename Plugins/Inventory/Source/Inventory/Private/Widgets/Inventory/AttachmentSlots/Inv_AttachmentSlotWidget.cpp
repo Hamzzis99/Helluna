@@ -31,7 +31,7 @@
 void UInv_AttachmentSlotWidget::InitSlot(int32 InSlotIndex, const FInv_AttachmentSlotDef& SlotDef, const FInv_AttachedItemData* AttachedData)
 {
 	SlotIndex = InSlotIndex;
-	SlotType = SlotDef.SlotType;
+	// SlotType은 WBP 디자이너에서 설정한 값을 사용 (여기서 덮어쓰지 않음)
 
 	// 슬롯 이름 설정
 	if (IsValid(Text_SlotName))
