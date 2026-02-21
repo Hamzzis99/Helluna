@@ -246,11 +246,17 @@ void AInv_WeaponPreviewActor::SetPreviewMesh(UStaticMesh* InMesh, const FRotator
 //   2. CaptureScene() 호출로 회전 상태 즉시 반영
 // Phase 연결: Phase 8 — CharacterDisplay와 동일한 드래그 회전 패턴
 // ════════════════════════════════════════════════════════════════
-void AInv_WeaponPreviewActor::RotatePreview(float YawDelta)
+void AInv_WeaponPreviewActor::RotatePreview(float YawDelta, float PitchDelta)
 {
 	if (!IsValid(PreviewMeshComponent)) return;
 
-	PreviewMeshComponent->AddRelativeRotation(FRotator(0.f, YawDelta, 0.f));
+	// Pitch 클램프: 누적값이 ±MaxPitchAngle 범위를 벗어나지 않도록 제한
+	const float NewPitch = FMath::Clamp(AccumulatedPitch + PitchDelta, -MaxPitchAngle, MaxPitchAngle);
+	const float ClampedPitchDelta = NewPitch - AccumulatedPitch;
+	AccumulatedPitch = NewPitch;
+
+	// Yaw는 무제한, Pitch는 클램프된 값만 적용
+	PreviewMeshComponent->AddRelativeRotation(FRotator(ClampedPitchDelta, YawDelta, 0.f));
 	// bCaptureEveryFrame=true이므로 수동 캡처 불필요 — 다음 프레임에 자동 반영
 }
 

@@ -91,7 +91,14 @@ public:
 	//   1. PreviewMeshComponent에 Yaw 회전 추가
 	//   2. CaptureScene() 호출하여 회전된 상태 캡처
 	// ════════════════════════════════════════════════════════════════
-	void RotatePreview(float YawDelta);
+	void RotatePreview(float YawDelta, float PitchDelta = 0.f);
+
+	// 누적 Pitch (상하 회전 제한용)
+	float AccumulatedPitch = 0.f;
+
+	// Pitch 제한 각도 (±도 단위, BP에서 조정 가능)
+	UPROPERTY(EditDefaultsOnly, Category = "상호작용|프리뷰|카메라", meta = (DisplayName = "상하 회전 제한 각도", ClampMin = "0", ClampMax = "90", ToolTip = "Pitch 회전 최대 각도 (±). 0이면 상하 회전 비활성화."))
+	float MaxPitchAngle = 60.f;
 
 	// ════════════════════════════════════════════════════════════════
 	// 📌 GetRenderTarget — RenderTarget 접근 (UMG Image에 연결용)

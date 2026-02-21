@@ -92,9 +92,10 @@ void UInv_AttachmentPanel::NativeTick(const FGeometry& MyGeometry, float InDelta
 		DragCurrentPosition = UWidgetLayoutLibrary::GetMousePositionOnViewport(GetOwningPlayer());
 
 		const float HorizontalDelta = DragLastPosition.X - DragCurrentPosition.X;
-		if (!FMath::IsNearlyZero(HorizontalDelta))
+		const float VerticalDelta = DragLastPosition.Y - DragCurrentPosition.Y;
+		if (!FMath::IsNearlyZero(HorizontalDelta) || !FMath::IsNearlyZero(VerticalDelta))
 		{
-			WeaponPreviewActor->RotatePreview(HorizontalDelta);
+			WeaponPreviewActor->RotatePreview(HorizontalDelta, VerticalDelta);
 		}
 	}
 }
