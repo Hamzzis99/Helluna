@@ -72,7 +72,8 @@ protected:
 
 private:
 
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "장비 타입 태그"))
+	UPROPERTY(EditAnywhere, Category = "인벤토리",
+		meta = (DisplayName = "장비 타입 태그", Tooltip = "이 장비의 GameplayTag 타입입니다. 장착/해제 시 식별에 사용됩니다."))
 	FGameplayTag EquipmentType;
 
 	// ============================================
@@ -83,7 +84,9 @@ private:
 	// ============================================
 	// TODO: [독립화] 졸작 후 삭제. 이 값을 WeaponBridgeComponent의 WeaponGAMap으로 이전.
 	// 삭제 전 반드시 BP에 설정된 GA 클래스 값을 기록해둘 것.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory|Weapon", meta = (AllowPrivateAccess = "true", DisplayName = "무기 스폰 GA"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "인벤토리|무기",
+		meta = (AllowPrivateAccess = "true", DisplayName = "무기 스폰 GA",
+				Tooltip = "무기를 손에 꺼낼 때 활성화할 GameplayAbility 클래스입니다."))
 	TSubclassOf<UGameplayAbility> SpawnWeaponAbility;
 
 	// ============================================
@@ -91,28 +94,34 @@ private:
 	// ⭐ 0 = 주무기 슬롯, 1 = 보조무기 슬롯
 	// ⭐ 장착 시 EquipmentComponent에서 설정
 	// ============================================
-	UPROPERTY(Replicated, VisibleAnywhere, Category = "Inventory|Weapon", meta = (DisplayName = "무기 슬롯 인덱스"))
+	UPROPERTY(Replicated, VisibleAnywhere, Category = "인벤토리|무기",
+		meta = (DisplayName = "무기 슬롯 인덱스", Tooltip = "0 = 주무기 슬롯, 1 = 보조무기 슬롯. 장착 시 EquipmentComponent에서 설정됩니다."))
 	int32 WeaponSlotIndex = -1;
 
 	// ============================================
 	// ⭐ [WeaponBridge] 무기 숨김 상태 (리플리케이트)
 	// ⭐ 손에 무기를 들면 true, 집어넣으면 false
 	// ============================================
-	UPROPERTY(ReplicatedUsing = OnRep_IsWeaponHidden, VisibleAnywhere, Category = "Inventory|Weapon")
+	UPROPERTY(ReplicatedUsing = OnRep_IsWeaponHidden, VisibleAnywhere, Category = "인벤토리|무기",
+		meta = (DisplayName = "무기 숨김 상태", Tooltip = "무기가 손에서 숨겨졌는지 여부입니다. 집어넣기 시 true가 됩니다."))
 	bool bIsWeaponHidden = false;
 
 	// ============================================
 	// ⭐ [WeaponBridge] 등 장착 소켓 (블루프린트에서 설정)
 	// ⭐ 주무기(SlotIndex=0)일 때 사용할 소켓
 	// ============================================
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory|Weapon|Socket", meta = (AllowPrivateAccess = "true", DisplayName = "주무기 등 소켓"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "인벤토리|무기|소켓",
+		meta = (AllowPrivateAccess = "true", DisplayName = "주무기 등 소켓",
+				Tooltip = "주무기(SlotIndex=0)일 때 등에 부착할 소켓 이름입니다."))
 	FName PrimaryBackSocket = TEXT("WeaponSocket_Primary");
 
 	// ============================================
 	// ⭐ [WeaponBridge] 등 장착 소켓 (블루프린트에서 설정)
 	// ⭐ 보조무기(SlotIndex=1)일 때 사용할 소켓
 	// ============================================
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory|Weapon|Socket", meta = (AllowPrivateAccess = "true", DisplayName = "보조무기 등 소켓"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "인벤토리|무기|소켓",
+		meta = (AllowPrivateAccess = "true", DisplayName = "보조무기 등 소켓",
+				Tooltip = "보조무기(SlotIndex=1)일 때 등에 부착할 소켓 이름입니다."))
 	FName SecondaryBackSocket = TEXT("WeaponSocket_Secondary");
 
 	// ════════════════════════════════════════════════════════════════
@@ -145,34 +154,41 @@ private:
 	// ════════════════════════════════════════════════════════════════
 
 	// -- 소음기 --
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory|Attachment|Effects",
-		meta = (AllowPrivateAccess = "true", DisplayName = "기본 발사 사운드"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "인벤토리|부착물|효과",
+		meta = (AllowPrivateAccess = "true", DisplayName = "기본 발사 사운드",
+				Tooltip = "소음기가 장착되지 않았을 때 사용하는 기본 발사 사운드입니다."))
 	TObjectPtr<USoundBase> DefaultFireSound = nullptr;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory|Attachment|Effects",
-		meta = (AllowPrivateAccess = "true", DisplayName = "소음기 발사 사운드"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "인벤토리|부착물|효과",
+		meta = (AllowPrivateAccess = "true", DisplayName = "소음기 발사 사운드",
+				Tooltip = "소음기가 장착되었을 때 사용하는 발사 사운드입니다."))
 	TObjectPtr<USoundBase> SuppressedFireSound = nullptr;
 
-	UPROPERTY(ReplicatedUsing = OnRep_bSuppressed, VisibleAnywhere, Category = "Inventory|Attachment|Effects")
+	UPROPERTY(ReplicatedUsing = OnRep_bSuppressed, VisibleAnywhere, Category = "인벤토리|부착물|효과",
+		meta = (DisplayName = "소음기 장착됨", Tooltip = "소음기가 현재 장착되어 있는지 여부입니다."))
 	bool bSuppressed = false;
 
 	// -- 스코프 --
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory|Attachment|Effects",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "인벤토리|부착물|효과",
 		meta = (AllowPrivateAccess = "true", DisplayName = "기본 줌 FOV",
+				Tooltip = "스코프가 장착되지 않았을 때 사용하는 기본 줌 시야각입니다.",
 				ClampMin = 10.0, ClampMax = 120.0))
 	float DefaultZoomFOV = 90.f;
 
-	UPROPERTY(Replicated, VisibleAnywhere, Category = "Inventory|Attachment|Effects")
+	UPROPERTY(Replicated, VisibleAnywhere, Category = "인벤토리|부착물|효과",
+		meta = (DisplayName = "오버라이드 줌 FOV", Tooltip = "스코프 부착물에 의해 오버라이드된 줌 FOV 값입니다. 0이면 기본값 사용."))
 	float OverrideZoomFOV = 0.f;
 
 	// -- 레이저 --
-	UPROPERTY(ReplicatedUsing = OnRep_bLaserActive, VisibleAnywhere, Category = "Inventory|Attachment|Effects")
+	UPROPERTY(ReplicatedUsing = OnRep_bLaserActive, VisibleAnywhere, Category = "인벤토리|부착물|효과",
+		meta = (DisplayName = "레이저 활성화", Tooltip = "레이저 사이트 부착물이 현재 활성화되어 있는지 여부입니다."))
 	bool bLaserActive = false;
 
 	// 레이저 비주얼 컴포넌트. 무기 BP에서 직접 추가하고 이 변수에 바인딩한다.
 	// nullptr이어도 안전하다 (IsValid 체크).
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory|Attachment|Effects",
-		meta = (AllowPrivateAccess = "true", DisplayName = "레이저 컴포넌트 (BP에서 설정)"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "인벤토리|부착물|효과",
+		meta = (AllowPrivateAccess = "true", DisplayName = "레이저 컴포넌트 (BP에서 설정)",
+				Tooltip = "레이저 비주얼 메시 컴포넌트입니다. 무기 BP에서 직접 추가하고 이 변수에 바인딩합니다."))
 	TObjectPtr<UStaticMeshComponent> LaserBeamComponent = nullptr;
 
 	// ════════════════════════════════════════════════════════════════
@@ -188,17 +204,17 @@ public:
 	// ════════════════════════════════════════════════════════════════
 
 	// 현재 사용할 발사 사운드 반환 (소음기 장착 여부에 따라 분기)
-	UFUNCTION(BlueprintCallable, Category = "Inventory|Attachment")
+	UFUNCTION(BlueprintCallable, Category = "인벤토리|부착물", meta = (DisplayName = "발사 사운드 가져오기"))
 	USoundBase* GetFireSound() const;
 
 	// 현재 사용할 줌 FOV 반환 (스코프 장착 여부에 따라 분기)
-	UFUNCTION(BlueprintCallable, Category = "Inventory|Attachment")
+	UFUNCTION(BlueprintCallable, Category = "인벤토리|부착물", meta = (DisplayName = "줌 FOV 가져오기"))
 	float GetZoomFOV() const;
 
-	UFUNCTION(BlueprintCallable, Category = "Inventory|Attachment")
+	UFUNCTION(BlueprintCallable, Category = "인벤토리|부착물", meta = (DisplayName = "소음기 장착 여부"))
 	bool IsSuppressed() const { return bSuppressed; }
 
-	UFUNCTION(BlueprintCallable, Category = "Inventory|Attachment")
+	UFUNCTION(BlueprintCallable, Category = "인벤토리|부착물", meta = (DisplayName = "레이저 활성화 여부"))
 	bool IsLaserActive() const { return bLaserActive; }
 
 	// ════════════════════════════════════════════════════════════════

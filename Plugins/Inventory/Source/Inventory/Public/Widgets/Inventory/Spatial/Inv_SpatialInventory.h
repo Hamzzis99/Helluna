@@ -93,13 +93,13 @@ private:
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UButton> Button_Craftables;
 	
-	UPROPERTY(EditAnywhere, Category = "Inventory")
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "아이템 설명 클래스", Tooltip = "인벤토리 아이템 호버 시 표시되는 설명 위젯의 블루프린트 클래스입니다."))
 	TSubclassOf<UInv_ItemDescription> ItemDescriptionClass;
 
 	UPROPERTY()
 	TObjectPtr<UInv_ItemDescription> ItemDescription;
-	
-	UPROPERTY(EditAnywhere, Category = "Inventory")
+
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "장착 아이템 설명 클래스", Tooltip = "장착 슬롯의 아이템 호버 시 표시되는 설명 위젯의 블루프린트 클래스입니다. 비교 표시에 사용됩니다."))
 	TSubclassOf<UInv_ItemDescription> EquippedItemDescriptionClass;
 
 	UPROPERTY()
@@ -111,10 +111,10 @@ private:
 	UFUNCTION()
 	void ShowEquippedItemDescription(UInv_InventoryItem* Item);
 	
-	UPROPERTY(EditAnywhere, Category = "Inventory")
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "설명 표시 지연 시간", Tooltip = "아이템 위에 마우스를 올린 후 설명 위젯이 표시되기까지의 지연 시간(초)입니다."))
 	float DescriptionTimerDelay = 0.5f; // 설명 타이머 지연 시간 설정
-	
-	UPROPERTY(EditAnywhere, Category = "Inventory")
+
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "장착 설명 표시 지연 시간", Tooltip = "장착 슬롯의 아이템 위에 마우스를 올린 후 설명 위젯이 표시되기까지의 지연 시간(초)입니다."))
 	float EquippedDescriptionTimerDelay = 0.5f;
 	
 	UInv_ItemDescription* GetItemDescription();

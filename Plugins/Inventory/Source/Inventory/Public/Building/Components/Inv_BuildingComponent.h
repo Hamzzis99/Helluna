@@ -29,12 +29,12 @@ public:
 
 public:
 	// 블루프린트에서 호출 가능: 위젯에서 건물 선택 시
-	UFUNCTION(BlueprintCallable, Category = "Building")
+	UFUNCTION(BlueprintCallable, Category = "건설", meta = (DisplayName = "위젯에서 건물 선택됨"))
 	void OnBuildingSelectedFromWidget(
-		TSubclassOf<AActor> GhostClass, 
-		TSubclassOf<AActor> ActualBuildingClass, 
-		int32 BuildingID, 
-		FGameplayTag MaterialTag1, 
+		TSubclassOf<AActor> GhostClass,
+		TSubclassOf<AActor> ActualBuildingClass,
+		int32 BuildingID,
+		FGameplayTag MaterialTag1,
 		int32 MaterialAmount1,
 		FGameplayTag MaterialTag2,
 		int32 MaterialAmount2
@@ -85,7 +85,8 @@ private:
 	// === 빌드 메뉴 위젯 관련 ===
 	
 	// 빌드 메뉴 위젯 클래스 (블루프린트에서 WBP_BuildMenu 설정)
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Building|UI", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "건설|UI",
+		meta = (DisplayName = "건설 메뉴 위젯 클래스", Tooltip = "건설 메뉴로 사용할 위젯 블루프린트 클래스. WBP_BuildMenu를 설정하세요.", AllowPrivateAccess = "true"))
 	TSubclassOf<UUserWidget> BuildMenuWidgetClass;
 
 	// 생성된 빌드 메뉴 위젯 인스턴스
@@ -123,23 +124,28 @@ private:
 	// === Input Mapping Context ===
 
 	// 빌드 메뉴 토글용 IMC (항상 활성화 - B키)
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Building|Input", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "건설|입력",
+		meta = (DisplayName = "건설 메뉴 입력 매핑", Tooltip = "건설 메뉴 토글용 입력 매핑 컨텍스트. B키로 항상 활성화됩니다.", AllowPrivateAccess = "true"))
 	TObjectPtr<UInputMappingContext> BuildingMenuMappingContext;
 
 	// 빌드 액션용 IMC (BuildMode일 때만 활성화 - 좌클릭/우클릭)
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Building|Input", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "건설|입력",
+		meta = (DisplayName = "건설 액션 입력 매핑", Tooltip = "건설 모드일 때만 활성화되는 입력 매핑 컨텍스트. 좌클릭/우클릭 액션을 포함합니다.", AllowPrivateAccess = "true"))
 	TObjectPtr<UInputMappingContext> BuildingActionMappingContext;
 
 	// 빌드 모드 토글 액션 (빌드 메뉴 열기/닫기 - B키)
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Building|Input", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "건설|입력",
+		meta = (DisplayName = "건설 메뉴 토글 액션", Tooltip = "건설 메뉴를 열고 닫는 입력 액션. 기본 B키에 바인딩됩니다.", AllowPrivateAccess = "true"))
 	TObjectPtr<UInputAction> IA_Building;
 
 	// 설치 액션 (실제 배치)
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Building|Input", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "건설|입력",
+		meta = (DisplayName = "건물 배치 액션", Tooltip = "건물을 실제로 배치하는 입력 액션. 좌클릭에 바인딩됩니다.", AllowPrivateAccess = "true"))
 	TObjectPtr<UInputAction> IA_BuildingAction;
 
 	// 빌드 모드 취소 액션 (우클릭)
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Building|Input", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "건설|입력",
+		meta = (DisplayName = "건설 취소 액션", Tooltip = "건설 모드를 취소하는 입력 액션. 우클릭에 바인딩됩니다.", AllowPrivateAccess = "true"))
 	TObjectPtr<UInputAction> IA_CancelBuilding;
 
 	// === 고스트 액터 ===
@@ -149,19 +155,21 @@ private:
 	TObjectPtr<AActor> GhostActorInstance;
 
 	// 빌드 모드 상태
-	UPROPERTY(BlueprintReadOnly, Category = "Building|State", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(BlueprintReadOnly, Category = "건설|상태", meta = (DisplayName = "건설 모드 여부", AllowPrivateAccess = "true"))
 	bool bIsInBuildMode = false;
 
 	// 건물 설치 가능 여부 (바닥에 닿았는지, 각도가 적절한지)
-	UPROPERTY(BlueprintReadOnly, Category = "Building|State", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(BlueprintReadOnly, Category = "건설|상태", meta = (DisplayName = "건물 배치 가능 여부", AllowPrivateAccess = "true"))
 	bool bCanPlaceBuilding = false;
 
 	// 최대 배치 거리 (플레이어로부터)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building|Settings", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|설정",
+		meta = (DisplayName = "최대 배치 거리", Tooltip = "플레이어로부터 건물을 배치할 수 있는 최대 거리(cm)입니다.", AllowPrivateAccess = "true"))
 	float MaxPlacementDistance = 1000.0f;
 
 	// 최대 허용 바닥 각도 (이보다 가파르면 설치 불가)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building|Settings", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|설정",
+		meta = (DisplayName = "최대 바닥 각도", Tooltip = "건물 설치를 허용하는 최대 지면 경사각(도)입니다. 이보다 가파르면 설치할 수 없습니다.", AllowPrivateAccess = "true"))
 	float MaxGroundAngle = 45.0f;
 
 	// === 동적 입력 바인딩 관리 ===
@@ -175,6 +183,7 @@ private:
 	uint32 CancelBuildingBindingHandle = 0;
 
 	// 빌드 모드 IMC 우선순위 (Combat IMC보다 높게 설정)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building|Input", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|입력",
+		meta = (DisplayName = "입력 매핑 우선순위", Tooltip = "건설 모드 입력 매핑 컨텍스트의 우선순위. 전투 IMC보다 높게 설정하세요.", AllowPrivateAccess = "true"))
 	int32 BuildingMappingContextPriority = 10;
 };

@@ -84,22 +84,22 @@ struct INVENTORY_API FInv_ItemManifest
 	bool DeserializeAndApplyFragments(const TArray<uint8>& InData);
 
 private:
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "Fragments (프래그먼트 배열)", Tooltip = "인벤토리 아이템의 구성요소 배열", ExcludeBaseStruct))
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "프래그먼트 배열", Tooltip = "인벤토리 아이템의 구성요소 배열", ExcludeBaseStruct))
 	TArray<TInstancedStruct<FInv_ItemFragment>> Fragments; // 인벤토리 아이템 배열 공간들.
 
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "ItemCategory (아이템 카테고리)", Tooltip = "아이템 분류 (장비/소모품/재료)"))
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "아이템 카테고리", Tooltip = "아이템 분류 (장비/소모품/재료)"))
 	EInv_ItemCategory ItemCategory{ EInv_ItemCategory::None }; // 개별 구성요소?
 
 	// 게임플레이 태그 부분
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "ItemType (아이템 타입)", Tooltip = "아이템 종류를 나타내는 GameplayTag", Categories ="GameItems"))
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "아이템 타입", Tooltip = "아이템 종류를 나타내는 GameplayTag", Categories ="GameItems"))
 	FGameplayTag ItemType;
 
 	// ⭐ 표시 이름 (UI에서 사용되는 한글 이름)
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "DisplayName (표시 이름)", Tooltip = "UI에서 표시되는 아이템 이름"))
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "표시 이름", Tooltip = "UI에서 표시되는 아이템 이름"))
 	FText DisplayName;
 
 	// 아이템 픽업 액터 클래스
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "PickupActorClass (픽업 액터 클래스)", Tooltip = "월드에 드롭될 때 생성되는 액터 클래스 (장착 BP말고 현재 작성중인 BP로 설정하세요!)"))
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "픽업 액터 클래스", Tooltip = "월드에 드롭될 때 생성되는 액터 클래스 (장착 BP말고 현재 작성중인 BP로 설정하세요!)"))
 	TSubclassOf<AActor> PickupActorClass;
 	
 	void ClearFragments();

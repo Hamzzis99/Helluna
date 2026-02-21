@@ -15,13 +15,13 @@ class INVENTORY_API UInv_WidgetUtils : public UBlueprintFunctionLibrary
 	GENERATED_BODY()
 	
 public:
-	UFUNCTION(BlueprintCallable, Category = "Inventory")
+	UFUNCTION(BlueprintCallable, Category = "인벤토리", meta = (DisplayName = "위젯 위치 가져오기"))
 	static FVector2D GetWidgetPosition(UWidget* Widget);
-	
-	UFUNCTION(BlueprintCallable, Category = "Inventory")
+
+	UFUNCTION(BlueprintCallable, Category = "인벤토리", meta = (DisplayName = "위젯 크기 가져오기"))
 	static FVector2D GetWidgetSize(UWidget* Widget);
 
-	UFUNCTION(BlueprintCallable, Category = "Inventory")
+	UFUNCTION(BlueprintCallable, Category = "인벤토리", meta = (DisplayName = "경계 내 포함 여부"))
 	static bool IsWithinBounds(const FVector2D& BoundaryPos, const FVector2D& WidgetSize, const FVector2D& MousePos);
 
 	// 위젯 위치를 경계 내로 제한하는 함수

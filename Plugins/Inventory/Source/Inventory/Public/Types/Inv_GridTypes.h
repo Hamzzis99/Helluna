@@ -7,10 +7,10 @@ class UInv_InventoryItem;
 UENUM(BlueprintType)
 enum class EInv_ItemCategory : uint8 // 위젯 만들 때 정확한 이름을 작성해야해 enum으로 알겠지. 기억해. 다만 Build는 빼고 컴포넌트로 할까 고민중
 {
-	Equippable,
-	Consumable,
-	Craftable,
-	None
+	Equippable UMETA(DisplayName = "장비"),
+	Consumable UMETA(DisplayName = "소모품"),
+	Craftable UMETA(DisplayName = "재료"),
+	None UMETA(DisplayName = "없음")
 };
 
 USTRUCT()
@@ -48,11 +48,11 @@ struct FInv_SlotAvailabilityResult
 UENUM(BlueprintType)
 enum class EInv_TileQuadrant : uint8
 {
-	TopLeft,
-	TopRight,
-	BottomLeft,
-	BottomRight,
-	None
+	TopLeft UMETA(DisplayName = "좌상단"),
+	TopRight UMETA(DisplayName = "우상단"),
+	BottomLeft UMETA(DisplayName = "좌하단"),
+	BottomRight UMETA(DisplayName = "우하단"),
+	None UMETA(DisplayName = "없음")
 };
 
 //마우스 커서 위치가 어디인지에 대한 변수들. TileCoordinats, TileIndex, TileQuadrant
@@ -61,13 +61,16 @@ struct FInv_TileParameters
 {
 	GENERATED_BODY()
 
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Inventory")
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "인벤토리",
+		meta = (DisplayName = "타일 좌표", Tooltip = "마우스 커서가 위치한 타일의 좌표입니다."))
 	FIntPoint TileCoordinats{};
 
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Inventory")
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "인벤토리",
+		meta = (DisplayName = "타일 인덱스", Tooltip = "마우스 커서가 위치한 타일의 인덱스입니다."))
 	int32 TileIndex{ INDEX_NONE };
 
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Inventory")
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "인벤토리",
+		meta = (DisplayName = "타일 사분면", Tooltip = "마우스 커서가 타일 내 어느 사분면에 있는지 나타냅니다."))
 	EInv_TileQuadrant TileQuadrant{ EInv_TileQuadrant::None };
 };
 

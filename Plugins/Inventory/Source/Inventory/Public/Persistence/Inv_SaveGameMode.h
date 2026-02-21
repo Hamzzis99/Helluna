@@ -81,7 +81,7 @@ public:
 	 * @return true = 저장 성공
 	 */
 	UFUNCTION(BlueprintCallable, Category = "인벤토리 저장",
-		meta = (DisplayName = "플레이어 인벤토리 저장(SavePlayerInventory)"))
+		meta = (DisplayName = "플레이어 인벤토리 저장"))
 	virtual bool SavePlayerInventory(const FString& PlayerId, APlayerController* PC);
 
 	/**
@@ -98,7 +98,7 @@ public:
 	 * @return true = 저장 성공
 	 */
 	UFUNCTION(BlueprintCallable, Category = "인벤토리 저장",
-		meta = (DisplayName = "수집 데이터 저장(SaveCollectedItems)"))
+		meta = (DisplayName = "수집 데이터 저장"))
 	virtual bool SaveCollectedItems(const FString& PlayerId, const TArray<FInv_SavedItemData>& Items);
 
 	/**
@@ -112,7 +112,7 @@ public:
 	 * @return 저장된 플레이어 수
 	 */
 	UFUNCTION(BlueprintCallable, Category = "인벤토리 저장",
-		meta = (DisplayName = "전체 플레이어 저장(SaveAllPlayersInventory)"))
+		meta = (DisplayName = "전체 플레이어 저장"))
 	virtual int32 SaveAllPlayersInventory();
 
 	/**
@@ -171,7 +171,7 @@ public:
 	 *   리슨서버 호스트에서 Broadcast하면 Client RPC에서 또 실행되어 이중 장착
 	 */
 	UFUNCTION(BlueprintCallable, Category = "인벤토리 로드",
-		meta = (DisplayName = "인벤토리 로드 및 전송(LoadAndSendInventoryToClient)"))
+		meta = (DisplayName = "인벤토리 로드 및 전송"))
 	virtual void LoadAndSendInventoryToClient(APlayerController* PC);
 
 	/**
@@ -182,7 +182,7 @@ public:
 	 * @return true = 데이터 있음
 	 */
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "인벤토리 로드",
-		meta = (DisplayName = "인벤토리 데이터 로드(LoadPlayerInventoryData)"))
+		meta = (DisplayName = "인벤토리 데이터 로드"))
 	bool LoadPlayerInventoryData(const FString& PlayerId, FInv_PlayerSaveData& OutData) const;
 
 	// ════════════════════════════════════════════════════════════════
@@ -198,7 +198,7 @@ public:
 	 * @return 스폰할 Actor 클래스, nullptr이면 해당 아이템 스킵
 	 */
 	UFUNCTION(BlueprintCallable, Category = "인벤토리 로드",
-		meta = (DisplayName = "아이템 클래스 결정(ResolveItemClass)"))
+		meta = (DisplayName = "아이템 클래스 결정"))
 	virtual TSubclassOf<AActor> ResolveItemClass(const FGameplayTag& ItemType);
 
 	/**
@@ -219,17 +219,17 @@ public:
 
 	/** 자동저장 타이머 시작 — BeginPlay()에서 자동 호출 */
 	UFUNCTION(BlueprintCallable, Category = "인벤토리 저장",
-		meta = (DisplayName = "자동저장 시작(StartAutoSave)"))
+		meta = (DisplayName = "자동저장 시작"))
 	void StartAutoSave();
 
 	/** 자동저장 타이머 중지 — EndPlay()에서 자동 호출 */
 	UFUNCTION(BlueprintCallable, Category = "인벤토리 저장",
-		meta = (DisplayName = "자동저장 중지(StopAutoSave)"))
+		meta = (DisplayName = "자동저장 중지"))
 	void StopAutoSave();
 
 	/** 수동으로 자동저장 즉시 실행 (디버그/BP용) */
 	UFUNCTION(BlueprintCallable, Category = "인벤토리 저장",
-		meta = (DisplayName = "강제 자동저장(ForceAutoSave)"))
+		meta = (DisplayName = "강제 자동저장"))
 	void ForceAutoSave();
 
 	// ════════════════════════════════════════════════════════════════
@@ -286,20 +286,20 @@ public:
 	// ════════════════════════════════════════════════════════════════
 
 	UPROPERTY(EditDefaultsOnly, Category = "인벤토리 저장",
-		meta = (DisplayName = "자동저장 활성화(bAutoSaveEnabled)"))
+		meta = (DisplayName = "자동저장 활성화", Tooltip = "활성화하면 일정 주기마다 자동으로 인벤토리를 저장합니다."))
 	bool bAutoSaveEnabled = true;
 
 	UPROPERTY(EditDefaultsOnly, Category = "인벤토리 저장",
-		meta = (DisplayName = "자동저장 주기(AutoSaveIntervalSeconds)",
-				ClampMin = "30.0", UIMin = "30.0"))
+		meta = (DisplayName = "자동저장 주기 (초)",
+				ClampMin = "30.0", UIMin = "30.0", Tooltip = "자동저장 간격(초)입니다. 최소 30초 이상이어야 합니다."))
 	float AutoSaveIntervalSeconds = 300.0f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "인벤토리 저장",
-		meta = (DisplayName = "저장 슬롯 이름(SaveSlotName)"))
+		meta = (DisplayName = "저장 슬롯 이름", Tooltip = ".sav 파일의 슬롯 이름입니다. Saved/SaveGames/ 폴더에 이 이름으로 저장됩니다."))
 	FString InventorySaveSlotName = TEXT("InventorySave");
 
 	UPROPERTY(EditDefaultsOnly, Category = "인벤토리 저장",
-		meta = (DisplayName = "리슨서버 종료 시 강제저장(bForceSaveOnListenServerShutdown)"))
+		meta = (DisplayName = "리슨서버 종료 시 강제저장", Tooltip = "리슨서버 종료 시 모든 플레이어의 인벤토리를 강제로 저장합니다."))
 	bool bForceSaveOnListenServerShutdown = true;
 
 	// ════════════════════════════════════════════════════════════════
@@ -322,7 +322,7 @@ public:
 	 *   - UI에서 Grid 위치 변경 시마다 RPC 호출되어야 함
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "인벤토리 저장",
-		meta = (DisplayName = "[Phase 5] 서버 직접 저장(bUseServerDirectSave)"))
+		meta = (DisplayName = "서버 직접 저장", Tooltip = "활성화하면 자동저장 시 RPC 없이 서버에서 직접 인벤토리를 수집하여 저장합니다. 네트워크 부하를 줄일 수 있습니다."))
 	bool bUseServerDirectSave = true;
 
 	/**

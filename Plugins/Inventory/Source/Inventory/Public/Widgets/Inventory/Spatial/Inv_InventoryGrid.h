@@ -208,16 +208,16 @@ private:
 	void CreateItemPopUp(const int32 GridIndex); // 아이템 팝업 생성 함수
 	void PutHoverItemBack(); // 호버 아이템 다시 놓기 함수
 	
-	UPROPERTY(EditAnywhere, Category = "Inventory")
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "아이템 팝업 클래스", Tooltip = "아이템 우클릭 시 표시되는 팝업 메뉴 위젯의 블루프린트 클래스입니다."))
 	TSubclassOf<UInv_ItemPopUp> ItemPopUpClass; // 아이템 팝업 클래스
 	
 	UPROPERTY() // 팝업 아이템 가비지 콜렉션 부분
 	TObjectPtr<UInv_ItemPopUp> ItemPopUp;
 	
-	UPROPERTY(EditAnywhere, Category = "Inventory")
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "보이는 커서 위젯 클래스", Tooltip = "아이템을 들고 있지 않을 때 표시되는 마우스 커서 위젯 클래스입니다."))
 	TSubclassOf<UUserWidget> VisibleCursorWidgetClass;
 
-	UPROPERTY(EditAnywhere, Category = "Inventory")
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "숨겨진 커서 위젯 클래스", Tooltip = "아이템을 들고 있을 때 사용되는 숨겨진 마우스 커서 위젯 클래스입니다."))
 	TSubclassOf<UUserWidget> HiddenCursorWidgetClass;
 	
 	UPROPERTY()
@@ -258,7 +258,7 @@ private:
 	UFUNCTION()
 	void OnInventoryMenuToggled(bool bOpen); // 인벤토리 메뉴 토글 (내가 뭔가 들 때 bool 값 반환하는 함수)
 	
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"), Category = "Inventory")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (AllowPrivateAccess = "true", DisplayName = "아이템 카테고리", Tooltip = "이 그리드가 담당하는 아이템 카테고리입니다. (장비, 소모품, 제작 재료 등)"), Category = "인벤토리")
 	EInv_ItemCategory ItemCategory;
 	UUserWidget* GetVisibleCursorWidget(); // 마우스 커서 보이게 하는 함수
 
@@ -266,33 +266,33 @@ private:
 	UPROPERTY()
 	TArray<TObjectPtr<UInv_GridSlot>> GridSlots;
 
-	UPROPERTY(EditAnywhere, Category = "Inventory")	
+	UPROPERTY(EditAnywhere, Category = "인벤토리|그리드", meta = (DisplayName = "그리드 슬롯 클래스", Tooltip = "그리드를 구성하는 개별 슬롯 위젯의 블루프린트 클래스입니다."))
 	TSubclassOf<UInv_GridSlot> GridSlotClass;
 
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UCanvasPanel> CanvasPanel;
 
-	UPROPERTY(EditAnywhere, Category = "Inventory")
-	TSubclassOf<UInv_SlottedItem> SlottedItemClass; 
+	UPROPERTY(EditAnywhere, Category = "인벤토리|그리드", meta = (DisplayName = "슬롯 아이템 클래스", Tooltip = "그리드에 배치된 아이템을 표시하는 위젯의 블루프린트 클래스입니다."))
+	TSubclassOf<UInv_SlottedItem> SlottedItemClass;
 
 	UPROPERTY()
 	TMap<int32, TObjectPtr<UInv_SlottedItem>> SlottedItems; // 인덱스와 슬로티드 아이템 매핑 아이템을 등록할 때마다 이 것을 사용할 것.
 
 	
-	UPROPERTY(EditAnywhere, Category = "Inventory")
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "아이템 팝업 오프셋", Tooltip = "아이템 우클릭 팝업의 표시 위치 오프셋(X, Y)입니다."))
 	FVector2D ItemPopUpOffset; // 마우스 우클릭 팝업 위치 조정하기 (누르자마자 뜨는 부분)
 	
 	// 왜 굳이 int32로?
-	UPROPERTY(EditAnywhere, Category = "Inventory")
+	UPROPERTY(EditAnywhere, Category = "인벤토리|그리드", meta = (DisplayName = "행 수", Tooltip = "그리드의 행(세로) 개수입니다."))
 	int32 Rows;
-	UPROPERTY(EditAnywhere, Category = "Inventory")
+	UPROPERTY(EditAnywhere, Category = "인벤토리|그리드", meta = (DisplayName = "열 수", Tooltip = "그리드의 열(가로) 개수입니다."))
 	int32 Columns;
 
-	UPROPERTY(EditAnywhere, Category = "Inventory")
+	UPROPERTY(EditAnywhere, Category = "인벤토리|그리드", meta = (DisplayName = "타일 크기", Tooltip = "그리드 슬롯 한 칸의 크기(픽셀)입니다."))
 	float TileSize;
 
 	//포인터를 생성하기 위한 보조 클래스
-	UPROPERTY(EditAnywhere, Category = "Inventory")
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "호버 아이템 클래스", Tooltip = "마우스로 아이템을 집었을 때 표시되는 호버 위젯의 블루프린트 클래스입니다."))
 	TSubclassOf<UInv_HoverItem> HoverItemClass;
 
 	UPROPERTY()
@@ -315,7 +315,7 @@ private:
 	// 📌 [부착물 시스템 Phase 3] 부착물 패널 위젯
 	// ════════════════════════════════════════════════════════════════
 
-	UPROPERTY(EditAnywhere, Category = "Attachment", meta = (DisplayName = "부착물 패널 클래스", Tooltip = "부착물 관리 패널 위젯 블루프린트 클래스"))
+	UPROPERTY(EditAnywhere, Category = "인벤토리|부착물", meta = (DisplayName = "부착물 패널 클래스", Tooltip = "무기 부착물 관리 패널의 위젯 블루프린트 클래스입니다."))
 	TSubclassOf<UInv_AttachmentPanel> AttachmentPanelClass;
 
 	UPROPERTY()

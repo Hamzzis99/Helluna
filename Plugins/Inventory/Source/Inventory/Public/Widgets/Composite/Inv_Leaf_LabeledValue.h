@@ -26,9 +26,11 @@ private:
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UTextBlock> Text_Value;
 	
-	UPROPERTY(EditAnywhere, Category = "Inventory")
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "라벨 글꼴 크기",
+		Tooltip = "라벨 텍스트의 글꼴 크기입니다."))
 	int32 FontSize_Label{12};
-	
-	UPROPERTY(EditAnywhere, Category = "Inventory")
+
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "값 글꼴 크기",
+		Tooltip = "값 텍스트의 글꼴 크기입니다."))
 	int32 FontSize_Value{12};
 };

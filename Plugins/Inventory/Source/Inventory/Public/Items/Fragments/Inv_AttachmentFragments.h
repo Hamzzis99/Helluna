@@ -89,19 +89,19 @@ struct FInv_AttachmentSlotDef
 	GENERATED_BODY()
 
 	// 슬롯 타입 태그 (예: "AttachmentSlot.Scope", "AttachmentSlot.Muzzle", "AttachmentSlot.Grip")
-	UPROPERTY(EditAnywhere, Category = "Attachment", meta = (Categories = "AttachmentSlot", DisplayName = "SlotType (슬롯 타입)", Tooltip = "부착물의 AttachmentType과 매칭되는 슬롯 타입 태그"))
+	UPROPERTY(EditAnywhere, Category = "부착물", meta = (Categories = "AttachmentSlot", DisplayName = "슬롯 타입", Tooltip = "부착물의 AttachmentType과 매칭되는 슬롯 타입 태그"))
 	FGameplayTag SlotType;
 
 	// UI에 표시할 슬롯 이름 ("스코프 슬롯", "총구 슬롯")
-	UPROPERTY(EditAnywhere, Category = "Attachment", meta = (DisplayName = "SlotDisplayName (슬롯 표시 이름)", Tooltip = "UI에 표시될 슬롯 이름"))
+	UPROPERTY(EditAnywhere, Category = "부착물", meta = (DisplayName = "슬롯 표시 이름", Tooltip = "UI에 표시될 슬롯 이름"))
 	FText SlotDisplayName;
 
 	// EquipActor의 소켓 이름 (Phase 5 시각적 부착용)
-	UPROPERTY(EditAnywhere, Category = "Attachment", meta = (DisplayName = "AttachSocket (부착 소켓)", Tooltip = "EquipActor 메시의 소켓 이름 (예: socket_scope)"))
+	UPROPERTY(EditAnywhere, Category = "부착물", meta = (DisplayName = "부착 소켓", Tooltip = "EquipActor 메시의 소켓 이름 (예: socket_scope)"))
 	FName AttachSocket{NAME_None};
 
 	// 이 슬롯에 장착 가능한 부착물 수 (보통 1)
-	UPROPERTY(EditAnywhere, Category = "Attachment", meta = (DisplayName = "MaxCount (최대 장착 수)", Tooltip = "이 슬롯에 동시에 장착 가능한 부착물 수", ClampMin = 1))
+	UPROPERTY(EditAnywhere, Category = "부착물", meta = (DisplayName = "최대 장착 수", Tooltip = "이 슬롯에 동시에 장착 가능한 부착물 수", ClampMin = 1))
 	int32 MaxCount{1};
 
 	// ════════════════════════════════════════════════════════════════
@@ -111,8 +111,8 @@ struct FInv_AttachmentSlotDef
 	// Top = 무기 위(스코프), Bottom = 아래(탄창), Left/Right = 좌우(그립/조명)
 	// AttachmentPanel::BuildSlotWidgets()에서 이 값으로 VerticalBox 분배
 	// ════════════════════════════════════════════════════════════════
-	UPROPERTY(EditAnywhere, Category = "Attachment",
-		meta = (DisplayName = "SlotPosition (슬롯 UI 위치)",
+	UPROPERTY(EditAnywhere, Category = "부착물",
+		meta = (DisplayName = "슬롯 UI 위치",
 				Tooltip = "십자형 부착물 패널에서 이 슬롯이 표시될 방향. Top=상단(스코프), Bottom=하단(탄창), Left=좌측(그립), Right=우측(조명)"))
 	EInv_AttachmentSlotPosition SlotPosition = EInv_AttachmentSlotPosition::Top;
 };
@@ -193,7 +193,7 @@ struct FInv_AttachmentHostFragment : public FInv_ItemFragment
 
 private:
 	// 에디터에서 정의하는 슬롯 배열 (예: 총은 [Scope, Muzzle, Grip] 3개)
-	UPROPERTY(EditAnywhere, Category = "Attachment", meta = (DisplayName = "SlotDefinitions (슬롯 정의 배열)", Tooltip = "이 무기가 가진 부착물 슬롯 목록"))
+	UPROPERTY(EditAnywhere, Category = "부착물", meta = (DisplayName = "슬롯 정의 배열", Tooltip = "이 무기가 가진 부착물 슬롯 목록"))
 	TArray<FInv_AttachmentSlotDef> SlotDefinitions;
 
 	// 런타임: 현재 장착된 부착물 목록 (서버 RPC로 변경됨)
@@ -241,20 +241,20 @@ struct FInv_AttachableFragment : public FInv_InventoryItemFragment
 private:
 	// 이 부착물이 들어갈 수 있는 슬롯 타입
 	// 예: "AttachmentSlot.Scope" → Scope 슬롯에만 장착 가능
-	UPROPERTY(EditAnywhere, Category = "Attachment", meta = (Categories = "AttachmentSlot", DisplayName = "AttachmentType (부착물 타입)", Tooltip = "이 부착물이 장착될 수 있는 슬롯 타입 태그"))
+	UPROPERTY(EditAnywhere, Category = "부착물", meta = (Categories = "AttachmentSlot", DisplayName = "부착물 타입", Tooltip = "이 부착물이 장착될 수 있는 슬롯 타입 태그"))
 	FGameplayTag AttachmentType;
 
 	// 소켓에 부착될 메시 (Phase 5에서 사용)
-	UPROPERTY(EditAnywhere, Category = "Attachment", meta = (DisplayName = "AttachmentMesh (부착물 메시)", Tooltip = "무기 소켓에 부착될 스태틱 메시"))
+	UPROPERTY(EditAnywhere, Category = "부착물", meta = (DisplayName = "부착물 메시", Tooltip = "무기 소켓에 부착될 스태틱 메시"))
 	TObjectPtr<UStaticMesh> AttachmentMesh = nullptr;
 
 	// 소켓 기준 오프셋 (위치/회전 미세 조정)
-	UPROPERTY(EditAnywhere, Category = "Attachment", meta = (DisplayName = "AttachOffset (부착 오프셋)", Tooltip = "소켓 기준 위치/회전 오프셋"))
+	UPROPERTY(EditAnywhere, Category = "부착물", meta = (DisplayName = "부착 오프셋", Tooltip = "소켓 기준 위치/회전 오프셋"))
 	FTransform AttachOffset{FTransform::Identity};
 
 	// 장착 시 적용되는 스탯 효과 (기존 EquipModifier 구조 재활용)
 	// 예: DamageModifier +5, ArmorModifier +3
-	UPROPERTY(EditAnywhere, Category = "Attachment", meta = (ExcludeBaseStruct, DisplayName = "EquipModifiers (장착 효과 목록)", Tooltip = "부착물 장착 시 적용될 스탯 효과들"))
+	UPROPERTY(EditAnywhere, Category = "부착물", meta = (ExcludeBaseStruct, DisplayName = "장착 효과 목록", Tooltip = "부착물 장착 시 적용될 스탯 효과들"))
 	TArray<TInstancedStruct<FInv_EquipModifier>> EquipModifiers;
 
 	// ════════════════════════════════════════════════════════════════
@@ -266,20 +266,20 @@ private:
 	// ════════════════════════════════════════════════════════════════
 
 	// 소음기 여부 — true이면 EquipActor의 SuppressedFireSound를 사용한다
-	UPROPERTY(EditAnywhere, Category = "Attachment|Effects",
+	UPROPERTY(EditAnywhere, Category = "부착물|효과",
 		meta = (DisplayName = "소음기 여부",
 				Tooltip = "체크하면 무기 BP에 설정된 소음기 사운드로 전환"))
 	bool bIsSuppressor = false;
 
 	// 줌 FOV 오버라이드 — 0보다 크면 조준 시 이 FOV를 적용한다
-	UPROPERTY(EditAnywhere, Category = "Attachment|Effects",
+	UPROPERTY(EditAnywhere, Category = "부착물|효과",
 		meta = (DisplayName = "줌 FOV 오버라이드",
 				Tooltip = "0보다 크면 조준 시 이 FOV 사용 (예: 45 = 약 2배율)",
 				ClampMin = 0.0, ClampMax = 120.0))
 	float ZoomFOVOverride = 0.f;
 
 	// 레이저 여부 — true이면 EquipActor의 LaserBeamComponent를 활성화한다
-	UPROPERTY(EditAnywhere, Category = "Attachment|Effects",
+	UPROPERTY(EditAnywhere, Category = "부착물|효과",
 		meta = (DisplayName = "레이저 여부",
 				Tooltip = "체크하면 무기의 레이저 컴포넌트를 활성화"))
 	bool bIsLaser = false;

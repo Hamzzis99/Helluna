@@ -106,30 +106,30 @@ public:
 private:
 	// ── 컴포넌트 ──
 
-	UPROPERTY(VisibleAnywhere, Category = "Preview")
+	UPROPERTY(VisibleAnywhere, Category = "상호작용|프리뷰", meta = (DisplayName = "씬 루트"))
 	TObjectPtr<USceneComponent> SceneRoot;
 
-	UPROPERTY(VisibleAnywhere, Category = "Preview")
+	UPROPERTY(VisibleAnywhere, Category = "상호작용|프리뷰", meta = (DisplayName = "프리뷰 메시"))
 	TObjectPtr<UStaticMeshComponent> PreviewMeshComponent;
 
-	UPROPERTY(VisibleAnywhere, Category = "Preview")
+	UPROPERTY(VisibleAnywhere, Category = "상호작용|프리뷰", meta = (DisplayName = "카메라 붐"))
 	TObjectPtr<USpringArmComponent> CameraBoom;
 
-	UPROPERTY(VisibleAnywhere, Category = "Preview")
+	UPROPERTY(VisibleAnywhere, Category = "상호작용|프리뷰", meta = (DisplayName = "씬 캡처"))
 	TObjectPtr<USceneCaptureComponent2D> SceneCapture;
 
 	// Key Light: SpotLight (범위 제한 → 월드 조명 오염 방지)
 	// ※ DirectionalLight는 Deferred에서 LightingChannels를 무시하므로 사용 금지
-	UPROPERTY(VisibleAnywhere, Category = "Preview")
+	UPROPERTY(VisibleAnywhere, Category = "상호작용|프리뷰", meta = (DisplayName = "프리뷰 조명"))
 	TObjectPtr<USpotLightComponent> PreviewLight;
 
 	// ── 프리뷰 전용 보조 조명 (Channel 1 전용) ──
 	// FillLight: 메인 조명 반대편 → 그림자 면 밝힘 (반사광 역할)
-	UPROPERTY(VisibleAnywhere, Category = "Preview")
+	UPROPERTY(VisibleAnywhere, Category = "상호작용|프리뷰", meta = (DisplayName = "보조 조명"))
 	TObjectPtr<UPointLightComponent> FillLight;
 
 	// RimLight: 뒤쪽 상단 → 가장자리 윤곽 강조 (실루엣 분리)
-	UPROPERTY(VisibleAnywhere, Category = "Preview")
+	UPROPERTY(VisibleAnywhere, Category = "상호작용|프리뷰", meta = (DisplayName = "림 조명"))
 	TObjectPtr<UPointLightComponent> RimLight;
 
 	// ── RenderTarget ──

@@ -27,30 +27,34 @@ public:
 	virtual float GetInteractionDistance_Implementation() const override;
 
 	// 상호작용 메시지 가져오기 (ItemComponent와 동일한 방식)
-	UFUNCTION(BlueprintCallable, Category = "Crafting")
+	UFUNCTION(BlueprintCallable, Category = "제작", meta = (DisplayName = "상호작용 메시지 가져오기"))
 	FString GetPickupMessage() const { return PickupMessage; }
 
 protected:
 	virtual void BeginPlay() override;
 
 	// 크래프팅 메뉴 위젯 클래스 (블루프린트에서 설정)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crafting")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "제작",
+		meta = (DisplayName = "제작 메뉴 위젯 클래스", Tooltip = "이 제작 스테이션에서 열릴 제작 메뉴 위젯 블루프린트 클래스입니다."))
 	TSubclassOf<UUserWidget> CraftingMenuClass;
-	
+
 	// 상호작용 메시지 (블루프린트에서 수정 가능 - ItemComponent와 동일)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crafting")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "제작",
+		meta = (DisplayName = "상호작용 메시지", Tooltip = "플레이어가 가까이 갔을 때 화면에 표시되는 상호작용 안내 메시지입니다."))
 	FString PickupMessage = "E - Craft";
 
 	// 상호작용 가능 거리
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crafting")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "제작",
+		meta = (DisplayName = "상호작용 거리", Tooltip = "플레이어가 이 거리(cm) 이내에 있어야 상호작용이 가능합니다."))
 	float InteractionDistance = 300.0f;
 
 	// 거리 체크 간격 (초 단위)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crafting", meta = (ClampMin = "0.1", ClampMax = "5.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "제작",
+		meta = (DisplayName = "거리 체크 간격", Tooltip = "플레이어와의 거리를 확인하는 주기(초). 메뉴가 열린 상태에서 거리를 벗어나면 자동으로 닫힙니다.", ClampMin = "0.1", ClampMax = "5.0"))
 	float DistanceCheckInterval = 0.5f;
 
 	// 스테이션 메시 (외형)
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "제작|컴포넌트", meta = (DisplayName = "스테이션 메시"))
 	TObjectPtr<UStaticMeshComponent> StationMesh;
 
 private:

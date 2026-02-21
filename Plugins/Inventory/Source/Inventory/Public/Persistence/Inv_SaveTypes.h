@@ -52,12 +52,12 @@ struct INVENTORY_API FInv_PlayerSaveData
 
 	/** 인벤토리 아이템 목록 (장착 아이템 포함) */
 	UPROPERTY(SaveGame, BlueprintReadWrite, Category = "인벤토리 저장",
-		meta = (DisplayName = "아이템 목록(Items)"))
+		meta = (DisplayName = "아이템 목록"))
 	TArray<FInv_SavedItemData> Items;
 
 	/** 마지막 저장 시간 — 디버깅 및 데이터 검증용 */
 	UPROPERTY(SaveGame, BlueprintReadWrite, Category = "인벤토리 저장",
-		meta = (DisplayName = "마지막 저장 시간(LastSaveTime)"))
+		meta = (DisplayName = "마지막 저장 시간"))
 	FDateTime LastSaveTime = FDateTime::MinValue();
 
 	/**
@@ -70,7 +70,7 @@ struct INVENTORY_API FInv_PlayerSaveData
 	 *            → v1/v2 하위 호환: SerializedManifest가 빈 배열이면 CDO 기본값 사용
 	 */
 	UPROPERTY(SaveGame, BlueprintReadWrite, Category = "인벤토리 저장",
-		meta = (DisplayName = "저장 버전(SaveVersion)"))
+		meta = (DisplayName = "저장 버전"))
 	int32 SaveVersion = 3;
 
 	/** 비어있는지 확인 */

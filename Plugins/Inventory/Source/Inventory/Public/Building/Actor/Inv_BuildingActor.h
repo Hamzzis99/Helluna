@@ -23,15 +23,15 @@ protected:
 	virtual void BeginPlay() override;
 
 	// 건물 메시 컴포넌트
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Building")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "건설", meta = (DisplayName = "건물 메시"))
 	TObjectPtr<UStaticMeshComponent> BuildingMesh;
 
-public:	
+public:
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
 
 	// 건물이 배치되었을 때 호출 (블루프린트에서 오버라이드 가능)
-	UFUNCTION(BlueprintNativeEvent, Category = "Building")
+	UFUNCTION(BlueprintNativeEvent, Category = "건설", meta = (DisplayName = "건물 배치됨"))
 	void OnBuildingPlaced();
 	virtual void OnBuildingPlaced_Implementation();
 };
