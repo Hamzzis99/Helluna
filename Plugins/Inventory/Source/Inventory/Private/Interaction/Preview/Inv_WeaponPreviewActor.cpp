@@ -70,8 +70,7 @@ AInv_WeaponPreviewActor::AInv_WeaponPreviewActor()
 	SceneCapture->SetupAttachment(CameraBoom);
 
 	// PRM_RenderScenePrimitives: 카메라 시야 내 모든 프리미티브 렌더
-	// Z=-10000이므로 월드 오브젝트는 시야에 안 잡힘
-	// ShowOnlyList 사용 시 라이트가 제외되어 메시가 검정으로 렌더되는 문제 해결
+	// BackdropCube가 물리적으로 하늘/대기를 차단하므로 ShowOnlyList 불필요
 	SceneCapture->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_RenderScenePrimitives;
 
 	// 매 프레임 캡처 (회전, 부착물 변경 실시간 반영)
@@ -99,6 +98,9 @@ AInv_WeaponPreviewActor::AInv_WeaponPreviewActor()
 	// 배경을 깔끔하게 하기 위해 안개/대기 효과 제거
 	SceneCapture->ShowFlags.SetFog(false);
 	SceneCapture->ShowFlags.SetVolumetricFog(false);
+	SceneCapture->ShowFlags.SetAtmosphere(false);
+	SceneCapture->ShowFlags.SetSkyLighting(false);
+	SceneCapture->ShowFlags.SetCloud(false);
 
 	// ════════════════════════════════════════════════════════════════
 	// 📌 3점 조명 시스템 — 물리적 범위 격리
@@ -149,6 +151,27 @@ AInv_WeaponPreviewActor::AInv_WeaponPreviewActor()
 	RimLight->CastShadows = false;
 	RimLight->LightingChannels.bChannel0 = false;
 	RimLight->LightingChannels.bChannel1 = true;
+
+	// ── 배경 차단 큐브 (UDS 하늘/대기 가림막) ──
+	// SceneCapture의 ShowOnlyList/ShowFlags로는 UDS 같은 BP 스카이를 못 막음
+	// 프리뷰 액터를 감싸는 검정 큐브로 물리적으로 하늘을 차단
+	BackdropCube = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("BackdropCube"));
+	BackdropCube->SetupAttachment(SceneRoot);
+	BackdropCube->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	BackdropCube->CastShadow = false;
+	// 음수 스케일 → 노멀 뒤집힘 → 내부에서 면이 보임
+	BackdropCube->SetRelativeScale3D(FVector(-5.f, 5.f, 5.f));
+	// 조명 채널 없음 → 어떤 라이트도 안 닿음 → 완전 검정 렌더
+	// 머티리얼의 luminance 기반 Opacity에서 검정=0 → 투명 처리됨
+	BackdropCube->LightingChannels.bChannel0 = false;
+	BackdropCube->LightingChannels.bChannel1 = false;
+
+	// 기본 큐브 메시 설정
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeMesh(TEXT("/Engine/BasicShapes/Cube.Cube"));
+	if (CubeMesh.Succeeded())
+	{
+		BackdropCube->SetStaticMesh(CubeMesh.Object);
+	}
 }
 
 // ════════════════════════════════════════════════════════════════

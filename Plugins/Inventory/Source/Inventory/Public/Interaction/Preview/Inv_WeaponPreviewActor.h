@@ -132,6 +132,11 @@ private:
 	UPROPERTY(VisibleAnywhere, Category = "상호작용|프리뷰", meta = (DisplayName = "림 조명"))
 	TObjectPtr<UPointLightComponent> RimLight;
 
+	// 배경 차단 큐브: UDS 하늘/대기를 물리적으로 가림
+	// 프리뷰 액터를 감싸는 검정 큐브 (내부에서 촬영)
+	UPROPERTY(VisibleAnywhere, Category = "상호작용|프리뷰", meta = (DisplayName = "배경 차단 큐브"))
+	TObjectPtr<UStaticMeshComponent> BackdropCube;
+
 	// ════════════════════════════════════════════════════════════════
 	// 📌 BP에서 조정 가능한 프리뷰 설정값
 	// ════════════════════════════════════════════════════════════════
