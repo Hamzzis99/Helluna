@@ -750,8 +750,13 @@ void UInv_AttachmentPanel::SetupWeaponPreview()
 	FActorSpawnParameters SpawnParams;
 	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
+	// BP 클래스가 설정되어 있으면 사용, 아니면 C++ 기본 클래스 폴백
+	UClass* ClassToSpawn = WeaponPreviewActorClass
+		? WeaponPreviewActorClass.Get()
+		: AInv_WeaponPreviewActor::StaticClass();
+
 	AInv_WeaponPreviewActor* NewPreview = World->SpawnActor<AInv_WeaponPreviewActor>(
-		AInv_WeaponPreviewActor::StaticClass(),
+		ClassToSpawn,
 		FVector(0.f, 0.f, PreviewSpawnZ),
 		FRotator::ZeroRotator,
 		SpawnParams

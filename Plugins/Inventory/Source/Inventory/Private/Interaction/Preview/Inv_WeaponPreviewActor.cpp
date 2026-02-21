@@ -92,6 +92,10 @@ AInv_WeaponPreviewActor::AInv_WeaponPreviewActor()
 	// 시야 거리 제한: 프리뷰 메시(~100유닛) 외 원거리 오브젝트 캡처 방지
 	SceneCapture->MaxViewDistanceOverride = 500.f;
 
+	// FOV: 기본 30° (좁은 화각 → 무기가 화면 꽉 채움)
+	// BP 서브클래스에서 SceneCapture 컴포넌트의 FOVAngle을 직접 변경 가능
+	SceneCapture->FOVAngle = 30.f;
+
 	// 배경을 깔끔하게 하기 위해 안개/대기 효과 제거
 	SceneCapture->ShowFlags.SetFog(false);
 	SceneCapture->ShowFlags.SetVolumetricFog(false);
@@ -183,19 +187,20 @@ void AInv_WeaponPreviewActor::SetPreviewMesh(UStaticMesh* InMesh, const FRotator
 	// 초기 회전 오프셋 적용
 	PreviewMeshComponent->SetRelativeRotation(RotationOffset);
 
-	// 카메라 거리 설정
+	// 카메라 거리 설정 (우선순위: 아이템 개별값 > 자동 계산 > BP 설정값)
 	if (IsValid(CameraBoom))
 	{
 		if (CameraDistance > 0.f)
 		{
-			// BP에서 명시적으로 지정한 거리 사용
+			// 1순위: EquipmentFragment에서 명시적으로 지정한 아이템별 거리
 			CameraBoom->TargetArmLength = CameraDistance;
 		}
-		else
+		else if (bAutoCalculateDistance)
 		{
-			// 메시 크기 기반 자동 계산
+			// 2순위: 메시 크기 기반 자동 계산 (기본 동작)
 			CameraBoom->TargetArmLength = CalculateAutoDistance();
 		}
+		// else: 3순위 — BP에서 설정한 CameraBoom->TargetArmLength 유지 (덮어쓰지 않음)
 	}
 
 	// RenderTarget 준비 (bCaptureEveryFrame=true이므로 수동 캡처 불필요)
@@ -267,7 +272,7 @@ void AInv_WeaponPreviewActor::CaptureNow()
 // 처리 흐름:
 //   1. RenderTarget이 이미 있으면 스킵
 //   2. 없으면 NewObject<UTextureRenderTarget2D> 생성
-//   3. InitAutoFormat(512, 512) → 512x512 해상도
+//   3. InitAutoFormat(Width, Height) → BP에서 지정한 해상도
 //   4. SceneCapture->TextureTarget에 연결
 // ════════════════════════════════════════════════════════════════
 void AInv_WeaponPreviewActor::EnsureRenderTarget()
@@ -281,11 +286,11 @@ void AInv_WeaponPreviewActor::EnsureRenderTarget()
 		return;
 	}
 
-	// 512x512 해상도 — UI 프리뷰 용도로 충분
-	// ClearColor: 짙은 회색 배경 (T_Pop_Up 배경과 조화, 메시 대비 확보)
-	// 배경 완전 투명 (알파=0) → Material Translucent에서 배경이 사라짐
+	// ClearColor: 배경 완전 투명 (알파=0) → Material Translucent에서 배경이 사라짐
 	RenderTarget->ClearColor = FLinearColor(0.f, 0.f, 0.f, 0.f);
-	RenderTarget->InitAutoFormat(512, 512);
+	const int32 Width = FMath::Clamp(RenderTargetWidth, 128, 2048);
+	const int32 Height = FMath::Clamp(RenderTargetHeight, 128, 2048);
+	RenderTarget->InitAutoFormat(Width, Height);
 	RenderTarget->UpdateResourceImmediate(true);
 
 	if (IsValid(SceneCapture))
@@ -294,7 +299,7 @@ void AInv_WeaponPreviewActor::EnsureRenderTarget()
 	}
 
 #if INV_DEBUG_ATTACHMENT
-	UE_LOG(LogTemp, Log, TEXT("[Weapon Preview] RenderTarget 생성 완료 (512x512)"));
+	UE_LOG(LogTemp, Log, TEXT("[Weapon Preview] RenderTarget 생성 완료 (%dx%d)"), Width, Height);
 #endif
 }
 
@@ -310,27 +315,22 @@ void AInv_WeaponPreviewActor::EnsureRenderTarget()
 // ════════════════════════════════════════════════════════════════
 float AInv_WeaponPreviewActor::CalculateAutoDistance() const
 {
-	constexpr float DefaultDistance = 150.f;
-	constexpr float MinDistance = 100.f;
-	constexpr float MaxDistance = 1000.f;
-	constexpr float DistanceMultiplier = 2.5f; // 메시 크기 대비 여유 계수
-
-	if (!IsValid(PreviewMeshComponent)) return DefaultDistance;
+	if (!IsValid(PreviewMeshComponent)) return AutoDistanceDefault;
 
 	UStaticMesh* Mesh = PreviewMeshComponent->GetStaticMesh();
-	if (!IsValid(Mesh)) return DefaultDistance;
+	if (!IsValid(Mesh)) return AutoDistanceDefault;
 
 	const FBoxSphereBounds Bounds = Mesh->GetBounds();
 	const float SphereRadius = Bounds.SphereRadius;
 
-	if (SphereRadius <= KINDA_SMALL_NUMBER) return DefaultDistance;
+	if (SphereRadius <= KINDA_SMALL_NUMBER) return AutoDistanceDefault;
 
-	const float AutoDistance = SphereRadius * DistanceMultiplier;
-	const float ClampedDistance = FMath::Clamp(AutoDistance, MinDistance, MaxDistance);
+	const float AutoDistance = SphereRadius * AutoDistanceMultiplier;
+	const float ClampedDistance = FMath::Clamp(AutoDistance, AutoDistanceMin, AutoDistanceMax);
 
 #if INV_DEBUG_ATTACHMENT
-	UE_LOG(LogTemp, Log, TEXT("[Weapon Preview] 자동 거리 계산: SphereRadius=%.1f → AutoDist=%.1f → Clamped=%.1f"),
-		SphereRadius, AutoDistance, ClampedDistance);
+	UE_LOG(LogTemp, Log, TEXT("[Weapon Preview] 자동 거리 계산: SphereRadius=%.1f × %.1f → %.1f → Clamped=%.1f"),
+		SphereRadius, AutoDistanceMultiplier, AutoDistance, ClampedDistance);
 #endif
 
 	return ClampedDistance;

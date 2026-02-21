@@ -132,6 +132,41 @@ private:
 	UPROPERTY(VisibleAnywhere, Category = "상호작용|프리뷰", meta = (DisplayName = "림 조명"))
 	TObjectPtr<UPointLightComponent> RimLight;
 
+	// ════════════════════════════════════════════════════════════════
+	// 📌 BP에서 조정 가능한 프리뷰 설정값
+	// ════════════════════════════════════════════════════════════════
+
+	// RenderTarget 가로 해상도 (2의 제곱 권장, 높을수록 선명하지만 VRAM 증가)
+	UPROPERTY(EditDefaultsOnly, Category = "상호작용|프리뷰|렌더", meta = (DisplayName = "렌더 가로 해상도", ClampMin = "128", ClampMax = "2048", ToolTip = "RenderTarget 가로 해상도. 2의 제곱 권장 (256, 512, 1024)"))
+	int32 RenderTargetWidth = 512;
+
+	// RenderTarget 세로 해상도
+	UPROPERTY(EditDefaultsOnly, Category = "상호작용|프리뷰|렌더", meta = (DisplayName = "렌더 세로 해상도", ClampMin = "128", ClampMax = "2048", ToolTip = "RenderTarget 세로 해상도. 16:9 비율 = 가로 512 기준 288"))
+	int32 RenderTargetHeight = 288;
+
+	// ── 자동 카메라 거리 계산 파라미터 ──
+	// SetPreviewMesh()에서 CameraDistance=0일 때 메시 Bounds 기반으로 자동 계산
+
+	// true: 메시 크기 기반 자동 계산 (기본값, 기존 동작 유지)
+	// false: BP에서 설정한 CameraBoom->TargetArmLength를 그대로 사용
+	UPROPERTY(EditDefaultsOnly, Category = "상호작용|프리뷰|카메라", meta = (DisplayName = "자동 카메라 거리 계산", ToolTip = "false로 설정하면 BP에서 지정한 CameraBoom TargetArmLength를 사용합니다."))
+	bool bAutoCalculateDistance = true;
+
+	// 메시 Bounds를 가져올 수 없을 때 사용하는 폴백 거리
+	UPROPERTY(EditDefaultsOnly, Category = "상호작용|프리뷰|카메라", meta = (DisplayName = "기본 카메라 거리", ClampMin = "50", ToolTip = "메시 Bounds 계산 실패 시 사용되는 기본 거리"))
+	float AutoDistanceDefault = 150.f;
+
+	// 자동 계산된 거리의 최소/최대 클램프
+	UPROPERTY(EditDefaultsOnly, Category = "상호작용|프리뷰|카메라", meta = (DisplayName = "최소 카메라 거리", ClampMin = "10", ToolTip = "자동 계산 시 이 값 미만으로 내려가지 않음"))
+	float AutoDistanceMin = 100.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "상호작용|프리뷰|카메라", meta = (DisplayName = "최대 카메라 거리", ClampMin = "100", ToolTip = "자동 계산 시 이 값 초과로 올라가지 않음"))
+	float AutoDistanceMax = 1000.f;
+
+	// 메시 BoundingSphere 반지름에 곱하는 배율 (클수록 카메라가 멀어짐)
+	UPROPERTY(EditDefaultsOnly, Category = "상호작용|프리뷰|카메라", meta = (DisplayName = "거리 배율", ClampMin = "1.0", ClampMax = "10.0", ToolTip = "메시 SphereRadius × 이 값 = 카메라 거리"))
+	float AutoDistanceMultiplier = 2.5f;
+
 	// ── RenderTarget ──
 
 	UPROPERTY()

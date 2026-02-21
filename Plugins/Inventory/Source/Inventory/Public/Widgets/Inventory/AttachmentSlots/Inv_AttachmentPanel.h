@@ -138,6 +138,13 @@ private:
 	TWeakObjectPtr<UInv_InventoryGrid> OwningGrid;
 
 	// ── Phase 8: 3D 프리뷰 ──
+
+	// 프리뷰 액터 BP 클래스 (WBP Class Defaults에서 선택 가능)
+	// BP에서 카메라 각도, 조명 위치/밝기, 거리 등을 자유롭게 조정
+	// 미설정 시 C++ 기본 클래스(AInv_WeaponPreviewActor) 사용
+	UPROPERTY(EditDefaultsOnly, Category = "부착물|프리뷰", meta = (DisplayName = "프리뷰 액터 클래스", ToolTip = "무기 3D 프리뷰에 사용할 액터 BP. 미설정 시 C++ 기본 클래스 사용."))
+	TSubclassOf<AInv_WeaponPreviewActor> WeaponPreviewActorClass;
+
 	UPROPERTY()
 	TWeakObjectPtr<AInv_WeaponPreviewActor> WeaponPreviewActor;
 
