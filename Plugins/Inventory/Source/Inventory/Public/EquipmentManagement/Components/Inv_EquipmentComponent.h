@@ -67,21 +67,21 @@ public:
 	// ⭐ [WeaponBridge] 무기 장착/해제 델리게이트
 	// ⭐ Helluna의 WeaponBridgeComponent에서 바인딩
 	// ============================================
-	UPROPERTY(BlueprintAssignable, Category = "Inventory|Weapon")
+	UPROPERTY(BlueprintAssignable, Category = "인벤토리|무기", meta = (DisplayName = "무기 장착 요청 델리게이트"))
 	FOnWeaponEquipRequested OnWeaponEquipRequested;
 
 	// ============================================
 	// ⭐ [WeaponBridge] 주무기 입력 처리
 	// ⭐ PlayerController에서 호출됨 (1키 입력)
 	// ============================================
-	UFUNCTION(BlueprintCallable, Category = "Inventory|Weapon", meta = (DisplayName = "주무기 입력 처리"))
+	UFUNCTION(BlueprintCallable, Category = "인벤토리|무기", meta = (DisplayName = "주무기 입력 처리"))
 	void HandlePrimaryWeaponInput();
 
 	// ============================================
 	// ⭐ [WeaponBridge] 보조무기 입력 처리
 	// ⭐ PlayerController에서 호출됨 (2키 입력)
 	// ============================================
-	UFUNCTION(BlueprintCallable, Category = "Inventory|Weapon", meta = (DisplayName = "보조무기 입력 처리"))
+	UFUNCTION(BlueprintCallable, Category = "인벤토리|무기", meta = (DisplayName = "보조무기 입력 처리"))
 	void HandleSecondaryWeaponInput();
 
 	// ============================================
@@ -89,16 +89,16 @@ public:
 	// ⭐ true일 때 HandlePrimary/SecondaryWeaponInput 차단
 	// ⭐ WeaponBridgeComponent에서 SetWeaponEquipping()을 통해 제어
 	// ============================================
-	UFUNCTION(BlueprintCallable, Category = "Inventory|Weapon", meta = (DisplayName = "무기 장착 중 설정"))
+	UFUNCTION(BlueprintCallable, Category = "인벤토리|무기", meta = (DisplayName = "무기 장착 중 설정"))
 	void SetWeaponEquipping(bool bNewEquipping);
 
-	UFUNCTION(BlueprintPure, Category = "Inventory|Weapon", meta = (DisplayName = "무기 장착 중 여부"))
+	UFUNCTION(BlueprintPure, Category = "인벤토리|무기", meta = (DisplayName = "무기 장착 중 여부"))
 	bool IsWeaponEquipping() const { return bIsWeaponEquipping; }
 
 	// ============================================
 	// ⭐ [WeaponBridge] 현재 활성 무기 슬롯 Getter
 	// ============================================
-	UFUNCTION(BlueprintPure, Category = "Inventory|Weapon", meta = (DisplayName = "활성 무기 슬롯 가져오기"))
+	UFUNCTION(BlueprintPure, Category = "인벤토리|무기", meta = (DisplayName = "활성 무기 슬롯 가져오기"))
 	EInv_ActiveWeaponSlot GetActiveWeaponSlot() const { return ActiveWeaponSlot; }
 
 protected:
@@ -140,11 +140,13 @@ private:
 	// ============================================
 
 	// 현재 활성 무기 슬롯
-	UPROPERTY(VisibleAnywhere, Category = "Inventory|Weapon", meta = (DisplayName = "활성 무기 슬롯"))
+	UPROPERTY(VisibleAnywhere, Category = "인벤토리|무기",
+		meta = (DisplayName = "활성 무기 슬롯", Tooltip = "현재 손에 들려있는 무기 슬롯 상태입니다."))
 	EInv_ActiveWeaponSlot ActiveWeaponSlot = EInv_ActiveWeaponSlot::None;
 
 	// ⭐ 무기 장착 애니메이션 진행 중 플래그
-	UPROPERTY(VisibleAnywhere, Category = "Inventory|Weapon", meta = (DisplayName = "무기 장착 중"))
+	UPROPERTY(VisibleAnywhere, Category = "인벤토리|무기",
+		meta = (DisplayName = "무기 장착 중", Tooltip = "무기 장착 애니메이션이 진행 중인지 나타냅니다. true일 때 무기 입력이 차단됩니다."))
 	bool bIsWeaponEquipping = false;
 
 	// ════════════════════════════════════════════════════════════════
@@ -209,7 +211,7 @@ public:
 	//   AInv_EquipActor* EA = PC ? PC->GetCurrentEquipActor() : nullptr;
 	//   USoundBase* Sound = EA ? EA->GetFireSound() : nullptr;
 	// ============================================
-	UFUNCTION(BlueprintCallable, Category = "Inventory|Weapon", meta = (DisplayName = "활성 무기 EquipActor 가져오기"))
+	UFUNCTION(BlueprintCallable, Category = "인벤토리|무기", meta = (DisplayName = "활성 무기 EquipActor 가져오기"))
 	AInv_EquipActor* GetActiveWeaponActor();
 
 	// ============================================

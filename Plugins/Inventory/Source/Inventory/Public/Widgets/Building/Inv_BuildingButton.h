@@ -112,61 +112,75 @@ private:
 	// === 건물 정보 (블루프린트에서 설정 가능) ===
 	
 	// 건물 이름
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설", meta = (AllowPrivateAccess = "true",
+		DisplayName = "건물 이름", Tooltip = "빌드 메뉴에 표시될 건물의 이름입니다."))
 	FText BuildingName;
 
 	// 건물 아이콘
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설", meta = (AllowPrivateAccess = "true",
+		DisplayName = "건물 아이콘", Tooltip = "빌드 메뉴에 표시될 건물의 아이콘 텍스처입니다."))
 	TObjectPtr<UTexture2D> BuildingIcon;
 
 	// 고스트 액터 클래스
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설", meta = (AllowPrivateAccess = "true",
+		DisplayName = "고스트 액터 클래스", Tooltip = "건설 미리보기용 반투명 고스트 액터의 클래스입니다."))
 	TSubclassOf<AActor> GhostActorClass;
 
 	// 실제 건물 액터 클래스
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설", meta = (AllowPrivateAccess = "true",
+		DisplayName = "실제 건물 클래스", Tooltip = "건설 완료 시 스폰될 실제 건물 액터의 클래스입니다."))
 	TSubclassOf<AActor> ActualBuildingClass;
 
 	// 건물 ID
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설", meta = (AllowPrivateAccess = "true",
+		DisplayName = "건물 ID", Tooltip = "건물을 식별하기 위한 고유 ID 값입니다."))
 	int32 BuildingID = 0;
 
 	// === 재료 정보 ===
 
 	// 필요한 재료 1 태그 (Craftables 중 선택)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building|Materials", meta = (AllowPrivateAccess = "true", Categories = "GameItems.Craftables"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|재료", meta = (AllowPrivateAccess = "true", Categories = "GameItems.Craftables",
+		DisplayName = "필요 재료 1 태그", Tooltip = "건설에 필요한 첫 번째 재료의 게임플레이 태그입니다."))
 	FGameplayTag RequiredMaterialTag;
 
 	// 필요한 재료 1 개수
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building|Materials", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|재료", meta = (AllowPrivateAccess = "true",
+		DisplayName = "필요 재료 1 개수", Tooltip = "건설에 필요한 첫 번째 재료의 수량입니다."))
 	int32 RequiredAmount = 0;
 
 	// 필요한 재료 1 아이콘
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building|Materials", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|재료", meta = (AllowPrivateAccess = "true",
+		DisplayName = "재료 1 아이콘", Tooltip = "첫 번째 재료의 아이콘 텍스처입니다."))
 	TObjectPtr<UTexture2D> MaterialIcon1;
 
 	// 필요한 재료 2 태그 (Craftables 중 선택, None이면 미사용)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building|Materials", meta = (AllowPrivateAccess = "true", Categories = "GameItems.Craftables"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|재료", meta = (AllowPrivateAccess = "true", Categories = "GameItems.Craftables",
+		DisplayName = "필요 재료 2 태그", Tooltip = "건설에 필요한 두 번째 재료의 게임플레이 태그입니다. None이면 미사용됩니다."))
 	FGameplayTag RequiredMaterialTag2;
 
 	// 필요한 재료 2 개수
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building|Materials", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|재료", meta = (AllowPrivateAccess = "true",
+		DisplayName = "필요 재료 2 개수", Tooltip = "건설에 필요한 두 번째 재료의 수량입니다."))
 	int32 RequiredAmount2 = 0;
 
 	// 필요한 재료 2 아이콘
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building|Materials", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|재료", meta = (AllowPrivateAccess = "true",
+		DisplayName = "재료 2 아이콘", Tooltip = "두 번째 재료의 아이콘 텍스처입니다."))
 	TObjectPtr<UTexture2D> MaterialIcon2;
 
 	// 필요한 재료 3 태그 (Craftables 중 선택, None이면 미사용)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building|Materials", meta = (AllowPrivateAccess = "true", Categories = "GameItems.Craftables"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|재료", meta = (AllowPrivateAccess = "true", Categories = "GameItems.Craftables",
+		DisplayName = "필요 재료 3 태그", Tooltip = "건설에 필요한 세 번째 재료의 게임플레이 태그입니다. None이면 미사용됩니다."))
 	FGameplayTag RequiredMaterialTag3;
 
 	// 필요한 재료 3 개수
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building|Materials", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|재료", meta = (AllowPrivateAccess = "true",
+		DisplayName = "필요 재료 3 개수", Tooltip = "건설에 필요한 세 번째 재료의 수량입니다."))
 	int32 RequiredAmount3 = 0;
 
 	// 필요한 재료 3 아이콘
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building|Materials", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|재료", meta = (AllowPrivateAccess = "true",
+		DisplayName = "재료 3 아이콘", Tooltip = "세 번째 재료의 아이콘 텍스처입니다."))
 	TObjectPtr<UTexture2D> MaterialIcon3;
 };
 

@@ -178,7 +178,7 @@ class INVENTORY_API UInv_CraftingButton : public UUserWidget
 
 public:
 	// 제작 아이템 정보 설정 (Blueprint에서 호출 가능)
-	UFUNCTION(BlueprintCallable, Category = "Crafting")
+	UFUNCTION(BlueprintCallable, Category = "제작", meta = (DisplayName = "제작 정보 설정"))
 	void SetCraftingInfo(const FText& Name, UTexture2D* Icon, TSubclassOf<AActor> ItemActorClass);
 
 protected:
@@ -278,53 +278,65 @@ private:
 	// === 제작 아이템 정보 (블루프린트에서 설정 가능) ===
 	
 	// 제작할 아이템 이름
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crafting", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "제작", meta = (AllowPrivateAccess = "true",
+		DisplayName = "아이템 이름", Tooltip = "제작 메뉴에 표시될 아이템의 이름입니다."))
 	FText ItemName;
 
 	// 제작할 아이템 아이콘
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crafting", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "제작", meta = (AllowPrivateAccess = "true",
+		DisplayName = "아이템 아이콘", Tooltip = "제작 메뉴에 표시될 아이템의 아이콘 텍스처입니다."))
 	TObjectPtr<UTexture2D> ItemIcon;
 
 	// 제작할 아이템 액터 클래스 (PickUp Actor)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crafting", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "제작", meta = (AllowPrivateAccess = "true",
+		DisplayName = "아이템 액터 클래스", Tooltip = "제작 완료 시 스폰될 아이템 픽업 액터의 클래스입니다."))
 	TSubclassOf<AActor> ItemActorClass;
 
 	// === 재료 정보 (Building과 동일한 구조) ===
 
 	// 필요한 재료 1 태그 (Craftables 중 선택)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crafting|Materials", meta = (AllowPrivateAccess = "true", Categories = "GameItems.Craftables"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "제작|재료", meta = (AllowPrivateAccess = "true", Categories = "GameItems.Craftables",
+		DisplayName = "필요 재료 1 태그", Tooltip = "제작에 필요한 첫 번째 재료의 게임플레이 태그입니다."))
 	FGameplayTag RequiredMaterialTag;
 
 	// 필요한 재료 1 개수
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crafting|Materials", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "제작|재료", meta = (AllowPrivateAccess = "true",
+		DisplayName = "필요 재료 1 개수", Tooltip = "제작에 필요한 첫 번째 재료의 수량입니다."))
 	int32 RequiredAmount = 0;
 
 	// 필요한 재료 1 아이콘 (Blueprint에서 직접 설정)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crafting|Materials", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "제작|재료", meta = (AllowPrivateAccess = "true",
+		DisplayName = "재료 1 아이콘", Tooltip = "첫 번째 재료의 아이콘 텍스처입니다."))
 	TObjectPtr<UTexture2D> MaterialIcon1;
 
 	// 필요한 재료 2 태그 (Craftables 중 선택, None이면 미사용)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crafting|Materials", meta = (AllowPrivateAccess = "true", Categories = "GameItems.Craftables"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "제작|재료", meta = (AllowPrivateAccess = "true", Categories = "GameItems.Craftables",
+		DisplayName = "필요 재료 2 태그", Tooltip = "제작에 필요한 두 번째 재료의 게임플레이 태그입니다. None이면 미사용됩니다."))
 	FGameplayTag RequiredMaterialTag2;
 
 	// 필요한 재료 2 개수
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crafting|Materials", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "제작|재료", meta = (AllowPrivateAccess = "true",
+		DisplayName = "필요 재료 2 개수", Tooltip = "제작에 필요한 두 번째 재료의 수량입니다."))
 	int32 RequiredAmount2 = 0;
 
 	// 필요한 재료 2 아이콘 (Blueprint에서 직접 설정)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crafting|Materials", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "제작|재료", meta = (AllowPrivateAccess = "true",
+		DisplayName = "재료 2 아이콘", Tooltip = "두 번째 재료의 아이콘 텍스처입니다."))
 	TObjectPtr<UTexture2D> MaterialIcon2;
 
 	// 필요한 재료 3 태그 (Craftables 중 선택, None이면 미사용)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crafting|Materials", meta = (AllowPrivateAccess = "true", Categories = "GameItems.Craftables"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "제작|재료", meta = (AllowPrivateAccess = "true", Categories = "GameItems.Craftables",
+		DisplayName = "필요 재료 3 태그", Tooltip = "제작에 필요한 세 번째 재료의 게임플레이 태그입니다. None이면 미사용됩니다."))
 	FGameplayTag RequiredMaterialTag3;
 
 	// 필요한 재료 3 개수
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crafting|Materials", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "제작|재료", meta = (AllowPrivateAccess = "true",
+		DisplayName = "필요 재료 3 개수", Tooltip = "제작에 필요한 세 번째 재료의 수량입니다."))
 	int32 RequiredAmount3 = 0;
 
 	// 필요한 재료 3 아이콘 (Blueprint에서 직접 설정)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crafting|Materials", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "제작|재료", meta = (AllowPrivateAccess = "true",
+		DisplayName = "재료 3 아이콘", Tooltip = "세 번째 재료의 아이콘 텍스처입니다."))
 	TObjectPtr<UTexture2D> MaterialIcon3;
 
 	// === 버튼 쿨다운 (연타 방지) ===

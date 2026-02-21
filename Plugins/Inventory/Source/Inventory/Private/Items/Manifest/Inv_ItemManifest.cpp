@@ -64,8 +64,9 @@ UInv_InventoryItem* FInv_ItemManifest::Manifest(UObject* NewOuter) // 인벤토�
 	{
 		Fragment.GetMutable().Manifest(); // 프래그먼트 매니페스트 호출
 	}
+	Item->GetItemManifestMutable().BuildFragmentCache(); // ⭐ [최적화 #3] 아이템의 Fragment 캐시 구축
 	ClearFragments();
-	
+
 	return Item;
 }
 
@@ -104,6 +105,21 @@ void FInv_ItemManifest::ClearFragments()
 		Fragment.Reset();
 	}
 	Fragments.Empty();
+	FragmentTypeCache.Reset(); // ⭐ [최적화 #3] 캐시도 초기화
+}
+
+// ⭐ [최적화 #3] Fragment 타입별 인덱스 캐시 구축
+void FInv_ItemManifest::BuildFragmentCache()
+{
+	FragmentTypeCache.Reset();
+	FragmentTypeCache.Reserve(Fragments.Num());
+	for (int32 i = 0; i < Fragments.Num(); ++i)
+	{
+		if (Fragments[i].IsValid())
+		{
+			FragmentTypeCache.Add(Fragments[i].GetScriptStruct(), i);
+		}
+	}
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -264,6 +280,7 @@ bool FInv_ItemManifest::DeserializeAndApplyFragments(const TArray<uint8>& InData
 
 	// ── 성공: 기존 Fragments를 교체 ──
 	Fragments = MoveTemp(TempFragments);
+	BuildFragmentCache(); // ⭐ [최적화 #3] 역직렬화 후 캐시 재구축
 
 #if INV_DEBUG_SAVE
 	UE_LOG(LogTemp, Warning,

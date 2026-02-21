@@ -44,7 +44,7 @@ public:
 	void RefreshLayout();
 
 private:
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (Categories = "GameItem.Equipment"))
+	UPROPERTY(EditAnywhere, Category = "인벤토리|장비", meta = (DisplayName = "장비 타입 태그", Tooltip = "이 슬롯에 장착 가능한 장비 유형을 나타내는 게임플레이 태그입니다.", Categories = "GameItem.Equipment"))
 	FGameplayTag EquipmentTypeTag; // 장착된 아이템의 타입을 나타내는 게임플레이 태그
 
 	// ============================================
@@ -52,13 +52,13 @@ private:
 	// ⭐ 블루프린트에서 설정 (0 = 주무기, 1 = 보조무기)
 	// ⭐ 무기 슬롯이 아닌 경우 -1
 	// ============================================
-	UPROPERTY(EditAnywhere, Category = "Inventory|Weapon", meta = (DisplayName = "무기 슬롯 인덱스"))
+	UPROPERTY(EditAnywhere, Category = "인벤토리|무기", meta = (DisplayName = "무기 슬롯 인덱스", Tooltip = "무기 슬롯 번호입니다. 0 = 주무기, 1 = 보조무기, -1 = 무기 슬롯 아님."))
 	int32 WeaponSlotIndex = -1;
 
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UImage> Image_GrayedOutIcon; // 호버했을 때 상황
 	
-	UPROPERTY(EditAnywhere, Category = "Inventory")
+	UPROPERTY(EditAnywhere, Category = "인벤토리|장비", meta = (DisplayName = "장착 슬롯 아이템 클래스", Tooltip = "장착 슬롯에 사용할 위젯 블루프린트 클래스입니다."))
 	TSubclassOf<UInv_EquippedSlottedItem> EquippedSlottedItemClass; // 장착된 슬롯 아이템의 클래스 타입
 	
 	UPROPERTY()

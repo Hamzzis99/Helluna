@@ -37,7 +37,7 @@ public:
 	UInv_InventoryComponent();
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
-	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Inventory")
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "인벤토리", meta = (DisplayName = "아이템 추가 시도"))
 	void TryAddItem(UInv_ItemComponent* ItemComponent);
 
 	//서버 부분 RPC로 만들 것
@@ -85,7 +85,7 @@ public:
 	void Multicast_ConsumeMaterialsUI(const FGameplayTag& MaterialTag, int32 Amount);
 
 	// 같은 타입의 모든 스택 개수 합산 (Building UI용)
-	UFUNCTION(BlueprintCallable, Category = "Inventory")
+	UFUNCTION(BlueprintCallable, Category = "인벤토리", meta = (DisplayName = "총 재료 수량 가져오기"))
 	int32 GetTotalMaterialCount(const FGameplayTag& MaterialTag) const;
 	
 	UFUNCTION(Server, Reliable) // 신뢰하는 것? 서버에 전달하는 것?
@@ -104,7 +104,7 @@ public:
 	void Server_DetachItemFromWeapon(int32 WeaponEntryIndex, int32 SlotIndex);
 
 	// 호환성 체크 (UI에서 드래그 중 슬롯 하이라이트용, 읽기 전용)
-	UFUNCTION(BlueprintCallable, Category = "Inventory|Attachment")
+	UFUNCTION(BlueprintCallable, Category = "인벤토리|부착물", meta = (DisplayName = "무기에 부착 가능 여부"))
 	bool CanAttachToWeapon(int32 WeaponEntryIndex, int32 AttachmentEntryIndex, int32 SlotIndex) const;
 	
 	UFUNCTION(NetMulticast, Reliable) // 멀티캐스트 함수 (서버에서 모든 클라이언트로 호출)
@@ -175,7 +175,8 @@ protected:
 
 	// ⭐ Blueprint에서 인벤토리 Grid 크기 참조 (모든 카테고리 공통 사용)
 	// WBP_SpatialInventory의 Grid_Equippables를 선택하면 Rows/Columns 자동 참조!
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "인벤토리|그리드 설정", meta = (DisplayName = "인벤토리 그리드 (크기 자동 참조)"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "인벤토리|그리드 설정",
+		meta = (DisplayName = "인벤토리 그리드 (크기 자동 참조)", Tooltip = "인벤토리 Grid 위젯 참조입니다. Rows/Columns 크기를 자동으로 가져옵니다."))
 	TObjectPtr<UInv_InventoryGrid> InventoryGridReference = nullptr;
 
 private:
@@ -187,6 +188,8 @@ private:
 	// ⭐ Blueprint Widget의 Grid 크기를 Component 설정으로 동기화
 	void SyncGridSizesFromWidget();
 
+	// TODO [Phase C] GridModel 도입 시 이 함수 제거 → GridModel.HasRoom()으로 통합
+	// 현재는 서버에 GridSlot(UI)이 없어서 별도 구현한 중복 로직
 	// ⭐ 서버 전용: InventoryList 기반 공간 체크 (UI 없이 작동!)
 	bool HasRoomInInventoryList(const FInv_ItemManifest& Manifest) const;
 
@@ -214,7 +217,8 @@ private:
 	UPROPERTY() // 이거는 소유권을 확보하는 것. 소유권을 잃지 않게 해주는 것.
 	TObjectPtr<UInv_InventoryBase> InventoryMenu; //인벤토리 메뉴 위젯 인스턴스
 
-	UPROPERTY(EditAnywhere, Category = "Inventory")
+	UPROPERTY(EditAnywhere, Category = "인벤토리",
+		meta = (DisplayName = "인벤토리 메뉴 클래스", Tooltip = "인벤토리 메뉴로 사용할 위젯 블루프린트 클래스를 지정합니다."))
 	TSubclassOf<UInv_InventoryBase> InventoryMenuClass;
 
 	bool bInventoryMenuOpen; //인벤토리 메뉴 열림 여부
@@ -223,19 +227,24 @@ private:
 	void CloseOtherMenus(); // BuildMenu와 CraftingMenu 닫기
 	
 	//아이템 드롭 시 빙글빙글 돌아요
-	UPROPERTY(EditAnywhere, Category = "Inventory")
+	UPROPERTY(EditAnywhere, Category = "인벤토리",
+		meta = (DisplayName = "드롭 스폰 최소 각도", Tooltip = "아이템 드롭 시 스폰되는 최소 각도입니다."))
 	float DropSpawnAngleMin = -85.f;
-	
-	UPROPERTY(EditAnywhere, Category = "Inventory")
+
+	UPROPERTY(EditAnywhere, Category = "인벤토리",
+		meta = (DisplayName = "드롭 스폰 최대 각도", Tooltip = "아이템 드롭 시 스폰되는 최대 각도입니다."))
 	float DropSpawnAngleMax = 85.f;
-	
-	UPROPERTY(EditAnywhere, Category = "Inventory")
+
+	UPROPERTY(EditAnywhere, Category = "인벤토리",
+		meta = (DisplayName = "드롭 스폰 최소 거리", Tooltip = "아이템 드롭 시 스폰되는 최소 거리입니다."))
 	float DropSpawnDistanceMin = 10.f;
-	
-	UPROPERTY(EditAnywhere, Category = "Inventory")
+
+	UPROPERTY(EditAnywhere, Category = "인벤토리",
+		meta = (DisplayName = "드롭 스폰 최대 거리", Tooltip = "아이템 드롭 시 스폰되는 최대 거리입니다."))
 	float DropSpawnDistanceMax = 50.f;
-	
-	UPROPERTY(EditAnywhere, Category = "Inventory")
+
+	UPROPERTY(EditAnywhere, Category = "인벤토리",
+		meta = (DisplayName = "상대 스폰 높이", Tooltip = "아이템 드롭 시 캐릭터 기준 상대적인 스폰 높이 오프셋입니다."))
 	float RelativeSpawnElevation = 70.f; // 스폰위치를 아래로 밀고싶다? 뭔 소리야?
 };
 

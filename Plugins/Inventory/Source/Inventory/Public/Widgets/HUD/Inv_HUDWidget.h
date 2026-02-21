@@ -18,10 +18,10 @@ public:
 	virtual void NativeOnInitialized() override;
 
 	// 아이템 획득 메시지 표시 함수 (Crafting Station과 통합)
-	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory")
+	UFUNCTION(BlueprintImplementableEvent, Category = "인벤토리", meta = (DisplayName = "픽업 메시지 표시"))
 	void ShowPickupMessage(const FString& Message);
-	
-	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory")
+
+	UFUNCTION(BlueprintImplementableEvent, Category = "인벤토리", meta = (DisplayName = "픽업 메시지 숨기기"))
 	void HidePickupMessage();
 
 private:

@@ -73,16 +73,16 @@ private:
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UImage> Image_GridSlot;
 
-	UPROPERTY(EditAnywhere, Category = "Inventory")
+	UPROPERTY(EditAnywhere, Category = "인벤토리|그리드", meta = (DisplayName = "비점유 브러시", Tooltip = "슬롯이 비어 있을 때 표시되는 브러시입니다."))
 	FSlateBrush Brush_Unoccupied;
 
-	UPROPERTY(EditAnywhere, Category = "Inventory")
+	UPROPERTY(EditAnywhere, Category = "인벤토리|그리드", meta = (DisplayName = "점유 브러시", Tooltip = "슬롯에 아이템이 배치되어 있을 때 표시되는 브러시입니다."))
 	FSlateBrush Brush_Occupied;
 
-	UPROPERTY(EditAnywhere, Category = "Inventory")
+	UPROPERTY(EditAnywhere, Category = "인벤토리|그리드", meta = (DisplayName = "선택 브러시", Tooltip = "슬롯이 선택(하이라이트)되었을 때 표시되는 브러시입니다."))
 	FSlateBrush Brush_Selected;
 
-	UPROPERTY(EditAnywhere, Category = "Inventory")
+	UPROPERTY(EditAnywhere, Category = "인벤토리|그리드", meta = (DisplayName = "비활성 브러시", Tooltip = "슬롯이 비활성(GrayedOut) 상태일 때 표시되는 브러시입니다."))
 	FSlateBrush Brush_GrayedOut;
 
 	EInv_GridSlotState GridSlotState;
