@@ -4,6 +4,7 @@
 #include "Blueprint/UserWidget.h"
 #include "Types/Inv_GridTypes.h"
 #include "Player/Inv_PlayerController.h"
+#include "Containers/BitArray.h"
 
 #include "Inv_InventoryGrid.generated.h"
 
@@ -310,6 +311,26 @@ private:
 	bool bLastMouseWithinCanvas;
 	// [최적화] HoverItem을 들고 있을 때만 true → NativeTick에서 계산 수행
 	bool bShouldTickForHover = false;
+
+	// ⭐ [최적화 #6] SlottedItem 위젯 풀 (CreateWidget 호출 최소화)
+	UPROPERTY()
+	TArray<TObjectPtr<UInv_SlottedItem>> SlottedItemPool;
+
+	// ⭐ [최적화 #6] 풀에서 SlottedItem 획득 (없으면 새로 생성)
+	UInv_SlottedItem* AcquireSlottedItem();
+
+	// ⭐ [최적화 #6] SlottedItem을 풀에 반환 (RemoveFromParent 후 보관)
+	void ReleaseSlottedItem(UInv_SlottedItem* SlottedItem);
+
+	// ⭐ [최적화 #5] 비트마스크 점유 맵 (O(n) GridSlot 순회 → O(1) 비트 검사)
+	// Index = Row * Columns + Col, true = 점유됨
+	TBitArray<> OccupiedMask;
+
+	// ⭐ [최적화 #5] 비트마스크 점유 상태 일괄 설정
+	void SetOccupiedBits(int32 StartIndex, const FIntPoint& Dimensions, bool bOccupied);
+
+	// ⭐ [최적화 #5] 영역이 비어있는지 비트마스크로 빠르게 확인
+	bool IsAreaFree(int32 StartIndex, const FIntPoint& Dimensions) const;
 	int32 LastHighlightedIndex;
 	FIntPoint LastHighlightedDimensions;
 
