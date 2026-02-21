@@ -52,6 +52,21 @@ void UInv_AttachmentPanel::NativeOnInitialized()
 }
 
 // ════════════════════════════════════════════════════════════════
+// 📌 NativeConstruct — WBP에서 설정한 이미지 사이즈 캐싱
+// ════════════════════════════════════════════════════════════════
+void UInv_AttachmentPanel::NativeConstruct()
+{
+	Super::NativeConstruct();
+
+	// WBP에서 디자이너가 지정한 Image_WeaponPreview의 Brush.ImageSize를 캐싱
+	// SetupWeaponPreview()에서 브러시를 교체한 뒤 이 값으로 복원
+	if (IsValid(Image_WeaponPreview))
+	{
+		CachedPreviewImageSize = Image_WeaponPreview->GetBrush().ImageSize;
+	}
+}
+
+// ════════════════════════════════════════════════════════════════
 // 📌 NativeTick — 매 프레임 호출 (하이라이트 + 드래그 회전)
 // ════════════════════════════════════════════════════════════════
 void UInv_AttachmentPanel::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
@@ -763,6 +778,12 @@ void UInv_AttachmentPanel::SetupWeaponPreview()
 			UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(PreviewMat, this);
 			MID->SetTextureParameterValue(TEXT("PreviewTexture"), RT);
 			Image_WeaponPreview->SetBrushFromMaterial(MID);
+
+			// SetBrushFromMaterial이 RenderTarget 해상도로 덮어쓴 ImageSize를
+			// NativeConstruct에서 캐싱한 WBP 원본 값으로 복원
+			FSlateBrush FixedBrush = Image_WeaponPreview->GetBrush();
+			FixedBrush.ImageSize = CachedPreviewImageSize;
+			Image_WeaponPreview->SetBrush(FixedBrush);
 		}
 		else
 		{
@@ -770,7 +791,7 @@ void UInv_AttachmentPanel::SetupWeaponPreview()
 			UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] M_WeaponPreview 로드 실패! FSlateBrush 폴백"));
 			FSlateBrush PreviewBrush;
 			PreviewBrush.SetResourceObject(RT);
-			PreviewBrush.ImageSize = FVector2D(512.f, 512.f);
+			PreviewBrush.ImageSize = CachedPreviewImageSize;
 			PreviewBrush.DrawAs = ESlateBrushDrawType::Image;
 			PreviewBrush.Tiling = ESlateBrushTileType::NoTile;
 			Image_WeaponPreview->SetBrush(PreviewBrush);

@@ -70,6 +70,7 @@ class INVENTORY_API UInv_AttachmentPanel : public UUserWidget
 
 public:
 	virtual void NativeOnInitialized() override;
+	virtual void NativeConstruct() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 	// ── 마우스 이벤트 (드래그 회전) ──
@@ -139,6 +140,9 @@ private:
 
 	// 프리뷰 액터 스폰 Z 위치 (월드 아래쪽, 카메라에 안 잡힘)
 	static constexpr float PreviewSpawnZ = -10000.f;
+
+	// NativeConstruct에서 캐싱한 WBP의 원본 ImageSize (SetupWeaponPreview에서 복원용)
+	FVector2D CachedPreviewImageSize = FVector2D::ZeroVector;
 
 	// ── Phase 8: 드래그 회전 ──
 	bool bIsDragging = false;
