@@ -49,21 +49,29 @@ void UInv_AttachmentPanel::NativeOnInitialized()
 
 	// WBP에 배치된 슬롯 위젯 자동 수집
 	CollectSlotWidgetsFromTree();
-}
-
-// ════════════════════════════════════════════════════════════════
-// 📌 NativeConstruct — WBP에서 설정한 이미지 사이즈 캐싱
-// ════════════════════════════════════════════════════════════════
-void UInv_AttachmentPanel::NativeConstruct()
-{
-	Super::NativeConstruct();
 
 	// WBP에서 디자이너가 지정한 Image_WeaponPreview의 Brush.ImageSize를 캐싱
-	// SetupWeaponPreview()에서 브러시를 교체한 뒤 이 값으로 복원
+	// NativeOnInitialized는 Visibility와 무관하게 위젯 생성 시 항상 호출됨
+	// (NativeConstruct는 Collapsed→Visible 전환 시점이라 SetupWeaponPreview보다 늦음)
 	if (IsValid(Image_WeaponPreview))
 	{
 		CachedPreviewImageSize = Image_WeaponPreview->GetBrush().ImageSize;
+		UE_LOG(LogTemp, Log, TEXT("[Attachment UI] CachedPreviewImageSize = (%.1f, %.1f)"),
+			CachedPreviewImageSize.X, CachedPreviewImageSize.Y);
 	}
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 NativeConstruct
+// ════════════════════════════════════════════════════════════════
+// ⚠️ CachedPreviewImageSize 캐싱은 여기서 하지 않음!
+//    이유: 위젯이 초기 Collapsed 상태일 때 NativeConstruct는
+//    SetVisibility(Visible) 시점에야 호출되므로,
+//    그보다 먼저 실행되는 SetupWeaponPreview()에서 캐싱값이 (0,0)이 됨.
+//    → 캐싱은 NativeOnInitialized에서 수행.
+void UInv_AttachmentPanel::NativeConstruct()
+{
+	Super::NativeConstruct();
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -780,9 +788,18 @@ void UInv_AttachmentPanel::SetupWeaponPreview()
 			Image_WeaponPreview->SetBrushFromMaterial(MID);
 
 			// SetBrushFromMaterial이 RenderTarget 해상도로 덮어쓴 ImageSize를
-			// NativeConstruct에서 캐싱한 WBP 원본 값으로 복원
+			// NativeOnInitialized에서 캐싱한 WBP 원본 값으로 복원
 			FSlateBrush FixedBrush = Image_WeaponPreview->GetBrush();
-			FixedBrush.ImageSize = CachedPreviewImageSize;
+			if (!CachedPreviewImageSize.IsNearlyZero())
+			{
+				FixedBrush.ImageSize = CachedPreviewImageSize;
+			}
+			else
+			{
+				// 캐싱 실패 안전장치: WBP 기본값 (256, 256) 사용
+				FixedBrush.ImageSize = FVector2D(256.f, 256.f);
+				UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] CachedPreviewImageSize가 0! 폴백값 (256, 256) 사용"));
+			}
 			Image_WeaponPreview->SetBrush(FixedBrush);
 		}
 		else
@@ -791,7 +808,9 @@ void UInv_AttachmentPanel::SetupWeaponPreview()
 			UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] M_WeaponPreview 로드 실패! FSlateBrush 폴백"));
 			FSlateBrush PreviewBrush;
 			PreviewBrush.SetResourceObject(RT);
-			PreviewBrush.ImageSize = CachedPreviewImageSize;
+			PreviewBrush.ImageSize = CachedPreviewImageSize.IsNearlyZero()
+				? FVector2D(256.f, 256.f)
+				: CachedPreviewImageSize;
 			PreviewBrush.DrawAs = ESlateBrushDrawType::Image;
 			PreviewBrush.Tiling = ESlateBrushTileType::NoTile;
 			Image_WeaponPreview->SetBrush(PreviewBrush);
