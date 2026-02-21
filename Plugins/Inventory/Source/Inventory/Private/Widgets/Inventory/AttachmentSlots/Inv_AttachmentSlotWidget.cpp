@@ -81,10 +81,9 @@ void UInv_AttachmentSlotWidget::SetOccupied(const FInv_AttachedItemData& Data)
 		UTexture2D* Icon = ImageFrag->GetIcon();
 		if (IsValid(Icon))
 		{
-			FSlateBrush IconBrush;
-			IconBrush.SetResourceObject(Icon);
-			// 크기는 WBP의 SizeBox 레이아웃이 결정 — C++에서 강제하지 않음
-			Image_ItemIcon->SetBrush(IconBrush);
+			// bMatchSize=false → 텍스처 원본 해상도를 ImageSize에 반영하지 않음
+			// WBP의 부모 레이아웃(SizeBox/Overlay)이 크기를 결정하도록 위임
+			Image_ItemIcon->SetBrushFromTexture(Icon, false);
 			Image_ItemIcon->SetVisibility(ESlateVisibility::Visible); // 아이콘 보이기
 		}
 	}

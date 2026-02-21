@@ -83,6 +83,7 @@ struct FInv_InventoryFastArray : public FFastArraySerializer
 	int32 GetTotalCountByType(const FGameplayTag& ItemType) const;
 
 private:
+	// TODO [Phase C] GridModel 도입 시 이 멤버를 GridModel로 이관 검토
 	// ⭐ [최적화 #4] 아이템 타입별 인덱스 캐시 (O(n) 선형 탐색 → O(1) 해시 조회)
 	// Key = ItemType GameplayTag, Value = Entries 배열 인덱스
 	// AddEntry/RemoveEntry 시 재구축

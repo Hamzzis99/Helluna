@@ -22,6 +22,29 @@ class UInv_AttachmentPanel;
 struct FGameplayTag;
 enum class EInv_GridSlotState : uint8;
 
+// ════════════════════════════════════════════════════════════════════════
+// TODO [Phase C - 데이터/뷰 분리] 상용화 리팩토링
+// ════════════════════════════════════════════════════════════════════════
+// 현재 이 클래스가 UI(위젯)와 데이터(점유 판단)를 모두 담당하고 있음.
+// 상용화 시 아래 작업 필요:
+//
+// 1. GridModel 클래스 신설 (UObject, 서버+클라 공유)
+//    - OccupiedMask (비트마스크) → 이미 구현됨, 여기서 이관
+//    - ItemTypeIndex (타입별 인덱스) → FastArray에서 이관
+//    - HasRoom(), FindSpace(), PlaceItem(), RemoveItem()
+//
+// 2. 이 클래스(Inv_InventoryGrid)는 UI만 담당하도록 축소
+//    - GridModel을 읽어서 시각적으로 표시
+//    - 슬롯 하이라이트, 드래그&드롭 등 UI 전용
+//
+// 3. Inv_InventoryComponent의 HasRoomInInventoryList() 제거
+//    - GridModel.HasRoom()으로 대체 (서버/클라 동일 로직 1벌)
+//
+// 도입 시기: 루팅 상자 / 상점 / NPC 인벤토리 추가할 때
+// 이유: 컨테이너마다 Grid가 필요 → GridModel을 공유하면 중복 제거
+// 참고: inventory_optimization_guide.md 최적화 #6 항목
+// ════════════════════════════════════════════════════════════════════════
+
 /**
  *
  */

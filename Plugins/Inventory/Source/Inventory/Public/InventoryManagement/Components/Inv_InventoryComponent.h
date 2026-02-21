@@ -188,6 +188,8 @@ private:
 	// ⭐ Blueprint Widget의 Grid 크기를 Component 설정으로 동기화
 	void SyncGridSizesFromWidget();
 
+	// TODO [Phase C] GridModel 도입 시 이 함수 제거 → GridModel.HasRoom()으로 통합
+	// 현재는 서버에 GridSlot(UI)이 없어서 별도 구현한 중복 로직
 	// ⭐ 서버 전용: InventoryList 기반 공간 체크 (UI 없이 작동!)
 	bool HasRoomInInventoryList(const FInv_ItemManifest& Manifest) const;
 
