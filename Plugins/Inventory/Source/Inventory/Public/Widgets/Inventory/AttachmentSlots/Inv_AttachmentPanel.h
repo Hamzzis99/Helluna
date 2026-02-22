@@ -180,6 +180,9 @@ private:
 	void SetupWeaponPreview();
 	void CleanupWeaponPreview();
 
+	// 프리뷰 액터에 현재 장착된 부착물 3D 메시 전체 갱신
+	void RefreshPreviewAttachments();
+
 	// Tick에서 호출: HoverItem 호환 슬롯 실시간 하이라이트
 	void UpdateSlotHighlights();
 

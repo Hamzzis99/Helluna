@@ -545,6 +545,9 @@ void UInv_AttachmentPanel::TryAttachHoverItem(int32 SlotIndex)
 	OwningGrid->ClearHoverItem();
 	OwningGrid->ShowCursor();
 
+	// 프리뷰 액터에 부착물 메시 갱신
+	RefreshPreviewAttachments();
+
 #if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 장착 성공: 슬롯 %d에 %s (WeaponEntry=%d, AttachEntry=%d)"),
 		SlotIndex,
@@ -583,6 +586,9 @@ void UInv_AttachmentPanel::TryDetachItem(int32 SlotIndex)
 
 	// 서버 RPC 호출
 	InventoryComponent->Server_DetachItemFromWeapon(WeaponEntryIndex, SlotIndex);
+
+	// 프리뷰 액터에서 분리된 부착물 메시 갱신
+	RefreshPreviewAttachments();
 
 #if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 분리 완료: 슬롯 %d (WeaponEntry=%d)"),
@@ -826,6 +832,9 @@ void UInv_AttachmentPanel::SetupWeaponPreview()
 		Image_WeaponPreview->SetVisibility(ESlateVisibility::Visible);
 	}
 
+	// 현재 장착된 부착물을 프리뷰 메시에 표시
+	RefreshPreviewAttachments();
+
 #if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 3D 프리뷰 설정 완료: Mesh=%s"), *PreviewMesh->GetName());
 	if (IsValid(Image_WeaponPreview))
@@ -845,12 +854,63 @@ void UInv_AttachmentPanel::SetupWeaponPreview()
 }
 
 // ════════════════════════════════════════════════════════════════
+// 📌 RefreshPreviewAttachments — 프리뷰 액터에 부착물 3D 메시 갱신
+// ════════════════════════════════════════════════════════════════
+// 호출 경로: SetupWeaponPreview 끝 / TryAttachHoverItem 후 / TryDetachItem 후
+// 처리 흐름:
+//   1. ClearAllAttachmentPreviews (이전 부착물 전부 제거)
+//   2. HostFragment에서 AttachedItems 순회
+//   3. 각 부착물의 ItemManifestCopy → AttachableFragment에서 메시 + 오프셋
+//   4. SlotDef에서 AttachSocket 이름
+//   5. AddAttachmentPreview 호출
+// ════════════════════════════════════════════════════════════════
+void UInv_AttachmentPanel::RefreshPreviewAttachments()
+{
+	if (!WeaponPreviewActor.IsValid() || !CurrentWeaponItem.IsValid()) return;
+
+	// 기존 부착물 전부 제거 후 재구성
+	WeaponPreviewActor->ClearAllAttachmentPreviews();
+
+	const FInv_AttachmentHostFragment* HostFrag =
+		CurrentWeaponItem->GetItemManifest().GetFragmentOfType<FInv_AttachmentHostFragment>();
+	if (!HostFrag) return;
+
+	const TArray<FInv_AttachmentSlotDef>& SlotDefs = HostFrag->GetSlotDefinitions();
+	const TArray<FInv_AttachedItemData>& AttachedItems = HostFrag->GetAttachedItems();
+
+	for (const FInv_AttachedItemData& AttData : AttachedItems)
+	{
+		// SlotIndex 범위 검증
+		if (!SlotDefs.IsValidIndex(AttData.SlotIndex)) continue;
+
+		// 부착물의 AttachableFragment에서 메시 + 오프셋 가져오기
+		const FInv_AttachableFragment* AttachableFrag =
+			AttData.ItemManifestCopy.GetFragmentOfType<FInv_AttachableFragment>();
+		if (!AttachableFrag) continue;
+
+		UStaticMesh* AttachMesh = AttachableFrag->GetAttachmentMesh();
+		if (!IsValid(AttachMesh)) continue;
+
+		const FName SocketName = SlotDefs[AttData.SlotIndex].AttachSocket;
+		const FTransform& Offset = AttachableFrag->GetAttachOffset();
+
+		WeaponPreviewActor->AddAttachmentPreview(AttData.SlotIndex, AttachMesh, SocketName, Offset);
+	}
+
+#if INV_DEBUG_ATTACHMENT
+	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 프리뷰 부착물 갱신 완료: %d개 부착물"),
+		AttachedItems.Num());
+#endif
+}
+
+// ════════════════════════════════════════════════════════════════
 // 📌 CleanupWeaponPreview — 프리뷰 액터 파괴 및 정리
 // ════════════════════════════════════════════════════════════════
 void UInv_AttachmentPanel::CleanupWeaponPreview()
 {
 	if (WeaponPreviewActor.IsValid())
 	{
+		WeaponPreviewActor->ClearAllAttachmentPreviews();
 		WeaponPreviewActor->Destroy();
 		WeaponPreviewActor.Reset();
 	}
