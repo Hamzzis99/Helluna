@@ -72,7 +72,7 @@ void FSTEvaluator_TargetSelector::Tick(FStateTreeExecutionContext& Context, cons
 		return;
 	}
 
-	// 기본 타겟: 우주선
+	// 기본 타겟: 우주선 (중심 거리 기준)
 	if (TargetData.TargetType == EHellunaTargetType::SpaceShip && TargetData.TargetActor.IsValid())
 	{
 		TargetData.DistanceToTarget = FVector::Dist(PawnLocation, TargetData.TargetActor->GetActorLocation());

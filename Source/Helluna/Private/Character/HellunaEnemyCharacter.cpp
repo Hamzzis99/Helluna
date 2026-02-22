@@ -68,8 +68,8 @@ AHellunaEnemyCharacter::AHellunaEnemyCharacter()
 		SkelMesh->bDisplayDebugUpdateRateOptimizations = false;
 	}
 	
-	GetCharacterMovement()->bUseRVOAvoidance = true;
-	GetCharacterMovement()->AvoidanceConsiderationRadius = 200.f;
+	//GetCharacterMovement()->bUseRVOAvoidance = true;
+	//GetCharacterMovement()->AvoidanceConsiderationRadius = 200.f;
 }
 
 
