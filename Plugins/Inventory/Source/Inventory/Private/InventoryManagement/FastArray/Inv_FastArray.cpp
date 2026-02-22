@@ -376,6 +376,12 @@ void FInv_InventoryFastArray::RemoveEntry(UInv_InventoryItem* Item)
 		FInv_InventoryEntry& Entry = *EntryIt;
 		if (Entry.Item == Item)
 		{
+			// [Swap버그추적] RemoveEntry 콜스택
+			UE_LOG(LogTemp, Error, TEXT("========== [RemoveEntry] 삭제 대상: %s =========="),
+				IsValid(Item) ? *Item->GetItemManifest().GetItemType().ToString() : TEXT("nullptr"));
+			FDebug::DumpStackTraceToLog(ELogVerbosity::Error);
+			UE_LOG(LogTemp, Error, TEXT("========== [RemoveEntry] 콜스택 끝 =========="));
+
 			EntryIt.RemoveCurrent(); // 현재 항목 제거
 			MarkArrayDirty();
 			RebuildItemTypeIndex(); // ⭐ [최적화 #4] 인덱스 캐시 재구축

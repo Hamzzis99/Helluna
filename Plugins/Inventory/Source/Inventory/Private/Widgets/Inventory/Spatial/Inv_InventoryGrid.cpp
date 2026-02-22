@@ -1054,8 +1054,21 @@ void UInv_InventoryGrid::CreateItemPopUp(const int32 GridIndex)
 
 void UInv_InventoryGrid::PutHoverItemBack()
 {
+	// [Swap버그추적] PutHoverItemBack 호출
+	UE_LOG(LogTemp, Error, TEXT("===== [PutHoverItemBack] ====="));
+	UE_LOG(LogTemp, Error, TEXT("  HoverItem 유효=%s"),
+		IsValid(HoverItem) ? TEXT("Y") : TEXT("N"));
+	if (IsValid(HoverItem))
+	{
+		UE_LOG(LogTemp, Error, TEXT("  HoverItem 아이템: %s, StackCount=%d, PrevGridIndex=%d"),
+			IsValid(HoverItem->GetInventoryItem())
+				? *HoverItem->GetInventoryItem()->GetItemManifest().GetItemType().ToString() : TEXT("NULL"),
+			HoverItem->GetStackCount(),
+			HoverItem->GetPreviousGridIndex());
+	}
+
 	if (!IsValid(HoverItem)) return;
-	
+
 	FInv_SlotAvailabilityResult Result = HasRoomForItem(HoverItem->GetInventoryItem(), HoverItem->GetStackCount());
 	Result.Item = HoverItem->GetInventoryItem();
 	
@@ -1445,6 +1458,14 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 // ⭐ 핵심 변경: EntryIndex는 로그용으로만 사용, 실제 매칭은 포인터 + ItemManifest로!
 void UInv_InventoryGrid::RemoveItem(UInv_InventoryItem* Item, int32 EntryIndex)
 {
+	// [Swap버그추적] RemoveItem 호출됨 (서버 삭제 감지)
+	UE_LOG(LogTemp, Error, TEXT("===== [RemoveItem] 서버 삭제 감지 ====="));
+	UE_LOG(LogTemp, Error, TEXT("  삭제 대상: %s (포인터=%p), EntryIndex=%d"),
+		IsValid(Item) ? *Item->GetItemManifest().GetItemType().ToString() : TEXT("NULL"),
+		Item, EntryIndex);
+	UE_LOG(LogTemp, Error, TEXT("  현재 SlottedItems 수: %d"), SlottedItems.Num());
+	FDebug::DumpStackTraceToLog(ELogVerbosity::Error);
+
 	if (!IsValid(Item))
 	{
 #if INV_DEBUG_WIDGET
@@ -2016,6 +2037,12 @@ void UInv_InventoryGrid::PutDownOnIndex(const int32 Index)
     const int32 StackCount = HoverItem->GetStackCount();
     const int32 EntryIndex = HoverItem->GetEntryIndex();
 
+	// [Swap버그추적] PutDown 진입
+	UE_LOG(LogTemp, Error, TEXT("===== [PutDownOnIndex] 진입 ====="));
+	UE_LOG(LogTemp, Error, TEXT("  ItemToPutDown: %s (포인터=%p), Index=%d, EntryIndex=%d, StackCount=%d"),
+		IsValid(ItemToPutDown) ? *ItemToPutDown->GetItemManifest().GetItemType().ToString() : TEXT("NULL"),
+		ItemToPutDown, Index, EntryIndex, StackCount);
+
     // Phase 8.1: Split 아이템이면 UI 배치 건너뛰기, 서버 RPC로 처리
     if (HoverItem->IsSplitItem())
     {
@@ -2106,6 +2133,19 @@ void UInv_InventoryGrid::SwapWithHoverItem(UInv_InventoryItem* ClickedInventoryI
 {
 	if (!IsValid(HoverItem)) return; // 호버 아이템이 유효하다면 리턴
 
+	// [Swap버그추적] Swap 진입 상태 덤프
+	UE_LOG(LogTemp, Error, TEXT("===== [SwapWithHoverItem] 진입 ====="));
+	UE_LOG(LogTemp, Error, TEXT("  HoverItem->GetInventoryItem(): %s (포인터=%p)"),
+		IsValid(HoverItem->GetInventoryItem()) ? *HoverItem->GetInventoryItem()->GetItemManifest().GetItemType().ToString() : TEXT("NULL"),
+		HoverItem->GetInventoryItem());
+	UE_LOG(LogTemp, Error, TEXT("  HoverItem->GetStackCount(): %d, EntryIndex: %d"),
+		HoverItem->GetStackCount(), HoverItem->GetEntryIndex());
+	UE_LOG(LogTemp, Error, TEXT("  ClickedInventoryItem: %s (포인터=%p)"),
+		IsValid(ClickedInventoryItem) ? *ClickedInventoryItem->GetItemManifest().GetItemType().ToString() : TEXT("NULL"),
+		ClickedInventoryItem);
+	UE_LOG(LogTemp, Error, TEXT("  GridIndex: %d, ItemDropIndex: %d, PreviousGridIndex: %d"),
+		GridIndex, ItemDropIndex, HoverItem->GetPreviousGridIndex());
+
 	// 임시로 저장해서 할당하는 이유가 뭘까?
 	UInv_InventoryItem* TempInventoryItem = HoverItem->GetInventoryItem(); // 호버 아이템 임시 저장
 	const int32 TempStackCount = HoverItem->GetStackCount(); // 호버 아이템 스택 수 임시 저장
@@ -2118,6 +2158,17 @@ void UInv_InventoryGrid::SwapWithHoverItem(UInv_InventoryItem* ClickedInventoryI
 	RemoveItemFromGrid(ClickedInventoryItem, GridIndex); // 그리드에서 클릭된 아이템 제거
 	AddItemAtIndex(TempInventoryItem, ItemDropIndex, bTempIsStackable, TempStackCount, TempEntryIndex); // 임시 저장된 아이템을 인덱스에 추가
 	UpdateGridSlots(TempInventoryItem, ItemDropIndex, bTempIsStackable, TempStackCount); // 그리드 슬롯 업데이트
+
+	// [Swap버그추적] Swap 완료 상태 덤프
+	UE_LOG(LogTemp, Error, TEXT("===== [SwapWithHoverItem] 완료 ====="));
+	UE_LOG(LogTemp, Error, TEXT("  새 HoverItem: %s (포인터=%p)"),
+		IsValid(HoverItem) && IsValid(HoverItem->GetInventoryItem())
+			? *HoverItem->GetInventoryItem()->GetItemManifest().GetItemType().ToString() : TEXT("NULL"),
+		IsValid(HoverItem) ? HoverItem->GetInventoryItem() : nullptr);
+	UE_LOG(LogTemp, Error, TEXT("  Grid에 배치된 아이템: %s, Index=%d"),
+		IsValid(TempInventoryItem) ? *TempInventoryItem->GetItemManifest().GetItemType().ToString() : TEXT("NULL"),
+		ItemDropIndex);
+	UE_LOG(LogTemp, Error, TEXT("  SlottedItems 총 개수: %d"), SlottedItems.Num());
 }
 
 bool UInv_InventoryGrid::ShouldSwapStackCounts(const int32 RoomInClickedSlot, const int32 HoveredStackCount, const int32 MaxStackSize) const
@@ -2337,6 +2388,17 @@ void UInv_InventoryGrid::OnPopUpMenuConsume(int32 Index)
 // 아이템을 들고 있을 때 다른 UI를 건드리지 못하게 하는 것.
 void UInv_InventoryGrid::OnInventoryMenuToggled(bool bOpen)
 {
+	// [Swap버그추적] 인벤토리 토글
+	UE_LOG(LogTemp, Error, TEXT("===== [OnInventoryMenuToggled] bOpen=%s ====="),
+		bOpen ? TEXT("TRUE") : TEXT("FALSE"));
+	if (!bOpen)
+	{
+		UE_LOG(LogTemp, Error, TEXT("  닫기 시점: HoverItem 유효=%s, HoverItem 아이템=%s"),
+			IsValid(HoverItem) ? TEXT("Y") : TEXT("N"),
+			IsValid(HoverItem) && IsValid(HoverItem->GetInventoryItem())
+				? *HoverItem->GetInventoryItem()->GetItemManifest().GetItemType().ToString() : TEXT("NULL"));
+	}
+
 	if (!bOpen)
 	{
 		PutHoverItemBack();
