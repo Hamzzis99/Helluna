@@ -26,14 +26,14 @@ public:
 
 protected:
 
-	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory")
+	UFUNCTION(BlueprintImplementableEvent, Category = "인벤토리", meta = (DisplayName = "아이템 줍기 이벤트"))
 	void OnPickedUp(); // 아이템이 줍혔을 때 호출되는 보호된 함수
 
 private:
-	UPROPERTY(Replicated, EditAnywhere, Category = "Inventory")
+	UPROPERTY(Replicated, EditAnywhere, Category = "인벤토리", meta = (DisplayName = "아이템 매니페스트", Tooltip = "이 아이템 컴포넌트의 매니페스트 데이터. 아이템의 모든 프래그먼트 정보를 포함합니다."))
 	FInv_ItemManifest ItemManifest;
 
 
-	UPROPERTY(EditAnywhere, Category = "Inventory")
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "줍기 메시지", Tooltip = "아이템을 주울 때 화면에 표시되는 메시지 텍스트."))
 	FString PickupMessage;
 };

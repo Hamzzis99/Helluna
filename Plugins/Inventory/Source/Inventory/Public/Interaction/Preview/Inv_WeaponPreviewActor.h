@@ -91,7 +91,14 @@ public:
 	//   1. PreviewMeshComponent에 Yaw 회전 추가
 	//   2. CaptureScene() 호출하여 회전된 상태 캡처
 	// ════════════════════════════════════════════════════════════════
-	void RotatePreview(float YawDelta);
+	void RotatePreview(float YawDelta, float PitchDelta = 0.f);
+
+	// 누적 Pitch (상하 회전 제한용)
+	float AccumulatedPitch = 0.f;
+
+	// Pitch 제한 각도 (±도 단위, BP에서 조정 가능)
+	UPROPERTY(EditDefaultsOnly, Category = "상호작용|프리뷰|카메라", meta = (DisplayName = "상하 회전 제한 각도", ClampMin = "0", ClampMax = "90", ToolTip = "Pitch 회전 최대 각도 (±). 0이면 상하 회전 비활성화."))
+	float MaxPitchAngle = 60.f;
 
 	// ════════════════════════════════════════════════════════════════
 	// 📌 GetRenderTarget — RenderTarget 접근 (UMG Image에 연결용)
@@ -106,31 +113,71 @@ public:
 private:
 	// ── 컴포넌트 ──
 
-	UPROPERTY(VisibleAnywhere, Category = "Preview")
+	UPROPERTY(VisibleAnywhere, Category = "상호작용|프리뷰", meta = (DisplayName = "씬 루트"))
 	TObjectPtr<USceneComponent> SceneRoot;
 
-	UPROPERTY(VisibleAnywhere, Category = "Preview")
+	UPROPERTY(VisibleAnywhere, Category = "상호작용|프리뷰", meta = (DisplayName = "프리뷰 메시"))
 	TObjectPtr<UStaticMeshComponent> PreviewMeshComponent;
 
-	UPROPERTY(VisibleAnywhere, Category = "Preview")
+	UPROPERTY(VisibleAnywhere, Category = "상호작용|프리뷰", meta = (DisplayName = "카메라 붐"))
 	TObjectPtr<USpringArmComponent> CameraBoom;
 
-	UPROPERTY(VisibleAnywhere, Category = "Preview")
+	UPROPERTY(VisibleAnywhere, Category = "상호작용|프리뷰", meta = (DisplayName = "씬 캡처"))
 	TObjectPtr<USceneCaptureComponent2D> SceneCapture;
 
 	// Key Light: SpotLight (범위 제한 → 월드 조명 오염 방지)
 	// ※ DirectionalLight는 Deferred에서 LightingChannels를 무시하므로 사용 금지
-	UPROPERTY(VisibleAnywhere, Category = "Preview")
+	UPROPERTY(VisibleAnywhere, Category = "상호작용|프리뷰", meta = (DisplayName = "프리뷰 조명"))
 	TObjectPtr<USpotLightComponent> PreviewLight;
 
 	// ── 프리뷰 전용 보조 조명 (Channel 1 전용) ──
 	// FillLight: 메인 조명 반대편 → 그림자 면 밝힘 (반사광 역할)
-	UPROPERTY(VisibleAnywhere, Category = "Preview")
+	UPROPERTY(VisibleAnywhere, Category = "상호작용|프리뷰", meta = (DisplayName = "보조 조명"))
 	TObjectPtr<UPointLightComponent> FillLight;
 
 	// RimLight: 뒤쪽 상단 → 가장자리 윤곽 강조 (실루엣 분리)
-	UPROPERTY(VisibleAnywhere, Category = "Preview")
+	UPROPERTY(VisibleAnywhere, Category = "상호작용|프리뷰", meta = (DisplayName = "림 조명"))
 	TObjectPtr<UPointLightComponent> RimLight;
+
+	// 배경 차단 큐브: UDS 하늘/대기를 물리적으로 가림
+	// 프리뷰 액터를 감싸는 검정 큐브 (내부에서 촬영)
+	UPROPERTY(VisibleAnywhere, Category = "상호작용|프리뷰", meta = (DisplayName = "배경 차단 큐브"))
+	TObjectPtr<UStaticMeshComponent> BackdropCube;
+
+	// ════════════════════════════════════════════════════════════════
+	// 📌 BP에서 조정 가능한 프리뷰 설정값
+	// ════════════════════════════════════════════════════════════════
+
+	// RenderTarget 가로 해상도 (2의 제곱 권장, 높을수록 선명하지만 VRAM 증가)
+	UPROPERTY(EditDefaultsOnly, Category = "상호작용|프리뷰|렌더", meta = (DisplayName = "렌더 가로 해상도", ClampMin = "128", ClampMax = "2048", ToolTip = "RenderTarget 가로 해상도. 2의 제곱 권장 (256, 512, 1024)"))
+	int32 RenderTargetWidth = 512;
+
+	// RenderTarget 세로 해상도
+	UPROPERTY(EditDefaultsOnly, Category = "상호작용|프리뷰|렌더", meta = (DisplayName = "렌더 세로 해상도", ClampMin = "128", ClampMax = "2048", ToolTip = "RenderTarget 세로 해상도. 16:9 비율 = 가로 512 기준 288"))
+	int32 RenderTargetHeight = 288;
+
+	// ── 자동 카메라 거리 계산 파라미터 ──
+	// SetPreviewMesh()에서 CameraDistance=0일 때 메시 Bounds 기반으로 자동 계산
+
+	// true: 메시 크기 기반 자동 계산 (기본값, 기존 동작 유지)
+	// false: BP에서 설정한 CameraBoom->TargetArmLength를 그대로 사용
+	UPROPERTY(EditDefaultsOnly, Category = "상호작용|프리뷰|카메라", meta = (DisplayName = "자동 카메라 거리 계산", ToolTip = "false로 설정하면 BP에서 지정한 CameraBoom TargetArmLength를 사용합니다."))
+	bool bAutoCalculateDistance = true;
+
+	// 메시 Bounds를 가져올 수 없을 때 사용하는 폴백 거리
+	UPROPERTY(EditDefaultsOnly, Category = "상호작용|프리뷰|카메라", meta = (DisplayName = "기본 카메라 거리", ClampMin = "50", ToolTip = "메시 Bounds 계산 실패 시 사용되는 기본 거리"))
+	float AutoDistanceDefault = 150.f;
+
+	// 자동 계산된 거리의 최소/최대 클램프
+	UPROPERTY(EditDefaultsOnly, Category = "상호작용|프리뷰|카메라", meta = (DisplayName = "최소 카메라 거리", ClampMin = "10", ToolTip = "자동 계산 시 이 값 미만으로 내려가지 않음"))
+	float AutoDistanceMin = 100.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "상호작용|프리뷰|카메라", meta = (DisplayName = "최대 카메라 거리", ClampMin = "100", ToolTip = "자동 계산 시 이 값 초과로 올라가지 않음"))
+	float AutoDistanceMax = 1000.f;
+
+	// 메시 BoundingSphere 반지름에 곱하는 배율 (클수록 카메라가 멀어짐)
+	UPROPERTY(EditDefaultsOnly, Category = "상호작용|프리뷰|카메라", meta = (DisplayName = "거리 배율", ClampMin = "1.0", ClampMax = "10.0", ToolTip = "메시 SphereRadius × 이 값 = 카메라 거리"))
+	float AutoDistanceMultiplier = 2.5f;
 
 	// ── RenderTarget ──
 

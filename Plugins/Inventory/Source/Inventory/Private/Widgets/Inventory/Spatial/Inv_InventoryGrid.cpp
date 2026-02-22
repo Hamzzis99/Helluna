@@ -41,6 +41,9 @@ void UInv_InventoryGrid::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
 
+	// [최적화] HoverItem을 들고 있지 않으면 마우스 추적 스킵
+	if (!bShouldTickForHover) return;
+
 	//캔버스가 시작하는 왼쪽 모서리 점을 알아보자.
 	const FVector2D CanvasPosition = UInv_WidgetUtils::GetWidgetPosition(CanvasPanel); // 캔2버스 패널의 위치 가져오기
 	const FVector2D MousePosition = UWidgetLayoutLibrary::GetMousePositionOnViewport(GetOwningPlayer()); // 뷰포트에서 마우스 위치 가져오기
@@ -111,16 +114,25 @@ FInv_SpaceQueryResult UInv_InventoryGrid::CheckHoverPosition(const FIntPoint& Po
 	// 호버 위치 확인
 	FInv_SpaceQueryResult Result;
 
+	const int32 StartIndex = UInv_WidgetUtils::GetIndexFromPosition(Position, Columns);
+
 	// in the grid bounds?
 	// 그리드 경계 내에 있는지?
-	if (!IsInGridBounds(UInv_WidgetUtils::GetIndexFromPosition(Position, Columns), Dimensions)) return Result; // 그리드 경계 내에 없으면 빈 결과 반환
+	if (!IsInGridBounds(StartIndex, Dimensions)) return Result; // 그리드 경계 내에 없으면 빈 결과 반환
+
+	// ⭐ [최적화 #5] 비트마스크 빠른 검사: 영역이 완전히 비어있으면 즉시 반환
+	if (IsAreaFree(StartIndex, Dimensions))
+	{
+		Result.bHasSpace = true;
+		return Result;
+	}
 
 	Result.bHasSpace = true; // 공간이 있다고 설정
 
 	// If more than one of the indices is occupied with the same item, we nneed to see if they all have the same upper left index.
 	// 여러 인덱스가 동일한 항목으로 점유된 경우, 모두 동일한 왼쪽 위 인덱스를 가지고 있는지 확인해야 합니다.
 	TSet<int32> OccupiedUpperLeftIndices;
-	UInv_InventoryStatics::ForEach2D(GridSlots, UInv_WidgetUtils::GetIndexFromPosition(Position, Columns), Dimensions, Columns, [&](const UInv_GridSlot* GridSlot)
+	UInv_InventoryStatics::ForEach2D(GridSlots, StartIndex, Dimensions, Columns, [&](const UInv_GridSlot* GridSlot)
 		{
 			if (GridSlot->GetInventoryItem().IsValid())
 			{
@@ -129,7 +141,7 @@ FInv_SpaceQueryResult UInv_InventoryGrid::CheckHoverPosition(const FIntPoint& Po
 				Result.bHasSpace = false; // 공간이 없다고 설정
 			}
 		});
-	
+
 	// if so, is there only one item in the way?
 	// 그렇다면, 장애물이 하나뿐인가? (바꿀 수 있을까?)
 	if (OccupiedUpperLeftIndices.Num() == 1) // single item at position - it's valid for swapping/combining
@@ -544,7 +556,8 @@ void UInv_InventoryGrid::RemoveItemFromGrid(UInv_InventoryItem* InventoryItem, c
 	const FInv_GridFragment* GridFragment = GetFragment<FInv_GridFragment>(InventoryItem, FragmentTags::GridFragment);
 	if (!GridFragment) return;
 
-	UInv_InventoryStatics::ForEach2D(GridSlots, GridIndex, GridFragment->GetGridSize(), Columns, [&](UInv_GridSlot* GridSlot)
+	const FIntPoint GridSize = GridFragment->GetGridSize();
+	UInv_InventoryStatics::ForEach2D(GridSlots, GridIndex, GridSize, Columns, [&](UInv_GridSlot* GridSlot)
 		{
 			//인벤토리 아이템 옮기기인데. 기존 있던 것을 0으로 두고 새로운 곳으로 인덱스를 둔다. (람다 함수 부분)
 			GridSlot->SetInventoryItem(nullptr);
@@ -553,6 +566,7 @@ void UInv_InventoryGrid::RemoveItemFromGrid(UInv_InventoryItem* InventoryItem, c
 			GridSlot->SetAvailable(true);
 			GridSlot->SetStackCount(0);
 		});
+	SetOccupiedBits(GridIndex, GridSize, false); // ⭐ [최적화 #5] 비트마스크 비점유 설정
 
 	if (SlottedItems.Contains(GridIndex))
 	{
@@ -563,7 +577,7 @@ void UInv_InventoryGrid::RemoveItemFromGrid(UInv_InventoryItem* InventoryItem, c
 		UE_LOG(LogTemp, Log, TEXT("[RemoveItemFromGrid] SlottedItem 삭제: GridIndex=%d"), GridIndex);
 #endif
 
-		FoundSlottedItem->RemoveFromParent();
+		ReleaseSlottedItem(FoundSlottedItem); // ⭐ [최적화 #6] 풀에 반환
 	}
 	else
 	{
@@ -608,13 +622,90 @@ void UInv_InventoryGrid::AssignHoverItem(UInv_InventoryItem* InventoryItem) // �
 	HoverItem->SetIsStackable(InventoryItem->IsStackable());
 
 	GetOwningPlayer()->SetMouseCursorWidget(EMouseCursor::Default, HoverItem); // 마우스 커서 위젯 설정
+	bShouldTickForHover = true; // [최적화] Tick 활성화
 }
 
 void UInv_InventoryGrid::OnHide()
 {
 	PutHoverItemBack();
+	bShouldTickForHover = false; // [최적화] 인벤토리 닫힘 → Tick 확실히 비활성화
+
+	// ⭐ [최적화 #6] 풀 트리밍 — 너무 많이 쌓이면 메모리 절약
+	const int32 MaxPoolSize = 16;
+	while (SlottedItemPool.Num() > MaxPoolSize)
+	{
+		SlottedItemPool.Pop();
+	}
 }
 
+// ⭐ [최적화 #6] 풀에서 SlottedItem 획득 (없으면 새로 생성)
+UInv_SlottedItem* UInv_InventoryGrid::AcquireSlottedItem()
+{
+	if (SlottedItemPool.Num() > 0)
+	{
+		UInv_SlottedItem* Pooled = SlottedItemPool.Pop();
+		if (IsValid(Pooled))
+		{
+			Pooled->SetVisibility(ESlateVisibility::Visible);
+			return Pooled;
+		}
+	}
+	// 풀이 비어있으면 새로 생성
+	return CreateWidget<UInv_SlottedItem>(GetOwningPlayer(), SlottedItemClass);
+}
+
+// ⭐ [최적화 #6] SlottedItem을 풀에 반환
+void UInv_InventoryGrid::ReleaseSlottedItem(UInv_SlottedItem* SlottedItem)
+{
+	if (!IsValid(SlottedItem)) return;
+
+	SlottedItem->RemoveFromParent();
+	SlottedItem->SetVisibility(ESlateVisibility::Collapsed);
+	SlottedItem->SetInventoryItem(nullptr);
+	SlottedItemPool.Add(SlottedItem);
+}
+
+// ⭐ [최적화 #5] 비트마스크 점유 상태 일괄 설정
+void UInv_InventoryGrid::SetOccupiedBits(int32 StartIndex, const FIntPoint& Dimensions, bool bOccupied)
+{
+	const FIntPoint StartPos = UInv_WidgetUtils::GetPositionFromIndex(StartIndex, Columns);
+	for (int32 j = 0; j < Dimensions.Y; ++j)
+	{
+		for (int32 i = 0; i < Dimensions.X; ++i)
+		{
+			const FIntPoint Coord = StartPos + FIntPoint(i, j);
+			const int32 Idx = UInv_WidgetUtils::GetIndexFromPosition(Coord, Columns);
+			if (Idx >= 0 && Idx < OccupiedMask.Num())
+			{
+				OccupiedMask[Idx] = bOccupied;
+			}
+		}
+	}
+}
+
+// ⭐ [최적화 #5] 영역이 비어있는지 비트마스크로 빠르게 확인
+bool UInv_InventoryGrid::IsAreaFree(int32 StartIndex, const FIntPoint& Dimensions) const
+{
+	const FIntPoint StartPos = UInv_WidgetUtils::GetPositionFromIndex(StartIndex, Columns);
+	for (int32 j = 0; j < Dimensions.Y; ++j)
+	{
+		for (int32 i = 0; i < Dimensions.X; ++i)
+		{
+			const FIntPoint Coord = StartPos + FIntPoint(i, j);
+			// 그리드 범위 밖이면 자유 아님
+			if (Coord.X < 0 || Coord.X >= Columns || Coord.Y < 0 || Coord.Y >= Rows)
+			{
+				return false;
+			}
+			const int32 Idx = UInv_WidgetUtils::GetIndexFromPosition(Coord, Columns);
+			if (Idx < 0 || Idx >= OccupiedMask.Num() || OccupiedMask[Idx])
+			{
+				return false;
+			}
+		}
+	}
+	return true;
+}
 
 // 같은 아이템이면 수량 쌓기
 void UInv_InventoryGrid::AddStacks(const FInv_SlotAvailabilityResult& Result) 
@@ -1368,7 +1459,7 @@ void UInv_InventoryGrid::RemoveItem(UInv_InventoryItem* Item, int32 EntryIndex)
 		*Item->GetItemManifest().GetItemType().ToString(), EntryIndex);
 
 	// 콜스택 출력 (어디서 호출되는지 확인)
-	FDebug::DumpStackTraceToLog(ELogVerbosity::Error);
+	// FDebug::DumpStackTraceToLog(ELogVerbosity::Error); // 비활성화: 그리드당 ~15ms 렉 유발
 
 #if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("[RemoveItem] ========== 제거 요청 시작 =========="));
@@ -1790,8 +1881,8 @@ void UInv_InventoryGrid::AddItemAtIndex(UInv_InventoryItem* Item, const int32 In
 
 UInv_SlottedItem* UInv_InventoryGrid::CreateSlottedItem(UInv_InventoryItem* Item, const bool bStackable, const int32 StackAmount, const FInv_GridFragment* GridFragment, const FInv_ImageFragment* ImageFragment, const int32 Index, const int32 EntryIndex)
 {
-	// Create a widget to add to the grid
-	UInv_SlottedItem* SlottedItem = CreateWidget<UInv_SlottedItem>(GetOwningPlayer(), SlottedItemClass);
+	// ⭐ [최적화 #6] 풀에서 위젯 획득 (없으면 새로 생성)
+	UInv_SlottedItem* SlottedItem = AcquireSlottedItem();
 	SlottedItem->SetInventoryItem(Item);
 	SetSlottedItemImage(SlottedItem, GridFragment, ImageFragment);
 	SlottedItem->SetGridIndex(Index);
@@ -1799,7 +1890,11 @@ UInv_SlottedItem* UInv_InventoryGrid::CreateSlottedItem(UInv_InventoryItem* Item
 	SlottedItem->SetIsStackable(bStackable);
 	const int32 StackUpdateAmount = bStackable ? StackAmount : 0;
 	SlottedItem->UpdateStackCount(StackUpdateAmount);
-	SlottedItem->OnSlottedItemClicked.AddDynamic(this, &ThisClass::OnSlottedItemClicked); // 마우스 아이템 클릭 델리게이트 바인딩
+	// ⭐ [최적화 #6] 풀에서 재사용된 위젯은 이미 바인딩되어 있을 수 있으므로 중복 방지
+	if (!SlottedItem->OnSlottedItemClicked.IsAlreadyBound(this, &ThisClass::OnSlottedItemClicked))
+	{
+		SlottedItem->OnSlottedItemClicked.AddDynamic(this, &ThisClass::OnSlottedItemClicked);
+	}
 
 	return SlottedItem;
 }
@@ -1852,6 +1947,7 @@ void UInv_InventoryGrid::UpdateGridSlots(UInv_InventoryItem* NewItem, const int3
 		GridSlot->SetOccupiedTexture(); // 그리드 슬롯을 점유된 텍스처로 설정 (그니까 아이템을 격자칸들 수만큼 공간으로 채운다는 것)
 		GridSlot->SetAvailable(false); // 그리드 슬롯을 사용 불가능으로 설정
 	}); //람다함수 부분들
+	SetOccupiedBits(Index, Dimensions, true); // ⭐ [최적화 #5] 비트마스크 점유 설정
 }
 
 bool UInv_InventoryGrid::IsIndexClaimed(const TSet<int32>& CheckedIndices, const int32 Index) const
@@ -1864,6 +1960,7 @@ bool UInv_InventoryGrid::IsIndexClaimed(const TSet<int32>& CheckedIndices, const
 void UInv_InventoryGrid::ConstructGrid()
 {
 	GridSlots.Reserve(Rows * Columns); // Tarray 지정 하는 건 알겠는데 GridSlot이거 어디서?
+	OccupiedMask.Init(false, Rows * Columns); // ⭐ [최적화 #5] 비트마스크 초기화 (모두 비점유)
 
 	for (int32 j = 0; j < Rows; ++j)
 	{
@@ -1948,6 +2045,7 @@ void UInv_InventoryGrid::PutDownOnIndex(const int32 Index)
 
 void UInv_InventoryGrid::ClearHoverItem() // 호버(잡는모션) 아이템 초기화
 {
+	bShouldTickForHover = false; // [최적화] Tick 비활성화
 	if (!IsValid(HoverItem)) return;
 
 	HoverItem->SetInventoryItem(nullptr); // 호버 아이템의 인벤토리 아이템 초기화
@@ -3014,6 +3112,7 @@ bool UInv_InventoryGrid::MoveItemByCurrentIndex(int32 CurrentIndex, const FIntPo
 			GridSlot->SetUnoccupiedTexture();
 		}
 	});
+	SetOccupiedBits(CurrentIndex, Dimensions, false); // ⭐ [최적화 #5] 이전 위치 비트마스크 해제
 
 	// ============================================
 	// Step 6: SlottedItems 맵 키 변경
@@ -3033,7 +3132,7 @@ bool UInv_InventoryGrid::MoveItemByCurrentIndex(int32 CurrentIndex, const FIntPo
 			GridSlot->SetUpperLeftIndex(TargetIndex);
 			GridSlot->SetOccupiedTexture();
 			GridSlot->SetAvailable(false);  // ⭐ 핵심 수정: 슬롯을 사용 불가능으로 설정!
-			
+
 			// ⭐ 핵심 수정: 첫 번째 슬롯(UpperLeft)에만 StackCount 설정
 			if (bIsFirstSlot)
 			{
@@ -3043,6 +3142,7 @@ bool UInv_InventoryGrid::MoveItemByCurrentIndex(int32 CurrentIndex, const FIntPo
 			}
 		}
 	});
+	SetOccupiedBits(TargetIndex, Dimensions, true); // ⭐ [최적화 #5] 새 위치 비트마스크 설정
 
 	// ============================================
 	// ⭐ Step 7.5: SlottedItem 위젯의 GridIndex 업데이트 (핵심 수정!)

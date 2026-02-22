@@ -26,11 +26,13 @@ private:
 	// This is the mesh on the player-controlled Character.
 	TWeakObjectPtr<USkeletalMeshComponent> SourceMesh;
 
-	UPROPERTY(VisibleAnywhere)
+	UPROPERTY(VisibleAnywhere, Category = "인벤토리",
+		meta = (DisplayName = "장비 컴포넌트"))
 	TObjectPtr<UInv_EquipmentComponent> EquipmentComponent;
 
 	// This is the proxy mesh we will see in the Inventory Menu.
-	UPROPERTY(VisibleAnywhere)
+	UPROPERTY(VisibleAnywhere, Category = "인벤토리",
+		meta = (DisplayName = "프록시 메시"))
 	TObjectPtr<USkeletalMeshComponent> Mesh;
 
 	FTimerHandle TimerForNextTick;

@@ -31,7 +31,7 @@
 void UInv_AttachmentSlotWidget::InitSlot(int32 InSlotIndex, const FInv_AttachmentSlotDef& SlotDef, const FInv_AttachedItemData* AttachedData)
 {
 	SlotIndex = InSlotIndex;
-	SlotType = SlotDef.SlotType;
+	// SlotType은 WBP 디자이너에서 설정한 값을 사용 (여기서 덮어쓰지 않음)
 
 	// 슬롯 이름 설정
 	if (IsValid(Text_SlotName))
@@ -68,10 +68,12 @@ void UInv_AttachmentSlotWidget::SetOccupied(const FInv_AttachedItemData& Data)
 {
 	bIsOccupied = true;
 
-	// 배경 브러시를 점유 상태로 변경
+	// 배경 브러시를 점유 상태로 변경 (ImageSize 보존)
 	if (IsValid(Image_Background))
 	{
-		Image_Background->SetBrush(Brush_Occupied);
+		FSlateBrush NewBrush = Brush_Occupied;
+		NewBrush.SetImageSize(FVector2f(SlotSize, SlotSize));
+		Image_Background->SetBrush(NewBrush);
 	}
 
 	// 부착물의 아이콘 표시
@@ -81,10 +83,9 @@ void UInv_AttachmentSlotWidget::SetOccupied(const FInv_AttachedItemData& Data)
 		UTexture2D* Icon = ImageFrag->GetIcon();
 		if (IsValid(Icon))
 		{
-			FSlateBrush IconBrush;
-			IconBrush.SetResourceObject(Icon);
-			IconBrush.ImageSize = IconSize;
-			Image_ItemIcon->SetBrush(IconBrush);
+			// bMatchSize=false → 텍스처 원본 해상도를 ImageSize에 반영하지 않음
+			// WBP의 부모 레이아웃(SizeBox/Overlay)이 크기를 결정하도록 위임
+			Image_ItemIcon->SetBrushFromTexture(Icon, false);
 			Image_ItemIcon->SetVisibility(ESlateVisibility::Visible); // 아이콘 보이기
 		}
 	}
@@ -122,10 +123,12 @@ void UInv_AttachmentSlotWidget::SetEmpty()
 {
 	bIsOccupied = false;
 
-	// 배경 브러시를 빈 상태로 변경
+	// 배경 브러시를 빈 상태로 변경 (ImageSize 보존)
 	if (IsValid(Image_Background))
 	{
-		Image_Background->SetBrush(Brush_Empty);
+		FSlateBrush NewBrush = Brush_Empty;
+		NewBrush.SetImageSize(FVector2f(SlotSize, SlotSize));
+		Image_Background->SetBrush(NewBrush);
 	}
 
 	// 아이콘 숨기기

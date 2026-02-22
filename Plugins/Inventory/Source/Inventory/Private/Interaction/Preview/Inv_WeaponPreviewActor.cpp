@@ -70,8 +70,7 @@ AInv_WeaponPreviewActor::AInv_WeaponPreviewActor()
 	SceneCapture->SetupAttachment(CameraBoom);
 
 	// PRM_RenderScenePrimitives: 카메라 시야 내 모든 프리미티브 렌더
-	// Z=-10000이므로 월드 오브젝트는 시야에 안 잡힘
-	// ShowOnlyList 사용 시 라이트가 제외되어 메시가 검정으로 렌더되는 문제 해결
+	// BackdropCube가 물리적으로 하늘/대기를 차단하므로 ShowOnlyList 불필요
 	SceneCapture->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_RenderScenePrimitives;
 
 	// 매 프레임 캡처 (회전, 부착물 변경 실시간 반영)
@@ -92,9 +91,16 @@ AInv_WeaponPreviewActor::AInv_WeaponPreviewActor()
 	// 시야 거리 제한: 프리뷰 메시(~100유닛) 외 원거리 오브젝트 캡처 방지
 	SceneCapture->MaxViewDistanceOverride = 500.f;
 
+	// FOV: 기본 30° (좁은 화각 → 무기가 화면 꽉 채움)
+	// BP 서브클래스에서 SceneCapture 컴포넌트의 FOVAngle을 직접 변경 가능
+	SceneCapture->FOVAngle = 30.f;
+
 	// 배경을 깔끔하게 하기 위해 안개/대기 효과 제거
 	SceneCapture->ShowFlags.SetFog(false);
 	SceneCapture->ShowFlags.SetVolumetricFog(false);
+	SceneCapture->ShowFlags.SetAtmosphere(false);
+	SceneCapture->ShowFlags.SetSkyLighting(false);
+	SceneCapture->ShowFlags.SetCloud(false);
 
 	// ════════════════════════════════════════════════════════════════
 	// 📌 3점 조명 시스템 — 물리적 범위 격리
@@ -145,6 +151,27 @@ AInv_WeaponPreviewActor::AInv_WeaponPreviewActor()
 	RimLight->CastShadows = false;
 	RimLight->LightingChannels.bChannel0 = false;
 	RimLight->LightingChannels.bChannel1 = true;
+
+	// ── 배경 차단 큐브 (UDS 하늘/대기 가림막) ──
+	// SceneCapture의 ShowOnlyList/ShowFlags로는 UDS 같은 BP 스카이를 못 막음
+	// 프리뷰 액터를 감싸는 검정 큐브로 물리적으로 하늘을 차단
+	BackdropCube = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("BackdropCube"));
+	BackdropCube->SetupAttachment(SceneRoot);
+	BackdropCube->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	BackdropCube->CastShadow = false;
+	// 음수 스케일 → 노멀 뒤집힘 → 내부에서 면이 보임
+	BackdropCube->SetRelativeScale3D(FVector(-5.f, 5.f, 5.f));
+	// 조명 채널 없음 → 어떤 라이트도 안 닿음 → 완전 검정 렌더
+	// 머티리얼의 luminance 기반 Opacity에서 검정=0 → 투명 처리됨
+	BackdropCube->LightingChannels.bChannel0 = false;
+	BackdropCube->LightingChannels.bChannel1 = false;
+
+	// 기본 큐브 메시 설정
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeMesh(TEXT("/Engine/BasicShapes/Cube.Cube"));
+	if (CubeMesh.Succeeded())
+	{
+		BackdropCube->SetStaticMesh(CubeMesh.Object);
+	}
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -183,19 +210,20 @@ void AInv_WeaponPreviewActor::SetPreviewMesh(UStaticMesh* InMesh, const FRotator
 	// 초기 회전 오프셋 적용
 	PreviewMeshComponent->SetRelativeRotation(RotationOffset);
 
-	// 카메라 거리 설정
+	// 카메라 거리 설정 (우선순위: 아이템 개별값 > 자동 계산 > BP 설정값)
 	if (IsValid(CameraBoom))
 	{
 		if (CameraDistance > 0.f)
 		{
-			// BP에서 명시적으로 지정한 거리 사용
+			// 1순위: EquipmentFragment에서 명시적으로 지정한 아이템별 거리
 			CameraBoom->TargetArmLength = CameraDistance;
 		}
-		else
+		else if (bAutoCalculateDistance)
 		{
-			// 메시 크기 기반 자동 계산
+			// 2순위: 메시 크기 기반 자동 계산 (기본 동작)
 			CameraBoom->TargetArmLength = CalculateAutoDistance();
 		}
+		// else: 3순위 — BP에서 설정한 CameraBoom->TargetArmLength 유지 (덮어쓰지 않음)
 	}
 
 	// RenderTarget 준비 (bCaptureEveryFrame=true이므로 수동 캡처 불필요)
@@ -218,11 +246,17 @@ void AInv_WeaponPreviewActor::SetPreviewMesh(UStaticMesh* InMesh, const FRotator
 //   2. CaptureScene() 호출로 회전 상태 즉시 반영
 // Phase 연결: Phase 8 — CharacterDisplay와 동일한 드래그 회전 패턴
 // ════════════════════════════════════════════════════════════════
-void AInv_WeaponPreviewActor::RotatePreview(float YawDelta)
+void AInv_WeaponPreviewActor::RotatePreview(float YawDelta, float PitchDelta)
 {
 	if (!IsValid(PreviewMeshComponent)) return;
 
-	PreviewMeshComponent->AddRelativeRotation(FRotator(0.f, YawDelta, 0.f));
+	// Pitch 클램프: 누적값이 ±MaxPitchAngle 범위를 벗어나지 않도록 제한
+	const float NewPitch = FMath::Clamp(AccumulatedPitch + PitchDelta, -MaxPitchAngle, MaxPitchAngle);
+	const float ClampedPitchDelta = NewPitch - AccumulatedPitch;
+	AccumulatedPitch = NewPitch;
+
+	// Yaw는 무제한, Pitch는 클램프된 값만 적용
+	PreviewMeshComponent->AddRelativeRotation(FRotator(ClampedPitchDelta, YawDelta, 0.f));
 	// bCaptureEveryFrame=true이므로 수동 캡처 불필요 — 다음 프레임에 자동 반영
 }
 
@@ -267,7 +301,7 @@ void AInv_WeaponPreviewActor::CaptureNow()
 // 처리 흐름:
 //   1. RenderTarget이 이미 있으면 스킵
 //   2. 없으면 NewObject<UTextureRenderTarget2D> 생성
-//   3. InitAutoFormat(512, 512) → 512x512 해상도
+//   3. InitAutoFormat(Width, Height) → BP에서 지정한 해상도
 //   4. SceneCapture->TextureTarget에 연결
 // ════════════════════════════════════════════════════════════════
 void AInv_WeaponPreviewActor::EnsureRenderTarget()
@@ -281,11 +315,11 @@ void AInv_WeaponPreviewActor::EnsureRenderTarget()
 		return;
 	}
 
-	// 512x512 해상도 — UI 프리뷰 용도로 충분
-	// ClearColor: 짙은 회색 배경 (T_Pop_Up 배경과 조화, 메시 대비 확보)
-	// 배경 완전 투명 (알파=0) → Material Translucent에서 배경이 사라짐
+	// ClearColor: 배경 완전 투명 (알파=0) → Material Translucent에서 배경이 사라짐
 	RenderTarget->ClearColor = FLinearColor(0.f, 0.f, 0.f, 0.f);
-	RenderTarget->InitAutoFormat(512, 512);
+	const int32 Width = FMath::Clamp(RenderTargetWidth, 128, 2048);
+	const int32 Height = FMath::Clamp(RenderTargetHeight, 128, 2048);
+	RenderTarget->InitAutoFormat(Width, Height);
 	RenderTarget->UpdateResourceImmediate(true);
 
 	if (IsValid(SceneCapture))
@@ -294,7 +328,7 @@ void AInv_WeaponPreviewActor::EnsureRenderTarget()
 	}
 
 #if INV_DEBUG_ATTACHMENT
-	UE_LOG(LogTemp, Log, TEXT("[Weapon Preview] RenderTarget 생성 완료 (512x512)"));
+	UE_LOG(LogTemp, Log, TEXT("[Weapon Preview] RenderTarget 생성 완료 (%dx%d)"), Width, Height);
 #endif
 }
 
@@ -310,27 +344,22 @@ void AInv_WeaponPreviewActor::EnsureRenderTarget()
 // ════════════════════════════════════════════════════════════════
 float AInv_WeaponPreviewActor::CalculateAutoDistance() const
 {
-	constexpr float DefaultDistance = 150.f;
-	constexpr float MinDistance = 100.f;
-	constexpr float MaxDistance = 1000.f;
-	constexpr float DistanceMultiplier = 2.5f; // 메시 크기 대비 여유 계수
-
-	if (!IsValid(PreviewMeshComponent)) return DefaultDistance;
+	if (!IsValid(PreviewMeshComponent)) return AutoDistanceDefault;
 
 	UStaticMesh* Mesh = PreviewMeshComponent->GetStaticMesh();
-	if (!IsValid(Mesh)) return DefaultDistance;
+	if (!IsValid(Mesh)) return AutoDistanceDefault;
 
 	const FBoxSphereBounds Bounds = Mesh->GetBounds();
 	const float SphereRadius = Bounds.SphereRadius;
 
-	if (SphereRadius <= KINDA_SMALL_NUMBER) return DefaultDistance;
+	if (SphereRadius <= KINDA_SMALL_NUMBER) return AutoDistanceDefault;
 
-	const float AutoDistance = SphereRadius * DistanceMultiplier;
-	const float ClampedDistance = FMath::Clamp(AutoDistance, MinDistance, MaxDistance);
+	const float AutoDistance = SphereRadius * AutoDistanceMultiplier;
+	const float ClampedDistance = FMath::Clamp(AutoDistance, AutoDistanceMin, AutoDistanceMax);
 
 #if INV_DEBUG_ATTACHMENT
-	UE_LOG(LogTemp, Log, TEXT("[Weapon Preview] 자동 거리 계산: SphereRadius=%.1f → AutoDist=%.1f → Clamped=%.1f"),
-		SphereRadius, AutoDistance, ClampedDistance);
+	UE_LOG(LogTemp, Log, TEXT("[Weapon Preview] 자동 거리 계산: SphereRadius=%.1f × %.1f → %.1f → Clamped=%.1f"),
+		SphereRadius, AutoDistanceMultiplier, AutoDistance, ClampedDistance);
 #endif
 
 	return ClampedDistance;

@@ -19,23 +19,23 @@ class INVENTORY_API UInv_InventoryStatics : public UBlueprintFunctionLibrary
 	GENERATED_BODY()
 public:
 
-	UFUNCTION(BlueprintCallable, Category = "Inventory")
+	UFUNCTION(BlueprintCallable, Category = "인벤토리", meta = (DisplayName = "인벤토리 컴포넌트 가져오기"))
 	static UInv_InventoryComponent* GetInventoryComponent(const APlayerController* PlayerController);
 
-	UFUNCTION(BlueprintCallable, Category = "Inventory")
+	UFUNCTION(BlueprintCallable, Category = "인벤토리", meta = (DisplayName = "아이템 카테고리 가져오기"))
 	static EInv_ItemCategory GetItemCategoryFromItemComp(UInv_ItemComponent* ItemComp);
 
 	// 2D 배열 순회 알고리즘 (그리드 조각을 for each문으로 돌리는 알고리즘 제작 부분)
 	template<typename T, typename FuncT>
 	static void ForEach2D(TArray<T>& Array, int32 Index, const FIntPoint& Range2D, int32 GridColumns, const FuncT& Function); 
 	
-	UFUNCTION(BlueprintCallable, Category = "Inventory")
+	UFUNCTION(BlueprintCallable, Category = "인벤토리", meta = (DisplayName = "아이템 호버 처리"))
 	static void ItemHovered(APlayerController* PC, UInv_InventoryItem* Item);
-	
-	UFUNCTION(BlueprintCallable, Category = "Inventory")
+
+	UFUNCTION(BlueprintCallable, Category = "인벤토리", meta = (DisplayName = "아이템 호버 해제"))
 	static void ItemUnhovered(APlayerController* PC);
-	
-	UFUNCTION(BlueprintCallable, Category = "Inventory")
+
+	UFUNCTION(BlueprintCallable, Category = "인벤토리", meta = (DisplayName = "호버 아이템 가져오기"))
 	static UInv_HoverItem* GetHoverItem(APlayerController* PC);
 	
 	static UInv_InventoryBase* GetInventoryWidget(APlayerController* PC);

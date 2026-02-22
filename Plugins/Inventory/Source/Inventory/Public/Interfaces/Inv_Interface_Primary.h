@@ -20,6 +20,7 @@ class INVENTORY_API IInv_Interface_Primary
 public:
 	// 상호작용 함수 
 	// 리턴값 bool: "내가 처리했으니(true) 다른 건 하지 마" 라는 신호용
-	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Interaction")
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "상호작용",
+		meta = (DisplayName = "상호작용 실행"))
 	bool ExecuteInteract(APlayerController* Controller);
 };

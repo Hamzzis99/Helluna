@@ -3,13 +3,13 @@
 
 #include "CoreMinimal.h"
 #include "Net/Serialization/FastArraySerializer.h"
+#include "GameplayTagContainer.h"
 
 #include "Inv_FastArray.generated.h"
 
 class UInv_InventoryComponent;
 class UInv_InventoryItem;
 class UInv_ItemComponent;
-struct FGameplayTag;
 
 /* A Single entry in an Inventory*/
 
@@ -79,7 +79,18 @@ struct FInv_InventoryFastArray : public FFastArraySerializer
 	void RemoveEntry(UInv_InventoryItem* Item); // 인벤토리 항목 제거
 	UInv_InventoryItem* FindFirstItemByType(const FGameplayTag& ItemType);
 
+	// ⭐ [최적화 #4] 아이템 타입별 개수 조회 (O(1) 해시 조회)
+	int32 GetTotalCountByType(const FGameplayTag& ItemType) const;
+
 private:
+	// TODO [Phase C] GridModel 도입 시 이 멤버를 GridModel로 이관 검토
+	// ⭐ [최적화 #4] 아이템 타입별 인덱스 캐시 (O(n) 선형 탐색 → O(1) 해시 조회)
+	// Key = ItemType GameplayTag, Value = Entries 배열 인덱스
+	// AddEntry/RemoveEntry 시 재구축
+	TMultiMap<FGameplayTag, int32> ItemTypeIndex;
+
+	// ⭐ [최적화 #4] 아이템 타입 인덱스 재구축
+	void RebuildItemTypeIndex();
 	friend UInv_InventoryComponent;
 	friend class UInv_InventoryGrid; // ⭐ Entries 접근용
 

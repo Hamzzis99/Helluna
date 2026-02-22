@@ -345,6 +345,7 @@ UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_ItemComponent* ItemCo
 
 	IC->AddRepSubObj(NewEntry.Item); // 복제 하위 객체로 항목 추가
 	MarkItemDirty(NewEntry); // 복제되어야 함을 알려주는 것.
+	RebuildItemTypeIndex(); // ⭐ [최적화 #4] 인덱스 캐시 재구축
 
 	return NewEntry.Item; // 새로 추가된 항목 반환
 }
@@ -363,7 +364,8 @@ UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_InventoryItem* Item)
 
 	IC->AddRepSubObj(NewEntry.Item); // 리플리케이션 등록 (크래프팅 아이템도 클라이언트로 전송!)
 	MarkItemDirty(NewEntry);
-	
+	RebuildItemTypeIndex(); // ⭐ [최적화 #4] 인덱스 캐시 재구축
+
 	return Item;
 }
 
@@ -375,18 +377,53 @@ void FInv_InventoryFastArray::RemoveEntry(UInv_InventoryItem* Item)
 		if (Entry.Item == Item)
 		{
 			EntryIt.RemoveCurrent(); // 현재 항목 제거
-			MarkArrayDirty(); 
+			MarkArrayDirty();
+			RebuildItemTypeIndex(); // ⭐ [최적화 #4] 인덱스 캐시 재구축
+			return; // 아이템 찾았으므로 즉시 반환
 		}
 	}
 }
 
 UInv_InventoryItem* FInv_InventoryFastArray::FindFirstItemByType(const FGameplayTag& ItemType)
 {
-	auto* FoundItem = Entries.FindByPredicate([ItemType = ItemType](const FInv_InventoryEntry& Entry)// 프레디케이트는 부를 수 있는지 확인하는 거라고?
+	// ⭐ [최적화 #4] 캐시가 구축되어 있으면 O(1) 조회
+	if (ItemTypeIndex.Num() > 0)
 	{
-		// 람다함수 코딩
-		//게임 플레이 태그만 확인하는 부분
+		TArray<int32> Indices;
+		ItemTypeIndex.MultiFind(ItemType, Indices);
+		for (int32 Idx : Indices)
+		{
+			if (Entries.IsValidIndex(Idx) && IsValid(Entries[Idx].Item))
+			{
+				return Entries[Idx].Item;
+			}
+		}
+		return nullptr;
+	}
+
+	// 캐시 미구축 시 기존 O(n) 폴백
+	auto* FoundItem = Entries.FindByPredicate([ItemType = ItemType](const FInv_InventoryEntry& Entry)
+	{
 		return IsValid(Entry.Item) && Entry.Item->GetItemManifest().GetItemType().MatchesTagExact(ItemType);
 	});
 	return FoundItem ? FoundItem->Item : nullptr;
+}
+
+// ⭐ [최적화 #4] 아이템 타입별 인덱스 캐시 재구축
+void FInv_InventoryFastArray::RebuildItemTypeIndex()
+{
+	ItemTypeIndex.Reset();
+	for (int32 i = 0; i < Entries.Num(); ++i)
+	{
+		if (IsValid(Entries[i].Item))
+		{
+			ItemTypeIndex.Add(Entries[i].Item->GetItemManifest().GetItemType(), i);
+		}
+	}
+}
+
+// ⭐ [최적화 #4] 아이템 타입별 개수 조회 (O(1) 해시 조회)
+int32 FInv_InventoryFastArray::GetTotalCountByType(const FGameplayTag& ItemType) const
+{
+	return ItemTypeIndex.Num(ItemType);
 }

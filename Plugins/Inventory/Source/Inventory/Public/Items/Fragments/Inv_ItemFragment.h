@@ -42,7 +42,7 @@ struct FInv_ItemFragment
 
 private:
 
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (Categories = "FragmentTags", DisplayName = "FragmentTag (프래그먼트 태그)", Tooltip = "이 프래그먼트를 식별하는 GameplayTag"))
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (Categories = "FragmentTags", DisplayName = "프래그먼트 태그", Tooltip = "이 프래그먼트를 식별하는 GameplayTag"))
 	FGameplayTag FragmentTag = FGameplayTag::EmptyTag; //조각 태그
 };
 
@@ -64,10 +64,10 @@ struct FInv_GridFragment : public FInv_ItemFragment
 	void SetGridPadding(float Padding) { GridPadding = Padding; } //그리드 패딩 설정
 
 private:
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "GridSize (그리드 크기)", Tooltip = "인벤토리에서 차지하는 칸 수 (X=가로, Y=세로)"))
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "그리드 크기", Tooltip = "인벤토리에서 차지하는 칸 수 (X=가로, Y=세로)"))
 	FIntPoint GridSize{1, 1}; //그리드 크기
 
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "GridPadding (그리드 여백)", Tooltip = "아이템 주변 여백 (픽셀)"))
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "그리드 여백", Tooltip = "아이템 주변 여백 (픽셀)"))
 	float GridPadding{ 0.f }; //그리드 패딩
 };
 
@@ -102,10 +102,10 @@ struct FInv_ImageFragment : public FInv_InventoryItemFragment
 	virtual void Assimilate(UInv_CompositeBase* Composite) const override;
 
 private:
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "Icon (아이콘 이미지)", Tooltip = "인벤토리에 표시될 아이템 아이콘"))
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "아이콘 이미지", Tooltip = "인벤토리에 표시될 아이템 아이콘"))
 	TObjectPtr<UTexture2D> Icon = nullptr; //아이콘 텍스처 {nullptr]도 표현 가능
 
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "IconDimensions (아이콘 크기)", Tooltip = "아이콘 표시 크기 (가로 x 세로 픽셀)"))
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "아이콘 크기", Tooltip = "아이콘 표시 크기 (가로 x 세로 픽셀)"))
 	FVector2D IconDimensions{ 44.f, 44.f }; //아이콘 크기
 };
 
@@ -126,7 +126,7 @@ struct FInv_TextFragment : public FInv_InventoryItemFragment
 	virtual void Assimilate(UInv_CompositeBase* Composite) const override;
 
 private:
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "FragmentText (표시 텍스트)", Tooltip = "UI에 표시될 텍스트 (아이템 이름, 설명 등)", MultiLine = true))
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "표시 텍스트", Tooltip = "UI에 표시될 텍스트 (아이템 이름, 설명 등)", MultiLine = true))
 	FText FragmentText;
 };
 
@@ -151,28 +151,28 @@ struct FInv_LabeledNumberFragment : public FInv_InventoryItemFragment
 	bool bRandomizeOnManifest{true}; //매니페스트 시 무작위화?
 
 private:
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "Text_Label (라벨 텍스트)", Tooltip = "숫자 앞에 표시될 라벨 (예: '공격력', '방어력')"))
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "라벨 텍스트", Tooltip = "숫자 앞에 표시될 라벨 (예: '공격력', '방어력')"))
 	FText Text_Label{};
 
-	UPROPERTY(VisibleAnywhere, Category = "Inventory", meta = (DisplayName = "Value (현재 값)", Tooltip = "Min~Max 범위에서 결정된 실제 값 (읽기 전용)"))
+	UPROPERTY(VisibleAnywhere, Category = "인벤토리", meta = (DisplayName = "현재 값", Tooltip = "Min~Max 범위에서 결정된 실제 값 (읽기 전용)"))
 	float Value{0.f};
 
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "Min (최소값)", Tooltip = "랜덤 범위의 최소값"))
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "최소값", Tooltip = "랜덤 범위의 최소값"))
 	float Min{0};
 
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "Max (최대값)", Tooltip = "랜덤 범위의 최대값"))
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "최대값", Tooltip = "랜덤 범위의 최대값"))
 	float Max{0};
 
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "bCollapseLabel (라벨 숨기기)", Tooltip = "true면 라벨 텍스트를 숨김"))
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "라벨 숨기기", Tooltip = "true면 라벨 텍스트를 숨김"))
 	bool bCollapseLabel{false};
 
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "bCollapseValue (값 숨기기)", Tooltip = "true면 숫자 값을 숨김"))
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "값 숨기기", Tooltip = "true면 숫자 값을 숨김"))
 	bool bCollapseValue{false};
 
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "MinFractionalDigits (소수점 최소 자릿수)", Tooltip = "표시할 소수점 이하 최소 자릿수", ClampMin = 0, ClampMax = 4))
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "소수점 최소 자릿수", Tooltip = "표시할 소수점 이하 최소 자릿수", ClampMin = 0, ClampMax = 4))
 	int32 MinFractionalDigits{1};
 
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "MaxFractionalDigits (소수점 최대 자릿수)", Tooltip = "표시할 소수점 이하 최대 자릿수", ClampMin = 0, ClampMax = 4))
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "소수점 최대 자릿수", Tooltip = "표시할 소수점 이하 최대 자릿수", ClampMin = 0, ClampMax = 4))
 	int32 MaxFractionalDigits{1};
 };
 
@@ -192,10 +192,10 @@ struct FInv_StackableFragment : public FInv_ItemFragment
 	void SetStackCount(int32 Count) { StackCount = Count; } //최대 아이템 스택 개수 설정
 
 private:
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "MaxStackSize (최대 스택 크기)", Tooltip = "한 슬롯에 쌓을 수 있는 최대 개수", ClampMin = 1))
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "최대 스택 크기", Tooltip = "한 슬롯에 쌓을 수 있는 최대 개수", ClampMin = 1))
 	int32 MaxStackSize{ 1 }; //최대 아이템 스택 크기
 
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "StackCount (현재 스택 개수)", Tooltip = "현재 쌓여있는 개수", ClampMin = 1))
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "현재 스택 개수", Tooltip = "현재 쌓여있는 개수", ClampMin = 1))
 	int32 StackCount{ 1 }; //최대 아이템 스택 개수
 };
 
@@ -226,7 +226,7 @@ struct FInv_ConsumableFragment : public FInv_InventoryItemFragment
 	virtual void Assimilate(UInv_CompositeBase* Composite) const override; //
 	virtual void Manifest() override;
 private:
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (ExcludeBaseStruct, DisplayName = "ConsumeModifiers (소비 효과 목록)", Tooltip = "아이템 사용 시 적용될 효과들"))
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (ExcludeBaseStruct, DisplayName = "소비 효과 목록", Tooltip = "아이템 사용 시 적용될 효과들"))
 	TArray<TInstancedStruct<FInv_ConsumeModifier>> ConsumeModifiers; // 입력 받은 랜덤 지정 값 적용 부분
 };
 
@@ -237,7 +237,7 @@ struct FInv_HealthPotionFragment : public FInv_ConsumeModifier
 	GENERATED_BODY()
 
 	// 기존에 사용하던 고정값 참조 방식
-	// UPROPERTY(EditAnywhere, Category = "Inventory")
+	// UPROPERTY(EditAnywhere, Category = "인벤토리")
 	// float HealAmount = 20.f; //회복량
 
 	//소비 호출?
@@ -348,20 +348,20 @@ struct FInv_EquipmentFragment : public FInv_InventoryItemFragment
 	void RestoreDesignTimePreview(const FInv_EquipmentFragment& CDOEquip);
 
 private:
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (ExcludeBaseStruct, DisplayName = "EquipModifiers (장비 효과 목록)", Tooltip = "장착 시 적용될 스탯 효과들 (공격력, 방어력 등)"))
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (ExcludeBaseStruct, DisplayName = "장비 효과 목록", Tooltip = "장착 시 적용될 스탯 효과들 (공격력, 방어력 등)"))
 	TArray<TInstancedStruct<FInv_EquipModifier>> EquipModifiers;
 
 	//장착장비 변수들
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "EquipActorClass (장비 액터 클래스)", Tooltip = "장착 시 스폰될 액터 클래스 (무기 메시 등)"))
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "장비 액터 클래스", Tooltip = "장착 시 스폰될 액터 클래스 (무기 메시 등)"))
 	TSubclassOf<AInv_EquipActor> EquipActorClass = nullptr; // 장착 장비 클래스
 
 	TWeakObjectPtr<AInv_EquipActor> EquippedActor = nullptr; // 장착 장비 포인터 (플레이어 Pawn을 말하는 것인가)
 
 	//장비 부착물 지정?
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "SocketAttachPoint (소켓 부착 위치)", Tooltip = "캐릭터 스켈레탈 메시의 소켓 이름 (예: hand_r, spine_01)"))
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "소켓 부착 위치", Tooltip = "캐릭터 스켈레탈 메시의 소켓 이름 (예: hand_r, spine_01)"))
 	FName SocketAttachPoint{NAME_None}; // Mesh의 소켓 부착 지점
 
-	UPROPERTY(EditAnywhere, Category = "Inventory", meta = (DisplayName = "EquipmentType (장비 타입 태그)", Tooltip = "장비 종류를 구분하는 GameplayTag (예: Weapon.Sword, Armor.Helmet)"))
+	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "장비 타입 태그", Tooltip = "장비 종류를 구분하는 GameplayTag (예: Weapon.Sword, Armor.Helmet)"))
 	FGameplayTag EquipmentType = FGameplayTag::EmptyTag; // 장비 타입 태그
 
 	// ════════════════════════════════════════════════════════════════
@@ -386,14 +386,14 @@ private:
 
 	// 부착물 패널 중앙에 표시할 StaticMesh
 	// 에셋 경로만 저장하고, 패널을 열 때 LoadSynchronous()로 로드
-	UPROPERTY(EditAnywhere, Category = "Inventory|Preview",
-		meta = (DisplayName = "프리뷰 메시 (StaticMesh)",
+	UPROPERTY(EditAnywhere, Category = "인벤토리|프리뷰",
+		meta = (DisplayName = "프리뷰 메시",
 				Tooltip = "부착물 패널 중앙에 3D로 표시할 메시. 미설정 시 2D 아이콘으로 대체."))
 	TSoftObjectPtr<UStaticMesh> PreviewStaticMesh;
 
 	// 프리뷰 표시 시 초기 회전 (총구 방향, 기울기 조정용)
 	// 예: 총구가 오른쪽을 향하게 하려면 Yaw = -90
-	UPROPERTY(EditAnywhere, Category = "Inventory|Preview",
+	UPROPERTY(EditAnywhere, Category = "인벤토리|프리뷰",
 		meta = (DisplayName = "프리뷰 회전 오프셋",
 				Tooltip = "프리뷰 메시의 초기 회전. 총구 방향 조정에 사용. 예: Yaw=-90으로 총구를 오른쪽으로."))
 	FRotator PreviewRotationOffset = FRotator::ZeroRotator;
@@ -401,7 +401,7 @@ private:
 	// SceneCapture 카메라와 메시 사이 거리
 	// 0이면 메시의 BoundingSphere 기준으로 자동 계산
 	// 큰 무기(런처)는 값을 크게, 작은 무기(권총)는 작게 조정
-	UPROPERTY(EditAnywhere, Category = "Inventory|Preview",
+	UPROPERTY(EditAnywhere, Category = "인벤토리|프리뷰",
 		meta = (DisplayName = "프리뷰 카메라 거리",
 				Tooltip = "SceneCapture 카메라에서 메시까지 거리. 0이면 메시 크기 기반 자동 계산.",
 				ClampMin = 0.0))
