@@ -141,6 +141,11 @@ struct FInv_AttachedItemData
 	// 부착물 아이템의 전체 Manifest 사본 (스탯, 아이콘 등 모든 Fragment 포함)
 	UPROPERTY()
 	FInv_ItemManifest ItemManifestCopy;
+
+	// ⭐ [부착물 시스템] 원본 InventoryItem 포인터 (분리 시 FastArray Entry 복원용)
+	// RemoveEntry 대신 bIsAttachedToWeapon 플래그 방식 사용 시 필요
+	UPROPERTY()
+	TObjectPtr<UInv_InventoryItem> OriginalItem = nullptr;
 };
 
 

@@ -45,6 +45,11 @@ private:
 	// INDEX_NONE = 첫 번째 빈 슬롯에 자동 배치, 유효한 값 = 해당 위치에 배치
 	UPROPERTY()
 	int32 TargetGridIndex = INDEX_NONE;
+
+	// ⭐ [부착물 시스템] 무기에 부착된 상태 플래그
+	// true면 Entry는 FastArray에 남아있지만 그리드에서는 숨김 (인덱스 밀림 방지)
+	UPROPERTY()
+	bool bIsAttachedToWeapon = false;
 };
 
 /* List of inventory Items 

@@ -1,4 +1,4 @@
-// Gihyeon's Inventory Project
+﻿// Gihyeon's Inventory Project
 //
 // ════════════════════════════════════════════════════════════════════════════════
 // 📌 부착물 패널 위젯 (Attachment Panel) — Phase 8 리뉴얼
@@ -538,15 +538,32 @@ void UInv_AttachmentPanel::TryAttachHoverItem(int32 SlotIndex)
 		SlotWidgets[SlotIndex]->SetOccupied(PreviewData);
 	}
 
+	// [낙관적 프리뷰] RPC 응답 전에 로컬 데이터로 즉시 프리뷰 추가
+	if (WeaponPreviewActor.IsValid() && CurrentWeaponItem.IsValid())
+	{
+		const FInv_AttachmentHostFragment* HostFrag =
+			CurrentWeaponItem->GetItemManifest().GetFragmentOfType<FInv_AttachmentHostFragment>();
+		const FInv_AttachableFragment* AttachFrag =
+			AttachmentItem->GetItemManifest().GetFragmentOfType<FInv_AttachableFragment>();
+
+		if (HostFrag && AttachFrag)
+		{
+			const FInv_AttachmentSlotDef* SlotDef = HostFrag->GetSlotDef(SlotIndex);
+			UStaticMesh* AttachMesh = AttachFrag->GetAttachmentMesh();
+			if (SlotDef && IsValid(AttachMesh))
+			{
+				WeaponPreviewActor->AddAttachmentPreview(
+					SlotIndex, AttachMesh, SlotDef->AttachSocket, AttachFrag->GetAttachOffset());
+			}
+		}
+	}
+
 	// 서버 RPC 호출
 	InventoryComponent->Server_AttachItemToWeapon(WeaponEntryIndex, AttachmentEntryIndex, SlotIndex);
 
 	// HoverItem 정리 및 커서 복원
 	OwningGrid->ClearHoverItem();
 	OwningGrid->ShowCursor();
-
-	// 프리뷰 액터에 부착물 메시 갱신
-	RefreshPreviewAttachments();
 
 #if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 장착 성공: 슬롯 %d에 %s (WeaponEntry=%d, AttachEntry=%d)"),
@@ -584,11 +601,14 @@ void UInv_AttachmentPanel::TryDetachItem(int32 SlotIndex)
 		SlotWidgets[SlotIndex]->SetEmpty();
 	}
 
+	// [낙관적 프리뷰] RPC 응답 전에 즉시 프리뷰 제거
+	if (WeaponPreviewActor.IsValid())
+	{
+		WeaponPreviewActor->RemoveAttachmentPreview(SlotIndex);
+	}
+
 	// 서버 RPC 호출
 	InventoryComponent->Server_DetachItemFromWeapon(WeaponEntryIndex, SlotIndex);
-
-	// 프리뷰 액터에서 분리된 부착물 메시 갱신
-	RefreshPreviewAttachments();
 
 #if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 분리 완료: 슬롯 %d (WeaponEntry=%d)"),

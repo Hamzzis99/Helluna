@@ -1580,6 +1580,7 @@ void UInv_InventoryComponent::Server_AttachItemToWeapon_Implementation(int32 Wea
 	AttachedData.SlotIndex = SlotIndex;
 	AttachedData.AttachmentItemType = AttachManifest.GetItemType();
 	AttachedData.ItemManifestCopy = AttachManifest; // Manifest 전체 사본
+	AttachedData.OriginalItem = AttachmentItem; // ⭐ 원본 포인터 저장 (분리 시 복원용)
 
 	HostFragment->AttachItem(SlotIndex, AttachedData);
 
@@ -1588,37 +1589,19 @@ void UInv_InventoryComponent::Server_AttachItemToWeapon_Implementation(int32 Wea
 		*AttachedData.AttachmentItemType.ToString(), SlotIndex);
 #endif
 
-	// ── 5. InventoryList에서 부착물 아이템 제거 ──
-	// 제거 전에 리슨서버용 Entry Index 기억
+	// ── 5. FastArray에서 부착물 Entry를 '부착됨' 상태로 표시 ──
+	// ⭐ RemoveEntry 대신 플래그 방식 (인덱스 밀림 방지!)
+	// Entry는 배열에 남아있지만 그리드에서만 숨김
 	int32 RemovedEntryIndex = AttachmentEntryIndex;
 
-	InventoryList.RemoveEntry(AttachmentItem);
+	InventoryList.Entries[AttachmentEntryIndex].bIsAttachedToWeapon = true;
+	InventoryList.Entries[AttachmentEntryIndex].GridIndex = INDEX_NONE; // 그리드 자리 반환
+	InventoryList.MarkItemDirty(InventoryList.Entries[AttachmentEntryIndex]);
 
-	// ⭐ [디버그] RemoveEntry 후 WeaponItem 및 HostFragment 데이터 일관성 확인
-	// 가능성 A 검증: FastArray RemoveEntry가 WeaponItem 포인터를 무효화하는지
-	if (IsValid(WeaponItem))
-	{
-		FInv_AttachmentHostFragment* DebugHostFrag =
-			WeaponItem->GetItemManifestMutable().GetFragmentOfTypeMutable<FInv_AttachmentHostFragment>();
-		if (DebugHostFrag)
-		{
-			const FInv_AttachedItemData* DebugData = DebugHostFrag->GetAttachedItemData(SlotIndex);
 #if INV_DEBUG_ATTACHMENT
-			UE_LOG(LogTemp, Warning, TEXT("[Attachment 디버그] RemoveEntry 후: WeaponItem 유효, 슬롯 %d 데이터=%s, AttachedItems 총 %d개"),
-				SlotIndex,
-				DebugData ? TEXT("있음") : TEXT("없음"),
-				DebugHostFrag->GetAttachedItems().Num());
+	UE_LOG(LogTemp, Log, TEXT("[Attachment] 부착물 Entry[%d] bIsAttachedToWeapon=true (RemoveEntry 대신 플래그 방식)"),
+		AttachmentEntryIndex);
 #endif
-		}
-		else
-		{
-			UE_LOG(LogTemp, Error, TEXT("[Attachment 디버그] RemoveEntry 후: WeaponItem 유효하지만 HostFragment가 nullptr!"));
-		}
-	}
-	else
-	{
-		UE_LOG(LogTemp, Error, TEXT("[Attachment 디버그] RemoveEntry 후: WeaponItem이 무효화됨!"));
-	}
 
 	// 리슨서버 호스트: 부착물이 Grid에서 사라졌으므로 OnItemRemoved 방송
 	if (IsListenServerOrStandalone())
@@ -1627,7 +1610,7 @@ void UInv_InventoryComponent::Server_AttachItemToWeapon_Implementation(int32 Wea
 	}
 
 	// ── 6. 무기 Entry를 dirty로 표시 (리플리케이션) ──
-	// 부착물 제거로 인해 Entry 인덱스가 변경되었을 수 있음
+	// ⭐ bIsAttachedToWeapon 방식이므로 Entry 인덱스가 변경되지 않음
 	for (int32 i = 0; i < InventoryList.Entries.Num(); ++i)
 	{
 		if (InventoryList.Entries[i].Item == WeaponItem)
@@ -1795,8 +1778,7 @@ void UInv_InventoryComponent::Server_DetachItemFromWeapon_Implementation(int32 W
 		return;
 	}
 
-	// ── 3. 인벤토리 Grid에 빈 공간 확인 ──
-	// 분리될 부착물의 Manifest로 공간 체크
+	// ── 3. 부착 데이터 및 원본 아이템 포인터 확인 ──
 	const FInv_AttachedItemData* AttachedData = HostFragment->GetAttachedItemData(SlotIndex);
 	if (!AttachedData)
 	{
@@ -1804,10 +1786,10 @@ void UInv_InventoryComponent::Server_DetachItemFromWeapon_Implementation(int32 W
 		return;
 	}
 
-	if (!HasRoomInInventoryList(AttachedData->ItemManifestCopy))
+	// ⭐ bIsAttachedToWeapon 방식: 원본 Entry가 FastArray에 남아있으므로 공간 체크 불필요
+	if (!IsValid(AttachedData->OriginalItem))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[Attachment] 분리 실패: 인벤토리 공간 부족"));
-		NoRoomInInventory.Broadcast();
+		UE_LOG(LogTemp, Error, TEXT("[Attachment] 분리 실패: OriginalItem 포인터가 nullptr (레거시 데이터?)"));
 		return;
 	}
 
@@ -1859,26 +1841,40 @@ void UInv_InventoryComponent::Server_DetachItemFromWeapon_Implementation(int32 W
 		*DetachedData.AttachmentItemType.ToString(), SlotIndex);
 #endif
 
-	// ── 6. ManifestCopy로 새 인벤토리 아이템 생성 ──
-	// bRandomizeOnManifest는 이미 false이므로 스탯이 재랜덤되지 않음
-	UInv_InventoryItem* RestoredItem = DetachedData.ItemManifestCopy.Manifest(GetOwner());
-	if (!IsValid(RestoredItem))
+	// ── 6. 원본 Entry의 bIsAttachedToWeapon 플래그 해제 ──
+	// ⭐ 새 아이템 생성 대신 원본 Entry를 복원 (인덱스 밀림 방지!)
+	UInv_InventoryItem* OriginalItem = DetachedData.OriginalItem;
+	int32 RestoredEntryIndex = INDEX_NONE;
+
+	for (int32 i = 0; i < InventoryList.Entries.Num(); ++i)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[Attachment] 분리 실패: ManifestCopy.Manifest() 실패"));
+		if (InventoryList.Entries[i].Item == OriginalItem && InventoryList.Entries[i].bIsAttachedToWeapon)
+		{
+			InventoryList.Entries[i].bIsAttachedToWeapon = false;
+			InventoryList.MarkItemDirty(InventoryList.Entries[i]);
+			RestoredEntryIndex = i;
+
+#if INV_DEBUG_ATTACHMENT
+			UE_LOG(LogTemp, Log, TEXT("[Attachment] 원본 Entry[%d] bIsAttachedToWeapon=false 복원 완료: %s"),
+				i, *OriginalItem->GetItemManifest().GetItemType().ToString());
+#endif
+			break;
+		}
+	}
+
+	if (RestoredEntryIndex == INDEX_NONE)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Attachment] 분리 실패: 원본 Entry를 FastArray에서 찾을 수 없음!"));
 		return;
 	}
 
-	// ── 7. InventoryList에 추가 ──
-	InventoryList.AddEntry(RestoredItem);
-
-	// 리슨서버 호스트: 새 아이템이 Grid에 추가되었으므로 OnItemAdded 방송
+	// 리슨서버 호스트: 아이템이 Grid에 다시 표시되므로 OnItemAdded 방송
 	if (IsListenServerOrStandalone())
 	{
-		int32 NewEntryIndex = InventoryList.Entries.Num() - 1;
-		OnItemAdded.Broadcast(RestoredItem, NewEntryIndex);
+		OnItemAdded.Broadcast(OriginalItem, RestoredEntryIndex);
 	}
 
-	// ── 8. 무기 Entry를 dirty로 표시 (리플리케이션) ──
+	// ── 7. 무기 Entry를 dirty로 표시 (리플리케이션) ──
 	for (int32 i = 0; i < InventoryList.Entries.Num(); ++i)
 	{
 		if (InventoryList.Entries[i].Item == WeaponItem)
@@ -2687,12 +2683,16 @@ TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave(
 		// 무기 아이템인 경우 AttachmentHostFragment의 AttachedItems 수집
 		if (Entry.Item->HasAttachmentSlots())
 		{
+#if INV_DEBUG_INVENTORY
 			UE_LOG(LogTemp, Error, TEXT("🔍 [SaveDiag] Entry[%d] %s - HasAttachmentSlots=TRUE"), i, *ItemType.ToString());
+#endif
 			const FInv_ItemManifest& ItemManifest = Entry.Item->GetItemManifest();
 			const FInv_AttachmentHostFragment* HostFrag = ItemManifest.GetFragmentOfType<FInv_AttachmentHostFragment>();
 			if (HostFrag)
 			{
+#if INV_DEBUG_INVENTORY
 				UE_LOG(LogTemp, Error, TEXT("🔍 [SaveDiag] Entry[%d] HostFrag 유효! AttachedItems=%d"), i, HostFrag->GetAttachedItems().Num());
+#endif
 				for (const FInv_AttachedItemData& Attached : HostFrag->GetAttachedItems())
 				{
 					FInv_SavedAttachmentData AttSave;

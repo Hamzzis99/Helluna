@@ -1054,6 +1054,7 @@ void UInv_InventoryGrid::CreateItemPopUp(const int32 GridIndex)
 
 void UInv_InventoryGrid::PutHoverItemBack()
 {
+#if INV_DEBUG_WIDGET
 	// [Swap버그추적] PutHoverItemBack 호출
 	UE_LOG(LogTemp, Error, TEXT("===== [PutHoverItemBack] ====="));
 	UE_LOG(LogTemp, Error, TEXT("  HoverItem 유효=%s"),
@@ -1066,6 +1067,7 @@ void UInv_InventoryGrid::PutHoverItemBack()
 			HoverItem->GetStackCount(),
 			HoverItem->GetPreviousGridIndex());
 	}
+#endif
 
 	if (!IsValid(HoverItem)) return;
 
@@ -1104,6 +1106,7 @@ UInv_HoverItem* UInv_InventoryGrid::GetHoverItem() const
 // 인벤토리 스택 쌓는 부분.
 void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 {
+#if INV_DEBUG_WIDGET
 	// 🔍 [진단] AddItem 시 Grid 주소 및 SlottedItems 상태 확인
 	UE_LOG(LogTemp, Error, TEXT("🔍 [AddItem 진단] Grid주소=%p, Category=%d, SlottedItems=%d, Item=%s, EntryIndex=%d"),
 		this, (int32)ItemCategory, SlottedItems.Num(),
@@ -1121,6 +1124,7 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 				DiagSlotted->GetEntryIndex(), EntryIndex);
 		}
 	}
+#endif
 
 	//아이템 그리드 체크 부분?
 	if (!MatchesCategory(Item))
@@ -1458,6 +1462,7 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 // ⭐ 핵심 변경: EntryIndex는 로그용으로만 사용, 실제 매칭은 포인터 + ItemManifest로!
 void UInv_InventoryGrid::RemoveItem(UInv_InventoryItem* Item, int32 EntryIndex)
 {
+#if INV_DEBUG_WIDGET
 	// [Swap버그추적] RemoveItem 호출됨 (서버 삭제 감지)
 	UE_LOG(LogTemp, Error, TEXT("===== [RemoveItem] 서버 삭제 감지 ====="));
 	UE_LOG(LogTemp, Error, TEXT("  삭제 대상: %s (포인터=%p), EntryIndex=%d"),
@@ -1465,6 +1470,7 @@ void UInv_InventoryGrid::RemoveItem(UInv_InventoryItem* Item, int32 EntryIndex)
 		Item, EntryIndex);
 	UE_LOG(LogTemp, Error, TEXT("  현재 SlottedItems 수: %d"), SlottedItems.Num());
 	FDebug::DumpStackTraceToLog(ELogVerbosity::Error);
+#endif
 
 	if (!IsValid(Item))
 	{
