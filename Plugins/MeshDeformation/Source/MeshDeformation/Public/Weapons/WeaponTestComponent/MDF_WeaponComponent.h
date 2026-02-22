@@ -26,11 +26,11 @@ public:
     // -------------------------------------------------------------------------
 
     // 슬롯 번호(0=레이저, 1=총)로 무기 교체
-    UFUNCTION(BlueprintCallable, Category = "MDF|Weapon")
+    UFUNCTION(BlueprintCallable, Category = "메시변형|무기")
     void EquipWeaponByIndex(int32 SlotIndex);
 
     // [New] 무기 해제 (맨손)
-    UFUNCTION(BlueprintCallable, Category = "MDF|Weapon")
+    UFUNCTION(BlueprintCallable, Category = "메시변형|무기")
     void UnEquipWeapon();
 
     // 현재 들고 있는 무기 발사/중지
@@ -38,11 +38,11 @@ public:
     void StopFire();
 
     // [New] 현재 무기 액터 반환 (없으면 nullptr)
-    UFUNCTION(BlueprintCallable, Category = "MDF|Weapon")
+    UFUNCTION(BlueprintCallable, Category = "메시변형|무기")
     AMDF_BaseWeapon* GetCurrentWeapon() const { return CurrentWeaponActor; }
 
     // [New] 현재 무기의 슬롯 인덱스 반환 (없으면 -1)
-    UFUNCTION(BlueprintCallable, Category = "MDF|Weapon")
+    UFUNCTION(BlueprintCallable, Category = "메시변형|무기")
     int32 GetCurrentWeaponIndex() const { return CurrentWeaponIndex; }
 
 protected:
@@ -51,11 +51,11 @@ protected:
     // -------------------------------------------------------------------------
     
     // 예: Index 0 = LaserGun, Index 1 = BreakerGun
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MDF|Setup", meta = (DisplayName = "무기 슬롯 목록"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|설정", meta = (DisplayName = "무기 슬롯 목록"))
     TArray<TSubclassOf<AMDF_BaseWeapon>> WeaponSlots;
 
     // 소켓 이름 (예: WeaponSocket)
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MDF|Setup")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|설정")
     FName WeaponAttachSocketName;
 
 private:

@@ -24,10 +24,10 @@ protected:
 
 public:
 	// 실제로 찌그러질 다이나믹 메시 (루트로 설정하여 스케일 조절 대응)
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MDF", meta = (AllowPrivateAccess = "true", DisplayName = "다이나믹메시컴포넌트"))
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "메시변형", meta = (AllowPrivateAccess = "true", DisplayName = "다이나믹메시컴포넌트"))
 	UDynamicMeshComponent* DynamicMeshComponent;
 
 	// 변형 로직을 담당하는 핵심 컴포넌트
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MDF", meta = (AllowPrivateAccess = "true", DisplayName = "변형컴포넌트"))
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "메시변형", meta = (AllowPrivateAccess = "true", DisplayName = "변형컴포넌트"))
 	UMDF_DeformableComponent* DeformableComponent;
 };

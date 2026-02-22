@@ -28,10 +28,10 @@ public:
     // [핵심 동작] 캐릭터가 이 함수들을 호출합니다.
     // -------------------------------------------------------------------------
     
-    UFUNCTION(BlueprintCallable, Category = "MDF|Weapon", meta = (DisplayName = "발사 시작 (Start Fire)"))
+    UFUNCTION(BlueprintCallable, Category = "메시변형|무기", meta = (DisplayName = "발사 시작"))
     virtual void StartFire();
 
-    UFUNCTION(BlueprintCallable, Category = "MDF|Weapon", meta = (DisplayName = "발사 중지 (Stop Fire)"))
+    UFUNCTION(BlueprintCallable, Category = "메시변형|무기", meta = (DisplayName = "발사 중지"))
     virtual void StopFire();
 
 protected:
@@ -63,26 +63,26 @@ protected:
     // -------------------------------------------------------------------------
 
     // [New] 무기의 외형을 담당하는 스태틱 메시 (이제 이게 루트 컴포넌트가 됩니다)
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MDF|Visual", meta = (DisplayName = "무기 외형 (Static Mesh)"))
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "메시변형|외형", meta = (DisplayName = "무기 외형"))
     TObjectPtr<UStaticMeshComponent> WeaponMesh;
 
     // 총구 위치 (WeaponMesh의 자식으로 붙습니다)
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MDF|Visual", meta = (DisplayName = "총구 위치 (Muzzle)"))
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "메시변형|외형", meta = (DisplayName = "총구 위치"))
     TObjectPtr<USceneComponent> MuzzleLocation;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MDF|Stats", meta = (DisplayName = "최대 탄약/배터리 (Max Ammo)"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|스탯", meta = (DisplayName = "최대 탄약/배터리"))
     float MaxAmmo;
 
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MDF|Stats", meta = (DisplayName = "현재 탄약 (Current Ammo)"))
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "메시변형|스탯", meta = (DisplayName = "현재 탄약"))
     float CurrentAmmo;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MDF|Stats", meta = (DisplayName = "연사 속도 (Fire Rate, 초 단위)"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|스탯", meta = (DisplayName = "연사 속도 (초 단위)"))
     float FireRate;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MDF|Stats", meta = (DisplayName = "사거리 (Range)"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|스탯", meta = (DisplayName = "사거리"))
     float FireRange;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MDF|Effects", meta = (DisplayName = "발사 효과음 (Sound)"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|이펙트", meta = (DisplayName = "발사 효과음"))
     TObjectPtr<USoundBase> FireSound;
 
 private:

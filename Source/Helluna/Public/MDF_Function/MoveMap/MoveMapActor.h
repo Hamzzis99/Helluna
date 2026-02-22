@@ -25,7 +25,7 @@ protected:
 
 public:
     // 실제 이동 로직을 수행하는 함수 (서버에서만 실행됨)
-    UFUNCTION(BlueprintCallable, Category = "Helluna|Interaction")
+    UFUNCTION(BlueprintCallable, Category = "헬루나|상호작용")
     void Interact(APlayerController* InstigatorController = nullptr);
 
     // [인터페이스 구현] PlayerController가 호출하는 상호작용 함수
@@ -37,7 +37,7 @@ public:
 
 public:
     // 에디터에서 이동할 맵 이름을 적으세요 (예: LobbyMap, GameMap)
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Map Settings", meta = (ExposeOnSpawn = "true", DisplayName = "Next Level Name (이동할 맵 이름)"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "맵 설정", meta = (ExposeOnSpawn = "true", DisplayName = "이동할 맵 이름"))
     FName NextLevelName;
 
     // =========================================================================================
@@ -45,15 +45,15 @@ public:
     // =========================================================================================
 
     /** 투표 조건 (만장일치 / 과반수) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vote Settings", meta = (DisplayName = "Vote Condition (투표 조건)"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "투표 설정", meta = (DisplayName = "투표 조건"))
     EVoteCondition VoteCondition = EVoteCondition::Majority;
 
     /** 투표 제한 시간 (초) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vote Settings", meta = (DisplayName = "Vote Timeout (투표 제한 시간)", ClampMin = "10.0", ClampMax = "120.0"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "투표 설정", meta = (DisplayName = "투표 제한 시간", ClampMin = "10.0", ClampMax = "120.0"))
     float VoteTimeout = 30.0f;
 
     /** 중도 퇴장 시 정책 */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vote Settings", meta = (DisplayName = "Disconnect Policy (퇴장 시 정책)"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "투표 설정", meta = (DisplayName = "퇴장 시 정책"))
     EVoteDisconnectPolicy DisconnectPolicy = EVoteDisconnectPolicy::ExcludeAndContinue;
 
     // =========================================================================================
@@ -67,6 +67,6 @@ public:
     virtual void ExecuteVoteResult_Implementation(const FVoteRequest& Request) override;
 
 public:
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "컴포넌트")
     TObjectPtr<UStaticMeshComponent> MeshComp;
 };

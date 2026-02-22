@@ -18,7 +18,7 @@ struct FMDFHistoryWrapper
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MDF Data")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|데이터")
 	TArray<FMDFHitData> History;
 };
 
@@ -37,6 +37,6 @@ public:
 	 * Key: 컴포넌트 GUID (신분증)
 	 * Value: 히스토리 + 체력 데이터 (Wrapper로 포장됨)
 	 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "MDF Save")
+	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "메시변형|저장")
 	TMap<FGuid, FMDFHistoryWrapper> SavedDeformationMap;
 };
