@@ -2908,7 +2908,7 @@ int32 UInv_InventoryGrid::RestoreItemPositions(const TArray<FInv_SavedItemData>&
 	TArray<FInv_SavedItemData> FilteredSavedItems;
 	for (const FInv_SavedItemData& SavedItem : SavedItems)
 	{
-		if (SavedItem.GridCategory == static_cast<uint8>(ItemCategory))
+		if (SavedItem.GridCategory == static_cast<uint8>(ItemCategory) && !SavedItem.bEquipped)
 		{
 			FilteredSavedItems.Add(SavedItem);
 		}

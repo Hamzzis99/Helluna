@@ -310,6 +310,159 @@ UInv_InventoryItem* UInv_InventoryComponent::AddAttachedItemFromManifest(FInv_It
 	return NewItem;
 }
 
+// ════════════════════════════════════════════════════════════════════════════════
+// 📌 [Phase 9] RestoreFromSaveData — 저장 데이터로 인벤토리 복원 (서버 전용)
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 📌 핵심:
+//    1) 기존 아이템 전부 제거 (중복 방지)
+//    2) SaveData로부터 아이템 재구축 (부착물 + Fragment 역직렬화 포함)
+//    3) 장착 상태 복원 (DediServer 전용)
+//    4) 멱등성 보장 (bInventoryRestored 플래그)
+//
+// 📌 이전 위치: SaveGameMode.cpp LoadAndSendInventoryToClient() lines 464-686
+//    → InventoryComponent가 자기 상태를 소유하도록 캡슐화
+//
+// ════════════════════════════════════════════════════════════════════════════════
+void UInv_InventoryComponent::RestoreFromSaveData(
+	const FInv_PlayerSaveData& SaveData,
+	const FInv_ItemTemplateResolver& TemplateResolver)
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority()) return;
+	if (bInventoryRestored) return;  // 멱등성 가드
+
+	// ── 1) 기존 아이템 전부 제거 ──
+	InventoryList.ClearAllEntries();
+
+	// ── 2) 저장 데이터에서 아이템 복원 ──
+	for (const FInv_SavedItemData& ItemData : SaveData.Items)
+	{
+		if (!ItemData.ItemType.IsValid()) continue;
+
+		// 템플릿 리졸빙 (게임별 DataTable 매핑)
+		UInv_ItemComponent* Template = TemplateResolver.Execute(ItemData.ItemType);
+		if (!Template) continue;
+
+		// Manifest 복사 (CDO 템플릿은 수정 금지!)
+		FInv_ItemManifest ManifestCopy = Template->GetItemManifest();
+
+		// ── 부착물 복원 (CDO 기반 — SpawnActor 없음!) ──
+		if (ItemData.Attachments.Num() > 0)
+		{
+			FInv_AttachmentHostFragment* HostFrag = ManifestCopy.GetFragmentOfTypeMutable<FInv_AttachmentHostFragment>();
+			if (HostFrag)
+			{
+				for (const FInv_SavedAttachmentData& AttSave : ItemData.Attachments)
+				{
+					UInv_ItemComponent* AttachTemplate = TemplateResolver.Execute(AttSave.AttachmentItemType);
+					if (!AttachTemplate) continue;
+
+					// FInv_AttachedItemData 구성
+					FInv_AttachedItemData AttachedData;
+					AttachedData.SlotIndex = AttSave.SlotIndex;
+					AttachedData.AttachmentItemType = AttSave.AttachmentItemType;
+					AttachedData.ItemManifestCopy = AttachTemplate->GetItemManifest(); // 값 복사
+
+					// 부착물 Fragment 역직렬화
+					if (AttSave.SerializedManifest.Num() > 0)
+					{
+						AttachedData.ItemManifestCopy.DeserializeAndApplyFragments(AttSave.SerializedManifest);
+					}
+
+					HostFrag->AttachItem(AttSave.SlotIndex, AttachedData);
+				}
+			}
+		}
+
+		// ── 메인 아이템 Fragment 역직렬화 ──
+		if (ItemData.SerializedManifest.Num() > 0)
+		{
+			ManifestCopy.DeserializeAndApplyFragments(ItemData.SerializedManifest);
+		}
+
+		// ── 디자인타임 전용 값 복원 (CDO 템플릿에서 추출) ──
+		{
+			const FInv_ItemManifest& CDOManifest = Template->GetItemManifest();
+
+			// SlotPosition 복원
+			const FInv_AttachmentHostFragment* CDOHost = CDOManifest.GetFragmentOfType<FInv_AttachmentHostFragment>();
+			FInv_AttachmentHostFragment* LoadedHost = ManifestCopy.GetFragmentOfTypeMutable<FInv_AttachmentHostFragment>();
+			if (CDOHost && LoadedHost)
+			{
+				LoadedHost->RestoreDesignTimeSlotPositions(CDOHost->GetSlotDefinitions());
+			}
+
+			// PreviewMesh 복원
+			const FInv_EquipmentFragment* CDOEquip = CDOManifest.GetFragmentOfType<FInv_EquipmentFragment>();
+			FInv_EquipmentFragment* LoadedEquip = ManifestCopy.GetFragmentOfTypeMutable<FInv_EquipmentFragment>();
+			if (CDOEquip && LoadedEquip)
+			{
+				LoadedEquip->RestoreDesignTimePreview(*CDOEquip);
+			}
+		}
+
+		// ── 인벤토리에 추가 ──
+		UInv_InventoryItem* NewItem = AddItemFromManifest(ManifestCopy, ItemData.StackCount);
+		if (!NewItem) continue;
+
+		// ── 그리드 위치 복원 ──
+		const int32 Columns = GridColumns > 0 ? GridColumns : 8;
+		int32 SavedGridIndex = ItemData.GridPosition.Y * Columns + ItemData.GridPosition.X;
+		SetLastEntryGridPosition(SavedGridIndex, ItemData.GridCategory);
+
+		// ── 부착물 FastArray Entry 생성 + OriginalItem 연결 ──
+		if (ItemData.Attachments.Num() > 0 && IsValid(NewItem))
+		{
+			FInv_AttachmentHostFragment* LoadedHostFrag =
+				NewItem->GetItemManifestMutable().GetFragmentOfTypeMutable<FInv_AttachmentHostFragment>();
+
+			if (LoadedHostFrag)
+			{
+				for (const FInv_SavedAttachmentData& AttSave : ItemData.Attachments)
+				{
+					UInv_ItemComponent* AttachTemplate = TemplateResolver.Execute(AttSave.AttachmentItemType);
+					if (!AttachTemplate) continue;
+
+					FInv_ItemManifest AttachManifest = AttachTemplate->GetItemManifest();
+
+					// Fragment 역직렬화 (저장된 스탯 복원)
+					if (AttSave.SerializedManifest.Num() > 0)
+					{
+						AttachManifest.DeserializeAndApplyFragments(AttSave.SerializedManifest);
+					}
+
+					// FastArray에 Entry 추가 (그리드 숨김 상태)
+					UInv_InventoryItem* AttachItem = AddAttachedItemFromManifest(AttachManifest);
+					if (!AttachItem) continue;
+
+					// HostFrag의 AttachedItemData에 OriginalItem 포인터 연결
+					LoadedHostFrag->SetOriginalItemForSlot(AttSave.SlotIndex, AttachItem);
+				}
+			}
+		}
+	}
+
+	// ── 3) 장착 상태 복원 (DediServer only) ──
+	if (GetOwner()->GetNetMode() == NM_DedicatedServer)
+	{
+		TSet<UInv_InventoryItem*> ProcessedEquipItems;
+		for (const FInv_SavedItemData& ItemData : SaveData.Items)
+		{
+			if (!ItemData.bEquipped || ItemData.WeaponSlotIndex < 0) continue;
+
+			UInv_InventoryItem* FoundItem = FindItemByTypeExcluding(
+				ItemData.ItemType, ProcessedEquipItems);
+			if (FoundItem)
+			{
+				OnItemEquipped.Broadcast(FoundItem, ItemData.WeaponSlotIndex);
+				ProcessedEquipItems.Add(FoundItem);
+			}
+		}
+	}
+
+	bInventoryRestored = true;
+}
+
 void UInv_InventoryComponent::Server_AddStacksToItem_Implementation(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder) // 서버에서 아이템 스택 개수를 세어주는 역할.
 {
 	const FGameplayTag& ItemType = IsValid(ItemComponent) ? ItemComponent->GetItemManifest().GetItemType() : FGameplayTag::EmptyTag; // 아이템 유형 가져오기

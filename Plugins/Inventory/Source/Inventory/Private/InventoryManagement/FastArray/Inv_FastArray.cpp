@@ -440,6 +440,20 @@ void FInv_InventoryFastArray::RemoveEntry(UInv_InventoryItem* Item)
 	}
 }
 
+void FInv_InventoryFastArray::ClearAllEntries()
+{
+	// 역순으로 제거 (인덱스 안정성)
+	for (int32 i = Entries.Num() - 1; i >= 0; --i)
+	{
+		if (IsValid(Entries[i].Item))
+		{
+			Entries.RemoveAt(i);
+		}
+	}
+	MarkArrayDirty();
+	RebuildItemTypeIndex();
+}
+
 UInv_InventoryItem* FInv_InventoryFastArray::FindFirstItemByType(const FGameplayTag& ItemType)
 {
 	// ⭐ [최적화 #4] 캐시가 구축되어 있으면 O(1) 조회
