@@ -28,13 +28,13 @@
 #define INV_DEBUG_RESOURCE 0
 
 // 플레이어 (PlayerController)
-#define INV_DEBUG_PLAYER 0
+#define INV_DEBUG_PLAYER 1
 
 // 부착물 시스템 (AttachmentFragments, AttachmentPanel, FastArray 부착진단)
 #define INV_DEBUG_ATTACHMENT 1
 
 // 저장/로드 시스템 (SaveGameMode, 로드 복원)
-#define INV_DEBUG_SAVE 0
+#define INV_DEBUG_SAVE 1
 
 // ============================================
 

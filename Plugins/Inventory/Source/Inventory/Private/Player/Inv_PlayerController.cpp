@@ -1304,8 +1304,7 @@ void AInv_PlayerController::Client_ReceiveInventoryData_Implementation(const TAr
 // [네트워크 최적화] Client_ReceiveInventoryDataChunk
 // ════════════════════════════════════════════════════════════════════════════════
 // 서버가 SavedItems를 청크로 나눠 보낼 때 사용.
-// 각 청크를 PendingSavedItems에 누적, bIsLastChunk=true일 때 복원 시작.
-// Client, Reliable RPC이므로 순서 보장됨.
+// 각 청크를 PendingSavedItems에 누적, bIsLastChunk=true일 때 폴링 복원 시작.
 // ════════════════════════════════════════════════════════════════════════════════
 void AInv_PlayerController::Client_ReceiveInventoryDataChunk_Implementation(
 	const TArray<FInv_SavedItemData>& ChunkItems, bool bIsLastChunk)
@@ -1322,18 +1321,69 @@ void AInv_PlayerController::Client_ReceiveInventoryDataChunk_Implementation(
 		return;
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[InventoryChunk] 마지막 청크 수신. 총 %d개 아이템 복원 시작"),
+	UE_LOG(LogTemp, Log, TEXT("[InventoryChunk] 마지막 청크 수신. 총 %d개 아이템 → 폴링 복원 시작"),
 		PendingSavedItems.Num());
 
-	TArray<FInv_SavedItemData> AllItems = MoveTemp(PendingSavedItems);
+	// 폴링 복원 데이터 세팅
+	PendingRestoreItems = MoveTemp(PendingSavedItems);
 	PendingSavedItems.Empty();
+	PendingRestoreRetryCount = 0;
 
-	// 기존 Client_ReceiveInventoryData와 동일한 복원 경로
-	FTimerHandle TimerHandle;
-	GetWorldTimerManager().SetTimer(TimerHandle, [this, AllItems]()
+	// 0.3초 간격 폴링 시작 (최대 15회 = 4.5초)
+	GetWorldTimerManager().SetTimer(PendingRestoreTimerHandle, this,
+		&AInv_PlayerController::PollAndRestoreInventory, 0.3f, true);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [네트워크 최적화] PollAndRestoreInventory
+// ════════════════════════════════════════════════════════════════════════════════
+// FastArray 리플리케이션이 완료될 때까지 폴링으로 대기.
+// InventoryComponent의 아이템 수가 기대값에 도달하면 복원 실행.
+// ════════════════════════════════════════════════════════════════════════════════
+void AInv_PlayerController::PollAndRestoreInventory()
+{
+	PendingRestoreRetryCount++;
+
+	// InventoryComponent에서 현재 도착한 아이템 수 확인
+	int32 CurrentItemCount = 0;
+	UInv_InventoryComponent* InvComp = nullptr;
+	if (APawn* MyPawn = GetPawn())
 	{
-		DelayedRestoreGridPositions(AllItems);
-	}, 0.5f, false);
+		InvComp = MyPawn->FindComponentByClass<UInv_InventoryComponent>();
+		if (InvComp)
+		{
+			CurrentItemCount = InvComp->GetInventoryList().GetAllItems().Num();
+		}
+	}
+
+	const int32 ExpectedCount = PendingRestoreItems.Num();
+	const bool bAllArrived = (CurrentItemCount >= ExpectedCount);
+	const bool bTimeout = (PendingRestoreRetryCount >= 15); // 최대 4.5초
+
+	UE_LOG(LogTemp, Log, TEXT("[InventoryChunk] 폴링 %d/15: FastArray 아이템 %d/%d %s"),
+		PendingRestoreRetryCount, CurrentItemCount, ExpectedCount,
+		bAllArrived ? TEXT("도착 완료!") : TEXT("대기 중..."));
+
+	if (!bAllArrived && !bTimeout)
+	{
+		return; // 다음 폴링 대기
+	}
+
+	// 폴링 타이머 정지
+	GetWorldTimerManager().ClearTimer(PendingRestoreTimerHandle);
+
+	if (bTimeout && !bAllArrived)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[InventoryChunk] 폴링 타임아웃! %d/%d개만 도착. 가진 만큼 복원 시도"),
+			CurrentItemCount, ExpectedCount);
+	}
+
+	// 복원 실행
+	TArray<FInv_SavedItemData> ItemsToRestore = MoveTemp(PendingRestoreItems);
+	PendingRestoreItems.Empty();
+	PendingRestoreRetryCount = 0;
+
+	DelayedRestoreGridPositions(ItemsToRestore);
 }
 
 /**

@@ -490,6 +490,9 @@ public:
 	UFUNCTION(Client, Reliable)
 	void Client_ReceiveInventoryDataChunk(const TArray<FInv_SavedItemData>& ChunkItems, bool bIsLastChunk);
 
+	/** [네트워크 최적화] FastArray 리플리케이션 완료 대기 후 복원 실행 */
+	void PollAndRestoreInventory();
+
 	/**
 	 * 인벤토리 로드 완료 대기 후 Grid 복원
 	 * FastArray 리플리케이션 완료 대기를 위한 딜레이 처리
@@ -511,6 +514,11 @@ private:
 
 	/** [네트워크 최적화] 청크 분할 수신 시 누적 버퍼 */
 	TArray<FInv_SavedItemData> PendingSavedItems;
+
+	/** [네트워크 최적화] FastArray 폴링 복원용 */
+	TArray<FInv_SavedItemData> PendingRestoreItems;
+	FTimerHandle PendingRestoreTimerHandle;
+	int32 PendingRestoreRetryCount = 0;
 
 	UPROPERTY(EditDefaultsOnly, Category = "인벤토리",
 		meta = (DisplayName = "기본 입력 매핑 컨텍스트", Tooltip = "기본 입력 매핑 컨텍스트 배열입니다. 인벤토리 관련 입력을 바인딩합니다."))
