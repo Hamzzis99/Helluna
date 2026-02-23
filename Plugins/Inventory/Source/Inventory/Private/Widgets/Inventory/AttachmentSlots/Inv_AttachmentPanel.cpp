@@ -56,8 +56,10 @@ void UInv_AttachmentPanel::NativeOnInitialized()
 	if (IsValid(Image_WeaponPreview))
 	{
 		CachedPreviewImageSize = Image_WeaponPreview->GetBrush().ImageSize;
+#if INV_DEBUG_ATTACHMENT
 		UE_LOG(LogTemp, Log, TEXT("[Attachment UI] CachedPreviewImageSize = (%.1f, %.1f)"),
 			CachedPreviewImageSize.X, CachedPreviewImageSize.Y);
+#endif
 	}
 }
 
@@ -246,6 +248,7 @@ void UInv_AttachmentPanel::BuildSlotWidgets()
 	ResetAllSlots();
 
 	// ★ [디버그] 수집된 슬롯 위젯 상태 확인
+#if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 수집된 슬롯 위젯: %d개"), CollectedSlotWidgets.Num());
 	for (const auto& Collected : CollectedSlotWidgets)
 	{
@@ -255,6 +258,7 @@ void UInv_AttachmentPanel::BuildSlotWidgets()
 				*Collected->GetName(), *Collected->GetSlotType().ToString());
 		}
 	}
+#endif
 
 	if (!CurrentWeaponItem.IsValid()) return;
 
@@ -309,9 +313,11 @@ void UInv_AttachmentPanel::BuildSlotWidgets()
 		// 슬롯 보이기
 		SlotWidget->SetVisibility(ESlateVisibility::Visible);
 
+#if INV_DEBUG_ATTACHMENT
 		UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 슬롯[%d] %s → Widget=%s"),
 			i, *SlotDefs[i].SlotType.ToString(),
 			*SlotWidget->GetName());
+#endif
 
 		SlotWidgets.Add(SlotWidget);
 	}
@@ -704,14 +710,18 @@ void UInv_AttachmentPanel::CollectSlotWidgetsFromTree()
 		{
 			if (!SlotWidget->GetSlotType().IsValid())
 			{
+#if INV_DEBUG_ATTACHMENT
 				UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] 슬롯 위젯 '%s'에 SlotType이 설정되지 않음! WBP에서 태그 지정 필요"),
 					*SlotWidget->GetName());
+#endif
 			}
 			CollectedSlotWidgets.Add(SlotWidget);
 		}
 	});
 
+#if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] WidgetTree에서 슬롯 위젯 %d개 수집 완료"), CollectedSlotWidgets.Num());
+#endif
 }
 
 // ════════════════════════════════════════════════════════════════

@@ -1480,10 +1480,12 @@ void UInv_InventoryGrid::RemoveItem(UInv_InventoryItem* Item, int32 EntryIndex)
 		return;
 	}
 
+#if INV_DEBUG_WIDGET
 	// 🔍 [진단] RemoveItem 호출 컨텍스트 확인 (항상 출력)
 	UE_LOG(LogTemp, Error, TEXT("🔍 [RemoveItem 진단] Grid=%p, Category=%d, SlottedItems=%d, ItemType=%s, EntryIndex=%d"),
 		this, (int32)ItemCategory, SlottedItems.Num(),
 		*Item->GetItemManifest().GetItemType().ToString(), EntryIndex);
+#endif
 
 	// 콜스택 출력 (어디서 호출되는지 확인)
 	// FDebug::DumpStackTraceToLog(ELogVerbosity::Error); // 비활성화: 그리드당 ~15ms 렉 유발
@@ -2043,11 +2045,13 @@ void UInv_InventoryGrid::PutDownOnIndex(const int32 Index)
     const int32 StackCount = HoverItem->GetStackCount();
     const int32 EntryIndex = HoverItem->GetEntryIndex();
 
+#if INV_DEBUG_WIDGET
 	// [Swap버그추적] PutDown 진입
 	UE_LOG(LogTemp, Error, TEXT("===== [PutDownOnIndex] 진입 ====="));
 	UE_LOG(LogTemp, Error, TEXT("  ItemToPutDown: %s (포인터=%p), Index=%d, EntryIndex=%d, StackCount=%d"),
 		IsValid(ItemToPutDown) ? *ItemToPutDown->GetItemManifest().GetItemType().ToString() : TEXT("NULL"),
 		ItemToPutDown, Index, EntryIndex, StackCount);
+#endif
 
     // Phase 8.1: Split 아이템이면 UI 배치 건너뛰기, 서버 RPC로 처리
     if (HoverItem->IsSplitItem())
@@ -2139,6 +2143,7 @@ void UInv_InventoryGrid::SwapWithHoverItem(UInv_InventoryItem* ClickedInventoryI
 {
 	if (!IsValid(HoverItem)) return; // 호버 아이템이 유효하다면 리턴
 
+#if INV_DEBUG_WIDGET
 	// [Swap버그추적] Swap 진입 상태 덤프
 	UE_LOG(LogTemp, Error, TEXT("===== [SwapWithHoverItem] 진입 ====="));
 	UE_LOG(LogTemp, Error, TEXT("  HoverItem->GetInventoryItem(): %s (포인터=%p)"),
@@ -2151,6 +2156,7 @@ void UInv_InventoryGrid::SwapWithHoverItem(UInv_InventoryItem* ClickedInventoryI
 		ClickedInventoryItem);
 	UE_LOG(LogTemp, Error, TEXT("  GridIndex: %d, ItemDropIndex: %d, PreviousGridIndex: %d"),
 		GridIndex, ItemDropIndex, HoverItem->GetPreviousGridIndex());
+#endif
 
 	// 임시로 저장해서 할당하는 이유가 뭘까?
 	UInv_InventoryItem* TempInventoryItem = HoverItem->GetInventoryItem(); // 호버 아이템 임시 저장
@@ -2165,6 +2171,7 @@ void UInv_InventoryGrid::SwapWithHoverItem(UInv_InventoryItem* ClickedInventoryI
 	AddItemAtIndex(TempInventoryItem, ItemDropIndex, bTempIsStackable, TempStackCount, TempEntryIndex); // 임시 저장된 아이템을 인덱스에 추가
 	UpdateGridSlots(TempInventoryItem, ItemDropIndex, bTempIsStackable, TempStackCount); // 그리드 슬롯 업데이트
 
+#if INV_DEBUG_WIDGET
 	// [Swap버그추적] Swap 완료 상태 덤프
 	UE_LOG(LogTemp, Error, TEXT("===== [SwapWithHoverItem] 완료 ====="));
 	UE_LOG(LogTemp, Error, TEXT("  새 HoverItem: %s (포인터=%p)"),
@@ -2175,6 +2182,7 @@ void UInv_InventoryGrid::SwapWithHoverItem(UInv_InventoryItem* ClickedInventoryI
 		IsValid(TempInventoryItem) ? *TempInventoryItem->GetItemManifest().GetItemType().ToString() : TEXT("NULL"),
 		ItemDropIndex);
 	UE_LOG(LogTemp, Error, TEXT("  SlottedItems 총 개수: %d"), SlottedItems.Num());
+#endif
 }
 
 bool UInv_InventoryGrid::ShouldSwapStackCounts(const int32 RoomInClickedSlot, const int32 HoveredStackCount, const int32 MaxStackSize) const
@@ -2394,6 +2402,7 @@ void UInv_InventoryGrid::OnPopUpMenuConsume(int32 Index)
 // 아이템을 들고 있을 때 다른 UI를 건드리지 못하게 하는 것.
 void UInv_InventoryGrid::OnInventoryMenuToggled(bool bOpen)
 {
+#if INV_DEBUG_WIDGET
 	// [Swap버그추적] 인벤토리 토글
 	UE_LOG(LogTemp, Error, TEXT("===== [OnInventoryMenuToggled] bOpen=%s ====="),
 		bOpen ? TEXT("TRUE") : TEXT("FALSE"));
@@ -2404,6 +2413,7 @@ void UInv_InventoryGrid::OnInventoryMenuToggled(bool bOpen)
 			IsValid(HoverItem) && IsValid(HoverItem->GetInventoryItem())
 				? *HoverItem->GetInventoryItem()->GetItemManifest().GetItemType().ToString() : TEXT("NULL"));
 	}
+#endif
 
 	if (!bOpen)
 	{
@@ -2514,7 +2524,9 @@ void UInv_InventoryGrid::OpenAttachmentPanel(UInv_InventoryItem* WeaponItem, int
 	// 패널 열기
 	AttachmentPanel->OpenForWeapon(WeaponItem, WeaponEntryIndex);
 
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 패널 열림: WeaponEntry=%d"), WeaponEntryIndex);
+#endif
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -2541,7 +2553,9 @@ bool UInv_InventoryGrid::IsAttachmentPanelOpen() const
 // ════════════════════════════════════════════════════════════════
 void UInv_InventoryGrid::OnAttachmentPanelClosed()
 {
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 패널 닫힘 콜백 (InventoryGrid)"));
+#endif
 }
 
 bool UInv_InventoryGrid::MatchesCategory(const UInv_InventoryItem* Item) const
@@ -2602,8 +2616,10 @@ bool UInv_InventoryGrid::HasRoomInActualGrid(const FInv_ItemManifest& Manifest) 
 
 	FIntPoint ItemSize = GridFragment->GetGridSize();
 
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("[ACTUAL GRID CHECK] 아이템 크기: %dx%d"), ItemSize.X, ItemSize.Y);
 	UE_LOG(LogTemp, Warning, TEXT("[ACTUAL GRID CHECK] Grid 크기: %dx%d"), Columns, Rows);
+#endif
 
 	// 실제 GridSlots 순회 (UI의 정확한 상태!)
 	for (int32 StartIndex = 0; StartIndex < GridSlots.Num(); ++StartIndex)
@@ -2647,13 +2663,17 @@ bool UInv_InventoryGrid::HasRoomInActualGrid(const FInv_ItemManifest& Manifest) 
 
 		if (bCanFit)
 		{
+#if INV_DEBUG_WIDGET
 			UE_LOG(LogTemp, Warning, TEXT("[ACTUAL GRID CHECK] ✅ 공간 발견! [%d, %d]부터 %dx%d"),
 				StartX, StartY, ItemSize.X, ItemSize.Y);
+#endif
 			return true; // 공간 발견!
 		}
 	}
 
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("[ACTUAL GRID CHECK] ❌ 공간 없음!"));
+#endif
 	return false; // 공간 없음
 }
 
@@ -2679,20 +2699,26 @@ TArray<FInv_SavedItemData> UInv_InventoryGrid::CollectGridState() const
 	const int32 CategoryIndex = static_cast<int32>(ItemCategory);
 	const TCHAR* GridCategoryStr = (CategoryIndex >= 0 && CategoryIndex < 3) ? GridCategoryNames[CategoryIndex] : TEXT("???");
 
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT(""));
 	UE_LOG(LogTemp, Warning, TEXT("    ┌─── [CollectGridState] Grid %d (%s) ───┐"), CategoryIndex, GridCategoryStr);
 	UE_LOG(LogTemp, Warning, TEXT("    │ Grid 크기: %d x %d (총 %d 슬롯)"), Columns, Rows, Columns * Rows);
 	UE_LOG(LogTemp, Warning, TEXT("    │ SlottedItems 개수: %d"), SlottedItems.Num());
+#endif
 
 	if (SlottedItems.Num() == 0)
 	{
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("    │ → 수집할 아이템 없음 (빈 Grid)"));
 		UE_LOG(LogTemp, Warning, TEXT("    └────────────────────────────────────────┘"));
+#endif
 		return Result;
 	}
 
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("    │"));
 	UE_LOG(LogTemp, Warning, TEXT("    │ ▶ SlottedItems 순회 시작:"));
+#endif
 
 	// SlottedItems 순회 (각 GridIndex에 있는 아이템)
 	int32 ItemIndex = 0;
@@ -2701,13 +2727,17 @@ TArray<FInv_SavedItemData> UInv_InventoryGrid::CollectGridState() const
 		const int32 GridIndex = Pair.Key;
 		const UInv_SlottedItem* SlottedItem = Pair.Value;
 
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("    │"));
 		UE_LOG(LogTemp, Warning, TEXT("    │   [%d] GridIndex=%d"), ItemIndex, GridIndex);
+#endif
 
 		// SlottedItem 유효성 검사
 		if (!IsValid(SlottedItem))
 		{
+#if INV_DEBUG_WIDGET
 			UE_LOG(LogTemp, Warning, TEXT("    │       ⚠️ SlottedItem이 nullptr! 건너뜀"));
+#endif
 			continue;
 		}
 
@@ -2715,15 +2745,19 @@ TArray<FInv_SavedItemData> UInv_InventoryGrid::CollectGridState() const
 		UInv_InventoryItem* Item = SlottedItem->GetInventoryItem();
 		if (!IsValid(Item))
 		{
+#if INV_DEBUG_WIDGET
 			UE_LOG(LogTemp, Warning, TEXT("    │       ⚠️ InventoryItem이 nullptr! 건너뜀"));
+#endif
 			continue;
 		}
 
 		// GridSlot 유효성 검사
 		if (!GridSlots.IsValidIndex(GridIndex))
 		{
-			UE_LOG(LogTemp, Warning, TEXT("    │       ⚠️ GridIndex(%d)가 범위 밖! (GridSlots.Num=%d) 건너뜀"), 
+#if INV_DEBUG_WIDGET
+			UE_LOG(LogTemp, Warning, TEXT("    │       ⚠️ GridIndex(%d)가 범위 밖! (GridSlots.Num=%d) 건너뜀"),
 				GridIndex, GridSlots.Num());
+#endif
 			continue;
 		}
 
@@ -2735,6 +2769,7 @@ TArray<FInv_SavedItemData> UInv_InventoryGrid::CollectGridState() const
 		const int32 StackCount = GridSlots[GridIndex]->GetStackCount();
 		const int32 ServerStackCount = Item->GetTotalStackCount();
 
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("    │       ItemType: %s"), *Item->GetItemManifest().GetItemType().ToString());
 		UE_LOG(LogTemp, Warning, TEXT("    │       UI StackCount: %d (⭐ 저장할 값)"), StackCount);
 		UE_LOG(LogTemp, Warning, TEXT("    │       서버 TotalStackCount: %d (참고용)"), ServerStackCount);
@@ -2744,13 +2779,16 @@ TArray<FInv_SavedItemData> UInv_InventoryGrid::CollectGridState() const
 		{
 			UE_LOG(LogTemp, Warning, TEXT("    │       🔀 Split 감지! UI(%d) ≠ 서버(%d)"), StackCount, ServerStackCount);
 		}
+#endif
 
 		// ============================================
 		// GridIndex → GridPosition 변환
 		// ============================================
 		const FIntPoint GridPosition = UInv_WidgetUtils::GetPositionFromIndex(GridIndex, Columns);
-		UE_LOG(LogTemp, Warning, TEXT("    │       GridIndex(%d) → Position(%d, %d)"), 
+#if INV_DEBUG_WIDGET
+		UE_LOG(LogTemp, Warning, TEXT("    │       GridIndex(%d) → Position(%d, %d)"),
 			GridIndex, GridPosition.X, GridPosition.Y);
+#endif
 
 		// ============================================
 		// 저장 데이터 생성
@@ -2826,14 +2864,18 @@ TArray<FInv_SavedItemData> UInv_InventoryGrid::CollectGridState() const
 
 		Result.Add(SavedData);
 
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("    │       ✅ 수집 완료: %s"), *SavedData.ToString());
+#endif
 
 		ItemIndex++;
 	}
 
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("    │"));
 	UE_LOG(LogTemp, Warning, TEXT("    │ 📦 Grid %d 수집 결과: %d개 아이템"), CategoryIndex, Result.Num());
 	UE_LOG(LogTemp, Warning, TEXT("    └────────────────────────────────────────┘"));
+#endif
 
 	return Result;
 }
@@ -2848,9 +2890,11 @@ int32 UInv_InventoryGrid::RestoreItemPositions(const TArray<FInv_SavedItemData>&
 	const TCHAR* GridCategoryNames[] = { TEXT("장비"), TEXT("소모품"), TEXT("재료") };
 	const TCHAR* GridCategoryStr = (CategoryIndex >= 0 && CategoryIndex < 3) ? GridCategoryNames[CategoryIndex] : TEXT("???");
 
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT(""));
 	UE_LOG(LogTemp, Warning, TEXT("    ┌─── [RestoreItemPositions] Grid %d (%s) ───┐"), CategoryIndex, GridCategoryStr);
 	UE_LOG(LogTemp, Warning, TEXT("    │ 복원할 아이템: %d개"), SavedItems.Num());
+#endif
 
 	// ============================================
 	// 🔧 [핵심 수정] 순서 기반 이동으로 변경
@@ -2870,14 +2914,18 @@ int32 UInv_InventoryGrid::RestoreItemPositions(const TArray<FInv_SavedItemData>&
 		}
 	}
 
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("    │ 이 Grid 카테고리 아이템: %d개"), FilteredSavedItems.Num());
+#endif
 
 	// 2. 현재 SlottedItems의 키(GridIndex)를 정렬하여 배열로 만듦
 	TArray<int32> SortedKeys;
 	SlottedItems.GetKeys(SortedKeys);
 	SortedKeys.Sort();  // 오름차순 정렬 (저장 시 순회 순서와 동일)
 
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("    │ 현재 SlottedItems 개수: %d"), SortedKeys.Num());
+#endif
 
 	// 3. 1:1 매칭하여 이동
 	int32 RestoredCount = 0;
@@ -2888,27 +2936,35 @@ int32 UInv_InventoryGrid::RestoreItemPositions(const TArray<FInv_SavedItemData>&
 		const int32 CurrentGridIndex = SortedKeys[i];
 		const FInv_SavedItemData& SavedItem = FilteredSavedItems[i];
 
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("    │"));
 		UE_LOG(LogTemp, Warning, TEXT("    │ [%d] %s x%d → Pos(%d,%d)"),
 			i, *SavedItem.ItemType.ToString(), SavedItem.StackCount,
 			SavedItem.GridPosition.X, SavedItem.GridPosition.Y);
+#endif
 
 		// 현재 GridIndex의 아이템을 저장된 위치로 이동
 		// ⭐ Phase 5: SavedItem.StackCount를 세 번째 파라미터로 전달!
 		if (MoveItemByCurrentIndex(CurrentGridIndex, SavedItem.GridPosition, SavedItem.StackCount))
 		{
+#if INV_DEBUG_WIDGET
 			UE_LOG(LogTemp, Warning, TEXT("    │     ✅ 복원 성공!"));
+#endif
 			RestoredCount++;
 		}
 		else
 		{
+#if INV_DEBUG_WIDGET
 			UE_LOG(LogTemp, Warning, TEXT("    │     ⚠️ 복원 실패"));
+#endif
 		}
 	}
 
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("    │"));
 	UE_LOG(LogTemp, Warning, TEXT("    │ 📦 복원 결과: %d개 성공"), RestoredCount);
 	UE_LOG(LogTemp, Warning, TEXT("    └────────────────────────────────────────┘"));
+#endif
 
 	return RestoredCount;
 }
@@ -2943,12 +2999,16 @@ void UInv_InventoryGrid::SendAllItemPositionsToServer()
 		InventoryComponent->Server_UpdateItemGridPosition(Item, GridIndex, GridCategoryValue);
 		SentCount++;
 		
-		UE_LOG(LogTemp, Log, TEXT("[SendAllItemPositionsToServer] Grid%d: %s → Index=%d"), 
+#if INV_DEBUG_WIDGET
+		UE_LOG(LogTemp, Log, TEXT("[SendAllItemPositionsToServer] Grid%d: %s → Index=%d"),
 			CategoryIndex, *Item->GetItemManifest().GetItemType().ToString(), GridIndex);
+#endif
 	}
-	
-	UE_LOG(LogTemp, Warning, TEXT("[SendAllItemPositionsToServer] Grid%d: %d개 아이템 위치 전송 완료"), 
+
+#if INV_DEBUG_WIDGET
+	UE_LOG(LogTemp, Warning, TEXT("[SendAllItemPositionsToServer] Grid%d: %d개 아이템 위치 전송 완료"),
 		CategoryIndex, SentCount);
+#endif
 }
 
 bool UInv_InventoryGrid::MoveItemToPosition(const FGameplayTag& ItemType, const FIntPoint& TargetPosition, int32 StackCount)
@@ -2997,8 +3057,10 @@ bool UInv_InventoryGrid::MoveItemToPosition(const FGameplayTag& ItemType, const 
 
 	if (!FoundSlottedItem || CurrentIndex == INDEX_NONE)
 	{
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("    │     ⚠️ [MoveItemToPosition] 매칭되는 아이템 없음"));
 		UE_LOG(LogTemp, Warning, TEXT("    │         ItemType: %s, StackCount: %d"), *ItemType.ToString(), StackCount);
+#endif
 		return false;
 	}
 
@@ -3007,7 +3069,9 @@ bool UInv_InventoryGrid::MoveItemToPosition(const FGameplayTag& ItemType, const 
 	// ============================================
 	if (CurrentIndex == TargetIndex)
 	{
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("    │     ✅ [MoveItemToPosition] 이미 목표 위치에 있음 (Index=%d)"), CurrentIndex);
+#endif
 		return true;
 	}
 
@@ -3016,18 +3080,24 @@ bool UInv_InventoryGrid::MoveItemToPosition(const FGameplayTag& ItemType, const 
 	// ============================================
 	if (!GridSlots.IsValidIndex(TargetIndex))
 	{
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("    │     ⚠️ [MoveItemToPosition] 유효하지 않은 목표 Index: %d"), TargetIndex);
+#endif
 		return false;
 	}
 
 	// 목표 슬롯이 이미 점유되어 있는지 확인
 	if (GridSlots[TargetIndex]->GetInventoryItem().IsValid())
 	{
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("    │     ⚠️ [MoveItemToPosition] 목표 위치가 이미 점유됨 (Index=%d)"), TargetIndex);
+#endif
 		return false;
 	}
 
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("    │     🔄 [MoveItemToPosition] 이동 시작: Index %d → %d"), CurrentIndex, TargetIndex);
+#endif
 
 	// ============================================
 	// Step 4: 원래 위치의 GridSlots 해제
@@ -3085,9 +3155,11 @@ bool UInv_InventoryGrid::MoveItemToPosition(const FGameplayTag& ItemType, const 
 		CanvasSlot->SetPosition(DrawPosWithPadding);
 	}
 
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("    │     ✅ [MoveItemToPosition] 이동 완료!"));
 	UE_LOG(LogTemp, Warning, TEXT("    │         %s x%d: Index %d → %d, Pos(%d,%d)"),
 		*ItemType.ToString(), StackCount, CurrentIndex, TargetIndex, TargetPosition.X, TargetPosition.Y);
+#endif
 
 	return true;
 }
@@ -3111,7 +3183,9 @@ bool UInv_InventoryGrid::MoveItemByCurrentIndex(int32 CurrentIndex, const FIntPo
 	// ============================================
 	if (CurrentIndex == TargetIndex)
 	{
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("    │     ✅ [MoveItemByCurrentIndex] 이미 목표 위치에 있음 (Index=%d)"), CurrentIndex);
+#endif
 		return true;
 	}
 
@@ -3121,14 +3195,18 @@ bool UInv_InventoryGrid::MoveItemByCurrentIndex(int32 CurrentIndex, const FIntPo
 	UInv_SlottedItem* FoundSlottedItem = SlottedItems.FindRef(CurrentIndex);
 	if (!IsValid(FoundSlottedItem))
 	{
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("    │     ⚠️ [MoveItemByCurrentIndex] CurrentIndex=%d에 SlottedItem 없음"), CurrentIndex);
+#endif
 		return false;
 	}
 
 	UInv_InventoryItem* InventoryItem = FoundSlottedItem->GetInventoryItem();
 	if (!InventoryItem)
 	{
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("    │     ⚠️ [MoveItemByCurrentIndex] InventoryItem이 nullptr"));
+#endif
 		return false;
 	}
 
@@ -3137,17 +3215,23 @@ bool UInv_InventoryGrid::MoveItemByCurrentIndex(int32 CurrentIndex, const FIntPo
 	// ============================================
 	if (!GridSlots.IsValidIndex(TargetIndex))
 	{
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("    │     ⚠️ [MoveItemByCurrentIndex] 유효하지 않은 목표 Index: %d"), TargetIndex);
+#endif
 		return false;
 	}
 
 	if (GridSlots[TargetIndex]->GetInventoryItem().IsValid())
 	{
+#if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("    │     ⚠️ [MoveItemByCurrentIndex] 목표 위치가 이미 점유됨 (Index=%d)"), TargetIndex);
+#endif
 		return false;
 	}
 
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("    │     🔄 [MoveItemByCurrentIndex] 이동 시작: Index %d → %d"), CurrentIndex, TargetIndex);
+#endif
 
 	// ============================================
 	// Step 4: 아이템 크기 정보 가져오기
@@ -3164,7 +3248,9 @@ bool UInv_InventoryGrid::MoveItemByCurrentIndex(int32 CurrentIndex, const FIntPo
 	// ============================================
 	// ⭐ Phase 5: SavedStackCount가 전달되면 그 값을 사용, 아니면 현재 슬롯의 StackCount 사용
 	const int32 OriginalStackCount = (SavedStackCount > 0) ? SavedStackCount : GridSlots[CurrentIndex]->GetStackCount();
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("    │     📦 기존 StackCount: %d (SavedStackCount=%d)"), OriginalStackCount, SavedStackCount);
+#endif
 
 	// ============================================
 	// Step 5: 원래 위치의 GridSlots 해제 (+ 텍스처/상태 복원!)
@@ -3206,7 +3292,9 @@ bool UInv_InventoryGrid::MoveItemByCurrentIndex(int32 CurrentIndex, const FIntPo
 			{
 				GridSlot->SetStackCount(OriginalStackCount);
 				bIsFirstSlot = false;
+#if INV_DEBUG_WIDGET
 				UE_LOG(LogTemp, Warning, TEXT("    │     📦 새 위치에 StackCount=%d 설정"), OriginalStackCount);
+#endif
 			}
 		}
 	});
@@ -3220,7 +3308,9 @@ bool UInv_InventoryGrid::MoveItemByCurrentIndex(int32 CurrentIndex, const FIntPo
 	FoundSlottedItem->SetGridIndex(TargetIndex);
 	// ⭐ Phase 5: SlottedItem UI 텍스트도 업데이트 (로드 후 "1"로 표시되는 버그 수정)
 	FoundSlottedItem->UpdateStackCount(OriginalStackCount);
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("    │     🔧 SlottedItem.GridIndex=%d로 업데이트, UI StackCount=%d"), TargetIndex, OriginalStackCount);
+#endif
 
 	// ============================================
 	// Step 8: 위젯 위치 업데이트
@@ -3238,10 +3328,12 @@ bool UInv_InventoryGrid::MoveItemByCurrentIndex(int32 CurrentIndex, const FIntPo
 		CanvasSlot->SetPosition(DrawPosWithPadding);
 	}
 
+#if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("    │     ✅ [MoveItemByCurrentIndex] 이동 완료!"));
 	UE_LOG(LogTemp, Warning, TEXT("    │         %s: Index %d → %d, Pos(%d,%d)"),
 		*InventoryItem->GetItemManifest().GetItemType().ToString(),
 		CurrentIndex, TargetIndex, TargetPosition.X, TargetPosition.Y);
+#endif
 
 	return true;
 }
