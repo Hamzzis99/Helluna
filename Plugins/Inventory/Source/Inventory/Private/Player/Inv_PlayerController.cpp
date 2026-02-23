@@ -1300,6 +1300,42 @@ void AInv_PlayerController::Client_ReceiveInventoryData_Implementation(const TAr
 #endif
 }
 
+// ════════════════════════════════════════════════════════════════════════════════
+// [네트워크 최적화] Client_ReceiveInventoryDataChunk
+// ════════════════════════════════════════════════════════════════════════════════
+// 서버가 SavedItems를 청크로 나눠 보낼 때 사용.
+// 각 청크를 PendingSavedItems에 누적, bIsLastChunk=true일 때 복원 시작.
+// Client, Reliable RPC이므로 순서 보장됨.
+// ════════════════════════════════════════════════════════════════════════════════
+void AInv_PlayerController::Client_ReceiveInventoryDataChunk_Implementation(
+	const TArray<FInv_SavedItemData>& ChunkItems, bool bIsLastChunk)
+{
+	UE_LOG(LogTemp, Log, TEXT("[InventoryChunk] 청크 수신: %d개, bIsLastChunk=%s, 누적=%d"),
+		ChunkItems.Num(),
+		bIsLastChunk ? TEXT("true") : TEXT("false"),
+		PendingSavedItems.Num());
+
+	PendingSavedItems.Append(ChunkItems);
+
+	if (!bIsLastChunk)
+	{
+		return;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[InventoryChunk] 마지막 청크 수신. 총 %d개 아이템 복원 시작"),
+		PendingSavedItems.Num());
+
+	TArray<FInv_SavedItemData> AllItems = MoveTemp(PendingSavedItems);
+	PendingSavedItems.Empty();
+
+	// 기존 Client_ReceiveInventoryData와 동일한 복원 경로
+	FTimerHandle TimerHandle;
+	GetWorldTimerManager().SetTimer(TimerHandle, [this, AllItems]()
+	{
+		DelayedRestoreGridPositions(AllItems);
+	}, 0.5f, false);
+}
+
 /**
  * FastArray 리플리케이션 완료 후 Grid 위치 복원
  */

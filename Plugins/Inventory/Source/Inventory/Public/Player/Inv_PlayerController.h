@@ -484,6 +484,12 @@ public:
 	UFUNCTION(Client, Reliable)
 	void Client_ReceiveInventoryData(const TArray<FInv_SavedItemData>& SavedItems);
 
+	/** [네트워크 최적화] 인벤토리 데이터 청크 분할 전송
+	 *  인벤토리가 꽉 찼을 때 64KB 번치 크기 제한 초과 방지
+	 *  서버가 N개씩 나눠 보내고, bIsLastChunk=true일 때 복원 시작 */
+	UFUNCTION(Client, Reliable)
+	void Client_ReceiveInventoryDataChunk(const TArray<FInv_SavedItemData>& ChunkItems, bool bIsLastChunk);
+
 	/**
 	 * 인벤토리 로드 완료 대기 후 Grid 복원
 	 * FastArray 리플리케이션 완료 대기를 위한 딜레이 처리
@@ -502,6 +508,9 @@ private:
 	
 	TWeakObjectPtr<UInv_InventoryComponent> InventoryComponent;
 	TWeakObjectPtr<UInv_EquipmentComponent> EquipmentComponent;
+
+	/** [네트워크 최적화] 청크 분할 수신 시 누적 버퍼 */
+	TArray<FInv_SavedItemData> PendingSavedItems;
 
 	UPROPERTY(EditDefaultsOnly, Category = "인벤토리",
 		meta = (DisplayName = "기본 입력 매핑 컨텍스트", Tooltip = "기본 입력 매핑 컨텍스트 배열입니다. 인벤토리 관련 입력을 바인딩합니다."))

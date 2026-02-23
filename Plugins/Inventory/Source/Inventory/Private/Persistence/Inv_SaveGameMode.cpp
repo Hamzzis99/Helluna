@@ -685,11 +685,42 @@ void AInv_SaveGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
 		}
 	}
 
-	// ── 클라이언트에 데이터 전송 ──
+	// ── 클라이언트에 데이터 전송 (청크 분할) ──
+	// UE 네트워크 최대 번치 크기(65536 bytes) 초과 방지
 	AInv_PlayerController* InvPC = Cast<AInv_PlayerController>(PC);
 	if (IsValid(InvPC))
 	{
-		InvPC->Client_ReceiveInventoryData(LoadedData.Items);
+		const TArray<FInv_SavedItemData>& AllItems = LoadedData.Items;
+		constexpr int32 ChunkSize = 5;
+
+		if (AllItems.Num() <= ChunkSize)
+		{
+			// 소량이면 기존 방식 (하위호환)
+			InvPC->Client_ReceiveInventoryData(AllItems);
+		}
+		else
+		{
+			// 청크 분할 전송
+			const int32 TotalItems = AllItems.Num();
+			for (int32 StartIdx = 0; StartIdx < TotalItems; StartIdx += ChunkSize)
+			{
+				const int32 EndIdx = FMath::Min(StartIdx + ChunkSize, TotalItems);
+				const bool bIsLast = (EndIdx >= TotalItems);
+
+				TArray<FInv_SavedItemData> Chunk;
+				Chunk.Reserve(EndIdx - StartIdx);
+				for (int32 i = StartIdx; i < EndIdx; ++i)
+				{
+					Chunk.Add(AllItems[i]);
+				}
+
+				InvPC->Client_ReceiveInventoryDataChunk(Chunk, bIsLast);
+
+				UE_LOG(LogTemp, Log, TEXT("[InventoryChunk] 전송: [%d~%d] / %d, bIsLast=%s"),
+					StartIdx, EndIdx - 1, TotalItems,
+					bIsLast ? TEXT("true") : TEXT("false"));
+			}
+		}
 	}
 }
 
