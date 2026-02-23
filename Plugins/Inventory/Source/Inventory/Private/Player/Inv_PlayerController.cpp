@@ -878,6 +878,37 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 #endif
 
 	// ============================================
+	// [FIX] 장착 아이템을 Grid에서 선제거 (Step 3 전에!)
+	// PostReplicatedAdd가 모든 아이템을 Grid에 자동 배치했으므로
+	// 장착 아이템이 Grid 공간을 차지하고 있음.
+	// Step 3에서 Grid 위치를 복원하기 전에 제거해야 겹침 방지.
+	// ============================================
+	{
+		UInv_InventoryGrid* PreEquipGrid = SpatialInventory->GetGrid_Equippables();
+		if (IsValid(PreEquipGrid))
+		{
+			TSet<UInv_InventoryItem*> TempProcessedEquip;
+			for (const FInv_SavedItemData& EqItem : SavedItems)
+			{
+				if (!EqItem.bEquipped) continue;
+
+				UInv_InventoryItem* Found = InventoryComponent->FindItemByTypeExcluding(
+					EqItem.ItemType, TempProcessedEquip);
+				if (IsValid(Found))
+				{
+					bool bPreRemoved = PreEquipGrid->RemoveSlottedItemByPointer(Found);
+					TempProcessedEquip.Add(Found);
+#if INV_DEBUG_PLAYER
+					UE_LOG(LogTemp, Warning, TEXT("[Pre-Equip] Grid에서 장착 아이템 선제거: %s (슬롯 %d) → %s"),
+						*EqItem.ItemType.ToString(), EqItem.WeaponSlotIndex,
+						bPreRemoved ? TEXT("성공") : TEXT("실패"));
+#endif
+				}
+			}
+		}
+	}
+
+	// ============================================
 	// Step 3: 각 Grid에 위치 복원 요청
 	// ============================================
 #if INV_DEBUG_PLAYER
@@ -1346,14 +1377,19 @@ void AInv_PlayerController::PollAndRestoreInventory()
 
 	// InventoryComponent에서 현재 도착한 아이템 수 확인
 	int32 CurrentItemCount = 0;
-	UInv_InventoryComponent* InvComp = nullptr;
-	if (APawn* MyPawn = GetPawn())
+	if (InventoryComponent.IsValid())
 	{
-		InvComp = MyPawn->FindComponentByClass<UInv_InventoryComponent>();
-		if (InvComp)
-		{
-			CurrentItemCount = InvComp->GetInventoryList().GetAllItems().Num();
-		}
+		CurrentItemCount = InventoryComponent->GetInventoryList().GetAllItems().Num();
+
+		// [진단] 폴링 시점의 InventoryComponent 주소 + 아이템 수
+		UE_LOG(LogTemp, Error, TEXT("[폴링진단] InvComp=%p, GetAllItems=%d, Owner=%s"),
+			InventoryComponent.Get(),
+			CurrentItemCount,
+			*GetName());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("[폴링진단] InventoryComponent가 INVALID! Controller=%s"), *GetName());
 	}
 
 	const int32 ExpectedCount = PendingRestoreItems.Num();

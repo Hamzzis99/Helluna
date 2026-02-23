@@ -101,6 +101,11 @@ void FInv_InventoryFastArray::PostReplicatedAdd(const TArrayView<int32> AddedInd
 	UInv_InventoryComponent* IC = Cast<UInv_InventoryComponent>(OwnerComponent);
 	if (!IsValid(IC)) return;
 
+	// [진단] PostReplicatedAdd 시점의 InventoryComponent 주소
+	UE_LOG(LogTemp, Error, TEXT("[PostRepAdd진단] IC=%p, Entries=%d, AddedIndices=%d, Owner=%s"),
+		IC, Entries.Num(), AddedIndices.Num(),
+		IC->GetOwner() ? *IC->GetOwner()->GetName() : TEXT("nullptr"));
+
 #if INV_DEBUG_INVENTORY
 	UE_LOG(LogTemp, Warning, TEXT("=== PostReplicatedAdd 호출됨! (FastArray) ==="));
 	UE_LOG(LogTemp, Warning, TEXT("추가된 항목 개수: %d / 전체 Entry 수: %d"), AddedIndices.Num(), Entries.Num());
@@ -319,10 +324,17 @@ void FInv_InventoryFastArray::PostReplicatedChange(const TArrayView<int32> Chang
 }
 
 // FastArray에 항목을 추가해주는 기능들.
-UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_ItemComponent* ItemComponent) 
+UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_ItemComponent* ItemComponent)
 {
-	//TODO : Implement once ItemComponent is more complete 
+	//TODO : Implement once ItemComponent is more complete
 	check(OwnerComponent); // 소유자 컴포넌트 확인 (소유재고 확인)
+
+	// [진단] AddEntry 호출 시 콜스택 추적 (아이템 중복 원인 파악)
+	UE_LOG(LogTemp, Error, TEXT("[AddEntry진단] 호출됨! 현재 Entries=%d, ItemType=%s"),
+		Entries.Num(),
+		*ItemComponent->GetItemManifest().GetItemType().ToString());
+	FDebug::DumpStackTraceToLog(ELogVerbosity::Error);
+
 	AActor* OwningActor = OwnerComponent->GetOwner(); // 소유자 확보
 	check(OwningActor->HasAuthority()); // 권한이 있는지 확인
 	UInv_InventoryComponent* IC = Cast<UInv_InventoryComponent>(OwnerComponent); // 소유자 컴포넌트를 인벤토리 컴포넌트로 캐스팅
@@ -382,6 +394,13 @@ UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_ItemComponent* ItemCo
 UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_InventoryItem* Item)
 {
 	check(OwnerComponent);
+
+	// [진단] AddEntry(Item*) 호출 콜스택
+	UE_LOG(LogTemp, Error, TEXT("[AddEntry진단-Item] 호출됨! 현재 Entries=%d, ItemType=%s"),
+		Entries.Num(),
+		IsValid(Item) ? *Item->GetItemManifest().GetItemType().ToString() : TEXT("nullptr"));
+	FDebug::DumpStackTraceToLog(ELogVerbosity::Error);
+
 	AActor* OwningActor = OwnerComponent->GetOwner();
 	check(OwningActor->HasAuthority());
 	
