@@ -279,6 +279,37 @@ UInv_InventoryItem* UInv_InventoryComponent::AddItemFromManifest(FInv_ItemManife
 	return NewItem;
 }
 
+UInv_InventoryItem* UInv_InventoryComponent::AddAttachedItemFromManifest(FInv_ItemManifest& ManifestCopy)
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return nullptr;
+	}
+
+	// Manifest → UInv_InventoryItem 생성
+	UInv_InventoryItem* NewItem = ManifestCopy.Manifest(GetOwner());
+	if (!IsValid(NewItem))
+	{
+		return nullptr;
+	}
+
+	// FastArray에 추가
+	InventoryList.AddEntry(NewItem);
+
+	// 스택 수량 1 (부착물은 스택 안 됨)
+	NewItem->SetTotalStackCount(1);
+
+	// ⭐ 부착 상태 플래그 설정 — 그리드에서 숨김
+	int32 LastIdx = InventoryList.Entries.Num() - 1;
+	InventoryList.Entries[LastIdx].bIsAttachedToWeapon = true;
+	InventoryList.Entries[LastIdx].GridIndex = INDEX_NONE;
+	InventoryList.MarkItemDirty(InventoryList.Entries[LastIdx]);
+
+	// ⭐ OnItemAdded 브로드캐스트 안 함! (부착된 아이템은 그리드에 표시하지 않음)
+
+	return NewItem;
+}
+
 void UInv_InventoryComponent::Server_AddStacksToItem_Implementation(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder) // 서버에서 아이템 스택 개수를 세어주는 역할.
 {
 	const FGameplayTag& ItemType = IsValid(ItemComponent) ? ItemComponent->GetItemManifest().GetItemType() : FGameplayTag::EmptyTag; // 아이템 유형 가져오기
@@ -2650,6 +2681,16 @@ TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave(
 		{
 #if INV_DEBUG_INVENTORY
 			UE_LOG(LogTemp, Warning, TEXT("║ [%d] ⚠️ Item nullptr - 스킵                               ║"), i);
+#endif
+			continue;
+		}
+
+		// ⭐ [부착물 시스템] 무기에 부착된 아이템은 저장 스킵
+		// 부착물 데이터는 무기의 SavedItem.Attachments에 이미 포함됨
+		if (Entry.bIsAttachedToWeapon)
+		{
+#if INV_DEBUG_ATTACHMENT
+			UE_LOG(LogTemp, Log, TEXT("║ [%d] bIsAttachedToWeapon=true → 저장 스킵 (무기 Attachments에 포함됨)"), i);
 #endif
 			continue;
 		}

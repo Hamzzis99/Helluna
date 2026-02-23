@@ -24,6 +24,7 @@
 #include "EquipmentManagement/Components/Inv_EquipmentComponent.h"
 #include "EquipmentManagement/EquipActor/Inv_EquipActor.h"
 #include "Items/Components/Inv_ItemComponent.h"
+#include "Items/Inv_InventoryItem.h"
 #include "Items/Fragments/Inv_AttachmentFragments.h"
 #include "GameplayTagContainer.h"
 
@@ -623,6 +624,46 @@ void AInv_SaveGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
 		const int32 Columns = 8;
 		int32 SavedGridIndex = ItemData.GridPosition.Y * Columns + ItemData.GridPosition.X;
 		InvComp->SetLastEntryGridPosition(SavedGridIndex, ItemData.GridCategory);
+
+		// ── Step 8: [부착물 시스템] 부착물의 FastArray Entry 생성 + OriginalItem 연결 ──
+		// bIsAttachedToWeapon 방식: 부착물도 FastArray에 Entry로 존재해야 분리 시 복원 가능
+		if (ItemData.Attachments.Num() > 0 && IsValid(NewItem))
+		{
+			FInv_AttachmentHostFragment* LoadedHostFrag =
+				NewItem->GetItemManifestMutable().GetFragmentOfTypeMutable<FInv_AttachmentHostFragment>();
+
+			if (LoadedHostFrag)
+			{
+				for (const FInv_SavedAttachmentData& AttSave : ItemData.Attachments)
+				{
+					TSubclassOf<AActor> AttachClass = ResolveItemClass(AttSave.AttachmentItemType);
+					if (!AttachClass) continue;
+
+					UInv_ItemComponent* AttachTemplate = FindItemComponentTemplate(AttachClass);
+					if (!AttachTemplate) continue;
+
+					FInv_ItemManifest AttachManifest = AttachTemplate->GetItemManifest();
+
+					// Fragment 역직렬화 (저장된 스탯 복원)
+					if (AttSave.SerializedManifest.Num() > 0)
+					{
+						AttachManifest.DeserializeAndApplyFragments(AttSave.SerializedManifest);
+					}
+
+					// FastArray에 Entry 추가 (그리드 숨김 상태)
+					UInv_InventoryItem* AttachItem = InvComp->AddAttachedItemFromManifest(AttachManifest);
+					if (!AttachItem) continue;
+
+					// HostFrag의 AttachedItemData에 OriginalItem 포인터 연결
+					LoadedHostFrag->SetOriginalItemForSlot(AttSave.SlotIndex, AttachItem);
+
+#if INV_DEBUG_ATTACHMENT
+					UE_LOG(LogTemp, Log, TEXT("[로드복원] 부착물 Entry 생성: %s → 슬롯 %d, bIsAttachedToWeapon=true, OriginalItem 연결됨"),
+						*AttSave.AttachmentItemType.ToString(), AttSave.SlotIndex);
+#endif
+				}
+			}
+		}
 	}
 
 	// ── 장착 상태 복원 ──

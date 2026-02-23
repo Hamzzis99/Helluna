@@ -147,6 +147,11 @@ public:
 	 */
 	UInv_InventoryItem* AddItemFromManifest(FInv_ItemManifest& ManifestCopy, int32 StackCount);
 
+	// ⭐ [부착물 시스템] 로드 시 부착물 Entry 생성 (그리드에 추가하지 않음)
+	// bIsAttachedToWeapon=true, GridIndex=INDEX_NONE으로 설정
+	// OnItemAdded 브로드캐스트 안 함
+	UInv_InventoryItem* AddAttachedItemFromManifest(FInv_ItemManifest& ManifestCopy);
+
 	// ════════════════════════════════════════════════════════════════
 	// 📌 [부착물 시스템 Phase 3] Entry Index 검색 헬퍼
 	// ════════════════════════════════════════════════════════════════

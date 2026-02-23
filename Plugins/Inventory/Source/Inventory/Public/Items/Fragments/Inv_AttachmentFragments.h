@@ -179,6 +179,19 @@ struct FInv_AttachmentHostFragment : public FInv_ItemFragment
 	void AttachItem(int32 SlotIndex, const FInv_AttachedItemData& Data);
 	FInv_AttachedItemData DetachItem(int32 SlotIndex);
 
+	// ── OriginalItem 포인터 연결 (로드 복원용) ──
+	void SetOriginalItemForSlot(int32 SlotIndex, UInv_InventoryItem* Item)
+	{
+		for (FInv_AttachedItemData& Data : AttachedItems)
+		{
+			if (Data.SlotIndex == SlotIndex)
+			{
+				Data.OriginalItem = Item;
+				return;
+			}
+		}
+	}
+
 	// ── 디자인타임 값 복원 (세이브/로드 후) ──
 	void RestoreDesignTimeSlotPositions(const TArray<FInv_AttachmentSlotDef>& CDOSlotDefs);
 
