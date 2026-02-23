@@ -2690,7 +2690,7 @@ bool UInv_InventoryGrid::HasRoomInActualGrid(const FInv_ItemManifest& Manifest) 
  * 3. GridIndex → GridPosition 변환
  * 4. FInv_SavedItemData 생성
  */
-TArray<FInv_SavedItemData> UInv_InventoryGrid::CollectGridState() const
+TArray<FInv_SavedItemData> UInv_InventoryGrid::CollectGridState(const TSet<UInv_InventoryItem*>* ItemsToSkip) const
 {
 	TArray<FInv_SavedItemData> Result;
 
@@ -2704,6 +2704,10 @@ TArray<FInv_SavedItemData> UInv_InventoryGrid::CollectGridState() const
 	UE_LOG(LogTemp, Warning, TEXT("    ┌─── [CollectGridState] Grid %d (%s) ───┐"), CategoryIndex, GridCategoryStr);
 	UE_LOG(LogTemp, Warning, TEXT("    │ Grid 크기: %d x %d (총 %d 슬롯)"), Columns, Rows, Columns * Rows);
 	UE_LOG(LogTemp, Warning, TEXT("    │ SlottedItems 개수: %d"), SlottedItems.Num());
+	if (ItemsToSkip)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("    │ ItemsToSkip 개수: %d"), ItemsToSkip->Num());
+	}
 #endif
 
 	if (SlottedItems.Num() == 0)
@@ -2747,6 +2751,15 @@ TArray<FInv_SavedItemData> UInv_InventoryGrid::CollectGridState() const
 		{
 #if INV_DEBUG_WIDGET
 			UE_LOG(LogTemp, Warning, TEXT("    │       ⚠️ InventoryItem이 nullptr! 건너뜀"));
+#endif
+			continue;
+		}
+
+		// [BugFix] 장착 아이템 필터링 — Grid에 남아있는 장착 아이템을 제외하여 이중 수집 방지
+		if (ItemsToSkip && ItemsToSkip->Contains(Item))
+		{
+#if INV_DEBUG_WIDGET
+			UE_LOG(LogTemp, Warning, TEXT("    │       🚫 장착 아이템이므로 건너뜀 (ItemsToSkip): %s"), *Item->GetItemManifest().GetItemType().ToString());
 #endif
 			continue;
 		}

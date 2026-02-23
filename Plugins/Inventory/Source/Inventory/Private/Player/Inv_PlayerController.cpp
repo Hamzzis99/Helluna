@@ -79,21 +79,6 @@ void AInv_PlayerController::ToggleInventory()
 	else
 	{
 		HUDWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
-
-		// ============================================
-		// ⭐ [Phase 3 테스트] 인벤토리 닫을 때 Grid 상태 수집
-		// ============================================
-		// TODO: Phase 4 완료 후 이 코드 제거 (RPC로 대체)
-#if INV_DEBUG_PLAYER
-		UE_LOG(LogTemp, Warning, TEXT(""));
-		UE_LOG(LogTemp, Warning, TEXT("🧪 [Phase 3 테스트] 인벤토리 닫힘 → CollectInventoryGridState() 호출"));
-#endif
-
-		TArray<FInv_SavedItemData> CollectedData = CollectInventoryGridState();
-
-#if INV_DEBUG_PLAYER
-		UE_LOG(LogTemp, Warning, TEXT("🧪 [Phase 3 테스트] 수집 완료! %d개 아이템"), CollectedData.Num());
-#endif
 	}
 }
 
@@ -562,11 +547,35 @@ TArray<FInv_SavedItemData> AInv_PlayerController::CollectInventoryGridState()
 #endif
 
 	// ============================================
+	// [BugFix] Step 3.5: 장착 아이템 포인터 Set 구성 (Step 4에서 이중 수집 방지)
+	// ============================================
+	TSet<UInv_InventoryItem*> EquippedItemPtrs;
+	{
+		const TArray<TObjectPtr<UInv_EquippedGridSlot>>& PreEquippedSlots = SpatialInventory->GetEquippedGridSlots();
+		for (const TObjectPtr<UInv_EquippedGridSlot>& Slot : PreEquippedSlots)
+		{
+			if (IsValid(Slot.Get()))
+			{
+				UInv_InventoryItem* EqItem = Slot->GetInventoryItem().Get();
+				if (IsValid(EqItem))
+				{
+					EquippedItemPtrs.Add(EqItem);
+				}
+			}
+		}
+	}
+
+#if INV_DEBUG_PLAYER
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("▶ [Step 3.5] 장착 아이템 필터 Set 구성: %d개"), EquippedItemPtrs.Num());
+#endif
+
+	// ============================================
 	// Step 4: 3개 Grid 접근 및 상태 수집
 	// ============================================
 #if INV_DEBUG_PLAYER
 	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("▶ [Step 4] 3개 Grid에서 아이템 수집"));
+	UE_LOG(LogTemp, Warning, TEXT("▶ [Step 4] 3개 Grid에서 아이템 수집 (장착 아이템 제외)"));
 	UE_LOG(LogTemp, Warning, TEXT("  ┌─────────────────────────────────────────────────────────────┐"));
 #endif
 
@@ -601,8 +610,8 @@ TArray<FInv_SavedItemData> AInv_PlayerController::CollectInventoryGridState()
 			continue;
 		}
 
-		// 각 Grid의 상태 수집
-		TArray<FInv_SavedItemData> GridItems = GridInfo.Grid->CollectGridState();
+		// 각 Grid의 상태 수집 (장착 아이템은 제외)
+		TArray<FInv_SavedItemData> GridItems = GridInfo.Grid->CollectGridState(&EquippedItemPtrs);
 
 #if INV_DEBUG_PLAYER
 		UE_LOG(LogTemp, Warning, TEXT("  │    📦 수집된 아이템: %d개"), GridItems.Num());

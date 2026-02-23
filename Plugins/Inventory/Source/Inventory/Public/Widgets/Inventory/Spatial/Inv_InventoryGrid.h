@@ -102,7 +102,8 @@ public:
 	bool HasRoomInActualGrid(const FInv_ItemManifest& Manifest) const;
 
 	// ⭐ Grid 상태 수집 (저장용) - Split된 스택도 개별 수집
-	TArray<FInv_SavedItemData> CollectGridState() const;
+	// @param ItemsToSkip 수집에서 제외할 아이템 포인터 Set (장착 아이템 중복 수집 방지용, nullptr이면 필터 없음)
+	TArray<FInv_SavedItemData> CollectGridState(const TSet<UInv_InventoryItem*>* ItemsToSkip = nullptr) const;
 
 	// 🔍 [진단] SlottedItems 개수 조회 (디버그용)
 	FORCEINLINE int32 GetSlottedItemCount() const { return SlottedItems.Num(); }

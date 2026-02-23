@@ -693,6 +693,16 @@ void AInv_SaveGameMode::OnPlayerInventoryStateReceived(
 	AInv_PlayerController* PlayerController,
 	const TArray<FInv_SavedItemData>& SavedItems)
 {
+	// [BugFix] Phase 5 우선 가드: 서버 직접 저장(비동기) 진행 중이면 클라이언트 데이터 무시
+	// Phase 5(SaveAllPlayersInventoryDirect)가 FastArray에서 직접 수집한 데이터가 더 정확함
+	if (bAsyncSaveInProgress)
+	{
+#if INV_DEBUG_SAVE
+		UE_LOG(LogTemp, Warning, TEXT("[Phase 5 Guard] ⚠️ 서버 직접 저장 진행 중 — 클라이언트 RPC 데이터 무시"));
+#endif
+		return;
+	}
+
 	FString PlayerId = GetPlayerSaveId(PlayerController);
 	if (PlayerId.IsEmpty())
 	{
