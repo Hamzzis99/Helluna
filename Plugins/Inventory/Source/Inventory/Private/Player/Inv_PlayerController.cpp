@@ -565,6 +565,13 @@ TArray<FInv_SavedItemData> AInv_PlayerController::CollectInventoryGridState()
 		}
 	}
 
+	UE_LOG(LogTemp, Error, TEXT("[Step3.5진단] EquippedItemPtrs 구성: %d개"), EquippedItemPtrs.Num());
+	for (UInv_InventoryItem* EqDiagPtr : EquippedItemPtrs)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Step3.5진단]   -> 포인터=%p, Type=%s"),
+			EqDiagPtr, *EqDiagPtr->GetItemManifest().GetItemType().ToString());
+	}
+
 #if INV_DEBUG_PLAYER
 	UE_LOG(LogTemp, Warning, TEXT(""));
 	UE_LOG(LogTemp, Warning, TEXT("▶ [Step 3.5] 장착 아이템 필터 Set 구성: %d개"), EquippedItemPtrs.Num());
@@ -891,7 +898,9 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 	// PostReplicatedAdd가 모든 아이템을 Grid에 자동 배치했으므로
 	// 장착 아이템이 Grid 공간을 차지하고 있음.
 	// Step 3에서 Grid 위치를 복원하기 전에 제거해야 겹침 방지.
+	// [BugFix] WeaponSlotIndex → 아이템 포인터를 저장하여 Phase 6에서 재사용
 	// ============================================
+	TMap<int32, UInv_InventoryItem*> PreRemovedEquippedItems;
 	{
 		UInv_InventoryGrid* PreEquipGrid = SpatialInventory->GetGrid_Equippables();
 		if (IsValid(PreEquipGrid))
@@ -907,8 +916,9 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 				{
 					bool bPreRemoved = PreEquipGrid->RemoveSlottedItemByPointer(Found);
 					TempProcessedEquip.Add(Found);
+					PreRemovedEquippedItems.Add(EqItem.WeaponSlotIndex, Found);
 #if INV_DEBUG_PLAYER
-					UE_LOG(LogTemp, Warning, TEXT("[Pre-Equip] Grid에서 장착 아이템 선제거: %s (슬롯 %d) → %s"),
+					UE_LOG(LogTemp, Warning, TEXT("[Pre-Equip] Grid에서 장착 아이템 선제거: %s (슬롯 %d) → %s (포인터 저장됨)"),
 						*EqItem.ItemType.ToString(), EqItem.WeaponSlotIndex,
 						bPreRemoved ? TEXT("성공") : TEXT("실패"));
 #endif
@@ -1079,11 +1089,25 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 			UE_LOG(LogTemp, Warning, TEXT("  │       ✅ TargetSlot 찾음: %s"), *TargetSlot->GetName());
 #endif
 
-			// InventoryComponent에서 해당 ItemType 아이템 찾기
+			// [BugFix] Pre-remove에서 저장한 정확한 인스턴스 사용, fallback으로 FindItemByTypeExcluding
+			UInv_InventoryItem* FoundItem = nullptr;
+			UInv_InventoryItem** PreRemovedPtr = PreRemovedEquippedItems.Find(ItemData.WeaponSlotIndex);
+			if (PreRemovedPtr && IsValid(*PreRemovedPtr))
+			{
+				FoundItem = *PreRemovedPtr;
 #if INV_DEBUG_PLAYER
-			UE_LOG(LogTemp, Warning, TEXT("  │       🔍 FindItemByType 호출: %s"), *ItemData.ItemType.ToString());
+				UE_LOG(LogTemp, Warning, TEXT("  │       ✅ Pre-remove 포인터 사용: %s (슬롯 %d)"),
+					*FoundItem->GetItemManifest().GetItemType().ToString(), ItemData.WeaponSlotIndex);
 #endif
-			UInv_InventoryItem* FoundItem = InventoryComponent->FindItemByTypeExcluding(ItemData.ItemType, ProcessedEquipItems);
+			}
+			else
+			{
+				// fallback: Pre-remove에서 못 찾은 경우 (타이밍 이슈 등)
+#if INV_DEBUG_PLAYER
+				UE_LOG(LogTemp, Warning, TEXT("  │       ⚠️ Pre-remove 포인터 없음 → FindItemByTypeExcluding fallback: %s"), *ItemData.ItemType.ToString());
+#endif
+				FoundItem = InventoryComponent->FindItemByTypeExcluding(ItemData.ItemType, ProcessedEquipItems);
+			}
 			if (!IsValid(FoundItem))
 			{
 #if INV_DEBUG_PLAYER
@@ -1108,24 +1132,26 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 					*ItemData.ItemType.ToString(), ItemData.WeaponSlotIndex);
 #endif
 
-				// 🆕 [Phase 6] Grid에서 장착된 아이템 제거 (중복 저장 방지)
-				UInv_InventoryGrid* EquipGrid = SpatialInventory->GetGrid_Equippables();
-				if (IsValid(EquipGrid))
+				// [BugFix] Grid에서 장착 아이템 제거 — Pre-remove에서 이미 제거했으면 스킵
+				if (!PreRemovedPtr || !IsValid(*PreRemovedPtr))
 				{
-					bool bRemoved = EquipGrid->RemoveSlottedItemByPointer(FoundItem);
-					if (bRemoved)
+					// fallback 경로: Pre-remove를 안 거쳤으므로 여기서 Grid 제거 시도
+					UInv_InventoryGrid* EquipGrid = SpatialInventory->GetGrid_Equippables();
+					if (IsValid(EquipGrid))
 					{
+						bool bRemoved = EquipGrid->RemoveSlottedItemByPointer(FoundItem);
 #if INV_DEBUG_PLAYER
-						UE_LOG(LogTemp, Warning, TEXT("  │       🗑️ Grid에서 장착 아이템 제거 완료"));
-#endif
-					}
-					else
-					{
-#if INV_DEBUG_PLAYER
-						UE_LOG(LogTemp, Warning, TEXT("  │       ⚠️ Grid에서 아이템 제거 실패 (이미 없음?)"));
+						UE_LOG(LogTemp, Warning, TEXT("  │       🗑️ Grid 제거 (fallback): %s"),
+							bRemoved ? TEXT("성공") : TEXT("실패"));
 #endif
 					}
 				}
+#if INV_DEBUG_PLAYER
+				else
+				{
+					UE_LOG(LogTemp, Warning, TEXT("  │       ✅ Grid 제거 스킵 (Pre-remove에서 이미 처리됨)"));
+				}
+#endif
 
 				// 장착 델리게이트 브로드캐스트 (무기 Actor 스폰용)
 #if INV_DEBUG_PLAYER
@@ -1149,6 +1175,36 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 #if INV_DEBUG_PLAYER
 		UE_LOG(LogTemp, Warning, TEXT("  │   ⚠️ SpatialInventory를 찾을 수 없음!"));
 #endif
+	}
+
+	// ============================================
+	// Fix 10: 복원 완료 후 서버에 올바른 Grid 위치 동기화
+	// ============================================
+	// PostReplicatedAdd 시 장착 아이템(GridIndex=INDEX_NONE)이 "first available" 슬롯에
+	// 배치되면서 Server_UpdateItemGridPosition RPC가 서버의 GridIndex를 덮어씀.
+	// MoveItemByCurrentIndex는 RPC를 보내지 않으므로, 복원 후 명시적으로 동기화 필요.
+	for (const FGridRestoreInfo& GridInfo : Grids)
+	{
+		if (IsValid(GridInfo.Grid))
+		{
+			GridInfo.Grid->SendAllItemPositionsToServer();
+			UE_LOG(LogTemp, Warning, TEXT("[Fix10] %s 위치 서버 동기화 완료"), GridInfo.Name);
+		}
+	}
+
+	// Fix 10: 장착 아이템의 GridIndex를 서버에서 INDEX_NONE으로 재설정
+	// PostReplicatedAdd → AddItem → UpdateGridSlots의 RPC가 서버의 GridIndex를 덮어썼으므로 복구
+	if (InventoryComponent.IsValid())
+	{
+		for (const auto& [SlotIdx, EquippedItem] : PreRemovedEquippedItems)
+		{
+			if (IsValid(EquippedItem))
+			{
+				InventoryComponent->Server_UpdateItemGridPosition(EquippedItem, INDEX_NONE, 0);
+				UE_LOG(LogTemp, Warning, TEXT("[Fix10] 장착 아이템 GridIndex 서버 클리어: %s (WeaponSlot=%d)"),
+					*EquippedItem->GetItemManifest().GetItemType().ToString(), SlotIdx);
+			}
+		}
 	}
 
 #if INV_DEBUG_PLAYER
@@ -1353,6 +1409,17 @@ void AInv_PlayerController::Client_ReceiveInventoryDataChunk_Implementation(
 		ChunkItems.Num(),
 		bIsLastChunk ? TEXT("true") : TEXT("false"),
 		PendingSavedItems.Num());
+
+	// [Fix10-Recv진단] 청크 수신 데이터 확인
+	for (int32 DiagIdx = 0; DiagIdx < ChunkItems.Num(); DiagIdx++)
+	{
+		const FInv_SavedItemData& DiagItem = ChunkItems[DiagIdx];
+		UE_LOG(LogTemp, Error, TEXT("[Fix10-Recv진단] 수신 Item[%d] %s: GridPos=(%d,%d), bEquipped=%s, WeaponSlot=%d"),
+			PendingSavedItems.Num() + DiagIdx, *DiagItem.ItemType.ToString(),
+			DiagItem.GridPosition.X, DiagItem.GridPosition.Y,
+			DiagItem.bEquipped ? TEXT("TRUE") : TEXT("FALSE"),
+			DiagItem.WeaponSlotIndex);
+	}
 
 	PendingSavedItems.Append(ChunkItems);
 

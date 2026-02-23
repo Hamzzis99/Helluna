@@ -1106,6 +1106,13 @@ UInv_HoverItem* UInv_InventoryGrid::GetHoverItem() const
 // 인벤토리 스택 쌓는 부분.
 void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 {
+	UE_LOG(LogTemp, Error, TEXT("[Grid-AddItem진단] %s Grid에 추가됨 — NetMode=%d, 포인터=%p, Category=%d, 호출자=%s"),
+		Item ? *Item->GetItemManifest().GetItemType().ToString() : TEXT("nullptr"),
+		GetWorld() ? (int32)GetWorld()->GetNetMode() : -1,
+		Item,
+		(int32)ItemCategory,
+		TEXT(__FUNCTION__));
+
 #if INV_DEBUG_WIDGET
 	// 🔍 [진단] AddItem 시 Grid 주소 및 SlottedItems 상태 확인
 	UE_LOG(LogTemp, Error, TEXT("🔍 [AddItem 진단] Grid주소=%p, Category=%d, SlottedItems=%d, Item=%s, EntryIndex=%d"),
@@ -2694,10 +2701,19 @@ TArray<FInv_SavedItemData> UInv_InventoryGrid::CollectGridState(const TSet<UInv_
 {
 	TArray<FInv_SavedItemData> Result;
 
+	// [진단1] Skip 동작 추적용 카운터
+	int32 DiagCollectedCount = 0;
+	int32 DiagSkippedCount = 0;
+
 	// 카테고리 이름 변환
 	const TCHAR* GridCategoryNames[] = { TEXT("장비"), TEXT("소모품"), TEXT("재료") };
 	const int32 CategoryIndex = static_cast<int32>(ItemCategory);
 	const TCHAR* GridCategoryStr = (CategoryIndex >= 0 && CategoryIndex < 3) ? GridCategoryNames[CategoryIndex] : TEXT("???");
+
+	UE_LOG(LogTemp, Error, TEXT("[CollectGridState진단] 시작 — Grid %d (%s), ItemsToSkip=%s, Skip수=%d"),
+		CategoryIndex, GridCategoryStr,
+		ItemsToSkip ? TEXT("있음") : TEXT("nullptr"),
+		ItemsToSkip ? ItemsToSkip->Num() : 0);
 
 #if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT(""));
@@ -2758,6 +2774,9 @@ TArray<FInv_SavedItemData> UInv_InventoryGrid::CollectGridState(const TSet<UInv_
 		// [BugFix] 장착 아이템 필터링 — Grid에 남아있는 장착 아이템을 제외하여 이중 수집 방지
 		if (ItemsToSkip && ItemsToSkip->Contains(Item))
 		{
+			UE_LOG(LogTemp, Error, TEXT("[CollectGridState진단] SKIP: %s (포인터=%p)"),
+				*Item->GetItemManifest().GetItemType().ToString(), Item);
+			DiagSkippedCount++;
 #if INV_DEBUG_WIDGET
 			UE_LOG(LogTemp, Warning, TEXT("    │       🚫 장착 아이템이므로 건너뜀 (ItemsToSkip): %s"), *Item->GetItemManifest().GetItemType().ToString());
 #endif
@@ -2875,6 +2894,11 @@ TArray<FInv_SavedItemData> UInv_InventoryGrid::CollectGridState(const TSet<UInv_
 			}
 		}
 
+		UE_LOG(LogTemp, Error, TEXT("[CollectGridState진단] 수집: %s (포인터=%p, Pos=(%d,%d))"),
+			*Item->GetItemManifest().GetItemType().ToString(), Item,
+			GridPosition.X, GridPosition.Y);
+		DiagCollectedCount++;
+
 		Result.Add(SavedData);
 
 #if INV_DEBUG_WIDGET
@@ -2883,6 +2907,9 @@ TArray<FInv_SavedItemData> UInv_InventoryGrid::CollectGridState(const TSet<UInv_
 
 		ItemIndex++;
 	}
+
+	UE_LOG(LogTemp, Error, TEXT("[CollectGridState진단] 완료 — Grid %d: 총 수집=%d개, Skip=%d개"),
+		CategoryIndex, DiagCollectedCount, DiagSkippedCount);
 
 #if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("    │"));
@@ -2967,8 +2994,34 @@ int32 UInv_InventoryGrid::RestoreItemPositions(const TArray<FInv_SavedItemData>&
 		}
 		else
 		{
+			// Fix 9: 좌표 충돌 시 빈 슬롯으로 fallback 배치
+			bool bFallbackSuccess = false;
+			for (int32 SlotIdx = 0; SlotIdx < GridSlots.Num(); SlotIdx++)
+			{
+				if (GridSlots.IsValidIndex(SlotIdx) && !GridSlots[SlotIdx]->GetInventoryItem().IsValid())
+				{
+					const FIntPoint FallbackPos = UInv_WidgetUtils::GetPositionFromIndex(SlotIdx, Columns);
+					if (MoveItemByCurrentIndex(CurrentGridIndex, FallbackPos, SavedItem.StackCount))
+					{
+						UE_LOG(LogTemp, Warning, TEXT("[Fix9] 좌표 충돌 fallback 성공: %s, 원래 Pos=(%d,%d) → fallback Pos=(%d,%d)"),
+							*SavedItem.ItemType.ToString(),
+							SavedItem.GridPosition.X, SavedItem.GridPosition.Y,
+							FallbackPos.X, FallbackPos.Y);
+						bFallbackSuccess = true;
+						RestoredCount++;
+						break;
+					}
+				}
+			}
+			if (!bFallbackSuccess)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[Fix9] 좌표 충돌 fallback 실패 — 빈 슬롯 없음: %s, Pos=(%d,%d)"),
+					*SavedItem.ItemType.ToString(),
+					SavedItem.GridPosition.X, SavedItem.GridPosition.Y);
+			}
 #if INV_DEBUG_WIDGET
-			UE_LOG(LogTemp, Warning, TEXT("    │     ⚠️ 복원 실패"));
+			UE_LOG(LogTemp, Warning, TEXT("    │     ⚠️ 복원 실패 (fallback %s)"),
+				bFallbackSuccess ? TEXT("성공") : TEXT("실패"));
 #endif
 		}
 	}

@@ -230,10 +230,38 @@ int32 AInv_SaveGameMode::SaveAllPlayersInventoryDirect()
 		UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
 		if (!IsValid(InvComp)) continue;
 
+		UE_LOG(LogTemp, Error, TEXT("[서버저장진단] 저장 시작 — HasAuthority=%s, 호출함수=%s, PlayerId=%s"),
+			HasAuthority() ? TEXT("서버") : TEXT("클라"),
+			TEXT(__FUNCTION__), *PlayerId);
+
 		TArray<FInv_SavedItemData> CollectedItems = InvComp->CollectInventoryDataForSave();
 
 		// ── Step 2: EquipmentComponent에서 장착 상태 병합 ──
 		MergeEquipmentState(PC, CollectedItems);
+
+		// Fix 8: 장착 아이템의 GridPosition 강제 무효화 — 좌표 중복 방어
+		for (FInv_SavedItemData& SavedItem : CollectedItems)
+		{
+			if (SavedItem.bEquipped && SavedItem.GridPosition != FIntPoint(-1, -1))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[Fix8] 장착 아이템 GridPosition 강제 초기화: %s, 기존 Pos=(%d,%d) → (-1,-1)"),
+					*SavedItem.ItemType.ToString(), SavedItem.GridPosition.X, SavedItem.GridPosition.Y);
+				SavedItem.GridPosition = FIntPoint(-1, -1);
+			}
+		}
+
+		UE_LOG(LogTemp, Error, TEXT("[서버저장진단] 수집된 총 아이템: %d개 (PlayerId=%s)"), CollectedItems.Num(), *PlayerId);
+		for (int32 DiagIdx = 0; DiagIdx < CollectedItems.Num(); DiagIdx++)
+		{
+			const FInv_SavedItemData& DiagItem = CollectedItems[DiagIdx];
+			UE_LOG(LogTemp, Error, TEXT("[서버저장진단]   [%d] %s, bEquipped=%s, WeaponSlot=%d, Pos=(%d,%d), GridCat=%d"),
+				DiagIdx,
+				*DiagItem.ItemType.ToString(),
+				DiagItem.bEquipped ? TEXT("TRUE") : TEXT("false"),
+				DiagItem.WeaponSlotIndex,
+				DiagItem.GridPosition.X, DiagItem.GridPosition.Y,
+				DiagItem.GridCategory);
+		}
 
 		if (CollectedItems.Num() == 0) continue;
 
@@ -455,6 +483,18 @@ void AInv_SaveGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
 		if (!ActorClass) return nullptr;
 		return FindItemComponentTemplate(ActorClass);
 	});
+	// Fix 10: 로드된 데이터 정리 — 이전 세션(Fix 7/8 미적용) 세이브 파일 호환
+	// 장착 아이템의 stale GridPosition이 남아있으면 클라이언트 Grid 배치가 꼬임
+	for (FInv_SavedItemData& LoadItem : LoadedData.Items)
+	{
+		if (LoadItem.bEquipped && LoadItem.GridPosition != FIntPoint(-1, -1))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[Fix10-Load] 장착 아이템 GridPosition 정리: %s, 기존 Pos=(%d,%d) → (-1,-1)"),
+				*LoadItem.ItemType.ToString(), LoadItem.GridPosition.X, LoadItem.GridPosition.Y);
+			LoadItem.GridPosition = FIntPoint(-1, -1);
+		}
+	}
+
 	InvComp->RestoreFromSaveData(LoadedData, Resolver);
 
 	// ── 클라이언트에 데이터 전송 (청크 분할) ──
@@ -464,6 +504,17 @@ void AInv_SaveGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
 	{
 		const TArray<FInv_SavedItemData>& AllItems = LoadedData.Items;
 		constexpr int32 ChunkSize = 5;
+
+		// [Fix10-Chunk진단] 전송 전 데이터 확인
+		for (int32 DiagIdx = 0; DiagIdx < AllItems.Num(); DiagIdx++)
+		{
+			const FInv_SavedItemData& DiagItem = AllItems[DiagIdx];
+			UE_LOG(LogTemp, Error, TEXT("[Fix10-Chunk진단] 전송 Item[%d] %s: GridPos=(%d,%d), bEquipped=%s, WeaponSlot=%d"),
+				DiagIdx, *DiagItem.ItemType.ToString(),
+				DiagItem.GridPosition.X, DiagItem.GridPosition.Y,
+				DiagItem.bEquipped ? TEXT("TRUE") : TEXT("FALSE"),
+				DiagItem.WeaponSlotIndex);
+		}
 
 		if (AllItems.Num() <= ChunkSize)
 		{

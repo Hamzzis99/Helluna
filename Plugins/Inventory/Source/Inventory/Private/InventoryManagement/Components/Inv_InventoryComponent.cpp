@@ -458,6 +458,23 @@ void UInv_InventoryComponent::RestoreFromSaveData(
 				ProcessedEquipItems.Add(FoundItem);
 			}
 		}
+
+		// Fix 7: 장착된 아이템의 서버 FastArray Entry GridIndex 클리어 — Phase 5 저장 시 좌표 중복 방지
+		for (UInv_InventoryItem* EquippedItem : ProcessedEquipItems)
+		{
+			for (int32 i = 0; i < InventoryList.Entries.Num(); i++)
+			{
+				if (InventoryList.Entries[i].Item == EquippedItem)
+				{
+					InventoryList.Entries[i].GridIndex = INDEX_NONE;
+					InventoryList.Entries[i].GridCategory = 0;
+					// MarkItemDirty 호출 금지! 리플리케이션 트리거 시 PostReplicatedChange → AddItem으로 아이템이 Grid에 다시 나타남
+					UE_LOG(LogTemp, Warning, TEXT("[Fix7-Restore] 장착 아이템 GridIndex 클리어: %s (Entry[%d])"),
+						*EquippedItem->GetItemManifest().GetItemType().ToString(), i);
+					break;
+				}
+			}
+		}
 	}
 
 	bInventoryRestored = true;
@@ -1676,6 +1693,25 @@ void UInv_InventoryComponent::Multicast_EquipSlotClicked_Implementation(UInv_Inv
 	// 장비 컴포넌트가 이 델리게이트를 수신 대기합니다.
 	OnItemEquipped.Broadcast(ItemToEquip, WeaponSlotIndex);
 	OnItemUnequipped.Broadcast(ItemToUnequip, WeaponSlotIndex);
+
+	// Fix 7: 장착 시 서버 FastArray Entry의 GridIndex 클리어 — Phase 5 좌표 중복 방지
+	if (GetOwner() && GetOwner()->HasAuthority() && IsValid(ItemToEquip))
+	{
+		for (int32 i = 0; i < InventoryList.Entries.Num(); i++)
+		{
+			if (InventoryList.Entries[i].Item == ItemToEquip)
+			{
+				InventoryList.Entries[i].GridIndex = INDEX_NONE;
+				InventoryList.Entries[i].GridCategory = 0;
+				// MarkItemDirty 호출 금지! 리플리케이션 트리거 시 PostReplicatedChange → AddItem으로 아이템이 Grid에 다시 나타남
+#if INV_DEBUG_INVENTORY
+				UE_LOG(LogTemp, Warning, TEXT("[Fix7] 장착 아이템 GridIndex 클리어: %s (Entry[%d])"),
+					*ItemToEquip->GetItemManifest().GetItemType().ToString(), i);
+#endif
+				break;
+			}
+		}
+	}
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -2384,10 +2420,12 @@ void UInv_InventoryComponent::Server_UpdateItemGridPosition_Implementation(UInv_
 		{
 			InventoryList.Entries[i].GridIndex = GridIndex;
 			InventoryList.Entries[i].GridCategory = GridCategory;
-			InventoryList.MarkItemDirty(InventoryList.Entries[i]);
+			// Fix 11: MarkItemDirty 제거 — Server_UpdateItemGridPosition은 항상 클라→서버 RPC이므로
+			// 클라이언트가 이미 올바른 GridIndex를 알고 있음. 서버→클라 역리플리케이션은 불필요하며,
+			// PostReplicatedChange → AddItem → UpdateGridSlots → RPC 순환 오염의 원인.
 
 #if INV_DEBUG_INVENTORY
-			UE_LOG(LogTemp, Log, TEXT("[Server_UpdateItemGridPosition] Entry[%d] 업데이트: %s → Grid%d Index=%d"),
+			UE_LOG(LogTemp, Log, TEXT("[Server_UpdateItemGridPosition] Entry[%d] 업데이트: %s → Grid%d Index=%d (MarkItemDirty 스킵)"),
 				i, *Item->GetItemManifest().GetItemType().ToString(), GridCategory, GridIndex);
 #endif
 			return;
@@ -2869,6 +2907,13 @@ TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave(
 		{
 			GridPosition = FIntPoint(-1, -1);  // 미배치
 		}
+
+		// [Fix10-Save진단] 저장 시 GridPosition 출처 확인
+		UE_LOG(LogTemp, Error, TEXT("[Fix10-Save진단] Entry[%d] %s: Entry.GridIndex=%d, GridColumns=%d, SavedItem.GridPosition=(%d,%d), GridCat=%d"),
+			i, *ItemType.ToString(),
+			GridIndex, LocalGridColumns,
+			GridPosition.X, GridPosition.Y,
+			GridCategory);
 
 		// FInv_SavedItemData 생성
 		FInv_SavedItemData SavedItem(ItemType, StackCount, GridPosition, GridCategory);
