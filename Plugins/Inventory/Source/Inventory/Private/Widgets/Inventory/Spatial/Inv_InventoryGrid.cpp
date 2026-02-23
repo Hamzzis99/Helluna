@@ -2937,11 +2937,16 @@ int32 UInv_InventoryGrid::RestoreItemPositions(const TArray<FInv_SavedItemData>&
 #endif
 
 	// ============================================
-	// 🔧 [핵심 수정] 순서 기반 이동으로 변경
+	// Fix 12: Two-pass clear-and-place 방식
 	// ============================================
-	// 문제: ItemType + StackCount로 찾으면 같은 타입/수량의 아이템이 
-	//       여러 개 있을 때 첫 번째 것만 계속 찾음
-	// 해결: 저장된 순서와 현재 SlottedItems 순서를 1:1 매칭
+	// 문제: 기존 순서 기반 1:1 매칭은 SavedItems 순서(Entry 생성 순서)와
+	//       SortedKeys 순서(GridIndex 오름차순)가 불일치하면
+	//       서로 다른 타입의 아이템이 뒤바뀌어 배치됨.
+	//       또한 PostReplicatedAdd의 장착 아이템이 슬롯을 선점하여
+	//       MoveItemByCurrentIndex가 충돌로 실패하는 연쇄 반응 발생.
+	// 해결: Phase 1에서 Grid를 완전히 비우고,
+	//       Phase 2에서 ItemType 매칭으로 올바른 위치에 직접 배치.
+	//       충돌이 원천 차단되므로 Fix 9 fallback 최소화.
 	// ============================================
 
 	// 1. 이 Grid 카테고리에 해당하는 저장 데이터만 필터링
@@ -2958,59 +2963,163 @@ int32 UInv_InventoryGrid::RestoreItemPositions(const TArray<FInv_SavedItemData>&
 	UE_LOG(LogTemp, Warning, TEXT("    │ 이 Grid 카테고리 아이템: %d개"), FilteredSavedItems.Num());
 #endif
 
-	// 2. 현재 SlottedItems의 키(GridIndex)를 정렬하여 배열로 만듦
-	TArray<int32> SortedKeys;
-	SlottedItems.GetKeys(SortedKeys);
-	SortedKeys.Sort();  // 오름차순 정렬 (저장 시 순회 순서와 동일)
+	// 2. 현재 Grid의 모든 아이템 정보 수집
+	struct FCollectedItemInfo
+	{
+		UInv_SlottedItem* SlottedItem;
+		UInv_InventoryItem* InventoryItem;
+		int32 OriginalGridIndex;
+		FIntPoint Dimensions;
+		float ItemPadding;
+		bool bUsed;
+	};
+
+	TArray<FCollectedItemInfo> CollectedItems;
+	TArray<int32> AllKeys;
+	SlottedItems.GetKeys(AllKeys);
+
+	for (int32 Key : AllKeys)
+	{
+		UInv_SlottedItem* Slotted = SlottedItems.FindRef(Key);
+		if (IsValid(Slotted) && Slotted->GetInventoryItem())
+		{
+			FCollectedItemInfo Info;
+			Info.SlottedItem = Slotted;
+			Info.InventoryItem = Slotted->GetInventoryItem();
+			Info.OriginalGridIndex = Key;
+			const FInv_GridFragment* GridFragment = GetFragment<FInv_GridFragment>(Info.InventoryItem, FragmentTags::GridFragment);
+			Info.Dimensions = GridFragment ? GridFragment->GetGridSize() : FIntPoint(1, 1);
+			Info.ItemPadding = GridFragment ? GridFragment->GetGridPadding() : 0.0f;
+			Info.bUsed = false;
+			CollectedItems.Add(Info);
+		}
+	}
 
 #if INV_DEBUG_WIDGET
-	UE_LOG(LogTemp, Warning, TEXT("    │ 현재 SlottedItems 개수: %d"), SortedKeys.Num());
+	UE_LOG(LogTemp, Warning, TEXT("    │ 현재 SlottedItems 개수: %d"), CollectedItems.Num());
 #endif
 
-	// 3. 1:1 매칭하여 이동
-	int32 RestoredCount = 0;
-	const int32 MatchCount = FMath::Min(SortedKeys.Num(), FilteredSavedItems.Num());
-
-	for (int32 i = 0; i < MatchCount; i++)
+	// ============================================
+	// Phase 1: Grid의 모든 슬롯 비우기
+	// ============================================
+	for (const FCollectedItemInfo& Info : CollectedItems)
 	{
-		const int32 CurrentGridIndex = SortedKeys[i];
+		UInv_InventoryStatics::ForEach2D(GridSlots, Info.OriginalGridIndex, Info.Dimensions, Columns, [](UInv_GridSlot* GridSlot)
+		{
+			if (GridSlot)
+			{
+				GridSlot->SetInventoryItem(nullptr);
+				GridSlot->SetUpperLeftIndex(INDEX_NONE);
+				GridSlot->SetStackCount(0);
+				GridSlot->SetAvailable(true);
+				GridSlot->SetUnoccupiedTexture();
+			}
+		});
+		SetOccupiedBits(Info.OriginalGridIndex, Info.Dimensions, false);
+	}
+	SlottedItems.Empty();
+
+#if INV_DEBUG_WIDGET
+	UE_LOG(LogTemp, Warning, TEXT("    │ Phase 1: Grid 비우기 완료 (%d개 아이템 수집)"), CollectedItems.Num());
+#endif
+
+	// ============================================
+	// Phase 2: ItemType 매칭으로 저장 위치에 직접 배치
+	// ============================================
+	// 배치 람다 — 지정된 GridIndex에 아이템 배치
+	auto PlaceItemAtGridIndex = [this](FCollectedItemInfo& Info, int32 TargetIndex, const FIntPoint& TargetPosition, int32 StackCount)
+	{
+		SlottedItems.Add(TargetIndex, Info.SlottedItem);
+
+		bool bIsFirstSlot = true;
+		UInv_InventoryStatics::ForEach2D(GridSlots, TargetIndex, Info.Dimensions, Columns, [&](UInv_GridSlot* GridSlot)
+		{
+			if (GridSlot)
+			{
+				GridSlot->SetInventoryItem(Info.InventoryItem);
+				GridSlot->SetUpperLeftIndex(TargetIndex);
+				GridSlot->SetOccupiedTexture();
+				GridSlot->SetAvailable(false);
+				if (bIsFirstSlot)
+				{
+					GridSlot->SetStackCount(StackCount);
+					bIsFirstSlot = false;
+				}
+			}
+		});
+		SetOccupiedBits(TargetIndex, Info.Dimensions, true);
+
+		Info.SlottedItem->SetGridIndex(TargetIndex);
+		Info.SlottedItem->UpdateStackCount(StackCount);
+
+		UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(Info.SlottedItem->Slot);
+		if (CanvasSlot)
+		{
+			const FVector2D DrawPos = FVector2D(TargetPosition.X * TileSize, TargetPosition.Y * TileSize);
+			CanvasSlot->SetPosition(DrawPos + FVector2D(Info.ItemPadding));
+		}
+
+		Info.bUsed = true;
+	};
+
+	int32 RestoredCount = 0;
+	for (int32 i = 0; i < FilteredSavedItems.Num(); i++)
+	{
 		const FInv_SavedItemData& SavedItem = FilteredSavedItems[i];
+		const int32 TargetIndex = UInv_WidgetUtils::GetIndexFromPosition(SavedItem.GridPosition, Columns);
 
 #if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("    │"));
-		UE_LOG(LogTemp, Warning, TEXT("    │ [%d] %s x%d → Pos(%d,%d)"),
+		UE_LOG(LogTemp, Warning, TEXT("    │ [%d] %s x%d → Pos(%d,%d) (TargetIndex=%d)"),
 			i, *SavedItem.ItemType.ToString(), SavedItem.StackCount,
-			SavedItem.GridPosition.X, SavedItem.GridPosition.Y);
+			SavedItem.GridPosition.X, SavedItem.GridPosition.Y, TargetIndex);
 #endif
 
-		// 현재 GridIndex의 아이템을 저장된 위치로 이동
-		// ⭐ Phase 5: SavedItem.StackCount를 세 번째 파라미터로 전달!
-		if (MoveItemByCurrentIndex(CurrentGridIndex, SavedItem.GridPosition, SavedItem.StackCount))
+		// ItemType으로 매칭되는 미사용 아이템 검색
+		FCollectedItemInfo* MatchedItem = nullptr;
+		for (FCollectedItemInfo& Info : CollectedItems)
 		{
+			if (!Info.bUsed && Info.InventoryItem->GetItemManifest().GetItemType() == SavedItem.ItemType)
+			{
+				MatchedItem = &Info;
+				break;
+			}
+		}
+
+		if (!MatchedItem)
+		{
+#if INV_DEBUG_WIDGET
+			UE_LOG(LogTemp, Warning, TEXT("    │     ⚠️ 매칭 실패: %s 타입 아이템 없음"), *SavedItem.ItemType.ToString());
+#endif
+			continue;
+		}
+
+		// 목표 위치에 직접 배치 시도 (Phase 1에서 비웠으므로 충돌 없어야 함)
+		if (GridSlots.IsValidIndex(TargetIndex) && !GridSlots[TargetIndex]->GetInventoryItem().IsValid())
+		{
+			PlaceItemAtGridIndex(*MatchedItem, TargetIndex, SavedItem.GridPosition, SavedItem.StackCount);
+			RestoredCount++;
 #if INV_DEBUG_WIDGET
 			UE_LOG(LogTemp, Warning, TEXT("    │     ✅ 복원 성공!"));
 #endif
-			RestoredCount++;
 		}
 		else
 		{
-			// Fix 9: 좌표 충돌 시 빈 슬롯으로 fallback 배치
+			// Fix 9: 세이브 데이터 좌표 중복 시 빈 슬롯으로 fallback 배치
 			bool bFallbackSuccess = false;
 			for (int32 SlotIdx = 0; SlotIdx < GridSlots.Num(); SlotIdx++)
 			{
 				if (GridSlots.IsValidIndex(SlotIdx) && !GridSlots[SlotIdx]->GetInventoryItem().IsValid())
 				{
 					const FIntPoint FallbackPos = UInv_WidgetUtils::GetPositionFromIndex(SlotIdx, Columns);
-					if (MoveItemByCurrentIndex(CurrentGridIndex, FallbackPos, SavedItem.StackCount))
-					{
-						UE_LOG(LogTemp, Warning, TEXT("[Fix9] 좌표 충돌 fallback 성공: %s, 원래 Pos=(%d,%d) → fallback Pos=(%d,%d)"),
-							*SavedItem.ItemType.ToString(),
-							SavedItem.GridPosition.X, SavedItem.GridPosition.Y,
-							FallbackPos.X, FallbackPos.Y);
-						bFallbackSuccess = true;
-						RestoredCount++;
-						break;
-					}
+					PlaceItemAtGridIndex(*MatchedItem, SlotIdx, FallbackPos, SavedItem.StackCount);
+					bFallbackSuccess = true;
+					RestoredCount++;
+					UE_LOG(LogTemp, Warning, TEXT("[Fix9] 좌표 충돌 fallback 성공: %s, 원래 Pos=(%d,%d) → fallback Pos=(%d,%d)"),
+						*SavedItem.ItemType.ToString(),
+						SavedItem.GridPosition.X, SavedItem.GridPosition.Y,
+						FallbackPos.X, FallbackPos.Y);
+					break;
 				}
 			}
 			if (!bFallbackSuccess)
@@ -3023,6 +3132,26 @@ int32 UInv_InventoryGrid::RestoreItemPositions(const TArray<FInv_SavedItemData>&
 			UE_LOG(LogTemp, Warning, TEXT("    │     ⚠️ 복원 실패 (fallback %s)"),
 				bFallbackSuccess ? TEXT("성공") : TEXT("실패"));
 #endif
+		}
+	}
+
+	// Phase 3: 세이브 데이터에 없는 잔여 아이템 처리 (빈 슬롯에 배치)
+	for (FCollectedItemInfo& Info : CollectedItems)
+	{
+		if (!Info.bUsed)
+		{
+			for (int32 SlotIdx = 0; SlotIdx < GridSlots.Num(); SlotIdx++)
+			{
+				if (GridSlots.IsValidIndex(SlotIdx) && !GridSlots[SlotIdx]->GetInventoryItem().IsValid())
+				{
+					const FIntPoint FallbackPos = UInv_WidgetUtils::GetPositionFromIndex(SlotIdx, Columns);
+					PlaceItemAtGridIndex(Info, SlotIdx, FallbackPos, 1);
+					UE_LOG(LogTemp, Warning, TEXT("[Fix12] 잔여 아이템 배치: %s → fallback Pos=(%d,%d)"),
+						*Info.InventoryItem->GetItemManifest().GetItemType().ToString(),
+						FallbackPos.X, FallbackPos.Y);
+					break;
+				}
+			}
 		}
 	}
 
