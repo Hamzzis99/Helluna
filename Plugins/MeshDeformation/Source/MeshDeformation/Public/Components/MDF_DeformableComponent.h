@@ -129,63 +129,63 @@ public:
     bool bFastArrayBatchPending = false;
 
     /** 원본으로 사용할 StaticMesh 에셋 */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|설정", meta = (DisplayName = "스태틱 메쉬(StaticMesh)"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|설정", meta = (DisplayName = "스태틱 메시"))
     TObjectPtr<UStaticMesh> SourceStaticMesh;
 
     /** 에셋을 기반으로 DynamicMesh를 초기화하는 함수 */
-    UFUNCTION(BlueprintCallable, Category = "MeshDeformation")
+    UFUNCTION(BlueprintCallable, Category = "메시변형")
     void InitializeDynamicMesh();
 
     /** 월드 좌표 -> 로컬 좌표 변환 */
-    UFUNCTION(BlueprintCallable, Category = "MeshDeformation|수학")
+    UFUNCTION(BlueprintCallable, Category = "메시변형|수학")
     FVector ConvertWorldToLocal(FVector WorldLocation);
 
     /** 월드 방향 -> 로컬 방향 변환 */
-    UFUNCTION(BlueprintCallable, Category = "MeshDeformation|수학")
+    UFUNCTION(BlueprintCallable, Category = "메시변형|수학")
     FVector ConvertWorldDirectionToLocal(FVector WorldDirection);
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|설정", meta = (DisplayName = "시스템 활성화"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|설정", meta = (DisplayName = "시스템 활성화"))
     bool bIsDeformationEnabled = true;
 
     /** 타격 지점 주변의 변형 반경 */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|설정", meta = (DisplayName = "변형 반경"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|설정", meta = (DisplayName = "변형 반경"))
     float DeformRadius = 100.0f;
 
     /** 타격 시 안으로 밀려 들어가는 강도 */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|설정", meta = (DisplayName = "변형 강도"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|설정", meta = (DisplayName = "변형 강도"))
     float DeformStrength = 30.0f;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|디버그", meta = (DisplayName = "디버그 포인트 표시"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|디버그", meta = (DisplayName = "디버그 포인트 표시"))
     bool bShowDebugPoints = true;
 
     /** [Step 6 최적화] 타격 데이터를 모으는 시간 (초) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|설정", meta = (DisplayName = "배칭 처리 대기 시간"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|설정", meta = (DisplayName = "배칭 처리 대기 시간"))
     float BatchProcessDelay = 0.0f;
 
     /** [최적화] HitHistory 최대 크기. 초과 시 오래된 데이터부터 제거됩니다.
      *  이미 메시에 적용된 변형은 유지되며, 늦게 접속한 클라이언트만 영향받습니다.
      *  0 = 제한 없음 */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|설정", meta = (DisplayName = "히스토리 최대 크기", ClampMin = "0", ClampMax = "5000"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|설정", meta = (DisplayName = "히스토리 최대 크기", ClampMin = "0", ClampMax = "5000"))
     int32 MaxHitHistorySize = 500;
 
     /** [MeshDeformation|Effect] 변형 시 발생할 나이아가라 파편 시스템 */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|설정", meta = (DisplayName = "파편 이펙트(Niagara)"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|설정", meta = (DisplayName = "파편 이펙트"))
     TObjectPtr<UNiagaraSystem> DebrisSystem;
 
     /** [MeshDeformation|Effect] 피격 시 재생될 3D 사운드 */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|설정", meta = (DisplayName = "피격 사운드(3D)"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|설정", meta = (DisplayName = "피격 사운드"))
     TObjectPtr<USoundBase> ImpactSound;
 
     /** [MeshDeformation|Effect] 3D 사운드 거리 감쇄 설정 */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|설정", meta = (DisplayName = "사운드 감쇄 설정(3D Attenuation)"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|설정", meta = (DisplayName = "사운드 감쇄 설정"))
     TObjectPtr<USoundAttenuation> ImpactAttenuation;
 
     /** [MeshDeformation|설정] 원거리 공격 판정용 클래스 */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|설정")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|설정")
     TSubclassOf<UDamageType> RangedDamageType;
 
     /** [MeshDeformation|설정] 근접 공격 판정용 클래스 */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|설정")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|설정")
     TSubclassOf<UDamageType> MeleeDamageType;
 
     /**
@@ -211,14 +211,14 @@ public:
      *   else
      *       → vertex displacement × 0.5 (일반 찌그러짐)
      */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|설정", meta = (DisplayName = "절단/관통 데미지 타입"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|설정", meta = (DisplayName = "절단/관통 데미지 타입"))
     TSubclassOf<UDamageType> BreachDamageType;
     // -------------------------------------------------------------------------
     // [Step 9: 월드 파티션 영속성 지원]
     // -------------------------------------------------------------------------
 
     /** [Step 9] GameState에 내 데이터를 맡길 때 사용하는 고유 ID (신분증) */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MeshDeformation|설정", meta = (DisplayName = "고유 식별자(GUID)"))
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "메시변형|설정", meta = (DisplayName = "고유 식별자"))
     FGuid ComponentGuid;
 
     // -------------------------------------------------------------------------
@@ -226,7 +226,7 @@ public:
     // -------------------------------------------------------------------------
 
     /** [Step 10] 메쉬를 원상복구(수리)하고 히스토리를 초기화합니다. (서버 전용) */
-    UFUNCTION(BlueprintCallable, Category = "MeshDeformation|수리", meta = (DisplayName = "메시 수리(RepairMesh)"))
+    UFUNCTION(BlueprintCallable, Category = "메시변형|수리", meta = (DisplayName = "메시 수리"))
     void RepairMesh();
 
     // -------------------------------------------------------------------------
@@ -234,11 +234,11 @@ public:
     // -------------------------------------------------------------------------
 
     /** [디버그] 개발자 모드 활성화 - 체크 시 변형 후 자동으로 메시가 복구됩니다. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|디버그", meta = (DisplayName = "개발자 모드 (자동 복구)"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|디버그", meta = (DisplayName = "개발자 모드 (자동 복구)"))
     bool bDevMode_AutoRepair = false;
 
     /** [디버그] 자동 복구까지 대기 시간 (초) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MeshDeformation|디버그", meta = (DisplayName = "자동 복구 대기 시간 (초)", EditCondition = "bDevMode_AutoRepair", ClampMin = "0.5", ClampMax = "60.0"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|디버그", meta = (DisplayName = "자동 복구 대기 시간 (초)", EditCondition = "bDevMode_AutoRepair", ClampMin = "0.5", ClampMax = "60.0"))
     float DevMode_RepairDelay = 5.0f;
 
 protected:

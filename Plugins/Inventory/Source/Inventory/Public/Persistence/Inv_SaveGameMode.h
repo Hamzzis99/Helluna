@@ -401,4 +401,8 @@ private:
 
 	/** 비동기 디스크 저장이 진행 중인지 여부 */
 	bool bAsyncSaveInProgress = false;
+
+	// ── 캐시 정리 타이머 핸들 (플레이어별) ──
+	// RemoveCachedDataDeferred에서 생성한 타이머를 추적하여 재접속 시 취소 가능
+	TMap<FString, FTimerHandle> CacheCleanupTimerHandles;
 };

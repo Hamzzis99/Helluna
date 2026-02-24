@@ -45,6 +45,16 @@ private:
 	// INDEX_NONE = 첫 번째 빈 슬롯에 자동 배치, 유효한 값 = 해당 위치에 배치
 	UPROPERTY()
 	int32 TargetGridIndex = INDEX_NONE;
+
+	// ⭐ [부착물 시스템] 무기에 부착된 상태 플래그
+	// true면 Entry는 FastArray에 남아있지만 그리드에서는 숨김 (인덱스 밀림 방지)
+	UPROPERTY()
+	bool bIsAttachedToWeapon = false;
+
+	// ⭐ [장착 시스템] 장착된 아이템 플래그
+	// true면 PostReplicatedAdd에서 그리드 배치를 스킵 (공간 선점 방지)
+	UPROPERTY()
+	bool bIsEquipped = false;
 };
 
 /* List of inventory Items 
@@ -77,6 +87,7 @@ struct FInv_InventoryFastArray : public FFastArraySerializer
 	UInv_InventoryItem* AddEntry(UInv_ItemComponent* ItemComponent); // 인벤토리 항목 추가
 	UInv_InventoryItem* AddEntry(UInv_InventoryItem* Item);
 	void RemoveEntry(UInv_InventoryItem* Item); // 인벤토리 항목 제거
+	void ClearAllEntries(); // 모든 항목 제거 (로드 시 중복 방지)
 	UInv_InventoryItem* FindFirstItemByType(const FGameplayTag& ItemType);
 
 	// ⭐ [최적화 #4] 아이템 타입별 개수 조회 (O(1) 해시 조회)

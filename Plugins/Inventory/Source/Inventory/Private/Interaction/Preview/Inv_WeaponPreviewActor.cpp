@@ -364,3 +364,110 @@ float AInv_WeaponPreviewActor::CalculateAutoDistance() const
 
 	return ClampedDistance;
 }
+
+// ════════════════════════════════════════════════════════════════
+// 📌 AddAttachmentPreview — 슬롯에 부착물 3D 메시 추가
+// ════════════════════════════════════════════════════════════════
+// 호출 경로: AttachmentPanel::RefreshPreviewAttachments → 이 함수
+// 처리 흐름:
+//   1. 이미 해당 SlotIndex에 메시가 있으면 제거
+//   2. NewObject<UStaticMeshComponent> 생성 (런타임이므로 CreateDefaultSubobject 불가)
+//   3. 메시 설정 + LightingChannels Channel1 전용
+//   4. SocketName이 유효하고 PreviewMeshComponent에 소켓이 있으면 소켓 부착
+//      없으면 Offset의 Location/Rotation을 RelativeTransform으로 적용
+//   5. RegisterComponent + TMap에 저장
+// ════════════════════════════════════════════════════════════════
+void AInv_WeaponPreviewActor::AddAttachmentPreview(int32 SlotIndex, UStaticMesh* AttachMesh, FName SocketName, const FTransform& Offset)
+{
+	if (!IsValid(AttachMesh))
+	{
+#if INV_DEBUG_ATTACHMENT
+		UE_LOG(LogTemp, Warning, TEXT("[Weapon Preview] AddAttachmentPreview 실패: AttachMesh가 nullptr (SlotIndex=%d)"), SlotIndex);
+#endif
+		return;
+	}
+
+	if (!IsValid(PreviewMeshComponent))
+	{
+#if INV_DEBUG_ATTACHMENT
+		UE_LOG(LogTemp, Warning, TEXT("[Weapon Preview] AddAttachmentPreview 실패: PreviewMeshComponent 무효"));
+#endif
+		return;
+	}
+
+	// 이미 존재하면 제거 후 재생성
+	RemoveAttachmentPreview(SlotIndex);
+
+	// 런타임 동적 생성 (CreateDefaultSubobject는 생성자 전용)
+	UStaticMeshComponent* NewComp = NewObject<UStaticMeshComponent>(this,
+		*FString::Printf(TEXT("AttachPreview_%d"), SlotIndex));
+	if (!IsValid(NewComp)) return;
+
+	NewComp->SetStaticMesh(AttachMesh);
+	NewComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	NewComp->CastShadow = false;
+
+	// 프리뷰 전용 LightingChannel (월드 조명 격리)
+	NewComp->LightingChannels.bChannel0 = false;
+	NewComp->LightingChannels.bChannel1 = true;
+
+	// 소켓 부착 시도: SocketName이 유효하고 메시에 소켓이 존재하면 소켓 부착
+	const bool bHasSocket = !SocketName.IsNone()
+		&& IsValid(PreviewMeshComponent->GetStaticMesh())
+		&& PreviewMeshComponent->GetStaticMesh()->FindSocket(SocketName) != nullptr;
+
+	if (bHasSocket)
+	{
+		NewComp->AttachToComponent(PreviewMeshComponent,
+			FAttachmentTransformRules::SnapToTargetNotIncludingScale, SocketName);
+
+		// 소켓 위치에 추가 오프셋 적용
+		NewComp->SetRelativeTransform(Offset);
+	}
+	else
+	{
+		// 소켓 없음 → PreviewMeshComponent에 상대 Transform으로 부착
+		NewComp->AttachToComponent(PreviewMeshComponent,
+			FAttachmentTransformRules::KeepRelativeTransform);
+		NewComp->SetRelativeTransform(Offset);
+	}
+
+	NewComp->RegisterComponent();
+
+	AttachmentMeshComponents.Add(SlotIndex, NewComp);
+
+#if INV_DEBUG_ATTACHMENT
+	UE_LOG(LogTemp, Log, TEXT("[Weapon Preview] 부착물 프리뷰 추가: Slot=%d, Mesh=%s, Socket=%s, bSocketUsed=%s"),
+		SlotIndex, *AttachMesh->GetName(),
+		*SocketName.ToString(),
+		bHasSocket ? TEXT("Y") : TEXT("N"));
+#endif
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 RemoveAttachmentPreview — 특정 슬롯의 부착물 메시 제거
+// ════════════════════════════════════════════════════════════════
+void AInv_WeaponPreviewActor::RemoveAttachmentPreview(int32 SlotIndex)
+{
+	TObjectPtr<UStaticMeshComponent>* Found = AttachmentMeshComponents.Find(SlotIndex);
+	if (Found && IsValid(*Found))
+	{
+		(*Found)->DestroyComponent();
+	}
+	AttachmentMeshComponents.Remove(SlotIndex);
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 ClearAllAttachmentPreviews — 모든 부착물 메시 제거
+// ════════════════════════════════════════════════════════════════
+void AInv_WeaponPreviewActor::ClearAllAttachmentPreviews()
+{
+	for (auto& Pair : AttachmentMeshComponents)
+	{
+		if (IsValid(Pair.Value))
+		{
+			Pair.Value->DestroyComponent();
+		}
+	}
+	AttachmentMeshComponents.Empty();
+}

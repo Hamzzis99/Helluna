@@ -279,6 +279,210 @@ UInv_InventoryItem* UInv_InventoryComponent::AddItemFromManifest(FInv_ItemManife
 	return NewItem;
 }
 
+UInv_InventoryItem* UInv_InventoryComponent::AddAttachedItemFromManifest(FInv_ItemManifest& ManifestCopy)
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return nullptr;
+	}
+
+	// Manifest → UInv_InventoryItem 생성
+	UInv_InventoryItem* NewItem = ManifestCopy.Manifest(GetOwner());
+	if (!IsValid(NewItem))
+	{
+		return nullptr;
+	}
+
+	// FastArray에 추가
+	InventoryList.AddEntry(NewItem);
+
+	// 스택 수량 1 (부착물은 스택 안 됨)
+	NewItem->SetTotalStackCount(1);
+
+	// ⭐ 부착 상태 플래그 설정 — 그리드에서 숨김
+	int32 LastIdx = InventoryList.Entries.Num() - 1;
+	InventoryList.Entries[LastIdx].bIsAttachedToWeapon = true;
+	InventoryList.Entries[LastIdx].GridIndex = INDEX_NONE;
+	InventoryList.MarkItemDirty(InventoryList.Entries[LastIdx]);
+
+	// ⭐ OnItemAdded 브로드캐스트 안 함! (부착된 아이템은 그리드에 표시하지 않음)
+
+	return NewItem;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 📌 [Phase 9] RestoreFromSaveData — 저장 데이터로 인벤토리 복원 (서버 전용)
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 📌 핵심:
+//    1) 기존 아이템 전부 제거 (중복 방지)
+//    2) SaveData로부터 아이템 재구축 (부착물 + Fragment 역직렬화 포함)
+//    3) 장착 상태 복원 (DediServer 전용)
+//    4) 멱등성 보장 (bInventoryRestored 플래그)
+//
+// 📌 이전 위치: SaveGameMode.cpp LoadAndSendInventoryToClient() lines 464-686
+//    → InventoryComponent가 자기 상태를 소유하도록 캡슐화
+//
+// ════════════════════════════════════════════════════════════════════════════════
+void UInv_InventoryComponent::RestoreFromSaveData(
+	const FInv_PlayerSaveData& SaveData,
+	const FInv_ItemTemplateResolver& TemplateResolver)
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority()) return;
+	if (bInventoryRestored) return;  // 멱등성 가드
+
+	// ── 1) 기존 아이템 전부 제거 ──
+	InventoryList.ClearAllEntries();
+
+	// ── 2) 저장 데이터에서 아이템 복원 ──
+	for (const FInv_SavedItemData& ItemData : SaveData.Items)
+	{
+		if (!ItemData.ItemType.IsValid()) continue;
+
+		// 템플릿 리졸빙 (게임별 DataTable 매핑)
+		UInv_ItemComponent* Template = TemplateResolver.Execute(ItemData.ItemType);
+		if (!Template) continue;
+
+		// Manifest 복사 (CDO 템플릿은 수정 금지!)
+		FInv_ItemManifest ManifestCopy = Template->GetItemManifest();
+
+		// ── 부착물 복원 (CDO 기반 — SpawnActor 없음!) ──
+		if (ItemData.Attachments.Num() > 0)
+		{
+			FInv_AttachmentHostFragment* HostFrag = ManifestCopy.GetFragmentOfTypeMutable<FInv_AttachmentHostFragment>();
+			if (HostFrag)
+			{
+				for (const FInv_SavedAttachmentData& AttSave : ItemData.Attachments)
+				{
+					UInv_ItemComponent* AttachTemplate = TemplateResolver.Execute(AttSave.AttachmentItemType);
+					if (!AttachTemplate) continue;
+
+					// FInv_AttachedItemData 구성
+					FInv_AttachedItemData AttachedData;
+					AttachedData.SlotIndex = AttSave.SlotIndex;
+					AttachedData.AttachmentItemType = AttSave.AttachmentItemType;
+					AttachedData.ItemManifestCopy = AttachTemplate->GetItemManifest(); // 값 복사
+
+					// 부착물 Fragment 역직렬화
+					if (AttSave.SerializedManifest.Num() > 0)
+					{
+						AttachedData.ItemManifestCopy.DeserializeAndApplyFragments(AttSave.SerializedManifest);
+					}
+
+					HostFrag->AttachItem(AttSave.SlotIndex, AttachedData);
+				}
+			}
+		}
+
+		// ── 메인 아이템 Fragment 역직렬화 ──
+		if (ItemData.SerializedManifest.Num() > 0)
+		{
+			ManifestCopy.DeserializeAndApplyFragments(ItemData.SerializedManifest);
+		}
+
+		// ── 디자인타임 전용 값 복원 (CDO 템플릿에서 추출) ──
+		{
+			const FInv_ItemManifest& CDOManifest = Template->GetItemManifest();
+
+			// SlotPosition 복원
+			const FInv_AttachmentHostFragment* CDOHost = CDOManifest.GetFragmentOfType<FInv_AttachmentHostFragment>();
+			FInv_AttachmentHostFragment* LoadedHost = ManifestCopy.GetFragmentOfTypeMutable<FInv_AttachmentHostFragment>();
+			if (CDOHost && LoadedHost)
+			{
+				LoadedHost->RestoreDesignTimeSlotPositions(CDOHost->GetSlotDefinitions());
+			}
+
+			// PreviewMesh 복원
+			const FInv_EquipmentFragment* CDOEquip = CDOManifest.GetFragmentOfType<FInv_EquipmentFragment>();
+			FInv_EquipmentFragment* LoadedEquip = ManifestCopy.GetFragmentOfTypeMutable<FInv_EquipmentFragment>();
+			if (CDOEquip && LoadedEquip)
+			{
+				LoadedEquip->RestoreDesignTimePreview(*CDOEquip);
+			}
+		}
+
+		// ── 인벤토리에 추가 ──
+		UInv_InventoryItem* NewItem = AddItemFromManifest(ManifestCopy, ItemData.StackCount);
+		if (!NewItem) continue;
+
+		// ── 그리드 위치 복원 ──
+		const int32 Columns = GridColumns > 0 ? GridColumns : 8;
+		int32 SavedGridIndex = ItemData.GridPosition.Y * Columns + ItemData.GridPosition.X;
+		SetLastEntryGridPosition(SavedGridIndex, ItemData.GridCategory);
+
+		// ── 부착물 FastArray Entry 생성 + OriginalItem 연결 ──
+		if (ItemData.Attachments.Num() > 0 && IsValid(NewItem))
+		{
+			FInv_AttachmentHostFragment* LoadedHostFrag =
+				NewItem->GetItemManifestMutable().GetFragmentOfTypeMutable<FInv_AttachmentHostFragment>();
+
+			if (LoadedHostFrag)
+			{
+				for (const FInv_SavedAttachmentData& AttSave : ItemData.Attachments)
+				{
+					UInv_ItemComponent* AttachTemplate = TemplateResolver.Execute(AttSave.AttachmentItemType);
+					if (!AttachTemplate) continue;
+
+					FInv_ItemManifest AttachManifest = AttachTemplate->GetItemManifest();
+
+					// Fragment 역직렬화 (저장된 스탯 복원)
+					if (AttSave.SerializedManifest.Num() > 0)
+					{
+						AttachManifest.DeserializeAndApplyFragments(AttSave.SerializedManifest);
+					}
+
+					// FastArray에 Entry 추가 (그리드 숨김 상태)
+					UInv_InventoryItem* AttachItem = AddAttachedItemFromManifest(AttachManifest);
+					if (!AttachItem) continue;
+
+					// HostFrag의 AttachedItemData에 OriginalItem 포인터 연결
+					LoadedHostFrag->SetOriginalItemForSlot(AttSave.SlotIndex, AttachItem);
+				}
+			}
+		}
+	}
+
+	// ── 3) 장착 상태 복원 (DediServer only) ──
+	if (GetOwner()->GetNetMode() == NM_DedicatedServer)
+	{
+		TSet<UInv_InventoryItem*> ProcessedEquipItems;
+		for (const FInv_SavedItemData& ItemData : SaveData.Items)
+		{
+			if (!ItemData.bEquipped || ItemData.WeaponSlotIndex < 0) continue;
+
+			UInv_InventoryItem* FoundItem = FindItemByTypeExcluding(
+				ItemData.ItemType, ProcessedEquipItems);
+			if (FoundItem)
+			{
+				OnItemEquipped.Broadcast(FoundItem, ItemData.WeaponSlotIndex);
+				ProcessedEquipItems.Add(FoundItem);
+			}
+		}
+
+		// Fix 7: 장착된 아이템의 서버 FastArray Entry GridIndex 클리어 — Phase 5 저장 시 좌표 중복 방지
+		// Fix 13: bIsEquipped 플래그 설정 — PostReplicatedAdd에서 그리드 배치 스킵
+		for (UInv_InventoryItem* EquippedItem : ProcessedEquipItems)
+		{
+			for (int32 i = 0; i < InventoryList.Entries.Num(); i++)
+			{
+				if (InventoryList.Entries[i].Item == EquippedItem)
+				{
+					InventoryList.Entries[i].GridIndex = INDEX_NONE;
+					InventoryList.Entries[i].GridCategory = 0;
+					InventoryList.Entries[i].bIsEquipped = true;
+					// MarkItemDirty 호출 금지! 리플리케이션 트리거 시 PostReplicatedChange → AddItem으로 아이템이 Grid에 다시 나타남
+					// bIsEquipped는 이미 dirty 상태인 Entry에 포함되어 리플리케이션됨 (같은 프레임)
+					UE_LOG(LogTemp, Warning, TEXT("[Fix7-Restore] 장착 아이템 GridIndex 클리어 + bIsEquipped 설정: %s (Entry[%d])"),
+						*EquippedItem->GetItemManifest().GetItemType().ToString(), i);
+					break;
+				}
+			}
+		}
+	}
+
+	bInventoryRestored = true;
+}
+
 void UInv_InventoryComponent::Server_AddStacksToItem_Implementation(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder) // 서버에서 아이템 스택 개수를 세어주는 역할.
 {
 	const FGameplayTag& ItemType = IsValid(ItemComponent) ? ItemComponent->GetItemManifest().GetItemType() : FGameplayTag::EmptyTag; // 아이템 유형 가져오기
@@ -308,6 +512,13 @@ void UInv_InventoryComponent::Server_AddStacksToItem_Implementation(UInv_ItemCom
 	if (AmountToAddToCurrentStack > 0)
 	{
 		Item->SetTotalStackCount(CurrentStack + AmountToAddToCurrentStack);
+
+		// ⚠️ MarkItemDirty — 데디서버 클라이언트에서 PostReplicatedChange가 트리거되어 UI 갱신
+		const int32 StackEntryIdx = FindEntryIndexForItem(Item);
+		if (InventoryList.Entries.IsValidIndex(StackEntryIdx))
+		{
+			InventoryList.MarkItemDirty(InventoryList.Entries[StackEntryIdx]);
+		}
 
 		// ════════════════════════════════════════════════════════════════
 		// 🔧 리슨서버 호환 수정
@@ -394,6 +605,8 @@ void UInv_InventoryComponent::Server_AddStacksToItem_Implementation(UInv_ItemCom
 //아이템 드롭 상호작용을 누른 뒤 서버에서 어떻게 처리를 할지.
 void UInv_InventoryComponent::Server_DropItem_Implementation(UInv_InventoryItem* Item, int32 StackCount)
 {
+	if (!IsValid(Item)) return;
+
 	//단순히 항목을 제거하는지 단순 업데이트를 하는지
 	const int32 NewStackCount = Item->GetTotalStackCount() - StackCount;
 	if (NewStackCount <= 0)
@@ -403,6 +616,12 @@ void UInv_InventoryComponent::Server_DropItem_Implementation(UInv_InventoryItem*
 	else
 	{
 		Item->SetTotalStackCount(NewStackCount);
+		// ⚠️ 부분 드롭 시 MarkItemDirty 필수 — 없으면 데디서버 클라이언트에서 스택 수 미갱신
+		const int32 DropEntryIdx = FindEntryIndexForItem(Item);
+		if (InventoryList.Entries.IsValidIndex(DropEntryIdx))
+		{
+			InventoryList.MarkItemDirty(InventoryList.Entries[DropEntryIdx]);
+		}
 	}
 
 	SpawnDroppedItem(Item, StackCount); // 떨어진 아이템 생성 함수 호출
@@ -412,8 +631,12 @@ void UInv_InventoryComponent::Server_DropItem_Implementation(UInv_InventoryItem*
 //무언가를 떨어뜨렸기 때문에 아이템도 생성 및 이벤트 효과들 보이게 하는 부분의 코드들
 void UInv_InventoryComponent::SpawnDroppedItem(UInv_InventoryItem* Item, int32 StackCount)
 {
+	if (!IsValid(Item)) return;
+	if (!OwningController.IsValid()) return;
+
 	// TODO : 아이템을 버릴 시 월드에 소환하게 하는 부분 만들기
 	const APawn* OwningPawn = OwningController->GetPawn();
+	if (!IsValid(OwningPawn)) return;
 	FVector RotatedForward = OwningPawn->GetActorForwardVector();
 	RotatedForward = RotatedForward.RotateAngleAxis(FMath::FRandRange(DropSpawnAngleMin, DropSpawnAngleMax), FVector::UpVector); // 아이템이 빙글빙글 도는 부분
 	FVector SpawnLocation = OwningPawn->GetActorLocation() + RotatedForward * FMath::FRandRange(DropSpawnDistanceMin, DropSpawnDistanceMax); // 아이템이 떨어지는 위치 설정
@@ -432,6 +655,8 @@ void UInv_InventoryComponent::SpawnDroppedItem(UInv_InventoryItem* Item, int32 S
 // 아이템 소비 상호작용을 누른 뒤 서버에서 어떻게 처리를 할지.
 void UInv_InventoryComponent::Server_ConsumeItem_Implementation(UInv_InventoryItem* Item)
 {
+	if (!IsValid(Item)) return;
+
 	const int32 NewStackCount = Item->GetTotalStackCount() - 1;
 
 	// ── Entry Index를 미리 찾아두기 (RemoveEntry 전에!) ──
@@ -1117,30 +1342,28 @@ void UInv_InventoryComponent::Server_ConsumeMaterials_Implementation(const FGame
 #endif
 	}
 
-	// UI 업데이트를 위해 델리게이트 브로드캐스트 (모든 클라이언트에서 실행)
-	// 리플리케이션이 작동하면 각 클라이언트에서도 호출됨
-	if (NewCount <= 0)
+	// ⚠️ 리슨서버/스탠드얼론에서만 직접 브로드캐스트 — 데디서버 클라는 FastArray 콜백이 처리
+	if (IsListenServerOrStandalone())
 	{
-		// 아이템 제거됨 - ⭐ Entry Index 전달!
-		OnItemRemoved.Broadcast(Item, ItemEntryIndex);
+		if (NewCount <= 0)
+		{
+			OnItemRemoved.Broadcast(Item, ItemEntryIndex);
 #if INV_DEBUG_INVENTORY
-		UE_LOG(LogTemp, Warning, TEXT("OnItemRemoved 브로드캐스트 완료 (EntryIndex=%d)"), ItemEntryIndex);
+			UE_LOG(LogTemp, Warning, TEXT("OnItemRemoved 브로드캐스트 완료 (EntryIndex=%d)"), ItemEntryIndex);
 #endif
-	}
-	else
-	{
-		// 스택 개수만 변경됨 - OnStackChange 브로드캐스트
-		FInv_SlotAvailabilityResult Result;
-		Result.Item = Item;
-		Result.bStackable = true;
-		Result.TotalRoomToFill = NewCount;
-		Result.EntryIndex = ItemEntryIndex; // ⭐ Entry Index 추가
-
-		// 슬롯 정보는 비워두고 (InventoryGrid가 Item으로 슬롯을 찾음)
-		OnStackChange.Broadcast(Result);
+		}
+		else
+		{
+			FInv_SlotAvailabilityResult Result;
+			Result.Item = Item;
+			Result.bStackable = true;
+			Result.TotalRoomToFill = NewCount;
+			Result.EntryIndex = ItemEntryIndex;
+			OnStackChange.Broadcast(Result);
 #if INV_DEBUG_INVENTORY
-		UE_LOG(LogTemp, Warning, TEXT("OnStackChange 브로드캐스트 완료 (NewCount: %d)"), NewCount);
+			UE_LOG(LogTemp, Warning, TEXT("OnStackChange 브로드캐스트 완료 (NewCount: %d)"), NewCount);
 #endif
+		}
 	}
 
 #if INV_DEBUG_INVENTORY
@@ -1211,7 +1434,7 @@ void UInv_InventoryComponent::Server_ConsumeMaterialsMultiStack_Implementation(c
 
 	// 1단계: 데이터(TotalStackCount) 차감 및 동기화
 	int32 RemainingAmount = Amount;
-	TArray<FInv_InventoryEntry*> EntriesToRemove;
+	TArray<UInv_InventoryItem*> ItemsToRemove;  // ⚠️ Entry 포인터가 아닌 Item 포인터 수집 (RemoveEntry가 TArray를 변경하므로 Entry* 저장 시 댕글링)
 
 	for (auto& Entry : InventoryList.Entries)
 	{
@@ -1240,8 +1463,8 @@ void UInv_InventoryComponent::Server_ConsumeMaterialsMultiStack_Implementation(c
 
 		if (NewCount <= 0)
 		{
-			// 제거 예약
-			EntriesToRemove.Add(&Entry);
+			// 제거 예약 — Item 포인터만 수집 (Entry 포인터는 RemoveEntry 후 무효화됨)
+			ItemsToRemove.Add(Entry.Item);
 #if INV_DEBUG_INVENTORY
 			UE_LOG(LogTemp, Warning, TEXT("❌ [서버] Entry 제거 예약: Item포인터=%p"), Entry.Item.Get());
 #endif
@@ -1287,9 +1510,8 @@ void UInv_InventoryComponent::Server_ConsumeMaterialsMultiStack_Implementation(c
 #endif
 
 	// 제거 예약된 아이템들 실제 제거
-	for (FInv_InventoryEntry* EntryPtr : EntriesToRemove)
+	for (UInv_InventoryItem* ItemToRemove : ItemsToRemove)
 	{
-		UInv_InventoryItem* ItemToRemove = EntryPtr->Item;
 		InventoryList.RemoveEntry(ItemToRemove);
 
 #if INV_DEBUG_INVENTORY
@@ -1492,6 +1714,25 @@ void UInv_InventoryComponent::Multicast_EquipSlotClicked_Implementation(UInv_Inv
 	// 장비 컴포넌트가 이 델리게이트를 수신 대기합니다.
 	OnItemEquipped.Broadcast(ItemToEquip, WeaponSlotIndex);
 	OnItemUnequipped.Broadcast(ItemToUnequip, WeaponSlotIndex);
+
+	// Fix 7: 장착 시 서버 FastArray Entry의 GridIndex 클리어 — Phase 5 좌표 중복 방지
+	if (GetOwner() && GetOwner()->HasAuthority() && IsValid(ItemToEquip))
+	{
+		for (int32 i = 0; i < InventoryList.Entries.Num(); i++)
+		{
+			if (InventoryList.Entries[i].Item == ItemToEquip)
+			{
+				InventoryList.Entries[i].GridIndex = INDEX_NONE;
+				InventoryList.Entries[i].GridCategory = 0;
+				// MarkItemDirty 호출 금지! 리플리케이션 트리거 시 PostReplicatedChange → AddItem으로 아이템이 Grid에 다시 나타남
+#if INV_DEBUG_INVENTORY
+				UE_LOG(LogTemp, Warning, TEXT("[Fix7] 장착 아이템 GridIndex 클리어: %s (Entry[%d])"),
+					*ItemToEquip->GetItemManifest().GetItemType().ToString(), i);
+#endif
+				break;
+			}
+		}
+	}
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -1580,6 +1821,7 @@ void UInv_InventoryComponent::Server_AttachItemToWeapon_Implementation(int32 Wea
 	AttachedData.SlotIndex = SlotIndex;
 	AttachedData.AttachmentItemType = AttachManifest.GetItemType();
 	AttachedData.ItemManifestCopy = AttachManifest; // Manifest 전체 사본
+	AttachedData.OriginalItem = AttachmentItem; // ⭐ 원본 포인터 저장 (분리 시 복원용)
 
 	HostFragment->AttachItem(SlotIndex, AttachedData);
 
@@ -1588,37 +1830,19 @@ void UInv_InventoryComponent::Server_AttachItemToWeapon_Implementation(int32 Wea
 		*AttachedData.AttachmentItemType.ToString(), SlotIndex);
 #endif
 
-	// ── 5. InventoryList에서 부착물 아이템 제거 ──
-	// 제거 전에 리슨서버용 Entry Index 기억
+	// ── 5. FastArray에서 부착물 Entry를 '부착됨' 상태로 표시 ──
+	// ⭐ RemoveEntry 대신 플래그 방식 (인덱스 밀림 방지!)
+	// Entry는 배열에 남아있지만 그리드에서만 숨김
 	int32 RemovedEntryIndex = AttachmentEntryIndex;
 
-	InventoryList.RemoveEntry(AttachmentItem);
+	InventoryList.Entries[AttachmentEntryIndex].bIsAttachedToWeapon = true;
+	InventoryList.Entries[AttachmentEntryIndex].GridIndex = INDEX_NONE; // 그리드 자리 반환
+	InventoryList.MarkItemDirty(InventoryList.Entries[AttachmentEntryIndex]);
 
-	// ⭐ [디버그] RemoveEntry 후 WeaponItem 및 HostFragment 데이터 일관성 확인
-	// 가능성 A 검증: FastArray RemoveEntry가 WeaponItem 포인터를 무효화하는지
-	if (IsValid(WeaponItem))
-	{
-		FInv_AttachmentHostFragment* DebugHostFrag =
-			WeaponItem->GetItemManifestMutable().GetFragmentOfTypeMutable<FInv_AttachmentHostFragment>();
-		if (DebugHostFrag)
-		{
-			const FInv_AttachedItemData* DebugData = DebugHostFrag->GetAttachedItemData(SlotIndex);
 #if INV_DEBUG_ATTACHMENT
-			UE_LOG(LogTemp, Warning, TEXT("[Attachment 디버그] RemoveEntry 후: WeaponItem 유효, 슬롯 %d 데이터=%s, AttachedItems 총 %d개"),
-				SlotIndex,
-				DebugData ? TEXT("있음") : TEXT("없음"),
-				DebugHostFrag->GetAttachedItems().Num());
+	UE_LOG(LogTemp, Log, TEXT("[Attachment] 부착물 Entry[%d] bIsAttachedToWeapon=true (RemoveEntry 대신 플래그 방식)"),
+		AttachmentEntryIndex);
 #endif
-		}
-		else
-		{
-			UE_LOG(LogTemp, Error, TEXT("[Attachment 디버그] RemoveEntry 후: WeaponItem 유효하지만 HostFragment가 nullptr!"));
-		}
-	}
-	else
-	{
-		UE_LOG(LogTemp, Error, TEXT("[Attachment 디버그] RemoveEntry 후: WeaponItem이 무효화됨!"));
-	}
 
 	// 리슨서버 호스트: 부착물이 Grid에서 사라졌으므로 OnItemRemoved 방송
 	if (IsListenServerOrStandalone())
@@ -1627,7 +1851,7 @@ void UInv_InventoryComponent::Server_AttachItemToWeapon_Implementation(int32 Wea
 	}
 
 	// ── 6. 무기 Entry를 dirty로 표시 (리플리케이션) ──
-	// 부착물 제거로 인해 Entry 인덱스가 변경되었을 수 있음
+	// ⭐ bIsAttachedToWeapon 방식이므로 Entry 인덱스가 변경되지 않음
 	for (int32 i = 0; i < InventoryList.Entries.Num(); ++i)
 	{
 		if (InventoryList.Entries[i].Item == WeaponItem)
@@ -1722,8 +1946,17 @@ void UInv_InventoryComponent::Server_AttachItemToWeapon_Implementation(int32 Wea
 		AInv_EquipActor* EquipActor = EquipFragment->GetEquippedActor();
 		if (IsValid(EquipActor) && AttachableFragment->GetAttachmentMesh())
 		{
+			// 소켓 폴백: 무기 SlotDef → 부착물 AttachableFragment → NAME_None
 			const FInv_AttachmentSlotDef* MeshSlotDef = HostFragment->GetSlotDef(SlotIndex);
-			FName MeshSocketName = MeshSlotDef ? MeshSlotDef->AttachSocket : NAME_None;
+			FName MeshSocketName = NAME_None;
+			if (MeshSlotDef && !MeshSlotDef->AttachSocket.IsNone())
+			{
+				MeshSocketName = MeshSlotDef->AttachSocket;  // 1순위: 무기 SlotDef 오버라이드
+			}
+			else
+			{
+				MeshSocketName = AttachableFragment->GetAttachSocket();  // 2순위: 부착물 기본 소켓
+			}
 			EquipActor->AttachMeshToSocket(
 				SlotIndex,
 				AttachableFragment->GetAttachmentMesh(),
@@ -1741,6 +1974,15 @@ void UInv_InventoryComponent::Server_AttachItemToWeapon_Implementation(int32 Wea
 		if (IsValid(EquipActor))
 		{
 			EquipActor->ApplyAttachmentEffects(AttachableFragment);
+		}
+
+		// ════════════════════════════════════════════════════════════════
+		// 부착물 시각 변경 알림 → WeaponBridge가 HandWeapon에 Multicast 전파
+		// EquipActor에만 반영된 부착물을 HandWeapon(손 무기)에도 동기화
+		// ════════════════════════════════════════════════════════════════
+		if (IsValid(EquipActor))
+		{
+			OnWeaponAttachmentVisualChanged.Broadcast(EquipActor);
 		}
 	}
 }
@@ -1795,8 +2037,7 @@ void UInv_InventoryComponent::Server_DetachItemFromWeapon_Implementation(int32 W
 		return;
 	}
 
-	// ── 3. 인벤토리 Grid에 빈 공간 확인 ──
-	// 분리될 부착물의 Manifest로 공간 체크
+	// ── 3. 부착 데이터 및 원본 아이템 포인터 확인 ──
 	const FInv_AttachedItemData* AttachedData = HostFragment->GetAttachedItemData(SlotIndex);
 	if (!AttachedData)
 	{
@@ -1804,10 +2045,10 @@ void UInv_InventoryComponent::Server_DetachItemFromWeapon_Implementation(int32 W
 		return;
 	}
 
-	if (!HasRoomInInventoryList(AttachedData->ItemManifestCopy))
+	// ⭐ bIsAttachedToWeapon 방식: 원본 Entry가 FastArray에 남아있으므로 공간 체크 불필요
+	if (!IsValid(AttachedData->OriginalItem))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[Attachment] 분리 실패: 인벤토리 공간 부족"));
-		NoRoomInInventory.Broadcast();
+		UE_LOG(LogTemp, Error, TEXT("[Attachment] 분리 실패: OriginalItem 포인터가 nullptr (레거시 데이터?)"));
 		return;
 	}
 
@@ -1848,6 +2089,13 @@ void UInv_InventoryComponent::Server_DetachItemFromWeapon_Implementation(int32 W
 #if INV_DEBUG_ATTACHMENT
 			UE_LOG(LogTemp, Log, TEXT("[Attachment Visual] 실시간 부착물 메시 제거: 슬롯 %d"), SlotIndex);
 #endif
+
+			// ════════════════════════════════════════════════════════════════
+			// 부착물 시각 변경 알림 → WeaponBridge가 HandWeapon에 Multicast 전파
+			// DetachMeshFromSocket 직후 Broadcast해야 GetAttachmentVisualInfos()가
+			// 제거된 슬롯을 제외한 결과를 반환한다
+			// ════════════════════════════════════════════════════════════════
+			OnWeaponAttachmentVisualChanged.Broadcast(EquipActor);
 		}
 	}
 
@@ -1859,26 +2107,40 @@ void UInv_InventoryComponent::Server_DetachItemFromWeapon_Implementation(int32 W
 		*DetachedData.AttachmentItemType.ToString(), SlotIndex);
 #endif
 
-	// ── 6. ManifestCopy로 새 인벤토리 아이템 생성 ──
-	// bRandomizeOnManifest는 이미 false이므로 스탯이 재랜덤되지 않음
-	UInv_InventoryItem* RestoredItem = DetachedData.ItemManifestCopy.Manifest(GetOwner());
-	if (!IsValid(RestoredItem))
+	// ── 6. 원본 Entry의 bIsAttachedToWeapon 플래그 해제 ──
+	// ⭐ 새 아이템 생성 대신 원본 Entry를 복원 (인덱스 밀림 방지!)
+	UInv_InventoryItem* OriginalItem = DetachedData.OriginalItem;
+	int32 RestoredEntryIndex = INDEX_NONE;
+
+	for (int32 i = 0; i < InventoryList.Entries.Num(); ++i)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[Attachment] 분리 실패: ManifestCopy.Manifest() 실패"));
+		if (InventoryList.Entries[i].Item == OriginalItem && InventoryList.Entries[i].bIsAttachedToWeapon)
+		{
+			InventoryList.Entries[i].bIsAttachedToWeapon = false;
+			InventoryList.MarkItemDirty(InventoryList.Entries[i]);
+			RestoredEntryIndex = i;
+
+#if INV_DEBUG_ATTACHMENT
+			UE_LOG(LogTemp, Log, TEXT("[Attachment] 원본 Entry[%d] bIsAttachedToWeapon=false 복원 완료: %s"),
+				i, *OriginalItem->GetItemManifest().GetItemType().ToString());
+#endif
+			break;
+		}
+	}
+
+	if (RestoredEntryIndex == INDEX_NONE)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Attachment] 분리 실패: 원본 Entry를 FastArray에서 찾을 수 없음!"));
 		return;
 	}
 
-	// ── 7. InventoryList에 추가 ──
-	InventoryList.AddEntry(RestoredItem);
-
-	// 리슨서버 호스트: 새 아이템이 Grid에 추가되었으므로 OnItemAdded 방송
+	// 리슨서버 호스트: 아이템이 Grid에 다시 표시되므로 OnItemAdded 방송
 	if (IsListenServerOrStandalone())
 	{
-		int32 NewEntryIndex = InventoryList.Entries.Num() - 1;
-		OnItemAdded.Broadcast(RestoredItem, NewEntryIndex);
+		OnItemAdded.Broadcast(OriginalItem, RestoredEntryIndex);
 	}
 
-	// ── 8. 무기 Entry를 dirty로 표시 (리플리케이션) ──
+	// ── 7. 무기 Entry를 dirty로 표시 (리플리케이션) ──
 	for (int32 i = 0; i < InventoryList.Entries.Num(); ++i)
 	{
 		if (InventoryList.Entries[i].Item == WeaponItem)
@@ -1946,6 +2208,14 @@ void UInv_InventoryComponent::AddRepSubObj(UObject* SubObj)
 	if (IsUsingRegisteredSubObjectList() && IsReadyForReplication() && IsValid(SubObj)) // 복제 준비가 되었는지 확인
 	{
 		AddReplicatedSubObject(SubObj); // 복제된 하위 객체 추가
+	}
+}
+
+void UInv_InventoryComponent::RemoveRepSubObj(UObject* SubObj)
+{
+	if (IsUsingRegisteredSubObjectList() && IsValid(SubObj))
+	{
+		RemoveReplicatedSubObject(SubObj); // 복제 하위 객체 등록 해제 (GC + 네트워크 누수 방지)
 	}
 }
 
@@ -2022,7 +2292,17 @@ void UInv_InventoryComponent::ConstructInventory()
 	if (!OwningController->IsLocalController()) return;
 
 	//블루프린터 위젯 클래스가 설정되어 있는지 확인
+	if (!InventoryMenuClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Inventory] ConstructInventory: InventoryMenuClass가 설정되지 않음!"));
+		return;
+	}
 	InventoryMenu = CreateWidget<UInv_InventoryBase>(OwningController.Get(), InventoryMenuClass);
+	if (!IsValid(InventoryMenu))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Inventory] ConstructInventory: CreateWidget 실패!"));
+		return;
+	}
 	InventoryMenu->AddToViewport();
 	CloseInventoryMenu();
 }
@@ -2157,11 +2437,8 @@ void UInv_InventoryComponent::Server_SplitItemEntry_Implementation(UInv_Inventor
 	NewItem->SetItemManifest(OriginalItem->GetItemManifest());
 	NewItem->SetTotalStackCount(SplitStackCount);
 
-	// 5. 새 Entry를 FastArray에 추가 (AddEntry 사용)
+	// 5. 새 Entry를 FastArray에 추가 (AddEntry 내부에서 AddRepSubObj도 호출됨)
 	InventoryList.AddEntry(NewItem);
-
-	// 6. 복제 하위 객체 등록
-	AddRepSubObj(NewItem);
 
 	int32 NewEntryIndex = InventoryList.Entries.Num() - 1;
 
@@ -2182,8 +2459,11 @@ void UInv_InventoryComponent::Server_SplitItemEntry_Implementation(UInv_Inventor
 	UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════╝"));
 #endif
 
-	// 8. OnItemAdded 브로드캐스트 (클라이언트 UI 업데이트용)
-	OnItemAdded.Broadcast(NewItem, NewEntryIndex);
+	// 8. OnItemAdded 브로드캐스트 (리슨서버/스탠드얼론에서만 — 데디서버 클라는 PostReplicatedAdd가 처리)
+	if (IsListenServerOrStandalone())
+	{
+		OnItemAdded.Broadcast(NewItem, NewEntryIndex);
+	}
 }
 
 // ⭐ [Phase 4 방법2] 클라이언트 Grid 위치를 서버 Entry에 동기화
@@ -2204,10 +2484,12 @@ void UInv_InventoryComponent::Server_UpdateItemGridPosition_Implementation(UInv_
 		{
 			InventoryList.Entries[i].GridIndex = GridIndex;
 			InventoryList.Entries[i].GridCategory = GridCategory;
-			InventoryList.MarkItemDirty(InventoryList.Entries[i]);
+			// Fix 11: MarkItemDirty 제거 — Server_UpdateItemGridPosition은 항상 클라→서버 RPC이므로
+			// 클라이언트가 이미 올바른 GridIndex를 알고 있음. 서버→클라 역리플리케이션은 불필요하며,
+			// PostReplicatedChange → AddItem → UpdateGridSlots → RPC 순환 오염의 원인.
 
 #if INV_DEBUG_INVENTORY
-			UE_LOG(LogTemp, Log, TEXT("[Server_UpdateItemGridPosition] Entry[%d] 업데이트: %s → Grid%d Index=%d"),
+			UE_LOG(LogTemp, Log, TEXT("[Server_UpdateItemGridPosition] Entry[%d] 업데이트: %s → Grid%d Index=%d (MarkItemDirty 스킵)"),
 				i, *Item->GetItemManifest().GetItemType().ToString(), GridCategory, GridIndex);
 #endif
 			return;
@@ -2658,12 +2940,51 @@ TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave(
 			continue;
 		}
 
+		// ⭐ [부착물 시스템] 무기에 부착된 아이템은 저장 스킵
+		// 부착물 데이터는 무기의 SavedItem.Attachments에 이미 포함됨
+		if (Entry.bIsAttachedToWeapon)
+		{
+#if INV_DEBUG_ATTACHMENT
+			UE_LOG(LogTemp, Log, TEXT("║ [%d] bIsAttachedToWeapon=true → 저장 스킵 (무기 Attachments에 포함됨)"), i);
+#endif
+			continue;
+		}
+
 		// Item 데이터 추출
 		const FInv_ItemManifest& Manifest = Entry.Item->GetItemManifest();
 		FGameplayTag ItemType = Manifest.GetItemType();
 		int32 StackCount = Entry.Item->GetTotalStackCount();
 		int32 GridIndex = Entry.GridIndex;
 		uint8 GridCategory = Entry.GridCategory;
+
+#if INV_DEBUG_ITEM_POINTER
+		// ── [포인터 진단] Entry별 아이템 포인터 & 부착물 상태 추적 ──
+		{
+			const FInv_AttachmentHostFragment* DiagHostFrag = Manifest.GetFragmentOfType<FInv_AttachmentHostFragment>();
+			int32 DiagAttachedCount = DiagHostFrag ? DiagHostFrag->GetAttachedItems().Num() : -1;
+
+			UE_LOG(LogTemp, Warning, TEXT("[ItemPointer] Entry[%d] %s | Item=%p | bIsEquipped=%s | bIsAttachedToWeapon=%s | HasSlots=%s | HostFrag=%p | AttachedItems=%d"),
+				i, *ItemType.ToString(),
+				Entry.Item.Get(),
+				Entry.bIsEquipped ? TEXT("Y") : TEXT("N"),
+				Entry.bIsAttachedToWeapon ? TEXT("Y") : TEXT("N"),
+				Entry.Item->HasAttachmentSlots() ? TEXT("Y") : TEXT("N"),
+				DiagHostFrag,
+				DiagAttachedCount);
+
+			if (DiagHostFrag && DiagAttachedCount > 0)
+			{
+				for (int32 d = 0; d < DiagHostFrag->GetAttachedItems().Num(); d++)
+				{
+					const FInv_AttachedItemData& DiagAtt = DiagHostFrag->GetAttachedItems()[d];
+					UE_LOG(LogTemp, Warning, TEXT("[ItemPointer]   └ 부착물[%d] Slot=%d, Type=%s, OriginalItem=%p"),
+						d, DiagAtt.SlotIndex,
+						*DiagAtt.AttachmentItemType.ToString(),
+						DiagAtt.OriginalItem.Get());
+				}
+			}
+		}
+#endif
 
 		// GridIndex → GridPosition 변환 (Column = X, Row = Y)
 		// 기본값 8 columns 사용 (서버에서는 실제 Grid 크기를 모를 수 있음)
@@ -2680,6 +3001,13 @@ TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave(
 			GridPosition = FIntPoint(-1, -1);  // 미배치
 		}
 
+		// [Fix10-Save진단] 저장 시 GridPosition 출처 확인
+		UE_LOG(LogTemp, Error, TEXT("[Fix10-Save진단] Entry[%d] %s: Entry.GridIndex=%d, GridColumns=%d, SavedItem.GridPosition=(%d,%d), GridCat=%d"),
+			i, *ItemType.ToString(),
+			GridIndex, LocalGridColumns,
+			GridPosition.X, GridPosition.Y,
+			GridCategory);
+
 		// FInv_SavedItemData 생성
 		FInv_SavedItemData SavedItem(ItemType, StackCount, GridPosition, GridCategory);
 
@@ -2687,12 +3015,16 @@ TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave(
 		// 무기 아이템인 경우 AttachmentHostFragment의 AttachedItems 수집
 		if (Entry.Item->HasAttachmentSlots())
 		{
+#if INV_DEBUG_INVENTORY
 			UE_LOG(LogTemp, Error, TEXT("🔍 [SaveDiag] Entry[%d] %s - HasAttachmentSlots=TRUE"), i, *ItemType.ToString());
+#endif
 			const FInv_ItemManifest& ItemManifest = Entry.Item->GetItemManifest();
 			const FInv_AttachmentHostFragment* HostFrag = ItemManifest.GetFragmentOfType<FInv_AttachmentHostFragment>();
 			if (HostFrag)
 			{
+#if INV_DEBUG_INVENTORY
 				UE_LOG(LogTemp, Error, TEXT("🔍 [SaveDiag] Entry[%d] HostFrag 유효! AttachedItems=%d"), i, HostFrag->GetAttachedItems().Num());
+#endif
 				for (const FInv_AttachedItemData& Attached : HostFrag->GetAttachedItems())
 				{
 					FInv_SavedAttachmentData AttSave;
@@ -2759,6 +3091,12 @@ TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave(
 
 		Result.Add(SavedItem);
 
+#if INV_DEBUG_ITEM_POINTER
+		UE_LOG(LogTemp, Warning, TEXT("[ItemPointer] → 저장 완료: Entry[%d] %s | Attachments=%d | bEquipped=%s"),
+			i, *ItemType.ToString(), SavedItem.Attachments.Num(),
+			Entry.bIsEquipped ? TEXT("Y") : TEXT("N"));
+#endif
+
 #if INV_DEBUG_INVENTORY
 		UE_LOG(LogTemp, Warning, TEXT("║ [%d] %s x%d @ Grid%d [%d,%d] (Cat:%d)"),
 			i,
@@ -2769,6 +3107,21 @@ TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave(
 			GridCategory);
 #endif
 	}
+
+#if INV_DEBUG_ITEM_POINTER
+	// ── [포인터 진단] 최종 요약 ──
+	{
+		int32 TotalAttachments = 0;
+		int32 EquippedCount = 0;
+		for (const FInv_SavedItemData& S : Result)
+		{
+			TotalAttachments += S.Attachments.Num();
+			if (S.bEquipped) EquippedCount++;
+		}
+		UE_LOG(LogTemp, Warning, TEXT("[ItemPointer] ═══ 저장 요약: 아이템 %d개, 장착 %d개, 부착물 총 %d개 ═══"),
+			Result.Num(), EquippedCount, TotalAttachments);
+	}
+#endif
 
 #if INV_DEBUG_INVENTORY
 	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));

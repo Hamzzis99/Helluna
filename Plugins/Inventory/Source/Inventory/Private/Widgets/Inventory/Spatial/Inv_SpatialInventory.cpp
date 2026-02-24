@@ -162,7 +162,8 @@ void UInv_SpatialInventory::EquippedGridSlotClicked(UInv_EquippedGridSlot* Equip
 	InventoryComponent->Server_EquipSlotClicked(HoverItem->GetInventoryItem(), nullptr, WeaponSlotIndex);
 	
 	//데디케이티드 서버 제약 조건 설정 (민우님에게도 알려줄 것.)
-	if (GetOwningPlayer()->GetNetMode() != NM_DedicatedServer)
+	// StandAlone/ListenServer는 Multicast_EquipSlotClicked에서 이미 Broadcast 됨 → 이중 스폰 방지
+	if (GetOwningPlayer()->GetNetMode() == NM_Client)
 	{
 		InventoryComponent->OnItemEquipped.Broadcast(HoverItem->GetInventoryItem(), WeaponSlotIndex); // 아이템 장착 델리게이트 방송
 	}
@@ -399,8 +400,8 @@ void UInv_SpatialInventory::BroadcastSlotClickedDelegates(UInv_InventoryItem* It
 	check(IsValid(InventoryComponent));
 	InventoryComponent->Server_EquipSlotClicked(ItemToEquip, ItemToUnequip, WeaponSlotIndex);
 	
-	// 데디서버일경우는 이런 걸 걱정 할 필요 없다.
-	if (GetOwningPlayer()->GetNetMode() != NM_DedicatedServer)
+	// StandAlone/ListenServer는 Multicast_EquipSlotClicked에서 이미 Broadcast 됨 → 이중 스폰 방지
+	if (GetOwningPlayer()->GetNetMode() == NM_Client)
 	{
 		// ⭐ [WeaponBridge] 유효한 아이템이 있을 때만 브로드캐스트
 		if (IsValid(ItemToEquip))

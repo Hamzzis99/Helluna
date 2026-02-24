@@ -26,10 +26,10 @@ protected:
 
 protected:
 	// [설정] 한 발당 데미지
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MDF|Stats", meta = (DisplayName = "발당 데미지"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|스탯", meta = (DisplayName = "발당 데미지"))
 	float DamagePerShot;
 
 	// [NEW] 원거리 데미지 타입 - MDF_DeformableComponent에서 무기 종류 판별용
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MDF|Stats", meta = (DisplayName = "데미지 타입 (원거리)"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|스탯", meta = (DisplayName = "데미지 타입 (원거리)"))
 	TSubclassOf<UDamageType> RifleRangedDamageType;
 };

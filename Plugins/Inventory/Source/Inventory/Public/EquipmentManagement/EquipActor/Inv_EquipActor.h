@@ -10,6 +10,7 @@
 class UGameplayAbility; // TODO: [독립화] 졸작 후 삭제. GAS 의존 제거.
 class USoundBase;
 struct FInv_AttachableFragment;
+struct FInv_AttachmentVisualInfo;
 
 UCLASS()
 class INVENTORY_API AInv_EquipActor : public AActor
@@ -70,7 +71,17 @@ protected:
 	UFUNCTION()
 	void OnRep_bLaserActive();
 
+	// ★ [Phase 5 리플리케이션] 부착물 비주얼 배열 OnRep
+	UFUNCTION()
+	void OnRep_AttachmentVisuals();
+
 private:
+
+	// 지정된 소켓을 보유한 자식 컴포넌트를 탐색한다.
+	// RootComponent(DefaultSceneRoot)에는 소켓이 없으므로,
+	// 실제 소켓이 정의된 메시 컴포넌트를 찾아 반환한다.
+	// 찾지 못하면 GetRootComponent() 폴백.
+	USceneComponent* FindComponentWithSocket(FName SocketName) const;
 
 	UPROPERTY(EditAnywhere, Category = "인벤토리",
 		meta = (DisplayName = "장비 타입 태그", Tooltip = "이 장비의 GameplayTag 타입입니다. 장착/해제 시 식별에 사용됩니다."))
@@ -198,6 +209,14 @@ private:
 	UPROPERTY()
 	TMap<int32, TObjectPtr<UStaticMeshComponent>> AttachmentMeshComponents;
 
+	// ════════════════════════════════════════════════════════════════
+	// ★ [Phase 5 리플리케이션] 부착물 비주얼 데이터 (서버→클라이언트)
+	// 서버에서 AttachMeshToSocket 호출 시 이 배열도 갱신됨.
+	// 클라이언트는 OnRep_AttachmentVisuals에서 메시를 로컬 생성.
+	// ════════════════════════════════════════════════════════════════
+	UPROPERTY(ReplicatedUsing = OnRep_AttachmentVisuals)
+	TArray<FInv_AttachmentVisualInfo> ReplicatedAttachmentVisuals;
+
 public:
 	// ════════════════════════════════════════════════════════════════
 	// [Phase 7] 효과 Getter — 발사 GA / 카메라 시스템에서 호출
@@ -216,6 +235,16 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "인벤토리|부착물", meta = (DisplayName = "레이저 활성화 여부"))
 	bool IsLaserActive() const { return bLaserActive; }
+
+	// ════════════════════════════════════════════════════════════════
+	// 📌 부착물 시각 정보 Getter (게임 모듈에서 사용)
+	// ════════════════════════════════════════════════════════════════
+	// 현재 이 EquipActor에 부착된 모든 부착물의 메시/소켓/오프셋 정보를 반환.
+	// 게임 모듈(WeaponBridgeComponent 등)에서 다른 액터에 동일한 부착물 시각을
+	// 복제할 때 사용한다. 인벤토리 플러그인은 "어디에 쓰이는지" 알 필요 없음.
+	UFUNCTION(BlueprintCallable, Category = "인벤토리|부착물",
+		meta = (DisplayName = "부착물 시각 정보 가져오기"))
+	TArray<FInv_AttachmentVisualInfo> GetAttachmentVisualInfos() const;
 
 	// ════════════════════════════════════════════════════════════════
 	// [Phase 7] 효과 Setter — 부착물 장착/분리 시 호출
