@@ -166,6 +166,9 @@ void AInv_EquipActor::AttachMeshToSocket(int32 SlotIndex, UStaticMesh* Mesh, FNa
 
 	MeshComp->SetStaticMesh(Mesh);
 
+	// 부착물은 시각 전용 — 충돌 비활성화 (BlockAllDynamic 기본값이 캐릭터 움직임 방해)
+	MeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
 	// 소켓을 보유한 실제 메시 컴포넌트를 찾아 부착
 	// (RootComponent=DefaultSceneRoot에는 소켓이 없으므로 직접 탐색)
 	USceneComponent* TargetComp = FindComponentWithSocket(SocketName);

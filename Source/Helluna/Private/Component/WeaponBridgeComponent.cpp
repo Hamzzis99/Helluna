@@ -19,6 +19,7 @@
 #include "Character/HellunaHeroCharacter.h"
 #include "AbilitySystem/HellunaAbilitySystemComponent.h"
 #include "EquipmentManagement/Components/Inv_EquipmentComponent.h"
+#include "InventoryManagement/Components/Inv_InventoryComponent.h"
 #include "EquipmentManagement/EquipActor/Inv_EquipActor.h"
 #include "Items/Fragments/Inv_AttachmentFragments.h" // 김기현 — 부착물 시각 전달용
 #include "Weapon/HellunaHeroWeapon.h"
@@ -123,6 +124,21 @@ void UWeaponBridgeComponent::InitializeWeaponBridge()
 		else
 		{
 			UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] EquipmentComponent를 찾을 수 없음!"));
+		}
+
+		// ============================================
+		// InventoryComponent 찾기 + 부착물 시각 변경 델리게이트 바인딩
+		// 무기를 꺼낸 상태에서 부착물 장착/분리 시 HandWeapon에 실시간 전파
+		// ============================================
+		UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
+		if (InvComp)
+		{
+			InventoryComponent = InvComp;
+			if (!InvComp->OnWeaponAttachmentVisualChanged.IsAlreadyBound(this, &ThisClass::OnWeaponAttachmentVisualChanged))
+			{
+				InvComp->OnWeaponAttachmentVisualChanged.AddDynamic(this, &ThisClass::OnWeaponAttachmentVisualChanged);
+				UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 부착물 시각 변경 델리게이트 바인딩 성공!"));
+			}
 		}
 	}
 	else
@@ -375,6 +391,8 @@ void UWeaponBridgeComponent::Multicast_ApplyAttachmentVisuals_Implementation(con
 	AHellunaHeroWeapon* HandWeapon = OwningCharacter->GetCurrentWeapon();
 	if (IsValid(HandWeapon))
 	{
+		// 기존 부착물 전부 제거 후 새로 적용 (분리 시 제거된 슬롯 대응)
+		HandWeapon->ClearAttachmentVisuals();
 		ApplyVisualsToHandWeapon(Visuals);
 		return;
 	}
@@ -416,6 +434,8 @@ void UWeaponBridgeComponent::OnMulticastVisualTimerTick()
 	AHellunaHeroWeapon* HandWeapon = OwningCharacter->GetCurrentWeapon();
 	if (IsValid(HandWeapon))
 	{
+		// 기존 부착물 전부 제거 후 새로 적용
+		HandWeapon->ClearAttachmentVisuals();
 		ApplyVisualsToHandWeapon(PendingMulticastVisuals);
 
 		if (UWorld* World = GetWorld())
@@ -497,4 +517,30 @@ void UWeaponBridgeComponent::TransferAttachmentVisuals(AInv_EquipActor* EquipAct
 
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 부착물 시각 전달 완료: %d개 (EquipActor: %s → HandWeapon: %s)"),
 		Visuals.Num(), *EquipActor->GetName(), *HandWeapon->GetName());
+}
+
+// ============================================
+// OnWeaponAttachmentVisualChanged
+// InventoryComponent의 부착물 시각 변경 델리게이트 콜백
+// 서버에서 실행: 무기를 꺼낸 상태에서 부착물 장착/분리 시
+// EquipActor의 현재 부착물 시각 정보를 Multicast로 HandWeapon에 전파
+// ============================================
+void UWeaponBridgeComponent::OnWeaponAttachmentVisualChanged(AInv_EquipActor* EquipActor)
+{
+	// 서버에서만 실행 (Server RPC 내부에서 Broadcast되므로)
+	if (!GetOwner() || !GetOwner()->HasAuthority()) return;
+	if (!IsValid(EquipActor) || !OwningCharacter.IsValid()) return;
+
+	// HandWeapon이 없으면 무시 (무기를 안 꺼낸 상태 → 전파 불필요)
+	AHellunaHeroWeapon* HandWeapon = OwningCharacter->GetCurrentWeapon();
+	if (!IsValid(HandWeapon)) return;
+
+	// EquipActor에서 현재 부착물 시각 정보 전체 읽기
+	TArray<FInv_AttachmentVisualInfo> Visuals = EquipActor->GetAttachmentVisualInfos();
+
+	// Multicast로 모든 클라이언트에 전송 (Clear + Apply)
+	Multicast_ApplyAttachmentVisuals(Visuals);
+
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 실시간 부착물 변경 → HandWeapon 전파: %d개 부착물"),
+		Visuals.Num());
 }

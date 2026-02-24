@@ -29,6 +29,7 @@ class AHellunaHeroWeapon; // 김기현 — 부착물 시각 전달용
 class UHellunaAbilitySystemComponent;
 class AInv_EquipActor;
 class UInv_EquipmentComponent;
+class UInv_InventoryComponent;
 class UGameplayAbility;
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
@@ -75,6 +76,10 @@ private:
 	// EquipmentComponent (PlayerController에 부착됨)
 	// 델리게이트 바인딩 대상
 	TWeakObjectPtr<UInv_EquipmentComponent> EquipmentComponent;
+
+	// InventoryComponent (PlayerController에 부착됨)
+	// 부착물 시각 변경 델리게이트 구독용
+	TWeakObjectPtr<UInv_InventoryComponent> InventoryComponent;
 	
 	// ============================================
 	// ⭐ 초기화 함수
@@ -184,4 +189,13 @@ private:
 	FTimerHandle MulticastVisualTimerHandle;
 	int32 MulticastVisualRetryCount = 0;
 	void OnMulticastVisualTimerTick();
+
+	// ============================================
+	// 실시간 부착물 변경 → HandWeapon 동기화
+	// ============================================
+	// InventoryComponent의 OnWeaponAttachmentVisualChanged 델리게이트 콜백
+	// 무기를 꺼낸 상태에서 부착물 장착/분리 시 서버에서 호출됨
+	// EquipActor의 현재 부착물 시각 정보를 읽어 Multicast로 HandWeapon에 전파
+	UFUNCTION()
+	void OnWeaponAttachmentVisualChanged(AInv_EquipActor* EquipActor);
 };

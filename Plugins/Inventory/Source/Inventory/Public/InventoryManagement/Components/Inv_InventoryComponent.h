@@ -16,6 +16,7 @@ class UInv_ItemComponent;
 class UInv_InventoryItem;
 class UInv_InventoryBase;
 class UInv_InventoryGrid;
+class AInv_EquipActor;
 struct FInv_ItemManifest;
 struct FInv_PlayerSaveData;
 
@@ -34,6 +35,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FStackChange, const FInv_SlotAvailab
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FItemEquipStatusChanged, UInv_InventoryItem*, Item, int32, WeaponSlotIndex);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInventoryMenuToggled, bool, bOpen);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FMaterialStacksChanged, const FGameplayTag&, MaterialTag); // Building 시스템용
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FWeaponAttachmentVisualChanged, AInv_EquipActor*, EquipActor); // 부착물 시각 변경 → HandWeapon 전파용
 
 UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent), Blueprintable ) // Blueprintable : 블루프린트에서 상속
 class INVENTORY_API UInv_InventoryComponent : public UActorComponent
@@ -193,6 +195,12 @@ public:
 	FItemEquipStatusChanged OnItemUnequipped;
 	FInventoryMenuToggled OnInventoryMenuToggled;
 	FMaterialStacksChanged OnMaterialStacksChanged; // Building 시스템용
+
+	// ════════════════════════════════════════════════════════════════
+	// 부착물 시각 변경 델리게이트 (무기가 장착 중일 때 부착물 장착/분리 시 발동)
+	// WeaponBridgeComponent가 구독하여 HandWeapon에 Multicast 전파
+	// ════════════════════════════════════════════════════════════════
+	FWeaponAttachmentVisualChanged OnWeaponAttachmentVisualChanged;
 	
 	
 protected:

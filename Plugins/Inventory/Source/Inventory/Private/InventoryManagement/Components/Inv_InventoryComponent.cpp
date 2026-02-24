@@ -1975,6 +1975,15 @@ void UInv_InventoryComponent::Server_AttachItemToWeapon_Implementation(int32 Wea
 		{
 			EquipActor->ApplyAttachmentEffects(AttachableFragment);
 		}
+
+		// ════════════════════════════════════════════════════════════════
+		// 부착물 시각 변경 알림 → WeaponBridge가 HandWeapon에 Multicast 전파
+		// EquipActor에만 반영된 부착물을 HandWeapon(손 무기)에도 동기화
+		// ════════════════════════════════════════════════════════════════
+		if (IsValid(EquipActor))
+		{
+			OnWeaponAttachmentVisualChanged.Broadcast(EquipActor);
+		}
 	}
 }
 
@@ -2080,6 +2089,13 @@ void UInv_InventoryComponent::Server_DetachItemFromWeapon_Implementation(int32 W
 #if INV_DEBUG_ATTACHMENT
 			UE_LOG(LogTemp, Log, TEXT("[Attachment Visual] 실시간 부착물 메시 제거: 슬롯 %d"), SlotIndex);
 #endif
+
+			// ════════════════════════════════════════════════════════════════
+			// 부착물 시각 변경 알림 → WeaponBridge가 HandWeapon에 Multicast 전파
+			// DetachMeshFromSocket 직후 Broadcast해야 GetAttachmentVisualInfos()가
+			// 제거된 슬롯을 제외한 결과를 반환한다
+			// ════════════════════════════════════════════════════════════════
+			OnWeaponAttachmentVisualChanged.Broadcast(EquipActor);
 		}
 	}
 
