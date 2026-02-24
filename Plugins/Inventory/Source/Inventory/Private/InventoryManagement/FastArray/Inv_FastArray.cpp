@@ -169,6 +169,15 @@ void FInv_InventoryFastArray::PostReplicatedAdd(const TArrayView<int32> AddedInd
 #endif
 			continue;
 		}
+
+		// ⭐ [Fix 13] 장착 아이템은 그리드에 추가하지 않음 (공간 선점 방지)
+		if (Entries[Index].bIsEquipped)
+		{
+			UE_LOG(LogTemp, Log, TEXT("[PostReplicatedAdd] Entry[%d] bIsEquipped=true → 그리드 추가 스킵 (%s)"),
+				Index, *Entries[Index].Item->GetItemManifest().GetItemType().ToString());
+			continue;
+		}
+
 		IC->OnItemAdded.Broadcast(Entries[Index].Item, Index);
 	}
 

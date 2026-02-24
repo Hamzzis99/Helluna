@@ -50,6 +50,11 @@ private:
 	// true면 Entry는 FastArray에 남아있지만 그리드에서는 숨김 (인덱스 밀림 방지)
 	UPROPERTY()
 	bool bIsAttachedToWeapon = false;
+
+	// ⭐ [장착 시스템] 장착된 아이템 플래그
+	// true면 PostReplicatedAdd에서 그리드 배치를 스킵 (공간 선점 방지)
+	UPROPERTY()
+	bool bIsEquipped = false;
 };
 
 /* List of inventory Items 

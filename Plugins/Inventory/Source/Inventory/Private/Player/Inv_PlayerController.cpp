@@ -1210,7 +1210,7 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 #if INV_DEBUG_PLAYER
 	UE_LOG(LogTemp, Warning, TEXT("  │                                                              │"));
 	UE_LOG(LogTemp, Warning, TEXT("  │ ⚔️ 장착 아이템 복원 완료: %d개 (예상: %d개)                    │"), EquippedRestored, EquippedCount);
-	UE_LOG(LogTemp, Warning, TEXT("  │ 실패: %3d개 ❌                                              │"), SavedItems.Num() - TotalRestored);
+	UE_LOG(LogTemp, Warning, TEXT("  │ 실패: %3d개 ❌                                              │"), SavedItems.Num() - TotalRestored - EquippedRestored);
 	UE_LOG(LogTemp, Warning, TEXT("  └─────────────────────────────────────────────────────────────┘"));
 	UE_LOG(LogTemp, Warning, TEXT(""));
 #endif
