@@ -598,6 +598,8 @@ void UInv_InventoryComponent::Server_AddStacksToItem_Implementation(UInv_ItemCom
 //아이템 드롭 상호작용을 누른 뒤 서버에서 어떻게 처리를 할지.
 void UInv_InventoryComponent::Server_DropItem_Implementation(UInv_InventoryItem* Item, int32 StackCount)
 {
+	if (!IsValid(Item)) return;
+
 	//단순히 항목을 제거하는지 단순 업데이트를 하는지
 	const int32 NewStackCount = Item->GetTotalStackCount() - StackCount;
 	if (NewStackCount <= 0)
@@ -616,8 +618,12 @@ void UInv_InventoryComponent::Server_DropItem_Implementation(UInv_InventoryItem*
 //무언가를 떨어뜨렸기 때문에 아이템도 생성 및 이벤트 효과들 보이게 하는 부분의 코드들
 void UInv_InventoryComponent::SpawnDroppedItem(UInv_InventoryItem* Item, int32 StackCount)
 {
+	if (!IsValid(Item)) return;
+	if (!OwningController.IsValid()) return;
+
 	// TODO : 아이템을 버릴 시 월드에 소환하게 하는 부분 만들기
 	const APawn* OwningPawn = OwningController->GetPawn();
+	if (!IsValid(OwningPawn)) return;
 	FVector RotatedForward = OwningPawn->GetActorForwardVector();
 	RotatedForward = RotatedForward.RotateAngleAxis(FMath::FRandRange(DropSpawnAngleMin, DropSpawnAngleMax), FVector::UpVector); // 아이템이 빙글빙글 도는 부분
 	FVector SpawnLocation = OwningPawn->GetActorLocation() + RotatedForward * FMath::FRandRange(DropSpawnDistanceMin, DropSpawnDistanceMax); // 아이템이 떨어지는 위치 설정
@@ -636,6 +642,8 @@ void UInv_InventoryComponent::SpawnDroppedItem(UInv_InventoryItem* Item, int32 S
 // 아이템 소비 상호작용을 누른 뒤 서버에서 어떻게 처리를 할지.
 void UInv_InventoryComponent::Server_ConsumeItem_Implementation(UInv_InventoryItem* Item)
 {
+	if (!IsValid(Item)) return;
+
 	const int32 NewStackCount = Item->GetTotalStackCount() - 1;
 
 	// ── Entry Index를 미리 찾아두기 (RemoveEntry 전에!) ──
@@ -1415,7 +1423,7 @@ void UInv_InventoryComponent::Server_ConsumeMaterialsMultiStack_Implementation(c
 
 	// 1단계: 데이터(TotalStackCount) 차감 및 동기화
 	int32 RemainingAmount = Amount;
-	TArray<FInv_InventoryEntry*> EntriesToRemove;
+	TArray<UInv_InventoryItem*> ItemsToRemove;  // ⚠️ Entry 포인터가 아닌 Item 포인터 수집 (RemoveEntry가 TArray를 변경하므로 Entry* 저장 시 댕글링)
 
 	for (auto& Entry : InventoryList.Entries)
 	{
@@ -1444,8 +1452,8 @@ void UInv_InventoryComponent::Server_ConsumeMaterialsMultiStack_Implementation(c
 
 		if (NewCount <= 0)
 		{
-			// 제거 예약
-			EntriesToRemove.Add(&Entry);
+			// 제거 예약 — Item 포인터만 수집 (Entry 포인터는 RemoveEntry 후 무효화됨)
+			ItemsToRemove.Add(Entry.Item);
 #if INV_DEBUG_INVENTORY
 			UE_LOG(LogTemp, Warning, TEXT("❌ [서버] Entry 제거 예약: Item포인터=%p"), Entry.Item.Get());
 #endif
@@ -1491,9 +1499,8 @@ void UInv_InventoryComponent::Server_ConsumeMaterialsMultiStack_Implementation(c
 #endif
 
 	// 제거 예약된 아이템들 실제 제거
-	for (FInv_InventoryEntry* EntryPtr : EntriesToRemove)
+	for (UInv_InventoryItem* ItemToRemove : ItemsToRemove)
 	{
-		UInv_InventoryItem* ItemToRemove = EntryPtr->Item;
 		InventoryList.RemoveEntry(ItemToRemove);
 
 #if INV_DEBUG_INVENTORY
@@ -2168,6 +2175,14 @@ void UInv_InventoryComponent::AddRepSubObj(UObject* SubObj)
 	}
 }
 
+void UInv_InventoryComponent::RemoveRepSubObj(UObject* SubObj)
+{
+	if (IsUsingRegisteredSubObjectList() && IsValid(SubObj))
+	{
+		RemoveReplicatedSubObject(SubObj); // 복제 하위 객체 등록 해제 (GC + 네트워크 누수 방지)
+	}
+}
+
 // Called when the game starts
 void UInv_InventoryComponent::BeginPlay()
 {
@@ -2241,7 +2256,17 @@ void UInv_InventoryComponent::ConstructInventory()
 	if (!OwningController->IsLocalController()) return;
 
 	//블루프린터 위젯 클래스가 설정되어 있는지 확인
+	if (!InventoryMenuClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Inventory] ConstructInventory: InventoryMenuClass가 설정되지 않음!"));
+		return;
+	}
 	InventoryMenu = CreateWidget<UInv_InventoryBase>(OwningController.Get(), InventoryMenuClass);
+	if (!IsValid(InventoryMenu))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Inventory] ConstructInventory: CreateWidget 실패!"));
+		return;
+	}
 	InventoryMenu->AddToViewport();
 	CloseInventoryMenu();
 }

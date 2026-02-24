@@ -20,6 +20,7 @@
 #include "AbilitySystem/HellunaAbilitySystemComponent.h"
 #include "EquipmentManagement/Components/Inv_EquipmentComponent.h"
 #include "EquipmentManagement/EquipActor/Inv_EquipActor.h"
+#include "Items/Fragments/Inv_AttachmentFragments.h"
 #include "Weapon/HellunaHeroWeapon.h"
 #include "Abilities/GameplayAbility.h"
 
@@ -158,6 +159,25 @@ void UWeaponBridgeComponent::OnWeaponEquipRequested(
 	{
 		// ⭐ 무기 꺼내기 - GA 활성화
 		SpawnHandWeapon(SpawnWeaponAbility);
+
+		// ⭐ 부착물 시각 전달 대기 시작
+		// GA가 비동기로 무기를 스폰하므로 타이머로 대기 후 전달
+		if (IsValid(BackWeaponActor))
+		{
+			PendingAttachmentSource = BackWeaponActor;
+			AttachmentTransferRetryCount = 0;
+
+			if (UWorld* World = GetWorld())
+			{
+				World->GetTimerManager().SetTimer(
+					AttachmentTransferTimerHandle,
+					this,
+					&UWeaponBridgeComponent::WaitAndTransferAttachments,
+					0.05f,
+					true  // 반복 타이머
+				);
+			}
+		}
 	}
 	else
 	{
@@ -233,17 +253,107 @@ void UWeaponBridgeComponent::SpawnHandWeapon(TSubclassOf<UGameplayAbility> Spawn
 void UWeaponBridgeComponent::DestroyHandWeapon()
 {
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] DestroyHandWeapon 시작"));
-	
+
+	// ⭐ 부착물 전달 대기 중이면 취소
+	if (AttachmentTransferTimerHandle.IsValid())
+	{
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(AttachmentTransferTimerHandle);
+		}
+		PendingAttachmentSource.Reset();
+	}
+
 	if (!OwningCharacter.IsValid())
 	{
 		UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] OwningCharacter가 null!"));
 		return;
 	}
-	
+
 	// ⭐ Server RPC 호출하여 서버에서 Destroy
 	// CurrentWeapon은 서버에서 스폰되어 리플리케이트된 액터이므로 서버에서만 Destroy 가능
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] Server_RequestDestroyWeapon 호출"));
 	OwningCharacter->Server_RequestDestroyWeapon();
-	
+
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] DestroyHandWeapon 완료"));
+}
+
+// ============================================
+// ⭐ WaitAndTransferAttachments (타이머 콜백)
+// ⭐ GA 비동기 스폰 완료 대기 후 부착물 시각 전달
+// ⭐ 0.05초 간격 반복, 최대 5초(100회) 시도
+// ============================================
+void UWeaponBridgeComponent::WaitAndTransferAttachments()
+{
+	++AttachmentTransferRetryCount;
+
+	// 참조 유효성 검사 — 무효하면 타이머 종료
+	if (!OwningCharacter.IsValid() || !PendingAttachmentSource.IsValid())
+	{
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(AttachmentTransferTimerHandle);
+		}
+		PendingAttachmentSource.Reset();
+		return;
+	}
+
+	// HandWeapon(손 무기)이 스폰되었는지 확인
+	AHellunaHeroWeapon* HandWeapon = OwningCharacter->GetCurrentWeapon();
+	if (IsValid(HandWeapon))
+	{
+		// 무기가 스폰됨 → 부착물 전달 실행
+		TransferAttachmentVisuals(PendingAttachmentSource.Get(), HandWeapon);
+
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(AttachmentTransferTimerHandle);
+		}
+		PendingAttachmentSource.Reset();
+		return;
+	}
+
+	// 타임아웃 체크
+	if (AttachmentTransferRetryCount >= MaxAttachmentTransferRetries)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("⭐ [WeaponBridge] 부착물 전달 타임아웃: HandWeapon이 %d회(%.1f초) 시도 후에도 유효하지 않음"),
+			MaxAttachmentTransferRetries, MaxAttachmentTransferRetries * 0.05f);
+
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(AttachmentTransferTimerHandle);
+		}
+		PendingAttachmentSource.Reset();
+	}
+}
+
+// ============================================
+// ⭐ TransferAttachmentVisuals
+// ⭐ EquipActor(등 무기) → HandWeapon(손 무기)으로 부착물 메시 복제
+// ⭐ 인벤토리 플러그인의 GetAttachmentVisualInfos() Getter 사용
+// ============================================
+void UWeaponBridgeComponent::TransferAttachmentVisuals(AInv_EquipActor* EquipActor, AHellunaHeroWeapon* HandWeapon)
+{
+	if (!IsValid(EquipActor) || !IsValid(HandWeapon)) return;
+
+	// EquipActor에서 부착물 시각 정보 읽기 (인벤토리 플러그인 Getter)
+	TArray<FInv_AttachmentVisualInfo> Visuals = EquipActor->GetAttachmentVisualInfos();
+
+	if (Visuals.Num() == 0) return;
+
+	for (const FInv_AttachmentVisualInfo& Info : Visuals)
+	{
+		if (!IsValid(Info.Mesh)) continue;
+
+		HandWeapon->ApplyAttachmentVisual(
+			Info.SlotIndex,
+			Info.Mesh,
+			Info.SocketName,
+			Info.Offset
+		);
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 부착물 시각 전달 완료: %d개 (EquipActor: %s → HandWeapon: %s)"),
+		Visuals.Num(), *EquipActor->GetName(), *HandWeapon->GetName());
 }

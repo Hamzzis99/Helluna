@@ -142,6 +142,31 @@ enum class EInv_AttachmentSlotPosition : uint8
 };
 
 // ════════════════════════════════════════════════════════════════════════════════
+// 📌 FInv_AttachmentVisualInfo — 부착물 시각 정보 (읽기 전용 DTO)
+// ════════════════════════════════════════════════════════════════════════════════
+// 부착물 메시를 다른 액터에 복제할 때 사용하는 순수 데이터 구조체.
+// 인벤토리 플러그인 외부(게임 모듈)에서 부착물 시각 정보를 읽을 수 있도록 노출.
+// GA나 특정 게임 클래스에 대한 의존성 없음.
+// ════════════════════════════════════════════════════════════════════════════════
+USTRUCT(BlueprintType)
+struct INVENTORY_API FInv_AttachmentVisualInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "부착물")
+	int32 SlotIndex = INDEX_NONE;
+
+	UPROPERTY(BlueprintReadOnly, Category = "부착물")
+	TObjectPtr<UStaticMesh> Mesh = nullptr;
+
+	UPROPERTY(BlueprintReadOnly, Category = "부착물")
+	FName SocketName = NAME_None;
+
+	UPROPERTY(BlueprintReadOnly, Category = "부착물")
+	FTransform Offset = FTransform::Identity;
+};
+
+// ════════════════════════════════════════════════════════════════════════════════
 // 📌 FInv_AttachmentSlotDef - 부착물 슬롯 정의
 // ════════════════════════════════════════════════════════════════════════════════
 // 부착물 슬롯 1개의 정의 (Fragment가 아닌 순수 데이터)

@@ -441,6 +441,12 @@ void FInv_InventoryFastArray::RemoveEntry(UInv_InventoryItem* Item)
 			UE_LOG(LogTemp, Error, TEXT("========== [RemoveEntry] 콜스택 끝 =========="));
 #endif
 
+			// ⚠️ 복제 서브오브젝트 등록 해제 (GC 누수 + 네트워크 대역폭 누수 방지)
+			if (UInv_InventoryComponent* IC = Cast<UInv_InventoryComponent>(OwnerComponent))
+			{
+				IC->RemoveRepSubObj(Item);
+			}
+
 			EntryIt.RemoveCurrent(); // 현재 항목 제거
 			MarkArrayDirty();
 			RebuildItemTypeIndex(); // ⭐ [최적화 #4] 인덱스 캐시 재구축

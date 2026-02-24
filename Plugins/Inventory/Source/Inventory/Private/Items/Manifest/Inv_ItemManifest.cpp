@@ -62,6 +62,7 @@ UInv_InventoryItem* FInv_ItemManifest::Manifest(UObject* NewOuter) // 인벤토�
 	//비어있더라도 호출 해주는 함수
 	for (auto& Fragment : Item->GetItemManifestMutable().GetFragmentsMutable()) // 각 프래그먼트에 대해
 	{
+		if (!Fragment.IsValid()) continue; // ⚠️ 빈 TInstancedStruct 방어 (GetMutable은 IsValid 실패 시 check 크래시)
 		Fragment.GetMutable().Manifest(); // 프래그먼트 매니페스트 호출
 	}
 	Item->GetItemManifestMutable().BuildFragmentCache(); // ⭐ [최적화 #3] 아이템의 Fragment 캐시 구축

@@ -208,6 +208,7 @@ void FInv_AttachableFragment::OnEquip(APlayerController* PC)
 {
 	for (auto& Modifier : EquipModifiers)
 	{
+		if (!Modifier.IsValid()) continue;
 		auto& ModRef = Modifier.GetMutable();
 		ModRef.OnEquip(PC);
 	}
@@ -218,6 +219,7 @@ void FInv_AttachableFragment::OnUnequip(APlayerController* PC)
 {
 	for (auto& Modifier : EquipModifiers)
 	{
+		if (!Modifier.IsValid()) continue;
 		auto& ModRef = Modifier.GetMutable();
 		ModRef.OnUnequip(PC);
 	}
@@ -244,6 +246,7 @@ void FInv_AttachableFragment::Manifest()
 	FInv_InventoryItemFragment::Manifest();
 	for (auto& Modifier : EquipModifiers)
 	{
+		if (!Modifier.IsValid()) continue;
 		auto& ModRef = Modifier.GetMutable();
 		ModRef.Manifest();
 	}

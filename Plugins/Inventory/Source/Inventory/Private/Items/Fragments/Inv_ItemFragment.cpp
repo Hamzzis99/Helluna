@@ -79,6 +79,7 @@ void FInv_ConsumableFragment::OnConsume(APlayerController* PC)
 {
 	for (auto& Modifier : ConsumeModifiers)
 	{
+		if (!Modifier.IsValid()) continue;
 		auto& ModRef = Modifier.GetMutable();
 		ModRef.OnConsume(PC);
 	}
@@ -100,6 +101,7 @@ void FInv_ConsumableFragment::Manifest() // 모든 자식 Fragment를 불러주�
 	FInv_InventoryItemFragment::Manifest();
 	for (auto& Modifier : ConsumeModifiers)
 	{
+		if (!Modifier.IsValid()) continue;
 		auto& ModRef = Modifier.GetMutable();
 		ModRef.Manifest();
 	}
@@ -203,6 +205,7 @@ void FInv_EquipmentFragment::OnEquip(APlayerController* PC)
 	bEquipped = true;
 	for (auto& Modifier : EquipModifiers)
 	{
+		if (!Modifier.IsValid()) continue;
 		auto& ModRef = Modifier.GetMutable(); // 수정 가능한 참조 얻기
 		ModRef.OnEquip(PC); // 장착 함수 호출
 	}
@@ -214,6 +217,7 @@ void FInv_EquipmentFragment::OnUnequip(APlayerController* PC)
 	bEquipped = false;
 	for (auto& Modifier : EquipModifiers)
 	{
+		if (!Modifier.IsValid()) continue;
 		auto& ModRef = Modifier.GetMutable(); // 수정 가능한 참조 얻기
 		ModRef.OnUnequip(PC); // 해제 함수 호출
 	}
@@ -235,6 +239,7 @@ void FInv_EquipmentFragment::Manifest()
 	FInv_InventoryItemFragment::Manifest();
 	for (auto& Modifier : EquipModifiers)
 	{
+		if (!Modifier.IsValid()) continue;
 		auto& ModRef = Modifier.GetMutable();
 		ModRef.Manifest();
 	}

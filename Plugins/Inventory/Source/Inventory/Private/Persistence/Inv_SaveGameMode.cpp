@@ -911,11 +911,22 @@ void AInv_SaveGameMode::OnAutoSaveBatchTimeout()
 // ════════════════════════════════════════════════════════════════════════════════
 void AInv_SaveGameMode::RemoveCachedDataDeferred(const FString& PlayerId, float Delay)
 {
-	FString PlayerIdCopy = PlayerId;
-	FTimerHandle CacheCleanupTimer;
-	GetWorldTimerManager().SetTimer(CacheCleanupTimer, [this, PlayerIdCopy]()
+	// ⚠️ 기존 타이머가 있으면 취소 (빠른 재접속 시 새 세션 캐시를 삭제하는 버그 방지)
+	if (FTimerHandle* ExistingHandle = CacheCleanupTimerHandles.Find(PlayerId))
 	{
-		CachedPlayerData.Remove(PlayerIdCopy);
+		GetWorldTimerManager().ClearTimer(*ExistingHandle);
+	}
+
+	FString PlayerIdCopy = PlayerId;
+	FTimerHandle& CacheCleanupTimer = CacheCleanupTimerHandles.FindOrAdd(PlayerId);
+	TWeakObjectPtr<AInv_SaveGameMode> WeakThis(this);
+	GetWorldTimerManager().SetTimer(CacheCleanupTimer, [WeakThis, PlayerIdCopy]()
+	{
+		if (WeakThis.IsValid())
+		{
+			WeakThis->CachedPlayerData.Remove(PlayerIdCopy);
+			WeakThis->CacheCleanupTimerHandles.Remove(PlayerIdCopy);
+		}
 	}, Delay, false);
 }
 
