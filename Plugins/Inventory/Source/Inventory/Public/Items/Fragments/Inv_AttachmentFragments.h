@@ -336,6 +336,9 @@ struct FInv_AttachableFragment : public FInv_InventoryItemFragment
 	UStaticMesh* GetAttachmentMesh() const { return AttachmentMesh; }
 	const FTransform& GetAttachOffset() const { return AttachOffset; }
 
+	// 부착물 기본 소켓 이름 (무기 SlotDef에 소켓이 없으면 이 값을 사용)
+	FName GetAttachSocket() const { return AttachSocket; }
+
 	// [Phase 7] 효과 플래그 Getter
 	bool GetIsSuppressor() const { return bIsSuppressor; }
 	float GetZoomFOVOverride() const { return ZoomFOVOverride; }
@@ -358,6 +361,17 @@ private:
 	// 소켓 기준 오프셋 (위치/회전 미세 조정)
 	UPROPERTY(EditAnywhere, Category = "부착물", meta = (DisplayName = "부착 오프셋", Tooltip = "소켓 기준 위치/회전 오프셋"))
 	FTransform AttachOffset{FTransform::Identity};
+
+	// ════════════════════════════════════════════════════════════════
+	// 📌 부착물 기본 소켓 이름
+	// ════════════════════════════════════════════════════════════════
+	// 이 부착물이 무기 메시의 어떤 소켓에 붙을지 지정한다.
+	// 무기의 SlotDef.AttachSocket이 설정되어 있으면 그쪽이 우선 적용된다 (오버라이드).
+	// 보통은 여기에 설정하면 충분하다.
+	// 예: "socket_muzzle", "socket_scope", "socket_laser"
+	// ════════════════════════════════════════════════════════════════
+	UPROPERTY(EditAnywhere, Category = "부착물", meta = (DisplayName = "부착 소켓", Tooltip = "무기 메시의 소켓 이름 (예: socket_muzzle). 무기 SlotDef에 소켓이 있으면 그쪽이 우선."))
+	FName AttachSocket{NAME_None};
 
 	// 장착 시 적용되는 스탯 효과 (기존 EquipModifier 구조 재활용)
 	// 예: DamageModifier +5, ArmorModifier +3

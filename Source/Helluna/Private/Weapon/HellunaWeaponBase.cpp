@@ -3,7 +3,7 @@
 
 #include "Weapon/HellunaWeaponBase.h"
 #include "Components/BoxComponent.h"
-#include "Engine/StaticMesh.h"
+#include "Engine/StaticMesh.h" // 김기현 — 부착물 시각 복제용
 
 // Sets default values
 AHellunaWeaponBase::AHellunaWeaponBase()
@@ -27,6 +27,7 @@ AHellunaWeaponBase::AHellunaWeaponBase()
 
 // ════════════════════════════════════════════════════════════════
 // 📌 ApplyAttachmentVisual — 부착물 메시를 WeaponMesh 소켓에 부착
+// 작성: 김기현 (인벤토리 부착물 시스템 연동)
 // ════════════════════════════════════════════════════════════════
 // WeaponBridgeComponent::TransferAttachmentVisuals에서 호출.
 // EquipActor의 부착물 정보를 받아 이 무기의 동일 소켓에 메시를 복제.
@@ -74,6 +75,7 @@ void AHellunaWeaponBase::ApplyAttachmentVisual(int32 SlotIndex, UStaticMesh* Mes
 
 // ════════════════════════════════════════════════════════════════
 // 📌 ClearAttachmentVisuals — 모든 부착물 메시 제거
+// 작성: 김기현 (인벤토리 부착물 시스템 연동)
 // ════════════════════════════════════════════════════════════════
 void AHellunaWeaponBase::ClearAttachmentVisuals()
 {

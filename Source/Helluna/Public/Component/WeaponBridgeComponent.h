@@ -21,10 +21,11 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "GameplayTagContainer.h"
+#include "Items/Fragments/Inv_AttachmentFragments.h" // UFUNCTION 파라미터에 FInv_AttachmentVisualInfo 필요
 #include "WeaponBridgeComponent.generated.h"
 
 class AHellunaHeroCharacter;
-class AHellunaHeroWeapon;
+class AHellunaHeroWeapon; // 김기현 — 부착물 시각 전달용
 class UHellunaAbilitySystemComponent;
 class AInv_EquipActor;
 class UInv_EquipmentComponent;
@@ -139,6 +140,7 @@ private:
 
 	// ============================================
 	// ⭐ 부착물 시각 전달 (EquipActor → HandWeapon)
+	// 작성: 김기현 (인벤토리 부착물 시스템 연동)
 	// ============================================
 	// EquipActor(등 무기)의 부착물 시각 정보를 읽어서
 	// HandWeapon(손 무기)에 동일하게 복제한다.
@@ -147,19 +149,39 @@ private:
 	// EquipActor → HandWeapon으로 부착물 메시 전달
 	void TransferAttachmentVisuals(AInv_EquipActor* EquipActor, AHellunaHeroWeapon* HandWeapon);
 
-	// GA 비동기 스폰 대기용 타이머 콜백
-	// GetCurrentWeapon()이 유효해지면 TransferAttachmentVisuals 호출
+	// 부착물 시각 데이터 배열을 HandWeapon에 직접 적용
+	void ApplyVisualsToHandWeapon(const TArray<FInv_AttachmentVisualInfo>& Visuals);
+
+	// GA 비동기 스폰 대기용 타이머 콜백 (서버에서 실행)
+	// GetCurrentWeapon()이 유효해지면 Multicast RPC로 부착물 데이터 전송
 	void WaitAndTransferAttachments();
 
-	// 부착물 전달 대기 중인 EquipActor (타이머에서 참조)
+	// 부착물 전달 대기 중인 EquipActor (서버 타이머에서 참조)
 	TWeakObjectPtr<AInv_EquipActor> PendingAttachmentSource;
 
-	// 타이머 핸들 (대기 중 취소용)
+	// 서버 타이머 핸들 (대기 중 취소용)
 	FTimerHandle AttachmentTransferTimerHandle;
 
-	// 타이머 재시도 횟수 (무한 루프 방지)
+	// 서버 타이머 재시도 횟수 (무한 루프 방지)
 	int32 AttachmentTransferRetryCount = 0;
 
 	// 최대 재시도 횟수 (0.05초 * 100 = 5초)
 	static constexpr int32 MaxAttachmentTransferRetries = 100;
+
+	// ============================================
+	// ⭐ 멀티플레이 부착물 시각 리플리케이션
+	// ============================================
+	// 소유 클라이언트 → 서버: 부착물 전달 요청
+	UFUNCTION(Server, Reliable)
+	void Server_RequestAttachmentTransfer(AInv_EquipActor* EquipActor);
+
+	// 서버 → 모든 클라이언트: 부착물 시각 데이터 전송
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_ApplyAttachmentVisuals(const TArray<FInv_AttachmentVisualInfo>& Visuals);
+
+	// Multicast 수신 후 HandWeapon 대기용 (클라이언트 로컬)
+	TArray<FInv_AttachmentVisualInfo> PendingMulticastVisuals;
+	FTimerHandle MulticastVisualTimerHandle;
+	int32 MulticastVisualRetryCount = 0;
+	void OnMulticastVisualTimerTick();
 };

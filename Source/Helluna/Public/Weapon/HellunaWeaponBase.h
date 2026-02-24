@@ -7,7 +7,7 @@
 #include "HellunaWeaponBase.generated.h"
 
 class UBoxComponent;
-class UStaticMesh;
+class UStaticMesh; // 김기현 — 부착물 시각 복제용
 
 UCLASS()
 class HELLUNA_API AHellunaWeaponBase : public AActor
@@ -39,6 +39,7 @@ public:
 
 	// ════════════════════════════════════════════════════════════════
 	// 📌 부착물 시각 복제 (WeaponBridgeComponent에서 호출)
+	// 작성: 김기현 (인벤토리 부착물 시스템 연동)
 	// ════════════════════════════════════════════════════════════════
 	// EquipActor(등 무기)의 부착물 시각 정보를 읽어서
 	// 이 무기의 WeaponMesh 소켓에 동일하게 부착한다.
@@ -50,7 +51,7 @@ public:
 	void ClearAttachmentVisuals();
 
 private:
-	// 슬롯 인덱스 → 스폰된 부착물 메시 컴포넌트
+	// 슬롯 인덱스 → 스폰된 부착물 메시 컴포넌트 (김기현)
 	UPROPERTY()
 	TMap<int32, TObjectPtr<UStaticMeshComponent>> AttachmentVisualComponents;
 };

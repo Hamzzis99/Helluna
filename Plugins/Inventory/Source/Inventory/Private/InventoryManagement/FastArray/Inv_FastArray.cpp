@@ -91,6 +91,8 @@ void FInv_InventoryFastArray::PreReplicatedRemove(const TArrayView<int32> Remove
 #endif
 	}
 
+	RebuildItemTypeIndex(); // ⚠️ 클라이언트 인덱스 캐시 동기화
+
 #if INV_DEBUG_INVENTORY
 	UE_LOG(LogTemp, Warning, TEXT("=== PreReplicatedRemove 완료! ==="));
 #endif
@@ -180,6 +182,8 @@ void FInv_InventoryFastArray::PostReplicatedAdd(const TArrayView<int32> AddedInd
 
 		IC->OnItemAdded.Broadcast(Entries[Index].Item, Index);
 	}
+
+	RebuildItemTypeIndex(); // ⚠️ 클라이언트 인덱스 캐시 동기화
 
 #if INV_DEBUG_INVENTORY
 	UE_LOG(LogTemp, Warning, TEXT("=== PostReplicatedAdd 완료! ==="));
@@ -326,6 +330,8 @@ void FInv_InventoryFastArray::PostReplicatedChange(const TArrayView<int32> Chang
 #endif
 		}
 	}
+
+	RebuildItemTypeIndex(); // ⚠️ 클라이언트 인덱스 캐시 동기화
 
 #if INV_DEBUG_INVENTORY
 	UE_LOG(LogTemp, Warning, TEXT("=== PostReplicatedChange 완료 (총 %d개 Entry 처리됨) ==="), ChangedIndices.Num());
@@ -500,7 +506,7 @@ void FInv_InventoryFastArray::RebuildItemTypeIndex()
 	ItemTypeIndex.Reset();
 	for (int32 i = 0; i < Entries.Num(); ++i)
 	{
-		if (IsValid(Entries[i].Item))
+		if (IsValid(Entries[i].Item) && !Entries[i].bIsAttachedToWeapon) // ⚠️ 부착물은 제외 — 재료 소비 시 부착물이 잡히는 버그 방지
 		{
 			ItemTypeIndex.Add(Entries[i].Item->GetItemManifest().GetItemType(), i);
 		}

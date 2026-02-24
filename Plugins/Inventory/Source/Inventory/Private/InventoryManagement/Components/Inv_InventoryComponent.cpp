@@ -513,6 +513,13 @@ void UInv_InventoryComponent::Server_AddStacksToItem_Implementation(UInv_ItemCom
 	{
 		Item->SetTotalStackCount(CurrentStack + AmountToAddToCurrentStack);
 
+		// ⚠️ MarkItemDirty — 데디서버 클라이언트에서 PostReplicatedChange가 트리거되어 UI 갱신
+		const int32 StackEntryIdx = FindEntryIndexForItem(Item);
+		if (InventoryList.Entries.IsValidIndex(StackEntryIdx))
+		{
+			InventoryList.MarkItemDirty(InventoryList.Entries[StackEntryIdx]);
+		}
+
 		// ════════════════════════════════════════════════════════════════
 		// 🔧 리슨서버 호환 수정
 		// ════════════════════════════════════════════════════════════════
@@ -609,6 +616,12 @@ void UInv_InventoryComponent::Server_DropItem_Implementation(UInv_InventoryItem*
 	else
 	{
 		Item->SetTotalStackCount(NewStackCount);
+		// ⚠️ 부분 드롭 시 MarkItemDirty 필수 — 없으면 데디서버 클라이언트에서 스택 수 미갱신
+		const int32 DropEntryIdx = FindEntryIndexForItem(Item);
+		if (InventoryList.Entries.IsValidIndex(DropEntryIdx))
+		{
+			InventoryList.MarkItemDirty(InventoryList.Entries[DropEntryIdx]);
+		}
 	}
 
 	SpawnDroppedItem(Item, StackCount); // 떨어진 아이템 생성 함수 호출
@@ -1329,30 +1342,28 @@ void UInv_InventoryComponent::Server_ConsumeMaterials_Implementation(const FGame
 #endif
 	}
 
-	// UI 업데이트를 위해 델리게이트 브로드캐스트 (모든 클라이언트에서 실행)
-	// 리플리케이션이 작동하면 각 클라이언트에서도 호출됨
-	if (NewCount <= 0)
+	// ⚠️ 리슨서버/스탠드얼론에서만 직접 브로드캐스트 — 데디서버 클라는 FastArray 콜백이 처리
+	if (IsListenServerOrStandalone())
 	{
-		// 아이템 제거됨 - ⭐ Entry Index 전달!
-		OnItemRemoved.Broadcast(Item, ItemEntryIndex);
+		if (NewCount <= 0)
+		{
+			OnItemRemoved.Broadcast(Item, ItemEntryIndex);
 #if INV_DEBUG_INVENTORY
-		UE_LOG(LogTemp, Warning, TEXT("OnItemRemoved 브로드캐스트 완료 (EntryIndex=%d)"), ItemEntryIndex);
+			UE_LOG(LogTemp, Warning, TEXT("OnItemRemoved 브로드캐스트 완료 (EntryIndex=%d)"), ItemEntryIndex);
 #endif
-	}
-	else
-	{
-		// 스택 개수만 변경됨 - OnStackChange 브로드캐스트
-		FInv_SlotAvailabilityResult Result;
-		Result.Item = Item;
-		Result.bStackable = true;
-		Result.TotalRoomToFill = NewCount;
-		Result.EntryIndex = ItemEntryIndex; // ⭐ Entry Index 추가
-
-		// 슬롯 정보는 비워두고 (InventoryGrid가 Item으로 슬롯을 찾음)
-		OnStackChange.Broadcast(Result);
+		}
+		else
+		{
+			FInv_SlotAvailabilityResult Result;
+			Result.Item = Item;
+			Result.bStackable = true;
+			Result.TotalRoomToFill = NewCount;
+			Result.EntryIndex = ItemEntryIndex;
+			OnStackChange.Broadcast(Result);
 #if INV_DEBUG_INVENTORY
-		UE_LOG(LogTemp, Warning, TEXT("OnStackChange 브로드캐스트 완료 (NewCount: %d)"), NewCount);
+			UE_LOG(LogTemp, Warning, TEXT("OnStackChange 브로드캐스트 완료 (NewCount: %d)"), NewCount);
 #endif
+		}
 	}
 
 #if INV_DEBUG_INVENTORY
@@ -1935,8 +1946,17 @@ void UInv_InventoryComponent::Server_AttachItemToWeapon_Implementation(int32 Wea
 		AInv_EquipActor* EquipActor = EquipFragment->GetEquippedActor();
 		if (IsValid(EquipActor) && AttachableFragment->GetAttachmentMesh())
 		{
+			// 소켓 폴백: 무기 SlotDef → 부착물 AttachableFragment → NAME_None
 			const FInv_AttachmentSlotDef* MeshSlotDef = HostFragment->GetSlotDef(SlotIndex);
-			FName MeshSocketName = MeshSlotDef ? MeshSlotDef->AttachSocket : NAME_None;
+			FName MeshSocketName = NAME_None;
+			if (MeshSlotDef && !MeshSlotDef->AttachSocket.IsNone())
+			{
+				MeshSocketName = MeshSlotDef->AttachSocket;  // 1순위: 무기 SlotDef 오버라이드
+			}
+			else
+			{
+				MeshSocketName = AttachableFragment->GetAttachSocket();  // 2순위: 부착물 기본 소켓
+			}
 			EquipActor->AttachMeshToSocket(
 				SlotIndex,
 				AttachableFragment->GetAttachmentMesh(),
@@ -2401,11 +2421,8 @@ void UInv_InventoryComponent::Server_SplitItemEntry_Implementation(UInv_Inventor
 	NewItem->SetItemManifest(OriginalItem->GetItemManifest());
 	NewItem->SetTotalStackCount(SplitStackCount);
 
-	// 5. 새 Entry를 FastArray에 추가 (AddEntry 사용)
+	// 5. 새 Entry를 FastArray에 추가 (AddEntry 내부에서 AddRepSubObj도 호출됨)
 	InventoryList.AddEntry(NewItem);
-
-	// 6. 복제 하위 객체 등록
-	AddRepSubObj(NewItem);
 
 	int32 NewEntryIndex = InventoryList.Entries.Num() - 1;
 
@@ -2426,8 +2443,11 @@ void UInv_InventoryComponent::Server_SplitItemEntry_Implementation(UInv_Inventor
 	UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════╝"));
 #endif
 
-	// 8. OnItemAdded 브로드캐스트 (클라이언트 UI 업데이트용)
-	OnItemAdded.Broadcast(NewItem, NewEntryIndex);
+	// 8. OnItemAdded 브로드캐스트 (리슨서버/스탠드얼론에서만 — 데디서버 클라는 PostReplicatedAdd가 처리)
+	if (IsListenServerOrStandalone())
+	{
+		OnItemAdded.Broadcast(NewItem, NewEntryIndex);
+	}
 }
 
 // ⭐ [Phase 4 방법2] 클라이언트 Grid 위치를 서버 Entry에 동기화

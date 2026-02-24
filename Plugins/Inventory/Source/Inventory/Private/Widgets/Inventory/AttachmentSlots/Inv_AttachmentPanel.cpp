@@ -558,8 +558,12 @@ void UInv_AttachmentPanel::TryAttachHoverItem(int32 SlotIndex)
 			UStaticMesh* AttachMesh = AttachFrag->GetAttachmentMesh();
 			if (SlotDef && IsValid(AttachMesh))
 			{
+				// 소켓 폴백: 무기 SlotDef → 부착물 AttachableFragment → NAME_None
+				const FName PreviewSocket = !SlotDef->AttachSocket.IsNone()
+					? SlotDef->AttachSocket
+					: AttachFrag->GetAttachSocket();
 				WeaponPreviewActor->AddAttachmentPreview(
-					SlotIndex, AttachMesh, SlotDef->AttachSocket, AttachFrag->GetAttachOffset());
+					SlotIndex, AttachMesh, PreviewSocket, AttachFrag->GetAttachOffset());
 			}
 		}
 	}
@@ -921,7 +925,10 @@ void UInv_AttachmentPanel::RefreshPreviewAttachments()
 		UStaticMesh* AttachMesh = AttachableFrag->GetAttachmentMesh();
 		if (!IsValid(AttachMesh)) continue;
 
-		const FName SocketName = SlotDefs[AttData.SlotIndex].AttachSocket;
+		// 소켓 폴백: 무기 SlotDef → 부착물 AttachableFragment → NAME_None
+		const FName SocketName = !SlotDefs[AttData.SlotIndex].AttachSocket.IsNone()
+			? SlotDefs[AttData.SlotIndex].AttachSocket
+			: AttachableFrag->GetAttachSocket();
 		const FTransform& Offset = AttachableFrag->GetAttachOffset();
 
 		WeaponPreviewActor->AddAttachmentPreview(AttData.SlotIndex, AttachMesh, SocketName, Offset);

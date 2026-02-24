@@ -20,9 +20,10 @@
 #include "AbilitySystem/HellunaAbilitySystemComponent.h"
 #include "EquipmentManagement/Components/Inv_EquipmentComponent.h"
 #include "EquipmentManagement/EquipActor/Inv_EquipActor.h"
-#include "Items/Fragments/Inv_AttachmentFragments.h"
+#include "Items/Fragments/Inv_AttachmentFragments.h" // 김기현 — 부착물 시각 전달용
 #include "Weapon/HellunaHeroWeapon.h"
 #include "Abilities/GameplayAbility.h"
+#include "Net/UnrealNetwork.h"
 
 // ============================================
 // ⭐ 생성자
@@ -32,6 +33,9 @@ UWeaponBridgeComponent::UWeaponBridgeComponent()
 {
 	// Tick 사용 안 함 - 델리게이트 이벤트 기반으로 동작
 	PrimaryComponentTick.bCanEverTick = false;
+
+	// RPC 지원을 위해 리플리케이션 활성화
+	SetIsReplicatedByDefault(true);
 }
 
 // ============================================
@@ -160,23 +164,12 @@ void UWeaponBridgeComponent::OnWeaponEquipRequested(
 		// ⭐ 무기 꺼내기 - GA 활성화
 		SpawnHandWeapon(SpawnWeaponAbility);
 
-		// ⭐ 부착물 시각 전달 대기 시작
-		// GA가 비동기로 무기를 스폰하므로 타이머로 대기 후 전달
+		// ⭐ [김기현] 부착물 시각 전달: Server RPC로 서버에 요청
+		// 서버에서 EquipActor의 AttachmentMeshComponents 데이터를 읽어
+		// Multicast RPC로 모든 클라이언트에 전송
 		if (IsValid(BackWeaponActor))
 		{
-			PendingAttachmentSource = BackWeaponActor;
-			AttachmentTransferRetryCount = 0;
-
-			if (UWorld* World = GetWorld())
-			{
-				World->GetTimerManager().SetTimer(
-					AttachmentTransferTimerHandle,
-					this,
-					&UWeaponBridgeComponent::WaitAndTransferAttachments,
-					0.05f,
-					true  // 반복 타이머
-				);
-			}
+			Server_RequestAttachmentTransfer(BackWeaponActor);
 		}
 	}
 	else
@@ -254,7 +247,7 @@ void UWeaponBridgeComponent::DestroyHandWeapon()
 {
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] DestroyHandWeapon 시작"));
 
-	// ⭐ 부착물 전달 대기 중이면 취소
+	// ⭐ [김기현] 부착물 전달 대기 중이면 취소 (서버 타이머)
 	if (AttachmentTransferTimerHandle.IsValid())
 	{
 		if (UWorld* World = GetWorld())
@@ -262,6 +255,16 @@ void UWeaponBridgeComponent::DestroyHandWeapon()
 			World->GetTimerManager().ClearTimer(AttachmentTransferTimerHandle);
 		}
 		PendingAttachmentSource.Reset();
+	}
+
+	// ⭐ Multicast 수신 후 대기 타이머도 취소 (클라이언트 로컬)
+	if (MulticastVisualTimerHandle.IsValid())
+	{
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(MulticastVisualTimerHandle);
+		}
+		PendingMulticastVisuals.Empty();
 	}
 
 	if (!OwningCharacter.IsValid())
@@ -279,8 +282,33 @@ void UWeaponBridgeComponent::DestroyHandWeapon()
 }
 
 // ============================================
-// ⭐ WaitAndTransferAttachments (타이머 콜백)
-// ⭐ GA 비동기 스폰 완료 대기 후 부착물 시각 전달
+// ⭐ Server_RequestAttachmentTransfer (Server RPC)
+// ⭐ 소유 클라이언트 → 서버: 부착물 전달 요청
+// ⭐ 서버에서 EquipActor 데이터가 존재하므로 서버에서 읽어서 Multicast
+// ============================================
+void UWeaponBridgeComponent::Server_RequestAttachmentTransfer_Implementation(AInv_EquipActor* EquipActor)
+{
+	if (!IsValid(EquipActor)) return;
+
+	PendingAttachmentSource = EquipActor;
+	AttachmentTransferRetryCount = 0;
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().SetTimer(
+			AttachmentTransferTimerHandle,
+			this,
+			&UWeaponBridgeComponent::WaitAndTransferAttachments,
+			0.05f,
+			true  // 반복 타이머
+		);
+	}
+}
+
+// ============================================
+// ⭐ WaitAndTransferAttachments (서버 타이머 콜백)
+// 작성: 김기현 (인벤토리 부착물 시스템 연동)
+// ⭐ 서버에서 실행: HandWeapon 스폰 대기 후 Multicast RPC로 부착물 데이터 전송
 // ⭐ 0.05초 간격 반복, 최대 5초(100회) 시도
 // ============================================
 void UWeaponBridgeComponent::WaitAndTransferAttachments()
@@ -298,18 +326,24 @@ void UWeaponBridgeComponent::WaitAndTransferAttachments()
 		return;
 	}
 
-	// HandWeapon(손 무기)이 스폰되었는지 확인
+	// HandWeapon(손 무기)이 서버에 스폰되었는지 확인
 	AHellunaHeroWeapon* HandWeapon = OwningCharacter->GetCurrentWeapon();
 	if (IsValid(HandWeapon))
 	{
-		// 무기가 스폰됨 → 부착물 전달 실행
-		TransferAttachmentVisuals(PendingAttachmentSource.Get(), HandWeapon);
+		// 서버에서 EquipActor의 부착물 데이터 읽기 (서버에만 데이터 존재!)
+		TArray<FInv_AttachmentVisualInfo> Visuals = PendingAttachmentSource->GetAttachmentVisualInfos();
 
 		if (UWorld* World = GetWorld())
 		{
 			World->GetTimerManager().ClearTimer(AttachmentTransferTimerHandle);
 		}
 		PendingAttachmentSource.Reset();
+
+		if (Visuals.Num() > 0)
+		{
+			// Multicast RPC로 모든 클라이언트에 부착물 시각 데이터 전송
+			Multicast_ApplyAttachmentVisuals(Visuals);
+		}
 		return;
 	}
 
@@ -329,7 +363,114 @@ void UWeaponBridgeComponent::WaitAndTransferAttachments()
 }
 
 // ============================================
+// ⭐ Multicast_ApplyAttachmentVisuals (NetMulticast RPC)
+// ⭐ 서버 → 모든 클라이언트: 부착물 시각 데이터 수신 및 적용
+// ⭐ HandWeapon이 아직 없으면 로컬 타이머로 대기
+// ============================================
+void UWeaponBridgeComponent::Multicast_ApplyAttachmentVisuals_Implementation(const TArray<FInv_AttachmentVisualInfo>& Visuals)
+{
+	if (!OwningCharacter.IsValid()) return;
+
+	// HandWeapon이 이미 유효하면 즉시 적용
+	AHellunaHeroWeapon* HandWeapon = OwningCharacter->GetCurrentWeapon();
+	if (IsValid(HandWeapon))
+	{
+		ApplyVisualsToHandWeapon(Visuals);
+		return;
+	}
+
+	// HandWeapon이 아직 없으면 로컬 타이머로 대기
+	PendingMulticastVisuals = Visuals;
+	MulticastVisualRetryCount = 0;
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().SetTimer(
+			MulticastVisualTimerHandle,
+			this,
+			&UWeaponBridgeComponent::OnMulticastVisualTimerTick,
+			0.05f,
+			true
+		);
+	}
+}
+
+// ============================================
+// ⭐ OnMulticastVisualTimerTick (클라이언트 로컬 타이머)
+// ⭐ Multicast 수신 후 HandWeapon 대기 → 유효해지면 적용
+// ============================================
+void UWeaponBridgeComponent::OnMulticastVisualTimerTick()
+{
+	++MulticastVisualRetryCount;
+
+	if (!OwningCharacter.IsValid())
+	{
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(MulticastVisualTimerHandle);
+		}
+		PendingMulticastVisuals.Empty();
+		return;
+	}
+
+	AHellunaHeroWeapon* HandWeapon = OwningCharacter->GetCurrentWeapon();
+	if (IsValid(HandWeapon))
+	{
+		ApplyVisualsToHandWeapon(PendingMulticastVisuals);
+
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(MulticastVisualTimerHandle);
+		}
+		PendingMulticastVisuals.Empty();
+		return;
+	}
+
+	// 타임아웃 (100회 = 5초)
+	if (MulticastVisualRetryCount >= MaxAttachmentTransferRetries)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("⭐ [WeaponBridge] Multicast 부착물 적용 타임아웃: HandWeapon이 %d회 시도 후에도 유효하지 않음"),
+			MaxAttachmentTransferRetries);
+
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(MulticastVisualTimerHandle);
+		}
+		PendingMulticastVisuals.Empty();
+	}
+}
+
+// ============================================
+// ⭐ ApplyVisualsToHandWeapon
+// ⭐ 부착물 시각 데이터 배열을 HandWeapon에 적용
+// ============================================
+void UWeaponBridgeComponent::ApplyVisualsToHandWeapon(const TArray<FInv_AttachmentVisualInfo>& Visuals)
+{
+	if (!OwningCharacter.IsValid()) return;
+
+	AHellunaHeroWeapon* HandWeapon = OwningCharacter->GetCurrentWeapon();
+	if (!IsValid(HandWeapon)) return;
+
+	for (const FInv_AttachmentVisualInfo& Info : Visuals)
+	{
+		if (!IsValid(Info.Mesh)) continue;
+
+		HandWeapon->ApplyAttachmentVisual(
+			Info.SlotIndex,
+			Info.Mesh,
+			Info.SocketName,
+			Info.Offset
+		);
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 부착물 시각 적용 완료: %d개 → HandWeapon: %s"),
+		Visuals.Num(), *HandWeapon->GetName());
+}
+
+// ============================================
 // ⭐ TransferAttachmentVisuals
+// 작성: 김기현 (인벤토리 부착물 시스템 연동)
 // ⭐ EquipActor(등 무기) → HandWeapon(손 무기)으로 부착물 메시 복제
 // ⭐ 인벤토리 플러그인의 GetAttachmentVisualInfos() Getter 사용
 // ============================================
