@@ -324,45 +324,7 @@ void UInv_EquipmentComponent::OnItemEquipped(UInv_InventoryItem* EquippedItem, i
 			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] 클라이언트: 리플리케이트된 액터 추가: %s (총 %d개) - this: %p"),
 				*ReplicatedActor->GetName(), EquippedActors.Num(), this);
 #endif
-
-			// ════════════════════════════════════════════════════════════
-			// ★ [Phase 5 클라이언트] 부착물 메시 로컬 생성
-			// 서버에서 NewObject<UStaticMeshComponent>로 동적 생성한 컴포넌트는
-			// 클라이언트에 리플리케이트되지 않으므로 클라이언트도 직접 생성해야 함
-			// ════════════════════════════════════════════════════════════
-			FInv_AttachmentHostFragment* AttachHostFrag = ItemManifest.GetFragmentOfTypeMutable<FInv_AttachmentHostFragment>();
-			if (AttachHostFrag)
-			{
-				const TArray<FInv_AttachmentSlotDef>& SlotDefs = AttachHostFrag->GetSlotDefinitions();
-				for (const FInv_AttachedItemData& AttachedData : AttachHostFrag->GetAttachedItems())
-				{
-					const FInv_AttachableFragment* AttachableFrag = AttachedData.ItemManifestCopy.GetFragmentOfType<FInv_AttachableFragment>();
-					if (AttachableFrag && AttachableFrag->GetAttachmentMesh())
-					{
-						// 소켓 폴백: 무기 SlotDef → 부착물 AttachableFragment → NAME_None
-						FName SocketName = NAME_None;
-						if (SlotDefs.IsValidIndex(AttachedData.SlotIndex) && !SlotDefs[AttachedData.SlotIndex].AttachSocket.IsNone())
-						{
-							SocketName = SlotDefs[AttachedData.SlotIndex].AttachSocket;
-						}
-						else
-						{
-							SocketName = AttachableFrag->GetAttachSocket();
-						}
-
-						ReplicatedActor->AttachMeshToSocket(
-							AttachedData.SlotIndex,
-							AttachableFrag->GetAttachmentMesh(),
-							SocketName,
-							AttachableFrag->GetAttachOffset()
-						);
-					}
-				}
-#if INV_DEBUG_EQUIP
-				UE_LOG(LogTemp, Warning, TEXT("★ [EquipmentComponent] 클라이언트: Phase 5 부착물 메시 %d개 로컬 생성 완료"),
-					AttachHostFrag->GetAttachedItems().Num());
-#endif
-			}
+			// 부착물 메시는 EquipActor::OnRep_AttachmentVisuals에서 자동 처리됨
 		}
 		else
 		{
