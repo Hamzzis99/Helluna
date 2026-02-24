@@ -129,7 +129,7 @@ void FInv_AttachmentHostFragment::Manifest()
 // 📌 [Phase 8] RestoreDesignTimeSlotPositions
 // ════════════════════════════════════════════════════════════════
 // 세이브/로드 시 역직렬화된 SlotDefinitions에
-// CDO(BP 에디터)의 최신 SlotPosition 값을 다시 적용
+// CDO(BP 에디터)의 최신 SlotPosition 값(Scope/Muzzle/Grip/Magazine)을 다시 적용
 //
 // 이유: DeserializeAndApplyFragments()가 Fragments 전체를 교체하므로
 //       BP 수정 후 저장된 옛날 데이터의 SlotPosition이 그대로 남음

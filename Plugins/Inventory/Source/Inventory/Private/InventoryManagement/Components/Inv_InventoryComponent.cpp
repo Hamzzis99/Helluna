@@ -2896,6 +2896,35 @@ TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave(
 		int32 GridIndex = Entry.GridIndex;
 		uint8 GridCategory = Entry.GridCategory;
 
+#if INV_DEBUG_ITEM_POINTER
+		// ── [포인터 진단] Entry별 아이템 포인터 & 부착물 상태 추적 ──
+		{
+			const FInv_AttachmentHostFragment* DiagHostFrag = Manifest.GetFragmentOfType<FInv_AttachmentHostFragment>();
+			int32 DiagAttachedCount = DiagHostFrag ? DiagHostFrag->GetAttachedItems().Num() : -1;
+
+			UE_LOG(LogTemp, Warning, TEXT("[ItemPointer] Entry[%d] %s | Item=%p | bIsEquipped=%s | bIsAttachedToWeapon=%s | HasSlots=%s | HostFrag=%p | AttachedItems=%d"),
+				i, *ItemType.ToString(),
+				Entry.Item.Get(),
+				Entry.bIsEquipped ? TEXT("Y") : TEXT("N"),
+				Entry.bIsAttachedToWeapon ? TEXT("Y") : TEXT("N"),
+				Entry.Item->HasAttachmentSlots() ? TEXT("Y") : TEXT("N"),
+				DiagHostFrag,
+				DiagAttachedCount);
+
+			if (DiagHostFrag && DiagAttachedCount > 0)
+			{
+				for (int32 d = 0; d < DiagHostFrag->GetAttachedItems().Num(); d++)
+				{
+					const FInv_AttachedItemData& DiagAtt = DiagHostFrag->GetAttachedItems()[d];
+					UE_LOG(LogTemp, Warning, TEXT("[ItemPointer]   └ 부착물[%d] Slot=%d, Type=%s, OriginalItem=%p"),
+						d, DiagAtt.SlotIndex,
+						*DiagAtt.AttachmentItemType.ToString(),
+						DiagAtt.OriginalItem.Get());
+				}
+			}
+		}
+#endif
+
 		// GridIndex → GridPosition 변환 (Column = X, Row = Y)
 		// 기본값 8 columns 사용 (서버에서는 실제 Grid 크기를 모를 수 있음)
 		int32 LocalGridColumns = GridColumns > 0 ? GridColumns : 8;
@@ -3001,6 +3030,12 @@ TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave(
 
 		Result.Add(SavedItem);
 
+#if INV_DEBUG_ITEM_POINTER
+		UE_LOG(LogTemp, Warning, TEXT("[ItemPointer] → 저장 완료: Entry[%d] %s | Attachments=%d | bEquipped=%s"),
+			i, *ItemType.ToString(), SavedItem.Attachments.Num(),
+			Entry.bIsEquipped ? TEXT("Y") : TEXT("N"));
+#endif
+
 #if INV_DEBUG_INVENTORY
 		UE_LOG(LogTemp, Warning, TEXT("║ [%d] %s x%d @ Grid%d [%d,%d] (Cat:%d)"),
 			i,
@@ -3011,6 +3046,21 @@ TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave(
 			GridCategory);
 #endif
 	}
+
+#if INV_DEBUG_ITEM_POINTER
+	// ── [포인터 진단] 최종 요약 ──
+	{
+		int32 TotalAttachments = 0;
+		int32 EquippedCount = 0;
+		for (const FInv_SavedItemData& S : Result)
+		{
+			TotalAttachments += S.Attachments.Num();
+			if (S.bEquipped) EquippedCount++;
+		}
+		UE_LOG(LogTemp, Warning, TEXT("[ItemPointer] ═══ 저장 요약: 아이템 %d개, 장착 %d개, 부착물 총 %d개 ═══"),
+			Result.Num(), EquippedCount, TotalAttachments);
+	}
+#endif
 
 #if INV_DEBUG_INVENTORY
 	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));

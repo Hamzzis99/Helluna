@@ -53,7 +53,7 @@
 //      → SlotType: "AttachmentSlot.Laser"
 //      → SlotDisplayName: "레이저 슬롯"
 //      → AttachSocket: "socket_laser" (EquipActor 메시에 소켓 필요)
-//      → SlotPosition: Right (십자형 UI에서의 위치)
+//      → SlotPosition: Magazine (세로 리스트 UI에서의 역할)
 //
 // ── STEP 4: UI 위젯 (선택) ──
 //    WBP_AttachmentPanel에 해당 태그의 슬롯 위젯이 없으면
@@ -115,29 +115,30 @@ class UStaticMesh;
 class APlayerController;
 
 // ════════════════════════════════════════════════════════════════════════════════
-// 📌 EInv_AttachmentSlotPosition — 부착물 슬롯 UI 배치 위치
+// 📌 EInv_AttachmentSlotPosition — 부착물 슬롯 역할 (세로 리스트 UI)
 // ════════════════════════════════════════════════════════════════════════════════
-// Phase 8: 십자형 레이아웃에서 슬롯이 표시될 방향
-// AttachmentPanel의 GridPanel에서 이 값을 읽어 Top/Left/Right/Bottom에 분배
+// Phase 8: 세로 리스트 레이아웃에서 슬롯의 역할을 나타내는 열거형
+// BuildSlotWidgets()는 SlotType GameplayTag로 위젯을 매칭하므로
+// 이 값은 직접적인 배치 로직에 사용되지 않지만, 슬롯의 의미를 명시
 //
 // 사용처:
 //   - FInv_AttachmentSlotDef::SlotPosition (BP 에디터에서 설정)
-//   - Inv_AttachmentPanel::BuildSlotWidgets() (슬롯 배치 분기)
+//   - 진단 로그에서 (int32) 캐스팅으로 출력
 //
 // BP 설정 예시:
 //   BP_Inv_Rifle의 AttachmentHostFragment → SlotDefinitions:
-//     [0] Scope  → SlotPosition = Top
-//     [1] Grip   → SlotPosition = Left
-//     [2] Laser  → SlotPosition = Right
-//     [3] Magazine → SlotPosition = Bottom
+//     [0] Scope    → SlotPosition = Scope
+//     [1] Muzzle   → SlotPosition = Muzzle
+//     [2] Grip     → SlotPosition = Grip
+//     [3] Magazine → SlotPosition = Magazine
 // ════════════════════════════════════════════════════════════════════════════════
 UENUM(BlueprintType)
 enum class EInv_AttachmentSlotPosition : uint8
 {
-	Top     UMETA(DisplayName = "상단 (스코프 등)"),
-	Bottom  UMETA(DisplayName = "하단 (탄창 등)"),
-	Left    UMETA(DisplayName = "좌측 (그립 등)"),
-	Right   UMETA(DisplayName = "우측 (조명/레이저 등)"),
+	Scope     UMETA(DisplayName = "스코프 (조준경)"),
+	Muzzle    UMETA(DisplayName = "총구 (소음기 등)"),
+	Grip      UMETA(DisplayName = "그립 (손잡이)"),
+	Magazine  UMETA(DisplayName = "탄창"),
 };
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -168,16 +169,16 @@ struct FInv_AttachmentSlotDef
 	int32 MaxCount{1};
 
 	// ════════════════════════════════════════════════════════════════
-	// 📌 [Phase 8] 슬롯 UI 배치 위치
+	// 📌 [Phase 8] 슬롯 역할 (세로 리스트 UI)
 	// ════════════════════════════════════════════════════════════════
-	// 십자형 레이아웃에서 이 슬롯이 표시될 방향
-	// Top = 무기 위(스코프), Bottom = 아래(탄창), Left/Right = 좌우(그립/조명)
-	// AttachmentPanel::BuildSlotWidgets()에서 이 값으로 VerticalBox 분배
+	// 세로 리스트 레이아웃에서 이 슬롯의 역할을 나타냄
+	// Scope = 조준경, Muzzle = 총구, Grip = 그립, Magazine = 탄창
+	// BuildSlotWidgets()는 SlotType 태그로 매칭하므로 배치에 직접 사용되지 않음
 	// ════════════════════════════════════════════════════════════════
 	UPROPERTY(EditAnywhere, Category = "부착물",
-		meta = (DisplayName = "슬롯 UI 위치",
-				Tooltip = "십자형 부착물 패널에서 이 슬롯이 표시될 방향. Top=상단(스코프), Bottom=하단(탄창), Left=좌측(그립), Right=우측(조명)"))
-	EInv_AttachmentSlotPosition SlotPosition = EInv_AttachmentSlotPosition::Top;
+		meta = (DisplayName = "슬롯 역할",
+				Tooltip = "이 슬롯의 역할. Scope=조준경, Muzzle=총구, Grip=그립, Magazine=탄창. BuildSlotWidgets()는 SlotType 태그로 위젯을 매칭"))
+	EInv_AttachmentSlotPosition SlotPosition = EInv_AttachmentSlotPosition::Scope;
 };
 
 

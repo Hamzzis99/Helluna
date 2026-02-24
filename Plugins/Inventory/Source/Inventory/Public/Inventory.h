@@ -36,6 +36,9 @@
 // 저장/로드 시스템 (SaveGameMode, 로드 복원)
 #define INV_DEBUG_SAVE 1
 
+// 아이템 포인터/부착물 저장 진단 (CollectInventoryDataForSave 포인터 추적)
+#define INV_DEBUG_ITEM_POINTER 1
+
 // ============================================
 
 //로그에 대해서 허용할 때 여기다가 이름을 넣는다?
