@@ -266,11 +266,15 @@ void UInv_EquipmentComponent::OnItemEquipped(UInv_InventoryItem* EquippedItem, i
 					const FInv_AttachableFragment* AttachableFrag = AttachedData.ItemManifestCopy.GetFragmentOfType<FInv_AttachableFragment>();
 					if (AttachableFrag && AttachableFrag->GetAttachmentMesh())
 					{
-						// 슬롯 정의에서 소켓 이름 가져오기
+						// 소켓 폴백: 무기 SlotDef → 부착물 AttachableFragment → NAME_None
 						FName SocketName = NAME_None;
-						if (SlotDefs.IsValidIndex(AttachedData.SlotIndex))
+						if (SlotDefs.IsValidIndex(AttachedData.SlotIndex) && !SlotDefs[AttachedData.SlotIndex].AttachSocket.IsNone())
 						{
-							SocketName = SlotDefs[AttachedData.SlotIndex].AttachSocket;
+							SocketName = SlotDefs[AttachedData.SlotIndex].AttachSocket;  // 1순위: 무기 SlotDef 오버라이드
+						}
+						else
+						{
+							SocketName = AttachableFrag->GetAttachSocket();  // 2순위: 부착물 기본 소켓
 						}
 
 						SpawnedEquipActor->AttachMeshToSocket(

@@ -79,21 +79,6 @@ void AInv_PlayerController::ToggleInventory()
 	else
 	{
 		HUDWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
-
-		// ============================================
-		// ⭐ [Phase 3 테스트] 인벤토리 닫을 때 Grid 상태 수집
-		// ============================================
-		// TODO: Phase 4 완료 후 이 코드 제거 (RPC로 대체)
-#if INV_DEBUG_PLAYER
-		UE_LOG(LogTemp, Warning, TEXT(""));
-		UE_LOG(LogTemp, Warning, TEXT("🧪 [Phase 3 테스트] 인벤토리 닫힘 → CollectInventoryGridState() 호출"));
-#endif
-
-		TArray<FInv_SavedItemData> CollectedData = CollectInventoryGridState();
-
-#if INV_DEBUG_PLAYER
-		UE_LOG(LogTemp, Warning, TEXT("🧪 [Phase 3 테스트] 수집 완료! %d개 아이템"), CollectedData.Num());
-#endif
 	}
 }
 
@@ -562,11 +547,42 @@ TArray<FInv_SavedItemData> AInv_PlayerController::CollectInventoryGridState()
 #endif
 
 	// ============================================
+	// [BugFix] Step 3.5: 장착 아이템 포인터 Set 구성 (Step 4에서 이중 수집 방지)
+	// ============================================
+	TSet<UInv_InventoryItem*> EquippedItemPtrs;
+	{
+		const TArray<TObjectPtr<UInv_EquippedGridSlot>>& PreEquippedSlots = SpatialInventory->GetEquippedGridSlots();
+		for (const TObjectPtr<UInv_EquippedGridSlot>& Slot : PreEquippedSlots)
+		{
+			if (IsValid(Slot.Get()))
+			{
+				UInv_InventoryItem* EqItem = Slot->GetInventoryItem().Get();
+				if (IsValid(EqItem))
+				{
+					EquippedItemPtrs.Add(EqItem);
+				}
+			}
+		}
+	}
+
+	UE_LOG(LogTemp, Error, TEXT("[Step3.5진단] EquippedItemPtrs 구성: %d개"), EquippedItemPtrs.Num());
+	for (UInv_InventoryItem* EqDiagPtr : EquippedItemPtrs)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Step3.5진단]   -> 포인터=%p, Type=%s"),
+			EqDiagPtr, *EqDiagPtr->GetItemManifest().GetItemType().ToString());
+	}
+
+#if INV_DEBUG_PLAYER
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("▶ [Step 3.5] 장착 아이템 필터 Set 구성: %d개"), EquippedItemPtrs.Num());
+#endif
+
+	// ============================================
 	// Step 4: 3개 Grid 접근 및 상태 수집
 	// ============================================
 #if INV_DEBUG_PLAYER
 	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("▶ [Step 4] 3개 Grid에서 아이템 수집"));
+	UE_LOG(LogTemp, Warning, TEXT("▶ [Step 4] 3개 Grid에서 아이템 수집 (장착 아이템 제외)"));
 	UE_LOG(LogTemp, Warning, TEXT("  ┌─────────────────────────────────────────────────────────────┐"));
 #endif
 
@@ -601,8 +617,8 @@ TArray<FInv_SavedItemData> AInv_PlayerController::CollectInventoryGridState()
 			continue;
 		}
 
-		// 각 Grid의 상태 수집
-		TArray<FInv_SavedItemData> GridItems = GridInfo.Grid->CollectGridState();
+		// 각 Grid의 상태 수집 (장착 아이템은 제외)
+		TArray<FInv_SavedItemData> GridItems = GridInfo.Grid->CollectGridState(&EquippedItemPtrs);
 
 #if INV_DEBUG_PLAYER
 		UE_LOG(LogTemp, Warning, TEXT("  │    📦 수집된 아이템: %d개"), GridItems.Num());
@@ -878,6 +894,40 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 #endif
 
 	// ============================================
+	// [FIX] 장착 아이템을 Grid에서 선제거 (Step 3 전에!)
+	// PostReplicatedAdd가 모든 아이템을 Grid에 자동 배치했으므로
+	// 장착 아이템이 Grid 공간을 차지하고 있음.
+	// Step 3에서 Grid 위치를 복원하기 전에 제거해야 겹침 방지.
+	// [BugFix] WeaponSlotIndex → 아이템 포인터를 저장하여 Phase 6에서 재사용
+	// ============================================
+	TMap<int32, UInv_InventoryItem*> PreRemovedEquippedItems;
+	{
+		UInv_InventoryGrid* PreEquipGrid = SpatialInventory->GetGrid_Equippables();
+		if (IsValid(PreEquipGrid))
+		{
+			TSet<UInv_InventoryItem*> TempProcessedEquip;
+			for (const FInv_SavedItemData& EqItem : SavedItems)
+			{
+				if (!EqItem.bEquipped) continue;
+
+				UInv_InventoryItem* Found = InventoryComponent->FindItemByTypeExcluding(
+					EqItem.ItemType, TempProcessedEquip);
+				if (IsValid(Found))
+				{
+					bool bPreRemoved = PreEquipGrid->RemoveSlottedItemByPointer(Found);
+					TempProcessedEquip.Add(Found);
+					PreRemovedEquippedItems.Add(EqItem.WeaponSlotIndex, Found);
+#if INV_DEBUG_PLAYER
+					UE_LOG(LogTemp, Warning, TEXT("[Pre-Equip] Grid에서 장착 아이템 선제거: %s (슬롯 %d) → %s (포인터 저장됨)"),
+						*EqItem.ItemType.ToString(), EqItem.WeaponSlotIndex,
+						bPreRemoved ? TEXT("성공") : TEXT("실패"));
+#endif
+				}
+			}
+		}
+	}
+
+	// ============================================
 	// Step 3: 각 Grid에 위치 복원 요청
 	// ============================================
 #if INV_DEBUG_PLAYER
@@ -1039,11 +1089,25 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 			UE_LOG(LogTemp, Warning, TEXT("  │       ✅ TargetSlot 찾음: %s"), *TargetSlot->GetName());
 #endif
 
-			// InventoryComponent에서 해당 ItemType 아이템 찾기
+			// [BugFix] Pre-remove에서 저장한 정확한 인스턴스 사용, fallback으로 FindItemByTypeExcluding
+			UInv_InventoryItem* FoundItem = nullptr;
+			UInv_InventoryItem** PreRemovedPtr = PreRemovedEquippedItems.Find(ItemData.WeaponSlotIndex);
+			if (PreRemovedPtr && IsValid(*PreRemovedPtr))
+			{
+				FoundItem = *PreRemovedPtr;
 #if INV_DEBUG_PLAYER
-			UE_LOG(LogTemp, Warning, TEXT("  │       🔍 FindItemByType 호출: %s"), *ItemData.ItemType.ToString());
+				UE_LOG(LogTemp, Warning, TEXT("  │       ✅ Pre-remove 포인터 사용: %s (슬롯 %d)"),
+					*FoundItem->GetItemManifest().GetItemType().ToString(), ItemData.WeaponSlotIndex);
 #endif
-			UInv_InventoryItem* FoundItem = InventoryComponent->FindItemByTypeExcluding(ItemData.ItemType, ProcessedEquipItems);
+			}
+			else
+			{
+				// fallback: Pre-remove에서 못 찾은 경우 (타이밍 이슈 등)
+#if INV_DEBUG_PLAYER
+				UE_LOG(LogTemp, Warning, TEXT("  │       ⚠️ Pre-remove 포인터 없음 → FindItemByTypeExcluding fallback: %s"), *ItemData.ItemType.ToString());
+#endif
+				FoundItem = InventoryComponent->FindItemByTypeExcluding(ItemData.ItemType, ProcessedEquipItems);
+			}
 			if (!IsValid(FoundItem))
 			{
 #if INV_DEBUG_PLAYER
@@ -1068,24 +1132,26 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 					*ItemData.ItemType.ToString(), ItemData.WeaponSlotIndex);
 #endif
 
-				// 🆕 [Phase 6] Grid에서 장착된 아이템 제거 (중복 저장 방지)
-				UInv_InventoryGrid* EquipGrid = SpatialInventory->GetGrid_Equippables();
-				if (IsValid(EquipGrid))
+				// [BugFix] Grid에서 장착 아이템 제거 — Pre-remove에서 이미 제거했으면 스킵
+				if (!PreRemovedPtr || !IsValid(*PreRemovedPtr))
 				{
-					bool bRemoved = EquipGrid->RemoveSlottedItemByPointer(FoundItem);
-					if (bRemoved)
+					// fallback 경로: Pre-remove를 안 거쳤으므로 여기서 Grid 제거 시도
+					UInv_InventoryGrid* EquipGrid = SpatialInventory->GetGrid_Equippables();
+					if (IsValid(EquipGrid))
 					{
+						bool bRemoved = EquipGrid->RemoveSlottedItemByPointer(FoundItem);
 #if INV_DEBUG_PLAYER
-						UE_LOG(LogTemp, Warning, TEXT("  │       🗑️ Grid에서 장착 아이템 제거 완료"));
-#endif
-					}
-					else
-					{
-#if INV_DEBUG_PLAYER
-						UE_LOG(LogTemp, Warning, TEXT("  │       ⚠️ Grid에서 아이템 제거 실패 (이미 없음?)"));
+						UE_LOG(LogTemp, Warning, TEXT("  │       🗑️ Grid 제거 (fallback): %s"),
+							bRemoved ? TEXT("성공") : TEXT("실패"));
 #endif
 					}
 				}
+#if INV_DEBUG_PLAYER
+				else
+				{
+					UE_LOG(LogTemp, Warning, TEXT("  │       ✅ Grid 제거 스킵 (Pre-remove에서 이미 처리됨)"));
+				}
+#endif
 
 				// 장착 델리게이트 브로드캐스트 (무기 Actor 스폰용)
 #if INV_DEBUG_PLAYER
@@ -1111,10 +1177,40 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 #endif
 	}
 
+	// ============================================
+	// Fix 10: 복원 완료 후 서버에 올바른 Grid 위치 동기화
+	// ============================================
+	// PostReplicatedAdd 시 장착 아이템(GridIndex=INDEX_NONE)이 "first available" 슬롯에
+	// 배치되면서 Server_UpdateItemGridPosition RPC가 서버의 GridIndex를 덮어씀.
+	// MoveItemByCurrentIndex는 RPC를 보내지 않으므로, 복원 후 명시적으로 동기화 필요.
+	for (const FGridRestoreInfo& GridInfo : Grids)
+	{
+		if (IsValid(GridInfo.Grid))
+		{
+			GridInfo.Grid->SendAllItemPositionsToServer();
+			UE_LOG(LogTemp, Warning, TEXT("[Fix10] %s 위치 서버 동기화 완료"), GridInfo.Name);
+		}
+	}
+
+	// Fix 10: 장착 아이템의 GridIndex를 서버에서 INDEX_NONE으로 재설정
+	// PostReplicatedAdd → AddItem → UpdateGridSlots의 RPC가 서버의 GridIndex를 덮어썼으므로 복구
+	if (InventoryComponent.IsValid())
+	{
+		for (const auto& [SlotIdx, EquippedItem] : PreRemovedEquippedItems)
+		{
+			if (IsValid(EquippedItem))
+			{
+				InventoryComponent->Server_UpdateItemGridPosition(EquippedItem, INDEX_NONE, 0);
+				UE_LOG(LogTemp, Warning, TEXT("[Fix10] 장착 아이템 GridIndex 서버 클리어: %s (WeaponSlot=%d)"),
+					*EquippedItem->GetItemManifest().GetItemType().ToString(), SlotIdx);
+			}
+		}
+	}
+
 #if INV_DEBUG_PLAYER
 	UE_LOG(LogTemp, Warning, TEXT("  │                                                              │"));
 	UE_LOG(LogTemp, Warning, TEXT("  │ ⚔️ 장착 아이템 복원 완료: %d개 (예상: %d개)                    │"), EquippedRestored, EquippedCount);
-	UE_LOG(LogTemp, Warning, TEXT("  │ 실패: %3d개 ❌                                              │"), SavedItems.Num() - TotalRestored);
+	UE_LOG(LogTemp, Warning, TEXT("  │ 실패: %3d개 ❌                                              │"), SavedItems.Num() - TotalRestored - EquippedRestored);
 	UE_LOG(LogTemp, Warning, TEXT("  └─────────────────────────────────────────────────────────────┘"));
 	UE_LOG(LogTemp, Warning, TEXT(""));
 #endif
@@ -1298,6 +1394,108 @@ void AInv_PlayerController::Client_ReceiveInventoryData_Implementation(const TAr
 #if INV_DEBUG_PLAYER
 	UE_LOG(LogTemp, Warning, TEXT("════════════════════════════════════════════════════════════════════════════════"));
 #endif
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [네트워크 최적화] Client_ReceiveInventoryDataChunk
+// ════════════════════════════════════════════════════════════════════════════════
+// 서버가 SavedItems를 청크로 나눠 보낼 때 사용.
+// 각 청크를 PendingSavedItems에 누적, bIsLastChunk=true일 때 폴링 복원 시작.
+// ════════════════════════════════════════════════════════════════════════════════
+void AInv_PlayerController::Client_ReceiveInventoryDataChunk_Implementation(
+	const TArray<FInv_SavedItemData>& ChunkItems, bool bIsLastChunk)
+{
+	UE_LOG(LogTemp, Log, TEXT("[InventoryChunk] 청크 수신: %d개, bIsLastChunk=%s, 누적=%d"),
+		ChunkItems.Num(),
+		bIsLastChunk ? TEXT("true") : TEXT("false"),
+		PendingSavedItems.Num());
+
+	// [Fix10-Recv진단] 청크 수신 데이터 확인
+	for (int32 DiagIdx = 0; DiagIdx < ChunkItems.Num(); DiagIdx++)
+	{
+		const FInv_SavedItemData& DiagItem = ChunkItems[DiagIdx];
+		UE_LOG(LogTemp, Error, TEXT("[Fix10-Recv진단] 수신 Item[%d] %s: GridPos=(%d,%d), bEquipped=%s, WeaponSlot=%d"),
+			PendingSavedItems.Num() + DiagIdx, *DiagItem.ItemType.ToString(),
+			DiagItem.GridPosition.X, DiagItem.GridPosition.Y,
+			DiagItem.bEquipped ? TEXT("TRUE") : TEXT("FALSE"),
+			DiagItem.WeaponSlotIndex);
+	}
+
+	PendingSavedItems.Append(ChunkItems);
+
+	if (!bIsLastChunk)
+	{
+		return;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[InventoryChunk] 마지막 청크 수신. 총 %d개 아이템 → 폴링 복원 시작"),
+		PendingSavedItems.Num());
+
+	// 폴링 복원 데이터 세팅
+	PendingRestoreItems = MoveTemp(PendingSavedItems);
+	PendingSavedItems.Empty();
+	PendingRestoreRetryCount = 0;
+
+	// 0.3초 간격 폴링 시작 (최대 15회 = 4.5초)
+	GetWorldTimerManager().SetTimer(PendingRestoreTimerHandle, this,
+		&AInv_PlayerController::PollAndRestoreInventory, 0.3f, true);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [네트워크 최적화] PollAndRestoreInventory
+// ════════════════════════════════════════════════════════════════════════════════
+// FastArray 리플리케이션이 완료될 때까지 폴링으로 대기.
+// InventoryComponent의 아이템 수가 기대값에 도달하면 복원 실행.
+// ════════════════════════════════════════════════════════════════════════════════
+void AInv_PlayerController::PollAndRestoreInventory()
+{
+	PendingRestoreRetryCount++;
+
+	// InventoryComponent에서 현재 도착한 아이템 수 확인
+	int32 CurrentItemCount = 0;
+	if (InventoryComponent.IsValid())
+	{
+		CurrentItemCount = InventoryComponent->GetInventoryList().GetAllItems().Num();
+
+		// [진단] 폴링 시점의 InventoryComponent 주소 + 아이템 수
+		UE_LOG(LogTemp, Error, TEXT("[폴링진단] InvComp=%p, GetAllItems=%d, Owner=%s"),
+			InventoryComponent.Get(),
+			CurrentItemCount,
+			*GetName());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("[폴링진단] InventoryComponent가 INVALID! Controller=%s"), *GetName());
+	}
+
+	const int32 ExpectedCount = PendingRestoreItems.Num();
+	const bool bAllArrived = (CurrentItemCount >= ExpectedCount);
+	const bool bTimeout = (PendingRestoreRetryCount >= 15); // 최대 4.5초
+
+	UE_LOG(LogTemp, Log, TEXT("[InventoryChunk] 폴링 %d/15: FastArray 아이템 %d/%d %s"),
+		PendingRestoreRetryCount, CurrentItemCount, ExpectedCount,
+		bAllArrived ? TEXT("도착 완료!") : TEXT("대기 중..."));
+
+	if (!bAllArrived && !bTimeout)
+	{
+		return; // 다음 폴링 대기
+	}
+
+	// 폴링 타이머 정지
+	GetWorldTimerManager().ClearTimer(PendingRestoreTimerHandle);
+
+	if (bTimeout && !bAllArrived)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[InventoryChunk] 폴링 타임아웃! %d/%d개만 도착. 가진 만큼 복원 시도"),
+			CurrentItemCount, ExpectedCount);
+	}
+
+	// 복원 실행
+	TArray<FInv_SavedItemData> ItemsToRestore = MoveTemp(PendingRestoreItems);
+	PendingRestoreItems.Empty();
+	PendingRestoreRetryCount = 0;
+
+	DelayedRestoreGridPositions(ItemsToRestore);
 }
 
 /**

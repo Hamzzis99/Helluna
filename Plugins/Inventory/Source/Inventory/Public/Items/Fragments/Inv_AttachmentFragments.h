@@ -1,7 +1,7 @@
 // Gihyeon's Inventory Project
 //
 // ════════════════════════════════════════════════════════════════════════════════
-// 📌 부착물 시스템 (Attachment System) — Phase 1 완료
+// 📌 부착물 시스템 (Attachment System) — 전체 완료
 // ════════════════════════════════════════════════════════════════════════════════
 //
 // 📌 이 파일의 역할:
@@ -14,29 +14,92 @@
 //    ③ FInv_AttachmentHostFragment — 무기가 가지는 Fragment ("나는 부착물 슬롯이 있어")
 //    ④ FInv_AttachableFragment    — 부착물이 가지는 Fragment ("나는 이 슬롯에 들어가")
 //
-// 📌 사용 예시:
-//    BP_Inv_Rifle (총) → Fragments에 FInv_AttachmentHostFragment 추가
-//      → SlotDefinitions: [Scope, Muzzle, Grip] 3개 슬롯 정의
-//    BP_Inv_Scope (스코프) → Fragments에 FInv_AttachableFragment 추가
-//      → AttachmentType: "AttachmentSlot.Scope"
-//      → EquipModifiers: [DamageModifier +5]
+// ════════════════════════════════════════════════════════════════════════════════
+// 🔧 새 부착물 아이템 추가 방법 (BP 설정 가이드)
+// ════════════════════════════════════════════════════════════════════════════════
 //
-// 📌 Phase 진행 상황:
+// ── STEP 1: 부착물 BP 생성 ──
+//    1) Content Browser에서 BP_Inv_Muzzle_Test를 Duplicate하여 새 BP 생성
+//       (예: BP_Inv_Laser_Test)
+//    2) BP를 열어서 다음 3가지를 반드시 설정:
+//
+//    ⭐ [필수 1] BP_Inv_Item_Component → Item Manifest → Item Type
+//       → GameplayTag를 설정 (예: GameItems.Equipment.Attachments.Laser)
+//       → ❌ 이 값이 비어있으면(None) 저장 시 아이템이 수집되지 않아 로드 후 사라짐!
+//       → 태그는 Inventory.cpp의 AddNativeGameplayTag에 등록되어 있어야 함
+//
+//    ⭐ [필수 2] BP_Inv_Item_Component → Item Manifest → Fragments 배열에서
+//       FInv_AttachableFragment 항목:
+//       → AttachmentType: "AttachmentSlot.Laser" (장착될 슬롯 타입)
+//       → AttachmentMesh: 무기 소켓에 부착될 스태틱 메시
+//       → 효과 플래그: bIsSuppressor, ZoomFOVOverride, bIsLaser 등
+//       → EquipModifiers: 장착 시 적용할 스탯 효과
+//
+//    ⭐ [필수 3] DT_ItemTypeMapping DataTable에 행 추가
+//       → RowName: "Laser_Test" (자유 이름)
+//       → ItemType: GameItems.Equipment.Attachments.Laser
+//       → ItemActorClass: BP_Inv_Laser_Test
+//       → ❌ 이 매핑이 없으면 로드 시 ResolveItemClass가 실패하여 아이템 복원 불가!
+//
+// ── STEP 2: GameplayTag 등록 확인 ──
+//    Inventory.cpp의 StartupModule()에 태그가 등록되어 있어야 함:
+//      TagManager.AddNativeGameplayTag("AttachmentSlot.Laser", TEXT("레이저 슬롯"));
+//      TagManager.AddNativeGameplayTag("GameItems.Equipment.Attachments.Laser", TEXT("레이저 부착물"));
+//    → 이미 등록된 태그를 재사용하면 이 단계는 불필요
+//
+// ── STEP 3: 무기 BP에 슬롯 추가 (선택) ──
+//    무기 BP (예: BP_Inv_Axe)의 Item Manifest → Fragments에서
+//    FInv_AttachmentHostFragment → SlotDefinitions 배열에 항목 추가:
+//      → SlotType: "AttachmentSlot.Laser"
+//      → SlotDisplayName: "레이저 슬롯"
+//      → AttachSocket: "socket_laser" (EquipActor 메시에 소켓 필요)
+//      → SlotPosition: Magazine (세로 리스트 UI에서의 역할)
+//
+// ── STEP 4: UI 위젯 (선택) ──
+//    WBP_AttachmentPanel에 해당 태그의 슬롯 위젯이 없으면
+//    "[Attachment UI] 슬롯[N] Tag: WBP에 해당 태그의 슬롯 위젯 없음" 로그 출력
+//    → 기능에는 문제없으나 UI에 슬롯이 표시 안 됨
+//
+// ════════════════════════════════════════════════════════════════════════════════
+// 🔧 흔한 실수 & 디버깅 체크리스트
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// ❌ "저장 후 로드하면 특정 아이템이 사라짐"
+//    → BP_Inv_XXX의 Item Manifest → ItemType이 None인지 확인!
+//    → DT_ItemTypeMapping에 해당 태그 행이 있는지 확인!
+//
+// ❌ "분리 시 OriginalItem nullptr 에러"
+//    → 세이브/로드 후 분리 시도인지 확인
+//    → Inv_SaveGameMode.cpp Step 8에서 AddAttachedItemFromManifest +
+//      SetOriginalItemForSlot이 정상 실행되는지 로그 확인
+//
+// ❌ "부착물이 그리드에 중복 표시됨"
+//    → PostReplicatedAdd에서 bIsAttachedToWeapon=true일 때 OnItemAdded 스킵하는지 확인
+//    → FastArray.cpp의 PostReplicatedAdd 참조
+//
+// ❌ "부착물 분리했는데 그리드에 안 나타남"
+//    → Server_DetachItemFromWeapon에서 bIsAttachedToWeapon=false로 복원 후
+//      OnItemAdded.Broadcast 호출하는지 확인
+//
+// ════════════════════════════════════════════════════════════════════════════════
+// 📌 Phase 완료 이력
+// ════════════════════════════════════════════════════════════════════════════════
 //    ✅ Phase 1: Fragment 정의 (이 파일)
-//    ⬜ Phase 2: 부착/분리 서버 로직 (Inv_InventoryComponent에 Server RPC 추가)
-//    ⬜ Phase 3: UI (Inv_AttachmentPanel, Inv_AttachmentSlotWidget 신규)
-//    ⬜ Phase 4: 드롭/줍기 확장 (ItemManifest에 부착물 데이터 보존)
-//    ⬜ Phase 5: 시각적 표현 (Inv_EquipActor에 소켓 메시 Attach)
-//    ⬜ Phase 6: 저장/로드 확장 (FInv_SavedItemData에 부착물 배열 추가)
+//    ✅ Phase 2: 부착/분리 서버 로직 (Inv_InventoryComponent Server RPC)
+//    ✅ Phase 3: UI (Inv_AttachmentPanel, Inv_AttachmentSlotWidget)
+//    ✅ Phase 4: 드롭/줍기 확장 (ItemManifest에 부착물 데이터 보존)
+//    ✅ Phase 5: 시각적 표현 (Inv_EquipActor에 소켓 메시 Attach)
+//    ✅ Phase 6: 저장/로드 확장 (FInv_SavedItemData에 부착물 배열)
+//    ✅ Phase 7: 부착물 효과 (소음기/줌/레이저)
+//    ✅ Phase 8: 부착물 패널 + 3D 프리뷰 + 인벤토리 최적화
+//    ✅ BUG FIX: bIsAttachedToWeapon 플래그 방식 (인덱스 밀림 해결)
+//    ✅ BUG FIX: 세이브/로드 중복 저장/OriginalItem 복원
 //
-// 📌 Phase 2에서 이 파일과 연결되는 부분:
-//    - Inv_InventoryComponent에서 Server_AttachItemToWeapon() RPC 추가
-//      → 무기 아이템의 AttachmentHostFragment를 GetFragmentOfTypeMutable로 가져옴
-//      → AttachItem() 호출하여 부착물 장착
-//    - Inv_InventoryComponent에서 Server_DetachItemFromWeapon() RPC 추가
-//      → DetachItem() 호출하여 부착물 분리, Grid에 아이템 복귀
-//    - Inv_EquipmentComponent의 OnItemEquipped/OnItemUnequipped에서
-//      → OnEquipAllAttachments() / OnUnequipAllAttachments() 호출하여 스탯 합산
+// 📌 핵심 아키텍처 — bIsAttachedToWeapon 플래그 방식:
+//    부착 시: Entry를 FastArray에서 삭제하지 않고, bIsAttachedToWeapon=true 마킹
+//             → 그리드에서만 숨김 (OnItemRemoved), 실제 Entry는 유지
+//    분리 시: bIsAttachedToWeapon=false 복원 → 그리드에 다시 표시 (OnItemAdded)
+//    장점: 인덱스 밀림 없음, OriginalItem 포인터 유지, 리플리케이션 안정
 //
 // ════════════════════════════════════════════════════════════════════════════════
 
@@ -52,29 +115,55 @@ class UStaticMesh;
 class APlayerController;
 
 // ════════════════════════════════════════════════════════════════════════════════
-// 📌 EInv_AttachmentSlotPosition — 부착물 슬롯 UI 배치 위치
+// 📌 EInv_AttachmentSlotPosition — 부착물 슬롯 역할 (세로 리스트 UI)
 // ════════════════════════════════════════════════════════════════════════════════
-// Phase 8: 십자형 레이아웃에서 슬롯이 표시될 방향
-// AttachmentPanel의 GridPanel에서 이 값을 읽어 Top/Left/Right/Bottom에 분배
+// Phase 8: 세로 리스트 레이아웃에서 슬롯의 역할을 나타내는 열거형
+// BuildSlotWidgets()는 SlotType GameplayTag로 위젯을 매칭하므로
+// 이 값은 직접적인 배치 로직에 사용되지 않지만, 슬롯의 의미를 명시
 //
 // 사용처:
 //   - FInv_AttachmentSlotDef::SlotPosition (BP 에디터에서 설정)
-//   - Inv_AttachmentPanel::BuildSlotWidgets() (슬롯 배치 분기)
+//   - 진단 로그에서 (int32) 캐스팅으로 출력
 //
 // BP 설정 예시:
 //   BP_Inv_Rifle의 AttachmentHostFragment → SlotDefinitions:
-//     [0] Scope  → SlotPosition = Top
-//     [1] Grip   → SlotPosition = Left
-//     [2] Laser  → SlotPosition = Right
-//     [3] Magazine → SlotPosition = Bottom
+//     [0] Scope    → SlotPosition = Scope
+//     [1] Muzzle   → SlotPosition = Muzzle
+//     [2] Grip     → SlotPosition = Grip
+//     [3] Magazine → SlotPosition = Magazine
 // ════════════════════════════════════════════════════════════════════════════════
 UENUM(BlueprintType)
 enum class EInv_AttachmentSlotPosition : uint8
 {
-	Top     UMETA(DisplayName = "상단 (스코프 등)"),
-	Bottom  UMETA(DisplayName = "하단 (탄창 등)"),
-	Left    UMETA(DisplayName = "좌측 (그립 등)"),
-	Right   UMETA(DisplayName = "우측 (조명/레이저 등)"),
+	Scope     UMETA(DisplayName = "스코프 (조준경)"),
+	Muzzle    UMETA(DisplayName = "총구 (소음기 등)"),
+	Grip      UMETA(DisplayName = "그립 (손잡이)"),
+	Magazine  UMETA(DisplayName = "탄창"),
+};
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 📌 FInv_AttachmentVisualInfo — 부착물 시각 정보 (읽기 전용 DTO)
+// ════════════════════════════════════════════════════════════════════════════════
+// 부착물 메시를 다른 액터에 복제할 때 사용하는 순수 데이터 구조체.
+// 인벤토리 플러그인 외부(게임 모듈)에서 부착물 시각 정보를 읽을 수 있도록 노출.
+// GA나 특정 게임 클래스에 대한 의존성 없음.
+// ════════════════════════════════════════════════════════════════════════════════
+USTRUCT(BlueprintType)
+struct INVENTORY_API FInv_AttachmentVisualInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "부착물")
+	int32 SlotIndex = INDEX_NONE;
+
+	UPROPERTY(BlueprintReadOnly, Category = "부착물")
+	TObjectPtr<UStaticMesh> Mesh = nullptr;
+
+	UPROPERTY(BlueprintReadOnly, Category = "부착물")
+	FName SocketName = NAME_None;
+
+	UPROPERTY(BlueprintReadOnly, Category = "부착물")
+	FTransform Offset = FTransform::Identity;
 };
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -105,16 +194,16 @@ struct FInv_AttachmentSlotDef
 	int32 MaxCount{1};
 
 	// ════════════════════════════════════════════════════════════════
-	// 📌 [Phase 8] 슬롯 UI 배치 위치
+	// 📌 [Phase 8] 슬롯 역할 (세로 리스트 UI)
 	// ════════════════════════════════════════════════════════════════
-	// 십자형 레이아웃에서 이 슬롯이 표시될 방향
-	// Top = 무기 위(스코프), Bottom = 아래(탄창), Left/Right = 좌우(그립/조명)
-	// AttachmentPanel::BuildSlotWidgets()에서 이 값으로 VerticalBox 분배
+	// 세로 리스트 레이아웃에서 이 슬롯의 역할을 나타냄
+	// Scope = 조준경, Muzzle = 총구, Grip = 그립, Magazine = 탄창
+	// BuildSlotWidgets()는 SlotType 태그로 매칭하므로 배치에 직접 사용되지 않음
 	// ════════════════════════════════════════════════════════════════
 	UPROPERTY(EditAnywhere, Category = "부착물",
-		meta = (DisplayName = "슬롯 UI 위치",
-				Tooltip = "십자형 부착물 패널에서 이 슬롯이 표시될 방향. Top=상단(스코프), Bottom=하단(탄창), Left=좌측(그립), Right=우측(조명)"))
-	EInv_AttachmentSlotPosition SlotPosition = EInv_AttachmentSlotPosition::Top;
+		meta = (DisplayName = "슬롯 역할",
+				Tooltip = "이 슬롯의 역할. Scope=조준경, Muzzle=총구, Grip=그립, Magazine=탄창. BuildSlotWidgets()는 SlotType 태그로 위젯을 매칭"))
+	EInv_AttachmentSlotPosition SlotPosition = EInv_AttachmentSlotPosition::Scope;
 };
 
 
@@ -141,6 +230,11 @@ struct FInv_AttachedItemData
 	// 부착물 아이템의 전체 Manifest 사본 (스탯, 아이콘 등 모든 Fragment 포함)
 	UPROPERTY()
 	FInv_ItemManifest ItemManifestCopy;
+
+	// ⭐ [부착물 시스템] 원본 InventoryItem 포인터 (분리 시 FastArray Entry 복원용)
+	// RemoveEntry 대신 bIsAttachedToWeapon 플래그 방식 사용 시 필요
+	UPROPERTY()
+	TObjectPtr<UInv_InventoryItem> OriginalItem = nullptr;
 };
 
 
@@ -173,6 +267,19 @@ struct FInv_AttachmentHostFragment : public FInv_ItemFragment
 
 	void AttachItem(int32 SlotIndex, const FInv_AttachedItemData& Data);
 	FInv_AttachedItemData DetachItem(int32 SlotIndex);
+
+	// ── OriginalItem 포인터 연결 (로드 복원용) ──
+	void SetOriginalItemForSlot(int32 SlotIndex, UInv_InventoryItem* Item)
+	{
+		for (FInv_AttachedItemData& Data : AttachedItems)
+		{
+			if (Data.SlotIndex == SlotIndex)
+			{
+				Data.OriginalItem = Item;
+				return;
+			}
+		}
+	}
 
 	// ── 디자인타임 값 복원 (세이브/로드 후) ──
 	void RestoreDesignTimeSlotPositions(const TArray<FInv_AttachmentSlotDef>& CDOSlotDefs);
@@ -229,6 +336,9 @@ struct FInv_AttachableFragment : public FInv_InventoryItemFragment
 	UStaticMesh* GetAttachmentMesh() const { return AttachmentMesh; }
 	const FTransform& GetAttachOffset() const { return AttachOffset; }
 
+	// 부착물 기본 소켓 이름 (무기 SlotDef에 소켓이 없으면 이 값을 사용)
+	FName GetAttachSocket() const { return AttachSocket; }
+
 	// [Phase 7] 효과 플래그 Getter
 	bool GetIsSuppressor() const { return bIsSuppressor; }
 	float GetZoomFOVOverride() const { return ZoomFOVOverride; }
@@ -251,6 +361,17 @@ private:
 	// 소켓 기준 오프셋 (위치/회전 미세 조정)
 	UPROPERTY(EditAnywhere, Category = "부착물", meta = (DisplayName = "부착 오프셋", Tooltip = "소켓 기준 위치/회전 오프셋"))
 	FTransform AttachOffset{FTransform::Identity};
+
+	// ════════════════════════════════════════════════════════════════
+	// 📌 부착물 기본 소켓 이름
+	// ════════════════════════════════════════════════════════════════
+	// 이 부착물이 무기 메시의 어떤 소켓에 붙을지 지정한다.
+	// 무기의 SlotDef.AttachSocket이 설정되어 있으면 그쪽이 우선 적용된다 (오버라이드).
+	// 보통은 여기에 설정하면 충분하다.
+	// 예: "socket_muzzle", "socket_scope", "socket_laser"
+	// ════════════════════════════════════════════════════════════════
+	UPROPERTY(EditAnywhere, Category = "부착물", meta = (DisplayName = "부착 소켓", Tooltip = "무기 메시의 소켓 이름 (예: socket_muzzle). 무기 SlotDef에 소켓이 있으면 그쪽이 우선."))
+	FName AttachSocket{NAME_None};
 
 	// 장착 시 적용되는 스탯 효과 (기존 EquipModifier 구조 재활용)
 	// 예: DamageModifier +5, ArmorModifier +3

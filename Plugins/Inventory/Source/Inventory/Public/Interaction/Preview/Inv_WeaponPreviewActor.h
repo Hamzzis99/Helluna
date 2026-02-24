@@ -101,6 +101,19 @@ public:
 	float MaxPitchAngle = 60.f;
 
 	// ════════════════════════════════════════════════════════════════
+	// 📌 부착물 3D 메시 프리뷰 — 무기에 장착된 부품을 소켓에 표시
+	// ════════════════════════════════════════════════════════════════
+	// 호출 경로: AttachmentPanel::RefreshPreviewAttachments → 이 함수들
+	// 처리 흐름:
+	//   Add: SlotIndex별 StaticMeshComponent 생성 → 소켓/오프셋 부착 → TMap 저장
+	//   Remove: TMap에서 찾아 DestroyComponent
+	//   ClearAll: 전체 순회 DestroyComponent → TMap 비우기
+	// ════════════════════════════════════════════════════════════════
+	void AddAttachmentPreview(int32 SlotIndex, UStaticMesh* AttachMesh, FName SocketName, const FTransform& Offset);
+	void RemoveAttachmentPreview(int32 SlotIndex);
+	void ClearAllAttachmentPreviews();
+
+	// ════════════════════════════════════════════════════════════════
 	// 📌 GetRenderTarget — RenderTarget 접근 (UMG Image에 연결용)
 	// ════════════════════════════════════════════════════════════════
 	UTextureRenderTarget2D* GetRenderTarget() const;
@@ -183,6 +196,10 @@ private:
 
 	UPROPERTY()
 	TObjectPtr<UTextureRenderTarget2D> RenderTarget;
+
+	// SlotIndex별 동적 생성된 부착물 메시 컴포넌트 (런타임 NewObject)
+	UPROPERTY()
+	TMap<int32, TObjectPtr<UStaticMeshComponent>> AttachmentMeshComponents;
 
 	// ── 내부 함수 ──
 

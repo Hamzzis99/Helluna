@@ -24,6 +24,7 @@
 #include "EquipmentManagement/Components/Inv_EquipmentComponent.h"
 #include "EquipmentManagement/EquipActor/Inv_EquipActor.h"
 #include "Items/Components/Inv_ItemComponent.h"
+#include "Items/Inv_InventoryItem.h"
 #include "Items/Fragments/Inv_AttachmentFragments.h"
 #include "GameplayTagContainer.h"
 
@@ -229,10 +230,38 @@ int32 AInv_SaveGameMode::SaveAllPlayersInventoryDirect()
 		UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
 		if (!IsValid(InvComp)) continue;
 
+		UE_LOG(LogTemp, Error, TEXT("[서버저장진단] 저장 시작 — HasAuthority=%s, 호출함수=%s, PlayerId=%s"),
+			HasAuthority() ? TEXT("서버") : TEXT("클라"),
+			TEXT(__FUNCTION__), *PlayerId);
+
 		TArray<FInv_SavedItemData> CollectedItems = InvComp->CollectInventoryDataForSave();
 
 		// ── Step 2: EquipmentComponent에서 장착 상태 병합 ──
 		MergeEquipmentState(PC, CollectedItems);
+
+		// Fix 8: 장착 아이템의 GridPosition 강제 무효화 — 좌표 중복 방어
+		for (FInv_SavedItemData& SavedItem : CollectedItems)
+		{
+			if (SavedItem.bEquipped && SavedItem.GridPosition != FIntPoint(-1, -1))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[Fix8] 장착 아이템 GridPosition 강제 초기화: %s, 기존 Pos=(%d,%d) → (-1,-1)"),
+					*SavedItem.ItemType.ToString(), SavedItem.GridPosition.X, SavedItem.GridPosition.Y);
+				SavedItem.GridPosition = FIntPoint(-1, -1);
+			}
+		}
+
+		UE_LOG(LogTemp, Error, TEXT("[서버저장진단] 수집된 총 아이템: %d개 (PlayerId=%s)"), CollectedItems.Num(), *PlayerId);
+		for (int32 DiagIdx = 0; DiagIdx < CollectedItems.Num(); DiagIdx++)
+		{
+			const FInv_SavedItemData& DiagItem = CollectedItems[DiagIdx];
+			UE_LOG(LogTemp, Error, TEXT("[서버저장진단]   [%d] %s, bEquipped=%s, WeaponSlot=%d, Pos=(%d,%d), GridCat=%d"),
+				DiagIdx,
+				*DiagItem.ItemType.ToString(),
+				DiagItem.bEquipped ? TEXT("TRUE") : TEXT("false"),
+				DiagItem.WeaponSlotIndex,
+				DiagItem.GridPosition.X, DiagItem.GridPosition.Y,
+				DiagItem.GridCategory);
+		}
 
 		if (CollectedItems.Num() == 0) continue;
 
@@ -447,208 +476,74 @@ void AInv_SaveGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
 	UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
 	if (!IsValid(InvComp)) return;
 
-	// ════════════════════════════════════════════════════════════════════════════
-	// 📌 [Phase 4] CDO 기반 아이템 복원 — SpawnActor 제거
-	// ════════════════════════════════════════════════════════════════════════════
-	//
-	// 📌 이전 방식 (Phase 3까지):
-	//    SpawnActor → FindComponentByClass → Manifest 추출 → Destroy
-	//    부착물마다 추가 SpawnActor + Destroy
-	//
-	// 📌 새 방식 (Phase 4):
-	//    FindItemComponentTemplate(CDO/SCS) → GetItemManifest()(복사)
-	//    SpawnActor/Destroy 완전 제거
-	//
-	// ════════════════════════════════════════════════════════════════════════════
-	for (const FInv_SavedItemData& ItemData : LoadedData.Items)
+	// ── 아이템 복원 (컴포넌트에 위임) ──
+	FInv_ItemTemplateResolver Resolver;
+	Resolver.BindLambda([this](const FGameplayTag& ItemType) -> UInv_ItemComponent* {
+		TSubclassOf<AActor> ActorClass = ResolveItemClass(ItemType);
+		if (!ActorClass) return nullptr;
+		return FindItemComponentTemplate(ActorClass);
+	});
+	// Fix 10: 로드된 데이터 정리 — 이전 세션(Fix 7/8 미적용) 세이브 파일 호환
+	// 장착 아이템의 stale GridPosition이 남아있으면 클라이언트 Grid 배치가 꼬임
+	for (FInv_SavedItemData& LoadItem : LoadedData.Items)
 	{
-		if (!ItemData.ItemType.IsValid()) continue;
-
-		// ── Step 1: ItemType → ActorClass 변환 (게임별 override) ──
-		TSubclassOf<AActor> ActorClass = ResolveItemClass(ItemData.ItemType);
-		if (!ActorClass) continue;
-
-		// ── Step 2: CDO/SCS에서 ItemComponent 템플릿 추출 (SpawnActor 없음!) ──
-		UInv_ItemComponent* Template = FindItemComponentTemplate(ActorClass);
-		if (!Template)
+		if (LoadItem.bEquipped && LoadItem.GridPosition != FIntPoint(-1, -1))
 		{
-			UE_LOG(LogTemp, Warning,
-				TEXT("[Phase 4] FindItemComponentTemplate 실패: %s — 스킵"),
-				*ItemData.ItemType.ToString());
-			continue;
-		}
-
-		// ── Step 3: Manifest 복사 (CDO 템플릿은 수정 금지!) ──
-		FInv_ItemManifest ManifestCopy = Template->GetItemManifest();
-
-		// ── Step 4: 부착물 복원 (CDO 기반 — SpawnActor 없음!) ──
-		if (ItemData.Attachments.Num() > 0)
-		{
-#if INV_DEBUG_ATTACHMENT
-			UE_LOG(LogTemp, Error, TEXT("[로드복원] 부착물 복원 시작: 무기=%s, 부착물=%d개"),
-				*ItemData.ItemType.ToString(), ItemData.Attachments.Num());
-#endif
-
-			FInv_AttachmentHostFragment* HostFrag = ManifestCopy.GetFragmentOfTypeMutable<FInv_AttachmentHostFragment>();
-
-#if INV_DEBUG_ATTACHMENT
-			UE_LOG(LogTemp, Error, TEXT("[로드복원] HostFrag=%s"),
-				HostFrag ? TEXT("유효") : TEXT("nullptr — 복원 불가!"));
-#endif
-
-			if (HostFrag)
-			{
-				for (const FInv_SavedAttachmentData& AttSave : ItemData.Attachments)
-				{
-					TSubclassOf<AActor> AttachClass = ResolveItemClass(AttSave.AttachmentItemType);
-
-#if INV_DEBUG_ATTACHMENT
-					UE_LOG(LogTemp, Error, TEXT("[로드복원]   부착물[%d] Type=%s, ResolveClass=%s"),
-						AttSave.SlotIndex, *AttSave.AttachmentItemType.ToString(),
-						AttachClass ? TEXT("성공") : TEXT("실패! — DataTable 매핑 없음"));
-#endif
-
-					if (!AttachClass) continue;
-
-					// CDO/SCS에서 부착물 Manifest 추출 (SpawnActor 없음!)
-					UInv_ItemComponent* AttachTemplate = FindItemComponentTemplate(AttachClass);
-					if (!AttachTemplate)
-					{
-						UE_LOG(LogTemp, Warning,
-							TEXT("[Phase 4] 부착물 CDO 추출 실패: %s — 스킵"),
-							*AttSave.AttachmentItemType.ToString());
-						continue;
-					}
-
-					// FInv_AttachedItemData 구성
-					FInv_AttachedItemData AttachedData;
-					AttachedData.SlotIndex = AttSave.SlotIndex;
-					AttachedData.AttachmentItemType = AttSave.AttachmentItemType;
-					AttachedData.ItemManifestCopy = AttachTemplate->GetItemManifest(); // 값 복사
-
-					// 부착물 Fragment 역직렬화
-					if (AttSave.SerializedManifest.Num() > 0)
-					{
-						if (AttachedData.ItemManifestCopy.DeserializeAndApplyFragments(AttSave.SerializedManifest))
-						{
-#if INV_DEBUG_SAVE
-							UE_LOG(LogTemp, Warning,
-								TEXT("[로드복원]   ✅ 부착물 Fragment 역직렬화 성공: %s (%d바이트)"),
-								*AttSave.AttachmentItemType.ToString(), AttSave.SerializedManifest.Num());
-#endif
-						}
-						else
-						{
-							UE_LOG(LogTemp, Error,
-								TEXT("[로드복원]   ❌ 부착물 Fragment 역직렬화 실패: %s — CDO 기본값 사용"),
-								*AttSave.AttachmentItemType.ToString());
-						}
-					}
-
-					HostFrag->AttachItem(AttSave.SlotIndex, AttachedData);
-
-#if INV_DEBUG_ATTACHMENT
-					UE_LOG(LogTemp, Error, TEXT("[로드복원]   부착물 복원 완료: %s → 슬롯 %d (현재 AttachedItems=%d)"),
-						*AttSave.AttachmentItemType.ToString(), AttSave.SlotIndex,
-						HostFrag->GetAttachedItems().Num());
-#endif
-				}
-			}
-		}
-
-		// ── Step 5: 메인 아이템 Fragment 역직렬화 ──
-		if (ItemData.SerializedManifest.Num() > 0)
-		{
-			if (ManifestCopy.DeserializeAndApplyFragments(ItemData.SerializedManifest))
-			{
-#if INV_DEBUG_SAVE
-				UE_LOG(LogTemp, Warning,
-					TEXT("[로드복원] ✅ [Phase 4] Fragment 역직렬화 성공: %s (%d바이트)"),
-					*ItemData.ItemType.ToString(), ItemData.SerializedManifest.Num());
-#endif
-			}
-			else
-			{
-				UE_LOG(LogTemp, Error,
-					TEXT("[로드복원] ❌ [Phase 4] Fragment 역직렬화 실패: %s — CDO 기본값 사용"),
-					*ItemData.ItemType.ToString());
-			}
-		}
-#if INV_DEBUG_SAVE
-		else
-		{
-			// SaveVersion 2 이하 데이터 — CDO 기본값 사용 (Manifest() 에서 재랜덤)
-			UE_LOG(LogTemp, Warning,
-				TEXT("[로드복원] ℹ️ [Phase 4] SerializedManifest 없음 (v2 하위호환): %s"),
-				*ItemData.ItemType.ToString());
-		}
-#endif
-
-		// ════════════════════════════════════════════════════════════════════════
-		// 📌 [Phase 8] 디자인타임 전용 값 복원
-		// ════════════════════════════════════════════════════════════════════════
-		// 문제: DeserializeAndApplyFragments()가 Fragments 배열 전체를 교체하므로
-		//       BP 에디터에서 나중에 변경한 디자인타임 전용 값이 옛날 세이브 데이터로 덮어씌워짐
-		// 해결: CDO 템플릿에서 디자인타임 전용 값만 추출하여 역직렬화된 데이터에 다시 적용
-		//
-		// 대상 필드:
-		//   - AttachmentHostFragment::SlotDefinitions[].SlotPosition (UI 배치 위치)
-		//   - EquipmentFragment::PreviewStaticMesh, PreviewRotationOffset, PreviewCameraDistance
-		// ════════════════════════════════════════════════════════════════════════
-		{
-			const FInv_ItemManifest& CDOManifest = Template->GetItemManifest();
-
-			// ── SlotPosition 복원 ──
-			const FInv_AttachmentHostFragment* CDOHost = CDOManifest.GetFragmentOfType<FInv_AttachmentHostFragment>();
-			FInv_AttachmentHostFragment* LoadedHost = ManifestCopy.GetFragmentOfTypeMutable<FInv_AttachmentHostFragment>();
-			if (CDOHost && LoadedHost)
-			{
-				LoadedHost->RestoreDesignTimeSlotPositions(CDOHost->GetSlotDefinitions());
-			}
-
-			// ── PreviewMesh 복원 ──
-			const FInv_EquipmentFragment* CDOEquip = CDOManifest.GetFragmentOfType<FInv_EquipmentFragment>();
-			FInv_EquipmentFragment* LoadedEquip = ManifestCopy.GetFragmentOfTypeMutable<FInv_EquipmentFragment>();
-			if (CDOEquip && LoadedEquip)
-			{
-				LoadedEquip->RestoreDesignTimePreview(*CDOEquip);
-			}
-		}
-
-		// ── Step 6: 인벤토리에 추가 (SpawnActor/Server_AddNewItem 없음!) ──
-		UInv_InventoryItem* NewItem = InvComp->AddItemFromManifest(ManifestCopy, ItemData.StackCount);
-		if (!NewItem) continue;
-
-		// ── Step 7: 그리드 위치 복원 ──
-		const int32 Columns = 8;
-		int32 SavedGridIndex = ItemData.GridPosition.Y * Columns + ItemData.GridPosition.X;
-		InvComp->SetLastEntryGridPosition(SavedGridIndex, ItemData.GridCategory);
-	}
-
-	// ── 장착 상태 복원 ──
-	TSet<UInv_InventoryItem*> ServerProcessedItems;
-	for (const FInv_SavedItemData& ItemData : LoadedData.Items)
-	{
-		if (!ItemData.bEquipped || ItemData.WeaponSlotIndex < 0) continue;
-
-		UInv_InventoryItem* FoundItem = InvComp->FindItemByTypeExcluding(ItemData.ItemType, ServerProcessedItems);
-		if (FoundItem)
-		{
-			// 데디서버에서만 서버측 장착 브로드캐스트 실행
-			// 리슨서버 호스트는 Client_ReceiveInventoryData → RestoreInventoryFromState에서 처리
-			if (GetNetMode() == NM_DedicatedServer)
-			{
-				InvComp->OnItemEquipped.Broadcast(FoundItem, ItemData.WeaponSlotIndex);
-			}
-			ServerProcessedItems.Add(FoundItem);
+			UE_LOG(LogTemp, Warning, TEXT("[Fix10-Load] 장착 아이템 GridPosition 정리: %s, 기존 Pos=(%d,%d) → (-1,-1)"),
+				*LoadItem.ItemType.ToString(), LoadItem.GridPosition.X, LoadItem.GridPosition.Y);
+			LoadItem.GridPosition = FIntPoint(-1, -1);
 		}
 	}
 
-	// ── 클라이언트에 데이터 전송 ──
+	InvComp->RestoreFromSaveData(LoadedData, Resolver);
+
+	// ── 클라이언트에 데이터 전송 (청크 분할) ──
+	// UE 네트워크 최대 번치 크기(65536 bytes) 초과 방지
 	AInv_PlayerController* InvPC = Cast<AInv_PlayerController>(PC);
 	if (IsValid(InvPC))
 	{
-		InvPC->Client_ReceiveInventoryData(LoadedData.Items);
+		const TArray<FInv_SavedItemData>& AllItems = LoadedData.Items;
+		constexpr int32 ChunkSize = 5;
+
+		// [Fix10-Chunk진단] 전송 전 데이터 확인
+		for (int32 DiagIdx = 0; DiagIdx < AllItems.Num(); DiagIdx++)
+		{
+			const FInv_SavedItemData& DiagItem = AllItems[DiagIdx];
+			UE_LOG(LogTemp, Error, TEXT("[Fix10-Chunk진단] 전송 Item[%d] %s: GridPos=(%d,%d), bEquipped=%s, WeaponSlot=%d"),
+				DiagIdx, *DiagItem.ItemType.ToString(),
+				DiagItem.GridPosition.X, DiagItem.GridPosition.Y,
+				DiagItem.bEquipped ? TEXT("TRUE") : TEXT("FALSE"),
+				DiagItem.WeaponSlotIndex);
+		}
+
+		if (AllItems.Num() <= ChunkSize)
+		{
+			// 소량이면 기존 방식 (하위호환)
+			InvPC->Client_ReceiveInventoryData(AllItems);
+		}
+		else
+		{
+			// 청크 분할 전송
+			const int32 TotalItems = AllItems.Num();
+			for (int32 StartIdx = 0; StartIdx < TotalItems; StartIdx += ChunkSize)
+			{
+				const int32 EndIdx = FMath::Min(StartIdx + ChunkSize, TotalItems);
+				const bool bIsLast = (EndIdx >= TotalItems);
+
+				TArray<FInv_SavedItemData> Chunk;
+				Chunk.Reserve(EndIdx - StartIdx);
+				for (int32 i = StartIdx; i < EndIdx; ++i)
+				{
+					Chunk.Add(AllItems[i]);
+				}
+
+				InvPC->Client_ReceiveInventoryDataChunk(Chunk, bIsLast);
+
+				UE_LOG(LogTemp, Log, TEXT("[InventoryChunk] 전송: [%d~%d] / %d, bIsLast=%s"),
+					StartIdx, EndIdx - 1, TotalItems,
+					bIsLast ? TEXT("true") : TEXT("false"));
+			}
+		}
 	}
 }
 
@@ -849,6 +744,16 @@ void AInv_SaveGameMode::OnPlayerInventoryStateReceived(
 	AInv_PlayerController* PlayerController,
 	const TArray<FInv_SavedItemData>& SavedItems)
 {
+	// [BugFix] Phase 5 우선 가드: 서버 직접 저장(비동기) 진행 중이면 클라이언트 데이터 무시
+	// Phase 5(SaveAllPlayersInventoryDirect)가 FastArray에서 직접 수집한 데이터가 더 정확함
+	if (bAsyncSaveInProgress)
+	{
+#if INV_DEBUG_SAVE
+		UE_LOG(LogTemp, Warning, TEXT("[Phase 5 Guard] ⚠️ 서버 직접 저장 진행 중 — 클라이언트 RPC 데이터 무시"));
+#endif
+		return;
+	}
+
 	FString PlayerId = GetPlayerSaveId(PlayerController);
 	if (PlayerId.IsEmpty())
 	{
@@ -1006,11 +911,22 @@ void AInv_SaveGameMode::OnAutoSaveBatchTimeout()
 // ════════════════════════════════════════════════════════════════════════════════
 void AInv_SaveGameMode::RemoveCachedDataDeferred(const FString& PlayerId, float Delay)
 {
-	FString PlayerIdCopy = PlayerId;
-	FTimerHandle CacheCleanupTimer;
-	GetWorldTimerManager().SetTimer(CacheCleanupTimer, [this, PlayerIdCopy]()
+	// ⚠️ 기존 타이머가 있으면 취소 (빠른 재접속 시 새 세션 캐시를 삭제하는 버그 방지)
+	if (FTimerHandle* ExistingHandle = CacheCleanupTimerHandles.Find(PlayerId))
 	{
-		CachedPlayerData.Remove(PlayerIdCopy);
+		GetWorldTimerManager().ClearTimer(*ExistingHandle);
+	}
+
+	FString PlayerIdCopy = PlayerId;
+	FTimerHandle& CacheCleanupTimer = CacheCleanupTimerHandles.FindOrAdd(PlayerId);
+	TWeakObjectPtr<AInv_SaveGameMode> WeakThis(this);
+	GetWorldTimerManager().SetTimer(CacheCleanupTimer, [WeakThis, PlayerIdCopy]()
+	{
+		if (WeakThis.IsValid())
+		{
+			WeakThis->CachedPlayerData.Remove(PlayerIdCopy);
+			WeakThis->CacheCleanupTimerHandles.Remove(PlayerIdCopy);
+		}
 	}, Delay, false);
 }
 

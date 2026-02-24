@@ -17,6 +17,14 @@ class UInv_InventoryItem;
 class UInv_InventoryBase;
 class UInv_InventoryGrid;
 struct FInv_ItemManifest;
+struct FInv_PlayerSaveData;
+
+// 아이템 템플릿 리졸버 — SaveGameMode가 게임별 매핑을 제공
+DECLARE_DELEGATE_RetVal_OneParam(
+	UInv_ItemComponent*,             // 반환: ItemComponent 템플릿 (CDO)
+	FInv_ItemTemplateResolver,
+	const FGameplayTag&              // 파라미터: ItemType
+);
 
 //델리게이트
 // ⭐ TwoParams로 변경: Item + EntryIndex (서버-클라이언트 포인터 불일치 해결용)
@@ -115,6 +123,7 @@ public:
 	
 	void ToggleInventoryMenu(); //인벤토리 메뉴 토글 함수
 	void AddRepSubObj(UObject* SubObj); //복제 하위 객체 추가 함수
+	void RemoveRepSubObj(UObject* SubObj); //복제 하위 객체 제거 함수
 	void SpawnDroppedItem(UInv_InventoryItem* Item, int32 StackCount); // 떨어진 아이템 생성 함수
 	UInv_InventoryBase* GetInventoryMenu() const {return InventoryMenu;};
 	bool IsMenuOpen() const { return bInventoryMenuOpen; }
@@ -146,6 +155,23 @@ public:
 	 * @return 생성된 UInv_InventoryItem, 실패 시 nullptr
 	 */
 	UInv_InventoryItem* AddItemFromManifest(FInv_ItemManifest& ManifestCopy, int32 StackCount);
+
+	/**
+	 * [Phase 9] 저장 데이터로 인벤토리 복원 (서버 전용)
+	 * - 기존 아이템 전부 제거 후 SaveData로 재구축
+	 * - 멱등성 보장 (2번 호출해도 안전)
+	 *
+	 * @param SaveData          로드된 플레이어 저장 데이터
+	 * @param TemplateResolver  ItemType → UInv_ItemComponent* 리졸버 (게임별)
+	 */
+	void RestoreFromSaveData(
+		const FInv_PlayerSaveData& SaveData,
+		const FInv_ItemTemplateResolver& TemplateResolver);
+
+	// ⭐ [부착물 시스템] 로드 시 부착물 Entry 생성 (그리드에 추가하지 않음)
+	// bIsAttachedToWeapon=true, GridIndex=INDEX_NONE으로 설정
+	// OnItemAdded 브로드캐스트 안 함
+	UInv_InventoryItem* AddAttachedItemFromManifest(FInv_ItemManifest& ManifestCopy);
 
 	// ════════════════════════════════════════════════════════════════
 	// 📌 [부착물 시스템 Phase 3] Entry Index 검색 헬퍼
@@ -182,6 +208,8 @@ protected:
 private:
 
 	TWeakObjectPtr<APlayerController> OwningController;
+
+	bool bInventoryRestored = false;
 
 	void ConstructInventory();
 	

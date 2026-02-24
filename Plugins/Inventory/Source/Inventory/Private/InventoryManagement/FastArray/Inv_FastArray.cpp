@@ -24,7 +24,8 @@ void FInv_InventoryFastArray::PreReplicatedRemove(const TArrayView<int32> Remove
 	UInv_InventoryComponent* IC = Cast<UInv_InventoryComponent>(OwnerComponent);
 	if (!IsValid(IC)) return;
 
-	// 🔍 [진단] PreReplicatedRemove 호출 컨텍스트 (항상 출력)
+#if INV_DEBUG_INVENTORY
+	// 🔍 [진단] PreReplicatedRemove 호출 컨텍스트
 	UE_LOG(LogTemp, Error, TEXT("🔍 [PreReplicatedRemove 진단] RemovedIndices=%d, FinalSize=%d, Entries=%d"),
 		RemovedIndices.Num(), FinalSize, Entries.Num());
 	for (int32 DiagIdx : RemovedIndices)
@@ -35,6 +36,7 @@ void FInv_InventoryFastArray::PreReplicatedRemove(const TArrayView<int32> Remove
 				DiagIdx, *Entries[DiagIdx].Item->GetItemManifest().GetItemType().ToString());
 		}
 	}
+#endif
 
 #if INV_DEBUG_INVENTORY
 	UE_LOG(LogTemp, Warning, TEXT("=== PreReplicatedRemove 호출됨! (FastArray) ==="));
@@ -89,6 +91,8 @@ void FInv_InventoryFastArray::PreReplicatedRemove(const TArrayView<int32> Remove
 #endif
 	}
 
+	RebuildItemTypeIndex(); // ⚠️ 클라이언트 인덱스 캐시 동기화
+
 #if INV_DEBUG_INVENTORY
 	UE_LOG(LogTemp, Warning, TEXT("=== PreReplicatedRemove 완료! ==="));
 #endif
@@ -98,6 +102,11 @@ void FInv_InventoryFastArray::PostReplicatedAdd(const TArrayView<int32> AddedInd
 {
 	UInv_InventoryComponent* IC = Cast<UInv_InventoryComponent>(OwnerComponent);
 	if (!IsValid(IC)) return;
+
+	// [진단] PostReplicatedAdd 시점의 InventoryComponent 주소
+	UE_LOG(LogTemp, Error, TEXT("[PostRepAdd진단] IC=%p, Entries=%d, AddedIndices=%d, Owner=%s"),
+		IC, Entries.Num(), AddedIndices.Num(),
+		IC->GetOwner() ? *IC->GetOwner()->GetName() : TEXT("nullptr"));
 
 #if INV_DEBUG_INVENTORY
 	UE_LOG(LogTemp, Warning, TEXT("=== PostReplicatedAdd 호출됨! (FastArray) ==="));
@@ -154,8 +163,27 @@ void FInv_InventoryFastArray::PostReplicatedAdd(const TArrayView<int32> AddedInd
 #endif
 
 		// ⭐ Entry Index도 함께 전달하여 클라이언트에서 저장 가능!
+		// ⭐ [부착물 시스템] bIsAttachedToWeapon 아이템은 그리드에 추가하지 않음
+		if (Entries[Index].bIsAttachedToWeapon)
+		{
+#if INV_DEBUG_ATTACHMENT
+			UE_LOG(LogTemp, Log, TEXT("[PostReplicatedAdd] Entry[%d] bIsAttachedToWeapon=true → 그리드 추가 스킵"), Index);
+#endif
+			continue;
+		}
+
+		// ⭐ [Fix 13] 장착 아이템은 그리드에 추가하지 않음 (공간 선점 방지)
+		if (Entries[Index].bIsEquipped)
+		{
+			UE_LOG(LogTemp, Log, TEXT("[PostReplicatedAdd] Entry[%d] bIsEquipped=true → 그리드 추가 스킵 (%s)"),
+				Index, *Entries[Index].Item->GetItemManifest().GetItemType().ToString());
+			continue;
+		}
+
 		IC->OnItemAdded.Broadcast(Entries[Index].Item, Index);
 	}
+
+	RebuildItemTypeIndex(); // ⚠️ 클라이언트 인덱스 캐시 동기화
 
 #if INV_DEBUG_INVENTORY
 	UE_LOG(LogTemp, Warning, TEXT("=== PostReplicatedAdd 완료! ==="));
@@ -167,7 +195,8 @@ void FInv_InventoryFastArray::PostReplicatedChange(const TArrayView<int32> Chang
 	UInv_InventoryComponent* IC = Cast<UInv_InventoryComponent>(OwnerComponent);
 	if (!IsValid(IC)) return;
 
-	// 🔍 [진단] PostReplicatedChange 호출 컨텍스트 (항상 출력)
+#if INV_DEBUG_INVENTORY
+	// 🔍 [진단] PostReplicatedChange 호출 컨텍스트
 	UE_LOG(LogTemp, Error, TEXT("🔍 [PostReplicatedChange 진단] ChangedIndices=%d, FinalSize=%d, Entries=%d"),
 		ChangedIndices.Num(), FinalSize, Entries.Num());
 	for (int32 DiagIdx : ChangedIndices)
@@ -179,6 +208,7 @@ void FInv_InventoryFastArray::PostReplicatedChange(const TArrayView<int32> Chang
 				(int32)Entries[DiagIdx].Item->GetItemManifest().GetItemCategory());
 		}
 	}
+#endif
 
 #if INV_DEBUG_INVENTORY
 	UE_LOG(LogTemp, Warning, TEXT("=== PostReplicatedChange 호출됨 (FastArray) ==="));
@@ -237,10 +267,23 @@ void FInv_InventoryFastArray::PostReplicatedChange(const TArrayView<int32> Chang
 		EInv_ItemCategory Category = ChangedItem->GetItemManifest().GetItemCategory();
 
 #if INV_DEBUG_INVENTORY
-		UE_LOG(LogTemp, Warning, TEXT("📦 FastArray 변경 감지 [%d]: Item포인터=%p, ItemType=%s, Category=%d, NewStackCount=%d"),
+		UE_LOG(LogTemp, Warning, TEXT("📦 FastArray 변경 감지 [%d]: Item포인터=%p, ItemType=%s, Category=%d, NewStackCount=%d, bIsAttached=%s"),
 			Index, ChangedItem, *ChangedItem->GetItemManifest().GetItemType().ToString(),
-			(int32)Category, NewStackCount);
+			(int32)Category, NewStackCount,
+			Entries[Index].bIsAttachedToWeapon ? TEXT("TRUE") : TEXT("FALSE"));
 #endif
+
+		// ⭐ [부착물 시스템] bIsAttachedToWeapon 플래그 처리
+		// true → 그리드에서 숨김 (OnItemRemoved), false → 그리드에 표시 (OnItemAdded)
+		if (Entries[Index].bIsAttachedToWeapon)
+		{
+			// 부착됨 → 그리드에서 제거
+			IC->OnItemRemoved.Broadcast(ChangedItem, Index);
+#if INV_DEBUG_ATTACHMENT
+			UE_LOG(LogTemp, Log, TEXT("[PostReplicatedChange] Entry[%d] bIsAttachedToWeapon=true → OnItemRemoved (그리드에서 숨김)"), Index);
+#endif
+			continue;
+		}
 
 		// ⭐⭐⭐ Craftables(재료)만 AddStacks() 호출! (차감 로직)
 		if (Category == EInv_ItemCategory::Craftable)
@@ -288,21 +331,31 @@ void FInv_InventoryFastArray::PostReplicatedChange(const TArrayView<int32> Chang
 		}
 	}
 
+	RebuildItemTypeIndex(); // ⚠️ 클라이언트 인덱스 캐시 동기화
+
 #if INV_DEBUG_INVENTORY
 	UE_LOG(LogTemp, Warning, TEXT("=== PostReplicatedChange 완료 (총 %d개 Entry 처리됨) ==="), ChangedIndices.Num());
 #endif
 }
 
 // FastArray에 항목을 추가해주는 기능들.
-UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_ItemComponent* ItemComponent) 
+UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_ItemComponent* ItemComponent)
 {
-	//TODO : Implement once ItemComponent is more complete 
+	//TODO : Implement once ItemComponent is more complete
 	check(OwnerComponent); // 소유자 컴포넌트 확인 (소유재고 확인)
+
+	// [진단] AddEntry 호출 시 콜스택 추적 (아이템 중복 원인 파악)
+	UE_LOG(LogTemp, Error, TEXT("[AddEntry진단] 호출됨! 현재 Entries=%d, ItemType=%s"),
+		Entries.Num(),
+		*ItemComponent->GetItemManifest().GetItemType().ToString());
+	FDebug::DumpStackTraceToLog(ELogVerbosity::Error);
+
 	AActor* OwningActor = OwnerComponent->GetOwner(); // 소유자 확보
 	check(OwningActor->HasAuthority()); // 권한이 있는지 확인
 	UInv_InventoryComponent* IC = Cast<UInv_InventoryComponent>(OwnerComponent); // 소유자 컴포넌트를 인벤토리 컴포넌트로 캐스팅
 	if (!IsValid(IC)) return nullptr;
 
+#if INV_DEBUG_INVENTORY
 	// ★ [Phase8진단] ItemComponent의 원본 Manifest에서 SlotPosition 확인 ★
 	{
 		FInv_ItemManifest SrcManifest = ItemComponent->GetItemManifest();
@@ -324,10 +377,12 @@ UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_ItemComponent* ItemCo
 				SrcEquip->HasPreviewMesh() ? TEXT("있음") : TEXT("없음(null)"));
 		}
 	}
+#endif
 
 	FInv_InventoryEntry& NewEntry = Entries.AddDefaulted_GetRef(); // 새 항목 추가
 	NewEntry.Item = ItemComponent->GetItemManifest().Manifest(OwningActor); // 항목 매니페스트에서 항목 가져오기 (새로 생성된 아이템의 소유자 지정)
 
+#if INV_DEBUG_INVENTORY
 	// ★ [Phase8진단] 생성된 아이템의 SlotPosition 확인 ★
 	{
 		const FInv_AttachmentHostFragment* NewHost = NewEntry.Item->GetItemManifest().GetFragmentOfType<FInv_AttachmentHostFragment>();
@@ -342,6 +397,7 @@ UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_ItemComponent* ItemCo
 			}
 		}
 	}
+#endif
 
 	IC->AddRepSubObj(NewEntry.Item); // 복제 하위 객체로 항목 추가
 	MarkItemDirty(NewEntry); // 복제되어야 함을 알려주는 것.
@@ -353,6 +409,13 @@ UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_ItemComponent* ItemCo
 UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_InventoryItem* Item)
 {
 	check(OwnerComponent);
+
+	// [진단] AddEntry(Item*) 호출 콜스택
+	UE_LOG(LogTemp, Error, TEXT("[AddEntry진단-Item] 호출됨! 현재 Entries=%d, ItemType=%s"),
+		Entries.Num(),
+		IsValid(Item) ? *Item->GetItemManifest().GetItemType().ToString() : TEXT("nullptr"));
+	FDebug::DumpStackTraceToLog(ELogVerbosity::Error);
+
 	AActor* OwningActor = OwnerComponent->GetOwner();
 	check(OwningActor->HasAuthority());
 	
@@ -376,12 +439,40 @@ void FInv_InventoryFastArray::RemoveEntry(UInv_InventoryItem* Item)
 		FInv_InventoryEntry& Entry = *EntryIt;
 		if (Entry.Item == Item)
 		{
+#if INV_DEBUG_INVENTORY
+			// [Swap버그추적] RemoveEntry 콜스택
+			UE_LOG(LogTemp, Error, TEXT("========== [RemoveEntry] 삭제 대상: %s =========="),
+				IsValid(Item) ? *Item->GetItemManifest().GetItemType().ToString() : TEXT("nullptr"));
+			FDebug::DumpStackTraceToLog(ELogVerbosity::Error);
+			UE_LOG(LogTemp, Error, TEXT("========== [RemoveEntry] 콜스택 끝 =========="));
+#endif
+
+			// ⚠️ 복제 서브오브젝트 등록 해제 (GC 누수 + 네트워크 대역폭 누수 방지)
+			if (UInv_InventoryComponent* IC = Cast<UInv_InventoryComponent>(OwnerComponent))
+			{
+				IC->RemoveRepSubObj(Item);
+			}
+
 			EntryIt.RemoveCurrent(); // 현재 항목 제거
 			MarkArrayDirty();
 			RebuildItemTypeIndex(); // ⭐ [최적화 #4] 인덱스 캐시 재구축
 			return; // 아이템 찾았으므로 즉시 반환
 		}
 	}
+}
+
+void FInv_InventoryFastArray::ClearAllEntries()
+{
+	// 역순으로 제거 (인덱스 안정성)
+	for (int32 i = Entries.Num() - 1; i >= 0; --i)
+	{
+		if (IsValid(Entries[i].Item))
+		{
+			Entries.RemoveAt(i);
+		}
+	}
+	MarkArrayDirty();
+	RebuildItemTypeIndex();
 }
 
 UInv_InventoryItem* FInv_InventoryFastArray::FindFirstItemByType(const FGameplayTag& ItemType)
@@ -415,7 +506,7 @@ void FInv_InventoryFastArray::RebuildItemTypeIndex()
 	ItemTypeIndex.Reset();
 	for (int32 i = 0; i < Entries.Num(); ++i)
 	{
-		if (IsValid(Entries[i].Item))
+		if (IsValid(Entries[i].Item) && !Entries[i].bIsAttachedToWeapon) // ⚠️ 부착물은 제외 — 재료 소비 시 부착물이 잡히는 버그 방지
 		{
 			ItemTypeIndex.Add(Entries[i].Item->GetItemManifest().GetItemType(), i);
 		}

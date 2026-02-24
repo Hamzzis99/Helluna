@@ -37,14 +37,14 @@ protected:
 	void ProcessLaserTrace();
 
 protected:
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MDF|Stats", meta = (DisplayName = "초당 배터리 소모량"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|스탯", meta = (DisplayName = "초당 배터리 소모량"))
 	float BatteryDrainRate;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MDF|Effects", meta = (DisplayName = "레이저 색상 (Debug)"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|이펙트", meta = (DisplayName = "레이저 색상 (디버그)"))
 	FColor LaserColor;
 
 	/** true: 화면 중앙(크로스헤어) 기준, false: 총구(Muzzle) 기준 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MDF|Stats", meta = (DisplayName = "화면 중앙 기준 사용"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|스탯", meta = (DisplayName = "화면 중앙 기준 사용"))
 	bool bUseScreenCenter;
 
 private:
