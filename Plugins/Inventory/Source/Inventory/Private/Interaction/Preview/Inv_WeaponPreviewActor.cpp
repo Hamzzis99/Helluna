@@ -319,7 +319,10 @@ void AInv_WeaponPreviewActor::EnsureRenderTarget()
 	RenderTarget->ClearColor = FLinearColor(0.f, 0.f, 0.f, 0.f);
 	const int32 Width = FMath::Clamp(RenderTargetWidth, 128, 2048);
 	const int32 Height = FMath::Clamp(RenderTargetHeight, 128, 2048);
-	RenderTarget->InitAutoFormat(Width, Height);
+	// ★ 명시적 HDR 포맷: 패키징 빌드에서 InitAutoFormat이 LDR(PF_B8G8R8A8)을
+	// 선택하면 알파 채널이 손실되어 배경 투명 처리가 깨짐.
+	// PF_FloatRGBA(RGBA16F)로 고정하여 어떤 빌드에서든 HDR+알파 보장.
+	RenderTarget->InitCustomFormat(Width, Height, PF_FloatRGBA, false);
 	RenderTarget->UpdateResourceImmediate(true);
 
 	if (IsValid(SceneCapture))
