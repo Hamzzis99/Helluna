@@ -3,7 +3,7 @@ Plugins/Developer/
 # Visual Studio
 .vs/
 .claude/
-UltraDynamicSky/
+Content/UltraDynamicSky/
 
 # Content Folder
 Content/Collections/
