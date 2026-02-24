@@ -28,9 +28,6 @@ struct FSTEvaluator_TargetSelectorInstanceData
 
 	UPROPERTY()
 	TWeakObjectPtr<AActor> DamagedByActor = nullptr;
-
-	UPROPERTY()
-	bool bTargetingPlayer = false;
 };
 
 USTRUCT(meta = (DisplayName = "Helluna: Target Selector", Category = "Helluna|AI"))
@@ -50,11 +47,13 @@ public:
 		meta = (DisplayName = "어그로 범위 (cm)", ClampMin = "100.0"))
 	float AggroRange = 800.f;
 
+	/**
+	 * 플레이어를 타겟으로 삼기 시작한 후 광폭화 이벤트를 발송할 때까지의 대기 시간 (초).
+	 * 이 시간이 경과하면 StateTree에 Enemy.Event.Enrage 이벤트를 보내
+	 * Enrage State로의 Transition을 트리거한다.
+	 * 0 으로 설정하면 플레이어 탐지 즉시 광폭화.
+	 */
 	UPROPERTY(EditAnywhere, Category = "Config",
-		meta = (DisplayName = "추적 포기 범위 (cm)", ClampMin = "100.0"))
-	float LeashRange = 1500.f;
-
-	UPROPERTY(EditAnywhere, Category = "Config",
-		meta = (DisplayName = "우주선 태그"))
-	FName SpaceShipTag = FName("SpaceShip");
+		meta = (DisplayName = "광폭화 시작 시간 (초)", ClampMin = "0.0"))
+	float EnrageDelay = 5.f;
 };

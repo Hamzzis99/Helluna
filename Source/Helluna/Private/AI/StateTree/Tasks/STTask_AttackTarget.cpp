@@ -116,10 +116,10 @@ EStateTreeRunStatus FSTTask_AttackTarget::Tick(
 	const bool bActivated = ASC->TryActivateAbilityByClass(GAClass);
 	if (bActivated)
 	{
-		// GA 발동 성공 시 쿨다운 세팅
-		// ①의 Spec.IsActive() 체크가 먼저 통과해야 이 카운트가 줄어들기 시작하므로
-		// GA가 완전히 끝난 후부터 정확하게 쿨다운이 카운트된다.
-		InstanceData.CooldownRemaining = AttackCooldown;
+		// 광폭화 상태이면 쿨다운 배율 적용
+		// EnrageCooldownMultiplier 가 0.5이면 절반 시간만 대기 (2배 빠른 공격)
+		const float CooldownMultiplier = Enemy->bEnraged ? Enemy->EnrageCooldownMultiplier : 1.f;
+		InstanceData.CooldownRemaining = AttackCooldown * CooldownMultiplier;
 	}
 
 	return EStateTreeRunStatus::Running;

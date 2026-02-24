@@ -24,7 +24,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
-
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	virtual void PossessedBy(AController* NewController) override;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
@@ -71,6 +71,59 @@ public:
 			ToolTip = "공격 시 재생할 Attack 애니메이션 몽타주입니다.\n데미지는 몽타주 종료 시점에 적용됩니다."))
 	TObjectPtr<UAnimMontage> AttackMontage = nullptr;
 
+	/**
+	 * 광폭화 진입 몽타주.
+	 * STTask_Enrage에서 EnterEnraged() 호출 시 서버→멀티캐스트로 재생된다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Animation|Combat",
+		meta = (DisplayName = "광폭화 몽타주",
+			ToolTip = "광폭화 상태에 진입할 때 재생할 애니메이션 몽타주입니다."))
+	TObjectPtr<UAnimMontage> EnrageMontage = nullptr;
+
+	// =========================================================
+	// 광폭화 스탯 배율 (에디터에서 설정, 서버에서만 적용)
+	// =========================================================
+
+	/** 광폭화 시 이동속도 배율 (기본 1.5배) */
+	UPROPERTY(EditDefaultsOnly, Category = "Combat|Enrage",
+		meta = (DisplayName = "광폭화 이동속도 배율", ClampMin = "1.0", ClampMax = "5.0"))
+	float EnrageMoveSpeedMultiplier = 1.5f;
+
+	/** 광폭화 시 공격력 배율 — EnemyGameplayAbility_Attack이 참조 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enrage",
+		meta = (DisplayName = "광폭화 공격력 배율", ClampMin = "1.0", ClampMax = "10.0"))
+	float EnrageDamageMultiplier = 2.0f;
+
+	/** 광폭화 시 공격쿨다운 배율 (0.5 = 2배 빠름) — STTask_AttackTarget이 참조 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enrage",
+		meta = (DisplayName = "광폭화 쿨다운 배율", ClampMin = "0.1", ClampMax = "1.0"))
+	float EnrageCooldownMultiplier = 0.5f;
+
+	/** 현재 광폭화 상태인지 (서버 → 클라 복제) */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Combat|Enrage")
+	bool bEnraged = false;
+
+	/**
+	 * 광폭화 진입.
+	 * STTask_Enrage의 EnterState에서 서버 측으로만 호출된다.
+	 * 내부에서 이동속도 증가 + 몽타주 + VFX 멀티캐스트 수행.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Combat|Enrage")
+	void EnterEnraged();
+
+	/** 광폭화 몽타주 멀티캐스트 재생 */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_PlayEnrage();
+
+	/**
+	 * 광폭화 몽타주 완료 델리게이트.
+	 * 몽타주가 끝나면 STTask_Enrage에 알려서 Succeeded를 반환하게 한다.
+	 */
+	DECLARE_DELEGATE(FOnEnrageMontageFinished)
+	FOnEnrageMontageFinished OnEnrageMontageFinished;
+
+
+public:
 	/** 피격 몽타주 재생 (서버 → 멀티캐스트) */
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayHitReact();
@@ -87,11 +140,14 @@ public:
 	UFUNCTION()
 	void OnDeathMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 
+	UFUNCTION()
+	void OnEnrageMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+
 	// =========================================================
 	// 공격 히트 이펙트 (블루프린트 에디터에서 설정)
 	// =========================================================
 
-	/** 타격 시 재생할 나이아가라 이펙트 (모든 클라이언트에서 재생) */
+	/** 타격 시 재생할 나이아가라 이펙트 */
 	UPROPERTY(EditDefaultsOnly, Category = "Combat|Effect",
 		meta = (DisplayName = "타격 나이아가라 이펙트",
 			ToolTip = "적이 플레이어 또는 우주선을 타격했을 때 재생할 나이아가라 파티클 이펙트입니다.\n비워두면 이펙트가 재생되지 않습니다."))
@@ -99,26 +155,28 @@ public:
 
 	/** 타격 이펙트 크기 배율 */
 	UPROPERTY(EditDefaultsOnly, Category = "Combat|Effect",
-		meta = (DisplayName = "타격 이펙트 크기",
-			ToolTip = "타격 나이아가라 이펙트의 크기 배율입니다.\n1.0 = 기본 크기, 0.5 = 절반 크기, 2.0 = 두 배 크기",
-			ClampMin = "0.01", ClampMax = "10.0"))
+		meta = (DisplayName = "타격 이펙트 크기", ClampMin = "0.01", ClampMax = "10.0"))
 	float HitEffectScale = 1.f;
 
-	/** 타격 시 재생할 사운드 (모든 클라이언트에서 재생) */
+	/** 광폭화 진입 시 재생할 나이아가라 이펙트 */
+	UPROPERTY(EditDefaultsOnly, Category = "Combat|Effect",
+		meta = (DisplayName = "광폭화 나이아가라 이펙트",
+			ToolTip = "광폭화 진입 시 모든 클라이언트에서 재생할 나이아가라 파티클 이펙트입니다.\n비워두면 이펙트가 재생되지 않습니다."))
+	TObjectPtr<UNiagaraSystem> EnrageNiagaraEffect = nullptr;
+
+	/** 광폭화 이펙트 크기 배율 */
+	UPROPERTY(EditDefaultsOnly, Category = "Combat|Effect",
+		meta = (DisplayName = "광폭화 이펙트 크기", ClampMin = "0.01", ClampMax = "10.0"))
+	float EnrageEffectScale = 1.f;
+
+	/** 타격 시 재생할 사운드 */
 	UPROPERTY(EditDefaultsOnly, Category = "Combat|Effect",
 		meta = (DisplayName = "타격 사운드",
 			ToolTip = "적이 플레이어 또는 우주선을 타격했을 때 재생할 사운드입니다.\n비워두면 사운드가 재생되지 않습니다."))
 	TObjectPtr<USoundBase> HitSound = nullptr;
 
-	/**
-	 * 타격 사운드 거리 감쇠 설정.
-	 * 이 설정이 없으면 거리와 관계없이 동일한 볼륨으로 재생된다.
-	 * SoundAttenuation 에셋을 생성해서 연결하거나,
-	 * HitSound 에셋 자체에 Attenuation을 설정하면 된다.
-	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Combat|Effect",
-		meta = (DisplayName = "타격 사운드 감쇠 설정",
-			ToolTip = "타격 사운드의 거리 감쇠(Attenuation) 설정입니다.\n비워두면 HitSound 에셋 자체의 Attenuation 설정을 사용합니다.\nHitSound 에셋에도 설정이 없으면 거리에 관계없이 들립니다."))
+		meta = (DisplayName = "타격 사운드 감쇠 설정"))
 	TObjectPtr<USoundAttenuation> HitSoundAttenuation = nullptr;
 
 	// =========================================================
@@ -201,14 +259,20 @@ private:
 	bool ServerApplyDamage_Validate(AActor* Target, float DamageAmount, const FVector& HitLocation);
 	
 	/**
-	 * Multicast RPC: 히트 이펙트 재생
-	 * 모든 클라이언트에서 타격 이펙트/사운드 재생
-	 * 
-	 * @param HitLocation - 타격 위치
+	 * Multicast RPC: 이펙트 재생 (타격/광폭화 공용)
+	 * 모든 클라이언트에서 나이아가라 이펙트를 재생한다.
+	 * 사운드는 타격 시에만 재생 (HitSound 프로퍼티 참조).
+	 *
+	 * @param SpawnLocation - 이펙트 재생 위치
+	 * @param Effect        - 재생할 나이아가라 에셋 (nullptr 이면 이펙트 생략)
+	 * @param EffectScale   - 이펙트 크기 배율
+	 * @param bPlaySound    - true 이면 HitSound 재생 (타격 시에만 true)
 	 */
 	UFUNCTION(NetMulticast, Reliable)
-	void MulticastPlayHitEffect(const FVector& HitLocation, float EffectScale);
-	void MulticastPlayHitEffect_Implementation(const FVector& HitLocation, float EffectScale);
+	void MulticastPlayEffect(const FVector& SpawnLocation, UNiagaraSystem* Effect,
+		float EffectScale, bool bPlaySound);
+	void MulticastPlayEffect_Implementation(const FVector& SpawnLocation, UNiagaraSystem* Effect,
+		float EffectScale, bool bPlaySound);
 
 public:
 	// ✅ 서버에서만: 공격 중에만 포즈/본 갱신을 강제하기 위한 토글

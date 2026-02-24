@@ -51,6 +51,9 @@ namespace HellunaGameplayTags
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Enemy_State_Death);
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Enemy_State_Attacking);
 
+	/** Enemy Event tags **/
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Enemy_Event_Enrage);
+
 
 
 

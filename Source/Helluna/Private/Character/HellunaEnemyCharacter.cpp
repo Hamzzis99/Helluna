@@ -33,6 +33,11 @@
 #include "Components/AudioComponent.h"
 #include "Sound/SoundAttenuation.h"
 
+#include "DebugHelper.h"
+
+// 리플리케이션
+#include "Net/UnrealNetwork.h"
+
 AHellunaEnemyCharacter::AHellunaEnemyCharacter()
 {
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
@@ -416,28 +421,21 @@ void AHellunaEnemyCharacter::PerformAttackTrace()
 			if (!IsValid(HitActor)) continue;
 			if (HitActor == this) continue;
 
-			// 플레이어 또는 우주선인지 확인
-			// ★ GetRootActor()를 사용해 트리거 컴포넌트 히트 시에도 루트 액터를 가져옴
-			// 우주선의 트리거 콜리전과 본체 콜리전이 별개로 감지되더라도
-			// 같은 액터로 처리되어 중복 데미지를 방지한다.
 			AHellunaHeroCharacter* HeroCharacter = Cast<AHellunaHeroCharacter>(HitActor);
 			AResourceUsingObject_SpaceShip* SpaceShip = Cast<AResourceUsingObject_SpaceShip>(HitActor);
 
 			if (!HeroCharacter && !SpaceShip) continue;
 
-			// 이미 이번 공격에서 데미지를 준 대상 제외 (중복 타격 방지)
 			if (HitActorsThisAttack.Contains(HitActor)) continue;
 
-			// 히트 대상 기록
 			HitActorsThisAttack.Add(HitActor);
-			
-			ServerApplyDamage(HitActor, CurrentDamageAmount, Hit.Location);
 
-			// ★ StopAttackTrace 제거: 첫 히트 후 즉시 종료하지 않음
-			// 이유: 우주선처럼 콜리전이 여러 개인 경우 트리거 콜리전이 먼저 감지되고
-			//       StopAttackTrace()가 호출되면 본체 콜리전은 처리되지 않는 문제가 있었음.
-			// 대신 HitActorsThisAttack으로 같은 대상에게 중복 데미지만 방지한다.
-			// 트레이스는 AnimNotify_AttackCollisionEnd에서 명시적으로 정지된다.
+			// 광폭화 상태이면 공격력 배율 적용
+			const float FinalDamage = bEnraged
+				? CurrentDamageAmount * EnrageDamageMultiplier
+				: CurrentDamageAmount;
+
+			ServerApplyDamage(HitActor, FinalDamage, Hit.Location);
 		}
 	}
 }
@@ -467,7 +465,7 @@ void AHellunaEnemyCharacter::ServerApplyDamage_Implementation(AActor* Target, fl
 	
 	UGameplayStatics::ApplyDamage(Target, DamageAmount, GetController(), this, UDamageType::StaticClass());
 	UE_LOG(LogTemp, Log, TEXT("[Damage] %.1f -> %s"), DamageAmount, *GetNameSafe(Target));
-	MulticastPlayHitEffect(HitLocation, HitEffectScale);
+	MulticastPlayEffect(HitLocation, HitNiagaraEffect, HitEffectScale, true);
 }
 
 bool AHellunaEnemyCharacter::ServerApplyDamage_Validate(AActor* Target, float DamageAmount, 
@@ -491,15 +489,15 @@ bool AHellunaEnemyCharacter::ServerApplyDamage_Validate(AActor* Target, float Da
 // Multicast RPC: 히트 이펙트
 // ====================================================================
 
-void AHellunaEnemyCharacter::MulticastPlayHitEffect_Implementation(const FVector& HitLocation, float EffectScale)
+void AHellunaEnemyCharacter::MulticastPlayEffect_Implementation(
+	const FVector& SpawnLocation, UNiagaraSystem* Effect, float EffectScale, bool bPlaySound)
 {
-	// 나이아가라 이펙트 재생
-	if (HitNiagaraEffect)
+	if (Effect)
 	{
 		UNiagaraFunctionLibrary::SpawnSystemAtLocation(
 			GetWorld(),
-			HitNiagaraEffect,
-			HitLocation,
+			Effect,
+			SpawnLocation,
 			FRotator::ZeroRotator,
 			FVector(EffectScale),
 			true,
@@ -509,19 +507,11 @@ void AHellunaEnemyCharacter::MulticastPlayHitEffect_Implementation(const FVector
 		);
 	}
 
-	// 사운드 재생
-	// AttenuationSettings가 사운드 에셋에 설정되어 있어야 거리 감쇠가 적용된다.
-	// 설정되지 않은 경우를 대비해 SpawnSoundAtLocation으로 재생하고
-	// 사운드 컴포넌트에 직접 감쇠 설정을 적용한다.
-	if (HitSound)
+	if (bPlaySound && HitSound)
 	{
 		if (UAudioComponent* AudioComp = UGameplayStatics::SpawnSoundAtLocation(
-			this,
-			HitSound,
-			HitLocation))
+			this, HitSound, SpawnLocation))
 		{
-			// Attenuation이 없는 사운드에 대한 안전장치:
-			// 사운드 에셋에 Attenuation이 이미 설정되어 있다면 이 설정은 무시된다.
 			if (HitSoundAttenuation)
 			{
 				AudioComp->AttenuationSettings = HitSoundAttenuation;
@@ -600,4 +590,130 @@ void AHellunaEnemyCharacter::SetServerAttackPoseTickEnabled(bool bEnable)
 		M->bEnableUpdateRateOptimizations = bSavedURO;
 		bPoseTickSaved = false;
 	}
+}
+
+// =========================================================
+// 리플리케이션 등록
+// =========================================================
+
+void AHellunaEnemyCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME(AHellunaEnemyCharacter, bEnraged);
+}
+
+// =========================================================
+// 광폭화 진입 (서버 전용)
+// =========================================================
+
+void AHellunaEnemyCharacter::EnterEnraged()
+{
+	if (!HasAuthority()) return;
+
+	if (bEnraged) return;
+
+	bEnraged = true;
+
+	// 진행 중인 공격 몽타주 즉시 중단 (광폭화 몽타주 재생 전에 정리)
+	StopAttackTrace();
+	if (USkeletalMeshComponent* SkelMesh = GetMesh())
+	{
+		if (UAnimInstance* AnimInst = SkelMesh->GetAnimInstance())
+		{
+			if (AttackMontage && AnimInst->Montage_IsPlaying(AttackMontage))
+			{
+				AnimInst->Montage_Stop(0.1f, AttackMontage);
+			}
+		}
+	}
+
+	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
+	{
+		// 광폭화 배율은 이동 잠금 여부와 무관하게 기준 속도에 곱해야 한다.
+		// LockMovementAndFaceTarget()이 SavedMaxWalkSpeed를 덮어쓸 수 있으므로
+		// 광폭화 기준이 되는 속도를 별도로 계산한다.
+		// bMovementLocked 중이면 SavedMaxWalkSpeed가 잠금 전 실제 속도를 담고 있음
+		const float BaseSpeed = bMovementLocked ? SavedMaxWalkSpeed : MoveComp->MaxWalkSpeed;
+		const float EnragedSpeed = BaseSpeed * EnrageMoveSpeedMultiplier;
+
+		// SavedMaxWalkSpeed를 광폭화 속도로 갱신해두면
+		// UnlockMovement() 복원 시에도 광폭화 속도가 유지된다.
+		SavedMaxWalkSpeed = EnragedSpeed;
+
+		if (!bMovementLocked)
+		{
+			MoveComp->MaxWalkSpeed = EnragedSpeed;
+		}
+		// bMovementLocked == true 이면 UnlockMovement()에서 SavedMaxWalkSpeed로 복원할 때 자동 적용
+	}
+
+	// 광폭화 몽타주 재생 + 완료 델리게이트 바인딩
+	if (EnrageMontage)
+	{
+		// 완료 콜백은 서버에서만 바인딩 (델리게이트 → STTask_Enrage에 알림)
+		if (USkeletalMeshComponent* SkelMesh = GetMesh())
+		{
+			if (UAnimInstance* AnimInst = SkelMesh->GetAnimInstance())
+			{
+				// 중복 바인딩 방지
+				AnimInst->OnMontageEnded.RemoveDynamic(this, &AHellunaEnemyCharacter::OnEnrageMontageEnded);
+				AnimInst->OnMontageEnded.AddDynamic(this, &AHellunaEnemyCharacter::OnEnrageMontageEnded);
+			}
+		}
+		Multicast_PlayEnrage();
+	}
+	else
+	{
+		// 몽타주 없으면 즉시 완료 신호
+		OnEnrageMontageFinished.ExecuteIfBound();
+	}
+
+	// 광폭화 VFX (액터 위치 기준)
+	MulticastPlayEffect(GetActorLocation(), EnrageNiagaraEffect, EnrageEffectScale, false);
+
+	Debug::Print(
+		FString::Printf(TEXT("[Enrage] ★ %s 광폭화 진입! Speed x%.1f / Damage x%.1f / Cooldown x%.1f"),
+			*GetName(),
+			EnrageMoveSpeedMultiplier,
+			EnrageDamageMultiplier,
+			EnrageCooldownMultiplier),
+		FColor::Red
+	);
+
+	UE_LOG(LogTemp, Log, TEXT("[Enrage] %s 광폭화 진입: MoveSpeed x%.1f, Damage x%.1f, CooldownMult x%.1f"),
+		*GetName(), EnrageMoveSpeedMultiplier, EnrageDamageMultiplier, EnrageCooldownMultiplier);
+}
+
+// =========================================================
+// 광폭화 몽타주 멀티캐스트
+// =========================================================
+
+void AHellunaEnemyCharacter::Multicast_PlayEnrage_Implementation()
+{
+	if (!EnrageMontage) return;
+
+	USkeletalMeshComponent* SkelMesh = GetMesh();
+	if (!SkelMesh) return;
+
+	UAnimInstance* AnimInst = SkelMesh->GetAnimInstance();
+	if (!AnimInst) return;
+
+	AnimInst->Montage_Play(EnrageMontage);
+}
+
+void AHellunaEnemyCharacter::OnEnrageMontageEnded(UAnimMontage* Montage, bool bInterrupted)
+{
+	if (Montage != EnrageMontage) return;
+
+	// 바인딩 해제 (1회용)
+	if (USkeletalMeshComponent* SkelMesh = GetMesh())
+	{
+		if (UAnimInstance* AnimInst = SkelMesh->GetAnimInstance())
+		{
+			AnimInst->OnMontageEnded.RemoveDynamic(this, &AHellunaEnemyCharacter::OnEnrageMontageEnded);
+		}
+	}
+
+	// STTask_Enrage에 완료 알림 → Tick에서 Succeeded 반환
+	OnEnrageMontageFinished.ExecuteIfBound();
 }
