@@ -11,6 +11,7 @@
 // ════════════════════════════════════════════════════════════════════════════════
 
 #include "Widgets/Inventory/AttachmentSlots/Inv_AttachmentSlotWidget.h"
+#include "Inventory.h"
 
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
@@ -49,10 +50,12 @@ void UInv_AttachmentSlotWidget::InitSlot(int32 InSlotIndex, const FInv_Attachmen
 		SetEmpty();
 	}
 
+#if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 슬롯 %d 초기화: %s (점유=%s)"),
 		SlotIndex,
 		*SlotType.ToString(),
 		bIsOccupied ? TEXT("O") : TEXT("X"));
+#endif
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -103,11 +106,15 @@ void UInv_AttachmentSlotWidget::SetOccupied(const FInv_AttachedItemData& Data)
 		{
 			DisplayName = TEXT("(태그 미설정)");
 		}
+#if INV_DEBUG_ATTACHMENT
 		UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] ⚠️ 슬롯 %d: AttachmentItemType이 비어있음! BP에서 태그 재설정 필요"), SlotIndex);
+#endif
 	}
 
+#if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 슬롯 %d 점유됨: %s"),
 		SlotIndex, *DisplayName);
+#endif
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -137,7 +144,9 @@ void UInv_AttachmentSlotWidget::SetEmpty()
 		Image_ItemIcon->SetVisibility(ESlateVisibility::Collapsed);
 	}
 
+#if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 슬롯 %d 비워짐"), SlotIndex);
+#endif
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -169,10 +178,12 @@ FReply UInv_AttachmentSlotWidget::NativeOnMouseButtonDown(const FGeometry& InGeo
 	const bool bIsLeft = InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton;
 	const bool bIsRight = InMouseEvent.GetEffectingButton() == EKeys::RightMouseButton;
 
+#if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 슬롯 %d 클릭됨 (좌/우=%s, 점유=%s)"),
 		SlotIndex,
 		bIsLeft ? TEXT("좌") : bIsRight ? TEXT("우") : TEXT("기타"),
 		bIsOccupied ? TEXT("O") : TEXT("X"));
+#endif
 
 	// 델리게이트 브로드캐스트 → 패널에서 좌/우 분기 처리
 	OnSlotClicked.Broadcast(SlotIndex, InMouseEvent);

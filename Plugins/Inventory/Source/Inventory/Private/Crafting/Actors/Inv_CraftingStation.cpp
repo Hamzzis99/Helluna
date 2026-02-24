@@ -1,6 +1,7 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
 #include "Crafting/Actors/Inv_CraftingStation.h"
+#include "Inventory.h"
 #include "Blueprint/UserWidget.h"
 #include "Components/StaticMeshComponent.h"
 
@@ -25,25 +26,33 @@ void AInv_CraftingStation::OnInteract_Implementation(APlayerController* PlayerCo
 	// 멀티플레이 체크: 로컬 컨트롤러만 UI 열기
 	if (!PlayerController->IsLocalController())
 	{
+#if INV_DEBUG_CRAFT
 		UE_LOG(LogTemp, Log, TEXT("OnInteract: 로컬 컨트롤러가 아님 - UI 열기 무시"));
-		return;
-	}
-	
-	if (!IsValid(CraftingMenuClass))
-	{
-		UE_LOG(LogTemp, Error, TEXT("CraftingMenuClass가 설정되지 않았습니다! BP에서 위젯을 할당하세요."));
+#endif
 		return;
 	}
 
+	if (!IsValid(CraftingMenuClass))
+	{
+#if INV_DEBUG_CRAFT
+		UE_LOG(LogTemp, Error, TEXT("CraftingMenuClass가 설정되지 않았습니다! BP에서 위젯을 할당하세요."));
+#endif
+		return;
+	}
+
+#if INV_DEBUG_CRAFT
 	UE_LOG(LogTemp, Warning, TEXT("=== 크래프팅 스테이션 상호작용! ==="));
 	UE_LOG(LogTemp, Warning, TEXT("Player: %s"), *PlayerController->GetName());
 	UE_LOG(LogTemp, Warning, TEXT("Station: %s"), *GetName());
+#endif
 
 	// 이미 이 플레이어의 메뉴가 열려있으면 닫기
 	if (PlayerMenuMap.Contains(PlayerController))
 	{
 		ForceCloseMenu(PlayerController);
+#if INV_DEBUG_CRAFT
 		UE_LOG(LogTemp, Log, TEXT("크래프팅 메뉴 닫힘 (Player: %s)"), *PlayerController->GetName());
+#endif
 		return;
 	}
 
@@ -75,13 +84,17 @@ void AInv_CraftingStation::OnInteract_Implementation(APlayerController* PlayerCo
 		);
 		
 		PlayerTimerMap.Add(PlayerController, TimerHandle);
-		
-		UE_LOG(LogTemp, Log, TEXT("크래프팅 메뉴 열림! 거리 체크 시작 (%.2f초마다, Player: %s)"), 
+
+#if INV_DEBUG_CRAFT
+		UE_LOG(LogTemp, Log, TEXT("크래프팅 메뉴 열림! 거리 체크 시작 (%.2f초마다, Player: %s)"),
 			DistanceCheckInterval, *PlayerController->GetName());
+#endif
 	}
 	else
 	{
+#if INV_DEBUG_CRAFT
 		UE_LOG(LogTemp, Error, TEXT("크래프팅 메뉴 생성 실패!"));
+#endif
 	}
 }
 
@@ -100,7 +113,9 @@ void AInv_CraftingStation::CheckDistanceToPlayer(APlayerController* PC)
 	// PlayerController가 유효한지 확인
 	if (!IsValid(PC))
 	{
+#if INV_DEBUG_CRAFT
 		UE_LOG(LogTemp, Warning, TEXT("PlayerController가 유효하지 않음. 메뉴 강제 닫기."));
+#endif
 		ForceCloseMenu(PC);
 		return;
 	}
@@ -108,7 +123,9 @@ void AInv_CraftingStation::CheckDistanceToPlayer(APlayerController* PC)
 	// 메뉴가 여전히 열려있는지 확인
 	if (!PlayerMenuMap.Contains(PC))
 	{
+#if INV_DEBUG_CRAFT
 		UE_LOG(LogTemp, Log, TEXT("메뉴가 이미 닫혔음. Timer 정지. (Player: %s)"), *PC->GetName());
+#endif
 		
 		// Timer 정지
 		if (PlayerTimerMap.Contains(PC))
@@ -123,7 +140,9 @@ void AInv_CraftingStation::CheckDistanceToPlayer(APlayerController* PC)
 	APawn* PlayerPawn = PC->GetPawn();
 	if (!IsValid(PlayerPawn))
 	{
+#if INV_DEBUG_CRAFT
 		UE_LOG(LogTemp, Warning, TEXT("PlayerPawn이 유효하지 않음. 메뉴 강제 닫기. (Player: %s)"), *PC->GetName());
+#endif
 		ForceCloseMenu(PC);
 		return;
 	}
@@ -134,8 +153,10 @@ void AInv_CraftingStation::CheckDistanceToPlayer(APlayerController* PC)
 	// InteractionDistance보다 멀어지면 메뉴 닫기
 	if (Distance > InteractionDistance)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("플레이어가 너무 멀어짐! (거리: %.1f / 최대: %.1f) 메뉴 자동 닫기 (Player: %s)"), 
+#if INV_DEBUG_CRAFT
+		UE_LOG(LogTemp, Warning, TEXT("플레이어가 너무 멀어짐! (거리: %.1f / 최대: %.1f) 메뉴 자동 닫기 (Player: %s)"),
 			Distance, InteractionDistance, *PC->GetName());
+#endif
 		ForceCloseMenu(PC);
 	}
 }
@@ -167,5 +188,7 @@ void AInv_CraftingStation::ForceCloseMenu(APlayerController* PC)
 		PlayerTimerMap.Remove(PC);
 	}
 
+#if INV_DEBUG_CRAFT
 	UE_LOG(LogTemp, Log, TEXT("크래프팅 메뉴 강제 닫힘. Timer 정지됨. (Player: %s)"), *PC->GetName());
+#endif
 }

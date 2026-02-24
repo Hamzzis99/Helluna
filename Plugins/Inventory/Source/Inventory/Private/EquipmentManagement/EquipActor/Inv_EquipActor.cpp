@@ -129,10 +129,12 @@ USceneComponent* AInv_EquipActor::FindComponentWithSocket(FName SocketName) cons
 	}
 
 	// 소켓을 찾지 못한 경우 — 폴백으로 RootComponent 반환
+#if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning,
 		TEXT("[Attachment Visual] FindComponentWithSocket: 소켓 '%s'을(를) 보유한 컴포넌트를 찾지 못함. RootComponent로 폴백합니다. (Actor: %s)"),
 		*SocketName.ToString(),
 		*GetName());
+#endif
 
 	return GetRootComponent();
 }
@@ -152,7 +154,9 @@ void AInv_EquipActor::AttachMeshToSocket(int32 SlotIndex, UStaticMesh* Mesh, FNa
 {
 	if (!IsValid(Mesh))
 	{
+#if INV_DEBUG_EQUIP
 		UE_LOG(LogTemp, Warning, TEXT("[Attachment Visual] AttachMeshToSocket 실패: Mesh가 nullptr (SlotIndex=%d)"), SlotIndex);
+#endif
 		return;
 	}
 
@@ -163,7 +167,9 @@ void AInv_EquipActor::AttachMeshToSocket(int32 SlotIndex, UStaticMesh* Mesh, FNa
 	UStaticMeshComponent* MeshComp = NewObject<UStaticMeshComponent>(this);
 	if (!IsValid(MeshComp))
 	{
+#if INV_DEBUG_EQUIP
 		UE_LOG(LogTemp, Error, TEXT("[Attachment Visual] StaticMeshComponent 생성 실패 (SlotIndex=%d)"), SlotIndex);
+#endif
 		return;
 	}
 

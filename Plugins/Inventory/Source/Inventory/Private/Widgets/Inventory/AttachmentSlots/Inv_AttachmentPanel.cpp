@@ -134,13 +134,17 @@ void UInv_AttachmentPanel::OpenForWeapon(UInv_InventoryItem* WeaponItem, int32 W
 {
 	if (!IsValid(WeaponItem))
 	{
+#if INV_DEBUG_ATTACHMENT
 		UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] OpenForWeapon 실패: WeaponItem이 nullptr"));
+#endif
 		return;
 	}
 
 	if (!WeaponItem->HasAttachmentSlots())
 	{
+#if INV_DEBUG_ATTACHMENT
 		UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] OpenForWeapon 실패: 부착물 슬롯이 없는 아이템"));
+#endif
 		return;
 	}
 
@@ -266,7 +270,9 @@ void UInv_AttachmentPanel::BuildSlotWidgets()
 	const FInv_AttachmentHostFragment* HostFrag = CurrentWeaponItem->GetItemManifest().GetFragmentOfType<FInv_AttachmentHostFragment>();
 	if (!HostFrag)
 	{
+#if INV_DEBUG_ATTACHMENT
 		UE_LOG(LogTemp, Error, TEXT("[Attachment UI] AttachmentHostFragment를 찾을 수 없음!"));
+#endif
 		return;
 	}
 
@@ -295,8 +301,10 @@ void UInv_AttachmentPanel::BuildSlotWidgets()
 		UInv_AttachmentSlotWidget* SlotWidget = FindSlotWidgetByTag(SlotDefs[i].SlotType);
 		if (!IsValid(SlotWidget))
 		{
+#if INV_DEBUG_ATTACHMENT
 			UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] 슬롯[%d] %s: WBP에 해당 태그의 슬롯 위젯 없음 (건너뜀)"),
 				i, *SlotDefs[i].SlotType.ToString());
+#endif
 			SlotWidgets.Add(nullptr);
 			continue;
 		}
@@ -448,7 +456,9 @@ void UInv_AttachmentPanel::OnSlotClicked(int32 SlotIndex, const FPointerEvent& M
 	// 슬롯 인덱스 유효성 검사
 	if (SlotIndex < 0 || SlotIndex >= SlotWidgets.Num())
 	{
+#if INV_DEBUG_ATTACHMENT
 		UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] 유효하지 않은 슬롯 인덱스: %d"), SlotIndex);
+#endif
 		return;
 	}
 
@@ -503,7 +513,9 @@ void UInv_AttachmentPanel::TryAttachHoverItem(int32 SlotIndex)
 	// 부착물 아이템인지 확인
 	if (!AttachmentItem->IsAttachableItem())
 	{
+#if INV_DEBUG_ATTACHMENT
 		UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] 장착 실패: 부착물이 아닌 아이템"));
+#endif
 		return;
 	}
 
@@ -513,12 +525,16 @@ void UInv_AttachmentPanel::TryAttachHoverItem(int32 SlotIndex)
 
 	if (AttachmentEntryIndex == INDEX_NONE)
 	{
+#if INV_DEBUG_ATTACHMENT
 		UE_LOG(LogTemp, Error, TEXT("[Attachment UI] 장착 실패: 부착물 EntryIndex를 찾을 수 없음"));
+#endif
 		return;
 	}
 	if (WeaponEntryIndex == INDEX_NONE)
 	{
+#if INV_DEBUG_ATTACHMENT
 		UE_LOG(LogTemp, Error, TEXT("[Attachment UI] 장착 실패: 무기 EntryIndex를 찾을 수 없음"));
+#endif
 		return;
 	}
 
@@ -529,7 +545,9 @@ void UInv_AttachmentPanel::TryAttachHoverItem(int32 SlotIndex)
 #endif
 	if (!InventoryComponent->CanAttachToWeapon(WeaponEntryIndex, AttachmentEntryIndex, SlotIndex))
 	{
+#if INV_DEBUG_ATTACHMENT
 		UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] 장착 실패: 호환 안 됨 (슬롯=%d)"), SlotIndex);
+#endif
 		return;
 	}
 
@@ -601,7 +619,9 @@ void UInv_AttachmentPanel::TryDetachItem(int32 SlotIndex)
 	const int32 WeaponEntryIndex = FindCurrentWeaponEntryIndex();
 	if (WeaponEntryIndex == INDEX_NONE)
 	{
+#if INV_DEBUG_ATTACHMENT
 		UE_LOG(LogTemp, Error, TEXT("[Attachment UI] 분리 실패: 무기 EntryIndex를 찾을 수 없음"));
+#endif
 		return;
 	}
 
@@ -653,7 +673,9 @@ int32 UInv_AttachmentPanel::FindCurrentWeaponEntryIndex() const
 	const int32 FoundIndex = InventoryComponent->FindEntryIndexForItem(CurrentWeaponItem.Get());
 	if (FoundIndex == INDEX_NONE)
 	{
+#if INV_DEBUG_ATTACHMENT
 		UE_LOG(LogTemp, Error, TEXT("[Attachment UI] 무기 EntryIndex 검색 실패! CurrentWeaponItem 포인터가 InventoryList에 없음"));
+#endif
 	}
 	else
 	{
@@ -703,7 +725,9 @@ void UInv_AttachmentPanel::CollectSlotWidgetsFromTree()
 
 	if (!WidgetTree)
 	{
+#if INV_DEBUG_ATTACHMENT
 		UE_LOG(LogTemp, Error, TEXT("[Attachment UI] WidgetTree가 nullptr — 슬롯 수집 불가"));
+#endif
 		return;
 	}
 
@@ -776,7 +800,9 @@ void UInv_AttachmentPanel::SetupWeaponPreview()
 	UStaticMesh* PreviewMesh = EquipFrag->GetPreviewStaticMesh().LoadSynchronous();
 	if (!IsValid(PreviewMesh))
 	{
+#if INV_DEBUG_ATTACHMENT
 		UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] 프리뷰 메시 로드 실패!"));
+#endif
 		if (IsValid(Image_WeaponPreview))
 		{
 			Image_WeaponPreview->SetVisibility(ESlateVisibility::Collapsed);
@@ -805,7 +831,9 @@ void UInv_AttachmentPanel::SetupWeaponPreview()
 
 	if (!IsValid(NewPreview))
 	{
+#if INV_DEBUG_ATTACHMENT
 		UE_LOG(LogTemp, Error, TEXT("[Attachment UI] WeaponPreviewActor 스폰 실패!"));
+#endif
 		return;
 	}
 
@@ -844,14 +872,18 @@ void UInv_AttachmentPanel::SetupWeaponPreview()
 			{
 				// 캐싱 실패 안전장치: WBP 기본값 (256, 256) 사용
 				FixedBrush.ImageSize = FVector2D(256.f, 256.f);
+#if INV_DEBUG_ATTACHMENT
 				UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] CachedPreviewImageSize가 0! 폴백값 (256, 256) 사용"));
+#endif
 			}
 			Image_WeaponPreview->SetBrush(FixedBrush);
 		}
 		else
 		{
 			// 폴백: Material 로드 실패 시 기존 방식 (알파 문제 있을 수 있음)
+#if INV_DEBUG_ATTACHMENT
 			UE_LOG(LogTemp, Warning, TEXT("[Attachment UI] M_WeaponPreview 로드 실패! FSlateBrush 폴백"));
+#endif
 			FSlateBrush PreviewBrush;
 			PreviewBrush.SetResourceObject(RT);
 			PreviewBrush.ImageSize = CachedPreviewImageSize.IsNearlyZero()

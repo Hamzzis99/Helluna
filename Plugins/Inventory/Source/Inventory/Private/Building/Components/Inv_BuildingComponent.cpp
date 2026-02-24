@@ -2,6 +2,7 @@
 
 
 #include "Building/Components/Inv_BuildingComponent.h"
+#include "Inventory.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "InputAction.h"
@@ -37,7 +38,9 @@ void UInv_BuildingComponent::BeginPlay()
 	OwningPC = Cast<APlayerController>(GetOwner());
 	if (!OwningPC.IsValid())
 	{
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Error, TEXT("Inv_BuildingComponent: Owner is not a PlayerController!"));
+#endif
 		return;
 	}
 
@@ -51,11 +54,15 @@ void UInv_BuildingComponent::BeginPlay()
 		if (IsValid(BuildingMenuMappingContext))
 		{
 			Subsystem->AddMappingContext(BuildingMenuMappingContext, 0);
+#if INV_DEBUG_BUILD
 			UE_LOG(LogTemp, Warning, TEXT("BuildingMenuMappingContext added (B키 - 항상 활성화)"));
+#endif
 		}
 		else
 		{
+#if INV_DEBUG_BUILD
 			UE_LOG(LogTemp, Warning, TEXT("BuildingMenuMappingContext is not set!"));
+#endif
 		}
 	}
 
@@ -66,11 +73,15 @@ void UInv_BuildingComponent::BeginPlay()
 		{
 			// B키: 빌드 메뉴 토글 (항상 활성화)
 			EnhancedInputComponent->BindAction(IA_Building, ETriggerEvent::Started, this, &UInv_BuildingComponent::ToggleBuildMenu);
+#if INV_DEBUG_BUILD
 			UE_LOG(LogTemp, Warning, TEXT("IA_Building bound to ToggleBuildMenu."));
+#endif
 		}
 		else
 		{
+#if INV_DEBUG_BUILD
 			UE_LOG(LogTemp, Warning, TEXT("IA_Building is not set."));
+#endif
 		}
 
 		// ★ IA_BuildingAction, IA_CancelBuilding은 여기서 바인딩하지 않음!
@@ -78,7 +89,9 @@ void UInv_BuildingComponent::BeginPlay()
 	}
 	else
 	{
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Error, TEXT("Enhanced Input Component not found!"));
+#endif
 	}
 }
 
@@ -142,12 +155,16 @@ void UInv_BuildingComponent::StartBuildMode()
 	if (!OwningPC.IsValid() || !GetWorld()) return;
 
 	bIsInBuildMode = true;
+#if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("=== Build Mode STARTED ==="));
+#endif
 
 	// 선택된 고스트 액터 클래스가 있는지 확인
 	if (!SelectedGhostClass)
 	{
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Error, TEXT("SelectedGhostClass is not set! Please select a building from the menu first."));
+#endif
 		return;
 	}
 
@@ -174,21 +191,27 @@ void UInv_BuildingComponent::StartBuildMode()
 
 	if (IsValid(GhostActorInstance))
 	{
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Warning, TEXT("Ghost Actor spawned successfully! (BuildingID: %d)"), CurrentBuildingID);
-		
+#endif
+
 		// 고스트 액터의 충돌 비활성화
 		GhostActorInstance->SetActorEnableCollision(false);
 	}
 	else
 	{
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Error, TEXT("Failed to spawn Ghost Actor!"));
+#endif
 	}
 }
 
 void UInv_BuildingComponent::EndBuildMode()
 {
 	bIsInBuildMode = false;
+#if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("=== Build Mode ENDED ==="));
+#endif
 
 	// ★ BuildMode 종료 시 입력 비활성화 (IMC 제거 + 바인딩 해제)
 	DisableBuildModeInput();
@@ -198,22 +221,30 @@ void UInv_BuildingComponent::EndBuildMode()
 	{
 		GhostActorInstance->Destroy();
 		GhostActorInstance = nullptr;
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Warning, TEXT("Ghost Actor destroyed."));
+#endif
 	}
 }
 
 void UInv_BuildingComponent::CancelBuildMode()
 {
+#if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("CancelBuildMode called. bIsInBuildMode: %s"), bIsInBuildMode ? TEXT("TRUE") : TEXT("FALSE"));
+#endif
 
 	// 빌드 모드일 때만 취소
 	if (!bIsInBuildMode)
 	{
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Warning, TEXT("Not in build mode - ignoring cancel request."));
+#endif
 		return; // 빌드 모드가 아니면 무시
 	}
 
+#if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("=== BUILD MODE CANCELLED (Right Click) ==="));
+#endif
 	
 	// 빌드 모드 종료
 	EndBuildMode();
@@ -245,11 +276,15 @@ void UInv_BuildingComponent::OpenBuildMenu()
 	// 빌드 메뉴 위젯 클래스가 설정되어 있는지 확인
 	if (!BuildMenuWidgetClass)
 	{
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Error, TEXT("BuildMenuWidgetClass is not set! Please set WBP_BuildMenu in BP_Inv_BuildingComponent."));
+#endif
 		return;
 	}
 
+#if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("=== OPENING BUILD MENU ==="));
+#endif
 
 	// Crafting Menu가 열려있으면 닫기
 	CloseCraftingMenuIfOpen();
@@ -258,7 +293,9 @@ void UInv_BuildingComponent::OpenBuildMenu()
 	BuildMenuInstance = CreateWidget<UUserWidget>(OwningPC.Get(), BuildMenuWidgetClass);
 	if (!IsValid(BuildMenuInstance))
 	{
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Error, TEXT("Failed to create Build Menu Widget!"));
+#endif
 		return;
 	}
 
@@ -274,7 +311,9 @@ void UInv_BuildingComponent::OpenBuildMenu()
 	// 마우스 커서 보이기
 	OwningPC->SetShowMouseCursor(true);
 
+#if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("Build Menu opened successfully!"));
+#endif
 }
 
 void UInv_BuildingComponent::CloseBuildMenu()
@@ -283,7 +322,9 @@ void UInv_BuildingComponent::CloseBuildMenu()
 
 	if (!IsValid(BuildMenuInstance)) return;
 
+#if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("=== CLOSING BUILD MENU ==="));
+#endif
 
 	// 위젯 제거
 	BuildMenuInstance->RemoveFromParent();
@@ -296,7 +337,9 @@ void UInv_BuildingComponent::CloseBuildMenu()
 	// 마우스 커서 숨기기
 	OwningPC->SetShowMouseCursor(false);
 
+#if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("Build Menu closed."));
+#endif
 }
 
 void UInv_BuildingComponent::CloseCraftingMenuIfOpen()
@@ -316,7 +359,9 @@ void UInv_BuildingComponent::CloseCraftingMenuIfOpen()
 		if (WidgetClassName.Contains(TEXT("CraftingMenu")))
 		{
 			Widget->RemoveFromParent();
+#if INV_DEBUG_BUILD
 			UE_LOG(LogTemp, Log, TEXT("Crafting Menu 닫힘: %s (BuildMenu 열림)"), *WidgetClassName);
+#endif
 		}
 	}
 }
@@ -332,13 +377,16 @@ void UInv_BuildingComponent::OnBuildingSelectedFromWidget(
 {
 	if (!GhostClass || !ActualBuildingClass)
 	{
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Error, TEXT("OnBuildingSelectedFromWidget: Invalid class parameters!"));
+#endif
 		return;
 	}
 
+#if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("=== BUILDING SELECTED FROM WIDGET ==="));
 	UE_LOG(LogTemp, Warning, TEXT("BuildingID: %d"), BuildingID);
-	
+
 	if (MaterialTag1.IsValid() && MaterialAmount1 > 0)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("Required Material 1: %s x %d"), *MaterialTag1.ToString(), MaterialAmount1);
@@ -347,6 +395,7 @@ void UInv_BuildingComponent::OnBuildingSelectedFromWidget(
 	{
 		UE_LOG(LogTemp, Warning, TEXT("Required Material 2: %s x %d"), *MaterialTag2.ToString(), MaterialAmount2);
 	}
+#endif
 
 	// 선택된 건물 정보 저장
 	SelectedGhostClass = GhostClass;
@@ -366,36 +415,48 @@ void UInv_BuildingComponent::OnBuildingSelectedFromWidget(
 
 void UInv_BuildingComponent::TryPlaceBuilding()
 {
+#if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("TryPlaceBuilding called. bIsInBuildMode: %s"), bIsInBuildMode ? TEXT("TRUE") : TEXT("FALSE"));
+#endif
 
 	// 빌드 모드가 아니면 무시 (버그 방지)
 	if (!bIsInBuildMode)
 	{
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Warning, TEXT("Not in build mode - ignoring placement request."));
+#endif
 		return; // 로그 추가
 	}
 
 	if (!bCanPlaceBuilding)
 	{
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Warning, TEXT("Cannot place building - invalid placement location (too steep or no ground)!"));
+#endif
 		return;
 	}
 
 	if (!IsValid(GhostActorInstance))
 	{
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Error, TEXT("Cannot place building - Ghost Actor is invalid!"));
+#endif
 		return;
 	}
 
 	if (!OwningPC.IsValid())
 	{
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Error, TEXT("Cannot place building - OwningPC is invalid!"));
+#endif
 		return;
 	}
 
 	if (!SelectedBuildingClass)
 	{
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Error, TEXT("Cannot place building - SelectedBuildingClass is invalid!"));
+#endif
 		return;
 	}
 
@@ -405,8 +466,10 @@ void UInv_BuildingComponent::TryPlaceBuilding()
 	{
 		if (!HasRequiredMaterials(CurrentMaterialTag, CurrentMaterialAmount))
 		{
+#if INV_DEBUG_BUILD
 			UE_LOG(LogTemp, Warning, TEXT("=== 배치 실패: 재료1이 부족합니다! ==="));
 			UE_LOG(LogTemp, Warning, TEXT("필요한 재료1: %s x %d"), *CurrentMaterialTag.ToString(), CurrentMaterialAmount);
+#endif
 			EndBuildMode(); // 빌드 모드 종료
 			return;
 		}
@@ -417,15 +480,19 @@ void UInv_BuildingComponent::TryPlaceBuilding()
 	{
 		if (!HasRequiredMaterials(CurrentMaterialTag2, CurrentMaterialAmount2))
 		{
+#if INV_DEBUG_BUILD
 			UE_LOG(LogTemp, Warning, TEXT("=== 배치 실패: 재료2가 부족합니다! ==="));
 			UE_LOG(LogTemp, Warning, TEXT("필요한 재료2: %s x %d"), *CurrentMaterialTag2.ToString(), CurrentMaterialAmount2);
+#endif
 			EndBuildMode(); // 빌드 모드 종료
 			return;
 		}
 	}
 
+#if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("=== TRY PLACING BUILDING (Client Request) ==="));
 	UE_LOG(LogTemp, Warning, TEXT("BuildingID: %d"), CurrentBuildingID);
+#endif
 	
 	// 고스트 액터의 현재 위치와 회전 가져오기
 	const FVector BuildingLocation = GhostActorInstance->GetActorLocation();
@@ -436,7 +503,9 @@ void UInv_BuildingComponent::TryPlaceBuilding()
 
 	// 건물 배치 성공 시 빌드 모드 종료
 	EndBuildMode();
+#if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("Building placed! Exiting build mode."));
+#endif
 }
 
 void UInv_BuildingComponent::Server_PlaceBuilding_Implementation(
@@ -450,17 +519,23 @@ void UInv_BuildingComponent::Server_PlaceBuilding_Implementation(
 {
 	if (!GetWorld())
 	{
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Error, TEXT("Server_PlaceBuilding: World is invalid!"));
+#endif
 		return;
 	}
 
 	if (!BuildingClass)
 	{
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Error, TEXT("Server_PlaceBuilding: BuildingClass is invalid!"));
+#endif
 		return;
 	}
 
+#if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("=== SERVER PLACING BUILDING ==="));
+#endif
 
 	// 서버에서 재료 검증 (반드시 통과해야 건설!)
 	// GetTotalMaterialCount는 멀티스택을 모두 합산하므로 정확함
@@ -470,15 +545,18 @@ void UInv_BuildingComponent::Server_PlaceBuilding_Implementation(
 	{
 		if (!HasRequiredMaterials(MaterialTag1, MaterialAmount1))
 		{
-			UE_LOG(LogTemp, Error, TEXT("❌ Server: 재료1 부족! 건설 차단. (Tag: %s, 필요: %d)"), 
+#if INV_DEBUG_BUILD
+			UE_LOG(LogTemp, Error, TEXT("❌ Server: 재료1 부족! 건설 차단. (Tag: %s, 필요: %d)"),
 				*MaterialTag1.ToString(), MaterialAmount1);
-			
+#endif
 			// 클라이언트에게 실패 알림 (옵션)
 			// Client_OnBuildingFailed(TEXT("재료가 부족합니다!"));
 			return; // 건설 중단!
 		}
-		UE_LOG(LogTemp, Warning, TEXT("✅ Server: 재료1 검증 통과 (Tag: %s, 필요: %d)"), 
+#if INV_DEBUG_BUILD
+		UE_LOG(LogTemp, Warning, TEXT("✅ Server: 재료1 검증 통과 (Tag: %s, 필요: %d)"),
 			*MaterialTag1.ToString(), MaterialAmount1);
+#endif
 	}
 
 	// 재료 2 검증 (필수)
@@ -486,12 +564,16 @@ void UInv_BuildingComponent::Server_PlaceBuilding_Implementation(
 	{
 		if (!HasRequiredMaterials(MaterialTag2, MaterialAmount2))
 		{
-			UE_LOG(LogTemp, Error, TEXT("❌ Server: 재료2 부족! 건설 차단. (Tag: %s, 필요: %d)"), 
+#if INV_DEBUG_BUILD
+			UE_LOG(LogTemp, Error, TEXT("❌ Server: 재료2 부족! 건설 차단. (Tag: %s, 필요: %d)"),
 				*MaterialTag2.ToString(), MaterialAmount2);
+#endif
 			return; // 건설 중단!
 		}
-		UE_LOG(LogTemp, Warning, TEXT("✅ Server: 재료2 검증 통과 (Tag: %s, 필요: %d)"), 
+#if INV_DEBUG_BUILD
+		UE_LOG(LogTemp, Warning, TEXT("✅ Server: 재료2 검증 통과 (Tag: %s, 필요: %d)"),
 			*MaterialTag2.ToString(), MaterialAmount2);
+#endif
 	}
 	
 	// 서버에서 실제 건물 액터 스폰
@@ -506,51 +588,69 @@ void UInv_BuildingComponent::Server_PlaceBuilding_Implementation(
 		// 실제 건물이므로 충돌 활성화
 		PlacedBuilding->SetActorEnableCollision(true);
 
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Warning, TEXT("건물 스폰 성공! 재료 차감 시도..."));
+#endif
 
 		// 건물 배치 성공! 재료 차감 (여기서만!)
 		// 재료 1 차감
 		if (MaterialTag1.IsValid() && MaterialAmount1 > 0)
 		{
+#if INV_DEBUG_BUILD
 			UE_LOG(LogTemp, Warning, TEXT("재료1 차감 조건 만족! ConsumeMaterials 호출..."));
+#endif
 			ConsumeMaterials(MaterialTag1, MaterialAmount1);
+#if INV_DEBUG_BUILD
 			UE_LOG(LogTemp, Warning, TEXT("Server: 재료1 차감 완료! (%s x %d)"), *MaterialTag1.ToString(), MaterialAmount1);
+#endif
 		}
 
 		// 재료 2 차감
 		if (MaterialTag2.IsValid() && MaterialAmount2 > 0)
 		{
+#if INV_DEBUG_BUILD
 			UE_LOG(LogTemp, Warning, TEXT("재료2 차감 조건 만족! ConsumeMaterials 호출..."));
+#endif
 			ConsumeMaterials(MaterialTag2, MaterialAmount2);
+#if INV_DEBUG_BUILD
 			UE_LOG(LogTemp, Warning, TEXT("Server: 재료2 차감 완료! (%s x %d)"), *MaterialTag2.ToString(), MaterialAmount2);
+#endif
 		}
-		
+
 		// 재료가 하나도 설정되지 않은 경우 로그
 		if (!MaterialTag1.IsValid() && !MaterialTag2.IsValid())
 		{
+#if INV_DEBUG_BUILD
 			UE_LOG(LogTemp, Warning, TEXT("재료가 필요 없는 건물입니다."));
+#endif
 		}
 		
 		// 리플리케이션 활성화 (중요!)
 		PlacedBuilding->SetReplicates(true);
 		PlacedBuilding->SetReplicateMovement(true);
 		
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Warning, TEXT("Server: Building placed successfully at location: %s"), *Location.ToString());
+#endif
 		
 		// 모든 클라이언트에게 건물 배치 알림 (선택사항 - 추가 로직이 필요할 때)
 		Multicast_OnBuildingPlaced(PlacedBuilding);
 	}
 	else
 	{
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Error, TEXT("Server: Failed to spawn building actor!"));
+#endif
 	}
 }
 
 void UInv_BuildingComponent::Multicast_OnBuildingPlaced_Implementation(AActor* PlacedBuilding)
 {
 	if (!IsValid(PlacedBuilding)) return;
-	
+
+#if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("Multicast: Building placed notification received - %s"), *PlacedBuilding->GetName());
+#endif
 	
 	// 여기에 건물 배치 후 추가 로직 (이펙트, 사운드 등) 추가 가능
 }
@@ -576,18 +676,24 @@ bool UInv_BuildingComponent::HasRequiredMaterials(const FGameplayTag& MaterialTa
 
 void UInv_BuildingComponent::ConsumeMaterials(const FGameplayTag& MaterialTag, int32 Amount)
 {
+#if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("=== ConsumeMaterials 호출됨 ==="));
 	UE_LOG(LogTemp, Warning, TEXT("MaterialTag: %s, Amount: %d"), *MaterialTag.ToString(), Amount);
+#endif
 
 	if (!MaterialTag.IsValid() || Amount <= 0)
 	{
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Error, TEXT("ConsumeMaterials: Invalid MaterialTag or Amount <= 0"));
+#endif
 		return;
 	}
 
 	if (!OwningPC.IsValid())
 	{
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Error, TEXT("ConsumeMaterials: OwningPC is invalid!"));
+#endif
 		return;
 	}
 
@@ -595,23 +701,31 @@ void UInv_BuildingComponent::ConsumeMaterials(const FGameplayTag& MaterialTag, i
 	UInv_InventoryComponent* InvComp = OwningPC->FindComponentByClass<UInv_InventoryComponent>();
 	if (!IsValid(InvComp))
 	{
+#if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Error, TEXT("ConsumeMaterials: InventoryComponent not found!"));
+#endif
 		return;
 	}
 
+#if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("InventoryComponent 찾음! Server_ConsumeMaterialsMultiStack RPC 호출..."));
+#endif
 
 	// 멀티스택 차감 RPC 호출 (여러 스택에서 차감 지원!)
 	InvComp->Server_ConsumeMaterialsMultiStack(MaterialTag, Amount);
 
+#if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("=== ConsumeMaterials 완료 ==="));
+#endif
 }
 
 void UInv_BuildingComponent::EnableBuildModeInput()
 {
 	if (!OwningPC.IsValid()) return;
 
+#if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("=== EnableBuildModeInput: 빌드 모드 입력 활성화 ==="));
+#endif
 
 	// 1. BuildingActionMappingContext 추가 (높은 우선순위로 GA 입력보다 먼저 처리)
 	if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(OwningPC->GetLocalPlayer()))
@@ -619,11 +733,15 @@ void UInv_BuildingComponent::EnableBuildModeInput()
 		if (IsValid(BuildingActionMappingContext))
 		{
 			Subsystem->AddMappingContext(BuildingActionMappingContext, BuildingMappingContextPriority);
+#if INV_DEBUG_BUILD
 			UE_LOG(LogTemp, Warning, TEXT("BuildingActionMappingContext ADDED (Priority: %d)"), BuildingMappingContextPriority);
+#endif
 		}
 		else
 		{
+#if INV_DEBUG_BUILD
 			UE_LOG(LogTemp, Error, TEXT("BuildingActionMappingContext is not set!"));
+#endif
 		}
 	}
 
@@ -636,7 +754,9 @@ void UInv_BuildingComponent::EnableBuildModeInput()
 			BuildActionBindingHandle = EnhancedInputComponent->BindAction(
 				IA_BuildingAction, ETriggerEvent::Started, this, &UInv_BuildingComponent::TryPlaceBuilding
 			).GetHandle();
+#if INV_DEBUG_BUILD
 			UE_LOG(LogTemp, Warning, TEXT("IA_BuildingAction BOUND (Handle: %u)"), BuildActionBindingHandle);
+#endif
 		}
 
 		// 우클릭: 빌드 모드 취소 (중복 방지)
@@ -645,7 +765,9 @@ void UInv_BuildingComponent::EnableBuildModeInput()
 			CancelBuildingBindingHandle = EnhancedInputComponent->BindAction(
 				IA_CancelBuilding, ETriggerEvent::Started, this, &UInv_BuildingComponent::CancelBuildMode
 			).GetHandle();
+#if INV_DEBUG_BUILD
 			UE_LOG(LogTemp, Warning, TEXT("IA_CancelBuilding BOUND (Handle: %u)"), CancelBuildingBindingHandle);
+#endif
 		}
 	}
 }
@@ -654,7 +776,9 @@ void UInv_BuildingComponent::DisableBuildModeInput()
 {
 	if (!OwningPC.IsValid()) return;
 
+#if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("=== DisableBuildModeInput: 빌드 모드 입력 비활성화 ==="));
+#endif
 
 	// 1. BuildingActionMappingContext 제거
 	if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(OwningPC->GetLocalPlayer()))
@@ -662,7 +786,9 @@ void UInv_BuildingComponent::DisableBuildModeInput()
 		if (IsValid(BuildingActionMappingContext))
 		{
 			Subsystem->RemoveMappingContext(BuildingActionMappingContext);
+#if INV_DEBUG_BUILD
 			UE_LOG(LogTemp, Warning, TEXT("BuildingActionMappingContext REMOVED"));
+#endif
 		}
 	}
 
@@ -672,14 +798,18 @@ void UInv_BuildingComponent::DisableBuildModeInput()
 		if (BuildActionBindingHandle != 0)
 		{
 			EnhancedInputComponent->RemoveBindingByHandle(BuildActionBindingHandle);
+#if INV_DEBUG_BUILD
 			UE_LOG(LogTemp, Warning, TEXT("IA_BuildingAction UNBOUND (Handle: %u)"), BuildActionBindingHandle);
+#endif
 			BuildActionBindingHandle = 0;
 		}
 
 		if (CancelBuildingBindingHandle != 0)
 		{
 			EnhancedInputComponent->RemoveBindingByHandle(CancelBuildingBindingHandle);
+#if INV_DEBUG_BUILD
 			UE_LOG(LogTemp, Warning, TEXT("IA_CancelBuilding UNBOUND (Handle: %u)"), CancelBuildingBindingHandle);
+#endif
 			CancelBuildingBindingHandle = 0;
 		}
 	}

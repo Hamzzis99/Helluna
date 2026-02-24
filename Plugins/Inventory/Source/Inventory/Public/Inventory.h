@@ -39,6 +39,9 @@
 // 아이템 포인터/부착물 저장 진단 (CollectInventoryDataForSave 포인터 추적)
 #define INV_DEBUG_ITEM_POINTER 0
 
+// 상호작용 시스템 (HighlightableStaticMesh, Interaction 관련)
+#define INV_DEBUG_INTERACTION 0
+
 // ============================================
 
 //로그에 대해서 허용할 때 여기다가 이름을 넣는다?

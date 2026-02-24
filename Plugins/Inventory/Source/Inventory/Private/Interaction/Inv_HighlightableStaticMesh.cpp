@@ -2,6 +2,7 @@
 
 
 #include "Interaction/Inv_HighlightableStaticMesh.h"
+#include "Inventory.h"
 #include "Materials/MaterialInstanceDynamic.h"
 
 UInv_HighlightableStaticMesh::UInv_HighlightableStaticMesh()
@@ -65,16 +66,20 @@ void UInv_HighlightableStaticMesh::CreateDynamicMaterial()
 {
 	if (!IsValid(HighlightMaterial))
 	{
+#if INV_DEBUG_INTERACTION
 		UE_LOG(LogTemp, Warning, TEXT("[HighlightMesh] HighlightMaterial이 설정되지 않았습니다!"));
+#endif
 		return;
 	}
 
 	// 동적 머티리얼 인스턴스 생성
 	DynamicHighlightMaterial = UMaterialInstanceDynamic::Create(HighlightMaterial, this);
-	
+
 	if (!IsValid(DynamicHighlightMaterial))
 	{
+#if INV_DEBUG_INTERACTION
 		UE_LOG(LogTemp, Error, TEXT("[HighlightMesh] DynamicMaterial 생성 실패!"));
+#endif
 	}
 }
 
