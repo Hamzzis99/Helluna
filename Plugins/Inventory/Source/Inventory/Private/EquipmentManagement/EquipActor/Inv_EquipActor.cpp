@@ -29,6 +29,9 @@ void AInv_EquipActor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutL
 	DOREPLIFETIME(AInv_EquipActor, bSuppressed);
 	DOREPLIFETIME(AInv_EquipActor, OverrideZoomFOV);
 	DOREPLIFETIME(AInv_EquipActor, bLaserActive);
+
+	// ★ [Phase 5 리플리케이션] 부착물 비주얼 데이터
+	DOREPLIFETIME(AInv_EquipActor, ReplicatedAttachmentVisuals);
 }
 
 // ⭐ [WeaponBridge] 무기 숨김/표시 설정
@@ -184,6 +187,20 @@ void AInv_EquipActor::AttachMeshToSocket(int32 SlotIndex, UStaticMesh* Mesh, FNa
 	// 맵에 등록
 	AttachmentMeshComponents.Add(SlotIndex, MeshComp);
 
+	// ★ 서버: 리플리케이트 배열에도 추가 (클라이언트 OnRep_AttachmentVisuals 트리거)
+	if (HasAuthority())
+	{
+		// 같은 SlotIndex가 이미 있으면 교체
+		ReplicatedAttachmentVisuals.RemoveAll([SlotIndex](const FInv_AttachmentVisualInfo& V) { return V.SlotIndex == SlotIndex; });
+
+		FInv_AttachmentVisualInfo VisualInfo;
+		VisualInfo.SlotIndex = SlotIndex;
+		VisualInfo.Mesh = Mesh;
+		VisualInfo.SocketName = SocketName;
+		VisualInfo.Offset = Offset;
+		ReplicatedAttachmentVisuals.Add(VisualInfo);
+	}
+
 #if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment Visual] 슬롯 %d에 메시 부착: %s → 소켓 %s"),
 		SlotIndex,
@@ -211,6 +228,12 @@ void AInv_EquipActor::DetachMeshFromSocket(int32 SlotIndex)
 #endif
 	}
 	AttachmentMeshComponents.Remove(SlotIndex);
+
+	// ★ 서버: 리플리케이트 배열에서도 제거
+	if (HasAuthority())
+	{
+		ReplicatedAttachmentVisuals.RemoveAll([SlotIndex](const FInv_AttachmentVisualInfo& V) { return V.SlotIndex == SlotIndex; });
+	}
 }
 
 // ════════════════════════════════════════════════════════════════
