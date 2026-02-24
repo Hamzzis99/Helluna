@@ -54,6 +54,9 @@ void AHellunaWeaponBase::ApplyAttachmentVisual(int32 SlotIndex, UStaticMesh* Mes
 
 	MeshComp->SetStaticMesh(Mesh);
 
+	// [김기현] 부착물은 시각 전용 — 충돌 비활성화 (기본값 BlockAllDynamic이 캐릭터 움직임 방해)
+	MeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
 	// 소켓 존재 여부 확인 (디버깅용)
 	if (!WeaponMesh->DoesSocketExist(SocketName))
 	{

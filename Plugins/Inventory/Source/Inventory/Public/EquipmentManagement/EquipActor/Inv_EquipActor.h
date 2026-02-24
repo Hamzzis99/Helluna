@@ -71,6 +71,10 @@ protected:
 	UFUNCTION()
 	void OnRep_bLaserActive();
 
+	// ★ [Phase 5 리플리케이션] 부착물 비주얼 배열 OnRep
+	UFUNCTION()
+	void OnRep_AttachmentVisuals();
+
 private:
 
 	// 지정된 소켓을 보유한 자식 컴포넌트를 탐색한다.
@@ -204,6 +208,14 @@ private:
 	// 슬롯 인덱스 → 스폰된 StaticMeshComponent 매핑
 	UPROPERTY()
 	TMap<int32, TObjectPtr<UStaticMeshComponent>> AttachmentMeshComponents;
+
+	// ════════════════════════════════════════════════════════════════
+	// ★ [Phase 5 리플리케이션] 부착물 비주얼 데이터 (서버→클라이언트)
+	// 서버에서 AttachMeshToSocket 호출 시 이 배열도 갱신됨.
+	// 클라이언트는 OnRep_AttachmentVisuals에서 메시를 로컬 생성.
+	// ════════════════════════════════════════════════════════════════
+	UPROPERTY(ReplicatedUsing = OnRep_AttachmentVisuals)
+	TArray<FInv_AttachmentVisualInfo> ReplicatedAttachmentVisuals;
 
 public:
 	// ════════════════════════════════════════════════════════════════

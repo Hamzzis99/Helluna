@@ -29,6 +29,9 @@ void AInv_EquipActor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutL
 	DOREPLIFETIME(AInv_EquipActor, bSuppressed);
 	DOREPLIFETIME(AInv_EquipActor, OverrideZoomFOV);
 	DOREPLIFETIME(AInv_EquipActor, bLaserActive);
+
+	// ★ [Phase 5 리플리케이션] 부착물 비주얼 데이터
+	DOREPLIFETIME(AInv_EquipActor, ReplicatedAttachmentVisuals);
 }
 
 // ⭐ [WeaponBridge] 무기 숨김/표시 설정
@@ -166,6 +169,9 @@ void AInv_EquipActor::AttachMeshToSocket(int32 SlotIndex, UStaticMesh* Mesh, FNa
 
 	MeshComp->SetStaticMesh(Mesh);
 
+	// 부착물은 시각 전용 — 충돌 비활성화 (BlockAllDynamic 기본값이 캐릭터 움직임 방해)
+	MeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
 	// 소켓을 보유한 실제 메시 컴포넌트를 찾아 부착
 	// (RootComponent=DefaultSceneRoot에는 소켓이 없으므로 직접 탐색)
 	USceneComponent* TargetComp = FindComponentWithSocket(SocketName);
@@ -180,6 +186,20 @@ void AInv_EquipActor::AttachMeshToSocket(int32 SlotIndex, UStaticMesh* Mesh, FNa
 
 	// 맵에 등록
 	AttachmentMeshComponents.Add(SlotIndex, MeshComp);
+
+	// ★ 서버: 리플리케이트 배열에도 추가 (클라이언트 OnRep_AttachmentVisuals 트리거)
+	if (HasAuthority())
+	{
+		// 같은 SlotIndex가 이미 있으면 교체
+		ReplicatedAttachmentVisuals.RemoveAll([SlotIndex](const FInv_AttachmentVisualInfo& V) { return V.SlotIndex == SlotIndex; });
+
+		FInv_AttachmentVisualInfo VisualInfo;
+		VisualInfo.SlotIndex = SlotIndex;
+		VisualInfo.Mesh = Mesh;
+		VisualInfo.SocketName = SocketName;
+		VisualInfo.Offset = Offset;
+		ReplicatedAttachmentVisuals.Add(VisualInfo);
+	}
 
 #if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment Visual] 슬롯 %d에 메시 부착: %s → 소켓 %s"),
@@ -208,6 +228,12 @@ void AInv_EquipActor::DetachMeshFromSocket(int32 SlotIndex)
 #endif
 	}
 	AttachmentMeshComponents.Remove(SlotIndex);
+
+	// ★ 서버: 리플리케이트 배열에서도 제거
+	if (HasAuthority())
+	{
+		ReplicatedAttachmentVisuals.RemoveAll([SlotIndex](const FInv_AttachmentVisualInfo& V) { return V.SlotIndex == SlotIndex; });
+	}
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -230,6 +256,12 @@ void AInv_EquipActor::DetachAllMeshes()
 		}
 	}
 	AttachmentMeshComponents.Empty();
+
+	// ★ 서버: 리플리케이트 배열도 클리어
+	if (HasAuthority())
+	{
+		ReplicatedAttachmentVisuals.Empty();
+	}
 
 #if INV_DEBUG_ATTACHMENT
 	if (Count > 0)
@@ -315,6 +347,49 @@ void AInv_EquipActor::OnRep_bLaserActive()
 	}
 #if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Attachment Effect] OnRep: 레이저 %s"), bLaserActive ? TEXT("ON") : TEXT("OFF"));
+#endif
+}
+
+// ════════════════════════════════════════════════════════════════
+// ★ [Phase 5 리플리케이션] OnRep — 클라이언트에서 부착물 메시 재생성
+// 서버가 ReplicatedAttachmentVisuals 배열을 갱신하면
+// 클라이언트에서 이 콜백이 호출되어 메시를 로컬 생성한다.
+// ════════════════════════════════════════════════════════════════
+void AInv_EquipActor::OnRep_AttachmentVisuals()
+{
+	// 기존 동적 생성 메시 모두 제거
+	for (auto& Pair : AttachmentMeshComponents)
+	{
+		if (IsValid(Pair.Value))
+		{
+			Pair.Value->DestroyComponent();
+		}
+	}
+	AttachmentMeshComponents.Empty();
+
+	// 리플리케이트된 배열 기반으로 메시 재생성
+	for (const FInv_AttachmentVisualInfo& Info : ReplicatedAttachmentVisuals)
+	{
+		if (!IsValid(Info.Mesh)) continue;
+
+		UStaticMeshComponent* MeshComp = NewObject<UStaticMeshComponent>(this);
+		if (!IsValid(MeshComp)) continue;
+
+		MeshComp->SetStaticMesh(Info.Mesh);
+		MeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+		USceneComponent* TargetComp = FindComponentWithSocket(Info.SocketName);
+		FAttachmentTransformRules AttachRules(EAttachmentRule::SnapToTarget, true);
+		MeshComp->AttachToComponent(TargetComp, AttachRules, Info.SocketName);
+		MeshComp->SetRelativeTransform(Info.Offset);
+		MeshComp->RegisterComponent();
+
+		AttachmentMeshComponents.Add(Info.SlotIndex, MeshComp);
+	}
+
+#if INV_DEBUG_ATTACHMENT
+	UE_LOG(LogTemp, Warning, TEXT("★ [Phase 5 OnRep] 클라이언트: 부착물 메시 %d개 재생성 완료 (Actor: %s)"),
+		ReplicatedAttachmentVisuals.Num(), *GetName());
 #endif
 }
 

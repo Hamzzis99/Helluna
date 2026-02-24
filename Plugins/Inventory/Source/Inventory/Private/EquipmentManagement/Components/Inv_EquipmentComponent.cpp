@@ -321,9 +321,10 @@ void UInv_EquipmentComponent::OnItemEquipped(UInv_InventoryItem* EquippedItem, i
 		{
 			EquippedActors.Add(ReplicatedActor);
 #if INV_DEBUG_EQUIP
-			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] 클라이언트: 리플리케이트된 액터 추가: %s (총 %d개) - this: %p"), 
+			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] 클라이언트: 리플리케이트된 액터 추가: %s (총 %d개) - this: %p"),
 				*ReplicatedActor->GetName(), EquippedActors.Num(), this);
 #endif
+			// 부착물 메시는 EquipActor::OnRep_AttachmentVisuals에서 자동 처리됨
 		}
 		else
 		{
