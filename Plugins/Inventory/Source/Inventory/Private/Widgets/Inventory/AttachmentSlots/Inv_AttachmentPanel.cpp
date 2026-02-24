@@ -853,7 +853,7 @@ void UInv_AttachmentPanel::SetupWeaponPreview()
 	if (IsValid(RT) && IsValid(Image_WeaponPreview))
 	{
 		UMaterialInterface* PreviewMat = LoadObject<UMaterialInterface>(
-			nullptr, TEXT("/Game/UI/Materials/M_WeaponPreview"));
+			nullptr, TEXT("/Inventory/Widgets/Inventory/Attachment/M_WeaponPreview"));
 
 		if (IsValid(PreviewMat))
 		{

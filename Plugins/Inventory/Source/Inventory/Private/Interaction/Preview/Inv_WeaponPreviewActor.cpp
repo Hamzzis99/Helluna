@@ -31,7 +31,7 @@
 //   2. SceneRoot 생성 → RootComponent
 //   3. PreviewMeshComponent 생성 → LightingChannel 1 전용
 //   4. CameraBoom(SpringArm) 생성
-//   5. SceneCapture 생성 → PRM_RenderScenePrimitives + MaxViewDistance 제한
+//   5. SceneCapture 생성 → PRM_UseShowOnlyList + MaxViewDistance 제한
 //   6. PreviewLight 생성 → LightingChannel 1 전용 (월드 조명 오염 방지)
 //
 // LightingChannels 격리 전략:
@@ -50,13 +50,15 @@ AInv_WeaponPreviewActor::AInv_WeaponPreviewActor()
 	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
 	RootComponent = SceneRoot;
 
-	// ── 무기 메시 (Channel 1 전용 → 월드 라이트 영향 안 받음) ──
+	// ── 무기 메시 ──
 	PreviewMeshComponent = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PreviewMesh"));
 	PreviewMeshComponent->SetupAttachment(SceneRoot);
 	PreviewMeshComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	PreviewMeshComponent->CastShadow = false;
-	PreviewMeshComponent->LightingChannels.bChannel0 = false;
-	PreviewMeshComponent->LightingChannels.bChannel1 = true;
+	// ★ Channel0(기본) 사용: 패키징 빌드에서 Channel1이 SceneCapture와
+	// 호환되지 않는 문제 해결. ShowOnlyList로 월드 메시 격리는 이미 보장됨.
+	PreviewMeshComponent->LightingChannels.bChannel0 = true;
+	PreviewMeshComponent->LightingChannels.bChannel1 = false;
 
 	// ── 카메라 붐 (스프링 암) ──
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
@@ -69,15 +71,15 @@ AInv_WeaponPreviewActor::AInv_WeaponPreviewActor()
 	SceneCapture = CreateDefaultSubobject<USceneCaptureComponent2D>(TEXT("SceneCapture"));
 	SceneCapture->SetupAttachment(CameraBoom);
 
-	// PRM_RenderScenePrimitives: 카메라 시야 내 모든 프리미티브 렌더
-	// BackdropCube가 물리적으로 하늘/대기를 차단하므로 ShowOnlyList 불필요
-	SceneCapture->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_RenderScenePrimitives;
+	// ★ ShowOnlyList 방식: 무기 메시+부착물만 렌더링
+	// 패키징 빌드에서 PropagateAlpha 셰이더가 달라 알파 손실되는 문제 해결.
+	// ShowOnlyList에 없는 프리미티브는 렌더링 안 됨 → 빈 픽셀은 ClearColor(알파=0) 유지.
+	SceneCapture->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;
 
 	// 매 프레임 캡처 (회전, 부착물 변경 실시간 반영)
 	SceneCapture->bCaptureEveryFrame = true;
 	SceneCapture->bCaptureOnMovement = true;
 
-	// SceneColorHDR: 알파 채널 보존 (메시=1, 배경=0) → Material에서 투명 배경 구현
 	SceneCapture->CaptureSource = ESceneCaptureSource::SCS_SceneColorHDR;
 	SceneCapture->bAlwaysPersistRenderingState = true;
 
@@ -102,6 +104,17 @@ AInv_WeaponPreviewActor::AInv_WeaponPreviewActor()
 	SceneCapture->ShowFlags.SetSkyLighting(false);
 	SceneCapture->ShowFlags.SetCloud(false);
 
+	// ★ Lumen GI/반사/그림자 비활성화 (캐릭터 프리뷰와 동일)
+	// ShowOnlyList 모드에서 월드 GI가 간섭하면 메시가 어둡게 보임
+	SceneCapture->ShowFlags.SetDynamicShadows(false);
+	SceneCapture->ShowFlags.SetGlobalIllumination(false);
+	SceneCapture->ShowFlags.SetScreenSpaceReflections(false);
+	SceneCapture->ShowFlags.SetAmbientOcclusion(false);
+	SceneCapture->ShowFlags.SetReflectionEnvironment(false);
+
+	// 무기 프리뷰 메시를 ShowOnlyList에 등록
+	SceneCapture->ShowOnlyComponents.Add(PreviewMeshComponent);
+
 	// ════════════════════════════════════════════════════════════════
 	// 📌 3점 조명 시스템 — 물리적 범위 격리
 	// ════════════════════════════════════════════════════════════════
@@ -110,10 +123,10 @@ AInv_WeaponPreviewActor::AInv_WeaponPreviewActor()
 	//    전역 적용됨 → 월드 밤낮 조명을 오염시킴.
 	//    SpotLight/PointLight만 사용하여 AttenuationRadius로 물리적 격리.
 	//
-	// 격리 보장 (3중):
+	// 격리 보장 (2중):
 	//   1차: AttenuationRadius=500 → 빛이 500유닛 밖으로 안 나감
-	//   2차: LightingChannels=Channel1 → Channel0(월드) 불간섭
-	//   3차: Z=-10000 + 월드(Z=0) → 거리 10000 >> 500
+	//   2차: Z=-10000 + 월드(Z=0) → 거리 10000 >> 500
+	// ※ LightingChannels=Channel0 사용: 패키징 빌드에서 Channel1이 SceneCapture 미적용 이슈 대응
 	//
 	// Key Light (SpotLight): 정면 상단 → 메시 직접 조명
 	// Fill Light (PointLight): 반대편 → 그림자 면 밝힘
@@ -129,8 +142,8 @@ AInv_WeaponPreviewActor::AInv_WeaponPreviewActor()
 	PreviewLight->SetInnerConeAngle(30.f);      // 중심 밝은 영역
 	PreviewLight->SetOuterConeAngle(60.f);      // 빛 감쇠 경계
 	PreviewLight->CastShadows = false;
-	PreviewLight->LightingChannels.bChannel0 = false;
-	PreviewLight->LightingChannels.bChannel1 = true;
+	PreviewLight->LightingChannels.bChannel0 = true;
+	PreviewLight->LightingChannels.bChannel1 = false;
 
 	// ── Fill Light (보조 조명 — 그림자 면 밝힘) ──
 	FillLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("FillLight"));
@@ -139,8 +152,8 @@ AInv_WeaponPreviewActor::AInv_WeaponPreviewActor()
 	FillLight->Intensity = 3000.f;
 	FillLight->AttenuationRadius = 500.f;
 	FillLight->CastShadows = false;
-	FillLight->LightingChannels.bChannel0 = false;
-	FillLight->LightingChannels.bChannel1 = true;
+	FillLight->LightingChannels.bChannel0 = true;
+	FillLight->LightingChannels.bChannel1 = false;
 
 	// ── Rim Light (윤곽 조명 — 뒤쪽 상단 실루엣 강조) ──
 	RimLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("RimLight"));
@@ -149,8 +162,8 @@ AInv_WeaponPreviewActor::AInv_WeaponPreviewActor()
 	RimLight->Intensity = 5000.f;
 	RimLight->AttenuationRadius = 500.f;
 	RimLight->CastShadows = false;
-	RimLight->LightingChannels.bChannel0 = false;
-	RimLight->LightingChannels.bChannel1 = true;
+	RimLight->LightingChannels.bChannel0 = true;
+	RimLight->LightingChannels.bChannel1 = false;
 
 	// ── 배경 차단 큐브 (UDS 하늘/대기 가림막) ──
 	// SceneCapture의 ShowOnlyList/ShowFlags로는 UDS 같은 BP 스카이를 못 막음
@@ -228,6 +241,61 @@ void AInv_WeaponPreviewActor::SetPreviewMesh(UStaticMesh* InMesh, const FRotator
 
 	// RenderTarget 준비 (bCaptureEveryFrame=true이므로 수동 캡처 불필요)
 	EnsureRenderTarget();
+
+	// ★ 패키징 빌드 디버깅 로그 (항상 출력)
+	UE_LOG(LogTemp, Warning, TEXT("========== [WeaponPreview Debug] =========="));
+	UE_LOG(LogTemp, Warning, TEXT("  Mesh: %s"), PreviewMeshComponent->GetStaticMesh() ? *PreviewMeshComponent->GetStaticMesh()->GetName() : TEXT("NULL"));
+	UE_LOG(LogTemp, Warning, TEXT("  Mesh Visible: %s"), PreviewMeshComponent->IsVisible() ? TEXT("YES") : TEXT("NO"));
+	UE_LOG(LogTemp, Warning, TEXT("  Mesh Location: %s"), *PreviewMeshComponent->GetComponentLocation().ToString());
+	UE_LOG(LogTemp, Warning, TEXT("  Mesh LightingChannel0: %s, Channel1: %s"),
+		PreviewMeshComponent->LightingChannels.bChannel0 ? TEXT("ON") : TEXT("OFF"),
+		PreviewMeshComponent->LightingChannels.bChannel1 ? TEXT("ON") : TEXT("OFF"));
+
+	if (IsValid(SceneCapture))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("  SceneCapture Valid: YES"));
+		UE_LOG(LogTemp, Warning, TEXT("  CaptureSource: %d"), (int32)SceneCapture->CaptureSource);
+		UE_LOG(LogTemp, Warning, TEXT("  TextureTarget: %s"), SceneCapture->TextureTarget ? TEXT("SET") : TEXT("NULL"));
+		UE_LOG(LogTemp, Warning, TEXT("  bCaptureEveryFrame: %s"), SceneCapture->bCaptureEveryFrame ? TEXT("YES") : TEXT("NO"));
+		UE_LOG(LogTemp, Warning, TEXT("  PrimitiveRenderMode: %d"), (int32)SceneCapture->PrimitiveRenderMode);
+		UE_LOG(LogTemp, Warning, TEXT("  ShowOnlyComponents Num: %d"), SceneCapture->ShowOnlyComponents.Num());
+		UE_LOG(LogTemp, Warning, TEXT("  ShowOnlyActors Num: %d"), SceneCapture->ShowOnlyActors.Num());
+		UE_LOG(LogTemp, Warning, TEXT("  MaxViewDistanceOverride: %.1f"), SceneCapture->MaxViewDistanceOverride);
+		UE_LOG(LogTemp, Warning, TEXT("  FOVAngle: %.1f"), SceneCapture->FOVAngle);
+		UE_LOG(LogTemp, Warning, TEXT("  AutoExposureBias: %.1f"), SceneCapture->PostProcessSettings.AutoExposureBias);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("  SceneCapture: INVALID!"));
+	}
+
+	if (IsValid(RenderTarget))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("  RenderTarget: %dx%d, Format=%d"),
+			RenderTarget->SizeX, RenderTarget->SizeY, (int32)RenderTarget->GetFormat());
+		UE_LOG(LogTemp, Warning, TEXT("  RenderTarget ClearColor: R=%.2f G=%.2f B=%.2f A=%.2f"),
+			RenderTarget->ClearColor.R, RenderTarget->ClearColor.G, RenderTarget->ClearColor.B, RenderTarget->ClearColor.A);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("  RenderTarget: INVALID!"));
+	}
+
+	if (IsValid(PreviewLight))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("  PreviewLight Intensity: %.0f, Visible: %s, Channel0: %s"),
+			PreviewLight->Intensity,
+			PreviewLight->IsVisible() ? TEXT("YES") : TEXT("NO"),
+			PreviewLight->LightingChannels.bChannel0 ? TEXT("ON") : TEXT("OFF"));
+	}
+
+	if (IsValid(CameraBoom))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("  CameraBoom ArmLength: %.1f"), CameraBoom->TargetArmLength);
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("  Actor Location: %s"), *GetActorLocation().ToString());
+	UE_LOG(LogTemp, Warning, TEXT("=========================================="));
 
 #if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Weapon Preview] 메시 설정 완료: %s, ArmLength=%.1f, Rotation=%s"),
@@ -410,9 +478,9 @@ void AInv_WeaponPreviewActor::AddAttachmentPreview(int32 SlotIndex, UStaticMesh*
 	NewComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	NewComp->CastShadow = false;
 
-	// 프리뷰 전용 LightingChannel (월드 조명 격리)
-	NewComp->LightingChannels.bChannel0 = false;
-	NewComp->LightingChannels.bChannel1 = true;
+	// Channel0 사용 (PreviewMeshComponent와 동일 — 패키징 빌드 채널1 미적용 이슈 대응)
+	NewComp->LightingChannels.bChannel0 = true;
+	NewComp->LightingChannels.bChannel1 = false;
 
 	// 소켓 부착 시도: SocketName이 유효하고 메시에 소켓이 존재하면 소켓 부착
 	const bool bHasSocket = !SocketName.IsNone()
@@ -437,6 +505,12 @@ void AInv_WeaponPreviewActor::AddAttachmentPreview(int32 SlotIndex, UStaticMesh*
 
 	NewComp->RegisterComponent();
 
+	// ShowOnlyList에 부착물 컴포넌트 추가 (SceneCapture가 렌더링하도록)
+	if (IsValid(SceneCapture))
+	{
+		SceneCapture->ShowOnlyComponents.Add(NewComp);
+	}
+
 	AttachmentMeshComponents.Add(SlotIndex, NewComp);
 
 #if INV_DEBUG_ATTACHMENT
@@ -455,6 +529,11 @@ void AInv_WeaponPreviewActor::RemoveAttachmentPreview(int32 SlotIndex)
 	TObjectPtr<UStaticMeshComponent>* Found = AttachmentMeshComponents.Find(SlotIndex);
 	if (Found && IsValid(*Found))
 	{
+		// ShowOnlyList에서 먼저 제거
+		if (IsValid(SceneCapture))
+		{
+			SceneCapture->ShowOnlyComponents.Remove(*Found);
+		}
 		(*Found)->DestroyComponent();
 	}
 	AttachmentMeshComponents.Remove(SlotIndex);
@@ -469,6 +548,11 @@ void AInv_WeaponPreviewActor::ClearAllAttachmentPreviews()
 	{
 		if (IsValid(Pair.Value))
 		{
+			// ShowOnlyList에서 먼저 제거
+			if (IsValid(SceneCapture))
+			{
+				SceneCapture->ShowOnlyComponents.Remove(Pair.Value);
+			}
 			Pair.Value->DestroyComponent();
 		}
 	}
