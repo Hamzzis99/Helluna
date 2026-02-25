@@ -133,29 +133,28 @@ void AHellunaLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 	}
 
 	// ── PlayerId 획득 ──
-	// GetPlayerSaveId(): 부모 HellunaBaseGameMode에서 UniqueNetId 기반으로 생성
-	const FString PlayerId = GetPlayerSaveId(NewPlayer);
+	// 📌 디버그 모드(bDebugSkipLogin=true)일 때는 고정 ID 사용
+	//    이유: PIE에서 GetPlayerSaveId()는 매 세션마다 다른 랜덤 DEBUG_xxx를 반환
+	//    → DebugSave로 저장한 데이터(PlayerId="DebugPlayer")와 절대 일치하지 않음
+	//    → 테스트를 위해 고정 ID "DebugPlayer"를 강제 사용
+	//
+	// 📌 테스트 순서:
+	//    1) PIE 실행 → 콘솔: Helluna.SQLite.DebugSave (아이템 2개 저장)
+	//    2) PIE 종료 → 재실행 → PostLogin에서 "DebugPlayer"로 Stash 로드 → Grid에 표시!
+	FString PlayerId;
+	if (bDebugSkipLogin)
+	{
+		PlayerId = TEXT("DebugPlayer");
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] ⚠ 디버그 모드 → 고정 ID '%s' 사용 (DebugSave와 일치)"), *PlayerId);
+	}
+	else
+	{
+		PlayerId = GetPlayerSaveId(NewPlayer);
+	}
+
 	if (PlayerId.IsEmpty())
 	{
-		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] PostLogin: PlayerId가 비어있음! (아직 로그인 안 됨?)"));
-
-		// 디버그 모드: PIE 테스트용 고정 ID
-		if (bDebugSkipLogin)
-		{
-			const FString DebugId = TEXT("debug_lobby_player");
-			UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] ⚠ 디버그 모드 → 기본 ID '%s' 사용"), *DebugId);
-
-			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [1/3] 크래시 복구 체크..."));
-			CheckAndRecoverFromCrash(DebugId);
-
-			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [2/3] Stash 로드..."));
-			LoadStashToComponent(LobbyPC, DebugId);
-
-			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [3/3] Controller-PlayerId 매핑 등록..."));
-			RegisterControllerPlayerId(LobbyPC, DebugId);
-
-			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] PostLogin 완료 (디버그 모드) → PlayerId=%s"), *DebugId);
-		}
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] PostLogin: PlayerId가 비어있음! Stash 로드 스킵"));
 		return;
 	}
 
