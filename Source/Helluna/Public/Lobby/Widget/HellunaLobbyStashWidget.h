@@ -53,7 +53,7 @@ public:
 	 * @param StashComp    Stash InventoryComponent
 	 * @param LoadoutComp  Loadout InventoryComponent
 	 */
-	UFUNCTION(BlueprintCallable, Category = "로비|Stash위젯",
+	UFUNCTION(BlueprintCallable, Category = "로비|창고위젯",
 		meta = (DisplayName = "패널 초기화"))
 	void InitializePanels(UInv_InventoryComponent* StashComp, UInv_InventoryComponent* LoadoutComp);
 
@@ -69,8 +69,8 @@ public:
 	 *
 	 * TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 연결
 	 */
-	UFUNCTION(BlueprintCallable, Category = "로비|Stash위젯",
-		meta = (DisplayName = "Loadout으로 아이템 전송"))
+	UFUNCTION(BlueprintCallable, Category = "로비|창고위젯",
+		meta = (DisplayName = "출격장비로 아이템 전송"))
 	void TransferItemToLoadout(int32 ItemEntryIndex);
 
 	/**
@@ -81,18 +81,18 @@ public:
 	 *
 	 * TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 연결
 	 */
-	UFUNCTION(BlueprintCallable, Category = "로비|Stash위젯",
-		meta = (DisplayName = "Stash로 아이템 전송"))
+	UFUNCTION(BlueprintCallable, Category = "로비|창고위젯",
+		meta = (DisplayName = "창고로 아이템 전송"))
 	void TransferItemToStash(int32 ItemEntryIndex);
 
 	// ════════════════════════════════════════════════════════════════
 	// 패널 접근
 	// ════════════════════════════════════════════════════════════════
 
-	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "로비|Stash위젯")
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "로비|창고위젯")
 	UHellunaLobbyPanel* GetStashPanel() const { return StashPanel; }
 
-	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "로비|Stash위젯")
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "로비|창고위젯")
 	UHellunaLobbyPanel* GetLoadoutPanel() const { return LoadoutPanel; }
 
 protected:

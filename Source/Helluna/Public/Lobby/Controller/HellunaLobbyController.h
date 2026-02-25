@@ -37,8 +37,8 @@ class UHellunaLobbyStashWidget;
 UENUM(BlueprintType)
 enum class ELobbyTransferDirection : uint8
 {
-	StashToLoadout  UMETA(DisplayName = "Stash → Loadout"),
-	LoadoutToStash  UMETA(DisplayName = "Loadout → Stash"),
+	StashToLoadout  UMETA(DisplayName = "창고 → 출격장비 (Stash → Loadout)"),
+	LoadoutToStash  UMETA(DisplayName = "출격장비 → 창고 (Loadout → Stash)"),
 };
 
 UCLASS()
@@ -54,11 +54,11 @@ public:
 	// ════════════════════════════════════════════════════════════════
 
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "로비|인벤토리",
-		meta = (DisplayName = "Stash 컴포넌트 가져오기"))
+		meta = (DisplayName = "창고(Stash) 컴포넌트 가져오기"))
 	UInv_InventoryComponent* GetStashComponent() const { return StashInventoryComponent; }
 
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "로비|인벤토리",
-		meta = (DisplayName = "Loadout 컴포넌트 가져오기"))
+		meta = (DisplayName = "출격장비(Loadout) 컴포넌트 가져오기"))
 	UInv_InventoryComponent* GetLoadoutComponent() const { return LoadoutInventoryComponent; }
 
 	// ════════════════════════════════════════════════════════════════
@@ -128,7 +128,7 @@ protected:
 	 * SQLite player_stash에서 로드된 데이터가 여기에 복원됨
 	 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "로비|인벤토리",
-		meta = (DisplayName = "Stash 인벤토리 컴포넌트 (창고)"))
+		meta = (DisplayName = "창고(Stash) 인벤토리 컴포넌트"))
 	TObjectPtr<UInv_InventoryComponent> StashInventoryComponent;
 
 	/**
@@ -136,7 +136,7 @@ protected:
 	 * 처음에는 비어있으며, 플레이어가 Stash에서 이동
 	 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "로비|인벤토리",
-		meta = (DisplayName = "Loadout 인벤토리 컴포넌트 (출격장비)"))
+		meta = (DisplayName = "출격장비(Loadout) 인벤토리 컴포넌트"))
 	TObjectPtr<UInv_InventoryComponent> LoadoutInventoryComponent;
 
 	// ════════════════════════════════════════════════════════════════
@@ -145,7 +145,7 @@ protected:
 
 	/** 로비 메인 위젯 클래스 (BP에서 WBP_HellunaLobbyStashWidget 지정) */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "로비|UI",
-		meta = (DisplayName = "로비 Stash 위젯 클래스"))
+		meta = (DisplayName = "로비 창고 위젯 클래스"))
 	TSubclassOf<UHellunaLobbyStashWidget> LobbyStashWidgetClass;
 
 	/** 현재 생성된 로비 위젯 인스턴스 */
@@ -158,7 +158,7 @@ protected:
 
 	/** 출격 시 이동할 게임 맵 URL (BP에서 설정) */
 	UPROPERTY(EditDefaultsOnly, Category = "로비|출격",
-		meta = (DisplayName = "게임 맵 URL", Tooltip = "출격 시 ClientTravel로 이동할 맵 URL입니다. 예: /Game/Maps/L_Defense?listen"))
+		meta = (DisplayName = "게임 맵 URL", Tooltip = "출격 시 ClientTravel로 이동할 맵의 URL입니다. 예: /Game/Maps/L_Defense?listen"))
 	FString DeployMapURL;
 
 private:
