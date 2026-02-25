@@ -38,29 +38,6 @@ void AHellunaMassSpawner::BeginPlay()
 	), HasAuthority() ? FColor::Yellow : FColor::Cyan);
 }
 
-void AHellunaMassSpawner::DoSpawning()
-{
-	// ✅ 서버에서만 실제 스폰
-	if (!HasAuthority())
-	{
-		PrintFlow(TEXT("[MassSpawner] DoSpawning skipped (Client)"), FColor::Cyan);
-		return;
-	}
-
-	// ✅ “설정이 비어있어서 스폰이 0”인 경우를 빠르게 캐치하는 최소 정보만
-	PrintFlow(FString::Printf(
-		TEXT("[MassSpawner:%p] DoSpawning ENTER | NetMode=%s | Auth=%d | Count=%d | Types=%d | Gens=%d | Scale=%.2f"),
-		this,
-		*NetModeToString(GetNetMode()),
-		HasAuthority() ? 1 : 0,
-		GetCount(),
-		EntityTypes.Num(),
-		SpawnDataGenerators.Num(),
-		GetSpawningCountScale()
-	), FColor::Green);
-
-	Super::DoSpawning();
-}
 
 void AHellunaMassSpawner::OnSpawnDataGenerationFinished(
 	TConstArrayView<FMassEntitySpawnDataGeneratorResult> Results,

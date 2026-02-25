@@ -3,52 +3,15 @@
  *
  * 하이브리드 ECS 핵심 Processor 구현체 (Phase 1 + Phase 2 최적화).
  *
- * ■ 이 파일이 뭔가요? (팀원용)
- *   매 틱마다 적의 Actor ↔ Entity 전환을 실행하는 핵심 로직입니다.
- *   플레이어 근처 적 = Actor(전투 가능), 먼 적 = Entity(가벼운 데이터).
- *   Phase 2에서 SpawnActor/Destroy를 Pool Activate/Deactivate로 교체했습니다.
- *
- * ■ 시스템 내 위치
- *   - 의존: FEnemySpawnStateFragment, FEnemyDataFragment, FTransformFragment,
- *           UEnemyActorPool, AHellunaEnemyCharacter, UHellunaHealthComponent
- *   - 피의존: MassSimulation 서브시스템 (매 틱 자동 Execute 호출)
+ * ■ 실행 분리
+ *   - if (!bIsClient): 서버/Standalone에서만 Actor 스폰/디스폰 수행
+ *   - 시각화 루프: 서버/클라이언트 공통 (ExecutionFlags::All)
  *
  * ■ 디버깅 팁
  *   - LogECSEnemy 카테고리: 모든 스폰/디스폰/Soft Cap/상태 로그
  *   - 300프레임마다 자동 상태 로그 출력
  *   - 파일 하단 [디버깅 가이드] 참조
  */
-
-// File: Source/Helluna/Private/ECS/Processors/EnemyActorSpawnProcessor.cpp
-
-// ============================================================================
-// [TODO] EnemyEntityMovementProcessor - Entity 상태에서 기지 방향 직선 이동
-// ============================================================================
-//
-// 현재 Entity는 스폰 위치에서 가만히 대기하다가 플레이어가 접근하면 Actor로 전환된다.
-// 추후 기지 방어 시스템 구현 시, Entity 상태에서도 기지를 향해 이동해야 한다.
-//
-// [구현 계획]
-// - 별도 UMassProcessor 서브클래스: UEnemyEntityMovementProcessor
-// - 매 틱: Entity Transform 위치를 기지 방향으로 이동
-//   EntityLocation += (BaseLocation - EntityLocation).GetSafeNormal() * MoveSpeed * DeltaTime
-// - NavMesh 불필요 (먼 거리에서는 직선 이동으로 충분)
-// - Actor 전환 후에는 StateTree의 MoveTo가 NavMesh 기반 정밀 이동 담당
-//
-// [필요한 Fragment 추가]
-// - FEnemyDataFragment에 추가:
-//   float EntityMoveSpeed = 300.f;  // Entity 상태 이동 속도 (cm/s)
-//   FVector TargetBaseLocation;     // 기지 위치 (GameMode에서 설정)
-//
-// [실행 흐름]
-// Entity (먼 거리) → 직선 이동 (이 Processor) → 50m 이내 → Actor 전환 → NavMesh 이동 (StateTree)
-//
-// [주의사항]
-// - bHasSpawnedActor == true인 Entity는 스킵 (이미 Actor가 이동 중)
-// - FTransformFragment를 ReadWrite로 사용해야 함 (위치 갱신)
-// - ProcessingPhase는 PrePhysics (EnemyActorSpawnProcessor보다 먼저 실행)
-// - 장애물 충돌 없음 (Entity는 물리 없음). 기지 근처에서 Actor 전환 후 NavMesh가 처리
-// ============================================================================
 
 #include "ECS/Processors/EnemyActorSpawnProcessor.h"
 
@@ -63,6 +26,10 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/Controller.h"
 
+#include "Components/InstancedStaticMeshComponent.h"
+#include "Components/SceneComponent.h"
+#include "DebugHelper.h"
+
 DEFINE_LOG_CATEGORY_STATIC(LogECSEnemy, Log, All);
 
 // ============================================================================
@@ -70,7 +37,15 @@ DEFINE_LOG_CATEGORY_STATIC(LogECSEnemy, Log, All);
 // ============================================================================
 UEnemyActorSpawnProcessor::UEnemyActorSpawnProcessor()
 {
-	ExecutionFlags = (uint8)(EProcessorExecutionFlags::Server | EProcessorExecutionFlags::Standalone);
+	// 서버/Standalone/클라이언트 모두 실행
+	// - 스폰/디스폰: if(!bIsClient) 블록에서 서버만 처리
+	// - 시각화: 공통 블록에서 모든 환경 처리
+	ExecutionFlags = (uint8)(
+		EProcessorExecutionFlags::Server |
+		EProcessorExecutionFlags::Standalone |
+		EProcessorExecutionFlags::Client
+	);
+
 	bRequiresGameThreadExecution = true;
 	RegisterQuery(EntityQuery);
 }
@@ -82,13 +57,8 @@ void UEnemyActorSpawnProcessor::ConfigureQueries(const TSharedRef<FMassEntityMan
 {
 	EntityQuery.RegisterWithProcessor(*this);
 
-	// FTransformFragment: ReadWrite (역변환 시 위치 갱신)
 	EntityQuery.AddRequirement<FTransformFragment>(EMassFragmentAccess::ReadWrite);
-
-	// FEnemySpawnStateFragment: ReadWrite (bHasSpawnedActor 갱신)
 	EntityQuery.AddRequirement<FEnemySpawnStateFragment>(EMassFragmentAccess::ReadWrite);
-
-	// FEnemyDataFragment: ReadWrite (역변환 시 HP 저장)
 	EntityQuery.AddRequirement<FEnemyDataFragment>(EMassFragmentAccess::ReadWrite);
 
 	UE_LOG(LogECSEnemy, Log, TEXT("[EnemyActorSpawnProcessor] ConfigureQueries 완료"));
@@ -116,17 +86,6 @@ float UEnemyActorSpawnProcessor::CalcMinDistSq(
 // ============================================================================
 // 헬퍼: Actor → Entity 역변환
 // ============================================================================
-// "죽인 게 아니라 잠시 꺼두는 것"
-//
-// Actor를 Pool에 반납하되, HP와 위치를 Fragment에 보존한다.
-// 나중에 TrySpawnActor에서 Pool.ActivateActor로 Actor를 재활성화하면
-// 플레이어 입장에서는 "적이 계속 거기 있었던 것"처럼 보인다.
-//
-// Phase 1과의 차이:
-// Phase 1: Controller UnPossess+Destroy → Actor Destroy (비용 높음)
-// Phase 2: Pool->DeactivateActor (AI 정지 + 숨김 + Pool 반납, 비용 거의 0)
-//          Controller는 살아있고 Possess 유지 → 재활성화 시 즉시 사용 가능
-// ============================================================================
 void UEnemyActorSpawnProcessor::DespawnActorToEntity(
 	FEnemySpawnStateFragment& SpawnState,
 	FEnemyDataFragment& Data,
@@ -134,20 +93,15 @@ void UEnemyActorSpawnProcessor::DespawnActorToEntity(
 	AActor* Actor,
 	UEnemyActorPool* Pool)
 {
-	// 1. HP 보존
 	if (UHellunaHealthComponent* HC = Actor->FindComponentByClass<UHellunaHealthComponent>())
 	{
 		Data.CurrentHP = HC->GetHealth();
 		Data.MaxHP = HC->GetMaxHealth();
 	}
 
-	// 2. 위치 보존 (Fragment에 현재 Actor 위치 기록)
 	Transform.GetMutableTransform() = Actor->GetActorTransform();
-
-	// 3. Pool에 반납 (AI 정지 + 숨김 + 비활성화)
 	Pool->DeactivateActor(Cast<AHellunaEnemyCharacter>(Actor));
 
-	// 4. 상태 초기화
 	SpawnState.bHasSpawnedActor = false;
 	SpawnState.SpawnedActor = nullptr;
 
@@ -159,7 +113,6 @@ void UEnemyActorSpawnProcessor::DespawnActorToEntity(
 
 // ============================================================================
 // 헬퍼: 거리별 Tick 빈도 조절
-// Actor와 AIController의 TickInterval을 동시에 변경한다.
 // ============================================================================
 void UEnemyActorSpawnProcessor::UpdateActorTickRate(
 	AActor* Actor,
@@ -169,20 +122,19 @@ void UEnemyActorSpawnProcessor::UpdateActorTickRate(
 	float TickInterval;
 	if (Distance < Data.NearDistance)
 	{
-		TickInterval = Data.NearTickInterval;   // 근거리: 매 틱
+		TickInterval = Data.NearTickInterval;
 	}
 	else if (Distance < Data.MidDistance)
 	{
-		TickInterval = Data.MidTickInterval;    // 중거리: ~12Hz
+		TickInterval = Data.MidTickInterval;
 	}
 	else
 	{
-		TickInterval = Data.FarTickInterval;    // 원거리: ~4Hz
+		TickInterval = Data.FarTickInterval;
 	}
 
 	Actor->SetActorTickInterval(TickInterval);
 
-	// AIController의 Tick도 함께 조절
 	if (APawn* Pawn = Cast<APawn>(Actor))
 	{
 		if (AController* Controller = Pawn->GetController())
@@ -191,8 +143,6 @@ void UEnemyActorSpawnProcessor::UpdateActorTickRate(
 		}
 	}
 
-	// Phase 3-1: 거리 기반 애니메이션/그림자 LOD (@author 김기현)
-	// 카메라 거리 기준으로 근거리=풀품질+그림자On, 중거리=그림자Off, 원거리=최소 업데이트
 	if (AHellunaEnemyCharacter* Enemy = Cast<AHellunaEnemyCharacter>(Actor))
 	{
 		Enemy->UpdateAnimationLOD(Distance);
@@ -201,8 +151,6 @@ void UEnemyActorSpawnProcessor::UpdateActorTickRate(
 
 // ============================================================================
 // 헬퍼: Entity->Actor 스폰 (Pool에서 꺼내기)
-// HP 복원 포함. Pool Actor는 이미 AutoPossessAI 완료 상태이므로
-// StateTree 타이머 불필요.
 // ============================================================================
 bool UEnemyActorSpawnProcessor::TrySpawnActor(
 	FEnemySpawnStateFragment& SpawnState,
@@ -218,7 +166,6 @@ bool UEnemyActorSpawnProcessor::TrySpawnActor(
 
 	const FTransform SpawnTransform = Transform.GetTransform();
 
-	// Pool에서 비활성 Actor 꺼내기 (위치 설정 + 보이기 + AI 시작 + HP 복원)
 	AHellunaEnemyCharacter* SpawnedActor = Pool->ActivateActor(
 		SpawnTransform, Data.CurrentHP, Data.MaxHP);
 
@@ -230,7 +177,13 @@ bool UEnemyActorSpawnProcessor::TrySpawnActor(
 		return false;
 	}
 
-	// 전환 완료 표시
+	// Entity 상태의 마지막 이동 방향을 Actor 초기 회전에 적용
+	if (!Data.LastMoveDirection.IsNearlyZero())
+	{
+		const FRotator LastRot = Data.LastMoveDirection.Rotation();
+		SpawnedActor->SetActorRotation(FRotator(0.f, LastRot.Yaw, 0.f));
+	}
+
 	SpawnState.bHasSpawnedActor = true;
 	SpawnState.SpawnedActor = SpawnedActor;
 
@@ -244,367 +197,493 @@ bool UEnemyActorSpawnProcessor::TrySpawnActor(
 }
 
 // ============================================================================
+// 시각화 헬퍼: Root Actor 보장
+// ============================================================================
+void UEnemyActorSpawnProcessor::EnsureVisualizationRoot(UWorld* World)
+{
+	if (EntityVisualizationRoot)
+		return;
+
+	EntityVisualizationRoot = World->SpawnActor<AActor>();
+	if (!EntityVisualizationRoot)
+		return;
+
+	EntityVisualizationRoot->SetActorLabel(TEXT("EntityVisualization_Root"));
+	EntityVisualizationRoot->SetActorHiddenInGame(false);
+	EntityVisualizationRoot->SetReplicates(false);
+
+	// ISMC Attach 대상 SceneComponent 생성
+	EntityVisualizationRootComp = NewObject<USceneComponent>(EntityVisualizationRoot);
+	EntityVisualizationRootComp->SetMobility(EComponentMobility::Movable);
+	EntityVisualizationRoot->SetRootComponent(EntityVisualizationRootComp);
+	EntityVisualizationRootComp->RegisterComponent();
+	EntityVisualizationRoot->AddInstanceComponent(EntityVisualizationRootComp);
+	
+	UE_LOG(LogECSEnemy, Log,
+		TEXT("[Visualization] Root Actor 생성 (NetMode: %d)"),
+		(int32)World->GetNetMode());
+}
+
+// ============================================================================
+// 시각화 헬퍼: Mesh별 ISMC 반환 (없으면 생성 후 Attach)
+// ============================================================================
+UInstancedStaticMeshComponent* UEnemyActorSpawnProcessor::GetOrCreateISMC(UStaticMesh* Mesh)
+{
+	if (!Mesh || !EntityVisualizationRoot)
+		return nullptr;
+
+	if (TObjectPtr<UInstancedStaticMeshComponent>* Found = MeshToISMC.Find(Mesh))
+	{
+		return Found->Get();
+	}
+
+	UInstancedStaticMeshComponent* ISMC = NewObject<UInstancedStaticMeshComponent>(EntityVisualizationRoot);
+	ISMC->SetStaticMesh(Mesh);
+	
+	//
+	ISMC->SetMobility(EComponentMobility::Movable);
+	ISMC->SetVisibility(true, true);
+	ISMC->SetHiddenInGame(false);
+	ISMC->bNeverDistanceCull = true;
+	//
+	ISMC->SetCastShadow(false);
+	ISMC->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	ISMC->SetIsReplicated(false);
+
+	ISMC->SetupAttachment(EntityVisualizationRootComp);
+
+	// ✅ Register는 설정 다 하고 나서
+	ISMC->RegisterComponent();
+	EntityVisualizationRoot->AddInstanceComponent(ISMC);
+	
+	MeshToISMC.Add(Mesh, ISMC);
+	MeshToInstanceEntities.FindOrAdd(Mesh);
+
+	UE_LOG(LogECSEnemy, Log,
+		TEXT("[Visualization] ISMC 생성 - Mesh: %s (NetMode: %d)"),
+		*Mesh->GetName(),
+		(int32)GetWorld()->GetNetMode());
+
+	return ISMC;
+}
+
+// ============================================================================
 // Execute: 매 틱 메인 로직
 // ============================================================================
 void UEnemyActorSpawnProcessor::Execute(
 	FMassEntityManager& EntityManager,
 	FMassExecutionContext& Context)
 {
-	// ============================================================================
-	// [핵심 개념] 하이브리드 ECS의 Actor ↔ Entity 전환 흐름
-	// ============================================================================
-	//
-	// 이 게임은 기지 방어 게임이다. 밤에 적이 기지로 몰려온다.
-	// 적은 처음에 Mass Entity(가벼운 데이터)로 생성되고,
-	// 플레이어 근처에 왔을 때만 Actor(무거운 전체 기능)로 전환된다.
-	//
-	// [왜 역변환이 필요한가?]
-	// Actor는 비싸다 (AI, 물리, 애니메이션, 네트워크). 100마리 전부 Actor면 30FPS.
-	// 그래서 동시 Actor 수를 50마리(MaxConcurrentActors)로 제한하고,
-	// 초과분은 Entity로 되돌린다 (역변환 = Despawn).
-	//
-	// [Soft Cap이 만드는 자연스러운 전투 흐름]
-	// 100마리가 기지로 몰려올 때:
-	//   - 가까운 50마리 → Actor (전투 가능)
-	//   - 뒤쪽 50마리 → Entity (대기, 비용 거의 0)
-	//   - 앞의 적이 죽으면 → Actor 슬롯이 빈다
-	//   - 뒤의 Entity가 자연스럽게 Actor로 전환됨
-	//   = 킬링플로어처럼 "다음 투입"이 코드 없이 자동 발생!
-	//
-	// [HP 복원이 필요한 이유]
-	// Soft Cap에 의해 Actor→Entity 역변환된 적은 "죽은 게 아니다".
-	// 예: 50마리 꽉 찬 상태에서 51번째 적이 Soft Cap으로 역변환됨
-	//   → 앞의 적이 죽어서 슬롯이 빔
-	//   → 51번째 적이 다시 Actor로 전환됨
-	//   → 이때 HP가 풀로 차있으면 이상하다! (때리던 적이었을 수도 있으니까)
-	//   → 그래서 역변환 시 HP를 Fragment에 저장하고, 재스폰 시 복원한다.
-	//
-	// [죽은 적 vs 역변환된 적]
-	// - 죽은 적: bDead = true → 영구적으로 다시 스폰 안 함
-	// - 역변환된 적: bDead = false, CurrentHP > 0 → 슬롯 나면 재스폰 (HP 유지)
-	//
-	// [Phase 2 Actor Pooling]
-	// Phase 1에서는 SpawnActor/Destroy로 Actor를 생성/파괴했다.
-	// Phase 2에서는 사전 생성된 Pool에서 Activate/Deactivate한다.
-	// - ActivateActor: Pool에서 꺼내기 → 위치/HP 설정 → 보이기 → AI 시작
-	// - DeactivateActor: AI 정지 → 숨기기 → Pool 반납
-	// Controller는 Possess 유지 → 재활성화 시 0.2초 타이머 불필요!
-	// ============================================================================
-
-	// ------------------------------------------------------------------
-	// Step 0: World 검증
-	// ------------------------------------------------------------------
 	UWorld* World = Context.GetWorld();
 	if (!World)
-	{
 		return;
-	}
 
-	// ------------------------------------------------------------------
-	// Step 0.5: Pool 초기화 (첫 틱만)
-	// ------------------------------------------------------------------
-	// Fragment에서 EnemyClass와 PoolSize를 읽어 Pool을 초기화한다.
-	// Pool 초기화 시 PoolSize개의 Actor가 Hidden 상태로 사전 생성된다.
-	// 초기화 후 이번 틱은 스킵 (Pool Actor의 AutoPossessAI 완료 대기).
-	UEnemyActorPool* Pool = World->GetSubsystem<UEnemyActorPool>();
-	if (!Pool)
-	{
-		UE_LOG(LogECSEnemy, Error, TEXT("[Pool] UEnemyActorPool 서브시스템을 찾을 수 없음!"));
-		return;
-	}
-
-	if (!Pool->IsPoolInitialized())
-	{
-		EntityQuery.ForEachEntityChunk(Context,
-			[&](FMassExecutionContext& ChunkCtx)
-			{
-				if (Pool->IsPoolInitialized()) return;
-
-				auto DataList = ChunkCtx.GetFragmentView<FEnemyDataFragment>();
-				if (DataList.Num() > 0)
-				{
-					const FEnemyDataFragment& Data = DataList[0];
-					if (Data.EnemyClass)
-					{
-						Pool->InitializePool(Data.EnemyClass, Data.PoolSize);
-					}
-				}
-			});
-
-		// 이번 틱 스킵: Pool Actor들의 AutoPossessAI + StateTree 초기화 대기
-		return;
-	}
-
-	// ------------------------------------------------------------------
-	// Step 1: 플레이어 위치 수집
-	// ------------------------------------------------------------------
-	TArray<FVector> PlayerLocations;
-	PlayerLocations.Reserve(4);
-
-	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
-	{
-		if (APlayerController* PC = It->Get())
-		{
-			if (APawn* Pawn = PC->GetPawn())
-			{
-				PlayerLocations.Add(Pawn->GetActorLocation());
-			}
-		}
-	}
-
-	if (PlayerLocations.IsEmpty())
-	{
-		return;
-	}
-
-	// ------------------------------------------------------------------
-	// Step 1.5: Pool 유지보수 (60프레임마다)
-	// ------------------------------------------------------------------
-	// 전투 사망으로 외부에서 파괴된 Actor를 정리하고 부족분을 보충한다.
-	static uint64 LastReplenishFrame = 0;
+	const bool bIsClient = (World->GetNetMode() == NM_Client);
 	const uint64 CurrentFrame = GFrameCounter;
 
-	if (CurrentFrame - LastReplenishFrame >= 60)
+	// =========================================================
+	// ✅ 서버/Standalone 전용: Actor 스폰/디스폰 로직
+	//  - 여기서 "return" 해버리면 아래 시각화가 안 도니까,
+	//    서버 로직은 "필요하면 skip" 하고, 함수는 끝까지 내려가게 만든다.
+	// =========================================================
+	if (!bIsClient)
 	{
-		LastReplenishFrame = CurrentFrame;
-		Pool->CleanupAndReplenish();
-	}
-
-	// ------------------------------------------------------------------
-	// Step 2: 엔티티 순회 준비
-	// ------------------------------------------------------------------
-
-	// 청크 간 공유 카운터 (람다에서 참조 캡처)
-	int32 ActiveActorCount = 0;
-	int32 MaxConcurrentActorsValue = 50;
-
-	// Soft Cap용: 스폰된 Actor 정보 수집
-	// Phase 2: Fragment 포인터를 함께 저장하여 Soft Cap에서 직접 HP/위치 보존 가능
-	struct FSoftCapEntry
-	{
-		TWeakObjectPtr<AActor> Actor;
-		float DistSq;
-		FEnemySpawnStateFragment* SpawnStatePtr;
-		FEnemyDataFragment* DataPtr;
-		FTransformFragment* TransformPtr;
-	};
-	TArray<FSoftCapEntry> SoftCapCandidates;
-
-	// ------------------------------------------------------------------
-	// Step 3: ForEachEntityChunk - 스폰/디스폰/틱 처리
-	// ------------------------------------------------------------------
-	EntityQuery.ForEachEntityChunk(Context,
-		[&](FMassExecutionContext& ChunkCtx)
+		UEnemyActorPool* Pool = World->GetSubsystem<UEnemyActorPool>();
+		if (!Pool)
 		{
-			auto TransformList = ChunkCtx.GetMutableFragmentView<FTransformFragment>();
-			auto SpawnStateList = ChunkCtx.GetMutableFragmentView<FEnemySpawnStateFragment>();
-			auto DataList = ChunkCtx.GetMutableFragmentView<FEnemyDataFragment>();
-			const int32 NumEntities = ChunkCtx.GetNumEntities();
-
-			for (int32 i = 0; i < NumEntities; ++i)
+			// 서버에서 풀 없으면 서버 로직만 스킵
+			Debug::Print(TEXT("[EnemyProc] Pool missing - skip server actor logic"), FColor::Red);
+		}
+		else
+		{
+			// ------------------------------------------------------------------
+			// Step 0.5: Pool 초기화 (첫 틱만)
+			//  - 여기서도 return 하지 말고, 서버 로직만 "이번 프레임 스킵"한다.
+			// ------------------------------------------------------------------
+			if (!Pool->IsPoolInitialized())
 			{
-				FEnemySpawnStateFragment& SpawnState = SpawnStateList[i];
-				FEnemyDataFragment& Data = DataList[i];
-				FTransformFragment& Transform = TransformList[i];
-
-				// MaxConcurrentActors는 모든 엔티티가 동일 (같은 EntityConfig)
-				MaxConcurrentActorsValue = Data.MaxConcurrentActors;
-
-				// ================================================
-				// A) 이미 Actor로 전환된 엔티티 처리
-				// ================================================
-				if (SpawnState.bHasSpawnedActor)
-				{
-					AActor* Actor = SpawnState.SpawnedActor.Get();
-
-					// A-1) Actor가 외부에서 파괴됨 (전투 사망, 환경 데미지 등)
-					// ※ 역변환(DespawnActorToEntity)은 bHasSpawnedActor=false로 설정하므로
-					//    여기 도달하는 경우 = 우리 코드가 아닌 외부에서 Actor가 파괴된 것.
-					//    즉 전투 중 사망 → bDead = true → 이 Entity는 영구 퇴장.
-					//    다시는 Actor로 전환되지 않으며, 웨이브 전멸 카운트에 반영된다.
-					//
-					// Pool 참고: 외부 파괴된 Actor는 Pool의 ActiveActors에 잔류하지만
-					// IsValid가 false이므로 CleanupAndReplenish에서 정리 + 보충된다.
-					if (!IsValid(Actor))
+				EntityQuery.ForEachEntityChunk(EntityManager, Context,
+					[&](FMassExecutionContext& ChunkCtx)
 					{
-						SpawnState.bHasSpawnedActor = false;
-						SpawnState.SpawnedActor = nullptr;
-						SpawnState.bDead = true;
-						Data.CurrentHP = -1.f;
-						continue;
-					}
+						if (Pool->IsPoolInitialized()) return;
 
-					const float MinDistSq = CalcMinDistSq(Actor->GetActorLocation(), PlayerLocations);
-					const float DespawnSq = Data.DespawnThreshold * Data.DespawnThreshold;
-
-					// A-2) 거리 > DespawnThreshold → 역변환 (Actor→Entity 복귀)
-					// 적이 죽은 게 아니라, 플레이어에게서 멀어졌거나 Soft Cap 대상이 된 것.
-					// HP와 위치를 Fragment에 저장한 뒤 Actor를 Pool에 반납한다.
-					// 나중에 플레이어가 다시 접근하거나 Soft Cap 슬롯이 나면
-					// 저장된 HP로 Actor가 재활성화된다 (풀피로 부활하는 게 아님!).
-					if (MinDistSq > DespawnSq)
-					{
-						DespawnActorToEntity(SpawnState, Data, Transform, Actor, Pool);
-						continue;
-					}
-
-					// A-3) 범위 내 -> Tick 빈도 조절
-					const float ActualDist = FMath::Sqrt(MinDistSq);
-					UpdateActorTickRate(Actor, ActualDist, Data);
-
-					// 활성 Actor 카운트 증가
-					ActiveActorCount++;
-
-					// Soft Cap 후보 수집 (Fragment 포인터 포함)
-					SoftCapCandidates.Add({
-						SpawnState.SpawnedActor, MinDistSq,
-						&SpawnState, &Data, &Transform
-					});
-				}
-				// ================================================
-				// B) 아직 Actor로 전환되지 않은 엔티티 처리
-				// ================================================
-				else
-				{
-					// 죽은 적은 다시 스폰하지 않음
-					if (SpawnState.bDead)
-					{
-						continue;
-					}
-
-					const FVector EntityLocation = Transform.GetTransform().GetLocation();
-					const float MinDistSq = CalcMinDistSq(EntityLocation, PlayerLocations);
-					const float SpawnSq = Data.SpawnThreshold * Data.SpawnThreshold;
-
-					// B-1) 거리 < SpawnThreshold && Actor 슬롯 여유 있음 → Pool에서 Actor 꺼내기
-					// 이 Entity는 두 가지 경우일 수 있다:
-					//   a) 처음 스폰: CurrentHP == -1 → 풀 HP로 생성
-					//   b) 역변환 후 재스폰: CurrentHP > 0 → 이전 HP로 복원
-					// Soft Cap이 이 흐름을 자동 관리:
-					//   앞의 적 사망 → ActiveActorCount 감소 → 여기서 다음 적이 스폰됨
-					if (MinDistSq < SpawnSq && ActiveActorCount < MaxConcurrentActorsValue)
-					{
-						if (TrySpawnActor(SpawnState, Data, Transform, Pool))
+						auto DataList = ChunkCtx.GetFragmentView<FEnemyDataFragment>();
+						if (DataList.Num() > 0)
 						{
-							ActiveActorCount++;
+							const FEnemyDataFragment& Data = DataList[0];
+							if (Data.EnemyClass)
+							{
+								Pool->InitializePool(Data.EnemyClass, Data.PoolSize);
+								Debug::Print(TEXT("[EnemyProc] Pool initialized"), FColor::Green);
+							}
+						}
+					});
+
+				// ✅ Pool 초기화 프레임에는 Actor 스폰/디스폰만 스킵
+				// (아래 시각화는 계속 돌아야 함)
+			}
+			else
+			{
+				// ------------------------------------------------------------------
+				// Step 1: 플레이어 위치 수집
+				// ------------------------------------------------------------------
+				TArray<FVector> PlayerLocations;
+				PlayerLocations.Reserve(4);
+
+				for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+				{
+					if (APlayerController* PC = It->Get())
+					{
+						if (APawn* Pawn = PC->GetPawn())
+						{
+							PlayerLocations.Add(Pawn->GetActorLocation());
 						}
 					}
 				}
+
+				// 플레이어가 없으면 서버 로직 스킵 (시각화는 아래에서 계속)
+				if (!PlayerLocations.IsEmpty())
+				{
+					// ------------------------------------------------------------------
+					// Step 1.5: Pool 유지보수 (60프레임마다)
+					// ------------------------------------------------------------------
+					static uint64 LastReplenishFrame = 0;
+					if (CurrentFrame - LastReplenishFrame >= 60)
+					{
+						LastReplenishFrame = CurrentFrame;
+						Pool->CleanupAndReplenish();
+					}
+
+					// ------------------------------------------------------------------
+					// Step 2: 엔티티 순회 준비
+					// ------------------------------------------------------------------
+					int32 ActiveActorCount = 0;
+					int32 MaxConcurrentActorsValue = 50;
+
+					struct FSoftCapEntry
+					{
+						TWeakObjectPtr<AActor> Actor;
+						float DistSq;
+						FEnemySpawnStateFragment* SpawnStatePtr;
+						FEnemyDataFragment* DataPtr;
+						FTransformFragment* TransformPtr;
+					};
+
+					TArray<FSoftCapEntry> SoftCapCandidates;
+
+					// ------------------------------------------------------------------
+					// Step 3: ForEachEntityChunk - 스폰/디스폰/틱 처리
+					// ------------------------------------------------------------------
+					EntityQuery.ForEachEntityChunk(EntityManager, Context,
+						[&](FMassExecutionContext& ChunkCtx)
+						{
+							auto TransformList = ChunkCtx.GetMutableFragmentView<FTransformFragment>();
+							auto SpawnStateList = ChunkCtx.GetMutableFragmentView<FEnemySpawnStateFragment>();
+							auto DataList = ChunkCtx.GetMutableFragmentView<FEnemyDataFragment>();
+							const int32 NumEntities = ChunkCtx.GetNumEntities();
+
+							for (int32 i = 0; i < NumEntities; ++i)
+							{
+								FEnemySpawnStateFragment& SpawnState = SpawnStateList[i];
+								FEnemyDataFragment& Data = DataList[i];
+								FTransformFragment& Transform = TransformList[i];
+
+								MaxConcurrentActorsValue = Data.MaxConcurrentActors;
+
+								if (SpawnState.bHasSpawnedActor)
+								{
+									AActor* Actor = SpawnState.SpawnedActor.Get();
+
+									if (!IsValid(Actor))
+									{
+										SpawnState.bHasSpawnedActor = false;
+										SpawnState.SpawnedActor = nullptr;
+										SpawnState.bDead = true;
+										Data.CurrentHP = -1.f;
+										continue;
+									}
+
+									const float MinDistSq = CalcMinDistSq(Actor->GetActorLocation(), PlayerLocations);
+									const float DespawnSq = Data.DespawnThreshold * Data.DespawnThreshold;
+
+									if (MinDistSq > DespawnSq)
+									{
+										DespawnActorToEntity(SpawnState, Data, Transform, Actor, Pool);
+										continue;
+									}
+
+									const float ActualDist = FMath::Sqrt(MinDistSq);
+									UpdateActorTickRate(Actor, ActualDist, Data);
+
+									ActiveActorCount++;
+									SoftCapCandidates.Add({
+										SpawnState.SpawnedActor, MinDistSq,
+										&SpawnState, &Data, &Transform
+									});
+								}
+								else
+								{
+									if (SpawnState.bDead)
+									{
+										continue;
+									}
+
+									const FVector EntityLocation = Transform.GetTransform().GetLocation();
+									const float MinDistSq = CalcMinDistSq(EntityLocation, PlayerLocations);
+									const float SpawnSq = Data.SpawnThreshold * Data.SpawnThreshold;
+
+									// 플레이어 거리 OR 우주선 거리 중 하나라도 SpawnThreshold 이내면 스폰
+									const float GoalDistSq = Data.bGoalLocationCached
+										? FVector::DistSquared(EntityLocation, Data.GoalLocation)
+										: MAX_FLT;
+
+									const bool bNearPlayer = MinDistSq < SpawnSq;
+									const bool bNearGoal   = GoalDistSq < SpawnSq;
+
+									if ((bNearPlayer || bNearGoal) && ActiveActorCount < MaxConcurrentActorsValue)
+									{
+										if (TrySpawnActor(SpawnState, Data, Transform, Pool))
+										{
+											ActiveActorCount++;
+										}
+									}
+								}
+							}
+						}
+					);
+
+					// ------------------------------------------------------------------
+					// Step 4: Soft Cap 관리 (30프레임마다)
+					// ------------------------------------------------------------------
+					static uint64 LastSoftCapFrame = 0;
+					if (CurrentFrame - LastSoftCapFrame >= 30 && ActiveActorCount > MaxConcurrentActorsValue)
+					{
+						LastSoftCapFrame = CurrentFrame;
+
+						SoftCapCandidates.Sort([](const FSoftCapEntry& A, const FSoftCapEntry& B)
+						{
+							return A.DistSq > B.DistSq;
+						});
+
+						const int32 ToRemove = ActiveActorCount - MaxConcurrentActorsValue;
+						int32 Removed = 0;
+
+						for (int32 k = 0; k < ToRemove && k < SoftCapCandidates.Num(); ++k)
+						{
+							AActor* Actor = SoftCapCandidates[k].Actor.Get();
+							if (!IsValid(Actor))
+								continue;
+
+							DespawnActorToEntity(
+								*SoftCapCandidates[k].SpawnStatePtr,
+								*SoftCapCandidates[k].DataPtr,
+								*SoftCapCandidates[k].TransformPtr,
+								Actor, Pool);
+							Removed++;
+						}
+
+						Debug::Print(
+							FString::Printf(TEXT("[SoftCap] %d -> %d (Removed=%d)"),
+								ActiveActorCount, ActiveActorCount - Removed, Removed),
+							FColor::Yellow);
+					}
+
+					// 디버그(300프레임마다)
+					static uint64 LastDebugFrame = 0;
+					if (CurrentFrame - LastDebugFrame >= 300)
+					{
+						LastDebugFrame = CurrentFrame;
+						Debug::Print(
+							FString::Printf(TEXT("[ServerStatus] Active=%d/%d | Players=%d | Pool(A=%d I=%d)"),
+								ActiveActorCount, MaxConcurrentActorsValue, PlayerLocations.Num(),
+								Pool->GetActiveCount(), Pool->GetInactiveCount()),
+							FColor::Cyan);
+					}
+				}
+			}
+		}
+	}
+
+	// =========================================================
+	// ✅ 서버/클라이언트 공통: Entity 시각화 갱신
+	// =========================================================
+	EntityQuery.ForEachEntityChunk(EntityManager, Context,
+		[&](FMassExecutionContext& ChunkContext)
+		{
+			const int32 NumEntities = ChunkContext.GetNumEntities();
+
+			const TConstArrayView<FTransformFragment> TransformList =
+				ChunkContext.GetFragmentView<FTransformFragment>();
+			const TArrayView<FEnemySpawnStateFragment> SpawnStateList =
+				ChunkContext.GetMutableFragmentView<FEnemySpawnStateFragment>();
+			const TArrayView<FEnemyDataFragment> DataList =
+				ChunkContext.GetMutableFragmentView<FEnemyDataFragment>();
+
+			for (int32 i = 0; i < NumEntities; ++i)
+			{
+				const FMassEntityHandle Entity = ChunkContext.GetEntity(i);
+				const FTransformFragment& Transform = TransformList[i];
+				const FEnemySpawnStateFragment& SpawnState = SpawnStateList[i];
+				const FEnemyDataFragment& Data = DataList[i];
+
+				UpdateEntityVisualization(Entity, Transform, Data, SpawnState);
 			}
 		}
 	);
+}
 
-	// ------------------------------------------------------------------
-	// Step 4: Soft Cap 관리 (30프레임마다)
-	// ------------------------------------------------------------------
-	// 활성 Actor가 MaxConcurrentActors(기본 50)를 초과하면 가장 먼 Actor부터 역변환.
-	//
-	// [왜 초과가 발생하는가?]
-	// Step 3에서 스폰 시 ActiveActorCount < Max 체크를 하지만,
-	// 같은 틱에 여러 Entity가 동시에 SpawnThreshold에 진입할 수 있다.
-	// 또한 플레이어가 여러 명이면 각자 주변에 Actor가 생기므로 합산 초과 가능.
-	//
-	// [30프레임마다인 이유]
-	// 매 틱 정렬+Deactivate는 비싸다. 0.5초 주기면 체감 차이 없이 성능 절약.
-	//
-	// [역변환 순서: 가장 먼 Actor부터]
-	// 플레이어에게서 가장 먼 Actor는 전투 참여 가능성이 낮으므로
-	// 역변환해도 플레이어가 눈치채지 못한다.
-	//
-	// [Phase 2 개선점]
-	// Phase 1: Soft Cap이 Actor를 Destroy하면 Fragment 상태는 다음 틱 A-1에서 정리
-	//          → HP/위치 정보가 손실됨 (Destroy 후 읽을 수 없으므로)
-	// Phase 2: Fragment 포인터를 SoftCapEntry에 저장하여 DespawnActorToEntity 호출
-	//          → HP/위치가 정상 보존됨 → 재스폰 시 이전 상태 그대로 복원
-	static uint64 LastSoftCapFrame = 0;
 
-	if (CurrentFrame - LastSoftCapFrame >= 30 && ActiveActorCount > MaxConcurrentActorsValue)
+// ============================================================================
+// 시각화: Entity 상태에 따라 ISMC 인스턴스 추가/갱신/제거
+// ============================================================================
+void UEnemyActorSpawnProcessor::UpdateEntityVisualization(
+	const FMassEntityHandle Entity,
+	const FTransformFragment& Transform,
+	const FEnemyDataFragment& Data,
+	const FEnemySpawnStateFragment& SpawnState)
+{
+	const bool bShouldVisualize =
+		!SpawnState.bHasSpawnedActor &&
+		!SpawnState.bDead &&
+		Data.bShowEntityVisualization &&
+		Data.EntityVisualizationMesh != nullptr;
+
+	FEntityInstanceRef* ExistingRef = EntityToInstanceRef.Find(Entity);
+
+	if (!bShouldVisualize)
 	{
-		LastSoftCapFrame = CurrentFrame;
-
-		// 거리 내림차순 정렬 (가장 먼 Actor가 앞에)
-		SoftCapCandidates.Sort([](const FSoftCapEntry& A, const FSoftCapEntry& B)
+		if (ExistingRef)
 		{
-			return A.DistSq > B.DistSq;
-		});
-
-		const int32 ToRemove = ActiveActorCount - MaxConcurrentActorsValue;
-		int32 Removed = 0;
-
-		for (int32 k = 0; k < ToRemove && k < SoftCapCandidates.Num(); ++k)
-		{
-			AActor* Actor = SoftCapCandidates[k].Actor.Get();
-			if (!IsValid(Actor))
-			{
-				continue;
-			}
-
-			// HP/위치 보존 후 Pool에 반납 (Fragment 포인터로 직접 접근)
-			DespawnActorToEntity(
-				*SoftCapCandidates[k].SpawnStatePtr,
-				*SoftCapCandidates[k].DataPtr,
-				*SoftCapCandidates[k].TransformPtr,
-				Actor, Pool);
-			Removed++;
+			CleanupEntityVisualization(Entity);
 		}
-
-		UE_LOG(LogECSEnemy, Warning,
-			TEXT("[SoftCap] Actor %d마리 -> %d마리로 축소 (%d마리 Pool 반납)"),
-			ActiveActorCount, ActiveActorCount - Removed, Removed);
+		return;
 	}
 
-	// 디버그 로그 (300프레임마다 = ~5초)
-	static uint64 LastDebugFrame = 0;
-	if (CurrentFrame - LastDebugFrame >= 300)
+	UWorld* World = GetWorld();
+	if (!World)
+		return;
+
+	EnsureVisualizationRoot(World);
+	if (!EntityVisualizationRootComp)
+		return;
+
+	UStaticMesh* Mesh = Data.EntityVisualizationMesh;
+	UInstancedStaticMeshComponent* ISMC = GetOrCreateISMC(Mesh);
+	if (!ISMC)
+		return;
+
+	FTransform InstanceTransform = Transform.GetTransform();
+	InstanceTransform.AddToTranslation(FVector(0.f, 0.f, Data.EntityMeshZOffset));
+	InstanceTransform.SetScale3D(Data.EntityMeshScale);
+
+	// 이미 존재하면 업데이트
+	if (ExistingRef && ExistingRef->Mesh == Mesh && ExistingRef->Index != INDEX_NONE)
 	{
-		LastDebugFrame = CurrentFrame;
-		UE_LOG(LogECSEnemy, Log,
-			TEXT("[Status] 활성 Actor: %d/%d, 플레이어: %d명, Pool(Active: %d, Inactive: %d)"),
-			ActiveActorCount, MaxConcurrentActorsValue, PlayerLocations.Num(),
-			Pool->GetActiveCount(), Pool->GetInactiveCount());
+		if (ExistingRef->Index < ISMC->GetInstanceCount())
+		{
+			ISMC->UpdateInstanceTransform(ExistingRef->Index, InstanceTransform, true, true, true);
+			return;
+		}
+		// 인덱스가 깨졌으면 재생성
+		CleanupEntityVisualization(Entity);
 	}
+
+	// 새 인스턴스 생성
+	const int32 NewIndex = ISMC->AddInstance(InstanceTransform, true);
+
+	FEntityInstanceRef NewRef;
+	NewRef.Mesh = Mesh;
+	NewRef.Index = NewIndex;
+	EntityToInstanceRef.Add(Entity, NewRef);
+
+	TArray<FMassEntityHandle>& InstanceEntities = MeshToInstanceEntities.FindOrAdd(Mesh);
+
+	// 방어: NewIndex 위치까지 채우기
+	while (InstanceEntities.Num() < NewIndex)
+		InstanceEntities.Add(FMassEntityHandle());
+
+	InstanceEntities.Add(Entity);
+}
+
+// ============================================================================
+// 시각화: 인스턴스 제거 (RemoveInstance 스왑 방식에 맞춰 인덱스 매핑 갱신)
+// ============================================================================
+void UEnemyActorSpawnProcessor::CleanupEntityVisualization(const FMassEntityHandle Entity)
+{
+	FEntityInstanceRef* Ref = EntityToInstanceRef.Find(Entity);
+	if (!Ref || !Ref->Mesh || Ref->Index == INDEX_NONE)
+		return;
+
+	UInstancedStaticMeshComponent* ISMC = nullptr;
+	if (TObjectPtr<UInstancedStaticMeshComponent>* Found = MeshToISMC.Find(Ref->Mesh))
+	{
+		ISMC = Found->Get();
+	}
+	if (!ISMC)
+	{
+		EntityToInstanceRef.Remove(Entity);
+		return;
+	}
+
+	TArray<FMassEntityHandle>* InstanceEntitiesPtr = MeshToInstanceEntities.Find(Ref->Mesh);
+	if (!InstanceEntitiesPtr)
+	{
+		EntityToInstanceRef.Remove(Entity);
+		return;
+	}
+
+	TArray<FMassEntityHandle>& InstanceEntities = *InstanceEntitiesPtr;
+	const int32 RemoveIndex = Ref->Index;
+	const int32 LastIndex = InstanceEntities.Num() - 1;
+
+	if (RemoveIndex < 0 || RemoveIndex > LastIndex)
+	{
+		EntityToInstanceRef.Remove(Entity);
+		return;
+	}
+
+	// RemoveInstance는 내부적으로 마지막↔제거 위치 스왑 → 매핑도 동일하게 처리
+	if (RemoveIndex != LastIndex)
+	{
+		const FMassEntityHandle SwappedEntity = InstanceEntities[LastIndex];
+		InstanceEntities[RemoveIndex] = SwappedEntity;
+
+		if (FEntityInstanceRef* SwappedRef = EntityToInstanceRef.Find(SwappedEntity))
+		{
+			SwappedRef->Index = RemoveIndex;
+		}
+	}
+
+	InstanceEntities.Pop();
+	ISMC->RemoveInstance(RemoveIndex);
+
+	EntityToInstanceRef.Remove(Entity);
 }
 
 // ============================================================================
 // [디버깅 가이드]
 // ============================================================================
 //
+// ■ 증상: 멀티에서 클라이언트에 메시 안 보임
+//   1. Output Log에서 "[Visualization] Root Actor 생성 (NetMode: 1)" 확인
+//      → 없으면 ExecutionFlags::Client 미적용 또는 Entity가 클라에 없음
+//   2. "[Visualization] ISMC 생성" 로그 확인
+//      → 없으면 bShowEntityVisualization=false 또는 EntityVisualizationMesh=null
+//
 // ■ 증상: 적이 가까이 와도 Actor로 전환되지 않음
-//   1. PlayerLocations가 비어있지 않은지 확인 (Step 1 로그)
-//   2. SpawnThreshold 값 확인 (Trait에서 설정, 기본 5000cm = 50m)
-//   3. MaxConcurrentActors 초과 여부 확인 (ActiveActorCount >= Max)
-//   4. Pool에 InactiveActor가 있는지 확인 ("[Status]" 로그의 Inactive 수)
-//   5. bDead가 true인지 확인 (전투 사망 후 영구 퇴장)
-//   → 해결: PoolSize 늘리기, MaxConcurrentActors 확인, bDead 확인
+//   1. PlayerLocations가 비어있지 않은지 확인
+//   2. SpawnThreshold 값 확인 (기본 5000cm = 50m)
+//   3. MaxConcurrentActors 초과 여부 확인
+//   4. Pool에 InactiveActor가 있는지 확인
+//   5. bDead가 true인지 확인
 //
 // ■ 증상: 적이 멀어져도 Entity로 돌아가지 않음
 //   1. DespawnThreshold 값 확인 (기본 6000cm = 60m)
-//   2. DespawnThreshold > SpawnThreshold인지 확인 (히스테리시스)
-//   3. DespawnActorToEntity 로그 "[Despawn]" 확인
-//   → 해결: DespawnThreshold를 SpawnThreshold보다 1000cm 이상 크게 설정
-//
-// ■ 증상: Soft Cap이 작동하지 않음
-//   1. "[SoftCap]" 로그 확인 (30프레임마다 체크)
-//   2. ActiveActorCount > MaxConcurrentActorsValue인지 확인
-//   3. SoftCapCandidates 배열이 비어있지 않은지 확인
-//   → 해결: 30프레임 주기 확인, MaxConcurrentActors 값 확인
-//
-// ■ 증상: Pool 초기화 실패 ("[Pool] 서브시스템을 찾을 수 없음!")
-//   1. UEnemyActorPool이 UCLASS()로 올바르게 선언되었는지 확인
-//   2. EnemyActorPool.generated.h가 포함되어 있는지 확인
-//   3. Build.cs에 필요한 모듈이 있는지 확인
-//   → 해결: 빌드 후 재시작, generated 파일 재생성
-//
-// ■ 증상: Soft Cap 후 재스폰 시 HP가 풀로 차있음
-//   1. Phase 2: SoftCapEntry에 Fragment 포인터가 저장되는지 확인
-//   2. DespawnActorToEntity에서 HP 보존 로그 확인
-//   3. ActivateActor에서 CurrentHP > 0 분기 진입 확인
-//   → 해결: FSoftCapEntry의 포인터가 올바른지 확인 (청크 메모리 유효성)
+//   2. DespawnThreshold > SpawnThreshold인지 확인
 //
 // ■ 로그 확인 명령어
 //   콘솔: Log LogECSEnemy Log        → Processor 이벤트
 //   콘솔: Log LogECSEnemy Verbose    → 상세 이벤트
-//   콘솔: Log LogECSPool Log         → Pool 이벤트
 //   콘솔: stat unit                  → Game Thread 시간 확인
 //   콘솔: stat game                  → 전체 게임 성능
 // ============================================================================

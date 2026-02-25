@@ -19,6 +19,7 @@ struct FInputActionValue;
 class UHelluna_FindResourceComponent;
 class UWeaponBridgeComponent;
 class AHeroWeapon_GunBase;
+class UHellunaHealthComponent;
 
 /**
  * 
@@ -175,5 +176,46 @@ private:
 
 	void SaveCurrentMagByClass(AHellunaHeroWeapon* Weapon);
 	void ApplySavedCurrentMagByClass(AHellunaHeroWeapon* Weapon);
+	
+	
+	// 애니메이션을 전체 재생할 것인가
+public:
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Animation")
+	bool PlayFullBody = false;
 
+	// =========================================================
+	// ★ 추가: 피격 / 사망 애니메이션
+	// =========================================================
+
+	/** 피격 시 재생할 몽타주 */
+	UPROPERTY(EditDefaultsOnly, Category = "Animation|Combat",
+		meta = (DisplayName = "피격 몽타주",
+			ToolTip = "데미지를 받았을 때 재생할 Hit React 애니메이션 몽타주입니다."))
+	TObjectPtr<UAnimMontage> HitReactMontage = nullptr;
+
+	/** 사망 시 재생할 몽타주 */
+	UPROPERTY(EditDefaultsOnly, Category = "Animation|Combat",
+		meta = (DisplayName = "사망 몽타주",
+			ToolTip = "HP가 0이 되어 사망할 때 재생할 Death 애니메이션 몽타주입니다."))
+	TObjectPtr<UAnimMontage> DeathMontage = nullptr;
+
+protected:
+	/** HealthComponent (피격/사망 처리) */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Component",
+		meta = (DisplayName = "체력 컴포넌트"))
+	TObjectPtr<UHellunaHealthComponent> HeroHealthComponent = nullptr;
+
+	UFUNCTION()
+	void OnHeroHealthChanged(UActorComponent* HealthComp, float OldHealth, float NewHealth, AActor* InstigatorActor);
+
+	UFUNCTION()
+	void OnHeroDeath(AActor* DeadActor, AActor* KillerActor);
+
+	/** 피격 몽타주 멀티캐스트 */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_PlayHeroHitReact();
+
+	/** 사망 몽타주 멀티캐스트 */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_PlayHeroDeath();
 };

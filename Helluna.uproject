@@ -1,6 +1,6 @@
 {
 	"FileVersion": 3,
-	"EngineAssociation": "5.7",
+	"EngineAssociation": "{7B17C9F7-4C42-D0B1-969F-4AA2A021CECB}",
 	"Category": "",
 	"Description": "",
 	"Modules": [
@@ -59,6 +59,10 @@
 		},
 		{
 			"Name": "PythonAutomationTest",
+			"Enabled": true
+		},
+		{
+			"Name": "PCG",
 			"Enabled": true
 		}
 	]

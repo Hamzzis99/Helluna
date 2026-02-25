@@ -1,14 +1,11 @@
 // Capstone Project Helluna
 
-
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
 
 #include "GameFramework/Actor.h"
 #include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
-#include "GameMode/HellunaDefenseGameMode.h"
 #include "Kismet/GameplayStatics.h"
-#include "Character/HellunaEnemyCharacter.h"
 
 #include "DebugHelper.h"
 
@@ -26,7 +23,6 @@ void UHellunaHealthComponent::BeginPlay()
 	if (!Owner)
 		return;
 
-	// ✅ 서버에서만 값 보정 + 데미지 바인딩
 	if (Owner->HasAuthority())
 	{
 		MaxHealth = FMath::Max(1.f, MaxHealth);
@@ -34,7 +30,6 @@ void UHellunaHealthComponent::BeginPlay()
 
 		bDead = (Health <= 0.f);
 
-		// ApplyDamage/ApplyPointDamage/ApplyRadialDamage 모두 여기로 들어옴
 		Owner->OnTakeAnyDamage.AddDynamic(this, &ThisClass::HandleOwnerAnyDamage);
 	}
 }
@@ -51,7 +46,7 @@ void UHellunaHealthComponent::SetHealth(float NewHealth)
 	Internal_SetHealth(NewHealth, nullptr);
 }
 
-void UHellunaHealthComponent::Heal(float Amount, AActor* InstigatorActor /*= nullptr*/)
+void UHellunaHealthComponent::Heal(float Amount, AActor* InstigatorActor)
 {
 	AActor* Owner = GetOwner();
 	if (!Owner || !Owner->HasAuthority())
@@ -66,7 +61,7 @@ void UHellunaHealthComponent::Heal(float Amount, AActor* InstigatorActor /*= nul
 	Internal_SetHealth(Health + Amount, InstigatorActor);
 }
 
-void UHellunaHealthComponent::ApplyDirectDamage(float Damage, AActor* InstigatorActor /*= nullptr*/)
+void UHellunaHealthComponent::ApplyDirectDamage(float Damage, AActor* InstigatorActor)
 {
 	AActor* Owner = GetOwner();
 	if (!Owner || !Owner->HasAuthority())
@@ -99,7 +94,6 @@ void UHellunaHealthComponent::HandleOwnerAnyDamage(
 	if (Damage <= 0.f)
 		return;
 
-	// “누가 때렸는지” 추적용 (가능한 범위에서)
 	AActor* InstigatorActor = DamageCauser;
 	if (!InstigatorActor && InstigatedBy)
 	{
@@ -113,16 +107,15 @@ void UHellunaHealthComponent::Internal_SetHealth(float NewHealth, AActor* Instig
 {
 	const float OldHealth = Health;
 
-	// Clamp
 	Health = FMath::Clamp(NewHealth, 0.f, MaxHealth);
 
-	// 변화가 있을 때만 알림
 	if (!FMath::IsNearlyEqual(OldHealth, Health))
 	{
 		OnHealthChanged.Broadcast(this, OldHealth, Health, InstigatorActor);
 	}
 
-	// 죽음 판정 (딱 한 번만)
+	// 죽음 판정 - OnDeath 브로드캐스트만 담당
+	// GameMode 통지 / DespawnMassEntity 는 StateTree DeathTask가 담당
 	if (!bDead && Health <= 0.f)
 	{
 		bDead = true;
@@ -133,28 +126,12 @@ void UHellunaHealthComponent::Internal_SetHealth(float NewHealth, AActor* Instig
 void UHellunaHealthComponent::HandleDeath(AActor* KillerActor)
 {
 	AActor* Owner = GetOwner();
-	if (!Owner)
+	if (!Owner || !Owner->HasAuthority())
 		return;
 
-	// ✅ 서버에서만 “룰/카운트” 처리
-	if (!Owner->HasAuthority())
-		return;
-	// ✅ (선택) 죽음 이벤트는 1회만
+	// OnDeath 브로드캐스트 → EnemyCharacter::OnMonsterDeath → StateTree Signal
 	OnDeath.Broadcast(Owner, KillerActor);
 
-	// ✅ 몬스터일 때만 GameMode에 통지
-	if (Cast<AHellunaEnemyCharacter>(Owner))
-	{
-		if (AHellunaDefenseGameMode* GM = Cast<AHellunaDefenseGameMode>(UGameplayStatics::GetGameMode(Owner)))
-		{
-			GM->NotifyMonsterDied(Owner);
-		}
-	}
-	if (AHellunaEnemyCharacter* Enemy = Cast<AHellunaEnemyCharacter>(Owner))
-	{
-		Enemy->DespawnMassEntityOnServer(TEXT("HealthComponent::HandleDeath"));
-	}
-	// ✅ (옵션) 자동 파괴
 	if (bAutoDestroyOwnerOnDeath)
 	{
 		Owner->SetLifeSpan(FMath::Max(0.1f, DestroyDelayOnDeath));
@@ -163,13 +140,11 @@ void UHellunaHealthComponent::HandleDeath(AActor* KillerActor)
 
 void UHellunaHealthComponent::OnRep_Health(float OldHealth)
 {
-	// 클라에서 UI 갱신용
 	OnHealthChanged.Broadcast(this, OldHealth, Health, nullptr);
 }
 
 void UHellunaHealthComponent::OnRep_MaxHealth(float OldMaxHealth)
 {
-	// MaxHealth가 바뀌면 체력 비율(UI)이 달라질 수 있으니 갱신 트리거 용도
 	OnHealthChanged.Broadcast(this, Health, Health, nullptr);
 }
 

@@ -34,6 +34,8 @@
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
 
 #include "DebugHelper.h"
+#include "Animation/AnimInstance.h"
+#include "Character/EnemyComponent/HellunaHealthComponent.h"
 
 
 AHellunaHeroCharacter::AHellunaHeroCharacter()
@@ -68,12 +70,21 @@ AHellunaHeroCharacter::AHellunaHeroCharacter()
 	// ⭐ [WeaponBridge] Inventory 연동 컴포넌트 생성
 	// ============================================
 	WeaponBridgeComponent = CreateDefaultSubobject<UWeaponBridgeComponent>(TEXT("WeaponBridgeComponent"));
+
+	// ★ 추가: 플레이어 체력 컴포넌트
+	HeroHealthComponent = CreateDefaultSubobject<UHellunaHealthComponent>(TEXT("HeroHealthComponent"));
 }
 
 void AHellunaHeroCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// ★ 추가: 서버에서만 피격/사망 델리게이트 바인딩
+	if (HasAuthority() && HeroHealthComponent)
+	{
+		HeroHealthComponent->OnHealthChanged.AddUniqueDynamic(this, &AHellunaHeroCharacter::OnHeroHealthChanged);
+		HeroHealthComponent->OnDeath.AddUniqueDynamic(this, &AHellunaHeroCharacter::OnHeroDeath);
+	}
 }
 
 // ============================================
@@ -770,7 +781,6 @@ void AHellunaHeroCharacter::Server_RequestPlayMontageExceptOwner_Implementation(
 {
 	Multicast_PlayEquipMontageExceptOwner(Montage);
 }
-
 void AHellunaHeroCharacter::SaveCurrentMagByClass(AHellunaHeroWeapon* Weapon)
 {
 	if (!HasAuthority()) return;
@@ -802,4 +812,69 @@ void AHellunaHeroCharacter::ApplySavedCurrentMagByClass(AHellunaHeroWeapon* Weap
 
 	Gun->CurrentMag = FMath::Clamp(*SavedMag, 0, Gun->MaxMag);
 	Gun->ForceNetUpdate();
+}
+
+// =========================================================
+// ★ 추가: 플레이어 피격/사망 애니메이션
+// =========================================================
+
+void AHellunaHeroCharacter::OnHeroHealthChanged(
+	UActorComponent* HealthComp,
+	float OldHealth,
+	float NewHealth,
+	AActor* InstigatorActor)
+{
+	if (!HasAuthority()) return;
+
+	const float Delta = OldHealth - NewHealth;
+
+	// 디버그: 체력 변화량 출력
+	if (Delta > 0.f)
+	{
+		Debug::Print(FString::Printf(TEXT("[PlayerHP] %s: -%.1f 데미지 (%.1f → %.1f)"),
+			*GetName(), Delta, OldHealth, NewHealth), FColor::Yellow);
+	}
+
+	// 피격 애니메이션 (데미지를 받았고 살아있을 때만)
+	if (Delta > 0.f && NewHealth > 0.f && HitReactMontage)
+	{
+		Multicast_PlayHeroHitReact();
+	}
+}
+
+void AHellunaHeroCharacter::OnHeroDeath(AActor* DeadActor, AActor* KillerActor)
+{
+	if (!HasAuthority()) return;
+
+	// 사망 애니메이션
+	if (DeathMontage)
+	{
+		Multicast_PlayHeroDeath();
+	}
+}
+
+void AHellunaHeroCharacter::Multicast_PlayHeroHitReact_Implementation()
+{
+	if (!HitReactMontage) return;
+
+	USkeletalMeshComponent* SkelMesh = GetMesh();
+	if (!SkelMesh) return;
+
+	UAnimInstance* AnimInst = SkelMesh->GetAnimInstance();
+	if (!AnimInst) return;
+
+	AnimInst->Montage_Play(HitReactMontage);
+}
+
+void AHellunaHeroCharacter::Multicast_PlayHeroDeath_Implementation()
+{
+	if (!DeathMontage) return;
+
+	USkeletalMeshComponent* SkelMesh = GetMesh();
+	if (!SkelMesh) return;
+
+	UAnimInstance* AnimInst = SkelMesh->GetAnimInstance();
+	if (!AnimInst) return;
+
+	AnimInst->Montage_Play(DeathMontage);
 }

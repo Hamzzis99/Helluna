@@ -18,12 +18,12 @@ AHellunaAIController::AHellunaAIController(const FObjectInitializer& ObjectIniti
 	AISenseConfig_Sight->DetectionByAffiliation.bDetectFriendlies = false;
 	AISenseConfig_Sight->DetectionByAffiliation.bDetectNeutrals = false;
 	AISenseConfig_Sight->SightRadius = 5000.f;
-	AISenseConfig_Sight->LoseSightRadius = 0.f;
+	AISenseConfig_Sight->LoseSightRadius = 8000.f;
 	AISenseConfig_Sight->PeripheralVisionAngleDegrees = 360.f;
 
 	EnemyPerceptionComponent = CreateDefaultSubobject<UAIPerceptionComponent>("EnemyPerceptionComponent");
 	EnemyPerceptionComponent->ConfigureSense(*AISenseConfig_Sight);
-	EnemyPerceptionComponent->SetDominantSense(UAISenseConfig_Sight::StaticClass());
+	EnemyPerceptionComponent->SetDominantSense(UAISense_Sight::StaticClass());
 	EnemyPerceptionComponent->OnTargetPerceptionUpdated.AddUniqueDynamic(this, &ThisClass::OnEnemyPerceptionUpdated);
 
 	// StateTree AI 컴포넌트 생성

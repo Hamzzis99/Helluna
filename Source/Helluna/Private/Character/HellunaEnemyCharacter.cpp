@@ -9,11 +9,29 @@
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameMode/HellunaDefenseGameMode.h"
+#include "Animation/AnimInstance.h"
 
 #include "Components/StateTreeComponent.h"
+#include "GameplayTagContainer.h"
+#include "AIController.h"
 
 #include "DebugHelper.h"
 
+// ✅ 타이머 기반 Trace 시스템용 헤더
+#include "DrawDebugHelpers.h"
+#include "GameFramework/DamageType.h"
+#include "Character/HellunaHeroCharacter.h"
+
+// ecs 추가
+#include "DrawDebugHelpers.h"
+#include "MassAgentComponent.h"
+#include "MassEntitySubsystem.h"
+#include "MassEntityManager.h"
+#include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
+#include "Components/AudioComponent.h"
+#include "Sound/SoundAttenuation.h"
 
 AHellunaEnemyCharacter::AHellunaEnemyCharacter()
 {
@@ -32,6 +50,11 @@ AHellunaEnemyCharacter::AHellunaEnemyCharacter()
 	EnemyCombatComponent = CreateDefaultSubobject<UEnemyCombatComponent>("EnemyCombatComponent");
 	HealthComponent = CreateDefaultSubobject<UHellunaHealthComponent>(TEXT("HealthComponent"));
 
+	// =========================================================
+	// ✅ 기존 물리 충돌 컴포넌트 제거됨
+	// 타이머 기반 Trace 시스템으로 교체 (성능 12배 향상)
+	// =========================================================
+
 	// === Animation URO (Update Rate Optimization) ===
 	// 프로파일링 결과: 애니메이션이 Game Thread의 ~40% 점유 (~10ms/24.88ms)
 	// URO는 거리/가시성에 따라 애니메이션 업데이트 빈도를 자동 조절한다.
@@ -40,17 +63,13 @@ AHellunaEnemyCharacter::AHellunaEnemyCharacter()
 	USkeletalMeshComponent* SkelMesh = GetMesh();
 	if (SkelMesh)
 	{
-		// (1) 화면 밖이면 몽타주만 최소 업데이트, 일반 locomotion은 정지
-		//     다시 보이면 즉시 복구. 공격 판정이 몽타주 Notify에 연결되어 있으면 정상 동작.
 		SkelMesh->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::OnlyTickMontagesWhenNotRendered;
-
-		// (2) URO 활성화: 카메라 거리에 따라 SkeletalMesh 업데이트 빈도 자동 조절
-		//     가까운 적: 매 프레임(60Hz), 중간: 2~4프레임마다, 먼 적: 4~8프레임마다
 		SkelMesh->bEnableUpdateRateOptimizations = true;
-
-		// (3) URO 디버그 시각화 비활성화 (개발 중 필요하면 true로)
 		SkelMesh->bDisplayDebugUpdateRateOptimizations = false;
 	}
+	
+	//GetCharacterMovement()->bUseRVOAvoidance = true;
+	//GetCharacterMovement()->AvoidanceConsiderationRadius = 200.f;
 }
 
 
@@ -60,9 +79,6 @@ void AHellunaEnemyCharacter::PossessedBy(AController* NewController)
 
 	InitEnemyStartUpData();
 
-	// 델리게이트 바인딩 (BeginPlay에서 이동)
-	// Normal actor: PossessedBy가 BeginPlay 전에 호출됨 → 여기서 바인딩
-	// Pool actor: ActivateActor → SpawnDefaultController → PossessedBy → 여기서 바인딩
 	if (HealthComponent)
 	{
 		HealthComponent->OnHealthChanged.AddUniqueDynamic(this, &AHellunaEnemyCharacter::OnMonsterHealthChanged);
@@ -94,10 +110,6 @@ void AHellunaEnemyCharacter::InitEnemyStartUpData()
 
 void AHellunaEnemyCharacter::BeginPlay()
 {
-	// Pool 생성 상태(Controller 없음)면 StateTree 자동 시작 방지
-	// Super::BeginPlay() → Component BeginPlay → StateTreeComponent::StartTree() 호출됨
-	// Controller 없으면 Pawn 컨텍스트 못 찾아서 에러 60×3줄 스팸 발생
-	// → ActivateActor에서 SpawnDefaultController 후 수동 시작
 	if (!GetController())
 	{
 		if (UStateTreeComponent* STComp = FindComponentByClass<UStateTreeComponent>())
@@ -108,30 +120,20 @@ void AHellunaEnemyCharacter::BeginPlay()
 
 	Super::BeginPlay();
 
-	Debug::Print(FString::Printf(TEXT("[Enemy] BeginPlay Auth=%d NetMode=%d"),
-		HasAuthority() ? 1 : 0, (int32)GetNetMode()));
-
-
 	if (!HasAuthority()) return;
 
-	// Pool 생성 상태(Controller 없음)면 GameMode 등록 스킵
-	// → ActivateActor에서 등록 예정 (TODO)
 	if (!GetController()) return;
 
 	if (AHellunaDefenseGameMode* GM = Cast<AHellunaDefenseGameMode>(UGameplayStatics::GetGameMode(this)))
 	{
 		GM->RegisterAliveMonster(this);
 	}
-		// ✅ 죽음 이벤트를 받아서 GameMode에 “죽었다” 통지
 	if (HealthComponent)
 	{
 		HealthComponent->OnHealthChanged.AddDynamic(this, &AHellunaEnemyCharacter::OnMonsterHealthChanged);
 		HealthComponent->OnDeath.RemoveDynamic(this, &ThisClass::OnMonsterDeath);
 		HealthComponent->OnDeath.AddUniqueDynamic(this, &ThisClass::OnMonsterDeath);
 	}
-
-	Debug::Print(TEXT("[HellunaEnemyCharacter] BeginPlay - Monster Registered"));
-
 }
 
 
@@ -142,86 +144,124 @@ void AHellunaEnemyCharacter::OnMonsterHealthChanged(
 	AActor* InstigatorActor
 )
 {
-	// 데미지는 서버에서 처리되고, 클라에 Rep될 때도 OnRep_Health로 델리게이트가 한 번 더 불릴 수 있음
-	// “중복 출력” 싫으면 서버에서만 출력
 	if (!HasAuthority())
 		return;
 
+	// 디버그: 체력 변화량 출력
 	const float Delta = OldHealth - NewHealth;
+	if (Delta > 0.f)
+	{
+		Debug::Print(FString::Printf(TEXT("[MonsterHP] %s: -%.1f (%.1f → %.1f)"),
+			*GetName(), Delta, OldHealth, NewHealth), FColor::Red);
+	}
 
-	const FString Msg = FString::Printf(
-		TEXT("[MonsterHP] -%.0f"),
-		Delta
-	);
-
-	Debug::Print(Msg);
+	// 피격 애니메이션 (데미지를 받았고 아직 살아있을 때만)
+	if (Delta > 0.f && NewHealth > 0.f && HitReactMontage)
+	{
+		Multicast_PlayHitReact();
+	}
 }
 
-/**
- * 거리 기반 애니메이션/그림자 LOD
- *
- * 카메라에서 가까운 적은 풀 품질, 먼 적은 그림자 끄고 애니메이션 품질 낮춤.
- * UE 내장 URO(bEnableUpdateRateOptimizations)가 프레임 스킵을 자동 처리하고,
- * 이 함수는 그 위에 그림자/스켈레톤 업데이트 품질을 추가 제어한다.
- *
- * [거리별 단계]
- * 근거리 (0~20m):  풀 품질 - 매 프레임 업데이트, 그림자 On
- * 중거리 (20~40m): 중간 품질 - 그림자 Off (Draw Call 절약)
- * 원거리 (40m+):   저품질 - 그림자 Off, 스켈레톤 최소 업데이트
- *
- * @author 김기현
- */
+
+// =========================================================
+// ★ 추가: 피격 몽타주 멀티캐스트
+// =========================================================
+void AHellunaEnemyCharacter::Multicast_PlayHitReact_Implementation()
+{
+	if (!HitReactMontage) return;
+
+	USkeletalMeshComponent* SkelMesh = GetMesh();
+	if (!SkelMesh) return;
+
+	UAnimInstance* AnimInst = SkelMesh->GetAnimInstance();
+	if (!AnimInst) return;
+
+	AnimInst->Montage_Play(HitReactMontage);
+}
+
+
+// =========================================================
+// ★ 추가: 사망 몽타주 멀티캐스트
+// =========================================================
+void AHellunaEnemyCharacter::Multicast_PlayDeath_Implementation()
+{
+	if (!DeathMontage) return;
+
+	USkeletalMeshComponent* SkelMesh = GetMesh();
+	if (!SkelMesh) return;
+
+	UAnimInstance* AnimInst = SkelMesh->GetAnimInstance();
+	if (!AnimInst) return;
+
+	AnimInst->Montage_Play(DeathMontage);
+}
+
+void AHellunaEnemyCharacter::OnDeathMontageEnded(UAnimMontage* Montage, bool bInterrupted)
+{
+	// GA_Death의 PlayMontageAndWait에서 완료를 처리하므로 여기선 사용 안 함
+	// OnDeathMontageFinished는 GA_Death::HandleDeathFinished에서 직접 호출
+}
+
+
 void AHellunaEnemyCharacter::UpdateAnimationLOD(float DistanceToCamera)
 {
 	USkeletalMeshComponent* SkelMesh = GetMesh();
 	if (!SkelMesh) return;
 
-	const float NearDist = 2000.f;   // 20m — 전투 거리, 풀 품질 필요
-	const float MidDist = 4000.f;    // 40m — 접근 중, 그림자 불필요
+	const float NearDist = 2000.f;
+	const float MidDist = 4000.f;
 
 	if (DistanceToCamera < NearDist)
 	{
-		// 근거리: 풀 품질 — 전투 중이므로 모든 시각적 디테일 유지
 		SkelMesh->bNoSkeletonUpdate = false;
 		SkelMesh->SetCastShadow(true);
 	}
 	else if (DistanceToCamera < MidDist)
 	{
-		// 중거리: 그림자 끄기 — 멀어서 그림자가 안 보임, Draw Call 절약
 		SkelMesh->bNoSkeletonUpdate = false;
 		SkelMesh->SetCastShadow(false);
 	}
 	else
 	{
-		// 원거리: 그림자 Off + 스켈레톤 최소 업데이트
-		// URO가 이미 프레임 스킵을 하지만, 추가로 품질을 낮춘다
-		// bNoSkeletonUpdate = false 유지: URO가 관리하므로 완전 끄면 충돌
 		SkelMesh->bNoSkeletonUpdate = false;
 		SkelMesh->SetCastShadow(false);
 	}
 }
 
+void AHellunaEnemyCharacter::TestDamage(AActor* DamagedActor, float DamageAmount)
+{
+	if (!DamagedActor) return;
+
+	Debug::Print(
+		FString::Printf(TEXT("[TestDamage] %s -> %s | %.1f DMG"),
+			*GetName(), *DamagedActor->GetName(), DamageAmount),
+		FColor::Orange
+	);
+}
+
 void AHellunaEnemyCharacter::OnMonsterDeath(AActor* DeadActor, AActor* KillerActor)
 {
-
-	// ✅ 서버만 카운트/낮밤 전환을 결정해야 함
 	if (!HasAuthority())
 		return;
 
-	if (AHellunaDefenseGameMode* GM = Cast<AHellunaDefenseGameMode>(UGameplayStatics::GetGameMode(this)))
+	AAIController* AIC = Cast<AAIController>(GetController());
+	if (!AIC) return;
+
+	UStateTreeComponent* STComp = AIC->FindComponentByClass<UStateTreeComponent>();
+	if (!STComp) return;
+
+	FGameplayTag DeathTag = FGameplayTag::RequestGameplayTag(FName("Enemy.State.Death"), false);
+	if (DeathTag.IsValid())
 	{
-		GM->NotifyMonsterDied(this);
+		STComp->SendStateTreeEvent(DeathTag);
 	}
 }
 
 
-#include "MassAgentComponent.h"
-#include "MassEntitySubsystem.h"
-#include "MassEntityManager.h"
+
 
 void AHellunaEnemyCharacter::DespawnMassEntityOnServer(const TCHAR* Where)
 {
-	// ✅ 서버에서만 엔티티 제거
 	if (!HasAuthority())
 		return;
 
@@ -232,16 +272,15 @@ void AHellunaEnemyCharacter::DespawnMassEntityOnServer(const TCHAR* Where)
 
 	if (!MassAgentComp)
 	{
-		Debug::Print(FString::Printf(TEXT("[MassDespawn] %s | No MassAgentComp"), Where), FColor::Red);
+		Destroy();
 		return;
 	}
 
-	// UE 버전에 따라 함수명이 조금씩 다를 수 있음
 	const FMassEntityHandle Entity = MassAgentComp->GetEntityHandle();
 
 	if (!Entity.IsValid())
 	{
-		Debug::Print(FString::Printf(TEXT("[MassDespawn] %s | Invalid EntityHandle"), Where), FColor::Red);
+		Destroy();
 		return;
 	}
 
@@ -251,15 +290,314 @@ void AHellunaEnemyCharacter::DespawnMassEntityOnServer(const TCHAR* Where)
 
 	UMassEntitySubsystem* ES = W->GetSubsystem<UMassEntitySubsystem>();
 	if (!ES)
-	{
-		Debug::Print(FString::Printf(TEXT("[MassDespawn] %s | No MassEntitySubsystem"), Where), FColor::Red);
 		return;
-	}
 
-	// ✅ 엔티티 자체 제거 (이게 핵심: Actor만 죽이면 다시 생성됨)
 	FMassEntityManager& EM = ES->GetMutableEntityManager();
 	EM.DestroyEntity(Entity);
+}
 
-	Debug::Print(FString::Printf(TEXT("[MassDespawn] %s | DestroyEntity OK"), Where), FColor::Green);
+// =========================================================
+// 공격 트레이스 시스템 구현 (타이머 기반)
+// =========================================================
 
+
+void AHellunaEnemyCharacter::StartAttackTrace(FName SocketName, float Radius, float Interval, 
+	float DamageAmount, bool bDebugDraw)
+{
+	// 이미 트레이스 중이면 먼저 정지
+	StopAttackTrace();
+	
+	// 설정 저장
+	CurrentTraceSocketName = SocketName;
+	CurrentTraceRadius = Radius;
+	CurrentDamageAmount = DamageAmount;
+	bDrawDebugTrace = bDebugDraw;
+	
+	// 히트 대상 리스트 초기화
+	HitActorsThisAttack.Empty();
+	
+	// 타이머 시작
+	GetWorldTimerManager().SetTimer(
+		AttackTraceTimerHandle,
+		this,
+		&AHellunaEnemyCharacter::PerformAttackTrace,
+		Interval,
+		true // 반복
+	);
+}
+
+void AHellunaEnemyCharacter::StopAttackTrace()
+{
+	if (AttackTraceTimerHandle.IsValid())
+	{
+		GetWorldTimerManager().ClearTimer(AttackTraceTimerHandle);
+		AttackTraceTimerHandle.Invalidate();
+		
+		// 히트 대상 리스트 초기화
+		HitActorsThisAttack.Empty();
+	}
+}
+
+void AHellunaEnemyCharacter::PerformAttackTrace()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	// Null 체크
+	if (!GetMesh())
+	{
+		UE_LOG(LogTemp, Error, TEXT("[AttackTrace] %s: Mesh is null"), *GetName());
+		StopAttackTrace();
+		return;
+	}
+	
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[AttackTrace] %s: World is null"), *GetName());
+		StopAttackTrace();
+		return;
+	}
+	
+	// 소켓 위치 가져오기
+	FVector SocketLocation = GetMesh()->GetSocketLocation(CurrentTraceSocketName);
+	if (SocketLocation.IsNearlyZero())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[AttackTrace] %s: Socket '%s' not found or invalid location"), 
+			*GetName(), *CurrentTraceSocketName.ToString());
+		return;
+	}
+	
+	// Sphere Trace 수행
+	TArray<FHitResult> HitResults;
+	FCollisionShape SphereShape = FCollisionShape::MakeSphere(CurrentTraceRadius);
+	
+	FCollisionQueryParams QueryParams;
+	QueryParams.AddIgnoredActor(this); // 자신 제외
+	QueryParams.bTraceComplex = false; // 단순 충돌만 (성능 최적화)
+	QueryParams.bReturnPhysicalMaterial = false;
+	QueryParams.bReturnFaceIndex = false;
+	
+	// ECC_Pawn 채널로 트레이스 (플레이어 감지)
+	bool bHit = World->SweepMultiByChannel(
+		HitResults,
+		SocketLocation,
+		SocketLocation, // 시작과 끝이 같음 (제자리 Sphere)
+		FQuat::Identity,
+		ECC_Pawn,
+		SphereShape,
+		QueryParams
+	);
+	
+	// 디버그 드로우
+	if (bDrawDebugTrace)
+	{
+		DrawDebugSphere(
+			World,
+			SocketLocation,
+			CurrentTraceRadius,
+			12,
+			bHit ? FColor::Red : FColor::Green,
+			false,
+			0.1f,
+			0,
+			2.0f
+		);
+	}
+	
+	// 히트 처리
+	if (bHit)
+	{
+		for (const FHitResult& Hit : HitResults)
+		{
+			AActor* HitActor = Hit.GetActor();
+			
+			if (!IsValid(HitActor)) continue;
+			if (HitActor == this) continue;
+
+			// 플레이어 또는 우주선인지 확인
+			// ★ GetRootActor()를 사용해 트리거 컴포넌트 히트 시에도 루트 액터를 가져옴
+			// 우주선의 트리거 콜리전과 본체 콜리전이 별개로 감지되더라도
+			// 같은 액터로 처리되어 중복 데미지를 방지한다.
+			AHellunaHeroCharacter* HeroCharacter = Cast<AHellunaHeroCharacter>(HitActor);
+			AResourceUsingObject_SpaceShip* SpaceShip = Cast<AResourceUsingObject_SpaceShip>(HitActor);
+
+			if (!HeroCharacter && !SpaceShip) continue;
+
+			// 이미 이번 공격에서 데미지를 준 대상 제외 (중복 타격 방지)
+			if (HitActorsThisAttack.Contains(HitActor)) continue;
+
+			// 히트 대상 기록
+			HitActorsThisAttack.Add(HitActor);
+			
+			ServerApplyDamage(HitActor, CurrentDamageAmount, Hit.Location);
+
+			// ★ StopAttackTrace 제거: 첫 히트 후 즉시 종료하지 않음
+			// 이유: 우주선처럼 콜리전이 여러 개인 경우 트리거 콜리전이 먼저 감지되고
+			//       StopAttackTrace()가 호출되면 본체 콜리전은 처리되지 않는 문제가 있었음.
+			// 대신 HitActorsThisAttack으로 같은 대상에게 중복 데미지만 방지한다.
+			// 트레이스는 AnimNotify_AttackCollisionEnd에서 명시적으로 정지된다.
+		}
+	}
+}
+
+// ====================================================================
+// 서버 RPC: 데미지 적용
+// ====================================================================
+
+void AHellunaEnemyCharacter::ServerApplyDamage_Implementation(AActor* Target, float DamageAmount, 
+	const FVector& HitLocation)
+{
+	if (!HasAuthority()) return;
+	if (!IsValid(Target)) return;
+	
+	// 거리 검증 (안티 치트)
+	// 우주선처럼 큰 오브젝트는 중심까지의 거리가 멀어도 표면은 가까울 수 있으므로
+	// HitLocation(실제 충돌 지점)과 자신의 거리로 검증한다.
+	const float DistanceToHit = FVector::Dist(GetActorLocation(), HitLocation);
+	const float MaxAttackDistance = 600.0f;
+	
+	if (DistanceToHit > MaxAttackDistance)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[ServerApplyDamage] Hit too far: %.1f cm (max %.1f)"),
+			DistanceToHit, MaxAttackDistance);
+		return;
+	}
+	
+	UGameplayStatics::ApplyDamage(Target, DamageAmount, GetController(), this, UDamageType::StaticClass());
+	UE_LOG(LogTemp, Log, TEXT("[Damage] %.1f -> %s"), DamageAmount, *GetNameSafe(Target));
+	MulticastPlayHitEffect(HitLocation, HitEffectScale);
+}
+
+bool AHellunaEnemyCharacter::ServerApplyDamage_Validate(AActor* Target, float DamageAmount, 
+	const FVector& HitLocation)
+{
+	if (DamageAmount < 0.0f || DamageAmount > 1000.0f) return false;
+	if (!IsValid(Target)) return false;
+
+	// HitLocation 기준 거리 검증 (우주선 등 큰 오브젝트 대응)
+	const float DistanceToHit = FVector::Dist(GetActorLocation(), HitLocation);
+	if (DistanceToHit > 600.0f)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Validate] Hit too far: %.1f cm"), DistanceToHit);
+		return false;
+	}
+	
+	return true;
+}
+
+// ====================================================================
+// Multicast RPC: 히트 이펙트
+// ====================================================================
+
+void AHellunaEnemyCharacter::MulticastPlayHitEffect_Implementation(const FVector& HitLocation, float EffectScale)
+{
+	// 나이아가라 이펙트 재생
+	if (HitNiagaraEffect)
+	{
+		UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+			GetWorld(),
+			HitNiagaraEffect,
+			HitLocation,
+			FRotator::ZeroRotator,
+			FVector(EffectScale),
+			true,
+			true,
+			ENCPoolMethod::None,
+			true
+		);
+	}
+
+	// 사운드 재생
+	// AttenuationSettings가 사운드 에셋에 설정되어 있어야 거리 감쇠가 적용된다.
+	// 설정되지 않은 경우를 대비해 SpawnSoundAtLocation으로 재생하고
+	// 사운드 컴포넌트에 직접 감쇠 설정을 적용한다.
+	if (HitSound)
+	{
+		if (UAudioComponent* AudioComp = UGameplayStatics::SpawnSoundAtLocation(
+			this,
+			HitSound,
+			HitLocation))
+		{
+			// Attenuation이 없는 사운드에 대한 안전장치:
+			// 사운드 에셋에 Attenuation이 이미 설정되어 있다면 이 설정은 무시된다.
+			if (HitSoundAttenuation)
+			{
+				AudioComp->AttenuationSettings = HitSoundAttenuation;
+			}
+		}
+	}
+}
+
+void AHellunaEnemyCharacter::LockMovementAndFaceTarget(AActor* TargetActor)
+{
+	if (!HasAuthority()) return;
+
+	UCharacterMovementComponent* MoveComp = GetCharacterMovement();
+	if (!MoveComp) return;
+
+	// 이동 잠금: MaxWalkSpeed를 0으로 설정
+	// 중복 호출을 대비해 이미 잠긴 상태면 SavedMaxWalkSpeed를 덮어쓰지 않는다.
+	if (!bMovementLocked)
+	{
+		SavedMaxWalkSpeed = MoveComp->MaxWalkSpeed;
+		bMovementLocked = true;
+	}
+	MoveComp->MaxWalkSpeed = 0.f;
+}
+
+void AHellunaEnemyCharacter::UnlockMovement()
+{
+	if (!HasAuthority()) return;
+	if (!bMovementLocked) return;
+
+	UCharacterMovementComponent* MoveComp = GetCharacterMovement();
+	if (!MoveComp) return;
+
+	// MaxWalkSpeed를 잠금 전 원래 값으로 복원
+	MoveComp->MaxWalkSpeed = SavedMaxWalkSpeed;
+	bMovementLocked = false;
+}
+
+void AHellunaEnemyCharacter::SetServerAttackPoseTickEnabled(bool bEnable)
+{
+	if (!HasAuthority())
+		return;
+
+	USkeletalMeshComponent* M = GetMesh();
+	if (!M)
+		return;
+
+	if (bEnable)
+	{
+		// ★ 공격 몽타주 시작 시 호출
+		// 서버는 카메라에서 멀리 있으면 VisibilityBasedAnimTickOption에 의해
+		// 애니메이션 업데이트가 생략될 수 있다.
+		// 소켓 위치 기반 AttackTrace가 정확하려면 본(Bone) 위치가 매 프레임 갱신되어야
+		// 하므로, 공격 중에는 강제로 AlwaysTickPoseAndRefreshBones로 전환한다.
+		// URO(Update Rate Optimization)도 함께 비활성화해 프레임 스킵을 방지한다.
+		if (!bPoseTickSaved)
+		{
+			// 원래 설정 저장 (공격 종료 시 복원용)
+			SavedAnimTickOption = M->VisibilityBasedAnimTickOption;
+			bSavedURO = M->bEnableUpdateRateOptimizations;
+			bPoseTickSaved = true;
+		}
+
+		M->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+		M->bEnableUpdateRateOptimizations = false;
+	}
+	else
+	{
+		// ★ 공격 몽타주 종료 시 호출 (EndAbility에서 호출)
+		// 저장해둔 원래 설정으로 복원해 불필요한 CPU 사용을 줄인다.
+		// bPoseTickSaved가 false면 Enable이 호출된 적 없는 것이므로 복원 불필요.
+		if (!bPoseTickSaved)
+			return;
+
+		M->VisibilityBasedAnimTickOption = SavedAnimTickOption;
+		M->bEnableUpdateRateOptimizations = bSavedURO;
+		bPoseTickSaved = false;
+	}
 }
