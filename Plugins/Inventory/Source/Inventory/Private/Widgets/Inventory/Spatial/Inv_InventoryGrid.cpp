@@ -92,7 +92,90 @@ void UInv_InventoryGrid::SetInventoryComponent(UInv_InventoryComponent* InComp)
 
 	UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] SetInventoryComponent 완료 → InvComp=%s, Category=%d"),
 		*InComp->GetName(), (int32)ItemCategory);
-	// TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 연결
+
+	// [Phase 4 Fix] 이미 InvComp에 존재하는 아이템을 Grid에 동기화
+	// SetInventoryComponent 호출 시점에 이미 아이템이 있으면 OnItemAdded가 안 날아가므로
+	// 수동으로 기존 아이템을 Grid에 추가
+	SyncExistingItems();
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 4 Fix] SyncExistingItems — 기존 아이템을 Grid에 동기화
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 📌 문제: SetInventoryComponent() 호출 시점에 InvComp에 이미 아이템이 있으면
+//    OnItemAdded 델리게이트가 발동하지 않아 Grid에 아이템이 표시되지 않음
+//
+// 📌 해결: InvComp의 Entries를 순회하며 유효한 아이템을 AddItem()으로 수동 추가
+//    - bIsEquipped=true → 스킵 (장착 아이템은 Grid 밖)
+//    - bIsAttachedToWeapon=true → 스킵 (부착물은 무기에 귀속)
+//    - Item==nullptr → 스킵 (빈 엔트리)
+//
+// ════════════════════════════════════════════════════════════════════════════════
+void UInv_InventoryGrid::SyncExistingItems()
+{
+	if (!InventoryComponent.IsValid())
+	{
+		return;
+	}
+
+	FInv_InventoryFastArray& InvList = InventoryComponent->GetInventoryList();
+	const TArray<FInv_InventoryEntry>& Entries = InvList.Entries;
+
+	int32 SyncCount = 0;
+
+	for (int32 i = 0; i < Entries.Num(); ++i)
+	{
+		const FInv_InventoryEntry& Entry = Entries[i];
+
+		// 빈 엔트리 스킵
+		if (!IsValid(Entry.Item))
+		{
+			continue;
+		}
+
+		// 장착된 아이템은 Grid 밖
+		if (Entry.bIsEquipped)
+		{
+			continue;
+		}
+
+		// 무기에 부착된 부착물은 Grid 밖
+		if (Entry.bIsAttachedToWeapon)
+		{
+			continue;
+		}
+
+		// 카테고리 불일치 스킵 (AddItem 내부에서도 체크하지만 로그 줄이기 위해 미리 필터)
+		if (!MatchesCategory(Entry.Item))
+		{
+			continue;
+		}
+
+		// 이미 이 Grid에 표시 중인 아이템인지 확인 (중복 방지)
+		bool bAlreadySlotted = false;
+		for (const auto& [SlotIdx, Slotted] : SlottedItems)
+		{
+			if (IsValid(Slotted) && Slotted->GetInventoryItem() == Entry.Item)
+			{
+				bAlreadySlotted = true;
+				break;
+			}
+		}
+		if (bAlreadySlotted)
+		{
+			continue;
+		}
+
+		AddItem(Entry.Item, i);
+		++SyncCount;
+	}
+
+	if (SyncCount > 0)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] SyncExistingItems: %d개 동기화 완료 (Category=%d)"),
+			SyncCount, (int32)ItemCategory);
+	}
 }
 
 // 매 프레임마다 호출되는 틱 함수 (마우스 Hover에 사용)
@@ -992,6 +1075,18 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 	
 	if (IsRightClick(MouseEvent)) // 우클릭을 눌렀을 때 실행되는 팝업 부분 실행 부분
 	{
+		// [Phase 4 Fix] 로비 전송 모드: 팝업 대신 전송 델리게이트 발동
+		if (bLobbyTransferMode)
+		{
+			UInv_SlottedItem* Slotted = SlottedItems.FindRef(GridIndex);
+			if (Slotted)
+			{
+				const int32 EntryIdx = Slotted->GetEntryIndex();
+				UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] 로비 전송 요청 → EntryIndex=%d, GridIndex=%d"), EntryIdx, GridIndex);
+				OnLobbyTransferRequested.Broadcast(EntryIdx);
+			}
+			return;
+		}
 		CreateItemPopUp(GridIndex); // 팝업 생성 함수 호출
 		return;
 	}

@@ -30,10 +30,10 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "Widgets/Inventory/Spatial/Inv_InventoryGrid.h" // FOnLobbyTransferRequested 델리게이트 사용
 #include "HellunaLobbyPanel.generated.h"
 
 // 전방 선언
-class UInv_InventoryGrid;
 class UInv_InventoryComponent;
 class UWidgetSwitcher;
 class UButton;
@@ -87,6 +87,17 @@ public:
 	UInv_InventoryComponent* GetBoundComponent() const { return BoundComponent.Get(); }
 
 	// ════════════════════════════════════════════════════════════════
+	// [Phase 4 Fix] 로비 전송 모드
+	// ════════════════════════════════════════════════════════════════
+
+	/** 3개 Grid에 로비 전송 모드 활성화 + 통합 델리게이트 바인딩 */
+	void EnableLobbyTransferMode();
+
+	/** 통합 전송 요청 델리게이트 — 어느 Grid에서든 우클릭 시 EntryIndex 전달 */
+	UPROPERTY(BlueprintAssignable, Category = "로비|패널")
+	FOnLobbyTransferRequested OnPanelTransferRequested;
+
+	// ════════════════════════════════════════════════════════════════
 	// 패널 이름 설정
 	// ════════════════════════════════════════════════════════════════
 
@@ -136,6 +147,10 @@ private:
 	// ════════════════════════════════════════════════════════════════
 	// 탭 전환 콜백
 	// ════════════════════════════════════════════════════════════════
+
+	// [Phase 4 Fix] Grid → Panel 통합 전달 콜백
+	UFUNCTION()
+	void OnGridTransferRequested(int32 EntryIndex);
 
 	UFUNCTION()
 	void ShowEquippables();

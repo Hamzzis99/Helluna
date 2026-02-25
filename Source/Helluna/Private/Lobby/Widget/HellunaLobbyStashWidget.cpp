@@ -148,8 +148,39 @@ void UHellunaLobbyStashWidget::InitializePanels(UInv_InventoryComponent* StashCo
 			LoadoutComp ? TEXT("O") : TEXT("X (LobbyController 생성자 확인)"));
 	}
 
+	// ── [Phase 4 Fix] 우클릭 전송 모드 활성화 ──
+	// Stash 패널: 우클릭 → Loadout으로 전송
+	if (StashPanel)
+	{
+		StashPanel->EnableLobbyTransferMode();
+		StashPanel->OnPanelTransferRequested.AddDynamic(this, &ThisClass::OnStashItemTransferRequested);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] StashPanel → 우클릭 전송 모드 ON (→ Loadout)"));
+	}
+
+	// Loadout SpatialInventory: 우클릭 → Stash로 전송
+	if (LoadoutSpatialInventory)
+	{
+		LoadoutSpatialInventory->EnableLobbyTransferMode();
+		LoadoutSpatialInventory->OnSpatialTransferRequested.AddDynamic(this, &ThisClass::OnLoadoutItemTransferRequested);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] LoadoutSpatialInventory → 우클릭 전송 모드 ON (→ Stash)"));
+	}
+
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] ── InitializePanels 완료 ──"));
-	// TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 SharedHoverItem 초기화 연결
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 4 Fix] 우클릭 전송 핸들러
+// ════════════════════════════════════════════════════════════════════════════════
+void UHellunaLobbyStashWidget::OnStashItemTransferRequested(int32 EntryIndex)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] Stash 우클릭 전송 → Loadout | EntryIndex=%d"), EntryIndex);
+	TransferItemToLoadout(EntryIndex);
+}
+
+void UHellunaLobbyStashWidget::OnLoadoutItemTransferRequested(int32 EntryIndex)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] Loadout 우클릭 전송 → Stash | EntryIndex=%d"), EntryIndex);
+	TransferItemToStash(EntryIndex);
 }
 
 // ════════════════════════════════════════════════════════════════════════════════

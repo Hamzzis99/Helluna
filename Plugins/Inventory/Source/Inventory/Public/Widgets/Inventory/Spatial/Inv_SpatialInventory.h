@@ -4,11 +4,11 @@
 
 #include "CoreMinimal.h"
 #include "Widgets/Inventory/InventoryBase/Inv_InventoryBase.h"
+#include "Widgets/Inventory/Spatial/Inv_InventoryGrid.h" // FOnLobbyTransferRequested 델리게이트 사용
 #include "Inv_SpatialInventory.generated.h"
 
 struct FGameplayTag;
 class UInv_ItemDescription;
-class UInv_InventoryGrid;
 class UWidgetSwitcher;
 class UButton;
 class UCanvasPanel;
@@ -75,7 +75,23 @@ public:
 		meta = (DisplayName = "인벤토리 컴포넌트 수동 설정 (SpatialInventory)"))
 	void SetInventoryComponent(UInv_InventoryComponent* InComp);
 
-private: 
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 4 Fix] 로비 전송 모드 — 3개 Grid에 일괄 활성화
+	// ════════════════════════════════════════════════════════════════
+
+	/** 3개 Grid에 로비 전송 모드 활성화 + 통합 델리게이트 바인딩 */
+	void EnableLobbyTransferMode();
+
+	/** 통합 전송 요청 델리게이트 — 어느 Grid에서든 우클릭 시 EntryIndex 전달 */
+	UPROPERTY(BlueprintAssignable, Category = "인벤토리|로비")
+	FOnLobbyTransferRequested OnSpatialTransferRequested;
+
+private:
+	// [Phase 4 Fix] Grid → SpatialInventory 통합 전달 콜백
+	UFUNCTION()
+	void OnGridTransferRequested(int32 EntryIndex);
+
+	// ──────────────────────────────────────────────────────────────── 
 	// 여기 있는 UPROPERTY와 위젯과의 이름이 동일해야만함.
 	
 	//장착 슬롯 늘리는 부분

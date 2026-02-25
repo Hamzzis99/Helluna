@@ -188,6 +188,35 @@ UInv_InventoryComponent* UInv_SpatialInventory::GetBoundInventoryComponent() con
 	return UInv_InventoryStatics::GetInventoryComponent(GetOwningPlayer());
 }
 
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 4 Fix] EnableLobbyTransferMode — 3개 Grid에 전송 모드 활성화
+// ════════════════════════════════════════════════════════════════════════════════
+void UInv_SpatialInventory::EnableLobbyTransferMode()
+{
+	UE_LOG(LogTemp, Log, TEXT("[SpatialInventory] EnableLobbyTransferMode 활성화"));
+
+	auto BindGrid = [this](UInv_InventoryGrid* Grid, const TCHAR* Name)
+	{
+		if (!Grid) return;
+		Grid->SetLobbyTransferMode(true);
+		if (!Grid->OnLobbyTransferRequested.IsAlreadyBound(this, &ThisClass::OnGridTransferRequested))
+		{
+			Grid->OnLobbyTransferRequested.AddDynamic(this, &ThisClass::OnGridTransferRequested);
+		}
+		UE_LOG(LogTemp, Log, TEXT("[SpatialInventory]   %s → 전송 모드 ON"), Name);
+	};
+
+	BindGrid(Grid_Equippables, TEXT("Grid_Equippables"));
+	BindGrid(Grid_Consumables, TEXT("Grid_Consumables"));
+	BindGrid(Grid_Craftables, TEXT("Grid_Craftables"));
+}
+
+void UInv_SpatialInventory::OnGridTransferRequested(int32 EntryIndex)
+{
+	UE_LOG(LogTemp, Log, TEXT("[SpatialInventory] Grid 전송 요청 전달 → EntryIndex=%d"), EntryIndex);
+	OnSpatialTransferRequested.Broadcast(EntryIndex);
+}
+
 // 장착된 그리드 슬롯이 클릭되었을 때 호출되는 함수
 void UInv_SpatialInventory::EquippedGridSlotClicked(UInv_EquippedGridSlot* EquippedGridSlot, const FGameplayTag& EquipmentTypeTag) // 콜백함수 
 {

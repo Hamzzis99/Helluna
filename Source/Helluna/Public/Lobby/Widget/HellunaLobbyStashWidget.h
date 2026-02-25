@@ -122,6 +122,18 @@ private:
 	void OnDeployClicked();
 
 	// ════════════════════════════════════════════════════════════════
+	// [Phase 4 Fix] 우클릭 전송 핸들러
+	// ════════════════════════════════════════════════════════════════
+
+	/** Stash Grid에서 우클릭 → Loadout으로 전송 */
+	UFUNCTION()
+	void OnStashItemTransferRequested(int32 EntryIndex);
+
+	/** Loadout Grid에서 우클릭 → Stash로 전송 */
+	UFUNCTION()
+	void OnLoadoutItemTransferRequested(int32 EntryIndex);
+
+	// ════════════════════════════════════════════════════════════════
 	// 내부 헬퍼
 	// ════════════════════════════════════════════════════════════════
 

@@ -240,6 +240,35 @@ void UHellunaLobbyPanel::SetPanelTitle(const FText& InTitle)
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
+// [Phase 4 Fix] EnableLobbyTransferMode — 3개 Grid에 전송 모드 활성화
+// ════════════════════════════════════════════════════════════════════════════════
+void UHellunaLobbyPanel::EnableLobbyTransferMode()
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPanel] EnableLobbyTransferMode 활성화"));
+
+	auto BindGrid = [this](UInv_InventoryGrid* Grid, const TCHAR* Name)
+	{
+		if (!Grid) return;
+		Grid->SetLobbyTransferMode(true);
+		if (!Grid->OnLobbyTransferRequested.IsAlreadyBound(this, &ThisClass::OnGridTransferRequested))
+		{
+			Grid->OnLobbyTransferRequested.AddDynamic(this, &ThisClass::OnGridTransferRequested);
+		}
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPanel]   %s → 전송 모드 ON"), Name);
+	};
+
+	BindGrid(Grid_Equippables, TEXT("Grid_Equippables"));
+	BindGrid(Grid_Consumables, TEXT("Grid_Consumables"));
+	BindGrid(Grid_Craftables, TEXT("Grid_Craftables"));
+}
+
+void UHellunaLobbyPanel::OnGridTransferRequested(int32 EntryIndex)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPanel] Grid 전송 요청 전달 → EntryIndex=%d"), EntryIndex);
+	OnPanelTransferRequested.Broadcast(EntryIndex);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
 // 탭 전환 — ShowEquippables / ShowConsumables / ShowCraftables
 // ════════════════════════════════════════════════════════════════════════════════
 //

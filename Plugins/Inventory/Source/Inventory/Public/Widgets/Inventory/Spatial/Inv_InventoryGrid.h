@@ -8,6 +8,11 @@
 
 #include "Inv_InventoryGrid.generated.h"
 
+// ════════════════════════════════════════════════════════════════
+// [Phase 4 Fix] 로비 전송 델리게이트 — 우클릭 시 상대 패널로 아이템 전송
+// ════════════════════════════════════════════════════════════════
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnLobbyTransferRequested, int32, EntryIndex);
+
 class UInv_ItemPopUp;
 class UInv_HoverItem;
 struct FInv_ImageFragment;
@@ -93,6 +98,17 @@ public:
 
 	/** 현재 바인딩된 InventoryComponent 반환 */
 	UInv_InventoryComponent* GetInventoryComponent() const { return InventoryComponent.Get(); }
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 4 Fix] 로비 전송 모드 — 우클릭 시 팝업 대신 전송 델리게이트 발동
+	// ════════════════════════════════════════════════════════════════
+
+	/** 로비 전송 모드 활성화/비활성화 */
+	void SetLobbyTransferMode(bool bEnable) { bLobbyTransferMode = bEnable; }
+
+	/** 로비 전송 요청 델리게이트 — 우클릭 시 EntryIndex를 전달 */
+	UPROPERTY(BlueprintAssignable, Category = "인벤토리|로비")
+	FOnLobbyTransferRequested OnLobbyTransferRequested;
 
 	void ShowCursor();
 	void HideCursor();
@@ -198,6 +214,12 @@ public:
 private:
 	// ⭐ 로드 중 RPC 억제 플래그
 	bool bSuppressServerSync = false;
+
+	// [Phase 4 Fix] 로비 전송 모드 플래그 — true이면 우클릭 시 팝업 대신 전송 델리게이트
+	bool bLobbyTransferMode = false;
+
+	// [Phase 4 Fix] 기존 아이템 동기화 — SetInventoryComponent 후 이미 InvComp에 있는 아이템을 Grid에 표시
+	void SyncExistingItems();
 
 	// ⭐ [Phase 4 Lobby] true이면 NativeOnInitialized에서 자동 바인딩 스킵
 	// 로비 듀얼 Grid에서 SetInventoryComponent()로 수동 바인딩할 때 사용
