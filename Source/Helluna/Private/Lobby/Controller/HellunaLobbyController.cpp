@@ -40,8 +40,8 @@
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
 #include "Blueprint/UserWidget.h"
 
-// 로그 카테고리 (HellunaLobbyGameMode.cpp에서 정의됨)
-DECLARE_LOG_CATEGORY_EXTERN(LogHellunaLobby, Log, All);
+// 로그 카테고리 (공유 헤더 — DEFINE은 HellunaLobbyGameMode.cpp)
+#include "Lobby/HellunaLobbyLog.h"
 
 // ════════════════════════════════════════════════════════════════════════════════
 // 생성자 — StashComp + LoadoutComp 생성
@@ -89,10 +89,10 @@ void AHellunaLobbyController::BeginPlay()
 	Super::BeginPlay();
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ──────────────────────────────────────"));
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] BeginPlay | IsLocalController=%s | HasAuthority=%s | IsServer=%s"),
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] BeginPlay | IsLocalController=%s | HasAuthority=%s | NetMode=%d"),
 		IsLocalController() ? TEXT("true") : TEXT("false"),
 		HasAuthority() ? TEXT("true") : TEXT("false"),
-		GetWorld()->IsServer() ? TEXT("true") : TEXT("false"));
+		GetWorld() ? (int32)GetWorld()->GetNetMode() : -1);
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC]   StashComp=%s | LoadoutComp=%s"),
 		StashInventoryComponent ? TEXT("O") : TEXT("X"),
 		LoadoutInventoryComponent ? TEXT("O") : TEXT("X"));

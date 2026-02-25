@@ -40,8 +40,8 @@
 #include "Persistence/Inv_SaveTypes.h"
 #include "Items/Components/Inv_ItemComponent.h"
 
-// Helluna 로그 카테고리
-DECLARE_LOG_CATEGORY_EXTERN(LogHellunaLobby, Log, All);
+// 로그 카테고리 (공유 헤더에서 DECLARE, 여기서 DEFINE)
+#include "Lobby/HellunaLobbyLog.h"
 DEFINE_LOG_CATEGORY(LogHellunaLobby);
 
 // ════════════════════════════════════════════════════════════════════════════════

@@ -26,15 +26,17 @@ void UInv_InventoryGrid::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
 
-	ConstructGrid();
-
-	// ⭐ [Phase 4 Lobby] bSkipAutoInit=true이면 자동 바인딩 스킵
-	// 로비 듀얼 Grid에서는 SetInventoryComponent()로 수동 바인딩
+	// ⭐ [Phase 4 Lobby] bSkipAutoInit=true이면 ConstructGrid + 자동 바인딩 모두 스킵
+	// 로비 듀얼 Grid에서는 SetInventoryComponent()에서 ConstructGrid를 지연 호출
+	// 이유: 로비에서는 CanvasPanel(BindWidget)이 NativeOnInitialized 시점에 아직 nullptr일 수 있음
+	//       → ConstructGrid()가 CanvasPanel->AddChild()에서 크래시 발생
 	if (bSkipAutoInit)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] bSkipAutoInit=true → 자동 바인딩 스킵 (수동 SetInventoryComponent 대기)"));
+		UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] bSkipAutoInit=true → ConstructGrid + 자동 바인딩 스킵 (SetInventoryComponent 대기)"));
 		return;
 	}
+
+	ConstructGrid();
 
 	InventoryComponent = UInv_InventoryStatics::GetInventoryComponent(GetOwningPlayer()); // 플레이어의 인벤토리 컴포넌트를 가져온다.
 	InventoryComponent->OnItemAdded.AddDynamic(this, &ThisClass::AddItem); // 델리게이트 바인딩
@@ -53,6 +55,20 @@ void UInv_InventoryGrid::SetInventoryComponent(UInv_InventoryComponent* InComp)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[InventoryGrid] SetInventoryComponent: InComp is nullptr!"));
 		return;
+	}
+
+	// ⭐ [Phase 4 Lobby] bSkipAutoInit=true로 지연된 ConstructGrid 실행
+	// NativeOnInitialized에서 스킵된 Grid 구성을 여기서 수행
+	// GridSlots이 비어있으면 아직 ConstructGrid가 호출되지 않은 것
+	if (GridSlots.Num() == 0 && CanvasPanel)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] SetInventoryComponent → 지연된 ConstructGrid 실행 (bSkipAutoInit 경로)"));
+		ConstructGrid();
+	}
+	else if (GridSlots.Num() == 0 && !CanvasPanel)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[InventoryGrid] SetInventoryComponent: CanvasPanel이 nullptr! Grid 구성 불가"));
+		UE_LOG(LogTemp, Error, TEXT("[InventoryGrid]   → WBP에서 Grid 위젯 내부에 'CanvasPanel' 이름의 CanvasPanel을 추가하세요"));
 	}
 
 	// 이전 바인딩이 있다면 해제

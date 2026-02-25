@@ -44,8 +44,8 @@
 #include "Components/TextBlock.h"
 #include "Player/Inv_PlayerController.h"
 
-// 로그 카테고리
-DECLARE_LOG_CATEGORY_EXTERN(LogHellunaLobby, Log, All);
+// 로그 카테고리 (공유 헤더 — DEFINE은 HellunaLobbyGameMode.cpp)
+#include "Lobby/HellunaLobbyLog.h"
 
 // ════════════════════════════════════════════════════════════════════════════════
 // NativeOnInitialized — 위젯 생성 시 초기화
