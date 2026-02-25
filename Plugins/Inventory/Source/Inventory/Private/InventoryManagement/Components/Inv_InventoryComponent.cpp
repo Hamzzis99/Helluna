@@ -3232,7 +3232,27 @@ bool UInv_InventoryComponent::TransferItemTo(int32 ItemIndex, UInv_InventoryComp
 
 	// ── 5) Source에서 제거 ──
 	// RemoveEntry: FastArray에서 해당 Entry 제거 → MarkDirty → 리플리케이션
+	//
+	// [Phase 4 Fix] EntryIndex를 미리 저장 — RemoveEntry 후 OnItemRemoved를 수동 broadcast
+	// RemoveEntry는 OnItemRemoved를 broadcast하지 않음 (PreReplicatedRemove에 의존)
+	// Standalone/ListenServer에서는 즉시 리플리케이션이 안 돌아서 Grid가 갱신 안 됨
+	int32 RemovedEntryIndex = INDEX_NONE;
+	for (int32 i = 0; i < InventoryList.Entries.Num(); ++i)
+	{
+		if (InventoryList.Entries[i].Item == Item)
+		{
+			RemovedEntryIndex = i;
+			break;
+		}
+	}
+
 	InventoryList.RemoveEntry(Item);
+
+	// 수동 broadcast — Grid가 즉시 아이템을 제거하도록
+	if (RemovedEntryIndex != INDEX_NONE)
+	{
+		OnItemRemoved.Broadcast(Item, RemovedEntryIndex);
+	}
 
 	UE_LOG(LogTemp, Log, TEXT("[InvComp] TransferItemTo 완료: %s x%d | %s → %s"),
 		*ItemType.ToString(), StackCount, *GetName(), *TargetComp->GetName());
