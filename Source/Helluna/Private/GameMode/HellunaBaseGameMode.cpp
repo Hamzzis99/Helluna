@@ -43,6 +43,9 @@
 // [투표 시스템] 플레이어 퇴장 시 투표 처리 (김기현)
 #include "Utils/Vote/VoteManagerComponent.h"
 
+// [Phase 3] SQLite 저장/로드 전환
+#include "Lobby/Database/HellunaSQLiteSubsystem.h"
+
 // ════════════════════════════════════════════════════════════════════════════════
 // 📌 팀원 가이드 - 이 파일 전체 구조
 // ════════════════════════════════════════════════════════════════════════════════
@@ -165,6 +168,10 @@ AHellunaBaseGameMode::AHellunaBaseGameMode()
 	PlayerStateClass = AHellunaPlayerState::StaticClass();
 	PlayerControllerClass = AHellunaLoginController::StaticClass();  // ⭐ 기존처럼 C++에서 직접 설정!
 	DefaultPawnClass = ASpectatorPawn::StaticClass();
+
+	// Phase 3: SaveAllPlayersInventoryDirect가 SaveCollectedItems를 우회하므로
+	// Direct 경로를 비활성화하여 모든 자동저장이 SQLite 경로(SaveCollectedItems)를 타도록 강제
+	bUseServerDirectSave = false;
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -394,6 +401,9 @@ void AHellunaBaseGameMode::PostLogin(APlayerController* NewPlayer)
 
 		// 3. ControllerToPlayerIdMap 등록 (Logout/인벤토리 저장 시 필요)
 		RegisterControllerPlayerId(NewPlayer, DebugPlayerId);
+
+		// Phase 3: 크래시 복구 체크 (비정상 종료 시 Loadout → Stash 복구)
+		CheckAndRecoverFromCrash(DebugPlayerId);
 
 		// 4. Controller EndPlay 델리게이트 바인딩 (인벤토리 저장용)
 		// 주의: bDebugSkipLogin 경로에서 NewPlayer는 LoginController이므로 InvPC 캐스트 실패할 수 있음
@@ -633,6 +643,9 @@ void AHellunaBaseGameMode::OnLoginSuccess(APlayerController* PlayerController, c
 	{
 		GI->RegisterLogin(PlayerId);
 	}
+
+	// Phase 3: 크래시 복구 체크 (비정상 종료 시 Loadout → Stash 복구)
+	CheckAndRecoverFromCrash(PlayerId);
 
 	// PlayerState에 로그인 정보 저장 (Replicated)
 	if (AHellunaPlayerState* PS = PlayerController->GetPlayerState<AHellunaPlayerState>())
@@ -1558,8 +1571,197 @@ EHellunaHeroType AHellunaBaseGameMode::IndexToHeroType(int32 Index)
 // 📦 인벤토리 시스템
 // ════════════════════════════════════════════════════════════════════════════════
 
+// ════════════════════════════════════════════════════════════════════════════════
+// 📌 [Phase 3] SaveCollectedItems — SQLite 저장 (실패 시 .sav 폴백)
+// ════════════════════════════════════════════════════════════════════════════════
+bool AHellunaBaseGameMode::SaveCollectedItems(const FString& PlayerId, const TArray<FInv_SavedItemData>& Items)
+{
+	if (PlayerId.IsEmpty() || Items.Num() == 0)
+	{
+		return false;
+	}
 
+	UGameInstance* GI = GetGameInstance();
+	UHellunaSQLiteSubsystem* DB = GI ? GI->GetSubsystem<UHellunaSQLiteSubsystem>() : nullptr;
 
+	if (DB && DB->IsDatabaseReady())
+	{
+		const bool bSuccess = DB->SavePlayerStash(PlayerId, Items);
+
+		// 캐시도 갱신 (Logout↔EndPlay 타이밍 문제 대응 — 부모와 동일)
+		FInv_PlayerSaveData SaveData;
+		SaveData.Items = Items;
+		SaveData.LastSaveTime = FDateTime::Now();
+		CachePlayerData(PlayerId, SaveData);
+
+		if (bSuccess)
+		{
+			UE_LOG(LogHelluna, Log, TEXT("[Phase3] SaveCollectedItems: SQLite 저장 성공 | PlayerId=%s | %d개"), *PlayerId, Items.Num());
+		}
+		else
+		{
+			UE_LOG(LogHelluna, Error, TEXT("[Phase3] SaveCollectedItems: SQLite 저장 실패 — .sav 폴백 | PlayerId=%s"), *PlayerId);
+			return Super::SaveCollectedItems(PlayerId, Items);
+		}
+
+		return bSuccess;
+	}
+
+	// SQLite 미준비 → .sav 폴백
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase3] SaveCollectedItems: SQLite 미준비 — .sav 폴백 | PlayerId=%s"), *PlayerId);
+	return Super::SaveCollectedItems(PlayerId, Items);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 📌 [Phase 3] LoadAndSendInventoryToClient — SQLite 로드 (실패 시 .sav 폴백)
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// ※ 부모의 InventorySaveGame이 private이라 Super 호출로 데이터 주입 불가
+// ※ 부모 로직 복제 + 데이터 소스만 SQLite로 교체
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaBaseGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
+{
+	if (!HasAuthority() || !IsValid(PC))
+	{
+		return;
+	}
+
+	const FString PlayerId = GetPlayerSaveId(PC);
+	if (PlayerId.IsEmpty())
+	{
+		return;
+	}
+
+	// ── SQLite에서 데이터 로드 ──
+	UGameInstance* GI = GetGameInstance();
+	UHellunaSQLiteSubsystem* DB = GI ? GI->GetSubsystem<UHellunaSQLiteSubsystem>() : nullptr;
+
+	FInv_PlayerSaveData LoadedData;
+	bool bLoaded = false;
+
+	if (DB && DB->IsDatabaseReady())
+	{
+		TArray<FInv_SavedItemData> Items = DB->LoadPlayerStash(PlayerId);
+		if (Items.Num() > 0)
+		{
+			LoadedData.Items = MoveTemp(Items);
+			LoadedData.LastSaveTime = FDateTime::Now();
+			bLoaded = true;
+			UE_LOG(LogHelluna, Log, TEXT("[Phase3] LoadAndSendInventoryToClient: SQLite 로드 성공 | PlayerId=%s | %d개"),
+				*PlayerId, LoadedData.Items.Num());
+		}
+		else
+		{
+			UE_LOG(LogHelluna, Log, TEXT("[Phase3] LoadAndSendInventoryToClient: SQLite 데이터 없음 (신규 유저) | PlayerId=%s"), *PlayerId);
+		}
+	}
+	else
+	{
+		// SQLite 미준비 → .sav 폴백
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase3] LoadAndSendInventoryToClient: SQLite 미준비 — .sav 폴백 | PlayerId=%s"), *PlayerId);
+		Super::LoadAndSendInventoryToClient(PC);
+		return;
+	}
+
+	// 데이터가 없으면 종료 (신규 유저는 빈 인벤토리로 시작)
+	if (!bLoaded || LoadedData.IsEmpty())
+	{
+		return;
+	}
+
+	// ── InvComp에 아이템 복원 ──
+	UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
+	if (!IsValid(InvComp))
+	{
+		return;
+	}
+
+	// Fix 10: 장착 아이템 GridPosition 정리 (부모와 동일)
+	for (FInv_SavedItemData& LoadItem : LoadedData.Items)
+	{
+		if (LoadItem.bEquipped && LoadItem.GridPosition != FIntPoint(-1, -1))
+		{
+			LoadItem.GridPosition = FIntPoint(-1, -1);
+		}
+	}
+
+	FInv_ItemTemplateResolver Resolver;
+	Resolver.BindLambda([this](const FGameplayTag& ItemType) -> UInv_ItemComponent*
+	{
+		TSubclassOf<AActor> ActorClass = ResolveItemClass(ItemType);
+		if (!ActorClass)
+		{
+			return nullptr;
+		}
+		return FindItemComponentTemplate(ActorClass);
+	});
+
+	InvComp->RestoreFromSaveData(LoadedData, Resolver);
+
+	// ── 클라이언트에 데이터 전송 (청크 분할, 부모와 동일) ──
+	AInv_PlayerController* InvPC = Cast<AInv_PlayerController>(PC);
+	if (!IsValid(InvPC))
+	{
+		return;
+	}
+
+	const TArray<FInv_SavedItemData>& AllItems = LoadedData.Items;
+	constexpr int32 ChunkSize = 5;
+
+	if (AllItems.Num() <= ChunkSize)
+	{
+		InvPC->Client_ReceiveInventoryData(AllItems);
+	}
+	else
+	{
+		const int32 TotalItems = AllItems.Num();
+		for (int32 StartIdx = 0; StartIdx < TotalItems; StartIdx += ChunkSize)
+		{
+			const int32 EndIdx = FMath::Min(StartIdx + ChunkSize, TotalItems);
+			const bool bIsLast = (EndIdx >= TotalItems);
+
+			TArray<FInv_SavedItemData> Chunk;
+			Chunk.Reserve(EndIdx - StartIdx);
+			for (int32 i = StartIdx; i < EndIdx; ++i)
+			{
+				Chunk.Add(AllItems[i]);
+			}
+
+			InvPC->Client_ReceiveInventoryDataChunk(Chunk, bIsLast);
+		}
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 📌 [Phase 3] CheckAndRecoverFromCrash — PostLogin 시 크래시 복구 체크
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaBaseGameMode::CheckAndRecoverFromCrash(const FString& PlayerId)
+{
+	if (PlayerId.IsEmpty())
+	{
+		return;
+	}
+
+	UGameInstance* GI = GetGameInstance();
+	UHellunaSQLiteSubsystem* DB = GI ? GI->GetSubsystem<UHellunaSQLiteSubsystem>() : nullptr;
+	if (!DB || !DB->IsDatabaseReady())
+	{
+		return;
+	}
+
+	if (DB->HasPendingLoadout(PlayerId))
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase3] 크래시 복구 감지! Loadout 잔존 | PlayerId=%s"), *PlayerId);
+		if (DB->RecoverFromCrash(PlayerId))
+		{
+			UE_LOG(LogHelluna, Log, TEXT("[Phase3] 크래시 복구 완료 | PlayerId=%s"), *PlayerId);
+		}
+		else
+		{
+			UE_LOG(LogHelluna, Error, TEXT("[Phase3] 크래시 복구 실패! | PlayerId=%s"), *PlayerId);
+		}
+	}
+}
 
 
 

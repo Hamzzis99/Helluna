@@ -51,7 +51,16 @@ protected:
 	virtual TSubclassOf<AActor> ResolveItemClass(const FGameplayTag& ItemType) override;
 	virtual FString GetPlayerSaveId(APlayerController* PC) const override;
 
+	/** 크래시 복구 체크 — PostLogin 시 호출하여 비정상 종료 시 Loadout → Stash 복구 */
+	void CheckAndRecoverFromCrash(const FString& PlayerId);
+
 public:
+	// ── Phase 3: SQLite 저장/로드 전환 ──
+	/** SQLite 저장 → 실패 시 .sav 폴백 */
+	virtual bool SaveCollectedItems(const FString& PlayerId, const TArray<FInv_SavedItemData>& Items) override;
+	/** SQLite 로드 → 실패 시 .sav 폴백 */
+	virtual void LoadAndSendInventoryToClient(APlayerController* PC) override;
+
 	virtual void PostLogin(APlayerController* NewPlayer) override;
 	virtual void Logout(AController* Exiting) override;
 	virtual void HandleSeamlessTravelPlayer(AController*& C) override;
