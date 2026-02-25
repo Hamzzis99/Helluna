@@ -978,3 +978,226 @@ bool UHellunaSQLiteSubsystem::RecoverFromCrash(const FString& PlayerId)
 	UE_LOG(LogHelluna, Log, TEXT("[SQLite] RecoverFromCrash 완료 | PlayerId=%s | 복구 아이템 %d개"), *PlayerId, LoadoutItems.Num());
 	return true;
 }
+
+// ============================================================
+// 디버그 콘솔 명령어 (Phase 2 Step 2-6) — 비출시 빌드 전용
+//
+// 사용법 (언리얼 콘솔 또는 PIE 콘솔):
+//   Helluna.SQLite.DebugSave    [PlayerId]
+//   Helluna.SQLite.DebugLoad    [PlayerId]
+//   Helluna.SQLite.DebugWipe    [PlayerId]
+//   Helluna.SQLite.DebugLoadout [PlayerId]
+// PlayerId 생략 시 "DebugPlayer" 사용
+// ============================================================
+#if !UE_BUILD_SHIPPING
+
+namespace
+{
+	// PIE/서버 World에서 UHellunaSQLiteSubsystem을 찾는 헬퍼
+	UHellunaSQLiteSubsystem* FindSQLiteSubsystem()
+	{
+		if (!GEngine)
+		{
+			return nullptr;
+		}
+		for (const FWorldContext& Ctx : GEngine->GetWorldContexts())
+		{
+			if (UWorld* W = Ctx.World())
+			{
+				if (UGameInstance* GI = W->GetGameInstance())
+				{
+					UHellunaSQLiteSubsystem* Sub = GI->GetSubsystem<UHellunaSQLiteSubsystem>();
+					if (Sub && Sub->IsDatabaseReady())
+					{
+						return Sub;
+					}
+				}
+			}
+		}
+		return nullptr;
+	}
+} // namespace
+
+// ── DebugSave ──────────────────────────────────────────────
+// 더미 아이템 2개를 player_stash에 저장 (SavePlayerStash 검증)
+static FAutoConsoleCommand CmdDebugSQLiteSave(
+	TEXT("Helluna.SQLite.DebugSave"),
+	TEXT("Usage: Helluna.SQLite.DebugSave [PlayerId]\n더미 아이템 2개를 player_stash에 저장하여 SavePlayerStash를 검증합니다."),
+	FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
+	{
+		const FString PlayerId = (Args.Num() > 0) ? Args[0] : TEXT("DebugPlayer");
+
+		UHellunaSQLiteSubsystem* Sub = FindSQLiteSubsystem();
+		if (!Sub)
+		{
+			UE_LOG(LogHelluna, Error, TEXT("[DebugSQLiteSave] Subsystem을 찾을 수 없음 — PIE 실행 중인지 확인"));
+			return;
+		}
+
+		TArray<FInv_SavedItemData> Items;
+
+		FInv_SavedItemData Item1;
+		// ItemType은 빈 태그 (DB INSERT 자체를 검증하는 것이 목적)
+		Item1.StackCount      = 5;
+		Item1.GridPosition    = FIntPoint(0, 0);
+		Item1.GridCategory    = 0;
+		Item1.bEquipped       = false;
+		Item1.WeaponSlotIndex = -1;
+		Items.Add(Item1);
+
+		FInv_SavedItemData Item2;
+		Item2.StackCount      = 10;
+		Item2.GridPosition    = FIntPoint(1, 0);
+		Item2.GridCategory    = 1;
+		Item2.bEquipped       = false;
+		Item2.WeaponSlotIndex = -1;
+		Items.Add(Item2);
+
+		const bool bOk = Sub->SavePlayerStash(PlayerId, Items);
+		UE_LOG(LogHelluna, Log, TEXT("[DebugSQLiteSave] PlayerId=%s | 결과=%s | 저장 %d개"),
+			*PlayerId, bOk ? TEXT("성공") : TEXT("실패"), Items.Num());
+	})
+);
+
+// ── DebugLoad ──────────────────────────────────────────────
+// player_stash에서 아이템 로드 후 로그 출력 (LoadPlayerStash 검증)
+static FAutoConsoleCommand CmdDebugSQLiteLoad(
+	TEXT("Helluna.SQLite.DebugLoad"),
+	TEXT("Usage: Helluna.SQLite.DebugLoad [PlayerId]\nplayer_stash에서 아이템을 로드하고 결과를 로그에 출력합니다."),
+	FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
+	{
+		const FString PlayerId = (Args.Num() > 0) ? Args[0] : TEXT("DebugPlayer");
+
+		UHellunaSQLiteSubsystem* Sub = FindSQLiteSubsystem();
+		if (!Sub)
+		{
+			UE_LOG(LogHelluna, Error, TEXT("[DebugSQLiteLoad] Subsystem을 찾을 수 없음"));
+			return;
+		}
+
+		const TArray<FInv_SavedItemData> Items = Sub->LoadPlayerStash(PlayerId);
+		UE_LOG(LogHelluna, Log, TEXT("[DebugSQLiteLoad] PlayerId=%s | 파싱된 아이템 %d개"), *PlayerId, Items.Num());
+		for (int32 i = 0; i < Items.Num(); ++i)
+		{
+			UE_LOG(LogHelluna, Log,
+				TEXT("  [%d] ItemType=%s | Stack=%d | Grid=(%d,%d) | Cat=%d | Equipped=%d | WeaponSlot=%d | Att=%d개"),
+				i,
+				*Items[i].ItemType.ToString(),
+				Items[i].StackCount,
+				Items[i].GridPosition.X, Items[i].GridPosition.Y,
+				Items[i].GridCategory,
+				Items[i].bEquipped ? 1 : 0,
+				Items[i].WeaponSlotIndex,
+				Items[i].Attachments.Num());
+		}
+	})
+);
+
+// ── DebugWipe ──────────────────────────────────────────────
+// PlayerId의 Stash와 Loadout 전체 삭제 (초기화용)
+static FAutoConsoleCommand CmdDebugSQLiteWipe(
+	TEXT("Helluna.SQLite.DebugWipe"),
+	TEXT("Usage: Helluna.SQLite.DebugWipe [PlayerId]\n해당 PlayerId의 Stash와 Loadout을 전부 삭제합니다."),
+	FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
+	{
+		const FString PlayerId = (Args.Num() > 0) ? Args[0] : TEXT("DebugPlayer");
+
+		UHellunaSQLiteSubsystem* Sub = FindSQLiteSubsystem();
+		if (!Sub)
+		{
+			UE_LOG(LogHelluna, Error, TEXT("[DebugSQLiteWipe] Subsystem을 찾을 수 없음"));
+			return;
+		}
+
+		// 빈 배열로 SavePlayerStash → 기존 Stash DELETE + INSERT 없음 = 전체 삭제
+		const bool bStashOk = Sub->SavePlayerStash(PlayerId, TArray<FInv_SavedItemData>());
+
+		// Loadout DELETE
+		const bool bLoadoutOk = Sub->DeletePlayerLoadout(PlayerId);
+
+		UE_LOG(LogHelluna, Log, TEXT("[DebugSQLiteWipe] PlayerId=%s | Stash=%s | Loadout=%s"),
+			*PlayerId,
+			bStashOk    ? TEXT("삭제완료") : TEXT("실패"),
+			bLoadoutOk  ? TEXT("삭제완료") : TEXT("없음/실패"));
+	})
+);
+
+// ── DebugLoadout ───────────────────────────────────────────
+// SavePlayerLoadout → HasPendingLoadout → RecoverFromCrash 순서 검증
+// 크래시 복구 전체 경로를 한 번에 테스트
+static FAutoConsoleCommand CmdDebugSQLiteLoadout(
+	TEXT("Helluna.SQLite.DebugLoadout"),
+	TEXT("Usage: Helluna.SQLite.DebugLoadout [PlayerId]\nSavePlayerLoadout → HasPendingLoadout → RecoverFromCrash 순서로 크래시 복구 경로를 검증합니다."),
+	FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
+	{
+		const FString PlayerId = (Args.Num() > 0) ? Args[0] : TEXT("DebugPlayer");
+
+		UHellunaSQLiteSubsystem* Sub = FindSQLiteSubsystem();
+		if (!Sub)
+		{
+			UE_LOG(LogHelluna, Error, TEXT("[DebugSQLiteLoadout] Subsystem을 찾을 수 없음"));
+			return;
+		}
+
+		UE_LOG(LogHelluna, Log, TEXT("[DebugSQLiteLoadout] ===== 테스트 시작 | PlayerId=%s ====="), *PlayerId);
+
+		// 1) Stash에 더미 아이템 저장
+		{
+			TArray<FInv_SavedItemData> StashItems;
+			FInv_SavedItemData StashItem;
+			StashItem.StackCount      = 3;
+			StashItem.GridPosition    = FIntPoint(0, 0);
+			StashItem.GridCategory    = 0;
+			StashItem.WeaponSlotIndex = -1;
+			StashItems.Add(StashItem);
+
+			const bool bOk = Sub->SavePlayerStash(PlayerId, StashItems);
+			UE_LOG(LogHelluna, Log, TEXT("[DebugSQLiteLoadout] 1) Stash 더미 저장=%s (%d개)"),
+				bOk ? TEXT("성공") : TEXT("실패"), StashItems.Num());
+		}
+
+		// 2) SavePlayerLoadout — Loadout INSERT + Stash DELETE (원자적)
+		{
+			TArray<FInv_SavedItemData> LoadoutItems;
+			FInv_SavedItemData LoadoutItem;
+			LoadoutItem.StackCount      = 2;
+			LoadoutItem.GridPosition    = FIntPoint(0, 0);
+			LoadoutItem.GridCategory    = 0;
+			LoadoutItem.WeaponSlotIndex = 0;
+			LoadoutItems.Add(LoadoutItem);
+
+			const bool bOk = Sub->SavePlayerLoadout(PlayerId, LoadoutItems);
+			UE_LOG(LogHelluna, Log, TEXT("[DebugSQLiteLoadout] 2) SavePlayerLoadout=%s"), bOk ? TEXT("성공") : TEXT("실패"));
+		}
+
+		// 3) HasPendingLoadout — true 여야 정상
+		{
+			const bool bPending = Sub->HasPendingLoadout(PlayerId);
+			UE_LOG(LogHelluna, Log, TEXT("[DebugSQLiteLoadout] 3) HasPendingLoadout=%s  ← true여야 정상"),
+				bPending ? TEXT("true") : TEXT("false"));
+		}
+
+		// 4) RecoverFromCrash — Loadout → Stash 복귀 + Loadout DELETE
+		{
+			const bool bOk = Sub->RecoverFromCrash(PlayerId);
+			UE_LOG(LogHelluna, Log, TEXT("[DebugSQLiteLoadout] 4) RecoverFromCrash=%s"), bOk ? TEXT("성공") : TEXT("실패"));
+		}
+
+		// 5) Loadout이 비워졌는지 확인 — false 여야 정상
+		{
+			const bool bPendingAfter = Sub->HasPendingLoadout(PlayerId);
+			UE_LOG(LogHelluna, Log, TEXT("[DebugSQLiteLoadout] 5) HasPendingLoadout(복구 후)=%s  ← false여야 정상"),
+				bPendingAfter ? TEXT("true") : TEXT("false"));
+		}
+
+		// 6) Stash 복원 아이템 수 확인
+		{
+			const TArray<FInv_SavedItemData> Restored = Sub->LoadPlayerStash(PlayerId);
+			UE_LOG(LogHelluna, Log, TEXT("[DebugSQLiteLoadout] 6) 복구된 Stash 아이템 %d개 (0 이상이면 정상)"), Restored.Num());
+		}
+
+		UE_LOG(LogHelluna, Log, TEXT("[DebugSQLiteLoadout] ===== 테스트 완료 ====="));
+	})
+);
+
+#endif // !UE_BUILD_SHIPPING
