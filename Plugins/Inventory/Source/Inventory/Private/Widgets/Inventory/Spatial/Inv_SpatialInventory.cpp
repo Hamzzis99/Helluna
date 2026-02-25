@@ -126,6 +126,68 @@ void UInv_SpatialInventory::RefreshEquippedSlotLayouts()
 #endif
 }
 
+// ════════════════════════════════════════════════════════════════
+// [Phase 4 Lobby] SetInventoryComponent — 외부 InvComp 수동 바인딩
+// ════════════════════════════════════════════════════════════════
+//
+// 📌 사용 시점: 로비에서 LoadoutComp를 SpatialInventory에 연결할 때
+// 📌 내부 동작:
+//   1) BoundInventoryComponent 캐시
+//   2) 3개 Grid에 SetInventoryComponent 전파
+//   3) EquippedGridSlots 수집 (아직 안 되었으면)
+//
+// 📌 인게임 영향: 없음 (인게임에서는 호출하지 않음)
+// TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 연결
+// ════════════════════════════════════════════════════════════════
+void UInv_SpatialInventory::SetInventoryComponent(UInv_InventoryComponent* InComp)
+{
+	UE_LOG(LogTemp, Log, TEXT("[SpatialInventory] SetInventoryComponent 호출 | InComp=%s"),
+		InComp ? *InComp->GetName() : TEXT("nullptr"));
+
+	// 캐시 저장
+	BoundInventoryComponent = InComp;
+
+	// 3개 Grid에 전파
+	if (Grid_Equippables)
+	{
+		Grid_Equippables->SetInventoryComponent(InComp);
+		UE_LOG(LogTemp, Log, TEXT("[SpatialInventory]   → Grid_Equippables 바인딩 완료"));
+	}
+	if (Grid_Consumables)
+	{
+		Grid_Consumables->SetInventoryComponent(InComp);
+		UE_LOG(LogTemp, Log, TEXT("[SpatialInventory]   → Grid_Consumables 바인딩 완료"));
+	}
+	if (Grid_Craftables)
+	{
+		Grid_Craftables->SetInventoryComponent(InComp);
+		UE_LOG(LogTemp, Log, TEXT("[SpatialInventory]   → Grid_Craftables 바인딩 완료"));
+	}
+
+	// EquippedGridSlots가 아직 수집 안 되었으면 수집
+	CollectEquippedGridSlots();
+
+	UE_LOG(LogTemp, Log, TEXT("[SpatialInventory] SetInventoryComponent 완료"));
+}
+
+// ════════════════════════════════════════════════════════════════
+// [Phase 4 Lobby] GetBoundInventoryComponent — 캐시 우선 반환
+// ════════════════════════════════════════════════════════════════
+//
+// BoundInventoryComponent가 유효하면 반환 (로비 모드)
+// 비어있으면 기존 자동 탐색(UInv_InventoryStatics::GetInventoryComponent) 폴백
+// → 인게임에서는 항상 폴백 경로 사용 (BoundInventoryComponent가 비어있으므로)
+// ════════════════════════════════════════════════════════════════
+UInv_InventoryComponent* UInv_SpatialInventory::GetBoundInventoryComponent() const
+{
+	if (BoundInventoryComponent.IsValid())
+	{
+		return BoundInventoryComponent.Get();
+	}
+	// 폴백: 기존 자동 탐색
+	return UInv_InventoryStatics::GetInventoryComponent(GetOwningPlayer());
+}
+
 // 장착된 그리드 슬롯이 클릭되었을 때 호출되는 함수
 void UInv_SpatialInventory::EquippedGridSlotClicked(UInv_EquippedGridSlot* EquippedGridSlot, const FGameplayTag& EquipmentTypeTag) // 콜백함수 
 {
@@ -137,8 +199,9 @@ void UInv_SpatialInventory::EquippedGridSlotClicked(UInv_EquippedGridSlot* Equip
 	
 	// Create an Equipped Slotted Item and add it to the Equipped Grid Slot (call EquippedGridSlot->OnItemEquipped())
 	// 장착된 슬롯 아이템을 만들고 장착된 그리드 슬롯에 (EquippedGridSlot->OnItemEquipped()) 추가
-	const float TileSize = UInv_InventoryStatics::GetInventoryWidget(GetOwningPlayer())->GetTileSize();
-	
+	// [Phase 4 Lobby] GetTileSize() 사용 (GetInventoryWidget 대신 — 로비에서도 안전)
+	const float TileSize = GetTileSize();
+
 	// 장착시킨 그리드 슬롯에 실제 아이템 장착
 	UInv_EquippedSlottedItem* EquippedSlottedItem = EquippedGridSlot->OnItemEquipped(
 		HoverItem->GetInventoryItem(),
@@ -146,10 +209,11 @@ void UInv_SpatialInventory::EquippedGridSlotClicked(UInv_EquippedGridSlot* Equip
 		TileSize
 	);
 	EquippedSlottedItem->OnEquippedSlottedItemClicked.AddDynamic(this, &ThisClass::EquippedSlottedItemClicked);
-	
+
 	// Inform the server that we've equipped an item (potentially unequipping an item as well)
 	// 아이템을 장착했음을 서버에 알리기(잠재적으로 아이템을 해제하기도 함)
-	UInv_InventoryComponent* InventoryComponent = UInv_InventoryStatics::GetInventoryComponent(GetOwningPlayer());
+	// [Phase 4 Lobby] GetBoundInventoryComponent() 사용 (캐시 우선, 폴백 자동탐색)
+	UInv_InventoryComponent* InventoryComponent = GetBoundInventoryComponent();
 	check(IsValid(InventoryComponent)); 
 	
 	// ⭐ [WeaponBridge] 무기 슬롯 인덱스 전달
@@ -329,10 +393,11 @@ void UInv_SpatialInventory::MakeEquippedSlottedItem(UInv_EquippedSlottedItem* Eq
 {
 	if (!IsValid(EquippedGridSlot)) return;
 	
+	// [Phase 4 Lobby] GetTileSize() 사용 (GetInventoryWidget 대신 — 로비에서도 안전)
 	UInv_EquippedSlottedItem* SlottedItem = EquippedGridSlot->OnItemEquipped(
-		ItemToEquip, 
-		EquippedSlottedItem->GetEquipmentTypeTag(), 
-		UInv_InventoryStatics::GetInventoryWidget(GetOwningPlayer())->GetTileSize());
+		ItemToEquip,
+		EquippedSlottedItem->GetEquipmentTypeTag(),
+		GetTileSize());
 	if (IsValid(SlottedItem))SlottedItem->OnEquippedSlottedItemClicked.AddDynamic(this, &ThisClass::EquippedSlottedItemClicked);
 	
 	//새로 아이템을 장착할 바인딩 되길 바람
@@ -396,7 +461,8 @@ UInv_EquippedSlottedItem* UInv_SpatialInventory::RestoreEquippedItem(UInv_Equipp
 
 void UInv_SpatialInventory::BroadcastSlotClickedDelegates(UInv_InventoryItem* ItemToEquip, UInv_InventoryItem* ItemToUnequip, int32 WeaponSlotIndex) const
 {
-	UInv_InventoryComponent* InventoryComponent = UInv_InventoryStatics::GetInventoryComponent(GetOwningPlayer());
+	// [Phase 4 Lobby] GetBoundInventoryComponent() 사용 (캐시 우선, 폴백 자동탐색)
+	UInv_InventoryComponent* InventoryComponent = GetBoundInventoryComponent();
 	check(IsValid(InventoryComponent));
 	InventoryComponent->Server_EquipSlotClicked(ItemToEquip, ItemToUnequip, WeaponSlotIndex);
 	

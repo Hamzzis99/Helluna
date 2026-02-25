@@ -7,12 +7,13 @@
 // ============================================================================
 //
 // 📌 레이아웃:
-//   ┌─── StashPanel (좌) ─────┐  ┌─── LoadoutPanel (우) ───┐
-//   │ [장비][소모품][재료]     │  │ [장비][소모품][재료]     │
-//   │ ┌─────────────────────┐ │  │ ┌─────────────────────┐ │
-//   │ │     Grid (탭별)     │ │  │ │     Grid (탭별)     │ │
-//   │ └─────────────────────┘ │  │ └─────────────────────┘ │
-//   └─────────────────────────┘  └─────────────────────────┘
+//   ┌─── StashPanel (좌) ─────┐  ┌── LoadoutSpatialInventory (우) ──┐
+//   │ [장비][소모품][재료]     │  │  [장착슬롯: 무기/방어구/...]     │
+//   │ ┌─────────────────────┐ │  │  ┌──────────────────────────┐    │
+//   │ │     Grid (탭별)     │ │  │  │ [장비][소모품][재료]      │    │
+//   │ └─────────────────────┘ │  │  │   Grid (탭별) + 장착슬롯  │    │
+//   └─────────────────────────┘  │  └──────────────────────────┘    │
+//                                └──────────────────────────────────┘
 //                      [ 출격 버튼 ]
 //
 // 📌 역할:
@@ -22,7 +23,8 @@
 //
 // 📌 BP 위젯 생성 시 주의사항 (WBP_HellunaLobbyStashWidget):
 //   1. StashPanel → UHellunaLobbyPanel 위젯 (WBP_HellunaLobbyPanel 인스턴스)
-//   2. LoadoutPanel → UHellunaLobbyPanel 위젯 (같은 BP, 다른 인스턴스)
+//   2. LoadoutSpatialInventory → UInv_SpatialInventory 위젯 (WBP_Inv_SpatialInventory 인스턴스)
+//      → 내부 Grid 3개의 bSkipAutoInit = true 설정 필수!
 //   3. Button_Deploy → Button 위젯
 //   4. 세 위젯 모두 BindWidget 이름이 정확히 일치해야 함!
 //
@@ -37,6 +39,7 @@
 
 #include "Lobby/Widget/HellunaLobbyStashWidget.h"
 #include "Lobby/Widget/HellunaLobbyPanel.h"
+#include "Widgets/Inventory/Spatial/Inv_SpatialInventory.h"
 #include "Lobby/Controller/HellunaLobbyController.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
 #include "Components/Button.h"
@@ -63,7 +66,7 @@ void UHellunaLobbyStashWidget::NativeOnInitialized()
 
 	// ── BindWidget 상태 진단 ──
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   StashPanel=%s"), StashPanel ? TEXT("바인딩됨") : TEXT("⚠ nullptr (BindWidget 확인!)"));
-	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   LoadoutPanel=%s"), LoadoutPanel ? TEXT("바인딩됨") : TEXT("⚠ nullptr (BindWidget 확인!)"));
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   LoadoutSpatialInventory=%s"), LoadoutSpatialInventory ? TEXT("바인딩됨") : TEXT("⚠ nullptr (BindWidget 확인!)"));
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   Button_Deploy=%s"), Button_Deploy ? TEXT("바인딩됨") : TEXT("⚠ nullptr (BindWidget 확인!)"));
 
 	// ── 출격 버튼 OnClicked 이벤트 바인딩 ──
@@ -93,7 +96,8 @@ void UHellunaLobbyStashWidget::NativeOnInitialized()
 //   2) StashPanel.SetPanelTitle("STASH (창고)")
 //   3) StashPanel.InitializeWithComponent(StashComp)
 //      → 내부에서 3개 Grid에 SetInventoryComponent(StashComp) 호출
-//   4) LoadoutPanel도 동일하게 LoadoutComp와 바인딩
+//   4) LoadoutSpatialInventory → SetInventoryComponent(LoadoutComp)
+//      → 인게임과 동일한 SpatialInventory UI에 LoadoutComp 바인딩
 //
 // 📌 이 함수 호출 후:
 //   - StashComp에 아이템이 있으면 좌측 Grid에 자동 표시됨
@@ -127,18 +131,20 @@ void UHellunaLobbyStashWidget::InitializePanels(UInv_InventoryComponent* StashCo
 			StashComp ? TEXT("O") : TEXT("X (LobbyController 생성자 확인)"));
 	}
 
-	// ── Loadout Panel 초기화 (우측: 출격장비) ──
-	if (LoadoutPanel && LoadoutComp)
+	// ── Loadout SpatialInventory 초기화 (우측: 출격장비 — 인게임과 동일 UI) ──
+	// [Phase 4 Lobby] LoadoutPanel(HellunaLobbyPanel) → LoadoutSpatialInventory(Inv_SpatialInventory)로 교체
+	// → 장착 슬롯 + 3탭 Grid를 인게임과 동일하게 사용
+	// TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 SharedHoverItem 연결
+	if (LoadoutSpatialInventory && LoadoutComp)
 	{
-		LoadoutPanel->SetPanelTitle(FText::FromString(TEXT("LOADOUT (출격장비)")));
-		LoadoutPanel->InitializeWithComponent(LoadoutComp);
-		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] LoadoutPanel ← LoadoutComp 바인딩 완료"));
+		LoadoutSpatialInventory->SetInventoryComponent(LoadoutComp);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] LoadoutSpatialInventory ← LoadoutComp 바인딩 완료"));
 	}
 	else
 	{
 		UE_LOG(LogHellunaLobby, Warning, TEXT("[StashWidget] Loadout 측 초기화 실패!"));
-		UE_LOG(LogHellunaLobby, Warning, TEXT("[StashWidget]   LoadoutPanel=%s | LoadoutComp=%s"),
-			LoadoutPanel ? TEXT("O") : TEXT("X (WBP에서 BindWidget 확인)"),
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[StashWidget]   LoadoutSpatialInventory=%s | LoadoutComp=%s"),
+			LoadoutSpatialInventory ? TEXT("O") : TEXT("X (WBP에서 BindWidget 'LoadoutSpatialInventory' 확인)"),
 			LoadoutComp ? TEXT("O") : TEXT("X (LobbyController 생성자 확인)"));
 	}
 

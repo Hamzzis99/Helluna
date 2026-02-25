@@ -14,6 +14,7 @@ class UButton;
 class UCanvasPanel;
 class UInv_HoverItem;
 class UInv_EquippedGridSlot;
+class UInv_InventoryComponent;
 
 // UI 연동 부분들
 
@@ -58,7 +59,22 @@ public:
 
 	// 🆕 [Phase 8] 인벤토리 열릴 때 장착 슬롯 레이아웃 갱신
 	void RefreshEquippedSlotLayouts();
-	
+
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [Phase 4 Lobby] 외부 InvComp 수동 바인딩
+	// ════════════════════════════════════════════════════════════════
+	//
+	// 로비에서 LoadoutComp를 수동 지정할 때 사용.
+	// 호출 시 내부 3개 Grid에도 SetInventoryComponent를 전파한다.
+	// 인게임에서는 호출하지 않으므로 기존 동작에 영향 없음.
+	//
+	// TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 연결
+	// ════════════════════════════════════════════════════════════════
+
+	UFUNCTION(BlueprintCallable, Category = "인벤토리|로비",
+		meta = (DisplayName = "인벤토리 컴포넌트 수동 설정 (SpatialInventory)"))
+	void SetInventoryComponent(UInv_InventoryComponent* InComp);
+
 private: 
 	// 여기 있는 UPROPERTY와 위젯과의 이름이 동일해야만함.
 	
@@ -147,4 +163,14 @@ private:
 	void BroadcastSlotClickedDelegates(UInv_InventoryItem* ItemToEquip, UInv_InventoryItem* ItemToUnequip, int32 WeaponSlotIndex = -1) const; // 슬롯 클릭 델리게이트 방송
 	
 	TWeakObjectPtr<UInv_InventoryGrid> ActiveGrid; // 활성 그리드가 생기면 늘 활성해주는 포인터.
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 4 Lobby] 수동 바인딩된 InvComp 캐시
+	// ════════════════════════════════════════════════════════════════
+	// 로비에서 LoadoutComp를 지정할 때 사용.
+	// 비어있으면 기존 자동 탐색(UInv_InventoryStatics::GetInventoryComponent) 사용.
+	TWeakObjectPtr<UInv_InventoryComponent> BoundInventoryComponent;
+
+	// 캐시된 InvComp 우선 반환 (없으면 자동 탐색 폴백)
+	UInv_InventoryComponent* GetBoundInventoryComponent() const;
 };
