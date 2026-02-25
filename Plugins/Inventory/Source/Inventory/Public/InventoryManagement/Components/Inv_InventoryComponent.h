@@ -185,6 +185,21 @@ public:
 	// ⭐ [Phase 4 개선] 서버에서 직접 인벤토리 데이터 수집 (Logout 시 저장용)
 	// RPC 없이 서버의 FastArray에서 직접 읽어서 반환
 	TArray<FInv_SavedItemData> CollectInventoryDataForSave() const;
+
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [Phase 4 Lobby] 크로스 컴포넌트 전송 (로비 Stash↔Loadout용)
+	// ════════════════════════════════════════════════════════════════
+	/**
+	 * 이 InvComp에서 아이템을 제거하고 대상 InvComp에 추가
+	 * FastArray 내부 접근이 필요하므로 INVENTORY_API가 붙은 이 클래스에서 수행
+	 *
+	 * @param ItemIndex   이 InvComp의 아이템 인덱스 (GetAllItems 기준)
+	 * @param TargetComp  아이템을 받을 대상 InvComp
+	 * @return 전송 성공 여부
+	 *
+	 * TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 연결
+	 */
+	bool TransferItemTo(int32 ItemIndex, UInv_InventoryComponent* TargetComp);
 	
 	// 서버 브로드캐스트 함수들.
 	FInventoryItemChange OnItemAdded;

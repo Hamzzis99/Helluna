@@ -3132,3 +3132,73 @@ TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave(
 
 	return Result;
 }
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 📌 [Phase 4 Lobby] TransferItemTo — 크로스 컴포넌트 아이템 전송
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 이 InvComp에서 아이템을 꺼내 TargetComp에 넣는다.
+// FastArray의 private 멤버(Entries, Item)에 접근해야 하므로
+// friend인 이 클래스에서 처리한다. (Helluna 모듈에서 직접 접근 불가)
+//
+// TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 연결
+// ════════════════════════════════════════════════════════════════════════════════
+bool UInv_InventoryComponent::TransferItemTo(int32 ItemIndex, UInv_InventoryComponent* TargetComp)
+{
+	if (!TargetComp || !GetOwner() || !GetOwner()->HasAuthority())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[InvComp] TransferItemTo: 조건 미충족 (TargetComp=%s, Authority=%s)"),
+			TargetComp ? TEXT("O") : TEXT("X"),
+			(GetOwner() && GetOwner()->HasAuthority()) ? TEXT("Y") : TEXT("N"));
+		return false;
+	}
+
+	// ── 1) 유효한 아이템 목록 구축 (invalid 항목 제외) ──
+	TArray<UInv_InventoryItem*> ValidItems;
+	for (const FInv_InventoryEntry& Entry : InventoryList.Entries)
+	{
+		if (IsValid(Entry.Item) && !Entry.bIsAttachedToWeapon)
+		{
+			ValidItems.Add(Entry.Item);
+		}
+	}
+
+	if (!ValidItems.IsValidIndex(ItemIndex))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[InvComp] TransferItemTo: 잘못된 ItemIndex=%d (유효 아이템 %d개)"),
+			ItemIndex, ValidItems.Num());
+		return false;
+	}
+
+	UInv_InventoryItem* Item = ValidItems[ItemIndex];
+	if (!IsValid(Item))
+	{
+		return false;
+	}
+
+	// ── 2) 아이템 정보 추출 ──
+	const FInv_ItemManifest& SourceManifest = Item->GetItemManifest();
+	const int32 StackCount = Item->GetTotalStackCount();
+	const FGameplayTag ItemType = SourceManifest.GetItemType();
+
+	UE_LOG(LogTemp, Log, TEXT("[InvComp] TransferItemTo: %s x%d → %s"),
+		*ItemType.ToString(), StackCount, *TargetComp->GetName());
+
+	// ── 3) Manifest 복사 ──
+	FInv_ItemManifest ManifestCopy = SourceManifest;
+
+	// ── 4) Target에 추가 ──
+	UInv_InventoryItem* NewItem = TargetComp->AddItemFromManifest(ManifestCopy, StackCount);
+	if (!NewItem)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[InvComp] TransferItemTo: Target 추가 실패 (공간 부족?) | %s"),
+			*ItemType.ToString());
+		return false;
+	}
+
+	// ── 5) Source에서 제거 ──
+	InventoryList.RemoveEntry(Item);
+
+	UE_LOG(LogTemp, Log, TEXT("[InvComp] TransferItemTo 완료: %s x%d"), *ItemType.ToString(), StackCount);
+	return true;
+}

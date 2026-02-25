@@ -1503,10 +1503,11 @@ static FAutoConsoleCommand CmdDebugSQLiteSave(
 			return;
 		}
 
-		// 더미 아이템 2개 생성
+		// 더미 아이템 2개 생성 (실제 GameplayTag 사용 — IsValid() 통과 필수!)
 		TArray<FInv_SavedItemData> Items;
 
 		FInv_SavedItemData Item1;
+		Item1.ItemType        = FGameplayTag::RequestGameplayTag(FName(TEXT("GameItems.Equipment.Weapons.Axe")), false);
 		Item1.StackCount      = 5;               // 5개 스택
 		Item1.GridPosition    = FIntPoint(0, 0);  // 그리드 (0,0) 위치
 		Item1.GridCategory    = 0;                // 장비 카테고리
@@ -1515,6 +1516,7 @@ static FAutoConsoleCommand CmdDebugSQLiteSave(
 		Items.Add(Item1);
 
 		FInv_SavedItemData Item2;
+		Item2.ItemType        = FGameplayTag::RequestGameplayTag(FName(TEXT("GameItems.Consumables.Potions.Blue.Small")), false);
 		Item2.StackCount      = 10;
 		Item2.GridPosition    = FIntPoint(1, 0);
 		Item2.GridCategory    = 1;                // 소모품 카테고리
@@ -1647,6 +1649,7 @@ static FAutoConsoleCommand CmdDebugSQLiteLoadout(
 		{
 			TArray<FInv_SavedItemData> StashItems;
 			FInv_SavedItemData StashItem;
+			StashItem.ItemType        = FGameplayTag::RequestGameplayTag(FName(TEXT("GameItems.Equipment.Weapons.Axe")), false);
 			StashItem.StackCount      = 3;
 			StashItem.GridPosition    = FIntPoint(0, 0);
 			StashItem.GridCategory    = 0;
@@ -1662,6 +1665,7 @@ static FAutoConsoleCommand CmdDebugSQLiteLoadout(
 		{
 			TArray<FInv_SavedItemData> LoadoutItems;
 			FInv_SavedItemData LoadoutItem;
+			LoadoutItem.ItemType        = FGameplayTag::RequestGameplayTag(FName(TEXT("GameItems.Consumables.Potions.Red.Small")), false);
 			LoadoutItem.StackCount      = 2;
 			LoadoutItem.GridPosition    = FIntPoint(0, 0);
 			LoadoutItem.GridCategory    = 0;

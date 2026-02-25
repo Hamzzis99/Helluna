@@ -59,6 +59,41 @@ public:
 
 	EInv_ItemCategory GetItemCategory() const { return ItemCategory; }
 
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [Phase 4 Lobby] 외부 InvComp 수동 바인딩 (로비 듀얼 Grid용)
+	// ════════════════════════════════════════════════════════════════
+	//
+	// 로비에서는 플레이어에 StashComp + LoadoutComp 2개가 붙어있으므로
+	// 기존 자동 바인딩(GetInventoryComponent)은 첫 번째 것만 잡음.
+	// → 이 함수로 원하는 InvComp를 수동 지정한 뒤 Grid 델리게이트를 바인딩.
+	//
+	// 사용법:
+	//   Grid->SetSkipAutoInit(true);  // BP WBP 디자이너에서 체크, 또는 C++에서 호출
+	//   Grid->SetInventoryComponent(StashComp);  // NativeOnInitialized 이후 호출
+	//
+	// 기존 인게임 Grid는 영향 없음 (bSkipAutoInit 기본값 false)
+	// TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 연결
+	// ════════════════════════════════════════════════════════════════
+
+	/**
+	 * 외부에서 InvComp를 수동 지정 + 델리게이트 바인딩
+	 * NativeOnInitialized에서 자동 바인딩을 건너뛰고 (bSkipAutoInit=true)
+	 * 이 함수로 원하는 InventoryComponent에 연결한다.
+	 *
+	 * @param InComp  바인딩할 InventoryComponent
+	 */
+	UFUNCTION(BlueprintCallable, Category = "인벤토리|로비",
+		meta = (DisplayName = "인벤토리 컴포넌트 수동 설정"))
+	void SetInventoryComponent(UInv_InventoryComponent* InComp);
+
+	/** NativeOnInitialized에서 자동 바인딩을 건너뛸지 여부 */
+	UFUNCTION(BlueprintCallable, Category = "인벤토리|로비",
+		meta = (DisplayName = "자동 초기화 스킵 설정"))
+	void SetSkipAutoInit(bool bSkip) { bSkipAutoInit = bSkip; }
+
+	/** 현재 바인딩된 InventoryComponent 반환 */
+	UInv_InventoryComponent* GetInventoryComponent() const { return InventoryComponent.Get(); }
+
 	void ShowCursor();
 	void HideCursor();
 	void SetOwningCanvas(UCanvasPanel* OwningCanvas); // 장비 튤팁 캔버스 설정 부분
@@ -163,6 +198,12 @@ public:
 private:
 	// ⭐ 로드 중 RPC 억제 플래그
 	bool bSuppressServerSync = false;
+
+	// ⭐ [Phase 4 Lobby] true이면 NativeOnInitialized에서 자동 바인딩 스킵
+	// 로비 듀얼 Grid에서 SetInventoryComponent()로 수동 바인딩할 때 사용
+	UPROPERTY(EditAnywhere, Category = "인벤토리|로비",
+		meta = (DisplayName = "자동 초기화 스킵", Tooltip = "true이면 NativeOnInitialized에서 InventoryComponent 자동 바인딩을 건너뜁니다. 로비 Grid에서 수동 바인딩할 때 사용합니다."))
+	bool bSkipAutoInit = false;
 
 	TWeakObjectPtr<UInv_InventoryComponent> InventoryComponent;
 	TWeakObjectPtr<UCanvasPanel> OwningCanvasPanel;

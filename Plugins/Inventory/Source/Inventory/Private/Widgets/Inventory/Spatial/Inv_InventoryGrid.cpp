@@ -28,12 +28,55 @@ void UInv_InventoryGrid::NativeOnInitialized()
 
 	ConstructGrid();
 
+	// ⭐ [Phase 4 Lobby] bSkipAutoInit=true이면 자동 바인딩 스킵
+	// 로비 듀얼 Grid에서는 SetInventoryComponent()로 수동 바인딩
+	if (bSkipAutoInit)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] bSkipAutoInit=true → 자동 바인딩 스킵 (수동 SetInventoryComponent 대기)"));
+		return;
+	}
+
 	InventoryComponent = UInv_InventoryStatics::GetInventoryComponent(GetOwningPlayer()); // 플레이어의 인벤토리 컴포넌트를 가져온다.
-	InventoryComponent->OnItemAdded.AddDynamic(this, &ThisClass::AddItem); // 델리게이트 바인딩 
+	InventoryComponent->OnItemAdded.AddDynamic(this, &ThisClass::AddItem); // 델리게이트 바인딩
 	InventoryComponent->OnStackChange.AddDynamic(this, &ThisClass::AddStacks); // 스택 변경 델리게이트 바인딩
 	InventoryComponent->OnInventoryMenuToggled.AddDynamic(this, &ThisClass::OnInventoryMenuToggled);
 	InventoryComponent->OnItemRemoved.AddDynamic(this, &ThisClass::RemoveItem); // 아이템 제거 델리게이트 바인딩
 	InventoryComponent->OnMaterialStacksChanged.AddDynamic(this, &ThisClass::UpdateMaterialStacksByTag); // Building 재료 업데이트 바인딩
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📌 [Phase 4 Lobby] 외부 InvComp 수동 바인딩
+// ════════════════════════════════════════════════════════════════
+void UInv_InventoryGrid::SetInventoryComponent(UInv_InventoryComponent* InComp)
+{
+	if (!InComp)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[InventoryGrid] SetInventoryComponent: InComp is nullptr!"));
+		return;
+	}
+
+	// 이전 바인딩이 있다면 해제
+	if (InventoryComponent.IsValid())
+	{
+		InventoryComponent->OnItemAdded.RemoveDynamic(this, &ThisClass::AddItem);
+		InventoryComponent->OnStackChange.RemoveDynamic(this, &ThisClass::AddStacks);
+		InventoryComponent->OnInventoryMenuToggled.RemoveDynamic(this, &ThisClass::OnInventoryMenuToggled);
+		InventoryComponent->OnItemRemoved.RemoveDynamic(this, &ThisClass::RemoveItem);
+		InventoryComponent->OnMaterialStacksChanged.RemoveDynamic(this, &ThisClass::UpdateMaterialStacksByTag);
+		UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] 이전 InvComp 바인딩 해제 완료"));
+	}
+
+	// 새 컴포넌트 바인딩
+	InventoryComponent = InComp;
+	InventoryComponent->OnItemAdded.AddDynamic(this, &ThisClass::AddItem);
+	InventoryComponent->OnStackChange.AddDynamic(this, &ThisClass::AddStacks);
+	InventoryComponent->OnInventoryMenuToggled.AddDynamic(this, &ThisClass::OnInventoryMenuToggled);
+	InventoryComponent->OnItemRemoved.AddDynamic(this, &ThisClass::RemoveItem);
+	InventoryComponent->OnMaterialStacksChanged.AddDynamic(this, &ThisClass::UpdateMaterialStacksByTag);
+
+	UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] SetInventoryComponent 완료 → InvComp=%s, Category=%d"),
+		*InComp->GetName(), (int32)ItemCategory);
+	// TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 연결
 }
 
 // 매 프레임마다 호출되는 틱 함수 (마우스 Hover에 사용)
