@@ -242,7 +242,7 @@ void AInv_WeaponPreviewActor::SetPreviewMesh(UStaticMesh* InMesh, const FRotator
 	// RenderTarget 준비 (bCaptureEveryFrame=true이므로 수동 캡처 불필요)
 	EnsureRenderTarget();
 
-	// ★ 패키징 빌드 디버깅 로그 (항상 출력)
+#if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Warning, TEXT("========== [WeaponPreview Debug] =========="));
 	UE_LOG(LogTemp, Warning, TEXT("  Mesh: %s"), PreviewMeshComponent->GetStaticMesh() ? *PreviewMeshComponent->GetStaticMesh()->GetName() : TEXT("NULL"));
 	UE_LOG(LogTemp, Warning, TEXT("  Mesh Visible: %s"), PreviewMeshComponent->IsVisible() ? TEXT("YES") : TEXT("NO"));
@@ -296,8 +296,6 @@ void AInv_WeaponPreviewActor::SetPreviewMesh(UStaticMesh* InMesh, const FRotator
 
 	UE_LOG(LogTemp, Warning, TEXT("  Actor Location: %s"), *GetActorLocation().ToString());
 	UE_LOG(LogTemp, Warning, TEXT("=========================================="));
-
-#if INV_DEBUG_ATTACHMENT
 	UE_LOG(LogTemp, Log, TEXT("[Weapon Preview] 메시 설정 완료: %s, ArmLength=%.1f, Rotation=%s"),
 		*InMesh->GetName(),
 		IsValid(CameraBoom) ? CameraBoom->TargetArmLength : -1.f,
