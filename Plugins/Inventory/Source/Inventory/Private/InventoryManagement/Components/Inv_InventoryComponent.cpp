@@ -3137,23 +3137,52 @@ TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave(
 // 📌 [Phase 4 Lobby] TransferItemTo — 크로스 컴포넌트 아이템 전송
 // ════════════════════════════════════════════════════════════════════════════════
 //
-// 이 InvComp에서 아이템을 꺼내 TargetComp에 넣는다.
-// FastArray의 private 멤버(Entries, Item)에 접근해야 하므로
-// friend인 이 클래스에서 처리한다. (Helluna 모듈에서 직접 접근 불가)
+// 📌 역할:
+//   이 InvComp(Source)에서 아이템을 꺼내 TargetComp에 넣는다.
+//   로비에서 Stash↔Loadout 간 아이템 이동에 사용.
+//
+// 📌 왜 이 함수가 플러그인(Inventory 모듈) 안에 있는가?
+//   FInv_InventoryFastArray는 USTRUCT이며 INVENTORY_API 매크로가 없음
+//   → InventoryList.Entries, Entry.Item 등 private 멤버에 외부 모듈(Helluna)에서 접근 불가
+//   → LNK2019 unresolved external 에러 발생
+//   → 해결: UInv_InventoryComponent는 INVENTORY_API UCLASS이므로 DLL export됨
+//     + InventoryList의 friend 접근 가능
+//     → 이 함수에서 FastArray 조작을 수행
+//
+// 📌 처리 순서:
+//   1) Authority 체크 (서버에서만 FastArray 수정 가능)
+//   2) InventoryList.Entries를 순회하여 유효한 아이템 목록 구축
+//      - IsValid(Entry.Item) && !Entry.bIsAttachedToWeapon
+//      - bIsAttachedToWeapon: 무기에 부착된 부착물은 전송 대상에서 제외
+//   3) ItemIndex번째 유효 아이템의 Manifest + StackCount 추출
+//   4) Manifest를 복사하여 TargetComp->AddItemFromManifest()로 대상에 추가
+//      - 새 UInv_InventoryItem이 생성되고 FastArray에 추가됨
+//      - 실패 시(공간 부족 등) nullptr 반환 → 전송 중단 (원본 유지)
+//   5) Source의 InventoryList.RemoveEntry()로 원본 제거
+//      - FastArray MarkItemDirty → 리플리케이션 트리거
+//
+// 📌 리플리케이션:
+//   AddItemFromManifest + RemoveEntry가 각각 FastArray를 Dirty 마킹
+//   → 다음 리플리케이션 프레임에 클라이언트에 자동 동기화
+//   → 클라이언트의 Grid가 OnItemAdded/OnItemRemoved 델리게이트로 UI 자동 업데이트
 //
 // TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 연결
 // ════════════════════════════════════════════════════════════════════════════════
 bool UInv_InventoryComponent::TransferItemTo(int32 ItemIndex, UInv_InventoryComponent* TargetComp)
 {
+	// ── Authority 체크 (서버 전용) ──
 	if (!TargetComp || !GetOwner() || !GetOwner()->HasAuthority())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[InvComp] TransferItemTo: 조건 미충족 (TargetComp=%s, Authority=%s)"),
+		UE_LOG(LogTemp, Warning, TEXT("[InvComp] TransferItemTo: 조건 미충족!"));
+		UE_LOG(LogTemp, Warning, TEXT("[InvComp]   TargetComp=%s | Owner=%s | HasAuthority=%s"),
 			TargetComp ? TEXT("O") : TEXT("X"),
-			(GetOwner() && GetOwner()->HasAuthority()) ? TEXT("Y") : TEXT("N"));
+			GetOwner() ? *GetOwner()->GetName() : TEXT("nullptr"),
+			(GetOwner() && GetOwner()->HasAuthority()) ? TEXT("Y") : TEXT("N (클라에서 직접 호출 불가!)"));
 		return false;
 	}
 
-	// ── 1) 유효한 아이템 목록 구축 (invalid 항목 제외) ──
+	// ── 1) 유효한 아이템 목록 구축 ──
+	// Entries에서 무효(IsValid 실패) + 부착물(bIsAttachedToWeapon) 제외
 	TArray<UInv_InventoryItem*> ValidItems;
 	for (const FInv_InventoryEntry& Entry : InventoryList.Entries)
 	{
@@ -3163,42 +3192,49 @@ bool UInv_InventoryComponent::TransferItemTo(int32 ItemIndex, UInv_InventoryComp
 		}
 	}
 
+	UE_LOG(LogTemp, Log, TEXT("[InvComp] TransferItemTo: 유효 아이템 %d개 (전체 Entry %d개) | 요청 Index=%d"),
+		ValidItems.Num(), InventoryList.Entries.Num(), ItemIndex);
+
+	// ── 2) 인덱스 검증 ──
 	if (!ValidItems.IsValidIndex(ItemIndex))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[InvComp] TransferItemTo: 잘못된 ItemIndex=%d (유효 아이템 %d개)"),
-			ItemIndex, ValidItems.Num());
+		UE_LOG(LogTemp, Warning, TEXT("[InvComp] TransferItemTo: 잘못된 ItemIndex=%d (유효 범위: 0~%d)"),
+			ItemIndex, ValidItems.Num() - 1);
 		return false;
 	}
 
 	UInv_InventoryItem* Item = ValidItems[ItemIndex];
 	if (!IsValid(Item))
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[InvComp] TransferItemTo: Item이 IsValid 실패!"));
 		return false;
 	}
 
-	// ── 2) 아이템 정보 추출 ──
+	// ── 3) 아이템 정보 추출 ──
 	const FInv_ItemManifest& SourceManifest = Item->GetItemManifest();
 	const int32 StackCount = Item->GetTotalStackCount();
 	const FGameplayTag ItemType = SourceManifest.GetItemType();
 
-	UE_LOG(LogTemp, Log, TEXT("[InvComp] TransferItemTo: %s x%d → %s"),
-		*ItemType.ToString(), StackCount, *TargetComp->GetName());
+	UE_LOG(LogTemp, Log, TEXT("[InvComp] TransferItemTo: %s x%d | Source=%s → Target=%s"),
+		*ItemType.ToString(), StackCount, *GetName(), *TargetComp->GetName());
 
-	// ── 3) Manifest 복사 ──
+	// ── 4) Manifest 복사 → Target에 추가 ──
+	// AddItemFromManifest: 새 UInv_InventoryItem 생성 → FastArray 추가 → MarkDirty
 	FInv_ItemManifest ManifestCopy = SourceManifest;
-
-	// ── 4) Target에 추가 ──
 	UInv_InventoryItem* NewItem = TargetComp->AddItemFromManifest(ManifestCopy, StackCount);
 	if (!NewItem)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[InvComp] TransferItemTo: Target 추가 실패 (공간 부족?) | %s"),
-			*ItemType.ToString());
+		UE_LOG(LogTemp, Warning, TEXT("[InvComp] TransferItemTo: Target 추가 실패!"));
+		UE_LOG(LogTemp, Warning, TEXT("[InvComp]   → Target에 공간이 부족하거나 아이템 생성 실패"));
+		UE_LOG(LogTemp, Warning, TEXT("[InvComp]   → ItemType=%s, StackCount=%d"), *ItemType.ToString(), StackCount);
 		return false;
 	}
 
 	// ── 5) Source에서 제거 ──
+	// RemoveEntry: FastArray에서 해당 Entry 제거 → MarkDirty → 리플리케이션
 	InventoryList.RemoveEntry(Item);
 
-	UE_LOG(LogTemp, Log, TEXT("[InvComp] TransferItemTo 완료: %s x%d"), *ItemType.ToString(), StackCount);
+	UE_LOG(LogTemp, Log, TEXT("[InvComp] TransferItemTo 완료: %s x%d | %s → %s"),
+		*ItemType.ToString(), StackCount, *GetName(), *TargetComp->GetName());
 	return true;
 }
