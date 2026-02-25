@@ -6,9 +6,10 @@
 #include "Lobby/Database/IInventoryDatabase.h"
 #include "HellunaSQLiteSubsystem.generated.h"
 
-// 전방선언 — FSQLiteDatabase는 UObject가 아닌 POD 클래스
-// #include "SQLiteDatabase.h"는 cpp에서만 수행
+// 전방선언 — FSQLiteDatabase, FSQLitePreparedStatement는 UObject가 아닌 POD 클래스
+// #include "SQLiteDatabase.h"와 "SQLitePreparedStatement.h"는 cpp에서만 수행
 class FSQLiteDatabase;
+class FSQLitePreparedStatement;
 
 /**
  * UHellunaSQLiteSubsystem
@@ -72,6 +73,17 @@ private:
 
 	/** 테이블 스키마 생성 + PRAGMA 설정 — OpenDatabase() 성공 직후 호출 */
 	bool InitializeSchema();
+
+	// ── FInv_SavedItemData ↔ DB 변환 헬퍼 ──
+
+	/** SELECT 결과 1행 → FInv_SavedItemData 파싱 */
+	static FInv_SavedItemData ParseRowToSavedItem(const FSQLitePreparedStatement& Statement);
+
+	/** FInv_SavedAttachmentData 배열 → JSON 문자열 */
+	static FString SerializeAttachmentsToJson(const TArray<FInv_SavedAttachmentData>& Attachments);
+
+	/** JSON 문자열 → FInv_SavedAttachmentData 배열 */
+	static TArray<FInv_SavedAttachmentData> DeserializeAttachmentsFromJson(const FString& JsonString);
 
 	/**
 	 * SQLite DB 인스턴스 (UObject 아님, 수동 수명 관리)
