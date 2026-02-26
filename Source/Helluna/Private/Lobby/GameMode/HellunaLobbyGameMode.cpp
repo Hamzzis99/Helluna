@@ -171,9 +171,44 @@ void AHellunaLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] PostLogin → PlayerId=%s"), *PlayerId);
 
+	// ── 0) 게임 결과 파일 처리 ──
+	// 게임서버가 ExportGameResultToFile로 내보낸 결과를 로비에서 import
+	// → 결과 파일 존재 = 정상 게임 종료: Stash 병합 + Loadout 삭제
+	// → 결과 파일 없음 + Loadout 존재 = 크래시: 아래 크래시 복구에서 처리
+	if (SQLiteSubsystem->HasPendingGameResultFile(PlayerId))
+	{
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [0] 게임 결과 파일 발견 → import 시작 | PlayerId=%s"), *PlayerId);
+
+		bool bSurvived = false;
+		TArray<FInv_SavedItemData> ResultItems = SQLiteSubsystem->ImportGameResultFromFile(PlayerId, bSurvived);
+
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [0] 게임 결과: survived=%s | 아이템=%d개 | PlayerId=%s"),
+			bSurvived ? TEXT("Y") : TEXT("N"), ResultItems.Num(), *PlayerId);
+
+		// 로비 자체 DB에서 Stash 병합
+		if (SQLiteSubsystem->MergeGameResultToStash(PlayerId, ResultItems))
+		{
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [0] MergeGameResultToStash 성공 | PlayerId=%s"), *PlayerId);
+		}
+		else
+		{
+			UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [0] MergeGameResultToStash 실패! | PlayerId=%s"), *PlayerId);
+		}
+
+		// Loadout(비행기표) 정리
+		if (SQLiteSubsystem->DeletePlayerLoadout(PlayerId))
+		{
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [0] DeletePlayerLoadout 성공 | PlayerId=%s"), *PlayerId);
+		}
+		else
+		{
+			UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] [0] DeletePlayerLoadout: 삭제할 Loadout 없음 | PlayerId=%s"), *PlayerId);
+		}
+	}
+
 	// ── 1) 크래시 복구 ──
-	// 이전 세션에서 비정상 종료된 경우 player_loadout에 데이터가 남아있을 수 있음
-	// → Stash로 복구하여 아이템 유실 방지
+	// 결과 파일이 없는데 Loadout이 남아있는 경우 = 게임서버 크래시
+	// → Loadout 아이템을 Stash로 복구하여 유실 방지
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [1/3] 크래시 복구 체크 | PlayerId=%s"), *PlayerId);
 	CheckAndRecoverFromCrash(PlayerId);
 
@@ -353,14 +388,33 @@ void AHellunaLobbyGameMode::LoadStashToComponent(AHellunaLobbyController* LobbyP
 		return;
 	}
 
-	// ── 로드된 아이템 상세 로그 (디버깅용) ──
+	// ── 로드된 아이템 상세 로그 + 리졸브 사전 진단 ──
+	int32 DiagResolveFail = 0;
 	for (int32 i = 0; i < StashItems.Num(); ++i)
 	{
 		const FInv_SavedItemData& ItemData = StashItems[i];
-		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM]   [%d] ItemType=%s | Stack=%d | GridPos=(%d,%d)"),
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM]   [%d] ItemType=%s | Stack=%d | GridPos=(%d,%d) | Cat=%d"),
 			i, *ItemData.ItemType.ToString(), ItemData.StackCount,
-			ItemData.GridPosition.X, ItemData.GridPosition.Y);
+			ItemData.GridPosition.X, ItemData.GridPosition.Y, ItemData.GridCategory);
+
+		// 사전 진단: 각 아이템이 리졸브 가능한지 미리 확인
+		UInv_ItemComponent* DiagTemplate = ResolveItemTemplate(ItemData.ItemType);
+		if (!DiagTemplate)
+		{
+			DiagResolveFail++;
+			UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] ◆ 사전 진단: [%d] '%s' 리졸브 실패! → 이 아이템은 복원되지 않습니다"),
+				i, *ItemData.ItemType.ToString());
+		}
 	}
+
+	if (DiagResolveFail > 0)
+	{
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] ◆ 사전 진단 결과: %d/%d개 아이템이 리졸브 실패! (파괴적 캐스케이드 위험)"),
+			DiagResolveFail, StashItems.Num());
+	}
+
+	// ── 로드된 아이템 수 기록 (파괴적 캐스케이드 방지용) ──
+	const int32 LoadedStashItemCount = StashItems.Num();
 
 	// ── FInv_PlayerSaveData 구성 ──
 	// RestoreFromSaveData()가 요구하는 포맷으로 래핑
@@ -378,8 +432,20 @@ void AHellunaLobbyGameMode::LoadStashToComponent(AHellunaLobbyController* LobbyP
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] RestoreFromSaveData 호출 → StashComp에 %d개 아이템 복원 시작"), SaveData.Items.Num());
 	StashComp->RestoreFromSaveData(SaveData, Resolver);
 
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] StashComp 복원 완료 | PlayerId=%s | 요청 아이템 %d개"),
-		*PlayerId, SaveData.Items.Num());
+	// ── 복원 후 검증 ──
+	const int32 RestoredCount = StashComp->CollectInventoryDataForSave().Num();
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] StashComp 복원 완료 | PlayerId=%s | DB 아이템=%d | 실제 복원=%d"),
+		*PlayerId, LoadedStashItemCount, RestoredCount);
+
+	if (RestoredCount < LoadedStashItemCount)
+	{
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] ◆◆ 아이템 유실 감지! DB=%d → 복원=%d → %d개 유실 | PlayerId=%s"),
+			LoadedStashItemCount, RestoredCount, LoadedStashItemCount - RestoredCount, *PlayerId);
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] ◆◆ 로그아웃 시 파괴적 저장을 방지합니다 (LoadedStashItemCount 기록)"));
+	}
+
+	// LobbyPC에 로드된 아이템 수를 저장 (SaveComponentsToDatabase에서 참조)
+	LobbyPC->SetLoadedStashItemCount(LoadedStashItemCount);
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -440,6 +506,26 @@ void AHellunaLobbyGameMode::SaveComponentsToDatabase(AHellunaLobbyController* Lo
 		}
 	}
 
+	// ── 2.5) 파괴적 캐스케이드 방지 ──
+	// DB에서 로드한 원본 아이템 수보다 현재 보유 아이템이 적으면
+	// 복원 실패(ResolveItemTemplate 실패)로 아이템이 유실된 것
+	// → 이 상태로 저장하면 DB에서도 영구 삭제되므로 저장을 거부
+	const int32 OriginalLoadedCount = LobbyPC->GetLoadedStashItemCount();
+	if (OriginalLoadedCount > 0 && FinalStashItems.Num() < OriginalLoadedCount)
+	{
+		UE_LOG(LogHellunaLobby, Error, TEXT(""));
+		UE_LOG(LogHellunaLobby, Error, TEXT("╔══════════════════════════════════════════════════════════════╗"));
+		UE_LOG(LogHellunaLobby, Error, TEXT("║  ◆◆ 파괴적 캐스케이드 방지: 저장 거부!                      ║"));
+		UE_LOG(LogHellunaLobby, Error, TEXT("║  DB 원본=%d개 → 현재=%d개 → %d개 유실 감지              ║"),
+			OriginalLoadedCount, FinalStashItems.Num(), OriginalLoadedCount - FinalStashItems.Num());
+		UE_LOG(LogHellunaLobby, Error, TEXT("║  → ResolveItemTemplate 실패로 복원되지 않은 아이템 있음 ║"));
+		UE_LOG(LogHellunaLobby, Error, TEXT("║  → DB 데이터를 보호하기 위해 저장을 건너뜁니다         ║"));
+		UE_LOG(LogHellunaLobby, Error, TEXT("║  → ItemTypeMappingDataTable 설정을 확인하세요!          ║"));
+		UE_LOG(LogHellunaLobby, Error, TEXT("╚══════════════════════════════════════════════════════════════╝"));
+		UE_LOG(LogHellunaLobby, Error, TEXT(""));
+		return;
+	}
+
 	// ── 3) 한 번만 저장 ──
 	const bool bStashOk = SQLiteSubsystem->SavePlayerStash(PlayerId, FinalStashItems);
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] Stash SQLite 저장 %s | PlayerId=%s | 아이템 %d개"),
@@ -469,24 +555,30 @@ void AHellunaLobbyGameMode::SaveComponentsToDatabase(AHellunaLobbyController* Lo
 // ════════════════════════════════════════════════════════════════════════════════
 UInv_ItemComponent* AHellunaLobbyGameMode::ResolveItemTemplate(const FGameplayTag& ItemType)
 {
-	UE_LOG(LogHellunaLobby, Verbose, TEXT("[LobbyGM] ResolveItemTemplate: %s"), *ItemType.ToString());
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ResolveItemTemplate: %s"), *ItemType.ToString());
 
+	// 1단계: DataTable에서 ItemType → ActorClass 매핑
 	TSubclassOf<AActor> ActorClass = ResolveItemClass(ItemType);
 	if (!ActorClass)
 	{
-		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] ResolveItemTemplate: ResolveItemClass 실패! | ItemType=%s"),
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] ✗ ResolveItemTemplate 실패(1단계): ResolveItemClass → nullptr | ItemType=%s"),
 			*ItemType.ToString());
-		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM]   → HellunaBaseGameMode의 ItemClassMap에 이 태그가 등록되었는지 확인하세요"));
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM]   → BP_HellunaLobbyGameMode의 ItemTypeMappingDataTable 설정 확인"));
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM]   → DT_ItemTypeMapping에 '%s' 행이 있는지 확인"), *ItemType.ToString());
 		return nullptr;
 	}
 
+	// 2단계: ActorClass CDO에서 UInv_ItemComponent 추출
 	UInv_ItemComponent* Template = FindItemComponentTemplate(ActorClass);
 	if (!Template)
 	{
-		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] ResolveItemTemplate: FindItemComponentTemplate 실패! | ItemType=%s, ActorClass=%s"),
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] ✗ ResolveItemTemplate 실패(2단계): FindItemComponentTemplate → nullptr | ItemType=%s, ActorClass=%s"),
 			*ItemType.ToString(), *ActorClass->GetName());
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM]   → %s 액터에 UInv_ItemComponent가 있는지 확인"), *ActorClass->GetName());
+		return nullptr;
 	}
 
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ✓ ResolveItemTemplate 성공 | %s → %s"), *ItemType.ToString(), *ActorClass->GetName());
 	return Template;
 }
 

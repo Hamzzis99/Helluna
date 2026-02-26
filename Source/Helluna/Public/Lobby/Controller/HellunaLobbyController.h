@@ -254,6 +254,17 @@ protected:
 	/** Deploy 중복 실행 방지 플래그 */
 	bool bDeployInProgress = false;
 
+	// ════════════════════════════════════════════════════════════════
+	// 파괴적 캐스케이드 방지 — DB에서 로드된 Stash 아이템 수 기록
+	// ════════════════════════════════════════════════════════════════
+
+	/** DB에서 로드된 원본 Stash 아이템 수 (SaveComponentsToDatabase에서 비교용) */
+	int32 LoadedStashItemCount = 0;
+
+public:
+	void SetLoadedStashItemCount(int32 Count) { LoadedStashItemCount = Count; }
+	int32 GetLoadedStashItemCount() const { return LoadedStashItemCount; }
+
 private:
 	// ════════════════════════════════════════════════════════════════
 	// V2 프리뷰 내부 함수

@@ -1078,12 +1078,57 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 		// [Phase 4 Fix] 로비 전송 모드: 팝업 대신 전송 델리게이트 발동
 		if (bLobbyTransferMode)
 		{
-			UInv_SlottedItem* Slotted = SlottedItems.FindRef(GridIndex);
+			// 큰 아이템(2x6 등)은 SlottedItems에 왼쪽 상단 셀 인덱스로만 등록됨
+			// 클릭된 셀의 UpperLeftIndex를 먼저 구해서 올바른 SlottedItem을 찾음
+			int32 LookupIndex = GridIndex;
+			if (GridSlots.IsValidIndex(GridIndex) && GridSlots[GridIndex])
+			{
+				const int32 UpperLeft = GridSlots[GridIndex]->GetUpperLeftIndex();
+				if (UpperLeft >= 0)
+				{
+					LookupIndex = UpperLeft;
+				}
+			}
+
+			UInv_SlottedItem* Slotted = SlottedItems.FindRef(LookupIndex);
 			if (Slotted)
 			{
-				const int32 EntryIdx = Slotted->GetEntryIndex();
-				UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] 로비 전송 요청 → EntryIndex=%d, GridIndex=%d"), EntryIdx, GridIndex);
-				OnLobbyTransferRequested.Broadcast(EntryIdx);
+				int32 EntryIdx = Slotted->GetEntryIndex();
+
+				// ⭐ [방어 코드] EntryIndex가 -1이면 InvComp Entries에서 Item 포인터로 역추적
+				if (EntryIdx == -1 && InventoryComponent.IsValid())
+				{
+					UInv_InventoryItem* SlottedItem = Slotted->GetInventoryItem();
+					if (IsValid(SlottedItem))
+					{
+						const TArray<FInv_InventoryEntry>& Entries = InventoryComponent->GetInventoryList().Entries;
+						for (int32 SearchIdx = 0; SearchIdx < Entries.Num(); ++SearchIdx)
+						{
+							if (Entries[SearchIdx].Item == SlottedItem)
+							{
+								EntryIdx = SearchIdx;
+								Slotted->SetEntryIndex(EntryIdx); // 다음 클릭을 위해 캐시
+								UE_LOG(LogTemp, Warning, TEXT("[InventoryGrid] ⚠ EntryIndex 방어 복구: Item=%s → Entry[%d] (포인터 매칭)"),
+									*SlottedItem->GetItemManifest().GetItemType().ToString(), EntryIdx);
+								break;
+							}
+						}
+					}
+				}
+
+				UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] 로비 전송 요청 → EntryIndex=%d, GridIndex=%d (UpperLeft=%d)"), EntryIdx, GridIndex, LookupIndex);
+				if (EntryIdx >= 0)
+				{
+					OnLobbyTransferRequested.Broadcast(EntryIdx);
+				}
+				else
+				{
+					UE_LOG(LogTemp, Error, TEXT("[InventoryGrid] 로비 전송 실패 → EntryIndex=-1 복구 불가 (Item 없음 또는 InvComp 없음)"));
+				}
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[InventoryGrid] 로비 전송 실패 → GridIndex=%d, LookupIndex=%d에 SlottedItem 없음"), GridIndex, LookupIndex);
 			}
 			return;
 		}
@@ -2067,6 +2112,12 @@ void UInv_InventoryGrid::AddItemAtIndex(UInv_InventoryItem* Item, const int32 In
 	// 삭제 소비 파괴 했을 때 이곳에.
 	// Store the new widget in a container.
 	SlottedItems.Add(Index, SlottedItem); // 인덱스와 슬로티드 아이템 매핑
+
+	// ⭐ [진단] SlottedItem 등록 확인 — EntryIndex=-1 버그 추적용
+	UE_LOG(LogTemp, Log, TEXT("[AddItemAtIndex] ✓ SlottedItems[%d] 등록 완료: Item=%s, EntryIndex=%d"),
+		Index,
+		Item ? *Item->GetItemManifest().GetItemType().ToString() : TEXT("nullptr"),
+		SlottedItem->GetEntryIndex());
 }
 
 UInv_SlottedItem* UInv_InventoryGrid::CreateSlottedItem(UInv_InventoryItem* Item, const bool bStackable, const int32 StackAmount, const FInv_GridFragment* GridFragment, const FInv_ImageFragment* ImageFragment, const int32 Index, const int32 EntryIndex)

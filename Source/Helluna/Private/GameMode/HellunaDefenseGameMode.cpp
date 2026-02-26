@@ -47,6 +47,17 @@ void AHellunaDefenseGameMode::BeginPlay()
     if (!HasAuthority())
         return;
 
+    // 커맨드라인에서 -LobbyURL= 인자가 있으면 BP 값 덮어쓰기
+    // (패키징된 서버에서 BP 재쿠킹 없이 LobbyURL 설정 가능)
+    FString CmdLobbyURL;
+    if (FParse::Value(FCommandLine::Get(), TEXT("-LobbyURL="), CmdLobbyURL))
+    {
+        LobbyServerURL = CmdLobbyURL;
+        UE_LOG(LogHelluna, Warning, TEXT("[DefenseGameMode] 커맨드라인에서 LobbyServerURL 설정: %s"), *LobbyServerURL);
+    }
+
+    UE_LOG(LogHelluna, Warning, TEXT("[DefenseGameMode] LobbyServerURL = '%s'"), *LobbyServerURL);
+
     // 게임 로직 초기화만
     CacheBossSpawnPoints();
     CacheMonsterSpawnPoints();
@@ -399,6 +410,8 @@ void AHellunaDefenseGameMode::EndGame(EHellunaGameEndReason Reason)
         Reason == EHellunaGameEndReason::Escaped ? TEXT("탈출 성공") :
         Reason == EHellunaGameEndReason::AllDead ? TEXT("전원 사망") :
         Reason == EHellunaGameEndReason::ServerShutdown ? TEXT("서버 셧다운") : TEXT("None"));
+    UE_LOG(LogHelluna, Warning, TEXT("║     LobbyServerURL: '%s'"), *LobbyServerURL);
+    UE_LOG(LogHelluna, Warning, TEXT("║     GameMode 클래스: %s"), *GetClass()->GetName());
     UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 
     // 낮/밤 타이머 정지 (더 이상 게임 진행 불필요)
@@ -487,12 +500,12 @@ void AHellunaDefenseGameMode::ProcessPlayerGameResult(APlayerController* PC, boo
         return;
     }
 
-    // DB 서브시스템 가져오기
+    // SQLite 서브시스템 가져오기 (DB 연결 불필요 — 파일 전송만 사용)
     UGameInstance* GI = GetGameInstance();
     UHellunaSQLiteSubsystem* DB = GI ? GI->GetSubsystem<UHellunaSQLiteSubsystem>() : nullptr;
-    if (!DB || !DB->IsDatabaseReady())
+    if (!DB)
     {
-        UE_LOG(LogHelluna, Error, TEXT("[Phase7] ProcessPlayerGameResult: DB 미준비 | PlayerId=%s"), *PlayerId);
+        UE_LOG(LogHelluna, Error, TEXT("[Phase7] ProcessPlayerGameResult: SQLite 서브시스템 없음 | PlayerId=%s"), *PlayerId);
         return;
     }
 
@@ -515,25 +528,16 @@ void AHellunaDefenseGameMode::ProcessPlayerGameResult(APlayerController* PC, boo
         // ResultItems는 빈 배열 — 사망자는 아이템 전부 손실
     }
 
-    // Stash에 결과 병합 (기존 Stash 유지 + ResultItems INSERT)
-    if (DB->MergeGameResultToStash(PlayerId, ResultItems))
+    // 게임 결과를 JSON 파일로 내보내기 (DB 잠금 회피)
+    // → 로비 PostLogin에서 ImportGameResultFromFile로 읽어 Stash에 병합
+    if (DB->ExportGameResultToFile(PlayerId, ResultItems, bSurvived))
     {
-        UE_LOG(LogHelluna, Log, TEXT("[Phase7] MergeGameResultToStash 성공 | PlayerId=%s Items=%d"),
-            *PlayerId, ResultItems.Num());
+        UE_LOG(LogHelluna, Log, TEXT("[Phase7] ExportGameResultToFile 성공 | PlayerId=%s | Items=%d | Survived=%s"),
+            *PlayerId, ResultItems.Num(), bSurvived ? TEXT("Y") : TEXT("N"));
     }
     else
     {
-        UE_LOG(LogHelluna, Error, TEXT("[Phase7] MergeGameResultToStash 실패! | PlayerId=%s"), *PlayerId);
-    }
-
-    // Loadout 정리 (비행기표 소멸)
-    if (DB->DeletePlayerLoadout(PlayerId))
-    {
-        UE_LOG(LogHelluna, Log, TEXT("[Phase7] DeletePlayerLoadout 성공 | PlayerId=%s"), *PlayerId);
-    }
-    else
-    {
-        UE_LOG(LogHelluna, Warning, TEXT("[Phase7] DeletePlayerLoadout: 삭제할 Loadout 없음 | PlayerId=%s"), *PlayerId);
+        UE_LOG(LogHelluna, Error, TEXT("[Phase7] ExportGameResultToFile 실패! | PlayerId=%s"), *PlayerId);
     }
 }
 
