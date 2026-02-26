@@ -157,4 +157,60 @@ public:
 	 * [호출 시점] HasPendingLoadout()이 true를 반환한 직후
 	 */
 	virtual bool RecoverFromCrash(const FString& PlayerId) = 0;
+
+	// ============================================================
+	// 게임 캐릭터 중복 방지 (active_game_characters)
+	// ============================================================
+
+	/**
+	 * 현재 모든 서버에서 사용 중인 캐릭터 조회
+	 *
+	 * @return 3개 bool 배열 (인덱스 0=Lui, 1=Luna, 2=Liam, true=사용중)
+	 *
+	 * [호출 시점] 로비 캐릭터 선택 UI 초기화 시
+	 *
+	 * TODO: [실시간] 현재는 폴링 방식. 다른 플레이어가 선택하면 즉시 반영되지 않음.
+	 * TODO: [확장] 서버별 필터링이 필요하면 ServerId 파라미터 추가
+	 */
+	virtual TArray<bool> GetActiveGameCharacters() = 0;
+
+	/**
+	 * 캐릭터 사용 등록 (출격 시)
+	 *
+	 * @param HeroType  등록할 캐릭터 타입 (0=Lui, 1=Luna, 2=Liam)
+	 * @param PlayerId  플레이어 고유 ID
+	 * @param ServerId  게임서버 고유 ID
+	 * @return 등록 성공 여부 (이미 사용 중이면 false)
+	 *
+	 * [호출 시점] 로비에서 캐릭터 선택 확정 시
+	 *
+	 * TODO: [Race Condition] 두 플레이어가 동시에 같은 캐릭터를 선택하면
+	 *       UNIQUE INDEX로 한쪽은 실패하지만, UI에 즉시 반영되지는 않음.
+	 * TODO: [크래시 복구] 서버 크래시 시 등록 레코드가 남아있을 수 있음.
+	 *       heartbeat/TTL 기반 자동 정리 필요.
+	 */
+	virtual bool RegisterActiveGameCharacter(int32 HeroType, const FString& PlayerId, const FString& ServerId) = 0;
+
+	/**
+	 * 플레이어의 캐릭터 사용 해제
+	 *
+	 * @param PlayerId  플레이어 고유 ID
+	 * @return 해제 성공 여부
+	 *
+	 * [호출 시점] 로비 Logout 시, 캐릭터 재선택 시
+	 */
+	virtual bool UnregisterActiveGameCharacter(const FString& PlayerId) = 0;
+
+	/**
+	 * 특정 서버의 모든 캐릭터 등록 해제
+	 *
+	 * @param ServerId  게임서버 고유 ID
+	 * @return 해제 성공 여부
+	 *
+	 * [호출 시점] 게임서버 종료 시 (정리용)
+	 *
+	 * TODO: [크래시 복구] 서버가 비정상 종료되면 이 함수가 호출되지 않음.
+	 *       외부 watchdog 또는 TTL 기반 자동 정리 필요.
+	 */
+	virtual bool UnregisterAllActiveGameCharactersForServer(const FString& ServerId) = 0;
 };

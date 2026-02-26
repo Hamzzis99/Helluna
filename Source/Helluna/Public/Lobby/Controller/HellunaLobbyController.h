@@ -24,12 +24,17 @@
 
 #include "CoreMinimal.h"
 #include "Player/Inv_PlayerController.h"
+#include "HellunaTypes.h"
 #include "HellunaLobbyController.generated.h"
 
 // 전방 선언
 class UInv_InventoryComponent;
 class UInv_InventoryItem;
 class UHellunaLobbyStashWidget;
+class AHellunaCharacterSelectSceneV2;
+class UTextureRenderTarget2D;
+class USkeletalMesh;
+class UHellunaLobbyCharSelectWidget;
 
 // ════════════════════════════════════════════════════════════════════════════════
 // 전송 방향 열거형
@@ -116,8 +121,43 @@ public:
 		meta = (DisplayName = "로비 UI 표시"))
 	void ShowLobbyWidget();
 
+	// ════════════════════════════════════════════════════════════════
+	// 캐릭터 선택 RPC
+	// ════════════════════════════════════════════════════════════════
+
+	/**
+	 * [클라이언트 → 서버] 로비 캐릭터 선택 요청
+	 *
+	 * @param CharacterIndex  선택한 캐릭터 인덱스 (0=Lui, 1=Luna, 2=Liam)
+	 */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_SelectLobbyCharacter(int32 CharacterIndex);
+
+	/**
+	 * [서버 → 클라이언트] 캐릭터 선택 결과 통보
+	 *
+	 * @param bSuccess  성공 여부
+	 * @param Message   결과 메시지
+	 */
+	UFUNCTION(Client, Reliable)
+	void Client_LobbyCharacterSelectionResult(bool bSuccess, const FString& Message);
+
+	/**
+	 * [서버 → 클라이언트] 가용 캐릭터 정보 전달
+	 *
+	 * @param UsedCharacters  3개 bool (true=사용중)
+	 */
+	UFUNCTION(Client, Reliable)
+	void Client_ShowLobbyCharacterSelectUI(const TArray<bool>& UsedCharacters);
+
+	/** 선택한 히어로 타입 Getter */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "로비|캐릭터선택")
+	EHellunaHeroType GetSelectedHeroType() const { return SelectedHeroType; }
+
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	// ════════════════════════════════════════════════════════════════
 	// 인벤토리 컴포넌트 (Stash + Loadout)
@@ -161,7 +201,62 @@ protected:
 		meta = (DisplayName = "게임 맵 URL", Tooltip = "출격 시 ClientTravel로 이동할 맵의 URL입니다. 예: /Game/Maps/L_Defense?listen"))
 	FString DeployMapURL;
 
+	// ════════════════════════════════════════════════════════════════
+	// 캐릭터 프리뷰 V2 시스템 (LoginController에서 복사)
+	// ════════════════════════════════════════════════════════════════
+
+	/** V2 씬 액터 클래스 (BP에서 세팅) */
+	UPROPERTY(EditDefaultsOnly, Category = "로비|캐릭터프리뷰V2",
+		meta = (DisplayName = "V2 씬 액터 클래스"))
+	TSubclassOf<AHellunaCharacterSelectSceneV2> PreviewSceneV2Class;
+
+	/** 캐릭터 타입별 SkeletalMesh 매핑 */
+	UPROPERTY(EditDefaultsOnly, Category = "로비|캐릭터프리뷰V2",
+		meta = (DisplayName = "프리뷰 메시 맵"))
+	TMap<EHellunaHeroType, TSoftObjectPtr<USkeletalMesh>> PreviewMeshMap;
+
+	/** 캐릭터 타입별 프리뷰 AnimInstance 클래스 매핑 */
+	UPROPERTY(EditDefaultsOnly, Category = "로비|캐릭터프리뷰V2",
+		meta = (DisplayName = "프리뷰 AnimClass 맵"))
+	TMap<EHellunaHeroType, TSubclassOf<UAnimInstance>> PreviewAnimClassMap;
+
+	/** V2 RenderTarget 해상도 */
+	UPROPERTY(EditDefaultsOnly, Category = "로비|캐릭터프리뷰V2",
+		meta = (DisplayName = "V2 렌더 타겟 해상도"))
+	FIntPoint PreviewV2RenderTargetSize = FIntPoint(1920, 1080);
+
+	/** V2 씬 스폰 위치 (월드 지하) */
+	UPROPERTY(EditDefaultsOnly, Category = "로비|캐릭터프리뷰V2",
+		meta = (DisplayName = "V2 프리뷰 스폰 위치"))
+	FVector PreviewSpawnBaseLocation = FVector(0.f, 0.f, -5000.f);
+
+	/** 스폰된 V2 씬 액터 (런타임) */
+	UPROPERTY()
+	TObjectPtr<AHellunaCharacterSelectSceneV2> SpawnedPreviewSceneV2;
+
+	/** V2 RenderTarget (GC 방지) */
+	UPROPERTY()
+	TObjectPtr<UTextureRenderTarget2D> PreviewV2RenderTarget;
+
+	// ════════════════════════════════════════════════════════════════
+	// 캐릭터 선택 상태
+	// ════════════════════════════════════════════════════════════════
+
+	/** 선택된 히어로 타입 (Replicated — 서버→클라 동기화) */
+	UPROPERTY(Replicated, VisibleAnywhere, BlueprintReadOnly, Category = "로비|캐릭터선택",
+		meta = (DisplayName = "선택된 히어로 타입"))
+	EHellunaHeroType SelectedHeroType = EHellunaHeroType::None;
+
 private:
+	// ════════════════════════════════════════════════════════════════
+	// V2 프리뷰 내부 함수
+	// ════════════════════════════════════════════════════════════════
+
+	/** V2 프리뷰 씬 스폰 (클라이언트 전용) */
+	void SpawnPreviewSceneV2();
+
+	/** V2 프리뷰 씬 파괴 */
+	void DestroyPreviewSceneV2();
 	// ════════════════════════════════════════════════════════════════
 	// 내부 전송 로직
 	// ════════════════════════════════════════════════════════════════

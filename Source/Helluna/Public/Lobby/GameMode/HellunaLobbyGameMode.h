@@ -23,6 +23,7 @@
 
 #include "CoreMinimal.h"
 #include "GameMode/HellunaBaseGameMode.h"
+#include "HellunaTypes.h"
 #include "HellunaLobbyGameMode.generated.h"
 
 // 전방 선언
@@ -86,4 +87,34 @@ protected:
 	/** SQLite 서브시스템 참조 (BeginPlay에서 캐시) */
 	UPROPERTY()
 	TObjectPtr<UHellunaSQLiteSubsystem> SQLiteSubsystem;
+
+	// ════════════════════════════════════════════════════════════════
+	// 캐릭터 중복 방지 (같은 로비 내)
+	// ════════════════════════════════════════════════════════════════
+
+public:
+	/**
+	 * 해당 캐릭터가 현재 로비에서 사용 가능한지 확인
+	 * 메모리 맵(같은 로비) + SQLite(다른 서버 간) 교차 체크
+	 */
+	bool IsLobbyCharacterAvailable(EHellunaHeroType HeroType) const;
+
+	/** 현재 로비에서 가용한 캐릭터 목록 (3개 bool, true=사용중) */
+	TArray<bool> GetLobbyAvailableCharacters() const;
+
+	/** 캐릭터 사용 등록 (같은 로비 + SQLite) */
+	void RegisterLobbyCharacterUse(EHellunaHeroType HeroType, const FString& PlayerId);
+
+	/** 캐릭터 사용 해제 (같은 로비 + SQLite) */
+	void UnregisterLobbyCharacterUse(const FString& PlayerId);
+
+private:
+	/**
+	 * 같은 로비 내 캐릭터 사용 맵 (메모리)
+	 * Key: HeroType, Value: PlayerId
+	 */
+	TMap<EHellunaHeroType, FString> LobbyUsedCharacterMap;
+
+	/** 로비 서버 고유 ID (active_game_characters.server_id용) */
+	FString LobbyServerId;
 };

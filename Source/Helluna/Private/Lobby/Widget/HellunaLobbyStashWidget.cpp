@@ -39,10 +39,12 @@
 
 #include "Lobby/Widget/HellunaLobbyStashWidget.h"
 #include "Lobby/Widget/HellunaLobbyPanel.h"
+#include "Lobby/Widget/HellunaLobbyCharSelectWidget.h"
 #include "Widgets/Inventory/Spatial/Inv_SpatialInventory.h"
 #include "Lobby/Controller/HellunaLobbyController.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
 #include "Components/Button.h"
+#include "Components/WidgetSwitcher.h"
 
 // 로그 카테고리 (공유 헤더 — DEFINE은 HellunaLobbyGameMode.cpp)
 #include "Lobby/HellunaLobbyLog.h"
@@ -65,9 +67,25 @@ void UHellunaLobbyStashWidget::NativeOnInitialized()
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] NativeOnInitialized 시작"));
 
 	// ── BindWidget 상태 진단 ──
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   MainSwitcher=%s"), MainSwitcher ? TEXT("바인딩됨") : TEXT("⚠ nullptr (BindWidget 확인!)"));
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   CharacterSelectPanel=%s"), CharacterSelectPanel ? TEXT("바인딩됨") : TEXT("⚠ nullptr (BindWidget 확인!)"));
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   StashPanel=%s"), StashPanel ? TEXT("바인딩됨") : TEXT("⚠ nullptr (BindWidget 확인!)"));
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   LoadoutSpatialInventory=%s"), LoadoutSpatialInventory ? TEXT("바인딩됨") : TEXT("⚠ nullptr (BindWidget 확인!)"));
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   Button_Deploy=%s"), Button_Deploy ? TEXT("바인딩됨") : TEXT("⚠ nullptr (BindWidget 확인!)"));
+
+	// ── MainSwitcher → 캐릭터 선택 페이지(0)로 시작 ──
+	if (MainSwitcher)
+	{
+		MainSwitcher->SetActiveWidgetIndex(0);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   MainSwitcher → Page 0 (캐릭터 선택)"));
+	}
+
+	// ── 캐릭터 선택 완료 델리게이트 바인딩 ──
+	if (CharacterSelectPanel)
+	{
+		CharacterSelectPanel->OnCharacterSelected.AddDynamic(this, &ThisClass::OnCharacterSelectedHandler);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   CharacterSelectPanel → OnCharacterSelected 바인딩 완료"));
+	}
 
 	// ── 출격 버튼 OnClicked 이벤트 바인딩 ──
 	if (Button_Deploy)
@@ -278,4 +296,29 @@ AHellunaLobbyController* UHellunaLobbyStashWidget::GetLobbyController() const
 	}
 
 	return LobbyPC;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// SwitchToInventoryPage — 인벤토리 페이지로 전환
+// ════════════════════════════════════════════════════════════════════════════════
+void UHellunaLobbyStashWidget::SwitchToInventoryPage()
+{
+	if (MainSwitcher)
+	{
+		MainSwitcher->SetActiveWidgetIndex(1);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] MainSwitcher → Page 1 (인벤토리)"));
+	}
+	else
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[StashWidget] SwitchToInventoryPage: MainSwitcher nullptr!"));
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// OnCharacterSelectedHandler — 캐릭터 선택 완료 → 인벤토리 페이지로 전환
+// ════════════════════════════════════════════════════════════════════════════════
+void UHellunaLobbyStashWidget::OnCharacterSelectedHandler(EHellunaHeroType SelectedHero)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] OnCharacterSelectedHandler | Hero=%d"), static_cast<int32>(SelectedHero));
+	SwitchToInventoryPage();
 }

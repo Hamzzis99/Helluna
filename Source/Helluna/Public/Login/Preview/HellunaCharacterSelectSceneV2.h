@@ -7,6 +7,7 @@
 class USkeletalMeshComponent;
 class USceneCaptureComponent2D;
 class UPointLightComponent;
+class USpotLightComponent;
 class UTextureRenderTarget2D;
 class USkeletalMesh;
 class UHellunaPreviewAnimInstance;
@@ -66,6 +67,14 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "프리뷰V2")
 	void SetCharacterHovered(int32 Index, bool bHovered);
+
+	/**
+	 * 캐릭터 선택 상태 설정 — 선택된 캐릭터는 앞으로 나오고 밝아짐, 나머지는 뒤로/어둡게
+	 *
+	 * @param SelectedIndex - 선택된 캐릭터 인덱스 (-1 = 미선택, 모두 원래 위치)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "프리뷰V2")
+	void SetCharacterSelected(int32 SelectedIndex);
 
 	/** RenderTarget 반환 */
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "프리뷰V2")
@@ -146,4 +155,26 @@ protected:
 	/** 캐릭터별 오버레이 하이라이트 머티리얼 (Lui/Luna/Liam 순서) */
 	UPROPERTY(EditDefaultsOnly, Category = "프리뷰V2|하이라이트", meta = (DisplayName = "하이라이트 머티리얼"))
 	TArray<UMaterialInterface*> HighlightMaterials;
+
+	// ============================================
+	// 선택 연출 설정
+	// ============================================
+
+	/** 선택 시 캐릭터가 앞으로 나오는 거리 (Y축) */
+	UPROPERTY(EditDefaultsOnly, Category = "프리뷰V2|선택연출", meta = (DisplayName = "선택 시 전진 거리"))
+	float SelectedForwardOffset = 50.f;
+
+	/** 비선택 캐릭터 어두움 정도 (0=완전어둡 ~ 1=원래밝기) */
+	UPROPERTY(EditDefaultsOnly, Category = "프리뷰V2|선택연출", meta = (DisplayName = "비선택 밝기 비율", ClampMin = "0.0", ClampMax = "1.0"))
+	float UnselectedBrightnessRatio = 0.3f;
+
+	/** 캐릭터별 스포트라이트 (InitializeScene에서 동적 생성) */
+	UPROPERTY()
+	TArray<TObjectPtr<USpotLightComponent>> CharacterSpotLights;
+
+	/** 캐릭터별 원래 위치 (선택 해제 시 복원용) */
+	TArray<FVector> OriginalLocations;
+
+	/** 선택된 캐릭터 인덱스 (-1 = 미선택) */
+	int32 CurrentSelectedIndex = -1;
 };

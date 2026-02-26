@@ -230,6 +230,22 @@ public:
 	 */
 	virtual bool RecoverFromCrash(const FString& PlayerId) override;
 
+	// ════════════════════════════════════════════════════════════════
+	// IInventoryDatabase 인터페이스 구현 — 게임 캐릭터 중복 방지
+	// ════════════════════════════════════════════════════════════════
+
+	/** 현재 모든 서버에서 사용 중인 캐릭터 조회 (3개 bool: Lui/Luna/Liam) */
+	virtual TArray<bool> GetActiveGameCharacters() override;
+
+	/** 캐릭터 사용 등록 */
+	virtual bool RegisterActiveGameCharacter(int32 HeroType, const FString& PlayerId, const FString& ServerId) override;
+
+	/** 플레이어의 캐릭터 등록 해제 */
+	virtual bool UnregisterActiveGameCharacter(const FString& PlayerId) override;
+
+	/** 특정 서버의 모든 캐릭터 등록 해제 */
+	virtual bool UnregisterAllActiveGameCharactersForServer(const FString& ServerId) override;
+
 private:
 	// ════════════════════════════════════════════════════════════════
 	// DB 관리 (private)

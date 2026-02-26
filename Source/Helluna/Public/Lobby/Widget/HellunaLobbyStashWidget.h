@@ -34,7 +34,10 @@ class UInv_SpatialInventory;
 class UInv_InventoryComponent;
 class UInv_InventoryItem;
 class UButton;
+class UWidgetSwitcher;
+class UHellunaLobbyCharSelectWidget;
 class AHellunaLobbyController;
+enum class EHellunaHeroType : uint8;
 
 UCLASS()
 class HELLUNA_API UHellunaLobbyStashWidget : public UUserWidget
@@ -96,12 +99,29 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "로비|창고위젯")
 	UInv_SpatialInventory* GetLoadoutSpatialInventory() const { return LoadoutSpatialInventory; }
 
+	/** 캐릭터 선택 패널 접근 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "로비|창고위젯")
+	UHellunaLobbyCharSelectWidget* GetCharacterSelectPanel() const { return CharacterSelectPanel; }
+
+	/** 인벤토리 페이지로 전환 (캐릭터 선택 완료 후) */
+	UFUNCTION(BlueprintCallable, Category = "로비|창고위젯",
+		meta = (DisplayName = "인벤토리 페이지로 전환"))
+	void SwitchToInventoryPage();
+
 protected:
 	// ════════════════════════════════════════════════════════════════
 	// BindWidget — BP에서 연결
 	// ════════════════════════════════════════════════════════════════
 
-	/** Stash 패널 (좌측) */
+	/** 메인 WidgetSwitcher — Page0=캐릭터선택, Page1=인벤토리 */
+	UPROPERTY(meta = (BindWidget))
+	TObjectPtr<UWidgetSwitcher> MainSwitcher;
+
+	/** 캐릭터 선택 패널 (Page 0) */
+	UPROPERTY(meta = (BindWidget))
+	TObjectPtr<UHellunaLobbyCharSelectWidget> CharacterSelectPanel;
+
+	/** Stash 패널 (좌측, Page 1 내부) */
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UHellunaLobbyPanel> StashPanel;
 
@@ -139,6 +159,10 @@ private:
 
 	/** 현재 LobbyController 가져오기 */
 	AHellunaLobbyController* GetLobbyController() const;
+
+	/** 캐릭터 선택 완료 핸들러 */
+	UFUNCTION()
+	void OnCharacterSelectedHandler(EHellunaHeroType SelectedHero);
 
 	// 바인딩된 컴포넌트 캐시
 	TWeakObjectPtr<UInv_InventoryComponent> CachedStashComp;

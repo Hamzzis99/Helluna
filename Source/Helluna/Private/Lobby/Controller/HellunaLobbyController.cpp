@@ -36,9 +36,13 @@
 #include "Lobby/Controller/HellunaLobbyController.h"
 #include "Lobby/GameMode/HellunaLobbyGameMode.h"
 #include "Lobby/Widget/HellunaLobbyStashWidget.h"
+#include "Lobby/Widget/HellunaLobbyCharSelectWidget.h"
 #include "Lobby/Database/HellunaSQLiteSubsystem.h"
+#include "Login/Preview/HellunaCharacterSelectSceneV2.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
 #include "Blueprint/UserWidget.h"
+#include "Engine/TextureRenderTarget2D.h"
+#include "Net/UnrealNetwork.h"
 
 // 로그 카테고리 (공유 헤더 — DEFINE은 HellunaLobbyGameMode.cpp)
 #include "Lobby/HellunaLobbyLog.h"
@@ -265,6 +269,13 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_Deploy 시작"));
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ══════════════════════════════════════"));
 
+	// ── 캐릭터 미선택 체크 ──
+	if (SelectedHeroType == EHellunaHeroType::None)
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] Server_Deploy: 캐릭터가 선택되지 않았습니다! 출격 거부."));
+		return;
+	}
+
 	// ── [1단계] SQLite 서브시스템 획득 ──
 	UGameInstance* GI = GetGameInstance();
 	UHellunaSQLiteSubsystem* DB = GI ? GI->GetSubsystem<UHellunaSQLiteSubsystem>() : nullptr;
@@ -336,11 +347,14 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Deploy: LoadoutComp가 nullptr!"));
 	}
 
-	// ── [4단계] ClientTravel 지시 ──
+	// ── [4단계] ClientTravel 지시 (HeroType 파라미터 추가) ──
 	if (!DeployMapURL.IsEmpty())
 	{
-		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [4]: Client_ExecuteDeploy → %s"), *DeployMapURL);
-		Client_ExecuteDeploy(DeployMapURL);
+		const int32 HeroIndex = HeroTypeToIndex(SelectedHeroType);
+		const FString Separator = DeployMapURL.Contains(TEXT("?")) ? TEXT("&") : TEXT("?");
+		const FString FinalURL = FString::Printf(TEXT("%s%sHeroType=%d"), *DeployMapURL, *Separator, HeroIndex);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [4]: Client_ExecuteDeploy → %s"), *FinalURL);
+		Client_ExecuteDeploy(FinalURL);
 	}
 	else
 	{
@@ -454,6 +468,16 @@ void AHellunaLobbyController::ShowLobbyWidget()
 		SetShowMouseCursor(true);
 		SetInputMode(FInputModeUIOnly());
 
+		// V2 프리뷰 스폰 + CharSelectWidget 초기화
+		SpawnPreviewSceneV2();
+
+		UHellunaLobbyCharSelectWidget* CharSelectPanel = LobbyStashWidgetInstance->GetCharacterSelectPanel();
+		if (CharSelectPanel && SpawnedPreviewSceneV2 && PreviewV2RenderTarget)
+		{
+			CharSelectPanel->SetupPreviewV2(PreviewV2RenderTarget, SpawnedPreviewSceneV2);
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] CharSelectPanel V2 프리뷰 설정 완료"));
+		}
+
 		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ── ShowLobbyWidget 완료 ──"));
 		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC]   위젯 생성 성공 | 마우스 커서 ON | UI 전용 입력 모드"));
 	}
@@ -463,4 +487,195 @@ void AHellunaLobbyController::ShowLobbyWidget()
 		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC]   → WBP_HellunaLobbyStashWidget의 BindWidget이 올바른지 확인하세요"));
 		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC]   → StashPanel, LoadoutPanel, Button_Deploy가 모두 있어야 합니다"));
 	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// GetLifetimeReplicatedProps — SelectedHeroType 리플리케이션
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaLobbyController::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(AHellunaLobbyController, SelectedHeroType);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// EndPlay — V2 프리뷰 정리
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaLobbyController::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	DestroyPreviewSceneV2();
+	Super::EndPlay(EndPlayReason);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Server_SelectLobbyCharacter — 캐릭터 선택 (Server RPC)
+// ════════════════════════════════════════════════════════════════════════════════
+bool AHellunaLobbyController::Server_SelectLobbyCharacter_Validate(int32 CharacterIndex)
+{
+	return CharacterIndex >= 0 && CharacterIndex <= 2;
+}
+
+void AHellunaLobbyController::Server_SelectLobbyCharacter_Implementation(int32 CharacterIndex)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_SelectLobbyCharacter | Index=%d"), CharacterIndex);
+
+	AHellunaLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr;
+	if (!LobbyGM)
+	{
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Server_SelectLobbyCharacter: GameMode 캐스팅 실패!"));
+		Client_LobbyCharacterSelectionResult(false, TEXT("서버 오류"));
+		return;
+	}
+
+	const EHellunaHeroType HeroType = IndexToHeroType(CharacterIndex);
+	if (HeroType == EHellunaHeroType::None)
+	{
+		Client_LobbyCharacterSelectionResult(false, TEXT("잘못된 캐릭터 인덱스"));
+		return;
+	}
+
+	// GameMode에서 가용성 체크 + 등록
+	const FString PlayerId = LobbyGM->GetLobbyPlayerId(this);
+	if (!LobbyGM->IsLobbyCharacterAvailable(HeroType))
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] 캐릭터 %d 이미 사용 중!"), CharacterIndex);
+		Client_LobbyCharacterSelectionResult(false, TEXT("다른 플레이어가 사용 중입니다"));
+		return;
+	}
+
+	// 등록
+	LobbyGM->RegisterLobbyCharacterUse(HeroType, PlayerId);
+	SelectedHeroType = HeroType;
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 캐릭터 선택 성공 | Index=%d | PlayerId=%s"), CharacterIndex, *PlayerId);
+	Client_LobbyCharacterSelectionResult(true, TEXT("캐릭터 선택 완료!"));
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Client_LobbyCharacterSelectionResult — 선택 결과 (Client RPC)
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaLobbyController::Client_LobbyCharacterSelectionResult_Implementation(bool bSuccess, const FString& Message)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Client_LobbyCharacterSelectionResult | 성공=%s | %s"),
+		bSuccess ? TEXT("true") : TEXT("false"), *Message);
+
+	if (LobbyStashWidgetInstance)
+	{
+		UHellunaLobbyCharSelectWidget* CharSelectPanel = LobbyStashWidgetInstance->GetCharacterSelectPanel();
+		if (CharSelectPanel)
+		{
+			CharSelectPanel->OnSelectionResult(bSuccess, Message);
+		}
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Client_ShowLobbyCharacterSelectUI — 가용 캐릭터 전달 (Client RPC)
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaLobbyController::Client_ShowLobbyCharacterSelectUI_Implementation(const TArray<bool>& UsedCharacters)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Client_ShowLobbyCharacterSelectUI | %d개 항목"), UsedCharacters.Num());
+
+	if (LobbyStashWidgetInstance)
+	{
+		UHellunaLobbyCharSelectWidget* CharSelectPanel = LobbyStashWidgetInstance->GetCharacterSelectPanel();
+		if (CharSelectPanel)
+		{
+			CharSelectPanel->SetAvailableCharacters(UsedCharacters);
+		}
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// SpawnPreviewSceneV2 — V2 프리뷰 씬 스폰 (LoginController에서 복사)
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaLobbyController::SpawnPreviewSceneV2()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] V2 프리뷰 스폰 실패 - World nullptr"));
+		return;
+	}
+
+	if (World->GetNetMode() == NM_DedicatedServer)
+	{
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] V2 프리뷰 스폰 스킵 - 데디케이티드 서버"));
+		return;
+	}
+
+	if (!PreviewSceneV2Class)
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] V2 프리뷰 스폰 스킵 - PreviewSceneV2Class 미설정"));
+		return;
+	}
+
+	if (PreviewMeshMap.Num() == 0)
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] V2 프리뷰 스폰 스킵 - PreviewMeshMap 비어있음"));
+		return;
+	}
+
+	// 기존 V2 정리
+	DestroyPreviewSceneV2();
+
+	// V2 씬 액터 스폰
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	SpawnedPreviewSceneV2 = World->SpawnActor<AHellunaCharacterSelectSceneV2>(
+		PreviewSceneV2Class, PreviewSpawnBaseLocation, FRotator::ZeroRotator, SpawnParams);
+
+	if (!SpawnedPreviewSceneV2)
+	{
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] V2 프리뷰 씬 액터 스폰 실패!"));
+		return;
+	}
+
+	// RenderTarget 생성
+	PreviewV2RenderTarget = NewObject<UTextureRenderTarget2D>(this);
+	PreviewV2RenderTarget->InitCustomFormat(PreviewV2RenderTargetSize.X, PreviewV2RenderTargetSize.Y, PF_FloatRGBA, false);
+	PreviewV2RenderTarget->ClearColor = FLinearColor::Transparent;
+	PreviewV2RenderTarget->UpdateResourceImmediate(true);
+
+	// 메시/애님 배열 구성
+	const TArray<EHellunaHeroType> HeroTypes = { EHellunaHeroType::Lui, EHellunaHeroType::Luna, EHellunaHeroType::Liam };
+
+	TArray<USkeletalMesh*> Meshes;
+	TArray<TSubclassOf<UAnimInstance>> AnimClasses;
+
+	for (const EHellunaHeroType HeroType : HeroTypes)
+	{
+		const TSoftObjectPtr<USkeletalMesh>* MeshPtr = PreviewMeshMap.Find(HeroType);
+		USkeletalMesh* LoadedMesh = MeshPtr ? MeshPtr->LoadSynchronous() : nullptr;
+		Meshes.Add(LoadedMesh);
+
+		const TSubclassOf<UAnimInstance>* AnimClassPtr = PreviewAnimClassMap.Find(HeroType);
+		AnimClasses.Add(AnimClassPtr ? *AnimClassPtr : nullptr);
+
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] V2 프리뷰: %s → Mesh=%s AnimClass=%s"),
+			*UEnum::GetValueAsString(HeroType),
+			LoadedMesh ? *LoadedMesh->GetName() : TEXT("nullptr"),
+			(AnimClassPtr && *AnimClassPtr) ? *(*AnimClassPtr)->GetName() : TEXT("nullptr"));
+	}
+
+	// 씬 초기화
+	SpawnedPreviewSceneV2->InitializeScene(Meshes, AnimClasses, PreviewV2RenderTarget);
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] V2 프리뷰 씬 스폰 및 초기화 완료"));
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// DestroyPreviewSceneV2 — V2 프리뷰 씬 파괴
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaLobbyController::DestroyPreviewSceneV2()
+{
+	if (IsValid(SpawnedPreviewSceneV2))
+	{
+		SpawnedPreviewSceneV2->Destroy();
+		SpawnedPreviewSceneV2 = nullptr;
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] V2 프리뷰 씬 파괴 완료"));
+	}
+
+	PreviewV2RenderTarget = nullptr;
 }

@@ -4,6 +4,7 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/SceneCaptureComponent2D.h"
 #include "Components/PointLightComponent.h"
+#include "Components/SpotLightComponent.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/SkeletalMesh.h"
 
@@ -172,6 +173,43 @@ void AHellunaCharacterSelectSceneV2::InitializeScene(
 	}
 
 	// ════════════════════════════════════════════
+	// OriginalLocations 저장 + 캐릭터별 스포트라이트 생성
+	// ════════════════════════════════════════════
+
+	OriginalLocations.Empty();
+	CharacterSpotLights.Empty();
+
+	for (int32 i = 0; i < PreviewMeshes.Num(); i++)
+	{
+		if (PreviewMeshes[i])
+		{
+			OriginalLocations.Add(PreviewMeshes[i]->GetRelativeLocation());
+		}
+		else
+		{
+			OriginalLocations.Add(FVector::ZeroVector);
+		}
+
+		// 캐릭터 머리 위에서 아래로 비추는 스포트라이트
+		USpotLightComponent* Spot = NewObject<USpotLightComponent>(this,
+			*FString::Printf(TEXT("CharSpotLight_%d"), i));
+		Spot->RegisterComponent();
+		Spot->AttachToComponent(SceneRoot, FAttachmentTransformRules::KeepRelativeTransform);
+
+		// 위치: 캐릭터 위 + 약간 앞에서 아래로 비춤
+		FVector SpotLoc = OriginalLocations[i] + FVector(100.f, 0.f, 350.f);
+		Spot->SetRelativeLocation(SpotLoc);
+		Spot->SetRelativeRotation(FRotator(-70.f, 0.f, 0.f)); // 위에서 아래로
+
+		Spot->SetIntensity(80000.f);
+		Spot->SetAttenuationRadius(1000.f);
+		Spot->SetInnerConeAngle(15.f);
+		Spot->SetOuterConeAngle(35.f);
+
+		CharacterSpotLights.Add(Spot);
+	}
+
+	// ════════════════════════════════════════════
 	// SceneCapture 설정
 	// ════════════════════════════════════════════
 
@@ -242,4 +280,47 @@ UTextureRenderTarget2D* AHellunaCharacterSelectSceneV2::GetRenderTarget() const
 int32 AHellunaCharacterSelectSceneV2::GetCharacterCount() const
 {
 	return PreviewMeshes.Num();
+}
+
+// ============================================
+// 선택 상태 연출
+// ============================================
+
+void AHellunaCharacterSelectSceneV2::SetCharacterSelected(int32 SelectedIndex)
+{
+	CurrentSelectedIndex = SelectedIndex;
+
+	for (int32 i = 0; i < PreviewMeshes.Num(); i++)
+	{
+		if (!PreviewMeshes[i]) continue;
+
+		const bool bIsSelected = (i == SelectedIndex);
+		const bool bNoSelection = (SelectedIndex < 0);
+
+		// 위치: 선택된 캐릭터는 카메라 쪽(Y+)으로 전진, 나머지는 원래 자리
+		FVector TargetLoc = OriginalLocations.IsValidIndex(i) ? OriginalLocations[i] : FVector::ZeroVector;
+		if (bIsSelected)
+		{
+			TargetLoc.Y += SelectedForwardOffset;
+		}
+		PreviewMeshes[i]->SetRelativeLocation(TargetLoc);
+
+		// 스포트라이트: 선택된 캐릭터는 밝게, 나머지는 어둡게 (미선택 시 모두 밝게)
+		if (CharacterSpotLights.IsValidIndex(i) && CharacterSpotLights[i])
+		{
+			const float FullIntensity = 80000.f;
+			if (bNoSelection)
+			{
+				CharacterSpotLights[i]->SetIntensity(FullIntensity);
+			}
+			else
+			{
+				CharacterSpotLights[i]->SetIntensity(bIsSelected ? FullIntensity : FullIntensity * UnselectedBrightnessRatio);
+			}
+		}
+	}
+
+#if HELLUNA_DEBUG_CHARACTER_PREVIEW_V2
+	UE_LOG(LogHelluna, Warning, TEXT("[프리뷰V2] SetCharacterSelected(%d)"), SelectedIndex);
+#endif
 }

@@ -367,7 +367,40 @@ bool UHellunaSQLiteSubsystem::InitializeSchema()
 		return false;
 	}
 
-	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ InitializeSchema 완료 (테이블 3개, 인덱스 2개)"));
+	// ── active_game_characters 테이블 생성 (캐릭터 중복 방지) ──
+	// TODO: [크래시 복구] 서버 비정상 종료 시 레코드가 남아있을 수 있음 → heartbeat/TTL 기반 자동 정리 필요
+	// TODO: [Race Condition] UNIQUE INDEX로 동시 등록은 방지되지만, UI 갱신에 지연 있음
+	// TODO: [실시간 알림] 다른 플레이어의 선택을 실시간으로 알리려면 Multicast RPC 또는 폴링 필요
+	if (!Database->Execute(TEXT(
+		"CREATE TABLE IF NOT EXISTS active_game_characters ("
+		"    id          INTEGER PRIMARY KEY AUTOINCREMENT,"
+		"    hero_type   INTEGER NOT NULL,"
+		"    player_id   TEXT NOT NULL,"
+		"    server_id   TEXT NOT NULL,"
+		"    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP"
+		");"
+	)))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ CREATE TABLE active_game_characters 실패 | 에러: %s"), *Database->GetLastError());
+		return false;
+	}
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite]   CREATE TABLE active_game_characters ✓"));
+
+	// hero_type + server_id 복합 유니크 인덱스 (같은 서버에서 같은 캐릭터 중복 등록 방지)
+	if (!Database->Execute(TEXT("CREATE UNIQUE INDEX IF NOT EXISTS idx_agc_hero_server ON active_game_characters(hero_type, server_id);")))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ INDEX idx_agc_hero_server 실패 | 에러: %s"), *Database->GetLastError());
+		return false;
+	}
+
+	// player_id 인덱스 (플레이어별 빠른 검색)
+	if (!Database->Execute(TEXT("CREATE INDEX IF NOT EXISTS idx_agc_player ON active_game_characters(player_id);")))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ INDEX idx_agc_player 실패 | 에러: %s"), *Database->GetLastError());
+		return false;
+	}
+
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ InitializeSchema 완료 (테이블 4개, 인덱스 4개)"));
 	return true;
 }
 
@@ -1395,6 +1428,177 @@ bool UHellunaSQLiteSubsystem::RecoverFromCrash(const FString& PlayerId)
 
 	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ RecoverFromCrash 완료 | PlayerId=%s | 복구 아이템 %d개"), *PlayerId, LoadoutItems.Num());
 	return true;
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 게임 캐릭터 중복 방지 (active_game_characters)
+// ════════════════════════════════════════════════════════════════════════════════
+
+// ──────────────────────────────────────────────────────────────
+// GetActiveGameCharacters — 현재 사용 중인 캐릭터 목록
+// ──────────────────────────────────────────────────────────────
+TArray<bool> UHellunaSQLiteSubsystem::GetActiveGameCharacters()
+{
+	// 3개 캐릭터: [0]=Lui, [1]=Luna, [2]=Liam, 기본값 false(미사용)
+	TArray<bool> Result;
+	Result.SetNum(3);
+	Result[0] = false;
+	Result[1] = false;
+	Result[2] = false;
+
+	if (!IsDatabaseReady())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] GetActiveGameCharacters: DB 미준비"));
+		return Result;
+	}
+
+	const TCHAR* SelectSQL = TEXT("SELECT DISTINCT hero_type FROM active_game_characters;");
+	FSQLitePreparedStatement SelectStmt = Database->PrepareStatement(SelectSQL);
+
+	if (!SelectStmt.IsValid())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] GetActiveGameCharacters: PrepareStatement 실패 | 에러: %s"), *Database->GetLastError());
+		return Result;
+	}
+
+	SelectStmt.Execute([&Result](const FSQLitePreparedStatement& Stmt) -> ESQLitePreparedStatementExecuteRowResult
+	{
+		int64 HeroType = 0;
+		Stmt.GetColumnValueByIndex(0, HeroType);
+		if (HeroType >= 0 && HeroType < 3)
+		{
+			Result[static_cast<int32>(HeroType)] = true;
+		}
+		return ESQLitePreparedStatementExecuteRowResult::Continue;
+	});
+
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] GetActiveGameCharacters: Lui=%s Luna=%s Liam=%s"),
+		Result[0] ? TEXT("사용중") : TEXT("가능"),
+		Result[1] ? TEXT("사용중") : TEXT("가능"),
+		Result[2] ? TEXT("사용중") : TEXT("가능"));
+
+	return Result;
+}
+
+// ──────────────────────────────────────────────────────────────
+// RegisterActiveGameCharacter — 캐릭터 사용 등록
+// ──────────────────────────────────────────────────────────────
+bool UHellunaSQLiteSubsystem::RegisterActiveGameCharacter(int32 HeroType, const FString& PlayerId, const FString& ServerId)
+{
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] RegisterActiveGameCharacter | HeroType=%d | PlayerId=%s | ServerId=%s"),
+		HeroType, *PlayerId, *ServerId);
+
+	if (!IsDatabaseReady())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] RegisterActiveGameCharacter: DB 미준비"));
+		return false;
+	}
+
+	if (HeroType < 0 || HeroType > 2)
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] RegisterActiveGameCharacter: 잘못된 HeroType=%d"), HeroType);
+		return false;
+	}
+
+	// 기존 플레이어 등록 제거 (재선택 허용)
+	UnregisterActiveGameCharacter(PlayerId);
+
+	// INSERT (UNIQUE INDEX가 중복 방지)
+	const TCHAR* InsertSQL = TEXT("INSERT INTO active_game_characters (hero_type, player_id, server_id) VALUES (?1, ?2, ?3);");
+	FSQLitePreparedStatement InsertStmt = Database->PrepareStatement(InsertSQL);
+
+	if (!InsertStmt.IsValid())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] RegisterActiveGameCharacter: PrepareStatement 실패 | 에러: %s"), *Database->GetLastError());
+		return false;
+	}
+
+	InsertStmt.SetBindingValueByIndex(1, static_cast<int64>(HeroType));
+	InsertStmt.SetBindingValueByIndex(2, PlayerId);
+	InsertStmt.SetBindingValueByIndex(3, ServerId);
+
+	if (InsertStmt.Execute())
+	{
+		UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ RegisterActiveGameCharacter 성공 | HeroType=%d | PlayerId=%s"), HeroType, *PlayerId);
+		return true;
+	}
+	else
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[SQLite] ✗ RegisterActiveGameCharacter 실패 (중복?) | HeroType=%d | 에러: %s"),
+			HeroType, *Database->GetLastError());
+		return false;
+	}
+}
+
+// ──────────────────────────────────────────────────────────────
+// UnregisterActiveGameCharacter — 플레이어의 캐릭터 등록 해제
+// ──────────────────────────────────────────────────────────────
+bool UHellunaSQLiteSubsystem::UnregisterActiveGameCharacter(const FString& PlayerId)
+{
+	if (!IsDatabaseReady())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] UnregisterActiveGameCharacter: DB 미준비"));
+		return false;
+	}
+
+	const TCHAR* DeleteSQL = TEXT("DELETE FROM active_game_characters WHERE player_id = ?1;");
+	FSQLitePreparedStatement DeleteStmt = Database->PrepareStatement(DeleteSQL);
+
+	if (!DeleteStmt.IsValid())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] UnregisterActiveGameCharacter: PrepareStatement 실패 | 에러: %s"), *Database->GetLastError());
+		return false;
+	}
+
+	DeleteStmt.SetBindingValueByIndex(1, PlayerId);
+
+	if (DeleteStmt.Execute())
+	{
+		UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ UnregisterActiveGameCharacter | PlayerId=%s"), *PlayerId);
+		return true;
+	}
+	else
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ UnregisterActiveGameCharacter 실패 | PlayerId=%s | 에러: %s"),
+			*PlayerId, *Database->GetLastError());
+		return false;
+	}
+}
+
+// ──────────────────────────────────────────────────────────────
+// UnregisterAllActiveGameCharactersForServer — 서버의 모든 캐릭터 해제
+// ──────────────────────────────────────────────────────────────
+bool UHellunaSQLiteSubsystem::UnregisterAllActiveGameCharactersForServer(const FString& ServerId)
+{
+	if (!IsDatabaseReady())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] UnregisterAllForServer: DB 미준비"));
+		return false;
+	}
+
+	const TCHAR* DeleteSQL = TEXT("DELETE FROM active_game_characters WHERE server_id = ?1;");
+	FSQLitePreparedStatement DeleteStmt = Database->PrepareStatement(DeleteSQL);
+
+	if (!DeleteStmt.IsValid())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] UnregisterAllForServer: PrepareStatement 실패 | 에러: %s"), *Database->GetLastError());
+		return false;
+	}
+
+	DeleteStmt.SetBindingValueByIndex(1, ServerId);
+
+	if (DeleteStmt.Execute())
+	{
+		UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ UnregisterAllForServer | ServerId=%s"), *ServerId);
+		return true;
+	}
+	else
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ UnregisterAllForServer 실패 | ServerId=%s | 에러: %s"),
+			*ServerId, *Database->GetLastError());
+		return false;
+	}
 }
 
 

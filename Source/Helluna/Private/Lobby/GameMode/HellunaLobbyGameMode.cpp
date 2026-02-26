@@ -59,8 +59,11 @@ AHellunaLobbyGameMode::AHellunaLobbyGameMode()
 {
 	DefaultPawnClass = nullptr;
 
+	// 로비 서버 고유 ID 생성 (GUID 기반)
+	LobbyServerId = FGuid::NewGuid().ToString();
+
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ========================================"));
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] 생성자 호출 | DefaultPawnClass=nullptr"));
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] 생성자 호출 | DefaultPawnClass=nullptr | ServerId=%s"), *LobbyServerId);
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ========================================"));
 }
 
@@ -178,6 +181,13 @@ void AHellunaLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [3/3] Controller-PlayerId 매핑 등록 | PlayerId=%s"), *PlayerId);
 	RegisterControllerPlayerId(LobbyPC, PlayerId);
 
+	// ── 4) 가용 캐릭터 정보 전달 ──
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [4/4] 가용 캐릭터 정보 전달"));
+	{
+		TArray<bool> UsedCharacters = GetLobbyAvailableCharacters();
+		LobbyPC->Client_ShowLobbyCharacterSelectUI(UsedCharacters);
+	}
+
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ══════════════════════════════════════"));
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] PostLogin 완료 → PlayerId=%s"), *PlayerId);
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ══════════════════════════════════════"));
@@ -210,6 +220,16 @@ void AHellunaLobbyGameMode::Logout(AController* Exiting)
 	{
 		AHellunaLobbyController* LobbyPC = Cast<AHellunaLobbyController>(Exiting);
 		const FString PlayerId = GetPlayerSaveId(Cast<APlayerController>(Exiting));
+
+		// 캐릭터 사용 해제
+		if (!PlayerId.IsEmpty())
+		{
+			UnregisterLobbyCharacterUse(PlayerId);
+		}
+		else if (const FString* CachedId = ControllerToPlayerIdMap.Find(Exiting))
+		{
+			UnregisterLobbyCharacterUse(*CachedId);
+		}
 
 		if (LobbyPC && !PlayerId.IsEmpty())
 		{
@@ -457,4 +477,119 @@ UInv_ItemComponent* AHellunaLobbyGameMode::ResolveItemTemplate(const FGameplayTa
 	}
 
 	return Template;
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 캐릭터 중복 방지 — 같은 로비 + SQLite 교차 체크
+// ════════════════════════════════════════════════════════════════════════════════
+
+bool AHellunaLobbyGameMode::IsLobbyCharacterAvailable(EHellunaHeroType HeroType) const
+{
+	// 1) 메모리 맵 체크 (같은 로비 내)
+	if (LobbyUsedCharacterMap.Contains(HeroType))
+	{
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] IsLobbyCharacterAvailable: %s → 이미 로비 내 사용중 (PlayerId=%s)"),
+			*UEnum::GetValueAsString(HeroType), *LobbyUsedCharacterMap[HeroType]);
+		return false;
+	}
+
+	// 2) SQLite 체크 (다른 서버 간)
+	if (SQLiteSubsystem && SQLiteSubsystem->IsDatabaseReady())
+	{
+		TArray<bool> DbUsed = SQLiteSubsystem->GetActiveGameCharacters();
+		const int32 Index = HeroTypeToIndex(HeroType);
+		if (DbUsed.IsValidIndex(Index) && DbUsed[Index])
+		{
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] IsLobbyCharacterAvailable: %s → SQLite에서 사용중"),
+				*UEnum::GetValueAsString(HeroType));
+			return false;
+		}
+	}
+
+	return true;
+}
+
+TArray<bool> AHellunaLobbyGameMode::GetLobbyAvailableCharacters() const
+{
+	TArray<bool> Result;
+	Result.SetNum(3);
+	Result[0] = false;
+	Result[1] = false;
+	Result[2] = false;
+
+	// 메모리 맵에서 사용 중인 캐릭터 마킹
+	for (const auto& Pair : LobbyUsedCharacterMap)
+	{
+		const int32 Index = HeroTypeToIndex(Pair.Key);
+		if (Index >= 0 && Index < 3)
+		{
+			Result[Index] = true;
+		}
+	}
+
+	// SQLite에서 추가 체크 (다른 서버에서 사용 중인 캐릭터)
+	if (SQLiteSubsystem && SQLiteSubsystem->IsDatabaseReady())
+	{
+		TArray<bool> DbUsed = SQLiteSubsystem->GetActiveGameCharacters();
+		for (int32 i = 0; i < FMath::Min(3, DbUsed.Num()); ++i)
+		{
+			if (DbUsed[i])
+			{
+				Result[i] = true;
+			}
+		}
+	}
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] GetLobbyAvailableCharacters: Lui=%s Luna=%s Liam=%s"),
+		Result[0] ? TEXT("사용중") : TEXT("가능"),
+		Result[1] ? TEXT("사용중") : TEXT("가능"),
+		Result[2] ? TEXT("사용중") : TEXT("가능"));
+
+	return Result;
+}
+
+void AHellunaLobbyGameMode::RegisterLobbyCharacterUse(EHellunaHeroType HeroType, const FString& PlayerId)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] RegisterLobbyCharacterUse | Hero=%s | PlayerId=%s"),
+		*UEnum::GetValueAsString(HeroType), *PlayerId);
+
+	// 기존 선택 해제 (같은 플레이어가 다른 캐릭터 재선택)
+	UnregisterLobbyCharacterUse(PlayerId);
+
+	// 메모리 맵 등록
+	LobbyUsedCharacterMap.Add(HeroType, PlayerId);
+
+	// SQLite 등록
+	if (SQLiteSubsystem && SQLiteSubsystem->IsDatabaseReady())
+	{
+		SQLiteSubsystem->RegisterActiveGameCharacter(HeroTypeToIndex(HeroType), PlayerId, LobbyServerId);
+	}
+}
+
+void AHellunaLobbyGameMode::UnregisterLobbyCharacterUse(const FString& PlayerId)
+{
+	// 메모리 맵에서 해당 플레이어 제거
+	EHellunaHeroType FoundType = EHellunaHeroType::None;
+	for (const auto& Pair : LobbyUsedCharacterMap)
+	{
+		if (Pair.Value == PlayerId)
+		{
+			FoundType = Pair.Key;
+			break;
+		}
+	}
+
+	if (FoundType != EHellunaHeroType::None)
+	{
+		LobbyUsedCharacterMap.Remove(FoundType);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] UnregisterLobbyCharacterUse | Hero=%s | PlayerId=%s"),
+			*UEnum::GetValueAsString(FoundType), *PlayerId);
+	}
+
+	// SQLite 해제
+	if (SQLiteSubsystem && SQLiteSubsystem->IsDatabaseReady())
+	{
+		SQLiteSubsystem->UnregisterActiveGameCharacter(PlayerId);
+	}
 }
