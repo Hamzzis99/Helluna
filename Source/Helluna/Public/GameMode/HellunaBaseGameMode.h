@@ -136,6 +136,9 @@ protected:
 	void SwapToGameController(AHellunaLoginController* LoginController, const FString& PlayerId, EHellunaHeroType SelectedHeroType = EHellunaHeroType::None);
 	void SpawnHeroCharacter(APlayerController* PlayerController);
 
+	/** 인벤토리 데이터 사전 로드 (디스크 I/O를 캐릭터 스폰 전에 완료) */
+	void PreCacheInventoryForPlayer(const FString& PlayerId);
+
 	// ════════════════════════════════════════════════════════════════════════════════
 	// 🎭 캐릭터 선택 시스템
 	// ════════════════════════════════════════════════════════════════════════════════
@@ -252,4 +255,7 @@ protected:
 	/** 현재 사용 중인 캐릭터 맵 (타입 → PlayerId) */
 	UPROPERTY()
 	TMap<EHellunaHeroType, FString> UsedCharacterMap;
+
+	/** 사전 로드된 인벤토리 캐시 (PlayerId → SaveData) — SpawnHeroCharacter 전에 채워짐 */
+	TMap<FString, FInv_PlayerSaveData> PreCachedInventoryMap;
 };

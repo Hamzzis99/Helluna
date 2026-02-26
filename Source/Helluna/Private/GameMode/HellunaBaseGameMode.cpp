@@ -403,6 +403,9 @@ void AHellunaBaseGameMode::PostLogin(APlayerController* NewPlayer)
 		// 4. Controller → PlayerId 매핑 등록
 		RegisterControllerPlayerId(NewPlayer, DeployPlayerId);
 
+		// 4.5 인벤토리 사전 로드 (디스크 I/O를 스폰 전에 완료)
+		PreCacheInventoryForPlayer(DeployPlayerId);
+
 		// 5. SwapToGameController → SpawnHeroCharacter → LoadAndSendInventoryToClient
 		AHellunaLoginController* LC = Cast<AHellunaLoginController>(NewPlayer);
 		if (LC && LC->GetGameControllerClass())
@@ -456,6 +459,9 @@ void AHellunaBaseGameMode::PostLogin(APlayerController* NewPlayer)
 		UE_LOG(LogHelluna, Warning, TEXT("[BaseGameMode] 이미 로그인됨! → Controller 확인 후 처리"));
 #endif
 		FString PlayerId = PS->GetPlayerUniqueId();
+
+		// 인벤토리 사전 로드 (디스크 I/O를 스폰 전에 완료)
+		PreCacheInventoryForPlayer(PlayerId);
 
 		// 0.5초 딜레이: Controller 초기화 완료 대기
 		FTimerHandle TimerHandle;
@@ -532,21 +538,28 @@ void AHellunaBaseGameMode::PostLogin(APlayerController* NewPlayer)
 				*GetNameSafe(NewPlayer));
 		}
 
-		// 5. 게임 초기화 (첫 플레이어일 때)
+		// 5. 인벤토리 사전 로드 (디스크 I/O를 스폰 전에 완료)
+		PreCacheInventoryForPlayer(DebugPlayerId);
+
+		// 6. 게임 초기화 (첫 플레이어일 때)
 		if (!bGameInitialized)
 		{
 			InitializeGame();
 		}
 
-		// 6. 인벤토리 로드 (1초 딜레이 - 컴포넌트 초기화 대기)
-		FTimerHandle InventoryLoadTimer;
-		GetWorldTimerManager().SetTimer(InventoryLoadTimer, [this, NewPlayer]()
+		// 7. 인벤토리 복원 — Pre-Cache 있으면 0.1초, 없으면 1.0초 딜레이
 		{
-			if (IsValid(NewPlayer))
+			const bool bHasCache = PreCachedInventoryMap.Contains(DebugPlayerId);
+			const float LoadDelay = bHasCache ? 0.1f : 1.0f;
+			FTimerHandle InventoryLoadTimer;
+			GetWorldTimerManager().SetTimer(InventoryLoadTimer, [this, NewPlayer]()
 			{
-				LoadAndSendInventoryToClient(NewPlayer);
-			}
-		}, 1.0f, false);
+				if (IsValid(NewPlayer))
+				{
+					LoadAndSendInventoryToClient(NewPlayer);
+				}
+			}, LoadDelay, false);
+		}
 
 		// 타임아웃 타이머 시작하지 않음!
 #else
@@ -1145,10 +1158,20 @@ void AHellunaBaseGameMode::SpawnHeroCharacter(APlayerController* PlayerControlle
 	}
 
 	// ────────────────────────────────────────────────────────────────────────────
-	// 📌 인벤토리 로드 (1초 딜레이)
+	// 📌 인벤토리 복원 — Pre-Cache 시 즉시, 아니면 1초 딜레이
 	// ────────────────────────────────────────────────────────────────────────────
-	// 딜레이 이유: InventoryComponent 초기화 완료 대기
-	// ────────────────────────────────────────────────────────────────────────────
+	FString SpawnPlayerId;
+	if (AHellunaPlayerState* SpawnPS = PlayerController->GetPlayerState<AHellunaPlayerState>())
+	{
+		SpawnPlayerId = SpawnPS->GetPlayerUniqueId();
+	}
+
+	const bool bHasPreCache = !SpawnPlayerId.IsEmpty() && PreCachedInventoryMap.Contains(SpawnPlayerId);
+	const float InventoryLoadDelay = bHasPreCache ? 0.1f : 1.0f;
+
+	UE_LOG(LogHelluna, Log, TEXT("[SpawnHero] 인벤토리 로드 딜레이=%.1f초 | PreCache=%s | PlayerId=%s"),
+		InventoryLoadDelay, bHasPreCache ? TEXT("Y") : TEXT("N"), *SpawnPlayerId);
+
 	FTimerHandle InventoryLoadTimer;
 	GetWorldTimerManager().SetTimer(InventoryLoadTimer, [this, PlayerController]()
 	{
@@ -1156,7 +1179,7 @@ void AHellunaBaseGameMode::SpawnHeroCharacter(APlayerController* PlayerControlle
 		{
 			LoadAndSendInventoryToClient(PlayerController);
 		}
-	}, 1.0f, false);
+	}, InventoryLoadDelay, false);
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -1466,6 +1489,9 @@ void AHellunaBaseGameMode::ProcessCharacterSelection(APlayerController* PlayerCo
 	// 캐릭터 사용 등록
 	RegisterCharacterUse(HeroType, PlayerId);
 
+	// 인벤토리 사전 로드 (디스크 I/O를 스폰 전에 완료)
+	PreCacheInventoryForPlayer(PlayerId);
+
 	// 성공 알림
 	if (LoginController)
 	{
@@ -1726,6 +1752,115 @@ bool AHellunaBaseGameMode::SaveCollectedItems(const FString& PlayerId, const TAr
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
+// 📌 PreCacheInventoryForPlayer — 인벤토리 데이터 사전 로드
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 📌 역할:
+//    캐릭터 스폰 전에 디스크 I/O(JSON 파일 / SQLite)를 미리 완료하여
+//    스폰 후 즉시 인벤토리를 복원할 수 있도록 캐싱
+//
+// 📌 호출 시점:
+//    PostLogin() / SwapToGameController() 등 SpawnHeroCharacter 이전
+//
+// 📌 데이터 소비:
+//    LoadAndSendInventoryToClient()에서 PreCachedInventoryMap을 우선 확인
+//
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaBaseGameMode::PreCacheInventoryForPlayer(const FString& PlayerId)
+{
+	if (PlayerId.IsEmpty())
+	{
+		return;
+	}
+
+	// 이미 캐시됨
+	if (PreCachedInventoryMap.Contains(PlayerId))
+	{
+		UE_LOG(LogHelluna, Log, TEXT("[PreCache] 이미 캐시됨 | PlayerId=%s"), *PlayerId);
+		return;
+	}
+
+	UGameInstance* GI = GetGameInstance();
+	UHellunaSQLiteSubsystem* DB = GI ? GI->GetSubsystem<UHellunaSQLiteSubsystem>() : nullptr;
+
+	FInv_PlayerSaveData LoadedData;
+	bool bLoaded = false;
+
+	// ── [1] 파일 기반 Loadout 우선 체크 (DB 잠금 회피) ──
+	if (DB && DB->HasPendingLoadoutFile(PlayerId))
+	{
+		int32 FileHeroType = 0;
+		TArray<FInv_SavedItemData> Items = DB->ImportLoadoutFromFile(PlayerId, FileHeroType);
+		UE_LOG(LogHelluna, Warning, TEXT("[PreCache] JSON 파일에서 Loadout 로드 | PlayerId=%s | %d개 | HeroType=%d"),
+			*PlayerId, Items.Num(), FileHeroType);
+
+		if (Items.Num() > 0)
+		{
+			LoadedData.Items = MoveTemp(Items);
+			LoadedData.LastSaveTime = FDateTime::Now();
+			bLoaded = true;
+		}
+
+		// DB Loadout도 정리
+		if (DB->IsDatabaseReady() && DB->HasPendingLoadout(PlayerId))
+		{
+			DB->DeletePlayerLoadout(PlayerId);
+			UE_LOG(LogHelluna, Log, TEXT("[PreCache] DB Loadout도 삭제 완료"));
+		}
+	}
+
+	// ── [2] 파일 없으면 DB에서 로드 시도 ──
+	if (!bLoaded)
+	{
+		if (DB && !DB->IsDatabaseReady())
+		{
+			DB->TryReopenDatabase();
+		}
+
+		if (DB && DB->IsDatabaseReady())
+		{
+			// DB Loadout 우선
+			if (DB->HasPendingLoadout(PlayerId))
+			{
+				TArray<FInv_SavedItemData> Items = DB->LoadPlayerLoadout(PlayerId);
+				if (Items.Num() > 0)
+				{
+					LoadedData.Items = MoveTemp(Items);
+					LoadedData.LastSaveTime = FDateTime::Now();
+					bLoaded = true;
+				}
+				DB->DeletePlayerLoadout(PlayerId);
+				UE_LOG(LogHelluna, Log, TEXT("[PreCache] DB Loadout 로드+삭제 | PlayerId=%s | %d개"), *PlayerId, LoadedData.Items.Num());
+			}
+
+			// Loadout 없으면 Stash
+			if (!bLoaded)
+			{
+				TArray<FInv_SavedItemData> Items = DB->LoadPlayerStash(PlayerId);
+				if (Items.Num() > 0)
+				{
+					LoadedData.Items = MoveTemp(Items);
+					LoadedData.LastSaveTime = FDateTime::Now();
+					bLoaded = true;
+					UE_LOG(LogHelluna, Log, TEXT("[PreCache] Stash 로드 | PlayerId=%s | %d개"), *PlayerId, LoadedData.Items.Num());
+				}
+			}
+		}
+	}
+
+	if (bLoaded && !LoadedData.IsEmpty())
+	{
+		PreCachedInventoryMap.Add(PlayerId, MoveTemp(LoadedData));
+		UE_LOG(LogHelluna, Warning, TEXT("[PreCache] ✓ 캐시 완료 | PlayerId=%s | %d개"),
+			*PlayerId, PreCachedInventoryMap[PlayerId].Items.Num());
+	}
+	else
+	{
+		UE_LOG(LogHelluna, Log, TEXT("[PreCache] 데이터 없음 (신규 유저 또는 빈 인벤토리) | PlayerId=%s"), *PlayerId);
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
 // 📌 [Phase 3] LoadAndSendInventoryToClient — SQLite 로드 (실패 시 .sav 폴백)
 // ════════════════════════════════════════════════════════════════════════════════
 //
@@ -1745,96 +1880,102 @@ void AHellunaBaseGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
 		return;
 	}
 
-	// ── SQLite 서브시스템 획득 ──
-	UGameInstance* GI = GetGameInstance();
-	UHellunaSQLiteSubsystem* DB = GI ? GI->GetSubsystem<UHellunaSQLiteSubsystem>() : nullptr;
-
 	FInv_PlayerSaveData LoadedData;
 	bool bLoaded = false;
 
 	// ══════════════════════════════════════════════════════════════
-	// [Phase 6 File] 파일 기반 Loadout 우선 체크 (DB 잠금 회피)
+	// [Pre-Cache] 사전 로드된 데이터 우선 사용
 	// ══════════════════════════════════════════════════════════════
-	// DB가 열리지 않아도 JSON 파일에서 직접 로드 가능
-	// → 로비 PIE와 데디서버가 동시에 같은 DB를 열 수 없는 문제 해결
-	if (DB && DB->HasPendingLoadoutFile(PlayerId))
+	if (FInv_PlayerSaveData* CachedData = PreCachedInventoryMap.Find(PlayerId))
 	{
-		int32 FileHeroType = 0;
-		TArray<FInv_SavedItemData> Items = DB->ImportLoadoutFromFile(PlayerId, FileHeroType);
-		UE_LOG(LogHelluna, Warning, TEXT("[Phase6-File] LoadAndSendInventoryToClient: JSON 파일에서 Loadout 로드 | PlayerId=%s | %d개 | HeroType=%d"),
-			*PlayerId, Items.Num(), FileHeroType);
-
-		if (Items.Num() > 0)
-		{
-			LoadedData.Items = MoveTemp(Items);
-			LoadedData.LastSaveTime = FDateTime::Now();
-			bLoaded = true;
-		}
-
-		// DB Loadout도 정리 (DB 접근 가능한 경우에만)
-		if (DB->IsDatabaseReady() && DB->HasPendingLoadout(PlayerId))
-		{
-			DB->DeletePlayerLoadout(PlayerId);
-			UE_LOG(LogHelluna, Log, TEXT("[Phase6-File] DB Loadout도 삭제 완료"));
-		}
+		LoadedData = MoveTemp(*CachedData);
+		PreCachedInventoryMap.Remove(PlayerId);
+		bLoaded = true;
+		UE_LOG(LogHelluna, Warning, TEXT("[LoadInv] ✓ Pre-Cache 데이터 사용 | PlayerId=%s | %d개"),
+			*PlayerId, LoadedData.Items.Num());
 	}
 
 	// ══════════════════════════════════════════════════════════════
-	// [Phase 6 DB] 파일 없으면 DB에서 로드 시도 (기존 경로)
+	// [Fallback] 캐시 없으면 기존 경로 (디스크 I/O)
 	// ══════════════════════════════════════════════════════════════
 	if (!bLoaded)
 	{
-		// DB 준비 확인 (미준비 시 재오픈 시도)
-		if (DB && !DB->IsDatabaseReady())
-		{
-			UE_LOG(LogHelluna, Warning, TEXT("[Phase3] LoadAndSendInventoryToClient: DB 미준비 → TryReopenDatabase 시도"));
-			DB->TryReopenDatabase();
-		}
+		UGameInstance* GI = GetGameInstance();
+		UHellunaSQLiteSubsystem* DB = GI ? GI->GetSubsystem<UHellunaSQLiteSubsystem>() : nullptr;
 
-		if (DB && DB->IsDatabaseReady())
+		// [Phase 6 File] 파일 기반 Loadout 체크
+		if (DB && DB->HasPendingLoadoutFile(PlayerId))
 		{
-			// Loadout 우선 체크 (DB에서)
-			if (DB->HasPendingLoadout(PlayerId))
+			int32 FileHeroType = 0;
+			TArray<FInv_SavedItemData> Items = DB->ImportLoadoutFromFile(PlayerId, FileHeroType);
+			UE_LOG(LogHelluna, Warning, TEXT("[Phase6-File] LoadAndSendInventoryToClient: JSON 파일에서 Loadout 로드 | PlayerId=%s | %d개 | HeroType=%d"),
+				*PlayerId, Items.Num(), FileHeroType);
+
+			if (Items.Num() > 0)
 			{
-				TArray<FInv_SavedItemData> Items = DB->LoadPlayerLoadout(PlayerId);
-				UE_LOG(LogHelluna, Log, TEXT("[Phase6] LoadAndSendInventoryToClient: DB Loadout 로드 | PlayerId=%s | %d개"),
-					*PlayerId, Items.Num());
+				LoadedData.Items = MoveTemp(Items);
+				LoadedData.LastSaveTime = FDateTime::Now();
+				bLoaded = true;
+			}
 
-				if (Items.Num() > 0)
-				{
-					LoadedData.Items = MoveTemp(Items);
-					LoadedData.LastSaveTime = FDateTime::Now();
-					bLoaded = true;
-				}
-
+			if (DB->IsDatabaseReady() && DB->HasPendingLoadout(PlayerId))
+			{
 				DB->DeletePlayerLoadout(PlayerId);
-				UE_LOG(LogHelluna, Log, TEXT("[Phase6] LoadAndSendInventoryToClient: DB Loadout 삭제 완료 | PlayerId=%s"), *PlayerId);
-			}
-
-			// Loadout 없으면 Stash에서 로드
-			if (!bLoaded)
-			{
-				TArray<FInv_SavedItemData> Items = DB->LoadPlayerStash(PlayerId);
-				if (Items.Num() > 0)
-				{
-					LoadedData.Items = MoveTemp(Items);
-					LoadedData.LastSaveTime = FDateTime::Now();
-					bLoaded = true;
-					UE_LOG(LogHelluna, Log, TEXT("[Phase3] LoadAndSendInventoryToClient: SQLite Stash 로드 성공 | PlayerId=%s | %d개"),
-						*PlayerId, LoadedData.Items.Num());
-				}
-				else
-				{
-					UE_LOG(LogHelluna, Log, TEXT("[Phase3] LoadAndSendInventoryToClient: SQLite 데이터 없음 (신규 유저) | PlayerId=%s"), *PlayerId);
-				}
+				UE_LOG(LogHelluna, Log, TEXT("[Phase6-File] DB Loadout도 삭제 완료"));
 			}
 		}
-		else
+
+		// [Phase 6 DB] DB에서 로드 시도
+		if (!bLoaded)
 		{
-			// SQLite 미준비 → .sav 폴백
-			UE_LOG(LogHelluna, Warning, TEXT("[Phase3] LoadAndSendInventoryToClient: SQLite 미준비 (재오픈도 실패) — .sav 폴백 | PlayerId=%s"), *PlayerId);
-			Super::LoadAndSendInventoryToClient(PC);
-			return;
+			if (DB && !DB->IsDatabaseReady())
+			{
+				UE_LOG(LogHelluna, Warning, TEXT("[Phase3] LoadAndSendInventoryToClient: DB 미준비 → TryReopenDatabase 시도"));
+				DB->TryReopenDatabase();
+			}
+
+			if (DB && DB->IsDatabaseReady())
+			{
+				if (DB->HasPendingLoadout(PlayerId))
+				{
+					TArray<FInv_SavedItemData> Items = DB->LoadPlayerLoadout(PlayerId);
+					UE_LOG(LogHelluna, Log, TEXT("[Phase6] LoadAndSendInventoryToClient: DB Loadout 로드 | PlayerId=%s | %d개"),
+						*PlayerId, Items.Num());
+
+					if (Items.Num() > 0)
+					{
+						LoadedData.Items = MoveTemp(Items);
+						LoadedData.LastSaveTime = FDateTime::Now();
+						bLoaded = true;
+					}
+
+					DB->DeletePlayerLoadout(PlayerId);
+					UE_LOG(LogHelluna, Log, TEXT("[Phase6] LoadAndSendInventoryToClient: DB Loadout 삭제 완료 | PlayerId=%s"), *PlayerId);
+				}
+
+				if (!bLoaded)
+				{
+					TArray<FInv_SavedItemData> Items = DB->LoadPlayerStash(PlayerId);
+					if (Items.Num() > 0)
+					{
+						LoadedData.Items = MoveTemp(Items);
+						LoadedData.LastSaveTime = FDateTime::Now();
+						bLoaded = true;
+						UE_LOG(LogHelluna, Log, TEXT("[Phase3] LoadAndSendInventoryToClient: SQLite Stash 로드 성공 | PlayerId=%s | %d개"),
+							*PlayerId, LoadedData.Items.Num());
+					}
+					else
+					{
+						UE_LOG(LogHelluna, Log, TEXT("[Phase3] LoadAndSendInventoryToClient: SQLite 데이터 없음 (신규 유저) | PlayerId=%s"), *PlayerId);
+					}
+				}
+			}
+			else
+			{
+				UE_LOG(LogHelluna, Warning, TEXT("[Phase3] LoadAndSendInventoryToClient: SQLite 미준비 (재오픈도 실패) — .sav 폴백 | PlayerId=%s"), *PlayerId);
+				Super::LoadAndSendInventoryToClient(PC);
+				return;
+			}
 		}
 	}
 
