@@ -902,9 +902,8 @@ bool UHellunaSQLiteSubsystem::InitializeSchema()
 	}
 
 	// ── player_loadout 테이블 생성 ──
-	// player_stash와 거의 동일하지만:
-	//   - is_equipped 컬럼 없음 (출격장비에는 장착 개념 없음)
-	//   - updated_at 대신 created_at (한 번 생성되면 수정되지 않음)
+	// player_stash와 거의 동일 (updated_at 대신 created_at)
+	// [Fix14] is_equipped 컬럼 추가 — 장착 상태 보존
 	if (!Database->Execute(TEXT(
 		"CREATE TABLE IF NOT EXISTS player_loadout ("
 		"    id                  INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -914,6 +913,7 @@ bool UHellunaSQLiteSubsystem::InitializeSchema()
 		"    grid_position_x     INTEGER DEFAULT -1,"
 		"    grid_position_y     INTEGER DEFAULT -1,"
 		"    grid_category       INTEGER DEFAULT 0,"
+		"    is_equipped         INTEGER DEFAULT 0,"
 		"    weapon_slot         INTEGER DEFAULT -1,"
 		"    serialized_manifest BLOB,"
 		"    attachments_json    TEXT,"
@@ -951,6 +951,11 @@ bool UHellunaSQLiteSubsystem::InitializeSchema()
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ INSERT schema_version 실패 | 에러: %s"), *Database->GetLastError());
 		return false;
 	}
+
+	// ── [Fix14] 마이그레이션: 기존 player_loadout에 is_equipped 컬럼 추가 ──
+	// CREATE TABLE IF NOT EXISTS는 이미 있는 테이블을 수정하지 않으므로,
+	// 기존 DB에 is_equipped 컬럼이 없을 수 있음 → ALTER TABLE로 추가 (이미 있으면 에러 무시)
+	Database->Execute(TEXT("ALTER TABLE player_loadout ADD COLUMN is_equipped INTEGER DEFAULT 0;"));
 
 	// ── active_game_characters 테이블 생성 (캐릭터 중복 방지) ──
 	// TODO: [크래시 복구] 서버 비정상 종료 시 레코드가 남아있을 수 있음 → heartbeat/TTL 기반 자동 정리 필요
@@ -1150,7 +1155,6 @@ TArray<FInv_SavedAttachmentData> UHellunaSQLiteSubsystem::DeserializeAttachments
 //
 // 컬럼 이름으로 값을 읽음 (GetColumnValueByName)
 // → 컬럼이 없으면 조용히 실패하고 기본값 유지
-//   (player_loadout에는 is_equipped 컬럼이 없지만 안전하게 동작)
 //
 // ─── 컬럼 매핑 ───
 // item_type           → Item.ItemType (FGameplayTag)
@@ -1158,7 +1162,7 @@ TArray<FInv_SavedAttachmentData> UHellunaSQLiteSubsystem::DeserializeAttachments
 // grid_position_x     → Item.GridPosition.X (int32)
 // grid_position_y     → Item.GridPosition.Y (int32)
 // grid_category       → Item.GridCategory (uint8)
-// is_equipped         → Item.bEquipped (bool) — Loadout에는 없음(기본 false)
+// is_equipped         → Item.bEquipped (bool) — [Fix14] Stash/Loadout 모두 사용
 // weapon_slot         → Item.WeaponSlotIndex (int32)
 // serialized_manifest → Item.SerializedManifest (TArray<uint8>)
 // attachments_json    → Item.Attachments (TArray<FInv_SavedAttachmentData>)
@@ -1488,10 +1492,8 @@ bool UHellunaSQLiteSubsystem::IsPlayerExists(const FString& PlayerId)
 // ──────────────────────────────────────────────────────────────
 // SQL: SELECT * FROM player_loadout WHERE player_id = ?
 //
-// 주의: player_loadout에는 is_equipped 컬럼이 없음!
-//   → SELECT 목록에서 is_equipped 제외
-//   → ParseRowToSavedItem에서 GetColumnValueByName("is_equipped")는
-//     조용히 실패하고 기본값 0(false) 유지 → 문제없음
+// [Fix14] is_equipped 컬럼 추가 — 장착 상태 보존하여 게임서버에 전달
+//   → ParseRowToSavedItem에서 is_equipped + weapon_slot 읽어 bEquipped + WeaponSlotIndex 설정
 //
 // 호출 시점:
 //   - 게임서버 PostLogin에서 LoadPlayerLoadout → InvComp에 복원
@@ -1512,10 +1514,10 @@ TArray<FInv_SavedItemData> UHellunaSQLiteSubsystem::LoadPlayerLoadout(const FStr
 		return TArray<FInv_SavedItemData>();
 	}
 
-	// is_equipped 컬럼 없음 → SELECT에서 제외
+	// [Fix14] is_equipped 컬럼 포함하여 장착 상태 보존
 	const TCHAR* SelectSQL = TEXT(
 		"SELECT item_type, stack_count, grid_position_x, grid_position_y, "
-		"grid_category, weapon_slot, serialized_manifest, attachments_json "
+		"grid_category, is_equipped, weapon_slot, serialized_manifest, attachments_json "
 		"FROM player_loadout WHERE player_id = ?1;"
 	);
 
@@ -1552,7 +1554,7 @@ TArray<FInv_SavedItemData> UHellunaSQLiteSubsystem::LoadPlayerLoadout(const FStr
 //
 // 내부 처리 (하나의 트랜잭션):
 //   1. BEGIN TRANSACTION
-//   2. Loadout INSERT (9개 바인딩 — is_equipped 없음)
+//   2. Loadout INSERT (10개 바인딩 — [Fix14] is_equipped 포함)
 //   3. Stash DELETE (해당 플레이어 전체)
 //   4. COMMIT (또는 ROLLBACK)
 //
@@ -1604,12 +1606,12 @@ bool UHellunaSQLiteSubsystem::SavePlayerLoadout(const FString& PlayerId, const T
 	}
 
 	// (a) player_loadout에 Items INSERT
-	//     is_equipped 컬럼 없음 → 9개 바인딩 (?1~?9)
+	//     [Fix14] is_equipped 컬럼 추가 → 10개 바인딩 (?1~?10)
 	const TCHAR* InsertSQL = TEXT(
 		"INSERT INTO player_loadout "
 		"(player_id, item_type, stack_count, grid_position_x, grid_position_y, "
-		"grid_category, weapon_slot, serialized_manifest, attachments_json) "
-		"VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9);"
+		"grid_category, is_equipped, weapon_slot, serialized_manifest, attachments_json) "
+		"VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10);"
 	);
 
 	FSQLitePreparedStatement InsertStmt = Database->PrepareStatement(InsertSQL, ESQLitePreparedStatementFlags::Persistent);
@@ -1630,27 +1632,28 @@ bool UHellunaSQLiteSubsystem::SavePlayerLoadout(const FString& PlayerId, const T
 		InsertStmt.SetBindingValueByIndex(4, Item.GridPosition.X);                        // ?4: grid_position_x
 		InsertStmt.SetBindingValueByIndex(5, Item.GridPosition.Y);                        // ?5: grid_position_y
 		InsertStmt.SetBindingValueByIndex(6, static_cast<int32>(Item.GridCategory));       // ?6: grid_category
-		InsertStmt.SetBindingValueByIndex(7, Item.WeaponSlotIndex);                       // ?7: weapon_slot
+		InsertStmt.SetBindingValueByIndex(7, Item.bEquipped ? 1 : 0);                    // ?7: is_equipped [Fix14]
+		InsertStmt.SetBindingValueByIndex(8, Item.WeaponSlotIndex);                       // ?8: weapon_slot
 
-		// ?8: serialized_manifest (BLOB)
+		// ?9: serialized_manifest (BLOB)
 		if (Item.SerializedManifest.Num() > 0)
 		{
-			InsertStmt.SetBindingValueByIndex(8, TArrayView<const uint8>(Item.SerializedManifest), true);
+			InsertStmt.SetBindingValueByIndex(9, TArrayView<const uint8>(Item.SerializedManifest), true);
 		}
 		else
 		{
-			InsertStmt.SetBindingValueByIndex(8); // NULL
+			InsertStmt.SetBindingValueByIndex(9); // NULL
 		}
 
-		// ?9: attachments_json
+		// ?10: attachments_json
 		const FString AttJson = SerializeAttachmentsToJson(Item.Attachments);
 		if (AttJson.IsEmpty())
 		{
-			InsertStmt.SetBindingValueByIndex(9, TEXT(""));
+			InsertStmt.SetBindingValueByIndex(10, TEXT(""));
 		}
 		else
 		{
-			InsertStmt.SetBindingValueByIndex(9, AttJson);
+			InsertStmt.SetBindingValueByIndex(10, AttJson);
 		}
 
 		if (!InsertStmt.Execute())

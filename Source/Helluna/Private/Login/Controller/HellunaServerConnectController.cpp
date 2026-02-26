@@ -2,6 +2,7 @@
 #include "Helluna.h"  // 전처리기 플래그
 #include "Login/Widget/HellunaServerConnectWidget.h"
 #include "Login/GameMode/HellunaLoginGameMode.h"
+#include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
 #include "Blueprint/UserWidget.h"
 #include "Kismet/GameplayStatics.h"
 
@@ -140,6 +141,12 @@ void AHellunaServerConnectController::OnConnectButtonClicked(const FString& IPAd
 		{
 			ConnectWidget->ShowMessage(FString::Printf(TEXT("%s 에 접속 중..."), *IPAddress), false);
 			ConnectWidget->SetLoadingState(true);
+		}
+
+		// 로딩 화면 표시 (open 명령 전)
+		if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance()))
+		{
+			GI->ShowLoadingScreen(TEXT("서버 접속 중..."));
 		}
 
 		FString Command = FString::Printf(TEXT("open %s"), *IPAddress);

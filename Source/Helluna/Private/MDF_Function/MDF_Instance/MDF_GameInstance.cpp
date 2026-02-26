@@ -46,6 +46,10 @@
 // ============================================
 
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
+#include "Login/Widget/HellunaLoadingWidget.h"
+#include "Blueprint/UserWidget.h"
+#include "Engine/LocalPlayer.h"
+#include "GameFramework/PlayerController.h"
 
 // ============================================
 // 🔐 RegisterLogin - 로그인 등록
@@ -105,4 +109,60 @@ bool UMDF_GameInstance::IsPlayerLoggedIn(const FString& PlayerId) const
 int32 UMDF_GameInstance::GetLoggedInPlayerCount() const
 {
 	return LoggedInPlayerIds.Num();
+}
+
+// ============================================
+// 로딩 화면 (Loading Screen)
+// ============================================
+
+void UMDF_GameInstance::ShowLoadingScreen(const FString& Message)
+{
+	// 이미 유효한 로딩 위젯이 있으면 메시지만 갱신
+	if (IsValid(LoadingWidget))
+	{
+		LoadingWidget->SetLoadingMessage(Message);
+		UE_LOG(LogTemp, Log, TEXT("[GameInstance] 로딩 화면 메시지 갱신: '%s'"), *Message);
+		return;
+	}
+
+	if (!LoadingWidgetClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[GameInstance] LoadingWidgetClass 미설정! BP에서 설정 필요"));
+		return;
+	}
+
+	// 첫 번째 로컬 플레이어 컨트롤러로 위젯 생성
+	APlayerController* PC = GetFirstLocalPlayerController();
+	if (!PC)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[GameInstance] 로딩 화면 표시 실패 - LocalPlayerController 없음"));
+		return;
+	}
+
+	LoadingWidget = CreateWidget<UHellunaLoadingWidget>(PC, LoadingWidgetClass);
+	if (!LoadingWidget)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[GameInstance] 로딩 위젯 생성 실패!"));
+		return;
+	}
+
+	LoadingWidget->SetLoadingMessage(Message);
+	LoadingWidget->AddToViewport(9999);  // 최상위 ZOrder
+
+	UE_LOG(LogTemp, Log, TEXT("[GameInstance] 로딩 화면 표시: '%s'"), *Message);
+}
+
+void UMDF_GameInstance::HideLoadingScreen()
+{
+	if (!IsValid(LoadingWidget))
+	{
+		// 맵 전환 등으로 이미 파괴됨 → 포인터만 정리
+		LoadingWidget = nullptr;
+		return;
+	}
+
+	LoadingWidget->RemoveFromParent();
+	LoadingWidget = nullptr;
+
+	UE_LOG(LogTemp, Log, TEXT("[GameInstance] 로딩 화면 숨김"));
 }

@@ -416,6 +416,20 @@ void AHellunaLobbyGameMode::LoadStashToComponent(AHellunaLobbyController* LobbyP
 	// ── 로드된 아이템 수 기록 (파괴적 캐스케이드 방지용) ──
 	const int32 LoadedStashItemCount = StashItems.Num();
 
+	// [Fix14] Stash 로딩 시 장착 상태 해제 — StashPanel에 EquippedGridSlots 없음
+	// bEquipped=true인 아이템이 Grid에 배치되지 않는 문제 방지
+	// DB에는 장착 정보가 보존되어 있으므로, 향후 자동 장착 기능에 활용 가능
+	for (FInv_SavedItemData& ItemData : StashItems)
+	{
+		if (ItemData.bEquipped)
+		{
+			UE_LOG(LogHellunaLobby, Log, TEXT("[Fix14] Stash 아이템 장착 해제: %s (WeaponSlot=%d)"),
+				*ItemData.ItemType.ToString(), ItemData.WeaponSlotIndex);
+			ItemData.bEquipped = false;
+			ItemData.WeaponSlotIndex = -1;
+		}
+	}
+
 	// ── FInv_PlayerSaveData 구성 ──
 	// RestoreFromSaveData()가 요구하는 포맷으로 래핑
 	FInv_PlayerSaveData SaveData;

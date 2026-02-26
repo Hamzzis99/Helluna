@@ -55,6 +55,11 @@ private:
 	// true면 PostReplicatedAdd에서 그리드 배치를 스킵 (공간 선점 방지)
 	UPROPERTY()
 	bool bIsEquipped = false;
+
+	// ⭐ [Fix14] 장착 무기 슬롯 인덱스 (-1=미장착, 0=주무기, 1=보조무기)
+	// bIsEquipped=true일 때 어느 슬롯에 장착됐는지 기록
+	UPROPERTY()
+	int32 WeaponSlotIndex = -1;
 };
 
 /* List of inventory Items 

@@ -461,6 +461,7 @@ void UInv_InventoryComponent::RestoreFromSaveData(
 
 		// Fix 7: 장착된 아이템의 서버 FastArray Entry GridIndex 클리어 — Phase 5 저장 시 좌표 중복 방지
 		// Fix 13: bIsEquipped 플래그 설정 — PostReplicatedAdd에서 그리드 배치 스킵
+		// [Fix14] WeaponSlotIndex도 Entry에 기록 — 저장/전송 시 슬롯 정보 보존
 		for (UInv_InventoryItem* EquippedItem : ProcessedEquipItems)
 		{
 			for (int32 i = 0; i < InventoryList.Entries.Num(); i++)
@@ -470,9 +471,22 @@ void UInv_InventoryComponent::RestoreFromSaveData(
 					InventoryList.Entries[i].GridIndex = INDEX_NONE;
 					InventoryList.Entries[i].GridCategory = 0;
 					InventoryList.Entries[i].bIsEquipped = true;
+
+					// [Fix14] SaveData에서 WeaponSlotIndex를 가져와서 Entry에도 기록
+					// ProcessedEquipItems에서 원본 SaveData의 WeaponSlotIndex를 찾기
+					for (const FInv_SavedItemData& ItemData : SaveData.Items)
+					{
+						if (ItemData.bEquipped && ItemData.ItemType == EquippedItem->GetItemManifest().GetItemType())
+						{
+							InventoryList.Entries[i].WeaponSlotIndex = ItemData.WeaponSlotIndex;
+							break;
+						}
+					}
+
 					// MarkItemDirty 호출 금지! 리플리케이션 트리거 시 PostReplicatedChange → AddItem으로 아이템이 Grid에 다시 나타남
 					// bIsEquipped는 이미 dirty 상태인 Entry에 포함되어 리플리케이션됨 (같은 프레임)
-					UE_LOG(LogTemp, Warning, TEXT("[Fix7-Restore] 장착 아이템 GridIndex 클리어 + bIsEquipped 설정: %s (Entry[%d])"),
+					UE_LOG(LogTemp, Warning, TEXT("[Fix14-Restore] 장착 아이템 bIsEquipped=true, WeaponSlotIndex=%d: %s (Entry[%d])"),
+						InventoryList.Entries[i].WeaponSlotIndex,
 						*EquippedItem->GetItemManifest().GetItemType().ToString(), i);
 					break;
 				}
@@ -1716,6 +1730,7 @@ void UInv_InventoryComponent::Multicast_EquipSlotClicked_Implementation(UInv_Inv
 	OnItemUnequipped.Broadcast(ItemToUnequip, WeaponSlotIndex);
 
 	// Fix 7: 장착 시 서버 FastArray Entry의 GridIndex 클리어 — Phase 5 좌표 중복 방지
+	// [Fix14] 장착 상태 + 슬롯 인덱스 기록
 	if (GetOwner() && GetOwner()->HasAuthority() && IsValid(ItemToEquip))
 	{
 		for (int32 i = 0; i < InventoryList.Entries.Num(); i++)
@@ -1724,10 +1739,30 @@ void UInv_InventoryComponent::Multicast_EquipSlotClicked_Implementation(UInv_Inv
 			{
 				InventoryList.Entries[i].GridIndex = INDEX_NONE;
 				InventoryList.Entries[i].GridCategory = 0;
+				InventoryList.Entries[i].bIsEquipped = true;
+				InventoryList.Entries[i].WeaponSlotIndex = WeaponSlotIndex;
 				// MarkItemDirty 호출 금지! 리플리케이션 트리거 시 PostReplicatedChange → AddItem으로 아이템이 Grid에 다시 나타남
 #if INV_DEBUG_INVENTORY
-				UE_LOG(LogTemp, Warning, TEXT("[Fix7] 장착 아이템 GridIndex 클리어: %s (Entry[%d])"),
-					*ItemToEquip->GetItemManifest().GetItemType().ToString(), i);
+				UE_LOG(LogTemp, Warning, TEXT("[Fix14] 장착 아이템 bIsEquipped=true, WeaponSlotIndex=%d, GridIndex 클리어: %s (Entry[%d])"),
+					WeaponSlotIndex, *ItemToEquip->GetItemManifest().GetItemType().ToString(), i);
+#endif
+				break;
+			}
+		}
+	}
+
+	// [Fix14] 해제되는 아이템의 장착 플래그 클리어
+	if (GetOwner() && GetOwner()->HasAuthority() && IsValid(ItemToUnequip))
+	{
+		for (int32 i = 0; i < InventoryList.Entries.Num(); i++)
+		{
+			if (InventoryList.Entries[i].Item == ItemToUnequip)
+			{
+				InventoryList.Entries[i].bIsEquipped = false;
+				InventoryList.Entries[i].WeaponSlotIndex = -1;
+#if INV_DEBUG_INVENTORY
+				UE_LOG(LogTemp, Warning, TEXT("[Fix14] 해제 아이템 bIsEquipped=false: %s (Entry[%d])"),
+					*ItemToUnequip->GetItemManifest().GetItemType().ToString(), i);
 #endif
 				break;
 			}
@@ -3019,6 +3054,10 @@ TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave(
 
 		// FInv_SavedItemData 생성
 		FInv_SavedItemData SavedItem(ItemType, StackCount, GridPosition, GridCategory);
+
+		// [Fix14] Entry의 장착 상태를 SavedItem에 전파
+		SavedItem.bEquipped = Entry.bIsEquipped;
+		SavedItem.WeaponSlotIndex = Entry.WeaponSlotIndex;
 
 		// ── [Phase 6 Attachment] 부착물 데이터 수집 ──
 		// 무기 아이템인 경우 AttachmentHostFragment의 AttachedItems 수집
