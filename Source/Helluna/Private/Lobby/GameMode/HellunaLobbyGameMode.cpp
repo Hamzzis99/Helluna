@@ -126,13 +126,21 @@ void AHellunaLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 			SQLiteSubsystem ? TEXT("성공") : TEXT("실패"));
 	}
 
-	if (!SQLiteSubsystem || !SQLiteSubsystem->IsDatabaseReady())
+	if (!SQLiteSubsystem)
 	{
-		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] PostLogin: SQLite 서브시스템 없음 또는 DB 미준비!"));
-		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM]   → SQLiteSubsystem=%s, IsDatabaseReady=%s"),
-			SQLiteSubsystem ? TEXT("O") : TEXT("X"),
-			(SQLiteSubsystem && SQLiteSubsystem->IsDatabaseReady()) ? TEXT("true") : TEXT("false"));
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] PostLogin: SQLiteSubsystem 없음!"));
 		return;
+	}
+
+	if (!SQLiteSubsystem->IsDatabaseReady())
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] PostLogin: DB 미준비 — TryReopenDatabase 시도"));
+		SQLiteSubsystem->TryReopenDatabase();
+		if (!SQLiteSubsystem->IsDatabaseReady())
+		{
+			UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] PostLogin: TryReopenDatabase 실패!"));
+			return;
+		}
 	}
 
 	// ── PlayerId 획득 ──
@@ -219,7 +227,8 @@ void AHellunaLobbyGameMode::Logout(AController* Exiting)
 	if (Exiting)
 	{
 		AHellunaLobbyController* LobbyPC = Cast<AHellunaLobbyController>(Exiting);
-		const FString PlayerId = GetPlayerSaveId(Cast<APlayerController>(Exiting));
+		APlayerController* PC = Cast<APlayerController>(Exiting);
+		const FString PlayerId = GetLobbyPlayerId(PC);
 
 		// 캐릭터 사용 해제
 		if (!PlayerId.IsEmpty())
@@ -266,6 +275,9 @@ void AHellunaLobbyGameMode::Logout(AController* Exiting)
 	{
 		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] Logout: Exiting Controller가 nullptr!"));
 	}
+
+	// ControllerToPlayerIdMap 정리 (댕글링 포인터 방지)
+	ControllerToPlayerIdMap.Remove(Exiting);
 
 	Super::Logout(Exiting);
 
@@ -399,59 +411,39 @@ void AHellunaLobbyGameMode::SaveComponentsToDatabase(AHellunaLobbyController* Lo
 		return;
 	}
 
-	// ── 1) Stash 저장 ──
-	// CollectInventoryDataForSave(): 서버의 FastArray에서 직접 수집 (RPC 불필요)
+	// ── 1) Stash 아이템 수집 ──
 	UInv_InventoryComponent* StashComp = LobbyPC->GetStashComponent();
+	TArray<FInv_SavedItemData> FinalStashItems;
 	if (StashComp)
 	{
-		TArray<FInv_SavedItemData> StashItems = StashComp->CollectInventoryDataForSave();
-		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] Stash 아이템 수집 완료 | %d개"), StashItems.Num());
-
-		const bool bStashOk = SQLiteSubsystem->SavePlayerStash(PlayerId, StashItems);
-		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] Stash SQLite 저장 %s | PlayerId=%s | 아이템 %d개"),
-			bStashOk ? TEXT("성공") : TEXT("실패"), *PlayerId, StashItems.Num());
+		FinalStashItems = StashComp->CollectInventoryDataForSave();
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] Stash 아이템 수집 완료 | %d개"), FinalStashItems.Num());
 	}
 	else
 	{
 		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] SaveComponents: StashComp가 nullptr! | PlayerId=%s"), *PlayerId);
 	}
 
-	// ── 2) Loadout 잔존 아이템 처리 ──
-	// 출격 없이 로비를 나간 경우 → Loadout 아이템을 Stash에 병합 저장
-	// 출격으로 나간 경우 → LoadoutComp은 비어있으므로 아무 일도 안 함
+	// ── 2) Loadout에 잔여 아이템이 있으면 Stash에 병합 (출격 안 하고 로그아웃한 경우) ──
 	UInv_InventoryComponent* LoadoutComp = LobbyPC->GetLoadoutComponent();
 	if (LoadoutComp)
 	{
 		TArray<FInv_SavedItemData> LoadoutItems = LoadoutComp->CollectInventoryDataForSave();
-		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] Loadout 잔존 아이템 확인 | %d개"), LoadoutItems.Num());
-
 		if (LoadoutItems.Num() > 0)
 		{
-			// ⚠ Loadout에 아이템이 있다 = 출격 안 하고 나감
-			// → 이 아이템들을 Stash에 합산해서 재저장 (유실 방지)
-			UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] ⚠ Logout 시 Loadout에 %d개 아이템 잔존! → Stash에 병합 저장"),
-				LoadoutItems.Num());
-
-			if (StashComp)
-			{
-				// Stash를 다시 수집 + Loadout 아이템 합산
-				TArray<FInv_SavedItemData> MergedStash = StashComp->CollectInventoryDataForSave();
-				const int32 StashCount = MergedStash.Num();
-				MergedStash.Append(LoadoutItems);
-
-				UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] 병합: Stash(%d) + Loadout(%d) = 총 %d개"),
-					StashCount, LoadoutItems.Num(), MergedStash.Num());
-
-				const bool bMergeOk = SQLiteSubsystem->SavePlayerStash(PlayerId, MergedStash);
-				UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] Stash+Loadout 병합 저장 %s | 총 %d개"),
-					bMergeOk ? TEXT("성공") : TEXT("실패"), MergedStash.Num());
-			}
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] Logout [Save]: Loadout에 잔여 아이템 %d개 → Stash에 병합"), LoadoutItems.Num());
+			FinalStashItems.Append(LoadoutItems);
 		}
 		else
 		{
 			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] Loadout이 비어있음 → 병합 불필요 (정상 출격 또는 이동 없음)"));
 		}
 	}
+
+	// ── 3) 한 번만 저장 ──
+	const bool bStashOk = SQLiteSubsystem->SavePlayerStash(PlayerId, FinalStashItems);
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] Stash SQLite 저장 %s | PlayerId=%s | 아이템 %d개"),
+		bStashOk ? TEXT("성공") : TEXT("실패"), *PlayerId, FinalStashItems.Num());
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] SaveComponentsToDatabase 완료 | PlayerId=%s"), *PlayerId);
 }

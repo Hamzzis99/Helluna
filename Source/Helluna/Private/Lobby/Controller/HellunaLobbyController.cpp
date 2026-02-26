@@ -141,14 +141,8 @@ void AHellunaLobbyController::BeginPlay()
 // ════════════════════════════════════════════════════════════════════════════════
 bool AHellunaLobbyController::Server_TransferItem_Validate(int32 ItemEntryIndex, ELobbyTransferDirection Direction)
 {
-	// 기본 검증: 음수 인덱스 차단
-	// 추후 필요 시 전송 속도 제한 등 추가 가능
-	const bool bValid = ItemEntryIndex >= 0;
-	if (!bValid)
-	{
-		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] Server_TransferItem_Validate 실패 | EntryIndex=%d"), ItemEntryIndex);
-	}
-	return bValid;
+	return ItemEntryIndex >= 0 && ItemEntryIndex < 10000
+		&& (Direction == ELobbyTransferDirection::StashToLoadout || Direction == ELobbyTransferDirection::LoadoutToStash);
 }
 
 void AHellunaLobbyController::Server_TransferItem_Implementation(int32 ItemEntryIndex, ELobbyTransferDirection Direction)
@@ -258,13 +252,13 @@ bool AHellunaLobbyController::ExecuteTransfer(
 // ════════════════════════════════════════════════════════════════════════════════
 bool AHellunaLobbyController::Server_Deploy_Validate()
 {
-	// 현재는 항상 허용
-	// 추후: Loadout 최소 아이템 개수 체크, 쿨다운 체크 등 추가 가능
-	return true;
+	return !bDeployInProgress;
 }
 
 void AHellunaLobbyController::Server_Deploy_Implementation()
 {
+	bDeployInProgress = true;
+
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ══════════════════════════════════════"));
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_Deploy 시작"));
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ══════════════════════════════════════"));
@@ -273,6 +267,8 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 	if (SelectedHeroType == EHellunaHeroType::None)
 	{
 		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] Server_Deploy: 캐릭터가 선택되지 않았습니다! 출격 거부."));
+		Client_DeployFailed(TEXT("캐릭터가 선택되지 않았습니다"));
+		bDeployInProgress = false;
 		return;
 	}
 
@@ -286,6 +282,8 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 			GI ? TEXT("O") : TEXT("X"),
 			DB ? TEXT("O") : TEXT("X"),
 			(DB && DB->IsDatabaseReady()) ? TEXT("true") : TEXT("false"));
+		Client_DeployFailed(TEXT("SQLite 서브시스템 없음"));
+		bDeployInProgress = false;
 		return;
 	}
 
@@ -305,6 +303,8 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 	if (PlayerId.IsEmpty())
 	{
 		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Server_Deploy: PlayerId가 비어있음! 출격 중단"));
+		Client_DeployFailed(TEXT("PlayerId가 비어있음"));
+		bDeployInProgress = false;
 		return;
 	}
 
@@ -323,6 +323,14 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 				const bool bStashOk = DB->SavePlayerStash(PlayerId, RemainingStash);
 				UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [3a]: 잔여 Stash 저장 %s | %d개 아이템"),
 					bStashOk ? TEXT("성공") : TEXT("실패"), RemainingStash.Num());
+
+				if (!bStashOk)
+				{
+					UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Deploy [3a]: 잔여 Stash 저장 실패! 출격 중단"));
+					Client_DeployFailed(TEXT("Stash 저장 실패"));
+					bDeployInProgress = false;
+					return;
+				}
 			}
 
 			// ── [3b] Loadout 저장 (원자적 트랜잭션) ──
@@ -334,6 +342,8 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 			{
 				UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Deploy: Loadout 저장 실패! 출격 중단"));
 				UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC]   → DB 오류 확인 필요 (디스크 용량, 권한 등)"));
+				Client_DeployFailed(TEXT("Loadout 저장 실패"));
+				bDeployInProgress = false;
 				return;
 			}
 
@@ -344,6 +354,14 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 			const bool bExportOk = DB->ExportLoadoutToFile(PlayerId, LoadoutItems, HeroIndex);
 			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [3c]: ExportLoadoutToFile %s"),
 				bExportOk ? TEXT("성공") : TEXT("실패"));
+
+			if (!bExportOk)
+			{
+				UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Deploy [3c]: JSON 파일 내보내기 실패! 출격 중단"));
+				Client_DeployFailed(TEXT("Loadout 파일 내보내기 실패"));
+				bDeployInProgress = false;
+				return;
+			}
 		}
 		else
 		{
@@ -353,6 +371,9 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 	else
 	{
 		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Deploy: LoadoutComp가 nullptr!"));
+		Client_DeployFailed(TEXT("LoadoutComp가 nullptr"));
+		bDeployInProgress = false;
+		return;
 	}
 
 	// ── [4단계] ClientTravel 지시 (HeroType 파라미터 추가) ──
@@ -370,9 +391,23 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] Deploy: DeployMapURL이 비어있음!"));
 		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC]   → BP_HellunaLobbyController에서 DeployMapURL을 설정하세요"));
 		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC]   → 예: /Game/Maps/L_Defense?listen"));
+		Client_DeployFailed(TEXT("DeployMapURL이 비어있음"));
+		bDeployInProgress = false;
+		return;
 	}
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_Deploy 완료 | PlayerId=%s"), *PlayerId);
+	bDeployInProgress = false;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Client_DeployFailed — 출격 실패 알림 (Client RPC)
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaLobbyController::Client_DeployFailed_Implementation(const FString& Reason)
+{
+	UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] 출격 실패: %s"), *Reason);
+	bDeployInProgress = false;
+	// TODO: UI 알림 표시
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -505,7 +540,7 @@ void AHellunaLobbyController::GetLifetimeReplicatedProps(TArray<FLifetimePropert
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
-	DOREPLIFETIME(AHellunaLobbyController, SelectedHeroType);
+	DOREPLIFETIME_CONDITION(AHellunaLobbyController, SelectedHeroType, COND_OwnerOnly);
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -513,6 +548,12 @@ void AHellunaLobbyController::GetLifetimeReplicatedProps(TArray<FLifetimePropert
 // ════════════════════════════════════════════════════════════════════════════════
 void AHellunaLobbyController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (LobbyStashWidgetInstance)
+	{
+		LobbyStashWidgetInstance->RemoveFromParent();
+		LobbyStashWidgetInstance = nullptr;
+	}
+
 	DestroyPreviewSceneV2();
 	Super::EndPlay(EndPlayReason);
 }
@@ -551,6 +592,12 @@ void AHellunaLobbyController::Server_SelectLobbyCharacter_Implementation(int32 C
 		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] 캐릭터 %d 이미 사용 중!"), CharacterIndex);
 		Client_LobbyCharacterSelectionResult(false, TEXT("다른 플레이어가 사용 중입니다"));
 		return;
+	}
+
+	// 이전 선택 해제 (재선택 허용)
+	if (SelectedHeroType != EHellunaHeroType::None)
+	{
+		LobbyGM->UnregisterLobbyCharacterUse(PlayerId);
 	}
 
 	// 등록

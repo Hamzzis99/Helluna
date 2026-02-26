@@ -105,6 +105,10 @@ public:
 	UFUNCTION(Client, Reliable)
 	void Client_ExecuteDeploy(const FString& TravelURL);
 
+	/** 출격 실패 시 클라이언트에 알림 */
+	UFUNCTION(Client, Reliable)
+	void Client_DeployFailed(const FString& Reason);
+
 	// ════════════════════════════════════════════════════════════════
 	// 로비 UI
 	// ════════════════════════════════════════════════════════════════
@@ -246,6 +250,9 @@ protected:
 	UPROPERTY(Replicated, VisibleAnywhere, BlueprintReadOnly, Category = "로비|캐릭터선택",
 		meta = (DisplayName = "선택된 히어로 타입"))
 	EHellunaHeroType SelectedHeroType = EHellunaHeroType::None;
+
+	/** Deploy 중복 실행 방지 플래그 */
+	bool bDeployInProgress = false;
 
 private:
 	// ════════════════════════════════════════════════════════════════

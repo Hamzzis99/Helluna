@@ -242,6 +242,14 @@ void AHellunaBaseGameMode::BeginPlay()
 // ════════════════════════════════════════════════════════════════════════════════
 void AHellunaBaseGameMode::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	// 타이머 전부 정리 (fire-and-forget 타이머 포함)
+	GetWorldTimerManager().ClearAllTimersForObject(this);
+
+	// 캐시 맵 정리
+	PreCachedInventoryMap.Empty();
+	PendingLobbyDeployMap.Empty();
+	LoginTimeoutTimers.Empty();
+
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -402,6 +410,9 @@ void AHellunaBaseGameMode::PostLogin(APlayerController* NewPlayer)
 
 		// 4. Controller → PlayerId 매핑 등록
 		RegisterControllerPlayerId(NewPlayer, DeployPlayerId);
+
+		// Phase 6: 크래시 복구 체크 (이전 게임 세션의 Loadout 잔존 → Stash 복귀)
+		CheckAndRecoverFromCrash(DeployPlayerId);
 
 		// 4.5 인벤토리 사전 로드 (디스크 I/O를 스폰 전에 완료)
 		PreCacheInventoryForPlayer(DeployPlayerId);
@@ -1271,6 +1282,16 @@ void AHellunaBaseGameMode::Logout(AController* Exiting)
 		PlayerId = PS->GetPlayerUniqueId();
 	}
 
+	// Phase 6: 미소비 PreCache 정리 (접속 끊김 시 메모리 누수 방지)
+	if (!PlayerId.IsEmpty())
+	{
+		PreCachedInventoryMap.Remove(PlayerId);
+	}
+	if (APlayerController* ExitingPC_ForDeploy = Cast<APlayerController>(Exiting))
+	{
+		PendingLobbyDeployMap.Remove(ExitingPC_ForDeploy);
+	}
+
 	if (!PlayerId.IsEmpty())
 	{
 		// ────────────────────────────────────────────────────────────────────────
@@ -1374,6 +1395,10 @@ void AHellunaBaseGameMode::HandleSeamlessTravelPlayer(AController*& C)
 			NewPS->SetLoginInfo(SavedPlayerId);
 			NewPS->SetSelectedHeroType(SavedHeroType);
 		}
+
+		// SeamlessTravel: 캐릭터 사용 재등록 + 인벤토리 사전 로드
+		RegisterCharacterUse(SavedHeroType, SavedPlayerId);
+		PreCacheInventoryForPlayer(SavedPlayerId);
 
 		// 로그인 상태였으면 게임 컨트롤러로 전환
 		if (bSavedIsLoggedIn)
@@ -1715,9 +1740,15 @@ EHellunaHeroType AHellunaBaseGameMode::IndexToHeroType(int32 Index)
 // ════════════════════════════════════════════════════════════════════════════════
 bool AHellunaBaseGameMode::SaveCollectedItems(const FString& PlayerId, const TArray<FInv_SavedItemData>& Items)
 {
-	if (PlayerId.IsEmpty() || Items.Num() == 0)
+	if (PlayerId.IsEmpty())
 	{
 		return false;
+	}
+
+	if (Items.Num() == 0)
+	{
+		UE_LOG(LogHelluna, Log, TEXT("[SaveCollectedItems] 저장할 아이템 0개 — 정상 처리 | PlayerId=%s"), *PlayerId);
+		return true;
 	}
 
 	UGameInstance* GI = GetGameInstance();
@@ -2114,6 +2145,9 @@ void AHellunaBaseGameMode::OnInvControllerEndPlay(
 		{
 			GI->RegisterLogout(PlayerId);
 		}
+
+		// 캐릭터 사용 해제 (Logout 안 거칠 수 있음 — 이중 호출 안전)
+		UnregisterCharacterUse(PlayerId);
 	}
 }
 

@@ -305,8 +305,14 @@ void UHellunaSQLiteSubsystem::ReleaseDatabaseConnection()
 // ──────────────────────────────────────────────────────────────
 FString UHellunaSQLiteSubsystem::GetLoadoutTransferFilePath(const FString& PlayerId) const
 {
+	// PlayerId 경로 탈출 방지 (path traversal 차단)
+	FString SafePlayerId = PlayerId;
+	SafePlayerId.ReplaceInline(TEXT("/"), TEXT("_"));
+	SafePlayerId.ReplaceInline(TEXT("\\"), TEXT("_"));
+	SafePlayerId.ReplaceInline(TEXT(".."), TEXT("_"));
+
 	const FString DBDir = FPaths::GetPath(CachedDatabasePath);
-	return FPaths::Combine(DBDir, TEXT("Transfer"), FString::Printf(TEXT("Loadout_%s.json"), *PlayerId));
+	return FPaths::Combine(DBDir, TEXT("Transfer"), FString::Printf(TEXT("Loadout_%s.json"), *SafePlayerId));
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -352,7 +358,11 @@ bool UHellunaSQLiteSubsystem::ExportLoadoutToFile(const FString& PlayerId, const
 
 	// Transfer 디렉토리 생성
 	const FString TransferDir = FPaths::GetPath(FilePath);
-	IFileManager::Get().MakeDirectory(*TransferDir, true);
+	if (!IFileManager::Get().MakeDirectory(*TransferDir, true))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ExportLoadoutToFile: Transfer 디렉토리 생성 실패 | %s"), *TransferDir);
+		return false;
+	}
 
 	// JSON 루트 오브젝트 생성
 	TSharedRef<FJsonObject> RootObj = MakeShared<FJsonObject>();
@@ -402,6 +412,7 @@ bool UHellunaSQLiteSubsystem::ExportLoadoutToFile(const FString& PlayerId, const
 	TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> Writer =
 		TJsonWriterFactory<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>::Create(&OutputString);
 	FJsonSerializer::Serialize(RootObj, Writer);
+	Writer->Close();
 
 	if (FFileHelper::SaveStringToFile(OutputString, *FilePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
 	{
@@ -730,7 +741,7 @@ bool UHellunaSQLiteSubsystem::IsDatabaseReady() const
 	// 문제 진단용: false일 때 어떤 조건이 실패했는지 로그
 	if (!bReady)
 	{
-		UE_LOG(LogHelluna, Warning, TEXT("[SQLite] IsDatabaseReady=false | bDatabaseOpen=%s | Database=%s | IsValid=%s"),
+		UE_LOG(LogHelluna, Verbose, TEXT("[SQLite] IsDatabaseReady=false | bDatabaseOpen=%s | Database=%s | IsValid=%s"),
 			bDatabaseOpen ? TEXT("true") : TEXT("false"),
 			Database != nullptr ? TEXT("존재") : TEXT("nullptr"),
 			(Database != nullptr && Database->IsValid()) ? TEXT("true") : TEXT("false"));
@@ -798,6 +809,7 @@ FString UHellunaSQLiteSubsystem::SerializeAttachmentsToJson(const TArray<FInv_Sa
 	FString OutputString;
 	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputString);
 	FJsonSerializer::Serialize(JsonArray, Writer);
+	Writer->Close();
 
 	UE_LOG(LogHelluna, Verbose, TEXT("[SQLite] SerializeAttachments: %d개 → JSON %d자"), Attachments.Num(), OutputString.Len());
 	return OutputString;
@@ -947,6 +959,12 @@ TArray<FInv_SavedItemData> UHellunaSQLiteSubsystem::LoadPlayerStash(const FStrin
 {
 	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ▶ LoadPlayerStash | PlayerId=%s"), *PlayerId);
 
+	if (PlayerId.IsEmpty())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ LoadPlayerStash: PlayerId가 비어있음 — 중단"));
+		return TArray<FInv_SavedItemData>();
+	}
+
 	if (!IsDatabaseReady())
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ LoadPlayerStash: DB가 준비되지 않음"));
@@ -1009,6 +1027,12 @@ bool UHellunaSQLiteSubsystem::SavePlayerStash(const FString& PlayerId, const TAr
 {
 	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ▶ SavePlayerStash | PlayerId=%s | 아이템 %d개"), *PlayerId, Items.Num());
 
+	if (PlayerId.IsEmpty())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SavePlayerStash: PlayerId가 비어있음 — 중단"));
+		return false;
+	}
+
 	if (!IsDatabaseReady())
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SavePlayerStash: DB가 준비되지 않음"));
@@ -1018,12 +1042,12 @@ bool UHellunaSQLiteSubsystem::SavePlayerStash(const FString& PlayerId, const TAr
 	// ── 트랜잭션 시작 ──
 	// 여러 SQL을 하나의 원자적 단위로 묶음
 	// → 중간에 실패하면 ROLLBACK으로 전부 취소 (데이터 정합성 보장)
-	if (!Database->Execute(TEXT("BEGIN TRANSACTION;")))
+	if (!Database->Execute(TEXT("BEGIN IMMEDIATE TRANSACTION;")))
 	{
-		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SavePlayerStash: BEGIN TRANSACTION 실패 | 에러: %s"), *Database->GetLastError());
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SavePlayerStash: BEGIN IMMEDIATE TRANSACTION 실패 | 에러: %s"), *Database->GetLastError());
 		return false;
 	}
-	UE_LOG(LogHelluna, Verbose, TEXT("[SQLite]   BEGIN TRANSACTION ✓"));
+	UE_LOG(LogHelluna, Verbose, TEXT("[SQLite]   BEGIN IMMEDIATE TRANSACTION ✓"));
 
 	// (1) 기존 Stash 전부 삭제
 	{
@@ -1137,6 +1161,12 @@ bool UHellunaSQLiteSubsystem::IsPlayerExists(const FString& PlayerId)
 {
 	UE_LOG(LogHelluna, Verbose, TEXT("[SQLite] IsPlayerExists | PlayerId=%s"), *PlayerId);
 
+	if (PlayerId.IsEmpty())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ IsPlayerExists: PlayerId가 비어있음 — 중단"));
+		return false;
+	}
+
 	if (!IsDatabaseReady())
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ IsPlayerExists: DB가 준비되지 않음 | PlayerId=%s"), *PlayerId);
@@ -1186,6 +1216,12 @@ bool UHellunaSQLiteSubsystem::IsPlayerExists(const FString& PlayerId)
 TArray<FInv_SavedItemData> UHellunaSQLiteSubsystem::LoadPlayerLoadout(const FString& PlayerId)
 {
 	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ▶ LoadPlayerLoadout | PlayerId=%s"), *PlayerId);
+
+	if (PlayerId.IsEmpty())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ LoadPlayerLoadout: PlayerId가 비어있음 — 중단"));
+		return TArray<FInv_SavedItemData>();
+	}
 
 	if (!IsDatabaseReady())
 	{
@@ -1246,6 +1282,12 @@ bool UHellunaSQLiteSubsystem::SavePlayerLoadout(const FString& PlayerId, const T
 {
 	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ▶ SavePlayerLoadout | PlayerId=%s | 출격 아이템 %d개"), *PlayerId, Items.Num());
 
+	if (PlayerId.IsEmpty())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SavePlayerLoadout: PlayerId가 비어있음 — 중단"));
+		return false;
+	}
+
 	if (!IsDatabaseReady())
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SavePlayerLoadout: DB가 준비되지 않음"));
@@ -1259,12 +1301,24 @@ bool UHellunaSQLiteSubsystem::SavePlayerLoadout(const FString& PlayerId, const T
 	}
 
 	// ── 트랜잭션 시작 ──
-	if (!Database->Execute(TEXT("BEGIN TRANSACTION;")))
+	if (!Database->Execute(TEXT("BEGIN IMMEDIATE TRANSACTION;")))
 	{
-		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SavePlayerLoadout: BEGIN TRANSACTION 실패 | 에러: %s"), *Database->GetLastError());
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SavePlayerLoadout: BEGIN IMMEDIATE TRANSACTION 실패 | 에러: %s"), *Database->GetLastError());
 		return false;
 	}
-	UE_LOG(LogHelluna, Verbose, TEXT("[SQLite]   BEGIN TRANSACTION ✓"));
+	UE_LOG(LogHelluna, Verbose, TEXT("[SQLite]   BEGIN IMMEDIATE TRANSACTION ✓"));
+
+	// (0) 기존 Loadout 삭제 (중복 방지 — 더블 클릭 등)
+	{
+		FSQLitePreparedStatement DeleteOldLoadout = Database->PrepareStatement(
+			TEXT("DELETE FROM player_loadout WHERE player_id = ?1;"));
+		if (DeleteOldLoadout.IsValid())
+		{
+			DeleteOldLoadout.SetBindingValueByIndex(1, PlayerId);
+			DeleteOldLoadout.Execute();
+		}
+		UE_LOG(LogHelluna, Verbose, TEXT("[SQLite]   DELETE old loadout ✓"));
+	}
 
 	// (a) player_loadout에 Items INSERT
 	//     is_equipped 컬럼 없음 → 9개 바인딩 (?1~?9)
@@ -1376,6 +1430,12 @@ bool UHellunaSQLiteSubsystem::DeletePlayerLoadout(const FString& PlayerId)
 {
 	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ▶ DeletePlayerLoadout | PlayerId=%s"), *PlayerId);
 
+	if (PlayerId.IsEmpty())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ DeletePlayerLoadout: PlayerId가 비어있음 — 중단"));
+		return false;
+	}
+
 	if (!IsDatabaseReady())
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ DeletePlayerLoadout: DB가 준비되지 않음"));
@@ -1420,6 +1480,12 @@ bool UHellunaSQLiteSubsystem::MergeGameResultToStash(const FString& PlayerId, co
 {
 	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ▶ MergeGameResultToStash | PlayerId=%s | 결과 아이템 %d개"), *PlayerId, ResultItems.Num());
 
+	if (PlayerId.IsEmpty())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ MergeGameResultToStash: PlayerId가 비어있음 — 중단"));
+		return false;
+	}
+
 	if (!IsDatabaseReady())
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ MergeGameResultToStash: DB가 준비되지 않음"));
@@ -1433,9 +1499,9 @@ bool UHellunaSQLiteSubsystem::MergeGameResultToStash(const FString& PlayerId, co
 	}
 
 	// ── 트랜잭션 시작 ──
-	if (!Database->Execute(TEXT("BEGIN TRANSACTION;")))
+	if (!Database->Execute(TEXT("BEGIN IMMEDIATE TRANSACTION;")))
 	{
-		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ MergeGameResultToStash: BEGIN TRANSACTION 실패 | 에러: %s"), *Database->GetLastError());
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ MergeGameResultToStash: BEGIN IMMEDIATE TRANSACTION 실패 | 에러: %s"), *Database->GetLastError());
 		return false;
 	}
 
@@ -1538,6 +1604,12 @@ bool UHellunaSQLiteSubsystem::HasPendingLoadout(const FString& PlayerId)
 {
 	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ▶ HasPendingLoadout | PlayerId=%s"), *PlayerId);
 
+	if (PlayerId.IsEmpty())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ HasPendingLoadout: PlayerId가 비어있음 — 중단"));
+		return false;
+	}
+
 	if (!IsDatabaseReady())
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ HasPendingLoadout: DB가 준비되지 않음"));
@@ -1591,6 +1663,12 @@ bool UHellunaSQLiteSubsystem::RecoverFromCrash(const FString& PlayerId)
 {
 	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ▶ RecoverFromCrash | PlayerId=%s"), *PlayerId);
 
+	if (PlayerId.IsEmpty())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ RecoverFromCrash: PlayerId가 비어있음 — 중단"));
+		return false;
+	}
+
 	if (!IsDatabaseReady())
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ RecoverFromCrash: DB가 준비되지 않음"));
@@ -1598,9 +1676,9 @@ bool UHellunaSQLiteSubsystem::RecoverFromCrash(const FString& PlayerId)
 	}
 
 	// ── 트랜잭션 시작 ──
-	if (!Database->Execute(TEXT("BEGIN TRANSACTION;")))
+	if (!Database->Execute(TEXT("BEGIN IMMEDIATE TRANSACTION;")))
 	{
-		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ RecoverFromCrash: BEGIN TRANSACTION 실패 | 에러: %s"), *Database->GetLastError());
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ RecoverFromCrash: BEGIN IMMEDIATE TRANSACTION 실패 | 에러: %s"), *Database->GetLastError());
 		return false;
 	}
 
@@ -1806,8 +1884,23 @@ bool UHellunaSQLiteSubsystem::RegisterActiveGameCharacter(int32 HeroType, const 
 		return false;
 	}
 
+	// 트랜잭션으로 원자적 처리 (DELETE 후 INSERT 실패 시 등록이 사라지는 것 방지)
+	if (!Database->Execute(TEXT("BEGIN IMMEDIATE TRANSACTION;")))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] RegisterActiveGameCharacter: BEGIN TRANSACTION 실패 | 에러: %s"), *Database->GetLastError());
+		return false;
+	}
+
 	// 기존 플레이어 등록 제거 (재선택 허용)
-	UnregisterActiveGameCharacter(PlayerId);
+	{
+		const TCHAR* DeleteSQL = TEXT("DELETE FROM active_game_characters WHERE player_id = ?1;");
+		FSQLitePreparedStatement DeleteStmt = Database->PrepareStatement(DeleteSQL);
+		if (DeleteStmt.IsValid())
+		{
+			DeleteStmt.SetBindingValueByIndex(1, PlayerId);
+			DeleteStmt.Execute();
+		}
+	}
 
 	// INSERT (UNIQUE INDEX가 중복 방지)
 	const TCHAR* InsertSQL = TEXT("INSERT INTO active_game_characters (hero_type, player_id, server_id) VALUES (?1, ?2, ?3);");
@@ -1816,6 +1909,7 @@ bool UHellunaSQLiteSubsystem::RegisterActiveGameCharacter(int32 HeroType, const 
 	if (!InsertStmt.IsValid())
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] RegisterActiveGameCharacter: PrepareStatement 실패 | 에러: %s"), *Database->GetLastError());
+		Database->Execute(TEXT("ROLLBACK;"));
 		return false;
 	}
 
@@ -1825,11 +1919,13 @@ bool UHellunaSQLiteSubsystem::RegisterActiveGameCharacter(int32 HeroType, const 
 
 	if (InsertStmt.Execute())
 	{
+		Database->Execute(TEXT("COMMIT;"));
 		UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ RegisterActiveGameCharacter 성공 | HeroType=%d | PlayerId=%s"), HeroType, *PlayerId);
 		return true;
 	}
 	else
 	{
+		Database->Execute(TEXT("ROLLBACK;"));
 		UE_LOG(LogHelluna, Warning, TEXT("[SQLite] ✗ RegisterActiveGameCharacter 실패 (중복?) | HeroType=%d | 에러: %s"),
 			HeroType, *Database->GetLastError());
 		return false;
