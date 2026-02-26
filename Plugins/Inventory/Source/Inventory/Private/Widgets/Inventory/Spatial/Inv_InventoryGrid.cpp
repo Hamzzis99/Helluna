@@ -1700,8 +1700,9 @@ void UInv_InventoryGrid::RemoveItem(UInv_InventoryItem* Item, int32 EntryIndex)
 		*Item->GetItemManifest().GetItemType().ToString(), EntryIndex, (int32)ItemCategory);
 #endif
 
-	// ⭐ 핵심 변경: EntryIndex는 로그용으로만 사용, 실제 매칭은 포인터 + ItemManifest로!
+	// ⭐ 2-pass 매칭: 1차=포인터+EntryIndex(Split 안전), 2차=포인터+Manifest(인덱스 시프트 대응)
 	int32 FoundIndex = INDEX_NONE;
+	int32 FallbackIndex = INDEX_NONE; // EntryIndex 불일치 시 폴백
 
 	for (const auto& [GridIndex, SlottedItem] : SlottedItems)
 	{
@@ -1713,26 +1714,42 @@ void UInv_InventoryGrid::RemoveItem(UInv_InventoryItem* Item, int32 EntryIndex)
 		// 1차 검증: 포인터 비교
 		if (GridSlotItem == Item)
 		{
-			// ⭐ Phase 7: EntryIndex로 정확한 슬롯 매칭 (Split 후 포인터 공유 문제 해결)
-			if (SlottedItem->GetEntryIndex() != EntryIndex)
+			// Manifest 타입 검증 (안전장치)
+			if (!GridSlotItem->GetItemManifest().GetItemType().MatchesTagExact(
+				Item->GetItemManifest().GetItemType()))
 			{
-#if INV_DEBUG_WIDGET
-				UE_LOG(LogTemp, Warning, TEXT("[RemoveItem] ⚠️ 포인터 일치하지만 EntryIndex 불일치: SlotEntry=%d, 찾는Entry=%d, 스킵!"),
-					SlottedItem->GetEntryIndex(), EntryIndex);
-#endif
 				continue;
 			}
-			// 2차 검증: ItemManifest 비교 (안전장치)
-			if (GridSlotItem->GetItemManifest().GetItemType().MatchesTagExact(
-				Item->GetItemManifest().GetItemType()))
+
+			// EntryIndex까지 일치하면 정확한 매칭 (Split 후 포인터 공유 대응)
+			if (SlottedItem->GetEntryIndex() == EntryIndex)
 			{
 				FoundIndex = GridIndex;
 #if INV_DEBUG_WIDGET
-				UE_LOG(LogTemp, Warning, TEXT("[RemoveItem] ✅ 슬롯 찾음! GridIndex=%d (포인터 일치 + Manifest 일치)"), GridIndex);
+				UE_LOG(LogTemp, Warning, TEXT("[RemoveItem] ✅ 정확한 매칭! GridIndex=%d (포인터+EntryIndex+Manifest 모두 일치)"), GridIndex);
 #endif
 				break;
 			}
+
+			// EntryIndex 불일치지만 포인터+Manifest 일치 → 폴백 후보 저장 (인덱스 시프트 대응)
+			if (FallbackIndex == INDEX_NONE)
+			{
+				FallbackIndex = GridIndex;
+#if INV_DEBUG_WIDGET
+				UE_LOG(LogTemp, Warning, TEXT("[RemoveItem] ⚠️ 폴백 후보: GridIndex=%d (포인터+Manifest 일치, EntryIndex 불일치: Slot=%d vs 요청=%d)"),
+					GridIndex, SlottedItem->GetEntryIndex(), EntryIndex);
+#endif
+			}
 		}
+	}
+
+	// 정확한 매칭 실패 시 폴백 사용 (FastArray 인덱스 시프트로 인한 EntryIndex 불일치 대응)
+	if (FoundIndex == INDEX_NONE && FallbackIndex != INDEX_NONE)
+	{
+		FoundIndex = FallbackIndex;
+#if INV_DEBUG_WIDGET
+		UE_LOG(LogTemp, Warning, TEXT("[RemoveItem] 🔄 폴백 매칭 사용: GridIndex=%d (EntryIndex 시프트 감지)"), FoundIndex);
+#endif
 	}
 
 	if (FoundIndex == INDEX_NONE)

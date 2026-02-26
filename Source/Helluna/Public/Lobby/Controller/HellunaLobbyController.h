@@ -5,7 +5,7 @@
 // 로비 전용 PlayerController — StashComp + LoadoutComp 듀얼 인벤토리 관리
 //
 // 📌 상속 구조:
-//    APlayerController → AInv_PlayerController → AHellunaLobbyController
+//    APlayerController → AHellunaLobbyController (AInv_PlayerController 미사용 — 로비 전용 경량화)
 //
 // 📌 역할:
 //    - StashComp: 전체 보유 아이템 (SQLite player_stash에서 로드)
@@ -23,7 +23,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Player/Inv_PlayerController.h"
+#include "GameFramework/PlayerController.h"
+#include "Player/Inv_PlayerController.h"  // FInv_SavedItemData 구조체 사용
 #include "HellunaTypes.h"
 #include "HellunaLobbyController.generated.h"
 
@@ -47,7 +48,7 @@ enum class ELobbyTransferDirection : uint8
 };
 
 UCLASS()
-class HELLUNA_API AHellunaLobbyController : public AInv_PlayerController
+class HELLUNA_API AHellunaLobbyController : public APlayerController
 {
 	GENERATED_BODY()
 
