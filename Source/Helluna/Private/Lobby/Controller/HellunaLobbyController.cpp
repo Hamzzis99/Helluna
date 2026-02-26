@@ -336,6 +336,14 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 				UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC]   → DB 오류 확인 필요 (디스크 용량, 권한 등)"));
 				return;
 			}
+
+			// ── [3c] Loadout을 JSON 파일로도 내보내기 (DB 잠금 회피용) ──
+			// 게임서버(데디서버)가 같은 DB를 열 수 없을 때,
+			// 이 JSON 파일에서 Loadout을 읽어 인벤토리를 복원
+			const int32 HeroIndex = HeroTypeToIndex(SelectedHeroType);
+			const bool bExportOk = DB->ExportLoadoutToFile(PlayerId, LoadoutItems, HeroIndex);
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [3c]: ExportLoadoutToFile %s"),
+				bExportOk ? TEXT("성공") : TEXT("실패"));
 		}
 		else
 		{

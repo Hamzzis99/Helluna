@@ -268,6 +268,25 @@ void AHellunaLobbyGameMode::Logout(AController* Exiting)
 	}
 
 	Super::Logout(Exiting);
+
+	// ── 마지막 플레이어 로그아웃 시 DB 연결 해제 ──
+	// PIE(로비서버)가 DB 파일을 잠그고 있으면 데디서버(게임서버)가 열 수 없음
+	// → 플레이어가 없으면 DB가 불필요하므로 잠금 해제
+	// → 데디서버의 TryReopenDatabase()가 성공할 수 있게 됨
+	const int32 RemainingPlayers = GetNumPlayers();
+	if (RemainingPlayers <= 0)
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] 마지막 플레이어 로그아웃 → DB 연결 해제 (게임서버 접근 허용)"));
+		if (SQLiteSubsystem)
+		{
+			SQLiteSubsystem->ReleaseDatabaseConnection();
+		}
+	}
+	else
+	{
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] 잔여 플레이어 %d명 → DB 연결 유지"), RemainingPlayers);
+	}
+
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] Logout 완료"));
 }
 

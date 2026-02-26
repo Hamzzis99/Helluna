@@ -60,6 +60,7 @@
 #include "Serialization/JsonSerializer.h"// FJsonSerializer — JSON 직렬화/역직렬화
 #include "Dom/JsonObject.h"              // FJsonObject — JSON 오브젝트
 #include "Dom/JsonValue.h"               // FJsonValue — JSON 값
+#include "Misc/FileHelper.h"             // FFileHelper — JSON 파일 읽기/쓰기
 #include "Helluna.h"                     // LogHelluna 로그 카테고리
 
 
@@ -97,13 +98,25 @@ void UHellunaSQLiteSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 	// 1. DB 파일 경로 설정
 	//    우선순위: 커맨드라인 -DatabasePath=<절대경로> > 기본 {ProjectSavedDir}/Database/Helluna.db
-	//    → 패키징된 데디서버가 에디터 PIE(로비)와 같은 DB를 공유하려면 커맨드라인으로 경로 지정
+	//    → -DatabasePath는 Transfer 디렉토리 공유를 위한 "기준 디렉토리"로도 사용됨
 	FString CommandLinePath;
 	if (FParse::Value(FCommandLine::Get(), TEXT("-DatabasePath="), CommandLinePath))
 	{
-		// 커맨드라인에서 절대 경로를 직접 지정한 경우
-		CachedDatabasePath = CommandLinePath;
-		UE_LOG(LogHelluna, Warning, TEXT("[SQLite]   DB 경로 (커맨드라인 오버라이드): %s"), *CachedDatabasePath);
+		// 커맨드라인에서 경로를 직접 지정한 경우
+		// → 데디서버는 같은 디렉토리에 별도 DB 파일을 사용하여 파일 잠금 충돌 방지
+		if (IsRunningDedicatedServer())
+		{
+			// -DatabasePath의 디렉토리를 공유하되, 파일명만 HellunaServer.db로 변경
+			const FString Dir = FPaths::GetPath(CommandLinePath);
+			CachedDatabasePath = FPaths::Combine(Dir, TEXT("HellunaServer.db"));
+			UE_LOG(LogHelluna, Warning, TEXT("[SQLite]   DB 경로 (데디서버 자동 분리): %s"), *CachedDatabasePath);
+			UE_LOG(LogHelluna, Warning, TEXT("[SQLite]   (원본 -DatabasePath: %s → PIE와 파일 잠금 충돌 방지)"), *CommandLinePath);
+		}
+		else
+		{
+			CachedDatabasePath = CommandLinePath;
+			UE_LOG(LogHelluna, Warning, TEXT("[SQLite]   DB 경로 (커맨드라인 오버라이드): %s"), *CachedDatabasePath);
+		}
 	}
 	else
 	{
@@ -223,6 +236,286 @@ void UHellunaSQLiteSubsystem::CloseDatabase()
 	Database = nullptr;
 	bDatabaseOpen = false;
 	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ DB 닫힘 + 메모리 해제"));
+}
+
+
+// ──────────────────────────────────────────────────────────────
+// TryReopenDatabase — DB가 닫혀있으면 재오픈 시도
+// ──────────────────────────────────────────────────────────────
+// 사용 시점: Initialize에서 실패한 경우, 파일 잠금이 풀린 후 호출
+// 예: 로비 PIE가 DB를 잠근 상태에서 데디서버가 시작 → 로비 PIE 종료 후 재시도
+// ──────────────────────────────────────────────────────────────
+bool UHellunaSQLiteSubsystem::TryReopenDatabase()
+{
+	// 이미 열려있으면 true 반환
+	if (IsDatabaseReady())
+	{
+		return true;
+	}
+
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] TryReopenDatabase: DB 재오픈 시도 | 경로: %s"), *CachedDatabasePath);
+
+	if (OpenDatabase())
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[SQLite] TryReopenDatabase: ✓ DB 재오픈 성공!"));
+		return true;
+	}
+
+	UE_LOG(LogHelluna, Warning, TEXT("[SQLite] TryReopenDatabase: ✗ DB 여전히 열 수 없음 (다른 프로세스가 잠금 중?)"));
+	return false;
+}
+
+// ──────────────────────────────────────────────────────────────
+// ReleaseDatabaseConnection — DB 연결 명시적 해제 (파일 잠금 풀기)
+// ──────────────────────────────────────────────────────────────
+// 사용 시점: 로비에서 마지막 플레이어 로그아웃 후 호출
+// → 게임서버(데디서버)가 같은 DB를 열 수 있도록 잠금 해제
+// ──────────────────────────────────────────────────────────────
+void UHellunaSQLiteSubsystem::ReleaseDatabaseConnection()
+{
+	if (!bDatabaseOpen && Database == nullptr)
+	{
+		UE_LOG(LogHelluna, Log, TEXT("[SQLite] ReleaseDatabaseConnection: 이미 닫혀있음"));
+		return;
+	}
+
+	UE_LOG(LogHelluna, Warning, TEXT("[SQLite] ReleaseDatabaseConnection: DB 연결 해제 (파일 잠금 풀기)"));
+	CloseDatabase();
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 파일 기반 Loadout 전송
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 📌 배경: PIE(로비)와 데디서버(게임)가 같은 SQLite DB를 동시에 열 수 없음
+//   → Loadout을 JSON 파일로 내보내고, 게임서버에서 읽어서 인벤토리 복원
+//
+// 📌 파일 경로: {DB 디렉토리}/Transfer/Loadout_{PlayerId}.json
+//   CachedDatabasePath에서 디렉토리를 추출하므로 -DatabasePath= 커맨드라인과 무관하게
+//   두 프로세스가 같은 경로를 참조
+//
+// 📌 흐름:
+//   로비: SavePlayerLoadout → ExportLoadoutToFile (JSON 생성)
+//   게임: HasPendingLoadoutFile → ImportLoadoutFromFile (JSON 읽기 + 삭제)
+// ════════════════════════════════════════════════════════════════════════════════
+
+// ──────────────────────────────────────────────────────────────
+// GetLoadoutTransferFilePath — 전송 파일 경로 생성
+// ──────────────────────────────────────────────────────────────
+FString UHellunaSQLiteSubsystem::GetLoadoutTransferFilePath(const FString& PlayerId) const
+{
+	const FString DBDir = FPaths::GetPath(CachedDatabasePath);
+	return FPaths::Combine(DBDir, TEXT("Transfer"), FString::Printf(TEXT("Loadout_%s.json"), *PlayerId));
+}
+
+// ──────────────────────────────────────────────────────────────
+// HasPendingLoadoutFile — 전송 파일 존재 여부 확인
+// ──────────────────────────────────────────────────────────────
+bool UHellunaSQLiteSubsystem::HasPendingLoadoutFile(const FString& PlayerId) const
+{
+	const FString FilePath = GetLoadoutTransferFilePath(PlayerId);
+	const bool bExists = FPaths::FileExists(FilePath);
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] HasPendingLoadoutFile: PlayerId=%s | 경로=%s | 존재=%s"),
+		*PlayerId, *FilePath, bExists ? TEXT("Y") : TEXT("N"));
+	return bExists;
+}
+
+// ──────────────────────────────────────────────────────────────
+// ExportLoadoutToFile — Loadout 아이템을 JSON 파일로 내보내기
+// ──────────────────────────────────────────────────────────────
+//
+// JSON 구조:
+// {
+//   "player_id": "DebugPlayer",
+//   "hero_type": 0,
+//   "export_time": "2026-02-26T12:34:56",
+//   "items": [
+//     {
+//       "item_type": "Item.Weapon.Rifle",
+//       "stack_count": 1,
+//       "grid_x": 0, "grid_y": 0,
+//       "grid_category": 0,
+//       "is_equipped": false,
+//       "weapon_slot": -1,
+//       "manifest": "Base64...",
+//       "attachments": [{"t":"...","s":0,"at":"...","m":"Base64..."}]
+//     }
+//   ]
+// }
+// ──────────────────────────────────────────────────────────────
+bool UHellunaSQLiteSubsystem::ExportLoadoutToFile(const FString& PlayerId, const TArray<FInv_SavedItemData>& Items, int32 HeroType)
+{
+	const FString FilePath = GetLoadoutTransferFilePath(PlayerId);
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ExportLoadoutToFile: 시작 | PlayerId=%s | %d개 아이템 | 경로=%s"),
+		*PlayerId, Items.Num(), *FilePath);
+
+	// Transfer 디렉토리 생성
+	const FString TransferDir = FPaths::GetPath(FilePath);
+	IFileManager::Get().MakeDirectory(*TransferDir, true);
+
+	// JSON 루트 오브젝트 생성
+	TSharedRef<FJsonObject> RootObj = MakeShared<FJsonObject>();
+	RootObj->SetStringField(TEXT("player_id"), PlayerId);
+	RootObj->SetNumberField(TEXT("hero_type"), HeroType);
+	RootObj->SetStringField(TEXT("export_time"), FDateTime::Now().ToString());
+
+	// 아이템 배열
+	TArray<TSharedPtr<FJsonValue>> ItemsArray;
+	for (const FInv_SavedItemData& Item : Items)
+	{
+		TSharedRef<FJsonObject> ItemObj = MakeShared<FJsonObject>();
+
+		ItemObj->SetStringField(TEXT("item_type"), Item.ItemType.ToString());
+		ItemObj->SetNumberField(TEXT("stack_count"), Item.StackCount);
+		ItemObj->SetNumberField(TEXT("grid_x"), Item.GridPosition.X);
+		ItemObj->SetNumberField(TEXT("grid_y"), Item.GridPosition.Y);
+		ItemObj->SetNumberField(TEXT("grid_category"), static_cast<int32>(Item.GridCategory));
+		ItemObj->SetBoolField(TEXT("is_equipped"), Item.bEquipped);
+		ItemObj->SetNumberField(TEXT("weapon_slot"), Item.WeaponSlotIndex);
+
+		// SerializedManifest → Base64
+		if (Item.SerializedManifest.Num() > 0)
+		{
+			ItemObj->SetStringField(TEXT("manifest"), FBase64::Encode(Item.SerializedManifest));
+		}
+
+		// Attachments → 기존 JSON 직렬화 재사용
+		if (Item.Attachments.Num() > 0)
+		{
+			const FString AttJson = SerializeAttachmentsToJson(Item.Attachments);
+			// JSON 문자열을 파싱하여 JSON 배열로 내장 (문자열이 아닌 구조체)
+			TSharedRef<TJsonReader<>> AttReader = TJsonReaderFactory<>::Create(AttJson);
+			TArray<TSharedPtr<FJsonValue>> AttArray;
+			if (FJsonSerializer::Deserialize(AttReader, AttArray))
+			{
+				ItemObj->SetArrayField(TEXT("attachments"), AttArray);
+			}
+		}
+
+		ItemsArray.Add(MakeShared<FJsonValueObject>(ItemObj));
+	}
+	RootObj->SetArrayField(TEXT("items"), ItemsArray);
+
+	// JSON → 문자열 → 파일 쓰기
+	FString OutputString;
+	TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> Writer =
+		TJsonWriterFactory<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>::Create(&OutputString);
+	FJsonSerializer::Serialize(RootObj, Writer);
+
+	if (FFileHelper::SaveStringToFile(OutputString, *FilePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[SQLite] ExportLoadoutToFile: ✓ JSON 파일 저장 성공 | %d자 | %s"),
+			OutputString.Len(), *FilePath);
+		return true;
+	}
+
+	UE_LOG(LogHelluna, Error, TEXT("[SQLite] ExportLoadoutToFile: ✗ 파일 쓰기 실패 | %s"), *FilePath);
+	return false;
+}
+
+// ──────────────────────────────────────────────────────────────
+// ImportLoadoutFromFile — JSON 파일에서 Loadout 읽기 + 파일 삭제
+// ──────────────────────────────────────────────────────────────
+TArray<FInv_SavedItemData> UHellunaSQLiteSubsystem::ImportLoadoutFromFile(const FString& PlayerId, int32& OutHeroType)
+{
+	TArray<FInv_SavedItemData> Result;
+	OutHeroType = 0;
+
+	const FString FilePath = GetLoadoutTransferFilePath(PlayerId);
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ImportLoadoutFromFile: 시작 | PlayerId=%s | 경로=%s"),
+		*PlayerId, *FilePath);
+
+	// 파일 읽기
+	FString JsonString;
+	if (!FFileHelper::LoadFileToString(JsonString, *FilePath))
+	{
+		UE_LOG(LogHelluna, Log, TEXT("[SQLite] ImportLoadoutFromFile: 파일 없음 또는 읽기 실패"));
+		return Result;
+	}
+
+	// JSON 파싱
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonString);
+	TSharedPtr<FJsonObject> RootObj;
+	if (!FJsonSerializer::Deserialize(Reader, RootObj) || !RootObj.IsValid())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ImportLoadoutFromFile: JSON 파싱 실패"));
+		// 손상된 파일 삭제
+		IFileManager::Get().Delete(*FilePath);
+		return Result;
+	}
+
+	// 헤더 필드
+	OutHeroType = static_cast<int32>(RootObj->GetNumberField(TEXT("hero_type")));
+
+	// 아이템 배열 파싱
+	const TArray<TSharedPtr<FJsonValue>>* ItemsArray = nullptr;
+	if (!RootObj->TryGetArrayField(TEXT("items"), ItemsArray) || !ItemsArray)
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[SQLite] ImportLoadoutFromFile: items 배열 없음"));
+		IFileManager::Get().Delete(*FilePath);
+		return Result;
+	}
+
+	for (const TSharedPtr<FJsonValue>& ItemValue : *ItemsArray)
+	{
+		const TSharedPtr<FJsonObject> ItemObj = ItemValue->AsObject();
+		if (!ItemObj.IsValid())
+		{
+			continue;
+		}
+
+		FInv_SavedItemData Item;
+
+		// item_type → FGameplayTag
+		FString ItemTypeStr;
+		if (ItemObj->TryGetStringField(TEXT("item_type"), ItemTypeStr))
+		{
+			Item.ItemType = FGameplayTag::RequestGameplayTag(FName(*ItemTypeStr), false);
+		}
+
+		Item.StackCount = static_cast<int32>(ItemObj->GetNumberField(TEXT("stack_count")));
+		Item.GridPosition.X = static_cast<int32>(ItemObj->GetNumberField(TEXT("grid_x")));
+		Item.GridPosition.Y = static_cast<int32>(ItemObj->GetNumberField(TEXT("grid_y")));
+		Item.GridCategory = static_cast<uint8>(ItemObj->GetNumberField(TEXT("grid_category")));
+		Item.bEquipped = ItemObj->GetBoolField(TEXT("is_equipped"));
+		Item.WeaponSlotIndex = static_cast<int32>(ItemObj->GetNumberField(TEXT("weapon_slot")));
+
+		// manifest → Base64 디코딩
+		FString ManifestB64;
+		if (ItemObj->TryGetStringField(TEXT("manifest"), ManifestB64) && !ManifestB64.IsEmpty())
+		{
+			FBase64::Decode(ManifestB64, Item.SerializedManifest);
+		}
+
+		// attachments → 기존 역직렬화 재사용
+		const TArray<TSharedPtr<FJsonValue>>* AttArray = nullptr;
+		if (ItemObj->TryGetArrayField(TEXT("attachments"), AttArray) && AttArray && AttArray->Num() > 0)
+		{
+			// JSON 배열 → 문자열 → DeserializeAttachmentsFromJson
+			FString AttJsonStr;
+			TSharedRef<TJsonWriter<>> AttWriter = TJsonWriterFactory<>::Create(&AttJsonStr);
+			FJsonSerializer::Serialize(*AttArray, AttWriter);
+			Item.Attachments = DeserializeAttachmentsFromJson(AttJsonStr);
+		}
+
+		Result.Add(MoveTemp(Item));
+	}
+
+	UE_LOG(LogHelluna, Warning, TEXT("[SQLite] ImportLoadoutFromFile: ✓ %d개 아이템 로드 | HeroType=%d"),
+		Result.Num(), OutHeroType);
+
+	// 파일 삭제 (비행기표 소멸)
+	if (IFileManager::Get().Delete(*FilePath))
+	{
+		UE_LOG(LogHelluna, Log, TEXT("[SQLite] ImportLoadoutFromFile: 전송 파일 삭제 완료"));
+	}
+	else
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[SQLite] ImportLoadoutFromFile: 파일 삭제 실패 (다음 접속 시 재시도) | %s"), *FilePath);
+	}
+
+	return Result;
 }
 
 

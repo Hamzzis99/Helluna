@@ -1745,60 +1745,97 @@ void AHellunaBaseGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
 		return;
 	}
 
-	// ── SQLite에서 데이터 로드 ──
+	// ── SQLite 서브시스템 획득 ──
 	UGameInstance* GI = GetGameInstance();
 	UHellunaSQLiteSubsystem* DB = GI ? GI->GetSubsystem<UHellunaSQLiteSubsystem>() : nullptr;
 
 	FInv_PlayerSaveData LoadedData;
 	bool bLoaded = false;
 
-	if (DB && DB->IsDatabaseReady())
+	// ══════════════════════════════════════════════════════════════
+	// [Phase 6 File] 파일 기반 Loadout 우선 체크 (DB 잠금 회피)
+	// ══════════════════════════════════════════════════════════════
+	// DB가 열리지 않아도 JSON 파일에서 직접 로드 가능
+	// → 로비 PIE와 데디서버가 동시에 같은 DB를 열 수 없는 문제 해결
+	if (DB && DB->HasPendingLoadoutFile(PlayerId))
 	{
-		// ── [Phase 6] Loadout 우선 체크 ──
-		// 로비에서 출격한 플레이어는 player_loadout에 아이템이 있음
-		// → Loadout 로드 후 삭제 (비행기표 소멸)
-		if (DB->HasPendingLoadout(PlayerId))
+		int32 FileHeroType = 0;
+		TArray<FInv_SavedItemData> Items = DB->ImportLoadoutFromFile(PlayerId, FileHeroType);
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase6-File] LoadAndSendInventoryToClient: JSON 파일에서 Loadout 로드 | PlayerId=%s | %d개 | HeroType=%d"),
+			*PlayerId, Items.Num(), FileHeroType);
+
+		if (Items.Num() > 0)
 		{
-			TArray<FInv_SavedItemData> Items = DB->LoadPlayerLoadout(PlayerId);
-			UE_LOG(LogHelluna, Log, TEXT("[Phase6] LoadAndSendInventoryToClient: Loadout 로드 성공 | PlayerId=%s | %d개"),
-				*PlayerId, Items.Num());
-
-			if (Items.Num() > 0)
-			{
-				LoadedData.Items = MoveTemp(Items);
-				LoadedData.LastSaveTime = FDateTime::Now();
-				bLoaded = true;
-			}
-
-			// Loadout 삭제 (아이템 0개여도 삭제 — 빈손 출격 정리)
-			DB->DeletePlayerLoadout(PlayerId);
-			UE_LOG(LogHelluna, Log, TEXT("[Phase6] LoadAndSendInventoryToClient: Loadout 삭제 완료 | PlayerId=%s"), *PlayerId);
+			LoadedData.Items = MoveTemp(Items);
+			LoadedData.LastSaveTime = FDateTime::Now();
+			bLoaded = true;
 		}
 
-		// ── Loadout 없으면 Stash에서 로드 (기존 경로) ──
-		if (!bLoaded)
+		// DB Loadout도 정리 (DB 접근 가능한 경우에만)
+		if (DB->IsDatabaseReady() && DB->HasPendingLoadout(PlayerId))
 		{
-			TArray<FInv_SavedItemData> Items = DB->LoadPlayerStash(PlayerId);
-			if (Items.Num() > 0)
-			{
-				LoadedData.Items = MoveTemp(Items);
-				LoadedData.LastSaveTime = FDateTime::Now();
-				bLoaded = true;
-				UE_LOG(LogHelluna, Log, TEXT("[Phase3] LoadAndSendInventoryToClient: SQLite Stash 로드 성공 | PlayerId=%s | %d개"),
-					*PlayerId, LoadedData.Items.Num());
-			}
-			else
-			{
-				UE_LOG(LogHelluna, Log, TEXT("[Phase3] LoadAndSendInventoryToClient: SQLite 데이터 없음 (신규 유저) | PlayerId=%s"), *PlayerId);
-			}
+			DB->DeletePlayerLoadout(PlayerId);
+			UE_LOG(LogHelluna, Log, TEXT("[Phase6-File] DB Loadout도 삭제 완료"));
 		}
 	}
-	else
+
+	// ══════════════════════════════════════════════════════════════
+	// [Phase 6 DB] 파일 없으면 DB에서 로드 시도 (기존 경로)
+	// ══════════════════════════════════════════════════════════════
+	if (!bLoaded)
 	{
-		// SQLite 미준비 → .sav 폴백
-		UE_LOG(LogHelluna, Warning, TEXT("[Phase3] LoadAndSendInventoryToClient: SQLite 미준비 — .sav 폴백 | PlayerId=%s"), *PlayerId);
-		Super::LoadAndSendInventoryToClient(PC);
-		return;
+		// DB 준비 확인 (미준비 시 재오픈 시도)
+		if (DB && !DB->IsDatabaseReady())
+		{
+			UE_LOG(LogHelluna, Warning, TEXT("[Phase3] LoadAndSendInventoryToClient: DB 미준비 → TryReopenDatabase 시도"));
+			DB->TryReopenDatabase();
+		}
+
+		if (DB && DB->IsDatabaseReady())
+		{
+			// Loadout 우선 체크 (DB에서)
+			if (DB->HasPendingLoadout(PlayerId))
+			{
+				TArray<FInv_SavedItemData> Items = DB->LoadPlayerLoadout(PlayerId);
+				UE_LOG(LogHelluna, Log, TEXT("[Phase6] LoadAndSendInventoryToClient: DB Loadout 로드 | PlayerId=%s | %d개"),
+					*PlayerId, Items.Num());
+
+				if (Items.Num() > 0)
+				{
+					LoadedData.Items = MoveTemp(Items);
+					LoadedData.LastSaveTime = FDateTime::Now();
+					bLoaded = true;
+				}
+
+				DB->DeletePlayerLoadout(PlayerId);
+				UE_LOG(LogHelluna, Log, TEXT("[Phase6] LoadAndSendInventoryToClient: DB Loadout 삭제 완료 | PlayerId=%s"), *PlayerId);
+			}
+
+			// Loadout 없으면 Stash에서 로드
+			if (!bLoaded)
+			{
+				TArray<FInv_SavedItemData> Items = DB->LoadPlayerStash(PlayerId);
+				if (Items.Num() > 0)
+				{
+					LoadedData.Items = MoveTemp(Items);
+					LoadedData.LastSaveTime = FDateTime::Now();
+					bLoaded = true;
+					UE_LOG(LogHelluna, Log, TEXT("[Phase3] LoadAndSendInventoryToClient: SQLite Stash 로드 성공 | PlayerId=%s | %d개"),
+						*PlayerId, LoadedData.Items.Num());
+				}
+				else
+				{
+					UE_LOG(LogHelluna, Log, TEXT("[Phase3] LoadAndSendInventoryToClient: SQLite 데이터 없음 (신규 유저) | PlayerId=%s"), *PlayerId);
+				}
+			}
+		}
+		else
+		{
+			// SQLite 미준비 → .sav 폴백
+			UE_LOG(LogHelluna, Warning, TEXT("[Phase3] LoadAndSendInventoryToClient: SQLite 미준비 (재오픈도 실패) — .sav 폴백 | PlayerId=%s"), *PlayerId);
+			Super::LoadAndSendInventoryToClient(PC);
+			return;
+		}
 	}
 
 	// 데이터가 없으면 종료 (신규 유저는 빈 인벤토리로 시작)
