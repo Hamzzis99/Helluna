@@ -7,6 +7,7 @@
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerState.h"
 #include "UI/Vote/VoteWidget.h"
+#include "GameMode/Widget/HellunaGameResultWidget.h"
 #include "Blueprint/UserWidget.h"
 #include "TimerManager.h"
 
@@ -141,4 +142,60 @@ void AHellunaHeroController::Server_SubmitVote_Implementation(bool bAgree)
 	UE_LOG(LogHellunaVote, Log, TEXT("[HeroController] Server_SubmitVote → VoteManager->ReceiveVote(%s, %s)"),
 		*VoterPS->GetPlayerName(), bAgree ? TEXT("찬성") : TEXT("반대"));
 	VoteManager->ReceiveVote(VoterPS, bAgree);
+}
+
+// ============================================================================
+// [Phase 7] 게임 결과 UI — Client RPC
+// ============================================================================
+
+void AHellunaHeroController::Client_ShowGameResult_Implementation(
+	const TArray<FInv_SavedItemData>& ResultItems,
+	bool bSurvived,
+	const FString& Reason,
+	const FString& LobbyURL)
+{
+	UE_LOG(LogTemp, Log, TEXT("[HeroController] Client_ShowGameResult | Survived=%s Items=%d Reason=%s"),
+		bSurvived ? TEXT("Yes") : TEXT("No"), ResultItems.Num(), *Reason);
+
+	if (!GameResultWidgetClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[HeroController] GameResultWidgetClass가 설정되지 않음! BP에서 설정 필요"));
+		// 위젯 없으면 바로 로비로 이동
+		if (!LobbyURL.IsEmpty())
+		{
+			ClientTravel(LobbyURL, TRAVEL_Absolute);
+		}
+		return;
+	}
+
+	// 기존 결과 위젯 중복 생성 방지
+	if (GameResultWidgetInstance)
+	{
+		GameResultWidgetInstance->RemoveFromParent();
+		GameResultWidgetInstance = nullptr;
+	}
+
+	GameResultWidgetInstance = CreateWidget<UHellunaGameResultWidget>(this, GameResultWidgetClass);
+	if (!GameResultWidgetInstance)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[HeroController] 결과 위젯 생성 실패!"));
+		if (!LobbyURL.IsEmpty())
+		{
+			ClientTravel(LobbyURL, TRAVEL_Absolute);
+		}
+		return;
+	}
+
+	// 로비 URL 설정
+	GameResultWidgetInstance->LobbyURL = LobbyURL;
+
+	// 결과 데이터 설정 (내부에서 OnResultDataSet BP 이벤트 호출)
+	GameResultWidgetInstance->SetResultData(ResultItems, bSurvived, Reason);
+
+	// 뷰포트에 추가
+	GameResultWidgetInstance->AddToViewport(100);  // 높은 ZOrder로 최상위 표시
+
+	// 마우스 커서 표시 (결과 화면에서 버튼 클릭 가능하도록)
+	SetShowMouseCursor(true);
+	SetInputMode(FInputModeUIOnly());
 }

@@ -21,6 +21,19 @@
 #include "HellunaDefenseGameMode.generated.h"
 
 class ATargetPoint;
+class UHellunaGameResultWidget;
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Phase 7: 게임 종료 사유
+// ════════════════════════════════════════════════════════════════════════════════
+UENUM(BlueprintType)
+enum class EHellunaGameEndReason : uint8
+{
+	None,
+	Escaped        UMETA(DisplayName = "탈출 성공"),
+	AllDead        UMETA(DisplayName = "전원 사망"),
+	ServerShutdown UMETA(DisplayName = "서버 셧다운"),
+};
 
 UCLASS()
 class HELLUNA_API AHellunaDefenseGameMode : public AHellunaBaseGameMode
@@ -158,4 +171,56 @@ protected:
 
 	void CacheBossSpawnPoints();
 	void TrySummonBoss();
+
+	// ════════════════════════════════════════════════════════════════════════════════
+	// Phase 7: 게임 종료 + 결과 반영 + 로비 복귀
+	// ════════════════════════════════════════════════════════════════════════════════
+public:
+	/**
+	 * 게임 종료 메인 함수
+	 * 각 플레이어의 인벤토리를 수집하여 Stash에 병합하고 결과 UI를 표시한다.
+	 * - 생존자: 현재 인벤토리 전체 보존
+	 * - 사망자: 아이템 전부 손실
+	 *
+	 * @param Reason 게임 종료 사유
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Defense(게임)|GameEnd(게임종료)",
+		meta = (DisplayName = "게임 종료 (EndGame)"))
+	void EndGame(EHellunaGameEndReason Reason);
+
+	virtual void Logout(AController* Exiting) override;
+
+protected:
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
+	/** 게임 종료 완료 플래그 (중복 호출 방지) */
+	UPROPERTY(BlueprintReadOnly, Category = "Defense(게임)|GameEnd(게임종료)")
+	bool bGameEnded = false;
+
+	/** 로비 서버 URL (BP에서 설정) */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|GameEnd(게임종료)",
+		meta = (DisplayName = "로비 서버 URL"))
+	FString LobbyServerURL;
+
+	/** 결과 UI 위젯 클래스 (BP에서 설정) */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|GameEnd(게임종료)",
+		meta = (DisplayName = "결과 위젯 클래스"))
+	TSubclassOf<UHellunaGameResultWidget> GameResultWidgetClass;
+
+	/** 결과 UI 표시 → 로비 복귀까지 대기 시간 (초) */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|GameEnd(게임종료)",
+		meta = (DisplayName = "결과 화면 표시 시간(초)", ClampMin = "1.0"))
+	float ResultDisplayDuration = 10.f;
+
+public:
+	/** 콘솔 커맨드 핸들러 (디버그용): EndGame Escaped / EndGame AllDead */
+	static void CmdEndGame(const TArray<FString>& Args, UWorld* World);
+
+private:
+	/**
+	 * 단일 플레이어의 게임 결과를 DB에 반영한다.
+	 * @param PC 대상 PlayerController
+	 * @param bSurvived 생존 여부 (false = 사망, 빈 배열로 Merge)
+	 */
+	void ProcessPlayerGameResult(APlayerController* PC, bool bSurvived);
 };

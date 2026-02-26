@@ -21,6 +21,16 @@
 #include "EngineUtils.h"
 #include "debughelper.h"
 
+// [Phase 7] 게임 종료 + 결과 반영
+#include "Lobby/Database/HellunaSQLiteSubsystem.h"
+#include "Player/HellunaPlayerState.h"
+#include "Controller/HellunaHeroController.h"
+#include "Character/HellunaHeroCharacter.h"
+#include "Character/EnemyComponent/HellunaHealthComponent.h"
+#include "InventoryManagement/Components/Inv_InventoryComponent.h"
+#include "Player/Inv_PlayerController.h"
+#include "HAL/IConsoleManager.h"
+
 AHellunaDefenseGameMode::AHellunaDefenseGameMode()
 {
     // BaseGameMode에서 기본 설정 처리됨
@@ -319,4 +329,247 @@ void AHellunaDefenseGameMode::RestartGame()
 
     bGameInitialized = false; // 리셋
     GetWorld()->ServerTravel(TEXT("/Game/Minwoo/MinwooTestMap?listen"));
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Phase 7: 게임 종료 + 결과 반영 + 로비 복귀
+// ════════════════════════════════════════════════════════════════════════════════
+
+// ── 콘솔 커맨드 핸들러 (디버그용) ──
+// 사용법: "EndGame Escaped" / "EndGame AllDead"
+void AHellunaDefenseGameMode::CmdEndGame(const TArray<FString>& Args, UWorld* World)
+{
+    if (!World) return;
+
+    AHellunaDefenseGameMode* GM = Cast<AHellunaDefenseGameMode>(World->GetAuthGameMode());
+    if (!GM)
+    {
+        UE_LOG(LogHelluna, Warning, TEXT("[Phase7] EndGame 커맨드: DefenseGameMode가 아닌 맵에서 호출됨"));
+        return;
+    }
+
+    EHellunaGameEndReason Reason = EHellunaGameEndReason::Escaped;
+    if (Args.Num() > 0)
+    {
+        if (Args[0].Equals(TEXT("AllDead"), ESearchCase::IgnoreCase))
+        {
+            Reason = EHellunaGameEndReason::AllDead;
+        }
+        else if (Args[0].Equals(TEXT("ServerShutdown"), ESearchCase::IgnoreCase))
+        {
+            Reason = EHellunaGameEndReason::ServerShutdown;
+        }
+    }
+
+    GM->EndGame(Reason);
+}
+
+// ── BeginPlay에서 콘솔 커맨드 등록 (기존 BeginPlay 뒤에 추가하지 않고, 생성자 뒤에서 1회 등록) ──
+// → 생성자에서 등록하면 CDO 생성 시점에 1회만 등록됨
+// ── 대신 InitializeGame()에서 콘솔 커맨드를 등록하는 것이 안전하지만,
+//    static 함수이므로 static 블록에서 FAutoConsoleCommand 사용
+
+// FAutoConsoleCommand는 글로벌이므로 cpp 파일 상단 static 영역에서 등록
+static FAutoConsoleCommandWithWorldAndArgs GCmdEndGame(
+    TEXT("EndGame"),
+    TEXT("Phase 7: 게임 종료. 사용법: EndGame [Escaped|AllDead|ServerShutdown]"),
+    FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&AHellunaDefenseGameMode::CmdEndGame)
+);
+
+// ════════════════════════════════════════════════════════════════════════════════
+// EndGame — 게임 종료 메인 함수
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaDefenseGameMode::EndGame(EHellunaGameEndReason Reason)
+{
+    if (!HasAuthority()) return;
+
+    // 중복 호출 방지
+    if (bGameEnded)
+    {
+        UE_LOG(LogHelluna, Warning, TEXT("[Phase7] EndGame: 이미 게임이 종료됨, 스킵"));
+        return;
+    }
+
+    bGameEnded = true;
+
+    UE_LOG(LogHelluna, Warning, TEXT(""));
+    UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
+    UE_LOG(LogHelluna, Warning, TEXT("║     [Phase7] EndGame — 게임 종료!                          ║"));
+    UE_LOG(LogHelluna, Warning, TEXT("║     Reason: %s"),
+        Reason == EHellunaGameEndReason::Escaped ? TEXT("탈출 성공") :
+        Reason == EHellunaGameEndReason::AllDead ? TEXT("전원 사망") :
+        Reason == EHellunaGameEndReason::ServerShutdown ? TEXT("서버 셧다운") : TEXT("None"));
+    UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+
+    // 낮/밤 타이머 정지 (더 이상 게임 진행 불필요)
+    GetWorldTimerManager().ClearTimer(TimerHandle_ToNight);
+    GetWorldTimerManager().ClearTimer(TimerHandle_ToDay);
+
+    // 종료 사유 문자열
+    FString ReasonString;
+    switch (Reason)
+    {
+    case EHellunaGameEndReason::Escaped:       ReasonString = TEXT("탈출 성공"); break;
+    case EHellunaGameEndReason::AllDead:        ReasonString = TEXT("전원 사망"); break;
+    case EHellunaGameEndReason::ServerShutdown: ReasonString = TEXT("서버 셧다운"); break;
+    default:                                    ReasonString = TEXT("알 수 없음"); break;
+    }
+
+    // ── 각 플레이어 처리 ──
+    for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+    {
+        APlayerController* PC = It->Get();
+        if (!IsValid(PC)) continue;
+
+        // 플레이어 생존 여부 판단
+        bool bSurvived = false;
+
+        // AllDead인 경우 모두 사망 처리
+        if (Reason != EHellunaGameEndReason::AllDead)
+        {
+            APawn* Pawn = PC->GetPawn();
+            if (IsValid(Pawn))
+            {
+                UHellunaHealthComponent* HealthComp = Pawn->FindComponentByClass<UHellunaHealthComponent>();
+                if (HealthComp && !HealthComp->IsDead())
+                {
+                    bSurvived = true;
+                }
+            }
+        }
+
+        UE_LOG(LogHelluna, Log, TEXT("[Phase7] EndGame: Player=%s Survived=%s"),
+            *GetNameSafe(PC), bSurvived ? TEXT("Yes") : TEXT("No"));
+
+        // DB에 결과 반영
+        ProcessPlayerGameResult(PC, bSurvived);
+
+        // 클라이언트에 결과 UI 표시
+        AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(PC);
+        if (HeroPC)
+        {
+            // 생존자: 현재 인벤토리 수집
+            TArray<FInv_SavedItemData> ResultItems;
+            if (bSurvived)
+            {
+                AInv_PlayerController* InvPC = Cast<AInv_PlayerController>(PC);
+                if (InvPC)
+                {
+                    // 서버에서 InvComp의 SaveData 수집
+                    UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
+                    if (InvComp)
+                    {
+                        ResultItems = InvComp->CollectInventoryDataForSave();
+                    }
+                }
+            }
+
+            HeroPC->Client_ShowGameResult(ResultItems, bSurvived, ReasonString, LobbyServerURL);
+        }
+    }
+
+    UE_LOG(LogHelluna, Log, TEXT("[Phase7] EndGame 완료 — 모든 플레이어 결과 처리됨"));
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ProcessPlayerGameResult — 단일 플레이어의 게임 결과를 DB에 반영
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaDefenseGameMode::ProcessPlayerGameResult(APlayerController* PC, bool bSurvived)
+{
+    if (!IsValid(PC)) return;
+
+    // PlayerId 가져오기
+    FString PlayerId = GetPlayerSaveId(PC);
+    if (PlayerId.IsEmpty())
+    {
+        UE_LOG(LogHelluna, Warning, TEXT("[Phase7] ProcessPlayerGameResult: PlayerId가 비어있음 | PC=%s"),
+            *GetNameSafe(PC));
+        return;
+    }
+
+    // DB 서브시스템 가져오기
+    UGameInstance* GI = GetGameInstance();
+    UHellunaSQLiteSubsystem* DB = GI ? GI->GetSubsystem<UHellunaSQLiteSubsystem>() : nullptr;
+    if (!DB || !DB->IsDatabaseReady())
+    {
+        UE_LOG(LogHelluna, Error, TEXT("[Phase7] ProcessPlayerGameResult: DB 미준비 | PlayerId=%s"), *PlayerId);
+        return;
+    }
+
+    // 결과 아이템 수집
+    TArray<FInv_SavedItemData> ResultItems;
+    if (bSurvived)
+    {
+        // 서버에서 InvComp의 SaveData 수집
+        UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
+        if (InvComp)
+        {
+            ResultItems = InvComp->CollectInventoryDataForSave();
+            UE_LOG(LogHelluna, Log, TEXT("[Phase7] 생존자 아이템 수집: %d개 | PlayerId=%s"),
+                ResultItems.Num(), *PlayerId);
+        }
+    }
+    else
+    {
+        UE_LOG(LogHelluna, Log, TEXT("[Phase7] 사망자: 아이템 전부 손실 | PlayerId=%s"), *PlayerId);
+        // ResultItems는 빈 배열 — 사망자는 아이템 전부 손실
+    }
+
+    // Stash에 결과 병합 (기존 Stash 유지 + ResultItems INSERT)
+    if (DB->MergeGameResultToStash(PlayerId, ResultItems))
+    {
+        UE_LOG(LogHelluna, Log, TEXT("[Phase7] MergeGameResultToStash 성공 | PlayerId=%s Items=%d"),
+            *PlayerId, ResultItems.Num());
+    }
+    else
+    {
+        UE_LOG(LogHelluna, Error, TEXT("[Phase7] MergeGameResultToStash 실패! | PlayerId=%s"), *PlayerId);
+    }
+
+    // Loadout 정리 (비행기표 소멸)
+    if (DB->DeletePlayerLoadout(PlayerId))
+    {
+        UE_LOG(LogHelluna, Log, TEXT("[Phase7] DeletePlayerLoadout 성공 | PlayerId=%s"), *PlayerId);
+    }
+    else
+    {
+        UE_LOG(LogHelluna, Warning, TEXT("[Phase7] DeletePlayerLoadout: 삭제할 Loadout 없음 | PlayerId=%s"), *PlayerId);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Phase 7: Logout override — 게임 진행 중 나가기 = 사망 취급
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaDefenseGameMode::Logout(AController* Exiting)
+{
+    // 게임 진행 중(InitializeGame 후, EndGame 전)이면 즉시 결과 처리
+    if (bGameInitialized && !bGameEnded)
+    {
+        APlayerController* PC = Cast<APlayerController>(Exiting);
+        if (IsValid(PC))
+        {
+            UE_LOG(LogHelluna, Warning, TEXT("[Phase7] Logout 중 게임 진행 중 — 사망 취급 | Player=%s"),
+                *GetNameSafe(PC));
+
+            // 사망 취급: 빈 배열로 Merge (아이템 전부 손실)
+            ProcessPlayerGameResult(PC, false);
+        }
+    }
+
+    Super::Logout(Exiting);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Phase 7: EndPlay override — 서버 셧다운 시 전원 결과 처리
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaDefenseGameMode::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+    // 서버 셧다운 + 게임 진행 중이면 모든 플레이어 결과 처리
+    if (HasAuthority() && bGameInitialized && !bGameEnded)
+    {
+        UE_LOG(LogHelluna, Warning, TEXT("[Phase7] EndPlay: 서버 셧다운 — EndGame(ServerShutdown) 호출"));
+        EndGame(EHellunaGameEndReason::ServerShutdown);
+    }
+
+    Super::EndPlay(EndPlayReason);
 }

@@ -9,6 +9,7 @@
 
 class UVoteWidget;
 class UVoteManagerComponent;
+class UHellunaGameResultWidget;
 
 /**
  * @brief   Helluna 영웅 전용 PlayerController
@@ -80,4 +81,31 @@ private:
 	/** 생성된 투표 위젯 인스턴스 */
 	UPROPERTY()
 	TObjectPtr<UVoteWidget> VoteWidgetInstance;
+
+	// =========================================================================================
+	// [Phase 7] 게임 결과 UI (김기현)
+	// =========================================================================================
+public:
+	/**
+	 * [서버 → 클라이언트] 게임 결과 UI 표시 RPC
+	 *
+	 * @param ResultItems  보존된 아이템 목록 (사망자는 빈 배열)
+	 * @param bSurvived    생존 여부
+	 * @param Reason       종료 사유 문자열
+	 * @param LobbyURL     로비 서버 접속 URL
+	 */
+	UFUNCTION(Client, Reliable)
+	void Client_ShowGameResult(const TArray<FInv_SavedItemData>& ResultItems, bool bSurvived,
+		const FString& Reason, const FString& LobbyURL);
+
+protected:
+	/** 결과 위젯 클래스 (BP에서 설정) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GameResult|UI",
+		meta = (DisplayName = "Game Result Widget Class (결과 위젯 클래스)"))
+	TSubclassOf<UHellunaGameResultWidget> GameResultWidgetClass;
+
+private:
+	/** 생성된 결과 위젯 인스턴스 */
+	UPROPERTY()
+	TObjectPtr<UHellunaGameResultWidget> GameResultWidgetInstance;
 };
