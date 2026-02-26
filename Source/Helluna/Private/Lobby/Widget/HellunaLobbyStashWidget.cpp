@@ -212,6 +212,14 @@ void UHellunaLobbyStashWidget::OnLoadoutItemTransferRequested(int32 EntryIndex)
 // ════════════════════════════════════════════════════════════════════════════════
 void UHellunaLobbyStashWidget::TransferItemToLoadout(int32 ItemEntryIndex)
 {
+	// 빈 슬롯 클릭 방어: EntryIndex < 0이면 RPC 호출하지 않음
+	// (Validate 실패 시 UE가 연결을 강제 종료하므로 클라이언트 측에서 사전 차단)
+	if (ItemEntryIndex < 0)
+	{
+		UE_LOG(LogHellunaLobby, Verbose, TEXT("[StashWidget] TransferToLoadout: 빈 슬롯 (EntryIndex=%d) → 무시"), ItemEntryIndex);
+		return;
+	}
+
 	AHellunaLobbyController* LobbyPC = GetLobbyController();
 	if (!LobbyPC)
 	{
@@ -236,6 +244,14 @@ void UHellunaLobbyStashWidget::TransferItemToLoadout(int32 ItemEntryIndex)
 // ════════════════════════════════════════════════════════════════════════════════
 void UHellunaLobbyStashWidget::TransferItemToStash(int32 ItemEntryIndex)
 {
+	// 빈 슬롯 클릭 방어: EntryIndex < 0이면 RPC 호출하지 않음
+	// (Validate 실패 시 UE가 연결을 강제 종료하므로 클라이언트 측에서 사전 차단)
+	if (ItemEntryIndex < 0)
+	{
+		UE_LOG(LogHellunaLobby, Verbose, TEXT("[StashWidget] TransferToStash: 빈 슬롯 (EntryIndex=%d) → 무시"), ItemEntryIndex);
+		return;
+	}
+
 	AHellunaLobbyController* LobbyPC = GetLobbyController();
 	if (!LobbyPC)
 	{

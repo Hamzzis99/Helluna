@@ -351,8 +351,9 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 	if (!DeployMapURL.IsEmpty())
 	{
 		const int32 HeroIndex = HeroTypeToIndex(SelectedHeroType);
-		const FString Separator = DeployMapURL.Contains(TEXT("?")) ? TEXT("&") : TEXT("?");
-		const FString FinalURL = FString::Printf(TEXT("%s%sHeroType=%d"), *DeployMapURL, *Separator, HeroIndex);
+		// UE URL Options는 항상 '?' 구분자 사용 (ParseOption이 '?Key=Value'만 인식)
+		const FString FinalURL = FString::Printf(TEXT("%s?HeroType=%d?PlayerId=%s"),
+			*DeployMapURL, HeroIndex, *PlayerId);
 		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [4]: Client_ExecuteDeploy → %s"), *FinalURL);
 		Client_ExecuteDeploy(FinalURL);
 	}

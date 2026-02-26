@@ -208,7 +208,8 @@ void UEnemyActorSpawnProcessor::EnsureVisualizationRoot(UWorld* World)
 	if (!EntityVisualizationRoot)
 		return;
 
-	EntityVisualizationRoot->SetActorLabel(TEXT("EntityVisualization_Root"));
+	//잠시 김기현이 데디서버 빌드 버전 쓰느라 주석으로 처리하겠습니다! SetActorLabel <- 이거는 에디터 전용 코드
+	//EntityVisualizationRoot->SetActorLabel(TEXT("EntityVisualization_Root"));
 	EntityVisualizationRoot->SetActorHiddenInGame(false);
 	EntityVisualizationRoot->SetReplicates(false);
 

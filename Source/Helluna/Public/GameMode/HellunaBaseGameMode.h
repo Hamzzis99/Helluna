@@ -33,6 +33,21 @@ class AHellunaLoginController;
 class AInv_PlayerController;
 class UDataTable;
 
+// ════════════════════════════════════════════════════════════════════════════════
+// Phase 6: 로비 배포 정보 (ClientTravel URL에서 파싱)
+// ════════════════════════════════════════════════════════════════════════════════
+USTRUCT()
+struct FLobbyDeployInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	FString PlayerId;
+
+	UPROPERTY()
+	EHellunaHeroType HeroType = EHellunaHeroType::None;
+};
+
 UCLASS()
 class HELLUNA_API AHellunaBaseGameMode : public AInv_SaveGameMode
 {
@@ -46,6 +61,11 @@ public:
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
+	// ── Phase 6: InitNewPlayer — URL Options에서 로비 배포 정보 파싱 ──
+	virtual FString InitNewPlayer(APlayerController* NewPlayerController,
+		const FUniqueNetIdRepl& UniqueId, const FString& Options,
+		const FString& Portal = TEXT("")) override;
 
 	// ── 부모 Override (인벤토리 저장/로드) ──
 	virtual TSubclassOf<AActor> ResolveItemClass(const FGameplayTag& ItemType) override;
@@ -212,6 +232,10 @@ protected:
 
 	UPROPERTY()
 	TMap<APlayerController*, FTimerHandle> LoginTimeoutTimers;
+
+	/** Phase 6: 로비 배포 대기 맵 (InitNewPlayer에서 추가, PostLogin에서 소비) */
+	UPROPERTY()
+	TMap<TObjectPtr<APlayerController>, FLobbyDeployInfo> PendingLobbyDeployMap;
 
 	// ════════════════════════════════════════════════════════════════════════════════
 	// 캐릭터 선택

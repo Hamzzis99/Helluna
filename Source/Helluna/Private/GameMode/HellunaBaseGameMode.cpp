@@ -274,6 +274,44 @@ void AHellunaBaseGameMode::InitializeGame()
 // ════════════════════════════════════════════════════════════════════════════════
 
 // ════════════════════════════════════════════════════════════════════════════════
+// 📌 [Phase 6] InitNewPlayer — URL Options에서 로비 배포 정보 파싱
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 📌 호출 시점:
+//    플레이어가 서버에 접속할 때 PostLogin보다 먼저 호출됨 (엔진 내부)
+//
+// 📌 역할:
+//    ClientTravel URL의 Options에서 PlayerId & HeroType 파싱
+//    → 둘 다 존재하면 PendingLobbyDeployMap에 등록
+//    → PostLogin에서 이 맵을 확인하여 로비 배포 분기 처리
+//
+// ════════════════════════════════════════════════════════════════════════════════
+FString AHellunaBaseGameMode::InitNewPlayer(APlayerController* NewPlayerController,
+	const FUniqueNetIdRepl& UniqueId, const FString& Options,
+	const FString& Portal)
+{
+	FString ErrorMessage = Super::InitNewPlayer(NewPlayerController, UniqueId, Options, Portal);
+
+	// Options에서 PlayerId & HeroType 파싱
+	const FString OptionPlayerId = UGameplayStatics::ParseOption(Options, TEXT("PlayerId"));
+	const FString OptionHeroType = UGameplayStatics::ParseOption(Options, TEXT("HeroType"));
+
+	if (!OptionPlayerId.IsEmpty() && !OptionHeroType.IsEmpty())
+	{
+		FLobbyDeployInfo DeployInfo;
+		DeployInfo.PlayerId = OptionPlayerId;
+		DeployInfo.HeroType = IndexToHeroType(FCString::Atoi(*OptionHeroType));
+
+		PendingLobbyDeployMap.Add(NewPlayerController, DeployInfo);
+
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase6] InitNewPlayer: 로비 배포 감지! PlayerId=%s, HeroType=%d"),
+			*OptionPlayerId, static_cast<int32>(DeployInfo.HeroType));
+	}
+
+	return ErrorMessage;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
 // 📌 PostLogin - 플레이어 접속 시 호출
 // ════════════════════════════════════════════════════════════════════════════════
 //
@@ -330,6 +368,81 @@ void AHellunaBaseGameMode::PostLogin(APlayerController* NewPlayer)
 	}
 
 	AHellunaPlayerState* PS = NewPlayer->GetPlayerState<AHellunaPlayerState>();
+
+	// ────────────────────────────────────────────────────────────────────────────
+	// 📌 [Phase 6] 로비 배포 분기 — InitNewPlayer에서 등록된 플레이어
+	// ────────────────────────────────────────────────────────────────────────────
+	// 로비에서 출격하여 ClientTravel로 접속한 경우
+	// → 로그인/캐릭터선택 UI 스킵, Loadout에서 인벤토리 로드
+	// ────────────────────────────────────────────────────────────────────────────
+	if (FLobbyDeployInfo* DeployInfo = PendingLobbyDeployMap.Find(NewPlayer))
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase6] PostLogin — 로비 배포 감지! PlayerId=%s, HeroType=%d"),
+			*DeployInfo->PlayerId, static_cast<int32>(DeployInfo->HeroType));
+
+		const FString DeployPlayerId = DeployInfo->PlayerId;
+		const EHellunaHeroType DeployHeroType = DeployInfo->HeroType;
+		PendingLobbyDeployMap.Remove(NewPlayer);
+
+		// 1. PlayerState 설정
+		if (PS)
+		{
+			PS->SetLoginInfo(DeployPlayerId);
+			PS->SetSelectedHeroType(DeployHeroType);
+		}
+
+		// 2. GameInstance에 로그인 등록
+		if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(UGameplayStatics::GetGameInstance(GetWorld())))
+		{
+			GI->RegisterLogin(DeployPlayerId);
+		}
+
+		// 3. 캐릭터 사용 등록
+		RegisterCharacterUse(DeployHeroType, DeployPlayerId);
+
+		// 4. Controller → PlayerId 매핑 등록
+		RegisterControllerPlayerId(NewPlayer, DeployPlayerId);
+
+		// 5. SwapToGameController → SpawnHeroCharacter → LoadAndSendInventoryToClient
+		AHellunaLoginController* LC = Cast<AHellunaLoginController>(NewPlayer);
+		if (LC && LC->GetGameControllerClass())
+		{
+			FTimerHandle SwapTimer;
+			GetWorldTimerManager().SetTimer(SwapTimer, [this, LC, DeployPlayerId, DeployHeroType]()
+			{
+				if (IsValid(LC))
+				{
+					SwapToGameController(LC, DeployPlayerId, DeployHeroType);
+				}
+			}, 0.5f, false);
+		}
+		else
+		{
+			// LoginController가 아닌 경우 (직접 GameController로 접속) → 바로 스폰
+			AInv_PlayerController* InvPC = Cast<AInv_PlayerController>(NewPlayer);
+			if (IsValid(InvPC))
+			{
+				InvPC->OnControllerEndPlay.AddDynamic(this, &AHellunaBaseGameMode::OnInvControllerEndPlay);
+			}
+
+			if (!bGameInitialized)
+			{
+				InitializeGame();
+			}
+
+			FTimerHandle SpawnTimer;
+			GetWorldTimerManager().SetTimer(SpawnTimer, [this, NewPlayer]()
+			{
+				if (IsValid(NewPlayer))
+				{
+					SpawnHeroCharacter(NewPlayer);
+				}
+			}, 0.3f, false);
+		}
+
+		Super::PostLogin(NewPlayer);
+		return;
+	}
 
 	// ────────────────────────────────────────────────────────────────────────────
 	// 📌 이미 로그인된 상태 (SeamlessTravel 후 재접속)
@@ -1641,18 +1754,43 @@ void AHellunaBaseGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
 
 	if (DB && DB->IsDatabaseReady())
 	{
-		TArray<FInv_SavedItemData> Items = DB->LoadPlayerStash(PlayerId);
-		if (Items.Num() > 0)
+		// ── [Phase 6] Loadout 우선 체크 ──
+		// 로비에서 출격한 플레이어는 player_loadout에 아이템이 있음
+		// → Loadout 로드 후 삭제 (비행기표 소멸)
+		if (DB->HasPendingLoadout(PlayerId))
 		{
-			LoadedData.Items = MoveTemp(Items);
-			LoadedData.LastSaveTime = FDateTime::Now();
-			bLoaded = true;
-			UE_LOG(LogHelluna, Log, TEXT("[Phase3] LoadAndSendInventoryToClient: SQLite 로드 성공 | PlayerId=%s | %d개"),
-				*PlayerId, LoadedData.Items.Num());
+			TArray<FInv_SavedItemData> Items = DB->LoadPlayerLoadout(PlayerId);
+			UE_LOG(LogHelluna, Log, TEXT("[Phase6] LoadAndSendInventoryToClient: Loadout 로드 성공 | PlayerId=%s | %d개"),
+				*PlayerId, Items.Num());
+
+			if (Items.Num() > 0)
+			{
+				LoadedData.Items = MoveTemp(Items);
+				LoadedData.LastSaveTime = FDateTime::Now();
+				bLoaded = true;
+			}
+
+			// Loadout 삭제 (아이템 0개여도 삭제 — 빈손 출격 정리)
+			DB->DeletePlayerLoadout(PlayerId);
+			UE_LOG(LogHelluna, Log, TEXT("[Phase6] LoadAndSendInventoryToClient: Loadout 삭제 완료 | PlayerId=%s"), *PlayerId);
 		}
-		else
+
+		// ── Loadout 없으면 Stash에서 로드 (기존 경로) ──
+		if (!bLoaded)
 		{
-			UE_LOG(LogHelluna, Log, TEXT("[Phase3] LoadAndSendInventoryToClient: SQLite 데이터 없음 (신규 유저) | PlayerId=%s"), *PlayerId);
+			TArray<FInv_SavedItemData> Items = DB->LoadPlayerStash(PlayerId);
+			if (Items.Num() > 0)
+			{
+				LoadedData.Items = MoveTemp(Items);
+				LoadedData.LastSaveTime = FDateTime::Now();
+				bLoaded = true;
+				UE_LOG(LogHelluna, Log, TEXT("[Phase3] LoadAndSendInventoryToClient: SQLite Stash 로드 성공 | PlayerId=%s | %d개"),
+					*PlayerId, LoadedData.Items.Num());
+			}
+			else
+			{
+				UE_LOG(LogHelluna, Log, TEXT("[Phase3] LoadAndSendInventoryToClient: SQLite 데이터 없음 (신규 유저) | PlayerId=%s"), *PlayerId);
+			}
 		}
 	}
 	else

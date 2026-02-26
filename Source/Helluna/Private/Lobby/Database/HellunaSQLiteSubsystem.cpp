@@ -95,10 +95,22 @@ void UHellunaSQLiteSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ▶ Initialize 시작"));
 
-	// 1. DB 파일 경로 설정: {ProjectSavedDir}/Database/Helluna.db
-	//    예: D:/UnrealProject/Capston_Project/Helluna/Saved/Database/Helluna.db
-	CachedDatabasePath = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Database"), TEXT("Helluna.db"));
-	UE_LOG(LogHelluna, Log, TEXT("[SQLite]   DB 경로: %s"), *CachedDatabasePath);
+	// 1. DB 파일 경로 설정
+	//    우선순위: 커맨드라인 -DatabasePath=<절대경로> > 기본 {ProjectSavedDir}/Database/Helluna.db
+	//    → 패키징된 데디서버가 에디터 PIE(로비)와 같은 DB를 공유하려면 커맨드라인으로 경로 지정
+	FString CommandLinePath;
+	if (FParse::Value(FCommandLine::Get(), TEXT("-DatabasePath="), CommandLinePath))
+	{
+		// 커맨드라인에서 절대 경로를 직접 지정한 경우
+		CachedDatabasePath = CommandLinePath;
+		UE_LOG(LogHelluna, Warning, TEXT("[SQLite]   DB 경로 (커맨드라인 오버라이드): %s"), *CachedDatabasePath);
+	}
+	else
+	{
+		// 기본: {ProjectSavedDir}/Database/Helluna.db
+		CachedDatabasePath = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Database"), TEXT("Helluna.db"));
+		UE_LOG(LogHelluna, Log, TEXT("[SQLite]   DB 경로 (기본): %s"), *CachedDatabasePath);
+	}
 
 	// 2. DB 디렉토리가 없으면 생성 (최초 실행 시 필요)
 	const FString DatabaseDir = FPaths::GetPath(CachedDatabasePath);
@@ -1707,26 +1719,63 @@ static FAutoConsoleCommand CmdDebugSQLiteSave(
 			return;
 		}
 
-		// 더미 아이템 2개 생성 (실제 GameplayTag 사용 — IsValid() 통과 필수!)
+		// 더미 아이템 5개 생성 (실제 GameplayTag 사용 — IsValid() 통과 필수!)
+		// 무기류(Axe)는 SerializedManifest가 없으면 복원 실패 → 소모품/재료로 구성
 		TArray<FInv_SavedItemData> Items;
 
 		FInv_SavedItemData Item1;
-		Item1.ItemType        = FGameplayTag::RequestGameplayTag(FName(TEXT("GameItems.Equipment.Weapons.Axe")), false);
-		Item1.StackCount      = 5;               // 5개 스택
-		Item1.GridPosition    = FIntPoint(0, 0);  // 그리드 (0,0) 위치
-		Item1.GridCategory    = 0;                // 장비 카테고리
+		Item1.ItemType        = FGameplayTag::RequestGameplayTag(FName(TEXT("GameItems.Consumables.Potions.Blue.Small")), false);
+		Item1.StackCount      = 10;
+		Item1.GridPosition    = FIntPoint(0, 0);
+		Item1.GridCategory    = 1;                // 소모품 카테고리
 		Item1.bEquipped       = false;
-		Item1.WeaponSlotIndex = -1;               // 무기 슬롯 미장착
+		Item1.WeaponSlotIndex = -1;
 		Items.Add(Item1);
 
 		FInv_SavedItemData Item2;
-		Item2.ItemType        = FGameplayTag::RequestGameplayTag(FName(TEXT("GameItems.Consumables.Potions.Blue.Small")), false);
+		Item2.ItemType        = FGameplayTag::RequestGameplayTag(FName(TEXT("GameItems.Consumables.Potions.Red.Small")), false);
 		Item2.StackCount      = 10;
 		Item2.GridPosition    = FIntPoint(1, 0);
 		Item2.GridCategory    = 1;                // 소모품 카테고리
 		Item2.bEquipped       = false;
 		Item2.WeaponSlotIndex = -1;
 		Items.Add(Item2);
+
+		FInv_SavedItemData Item3;
+		Item3.ItemType        = FGameplayTag::RequestGameplayTag(FName(TEXT("GameItems.Craftables.FireFernFruit")), false);
+		Item3.StackCount      = 5;
+		Item3.GridPosition    = FIntPoint(0, 0);
+		Item3.GridCategory    = 2;                // 재료 카테고리
+		Item3.bEquipped       = false;
+		Item3.WeaponSlotIndex = -1;
+		Items.Add(Item3);
+
+		FInv_SavedItemData Item4;
+		Item4.ItemType        = FGameplayTag::RequestGameplayTag(FName(TEXT("GameItems.Craftables.LuminDaisy")), false);
+		Item4.StackCount      = 5;
+		Item4.GridPosition    = FIntPoint(1, 0);
+		Item4.GridCategory    = 2;                // 재료 카테고리
+		Item4.bEquipped       = false;
+		Item4.WeaponSlotIndex = -1;
+		Items.Add(Item4);
+
+		FInv_SavedItemData Item5;
+		Item5.ItemType        = FGameplayTag::RequestGameplayTag(FName(TEXT("GameItems.Equipment.Attachments.Muzzle")), false);
+		Item5.StackCount      = 1;
+		Item5.GridPosition    = FIntPoint(0, 0);
+		Item5.GridCategory    = 0;                // 장비 카테고리
+		Item5.bEquipped       = false;
+		Item5.WeaponSlotIndex = -1;
+		Items.Add(Item5);
+
+		FInv_SavedItemData Item6;
+		Item6.ItemType        = FGameplayTag::RequestGameplayTag(FName(TEXT("GameItems.Equipment.Weapons.Axe")), false);
+		Item6.StackCount      = 1;
+		Item6.GridPosition    = FIntPoint(2, 0);
+		Item6.GridCategory    = 0;                // 장비 카테고리
+		Item6.bEquipped       = false;
+		Item6.WeaponSlotIndex = -1;
+		Items.Add(Item6);
 
 		const bool bOk = Sub->SavePlayerStash(PlayerId, Items);
 		UE_LOG(LogHelluna, Log, TEXT("[DebugSQLiteSave] 결과: %s | PlayerId=%s | 저장 %d개"),
