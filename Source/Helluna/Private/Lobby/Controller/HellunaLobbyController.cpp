@@ -149,7 +149,7 @@ void AHellunaLobbyController::Server_TransferItem_Implementation(int32 ItemEntry
 {
 	const FString DirectionStr = (Direction == ELobbyTransferDirection::StashToLoadout) ? TEXT("Stash→Loadout") : TEXT("Loadout→Stash");
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ── Server_TransferItem 시작 ──"));
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC]   EntryIndex=%d | Direction=%s"), ItemEntryIndex, *DirectionStr);
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC]   RepID=%d | Direction=%s"), ItemEntryIndex, *DirectionStr);
 
 	// ── Source/Target 결정 ──
 	UInv_InventoryComponent* SourceComp = nullptr;
@@ -178,9 +178,9 @@ void AHellunaLobbyController::Server_TransferItem_Implementation(int32 ItemEntry
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC]   Source=%s → Target=%s"),
 		*SourceComp->GetName(), *TargetComp->GetName());
 
-	// ── ExecuteTransfer 실행 (내부적으로 TransferItemTo 호출) ──
+	// ── ExecuteTransfer 실행 (ReplicationID → 실제 인덱스 변환 후 TransferItemTo 호출) ──
 	const bool bSuccess = ExecuteTransfer(SourceComp, TargetComp, ItemEntryIndex);
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_TransferItem %s | EntryIndex=%d | Direction=%s"),
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_TransferItem %s | RepID=%d | Direction=%s"),
 		bSuccess ? TEXT("성공") : TEXT("실패"), ItemEntryIndex, *DirectionStr);
 
 	// TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 연결
@@ -207,7 +207,7 @@ void AHellunaLobbyController::Server_TransferItem_Implementation(int32 ItemEntry
 bool AHellunaLobbyController::ExecuteTransfer(
 	UInv_InventoryComponent* SourceComp,
 	UInv_InventoryComponent* TargetComp,
-	int32 ItemEntryIndex)
+	int32 ItemReplicationID)
 {
 	if (!SourceComp || !TargetComp)
 	{
@@ -216,11 +216,22 @@ bool AHellunaLobbyController::ExecuteTransfer(
 		return false;
 	}
 
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ExecuteTransfer: %s[%d] → %s"),
-		*SourceComp->GetName(), ItemEntryIndex, *TargetComp->GetName());
+	// ⭐ [Phase 4 Fix] ReplicationID → ValidItems 배열 인덱스 변환
+	// 클라이언트가 보내는 값은 FastArray Entry의 ReplicationID (배열 밀림에 안전)
+	// TransferItemTo()는 ValidItems 배열 인덱스를 기대하므로 여기서 변환
+	const int32 ActualIndex = SourceComp->FindValidItemIndexByReplicationID(ItemReplicationID);
+	if (ActualIndex == INDEX_NONE)
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] ExecuteTransfer: RepID=%d에 해당하는 아이템 미발견 | Source=%s"),
+			ItemReplicationID, *SourceComp->GetName());
+		return false;
+	}
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ExecuteTransfer: %s RepID=%d → ValidIndex=%d → %s"),
+		*SourceComp->GetName(), ItemReplicationID, ActualIndex, *TargetComp->GetName());
 
 	// TransferItemTo: 플러그인 내부에서 FastArray 조작 (INVENTORY_API 경계 내)
-	const bool bResult = SourceComp->TransferItemTo(ItemEntryIndex, TargetComp);
+	const bool bResult = SourceComp->TransferItemTo(ActualIndex, TargetComp);
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ExecuteTransfer 결과: %s"), bResult ? TEXT("성공") : TEXT("실패"));
 	return bResult;
@@ -308,32 +319,35 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 		return;
 	}
 
-	// ── [3단계] LoadoutComp → SQLite 저장 ──
+	// ── [3단계] Stash + Loadout 저장 ──
 	if (LoadoutInventoryComponent)
 	{
 		TArray<FInv_SavedItemData> LoadoutItems = LoadoutInventoryComponent->CollectInventoryDataForSave();
-		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [3a]: Loadout 아이템 %d개 수집 완료"), LoadoutItems.Num());
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [3]: Loadout 아이템 %d개 수집 완료"), LoadoutItems.Num());
+
+		// ── [3a] 잔여 Stash 저장 (항상 실행 — 빈 로드아웃이라도 Stash 상태를 DB에 반영) ──
+		// ⭐ [Fix] 이전: LoadoutItems > 0일 때만 실행 → 빈 로드아웃 시 이전 Stash가 DB에 잔존
+		//   → MergeGameResultToStash(INSERT-only)에서 이전 Stash + 신규 결과 = 중복 발생
+		//   수정: 항상 SavePlayerStash 호출하여 현재 Stash 상태를 정확히 DB에 반영
+		if (StashInventoryComponent)
+		{
+			TArray<FInv_SavedItemData> RemainingStash = StashInventoryComponent->CollectInventoryDataForSave();
+			const bool bStashOk = DB->SavePlayerStash(PlayerId, RemainingStash);
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [3a]: 잔여 Stash 저장 %s | %d개 아이템"),
+				bStashOk ? TEXT("성공") : TEXT("실패"), RemainingStash.Num());
+
+			if (!bStashOk)
+			{
+				UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Deploy [3a]: 잔여 Stash 저장 실패! 출격 중단"));
+				Client_DeployFailed(TEXT("Stash 저장 실패"));
+				bDeployInProgress = false;
+				return;
+			}
+		}
 
 		if (LoadoutItems.Num() > 0)
 		{
-			// ── [3a] 먼저 잔여 Stash 저장 (출격에서 빼고 남은 아이템) ──
-			if (StashInventoryComponent)
-			{
-				TArray<FInv_SavedItemData> RemainingStash = StashInventoryComponent->CollectInventoryDataForSave();
-				const bool bStashOk = DB->SavePlayerStash(PlayerId, RemainingStash);
-				UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [3a]: 잔여 Stash 저장 %s | %d개 아이템"),
-					bStashOk ? TEXT("성공") : TEXT("실패"), RemainingStash.Num());
-
-				if (!bStashOk)
-				{
-					UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Deploy [3a]: 잔여 Stash 저장 실패! 출격 중단"));
-					Client_DeployFailed(TEXT("Stash 저장 실패"));
-					bDeployInProgress = false;
-					return;
-				}
-			}
-
-			// ── [3b] Loadout 저장 (원자적 트랜잭션) ──
+			// ── [3b] Loadout 저장 ──
 			const bool bLoadoutOk = DB->SavePlayerLoadout(PlayerId, LoadoutItems);
 			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [3b]: SavePlayerLoadout %s | %d개 아이템"),
 				bLoadoutOk ? TEXT("성공") : TEXT("실패"), LoadoutItems.Num());
@@ -365,7 +379,7 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 		}
 		else
 		{
-			UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] Deploy: Loadout이 비어있음! 빈손 출격 진행"));
+			UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] Deploy: Loadout이 비어있음! 빈손 출격 진행 (Stash는 이미 저장됨)"));
 		}
 	}
 	else

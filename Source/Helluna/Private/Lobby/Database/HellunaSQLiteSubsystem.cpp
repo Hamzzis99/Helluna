@@ -154,7 +154,16 @@ void UHellunaSQLiteSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	}
 	else
 	{
+		// DB 열기 실패
+		// PIE에서 멀티플레이어 테스트 시, 서버 GameInstance가 DB를 선점하면
+		// 클라이언트 GameInstance는 "disk I/O error"로 실패함 (정상 동작)
+		// 클라이언트는 서버 RPC로 데이터를 받으므로 파일 전송 전용 모드로 전환
+#if WITH_EDITOR
+		bFileTransferOnly = true;
+		UE_LOG(LogHelluna, Warning, TEXT("[SQLite] DB 열기 실패 (에디터) → 파일 전송 전용 모드 전환 (PIE 클라이언트 추정) | 경로: %s"), *CachedDatabasePath);
+#else
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ 서브시스템 초기화 실패 — DB 열기 실패 | 경로: %s"), *CachedDatabasePath);
+#endif
 	}
 }
 
@@ -624,8 +633,14 @@ bool UHellunaSQLiteSubsystem::ExportGameResultToFile(const FString& PlayerId, co
 
 	// 아이템 배열
 	TArray<TSharedPtr<FJsonValue>> ItemsArray;
+	int32 ExportIdx = 0;
 	for (const FInv_SavedItemData& Item : Items)
 	{
+		UE_LOG(LogHelluna, Log, TEXT("[SQLite] ExportGameResultToFile: [%d] %s | Stack=%d | Equipped=%s"),
+			ExportIdx, *Item.ItemType.ToString(), Item.StackCount,
+			Item.bEquipped ? TEXT("Y") : TEXT("N"));
+		++ExportIdx;
+
 		TSharedRef<FJsonObject> ItemObj = MakeShared<FJsonObject>();
 
 		ItemObj->SetStringField(TEXT("item_type"), Item.ItemType.ToString());
@@ -758,6 +773,11 @@ TArray<FInv_SavedItemData> UHellunaSQLiteSubsystem::ImportGameResultFromFile(con
 			FJsonSerializer::Serialize(*AttArray, AttWriter);
 			Item.Attachments = DeserializeAttachmentsFromJson(AttJsonStr);
 		}
+
+		// ⭐ [진단] 각 아이템의 StackCount 확인 — Stack=0 원인 추적
+		UE_LOG(LogHelluna, Log, TEXT("[SQLite] ImportGameResultFromFile: [%d] %s | Stack=%d | Equipped=%s"),
+			Result.Num(), *Item.ItemType.ToString(), Item.StackCount,
+			Item.bEquipped ? TEXT("Y") : TEXT("N"));
 
 		Result.Add(MoveTemp(Item));
 	}
@@ -1646,27 +1666,12 @@ bool UHellunaSQLiteSubsystem::SavePlayerLoadout(const FString& PlayerId, const T
 	}
 	UE_LOG(LogHelluna, Verbose, TEXT("[SQLite]   Loadout INSERT %d개 ✓"), Items.Num());
 
-	// (b) player_stash에서 해당 플레이어 전체 DELETE
-	//     비행기표 패턴: 출격하면 창고가 비워짐
-	// TODO: [SQL전환] 추후 부분 차감이 필요하면 이 DELETE를 개별 아이템 차감으로 교체
-	{
-		FSQLitePreparedStatement DeleteStmt = Database->PrepareStatement(
-			TEXT("DELETE FROM player_stash WHERE player_id = ?1;"));
-		if (!DeleteStmt.IsValid())
-		{
-			UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SavePlayerLoadout: Stash DELETE Prepare 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
-			Database->Execute(TEXT("ROLLBACK;"));
-			return false;
-		}
-		DeleteStmt.SetBindingValueByIndex(1, PlayerId);
-		if (!DeleteStmt.Execute())
-		{
-			UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SavePlayerLoadout: Stash DELETE 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
-			Database->Execute(TEXT("ROLLBACK;"));
-			return false;
-		}
-		UE_LOG(LogHelluna, Verbose, TEXT("[SQLite]   Stash DELETE ✓"));
-	}
+	// ⭐ [Fix] Stash DELETE 제거 — 잔여 Stash 보존
+	// 이전: SavePlayerLoadout 안에서 player_stash 전부 DELETE (비행기표 패턴)
+	// 문제: Deploy 흐름에서 [3a] SavePlayerStash(잔여) → [3b] SavePlayerLoadout(DELETE stash)
+	//       → [3a]에서 저장한 잔여 아이템이 [3b]에서 다시 삭제됨 (데이터 소실)
+	// 수정: Stash 관리는 Deploy 흐름의 SavePlayerStash에 위임
+	//       SavePlayerLoadout은 Loadout 데이터만 관리
 
 	// ── 트랜잭션 커밋 ──
 	if (!Database->Execute(TEXT("COMMIT;")))
@@ -1676,7 +1681,7 @@ bool UHellunaSQLiteSubsystem::SavePlayerLoadout(const FString& PlayerId, const T
 		return false;
 	}
 
-	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ SavePlayerLoadout 완료 | PlayerId=%s | Loadout %d개 INSERT + Stash DELETE"), *PlayerId, Items.Num());
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ SavePlayerLoadout 완료 | PlayerId=%s | Loadout %d개 INSERT (Stash 보존)"), *PlayerId, Items.Num());
 	return true;
 }
 
@@ -1788,11 +1793,19 @@ bool UHellunaSQLiteSubsystem::MergeGameResultToStash(const FString& PlayerId, co
 	{
 		const FInv_SavedItemData& Item = ResultItems[i];
 
+		// ⭐ [진단] 각 아이템의 StackCount 확인 — Stack=0 원인 추적
+		UE_LOG(LogHelluna, Log, TEXT("[SQLite] MergeGameResultToStash: INSERT[%d] %s | Stack=%d | Equipped=%s | Grid=(%d,%d)"),
+			i, *Item.ItemType.ToString(), Item.StackCount,
+			Item.bEquipped ? TEXT("Y") : TEXT("N"),
+			Item.GridPosition.X, Item.GridPosition.Y);
+
 		InsertStmt.SetBindingValueByIndex(1, PlayerId);
 		InsertStmt.SetBindingValueByIndex(2, Item.ItemType.ToString());
 		InsertStmt.SetBindingValueByIndex(3, Item.StackCount);
-		InsertStmt.SetBindingValueByIndex(4, Item.GridPosition.X);
-		InsertStmt.SetBindingValueByIndex(5, Item.GridPosition.Y);
+		// ⭐ 게임 그리드 위치를 (-1,-1)로 리셋 — 게임/로비 그리드 사이즈가 다르므로
+		// 로비에서 HasRoomForItem → 2D 순회로 자동 배치되게 함
+		InsertStmt.SetBindingValueByIndex(4, -1);  // grid_position_x = -1 (미배치)
+		InsertStmt.SetBindingValueByIndex(5, -1);  // grid_position_y = -1 (미배치)
 		InsertStmt.SetBindingValueByIndex(6, static_cast<int32>(Item.GridCategory));
 		InsertStmt.SetBindingValueByIndex(7, Item.bEquipped ? 1 : 0);
 		InsertStmt.SetBindingValueByIndex(8, Item.WeaponSlotIndex);

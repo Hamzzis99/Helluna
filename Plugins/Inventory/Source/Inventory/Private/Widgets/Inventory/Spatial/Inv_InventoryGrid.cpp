@@ -1093,37 +1093,35 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 			UInv_SlottedItem* Slotted = SlottedItems.FindRef(LookupIndex);
 			if (Slotted)
 			{
-				int32 EntryIdx = Slotted->GetEntryIndex();
-
-				// ⭐ [방어 코드] EntryIndex가 -1이면 InvComp Entries에서 Item 포인터로 역추적
-				if (EntryIdx == -1 && InventoryComponent.IsValid())
+				// ⭐ [Phase 4 Fix] ReplicationID 기반 전송 — 배열 인덱스 대신 안정적 식별자 사용
+				// EntryIndex는 FastArray에서 아이템이 제거되면 밀림 (컴팩션)
+				// ReplicationID는 Entry 생성 시 부여되며, 다른 Entry의 추가/제거와 무관하게 유지됨
+				int32 RepID = INDEX_NONE;
+				if (InventoryComponent.IsValid())
 				{
 					UInv_InventoryItem* SlottedItem = Slotted->GetInventoryItem();
 					if (IsValid(SlottedItem))
 					{
 						const TArray<FInv_InventoryEntry>& Entries = InventoryComponent->GetInventoryList().Entries;
-						for (int32 SearchIdx = 0; SearchIdx < Entries.Num(); ++SearchIdx)
+						for (const FInv_InventoryEntry& Entry : Entries)
 						{
-							if (Entries[SearchIdx].Item == SlottedItem)
+							if (Entry.Item == SlottedItem)
 							{
-								EntryIdx = SearchIdx;
-								Slotted->SetEntryIndex(EntryIdx); // 다음 클릭을 위해 캐시
-								UE_LOG(LogTemp, Warning, TEXT("[InventoryGrid] ⚠ EntryIndex 방어 복구: Item=%s → Entry[%d] (포인터 매칭)"),
-									*SlottedItem->GetItemManifest().GetItemType().ToString(), EntryIdx);
+								RepID = Entry.ReplicationID;
 								break;
 							}
 						}
 					}
 				}
 
-				UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] 로비 전송 요청 → EntryIndex=%d, GridIndex=%d (UpperLeft=%d)"), EntryIdx, GridIndex, LookupIndex);
-				if (EntryIdx >= 0)
+				UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] 로비 전송 요청 → RepID=%d, GridIndex=%d (UpperLeft=%d)"), RepID, GridIndex, LookupIndex);
+				if (RepID != INDEX_NONE)
 				{
-					OnLobbyTransferRequested.Broadcast(EntryIdx);
+					OnLobbyTransferRequested.Broadcast(RepID);
 				}
 				else
 				{
-					UE_LOG(LogTemp, Error, TEXT("[InventoryGrid] 로비 전송 실패 → EntryIndex=-1 복구 불가 (Item 없음 또는 InvComp 없음)"));
+					UE_LOG(LogTemp, Error, TEXT("[InventoryGrid] 로비 전송 실패 → ReplicationID 미발견 (Item 없음 또는 InvComp 없음)"));
 				}
 			}
 			else
@@ -3003,8 +3001,16 @@ TArray<FInv_SavedItemData> UInv_InventoryGrid::CollectGridState(const TSet<UInv_
 		// ============================================
 		// 서버의 TotalStackCount가 아니라 UI 슬롯의 개별 스택 수량!
 		// Split 시: 서버(20개) → UI슬롯1(9개) + UI슬롯2(11개)
-		const int32 StackCount = GridSlots[GridIndex]->GetStackCount();
+		int32 StackCount = GridSlots[GridIndex]->GetStackCount();
 		const int32 ServerStackCount = Item->GetTotalStackCount();
+
+		// ⭐ [Fix11] 비스택(장비) 아이템은 UI StackCount가 0일 수 있음
+		// Stackable Fragment가 없는 아이템은 "존재 = 1개"이므로 최소 1로 보정
+		if (StackCount <= 0 && !Item->IsStackable())
+		{
+			StackCount = 1;
+			UE_LOG(LogTemp, Log, TEXT("[Fix11] Grid[%d] %s: 비스택 아이템 StackCount 0→1 보정"), GridIndex, *Item->GetItemManifest().GetItemType().ToString());
+		}
 
 #if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("    │       ItemType: %s"), *Item->GetItemManifest().GetItemType().ToString());

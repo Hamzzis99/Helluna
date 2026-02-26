@@ -382,6 +382,13 @@ UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_ItemComponent* ItemCo
 	FInv_InventoryEntry& NewEntry = Entries.AddDefaulted_GetRef(); // 새 항목 추가
 	NewEntry.Item = ItemComponent->GetItemManifest().Manifest(OwningActor); // 항목 매니페스트에서 항목 가져오기 (새로 생성된 아이템의 소유자 지정)
 
+	// ⭐ [Fix11] 비스택 아이템은 Manifest() 후 TotalStackCount가 0으로 남음
+	// "아이템이 존재한다 = 최소 1개"이므로 비스택 아이템은 TotalStackCount=1로 초기화
+	if (NewEntry.Item && !NewEntry.Item->IsStackable())
+	{
+		NewEntry.Item->SetTotalStackCount(1);
+	}
+
 #if INV_DEBUG_INVENTORY
 	// ★ [Phase8진단] 생성된 아이템의 SlotPosition 확인 ★
 	{
@@ -410,11 +417,13 @@ UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_InventoryItem* Item)
 {
 	check(OwnerComponent);
 
+#if INV_DEBUG_INVENTORY
 	// [진단] AddEntry(Item*) 호출 콜스택
 	UE_LOG(LogTemp, Error, TEXT("[AddEntry진단-Item] 호출됨! 현재 Entries=%d, ItemType=%s"),
 		Entries.Num(),
 		IsValid(Item) ? *Item->GetItemManifest().GetItemType().ToString() : TEXT("nullptr"));
 	FDebug::DumpStackTraceToLog(ELogVerbosity::Error);
+#endif
 
 	AActor* OwningActor = OwnerComponent->GetOwner();
 	check(OwningActor->HasAuthority());
@@ -424,6 +433,12 @@ UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_InventoryItem* Item)
 
 	FInv_InventoryEntry& NewEntry = Entries.AddDefaulted_GetRef();
 	NewEntry.Item = Item;
+
+	// ⭐ [Fix11] 비스택 아이템은 TotalStackCount=0일 수 있음 → 1로 보정
+	if (NewEntry.Item && !NewEntry.Item->IsStackable() && NewEntry.Item->GetTotalStackCount() <= 0)
+	{
+		NewEntry.Item->SetTotalStackCount(1);
+	}
 
 	IC->AddRepSubObj(NewEntry.Item); // 리플리케이션 등록 (크래프팅 아이템도 클라이언트로 전송!)
 	MarkItemDirty(NewEntry);

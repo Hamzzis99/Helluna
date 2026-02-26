@@ -200,7 +200,15 @@ public:
 	 * TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 연결
 	 */
 	bool TransferItemTo(int32 ItemIndex, UInv_InventoryComponent* TargetComp);
-	
+
+	/**
+	 * [Phase 4 Fix] ReplicationID → ValidItems 배열 인덱스 변환
+	 * FastArray Entry의 ReplicationID는 배열이 밀려도 안정적으로 유지됨
+	 * @param ReplicationID   FFastArraySerializerItem::ReplicationID
+	 * @return ValidItems 배열 인덱스 (INDEX_NONE이면 미발견)
+	 */
+	int32 FindValidItemIndexByReplicationID(int32 ReplicationID) const;
+
 	// 서버 브로드캐스트 함수들.
 	FInventoryItemChange OnItemAdded;
 	FInventoryItemChange OnItemRemoved;

@@ -2957,6 +2957,14 @@ TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave(
 		int32 GridIndex = Entry.GridIndex;
 		uint8 GridCategory = Entry.GridCategory;
 
+		// ⭐ [Fix11] 비스택(장비) 아이템은 TotalStackCount가 0일 수 있음
+		// Stackable Fragment가 없는 아이템은 "존재 = 1개"이므로 최소 1로 보정
+		if (StackCount <= 0 && !Entry.Item->IsStackable())
+		{
+			StackCount = 1;
+			UE_LOG(LogTemp, Log, TEXT("[Fix11] Entry[%d] %s: 비스택 아이템 StackCount 0→1 보정"), i, *ItemType.ToString());
+		}
+
 #if INV_DEBUG_ITEM_POINTER
 		// ── [포인터 진단] Entry별 아이템 포인터 & 부착물 상태 추적 ──
 		{
@@ -3001,9 +3009,10 @@ TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave(
 			GridPosition = FIntPoint(-1, -1);  // 미배치
 		}
 
-		// [Fix10-Save진단] 저장 시 GridPosition 출처 확인
-		UE_LOG(LogTemp, Error, TEXT("[Fix10-Save진단] Entry[%d] %s: Entry.GridIndex=%d, GridColumns=%d, SavedItem.GridPosition=(%d,%d), GridCat=%d"),
+		// [Fix10-Save진단] 저장 시 GridPosition + StackCount 출처 확인
+		UE_LOG(LogTemp, Error, TEXT("[Fix10-Save진단] Entry[%d] %s: StackCount=%d, Entry.GridIndex=%d, GridColumns=%d, SavedItem.GridPosition=(%d,%d), GridCat=%d"),
 			i, *ItemType.ToString(),
+			StackCount,
 			GridIndex, LocalGridColumns,
 			GridPosition.X, GridPosition.Y,
 			GridCategory);
@@ -3257,4 +3266,28 @@ bool UInv_InventoryComponent::TransferItemTo(int32 ItemIndex, UInv_InventoryComp
 	UE_LOG(LogTemp, Log, TEXT("[InvComp] TransferItemTo 완료: %s x%d | %s → %s"),
 		*ItemType.ToString(), StackCount, *GetName(), *TargetComp->GetName());
 	return true;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 📌 [Phase 4 Fix] FindValidItemIndexByReplicationID
+// ════════════════════════════════════════════════════════════════════════════════
+// FastArray의 ReplicationID로 ValidItems 배열 인덱스를 찾는다.
+// ReplicationID는 Entry가 추가될 때 부여되며, 다른 Entry의 제거로 배열이 밀려도 변하지 않는다.
+// TransferItemTo()가 사용하는 ValidItems 인덱스(무효/부착물 제외)와 동일한 기준으로 필터링.
+// ════════════════════════════════════════════════════════════════════════════════
+int32 UInv_InventoryComponent::FindValidItemIndexByReplicationID(int32 InReplicationID) const
+{
+	int32 ValidIdx = 0;
+	for (const FInv_InventoryEntry& Entry : InventoryList.Entries)
+	{
+		if (IsValid(Entry.Item) && !Entry.bIsAttachedToWeapon)
+		{
+			if (Entry.ReplicationID == InReplicationID)
+			{
+				return ValidIdx;
+			}
+			ValidIdx++;
+		}
+	}
+	return INDEX_NONE;
 }
