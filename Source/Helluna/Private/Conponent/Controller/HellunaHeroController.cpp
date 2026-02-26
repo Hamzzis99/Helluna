@@ -8,6 +8,7 @@
 #include "GameFramework/PlayerState.h"
 #include "UI/Vote/VoteWidget.h"
 #include "GameMode/Widget/HellunaGameResultWidget.h"
+#include "GameMode/HellunaDefenseGameMode.h"  // EHellunaGameEndReason, EndGame()
 #include "Blueprint/UserWidget.h"
 #include "TimerManager.h"
 
@@ -142,6 +143,38 @@ void AHellunaHeroController::Server_SubmitVote_Implementation(bool bAgree)
 	UE_LOG(LogHellunaVote, Log, TEXT("[HeroController] Server_SubmitVote → VoteManager->ReceiveVote(%s, %s)"),
 		*VoterPS->GetPlayerName(), bAgree ? TEXT("찬성") : TEXT("반대"));
 	VoteManager->ReceiveVote(VoterPS, bAgree);
+}
+
+// ============================================================================
+// [디버그] 치트 RPC — 클라이언트 → 서버 강제 게임 종료
+// ============================================================================
+
+void AHellunaHeroController::Server_CheatEndGame_Implementation(uint8 ReasonIndex)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	AHellunaDefenseGameMode* DefenseGM = Cast<AHellunaDefenseGameMode>(GetWorld()->GetAuthGameMode());
+	if (!IsValid(DefenseGM))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[HeroController] Server_CheatEndGame: DefenseGameMode가 아님 — 무시"));
+		return;
+	}
+
+	// ReasonIndex → EHellunaGameEndReason 변환
+	EHellunaGameEndReason Reason;
+	switch (ReasonIndex)
+	{
+	case 0:  Reason = EHellunaGameEndReason::Escaped;        break;
+	case 1:  Reason = EHellunaGameEndReason::AllDead;         break;
+	case 2:  Reason = EHellunaGameEndReason::ServerShutdown;  break;
+	default: Reason = EHellunaGameEndReason::Escaped;         break;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[HeroController] === 치트: EndGame(%d) 호출 ==="), ReasonIndex);
+	DefenseGM->EndGame(Reason);
 }
 
 // ============================================================================

@@ -83,9 +83,21 @@ private:
 	TObjectPtr<UVoteWidget> VoteWidgetInstance;
 
 	// =========================================================================================
-	// [Phase 7] 게임 결과 UI (김기현)
+	// [디버그] 서버 치트 RPC — 클라이언트에서 서버 GameMode 함수 호출 (김기현)
 	// =========================================================================================
 public:
+	/**
+	 * [디버그] 클라이언트 → 서버: 강제 게임 종료
+	 * BP에서 키보드 입력(F9 등)에 바인딩하여 사용
+	 * @param ReasonIndex  0=Escaped, 1=AllDead, 2=ServerShutdown
+	 */
+	UFUNCTION(Server, Reliable, BlueprintCallable, Category = "Debug(디버그)",
+		meta = (DisplayName = "Cheat End Game (치트 게임 종료)"))
+	void Server_CheatEndGame(uint8 ReasonIndex);
+
+	// =========================================================================================
+	// [Phase 7] 게임 결과 UI (김기현)
+	// =========================================================================================
 	/**
 	 * [서버 → 클라이언트] 게임 결과 UI 표시 RPC
 	 *
