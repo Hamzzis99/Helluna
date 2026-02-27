@@ -890,7 +890,7 @@ void AHellunaHeroCharacter::OnHeroDeath(AActor* DeadActor, AActor* KillerActor)
 			}
 
 			// 컨테이너 활성화
-			LootContainerComponent->Activate();
+			LootContainerComponent->ActivateContainer();
 			LootContainerComponent->SetContainerDisplayName(
 				FText::FromString(FString::Printf(TEXT("%s의 사체"), *GetName())));
 

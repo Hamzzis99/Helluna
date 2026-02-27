@@ -165,7 +165,7 @@ public:
 	/** 컨테이너 활성화 (사체: OnHeroDeath에서 호출) */
 	UFUNCTION(BlueprintCallable, Category = "Container",
 		meta = (DisplayName = "Activate Container (컨테이너 활성화)"))
-	void Activate();
+	void ActivateContainer();
 
 	/**
 	 * 외부 아이템으로 초기화 (사체: 죽은 플레이어 아이템 복사)

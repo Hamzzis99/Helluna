@@ -19,7 +19,7 @@ UInv_LootContainerComponent::UInv_LootContainerComponent()
 	// 리플리케이션 활성화
 	SetIsReplicatedByDefault(true);
 
-	// 기본 비활성 (사체용 — 사망 시 Activate() 호출)
+	// 기본 비활성 (사체용 — 사망 시 ActivateContainer() 호출)
 	// 상자용은 BP에서 bActivated=true 설정
 	bActivated = true;
 	CurrentUser = nullptr;
@@ -90,7 +90,7 @@ void UInv_LootContainerComponent::UnHighlight_Implementation()
 // 컨테이너 활성화
 // ════════════════════════════════════════════════════════════════
 
-void UInv_LootContainerComponent::Activate()
+void UInv_LootContainerComponent::ActivateContainer()
 {
 	bActivated = true;
 }
