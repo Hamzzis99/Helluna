@@ -86,6 +86,16 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "인벤토리|로비")
 	FOnLobbyTransferRequested OnSpatialTransferRequested;
 
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 9] 컨테이너 Grid 연결 — SpatialInventory ↔ ContainerGrid 크로스 링크
+	// ════════════════════════════════════════════════════════════════
+
+	/** 컨테이너 Grid 연결 — 3개 Grid 모두에 LinkedContainerGrid 설정 + 활성 Grid 역방향 연결 */
+	void LinkContainerGrid(UInv_InventoryGrid* ContainerGrid);
+
+	/** 컨테이너 Grid 연결 해제 */
+	void UnlinkContainerGrid();
+
 private:
 	// [Phase 4 Fix] Grid → SpatialInventory 통합 전달 콜백
 	UFUNCTION()
@@ -179,6 +189,9 @@ private:
 	void BroadcastSlotClickedDelegates(UInv_InventoryItem* ItemToEquip, UInv_InventoryItem* ItemToUnequip, int32 WeaponSlotIndex = -1) const; // 슬롯 클릭 델리게이트 방송
 	
 	TWeakObjectPtr<UInv_InventoryGrid> ActiveGrid; // 활성 그리드가 생기면 늘 활성해주는 포인터.
+
+	/** [Phase 9] 연결된 컨테이너 Grid 참조 (탭 전환 시 역방향 업데이트용) */
+	TWeakObjectPtr<UInv_InventoryGrid> LinkedContainerGridRef;
 
 	// ════════════════════════════════════════════════════════════════
 	// [Phase 4 Lobby] 수동 바인딩된 InvComp 캐시

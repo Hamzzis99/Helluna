@@ -1723,13 +1723,21 @@ void AInv_PlayerController::Client_ShowContainerUI_Implementation(UInv_LootConta
 {
 	if (!IsValid(Container) || !InventoryComponent.IsValid()) return;
 
-	// 일반 인벤토리 열려있으면 닫기
-	if (InventoryComponent->IsMenuOpen())
+	// 1. 인벤토리 열기 (닫혀있으면) — SpatialInventory(풀 인벤토리 UI)를 함께 표시
+	if (!InventoryComponent->IsMenuOpen())
 	{
 		InventoryComponent->ToggleInventoryMenu();
 	}
 
-	// 컨테이너 위젯 생성 (최초 1회)
+	// 2. SpatialInventory 참조 확보 (크로스 링크용)
+	UInv_SpatialInventory* SpatialInv = Cast<UInv_SpatialInventory>(InventoryComponent->GetInventoryMenu());
+	if (!IsValid(SpatialInv))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Inv_PlayerController] SpatialInventory 캐스트 실패"));
+		return;
+	}
+
+	// 3. 컨테이너 위젯 생성 (최초 1회)
 	if (!IsValid(ContainerWidget))
 	{
 		if (!ContainerWidgetClass)
@@ -1742,14 +1750,15 @@ void AInv_PlayerController::Client_ShowContainerUI_Implementation(UInv_LootConta
 
 	if (!IsValid(ContainerWidget)) return;
 
-	// U15: 이전 컨테이너 패널이 열려있으면 정리 후 재초기화
+	// 4. 이전 컨테이너 패널이 열려있으면 정리 후 재초기화
 	if (ContainerWidget->IsInViewport())
 	{
 		ContainerWidget->CleanupPanels();
-		ContainerWidget->RemoveFromParent(); // U16: AddToViewport 전 RemoveFromParent
+		ContainerWidget->RemoveFromParent();
 	}
 
-	ContainerWidget->InitializePanels(Container, InventoryComponent.Get());
+	// 5. 초기화 + 표시 (SpatialInventory 전달)
+	ContainerWidget->InitializePanels(Container, InventoryComponent.Get(), SpatialInv);
 	ContainerWidget->AddToViewport();
 
 	bIsViewingContainer = true;
@@ -1765,12 +1774,13 @@ void AInv_PlayerController::Client_ShowContainerUI_Implementation(UInv_LootConta
 	SetShowMouseCursor(true);
 	SetInputMode(FInputModeGameAndUI());
 
-	UE_LOG(LogTemp, Log, TEXT("[Inv_PlayerController] 컨테이너 UI 표시: %s"),
+	UE_LOG(LogTemp, Log, TEXT("[Inv_PlayerController] 컨테이너 UI 표시 (SpatialInventory 통합): %s"),
 		*Container->ContainerDisplayName.ToString());
 }
 
 void AInv_PlayerController::Client_HideContainerUI_Implementation()
 {
+	// 1. ContainerWidget 정리 (SpatialInventory 링크 해제 포함)
 	if (IsValid(ContainerWidget))
 	{
 		ContainerWidget->CleanupPanels();
@@ -1780,15 +1790,20 @@ void AInv_PlayerController::Client_HideContainerUI_Implementation()
 	bIsViewingContainer = false;
 	ActiveContainerComp.Reset();
 
-	// HUD 다시 표시
+	// 2. 인벤토리도 닫기 (열려있으면) — ToggleInventoryMenu가 HUD/커서/입력모드 처리
+	if (InventoryComponent.IsValid() && InventoryComponent->IsMenuOpen())
+	{
+		InventoryComponent->ToggleInventoryMenu();
+	}
+
+	// 3. 안전을 위해 상태 보장 (ToggleInventoryMenu에서 이미 처리되지만 방어 코드)
 	if (IsValid(HUDWidget))
 	{
 		HUDWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
 	}
 
-	// 마우스 커서 숨기기
 	SetShowMouseCursor(false);
 	SetInputMode(FInputModeGameOnly());
 
-	UE_LOG(LogTemp, Log, TEXT("[Inv_PlayerController] 컨테이너 UI 닫기"));
+	UE_LOG(LogTemp, Log, TEXT("[Inv_PlayerController] 컨테이너 UI 닫기 (인벤토리 함께 닫기)"));
 }

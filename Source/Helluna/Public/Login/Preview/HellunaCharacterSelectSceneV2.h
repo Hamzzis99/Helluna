@@ -201,4 +201,27 @@ protected:
 
 	/** Solo 모드에서 표시 중인 캐릭터 인덱스 */
 	int32 SoloCharacterIndex = -1;
+
+	// ============================================
+	// Solo 센터 프리뷰 메시 (Play 탭 전용)
+	// ============================================
+
+	/** Solo 모드에서 카메라 정중앙에 표시할 전용 메시 (InitializeScene에서 동적 생성) */
+	UPROPERTY()
+	TObjectPtr<USkeletalMeshComponent> SoloCenterMesh;
+
+	/** Solo 센터 메시의 위치 오프셋 (씬 루트 기준, 카메라 정면 중앙) */
+	UPROPERTY(EditDefaultsOnly, Category = "프리뷰V2|Solo",
+		meta = (DisplayName = "Solo 센터 위치 오프셋"))
+	FVector SoloCenterOffset = FVector(0.f, 0.f, 0.f);
+
+	/** Solo 센터 메시의 회전 (기본: 카메라 정면) */
+	UPROPERTY(EditDefaultsOnly, Category = "프리뷰V2|Solo",
+		meta = (DisplayName = "Solo 센터 회전"))
+	FRotator SoloCenterRotation = FRotator(0.f, -90.f, 0.f);
+
+	/** Solo 센터 메시의 스케일 */
+	UPROPERTY(EditDefaultsOnly, Category = "프리뷰V2|Solo",
+		meta = (DisplayName = "Solo 센터 스케일"))
+	FVector SoloCenterScale = FVector(1.f, 1.f, 1.f);
 };

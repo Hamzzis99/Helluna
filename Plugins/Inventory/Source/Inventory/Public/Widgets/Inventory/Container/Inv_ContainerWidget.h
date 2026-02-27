@@ -1,16 +1,20 @@
 // File: Plugins/Inventory/Source/Inventory/Public/Widgets/Inventory/Container/Inv_ContainerWidget.h
 // ════════════════════════════════════════════════════════════════════════════════
-// UInv_ContainerWidget — 듀얼 Grid 컨테이너 UI
+// UInv_ContainerWidget — 컨테이너 Grid UI (SpatialInventory 통합)
 // ════════════════════════════════════════════════════════════════════════════════
 //
 // 📌 역할:
-//    상자/사체 루팅 시 표시되는 듀얼 Grid UI
-//    왼쪽: 컨테이너 Grid, 오른쪽: 플레이어 Grid
+//    상자/사체 루팅 시 표시되는 컨테이너 전용 Grid UI
+//    ContainerGrid만 포함, 플레이어 인벤토리는 SpatialInventory(풀 UI)를 그대로 사용
 //
 // 📌 BP 바인딩:
 //    WBP_Inv_ContainerWidget에서 BindWidget으로 연결
-//    ContainerGrid, PlayerGrid, Text_ContainerName 필수
+//    ContainerGrid, Text_ContainerName 필수
 //    Button_TakeAll 선택 (BindWidgetOptional)
+//
+// 📌 변경 이력:
+//    Phase 9 초기: 듀얼 Grid (ContainerGrid + PlayerGrid)
+//    Phase 9 개선: PlayerGrid 제거 → SpatialInventory 크로스 링크 방식으로 전환
 //
 // 작성자: Gihyeon (Claude Code 보조)
 // ════════════════════════════════════════════════════════════════════════════════
@@ -24,6 +28,7 @@
 class UInv_InventoryGrid;
 class UInv_InventoryComponent;
 class UInv_LootContainerComponent;
+class UInv_SpatialInventory;
 class UTextBlock;
 class UButton;
 
@@ -34,15 +39,17 @@ class INVENTORY_API UInv_ContainerWidget : public UUserWidget
 
 public:
 	/**
-	 * 컨테이너와 플레이어 InvComp로 초기화
+	 * 컨테이너 + SpatialInventory 크로스 링크 초기화
 	 *
-	 * @param InContainerComp  컨테이너 컴포넌트
-	 * @param InPlayerComp     플레이어 인벤토리 컴포넌트
+	 * @param InContainerComp     컨테이너 컴포넌트
+	 * @param InPlayerComp        플레이어 인벤토리 컴포넌트 (RPC용)
+	 * @param InSpatialInventory  플레이어 SpatialInventory (크로스 링크용)
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Container|UI",
 		meta = (DisplayName = "Initialize Panels (패널 초기화)"))
 	void InitializePanels(UInv_LootContainerComponent* InContainerComp,
-		UInv_InventoryComponent* InPlayerComp);
+		UInv_InventoryComponent* InPlayerComp,
+		UInv_SpatialInventory* InSpatialInventory);
 
 	/** UI 정리 (닫기 시 호출) */
 	UFUNCTION(BlueprintCallable, Category = "Container|UI",
@@ -52,6 +59,9 @@ public:
 	/** 바인딩된 컨테이너 컴포넌트 반환 */
 	UInv_LootContainerComponent* GetContainerComponent() const { return CachedContainerComp.Get(); }
 
+	/** ContainerGrid Getter */
+	UInv_InventoryGrid* GetContainerGrid() const { return ContainerGrid; }
+
 protected:
 	virtual void NativeConstruct() override;
 
@@ -59,13 +69,9 @@ protected:
 	// BindWidget — BP에서 연결
 	// ═══════════════════════════════════════════
 
-	/** 컨테이너 Grid (왼쪽) */
+	/** 컨테이너 Grid */
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UInv_InventoryGrid> ContainerGrid;
-
-	/** 플레이어 Grid (오른쪽) */
-	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<UInv_InventoryGrid> PlayerGrid;
 
 	/** 컨테이너 이름 텍스트 */
 	UPROPERTY(meta = (BindWidget))
@@ -81,4 +87,5 @@ private:
 
 	TWeakObjectPtr<UInv_LootContainerComponent> CachedContainerComp;
 	TWeakObjectPtr<UInv_InventoryComponent> CachedPlayerComp;
+	TWeakObjectPtr<UInv_SpatialInventory> CachedSpatialInventory;
 };

@@ -1,6 +1,6 @@
 // File: Plugins/Inventory/Source/Inventory/Private/Widgets/Inventory/Container/Inv_ContainerWidget.cpp
 // ════════════════════════════════════════════════════════════════════════════════
-// UInv_ContainerWidget 구현
+// UInv_ContainerWidget 구현 (Phase 9 개선: SpatialInventory 통합)
 // ════════════════════════════════════════════════════════════════════════════════
 
 #include "Widgets/Inventory/Container/Inv_ContainerWidget.h"
@@ -8,6 +8,7 @@
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
 #include "InventoryManagement/Components/Inv_LootContainerComponent.h"
 #include "Widgets/Inventory/Spatial/Inv_InventoryGrid.h"
+#include "Widgets/Inventory/Spatial/Inv_SpatialInventory.h"
 #include "Components/TextBlock.h"
 #include "Components/Button.h"
 
@@ -24,7 +25,8 @@ void UInv_ContainerWidget::NativeConstruct()
 
 void UInv_ContainerWidget::InitializePanels(
 	UInv_LootContainerComponent* InContainerComp,
-	UInv_InventoryComponent* InPlayerComp)
+	UInv_InventoryComponent* InPlayerComp,
+	UInv_SpatialInventory* InSpatialInventory)
 {
 	if (!IsValid(InContainerComp) || !IsValid(InPlayerComp))
 	{
@@ -34,6 +36,7 @@ void UInv_ContainerWidget::InitializePanels(
 
 	CachedContainerComp = InContainerComp;
 	CachedPlayerComp = InPlayerComp;
+	CachedSpatialInventory = InSpatialInventory;
 
 	// 컨테이너 이름 표시
 	if (IsValid(Text_ContainerName))
@@ -42,7 +45,7 @@ void UInv_ContainerWidget::InitializePanels(
 	}
 
 	// ═══════════════════════════════════════════
-	// 왼쪽: 컨테이너 Grid 설정
+	// 컨테이너 Grid 설정
 	// ═══════════════════════════════════════════
 	if (IsValid(ContainerGrid))
 	{
@@ -62,41 +65,28 @@ void UInv_ContainerWidget::InitializePanels(
 	}
 
 	// ═══════════════════════════════════════════
-	// 오른쪽: 플레이어 Grid 설정
+	// SpatialInventory ↔ ContainerGrid 크로스 링크
+	// (기존 PlayerGrid 대신)
 	// ═══════════════════════════════════════════
-	if (IsValid(PlayerGrid))
+	if (IsValid(InSpatialInventory) && IsValid(ContainerGrid))
 	{
-		PlayerGrid->SetSkipAutoInit(true);
-		PlayerGrid->SetOwnerType(EGridOwnerType::Player);
-		PlayerGrid->SetInventoryComponent(InPlayerComp);
+		InSpatialInventory->LinkContainerGrid(ContainerGrid);
 	}
 
-	// ═══════════════════════════════════════════
-	// 크로스 Grid 연결 (양방향)
-	// ═══════════════════════════════════════════
-	if (IsValid(ContainerGrid) && IsValid(PlayerGrid))
-	{
-		ContainerGrid->SetLinkedContainerGrid(PlayerGrid);
-		PlayerGrid->SetLinkedContainerGrid(ContainerGrid);
-	}
-
-	UE_LOG(LogTemp, Log, TEXT("[ContainerWidget] InitializePanels 완료: %s"),
+	UE_LOG(LogTemp, Log, TEXT("[ContainerWidget] InitializePanels 완료: %s (SpatialInventory 통합)"),
 		*InContainerComp->ContainerDisplayName.ToString());
 }
 
 void UInv_ContainerWidget::CleanupPanels()
 {
-	// 델리게이트 해제
-	if (CachedContainerComp.IsValid())
+	// 컨테이너 델리게이트 해제
+	if (CachedContainerComp.IsValid() && IsValid(ContainerGrid))
 	{
-		if (IsValid(ContainerGrid))
-		{
-			CachedContainerComp->OnContainerItemAdded.RemoveDynamic(ContainerGrid, &UInv_InventoryGrid::AddItem);
-			CachedContainerComp->OnContainerItemRemoved.RemoveDynamic(ContainerGrid, &UInv_InventoryGrid::RemoveItem);
-		}
+		CachedContainerComp->OnContainerItemAdded.RemoveDynamic(ContainerGrid, &UInv_InventoryGrid::AddItem);
+		CachedContainerComp->OnContainerItemRemoved.RemoveDynamic(ContainerGrid, &UInv_InventoryGrid::RemoveItem);
 	}
 
-	// Grid 연결 해제
+	// ContainerGrid 정리
 	if (IsValid(ContainerGrid))
 	{
 		ContainerGrid->SetLinkedContainerGrid(nullptr);
@@ -104,15 +94,15 @@ void UInv_ContainerWidget::CleanupPanels()
 		ContainerGrid->OnHide();
 	}
 
-	if (IsValid(PlayerGrid))
+	// SpatialInventory 링크 해제 (기존 PlayerGrid 정리 대신)
+	if (CachedSpatialInventory.IsValid())
 	{
-		PlayerGrid->SetLinkedContainerGrid(nullptr);
-		// U29: PlayerGrid의 InvComp 해제 (SetInventoryComponent가 바인딩한 델리게이트 정리)
-		PlayerGrid->OnHide();
+		CachedSpatialInventory->UnlinkContainerGrid();
 	}
 
 	CachedContainerComp.Reset();
 	CachedPlayerComp.Reset();
+	CachedSpatialInventory.Reset();
 
 	UE_LOG(LogTemp, Log, TEXT("[ContainerWidget] CleanupPanels 완료"));
 }

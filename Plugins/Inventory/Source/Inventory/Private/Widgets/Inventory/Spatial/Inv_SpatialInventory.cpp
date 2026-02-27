@@ -212,6 +212,48 @@ void UInv_SpatialInventory::EnableLobbyTransferMode()
 	BindGrid(Grid_Craftables, TEXT("Grid_Craftables"));
 }
 
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 9] LinkContainerGrid — 컨테이너 Grid ↔ SpatialInventory 3개 Grid 크로스 링크
+// ════════════════════════════════════════════════════════════════════════════════
+void UInv_SpatialInventory::LinkContainerGrid(UInv_InventoryGrid* ContainerGrid)
+{
+	if (!IsValid(ContainerGrid)) return;
+	LinkedContainerGridRef = ContainerGrid;
+
+	// 3개 플레이어 Grid → 컨테이너 Grid 연결
+	if (IsValid(Grid_Equippables)) Grid_Equippables->SetLinkedContainerGrid(ContainerGrid);
+	if (IsValid(Grid_Consumables)) Grid_Consumables->SetLinkedContainerGrid(ContainerGrid);
+	if (IsValid(Grid_Craftables))  Grid_Craftables->SetLinkedContainerGrid(ContainerGrid);
+
+	// 컨테이너 Grid → 현재 활성 플레이어 Grid 역방향 연결
+	if (ActiveGrid.IsValid())
+	{
+		ContainerGrid->SetLinkedContainerGrid(ActiveGrid.Get());
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[SpatialInventory] LinkContainerGrid 완료: ContainerGrid=%s, ActiveGrid=%s"),
+		*ContainerGrid->GetName(),
+		ActiveGrid.IsValid() ? *ActiveGrid->GetName() : TEXT("nullptr"));
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 9] UnlinkContainerGrid — 모든 크로스 링크 해제
+// ════════════════════════════════════════════════════════════════════════════════
+void UInv_SpatialInventory::UnlinkContainerGrid()
+{
+	if (IsValid(Grid_Equippables)) Grid_Equippables->SetLinkedContainerGrid(nullptr);
+	if (IsValid(Grid_Consumables)) Grid_Consumables->SetLinkedContainerGrid(nullptr);
+	if (IsValid(Grid_Craftables))  Grid_Craftables->SetLinkedContainerGrid(nullptr);
+
+	if (LinkedContainerGridRef.IsValid())
+	{
+		LinkedContainerGridRef->SetLinkedContainerGrid(nullptr);
+	}
+	LinkedContainerGridRef.Reset();
+
+	UE_LOG(LogTemp, Log, TEXT("[SpatialInventory] UnlinkContainerGrid 완료"));
+}
+
 void UInv_SpatialInventory::OnGridTransferRequested(int32 EntryIndex)
 {
 	UE_LOG(LogTemp, Log, TEXT("[SpatialInventory] Grid 전송 요청 전달 → EntryIndex=%d"), EntryIndex);
@@ -677,7 +719,7 @@ void UInv_SpatialInventory::DisableButton(UButton* Button)
 }
 
 // 그리드가 활성 되면 등장하는 것들.
-void UInv_SpatialInventory::SetActiveGrid(UInv_InventoryGrid* Grid, UButton* Button) 
+void UInv_SpatialInventory::SetActiveGrid(UInv_InventoryGrid* Grid, UButton* Button)
 {
 	if (ActiveGrid.IsValid())
 	{
@@ -688,6 +730,12 @@ void UInv_SpatialInventory::SetActiveGrid(UInv_InventoryGrid* Grid, UButton* But
 	if (ActiveGrid.IsValid()) ActiveGrid->ShowCursor();
 	DisableButton(Button);
 	Switcher->SetActiveWidget(Grid);
+
+	// ★ [Phase 9] 컨테이너 연결 시 → 컨테이너 Grid의 역방향 링크 업데이트
+	if (LinkedContainerGridRef.IsValid() && ActiveGrid.IsValid())
+	{
+		LinkedContainerGridRef->SetLinkedContainerGrid(ActiveGrid.Get());
+	}
 }
 
 // ⭐ UI 기반 재료 개수 세기 (Split된 스택도 정확히 계산!)

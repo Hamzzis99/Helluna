@@ -210,6 +210,21 @@ void AHellunaCharacterSelectSceneV2::InitializeScene(
 	}
 
 	// ════════════════════════════════════════════
+	// Solo 센터 메시 생성 (Play 탭용 — 항상 카메라 정중앙)
+	// ════════════════════════════════════════════
+	if (!SoloCenterMesh)
+	{
+		SoloCenterMesh = NewObject<USkeletalMeshComponent>(this, TEXT("SoloCenterMesh"));
+		SoloCenterMesh->RegisterComponent();
+		SoloCenterMesh->AttachToComponent(SceneRoot, FAttachmentTransformRules::KeepRelativeTransform);
+		SoloCenterMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		SoloCenterMesh->SetRelativeLocation(SoloCenterOffset);
+		SoloCenterMesh->SetRelativeRotation(SoloCenterRotation);
+		SoloCenterMesh->SetRelativeScale3D(SoloCenterScale);
+		SoloCenterMesh->SetVisibility(false); // 초기엔 숨김
+	}
+
+	// ════════════════════════════════════════════
 	// SceneCapture 설정
 	// ════════════════════════════════════════════
 
@@ -333,41 +348,50 @@ void AHellunaCharacterSelectSceneV2::SetSoloCharacter(int32 CharacterIndex)
 {
 	if (CharacterIndex < 0 || CharacterIndex >= PreviewMeshes.Num())
 	{
-		UE_LOG(LogHelluna, Warning, TEXT("[프리뷰V2] SetSoloCharacter: 잘못된 인덱스 %d (캐릭터 수=%d)"), CharacterIndex, PreviewMeshes.Num());
+		UE_LOG(LogHelluna, Warning, TEXT("[프리뷰V2] SetSoloCharacter: 잘못된 인덱스 %d (캐릭터 수=%d)"),
+			CharacterIndex, PreviewMeshes.Num());
 		return;
 	}
 
 	bSoloMode = true;
 	SoloCharacterIndex = CharacterIndex;
 
-	// 선택된 캐릭터만 Visible, 나머지 Hidden
+	// ── 기존 PreviewMeshes + 스포트라이트 전체 숨김 ──
 	for (int32 i = 0; i < PreviewMeshes.Num(); ++i)
 	{
 		if (PreviewMeshes[i])
 		{
-			PreviewMeshes[i]->SetVisibility(i == CharacterIndex);
+			PreviewMeshes[i]->SetVisibility(false);
 		}
 		if (CharacterSpotLights.IsValidIndex(i) && CharacterSpotLights[i])
 		{
-			CharacterSpotLights[i]->SetVisibility(i == CharacterIndex);
+			CharacterSpotLights[i]->SetVisibility(false);
 		}
 	}
 
-	// Solo 캐릭터는 원래 위치로 복원 (전진 오프셋 없이 센터에)
-	if (PreviewMeshes.IsValidIndex(CharacterIndex) && PreviewMeshes[CharacterIndex])
+	// ── SoloCenterMesh에 선택 캐릭터 복사 ──
+	if (SoloCenterMesh && PreviewMeshes[CharacterIndex])
 	{
-		FVector TargetLoc = OriginalLocations.IsValidIndex(CharacterIndex) ? OriginalLocations[CharacterIndex] : FVector::ZeroVector;
-		PreviewMeshes[CharacterIndex]->SetRelativeLocation(TargetLoc);
-	}
+		USkeletalMeshComponent* SourceMesh = PreviewMeshes[CharacterIndex];
 
-	// Solo 캐릭터 스포트라이트는 최대 밝기
-	if (CharacterSpotLights.IsValidIndex(CharacterIndex) && CharacterSpotLights[CharacterIndex])
-	{
-		CharacterSpotLights[CharacterIndex]->SetIntensity(80000.f);
+		// 메시 복사
+		SoloCenterMesh->SetSkeletalMesh(SourceMesh->GetSkeletalMeshAsset());
+
+		// 애님 클래스 복사
+		SoloCenterMesh->SetAnimInstanceClass(SourceMesh->GetAnimClass());
+
+		// 머티리얼 복사 (오버레이 등)
+		for (int32 MatIdx = 0; MatIdx < SourceMesh->GetNumMaterials(); ++MatIdx)
+		{
+			SoloCenterMesh->SetMaterial(MatIdx, SourceMesh->GetMaterial(MatIdx));
+		}
+
+		// 가시성 ON
+		SoloCenterMesh->SetVisibility(true);
 	}
 
 #if HELLUNA_DEBUG_CHARACTER_PREVIEW_V2
-	UE_LOG(LogHelluna, Warning, TEXT("[프리뷰V2] SetSoloCharacter(%d) — Solo 모드 ON"), CharacterIndex);
+	UE_LOG(LogHelluna, Warning, TEXT("[프리뷰V2] SetSoloCharacter(%d) — SoloCenterMesh에 복사, 중앙 표시"), CharacterIndex);
 #endif
 }
 
@@ -378,7 +402,13 @@ void AHellunaCharacterSelectSceneV2::ClearSoloMode()
 	bSoloMode = false;
 	SoloCharacterIndex = -1;
 
-	// 전체 캐릭터 + 스포트라이트 Visible 복원
+	// ── SoloCenterMesh 숨김 ──
+	if (SoloCenterMesh)
+	{
+		SoloCenterMesh->SetVisibility(false);
+	}
+
+	// ── 기존 PreviewMeshes + 스포트라이트 전체 복원 ──
 	for (int32 i = 0; i < PreviewMeshes.Num(); ++i)
 	{
 		if (PreviewMeshes[i])
@@ -395,6 +425,6 @@ void AHellunaCharacterSelectSceneV2::ClearSoloMode()
 	SetCharacterSelected(CurrentSelectedIndex);
 
 #if HELLUNA_DEBUG_CHARACTER_PREVIEW_V2
-	UE_LOG(LogHelluna, Warning, TEXT("[프리뷰V2] ClearSoloMode — Solo 모드 OFF, 전체 표시 복원"));
+	UE_LOG(LogHelluna, Warning, TEXT("[프리뷰V2] ClearSoloMode — SoloCenterMesh 숨김, 전체 표시 복원"));
 #endif
 }
