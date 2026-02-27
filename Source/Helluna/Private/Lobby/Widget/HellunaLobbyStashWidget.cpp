@@ -1,32 +1,17 @@
 // ════════════════════════════════════════════════════════════════════════════════
-// HellunaLobbyStashWidget.cpp
+// File: Source/Helluna/Private/Lobby/Widget/HellunaLobbyStashWidget.cpp
 // ════════════════════════════════════════════════════════════════════════════════
 //
-// ============================================================================
-// 📌 Phase 4 Step 4-4: 로비 메인 듀얼 위젯
-// ============================================================================
+// 로비 메인 위젯 — 탑 네비게이션 바 + 3탭 (Play / Loadout / Character)
 //
-// 📌 레이아웃:
-//   ┌─── StashPanel (좌) ─────┐  ┌── LoadoutSpatialInventory (우) ──┐
-//   │ [장비][소모품][재료]     │  │  [장착슬롯: 무기/방어구/...]     │
-//   │ ┌─────────────────────┐ │  │  ┌──────────────────────────┐    │
-//   │ │     Grid (탭별)     │ │  │  │ [장비][소모품][재료]      │    │
-//   │ └─────────────────────┘ │  │  │   Grid (탭별) + 장착슬롯  │    │
-//   └─────────────────────────┘  │  └──────────────────────────┘    │
-//                                └──────────────────────────────────┘
-//                      [ 출격 버튼 ]
-//
-// 📌 역할:
-//   - 상위 컨테이너: StashPanel + LoadoutPanel 양쪽을 소유하고 초기화
-//   - 아이템 전송: TransferItemToLoadout/ToStash → Server RPC 호출
-//   - 출격: OnDeployClicked → Server_Deploy RPC 호출
-//
-// 📌 BP 위젯 생성 시 주의사항 (WBP_HellunaLobbyStashWidget):
-//   1. StashPanel → UHellunaLobbyPanel 위젯 (WBP_HellunaLobbyPanel 인스턴스)
-//   2. LoadoutSpatialInventory → UInv_SpatialInventory 위젯 (WBP_Inv_SpatialInventory 인스턴스)
-//      → 내부 Grid 3개의 bSkipAutoInit = true 설정 필수!
-//   3. Button_Deploy → Button 위젯
-//   4. 세 위젯 모두 BindWidget 이름이 정확히 일치해야 함!
+// 📌 레이아웃 (Phase 번외 리팩토링):
+//   ┌─────────────────────────────────────────────────────────┐
+//   │  [PLAY]  [LOADOUT]  [CHARACTER]           TopNavBar     │
+//   ├─────────────────────────────────────────────────────────┤
+//   │  Page 0: PlayPage      — 캐릭터 프리뷰 + 맵 카드 + START│
+//   │  Page 1: LoadoutPage   — Stash + Loadout + Deploy (기존) │
+//   │  Page 2: CharacterPage — 캐릭터 선택 (기존)              │
+//   └─────────────────────────────────────────────────────────┘
 //
 // 📌 아이템 전송 경로 (클라→서버):
 //   UI 버튼 클릭 → TransferItemToLoadout(EntryIndex)
@@ -42,23 +27,21 @@
 #include "Lobby/Widget/HellunaLobbyCharSelectWidget.h"
 #include "Widgets/Inventory/Spatial/Inv_SpatialInventory.h"
 #include "Lobby/Controller/HellunaLobbyController.h"
+#include "Login/Preview/HellunaCharacterSelectSceneV2.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
+#include "HellunaTypes.h"
 #include "Components/Button.h"
 #include "Components/WidgetSwitcher.h"
+#include "Components/Image.h"
+#include "Components/TextBlock.h"
+#include "Engine/TextureRenderTarget2D.h"
+#include "Materials/MaterialInstanceDynamic.h"
 
 // 로그 카테고리 (공유 헤더 — DEFINE은 HellunaLobbyGameMode.cpp)
 #include "Lobby/HellunaLobbyLog.h"
 
 // ════════════════════════════════════════════════════════════════════════════════
 // NativeOnInitialized — 위젯 생성 시 초기화
-// ════════════════════════════════════════════════════════════════════════════════
-//
-// 📌 호출 시점: CreateWidget 후 위젯 트리 구성 완료
-// 📌 역할: 출격 버튼 이벤트 바인딩 + BindWidget 상태 진단
-//
-// 📌 주의: 이 시점에서는 StashPanel/LoadoutPanel은 InvComp과 아직 미바인딩
-//    → InitializePanels()가 별도로 호출되어야 실제로 아이템이 표시됨
-//
 // ════════════════════════════════════════════════════════════════════════════════
 void UHellunaLobbyStashWidget::NativeOnInitialized()
 {
@@ -67,62 +50,62 @@ void UHellunaLobbyStashWidget::NativeOnInitialized()
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] NativeOnInitialized 시작"));
 
 	// ── BindWidget 상태 진단 ──
-	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   MainSwitcher=%s"), MainSwitcher ? TEXT("바인딩됨") : TEXT("⚠ nullptr (BindWidget 확인!)"));
-	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   CharacterSelectPanel=%s"), CharacterSelectPanel ? TEXT("바인딩됨") : TEXT("⚠ nullptr (BindWidget 확인!)"));
-	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   StashPanel=%s"), StashPanel ? TEXT("바인딩됨") : TEXT("⚠ nullptr (BindWidget 확인!)"));
-	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   LoadoutSpatialInventory=%s"), LoadoutSpatialInventory ? TEXT("바인딩됨") : TEXT("⚠ nullptr (BindWidget 확인!)"));
-	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   Button_Deploy=%s"), Button_Deploy ? TEXT("바인딩됨") : TEXT("⚠ nullptr (BindWidget 확인!)"));
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   MainSwitcher=%s"), MainSwitcher ? TEXT("OK") : TEXT("nullptr"));
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   Button_Tab_Play=%s"), Button_Tab_Play ? TEXT("OK") : TEXT("nullptr"));
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   Button_Tab_Loadout=%s"), Button_Tab_Loadout ? TEXT("OK") : TEXT("nullptr"));
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   Button_Tab_Character=%s"), Button_Tab_Character ? TEXT("OK") : TEXT("nullptr"));
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   Button_Start=%s"), Button_Start ? TEXT("OK") : TEXT("nullptr"));
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   Button_Deploy=%s"), Button_Deploy ? TEXT("OK") : TEXT("nullptr"));
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   CharacterSelectPanel=%s"), CharacterSelectPanel ? TEXT("OK") : TEXT("nullptr"));
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   StashPanel=%s"), StashPanel ? TEXT("OK") : TEXT("nullptr"));
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   LoadoutSpatialInventory=%s"), LoadoutSpatialInventory ? TEXT("OK") : TEXT("nullptr"));
 
-	// ── MainSwitcher → 캐릭터 선택 페이지(0)로 시작 ──
-	if (MainSwitcher)
+	// ── 탭 버튼 OnClicked 바인딩 ──
+	if (Button_Tab_Play)
 	{
-		MainSwitcher->SetActiveWidgetIndex(0);
-		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   MainSwitcher → Page 0 (캐릭터 선택)"));
+		Button_Tab_Play->OnClicked.AddDynamic(this, &ThisClass::OnTabPlayClicked);
+	}
+	if (Button_Tab_Loadout)
+	{
+		Button_Tab_Loadout->OnClicked.AddDynamic(this, &ThisClass::OnTabLoadoutClicked);
+	}
+	if (Button_Tab_Character)
+	{
+		Button_Tab_Character->OnClicked.AddDynamic(this, &ThisClass::OnTabCharacterClicked);
+	}
+
+	// ── Play 탭: START 버튼 바인딩 ──
+	if (Button_Start)
+	{
+		Button_Start->OnClicked.AddDynamic(this, &ThisClass::OnStartClicked);
+	}
+
+	// ── Loadout 탭: 출격 버튼 바인딩 (기존) ──
+	if (Button_Deploy)
+	{
+		Button_Deploy->OnClicked.AddDynamic(this, &ThisClass::OnDeployClicked);
 	}
 
 	// ── 캐릭터 선택 완료 델리게이트 바인딩 ──
 	if (CharacterSelectPanel)
 	{
 		CharacterSelectPanel->OnCharacterSelected.AddDynamic(this, &ThisClass::OnCharacterSelectedHandler);
-		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   CharacterSelectPanel → OnCharacterSelected 바인딩 완료"));
 	}
 
-	// ── 출격 버튼 OnClicked 이벤트 바인딩 ──
-	if (Button_Deploy)
+	// ── 경고 텍스트 초기 숨김 ──
+	if (Text_NoCharWarning)
 	{
-		Button_Deploy->OnClicked.AddDynamic(this, &ThisClass::OnDeployClicked);
-		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   Button_Deploy → OnDeployClicked 바인딩 완료"));
+		Text_NoCharWarning->SetVisibility(ESlateVisibility::Collapsed);
 	}
-	else
-	{
-		UE_LOG(LogHellunaLobby, Warning, TEXT("[StashWidget]   Button_Deploy가 nullptr! → WBP에서 'Button_Deploy' 이름의 Button 위젯을 추가하세요"));
-	}
+
+	// ── 시작 탭: Play ──
+	SwitchToTab(LobbyTab::Play);
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] NativeOnInitialized 완료"));
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
 // InitializePanels — 양쪽 패널을 각각의 InvComp와 바인딩
-// ════════════════════════════════════════════════════════════════════════════════
-//
-// 📌 호출 경로:
-//   LobbyController::ShowLobbyWidget()
-//     → LobbyStashWidgetInstance->InitializePanels(StashComp, LoadoutComp)
-//
-// 📌 내부 동작:
-//   1) CachedStashComp / CachedLoadoutComp 캐시 (나중에 전송 시 참조)
-//   2) StashPanel.SetPanelTitle("STASH (창고)")
-//   3) StashPanel.InitializeWithComponent(StashComp)
-//      → 내부에서 3개 Grid에 SetInventoryComponent(StashComp) 호출
-//   4) LoadoutSpatialInventory → SetInventoryComponent(LoadoutComp)
-//      → 인게임과 동일한 SpatialInventory UI에 LoadoutComp 바인딩
-//
-// 📌 이 함수 호출 후:
-//   - StashComp에 아이템이 있으면 좌측 Grid에 자동 표시됨
-//     (RestoreFromSaveData → FastArray 추가 → OnItemAdded 델리게이트 → Grid.AddItem)
-//   - LoadoutComp은 비어있으므로 우측은 빈 Grid
-//
-// TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 SharedHoverItem 초기화 연결
 // ════════════════════════════════════════════════════════════════════════════════
 void UHellunaLobbyStashWidget::InitializePanels(UInv_InventoryComponent* StashComp, UInv_InventoryComponent* LoadoutComp)
 {
@@ -150,9 +133,6 @@ void UHellunaLobbyStashWidget::InitializePanels(UInv_InventoryComponent* StashCo
 	}
 
 	// ── Loadout SpatialInventory 초기화 (우측: 출격장비 — 인게임과 동일 UI) ──
-	// [Phase 4 Lobby] LoadoutPanel(HellunaLobbyPanel) → LoadoutSpatialInventory(Inv_SpatialInventory)로 교체
-	// → 장착 슬롯 + 3탭 Grid를 인게임과 동일하게 사용
-	// TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 SharedHoverItem 연결
 	if (LoadoutSpatialInventory && LoadoutComp)
 	{
 		LoadoutSpatialInventory->SetInventoryComponent(LoadoutComp);
@@ -167,7 +147,6 @@ void UHellunaLobbyStashWidget::InitializePanels(UInv_InventoryComponent* StashCo
 	}
 
 	// ── [Phase 4 Fix] 우클릭 전송 모드 활성화 ──
-	// Stash 패널: 우클릭 → Loadout으로 전송
 	if (StashPanel)
 	{
 		StashPanel->EnableLobbyTransferMode();
@@ -176,7 +155,6 @@ void UHellunaLobbyStashWidget::InitializePanels(UInv_InventoryComponent* StashCo
 		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] StashPanel → 우클릭 전송 모드 ON (→ Loadout)"));
 	}
 
-	// Loadout SpatialInventory: 우클릭 → Stash로 전송
 	if (LoadoutSpatialInventory)
 	{
 		LoadoutSpatialInventory->EnableLobbyTransferMode();
@@ -186,8 +164,6 @@ void UHellunaLobbyStashWidget::InitializePanels(UInv_InventoryComponent* StashCo
 	}
 
 	// ── [Fix19] 전송 대상 Grid 교차 연결 (용량 사전 체크용) ──
-	// Stash의 각 Grid → 같은 카테고리의 Loadout Grid (전송 전 공간 확인)
-	// Loadout의 각 Grid → 같은 카테고리의 Stash Grid (역방향도 동일)
 	if (StashPanel && LoadoutSpatialInventory)
 	{
 		// Stash → Loadout 방향
@@ -225,8 +201,176 @@ void UHellunaLobbyStashWidget::InitializePanels(UInv_InventoryComponent* StashCo
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
+// 탭 네비게이션
+// ════════════════════════════════════════════════════════════════════════════════
+
+void UHellunaLobbyStashWidget::SwitchToTab(int32 TabIndex)
+{
+	if (!MainSwitcher)
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[StashWidget] SwitchToTab: MainSwitcher nullptr!"));
+		return;
+	}
+
+	MainSwitcher->SetActiveWidgetIndex(TabIndex);
+	UpdateTabVisuals(TabIndex);
+
+	// ── 프리뷰 씬 Solo 모드 연동 ──
+	if (CachedPreviewScene.IsValid())
+	{
+		if (TabIndex == LobbyTab::Play)
+		{
+			// Play 탭: 선택된 캐릭터 Solo (미선택이면 기본 Index 0)
+			int32 HeroIndex = 0;
+			AHellunaLobbyController* LobbyPC = GetLobbyController();
+			if (LobbyPC && LobbyPC->GetSelectedHeroType() != EHellunaHeroType::None)
+			{
+				HeroIndex = HeroTypeToIndex(LobbyPC->GetSelectedHeroType());
+			}
+			CachedPreviewScene->SetSoloCharacter(HeroIndex);
+		}
+		else if (TabIndex == LobbyTab::Character)
+		{
+			// CHARACTER 탭: Solo 모드 해제, 전체 표시
+			CachedPreviewScene->ClearSoloMode();
+		}
+		// Loadout 탭: 프리뷰 상태 유지 (변경 없음)
+	}
+
+	// ── Play 탭일 때 캐릭터 미선택 경고 표시 ──
+	if (Text_NoCharWarning)
+	{
+		const bool bShowWarning = (TabIndex == LobbyTab::Play) && !IsCharacterSelected();
+		Text_NoCharWarning->SetVisibility(bShowWarning ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	}
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] SwitchToTab(%d) — %s"),
+		TabIndex,
+		TabIndex == LobbyTab::Play ? TEXT("Play") :
+		TabIndex == LobbyTab::Loadout ? TEXT("Loadout") :
+		TabIndex == LobbyTab::Character ? TEXT("Character") : TEXT("Unknown"));
+}
+
+void UHellunaLobbyStashWidget::OnTabPlayClicked()
+{
+	SwitchToTab(LobbyTab::Play);
+}
+
+void UHellunaLobbyStashWidget::OnTabLoadoutClicked()
+{
+	SwitchToTab(LobbyTab::Loadout);
+}
+
+void UHellunaLobbyStashWidget::OnTabCharacterClicked()
+{
+	SwitchToTab(LobbyTab::Character);
+}
+
+void UHellunaLobbyStashWidget::UpdateTabVisuals(int32 ActiveTabIndex)
+{
+	TArray<UButton*> TabButtons = { Button_Tab_Play, Button_Tab_Loadout, Button_Tab_Character };
+
+	for (int32 i = 0; i < TabButtons.Num(); ++i)
+	{
+		if (!TabButtons[i]) continue;
+
+		const bool bActive = (i == ActiveTabIndex);
+		TabButtons[i]->SetBackgroundColor(bActive ? ActiveTabColor : InactiveTabColor);
+	}
+
+	CurrentTabIndex = ActiveTabIndex;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Play 탭 — START 버튼
+// ════════════════════════════════════════════════════════════════════════════════
+
+void UHellunaLobbyStashWidget::OnStartClicked()
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] START 버튼 클릭!"));
+
+	// 캐릭터 미선택 체크 (클라이언트 UX 방어 — 서버에서도 별도 체크)
+	if (!IsCharacterSelected())
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[StashWidget] OnStartClicked: 캐릭터 미선택 → 경고 표시"));
+		if (Text_NoCharWarning)
+		{
+			Text_NoCharWarning->SetVisibility(ESlateVisibility::Visible);
+		}
+		return;
+	}
+
+	AHellunaLobbyController* LobbyPC = GetLobbyController();
+	if (!LobbyPC)
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[StashWidget] OnStartClicked: LobbyController 없음!"));
+		return;
+	}
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] → Server_Deploy RPC 호출 (START)"));
+	LobbyPC->Server_Deploy();
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 중앙 프리뷰 설정 (ShowLobbyWidget에서 호출)
+// ════════════════════════════════════════════════════════════════════════════════
+
+void UHellunaLobbyStashWidget::SetupCenterPreview(UTextureRenderTarget2D* InRenderTarget, AHellunaCharacterSelectSceneV2* InPreviewScene)
+{
+	// 프리뷰 씬 캐시
+	CachedPreviewScene = InPreviewScene;
+
+	// CenterPreviewImage에 RenderTarget 머티리얼 적용
+	if (CenterPreviewImage && InRenderTarget && PreviewCaptureMaterial)
+	{
+		UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(PreviewCaptureMaterial, this);
+		if (MID)
+		{
+			MID->SetTextureParameterValue(FName(TEXT("RenderTarget")), InRenderTarget);
+			CenterPreviewImage->SetBrushFromMaterial(MID);
+			UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] SetupCenterPreview: MID 생성 완료, CenterPreviewImage에 적용"));
+		}
+	}
+	else
+	{
+		if (!CenterPreviewImage)
+		{
+			UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] SetupCenterPreview: CenterPreviewImage nullptr (BindWidgetOptional — BP 미설정)"));
+		}
+		if (!PreviewCaptureMaterial)
+		{
+			UE_LOG(LogHellunaLobby, Warning, TEXT("[StashWidget] SetupCenterPreview: PreviewCaptureMaterial nullptr → Class Defaults에서 설정 필요"));
+		}
+	}
+
+	// 초기 Solo 모드 적용 (Play 탭이 기본이므로)
+	if (CachedPreviewScene.IsValid() && CurrentTabIndex == LobbyTab::Play)
+	{
+		int32 HeroIndex = 0;
+		AHellunaLobbyController* LobbyPC = GetLobbyController();
+		if (LobbyPC && LobbyPC->GetSelectedHeroType() != EHellunaHeroType::None)
+		{
+			HeroIndex = HeroTypeToIndex(LobbyPC->GetSelectedHeroType());
+		}
+		CachedPreviewScene->SetSoloCharacter(HeroIndex);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] SetupCenterPreview: 초기 Solo 모드 → Index %d"), HeroIndex);
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// IsCharacterSelected — 캐릭터 선택 여부
+// ════════════════════════════════════════════════════════════════════════════════
+
+bool UHellunaLobbyStashWidget::IsCharacterSelected() const
+{
+	AHellunaLobbyController* LobbyPC = GetLobbyController();
+	return LobbyPC && LobbyPC->GetSelectedHeroType() != EHellunaHeroType::None;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
 // [Phase 4 Fix] 우클릭 전송 핸들러
 // ════════════════════════════════════════════════════════════════════════════════
+
 void UHellunaLobbyStashWidget::OnStashItemTransferRequested(int32 EntryIndex)
 {
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] Stash 우클릭 전송 → Loadout | EntryIndex=%d"), EntryIndex);
@@ -242,16 +386,8 @@ void UHellunaLobbyStashWidget::OnLoadoutItemTransferRequested(int32 EntryIndex)
 // ════════════════════════════════════════════════════════════════════════════════
 // TransferItemToLoadout — Stash → Loadout 아이템 전송
 // ════════════════════════════════════════════════════════════════════════════════
-//
-// 📌 호출 시점: UI에서 Stash 아이템의 "Loadout으로 보내기" 버튼 클릭
-// 📌 처리: Server RPC 호출 → 서버에서 실제 전송 처리 → 리플리케이션으로 UI 자동 업데이트
-//
-// TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 연결
-// ════════════════════════════════════════════════════════════════════════════════
 void UHellunaLobbyStashWidget::TransferItemToLoadout(int32 ItemEntryIndex)
 {
-	// 빈 슬롯 클릭 방어: EntryIndex < 0이면 RPC 호출하지 않음
-	// (Validate 실패 시 UE가 연결을 강제 종료하므로 클라이언트 측에서 사전 차단)
 	if (ItemEntryIndex < 0)
 	{
 		UE_LOG(LogHellunaLobby, Verbose, TEXT("[StashWidget] TransferToLoadout: 빈 슬롯 (EntryIndex=%d) → 무시"), ItemEntryIndex);
@@ -262,28 +398,18 @@ void UHellunaLobbyStashWidget::TransferItemToLoadout(int32 ItemEntryIndex)
 	if (!LobbyPC)
 	{
 		UE_LOG(LogHellunaLobby, Warning, TEXT("[StashWidget] TransferToLoadout: LobbyController 없음!"));
-		UE_LOG(LogHellunaLobby, Warning, TEXT("[StashWidget]   → GetOwningPlayer()가 AHellunaLobbyController인지 확인"));
 		return;
 	}
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] TransferToLoadout → EntryIndex=%d | Stash→Loadout"), ItemEntryIndex);
 	LobbyPC->Server_TransferItem(ItemEntryIndex, ELobbyTransferDirection::StashToLoadout);
-	// TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 연결
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
 // TransferItemToStash — Loadout → Stash 아이템 전송
 // ════════════════════════════════════════════════════════════════════════════════
-//
-// 📌 호출 시점: UI에서 Loadout 아이템의 "Stash로 보내기" 버튼 클릭
-// 📌 처리: Server RPC 호출 → 서버에서 실제 전송 처리 → 리플리케이션으로 UI 자동 업데이트
-//
-// TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 연결
-// ════════════════════════════════════════════════════════════════════════════════
 void UHellunaLobbyStashWidget::TransferItemToStash(int32 ItemEntryIndex)
 {
-	// 빈 슬롯 클릭 방어: EntryIndex < 0이면 RPC 호출하지 않음
-	// (Validate 실패 시 UE가 연결을 강제 종료하므로 클라이언트 측에서 사전 차단)
 	if (ItemEntryIndex < 0)
 	{
 		UE_LOG(LogHellunaLobby, Verbose, TEXT("[StashWidget] TransferToStash: 빈 슬롯 (EntryIndex=%d) → 무시"), ItemEntryIndex);
@@ -294,29 +420,19 @@ void UHellunaLobbyStashWidget::TransferItemToStash(int32 ItemEntryIndex)
 	if (!LobbyPC)
 	{
 		UE_LOG(LogHellunaLobby, Warning, TEXT("[StashWidget] TransferToStash: LobbyController 없음!"));
-		UE_LOG(LogHellunaLobby, Warning, TEXT("[StashWidget]   → GetOwningPlayer()가 AHellunaLobbyController인지 확인"));
 		return;
 	}
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] TransferToStash → EntryIndex=%d | Loadout→Stash"), ItemEntryIndex);
 	LobbyPC->Server_TransferItem(ItemEntryIndex, ELobbyTransferDirection::LoadoutToStash);
-	// TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 연결
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
-// OnDeployClicked — 출격 버튼 클릭 콜백
-// ════════════════════════════════════════════════════════════════════════════════
-//
-// 📌 호출 경로: Button_Deploy.OnClicked → OnDeployClicked
-// 📌 처리: LobbyPC->Server_Deploy() Server RPC 호출
-//    → 서버에서 SQLite 저장 + ClientTravel 지시
-//
+// OnDeployClicked — 출격 버튼 클릭 콜백 (Loadout 탭)
 // ════════════════════════════════════════════════════════════════════════════════
 void UHellunaLobbyStashWidget::OnDeployClicked()
 {
-	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] ══════════════════════════════════════"));
-	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] 출격 버튼 클릭!"));
-	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] ══════════════════════════════════════"));
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] 출격 버튼 클릭! (Loadout 탭)"));
 
 	AHellunaLobbyController* LobbyPC = GetLobbyController();
 	if (!LobbyPC)
@@ -325,18 +441,12 @@ void UHellunaLobbyStashWidget::OnDeployClicked()
 		return;
 	}
 
-	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] → Server_Deploy RPC 호출"));
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] → Server_Deploy RPC 호출 (Deploy)"));
 	LobbyPC->Server_Deploy();
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
 // GetLobbyController — 현재 클라이언트의 LobbyController 가져오기
-// ════════════════════════════════════════════════════════════════════════════════
-//
-// 📌 GetOwningPlayer(): 이 위젯을 소유한 PlayerController 반환
-// 📌 Cast<AHellunaLobbyController>: 로비 전용 Controller로 캐스팅
-//    실패하면 nullptr → 호출자가 처리
-//
 // ════════════════════════════════════════════════════════════════════════════════
 AHellunaLobbyController* UHellunaLobbyStashWidget::GetLobbyController() const
 {
@@ -353,26 +463,39 @@ AHellunaLobbyController* UHellunaLobbyStashWidget::GetLobbyController() const
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
-// SwitchToInventoryPage — 인벤토리 페이지로 전환
+// SwitchToInventoryPage — 하위호환 (내부적으로 SwitchToTab(Loadout) 호출)
 // ════════════════════════════════════════════════════════════════════════════════
 void UHellunaLobbyStashWidget::SwitchToInventoryPage()
 {
-	if (MainSwitcher)
-	{
-		MainSwitcher->SetActiveWidgetIndex(1);
-		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] MainSwitcher → Page 1 (인벤토리)"));
-	}
-	else
-	{
-		UE_LOG(LogHellunaLobby, Warning, TEXT("[StashWidget] SwitchToInventoryPage: MainSwitcher nullptr!"));
-	}
+	SwitchToTab(LobbyTab::Loadout);
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
-// OnCharacterSelectedHandler — 캐릭터 선택 완료 → 인벤토리 페이지로 전환
+// OnCharacterSelectedHandler — 캐릭터 선택 완료
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 📌 기존: SwitchToInventoryPage() 자동 호출 → 삭제
+// 📌 변경: 경고 숨김 + Play 탭이면 Solo 프리뷰 업데이트 (탭 이동 안 함)
+//
 // ════════════════════════════════════════════════════════════════════════════════
 void UHellunaLobbyStashWidget::OnCharacterSelectedHandler(EHellunaHeroType SelectedHero)
 {
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] OnCharacterSelectedHandler | Hero=%d"), static_cast<int32>(SelectedHero));
-	SwitchToInventoryPage();
+
+	// 경고 텍스트 숨김
+	if (Text_NoCharWarning)
+	{
+		Text_NoCharWarning->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
+	// Play 탭에 있으면 Solo 프리뷰를 선택된 캐릭터로 업데이트
+	if (CurrentTabIndex == LobbyTab::Play && CachedPreviewScene.IsValid())
+	{
+		const int32 HeroIndex = HeroTypeToIndex(SelectedHero);
+		if (HeroIndex >= 0)
+		{
+			CachedPreviewScene->SetSoloCharacter(HeroIndex);
+			UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] Play 탭 Solo 프리뷰 업데이트 → Index %d"), HeroIndex);
+		}
+	}
 }

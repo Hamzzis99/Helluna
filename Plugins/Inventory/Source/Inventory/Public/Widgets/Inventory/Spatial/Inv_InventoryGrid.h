@@ -23,9 +23,20 @@ struct FInv_ItemManifest;
 class UCanvasPanel;
 class UInv_GridSlot;
 class UInv_InventoryComponent;
+class UInv_LootContainerComponent;
 class UInv_AttachmentPanel;
 struct FGameplayTag;
 enum class EInv_GridSlotState : uint8;
+
+// ════════════════════════════════════════════════════════════════
+// [Phase 9] Grid 소유자 타입 — 플레이어 인벤토리 vs 컨테이너
+// ════════════════════════════════════════════════════════════════
+UENUM()
+enum class EGridOwnerType : uint8
+{
+	Player,      // 플레이어 인벤토리 Grid
+	Container,   // 컨테이너 (상자/사체) Grid
+};
 
 // ════════════════════════════════════════════════════════════════════════
 // TODO [Phase C - 데이터/뷰 분리] 상용화 리팩토링
@@ -120,6 +131,25 @@ public:
 	/** 로비 전송 요청 델리게이트 — 우클릭 시 EntryIndex를 전달 */
 	UPROPERTY(BlueprintAssignable, Category = "인벤토리|로비")
 	FOnLobbyTransferRequested OnLobbyTransferRequested;
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 9] 컨테이너 Grid 크로스 드래그 & 드롭
+	// ════════════════════════════════════════════════════════════════
+
+	/** Grid 소유자 타입 설정 (Player/Container) */
+	void SetOwnerType(EGridOwnerType InType) { OwnerType = InType; }
+	EGridOwnerType GetOwnerType() const { return OwnerType; }
+
+	/** 크로스 Grid 드래그용: 반대편 Grid 참조 */
+	void SetLinkedContainerGrid(UInv_InventoryGrid* OtherGrid);
+
+	/** 크로스 Grid 드래그: 연결된 Grid에 HoverItem이 있는지 */
+	bool HasLinkedHoverItem() const;
+	UInv_HoverItem* GetLinkedHoverItem() const;
+
+	/** 컨테이너 컴포넌트 참조 설정 (컨테이너 Grid용) */
+	void SetContainerComponent(UInv_LootContainerComponent* InContainerComp) { ContainerComp = InContainerComp; }
+	UInv_LootContainerComponent* GetContainerComponent() const { return ContainerComp.Get(); }
 
 	void ShowCursor();
 	void HideCursor();
@@ -234,6 +264,22 @@ private:
 
 	// [Fix20] 상대 Grid의 HoverItem을 이쪽으로 전송 (패널 간 드래그 앤 드롭)
 	bool TryTransferFromTargetGrid();
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 9] 컨테이너 Grid 관련 private 멤버
+	// ════════════════════════════════════════════════════════════════
+
+	// Grid 소유자 타입 (기본: Player)
+	EGridOwnerType OwnerType = EGridOwnerType::Player;
+
+	// 크로스 Grid 드래그용: 반대편 Grid 참조 (LobbyTargetGrid와 별도)
+	TWeakObjectPtr<UInv_InventoryGrid> LinkedContainerGrid;
+
+	// 컨테이너 컴포넌트 참조 (Container Grid에서만 유효)
+	TWeakObjectPtr<UInv_LootContainerComponent> ContainerComp;
+
+	// 크로스 Grid에서 아이템 전송 시도 (OnGridSlotClicked에서 호출)
+	bool TryTransferFromLinkedContainerGrid(int32 GridIndex);
 
 	// [Phase 4 Fix] 기존 아이템 동기화 — SetInventoryComponent 후 이미 InvComp에 있는 아이템을 Grid에 표시
 	void SyncExistingItems();
