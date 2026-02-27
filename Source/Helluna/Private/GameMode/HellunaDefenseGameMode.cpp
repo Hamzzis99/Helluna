@@ -30,6 +30,7 @@
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
 #include "Player/Inv_PlayerController.h"
 #include "HAL/IConsoleManager.h"
+#include "Chat/HellunaChatTypes.h"
 
 AHellunaDefenseGameMode::AHellunaDefenseGameMode()
 {
@@ -189,6 +190,9 @@ void AHellunaDefenseGameMode::EnterDay()
         GS->SetAliveMonsterCount(0);
         GS->MulticastPrintDay();
 
+        // [Phase 10] 채팅 시스템 메시지
+        GS->BroadcastChatMessage(TEXT(""), TEXT("낮이 시작됩니다"), EChatMessageType::System);
+
         // 새벽 완료 신호 → OnDawnPassed (BP: UDS 비례 구동 시작)
         // RoundDuration을 같이 보내서 BP에서 UDS 속도 계산에 사용
         GS->NetMulticast_OnDawnPassed(TestDayDuration);
@@ -213,6 +217,9 @@ void AHellunaDefenseGameMode::EnterNight()
     {
         GS->SetPhase(EDefensePhase::Night);
         GS->SetAliveMonsterCount(0);
+
+        // [Phase 10] 채팅 시스템 메시지
+        GS->BroadcastChatMessage(TEXT(""), TEXT("밤이 시작됩니다"), EChatMessageType::System);
     }
 
     int32 Current = 0, Need = 0;
@@ -350,6 +357,33 @@ void AHellunaDefenseGameMode::RestartGame()
 
     bGameInitialized = false; // 리셋
     GetWorld()->ServerTravel(TEXT("/Game/Minwoo/MinwooTestMap?listen"));
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 10] PostLogin — 접속 채팅 시스템 메시지
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaDefenseGameMode::PostLogin(APlayerController* NewPlayer)
+{
+    Super::PostLogin(NewPlayer);
+
+    // 게임이 초기화된 이후에만 접속 메시지 전송
+    if (bGameInitialized && IsValid(NewPlayer))
+    {
+        FString PlayerName;
+        if (AHellunaPlayerState* HellunaPS = NewPlayer->GetPlayerState<AHellunaPlayerState>())
+        {
+            PlayerName = HellunaPS->GetPlayerUniqueId();
+        }
+        if (PlayerName.IsEmpty())
+        {
+            PlayerName = GetNameSafe(NewPlayer);
+        }
+
+        if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
+        {
+            GS->BroadcastChatMessage(TEXT(""), FString::Printf(TEXT("%s 님이 접속했습니다"), *PlayerName), EChatMessageType::System);
+        }
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -577,6 +611,29 @@ void AHellunaDefenseGameMode::ProcessPlayerGameResult(APlayerController* PC, boo
 // ════════════════════════════════════════════════════════════════════════════════
 void AHellunaDefenseGameMode::Logout(AController* Exiting)
 {
+    // [Phase 10] 퇴장 채팅 시스템 메시지 (Super 호출 전에 전송)
+    if (bGameInitialized)
+    {
+        APlayerController* ExitPC = Cast<APlayerController>(Exiting);
+        if (IsValid(ExitPC))
+        {
+            FString PlayerName;
+            if (AHellunaPlayerState* HellunaPS = ExitPC->GetPlayerState<AHellunaPlayerState>())
+            {
+                PlayerName = HellunaPS->GetPlayerUniqueId();
+            }
+            if (PlayerName.IsEmpty())
+            {
+                PlayerName = GetNameSafe(ExitPC);
+            }
+
+            if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
+            {
+                GS->BroadcastChatMessage(TEXT(""), FString::Printf(TEXT("%s 님이 퇴장했습니다"), *PlayerName), EChatMessageType::System);
+            }
+        }
+    }
+
     // 게임 진행 중(InitializeGame 후, EndGame 전)이면 즉시 결과 처리
     if (bGameInitialized && !bGameEnded)
     {

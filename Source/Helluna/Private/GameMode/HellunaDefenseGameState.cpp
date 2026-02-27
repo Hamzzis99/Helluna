@@ -14,6 +14,7 @@
 #include "EngineUtils.h"  // TActorIterator
 #include "Save/MDF_SaveActor.h"                    // 저장용 액터 클래스 (SaveGame)
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h" // 이사 확인증 확인용
+#include "Chat/HellunaChatTypes.h"
 
 // =========================================================================================
 // 생성자 (김기현)
@@ -492,8 +493,39 @@ void AHellunaDefenseGameState::WriteDataToDisk()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 🎭 캐릭터 선택 시스템은 Base(AHellunaBaseGameState)로 이동됨
+// [Phase 10] 채팅 시스템
 // ═══════════════════════════════════════════════════════════════════════════════
+
+void AHellunaDefenseGameState::BroadcastChatMessage(const FString& SenderName, const FString& Message, EChatMessageType Type)
+{
+	if (!HasAuthority()) return;
+
+	FChatMessage ChatMsg;
+	ChatMsg.SenderName = SenderName;
+	ChatMsg.Message = Message;
+	ChatMsg.MessageType = Type;
+	ChatMsg.ServerTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
+
+	// 서버 히스토리에 보관 (최대 100개)
+	if (ChatHistory.Num() >= MaxChatHistory)
+	{
+		ChatHistory.RemoveAt(0);
+	}
+	ChatHistory.Add(ChatMsg);
+
+	// 모든 클라이언트에 전달
+	NetMulticast_ReceiveChatMessage(ChatMsg);
+}
+
+void AHellunaDefenseGameState::NetMulticast_ReceiveChatMessage_Implementation(const FChatMessage& ChatMessage)
+{
+	// 로컬 델리게이트 브로드캐스트 → ChatWidget에서 수신
+	OnChatMessageReceived.Broadcast(ChatMessage);
+
+	UE_LOG(LogHellunaChat, Verbose, TEXT("[Chat] %s: %s"),
+		ChatMessage.MessageType == EChatMessageType::System ? TEXT("[시스템]") : *ChatMessage.SenderName,
+		*ChatMessage.Message);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ☀️ UDS/UDW 헬퍼 함수 - 다이나믹 스카이 날씨변경 부분

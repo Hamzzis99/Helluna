@@ -218,6 +218,7 @@ public:
 		meta = (DisplayName = "게임 종료 (EndGame)"))
 	void EndGame(EHellunaGameEndReason Reason);
 
+	virtual void PostLogin(APlayerController* NewPlayer) override;
 	virtual void Logout(AController* Exiting) override;
 
 protected:

@@ -9,6 +9,8 @@
 #include "Interface/MDF_GameStateInterface.h"
 #include "Components/MDF_DeformableComponent.h"
 
+#include "Chat/HellunaChatTypes.h"
+
 #include "HellunaDefenseGameState.generated.h"
 
 // =========================================================================================
@@ -52,6 +54,26 @@ public:
     AResourceUsingObject_SpaceShip* GetSpaceShip() const { return SpaceShip; }
 
     void RegisterSpaceShip(AResourceUsingObject_SpaceShip* InShip);
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // [Phase 10] 채팅 시스템
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /** 채팅 메시지 수신 델리게이트 — 위젯에서 바인딩 */
+    UPROPERTY(BlueprintAssignable, Category = "Chat (채팅)")
+    FOnChatMessageReceived OnChatMessageReceived;
+
+    /**
+     * 채팅 메시지 브로드캐스트 (서버 전용 헬퍼)
+     * @param SenderName  발신자 이름 (시스템 메시지: 빈 문자열)
+     * @param Message     메시지 본문
+     * @param Type        메시지 타입 (Player / System)
+     */
+    void BroadcastChatMessage(const FString& SenderName, const FString& Message, EChatMessageType Type);
+
+    /** [Multicast RPC] 채팅 메시지를 모든 클라이언트에 전달 */
+    UFUNCTION(NetMulticast, Reliable)
+    void NetMulticast_ReceiveChatMessage(const FChatMessage& ChatMessage);
 
     UFUNCTION(BlueprintPure, Category = "Defense")
     EDefensePhase GetPhase() const { return Phase; }
@@ -304,4 +326,10 @@ protected:
     
     /** 밤을 한 번이라도 거쳤는지 (첫 시작 시 새벽 전환 방지) */
     bool bHasBeenNight = false;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // [Phase 10] 채팅 히스토리 (서버 메모리 전용, 리플리케이션 안 함)
+    // ═══════════════════════════════════════════════════════════════════════════
+    TArray<FChatMessage> ChatHistory;
+    static constexpr int32 MaxChatHistory = 100;
 };
