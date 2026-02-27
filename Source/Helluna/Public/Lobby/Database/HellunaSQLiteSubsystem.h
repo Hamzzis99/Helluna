@@ -214,9 +214,10 @@ public:
 	 *
 	 * @param PlayerId     플레이어 고유 ID
 	 * @param OutSurvived  파일에 저장된 생존 여부 (out)
-	 * @return 로드된 아이템 배열 (파일 없으면 빈 배열)
+	 * @param bOutSuccess  JSON 파싱 성공 여부 (out) — false면 파일 손상 (호출자가 Loadout 삭제 스킵해야 함)
+	 * @return 로드된 아이템 배열 (파일 없거나 파싱 실패 시 빈 배열)
 	 */
-	TArray<FInv_SavedItemData> ImportGameResultFromFile(const FString& PlayerId, bool& OutSurvived);
+	TArray<FInv_SavedItemData> ImportGameResultFromFile(const FString& PlayerId, bool& OutSurvived, bool& bOutSuccess);
 
 	/**
 	 * 게임 결과 전송 파일이 존재하는지 확인

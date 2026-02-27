@@ -180,29 +180,42 @@ void AHellunaLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [0] 게임 결과 파일 발견 → import 시작 | PlayerId=%s"), *PlayerId);
 
 		bool bSurvived = false;
-		TArray<FInv_SavedItemData> ResultItems = SQLiteSubsystem->ImportGameResultFromFile(PlayerId, bSurvived);
+		bool bImportSuccess = false;
+		TArray<FInv_SavedItemData> ResultItems = SQLiteSubsystem->ImportGameResultFromFile(PlayerId, bSurvived, bImportSuccess);
 
-		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [0] 게임 결과: survived=%s | 아이템=%d개 | PlayerId=%s"),
-			bSurvived ? TEXT("Y") : TEXT("N"), ResultItems.Num(), *PlayerId);
-
-		// 로비 자체 DB에서 Stash 병합
-		if (SQLiteSubsystem->MergeGameResultToStash(PlayerId, ResultItems))
+		if (bImportSuccess)
 		{
-			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [0] MergeGameResultToStash 성공 | PlayerId=%s"), *PlayerId);
+			// 정상 파싱 성공 → Stash 병합 + Loadout 삭제
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [0] 게임 결과: survived=%s | 아이템=%d개 | PlayerId=%s"),
+				bSurvived ? TEXT("Y") : TEXT("N"), ResultItems.Num(), *PlayerId);
+
+			// 로비 자체 DB에서 Stash 병합
+			if (SQLiteSubsystem->MergeGameResultToStash(PlayerId, ResultItems))
+			{
+				UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [0] MergeGameResultToStash 성공 | PlayerId=%s"), *PlayerId);
+			}
+			else
+			{
+				UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [0] MergeGameResultToStash 실패! | PlayerId=%s"), *PlayerId);
+			}
+
+			// Loadout(비행기표) 정리
+			if (SQLiteSubsystem->DeletePlayerLoadout(PlayerId))
+			{
+				UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [0] DeletePlayerLoadout 성공 | PlayerId=%s"), *PlayerId);
+			}
+			else
+			{
+				UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] [0] DeletePlayerLoadout: 삭제할 Loadout 없음 | PlayerId=%s"), *PlayerId);
+			}
 		}
 		else
 		{
-			UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [0] MergeGameResultToStash 실패! | PlayerId=%s"), *PlayerId);
-		}
-
-		// Loadout(비행기표) 정리
-		if (SQLiteSubsystem->DeletePlayerLoadout(PlayerId))
-		{
-			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [0] DeletePlayerLoadout 성공 | PlayerId=%s"), *PlayerId);
-		}
-		else
-		{
-			UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] [0] DeletePlayerLoadout: 삭제할 Loadout 없음 | PlayerId=%s"), *PlayerId);
+			// [Case 8] GameResult JSON 파일 손상 → Loadout 보존하여 크래시 복구로 전환
+			// 손상된 파일은 ImportGameResultFromFile 내부에서 이미 삭제됨
+			// → Step 1 (CheckAndRecoverFromCrash)에서 Loadout→Stash 복구 처리
+			UE_LOG(LogHellunaLobby, Error,
+				TEXT("[LobbyGM] [0] GameResult 파일 손상! Loadout 보존 → 크래시 복구로 전환 | PlayerId=%s"), *PlayerId);
 		}
 	}
 

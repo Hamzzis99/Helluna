@@ -1205,9 +1205,11 @@ void UInv_InventoryGrid::CreateItemPopUp(const int32 GridIndex)
 	
 	ItemPopUp = CreateWidget<UInv_ItemPopUp>(this, ItemPopUpClass); // 팝업 위젯 생성
 	GridSlots[GridIndex]->SetItemPopUp(ItemPopUp);
-	
-	//마우스 올려진 곳에 툴팁 같은 것이 등장하는 부분인가?
-	OwningCanvasPanel->AddChild(ItemPopUp);
+
+	// 팝업을 캔버스에 추가 — OwningCanvasPanel이 없으면 자체 CanvasPanel 사용 (로비 듀얼 Grid 대응)
+	UCanvasPanel* TargetCanvas = OwningCanvasPanel.IsValid() ? OwningCanvasPanel.Get() : CanvasPanel.Get();
+	if (!IsValid(TargetCanvas)) return;
+	TargetCanvas->AddChild(ItemPopUp);
 	UCanvasPanelSlot* CanvasSlot = UWidgetLayoutLibrary::SlotAsCanvasSlot(ItemPopUp);
 	const FVector2D MousePosition = UWidgetLayoutLibrary::GetMousePositionOnViewport(GetOwningPlayer());
 	CanvasSlot->SetPosition(MousePosition - ItemPopUpOffset); // 마우스 위치에 팝업 위치 설정

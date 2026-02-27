@@ -694,10 +694,11 @@ bool UHellunaSQLiteSubsystem::ExportGameResultToFile(const FString& PlayerId, co
 // ──────────────────────────────────────────────────────────────
 // ImportGameResultFromFile — JSON 파일에서 게임 결과 읽기 + 파일 삭제
 // ──────────────────────────────────────────────────────────────
-TArray<FInv_SavedItemData> UHellunaSQLiteSubsystem::ImportGameResultFromFile(const FString& PlayerId, bool& OutSurvived)
+TArray<FInv_SavedItemData> UHellunaSQLiteSubsystem::ImportGameResultFromFile(const FString& PlayerId, bool& OutSurvived, bool& bOutSuccess)
 {
 	TArray<FInv_SavedItemData> Result;
 	OutSurvived = false;
+	bOutSuccess = false;
 
 	const FString FilePath = GetGameResultTransferFilePath(PlayerId);
 	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ImportGameResultFromFile: 시작 | PlayerId=%s | 경로=%s"),
@@ -716,9 +717,9 @@ TArray<FInv_SavedItemData> UHellunaSQLiteSubsystem::ImportGameResultFromFile(con
 	TSharedPtr<FJsonObject> RootObj;
 	if (!FJsonSerializer::Deserialize(Reader, RootObj) || !RootObj.IsValid())
 	{
-		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ImportGameResultFromFile: JSON 파싱 실패"));
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ImportGameResultFromFile: JSON 파싱 실패 → 손상된 파일 삭제, 크래시 복구로 전환"));
 		IFileManager::Get().Delete(*FilePath);
-		return Result;
+		return Result;  // bOutSuccess = false → 호출자가 Loadout 보존
 	}
 
 	// 헤더 필드
@@ -728,9 +729,9 @@ TArray<FInv_SavedItemData> UHellunaSQLiteSubsystem::ImportGameResultFromFile(con
 	const TArray<TSharedPtr<FJsonValue>>* ItemsArray = nullptr;
 	if (!RootObj->TryGetArrayField(TEXT("items"), ItemsArray) || !ItemsArray)
 	{
-		UE_LOG(LogHelluna, Warning, TEXT("[SQLite] ImportGameResultFromFile: items 배열 없음"));
+		UE_LOG(LogHelluna, Warning, TEXT("[SQLite] ImportGameResultFromFile: items 배열 없음 → 손상된 파일 삭제, 크래시 복구로 전환"));
 		IFileManager::Get().Delete(*FilePath);
-		return Result;
+		return Result;  // bOutSuccess = false → 호출자가 Loadout 보존
 	}
 
 	for (const TSharedPtr<FJsonValue>& ItemValue : *ItemsArray)
@@ -784,6 +785,9 @@ TArray<FInv_SavedItemData> UHellunaSQLiteSubsystem::ImportGameResultFromFile(con
 
 	UE_LOG(LogHelluna, Warning, TEXT("[SQLite] ImportGameResultFromFile: ✓ %d개 아이템 로드 | survived=%s"),
 		Result.Num(), OutSurvived ? TEXT("Y") : TEXT("N"));
+
+	// JSON 파싱 성공 (아이템 0개라도 성공 — 사망 시 빈 배열이 정상)
+	bOutSuccess = true;
 
 	// 파일 삭제 (처리 완료)
 	if (IFileManager::Get().Delete(*FilePath))
