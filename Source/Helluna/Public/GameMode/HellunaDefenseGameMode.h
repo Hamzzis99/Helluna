@@ -21,6 +21,7 @@
 #include "HellunaDefenseGameMode.generated.h"
 
 class ATargetPoint;
+class AHellunaEnemyMassSpawner;
 
 UCLASS()
 class HELLUNA_API AHellunaDefenseGameMode : public AHellunaBaseGameMode
@@ -84,48 +85,70 @@ protected:
 	UPROPERTY()
 	TSet<TWeakObjectPtr<AActor>> AliveMonsters;
 
-	/** 몬스터 스폰 포인트 (맵에서 캐싱) */
+	/** 이번 밤에 소환된 총 몬스터 수 (DoSpawning 시 저장, 사망마다 1 차감) */
+	int32 TotalSpawnedThisNight = 0;
+
+	/** 현재 남은 몬스터 수 (TotalSpawnedThisNight 에서 차감) */
+	int32 RemainingMonstersThisNight = 0;
+
+	/**
+	 * 런타임에 동적 생성된 MassSpawner 목록.
+	 * EnterNight() 최초 호출 시 MonsterSpawnTag 를 가진 TargetPoint 위치에
+	 * SpawnActor 로 AHellunaEnemyMassSpawner 를 생성하고 여기에 캐싱한다.
+	 * 이후 밤마다 DoSpawning() 을 재호출해 재사용한다.
+	 */
 	UPROPERTY()
-	TArray<ATargetPoint*> MonsterSpawnPoints;
+	TArray<TObjectPtr<AHellunaEnemyMassSpawner>> CachedMassSpawners;
 
 public:
-	/**
-	 * 몬스터 등록 (몬스터 BeginPlay에서 호출)
-	 */
 	UFUNCTION(BlueprintCallable, Category = "Defense(게임)|Monster(몬스터)")
 	void RegisterAliveMonster(AActor* Monster);
 
-	/**
-	 * 몬스터 사망 알림 (몬스터 사망 시 호출)
-	 * 모든 몬스터가 죽으면 자동으로 EnterDay() 호출됨
-	 */
 	UFUNCTION(BlueprintCallable, Category = "Defense(게임)|Monster(몬스터)")
 	void NotifyMonsterDied(AActor* DeadMonster);
 
-	/** 현재 살아있는 몬스터 수 */
 	UFUNCTION(BlueprintPure, Category = "Defense(게임)|Monster(몬스터)")
 	int32 GetAliveMonsterCount() const { return AliveMonsters.Num(); }
 
+	/**
+	 * MassSpawner 가 DoSpawning() 완료 후 호출.
+	 * 이번 밤 총 소환 수에 스폰된 수를 누적한다.
+	 */
+	void AddSpawnedCount(int32 Count);
+
 protected:
-	/** 스폰할 몬스터 클래스 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Defense(게임)|Monster(몬스터)",
-		meta = (DisplayName = "테스트 몬스터 클래스"))
-	TSubclassOf<APawn> TestMonsterClass;
+	/**
+	 * 스폰할 MassSpawner 블루프린트 클래스.
+	 * AHellunaEnemyMassSpawner 를 부모로 만든 BP 를 에디터에서 설정한다.
+	 * (BP 안에 MassSpawner EntityTypes, SpawnCount 등을 설정해 두면 된다.)
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|Monster(몬스터)",
+		meta = (DisplayName = "MassSpawner 클래스",
+			ToolTip = "밤에 TargetPoint 위치마다 동적으로 생성할 MassSpawner 블루프린트입니다.\nHellunaEnemyMassSpawner 를 부모로 만든 BP 를 설정하세요."))
+	TSubclassOf<AHellunaEnemyMassSpawner> MassSpawnerClass;
 
-	/** 몬스터 스폰 포인트 태그 */
-	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|Monster(몬스터)")
-	FName MonsterSpawnPointTag = TEXT("MonsterSpawn");
+	/**
+	 * MassSpawner 를 생성할 TargetPoint 태그.
+	 * 레벨에 배치한 TargetPoint 액터에 이 태그를 붙이면
+	 * 첫 번째 EnterNight() 에서 해당 위치에 MassSpawner 가 자동 생성된다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|Monster(몬스터)",
+		meta = (DisplayName = "몬스터 스폰 포인트 태그",
+			ToolTip = "MassSpawner 를 생성할 위치를 나타내는 TargetPoint 의 태그입니다."))
+	FName MonsterSpawnTag = TEXT("MonsterSpawn");
 
-	/** 한 번에 스폰할 몬스터 수 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Defense(게임)|Monster(몬스터)",
-		meta = (DisplayName = "몬스터 스폰 개수", ClampMin = "0"))
-	int32 TestMonsterSpawnCount = 3;
-
-	/** 몬스터 스폰 포인트 캐싱 (BeginPlay에서 호출) */
+	/** 몬스터 스폰 포인트 TargetPoint 캐싱 (BeginPlay 에서 호출) */
 	void CacheMonsterSpawnPoints();
 
-	/** 테스트 몬스터 스폰 */
-	void SpawnTestMonsters();
+	/**
+	 * 첫 번째 밤에 TargetPoint 위치마다 MassSpawner 를 동적 생성.
+	 * 이후 밤에는 이미 생성된 MassSpawner 에 DoSpawning() 만 재호출.
+	 */
+	void TriggerMassSpawning();
+
+	/** 스폰 포인트 TargetPoint 목록 (BeginPlay 에서 캐싱) */
+	UPROPERTY()
+	TArray<ATargetPoint*> MonsterSpawnPoints;
 
 	// ════════════════════════════════════════════════════════════════════════════════
 	// 보스 스폰 시스템

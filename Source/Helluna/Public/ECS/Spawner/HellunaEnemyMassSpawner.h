@@ -23,6 +23,17 @@ class HELLUNA_API AHellunaEnemyMassSpawner : public AMassSpawner
 public:
 	AHellunaEnemyMassSpawner();
 
+	/**
+	 * GameMode 에서 밤 시작 시 호출하는 스폰 트리거.
+	 * 시뮬레이션이 준비된 상태면 즉시 DoSpawning(),
+	 * 아직 미준비 상태면 OnSimulationReady 콜백 등록 후 대기.
+	 * (DoSpawning() 을 직접 호출하면 시뮬레이션 미준비로 스폰이 무시될 수 있음)
+	 */
+	void RequestSpawn();
+
+	/** 대기 중인 스폰 타이머/콜백 취소 (낮 전환 시 GameMode 에서 호출) */
+	void CancelPendingSpawn();
+
 protected:
 	virtual void BeginPlay() override;
 

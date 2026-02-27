@@ -1,11 +1,11 @@
-﻿/**
+/**
  * STEvaluator_SpaceShip.h
  *
- * StateTree Evaluator: 우주선 타겟 정보를 매 틱 갱신한다.
+ * StateTree Evaluator: 우주선 위치 정보를 매 틱 갱신해서 Task에 제공한다.
  *
- * EnrageLoop State의 ChaseTarget / AttackTarget Task가
- * 이 Evaluator의 SpaceShipData를 바인딩해서 사용하면
- * 광폭화 후 타겟 전환을 코드 없이 에디터 바인딩만으로 해결할 수 있다.
+ * EnrageLoop State의 ChaseTarget / AttackTarget Task는
+ * 이 Evaluator의 SpaceShipData를 바인딩해서 사용한다.
+ * 우주선이 씬에 없거나 소멸된 경우 TargetActor가 null로 유지된다.
  *
  * @author 김민우
  */
@@ -27,9 +27,9 @@ struct FSTEvaluator_SpaceShipInstanceData
 	UPROPERTY(EditAnywhere, Category = "Context")
 	TObjectPtr<AAIController> AIController = nullptr;
 
-	/** 매 틱 갱신되는 우주선 타겟 정보 (Task에서 바인딩) */
+	/** 우주선 타겟 데이터 (Task에서 바인딩해서 읽음) */
 	UPROPERTY(EditAnywhere, Category = "Output")
-	FHellunaSpaceShipTargetData SpaceShipData;
+	FHellunaAITargetData SpaceShipData;
 };
 
 USTRUCT(meta = (DisplayName = "Helluna: SpaceShip Target", Category = "Helluna|AI"))
@@ -46,7 +46,7 @@ protected:
 	virtual void Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const override;
 
 public:
-	/** 우주선 액터에 붙어있는 태그 */
+	/** 우주선 액터를 찾을 때 사용하는 태그 */
 	UPROPERTY(EditAnywhere, Category = "Config",
 		meta = (DisplayName = "우주선 태그"))
 	FName SpaceShipTag = FName("SpaceShip");

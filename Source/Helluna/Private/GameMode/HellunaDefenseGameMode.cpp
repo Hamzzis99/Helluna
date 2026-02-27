@@ -1,21 +1,7 @@
-// ════════════════════════════════════════════════════════════════════════════════
-// HellunaDefenseGameMode.cpp
-// ════════════════════════════════════════════════════════════════════════════════
-//
-// 게임 로직 전용 GameMode
-// 로그인/인벤토리 시스템은 HellunaBaseGameMode.cpp 참고
-//
-// 🎮 이 파일의 역할:
-//    - InitializeGame() : 게임 시작
-//    - EnterDay() / EnterNight() : 낮밤 전환
-//    - SpawnTestMonsters() : 몬스터 스폰
-//    - TrySummonBoss() : 보스 소환
-//
-// ════════════════════════════════════════════════════════════════════════════════
-
-#include "GameMode/HellunaDefenseGameMode.h"
+﻿#include "GameMode/HellunaDefenseGameMode.h"
 #include "GameMode/HellunaDefenseGameState.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
+#include "ECS/Spawner/HellunaEnemyMassSpawner.h"
 #include "Engine/TargetPoint.h"
 #include "Kismet/GameplayStatics.h"
 #include "EngineUtils.h"
@@ -23,47 +9,26 @@
 
 AHellunaDefenseGameMode::AHellunaDefenseGameMode()
 {
-    // BaseGameMode에서 기본 설정 처리됨
-    // ⚠️ BP에서 덮어쓰는 문제 방지를 위해 로그 추가
-    UE_LOG(LogTemp, Warning, TEXT("⭐ [DefenseGameMode] Constructor 호출!"));
-    UE_LOG(LogTemp, Warning, TEXT("⭐ PlayerControllerClass: %s"), PlayerControllerClass ? *PlayerControllerClass->GetName() : TEXT("nullptr"));
-    UE_LOG(LogTemp, Warning, TEXT("⭐ DefaultPawnClass: %s"), DefaultPawnClass ? *DefaultPawnClass->GetName() : TEXT("nullptr"));
+    UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] Constructor"));
+    UE_LOG(LogTemp, Warning, TEXT("  PlayerControllerClass: %s"), PlayerControllerClass ? *PlayerControllerClass->GetName() : TEXT("nullptr"));
+    UE_LOG(LogTemp, Warning, TEXT("  DefaultPawnClass: %s"),      DefaultPawnClass      ? *DefaultPawnClass->GetName()      : TEXT("nullptr"));
 }
 
 void AHellunaDefenseGameMode::BeginPlay()
 {
-    Super::BeginPlay();  // BaseGameMode의 로그인/인벤토리 초기화 호출
+    Super::BeginPlay();
+    if (!HasAuthority()) return;
 
-    if (!HasAuthority())
-        return;
-
-    // 게임 로직 초기화만
     CacheBossSpawnPoints();
     CacheMonsterSpawnPoints();
 
-    UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] BeginPlay - 게임 로직 초기화 완료"));
-    UE_LOG(LogTemp, Warning, TEXT("  - BossSpawnPoints: %d개"), BossSpawnPoints.Num());
-    UE_LOG(LogTemp, Warning, TEXT("  - MonsterSpawnPoints: %d개"), MonsterSpawnPoints.Num());
+    UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] BeginPlay 완료 — BossSpawn: %d / MonsterSpawn: %d"),
+        BossSpawnPoints.Num(), MonsterSpawnPoints.Num());
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// ⭐⭐⭐ InitializeGame - 게임 로직 시작점 ⭐⭐⭐
-// ════════════════════════════════════════════════════════════════════════════════
-//
-// 📌 호출 시점: 첫 번째 플레이어가 로그인 + 캐릭터 소환 완료 후
-//
-// 📌 이 함수가 호출되면:
-//    - 게임이 본격적으로 시작됨
-//    - EnterDay()가 호출되어 낮/밤 사이클 시작
-//
-// ✅ 팀원 작업: 게임 시작 시 필요한 초기화 로직을 여기에 추가하세요!
-//    예시:
-//    - 배경음악 재생
-//    - 튜토리얼 시작
-//    - UI 표시
-//    - 환경 초기화
-//
-// ════════════════════════════════════════════════════════════════════════════════
+// ============================================================
+// InitializeGame
+// ============================================================
 void AHellunaDefenseGameMode::InitializeGame()
 {
     if (bGameInitialized)
@@ -71,56 +36,27 @@ void AHellunaDefenseGameMode::InitializeGame()
         UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] 이미 초기화됨, 스킵"));
         return;
     }
-
     bGameInitialized = true;
 
-    UE_LOG(LogTemp, Warning, TEXT(""));
-    UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-    UE_LOG(LogTemp, Warning, TEXT("║     [DefenseGameMode] InitializeGame 🎮                    ║"));
-    UE_LOG(LogTemp, Warning, TEXT("║     첫 플레이어 캐릭터 소환 완료! 게임 시작!               ║"));
-    UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
-    UE_LOG(LogTemp, Warning, TEXT(""));
-
+    UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] 게임 시작!"));
     Debug::Print(TEXT("[DefenseGameMode] InitializeGame - 게임 시작!"), FColor::Green);
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // ✅ 팀원 작업 영역 - 게임 시작 시 초기화 로직 추가
-    // ════════════════════════════════════════════════════════════════════════════
-    //
-    // 여기에 게임 시작 시 필요한 코드를 추가하세요!
-    //
-    // 예시:
-    // PlayBackgroundMusic();
-    // ShowTutorialWidget();
-    // InitializeEnvironment();
-    //
-    // ════════════════════════════════════════════════════════════════════════════
-
-    // 낮/밤 사이클 시작
     EnterDay();
-
-    // 자동저장 타이머 시작
     StartAutoSave();
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// 🗺️ 스폰 포인트 캐싱
-// ════════════════════════════════════════════════════════════════════════════════
-
+// ============================================================
+// 스폰 포인트 캐싱
+// ============================================================
 void AHellunaDefenseGameMode::CacheBossSpawnPoints()
 {
     BossSpawnPoints.Empty();
     TArray<AActor*> Found;
     UGameplayStatics::GetAllActorsOfClass(this, ATargetPoint::StaticClass(), Found);
-
     for (AActor* A : Found)
-    {
         if (ATargetPoint* TP = Cast<ATargetPoint>(A))
-        {
             if (TP->ActorHasTag(BossSpawnPointTag))
                 BossSpawnPoints.Add(TP);
-        }
-    }
 }
 
 void AHellunaDefenseGameMode::CacheMonsterSpawnPoints()
@@ -128,60 +64,55 @@ void AHellunaDefenseGameMode::CacheMonsterSpawnPoints()
     MonsterSpawnPoints.Empty();
     TArray<AActor*> Found;
     UGameplayStatics::GetAllActorsOfClass(this, ATargetPoint::StaticClass(), Found);
-
     for (AActor* A : Found)
-    {
         if (ATargetPoint* TP = Cast<ATargetPoint>(A))
-        {
-            if (TP->ActorHasTag(MonsterSpawnPointTag))
+            if (TP->ActorHasTag(MonsterSpawnTag))
                 MonsterSpawnPoints.Add(TP);
-        }
-    }
+
+    Debug::Print(FString::Printf(
+        TEXT("[CacheMonsterSpawnPoints] TargetPoint %d개 (태그: %s)"),
+        MonsterSpawnPoints.Num(), *MonsterSpawnTag.ToString()),
+        MonsterSpawnPoints.Num() > 0 ? FColor::Green : FColor::Red);
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// 🌅🌙 낮/밤 시스템
-// ════════════════════════════════════════════════════════════════════════════════
-
-// 🌅 EnterDay - 낮 시작
+// ============================================================
+// 낮/밤 시스템
+// ============================================================
 void AHellunaDefenseGameMode::EnterDay()
 {
-    if (!bGameInitialized)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] EnterDay 스킵 - 게임 미초기화"));
-        return;
-    }
+    if (!bGameInitialized) return;
 
-    Debug::Print(TEXT("[DefenseGameMode] EnterDay - 낮 시작!"), FColor::Yellow);
-
+    Debug::Print(TEXT("[EnterDay] 낮 시작"), FColor::Yellow);
     AliveMonsters.Empty();
+
+    // 낮 전환 시 MassSpawner 의 대기 중인 스폰 타이머도 취소
+    for (AHellunaEnemyMassSpawner* Spawner : CachedMassSpawners)
+    {
+        if (IsValid(Spawner))
+            Spawner->CancelPendingSpawn();
+    }
 
     if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
     {
-        // Phase 전환 → OnDayStarted (BP: 밤→아침 빠른 전환 연출)
         GS->SetPhase(EDefensePhase::Day);
         GS->SetAliveMonsterCount(0);
         GS->MulticastPrintDay();
-
-        // 새벽 완료 신호 → OnDawnPassed (BP: UDS 비례 구동 시작)
-        // RoundDuration을 같이 보내서 BP에서 UDS 속도 계산에 사용
         GS->NetMulticast_OnDawnPassed(TestDayDuration);
     }
 
-    // 라운드 타이머: OnDawnPassed 이후부터 카운트 시작
-    // (새벽 전환 연출 시간은 라운드 시간에 포함하지 않음)
     GetWorldTimerManager().ClearTimer(TimerHandle_ToNight);
     GetWorldTimerManager().SetTimer(TimerHandle_ToNight, this, &ThisClass::EnterNight, TestDayDuration, false);
 }
 
-// 🌙 EnterNight - 밤 시작
 void AHellunaDefenseGameMode::EnterNight()
 {
     if (!HasAuthority() || !bGameInitialized) return;
 
-    Debug::Print(TEXT("[DefenseGameMode] EnterNight - 밤 시작!"), FColor::Purple);
+    Debug::Print(TEXT("[EnterNight] 밤 시작"), FColor::Purple);
 
     AliveMonsters.Empty();
+    TotalSpawnedThisNight      = 0;
+    RemainingMonstersThisNight = 0;
 
     if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
     {
@@ -196,67 +127,77 @@ void AHellunaDefenseGameMode::EnterNight()
         return;
     }
 
-    SpawnTestMonsters();
+    TriggerMassSpawning();
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// 👾 몬스터/보스 스폰
-// ════════════════════════════════════════════════════════════════════════════════
-
-// 👾 SpawnTestMonsters - 몬스터 스폰
-void AHellunaDefenseGameMode::SpawnTestMonsters()
+// ============================================================
+// MassSpawner 트리거
+// ============================================================
+void AHellunaDefenseGameMode::TriggerMassSpawning()
 {
-    if (!HasAuthority() || !bGameInitialized) return;
+    Debug::Print(TEXT("[TriggerMassSpawning] 진입"), FColor::Cyan);
 
-    if (!TestMonsterClass)
+    if (!HasAuthority()) return;
+
+    if (!MassSpawnerClass)
     {
-        Debug::Print(TEXT("[Defense] TestMonsterClass is null"), FColor::Red);
+        Debug::Print(TEXT("[TriggerMassSpawning] MassSpawnerClass null — BP 에서 설정하세요"), FColor::Red);
         return;
     }
 
-    if (MonsterSpawnPoints.IsEmpty())
+    // 첫 번째 밤: TargetPoint 위치마다 MassSpawner 동적 생성
+    if (CachedMassSpawners.IsEmpty())
     {
-        Debug::Print(TEXT("[Defense] No MonsterSpawn TargetPoints"), FColor::Red);
-        return;
+        if (MonsterSpawnPoints.IsEmpty())
+        {
+            Debug::Print(FString::Printf(
+                TEXT("[TriggerMassSpawning] MonsterSpawnPoints 없음 — TargetPoint 에 태그 '%s' 추가하세요"),
+                *MonsterSpawnTag.ToString()), FColor::Red);
+            return;
+        }
+
+        for (ATargetPoint* TP : MonsterSpawnPoints)
+        {
+            if (!IsValid(TP)) continue;
+
+            FActorSpawnParameters Params;
+            Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+            AHellunaEnemyMassSpawner* Spawner = GetWorld()->SpawnActor<AHellunaEnemyMassSpawner>(
+                MassSpawnerClass, TP->GetActorLocation(), TP->GetActorRotation(), Params);
+
+            if (!IsValid(Spawner))
+            {
+                Debug::Print(TEXT("[TriggerMassSpawning] SpawnActor 실패"), FColor::Red);
+                continue;
+            }
+
+            CachedMassSpawners.Add(Spawner);
+            Debug::Print(FString::Printf(TEXT("[TriggerMassSpawning] MassSpawner 생성: %s"), *Spawner->GetName()), FColor::Green);
+        }
     }
 
-    for (int32 i = 0; i < TestMonsterSpawnCount; ++i)
+    // 매 밤: RequestSpawn() 호출
+    for (AHellunaEnemyMassSpawner* Spawner : CachedMassSpawners)
     {
-        ATargetPoint* TP = MonsterSpawnPoints[FMath::RandRange(0, MonsterSpawnPoints.Num() - 1)];
-        if (!TP) continue;
-
-        FActorSpawnParameters Param;
-        Param.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
-
-        GetWorld()->SpawnActor<APawn>(TestMonsterClass, TP->GetActorLocation(), TP->GetActorRotation(), Param);
+        if (!IsValid(Spawner)) continue;
+        Spawner->RequestSpawn();
+        Debug::Print(FString::Printf(TEXT("[TriggerMassSpawning] RequestSpawn: %s"), *Spawner->GetName()), FColor::Green);
     }
 }
 
-void AHellunaDefenseGameMode::TrySummonBoss()
+// ============================================================
+// 몬스터 관리
+// ============================================================
+void AHellunaDefenseGameMode::AddSpawnedCount(int32 Count)
 {
-    if (!HasAuthority() || !bGameInitialized || !BossClass || BossSpawnPoints.IsEmpty())
-        return;
+    TotalSpawnedThisNight      += Count;
+    RemainingMonstersThisNight += Count;
 
-    ATargetPoint* TP = BossSpawnPoints[FMath::RandRange(0, BossSpawnPoints.Num() - 1)];
-    const FVector SpawnLoc = TP->GetActorLocation() + FVector(0, 0, SpawnZOffset);
-
-    FActorSpawnParameters Param;
-    Param.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
-
-    APawn* Boss = GetWorld()->SpawnActor<APawn>(BossClass, SpawnLoc, TP->GetActorRotation(), Param);
-    if (Boss) bBossReady = false;
+    Debug::Print(FString::Printf(
+        TEXT("[스폰 완료] 이번 밤 총 소환: %d"), TotalSpawnedThisNight),
+        FColor::Cyan);
 }
-
-void AHellunaDefenseGameMode::SetBossReady(bool bReady)
-{
-    if (!HasAuthority() || bBossReady == bReady) return;
-    bBossReady = bReady;
-    if (bBossReady) TrySummonBoss();
-}
-
-// ════════════════════════════════════════════════════════════════════════════════
-// 📊 몬스터 관리
-// ════════════════════════════════════════════════════════════════════════════════
 
 void AHellunaDefenseGameMode::RegisterAliveMonster(AActor* Monster)
 {
@@ -266,7 +207,6 @@ void AHellunaDefenseGameMode::RegisterAliveMonster(AActor* Monster)
     if (!GS || GS->GetPhase() != EDefensePhase::Night) return;
 
     if (AliveMonsters.Contains(Monster)) return;
-
     AliveMonsters.Add(Monster);
     GS->SetAliveMonsterCount(AliveMonsters.Num());
 }
@@ -281,6 +221,15 @@ void AHellunaDefenseGameMode::NotifyMonsterDied(AActor* DeadMonster)
     AliveMonsters.Remove(TWeakObjectPtr<AActor>(DeadMonster));
     GS->SetAliveMonsterCount(AliveMonsters.Num());
 
+    // 카운터 차감 후 출력
+    RemainingMonstersThisNight = FMath::Max(0, RemainingMonstersThisNight - 1);
+    Debug::Print(FString::Printf(
+        TEXT("죽은 몬스터: %s  |  남은 몬스터: %d / %d"),
+        *DeadMonster->GetName(),
+        RemainingMonstersThisNight,
+        TotalSpawnedThisNight),
+        FColor::Orange);
+
     if (AliveMonsters.Num() <= 0)
     {
         GetWorldTimerManager().ClearTimer(TimerHandle_ToDay);
@@ -288,35 +237,48 @@ void AHellunaDefenseGameMode::NotifyMonsterDied(AActor* DeadMonster)
     }
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// 🚀 우주선 상태 체크
-// ════════════════════════════════════════════════════════════════════════════════
+// ============================================================
+// 보스 스폰
+// ============================================================
+void AHellunaDefenseGameMode::TrySummonBoss()
+{
+    if (!HasAuthority() || !bGameInitialized || !BossClass || BossSpawnPoints.IsEmpty()) return;
 
+    ATargetPoint* TP = BossSpawnPoints[FMath::RandRange(0, BossSpawnPoints.Num() - 1)];
+    FActorSpawnParameters Param;
+    Param.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+    APawn* Boss = GetWorld()->SpawnActor<APawn>(BossClass, TP->GetActorLocation() + FVector(0,0,SpawnZOffset), TP->GetActorRotation(), Param);
+    if (Boss) bBossReady = false;
+}
+
+void AHellunaDefenseGameMode::SetBossReady(bool bReady)
+{
+    if (!HasAuthority() || bBossReady == bReady) return;
+    bBossReady = bReady;
+    if (bBossReady) TrySummonBoss();
+}
+
+// ============================================================
+// 우주선 상태 체크
+// ============================================================
 bool AHellunaDefenseGameMode::IsSpaceShipFullyRepaired(int32& OutCurrent, int32& OutNeed) const
 {
-    OutCurrent = 0;
-    OutNeed = 0;
-
+    OutCurrent = OutNeed = 0;
     const AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>();
     if (!GS) return false;
-
     AResourceUsingObject_SpaceShip* Ship = GS->GetSpaceShip();
     if (!Ship) return false;
-
     OutCurrent = Ship->GetCurrentResource();
-    OutNeed = Ship->GetNeedResource();
-
+    OutNeed    = Ship->GetNeedResource();
     return (OutNeed > 0) && (OutCurrent >= OutNeed);
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// 🔄 게임 재시작
-// ════════════════════════════════════════════════════════════════════════════════
-
+// ============================================================
+// 게임 재시작
+// ============================================================
 void AHellunaDefenseGameMode::RestartGame()
 {
     if (!HasAuthority()) return;
-
-    bGameInitialized = false; // 리셋
+    bGameInitialized = false;
     GetWorld()->ServerTravel(TEXT("/Game/Minwoo/MinwooTestMap?listen"));
 }

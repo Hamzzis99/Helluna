@@ -1,6 +1,15 @@
 ﻿/**
  * STTask_AttackTarget.cpp
  *
+ * 공격 GA를 주기적으로 발동하고 쿨다운을 관리한다.
+ *
+ * ─── Tick 흐름 ───────────────────────────────────────────────
+ *  ① GA 활성 중 → Running (GA 내부에서 몽타주 + 경직 처리)
+ *  ② GA 종료 + 쿨다운 중 → 카운트다운 + 타겟 방향 회전
+ *  ③ 쿨다운 완료 → GA 발동 + CooldownRemaining 초기화
+ *
+ *  광폭화 시: CooldownRemaining *= EnrageCooldownMultiplier (0.5 → 2배 빠름)
+ *
  * @author 김민우
  */
 
@@ -8,10 +17,13 @@
 #include "StateTreeExecutionContext.h"
 #include "AIController.h"
 #include "GameFramework/Pawn.h"
+#include "GameFramework/CharacterMovementComponent.h"
 
 #include "Character/HellunaEnemyCharacter.h"
 #include "AbilitySystem/HellunaAbilitySystemComponent.h"
+#include "AbilitySystem/HellunaEnemyGameplayAbility.h"
 #include "AbilitySystem/EnemyAbility/EnemyGameplayAbility_Attack.h"
+#include "AbilitySystem/EnemyAbility/EnemyGameplayAbility_RangedAttack.h"
 
 EStateTreeRunStatus FSTTask_AttackTarget::EnterState(
 	FStateTreeExecutionContext& Context,
@@ -22,11 +34,23 @@ EStateTreeRunStatus FSTTask_AttackTarget::EnterState(
 	if (!InstanceData.AIController)
 		return EStateTreeRunStatus::Failed;
 
-	// Attack State 진입 즉시 이동 정지
+	// Attack State 진입: 이동 정지 + 타겟 방향 회전 모드 전환
 	InstanceData.AIController->StopMovement();
 
-	// 진입 시 쿨다운 없음 → 즉시 첫 공격 가능
-	InstanceData.CooldownRemaining = 0.f;
+	APawn* Pawn = InstanceData.AIController->GetPawn();
+	if (UCharacterMovementComponent* MoveComp = Pawn ? Cast<UCharacterMovementComponent>(Pawn->GetMovementComponent()) : nullptr)
+	{
+		// bOrientRotationToMovement OFF, bUseControllerDesiredRotation ON
+		// → SetFocus 방향으로 부드럽게 회전
+		MoveComp->bOrientRotationToMovement     = false;
+		MoveComp->bUseControllerDesiredRotation = true;
+	}
+
+	const FHellunaAITargetData& TargetData = Context.GetInstanceData(*this).TargetData;
+	if (TargetData.HasValidTarget())
+		InstanceData.AIController->SetFocus(TargetData.TargetActor.Get());
+
+	InstanceData.CooldownRemaining = InitialAttackDelay;
 
 	return EStateTreeRunStatus::Running;
 }
@@ -51,9 +75,9 @@ EStateTreeRunStatus FSTTask_AttackTarget::Tick(
 	if (!ASC) return EStateTreeRunStatus::Failed;
 
 	// 사용할 GA 클래스: 에디터에서 선택한 클래스, 없으면 기본 클래스 사용
-	TSubclassOf<UEnemyGameplayAbility_Attack> GAClass = AttackAbilityClass.Get()
+	TSubclassOf<UHellunaEnemyGameplayAbility> GAClass = AttackAbilityClass.Get()
 		? AttackAbilityClass
-		: TSubclassOf<UEnemyGameplayAbility_Attack>(UEnemyGameplayAbility_Attack::StaticClass());
+		: TSubclassOf<UHellunaEnemyGameplayAbility>(UHellunaEnemyGameplayAbility::StaticClass());
 
 	const FHellunaAITargetData& TargetData = InstanceData.TargetData;
 
@@ -68,23 +92,20 @@ EStateTreeRunStatus FSTTask_AttackTarget::Tick(
 		}
 	}
 
-	// ② GA 종료 후 쿨다운 대기 중: 카운트다운 + 타겟 방향 회전
+	// ② GA 종료 후 쿨다운 대기 중
 	if (InstanceData.CooldownRemaining > 0.f)
 	{
 		InstanceData.CooldownRemaining -= DeltaTime;
 
-		if (TargetData.IsValid())
-		{
-			const FVector ToTarget = (TargetData.TargetActor->GetActorLocation() - Pawn->GetActorLocation()).GetSafeNormal();
-			if (!ToTarget.IsNearlyZero())
-			{
-				const FRotator CurrentRot = Pawn->GetActorRotation();
-				const FRotator TargetRot  = FRotator(0.f, ToTarget.Rotation().Yaw, 0.f);
-				Pawn->SetActorRotation(FMath::RInterpTo(CurrentRot, TargetRot, DeltaTime, RotationSpeed));
-			}
-		}
+		// SetFocus로 타겟 방향 바라보기 (bOrientRotationToMovement 건드리지 않음)
+		if (TargetData.HasValidTarget())
+			AIController->SetFocus(TargetData.TargetActor.Get());
+
 		return EStateTreeRunStatus::Running;
 	}
+
+	// 쿨다운 끝 → 포커스 해제
+	AIController->ClearFocus(EAIFocusPriority::Gameplay);
 
 	// ③ 쿨다운 완료 → GA 발동
 	bool bAlreadyHas = false;
@@ -104,20 +125,22 @@ EStateTreeRunStatus FSTTask_AttackTarget::Tick(
 		ASC->GiveAbility(Spec);
 	}
 
+	// TryActivate 이전에 CurrentTarget 설정 (GA ActivateAbility 내부에서 즉시 참조)
 	for (FGameplayAbilitySpec& Spec : ASC->GetActivatableAbilities())
 	{
+		if (!Spec.Ability || Spec.Ability->GetClass() != GAClass) continue;
+
 		if (UEnemyGameplayAbility_Attack* AttackGA = Cast<UEnemyGameplayAbility_Attack>(Spec.Ability))
-		{
 			AttackGA->CurrentTarget = TargetData.TargetActor.Get();
-			break;
-		}
+		else if (UEnemyGameplayAbility_RangedAttack* RangedGA = Cast<UEnemyGameplayAbility_RangedAttack>(Spec.Ability))
+			RangedGA->CurrentTarget = TargetData.TargetActor.Get();
+
+		break;
 	}
 
 	const bool bActivated = ASC->TryActivateAbilityByClass(GAClass);
 	if (bActivated)
 	{
-		// 광폭화 상태이면 쿨다운 배율 적용
-		// EnrageCooldownMultiplier 가 0.5이면 절반 시간만 대기 (2배 빠른 공격)
 		const float CooldownMultiplier = Enemy->bEnraged ? Enemy->EnrageCooldownMultiplier : 1.f;
 		InstanceData.CooldownRemaining = AttackCooldown * CooldownMultiplier;
 	}
@@ -129,4 +152,19 @@ void FSTTask_AttackTarget::ExitState(
 	FStateTreeExecutionContext& Context,
 	const FStateTreeTransitionResult& Transition) const
 {
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	if (AAIController* AIC = InstanceData.AIController)
+	{
+		AIC->ClearFocus(EAIFocusPriority::Gameplay);
+
+		if (APawn* Pawn = AIC->GetPawn())
+		{
+			if (UCharacterMovementComponent* MoveComp = Cast<UCharacterMovementComponent>(Pawn->GetMovementComponent()))
+			{
+				// 원래 설정으로 복원
+				MoveComp->bOrientRotationToMovement     = true;
+				MoveComp->bUseControllerDesiredRotation = false;
+			}
+		}
+	}
 }

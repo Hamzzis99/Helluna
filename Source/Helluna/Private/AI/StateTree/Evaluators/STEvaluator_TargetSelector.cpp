@@ -16,7 +16,35 @@
 #include "GameFramework/PlayerController.h"
 #include "Components/StateTreeComponent.h"
 #include "HellunaGameplayTags.h"
-#include "DebugHelper.h"
+
+// ============================================================================
+// TreeStart - ?? ?? ?? ??(???)?? ???
+// ============================================================================
+void FSTEvaluator_TargetSelector::TreeStart(FStateTreeExecutionContext& Context) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	FHellunaAITargetData& TargetData = InstanceData.TargetData;
+
+	TargetData.TargetActor         = nullptr;
+	TargetData.TargetType          = EHellunaTargetType::SpaceShip;
+	TargetData.bTargetingPlayer    = false;
+	TargetData.bPlayerLocked       = false;
+	TargetData.bEnraged            = false;
+	TargetData.PlayerTargetingTime = 0.f;
+	TargetData.DistanceToTarget    = 0.f;
+
+	const UWorld* World = Context.GetWorld();
+	if (!World) return;
+
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (It->ActorHasTag(FName("SpaceShip")))
+		{
+			TargetData.TargetActor = *It;
+			break;
+		}
+	}
+}
 
 void FSTEvaluator_TargetSelector::Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const
 {
@@ -60,15 +88,6 @@ void FSTEvaluator_TargetSelector::Tick(FStateTreeExecutionContext& Context, cons
 		TargetData.DistanceToTarget    = FVector::Dist(PawnLocation, TargetData.TargetActor->GetActorLocation());
 		TargetData.PlayerTargetingTime += DeltaTime;
 
-		const int32 DebugKey = static_cast<int32>(GetTypeHash(ControlledPawn)) & 0x7FFF;
-		Debug::Print(
-			FString::Printf(TEXT("[Enrage] %s → 플레이어 추적 중 | %.0f초 / %.0f초"),
-				*ControlledPawn->GetName(),
-				FMath::FloorToFloat(TargetData.PlayerTargetingTime),
-				EnrageDelay),
-			FColor::Yellow, DebugKey
-		);
-
 		// 광폭화 이벤트 발송
 		if (!TargetData.bEnraged && TargetData.PlayerTargetingTime >= EnrageDelay)
 		{
@@ -78,20 +97,6 @@ void FSTEvaluator_TargetSelector::Tick(FStateTreeExecutionContext& Context, cons
 				FStateTreeEvent EnrageEvent;
 				EnrageEvent.Tag = HellunaGameplayTags::Enemy_Event_Enrage;
 				STComp->SendStateTreeEvent(EnrageEvent);
-
-				Debug::Print(
-					FString::Printf(TEXT("[Enrage] %s → 광폭화 이벤트 발송! (%.1f초 경과)"),
-						*ControlledPawn->GetName(), TargetData.PlayerTargetingTime),
-					FColor::Red, DebugKey + 1
-				);
-			}
-			else
-			{
-				Debug::Print(
-					FString::Printf(TEXT("[Enrage] %s → STComp 없음! 발송 실패"),
-						*ControlledPawn->GetName()),
-					FColor::Purple, DebugKey + 1
-				);
 			}
 		}
 		return;
