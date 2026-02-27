@@ -74,6 +74,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override; // C5: 타이머/델리게이트 정리
 
 	// =========================================================================================
 	// [투표 시스템] 위젯 자동 생성 (김기현)

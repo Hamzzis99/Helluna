@@ -76,6 +76,32 @@ void AHellunaHeroController::BeginPlay()
 }
 
 // ============================================================================
+// C5+B7: EndPlay — 타이머 정리 + 채팅 델리게이트 해제
+// ============================================================================
+
+void AHellunaHeroController::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	// C5: 타이머 핸들 정리 (파괴 후 콜백 방지)
+	GetWorldTimerManager().ClearTimer(VoteWidgetInitTimerHandle);
+	GetWorldTimerManager().ClearTimer(ChatWidgetInitTimerHandle);
+
+	// B7: 채팅 델리게이트 언바인딩 (GameState가 파괴된 위젯 참조 방지)
+	if (IsValid(ChatWidgetInstance))
+	{
+		if (UWorld* World = GetWorld())
+		{
+			if (AHellunaDefenseGameState* DefenseGS = World->GetGameState<AHellunaDefenseGameState>())
+			{
+				DefenseGS->OnChatMessageReceived.RemoveDynamic(ChatWidgetInstance, &UHellunaChatWidget::OnReceiveChatMessage);
+			}
+		}
+		ChatWidgetInstance->OnChatMessageSubmitted.RemoveDynamic(this, &AHellunaHeroController::OnChatMessageSubmitted);
+	}
+
+	Super::EndPlay(EndPlayReason);
+}
+
+// ============================================================================
 // [투표 시스템] 위젯 자동 초기화
 // ============================================================================
 
@@ -287,7 +313,9 @@ void AHellunaHeroController::InitializeChatWidget()
 	}
 
 	// 2. GameState 대기
-	AHellunaDefenseGameState* DefenseGS = GetWorld()->GetGameState<AHellunaDefenseGameState>();
+	UWorld* World = GetWorld(); // C6: GetWorld() null 체크
+	if (!World) return;
+	AHellunaDefenseGameState* DefenseGS = World->GetGameState<AHellunaDefenseGameState>();
 	if (!DefenseGS)
 	{
 		UE_LOG(LogHellunaChat, Warning, TEXT("[HeroController] GameState가 아직 없음 — 채팅 위젯 재시도"));
@@ -336,6 +364,12 @@ void AHellunaHeroController::InitializeChatWidget()
 
 void AHellunaHeroController::OnChatToggleInput(const FInputActionValue& Value)
 {
+	// W6: 채팅 입력 활성 상태에서 Enter는 TextBox의 OnTextCommitted가 처리
+	// Enhanced Input과 TextBox 양쪽에서 Enter가 동시 처리되는 충돌 방지
+	if (IsValid(ChatWidgetInstance) && ChatWidgetInstance->IsChatInputActive())
+	{
+		return;
+	}
 	ToggleChatInput();
 }
 
@@ -385,7 +419,9 @@ void AHellunaHeroController::Server_SendChatMessage_Implementation(const FString
 	}
 
 	// GameState를 통해 모든 클라이언트에 브로드캐스트
-	AHellunaDefenseGameState* DefenseGS = GetWorld()->GetGameState<AHellunaDefenseGameState>();
+	UWorld* SendWorld = GetWorld(); // C6: GetWorld() null 체크
+	if (!SendWorld) return;
+	AHellunaDefenseGameState* DefenseGS = SendWorld->GetGameState<AHellunaDefenseGameState>();
 	if (DefenseGS)
 	{
 		DefenseGS->BroadcastChatMessage(SenderName, Message, EChatMessageType::Player);

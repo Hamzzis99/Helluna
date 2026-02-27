@@ -328,10 +328,11 @@ void FInv_InventoryFastArray::PostReplicatedChange(const TArrayView<int32> Chang
 			continue;
 		}
 
-		// ⭐ [Phase 9] 컨테이너에서는 간단하게 OnContainerItemAdded 브로드캐스트 (카테고리 구분 불필요)
+		// ⭐ [Phase 9] 컨테이너는 아이템 전체 이동만 수행 (스택 변경 RPC 없음)
+		// B10: OnContainerItemAdded는 "추가" 이벤트이므로 "변경"에서 호출하면 중복 UI 발생
+		// 향후 부분 전송/스택 분할 추가 시 OnContainerItemChanged 델리게이트 필요
 		if (IsValid(ContainerComp))
 		{
-			ContainerComp->OnContainerItemAdded.Broadcast(ChangedItem, Index);
 			continue;
 		}
 
@@ -401,7 +402,7 @@ UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_ItemComponent* ItemCo
 	FDebug::DumpStackTraceToLog(ELogVerbosity::Error);
 
 	AActor* OwningActor = OwnerComponent->GetOwner(); // 소유자 확보
-	check(OwningActor->HasAuthority()); // 권한이 있는지 확인
+	if (!OwningActor || !OwningActor->HasAuthority()) return nullptr; // C4: 안전한 early return (check 크래시 방지)
 	UInv_InventoryComponent* IC = Cast<UInv_InventoryComponent>(OwnerComponent); // 소유자 컴포넌트를 인벤토리 컴포넌트로 캐스팅
 	UInv_LootContainerComponent* ContainerComp = nullptr;
 	if (!IsValid(IC))
@@ -493,7 +494,7 @@ UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_InventoryItem* Item)
 #endif
 
 	AActor* OwningActor = OwnerComponent->GetOwner();
-	check(OwningActor->HasAuthority());
+	if (!OwningActor || !OwningActor->HasAuthority()) return nullptr; // C4: 안전한 early return
 
 	UInv_InventoryComponent* IC = Cast<UInv_InventoryComponent>(OwnerComponent);
 	UInv_LootContainerComponent* ContainerComp = nullptr;
@@ -570,14 +571,8 @@ void FInv_InventoryFastArray::RemoveEntry(UInv_InventoryItem* Item)
 
 void FInv_InventoryFastArray::ClearAllEntries()
 {
-	// 역순으로 제거 (인덱스 안정성)
-	for (int32 i = Entries.Num() - 1; i >= 0; --i)
-	{
-		if (IsValid(Entries[i].Item))
-		{
-			Entries.RemoveAt(i);
-		}
-	}
+	// B3: nullptr 엔트리도 포함하여 모든 엔트리 제거 (기존: IsValid 체크로 nullptr 엔트리 누락)
+	Entries.Empty();
 	MarkArrayDirty();
 	RebuildItemTypeIndex();
 }

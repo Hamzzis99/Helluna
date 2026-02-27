@@ -1186,6 +1186,11 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 							}
 						}
 					}
+					else
+					{
+						// [W2] LobbyTargetGrid 미설정 경고 — HellunaLobbyStashWidget::InitializePanels에서 SetLobbyTargetGrid 필요
+						UE_LOG(LogTemp, Warning, TEXT("[InventoryGrid] W2 - LobbyTargetGrid 미설정 (Shift+RMB 전송). 용량 체크 없이 전송 진행"));
+					}
 
 					OnLobbyTransferRequested.Broadcast(RepID);
 				}
@@ -1271,9 +1276,20 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 //우클릭 팝업을 생성하는 함수를 만드는 부분. (아이템 디테일 부분들)
 void UInv_InventoryGrid::CreateItemPopUp(const int32 GridIndex)
 {
-	UInv_InventoryItem* RightClickedItem = GridSlots[GridIndex]->GetInventoryItem().Get();
+	if (!GridSlots.IsValidIndex(GridIndex)) return;
+
+	// B9: 대형 아이템의 서브셀 클릭 시 UpperLeft 기준으로 보정 (중복 팝업 방지)
+	const int32 UpperLeft = GridSlots[GridIndex]->GetUpperLeftIndex();
+	const int32 LookupIndex = (UpperLeft >= 0 && GridSlots.IsValidIndex(UpperLeft)) ? UpperLeft : GridIndex;
+	UInv_InventoryItem* RightClickedItem = GridSlots[LookupIndex]->GetInventoryItem().Get();
 	if (!IsValid(RightClickedItem)) return; //오른쪽 클릭을 확인했을 때.
-	if (IsValid(GridSlots[GridIndex]->GetItemPopUp())) return; // 이미 팝업이 있다면 리턴
+	if (IsValid(GridSlots[LookupIndex]->GetItemPopUp())) return; // 이미 팝업이 있다면 리턴
+
+	// 기존 팝업이 있으면 정리 (다른 아이템의 팝업)
+	if (IsValid(ItemPopUp))
+	{
+		ItemPopUp->RemoveFromParent();
+	}
 
 	// ItemPopUpClass 미설정 방어
 	if (!ItemPopUpClass)
@@ -1283,7 +1299,7 @@ void UInv_InventoryGrid::CreateItemPopUp(const int32 GridIndex)
 	}
 
 	ItemPopUp = CreateWidget<UInv_ItemPopUp>(this, ItemPopUpClass); // 팝업 위젯 생성
-	GridSlots[GridIndex]->SetItemPopUp(ItemPopUp);
+	GridSlots[LookupIndex]->SetItemPopUp(ItemPopUp); // B9: UpperLeft 슬롯에 팝업 설정
 
 	// 팝업을 캔버스에 추가 — OwningCanvasPanel이 없으면 자체 CanvasPanel 사용 (로비 듀얼 Grid 대응)
 	UCanvasPanel* TargetCanvas = OwningCanvasPanel.IsValid() ? OwningCanvasPanel.Get() : CanvasPanel.Get();
@@ -1297,11 +1313,11 @@ void UInv_InventoryGrid::CreateItemPopUp(const int32 GridIndex)
 	CanvasSlot->SetPosition(LocalMousePos - ItemPopUpOffset); // 캔버스 로컬 좌표에 팝업 위치 설정
 	CanvasSlot->SetSize(ItemPopUp->GetBoxSize());
 	
-	const int32 SliderMax = GridSlots[GridIndex]->GetStackCount() - 1; // 슬라이더 최대값 설정
+	const int32 SliderMax = GridSlots[LookupIndex]->GetStackCount() - 1; // B9: UpperLeft 기준 스택 수
 	if (RightClickedItem->IsStackable() && SliderMax > 0)
 	{
 		ItemPopUp->OnSplit.BindDynamic(this, &ThisClass::OnPopUpMenuSplit); // 분할 바인딩
-		ItemPopUp->SetSliderParams(SliderMax, FMath::Max(1, GridSlots[GridIndex] -> GetStackCount() / 2)); // 슬라이더 파라미터 설정
+		ItemPopUp->SetSliderParams(SliderMax, FMath::Max(1, GridSlots[LookupIndex]->GetStackCount() / 2)); // 슬라이더 파라미터 설정
 	}
 	else
 	{
@@ -1450,6 +1466,7 @@ void UInv_InventoryGrid::DropItem()
 
 	// TODO : Tell the server to actually drop the item
 	// TODO : 서버에서 실제로 아이템을 떨어뜨리도록 지시하는 일
+	if (!InventoryComponent.IsValid()) return; // C1: TWeakObjectPtr 무효 시 크래시 방지
 	InventoryComponent->Server_DropItem(HoverItem->GetInventoryItem(), HoverItem->GetStackCount()); // 서버에 아이템 드롭 요청
 	
 	ClearHoverItem();
@@ -2774,6 +2791,7 @@ void UInv_InventoryGrid::OnPopUpMenuSplit(int32 SplitAmount, int32 Index) // 아
 
 void UInv_InventoryGrid::OnPopUpMenuDrop(int32 Index) // 아이템 버리기 함수
 {
+	if (!GridSlots.IsValidIndex(Index)) return; // W1: 범위 검사
 	//어느 서버에서도 통신을 할 수 있게 만드는 부분 (리슨서버, 호스트 서버, 데디서버 등)
 	UInv_InventoryItem* RightClickedItem = GridSlots[Index]->GetInventoryItem().Get();
 	if (!IsValid(RightClickedItem)) return; // 유효한 아이템인지 확인
@@ -2783,12 +2801,14 @@ void UInv_InventoryGrid::OnPopUpMenuDrop(int32 Index) // 아이템 버리기 함
 }
 
 // 아이템 소비 상호작용 부분
-void UInv_InventoryGrid::OnPopUpMenuConsume(int32 Index) 
+void UInv_InventoryGrid::OnPopUpMenuConsume(int32 Index)
 {
+	if (!GridSlots.IsValidIndex(Index)) return; // W1: 범위 검사
 	UInv_InventoryItem* RightClickedItem = GridSlots[Index]->GetInventoryItem().Get(); // 오른쪽 클릭한 아이템 가져오기
 	if (!IsValid(RightClickedItem)) return; // 유효한 아이템인지 확인
-	
+
 	const int32 UpperLeftIndex = GridSlots[Index]->GetUpperLeftIndex(); // 그리드 슬롯의 왼쪽 위 인덱스 가져오기
+	if (!GridSlots.IsValidIndex(UpperLeftIndex)) return; // C3: INDEX_NONE(-1) 방어
 	UInv_GridSlot* UpperLeftGridSlot = GridSlots[UpperLeftIndex]; // 왼쪽 위 그리드 슬롯 가져오기
 	const int32 StackCount = UpperLeftGridSlot -> GetStackCount(); // 스택 수 가져오기
 	const int32 NewStackCount = StackCount - 1; // 새로운 스택 수 계산 <- 1개 소비하는 것
@@ -2797,6 +2817,7 @@ void UInv_InventoryGrid::OnPopUpMenuConsume(int32 Index)
 	SlottedItems.FindChecked(UpperLeftIndex)->UpdateStackCount(NewStackCount); // 슬로티드 아이템 스택 수 업데이트
 	
 	// 서버에서 내가 소모되는 것을 서버에게 알리는 부분.
+	if (!InventoryComponent.IsValid()) return; // C2: TWeakObjectPtr 무효 시 크래시 방지
 	InventoryComponent->Server_ConsumeItem(RightClickedItem);
 	
 	if (NewStackCount <= 0)
@@ -2839,6 +2860,7 @@ void UInv_InventoryGrid::OnInventoryMenuToggled(bool bOpen)
 // ════════════════════════════════════════════════════════════════
 void UInv_InventoryGrid::OnPopUpMenuAttachment(int32 Index)
 {
+	if (!GridSlots.IsValidIndex(Index)) return; // W1: 범위 검사
 	UInv_InventoryItem* RightClickedItem = GridSlots[Index]->GetInventoryItem().Get();
 	if (!IsValid(RightClickedItem)) return;
 	if (!RightClickedItem->HasAttachmentSlots()) return;
@@ -2920,6 +2942,11 @@ void UInv_InventoryGrid::OnPopUpMenuTransfer(int32 Index)
 					return;
 				}
 			}
+		}
+		else
+		{
+			// [W2] LobbyTargetGrid 미설정 경고
+			UE_LOG(LogTemp, Warning, TEXT("[InventoryGrid] W2 - LobbyTargetGrid 미설정 (PopupMenu Transfer). 용량 체크 없이 전송 진행"));
 		}
 
 		OnLobbyTransferRequested.Broadcast(RepID);
@@ -4015,6 +4042,48 @@ void UInv_InventoryGrid::SetContainerComponent(UInv_LootContainerComponent* InCo
 UInv_LootContainerComponent* UInv_InventoryGrid::GetContainerComponent() const
 {
 	return ContainerComp.Get();
+}
+
+// [B1+B2 Fix] RPC 호출용으로만 InvComp를 설정 (델리게이트 바인딩 + SyncExistingItems 스킵)
+// 컨테이너 Grid에서 사용 — 플레이어 InvComp의 델리게이트를 바인딩하면 플레이어 아이템이 표시되는 버그 방지
+void UInv_InventoryGrid::SetInventoryComponentForRPC(UInv_InventoryComponent* InComp)
+{
+	if (!IsValid(InComp)) return;
+
+	// bSkipAutoInit 경로: 지연된 ConstructGrid 실행
+	if (GridSlots.Num() == 0 && CanvasPanel)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] SetInventoryComponentForRPC → 지연된 ConstructGrid 실행"));
+		ConstructGrid();
+	}
+
+	// RPC 호출용 참조만 저장 (델리게이트 바인딩 없음, SyncExistingItems 호출 없음)
+	InventoryComponent = InComp;
+
+	UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] SetInventoryComponentForRPC 완료 → InvComp=%s (RPC전용, 델리게이트 없음)"),
+		*InComp->GetName());
+}
+
+// [B1+B2 Fix] 컨테이너 FastArray의 기존 아이템을 Grid에 동기화
+// SetInventoryComponent의 SyncExistingItems 대신, ContainerComp의 Entries를 순회
+void UInv_InventoryGrid::SyncContainerItems(UInv_LootContainerComponent* InContainerComp)
+{
+	if (!IsValid(InContainerComp)) return;
+
+	const TArray<FInv_InventoryEntry>& Entries = InContainerComp->ContainerInventoryList.Entries;
+	int32 SyncCount = 0;
+
+	for (int32 i = 0; i < Entries.Num(); ++i)
+	{
+		const FInv_InventoryEntry& Entry = Entries[i];
+		if (!IsValid(Entry.Item)) continue;
+
+		// AddItem(Item, EntryIndex) — Grid에 아이템 표시
+		AddItem(Entry.Item, i);
+		++SyncCount;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] SyncContainerItems: %d개 컨테이너 아이템 동기화 완료"), SyncCount);
 }
 
 void UInv_InventoryGrid::SetLinkedContainerGrid(UInv_InventoryGrid* OtherGrid)

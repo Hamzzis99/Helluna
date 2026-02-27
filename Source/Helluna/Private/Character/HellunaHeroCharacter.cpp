@@ -862,7 +862,12 @@ void AHellunaHeroCharacter::OnHeroDeath(AActor* DeadActor, AActor* KillerActor)
 	// Phase 9: 사체에 인벤토리 아이템 이전
 	if (IsValid(LootContainerComponent))
 	{
+		// B8: 사망 시 GetController()가 nullptr일 수 있음 (UnPossess 타이밍)
 		APlayerController* PC = Cast<APlayerController>(GetController());
+		if (!PC)
+		{
+			UE_LOG(LogHelluna, Warning, TEXT("[HeroCharacter] OnHeroDeath: GetController() nullptr — 사체에 아이템 없음 (%s)"), *GetName());
+		}
 		UInv_InventoryComponent* InvComp = PC ? PC->FindComponentByClass<UInv_InventoryComponent>() : nullptr;
 
 		if (IsValid(InvComp))

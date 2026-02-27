@@ -18,7 +18,7 @@ void UInv_ContainerWidget::NativeConstruct()
 	// TakeAll 버튼 바인딩
 	if (IsValid(Button_TakeAll))
 	{
-		Button_TakeAll->OnClicked.AddDynamic(this, &UInv_ContainerWidget::OnTakeAllClicked);
+		Button_TakeAll->OnClicked.AddUniqueDynamic(this, &UInv_ContainerWidget::OnTakeAllClicked); // B6: 중복 바인딩 방지
 	}
 }
 
@@ -54,8 +54,11 @@ void UInv_ContainerWidget::InitializePanels(
 		InContainerComp->OnContainerItemAdded.AddDynamic(ContainerGrid, &UInv_InventoryGrid::AddItem);
 		InContainerComp->OnContainerItemRemoved.AddDynamic(ContainerGrid, &UInv_InventoryGrid::RemoveItem);
 
-		// 컨테이너 Grid에 InvComp 설정 (RPC 호출용)
-		ContainerGrid->SetInventoryComponent(InPlayerComp);
+		// [B1+B2 Fix] RPC 호출용으로만 InvComp 설정 (델리게이트 바인딩 X, 플레이어 아이템 동기화 X)
+		ContainerGrid->SetInventoryComponentForRPC(InPlayerComp);
+
+		// 컨테이너의 기존 아이템을 Grid에 동기화
+		ContainerGrid->SyncContainerItems(InContainerComp);
 	}
 
 	// ═══════════════════════════════════════════

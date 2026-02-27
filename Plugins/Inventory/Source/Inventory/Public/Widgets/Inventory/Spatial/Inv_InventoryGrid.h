@@ -102,6 +102,12 @@ public:
 		meta = (DisplayName = "인벤토리 컴포넌트 수동 설정"))
 	void SetInventoryComponent(UInv_InventoryComponent* InComp);
 
+	/** [Phase 9] 컨테이너 Grid용 — InvComp 참조만 저장 (델리게이트/Sync 없음, RPC 호출용) */
+	void SetInventoryComponentForRPC(UInv_InventoryComponent* InComp);
+
+	/** [Phase 9] 컨테이너의 기존 아이템을 Grid에 동기화 */
+	void SyncContainerItems(UInv_LootContainerComponent* ContainerComp);
+
 	/** NativeOnInitialized에서 자동 바인딩을 건너뛸지 여부 */
 	UFUNCTION(BlueprintCallable, Category = "인벤토리|로비",
 		meta = (DisplayName = "자동 초기화 스킵 설정"))

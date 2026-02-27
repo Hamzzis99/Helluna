@@ -26,10 +26,10 @@ void UHellunaChatWidget::NativeConstruct()
 		Border_InputArea->SetVisibility(ESlateVisibility::Collapsed);
 	}
 
-	// TextBox_Input의 OnTextCommitted 바인딩
+	// TextBox_Input의 OnTextCommitted 바인딩 (B6: NativeConstruct 중복 호출 대비 AddUniqueDynamic)
 	if (TextBox_Input)
 	{
-		TextBox_Input->OnTextCommitted.AddDynamic(this, &UHellunaChatWidget::OnChatTextCommitted);
+		TextBox_Input->OnTextCommitted.AddUniqueDynamic(this, &UHellunaChatWidget::OnChatTextCommitted);
 	}
 
 	bChatInputActive = false;
@@ -151,8 +151,18 @@ void UHellunaChatWidget::OnReceiveChatMessage(const FChatMessage& ChatMessage)
 		}
 	}
 
-	// 스크롤을 맨 아래로
-	ScrollBox_Messages->ScrollToEnd();
+	// W5: 스크롤을 맨 아래로 (같은 프레임에서는 새 자식의 지오메트리 미계산 → 다음 틱으로 지연)
+	if (UWorld* World = GetWorld())
+	{
+		TWeakObjectPtr<UScrollBox> WeakScrollBox = ScrollBox_Messages;
+		World->GetTimerManager().SetTimerForNextTick([WeakScrollBox]()
+		{
+			if (WeakScrollBox.IsValid())
+			{
+				WeakScrollBox->ScrollToEnd();
+			}
+		});
+	}
 }
 
 UTextBlock* UHellunaChatWidget::CreateMessageTextBlock(const FChatMessage& ChatMessage)
