@@ -120,6 +120,11 @@ void AHellunaDefenseGameMode::InitializeGame()
     // 낮/밤 사이클 시작
     EnterDay();
 
+    // [Phase 8 TODO] EnterDay() 이후, 전원 사망 체크 타이머 시작
+    // @author 김기현
+    // GetWorldTimerManager().SetTimer(TimerHandle_CheckGameEnd, this,
+    //     &AHellunaDefenseGameMode::CheckGameEndConditions, 0.5f, true);
+
     // 자동저장 타이머 시작
     StartAutoSave();
 }
@@ -265,7 +270,12 @@ void AHellunaDefenseGameMode::TrySummonBoss()
     Param.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
 
     APawn* Boss = GetWorld()->SpawnActor<APawn>(BossClass, SpawnLoc, TP->GetActorRotation(), Param);
-    if (Boss) bBossReady = false;
+    if (Boss)
+    {
+        // [Phase 8 TODO] 보스 참조 저장: CurrentBoss = Boss;
+        // @author 김기현
+        bBossReady = false;
+    }
 }
 
 void AHellunaDefenseGameMode::SetBossReady(bool bReady)
@@ -402,6 +412,10 @@ void AHellunaDefenseGameMode::EndGame(EHellunaGameEndReason Reason)
     }
 
     bGameEnded = true;
+
+    // [Phase 8 TODO] 전원 사망 체크 타이머 정지
+    // @author 김기현
+    // GetWorldTimerManager().ClearTimer(TimerHandle_CheckGameEnd);
 
     UE_LOG(LogHelluna, Warning, TEXT(""));
     UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
@@ -594,3 +608,53 @@ void AHellunaDefenseGameMode::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
     Super::EndPlay(EndPlayReason);
 }
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 8 TODO] 게임 종료 조건 자동화 — 구현 예정 함수들
+// @author 김기현
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// ── OnBossKilled() ──
+// 보스 사망 시 호출 (HellunaEnemyCharacter::OnMonsterDeath에서 호출)
+//
+// void AHellunaDefenseGameMode::OnBossKilled()
+// {
+//     if (!HasAuthority() || bGameEnded) return;
+//     CurrentBoss = nullptr;
+//     UE_LOG(LogHelluna, Warning, TEXT("[Phase8] 보스 처치 → EndGame(Escaped)"));
+//     EndGame(EHellunaGameEndReason::Escaped);
+// }
+//
+// ── AreAllPlayersDead() ──
+// 모든 플레이어의 HellunaHealthComponent::IsDead()를 확인
+//
+// bool AHellunaDefenseGameMode::AreAllPlayersDead() const
+// {
+//     int32 Total = 0, Dead = 0;
+//     for (auto It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+//     {
+//         APlayerController* PC = It->Get();
+//         if (!IsValid(PC)) continue;
+//         APawn* Pawn = PC->GetPawn();
+//         if (!IsValid(Pawn)) continue;
+//         Total++;
+//         auto* HC = Pawn->FindComponentByClass<UHellunaHealthComponent>();
+//         if (HC && HC->IsDead()) Dead++;
+//     }
+//     return Total > 0 && Dead == Total;
+// }
+//
+// ── CheckGameEndConditions() ──
+// 0.5초 타이머 콜백: 전원 사망 → EndGame(AllDead)
+//
+// void AHellunaDefenseGameMode::CheckGameEndConditions()
+// {
+//     if (!HasAuthority() || bGameEnded) return;
+//     if (AreAllPlayersDead())
+//     {
+//         UE_LOG(LogHelluna, Warning, TEXT("[Phase8] 전원 사망 → EndGame(AllDead)"));
+//         EndGame(EHellunaGameEndReason::AllDead);
+//     }
+// }
+//
+// ════════════════════════════════════════════════════════════════════════════════

@@ -255,6 +255,24 @@ void AHellunaEnemyCharacter::OnMonsterDeath(AActor* DeadActor, AActor* KillerAct
 	{
 		STComp->SendStateTreeEvent(DeathTag);
 	}
+
+	// ════════════════════════════════════════════════════════════════════════════
+	// [Phase 8 TODO] GameMode에 사망 알림 + 보스 사망 감지
+	// @author 김기현
+	// ────────────────────────────────────────────────────────────────────────────
+	// 아래 코드를 이 위치에 추가하면 보스 처치 / 전원 사망 시 자동 EndGame 가능.
+	//
+	// if (AHellunaDefenseGameMode* GM = Cast<AHellunaDefenseGameMode>(GetWorld()->GetAuthGameMode()))
+	// {
+	//     GM->NotifyMonsterDied(this);  // 기존 함수: AliveMonsterCount 감소
+	//
+	//     // 보스 사망 감지 (보스 소환 시 GM->CurrentBoss에 저장됨)
+	//     if (GM->GetCurrentBoss() == this)
+	//     {
+	//         GM->OnBossKilled();  // → EndGame(Escaped) 호출
+	//     }
+	// }
+	// ════════════════════════════════════════════════════════════════════════════
 }
 
 

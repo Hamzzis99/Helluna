@@ -173,6 +173,36 @@ protected:
 	void TrySummonBoss();
 
 	// ════════════════════════════════════════════════════════════════════════════════
+	// [Phase 8 TODO] 게임 종료 조건 자동화 — 보스 처치 / 전원 사망
+	// @author 김기현
+	// ────────────────────────────────────────────────────────────────────────────────
+	//
+	// 현재 게임 종료는 콘솔 커맨드(EndGame Escaped / EndGame AllDead)로만 가능함.
+	// Phase 8에서는 보스 처치 및 전원 사망 시 자동으로 EndGame()을 호출하는 Hook 추가 예정.
+	//
+	// ── 추가할 멤버 변수 ──
+	//   TObjectPtr<APawn> CurrentBoss = nullptr;     // 현재 활성 보스 (소환 시 설정, 사망 시 nullptr)
+	//   FTimerHandle TimerHandle_CheckGameEnd;        // 전원 사망 체크 타이머
+	//
+	// ── 추가할 public 함수 ──
+	//   void OnBossKilled();                          // 보스 사망 시 호출 → EndGame(Escaped)
+	//   bool AreAllPlayersDead() const;               // 전체 플레이어 사망 여부 (HealthComponent::IsDead 사용)
+	//   APawn* GetCurrentBoss() const;                // CurrentBoss getter (EnemyCharacter에서 비교용)
+	//
+	// ── 추가할 protected 함수 ──
+	//   void CheckGameEndConditions();                // 0.5초 타이머 콜백 → AreAllPlayersDead() → EndGame(AllDead)
+	//
+	// ── 기존 함수 수정 ──
+	//   TrySummonBoss()    : SpawnActor 성공 후 CurrentBoss = Boss; 추가
+	//   InitializeGame()   : EnterDay() 이후 0.5초 주기 타이머 시작 (CheckGameEndConditions)
+	//   EndGame()          : bGameEnded = true 직후 TimerHandle_CheckGameEnd 정지
+	//
+	// ── EnemyCharacter 쪽 수정 (OnMonsterDeath 끝에 추가) ──
+	//   → HellunaEnemyCharacter.cpp 참조
+	//
+	// ════════════════════════════════════════════════════════════════════════════════
+
+	// ════════════════════════════════════════════════════════════════════════════════
 	// Phase 7: 게임 종료 + 결과 반영 + 로비 복귀
 	// ════════════════════════════════════════════════════════════════════════════════
 public:
