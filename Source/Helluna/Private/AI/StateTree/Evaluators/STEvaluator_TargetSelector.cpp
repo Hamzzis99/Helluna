@@ -132,4 +132,10 @@ void FSTEvaluator_TargetSelector::Tick(FStateTreeExecutionContext& Context, cons
 
 		const_cast<AAIController*>(AIController)->SetFocus(NearestPlayer);
 	}
+	else
+	{
+		// 플레이어 없음 → 우주선 타겟 거리 갱신
+		if (TargetData.TargetActor.IsValid())
+			TargetData.DistanceToTarget = FVector::Dist(PawnLocation, TargetData.TargetActor->GetActorLocation());
+	}
 }
