@@ -67,6 +67,16 @@ protected:
 	void LoadStashToComponent(AHellunaLobbyController* LobbyPC, const FString& PlayerId);
 
 	/**
+	 * [Fix21] SQLite에서 Loadout 로드 → LoadoutComp에 RestoreFromSaveData
+	 * 게임 생존 후 복귀 시 Loadout 아이템을 LoadoutComp에 복원
+	 * 로드 완료 후 player_loadout 삭제 (Logout 시 중복 방지)
+	 *
+	 * @param LobbyPC  대상 로비 컨트롤러
+	 * @param PlayerId 플레이어 고유 ID
+	 */
+	void LoadLoadoutToComponent(AHellunaLobbyController* LobbyPC, const FString& PlayerId);
+
+	/**
 	 * 현재 StashComp + LoadoutComp 상태를 SQLite에 저장
 	 *
 	 * @param LobbyPC  대상 로비 컨트롤러
