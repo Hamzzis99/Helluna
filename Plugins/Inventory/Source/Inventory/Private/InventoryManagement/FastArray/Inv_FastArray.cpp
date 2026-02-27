@@ -2,6 +2,7 @@
 
 #include "Inventory.h"  // INV_DEBUG_INVENTORY 매크로 정의
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
+#include "InventoryManagement/Components/Inv_LootContainerComponent.h"
 #include "Items/Inv_InventoryItem.h"
 #include "Items/Components/Inv_ItemComponent.h"
 #include "Items/Fragments/Inv_AttachmentFragments.h"
@@ -21,8 +22,14 @@ TArray<UInv_InventoryItem*> FInv_InventoryFastArray::GetAllItems() const
 
 void FInv_InventoryFastArray::PreReplicatedRemove(const TArrayView<int32> RemovedIndices, int32 FinalSize)
 {
+	// ⭐ [Phase 9] OwnerComponent가 InventoryComponent 또는 LootContainerComponent인지 분기
 	UInv_InventoryComponent* IC = Cast<UInv_InventoryComponent>(OwnerComponent);
-	if (!IsValid(IC)) return;
+	UInv_LootContainerComponent* ContainerComp = nullptr;
+	if (!IsValid(IC))
+	{
+		ContainerComp = Cast<UInv_LootContainerComponent>(OwnerComponent);
+		if (!IsValid(ContainerComp)) return;
+	}
 
 #if INV_DEBUG_INVENTORY
 	// 🔍 [진단] PreReplicatedRemove 호출 컨텍스트
@@ -65,11 +72,19 @@ void FInv_InventoryFastArray::PreReplicatedRemove(const TArrayView<int32> Remove
 #endif
 
 			// ⭐ OnItemRemoved 델리게이트 브로드캐스트 (모든 아이템)
-			IC->OnItemRemoved.Broadcast(RemovedItem, Index);
+			if (IsValid(IC))
+			{
+				IC->OnItemRemoved.Broadcast(RemovedItem, Index);
+			}
+			else if (IsValid(ContainerComp))
+			{
+				// [Phase 9] 컨테이너 아이템 제거 델리게이트
+				ContainerComp->OnContainerItemRemoved.Broadcast(RemovedItem, Index);
+			}
 
 			// ⭐⭐⭐ Stackable 아이템만 OnMaterialStacksChanged 호출!
 			// Non-stackable(장비)은 UpdateMaterialStacksByTag 실행 안 함 (GameplayTag 기반 삭제 방지)
-			if (RemovedItem->IsStackable())
+			if (IsValid(IC) && RemovedItem->IsStackable())
 			{
 				IC->OnMaterialStacksChanged.Broadcast(ItemType);
 #if INV_DEBUG_INVENTORY
@@ -77,7 +92,7 @@ void FInv_InventoryFastArray::PreReplicatedRemove(const TArrayView<int32> Remove
 #endif
 			}
 #if INV_DEBUG_INVENTORY
-			else
+			else if (IsValid(IC))
 			{
 				UE_LOG(LogTemp, Warning, TEXT("✅ OnItemRemoved 브로드캐스트 완료 (Non-stackable, OnMaterialStacksChanged 스킵)"));
 			}
@@ -100,13 +115,20 @@ void FInv_InventoryFastArray::PreReplicatedRemove(const TArrayView<int32> Remove
 
 void FInv_InventoryFastArray::PostReplicatedAdd(const TArrayView<int32> AddedIndices, int32 FinalSize)
 {
+	// ⭐ [Phase 9] OwnerComponent 이중 캐스트
 	UInv_InventoryComponent* IC = Cast<UInv_InventoryComponent>(OwnerComponent);
-	if (!IsValid(IC)) return;
+	UInv_LootContainerComponent* ContainerComp = nullptr;
+	if (!IsValid(IC))
+	{
+		ContainerComp = Cast<UInv_LootContainerComponent>(OwnerComponent);
+		if (!IsValid(ContainerComp)) return;
+	}
 
-	// [진단] PostReplicatedAdd 시점의 InventoryComponent 주소
-	UE_LOG(LogTemp, Error, TEXT("[PostRepAdd진단] IC=%p, Entries=%d, AddedIndices=%d, Owner=%s"),
-		IC, Entries.Num(), AddedIndices.Num(),
-		IC->GetOwner() ? *IC->GetOwner()->GetName() : TEXT("nullptr"));
+	// [진단] PostReplicatedAdd 시점 Owner 정보
+	AActor* DiagOwner = IsValid(IC) ? IC->GetOwner() : (IsValid(ContainerComp) ? ContainerComp->GetOwner() : nullptr);
+	UE_LOG(LogTemp, Error, TEXT("[PostRepAdd진단] IC=%p, ContainerComp=%p, Entries=%d, AddedIndices=%d, Owner=%s"),
+		IC, ContainerComp, Entries.Num(), AddedIndices.Num(),
+		DiagOwner ? *DiagOwner->GetName() : TEXT("nullptr"));
 
 #if INV_DEBUG_INVENTORY
 	UE_LOG(LogTemp, Warning, TEXT("=== PostReplicatedAdd 호출됨! (FastArray) ==="));
@@ -180,7 +202,15 @@ void FInv_InventoryFastArray::PostReplicatedAdd(const TArrayView<int32> AddedInd
 			continue;
 		}
 
-		IC->OnItemAdded.Broadcast(Entries[Index].Item, Index);
+		// ⭐ [Phase 9] InventoryComponent 또는 LootContainerComponent 분기
+		if (IsValid(IC))
+		{
+			IC->OnItemAdded.Broadcast(Entries[Index].Item, Index);
+		}
+		else if (IsValid(ContainerComp))
+		{
+			ContainerComp->OnContainerItemAdded.Broadcast(Entries[Index].Item, Index);
+		}
 	}
 
 	RebuildItemTypeIndex(); // ⚠️ 클라이언트 인덱스 캐시 동기화
@@ -192,8 +222,14 @@ void FInv_InventoryFastArray::PostReplicatedAdd(const TArrayView<int32> AddedInd
 
 void FInv_InventoryFastArray::PostReplicatedChange(const TArrayView<int32> ChangedIndices, int32 FinalSize)
 {
+	// ⭐ [Phase 9] OwnerComponent 이중 캐스트
 	UInv_InventoryComponent* IC = Cast<UInv_InventoryComponent>(OwnerComponent);
-	if (!IsValid(IC)) return;
+	UInv_LootContainerComponent* ContainerComp = nullptr;
+	if (!IsValid(IC))
+	{
+		ContainerComp = Cast<UInv_LootContainerComponent>(OwnerComponent);
+		if (!IsValid(ContainerComp)) return;
+	}
 
 #if INV_DEBUG_INVENTORY
 	// 🔍 [진단] PostReplicatedChange 호출 컨텍스트
@@ -278,10 +314,24 @@ void FInv_InventoryFastArray::PostReplicatedChange(const TArrayView<int32> Chang
 		if (Entries[Index].bIsAttachedToWeapon)
 		{
 			// 부착됨 → 그리드에서 제거
-			IC->OnItemRemoved.Broadcast(ChangedItem, Index);
+			if (IsValid(IC))
+			{
+				IC->OnItemRemoved.Broadcast(ChangedItem, Index);
+			}
+			else if (IsValid(ContainerComp))
+			{
+				ContainerComp->OnContainerItemRemoved.Broadcast(ChangedItem, Index);
+			}
 #if INV_DEBUG_ATTACHMENT
 			UE_LOG(LogTemp, Log, TEXT("[PostReplicatedChange] Entry[%d] bIsAttachedToWeapon=true → OnItemRemoved (그리드에서 숨김)"), Index);
 #endif
+			continue;
+		}
+
+		// ⭐ [Phase 9] 컨테이너에서는 간단하게 OnContainerItemAdded 브로드캐스트 (카테고리 구분 불필요)
+		if (IsValid(ContainerComp))
+		{
+			ContainerComp->OnContainerItemAdded.Broadcast(ChangedItem, Index);
 			continue;
 		}
 
@@ -353,7 +403,13 @@ UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_ItemComponent* ItemCo
 	AActor* OwningActor = OwnerComponent->GetOwner(); // 소유자 확보
 	check(OwningActor->HasAuthority()); // 권한이 있는지 확인
 	UInv_InventoryComponent* IC = Cast<UInv_InventoryComponent>(OwnerComponent); // 소유자 컴포넌트를 인벤토리 컴포넌트로 캐스팅
-	if (!IsValid(IC)) return nullptr;
+	UInv_LootContainerComponent* ContainerComp = nullptr;
+	if (!IsValid(IC))
+	{
+		// [Phase 9] LootContainerComponent에서 호출된 경우
+		ContainerComp = Cast<UInv_LootContainerComponent>(OwnerComponent);
+		if (!IsValid(ContainerComp)) return nullptr;
+	}
 
 #if INV_DEBUG_INVENTORY
 	// ★ [Phase8진단] ItemComponent의 원본 Manifest에서 SlotPosition 확인 ★
@@ -406,7 +462,18 @@ UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_ItemComponent* ItemCo
 	}
 #endif
 
-	IC->AddRepSubObj(NewEntry.Item); // 복제 하위 객체로 항목 추가
+	// [Phase 9] InventoryComponent 또는 LootContainerComponent에 리플리케이션 서브오브젝트 등록
+	if (IsValid(IC))
+	{
+		IC->AddRepSubObj(NewEntry.Item);
+	}
+	else if (IsValid(ContainerComp))
+	{
+		if (ContainerComp->IsUsingRegisteredSubObjectList() && ContainerComp->IsReadyForReplication() && IsValid(NewEntry.Item))
+		{
+			ContainerComp->AddReplicatedSubObject(NewEntry.Item);
+		}
+	}
 	MarkItemDirty(NewEntry); // 복제되어야 함을 알려주는 것.
 	RebuildItemTypeIndex(); // ⭐ [최적화 #4] 인덱스 캐시 재구축
 
@@ -427,9 +494,15 @@ UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_InventoryItem* Item)
 
 	AActor* OwningActor = OwnerComponent->GetOwner();
 	check(OwningActor->HasAuthority());
-	
+
 	UInv_InventoryComponent* IC = Cast<UInv_InventoryComponent>(OwnerComponent);
-	if (!IsValid(IC)) return nullptr;
+	UInv_LootContainerComponent* ContainerComp = nullptr;
+	if (!IsValid(IC))
+	{
+		// [Phase 9] LootContainerComponent에서 호출된 경우
+		ContainerComp = Cast<UInv_LootContainerComponent>(OwnerComponent);
+		if (!IsValid(ContainerComp)) return nullptr;
+	}
 
 	FInv_InventoryEntry& NewEntry = Entries.AddDefaulted_GetRef();
 	NewEntry.Item = Item;
@@ -440,7 +513,18 @@ UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_InventoryItem* Item)
 		NewEntry.Item->SetTotalStackCount(1);
 	}
 
-	IC->AddRepSubObj(NewEntry.Item); // 리플리케이션 등록 (크래프팅 아이템도 클라이언트로 전송!)
+	// [Phase 9] 리플리케이션 등록 분기
+	if (IsValid(IC))
+	{
+		IC->AddRepSubObj(NewEntry.Item);
+	}
+	else if (IsValid(ContainerComp))
+	{
+		if (ContainerComp->IsUsingRegisteredSubObjectList() && ContainerComp->IsReadyForReplication() && IsValid(NewEntry.Item))
+		{
+			ContainerComp->AddReplicatedSubObject(NewEntry.Item);
+		}
+	}
 	MarkItemDirty(NewEntry);
 	RebuildItemTypeIndex(); // ⭐ [최적화 #4] 인덱스 캐시 재구축
 
@@ -466,6 +550,14 @@ void FInv_InventoryFastArray::RemoveEntry(UInv_InventoryItem* Item)
 			if (UInv_InventoryComponent* IC = Cast<UInv_InventoryComponent>(OwnerComponent))
 			{
 				IC->RemoveRepSubObj(Item);
+			}
+			// [Phase 9] LootContainerComponent에서도 서브오브젝트 해제
+			else if (UInv_LootContainerComponent* CC = Cast<UInv_LootContainerComponent>(OwnerComponent))
+			{
+				if (CC->IsUsingRegisteredSubObjectList() && IsValid(Item))
+				{
+					CC->RemoveReplicatedSubObject(Item);
+				}
 			}
 
 			EntryIt.RemoveCurrent(); // 현재 항목 제거

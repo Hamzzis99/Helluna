@@ -20,6 +20,7 @@ class UHelluna_FindResourceComponent;
 class UWeaponBridgeComponent;
 class AHeroWeapon_GunBase;
 class UHellunaHealthComponent;
+class UInv_LootContainerComponent;
 
 /**
  * 
@@ -205,6 +206,11 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Component",
 		meta = (DisplayName = "체력 컴포넌트"))
 	TObjectPtr<UHellunaHealthComponent> HeroHealthComponent = nullptr;
+
+	/** Phase 9: 사체 루팅용 컨테이너 (사망 시 아이템 이전) */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Component",
+		meta = (DisplayName = "루트 컨테이너 컴포넌트"))
+	TObjectPtr<UInv_LootContainerComponent> LootContainerComponent = nullptr;
 
 	UFUNCTION()
 	void OnHeroHealthChanged(UActorComponent* HealthComp, float OldHealth, float NewHealth, AActor* InstigatorActor);

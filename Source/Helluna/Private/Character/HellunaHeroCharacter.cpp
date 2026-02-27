@@ -36,6 +36,7 @@
 #include "DebugHelper.h"
 #include "Animation/AnimInstance.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
+#include "InventoryManagement/Components/Inv_LootContainerComponent.h"
 
 
 AHellunaHeroCharacter::AHellunaHeroCharacter()
@@ -73,6 +74,12 @@ AHellunaHeroCharacter::AHellunaHeroCharacter()
 
 	// ★ 추가: 플레이어 체력 컴포넌트
 	HeroHealthComponent = CreateDefaultSubobject<UHellunaHealthComponent>(TEXT("HeroHealthComponent"));
+
+	// Phase 9: 사체 루팅용 컨테이너 (비활성 상태로 생성, 사망 시 Activate)
+	LootContainerComponent = CreateDefaultSubobject<UInv_LootContainerComponent>(TEXT("LootContainerComponent"));
+	LootContainerComponent->bActivated = false;
+	LootContainerComponent->bDestroyOwnerWhenEmpty = false;
+	LootContainerComponent->ContainerDisplayName = FText::FromString(TEXT("사체"));
 }
 
 void AHellunaHeroCharacter::BeginPlay()
@@ -850,6 +857,49 @@ void AHellunaHeroCharacter::OnHeroDeath(AActor* DeadActor, AActor* KillerActor)
 	if (DeathMontage)
 	{
 		Multicast_PlayHeroDeath();
+	}
+
+	// Phase 9: 사체에 인벤토리 아이템 이전
+	if (IsValid(LootContainerComponent))
+	{
+		APlayerController* PC = Cast<APlayerController>(GetController());
+		UInv_InventoryComponent* InvComp = PC ? PC->FindComponentByClass<UInv_InventoryComponent>() : nullptr;
+
+		if (IsValid(InvComp))
+		{
+			// 인벤토리 데이터 수집
+			TArray<FInv_SavedItemData> CollectedItems = InvComp->CollectInventoryDataForSave();
+
+			if (CollectedItems.Num() > 0)
+			{
+				// GameMode에서 Resolver 생성
+				AHellunaBaseGameMode* GM = Cast<AHellunaBaseGameMode>(UGameplayStatics::GetGameMode(GetWorld()));
+				if (IsValid(GM))
+				{
+					FInv_ItemTemplateResolver Resolver;
+					Resolver.BindLambda([GM](const FGameplayTag& ItemType) -> UInv_ItemComponent*
+					{
+						TSubclassOf<AActor> ActorClass = GM->ResolveItemClass(ItemType);
+						if (!ActorClass) return nullptr;
+						AActor* CDO = ActorClass->GetDefaultObject<AActor>();
+						return CDO ? CDO->FindComponentByClass<UInv_ItemComponent>() : nullptr;
+					});
+
+					LootContainerComponent->InitializeWithItems(CollectedItems, Resolver);
+				}
+			}
+
+			// 컨테이너 활성화
+			LootContainerComponent->Activate();
+			LootContainerComponent->SetContainerDisplayName(
+				FText::FromString(FString::Printf(TEXT("%s의 사체"), *GetName())));
+
+			// 사체 유지 (LifeSpan=0 → 파괴하지 않음)
+			SetLifeSpan(0.f);
+
+			UE_LOG(LogTemp, Log, TEXT("[HeroCharacter] OnHeroDeath: %s → 사체 컨테이너 활성화 (%d아이템)"),
+				*GetName(), CollectedItems.Num());
+		}
 	}
 }
 

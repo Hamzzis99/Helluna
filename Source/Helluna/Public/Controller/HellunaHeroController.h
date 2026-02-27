@@ -10,6 +10,9 @@
 class UVoteWidget;
 class UVoteManagerComponent;
 class UHellunaGameResultWidget;
+class UHellunaChatWidget;
+class UInputAction;
+class UInputMappingContext;
 
 /**
  * @brief   Helluna 영웅 전용 PlayerController
@@ -51,6 +54,24 @@ public:
 	UFUNCTION(Server, Reliable)
 	void Server_SubmitVote(bool bAgree);
 
+	// =========================================================================================
+	// [Phase 10] 채팅 시스템 Server RPC
+	// =========================================================================================
+
+	/**
+	 * 채팅 메시지 전송 Server RPC (클라이언트 → 서버)
+	 * @param Message  전송할 메시지 (1~200자)
+	 */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_SendChatMessage(const FString& Message);
+
+	/**
+	 * 채팅 입력 토글 (BP에서도 호출 가능)
+	 * Enter 키 입력 시 호출 → 위젯의 입력창 활성/비활성 전환
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Chat (채팅)")
+	void ToggleChatInput();
+
 protected:
 	virtual void BeginPlay() override;
 
@@ -64,6 +85,25 @@ protected:
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Vote|UI", meta = (DisplayName = "Vote Widget Class (투표 위젯 클래스)"))
 	TSubclassOf<UVoteWidget> VoteWidgetClass;
+
+	// =========================================================================================
+	// [Phase 10] 채팅 위젯 설정
+	// =========================================================================================
+
+	/** 채팅 위젯 클래스 (BP에서 WBP_HellunaChatWidget 지정) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Chat|UI (채팅|UI)",
+		meta = (DisplayName = "Chat Widget Class (채팅 위젯 클래스)"))
+	TSubclassOf<UHellunaChatWidget> ChatWidgetClass;
+
+	/** 채팅 토글 입력 액션 (Enter 키에 매핑된 IA 에셋) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Chat|Input (채팅|입력)",
+		meta = (DisplayName = "Chat Toggle Action (채팅 토글 액션)"))
+	TObjectPtr<UInputAction> ChatToggleAction;
+
+	/** 채팅 입력 매핑 컨텍스트 (Enter 키 → ChatToggleAction) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Chat|Input (채팅|입력)",
+		meta = (DisplayName = "Chat Mapping Context (채팅 입력 매핑)"))
+	TObjectPtr<UInputMappingContext> ChatMappingContext;
 
 private:
 	FGenericTeamId HeroTeamID;
@@ -81,6 +121,31 @@ private:
 	/** 생성된 투표 위젯 인스턴스 */
 	UPROPERTY()
 	TObjectPtr<UVoteWidget> VoteWidgetInstance;
+
+	// =========================================================================================
+	// [Phase 10] 채팅 시스템 내부 함수
+	// =========================================================================================
+
+	/** 채팅 위젯 초기화 (GameState 복제 대기 + 재시도) */
+	void InitializeChatWidget();
+
+	/** 채팅 위젯 초기화 타이머 핸들 */
+	FTimerHandle ChatWidgetInitTimerHandle;
+
+	/** 생성된 채팅 위젯 인스턴스 */
+	UPROPERTY()
+	TObjectPtr<UHellunaChatWidget> ChatWidgetInstance;
+
+	/** 채팅 입력 핸들러 (Enhanced Input에서 호출) */
+	void OnChatToggleInput(const struct FInputActionValue& Value);
+
+	/** 위젯에서 메시지 제출 시 콜백 */
+	UFUNCTION()
+	void OnChatMessageSubmitted(const FString& Message);
+
+	/** 스팸 방지: 마지막 메시지 시간 (서버 전용) */
+	double LastChatMessageTime = 0.0;
+	static constexpr double ChatCooldownSeconds = 0.5;
 
 	// =========================================================================================
 	// [디버그] 서버 치트 RPC — 클라이언트에서 서버 GameMode 함수 호출 (김기현)

@@ -14,6 +14,7 @@
 // ════════════════════════════════════════════════════════════════
 
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
+#include "InventoryManagement/Components/Inv_LootContainerComponent.h"
 
 #include "Inventory.h"  // INV_DEBUG_INVENTORY 매크로 정의
 #include "Items/Components/Inv_ItemComponent.h"
@@ -3375,4 +3376,260 @@ int32 UInv_InventoryComponent::FindValidItemIndexByReplicationID(int32 InReplica
 		}
 	}
 	return INDEX_NONE;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 9] 컨테이너 아이템 전송 RPC 구현
+// ════════════════════════════════════════════════════════════════════════════════
+
+// ⚠️ Fix18 준수: Validate에서 UObject IsValid() 금지, 값 타입만 검증
+bool UInv_InventoryComponent::Server_TakeItemFromContainer_Validate(
+	UInv_LootContainerComponent* Container,
+	int32 ContainerEntryIndex,
+	int32 TargetGridIndex)
+{
+	return ContainerEntryIndex >= 0;
+}
+
+void UInv_InventoryComponent::Server_TakeItemFromContainer_Implementation(
+	UInv_LootContainerComponent* Container,
+	int32 ContainerEntryIndex,
+	int32 TargetGridIndex)
+{
+	if (!IsValid(Container)) return;
+
+	// 잠금 확인: 요청한 PC가 CurrentUser인지
+	APlayerController* PC = Cast<APlayerController>(GetOwner());
+	if (!IsValid(PC) || Container->CurrentUser != PC)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Phase 9] Server_TakeItemFromContainer: 잠금 불일치 (요청 PC != CurrentUser)"));
+		return;
+	}
+
+	// 컨테이너 FastArray에서 아이템 검색
+	FInv_InventoryFastArray& ContainerList = Container->ContainerInventoryList;
+	if (!ContainerList.Entries.IsValidIndex(ContainerEntryIndex))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Phase 9] Server_TakeItemFromContainer: 유효하지 않은 EntryIndex=%d"), ContainerEntryIndex);
+		return;
+	}
+
+	FInv_InventoryEntry& ContainerEntry = ContainerList.Entries[ContainerEntryIndex];
+	if (!IsValid(ContainerEntry.Item))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Phase 9] Server_TakeItemFromContainer: Entry[%d] Item이 nullptr"), ContainerEntryIndex);
+		return;
+	}
+
+	// 내 인벤토리에 공간 확인
+	FInv_ItemManifest Manifest = ContainerEntry.Item->GetItemManifest();
+	if (!HasRoomInInventoryList(Manifest))
+	{
+		UE_LOG(LogTemp, Log, TEXT("[Phase 9] Server_TakeItemFromContainer: 인벤토리 공간 부족"));
+		NoRoomInInventory.Broadcast();
+		return;
+	}
+
+	// 아이템 정보 캐시 (RemoveEntry 전에 복사)
+	UInv_InventoryItem* ItemToMove = ContainerEntry.Item;
+	int32 StackCount = ItemToMove->GetTotalStackCount();
+	FGameplayTag ItemType = Manifest.GetItemType();
+
+	// 내 인벤토리에 추가
+	FInv_InventoryEntry& NewEntry = InventoryList.Entries.AddDefaulted_GetRef();
+	NewEntry.Item = ItemToMove;
+
+	// Grid 위치 설정
+	if (TargetGridIndex >= 0)
+	{
+		NewEntry.GridIndex = TargetGridIndex;
+	}
+	NewEntry.GridCategory = static_cast<uint8>(Manifest.GetItemCategory());
+
+	// 리플리케이션 서브오브젝트 이전: 컨테이너에서 해제 → 내 InvComp에 등록
+	if (Container->IsUsingRegisteredSubObjectList() && IsValid(ItemToMove))
+	{
+		Container->RemoveReplicatedSubObject(ItemToMove);
+	}
+	AddRepSubObj(ItemToMove);
+
+	InventoryList.MarkItemDirty(NewEntry);
+	InventoryList.RebuildItemTypeIndex();
+
+	// 컨테이너에서 제거 (Entry만 제거, Item 객체는 유지 — 내 InvComp으로 이동했으므로)
+	ContainerList.Entries.RemoveAt(ContainerEntryIndex);
+	ContainerList.MarkArrayDirty();
+	ContainerList.RebuildItemTypeIndex();
+
+	UE_LOG(LogTemp, Log, TEXT("[Phase 9] Server_TakeItemFromContainer: %s (x%d) 가져옴"),
+		*ItemType.ToString(), StackCount);
+
+	// 리슨서버 호스트 UI 갱신
+	if (IsListenServerOrStandalone())
+	{
+		OnItemAdded.Broadcast(ItemToMove, InventoryList.Entries.Num() - 1);
+	}
+
+	// 비어있으면 파괴 (설정에 따라)
+	if (Container->bDestroyOwnerWhenEmpty && Container->IsEmpty())
+	{
+		AActor* ContainerOwner = Container->GetOwner();
+		if (IsValid(ContainerOwner))
+		{
+			ContainerOwner->Destroy();
+		}
+	}
+}
+
+bool UInv_InventoryComponent::Server_PutItemInContainer_Validate(
+	UInv_LootContainerComponent* Container,
+	int32 PlayerEntryIndex,
+	int32 TargetGridIndex)
+{
+	return PlayerEntryIndex >= 0;
+}
+
+void UInv_InventoryComponent::Server_PutItemInContainer_Implementation(
+	UInv_LootContainerComponent* Container,
+	int32 PlayerEntryIndex,
+	int32 TargetGridIndex)
+{
+	if (!IsValid(Container)) return;
+
+	// 잠금 확인
+	APlayerController* PC = Cast<APlayerController>(GetOwner());
+	if (!IsValid(PC) || Container->CurrentUser != PC)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Phase 9] Server_PutItemInContainer: 잠금 불일치"));
+		return;
+	}
+
+	// 내 FastArray에서 아이템 검색
+	if (!InventoryList.Entries.IsValidIndex(PlayerEntryIndex))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Phase 9] Server_PutItemInContainer: 유효하지 않은 EntryIndex=%d"), PlayerEntryIndex);
+		return;
+	}
+
+	FInv_InventoryEntry& PlayerEntry = InventoryList.Entries[PlayerEntryIndex];
+	if (!IsValid(PlayerEntry.Item))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Phase 9] Server_PutItemInContainer: Entry[%d] Item이 nullptr"), PlayerEntryIndex);
+		return;
+	}
+
+	// 아이템 정보 캐시
+	UInv_InventoryItem* ItemToMove = PlayerEntry.Item;
+	int32 StackCount = ItemToMove->GetTotalStackCount();
+	FGameplayTag ItemType = ItemToMove->GetItemManifest().GetItemType();
+
+	// 컨테이너에 추가
+	FInv_InventoryFastArray& ContainerList = Container->ContainerInventoryList;
+	FInv_InventoryEntry& NewEntry = ContainerList.Entries.AddDefaulted_GetRef();
+	NewEntry.Item = ItemToMove;
+
+	if (TargetGridIndex >= 0)
+	{
+		NewEntry.GridIndex = TargetGridIndex;
+	}
+
+	// 리플리케이션 서브오브젝트 이전: 내 InvComp에서 해제 → 컨테이너에 등록
+	RemoveRepSubObj(ItemToMove);
+	if (Container->IsUsingRegisteredSubObjectList() && Container->IsReadyForReplication() && IsValid(ItemToMove))
+	{
+		Container->AddReplicatedSubObject(ItemToMove);
+	}
+
+	ContainerList.MarkItemDirty(NewEntry);
+	ContainerList.RebuildItemTypeIndex();
+
+	// 내 인벤토리에서 제거
+	InventoryList.Entries.RemoveAt(PlayerEntryIndex);
+	InventoryList.MarkArrayDirty();
+	InventoryList.RebuildItemTypeIndex();
+
+	UE_LOG(LogTemp, Log, TEXT("[Phase 9] Server_PutItemInContainer: %s (x%d) 넣음"),
+		*ItemType.ToString(), StackCount);
+
+	// 리슨서버 호스트 UI 갱신
+	if (IsListenServerOrStandalone())
+	{
+		OnItemRemoved.Broadcast(ItemToMove, PlayerEntryIndex);
+	}
+}
+
+void UInv_InventoryComponent::Server_TakeAllFromContainer_Implementation(
+	UInv_LootContainerComponent* Container)
+{
+	if (!IsValid(Container)) return;
+
+	// 잠금 확인
+	APlayerController* PC = Cast<APlayerController>(GetOwner());
+	if (!IsValid(PC) || Container->CurrentUser != PC)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Phase 9] Server_TakeAllFromContainer: 잠금 불일치"));
+		return;
+	}
+
+	FInv_InventoryFastArray& ContainerList = Container->ContainerInventoryList;
+	int32 TakenCount = 0;
+
+	// 역순으로 가져오기 (인덱스 시프트 안전)
+	for (int32 i = ContainerList.Entries.Num() - 1; i >= 0; --i)
+	{
+		if (!ContainerList.Entries.IsValidIndex(i)) continue;
+
+		FInv_InventoryEntry& ContainerEntry = ContainerList.Entries[i];
+		if (!IsValid(ContainerEntry.Item)) continue;
+
+		// 공간 확인
+		FInv_ItemManifest Manifest = ContainerEntry.Item->GetItemManifest();
+		if (!HasRoomInInventoryList(Manifest))
+		{
+			UE_LOG(LogTemp, Log, TEXT("[Phase 9] Server_TakeAllFromContainer: 공간 부족으로 중단 (%d개 가져옴)"), TakenCount);
+			break;
+		}
+
+		// 아이템 이동
+		UInv_InventoryItem* ItemToMove = ContainerEntry.Item;
+
+		FInv_InventoryEntry& NewEntry = InventoryList.Entries.AddDefaulted_GetRef();
+		NewEntry.Item = ItemToMove;
+		NewEntry.GridCategory = static_cast<uint8>(Manifest.GetItemCategory());
+
+		// 리플리케이션 서브오브젝트 이전
+		if (Container->IsUsingRegisteredSubObjectList() && IsValid(ItemToMove))
+		{
+			Container->RemoveReplicatedSubObject(ItemToMove);
+		}
+		AddRepSubObj(ItemToMove);
+
+		InventoryList.MarkItemDirty(NewEntry);
+
+		// 컨테이너에서 제거
+		ContainerList.Entries.RemoveAt(i);
+		TakenCount++;
+
+		// 리슨서버 호스트 UI 갱신
+		if (IsListenServerOrStandalone())
+		{
+			OnItemAdded.Broadcast(ItemToMove, InventoryList.Entries.Num() - 1);
+		}
+	}
+
+	ContainerList.MarkArrayDirty();
+	ContainerList.RebuildItemTypeIndex();
+	InventoryList.RebuildItemTypeIndex();
+
+	UE_LOG(LogTemp, Log, TEXT("[Phase 9] Server_TakeAllFromContainer: %d개 아이템 가져옴"), TakenCount);
+
+	// 비어있으면 파괴
+	if (Container->bDestroyOwnerWhenEmpty && Container->IsEmpty())
+	{
+		AActor* ContainerOwner = Container->GetOwner();
+		if (IsValid(ContainerOwner))
+		{
+			ContainerOwner->Destroy();
+		}
+	}
 }

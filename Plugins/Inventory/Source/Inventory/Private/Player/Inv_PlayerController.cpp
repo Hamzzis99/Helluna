@@ -20,6 +20,8 @@
 #include "Items/Fragments/Inv_AttachmentFragments.h"
 #include "Widgets/Inventory/SlottedItems/Inv_EquippedSlottedItem.h"
 #include "InventoryManagement/Utils/Inv_InventoryStatics.h"
+#include "InventoryManagement/Components/Inv_LootContainerComponent.h"
+#include "Widgets/Inventory/Container/Inv_ContainerWidget.h"
 #include "Interfaces/Inv_Interface_Primary.cpp"
 
 AInv_PlayerController::AInv_PlayerController()
@@ -37,6 +39,13 @@ void AInv_PlayerController::Tick(float DeltaSeconds)
 
 void AInv_PlayerController::ToggleInventory()
 {
+	// Phase 9: 컨테이너 열려있으면 닫기
+	if (bIsViewingContainer)
+	{
+		Server_CloseContainer();
+		return;
+	}
+
 	if (!InventoryComponent.IsValid()) return;
 	InventoryComponent->ToggleInventoryMenu();
 
@@ -133,6 +142,14 @@ void AInv_PlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	UE_LOG(LogTemp, Warning, TEXT("║ HasAuthority: %s"), HasAuthority() ? TEXT("TRUE") : TEXT("FALSE"));
 	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 #endif
+
+	// Phase 9: 컨테이너 잠금 해제
+	if (ActiveContainerComp.IsValid())
+	{
+		ActiveContainerComp->ClearCurrentUser();
+		ActiveContainerComp.Reset();
+	}
+	bIsViewingContainer = false;
 
 	// ⭐ 서버에서만 처리 (인벤토리 저장 + 로그아웃)
 	if (HasAuthority())
@@ -265,6 +282,21 @@ void AInv_PlayerController::PrimaryInteract()
 {
 	if (!ThisActor.IsValid()) return;
 
+	// Phase 9: 컨테이너 상호작용
+	UInv_LootContainerComponent* ContainerComp = ThisActor->FindComponentByClass<UInv_LootContainerComponent>();
+	if (IsValid(ContainerComp))
+	{
+		if (bIsViewingContainer)
+		{
+			Server_CloseContainer();
+		}
+		else
+		{
+			Server_OpenContainer(ContainerComp);
+		}
+		return;
+	}
+
 	if (ThisActor->Implements<UInv_Interface_Primary>())
 	{
 		Server_Interact(ThisActor.Get());
@@ -394,10 +426,19 @@ void AInv_PlayerController::TraceForInteractables()
 			}
 			else
 			{
-				UInv_ItemComponent* ItemComponent = ThisActor->FindComponentByClass<UInv_ItemComponent>();
-				if (IsValid(ItemComponent))
+				// Phase 9: 컨테이너 표시 이름
+				UInv_LootContainerComponent* LootComp = ThisActor->FindComponentByClass<UInv_LootContainerComponent>();
+				if (IsValid(LootComp))
 				{
-					HUDWidget->ShowPickupMessage(ItemComponent->GetPickupMessage());
+					HUDWidget->ShowPickupMessage(LootComp->ContainerDisplayName);
+				}
+				else
+				{
+					UInv_ItemComponent* ItemComponent = ThisActor->FindComponentByClass<UInv_ItemComponent>();
+					if (IsValid(ItemComponent))
+					{
+						HUDWidget->ShowPickupMessage(ItemComponent->GetPickupMessage());
+					}
 				}
 			}
 		}
@@ -1628,4 +1669,111 @@ AInv_EquipActor* AInv_PlayerController::GetCurrentEquipActor() const
 		return EquipmentComponent->GetActiveWeaponActor();
 	}
 	return nullptr;
+}
+
+// ════════════════════════════════════════════════════════════════
+// Phase 9: 컨테이너 RPC 구현
+// ════════════════════════════════════════════════════════════════
+
+void AInv_PlayerController::Server_OpenContainer_Implementation(UInv_LootContainerComponent* Container)
+{
+	if (!IsValid(Container)) return;
+
+	// 활성화 체크
+	if (!Container->IsActivated())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Inv_PlayerController] 컨테이너 미활성화 → 열기 거부"));
+		return;
+	}
+
+	// 잠금 체크: 이미 다른 플레이어가 사용 중
+	if (IsValid(Container->CurrentUser) && Container->CurrentUser != this)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Inv_PlayerController] 컨테이너 잠금 → %s가 사용 중"),
+			*Container->CurrentUser->GetName());
+		return;
+	}
+
+	Container->SetCurrentUser(this);
+	ActiveContainerComp = Container;
+
+	Client_ShowContainerUI(Container);
+}
+
+void AInv_PlayerController::Server_CloseContainer_Implementation()
+{
+	if (ActiveContainerComp.IsValid())
+	{
+		ActiveContainerComp->ClearCurrentUser();
+		ActiveContainerComp.Reset();
+	}
+
+	Client_HideContainerUI();
+}
+
+void AInv_PlayerController::Client_ShowContainerUI_Implementation(UInv_LootContainerComponent* Container)
+{
+	if (!IsValid(Container) || !InventoryComponent.IsValid()) return;
+
+	// 일반 인벤토리 열려있으면 닫기
+	if (InventoryComponent->IsMenuOpen())
+	{
+		InventoryComponent->ToggleInventoryMenu();
+	}
+
+	// 컨테이너 위젯 생성 (최초 1회)
+	if (!IsValid(ContainerWidget))
+	{
+		if (!ContainerWidgetClass)
+		{
+			UE_LOG(LogTemp, Error, TEXT("[Inv_PlayerController] ContainerWidgetClass가 설정되지 않음"));
+			return;
+		}
+		ContainerWidget = CreateWidget<UInv_ContainerWidget>(this, ContainerWidgetClass);
+	}
+
+	if (!IsValid(ContainerWidget)) return;
+
+	ContainerWidget->InitializePanels(Container, InventoryComponent.Get());
+	ContainerWidget->AddToViewport();
+
+	bIsViewingContainer = true;
+	ActiveContainerComp = Container;
+
+	// HUD 숨기기
+	if (IsValid(HUDWidget))
+	{
+		HUDWidget->SetVisibility(ESlateVisibility::Hidden);
+	}
+
+	// 마우스 커서 표시
+	SetShowMouseCursor(true);
+	SetInputMode(FInputModeGameAndUI());
+
+	UE_LOG(LogTemp, Log, TEXT("[Inv_PlayerController] 컨테이너 UI 표시: %s"),
+		*Container->ContainerDisplayName.ToString());
+}
+
+void AInv_PlayerController::Client_HideContainerUI_Implementation()
+{
+	if (IsValid(ContainerWidget))
+	{
+		ContainerWidget->CleanupPanels();
+		ContainerWidget->RemoveFromParent();
+	}
+
+	bIsViewingContainer = false;
+	ActiveContainerComp.Reset();
+
+	// HUD 다시 표시
+	if (IsValid(HUDWidget))
+	{
+		HUDWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+
+	// 마우스 커서 숨기기
+	SetShowMouseCursor(false);
+	SetInputMode(FInputModeGameOnly());
+
+	UE_LOG(LogTemp, Log, TEXT("[Inv_PlayerController] 컨테이너 UI 닫기"));
 }

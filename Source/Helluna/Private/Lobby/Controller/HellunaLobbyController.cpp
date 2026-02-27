@@ -537,6 +537,13 @@ void AHellunaLobbyController::ShowLobbyWidget()
 			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] CharSelectPanel V2 프리뷰 설정 완료"));
 		}
 
+		// Play 탭 중앙 프리뷰 설정 (동일 RenderTarget + Scene 공유)
+		if (SpawnedPreviewSceneV2 && PreviewV2RenderTarget)
+		{
+			LobbyStashWidgetInstance->SetupCenterPreview(PreviewV2RenderTarget, SpawnedPreviewSceneV2);
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Play 탭 중앙 프리뷰 설정 완료"));
+		}
+
 		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ── ShowLobbyWidget 완료 ──"));
 		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC]   위젯 생성 성공 | 마우스 커서 ON | UI 전용 입력 모드"));
 	}

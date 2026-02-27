@@ -324,3 +324,77 @@ void AHellunaCharacterSelectSceneV2::SetCharacterSelected(int32 SelectedIndex)
 	UE_LOG(LogHelluna, Warning, TEXT("[프리뷰V2] SetCharacterSelected(%d)"), SelectedIndex);
 #endif
 }
+
+// ============================================
+// Solo 모드 — Play 탭에서 캐릭터 1개만 표시
+// ============================================
+
+void AHellunaCharacterSelectSceneV2::SetSoloCharacter(int32 CharacterIndex)
+{
+	if (CharacterIndex < 0 || CharacterIndex >= PreviewMeshes.Num())
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[프리뷰V2] SetSoloCharacter: 잘못된 인덱스 %d (캐릭터 수=%d)"), CharacterIndex, PreviewMeshes.Num());
+		return;
+	}
+
+	bSoloMode = true;
+	SoloCharacterIndex = CharacterIndex;
+
+	// 선택된 캐릭터만 Visible, 나머지 Hidden
+	for (int32 i = 0; i < PreviewMeshes.Num(); ++i)
+	{
+		if (PreviewMeshes[i])
+		{
+			PreviewMeshes[i]->SetVisibility(i == CharacterIndex);
+		}
+		if (CharacterSpotLights.IsValidIndex(i) && CharacterSpotLights[i])
+		{
+			CharacterSpotLights[i]->SetVisibility(i == CharacterIndex);
+		}
+	}
+
+	// Solo 캐릭터는 원래 위치로 복원 (전진 오프셋 없이 센터에)
+	if (PreviewMeshes.IsValidIndex(CharacterIndex) && PreviewMeshes[CharacterIndex])
+	{
+		FVector TargetLoc = OriginalLocations.IsValidIndex(CharacterIndex) ? OriginalLocations[CharacterIndex] : FVector::ZeroVector;
+		PreviewMeshes[CharacterIndex]->SetRelativeLocation(TargetLoc);
+	}
+
+	// Solo 캐릭터 스포트라이트는 최대 밝기
+	if (CharacterSpotLights.IsValidIndex(CharacterIndex) && CharacterSpotLights[CharacterIndex])
+	{
+		CharacterSpotLights[CharacterIndex]->SetIntensity(80000.f);
+	}
+
+#if HELLUNA_DEBUG_CHARACTER_PREVIEW_V2
+	UE_LOG(LogHelluna, Warning, TEXT("[프리뷰V2] SetSoloCharacter(%d) — Solo 모드 ON"), CharacterIndex);
+#endif
+}
+
+void AHellunaCharacterSelectSceneV2::ClearSoloMode()
+{
+	if (!bSoloMode) return;
+
+	bSoloMode = false;
+	SoloCharacterIndex = -1;
+
+	// 전체 캐릭터 + 스포트라이트 Visible 복원
+	for (int32 i = 0; i < PreviewMeshes.Num(); ++i)
+	{
+		if (PreviewMeshes[i])
+		{
+			PreviewMeshes[i]->SetVisibility(true);
+		}
+		if (CharacterSpotLights.IsValidIndex(i) && CharacterSpotLights[i])
+		{
+			CharacterSpotLights[i]->SetVisibility(true);
+		}
+	}
+
+	// 기존 Selected 상태 복원 (위치/밝기)
+	SetCharacterSelected(CurrentSelectedIndex);
+
+#if HELLUNA_DEBUG_CHARACTER_PREVIEW_V2
+	UE_LOG(LogHelluna, Warning, TEXT("[프리뷰V2] ClearSoloMode — Solo 모드 OFF, 전체 표시 복원"));
+#endif
+}

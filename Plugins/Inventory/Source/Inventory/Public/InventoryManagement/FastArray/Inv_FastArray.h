@@ -8,6 +8,7 @@
 #include "Inv_FastArray.generated.h"
 
 class UInv_InventoryComponent;
+class UInv_LootContainerComponent;
 class UInv_InventoryItem;
 class UInv_ItemComponent;
 
@@ -108,6 +109,7 @@ private:
 	// ⭐ [최적화 #4] 아이템 타입 인덱스 재구축
 	void RebuildItemTypeIndex();
 	friend UInv_InventoryComponent;
+	friend UInv_LootContainerComponent; // ⭐ [Phase 9] 컨테이너 Entries 접근용
 	friend class UInv_InventoryGrid; // ⭐ Entries 접근용
 
 	// Replicated list of items 

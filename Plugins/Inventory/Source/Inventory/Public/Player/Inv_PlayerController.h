@@ -11,6 +11,8 @@ class AInv_EquipActor;
 class UInputMappingContext;
 class UInputAction;
 class UInv_HUDWidget;
+class UInv_ContainerWidget;
+class UInv_LootContainerComponent;
 
 // ════════════════════════════════════════════════════════════════
 // 📌 [Phase 6] 부착물 저장 데이터
@@ -327,6 +329,31 @@ public:
 		meta = (DisplayName = "인벤토리 토글"))
 	void ToggleInventory();
 
+	// ═══════════════════════════════════════════
+	// Phase 9: 컨테이너 상호작용
+	// ═══════════════════════════════════════════
+
+	/** 컨테이너 UI가 열려있는지 확인 */
+	UFUNCTION(BlueprintCallable, Category = "인벤토리|컨테이너",
+		meta = (DisplayName = "Is Viewing Container (컨테이너 보는 중)"))
+	bool IsViewingContainer() const { return bIsViewingContainer; }
+
+	/** [클라이언트 → 서버] 컨테이너 열기 요청 */
+	UFUNCTION(Server, Reliable)
+	void Server_OpenContainer(UInv_LootContainerComponent* Container);
+
+	/** [클라이언트 → 서버] 컨테이너 닫기 요청 */
+	UFUNCTION(Server, Reliable)
+	void Server_CloseContainer();
+
+	/** [서버 → 클라이언트] 컨테이너 UI 표시 */
+	UFUNCTION(Client, Reliable)
+	void Client_ShowContainerUI(UInv_LootContainerComponent* Container);
+
+	/** [서버 → 클라이언트] 컨테이너 UI 숨기기 */
+	UFUNCTION(Client, Reliable)
+	void Client_HideContainerUI();
+
 	// ============================================
 	// 🆕 [Phase 7.5] 현재 활성 무기의 EquipActor 반환
 	// ============================================
@@ -572,4 +599,19 @@ private:
 	TWeakObjectPtr<AActor> ThisActor;
 	TWeakObjectPtr<AActor> LastActor;
 	TWeakObjectPtr<AActor> CurrentCraftingStation;
+
+	// ═══════════════════════════════════════════
+	// Phase 9: 컨테이너 UI
+	// ═══════════════════════════════════════════
+
+	UPROPERTY(EditDefaultsOnly, Category = "인벤토리|컨테이너",
+		meta = (DisplayName = "Container Widget Class (컨테이너 위젯 클래스)"))
+	TSubclassOf<UInv_ContainerWidget> ContainerWidgetClass;
+
+	UPROPERTY()
+	TObjectPtr<UInv_ContainerWidget> ContainerWidget;
+
+	bool bIsViewingContainer = false;
+
+	TWeakObjectPtr<UInv_LootContainerComponent> ActiveContainerComp;
 };

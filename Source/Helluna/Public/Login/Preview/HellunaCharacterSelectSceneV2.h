@@ -84,6 +84,20 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "프리뷰V2")
 	int32 GetCharacterCount() const;
 
+	// ============================================
+	// Solo 모드 (Play 탭: 캐릭터 1개만 표시)
+	// ============================================
+
+	/** Solo 모드 — 지정 캐릭터만 표시, 나머지 숨김 (Play 탭용) */
+	UFUNCTION(BlueprintCallable, Category = "프리뷰V2|Solo",
+		meta = (DisplayName = "Set Solo Character (솔로 캐릭터 설정)"))
+	void SetSoloCharacter(int32 CharacterIndex);
+
+	/** Solo 모드 해제 — 전체 캐릭터 표시 복원 (CHARACTER 탭 복귀용) */
+	UFUNCTION(BlueprintCallable, Category = "프리뷰V2|Solo",
+		meta = (DisplayName = "Clear Solo Mode (솔로 모드 해제)"))
+	void ClearSoloMode();
+
 protected:
 	// ============================================
 	// 컴포넌트
@@ -177,4 +191,14 @@ protected:
 
 	/** 선택된 캐릭터 인덱스 (-1 = 미선택) */
 	int32 CurrentSelectedIndex = -1;
+
+	// ============================================
+	// Solo 모드 상태
+	// ============================================
+
+	/** Solo 모드 활성화 여부 */
+	bool bSoloMode = false;
+
+	/** Solo 모드에서 표시 중인 캐릭터 인덱스 */
+	int32 SoloCharacterIndex = -1;
 };
