@@ -54,7 +54,7 @@ private:
 	TObjectPtr<UTextBlock> Text_StackCount;
 
 	//이전 그리드 인덱스를 알아내는 변수 우리가 Grid에서 알아내야 할 변수들
-	int32 PreviousGridIndex;
+	int32 PreviousGridIndex{ INDEX_NONE }; // U27: 미초기화 방지
 	int32 EntryIndex{ INDEX_NONE }; // ⭐ FastArray Entry Index
 	FIntPoint GridDimensions;
 	TWeakObjectPtr<UInv_InventoryItem> InventoryItem;

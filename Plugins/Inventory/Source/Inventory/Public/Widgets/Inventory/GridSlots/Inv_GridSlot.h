@@ -85,7 +85,7 @@ private:
 	UPROPERTY(EditAnywhere, Category = "인벤토리|그리드", meta = (DisplayName = "비활성 브러시", Tooltip = "슬롯이 비활성(GrayedOut) 상태일 때 표시되는 브러시입니다."))
 	FSlateBrush Brush_GrayedOut;
 
-	EInv_GridSlotState GridSlotState;
+	EInv_GridSlotState GridSlotState = EInv_GridSlotState::Unoccupied; // U28: 미초기화 방지
 	
 	UFUNCTION()
 	void OnItemPopUpDestruct(UUserWidget* Menu); // 아이템 팝업 소멸시 호출되는 함수

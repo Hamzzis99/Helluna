@@ -51,7 +51,11 @@ void AInv_PlayerController::ToggleInventory()
 
 	if (InventoryComponent->IsMenuOpen())
 	{
-		HUDWidget->SetVisibility(ESlateVisibility::Hidden);
+		// U10: HUDWidget null 체크
+		if (IsValid(HUDWidget))
+		{
+			HUDWidget->SetVisibility(ESlateVisibility::Hidden);
+		}
 
 #if INV_DEBUG_ATTACHMENT
 		// ★ [부착진단-UI] 인벤토리 열기 시 InventoryList 아이템 부착물 상태 확인 ★
@@ -87,7 +91,11 @@ void AInv_PlayerController::ToggleInventory()
 	}
 	else
 	{
-		HUDWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+		// U10: HUDWidget null 체크
+		if (IsValid(HUDWidget))
+		{
+			HUDWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+		}
 	}
 }
 
@@ -1733,6 +1741,13 @@ void AInv_PlayerController::Client_ShowContainerUI_Implementation(UInv_LootConta
 	}
 
 	if (!IsValid(ContainerWidget)) return;
+
+	// U15: 이전 컨테이너 패널이 열려있으면 정리 후 재초기화
+	if (ContainerWidget->IsInViewport())
+	{
+		ContainerWidget->CleanupPanels();
+		ContainerWidget->RemoveFromParent(); // U16: AddToViewport 전 RemoveFromParent
+	}
 
 	ContainerWidget->InitializePanels(Container, InventoryComponent.Get());
 	ContainerWidget->AddToViewport();

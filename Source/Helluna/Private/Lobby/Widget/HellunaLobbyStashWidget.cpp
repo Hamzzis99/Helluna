@@ -63,33 +63,33 @@ void UHellunaLobbyStashWidget::NativeOnInitialized()
 	// ── 탭 버튼 OnClicked 바인딩 ──
 	if (Button_Tab_Play)
 	{
-		Button_Tab_Play->OnClicked.AddDynamic(this, &ThisClass::OnTabPlayClicked);
+		Button_Tab_Play->OnClicked.AddUniqueDynamic(this, &ThisClass::OnTabPlayClicked); // U22: 중복 바인딩 방지
 	}
 	if (Button_Tab_Loadout)
 	{
-		Button_Tab_Loadout->OnClicked.AddDynamic(this, &ThisClass::OnTabLoadoutClicked);
+		Button_Tab_Loadout->OnClicked.AddUniqueDynamic(this, &ThisClass::OnTabLoadoutClicked); // U22
 	}
 	if (Button_Tab_Character)
 	{
-		Button_Tab_Character->OnClicked.AddDynamic(this, &ThisClass::OnTabCharacterClicked);
+		Button_Tab_Character->OnClicked.AddUniqueDynamic(this, &ThisClass::OnTabCharacterClicked); // U22
 	}
 
 	// ── Play 탭: START 버튼 바인딩 ──
 	if (Button_Start)
 	{
-		Button_Start->OnClicked.AddDynamic(this, &ThisClass::OnStartClicked);
+		Button_Start->OnClicked.AddUniqueDynamic(this, &ThisClass::OnStartClicked); // U22
 	}
 
 	// ── Loadout 탭: 출격 버튼 바인딩 (기존) ──
 	if (Button_Deploy)
 	{
-		Button_Deploy->OnClicked.AddDynamic(this, &ThisClass::OnDeployClicked);
+		Button_Deploy->OnClicked.AddUniqueDynamic(this, &ThisClass::OnDeployClicked); // U22
 	}
 
 	// ── 캐릭터 선택 완료 델리게이트 바인딩 ──
 	if (CharacterSelectPanel)
 	{
-		CharacterSelectPanel->OnCharacterSelected.AddDynamic(this, &ThisClass::OnCharacterSelectedHandler);
+		CharacterSelectPanel->OnCharacterSelected.AddUniqueDynamic(this, &ThisClass::OnCharacterSelectedHandler); // U22
 	}
 
 	// ── 경고 텍스트 초기 숨김 ──
@@ -212,8 +212,10 @@ void UHellunaLobbyStashWidget::SwitchToTab(int32 TabIndex)
 		return;
 	}
 
-	MainSwitcher->SetActiveWidgetIndex(TabIndex);
-	UpdateTabVisuals(TabIndex);
+	// U31: TabIndex 범위 검증
+	const int32 ClampedIndex = FMath::Clamp(TabIndex, 0, 2);
+	MainSwitcher->SetActiveWidgetIndex(ClampedIndex);
+	UpdateTabVisuals(ClampedIndex);
 
 	// ── 프리뷰 씬 Solo 모드 연동 ──
 	if (CachedPreviewScene.IsValid())

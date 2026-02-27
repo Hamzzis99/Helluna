@@ -107,6 +107,7 @@ void UInv_ContainerWidget::CleanupPanels()
 	if (IsValid(PlayerGrid))
 	{
 		PlayerGrid->SetLinkedContainerGrid(nullptr);
+		// U29: PlayerGrid의 InvComp 해제 (SetInventoryComponent가 바인딩한 델리게이트 정리)
 		PlayerGrid->OnHide();
 	}
 

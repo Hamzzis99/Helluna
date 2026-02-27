@@ -77,17 +77,20 @@ void UHellunaLobbyPanel::NativeOnInitialized()
 	// ── 탭 버튼 OnClicked 이벤트 바인딩 ──
 	if (Button_Equippables)
 	{
-		Button_Equippables->OnClicked.AddDynamic(this, &ThisClass::ShowEquippables);
+		// U23: AddUniqueDynamic — 중복 바인딩 방지
+		Button_Equippables->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowEquippables);
 		UE_LOG(LogHellunaLobby, Verbose, TEXT("[LobbyPanel]   Button_Equippables → ShowEquippables 바인딩"));
 	}
 	if (Button_Consumables)
 	{
-		Button_Consumables->OnClicked.AddDynamic(this, &ThisClass::ShowConsumables);
+		// U23: AddUniqueDynamic
+		Button_Consumables->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowConsumables);
 		UE_LOG(LogHellunaLobby, Verbose, TEXT("[LobbyPanel]   Button_Consumables → ShowConsumables 바인딩"));
 	}
 	if (Button_Craftables)
 	{
-		Button_Craftables->OnClicked.AddDynamic(this, &ThisClass::ShowCraftables);
+		// U23: AddUniqueDynamic
+		Button_Craftables->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowCraftables);
 		UE_LOG(LogHellunaLobby, Verbose, TEXT("[LobbyPanel]   Button_Craftables → ShowCraftables 바인딩"));
 	}
 

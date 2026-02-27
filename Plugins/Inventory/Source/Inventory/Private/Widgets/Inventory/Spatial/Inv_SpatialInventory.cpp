@@ -38,9 +38,10 @@ void UInv_SpatialInventory::NativeOnInitialized()
 #endif
 
 	//인벤토리 장비 칸들
-	Button_Equippables->OnClicked.AddDynamic(this, &ThisClass::ShowEquippables);
-	Button_Consumables->OnClicked.AddDynamic(this, &ThisClass::ShowConsumables);
-	Button_Craftables->OnClicked.AddDynamic(this, &ThisClass::ShowCraftables);
+	// U24: AddUniqueDynamic — NativeOnInitialized 재호출 시 중복 바인딩 방지
+	Button_Equippables->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowEquippables);
+	Button_Consumables->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowConsumables);
+	Button_Craftables->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowCraftables);
 	
 	// 툴팁 캔버스 설정
 	Grid_Equippables->SetOwningCanvas(CanvasPanel);
@@ -316,6 +317,8 @@ void UInv_SpatialInventory::EquippedSlottedItemClicked(UInv_EquippedSlottedItem*
 // 마우스 버튼 다운 이벤트 처리 인벤토리 아이템 드롭
 FReply UInv_SpatialInventory::NativeOnMouseButtonDown(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
 {
+	// U9: ActiveGrid null 체크 (탭 전환 전이나 초기화 전 클릭 방어)
+	if (!ActiveGrid.IsValid()) return FReply::Handled();
 	ActiveGrid->DropItem();
 	return FReply::Handled();
 }
@@ -538,12 +541,15 @@ void UInv_SpatialInventory::OnItemHovered(UInv_InventoryItem* Item)
 	GetOwningPlayer()->GetWorldTimerManager().ClearTimer(EquippedDescriptionTimer); // 두 번째 장비 보이는 것. (장착 장비)
 	
 	FTimerDelegate DescriptionTimerDelegate;
-	DescriptionTimerDelegate.BindLambda([this, Item, &Manifest, DescriptionWidget]()
+	// U11: &Manifest 참조 캡처 → 값 복사로 변경 (타이머 지연 중 아이템 제거 시 Use-After-Free 방지)
+	FInv_ItemManifest ManifestCopy = Item->GetItemManifest();
+	DescriptionTimerDelegate.BindLambda([this, Item, ManifestCopy, DescriptionWidget]()
 	{
-		// Assimalate the manifest into the Item Description widget.
+		// 아이템이 타이머 지연 중 제거되었을 수 있으므로 체크
+		if (!IsValid(Item)) return;
 		// 아이템 설명 위젯에 매니페스트 동화
 		GetItemDescription()->SetVisibility(ESlateVisibility::HitTestInvisible); // 설명 위젯 보이기
-		Manifest.AssimilateInventoryFragments(DescriptionWidget);
+		ManifestCopy.AssimilateInventoryFragments(DescriptionWidget);
 		
 		// For the second item description, showing the equipped item of this type.
 		// 두 번째 아이템 설명의 경우, 이 유형의 장착된 아이템을 보여줌.

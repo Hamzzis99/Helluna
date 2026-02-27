@@ -41,11 +41,33 @@ void UInv_InventoryGrid::NativeOnInitialized()
 	ConstructGrid();
 
 	InventoryComponent = UInv_InventoryStatics::GetInventoryComponent(GetOwningPlayer()); // 플레이어의 인벤토리 컴포넌트를 가져온다.
+	// U2: InventoryComponent null 체크 (타이밍에 따라 아직 준비 안 될 수 있음)
+	if (!InventoryComponent.IsValid())
+	{
+		UE_LOG(LogTemp, Error, TEXT("[InventoryGrid] NativeOnInitialized: InventoryComponent를 찾을 수 없음!"));
+		return;
+	}
 	InventoryComponent->OnItemAdded.AddDynamic(this, &ThisClass::AddItem); // 델리게이트 바인딩
 	InventoryComponent->OnStackChange.AddDynamic(this, &ThisClass::AddStacks); // 스택 변경 델리게이트 바인딩
 	InventoryComponent->OnInventoryMenuToggled.AddDynamic(this, &ThisClass::OnInventoryMenuToggled);
 	InventoryComponent->OnItemRemoved.AddDynamic(this, &ThisClass::RemoveItem); // 아이템 제거 델리게이트 바인딩
 	InventoryComponent->OnMaterialStacksChanged.AddDynamic(this, &ThisClass::UpdateMaterialStacksByTag); // Building 재료 업데이트 바인딩
+}
+
+// ════════════════════════════════════════════════════════════════
+// U19: NativeDestruct — 위젯 파괴 시 InvComp 델리게이트 해제
+// ════════════════════════════════════════════════════════════════
+void UInv_InventoryGrid::NativeDestruct()
+{
+	if (InventoryComponent.IsValid())
+	{
+		InventoryComponent->OnItemAdded.RemoveDynamic(this, &ThisClass::AddItem);
+		InventoryComponent->OnStackChange.RemoveDynamic(this, &ThisClass::AddStacks);
+		InventoryComponent->OnInventoryMenuToggled.RemoveDynamic(this, &ThisClass::OnInventoryMenuToggled);
+		InventoryComponent->OnItemRemoved.RemoveDynamic(this, &ThisClass::RemoveItem);
+		InventoryComponent->OnMaterialStacksChanged.RemoveDynamic(this, &ThisClass::UpdateMaterialStacksByTag);
+	}
+	Super::NativeDestruct();
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -188,6 +210,9 @@ void UInv_InventoryGrid::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 	// [최적화] HoverItem을 들고 있지 않으면 마우스 추적 스킵
 	// [Phase 9] LinkedGrid에 HoverItem이 있으면 크로스 Grid 하이라이트를 위해 Tick 실행
 	if (!bShouldTickForHover && !HasLinkedHoverItem()) return;
+
+	// U7: CanvasPanel null 체크 (bSkipAutoInit 경로에서 아직 미초기화 상태일 수 있음)
+	if (!IsValid(CanvasPanel)) return;
 
 	//캔버스가 시작하는 왼쪽 모서리 점을 알아보자.
 	const FVector2D CanvasPosition = UInv_WidgetUtils::GetWidgetPosition(CanvasPanel); // 캔2버스 패널의 위치 가져오기
@@ -451,11 +476,15 @@ EInv_TileQuadrant UInv_InventoryGrid::CalculateTileQuadrant(const FVector2D& Can
 
 FInv_SlotAvailabilityResult UInv_InventoryGrid::HasRoomForItem(const UInv_ItemComponent* ItemComponent)
 {
+	// U9-b: null 체크
+	if (!IsValid(ItemComponent)) return FInv_SlotAvailabilityResult();
 	return HasRoomForItem(ItemComponent->GetItemManifest());
 }
 
 FInv_SlotAvailabilityResult UInv_InventoryGrid::HasRoomForItem(const UInv_InventoryItem* Item, const int32 StackAmountOverride)
 {
+	// U9-b: null 체크
+	if (!IsValid(Item)) return FInv_SlotAvailabilityResult();
 	return HasRoomForItem(Item->GetItemManifest(), StackAmountOverride);
 }
 
@@ -645,7 +674,8 @@ int32 UInv_InventoryGrid::GetStackAmount(const UInv_GridSlot* GridSlot) const
 	int32 CurrentSlotStackCount = GridSlot->GetStackCount();
 	// 스택이 없을 경우 개수를 세어 실제 스택 개수를 파악하는 함수
 	// If we are at a slot that dosen't hold the stack count. we must get the actual stack count.
-	if (const int32 UpperLeftIndex = GridSlot->GetUpperLeftIndex(); UpperLeftIndex != INDEX_NONE)
+	// U5: UpperLeftIndex 범위 체크 추가
+	if (const int32 UpperLeftIndex = GridSlot->GetUpperLeftIndex(); UpperLeftIndex != INDEX_NONE && GridSlots.IsValidIndex(UpperLeftIndex))
 	{
 		UInv_GridSlot* UpperLeftGridSlot = GridSlots[UpperLeftIndex];
 		CurrentSlotStackCount = UpperLeftGridSlot->GetStackCount();
@@ -741,7 +771,11 @@ void UInv_InventoryGrid::AssignHoverItem(UInv_InventoryItem* InventoryItem) // �
 #if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Error, TEXT("[AssignHoverItem] ❌ InventoryItem이 nullptr입니다!"));
 #endif
-		HoverItem->SetVisibility(ESlateVisibility::Hidden);
+		// U1: HoverItem이 아직 생성되지 않았을 수 있으므로 null 체크
+		if (IsValid(HoverItem))
+		{
+			HoverItem->SetVisibility(ESlateVisibility::Hidden);
+		}
 		return;
 	}
 	if (!IsValid(HoverItem))
@@ -1036,8 +1070,8 @@ void UInv_InventoryGrid::AddStacks(const FInv_SlotAvailabilityResult& Result)
 		if (Availability.bItemAtIndex) // 해당 인덱스에 아이템이 있는 경우
 		{
 			const auto& GridSlot = GridSlots[Availability.Index];
-			const auto& SlottedItem = SlottedItems.FindChecked(Availability.Index);
-			SlottedItem->UpdateStackCount(GridSlot->GetStackCount() + Availability.AmountToFill); // 스택 수 업데이트
+			UInv_SlottedItem* SlottedItem = SlottedItems.FindRef(Availability.Index); // U26: FindRef null 안전
+			if (SlottedItem) SlottedItem->UpdateStackCount(GridSlot->GetStackCount() + Availability.AmountToFill); // 스택 수 업데이트
 			GridSlot->SetStackCount(GridSlot->GetStackCount() + Availability.AmountToFill); // 그리드 슬롯에도 스택 수 업데이트
 		}
 		else // 해당 인덱스에 아이템이 없는 경우
@@ -1055,7 +1089,8 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 	UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer()); // 아이템 언호버 처리
 	
 	//UE_LOG(LogTemp, Warning, TEXT("Clicked on item at index %d"), GridIndex); // 아이템 클릭 디버깅입니다.
-	check(GridSlots.IsValidIndex(GridIndex)); // 유효한 인덱스인지 확인
+	// U3: check() → 안전한 early return (데디서버에서 check 실패 시 전체 크래시)
+	if (!GridSlots.IsValidIndex(GridIndex)) return;
 	UInv_InventoryItem* ClickedInventoryItem = GridSlots[GridIndex]->GetInventoryItem().Get(); // 클릭한 아이템 가져오기
 	
 	// ⭐ nullptr 체크 추가 (MoveItemByCurrentIndex 후 원래 위치 클릭 시 크래시 방지)
@@ -2352,8 +2387,13 @@ void UInv_InventoryGrid::AddSlottedItemToCanvas(const int32 Index, const FInv_Gr
 
 void UInv_InventoryGrid::UpdateGridSlots(UInv_InventoryItem* NewItem, const int32 Index, bool bStackableItem, const int32 StackAmount)
 {
-	check(GridSlots.IsValidIndex(Index)); // 인덱스 유효성 검사
-	
+	// U4: check() → 안전한 early return (데디서버에서 check 실패 시 전체 크래시)
+	if (!GridSlots.IsValidIndex(Index))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[UpdateGridSlots] 유효하지 않은 Index: %d"), Index);
+		return;
+	}
+
 	//쌓을 수 있는 아이템인지 확인해볼까? (Stackable이 가능한지)
 	if (bStackableItem)
 	{
@@ -2400,6 +2440,9 @@ bool UInv_InventoryGrid::IsIndexClaimed(const TSet<int32>& CheckedIndices, const
 //2차원 격자 생성 아이템칸 만든다는 뜻.
 void UInv_InventoryGrid::ConstructGrid()
 {
+	// U32: 중복 호출 방지
+	if (GridSlots.Num() > 0) return;
+
 	GridSlots.Reserve(Rows * Columns); // Tarray 지정 하는 건 알겠는데 GridSlot이거 어디서?
 	OccupiedMask.Init(false, Rows * Columns); // ⭐ [최적화 #5] 비트마스크 초기화 (모두 비점유)
 
@@ -2618,9 +2661,9 @@ void UInv_InventoryGrid::SwapStackCounts(const int32 ClickedStackCount, const in
 	UInv_GridSlot* GridSlot = GridSlots[Index]; // 그리드 슬롯 가져오기
 	GridSlot->SetStackCount(HoveredStackCount);
 	
-	UInv_SlottedItem* ClickedSlottedItem = SlottedItems.FindChecked(Index); // 클릭된 슬로티드 아이템 가져오기
-	ClickedSlottedItem->UpdateStackCount(HoveredStackCount); // 클릭된 슬로티드 아이템 스택 수 업데이트
-	
+	UInv_SlottedItem* ClickedSlottedItem = SlottedItems.FindRef(Index); // 클릭된 슬로티드 아이템 가져오기
+	if (ClickedSlottedItem) ClickedSlottedItem->UpdateStackCount(HoveredStackCount); // U26: null 안전
+
 	HoverItem->UpdateStackCount(ClickedStackCount); // 호버 아이템 스택 수 업데이트
 }
 
@@ -2638,7 +2681,7 @@ void UInv_InventoryGrid::ConsumeHoverItemStacks(const int32 ClickedStackCount, c
 	
 	// UI 업데이트
 	GridSlots[Index]->SetStackCount(NewClickedStackCount); // 그리드 슬롯 스택 수 업데이트
-	SlottedItems.FindChecked(Index)->UpdateStackCount(NewClickedStackCount); // 슬로티드 아이템 스택 수 업데이트
+	if (UInv_SlottedItem* SI = SlottedItems.FindRef(Index)) SI->UpdateStackCount(NewClickedStackCount); // U26: null 안전
 	
 	// 서버에 스택 변경 알림
 	if (InventoryComponent.IsValid())
@@ -2681,9 +2724,9 @@ void UInv_InventoryGrid::FillInStack(const int32 FillAmount, const int32 Remaind
 	
 	GridSlot->SetStackCount(NewStackCount); // 그리드 슬롯 스택 수 업데이트
 	
-	UInv_SlottedItem* ClickedSlottedItem = SlottedItems.FindChecked(Index); // 클릭된 슬로티드 아이템 가져오기
-	ClickedSlottedItem->UpdateStackCount(NewStackCount); // 클릭된 슬로티드 아이템 스택 수 업데이트
-	
+	UInv_SlottedItem* ClickedSlottedItem = SlottedItems.FindRef(Index); // 클릭된 슬로티드 아이템 가져오기
+	if (ClickedSlottedItem) ClickedSlottedItem->UpdateStackCount(NewStackCount); // U26: null 안전
+
 	HoverItem->UpdateStackCount(Remainder); // 호버 아이템 스택 수 업데이트
 	
 	// 서버에 스택 변경 알림
@@ -2727,6 +2770,8 @@ void UInv_InventoryGrid::SetOwningCanvas(UCanvasPanel* OwningCanvas)
 void UInv_InventoryGrid::OnGridSlotHovered(int32 GridIndex, const FPointerEvent& MouseEvent)
 {
 	if (IsValid(HoverItem)) return; // 호버 아이템이 유효하다면 리턴
+	// U25: 범위 체크
+	if (!GridSlots.IsValidIndex(GridIndex)) return;
 
 	UInv_GridSlot* GridSlot = GridSlots[GridIndex]; // 그리드 슬롯 가져오기
 	if (GridSlot->IsAvailable()) // 그리드 슬롯이 사용 가능하다면
@@ -2738,6 +2783,8 @@ void UInv_InventoryGrid::OnGridSlotHovered(int32 GridIndex, const FPointerEvent&
 void UInv_InventoryGrid::OnGridSlotUnhovered(int32 GridIndex, const FPointerEvent& MouseEvent)
 {
 	if (IsValid(HoverItem)) return; // 호버 아이템이 유효하다면 리턴
+	// U25: 범위 체크
+	if (!GridSlots.IsValidIndex(GridIndex)) return;
 
 	UInv_GridSlot* GridSlot = GridSlots[GridIndex]; // 그리드 슬롯 가져오기
 	if (GridSlot->IsAvailable()) // 그리드 슬롯이 사용 가능하다면
@@ -2748,12 +2795,16 @@ void UInv_InventoryGrid::OnGridSlotUnhovered(int32 GridIndex, const FPointerEven
 
 void UInv_InventoryGrid::OnPopUpMenuSplit(int32 SplitAmount, int32 Index) // 아이템 분할 함수
 {
+	// U6: 범위 체크
+	if (!GridSlots.IsValidIndex(Index)) return;
 	// 오른쪽 마우스 우클릭 창 불러오는 곳
 	UInv_InventoryItem* RightClickedItem = GridSlots[Index]->GetInventoryItem().Get(); // 오른쪽 클릭한 아이템 가져오기
 	if (!IsValid(RightClickedItem)) return; // 유효한 아이템인지 확인
 	if (!RightClickedItem -> IsStackable()) return; // 스택 가능한 아이템인지 확인
-	
+
 	const int32 UpperLeftIndex = GridSlots[Index]->GetUpperLeftIndex(); // 그리드 슬롯의 왼쪽 위 인덱스 가져오기
+	// U6: UpperLeftIndex 범위 체크 (INDEX_NONE(-1) 방어)
+	if (!GridSlots.IsValidIndex(UpperLeftIndex)) return;
 	UInv_GridSlot* UpperLeftGridSlot = GridSlots[UpperLeftIndex]; // 왼쪽 위 그리드 슬롯 가져오기
 	const int32 OriginalStackCount = UpperLeftGridSlot->GetStackCount(); // 원본 스택 수 가져오기
 	const int32 NewStackCount = OriginalStackCount - SplitAmount; // 새로운 스택 수 계산 <- 분할된 양을 빼주는 것
@@ -2765,8 +2816,8 @@ void UInv_InventoryGrid::OnPopUpMenuSplit(int32 SplitAmount, int32 Index) // 아
 
 	// 1단계: UI 업데이트 (빠른 반응성)
 	UpperLeftGridSlot->SetStackCount(NewStackCount); // 그리드 슬롯 스택 수 업데이트
-	SlottedItems.FindChecked(UpperLeftIndex)->UpdateStackCount(NewStackCount); // 슬로티드 아이템 스택 수 업데이트
-	
+	if (UInv_SlottedItem* SI = SlottedItems.FindRef(UpperLeftIndex)) SI->UpdateStackCount(NewStackCount); // U26: null 안전
+
 	AssignHoverItem(RightClickedItem, UpperLeftIndex, UpperLeftIndex); // 호버 아이템 할당
 	HoverItem->UpdateStackCount(SplitAmount); // 호버 아이템 스택 수 업데이트
 	
@@ -2814,8 +2865,8 @@ void UInv_InventoryGrid::OnPopUpMenuConsume(int32 Index)
 	const int32 NewStackCount = StackCount - 1; // 새로운 스택 수 계산 <- 1개 소비하는 것
 	
 	UpperLeftGridSlot->SetStackCount(NewStackCount); // 그리드 슬롯 스택 수 업데이트
-	SlottedItems.FindChecked(UpperLeftIndex)->UpdateStackCount(NewStackCount); // 슬로티드 아이템 스택 수 업데이트
-	
+	if (UInv_SlottedItem* SI = SlottedItems.FindRef(UpperLeftIndex)) SI->UpdateStackCount(NewStackCount); // U26: null 안전
+
 	// 서버에서 내가 소모되는 것을 서버에게 알리는 부분.
 	if (!InventoryComponent.IsValid()) return; // C2: TWeakObjectPtr 무효 시 크래시 방지
 	InventoryComponent->Server_ConsumeItem(RightClickedItem);
@@ -3802,14 +3853,20 @@ bool UInv_InventoryGrid::MoveItemToPosition(const FGameplayTag& ItemType, const 
 		Dimensions = GridFragment->GetGridSize();
 	}
 
-	// 원래 위치의 모든 GridSlot 해제 (다차원 아이템 지원)
+	// U12+U13: 원래 위치의 모든 GridSlot 완전 초기화 (MoveItemByCurrentIndex 패턴과 일치)
 	UInv_InventoryStatics::ForEach2D(GridSlots, CurrentIndex, Dimensions, Columns, [&](UInv_GridSlot* GridSlot)
 	{
 		if (GridSlot)
 		{
 			GridSlot->SetInventoryItem(nullptr);
+			GridSlot->SetUpperLeftIndex(INDEX_NONE); // U13: 고스트 슬롯 방지
+			GridSlot->SetStackCount(0);
+			GridSlot->SetAvailable(true);
+			GridSlot->SetUnoccupiedTexture();
 		}
 	});
+	// U12: OccupiedMask 비트 해제 (이전 위치)
+	SetOccupiedBits(CurrentIndex, Dimensions, false);
 
 	// ============================================
 	// Step 5: SlottedItems 맵 키 변경
@@ -3829,6 +3886,8 @@ bool UInv_InventoryGrid::MoveItemToPosition(const FGameplayTag& ItemType, const 
 			GridSlot->SetOccupiedTexture();
 		}
 	});
+	// U12: OccupiedMask 비트 설정 (새 위치)
+	SetOccupiedBits(TargetIndex, Dimensions, true);
 
 	// ============================================
 	// Step 7: 위젯 위치 업데이트

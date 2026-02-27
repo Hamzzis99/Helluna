@@ -92,11 +92,20 @@ void UHellunaChatWidget::DeactivateChatInput()
 	// 텍스트 초기화
 	TextBox_Input->SetText(FText::GetEmpty());
 
-	// 입력 모드: GameOnly (게임 조작 복원)
+	// U14: 인벤토리/컨테이너 UI가 열린 상태에서 채팅 종료 시 마우스 커서 유지
+	// bShowMouseCursor가 true면 다른 UI가 마우스를 사용 중 → GameAndUI 유지
 	APlayerController* PC = GetOwningPlayer();
 	if (PC)
 	{
-		PC->SetInputMode(FInputModeGameOnly());
+		if (PC->bShowMouseCursor)
+		{
+			// 다른 UI(인벤토리/컨테이너)가 마우스 커서를 사용 중 → GameAndUI 유지
+			PC->SetInputMode(FInputModeGameAndUI());
+		}
+		else
+		{
+			PC->SetInputMode(FInputModeGameOnly());
+		}
 	}
 
 	UE_LOG(LogHellunaChat, Verbose, TEXT("[ChatWidget] 채팅 입력 비활성화"));

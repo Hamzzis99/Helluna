@@ -71,6 +71,7 @@ class INVENTORY_API UInv_InventoryGrid : public UUserWidget
 
 public:
 	virtual void NativeOnInitialized() override; // Viewport를 동시에 생성하는 것이 NativeConstruct?
+	virtual void NativeDestruct() override; // U19: 위젯 파괴 시 InvComp 델리게이트 해제
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override; // 매 프레임마다 호출되는 틱 함수 (마우스 Hover에 사용)
 
 	EInv_ItemCategory GetItemCategory() const { return ItemCategory; }
@@ -444,13 +445,14 @@ private:
 	FVector2D ItemPopUpOffset; // 마우스 우클릭 팝업 위치 조정하기 (누르자마자 뜨는 부분)
 	
 	// 왜 굳이 int32로?
+	// U18: 안전한 기본값 설정 (TileSize=0이면 나눗셈 NaN/Inf 발생)
 	UPROPERTY(EditAnywhere, Category = "인벤토리|그리드", meta = (DisplayName = "행 수", Tooltip = "그리드의 행(세로) 개수입니다."))
-	int32 Rows;
+	int32 Rows = 5;
 	UPROPERTY(EditAnywhere, Category = "인벤토리|그리드", meta = (DisplayName = "열 수", Tooltip = "그리드의 열(가로) 개수입니다."))
-	int32 Columns;
+	int32 Columns = 10;
 
 	UPROPERTY(EditAnywhere, Category = "인벤토리|그리드", meta = (DisplayName = "타일 크기", Tooltip = "그리드 슬롯 한 칸의 크기(픽셀)입니다."))
-	float TileSize;
+	float TileSize = 50.f;
 
 	//포인터를 생성하기 위한 보조 클래스
 	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "호버 아이템 클래스", Tooltip = "마우스로 아이템을 집었을 때 표시되는 호버 위젯의 블루프린트 클래스입니다."))

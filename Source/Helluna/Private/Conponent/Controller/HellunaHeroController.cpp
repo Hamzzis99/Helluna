@@ -318,7 +318,14 @@ void AHellunaHeroController::InitializeChatWidget()
 	AHellunaDefenseGameState* DefenseGS = World->GetGameState<AHellunaDefenseGameState>();
 	if (!DefenseGS)
 	{
-		UE_LOG(LogHellunaChat, Warning, TEXT("[HeroController] GameState가 아직 없음 — 채팅 위젯 재시도"));
+		// U30: 무한 재시도 방지
+		++ChatWidgetInitRetryCount;
+		if (ChatWidgetInitRetryCount >= MaxChatWidgetInitRetries)
+		{
+			UE_LOG(LogHellunaChat, Error, TEXT("[HeroController] GameState %d회 재시도 실패 — 채팅 초기화 중단"), MaxChatWidgetInitRetries);
+			return;
+		}
+		UE_LOG(LogHellunaChat, Warning, TEXT("[HeroController] GameState가 아직 없음 — 채팅 위젯 재시도 (%d/%d)"), ChatWidgetInitRetryCount, MaxChatWidgetInitRetries);
 		GetWorldTimerManager().SetTimer(
 			ChatWidgetInitTimerHandle,
 			this,

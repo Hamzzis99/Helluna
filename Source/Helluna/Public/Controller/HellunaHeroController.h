@@ -133,6 +133,10 @@ private:
 	/** 채팅 위젯 초기화 타이머 핸들 */
 	FTimerHandle ChatWidgetInitTimerHandle;
 
+	/** U30: 채팅 초기화 재시도 카운터 (무한 루프 방지) */
+	int32 ChatWidgetInitRetryCount = 0;
+	static constexpr int32 MaxChatWidgetInitRetries = 20; // 최대 10초 (0.5초 × 20회)
+
 	/** 생성된 채팅 위젯 인스턴스 */
 	UPROPERTY()
 	TObjectPtr<UHellunaChatWidget> ChatWidgetInstance;
