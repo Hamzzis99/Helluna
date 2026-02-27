@@ -493,6 +493,12 @@ private:
 
 	// ⭐ [최적화 #5] 영역이 비어있는지 비트마스크로 빠르게 확인
 	bool IsAreaFree(int32 StartIndex, const FIntPoint& Dimensions) const;
+	// [Fix21] HoverItem 브러시의 현재 TileSize 추적 (크로스 Grid 리사이즈용)
+	float HoverItemCurrentTileSize = 0.f;
+
+	// [Fix21] HoverItem 브러시를 TargetTileSize에 맞게 리사이즈
+	void RefreshHoverItemBrushSize(float TargetTileSize);
+
 	int32 LastHighlightedIndex;
 	FIntPoint LastHighlightedDimensions;
 
@@ -502,6 +508,11 @@ private:
 
 	UPROPERTY(EditAnywhere, Category = "인벤토리|부착물", meta = (DisplayName = "부착물 패널 클래스", Tooltip = "무기 부착물 관리 패널의 위젯 블루프린트 클래스입니다."))
 	TSubclassOf<UInv_AttachmentPanel> AttachmentPanelClass;
+
+	/** true면 AttachmentPanel을 Viewport 중앙에 배치 (로비용), false면 OwningCanvasPanel 자식 (인게임용) */
+	UPROPERTY(EditDefaultsOnly, Category = "인벤토리|부착물",
+		meta = (DisplayName = "부착물 패널 뷰포트 중앙 배치 (Attachment Panel To Viewport)"))
+	bool bAttachmentPanelToViewport = false;
 
 	UPROPERTY()
 	TObjectPtr<UInv_AttachmentPanel> AttachmentPanel;

@@ -202,6 +202,31 @@ void UInv_InventoryGrid::SyncExistingItems()
 	}
 }
 
+// [Fix21] HoverItem 브러시를 TargetTileSize에 맞게 리사이즈 (크로스 Grid 드래그 시 크기 동적 조절)
+void UInv_InventoryGrid::RefreshHoverItemBrushSize(float TargetTileSize)
+{
+	if (!IsValid(HoverItem)) return;
+	if (FMath::IsNearlyEqual(HoverItemCurrentTileSize, TargetTileSize)) return;
+
+	UInv_InventoryItem* Item = HoverItem->GetInventoryItem();
+	if (!IsValid(Item)) return;
+
+	const FInv_GridFragment* GridFragment = GetFragment<FInv_GridFragment>(Item, FragmentTags::GridFragment);
+	const FInv_ImageFragment* ImageFragment = GetFragment<FInv_ImageFragment>(Item, FragmentTags::IconFragment);
+	if (!GridFragment || !ImageFragment) return;
+
+	const float IconTileWidth = TargetTileSize - GridFragment->GetGridPadding() * 2;
+	const FVector2D DrawSize = GridFragment->GetGridSize() * IconTileWidth;
+
+	FSlateBrush IconBrush;
+	IconBrush.SetResourceObject(ImageFragment->GetIcon());
+	IconBrush.DrawAs = ESlateBrushDrawType::Image;
+	IconBrush.ImageSize = DrawSize * UWidgetLayoutLibrary::GetViewportScale(this);
+
+	HoverItem->SetImageBrush(IconBrush);
+	HoverItemCurrentTileSize = TargetTileSize;
+}
+
 // 매 프레임마다 호출되는 틱 함수 (마우스 Hover에 사용)
 void UInv_InventoryGrid::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
@@ -221,7 +246,25 @@ void UInv_InventoryGrid::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 	//캔버스 패널 바깥으로 벗어났는지 여부 확인 (매 틱마다 확인해줌)
 	if (CursorExitedCanvas(CanvasPosition, UInv_WidgetUtils::GetWidgetSize(CanvasPanel), MousePosition))
 	{
+		// [Fix21] 커서가 이 Grid를 벗어남 → 대상 Grid의 TileSize로 HoverItem 리사이즈
+		if (IsValid(HoverItem))
+		{
+			if (LobbyTargetGrid.IsValid())
+			{
+				RefreshHoverItemBrushSize(LobbyTargetGrid->GetTileSize());
+			}
+			else if (LinkedContainerGrid.IsValid())
+			{
+				RefreshHoverItemBrushSize(LinkedContainerGrid->GetTileSize());
+			}
+		}
 		return; // 캔버스 패널을 벗어났다면 반환
+	}
+
+	// [Fix21] 커서가 이 Grid 안에 있음 → 이 Grid의 TileSize로 HoverItem 리사이즈
+	if (bMouseWithinCanvas && IsValid(HoverItem))
+	{
+		RefreshHoverItemBrushSize(TileSize);
 	}
 
 	UpdateTileParameters(CanvasPosition, MousePosition); // 타일 매개변수 업데이트
@@ -802,6 +845,7 @@ void UInv_InventoryGrid::AssignHoverItem(UInv_InventoryItem* InventoryItem) // �
 
 	GetOwningPlayer()->SetMouseCursorWidget(EMouseCursor::Default, HoverItem); // 마우스 커서 위젯 설정
 	bShouldTickForHover = true; // [최적화] Tick 활성화
+	HoverItemCurrentTileSize = TileSize; // [Fix21] 크로스 Grid 리사이즈 추적
 }
 
 void UInv_InventoryGrid::OnHide()
@@ -3044,19 +3088,43 @@ void UInv_InventoryGrid::OpenAttachmentPanel(UInv_InventoryItem* WeaponItem, int
 			return;
 		}
 
-		// OwningCanvasPanel에 추가
-		if (OwningCanvasPanel.IsValid())
+		if (bAttachmentPanelToViewport)
 		{
-			OwningCanvasPanel->AddChild(AttachmentPanel);
+			// ═══ 로비 모드: 뷰포트에 직접 추가 → 화면 중앙 배치 ═══
+			AttachmentPanel->AddToViewport(100);
 
-			// 캔버스 패널 슬롯 위치 설정 (Grid 오른쪽에 배치)
-			UCanvasPanelSlot* CanvasSlot = UWidgetLayoutLibrary::SlotAsCanvasSlot(AttachmentPanel);
-			if (CanvasSlot)
+			// WBP 루트 CanvasPanel의 첫 자식(Overlay)을 화면 중앙 앵커로 변경
+			UCanvasPanel* RootCanvas = Cast<UCanvasPanel>(AttachmentPanel->GetRootWidget());
+			if (RootCanvas && RootCanvas->GetChildrenCount() > 0)
 			{
-				// Grid 오른쪽에 배치 (Columns * TileSize + 여백)
-				const float PanelX = Columns * TileSize + 20.f;
-				CanvasSlot->SetPosition(FVector2D(PanelX, 0.f));
-				CanvasSlot->SetAutoSize(true);
+				UWidget* OverlayChild = RootCanvas->GetChildAt(0);
+				UCanvasPanelSlot* OverlaySlot = UWidgetLayoutLibrary::SlotAsCanvasSlot(OverlayChild);
+				if (OverlaySlot)
+				{
+					FAnchors CenterAnchor(0.5f, 0.5f, 0.5f, 0.5f);
+					OverlaySlot->SetAnchors(CenterAnchor);
+					OverlaySlot->SetAlignment(FVector2D(0.5f, 0.5f));
+					OverlaySlot->SetAutoSize(true);
+					OverlaySlot->SetPosition(FVector2D::ZeroVector);
+				}
+			}
+
+			UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 뷰포트 중앙 배치 (로비 모드)"));
+		}
+		else
+		{
+			// ═══ 인게임 모드: 기존 방식 (OwningCanvasPanel 자식, Grid 오른쪽) ═══
+			if (OwningCanvasPanel.IsValid())
+			{
+				OwningCanvasPanel->AddChild(AttachmentPanel);
+
+				UCanvasPanelSlot* CanvasSlot = UWidgetLayoutLibrary::SlotAsCanvasSlot(AttachmentPanel);
+				if (CanvasSlot)
+				{
+					const float PanelX = Columns * TileSize + 20.f;
+					CanvasSlot->SetPosition(FVector2D(PanelX, 0.f));
+					CanvasSlot->SetAutoSize(true);
+				}
 			}
 		}
 
@@ -3072,7 +3140,8 @@ void UInv_InventoryGrid::OpenAttachmentPanel(UInv_InventoryItem* WeaponItem, int
 	AttachmentPanel->OpenForWeapon(WeaponItem, WeaponEntryIndex);
 
 #if INV_DEBUG_WIDGET
-	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 패널 열림: WeaponEntry=%d"), WeaponEntryIndex);
+	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 패널 열림: WeaponEntry=%d, Viewport=%s"),
+		WeaponEntryIndex, bAttachmentPanelToViewport ? TEXT("Y") : TEXT("N"));
 #endif
 }
 

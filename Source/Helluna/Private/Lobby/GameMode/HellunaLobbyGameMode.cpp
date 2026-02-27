@@ -175,7 +175,7 @@ void AHellunaLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 	// 게임서버가 ExportGameResultToFile로 내보낸 결과를 로비에서 import
 	// → 결과 파일 존재 = 정상 게임 종료: Loadout에 복원(생존) 또는 삭제(사망)
 	// → 결과 파일 없음 + Loadout 존재 = 크래시: 아래 크래시 복구에서 처리
-	bool bGameResultProcessed = false;  // [Fix21] 크래시 복구 조건 제어용
+	bool bGameResultProcessed = false;  // [Fix23] 크래시 복구 조건 제어용
 	if (SQLiteSubsystem->HasPendingGameResultFile(PlayerId))
 	{
 		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [0] 게임 결과 파일 발견 → import 시작 | PlayerId=%s"), *PlayerId);
@@ -186,13 +186,13 @@ void AHellunaLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 
 		if (bImportSuccess)
 		{
-			bGameResultProcessed = true;  // [Fix21] 크래시 복구 스킵 플래그
+			bGameResultProcessed = true;  // [Fix23] 크래시 복구 스킵 플래그
 
 			// 정상 파싱 성공
 			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [0] 게임 결과: survived=%s | 아이템=%d개 | PlayerId=%s"),
 				bSurvived ? TEXT("Y") : TEXT("N"), ResultItems.Num(), *PlayerId);
 
-			// [Fix21] 생존: 결과 아이템을 Loadout에 복원 (기존: Stash에 병합 → Loadout 유실)
+			// [Fix23] 생존: 결과 아이템을 Loadout에 복원 (기존: Stash에 병합 → Loadout 유실)
 			// Stash는 Deploy 시점에 이미 SavePlayerStash로 저장됨 → 건드리지 않음
 			if (bSurvived && ResultItems.Num() > 0)
 			{
@@ -204,12 +204,12 @@ void AHellunaLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 
 				if (SQLiteSubsystem->SavePlayerLoadout(PlayerId, ResultItems))
 				{
-					UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [0] [Fix21] SavePlayerLoadout 성공 — 게임 결과를 Loadout에 복원 | PlayerId=%s | %d개"),
+					UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [0] [Fix23] SavePlayerLoadout 성공 — 게임 결과를 Loadout에 복원 | PlayerId=%s | %d개"),
 						*PlayerId, ResultItems.Num());
 				}
 				else
 				{
-					UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [0] [Fix21] SavePlayerLoadout 실패! Stash 폴백 | PlayerId=%s"), *PlayerId);
+					UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [0] [Fix23] SavePlayerLoadout 실패! Stash 폴백 | PlayerId=%s"), *PlayerId);
 					// 폴백: Loadout 저장 실패 시 Stash에 병합 (데이터 유실 방지)
 					SQLiteSubsystem->MergeGameResultToStash(PlayerId, ResultItems);
 					SQLiteSubsystem->DeletePlayerLoadout(PlayerId);
@@ -241,7 +241,7 @@ void AHellunaLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 	// ── 1) 크래시 복구 ──
 	// 결과 파일이 없는데 Loadout이 남아있는 경우 = 게임서버 크래시
 	// → Loadout 아이템을 Stash로 복구하여 유실 방지
-	// [Fix21] 게임 결과를 정상 처리한 경우에는 스킵 (SavePlayerLoadout으로 Loadout에 저장했으므로)
+	// [Fix23] 게임 결과를 정상 처리한 경우에는 스킵 (SavePlayerLoadout으로 Loadout에 저장했으므로)
 	if (!bGameResultProcessed)
 	{
 		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [1/4] 크래시 복구 체크 | PlayerId=%s"), *PlayerId);
@@ -258,10 +258,10 @@ void AHellunaLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [2/4] Stash 로드 → StashComp | PlayerId=%s"), *PlayerId);
 	LoadStashToComponent(LobbyPC, PlayerId);
 
-	// ── 2.5) [Fix21] Loadout 로드 → LoadoutComp에 복원 ──
+	// ── 2.5) [Fix23] Loadout 로드 → LoadoutComp에 복원 ──
 	// 게임 생존 후 복귀: player_loadout에 저장된 결과 아이템을 LoadoutComp에 복원
 	// → 로드 후 player_loadout 삭제 (다음 로그인 시 중복 방지)
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [2.5/4] [Fix21] Loadout 로드 → LoadoutComp | PlayerId=%s"), *PlayerId);
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [2.5/4] [Fix23] Loadout 로드 → LoadoutComp | PlayerId=%s"), *PlayerId);
 	LoadLoadoutToComponent(LobbyPC, PlayerId);
 
 	// ── 3) Controller-PlayerId 매핑 등록 ──
@@ -509,7 +509,7 @@ void AHellunaLobbyGameMode::LoadStashToComponent(AHellunaLobbyController* LobbyP
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
-// [Fix21] LoadLoadoutToComponent — SQLite에서 Loadout 데이터를 로드하여 LoadoutComp에 복원
+// [Fix23] LoadLoadoutToComponent — SQLite에서 Loadout 데이터를 로드하여 LoadoutComp에 복원
 // ════════════════════════════════════════════════════════════════════════════════
 //
 // 📌 데이터 흐름:
@@ -525,16 +525,17 @@ void AHellunaLobbyGameMode::LoadStashToComponent(AHellunaLobbyController* LobbyP
 //   - 최초 로그인/사망 후: player_loadout이 비어있으므로 스킵
 //
 // 📌 로드 후:
-//   - player_loadout 삭제 (Logout 시 SaveComponentsToDatabase에서 중복 저장 방지)
+//   - 복원 성공: player_loadout 삭제 (Logout 시 SaveComponentsToDatabase에서 중복 저장 방지)
+//   - 복원 실패(아이템 유실): player_loadout 보존 → 다음 로그인 시 크래시 복구로 Stash에 복원
 //
 // ════════════════════════════════════════════════════════════════════════════════
 void AHellunaLobbyGameMode::LoadLoadoutToComponent(AHellunaLobbyController* LobbyPC, const FString& PlayerId)
 {
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix21] LoadLoadoutToComponent 시작 | PlayerId=%s"), *PlayerId);
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix23] LoadLoadoutToComponent 시작 | PlayerId=%s"), *PlayerId);
 
 	if (!LobbyPC || !SQLiteSubsystem || !SQLiteSubsystem->IsDatabaseReady())
 	{
-		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [Fix21] LoadLoadout: 조건 미충족 | LobbyPC=%s, DB=%s"),
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [Fix23] LoadLoadout: 조건 미충족 | LobbyPC=%s, DB=%s"),
 			LobbyPC ? TEXT("O") : TEXT("X"),
 			(SQLiteSubsystem && SQLiteSubsystem->IsDatabaseReady()) ? TEXT("Ready") : TEXT("Not Ready"));
 		return;
@@ -543,19 +544,22 @@ void AHellunaLobbyGameMode::LoadLoadoutToComponent(AHellunaLobbyController* Lobb
 	UInv_InventoryComponent* LoadoutComp = LobbyPC->GetLoadoutComponent();
 	if (!LoadoutComp)
 	{
-		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [Fix21] LoadLoadout: LoadoutComp가 nullptr! | PlayerId=%s"), *PlayerId);
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [Fix23] LoadLoadout: LoadoutComp가 nullptr! | PlayerId=%s"), *PlayerId);
 		return;
 	}
 
 	// ── SQLite에서 Loadout 로드 ──
 	TArray<FInv_SavedItemData> LoadoutItems = SQLiteSubsystem->LoadPlayerLoadout(PlayerId);
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix21] SQLite Loadout 로드 완료 | PlayerId=%s | 아이템 %d개"), *PlayerId, LoadoutItems.Num());
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix23] SQLite Loadout 로드 완료 | PlayerId=%s | 아이템 %d개"), *PlayerId, LoadoutItems.Num());
 
 	if (LoadoutItems.Num() == 0)
 	{
-		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix21] Loadout이 비어있음 → 스킵 (최초 로그인/사망 후 복귀)"));
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix23] Loadout이 비어있음 → 스킵 (최초 로그인/사망 후 복귀)"));
 		return;
 	}
+
+	// ── 원본 아이템 수 기록 (파괴적 캐스케이드 방지용) ──
+	const int32 LoadedLoadoutItemCount = LoadoutItems.Num();
 
 	// ── 장착 상태 해제 (Loadout 패널에 무기 슬롯 없음) ──
 	// DB에는 장착 정보가 보존되어 있으므로, 향후 무기 장착 슬롯 추가 시 활용 가능
@@ -563,7 +567,7 @@ void AHellunaLobbyGameMode::LoadLoadoutToComponent(AHellunaLobbyController* Lobb
 	{
 		if (ItemData.bEquipped)
 		{
-			UE_LOG(LogHellunaLobby, Log, TEXT("[Fix21] Loadout 아이템 장착 해제: %s (WeaponSlot=%d)"),
+			UE_LOG(LogHellunaLobby, Log, TEXT("[Fix23] Loadout 아이템 장착 해제: %s (WeaponSlot=%d)"),
 				*ItemData.ItemType.ToString(), ItemData.WeaponSlotIndex);
 			ItemData.bEquipped = false;
 			ItemData.WeaponSlotIndex = -1;
@@ -580,19 +584,32 @@ void AHellunaLobbyGameMode::LoadLoadoutToComponent(AHellunaLobbyController* Lobb
 	Resolver.BindUObject(this, &AHellunaLobbyGameMode::ResolveItemTemplate);
 
 	// ── LoadoutComp에 복원 ──
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix21] RestoreFromSaveData → LoadoutComp에 %d개 아이템 복원 시작"), SaveData.Items.Num());
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix23] RestoreFromSaveData → LoadoutComp에 %d개 아이템 복원 시작"), SaveData.Items.Num());
 	LoadoutComp->RestoreFromSaveData(SaveData, Resolver);
 
 	// ── 복원 후 검증 ──
 	const int32 RestoredCount = LoadoutComp->CollectInventoryDataForSave().Num();
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix21] LoadoutComp 복원 완료 | PlayerId=%s | 실제 복원=%d"), *PlayerId, RestoredCount);
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix23] LoadoutComp 복원 완료 | PlayerId=%s | DB 아이템=%d | 실제 복원=%d"),
+		*PlayerId, LoadedLoadoutItemCount, RestoredCount);
+
+	// ── 파괴적 캐스케이드 방지 ──
+	// 복원된 수가 원본보다 적으면 리졸브 실패로 아이템 유실
+	// → player_loadout을 보존하여 다음 로그인 시 크래시 복구(Loadout→Stash)로 안전하게 복원
+	if (RestoredCount < LoadedLoadoutItemCount)
+	{
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [Fix23] ◆◆ Loadout 아이템 유실 감지! DB=%d → 복원=%d → %d개 유실"),
+			LoadedLoadoutItemCount, RestoredCount, LoadedLoadoutItemCount - RestoredCount);
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [Fix23] ◆◆ player_loadout 보존 → 다음 로그인 시 크래시 복구로 Stash 이동"));
+		return;
+	}
 
 	// ── player_loadout 삭제 (중복 방지) ──
+	// 복원 성공 시에만 삭제
 	// Logout 시 SaveComponentsToDatabase가 LoadoutComp 아이템을 Stash에 병합하므로
 	// DB에 player_loadout이 남아있으면 다음 로그인에서 크래시 복구가 중복 로드할 수 있음
 	if (SQLiteSubsystem->DeletePlayerLoadout(PlayerId))
 	{
-		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix21] player_loadout 삭제 완료 (중복 방지) | PlayerId=%s"), *PlayerId);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix23] player_loadout 삭제 완료 (중복 방지) | PlayerId=%s"), *PlayerId);
 	}
 }
 
