@@ -17,6 +17,7 @@ class UInv_InventoryItem;
 class UInv_InventoryBase;
 class UInv_InventoryGrid;
 class AInv_EquipActor;
+class UInv_LootContainerComponent;
 struct FInv_ItemManifest;
 struct FInv_PlayerSaveData;
 
@@ -117,6 +118,28 @@ public:
 	// 호환성 체크 (UI에서 드래그 중 슬롯 하이라이트용, 읽기 전용)
 	UFUNCTION(BlueprintCallable, Category = "인벤토리|부착물", meta = (DisplayName = "무기에 부착 가능 여부"))
 	bool CanAttachToWeapon(int32 WeaponEntryIndex, int32 AttachmentEntryIndex, int32 SlotIndex) const;
+
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [Phase 9] 컨테이너 아이템 전송 RPC
+	// ════════════════════════════════════════════════════════════════
+
+	/** 컨테이너 → 내 인벤토리 (아이템 가져오기) */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_TakeItemFromContainer(
+		UInv_LootContainerComponent* Container,
+		int32 ContainerEntryIndex,
+		int32 TargetGridIndex);   // 내 Grid에 놓을 위치 (-1이면 자동 배치)
+
+	/** 내 인벤토리 → 컨테이너 (아이템 넣기) */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_PutItemInContainer(
+		UInv_LootContainerComponent* Container,
+		int32 PlayerEntryIndex,
+		int32 TargetGridIndex);   // 컨테이너 Grid에 놓을 위치 (-1이면 자동 배치)
+
+	/** 컨테이너 전체 아이템 가져오기 */
+	UFUNCTION(Server, Reliable)
+	void Server_TakeAllFromContainer(UInv_LootContainerComponent* Container);
 	
 	UFUNCTION(NetMulticast, Reliable) // 멀티캐스트 함수 (서버에서 모든 클라이언트로 호출)
 	void Multicast_EquipSlotClicked(UInv_InventoryItem* ItemToEquip, UInv_InventoryItem* ItemToUnequip, int32 WeaponSlotIndex = -1);

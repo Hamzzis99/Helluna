@@ -20,6 +20,7 @@
 #include "Widgets/ItemPopUp/Inv_ItemPopUp.h"
 #include "Widgets/Inventory/AttachmentSlots/Inv_AttachmentPanel.h"
 #include "Items/Fragments/Inv_AttachmentFragments.h"
+#include "InventoryManagement/Components/Inv_LootContainerComponent.h"
 #include "Framework/Application/SlateApplication.h"
 
 // 인벤토리 바인딩 메뉴
@@ -185,7 +186,8 @@ void UInv_InventoryGrid::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 	Super::NativeTick(MyGeometry, InDeltaTime);
 
 	// [최적화] HoverItem을 들고 있지 않으면 마우스 추적 스킵
-	if (!bShouldTickForHover) return;
+	// [Phase 9] LinkedGrid에 HoverItem이 있으면 크로스 Grid 하이라이트를 위해 Tick 실행
+	if (!bShouldTickForHover && !HasLinkedHoverItem()) return;
 
 	//캔버스가 시작하는 왼쪽 모서리 점을 알아보자.
 	const FVector2D CanvasPosition = UInv_WidgetUtils::GetWidgetPosition(CanvasPanel); // 캔2버스 패널의 위치 가져오기
@@ -1076,6 +1078,60 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 	
 	if (IsRightClick(MouseEvent)) // 우클릭을 눌렀을 때 실행되는 팝업 부분 실행 부분
 	{
+		// [Phase 9] Shift+RMB → 컨테이너 빠른 전송 (LinkedContainerGrid가 설정된 경우)
+		if (LinkedContainerGrid.IsValid() && MouseEvent.IsShiftDown())
+		{
+			// 클릭된 아이템의 EntryIndex 추출
+			int32 LookupIndex = GridIndex;
+			if (GridSlots.IsValidIndex(GridIndex) && GridSlots[GridIndex])
+			{
+				const int32 UpperLeft = GridSlots[GridIndex]->GetUpperLeftIndex();
+				if (UpperLeft >= 0) LookupIndex = UpperLeft;
+			}
+
+			UInv_SlottedItem* Slotted = SlottedItems.FindRef(LookupIndex);
+			if (IsValid(Slotted) && InventoryComponent.IsValid())
+			{
+				UInv_InventoryItem* SlottedItem = Slotted->GetInventoryItem();
+				if (IsValid(SlottedItem))
+				{
+					// Entry 인덱스 찾기
+					int32 EntryIdx = INDEX_NONE;
+					const TArray<FInv_InventoryEntry>& Entries =
+						(OwnerType == EGridOwnerType::Container && ContainerComp.IsValid())
+						? ContainerComp->ContainerInventoryList.Entries
+						: InventoryComponent->GetInventoryList().Entries;
+
+					for (int32 i = 0; i < Entries.Num(); ++i)
+					{
+						if (Entries[i].Item == SlottedItem)
+						{
+							EntryIdx = i;
+							break;
+						}
+					}
+
+					if (EntryIdx != INDEX_NONE)
+					{
+						UInv_LootContainerComponent* LinkedCC = LinkedContainerGrid->GetContainerComponent();
+						UInv_LootContainerComponent* MyCC = GetContainerComponent();
+
+						if (OwnerType == EGridOwnerType::Container && IsValid(MyCC))
+						{
+							// 컨테이너 → 플레이어
+							InventoryComponent->Server_TakeItemFromContainer(MyCC, EntryIdx, -1);
+						}
+						else if (OwnerType == EGridOwnerType::Player && IsValid(LinkedCC))
+						{
+							// 플레이어 → 컨테이너
+							InventoryComponent->Server_PutItemInContainer(LinkedCC, EntryIdx, -1);
+						}
+					}
+				}
+			}
+			return;
+		}
+
 		// Shift+RMB → 로비 빠른 전송 (기존 우클릭 전송 로직)
 		if (bLobbyTransferMode && MouseEvent.IsShiftDown())
 		{
@@ -1362,10 +1418,13 @@ bool UInv_InventoryGrid::TryTransferFromTargetGrid()
 		return true; // 처리됨 (실패이지만 HoverItem 정리)
 	}
 
+	// ★ 핵심: 먼저 아이템을 원래 Grid로 복원한 뒤 전송 (Shift+RMB와 동일한 안정적 흐름)
+	// ClearHoverItem은 아이템을 어디에도 배치하지 않고 파괴하므로, PutHoverItemBack으로 먼저 Grid에 복원
+	LobbyTargetGrid->PutHoverItemBack();
+	LobbyTargetGrid->ShowCursor();
+
 	UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] Fix20 - Cross-panel drag-and-drop transfer (RepID=%d)"), RepID);
 	LobbyTargetGrid->OnLobbyTransferRequested.Broadcast(RepID);
-	LobbyTargetGrid->ClearHoverItem();
-	LobbyTargetGrid->ShowCursor();
 	return true;
 }
 
@@ -1439,7 +1498,8 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 #endif
 
 	//아이템 그리드 체크 부분?
-	if (!MatchesCategory(Item))
+	// [Phase 9] 컨테이너 Grid에서는 카테고리 체크 바이패스 (모든 아이템 혼합)
+	if (OwnerType != EGridOwnerType::Container && !MatchesCategory(Item))
 	{
 #if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Log, TEXT("[AddItem] 카테고리 불일치: %s, Grid=%d"),
@@ -2353,6 +2413,12 @@ void UInv_InventoryGrid::OnGridSlotClicked(int32 GridIndex, const FPointerEvent&
 {
 	if (!IsValid(HoverItem))
 	{
+		// [Phase 9] 크로스 컨테이너 Grid 드래그 앤 드롭
+		if (TryTransferFromLinkedContainerGrid(GridIndex))
+		{
+			return;
+		}
+
 		// [Fix20] 패널 간 드래그 앤 드롭: 상대 Grid에 HoverItem이 있으면 전송
 		TryTransferFromTargetGrid();
 		return;
@@ -3937,4 +4003,59 @@ bool UInv_InventoryGrid::MoveItemByCurrentIndex(int32 CurrentIndex, const FIntPo
 	return true;
 }
 
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 9] 컨테이너 Grid 크로스 드래그 & 드롭 함수들
+// ════════════════════════════════════════════════════════════════════════════════
 
+void UInv_InventoryGrid::SetLinkedContainerGrid(UInv_InventoryGrid* OtherGrid)
+{
+	LinkedContainerGrid = OtherGrid;
+}
+
+bool UInv_InventoryGrid::HasLinkedHoverItem() const
+{
+	if (!LinkedContainerGrid.IsValid()) return false;
+	return LinkedContainerGrid->HasHoverItem();
+}
+
+UInv_HoverItem* UInv_InventoryGrid::GetLinkedHoverItem() const
+{
+	if (!LinkedContainerGrid.IsValid()) return nullptr;
+	return LinkedContainerGrid->GetHoverItem();
+}
+
+bool UInv_InventoryGrid::TryTransferFromLinkedContainerGrid(int32 GridIndex)
+{
+	if (!LinkedContainerGrid.IsValid() || !HasLinkedHoverItem()) return false;
+	if (!InventoryComponent.IsValid()) return false;
+
+	UInv_HoverItem* LinkedHover = GetLinkedHoverItem();
+	if (!IsValid(LinkedHover)) return false;
+
+	const int32 EntryIndex = LinkedHover->GetEntryIndex();
+	UInv_LootContainerComponent* LinkedCC = LinkedContainerGrid->GetContainerComponent();
+
+	// 방향 판별: 연결된 Grid가 Container이고 내가 Player → TakeItem
+	if (LinkedContainerGrid->GetOwnerType() == EGridOwnerType::Container
+		&& OwnerType == EGridOwnerType::Player)
+	{
+		if (IsValid(LinkedCC))
+		{
+			InventoryComponent->Server_TakeItemFromContainer(LinkedCC, EntryIndex, GridIndex);
+		}
+	}
+	// 연결된 Grid가 Player이고 내가 Container → PutItem
+	else if (LinkedContainerGrid->GetOwnerType() == EGridOwnerType::Player
+		&& OwnerType == EGridOwnerType::Container)
+	{
+		UInv_LootContainerComponent* MyCC = GetContainerComponent();
+		if (IsValid(MyCC))
+		{
+			InventoryComponent->Server_PutItemInContainer(MyCC, EntryIndex, GridIndex);
+		}
+	}
+
+	// 원본 Grid의 HoverItem 정리
+	LinkedContainerGrid->ClearHoverItem();
+	return true;
+}
