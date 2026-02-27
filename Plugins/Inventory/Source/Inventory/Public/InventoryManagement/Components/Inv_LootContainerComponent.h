@@ -28,6 +28,7 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "InventoryManagement/FastArray/Inv_FastArray.h"
+#include "InventoryManagement/Components/Inv_InventoryComponent.h"  // FInv_ItemTemplateResolver 델리게이트
 #include "Interaction/Inv_Highlightable.h"
 #include "Inv_LootContainerComponent.generated.h"
 

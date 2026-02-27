@@ -430,7 +430,7 @@ void AInv_PlayerController::TraceForInteractables()
 				UInv_LootContainerComponent* LootComp = ThisActor->FindComponentByClass<UInv_LootContainerComponent>();
 				if (IsValid(LootComp))
 				{
-					HUDWidget->ShowPickupMessage(LootComp->ContainerDisplayName);
+					HUDWidget->ShowPickupMessage(LootComp->ContainerDisplayName.ToString());
 				}
 				else
 				{

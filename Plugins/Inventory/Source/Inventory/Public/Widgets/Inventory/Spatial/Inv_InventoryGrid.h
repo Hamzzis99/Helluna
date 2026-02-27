@@ -148,8 +148,8 @@ public:
 	UInv_HoverItem* GetLinkedHoverItem() const;
 
 	/** 컨테이너 컴포넌트 참조 설정 (컨테이너 Grid용) */
-	void SetContainerComponent(UInv_LootContainerComponent* InContainerComp) { ContainerComp = InContainerComp; }
-	UInv_LootContainerComponent* GetContainerComponent() const { return ContainerComp.Get(); }
+	void SetContainerComponent(UInv_LootContainerComponent* InContainerComp);
+	UInv_LootContainerComponent* GetContainerComponent() const;
 
 	void ShowCursor();
 	void HideCursor();

@@ -58,6 +58,9 @@ class HELLUNA_API AHellunaBaseGameMode : public AInv_SaveGameMode
 public:
 	AHellunaBaseGameMode();
 
+	// ── 부모 Override (인벤토리 저장/로드) — public: 사체 루팅 등 외부에서 호출 필요 ──
+	virtual TSubclassOf<AActor> ResolveItemClass(const FGameplayTag& ItemType) override;
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -68,7 +71,6 @@ protected:
 		const FString& Portal = TEXT("")) override;
 
 	// ── 부모 Override (인벤토리 저장/로드) ──
-	virtual TSubclassOf<AActor> ResolveItemClass(const FGameplayTag& ItemType) override;
 	virtual FString GetPlayerSaveId(APlayerController* PC) const override;
 
 	/** 크래시 복구 체크 — PostLogin 시 호출하여 비정상 종료 시 Loadout → Stash 복구 */

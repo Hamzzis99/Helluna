@@ -4007,6 +4007,16 @@ bool UInv_InventoryGrid::MoveItemByCurrentIndex(int32 CurrentIndex, const FIntPo
 // [Phase 9] 컨테이너 Grid 크로스 드래그 & 드롭 함수들
 // ════════════════════════════════════════════════════════════════════════════════
 
+void UInv_InventoryGrid::SetContainerComponent(UInv_LootContainerComponent* InContainerComp)
+{
+	ContainerComp = InContainerComp;
+}
+
+UInv_LootContainerComponent* UInv_InventoryGrid::GetContainerComponent() const
+{
+	return ContainerComp.Get();
+}
+
 void UInv_InventoryGrid::SetLinkedContainerGrid(UInv_InventoryGrid* OtherGrid)
 {
 	LinkedContainerGrid = OtherGrid;
