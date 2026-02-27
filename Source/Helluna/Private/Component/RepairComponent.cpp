@@ -476,6 +476,12 @@ FText URepairComponent::GetMaterialDisplayName(int32 MaterialIndex) const
 
 void URepairComponent::Server_TestConsumeMaterial_Implementation(APlayerController* PlayerController, FGameplayTag MaterialTag, int32 Amount)
 {
+#if UE_BUILD_SHIPPING
+	// 프로덕션(Shipping) 빌드에서는 테스트 RPC 무효화
+	UE_LOG(LogTemp, Warning, TEXT("[RepairComponent] Server_TestConsumeMaterial: Shipping 빌드에서 차단"));
+	return;
+#endif
+
 	UE_LOG(LogTemp, Warning, TEXT("=== [Server_TestConsumeMaterial] 테스트 시작 ==="));
 	UE_LOG(LogTemp, Warning, TEXT("  PlayerController: %s"), PlayerController ? *PlayerController->GetName() : TEXT("nullptr"));
 	UE_LOG(LogTemp, Warning, TEXT("  MaterialTag: %s"), *MaterialTag.ToString());

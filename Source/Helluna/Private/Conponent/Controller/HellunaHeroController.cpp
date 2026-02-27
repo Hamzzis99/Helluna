@@ -151,6 +151,12 @@ void AHellunaHeroController::Server_SubmitVote_Implementation(bool bAgree)
 
 void AHellunaHeroController::Server_CheatEndGame_Implementation(uint8 ReasonIndex)
 {
+#if UE_BUILD_SHIPPING
+	// 프로덕션(Shipping) 빌드에서는 치트 명령 무효화
+	UE_LOG(LogHelluna, Warning, TEXT("[HeroController] Server_CheatEndGame: Shipping 빌드에서 치트 차단"));
+	return;
+#endif
+
 	if (!HasAuthority())
 	{
 		return;

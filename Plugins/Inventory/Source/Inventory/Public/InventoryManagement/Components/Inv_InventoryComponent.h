@@ -51,13 +51,13 @@ public:
 	void TryAddItem(UInv_ItemComponent* ItemComponent);
 
 	//서버 부분 RPC로 만들 것
-	UFUNCTION(Server, Reliable) // 신뢰하는 것? 서버에 전달하는 것?
+	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_AddNewItem(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder);
 
 	UFUNCTION(Server, Reliable) // 신뢰하는 것? 서버에 전달하는 것?
 	void Server_AddStacksToItem(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder);
 
-	UFUNCTION(Server, Reliable) // 신뢰하는 것? 서버에 전달하는 것?
+	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_DropItem(UInv_InventoryItem* Item, int32 StackCount); // 아이템을 서버에다 어떻게 버릴지
 	
 	UFUNCTION(Server, Reliable) // 신뢰하는 것? 서버에 전달하는 것?
@@ -77,14 +77,15 @@ public:
 
 	// ⭐ [Phase 4 방법2] 클라이언트 Grid 위치를 서버 Entry에 동기화
 	// 클라이언트에서 아이템을 Grid에 배치/이동할 때 호출
-	UFUNCTION(Server, Reliable)
+	// Unreliable: 시각적 정보이며 MarkDirty 스킵. 유실 시에도 다음 이동에서 보정됨
+	UFUNCTION(Server, Unreliable)
 	void Server_UpdateItemGridPosition(UInv_InventoryItem* Item, int32 GridIndex, uint8 GridCategory);
 
-	UFUNCTION(Server, Reliable) // 크래프팅: 서버에서 아이템 생성 및 인벤토리 추가
+	UFUNCTION(Server, Reliable, WithValidation) // 크래프팅: 서버에서 아이템 생성 및 인벤토리 추가
 	void Server_CraftItem(TSubclassOf<AActor> ItemActorClass);
 
 	// ⭐ 크래프팅 통합 RPC: 공간 체크 → 재료 차감 → 아이템 생성
-	UFUNCTION(Server, Reliable)
+	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_CraftItemWithMaterials(TSubclassOf<AActor> ItemActorClass,
 		const FGameplayTag& MaterialTag1, int32 Amount1,
 		const FGameplayTag& MaterialTag2, int32 Amount2,
@@ -106,7 +107,7 @@ public:
 	// ════════════════════════════════════════════════════════════════
 
 	// 부착물 장착: 인벤토리 Grid에서 부착물을 무기 슬롯에 장착
-	UFUNCTION(Server, Reliable)
+	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_AttachItemToWeapon(int32 WeaponEntryIndex, int32 AttachmentEntryIndex, int32 SlotIndex);
 
 	// 부착물 분리: 무기 슬롯에서 부착물을 분리하여 인벤토리 Grid로 복귀

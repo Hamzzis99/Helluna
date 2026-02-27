@@ -148,6 +148,15 @@ void UInv_InventoryComponent::TryAddItem(UInv_ItemComponent* ItemComponent)
 #endif
 }
 
+// ════════════════════════════════════════════════════════════════
+// WithValidation: 파라미터 범위/null 검사 (빠른 early reject, 치팅 방지)
+// ════════════════════════════════════════════════════════════════
+
+bool UInv_InventoryComponent::Server_AddNewItem_Validate(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder)
+{
+	return IsValid(ItemComponent) && StackCount >= 0 && Remainder >= 0;
+}
+
 void UInv_InventoryComponent::Server_AddNewItem_Implementation(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder) // 서버에서 새로운 아이템 추가 구현
 {
 #if INV_DEBUG_INVENTORY
@@ -616,6 +625,11 @@ void UInv_InventoryComponent::Server_AddStacksToItem_Implementation(UInv_ItemCom
 	}
 }
 
+bool UInv_InventoryComponent::Server_DropItem_Validate(UInv_InventoryItem* Item, int32 StackCount)
+{
+	return IsValid(Item) && StackCount > 0;
+}
+
 //아이템 드롭 상호작용을 누른 뒤 서버에서 어떻게 처리를 할지.
 void UInv_InventoryComponent::Server_DropItem_Implementation(UInv_InventoryItem* Item, int32 StackCount)
 {
@@ -734,6 +748,11 @@ void UInv_InventoryComponent::Server_ConsumeItem_Implementation(UInv_InventoryIt
 	{
 		ConsumableFragment->OnConsume(OwningController.Get());
 	}
+}
+
+bool UInv_InventoryComponent::Server_CraftItem_Validate(TSubclassOf<AActor> ItemActorClass)
+{
+	return ItemActorClass != nullptr;
 }
 
 // 크래프팅: 서버에서 아이템 생성 및 인벤토리 추가 (ItemManifest 직접 사용!)
@@ -867,6 +886,16 @@ bool UInv_InventoryComponent::HasRequiredMaterialsOnServer(const FGameplayTag& M
 	}
 
 	return true;
+}
+
+bool UInv_InventoryComponent::Server_CraftItemWithMaterials_Validate(
+	TSubclassOf<AActor> ItemActorClass,
+	const FGameplayTag& MaterialTag1, int32 Amount1,
+	const FGameplayTag& MaterialTag2, int32 Amount2,
+	const FGameplayTag& MaterialTag3, int32 Amount3,
+	int32 CraftedAmount)
+{
+	return ItemActorClass != nullptr && Amount1 >= 0 && Amount2 >= 0 && Amount3 >= 0 && CraftedAmount > 0;
 }
 
 // ⭐ 크래프팅 통합 RPC: [안전성 강화] 서버 측 재료 검증 추가
@@ -1782,6 +1811,11 @@ void UInv_InventoryComponent::Multicast_EquipSlotClicked_Implementation(UInv_Inv
 //   5. 무기 장비 슬롯 장착 중이면 부착물 스탯 적용
 //   6. 리플리케이션 (MarkItemDirty + 리슨서버 분기)
 // ════════════════════════════════════════════════════════════════
+bool UInv_InventoryComponent::Server_AttachItemToWeapon_Validate(int32 WeaponEntryIndex, int32 AttachmentEntryIndex, int32 SlotIndex)
+{
+	return WeaponEntryIndex >= 0 && AttachmentEntryIndex >= 0 && SlotIndex >= 0;
+}
+
 void UInv_InventoryComponent::Server_AttachItemToWeapon_Implementation(int32 WeaponEntryIndex, int32 AttachmentEntryIndex, int32 SlotIndex)
 {
 #if INV_DEBUG_ATTACHMENT

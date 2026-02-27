@@ -123,7 +123,8 @@ public:
 	void Multicast_PlayEquipMontageExceptOwner(UAnimMontage* Montage);
 	
 	// 서버에 애니 재생 요청
-	UFUNCTION(Server, Reliable)
+	// Unreliable: 코스메틱 애니메이션 동기화. 유실돼도 다음 애니메이션에서 보정
+	UFUNCTION(Server, Unreliable)
 	void Server_RequestPlayMontageExceptOwner(UAnimMontage* Montage);
 
 
