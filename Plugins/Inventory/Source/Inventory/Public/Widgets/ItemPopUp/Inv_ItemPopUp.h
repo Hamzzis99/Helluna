@@ -21,6 +21,7 @@ DECLARE_DYNAMIC_DELEGATE_TwoParams(FPopUpMenuSplit, int32, SplitAmount, int32, I
 DECLARE_DYNAMIC_DELEGATE_OneParam(FPopUpMenuDrop, int32, Index);
 DECLARE_DYNAMIC_DELEGATE_OneParam(FPopUpMenuConsume, int32, Index);
 DECLARE_DYNAMIC_DELEGATE_OneParam(FPopUpMenuAttachment, int32, Index); // 부착물 관리 버튼 콜백
+DECLARE_DYNAMIC_DELEGATE_OneParam(FPopUpMenuTransfer, int32, Index); // 로비 전송 버튼 콜백
 
 UCLASS()
 class INVENTORY_API UInv_ItemPopUp : public UUserWidget
@@ -34,11 +35,14 @@ public:
 	FPopUpMenuDrop OnDrop;
 	FPopUpMenuConsume OnConsume;
 	FPopUpMenuAttachment OnAttachment; // 부착물 관리 콜백
-	
+	FPopUpMenuTransfer OnTransfer; // 로비 전송 콜백
+
 	int32 GetSplitAmount() const;
 	void CollapseSplitButton() const;
 	void CollapseConsumeButton() const;
+	void CollapseDropButton() const; // 드롭 버튼 숨기기
 	void CollapseAttachmentButton() const; // 부착물 관리 버튼 숨기기
+	void CollapseTransferButton() const; // 전송 버튼 숨기기
 	void SetSliderParams(const float Max, const float Value) const;
 	FVector2D GetBoxSize() const;
 	void SetGridIndex(int32 Index) {GridIndex = Index;}
@@ -57,6 +61,9 @@ private:
 
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UButton> Button_Attachment; // 부착물 관리 버튼
+
+	UPROPERTY(meta = (BindWidget))
+	TObjectPtr<UButton> Button_Transfer; // 로비 전송 버튼
 
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<USlider> Slider_Split; // 슬라이더 버튼 만드는 법.
@@ -80,6 +87,9 @@ private:
 
 	UFUNCTION()
 	void AttachmentButtonClicked(); // 부착물 관리 버튼 클릭시 실행되는 함수
+
+	UFUNCTION()
+	void TransferButtonClicked(); // 전송 버튼 클릭시 실행되는 함수
 
 	UFUNCTION()
 	void SliderValueChanged(float Value); // 슬라이더 값이 변경될 때 실행되는 함수

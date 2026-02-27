@@ -17,6 +17,7 @@ void UInv_ItemPopUp::NativeOnInitialized()
 	Button_Drop->OnClicked.AddDynamic(this, &ThisClass::DropButtonClicked);
 	Button_Consume->OnClicked.AddDynamic(this, &ThisClass::ConsumeButtonClicked);
 	Button_Attachment->OnClicked.AddDynamic(this, &ThisClass::AttachmentButtonClicked);
+	Button_Transfer->OnClicked.AddDynamic(this, &ThisClass::TransferButtonClicked);
 	Slider_Split->OnValueChanged.AddDynamic(this, &ThisClass::SliderValueChanged);
 }
 
@@ -72,14 +73,32 @@ void UInv_ItemPopUp::CollapseConsumeButton() const
 	Button_Consume->SetVisibility(ESlateVisibility::Collapsed); //
 }
 
+void UInv_ItemPopUp::CollapseDropButton() const
+{
+	Button_Drop->SetVisibility(ESlateVisibility::Collapsed); // 드롭 버튼 숨기기
+}
+
 void UInv_ItemPopUp::CollapseAttachmentButton() const
 {
 	Button_Attachment->SetVisibility(ESlateVisibility::Collapsed); // 부착물 관리 버튼 숨기기
 }
 
+void UInv_ItemPopUp::CollapseTransferButton() const
+{
+	Button_Transfer->SetVisibility(ESlateVisibility::Collapsed); // 전송 버튼 숨기기
+}
+
 void UInv_ItemPopUp::AttachmentButtonClicked()
 {
 	if (OnAttachment.ExecuteIfBound(GridIndex))
+	{
+		RemoveFromParent(); // 위젯 제거
+	}
+}
+
+void UInv_ItemPopUp::TransferButtonClicked()
+{
+	if (OnTransfer.ExecuteIfBound(GridIndex))
 	{
 		RemoveFromParent(); // 위젯 제거
 	}

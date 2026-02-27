@@ -343,6 +343,10 @@ private:
 	UFUNCTION()
 	void OnPopUpMenuAttachment(int32 Index);
 
+	// 로비 전송 버튼 상호작용 (PopupMenu에서 Transfer 클릭)
+	UFUNCTION()
+	void OnPopUpMenuTransfer(int32 Index);
+
 	UFUNCTION()
 	void OnInventoryMenuToggled(bool bOpen); // 인벤토리 메뉴 토글 (내가 뭔가 들 때 bool 값 반환하는 함수)
 	

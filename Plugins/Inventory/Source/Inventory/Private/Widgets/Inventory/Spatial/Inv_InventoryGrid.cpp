@@ -1075,8 +1075,8 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 	
 	if (IsRightClick(MouseEvent)) // 우클릭을 눌렀을 때 실행되는 팝업 부분 실행 부분
 	{
-		// [Phase 4 Fix] 로비 전송 모드: 팝업 대신 전송 델리게이트 발동
-		if (bLobbyTransferMode)
+		// Shift+RMB → 로비 빠른 전송 (기존 우클릭 전송 로직)
+		if (bLobbyTransferMode && MouseEvent.IsShiftDown())
 		{
 			// 큰 아이템(2x6 등)은 SlottedItems에 왼쪽 상단 셀 인덱스로만 등록됨
 			// 클릭된 셀의 UpperLeftIndex를 먼저 구해서 올바른 SlottedItem을 찾음
@@ -1093,9 +1093,7 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 			UInv_SlottedItem* Slotted = SlottedItems.FindRef(LookupIndex);
 			if (Slotted)
 			{
-				// ⭐ [Phase 4 Fix] ReplicationID 기반 전송 — 배열 인덱스 대신 안정적 식별자 사용
-				// EntryIndex는 FastArray에서 아이템이 제거되면 밀림 (컴팩션)
-				// ReplicationID는 Entry 생성 시 부여되며, 다른 Entry의 추가/제거와 무관하게 유지됨
+				// ReplicationID 기반 전송 — 배열 인덱스 대신 안정적 식별자 사용
 				int32 RepID = INDEX_NONE;
 				if (InventoryComponent.IsValid())
 				{
@@ -1114,7 +1112,7 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 					}
 				}
 
-				UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] 로비 전송 요청 → RepID=%d, GridIndex=%d (UpperLeft=%d)"), RepID, GridIndex, LookupIndex);
+				UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] 로비 빠른 전송(Shift+RMB) → RepID=%d, GridIndex=%d (UpperLeft=%d)"), RepID, GridIndex, LookupIndex);
 				if (RepID != INDEX_NONE)
 				{
 					OnLobbyTransferRequested.Broadcast(RepID);
@@ -1130,7 +1128,9 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 			}
 			return;
 		}
-		CreateItemPopUp(GridIndex); // 팝업 생성 함수 호출
+
+		// RMB (Shift 없음) → 항상 PopupMenu 표시
+		CreateItemPopUp(GridIndex);
 		return;
 	}
 	
@@ -1224,15 +1224,37 @@ void UInv_InventoryGrid::CreateItemPopUp(const int32 GridIndex)
 		ItemPopUp->CollapseSplitButton(); // 분할 버튼 숨기기
 	}
 	
-	ItemPopUp->OnDrop.BindDynamic(this, &ThisClass::OnPopUpMenuDrop); // 드롭 바인딩 (바인딩은 키를 등록하는 부분이었나)
-	
-	if (RightClickedItem->IsConsumable())
+	// ════════════════════════════════════════════════════════════════
+	// 로비 전송 모드: Transfer 버튼 표시, Drop/Consume 숨기기
+	// 게임 모드: Transfer 숨기기, Drop/Consume 표시
+	// ════════════════════════════════════════════════════════════════
+	if (bLobbyTransferMode)
 	{
-		ItemPopUp->OnConsume.BindDynamic(this, &ThisClass::OnPopUpMenuConsume);
+		// 로비: Transfer 버튼 활성화
+		ItemPopUp->OnTransfer.BindDynamic(this, &ThisClass::OnPopUpMenuTransfer);
+
+		// 로비에는 3D 월드가 없으므로 Drop 불필요
+		ItemPopUp->CollapseDropButton();
+		// 로비에서 소비 불가
+		ItemPopUp->CollapseConsumeButton();
 	}
 	else
 	{
-		ItemPopUp->CollapseConsumeButton();
+		// 게임: Transfer 버튼 숨기기
+		ItemPopUp->CollapseTransferButton();
+
+		// 게임: Drop 바인딩
+		ItemPopUp->OnDrop.BindDynamic(this, &ThisClass::OnPopUpMenuDrop);
+
+		// 게임: Consume 바인딩 (소비 가능한 아이템만)
+		if (RightClickedItem->IsConsumable())
+		{
+			ItemPopUp->OnConsume.BindDynamic(this, &ThisClass::OnPopUpMenuConsume);
+		}
+		else
+		{
+			ItemPopUp->CollapseConsumeButton();
+		}
 	}
 
 	// ════════════════════════════════════════════════════════════════
@@ -2686,6 +2708,54 @@ void UInv_InventoryGrid::OnPopUpMenuAttachment(int32 Index)
 	}
 
 	OpenAttachmentPanel(RightClickedItem, EntryIndex);
+}
+
+// ════════════════════════════════════════════════════════════════
+// PopupMenu Transfer 버튼 콜백 — 로비 전송 (RMB 메뉴에서 Transfer 클릭)
+// ════════════════════════════════════════════════════════════════
+void UInv_InventoryGrid::OnPopUpMenuTransfer(int32 Index)
+{
+	// UpperLeftIndex로 대형 아이템 처리
+	int32 LookupIndex = Index;
+	if (GridSlots.IsValidIndex(Index) && GridSlots[Index])
+	{
+		const int32 UpperLeft = GridSlots[Index]->GetUpperLeftIndex();
+		if (UpperLeft >= 0)
+		{
+			LookupIndex = UpperLeft;
+		}
+	}
+
+	UInv_SlottedItem* Slotted = SlottedItems.FindRef(LookupIndex);
+	if (!Slotted) return;
+
+	int32 RepID = INDEX_NONE;
+	if (InventoryComponent.IsValid())
+	{
+		UInv_InventoryItem* SlottedItem = Slotted->GetInventoryItem();
+		if (IsValid(SlottedItem))
+		{
+			const TArray<FInv_InventoryEntry>& Entries = InventoryComponent->GetInventoryList().Entries;
+			for (const FInv_InventoryEntry& Entry : Entries)
+			{
+				if (Entry.Item == SlottedItem)
+				{
+					RepID = Entry.ReplicationID;
+					break;
+				}
+			}
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] PopupMenu Transfer → RepID=%d, GridIndex=%d (UpperLeft=%d)"), RepID, Index, LookupIndex);
+	if (RepID != INDEX_NONE)
+	{
+		OnLobbyTransferRequested.Broadcast(RepID);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("[InventoryGrid] PopupMenu Transfer 실패 → ReplicationID 미발견"));
+	}
 }
 
 // ════════════════════════════════════════════════════════════════
