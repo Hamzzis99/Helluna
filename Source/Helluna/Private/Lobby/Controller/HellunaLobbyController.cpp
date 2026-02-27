@@ -231,6 +231,7 @@ bool AHellunaLobbyController::ExecuteTransfer(
 		*SourceComp->GetName(), ItemReplicationID, ActualIndex, *TargetComp->GetName());
 
 	// TransferItemTo: 플러그인 내부에서 FastArray 조작 (INVENTORY_API 경계 내)
+	// ⭐ [Phase 8 Fix] TransferItemTo 내부에서 HasRoomInInventoryList 체크 포함
 	const bool bResult = SourceComp->TransferItemTo(ActualIndex, TargetComp);
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ExecuteTransfer 결과: %s"), bResult ? TEXT("성공") : TEXT("실패"));

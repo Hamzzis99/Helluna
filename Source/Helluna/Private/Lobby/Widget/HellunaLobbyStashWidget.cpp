@@ -185,6 +185,42 @@ void UHellunaLobbyStashWidget::InitializePanels(UInv_InventoryComponent* StashCo
 		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] LoadoutSpatialInventory → 우클릭 전송 모드 ON (→ Stash)"));
 	}
 
+	// ── [Fix19] 전송 대상 Grid 교차 연결 (용량 사전 체크용) ──
+	// Stash의 각 Grid → 같은 카테고리의 Loadout Grid (전송 전 공간 확인)
+	// Loadout의 각 Grid → 같은 카테고리의 Stash Grid (역방향도 동일)
+	if (StashPanel && LoadoutSpatialInventory)
+	{
+		// Stash → Loadout 방향
+		if (StashPanel->GetGrid_Equippables() && LoadoutSpatialInventory->GetGrid_Equippables())
+		{
+			StashPanel->GetGrid_Equippables()->SetLobbyTargetGrid(LoadoutSpatialInventory->GetGrid_Equippables());
+		}
+		if (StashPanel->GetGrid_Consumables() && LoadoutSpatialInventory->GetGrid_Consumables())
+		{
+			StashPanel->GetGrid_Consumables()->SetLobbyTargetGrid(LoadoutSpatialInventory->GetGrid_Consumables());
+		}
+		if (StashPanel->GetGrid_Craftables() && LoadoutSpatialInventory->GetGrid_Craftables())
+		{
+			StashPanel->GetGrid_Craftables()->SetLobbyTargetGrid(LoadoutSpatialInventory->GetGrid_Craftables());
+		}
+
+		// Loadout → Stash 방향
+		if (LoadoutSpatialInventory->GetGrid_Equippables() && StashPanel->GetGrid_Equippables())
+		{
+			LoadoutSpatialInventory->GetGrid_Equippables()->SetLobbyTargetGrid(StashPanel->GetGrid_Equippables());
+		}
+		if (LoadoutSpatialInventory->GetGrid_Consumables() && StashPanel->GetGrid_Consumables())
+		{
+			LoadoutSpatialInventory->GetGrid_Consumables()->SetLobbyTargetGrid(StashPanel->GetGrid_Consumables());
+		}
+		if (LoadoutSpatialInventory->GetGrid_Craftables() && StashPanel->GetGrid_Craftables())
+		{
+			LoadoutSpatialInventory->GetGrid_Craftables()->SetLobbyTargetGrid(StashPanel->GetGrid_Craftables());
+		}
+
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Fix19] 전송 대상 Grid 교차 연결 완료 (Stash↔Loadout)"));
+	}
+
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] ── InitializePanels 완료 ──"));
 }
 

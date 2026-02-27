@@ -154,7 +154,9 @@ void UInv_InventoryComponent::TryAddItem(UInv_ItemComponent* ItemComponent)
 
 bool UInv_InventoryComponent::Server_AddNewItem_Validate(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder)
 {
-	return IsValid(ItemComponent) && StackCount >= 0 && Remainder >= 0;
+	// UObject 포인터는 리플리케이션 타이밍으로 일시적 invalid 가능 → Validate에서 체크하면 강제 킥됨
+	// null 체크는 _Implementation에서 수행
+	return StackCount >= 0 && Remainder >= 0;
 }
 
 void UInv_InventoryComponent::Server_AddNewItem_Implementation(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder) // 서버에서 새로운 아이템 추가 구현
@@ -627,7 +629,9 @@ void UInv_InventoryComponent::Server_AddStacksToItem_Implementation(UInv_ItemCom
 
 bool UInv_InventoryComponent::Server_DropItem_Validate(UInv_InventoryItem* Item, int32 StackCount)
 {
-	return IsValid(Item) && StackCount > 0;
+	// UObject 포인터는 리플리케이션 타이밍으로 일시적 invalid 가능 → Validate에서 체크하면 강제 킥됨
+	// null 체크는 _Implementation에서 수행
+	return StackCount > 0;
 }
 
 //아이템 드롭 상호작용을 누른 뒤 서버에서 어떻게 처리를 할지.
@@ -3299,6 +3303,14 @@ bool UInv_InventoryComponent::TransferItemTo(int32 ItemIndex, UInv_InventoryComp
 
 	UE_LOG(LogTemp, Log, TEXT("[InvComp] TransferItemTo: %s x%d | Source=%s → Target=%s"),
 		*ItemType.ToString(), StackCount, *GetName(), *TargetComp->GetName());
+
+	// ── 3-1) 대상 인벤토리 용량 체크 ──
+	// 꽉 찬 그리드에 아이템 전송 방지
+	if (!TargetComp->HasRoomInInventoryList(SourceManifest))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[InvComp] TransferItemTo: 대상 인벤토리 공간 부족! %s 전송 불가"), *ItemType.ToString());
+		return false;
+	}
 
 	// ── 4) Manifest 복사 → Target에 추가 ──
 	// AddItemFromManifest: 새 UInv_InventoryItem 생성 → FastArray 추가 → MarkDirty

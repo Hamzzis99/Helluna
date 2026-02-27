@@ -106,6 +106,17 @@ public:
 	/** 로비 전송 모드 활성화/비활성화 */
 	void SetLobbyTransferMode(bool bEnable) { bLobbyTransferMode = bEnable; }
 
+	// ════════════════════════════════════════════════════════════════
+	// [Fix19] 로비 전송 대상 Grid — 전송 전 용량 사전 체크용
+	// ════════════════════════════════════════════════════════════════
+	// Stash Grid → Loadout Grid (같은 카테고리)
+	// Loadout Grid → Stash Grid (같은 카테고리)
+	// InitializePanels에서 교차 설정됨
+	// ════════════════════════════════════════════════════════════════
+
+	/** 전송 대상 Grid 설정 (같은 카테고리 Grid 교차 연결) */
+	void SetLobbyTargetGrid(UInv_InventoryGrid* InTargetGrid) { LobbyTargetGrid = InTargetGrid; }
+
 	/** 로비 전송 요청 델리게이트 — 우클릭 시 EntryIndex를 전달 */
 	UPROPERTY(BlueprintAssignable, Category = "인벤토리|로비")
 	FOnLobbyTransferRequested OnLobbyTransferRequested;
@@ -217,6 +228,9 @@ private:
 
 	// [Phase 4 Fix] 로비 전송 모드 플래그 — true이면 우클릭 시 팝업 대신 전송 델리게이트
 	bool bLobbyTransferMode = false;
+
+	// [Fix19] 로비 전송 대상 Grid (같은 카테고리, 교차 연결)
+	TWeakObjectPtr<UInv_InventoryGrid> LobbyTargetGrid;
 
 	// [Phase 4 Fix] 기존 아이템 동기화 — SetInventoryComponent 후 이미 InvComp에 있는 아이템을 Grid에 표시
 	void SyncExistingItems();

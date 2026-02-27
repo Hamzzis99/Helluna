@@ -20,6 +20,7 @@
 #include "Widgets/ItemPopUp/Inv_ItemPopUp.h"
 #include "Widgets/Inventory/AttachmentSlots/Inv_AttachmentPanel.h"
 #include "Items/Fragments/Inv_AttachmentFragments.h"
+#include "Framework/Application/SlateApplication.h"
 
 // 인벤토리 바인딩 메뉴
 void UInv_InventoryGrid::NativeOnInitialized()
@@ -1115,6 +1116,21 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 				UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] 로비 빠른 전송(Shift+RMB) → RepID=%d, GridIndex=%d (UpperLeft=%d)"), RepID, GridIndex, LookupIndex);
 				if (RepID != INDEX_NONE)
 				{
+					// [Fix19] 대상 Grid 용량 사전 체크 - 공간 없으면 전송 차단
+					if (LobbyTargetGrid.IsValid())
+					{
+						UInv_InventoryItem* ItemToTransfer = Slotted->GetInventoryItem();
+						if (IsValid(ItemToTransfer))
+						{
+							const FInv_ItemManifest& Manifest = ItemToTransfer->GetItemManifest();
+							if (!LobbyTargetGrid->HasRoomInActualGrid(Manifest))
+							{
+								UE_LOG(LogTemp, Warning, TEXT("[InventoryGrid] Fix19 - Transfer blocked (Shift+RMB): no room in target Grid (RepID=%d)"), RepID);
+								return;
+							}
+						}
+					}
+
 					OnLobbyTransferRequested.Broadcast(RepID);
 				}
 				else
@@ -1196,13 +1212,20 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 
 }
 
-//우클릭 팝업을 생성하는 함수를 만드는 부분. (아이템 디테일 부분들) 
+//우클릭 팝업을 생성하는 함수를 만드는 부분. (아이템 디테일 부분들)
 void UInv_InventoryGrid::CreateItemPopUp(const int32 GridIndex)
 {
 	UInv_InventoryItem* RightClickedItem = GridSlots[GridIndex]->GetInventoryItem().Get();
 	if (!IsValid(RightClickedItem)) return; //오른쪽 클릭을 확인했을 때.
 	if (IsValid(GridSlots[GridIndex]->GetItemPopUp())) return; // 이미 팝업이 있다면 리턴
-	
+
+	// ItemPopUpClass 미설정 방어
+	if (!ItemPopUpClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[CreateItemPopUp] ❌ ItemPopUpClass가 설정되지 않음! BP에서 'Item Pop Up Class' 프로퍼티를 설정하세요."));
+		return;
+	}
+
 	ItemPopUp = CreateWidget<UInv_ItemPopUp>(this, ItemPopUpClass); // 팝업 위젯 생성
 	GridSlots[GridIndex]->SetItemPopUp(ItemPopUp);
 
@@ -1211,8 +1234,11 @@ void UInv_InventoryGrid::CreateItemPopUp(const int32 GridIndex)
 	if (!IsValid(TargetCanvas)) return;
 	TargetCanvas->AddChild(ItemPopUp);
 	UCanvasPanelSlot* CanvasSlot = UWidgetLayoutLibrary::SlotAsCanvasSlot(ItemPopUp);
-	const FVector2D MousePosition = UWidgetLayoutLibrary::GetMousePositionOnViewport(GetOwningPlayer());
-	CanvasSlot->SetPosition(MousePosition - ItemPopUpOffset); // 마우스 위치에 팝업 위치 설정
+
+	// 뷰포트 마우스 좌표를 캔버스 로컬 좌표로 변환 (캔버스가 화면 중앙/우측에 있어도 정확한 위치에 팝업 표시)
+	const FVector2D AbsoluteMousePos = FSlateApplication::Get().GetCursorPos();
+	const FVector2D LocalMousePos = TargetCanvas->GetCachedGeometry().AbsoluteToLocal(AbsoluteMousePos);
+	CanvasSlot->SetPosition(LocalMousePos - ItemPopUpOffset); // 캔버스 로컬 좌표에 팝업 위치 설정
 	CanvasSlot->SetSize(ItemPopUp->GetBoxSize());
 	
 	const int32 SliderMax = GridSlots[GridIndex]->GetStackCount() - 1; // 슬라이더 최대값 설정
@@ -2752,6 +2778,21 @@ void UInv_InventoryGrid::OnPopUpMenuTransfer(int32 Index)
 	UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] PopupMenu Transfer → RepID=%d, GridIndex=%d (UpperLeft=%d)"), RepID, Index, LookupIndex);
 	if (RepID != INDEX_NONE)
 	{
+		// [Fix19] 대상 Grid 용량 사전 체크 - 공간 없으면 전송 차단
+		if (LobbyTargetGrid.IsValid())
+		{
+			UInv_InventoryItem* ItemToTransfer = Slotted->GetInventoryItem();
+			if (IsValid(ItemToTransfer))
+			{
+				const FInv_ItemManifest& Manifest = ItemToTransfer->GetItemManifest();
+				if (!LobbyTargetGrid->HasRoomInActualGrid(Manifest))
+				{
+					UE_LOG(LogTemp, Warning, TEXT("[InventoryGrid] Fix19 - Transfer blocked (PopupMenu): no room in target Grid (RepID=%d)"), RepID);
+					return;
+				}
+			}
+		}
+
 		OnLobbyTransferRequested.Broadcast(RepID);
 	}
 	else
