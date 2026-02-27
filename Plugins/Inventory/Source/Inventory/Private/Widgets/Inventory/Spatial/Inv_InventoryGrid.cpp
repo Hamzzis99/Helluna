@@ -1325,12 +1325,70 @@ void UInv_InventoryGrid::PutHoverItemBack()
 	ClearHoverItem();
 }
 
+// [Fix20] 상대 Grid의 HoverItem을 이쪽으로 전송 (패널 간 드래그 앤 드롭)
+bool UInv_InventoryGrid::TryTransferFromTargetGrid()
+{
+	if (!bLobbyTransferMode) return false;
+	if (!LobbyTargetGrid.IsValid()) return false;
+	if (!LobbyTargetGrid->HasHoverItem()) return false;
+
+	UInv_HoverItem* SourceHover = LobbyTargetGrid->GetHoverItem();
+	if (!IsValid(SourceHover)) return false;
+
+	UInv_InventoryItem* ItemToTransfer = SourceHover->GetInventoryItem();
+	if (!IsValid(ItemToTransfer)) return false;
+
+	// ReplicationID 찾기
+	if (!LobbyTargetGrid->InventoryComponent.IsValid()) return false;
+	const TArray<FInv_InventoryEntry>& Entries = LobbyTargetGrid->InventoryComponent->GetInventoryList().Entries;
+	int32 RepID = INDEX_NONE;
+	for (const FInv_InventoryEntry& Entry : Entries)
+	{
+		if (Entry.Item == ItemToTransfer)
+		{
+			RepID = Entry.ReplicationID;
+			break;
+		}
+	}
+	if (RepID == INDEX_NONE) return false;
+
+	// 용량 체크 (Fix19 패턴)
+	const FInv_ItemManifest& Manifest = ItemToTransfer->GetItemManifest();
+	if (!HasRoomInActualGrid(Manifest))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[InventoryGrid] Fix20 - Cross-panel transfer blocked: no room in target Grid (RepID=%d)"), RepID);
+		LobbyTargetGrid->PutHoverItemBack();
+		LobbyTargetGrid->ShowCursor();
+		return true; // 처리됨 (실패이지만 HoverItem 정리)
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] Fix20 - Cross-panel drag-and-drop transfer (RepID=%d)"), RepID);
+	LobbyTargetGrid->OnLobbyTransferRequested.Broadcast(RepID);
+	LobbyTargetGrid->ClearHoverItem();
+	LobbyTargetGrid->ShowCursor();
+	return true;
+}
+
 void UInv_InventoryGrid::DropItem()
 {
 	//위젯 쪽에서 먼저 처리하게 하기
-	if (!IsValid(HoverItem)) return;
+	if (!IsValid(HoverItem))
+	{
+		// [Fix20] 이 Grid에 HoverItem 없으면, 상대 Grid에서 전송 시도 (패널 배경 클릭)
+		TryTransferFromTargetGrid();
+		return;
+	}
 	if (!IsValid(HoverItem->GetInventoryItem())) return;
-	
+
+	// [Fix20] 로비 모드에서는 Drop 차단 — Server_DropItem RPC 호출 방지 (Validate 실패 → 강제 킥 방지)
+	if (bLobbyTransferMode)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[InventoryGrid] Fix20 - Drop blocked in lobby mode. Returning item to original position."));
+		PutHoverItemBack();
+		ShowCursor();
+		return;
+	}
+
 	// TODO : Tell the server to actually drop the item
 	// TODO : 서버에서 실제로 아이템을 떨어뜨리도록 지시하는 일
 	InventoryComponent->Server_DropItem(HoverItem->GetInventoryItem(), HoverItem->GetStackCount()); // 서버에 아이템 드롭 요청
@@ -2293,7 +2351,12 @@ void UInv_InventoryGrid::ConstructGrid()
 // 그리드 클릭되었을 때 작동하게 만드려는 델리게이트 대비 함수.
 void UInv_InventoryGrid::OnGridSlotClicked(int32 GridIndex, const FPointerEvent& MouseEvent)
 {
-	if (!IsValid(HoverItem)) return; // 호버 아이템이 유효하다면 리턴
+	if (!IsValid(HoverItem))
+	{
+		// [Fix20] 패널 간 드래그 앤 드롭: 상대 Grid에 HoverItem이 있으면 전송
+		TryTransferFromTargetGrid();
+		return;
+	} // 호버 아이템이 유효하다면 리턴
 	if (!GridSlots.IsValidIndex(ItemDropIndex)) return; // 아이템 드롭 인덱스가 유효하지 않다면 리턴
 
 

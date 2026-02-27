@@ -232,6 +232,9 @@ private:
 	// [Fix19] 로비 전송 대상 Grid (같은 카테고리, 교차 연결)
 	TWeakObjectPtr<UInv_InventoryGrid> LobbyTargetGrid;
 
+	// [Fix20] 상대 Grid의 HoverItem을 이쪽으로 전송 (패널 간 드래그 앤 드롭)
+	bool TryTransferFromTargetGrid();
+
 	// [Phase 4 Fix] 기존 아이템 동기화 — SetInventoryComponent 후 이미 InvComp에 있는 아이템을 Grid에 표시
 	void SyncExistingItems();
 
