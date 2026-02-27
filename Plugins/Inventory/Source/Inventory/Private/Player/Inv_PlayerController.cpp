@@ -1244,17 +1244,49 @@ void AInv_PlayerController::Client_RequestInventoryState_Implementation()
 	TArray<FInv_SavedItemData> CollectedData = CollectInventoryGridState();
 
 	// Step 2: 서버로 전송
+	// [Fix15] 청크 분할 전송 — 65KB RPC 번치 크기 제한 초과 방지
+	// 아이템당 SerializedManifest(바이너리 BLOB)가 커서 12개 이상이면 65KB 초과 가능
+	constexpr int32 ChunkSize = 5; // 아이템 5개씩 분할 (안전 마진 확보)
+
 #if INV_DEBUG_PLAYER
 	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("▶ [Step 2] Server_ReceiveInventoryState() RPC로 서버에 전송..."));
-	UE_LOG(LogTemp, Warning, TEXT("   전송할 아이템: %d개"), CollectedData.Num());
+	UE_LOG(LogTemp, Warning, TEXT("▶ [Step 2] Server_ReceiveInventoryStateChunk() RPC로 서버에 청크 전송..."));
+	UE_LOG(LogTemp, Warning, TEXT("   전송할 아이템: %d개, 청크 크기: %d"), CollectedData.Num(), ChunkSize);
 #endif
 
-	Server_ReceiveInventoryState(CollectedData);
+	if (CollectedData.Num() <= ChunkSize)
+	{
+		// 소량 → 단일 청크로 전송
+		Server_ReceiveInventoryStateChunk(CollectedData, true);
+	}
+	else
+	{
+		// 대량 → 분할 전송
+		const int32 TotalItems = CollectedData.Num();
+		for (int32 StartIdx = 0; StartIdx < TotalItems; StartIdx += ChunkSize)
+		{
+			const int32 EndIdx = FMath::Min(StartIdx + ChunkSize, TotalItems);
+			const bool bIsLast = (EndIdx >= TotalItems);
+
+			TArray<FInv_SavedItemData> Chunk;
+			Chunk.Reserve(EndIdx - StartIdx);
+			for (int32 i = StartIdx; i < EndIdx; i++)
+			{
+				Chunk.Add(CollectedData[i]);
+			}
+
+#if INV_DEBUG_PLAYER
+			UE_LOG(LogTemp, Warning, TEXT("   청크 전송: [%d~%d] (%d개), bIsLast=%s"),
+				StartIdx, EndIdx - 1, Chunk.Num(), bIsLast ? TEXT("true") : TEXT("false"));
+#endif
+
+			Server_ReceiveInventoryStateChunk(Chunk, bIsLast);
+		}
+	}
 
 #if INV_DEBUG_PLAYER
 	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("✅ 클라이언트 → 서버 전송 완료!"));
+	UE_LOG(LogTemp, Warning, TEXT("✅ 클라이언트 → 서버 청크 전송 완료!"));
 	UE_LOG(LogTemp, Warning, TEXT("════════════════════════════════════════════════════════════════════════════════"));
 #endif
 }
@@ -1325,6 +1357,60 @@ void AInv_PlayerController::Server_ReceiveInventoryState_Implementation(const TA
 	UE_LOG(LogTemp, Warning, TEXT("✅ 서버 수신 처리 완료!"));
 	UE_LOG(LogTemp, Warning, TEXT("════════════════════════════════════════════════════════════════════════════════"));
 #endif
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Fix15] Server_ReceiveInventoryStateChunk — 청크 분할 수신
+// ════════════════════════════════════════════════════════════════════════════════
+// 클라이언트가 인벤토리 데이터를 N개씩 나눠 보낼 때 사용.
+// 각 청크를 PendingServerChunkItems에 누적, bIsLastChunk=true일 때 델리게이트 브로드캐스트.
+// ════════════════════════════════════════════════════════════════════════════════
+
+bool AInv_PlayerController::Server_ReceiveInventoryStateChunk_Validate(
+	const TArray<FInv_SavedItemData>& ChunkItems, bool bIsLastChunk)
+{
+	// 청크당 최대 100개, 누적 최대 1000개
+	if (ChunkItems.Num() > 100)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Server_ReceiveInventoryStateChunk_Validate] 청크 아이템 수 초과: %d"), ChunkItems.Num());
+		return false;
+	}
+	return true;
+}
+
+void AInv_PlayerController::Server_ReceiveInventoryStateChunk_Implementation(
+	const TArray<FInv_SavedItemData>& ChunkItems, bool bIsLastChunk)
+{
+	UE_LOG(LogTemp, Log, TEXT("[Fix15] Server_ReceiveInventoryStateChunk: 청크 수신 %d개, bIsLastChunk=%s, 누적=%d"),
+		ChunkItems.Num(), bIsLastChunk ? TEXT("true") : TEXT("false"), PendingServerChunkItems.Num());
+
+	PendingServerChunkItems.Append(ChunkItems);
+
+	if (!bIsLastChunk)
+	{
+		return; // 아직 더 올 청크가 있음
+	}
+
+	// 마지막 청크 → 누적된 전체 데이터로 델리게이트 브로드캐스트
+	UE_LOG(LogTemp, Log, TEXT("[Fix15] 마지막 청크 수신. 총 %d개 아이템 → 델리게이트 브로드캐스트"),
+		PendingServerChunkItems.Num());
+
+#if INV_DEBUG_PLAYER
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("▶ [Fix15] OnInventoryStateReceived 델리게이트 브로드캐스트 (청크 누적 완료)..."));
+#endif
+
+	if (OnInventoryStateReceived.IsBound())
+	{
+		OnInventoryStateReceived.Broadcast(this, PendingServerChunkItems);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Fix15] 델리게이트 바인딩 안 됨! (GameMode에서 바인딩 필요)"));
+	}
+
+	// 누적 버퍼 초기화
+	PendingServerChunkItems.Empty();
 }
 
 // ============================================

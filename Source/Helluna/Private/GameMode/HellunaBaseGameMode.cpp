@@ -1777,6 +1777,15 @@ bool AHellunaBaseGameMode::SaveCollectedItems(const FString& PlayerId, const TAr
 		return bSuccess;
 	}
 
+	// [Fix16] bFileTransferOnly 모드(게임서버)에서는 .sav 폴백 금지
+	// — .sav에 저장하면 다음 세션에서 오래된 데이터를 로드하여 아이템 복제 발생
+	// — 게임서버의 저장 경로는 ExportGameResultToFile (JSON) 전용
+	if (DB && DB->IsFileTransferOnly())
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[Fix16] SaveCollectedItems: 파일 전송 전용 모드 — .sav 폴백 차단 | PlayerId=%s"), *PlayerId);
+		return false;
+	}
+
 	// SQLite 미준비 → .sav 폴백
 	UE_LOG(LogHelluna, Warning, TEXT("[Phase3] SaveCollectedItems: SQLite 미준비 — .sav 폴백 | PlayerId=%s"), *PlayerId);
 	return Super::SaveCollectedItems(PlayerId, Items);
@@ -2003,6 +2012,15 @@ void AHellunaBaseGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
 			}
 			else
 			{
+				// [Fix16] bFileTransferOnly 모드(게임서버)에서는 .sav 폴백 금지
+				// — .sav에 이전 세션의 오래된 데이터가 있으면 아이템 복제 발생
+				// — JSON Loadout 파일이 없으면 빈손 출격이므로 빈 인벤토리로 시작
+				if (DB && DB->IsFileTransferOnly())
+				{
+					UE_LOG(LogHelluna, Warning, TEXT("[Fix16] LoadAndSendInventoryToClient: 파일 전송 전용 모드 — .sav 폴백 차단, 빈 인벤토리로 시작 | PlayerId=%s"), *PlayerId);
+					return;
+				}
+
 				UE_LOG(LogHelluna, Warning, TEXT("[Phase3] LoadAndSendInventoryToClient: SQLite 미준비 (재오픈도 실패) — .sav 폴백 | PlayerId=%s"), *PlayerId);
 				Super::LoadAndSendInventoryToClient(PC);
 				return;

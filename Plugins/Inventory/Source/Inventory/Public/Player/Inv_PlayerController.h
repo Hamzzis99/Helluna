@@ -449,6 +449,11 @@ public:
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_ReceiveInventoryState(const TArray<FInv_SavedItemData>& SavedItems);
 
+	/** [Fix15] 청크 분할 전송 — 65KB RPC 제한 초과 방지
+	 *  클라이언트가 N개씩 나눠 보내고, bIsLastChunk=true일 때 델리게이트 브로드캐스트 */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_ReceiveInventoryStateChunk(const TArray<FInv_SavedItemData>& ChunkItems, bool bIsLastChunk);
+
 	/**
 	 * 서버에서 인벤토리 상태 수신 시 브로드캐스트되는 델리게이트
 	 * GameMode에서 바인딩하여 저장 처리
@@ -512,8 +517,11 @@ private:
 	TWeakObjectPtr<UInv_InventoryComponent> InventoryComponent;
 	TWeakObjectPtr<UInv_EquipmentComponent> EquipmentComponent;
 
-	/** [네트워크 최적화] 청크 분할 수신 시 누적 버퍼 */
+	/** [네트워크 최적화] 클라이언트→서버 청크 분할 수신 시 누적 버퍼 (Client_ReceiveInventoryDataChunk용) */
 	TArray<FInv_SavedItemData> PendingSavedItems;
+
+	/** [Fix15] 서버측 청크 누적 버퍼 (Server_ReceiveInventoryStateChunk용) */
+	TArray<FInv_SavedItemData> PendingServerChunkItems;
 
 	/** [네트워크 최적화] FastArray 폴링 복원용 */
 	TArray<FInv_SavedItemData> PendingRestoreItems;

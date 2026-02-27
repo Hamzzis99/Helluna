@@ -477,7 +477,24 @@ void AHellunaDefenseGameMode::EndGame(EHellunaGameEndReason Reason)
                 }
             }
 
-            HeroPC->Client_ShowGameResult(ResultItems, bSurvived, ReasonString, LobbyServerURL);
+            // [Fix15] 네트워크 최적화: SerializedManifest 제거 (65KB RPC 제한 초과 방지)
+            // 결과 UI는 ItemType, StackCount, bEquipped만 필요 — 무거운 바이너리 데이터 불필요
+            TArray<FInv_SavedItemData> LightweightItems;
+            LightweightItems.Reserve(ResultItems.Num());
+            for (const FInv_SavedItemData& Item : ResultItems)
+            {
+                FInv_SavedItemData LightItem;
+                LightItem.ItemType = Item.ItemType;
+                LightItem.StackCount = Item.StackCount;
+                LightItem.GridPosition = Item.GridPosition;
+                LightItem.GridCategory = Item.GridCategory;
+                LightItem.bEquipped = Item.bEquipped;
+                LightItem.WeaponSlotIndex = Item.WeaponSlotIndex;
+                // SerializedManifest, AttachmentsJson 제외 (대용량 바이너리)
+                LightweightItems.Add(MoveTemp(LightItem));
+            }
+
+            HeroPC->Client_ShowGameResult(LightweightItems, bSurvived, ReasonString, LobbyServerURL);
         }
     }
 

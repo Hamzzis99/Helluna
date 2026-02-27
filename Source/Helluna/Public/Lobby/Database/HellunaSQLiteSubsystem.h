@@ -102,6 +102,10 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Helluna|Database")
 	bool IsDatabaseReady() const;
 
+	/** 파일 전송 전용 모드 여부 (게임서버에서 true → DB 사용 불가, JSON 전송만 가능) */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Helluna|Database")
+	bool IsFileTransferOnly() const { return bFileTransferOnly; }
+
 	/**
 	 * DB 파일의 절대 경로를 반환
 	 * 예: "D:/UnrealProject/.../Saved/Database/Helluna.db"
