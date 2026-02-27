@@ -1,6 +1,7 @@
 #include "Login/Widget/HellunaLoginWidget.h"
 #include "Login/Controller/HellunaLoginController.h"
 #include "Login/Widget/HellunaCharacterSelectWidget.h"
+#include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
 #include "Components/EditableTextBox.h"
 #include "Components/TextBlock.h"
 #include "Components/Button.h"
@@ -66,6 +67,15 @@ void UHellunaLoginWidget::OnLoginButtonClicked()
 		return;
 	}
 
+	// 로딩 화면 표시 (RPC 호출 전)
+	if (UGameInstance* GIBase = UGameplayStatics::GetGameInstance(GetWorld()))
+	{
+		if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GIBase))
+		{
+			GI->ShowLoadingScreen(TEXT("로그인 중..."));
+		}
+	}
+
 	APlayerController* PC = UGameplayStatics::GetPlayerController(GetWorld(), 0);
 	if (AHellunaLoginController* LoginController = Cast<AHellunaLoginController>(PC))
 	{
@@ -76,6 +86,15 @@ void UHellunaLoginWidget::OnLoginButtonClicked()
 	{
 		UE_LOG(LogTemp, Error, TEXT("[LoginWidget] LoginController 없음! (PC: %s)"), PC ? *PC->GetClass()->GetName() : TEXT("nullptr"));
 		ShowMessage(TEXT("Controller 오류!"), true);
+
+		// 로딩 화면 해제
+		if (UGameInstance* GIBase2 = UGameplayStatics::GetGameInstance(GetWorld()))
+		{
+			if (UMDF_GameInstance* GI2 = Cast<UMDF_GameInstance>(GIBase2))
+			{
+				GI2->HideLoadingScreen();
+			}
+		}
 	}
 
 	UE_LOG(LogTemp, Warning, TEXT(""));

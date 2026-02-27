@@ -4,6 +4,8 @@
 #include "Engine/GameInstance.h"
 #include "MDF_GameInstance.generated.h"
 
+class UHellunaLoadingWidget;
+
 /**
  * ============================================
  * 📌 MDF_GameInstance
@@ -130,4 +132,34 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Login")
 	int32 GetLoggedInPlayerCount() const;
+
+	// ============================================
+	// 로딩 화면 (Loading Screen)
+	// ============================================
+
+	/**
+	 * 로딩 화면 표시
+	 * 전환 구간(서버 접속, 로그인, 캐릭터 선택 등)에서 호출
+	 * 이미 표시 중이면 메시지만 갱신
+	 *
+	 * @param Message - 표시할 로딩 메시지
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Loading")
+	void ShowLoadingScreen(const FString& Message);
+
+	/**
+	 * 로딩 화면 숨김
+	 * 전환 완료 후 호출
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Loading")
+	void HideLoadingScreen();
+
+protected:
+	/** 로딩 위젯 클래스 (BP에서 설정: WBP_HellunaLoadingWidget) */
+	UPROPERTY(EditDefaultsOnly, Category = "Loading", meta = (DisplayName = "Loading Widget Class (로딩 위젯 클래스)"))
+	TSubclassOf<UHellunaLoadingWidget> LoadingWidgetClass;
+
+	/** 현재 활성화된 로딩 위젯 인스턴스 */
+	UPROPERTY()
+	TObjectPtr<UHellunaLoadingWidget> LoadingWidget;
 };

@@ -195,6 +195,12 @@ void AHellunaLoginController::ShowLoginWidget()
 		}
 	}
 
+	// 로딩 화면 해제 (서버 접속 완료 후)
+	if (UMDF_GameInstance* GI2 = Cast<UMDF_GameInstance>(GetGameInstance()))
+	{
+		GI2->HideLoadingScreen();
+	}
+
 	if (!LoginWidgetClass)
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[LoginController] LoginWidgetClass가 nullptr!"));
@@ -425,6 +431,15 @@ void AHellunaLoginController::Client_PrepareControllerSwap_Implementation()
 
 void AHellunaLoginController::ShowLoginResult(bool bSuccess, const FString& Message)
 {
+	// 로그인 실패 시 로딩 화면 해제
+	if (!bSuccess)
+	{
+		if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance()))
+		{
+			GI->HideLoadingScreen();
+		}
+	}
+
 	if (!LoginWidget) return;
 
 	if (bSuccess)
@@ -494,12 +509,18 @@ void AHellunaLoginController::Client_CharacterSelectionResult_Implementation(boo
 	}
 
 	// ════════════════════════════════════════════
-	// 📌 선택 성공 시 프리뷰 액터 파괴 (비용 0)
+	// 선택 성공 시 프리뷰 액터 파괴 + 로딩 화면 표시
 	// ════════════════════════════════════════════
 	if (bSuccess)
 	{
 		DestroyPreviewActors();   // V1
 		DestroyPreviewSceneV2();  // V2
+
+		// 게임 진입 대기 로딩 화면 표시 (맵 전환 시 자동 파괴됨)
+		if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance()))
+		{
+			GI->ShowLoadingScreen(TEXT("게임 준비 중..."));
+		}
 	}
 }
 
@@ -517,6 +538,12 @@ void AHellunaLoginController::Client_ShowCharacterSelectUI_Implementation(const 
 	}
 	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 #endif
+
+	// 로딩 화면 해제 (로그인 성공 → 캐릭터 선택 UI 표시 전)
+	if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance()))
+	{
+		GI->HideLoadingScreen();
+	}
 
 	// LoginWidget에 캐릭터 선택 UI 표시 요청
 	if (!LoginWidget) return;
