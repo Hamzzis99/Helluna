@@ -1629,6 +1629,22 @@ void UInv_InventoryGrid::CreateItemPopUp(const int32 GridIndex)
 	{
 		ItemPopUp->CollapseAttachmentButton();
 	}
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 11] 회전 버튼 — 1x1 또는 정사각형이 아닌 아이템에만 표시
+	// ════════════════════════════════════════════════════════════════
+	{
+		const FInv_GridFragment* GridFrag = GetFragment<FInv_GridFragment>(RightClickedItem, FragmentTags::GridFragment);
+		const FIntPoint GridSize = GridFrag ? GridFrag->GetGridSize() : FIntPoint(1, 1);
+		if (GridSize.X != GridSize.Y) // 정사각형/1x1은 회전 무의미
+		{
+			ItemPopUp->OnRotate.BindDynamic(this, &ThisClass::OnPopUpMenuRotate);
+		}
+		else
+		{
+			ItemPopUp->CollapseRotateButton();
+		}
+	}
 }
 
 void UInv_InventoryGrid::PutHoverItemBack()
@@ -3288,6 +3304,110 @@ void UInv_InventoryGrid::OnPopUpMenuTransfer(int32 Index)
 	{
 		UE_LOG(LogTemp, Error, TEXT("[InventoryGrid] PopupMenu Transfer 실패 → ReplicationID 미발견"));
 	}
+}
+
+// ════════════════════════════════════════════════════════════════
+// [Phase 11] 아이템 제자리 90도 회전 (PopupMenu Rotate 버튼)
+// 처리 흐름:
+//   1. UpperLeftIndex 리졸브 → 아이템/Fragment 가져오기
+//   2. 현재 위치에서 아이템 제거 (GridSlot + OccupiedMask + SlottedItem 정리)
+//   3. 회전된 크기로 같은 위치에 공간이 있는지 체크
+//   4. 공간 있으면 회전된 상태로 재배치 + Server RPC 동기화
+//   5. 공간 없으면 원래 상태로 복원
+// ════════════════════════════════════════════════════════════════
+void UInv_InventoryGrid::OnPopUpMenuRotate(int32 Index)
+{
+	// UpperLeftIndex 리졸브
+	int32 LookupIndex = Index;
+	if (GridSlots.IsValidIndex(Index) && GridSlots[Index])
+	{
+		const int32 UpperLeft = GridSlots[Index]->GetUpperLeftIndex();
+		if (UpperLeft >= 0)
+		{
+			LookupIndex = UpperLeft;
+		}
+	}
+
+	UInv_SlottedItem* Slotted = SlottedItems.FindRef(LookupIndex);
+	if (!IsValid(Slotted)) return;
+
+	UInv_InventoryItem* Item = Slotted->GetInventoryItem();
+	if (!IsValid(Item)) return;
+
+	const FInv_GridFragment* GridFragment = GetFragment<FInv_GridFragment>(Item, FragmentTags::GridFragment);
+	if (!GridFragment) return;
+
+	const FIntPoint OriginalSize = GridFragment->GetGridSize();
+	// 정사각형/1x1은 이미 CreateItemPopUp에서 필터링되지만, 안전 체크
+	if (OriginalSize.X == OriginalSize.Y) return;
+
+	const bool bCurrentRotated = Slotted->IsRotated();
+	const bool bNewRotated = !bCurrentRotated;
+
+	// 회전 후 점유할 셀 크기
+	const FIntPoint NewDim = GetEffectiveDimensions(GridFragment, bNewRotated);
+
+	// 기존 슬롯의 StackCount, EntryIndex 보존 (GridSlot에서 가져옴)
+	const int32 StackCount = GridSlots.IsValidIndex(LookupIndex) ? GridSlots[LookupIndex]->GetStackCount() : 1;
+	const bool bStackable = Item->IsStackable();
+
+	int32 EntryIndex = INDEX_NONE;
+	if (InventoryComponent.IsValid())
+	{
+		const TArray<FInv_InventoryEntry>& Entries = InventoryComponent->GetInventoryList().Entries;
+		for (int32 i = 0; i < Entries.Num(); ++i)
+		{
+			if (Entries[i].Item == Item)
+			{
+				EntryIndex = i;
+				break;
+			}
+		}
+	}
+
+	// 1) 현재 위치에서 아이템 제거 (공간 확보)
+	RemoveItemFromGrid(Item, LookupIndex);
+
+	// 2) 회전된 크기로 같은 위치에 공간이 있는지 체크
+	//    ForEach2D로 회전 후 차지할 모든 셀이 비어있는지 확인
+	bool bCanRotate = true;
+	UInv_InventoryStatics::ForEach2D(GridSlots, LookupIndex, NewDim, Columns, [&](const UInv_GridSlot* GridSlot)
+	{
+		if (!GridSlot || !GridSlot->IsAvailable())
+		{
+			bCanRotate = false;
+		}
+	});
+
+	// 그리드 경계 밖으로 나가는지도 확인 (ForEach2D는 경계 초과 시 콜백을 호출하지 않을 수 있음)
+	{
+		const int32 Row = LookupIndex / Columns;
+		const int32 Col = LookupIndex % Columns;
+		if (Col + NewDim.X > Columns || Row + NewDim.Y > Rows)
+		{
+			bCanRotate = false;
+		}
+	}
+
+	if (!bCanRotate)
+	{
+		// 공간이 없으면 원래 상태로 복원
+		AddItemAtIndex(Item, LookupIndex, bStackable, StackCount, EntryIndex, bCurrentRotated);
+		UpdateGridSlots(Item, LookupIndex, bStackable, StackCount, bCurrentRotated);
+		UE_LOG(LogTemp, Warning, TEXT("[OnPopUpMenuRotate] 회전 불가 — 공간 부족 (Index=%d, NewDim=%dx%d)"),
+			LookupIndex, NewDim.X, NewDim.Y);
+		return;
+	}
+
+	// 3) 회전된 상태로 재배치
+	AddItemAtIndex(Item, LookupIndex, bStackable, StackCount, EntryIndex, bNewRotated);
+	UpdateGridSlots(Item, LookupIndex, bStackable, StackCount, bNewRotated);
+
+	UE_LOG(LogTemp, Log, TEXT("[OnPopUpMenuRotate] 회전 완료: Index=%d, %s → %s (Dim=%dx%d)"),
+		LookupIndex,
+		bCurrentRotated ? TEXT("90°") : TEXT("0°"),
+		bNewRotated ? TEXT("90°") : TEXT("0°"),
+		NewDim.X, NewDim.Y);
 }
 
 // ════════════════════════════════════════════════════════════════

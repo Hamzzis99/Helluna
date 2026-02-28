@@ -19,6 +19,7 @@ void UInv_ItemPopUp::NativeOnInitialized()
 	Button_Consume->OnClicked.AddUniqueDynamic(this, &ThisClass::ConsumeButtonClicked);
 	Button_Attachment->OnClicked.AddUniqueDynamic(this, &ThisClass::AttachmentButtonClicked);
 	Button_Transfer->OnClicked.AddUniqueDynamic(this, &ThisClass::TransferButtonClicked);
+	Button_Rotate->OnClicked.AddUniqueDynamic(this, &ThisClass::RotateButtonClicked);
 	Slider_Split->OnValueChanged.AddUniqueDynamic(this, &ThisClass::SliderValueChanged);
 }
 
@@ -89,6 +90,11 @@ void UInv_ItemPopUp::CollapseTransferButton() const
 	Button_Transfer->SetVisibility(ESlateVisibility::Collapsed); // 전송 버튼 숨기기
 }
 
+void UInv_ItemPopUp::CollapseRotateButton() const
+{
+	Button_Rotate->SetVisibility(ESlateVisibility::Collapsed); // 회전 버튼 숨기기
+}
+
 void UInv_ItemPopUp::AttachmentButtonClicked()
 {
 	if (OnAttachment.ExecuteIfBound(GridIndex))
@@ -100,6 +106,14 @@ void UInv_ItemPopUp::AttachmentButtonClicked()
 void UInv_ItemPopUp::TransferButtonClicked()
 {
 	if (OnTransfer.ExecuteIfBound(GridIndex))
+	{
+		RemoveFromParent(); // 위젯 제거
+	}
+}
+
+void UInv_ItemPopUp::RotateButtonClicked()
+{
+	if (OnRotate.ExecuteIfBound(GridIndex))
 	{
 		RemoveFromParent(); // 위젯 제거
 	}
