@@ -34,8 +34,6 @@ class AHellunaLobbyController;
 class AHellunaCharacterSelectSceneV2;
 class UImage;
 class UTextBlock;
-class UMaterialInterface;
-class UTextureRenderTarget2D;
 enum class EHellunaHeroType : uint8;
 
 // 탭 인덱스 상수
@@ -128,10 +126,10 @@ public:
 	// 중앙 프리뷰 설정
 	// ════════════════════════════════════════════════════════════════
 
-	/** Play 탭의 캐릭터 프리뷰 이미지 설정 (ShowLobbyWidget에서 호출) */
+	/** Play 탭의 캐릭터 프리뷰 씬 캐시 설정 (ShowLobbyWidget에서 호출, 직접 뷰포트 모드) */
 	UFUNCTION(BlueprintCallable, Category = "로비|프리뷰",
 		meta = (DisplayName = "Setup Center Preview (중앙 프리뷰 설정)"))
-	void SetupCenterPreview(UTextureRenderTarget2D* InRenderTarget, AHellunaCharacterSelectSceneV2* InPreviewScene);
+	void SetupCenterPreview(AHellunaCharacterSelectSceneV2* InPreviewScene);
 
 	/** 캐릭터 선택 여부 */
 	bool IsCharacterSelected() const;
@@ -156,9 +154,6 @@ protected:
 	TObjectPtr<UButton> Button_Tab_Character;
 
 	// ── Play 탭 (Page 0) ──
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UImage> CenterPreviewImage;
-
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UButton> Button_Start;
 
@@ -190,15 +185,6 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "로비|탭 스타일",
 		meta = (DisplayName = "Inactive Tab Color (비활성 탭 색상)"))
 	FLinearColor InactiveTabColor = FLinearColor(0.3f, 0.3f, 0.3f, 1.f);
-
-	// ════════════════════════════════════════════════════════════════
-	// 프리뷰 설정 (BP Class Defaults에서 지정)
-	// ════════════════════════════════════════════════════════════════
-
-	/** 프리뷰 캡처 머티리얼 (기존 CharSelectWidget의 것과 동일한 머티리얼 사용) */
-	UPROPERTY(EditDefaultsOnly, Category = "로비|프리뷰",
-		meta = (DisplayName = "Preview Capture Material (프리뷰 캡처 머티리얼)"))
-	TObjectPtr<UMaterialInterface> PreviewCaptureMaterial;
 
 private:
 	// ════════════════════════════════════════════════════════════════

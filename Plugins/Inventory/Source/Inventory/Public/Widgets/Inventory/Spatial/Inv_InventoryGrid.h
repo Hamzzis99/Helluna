@@ -509,10 +509,9 @@ private:
 	UPROPERTY(EditAnywhere, Category = "인벤토리|부착물", meta = (DisplayName = "부착물 패널 클래스", Tooltip = "무기 부착물 관리 패널의 위젯 블루프린트 클래스입니다."))
 	TSubclassOf<UInv_AttachmentPanel> AttachmentPanelClass;
 
-	/** true면 AttachmentPanel을 Viewport 중앙에 배치 (로비용), false면 OwningCanvasPanel 자식 (인게임용) */
-	UPROPERTY(EditDefaultsOnly, Category = "인벤토리|부착물",
-		meta = (DisplayName = "부착물 패널 뷰포트 중앙 배치 (Attachment Panel To Viewport)"))
-	bool bAttachmentPanelToViewport = false;
+	/** [Fix25] 더 이상 사용하지 않음 — 항상 Viewport 중앙 배치 (히트 테스트 클리핑 방지) */
+	UPROPERTY()
+	bool bAttachmentPanelToViewport_DEPRECATED = false;
 
 	UPROPERTY()
 	TObjectPtr<UInv_AttachmentPanel> AttachmentPanel;

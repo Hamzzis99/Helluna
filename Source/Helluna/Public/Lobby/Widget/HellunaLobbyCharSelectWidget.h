@@ -30,10 +30,7 @@
 #include "HellunaLobbyCharSelectWidget.generated.h"
 
 class UButton;
-class UImage;
 class UTextBlock;
-class UTextureRenderTarget2D;
-class UMaterialInstanceDynamic;
 class AHellunaCharacterSelectSceneV2;
 class AHellunaLobbyController;
 
@@ -62,14 +59,13 @@ public:
 	void SetAvailableCharacters(const TArray<bool>& InUsedCharacters);
 
 	/**
-	 * V2 프리뷰 바인딩 (RenderTarget → PreviewImage_V2)
+	 * V2 프리뷰 씬 캐시 (직접 뷰포트 모드 — RT 불필요)
 	 *
-	 * @param InRenderTarget  공유 RenderTarget
-	 * @param InScene         V2 씬 액터
+	 * @param InScene  V2 씬 액터
 	 */
 	UFUNCTION(BlueprintCallable, Category = "로비|캐릭터선택",
 		meta = (DisplayName = "V2 프리뷰 설정"))
-	void SetupPreviewV2(UTextureRenderTarget2D* InRenderTarget, AHellunaCharacterSelectSceneV2* InScene);
+	void SetupPreviewV2(AHellunaCharacterSelectSceneV2* InScene);
 
 	/**
 	 * 서버 응답 처리 — 성공 시 델리게이트 broadcast
@@ -106,10 +102,6 @@ protected:
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UButton> LiamButton;
 
-	/** V2 프리뷰 이미지 (3캐릭터 한 장면) — 없어도 동작 */
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UImage> PreviewImage_V2;
-
 	/** 상태 메시지 텍스트 — 없어도 동작 */
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> MessageText;
@@ -125,15 +117,6 @@ protected:
 	/** 리암 이름 라벨 — 투명 버튼 하단에 표시 */
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> LiamNameText;
-
-	// ════════════════════════════════════════════════════════════════
-	// BP 설정
-	// ════════════════════════════════════════════════════════════════
-
-	/** 프리뷰 캡처용 머티리얼 (RenderTarget을 텍스처로 사용하는 머티리얼) */
-	UPROPERTY(EditDefaultsOnly, Category = "로비|캐릭터선택",
-		meta = (DisplayName = "프리뷰 캡처 머티리얼"))
-	TObjectPtr<UMaterialInterface> PreviewCaptureMaterial;
 
 private:
 	// ════════════════════════════════════════════════════════════════
@@ -165,10 +148,6 @@ private:
 	/** V2 씬 액터 참조 */
 	UPROPERTY()
 	TObjectPtr<AHellunaCharacterSelectSceneV2> CachedPreviewScene;
-
-	/** V2 머티리얼 인스턴스 */
-	UPROPERTY()
-	TObjectPtr<UMaterialInstanceDynamic> PreviewMaterialV2;
 
 	/** 마지막으로 선택 요청한 캐릭터 인덱스 (서버 응답 대기용) */
 	int32 PendingSelectionIndex = -1;

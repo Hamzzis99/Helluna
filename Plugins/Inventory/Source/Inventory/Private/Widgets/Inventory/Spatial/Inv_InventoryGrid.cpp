@@ -3088,45 +3088,28 @@ void UInv_InventoryGrid::OpenAttachmentPanel(UInv_InventoryItem* WeaponItem, int
 			return;
 		}
 
-		if (bAttachmentPanelToViewport)
+		// [Fix25] 항상 Viewport에 직접 추가 → 화면 중앙 배치
+		// CanvasPanel 자식 방식은 부모 위젯의 클리핑 경계를 벗어나면
+		// 히트 테스트가 차단되어 슬롯 클릭이 먹히지 않는 문제 발생
+		AttachmentPanel->AddToViewport(100);
+
+		// WBP 루트 CanvasPanel의 첫 자식(Overlay)을 화면 중앙 앵커로 변경
+		UCanvasPanel* RootCanvas = Cast<UCanvasPanel>(AttachmentPanel->GetRootWidget());
+		if (RootCanvas && RootCanvas->GetChildrenCount() > 0)
 		{
-			// ═══ 로비 모드: 뷰포트에 직접 추가 → 화면 중앙 배치 ═══
-			AttachmentPanel->AddToViewport(100);
-
-			// WBP 루트 CanvasPanel의 첫 자식(Overlay)을 화면 중앙 앵커로 변경
-			UCanvasPanel* RootCanvas = Cast<UCanvasPanel>(AttachmentPanel->GetRootWidget());
-			if (RootCanvas && RootCanvas->GetChildrenCount() > 0)
+			UWidget* OverlayChild = RootCanvas->GetChildAt(0);
+			UCanvasPanelSlot* OverlaySlot = UWidgetLayoutLibrary::SlotAsCanvasSlot(OverlayChild);
+			if (OverlaySlot)
 			{
-				UWidget* OverlayChild = RootCanvas->GetChildAt(0);
-				UCanvasPanelSlot* OverlaySlot = UWidgetLayoutLibrary::SlotAsCanvasSlot(OverlayChild);
-				if (OverlaySlot)
-				{
-					FAnchors CenterAnchor(0.5f, 0.5f, 0.5f, 0.5f);
-					OverlaySlot->SetAnchors(CenterAnchor);
-					OverlaySlot->SetAlignment(FVector2D(0.5f, 0.5f));
-					OverlaySlot->SetAutoSize(true);
-					OverlaySlot->SetPosition(FVector2D::ZeroVector);
-				}
-			}
-
-			UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 뷰포트 중앙 배치 (로비 모드)"));
-		}
-		else
-		{
-			// ═══ 인게임 모드: 기존 방식 (OwningCanvasPanel 자식, Grid 오른쪽) ═══
-			if (OwningCanvasPanel.IsValid())
-			{
-				OwningCanvasPanel->AddChild(AttachmentPanel);
-
-				UCanvasPanelSlot* CanvasSlot = UWidgetLayoutLibrary::SlotAsCanvasSlot(AttachmentPanel);
-				if (CanvasSlot)
-				{
-					const float PanelX = Columns * TileSize + 20.f;
-					CanvasSlot->SetPosition(FVector2D(PanelX, 0.f));
-					CanvasSlot->SetAutoSize(true);
-				}
+				FAnchors CenterAnchor(0.5f, 0.5f, 0.5f, 0.5f);
+				OverlaySlot->SetAnchors(CenterAnchor);
+				OverlaySlot->SetAlignment(FVector2D(0.5f, 0.5f));
+				OverlaySlot->SetAutoSize(true);
+				OverlaySlot->SetPosition(FVector2D::ZeroVector);
 			}
 		}
+
+		UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 뷰포트 중앙 배치 (Fix25: 인게임+로비 공통)"));
 
 		// 패널 닫힘 콜백 바인딩
 		AttachmentPanel->OnPanelClosed.AddDynamic(this, &ThisClass::OnAttachmentPanelClosed);
@@ -3140,8 +3123,8 @@ void UInv_InventoryGrid::OpenAttachmentPanel(UInv_InventoryItem* WeaponItem, int
 	AttachmentPanel->OpenForWeapon(WeaponItem, WeaponEntryIndex);
 
 #if INV_DEBUG_WIDGET
-	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 패널 열림: WeaponEntry=%d, Viewport=%s"),
-		WeaponEntryIndex, bAttachmentPanelToViewport ? TEXT("Y") : TEXT("N"));
+	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 패널 열림: WeaponEntry=%d (Fix25: 항상 Viewport 배치)"),
+		WeaponEntryIndex);
 #endif
 }
 

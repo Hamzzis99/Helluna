@@ -19,10 +19,7 @@
 #include "Lobby/Controller/HellunaLobbyController.h"
 #include "Login/Preview/HellunaCharacterSelectSceneV2.h"
 #include "Components/Button.h"
-#include "Components/Image.h"
 #include "Components/TextBlock.h"
-#include "Engine/TextureRenderTarget2D.h"
-#include "Materials/MaterialInstanceDynamic.h"
 
 // 로그 카테고리 (공유 헤더 — DEFINE은 HellunaLobbyGameMode.cpp)
 #include "Lobby/HellunaLobbyLog.h"
@@ -62,8 +59,7 @@ void UHellunaLobbyCharSelectWidget::NativeOnInitialized()
 		LuiButton ? TEXT("O") : TEXT("X"),
 		LunaButton ? TEXT("O") : TEXT("X"),
 		LiamButton ? TEXT("O") : TEXT("X"));
-	UE_LOG(LogHellunaLobby, Log, TEXT("[CharSelect]   PreviewImage_V2=%s MessageText=%s"),
-		PreviewImage_V2 ? TEXT("O") : TEXT("X (Optional)"),
+	UE_LOG(LogHellunaLobby, Log, TEXT("[CharSelect]   MessageText=%s (직접 뷰포트 모드 — RT 불필요)"),
 		MessageText ? TEXT("O") : TEXT("X (Optional)"));
 	UE_LOG(LogHellunaLobby, Log, TEXT("[CharSelect]   LuiNameText=%s LunaNameText=%s LiamNameText=%s"),
 		LuiNameText ? TEXT("O") : TEXT("X (Optional)"),
@@ -104,45 +100,14 @@ void UHellunaLobbyCharSelectWidget::SetAvailableCharacters(const TArray<bool>& I
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
-// SetupPreviewV2 — V2 프리뷰 바인딩
+// SetupPreviewV2 — V2 프리뷰 씬 캐시 (직접 뷰포트 모드)
 // ════════════════════════════════════════════════════════════════════════════════
-void UHellunaLobbyCharSelectWidget::SetupPreviewV2(UTextureRenderTarget2D* InRenderTarget, AHellunaCharacterSelectSceneV2* InScene)
+void UHellunaLobbyCharSelectWidget::SetupPreviewV2(AHellunaCharacterSelectSceneV2* InScene)
 {
-	UE_LOG(LogHellunaLobby, Log, TEXT("[CharSelect] SetupPreviewV2 | RT=%s Scene=%s"),
-		InRenderTarget ? TEXT("O") : TEXT("X"),
+	UE_LOG(LogHellunaLobby, Log, TEXT("[CharSelect] SetupPreviewV2 | Scene=%s (직접 뷰포트 모드)"),
 		InScene ? TEXT("O") : TEXT("X"));
 
 	CachedPreviewScene = InScene;
-
-	if (!PreviewImage_V2 || !InRenderTarget)
-	{
-		UE_LOG(LogHellunaLobby, Log, TEXT("[CharSelect] PreviewImage_V2 또는 RenderTarget 없음 → 프리뷰 스킵"));
-		return;
-	}
-
-	// 머티리얼 인스턴스 생성
-	if (PreviewCaptureMaterial)
-	{
-		PreviewMaterialV2 = UMaterialInstanceDynamic::Create(PreviewCaptureMaterial, this);
-		if (PreviewMaterialV2)
-		{
-			PreviewMaterialV2->SetTextureParameterValue(TEXT("RenderTarget"), InRenderTarget);
-			FSlateBrush Brush;
-			Brush.SetResourceObject(PreviewMaterialV2);
-			Brush.ImageSize = FVector2D(1920.f, 1080.f);
-			PreviewImage_V2->SetBrush(Brush);
-			UE_LOG(LogHellunaLobby, Log, TEXT("[CharSelect] V2 프리뷰 머티리얼 바인딩 완료"));
-		}
-	}
-	else
-	{
-		// 머티리얼 없으면 RenderTarget 직접 사용
-		FSlateBrush Brush;
-		Brush.SetResourceObject(InRenderTarget);
-		Brush.ImageSize = FVector2D(1920.f, 1080.f);
-		PreviewImage_V2->SetBrush(Brush);
-		UE_LOG(LogHellunaLobby, Log, TEXT("[CharSelect] V2 프리뷰 RT 직접 바인딩 (머티리얼 미설정)"));
-	}
 }
 
 // ════════════════════════════════════════════════════════════════════════════════

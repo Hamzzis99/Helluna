@@ -1012,6 +1012,14 @@ void UInv_AttachmentPanel::CleanupWeaponPreview()
 // ════════════════════════════════════════════════════════════════
 FReply UInv_AttachmentPanel::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
+#if INV_DEBUG_ATTACHMENT
+	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 패널 NativeOnMouseButtonDown: 버튼=%s, HoverItem=%s, bIsOpen=%s"),
+		InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton ? TEXT("좌") :
+		InMouseEvent.GetEffectingButton() == EKeys::RightMouseButton ? TEXT("우") : TEXT("기타"),
+		(OwningGrid.IsValid() && OwningGrid->HasHoverItem()) ? TEXT("O") : TEXT("X"),
+		bIsOpen ? TEXT("O") : TEXT("X"));
+#endif
+
 	if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
 	{
 		// ⭐ HoverItem 들고 있으면 드래그 대신 슬롯 장착이 우선

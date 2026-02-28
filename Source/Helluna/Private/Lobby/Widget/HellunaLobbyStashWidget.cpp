@@ -34,8 +34,6 @@
 #include "Components/WidgetSwitcher.h"
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
-#include "Engine/TextureRenderTarget2D.h"
-#include "Materials/MaterialInstanceDynamic.h"
 
 // 로그 카테고리 (공유 헤더 — DEFINE은 HellunaLobbyGameMode.cpp)
 #include "Lobby/HellunaLobbyLog.h"
@@ -218,13 +216,14 @@ void UHellunaLobbyStashWidget::SwitchToTab(int32 TabIndex)
 	UpdateTabVisuals(ClampedIndex);
 
 	// ── 프리뷰 씬 Solo 모드 연동 ──
+	AHellunaLobbyController* LobbyPC = GetLobbyController();
+
 	if (CachedPreviewScene.IsValid())
 	{
 		if (TabIndex == LobbyTab::Play)
 		{
 			// Play 탭: 선택된 캐릭터 Solo (미선택이면 기본 Index 0)
 			int32 HeroIndex = 0;
-			AHellunaLobbyController* LobbyPC = GetLobbyController();
 			if (LobbyPC && LobbyPC->GetSelectedHeroType() != EHellunaHeroType::None)
 			{
 				HeroIndex = HeroTypeToIndex(LobbyPC->GetSelectedHeroType());
@@ -237,6 +236,12 @@ void UHellunaLobbyStashWidget::SwitchToTab(int32 TabIndex)
 			CachedPreviewScene->ClearSoloMode();
 		}
 		// Loadout 탭: 프리뷰 상태 유지 (변경 없음)
+	}
+
+	// ── Level Streaming 배경 전환 ──
+	if (LobbyPC)
+	{
+		LobbyPC->LoadBackgroundForTab(TabIndex);
 	}
 
 	// ── Play 탭일 때 캐릭터 미선택 경고 표시 ──
@@ -317,33 +322,12 @@ void UHellunaLobbyStashWidget::OnStartClicked()
 // 중앙 프리뷰 설정 (ShowLobbyWidget에서 호출)
 // ════════════════════════════════════════════════════════════════════════════════
 
-void UHellunaLobbyStashWidget::SetupCenterPreview(UTextureRenderTarget2D* InRenderTarget, AHellunaCharacterSelectSceneV2* InPreviewScene)
+void UHellunaLobbyStashWidget::SetupCenterPreview(AHellunaCharacterSelectSceneV2* InPreviewScene)
 {
-	// 프리뷰 씬 캐시
+	// 프리뷰 씬 캐시 (직접 뷰포트 모드 — RT/MID 불필요)
 	CachedPreviewScene = InPreviewScene;
 
-	// CenterPreviewImage에 RenderTarget 머티리얼 적용
-	if (CenterPreviewImage && InRenderTarget && PreviewCaptureMaterial)
-	{
-		UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(PreviewCaptureMaterial, this);
-		if (MID)
-		{
-			MID->SetTextureParameterValue(FName(TEXT("RenderTarget")), InRenderTarget);
-			CenterPreviewImage->SetBrushFromMaterial(MID);
-			UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] SetupCenterPreview: MID 생성 완료, CenterPreviewImage에 적용"));
-		}
-	}
-	else
-	{
-		if (!CenterPreviewImage)
-		{
-			UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] SetupCenterPreview: CenterPreviewImage nullptr (BindWidgetOptional — BP 미설정)"));
-		}
-		if (!PreviewCaptureMaterial)
-		{
-			UE_LOG(LogHellunaLobby, Warning, TEXT("[StashWidget] SetupCenterPreview: PreviewCaptureMaterial nullptr → Class Defaults에서 설정 필요"));
-		}
-	}
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] SetupCenterPreview: 씬 캐시 완료 (직접 뷰포트 모드)"));
 
 	// 초기 Solo 모드 적용 (Play 탭이 기본이므로)
 	if (CachedPreviewScene.IsValid() && CurrentTabIndex == LobbyTab::Play)
