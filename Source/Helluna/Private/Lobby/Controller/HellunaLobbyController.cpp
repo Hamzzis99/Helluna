@@ -41,7 +41,9 @@
 #include "Login/Preview/HellunaCharacterSelectSceneV2.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
 #include "Blueprint/UserWidget.h"
-#include "Engine/TextureRenderTarget2D.h"
+#include "Camera/CameraActor.h"
+#include "Camera/CameraComponent.h"
+#include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
 
 // 로그 카테고리 (공유 헤더 — DEFINE은 HellunaLobbyGameMode.cpp)
@@ -527,25 +529,28 @@ void AHellunaLobbyController::ShowLobbyWidget()
 		SetShowMouseCursor(true);
 		SetInputMode(FInputModeUIOnly());
 
-		// V2 프리뷰 스폰 + CharSelectWidget 초기화
+		// V2 프리뷰 스폰 + 직접 뷰포트 카메라 설정
 		SpawnPreviewSceneV2();
 
 		UHellunaLobbyCharSelectWidget* CharSelectPanel = LobbyStashWidgetInstance->GetCharacterSelectPanel();
-		if (CharSelectPanel && SpawnedPreviewSceneV2 && PreviewV2RenderTarget)
+		if (CharSelectPanel && SpawnedPreviewSceneV2)
 		{
-			CharSelectPanel->SetupPreviewV2(PreviewV2RenderTarget, SpawnedPreviewSceneV2);
+			CharSelectPanel->SetupPreviewV2(SpawnedPreviewSceneV2);
 			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] CharSelectPanel V2 프리뷰 설정 완료"));
 		}
 
-		// Play 탭 중앙 프리뷰 설정 (동일 RenderTarget + Scene 공유)
-		if (SpawnedPreviewSceneV2 && PreviewV2RenderTarget)
+		// Play 탭 중앙 프리뷰 설정 (Scene 캐시 — 직접 뷰포트이므로 RT 불필요)
+		if (SpawnedPreviewSceneV2)
 		{
-			LobbyStashWidgetInstance->SetupCenterPreview(PreviewV2RenderTarget, SpawnedPreviewSceneV2);
+			LobbyStashWidgetInstance->SetupCenterPreview(SpawnedPreviewSceneV2);
 			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Play 탭 중앙 프리뷰 설정 완료"));
 		}
 
+		// 초기 배경 레벨 로드 (Play 탭이 기본 — TabIndex 0)
+		LoadBackgroundForTab(0);
+
 		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ── ShowLobbyWidget 완료 ──"));
-		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC]   위젯 생성 성공 | 마우스 커서 ON | UI 전용 입력 모드"));
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC]   위젯 생성 성공 | 마우스 커서 ON | UI 전용 입력 모드 | 직접 뷰포트 카메라"));
 	}
 	else
 	{
@@ -574,6 +579,12 @@ void AHellunaLobbyController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	{
 		LobbyStashWidgetInstance->RemoveFromParent();
 		LobbyStashWidgetInstance = nullptr;
+	}
+
+	// 배경 레벨 언로드
+	if (!CurrentLoadedLevel.IsNone())
+	{
+		UnloadBackgroundLevel(CurrentLoadedLevel);
 	}
 
 	DestroyPreviewSceneV2();
@@ -710,12 +721,6 @@ void AHellunaLobbyController::SpawnPreviewSceneV2()
 		return;
 	}
 
-	// RenderTarget 생성
-	PreviewV2RenderTarget = NewObject<UTextureRenderTarget2D>(this);
-	PreviewV2RenderTarget->InitCustomFormat(PreviewV2RenderTargetSize.X, PreviewV2RenderTargetSize.Y, PF_FloatRGBA, false);
-	PreviewV2RenderTarget->ClearColor = FLinearColor::Transparent;
-	PreviewV2RenderTarget->UpdateResourceImmediate(true);
-
 	// 메시/애님 배열 구성
 	const TArray<EHellunaHeroType> HeroTypes = { EHellunaHeroType::Lui, EHellunaHeroType::Luna, EHellunaHeroType::Liam };
 
@@ -738,9 +743,37 @@ void AHellunaLobbyController::SpawnPreviewSceneV2()
 	}
 
 	// 씬 초기화
-	SpawnedPreviewSceneV2->InitializeScene(Meshes, AnimClasses, PreviewV2RenderTarget);
+	SpawnedPreviewSceneV2->InitializeScene(Meshes, AnimClasses);
 
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] V2 프리뷰 씬 스폰 및 초기화 완료"));
+	// ── 카메라 스폰 (직접 뷰포트 렌더링) ──
+	const FVector CamWorldPos = PreviewSpawnBaseLocation + SpawnedPreviewSceneV2->GetCameraOffset();
+	const FRotator CamWorldRot = SpawnedPreviewSceneV2->GetCameraRotation();
+
+	FActorSpawnParameters CamSpawnParams;
+	CamSpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	LobbyCamera = World->SpawnActor<ACameraActor>(CamWorldPos, CamWorldRot, CamSpawnParams);
+
+	if (LobbyCamera)
+	{
+		// FOV 적용
+		UCameraComponent* CamComp = LobbyCamera->GetCameraComponent();
+		if (CamComp)
+		{
+			CamComp->SetFieldOfView(SpawnedPreviewSceneV2->GetCameraFOV());
+		}
+
+		// 직접 뷰포트에 카메라 설정 (블렌드 없이 즉시)
+		SetViewTarget(LobbyCamera);
+
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 로비 카메라 스폰 완료 | Pos=%s Rot=%s FOV=%.1f"),
+			*CamWorldPos.ToString(), *CamWorldRot.ToString(), SpawnedPreviewSceneV2->GetCameraFOV());
+	}
+	else
+	{
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] 로비 카메라 스폰 실패!"));
+	}
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] V2 프리뷰 씬 스폰 및 초기화 완료 (직접 뷰포트 카메라)"));
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -755,5 +788,95 @@ void AHellunaLobbyController::DestroyPreviewSceneV2()
 		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] V2 프리뷰 씬 파괴 완료"));
 	}
 
-	PreviewV2RenderTarget = nullptr;
+	if (IsValid(LobbyCamera))
+	{
+		LobbyCamera->Destroy();
+		LobbyCamera = nullptr;
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 로비 카메라 파괴 완료"));
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Level Streaming — 배경 레벨 로드/언로드
+// ════════════════════════════════════════════════════════════════════════════════
+
+void AHellunaLobbyController::LoadBackgroundLevel(FName LevelName)
+{
+	if (LevelName.IsNone())
+	{
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] LoadBackgroundLevel: 레벨 이름 비어있음 → 스킵"));
+		return;
+	}
+
+	// 이미 같은 레벨이 로드되어 있으면 스킵
+	if (CurrentLoadedLevel == LevelName)
+	{
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] LoadBackgroundLevel: '%s' 이미 로드됨 → 스킵"), *LevelName.ToString());
+		return;
+	}
+
+	// 이전 레벨 언로드
+	if (!CurrentLoadedLevel.IsNone())
+	{
+		UnloadBackgroundLevel(CurrentLoadedLevel);
+	}
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] LoadBackgroundLevel: '%s' 로드 시작"), *LevelName.ToString());
+
+	// FLatentActionInfo — 콜백은 UFUNCTION이어야 함 (리플렉션 호출)
+	FLatentActionInfo LatentInfo;
+	LatentInfo.CallbackTarget = this;
+	LatentInfo.ExecutionFunction = FName(TEXT("OnBackgroundLevelLoaded"));
+	LatentInfo.Linkage = 0;
+	LatentInfo.UUID = GetUniqueID();
+
+	UGameplayStatics::LoadStreamLevel(this, LevelName, true, false, LatentInfo);
+	CurrentLoadedLevel = LevelName;
+}
+
+void AHellunaLobbyController::UnloadBackgroundLevel(FName LevelName)
+{
+	if (LevelName.IsNone())
+	{
+		return;
+	}
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] UnloadBackgroundLevel: '%s' 언로드 시작"), *LevelName.ToString());
+
+	FLatentActionInfo LatentInfo;
+	LatentInfo.CallbackTarget = this;
+	LatentInfo.ExecutionFunction = FName(TEXT("OnBackgroundLevelUnloaded"));
+	LatentInfo.Linkage = 1;
+	LatentInfo.UUID = GetUniqueID() + 1;
+
+	UGameplayStatics::UnloadStreamLevel(this, LevelName, LatentInfo, false);
+
+	if (CurrentLoadedLevel == LevelName)
+	{
+		CurrentLoadedLevel = NAME_None;
+	}
+}
+
+void AHellunaLobbyController::OnBackgroundLevelLoaded()
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] OnBackgroundLevelLoaded: '%s' 로드 완료"), *CurrentLoadedLevel.ToString());
+}
+
+void AHellunaLobbyController::OnBackgroundLevelUnloaded()
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] OnBackgroundLevelUnloaded: 언로드 완료"));
+}
+
+void AHellunaLobbyController::LoadBackgroundForTab(int32 TabIndex)
+{
+	// 탭 인덱스에 맞는 배경 레벨 로드 (0=Play, 2=Character, 기타=유지)
+	if (TabIndex == 0) // LobbyTab::Play
+	{
+		LoadBackgroundLevel(PlayBackgroundLevel);
+	}
+	else if (TabIndex == 2) // LobbyTab::Character
+	{
+		LoadBackgroundLevel(CharacterBackgroundLevel);
+	}
+	// Loadout 탭(1): 배경 유지 (변경 없음)
 }

@@ -11,6 +11,7 @@
 #include "Player/HellunaPlayerState.h"
 #include "Blueprint/UserWidget.h"
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
+#include "Components/SceneCaptureComponent2D.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/SkeletalMesh.h"
 #include "Kismet/GameplayStatics.h"
@@ -947,12 +948,57 @@ void AHellunaLoginController::SpawnPreviewSceneV2()
 	}
 
 	// ════════════════════════════════════════════
-	// 📌 씬 초기화
+	// 📌 씬 초기화 (RT는 더 이상 Scene에 전달하지 않음)
 	// ════════════════════════════════════════════
-	SpawnedPreviewSceneV2->InitializeScene(Meshes, AnimClasses, PreviewV2RenderTarget);
+	SpawnedPreviewSceneV2->InitializeScene(Meshes, AnimClasses);
+
+	// ════════════════════════════════════════════
+	// 📌 로그인 전용 SceneCapture 생성 (로비에서는 직접 뷰포트 사용)
+	// ════════════════════════════════════════════
+	LoginSceneCapture = NewObject<USceneCaptureComponent2D>(SpawnedPreviewSceneV2, TEXT("LoginSceneCapture"));
+	if (LoginSceneCapture)
+	{
+		LoginSceneCapture->RegisterComponent();
+		LoginSceneCapture->AttachToComponent(SpawnedPreviewSceneV2->GetRootComponent(),
+			FAttachmentTransformRules::KeepRelativeTransform);
+
+		// 카메라 설정 (Scene의 카메라 값 참조)
+		LoginSceneCapture->SetRelativeLocation(SpawnedPreviewSceneV2->GetCameraOffset());
+		LoginSceneCapture->SetRelativeRotation(SpawnedPreviewSceneV2->GetCameraRotation());
+		LoginSceneCapture->FOVAngle = SpawnedPreviewSceneV2->GetCameraFOV();
+
+		// RT 바인딩
+		LoginSceneCapture->TextureTarget = PreviewV2RenderTarget;
+
+		// 캡처 설정
+		LoginSceneCapture->bCaptureEveryFrame = true;
+		LoginSceneCapture->bCaptureOnMovement = false;
+		LoginSceneCapture->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;
+		LoginSceneCapture->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;
+
+		// ShowFlags
+		LoginSceneCapture->ShowFlags.SetAtmosphere(false);
+		LoginSceneCapture->ShowFlags.SetFog(false);
+		LoginSceneCapture->ShowFlags.SetVolumetricFog(false);
+		LoginSceneCapture->ShowFlags.SetSkyLighting(false);
+		LoginSceneCapture->ShowFlags.SetDynamicShadows(false);
+		LoginSceneCapture->ShowFlags.SetGlobalIllumination(false);
+		LoginSceneCapture->ShowFlags.SetScreenSpaceReflections(false);
+		LoginSceneCapture->ShowFlags.SetAmbientOcclusion(false);
+		LoginSceneCapture->ShowFlags.SetReflectionEnvironment(false);
+
+		// AutoExposure
+		LoginSceneCapture->PostProcessSettings.bOverride_AutoExposureBias = true;
+		LoginSceneCapture->PostProcessSettings.AutoExposureBias = 3.0f;
+		LoginSceneCapture->PostProcessBlendWeight = 1.0f;
+
+		// ShowOnlyActors
+		LoginSceneCapture->ShowOnlyActors.Empty();
+		LoginSceneCapture->ShowOnlyActors.Add(SpawnedPreviewSceneV2);
+	}
 
 #if HELLUNA_DEBUG_CHARACTER_PREVIEW_V2
-	UE_LOG(LogHelluna, Warning, TEXT("║ ✅ V2 프리뷰 씬 스폰 및 초기화 완료"));
+	UE_LOG(LogHelluna, Warning, TEXT("║ V2 프리뷰 씬 스폰 및 초기화 완료 (로그인 전용 SceneCapture)"));
 	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 	UE_LOG(LogHelluna, Warning, TEXT(""));
 #endif
@@ -966,6 +1012,9 @@ void AHellunaLoginController::DestroyPreviewSceneV2()
 		UE_LOG(LogHelluna, Warning, TEXT("[로그인컨트롤러] 🗑️ V2 프리뷰 씬 파괴"));
 	}
 #endif
+
+	// LoginSceneCapture는 SpawnedPreviewSceneV2의 자식이므로 Destroy 시 함께 정리됨
+	LoginSceneCapture = nullptr;
 
 	if (IsValid(SpawnedPreviewSceneV2))
 	{

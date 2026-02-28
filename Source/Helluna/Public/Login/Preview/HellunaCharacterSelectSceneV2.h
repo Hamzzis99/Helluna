@@ -5,12 +5,11 @@
 #include "HellunaCharacterSelectSceneV2.generated.h"
 
 class USkeletalMeshComponent;
-class USceneCaptureComponent2D;
 class UPointLightComponent;
 class USpotLightComponent;
-class UTextureRenderTarget2D;
 class USkeletalMesh;
 class UHellunaPreviewAnimInstance;
+class ACameraActor;
 
 /**
  * ============================================
@@ -18,7 +17,7 @@ class UHellunaPreviewAnimInstance;
  * ============================================
  *
  * V2 캐릭터 선택 프리뷰 씬 액터
- * 3캐릭터를 한 공간에 배치 + 카메라 1개 + RenderTarget 1개
+ * 3캐릭터를 한 공간에 배치 + 직접 뷰포트 카메라 (ACameraActor 외부 스폰)
  *
  * V1(HellunaCharacterPreviewActor)은 캐릭터별 1:1 구조였으나,
  * V2는 하나의 액터 안에서 모든 캐릭터를 관리한다.
@@ -28,7 +27,6 @@ class UHellunaPreviewAnimInstance;
  * ============================================
  * SceneRoot (Root)
  *   PreviewMeshes[] (동적 생성)
- *   SceneCapture (카메라 1개)
  *   MainLight
  *   FillLight
  *
@@ -47,17 +45,15 @@ public:
 	// ============================================
 
 	/**
-	 * 씬 초기화 - 캐릭터 메시/애님/RT 설정
+	 * 씬 초기화 - 캐릭터 메시/애님 설정
 	 *
 	 * @param InMeshes - 캐릭터별 SkeletalMesh 배열 (Lui/Luna/Liam 순서)
 	 * @param InAnimClasses - 캐릭터별 AnimInstance 클래스 배열
-	 * @param InRenderTarget - 공유 RenderTarget (1개)
 	 */
 	UFUNCTION(BlueprintCallable, Category = "프리뷰V2")
 	void InitializeScene(
 		const TArray<USkeletalMesh*>& InMeshes,
-		const TArray<TSubclassOf<UAnimInstance>>& InAnimClasses,
-		UTextureRenderTarget2D* InRenderTarget);
+		const TArray<TSubclassOf<UAnimInstance>>& InAnimClasses);
 
 	/**
 	 * 호버 ON/OFF (오버레이 머티리얼 + AnimBP)
@@ -76,9 +72,17 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "프리뷰V2")
 	void SetCharacterSelected(int32 SelectedIndex);
 
-	/** RenderTarget 반환 */
+	/** 카메라 오프셋 (LobbyController에서 ACameraActor 배치 시 참조) */
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "프리뷰V2")
-	UTextureRenderTarget2D* GetRenderTarget() const;
+	FVector GetCameraOffset() const { return CameraOffset; }
+
+	/** 카메라 회전 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "프리뷰V2")
+	FRotator GetCameraRotation() const { return CameraRotation; }
+
+	/** 카메라 FOV */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "프리뷰V2")
+	float GetCameraFOV() const { return CameraFOV; }
 
 	/** 캐릭터 수 반환 */
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "프리뷰V2")
@@ -105,9 +109,6 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, Category = "프리뷰V2")
 	TObjectPtr<USceneComponent> SceneRoot;
-
-	UPROPERTY(VisibleAnywhere, Category = "프리뷰V2")
-	TObjectPtr<USceneCaptureComponent2D> SceneCapture;
 
 	UPROPERTY(VisibleAnywhere, Category = "프리뷰V2")
 	TObjectPtr<UPointLightComponent> MainLight;

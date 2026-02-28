@@ -2,10 +2,8 @@
 #include "Helluna.h"
 #include "AnimInstance/HellunaPreviewAnimInstance.h"
 #include "Components/SkeletalMeshComponent.h"
-#include "Components/SceneCaptureComponent2D.h"
 #include "Components/PointLightComponent.h"
 #include "Components/SpotLightComponent.h"
-#include "Engine/TextureRenderTarget2D.h"
 #include "Engine/SkeletalMesh.h"
 
 // ============================================
@@ -24,29 +22,6 @@ AHellunaCharacterSelectSceneV2::AHellunaCharacterSelectSceneV2()
 
 	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
 	SetRootComponent(SceneRoot);
-
-	SceneCapture = CreateDefaultSubobject<USceneCaptureComponent2D>(TEXT("SceneCapture"));
-	SceneCapture->SetupAttachment(SceneRoot);
-	SceneCapture->bCaptureEveryFrame = true;
-	SceneCapture->bCaptureOnMovement = false;
-	SceneCapture->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;
-	SceneCapture->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;
-
-	// ShowFlags (V1과 동일)
-	SceneCapture->ShowFlags.SetAtmosphere(false);
-	SceneCapture->ShowFlags.SetFog(false);
-	SceneCapture->ShowFlags.SetVolumetricFog(false);
-	SceneCapture->ShowFlags.SetSkyLighting(false);
-	SceneCapture->ShowFlags.SetDynamicShadows(false);
-	SceneCapture->ShowFlags.SetGlobalIllumination(false);
-	SceneCapture->ShowFlags.SetScreenSpaceReflections(false);
-	SceneCapture->ShowFlags.SetAmbientOcclusion(false);
-	SceneCapture->ShowFlags.SetReflectionEnvironment(false);
-
-	// AutoExposure (V1과 동일)
-	SceneCapture->PostProcessSettings.bOverride_AutoExposureBias = true;
-	SceneCapture->PostProcessSettings.AutoExposureBias = 3.0f;
-	SceneCapture->PostProcessBlendWeight = 1.0f;
 
 	// 메인 조명
 	MainLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("MainLight"));
@@ -69,8 +44,7 @@ AHellunaCharacterSelectSceneV2::AHellunaCharacterSelectSceneV2()
 
 void AHellunaCharacterSelectSceneV2::InitializeScene(
 	const TArray<USkeletalMesh*>& InMeshes,
-	const TArray<TSubclassOf<UAnimInstance>>& InAnimClasses,
-	UTextureRenderTarget2D* InRenderTarget)
+	const TArray<TSubclassOf<UAnimInstance>>& InAnimClasses)
 {
 	// ════════════════════════════════════════════
 	// 인자 검증
@@ -80,12 +54,6 @@ void AHellunaCharacterSelectSceneV2::InitializeScene(
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[프리뷰V2] InitializeScene 실패 - Meshes(%d)와 AnimClasses(%d) 수 불일치!"),
 			InMeshes.Num(), InAnimClasses.Num());
-		return;
-	}
-
-	if (!InRenderTarget)
-	{
-		UE_LOG(LogHelluna, Error, TEXT("[프리뷰V2] InitializeScene 실패 - InRenderTarget이 nullptr!"));
 		return;
 	}
 
@@ -224,22 +192,8 @@ void AHellunaCharacterSelectSceneV2::InitializeScene(
 		SoloCenterMesh->SetVisibility(false); // 초기엔 숨김
 	}
 
-	// ════════════════════════════════════════════
-	// SceneCapture 설정
-	// ════════════════════════════════════════════
-
-	SceneCapture->TextureTarget = InRenderTarget;
-	SceneCapture->SetRelativeLocation(CameraOffset);
-	SceneCapture->SetRelativeRotation(CameraRotation);
-	SceneCapture->FOVAngle = CameraFOV;
-
-	// ShowOnlyActors - 자기 자신 (안에 모든 메시 포함)
-	SceneCapture->ShowOnlyActors.Empty();
-	SceneCapture->ShowOnlyActors.Add(this);
-
 #if HELLUNA_DEBUG_CHARACTER_PREVIEW_V2
-	UE_LOG(LogHelluna, Warning, TEXT("║ SceneCapture 설정 완료 (RT: %s, %dx%d)"),
-		*InRenderTarget->GetName(), InRenderTarget->SizeX, InRenderTarget->SizeY);
+	UE_LOG(LogHelluna, Warning, TEXT("║ 씬 초기화 완료 (직접 뷰포트 카메라 모드)"));
 	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 	UE_LOG(LogHelluna, Warning, TEXT(""));
 #endif
@@ -282,15 +236,6 @@ void AHellunaCharacterSelectSceneV2::SetCharacterHovered(int32 Index, bool bHove
 // ============================================
 // Getter
 // ============================================
-
-UTextureRenderTarget2D* AHellunaCharacterSelectSceneV2::GetRenderTarget() const
-{
-	if (SceneCapture)
-	{
-		return SceneCapture->TextureTarget;
-	}
-	return nullptr;
-}
 
 int32 AHellunaCharacterSelectSceneV2::GetCharacterCount() const
 {

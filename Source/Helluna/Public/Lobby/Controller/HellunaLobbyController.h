@@ -33,7 +33,7 @@ class UInv_InventoryComponent;
 class UInv_InventoryItem;
 class UHellunaLobbyStashWidget;
 class AHellunaCharacterSelectSceneV2;
-class UTextureRenderTarget2D;
+class ACameraActor;
 class USkeletalMesh;
 class UHellunaLobbyCharSelectWidget;
 
@@ -225,11 +225,6 @@ protected:
 		meta = (DisplayName = "프리뷰 AnimClass 맵"))
 	TMap<EHellunaHeroType, TSubclassOf<UAnimInstance>> PreviewAnimClassMap;
 
-	/** V2 RenderTarget 해상도 */
-	UPROPERTY(EditDefaultsOnly, Category = "로비|캐릭터프리뷰V2",
-		meta = (DisplayName = "V2 렌더 타겟 해상도"))
-	FIntPoint PreviewV2RenderTargetSize = FIntPoint(1920, 1080);
-
 	/** V2 씬 스폰 위치 (월드 지하) */
 	UPROPERTY(EditDefaultsOnly, Category = "로비|캐릭터프리뷰V2",
 		meta = (DisplayName = "V2 프리뷰 스폰 위치"))
@@ -239,9 +234,26 @@ protected:
 	UPROPERTY()
 	TObjectPtr<AHellunaCharacterSelectSceneV2> SpawnedPreviewSceneV2;
 
-	/** V2 RenderTarget (GC 방지) */
+	/** 로비 카메라 (직접 뷰포트 렌더링용) */
 	UPROPERTY()
-	TObjectPtr<UTextureRenderTarget2D> PreviewV2RenderTarget;
+	TObjectPtr<ACameraActor> LobbyCamera;
+
+	// ════════════════════════════════════════════════════════════════
+	// Level Streaming 배경 (탭별 서브레벨)
+	// ════════════════════════════════════════════════════════════════
+
+	/** Play 탭 배경 서브레벨 이름 (예: /Game/Maps/Lobby/Sub_Play) */
+	UPROPERTY(EditDefaultsOnly, Category = "로비|배경",
+		meta = (DisplayName = "Play Tab Background Level (Play 탭 배경 레벨)"))
+	FName PlayBackgroundLevel;
+
+	/** Character 탭 배경 서브레벨 이름 (예: /Game/Maps/Lobby/Sub_Character) */
+	UPROPERTY(EditDefaultsOnly, Category = "로비|배경",
+		meta = (DisplayName = "Character Tab Background Level (Character 탭 배경 레벨)"))
+	FName CharacterBackgroundLevel;
+
+	/** 현재 로딩된 배경 레벨 이름 */
+	FName CurrentLoadedLevel;
 
 	// ════════════════════════════════════════════════════════════════
 	// 캐릭터 선택 상태
@@ -266,6 +278,26 @@ public:
 	void SetLoadedStashItemCount(int32 Count) { LoadedStashItemCount = Count; }
 	int32 GetLoadedStashItemCount() const { return LoadedStashItemCount; }
 
+public:
+	// ════════════════════════════════════════════════════════════════
+	// Level Streaming 제어 (StashWidget에서 탭 전환 시 호출)
+	// ════════════════════════════════════════════════════════════════
+
+	/** 배경 레벨 로드 (이전 레벨 자동 언로드) */
+	UFUNCTION(BlueprintCallable, Category = "로비|배경",
+		meta = (DisplayName = "Load Background Level (배경 레벨 로드)"))
+	void LoadBackgroundLevel(FName LevelName);
+
+	/** 배경 레벨 언로드 */
+	UFUNCTION(BlueprintCallable, Category = "로비|배경",
+		meta = (DisplayName = "Unload Background Level (배경 레벨 언로드)"))
+	void UnloadBackgroundLevel(FName LevelName);
+
+	/** 탭 인덱스에 맞는 배경 레벨 로드 (StashWidget에서 호출) */
+	UFUNCTION(BlueprintCallable, Category = "로비|배경",
+		meta = (DisplayName = "Load Background For Tab (탭별 배경 로드)"))
+	void LoadBackgroundForTab(int32 TabIndex);
+
 private:
 	// ════════════════════════════════════════════════════════════════
 	// V2 프리뷰 내부 함수
@@ -276,6 +308,19 @@ private:
 
 	/** V2 프리뷰 씬 파괴 */
 	void DestroyPreviewSceneV2();
+
+	// ════════════════════════════════════════════════════════════════
+	// Level Streaming 콜백 (UFUNCTION 필수 — FLatentActionInfo 리플렉션)
+	// ════════════════════════════════════════════════════════════════
+
+	/** 배경 레벨 로드 완료 콜백 */
+	UFUNCTION()
+	void OnBackgroundLevelLoaded();
+
+	/** 배경 레벨 언로드 완료 콜백 */
+	UFUNCTION()
+	void OnBackgroundLevelUnloaded();
+
 	// ════════════════════════════════════════════════════════════════
 	// 내부 전송 로직
 	// ════════════════════════════════════════════════════════════════
