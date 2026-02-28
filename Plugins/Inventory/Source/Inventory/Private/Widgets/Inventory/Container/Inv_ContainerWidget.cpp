@@ -54,8 +54,9 @@ void UInv_ContainerWidget::InitializePanels(
 		ContainerGrid->SetContainerComponent(InContainerComp);
 
 		// 컨테이너의 FastArray에서 델리게이트 바인딩
-		InContainerComp->OnContainerItemAdded.AddDynamic(ContainerGrid, &UInv_InventoryGrid::AddItem);
-		InContainerComp->OnContainerItemRemoved.AddDynamic(ContainerGrid, &UInv_InventoryGrid::RemoveItem);
+		// [Fix26] AddDynamic → AddUniqueDynamic (재열기 시 이중 바인딩 방지)
+		InContainerComp->OnContainerItemAdded.AddUniqueDynamic(ContainerGrid, &UInv_InventoryGrid::AddItem);
+		InContainerComp->OnContainerItemRemoved.AddUniqueDynamic(ContainerGrid, &UInv_InventoryGrid::RemoveItem);
 
 		// [B1+B2 Fix] RPC 호출용으로만 InvComp 설정 (델리게이트 바인딩 X, 플레이어 아이템 동기화 X)
 		ContainerGrid->SetInventoryComponentForRPC(InPlayerComp);
@@ -75,6 +76,13 @@ void UInv_ContainerWidget::InitializePanels(
 
 	UE_LOG(LogTemp, Log, TEXT("[ContainerWidget] InitializePanels 완료: %s (SpatialInventory 통합)"),
 		*InContainerComp->ContainerDisplayName.ToString());
+}
+
+// [Fix26] NativeDestruct — CleanupPanels 안전망 (위젯 파괴 시 델리게이트 누수 방지)
+void UInv_ContainerWidget::NativeDestruct()
+{
+	CleanupPanels();
+	Super::NativeDestruct();
 }
 
 void UInv_ContainerWidget::CleanupPanels()

@@ -64,6 +64,7 @@ public:
 
 protected:
 	virtual void NativeConstruct() override;
+	virtual void NativeDestruct() override;
 
 	// ═══════════════════════════════════════════
 	// BindWidget — BP에서 연결

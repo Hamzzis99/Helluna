@@ -22,6 +22,7 @@
 #include "Items/Fragments/Inv_AttachmentFragments.h"
 #include "InventoryManagement/Components/Inv_LootContainerComponent.h"
 #include "Framework/Application/SlateApplication.h"
+#include "Components/Image.h" // R키 회전: SlottedItem 이미지 RenderTransform용
 
 // 인벤토리 바인딩 메뉴
 void UInv_InventoryGrid::NativeOnInitialized()
@@ -216,7 +217,9 @@ void UInv_InventoryGrid::RefreshHoverItemBrushSize(float TargetTileSize)
 	if (!GridFragment || !ImageFragment) return;
 
 	const float IconTileWidth = TargetTileSize - GridFragment->GetGridPadding() * 2;
-	const FVector2D DrawSize = GridFragment->GetGridSize() * IconTileWidth;
+	// R키 회전 시 회전된 dimensions로 DrawSize 계산
+	const FIntPoint EffDim = GetEffectiveDimensions(GridFragment, HoverItem->IsRotated());
+	const FVector2D DrawSize = FVector2D(EffDim) * IconTileWidth;
 
 	FSlateBrush IconBrush;
 	IconBrush.SetResourceObject(ImageFragment->GetIcon());
@@ -225,6 +228,29 @@ void UInv_InventoryGrid::RefreshHoverItemBrushSize(float TargetTileSize)
 
 	HoverItem->SetImageBrush(IconBrush);
 	HoverItemCurrentTileSize = TargetTileSize;
+
+	// R키 회전: RenderTransform 유지 (크로스 Grid 이동 시에도 회전 시각 유지)
+	UImage* HoverImage = HoverItem->GetImageIcon();
+	if (IsValid(HoverImage))
+	{
+		HoverImage->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+		HoverImage->SetRenderTransformAngle(HoverItem->IsRotated() ? 90.f : 0.f);
+	}
+}
+
+// R키 회전: 회전 적용된 실효 크기
+FIntPoint UInv_InventoryGrid::GetEffectiveDimensions(const FInv_GridFragment* GridFragment, bool bRotated)
+{
+	FIntPoint Size = GridFragment ? GridFragment->GetGridSize() : FIntPoint(1, 1);
+	return bRotated ? FIntPoint(Size.Y, Size.X) : Size;
+}
+
+// R키 회전: 회전 상태에 따른 DrawSize 계산
+FVector2D UInv_InventoryGrid::GetDrawSizeRotated(const FInv_GridFragment* GridFragment, bool bRotated) const
+{
+	const float IconTileWidth = TileSize - GridFragment->GetGridPadding() * 2;
+	const FIntPoint EffDim = GetEffectiveDimensions(GridFragment, bRotated);
+	return FVector2D(EffDim) * IconTileWidth;
 }
 
 // 매 프레임마다 호출되는 틱 함수 (마우스 Hover에 사용)
@@ -268,6 +294,86 @@ void UInv_InventoryGrid::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 	}
 
 	UpdateTileParameters(CanvasPosition, MousePosition); // 타일 매개변수 업데이트
+}
+
+// R키 아이템 회전 핸들러
+FReply UInv_InventoryGrid::NativeOnKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent)
+{
+	if (InKeyEvent.GetKey() != EKeys::R)
+	{
+		return Super::NativeOnKeyDown(MyGeometry, InKeyEvent);
+	}
+
+	// 드래그 중이 아니면 무시
+	if (!bShouldTickForHover || !IsValid(HoverItem))
+	{
+		return Super::NativeOnKeyDown(MyGeometry, InKeyEvent);
+	}
+
+	// Split 아이템은 회전 비활성화 (서버에서 새 Entry 생성 시 위치만 전달)
+	if (HoverItem->IsSplitItem())
+	{
+		return FReply::Handled();
+	}
+
+	const FIntPoint CurrentDim = HoverItem->GetGridDimensions();
+
+	// 1x1 또는 정사각형은 회전 무의미
+	if (CurrentDim.X == CurrentDim.Y)
+	{
+		return FReply::Handled();
+	}
+
+	// 토글 회전
+	const bool bNewRotated = !HoverItem->IsRotated();
+	HoverItem->SetRotated(bNewRotated);
+
+	// GridDimensions XY 교환
+	HoverItem->SetGridDimensions(FIntPoint(CurrentDim.Y, CurrentDim.X));
+
+	// 브러시 재계산 (회전된 크기로)
+	UInv_InventoryItem* Item = HoverItem->GetInventoryItem();
+	if (IsValid(Item))
+	{
+		const FInv_GridFragment* GridFragment = GetFragment<FInv_GridFragment>(Item, FragmentTags::GridFragment);
+		const FInv_ImageFragment* ImageFragment = GetFragment<FInv_ImageFragment>(Item, FragmentTags::IconFragment);
+		if (GridFragment && ImageFragment)
+		{
+			// 브러시 크기는 회전된 dimensions (캔버스 풋프린트)
+			const FVector2D DrawSize = GetDrawSizeRotated(GridFragment, bNewRotated);
+
+			FSlateBrush IconBrush;
+			IconBrush.SetResourceObject(ImageFragment->GetIcon());
+			IconBrush.DrawAs = ESlateBrushDrawType::Image;
+			IconBrush.ImageSize = DrawSize * UWidgetLayoutLibrary::GetViewportScale(this);
+
+			HoverItem->SetImageBrush(IconBrush);
+			HoverItemCurrentTileSize = TileSize;
+
+			// 이미지 RenderTransform으로 시각적 회전
+			UImage* HoverImage = HoverItem->GetImageIcon();
+			if (IsValid(HoverImage))
+			{
+				HoverImage->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+				HoverImage->SetRenderTransformAngle(bNewRotated ? 90.f : 0.f);
+			}
+		}
+	}
+
+	// 하이라이트 갱신 — OnTileParametersUpdated 재호출
+	if (bMouseWithinCanvas)
+	{
+		UnHighlightSlots(LastHighlightedIndex, LastHighlightedDimensions);
+		OnTileParametersUpdated(TileParameters);
+	}
+
+#if INV_DEBUG_WIDGET
+	UE_LOG(LogTemp, Warning, TEXT("[R키 회전] bRotated=%s, Dim=(%d,%d)"),
+		bNewRotated ? TEXT("true") : TEXT("false"),
+		HoverItem->GetGridDimensions().X, HoverItem->GetGridDimensions().Y);
+#endif
+
+	return FReply::Handled();
 }
 
 // 마우스 위치에 따라 타일 매개변수를 업데이트하는 함수
@@ -738,11 +844,54 @@ bool UInv_InventoryGrid::IsLeftClick(const FPointerEvent& MouseEvent) const // �
 
 void UInv_InventoryGrid::PickUp(UInv_InventoryItem* ClickedInventoryItem, const int32 GridIndex) //집었을 때 개수까지 알아와주기
 {
+	// 기존 SlottedItem의 회전 상태 읽기
+	bool bWasRotated = false;
+	if (UInv_SlottedItem* const* FoundSlotted = SlottedItems.Find(GridIndex))
+	{
+		if (IsValid(*FoundSlotted))
+		{
+			bWasRotated = (*FoundSlotted)->IsRotated();
+		}
+	}
+
 	// Assign the hover item
 	// 아이템을 집었을 때 호버 아이템으로 할당하는 부분
 	AssignHoverItem(ClickedInventoryItem, GridIndex, GridIndex);
 
-	// Remove Clicked Item from the grid
+	// 회전 상태 복원 (AssignHoverItem 이후에 설정)
+	if (bWasRotated && IsValid(HoverItem))
+	{
+		HoverItem->SetRotated(true);
+		const FInv_GridFragment* GridFrag = GetFragment<FInv_GridFragment>(ClickedInventoryItem, FragmentTags::GridFragment);
+		if (GridFrag)
+		{
+			// GridDimensions XY 교환
+			const FIntPoint OrigDim = GridFrag->GetGridSize();
+			HoverItem->SetGridDimensions(FIntPoint(OrigDim.Y, OrigDim.X));
+
+			// 브러시 재계산
+			const FInv_ImageFragment* ImgFrag = GetFragment<FInv_ImageFragment>(ClickedInventoryItem, FragmentTags::IconFragment);
+			if (ImgFrag)
+			{
+				const FVector2D DrawSize = GetDrawSizeRotated(GridFrag, true);
+				FSlateBrush IconBrush;
+				IconBrush.SetResourceObject(ImgFrag->GetIcon());
+				IconBrush.DrawAs = ESlateBrushDrawType::Image;
+				IconBrush.ImageSize = DrawSize * UWidgetLayoutLibrary::GetViewportScale(this);
+				HoverItem->SetImageBrush(IconBrush);
+
+				// 이미지 RenderTransform 회전 적용
+				UImage* HoverImage = HoverItem->GetImageIcon();
+				if (IsValid(HoverImage))
+				{
+					HoverImage->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+					HoverImage->SetRenderTransformAngle(90.f);
+				}
+			}
+		}
+	}
+
+	// Remove Clicked Item from the grid (회전된 크기로 제거)
 	RemoveItemFromGrid(ClickedInventoryItem, GridIndex);
 }
 
@@ -774,7 +923,21 @@ void UInv_InventoryGrid::RemoveItemFromGrid(UInv_InventoryItem* InventoryItem, c
 	const FInv_GridFragment* GridFragment = GetFragment<FInv_GridFragment>(InventoryItem, FragmentTags::GridFragment);
 	if (!GridFragment) return;
 
-	const FIntPoint GridSize = GridFragment->GetGridSize();
+	// 회전 상태 확인: SlottedItem이 있으면 회전 여부 체크, 없으면 HoverItem에서 확인
+	bool bItemRotated = false;
+	if (UInv_SlottedItem* const* FoundSlotted = SlottedItems.Find(GridIndex))
+	{
+		if (IsValid(*FoundSlotted))
+		{
+			bItemRotated = (*FoundSlotted)->IsRotated();
+		}
+	}
+	else if (IsValid(HoverItem) && HoverItem->GetInventoryItem() == InventoryItem)
+	{
+		bItemRotated = HoverItem->IsRotated();
+	}
+
+	const FIntPoint GridSize = GetEffectiveDimensions(GridFragment, bItemRotated);
 	UInv_InventoryStatics::ForEach2D(GridSlots, GridIndex, GridSize, Columns, [&](UInv_GridSlot* GridSlot)
 		{
 			//인벤토리 아이템 옮기기인데. 기존 있던 것을 0으로 두고 새로운 곳으로 인덱스를 둔다. (람다 함수 부분)
@@ -885,6 +1048,7 @@ void UInv_InventoryGrid::ReleaseSlottedItem(UInv_SlottedItem* SlottedItem)
 	SlottedItem->RemoveFromParent();
 	SlottedItem->SetVisibility(ESlateVisibility::Collapsed);
 	SlottedItem->SetInventoryItem(nullptr);
+	SlottedItem->SetRotated(false); // 회전 상태 리셋
 	SlottedItemPool.Add(SlottedItem);
 }
 
@@ -1459,19 +1623,33 @@ void UInv_InventoryGrid::PutHoverItemBack()
 		IsValid(HoverItem) ? TEXT("Y") : TEXT("N"));
 	if (IsValid(HoverItem))
 	{
-		UE_LOG(LogTemp, Error, TEXT("  HoverItem 아이템: %s, StackCount=%d, PrevGridIndex=%d"),
+		UE_LOG(LogTemp, Error, TEXT("  HoverItem 아이템: %s, StackCount=%d, PrevGridIndex=%d, Rotated=%s"),
 			IsValid(HoverItem->GetInventoryItem())
 				? *HoverItem->GetInventoryItem()->GetItemManifest().GetItemType().ToString() : TEXT("NULL"),
 			HoverItem->GetStackCount(),
-			HoverItem->GetPreviousGridIndex());
+			HoverItem->GetPreviousGridIndex(),
+			HoverItem->IsRotated() ? TEXT("Y") : TEXT("N"));
 	}
 #endif
 
 	if (!IsValid(HoverItem)) return;
 
+	// 회전 상태를 리셋하여 기본 방향으로 복원
+	// HasRoomForItem은 Manifest의 원본 GridSize를 사용하므로, 회전 상태를 기본값으로 맞춤
+	if (HoverItem->IsRotated())
+	{
+		const FInv_GridFragment* GridFrag = GetFragment<FInv_GridFragment>(
+			HoverItem->GetInventoryItem(), FragmentTags::GridFragment);
+		if (GridFrag)
+		{
+			HoverItem->SetGridDimensions(GridFrag->GetGridSize()); // 원본 크기로 복원
+		}
+		HoverItem->SetRotated(false);
+	}
+
 	FInv_SlotAvailabilityResult Result = HasRoomForItem(HoverItem->GetInventoryItem(), HoverItem->GetStackCount());
 	Result.Item = HoverItem->GetInventoryItem();
-	
+
 	AddStacks(Result);
 	ClearHoverItem();
 }
@@ -1602,6 +1780,27 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 			*Item->GetItemManifest().GetItemType().ToString(), (int32)ItemCategory);
 #endif
 		return;
+	}
+
+	// R키 회전: Entry에서 bRotated 읽기 (PostReplicatedAdd → AddItem 경로)
+	bool bEntryRotated = false;
+	if (OwnerType == EGridOwnerType::Container && ContainerComp.IsValid())
+	{
+		// 컨테이너 Grid: ContainerComp의 FastArray에서 읽기
+		const TArray<FInv_InventoryEntry>& ContEntries = ContainerComp->ContainerInventoryList.Entries;
+		if (ContEntries.IsValidIndex(EntryIndex))
+		{
+			bEntryRotated = ContEntries[EntryIndex].bRotated;
+		}
+	}
+	else if (InventoryComponent.IsValid())
+	{
+		// 플레이어 Grid: InventoryComponent의 FastArray에서 읽기
+		const TArray<FInv_InventoryEntry>& Entries = InventoryComponent->GetInventoryList().Entries;
+		if (Entries.IsValidIndex(EntryIndex))
+		{
+			bEntryRotated = Entries[EntryIndex].bRotated;
+		}
 	}
 
 #if INV_DEBUG_WIDGET
@@ -1853,7 +2052,7 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 
 		// Create a widget to show the item icon and add it to the correct spot on the grid.
 		// 아이콘을 보여주고 그리드의 올바른 위치에 추가하는 위젯을 만듭니다.
-		AddItemToIndices(Result, Item);
+		AddItemToIndices(Result, Item, bEntryRotated);
 
 #if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("[AddItem] ✅ 빈 슬롯에 배치 완료! EntryIndex=%d"), EntryIndex);
@@ -1905,7 +2104,7 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 #endif
 
 			Result.SlotAvailabilities = CompletelyEmptySlots;
-			AddItemToIndices(Result, Item);
+			AddItemToIndices(Result, Item, bEntryRotated);
 
 #if INV_DEBUG_WIDGET
 			UE_LOG(LogTemp, Warning, TEXT("[AddItem] ✅ 새 빈 슬롯에 배치 완료! EntryIndex=%d"), EntryIndex);
@@ -2331,22 +2530,19 @@ void UInv_InventoryGrid::ConsumeItemsByTag(const FGameplayTag& MaterialTag, int3
 
 
 
-void UInv_InventoryGrid::AddItemToIndices(const FInv_SlotAvailabilityResult& Result, UInv_InventoryItem* NewItem)
+void UInv_InventoryGrid::AddItemToIndices(const FInv_SlotAvailabilityResult& Result, UInv_InventoryItem* NewItem, bool bRotated)
 {
 	for (const auto& Availability : Result.SlotAvailabilities)
 	{
-		// ⭐ 빈 슬롯에 새 아이템 배치 시: 실제 TotalStackCount 사용
-		// Availability.AmountToFill은 HasRoomForItem에서 MaxStackSize로 제한된 값이라 사용 불가
-		// 리플리케이션된 아이템의 실제 스택 수를 그대로 반영해야 함
 		const int32 ActualStackCount = NewItem->GetTotalStackCount();
 
 #if INV_DEBUG_WIDGET
-		UE_LOG(LogTemp, Warning, TEXT("[AddItemToIndices] 빈 슬롯 배치: Index=%d, AmountToFill=%d (무시), ActualStackCount=%d (사용)"),
-			Availability.Index, Availability.AmountToFill, ActualStackCount);
+		UE_LOG(LogTemp, Warning, TEXT("[AddItemToIndices] 빈 슬롯 배치: Index=%d, AmountToFill=%d (무시), ActualStackCount=%d (사용), Rotated=%s"),
+			Availability.Index, Availability.AmountToFill, ActualStackCount, bRotated ? TEXT("Y") : TEXT("N"));
 #endif
 
-		AddItemAtIndex(NewItem, Availability.Index, Result.bStackable, ActualStackCount, Result.EntryIndex);
-		UpdateGridSlots(NewItem, Availability.Index, Result.bStackable, ActualStackCount);
+		AddItemAtIndex(NewItem, Availability.Index, Result.bStackable, ActualStackCount, Result.EntryIndex, bRotated);
+		UpdateGridSlots(NewItem, Availability.Index, Result.bStackable, ActualStackCount, bRotated);
 	}
 }
 
@@ -2357,57 +2553,51 @@ FVector2D UInv_InventoryGrid::GetDrawSize(const FInv_GridFragment* GridFragment)
 	return GridFragment->GetGridSize() * IconTileWidth; // 아이콘 크기 반환
 }
 
-void UInv_InventoryGrid::SetSlottedItemImage(const UInv_SlottedItem* SlottedItem, const FInv_GridFragment* GridFragment, const FInv_ImageFragment* ImageFragment) const
+void UInv_InventoryGrid::SetSlottedItemImage(const UInv_SlottedItem* SlottedItem, const FInv_GridFragment* GridFragment, const FInv_ImageFragment* ImageFragment, bool bRotated) const
 {
-	//슬레이트 브러시?
 	FSlateBrush Brush;
 	Brush.SetResourceObject(ImageFragment->GetIcon()); // 아이콘 설정
 	Brush.DrawAs = ESlateBrushDrawType::Image; // 이미지로 그리기
-	Brush.ImageSize = GetDrawSize(GridFragment); // 아이콘 크기 설정
+	// R키 회전: 회전 시 DrawSize는 원본 크기 유지 (RenderTransform으로 시각적 회전)
+	Brush.ImageSize = GetDrawSize(GridFragment);
 	SlottedItem->SetImageBrush(Brush); // 슬로티드 아이템에 브러시 설정
 }
 
-void UInv_InventoryGrid::AddItemAtIndex(UInv_InventoryItem* Item, const int32 Index, const bool bStackable, const int32 StackAmount, const int32 EntryIndex)
+void UInv_InventoryGrid::AddItemAtIndex(UInv_InventoryItem* Item, const int32 Index, const bool bStackable, const int32 StackAmount, const int32 EntryIndex, bool bRotated)
 {
 #if INV_DEBUG_WIDGET
-	UE_LOG(LogTemp, Log, TEXT("[AddItemAtIndex] GridIndex=%d, Item=%s"),
-		Index, *Item->GetItemManifest().GetItemType().ToString());
+	UE_LOG(LogTemp, Log, TEXT("[AddItemAtIndex] GridIndex=%d, Item=%s, Rotated=%s"),
+		Index, *Item->GetItemManifest().GetItemType().ToString(), bRotated ? TEXT("Y") : TEXT("N"));
 #endif
 
-	//격자의 크기를 얻어오자. 게임플레이 태그로 말야
-	// Get Grid Fragment so we know how many grid spaces the item takes.
-	// 텍스처와 아이콘도 여기서 얻어온다는건가?
-	// Get Image Fragment so we have the icon to display
 	const FInv_GridFragment* GridFragment = GetFragment<FInv_GridFragment>(Item, FragmentTags::GridFragment);
 	const FInv_ImageFragment* ImageFragment = GetFragment<FInv_ImageFragment>(Item, FragmentTags::IconFragment);
-	if (!GridFragment || !ImageFragment) return; // 둘 중 하나라도 없으면 리턴
+	if (!GridFragment || !ImageFragment) return;
 
-	// Add the slotted item to the canvas panel.
-	// 슬롯 아이템을 캔버스 패널에 그려주는 곳. 또한 그리드 슬롯을 관리해주는 곳.
-	UInv_SlottedItem* SlottedItem = CreateSlottedItem(Item, bStackable, StackAmount, GridFragment, ImageFragment, Index, EntryIndex);
+	UInv_SlottedItem* SlottedItem = CreateSlottedItem(Item, bStackable, StackAmount, GridFragment, ImageFragment, Index, EntryIndex, bRotated);
 
-	AddSlottedItemToCanvas(Index, GridFragment, SlottedItem); // 캔버스에 슬로티드 아이템 추가하는 부분
+	AddSlottedItemToCanvas(Index, GridFragment, SlottedItem, bRotated);
 
-	// 삭제 소비 파괴 했을 때 이곳에.
-	// Store the new widget in a container.
-	SlottedItems.Add(Index, SlottedItem); // 인덱스와 슬로티드 아이템 매핑
+	SlottedItems.Add(Index, SlottedItem);
 
-	// ⭐ [진단] SlottedItem 등록 확인 — EntryIndex=-1 버그 추적용
-	UE_LOG(LogTemp, Log, TEXT("[AddItemAtIndex] ✓ SlottedItems[%d] 등록 완료: Item=%s, EntryIndex=%d"),
+	UE_LOG(LogTemp, Log, TEXT("[AddItemAtIndex] ✓ SlottedItems[%d] 등록 완료: Item=%s, EntryIndex=%d, Rotated=%s"),
 		Index,
 		Item ? *Item->GetItemManifest().GetItemType().ToString() : TEXT("nullptr"),
-		SlottedItem->GetEntryIndex());
+		SlottedItem->GetEntryIndex(),
+		bRotated ? TEXT("Y") : TEXT("N"));
 }
 
-UInv_SlottedItem* UInv_InventoryGrid::CreateSlottedItem(UInv_InventoryItem* Item, const bool bStackable, const int32 StackAmount, const FInv_GridFragment* GridFragment, const FInv_ImageFragment* ImageFragment, const int32 Index, const int32 EntryIndex)
+UInv_SlottedItem* UInv_InventoryGrid::CreateSlottedItem(UInv_InventoryItem* Item, const bool bStackable, const int32 StackAmount, const FInv_GridFragment* GridFragment, const FInv_ImageFragment* ImageFragment, const int32 Index, const int32 EntryIndex, bool bRotated)
 {
 	// ⭐ [최적화 #6] 풀에서 위젯 획득 (없으면 새로 생성)
 	UInv_SlottedItem* SlottedItem = AcquireSlottedItem();
 	SlottedItem->SetInventoryItem(Item);
-	SetSlottedItemImage(SlottedItem, GridFragment, ImageFragment);
+	SetSlottedItemImage(SlottedItem, GridFragment, ImageFragment, bRotated);
 	SlottedItem->SetGridIndex(Index);
 	SlottedItem->SetEntryIndex(EntryIndex); // ⭐ EntryIndex 설정!
 	SlottedItem->SetIsStackable(bStackable);
+	SlottedItem->SetRotated(bRotated); // R키 회전 상태 설정
+	SlottedItem->SetGridDimensions(GetEffectiveDimensions(GridFragment, bRotated)); // 회전된 크기 설정
 	const int32 StackUpdateAmount = bStackable ? StackAmount : 0;
 	SlottedItem->UpdateStackCount(StackUpdateAmount);
 	// ⭐ [최적화 #6] 풀에서 재사용된 위젯은 이미 바인딩되어 있을 수 있으므로 중복 방지
@@ -2419,17 +2609,42 @@ UInv_SlottedItem* UInv_InventoryGrid::CreateSlottedItem(UInv_InventoryItem* Item
 	return SlottedItem;
 }
 
-void UInv_InventoryGrid::AddSlottedItemToCanvas(const int32 Index, const FInv_GridFragment* GridFragment, UInv_SlottedItem* SlottedItem) const
+void UInv_InventoryGrid::AddSlottedItemToCanvas(const int32 Index, const FInv_GridFragment* GridFragment, UInv_SlottedItem* SlottedItem, bool bRotated) const
 {
 	CanvasPanel->AddChild(SlottedItem);
 	UCanvasPanelSlot* CanvasSlot = UWidgetLayoutLibrary::SlotAsCanvasSlot(SlottedItem);
-	CanvasSlot->SetSize(GetDrawSize(GridFragment));
-	const FVector2D DrawPos = UInv_WidgetUtils::GetPositionFromIndex(Index, Columns)* TileSize; // 정사각형 위치를 의미하는 것?
-	const FVector2D DrawPosWithPadding = DrawPos + FVector2D(GridFragment->GetGridPadding()); // 패딩 적용된 위치
+
+	// R키 회전: 캔버스 슬롯 크기는 회전된 dimensions 사용 (레이아웃 반영)
+	const FIntPoint EffDim = GetEffectiveDimensions(GridFragment, bRotated);
+	const float IconTileWidth = TileSize - GridFragment->GetGridPadding() * 2;
+	const FVector2D EffDrawSize = FVector2D(EffDim) * IconTileWidth;
+	CanvasSlot->SetSize(EffDrawSize);
+
+	const FVector2D DrawPos = UInv_WidgetUtils::GetPositionFromIndex(Index, Columns) * TileSize;
+	const FVector2D DrawPosWithPadding = DrawPos + FVector2D(GridFragment->GetGridPadding());
 	CanvasSlot->SetPosition(DrawPosWithPadding);
+
+	// R키 회전: 이미지를 시각적으로 90도 회전 (RenderTransform)
+	if (bRotated)
+	{
+		UImage* ImageIcon = SlottedItem->GetImageIcon();
+		if (IsValid(ImageIcon))
+		{
+			ImageIcon->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+			ImageIcon->SetRenderTransformAngle(90.f);
+		}
+	}
+	else
+	{
+		UImage* ImageIcon = SlottedItem->GetImageIcon();
+		if (IsValid(ImageIcon))
+		{
+			ImageIcon->SetRenderTransformAngle(0.f);
+		}
+	}
 }
 
-void UInv_InventoryGrid::UpdateGridSlots(UInv_InventoryItem* NewItem, const int32 Index, bool bStackableItem, const int32 StackAmount)
+void UInv_InventoryGrid::UpdateGridSlots(UInv_InventoryItem* NewItem, const int32 Index, bool bStackableItem, const int32 StackAmount, bool bRotated)
 {
 	// U4: check() → 안전한 early return (데디서버에서 check 실패 시 전체 크래시)
 	if (!GridSlots.IsValidIndex(Index))
@@ -2438,41 +2653,39 @@ void UInv_InventoryGrid::UpdateGridSlots(UInv_InventoryItem* NewItem, const int3
 		return;
 	}
 
-	//쌓을 수 있는 아이템인지 확인해볼까? (Stackable이 가능한지)
 	if (bStackableItem)
 	{
-		GridSlots[Index]->SetStackCount(StackAmount); // 그리드 슬롯에 인벤토리 아이템 설정
+		GridSlots[Index]->SetStackCount(StackAmount);
 	}
 
-	const FInv_GridFragment* GridFragment = GetFragment<FInv_GridFragment>(NewItem, FragmentTags::GridFragment); // 그리드 조각 가져오기
-	const FIntPoint Dimensions = GridFragment ? GridFragment->GetGridSize() : FIntPoint(1, 1); // 그리드 크기 가져오기
+	const FInv_GridFragment* GridFragment = GetFragment<FInv_GridFragment>(NewItem, FragmentTags::GridFragment);
+	// R키 회전: 회전된 dimensions로 슬롯 점유
+	const FIntPoint Dimensions = GridFragment ? GetEffectiveDimensions(GridFragment, bRotated) : FIntPoint(1, 1);
 
-	// ⭐ 아이템의 Grid 위치 저장! (서버→클라이언트 동기화!)
 	FIntPoint GridPos = UInv_WidgetUtils::GetPositionFromIndex(Index, Columns);
 	NewItem->SetGridPosition(GridPos);
-	
-	// ⭐ [Phase 4 방법2] 서버에 Grid 위치 동기화
-	// ⭐ [Phase 4 Fix] 로드 중에는 RPC 스킵 (잘못된 위치로 덮어쓰기 방지)
+
+	// 서버에 Grid 위치 + 회전 상태 동기화
 	if (InventoryComponent.IsValid() && !bSuppressServerSync)
 	{
 		uint8 GridCategoryValue = static_cast<uint8>(ItemCategory);
-		InventoryComponent->Server_UpdateItemGridPosition(NewItem, Index, GridCategoryValue);
+		InventoryComponent->Server_UpdateItemGridPosition(NewItem, Index, GridCategoryValue, bRotated);
 	}
 
 #if INV_DEBUG_WIDGET
-	UE_LOG(LogTemp, Log, TEXT("[UpdateGridSlots] 아이템 %s를 Grid[%d,%d]에 배치 (Index=%d, Category=%d)"),
-		*NewItem->GetItemManifest().GetItemType().ToString(), GridPos.X, GridPos.Y, Index, static_cast<int32>(ItemCategory));
+	UE_LOG(LogTemp, Log, TEXT("[UpdateGridSlots] 아이템 %s를 Grid[%d,%d]에 배치 (Index=%d, Category=%d, Rotated=%s)"),
+		*NewItem->GetItemManifest().GetItemType().ToString(), GridPos.X, GridPos.Y, Index, static_cast<int32>(ItemCategory),
+		bRotated ? TEXT("Y") : TEXT("N"));
 #endif
 
-	//2D 격자 순회하면서 그리드 슬롯 업데이트
-	UInv_InventoryStatics::ForEach2D(GridSlots, Index, Dimensions, Columns, [&](UInv_GridSlot* GridSlot) // [&] 이건 뭔데?
+	UInv_InventoryStatics::ForEach2D(GridSlots, Index, Dimensions, Columns, [&](UInv_GridSlot* GridSlot)
 	{
-		GridSlot->SetInventoryItem(NewItem); // 그리드 슬롯에 인벤토리 아이템 설정
-		GridSlot->SetUpperLeftIndex(Index); // 그리드 슬롯에 왼쪽 위 인덱스 설정
-		GridSlot->SetOccupiedTexture(); // 그리드 슬롯을 점유된 텍스처로 설정 (그니까 아이템을 격자칸들 수만큼 공간으로 채운다는 것)
-		GridSlot->SetAvailable(false); // 그리드 슬롯을 사용 불가능으로 설정
-	}); //람다함수 부분들
-	SetOccupiedBits(Index, Dimensions, true); // ⭐ [최적화 #5] 비트마스크 점유 설정
+		GridSlot->SetInventoryItem(NewItem);
+		GridSlot->SetUpperLeftIndex(Index);
+		GridSlot->SetOccupiedTexture();
+		GridSlot->SetAvailable(false);
+	});
+	SetOccupiedBits(Index, Dimensions, true);
 }
 
 bool UInv_InventoryGrid::IsIndexClaimed(const TSet<int32>& CheckedIndices, const int32 Index) const
@@ -2582,10 +2795,11 @@ void UInv_InventoryGrid::PutDownOnIndex(const int32 Index)
         return;
     }
 
-    AddItemAtIndex(ItemToPutDown, Index, bIsStackable, StackCount, EntryIndex);
-    UpdateGridSlots(ItemToPutDown, Index, bIsStackable, StackCount);
+    const bool bIsRotated = HoverItem->IsRotated();
+    AddItemAtIndex(ItemToPutDown, Index, bIsStackable, StackCount, EntryIndex, bIsRotated);
+    UpdateGridSlots(ItemToPutDown, Index, bIsStackable, StackCount, bIsRotated);
 #if INV_DEBUG_WIDGET
-    UE_LOG(LogTemp, Verbose, TEXT("PutDown: Index=%d, StackCount=%d"), Index, StackCount);
+    UE_LOG(LogTemp, Verbose, TEXT("PutDown: Index=%d, StackCount=%d, Rotated=%s"), Index, StackCount, bIsRotated ? TEXT("Y") : TEXT("N"));
 #endif
     ClearHoverItem();
 }
@@ -2603,6 +2817,13 @@ void UInv_InventoryGrid::ClearHoverItem() // 호버(잡는모션) 아이템 초�
 	// ⭐ Phase 8: Split 플래그 초기화
 	HoverItem->SetIsSplitItem(false);
 	HoverItem->SetOriginalSplitItem(nullptr);
+	HoverItem->SetRotated(false); // R키 회전 상태 초기화
+	// 이미지 RenderTransform 리셋
+	UImage* HoverImage = HoverItem->GetImageIcon();
+	if (IsValid(HoverImage))
+	{
+		HoverImage->SetRenderTransformAngle(0.f);
+	}
 	HoverItem->SetImageBrush(FSlateNoResource()); // 이미지 브러시 초기화 FSlateNoResource <- 모든 것을 지운다고 하네
 
 	
@@ -3430,6 +3651,7 @@ TArray<FInv_SavedItemData> UInv_InventoryGrid::CollectGridState(const TSet<UInv_
 		SavedData.StackCount = StackCount > 0 ? StackCount : 1;  // Non-stackable은 1
 		SavedData.GridPosition = GridPosition;
 		SavedData.GridCategory = static_cast<uint8>(ItemCategory);
+		SavedData.bRotated = SlottedItem->IsRotated(); // R키 회전 상태 저장
 
 		// ── [Phase 6 Attachment] 부착물 데이터 수집 ──
 		// 무기 아이템인 경우 AttachmentHostFragment의 AttachedItems 수집
@@ -3790,8 +4012,8 @@ void UInv_InventoryGrid::SendAllItemPositionsToServer()
 		UInv_InventoryItem* Item = SlottedItem->GetInventoryItem();
 		if (!IsValid(Item)) continue;
 		
-		// 서버에 올바른 위치 전송
-		InventoryComponent->Server_UpdateItemGridPosition(Item, GridIndex, GridCategoryValue);
+		// 서버에 올바른 위치 전송 (회전 상태 포함)
+		InventoryComponent->Server_UpdateItemGridPosition(Item, GridIndex, GridCategoryValue, SlottedItem->IsRotated());
 		SentCount++;
 		
 #if INV_DEBUG_WIDGET
@@ -3899,10 +4121,12 @@ bool UInv_InventoryGrid::MoveItemToPosition(const FGameplayTag& ItemType, const 
 	// ============================================
 	UInv_InventoryItem* InventoryItem = FoundSlottedItem->GetInventoryItem();
 	const FInv_GridFragment* GridFragment = GetFragment<FInv_GridFragment>(InventoryItem, FragmentTags::GridFragment);
+	// R키 회전: SlottedItem의 회전 상태로 실효 dimensions 계산
+	const bool bItemRotated = FoundSlottedItem->IsRotated();
 	FIntPoint Dimensions = FIntPoint(1, 1);
 	if (GridFragment)
 	{
-		Dimensions = GridFragment->GetGridSize();
+		Dimensions = GetEffectiveDimensions(GridFragment, bItemRotated);
 	}
 
 	// U12+U13: 원래 위치의 모든 GridSlot 완전 초기화 (MoveItemByCurrentIndex 패턴과 일치)
@@ -3947,12 +4171,14 @@ bool UInv_InventoryGrid::MoveItemToPosition(const FGameplayTag& ItemType, const 
 	UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(FoundSlottedItem->Slot);
 	if (CanvasSlot)
 	{
-		// 기존 AddItemAtIndex 로직과 동일한 방식으로 위치 계산
 		const FVector2D DrawPos = FVector2D(TargetPosition.X * TileSize, TargetPosition.Y * TileSize);
 		float ItemPadding = 0.0f;
 		if (GridFragment)
 		{
 			ItemPadding = GridFragment->GetGridPadding();
+			// R키 회전: 캔버스 슬롯 크기도 회전된 dimensions로 설정
+			const float IconTileWidth = TileSize - ItemPadding * 2;
+			CanvasSlot->SetSize(FVector2D(Dimensions) * IconTileWidth);
 		}
 		const FVector2D DrawPosWithPadding = DrawPos + FVector2D(ItemPadding);
 		CanvasSlot->SetPosition(DrawPosWithPadding);
@@ -4037,14 +4263,11 @@ bool UInv_InventoryGrid::MoveItemByCurrentIndex(int32 CurrentIndex, const FIntPo
 #endif
 
 	// ============================================
-	// Step 4: 아이템 크기 정보 가져오기
+	// Step 4: 아이템 크기 정보 가져오기 (회전 상태 반영)
 	// ============================================
 	const FInv_GridFragment* GridFragment = GetFragment<FInv_GridFragment>(InventoryItem, FragmentTags::GridFragment);
-	FIntPoint Dimensions = FIntPoint(1, 1);
-	if (GridFragment)
-	{
-		Dimensions = GridFragment->GetGridSize();
-	}
+	const bool bItemRotated = FoundSlottedItem->IsRotated();
+	FIntPoint Dimensions = GetEffectiveDimensions(GridFragment, bItemRotated);
 
 	// ============================================
 	// ⭐ Step 4.5: 기존 위치의 StackCount 저장 (핵심 수정!)
@@ -4116,7 +4339,7 @@ bool UInv_InventoryGrid::MoveItemByCurrentIndex(int32 CurrentIndex, const FIntPo
 #endif
 
 	// ============================================
-	// Step 8: 위젯 위치 업데이트
+	// Step 8: 위젯 위치 + 크기 업데이트 (회전 상태 반영)
 	// ============================================
 	UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(FoundSlottedItem->Slot);
 	if (CanvasSlot)
@@ -4129,6 +4352,10 @@ bool UInv_InventoryGrid::MoveItemByCurrentIndex(int32 CurrentIndex, const FIntPo
 		}
 		const FVector2D DrawPosWithPadding = DrawPos + FVector2D(ItemPadding);
 		CanvasSlot->SetPosition(DrawPosWithPadding);
+
+		// 회전 상태에 맞는 캔버스 크기 설정
+		const FVector2D RotatedDrawSize = GetDrawSizeRotated(GridFragment, bItemRotated);
+		CanvasSlot->SetSize(RotatedDrawSize);
 	}
 
 #if INV_DEBUG_WIDGET

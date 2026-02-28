@@ -73,6 +73,7 @@ public:
 	virtual void NativeOnInitialized() override; // Viewport를 동시에 생성하는 것이 NativeConstruct?
 	virtual void NativeDestruct() override; // U19: 위젯 파괴 시 InvComp 델리게이트 해제
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override; // 매 프레임마다 호출되는 틱 함수 (마우스 Hover에 사용)
+	virtual FReply NativeOnKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent) override; // R키 아이템 회전
 
 	EInv_ItemCategory GetItemCategory() const { return ItemCategory; }
 
@@ -301,20 +302,21 @@ private:
 	TWeakObjectPtr<UCanvasPanel> OwningCanvasPanel;
 	
 	void ConstructGrid();
-	void AddItemToIndices(const FInv_SlotAvailabilityResult& Result, UInv_InventoryItem* NewItem); // 아이템을 인덱스에 추가
+	void AddItemToIndices(const FInv_SlotAvailabilityResult& Result, UInv_InventoryItem* NewItem, bool bRotated = false); // 아이템을 인덱스에 추가
 	bool MatchesCategory(const UInv_InventoryItem* Item) const; // 카테고리 일치 여부 확인
 	FVector2D GetDrawSize(const FInv_GridFragment* GridFragment) const; // 그리드 조각의 그리기 크기 가져오기
-	void SetSlottedItemImage(const UInv_SlottedItem* SlottedItem, const FInv_GridFragment* GridFragment, const FInv_ImageFragment* ImageFragment) const; // 슬로티드 아이템 이미지 설정
-	void AddItemAtIndex(UInv_InventoryItem* Item, const int32 Index, const bool bStackable, const int32 StackAmount, const int32 EntryIndex); // 인덱스에 아이템 추가
+	void SetSlottedItemImage(const UInv_SlottedItem* SlottedItem, const FInv_GridFragment* GridFragment, const FInv_ImageFragment* ImageFragment, bool bRotated = false) const; // 슬로티드 아이템 이미지 설정
+	void AddItemAtIndex(UInv_InventoryItem* Item, const int32 Index, const bool bStackable, const int32 StackAmount, const int32 EntryIndex, bool bRotated = false); // 인덱스에 아이템 추가
 	UInv_SlottedItem* CreateSlottedItem(UInv_InventoryItem* Item,
 		const bool bStackable,
 		const int32 StackAmount,
 		const FInv_GridFragment* GridFragment,
 		const FInv_ImageFragment* ImageFragment,
 		const int32 Index,
-		const int32 EntryIndex); // ⭐ EntryIndex 추가
-	void AddSlottedItemToCanvas(const int32 Index, const FInv_GridFragment* GridFragment, UInv_SlottedItem* SlottedItem) const;
-	void UpdateGridSlots(UInv_InventoryItem* NewItem, const int32 Index, bool bStackableItem, const int32 StackAmount); // 그리드 슬롯 업데이트
+		const int32 EntryIndex,
+		bool bRotated = false); // ⭐ EntryIndex 추가 + 회전 상태
+	void AddSlottedItemToCanvas(const int32 Index, const FInv_GridFragment* GridFragment, UInv_SlottedItem* SlottedItem, bool bRotated = false) const;
+	void UpdateGridSlots(UInv_InventoryItem* NewItem, const int32 Index, bool bStackableItem, const int32 StackAmount, bool bRotated = false); // 그리드 슬롯 업데이트
 	bool IsIndexClaimed(const TSet<int32>& CheckedIndices, const int32 Index) const; // 인덱스가 이미 점유되었는지 확인
 	bool HasRoomAtIndex(const UInv_GridSlot* GridSlot,
 		const FIntPoint& Dimensions,
@@ -499,6 +501,12 @@ private:
 	// [Fix21] HoverItem 브러시를 TargetTileSize에 맞게 리사이즈
 	void RefreshHoverItemBrushSize(float TargetTileSize);
 
+	// R키 회전: 회전 적용된 실효 크기 (Dimensions XY 교환)
+	static FIntPoint GetEffectiveDimensions(const FInv_GridFragment* GridFragment, bool bRotated);
+
+	// R키 회전: 회전 상태에 따른 DrawSize 계산
+	FVector2D GetDrawSizeRotated(const FInv_GridFragment* GridFragment, bool bRotated) const;
+
 	int32 LastHighlightedIndex;
 	FIntPoint LastHighlightedDimensions;
 
@@ -508,10 +516,6 @@ private:
 
 	UPROPERTY(EditAnywhere, Category = "인벤토리|부착물", meta = (DisplayName = "부착물 패널 클래스", Tooltip = "무기 부착물 관리 패널의 위젯 블루프린트 클래스입니다."))
 	TSubclassOf<UInv_AttachmentPanel> AttachmentPanelClass;
-
-	/** [Fix25] 더 이상 사용하지 않음 — 항상 Viewport 중앙 배치 (히트 테스트 클리핑 방지) */
-	UPROPERTY()
-	bool bAttachmentPanelToViewport_DEPRECATED = false;
 
 	UPROPERTY()
 	TObjectPtr<UInv_AttachmentPanel> AttachmentPanel;
