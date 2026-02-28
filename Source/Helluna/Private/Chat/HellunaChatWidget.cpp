@@ -158,6 +158,10 @@ void UHellunaChatWidget::OnReceiveChatMessage(const FChatMessage& ChatMessage)
 		{
 			ScrollBox_Messages->RemoveChild(OldestChild);
 		}
+		else
+		{
+			break; // [Fix26] RemoveChild 실패 시 무한 루프 방지
+		}
 	}
 
 	// W5: 스크롤을 맨 아래로 (같은 프레임에서는 새 자식의 지오메트리 미계산 → 다음 틱으로 지연)

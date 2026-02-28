@@ -119,6 +119,9 @@ private:
 	/** 타이머 핸들 (GameState 복제 대기용) */
 	FTimerHandle VoteWidgetInitTimerHandle;
 
+	/** [Fix26] 투표 위젯 초기화 재시도 횟수 (무한 루프 방지) */
+	int32 VoteWidgetInitRetryCount = 0;
+
 	/** 생성된 투표 위젯 인스턴스 */
 	UPROPERTY()
 	TObjectPtr<UVoteWidget> VoteWidgetInstance;
