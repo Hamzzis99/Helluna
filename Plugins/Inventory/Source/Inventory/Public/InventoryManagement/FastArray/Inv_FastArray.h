@@ -61,6 +61,10 @@ private:
 	// bIsEquipped=true일 때 어느 슬롯에 장착됐는지 기록
 	UPROPERTY()
 	int32 WeaponSlotIndex = -1;
+
+	// R키 아이템 회전 상태 (90도 회전 여부)
+	UPROPERTY()
+	bool bRotated = false;
 };
 
 /* List of inventory Items 

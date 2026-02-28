@@ -245,6 +245,13 @@ void AHellunaBaseGameMode::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	// 타이머 전부 정리 (fire-and-forget 타이머 포함)
 	GetWorldTimerManager().ClearAllTimersForObject(this);
 
+	// [Fix26] 람다 기반 타이머는 ClearAllTimersForObject로 해제되지 않으므로 개별 해제
+	for (FTimerHandle& Handle : LambdaTimerHandles)
+	{
+		GetWorldTimerManager().ClearTimer(Handle);
+	}
+	LambdaTimerHandles.Empty();
+
 	// 캐시 맵 정리
 	PreCachedInventoryMap.Empty();
 	PendingLobbyDeployMap.Empty();
@@ -421,7 +428,8 @@ void AHellunaBaseGameMode::PostLogin(APlayerController* NewPlayer)
 		AHellunaLoginController* LC = Cast<AHellunaLoginController>(NewPlayer);
 		if (LC && LC->GetGameControllerClass())
 		{
-			FTimerHandle SwapTimer;
+			// [Fix26] 로컬 핸들 → LambdaTimerHandles 등록 (EndPlay에서 해제)
+			FTimerHandle& SwapTimer = LambdaTimerHandles.AddDefaulted_GetRef();
 			GetWorldTimerManager().SetTimer(SwapTimer, [this, LC, DeployPlayerId, DeployHeroType]()
 			{
 				if (IsValid(LC))
@@ -444,7 +452,8 @@ void AHellunaBaseGameMode::PostLogin(APlayerController* NewPlayer)
 				InitializeGame();
 			}
 
-			FTimerHandle SpawnTimer;
+			// [Fix26] 로컬 핸들 → LambdaTimerHandles 등록
+			FTimerHandle& SpawnTimer = LambdaTimerHandles.AddDefaulted_GetRef();
 			GetWorldTimerManager().SetTimer(SpawnTimer, [this, NewPlayer]()
 			{
 				if (IsValid(NewPlayer))
@@ -475,7 +484,8 @@ void AHellunaBaseGameMode::PostLogin(APlayerController* NewPlayer)
 		PreCacheInventoryForPlayer(PlayerId);
 
 		// 0.5초 딜레이: Controller 초기화 완료 대기
-		FTimerHandle TimerHandle;
+		// [Fix26] 로컬 핸들 → LambdaTimerHandles 등록
+		FTimerHandle& TimerHandle = LambdaTimerHandles.AddDefaulted_GetRef();
 		GetWorldTimerManager().SetTimer(TimerHandle, [this, NewPlayer, PlayerId]()
 		{
 			if (IsValid(NewPlayer))
@@ -562,7 +572,8 @@ void AHellunaBaseGameMode::PostLogin(APlayerController* NewPlayer)
 		{
 			const bool bHasCache = PreCachedInventoryMap.Contains(DebugPlayerId);
 			const float LoadDelay = bHasCache ? 0.1f : 1.0f;
-			FTimerHandle InventoryLoadTimer;
+			// [Fix26] 로컬 핸들 → LambdaTimerHandles 등록
+			FTimerHandle& InventoryLoadTimer = LambdaTimerHandles.AddDefaulted_GetRef();
 			GetWorldTimerManager().SetTimer(InventoryLoadTimer, [this, NewPlayer]()
 			{
 				if (IsValid(NewPlayer))
@@ -1011,8 +1022,9 @@ void AHellunaBaseGameMode::SwapToGameController(AHellunaLoginController* LoginCo
 #endif
 
 	// 0.3초 딜레이 후 캐릭터 소환 (Controller 초기화 완료 대기)
-	FTimerHandle TimerHandle;
-	GetWorldTimerManager().SetTimer(TimerHandle, [this, NewController]()
+	// [Fix26] 로컬 핸들 → LambdaTimerHandles 등록
+	FTimerHandle& SpawnTimerHandle = LambdaTimerHandles.AddDefaulted_GetRef();
+	GetWorldTimerManager().SetTimer(SpawnTimerHandle, [this, NewController]()
 	{
 		if (IsValid(NewController))
 		{
@@ -1183,7 +1195,8 @@ void AHellunaBaseGameMode::SpawnHeroCharacter(APlayerController* PlayerControlle
 	UE_LOG(LogHelluna, Log, TEXT("[SpawnHero] 인벤토리 로드 딜레이=%.1f초 | PreCache=%s | PlayerId=%s"),
 		InventoryLoadDelay, bHasPreCache ? TEXT("Y") : TEXT("N"), *SpawnPlayerId);
 
-	FTimerHandle InventoryLoadTimer;
+	// [Fix26] 로컬 핸들 → LambdaTimerHandles 등록
+	FTimerHandle& InventoryLoadTimer = LambdaTimerHandles.AddDefaulted_GetRef();
 	GetWorldTimerManager().SetTimer(InventoryLoadTimer, [this, PlayerController]()
 	{
 		if (IsValid(PlayerController))
@@ -1406,8 +1419,9 @@ void AHellunaBaseGameMode::HandleSeamlessTravelPlayer(AController*& C)
 			APlayerController* TraveledPC = Cast<APlayerController>(C);
 			if (TraveledPC)
 			{
-				FTimerHandle TimerHandle;
-				GetWorldTimerManager().SetTimer(TimerHandle, [this, TraveledPC, SavedPlayerId, SavedHeroType]()
+				// [Fix26] 로컬 핸들 → LambdaTimerHandles 등록
+				FTimerHandle& TravelTimerHandle = LambdaTimerHandles.AddDefaulted_GetRef();
+				GetWorldTimerManager().SetTimer(TravelTimerHandle, [this, TraveledPC, SavedPlayerId, SavedHeroType]()
 				{
 					if (IsValid(TraveledPC))
 					{
@@ -1526,8 +1540,9 @@ void AHellunaBaseGameMode::ProcessCharacterSelection(APlayerController* PlayerCo
 	// 0.3초 후 GameController로 전환
 	if (LoginController && LoginController->GetGameControllerClass())
 	{
-		FTimerHandle TimerHandle;
-		GetWorldTimerManager().SetTimer(TimerHandle, [this, LoginController, PlayerId, HeroType]()
+		// [Fix26] 로컬 핸들 → LambdaTimerHandles 등록
+		FTimerHandle& CharSelectTimerHandle = LambdaTimerHandles.AddDefaulted_GetRef();
+		GetWorldTimerManager().SetTimer(CharSelectTimerHandle, [this, LoginController, PlayerId, HeroType]()
 		{
 			if (IsValid(LoginController))
 			{

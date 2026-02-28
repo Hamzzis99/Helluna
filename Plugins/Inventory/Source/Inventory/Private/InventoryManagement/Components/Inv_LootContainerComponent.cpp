@@ -93,7 +93,8 @@ void UInv_LootContainerComponent::UnHighlight_Implementation()
 void UInv_LootContainerComponent::ActivateContainer()
 {
 	// W4: 서버 권위 체크 (Replicated 프로퍼티 변경은 서버에서만)
-	if (GetOwner() && !GetOwner()->HasAuthority()) return;
+	// [Fix26] Owner null → 서버도 아니므로 early return (기존: Owner null이면 검사 스킵)
+	if (!GetOwner() || !GetOwner()->HasAuthority()) return;
 	bActivated = true;
 }
 
@@ -191,14 +192,16 @@ bool UInv_LootContainerComponent::IsEmpty() const
 void UInv_LootContainerComponent::SetCurrentUser(APlayerController* PC)
 {
 	// W4: 서버 권위 체크 (Replicated 프로퍼티 변경은 서버에서만)
-	if (GetOwner() && !GetOwner()->HasAuthority()) return;
+	// [Fix26] Owner null → early return
+	if (!GetOwner() || !GetOwner()->HasAuthority()) return;
 	CurrentUser = PC;
 }
 
 void UInv_LootContainerComponent::ClearCurrentUser()
 {
 	// W4: 서버 권위 체크
-	if (GetOwner() && !GetOwner()->HasAuthority()) return;
+	// [Fix26] Owner null → early return
+	if (!GetOwner() || !GetOwner()->HasAuthority()) return;
 	CurrentUser = nullptr;
 }
 

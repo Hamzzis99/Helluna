@@ -261,7 +261,12 @@ void AHellunaDefenseGameMode::SpawnTestMonsters()
         FActorSpawnParameters Param;
         Param.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
 
-        GetWorld()->SpawnActor<APawn>(TestMonsterClass, TP->GetActorLocation(), TP->GetActorRotation(), Param);
+        // [Fix26] GetWorld() null 체크
+        UWorld* SpawnWorld = GetWorld();
+        if (SpawnWorld)
+        {
+            SpawnWorld->SpawnActor<APawn>(TestMonsterClass, TP->GetActorLocation(), TP->GetActorRotation(), Param);
+        }
     }
 }
 
@@ -276,7 +281,10 @@ void AHellunaDefenseGameMode::TrySummonBoss()
     FActorSpawnParameters Param;
     Param.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
 
-    APawn* Boss = GetWorld()->SpawnActor<APawn>(BossClass, SpawnLoc, TP->GetActorRotation(), Param);
+    // [Fix26] GetWorld() null 체크
+    UWorld* BossWorld = GetWorld();
+    if (!BossWorld) return;
+    APawn* Boss = BossWorld->SpawnActor<APawn>(BossClass, SpawnLoc, TP->GetActorRotation(), Param);
     if (Boss)
     {
         // [Phase 8 TODO] 보스 참조 저장: CurrentBoss = Boss;

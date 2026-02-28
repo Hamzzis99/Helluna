@@ -260,4 +260,8 @@ protected:
 
 	/** 사전 로드된 인벤토리 캐시 (PlayerId → SaveData) — SpawnHeroCharacter 전에 채워짐 */
 	TMap<FString, FInv_PlayerSaveData> PreCachedInventoryMap;
+
+	// [Fix26] 람다 기반 fire-and-forget 타이머 핸들 수집 배열
+	// ClearAllTimersForObject(this)는 람다 타이머를 해제하지 않으므로, EndPlay에서 개별 ClearTimer 필요
+	TArray<FTimerHandle> LambdaTimerHandles;
 };

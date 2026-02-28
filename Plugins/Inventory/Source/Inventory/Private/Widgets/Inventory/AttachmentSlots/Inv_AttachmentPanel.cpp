@@ -44,7 +44,8 @@ void UInv_AttachmentPanel::NativeOnInitialized()
 	// 닫기 버튼 클릭 바인딩
 	if (IsValid(Button_Close))
 	{
-		Button_Close->OnClicked.AddDynamic(this, &ThisClass::OnCloseButtonClicked);
+		// [Fix26] AddDynamic → AddUniqueDynamic
+		Button_Close->OnClicked.AddUniqueDynamic(this, &ThisClass::OnCloseButtonClicked);
 	}
 
 	// WBP에 배치된 슬롯 위젯 자동 수집
@@ -316,7 +317,8 @@ void UInv_AttachmentPanel::BuildSlotWidgets()
 		SlotWidget->InitSlot(i, SlotDefs[i], AttachedData);
 
 		// 슬롯 클릭 델리게이트 바인딩
-		SlotWidget->OnSlotClicked.AddDynamic(this, &ThisClass::OnSlotClicked);
+		// [Fix26] AddDynamic → AddUniqueDynamic
+		SlotWidget->OnSlotClicked.AddUniqueDynamic(this, &ThisClass::OnSlotClicked);
 
 		// 슬롯 보이기
 		SlotWidget->SetVisibility(ESlateVisibility::Visible);

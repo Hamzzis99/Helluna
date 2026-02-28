@@ -839,7 +839,12 @@ TArray<FInv_SavedItemData> UHellunaSQLiteSubsystem::ImportGameResultFromFile(con
 // ════════════════════════════════════════════════════════════════════════════════
 bool UHellunaSQLiteSubsystem::InitializeSchema()
 {
-	check(Database != nullptr);
+	// [Fix26] check() → safe return (데디서버 프로세스 종료 방지)
+	if (!Database)
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] InitializeSchema: Database is nullptr!"));
+		return false;
+	}
 
 	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ▶ InitializeSchema 시작"));
 
@@ -1966,9 +1971,10 @@ bool UHellunaSQLiteSubsystem::RecoverFromCrash(const FString& PlayerId)
 	}
 
 	// (a) player_loadout에서 잔존 아이템 SELECT
+	// [Fix26] is_equipped 컬럼 추가 (누락 시 장비 장착 상태 복원 불가)
 	const TCHAR* SelectSQL = TEXT(
 		"SELECT item_type, stack_count, grid_position_x, grid_position_y, "
-		"grid_category, weapon_slot, serialized_manifest, attachments_json "
+		"grid_category, is_equipped, weapon_slot, serialized_manifest, attachments_json "
 		"FROM player_loadout WHERE player_id = ?1;"
 	);
 

@@ -336,7 +336,10 @@ void AHellunaLoginController::Server_RequestSwapAfterTravel_Implementation()
 #endif
 
 	// GameMode에서 SwapToGameController 호출
-	if (AHellunaBaseGameMode* GM = GetWorld()->GetAuthGameMode<AHellunaBaseGameMode>())
+	// [Fix26] GetWorld() null 체크
+	UWorld* World = GetWorld();
+	if (!World) return;
+	if (AHellunaBaseGameMode* GM = World->GetAuthGameMode<AHellunaBaseGameMode>())
 	{
 		if (!PlayerId.IsEmpty())
 		{
@@ -370,7 +373,9 @@ void AHellunaLoginController::Server_RequestLogin_Implementation(const FString& 
 	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 #endif
 
-	AHellunaBaseGameMode* GM = Cast<AHellunaBaseGameMode>(GetWorld()->GetAuthGameMode());
+	// [Fix26] GetWorld() null 체크
+	UWorld* LoginWorld = GetWorld();
+	AHellunaBaseGameMode* GM = LoginWorld ? Cast<AHellunaBaseGameMode>(LoginWorld->GetAuthGameMode()) : nullptr;
 	if (GM)
 	{
 		GM->ProcessLogin(this, PlayerId, Password);
@@ -470,7 +475,9 @@ void AHellunaLoginController::Server_SelectCharacter_Implementation(int32 Charac
 	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 #endif
 
-	AHellunaBaseGameMode* GM = Cast<AHellunaBaseGameMode>(GetWorld()->GetAuthGameMode());
+	// [Fix26] GetWorld() null 체크
+	UWorld* SelectWorld = GetWorld();
+	AHellunaBaseGameMode* GM = SelectWorld ? Cast<AHellunaBaseGameMode>(SelectWorld->GetAuthGameMode()) : nullptr;
 	if (GM)
 	{
 		// int32 → EHellunaHeroType 변환

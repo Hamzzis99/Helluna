@@ -13,12 +13,13 @@ void UInv_ItemPopUp::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
 
-	Button_Split->OnClicked.AddDynamic(this, &ThisClass::SplitButtonClicked);
-	Button_Drop->OnClicked.AddDynamic(this, &ThisClass::DropButtonClicked);
-	Button_Consume->OnClicked.AddDynamic(this, &ThisClass::ConsumeButtonClicked);
-	Button_Attachment->OnClicked.AddDynamic(this, &ThisClass::AttachmentButtonClicked);
-	Button_Transfer->OnClicked.AddDynamic(this, &ThisClass::TransferButtonClicked);
-	Slider_Split->OnValueChanged.AddDynamic(this, &ThisClass::SliderValueChanged);
+	// [Fix26] AddDynamic → AddUniqueDynamic (NativeOnInitialized 재호출 시 이중 바인딩 방지)
+	Button_Split->OnClicked.AddUniqueDynamic(this, &ThisClass::SplitButtonClicked);
+	Button_Drop->OnClicked.AddUniqueDynamic(this, &ThisClass::DropButtonClicked);
+	Button_Consume->OnClicked.AddUniqueDynamic(this, &ThisClass::ConsumeButtonClicked);
+	Button_Attachment->OnClicked.AddUniqueDynamic(this, &ThisClass::AttachmentButtonClicked);
+	Button_Transfer->OnClicked.AddUniqueDynamic(this, &ThisClass::TransferButtonClicked);
+	Slider_Split->OnValueChanged.AddUniqueDynamic(this, &ThisClass::SliderValueChanged);
 }
 
 void UInv_ItemPopUp::NativeOnMouseLeave(const FPointerEvent& InMouseEvent)

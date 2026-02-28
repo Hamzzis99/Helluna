@@ -80,7 +80,7 @@ public:
 	// 클라이언트에서 아이템을 Grid에 배치/이동할 때 호출
 	// Unreliable: 시각적 정보이며 MarkDirty 스킵. 유실 시에도 다음 이동에서 보정됨
 	UFUNCTION(Server, Unreliable)
-	void Server_UpdateItemGridPosition(UInv_InventoryItem* Item, int32 GridIndex, uint8 GridCategory);
+	void Server_UpdateItemGridPosition(UInv_InventoryItem* Item, int32 GridIndex, uint8 GridCategory, bool bRotated = false);
 
 	UFUNCTION(Server, Reliable, WithValidation) // 크래프팅: 서버에서 아이템 생성 및 인벤토리 추가
 	void Server_CraftItem(TSubclassOf<AActor> ItemActorClass);

@@ -263,6 +263,9 @@ void AInv_PlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	UE_LOG(LogTemp, Warning, TEXT(""));
 #endif
 
+	// [Fix26] 람다 타이머 핸들 해제
+	GetWorldTimerManager().ClearTimer(GridRestoreTimerHandle);
+
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -270,7 +273,13 @@ void AInv_PlayerController::SetupInputComponent()
 {
 	Super::SetupInputComponent();
 
-	UEnhancedInputComponent* EnhancedInputComponent = CastChecked<UEnhancedInputComponent>(InputComponent);
+	// [Fix26] CastChecked → Cast + null 체크 (프로세스 종료 방지)
+	UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(InputComponent);
+	if (!EnhancedInputComponent)
+	{
+		UE_LOG(LogInventory, Error, TEXT("[InvPlayerController] InputComponent가 UEnhancedInputComponent가 아닙니다! 입력 바인딩 스킵"));
+		return;
+	}
 
 	EnhancedInputComponent->BindAction(PrimaryInteractAction, ETriggerEvent::Started, this, &AInv_PlayerController::PrimaryInteract);
 	EnhancedInputComponent->BindAction(ToggleInventoryAction, ETriggerEvent::Started, this, &AInv_PlayerController::ToggleInventory);
@@ -381,7 +390,10 @@ void AInv_PlayerController::TraceForInteractables()
 
 	const FVector TraceEnd = TraceStart + (Forward * TraceLength);
 	FHitResult HitResult;
-	GetWorld()->LineTraceSingleByChannel(HitResult, TraceStart, TraceEnd, ItemTraceChannel);
+	// [Fix26] GetWorld() null 체크 (레벨 전환 중 Tick 크래시 방지)
+	UWorld* TraceWorld = GetWorld();
+	if (!TraceWorld) return;
+	TraceWorld->LineTraceSingleByChannel(HitResult, TraceStart, TraceEnd, ItemTraceChannel);
 
 	LastActor = ThisActor;
 	ThisActor = HitResult.GetActor();
@@ -1520,8 +1532,8 @@ void AInv_PlayerController::Client_ReceiveInventoryData_Implementation(const TAr
 	// SavedItems 복사본 생성 (타이머 람다에서 사용)
 	TArray<FInv_SavedItemData> SavedItemsCopy = SavedItems;
 
-	FTimerHandle TimerHandle;
-	GetWorldTimerManager().SetTimer(TimerHandle, [this, SavedItemsCopy]()
+	// [Fix26] 로컬 핸들 → 멤버 변수 (EndPlay에서 해제 가능)
+	GetWorldTimerManager().SetTimer(GridRestoreTimerHandle, [this, SavedItemsCopy]()
 	{
 		DelayedRestoreGridPositions(SavedItemsCopy);
 	}, 0.5f, false);

@@ -534,8 +534,11 @@ AActor* AHellunaDefenseGameState::GetUDSActor()
 {
     if (CachedUDS.IsValid())
         return CachedUDS.Get();
-    
-    for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+
+    // [Fix26] GetWorld() null 체크 (EndPlay teardown 시 TActorIterator 크래시 방지)
+    UWorld* World = GetWorld();
+    if (!World) return nullptr;
+    for (TActorIterator<AActor> It(World); It; ++It)
     {
         if (It->GetName().Contains(TEXT("Ultra_Dynamic_Sky")))
         {
@@ -550,8 +553,11 @@ AActor* AHellunaDefenseGameState::GetUDWActor()
 {
     if (CachedUDW.IsValid())
         return CachedUDW.Get();
-    
-    for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+
+    // [Fix26] GetWorld() null 체크
+    UWorld* World = GetWorld();
+    if (!World) return nullptr;
+    for (TActorIterator<AActor> It(World); It; ++It)
     {
         if (It->GetName().Contains(TEXT("Ultra_Dynamic_Weather")))
         {

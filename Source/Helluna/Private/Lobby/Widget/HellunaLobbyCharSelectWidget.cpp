@@ -36,23 +36,23 @@ void UHellunaLobbyCharSelectWidget::NativeOnInitialized()
 	// ── 버튼 OnClicked 바인딩 ──
 	if (LuiButton)
 	{
-		LuiButton->OnClicked.AddDynamic(this, &ThisClass::OnLuiClicked);
-		LuiButton->OnHovered.AddDynamic(this, &ThisClass::OnLuiHovered);
-		LuiButton->OnUnhovered.AddDynamic(this, &ThisClass::OnLuiUnhovered);
+		LuiButton->OnClicked.AddUniqueDynamic(this, &ThisClass::OnLuiClicked);
+		LuiButton->OnHovered.AddUniqueDynamic(this, &ThisClass::OnLuiHovered);
+		LuiButton->OnUnhovered.AddUniqueDynamic(this, &ThisClass::OnLuiUnhovered);
 	}
 
 	if (LunaButton)
 	{
-		LunaButton->OnClicked.AddDynamic(this, &ThisClass::OnLunaClicked);
-		LunaButton->OnHovered.AddDynamic(this, &ThisClass::OnLunaHovered);
-		LunaButton->OnUnhovered.AddDynamic(this, &ThisClass::OnLunaUnhovered);
+		LunaButton->OnClicked.AddUniqueDynamic(this, &ThisClass::OnLunaClicked);
+		LunaButton->OnHovered.AddUniqueDynamic(this, &ThisClass::OnLunaHovered);
+		LunaButton->OnUnhovered.AddUniqueDynamic(this, &ThisClass::OnLunaUnhovered);
 	}
 
 	if (LiamButton)
 	{
-		LiamButton->OnClicked.AddDynamic(this, &ThisClass::OnLiamClicked);
-		LiamButton->OnHovered.AddDynamic(this, &ThisClass::OnLiamHovered);
-		LiamButton->OnUnhovered.AddDynamic(this, &ThisClass::OnLiamUnhovered);
+		LiamButton->OnClicked.AddUniqueDynamic(this, &ThisClass::OnLiamClicked);
+		LiamButton->OnHovered.AddUniqueDynamic(this, &ThisClass::OnLiamHovered);
+		LiamButton->OnUnhovered.AddUniqueDynamic(this, &ThisClass::OnLiamUnhovered);
 	}
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[CharSelect]   LuiButton=%s LunaButton=%s LiamButton=%s"),

@@ -183,6 +183,8 @@ void AHellunaHeroCharacter::Input_Move(const FInputActionValue& InputActionValue
 
 	const FVector2D MovementVector = InputActionValue.Get<FVector2D>();
 
+	// [Fix26] Controller null 체크 (Unpossess 상태에서 크래시 방지)
+	if (!Controller) return;
 	const FRotator MovementRotation(0.f, Controller->GetControlRotation().Yaw, 0.f);
 
 	if (MovementVector.Y != 0.f)
@@ -264,17 +266,37 @@ void AHellunaHeroCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInp
 		return;
 	}
 	
-	checkf(InputConfigDataAsset, TEXT("InputConfigDataAsset이 설정되지 않았습니다!"));
+	// [Fix26] check()/checkf()/CastChecked → safe return (데디서버 프로세스 종료 방지)
+	if (!InputConfigDataAsset)
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[HeroCharacter] InputConfigDataAsset이 설정되지 않았습니다! 입력 바인딩 스킵"));
+		return;
+	}
 
-	ULocalPlayer* LocalPlayer = GetController<APlayerController>()->GetLocalPlayer();
+	APlayerController* PC = GetController<APlayerController>();
+	if (!PC)
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[HeroCharacter] GetController<APlayerController>() null — 입력 바인딩 스킵"));
+		return;
+	}
+	ULocalPlayer* LocalPlayer = PC->GetLocalPlayer();
 
 	UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(LocalPlayer);
 
-	check(Subsystem);
+	if (!Subsystem)
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[HeroCharacter] EnhancedInputLocalPlayerSubsystem null — 입력 바인딩 스킵"));
+		return;
+	}
 
 	Subsystem->AddMappingContext(InputConfigDataAsset->DefaultMappingContext, 0);
 
-	UHellunaInputComponent* HellunaInputComponent = CastChecked<UHellunaInputComponent>(PlayerInputComponent);
+	UHellunaInputComponent* HellunaInputComponent = Cast<UHellunaInputComponent>(PlayerInputComponent);
+	if (!HellunaInputComponent)
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[HeroCharacter] PlayerInputComponent가 UHellunaInputComponent가 아닙니다! 입력 바인딩 스킵"));
+		return;
+	}
 
 	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Move, ETriggerEvent::Triggered, this, &ThisClass::Input_Move);
 	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Look, ETriggerEvent::Triggered, this, &ThisClass::Input_Look);

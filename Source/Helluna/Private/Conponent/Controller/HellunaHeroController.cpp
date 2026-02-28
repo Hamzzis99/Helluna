@@ -107,7 +107,15 @@ void AHellunaHeroController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 void AHellunaHeroController::InitializeVoteWidget()
 {
-	UE_LOG(LogHellunaVote, Log, TEXT("[HellunaHeroController] InitializeVoteWidget 진입"));
+	// [Fix26] 재시도 횟수 제한 (무한 루프 방지, ChatWidget과 동일 패턴)
+	constexpr int32 MaxVoteWidgetInitRetries = 20;
+	if (VoteWidgetInitRetryCount >= MaxVoteWidgetInitRetries)
+	{
+		UE_LOG(LogHellunaVote, Error, TEXT("[HellunaHeroController] 투표 위젯 초기화 최대 재시도(%d) 초과 — 중단"), MaxVoteWidgetInitRetries);
+		return;
+	}
+
+	UE_LOG(LogHellunaVote, Log, TEXT("[HellunaHeroController] InitializeVoteWidget 진입 (시도 %d/%d)"), VoteWidgetInitRetryCount + 1, MaxVoteWidgetInitRetries);
 
 	// 1. 위젯이 아직 없으면 생성 (재시도 시 중복 생성 방지)
 	if (!VoteWidgetInstance)
@@ -125,11 +133,14 @@ void AHellunaHeroController::InitializeVoteWidget()
 	}
 
 	// 2. GameState에서 VoteManager 가져오기
-	AGameStateBase* GameState = GetWorld()->GetGameState();
+	// [Fix26] GetWorld() null 체크
+	UWorld* VoteWorld = GetWorld();
+	if (!VoteWorld) return;
+	AGameStateBase* GameState = VoteWorld->GetGameState();
 	if (!GameState)
 	{
 		UE_LOG(LogHellunaVote, Warning, TEXT("[HellunaHeroController] GameState가 아직 없음 - 재시도"));
-		// GameState가 아직 복제 안 됐으면 0.5초 후 재시도
+		++VoteWidgetInitRetryCount; // [Fix26]
 		GetWorldTimerManager().SetTimer(
 			VoteWidgetInitTimerHandle,
 			this,
@@ -144,6 +155,7 @@ void AHellunaHeroController::InitializeVoteWidget()
 	if (!VoteManager)
 	{
 		UE_LOG(LogHellunaVote, Warning, TEXT("[HellunaHeroController] VoteManager가 아직 없음 - 재시도"));
+		++VoteWidgetInitRetryCount; // [Fix26]
 		GetWorldTimerManager().SetTimer(
 			VoteWidgetInitTimerHandle,
 			this,
@@ -175,7 +187,10 @@ void AHellunaHeroController::Server_SubmitVote_Implementation(bool bAgree)
 	}
 
 	// 2. GameState에서 VoteManagerComponent 가져오기
-	AGameStateBase* GameState = GetWorld()->GetGameState();
+	// [Fix26] GetWorld() null 체크
+	UWorld* SubmitWorld = GetWorld();
+	if (!SubmitWorld) return;
+	AGameStateBase* GameState = SubmitWorld->GetGameState();
 	if (!GameState)
 	{
 		UE_LOG(LogHellunaVote, Warning, TEXT("[HeroController] Server_SubmitVote - GameState가 null"));
@@ -337,10 +352,11 @@ void AHellunaHeroController::InitializeChatWidget()
 	}
 
 	// 3. GameState의 채팅 메시지 델리게이트 바인딩
-	DefenseGS->OnChatMessageReceived.AddDynamic(ChatWidgetInstance, &UHellunaChatWidget::OnReceiveChatMessage);
+	// [Fix26] AddDynamic → AddUniqueDynamic (재초기화 시 이중 바인딩 방지)
+	DefenseGS->OnChatMessageReceived.AddUniqueDynamic(ChatWidgetInstance, &UHellunaChatWidget::OnReceiveChatMessage);
 
 	// 4. 위젯의 메시지 제출 델리게이트 바인딩
-	ChatWidgetInstance->OnChatMessageSubmitted.AddDynamic(this, &AHellunaHeroController::OnChatMessageSubmitted);
+	ChatWidgetInstance->OnChatMessageSubmitted.AddUniqueDynamic(this, &AHellunaHeroController::OnChatMessageSubmitted);
 
 	// 5. Enhanced Input 바인딩 — 채팅 토글 (Enter 키)
 	if (ChatToggleAction && ChatMappingContext)

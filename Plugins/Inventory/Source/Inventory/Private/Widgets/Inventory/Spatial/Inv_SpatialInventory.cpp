@@ -286,8 +286,13 @@ void UInv_SpatialInventory::EquippedGridSlotClicked(UInv_EquippedGridSlot* Equip
 	// 아이템을 장착했음을 서버에 알리기(잠재적으로 아이템을 해제하기도 함)
 	// [Phase 4 Lobby] GetBoundInventoryComponent() 사용 (캐시 우선, 폴백 자동탐색)
 	UInv_InventoryComponent* InventoryComponent = GetBoundInventoryComponent();
-	check(IsValid(InventoryComponent)); 
-	
+	// [Fix26] check() → safe return (데디서버 프로세스 종료 방지)
+	if (!IsValid(InventoryComponent))
+	{
+		UE_LOG(LogInventory, Error, TEXT("[SpatialInventory] EquippedGridSlotClicked — InventoryComponent null, RPC 스킵"));
+		return;
+	}
+
 	// ⭐ [WeaponBridge] 무기 슬롯 인덱스 전달
 	int32 WeaponSlotIndex = EquippedGridSlot->GetWeaponSlotIndex();
 #if INV_DEBUG_WIDGET
@@ -537,7 +542,12 @@ void UInv_SpatialInventory::BroadcastSlotClickedDelegates(UInv_InventoryItem* It
 {
 	// [Phase 4 Lobby] GetBoundInventoryComponent() 사용 (캐시 우선, 폴백 자동탐색)
 	UInv_InventoryComponent* InventoryComponent = GetBoundInventoryComponent();
-	check(IsValid(InventoryComponent));
+	// [Fix26] check() → safe return (데디서버 프로세스 종료 방지)
+	if (!IsValid(InventoryComponent))
+	{
+		UE_LOG(LogInventory, Error, TEXT("[SpatialInventory] BroadcastSlotClickedDelegates — InventoryComponent null, RPC 스킵"));
+		return;
+	}
 	InventoryComponent->Server_EquipSlotClicked(ItemToEquip, ItemToUnequip, WeaponSlotIndex);
 	
 	// StandAlone/ListenServer는 Multicast_EquipSlotClicked에서 이미 Broadcast 됨 → 이중 스폰 방지
@@ -575,33 +585,48 @@ FInv_SlotAvailabilityResult UInv_SpatialInventory::HasRoomForItem(UInv_ItemCompo
 // 아이템이 호버되었을 때 호출되는 함수 (설명 칸 보일 때 쓰는 부분들임)
 void UInv_SpatialInventory::OnItemHovered(UInv_InventoryItem* Item)
 {
+	// [Fix26] Item null 체크
+	if (!IsValid(Item)) return;
+	// [Fix26] GetOwningPlayer null 체크 (위젯 teardown 시 크래시 방지)
+	APlayerController* OwningPC = GetOwningPlayer();
+	if (!OwningPC) return;
+
 	const auto& Manifest = Item->GetItemManifest(); // 아이템 매니페스트 가져오기
 	UInv_ItemDescription* DescriptionWidget = GetItemDescription();
+	if (!DescriptionWidget) return;
 	DescriptionWidget->SetVisibility(ESlateVisibility::Collapsed);
-	
-	GetOwningPlayer()->GetWorldTimerManager().ClearTimer(DescriptionTimer); // 기존 타이머 클리어
-	GetOwningPlayer()->GetWorldTimerManager().ClearTimer(EquippedDescriptionTimer); // 두 번째 장비 보이는 것. (장착 장비)
-	
+
+	OwningPC->GetWorldTimerManager().ClearTimer(DescriptionTimer); // 기존 타이머 클리어
+	OwningPC->GetWorldTimerManager().ClearTimer(EquippedDescriptionTimer); // 두 번째 장비 보이는 것. (장착 장비)
+
 	FTimerDelegate DescriptionTimerDelegate;
 	// U11: &Manifest 참조 캡처 → 값 복사로 변경 (타이머 지연 중 아이템 제거 시 Use-After-Free 방지)
 	FInv_ItemManifest ManifestCopy = Item->GetItemManifest();
-	DescriptionTimerDelegate.BindLambda([this, Item, ManifestCopy, DescriptionWidget]()
+	// [Fix26] raw this/DescriptionWidget → TWeakObjectPtr (위젯 파괴 후 타이머 발동 시 댕글링 방지)
+	TWeakObjectPtr<UInv_SpatialInventory> WeakThis(this);
+	TWeakObjectPtr<UInv_InventoryItem> WeakItem(Item);
+	TWeakObjectPtr<UInv_ItemDescription> WeakDesc(DescriptionWidget);
+	DescriptionTimerDelegate.BindLambda([WeakThis, WeakItem, ManifestCopy, WeakDesc]()
 	{
-		// 아이템이 타이머 지연 중 제거되었을 수 있으므로 체크
-		if (!IsValid(Item)) return;
+		// 아이템/위젯이 타이머 지연 중 제거되었을 수 있으므로 체크
+		if (!WeakThis.IsValid() || !WeakItem.IsValid() || !WeakDesc.IsValid()) return;
+		UInv_SpatialInventory* Self = WeakThis.Get();
+		UInv_InventoryItem* ItemPtr = WeakItem.Get();
 		// 아이템 설명 위젯에 매니페스트 동화
-		GetItemDescription()->SetVisibility(ESlateVisibility::HitTestInvisible); // 설명 위젯 보이기
-		ManifestCopy.AssimilateInventoryFragments(DescriptionWidget);
-		
+		Self->GetItemDescription()->SetVisibility(ESlateVisibility::HitTestInvisible); // 설명 위젯 보이기
+		ManifestCopy.AssimilateInventoryFragments(WeakDesc.Get());
+
 		// For the second item description, showing the equipped item of this type.
 		// 두 번째 아이템 설명의 경우, 이 유형의 장착된 아이템을 보여줌.
+		APlayerController* PC = Self->GetOwningPlayer();
+		if (!PC) return;
 		FTimerDelegate EquippedDescriptionTimerDelegate;
-		EquippedDescriptionTimerDelegate.BindUObject(this, &ThisClass::ShowEquippedItemDescription, Item);
-		GetOwningPlayer()->GetWorldTimerManager().SetTimer(EquippedDescriptionTimer, EquippedDescriptionTimerDelegate, EquippedDescriptionTimerDelay, false);
+		EquippedDescriptionTimerDelegate.BindUObject(Self, &UInv_SpatialInventory::ShowEquippedItemDescription, ItemPtr);
+		PC->GetWorldTimerManager().SetTimer(Self->EquippedDescriptionTimer, EquippedDescriptionTimerDelegate, Self->EquippedDescriptionTimerDelay, false);
 	});
-	
+
 	// 타이머 설정
-	GetOwningPlayer()->GetWorldTimerManager().SetTimer(DescriptionTimer, DescriptionTimerDelegate, DescriptionTimerDelay, false);
+	OwningPC->GetWorldTimerManager().SetTimer(DescriptionTimer, DescriptionTimerDelegate, DescriptionTimerDelay, false);
 }
 
 //아이템에서 마우스에 손을 땔 떄
@@ -636,23 +661,30 @@ float UInv_SpatialInventory::GetTileSize() const
 
 void UInv_SpatialInventory::ShowEquippedItemDescription(UInv_InventoryItem* Item)
 {
+	// [Fix26] Item null 체크 (타이머 콜백에서 GC된 아이템 역참조 방지)
+	if (!IsValid(Item)) return;
+
 	const auto& Manifest = Item->GetItemManifest();
 	const FInv_EquipmentFragment* EquipmentFragment = Manifest.GetFragmentOfType<FInv_EquipmentFragment>();
 	if (!EquipmentFragment) return;
 
 	const FGameplayTag HoveredEquipmentType = EquipmentFragment->GetEquipmentType();
-	
+
 	auto EquippedGridSlot = EquippedGridSlots.FindByPredicate([Item](const UInv_EquippedGridSlot* GridSlot)
 	{
-		return GridSlot->GetInventoryItem() == Item;
+		return IsValid(GridSlot) ? GridSlot->GetInventoryItem() == Item : false;
 	});
 	if (EquippedGridSlot != nullptr) return; // The hovered item is already equipped, we're already showing its Item Description
 
 	// It's not equipped, so find the equipped item with the same equipment type
+	// [Fix26] GetFragmentOfType null 체크 추가 (Equipment Fragment 없는 아이템 크래시 방지)
 	auto FoundEquippedSlot = EquippedGridSlots.FindByPredicate([HoveredEquipmentType](const UInv_EquippedGridSlot* GridSlot)
 	{
+		if (!IsValid(GridSlot)) return false;
 		UInv_InventoryItem* InventoryItem = GridSlot->GetInventoryItem().Get();
-		return IsValid(InventoryItem) ? InventoryItem->GetItemManifest().GetFragmentOfType<FInv_EquipmentFragment>()->GetEquipmentType() == HoveredEquipmentType : false ;
+		if (!IsValid(InventoryItem)) return false;
+		const FInv_EquipmentFragment* Frag = InventoryItem->GetItemManifest().GetFragmentOfType<FInv_EquipmentFragment>();
+		return Frag ? (Frag->GetEquipmentType() == HoveredEquipmentType) : false;
 	});
 	UInv_EquippedGridSlot* EquippedSlot = FoundEquippedSlot ? *FoundEquippedSlot : nullptr;
 	if (!IsValid(EquippedSlot)) return; // No equipped item with the same equipment type

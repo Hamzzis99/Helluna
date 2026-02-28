@@ -200,6 +200,11 @@ struct INVENTORY_API FInv_SavedItemData
 		meta = (DisplayName = "무기 슬롯 인덱스", Tooltip = "무기 슬롯 인덱스입니다. -1은 미장착, 0은 주무기, 1은 보조무기입니다."))
 	int32 WeaponSlotIndex;
 
+	// R키 아이템 회전 상태 (90도 회전 여부)
+	UPROPERTY(BlueprintReadWrite, Category = "인벤토리|저장",
+		meta = (DisplayName = "회전 여부 (Rotated)", Tooltip = "90도 회전 상태입니다."))
+	bool bRotated = false;
+
 	// ============================================
 	// 📌 [Phase 6 Attachment] 부착물 저장 데이터
 	// ============================================
@@ -554,6 +559,9 @@ private:
 	TArray<FInv_SavedItemData> PendingRestoreItems;
 	FTimerHandle PendingRestoreTimerHandle;
 	int32 PendingRestoreRetryCount = 0;
+
+	// [Fix26] 로컬 람다 타이머 핸들 → 멤버로 승격 (EndPlay에서 해제)
+	FTimerHandle GridRestoreTimerHandle;
 
 	UPROPERTY(EditDefaultsOnly, Category = "인벤토리",
 		meta = (DisplayName = "기본 입력 매핑 컨텍스트", Tooltip = "기본 입력 매핑 컨텍스트 배열입니다. 인벤토리 관련 입력을 바인딩합니다."))

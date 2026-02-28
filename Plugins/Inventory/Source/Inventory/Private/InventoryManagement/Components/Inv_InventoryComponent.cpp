@@ -422,6 +422,12 @@ void UInv_InventoryComponent::RestoreFromSaveData(
 		int32 SavedGridIndex = ItemData.GridPosition.Y * Columns + ItemData.GridPosition.X;
 		SetLastEntryGridPosition(SavedGridIndex, ItemData.GridCategory);
 
+		// ── R키 회전 상태 복원 ──
+		if (InventoryList.Entries.Num() > 0)
+		{
+			InventoryList.Entries.Last().bRotated = ItemData.bRotated;
+		}
+
 		// ── 부착물 FastArray Entry 생성 + OriginalItem 연결 ──
 		if (ItemData.Attachments.Num() > 0 && IsValid(NewItem))
 		{
@@ -2541,7 +2547,7 @@ void UInv_InventoryComponent::Server_SplitItemEntry_Implementation(UInv_Inventor
 }
 
 // ⭐ [Phase 4 방법2] 클라이언트 Grid 위치를 서버 Entry에 동기화
-void UInv_InventoryComponent::Server_UpdateItemGridPosition_Implementation(UInv_InventoryItem* Item, int32 GridIndex, uint8 GridCategory)
+void UInv_InventoryComponent::Server_UpdateItemGridPosition_Implementation(UInv_InventoryItem* Item, int32 GridIndex, uint8 GridCategory, bool bRotated)
 {
 	if (!IsValid(Item))
 	{
@@ -2558,6 +2564,7 @@ void UInv_InventoryComponent::Server_UpdateItemGridPosition_Implementation(UInv_
 		{
 			InventoryList.Entries[i].GridIndex = GridIndex;
 			InventoryList.Entries[i].GridCategory = GridCategory;
+			InventoryList.Entries[i].bRotated = bRotated;
 			// Fix 11: MarkItemDirty 제거 — Server_UpdateItemGridPosition은 항상 클라→서버 RPC이므로
 			// 클라이언트가 이미 올바른 GridIndex를 알고 있음. 서버→클라 역리플리케이션은 불필요하며,
 			// PostReplicatedChange → AddItem → UpdateGridSlots → RPC 순환 오염의 원인.
@@ -3097,6 +3104,7 @@ TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave(
 		// [Fix14] Entry의 장착 상태를 SavedItem에 전파
 		SavedItem.bEquipped = Entry.bIsEquipped;
 		SavedItem.WeaponSlotIndex = Entry.WeaponSlotIndex;
+		SavedItem.bRotated = Entry.bRotated;
 
 		// ── [Phase 6 Attachment] 부착물 데이터 수집 ──
 		// 무기 아이템인 경우 AttachmentHostFragment의 AttachedItems 수집

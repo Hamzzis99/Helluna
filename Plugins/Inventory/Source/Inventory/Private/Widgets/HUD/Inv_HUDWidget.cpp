@@ -36,6 +36,17 @@ void UInv_HUDWidget::NativeOnInitialized()
 	}
 }
 
+// [Fix26] NativeDestruct — 외부 델리게이트 해제 (댕글링 참조 방지)
+void UInv_HUDWidget::NativeDestruct()
+{
+	UInv_InventoryComponent* InventoryComponent = UInv_InventoryStatics::GetInventoryComponent(GetOwningPlayer());
+	if (IsValid(InventoryComponent))
+	{
+		InventoryComponent->NoRoomInInventory.RemoveDynamic(this, &UInv_HUDWidget::OnNoRoom);
+	}
+	Super::NativeDestruct();
+}
+
 void UInv_HUDWidget::OnNoRoom()
 {
 #if INV_DEBUG_WIDGET
