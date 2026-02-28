@@ -13,6 +13,13 @@
 // ════════════════════════════════════════════════════════════════
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnLobbyTransferRequested, int32, EntryIndex);
 
+class UInv_InventoryItem; // [Phase 11] 빠른 장착 델리게이트 forward declaration
+
+// ════════════════════════════════════════════════════════════════
+// [Phase 11] 빠른 장착 델리게이트 — Alt+LMB 시 SpatialInventory에서 장착 처리
+// ════════════════════════════════════════════════════════════════
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnQuickEquipRequested, UInv_InventoryItem*, Item, int32, EntryIndex);
+
 class UInv_ItemPopUp;
 class UInv_HoverItem;
 struct FInv_ImageFragment;
@@ -139,6 +146,12 @@ public:
 	/** 로비 전송 요청 델리게이트 — 우클릭 시 EntryIndex를 전달 */
 	UPROPERTY(BlueprintAssignable, Category = "인벤토리|로비")
 	FOnLobbyTransferRequested OnLobbyTransferRequested;
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 11] 빠른 장착 델리게이트 — Alt+LMB 시 SpatialInventory가 장착 처리
+	// ════════════════════════════════════════════════════════════════
+	UPROPERTY(BlueprintAssignable, Category = "인벤토리")
+	FOnQuickEquipRequested OnQuickEquipRequested;
 
 	// ════════════════════════════════════════════════════════════════
 	// [Phase 9] 컨테이너 Grid 크로스 드래그 & 드롭
@@ -272,6 +285,13 @@ private:
 
 	// [Fix20] 상대 Grid의 HoverItem을 이쪽으로 전송 (패널 간 드래그 앤 드롭)
 	bool TryTransferFromTargetGrid();
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 11] 타르코프 스타일 단축키 헬퍼 함수
+	// ════════════════════════════════════════════════════════════════
+	void HandleQuickTransfer(int32 GridIndex);  // Ctrl+LMB: 빠른 전송
+	void HandleQuickEquip(int32 GridIndex);     // Alt+LMB: 빠른 장착/해제
+	void HandleQuickSplit(int32 GridIndex);     // Shift+LMB: 스택 반분할
 
 	// ════════════════════════════════════════════════════════════════
 	// [Phase 9] 컨테이너 Grid 관련 private 멤버

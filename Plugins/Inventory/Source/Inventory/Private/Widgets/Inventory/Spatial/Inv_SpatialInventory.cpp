@@ -48,6 +48,11 @@ void UInv_SpatialInventory::NativeOnInitialized()
 	Grid_Consumables->SetOwningCanvas(CanvasPanel);
 	Grid_Craftables->SetOwningCanvas(CanvasPanel);
 
+	// [Phase 11] Alt+LMB 빠른 장착 델리게이트 바인딩
+	Grid_Equippables->OnQuickEquipRequested.AddUniqueDynamic(this, &ThisClass::OnGridQuickEquipRequested);
+	Grid_Consumables->OnQuickEquipRequested.AddUniqueDynamic(this, &ThisClass::OnGridQuickEquipRequested);
+	Grid_Craftables->OnQuickEquipRequested.AddUniqueDynamic(this, &ThisClass::OnGridQuickEquipRequested);
+
 	ShowEquippables(); // 기본값으로 장비창을 보여주자.
 
 	// 🔍 [디버깅] WidgetTree 순회 전 상태
@@ -792,5 +797,123 @@ int32 UInv_SpatialInventory::GetTotalMaterialCountFromUI(const FGameplayTag& Mat
 	UE_LOG(LogTemp, Log, TEXT("GetTotalMaterialCountFromUI(%s) = %d (모든 그리드 합산)"), *MaterialTag.ToString(), TotalCount);
 #endif
 	return TotalCount;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 11] NativeDestruct — Quick Equip 델리게이트 해제
+// ════════════════════════════════════════════════════════════════════════════════
+void UInv_SpatialInventory::NativeDestruct()
+{
+	// Quick Equip 델리게이트 해제
+	if (IsValid(Grid_Equippables))
+	{
+		Grid_Equippables->OnQuickEquipRequested.RemoveDynamic(this, &ThisClass::OnGridQuickEquipRequested);
+	}
+	if (IsValid(Grid_Consumables))
+	{
+		Grid_Consumables->OnQuickEquipRequested.RemoveDynamic(this, &ThisClass::OnGridQuickEquipRequested);
+	}
+	if (IsValid(Grid_Craftables))
+	{
+		Grid_Craftables->OnQuickEquipRequested.RemoveDynamic(this, &ThisClass::OnGridQuickEquipRequested);
+	}
+
+	Super::NativeDestruct();
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 11] OnGridQuickEquipRequested — Alt+LMB 빠른 장착 처리
+// Grid에서 아이템을 들지 않고(HoverItem 없이) 바로 장착 슬롯에 장착
+// ════════════════════════════════════════════════════════════════════════════════
+void UInv_SpatialInventory::OnGridQuickEquipRequested(UInv_InventoryItem* Item, int32 EntryIndex)
+{
+	if (!IsValid(Item)) return;
+
+	// 장비 Fragment 확인
+	const FInv_EquipmentFragment* EquipFrag = Item->GetItemManifest().GetFragmentOfType<FInv_EquipmentFragment>();
+	if (!EquipFrag) return;
+
+	const FGameplayTag EquipmentType = EquipFrag->GetEquipmentType();
+
+	// 장착 타입에 맞는 빈 슬롯 찾기
+	UInv_EquippedGridSlot* TargetSlot = nullptr;
+	UInv_InventoryItem* ItemToUnequip = nullptr;
+
+	for (UInv_EquippedGridSlot* EquipSlot : EquippedGridSlots)
+	{
+		if (!IsValid(EquipSlot)) continue;
+
+		// 슬롯의 장비 타입 태그가 아이템의 장비 타입과 일치하는지 확인
+		if (!EquipmentType.MatchesTag(EquipSlot->GetEquipmentTypeTag())) continue;
+
+		// 빈 슬롯 우선
+		if (!EquipSlot->GetInventoryItem().IsValid())
+		{
+			TargetSlot = EquipSlot;
+			break;
+		}
+
+		// 같은 타입 슬롯이지만 이미 장착된 경우 → 교체 후보
+		if (!TargetSlot)
+		{
+			TargetSlot = EquipSlot;
+			ItemToUnequip = EquipSlot->GetInventoryItem().Get();
+		}
+	}
+
+	if (!TargetSlot) return; // 호환 슬롯 없음
+
+	// ────────────────────────────────────────────────────────────
+	// Grid에서 아이템을 PickUp → HoverItem으로 전환 → 장착 슬롯에 장착
+	// 기존 EquippedGridSlotClicked 플로우를 활용
+	// ────────────────────────────────────────────────────────────
+
+	// 1) 활성 Grid에서 아이템 들기 (HoverItem으로)
+	// 아이템이 Equippable 카테고리이므로 Grid_Equippables에서 처리
+	UInv_InventoryGrid* SourceGrid = Grid_Equippables;
+	if (!IsValid(SourceGrid)) return;
+
+	// Grid에서 아이템 제거 + HoverItem 할당
+	SourceGrid->AssignHoverItem(Item);
+
+	// 2) Grid에서 SlottedItem 제거
+	SourceGrid->RemoveSlottedItemByPointer(Item);
+
+	// 3) 기존 슬롯에 장착된 아이템이 있으면 해제 처리
+	if (IsValid(ItemToUnequip))
+	{
+		// 기존 장착 아이템의 EquippedSlottedItem 찾아서 제거
+		UInv_EquippedSlottedItem* OldEquippedSlottedItem = TargetSlot->GetEquippedSlottedItem();
+		ClearSlotOfItem(TargetSlot);
+		// 기존 아이템을 Grid에 돌려놓기
+		SourceGrid->AssignHoverItem(ItemToUnequip);
+		SourceGrid->DropItem(); // Grid의 첫 번째 빈 슬롯에 배치
+		RemoveEquippedSlottedItem(OldEquippedSlottedItem);
+	}
+
+	// 4) 새 아이템 장착
+	UInv_HoverItem* CurrentHoverItem = SourceGrid->GetHoverItem();
+	if (!IsValid(CurrentHoverItem)) return;
+
+	const float CurrentTileSize = GetTileSize();
+	UInv_EquippedSlottedItem* NewEquippedSlottedItem = TargetSlot->OnItemEquipped(
+		Item,
+		EquipmentType,
+		CurrentTileSize
+	);
+	if (IsValid(NewEquippedSlottedItem))
+	{
+		NewEquippedSlottedItem->OnEquippedSlottedItemClicked.AddDynamic(this, &ThisClass::EquippedSlottedItemClicked);
+	}
+
+	// 5) HoverItem 정리
+	SourceGrid->ClearHoverItem();
+
+	// 6) 서버 RPC + 클라이언트 브로드캐스트
+	int32 WeaponSlotIndex = TargetSlot->GetWeaponSlotIndex();
+	BroadcastSlotClickedDelegates(Item, ItemToUnequip, WeaponSlotIndex);
+
+	UE_LOG(LogTemp, Log, TEXT("[OnGridQuickEquipRequested] Alt+LMB 빠른 장착 완료 → WeaponSlot=%d, Item=%s"),
+		WeaponSlotIndex, *Item->GetItemManifest().GetItemType().ToString());
 }
 

@@ -846,11 +846,11 @@ void UInv_InventoryGrid::PickUp(UInv_InventoryItem* ClickedInventoryItem, const 
 {
 	// 기존 SlottedItem의 회전 상태 읽기
 	bool bWasRotated = false;
-	if (UInv_SlottedItem* const* FoundSlotted = SlottedItems.Find(GridIndex))
 	{
-		if (IsValid(*FoundSlotted))
+		UInv_SlottedItem* FoundSlotted = SlottedItems.FindRef(GridIndex);
+		if (IsValid(FoundSlotted))
 		{
-			bWasRotated = (*FoundSlotted)->IsRotated();
+			bWasRotated = FoundSlotted->IsRotated();
 		}
 	}
 
@@ -925,16 +925,16 @@ void UInv_InventoryGrid::RemoveItemFromGrid(UInv_InventoryItem* InventoryItem, c
 
 	// 회전 상태 확인: SlottedItem이 있으면 회전 여부 체크, 없으면 HoverItem에서 확인
 	bool bItemRotated = false;
-	if (UInv_SlottedItem* const* FoundSlotted = SlottedItems.Find(GridIndex))
 	{
-		if (IsValid(*FoundSlotted))
+		UInv_SlottedItem* FoundSlotted = SlottedItems.FindRef(GridIndex);
+		if (IsValid(FoundSlotted))
 		{
-			bItemRotated = (*FoundSlotted)->IsRotated();
+			bItemRotated = FoundSlotted->IsRotated();
 		}
-	}
-	else if (IsValid(HoverItem) && HoverItem->GetInventoryItem() == InventoryItem)
-	{
-		bItemRotated = HoverItem->IsRotated();
+		else if (IsValid(HoverItem) && HoverItem->GetInventoryItem() == InventoryItem)
+		{
+			bItemRotated = HoverItem->IsRotated();
+		}
 	}
 
 	const FIntPoint GridSize = GetEffectiveDimensions(GridFragment, bItemRotated);
@@ -1313,6 +1313,23 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 	//좌클릭을 눌렀을 때 실행되는 호버 부분 실행 부분
 	if (!IsValid(HoverItem) && IsLeftClick(MouseEvent))
 	{
+		// [Phase 11] 타르코프 스타일 단축키 — modifier 키 우선 체크
+		if (MouseEvent.IsControlDown())
+		{
+			HandleQuickTransfer(GridIndex);
+			return;
+		}
+		if (MouseEvent.IsAltDown())
+		{
+			HandleQuickEquip(GridIndex);
+			return;
+		}
+		if (MouseEvent.IsShiftDown())
+		{
+			HandleQuickSplit(GridIndex);
+			return;
+		}
+
 		// 호버 항목을 지정하고 그리드에서 슬롯이 있는 항목을 제거하는 부분을 구현하자.
 		// Assign the hover item, and remove the slotted item from the grid.
 		PickUp(ClickedInventoryItem, GridIndex);
@@ -3314,7 +3331,7 @@ void UInv_InventoryGrid::OpenAttachmentPanel(UInv_InventoryItem* WeaponItem, int
 		// 히트 테스트가 차단되어 슬롯 클릭이 먹히지 않는 문제 발생
 		AttachmentPanel->AddToViewport(100);
 
-		// WBP 루트 CanvasPanel의 첫 자식(Overlay)을 화면 중앙 앵커로 변경
+		// WBP 루트 CanvasPanel의 첫 자식(Overlay)을 화면 중앙 배치 (고정 크기)
 		UCanvasPanel* RootCanvas = Cast<UCanvasPanel>(AttachmentPanel->GetRootWidget());
 		if (RootCanvas && RootCanvas->GetChildrenCount() > 0)
 		{
@@ -3322,11 +3339,14 @@ void UInv_InventoryGrid::OpenAttachmentPanel(UInv_InventoryItem* WeaponItem, int
 			UCanvasPanelSlot* OverlaySlot = UWidgetLayoutLibrary::SlotAsCanvasSlot(OverlayChild);
 			if (OverlaySlot)
 			{
+				// 중앙 앵커 + 고정 크기 (AutoSize=false)
+				// AutoSize=true 시 Border_Background 텍스처 원본 크기(1443x1958)로 확장되는 버그 수정
 				FAnchors CenterAnchor(0.5f, 0.5f, 0.5f, 0.5f);
 				OverlaySlot->SetAnchors(CenterAnchor);
 				OverlaySlot->SetAlignment(FVector2D(0.5f, 0.5f));
-				OverlaySlot->SetAutoSize(true);
-				OverlaySlot->SetPosition(FVector2D::ZeroVector);
+				OverlaySlot->SetAutoSize(false);
+				// 중앙 앵커 + AutoSize=false: Offsets = (PosX, PosY, Width, Height)
+				OverlaySlot->SetOffsets(FMargin(0.f, 0.f, 500.f, 600.f));
 			}
 		}
 
@@ -4475,4 +4495,208 @@ bool UInv_InventoryGrid::TryTransferFromLinkedContainerGrid(int32 GridIndex)
 	// 원본 Grid의 HoverItem 정리
 	LinkedContainerGrid->ClearHoverItem();
 	return true;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 11] HandleQuickTransfer — Ctrl+LMB: 빠른 전송
+// Shift+RMB 로비 전송 + Phase 9 컨테이너 전송 로직 재사용
+// ════════════════════════════════════════════════════════════════════════════════
+void UInv_InventoryGrid::HandleQuickTransfer(int32 GridIndex)
+{
+	// UpperLeftIndex 리졸브 (대형 아이템 호환)
+	int32 LookupIndex = GridIndex;
+	if (GridSlots.IsValidIndex(GridIndex) && GridSlots[GridIndex])
+	{
+		const int32 UpperLeft = GridSlots[GridIndex]->GetUpperLeftIndex();
+		if (UpperLeft >= 0) LookupIndex = UpperLeft;
+	}
+
+	UInv_SlottedItem* Slotted = SlottedItems.FindRef(LookupIndex);
+	if (!IsValid(Slotted)) return;
+
+	UInv_InventoryItem* SlottedItem = Slotted->GetInventoryItem();
+	if (!IsValid(SlottedItem)) return;
+	if (!InventoryComponent.IsValid()) return;
+
+	// ──────────────────────────────────────────────────────────────
+	// 1) 컨테이너 모드 (Phase 9) — LinkedContainerGrid가 설정된 경우
+	// ──────────────────────────────────────────────────────────────
+	if (LinkedContainerGrid.IsValid())
+	{
+		// Entry 인덱스 찾기
+		int32 EntryIdx = INDEX_NONE;
+		const TArray<FInv_InventoryEntry>& Entries =
+			(OwnerType == EGridOwnerType::Container && ContainerComp.IsValid())
+			? ContainerComp->ContainerInventoryList.Entries
+			: InventoryComponent->GetInventoryList().Entries;
+
+		for (int32 i = 0; i < Entries.Num(); ++i)
+		{
+			if (Entries[i].Item == SlottedItem)
+			{
+				EntryIdx = i;
+				break;
+			}
+		}
+
+		if (EntryIdx != INDEX_NONE)
+		{
+			UInv_LootContainerComponent* LinkedCC = LinkedContainerGrid->GetContainerComponent();
+			UInv_LootContainerComponent* MyCC = GetContainerComponent();
+
+			if (OwnerType == EGridOwnerType::Container && IsValid(MyCC))
+			{
+				// 컨테이너 → 플레이어
+				InventoryComponent->Server_TakeItemFromContainer(MyCC, EntryIdx, -1);
+			}
+			else if (OwnerType == EGridOwnerType::Player && IsValid(LinkedCC))
+			{
+				// 플레이어 → 컨테이너
+				InventoryComponent->Server_PutItemInContainer(LinkedCC, EntryIdx, -1);
+			}
+		}
+		return;
+	}
+
+	// ──────────────────────────────────────────────────────────────
+	// 2) 로비 전송 모드 — LobbyTargetGrid가 설정된 경우
+	// ──────────────────────────────────────────────────────────────
+	if (bLobbyTransferMode)
+	{
+		// ReplicationID 기반 전송
+		int32 RepID = INDEX_NONE;
+		const TArray<FInv_InventoryEntry>& Entries = InventoryComponent->GetInventoryList().Entries;
+		for (const FInv_InventoryEntry& Entry : Entries)
+		{
+			if (Entry.Item == SlottedItem)
+			{
+				RepID = Entry.ReplicationID;
+				break;
+			}
+		}
+
+		if (RepID == INDEX_NONE)
+		{
+			UE_LOG(LogTemp, Error, TEXT("[HandleQuickTransfer] Ctrl+LMB 전송 실패 → ReplicationID 미발견"));
+			return;
+		}
+
+		// [Fix19] 대상 Grid 용량 사전 체크
+		if (LobbyTargetGrid.IsValid())
+		{
+			const FInv_ItemManifest& Manifest = SlottedItem->GetItemManifest();
+			if (!LobbyTargetGrid->HasRoomInActualGrid(Manifest))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[HandleQuickTransfer] Ctrl+LMB 전송 차단: 대상 Grid 공간 부족 (RepID=%d)"), RepID);
+				return;
+			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[HandleQuickTransfer] LobbyTargetGrid 미설정 (Ctrl+LMB). 용량 체크 없이 전송 진행"));
+		}
+
+		UE_LOG(LogTemp, Log, TEXT("[HandleQuickTransfer] Ctrl+LMB 빠른 전송 → RepID=%d"), RepID);
+		OnLobbyTransferRequested.Broadcast(RepID);
+		return;
+	}
+
+	// 3) 일반 게임 모드 — 전송 대상 없음, 무시
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 11] HandleQuickEquip — Alt+LMB: 빠른 장착/해제
+// ════════════════════════════════════════════════════════════════════════════════
+void UInv_InventoryGrid::HandleQuickEquip(int32 GridIndex)
+{
+	// 로비 모드 / 컨테이너 Grid → 장착 불가 컨텍스트
+	if (bLobbyTransferMode) return;
+	if (OwnerType == EGridOwnerType::Container) return;
+
+	// UpperLeftIndex 리졸브
+	int32 LookupIndex = GridIndex;
+	if (GridSlots.IsValidIndex(GridIndex) && GridSlots[GridIndex])
+	{
+		const int32 UpperLeft = GridSlots[GridIndex]->GetUpperLeftIndex();
+		if (UpperLeft >= 0) LookupIndex = UpperLeft;
+	}
+
+	UInv_SlottedItem* Slotted = SlottedItems.FindRef(LookupIndex);
+	if (!IsValid(Slotted)) return;
+
+	UInv_InventoryItem* Item = Slotted->GetInventoryItem();
+	if (!IsValid(Item)) return;
+
+	// 장비 아이템인지 확인 (EquipmentFragment 존재 여부)
+	const FInv_EquipmentFragment* EquipFrag = Item->GetItemManifest().GetFragmentOfType<FInv_EquipmentFragment>();
+	if (!EquipFrag) return; // 장비 아이템 아님
+
+	if (!InventoryComponent.IsValid()) return;
+
+	// Entry에서 장착 상태 확인
+	const TArray<FInv_InventoryEntry>& Entries = InventoryComponent->GetInventoryList().Entries;
+	int32 EntryIdx = INDEX_NONE;
+	for (int32 i = 0; i < Entries.Num(); ++i)
+	{
+		if (Entries[i].Item == Item)
+		{
+			EntryIdx = i;
+			break;
+		}
+	}
+	if (EntryIdx == INDEX_NONE) return;
+
+	const FInv_InventoryEntry& Entry = Entries[EntryIdx];
+
+	if (Entry.bIsEquipped)
+	{
+		// 이미 장착됨 → 해제 RPC (Server_EquipSlotClicked에 ItemToEquip=nullptr, ItemToUnequip=Item)
+		InventoryComponent->Server_EquipSlotClicked(nullptr, Item, Entry.WeaponSlotIndex);
+
+		// 클라이언트 브로드캐스트 (데디서버)
+		if (GetOwningPlayer() && GetOwningPlayer()->GetNetMode() == NM_Client)
+		{
+			InventoryComponent->OnItemUnequipped.Broadcast(Item, Entry.WeaponSlotIndex);
+		}
+
+		UE_LOG(LogTemp, Log, TEXT("[HandleQuickEquip] Alt+LMB 빠른 해제 → WeaponSlot=%d"), Entry.WeaponSlotIndex);
+	}
+	else
+	{
+		// 미장착 → 장착 요청 (SpatialInventory가 슬롯 배정 처리)
+		OnQuickEquipRequested.Broadcast(Item, EntryIdx);
+		UE_LOG(LogTemp, Log, TEXT("[HandleQuickEquip] Alt+LMB 빠른 장착 요청 → EntryIdx=%d"), EntryIdx);
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 11] HandleQuickSplit — Shift+LMB: 스택 반분할 (다이얼로그 없음)
+// ════════════════════════════════════════════════════════════════════════════════
+void UInv_InventoryGrid::HandleQuickSplit(int32 GridIndex)
+{
+	// HoverItem이 이미 있으면 무시 (드래그 중이 아닌 경우에만 동작)
+	if (IsValid(HoverItem)) return;
+
+	if (!GridSlots.IsValidIndex(GridIndex)) return;
+
+	// UpperLeftIndex 리졸브
+	const int32 UpperLeft = GridSlots[GridIndex]->GetUpperLeftIndex();
+	const int32 LookupIndex = (UpperLeft >= 0 && GridSlots.IsValidIndex(UpperLeft)) ? UpperLeft : GridIndex;
+
+	UInv_InventoryItem* Item = GridSlots[LookupIndex]->GetInventoryItem().Get();
+	if (!IsValid(Item)) return;
+	if (!Item->IsStackable()) return; // 스택 불가능 아이템은 무시
+
+	// UpperLeftGridSlot에서 현재 스택 수 가져오기
+	UInv_GridSlot* UpperLeftGridSlot = GridSlots[LookupIndex];
+	const int32 CurrentStackCount = UpperLeftGridSlot->GetStackCount();
+	if (CurrentStackCount < 2) return; // 1개 이하면 분할 불가
+
+	// 반분할 양 계산 (올림)
+	const int32 SplitAmount = (CurrentStackCount + 1) / 2;
+
+	UE_LOG(LogTemp, Log, TEXT("[HandleQuickSplit] Shift+LMB 반분할 → 원본 %d개, 분할 %d개"), CurrentStackCount, SplitAmount);
+
+	// 기존 OnPopUpMenuSplit 로직 재사용
+	OnPopUpMenuSplit(SplitAmount, LookupIndex);
 }

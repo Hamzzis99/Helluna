@@ -38,6 +38,12 @@ public:
 	// ============================================
 	UInv_InventoryItem* GetEquippedInventoryItem() const;
 
+	// [Phase 11] 장비 타입 태그 Getter (Quick Equip에서 슬롯 매칭용)
+	const FGameplayTag& GetEquipmentTypeTag() const { return EquipmentTypeTag; }
+
+	// [Phase 11] EquippedSlottedItem Getter (Quick Equip 교체 시 기존 아이템 제거용)
+	UInv_EquippedSlottedItem* GetEquippedSlottedItem() const { return EquippedSlottedItem.Get(); }
+
 	// ============================================
 	// 🆕 [Phase 8] 레이아웃 갱신 (인벤토리 열릴 때 호출)
 	// ============================================

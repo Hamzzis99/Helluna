@@ -96,10 +96,18 @@ public:
 	/** 컨테이너 Grid 연결 해제 */
 	void UnlinkContainerGrid();
 
+	virtual void NativeDestruct() override; // [Phase 11] Quick Equip 델리게이트 해제
+
 private:
 	// [Phase 4 Fix] Grid → SpatialInventory 통합 전달 콜백
 	UFUNCTION()
 	void OnGridTransferRequested(int32 EntryIndex);
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 11] Alt+LMB 빠른 장착 핸들러
+	// ════════════════════════════════════════════════════════════════
+	UFUNCTION()
+	void OnGridQuickEquipRequested(UInv_InventoryItem* Item, int32 EntryIndex);
 
 	// ──────────────────────────────────────────────────────────────── 
 	// 여기 있는 UPROPERTY와 위젯과의 이름이 동일해야만함.
