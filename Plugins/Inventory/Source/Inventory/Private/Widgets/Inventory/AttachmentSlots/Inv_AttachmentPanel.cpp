@@ -1057,11 +1057,11 @@ FReply UInv_AttachmentPanel::NativeOnMouseButtonDown(const FGeometry& InGeometry
 			}
 		}
 		
-		// [Fix26] 프리뷰 영역 바깥 → 이벤트 전파 (인벤토리 조작 가능)
-		return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
+		// [Fix26] 프리뷰 영역 바깥 → FReply::Unhandled()로 이벤트 전파 (인벤토리 조작 가능)
+		return FReply::Unhandled();
 	}
 
-	return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
+	return FReply::Unhandled();
 }
 
 // ════════════════════════════════════════════════════════════════

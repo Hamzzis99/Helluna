@@ -145,7 +145,11 @@ void UInv_AttachmentSlotWidget::SetEmpty()
 	}
 
 #if INV_DEBUG_ATTACHMENT
-	UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 슬롯 %d 비워짐"), SlotIndex);
+	// [Fix27] SlotIndex가 초기화되지 않은 경우 로그 스킵 (NativeConstruct 시점에 호출될 수 있음)
+	if (SlotIndex != INDEX_NONE)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 슬롯 %d 비워짐"), SlotIndex);
+	}
 #endif
 }
 

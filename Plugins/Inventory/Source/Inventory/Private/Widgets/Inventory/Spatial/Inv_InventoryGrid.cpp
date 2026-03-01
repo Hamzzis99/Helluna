@@ -1812,21 +1812,21 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 		return;
 	}
 
-	UE_LOG(LogTemp, Error, TEXT("[Grid-AddItem진단] %s Grid에 추가됨 — NetMode=%d, 포인터=%p, Category=%d, GridName=%s, 호출자=%s"),
-		*Item->GetItemManifest().GetItemType().ToString(),
-		GetWorld() ? (int32)GetWorld()->GetNetMode() : -1,
-		Item,
-		(int32)ItemCategory,
-		*GetName(),
-		TEXT(__FUNCTION__));
-
-	// [Fix25] 유효하지 않은 Category 보정 (BP CDO가 새 기본값을 덮어쓴 경우)
-	if (static_cast<uint8>(ItemCategory) > 3)
+	// [Fix27] 유효하지 않은 Grid 카테고리는 조기 종료 (Grid_Builds 등 사용하지 않는 Grid)
+	// 유효한 카테고리: Equippable(0), Consumable(1), Craftable(2), None(3)
+	const uint8 CatVal = static_cast<uint8>(ItemCategory);
+	if (CatVal > 2) // None(3) 이상은 무시 — 실제 사용되는 Grid는 0,1,2 뿐
 	{
-		UE_LOG(LogTemp, Error, TEXT("[Fix25] GridName=%s의 ItemCategory가 유효하지 않음(%d) → Equippable로 보정"),
-			*GetName(), (int32)ItemCategory);
-		ItemCategory = EInv_ItemCategory::Equippable;
+		return; // 로그 없이 조용히 무시
 	}
+
+#if INV_DEBUG_WIDGET
+	UE_LOG(LogTemp, Log, TEXT("[Grid-AddItem] %s Grid에 추가 — Category=%d, GridName=%s"),
+		*Item->GetItemManifest().GetItemType().ToString(),
+		(int32)ItemCategory,
+		*GetName());
+#endif
+
 
 	// [Fix25] 중복 아이템 체크 (항상 수행) — 같은 Item 포인터가 이미 Grid에 있으면 스킵
 	for (const auto& [DiagIdx, DiagSlotted] : SlottedItems)
@@ -3618,22 +3618,27 @@ bool UInv_InventoryGrid::MatchesCategory(const UInv_InventoryItem* Item) const
 		return false;
 	}
 
-	// [Fix25] 유효하지 않은 카테고리 방어 (초기화되지 않은 쓰레기 값)
+	// [Fix27] 유효하지 않은 Grid 카테고리는 무시 (Grid_Builds 등 사용하지 않는 Grid)
 	const EInv_ItemCategory GridCat = ItemCategory;
 	const EInv_ItemCategory ItemCat = Item->GetItemManifest().GetItemCategory();
 	
-	// enum 범위 체크 (0=Equippable, 1=Consumable, 2=Craftable, 3=None)
 	const uint8 GridCatVal = static_cast<uint8>(GridCat);
 	const uint8 ItemCatVal = static_cast<uint8>(ItemCat);
 	
-	if (GridCatVal > 3 || ItemCatVal > 3)
+	// [Fix27] Grid 카테고리가 Equippable(0), Consumable(1), Craftable(2)이 아니면 무시
+	if (GridCatVal > 2)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[Fix25] MatchesCategory: 유효하지 않은 카테고리! GridCat=%d, ItemCat=%d, Item=%s"),
-			GridCatVal, ItemCatVal, *Item->GetItemManifest().GetItemType().ToString());
-		return false;
+		return false; // 로그 없이 조용히 무시
+	}
+	
+	// [Fix27] Item 카테고리가 유효하지 않으면 → Equippable로 간주
+	EInv_ItemCategory EffectiveItemCat = ItemCat;
+	if (ItemCatVal > 2)
+	{
+		EffectiveItemCat = EInv_ItemCategory::Equippable;
 	}
 
-	return ItemCat == GridCat;
+	return EffectiveItemCat == GridCat;
 }
 
 // ⭐ UI GridSlots 기반 재료 개수 세기 (Split 대응!)
