@@ -260,7 +260,8 @@ void UInv_InventoryGrid::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 
 	// [최적화] HoverItem을 들고 있지 않으면 마우스 추적 스킵
 	// [Phase 9] LinkedGrid에 HoverItem이 있으면 크로스 Grid 하이라이트를 위해 Tick 실행
-	if (!bShouldTickForHover && !HasLinkedHoverItem()) return;
+	// [Fix25] LobbyTargetGrid에 HoverItem이 있으면 로비 크로스 패널 하이라이트를 위해 Tick 실행
+	if (!bShouldTickForHover && !HasLinkedHoverItem() && !HasLobbyTargetHoverItem()) return;
 
 	// U7: CanvasPanel null 체크 (bSkipAutoInit 경로에서 아직 미초기화 상태일 수 있음)
 	if (!IsValid(CanvasPanel)) return;
@@ -399,11 +400,24 @@ void UInv_InventoryGrid::UpdateTileParameters(const FVector2D& CanvasPosition, c
 
 void UInv_InventoryGrid::OnTileParametersUpdated(const FInv_TileParameters& Parameters)
 {
-	if (!IsValid(HoverItem)) return;
+	// [Fix25] 자기 HoverItem이 없으면 LobbyTargetGrid 또는 LinkedContainerGrid의 HoverItem 사용
+	UInv_HoverItem* EffectiveHoverItem = HoverItem;
+	
+	if (!IsValid(EffectiveHoverItem) && LobbyTargetGrid.IsValid())
+	{
+		EffectiveHoverItem = LobbyTargetGrid->GetHoverItem();
+	}
+	
+	if (!IsValid(EffectiveHoverItem) && LinkedContainerGrid.IsValid())
+	{
+		EffectiveHoverItem = LinkedContainerGrid->GetHoverItem();
+	}
+	
+	if (!IsValid(EffectiveHoverItem)) return;
 
 	// Get Hover Item's dimensions
 	// 호버 아이템의 치수 가져오기
-	const FIntPoint Dimensions = HoverItem->GetGridDimensions();
+	const FIntPoint Dimensions = EffectiveHoverItem->GetGridDimensions();
 	// Calculate the starting coordinate for highlighting
 	// 하이라이팅을 시작하는 좌표를 검색한다
 	const FIntPoint StartingCoordinate = CalculateStartingCoordinate(Parameters.TileCoordinats, Dimensions, Parameters.TileQuadrant);
@@ -844,19 +858,27 @@ bool UInv_InventoryGrid::IsLeftClick(const FPointerEvent& MouseEvent) const // �
 
 void UInv_InventoryGrid::PickUp(UInv_InventoryItem* ClickedInventoryItem, const int32 GridIndex) //집었을 때 개수까지 알아와주기
 {
-	// 기존 SlottedItem의 회전 상태 읽기
+	// 기존 SlottedItem의 회전 상태와 EntryIndex 읽기
 	bool bWasRotated = false;
+	int32 SlottedEntryIndex = INDEX_NONE; // [Fix25] EntryIndex 보존
 	{
 		UInv_SlottedItem* FoundSlotted = SlottedItems.FindRef(GridIndex);
 		if (IsValid(FoundSlotted))
 		{
 			bWasRotated = FoundSlotted->IsRotated();
+			SlottedEntryIndex = FoundSlotted->GetEntryIndex(); // [Fix25] EntryIndex 읽기
 		}
 	}
 
 	// Assign the hover item
 	// 아이템을 집었을 때 호버 아이템으로 할당하는 부분
 	AssignHoverItem(ClickedInventoryItem, GridIndex, GridIndex);
+
+	// [Fix25] HoverItem에 EntryIndex 설정 (PutDownOnIndex에서 사용)
+	if (IsValid(HoverItem) && SlottedEntryIndex != INDEX_NONE)
+	{
+		HoverItem->SetEntryIndex(SlottedEntryIndex);
+	}
 
 	// 회전 상태 복원 (AssignHoverItem 이후에 설정)
 	if (bWasRotated && IsValid(HoverItem))
@@ -1035,6 +1057,13 @@ UInv_SlottedItem* UInv_InventoryGrid::AcquireSlottedItem()
 			Pooled->SetVisibility(ESlateVisibility::Visible);
 			return Pooled;
 		}
+	}
+	// [Fix25] SlottedItemClass null 체크 — BP에서 클래스 미설정 시 크래시 방지
+	if (!SlottedItemClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Fix25] SlottedItemClass가 null! GridName=%s, Category=%d — WBP Details에서 SlottedItemClass 설정 필요"),
+			*GetName(), (int32)ItemCategory);
+		return nullptr;
 	}
 	// 풀이 비어있으면 새로 생성
 	return CreateWidget<UInv_SlottedItem>(GetOwningPlayer(), SlottedItemClass);
@@ -1777,31 +1806,53 @@ UInv_HoverItem* UInv_InventoryGrid::GetHoverItem() const
 // 인벤토리 스택 쌓는 부분.
 void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 {
-	UE_LOG(LogTemp, Error, TEXT("[Grid-AddItem진단] %s Grid에 추가됨 — NetMode=%d, 포인터=%p, Category=%d, 호출자=%s"),
-		Item ? *Item->GetItemManifest().GetItemType().ToString() : TEXT("nullptr"),
+	// [Fix25] null 체크
+	if (!IsValid(Item))
+	{
+		return;
+	}
+
+	UE_LOG(LogTemp, Error, TEXT("[Grid-AddItem진단] %s Grid에 추가됨 — NetMode=%d, 포인터=%p, Category=%d, GridName=%s, 호출자=%s"),
+		*Item->GetItemManifest().GetItemType().ToString(),
 		GetWorld() ? (int32)GetWorld()->GetNetMode() : -1,
 		Item,
 		(int32)ItemCategory,
+		*GetName(),
 		TEXT(__FUNCTION__));
 
-#if INV_DEBUG_WIDGET
-	// 🔍 [진단] AddItem 시 Grid 주소 및 SlottedItems 상태 확인
-	UE_LOG(LogTemp, Error, TEXT("🔍 [AddItem 진단] Grid주소=%p, Category=%d, SlottedItems=%d, Item=%s, EntryIndex=%d"),
-		this, (int32)ItemCategory, SlottedItems.Num(),
-		Item ? *Item->GetItemManifest().GetItemType().ToString() : TEXT("nullptr"), EntryIndex);
+	// [Fix25] 유효하지 않은 Category 보정 (BP CDO가 새 기본값을 덮어쓴 경우)
+	if (static_cast<uint8>(ItemCategory) > 3)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Fix25] GridName=%s의 ItemCategory가 유효하지 않음(%d) → Equippable로 보정"),
+			*GetName(), (int32)ItemCategory);
+		ItemCategory = EInv_ItemCategory::Equippable;
+	}
 
-	// 🔍 [진단] 중복 아이템 존재 여부 확인
+	// [Fix25] 중복 아이템 체크 (항상 수행) — 같은 Item 포인터가 이미 Grid에 있으면 스킵
 	for (const auto& [DiagIdx, DiagSlotted] : SlottedItems)
 	{
 		if (!IsValid(DiagSlotted)) continue;
 		UInv_InventoryItem* DiagItem = DiagSlotted->GetInventoryItem();
 		if (DiagItem == Item)
 		{
-			UE_LOG(LogTemp, Error, TEXT("🔍 [AddItem 진단] ⚠️ 중복 감지: Item=%s(ptr=%p)가 이미 GridIndex=%d에 있음! (기존 EntryIndex=%d, 새 EntryIndex=%d)"),
-				*Item->GetItemManifest().GetItemType().ToString(), Item, DiagIdx,
-				DiagSlotted->GetEntryIndex(), EntryIndex);
+			// 이미 Grid에 존재 → 스택 카운트만 업데이트하고 return
+			const int32 NewStackCount = Item->GetTotalStackCount();
+			if (GridSlots.IsValidIndex(DiagIdx))
+			{
+				GridSlots[DiagIdx]->SetStackCount(NewStackCount);
+			}
+			DiagSlotted->UpdateStackCount(NewStackCount);
+			UE_LOG(LogTemp, Warning, TEXT("[Fix25] 중복 AddItem 감지! Item=%s(ptr=%p)가 이미 GridIndex=%d에 있음. 스택만 업데이트: %d"),
+				*Item->GetItemManifest().GetItemType().ToString(), Item, DiagIdx, NewStackCount);
+			return;
 		}
 	}
+
+#if INV_DEBUG_WIDGET
+	// 🔍 [진단] AddItem 시 Grid 주소 및 SlottedItems 상태 확인
+	UE_LOG(LogTemp, Error, TEXT("🔍 [AddItem 진단] Grid주소=%p, Category=%d, SlottedItems=%d, Item=%s, EntryIndex=%d"),
+		this, (int32)ItemCategory, SlottedItems.Num(),
+		*Item->GetItemManifest().GetItemType().ToString(), EntryIndex);
 #endif
 
 	//아이템 그리드 체크 부분?
@@ -2608,6 +2659,13 @@ void UInv_InventoryGrid::AddItemAtIndex(UInv_InventoryItem* Item, const int32 In
 	if (!GridFragment || !ImageFragment) return;
 
 	UInv_SlottedItem* SlottedItem = CreateSlottedItem(Item, bStackable, StackAmount, GridFragment, ImageFragment, Index, EntryIndex, bRotated);
+	
+	// [Fix25] CreateSlottedItem 실패 시 early return (SlottedItemClass 미설정 등)
+	if (!IsValid(SlottedItem))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Fix25] AddItemAtIndex 중단 — SlottedItem 생성 실패. GridName=%s, Index=%d"), *GetName(), Index);
+		return;
+	}
 
 	AddSlottedItemToCanvas(Index, GridFragment, SlottedItem, bRotated);
 
@@ -2624,6 +2682,15 @@ UInv_SlottedItem* UInv_InventoryGrid::CreateSlottedItem(UInv_InventoryItem* Item
 {
 	// ⭐ [최적화 #6] 풀에서 위젯 획득 (없으면 새로 생성)
 	UInv_SlottedItem* SlottedItem = AcquireSlottedItem();
+	
+	// [Fix25] AcquireSlottedItem이 null 반환 시 처리 (SlottedItemClass 미설정)
+	if (!IsValid(SlottedItem))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Fix25] CreateSlottedItem 실패 — SlottedItem 획득 불가. Item=%s, GridName=%s"),
+			Item ? *Item->GetItemManifest().GetItemType().ToString() : TEXT("nullptr"), *GetName());
+		return nullptr;
+	}
+	
 	SlottedItem->SetInventoryItem(Item);
 	SetSlottedItemImage(SlottedItem, GridFragment, ImageFragment, bRotated);
 	SlottedItem->SetGridIndex(Index);
@@ -2928,9 +2995,26 @@ void UInv_InventoryGrid::SwapWithHoverItem(UInv_InventoryItem* ClickedInventoryI
 	const bool bTempIsStackable = HoverItem->IsStackable(); // 호버 아이템 스택 가능 여부 임시 저장
 	const int32 TempEntryIndex = HoverItem->GetEntryIndex(); // ⭐ 호버 아이템 EntryIndex 임시 저장
 
+	// [Fix25] ClickedItem의 SlottedItem에서 EntryIndex 읽기
+	int32 ClickedEntryIndex = INDEX_NONE;
+	{
+		UInv_SlottedItem* ClickedSlotted = SlottedItems.FindRef(GridIndex);
+		if (IsValid(ClickedSlotted))
+		{
+			ClickedEntryIndex = ClickedSlotted->GetEntryIndex();
+		}
+	}
+
 	// 이전 격자 인덱스를 유지시켜야 하는 부분.
 	// Keep the same previous grid index.
 	AssignHoverItem(ClickedInventoryItem, GridIndex, HoverItem->GetPreviousGridIndex()); // 클릭된 아이템을 호버 아이템으로 할당
+	
+	// [Fix25] 새 HoverItem에 ClickedItem의 EntryIndex 설정
+	if (IsValid(HoverItem) && ClickedEntryIndex != INDEX_NONE)
+	{
+		HoverItem->SetEntryIndex(ClickedEntryIndex);
+	}
+	
 	RemoveItemFromGrid(ClickedInventoryItem, GridIndex); // 그리드에서 클릭된 아이템 제거
 	AddItemAtIndex(TempInventoryItem, ItemDropIndex, bTempIsStackable, TempStackCount, TempEntryIndex); // 임시 저장된 아이템을 인덱스에 추가
 	UpdateGridSlots(TempInventoryItem, ItemDropIndex, bTempIsStackable, TempStackCount); // 그리드 슬롯 업데이트
@@ -3451,8 +3535,16 @@ void UInv_InventoryGrid::OpenAttachmentPanel(UInv_InventoryItem* WeaponItem, int
 		// 히트 테스트가 차단되어 슬롯 클릭이 먹히지 않는 문제 발생
 		AttachmentPanel->AddToViewport(100);
 
-		// WBP 루트 CanvasPanel의 첫 자식(Overlay)을 화면 중앙 배치 (고정 크기)
+		// [Fix26] 루트 CanvasPanel을 SelfHitTestInvisible로 설정
+		// 패널 배경 영역의 클릭이 인벤토리 Grid로 통과되도록 함
+		// 자식 위젯(슬롯, 프리뷰 이미지 등)은 여전히 클릭 가능
 		UCanvasPanel* RootCanvas = Cast<UCanvasPanel>(AttachmentPanel->GetRootWidget());
+		if (RootCanvas)
+		{
+			RootCanvas->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		}
+
+		// WBP 루트 CanvasPanel의 첫 자식(Overlay)을 화면 중앙 배치 (고정 크기)
 		if (RootCanvas && RootCanvas->GetChildrenCount() > 0)
 		{
 			UWidget* OverlayChild = RootCanvas->GetChildAt(0);
@@ -3520,7 +3612,28 @@ void UInv_InventoryGrid::OnAttachmentPanelClosed()
 
 bool UInv_InventoryGrid::MatchesCategory(const UInv_InventoryItem* Item) const
 {
-	return Item->GetItemManifest().GetItemCategory() == ItemCategory; // 아이템 카테고리 비교
+	// [Fix25] null 체크
+	if (!IsValid(Item))
+	{
+		return false;
+	}
+
+	// [Fix25] 유효하지 않은 카테고리 방어 (초기화되지 않은 쓰레기 값)
+	const EInv_ItemCategory GridCat = ItemCategory;
+	const EInv_ItemCategory ItemCat = Item->GetItemManifest().GetItemCategory();
+	
+	// enum 범위 체크 (0=Equippable, 1=Consumable, 2=Craftable, 3=None)
+	const uint8 GridCatVal = static_cast<uint8>(GridCat);
+	const uint8 ItemCatVal = static_cast<uint8>(ItemCat);
+	
+	if (GridCatVal > 3 || ItemCatVal > 3)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Fix25] MatchesCategory: 유효하지 않은 카테고리! GridCat=%d, ItemCat=%d, Item=%s"),
+			GridCatVal, ItemCatVal, *Item->GetItemManifest().GetItemType().ToString());
+		return false;
+	}
+
+	return ItemCat == GridCat;
 }
 
 // ⭐ UI GridSlots 기반 재료 개수 세기 (Split 대응!)
@@ -4573,6 +4686,20 @@ bool UInv_InventoryGrid::HasLinkedHoverItem() const
 {
 	if (!LinkedContainerGrid.IsValid()) return false;
 	return LinkedContainerGrid->HasHoverItem();
+}
+
+// [Fix25] 로비 전송 대상 Grid의 HoverItem 확인
+bool UInv_InventoryGrid::HasLobbyTargetHoverItem() const
+{
+	if (!LobbyTargetGrid.IsValid()) return false;
+	return LobbyTargetGrid->HasHoverItem();
+}
+
+// [Fix25] 로비 전송 대상 Grid의 HoverItem 가져오기
+UInv_HoverItem* UInv_InventoryGrid::GetLobbyTargetHoverItem() const
+{
+	if (!LobbyTargetGrid.IsValid()) return nullptr;
+	return LobbyTargetGrid->GetHoverItem();
 }
 
 UInv_HoverItem* UInv_InventoryGrid::GetLinkedHoverItem() const
