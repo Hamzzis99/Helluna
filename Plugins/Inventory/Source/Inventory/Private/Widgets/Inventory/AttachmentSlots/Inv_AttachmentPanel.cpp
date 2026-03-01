@@ -1022,12 +1022,6 @@ FReply UInv_AttachmentPanel::NativeOnMouseButtonDown(const FGeometry& InGeometry
 		bIsOpen ? TEXT("O") : TEXT("X"));
 #endif
 
-	// [Fix26] 패널이 열려있지 않으면 이벤트 전파 (다른 위젯이 처리하도록)
-	if (!bIsOpen)
-	{
-		return FReply::Unhandled();
-	}
-
 	if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
 	{
 		// ⭐ HoverItem 들고 있으면 드래그 대신 슬롯 장착이 우선
@@ -1037,31 +1031,14 @@ FReply UInv_AttachmentPanel::NativeOnMouseButtonDown(const FGeometry& InGeometry
 			return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
 		}
 
-		// [Fix26] 드래그 회전은 프리뷰 이미지 영역 안에서만 시작
-		// 프리뷰 이미지 바깥 클릭은 이벤트 전파하여 인벤토리 조작 가능
-		if (IsValid(Image_WeaponPreview) && Image_WeaponPreview->GetVisibility() == ESlateVisibility::Visible)
-		{
-			const FGeometry PreviewGeometry = Image_WeaponPreview->GetCachedGeometry();
-			const FVector2D LocalMousePos = PreviewGeometry.AbsoluteToLocal(InMouseEvent.GetScreenSpacePosition());
-			const FVector2D PreviewSize = PreviewGeometry.GetLocalSize();
-			
-			// 마우스가 프리뷰 이미지 영역 안인지 확인
-			if (LocalMousePos.X >= 0 && LocalMousePos.X <= PreviewSize.X &&
-				LocalMousePos.Y >= 0 && LocalMousePos.Y <= PreviewSize.Y)
-			{
-				// 프리뷰 영역 안 → 드래그 회전 시작
-				DragCurrentPosition = UWidgetLayoutLibrary::GetMousePositionOnViewport(GetOwningPlayer());
-				DragLastPosition = DragCurrentPosition;
-				bIsDragging = true;
-				return FReply::Handled();
-			}
-		}
-		
-		// [Fix26] 프리뷰 영역 바깥 → FReply::Unhandled()로 이벤트 전파 (인벤토리 조작 가능)
-		return FReply::Unhandled();
+		// HoverItem 없으면 드래그 회전 시작
+		DragCurrentPosition = UWidgetLayoutLibrary::GetMousePositionOnViewport(GetOwningPlayer());
+		DragLastPosition = DragCurrentPosition;
+		bIsDragging = true;
+		return FReply::Handled();
 	}
 
-	return FReply::Unhandled();
+	return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
 }
 
 // ════════════════════════════════════════════════════════════════

@@ -168,10 +168,6 @@ public:
 	bool HasLinkedHoverItem() const;
 	UInv_HoverItem* GetLinkedHoverItem() const;
 
-	/** [Fix25] 로비 전송 대상 Grid의 HoverItem 확인 */
-	bool HasLobbyTargetHoverItem() const;
-	UInv_HoverItem* GetLobbyTargetHoverItem() const;
-
 	/** 컨테이너 컴포넌트 참조 설정 (컨테이너 Grid용) */
 	void SetContainerComponent(UInv_LootContainerComponent* InContainerComp);
 	UInv_LootContainerComponent* GetContainerComponent() const;
@@ -451,7 +447,7 @@ private:
 	void OnInventoryMenuToggled(bool bOpen); // 인벤토리 메뉴 토글 (내가 뭔가 들 때 bool 값 반환하는 함수)
 	
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (AllowPrivateAccess = "true", DisplayName = "아이템 카테고리", Tooltip = "이 그리드가 담당하는 아이템 카테고리입니다. (장비, 소모품, 제작 재료 등)"), Category = "인벤토리")
-	EInv_ItemCategory ItemCategory = EInv_ItemCategory::Equippable; // [Fix25] 기본값 설정 (초기화되지 않은 쓰레기 값 방지)
+	EInv_ItemCategory ItemCategory;
 	UUserWidget* GetVisibleCursorWidget(); // 마우스 커서 보이게 하는 함수
 
 	//2차원 격자를 만드는 것 Tarray로
