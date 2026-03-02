@@ -1031,11 +1031,24 @@ FReply UInv_AttachmentPanel::NativeOnMouseButtonDown(const FGeometry& InGeometry
 			return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
 		}
 
-		// HoverItem 없으면 드래그 회전 시작
-		DragCurrentPosition = UWidgetLayoutLibrary::GetMousePositionOnViewport(GetOwningPlayer());
-		DragLastPosition = DragCurrentPosition;
-		bIsDragging = true;
-		return FReply::Handled();
+		// HoverItem 없으면 → Image_WeaponPreview 영역 내에서만 드래그 회전 시작
+		if (IsValid(Image_WeaponPreview) && Image_WeaponPreview->GetVisibility() == ESlateVisibility::Visible)
+		{
+			const FGeometry PreviewGeometry = Image_WeaponPreview->GetCachedGeometry();
+			const FVector2D LocalPos = PreviewGeometry.AbsoluteToLocal(InMouseEvent.GetScreenSpacePosition());
+			const FVector2D PreviewSize = PreviewGeometry.GetLocalSize();
+
+			if (LocalPos.X >= 0.f && LocalPos.Y >= 0.f && LocalPos.X <= PreviewSize.X && LocalPos.Y <= PreviewSize.Y)
+			{
+				DragCurrentPosition = UWidgetLayoutLibrary::GetMousePositionOnViewport(GetOwningPlayer());
+				DragLastPosition = DragCurrentPosition;
+				bIsDragging = true;
+				return FReply::Handled();
+			}
+		}
+
+		// 프리뷰 영역 밖 → 자식 위젯(슬롯 등)으로 이벤트 전파
+		return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
 	}
 
 	return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
