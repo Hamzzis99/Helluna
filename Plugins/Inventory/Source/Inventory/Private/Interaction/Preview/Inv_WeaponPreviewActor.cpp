@@ -76,7 +76,7 @@ AInv_WeaponPreviewActor::AInv_WeaponPreviewActor()
 	// ShowOnlyList에 없는 프리미티브는 렌더링 안 됨 → 빈 픽셀은 ClearColor(알파=0) 유지.
 	SceneCapture->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;
 
-	// 매 프레임 캡처 (회전, 부착물 변경 실시간 반영)
+	// 매 프레임 캡처 (회전, 부착물 변경 실시간 반영)- S
 	SceneCapture->bCaptureEveryFrame = true;
 	SceneCapture->bCaptureOnMovement = true;
 

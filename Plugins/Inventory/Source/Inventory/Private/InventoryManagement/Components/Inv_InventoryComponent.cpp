@@ -378,7 +378,12 @@ void UInv_InventoryComponent::RestoreFromSaveData(
 					// 부착물 Fragment 역직렬화
 					if (AttSave.SerializedManifest.Num() > 0)
 					{
-						AttachedData.ItemManifestCopy.DeserializeAndApplyFragments(AttSave.SerializedManifest);
+						if (!AttachedData.ItemManifestCopy.DeserializeAndApplyFragments(AttSave.SerializedManifest))
+						{
+							UE_LOG(LogTemp, Warning,
+								TEXT("[RestoreFromSaveData] ⚠️ 부착물 Fragment 역직렬화 실패 → CDO 기본값 사용 | AttachType=%s"),
+								*AttSave.AttachmentItemType.ToString());
+						}
 					}
 
 					HostFrag->AttachItem(AttSave.SlotIndex, AttachedData);
@@ -389,7 +394,14 @@ void UInv_InventoryComponent::RestoreFromSaveData(
 		// ── 메인 아이템 Fragment 역직렬화 ──
 		if (ItemData.SerializedManifest.Num() > 0)
 		{
-			ManifestCopy.DeserializeAndApplyFragments(ItemData.SerializedManifest);
+			const bool bDeserializeOk = ManifestCopy.DeserializeAndApplyFragments(ItemData.SerializedManifest);
+			if (!bDeserializeOk)
+			{
+				// [Fix26] 역직렬화 실패 → CDO 기본 Fragment로 계속 진행 (아이템 유실 방지)
+				UE_LOG(LogTemp, Warning,
+					TEXT("[RestoreFromSaveData] ⚠️ Fragment 역직렬화 실패 → CDO 기본값 사용 | ItemType=%s | SerializedSize=%d"),
+					*ItemData.ItemType.ToString(), ItemData.SerializedManifest.Num());
+			}
 		}
 
 		// ── 디자인타임 전용 값 복원 (CDO 템플릿에서 추출) ──
@@ -446,7 +458,12 @@ void UInv_InventoryComponent::RestoreFromSaveData(
 					// Fragment 역직렬화 (저장된 스탯 복원)
 					if (AttSave.SerializedManifest.Num() > 0)
 					{
-						AttachManifest.DeserializeAndApplyFragments(AttSave.SerializedManifest);
+						if (!AttachManifest.DeserializeAndApplyFragments(AttSave.SerializedManifest))
+						{
+							UE_LOG(LogTemp, Warning,
+								TEXT("[RestoreFromSaveData] ⚠️ 부착물(Entry) Fragment 역직렬화 실패 → CDO 기본값 사용 | AttachType=%s"),
+								*AttSave.AttachmentItemType.ToString());
+						}
 					}
 
 					// FastArray에 Entry 추가 (그리드 숨김 상태)
@@ -3359,6 +3376,139 @@ bool UInv_InventoryComponent::TransferItemTo(int32 ItemIndex, UInv_InventoryComp
 
 	UE_LOG(LogTemp, Log, TEXT("[InvComp] TransferItemTo 완료: %s x%d | %s → %s"),
 		*ItemType.ToString(), StackCount, *GetName(), *TargetComp->GetName());
+	return true;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [CrossSwap] SwapItemWith — 두 InvComp 간 아이템 교환
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// TransferItemTo를 두 번 호출하면 HasRoomInInventoryList가 Swap을 차단함
+// (꽉 찬 Grid에 아이템 추가 불가). 따라서:
+//   1) 양쪽 Manifest 수집
+//   2) 양쪽 아이템 제거
+//   3) 교차 추가
+//   4) 실패 시 롤백
+//
+// ════════════════════════════════════════════════════════════════════════════════
+bool UInv_InventoryComponent::SwapItemWith(int32 MyItemIndex, UInv_InventoryComponent* OtherComp, int32 OtherItemIndex)
+{
+	if (!OtherComp || !GetOwner() || !GetOwner()->HasAuthority())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[InvComp] SwapItemWith: 조건 미충족!"));
+		return false;
+	}
+
+	// ── 1) ValidItems 구축 (양쪽) ──
+	auto BuildValidItems = [](UInv_InventoryComponent* Comp) -> TArray<UInv_InventoryItem*>
+	{
+		TArray<UInv_InventoryItem*> Items;
+		for (const FInv_InventoryEntry& Entry : Comp->InventoryList.Entries)
+		{
+			if (IsValid(Entry.Item) && !Entry.bIsAttachedToWeapon)
+			{
+				Items.Add(Entry.Item);
+			}
+		}
+		return Items;
+	};
+
+	TArray<UInv_InventoryItem*> MyValidItems = BuildValidItems(this);
+	TArray<UInv_InventoryItem*> OtherValidItems = BuildValidItems(OtherComp);
+
+	if (!MyValidItems.IsValidIndex(MyItemIndex) || !OtherValidItems.IsValidIndex(OtherItemIndex))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[InvComp] SwapItemWith: 인덱스 범위 초과! MyIndex=%d/%d, OtherIndex=%d/%d"),
+			MyItemIndex, MyValidItems.Num(), OtherItemIndex, OtherValidItems.Num());
+		return false;
+	}
+
+	UInv_InventoryItem* MyItem = MyValidItems[MyItemIndex];
+	UInv_InventoryItem* OtherItem = OtherValidItems[OtherItemIndex];
+
+	if (!IsValid(MyItem) || !IsValid(OtherItem))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[InvComp] SwapItemWith: Item이 IsValid 실패!"));
+		return false;
+	}
+
+	// ── 2) Manifest & StackCount 수집 (제거 전에!) ──
+	FInv_ItemManifest MyManifest = MyItem->GetItemManifest();
+	const int32 MyStackCount = MyItem->GetTotalStackCount();
+	const FGameplayTag MyType = MyManifest.GetItemType();
+
+	FInv_ItemManifest OtherManifest = OtherItem->GetItemManifest();
+	const int32 OtherStackCount = OtherItem->GetTotalStackCount();
+	const FGameplayTag OtherType = OtherManifest.GetItemType();
+
+	UE_LOG(LogTemp, Log, TEXT("[InvComp] SwapItemWith: %s x%d (%s) ↔ %s x%d (%s)"),
+		*MyType.ToString(), MyStackCount, *GetName(),
+		*OtherType.ToString(), OtherStackCount, *OtherComp->GetName());
+
+	// ── 3) 양쪽 아이템 제거 ──
+	// MyItem 제거
+	int32 MyRemovedIdx = INDEX_NONE;
+	for (int32 i = 0; i < InventoryList.Entries.Num(); ++i)
+	{
+		if (InventoryList.Entries[i].Item == MyItem)
+		{
+			MyRemovedIdx = i;
+			break;
+		}
+	}
+	InventoryList.RemoveEntry(MyItem);
+	if (MyRemovedIdx != INDEX_NONE)
+	{
+		OnItemRemoved.Broadcast(MyItem, MyRemovedIdx);
+	}
+
+	// OtherItem 제거
+	int32 OtherRemovedIdx = INDEX_NONE;
+	for (int32 i = 0; i < OtherComp->InventoryList.Entries.Num(); ++i)
+	{
+		if (OtherComp->InventoryList.Entries[i].Item == OtherItem)
+		{
+			OtherRemovedIdx = i;
+			break;
+		}
+	}
+	OtherComp->InventoryList.RemoveEntry(OtherItem);
+	if (OtherRemovedIdx != INDEX_NONE)
+	{
+		OtherComp->OnItemRemoved.Broadcast(OtherItem, OtherRemovedIdx);
+	}
+
+	// ── 4) 교차 추가 ──
+	// MyItem의 Manifest → OtherComp에 추가
+	UInv_InventoryItem* NewItemInOther = OtherComp->AddItemFromManifest(MyManifest, MyStackCount);
+	// OtherItem의 Manifest → 이 Comp에 추가
+	UInv_InventoryItem* NewItemInMe = AddItemFromManifest(OtherManifest, OtherStackCount);
+
+	// ── 5) 실패 시 롤백 ──
+	if (!NewItemInOther || !NewItemInMe)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[InvComp] SwapItemWith: 교차 추가 실패! 롤백 시도"));
+
+		// 추가된 것이 있으면 제거
+		if (NewItemInOther)
+		{
+			OtherComp->InventoryList.RemoveEntry(NewItemInOther);
+		}
+		if (NewItemInMe)
+		{
+			InventoryList.RemoveEntry(NewItemInMe);
+		}
+
+		// 원본 복원
+		AddItemFromManifest(MyManifest, MyStackCount);
+		OtherComp->AddItemFromManifest(OtherManifest, OtherStackCount);
+
+		UE_LOG(LogTemp, Error, TEXT("[InvComp] SwapItemWith: 롤백 완료 — 원본 상태 복원"));
+		return false;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[InvComp] SwapItemWith 완료: %s x%d ↔ %s x%d"),
+		*MyType.ToString(), MyStackCount, *OtherType.ToString(), OtherStackCount);
 	return true;
 }
 

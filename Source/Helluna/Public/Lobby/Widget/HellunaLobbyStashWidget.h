@@ -229,6 +229,10 @@ private:
 	UFUNCTION()
 	void OnLoadoutItemTransferRequested(int32 EntryIndex);
 
+	/** [CrossSwap] 크로스 Grid Swap 핸들러 */
+	UFUNCTION()
+	void OnCrossSwapRequested(int32 RepID_A, int32 RepID_B);
+
 	// ════════════════════════════════════════════════════════════════
 	// 내부 헬퍼
 	// ════════════════════════════════════════════════════════════════

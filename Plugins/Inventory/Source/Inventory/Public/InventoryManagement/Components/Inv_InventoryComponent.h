@@ -226,6 +226,20 @@ public:
 	bool TransferItemTo(int32 ItemIndex, UInv_InventoryComponent* TargetComp);
 
 	/**
+	 * [CrossSwap] 두 InvComp 간 아이템 교환 (서버 전용)
+	 *
+	 * 📌 TransferItemTo와 달리 HasRoomInInventoryList를 개별 체크하지 않음
+	 *   양쪽 아이템을 먼저 제거한 뒤 교차 추가하므로 "꽉 찬 Grid" Swap 가능
+	 *   실패 시 롤백 (양쪽 원본 Comp에 복원)
+	 *
+	 * @param MyItemIndex     이 InvComp의 아이템 ValidIndex
+	 * @param OtherComp       교환 상대 InvComp
+	 * @param OtherItemIndex  상대 InvComp의 아이템 ValidIndex
+	 * @return 교환 성공 여부
+	 */
+	bool SwapItemWith(int32 MyItemIndex, UInv_InventoryComponent* OtherComp, int32 OtherItemIndex);
+
+	/**
 	 * [Phase 4 Fix] ReplicationID → ValidItems 배열 인덱스 변환
 	 * FastArray Entry의 ReplicationID는 배열이 밀려도 안정적으로 유지됨
 	 * @param ReplicationID   FFastArraySerializerItem::ReplicationID

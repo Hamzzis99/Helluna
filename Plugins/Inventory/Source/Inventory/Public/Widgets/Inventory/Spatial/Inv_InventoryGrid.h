@@ -13,6 +13,9 @@
 // ════════════════════════════════════════════════════════════════
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnLobbyTransferRequested, int32, EntryIndex);
 
+// [CrossSwap] 크로스 Grid Swap 델리게이트 — 양쪽 아이템 RepID를 전달
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnLobbyCrossSwapRequested, int32, RepID_A, int32, RepID_B);
+
 class UInv_InventoryItem; // [Phase 11] 빠른 장착 델리게이트 forward declaration
 
 // ════════════════════════════════════════════════════════════════
@@ -147,6 +150,10 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "인벤토리|로비")
 	FOnLobbyTransferRequested OnLobbyTransferRequested;
 
+	/** [CrossSwap] 크로스 Grid Swap 요청 델리게이트 — 양쪽 아이템 RepID 전달 */
+	UPROPERTY(BlueprintAssignable, Category = "인벤토리|로비")
+	FOnLobbyCrossSwapRequested OnLobbyCrossSwapRequested;
+
 	// ════════════════════════════════════════════════════════════════
 	// [Phase 11] 빠른 장착 델리게이트 — Alt+LMB 시 SpatialInventory가 장착 처리
 	// ════════════════════════════════════════════════════════════════
@@ -167,6 +174,12 @@ public:
 	/** 크로스 Grid 드래그: 연결된 Grid에 HoverItem이 있는지 */
 	bool HasLinkedHoverItem() const;
 	UInv_HoverItem* GetLinkedHoverItem() const;
+
+	/** 로비 크로스 Grid: LobbyTargetGrid에 HoverItem이 있는지 */
+	bool HasLobbyLinkedHoverItem() const;
+
+	/** 로비 크로스 Grid Swap: 상대 Grid HoverItem과 이 Grid 아이템 교환 */
+	bool TryCrossGridSwap(int32 GridIndex);
 
 	/** 컨테이너 컴포넌트 참조 설정 (컨테이너 Grid용) */
 	void SetContainerComponent(UInv_LootContainerComponent* InContainerComp);
@@ -447,7 +460,7 @@ private:
 	void OnInventoryMenuToggled(bool bOpen); // 인벤토리 메뉴 토글 (내가 뭔가 들 때 bool 값 반환하는 함수)
 	
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (AllowPrivateAccess = "true", DisplayName = "아이템 카테고리", Tooltip = "이 그리드가 담당하는 아이템 카테고리입니다. (장비, 소모품, 제작 재료 등)"), Category = "인벤토리")
-	EInv_ItemCategory ItemCategory;
+	EInv_ItemCategory ItemCategory = EInv_ItemCategory::Equippable;
 	UUserWidget* GetVisibleCursorWidget(); // 마우스 커서 보이게 하는 함수
 
 	//2차원 격자를 만드는 것 Tarray로

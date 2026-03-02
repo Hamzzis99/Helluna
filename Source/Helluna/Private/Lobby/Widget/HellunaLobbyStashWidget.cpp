@@ -193,6 +193,28 @@ void UHellunaLobbyStashWidget::InitializePanels(UInv_InventoryComponent* StashCo
 		}
 
 		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Fix19] 전송 대상 Grid 교차 연결 완료 (Stash↔Loadout)"));
+
+		// ── [CrossSwap] 크로스 Grid Swap 델리게이트 바인딩 ──
+		auto BindCrossSwap = [this](UInv_InventoryGrid* Grid)
+		{
+			if (Grid)
+			{
+				Grid->OnLobbyCrossSwapRequested.RemoveDynamic(this, &ThisClass::OnCrossSwapRequested);
+				Grid->OnLobbyCrossSwapRequested.AddUniqueDynamic(this, &ThisClass::OnCrossSwapRequested);
+			}
+		};
+
+		// Stash 측 Grid 바인딩
+		BindCrossSwap(StashPanel->GetGrid_Equippables());
+		BindCrossSwap(StashPanel->GetGrid_Consumables());
+		BindCrossSwap(StashPanel->GetGrid_Craftables());
+
+		// Loadout 측 Grid 바인딩
+		BindCrossSwap(LoadoutSpatialInventory->GetGrid_Equippables());
+		BindCrossSwap(LoadoutSpatialInventory->GetGrid_Consumables());
+		BindCrossSwap(LoadoutSpatialInventory->GetGrid_Craftables());
+
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [CrossSwap] 크로스 Grid Swap 델리게이트 바인딩 완료"));
 	}
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] ── InitializePanels 완료 ──"));
@@ -367,6 +389,23 @@ void UHellunaLobbyStashWidget::OnLoadoutItemTransferRequested(int32 EntryIndex)
 {
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] Loadout 우클릭 전송 → Stash | EntryIndex=%d"), EntryIndex);
 	TransferItemToStash(EntryIndex);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [CrossSwap] 크로스 Grid Swap 핸들러
+// ════════════════════════════════════════════════════════════════════════════════
+void UHellunaLobbyStashWidget::OnCrossSwapRequested(int32 RepID_A, int32 RepID_B)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] CrossSwap 요청: RepID_A=%d ↔ RepID_B=%d"), RepID_A, RepID_B);
+
+	AHellunaLobbyController* LobbyPC = GetLobbyController();
+	if (!LobbyPC)
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[StashWidget] CrossSwap: LobbyController 없음!"));
+		return;
+	}
+
+	LobbyPC->Server_SwapTransferItem(RepID_A, RepID_B);
 }
 
 // ════════════════════════════════════════════════════════════════════════════════

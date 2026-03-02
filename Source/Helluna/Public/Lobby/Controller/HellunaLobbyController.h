@@ -88,6 +88,20 @@ public:
 	void Server_TransferItem(int32 ItemEntryIndex, ELobbyTransferDirection Direction);
 
 	/**
+	 * [클라이언트 → 서버] 크로스 Grid 아이템 Swap
+	 *
+	 * 📌 처리 흐름:
+	 *   1. RepID_A와 RepID_B로 아이템 찾기 (각각 다른 InvComp)
+	 *   2. 양쪽 Manifest 수집
+	 *   3. 양쪽 제거 후 교차 추가
+	 *
+	 * @param RepID_A  상대 Grid에서 온 아이템의 ReplicationID
+	 * @param RepID_B  이 Grid에 있던 아이템의 ReplicationID
+	 */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_SwapTransferItem(int32 RepID_A, int32 RepID_B);
+
+	/**
 	 * [클라이언트 → 서버] 출격 요청
 	 *
 	 * 📌 처리 흐름:

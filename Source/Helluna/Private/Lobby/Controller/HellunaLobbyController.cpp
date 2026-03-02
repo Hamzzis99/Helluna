@@ -241,6 +241,90 @@ bool AHellunaLobbyController::ExecuteTransfer(
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
+// Server_SwapTransferItem — 크로스 Grid 아이템 Swap (Server RPC)
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 📌 호출 경로:
+//   클라이언트: TryCrossGridSwap → 델리게이트 → StashWidget → Server_SwapTransferItem()
+//   서버: _Implementation 실행 → 양쪽 아이템을 찾아 교차 전송
+//
+// 📌 Swap 로직:
+//   1) RepID_A → CompA에서 아이템A 찾기
+//   2) RepID_B → CompB에서 아이템B 찾기
+//   3) A: CompA→CompB 전송 (TransferItemTo)
+//   4) B: CompB→CompA 전송 (TransferItemTo)
+//   ⚠️ 첫 번째 전송 후 인덱스 시프트 → 두 번째는 RepID 재검색 필수
+//
+// ════════════════════════════════════════════════════════════════════════════════
+bool AHellunaLobbyController::Server_SwapTransferItem_Validate(int32 RepID_A, int32 RepID_B)
+{
+	return RepID_A >= 0 && RepID_A < 100000 && RepID_B >= 0 && RepID_B < 100000 && RepID_A != RepID_B;
+}
+
+void AHellunaLobbyController::Server_SwapTransferItem_Implementation(int32 RepID_A, int32 RepID_B)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ── Server_SwapTransferItem 시작 ── RepID_A=%d ↔ RepID_B=%d"), RepID_A, RepID_B);
+
+	if (!StashInventoryComponent || !LoadoutInventoryComponent)
+	{
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] SwapTransfer: InvComp nullptr!"));
+		return;
+	}
+
+	// ── 아이템A가 어느 Comp에 있는지 탐색 ──
+	UInv_InventoryComponent* CompA = nullptr;
+	UInv_InventoryComponent* CompB = nullptr;
+
+	if (StashInventoryComponent->FindValidItemIndexByReplicationID(RepID_A) != INDEX_NONE)
+	{
+		CompA = StashInventoryComponent;
+	}
+	else if (LoadoutInventoryComponent->FindValidItemIndexByReplicationID(RepID_A) != INDEX_NONE)
+	{
+		CompA = LoadoutInventoryComponent;
+	}
+
+	if (!CompA)
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] SwapTransfer: RepID_A=%d 미발견!"), RepID_A);
+		return;
+	}
+
+	// ── 아이템B는 반대쪽 Comp에 있어야 함 ──
+	CompB = (CompA == StashInventoryComponent) ? LoadoutInventoryComponent : StashInventoryComponent;
+
+	if (CompB->FindValidItemIndexByReplicationID(RepID_B) == INDEX_NONE)
+	{
+		// 같은 Comp에 있을 수도 있으니 폴백 체크
+		CompB = CompA;
+		if (CompB->FindValidItemIndexByReplicationID(RepID_B) == INDEX_NONE)
+		{
+			UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] SwapTransfer: RepID_B=%d 미발견!"), RepID_B);
+			return;
+		}
+	}
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] SwapTransfer: A(RepID=%d) in %s ↔ B(RepID=%d) in %s"),
+		RepID_A, *CompA->GetName(), RepID_B, *CompB->GetName());
+
+	// ── ValidIndex 변환 ──
+	const int32 IndexA = CompA->FindValidItemIndexByReplicationID(RepID_A);
+	const int32 IndexB = CompB->FindValidItemIndexByReplicationID(RepID_B);
+
+	if (IndexA == INDEX_NONE || IndexB == INDEX_NONE)
+	{
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] SwapTransfer: 인덱스 변환 실패! IndexA=%d, IndexB=%d"), IndexA, IndexB);
+		return;
+	}
+
+	// ── SwapItemWith: 양쪽 제거 후 교차 추가 (HasRoom 우회 + 롤백 지원) ──
+	const bool bSuccess = CompA->SwapItemWith(IndexA, CompB, IndexB);
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ── Server_SwapTransferItem %s ── RepID_A=%d ↔ RepID_B=%d"),
+		bSuccess ? TEXT("완료") : TEXT("실패"), RepID_A, RepID_B);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
 // Server_Deploy — 출격 (Server RPC)
 // ════════════════════════════════════════════════════════════════════════════════
 //
