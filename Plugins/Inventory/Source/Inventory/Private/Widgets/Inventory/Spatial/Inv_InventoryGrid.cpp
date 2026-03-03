@@ -1708,12 +1708,47 @@ void UInv_InventoryGrid::PutHoverItemBack()
 
 	if (!IsValid(HoverItem)) return;
 
+	UInv_InventoryItem* ItemToPutBack = HoverItem->GetInventoryItem();
+	if (!IsValid(ItemToPutBack))
+	{
+		ClearHoverItem();
+		return;
+	}
+
+	// [Fix30-B] PreviousGridIndex로 원위치 복귀 우선 시도
+	const int32 PrevIndex = HoverItem->GetPreviousGridIndex();
+	const FInv_GridFragment* GridFrag = GetFragment<FInv_GridFragment>(
+		ItemToPutBack, FragmentTags::GridFragment);
+
+	if (PrevIndex != INDEX_NONE && GridFrag)
+	{
+		const FIntPoint ItemDimensions = GridFrag->GetGridSize();
+		if (IsInGridBounds(PrevIndex, ItemDimensions) && IsAreaFree(PrevIndex, ItemDimensions))
+		{
+			// 원위치가 비어있으므로 직접 배치
+			const bool bStackable = HoverItem->IsStackable();
+			const int32 StackCount = HoverItem->GetStackCount();
+			const int32 EntryIndex = HoverItem->GetEntryIndex();
+
+			// 회전 상태 리셋 (원위치는 회전 전 상태로 저장됨)
+			if (HoverItem->IsRotated())
+			{
+				HoverItem->SetGridDimensions(ItemDimensions);
+				HoverItem->SetRotated(false);
+			}
+
+			AddItemAtIndex(ItemToPutBack, PrevIndex, bStackable, StackCount, EntryIndex);
+			UpdateGridSlots(ItemToPutBack, PrevIndex, bStackable, StackCount);
+			ClearHoverItem();
+			return;
+		}
+	}
+
+	// 원위치 복귀 실패 → 기존 HasRoomForItem() 폴백
 	// 회전 상태를 리셋하여 기본 방향으로 복원
 	// HasRoomForItem은 Manifest의 원본 GridSize를 사용하므로, 회전 상태를 기본값으로 맞춤
 	if (HoverItem->IsRotated())
 	{
-		const FInv_GridFragment* GridFrag = GetFragment<FInv_GridFragment>(
-			HoverItem->GetInventoryItem(), FragmentTags::GridFragment);
 		if (GridFrag)
 		{
 			HoverItem->SetGridDimensions(GridFrag->GetGridSize()); // 원본 크기로 복원
@@ -1721,8 +1756,8 @@ void UInv_InventoryGrid::PutHoverItemBack()
 		HoverItem->SetRotated(false);
 	}
 
-	FInv_SlotAvailabilityResult Result = HasRoomForItem(HoverItem->GetInventoryItem(), HoverItem->GetStackCount());
-	Result.Item = HoverItem->GetInventoryItem();
+	FInv_SlotAvailabilityResult Result = HasRoomForItem(ItemToPutBack, HoverItem->GetStackCount());
+	Result.Item = ItemToPutBack;
 
 	AddStacks(Result);
 	ClearHoverItem();

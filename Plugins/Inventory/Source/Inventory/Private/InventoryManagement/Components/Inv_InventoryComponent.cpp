@@ -430,8 +430,18 @@ void UInv_InventoryComponent::RestoreFromSaveData(
 		if (!NewItem) continue;
 
 		// ── 그리드 위치 복원 ──
+		// [Fix30-A] GridPosition이 음수(-1,-1 등)일 때 INDEX_NONE으로 방어
+		// 음수 좌표 → (-1)*8+(-1)=-9 같은 잘못된 인덱스 방지
 		const int32 Columns = GridColumns > 0 ? GridColumns : 8;
-		int32 SavedGridIndex = ItemData.GridPosition.Y * Columns + ItemData.GridPosition.X;
+		int32 SavedGridIndex;
+		if (ItemData.GridPosition.X < 0 || ItemData.GridPosition.Y < 0)
+		{
+			SavedGridIndex = INDEX_NONE;
+		}
+		else
+		{
+			SavedGridIndex = ItemData.GridPosition.Y * Columns + ItemData.GridPosition.X;
+		}
 		SetLastEntryGridPosition(SavedGridIndex, ItemData.GridCategory);
 
 		// ── R키 회전 상태 복원 ──
@@ -3441,9 +3451,40 @@ bool UInv_InventoryComponent::SwapItemWith(int32 MyItemIndex, UInv_InventoryComp
 	const int32 OtherStackCount = OtherItem->GetTotalStackCount();
 	const FGameplayTag OtherType = OtherManifest.GetItemType();
 
+	// [Fix30-C] 제거 전 양쪽 Entry의 위치 정보 캡처 (교차 할당용)
+	int32 MyGridIndex = INDEX_NONE;
+	uint8 MyGridCategory = 0;
+	bool bMyRotated = false;
+	int32 OtherGridIndex = INDEX_NONE;
+	uint8 OtherGridCategory = 0;
+	bool bOtherRotated = false;
+
+	for (const FInv_InventoryEntry& Entry : InventoryList.Entries)
+	{
+		if (Entry.Item == MyItem)
+		{
+			MyGridIndex = Entry.GridIndex;
+			MyGridCategory = Entry.GridCategory;
+			bMyRotated = Entry.bRotated;
+			break;
+		}
+	}
+	for (const FInv_InventoryEntry& Entry : OtherComp->InventoryList.Entries)
+	{
+		if (Entry.Item == OtherItem)
+		{
+			OtherGridIndex = Entry.GridIndex;
+			OtherGridCategory = Entry.GridCategory;
+			bOtherRotated = Entry.bRotated;
+			break;
+		}
+	}
+
 	UE_LOG(LogTemp, Log, TEXT("[InvComp] SwapItemWith: %s x%d (%s) ↔ %s x%d (%s)"),
 		*MyType.ToString(), MyStackCount, *GetName(),
 		*OtherType.ToString(), OtherStackCount, *OtherComp->GetName());
+	UE_LOG(LogTemp, Log, TEXT("[InvComp] SwapItemWith 위치캡처: My(Grid=%d,Cat=%d,Rot=%d) Other(Grid=%d,Cat=%d,Rot=%d)"),
+		MyGridIndex, MyGridCategory, bMyRotated, OtherGridIndex, OtherGridCategory, bOtherRotated);
 
 	// ── 3) 양쪽 아이템 제거 ──
 	// MyItem 제거
@@ -3507,7 +3548,33 @@ bool UInv_InventoryComponent::SwapItemWith(int32 MyItemIndex, UInv_InventoryComp
 		return false;
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[InvComp] SwapItemWith 완료: %s x%d ↔ %s x%d"),
+	// [Fix30-C] 교차 위치 할당: 각 새 아이템은 같은 컴포넌트에서 제거된 아이템의 위치를 상속
+	// NewItemInMe (OtherItem 데이터) → MyItem이 있던 자리 (MyGridIndex, MyGridCategory)
+	for (FInv_InventoryEntry& Entry : InventoryList.Entries)
+	{
+		if (Entry.Item == NewItemInMe)
+		{
+			Entry.GridIndex = MyGridIndex;
+			Entry.GridCategory = MyGridCategory;
+			Entry.bRotated = bMyRotated;
+			InventoryList.MarkItemDirty(Entry);
+			break;
+		}
+	}
+	// NewItemInOther (MyItem 데이터) → OtherItem이 있던 자리 (OtherGridIndex, OtherGridCategory)
+	for (FInv_InventoryEntry& Entry : OtherComp->InventoryList.Entries)
+	{
+		if (Entry.Item == NewItemInOther)
+		{
+			Entry.GridIndex = OtherGridIndex;
+			Entry.GridCategory = OtherGridCategory;
+			Entry.bRotated = bOtherRotated;
+			OtherComp->InventoryList.MarkItemDirty(Entry);
+			break;
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[InvComp] SwapItemWith 완료: %s x%d ↔ %s x%d (위치 교차 할당됨)"),
 		*MyType.ToString(), MyStackCount, *OtherType.ToString(), OtherStackCount);
 	return true;
 }
