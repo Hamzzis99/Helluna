@@ -101,7 +101,7 @@ public:
 private:
 	// [Phase 4 Fix] Grid → SpatialInventory 통합 전달 콜백
 	UFUNCTION()
-	void OnGridTransferRequested(int32 EntryIndex);
+	void OnGridTransferRequested(int32 EntryIndex, int32 TargetGridIndex);
 
 	// ════════════════════════════════════════════════════════════════
 	// [Phase 11] Alt+LMB 빠른 장착 핸들러

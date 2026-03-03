@@ -80,19 +80,18 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "로비|창고위젯",
 		meta = (DisplayName = "출격장비로 아이템 전송"))
-	void TransferItemToLoadout(int32 ItemEntryIndex);
+	void TransferItemToLoadout(int32 ItemEntryIndex, int32 TargetGridIndex = -1);
 
 	/**
 	 * Loadout → Stash 아이템 전송
 	 * Server RPC를 통해 서버에서 실행
 	 *
-	 * @param ItemEntryIndex  전송할 아이템의 Entry 인덱스
-	 *
-	 * TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 연결
+	 * @param ItemEntryIndex   전송할 아이템의 Entry 인덱스
+	 * @param TargetGridIndex  대상 Grid 위치 (INDEX_NONE이면 서버 자동 배치)
 	 */
 	UFUNCTION(BlueprintCallable, Category = "로비|창고위젯",
 		meta = (DisplayName = "창고로 아이템 전송"))
-	void TransferItemToStash(int32 ItemEntryIndex);
+	void TransferItemToStash(int32 ItemEntryIndex, int32 TargetGridIndex = -1);
 
 	// ════════════════════════════════════════════════════════════════
 	// 패널 접근
@@ -223,15 +222,15 @@ private:
 
 	/** Stash Grid에서 우클릭 → Loadout으로 전송 */
 	UFUNCTION()
-	void OnStashItemTransferRequested(int32 EntryIndex);
+	void OnStashItemTransferRequested(int32 EntryIndex, int32 TargetGridIndex);
 
 	/** Loadout Grid에서 우클릭 → Stash로 전송 */
 	UFUNCTION()
-	void OnLoadoutItemTransferRequested(int32 EntryIndex);
+	void OnLoadoutItemTransferRequested(int32 EntryIndex, int32 TargetGridIndex);
 
 	/** [CrossSwap] 크로스 Grid Swap 핸들러 */
 	UFUNCTION()
-	void OnCrossSwapRequested(int32 RepID_A, int32 RepID_B);
+	void OnCrossSwapRequested(int32 RepID_A, int32 RepID_B, int32 TargetGridIndex);
 
 	// ════════════════════════════════════════════════════════════════
 	// 내부 헬퍼

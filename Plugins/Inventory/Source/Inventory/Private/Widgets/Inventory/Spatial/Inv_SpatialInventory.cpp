@@ -259,10 +259,10 @@ void UInv_SpatialInventory::UnlinkContainerGrid()
 	UE_LOG(LogTemp, Log, TEXT("[SpatialInventory] UnlinkContainerGrid 완료"));
 }
 
-void UInv_SpatialInventory::OnGridTransferRequested(int32 EntryIndex)
+void UInv_SpatialInventory::OnGridTransferRequested(int32 EntryIndex, int32 TargetGridIndex)
 {
-	UE_LOG(LogTemp, Log, TEXT("[SpatialInventory] Grid 전송 요청 전달 → EntryIndex=%d"), EntryIndex);
-	OnSpatialTransferRequested.Broadcast(EntryIndex);
+	UE_LOG(LogTemp, Log, TEXT("[SpatialInventory] Grid 전송 요청 전달 → EntryIndex=%d, TargetGridIndex=%d"), EntryIndex, TargetGridIndex);
+	OnSpatialTransferRequested.Broadcast(EntryIndex, TargetGridIndex);
 }
 
 // 장착된 그리드 슬롯이 클릭되었을 때 호출되는 함수

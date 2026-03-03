@@ -265,10 +265,10 @@ void UHellunaLobbyPanel::EnableLobbyTransferMode()
 	BindGrid(Grid_Craftables, TEXT("Grid_Craftables"));
 }
 
-void UHellunaLobbyPanel::OnGridTransferRequested(int32 EntryIndex)
+void UHellunaLobbyPanel::OnGridTransferRequested(int32 EntryIndex, int32 TargetGridIndex)
 {
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPanel] Grid 전송 요청 전달 → EntryIndex=%d"), EntryIndex);
-	OnPanelTransferRequested.Broadcast(EntryIndex);
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPanel] Grid 전송 요청 전달 → EntryIndex=%d, TargetGridIndex=%d"), EntryIndex, TargetGridIndex);
+	OnPanelTransferRequested.Broadcast(EntryIndex, TargetGridIndex);
 }
 
 // ════════════════════════════════════════════════════════════════════════════════

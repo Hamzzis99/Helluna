@@ -379,24 +379,24 @@ bool UHellunaLobbyStashWidget::IsCharacterSelected() const
 // [Phase 4 Fix] 우클릭 전송 핸들러
 // ════════════════════════════════════════════════════════════════════════════════
 
-void UHellunaLobbyStashWidget::OnStashItemTransferRequested(int32 EntryIndex)
+void UHellunaLobbyStashWidget::OnStashItemTransferRequested(int32 EntryIndex, int32 TargetGridIndex)
 {
-	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] Stash 우클릭 전송 → Loadout | EntryIndex=%d"), EntryIndex);
-	TransferItemToLoadout(EntryIndex);
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] Stash 우클릭 전송 → Loadout | EntryIndex=%d, TargetGridIndex=%d"), EntryIndex, TargetGridIndex);
+	TransferItemToLoadout(EntryIndex, TargetGridIndex);
 }
 
-void UHellunaLobbyStashWidget::OnLoadoutItemTransferRequested(int32 EntryIndex)
+void UHellunaLobbyStashWidget::OnLoadoutItemTransferRequested(int32 EntryIndex, int32 TargetGridIndex)
 {
-	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] Loadout 우클릭 전송 → Stash | EntryIndex=%d"), EntryIndex);
-	TransferItemToStash(EntryIndex);
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] Loadout 우클릭 전송 → Stash | EntryIndex=%d, TargetGridIndex=%d"), EntryIndex, TargetGridIndex);
+	TransferItemToStash(EntryIndex, TargetGridIndex);
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
 // [CrossSwap] 크로스 Grid Swap 핸들러
 // ════════════════════════════════════════════════════════════════════════════════
-void UHellunaLobbyStashWidget::OnCrossSwapRequested(int32 RepID_A, int32 RepID_B)
+void UHellunaLobbyStashWidget::OnCrossSwapRequested(int32 RepID_A, int32 RepID_B, int32 TargetGridIndex)
 {
-	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] CrossSwap 요청: RepID_A=%d ↔ RepID_B=%d"), RepID_A, RepID_B);
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] CrossSwap 요청: RepID_A=%d ↔ RepID_B=%d | TargetGridIndex=%d"), RepID_A, RepID_B, TargetGridIndex);
 
 	AHellunaLobbyController* LobbyPC = GetLobbyController();
 	if (!LobbyPC)
@@ -405,13 +405,13 @@ void UHellunaLobbyStashWidget::OnCrossSwapRequested(int32 RepID_A, int32 RepID_B
 		return;
 	}
 
-	LobbyPC->Server_SwapTransferItem(RepID_A, RepID_B);
+	LobbyPC->Server_SwapTransferItem(RepID_A, RepID_B, TargetGridIndex);
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
 // TransferItemToLoadout — Stash → Loadout 아이템 전송
 // ════════════════════════════════════════════════════════════════════════════════
-void UHellunaLobbyStashWidget::TransferItemToLoadout(int32 ItemEntryIndex)
+void UHellunaLobbyStashWidget::TransferItemToLoadout(int32 ItemEntryIndex, int32 TargetGridIndex)
 {
 	if (ItemEntryIndex < 0)
 	{
@@ -426,14 +426,14 @@ void UHellunaLobbyStashWidget::TransferItemToLoadout(int32 ItemEntryIndex)
 		return;
 	}
 
-	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] TransferToLoadout → EntryIndex=%d | Stash→Loadout"), ItemEntryIndex);
-	LobbyPC->Server_TransferItem(ItemEntryIndex, ELobbyTransferDirection::StashToLoadout);
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] TransferToLoadout → EntryIndex=%d, TargetGridIndex=%d | Stash→Loadout"), ItemEntryIndex, TargetGridIndex);
+	LobbyPC->Server_TransferItem(ItemEntryIndex, ELobbyTransferDirection::StashToLoadout, TargetGridIndex);
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
 // TransferItemToStash — Loadout → Stash 아이템 전송
 // ════════════════════════════════════════════════════════════════════════════════
-void UHellunaLobbyStashWidget::TransferItemToStash(int32 ItemEntryIndex)
+void UHellunaLobbyStashWidget::TransferItemToStash(int32 ItemEntryIndex, int32 TargetGridIndex)
 {
 	if (ItemEntryIndex < 0)
 	{
@@ -448,8 +448,8 @@ void UHellunaLobbyStashWidget::TransferItemToStash(int32 ItemEntryIndex)
 		return;
 	}
 
-	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] TransferToStash → EntryIndex=%d | Loadout→Stash"), ItemEntryIndex);
-	LobbyPC->Server_TransferItem(ItemEntryIndex, ELobbyTransferDirection::LoadoutToStash);
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] TransferToStash → EntryIndex=%d, TargetGridIndex=%d | Loadout→Stash"), ItemEntryIndex, TargetGridIndex);
+	LobbyPC->Server_TransferItem(ItemEntryIndex, ELobbyTransferDirection::LoadoutToStash, TargetGridIndex);
 }
 
 // ════════════════════════════════════════════════════════════════════════════════

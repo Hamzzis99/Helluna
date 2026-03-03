@@ -85,7 +85,7 @@ public:
 	 * TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 연결
 	 */
 	UFUNCTION(Server, Reliable, WithValidation)
-	void Server_TransferItem(int32 ItemEntryIndex, ELobbyTransferDirection Direction);
+	void Server_TransferItem(int32 ItemEntryIndex, ELobbyTransferDirection Direction, int32 TargetGridIndex = INDEX_NONE);
 
 	/**
 	 * [클라이언트 → 서버] 크로스 Grid 아이템 Swap
@@ -99,7 +99,7 @@ public:
 	 * @param RepID_B  이 Grid에 있던 아이템의 ReplicationID
 	 */
 	UFUNCTION(Server, Reliable, WithValidation)
-	void Server_SwapTransferItem(int32 RepID_A, int32 RepID_B);
+	void Server_SwapTransferItem(int32 RepID_A, int32 RepID_B, int32 TargetGridIndex = INDEX_NONE);
 
 	/**
 	 * [클라이언트 → 서버] 출격 요청
@@ -348,5 +348,5 @@ private:
 	 * @param ItemEntryIndex 전송할 아이템의 Entry 인덱스
 	 * @return 전송 성공 여부
 	 */
-	bool ExecuteTransfer(UInv_InventoryComponent* SourceComp, UInv_InventoryComponent* TargetComp, int32 ItemEntryIndex);
+	bool ExecuteTransfer(UInv_InventoryComponent* SourceComp, UInv_InventoryComponent* TargetComp, int32 ItemEntryIndex, int32 TargetGridIndex = INDEX_NONE);
 };

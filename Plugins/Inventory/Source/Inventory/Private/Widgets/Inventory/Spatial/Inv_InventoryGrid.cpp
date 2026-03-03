@@ -1493,7 +1493,7 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 						UE_LOG(LogTemp, Warning, TEXT("[InventoryGrid] W2 - LobbyTargetGrid 미설정 (Shift+RMB 전송). 용량 체크 없이 전송 진행"));
 					}
 
-					OnLobbyTransferRequested.Broadcast(RepID);
+					OnLobbyTransferRequested.Broadcast(RepID, INDEX_NONE);
 				}
 				else
 				{
@@ -1764,7 +1764,7 @@ void UInv_InventoryGrid::PutHoverItemBack()
 }
 
 // [Fix20] 상대 Grid의 HoverItem을 이쪽으로 전송 (패널 간 드래그 앤 드롭)
-bool UInv_InventoryGrid::TryTransferFromTargetGrid()
+bool UInv_InventoryGrid::TryTransferFromTargetGrid(int32 TargetGridIndex)
 {
 	if (!bLobbyTransferMode) return false;
 	if (!LobbyTargetGrid.IsValid()) return false;
@@ -1800,13 +1800,15 @@ bool UInv_InventoryGrid::TryTransferFromTargetGrid()
 		return true; // 처리됨 (실패이지만 HoverItem 정리)
 	}
 
-	// ★ 핵심: 먼저 아이템을 원래 Grid로 복원한 뒤 전송 (Shift+RMB와 동일한 안정적 흐름)
-	// ClearHoverItem은 아이템을 어디에도 배치하지 않고 파괴하므로, PutHoverItemBack으로 먼저 Grid에 복원
-	LobbyTargetGrid->PutHoverItemBack();
+	// [Fix31] HoverItem 정리: PutHoverItemBack 제거 (이중 배치 근본 원인)
+	// PutHoverItemBack은 로컬 시각 배치 + Server_UpdateItemGridPosition RPC를 발생시켜
+	// 서버 TransferItemTo의 리플리케이션과 충돌 → 이중 배치/겹침 유발.
+	// 수정: 커서만 정리하고 서버 리플리케이션이 TargetGridIndex에 배치하도록 위임.
+	LobbyTargetGrid->ClearHoverItem();
 	LobbyTargetGrid->ShowCursor();
 
-	UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] Fix20 - Cross-panel drag-and-drop transfer (RepID=%d)"), RepID);
-	LobbyTargetGrid->OnLobbyTransferRequested.Broadcast(RepID);
+	UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] Fix31 - Cross-panel transfer with position (RepID=%d, TargetGridIndex=%d)"), RepID, TargetGridIndex);
+	LobbyTargetGrid->OnLobbyTransferRequested.Broadcast(RepID, TargetGridIndex);
 	return true;
 }
 
@@ -1816,7 +1818,8 @@ void UInv_InventoryGrid::DropItem()
 	if (!IsValid(HoverItem))
 	{
 		// [Fix20] 이 Grid에 HoverItem 없으면, 상대 Grid에서 전송 시도 (패널 배경 클릭)
-		TryTransferFromTargetGrid();
+		// [Fix31] DropItem에는 특정 GridIndex 없음 → INDEX_NONE (서버 자동 배치)
+		TryTransferFromTargetGrid(INDEX_NONE);
 		return;
 	}
 	if (!IsValid(HoverItem->GetInventoryItem())) return;
@@ -2858,8 +2861,9 @@ void UInv_InventoryGrid::OnGridSlotClicked(int32 GridIndex, const FPointerEvent&
 		}
 
 		// [Fix20] 패널 간 드래그 앤 드롭: 상대 Grid에 HoverItem이 있으면 전송 (빈 셀에 단방향)
+		// [Fix31] GridIndex를 TargetGridIndex로 전달 → 서버가 해당 위치에 배치
 		UE_LOG(LogTemp, Warning, TEXT("[GridSlotClick진단] TryCrossGridSwap 실패 → TryTransferFromTargetGrid 폴백 | GridIndex=%d"), GridIndex);
-		TryTransferFromTargetGrid();
+		TryTransferFromTargetGrid(GridIndex);
 		return;
 	} // 호버 아이템이 유효하다면 리턴
 	if (!GridSlots.IsValidIndex(ItemDropIndex)) return; // 아이템 드롭 인덱스가 유효하지 않다면 리턴
@@ -3388,7 +3392,7 @@ void UInv_InventoryGrid::OnPopUpMenuTransfer(int32 Index)
 			UE_LOG(LogTemp, Warning, TEXT("[InventoryGrid] W2 - LobbyTargetGrid 미설정 (PopupMenu Transfer). 용량 체크 없이 전송 진행"));
 		}
 
-		OnLobbyTransferRequested.Broadcast(RepID);
+		OnLobbyTransferRequested.Broadcast(RepID, INDEX_NONE);
 	}
 	else
 	{
@@ -4763,20 +4767,20 @@ bool UInv_InventoryGrid::TryCrossGridSwap(int32 GridIndex)
 	}
 	if (RepID_B == INDEX_NONE) return false;
 
-	// ── HoverItem 정리: 아이템A를 원래 자리로 복원 ──
-	LobbyTargetGrid->PutHoverItemBack();
+	// [Fix31] ── HoverItem 정리: PutHoverItemBack 제거 (이중 배치 근본 원인) ──
+	// PutHoverItemBack은 (1) 로컬 시각 배치 + (2) Server_UpdateItemGridPosition RPC를
+	// 호출하여, 서버 SwapItemWith의 리플리케이션과 충돌 → 이중 배치 유발.
+	// 수정: 커서만 정리하고 양쪽 시각 슬롯을 비운 뒤, 서버 리플리케이션이 교차 위치에 배치.
+	LobbyTargetGrid->ClearHoverItem();
 	LobbyTargetGrid->ShowCursor();
 
-	// [Fix29-G] PutHoverItemBack 실패 시 Swap RPC 전송하지 않음 (아이템 유실 방지)
-	if (LobbyTargetGrid->HasHoverItem())
-	{
-		UE_LOG(LogTemp, Error, TEXT("[CrossSwap] PutHoverItemBack 실패: HoverItem이 여전히 존재 → Swap 취소"));
-		return false;
-	}
+	// 이 Grid에서 ItemB를 시각적으로 제거 (서버 리플리케이션이 교차 위치에 재배치)
+	RemoveItemFromGrid(ItemB, LookupIndex);
 
 	// ── 델리게이트 Broadcast → StashWidget이 Server RPC 호출 ──
-	UE_LOG(LogTemp, Log, TEXT("[CrossSwap] TryCrossGridSwap: RepID_A=%d ↔ RepID_B=%d"), RepID_A, RepID_B);
-	OnLobbyCrossSwapRequested.Broadcast(RepID_A, RepID_B);
+	// [Fix31] GridIndex = 이 Grid에서 ItemB가 있던 위치 = ItemA(HoverItem)가 갈 위치
+	UE_LOG(LogTemp, Log, TEXT("[CrossSwap] TryCrossGridSwap: RepID_A=%d ↔ RepID_B=%d | TargetGridIndex=%d"), RepID_A, RepID_B, GridIndex);
+	OnLobbyCrossSwapRequested.Broadcast(RepID_A, RepID_B, GridIndex);
 	return true;
 }
 
@@ -4916,7 +4920,7 @@ void UInv_InventoryGrid::HandleQuickTransfer(int32 GridIndex)
 		}
 
 		UE_LOG(LogTemp, Log, TEXT("[HandleQuickTransfer] Ctrl+LMB 빠른 전송 → RepID=%d"), RepID);
-		OnLobbyTransferRequested.Broadcast(RepID);
+		OnLobbyTransferRequested.Broadcast(RepID, INDEX_NONE);
 		return;
 	}
 

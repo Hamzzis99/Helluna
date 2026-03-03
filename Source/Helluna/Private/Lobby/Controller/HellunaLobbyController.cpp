@@ -141,19 +141,21 @@ void AHellunaLobbyController::BeginPlay()
 //
 // TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 연결
 // ════════════════════════════════════════════════════════════════════════════════
-bool AHellunaLobbyController::Server_TransferItem_Validate(int32 ItemEntryIndex, ELobbyTransferDirection Direction)
+bool AHellunaLobbyController::Server_TransferItem_Validate(int32 ItemEntryIndex, ELobbyTransferDirection Direction, int32 TargetGridIndex)
 {
 	// [Fix29-B] Deploy 진행 중에는 Transfer 차단 — Deploy의 Stash/Loadout 저장과 동시 수정 시 아이템 복제 위험
+	// [Fix31] TargetGridIndex 검증: INDEX_NONE(자동 배치) 또는 유효 범위
 	return !bDeployInProgress
 		&& ItemEntryIndex >= 0 && ItemEntryIndex < 10000
-		&& (Direction == ELobbyTransferDirection::StashToLoadout || Direction == ELobbyTransferDirection::LoadoutToStash);
+		&& (Direction == ELobbyTransferDirection::StashToLoadout || Direction == ELobbyTransferDirection::LoadoutToStash)
+		&& (TargetGridIndex == INDEX_NONE || (TargetGridIndex >= 0 && TargetGridIndex < 10000));
 }
 
-void AHellunaLobbyController::Server_TransferItem_Implementation(int32 ItemEntryIndex, ELobbyTransferDirection Direction)
+void AHellunaLobbyController::Server_TransferItem_Implementation(int32 ItemEntryIndex, ELobbyTransferDirection Direction, int32 TargetGridIndex)
 {
 	const FString DirectionStr = (Direction == ELobbyTransferDirection::StashToLoadout) ? TEXT("Stash→Loadout") : TEXT("Loadout→Stash");
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ── Server_TransferItem 시작 ──"));
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC]   RepID=%d | Direction=%s"), ItemEntryIndex, *DirectionStr);
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC]   RepID=%d | Direction=%s | TargetGridIndex=%d"), ItemEntryIndex, *DirectionStr, TargetGridIndex);
 
 	// ── Source/Target 결정 ──
 	UInv_InventoryComponent* SourceComp = nullptr;
@@ -183,11 +185,10 @@ void AHellunaLobbyController::Server_TransferItem_Implementation(int32 ItemEntry
 		*SourceComp->GetName(), *TargetComp->GetName());
 
 	// ── ExecuteTransfer 실행 (ReplicationID → 실제 인덱스 변환 후 TransferItemTo 호출) ──
-	const bool bSuccess = ExecuteTransfer(SourceComp, TargetComp, ItemEntryIndex);
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_TransferItem %s | RepID=%d | Direction=%s"),
-		bSuccess ? TEXT("성공") : TEXT("실패"), ItemEntryIndex, *DirectionStr);
-
-	// TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 연결
+	// [Fix31] TargetGridIndex를 ExecuteTransfer → TransferItemTo까지 전달
+	const bool bSuccess = ExecuteTransfer(SourceComp, TargetComp, ItemEntryIndex, TargetGridIndex);
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_TransferItem %s | RepID=%d | Direction=%s | TargetGridIndex=%d"),
+		bSuccess ? TEXT("성공") : TEXT("실패"), ItemEntryIndex, *DirectionStr, TargetGridIndex);
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -211,7 +212,8 @@ void AHellunaLobbyController::Server_TransferItem_Implementation(int32 ItemEntry
 bool AHellunaLobbyController::ExecuteTransfer(
 	UInv_InventoryComponent* SourceComp,
 	UInv_InventoryComponent* TargetComp,
-	int32 ItemReplicationID)
+	int32 ItemReplicationID,
+	int32 TargetGridIndex)
 {
 	if (!SourceComp || !TargetComp)
 	{
@@ -236,7 +238,8 @@ bool AHellunaLobbyController::ExecuteTransfer(
 
 	// TransferItemTo: 플러그인 내부에서 FastArray 조작 (INVENTORY_API 경계 내)
 	// ⭐ [Phase 8 Fix] TransferItemTo 내부에서 HasRoomInInventoryList 체크 포함
-	const bool bResult = SourceComp->TransferItemTo(ActualIndex, TargetComp);
+	// [Fix31] TargetGridIndex 전달 → 새 Entry에 GridIndex 설정 후 리플리케이션
+	const bool bResult = SourceComp->TransferItemTo(ActualIndex, TargetComp, TargetGridIndex);
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ExecuteTransfer 결과: %s"), bResult ? TEXT("성공") : TEXT("실패"));
 	return bResult;
@@ -258,19 +261,21 @@ bool AHellunaLobbyController::ExecuteTransfer(
 //   ⚠️ 첫 번째 전송 후 인덱스 시프트 → 두 번째는 RepID 재검색 필수
 //
 // ════════════════════════════════════════════════════════════════════════════════
-bool AHellunaLobbyController::Server_SwapTransferItem_Validate(int32 RepID_A, int32 RepID_B)
+bool AHellunaLobbyController::Server_SwapTransferItem_Validate(int32 RepID_A, int32 RepID_B, int32 TargetGridIndex)
 {
 	// [Fix28] RepID_A == RepID_B 허용: StashComp과 LoadoutComp은 별도 FastArray 카운터 사용
 	// → 다른 Comp의 아이템이 같은 숫자 RepID를 가질 수 있음
 	// 자기 자신과의 Swap은 Implementation에서 CompA != CompB + 실제 아이템 검증으로 방지
 	// [Fix29-B] Deploy 진행 중에는 Swap 차단
+	// [Fix31] TargetGridIndex 검증
 	return !bDeployInProgress
-		&& RepID_A >= 0 && RepID_A < 100000 && RepID_B >= 0 && RepID_B < 100000;
+		&& RepID_A >= 0 && RepID_A < 100000 && RepID_B >= 0 && RepID_B < 100000
+		&& (TargetGridIndex == INDEX_NONE || (TargetGridIndex >= 0 && TargetGridIndex < 10000));
 }
 
-void AHellunaLobbyController::Server_SwapTransferItem_Implementation(int32 RepID_A, int32 RepID_B)
+void AHellunaLobbyController::Server_SwapTransferItem_Implementation(int32 RepID_A, int32 RepID_B, int32 TargetGridIndex)
 {
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ── Server_SwapTransferItem 시작 ── RepID_A=%d ↔ RepID_B=%d"), RepID_A, RepID_B);
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ── Server_SwapTransferItem 시작 ── RepID_A=%d ↔ RepID_B=%d | TargetGridIndex=%d"), RepID_A, RepID_B, TargetGridIndex);
 
 	if (!StashInventoryComponent || !LoadoutInventoryComponent)
 	{
@@ -332,10 +337,11 @@ void AHellunaLobbyController::Server_SwapTransferItem_Implementation(int32 RepID
 	}
 
 	// ── SwapItemWith: 양쪽 제거 후 교차 추가 (HasRoom 우회 + 롤백 지원) ──
-	const bool bSuccess = CompA->SwapItemWith(IndexA, CompB, IndexB);
+	// [Fix31] TargetGridIndex 전달 → ItemA(HoverItem)가 갈 위치를 명시적으로 지정
+	const bool bSuccess = CompA->SwapItemWith(IndexA, CompB, IndexB, TargetGridIndex);
 
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ── Server_SwapTransferItem %s ── RepID_A=%d ↔ RepID_B=%d"),
-		bSuccess ? TEXT("완료") : TEXT("실패"), RepID_A, RepID_B);
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ── Server_SwapTransferItem %s ── RepID_A=%d ↔ RepID_B=%d | TargetGridIndex=%d"),
+		bSuccess ? TEXT("완료") : TEXT("실패"), RepID_A, RepID_B, TargetGridIndex);
 }
 
 // ════════════════════════════════════════════════════════════════════════════════

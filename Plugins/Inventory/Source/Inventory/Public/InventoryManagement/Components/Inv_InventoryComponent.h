@@ -223,7 +223,7 @@ public:
 	 *
 	 * TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 연결
 	 */
-	bool TransferItemTo(int32 ItemIndex, UInv_InventoryComponent* TargetComp);
+	bool TransferItemTo(int32 ItemIndex, UInv_InventoryComponent* TargetComp, int32 TargetGridIndex = INDEX_NONE);
 
 	/**
 	 * [CrossSwap] 두 InvComp 간 아이템 교환 (서버 전용)
@@ -237,7 +237,7 @@ public:
 	 * @param OtherItemIndex  상대 InvComp의 아이템 ValidIndex
 	 * @return 교환 성공 여부
 	 */
-	bool SwapItemWith(int32 MyItemIndex, UInv_InventoryComponent* OtherComp, int32 OtherItemIndex);
+	bool SwapItemWith(int32 MyItemIndex, UInv_InventoryComponent* OtherComp, int32 OtherItemIndex, int32 TargetGridIndex = INDEX_NONE);
 
 	/**
 	 * [Phase 4 Fix] ReplicationID → ValidItems 배열 인덱스 변환

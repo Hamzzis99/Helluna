@@ -11,10 +11,10 @@
 // ════════════════════════════════════════════════════════════════
 // [Phase 4 Fix] 로비 전송 델리게이트 — 우클릭 시 상대 패널로 아이템 전송
 // ════════════════════════════════════════════════════════════════
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnLobbyTransferRequested, int32, EntryIndex);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnLobbyTransferRequested, int32, EntryIndex, int32, TargetGridIndex);
 
-// [CrossSwap] 크로스 Grid Swap 델리게이트 — 양쪽 아이템 RepID를 전달
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnLobbyCrossSwapRequested, int32, RepID_A, int32, RepID_B);
+// [CrossSwap] 크로스 Grid Swap 델리게이트 — 양쪽 아이템 RepID + 대상 위치 전달
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnLobbyCrossSwapRequested, int32, RepID_A, int32, RepID_B, int32, TargetGridIndex);
 
 class UInv_InventoryItem; // [Phase 11] 빠른 장착 델리게이트 forward declaration
 
@@ -297,7 +297,7 @@ private:
 	TWeakObjectPtr<UInv_InventoryGrid> LobbyTargetGrid;
 
 	// [Fix20] 상대 Grid의 HoverItem을 이쪽으로 전송 (패널 간 드래그 앤 드롭)
-	bool TryTransferFromTargetGrid();
+	bool TryTransferFromTargetGrid(int32 TargetGridIndex = INDEX_NONE);
 
 	// ════════════════════════════════════════════════════════════════
 	// [Phase 11] 타르코프 스타일 단축키 헬퍼 함수

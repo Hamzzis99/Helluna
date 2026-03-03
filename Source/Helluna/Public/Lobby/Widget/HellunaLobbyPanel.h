@@ -150,7 +150,7 @@ private:
 
 	// [Phase 4 Fix] Grid → Panel 통합 전달 콜백
 	UFUNCTION()
-	void OnGridTransferRequested(int32 EntryIndex);
+	void OnGridTransferRequested(int32 EntryIndex, int32 TargetGridIndex);
 
 	UFUNCTION()
 	void ShowEquippables();

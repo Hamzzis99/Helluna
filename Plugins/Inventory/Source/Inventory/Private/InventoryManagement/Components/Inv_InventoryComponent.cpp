@@ -3290,7 +3290,7 @@ TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave(
 //
 // TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 연결
 // ════════════════════════════════════════════════════════════════════════════════
-bool UInv_InventoryComponent::TransferItemTo(int32 ItemIndex, UInv_InventoryComponent* TargetComp)
+bool UInv_InventoryComponent::TransferItemTo(int32 ItemIndex, UInv_InventoryComponent* TargetComp, int32 TargetGridIndex)
 {
 	// ── Authority 체크 (서버 전용) ──
 	if (!TargetComp || !GetOwner() || !GetOwner()->HasAuthority())
@@ -3348,6 +3348,17 @@ bool UInv_InventoryComponent::TransferItemTo(int32 ItemIndex, UInv_InventoryComp
 		return false;
 	}
 
+	// ── 3-2) 전송 전 소스 Entry의 GridCategory 캡처 (Target Entry에 설정용) ──
+	uint8 SourceGridCategory = 0;
+	for (const FInv_InventoryEntry& Entry : InventoryList.Entries)
+	{
+		if (Entry.Item == Item)
+		{
+			SourceGridCategory = Entry.GridCategory;
+			break;
+		}
+	}
+
 	// ── 4) Manifest 복사 → Target에 추가 ──
 	// AddItemFromManifest: 새 UInv_InventoryItem 생성 → FastArray 추가 → MarkDirty
 	FInv_ItemManifest ManifestCopy = SourceManifest;
@@ -3358,6 +3369,23 @@ bool UInv_InventoryComponent::TransferItemTo(int32 ItemIndex, UInv_InventoryComp
 		UE_LOG(LogTemp, Warning, TEXT("[InvComp]   → Target에 공간이 부족하거나 아이템 생성 실패"));
 		UE_LOG(LogTemp, Warning, TEXT("[InvComp]   → ItemType=%s, StackCount=%d"), *ItemType.ToString(), StackCount);
 		return false;
+	}
+
+	// ── 4-1) [Fix31] 새 Entry에 TargetGridIndex 설정 → 리플리케이션으로 클라이언트가 해당 위치에 배치 ──
+	if (TargetGridIndex != INDEX_NONE)
+	{
+		for (FInv_InventoryEntry& Entry : TargetComp->InventoryList.Entries)
+		{
+			if (Entry.Item == NewItem)
+			{
+				Entry.GridIndex = TargetGridIndex;
+				Entry.GridCategory = SourceGridCategory;
+				TargetComp->InventoryList.MarkItemDirty(Entry);
+				UE_LOG(LogTemp, Log, TEXT("[InvComp] TransferItemTo: [Fix31] Entry.GridIndex=%d, GridCategory=%d 설정 완료"),
+					TargetGridIndex, SourceGridCategory);
+				break;
+			}
+		}
 	}
 
 	// ── 5) Source에서 제거 ──
@@ -3401,7 +3429,7 @@ bool UInv_InventoryComponent::TransferItemTo(int32 ItemIndex, UInv_InventoryComp
 //   4) 실패 시 롤백
 //
 // ════════════════════════════════════════════════════════════════════════════════
-bool UInv_InventoryComponent::SwapItemWith(int32 MyItemIndex, UInv_InventoryComponent* OtherComp, int32 OtherItemIndex)
+bool UInv_InventoryComponent::SwapItemWith(int32 MyItemIndex, UInv_InventoryComponent* OtherComp, int32 OtherItemIndex, int32 TargetGridIndex)
 {
 	if (!OtherComp || !GetOwner() || !GetOwner()->HasAuthority())
 	{
@@ -3562,14 +3590,17 @@ bool UInv_InventoryComponent::SwapItemWith(int32 MyItemIndex, UInv_InventoryComp
 		}
 	}
 	// NewItemInOther (MyItem 데이터) → OtherItem이 있던 자리 (OtherGridIndex, OtherGridCategory)
+	// [Fix31] TargetGridIndex가 지정되면 해당 위치로 오버라이드 (유저가 드롭한 위치)
 	for (FInv_InventoryEntry& Entry : OtherComp->InventoryList.Entries)
 	{
 		if (Entry.Item == NewItemInOther)
 		{
-			Entry.GridIndex = OtherGridIndex;
+			Entry.GridIndex = (TargetGridIndex != INDEX_NONE) ? TargetGridIndex : OtherGridIndex;
 			Entry.GridCategory = OtherGridCategory;
 			Entry.bRotated = bOtherRotated;
 			OtherComp->InventoryList.MarkItemDirty(Entry);
+			UE_LOG(LogTemp, Log, TEXT("[InvComp] SwapItemWith: [Fix31] NewItemInOther.GridIndex=%d (Target=%d, Fallback=%d)"),
+				Entry.GridIndex, TargetGridIndex, OtherGridIndex);
 			break;
 		}
 	}
