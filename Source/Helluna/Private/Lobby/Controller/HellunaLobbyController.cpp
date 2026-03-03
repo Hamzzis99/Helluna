@@ -143,7 +143,9 @@ void AHellunaLobbyController::BeginPlay()
 // ════════════════════════════════════════════════════════════════════════════════
 bool AHellunaLobbyController::Server_TransferItem_Validate(int32 ItemEntryIndex, ELobbyTransferDirection Direction)
 {
-	return ItemEntryIndex >= 0 && ItemEntryIndex < 10000
+	// [Fix29-B] Deploy 진행 중에는 Transfer 차단 — Deploy의 Stash/Loadout 저장과 동시 수정 시 아이템 복제 위험
+	return !bDeployInProgress
+		&& ItemEntryIndex >= 0 && ItemEntryIndex < 10000
 		&& (Direction == ELobbyTransferDirection::StashToLoadout || Direction == ELobbyTransferDirection::LoadoutToStash);
 }
 
@@ -258,7 +260,12 @@ bool AHellunaLobbyController::ExecuteTransfer(
 // ════════════════════════════════════════════════════════════════════════════════
 bool AHellunaLobbyController::Server_SwapTransferItem_Validate(int32 RepID_A, int32 RepID_B)
 {
-	return RepID_A >= 0 && RepID_A < 100000 && RepID_B >= 0 && RepID_B < 100000 && RepID_A != RepID_B;
+	// [Fix28] RepID_A == RepID_B 허용: StashComp과 LoadoutComp은 별도 FastArray 카운터 사용
+	// → 다른 Comp의 아이템이 같은 숫자 RepID를 가질 수 있음
+	// 자기 자신과의 Swap은 Implementation에서 CompA != CompB + 실제 아이템 검증으로 방지
+	// [Fix29-B] Deploy 진행 중에는 Swap 차단
+	return !bDeployInProgress
+		&& RepID_A >= 0 && RepID_A < 100000 && RepID_B >= 0 && RepID_B < 100000;
 }
 
 void AHellunaLobbyController::Server_SwapTransferItem_Implementation(int32 RepID_A, int32 RepID_B)
@@ -306,6 +313,13 @@ void AHellunaLobbyController::Server_SwapTransferItem_Implementation(int32 RepID
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] SwapTransfer: A(RepID=%d) in %s ↔ B(RepID=%d) in %s"),
 		RepID_A, *CompA->GetName(), RepID_B, *CompB->GetName());
+
+	// [Fix28] 같은 Comp의 같은 아이템을 자기 자신과 Swap하는 것 방지
+	if (CompA == CompB && RepID_A == RepID_B)
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] SwapTransfer: 같은 Comp의 같은 아이템 → 무시 | RepID=%d"), RepID_A);
+		return;
+	}
 
 	// ── ValidIndex 변환 ──
 	const int32 IndexA = CompA->FindValidItemIndexByReplicationID(RepID_A);
@@ -406,75 +420,71 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 		return;
 	}
 
-	// ── [3단계] Stash + Loadout 저장 ──
-	if (LoadoutInventoryComponent)
-	{
-		TArray<FInv_SavedItemData> LoadoutItems = LoadoutInventoryComponent->CollectInventoryDataForSave();
-		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [3]: Loadout 아이템 %d개 수집 완료"), LoadoutItems.Num());
-
-		// ── [3a] 잔여 Stash 저장 (항상 실행 — 빈 로드아웃이라도 Stash 상태를 DB에 반영) ──
-		// ⭐ [Fix] 이전: LoadoutItems > 0일 때만 실행 → 빈 로드아웃 시 이전 Stash가 DB에 잔존
-		//   → MergeGameResultToStash(INSERT-only)에서 이전 Stash + 신규 결과 = 중복 발생
-		//   수정: 항상 SavePlayerStash 호출하여 현재 Stash 상태를 정확히 DB에 반영
-		if (StashInventoryComponent)
-		{
-			TArray<FInv_SavedItemData> RemainingStash = StashInventoryComponent->CollectInventoryDataForSave();
-			const bool bStashOk = DB->SavePlayerStash(PlayerId, RemainingStash);
-			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [3a]: 잔여 Stash 저장 %s | %d개 아이템"),
-				bStashOk ? TEXT("성공") : TEXT("실패"), RemainingStash.Num());
-
-			if (!bStashOk)
-			{
-				UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Deploy [3a]: 잔여 Stash 저장 실패! 출격 중단"));
-				Client_DeployFailed(TEXT("Stash 저장 실패"));
-				bDeployInProgress = false;
-				return;
-			}
-		}
-
-		if (LoadoutItems.Num() > 0)
-		{
-			// ── [3b] Loadout 저장 ──
-			const bool bLoadoutOk = DB->SavePlayerLoadout(PlayerId, LoadoutItems);
-			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [3b]: SavePlayerLoadout %s | %d개 아이템"),
-				bLoadoutOk ? TEXT("성공") : TEXT("실패"), LoadoutItems.Num());
-
-			if (!bLoadoutOk)
-			{
-				UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Deploy: Loadout 저장 실패! 출격 중단"));
-				UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC]   → DB 오류 확인 필요 (디스크 용량, 권한 등)"));
-				Client_DeployFailed(TEXT("Loadout 저장 실패"));
-				bDeployInProgress = false;
-				return;
-			}
-
-			// ── [3c] Loadout을 JSON 파일로도 내보내기 (DB 잠금 회피용) ──
-			// 게임서버(데디서버)가 같은 DB를 열 수 없을 때,
-			// 이 JSON 파일에서 Loadout을 읽어 인벤토리를 복원
-			const int32 HeroIndex = HeroTypeToIndex(SelectedHeroType);
-			const bool bExportOk = DB->ExportLoadoutToFile(PlayerId, LoadoutItems, HeroIndex);
-			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [3c]: ExportLoadoutToFile %s"),
-				bExportOk ? TEXT("성공") : TEXT("실패"));
-
-			if (!bExportOk)
-			{
-				UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Deploy [3c]: JSON 파일 내보내기 실패! 출격 중단"));
-				Client_DeployFailed(TEXT("Loadout 파일 내보내기 실패"));
-				bDeployInProgress = false;
-				return;
-			}
-		}
-		else
-		{
-			UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] Deploy: Loadout이 비어있음! 빈손 출격 진행 (Stash는 이미 저장됨)"));
-		}
-	}
-	else
+	// ── [3단계] Loadout → Stash 순서로 저장 ──
+	// [Fix29-C] Loadout을 먼저 저장: 크래시 발생 시 크래시 복구(Loadout→Stash)로 아이템 복원 가능
+	// 이전: Stash 먼저 → 크래시 → Loadout 미저장 → 아이템 영구 손실
+	// 수정: Loadout 먼저 → 크래시 → Stash에서 Loadout 아이템이 빠졌지만 player_loadout에 보존 → 복구 가능
+	if (!LoadoutInventoryComponent)
 	{
 		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Deploy: LoadoutComp가 nullptr!"));
 		Client_DeployFailed(TEXT("LoadoutComp가 nullptr"));
 		bDeployInProgress = false;
 		return;
+	}
+
+	TArray<FInv_SavedItemData> LoadoutItems = LoadoutInventoryComponent->CollectInventoryDataForSave();
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [3]: Loadout 아이템 %d개 수집 완료"), LoadoutItems.Num());
+
+	if (LoadoutItems.Num() > 0)
+	{
+		// ── [3a] Loadout 저장 (먼저!) ──
+		const bool bLoadoutOk = DB->SavePlayerLoadout(PlayerId, LoadoutItems);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [3a]: SavePlayerLoadout %s | %d개 아이템"),
+			bLoadoutOk ? TEXT("성공") : TEXT("실패"), LoadoutItems.Num());
+
+		if (!bLoadoutOk)
+		{
+			UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Deploy: Loadout 저장 실패! 출격 중단"));
+			UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC]   → DB 오류 확인 필요 (디스크 용량, 권한 등)"));
+			Client_DeployFailed(TEXT("Loadout 저장 실패"));
+			bDeployInProgress = false;
+			return;
+		}
+
+		// ── [3b] Loadout을 JSON 파일로도 내보내기 (DB 잠금 회피용) ──
+		const int32 HeroIndex = HeroTypeToIndex(SelectedHeroType);
+		const bool bExportOk = DB->ExportLoadoutToFile(PlayerId, LoadoutItems, HeroIndex);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [3b]: ExportLoadoutToFile %s"),
+			bExportOk ? TEXT("성공") : TEXT("실패"));
+
+		if (!bExportOk)
+		{
+			UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Deploy [3b]: JSON 파일 내보내기 실패! 출격 중단"));
+			Client_DeployFailed(TEXT("Loadout 파일 내보내기 실패"));
+			bDeployInProgress = false;
+			return;
+		}
+	}
+	else
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] Deploy: Loadout이 비어있음! 빈손 출격 진행"));
+	}
+
+	// ── [3c] 잔여 Stash 저장 (Loadout 이후) ──
+	if (StashInventoryComponent)
+	{
+		TArray<FInv_SavedItemData> RemainingStash = StashInventoryComponent->CollectInventoryDataForSave();
+		const bool bStashOk = DB->SavePlayerStash(PlayerId, RemainingStash);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [3c]: 잔여 Stash 저장 %s | %d개 아이템"),
+			bStashOk ? TEXT("성공") : TEXT("실패"), RemainingStash.Num());
+
+		if (!bStashOk)
+		{
+			UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Deploy [3c]: 잔여 Stash 저장 실패! 출격 중단"));
+			Client_DeployFailed(TEXT("Stash 저장 실패"));
+			bDeployInProgress = false;
+			return;
+		}
 	}
 
 	// ── [4단계] ClientTravel 지시 (HeroType 파라미터 추가) ──

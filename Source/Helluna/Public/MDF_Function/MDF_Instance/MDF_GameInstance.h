@@ -48,6 +48,7 @@ class UHellunaLoadingWidget;
  * │ DefenseGameMode::Logout()                                │
  * │   └─ GameInstance->RegisterLogout(PlayerId)              │
  * │       → LoggedInPlayerIds에서 제거                       │
+ *
  * └─────────────────────────────────────────────────────────┘
  * 
  * ============================================

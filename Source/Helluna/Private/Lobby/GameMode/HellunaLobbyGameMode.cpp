@@ -600,6 +600,14 @@ void AHellunaLobbyGameMode::LoadLoadoutToComponent(AHellunaLobbyController* Lobb
 		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [Fix23] ◆◆ Loadout 아이템 유실 감지! DB=%d → 복원=%d → %d개 유실"),
 			LoadedLoadoutItemCount, RestoredCount, LoadedLoadoutItemCount - RestoredCount);
 		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [Fix23] ◆◆ player_loadout 보존 → 다음 로그인 시 크래시 복구로 Stash 이동"));
+
+		// [Fix29-A] LoadoutComp를 비워서 Logout 시 SaveComponentsToDatabase에서 부분 아이템이 Stash에 병합되지 않도록 방지
+		// → player_loadout이 DB에 보존되므로, 다음 로그인 시 크래시 복구가 전체 아이템을 Stash로 안전하게 이동
+		// → LoadoutComp에 부분 아이템이 남아있으면: Logout 병합(부분) + 크래시 복구(전체) = 아이템 복제!
+		FInv_PlayerSaveData EmptySaveData;
+		EmptySaveData.LastSaveTime = FDateTime::Now();
+		LoadoutComp->RestoreFromSaveData(EmptySaveData, Resolver);
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] [Fix29-A] LoadoutComp 비움 — 부분 복원 아이템 복제 방지"));
 		return;
 	}
 
@@ -676,6 +684,15 @@ void AHellunaLobbyGameMode::SaveComponentsToDatabase(AHellunaLobbyController* Lo
 	// 복원 실패(ResolveItemTemplate 실패)로 아이템이 유실된 것
 	// → 이 상태로 저장하면 DB에서도 영구 삭제되므로 저장을 거부
 	const int32 OriginalLoadedCount = LobbyPC->GetLoadedStashItemCount();
+
+	// [Fix29-D] 미로드 상태(-1) = PostLogin이 완료되기 전에 Logout 발생
+	// → 빈 Stash를 DB에 저장하면 기존 데이터 덮어쓰기 → 저장 차단
+	if (OriginalLoadedCount < 0)
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] [Fix29-D] Stash 미로드 상태(PostLogin 미완료)에서 Logout → 저장 차단 | PlayerId=%s"), *PlayerId);
+		return;
+	}
+
 	if (OriginalLoadedCount > 0 && FinalStashItems.Num() < OriginalLoadedCount)
 	{
 		UE_LOG(LogHellunaLobby, Error, TEXT(""));

@@ -411,11 +411,16 @@ void UInv_InventoryGrid::UpdateTileParameters(const FVector2D& CanvasPosition, c
 
 void UInv_InventoryGrid::OnTileParametersUpdated(const FInv_TileParameters& Parameters)
 {
-	// [CrossSwap] 자기 HoverItem이 없으면 LobbyTargetGrid의 HoverItem 참조
+	// [CrossSwap] 자기 HoverItem이 없으면 연결된 Grid의 HoverItem 참조
 	UInv_HoverItem* ActiveHover = HoverItem;
 	if (!IsValid(ActiveHover) && HasLobbyLinkedHoverItem())
 	{
 		ActiveHover = LobbyTargetGrid->GetHoverItem();
+	}
+	// [Fix29-F] Phase 9 컨테이너 Grid의 HoverItem 폴백
+	if (!IsValid(ActiveHover) && HasLinkedHoverItem())
+	{
+		ActiveHover = GetLinkedHoverItem();
 	}
 	if (!IsValid(ActiveHover)) return;
 
@@ -1313,9 +1318,18 @@ void UInv_InventoryGrid::AddStacks(const FInv_SlotAvailabilityResult& Result)
 // 슬롯에 있는 아이템을 마우스로 클릭했을 때 
 void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEvent& MouseEvent)
 {
+	// [진단] 클릭 이벤트 추적
+	UE_LOG(LogTemp, Warning, TEXT("[SlottedClick진단] GridIndex=%d | HoverItem=%s | LobbyMode=%d | LobbyTarget=%d | TargetHasHover=%d | Category=%d"),
+		GridIndex,
+		IsValid(HoverItem) ? TEXT("Y") : TEXT("N"),
+		bLobbyTransferMode ? 1 : 0,
+		LobbyTargetGrid.IsValid() ? 1 : 0,
+		(LobbyTargetGrid.IsValid() && LobbyTargetGrid->HasHoverItem()) ? 1 : 0,
+		(int32)ItemCategory);
+
 	// 마우스를 가장자리 넘을 때 언호버 처리 해서 자연스러운 아이템 Detail칸 열게 하기
 	UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer()); // 아이템 언호버 처리
-	
+
 	//UE_LOG(LogTemp, Warning, TEXT("Clicked on item at index %d"), GridIndex); // 아이템 클릭 디버깅입니다.
 	// U3: check() → 안전한 early return (데디서버에서 check 실패 시 전체 크래시)
 	if (!GridSlots.IsValidIndex(GridIndex)) return;
@@ -1804,6 +1818,15 @@ UInv_HoverItem* UInv_InventoryGrid::GetHoverItem() const
 // 인벤토리 스택 쌓는 부분.
 void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 {
+	// [Fix29진단] 항상-활성 AddItem 진입 로그 (Swap 겹침 디버그용)
+	UE_LOG(LogTemp, Warning, TEXT("[AddItem진단] Grid=%p | GridCat=%d | ItemCat=%d | Item=%s | EntryIndex=%d | InvComp=%s | SlottedItems=%d"),
+		this, (int32)ItemCategory,
+		Item ? (int32)Item->GetItemManifest().GetItemCategory() : -1,
+		Item ? *Item->GetItemManifest().GetItemType().ToString() : TEXT("nullptr"),
+		EntryIndex,
+		InventoryComponent.IsValid() ? *InventoryComponent->GetName() : TEXT("nullptr"),
+		SlottedItems.Num());
+
 	// [Fix26] Invalid Category 방어 — BP에서 제거 안 된 유령 Grid (Grid_Builds 등) 차단
 	if (static_cast<uint8>(ItemCategory) > static_cast<uint8>(EInv_ItemCategory::None))
 	{
@@ -1823,10 +1846,9 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 	// [Phase 9] 컨테이너 Grid에서는 카테고리 체크 바이패스 (모든 아이템 혼합)
 	if (OwnerType != EGridOwnerType::Container && !MatchesCategory(Item))
 	{
-#if INV_DEBUG_WIDGET
-		UE_LOG(LogTemp, Log, TEXT("[AddItem] 카테고리 불일치: %s, Grid=%d"),
-			*Item->GetItemManifest().GetItemType().ToString(), (int32)ItemCategory);
-#endif
+		UE_LOG(LogTemp, Warning, TEXT("[AddItem진단] 카테고리 불일치! ItemCat=%d vs GridCat=%d → 스킵 | %s"),
+			(int32)Item->GetItemManifest().GetItemCategory(), (int32)ItemCategory,
+			*Item->GetItemManifest().GetItemType().ToString());
 		return;
 	}
 
@@ -2177,6 +2199,12 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 // ⭐ 핵심 변경: EntryIndex는 로그용으로만 사용, 실제 매칭은 포인터 + ItemManifest로!
 void UInv_InventoryGrid::RemoveItem(UInv_InventoryItem* Item, int32 EntryIndex)
 {
+	// [Fix29진단] 항상-활성 RemoveItem 진입 로그
+	UE_LOG(LogTemp, Warning, TEXT("[RemoveItem진단] Grid=%p | GridCat=%d | Item=%s (ptr=%p) | EntryIndex=%d | SlottedItems=%d"),
+		this, (int32)ItemCategory,
+		IsValid(Item) ? *Item->GetItemManifest().GetItemType().ToString() : TEXT("nullptr"),
+		Item, EntryIndex, SlottedItems.Num());
+
 	// [Fix26] Invalid Category 방어
 	if (static_cast<uint8>(ItemCategory) > static_cast<uint8>(EInv_ItemCategory::None)) return;
 
@@ -2790,10 +2818,12 @@ void UInv_InventoryGrid::OnGridSlotClicked(int32 GridIndex, const FPointerEvent&
 		// [CrossSwap] 크로스 Grid Swap 우선 시도 (대상 위치에 아이템이 있으면 교환)
 		if (TryCrossGridSwap(GridIndex))
 		{
+			UE_LOG(LogTemp, Warning, TEXT("[GridSlotClick진단] TryCrossGridSwap 성공 → Swap 실행"));
 			return;
 		}
 
 		// [Fix20] 패널 간 드래그 앤 드롭: 상대 Grid에 HoverItem이 있으면 전송 (빈 셀에 단방향)
+		UE_LOG(LogTemp, Warning, TEXT("[GridSlotClick진단] TryCrossGridSwap 실패 → TryTransferFromTargetGrid 폴백 | GridIndex=%d"), GridIndex);
 		TryTransferFromTargetGrid();
 		return;
 	} // 호버 아이템이 유효하다면 리턴
@@ -2951,13 +2981,14 @@ void UInv_InventoryGrid::SwapWithHoverItem(UInv_InventoryItem* ClickedInventoryI
 	const int32 TempStackCount = HoverItem->GetStackCount(); // 호버 아이템 스택 수 임시 저장
 	const bool bTempIsStackable = HoverItem->IsStackable(); // 호버 아이템 스택 가능 여부 임시 저장
 	const int32 TempEntryIndex = HoverItem->GetEntryIndex(); // ⭐ 호버 아이템 EntryIndex 임시 저장
+	const bool bTempIsRotated = HoverItem->IsRotated(); // [Fix29-E] 회전 상태 임시 저장
 
 	// 이전 격자 인덱스를 유지시켜야 하는 부분.
 	// Keep the same previous grid index.
 	AssignHoverItem(ClickedInventoryItem, GridIndex, HoverItem->GetPreviousGridIndex()); // 클릭된 아이템을 호버 아이템으로 할당
 	RemoveItemFromGrid(ClickedInventoryItem, GridIndex); // 그리드에서 클릭된 아이템 제거
-	AddItemAtIndex(TempInventoryItem, ItemDropIndex, bTempIsStackable, TempStackCount, TempEntryIndex); // 임시 저장된 아이템을 인덱스에 추가
-	UpdateGridSlots(TempInventoryItem, ItemDropIndex, bTempIsStackable, TempStackCount); // 그리드 슬롯 업데이트
+	AddItemAtIndex(TempInventoryItem, ItemDropIndex, bTempIsStackable, TempStackCount, TempEntryIndex, bTempIsRotated); // [Fix29-E] 회전 상태 전달
+	UpdateGridSlots(TempInventoryItem, ItemDropIndex, bTempIsStackable, TempStackCount, bTempIsRotated); // [Fix29-E] 회전 상태 전달
 
 #if INV_DEBUG_WIDGET
 	// [Swap버그추적] Swap 완료 상태 덤프
@@ -4612,15 +4643,15 @@ bool UInv_InventoryGrid::HasLobbyLinkedHoverItem() const
 
 bool UInv_InventoryGrid::TryCrossGridSwap(int32 GridIndex)
 {
-	// 전제조건: 로비 모드 + 상대 Grid에 HoverItem 존재
-	if (!bLobbyTransferMode) return false;
-	if (!LobbyTargetGrid.IsValid()) return false;
-	if (!LobbyTargetGrid->HasHoverItem()) return false;
+	// [진단] 각 조건별 실패 추적
+	if (!bLobbyTransferMode) { UE_LOG(LogTemp, Warning, TEXT("[CrossSwap진단] FAIL: bLobbyTransferMode=false")); return false; }
+	if (!LobbyTargetGrid.IsValid()) { UE_LOG(LogTemp, Warning, TEXT("[CrossSwap진단] FAIL: LobbyTargetGrid invalid")); return false; }
+	if (!LobbyTargetGrid->HasHoverItem()) { UE_LOG(LogTemp, Warning, TEXT("[CrossSwap진단] FAIL: LobbyTargetGrid has no HoverItem")); return false; }
 
 	UInv_HoverItem* SourceHover = LobbyTargetGrid->GetHoverItem();
-	if (!IsValid(SourceHover)) return false;
+	if (!IsValid(SourceHover)) { UE_LOG(LogTemp, Warning, TEXT("[CrossSwap진단] FAIL: SourceHover invalid")); return false; }
 	UInv_InventoryItem* ItemA = SourceHover->GetInventoryItem();
-	if (!IsValid(ItemA)) return false;
+	if (!IsValid(ItemA)) { UE_LOG(LogTemp, Warning, TEXT("[CrossSwap진단] FAIL: ItemA invalid")); return false; }
 
 	// 이 Grid의 GridIndex에 아이템B가 있는지 확인
 	// UpperLeftIndex 보정 (대형 아이템의 서브셀 클릭 대응)
@@ -4640,8 +4671,13 @@ bool UInv_InventoryGrid::TryCrossGridSwap(int32 GridIndex)
 		ItemB = GridSlots[LookupIndex]->GetInventoryItem().Get();
 	}
 
+	UE_LOG(LogTemp, Warning, TEXT("[CrossSwap진단] GridIndex=%d → LookupIndex=%d | ItemA=%s | ItemB=%s"),
+		GridIndex, LookupIndex,
+		ItemA ? *ItemA->GetItemManifest().GetItemType().ToString() : TEXT("nullptr"),
+		ItemB ? *ItemB->GetItemManifest().GetItemType().ToString() : TEXT("nullptr"));
+
 	// 아이템B가 없으면 Swap 불필요 → false 반환하여 단방향 전송으로 폴백
-	if (!IsValid(ItemB)) return false;
+	if (!IsValid(ItemB)) { UE_LOG(LogTemp, Warning, TEXT("[CrossSwap진단] FAIL: ItemB invalid → 단방향 전송 폴백")); return false; }
 
 	// [D-4] 부착물 아이템은 Swap 대상에서 제외
 	{
@@ -4695,6 +4731,13 @@ bool UInv_InventoryGrid::TryCrossGridSwap(int32 GridIndex)
 	// ── HoverItem 정리: 아이템A를 원래 자리로 복원 ──
 	LobbyTargetGrid->PutHoverItemBack();
 	LobbyTargetGrid->ShowCursor();
+
+	// [Fix29-G] PutHoverItemBack 실패 시 Swap RPC 전송하지 않음 (아이템 유실 방지)
+	if (LobbyTargetGrid->HasHoverItem())
+	{
+		UE_LOG(LogTemp, Error, TEXT("[CrossSwap] PutHoverItemBack 실패: HoverItem이 여전히 존재 → Swap 취소"));
+		return false;
+	}
 
 	// ── 델리게이트 Broadcast → StashWidget이 Server RPC 호출 ──
 	UE_LOG(LogTemp, Log, TEXT("[CrossSwap] TryCrossGridSwap: RepID_A=%d ↔ RepID_B=%d"), RepID_A, RepID_B);

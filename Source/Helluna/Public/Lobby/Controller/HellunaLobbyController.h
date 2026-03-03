@@ -285,8 +285,9 @@ protected:
 	// 파괴적 캐스케이드 방지 — DB에서 로드된 Stash 아이템 수 기록
 	// ════════════════════════════════════════════════════════════════
 
-	/** DB에서 로드된 원본 Stash 아이템 수 (SaveComponentsToDatabase에서 비교용) */
-	int32 LoadedStashItemCount = 0;
+	/** DB에서 로드된 원본 Stash 아이템 수 (SaveComponentsToDatabase에서 비교용)
+	 * [Fix29-D] 기본값 -1 = 미로드 상태 → PostLogin 완료 전 Logout 시 저장 차단 */
+	int32 LoadedStashItemCount = -1;
 
 public:
 	void SetLoadedStashItemCount(int32 Count) { LoadedStashItemCount = Count; }

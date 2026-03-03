@@ -2032,8 +2032,9 @@ bool UHellunaSQLiteSubsystem::RecoverFromCrash(const FString& PlayerId)
 		InsertStmt.SetBindingValueByIndex(1, PlayerId);
 		InsertStmt.SetBindingValueByIndex(2, Item.ItemType.ToString());
 		InsertStmt.SetBindingValueByIndex(3, Item.StackCount);
-		InsertStmt.SetBindingValueByIndex(4, Item.GridPosition.X);
-		InsertStmt.SetBindingValueByIndex(5, Item.GridPosition.Y);
+		// [Fix29-J] Loadout Grid 좌표는 Stash Grid와 크기가 다를 수 있음 → (-1,-1)로 리셋하여 클라에서 자동 배치
+		InsertStmt.SetBindingValueByIndex(4, -1);
+		InsertStmt.SetBindingValueByIndex(5, -1);
 		InsertStmt.SetBindingValueByIndex(6, static_cast<int32>(Item.GridCategory));
 		InsertStmt.SetBindingValueByIndex(7, Item.bEquipped ? 1 : 0);
 		InsertStmt.SetBindingValueByIndex(8, Item.WeaponSlotIndex);

@@ -74,6 +74,10 @@ void FInv_InventoryFastArray::PreReplicatedRemove(const TArrayView<int32> Remove
 			// ⭐ OnItemRemoved 델리게이트 브로드캐스트 (모든 아이템)
 			if (IsValid(IC))
 			{
+				// [Fix29진단] Remove Broadcast 직전
+				UE_LOG(LogTemp, Warning, TEXT("[PreRepRemove진단] Broadcast: IC=%s (ptr=%p) | Item=%s (ptr=%p) | EntryIdx=%d"),
+					*IC->GetName(), IC,
+					*ItemType.ToString(), RemovedItem, Index);
 				IC->OnItemRemoved.Broadcast(RemovedItem, Index);
 			}
 			else if (IsValid(ContainerComp))
@@ -205,6 +209,12 @@ void FInv_InventoryFastArray::PostReplicatedAdd(const TArrayView<int32> AddedInd
 		// ⭐ [Phase 9] InventoryComponent 또는 LootContainerComponent 분기
 		if (IsValid(IC))
 		{
+			// [Fix29진단] Broadcast 직전 — 어떤 IC에서 발생하는지 확인
+			UE_LOG(LogTemp, Warning, TEXT("[PostRepAdd진단] Broadcast: IC=%s (ptr=%p) | ItemCat=%d | Item=%s | EntryIdx=%d"),
+				*IC->GetName(), IC,
+				(int32)Entries[Index].Item->GetItemManifest().GetItemCategory(),
+				*Entries[Index].Item->GetItemManifest().GetItemType().ToString(),
+				Index);
 			IC->OnItemAdded.Broadcast(Entries[Index].Item, Index);
 		}
 		else if (IsValid(ContainerComp))
@@ -393,7 +403,8 @@ void FInv_InventoryFastArray::PostReplicatedChange(const TArrayView<int32> Chang
 UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_ItemComponent* ItemComponent)
 {
 	//TODO : Implement once ItemComponent is more complete
-	check(OwnerComponent); // 소유자 컴포넌트 확인 (소유재고 확인)
+	// [Fix29-H] check() → safe return (Shipping 빌드에서 프로세스 종료 방지)
+	if (!OwnerComponent) { UE_LOG(LogTemp, Error, TEXT("[FastArray] AddEntry(ItemComp): OwnerComponent is null!")); return nullptr; }
 
 	// [진단] AddEntry 호출 시 콜스택 추적 (아이템 중복 원인 파악)
 	UE_LOG(LogTemp, Error, TEXT("[AddEntry진단] 호출됨! 현재 Entries=%d, ItemType=%s"),
@@ -483,7 +494,8 @@ UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_ItemComponent* ItemCo
 
 UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_InventoryItem* Item)
 {
-	check(OwnerComponent);
+	// [Fix29-H] check() → safe return (Shipping 빌드에서 프로세스 종료 방지)
+	if (!OwnerComponent) { UE_LOG(LogTemp, Error, TEXT("[FastArray] AddEntry(Item*): OwnerComponent is null!")); return nullptr; }
 
 #if INV_DEBUG_INVENTORY
 	// [진단] AddEntry(Item*) 호출 콜스택
@@ -571,7 +583,32 @@ void FInv_InventoryFastArray::RemoveEntry(UInv_InventoryItem* Item)
 
 void FInv_InventoryFastArray::ClearAllEntries()
 {
-	// B3: nullptr 엔트리도 포함하여 모든 엔트리 제거 (기존: IsValid 체크로 nullptr 엔트리 누락)
+	// [Fix29-I] 리플리케이션 서브오브젝트 해제 후 엔트리 제거 (네트워크 + GC 누수 방지)
+	if (OwnerComponent)
+	{
+		if (UInv_InventoryComponent* IC = Cast<UInv_InventoryComponent>(OwnerComponent))
+		{
+			for (const FInv_InventoryEntry& Entry : Entries)
+			{
+				if (IsValid(Entry.Item))
+				{
+					IC->RemoveRepSubObj(Entry.Item);
+				}
+			}
+		}
+		else if (UInv_LootContainerComponent* CC = Cast<UInv_LootContainerComponent>(OwnerComponent))
+		{
+			for (const FInv_InventoryEntry& Entry : Entries)
+			{
+				if (IsValid(Entry.Item) && CC->IsUsingRegisteredSubObjectList())
+				{
+					CC->RemoveReplicatedSubObject(Entry.Item);
+				}
+			}
+		}
+	}
+
+	// B3: nullptr 엔트리도 포함하여 모든 엔트리 제거
 	Entries.Empty();
 	MarkArrayDirty();
 	RebuildItemTypeIndex();
