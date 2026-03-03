@@ -49,6 +49,7 @@
 #include "CoreMinimal.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "Lobby/Database/IInventoryDatabase.h"
+#include "Lobby/Party/HellunaPartyTypes.h"
 #include "HellunaSQLiteSubsystem.generated.h"
 
 // 전방선언 — FSQLiteDatabase, FSQLitePreparedStatement는 UObject가 아닌 POD 클래스
@@ -321,9 +322,7 @@ public:
 
 	/**
 	 * 미처리 Loadout이 남아있는지 확인 (비정상 종료 감지)
-	 *
-	 * 원리: 정상 종료 시 Loadout은 반드시 삭제됨.
-	 *       Loadout이 남아있다 = 게임 도중 크래시 또는 비정상 종료
+	 * @deprecated [Fix36] IsPlayerDeployed로 대체
 	 *
 	 * SQL: SELECT COUNT(*) FROM player_loadout WHERE player_id = ?
 	 *
@@ -334,19 +333,22 @@ public:
 
 	/**
 	 * 크래시 복구 — Loadout에 남은 아이템을 Stash로 복귀
-	 *
-	 * 내부 처리 (트랜잭션):
-	 *   1. player_loadout에서 SELECT (잔존 아이템 읽기)
-	 *   2. player_stash에 INSERT (Stash로 복귀)
-	 *   3. player_loadout에서 DELETE (정리)
-	 *   → 하나의 트랜잭션으로 원자적 처리
-	 *
-	 * 호출 시점: 로비 PostLogin에서 CheckAndRecoverFromCrash()가 호출
+	 * @deprecated [Fix36] IsPlayerDeployed/SetPlayerDeployed로 대체. Loadout→Stash 이동 없음.
 	 *
 	 * @param PlayerId  플레이어 고유 ID
 	 * @return 성공 여부
 	 */
 	virtual bool RecoverFromCrash(const FString& PlayerId) override;
+
+	// ════════════════════════════════════════════════════════════════
+	// [Fix36] 출격 상태 추적 (독립 Loadout 영속성)
+	// ════════════════════════════════════════════════════════════════
+
+	/** [Fix36] 출격 상태 설정 (Deploy=true, GameResult 처리=false) */
+	virtual bool SetPlayerDeployed(const FString& PlayerId, bool bDeployed) override;
+
+	/** [Fix36] 플레이어가 출격 중인지 확인 (크래시 감지용) */
+	virtual bool IsPlayerDeployed(const FString& PlayerId) override;
 
 	// ════════════════════════════════════════════════════════════════
 	// IInventoryDatabase 인터페이스 구현 — 게임 캐릭터 중복 방지
@@ -363,6 +365,129 @@ public:
 
 	/** 특정 서버의 모든 캐릭터 등록 해제 */
 	virtual bool UnregisterAllActiveGameCharactersForServer(const FString& ServerId) override;
+
+	// ════════════════════════════════════════════════════════════════
+	// 파티 시스템 CRUD (Phase 12a)
+	// ════════════════════════════════════════════════════════════════
+
+	/**
+	 * 파티 생성 — party_groups INSERT + party_members INSERT(Leader)
+	 *
+	 * @param LeaderId    리더 플레이어 ID
+	 * @param DisplayName 리더 표시 이름
+	 * @param PartyCode   6자리 파티 코드 (호출자가 생성)
+	 * @return 생성된 PartyId (실패 시 0)
+	 */
+	int32 CreateParty(const FString& LeaderId, const FString& DisplayName, const FString& PartyCode);
+
+	/**
+	 * 파티 참가 — party_members INSERT
+	 *
+	 * @param PartyId     참가할 파티 ID
+	 * @param PlayerId    참가 플레이어 ID
+	 * @param DisplayName 표시 이름
+	 * @return 성공 여부
+	 */
+	bool JoinParty(int32 PartyId, const FString& PlayerId, const FString& DisplayName);
+
+	/**
+	 * 파티 탈퇴 — party_members DELETE, 마지막 멤버면 party_groups도 DELETE
+	 *
+	 * @param PlayerId  탈퇴할 플레이어 ID
+	 * @return 성공 여부
+	 */
+	bool LeaveParty(const FString& PlayerId);
+
+	/**
+	 * 파티 해산 — party_groups + party_members 전체 DELETE
+	 *
+	 * @param PartyId  해산할 파티 ID
+	 * @return 성공 여부
+	 */
+	bool DisbandParty(int32 PartyId);
+
+	/**
+	 * 파티 코드로 파티 ID 조회
+	 *
+	 * @param PartyCode  6자리 파티 코드
+	 * @return PartyId (없으면 0)
+	 */
+	int32 FindPartyByCode(const FString& PartyCode);
+
+	/**
+	 * 파티 멤버 수 조회
+	 *
+	 * @param PartyId  파티 ID
+	 * @return 멤버 수 (파티 없으면 0)
+	 */
+	int32 GetPartyMemberCount(int32 PartyId);
+
+	/**
+	 * 플레이어가 속한 파티 ID 조회
+	 *
+	 * @param PlayerId  플레이어 ID
+	 * @return PartyId (미가입 시 0)
+	 */
+	int32 GetPlayerPartyId(const FString& PlayerId);
+
+	/**
+	 * 파티 전체 정보 로드 (party_groups + party_members JOIN)
+	 *
+	 * @param PartyId  파티 ID
+	 * @return 파티 정보 (없으면 PartyId=0인 무효 구조체)
+	 */
+	FHellunaPartyInfo LoadPartyInfo(int32 PartyId);
+
+	/**
+	 * 멤버 Ready 상태 업데이트
+	 *
+	 * @param PlayerId  플레이어 ID
+	 * @param bReady    준비 완료 여부
+	 * @return 성공 여부
+	 */
+	bool UpdateMemberReady(const FString& PlayerId, bool bReady);
+
+	/**
+	 * 멤버 영웅 타입 업데이트
+	 *
+	 * @param PlayerId  플레이어 ID
+	 * @param HeroType  영웅 타입 인덱스 (EHellunaHeroType 기반)
+	 * @return 성공 여부
+	 */
+	bool UpdateMemberHeroType(const FString& PlayerId, int32 HeroType);
+
+	/**
+	 * 리더십 이전 — 기존 리더를 Member로, NewLeaderId를 Leader로
+	 *
+	 * @param PartyId      파티 ID
+	 * @param NewLeaderId  새 리더 플레이어 ID
+	 * @return 성공 여부
+	 */
+	bool TransferLeadership(int32 PartyId, const FString& NewLeaderId);
+
+	/**
+	 * 파티 전원 Ready 상태 리셋
+	 *
+	 * @param PartyId  파티 ID
+	 * @return 성공 여부
+	 */
+	bool ResetAllReadyStates(int32 PartyId);
+
+	/**
+	 * 파티 코드 유니크 여부 확인
+	 *
+	 * @param Code  6자리 코드
+	 * @return true = 사용 가능 (중복 없음)
+	 */
+	bool IsPartyCodeUnique(const FString& Code);
+
+	/**
+	 * 오래된 파티 정리 — HoursOld 시간 이상 된 파티 삭제
+	 *
+	 * @param HoursOld  시간 기준 (기본 24시간)
+	 * @return 삭제된 파티 수
+	 */
+	int32 CleanupStaleParties(int32 HoursOld = 24);
 
 private:
 	// ════════════════════════════════════════════════════════════════

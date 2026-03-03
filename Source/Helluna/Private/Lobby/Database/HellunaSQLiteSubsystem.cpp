@@ -999,7 +999,76 @@ bool UHellunaSQLiteSubsystem::InitializeSchema()
 		return false;
 	}
 
-	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ InitializeSchema 완료 (테이블 4개, 인덱스 4개)"));
+	// ── [Fix36] player_deploy_state 테이블 생성 (출격 상태 추적) ──
+	// Loadout 존재 ≠ 크래시. 출격 상태를 별도 추적하여 크래시 감지
+	if (!Database->Execute(TEXT(
+		"CREATE TABLE IF NOT EXISTS player_deploy_state ("
+		"    player_id   TEXT PRIMARY KEY,"
+		"    is_deployed INTEGER NOT NULL DEFAULT 0,"
+		"    deployed_at DATETIME DEFAULT CURRENT_TIMESTAMP"
+		");"
+	)))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ CREATE TABLE player_deploy_state 실패 | 에러: %s"), *Database->GetLastError());
+		return false;
+	}
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite]   CREATE TABLE player_deploy_state ✓"));
+
+	// ── [Phase 12a] party_groups 테이블 생성 (파티 그룹) ──
+	if (!Database->Execute(TEXT(
+		"CREATE TABLE IF NOT EXISTS party_groups ("
+		"    id          INTEGER PRIMARY KEY AUTOINCREMENT,"
+		"    party_code  TEXT NOT NULL UNIQUE,"
+		"    leader_id   TEXT NOT NULL,"
+		"    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP"
+		");"
+	)))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ CREATE TABLE party_groups 실패 | 에러: %s"), *Database->GetLastError());
+		return false;
+	}
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite]   CREATE TABLE party_groups ✓"));
+
+	// ── party_groups 인덱스 (party_code UNIQUE는 CREATE TABLE에서 이미 보장) ──
+	if (!Database->Execute(TEXT("CREATE INDEX IF NOT EXISTS idx_party_groups_leader ON party_groups(leader_id);")))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ INDEX idx_party_groups_leader 실패 | 에러: %s"), *Database->GetLastError());
+		return false;
+	}
+
+	// ── [Phase 12a] party_members 테이블 생성 (파티 멤버) ──
+	// player_id UNIQUE: 1인 1파티 보장
+	if (!Database->Execute(TEXT(
+		"CREATE TABLE IF NOT EXISTS party_members ("
+		"    id           INTEGER PRIMARY KEY AUTOINCREMENT,"
+		"    party_id     INTEGER NOT NULL,"
+		"    player_id    TEXT NOT NULL UNIQUE,"
+		"    display_name TEXT NOT NULL DEFAULT '',"
+		"    role         INTEGER NOT NULL DEFAULT 1,"
+		"    is_ready     INTEGER NOT NULL DEFAULT 0,"
+		"    hero_type    INTEGER NOT NULL DEFAULT 3,"
+		"    joined_at    DATETIME DEFAULT CURRENT_TIMESTAMP"
+		");"
+	)))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ CREATE TABLE party_members 실패 | 에러: %s"), *Database->GetLastError());
+		return false;
+	}
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite]   CREATE TABLE party_members ✓"));
+
+	// ── party_members 인덱스 ──
+	if (!Database->Execute(TEXT("CREATE INDEX IF NOT EXISTS idx_party_members_party_id ON party_members(party_id);")))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ INDEX idx_party_members_party_id 실패 | 에러: %s"), *Database->GetLastError());
+		return false;
+	}
+	if (!Database->Execute(TEXT("CREATE INDEX IF NOT EXISTS idx_party_members_player_id ON party_members(player_id);")))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ INDEX idx_party_members_player_id 실패 | 에러: %s"), *Database->GetLastError());
+		return false;
+	}
+
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ InitializeSchema 완료 (테이블 7개, 인덱스 7개)"));
 	return true;
 }
 
@@ -2105,6 +2174,111 @@ bool UHellunaSQLiteSubsystem::RecoverFromCrash(const FString& PlayerId)
 
 
 // ════════════════════════════════════════════════════════════════════════════════
+// [Fix36] 출격 상태 추적 (독립 Loadout 영속성)
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 📌 목적:
+//   Loadout 존재 여부가 아닌 별도 deploy_state 테이블로 크래시 감지
+//   → Loadout이 DB에 남아있어도 정상 (독립 영속성)
+//   → is_deployed=true + 게임 결과 없음 = 크래시
+//
+// ════════════════════════════════════════════════════════════════════════════════
+
+// ──────────────────────────────────────────────────────────────
+// SetPlayerDeployed — 출격 상태 설정/해제
+// ──────────────────────────────────────────────────────────────
+bool UHellunaSQLiteSubsystem::SetPlayerDeployed(const FString& PlayerId, bool bDeployed)
+{
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] [Fix36] ▶ SetPlayerDeployed | PlayerId=%s | bDeployed=%s"),
+		*PlayerId, bDeployed ? TEXT("true") : TEXT("false"));
+
+	if (PlayerId.IsEmpty())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] [Fix36] ✗ SetPlayerDeployed: PlayerId가 비어있음"));
+		return false;
+	}
+
+	if (!IsDatabaseReady())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] [Fix36] ✗ SetPlayerDeployed: DB가 준비되지 않음"));
+		return false;
+	}
+
+	// INSERT OR REPLACE (UPSERT): player_id가 PRIMARY KEY이므로 존재하면 UPDATE, 없으면 INSERT
+	FSQLitePreparedStatement Statement;
+	Statement.Create(*Database,
+		TEXT("INSERT OR REPLACE INTO player_deploy_state (player_id, is_deployed, deployed_at) VALUES (?, ?, CURRENT_TIMESTAMP);"),
+		ESQLitePreparedStatementFlags::Persistent);
+
+	if (!Statement.IsValid())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] [Fix36] ✗ SetPlayerDeployed: PrepareStatement 실패 | 에러: %s"), *Database->GetLastError());
+		return false;
+	}
+
+	Statement.SetBindingValueByIndex(1, PlayerId);
+	Statement.SetBindingValueByIndex(2, static_cast<int64>(bDeployed ? 1 : 0));
+
+	if (!Statement.Execute())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] [Fix36] ✗ SetPlayerDeployed: Execute 실패 | 에러: %s"), *Database->GetLastError());
+		return false;
+	}
+
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] [Fix36] ✓ SetPlayerDeployed 완료 | PlayerId=%s | is_deployed=%d"),
+		*PlayerId, bDeployed ? 1 : 0);
+	return true;
+}
+
+// ──────────────────────────────────────────────────────────────
+// IsPlayerDeployed — 출격 중인지 확인
+// ──────────────────────────────────────────────────────────────
+bool UHellunaSQLiteSubsystem::IsPlayerDeployed(const FString& PlayerId)
+{
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] [Fix36] ▶ IsPlayerDeployed | PlayerId=%s"), *PlayerId);
+
+	if (PlayerId.IsEmpty())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] [Fix36] ✗ IsPlayerDeployed: PlayerId가 비어있음"));
+		return false;
+	}
+
+	if (!IsDatabaseReady())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] [Fix36] ✗ IsPlayerDeployed: DB가 준비되지 않음"));
+		return false;
+	}
+
+	FSQLitePreparedStatement Statement;
+	Statement.Create(*Database,
+		TEXT("SELECT is_deployed FROM player_deploy_state WHERE player_id = ?;"),
+		ESQLitePreparedStatementFlags::Persistent);
+
+	if (!Statement.IsValid())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] [Fix36] ✗ IsPlayerDeployed: PrepareStatement 실패 | 에러: %s"), *Database->GetLastError());
+		return false;
+	}
+
+	Statement.SetBindingValueByIndex(1, PlayerId);
+
+	if (Statement.Step() == ESQLitePreparedStatementStepResult::Row)
+	{
+		int64 IsDeployed = 0;
+		Statement.GetColumnValueByIndex(0, IsDeployed);
+		const bool bResult = (IsDeployed != 0);
+		UE_LOG(LogHelluna, Log, TEXT("[SQLite] [Fix36] ✓ IsPlayerDeployed: %s | PlayerId=%s"),
+			bResult ? TEXT("출격 중") : TEXT("로비"), *PlayerId);
+		return bResult;
+	}
+
+	// 행 없음 = 한 번도 출격한 적 없음 → false
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] [Fix36] ✓ IsPlayerDeployed: 기록 없음 (미출격) | PlayerId=%s"), *PlayerId);
+	return false;
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════════
 // 게임 캐릭터 중복 방지 (active_game_characters)
 // ════════════════════════════════════════════════════════════════════════════════
 
@@ -2639,3 +2813,766 @@ static FAutoConsoleCommand CmdDebugSQLiteLoadout(
 );
 
 #endif // !UE_BUILD_SHIPPING
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 12a] 파티 시스템 CRUD
+// ════════════════════════════════════════════════════════════════════════════════
+
+// ──────────────────────────────────────────────────────────────
+// CreateParty — 파티 생성 (party_groups + party_members Leader 동시 INSERT)
+// ──────────────────────────────────────────────────────────────
+int32 UHellunaSQLiteSubsystem::CreateParty(const FString& LeaderId, const FString& DisplayName, const FString& PartyCode)
+{
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ▶ CreateParty | Leader=%s | Code=%s"), *LeaderId, *PartyCode);
+
+	if (LeaderId.IsEmpty() || PartyCode.IsEmpty())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ CreateParty: LeaderId 또는 PartyCode가 비어있음"));
+		return 0;
+	}
+
+	if (!IsDatabaseReady())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ CreateParty: DB가 준비되지 않음"));
+		return 0;
+	}
+
+	// 트랜잭션 시작
+	if (!Database->Execute(TEXT("BEGIN IMMEDIATE TRANSACTION;")))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ CreateParty: BEGIN 실패 | 에러: %s"), *Database->GetLastError());
+		return 0;
+	}
+
+	// (1) party_groups INSERT
+	{
+		FSQLitePreparedStatement InsertGroup = Database->PrepareStatement(
+			TEXT("INSERT INTO party_groups (party_code, leader_id) VALUES (?1, ?2);"));
+		if (!InsertGroup.IsValid())
+		{
+			UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ CreateParty: INSERT party_groups Prepare 실패 | 에러: %s"), *Database->GetLastError());
+			Database->Execute(TEXT("ROLLBACK;"));
+			return 0;
+		}
+		InsertGroup.SetBindingValueByIndex(1, PartyCode);
+		InsertGroup.SetBindingValueByIndex(2, LeaderId);
+		if (!InsertGroup.Execute())
+		{
+			UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ CreateParty: INSERT party_groups 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
+			Database->Execute(TEXT("ROLLBACK;"));
+			return 0;
+		}
+	}
+
+	// (2) 생성된 PartyId 가져오기
+	int32 PartyId = 0;
+	{
+		FSQLitePreparedStatement LastId = Database->PrepareStatement(TEXT("SELECT last_insert_rowid();"));
+		if (LastId.IsValid())
+		{
+			LastId.Execute([&PartyId](const FSQLitePreparedStatement& Stmt) -> ESQLitePreparedStatementExecuteRowResult
+			{
+				int64 Id = 0;
+				Stmt.GetColumnValueByIndex(0, Id);
+				PartyId = static_cast<int32>(Id);
+				return ESQLitePreparedStatementExecuteRowResult::Stop;
+			});
+		}
+	}
+
+	if (PartyId <= 0)
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ CreateParty: last_insert_rowid 실패 — ROLLBACK"));
+		Database->Execute(TEXT("ROLLBACK;"));
+		return 0;
+	}
+
+	// (3) party_members INSERT (Leader)
+	{
+		FSQLitePreparedStatement InsertMember = Database->PrepareStatement(
+			TEXT("INSERT INTO party_members (party_id, player_id, display_name, role, is_ready, hero_type) VALUES (?1, ?2, ?3, ?4, ?5, ?6);"));
+		if (!InsertMember.IsValid())
+		{
+			UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ CreateParty: INSERT party_members Prepare 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
+			Database->Execute(TEXT("ROLLBACK;"));
+			return 0;
+		}
+		InsertMember.SetBindingValueByIndex(1, PartyId);
+		InsertMember.SetBindingValueByIndex(2, LeaderId);
+		InsertMember.SetBindingValueByIndex(3, DisplayName);
+		InsertMember.SetBindingValueByIndex(4, static_cast<int32>(EHellunaPartyRole::Leader));
+		InsertMember.SetBindingValueByIndex(5, 0); // not ready
+		InsertMember.SetBindingValueByIndex(6, 3); // None
+		if (!InsertMember.Execute())
+		{
+			UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ CreateParty: INSERT party_members 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
+			Database->Execute(TEXT("ROLLBACK;"));
+			return 0;
+		}
+	}
+
+	// 커밋
+	if (!Database->Execute(TEXT("COMMIT;")))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ CreateParty: COMMIT 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
+		Database->Execute(TEXT("ROLLBACK;"));
+		return 0;
+	}
+
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ CreateParty 완료 | PartyId=%d | Code=%s | Leader=%s"), PartyId, *PartyCode, *LeaderId);
+	return PartyId;
+}
+
+// ──────────────────────────────────────────────────────────────
+// JoinParty — 파티 참가
+// ──────────────────────────────────────────────────────────────
+bool UHellunaSQLiteSubsystem::JoinParty(int32 PartyId, const FString& PlayerId, const FString& DisplayName)
+{
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ▶ JoinParty | PartyId=%d | PlayerId=%s"), PartyId, *PlayerId);
+
+	if (PartyId <= 0 || PlayerId.IsEmpty())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ JoinParty: 잘못된 인자 | PartyId=%d | PlayerId=%s"), PartyId, *PlayerId);
+		return false;
+	}
+
+	if (!IsDatabaseReady())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ JoinParty: DB가 준비되지 않음"));
+		return false;
+	}
+
+	if (!Database->Execute(TEXT("BEGIN IMMEDIATE TRANSACTION;")))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ JoinParty: BEGIN 실패 | 에러: %s"), *Database->GetLastError());
+		return false;
+	}
+
+	FSQLitePreparedStatement InsertStmt = Database->PrepareStatement(
+		TEXT("INSERT INTO party_members (party_id, player_id, display_name, role, is_ready, hero_type) VALUES (?1, ?2, ?3, ?4, ?5, ?6);"));
+	if (!InsertStmt.IsValid())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ JoinParty: Prepare 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
+		Database->Execute(TEXT("ROLLBACK;"));
+		return false;
+	}
+	InsertStmt.SetBindingValueByIndex(1, PartyId);
+	InsertStmt.SetBindingValueByIndex(2, PlayerId);
+	InsertStmt.SetBindingValueByIndex(3, DisplayName);
+	InsertStmt.SetBindingValueByIndex(4, static_cast<int32>(EHellunaPartyRole::Member));
+	InsertStmt.SetBindingValueByIndex(5, 0); // not ready
+	InsertStmt.SetBindingValueByIndex(6, 3); // None
+	if (!InsertStmt.Execute())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ JoinParty: INSERT 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
+		Database->Execute(TEXT("ROLLBACK;"));
+		return false;
+	}
+
+	if (!Database->Execute(TEXT("COMMIT;")))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ JoinParty: COMMIT 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
+		Database->Execute(TEXT("ROLLBACK;"));
+		return false;
+	}
+
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ JoinParty 완료 | PartyId=%d | PlayerId=%s"), PartyId, *PlayerId);
+	return true;
+}
+
+// ──────────────────────────────────────────────────────────────
+// LeaveParty — 파티 탈퇴 (마지막 멤버면 파티 자체 삭제)
+// ──────────────────────────────────────────────────────────────
+bool UHellunaSQLiteSubsystem::LeaveParty(const FString& PlayerId)
+{
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ▶ LeaveParty | PlayerId=%s"), *PlayerId);
+
+	if (PlayerId.IsEmpty())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ LeaveParty: PlayerId가 비어있음"));
+		return false;
+	}
+
+	if (!IsDatabaseReady())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ LeaveParty: DB가 준비되지 않음"));
+		return false;
+	}
+
+	// 먼저 파티 ID 확인
+	const int32 PartyId = GetPlayerPartyId(PlayerId);
+	if (PartyId <= 0)
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[SQLite] LeaveParty: 플레이어가 파티에 속하지 않음 | PlayerId=%s"), *PlayerId);
+		return true; // 이미 탈퇴 상태 → 성공으로 처리
+	}
+
+	if (!Database->Execute(TEXT("BEGIN IMMEDIATE TRANSACTION;")))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ LeaveParty: BEGIN 실패 | 에러: %s"), *Database->GetLastError());
+		return false;
+	}
+
+	// (1) party_members에서 해당 플레이어 DELETE
+	{
+		FSQLitePreparedStatement DeleteStmt = Database->PrepareStatement(
+			TEXT("DELETE FROM party_members WHERE player_id = ?1;"));
+		if (!DeleteStmt.IsValid())
+		{
+			UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ LeaveParty: DELETE Prepare 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
+			Database->Execute(TEXT("ROLLBACK;"));
+			return false;
+		}
+		DeleteStmt.SetBindingValueByIndex(1, PlayerId);
+		if (!DeleteStmt.Execute())
+		{
+			UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ LeaveParty: DELETE 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
+			Database->Execute(TEXT("ROLLBACK;"));
+			return false;
+		}
+	}
+
+	// (2) 남은 멤버 수 확인 — 0이면 파티 삭제
+	int64 RemainingCount = 0;
+	{
+		FSQLitePreparedStatement CountStmt = Database->PrepareStatement(
+			TEXT("SELECT COUNT(*) FROM party_members WHERE party_id = ?1;"));
+		if (CountStmt.IsValid())
+		{
+			CountStmt.SetBindingValueByIndex(1, PartyId);
+			CountStmt.Execute([&RemainingCount](const FSQLitePreparedStatement& Stmt) -> ESQLitePreparedStatementExecuteRowResult
+			{
+				Stmt.GetColumnValueByIndex(0, RemainingCount);
+				return ESQLitePreparedStatementExecuteRowResult::Stop;
+			});
+		}
+	}
+
+	if (RemainingCount <= 0)
+	{
+		// 파티 삭제
+		FSQLitePreparedStatement DeleteGroup = Database->PrepareStatement(
+			TEXT("DELETE FROM party_groups WHERE id = ?1;"));
+		if (DeleteGroup.IsValid())
+		{
+			DeleteGroup.SetBindingValueByIndex(1, PartyId);
+			DeleteGroup.Execute();
+		}
+		UE_LOG(LogHelluna, Log, TEXT("[SQLite]   마지막 멤버 탈퇴 → party_groups 삭제 | PartyId=%d"), PartyId);
+	}
+
+	if (!Database->Execute(TEXT("COMMIT;")))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ LeaveParty: COMMIT 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
+		Database->Execute(TEXT("ROLLBACK;"));
+		return false;
+	}
+
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ LeaveParty 완료 | PlayerId=%s | PartyId=%d | 남은멤버=%lld"), *PlayerId, PartyId, RemainingCount);
+	return true;
+}
+
+// ──────────────────────────────────────────────────────────────
+// DisbandParty — 파티 강제 해산
+// ──────────────────────────────────────────────────────────────
+bool UHellunaSQLiteSubsystem::DisbandParty(int32 PartyId)
+{
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ▶ DisbandParty | PartyId=%d"), PartyId);
+
+	if (PartyId <= 0)
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ DisbandParty: 잘못된 PartyId=%d"), PartyId);
+		return false;
+	}
+
+	if (!IsDatabaseReady())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ DisbandParty: DB가 준비되지 않음"));
+		return false;
+	}
+
+	if (!Database->Execute(TEXT("BEGIN IMMEDIATE TRANSACTION;")))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ DisbandParty: BEGIN 실패 | 에러: %s"), *Database->GetLastError());
+		return false;
+	}
+
+	// (1) party_members 전부 삭제
+	{
+		FSQLitePreparedStatement DeleteMembers = Database->PrepareStatement(
+			TEXT("DELETE FROM party_members WHERE party_id = ?1;"));
+		if (!DeleteMembers.IsValid())
+		{
+			Database->Execute(TEXT("ROLLBACK;"));
+			return false;
+		}
+		DeleteMembers.SetBindingValueByIndex(1, PartyId);
+		if (!DeleteMembers.Execute())
+		{
+			Database->Execute(TEXT("ROLLBACK;"));
+			return false;
+		}
+	}
+
+	// (2) party_groups 삭제
+	{
+		FSQLitePreparedStatement DeleteGroup = Database->PrepareStatement(
+			TEXT("DELETE FROM party_groups WHERE id = ?1;"));
+		if (!DeleteGroup.IsValid())
+		{
+			Database->Execute(TEXT("ROLLBACK;"));
+			return false;
+		}
+		DeleteGroup.SetBindingValueByIndex(1, PartyId);
+		if (!DeleteGroup.Execute())
+		{
+			Database->Execute(TEXT("ROLLBACK;"));
+			return false;
+		}
+	}
+
+	if (!Database->Execute(TEXT("COMMIT;")))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ DisbandParty: COMMIT 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
+		Database->Execute(TEXT("ROLLBACK;"));
+		return false;
+	}
+
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ DisbandParty 완료 | PartyId=%d"), PartyId);
+	return true;
+}
+
+// ──────────────────────────────────────────────────────────────
+// FindPartyByCode — 파티 코드로 ID 조회
+// ──────────────────────────────────────────────────────────────
+int32 UHellunaSQLiteSubsystem::FindPartyByCode(const FString& PartyCode)
+{
+	UE_LOG(LogHelluna, Verbose, TEXT("[SQLite] FindPartyByCode | Code=%s"), *PartyCode);
+
+	if (PartyCode.IsEmpty() || !IsDatabaseReady())
+	{
+		return 0;
+	}
+
+	FSQLitePreparedStatement Stmt = Database->PrepareStatement(
+		TEXT("SELECT id FROM party_groups WHERE party_code = ?1;"));
+	if (!Stmt.IsValid())
+	{
+		return 0;
+	}
+	Stmt.SetBindingValueByIndex(1, PartyCode);
+
+	int32 PartyId = 0;
+	Stmt.Execute([&PartyId](const FSQLitePreparedStatement& S) -> ESQLitePreparedStatementExecuteRowResult
+	{
+		int64 Id = 0;
+		S.GetColumnValueByIndex(0, Id);
+		PartyId = static_cast<int32>(Id);
+		return ESQLitePreparedStatementExecuteRowResult::Stop;
+	});
+
+	UE_LOG(LogHelluna, Verbose, TEXT("[SQLite] FindPartyByCode: Code=%s → PartyId=%d"), *PartyCode, PartyId);
+	return PartyId;
+}
+
+// ──────────────────────────────────────────────────────────────
+// GetPartyMemberCount — 파티 멤버 수
+// ──────────────────────────────────────────────────────────────
+int32 UHellunaSQLiteSubsystem::GetPartyMemberCount(int32 PartyId)
+{
+	if (PartyId <= 0 || !IsDatabaseReady())
+	{
+		return 0;
+	}
+
+	FSQLitePreparedStatement Stmt = Database->PrepareStatement(
+		TEXT("SELECT COUNT(*) FROM party_members WHERE party_id = ?1;"));
+	if (!Stmt.IsValid())
+	{
+		return 0;
+	}
+	Stmt.SetBindingValueByIndex(1, PartyId);
+
+	int64 Count = 0;
+	Stmt.Execute([&Count](const FSQLitePreparedStatement& S) -> ESQLitePreparedStatementExecuteRowResult
+	{
+		S.GetColumnValueByIndex(0, Count);
+		return ESQLitePreparedStatementExecuteRowResult::Stop;
+	});
+
+	return static_cast<int32>(Count);
+}
+
+// ──────────────────────────────────────────────────────────────
+// GetPlayerPartyId — 플레이어의 파티 ID
+// ──────────────────────────────────────────────────────────────
+int32 UHellunaSQLiteSubsystem::GetPlayerPartyId(const FString& PlayerId)
+{
+	if (PlayerId.IsEmpty() || !IsDatabaseReady())
+	{
+		return 0;
+	}
+
+	FSQLitePreparedStatement Stmt = Database->PrepareStatement(
+		TEXT("SELECT party_id FROM party_members WHERE player_id = ?1;"));
+	if (!Stmt.IsValid())
+	{
+		return 0;
+	}
+	Stmt.SetBindingValueByIndex(1, PlayerId);
+
+	int32 PartyId = 0;
+	Stmt.Execute([&PartyId](const FSQLitePreparedStatement& S) -> ESQLitePreparedStatementExecuteRowResult
+	{
+		int64 Id = 0;
+		S.GetColumnValueByIndex(0, Id);
+		PartyId = static_cast<int32>(Id);
+		return ESQLitePreparedStatementExecuteRowResult::Stop;
+	});
+
+	return PartyId;
+}
+
+// ──────────────────────────────────────────────────────────────
+// LoadPartyInfo — 파티 전체 정보 로드 (그룹 + 멤버 JOIN)
+// ──────────────────────────────────────────────────────────────
+FHellunaPartyInfo UHellunaSQLiteSubsystem::LoadPartyInfo(int32 PartyId)
+{
+	FHellunaPartyInfo Info;
+
+	if (PartyId <= 0 || !IsDatabaseReady())
+	{
+		return Info;
+	}
+
+	// (1) party_groups에서 코드, 리더 조회
+	{
+		FSQLitePreparedStatement GroupStmt = Database->PrepareStatement(
+			TEXT("SELECT party_code, leader_id FROM party_groups WHERE id = ?1;"));
+		if (!GroupStmt.IsValid())
+		{
+			return Info;
+		}
+		GroupStmt.SetBindingValueByIndex(1, PartyId);
+		GroupStmt.Execute([&Info, PartyId](const FSQLitePreparedStatement& S) -> ESQLitePreparedStatementExecuteRowResult
+		{
+			S.GetColumnValueByName(TEXT("party_code"), Info.PartyCode);
+			S.GetColumnValueByName(TEXT("leader_id"), Info.LeaderId);
+			Info.PartyId = PartyId;
+			return ESQLitePreparedStatementExecuteRowResult::Stop;
+		});
+	}
+
+	if (!Info.IsValid())
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[SQLite] LoadPartyInfo: PartyId=%d 존재하지 않음"), PartyId);
+		return Info;
+	}
+
+	// (2) party_members 조회 (joined_at 순서)
+	{
+		FSQLitePreparedStatement MemberStmt = Database->PrepareStatement(
+			TEXT("SELECT player_id, display_name, role, is_ready, hero_type FROM party_members WHERE party_id = ?1 ORDER BY joined_at ASC;"));
+		if (!MemberStmt.IsValid())
+		{
+			return Info;
+		}
+		MemberStmt.SetBindingValueByIndex(1, PartyId);
+		MemberStmt.Execute([&Info](const FSQLitePreparedStatement& S) -> ESQLitePreparedStatementExecuteRowResult
+		{
+			FHellunaPartyMemberInfo Member;
+			S.GetColumnValueByName(TEXT("player_id"), Member.PlayerId);
+			S.GetColumnValueByName(TEXT("display_name"), Member.DisplayName);
+
+			int32 RoleInt = 1;
+			S.GetColumnValueByName(TEXT("role"), RoleInt);
+			Member.Role = static_cast<EHellunaPartyRole>(FMath::Clamp(RoleInt, 0, 1));
+
+			int32 ReadyInt = 0;
+			S.GetColumnValueByName(TEXT("is_ready"), ReadyInt);
+			Member.bIsReady = (ReadyInt != 0);
+
+			S.GetColumnValueByName(TEXT("hero_type"), Member.SelectedHeroType);
+
+			Info.Members.Add(MoveTemp(Member));
+			return ESQLitePreparedStatementExecuteRowResult::Continue;
+		});
+	}
+
+	UE_LOG(LogHelluna, Verbose, TEXT("[SQLite] LoadPartyInfo: PartyId=%d | Code=%s | Members=%d"),
+		Info.PartyId, *Info.PartyCode, Info.Members.Num());
+	return Info;
+}
+
+// ──────────────────────────────────────────────────────────────
+// UpdateMemberReady — Ready 상태 업데이트
+// ──────────────────────────────────────────────────────────────
+bool UHellunaSQLiteSubsystem::UpdateMemberReady(const FString& PlayerId, bool bReady)
+{
+	if (PlayerId.IsEmpty() || !IsDatabaseReady())
+	{
+		return false;
+	}
+
+	FSQLitePreparedStatement Stmt = Database->PrepareStatement(
+		TEXT("UPDATE party_members SET is_ready = ?1 WHERE player_id = ?2;"));
+	if (!Stmt.IsValid())
+	{
+		return false;
+	}
+	Stmt.SetBindingValueByIndex(1, bReady ? 1 : 0);
+	Stmt.SetBindingValueByIndex(2, PlayerId);
+
+	if (!Stmt.Execute())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ UpdateMemberReady 실패 | PlayerId=%s | 에러: %s"), *PlayerId, *Database->GetLastError());
+		return false;
+	}
+
+	UE_LOG(LogHelluna, Verbose, TEXT("[SQLite] UpdateMemberReady: PlayerId=%s → %s"), *PlayerId, bReady ? TEXT("Ready") : TEXT("NotReady"));
+	return true;
+}
+
+// ──────────────────────────────────────────────────────────────
+// UpdateMemberHeroType — 영웅 타입 업데이트
+// ──────────────────────────────────────────────────────────────
+bool UHellunaSQLiteSubsystem::UpdateMemberHeroType(const FString& PlayerId, int32 HeroType)
+{
+	if (PlayerId.IsEmpty() || !IsDatabaseReady())
+	{
+		return false;
+	}
+
+	FSQLitePreparedStatement Stmt = Database->PrepareStatement(
+		TEXT("UPDATE party_members SET hero_type = ?1 WHERE player_id = ?2;"));
+	if (!Stmt.IsValid())
+	{
+		return false;
+	}
+	Stmt.SetBindingValueByIndex(1, HeroType);
+	Stmt.SetBindingValueByIndex(2, PlayerId);
+
+	if (!Stmt.Execute())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ UpdateMemberHeroType 실패 | PlayerId=%s | 에러: %s"), *PlayerId, *Database->GetLastError());
+		return false;
+	}
+
+	UE_LOG(LogHelluna, Verbose, TEXT("[SQLite] UpdateMemberHeroType: PlayerId=%s → HeroType=%d"), *PlayerId, HeroType);
+	return true;
+}
+
+// ──────────────────────────────────────────────────────────────
+// TransferLeadership — 리더십 이전
+// ──────────────────────────────────────────────────────────────
+bool UHellunaSQLiteSubsystem::TransferLeadership(int32 PartyId, const FString& NewLeaderId)
+{
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ▶ TransferLeadership | PartyId=%d | NewLeader=%s"), PartyId, *NewLeaderId);
+
+	if (PartyId <= 0 || NewLeaderId.IsEmpty() || !IsDatabaseReady())
+	{
+		return false;
+	}
+
+	if (!Database->Execute(TEXT("BEGIN IMMEDIATE TRANSACTION;")))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ TransferLeadership: BEGIN 실패 | 에러: %s"), *Database->GetLastError());
+		return false;
+	}
+
+	// (1) 기존 리더를 Member로
+	{
+		FSQLitePreparedStatement DemoteStmt = Database->PrepareStatement(
+			TEXT("UPDATE party_members SET role = ?1 WHERE party_id = ?2 AND role = ?3;"));
+		if (!DemoteStmt.IsValid())
+		{
+			Database->Execute(TEXT("ROLLBACK;"));
+			return false;
+		}
+		DemoteStmt.SetBindingValueByIndex(1, static_cast<int32>(EHellunaPartyRole::Member));
+		DemoteStmt.SetBindingValueByIndex(2, PartyId);
+		DemoteStmt.SetBindingValueByIndex(3, static_cast<int32>(EHellunaPartyRole::Leader));
+		if (!DemoteStmt.Execute())
+		{
+			Database->Execute(TEXT("ROLLBACK;"));
+			return false;
+		}
+	}
+
+	// (2) NewLeaderId를 Leader로
+	{
+		FSQLitePreparedStatement PromoteStmt = Database->PrepareStatement(
+			TEXT("UPDATE party_members SET role = ?1 WHERE player_id = ?2 AND party_id = ?3;"));
+		if (!PromoteStmt.IsValid())
+		{
+			Database->Execute(TEXT("ROLLBACK;"));
+			return false;
+		}
+		PromoteStmt.SetBindingValueByIndex(1, static_cast<int32>(EHellunaPartyRole::Leader));
+		PromoteStmt.SetBindingValueByIndex(2, NewLeaderId);
+		PromoteStmt.SetBindingValueByIndex(3, PartyId);
+		if (!PromoteStmt.Execute())
+		{
+			Database->Execute(TEXT("ROLLBACK;"));
+			return false;
+		}
+	}
+
+	// (3) party_groups.leader_id 갱신
+	{
+		FSQLitePreparedStatement UpdateGroup = Database->PrepareStatement(
+			TEXT("UPDATE party_groups SET leader_id = ?1 WHERE id = ?2;"));
+		if (!UpdateGroup.IsValid())
+		{
+			Database->Execute(TEXT("ROLLBACK;"));
+			return false;
+		}
+		UpdateGroup.SetBindingValueByIndex(1, NewLeaderId);
+		UpdateGroup.SetBindingValueByIndex(2, PartyId);
+		if (!UpdateGroup.Execute())
+		{
+			Database->Execute(TEXT("ROLLBACK;"));
+			return false;
+		}
+	}
+
+	if (!Database->Execute(TEXT("COMMIT;")))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ TransferLeadership: COMMIT 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
+		Database->Execute(TEXT("ROLLBACK;"));
+		return false;
+	}
+
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ TransferLeadership 완료 | PartyId=%d | NewLeader=%s"), PartyId, *NewLeaderId);
+	return true;
+}
+
+// ──────────────────────────────────────────────────────────────
+// ResetAllReadyStates — 파티 전원 Ready 리셋
+// ──────────────────────────────────────────────────────────────
+bool UHellunaSQLiteSubsystem::ResetAllReadyStates(int32 PartyId)
+{
+	if (PartyId <= 0 || !IsDatabaseReady())
+	{
+		return false;
+	}
+
+	FSQLitePreparedStatement Stmt = Database->PrepareStatement(
+		TEXT("UPDATE party_members SET is_ready = 0 WHERE party_id = ?1;"));
+	if (!Stmt.IsValid())
+	{
+		return false;
+	}
+	Stmt.SetBindingValueByIndex(1, PartyId);
+
+	if (!Stmt.Execute())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ ResetAllReadyStates 실패 | PartyId=%d | 에러: %s"), PartyId, *Database->GetLastError());
+		return false;
+	}
+
+	UE_LOG(LogHelluna, Verbose, TEXT("[SQLite] ResetAllReadyStates: PartyId=%d"), PartyId);
+	return true;
+}
+
+// ──────────────────────────────────────────────────────────────
+// IsPartyCodeUnique — 파티 코드 유니크 확인
+// ──────────────────────────────────────────────────────────────
+bool UHellunaSQLiteSubsystem::IsPartyCodeUnique(const FString& Code)
+{
+	if (Code.IsEmpty() || !IsDatabaseReady())
+	{
+		return false;
+	}
+
+	FSQLitePreparedStatement Stmt = Database->PrepareStatement(
+		TEXT("SELECT COUNT(*) FROM party_groups WHERE party_code = ?1;"));
+	if (!Stmt.IsValid())
+	{
+		return false;
+	}
+	Stmt.SetBindingValueByIndex(1, Code);
+
+	int64 Count = 0;
+	Stmt.Execute([&Count](const FSQLitePreparedStatement& S) -> ESQLitePreparedStatementExecuteRowResult
+	{
+		S.GetColumnValueByIndex(0, Count);
+		return ESQLitePreparedStatementExecuteRowResult::Stop;
+	});
+
+	return Count == 0;
+}
+
+// ──────────────────────────────────────────────────────────────
+// CleanupStaleParties — 오래된 파티 정리
+// ──────────────────────────────────────────────────────────────
+int32 UHellunaSQLiteSubsystem::CleanupStaleParties(int32 HoursOld)
+{
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ▶ CleanupStaleParties | HoursOld=%d"), HoursOld);
+
+	if (!IsDatabaseReady())
+	{
+		return 0;
+	}
+
+	if (!Database->Execute(TEXT("BEGIN IMMEDIATE TRANSACTION;")))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ CleanupStaleParties: BEGIN 실패 | 에러: %s"), *Database->GetLastError());
+		return 0;
+	}
+
+	// 오래된 파티 ID 수집
+	TArray<int32> StalePartyIds;
+	{
+		FSQLitePreparedStatement Stmt = Database->PrepareStatement(
+			TEXT("SELECT id FROM party_groups WHERE created_at < datetime('now', ?1);"));
+		if (!Stmt.IsValid())
+		{
+			Database->Execute(TEXT("ROLLBACK;"));
+			return 0;
+		}
+		FString TimeOffset = FString::Printf(TEXT("-%d hours"), HoursOld);
+		Stmt.SetBindingValueByIndex(1, TimeOffset);
+		Stmt.Execute([&StalePartyIds](const FSQLitePreparedStatement& S) -> ESQLitePreparedStatementExecuteRowResult
+		{
+			int64 Id = 0;
+			S.GetColumnValueByIndex(0, Id);
+			StalePartyIds.Add(static_cast<int32>(Id));
+			return ESQLitePreparedStatementExecuteRowResult::Continue;
+		});
+	}
+
+	// 각 파티의 멤버 + 그룹 삭제
+	for (int32 PId : StalePartyIds)
+	{
+		{
+			FSQLitePreparedStatement DelMembers = Database->PrepareStatement(
+				TEXT("DELETE FROM party_members WHERE party_id = ?1;"));
+			if (DelMembers.IsValid())
+			{
+				DelMembers.SetBindingValueByIndex(1, PId);
+				DelMembers.Execute();
+			}
+		}
+		{
+			FSQLitePreparedStatement DelGroup = Database->PrepareStatement(
+				TEXT("DELETE FROM party_groups WHERE id = ?1;"));
+			if (DelGroup.IsValid())
+			{
+				DelGroup.SetBindingValueByIndex(1, PId);
+				DelGroup.Execute();
+			}
+		}
+	}
+
+	if (!Database->Execute(TEXT("COMMIT;")))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ CleanupStaleParties: COMMIT 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
+		Database->Execute(TEXT("ROLLBACK;"));
+		return 0;
+	}
+
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ CleanupStaleParties 완료 | 삭제된 파티: %d개"), StalePartyIds.Num());
+	return StalePartyIds.Num();
+}
