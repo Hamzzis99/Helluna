@@ -611,14 +611,10 @@ void AHellunaLobbyGameMode::LoadLoadoutToComponent(AHellunaLobbyController* Lobb
 		return;
 	}
 
-	// ── player_loadout 삭제 (중복 방지) ──
-	// 복원 성공 시에만 삭제
-	// Logout 시 SaveComponentsToDatabase가 LoadoutComp 아이템을 Stash에 병합하므로
-	// DB에 player_loadout이 남아있으면 다음 로그인에서 크래시 복구가 중복 로드할 수 있음
-	if (SQLiteSubsystem->DeletePlayerLoadout(PlayerId))
-	{
-		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix23] player_loadout 삭제 완료 (중복 방지) | PlayerId=%s"), *PlayerId);
-	}
+	// [Fix35] player_loadout을 DB에 유지 — 타르코프 방식 per-interaction save
+	// 로비에 있는 동안 Stash+Loadout 모두 DB에 반영되어야 크래시 시 유실 없음
+	// 정리 시점: Logout → SaveComponentsToDatabase → DeletePlayerLoadout (Stash에 병합 후)
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix35] player_loadout DB 유지 (per-interaction save 대비) | PlayerId=%s"), *PlayerId);
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -712,6 +708,15 @@ void AHellunaLobbyGameMode::SaveComponentsToDatabase(AHellunaLobbyController* Lo
 	const bool bStashOk = SQLiteSubsystem->SavePlayerStash(PlayerId, FinalStashItems);
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] Stash SQLite 저장 %s | PlayerId=%s | 아이템 %d개"),
 		bStashOk ? TEXT("성공") : TEXT("실패"), *PlayerId, FinalStashItems.Num());
+
+	// [Fix35] Per-interaction save가 player_loadout에 남긴 데이터 정리
+	// Logout 시 Loadout 아이템은 이미 위에서 Stash에 병합 저장됨
+	// 삭제 안 하면 다음 PostLogin에서 false crash recovery 발생 (아이템 중복)
+	if (bStashOk)
+	{
+		SQLiteSubsystem->DeletePlayerLoadout(PlayerId);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix35] DeletePlayerLoadout 완료 (Logout 병합 후 정리) | PlayerId=%s"), *PlayerId);
+	}
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] SaveComponentsToDatabase 완료 | PlayerId=%s"), *PlayerId);
 }

@@ -189,6 +189,12 @@ void AHellunaLobbyController::Server_TransferItem_Implementation(int32 ItemEntry
 	const bool bSuccess = ExecuteTransfer(SourceComp, TargetComp, ItemEntryIndex, TargetGridIndex);
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_TransferItem %s | RepID=%d | Direction=%s | TargetGridIndex=%d"),
 		bSuccess ? TEXT("성공") : TEXT("실패"), ItemEntryIndex, *DirectionStr, TargetGridIndex);
+
+	// [Fix35] Per-interaction save
+	if (bSuccess)
+	{
+		SaveBothComponentsAfterInteraction();
+	}
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -342,6 +348,83 @@ void AHellunaLobbyController::Server_SwapTransferItem_Implementation(int32 RepID
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ── Server_SwapTransferItem %s ── RepID_A=%d ↔ RepID_B=%d | TargetGridIndex=%d"),
 		bSuccess ? TEXT("완료") : TEXT("실패"), RepID_A, RepID_B, TargetGridIndex);
+
+	// [Fix35] Per-interaction save
+	if (bSuccess)
+	{
+		SaveBothComponentsAfterInteraction();
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Fix35] SaveBothComponentsAfterInteraction — Transfer/Swap 성공 후 즉시 DB 저장
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 📌 목적:
+//   타르코프 방식 per-interaction save — 매 Transfer/Swap 성공 후 Stash+Loadout을
+//   SQLite에 즉시 저장하여 로비 서버 크래시 시 아이템 유실 방지
+//
+// 📌 저장 순서:
+//   Loadout 먼저 → Stash 나중 (Fix29-C 크래시 복구 순서 준수)
+//   → 크래시 시 Loadout이 DB에 보존되므로 다음 PostLogin에서 복구 가능
+//
+// 📌 Best-effort:
+//   저장 실패 시 로그만 출력, RPC 결과에 영향 없음
+//   (Logout 시 최종 저장이 있으므로 per-interaction은 추가 안전장치)
+//
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaLobbyController::SaveBothComponentsAfterInteraction()
+{
+	// ── DB 서브시스템 획득 (Deploy 흐름과 동일 패턴) ──
+	UGameInstance* GI = GetGameInstance();
+	UHellunaSQLiteSubsystem* DB = GI ? GI->GetSubsystem<UHellunaSQLiteSubsystem>() : nullptr;
+	if (!DB || !DB->IsDatabaseReady())
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] [Fix35] SaveAfterInteraction: DB 미준비 → 스킵"));
+		return;
+	}
+
+	// ── PlayerId 획득 ──
+	AHellunaLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr;
+	if (!LobbyGM)
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] [Fix35] SaveAfterInteraction: GameMode 캐스팅 실패 → 스킵"));
+		return;
+	}
+
+	const FString PlayerId = LobbyGM->GetLobbyPlayerId(this);
+	if (PlayerId.IsEmpty())
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] [Fix35] SaveAfterInteraction: PlayerId 비어있음 → 스킵"));
+		return;
+	}
+
+	// ── Loadout 먼저 저장 (Fix29-C 크래시 복구 순서) ──
+	if (LoadoutInventoryComponent)
+	{
+		TArray<FInv_SavedItemData> LoadoutItems = LoadoutInventoryComponent->CollectInventoryDataForSave();
+		if (LoadoutItems.Num() > 0)
+		{
+			const bool bLoadoutOk = DB->SavePlayerLoadout(PlayerId, LoadoutItems);
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] [Fix35] SavePlayerLoadout %s | %d개 | PlayerId=%s"),
+				bLoadoutOk ? TEXT("성공") : TEXT("실패"), LoadoutItems.Num(), *PlayerId);
+		}
+		else
+		{
+			// Loadout이 비어있으면 기존 player_loadout 삭제 (false crash recovery 방지)
+			DB->DeletePlayerLoadout(PlayerId);
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] [Fix35] Loadout 비어있음 → DeletePlayerLoadout | PlayerId=%s"), *PlayerId);
+		}
+	}
+
+	// ── Stash 저장 ──
+	if (StashInventoryComponent)
+	{
+		TArray<FInv_SavedItemData> StashItems = StashInventoryComponent->CollectInventoryDataForSave();
+		const bool bStashOk = DB->SavePlayerStash(PlayerId, StashItems);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] [Fix35] SavePlayerStash %s | %d개 | PlayerId=%s"),
+			bStashOk ? TEXT("성공") : TEXT("실패"), StashItems.Num(), *PlayerId);
+	}
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
