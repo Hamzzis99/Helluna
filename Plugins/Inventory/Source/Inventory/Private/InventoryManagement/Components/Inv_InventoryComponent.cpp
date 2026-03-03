@@ -3374,18 +3374,29 @@ bool UInv_InventoryComponent::TransferItemTo(int32 ItemIndex, UInv_InventoryComp
 	// ── 4-1) [Fix31] 새 Entry에 TargetGridIndex 설정 → 리플리케이션으로 클라이언트가 해당 위치에 배치 ──
 	if (TargetGridIndex != INDEX_NONE)
 	{
-		for (FInv_InventoryEntry& Entry : TargetComp->InventoryList.Entries)
+		bool bFound = false;
+		for (int32 i = 0; i < TargetComp->InventoryList.Entries.Num(); ++i)
 		{
+			FInv_InventoryEntry& Entry = TargetComp->InventoryList.Entries[i];
 			if (Entry.Item == NewItem)
 			{
 				Entry.GridIndex = TargetGridIndex;
 				Entry.GridCategory = SourceGridCategory;
 				TargetComp->InventoryList.MarkItemDirty(Entry);
-				UE_LOG(LogTemp, Log, TEXT("[InvComp] TransferItemTo: [Fix31] Entry.GridIndex=%d, GridCategory=%d 설정 완료"),
-					TargetGridIndex, SourceGridCategory);
+				UE_LOG(LogTemp, Warning, TEXT("[InvComp-Fix31진단] TransferItemTo: Entry[%d] GridIndex=%d→%d, GridCategory=%d 설정 완료 | Target=%s"),
+					i, Entry.GridIndex, TargetGridIndex, SourceGridCategory, *TargetComp->GetName());
+				bFound = true;
 				break;
 			}
 		}
+		if (!bFound)
+		{
+			UE_LOG(LogTemp, Error, TEXT("[InvComp-Fix31진단] TransferItemTo: NewItem을 TargetComp에서 찾지 못함! TargetGridIndex=%d"), TargetGridIndex);
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[InvComp-Fix31진단] TransferItemTo: TargetGridIndex=INDEX_NONE → 자동 배치"));
 	}
 
 	// ── 5) Source에서 제거 ──

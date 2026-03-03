@@ -29,6 +29,18 @@ void UInv_InventoryGrid::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
 
+	// [Fix32] Invalid ItemCategory 자동 바인딩 차단 — bSkipAutoInit과 무관하게 최우선 검사
+	// Fix26의 SetInventoryComponent 차단은 명시적 바인딩만 막음, 자동 바인딩(아래)은 미검사였음
+	// 원인: BP에서 Inv_InventoryGrid를 배치했으나 ItemCategory를 설정하지 않아 가비지 값(4) 발생
+	if (static_cast<uint8>(ItemCategory) > static_cast<uint8>(EInv_ItemCategory::None))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[InventoryGrid-GHOST] NativeOnInit 차단 | this=%p | ItemCategory=%d | Name=%s | Outer=%s | bSkipAutoInit=%s"),
+			this, (int32)ItemCategory, *GetName(),
+			GetOuter() ? *GetOuter()->GetName() : TEXT("NULL"),
+			bSkipAutoInit ? TEXT("true") : TEXT("false"));
+		return;  // ConstructGrid + 자동 바인딩 모두 차단
+	}
+
 	// ⭐ [Phase 4 Lobby] bSkipAutoInit=true이면 ConstructGrid + 자동 바인딩 모두 스킵
 	// 로비 듀얼 Grid에서는 SetInventoryComponent()에서 ConstructGrid를 지연 호출
 	// 이유: 로비에서는 CanvasPanel(BindWidget)이 NativeOnInitialized 시점에 아직 nullptr일 수 있음
@@ -1935,6 +1947,10 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 	UE_LOG(LogTemp, Warning, TEXT("[AddItem] 🔍 1단계: EntryIndex=%d 로 검색 시작..."), EntryIndex);
 #endif
 
+	// [Fix34] Stage 2.1: EntryIndex 매칭 + Item 포인터 검증
+	// FastArray 인덱스 시프트 (서버 RemoveEntry 컴팩션 vs 클라이언트 비컴팩션) 으로 인해
+	// 클라이언트의 SlottedItem이 stale EntryIndex를 가질 수 있음.
+	// Item 포인터로 검증하여 다른 아이템이면 스킵 (기존 비주얼 보존!)
 	for (const auto& [Index, SlottedItem] : SlottedItems)
 	{
 		if (!IsValid(SlottedItem)) continue;
@@ -1957,7 +1973,22 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 		// ⭐ EntryIndex로 매칭!
 		if (SlotEntryIndex == EntryIndex)
 		{
-			// ✅ EntryIndex 매칭 발견! 스택 카운트만 업데이트
+			// [Fix34] Item 포인터 검증: 같은 EntryIndex라도 다른 아이템이면 스킵
+			// 서버 RemoveEntry() → EntryIt.RemoveCurrent() 가 배열을 컴팩션하지만
+			// 클라이언트는 hole을 유지 → 인덱스 불일치 발생 가능
+			// 이때 기존 비주얼을 삭제하면 안 됨 (아이템 소실!)
+			if (GridSlots.IsValidIndex(Index))
+			{
+				UInv_InventoryItem* GridSlotItem = GridSlots[Index]->GetInventoryItem().Get();
+				if (GridSlotItem != Item)
+				{
+					UE_LOG(LogTemp, Warning, TEXT("[AddItem] [Fix34] EntryIndex=%d 매칭 but Item 포인터 불일치 (SlottedItem[%d]: %p vs 수신: %p) → 인덱스 시프트 감지, 기존 비주얼 보존"),
+						EntryIndex, Index, GridSlotItem, Item);
+					continue; // 다른 아이템 → 이 슬롯 건너뜀, 비주얼 보존!
+				}
+			}
+
+			// ✅ EntryIndex + Item 포인터 모두 매칭 → 정상 스택 업데이트
 			int32 NewStackCount = Item->GetTotalStackCount();
 			int32 OldStackCount = GridSlots[Index]->GetStackCount();
 
@@ -1980,6 +2011,9 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 			return; // ⭐ 새 슬롯 추가 필요 없음!
 		}
 	}
+
+	// [Fix34] 기존 비주얼은 절대 삭제하지 않음 (Fix33의 RemoveItemFromGrid 제거)
+	// FastArray 인덱스 시프트로 인한 stale EntryIndex는 Stage 2.2 포인터 매칭에서 교정됨
 
 #if INV_DEBUG_WIDGET
 	// ⚠️ 1단계 검색 실패!
@@ -2008,6 +2042,15 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 			if (IsValid(SlottedItem))
 			{
 				SlottedItem->UpdateStackCount(NewStackCount);
+
+				// [Fix34] EntryIndex 교정: FastArray 인덱스 시프트 후 리플리케이션 보정 수신 시
+				if (SlottedItem->GetEntryIndex() != EntryIndex)
+				{
+					UE_LOG(LogTemp, Warning, TEXT("[AddItem] [Fix34] Stage 2.2: EntryIndex 교정 %d → %d (Item=%s, GridIndex=%d)"),
+						SlottedItem->GetEntryIndex(), EntryIndex,
+						*Item->GetItemManifest().GetItemType().ToString(), Index);
+					SlottedItem->SetEntryIndex(EntryIndex);
+				}
 			}
 
 #if INV_DEBUG_WIDGET
@@ -2030,7 +2073,12 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 		{
 			int32 SavedGridIndex = InventoryList.Entries[EntryIndex].GridIndex;
 			uint8 SavedGridCategory = InventoryList.Entries[EntryIndex].GridCategory;
-			
+
+			// [Fix31진단] Stage 2.4 조건 체크 (always-on)
+			UE_LOG(LogTemp, Warning, TEXT("[AddItem-Stage2.4] Entry[%d]: SavedGridIndex=%d, SavedGridCategory=%d, ItemCategory=%d, GridSlotsNum=%d, SlottedContains=%s"),
+				EntryIndex, SavedGridIndex, (int32)SavedGridCategory, (int32)ItemCategory, GridSlots.Num(),
+				SlottedItems.Contains(SavedGridIndex) ? TEXT("Y") : TEXT("N"));
+
 			// 이 Grid의 카테고리와 일치하고, GridIndex가 유효한 경우
 			if (SavedGridCategory == static_cast<uint8>(ItemCategory) &&
 				SavedGridIndex >= 0 &&
@@ -2056,6 +2104,15 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item, int32 EntryIndex)
 				UE_LOG(LogTemp, Warning, TEXT("========== [AddItem] 아이템 추가 완료 =========="));
 #endif
 				return;
+			}
+			else
+			{
+				// [Fix31진단] Stage 2.4 조건 실패 이유
+				UE_LOG(LogTemp, Warning, TEXT("[AddItem-Stage2.4] FAIL: CatMatch=%s, GridIdx>=0=%s, ValidIdx=%s, NotOccupied=%s"),
+					(SavedGridCategory == static_cast<uint8>(ItemCategory)) ? TEXT("Y") : TEXT("N"),
+					(SavedGridIndex >= 0) ? TEXT("Y") : TEXT("N"),
+					GridSlots.IsValidIndex(SavedGridIndex) ? TEXT("Y") : TEXT("N"),
+					!SlottedItems.Contains(SavedGridIndex) ? TEXT("Y") : TEXT("N"));
 			}
 		}
 	}
@@ -2862,8 +2919,12 @@ void UInv_InventoryGrid::OnGridSlotClicked(int32 GridIndex, const FPointerEvent&
 
 		// [Fix20] 패널 간 드래그 앤 드롭: 상대 Grid에 HoverItem이 있으면 전송 (빈 셀에 단방향)
 		// [Fix31] GridIndex를 TargetGridIndex로 전달 → 서버가 해당 위치에 배치
-		UE_LOG(LogTemp, Warning, TEXT("[GridSlotClick진단] TryCrossGridSwap 실패 → TryTransferFromTargetGrid 폴백 | GridIndex=%d"), GridIndex);
-		TryTransferFromTargetGrid(GridIndex);
+		// [Fix32] ItemDropIndex 사용: hover 계산이 아이템 크기를 반영한 상단-좌측 위치
+		//         raw GridIndex는 클릭한 셀이므로 2x2+ 아이템에서 1셀 오프셋 발생
+		const int32 TransferTargetIndex = GridSlots.IsValidIndex(ItemDropIndex) ? ItemDropIndex : GridIndex;
+		UE_LOG(LogTemp, Warning, TEXT("[GridSlotClick진단] TryCrossGridSwap 실패 → TryTransferFromTargetGrid 폴백 | GridIndex=%d → TransferTargetIndex=%d (ItemDropIndex=%d)"),
+			GridIndex, TransferTargetIndex, ItemDropIndex);
+		TryTransferFromTargetGrid(TransferTargetIndex);
 		return;
 	} // 호버 아이템이 유효하다면 리턴
 	if (!GridSlots.IsValidIndex(ItemDropIndex)) return; // 아이템 드롭 인덱스가 유효하지 않다면 리턴
@@ -4778,9 +4839,10 @@ bool UInv_InventoryGrid::TryCrossGridSwap(int32 GridIndex)
 	RemoveItemFromGrid(ItemB, LookupIndex);
 
 	// ── 델리게이트 Broadcast → StashWidget이 Server RPC 호출 ──
-	// [Fix31] GridIndex = 이 Grid에서 ItemB가 있던 위치 = ItemA(HoverItem)가 갈 위치
-	UE_LOG(LogTemp, Log, TEXT("[CrossSwap] TryCrossGridSwap: RepID_A=%d ↔ RepID_B=%d | TargetGridIndex=%d"), RepID_A, RepID_B, GridIndex);
-	OnLobbyCrossSwapRequested.Broadcast(RepID_A, RepID_B, GridIndex);
+	// [Fix32] LookupIndex 사용: ItemB의 UpperLeft = ItemA가 실제로 배치될 위치
+	//         raw GridIndex는 클릭한 셀이므로 대형 아이템의 서브셀 클릭 시 오프셋 발생
+	UE_LOG(LogTemp, Log, TEXT("[CrossSwap] TryCrossGridSwap: RepID_A=%d ↔ RepID_B=%d | TargetGridIndex=%d (raw GridIndex=%d)"), RepID_A, RepID_B, LookupIndex, GridIndex);
+	OnLobbyCrossSwapRequested.Broadcast(RepID_A, RepID_B, LookupIndex);
 	return true;
 }
 
