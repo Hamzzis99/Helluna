@@ -135,6 +135,27 @@ public:
 	int32 GetLoggedInPlayerCount() const;
 
 	// ============================================
+	// 📌 서버 접속 IP 관리 (Phase 12c)
+	// ============================================
+
+	/**
+	 * 접속한 서버 IP (로그인 시 저장, Deploy/로비 복귀에 재사용)
+	 *
+	 * 예: "192.168.1.100" (포트 제외)
+	 * 설정 시점: HellunaServerConnectController::OnConnectButtonClicked
+	 * 사용 시점: Deploy → ClientTravel, 게임 종료 → 로비 복귀
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Connection")
+	FString ConnectedServerIP;
+
+	/**
+	 * 로비서버 포트 (기본 7777)
+	 * Deploy 후 로비 복귀 시 IP + 이 포트로 Travel
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Connection")
+	int32 LobbyServerPort = 7777;
+
+	// ============================================
 	// 로딩 화면 (Loading Screen)
 	// ============================================
 

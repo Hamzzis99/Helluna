@@ -2113,7 +2113,9 @@ void AHellunaBaseGameMode::LoadAndSendInventoryToClient(APlayerController* PC)
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
-// 📌 [Phase 3] CheckAndRecoverFromCrash — PostLogin 시 크래시 복구 체크
+// 📌 [Phase 3 / Fix36] CheckAndRecoverFromCrash — PostLogin 시 크래시 복구 체크
+// [Fix36] deploy_state 기반 크래시 감지. Loadout 존재 ≠ 크래시.
+// 크래시 시 Loadout은 출격 전 상태 그대로 보존 (Stash 이동 없음)
 // ════════════════════════════════════════════════════════════════════════════════
 void AHellunaBaseGameMode::CheckAndRecoverFromCrash(const FString& PlayerId)
 {
@@ -2129,17 +2131,12 @@ void AHellunaBaseGameMode::CheckAndRecoverFromCrash(const FString& PlayerId)
 		return;
 	}
 
-	if (DB->HasPendingLoadout(PlayerId))
+	// [Fix36] deploy_state 기반 크래시 감지
+	if (DB->IsPlayerDeployed(PlayerId))
 	{
-		UE_LOG(LogHelluna, Warning, TEXT("[Phase3] 크래시 복구 감지! Loadout 잔존 | PlayerId=%s"), *PlayerId);
-		if (DB->RecoverFromCrash(PlayerId))
-		{
-			UE_LOG(LogHelluna, Log, TEXT("[Phase3] 크래시 복구 완료 | PlayerId=%s"), *PlayerId);
-		}
-		else
-		{
-			UE_LOG(LogHelluna, Error, TEXT("[Phase3] 크래시 복구 실패! | PlayerId=%s"), *PlayerId);
-		}
+		UE_LOG(LogHelluna, Warning, TEXT("[Fix36] 크래시 감지: 출격 상태인데 게임서버에서 복귀하지 않음 | PlayerId=%s"), *PlayerId);
+		DB->SetPlayerDeployed(PlayerId, false);
+		UE_LOG(LogHelluna, Log, TEXT("[Fix36] deploy 상태 해제 완료 — Loadout은 출격 전 상태 보존 | PlayerId=%s"), *PlayerId);
 	}
 }
 

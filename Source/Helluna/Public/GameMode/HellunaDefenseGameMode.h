@@ -228,10 +228,35 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "Defense(게임)|GameEnd(게임종료)")
 	bool bGameEnded = false;
 
-	/** 로비 서버 URL (BP에서 설정) */
+	/** 로비 서버 URL (BP에서 설정, Phase 12f 이후 폴백용) */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|GameEnd(게임종료)",
-		meta = (DisplayName = "로비 서버 URL"))
+		meta = (DisplayName = "로비 서버 URL (Fallback)"))
 	FString LobbyServerURL;
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 12b] 서버 레지스트리 — 채널 JSON 파일 관리
+	// ════════════════════════════════════════════════════════════════
+
+	/** 현재 접속 플레이어 수 (레지스트리 갱신용) */
+	int32 CurrentPlayerCount = 0;
+
+	/** 서버 레지스트리 디렉토리 경로 */
+	FString GetRegistryDirectoryPath() const;
+
+	/** 현재 서버의 레지스트리 파일 경로 */
+	FString GetRegistryFilePath() const;
+
+	/** 현재 서버 포트 (커맨드라인 또는 World URL) */
+	int32 GetServerPort() const;
+
+	/** 레지스트리 JSON 파일 쓰기 */
+	void WriteRegistryFile(const FString& Status, int32 PlayerCount);
+
+	/** [Phase 12 Fix] 하트비트 타이머 핸들 (30초마다 레지스트리 갱신) */
+	FTimerHandle RegistryHeartbeatTimer;
+
+	/** 레지스트리 JSON 파일 삭제 */
+	void DeleteRegistryFile();
 
 	/** 결과 UI 위젯 클래스 (BP에서 설정) */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|GameEnd(게임종료)",

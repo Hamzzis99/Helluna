@@ -42,7 +42,10 @@ public class Helluna : ModuleRules
             "SQLiteCore",
 
             // [로비/창고 시스템] JSON 직렬화 (부착물 attachments_json 컬럼용)
-            "Json", "JsonUtilities"
+            "Json", "JsonUtilities",
+
+            // [Phase 12g] 클립보드 복사 (파티 코드)
+            "ApplicationCore"
         });
         PrivateDependencyModuleNames.AddRange(new string[] { });
 

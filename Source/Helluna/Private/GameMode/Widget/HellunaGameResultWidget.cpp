@@ -8,6 +8,7 @@
 #include "Components/Button.h"
 #include "Components/VerticalBox.h"
 #include "Kismet/GameplayStatics.h"
+#include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
 
 void UHellunaGameResultWidget::NativeConstruct()
 {
@@ -41,10 +42,20 @@ void UHellunaGameResultWidget::ReturnToLobby()
 		return;
 	}
 
+	// [Phase 12f] LobbyURL이 비어있으면 GameInstance에서 동적 구성
 	if (LobbyURL.IsEmpty())
 	{
-		UE_LOG(LogTemp, Error, TEXT("[GameResultWidget] ReturnToLobby: LobbyURL이 비어있음!"));
-		return;
+		UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(PC->GetGameInstance());
+		if (GI && !GI->ConnectedServerIP.IsEmpty())
+		{
+			LobbyURL = FString::Printf(TEXT("%s:%d"), *GI->ConnectedServerIP, GI->LobbyServerPort);
+			UE_LOG(LogTemp, Log, TEXT("[GameResultWidget] LobbyURL 동적 구성: %s"), *LobbyURL);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("[GameResultWidget] ReturnToLobby: LobbyURL이 비어있고 ConnectedServerIP도 없음!"));
+			return;
+		}
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("[GameResultWidget] ReturnToLobby: ClientTravel → %s"), *LobbyURL);

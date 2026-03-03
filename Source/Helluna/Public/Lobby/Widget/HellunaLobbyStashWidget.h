@@ -156,6 +156,10 @@ protected:
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UButton> Button_Start;
 
+	/** [Phase 12g] 파티 팝업 열기 버튼 (선택적 — WBP에 없으면 무시) */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> Button_Party;
+
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> Text_NoCharWarning;
 
@@ -242,6 +246,10 @@ private:
 	/** 캐릭터 선택 완료 핸들러 */
 	UFUNCTION()
 	void OnCharacterSelectedHandler(EHellunaHeroType SelectedHero);
+
+	/** [Phase 12g] 파티 버튼 클릭 콜백 */
+	UFUNCTION()
+	void OnPartyClicked();
 
 	// ════════════════════════════════════════════════════════════════
 	// 내부 상태

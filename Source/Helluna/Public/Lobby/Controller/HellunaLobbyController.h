@@ -26,12 +26,14 @@
 #include "GameFramework/PlayerController.h"
 #include "Player/Inv_PlayerController.h"  // FInv_SavedItemData 구조체 사용
 #include "HellunaTypes.h"
+#include "Lobby/Party/HellunaPartyTypes.h"
 #include "HellunaLobbyController.generated.h"
 
 // 전방 선언
 class UInv_InventoryComponent;
 class UInv_InventoryItem;
 class UHellunaLobbyStashWidget;
+class UHellunaPartyWidget;
 class AHellunaCharacterSelectSceneV2;
 class ACameraActor;
 class USkeletalMesh;
@@ -125,6 +127,77 @@ public:
 	void Client_DeployFailed(const FString& Reason);
 
 	// ════════════════════════════════════════════════════════════════
+	// [Phase 12d] 파티 시스템 RPC
+	// ════════════════════════════════════════════════════════════════
+
+	// ── Server RPCs (Client → Server) ──
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_CreateParty();
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_JoinParty(const FString& PartyCode);
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_LeaveParty();
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_SetPartyReady(bool bReady);
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_KickPartyMember(const FString& TargetPlayerId);
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_SendPartyChatMessage(const FString& Message);
+
+	// ── Client RPCs (Server → Client) ──
+
+	UFUNCTION(Client, Reliable)
+	void Client_UpdatePartyState(const FHellunaPartyInfo& PartyInfo);
+
+	UFUNCTION(Client, Reliable)
+	void Client_PartyDisbanded(const FString& Reason);
+
+	UFUNCTION(Client, Reliable)
+	void Client_PartyError(const FString& ErrorMessage);
+
+	UFUNCTION(Client, Reliable)
+	void Client_ReceivePartyChatMessage(const FHellunaPartyChatMessage& Msg);
+
+	/** 파티 Deploy — 포트만 전달 (IP는 클라이언트 GameInstance에서) */
+	UFUNCTION(Client, Reliable)
+	void Client_ExecutePartyDeploy(int32 GameServerPort);
+
+	/** Deploy 중 여부 (public getter/setter) */
+	bool IsDeployInProgress() const { return bDeployInProgress; }
+	void SetDeployInProgress(bool bInProgress) { bDeployInProgress = bInProgress; }
+
+	// ── 파티 위젯 ──
+
+	/** 파티 위젯 토글 */
+	UFUNCTION(BlueprintCallable, Category = "로비|파티",
+		meta = (DisplayName = "Toggle Party Widget (파티 위젯 토글)"))
+	void TogglePartyWidget();
+
+	// ── 파티 상태 + 델리게이트 ──
+
+	/** 현재 파티 정보 (Client RPC로 갱신) */
+	UPROPERTY(BlueprintReadOnly, Category = "로비|파티")
+	FHellunaPartyInfo CurrentPartyInfo;
+
+	/** 파티 상태 변경 이벤트 (위젯 갱신용) */
+	UPROPERTY(BlueprintAssignable, Category = "로비|파티")
+	FOnPartyStateChanged OnPartyStateChanged;
+
+	/** 파티 채팅 수신 이벤트 */
+	UPROPERTY(BlueprintAssignable, Category = "로비|파티")
+	FOnPartyChatReceived OnPartyChatReceived;
+
+	/** 파티 에러 이벤트 */
+	UPROPERTY(BlueprintAssignable, Category = "로비|파티")
+	FOnPartyError OnPartyError;
+
+	// ════════════════════════════════════════════════════════════════
 	// 로비 UI
 	// ════════════════════════════════════════════════════════════════
 
@@ -173,6 +246,10 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "로비|캐릭터선택")
 	EHellunaHeroType GetSelectedHeroType() const { return SelectedHeroType; }
 
+	/** 로그인 PlayerId Getter (서버에서 설정, Replicated) */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "로비|플레이어")
+	FString GetPlayerId() const { return ReplicatedPlayerId; }
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -215,10 +292,23 @@ protected:
 	// 출격 설정
 	// ════════════════════════════════════════════════════════════════
 
-	/** 출격 시 이동할 게임 맵 URL (BP에서 설정) */
+	/** 출격 시 이동할 게임 맵 URL (BP에서 설정, Phase 12e 이후 폴백용) */
 	UPROPERTY(EditDefaultsOnly, Category = "로비|출격",
-		meta = (DisplayName = "게임 맵 URL", Tooltip = "출격 시 ClientTravel로 이동할 맵의 URL입니다. 예: /Game/Maps/L_Defense?listen"))
+		meta = (DisplayName = "게임 맵 URL (Fallback)", Tooltip = "Phase 12 이전 호환용. 채널 시스템 사용 시 무시됩니다."))
 	FString DeployMapURL;
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 12d] 파티 위젯 설정
+	// ════════════════════════════════════════════════════════════════
+
+	/** 파티 팝업 위젯 클래스 (BP에서 WBP_HellunaPartyWidget 지정) */
+	UPROPERTY(EditDefaultsOnly, Category = "로비|파티",
+		meta = (DisplayName = "Party Widget Class (파티 위젯 클래스)"))
+	TSubclassOf<UHellunaPartyWidget> PartyWidgetClass;
+
+	/** 현재 생성된 파티 위젯 인스턴스 */
+	UPROPERTY()
+	TObjectPtr<UHellunaPartyWidget> PartyWidgetInstance;
 
 	// ════════════════════════════════════════════════════════════════
 	// 캐릭터 프리뷰 V2 시스템 (LoginController에서 복사)
@@ -278,6 +368,11 @@ protected:
 		meta = (DisplayName = "선택된 히어로 타입"))
 	EHellunaHeroType SelectedHeroType = EHellunaHeroType::None;
 
+	/** [Phase 12] 서버에서 설정된 PlayerId (Replicated — Client_ExecutePartyDeploy에서 사용) */
+	UPROPERTY(Replicated, VisibleAnywhere, BlueprintReadOnly, Category = "로비|플레이어",
+		meta = (DisplayName = "Replicated Player ID"))
+	FString ReplicatedPlayerId;
+
 	/** Deploy 중복 실행 방지 플래그 */
 	bool bDeployInProgress = false;
 
@@ -289,9 +384,18 @@ protected:
 	 * [Fix29-D] 기본값 -1 = 미로드 상태 → PostLogin 완료 전 Logout 시 저장 차단 */
 	int32 LoadedStashItemCount = -1;
 
+	/** [Fix36] DB에서 로드된 원본 Loadout 아이템 수 (파괴적 캐스케이드 방지)
+	 * 기본값 -1 = 미로드 → Logout 시 저장 차단 */
+	int32 LoadedLoadoutItemCount = -1;
+
 public:
 	void SetLoadedStashItemCount(int32 Count) { LoadedStashItemCount = Count; }
 	int32 GetLoadedStashItemCount() const { return LoadedStashItemCount; }
+
+	void SetLoadedLoadoutItemCount(int32 Count) { LoadedLoadoutItemCount = Count; }
+	int32 GetLoadedLoadoutItemCount() const { return LoadedLoadoutItemCount; }
+
+	void SetReplicatedPlayerId(const FString& InPlayerId) { ReplicatedPlayerId = InPlayerId; }
 
 public:
 	// ════════════════════════════════════════════════════════════════

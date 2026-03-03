@@ -24,6 +24,7 @@
 #include "CoreMinimal.h"
 #include "GameMode/HellunaBaseGameMode.h"
 #include "HellunaTypes.h"
+#include "Lobby/Party/HellunaPartyTypes.h"
 #include "HellunaLobbyGameMode.generated.h"
 
 // 전방 선언
@@ -43,6 +44,7 @@ public:
 	// GameMode 오버라이드
 	// ════════════════════════════════════════════════════════════════
 
+	virtual void BeginPlay() override;
 	virtual void PostLogin(APlayerController* NewPlayer) override;
 	virtual void Logout(AController* Exiting) override;
 
@@ -117,6 +119,90 @@ public:
 
 	/** 캐릭터 사용 해제 (같은 로비 + SQLite) */
 	void UnregisterLobbyCharacterUse(const FString& PlayerId);
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 12b] 채널 레지스트리 스캔
+	// ════════════════════════════════════════════════════════════════
+
+	/** ServerRegistry 폴더 스캔 → 채널 목록 반환 */
+	TArray<FGameChannelInfo> ScanAvailableChannels();
+
+	/** 빈 채널(status=empty, PendingDeploy 제외) 찾기 — null이면 빈 채널 없음 */
+	bool FindEmptyChannel(FGameChannelInfo& OutChannel);
+
+	/** Deploy 결정 후 즉시 채널 예약 (이중 배정 방지) */
+	void MarkChannelAsPendingDeploy(int32 Port);
+
+	/** 레지스트리 디렉토리 경로 */
+	FString GetRegistryDirectoryPath() const;
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 12d] 파티 시스템 — 서버 로직
+	// ════════════════════════════════════════════════════════════════
+
+	/** 파티 코드 생성 (6자리, 유니크 보장) */
+	FString GeneratePartyCode();
+
+	/** 파티 생성 */
+	void CreatePartyForPlayer(const FString& PlayerId, const FString& DisplayName);
+
+	/** 파티 참가 */
+	void JoinPartyForPlayer(const FString& PlayerId, const FString& DisplayName, const FString& PartyCode);
+
+	/** 파티 탈퇴 (리더 이전/해산 포함) */
+	void LeavePartyForPlayer(const FString& PlayerId);
+
+	/** 파티 멤버 추방 (리더만) */
+	void KickPartyMember(const FString& RequesterId, const FString& TargetId);
+
+	/** 멤버 Ready 상태 설정 + Auto-Deploy 체크 */
+	void SetPlayerReady(const FString& PlayerId, bool bReady);
+
+	/** 캐릭터 선택 변경 알림 */
+	void OnPlayerHeroChanged(const FString& PlayerId, int32 HeroType);
+
+	/** 파티 내 영웅 중복 검사 — true = 중복 있음 */
+	bool ValidatePartyHeroDuplication(int32 PartyId);
+
+	/** 전원 Ready + 중복 없음 → Deploy */
+	void TryAutoDeployParty(int32 PartyId);
+
+	/** 파티 Deploy 실행 (채널 선택 + Save + Travel) */
+	void ExecutePartyDeploy(int32 PartyId);
+
+	/** 파티 상태를 전원에게 RPC */
+	void BroadcastPartyState(int32 PartyId);
+
+	/** 파티 채팅 메시지 전원 전송 */
+	void BroadcastPartyChatMessage(int32 PartyId, const FHellunaPartyChatMessage& Msg);
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 12d] 파티 캐시 + 타이머
+	// ════════════════════════════════════════════════════════════════
+
+	/** 메모리 캐시: PartyId → 파티 정보 */
+	TMap<int32, FHellunaPartyInfo> ActivePartyCache;
+
+	/** PlayerId → PartyId 빠른 조회 */
+	TMap<FString, int32> PlayerToPartyMap;
+
+	/** PlayerId → LobbyController 매핑 */
+	TMap<FString, TWeakObjectPtr<AHellunaLobbyController>> PlayerIdToControllerMap;
+
+	/** 파티 채팅 기록 (메모리 전용, 최대 50개/파티) */
+	TMap<int32, TArray<FHellunaPartyChatMessage>> PartyChatHistory;
+
+	/** Deploy 예약된 채널 포트 (이중 배정 방지) */
+	TSet<int32> PendingDeployChannels;
+
+	/** PendingDeploy 자동 해제 타이머 */
+	TMap<int32, FTimerHandle> PendingDeployTimers;
+
+	/** 연결 끊김 시 파티 탈퇴 유예 타이머 (30초) */
+	TMap<FString, FTimerHandle> PartyLeaveTimers;
+
+	/** 캐시 갱신 (DB에서 다시 로드) */
+	void RefreshPartyCache(int32 PartyId);
 
 private:
 	/**

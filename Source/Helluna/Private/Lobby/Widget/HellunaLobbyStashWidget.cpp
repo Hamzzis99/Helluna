@@ -78,6 +78,13 @@ void UHellunaLobbyStashWidget::NativeOnInitialized()
 		Button_Start->OnClicked.AddUniqueDynamic(this, &ThisClass::OnStartClicked); // U22
 	}
 
+	// ── [Phase 12g] 파티 버튼 바인딩 (Optional) ──
+	if (Button_Party)
+	{
+		Button_Party->OnClicked.AddUniqueDynamic(this, &ThisClass::OnPartyClicked);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   Button_Party=OK (바인딩 완료)"));
+	}
+
 	// ── Loadout 탭: 출격 버튼 바인딩 (기존) ──
 	if (Button_Deploy)
 	{
@@ -503,6 +510,28 @@ void UHellunaLobbyStashWidget::SwitchToInventoryPage()
 // 📌 변경: 경고 숨김 + Play 탭이면 Solo 프리뷰 업데이트 (탭 이동 안 함)
 //
 // ════════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 12g] 파티 버튼 클릭
+// ════════════════════════════════════════════════════════════════════════════════
+
+void UHellunaLobbyStashWidget::OnPartyClicked()
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] 파티 버튼 클릭!"));
+
+	AHellunaLobbyController* LobbyPC = GetLobbyController();
+	if (!LobbyPC)
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[StashWidget] OnPartyClicked: LobbyController 없음!"));
+		return;
+	}
+
+	LobbyPC->TogglePartyWidget();
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// OnCharacterSelectedHandler — 캐릭터 선택 완료
+// ════════════════════════════════════════════════════════════════════════════════
+
 void UHellunaLobbyStashWidget::OnCharacterSelectedHandler(EHellunaHeroType SelectedHero)
 {
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] OnCharacterSelectedHandler | Hero=%d"), static_cast<int32>(SelectedHero));

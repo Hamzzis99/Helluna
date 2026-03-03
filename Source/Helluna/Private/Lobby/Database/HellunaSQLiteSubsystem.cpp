@@ -3061,6 +3061,71 @@ bool UHellunaSQLiteSubsystem::LeaveParty(const FString& PlayerId)
 		}
 		UE_LOG(LogHelluna, Log, TEXT("[SQLite]   마지막 멤버 탈퇴 → party_groups 삭제 | PartyId=%d"), PartyId);
 	}
+	else
+	{
+		// [Phase 12 Fix] 리더가 탈퇴하면 가장 오래된 멤버에게 리더 자동 이전
+		// party_groups.leader_id가 탈퇴한 플레이어인지 확인
+		FString CurrentLeaderId;
+		{
+			FSQLitePreparedStatement LeaderStmt = Database->PrepareStatement(
+				TEXT("SELECT leader_id FROM party_groups WHERE id = ?1;"));
+			if (LeaderStmt.IsValid())
+			{
+				LeaderStmt.SetBindingValueByIndex(1, PartyId);
+				LeaderStmt.Execute([&CurrentLeaderId](const FSQLitePreparedStatement& S) -> ESQLitePreparedStatementExecuteRowResult
+				{
+					S.GetColumnValueByIndex(0, CurrentLeaderId);
+					return ESQLitePreparedStatementExecuteRowResult::Stop;
+				});
+			}
+		}
+
+		if (CurrentLeaderId == PlayerId)
+		{
+			// 가장 먼저 가입한 멤버를 새 리더로 승격
+			FString NewLeaderId;
+			{
+				FSQLitePreparedStatement NextStmt = Database->PrepareStatement(
+					TEXT("SELECT player_id FROM party_members WHERE party_id = ?1 ORDER BY joined_at ASC LIMIT 1;"));
+				if (NextStmt.IsValid())
+				{
+					NextStmt.SetBindingValueByIndex(1, PartyId);
+					NextStmt.Execute([&NewLeaderId](const FSQLitePreparedStatement& S) -> ESQLitePreparedStatementExecuteRowResult
+					{
+						S.GetColumnValueByIndex(0, NewLeaderId);
+						return ESQLitePreparedStatementExecuteRowResult::Stop;
+					});
+				}
+			}
+
+			if (!NewLeaderId.IsEmpty())
+			{
+				// party_members.role 업데이트 + party_groups.leader_id 업데이트
+				{
+					FSQLitePreparedStatement PromoteStmt = Database->PrepareStatement(
+						TEXT("UPDATE party_members SET role = ?1 WHERE party_id = ?2 AND player_id = ?3;"));
+					if (PromoteStmt.IsValid())
+					{
+						PromoteStmt.SetBindingValueByIndex(1, static_cast<int32>(EHellunaPartyRole::Leader));
+						PromoteStmt.SetBindingValueByIndex(2, PartyId);
+						PromoteStmt.SetBindingValueByIndex(3, NewLeaderId);
+						PromoteStmt.Execute();
+					}
+				}
+				{
+					FSQLitePreparedStatement UpdateGroupStmt = Database->PrepareStatement(
+						TEXT("UPDATE party_groups SET leader_id = ?1 WHERE id = ?2;"));
+					if (UpdateGroupStmt.IsValid())
+					{
+						UpdateGroupStmt.SetBindingValueByIndex(1, NewLeaderId);
+						UpdateGroupStmt.SetBindingValueByIndex(2, PartyId);
+						UpdateGroupStmt.Execute();
+					}
+				}
+				UE_LOG(LogHelluna, Log, TEXT("[SQLite]   리더 탈퇴 → 리더 자동 이전 | NewLeader=%s"), *NewLeaderId);
+			}
+		}
+	}
 
 	if (!Database->Execute(TEXT("COMMIT;")))
 	{
@@ -3513,6 +3578,13 @@ int32 UHellunaSQLiteSubsystem::CleanupStaleParties(int32 HoursOld)
 
 	if (!IsDatabaseReady())
 	{
+		return 0;
+	}
+
+	// [Phase 12 Fix] 유효하지 않은 HoursOld 방어
+	if (HoursOld <= 0)
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[SQLite] CleanupStaleParties: HoursOld가 0 이하 (%d) → 무시"), HoursOld);
 		return 0;
 	}
 

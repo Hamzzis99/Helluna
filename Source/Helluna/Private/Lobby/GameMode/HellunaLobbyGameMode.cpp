@@ -39,6 +39,13 @@
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
 #include "Persistence/Inv_SaveTypes.h"
 #include "Items/Components/Inv_ItemComponent.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "HAL/FileManager.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
+#include "Dom/JsonObject.h"
+#include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
 
 // 로그 카테고리 (공유 헤더에서 DECLARE, 여기서 DEFINE)
 #include "Lobby/HellunaLobbyLog.h"
@@ -65,6 +72,32 @@ AHellunaLobbyGameMode::AHellunaLobbyGameMode()
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ========================================"));
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] 생성자 호출 | DefaultPawnClass=nullptr | ServerId=%s"), *LobbyServerId);
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ========================================"));
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 12h] BeginPlay — 서버 초기화 (오래된 파티 정리)
+// ════════════════════════════════════════════════════════════════════════════════
+
+void AHellunaLobbyGameMode::BeginPlay()
+{
+	Super::BeginPlay();
+
+	// SQLite 서브시스템 캐시 (PostLogin 보다 앞서 초기화)
+	if (!SQLiteSubsystem)
+	{
+		UGameInstance* GI = GetGameInstance();
+		if (GI)
+		{
+			SQLiteSubsystem = GI->GetSubsystem<UHellunaSQLiteSubsystem>();
+		}
+	}
+
+	// 24시간 이상 된 오래된 파티 DB에서 정리
+	if (SQLiteSubsystem)
+	{
+		SQLiteSubsystem->CleanupStaleParties(24);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] BeginPlay: CleanupStaleParties(24h) 완료"));
+	}
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -188,6 +221,9 @@ void AHellunaLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 		{
 			bGameResultProcessed = true;  // [Fix23] 크래시 복구 스킵 플래그
 
+			// [Fix36] 게임 결과 정상 처리 → 출격 상태 해제
+			SQLiteSubsystem->SetPlayerDeployed(PlayerId, false);
+
 			// 정상 파싱 성공
 			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [0] 게임 결과: survived=%s | 아이템=%d개 | PlayerId=%s"),
 				bSurvived ? TEXT("Y") : TEXT("N"), ResultItems.Num(), *PlayerId);
@@ -238,14 +274,22 @@ void AHellunaLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 		}
 	}
 
-	// ── 1) 크래시 복구 ──
-	// 결과 파일이 없는데 Loadout이 남아있는 경우 = 게임서버 크래시
-	// → Loadout 아이템을 Stash로 복구하여 유실 방지
-	// [Fix23] 게임 결과를 정상 처리한 경우에는 스킵 (SavePlayerLoadout으로 Loadout에 저장했으므로)
+	// ── 1) [Fix36] 크래시 복구 ──
+	// 게임 결과가 없는데 deploy_state가 true = 게임서버 크래시
+	// → Loadout은 출격 전 상태 그대로 보존 (Stash 이동 없음)
+	// → deploy 상태만 해제하여 다음 출격 가능하게 함
 	if (!bGameResultProcessed)
 	{
-		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [1/4] 크래시 복구 체크 | PlayerId=%s"), *PlayerId);
-		CheckAndRecoverFromCrash(PlayerId);
+		if (SQLiteSubsystem->IsPlayerDeployed(PlayerId))
+		{
+			UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] [Fix36] [1/4] 크래시 감지: 출격 중인데 게임 결과 없음 | PlayerId=%s"), *PlayerId);
+			SQLiteSubsystem->SetPlayerDeployed(PlayerId, false);
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix36] [1/4] deploy 상태 해제 완료 — Loadout은 출격 전 상태 보존 | PlayerId=%s"), *PlayerId);
+		}
+		else
+		{
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix36] [1/4] 크래시 아님 (미출격 상태) | PlayerId=%s"), *PlayerId);
+		}
 	}
 	else
 	{
@@ -275,6 +319,42 @@ void AHellunaLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 	{
 		TArray<bool> UsedCharacters = GetLobbyAvailableCharacters();
 		LobbyPC->Client_ShowLobbyCharacterSelectUI(UsedCharacters);
+	}
+
+	// ── [Phase 12 Fix] ReplicatedPlayerId 설정 (클라이언트에서 GetPlayerId 사용) ──
+	LobbyPC->SetReplicatedPlayerId(PlayerId);
+
+	// ── [Phase 12d] Step 5: 파티 자동 복귀 ──
+	// DB에 파티 기록이 남아있으면 캐시 복구 + 전원에게 BroadcastPartyState
+	PlayerIdToControllerMap.Add(PlayerId, LobbyPC);
+	{
+		const int32 ExistingPartyId = SQLiteSubsystem->GetPlayerPartyId(PlayerId);
+		if (ExistingPartyId > 0)
+		{
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [5/5] 파티 자동 복귀 | PlayerId=%s | PartyId=%d"), *PlayerId, ExistingPartyId);
+
+			// Ready 리셋 (게임에서 돌아온 경우)
+			SQLiteSubsystem->UpdateMemberReady(PlayerId, false);
+
+			// 재접속 타이머 취소 (Logout에서 30초 타이머 걸었을 수 있음)
+			if (FTimerHandle* TimerPtr = PartyLeaveTimers.Find(PlayerId))
+			{
+				UWorld* World = GetWorld();
+				if (World)
+				{
+					World->GetTimerManager().ClearTimer(*TimerPtr);
+				}
+				PartyLeaveTimers.Remove(PlayerId);
+				UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] 파티 탈퇴 타이머 취소 | PlayerId=%s"), *PlayerId);
+			}
+
+			RefreshPartyCache(ExistingPartyId);
+			BroadcastPartyState(ExistingPartyId);
+		}
+		else
+		{
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [5/5] 파티 미가입 상태 | PlayerId=%s"), *PlayerId);
+		}
 	}
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ══════════════════════════════════════"));
@@ -355,6 +435,68 @@ void AHellunaLobbyGameMode::Logout(AController* Exiting)
 	else
 	{
 		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] Logout: Exiting Controller가 nullptr!"));
+	}
+
+	// [Phase 12d] 파티 연결 해제 처리
+	{
+		FString LogoutPlayerId;
+		APlayerController* LogoutPC = Cast<APlayerController>(Exiting);
+		if (LogoutPC)
+		{
+			LogoutPlayerId = GetLobbyPlayerId(LogoutPC);
+		}
+		if (LogoutPlayerId.IsEmpty())
+		{
+			if (const FString* CachedId = ControllerToPlayerIdMap.Find(Exiting))
+			{
+				LogoutPlayerId = *CachedId;
+			}
+		}
+
+		if (!LogoutPlayerId.IsEmpty())
+		{
+			PlayerIdToControllerMap.Remove(LogoutPlayerId);
+
+			AHellunaLobbyController* LogoutLobbyPC = Cast<AHellunaLobbyController>(Exiting);
+			const bool bDeploy = LogoutLobbyPC && LogoutLobbyPC->IsDeployInProgress();
+
+			if (bDeploy)
+			{
+				// Deploy로 인한 Logout — 파티 탈퇴 안 함
+				UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] Logout: Deploy 중 — 파티 유지 | PlayerId=%s"), *LogoutPlayerId);
+			}
+			else if (PlayerToPartyMap.Contains(LogoutPlayerId))
+			{
+				// Ready 리셋
+				if (SQLiteSubsystem && SQLiteSubsystem->IsDatabaseReady())
+				{
+					SQLiteSubsystem->UpdateMemberReady(LogoutPlayerId, false);
+					const int32* PId = PlayerToPartyMap.Find(LogoutPlayerId);
+					if (PId && *PId > 0)
+					{
+						SQLiteSubsystem->ResetAllReadyStates(*PId);
+						RefreshPartyCache(*PId);
+						BroadcastPartyState(*PId);
+					}
+				}
+
+				// 30초 유예 타이머 → 재접속 안 하면 자동 탈퇴
+				FTimerHandle& LeaveTimer = PartyLeaveTimers.FindOrAdd(LogoutPlayerId);
+				UWorld* World = GetWorld();
+				if (World)
+				{
+					FString CapturedPlayerId = LogoutPlayerId;
+					World->GetTimerManager().SetTimer(LeaveTimer, [this, CapturedPlayerId]()
+					{
+						UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] 30초 유예 만료 — 파티 자동 탈퇴 | PlayerId=%s"), *CapturedPlayerId);
+						LeavePartyForPlayer(CapturedPlayerId);
+						PartyLeaveTimers.Remove(CapturedPlayerId);
+					}, 30.f, false);
+
+					UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] Logout: 30초 파티 탈퇴 타이머 시작 | PlayerId=%s"), *LogoutPlayerId);
+				}
+			}
+		}
 	}
 
 	// ControllerToPlayerIdMap 정리 (댕글링 포인터 방지)
@@ -554,6 +696,8 @@ void AHellunaLobbyGameMode::LoadLoadoutToComponent(AHellunaLobbyController* Lobb
 
 	if (LoadoutItems.Num() == 0)
 	{
+		// [Fix36] 빈 Loadout도 정상 — 미로드(-1) 아닌 "0개 로드됨"으로 설정
+		LobbyPC->SetLoadedLoadoutItemCount(0);
 		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix23] Loadout이 비어있음 → 스킵 (최초 로그인/사망 후 복귀)"));
 		return;
 	}
@@ -594,49 +738,50 @@ void AHellunaLobbyGameMode::LoadLoadoutToComponent(AHellunaLobbyController* Lobb
 
 	// ── 파괴적 캐스케이드 방지 ──
 	// 복원된 수가 원본보다 적으면 리졸브 실패로 아이템 유실
-	// → player_loadout을 보존하여 다음 로그인 시 크래시 복구(Loadout→Stash)로 안전하게 복원
+	// → player_loadout을 보존하여 다음 로그인 시 재시도
+	// [Fix36] LoadedLoadoutItemCount = -1 유지 → SaveComponentsToDatabase에서 저장 차단
 	if (RestoredCount < LoadedLoadoutItemCount)
 	{
 		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [Fix23] ◆◆ Loadout 아이템 유실 감지! DB=%d → 복원=%d → %d개 유실"),
 			LoadedLoadoutItemCount, RestoredCount, LoadedLoadoutItemCount - RestoredCount);
-		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [Fix23] ◆◆ player_loadout 보존 → 다음 로그인 시 크래시 복구로 Stash 이동"));
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [Fix36] ◆◆ player_loadout 보존 (LoadedLoadoutItemCount=-1 유지 → 저장 차단)"));
 
-		// [Fix29-A] LoadoutComp를 비워서 Logout 시 SaveComponentsToDatabase에서 부분 아이템이 Stash에 병합되지 않도록 방지
-		// → player_loadout이 DB에 보존되므로, 다음 로그인 시 크래시 복구가 전체 아이템을 Stash로 안전하게 이동
-		// → LoadoutComp에 부분 아이템이 남아있으면: Logout 병합(부분) + 크래시 복구(전체) = 아이템 복제!
+		// [Fix29-A] LoadoutComp를 비워서 부분 아이템이 저장되지 않도록 방지
 		FInv_PlayerSaveData EmptySaveData;
 		EmptySaveData.LastSaveTime = FDateTime::Now();
 		LoadoutComp->RestoreFromSaveData(EmptySaveData, Resolver);
 		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] [Fix29-A] LoadoutComp 비움 — 부분 복원 아이템 복제 방지"));
+		// LoadedLoadoutItemCount 미설정 → -1 유지 → Logout 시 Loadout 저장 차단
 		return;
 	}
 
-	// [Fix35] player_loadout을 DB에 유지 — 타르코프 방식 per-interaction save
-	// 로비에 있는 동안 Stash+Loadout 모두 DB에 반영되어야 크래시 시 유실 없음
-	// 정리 시점: Logout → SaveComponentsToDatabase → DeletePlayerLoadout (Stash에 병합 후)
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix35] player_loadout DB 유지 (per-interaction save 대비) | PlayerId=%s"), *PlayerId);
+	// [Fix36] 복원 성공 → LoadedLoadoutItemCount 설정 (Logout 시 캐스케이드 검증용)
+	LobbyPC->SetLoadedLoadoutItemCount(LoadedLoadoutItemCount);
+
+	// [Fix35/Fix36] player_loadout을 DB에 유지 — 독립 영속성
+	// 로비에 있는 동안 Stash+Loadout 모두 DB에 반영
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix36] player_loadout DB 유지 (독립 영속성) | PlayerId=%s | LoadedLoadoutItemCount=%d"), *PlayerId, LoadedLoadoutItemCount);
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
-// SaveComponentsToDatabase — StashComp + LoadoutComp 상태를 SQLite에 저장
+// [Fix36] SaveComponentsToDatabase — StashComp + LoadoutComp 독립 저장
 // ════════════════════════════════════════════════════════════════════════════════
 //
 // 📌 호출 시점: Logout (정상 종료 / 접속 해제)
 //
-// 📌 저장 전략:
-//   1) StashComp 데이터 → SQLite player_stash (현재 창고 상태)
-//   2) LoadoutComp에 아이템이 남아있으면:
-//      - 출격하지 않고 나간 것이므로 Loadout 아이템도 Stash에 병합 저장
-//      - 이렇게 해야 다음 로그인 시 아이템 유실이 없음
+// 📌 [Fix36] 저장 전략 (독립 영속성):
+//   1) StashComp → SQLite player_stash (독립 저장)
+//   2) LoadoutComp → SQLite player_loadout (독립 저장, 비어있으면 삭제)
+//   → Loadout→Stash 병합 없음! 각각 독립적으로 DB에 유지
 //
 // 📌 주의:
 //   - Deploy(출격)으로 나간 경우 LoadoutComp은 이미 Server_Deploy에서 저장됨
-//   - 이 경우 LoadoutComp은 비어있으므로 병합 저장이 발생하지 않음
+//   - LoadedStashItemCount 또는 LoadedLoadoutItemCount가 -1이면 미로드 → 저장 차단
 //
 // ════════════════════════════════════════════════════════════════════════════════
 void AHellunaLobbyGameMode::SaveComponentsToDatabase(AHellunaLobbyController* LobbyPC, const FString& PlayerId)
 {
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] SaveComponentsToDatabase 시작 | PlayerId=%s"), *PlayerId);
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix36] SaveComponentsToDatabase 시작 | PlayerId=%s"), *PlayerId);
 
 	if (!LobbyPC || !SQLiteSubsystem || !SQLiteSubsystem->IsDatabaseReady())
 	{
@@ -646,79 +791,84 @@ void AHellunaLobbyGameMode::SaveComponentsToDatabase(AHellunaLobbyController* Lo
 		return;
 	}
 
-	// ── 1) Stash 아이템 수집 ──
+	// ── [Fix29-D + Fix36] 미로드 상태 체크 ──
+	// LoadedStashItemCount < 0 OR LoadedLoadoutItemCount < 0 = PostLogin 미완료
+	// → 빈 데이터로 DB를 덮어쓰면 기존 데이터 소실 → 저장 차단
+	const int32 OriginalStashCount = LobbyPC->GetLoadedStashItemCount();
+	const int32 OriginalLoadoutCount = LobbyPC->GetLoadedLoadoutItemCount();
+
+	if (OriginalStashCount < 0 || OriginalLoadoutCount < 0)
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] [Fix36] 미로드 상태에서 Logout → 저장 차단 | PlayerId=%s | StashLoaded=%d, LoadoutLoaded=%d"),
+			*PlayerId, OriginalStashCount, OriginalLoadoutCount);
+		return;
+	}
+
+	// ════════════════════════════════════════════════════════════════
+	// 1) Stash 독립 저장
+	// ════════════════════════════════════════════════════════════════
 	UInv_InventoryComponent* StashComp = LobbyPC->GetStashComponent();
-	TArray<FInv_SavedItemData> FinalStashItems;
 	if (StashComp)
 	{
-		FinalStashItems = StashComp->CollectInventoryDataForSave();
-		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] Stash 아이템 수집 완료 | %d개"), FinalStashItems.Num());
+		TArray<FInv_SavedItemData> StashItems = StashComp->CollectInventoryDataForSave();
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix36] Stash 아이템 수집 | %d개"), StashItems.Num());
+
+		// 파괴적 캐스케이드 방지 (Stash)
+		if (OriginalStashCount > 0 && StashItems.Num() < OriginalStashCount)
+		{
+			UE_LOG(LogHellunaLobby, Error, TEXT(""));
+			UE_LOG(LogHellunaLobby, Error, TEXT("╔══════════════════════════════════════════════════════════════╗"));
+			UE_LOG(LogHellunaLobby, Error, TEXT("║  ◆◆ [Fix36] Stash 파괴적 캐스케이드 방지: 저장 거부!       ║"));
+			UE_LOG(LogHellunaLobby, Error, TEXT("║  DB 원본=%d개 → 현재=%d개 → %d개 유실 감지              ║"),
+				OriginalStashCount, StashItems.Num(), OriginalStashCount - StashItems.Num());
+			UE_LOG(LogHellunaLobby, Error, TEXT("╚══════════════════════════════════════════════════════════════╝"));
+			UE_LOG(LogHellunaLobby, Error, TEXT(""));
+		}
+		else
+		{
+			const bool bStashOk = SQLiteSubsystem->SavePlayerStash(PlayerId, StashItems);
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix36] Stash SQLite 저장 %s | %d개 | PlayerId=%s"),
+				bStashOk ? TEXT("성공") : TEXT("실패"), StashItems.Num(), *PlayerId);
+		}
 	}
 	else
 	{
 		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] SaveComponents: StashComp가 nullptr! | PlayerId=%s"), *PlayerId);
 	}
 
-	// ── 2) Loadout에 잔여 아이템이 있으면 Stash에 병합 (출격 안 하고 로그아웃한 경우) ──
+	// ════════════════════════════════════════════════════════════════
+	// 2) Loadout 독립 저장
+	// ════════════════════════════════════════════════════════════════
 	UInv_InventoryComponent* LoadoutComp = LobbyPC->GetLoadoutComponent();
 	if (LoadoutComp)
 	{
 		TArray<FInv_SavedItemData> LoadoutItems = LoadoutComp->CollectInventoryDataForSave();
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix36] Loadout 아이템 수집 | %d개"), LoadoutItems.Num());
+
 		if (LoadoutItems.Num() > 0)
 		{
-			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] Logout [Save]: Loadout에 잔여 아이템 %d개 → Stash에 병합"), LoadoutItems.Num());
-			FinalStashItems.Append(LoadoutItems);
+			// 파괴적 캐스케이드 방지 (Loadout)
+			if (OriginalLoadoutCount > 0 && LoadoutItems.Num() < OriginalLoadoutCount)
+			{
+				UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [Fix36] ◆◆ Loadout 캐스케이드 방지: 저장 거부! DB 원본=%d → 현재=%d"),
+					OriginalLoadoutCount, LoadoutItems.Num());
+			}
+			else
+			{
+				const bool bLoadoutOk = SQLiteSubsystem->SavePlayerLoadout(PlayerId, LoadoutItems);
+				UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix36] Loadout SQLite 저장 %s | %d개 | PlayerId=%s"),
+					bLoadoutOk ? TEXT("성공") : TEXT("실패"), LoadoutItems.Num(), *PlayerId);
+			}
 		}
 		else
 		{
-			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] Loadout이 비어있음 → 병합 불필요 (정상 출격 또는 이동 없음)"));
+			// [Fix36] 빈 Loadout → player_loadout 삭제 (빈 행 정리, 크래시 감지와 무관)
+			SQLiteSubsystem->DeletePlayerLoadout(PlayerId);
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix36] Loadout 비어있음 → DeletePlayerLoadout (빈 행 정리) | PlayerId=%s"), *PlayerId);
 		}
 	}
 
-	// ── 2.5) 파괴적 캐스케이드 방지 ──
-	// DB에서 로드한 원본 아이템 수보다 현재 보유 아이템이 적으면
-	// 복원 실패(ResolveItemTemplate 실패)로 아이템이 유실된 것
-	// → 이 상태로 저장하면 DB에서도 영구 삭제되므로 저장을 거부
-	const int32 OriginalLoadedCount = LobbyPC->GetLoadedStashItemCount();
-
-	// [Fix29-D] 미로드 상태(-1) = PostLogin이 완료되기 전에 Logout 발생
-	// → 빈 Stash를 DB에 저장하면 기존 데이터 덮어쓰기 → 저장 차단
-	if (OriginalLoadedCount < 0)
-	{
-		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] [Fix29-D] Stash 미로드 상태(PostLogin 미완료)에서 Logout → 저장 차단 | PlayerId=%s"), *PlayerId);
-		return;
-	}
-
-	if (OriginalLoadedCount > 0 && FinalStashItems.Num() < OriginalLoadedCount)
-	{
-		UE_LOG(LogHellunaLobby, Error, TEXT(""));
-		UE_LOG(LogHellunaLobby, Error, TEXT("╔══════════════════════════════════════════════════════════════╗"));
-		UE_LOG(LogHellunaLobby, Error, TEXT("║  ◆◆ 파괴적 캐스케이드 방지: 저장 거부!                      ║"));
-		UE_LOG(LogHellunaLobby, Error, TEXT("║  DB 원본=%d개 → 현재=%d개 → %d개 유실 감지              ║"),
-			OriginalLoadedCount, FinalStashItems.Num(), OriginalLoadedCount - FinalStashItems.Num());
-		UE_LOG(LogHellunaLobby, Error, TEXT("║  → ResolveItemTemplate 실패로 복원되지 않은 아이템 있음 ║"));
-		UE_LOG(LogHellunaLobby, Error, TEXT("║  → DB 데이터를 보호하기 위해 저장을 건너뜁니다         ║"));
-		UE_LOG(LogHellunaLobby, Error, TEXT("║  → ItemTypeMappingDataTable 설정을 확인하세요!          ║"));
-		UE_LOG(LogHellunaLobby, Error, TEXT("╚══════════════════════════════════════════════════════════════╝"));
-		UE_LOG(LogHellunaLobby, Error, TEXT(""));
-		return;
-	}
-
-	// ── 3) 한 번만 저장 ──
-	const bool bStashOk = SQLiteSubsystem->SavePlayerStash(PlayerId, FinalStashItems);
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] Stash SQLite 저장 %s | PlayerId=%s | 아이템 %d개"),
-		bStashOk ? TEXT("성공") : TEXT("실패"), *PlayerId, FinalStashItems.Num());
-
-	// [Fix35] Per-interaction save가 player_loadout에 남긴 데이터 정리
-	// Logout 시 Loadout 아이템은 이미 위에서 Stash에 병합 저장됨
-	// 삭제 안 하면 다음 PostLogin에서 false crash recovery 발생 (아이템 중복)
-	if (bStashOk)
-	{
-		SQLiteSubsystem->DeletePlayerLoadout(PlayerId);
-		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix35] DeletePlayerLoadout 완료 (Logout 병합 후 정리) | PlayerId=%s"), *PlayerId);
-	}
-
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] SaveComponentsToDatabase 완료 | PlayerId=%s"), *PlayerId);
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix36] SaveComponentsToDatabase 완료 | PlayerId=%s"), *PlayerId);
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -881,5 +1031,699 @@ void AHellunaLobbyGameMode::UnregisterLobbyCharacterUse(const FString& PlayerId)
 	if (SQLiteSubsystem && SQLiteSubsystem->IsDatabaseReady())
 	{
 		SQLiteSubsystem->UnregisterActiveGameCharacter(PlayerId);
+	}
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 12b] 채널 레지스트리 스캔
+// ════════════════════════════════════════════════════════════════════════════════
+
+FString AHellunaLobbyGameMode::GetRegistryDirectoryPath() const
+{
+	return FPaths::ConvertRelativePathToFull(
+		FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("ServerRegistry")));
+}
+
+TArray<FGameChannelInfo> AHellunaLobbyGameMode::ScanAvailableChannels()
+{
+	TArray<FGameChannelInfo> Channels;
+	const FString RegistryDir = GetRegistryDirectoryPath();
+
+	// JSON 파일 목록 스캔
+	TArray<FString> FoundFiles;
+	IFileManager::Get().FindFiles(FoundFiles, *FPaths::Combine(RegistryDir, TEXT("channel_*.json")), true, false);
+
+	const FDateTime Now = FDateTime::UtcNow();
+
+	for (const FString& FileName : FoundFiles)
+	{
+		const FString FilePath = FPaths::Combine(RegistryDir, FileName);
+		FString JsonString;
+		if (!FFileHelper::LoadFileToString(JsonString, *FilePath))
+		{
+			continue;
+		}
+
+		TSharedPtr<FJsonObject> JsonObj;
+		TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonString);
+		if (!FJsonSerializer::Deserialize(Reader, JsonObj) || !JsonObj.IsValid())
+		{
+			continue;
+		}
+
+		FGameChannelInfo Info;
+		Info.ChannelId = JsonObj->GetStringField(TEXT("channelId"));
+		Info.Port = static_cast<int32>(JsonObj->GetNumberField(TEXT("port")));
+		Info.CurrentPlayers = static_cast<int32>(JsonObj->GetNumberField(TEXT("currentPlayers")));
+		Info.MaxPlayers = static_cast<int32>(JsonObj->GetNumberField(TEXT("maxPlayers")));
+		Info.MapName = JsonObj->GetStringField(TEXT("mapName"));
+
+		// Status 문자열 → enum
+		const FString StatusStr = JsonObj->GetStringField(TEXT("status"));
+		if (StatusStr == TEXT("playing"))
+		{
+			Info.Status = EChannelStatus::Playing;
+		}
+		else if (StatusStr == TEXT("empty"))
+		{
+			Info.Status = EChannelStatus::Empty;
+		}
+		else
+		{
+			Info.Status = EChannelStatus::Offline;
+		}
+
+		// [Phase 12h] lastUpdate 60초 초과 → Offline (비정상 종료 대비)
+		FString LastUpdateStr = JsonObj->GetStringField(TEXT("lastUpdate"));
+		FDateTime LastUpdate;
+		if (FDateTime::ParseIso8601(*LastUpdateStr, LastUpdate))
+		{
+			const FTimespan Age = Now - LastUpdate;
+			if (Age.GetTotalSeconds() > 60.0)
+			{
+				Info.Status = EChannelStatus::Offline;
+				UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] 채널 %s 타임아웃 (%.0f초) → Offline"),
+					*Info.ChannelId, Age.GetTotalSeconds());
+			}
+		}
+
+		Channels.Add(MoveTemp(Info));
+	}
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ScanAvailableChannels: %d개 채널 발견"), Channels.Num());
+	return Channels;
+}
+
+bool AHellunaLobbyGameMode::FindEmptyChannel(FGameChannelInfo& OutChannel)
+{
+	const TArray<FGameChannelInfo> Channels = ScanAvailableChannels();
+
+	for (const FGameChannelInfo& Ch : Channels)
+	{
+		if (Ch.Status == EChannelStatus::Empty && !PendingDeployChannels.Contains(Ch.Port))
+		{
+			OutChannel = Ch;
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] FindEmptyChannel: %s (Port=%d)"), *Ch.ChannelId, Ch.Port);
+			return true;
+		}
+	}
+
+	UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] FindEmptyChannel: 빈 채널 없음"));
+	return false;
+}
+
+void AHellunaLobbyGameMode::MarkChannelAsPendingDeploy(int32 Port)
+{
+	PendingDeployChannels.Add(Port);
+
+	// 30초 후 자동 해제 (Travel 실패 대비)
+	FTimerHandle& TimerHandle = PendingDeployTimers.FindOrAdd(Port);
+	UWorld* World = GetWorld();
+	if (World)
+	{
+		World->GetTimerManager().SetTimer(TimerHandle, [this, Port]()
+		{
+			PendingDeployChannels.Remove(Port);
+			PendingDeployTimers.Remove(Port);
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] PendingDeploy 타이머 해제 | Port=%d"), Port);
+		}, 30.f, false);
+	}
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] MarkChannelAsPendingDeploy | Port=%d"), Port);
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 12d] 파티 시스템 — 서버 로직
+// ════════════════════════════════════════════════════════════════════════════════
+
+FString AHellunaLobbyGameMode::GeneratePartyCode()
+{
+	// 문자 풀: I/O/0/1 제외 (가독성)
+	static const TCHAR* CharPool = TEXT("ABCDEFGHJKLMNPQRSTUVWXYZ23456789");
+	static const int32 PoolSize = 30; // strlen(CharPool)
+	static const int32 CodeLength = 6;
+
+	if (!SQLiteSubsystem || !SQLiteSubsystem->IsDatabaseReady())
+	{
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] GeneratePartyCode: DB가 준비되지 않음"));
+		return FString();
+	}
+
+	for (int32 Attempt = 0; Attempt < 10; ++Attempt)
+	{
+		FString Code;
+		Code.Reserve(CodeLength);
+		for (int32 i = 0; i < CodeLength; ++i)
+		{
+			Code.AppendChar(CharPool[FMath::RandRange(0, PoolSize - 1)]);
+		}
+
+		if (SQLiteSubsystem->IsPartyCodeUnique(Code))
+		{
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] GeneratePartyCode: %s (시도 %d회)"), *Code, Attempt + 1);
+			return Code;
+		}
+	}
+
+	UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] GeneratePartyCode: 10회 시도 후 유니크 코드 생성 실패"));
+	return FString();
+}
+
+void AHellunaLobbyGameMode::RefreshPartyCache(int32 PartyId)
+{
+	if (!SQLiteSubsystem || !SQLiteSubsystem->IsDatabaseReady() || PartyId <= 0)
+	{
+		return;
+	}
+
+	FHellunaPartyInfo Info = SQLiteSubsystem->LoadPartyInfo(PartyId);
+	if (Info.IsValid())
+	{
+		ActivePartyCache.Add(PartyId, Info);
+
+		// PlayerToPartyMap 갱신
+		for (const FHellunaPartyMemberInfo& Member : Info.Members)
+		{
+			PlayerToPartyMap.Add(Member.PlayerId, PartyId);
+		}
+	}
+	else
+	{
+		// 파티가 삭제됨
+		ActivePartyCache.Remove(PartyId);
+	}
+}
+
+void AHellunaLobbyGameMode::CreatePartyForPlayer(const FString& PlayerId, const FString& DisplayName)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ▶ CreatePartyForPlayer | PlayerId=%s"), *PlayerId);
+
+	if (!SQLiteSubsystem || !SQLiteSubsystem->IsDatabaseReady())
+	{
+		auto* PC = PlayerIdToControllerMap.Find(PlayerId);
+		if (PC && PC->IsValid())
+		{
+			(*PC)->Client_PartyError(TEXT("DB가 준비되지 않았습니다"));
+		}
+		return;
+	}
+
+	// 이미 파티에 속해있는지 확인
+	if (PlayerToPartyMap.Contains(PlayerId))
+	{
+		auto* PC = PlayerIdToControllerMap.Find(PlayerId);
+		if (PC && PC->IsValid())
+		{
+			(*PC)->Client_PartyError(TEXT("이미 파티에 참가 중입니다"));
+		}
+		return;
+	}
+
+	const FString PartyCode = GeneratePartyCode();
+	if (PartyCode.IsEmpty())
+	{
+		auto* PC = PlayerIdToControllerMap.Find(PlayerId);
+		if (PC && PC->IsValid())
+		{
+			(*PC)->Client_PartyError(TEXT("파티 코드 생성 실패"));
+		}
+		return;
+	}
+
+	const int32 PartyId = SQLiteSubsystem->CreateParty(PlayerId, DisplayName, PartyCode);
+	if (PartyId <= 0)
+	{
+		auto* PC = PlayerIdToControllerMap.Find(PlayerId);
+		if (PC && PC->IsValid())
+		{
+			(*PC)->Client_PartyError(TEXT("파티 생성 실패"));
+		}
+		return;
+	}
+
+	RefreshPartyCache(PartyId);
+	BroadcastPartyState(PartyId);
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ✓ 파티 생성 완료 | PartyId=%d | Code=%s | Leader=%s"), PartyId, *PartyCode, *PlayerId);
+}
+
+void AHellunaLobbyGameMode::JoinPartyForPlayer(const FString& PlayerId, const FString& DisplayName, const FString& PartyCode)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ▶ JoinPartyForPlayer | PlayerId=%s | Code=%s"), *PlayerId, *PartyCode);
+
+	if (!SQLiteSubsystem || !SQLiteSubsystem->IsDatabaseReady())
+	{
+		auto* PC = PlayerIdToControllerMap.Find(PlayerId);
+		if (PC && PC->IsValid()) { (*PC)->Client_PartyError(TEXT("DB가 준비되지 않았습니다")); }
+		return;
+	}
+
+	// 이미 파티에 속해있는지
+	if (PlayerToPartyMap.Contains(PlayerId))
+	{
+		auto* PC = PlayerIdToControllerMap.Find(PlayerId);
+		if (PC && PC->IsValid()) { (*PC)->Client_PartyError(TEXT("이미 파티에 참가 중입니다")); }
+		return;
+	}
+
+	// 파티 코드로 PartyId 조회
+	const int32 PartyId = SQLiteSubsystem->FindPartyByCode(PartyCode);
+	if (PartyId <= 0)
+	{
+		auto* PC = PlayerIdToControllerMap.Find(PlayerId);
+		if (PC && PC->IsValid()) { (*PC)->Client_PartyError(TEXT("존재하지 않는 파티 코드입니다")); }
+		return;
+	}
+
+	// 인원 체크 (최대 3명)
+	const int32 MemberCount = SQLiteSubsystem->GetPartyMemberCount(PartyId);
+	if (MemberCount >= 3)
+	{
+		auto* PC = PlayerIdToControllerMap.Find(PlayerId);
+		if (PC && PC->IsValid()) { (*PC)->Client_PartyError(TEXT("파티가 가득 찼습니다 (최대 3명)")); }
+		return;
+	}
+
+	if (!SQLiteSubsystem->JoinParty(PartyId, PlayerId, DisplayName))
+	{
+		auto* PC = PlayerIdToControllerMap.Find(PlayerId);
+		if (PC && PC->IsValid()) { (*PC)->Client_PartyError(TEXT("파티 참가 실패")); }
+		return;
+	}
+
+	// 전원 Ready 리셋
+	SQLiteSubsystem->ResetAllReadyStates(PartyId);
+
+	RefreshPartyCache(PartyId);
+	BroadcastPartyState(PartyId);
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ✓ 파티 참가 완료 | PartyId=%d | PlayerId=%s"), PartyId, *PlayerId);
+}
+
+void AHellunaLobbyGameMode::LeavePartyForPlayer(const FString& PlayerId)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ▶ LeavePartyForPlayer | PlayerId=%s"), *PlayerId);
+
+	if (!SQLiteSubsystem || !SQLiteSubsystem->IsDatabaseReady())
+	{
+		return;
+	}
+
+	const int32* PartyIdPtr = PlayerToPartyMap.Find(PlayerId);
+	if (!PartyIdPtr || *PartyIdPtr <= 0)
+	{
+		return;
+	}
+	const int32 PartyId = *PartyIdPtr;
+
+	// 리더인지 확인
+	const FHellunaPartyInfo* CachedInfo = ActivePartyCache.Find(PartyId);
+	const bool bIsLeader = CachedInfo && CachedInfo->LeaderId == PlayerId;
+
+	// DB에서 탈퇴
+	SQLiteSubsystem->LeaveParty(PlayerId);
+	PlayerToPartyMap.Remove(PlayerId);
+
+	// 남은 멤버 확인
+	const int32 RemainingCount = SQLiteSubsystem->GetPartyMemberCount(PartyId);
+
+	if (RemainingCount <= 0)
+	{
+		// 파티 해산
+		ActivePartyCache.Remove(PartyId);
+		PartyChatHistory.Remove(PartyId);
+
+		// 탈퇴한 플레이어에게 해산 알림
+		auto* PC = PlayerIdToControllerMap.Find(PlayerId);
+		if (PC && PC->IsValid())
+		{
+			(*PC)->Client_PartyDisbanded(TEXT("파티가 해산되었습니다"));
+		}
+	}
+	else
+	{
+		// 리더였으면 리더십 이전 (joined_at 순서로 DB에서 첫 번째)
+		if (bIsLeader)
+		{
+			FHellunaPartyInfo Info = SQLiteSubsystem->LoadPartyInfo(PartyId);
+			if (Info.Members.Num() > 0)
+			{
+				const FString NewLeaderId = Info.Members[0].PlayerId;
+				SQLiteSubsystem->TransferLeadership(PartyId, NewLeaderId);
+				UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] 리더십 이전: %s → %s"), *PlayerId, *NewLeaderId);
+			}
+		}
+
+		// 전원 Ready 리셋
+		SQLiteSubsystem->ResetAllReadyStates(PartyId);
+
+		RefreshPartyCache(PartyId);
+		BroadcastPartyState(PartyId);
+
+		// 탈퇴한 플레이어에게 해산 알림
+		auto* PC = PlayerIdToControllerMap.Find(PlayerId);
+		if (PC && PC->IsValid())
+		{
+			(*PC)->Client_PartyDisbanded(TEXT("파티에서 탈퇴했습니다"));
+		}
+	}
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ✓ 파티 탈퇴 완료 | PlayerId=%s | PartyId=%d | Remaining=%d"), *PlayerId, PartyId, RemainingCount);
+}
+
+void AHellunaLobbyGameMode::KickPartyMember(const FString& RequesterId, const FString& TargetId)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ▶ KickPartyMember | Requester=%s | Target=%s"), *RequesterId, *TargetId);
+
+	const int32* PartyIdPtr = PlayerToPartyMap.Find(RequesterId);
+	if (!PartyIdPtr || *PartyIdPtr <= 0)
+	{
+		return;
+	}
+	const int32 PartyId = *PartyIdPtr;
+
+	// 리더 확인
+	const FHellunaPartyInfo* CachedInfo = ActivePartyCache.Find(PartyId);
+	if (!CachedInfo || CachedInfo->LeaderId != RequesterId)
+	{
+		auto* PC = PlayerIdToControllerMap.Find(RequesterId);
+		if (PC && PC->IsValid()) { (*PC)->Client_PartyError(TEXT("리더만 추방할 수 있습니다")); }
+		return;
+	}
+
+	// 대상이 같은 파티인지
+	const int32* TargetPartyPtr = PlayerToPartyMap.Find(TargetId);
+	if (!TargetPartyPtr || *TargetPartyPtr != PartyId)
+	{
+		auto* PC = PlayerIdToControllerMap.Find(RequesterId);
+		if (PC && PC->IsValid()) { (*PC)->Client_PartyError(TEXT("대상이 파티에 없습니다")); }
+		return;
+	}
+
+	// 대상 DB 탈퇴
+	if (SQLiteSubsystem)
+	{
+		SQLiteSubsystem->LeaveParty(TargetId);
+	}
+	PlayerToPartyMap.Remove(TargetId);
+
+	// 추방된 플레이어에게 알림
+	auto* TargetPC = PlayerIdToControllerMap.Find(TargetId);
+	if (TargetPC && TargetPC->IsValid())
+	{
+		(*TargetPC)->Client_PartyDisbanded(TEXT("파티에서 추방되었습니다"));
+	}
+
+	// 전원 Ready 리셋 + 갱신
+	if (SQLiteSubsystem)
+	{
+		SQLiteSubsystem->ResetAllReadyStates(PartyId);
+	}
+	RefreshPartyCache(PartyId);
+	BroadcastPartyState(PartyId);
+}
+
+void AHellunaLobbyGameMode::SetPlayerReady(const FString& PlayerId, bool bReady)
+{
+	UE_LOG(LogHellunaLobby, Verbose, TEXT("[LobbyGM] SetPlayerReady | PlayerId=%s | Ready=%s"), *PlayerId, bReady ? TEXT("true") : TEXT("false"));
+
+	if (!SQLiteSubsystem || !SQLiteSubsystem->IsDatabaseReady())
+	{
+		return;
+	}
+
+	SQLiteSubsystem->UpdateMemberReady(PlayerId, bReady);
+
+	const int32* PartyIdPtr = PlayerToPartyMap.Find(PlayerId);
+	if (PartyIdPtr && *PartyIdPtr > 0)
+	{
+		RefreshPartyCache(*PartyIdPtr);
+		BroadcastPartyState(*PartyIdPtr);
+
+		// Auto-Deploy 체크
+		if (bReady)
+		{
+			TryAutoDeployParty(*PartyIdPtr);
+		}
+	}
+}
+
+void AHellunaLobbyGameMode::OnPlayerHeroChanged(const FString& PlayerId, int32 HeroType)
+{
+	UE_LOG(LogHellunaLobby, Verbose, TEXT("[LobbyGM] OnPlayerHeroChanged | PlayerId=%s | HeroType=%d"), *PlayerId, HeroType);
+
+	if (!SQLiteSubsystem || !SQLiteSubsystem->IsDatabaseReady())
+	{
+		return;
+	}
+
+	SQLiteSubsystem->UpdateMemberHeroType(PlayerId, HeroType);
+
+	const int32* PartyIdPtr = PlayerToPartyMap.Find(PlayerId);
+	if (PartyIdPtr && *PartyIdPtr > 0)
+	{
+		RefreshPartyCache(*PartyIdPtr);
+		BroadcastPartyState(*PartyIdPtr);
+	}
+}
+
+bool AHellunaLobbyGameMode::ValidatePartyHeroDuplication(int32 PartyId)
+{
+	const FHellunaPartyInfo* Info = ActivePartyCache.Find(PartyId);
+	if (!Info)
+	{
+		return false;
+	}
+
+	TSet<int32> UsedHeroes;
+	for (const FHellunaPartyMemberInfo& Member : Info->Members)
+	{
+		// None(3)은 중복 체크 대상 아님
+		if (Member.SelectedHeroType == 3)
+		{
+			continue;
+		}
+		if (UsedHeroes.Contains(Member.SelectedHeroType))
+		{
+			return true; // 중복 발견
+		}
+		UsedHeroes.Add(Member.SelectedHeroType);
+	}
+	return false; // 중복 없음
+}
+
+void AHellunaLobbyGameMode::TryAutoDeployParty(int32 PartyId)
+{
+	// [Phase 12 Fix] 값 복사 — RefreshPartyCache가 ActivePartyCache를 변경할 수 있으므로 포인터 사용 금지
+	const FHellunaPartyInfo* InfoPtr = ActivePartyCache.Find(PartyId);
+	if (!InfoPtr || InfoPtr->Members.Num() == 0)
+	{
+		return;
+	}
+	FHellunaPartyInfo Info = *InfoPtr; // 값 복사
+	InfoPtr = nullptr; // 실수 방지
+
+	// 전원 Ready 확인
+	for (const FHellunaPartyMemberInfo& Member : Info.Members)
+	{
+		if (!Member.bIsReady)
+		{
+			return; // 아직 안 됨
+		}
+	}
+
+	// 영웅 중복 체크
+	if (ValidatePartyHeroDuplication(PartyId))
+	{
+		// 중복 있음 — 에러 전송 + Ready 리셋
+		if (SQLiteSubsystem)
+		{
+			SQLiteSubsystem->ResetAllReadyStates(PartyId);
+		}
+
+		RefreshPartyCache(PartyId);
+
+		for (const FHellunaPartyMemberInfo& Member : Info.Members)
+		{
+			auto* PC = PlayerIdToControllerMap.Find(Member.PlayerId);
+			if (PC && PC->IsValid())
+			{
+				(*PC)->Client_PartyError(TEXT("영웅이 중복되었습니다! 캐릭터를 변경해주세요"));
+			}
+		}
+
+		BroadcastPartyState(PartyId);
+		return;
+	}
+
+	// 캐릭터 미선택 체크 (None = static_cast<int32>(EHellunaHeroType::None))
+	for (const FHellunaPartyMemberInfo& Member : Info.Members)
+	{
+		if (Member.SelectedHeroType == 3) // None
+		{
+			auto* PC = PlayerIdToControllerMap.Find(Member.PlayerId);
+			if (PC && PC->IsValid())
+			{
+				(*PC)->Client_PartyError(TEXT("모든 멤버가 캐릭터를 선택해야 합니다"));
+			}
+
+			if (SQLiteSubsystem)
+			{
+				SQLiteSubsystem->ResetAllReadyStates(PartyId);
+			}
+			RefreshPartyCache(PartyId);
+			BroadcastPartyState(PartyId);
+			return;
+		}
+	}
+
+	// 전원 Ready + 중복 없음 + 캐릭터 선택 완료 → Deploy!
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] TryAutoDeployParty: 전원 Ready — Deploy 시작 | PartyId=%d"), PartyId);
+	ExecutePartyDeploy(PartyId);
+}
+
+void AHellunaLobbyGameMode::ExecutePartyDeploy(int32 PartyId)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ▶ ExecutePartyDeploy | PartyId=%d"), PartyId);
+
+	// [Phase 12 Fix] 값 복사 — RefreshPartyCache가 ActivePartyCache를 변경할 수 있으므로
+	const FHellunaPartyInfo* InfoPtr = ActivePartyCache.Find(PartyId);
+	if (!InfoPtr || InfoPtr->Members.Num() == 0)
+	{
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] ExecutePartyDeploy: 캐시에 파티 정보 없음 | PartyId=%d"), PartyId);
+		return;
+	}
+	FHellunaPartyInfo Info = *InfoPtr;
+	InfoPtr = nullptr;
+
+	// Step 1: 빈 채널 선택
+	FGameChannelInfo EmptyChannel;
+	if (!FindEmptyChannel(EmptyChannel))
+	{
+		// 빈 채널 없음 → 에러 + Ready 리셋
+		for (const FHellunaPartyMemberInfo& Member : Info.Members)
+		{
+			auto* PC = PlayerIdToControllerMap.Find(Member.PlayerId);
+			if (PC && PC->IsValid())
+			{
+				(*PC)->Client_PartyError(TEXT("빈 채널이 없습니다. 잠시 후 다시 시도해주세요."));
+			}
+		}
+		if (SQLiteSubsystem)
+		{
+			SQLiteSubsystem->ResetAllReadyStates(PartyId);
+		}
+		RefreshPartyCache(PartyId);
+		BroadcastPartyState(PartyId);
+		return;
+	}
+
+	MarkChannelAsPendingDeploy(EmptyChannel.Port);
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ExecutePartyDeploy: 채널 배정 | Port=%d"), EmptyChannel.Port);
+
+	// Step 2: 전원 Save
+	for (const FHellunaPartyMemberInfo& Member : Info.Members)
+	{
+		auto* PCPtr = PlayerIdToControllerMap.Find(Member.PlayerId);
+		if (!PCPtr || !PCPtr->IsValid())
+		{
+			UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] ExecutePartyDeploy: Controller 없음 | PlayerId=%s"), *Member.PlayerId);
+			continue;
+		}
+
+		AHellunaLobbyController* MemberPC = PCPtr->Get();
+		UInv_InventoryComponent* LoadoutComp = MemberPC->GetLoadoutComponent();
+		UInv_InventoryComponent* StashComp = MemberPC->GetStashComponent();
+
+		if (SQLiteSubsystem && SQLiteSubsystem->IsDatabaseReady())
+		{
+			// [Fix29-C 순서] Loadout → ExportToFile → Stash
+			if (LoadoutComp)
+			{
+				TArray<FInv_SavedItemData> LoadoutItems = LoadoutComp->CollectInventoryDataForSave();
+				if (LoadoutItems.Num() > 0)
+				{
+					SQLiteSubsystem->SavePlayerLoadout(Member.PlayerId, LoadoutItems);
+					SQLiteSubsystem->ExportLoadoutToFile(Member.PlayerId, LoadoutItems, Member.SelectedHeroType);
+				}
+			}
+			if (StashComp)
+			{
+				TArray<FInv_SavedItemData> StashItems = StashComp->CollectInventoryDataForSave();
+				SQLiteSubsystem->SavePlayerStash(Member.PlayerId, StashItems);
+			}
+
+			// [Phase 12 Fix] 크래시 복구를 위한 출격 상태 설정
+			SQLiteSubsystem->SetPlayerDeployed(Member.PlayerId, true);
+		}
+	}
+
+	// Step 3: 전원 Deploy
+	for (const FHellunaPartyMemberInfo& Member : Info.Members)
+	{
+		auto* PCPtr = PlayerIdToControllerMap.Find(Member.PlayerId);
+		if (!PCPtr || !PCPtr->IsValid())
+		{
+			continue;
+		}
+
+		AHellunaLobbyController* MemberPC = PCPtr->Get();
+		MemberPC->SetDeployInProgress(true);
+		MemberPC->Client_ExecutePartyDeploy(EmptyChannel.Port);
+
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ExecutePartyDeploy: Client_ExecutePartyDeploy 전송 | PlayerId=%s | Port=%d"),
+			*Member.PlayerId, EmptyChannel.Port);
+	}
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ✓ ExecutePartyDeploy 완료 | PartyId=%d | Port=%d | Members=%d"),
+		PartyId, EmptyChannel.Port, Info.Members.Num());
+}
+
+void AHellunaLobbyGameMode::BroadcastPartyState(int32 PartyId)
+{
+	const FHellunaPartyInfo* Info = ActivePartyCache.Find(PartyId);
+	if (!Info)
+	{
+		return;
+	}
+
+	for (const FHellunaPartyMemberInfo& Member : Info->Members)
+	{
+		auto* PC = PlayerIdToControllerMap.Find(Member.PlayerId);
+		if (PC && PC->IsValid())
+		{
+			(*PC)->Client_UpdatePartyState(*Info);
+		}
+	}
+
+	UE_LOG(LogHellunaLobby, Verbose, TEXT("[LobbyGM] BroadcastPartyState | PartyId=%d | Members=%d"), PartyId, Info->Members.Num());
+}
+
+void AHellunaLobbyGameMode::BroadcastPartyChatMessage(int32 PartyId, const FHellunaPartyChatMessage& Msg)
+{
+	// 채팅 기록 저장 (최대 50개)
+	TArray<FHellunaPartyChatMessage>& History = PartyChatHistory.FindOrAdd(PartyId);
+	History.Add(Msg);
+	if (History.Num() > 50)
+	{
+		History.RemoveAt(0);
+	}
+
+	// 파티원에게 전송
+	const FHellunaPartyInfo* Info = ActivePartyCache.Find(PartyId);
+	if (!Info)
+	{
+		return;
+	}
+
+	for (const FHellunaPartyMemberInfo& Member : Info->Members)
+	{
+		auto* PC = PlayerIdToControllerMap.Find(Member.PlayerId);
+		if (PC && PC->IsValid())
+		{
+			(*PC)->Client_ReceivePartyChatMessage(Msg);
+		}
 	}
 }

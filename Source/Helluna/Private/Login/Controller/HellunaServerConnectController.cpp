@@ -143,9 +143,19 @@ void AHellunaServerConnectController::OnConnectButtonClicked(const FString& IPAd
 			ConnectWidget->SetLoadingState(true);
 		}
 
-		// 로딩 화면 표시 (open 명령 전)
+		// [Phase 12c] 접속 IP 저장 (포트 제거) — Deploy/로비 복귀에 재사용
 		if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance()))
 		{
+			FString IP = IPAddress;
+			int32 ColonIdx;
+			if (IP.FindChar(TEXT(':'), ColonIdx))
+			{
+				IP = IP.Left(ColonIdx);
+			}
+			GI->ConnectedServerIP = IP;
+			UE_LOG(LogHelluna, Log, TEXT("[ServerConnectController] ConnectedServerIP 저장: %s"), *IP);
+
+			// 로딩 화면 표시 (open 명령 전)
 			GI->ShowLoadingScreen(TEXT("서버 접속 중..."));
 		}
 

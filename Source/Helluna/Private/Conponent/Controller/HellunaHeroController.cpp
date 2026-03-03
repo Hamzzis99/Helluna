@@ -21,6 +21,7 @@
 #include "EnhancedInputSubsystems.h"
 #include "InputAction.h"
 #include "InputMappingContext.h"
+#include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
 
 
 
@@ -261,13 +262,25 @@ void AHellunaHeroController::Client_ShowGameResult_Implementation(
 	UE_LOG(LogTemp, Log, TEXT("[HeroController] Client_ShowGameResult | Survived=%s Items=%d Reason=%s"),
 		bSurvived ? TEXT("Yes") : TEXT("No"), ResultItems.Num(), *Reason);
 
+	// [Phase 12f] LobbyURL이 비어있으면 GameInstance에서 동적 구성
+	FString ResolvedLobbyURL = LobbyURL;
+	if (ResolvedLobbyURL.IsEmpty())
+	{
+		UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance());
+		if (GI && !GI->ConnectedServerIP.IsEmpty())
+		{
+			ResolvedLobbyURL = FString::Printf(TEXT("%s:%d"), *GI->ConnectedServerIP, GI->LobbyServerPort);
+			UE_LOG(LogTemp, Log, TEXT("[HeroController] LobbyURL 동적 구성: %s"), *ResolvedLobbyURL);
+		}
+	}
+
 	if (!GameResultWidgetClass)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[HeroController] GameResultWidgetClass가 설정되지 않음! BP에서 설정 필요"));
 		// 위젯 없으면 바로 로비로 이동
-		if (!LobbyURL.IsEmpty())
+		if (!ResolvedLobbyURL.IsEmpty())
 		{
-			ClientTravel(LobbyURL, TRAVEL_Absolute);
+			ClientTravel(ResolvedLobbyURL, TRAVEL_Absolute);
 		}
 		return;
 	}
@@ -283,15 +296,15 @@ void AHellunaHeroController::Client_ShowGameResult_Implementation(
 	if (!GameResultWidgetInstance)
 	{
 		UE_LOG(LogTemp, Error, TEXT("[HeroController] 결과 위젯 생성 실패!"));
-		if (!LobbyURL.IsEmpty())
+		if (!ResolvedLobbyURL.IsEmpty())
 		{
-			ClientTravel(LobbyURL, TRAVEL_Absolute);
+			ClientTravel(ResolvedLobbyURL, TRAVEL_Absolute);
 		}
 		return;
 	}
 
-	// 로비 URL 설정
-	GameResultWidgetInstance->LobbyURL = LobbyURL;
+	// 로비 URL 설정 (위젯에도 동적 구성 폴백 있음)
+	GameResultWidgetInstance->LobbyURL = ResolvedLobbyURL;
 
 	// 결과 데이터 설정 (내부에서 OnResultDataSet BP 이벤트 호출)
 	GameResultWidgetInstance->SetResultData(ResultItems, bSurvived, Reason);

@@ -31,6 +31,9 @@
 #include "Player/Inv_PlayerController.h"
 #include "HAL/IConsoleManager.h"
 #include "Chat/HellunaChatTypes.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "HAL/FileManager.h"
 
 AHellunaDefenseGameMode::AHellunaDefenseGameMode()
 {
@@ -58,6 +61,24 @@ void AHellunaDefenseGameMode::BeginPlay()
     }
 
     UE_LOG(LogHelluna, Warning, TEXT("[DefenseGameMode] LobbyServerURL = '%s'"), *LobbyServerURL);
+
+    // [Phase 12b] 서버 레지스트리 — 디렉토리 생성 + 초기 파일 쓰기
+    {
+        const FString RegistryDir = GetRegistryDirectoryPath();
+        IFileManager::Get().MakeDirectory(*RegistryDir, true);
+        WriteRegistryFile(TEXT("empty"), 0);
+        UE_LOG(LogHelluna, Log, TEXT("[DefenseGameMode] 서버 레지스트리 초기화 | Port=%d | Path=%s"), GetServerPort(), *GetRegistryFilePath());
+
+        // [Phase 12 Fix] 30초마다 하트비트 — 로비 서버의 60초 Offline 감지 대비
+        if (UWorld* W = GetWorld())
+        {
+            W->GetTimerManager().SetTimer(RegistryHeartbeatTimer, [this]()
+            {
+                const FString Status = CurrentPlayerCount > 0 ? TEXT("playing") : TEXT("empty");
+                WriteRegistryFile(Status, CurrentPlayerCount);
+            }, 30.0f, true);
+        }
+    }
 
     // 게임 로직 초기화만
     CacheBossSpawnPoints();
@@ -374,6 +395,11 @@ void AHellunaDefenseGameMode::PostLogin(APlayerController* NewPlayer)
 {
     Super::PostLogin(NewPlayer);
 
+    // [Phase 12b] 서버 레지스트리 갱신 — 플레이어 접속
+    CurrentPlayerCount++;
+    WriteRegistryFile(TEXT("playing"), CurrentPlayerCount);
+    UE_LOG(LogHelluna, Log, TEXT("[DefenseGameMode] PostLogin 레지스트리 갱신 | Players=%d"), CurrentPlayerCount);
+
     // 게임이 초기화된 이후에만 접속 메시지 전송
     if (bGameInitialized && IsValid(NewPlayer))
     {
@@ -656,6 +682,11 @@ void AHellunaDefenseGameMode::Logout(AController* Exiting)
         }
     }
 
+    // [Phase 12b] 서버 레지스트리 갱신 — 플레이어 퇴장
+    CurrentPlayerCount = FMath::Max(0, CurrentPlayerCount - 1);
+    WriteRegistryFile(CurrentPlayerCount > 0 ? TEXT("playing") : TEXT("empty"), CurrentPlayerCount);
+    UE_LOG(LogHelluna, Log, TEXT("[DefenseGameMode] Logout 레지스트리 갱신 | Players=%d"), CurrentPlayerCount);
+
     Super::Logout(Exiting);
 }
 
@@ -670,6 +701,16 @@ void AHellunaDefenseGameMode::EndPlay(const EEndPlayReason::Type EndPlayReason)
         UE_LOG(LogHelluna, Warning, TEXT("[Phase7] EndPlay: 서버 셧다운 — EndGame(ServerShutdown) 호출"));
         EndGame(EHellunaGameEndReason::ServerShutdown);
     }
+
+    // [Phase 12b] 서버 레지스트리 파일 삭제
+    // [Phase 12 Fix] 하트비트 타이머 정리
+    if (UWorld* W = GetWorld())
+    {
+        W->GetTimerManager().ClearTimer(RegistryHeartbeatTimer);
+    }
+
+    DeleteRegistryFile();
+    UE_LOG(LogHelluna, Log, TEXT("[DefenseGameMode] EndPlay: 레지스트리 파일 삭제"));
 
     Super::EndPlay(EndPlayReason);
 }
@@ -723,3 +764,66 @@ void AHellunaDefenseGameMode::EndPlay(const EEndPlayReason::Type EndPlayReason)
 // }
 //
 // ════════════════════════════════════════════════════════════════════════════════
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 12b] 서버 레지스트리 헬퍼 함수
+// ════════════════════════════════════════════════════════════════════════════════
+
+FString AHellunaDefenseGameMode::GetRegistryDirectoryPath() const
+{
+    return FPaths::ConvertRelativePathToFull(
+        FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("ServerRegistry")));
+}
+
+int32 AHellunaDefenseGameMode::GetServerPort() const
+{
+    UWorld* World = GetWorld();
+    if (World)
+    {
+        return World->URL.Port;
+    }
+    return 7777;
+}
+
+FString AHellunaDefenseGameMode::GetRegistryFilePath() const
+{
+    const int32 Port = GetServerPort();
+    return FPaths::Combine(GetRegistryDirectoryPath(), FString::Printf(TEXT("channel_%d.json"), Port));
+}
+
+void AHellunaDefenseGameMode::WriteRegistryFile(const FString& Status, int32 PlayerCount)
+{
+    const int32 Port = GetServerPort();
+    const FString ChannelId = FString::Printf(TEXT("channel_%d"), Port);
+    const FString MapName = GetWorld() ? GetWorld()->GetMapName() : TEXT("Unknown");
+    const FString LastUpdate = FDateTime::UtcNow().ToIso8601();
+
+    const FString JsonContent = FString::Printf(
+        TEXT("{\n")
+        TEXT("  \"channelId\": \"%s\",\n")
+        TEXT("  \"port\": %d,\n")
+        TEXT("  \"status\": \"%s\",\n")
+        TEXT("  \"currentPlayers\": %d,\n")
+        TEXT("  \"maxPlayers\": 3,\n")
+        TEXT("  \"mapName\": \"%s\",\n")
+        TEXT("  \"lastUpdate\": \"%s\"\n")
+        TEXT("}"),
+        *ChannelId, Port, *Status, PlayerCount, *MapName, *LastUpdate
+    );
+
+    const FString FilePath = GetRegistryFilePath();
+    if (!FFileHelper::SaveStringToFile(JsonContent, *FilePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+    {
+        UE_LOG(LogHelluna, Error, TEXT("[DefenseGameMode] 레지스트리 파일 쓰기 실패: %s"), *FilePath);
+    }
+}
+
+void AHellunaDefenseGameMode::DeleteRegistryFile()
+{
+    const FString FilePath = GetRegistryFilePath();
+    if (IFileManager::Get().FileExists(*FilePath))
+    {
+        IFileManager::Get().Delete(*FilePath);
+        UE_LOG(LogHelluna, Log, TEXT("[DefenseGameMode] 레지스트리 파일 삭제: %s"), *FilePath);
+    }
+}

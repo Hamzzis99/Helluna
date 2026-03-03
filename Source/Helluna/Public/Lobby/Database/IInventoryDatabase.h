@@ -139,7 +139,7 @@ public:
 
 	/**
 	 * 크래시 복구용: Loadout이 아직 남아있는지 확인한다.
-	 * Loadout이 남아있다 = 이전 게임에서 비정상 종료된 것.
+	 * @deprecated [Fix36] IsPlayerDeployed로 대체. Loadout 존재는 정상 상태임.
 	 *
 	 * @param PlayerId  플레이어 고유 ID
 	 * @return Loadout 잔존 여부 (true = 비정상 종료 감지)
@@ -150,6 +150,7 @@ public:
 
 	/**
 	 * 크래시 복구: Loadout 잔존 아이템을 Stash로 복귀시키고 Loadout을 삭제한다.
+	 * @deprecated [Fix36] IsPlayerDeployed/SetPlayerDeployed로 대체. Loadout 존재 ≠ 크래시.
 	 *
 	 * @param PlayerId  플레이어 고유 ID
 	 * @return 복구 성공 여부
@@ -157,6 +158,29 @@ public:
 	 * [호출 시점] HasPendingLoadout()이 true를 반환한 직후
 	 */
 	virtual bool RecoverFromCrash(const FString& PlayerId) = 0;
+
+	// ============================================================
+	// [Fix36] 출격 상태 추적 (독립 Loadout 영속성)
+	// ============================================================
+
+	/**
+	 * [Fix36] 플레이어 출격 상태 설정
+	 * Deploy=true: 출격 시 설정, GameResult 처리 또는 크래시 복구 시 false로 해제
+	 *
+	 * @param PlayerId   플레이어 고유 ID
+	 * @param bDeployed  출격 중 여부 (true=출격, false=로비)
+	 * @return 성공 여부
+	 */
+	virtual bool SetPlayerDeployed(const FString& PlayerId, bool bDeployed) = 0;
+
+	/**
+	 * [Fix36] 플레이어가 출격 중인지 확인 (크래시 감지용)
+	 * 출격 중(true) + 게임 결과 없음 = 크래시로 판단
+	 *
+	 * @param PlayerId  플레이어 고유 ID
+	 * @return 출격 중 여부 (행 없음 or is_deployed=0 → false)
+	 */
+	virtual bool IsPlayerDeployed(const FString& PlayerId) = 0;
 
 	// ============================================================
 	// 게임 캐릭터 중복 방지 (active_game_characters)
