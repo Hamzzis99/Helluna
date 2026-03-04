@@ -172,6 +172,14 @@ public:
 	bool IsDeployInProgress() const { return bDeployInProgress; }
 	void SetDeployInProgress(bool bInProgress) { bDeployInProgress = bInProgress; }
 
+	// ── [Phase 12g-2] 파티 프리뷰 ──
+
+	/** 파티 상태 변경 시 3D 프리뷰 갱신 (2명 이상이면 Party 모드, 1명 이하면 Solo 복귀) */
+	void UpdatePartyPreview(const FHellunaPartyInfo& PartyInfo);
+
+	/** 파티 해산/탈퇴 시 Solo 프리뷰로 복귀 */
+	void ResetToSoloPreview();
+
 	// ── 파티 위젯 ──
 
 	/** 파티 위젯 토글 */

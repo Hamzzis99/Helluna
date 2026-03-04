@@ -244,24 +244,37 @@ void UHellunaLobbyStashWidget::SwitchToTab(int32 TabIndex)
 	MainSwitcher->SetActiveWidgetIndex(ClampedIndex);
 	UpdateTabVisuals(ClampedIndex);
 
-	// ── 프리뷰 씬 Solo 모드 연동 ──
+	// ── 프리뷰 씬 Solo/Party 모드 연동 ──
 	AHellunaLobbyController* LobbyPC = GetLobbyController();
 
 	if (CachedPreviewScene.IsValid())
 	{
 		if (TabIndex == LobbyTab::Play)
 		{
-			// Play 탭: 선택된 캐릭터 Solo (미선택이면 기본 Index 0)
-			int32 HeroIndex = 0;
-			if (LobbyPC && LobbyPC->GetSelectedHeroType() != EHellunaHeroType::None)
+			// [Phase 12g-2] 파티 2명 이상이면 Party 프리뷰, 아니면 Solo
+			if (LobbyPC && LobbyPC->CurrentPartyInfo.IsValid()
+				&& LobbyPC->CurrentPartyInfo.Members.Num() >= 2)
 			{
-				HeroIndex = HeroTypeToIndex(LobbyPC->GetSelectedHeroType());
+				LobbyPC->UpdatePartyPreview(LobbyPC->CurrentPartyInfo);
 			}
-			CachedPreviewScene->SetSoloCharacter(HeroIndex);
+			else
+			{
+				// Solo 모드: 선택된 캐릭터 (미선택이면 기본 Index 0)
+				int32 HeroIndex = 0;
+				if (LobbyPC && LobbyPC->GetSelectedHeroType() != EHellunaHeroType::None)
+				{
+					HeroIndex = HeroTypeToIndex(LobbyPC->GetSelectedHeroType());
+				}
+				CachedPreviewScene->SetSoloCharacter(HeroIndex);
+			}
 		}
 		else if (TabIndex == LobbyTab::Character)
 		{
-			// CHARACTER 탭: Solo 모드 해제, 전체 표시
+			// CHARACTER 탭: Party/Solo 모두 해제, 3열 캐릭터 선택 표시
+			if (CachedPreviewScene->IsPartyMode())
+			{
+				CachedPreviewScene->ClearPartyPreview();
+			}
 			CachedPreviewScene->ClearSoloMode();
 		}
 		// Loadout 탭: 프리뷰 상태 유지 (변경 없음)
@@ -358,17 +371,29 @@ void UHellunaLobbyStashWidget::SetupCenterPreview(AHellunaCharacterSelectSceneV2
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] SetupCenterPreview: 씬 캐시 완료 (직접 뷰포트 모드)"));
 
-	// 초기 Solo 모드 적용 (Play 탭이 기본이므로)
+	// 초기 모드 적용 (Play 탭이 기본이므로)
 	if (CachedPreviewScene.IsValid() && CurrentTabIndex == LobbyTab::Play)
 	{
-		int32 HeroIndex = 0;
 		AHellunaLobbyController* LobbyPC = GetLobbyController();
-		if (LobbyPC && LobbyPC->GetSelectedHeroType() != EHellunaHeroType::None)
+
+		// [Phase 12g-2] 파티 상태에 따라 Party/Solo 분기
+		if (LobbyPC && LobbyPC->CurrentPartyInfo.IsValid()
+			&& LobbyPC->CurrentPartyInfo.Members.Num() >= 2)
 		{
-			HeroIndex = HeroTypeToIndex(LobbyPC->GetSelectedHeroType());
+			LobbyPC->UpdatePartyPreview(LobbyPC->CurrentPartyInfo);
+			UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] SetupCenterPreview: 초기 Party 모드 → %d명"),
+				LobbyPC->CurrentPartyInfo.Members.Num());
 		}
-		CachedPreviewScene->SetSoloCharacter(HeroIndex);
-		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] SetupCenterPreview: 초기 Solo 모드 → Index %d"), HeroIndex);
+		else
+		{
+			int32 HeroIndex = 0;
+			if (LobbyPC && LobbyPC->GetSelectedHeroType() != EHellunaHeroType::None)
+			{
+				HeroIndex = HeroTypeToIndex(LobbyPC->GetSelectedHeroType());
+			}
+			CachedPreviewScene->SetSoloCharacter(HeroIndex);
+			UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] SetupCenterPreview: 초기 Solo 모드 → Index %d"), HeroIndex);
+		}
 	}
 }
 
@@ -542,14 +567,28 @@ void UHellunaLobbyStashWidget::OnCharacterSelectedHandler(EHellunaHeroType Selec
 		Text_NoCharWarning->SetVisibility(ESlateVisibility::Collapsed);
 	}
 
-	// Play 탭에 있으면 Solo 프리뷰를 선택된 캐릭터로 업데이트
+	// Play 탭에 있으면 프리뷰 업데이트
 	if (CurrentTabIndex == LobbyTab::Play && CachedPreviewScene.IsValid())
 	{
-		const int32 HeroIndex = HeroTypeToIndex(SelectedHero);
-		if (HeroIndex >= 0)
+		AHellunaLobbyController* LobbyPC = GetLobbyController();
+
+		// [Phase 12g-2] 파티 모드면 파티 프리뷰 갱신 (캐릭터 변경 반영은 서버 BroadcastPartyState로)
+		// Solo 모드면 직접 Solo 캐릭터 업데이트
+		if (LobbyPC && LobbyPC->CurrentPartyInfo.IsValid()
+			&& LobbyPC->CurrentPartyInfo.Members.Num() >= 2)
 		{
-			CachedPreviewScene->SetSoloCharacter(HeroIndex);
-			UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] Play 탭 Solo 프리뷰 업데이트 → Index %d"), HeroIndex);
+			// 파티 모드: 서버 BroadcastPartyState가 Client_UpdatePartyState를 통해 자동 갱신
+			// 여기서는 로컬 프리뷰 반영만 (서버 응답 전 즉시 피드백)
+			UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] Play 탭 Party 모드 — 서버 BroadcastPartyState 대기"));
+		}
+		else
+		{
+			const int32 HeroIndex = HeroTypeToIndex(SelectedHero);
+			if (HeroIndex >= 0)
+			{
+				CachedPreviewScene->SetSoloCharacter(HeroIndex);
+				UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] Play 탭 Solo 프리뷰 업데이트 → Index %d"), HeroIndex);
+			}
 		}
 	}
 }

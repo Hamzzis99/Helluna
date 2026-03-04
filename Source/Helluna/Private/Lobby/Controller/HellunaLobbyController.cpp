@@ -1007,6 +1007,81 @@ void AHellunaLobbyController::SpawnPreviewSceneV2()
 // ════════════════════════════════════════════════════════════════════════════════
 // DestroyPreviewSceneV2 — V2 프리뷰 씬 파괴
 // ════════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 12g-2] 파티 프리뷰 갱신/해제
+// ════════════════════════════════════════════════════════════════════════════════
+
+void AHellunaLobbyController::UpdatePartyPreview(const FHellunaPartyInfo& PartyInfo)
+{
+	if (!IsLocalController()) return;
+	if (!IsValid(SpawnedPreviewSceneV2)) return;
+
+	// 파티 2명 이상이면 Party 모드
+	if (PartyInfo.IsValid() && PartyInfo.Members.Num() >= 2)
+	{
+		// HeroType(int32) -> Mesh/Anim 맵 구성 (LobbyController의 TSoftObjectPtr 매핑을 int32 키로 변환)
+		TMap<int32, USkeletalMesh*> MeshMap;
+		TMap<int32, TSubclassOf<UAnimInstance>> AnimMap;
+
+		for (const auto& Pair : PreviewMeshMap)
+		{
+			const int32 Idx = HeroTypeToIndex(Pair.Key);
+			if (Idx >= 0)
+			{
+				USkeletalMesh* Mesh = Pair.Value.LoadSynchronous();
+				if (Mesh)
+				{
+					MeshMap.Add(Idx, Mesh);
+				}
+			}
+		}
+		for (const auto& Pair : PreviewAnimClassMap)
+		{
+			const int32 Idx = HeroTypeToIndex(Pair.Key);
+			if (Idx >= 0 && Pair.Value)
+			{
+				AnimMap.Add(Idx, Pair.Value);
+			}
+		}
+
+		SpawnedPreviewSceneV2->SetPartyPreview(
+			PartyInfo.Members,
+			ReplicatedPlayerId,
+			MeshMap,
+			AnimMap);
+	}
+	else
+	{
+		// 1명 이하 → Solo 복귀
+		ResetToSoloPreview();
+	}
+}
+
+void AHellunaLobbyController::ResetToSoloPreview()
+{
+	if (!IsLocalController()) return;
+	if (!IsValid(SpawnedPreviewSceneV2)) return;
+
+	if (SpawnedPreviewSceneV2->IsPartyMode())
+	{
+		SpawnedPreviewSceneV2->ClearPartyPreview();
+	}
+
+	// 선택된 캐릭터가 있으면 Solo 모드 복귀
+	if (SelectedHeroType != EHellunaHeroType::None)
+	{
+		const int32 HeroIndex = HeroTypeToIndex(SelectedHeroType);
+		if (HeroIndex >= 0)
+		{
+			SpawnedPreviewSceneV2->SetSoloCharacter(HeroIndex);
+		}
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// DestroyPreviewSceneV2 — 프리뷰 씬 정리
+// ════════════════════════════════════════════════════════════════════════════════
+
 void AHellunaLobbyController::DestroyPreviewSceneV2()
 {
 	if (IsValid(SpawnedPreviewSceneV2))
@@ -1257,6 +1332,9 @@ void AHellunaLobbyController::Client_UpdatePartyState_Implementation(const FHell
 	CurrentPartyInfo = PartyInfo;
 	OnPartyStateChanged.Broadcast(PartyInfo);
 
+	// [Phase 12g-2] 파티 프리뷰 갱신
+	UpdatePartyPreview(PartyInfo);
+
 	UE_LOG(LogHellunaLobby, Verbose, TEXT("[LobbyPC] Client_UpdatePartyState | PartyId=%d | Members=%d"),
 		PartyInfo.PartyId, PartyInfo.Members.Num());
 }
@@ -1265,6 +1343,9 @@ void AHellunaLobbyController::Client_PartyDisbanded_Implementation(const FString
 {
 	CurrentPartyInfo = FHellunaPartyInfo(); // 초기화
 	OnPartyStateChanged.Broadcast(CurrentPartyInfo);
+
+	// [Phase 12g-2] Solo 프리뷰 복귀
+	ResetToSoloPreview();
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Client_PartyDisbanded: %s"), *Reason);
 }
