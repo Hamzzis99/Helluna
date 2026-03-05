@@ -252,15 +252,10 @@ void AHellunaLobbyGameMode::ProcessLobbyLogin(AHellunaLobbyController* LobbyPC, 
 	}
 	else
 	{
-		// 새 계정: 자동 생성
-		if (!LobbyAccountSaveGame->CreateAccount(PlayerId, Password))
-		{
-			UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] ProcessLobbyLogin: 계정 생성 실패 | PlayerId=%s"), *PlayerId);
-			LobbyPC->Client_LobbyLoginResult(false, TEXT("계정 생성 실패"));
-			return;
-		}
-		UHellunaAccountSaveGame::Save(LobbyAccountSaveGame);
-		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ProcessLobbyLogin: 새 계정 생성 + 저장 | PlayerId=%s"), *PlayerId);
+		// 계정 없음: 회원가입 안내
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] ProcessLobbyLogin: 계정 없음 | PlayerId=%s"), *PlayerId);
+		LobbyPC->Client_LobbyLoginResult(false, TEXT("계정이 없습니다. 회원가입해주세요."));
+		return;
 	}
 
 	// ── 로그인 성공 → 등록 + 초기화 ──
@@ -272,6 +267,58 @@ void AHellunaLobbyGameMode::ProcessLobbyLogin(AHellunaLobbyController* LobbyPC, 
 
 	LobbyPC->SetReplicatedPlayerId(PlayerId);
 	InitializeLobbyForPlayer(LobbyPC, PlayerId);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 13] ProcessLobbySignup — 로비 회원가입 처리
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 📌 호출 시점: Controller->Server_RequestLobbySignup에서 호출
+// 📌 처리: ID 중복 체크 → 계정 생성 → Save → 성공 메시지 (자동 로그인 안 함)
+//
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaLobbyGameMode::ProcessLobbySignup(AHellunaLobbyController* LobbyPC, const FString& PlayerId, const FString& Password)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ──────────────────────────────────────"));
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ProcessLobbySignup | PlayerId=%s | PC=%s"), *PlayerId, *GetNameSafe(LobbyPC));
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ──────────────────────────────────────"));
+
+	if (!LobbyPC)
+	{
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] ProcessLobbySignup: LobbyPC nullptr!"));
+		return;
+	}
+
+	// ── AccountSaveGame 검증 ──
+	if (!LobbyAccountSaveGame)
+	{
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] ProcessLobbySignup: AccountSaveGame nullptr!"));
+		LobbyPC->Client_LobbySignupResult(false, TEXT("서버 오류"));
+		return;
+	}
+
+	// ── ID 중복 체크 ──
+	if (LobbyAccountSaveGame->HasAccount(PlayerId))
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] ProcessLobbySignup: 이미 존재하는 아이디 | PlayerId=%s"), *PlayerId);
+		LobbyPC->Client_LobbySignupResult(false, TEXT("이미 존재하는 아이디입니다."));
+		return;
+	}
+
+	// ── 계정 생성 ──
+	if (!LobbyAccountSaveGame->CreateAccount(PlayerId, Password))
+	{
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] ProcessLobbySignup: 계정 생성 실패 | PlayerId=%s"), *PlayerId);
+		LobbyPC->Client_LobbySignupResult(false, TEXT("계정 생성에 실패했습니다."));
+		return;
+	}
+
+	// ── 저장 ──
+	UHellunaAccountSaveGame::Save(LobbyAccountSaveGame);
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ProcessLobbySignup: 계정 생성 + 저장 완료 | PlayerId=%s"), *PlayerId);
+
+	// ── 성공 통보 (자동 로그인 안 함 — 클라이언트에서 로그인 탭으로 전환) ──
+	LobbyPC->Client_LobbySignupResult(true, TEXT("회원가입 성공! 로그인해주세요."));
 }
 
 // ════════════════════════════════════════════════════════════════════════════════

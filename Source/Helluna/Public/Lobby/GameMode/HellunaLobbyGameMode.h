@@ -63,6 +63,9 @@ public:
 	/** 로비 로그인 처리 (AccountSaveGame 검증 + 동시접속 체크) */
 	void ProcessLobbyLogin(AHellunaLobbyController* LobbyPC, const FString& PlayerId, const FString& Password);
 
+	/** 로비 회원가입 처리 (ID 중복 체크 + 계정 생성) */
+	void ProcessLobbySignup(AHellunaLobbyController* LobbyPC, const FString& PlayerId, const FString& Password);
+
 	/** 로그인 성공 후 로비 초기화 (게임결과 처리, Stash/Loadout 로드, 캐릭터선택, 파티복구) */
 	void InitializeLobbyForPlayer(AHellunaLobbyController* LobbyPC, const FString& PlayerId);
 

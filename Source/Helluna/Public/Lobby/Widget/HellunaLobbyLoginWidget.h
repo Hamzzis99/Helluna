@@ -2,14 +2,16 @@
 // HellunaLobbyLoginWidget.h
 // ════════════════════════════════════════════════════════════════════════════════
 //
-// [Phase 13] 로비 전용 로그인 위젯
+// [Phase 13] 로비 전용 로그인/회원가입 위젯
 //
 // 📌 역할:
-//    - ID/PW 입력 → Server_RequestLobbyLogin RPC 호출
-//    - 로그인 결과 메시지 표시 (성공/실패)
+//    - 로그인 모드: ID/PW 입력 → Server_RequestLobbyLogin RPC 호출
+//    - 회원가입 모드: ID/PW/PW확인 입력 → Server_RequestLobbySignup RPC 호출
+//    - 탭 버튼으로 로그인/회원가입 모드 전환
 //
 // 📌 BP 바인딩 필수:
-//    IDInputTextBox, PasswordInputTextBox, LoginButton, MessageText
+//    IDInputTextBox, PasswordInputTextBox, ConfirmPasswordInputTextBox,
+//    LoginButton, LoginTabButton, SignupTabButton, MessageText
 //
 // 작성자: Gihyeon (Claude Code 보조)
 // ════════════════════════════════════════════════════════════════════════════════
@@ -36,12 +38,29 @@ public:
 	/** 성공 메시지 표시 */
 	void ShowSuccess();
 
+	/** 회원가입 결과 처리 (Controller에서 호출) */
+	void HandleSignupResult(bool bSuccess, const FString& Message);
+
 protected:
 	virtual void NativeOnInitialized() override;
 
-	/** 로그인 버튼 클릭 */
+	/** 로그인/회원가입 버튼 클릭 */
 	UFUNCTION()
 	void OnLoginButtonClicked();
+
+	/** 로그인 탭 클릭 */
+	UFUNCTION()
+	void OnLoginTabClicked();
+
+	/** 회원가입 탭 클릭 */
+	UFUNCTION()
+	void OnSignupTabClicked();
+
+	/** 로그인 모드로 전환 */
+	void SwitchToLoginMode();
+
+	/** 회원가입 모드로 전환 */
+	void SwitchToSignupMode();
 
 	// ── BP 바인딩 ──
 
@@ -52,8 +71,20 @@ protected:
 	TObjectPtr<UEditableTextBox> PasswordInputTextBox;
 
 	UPROPERTY(meta = (BindWidget))
+	TObjectPtr<UEditableTextBox> ConfirmPasswordInputTextBox;
+
+	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UButton> LoginButton;
 
 	UPROPERTY(meta = (BindWidget))
+	TObjectPtr<UButton> LoginTabButton;
+
+	UPROPERTY(meta = (BindWidget))
+	TObjectPtr<UButton> SignupTabButton;
+
+	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UTextBlock> MessageText;
+
+	/** 현재 회원가입 모드 여부 (false = 로그인 모드) */
+	bool bIsSignupMode = false;
 };

@@ -66,6 +66,10 @@ public:
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_RequestLobbyLogin(const FString& PlayerId, const FString& Password);
 
+	/** [클라이언트 → 서버] 로비 회원가입 요청 */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_RequestLobbySignup(const FString& PlayerId, const FString& Password);
+
 	/** [서버 → 클라이언트] 로그인 위젯 표시 지시 */
 	UFUNCTION(Client, Reliable)
 	void Client_ShowLobbyLoginUI();
@@ -73,6 +77,10 @@ public:
 	/** [서버 → 클라이언트] 로그인 결과 통보 */
 	UFUNCTION(Client, Reliable)
 	void Client_LobbyLoginResult(bool bSuccess, const FString& ErrorMessage);
+
+	/** [서버 → 클라이언트] 회원가입 결과 통보 */
+	UFUNCTION(Client, Reliable)
+	void Client_LobbySignupResult(bool bSuccess, const FString& Message);
 
 	/** 로그인 완료 여부 */
 	bool IsLoggedIn() const { return bIsLoggedIn; }

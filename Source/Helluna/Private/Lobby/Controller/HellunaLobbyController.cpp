@@ -880,6 +880,43 @@ void AHellunaLobbyController::Server_RequestLobbyLogin_Implementation(const FStr
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
+// [Phase 13] Server_RequestLobbySignup — 로비 회원가입 요청 (Server RPC)
+// ════════════════════════════════════════════════════════════════════════════════
+bool AHellunaLobbyController::Server_RequestLobbySignup_Validate(const FString& PlayerId, const FString& Password)
+{
+	return !PlayerId.IsEmpty() && !Password.IsEmpty();
+}
+
+void AHellunaLobbyController::Server_RequestLobbySignup_Implementation(const FString& PlayerId, const FString& Password)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_RequestLobbySignup | PlayerId=%s"), *PlayerId);
+
+	AHellunaLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr;
+	if (!LobbyGM)
+	{
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Server_RequestLobbySignup: GameMode 캐스팅 실패!"));
+		Client_LobbySignupResult(false, TEXT("서버 오류"));
+		return;
+	}
+
+	LobbyGM->ProcessLobbySignup(this, PlayerId, Password);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 13] Client_LobbySignupResult — 회원가입 결과 (Client RPC)
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaLobbyController::Client_LobbySignupResult_Implementation(bool bSuccess, const FString& Message)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Client_LobbySignupResult | bSuccess=%s | Msg=%s"),
+		bSuccess ? TEXT("true") : TEXT("false"), *Message);
+
+	if (LobbyLoginWidgetInstance)
+	{
+		LobbyLoginWidgetInstance->HandleSignupResult(bSuccess, Message);
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
 // [Phase 13] Client_ShowLobbyLoginUI — 로그인 위젯 표시 (Client RPC)
 // ════════════════════════════════════════════════════════════════════════════════
 void AHellunaLobbyController::Client_ShowLobbyLoginUI_Implementation()
