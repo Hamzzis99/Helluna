@@ -52,4 +52,7 @@ namespace HellunaGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Enemy_State_Death, "Enemy.State.Death");
 	UE_DEFINE_GAMEPLAY_TAG(Enemy_State_Attacking, "Enemy.State.Attacking");
 
+	/** Enemy Event tags **/
+	UE_DEFINE_GAMEPLAY_TAG(Enemy_Event_Enrage, "Enemy.Event.Enrage");
+
 }

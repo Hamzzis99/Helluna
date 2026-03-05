@@ -30,11 +30,12 @@
 #include "CoreMinimal.h"
 #include "Tasks/StateTreeAITask.h"
 #include "AI/StateTree/HellunaStateTreeTypes.h"
-#include "AbilitySystem/EnemyAbility/EnemyGameplayAbility_Attack.h"
+//#include "AbilitySystem/HellunaEnemyGameplayAbility.h"
 #include "STTask_AttackTarget.generated.h"
 
 class AAIController;
 class APawn;
+class UHellunaEnemyGameplayAbility;
 
 USTRUCT()
 struct FSTTask_AttackTargetInstanceData
@@ -78,7 +79,7 @@ public:
 	UPROPERTY(EditAnywhere, Category = "설정",
 		meta = (DisplayName = "공격 어빌리티 클래스",
 			ToolTip = "이 Task가 발동할 공격 GA를 선택합니다.\n몬스터 종류마다 다른 GA를 지정할 수 있습니다."))
-	TSubclassOf<UEnemyGameplayAbility_Attack> AttackAbilityClass;
+	TSubclassOf<UHellunaEnemyGameplayAbility> AttackAbilityClass;
 
 	/**
 	 * GA 종료 후 다음 공격까지 대기 시간 (초).
@@ -91,12 +92,20 @@ public:
 	float AttackCooldown = 1.5f;
 
 	/**
-	 * 쿨다운 대기 중 타겟 방향으로 회전하는 속도.
-	 * GA 활성 중(몽타주 + 경직)에는 동작하지 않음.
+	 * Attack State 최초 진입 시 첫 공격 전 대기 시간 (초).
+	 * 이 시간 동안 타겟 방향으로 회전한 뒤 공격을 시작한다.
+	 * - 근거리: 0 (진입 즉시 공격)
+	 * - 원거리: 0.5~1.0 (조준 후 공격)
 	 */
 	UPROPERTY(EditAnywhere, Category = "설정",
+		meta = (DisplayName = "첫 공격 전 딜레이 (초)",
+			ToolTip = "Attack State 진입 후 첫 공격까지 기다리는 시간입니다.\n근거리는 0, 원거리는 0.5~1.0 권장.",
+			ClampMin = "0.0"))
+	float InitialAttackDelay = 0.f;
+
+	UPROPERTY(EditAnywhere, Category = "설정",
 		meta = (DisplayName = "대기 중 회전 속도",
-			ToolTip = "공격 쿨다운 대기 중에 타겟을 바라보는 회전 속도입니다.\n값이 클수록 빠르게 회전합니다. (RInterpTo Speed)",
+			ToolTip = "공격 쿨다운 대기 중에 타겟을 바라보는 회전 속도입니다.",
 			ClampMin = "0.0"))
 	float RotationSpeed = 10.f;
-};
+};	

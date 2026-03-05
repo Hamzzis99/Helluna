@@ -51,8 +51,11 @@ void UEnemyGameplayAbility_Attack::ActivateAbility(
 	// 회전은 몽타주가 완전히 끝난 OnMontageCompleted에서 처리한다.
 	Enemy->LockMovementAndFaceTarget(nullptr);
 	
+	// 광폭화 상태이면 Enemy에 설정된 EnrageAttackMontagePlayRate 배율로 공격 애니메이션을 빠르게 재생
+	const float PlayRate = Enemy->bEnraged ? Enemy->EnrageAttackMontagePlayRate : 1.f;
+
 	UAbilityTask_PlayMontageAndWait* MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
-		this, NAME_None, AttackMontage, 1.f, NAME_None, false
+		this, NAME_None, AttackMontage, PlayRate, NAME_None, false
 	);
 
 	if (!MontageTask)

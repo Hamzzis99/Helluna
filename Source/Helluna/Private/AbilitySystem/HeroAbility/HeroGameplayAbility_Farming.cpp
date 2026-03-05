@@ -106,7 +106,7 @@ void UHeroGameplayAbility_Farming::ActivateAbility(
 		Hero->LockLookInput();
 	}
 
-	Hero->PlayFullBody = true;
+	Hero->PlayFullBody =	true;
 	
 	FarmingTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, FarmingMontage, 1.f);
 

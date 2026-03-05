@@ -1,6 +1,21 @@
 ﻿/**
  * STTask_ChaseTarget.cpp
  *
+ * 플레이어/우주선을 향해 이동 명령을 발행하고 경로를 유지한다.
+ *
+ * ─── 이동 방식 요약 ──────────────────────────────────────────
+ *  [플레이어]
+ *    - RepathInterval마다 MoveToActor 재발행 (움직이는 대상 추적)
+ *    - AttackPositionQuery 설정 시 EQS로 공격 위치 계산 후 이동
+ *    - 이동 중 타겟 방향으로 서서히 회전 (RInterpTo)
+ *    - Stuck(이동 중 저속) 감지 시 즉시 재발행
+ *
+ *  [우주선]
+ *    - EnterState에서 이동 명령 1회 발행 (고정 대상)
+ *    - FindShipApproachPoint로 NavMesh 위 랜덤 접근 위치 사용
+ *      (여러 몬스터가 같은 지점으로 몰리는 것 방지)
+ *    - Stuck 또는 Idle+원거리 감지 시에만 재발행
+ *
  * @author 김민우
  */
 
@@ -122,7 +137,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget::EnterState(
 		return EStateTreeRunStatus::Failed;
 
 	const FHellunaAITargetData& TargetData = InstanceData.TargetData;
-	if (!TargetData.IsValid())
+	if (!TargetData.HasValidTarget())
 	{
 		// Evaluator가 아직 첫 Tick을 안 돌았을 수 있음
 		// Failed 대신 Running 반환 → Tick에서 타겟 생기면 이동 명령 발행
@@ -168,7 +183,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget::Tick(
 	if (!AIController) return EStateTreeRunStatus::Failed;
 
 	const FHellunaAITargetData& TargetData = InstanceData.TargetData;
-	if (!TargetData.IsValid()) return EStateTreeRunStatus::Failed;
+	if (!TargetData.HasValidTarget()) return EStateTreeRunStatus::Failed;
 
 	APawn* Pawn = AIController->GetPawn();
 	if (!Pawn) return EStateTreeRunStatus::Failed;
@@ -205,7 +220,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget::Tick(
 		{
 			const bool bMoving = (PFC->GetStatus() == EPathFollowingStatus::Moving);
 			const bool bSlow   = (Pawn->GetVelocity().SizeSquared2D() < 30.f * 30.f);
-			const bool bFar    = (TargetData.DistanceToTarget > AcceptanceRadius + 200.f);
+			const bool bFar    = (TargetData.DistanceToTarget > AcceptanceRadius + 150.f);
 			bStuck = bMoving && bSlow && bFar;
 		}
 
