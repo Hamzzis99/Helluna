@@ -282,6 +282,12 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "로비|캐릭터선택")
 	EHellunaHeroType GetSelectedHeroType() const { return SelectedHeroType; }
 
+	/** [Fix43] 캐릭터 선택 리셋 (파티 충돌 시 서버에서 호출) */
+	void ResetSelectedHeroType() { SelectedHeroType = EHellunaHeroType::None; }
+
+	/** [Fix43] 캐릭터 선택 강제 설정 (서버 권한, 파티 복원 시 사용) */
+	void ForceSetSelectedHeroType(EHellunaHeroType InType) { SelectedHeroType = InType; }
+
 	/** 로그인 PlayerId Getter (서버에서 설정, Replicated) */
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "로비|플레이어")
 	FString GetPlayerId() const { return ReplicatedPlayerId; }

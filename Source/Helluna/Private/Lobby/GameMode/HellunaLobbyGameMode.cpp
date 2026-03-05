@@ -453,6 +453,25 @@ void AHellunaLobbyGameMode::InitializeLobbyForPlayer(AHellunaLobbyController* Lo
 
 			SQLiteSubsystem->UpdateMemberReady(PlayerId, false);
 
+			// [Fix43] 파티 DB에서 hero_type 복원 → 새 Controller의 SelectedHeroType 설정
+			{
+				FHellunaPartyInfo TempInfo = SQLiteSubsystem->LoadPartyInfo(ExistingPartyId);
+				for (const FHellunaPartyMemberInfo& Member : TempInfo.Members)
+				{
+					if (Member.PlayerId == PlayerId && Member.SelectedHeroType != 3) // 3 = None
+					{
+						const EHellunaHeroType RestoredHero = IndexToHeroType(Member.SelectedHeroType);
+						if (RestoredHero != EHellunaHeroType::None)
+						{
+							RegisterLobbyCharacterUse(RestoredHero, PlayerId);
+							LobbyPC->ForceSetSelectedHeroType(RestoredHero);
+							UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix43] 파티 복귀 시 캐릭터 복원 | PlayerId=%s | HeroType=%d"), *PlayerId, Member.SelectedHeroType);
+						}
+						break;
+					}
+				}
+			}
+
 			if (FTimerHandle* TimerPtr = PartyLeaveTimers.Find(PlayerId))
 			{
 				UWorld* World = GetWorld();
@@ -1452,6 +1471,22 @@ void AHellunaLobbyGameMode::CreatePartyForPlayer(const FString& PlayerId, const 
 		return;
 	}
 
+	// [Fix43] 파티 생성 시 리더의 기존 캐릭터 선택 보존
+	{
+		auto* LeaderPCPtr = PlayerIdToControllerMap.Find(PlayerId);
+		if (LeaderPCPtr && LeaderPCPtr->IsValid())
+		{
+			AHellunaLobbyController* LeaderPC = LeaderPCPtr->Get();
+			const EHellunaHeroType LeaderHero = LeaderPC->GetSelectedHeroType();
+			if (LeaderHero != EHellunaHeroType::None)
+			{
+				const int32 HeroIndex = HeroTypeToIndex(LeaderHero);
+				SQLiteSubsystem->UpdateMemberHeroType(PlayerId, HeroIndex);
+				UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix43] 파티 생성 시 리더 캐릭터 보존 | PlayerId=%s | HeroType=%d"), *PlayerId, HeroIndex);
+			}
+		}
+	}
+
 	RefreshPartyCache(PartyId);
 	BroadcastPartyState(PartyId);
 
@@ -1500,6 +1535,47 @@ void AHellunaLobbyGameMode::JoinPartyForPlayer(const FString& PlayerId, const FS
 		auto* PC = PlayerIdToControllerMap.Find(PlayerId);
 		if (PC && PC->IsValid()) { (*PC)->Client_PartyError(TEXT("파티 참가 실패")); }
 		return;
+	}
+
+	// [Fix43] 기존 캐릭터 선택 보존 — 충돌 시에만 리셋
+	{
+		auto* JoiningPCPtr = PlayerIdToControllerMap.Find(PlayerId);
+		if (JoiningPCPtr && JoiningPCPtr->IsValid())
+		{
+			AHellunaLobbyController* JoiningPC = JoiningPCPtr->Get();
+			const EHellunaHeroType JoiningHero = JoiningPC->GetSelectedHeroType();
+
+			if (JoiningHero != EHellunaHeroType::None)
+			{
+				// 기존 파티원들의 hero_type과 충돌 체크
+				FHellunaPartyInfo TempInfo = SQLiteSubsystem->LoadPartyInfo(PartyId);
+				bool bConflict = false;
+				for (const FHellunaPartyMemberInfo& Member : TempInfo.Members)
+				{
+					if (Member.PlayerId == PlayerId) continue; // 자기 자신 제외
+					if (Member.SelectedHeroType == static_cast<int32>(JoiningHero))
+					{
+						bConflict = true;
+						break;
+					}
+				}
+
+				if (!bConflict)
+				{
+					// 충돌 없음 → DB에 기존 캐릭터 반영
+					const int32 HeroIndex = HeroTypeToIndex(JoiningHero);
+					SQLiteSubsystem->UpdateMemberHeroType(PlayerId, HeroIndex);
+					UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix43] 파티 참가 시 캐릭터 보존 | PlayerId=%s | HeroType=%d"), *PlayerId, HeroIndex);
+				}
+				else
+				{
+					// 충돌 → 캐릭터 리셋 (재선택 필요)
+					JoiningPC->ResetSelectedHeroType();
+					UnregisterLobbyCharacterUse(PlayerId);
+					UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix43] 파티 캐릭터 충돌 → 리셋 | PlayerId=%s"), *PlayerId);
+				}
+			}
+		}
 	}
 
 	// 전원 Ready 리셋
