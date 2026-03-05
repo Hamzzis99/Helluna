@@ -60,3 +60,93 @@ FORCEINLINE EHellunaHeroType IndexToHeroType(int32 Index)
 	if (Index < 0 || Index > 2) return EHellunaHeroType::None;
 	return static_cast<EHellunaHeroType>(Index);
 }
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 적 등급 Enum
+// ════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * 적 캐릭터의 등급.
+ * AHellunaEnemyCharacter::EnemyGrade 에 설정하며,
+ * GameMode의 NotifyMonsterDied / NotifyBossDied 분기에 사용된다.
+ *
+ *   Normal   → 일반 몬스터 처리 경로
+ *   SemiBoss → 세미보스 처리 경로 (보스 사망 경로, TypeLabel = "세미보스")
+ *   Boss     → 정보스 처리 경로  (보스 사망 경로, TypeLabel = "보스")
+ */
+UENUM(BlueprintType)
+enum class EEnemyGrade : uint8
+{
+	Normal		UMETA(DisplayName = "일반 몬스터"),
+	SemiBoss	UMETA(DisplayName = "세미 보스"),
+	Boss		UMETA(DisplayName = "보스"),
+};
+
+/**
+ * 날짜별 일반 몬스터 소환 구성.
+ * HellunaDefenseGameMode::NightSpawnTable 배열의 원소로 사용된다.
+ *
+ * FromDay 방식으로 동작:
+ *   - CurrentDay >= FromDay 인 항목 중 FromDay가 가장 큰 항목이 적용됨
+ *   - 중간 날짜 설정이 없어도 이전 설정이 자동으로 유지됨
+ *   - 예) FromDay=1(근거리3/원거리0), FromDay=3(근거리5/원거리2) 설정 시
+ *         2일차에는 FromDay=1 설정이 적용됨
+ *
+ * 에디터 설정 예시:
+ *   [0] FromDay=1, MeleeCount=3, RangeCount=0
+ *   [1] FromDay=2, MeleeCount=5, RangeCount=1
+ *   [2] FromDay=3, MeleeCount=5, RangeCount=4
+ */
+USTRUCT(BlueprintType)
+struct FNightSpawnConfig
+{
+	GENERATED_BODY()
+
+	/**
+	 * 이 설정이 적용되기 시작하는 Day.
+	 * CurrentDay >= FromDay 인 항목 중 FromDay가 가장 큰 항목이 사용됨.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Spawn",
+		meta = (DisplayName = "적용 시작 일(Day)", ClampMin = "1"))
+	int32 FromDay = 1;
+
+	/** 이 날부터 소환할 근거리 몬스터 수 (MeleeMassSpawner 1개당) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Spawn",
+		meta = (DisplayName = "근거리 소환 수", ClampMin = "0"))
+	int32 MeleeCount = 3;
+
+	/** 이 날부터 소환할 원거리 몬스터 수 (RangeMassSpawner 1개당) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Spawn",
+		meta = (DisplayName = "원거리 소환 수", ClampMin = "0"))
+	int32 RangeCount = 0;
+};
+
+/**
+ * 보스/세미보스 소환 스케줄 한 항목.
+ * HellunaDefenseGameMode::BossSchedule 배열의 원소로 사용된다.
+ *
+ * 에디터에서 배열 원소마다:
+ *   SpawnDay  → 소환할 Day 번호 (1-based)
+ *   BossClass → 그 날 밤에 소환할 Pawn 클래스
+ *               (해당 BP의 EnemyGrade를 SemiBoss 또는 Boss로 설정해야 한다)
+ */
+USTRUCT(BlueprintType)
+struct FBossSpawnEntry
+{
+	GENERATED_BODY()
+
+	/** 소환할 Day 번호 (1 = 첫 번째 낮이 끝난 뒤 첫 번째 밤) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Boss",
+		meta = (DisplayName = "소환 일(Day)", ClampMin = "1"))
+	int32 SpawnDay = 1;
+
+	/**
+	 * 그 날 밤에 소환할 Pawn 클래스.
+	 * AHellunaEnemyCharacter를 상속한 BP를 설정하고
+	 * 해당 BP에서 EnemyGrade를 SemiBoss 또는 Boss로 설정해야
+	 * 사망 처리가 정상 동작한다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Boss",
+		meta = (DisplayName = "소환할 보스 클래스"))
+	TSubclassOf<APawn> BossClass;
+};

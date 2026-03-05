@@ -4,9 +4,11 @@
 
 #include "CoreMinimal.h"
 #include "Character/HellunaBaseCharacter.h"
+#include "HellunaTypes.h"
 #include "NiagaraSystem.h"
 #include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
+#include "DebugHelper.h"
 #include "HellunaEnemyCharacter.generated.h"
 
 class UEnemyCombatComponent;
@@ -46,9 +48,32 @@ private:
 public:
 	FORCEINLINE UEnemyCombatComponent* GetEnemyCombatComponent() const { return EnemyCombatComponent; }
 
+	/**
+	 * 이 캐릭터의 등급.
+	 * 사망 시 GameMode::NotifyMonsterDied 에서 등급에 따라 처리 경로가 분기된다.
+	 *
+	 *   Normal   → 일반 몬스터 처리 (AliveMonsters 차감, 전멸 시 낮 전환)
+	 *   SemiBoss → 세미보스 처리   (NotifyBossDied, TypeLabel = "세미보스")
+	 *   Boss     → 정보스 처리     (NotifyBossDied, TypeLabel = "보스")
+	 *
+	 * 각 캐릭터 BP의 기본값에서 설정하세요.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Enemy|Grade",
+		meta = (DisplayName = "적 등급",
+			ToolTip = "Normal=일반 몬스터, SemiBoss=세미보스, Boss=정보스.\n각 BP 기본값에서 설정하세요."))
+	EEnemyGrade EnemyGrade = EEnemyGrade::Normal;
+
 	/** 테스트용: 이 몬스터가 플레이어에게 데미지를 혔을때 서버에 출력 */
 	UFUNCTION(BlueprintCallable, Category = "Debug")
 	void TestDamage(AActor* DamagedActor, float DamageAmount);
+
+	/** 보스 소환 진단용 — TrySummonBoss에서 호출 */
+	void DebugPrintBossStatus() const
+	{
+		Debug::Print(FString::Printf(TEXT("  HealthComp  : %s"), HealthComponent ? TEXT("✅ 있음") : TEXT("❌ 없음")), FColor::Cyan);
+		Debug::Print(FString::Printf(TEXT("  StartUpData : %s"),
+			CharacterStartUpData.IsNull() ? TEXT("❌ 없음 — GA_Death 부여 안 됨") : TEXT("✅ 있음")), FColor::Cyan);
+	}
 
 	// =========================================================
 	// 피격 / 사망 애니메이션

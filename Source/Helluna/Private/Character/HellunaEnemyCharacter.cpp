@@ -72,13 +72,66 @@ AHellunaEnemyCharacter::AHellunaEnemyCharacter()
 
 // ============================================================
 // PossessedBy — AI 컨트롤러가 빙의될 때 어빌리티/체력 초기화
+//
+// [보스 SpawnActor 소환 시 타이밍 이슈 해결]
+// SpawnActor로 런타임 소환 시 실행 순서:
+//   1. AIController 생성 → StateTree StartLogic 시도
+//      → 이 시점엔 아직 Pawn이 없어서 "Could not find context actor of type Pawn" 에러 발생
+//      → StateTree 틱 비활성화됨
+//   2. Pawn(보스) BeginPlay
+//   3. PossessedBy 호출 ← 여기서 Pawn이 확정됨
+//
+// 따라서 PossessedBy에서 다음 프레임(NextTick)에 StateTree를 Stop→Start로 재시작해야
+// Pawn 컨텍스트를 정상적으로 찾을 수 있다.
+//
+// 레벨에 배치된 일반 몬스터는 이 문제가 없으므로 영향 없음.
 // ============================================================
 void AHellunaEnemyCharacter::PossessedBy(AController* NewController)
 {
 	Super::PossessedBy(NewController);
 
+	UE_LOG(LogTemp, Warning, TEXT("[PossessedBy] %s → Controller: %s"),
+		*GetName(), NewController ? *NewController->GetName() : TEXT("null"));
+
+	// Pawn 자체에 StateTreeComponent가 붙어있는 경우:
+	// BeginPlay에서 컨트롤러 없음으로 틱이 꺼졌을 수 있으므로 다시 켜줌
+	if (UStateTreeComponent* STComp = FindComponentByClass<UStateTreeComponent>())
+	{
+		STComp->SetComponentTickEnabled(true);
+		UE_LOG(LogTemp, Warning, TEXT("[PossessedBy] Pawn의 StateTree 틱 재활성화"));
+	}
+
+	// AIController에 StateTreeComponent가 붙어있는 경우 (보스 포함 일반적인 구조):
+	// Pawn 빙의 완료 후 다음 프레임에 StateTree를 재시작해서 Pawn 컨텍스트를 정상 등록
+	AAIController* AIC = Cast<AAIController>(NewController);
+	if (AIC)
+	{
+		UStateTreeComponent* STComp = AIC->FindComponentByClass<UStateTreeComponent>();
+		UE_LOG(LogTemp, Warning, TEXT("[PossessedBy] AIController StateTree: %s"),
+			STComp ? TEXT("✅ 있음") : TEXT("❌ 없음"));
+
+		if (STComp)
+		{
+			// NextTick 이유: PossessedBy 호출 시점에도 AIController->GetPawn()이
+			// 내부적으로 아직 완전히 등록되지 않아 StartLogic이 실패하는 경우가 있음.
+			// 한 프레임 뒤에 재시작하면 Pawn이 확실히 등록된 상태가 보장됨.
+			UStateTreeComponent* STCompPtr = STComp;
+			AHellunaEnemyCharacter* SelfPtr = this;
+			GetWorldTimerManager().SetTimerForNextTick([STCompPtr, SelfPtr]()
+			{
+				if (IsValid(STCompPtr) && IsValid(SelfPtr))
+				{
+					STCompPtr->StopLogic(TEXT("Restart after possess"));
+					STCompPtr->StartLogic();
+					UE_LOG(LogTemp, Warning, TEXT("[PossessedBy] NextTick StateTree Stop→Start 완료 — %s"), *SelfPtr->GetName());
+				}
+			});
+		}
+	}
+
 	InitEnemyStartUpData();
 
+	// HealthComponent 바인딩: PossessedBy에서도 바인딩해서 BeginPlay보다 늦게 빙의되는 경우도 커버
 	if (HealthComponent)
 	{
 		HealthComponent->OnHealthChanged.AddUniqueDynamic(this, &AHellunaEnemyCharacter::OnMonsterHealthChanged);
@@ -110,10 +163,21 @@ void AHellunaEnemyCharacter::InitEnemyStartUpData()
 
 // ============================================================
 // BeginPlay
+//
+// [HealthComponent 바인딩 설계]
+// SpawnActor 소환 시 BeginPlay → PossessedBy 순서로 실행되므로
+// BeginPlay 시점에 컨트롤러가 없을 수 있음.
+// 기존 코드는 컨트롤러 없으면 early return해서 HealthComponent 바인딩이
+// 통째로 스킵되는 문제가 있었음 → 보스가 맞아도 죽지 않는 버그 원인.
+//
+// 수정: HealthComponent 바인딩은 컨트롤러 유무와 무관하게 항상 수행.
+// PossessedBy에서도 동일하게 바인딩(AddUniqueDynamic)하므로 중복 등록 없음.
 // ============================================================
 void AHellunaEnemyCharacter::BeginPlay()
 {
-	// 컨트롤러 없이 배치된 경우 StateTree 틱을 꺼서 불필요한 연산 방지
+	// Pawn에 StateTreeComponent가 직접 붙어있고 컨트롤러가 없는 경우
+	// (레벨 배치 전 또는 ECS 몬스터): 불필요한 StateTree 연산 방지를 위해 틱 비활성화.
+	// PossessedBy에서 컨트롤러가 붙으면 다시 활성화됨.
 	if (!GetController())
 	{
 		if (UStateTreeComponent* STComp = FindComponentByClass<UStateTreeComponent>())
@@ -125,19 +189,26 @@ void AHellunaEnemyCharacter::BeginPlay()
 	Super::BeginPlay();
 
 	if (!HasAuthority()) return;
-	if (!GetController())  return;
 
-	// 게임모드에 생존 몬스터로 등록
-	if (AHellunaDefenseGameMode* GM = Cast<AHellunaDefenseGameMode>(UGameplayStatics::GetGameMode(this)))
-	{
-		GM->RegisterAliveMonster(this);
-	}
-
+	// HealthComponent 바인딩 — 컨트롤러 유무와 무관하게 항상 수행
+	// (보스처럼 SpawnActor로 소환되는 경우 BeginPlay 시점엔 컨트롤러가 없을 수 있으므로
+	//  컨트롤러 체크로 early return하면 바인딩이 누락됨)
 	if (HealthComponent)
 	{
-		HealthComponent->OnHealthChanged.AddDynamic(this, &AHellunaEnemyCharacter::OnMonsterHealthChanged);
+		HealthComponent->OnHealthChanged.RemoveDynamic(this, &AHellunaEnemyCharacter::OnMonsterHealthChanged);
+		HealthComponent->OnHealthChanged.AddUniqueDynamic(this, &AHellunaEnemyCharacter::OnMonsterHealthChanged);
 		HealthComponent->OnDeath.RemoveDynamic(this, &ThisClass::OnMonsterDeath);
 		HealthComponent->OnDeath.AddUniqueDynamic(this, &ThisClass::OnMonsterDeath);
+	}
+
+	// GameMode 등록은 컨트롤러가 있는 경우에만 수행
+	// ECS 몬스터는 컨트롤러 없이 시작하며 카운터는 RequestSpawn 시점에 확정되므로 등록 불필요
+	if (GetController())
+	{
+		if (AHellunaDefenseGameMode* GM = Cast<AHellunaDefenseGameMode>(UGameplayStatics::GetGameMode(this)))
+		{
+			GM->RegisterAliveMonster(this);
+		}
 	}
 }
 
@@ -243,23 +314,47 @@ void AHellunaEnemyCharacter::TestDamage(AActor* DamagedActor, float DamageAmount
 }
 
 // ============================================================
-// OnMonsterDeath — StateTree 에 Death 이벤트 전송
+// OnMonsterDeath — HealthComponent OnDeath 델리게이트 콜백
+//
+// HP가 0이 되면 HealthComponent가 이 함수를 호출.
+// AIController의 StateTreeComponent에 "Enemy.State.Death" 태그 이벤트를 전송해서
+// StateTree의 Death 상태로 전환시킨다.
+//
+// StateTree Death 상태 → STTask_Death → GA_Death(사망 몽타주 재생)
+//   → HandleDeathFinished → NotifyMonsterDied(GameMode 카운터 차감) → Destroy
+//
+// 주의: 이 함수에서 직접 Destroy를 호출하지 않는다.
+//       반드시 StateTree → GA_Death 경로를 거쳐야 사망 애니메이션과 GameMode 통보가 보장됨.
 // ============================================================
 void AHellunaEnemyCharacter::OnMonsterDeath(AActor* DeadActor, AActor* KillerActor)
 {
 	if (!HasAuthority()) return;
 
+	UE_LOG(LogTemp, Warning, TEXT("[OnMonsterDeath] %s 사망 처리 시작"), *GetName());
+
 	AAIController* AIC = Cast<AAIController>(GetController());
-	if (!AIC) return;
+	if (!AIC)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[OnMonsterDeath] ❌ AIController 없음 — %s"), *GetName());
+		return;
+	}
 
 	UStateTreeComponent* STComp = AIC->FindComponentByClass<UStateTreeComponent>();
-	if (!STComp) return;
+	if (!STComp)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[OnMonsterDeath] ❌ AIController에 StateTreeComponent 없음 — AIC: %s"), *AIC->GetName());
+		return;
+	}
 
 	FGameplayTag DeathTag = FGameplayTag::RequestGameplayTag(FName("Enemy.State.Death"), false);
-	if (DeathTag.IsValid())
+	if (!DeathTag.IsValid())
 	{
-		STComp->SendStateTreeEvent(DeathTag);
+		UE_LOG(LogTemp, Error, TEXT("[OnMonsterDeath] ❌ GameplayTag 'Enemy.State.Death' 없음"));
+		return;
 	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[OnMonsterDeath] ✅ Death 이벤트 전송 — %s"), *GetName());
+	STComp->SendStateTreeEvent(DeathTag);
 }
 
 // ============================================================
