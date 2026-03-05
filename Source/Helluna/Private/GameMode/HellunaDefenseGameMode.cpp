@@ -423,7 +423,6 @@ void AHellunaDefenseGameMode::NotifyMonsterDied(AActor* DeadMonster)
 }
 
 // 보스몬스터 사망 로직 — NotifyMonsterDied에서 EnemyGrade != Normal 시 호출
-//기현님이 수정해주시면 될 거 같습니다!
 void AHellunaDefenseGameMode::NotifyBossDied(AActor* DeadBoss)
 {
     if (!HasAuthority() || !DeadBoss) return;
@@ -450,7 +449,51 @@ void AHellunaDefenseGameMode::NotifyBossDied(AActor* DeadBoss)
         *TypeLabel, *DeadBoss->GetName(), CurrentDay),
         FColor::Red);
 
-    // TODO: 보스/세미보스 사망 후속 처리 (보상, 연출, 클리어 조건 등) 이후 구현
+    // 최종 보스 처치 → 승리
+    if (Grade == EEnemyGrade::Boss)
+    {
+        UE_LOG(LogHelluna, Warning, TEXT("[Victory] 최종 보스 처치! EndGame(Escaped) 호출"));
+        EndGame(EHellunaGameEndReason::Escaped);
+    }
+    else
+    {
+        // 세미보스 처치 → 낮 전환
+        UE_LOG(LogHelluna, Log, TEXT("[NotifyBossDied] 세미보스 처치 — 낮 전환 타이머 시작"));
+        GetWorldTimerManager().ClearTimer(TimerHandle_ToDay);
+        GetWorldTimerManager().SetTimer(TimerHandle_ToDay, this, &ThisClass::EnterDay, TestNightFailToDayDelay, false);
+    }
+}
+
+// ============================================================
+// NotifyPlayerDied — 플레이어 사망 → 전원 사망 체크
+// ============================================================
+void AHellunaDefenseGameMode::NotifyPlayerDied(APlayerController* DeadPC)
+{
+    if (!HasAuthority() || !bGameInitialized || bGameEnded) return;
+
+    UE_LOG(LogHelluna, Log, TEXT("[NotifyPlayerDied] %s 사망"), *GetNameSafe(DeadPC));
+
+    // 생존자가 한 명이라도 있는지 확인
+    for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+    {
+        APlayerController* PC = It->Get();
+        if (!IsValid(PC)) continue;
+
+        APawn* Pawn = PC->GetPawn();
+        if (!IsValid(Pawn)) continue;
+
+        UHellunaHealthComponent* HealthComp = Pawn->FindComponentByClass<UHellunaHealthComponent>();
+        if (HealthComp && !HealthComp->IsDead())
+        {
+            // 생존자 있음 → 게임 계속
+            UE_LOG(LogHelluna, Log, TEXT("[NotifyPlayerDied] 생존자 있음: %s"), *GetNameSafe(PC));
+            return;
+        }
+    }
+
+    // 전원 사망 → 패배
+    UE_LOG(LogHelluna, Warning, TEXT("[Defeat] 전원 사망! EndGame(AllDead) 호출"));
+    EndGame(EHellunaGameEndReason::AllDead);
 }
 
 // ============================================================

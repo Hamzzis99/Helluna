@@ -928,6 +928,13 @@ void AHellunaHeroCharacter::OnHeroDeath(AActor* DeadActor, AActor* KillerActor)
 				*GetName(), CollectedItems.Num());
 		}
 	}
+
+	// 전원 사망 체크 → GameMode에 사망 알림
+	if (AHellunaDefenseGameMode* DefenseGM = Cast<AHellunaDefenseGameMode>(UGameplayStatics::GetGameMode(GetWorld())))
+	{
+		APlayerController* PC = Cast<APlayerController>(GetController());
+		DefenseGM->NotifyPlayerDied(PC);
+	}
 }
 
 void AHellunaHeroCharacter::Multicast_PlayHeroHitReact_Implementation()

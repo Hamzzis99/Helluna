@@ -379,7 +379,7 @@ void AHellunaHeroController::InitializeChatWidget()
 			if (UEnhancedInputLocalPlayerSubsystem* Subsystem = LocalPlayer->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
 			{
 				// 채팅 IMC를 항상 활성화
-				Subsystem->AddMappingContext(ChatMappingContext, 0);
+				Subsystem->AddMappingContext(ChatMappingContext, 10);
 				UE_LOG(LogHellunaChat, Log, TEXT("[HeroController] ChatMappingContext 추가 완료"));
 			}
 		}
@@ -400,6 +400,8 @@ void AHellunaHeroController::InitializeChatWidget()
 
 void AHellunaHeroController::OnChatToggleInput(const FInputActionValue& Value)
 {
+	UE_LOG(LogHellunaChat, Warning, TEXT("[HeroController] OnChatToggleInput 호출됨!"));
+
 	// W6: 채팅 입력 활성 상태에서 Enter는 TextBox의 OnTextCommitted가 처리
 	// Enhanced Input과 TextBox 양쪽에서 Enter가 동시 처리되는 충돌 방지
 	if (IsValid(ChatWidgetInstance) && ChatWidgetInstance->IsChatInputActive())

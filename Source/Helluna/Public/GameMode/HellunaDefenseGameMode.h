@@ -185,6 +185,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Defense(게임)|Monster(몬스터)")
 	void NotifyMonsterDied(AActor* DeadMonster);
 
+	/** 플레이어 사망 알림. 전원 사망 시 EndGame(AllDead) 호출 */
+	UFUNCTION(BlueprintCallable, Category = "Defense(게임)|GameEnd(게임종료)")
+	void NotifyPlayerDied(APlayerController* DeadPC);
+
 	UFUNCTION(BlueprintPure, Category = "Defense(게임)|Monster(몬스터)")
 	int32 GetRemainingMonsterCount() const { return RemainingMonstersThisNight; }
 
