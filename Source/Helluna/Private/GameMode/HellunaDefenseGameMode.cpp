@@ -10,6 +10,20 @@
 #include "AIController.h"
 #include "Components/StateTreeComponent.h"
 
+// Phase 7 게임 종료 + 결과 반영
+#include "Lobby/Database/HellunaSQLiteSubsystem.h"
+#include "Player/HellunaPlayerState.h"
+#include "Controller/HellunaHeroController.h"
+#include "Character/HellunaHeroCharacter.h"
+#include "Character/EnemyComponent/HellunaHealthComponent.h"
+#include "InventoryManagement/Components/Inv_InventoryComponent.h"
+#include "Player/Inv_PlayerController.h"
+#include "HAL/IConsoleManager.h"
+#include "Chat/HellunaChatTypes.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "HAL/FileManager.h"
+
 AHellunaDefenseGameMode::AHellunaDefenseGameMode()
 {
     UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] Constructor"));
@@ -21,6 +35,33 @@ void AHellunaDefenseGameMode::BeginPlay()
 {
     Super::BeginPlay();
     if (!HasAuthority()) return;
+
+    // 커맨드라인 LobbyURL 오버라이드
+    FString CmdLobbyURL;
+    if (FParse::Value(FCommandLine::Get(), TEXT("-LobbyURL="), CmdLobbyURL))
+    {
+        LobbyServerURL = CmdLobbyURL;
+        UE_LOG(LogHelluna, Warning, TEXT("[DefenseGameMode] 커맨드라인에서 LobbyServerURL 설정: %s"), *LobbyServerURL);
+    }
+    UE_LOG(LogHelluna, Warning, TEXT("[DefenseGameMode] LobbyServerURL = '%s'"), *LobbyServerURL);
+
+    // Phase 12b: 서버 레지스트리 초기화
+    {
+        const FString RegistryDir = GetRegistryDirectoryPath();
+        IFileManager::Get().MakeDirectory(*RegistryDir, true);
+        WriteRegistryFile(TEXT("empty"), 0);
+        UE_LOG(LogHelluna, Log, TEXT("[DefenseGameMode] 서버 레지스트리 초기화 | Port=%d | Path=%s"), GetServerPort(), *GetRegistryFilePath());
+
+        // 30초마다 하트비트
+        if (UWorld* W = GetWorld())
+        {
+            W->GetTimerManager().SetTimer(RegistryHeartbeatTimer, [this]()
+            {
+                const FString Status = CurrentPlayerCount > 0 ? TEXT("playing") : TEXT("empty");
+                WriteRegistryFile(Status, CurrentPlayerCount);
+            }, 30.0f, true);
+        }
+    }
 
     CacheBossSpawnPoints();
     CacheMeleeSpawnPoints();
@@ -137,6 +178,10 @@ void AHellunaDefenseGameMode::EnterDay()
         GS->SetPhase(EDefensePhase::Day);
         GS->SetAliveMonsterCount(0);
         GS->MulticastPrintDay();
+
+        // Phase 10: 채팅 시스템 메시지
+        GS->BroadcastChatMessage(TEXT(""), TEXT("낮이 시작됩니다"), EChatMessageType::System);
+
         GS->NetMulticast_OnDawnPassed(TestDayDuration);
     }
 
@@ -156,6 +201,9 @@ void AHellunaDefenseGameMode::EnterNight()
     {
         GS->SetPhase(EDefensePhase::Night);
         GS->SetAliveMonsterCount(0);
+
+        // Phase 10: 채팅 시스템 메시지
+        GS->BroadcastChatMessage(TEXT(""), TEXT("밤이 시작됩니다"), EChatMessageType::System);
     }
 
     // ── 보스 소환 일 체크 ──────────────────────────────────────────────
@@ -525,4 +573,353 @@ void AHellunaDefenseGameMode::RestartGame()
     if (!HasAuthority()) return;
     bGameInitialized = false;
     GetWorld()->ServerTravel(TEXT("/Game/Minwoo/MinwooTestMap?listen"));
+}
+
+// ============================================================
+// Phase 10: PostLogin — 접속 채팅 + Phase 12b 레지스트리
+// ============================================================
+void AHellunaDefenseGameMode::PostLogin(APlayerController* NewPlayer)
+{
+    Super::PostLogin(NewPlayer);
+
+    // Phase 12b: 레지스트리 갱신
+    CurrentPlayerCount++;
+    WriteRegistryFile(TEXT("playing"), CurrentPlayerCount);
+    UE_LOG(LogHelluna, Log, TEXT("[DefenseGameMode] PostLogin 레지스트리 갱신 | Players=%d"), CurrentPlayerCount);
+
+    // Phase 10: 접속 메시지
+    if (bGameInitialized && IsValid(NewPlayer))
+    {
+        FString PlayerName;
+        if (AHellunaPlayerState* HellunaPS = NewPlayer->GetPlayerState<AHellunaPlayerState>())
+        {
+            PlayerName = HellunaPS->GetPlayerUniqueId();
+        }
+        if (PlayerName.IsEmpty())
+        {
+            PlayerName = GetNameSafe(NewPlayer);
+        }
+
+        if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
+        {
+            GS->BroadcastChatMessage(TEXT(""), FString::Printf(TEXT("%s 님이 접속했습니다"), *PlayerName), EChatMessageType::System);
+        }
+    }
+}
+
+// ============================================================
+// Phase 7: 게임 종료
+// ============================================================
+
+// 콘솔 커맨드 핸들러 (디버그용)
+void AHellunaDefenseGameMode::CmdEndGame(const TArray<FString>& Args, UWorld* World)
+{
+    if (!World) return;
+
+    AHellunaDefenseGameMode* GM = Cast<AHellunaDefenseGameMode>(World->GetAuthGameMode());
+    if (!GM)
+    {
+        UE_LOG(LogHelluna, Warning, TEXT("[Phase7] EndGame 커맨드: DefenseGameMode가 아닌 맵에서 호출됨"));
+        return;
+    }
+
+    EHellunaGameEndReason Reason = EHellunaGameEndReason::Escaped;
+    if (Args.Num() > 0)
+    {
+        if (Args[0].Equals(TEXT("AllDead"), ESearchCase::IgnoreCase))
+        {
+            Reason = EHellunaGameEndReason::AllDead;
+        }
+        else if (Args[0].Equals(TEXT("ServerShutdown"), ESearchCase::IgnoreCase))
+        {
+            Reason = EHellunaGameEndReason::ServerShutdown;
+        }
+    }
+
+    GM->EndGame(Reason);
+}
+
+static FAutoConsoleCommandWithWorldAndArgs GCmdEndGame(
+    TEXT("EndGame"),
+    TEXT("Phase 7: 게임 종료. 사용법: EndGame [Escaped|AllDead|ServerShutdown]"),
+    FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&AHellunaDefenseGameMode::CmdEndGame)
+);
+
+// EndGame 메인 함수
+void AHellunaDefenseGameMode::EndGame(EHellunaGameEndReason Reason)
+{
+    if (!HasAuthority()) return;
+
+    if (bGameEnded)
+    {
+        UE_LOG(LogHelluna, Warning, TEXT("[Phase7] EndGame: 이미 게임이 종료됨, 스킵"));
+        return;
+    }
+
+    bGameEnded = true;
+
+    UE_LOG(LogHelluna, Warning, TEXT("[Phase7] EndGame — Reason: %s | LobbyServerURL: '%s'"),
+        Reason == EHellunaGameEndReason::Escaped ? TEXT("탈출 성공") :
+        Reason == EHellunaGameEndReason::AllDead ? TEXT("전원 사망") :
+        Reason == EHellunaGameEndReason::ServerShutdown ? TEXT("서버 셧다운") : TEXT("None"),
+        *LobbyServerURL);
+
+    // 낮/밤 타이머 정지
+    GetWorldTimerManager().ClearTimer(TimerHandle_ToNight);
+    GetWorldTimerManager().ClearTimer(TimerHandle_ToDay);
+
+    FString ReasonString;
+    switch (Reason)
+    {
+    case EHellunaGameEndReason::Escaped:       ReasonString = TEXT("탈출 성공"); break;
+    case EHellunaGameEndReason::AllDead:        ReasonString = TEXT("전원 사망"); break;
+    case EHellunaGameEndReason::ServerShutdown: ReasonString = TEXT("서버 셧다운"); break;
+    default:                                    ReasonString = TEXT("알 수 없음"); break;
+    }
+
+    // 각 플레이어 처리
+    for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+    {
+        APlayerController* PC = It->Get();
+        if (!IsValid(PC)) continue;
+
+        bool bSurvived = false;
+        if (Reason != EHellunaGameEndReason::AllDead)
+        {
+            APawn* Pawn = PC->GetPawn();
+            if (IsValid(Pawn))
+            {
+                UHellunaHealthComponent* HealthComp = Pawn->FindComponentByClass<UHellunaHealthComponent>();
+                if (HealthComp && !HealthComp->IsDead())
+                {
+                    bSurvived = true;
+                }
+            }
+        }
+
+        UE_LOG(LogHelluna, Log, TEXT("[Phase7] EndGame: Player=%s Survived=%s"),
+            *GetNameSafe(PC), bSurvived ? TEXT("Yes") : TEXT("No"));
+
+        ProcessPlayerGameResult(PC, bSurvived);
+
+        AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(PC);
+        if (HeroPC)
+        {
+            TArray<FInv_SavedItemData> ResultItems;
+            if (bSurvived)
+            {
+                AInv_PlayerController* InvPC = Cast<AInv_PlayerController>(PC);
+                if (InvPC)
+                {
+                    UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
+                    if (InvComp)
+                    {
+                        ResultItems = InvComp->CollectInventoryDataForSave();
+                    }
+                }
+            }
+
+            // [Fix15] 네트워크 최적화: SerializedManifest 제거
+            TArray<FInv_SavedItemData> LightweightItems;
+            LightweightItems.Reserve(ResultItems.Num());
+            for (const FInv_SavedItemData& Item : ResultItems)
+            {
+                FInv_SavedItemData LightItem;
+                LightItem.ItemType = Item.ItemType;
+                LightItem.StackCount = Item.StackCount;
+                LightItem.GridPosition = Item.GridPosition;
+                LightItem.GridCategory = Item.GridCategory;
+                LightItem.bEquipped = Item.bEquipped;
+                LightItem.WeaponSlotIndex = Item.WeaponSlotIndex;
+                LightweightItems.Add(MoveTemp(LightItem));
+            }
+
+            HeroPC->Client_ShowGameResult(LightweightItems, bSurvived, ReasonString, LobbyServerURL);
+        }
+    }
+
+    UE_LOG(LogHelluna, Log, TEXT("[Phase7] EndGame 완료 — 모든 플레이어 결과 처리됨"));
+}
+
+// ============================================================
+// ProcessPlayerGameResult
+// ============================================================
+void AHellunaDefenseGameMode::ProcessPlayerGameResult(APlayerController* PC, bool bSurvived)
+{
+    if (!IsValid(PC)) return;
+
+    FString PlayerId = GetPlayerSaveId(PC);
+    if (PlayerId.IsEmpty())
+    {
+        UE_LOG(LogHelluna, Warning, TEXT("[Phase7] ProcessPlayerGameResult: PlayerId가 비어있음 | PC=%s"),
+            *GetNameSafe(PC));
+        return;
+    }
+
+    UGameInstance* GI = GetGameInstance();
+    UHellunaSQLiteSubsystem* DB = GI ? GI->GetSubsystem<UHellunaSQLiteSubsystem>() : nullptr;
+    if (!DB)
+    {
+        UE_LOG(LogHelluna, Error, TEXT("[Phase7] ProcessPlayerGameResult: SQLite 서브시스템 없음 | PlayerId=%s"), *PlayerId);
+        return;
+    }
+
+    TArray<FInv_SavedItemData> ResultItems;
+    if (bSurvived)
+    {
+        UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
+        if (InvComp)
+        {
+            ResultItems = InvComp->CollectInventoryDataForSave();
+            UE_LOG(LogHelluna, Log, TEXT("[Phase7] 생존자 아이템 수집: %d개 | PlayerId=%s"),
+                ResultItems.Num(), *PlayerId);
+        }
+    }
+    else
+    {
+        UE_LOG(LogHelluna, Log, TEXT("[Phase7] 사망자: 아이템 전부 손실 | PlayerId=%s"), *PlayerId);
+    }
+
+    if (DB->ExportGameResultToFile(PlayerId, ResultItems, bSurvived))
+    {
+        UE_LOG(LogHelluna, Log, TEXT("[Phase7] ExportGameResultToFile 성공 | PlayerId=%s | Items=%d | Survived=%s"),
+            *PlayerId, ResultItems.Num(), bSurvived ? TEXT("Y") : TEXT("N"));
+    }
+    else
+    {
+        UE_LOG(LogHelluna, Error, TEXT("[Phase7] ExportGameResultToFile 실패! | PlayerId=%s"), *PlayerId);
+    }
+}
+
+// ============================================================
+// Logout — Phase 10 채팅 + Phase 7 사망 처리 + Phase 12b 레지스트리
+// ============================================================
+void AHellunaDefenseGameMode::Logout(AController* Exiting)
+{
+    // Phase 10: 퇴장 메시지
+    if (bGameInitialized)
+    {
+        APlayerController* ExitPC = Cast<APlayerController>(Exiting);
+        if (IsValid(ExitPC))
+        {
+            FString PlayerName;
+            if (AHellunaPlayerState* HellunaPS = ExitPC->GetPlayerState<AHellunaPlayerState>())
+            {
+                PlayerName = HellunaPS->GetPlayerUniqueId();
+            }
+            if (PlayerName.IsEmpty())
+            {
+                PlayerName = GetNameSafe(ExitPC);
+            }
+
+            if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
+            {
+                GS->BroadcastChatMessage(TEXT(""), FString::Printf(TEXT("%s 님이 퇴장했습니다"), *PlayerName), EChatMessageType::System);
+            }
+        }
+    }
+
+    // Phase 7: 게임 진행 중이면 사망 취급
+    if (bGameInitialized && !bGameEnded)
+    {
+        APlayerController* PC = Cast<APlayerController>(Exiting);
+        if (IsValid(PC))
+        {
+            UE_LOG(LogHelluna, Warning, TEXT("[Phase7] Logout 중 게임 진행 중 — 사망 취급 | Player=%s"),
+                *GetNameSafe(PC));
+            ProcessPlayerGameResult(PC, false);
+        }
+    }
+
+    // Phase 12b: 레지스트리 갱신
+    CurrentPlayerCount = FMath::Max(0, CurrentPlayerCount - 1);
+    WriteRegistryFile(CurrentPlayerCount > 0 ? TEXT("playing") : TEXT("empty"), CurrentPlayerCount);
+    UE_LOG(LogHelluna, Log, TEXT("[DefenseGameMode] Logout 레지스트리 갱신 | Players=%d"), CurrentPlayerCount);
+
+    Super::Logout(Exiting);
+}
+
+// ============================================================
+// EndPlay — Phase 7 셧다운 + Phase 12b 레지스트리 정리
+// ============================================================
+void AHellunaDefenseGameMode::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+    if (HasAuthority() && bGameInitialized && !bGameEnded)
+    {
+        UE_LOG(LogHelluna, Warning, TEXT("[Phase7] EndPlay: 서버 셧다운 — EndGame(ServerShutdown) 호출"));
+        EndGame(EHellunaGameEndReason::ServerShutdown);
+    }
+
+    // Phase 12b: 하트비트 타이머 정리 + 레지스트리 파일 삭제
+    if (UWorld* W = GetWorld())
+    {
+        W->GetTimerManager().ClearTimer(RegistryHeartbeatTimer);
+    }
+    DeleteRegistryFile();
+    UE_LOG(LogHelluna, Log, TEXT("[DefenseGameMode] EndPlay: 레지스트리 파일 삭제"));
+
+    Super::EndPlay(EndPlayReason);
+}
+
+// ============================================================
+// Phase 12b: 서버 레지스트리 헬퍼 함수
+// ============================================================
+
+FString AHellunaDefenseGameMode::GetRegistryDirectoryPath() const
+{
+    return FPaths::ConvertRelativePathToFull(
+        FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("ServerRegistry")));
+}
+
+int32 AHellunaDefenseGameMode::GetServerPort() const
+{
+    UWorld* World = GetWorld();
+    if (World)
+    {
+        return World->URL.Port;
+    }
+    return 7777;
+}
+
+FString AHellunaDefenseGameMode::GetRegistryFilePath() const
+{
+    const int32 Port = GetServerPort();
+    return FPaths::Combine(GetRegistryDirectoryPath(), FString::Printf(TEXT("channel_%d.json"), Port));
+}
+
+void AHellunaDefenseGameMode::WriteRegistryFile(const FString& Status, int32 PlayerCount)
+{
+    const int32 Port = GetServerPort();
+    const FString ChannelId = FString::Printf(TEXT("channel_%d"), Port);
+    const FString MapName = GetWorld() ? GetWorld()->GetMapName() : TEXT("Unknown");
+    const FString LastUpdate = FDateTime::UtcNow().ToIso8601();
+
+    const FString JsonContent = FString::Printf(
+        TEXT("{\n")
+        TEXT("  \"channelId\": \"%s\",\n")
+        TEXT("  \"port\": %d,\n")
+        TEXT("  \"status\": \"%s\",\n")
+        TEXT("  \"currentPlayers\": %d,\n")
+        TEXT("  \"maxPlayers\": 3,\n")
+        TEXT("  \"mapName\": \"%s\",\n")
+        TEXT("  \"lastUpdate\": \"%s\"\n")
+        TEXT("}"),
+        *ChannelId, Port, *Status, PlayerCount, *MapName, *LastUpdate
+    );
+
+    const FString FilePath = GetRegistryFilePath();
+    if (!FFileHelper::SaveStringToFile(JsonContent, *FilePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+    {
+        UE_LOG(LogHelluna, Error, TEXT("[DefenseGameMode] 레지스트리 파일 쓰기 실패: %s"), *FilePath);
+    }
+}
+
+void AHellunaDefenseGameMode::DeleteRegistryFile()
+{
+    const FString FilePath = GetRegistryFilePath();
+    if (IFileManager::Get().FileExists(*FilePath))
+    {
+        IFileManager::Get().Delete(*FilePath);
+        UE_LOG(LogHelluna, Log, TEXT("[DefenseGameMode] 레지스트리 파일 삭제: %s"), *FilePath);
+    }
 }
