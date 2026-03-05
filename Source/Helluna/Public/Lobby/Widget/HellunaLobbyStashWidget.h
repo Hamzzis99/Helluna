@@ -20,6 +20,7 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "Lobby/Party/HellunaPartyTypes.h"
 #include "HellunaLobbyStashWidget.generated.h"
 
 // 전방 선언
@@ -160,6 +161,10 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Button_Party;
 
+	/** [Phase 12h] START 버튼 자식 TextBlock — 없으면 GetChildAt(0)으로 탐색 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Text_StartLabel;
+
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> Text_NoCharWarning;
 
@@ -252,11 +257,25 @@ private:
 	void OnPartyClicked();
 
 	// ════════════════════════════════════════════════════════════════
+	// [Phase 12h] START/READY 버튼 전환
+	// ════════════════════════════════════════════════════════════════
+
+	/** 파티 상태 변경 시 버튼 텍스트 갱신 */
+	UFUNCTION()
+	void OnPartyStateChangedHandler(const FHellunaPartyInfo& PartyInfo);
+
+	/** START/READY 버튼 텍스트 업데이트 */
+	void UpdateStartButtonForPartyState();
+
+	// ════════════════════════════════════════════════════════════════
 	// 내부 상태
 	// ════════════════════════════════════════════════════════════════
 
 	// 현재 활성 탭 인덱스
 	int32 CurrentTabIndex = LobbyTab::Play;
+
+	/** [Phase 12h] 로컬 플레이어의 현재 Ready 상태 캐시 */
+	bool bLocalPlayerReady = false;
 
 	// 프리뷰 씬 캐시 (Solo 모드 전환용)
 	TWeakObjectPtr<AHellunaCharacterSelectSceneV2> CachedPreviewScene;

@@ -104,6 +104,13 @@ void UHellunaLobbyStashWidget::NativeOnInitialized()
 		Text_NoCharWarning->SetVisibility(ESlateVisibility::Collapsed);
 	}
 
+	// ── [Phase 12h] 파티 상태 변경 → START/READY 버튼 텍스트 갱신 ──
+	if (AHellunaLobbyController* LobbyPC = GetLobbyController())
+	{
+		LobbyPC->OnPartyStateChanged.AddUniqueDynamic(this, &ThisClass::OnPartyStateChangedHandler);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] OnPartyStateChanged 바인딩 완료"));
+	}
+
 	// ── 시작 탭: Play ──
 	SwitchToTab(LobbyTab::Play);
 
@@ -379,6 +386,12 @@ void UHellunaLobbyStashWidget::SwitchToTab(int32 TabIndex)
 		Text_NoCharWarning->SetVisibility(bShowWarning ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	}
 
+	// ── [Phase 12h] Play 탭 진입 시 START/READY 버튼 텍스트 갱신 ──
+	if (TabIndex == LobbyTab::Play)
+	{
+		UpdateStartButtonForPartyState();
+	}
+
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] SwitchToTab(%d) — %s"),
 		TabIndex,
 		TabIndex == LobbyTab::Play ? TEXT("Play") :
@@ -422,7 +435,7 @@ void UHellunaLobbyStashWidget::UpdateTabVisuals(int32 ActiveTabIndex)
 
 void UHellunaLobbyStashWidget::OnStartClicked()
 {
-	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] START 버튼 클릭!"));
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] START/READY 버튼 클릭!"));
 
 	// 캐릭터 미선택 체크 (클라이언트 UX 방어 — 서버에서도 별도 체크)
 	if (!IsCharacterSelected())
@@ -442,8 +455,23 @@ void UHellunaLobbyStashWidget::OnStartClicked()
 		return;
 	}
 
-	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] → Server_Deploy RPC 호출 (START)"));
-	LobbyPC->Server_Deploy();
+	// [Phase 12h] 파티 모드 분기
+	if (LobbyPC->CurrentPartyInfo.IsValid()
+		&& LobbyPC->CurrentPartyInfo.Members.Num() >= 2)
+	{
+		// 파티 모드 → Ready 토글
+		bLocalPlayerReady = !bLocalPlayerReady;
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] → Server_SetPartyReady(%s)"),
+			bLocalPlayerReady ? TEXT("true") : TEXT("false"));
+		LobbyPC->Server_SetPartyReady(bLocalPlayerReady);
+		UpdateStartButtonForPartyState();
+	}
+	else
+	{
+		// 솔로 모드 → 즉시 Deploy (기존)
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] → Server_Deploy RPC 호출 (START)"));
+		LobbyPC->Server_Deploy();
+	}
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -481,6 +509,9 @@ void UHellunaLobbyStashWidget::SetupCenterPreview(AHellunaCharacterSelectSceneV2
 			UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] SetupCenterPreview: 초기 Solo 모드 → Index %d"), HeroIndex);
 		}
 	}
+
+	// [Phase 12h] 초기 버튼 상태 설정
+	UpdateStartButtonForPartyState();
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -676,5 +707,62 @@ void UHellunaLobbyStashWidget::OnCharacterSelectedHandler(EHellunaHeroType Selec
 				UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] Play 탭 Solo 프리뷰 업데이트 → Index %d"), HeroIndex);
 			}
 		}
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 12h] 파티 상태 변경 → START/READY 버튼 전환
+// ════════════════════════════════════════════════════════════════════════════════
+
+void UHellunaLobbyStashWidget::OnPartyStateChangedHandler(const FHellunaPartyInfo& PartyInfo)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase 12h] 파티 상태 변경 수신 → 버튼 갱신"));
+
+	// 파티 해산 시 Ready 상태 리셋
+	if (!PartyInfo.IsValid() || PartyInfo.Members.Num() < 2)
+	{
+		bLocalPlayerReady = false;
+	}
+
+	UpdateStartButtonForPartyState();
+}
+
+void UHellunaLobbyStashWidget::UpdateStartButtonForPartyState()
+{
+	// Text_StartLabel 찾기: BindWidgetOptional 우선, 없으면 Button_Start의 자식 탐색
+	UTextBlock* StartLabel = Text_StartLabel;
+	if (!StartLabel && Button_Start && Button_Start->GetChildrenCount() > 0)
+	{
+		StartLabel = Cast<UTextBlock>(Button_Start->GetChildAt(0));
+	}
+
+	if (!StartLabel)
+	{
+		return;
+	}
+
+	AHellunaLobbyController* LobbyPC = GetLobbyController();
+	const bool bInParty = LobbyPC
+		&& LobbyPC->CurrentPartyInfo.IsValid()
+		&& LobbyPC->CurrentPartyInfo.Members.Num() >= 2;
+
+	if (bInParty)
+	{
+		if (bLocalPlayerReady)
+		{
+			StartLabel->SetText(FText::FromString(TEXT("CANCEL READY")));
+			UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] 버튼 → CANCEL READY"));
+		}
+		else
+		{
+			StartLabel->SetText(FText::FromString(TEXT("READY")));
+			UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] 버튼 → READY"));
+		}
+	}
+	else
+	{
+		StartLabel->SetText(FText::FromString(TEXT("START")));
+		bLocalPlayerReady = false;
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] 버튼 → START (솔로)"));
 	}
 }
