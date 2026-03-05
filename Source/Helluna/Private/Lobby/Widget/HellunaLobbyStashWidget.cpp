@@ -29,6 +29,7 @@
 #include "Lobby/Controller/HellunaLobbyController.h"
 #include "Login/Preview/HellunaCharacterSelectSceneV2.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
+#include "Widgets/Inventory/GridSlots/Inv_EquippedGridSlot.h"
 #include "HellunaTypes.h"
 #include "Components/Button.h"
 #include "Components/WidgetSwitcher.h"
@@ -149,6 +150,61 @@ void UHellunaLobbyStashWidget::InitializePanels(UInv_InventoryComponent* StashCo
 		UE_LOG(LogHellunaLobby, Warning, TEXT("[StashWidget]   LoadoutSpatialInventory=%s | LoadoutComp=%s"),
 			LoadoutSpatialInventory ? TEXT("O") : TEXT("X (WBP에서 BindWidget 'LoadoutSpatialInventory' 확인)"),
 			LoadoutComp ? TEXT("O") : TEXT("X (LobbyController 생성자 확인)"));
+	}
+
+	// ── [Fix39] 로비 복귀 시 장착 아이템 EquippedGridSlot 복원 ──
+	// Inv_PlayerController::Client_RestoreEquippedItems (Phase 6)와 동일한 패턴
+	// 로비 컨트롤러는 Inv_PlayerController를 상속하지 않으므로 여기서 직접 처리
+	if (LoadoutSpatialInventory && LoadoutComp)
+	{
+		LoadoutSpatialInventory->CollectEquippedGridSlots();
+		const TArray<TObjectPtr<UInv_EquippedGridSlot>>& EquippedSlots = LoadoutSpatialInventory->GetEquippedGridSlots();
+
+		if (EquippedSlots.Num() > 0)
+		{
+			TArray<FInv_SavedItemData> SavedItems = LoadoutComp->CollectInventoryDataForSave();
+			TSet<UInv_InventoryItem*> ProcessedItems;
+			int32 RestoredCount = 0;
+
+			for (const FInv_SavedItemData& ItemData : SavedItems)
+			{
+				if (!ItemData.bEquipped || ItemData.WeaponSlotIndex < 0)
+					continue;
+
+				// WeaponSlotIndex에 맞는 EquippedGridSlot 찾기
+				UInv_EquippedGridSlot* TargetSlot = nullptr;
+				for (const TObjectPtr<UInv_EquippedGridSlot>& EquipSlot : EquippedSlots)
+				{
+					if (IsValid(EquipSlot) && EquipSlot->GetWeaponSlotIndex() == ItemData.WeaponSlotIndex)
+					{
+						TargetSlot = EquipSlot.Get();
+						break;
+					}
+				}
+
+				if (!TargetSlot)
+				{
+					UE_LOG(LogHellunaLobby, Warning, TEXT("[StashWidget] [Fix39] WeaponSlot %d 슬롯 없음 → 스킵"), ItemData.WeaponSlotIndex);
+					continue;
+				}
+
+				UInv_InventoryItem* FoundItem = LoadoutComp->FindItemByTypeExcluding(ItemData.ItemType, ProcessedItems);
+				if (!FoundItem)
+				{
+					UE_LOG(LogHellunaLobby, Warning, TEXT("[StashWidget] [Fix39] 아이템 못 찾음: %s"), *ItemData.ItemType.ToString());
+					continue;
+				}
+
+				UInv_EquippedSlottedItem* Result = LoadoutSpatialInventory->RestoreEquippedItem(TargetSlot, FoundItem);
+				if (Result)
+				{
+					ProcessedItems.Add(FoundItem);
+					RestoredCount++;
+				}
+			}
+
+			UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Fix39] 장착 아이템 복원 완료: %d개"), RestoredCount);
+		}
 	}
 
 	// ── [Phase 4 Fix] 우클릭 전송 모드 활성화 ──

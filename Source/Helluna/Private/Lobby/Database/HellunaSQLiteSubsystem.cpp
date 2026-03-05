@@ -416,6 +416,7 @@ bool UHellunaSQLiteSubsystem::ExportLoadoutToFile(const FString& PlayerId, const
 		ItemObj->SetNumberField(TEXT("grid_category"), static_cast<int32>(Item.GridCategory));
 		ItemObj->SetBoolField(TEXT("is_equipped"), Item.bEquipped);
 		ItemObj->SetNumberField(TEXT("weapon_slot"), Item.WeaponSlotIndex);
+		ItemObj->SetBoolField(TEXT("is_rotated"), Item.bRotated);
 
 		// SerializedManifest → Base64
 		if (Item.SerializedManifest.Num() > 0)
@@ -524,6 +525,7 @@ TArray<FInv_SavedItemData> UHellunaSQLiteSubsystem::ImportLoadoutFromFile(const 
 		Item.GridCategory = static_cast<uint8>(ItemObj->GetNumberField(TEXT("grid_category")));
 		Item.bEquipped = ItemObj->GetBoolField(TEXT("is_equipped"));
 		Item.WeaponSlotIndex = static_cast<int32>(ItemObj->GetNumberField(TEXT("weapon_slot")));
+		Item.bRotated = ItemObj->GetBoolField(TEXT("is_rotated"));
 
 		// manifest → Base64 디코딩
 		FString ManifestB64;
@@ -631,6 +633,20 @@ bool UHellunaSQLiteSubsystem::ExportGameResultToFile(const FString& PlayerId, co
 	RootObj->SetBoolField(TEXT("survived"), bSurvived);
 	RootObj->SetStringField(TEXT("export_time"), FDateTime::Now().ToString());
 
+	// 장착 슬롯 정보 추출 → equipment 섹션
+	TArray<TSharedPtr<FJsonValue>> EquipArray;
+	for (const FInv_SavedItemData& Item : Items)
+	{
+		if (Item.bEquipped && Item.WeaponSlotIndex >= 0)
+		{
+			TSharedRef<FJsonObject> SlotObj = MakeShared<FJsonObject>();
+			SlotObj->SetStringField(TEXT("slot_id"), FString::Printf(TEXT("weapon_%d"), Item.WeaponSlotIndex));
+			SlotObj->SetStringField(TEXT("item_type"), Item.ItemType.ToString());
+			EquipArray.Add(MakeShared<FJsonValueObject>(SlotObj));
+		}
+	}
+	RootObj->SetArrayField(TEXT("equipment"), EquipArray);
+
 	// 아이템 배열
 	TArray<TSharedPtr<FJsonValue>> ItemsArray;
 	int32 ExportIdx = 0;
@@ -650,6 +666,7 @@ bool UHellunaSQLiteSubsystem::ExportGameResultToFile(const FString& PlayerId, co
 		ItemObj->SetNumberField(TEXT("grid_category"), static_cast<int32>(Item.GridCategory));
 		ItemObj->SetBoolField(TEXT("is_equipped"), Item.bEquipped);
 		ItemObj->SetNumberField(TEXT("weapon_slot"), Item.WeaponSlotIndex);
+		ItemObj->SetBoolField(TEXT("is_rotated"), Item.bRotated);
 
 		// SerializedManifest → Base64
 		if (Item.SerializedManifest.Num() > 0)
@@ -694,7 +711,8 @@ bool UHellunaSQLiteSubsystem::ExportGameResultToFile(const FString& PlayerId, co
 // ──────────────────────────────────────────────────────────────
 // ImportGameResultFromFile — JSON 파일에서 게임 결과 읽기 + 파일 삭제
 // ──────────────────────────────────────────────────────────────
-TArray<FInv_SavedItemData> UHellunaSQLiteSubsystem::ImportGameResultFromFile(const FString& PlayerId, bool& OutSurvived, bool& bOutSuccess)
+TArray<FInv_SavedItemData> UHellunaSQLiteSubsystem::ImportGameResultFromFile(const FString& PlayerId, bool& OutSurvived, bool& bOutSuccess,
+	TArray<FHellunaEquipmentSlotData>* OutEquipment)
 {
 	TArray<FInv_SavedItemData> Result;
 	OutSurvived = false;
@@ -724,6 +742,31 @@ TArray<FInv_SavedItemData> UHellunaSQLiteSubsystem::ImportGameResultFromFile(con
 
 	// 헤더 필드
 	OutSurvived = RootObj->GetBoolField(TEXT("survived"));
+
+	// 장착 슬롯 파싱 (equipment 섹션)
+	if (OutEquipment)
+	{
+		const TArray<TSharedPtr<FJsonValue>>* EquipArray = nullptr;
+		if (RootObj->TryGetArrayField(TEXT("equipment"), EquipArray) && EquipArray)
+		{
+			for (const TSharedPtr<FJsonValue>& SlotValue : *EquipArray)
+			{
+				const TSharedPtr<FJsonObject> SlotObj = SlotValue->AsObject();
+				if (!SlotObj.IsValid()) continue;
+
+				FHellunaEquipmentSlotData Slot;
+				SlotObj->TryGetStringField(TEXT("slot_id"), Slot.SlotId);
+				FString ItemTypeStr;
+				if (SlotObj->TryGetStringField(TEXT("item_type"), ItemTypeStr))
+				{
+					Slot.ItemType = FGameplayTag::RequestGameplayTag(FName(*ItemTypeStr), false);
+				}
+				OutEquipment->Add(MoveTemp(Slot));
+			}
+			UE_LOG(LogHelluna, Log, TEXT("[SQLite] ImportGameResultFromFile: equipment %d개 슬롯 파싱"),
+				OutEquipment->Num());
+		}
+	}
 
 	// 아이템 배열 파싱
 	const TArray<TSharedPtr<FJsonValue>>* ItemsArray = nullptr;
@@ -757,6 +800,7 @@ TArray<FInv_SavedItemData> UHellunaSQLiteSubsystem::ImportGameResultFromFile(con
 		Item.GridCategory = static_cast<uint8>(ItemObj->GetNumberField(TEXT("grid_category")));
 		Item.bEquipped = ItemObj->GetBoolField(TEXT("is_equipped"));
 		Item.WeaponSlotIndex = static_cast<int32>(ItemObj->GetNumberField(TEXT("weapon_slot")));
+		Item.bRotated = ItemObj->GetBoolField(TEXT("is_rotated"));
 
 		// manifest → Base64 디코딩
 		FString ManifestB64;
@@ -1068,7 +1112,24 @@ bool UHellunaSQLiteSubsystem::InitializeSchema()
 		return false;
 	}
 
-	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ InitializeSchema 완료 (테이블 7개, 인덱스 7개)"));
+	// ── player_equipment 테이블 생성 (장착 상태 보존) ──
+	// 게임→로비 복귀 시 장착 슬롯 정보를 별도 관리
+	if (!Database->Execute(TEXT(
+		"CREATE TABLE IF NOT EXISTS player_equipment ("
+		"    player_id   TEXT NOT NULL,"
+		"    slot_id     TEXT NOT NULL,"
+		"    item_type   TEXT NOT NULL,"
+		"    updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP,"
+		"    PRIMARY KEY (player_id, slot_id)"
+		");"
+	)))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ CREATE TABLE player_equipment 실패 | 에러: %s"), *Database->GetLastError());
+		return false;
+	}
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite]   CREATE TABLE player_equipment ✓"));
+
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ InitializeSchema 완료 (테이블 8개, 인덱스 7개)"));
 	return true;
 }
 
@@ -2275,6 +2336,162 @@ bool UHellunaSQLiteSubsystem::IsPlayerDeployed(const FString& PlayerId)
 	// 행 없음 = 한 번도 출격한 적 없음 → false
 	UE_LOG(LogHelluna, Log, TEXT("[SQLite] [Fix36] ✓ IsPlayerDeployed: 기록 없음 (미출격) | PlayerId=%s"), *PlayerId);
 	return false;
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 장착 상태 관리 (player_equipment)
+// ════════════════════════════════════════════════════════════════════════════════
+
+// ──────────────────────────────────────────────────────────────
+// SavePlayerEquipment — 장착 스냅샷 저장 (DELETE + INSERT)
+// ──────────────────────────────────────────────────────────────
+bool UHellunaSQLiteSubsystem::SavePlayerEquipment(const FString& PlayerId, const TArray<FHellunaEquipmentSlotData>& Equipment)
+{
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ▶ SavePlayerEquipment | PlayerId=%s | %d개 슬롯"), *PlayerId, Equipment.Num());
+
+	if (PlayerId.IsEmpty())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SavePlayerEquipment: PlayerId가 비어있음"));
+		return false;
+	}
+	if (!IsDatabaseReady())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SavePlayerEquipment: DB가 준비되지 않음"));
+		return false;
+	}
+
+	// 트랜잭션
+	if (!Database->Execute(TEXT("BEGIN TRANSACTION;")))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SavePlayerEquipment: BEGIN 실패 | 에러: %s"), *Database->GetLastError());
+		return false;
+	}
+
+	// (1) 기존 삭제
+	{
+		FSQLitePreparedStatement DeleteStmt = Database->PrepareStatement(
+			TEXT("DELETE FROM player_equipment WHERE player_id = ?1;"));
+		if (!DeleteStmt.IsValid())
+		{
+			Database->Execute(TEXT("ROLLBACK;"));
+			return false;
+		}
+		DeleteStmt.SetBindingValueByIndex(1, PlayerId);
+		if (!DeleteStmt.Execute())
+		{
+			UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SavePlayerEquipment: DELETE 실패 | 에러: %s"), *Database->GetLastError());
+			Database->Execute(TEXT("ROLLBACK;"));
+			return false;
+		}
+	}
+
+	// (2) 신규 INSERT
+	if (Equipment.Num() > 0)
+	{
+		FSQLitePreparedStatement InsertStmt = Database->PrepareStatement(
+			TEXT("INSERT INTO player_equipment (player_id, slot_id, item_type) VALUES (?1, ?2, ?3);"),
+			ESQLitePreparedStatementFlags::Persistent);
+		if (!InsertStmt.IsValid())
+		{
+			UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SavePlayerEquipment: INSERT Prepare 실패 | 에러: %s"), *Database->GetLastError());
+			Database->Execute(TEXT("ROLLBACK;"));
+			return false;
+		}
+
+		for (const FHellunaEquipmentSlotData& Slot : Equipment)
+		{
+			InsertStmt.SetBindingValueByIndex(1, PlayerId);
+			InsertStmt.SetBindingValueByIndex(2, Slot.SlotId);
+			InsertStmt.SetBindingValueByIndex(3, Slot.ItemType.ToString());
+
+			if (!InsertStmt.Execute())
+			{
+				UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SavePlayerEquipment: INSERT 실패 | slot=%s | 에러: %s"),
+					*Slot.SlotId, *Database->GetLastError());
+				Database->Execute(TEXT("ROLLBACK;"));
+				return false;
+			}
+			InsertStmt.Reset();
+			InsertStmt.ClearBindings();
+		}
+	}
+
+	if (!Database->Execute(TEXT("COMMIT;")))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SavePlayerEquipment: COMMIT 실패 | 에러: %s"), *Database->GetLastError());
+		Database->Execute(TEXT("ROLLBACK;"));
+		return false;
+	}
+
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ SavePlayerEquipment 완료 | PlayerId=%s | %d개 슬롯"), *PlayerId, Equipment.Num());
+	return true;
+}
+
+// ──────────────────────────────────────────────────────────────
+// LoadPlayerEquipment — 장착 스냅샷 로드
+// ──────────────────────────────────────────────────────────────
+TArray<FHellunaEquipmentSlotData> UHellunaSQLiteSubsystem::LoadPlayerEquipment(const FString& PlayerId)
+{
+	TArray<FHellunaEquipmentSlotData> Result;
+
+	if (PlayerId.IsEmpty() || !IsDatabaseReady())
+	{
+		return Result;
+	}
+
+	FSQLitePreparedStatement Stmt = Database->PrepareStatement(
+		TEXT("SELECT slot_id, item_type FROM player_equipment WHERE player_id = ?1;"));
+	if (!Stmt.IsValid())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ LoadPlayerEquipment: PrepareStatement 실패"));
+		return Result;
+	}
+
+	Stmt.SetBindingValueByIndex(1, PlayerId);
+
+	while (Stmt.Step() == ESQLitePreparedStatementStepResult::Row)
+	{
+		FHellunaEquipmentSlotData Slot;
+		Stmt.GetColumnValueByName(TEXT("slot_id"), Slot.SlotId);
+
+		FString ItemTypeStr;
+		Stmt.GetColumnValueByName(TEXT("item_type"), ItemTypeStr);
+		Slot.ItemType = FGameplayTag::RequestGameplayTag(FName(*ItemTypeStr), false);
+
+		Result.Add(MoveTemp(Slot));
+	}
+
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ LoadPlayerEquipment | PlayerId=%s | %d개 슬롯 로드"), *PlayerId, Result.Num());
+	return Result;
+}
+
+// ──────────────────────────────────────────────────────────────
+// DeletePlayerEquipment — 장착 정보 삭제
+// ──────────────────────────────────────────────────────────────
+bool UHellunaSQLiteSubsystem::DeletePlayerEquipment(const FString& PlayerId)
+{
+	if (PlayerId.IsEmpty() || !IsDatabaseReady())
+	{
+		return false;
+	}
+
+	FSQLitePreparedStatement Stmt = Database->PrepareStatement(
+		TEXT("DELETE FROM player_equipment WHERE player_id = ?1;"));
+	if (!Stmt.IsValid())
+	{
+		return false;
+	}
+
+	Stmt.SetBindingValueByIndex(1, PlayerId);
+	if (!Stmt.Execute())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ DeletePlayerEquipment 실패 | 에러: %s"), *Database->GetLastError());
+		return false;
+	}
+
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ DeletePlayerEquipment 완료 | PlayerId=%s"), *PlayerId);
+	return true;
 }
 
 
