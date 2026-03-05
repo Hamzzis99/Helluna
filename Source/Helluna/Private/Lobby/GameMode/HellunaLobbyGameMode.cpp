@@ -46,6 +46,7 @@
 #include "Serialization/JsonSerializer.h"
 #include "Dom/JsonObject.h"
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
+#include "Login/Save/HellunaAccountSaveGame.h"
 
 // 로그 카테고리 (공유 헤더에서 DECLARE, 여기서 DEFINE)
 #include "Lobby/HellunaLobbyLog.h"
@@ -98,6 +99,12 @@ void AHellunaLobbyGameMode::BeginPlay()
 		SQLiteSubsystem->CleanupStaleParties(24);
 		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] BeginPlay: CleanupStaleParties(24h) 완료"));
 	}
+
+	// [Phase 13] AccountSaveGame 로드 (로비 로그인용)
+	LobbyAccountSaveGame = UHellunaAccountSaveGame::LoadOrCreate();
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] BeginPlay: AccountSaveGame %s | 계정 수=%d"),
+		LobbyAccountSaveGame ? TEXT("로드 성공") : TEXT("로드 실패"),
+		LobbyAccountSaveGame ? LobbyAccountSaveGame->GetAccountCount() : 0);
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -150,7 +157,6 @@ void AHellunaLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 		LobbyPC->GetLoadoutComponent() ? TEXT("O") : TEXT("X"));
 
 	// ── SQLite 서브시스템 캐시 ──
-	// GameInstanceSubsystem이므로 게임 인스턴스 생존 기간 동안 유지됨
 	if (!SQLiteSubsystem)
 	{
 		UGameInstance* GI = GetGameInstance();
@@ -176,39 +182,120 @@ void AHellunaLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 		}
 	}
 
-	// ── PlayerId 획득 ──
-	// 📌 디버그 모드(bDebugSkipLogin=true)일 때는 고정 ID 사용
-	//    이유: PIE에서 GetPlayerSaveId()는 매 세션마다 다른 랜덤 DEBUG_xxx를 반환
-	//    → DebugSave로 저장한 데이터(PlayerId="DebugPlayer")와 절대 일치하지 않음
-	//    → 테스트를 위해 고정 ID "DebugPlayer"를 강제 사용
-	//
-	// 📌 테스트 순서:
-	//    1) PIE 실행 → 콘솔: Helluna.SQLite.DebugSave (아이템 2개 저장)
-	//    2) PIE 종료 → 재실행 → PostLogin에서 "DebugPlayer"로 Stash 로드 → Grid에 표시!
-	FString PlayerId;
+	// ── [Phase 13] 로그인 모드 분기 ──
 	if (bDebugSkipLogin)
 	{
-		PlayerId = TEXT("DebugPlayer");
-		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] ⚠ 디버그 모드 → 고정 ID '%s' 사용 (DebugSave와 일치)"), *PlayerId);
+		// ── 디버그 모드: 로그인 스킵 → 즉시 로비 초기화 ──
+		const FString PlayerId = TEXT("DebugPlayer");
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] [Phase 13] 디버그 모드 → 고정 ID '%s' 사용"), *PlayerId);
+		InitializeLobbyForPlayer(LobbyPC, PlayerId);
 	}
 	else
 	{
-		PlayerId = GetPlayerSaveId(NewPlayer);
+		// ── 로그인 모드: 클라이언트에 로그인 UI 표시 지시 → 로그인 대기 ──
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Phase 13] 로그인 필요 → Client_ShowLobbyLoginUI 호출"));
+		LobbyPC->Client_ShowLobbyLoginUI();
 	}
 
-	if (PlayerId.IsEmpty())
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ══════════════════════════════════════"));
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] PostLogin 완료 | PC=%s"), *GetNameSafe(NewPlayer));
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ══════════════════════════════════════"));
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 13] ProcessLobbyLogin — 로비 로그인 처리
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 📌 호출 시점: Controller->Server_RequestLobbyLogin에서 호출
+// 📌 처리: AccountSaveGame 검증 → 동시접속 체크 → 성공 시 InitializeLobbyForPlayer
+//
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaLobbyGameMode::ProcessLobbyLogin(AHellunaLobbyController* LobbyPC, const FString& PlayerId, const FString& Password)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ──────────────────────────────────────"));
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ProcessLobbyLogin | PlayerId=%s | PC=%s"), *PlayerId, *GetNameSafe(LobbyPC));
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ──────────────────────────────────────"));
+
+	if (!LobbyPC)
 	{
-		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] PostLogin: PlayerId가 비어있음! Stash 로드 스킵"));
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] ProcessLobbyLogin: LobbyPC nullptr!"));
 		return;
 	}
 
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] PostLogin → PlayerId=%s"), *PlayerId);
+	// ── 동시 접속 체크 ──
+	UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance());
+	if (GI && GI->IsPlayerLoggedIn(PlayerId))
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] ProcessLobbyLogin: 동시 접속 거부 | PlayerId=%s"), *PlayerId);
+		LobbyPC->Client_LobbyLoginResult(false, TEXT("이미 접속 중인 계정입니다."));
+		return;
+	}
+
+	// ── AccountSaveGame 검증 ──
+	if (!LobbyAccountSaveGame)
+	{
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] ProcessLobbyLogin: AccountSaveGame nullptr!"));
+		LobbyPC->Client_LobbyLoginResult(false, TEXT("서버 오류"));
+		return;
+	}
+
+	if (LobbyAccountSaveGame->HasAccount(PlayerId))
+	{
+		// 기존 계정: 비밀번호 검증
+		if (!LobbyAccountSaveGame->ValidatePassword(PlayerId, Password))
+		{
+			UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] ProcessLobbyLogin: 비밀번호 불일치 | PlayerId=%s"), *PlayerId);
+			LobbyPC->Client_LobbyLoginResult(false, TEXT("비밀번호를 확인해주세요."));
+			return;
+		}
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ProcessLobbyLogin: 기존 계정 로그인 성공 | PlayerId=%s"), *PlayerId);
+	}
+	else
+	{
+		// 새 계정: 자동 생성
+		if (!LobbyAccountSaveGame->CreateAccount(PlayerId, Password))
+		{
+			UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] ProcessLobbyLogin: 계정 생성 실패 | PlayerId=%s"), *PlayerId);
+			LobbyPC->Client_LobbyLoginResult(false, TEXT("계정 생성 실패"));
+			return;
+		}
+		UHellunaAccountSaveGame::Save(LobbyAccountSaveGame);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ProcessLobbyLogin: 새 계정 생성 + 저장 | PlayerId=%s"), *PlayerId);
+	}
+
+	// ── 로그인 성공 → 등록 + 초기화 ──
+	if (GI)
+	{
+		GI->RegisterLogin(PlayerId);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ProcessLobbyLogin: RegisterLogin 완료 | PlayerId=%s"), *PlayerId);
+	}
+
+	LobbyPC->SetReplicatedPlayerId(PlayerId);
+	InitializeLobbyForPlayer(LobbyPC, PlayerId);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 13] InitializeLobbyForPlayer — 로그인 성공 후 로비 초기화
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 📌 기존 PostLogin의 Step 0~5를 추출
+// 📌 bDebugSkipLogin=true 경로와 로그인 성공 경로 모두 이 함수를 호출
+//
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaLobbyGameMode::InitializeLobbyForPlayer(AHellunaLobbyController* LobbyPC, const FString& PlayerId)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ══════════════════════════════════════"));
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] InitializeLobbyForPlayer 시작 | PlayerId=%s"), *PlayerId);
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ══════════════════════════════════════"));
+
+	if (!LobbyPC || PlayerId.IsEmpty())
+	{
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] InitializeLobbyForPlayer: 유효하지 않은 파라미터!"));
+		return;
+	}
 
 	// ── 0) 게임 결과 파일 처리 ──
-	// 게임서버가 ExportGameResultToFile로 내보낸 결과를 로비에서 import
-	// → 결과 파일 존재 = 정상 게임 종료: Loadout에 복원(생존) 또는 삭제(사망)
-	// → 결과 파일 없음 + Loadout 존재 = 크래시: 아래 크래시 복구에서 처리
-	bool bGameResultProcessed = false;  // [Fix23] 크래시 복구 조건 제어용
+	bool bGameResultProcessed = false;
 	if (SQLiteSubsystem->HasPendingGameResultFile(PlayerId))
 	{
 		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [0] 게임 결과 파일 발견 → import 시작 | PlayerId=%s"), *PlayerId);
@@ -220,23 +307,14 @@ void AHellunaLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 
 		if (bImportSuccess)
 		{
-			bGameResultProcessed = true;  // [Fix23] 크래시 복구 스킵 플래그
-
-			// [Fix36] 게임 결과 정상 처리 → 출격 상태 해제
+			bGameResultProcessed = true;
 			SQLiteSubsystem->SetPlayerDeployed(PlayerId, false);
 
-			// 정상 파싱 성공
 			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [0] 게임 결과: survived=%s | 아이템=%d개 | 장착=%d슬롯 | PlayerId=%s"),
 				bSurvived ? TEXT("Y") : TEXT("N"), ResultItems.Num(), GameEquipment.Num(), *PlayerId);
 
-			// [Fix23] 생존: 결과 아이템을 Loadout에 복원 (기존: Stash에 병합 → Loadout 유실)
-			// Stash는 Deploy 시점에 이미 SavePlayerStash로 저장됨 → 건드리지 않음
 			if (bSurvived && ResultItems.Num() > 0)
 			{
-				// GridPosition 유지 — bEquipped/WeaponSlotIndex도 그대로 보존
-				// (게임/로비 GridColumns가 동일한 경우 원래 위치 유지)
-
-				// 장착 슬롯 정보 → player_equipment 테이블에 저장
 				if (GameEquipment.Num() > 0)
 				{
 					SQLiteSubsystem->SavePlayerEquipment(PlayerId, GameEquipment);
@@ -246,13 +324,12 @@ void AHellunaLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 
 				if (SQLiteSubsystem->SavePlayerLoadout(PlayerId, ResultItems))
 				{
-					UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [0] [Fix23] SavePlayerLoadout 성공 — 게임 결과를 Loadout에 복원 | PlayerId=%s | %d개"),
+					UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [0] [Fix23] SavePlayerLoadout 성공 | PlayerId=%s | %d개"),
 						*PlayerId, ResultItems.Num());
 				}
 				else
 				{
 					UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [0] [Fix23] SavePlayerLoadout 실패! Stash 폴백 | PlayerId=%s"), *PlayerId);
-					// 폴백: Loadout 저장 실패 시 Stash에 병합 (데이터 유실 방지)
 					SQLiteSubsystem->MergeGameResultToStash(PlayerId, ResultItems);
 					SQLiteSubsystem->DeletePlayerLoadout(PlayerId);
 					SQLiteSubsystem->DeletePlayerEquipment(PlayerId);
@@ -260,8 +337,7 @@ void AHellunaLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 			}
 			else
 			{
-				// 사망 또는 아이템 없음: Loadout 삭제 (아이템 전부 손실)
-				SQLiteSubsystem->DeletePlayerEquipment(PlayerId);  // 장착 정보도 삭제
+				SQLiteSubsystem->DeletePlayerEquipment(PlayerId);
 				if (SQLiteSubsystem->DeletePlayerLoadout(PlayerId))
 				{
 					UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [0] DeletePlayerLoadout 성공 (사망/아이템없음) | PlayerId=%s"), *PlayerId);
@@ -274,25 +350,19 @@ void AHellunaLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 		}
 		else
 		{
-			// [Case 8] GameResult JSON 파일 손상 → Loadout 보존하여 크래시 복구로 전환
-			// 손상된 파일은 ImportGameResultFromFile 내부에서 이미 삭제됨
-			// → Step 1 (CheckAndRecoverFromCrash)에서 Loadout→Stash 복구 처리
 			UE_LOG(LogHellunaLobby, Error,
 				TEXT("[LobbyGM] [0] GameResult 파일 손상! Loadout 보존 → 크래시 복구로 전환 | PlayerId=%s"), *PlayerId);
 		}
 	}
 
 	// ── 1) [Fix36] 크래시 복구 ──
-	// 게임 결과가 없는데 deploy_state가 true = 게임서버 크래시
-	// → Loadout은 출격 전 상태 그대로 보존 (Stash 이동 없음)
-	// → deploy 상태만 해제하여 다음 출격 가능하게 함
 	if (!bGameResultProcessed)
 	{
 		if (SQLiteSubsystem->IsPlayerDeployed(PlayerId))
 		{
-			UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] [Fix36] [1/4] 크래시 감지: 출격 중인데 게임 결과 없음 | PlayerId=%s"), *PlayerId);
+			UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] [Fix36] [1/4] 크래시 감지 | PlayerId=%s"), *PlayerId);
 			SQLiteSubsystem->SetPlayerDeployed(PlayerId, false);
-			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix36] [1/4] deploy 상태 해제 완료 — Loadout은 출격 전 상태 보존 | PlayerId=%s"), *PlayerId);
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix36] [1/4] deploy 상태 해제 완료 | PlayerId=%s"), *PlayerId);
 		}
 		else
 		{
@@ -305,20 +375,14 @@ void AHellunaLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 	}
 
 	// ── 2) Stash 로드 → StashComp에 복원 ──
-	// SQLite player_stash → TArray<FInv_SavedItemData> → FInv_PlayerSaveData
-	// → RestoreFromSaveData(SaveData, Resolver) 호출
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [2/4] Stash 로드 → StashComp | PlayerId=%s"), *PlayerId);
 	LoadStashToComponent(LobbyPC, PlayerId);
 
 	// ── 2.5) [Fix23] Loadout 로드 → LoadoutComp에 복원 ──
-	// 게임 생존 후 복귀: player_loadout에 저장된 결과 아이템을 LoadoutComp에 복원
-	// → 로드 후 player_loadout 삭제 (다음 로그인 시 중복 방지)
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [2.5/4] [Fix23] Loadout 로드 → LoadoutComp | PlayerId=%s"), *PlayerId);
 	LoadLoadoutToComponent(LobbyPC, PlayerId);
 
 	// ── 3) Controller-PlayerId 매핑 등록 ──
-	// Logout 시 Controller에서 PlayerId를 역추적하기 위한 TMap 등록
-	// (Logout 시점에는 PlayerState가 이미 정리됐을 수 있으므로 미리 저장)
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [3/4] Controller-PlayerId 매핑 등록 | PlayerId=%s"), *PlayerId);
 	RegisterControllerPlayerId(LobbyPC, PlayerId);
 
@@ -329,11 +393,10 @@ void AHellunaLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 		LobbyPC->Client_ShowLobbyCharacterSelectUI(UsedCharacters);
 	}
 
-	// ── [Phase 12 Fix] ReplicatedPlayerId 설정 (클라이언트에서 GetPlayerId 사용) ──
+	// ── ReplicatedPlayerId 설정 ──
 	LobbyPC->SetReplicatedPlayerId(PlayerId);
 
 	// ── [Phase 12d] Step 5: 파티 자동 복귀 ──
-	// DB에 파티 기록이 남아있으면 캐시 복구 + 전원에게 BroadcastPartyState
 	PlayerIdToControllerMap.Add(PlayerId, LobbyPC);
 	{
 		const int32 ExistingPartyId = SQLiteSubsystem->GetPlayerPartyId(PlayerId);
@@ -341,10 +404,8 @@ void AHellunaLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 		{
 			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [5/5] 파티 자동 복귀 | PlayerId=%s | PartyId=%d"), *PlayerId, ExistingPartyId);
 
-			// Ready 리셋 (게임에서 돌아온 경우)
 			SQLiteSubsystem->UpdateMemberReady(PlayerId, false);
 
-			// 재접속 타이머 취소 (Logout에서 30초 타이머 걸었을 수 있음)
 			if (FTimerHandle* TimerPtr = PartyLeaveTimers.Find(PlayerId))
 			{
 				UWorld* World = GetWorld();
@@ -365,8 +426,26 @@ void AHellunaLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 		}
 	}
 
+	// ── 로비 UI 표시 (0.5초 딜레이 — 리플리케이션 대기) ──
+	FTimerHandle UITimer;
+	UWorld* World = GetWorld();
+	if (World)
+	{
+		TWeakObjectPtr<AHellunaLobbyController> WeakPC = LobbyPC;
+		World->GetTimerManager().SetTimer(UITimer, [WeakPC]()
+		{
+			if (WeakPC.IsValid())
+			{
+				WeakPC->Client_ShowLobbyUI();
+			}
+		}, 0.5f, false);
+	}
+
+	// ── 로그인 결과 성공 통보 ──
+	LobbyPC->Client_LobbyLoginResult(true, TEXT(""));
+
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ══════════════════════════════════════"));
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] PostLogin 완료 → PlayerId=%s"), *PlayerId);
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] InitializeLobbyForPlayer 완료 | PlayerId=%s"), *PlayerId);
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ══════════════════════════════════════"));
 }
 
@@ -503,6 +582,32 @@ void AHellunaLobbyGameMode::Logout(AController* Exiting)
 
 					UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] Logout: 30초 파티 탈퇴 타이머 시작 | PlayerId=%s"), *LogoutPlayerId);
 				}
+			}
+		}
+	}
+
+	// [Phase 13] RegisterLogout — 동시접속 방지 해제
+	{
+		FString LogoutId;
+		APlayerController* ExitingPC = Cast<APlayerController>(Exiting);
+		if (ExitingPC)
+		{
+			LogoutId = GetLobbyPlayerId(ExitingPC);
+		}
+		if (LogoutId.IsEmpty())
+		{
+			if (const FString* CachedId = ControllerToPlayerIdMap.Find(Exiting))
+			{
+				LogoutId = *CachedId;
+			}
+		}
+		if (!LogoutId.IsEmpty())
+		{
+			UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance());
+			if (GI)
+			{
+				GI->RegisterLogout(LogoutId);
+				UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] Logout: RegisterLogout 완료 | PlayerId=%s"), *LogoutId);
 			}
 		}
 	}

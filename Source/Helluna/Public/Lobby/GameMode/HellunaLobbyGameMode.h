@@ -31,6 +31,7 @@
 class AHellunaLobbyController;
 class UHellunaSQLiteSubsystem;
 class UInv_InventoryComponent;
+class UHellunaAccountSaveGame;
 
 UCLASS()
 class HELLUNA_API AHellunaLobbyGameMode : public AHellunaBaseGameMode
@@ -54,6 +55,16 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "로비",
 		meta = (DisplayName = "플레이어 ID 가져오기"))
 	FString GetLobbyPlayerId(APlayerController* PC) const { return bDebugSkipLogin ? TEXT("DebugPlayer") : GetPlayerSaveId(PC); }
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 13] 로비 로그인 시스템
+	// ════════════════════════════════════════════════════════════════
+
+	/** 로비 로그인 처리 (AccountSaveGame 검증 + 동시접속 체크) */
+	void ProcessLobbyLogin(AHellunaLobbyController* LobbyPC, const FString& PlayerId, const FString& Password);
+
+	/** 로그인 성공 후 로비 초기화 (게임결과 처리, Stash/Loadout 로드, 캐릭터선택, 파티복구) */
+	void InitializeLobbyForPlayer(AHellunaLobbyController* LobbyPC, const FString& PlayerId);
 
 protected:
 	// ════════════════════════════════════════════════════════════════
@@ -99,6 +110,10 @@ protected:
 	/** SQLite 서브시스템 참조 (BeginPlay에서 캐시) */
 	UPROPERTY()
 	TObjectPtr<UHellunaSQLiteSubsystem> SQLiteSubsystem;
+
+	/** [Phase 13] 계정 SaveGame (BeginPlay에서 LoadOrCreate) */
+	UPROPERTY()
+	TObjectPtr<UHellunaAccountSaveGame> LobbyAccountSaveGame;
 
 	// ════════════════════════════════════════════════════════════════
 	// 캐릭터 중복 방지 (같은 로비 내)

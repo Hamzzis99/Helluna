@@ -33,6 +33,7 @@
 class UInv_InventoryComponent;
 class UInv_InventoryItem;
 class UHellunaLobbyStashWidget;
+class UHellunaLobbyLoginWidget;
 class UHellunaPartyWidget;
 class AHellunaCharacterSelectSceneV2;
 class ACameraActor;
@@ -56,6 +57,25 @@ class HELLUNA_API AHellunaLobbyController : public APlayerController
 
 public:
 	AHellunaLobbyController();
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 13] 로비 로그인 RPC
+	// ════════════════════════════════════════════════════════════════
+
+	/** [클라이언트 → 서버] 로비 로그인 요청 */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_RequestLobbyLogin(const FString& PlayerId, const FString& Password);
+
+	/** [서버 → 클라이언트] 로그인 위젯 표시 지시 */
+	UFUNCTION(Client, Reliable)
+	void Client_ShowLobbyLoginUI();
+
+	/** [서버 → 클라이언트] 로그인 결과 통보 */
+	UFUNCTION(Client, Reliable)
+	void Client_LobbyLoginResult(bool bSuccess, const FString& ErrorMessage);
+
+	/** 로그인 완료 여부 */
+	bool IsLoggedIn() const { return bIsLoggedIn; }
 
 	// ════════════════════════════════════════════════════════════════
 	// 컴포넌트 Getter
@@ -317,6 +337,22 @@ protected:
 	/** 현재 생성된 파티 위젯 인스턴스 */
 	UPROPERTY()
 	TObjectPtr<UHellunaPartyWidget> PartyWidgetInstance;
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 13] 로비 로그인 위젯 설정
+	// ════════════════════════════════════════════════════════════════
+
+	/** 로비 로그인 위젯 클래스 (BP에서 WBP_LobbyLoginWidget 지정) */
+	UPROPERTY(EditDefaultsOnly, Category = "로비|로그인",
+		meta = (DisplayName = "Lobby Login Widget Class (로비 로그인 위젯 클래스)"))
+	TSubclassOf<UHellunaLobbyLoginWidget> LobbyLoginWidgetClass;
+
+	/** 현재 생성된 로그인 위젯 인스턴스 */
+	UPROPERTY()
+	TObjectPtr<UHellunaLobbyLoginWidget> LobbyLoginWidgetInstance;
+
+	/** 로그인 완료 여부 */
+	bool bIsLoggedIn = false;
 
 	// ════════════════════════════════════════════════════════════════
 	// 캐릭터 프리뷰 V2 시스템 (LoginController에서 복사)

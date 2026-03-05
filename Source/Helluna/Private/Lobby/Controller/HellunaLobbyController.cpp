@@ -36,6 +36,7 @@
 #include "Lobby/Controller/HellunaLobbyController.h"
 #include "Lobby/GameMode/HellunaLobbyGameMode.h"
 #include "Lobby/Widget/HellunaLobbyStashWidget.h"
+#include "Lobby/Widget/HellunaLobbyLoginWidget.h"
 #include "Lobby/Widget/HellunaPartyWidget.h"
 #include "Lobby/Widget/HellunaLobbyCharSelectWidget.h"
 #include "Lobby/Database/HellunaSQLiteSubsystem.h"
@@ -86,10 +87,9 @@ AHellunaLobbyController::AHellunaLobbyController()
 // ════════════════════════════════════════════════════════════════════════════════
 //
 // 📌 서버+클라 모두 호출됨
-// 📌 클라이언트(IsLocalController)에서만 UI 생성
-// 📌 0.5초 딜레이: 서버에서 StashComp에 데이터 복원이 완료되고
-//    리플리케이션으로 클라이언트에 도달할 시간을 확보하기 위함
-//    (BeginPlay 시점에서는 아직 Stash 데이터가 도착하지 않았을 수 있음)
+// 📌 [Phase 13] UI 표시는 서버가 제어:
+//    bDebugSkipLogin=true → PostLogin에서 바로 초기화 + Client_ShowLobbyUI
+//    bDebugSkipLogin=false → PostLogin에서 Client_ShowLobbyLoginUI → 로그인 후 초기화
 //
 // ════════════════════════════════════════════════════════════════════════════════
 void AHellunaLobbyController::BeginPlay()
@@ -110,19 +110,10 @@ void AHellunaLobbyController::BeginPlay()
 		DeployMapURL.IsEmpty() ? TEXT("(비어있음 — BP에서 설정 필요!)") : *DeployMapURL);
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ──────────────────────────────────────"));
 
-	// 클라이언트에서 자동으로 UI 표시 (로컬 컨트롤러일 때만)
-	// 서버의 Dedicated Server에는 로컬 컨트롤러가 없으므로 이 블록은 실행 안 됨
-	if (IsLocalController())
-	{
-		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 로컬 컨트롤러 → 0.5초 후 ShowLobbyWidget 예약"));
-		// 타이머 딜레이: 서버→클라 리플리케이션 대기 (Stash 데이터 도착 시간)
-		FTimerHandle UITimerHandle;
-		GetWorldTimerManager().SetTimer(UITimerHandle, this, &AHellunaLobbyController::ShowLobbyWidget, 0.5f, false);
-	}
-	else
-	{
-		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 비로컬 컨트롤러 → UI 생성 스킵 (서버 또는 다른 클라의 PC)"));
-	}
+	// [Phase 13] UI 표시는 서버 PostLogin에서 RPC로 제어
+	// bDebugSkipLogin=true → 서버가 0.5초 후 Client_ShowLobbyUI 호출
+	// bDebugSkipLogin=false → 서버가 Client_ShowLobbyLoginUI 호출 → 로그인 성공 후 Client_ShowLobbyUI
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] [Phase 13] UI 표시는 서버 PostLogin에서 RPC로 제어"));
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -843,6 +834,12 @@ void AHellunaLobbyController::GetLifetimeReplicatedProps(TArray<FLifetimePropert
 // ════════════════════════════════════════════════════════════════════════════════
 void AHellunaLobbyController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (LobbyLoginWidgetInstance)
+	{
+		LobbyLoginWidgetInstance->RemoveFromParent();
+		LobbyLoginWidgetInstance = nullptr;
+	}
+
 	if (LobbyStashWidgetInstance)
 	{
 		LobbyStashWidgetInstance->RemoveFromParent();
@@ -857,6 +854,101 @@ void AHellunaLobbyController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 	DestroyPreviewSceneV2();
 	Super::EndPlay(EndPlayReason);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 13] Server_RequestLobbyLogin — 로비 로그인 요청 (Server RPC)
+// ════════════════════════════════════════════════════════════════════════════════
+bool AHellunaLobbyController::Server_RequestLobbyLogin_Validate(const FString& PlayerId, const FString& Password)
+{
+	return !PlayerId.IsEmpty() && !Password.IsEmpty();
+}
+
+void AHellunaLobbyController::Server_RequestLobbyLogin_Implementation(const FString& PlayerId, const FString& Password)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_RequestLobbyLogin | PlayerId=%s"), *PlayerId);
+
+	AHellunaLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr;
+	if (!LobbyGM)
+	{
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Server_RequestLobbyLogin: GameMode 캐스팅 실패!"));
+		Client_LobbyLoginResult(false, TEXT("서버 오류"));
+		return;
+	}
+
+	LobbyGM->ProcessLobbyLogin(this, PlayerId, Password);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 13] Client_ShowLobbyLoginUI — 로그인 위젯 표시 (Client RPC)
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaLobbyController::Client_ShowLobbyLoginUI_Implementation()
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Client_ShowLobbyLoginUI 수신"));
+
+	if (!LobbyLoginWidgetClass)
+	{
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] LobbyLoginWidgetClass 미설정! BP에서 지정 필요"));
+		return;
+	}
+
+	if (!LobbyLoginWidgetInstance)
+	{
+		LobbyLoginWidgetInstance = CreateWidget<UHellunaLobbyLoginWidget>(this, LobbyLoginWidgetClass);
+		if (LobbyLoginWidgetInstance)
+		{
+			LobbyLoginWidgetInstance->AddToViewport(10);
+
+			// 마우스 커서 표시 + UI 입력 모드
+			SetShowMouseCursor(true);
+			FInputModeUIOnly InputMode;
+			InputMode.SetWidgetToFocus(LobbyLoginWidgetInstance->TakeWidget());
+			SetInputMode(InputMode);
+
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 로그인 위젯 생성 + Viewport 추가 완료"));
+		}
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 13] Client_LobbyLoginResult — 로그인 결과 (Client RPC)
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaLobbyController::Client_LobbyLoginResult_Implementation(bool bSuccess, const FString& ErrorMessage)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Client_LobbyLoginResult | bSuccess=%s | Msg=%s"),
+		bSuccess ? TEXT("true") : TEXT("false"), *ErrorMessage);
+
+	if (bSuccess)
+	{
+		bIsLoggedIn = true;
+
+		// 로그인 위젯 제거
+		if (LobbyLoginWidgetInstance)
+		{
+			LobbyLoginWidgetInstance->ShowSuccess();
+
+			// 0.3초 후 위젯 제거 + 로비 UI 표시
+			FTimerHandle RemoveTimer;
+			GetWorldTimerManager().SetTimer(RemoveTimer, [this]()
+			{
+				if (LobbyLoginWidgetInstance)
+				{
+					LobbyLoginWidgetInstance->RemoveFromParent();
+					LobbyLoginWidgetInstance = nullptr;
+				}
+				// 로비 위젯은 서버가 Client_ShowLobbyUI로 표시 지시
+				// (InitializeLobbyForPlayer에서 0.5초 후 호출)
+			}, 0.3f, false);
+		}
+	}
+	else
+	{
+		// 실패: 위젯에 에러 메시지 표시
+		if (LobbyLoginWidgetInstance)
+		{
+			LobbyLoginWidgetInstance->ShowError(ErrorMessage);
+		}
+	}
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
