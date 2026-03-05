@@ -41,6 +41,12 @@ public:
 	/** 회원가입 결과 처리 (Controller에서 호출) */
 	void HandleSignupResult(bool bSuccess, const FString& Message);
 
+	/** 현재 입력된 ID 반환 (자격증명 캐시용) */
+	FString GetEnteredPlayerId() const;
+
+	/** 현재 입력된 PW 반환 (자격증명 캐시용) */
+	FString GetEnteredPassword() const;
+
 protected:
 	virtual void NativeOnInitialized() override;
 

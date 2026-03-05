@@ -155,6 +155,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Connection")
 	int32 LobbyServerPort = 7777;
 
+	/** [Phase 13] 로그인 성공 시 캐시 — 로비 복귀 시 자동 재로그인용 (메모리 전용, 디스크 미저장) */
+	FString CachedLoginId;
+	FString CachedLoginPassword;
+
 	// ============================================
 	// 로딩 화면 (Loading Screen)
 	// ============================================

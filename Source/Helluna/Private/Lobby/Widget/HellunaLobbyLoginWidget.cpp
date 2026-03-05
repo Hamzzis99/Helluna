@@ -234,6 +234,16 @@ void UHellunaLobbyLoginWidget::HandleSignupResult(bool bSuccess, const FString& 
 	}
 }
 
+FString UHellunaLobbyLoginWidget::GetEnteredPlayerId() const
+{
+	return IDInputTextBox ? IDInputTextBox->GetText().ToString().TrimStartAndEnd() : FString();
+}
+
+FString UHellunaLobbyLoginWidget::GetEnteredPassword() const
+{
+	return PasswordInputTextBox ? PasswordInputTextBox->GetText().ToString().TrimStartAndEnd() : FString();
+}
+
 void UHellunaLobbyLoginWidget::ShowError(const FString& Message)
 {
 	if (MessageText)

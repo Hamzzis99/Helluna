@@ -923,6 +923,16 @@ void AHellunaLobbyController::Client_ShowLobbyLoginUI_Implementation()
 {
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Client_ShowLobbyLoginUI 수신"));
 
+	// ── [Phase 13] 게임에서 로비 복귀 시 자동 재로그인 ──
+	// GameInstance는 ClientTravel 사이에도 유지됨
+	UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance());
+	if (GI && !GI->CachedLoginId.IsEmpty() && !GI->CachedLoginPassword.IsEmpty())
+	{
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 캐시된 자격증명 발견 → 자동 재로그인 | PlayerId=%s"), *GI->CachedLoginId);
+		Server_RequestLobbyLogin(GI->CachedLoginId, GI->CachedLoginPassword);
+		return;
+	}
+
 	if (!LobbyLoginWidgetClass)
 	{
 		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] LobbyLoginWidgetClass 미설정! BP에서 지정 필요"));
@@ -958,6 +968,20 @@ void AHellunaLobbyController::Client_LobbyLoginResult_Implementation(bool bSucce
 	if (bSuccess)
 	{
 		bIsLoggedIn = true;
+
+		// ── [Phase 13] 자격증명 캐시 (로비 복귀 시 자동 재로그인용) ──
+		UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance());
+		if (GI)
+		{
+			if (LobbyLoginWidgetInstance)
+			{
+				// 위젯에서 입력값 가져오기
+				GI->CachedLoginId = LobbyLoginWidgetInstance->GetEnteredPlayerId();
+				GI->CachedLoginPassword = LobbyLoginWidgetInstance->GetEnteredPassword();
+			}
+			// 자동 재로그인 경로(위젯 없음)에서는 이미 캐시에 값이 있으므로 스킵
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 자격증명 캐시 완료 | PlayerId=%s"), *GI->CachedLoginId);
+		}
 
 		// 로그인 위젯 제거
 		if (LobbyLoginWidgetInstance)
