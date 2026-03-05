@@ -160,9 +160,27 @@ void UHellunaLobbyStashWidget::InitializePanels(UInv_InventoryComponent* StashCo
 		LoadoutSpatialInventory->CollectEquippedGridSlots();
 		const TArray<TObjectPtr<UInv_EquippedGridSlot>>& EquippedSlots = LoadoutSpatialInventory->GetEquippedGridSlots();
 
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Fix39] EquippedSlots=%d개"), EquippedSlots.Num());
+		for (int32 s = 0; s < EquippedSlots.Num(); s++)
+		{
+			UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Fix39]   Slot[%d] Valid=%s WeaponSlotIndex=%d"),
+				s, IsValid(EquippedSlots[s]) ? TEXT("Y") : TEXT("N"),
+				IsValid(EquippedSlots[s]) ? EquippedSlots[s]->GetWeaponSlotIndex() : -99);
+		}
+
 		if (EquippedSlots.Num() > 0)
 		{
 			TArray<FInv_SavedItemData> SavedItems = LoadoutComp->CollectInventoryDataForSave();
+
+			UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Fix39] SavedItems=%d개"), SavedItems.Num());
+			for (int32 d = 0; d < SavedItems.Num(); d++)
+			{
+				UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Fix39]   Item[%d] %s bEquipped=%s WeaponSlot=%d"),
+					d, *SavedItems[d].ItemType.ToString(),
+					SavedItems[d].bEquipped ? TEXT("Y") : TEXT("N"),
+					SavedItems[d].WeaponSlotIndex);
+			}
+
 			TSet<UInv_InventoryItem*> ProcessedItems;
 			int32 RestoredCount = 0;
 
@@ -195,15 +213,27 @@ void UHellunaLobbyStashWidget::InitializePanels(UInv_InventoryComponent* StashCo
 					continue;
 				}
 
+				UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Fix39] RestoreEquippedItem 시도: Slot=%d Item=%s"),
+					ItemData.WeaponSlotIndex, *ItemData.ItemType.ToString());
+
 				UInv_EquippedSlottedItem* Result = LoadoutSpatialInventory->RestoreEquippedItem(TargetSlot, FoundItem);
 				if (Result)
 				{
 					ProcessedItems.Add(FoundItem);
 					RestoredCount++;
+					UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Fix39] ✓ 복원 성공: Slot=%d"), ItemData.WeaponSlotIndex);
+				}
+				else
+				{
+					UE_LOG(LogHellunaLobby, Warning, TEXT("[StashWidget] [Fix39] ✗ RestoreEquippedItem 실패: Slot=%d"), ItemData.WeaponSlotIndex);
 				}
 			}
 
 			UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Fix39] 장착 아이템 복원 완료: %d개"), RestoredCount);
+		}
+		else
+		{
+			UE_LOG(LogHellunaLobby, Warning, TEXT("[StashWidget] [Fix39] EquippedSlots 비어있음 → 복원 스킵"));
 		}
 	}
 

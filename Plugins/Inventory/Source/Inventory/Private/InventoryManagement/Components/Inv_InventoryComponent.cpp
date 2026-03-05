@@ -507,6 +507,27 @@ void UInv_InventoryComponent::RestoreFromSaveData(
 		// Fix 7: 장착된 아이템의 서버 FastArray Entry GridIndex 클리어 — Phase 5 저장 시 좌표 중복 방지
 		// Fix 13: bIsEquipped 플래그 설정 — PostReplicatedAdd에서 그리드 배치 스킵
 		// [Fix14] WeaponSlotIndex도 Entry에 기록 — 저장/전송 시 슬롯 정보 보존
+		// [Fix40] Item 포인터 → SaveData 매핑 구축 (같은 ItemType 다중 장착 지원)
+		TMap<UInv_InventoryItem*, int32> ItemToWeaponSlotMap;
+		{
+			TSet<int32> UsedSaveDataIndices;
+			for (UInv_InventoryItem* EqItem : ProcessedEquipItems)
+			{
+				const FGameplayTag& EqType = EqItem->GetItemManifest().GetItemType();
+				for (int32 s = 0; s < SaveData.Items.Num(); s++)
+				{
+					if (UsedSaveDataIndices.Contains(s)) continue;
+					const FInv_SavedItemData& SD = SaveData.Items[s];
+					if (SD.bEquipped && SD.ItemType == EqType)
+					{
+						ItemToWeaponSlotMap.Add(EqItem, SD.WeaponSlotIndex);
+						UsedSaveDataIndices.Add(s);
+						break;
+					}
+				}
+			}
+		}
+
 		for (UInv_InventoryItem* EquippedItem : ProcessedEquipItems)
 		{
 			for (int32 i = 0; i < InventoryList.Entries.Num(); i++)
@@ -517,16 +538,9 @@ void UInv_InventoryComponent::RestoreFromSaveData(
 					InventoryList.Entries[i].GridCategory = 0;
 					InventoryList.Entries[i].bIsEquipped = true;
 
-					// [Fix14] SaveData에서 WeaponSlotIndex를 가져와서 Entry에도 기록
-					// ProcessedEquipItems에서 원본 SaveData의 WeaponSlotIndex를 찾기
-					for (const FInv_SavedItemData& ItemData : SaveData.Items)
-					{
-						if (ItemData.bEquipped && ItemData.ItemType == EquippedItem->GetItemManifest().GetItemType())
-						{
-							InventoryList.Entries[i].WeaponSlotIndex = ItemData.WeaponSlotIndex;
-							break;
-						}
-					}
+					// [Fix40] 미리 구축한 매핑에서 정확한 WeaponSlotIndex 사용
+					const int32* MappedSlot = ItemToWeaponSlotMap.Find(EquippedItem);
+					InventoryList.Entries[i].WeaponSlotIndex = MappedSlot ? *MappedSlot : 0;
 
 					// MarkItemDirty 호출 금지! 리플리케이션 트리거 시 PostReplicatedChange → AddItem으로 아이템이 Grid에 다시 나타남
 					// bIsEquipped는 이미 dirty 상태인 Entry에 포함되어 리플리케이션됨 (같은 프레임)
