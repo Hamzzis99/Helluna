@@ -380,6 +380,11 @@ void AHellunaLobbyController::SaveBothComponentsAfterInteraction()
 	// ── DB 서브시스템 획득 (Deploy 흐름과 동일 패턴) ──
 	UGameInstance* GI = GetGameInstance();
 	UHellunaSQLiteSubsystem* DB = GI ? GI->GetSubsystem<UHellunaSQLiteSubsystem>() : nullptr;
+	// [Fix41] ReleaseDatabaseConnection 후 DB가 닫혀있을 수 있으므로 재오픈 시도
+	if (DB && !DB->IsDatabaseReady())
+	{
+		DB->TryReopenDatabase();
+	}
 	if (!DB || !DB->IsDatabaseReady())
 	{
 		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] [Fix35] SaveAfterInteraction: DB 미준비 → 스킵"));
@@ -509,6 +514,12 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 	// ── [1단계] SQLite 서브시스템 획득 ──
 	UGameInstance* GI = GetGameInstance();
 	UHellunaSQLiteSubsystem* DB = GI ? GI->GetSubsystem<UHellunaSQLiteSubsystem>() : nullptr;
+	// [Fix41] ReleaseDatabaseConnection 후 DB가 닫혀있을 수 있으므로 재오픈 시도
+	if (DB && !DB->IsDatabaseReady())
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] Server_Deploy: DB 미준비 → TryReopenDatabase 시도"));
+		DB->TryReopenDatabase();
+	}
 	if (!DB || !DB->IsDatabaseReady())
 	{
 		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Server_Deploy: SQLite 서브시스템 없음!"));

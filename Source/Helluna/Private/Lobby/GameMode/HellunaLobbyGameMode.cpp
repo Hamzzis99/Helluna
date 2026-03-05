@@ -579,6 +579,9 @@ void AHellunaLobbyGameMode::LoadStashToComponent(AHellunaLobbyController* LobbyP
 
 	if (StashItems.Num() == 0)
 	{
+		// [Fix41] 빈 Stash도 정상 — 미로드(-1) 아닌 "0개 로드됨"으로 설정
+		// 미설정 시 LoadedStashItemCount=-1 유지 → SaveComponentsToDatabase에서 전체 저장 차단
+		LobbyPC->SetLoadedStashItemCount(0);
 		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] Stash가 비어있음 → 빈 인벤토리로 시작 | PlayerId=%s"), *PlayerId);
 		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM]   → DebugSave 콘솔 명령으로 테스트 데이터를 넣을 수 있습니다"));
 		return;
@@ -797,6 +800,11 @@ void AHellunaLobbyGameMode::SaveComponentsToDatabase(AHellunaLobbyController* Lo
 {
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix36] SaveComponentsToDatabase 시작 | PlayerId=%s"), *PlayerId);
 
+	// [Fix41] ReleaseDatabaseConnection 후 DB가 닫혀있을 수 있으므로 재오픈 시도
+	if (SQLiteSubsystem && !SQLiteSubsystem->IsDatabaseReady())
+	{
+		SQLiteSubsystem->TryReopenDatabase();
+	}
 	if (!LobbyPC || !SQLiteSubsystem || !SQLiteSubsystem->IsDatabaseReady())
 	{
 		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] SaveComponents: 조건 미충족! | PC=%s, DB=%s"),
