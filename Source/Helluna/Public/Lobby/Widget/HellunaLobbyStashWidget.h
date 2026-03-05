@@ -35,6 +35,9 @@ class AHellunaLobbyController;
 class AHellunaCharacterSelectSceneV2;
 class UImage;
 class UTextBlock;
+class UScrollBox;
+class UEditableTextBox;
+class UVerticalBox;
 enum class EHellunaHeroType : uint8;
 
 // 탭 인덱스 상수
@@ -168,6 +171,23 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> Text_NoCharWarning;
 
+	// ── [Phase 12i] Play 탭 파티 채팅 ──
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UScrollBox> PlayChatScrollBox;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UEditableTextBox> PlayChatInput;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> PlayChatSendButton;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> Img_ChatBackground;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UVerticalBox> PlayChatBox;
+
 	// ── Loadout 탭 (Page 1) — 기존 ──
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UHellunaLobbyPanel> StashPanel;
@@ -266,6 +286,28 @@ private:
 
 	/** START/READY 버튼 텍스트 업데이트 */
 	void UpdateStartButtonForPartyState();
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 12i] Play 탭 파티 채팅
+	// ════════════════════════════════════════════════════════════════
+
+	/** 파티 채팅 메시지 수신 핸들러 */
+	UFUNCTION()
+	void HandlePlayChatReceived(const FHellunaPartyChatMessage& ChatMessage);
+
+	/** Play 탭 채팅 전송 */
+	UFUNCTION()
+	void OnPlayChatSendClicked();
+
+	/** Play 탭 채팅 Enter 키 전송 */
+	UFUNCTION()
+	void OnPlayChatInputCommitted(const FText& Text, ETextCommit::Type CommitMethod);
+
+	/** Play 탭 채팅 메시지를 ScrollBox에 추가 */
+	void AddPlayChatMessage(const FHellunaPartyChatMessage& ChatMessage);
+
+	/** 파티 상태에 따라 채팅 패널 표시/숨김 */
+	void UpdatePlayChatVisibility();
 
 	// ════════════════════════════════════════════════════════════════
 	// 내부 상태

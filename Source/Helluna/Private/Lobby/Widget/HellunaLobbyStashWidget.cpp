@@ -35,6 +35,9 @@
 #include "Components/WidgetSwitcher.h"
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
+#include "Components/ScrollBox.h"
+#include "Components/EditableTextBox.h"
+#include "Components/VerticalBox.h"
 
 // 로그 카테고리 (공유 헤더 — DEFINE은 HellunaLobbyGameMode.cpp)
 #include "Lobby/HellunaLobbyLog.h"
@@ -110,6 +113,21 @@ void UHellunaLobbyStashWidget::NativeOnInitialized()
 		LobbyPC->OnPartyStateChanged.AddUniqueDynamic(this, &ThisClass::OnPartyStateChangedHandler);
 		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] OnPartyStateChanged 바인딩 완료"));
 	}
+
+	// ── [Phase 12i] Play 탭 파티 채팅 바인딩 ──
+	if (PlayChatSendButton)
+	{
+		PlayChatSendButton->OnClicked.AddUniqueDynamic(this, &ThisClass::OnPlayChatSendClicked);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] PlayChatSendButton 바인딩 완료"));
+	}
+	if (PlayChatInput)
+	{
+		PlayChatInput->OnTextCommitted.AddUniqueDynamic(this, &ThisClass::OnPlayChatInputCommitted);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] PlayChatInput Enter 바인딩 완료"));
+	}
+
+	// 초기 채팅 패널 숨김 (파티 없으면)
+	UpdatePlayChatVisibility();
 
 	// ── 시작 탭: Play ──
 	SwitchToTab(LobbyTab::Play);
@@ -315,6 +333,13 @@ void UHellunaLobbyStashWidget::InitializePanels(UInv_InventoryComponent* StashCo
 		BindCrossSwap(LoadoutSpatialInventory->GetGrid_Craftables());
 
 		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [CrossSwap] 크로스 Grid Swap 델리게이트 바인딩 완료"));
+	}
+
+	// ── [Phase 12i] OnPartyChatReceived 바인딩 ──
+	if (AHellunaLobbyController* LobbyPC = GetLobbyController())
+	{
+		LobbyPC->OnPartyChatReceived.AddUniqueDynamic(this, &ThisClass::HandlePlayChatReceived);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase 12i] OnPartyChatReceived 바인딩 완료"));
 	}
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] ── InitializePanels 완료 ──"));
@@ -725,6 +750,9 @@ void UHellunaLobbyStashWidget::OnPartyStateChangedHandler(const FHellunaPartyInf
 	}
 
 	UpdateStartButtonForPartyState();
+
+	// [Phase 12i] 채팅 패널 표시/숨김
+	UpdatePlayChatVisibility();
 }
 
 void UHellunaLobbyStashWidget::UpdateStartButtonForPartyState()
@@ -765,4 +793,111 @@ void UHellunaLobbyStashWidget::UpdateStartButtonForPartyState()
 		bLocalPlayerReady = false;
 		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] 버튼 → START (솔로)"));
 	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 12i] Play 탭 파티 채팅
+// ════════════════════════════════════════════════════════════════════════════════
+
+void UHellunaLobbyStashWidget::HandlePlayChatReceived(const FHellunaPartyChatMessage& ChatMessage)
+{
+	AddPlayChatMessage(ChatMessage);
+}
+
+void UHellunaLobbyStashWidget::AddPlayChatMessage(const FHellunaPartyChatMessage& ChatMessage)
+{
+	if (!PlayChatScrollBox)
+	{
+		return;
+	}
+
+	// 메시지 누적 제한 (100개 초과 시 오래된 것 삭제)
+	if (PlayChatScrollBox->GetChildrenCount() > 100)
+	{
+		PlayChatScrollBox->RemoveChildAt(0);
+	}
+
+	UTextBlock* MsgText = NewObject<UTextBlock>(this);
+	if (!MsgText)
+	{
+		return;
+	}
+
+	const FString FormattedMsg = FString::Printf(TEXT("[%s] %s"),
+		*ChatMessage.SenderName, *ChatMessage.Message);
+	MsgText->SetText(FText::FromString(FormattedMsg));
+
+	FSlateFontInfo FontInfo = MsgText->GetFont();
+	FontInfo.Size = 11;
+	MsgText->SetFont(FontInfo);
+
+	// 발신자 색상: 본인이면 골드, 아니면 회색
+	AHellunaLobbyController* LobbyPC = GetLobbyController();
+	const bool bIsSelf = LobbyPC && ChatMessage.SenderName == LobbyPC->GetPlayerId();
+	MsgText->SetColorAndOpacity(FSlateColor(bIsSelf
+		? FLinearColor(0.918f, 0.702f, 0.031f, 1.f)   // 골드
+		: FLinearColor(0.63f, 0.63f, 0.67f, 1.f)));    // 회색
+
+	PlayChatScrollBox->AddChild(MsgText);
+	PlayChatScrollBox->ScrollToEnd();
+
+	UE_LOG(LogHellunaLobby, Verbose, TEXT("[StashWidget] [Phase 12i] 채팅 표시: [%s] %s"),
+		*ChatMessage.SenderName, *ChatMessage.Message);
+}
+
+void UHellunaLobbyStashWidget::OnPlayChatSendClicked()
+{
+	if (!PlayChatInput)
+	{
+		return;
+	}
+
+	AHellunaLobbyController* LobbyPC = GetLobbyController();
+	if (!LobbyPC)
+	{
+		return;
+	}
+
+	const FString Msg = PlayChatInput->GetText().ToString().TrimStartAndEnd();
+	if (Msg.IsEmpty())
+	{
+		return;
+	}
+
+	LobbyPC->Server_SendPartyChatMessage(Msg);
+	PlayChatInput->SetText(FText::GetEmpty());
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase 12i] 채팅 전송: %s"), *Msg);
+}
+
+void UHellunaLobbyStashWidget::OnPlayChatInputCommitted(const FText& Text, ETextCommit::Type CommitMethod)
+{
+	if (CommitMethod == ETextCommit::OnEnter)
+	{
+		OnPlayChatSendClicked();
+	}
+}
+
+void UHellunaLobbyStashWidget::UpdatePlayChatVisibility()
+{
+	AHellunaLobbyController* LobbyPC = GetLobbyController();
+	const bool bInParty = LobbyPC
+		&& LobbyPC->CurrentPartyInfo.IsValid()
+		&& LobbyPC->CurrentPartyInfo.Members.Num() >= 2;
+
+	const ESlateVisibility ChatVis = bInParty
+		? ESlateVisibility::Visible
+		: ESlateVisibility::Collapsed;
+
+	if (PlayChatBox)
+	{
+		PlayChatBox->SetVisibility(ChatVis);
+	}
+	if (Img_ChatBackground)
+	{
+		Img_ChatBackground->SetVisibility(ChatVis);
+	}
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase 12i] 채팅 패널: %s"),
+		bInParty ? TEXT("Visible") : TEXT("Collapsed"));
 }
