@@ -10,6 +10,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "GameplayTagContainer.h"
 #include "HellunaTypes.generated.h"
 
 /**
@@ -149,4 +150,29 @@ struct FBossSpawnEntry
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Boss",
 		meta = (DisplayName = "소환할 보스 클래스"))
 	TSubclassOf<APawn> BossClass;
+};
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 장착 슬롯 데이터 (player_equipment 테이블)
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 게임→로비 복귀 시 장착 상태를 별도 테이블로 영속화
+// 추후 방어구/헬멧/백팩 등 다양한 슬롯 확장 가능
+//
+// SlotId 규칙:
+//   "weapon_0" = 주무기, "weapon_1" = 보조무기
+//   추후: "helmet", "chest", "backpack" 등
+// ════════════════════════════════════════════════════════════════════════════════
+USTRUCT()
+struct FHellunaEquipmentSlotData
+{
+	GENERATED_BODY()
+
+	/** 슬롯 식별자 (예: "weapon_0", "weapon_1", 추후 "helmet", "chest") */
+	UPROPERTY()
+	FString SlotId;
+
+	/** 장착된 아이템 타입 */
+	UPROPERTY()
+	FGameplayTag ItemType;
 };

@@ -213,12 +213,14 @@ public:
 	 * 호출 시점: 로비 PostLogin에서 크래시 복구 전
 	 * → 파일이 있으면 로드 후 삭제, 없으면 빈 배열 반환
 	 *
-	 * @param PlayerId     플레이어 고유 ID
-	 * @param OutSurvived  파일에 저장된 생존 여부 (out)
-	 * @param bOutSuccess  JSON 파싱 성공 여부 (out) — false면 파일 손상 (호출자가 Loadout 삭제 스킵해야 함)
+	 * @param PlayerId       플레이어 고유 ID
+	 * @param OutSurvived    파일에 저장된 생존 여부 (out)
+	 * @param bOutSuccess    JSON 파싱 성공 여부 (out) — false면 파일 손상 (호출자가 Loadout 삭제 스킵해야 함)
+	 * @param OutEquipment   게임 시점 장착 슬롯 정보 (out, 선택적)
 	 * @return 로드된 아이템 배열 (파일 없거나 파싱 실패 시 빈 배열)
 	 */
-	TArray<FInv_SavedItemData> ImportGameResultFromFile(const FString& PlayerId, bool& OutSurvived, bool& bOutSuccess);
+	TArray<FInv_SavedItemData> ImportGameResultFromFile(const FString& PlayerId, bool& OutSurvived, bool& bOutSuccess,
+		TArray<FHellunaEquipmentSlotData>* OutEquipment = nullptr);
 
 	/**
 	 * 게임 결과 전송 파일이 존재하는지 확인
@@ -365,6 +367,19 @@ public:
 
 	/** 특정 서버의 모든 캐릭터 등록 해제 */
 	virtual bool UnregisterAllActiveGameCharactersForServer(const FString& ServerId) override;
+
+	// ════════════════════════════════════════════════════════════════
+	// IInventoryDatabase — 장착 상태 관리 (player_equipment)
+	// ════════════════════════════════════════════════════════════════
+
+	/** 장착 스냅샷 저장 (DELETE + INSERT) */
+	virtual bool SavePlayerEquipment(const FString& PlayerId, const TArray<FHellunaEquipmentSlotData>& Equipment) override;
+
+	/** 장착 스냅샷 로드 */
+	virtual TArray<FHellunaEquipmentSlotData> LoadPlayerEquipment(const FString& PlayerId) override;
+
+	/** 장착 정보 삭제 (사망/리셋 시) */
+	virtual bool DeletePlayerEquipment(const FString& PlayerId) override;
 
 	// ════════════════════════════════════════════════════════════════
 	// 파티 시스템 CRUD (Phase 12a)

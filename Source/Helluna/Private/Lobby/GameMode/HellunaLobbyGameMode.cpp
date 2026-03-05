@@ -215,7 +215,8 @@ void AHellunaLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 
 		bool bSurvived = false;
 		bool bImportSuccess = false;
-		TArray<FInv_SavedItemData> ResultItems = SQLiteSubsystem->ImportGameResultFromFile(PlayerId, bSurvived, bImportSuccess);
+		TArray<FHellunaEquipmentSlotData> GameEquipment;
+		TArray<FInv_SavedItemData> ResultItems = SQLiteSubsystem->ImportGameResultFromFile(PlayerId, bSurvived, bImportSuccess, &GameEquipment);
 
 		if (bImportSuccess)
 		{
@@ -225,17 +226,22 @@ void AHellunaLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 			SQLiteSubsystem->SetPlayerDeployed(PlayerId, false);
 
 			// 정상 파싱 성공
-			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [0] 게임 결과: survived=%s | 아이템=%d개 | PlayerId=%s"),
-				bSurvived ? TEXT("Y") : TEXT("N"), ResultItems.Num(), *PlayerId);
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [0] 게임 결과: survived=%s | 아이템=%d개 | 장착=%d슬롯 | PlayerId=%s"),
+				bSurvived ? TEXT("Y") : TEXT("N"), ResultItems.Num(), GameEquipment.Num(), *PlayerId);
 
 			// [Fix23] 생존: 결과 아이템을 Loadout에 복원 (기존: Stash에 병합 → Loadout 유실)
 			// Stash는 Deploy 시점에 이미 SavePlayerStash로 저장됨 → 건드리지 않음
 			if (bSurvived && ResultItems.Num() > 0)
 			{
-				// 게임/로비 Grid 사이즈가 다르므로 위치 리셋 → 자동 배치
-				for (FInv_SavedItemData& Item : ResultItems)
+				// GridPosition 유지 — bEquipped/WeaponSlotIndex도 그대로 보존
+				// (게임/로비 GridColumns가 동일한 경우 원래 위치 유지)
+
+				// 장착 슬롯 정보 → player_equipment 테이블에 저장
+				if (GameEquipment.Num() > 0)
 				{
-					Item.GridPosition = FIntPoint(-1, -1);
+					SQLiteSubsystem->SavePlayerEquipment(PlayerId, GameEquipment);
+					UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [0] SavePlayerEquipment 성공 | %d개 슬롯 | PlayerId=%s"),
+						GameEquipment.Num(), *PlayerId);
 				}
 
 				if (SQLiteSubsystem->SavePlayerLoadout(PlayerId, ResultItems))
@@ -249,11 +255,13 @@ void AHellunaLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 					// 폴백: Loadout 저장 실패 시 Stash에 병합 (데이터 유실 방지)
 					SQLiteSubsystem->MergeGameResultToStash(PlayerId, ResultItems);
 					SQLiteSubsystem->DeletePlayerLoadout(PlayerId);
+					SQLiteSubsystem->DeletePlayerEquipment(PlayerId);
 				}
 			}
 			else
 			{
 				// 사망 또는 아이템 없음: Loadout 삭제 (아이템 전부 손실)
+				SQLiteSubsystem->DeletePlayerEquipment(PlayerId);  // 장착 정보도 삭제
 				if (SQLiteSubsystem->DeletePlayerLoadout(PlayerId))
 				{
 					UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [0] DeletePlayerLoadout 성공 (사망/아이템없음) | PlayerId=%s"), *PlayerId);
@@ -571,6 +579,9 @@ void AHellunaLobbyGameMode::LoadStashToComponent(AHellunaLobbyController* LobbyP
 
 	if (StashItems.Num() == 0)
 	{
+		// [Fix41] 빈 Stash도 정상 — 미로드(-1) 아닌 "0개 로드됨"으로 설정
+		// 미설정 시 LoadedStashItemCount=-1 유지 → SaveComponentsToDatabase에서 전체 저장 차단
+		LobbyPC->SetLoadedStashItemCount(0);
 		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] Stash가 비어있음 → 빈 인벤토리로 시작 | PlayerId=%s"), *PlayerId);
 		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM]   → DebugSave 콘솔 명령으로 테스트 데이터를 넣을 수 있습니다"));
 		return;
@@ -705,16 +716,22 @@ void AHellunaLobbyGameMode::LoadLoadoutToComponent(AHellunaLobbyController* Lobb
 	// ── 원본 아이템 수 기록 (파괴적 캐스케이드 방지용) ──
 	const int32 LoadedLoadoutItemCount = LoadoutItems.Num();
 
-	// ── 장착 상태 해제 (Loadout 패널에 무기 슬롯 없음) ──
-	// DB에는 장착 정보가 보존되어 있으므로, 향후 무기 장착 슬롯 추가 시 활용 가능
-	for (FInv_SavedItemData& ItemData : LoadoutItems)
+	// ── 장착 상태 보존 (bEquipped + WeaponSlotIndex 유지) ──
+	// player_equipment 테이블에서 교차 검증용 로드
+	TArray<FHellunaEquipmentSlotData> EquipSlots = SQLiteSubsystem->LoadPlayerEquipment(PlayerId);
+	if (EquipSlots.Num() > 0)
+	{
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix23] player_equipment에서 %d개 장착 슬롯 로드 | PlayerId=%s"),
+			EquipSlots.Num(), *PlayerId);
+	}
+
+	// 장착 아이템 로깅 (강제 해제 없음)
+	for (const FInv_SavedItemData& ItemData : LoadoutItems)
 	{
 		if (ItemData.bEquipped)
 		{
-			UE_LOG(LogHellunaLobby, Log, TEXT("[Fix23] Loadout 아이템 장착 해제: %s (WeaponSlot=%d)"),
+			UE_LOG(LogHellunaLobby, Log, TEXT("[Fix23] Loadout 장착 아이템 보존: %s (WeaponSlot=%d)"),
 				*ItemData.ItemType.ToString(), ItemData.WeaponSlotIndex);
-			ItemData.bEquipped = false;
-			ItemData.WeaponSlotIndex = -1;
 		}
 	}
 
@@ -783,6 +800,11 @@ void AHellunaLobbyGameMode::SaveComponentsToDatabase(AHellunaLobbyController* Lo
 {
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix36] SaveComponentsToDatabase 시작 | PlayerId=%s"), *PlayerId);
 
+	// [Fix41] ReleaseDatabaseConnection 후 DB가 닫혀있을 수 있으므로 재오픈 시도
+	if (SQLiteSubsystem && !SQLiteSubsystem->IsDatabaseReady())
+	{
+		SQLiteSubsystem->TryReopenDatabase();
+	}
 	if (!LobbyPC || !SQLiteSubsystem || !SQLiteSubsystem->IsDatabaseReady())
 	{
 		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] SaveComponents: 조건 미충족! | PC=%s, DB=%s"),
@@ -858,12 +880,27 @@ void AHellunaLobbyGameMode::SaveComponentsToDatabase(AHellunaLobbyController* Lo
 				const bool bLoadoutOk = SQLiteSubsystem->SavePlayerLoadout(PlayerId, LoadoutItems);
 				UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix36] Loadout SQLite 저장 %s | %d개 | PlayerId=%s"),
 					bLoadoutOk ? TEXT("성공") : TEXT("실패"), LoadoutItems.Num(), *PlayerId);
+
+				// 3) 장착 상태 저장 (Loadout 아이템 중 bEquipped 추출)
+				TArray<FHellunaEquipmentSlotData> EquipSlots;
+				for (const FInv_SavedItemData& Item : LoadoutItems)
+				{
+					if (Item.bEquipped && Item.WeaponSlotIndex >= 0)
+					{
+						FHellunaEquipmentSlotData Slot;
+						Slot.SlotId = FString::Printf(TEXT("weapon_%d"), Item.WeaponSlotIndex);
+						Slot.ItemType = Item.ItemType;
+						EquipSlots.Add(Slot);
+					}
+				}
+				SQLiteSubsystem->SavePlayerEquipment(PlayerId, EquipSlots);
 			}
 		}
 		else
 		{
 			// [Fix36] 빈 Loadout → player_loadout 삭제 (빈 행 정리, 크래시 감지와 무관)
 			SQLiteSubsystem->DeletePlayerLoadout(PlayerId);
+			SQLiteSubsystem->DeletePlayerEquipment(PlayerId);
 			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix36] Loadout 비어있음 → DeletePlayerLoadout (빈 행 정리) | PlayerId=%s"), *PlayerId);
 		}
 	}

@@ -4,6 +4,7 @@
 #include "CoreMinimal.h"
 #include "Player/Inv_PlayerController.h"    // FInv_SavedItemData
 #include "Persistence/Inv_SaveTypes.h"      // FInv_PlayerSaveData
+#include "HellunaTypes.h"                   // FHellunaEquipmentSlotData
 
 /**
  * IInventoryDatabase - 인벤토리 백엔드 추상화 인터페이스
@@ -237,4 +238,34 @@ public:
 	 *       외부 watchdog 또는 TTL 기반 자동 정리 필요.
 	 */
 	virtual bool UnregisterAllActiveGameCharactersForServer(const FString& ServerId) = 0;
+
+	// ============================================================
+	// 장착 상태 관리 (player_equipment)
+	// ============================================================
+
+	/**
+	 * 장착 스냅샷 저장 (DELETE+INSERT 방식)
+	 * 게임 종료 시 / 로비 장착 변경 시 호출
+	 *
+	 * @param PlayerId   플레이어 고유 ID
+	 * @param Equipment  장착 슬롯 배열
+	 * @return 성공 여부
+	 */
+	virtual bool SavePlayerEquipment(const FString& PlayerId, const TArray<FHellunaEquipmentSlotData>& Equipment) = 0;
+
+	/**
+	 * 장착 스냅샷 로드
+	 *
+	 * @param PlayerId  플레이어 고유 ID
+	 * @return 장착 슬롯 배열 (비어있으면 장착 정보 없음)
+	 */
+	virtual TArray<FHellunaEquipmentSlotData> LoadPlayerEquipment(const FString& PlayerId) = 0;
+
+	/**
+	 * 장착 정보 삭제 (사망/리셋 시)
+	 *
+	 * @param PlayerId  플레이어 고유 ID
+	 * @return 성공 여부
+	 */
+	virtual bool DeletePlayerEquipment(const FString& PlayerId) = 0;
 };

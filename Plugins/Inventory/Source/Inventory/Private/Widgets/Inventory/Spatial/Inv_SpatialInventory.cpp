@@ -501,28 +501,22 @@ UInv_EquippedSlottedItem* UInv_SpatialInventory::RestoreEquippedItem(UInv_Equipp
 		return nullptr;
 	}
 
-	// TileSize 가져오기
-	auto* InventoryWidget = UInv_InventoryStatics::GetInventoryWidget(GetOwningPlayer());
-	if (!IsValid(InventoryWidget))
+	// TileSize 가져오기 — this(SpatialInventory) 자체의 GetTileSize() 사용
+	// [Fix40] 로비에서는 InventoryMenuClass 미설정 → GetInventoryWidget() = nullptr 이므로
+	// UInv_InventoryStatics::GetInventoryWidget() 대신 자체 Grid에서 직접 조회
+	const float TileSize = GetTileSize();
+	if (TileSize <= 0.f)
 	{
 #if INV_DEBUG_WIDGET
-		UE_LOG(LogTemp, Error, TEXT("[RestoreEquippedItem] ❌ InventoryWidget이 nullptr!"));
+		UE_LOG(LogTemp, Error, TEXT("[RestoreEquippedItem] TileSize=%.1f (Grid 미초기화)"), TileSize);
 #endif
 		return nullptr;
 	}
-	const float TileSize = InventoryWidget->GetTileSize();
 
 #if INV_DEBUG_WIDGET
-	// 🔍 [Phase 8] TileSize 디버깅
-	UE_LOG(LogTemp, Warning, TEXT("[RestoreEquippedItem] InventoryWidget: %s, TileSize: %.1f"),
-		*InventoryWidget->GetName(), TileSize);
-
-	if (TileSize <= 0.f)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[RestoreEquippedItem] ❌ TileSize가 0 이하! 위젯이 안 보일 수 있음!"));
-	}
+	UE_LOG(LogTemp, Warning, TEXT("[RestoreEquippedItem] TileSize: %.1f"), TileSize);
 #endif
-	
+
 	// 장착 아이템의 태그 가져오기
 	FGameplayTag EquipmentTag = ItemToEquip->GetItemManifest().GetItemType();
 	

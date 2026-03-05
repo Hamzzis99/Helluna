@@ -380,6 +380,11 @@ void AHellunaLobbyController::SaveBothComponentsAfterInteraction()
 	// ── DB 서브시스템 획득 (Deploy 흐름과 동일 패턴) ──
 	UGameInstance* GI = GetGameInstance();
 	UHellunaSQLiteSubsystem* DB = GI ? GI->GetSubsystem<UHellunaSQLiteSubsystem>() : nullptr;
+	// [Fix41] ReleaseDatabaseConnection 후 DB가 닫혀있을 수 있으므로 재오픈 시도
+	if (DB && !DB->IsDatabaseReady())
+	{
+		DB->TryReopenDatabase();
+	}
 	if (!DB || !DB->IsDatabaseReady())
 	{
 		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] [Fix35] SaveAfterInteraction: DB 미준비 → 스킵"));
@@ -410,11 +415,26 @@ void AHellunaLobbyController::SaveBothComponentsAfterInteraction()
 			const bool bLoadoutOk = DB->SavePlayerLoadout(PlayerId, LoadoutItems);
 			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] [Fix35] SavePlayerLoadout %s | %d개 | PlayerId=%s"),
 				bLoadoutOk ? TEXT("성공") : TEXT("실패"), LoadoutItems.Num(), *PlayerId);
+
+			// 장착 상태 동기화 (per-interaction)
+			TArray<FHellunaEquipmentSlotData> EquipSlots;
+			for (const FInv_SavedItemData& Item : LoadoutItems)
+			{
+				if (Item.bEquipped && Item.WeaponSlotIndex >= 0)
+				{
+					FHellunaEquipmentSlotData Slot;
+					Slot.SlotId = FString::Printf(TEXT("weapon_%d"), Item.WeaponSlotIndex);
+					Slot.ItemType = Item.ItemType;
+					EquipSlots.Add(Slot);
+				}
+			}
+			DB->SavePlayerEquipment(PlayerId, EquipSlots);
 		}
 		else
 		{
 			// Loadout이 비어있으면 기존 player_loadout 삭제 (빈 행 정리, Fix36: 크래시 감지와 무관)
 			DB->DeletePlayerLoadout(PlayerId);
+			DB->DeletePlayerEquipment(PlayerId);
 			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] [Fix35] Loadout 비어있음 → DeletePlayerLoadout (빈 행 정리) | PlayerId=%s"), *PlayerId);
 		}
 	}
@@ -494,6 +514,12 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 	// ── [1단계] SQLite 서브시스템 획득 ──
 	UGameInstance* GI = GetGameInstance();
 	UHellunaSQLiteSubsystem* DB = GI ? GI->GetSubsystem<UHellunaSQLiteSubsystem>() : nullptr;
+	// [Fix41] ReleaseDatabaseConnection 후 DB가 닫혀있을 수 있으므로 재오픈 시도
+	if (DB && !DB->IsDatabaseReady())
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] Server_Deploy: DB 미준비 → TryReopenDatabase 시도"));
+		DB->TryReopenDatabase();
+	}
 	if (!DB || !DB->IsDatabaseReady())
 	{
 		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Server_Deploy: SQLite 서브시스템 없음!"));
@@ -556,6 +582,23 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 			Client_DeployFailed(TEXT("Loadout 저장 실패"));
 			bDeployInProgress = false;
 			return;
+		}
+
+		// ── [3a-2] 출격 시점 장착 스냅샷 저장 ──
+		{
+			TArray<FHellunaEquipmentSlotData> EquipSlots;
+			for (const FInv_SavedItemData& Item : LoadoutItems)
+			{
+				if (Item.bEquipped && Item.WeaponSlotIndex >= 0)
+				{
+					FHellunaEquipmentSlotData Slot;
+					Slot.SlotId = FString::Printf(TEXT("weapon_%d"), Item.WeaponSlotIndex);
+					Slot.ItemType = Item.ItemType;
+					EquipSlots.Add(Slot);
+				}
+			}
+			DB->SavePlayerEquipment(PlayerId, EquipSlots);
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [3a-2]: SavePlayerEquipment %d개 슬롯"), EquipSlots.Num());
 		}
 
 		// ── [3b] Loadout을 JSON 파일로도 내보내기 (DB 잠금 회피용) ──
