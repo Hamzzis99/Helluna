@@ -414,7 +414,7 @@ void UHellunaPartyWidget::CheckHeroDuplication(const FHellunaPartyInfo& PartyInf
 
 	for (const FHellunaPartyMemberInfo& Member : PartyInfo.Members)
 	{
-		if (Member.SelectedHeroType == 3) // None
+		if (Member.SelectedHeroType == static_cast<int32>(EHellunaHeroType::None)) // [Fix47-L2]
 		{
 			continue;
 		}

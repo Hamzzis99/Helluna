@@ -29,6 +29,8 @@
 #include "Lobby/Party/HellunaPartyTypes.h"
 #include "HellunaLobbyController.generated.h"
 
+class AHellunaLobbyGameMode;
+
 // 전방 선언
 class UInv_InventoryComponent;
 class UInv_InventoryItem;
