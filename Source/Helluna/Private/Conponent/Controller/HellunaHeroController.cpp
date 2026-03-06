@@ -177,6 +177,16 @@ void AHellunaHeroController::InitializeVoteWidget()
 // [투표 시스템] Server RPC - 클라이언트 → 서버
 // ============================================================================
 
+// ============================================================================
+// [Step3] Server_SubmitVote Validate
+// bool 파라미터는 범위가 제한적이므로 항상 true 반환
+// WithValidation 자체가 UE 네트워크 스택의 기본 무결성 검증을 활성화함
+// ============================================================================
+bool AHellunaHeroController::Server_SubmitVote_Validate(bool bAgree)
+{
+	return true;
+}
+
 void AHellunaHeroController::Server_SubmitVote_Implementation(bool bAgree)
 {
 	// 1. PlayerState 가져오기 (서버에서 실행되므로 항상 유효)

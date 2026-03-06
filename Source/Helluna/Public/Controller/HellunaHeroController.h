@@ -51,7 +51,9 @@ public:
 	 *
 	 * @param   bAgree - true: 찬성, false: 반대
 	 */
-	UFUNCTION(Server, Reliable)
+	// [Step3] WithValidation 추가 - 서버 RPC 보안 강화
+	// bool 파라미터이므로 추가 검증은 없지만, UE 네트워크 안전성 보장
+	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_SubmitVote(bool bAgree);
 
 	// =========================================================================================

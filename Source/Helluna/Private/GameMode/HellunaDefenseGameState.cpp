@@ -64,18 +64,24 @@ void AHellunaDefenseGameState::SetPhase(EDefensePhase NewPhase)
 // ═══════════════════════════════════════════════════════════════════════════════
 void AHellunaDefenseGameState::OnRep_Phase()
 {
+#if HELLUNA_DEBUG_DEFENSE
     UE_LOG(LogTemp, Warning, TEXT("[GameState] OnRep_Phase 호출됨! Phase=%d, HasAuthority=%d"),
         (int32)Phase, HasAuthority());
+#endif
 
     switch (Phase)
     {
     case EDefensePhase::Day:
+#if HELLUNA_DEBUG_DEFENSE
         UE_LOG(LogTemp, Warning, TEXT("[GameState] OnDayStarted 호출 시도"));
+#endif
         OnDayStarted();
         if (bHasUDW) ApplyRandomWeather(true);
         break;
     case EDefensePhase::Night:
+#if HELLUNA_DEBUG_DEFENSE
         UE_LOG(LogTemp, Warning, TEXT("[GameState] OnNightStarted 호출 시도"));
+#endif
         OnNightStarted();
         bHasBeenNight = true;  // ★ 밤 경험 기록
         if (bHasUDW) ApplyRandomWeather(false);
@@ -85,7 +91,8 @@ void AHellunaDefenseGameState::OnRep_Phase()
             AActor* UDS = GetUDSActor();
             if (UDS)
             {
-                if (FBoolProperty* AnimProp = FindFProperty<FBoolProperty>(UDS->GetClass(), TEXT("Animate Time of Day")))
+                // [Step3 O-02] 캐싱된 프로퍼티 포인터 사용
+                if (FBoolProperty* AnimProp = CastField<FBoolProperty>(CachedProp_Animate))
                     AnimProp->SetPropertyValue_InContainer(UDS, false);
             }
         }
@@ -100,8 +107,10 @@ void AHellunaDefenseGameState::OnRep_Phase()
 // ═══════════════════════════════════════════════════════════════════════════════
 void AHellunaDefenseGameState::NetMulticast_OnDawnPassed_Implementation(float RoundDuration)
 {
+#if HELLUNA_DEBUG_DEFENSE
     UE_LOG(LogTemp, Warning, TEXT("[GameState] OnDawnPassed! RoundDuration=%.1f초, Authority=%d"),
         RoundDuration, HasAuthority());
+#endif
 
     // BP 이벤트 호출
     OnDawnPassed(RoundDuration);
@@ -112,15 +121,15 @@ void AHellunaDefenseGameState::NetMulticast_OnDawnPassed_Implementation(float Ro
     AActor* UDS = GetUDSActor();
     if (!UDS) return;
 
-    // ★ Animate OFF (전환 중 자체 애니메이션 방지)
-    if (FBoolProperty* AnimProp = FindFProperty<FBoolProperty>(UDS->GetClass(), TEXT("Animate Time of Day")))
+    // [Step3 O-02] 캐싱된 프로퍼티 포인터 사용 — Animate OFF (전환 중 자체 애니메이션 방지)
+    if (FBoolProperty* AnimProp = CastField<FBoolProperty>(CachedProp_Animate))
         AnimProp->SetPropertyValue_InContainer(UDS, false);
 
-    // 현재 UDS Time of Day 읽기
+    // [Step3 O-02] 캐싱된 프로퍼티로 현재 UDS Time of Day 읽기
     float CurrentTime = 0.f;
-    if (FFloatProperty* Prop = FindFProperty<FFloatProperty>(UDS->GetClass(), TEXT("Time of Day")))
+    if (FFloatProperty* Prop = CastField<FFloatProperty>(CachedProp_TimeOfDay))
         CurrentTime = Prop->GetPropertyValue_InContainer(UDS);
-    else if (FDoubleProperty* DProp = FindFProperty<FDoubleProperty>(UDS->GetClass(), TEXT("Time of Day")))
+    else if (FDoubleProperty* DProp = CastField<FDoubleProperty>(CachedProp_TimeOfDay))
         CurrentTime = (float)DProp->GetPropertyValue_InContainer(UDS);
 
     // DawnTransitionDuration이 0 이하이거나, 첫 시작(밤 미경험)이면 즉시 전환
@@ -132,16 +141,20 @@ void AHellunaDefenseGameState::NetMulticast_OnDawnPassed_Implementation(float Ro
         if (TimeRange <= 0.f) TimeRange = 1000.f;
         float DayLength = 20.f * RoundDuration / TimeRange;
 
-        if (FFloatProperty* DLProp = FindFProperty<FFloatProperty>(UDS->GetClass(), TEXT("Day Length")))
+        // [Step3 O-02] 캐싱된 프로퍼티 포인터 사용 — Day Length 설정
+        if (FFloatProperty* DLProp = CastField<FFloatProperty>(CachedProp_DayLength))
             DLProp->SetPropertyValue_InContainer(UDS, DayLength);
-        else if (FDoubleProperty* DLDProp = FindFProperty<FDoubleProperty>(UDS->GetClass(), TEXT("Day Length")))
+        else if (FDoubleProperty* DLDProp = CastField<FDoubleProperty>(CachedProp_DayLength))
             DLDProp->SetPropertyValue_InContainer(UDS, (double)DayLength);
 
-        if (FBoolProperty* AnimProp2 = FindFProperty<FBoolProperty>(UDS->GetClass(), TEXT("Animate Time of Day")))
+        // [Step3 O-02] 캐싱된 프로퍼티 포인터 사용 — Animate ON
+        if (FBoolProperty* AnimProp2 = CastField<FBoolProperty>(CachedProp_Animate))
             AnimProp2->SetPropertyValue_InContainer(UDS, true);
 
+#if HELLUNA_DEBUG_DEFENSE
         UE_LOG(LogTemp, Warning, TEXT("[GameState] %s: 즉시 전환 DayLength=%.3f"),
             HasAuthority() ? TEXT("SERVER") : TEXT("CLIENT"), DayLength);
+#endif
         return;
     }
 
@@ -151,9 +164,11 @@ void AHellunaDefenseGameState::NetMulticast_OnDawnPassed_Implementation(float Ro
     DawnTotalDistance = (2400.f - CurrentTime) + DayStartTime;
     PendingRoundDuration = RoundDuration;
 
+#if HELLUNA_DEBUG_DEFENSE
     UE_LOG(LogTemp, Warning, TEXT("[GameState] %s: 새벽 전환 시작! 현재=%.0f → 목표=%.0f (이동량=%.0f, %.1f초)"),
         HasAuthority() ? TEXT("SERVER") : TEXT("CLIENT"),
         CurrentTime, DayStartTime, DawnTotalDistance, DawnTransitionDuration);
+#endif
 
     // ~60fps 루핑 타이머 시작
     GetWorldTimerManager().ClearTimer(TimerHandle_DawnTransition);
@@ -178,7 +193,11 @@ void AHellunaDefenseGameState::TickDawnTransition()
         return;
     }
 
-    DawnLerpElapsed += 0.016f;
+    // [Step3 O-03] 고정 delta 제거 - 실제 경과 시간 사용
+    // 타이머는 0.016f 간격이지만 실제 호출 간격은 프레임에 따라 다를 수 있음
+    UWorld* World = GetWorld();
+    const float DeltaTime = World ? World->GetDeltaSeconds() : 0.016f;
+    DawnLerpElapsed += DeltaTime;
     float Alpha = FMath::Clamp(DawnLerpElapsed / DawnTransitionDuration, 0.f, 1.f);
 
     float NewTime = DawnLerpStart + (DawnTotalDistance * Alpha);
@@ -202,26 +221,29 @@ void AHellunaDefenseGameState::TickDawnTransition()
             if (TimeRange <= 0.f) TimeRange = 1000.f;
             float DayLength = 20.f * PendingRoundDuration / TimeRange;
 
-            if (FFloatProperty* DLProp = FindFProperty<FFloatProperty>(UDS->GetClass(), TEXT("Day Length")))
+            // [Step3 O-02] 캐싱된 프로퍼티 포인터 사용 — Day Length 설정
+            if (FFloatProperty* DLProp = CastField<FFloatProperty>(CachedProp_DayLength))
                 DLProp->SetPropertyValue_InContainer(UDS, DayLength);
-            else if (FDoubleProperty* DLDProp = FindFProperty<FDoubleProperty>(UDS->GetClass(), TEXT("Day Length")))
+            else if (FDoubleProperty* DLDProp = CastField<FDoubleProperty>(CachedProp_DayLength))
                 DLDProp->SetPropertyValue_InContainer(UDS, (double)DayLength);
 
-            if (FBoolProperty* AnimProp = FindFProperty<FBoolProperty>(UDS->GetClass(), TEXT("Animate Time of Day")))
+            // [Step3 O-02] 캐싱된 프로퍼티 포인터 사용 — Animate ON
+            if (FBoolProperty* AnimProp = CastField<FBoolProperty>(CachedProp_Animate))
                 AnimProp->SetPropertyValue_InContainer(UDS, true);
 
+#if HELLUNA_DEBUG_DEFENSE
             UE_LOG(LogTemp, Warning, TEXT("[GameState] %s: 새벽 전환 완료! DayLength=%.3f, TimeRange=%.0f"),
                 HasAuthority() ? TEXT("SERVER") : TEXT("CLIENT"), DayLength, TimeRange);
+#endif
         }
     }
 }
 
 void AHellunaDefenseGameState::MulticastPrintNight_Implementation(int32 Current, int32 Need)
 {
+#if HELLUNA_DEBUG_DEFENSE
+    // 디버그 전용: 화면 출력 및 몹 수 모니터링 타이머
     Debug::Print(FString::Printf(TEXT("Night! SpaceShip Repair: %d / %d"), Current, Need));
-
-
-    // 디버그용 
 
     GetWorldTimerManager().ClearTimer(TimerHandle_NightDebug);
 
@@ -234,19 +256,19 @@ void AHellunaDefenseGameState::MulticastPrintNight_Implementation(int32 Current,
         NightDebugInterval,
         true
     );
+#endif
 }
 
+#if HELLUNA_DEBUG_DEFENSE
 void AHellunaDefenseGameState::PrintNightDebug()
 {
-    // ✅ 여기서 "현재 복제된 몬스터 수"를 출력
-    // AliveMonsterCount가 멤버면 그대로 쓰면 되고,
-    // Getter가 있으면 GetAliveMonsterCount()로 바꿔도 됨.
-
+    // 현재 복제된 몬스터 수를 화면에 디버그 출력
     Debug::Print(FString::Printf(
         TEXT("Night Debug | AliveMonsters: %d"),
         AliveMonsterCount
     ));
 }
+#endif
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // 🔍 UDS 디버그: 1초마다 Time of Day, Animate 상태, Phase 출력
@@ -260,17 +282,18 @@ void AHellunaDefenseGameState::PrintUDSDebug()
     bool bAnimate = false;
     float DayLength = -1.f;
     
-    if (FFloatProperty* Prop = FindFProperty<FFloatProperty>(UDS->GetClass(), TEXT("Time of Day")))
+    // [Step3 O-02] 캐싱된 프로퍼티 포인터 사용 — 매 호출마다 FindFProperty 제거
+    if (FFloatProperty* Prop = CastField<FFloatProperty>(CachedProp_TimeOfDay))
         TimeOfDay = Prop->GetPropertyValue_InContainer(UDS);
-    else if (FDoubleProperty* DProp = FindFProperty<FDoubleProperty>(UDS->GetClass(), TEXT("Time of Day")))
+    else if (FDoubleProperty* DProp = CastField<FDoubleProperty>(CachedProp_TimeOfDay))
         TimeOfDay = (float)DProp->GetPropertyValue_InContainer(UDS);
-    
-    if (FBoolProperty* AnimProp = FindFProperty<FBoolProperty>(UDS->GetClass(), TEXT("Animate Time of Day")))
+
+    if (FBoolProperty* AnimProp = CastField<FBoolProperty>(CachedProp_Animate))
         bAnimate = AnimProp->GetPropertyValue_InContainer(UDS);
-    
-    if (FFloatProperty* DLProp = FindFProperty<FFloatProperty>(UDS->GetClass(), TEXT("Day Length")))
+
+    if (FFloatProperty* DLProp = CastField<FFloatProperty>(CachedProp_DayLength))
         DayLength = DLProp->GetPropertyValue_InContainer(UDS);
-    else if (FDoubleProperty* DLDProp = FindFProperty<FDoubleProperty>(UDS->GetClass(), TEXT("Day Length")))
+    else if (FDoubleProperty* DLDProp = CastField<FDoubleProperty>(CachedProp_DayLength))
         DayLength = (float)DLDProp->GetPropertyValue_InContainer(UDS);
 
     UE_LOG(LogTemp, Warning, TEXT("[UDS Debug] %s | Phase=%s | TimeOfDay=%.2f | Animate=%s | DayLength=%.2f"),
@@ -284,7 +307,9 @@ void AHellunaDefenseGameState::PrintUDSDebug()
 
 void AHellunaDefenseGameState::MulticastPrintDay_Implementation()
 {
+#if HELLUNA_DEBUG_DEFENSE
     Debug::Print(TEXT("Day!"));
+#endif
 }
 
 void AHellunaDefenseGameState::SetAliveMonsterCount(int32 NewCount)
@@ -307,7 +332,14 @@ void AHellunaDefenseGameState::BeginPlay()
     // ★ UDS/UDW 존재 여부 1회 체크 (데디서버에서 없을 수 있음)
     bHasUDS = (GetUDSActor() != nullptr);
     bHasUDW = (GetUDWActor() != nullptr);
-    
+
+    // [Step3 O-02] UDS 프로퍼티 캐싱 (FindFProperty를 매 프레임 호출하지 않도록)
+    if (bHasUDS)
+    {
+        CacheUDSProperties();
+    }
+
+#if HELLUNA_DEBUG_DEFENSE
     if (!bHasUDS)
     {
         UE_LOG(LogTemp, Warning, TEXT("[GameState] UDS 액터 없음 (데디서버 또는 미배치)"));
@@ -316,6 +348,7 @@ void AHellunaDefenseGameState::BeginPlay()
     {
         UE_LOG(LogTemp, Warning, TEXT("[GameState] UDW 액터 없음 (데디서버 또는 미배치)"));
     }
+#endif
 
 #if !UE_BUILD_SHIPPING && HELLUNA_DEBUG_UDS
     // 디버그 빌드에서만 UDS 로깅 (1초 간격)
@@ -400,7 +433,9 @@ void AHellunaDefenseGameState::BeginPlay()
 void AHellunaDefenseGameState::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
     GetWorldTimerManager().ClearTimer(TimerHandle_UDSDebug);
+#if HELLUNA_DEBUG_DEFENSE
     GetWorldTimerManager().ClearTimer(TimerHandle_NightDebug);
+#endif
     GetWorldTimerManager().ClearTimer(TimerHandle_DawnTransition);
     
     if (HasAuthority())
@@ -527,6 +562,22 @@ void AHellunaDefenseGameState::NetMulticast_ReceiveChatMessage_Implementation(co
 		*ChatMessage.Message);
 }
 
+// ===============================================================
+// [Step3 O-02] UDS 프로퍼티 캐싱 - BeginPlay에서 1회 호출
+// FindFProperty는 리플렉션 기반이라 매 프레임 호출하면 성능 저하
+// 캐싱 후에는 포인터만 사용하여 O(1) 접근
+// ===============================================================
+void AHellunaDefenseGameState::CacheUDSProperties()
+{
+    AActor* UDS = GetUDSActor();
+    if (!UDS) return;
+
+    UClass* UDSClass = UDS->GetClass();
+    CachedProp_TimeOfDay = FindFProperty<FProperty>(UDSClass, TEXT("Time of Day"));
+    CachedProp_Animate = FindFProperty<FProperty>(UDSClass, TEXT("Animate Time of Day"));
+    CachedProp_DayLength = FindFProperty<FProperty>(UDSClass, TEXT("Day Length"));
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // ☀️ UDS/UDW 헬퍼 함수 - 다이나믹 스카이 날씨변경 부분
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -573,11 +624,12 @@ void AHellunaDefenseGameState::SetUDSTimeOfDay(float Time)
     AActor* UDS = GetUDSActor();
     if (!UDS) return;
     
-    // fallback: 프로퍼티 직접 세팅
-    if (FFloatProperty* Prop = FindFProperty<FFloatProperty>(UDS->GetClass(), TEXT("Time of Day")))
-        Prop->SetPropertyValue_InContainer(UDS, Time);
-    else if (FDoubleProperty* DProp = FindFProperty<FDoubleProperty>(UDS->GetClass(), TEXT("Time of Day")))
-        DProp->SetPropertyValue_InContainer(UDS, (double)Time);
+    // [Step3 O-02] 캐싱된 프로퍼티 포인터 사용 (매 호출마다 FindFProperty 제거)
+    if (!CachedProp_TimeOfDay) return;
+    if (FFloatProperty* FP = CastField<FFloatProperty>(CachedProp_TimeOfDay))
+        FP->SetPropertyValue_InContainer(UDS, Time);
+    else if (FDoubleProperty* DP = CastField<FDoubleProperty>(CachedProp_TimeOfDay))
+        DP->SetPropertyValue_InContainer(UDS, (double)Time);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -612,10 +664,12 @@ void AHellunaDefenseGameState::ApplyRandomWeather(bool bIsDay)
         Params.TransitionTime = WeatherTransitionTime;
         UDW->ProcessEvent(Func, &Params);
         
+#if HELLUNA_DEBUG_DEFENSE
         UE_LOG(LogTemp, Log, TEXT("[Weather] %s → %s (%d/%d)"),
             bIsDay ? TEXT("낮") : TEXT("밤"),
             *SelectedWeather->GetName(),
             RandomIdx, WeatherArray.Num());
+#endif
     }
 }
 

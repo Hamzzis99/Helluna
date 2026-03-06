@@ -34,9 +34,11 @@
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
 
 #include "DebugHelper.h"
+#include "Helluna.h"  // [Step3] HELLUNA_DEBUG_HERO 매크로 (EndPlay/Input/Weapon/Repair 디버그 로그)
 #include "Animation/AnimInstance.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
 #include "InventoryManagement/Components/Inv_LootContainerComponent.h"
+#include "Items/Components/Inv_ItemComponent.h"  // [Step3] FindComponentByClass<UInv_ItemComponent> 완전한 타입 필요
 
 
 AHellunaHeroCharacter::AHellunaHeroCharacter()
@@ -110,6 +112,7 @@ void AHellunaHeroCharacter::BeginPlay()
 // ============================================
 void AHellunaHeroCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+#if HELLUNA_DEBUG_HERO // [Step3] 프로덕션 빌드에서 디버그 로그 제거
 	UE_LOG(LogTemp, Warning, TEXT(""));
 	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
 	UE_LOG(LogTemp, Warning, TEXT("║ [HeroCharacter] EndPlay - 인벤토리 저장 시도               ║"));
@@ -117,6 +120,7 @@ void AHellunaHeroCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	UE_LOG(LogTemp, Warning, TEXT("║ Character: %s"), *GetName());
 	UE_LOG(LogTemp, Warning, TEXT("║ EndPlayReason: %d"), (int32)EndPlayReason);
 	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
 
 	// 서버에서만 저장 처리
 	if (HasAuthority())
@@ -125,7 +129,9 @@ void AHellunaHeroCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(UGameplayStatics::GetGameInstance(GetWorld()));
 		if (GI && GI->bIsMapTransitioning)
 		{
+#if HELLUNA_DEBUG_HERO
 			UE_LOG(LogTemp, Warning, TEXT("[EndPlay] ⚠️ 맵 이동 중! SaveAllPlayersInventory에서 이미 저장했으므로 스킵"));
+#endif
 			Super::EndPlay(EndPlayReason);
 			return;
 		}
@@ -142,8 +148,10 @@ void AHellunaHeroCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 			if (!PlayerId.IsEmpty())
 			{
+#if HELLUNA_DEBUG_HERO
 				UE_LOG(LogTemp, Warning, TEXT("[EndPlay] ✅ PlayerId: %s"), *PlayerId);
 				UE_LOG(LogTemp, Warning, TEXT("[EndPlay] ✅ InventoryComponent 발견! 직접 저장 시작..."));
+#endif
 
 				// 인벤토리 데이터 수집
 				TArray<FInv_SavedItemData> CollectedItems = InvComp->CollectInventoryDataForSave();
@@ -156,18 +164,24 @@ void AHellunaHeroCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 				}
 				else
 				{
-					UE_LOG(LogTemp, Error, TEXT("[EndPlay] ❌ GameMode를 찾을 수 없음!"));
+	#if HELLUNA_DEBUG_HERO
+				UE_LOG(LogTemp, Error, TEXT("[EndPlay] ❌ GameMode를 찾을 수 없음!"));
+#endif
 				}
 			}
 			else
 			{
-				UE_LOG(LogTemp, Warning, TEXT("[EndPlay] ⚠️ PlayerId가 비어있음 (저장 생략)"));
+	#if HELLUNA_DEBUG_HERO
+			UE_LOG(LogTemp, Warning, TEXT("[EndPlay] ⚠️ PlayerId가 비어있음 (저장 생략)"));
+#endif
 			}
 		}
 		else
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[EndPlay] ⚠️ InventoryComponent 없음 (PC: %s)"), 
+#if HELLUNA_DEBUG_HERO
+			UE_LOG(LogTemp, Warning, TEXT("[EndPlay] ⚠️ InventoryComponent 없음 (PC: %s)"),
 				PC ? TEXT("Valid") : TEXT("nullptr"));
+#endif
 		}
 	}
 
@@ -238,6 +252,7 @@ void AHellunaHeroCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInp
 	// ============================================
 	// ⭐ 디버깅: 입력 바인딩 상태 확인
 	// ============================================
+#if HELLUNA_DEBUG_HERO
 	UE_LOG(LogTemp, Warning, TEXT(""));
 	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
 	UE_LOG(LogTemp, Warning, TEXT("║     [HeroCharacter] SetupPlayerInputComponent              ║"));
@@ -247,7 +262,7 @@ void AHellunaHeroCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInp
 	UE_LOG(LogTemp, Warning, TEXT("║ HasAuthority: %s"), HasAuthority() ? TEXT("TRUE (서버)") : TEXT("FALSE (클라이언트)"));
 	UE_LOG(LogTemp, Warning, TEXT("║ GetLocalRole: %d"), (int32)GetLocalRole());
 	UE_LOG(LogTemp, Warning, TEXT("║ Controller: %s"), GetController() ? *GetController()->GetName() : TEXT("nullptr"));
-	
+
 	if (APlayerController* PC = GetController<APlayerController>())
 	{
 		UE_LOG(LogTemp, Warning, TEXT("║ PC->IsLocalController: %s"), PC->IsLocalController() ? TEXT("TRUE ✅") : TEXT("FALSE ❌"));
@@ -255,6 +270,7 @@ void AHellunaHeroCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInp
 	}
 	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 	UE_LOG(LogTemp, Warning, TEXT(""));
+#endif
 
 	// ============================================
 	// ⭐ 로컬에서 제어하는 캐릭터만 입력 바인딩!
@@ -262,7 +278,9 @@ void AHellunaHeroCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInp
 	// ============================================
 	if (!IsLocallyControlled())
 	{
+#if HELLUNA_DEBUG_HERO
 		UE_LOG(LogTemp, Warning, TEXT("[HeroCharacter] 입력 바인딩 스킵 - 로컬 캐릭터 아님"));
+#endif
 		return;
 	}
 	
@@ -322,6 +340,7 @@ void AHellunaHeroCharacter::Input_AbilityInputPressed(FGameplayTag InInputTag)
 	// ============================================
 	// 🔍 [디버깅] 입력 처리 추적
 	// ============================================
+#if HELLUNA_DEBUG_HERO
 	UE_LOG(LogTemp, Warning, TEXT(""));
 	UE_LOG(LogTemp, Warning, TEXT("╔══════════════════════════════════════════════════════════════╗"));
 	UE_LOG(LogTemp, Warning, TEXT("║  🎮 [HeroCharacter] Input_AbilityInputPressed 호출           ║"));
@@ -332,6 +351,7 @@ void AHellunaHeroCharacter::Input_AbilityInputPressed(FGameplayTag InInputTag)
 	UE_LOG(LogTemp, Warning, TEXT("║ HasAuthority: %s"), HasAuthority() ? TEXT("TRUE (서버)") : TEXT("FALSE (클라)"));
 	UE_LOG(LogTemp, Warning, TEXT("║ ASC 유효: %s"), HellunaAbilitySystemComponent ? TEXT("TRUE ✅") : TEXT("FALSE ❌"));
 	UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════╝"));
+#endif
 
 	if (HellunaAbilitySystemComponent)
 	{	
@@ -339,7 +359,9 @@ void AHellunaHeroCharacter::Input_AbilityInputPressed(FGameplayTag InInputTag)
 	}
 	else
 	{
+#if HELLUNA_DEBUG_HERO
 		UE_LOG(LogTemp, Error, TEXT("⛔ [HeroCharacter] ASC가 nullptr!"));
+#endif
 	}
 }
 
@@ -356,15 +378,19 @@ void AHellunaHeroCharacter::Input_AbilityInputReleased(FGameplayTag InInputTag)
 // ⭐ SpaceShip 수리 Server RPC (재료 개별 전달)
 void AHellunaHeroCharacter::Server_RepairSpaceShip_Implementation(FGameplayTag Material1Tag, int32 Material1Amount, FGameplayTag Material2Tag, int32 Material2Amount)
 {
+#if HELLUNA_DEBUG_HERO
 	UE_LOG(LogTemp, Warning, TEXT("=== [HeroCharacter::Server_RepairSpaceShip] 호출됨! ==="));
 	UE_LOG(LogTemp, Warning, TEXT("  재료 1: %s x %d"), *Material1Tag.ToString(), Material1Amount);
 	UE_LOG(LogTemp, Warning, TEXT("  재료 2: %s x %d"), *Material2Tag.ToString(), Material2Amount);
 	UE_LOG(LogTemp, Warning, TEXT("  서버 여부: %s"), HasAuthority() ? TEXT("서버 ✅") : TEXT("클라이언트 ❌"));
+#endif
 
 	// 서버 권한 체크
 	if (!HasAuthority())
 	{
+#if HELLUNA_DEBUG_HERO
 		UE_LOG(LogTemp, Error, TEXT("  ❌ 서버가 아님!"));
+#endif
 		return;
 	}
 
@@ -374,7 +400,9 @@ void AHellunaHeroCharacter::Server_RepairSpaceShip_Implementation(FGameplayTag M
 	// 자원이 0 이하면 무시
 	if (TotalResource <= 0)
 	{
+#if HELLUNA_DEBUG_HERO
 		UE_LOG(LogTemp, Warning, TEXT("  ⚠️ 자원이 0 이하! 무시"));
+#endif
 		return;
 	}
 
@@ -384,30 +412,40 @@ void AHellunaHeroCharacter::Server_RepairSpaceShip_Implementation(FGameplayTag M
 
 	if (FoundActors.Num() == 0)
 	{
+#if HELLUNA_DEBUG_HERO
 		UE_LOG(LogTemp, Error, TEXT("  ❌ SpaceShip을 찾을 수 없음! 'SpaceShip' 태그 확인 필요"));
+#endif
 		return;
 	}
 
 	// SpaceShip 찾음
 	if (AResourceUsingObject_SpaceShip* SpaceShip = Cast<AResourceUsingObject_SpaceShip>(FoundActors[0]))
 	{
+#if HELLUNA_DEBUG_HERO
 		UE_LOG(LogTemp, Warning, TEXT("  ✅ SpaceShip 찾음: %s"), *SpaceShip->GetName());
-		
+#endif
+
 		// ⭐ RepairComponent 가져오기
 		URepairComponent* RepairComp = SpaceShip->FindComponentByClass<URepairComponent>();
 		if (RepairComp)
 		{
+#if HELLUNA_DEBUG_HERO
 			UE_LOG(LogTemp, Warning, TEXT("  ✅ RepairComponent 찾음!"));
-			
+#endif
+
 			// ⭐ 애니메이션/사운드를 **한 번만** 재생 (멀티캐스트)
 			FVector SpaceShipLocation = SpaceShip->GetActorLocation();
 			RepairComp->Multicast_PlaySingleRepairEffect(SpaceShipLocation);
+#if HELLUNA_DEBUG_HERO
 			UE_LOG(LogTemp, Warning, TEXT("  🎬 애니메이션/사운드 한 번 재생 요청!"));
+#endif
 		}
 		
 		// ⭐⭐⭐ SpaceShip에 자원 추가 (실제 추가된 양 반환)
 		int32 ActualAdded = SpaceShip->AddRepairResource(TotalResource);
+#if HELLUNA_DEBUG_HERO
 		UE_LOG(LogTemp, Warning, TEXT("  📊 SpaceShip->AddRepairResource(%d) 호출 → 실제 추가: %d"), TotalResource, ActualAdded);
+#endif
 
 		// ⭐⭐⭐ 실제 추가된 양만큼만 인벤토리에서 차감!
 		if (ActualAdded > 0)
@@ -416,7 +454,9 @@ void AHellunaHeroCharacter::Server_RepairSpaceShip_Implementation(FGameplayTag M
 			APlayerController* PC = Cast<APlayerController>(GetController());
 			if (!PC)
 			{
+#if HELLUNA_DEBUG_HERO
 				UE_LOG(LogTemp, Error, TEXT("  ❌ PlayerController를 찾을 수 없음!"));
+#endif
 				return;
 			}
 
@@ -424,11 +464,15 @@ void AHellunaHeroCharacter::Server_RepairSpaceShip_Implementation(FGameplayTag M
 			UInv_InventoryComponent* InvComp = UInv_InventoryStatics::GetInventoryComponent(PC);
 			if (!InvComp)
 			{
+#if HELLUNA_DEBUG_HERO
 				UE_LOG(LogTemp, Error, TEXT("  ❌ InventoryComponent를 찾을 수 없음!"));
+#endif
 				return;
 			}
 
+#if HELLUNA_DEBUG_HERO
 			UE_LOG(LogTemp, Warning, TEXT("  ✅ InventoryComponent 찾음!"));
+#endif
 
 			// 실제 차감량 계산 (비율로 분배)
 			int32 ActualMaterial1 = 0;
@@ -443,38 +487,52 @@ void AHellunaHeroCharacter::Server_RepairSpaceShip_Implementation(FGameplayTag M
 				ActualMaterial1 = FMath::RoundToInt(Ratio1 * ActualAdded);
 				ActualMaterial2 = ActualAdded - ActualMaterial1; // 나머지는 재료2에
 
+#if HELLUNA_DEBUG_HERO
 				UE_LOG(LogTemp, Warning, TEXT("  📊 비율 계산:"));
 				UE_LOG(LogTemp, Warning, TEXT("    - 재료1 비율: %.2f → 차감: %d"), Ratio1, ActualMaterial1);
 				UE_LOG(LogTemp, Warning, TEXT("    - 재료2 비율: %.2f → 차감: %d"), Ratio2, ActualMaterial2);
+#endif
 			}
 
 			// 재료 1 차감
 			if (ActualMaterial1 > 0 && Material1Tag.IsValid())
 			{
+#if HELLUNA_DEBUG_HERO
 				UE_LOG(LogTemp, Warning, TEXT("  🧪 재료 1 차감: %s x %d"), *Material1Tag.ToString(), ActualMaterial1);
+#endif
 				InvComp->Server_ConsumeMaterialsMultiStack(Material1Tag, ActualMaterial1);
 			}
 
 			// 재료 2 차감
 			if (ActualMaterial2 > 0 && Material2Tag.IsValid())
 			{
+#if HELLUNA_DEBUG_HERO
 				UE_LOG(LogTemp, Warning, TEXT("  🧪 재료 2 차감: %s x %d"), *Material2Tag.ToString(), ActualMaterial2);
+#endif
 				InvComp->Server_ConsumeMaterialsMultiStack(Material2Tag, ActualMaterial2);
 			}
 
+#if HELLUNA_DEBUG_HERO
 			UE_LOG(LogTemp, Warning, TEXT("  ✅ 실제 차감 완료! 총 차감: %d"), ActualAdded);
+#endif
 		}
 		else
 		{
+#if HELLUNA_DEBUG_HERO
 			UE_LOG(LogTemp, Warning, TEXT("  ⚠️ SpaceShip에 추가된 자원이 없음! (이미 만원일 수 있음)"));
+#endif
 		}
 	}
 	else
 	{
+#if HELLUNA_DEBUG_HERO
 		UE_LOG(LogTemp, Error, TEXT("  ❌ SpaceShip 캐스팅 실패!"));
+#endif
 	}
 
+#if HELLUNA_DEBUG_HERO
 	UE_LOG(LogTemp, Warning, TEXT("=== [HeroCharacter::Server_RepairSpaceShip] 완료! ==="));
+#endif
 }
 
 // ============================================================================
@@ -680,13 +738,17 @@ void AHellunaHeroCharacter::Multicast_PlayEquipMontageExceptOwner_Implementation
 // ============================================
 void AHellunaHeroCharacter::Server_RequestDestroyWeapon_Implementation()
 {
+#if HELLUNA_DEBUG_HERO
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [HeroCharacter] Server_RequestDestroyWeapon 호출됨 (서버)"));
+#endif
 
 
 
 	if (IsValid(CurrentWeapon))
 	{
+#if HELLUNA_DEBUG_HERO
 		UE_LOG(LogTemp, Warning, TEXT("⭐ [HeroCharacter] CurrentWeapon Destroy: %s"), *CurrentWeapon->GetName());
+#endif
 
 		if (AHeroWeapon_GunBase* Gun = Cast<AHeroWeapon_GunBase>(CurrentWeapon))
 		{
@@ -699,7 +761,9 @@ void AHellunaHeroCharacter::Server_RequestDestroyWeapon_Implementation()
 
 	else
 	{
+#if HELLUNA_DEBUG_HERO
 		UE_LOG(LogTemp, Warning, TEXT("⭐ [HeroCharacter] CurrentWeapon이 이미 null"));
+#endif
 	}
 
 	//== 김민우 수정(디스트로이 웨폰을 할 때 무기 태그 제거) ==
