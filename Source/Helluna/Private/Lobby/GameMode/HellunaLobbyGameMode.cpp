@@ -1065,14 +1065,25 @@ void AHellunaLobbyGameMode::SaveComponentsToDatabase(AHellunaLobbyController* Lo
 						EquipSlots.Add(Slot);
 					}
 				}
-				SQLiteSubsystem->SavePlayerEquipment(PlayerId, EquipSlots);
+				// [Fix44-C4] Equipment 저장 반환값 검증
+				const bool bEquipOk = SQLiteSubsystem->SavePlayerEquipment(PlayerId, EquipSlots);
+				if (!bEquipOk)
+				{
+					UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [Fix44] SavePlayerEquipment 실패! Loadout/Equipment 불일치 가능 | PlayerId=%s"), *PlayerId);
+				}
 			}
 		}
 		else
 		{
 			// [Fix36] 빈 Loadout → player_loadout 삭제 (빈 행 정리, 크래시 감지와 무관)
-			SQLiteSubsystem->DeletePlayerLoadout(PlayerId);
-			SQLiteSubsystem->DeletePlayerEquipment(PlayerId);
+			// [Fix44-C3] Delete 반환값 검증
+			const bool bDelLoadout = SQLiteSubsystem->DeletePlayerLoadout(PlayerId);
+			const bool bDelEquip = SQLiteSubsystem->DeletePlayerEquipment(PlayerId);
+			if (!bDelLoadout || !bDelEquip)
+			{
+				UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [Fix44] Delete 실패: Loadout=%s Equipment=%s | PlayerId=%s"),
+					bDelLoadout ? TEXT("OK") : TEXT("FAIL"), bDelEquip ? TEXT("OK") : TEXT("FAIL"), *PlayerId);
+			}
 			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix36] Loadout 비어있음 → DeletePlayerLoadout (빈 행 정리) | PlayerId=%s"), *PlayerId);
 		}
 	}

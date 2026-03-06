@@ -419,13 +419,24 @@ void AHellunaLobbyController::SaveBothComponentsAfterInteraction()
 					EquipSlots.Add(Slot);
 				}
 			}
-			DB->SavePlayerEquipment(PlayerId, EquipSlots);
+			// [Fix44-C4] Equipment 저장 반환값 검증
+			const bool bEquipOk = DB->SavePlayerEquipment(PlayerId, EquipSlots);
+			if (!bEquipOk)
+			{
+				UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] [Fix44] SavePlayerEquipment 실패! Loadout/Equipment 불일치 가능 | PlayerId=%s"), *PlayerId);
+			}
 		}
 		else
 		{
 			// Loadout이 비어있으면 기존 player_loadout 삭제 (빈 행 정리, Fix36: 크래시 감지와 무관)
-			DB->DeletePlayerLoadout(PlayerId);
-			DB->DeletePlayerEquipment(PlayerId);
+			// [Fix44-C3] Delete 반환값 검증
+			const bool bDelLoadout = DB->DeletePlayerLoadout(PlayerId);
+			const bool bDelEquip = DB->DeletePlayerEquipment(PlayerId);
+			if (!bDelLoadout || !bDelEquip)
+			{
+				UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] [Fix44] Delete 실패: Loadout=%s Equipment=%s | PlayerId=%s"),
+					bDelLoadout ? TEXT("OK") : TEXT("FAIL"), bDelEquip ? TEXT("OK") : TEXT("FAIL"), *PlayerId);
+			}
 			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] [Fix35] Loadout 비어있음 → DeletePlayerLoadout (빈 행 정리) | PlayerId=%s"), *PlayerId);
 		}
 	}
@@ -437,6 +448,12 @@ void AHellunaLobbyController::SaveBothComponentsAfterInteraction()
 		const bool bStashOk = DB->SavePlayerStash(PlayerId, StashItems);
 		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] [Fix35] SavePlayerStash %s | %d개 | PlayerId=%s"),
 			bStashOk ? TEXT("성공") : TEXT("실패"), StashItems.Num(), *PlayerId);
+
+		// [Fix44-C2] Stash 저장 실패 시 Loadout과 불일치 경고
+		if (!bStashOk)
+		{
+			UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] [Fix44] SavePlayerStash 실패! Loadout 성공+Stash 실패 → 데이터 불일치 가능 | PlayerId=%s"), *PlayerId);
+		}
 	}
 }
 
@@ -700,6 +717,9 @@ void AHellunaLobbyController::Client_DeployFailed_Implementation(const FString& 
 // ════════════════════════════════════════════════════════════════════════════════
 void AHellunaLobbyController::Client_ExecuteDeploy_Implementation(const FString& TravelURL)
 {
+	// [Fix44-C1] Deploy 성공 → 플래그 리셋 (ClientTravel 실패 시 영구 차단 방지)
+	bDeployInProgress = false;
+
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ══════════════════════════════════════"));
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Client_ExecuteDeploy: ClientTravel 시작"));
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC]   TravelURL=%s"), *TravelURL);
@@ -1566,6 +1586,9 @@ void AHellunaLobbyController::Client_ReceivePartyChatMessage_Implementation(cons
 
 void AHellunaLobbyController::Client_ExecutePartyDeploy_Implementation(int32 GameServerPort)
 {
+	// [Fix44-C1] Deploy 성공 → 플래그 리셋 (ClientTravel 실패 시 영구 차단 방지)
+	bDeployInProgress = false;
+
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Client_ExecutePartyDeploy | Port=%d"), GameServerPort);
 
 	UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance());
