@@ -556,6 +556,11 @@ void UInv_InventoryComponent::RestoreFromSaveData(
 	bInventoryRestored = true;
 }
 
+bool UInv_InventoryComponent::Server_AddStacksToItem_Validate(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder)
+{
+	return StackCount >= 0 && Remainder >= 0;
+}
+
 void UInv_InventoryComponent::Server_AddStacksToItem_Implementation(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder) // 서버에서 아이템 스택 개수를 세어주는 역할.
 {
 	const FGameplayTag& ItemType = IsValid(ItemComponent) ? ItemComponent->GetItemManifest().GetItemType() : FGameplayTag::EmptyTag; // 아이템 유형 가져오기
@@ -730,6 +735,11 @@ void UInv_InventoryComponent::SpawnDroppedItem(UInv_InventoryItem* Item, int32 S
 		StackableFragment->SetStackCount(StackCount); // 스택 수 설정
 	}
 	ItemManifest.SpawnPickupActor(this,SpawnLocation, SpawnRotation); // 아이템 매니페스트로 픽업 액터 생성
+}
+
+bool UInv_InventoryComponent::Server_ConsumeItem_Validate(UInv_InventoryItem* Item)
+{
+	return true;
 }
 
 // 아이템 소비 상호작용을 누른 뒤 서버에서 어떻게 처리를 할지.
@@ -1357,6 +1367,11 @@ void UInv_InventoryComponent::Server_CraftItemWithMaterials_Implementation(
 #endif
 }
 
+bool UInv_InventoryComponent::Server_ConsumeMaterials_Validate(const FGameplayTag& MaterialTag, int32 Amount)
+{
+	return MaterialTag.IsValid() && Amount > 0;
+}
+
 // 재료 소비 (Building 시스템용) - Server_DropItem과 동일한 로직 사용
 void UInv_InventoryComponent::Server_ConsumeMaterials_Implementation(const FGameplayTag& MaterialTag, int32 Amount)
 {
@@ -1499,6 +1514,11 @@ int32 UInv_InventoryComponent::GetTotalMaterialCount(const FGameplayTag& Materia
 		*MaterialTag.ToString(), TotalCount);
 #endif
 	return TotalCount;
+}
+
+bool UInv_InventoryComponent::Server_ConsumeMaterialsMultiStack_Validate(const FGameplayTag& MaterialTag, int32 Amount)
+{
+	return MaterialTag.IsValid() && Amount > 0;
 }
 
 // 재료 소비 - 여러 스택에서 차감 (Building 시스템용)
@@ -1656,6 +1676,11 @@ void UInv_InventoryComponent::Server_ConsumeMaterialsMultiStack_Implementation(c
 #endif
 }
 
+bool UInv_InventoryComponent::Server_UpdateItemStackCount_Validate(UInv_InventoryItem* Item, int32 NewStackCount)
+{
+	return NewStackCount > 0;
+}
+
 // Split 시 서버의 TotalStackCount 업데이트
 void UInv_InventoryComponent::Server_UpdateItemStackCount_Implementation(UInv_InventoryItem* Item, int32 NewStackCount)
 {
@@ -1794,6 +1819,11 @@ void UInv_InventoryComponent::Multicast_ConsumeMaterialsUI_Implementation(const 
 	UE_LOG(LogTemp, Warning, TEXT("✅ UI(GridSlot) 차감 완료!"));
 	UE_LOG(LogTemp, Warning, TEXT("=== Multicast_ConsumeMaterialsUI 완료 ==="));
 #endif
+}
+
+bool UInv_InventoryComponent::Server_EquipSlotClicked_Validate(UInv_InventoryItem* ItemToEquip, UInv_InventoryItem* ItemToUnequip, int32 WeaponSlotIndex)
+{
+	return WeaponSlotIndex >= -1 && WeaponSlotIndex <= 1;
 }
 
 // 아이템 장착 상호작용을 누른 뒤 서버에서 어떻게 처리를 할지.
@@ -2121,6 +2151,11 @@ void UInv_InventoryComponent::Server_AttachItemToWeapon_Implementation(int32 Wea
 //   6. 무기 장비 슬롯 장착 중이면 부착물 스탯 해제
 //   7. 리플리케이션
 // ════════════════════════════════════════════════════════════════
+bool UInv_InventoryComponent::Server_DetachItemFromWeapon_Validate(int32 WeaponEntryIndex, int32 SlotIndex)
+{
+	return WeaponEntryIndex >= 0 && SlotIndex >= 0;
+}
+
 void UInv_InventoryComponent::Server_DetachItemFromWeapon_Implementation(int32 WeaponEntryIndex, int32 SlotIndex)
 {
 #if INV_DEBUG_ATTACHMENT
@@ -2478,6 +2513,11 @@ void UInv_InventoryComponent::CloseOtherMenus()
 }
 
 // ⭐ InventoryList 기반 공간 체크 (서버 전용, UI 없이 작동!)
+bool UInv_InventoryComponent::Server_SplitItemEntry_Validate(UInv_InventoryItem* OriginalItem, int32 OriginalNewStackCount, int32 SplitStackCount, int32 TargetGridIndex)
+{
+	return OriginalNewStackCount > 0 && SplitStackCount > 0;
+}
+
 // ⭐ Phase 8: Split 시 서버에서 새 Entry 생성 (포인터 분리)
 void UInv_InventoryComponent::Server_SplitItemEntry_Implementation(UInv_InventoryItem* OriginalItem, int32 OriginalNewStackCount, int32 SplitStackCount, int32 TargetGridIndex)
 {
@@ -2585,6 +2625,11 @@ void UInv_InventoryComponent::Server_SplitItemEntry_Implementation(UInv_Inventor
 	{
 		OnItemAdded.Broadcast(NewItem, NewEntryIndex);
 	}
+}
+
+bool UInv_InventoryComponent::Server_UpdateItemGridPosition_Validate(UInv_InventoryItem* Item, int32 GridIndex, uint8 GridCategory, bool bRotated)
+{
+	return GridCategory <= 2;
 }
 
 // ⭐ [Phase 4 방법2] 클라이언트 Grid 위치를 서버 Entry에 동기화
@@ -3837,6 +3882,11 @@ void UInv_InventoryComponent::Server_PutItemInContainer_Implementation(
 	{
 		OnItemRemoved.Broadcast(ItemToMove, PlayerEntryIndex);
 	}
+}
+
+bool UInv_InventoryComponent::Server_TakeAllFromContainer_Validate(UInv_LootContainerComponent* Container)
+{
+	return true;
 }
 
 void UInv_InventoryComponent::Server_TakeAllFromContainer_Implementation(

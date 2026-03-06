@@ -124,8 +124,9 @@ public:
 	 * - DefenseGameMode::ProcessLogin() 호출
 	 * - 계정 검증 후 Client_LoginResult()로 결과 전달
 	 */
-	UFUNCTION(Server, Reliable)
+	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_RequestLogin(const FString& PlayerId, const FString& Password);
+	bool Server_RequestLogin_Validate(const FString& PlayerId, const FString& Password);
 
 	// ============================================
 	// 📌 SeamlessTravel 후 Controller 스왑 요청
@@ -133,8 +134,9 @@ public:
 	// ShowLoginWidget()에서 이미 로그인된 상태 감지 시 호출
 	// 서버에서 SwapToGameController() 실행
 	// ============================================
-	UFUNCTION(Server, Reliable)
+	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_RequestSwapAfterTravel();
+	bool Server_RequestSwapAfterTravel_Validate();
 
 	/**
 	 * [서버 → 클라이언트] 로그인 결과 전달
@@ -174,8 +176,9 @@ public:
 	 * - 중복 체크 후 결과 전달
 	 * - 성공 시 SwapToGameController → SpawnHeroCharacter
 	 */
-	UFUNCTION(Server, Reliable)
+	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_SelectCharacter(int32 CharacterIndex);
+	bool Server_SelectCharacter_Validate(int32 CharacterIndex);
 
 	/**
 	 * [서버 → 클라이언트] 캐릭터 선택 결과 전달

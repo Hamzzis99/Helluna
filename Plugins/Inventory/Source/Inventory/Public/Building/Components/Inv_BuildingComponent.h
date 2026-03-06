@@ -64,12 +64,21 @@ private:
 	void ConsumeMaterials(const FGameplayTag& MaterialTag, int32 Amount);
 
 	// 서버 RPC: 건물 배치 요청
-	UFUNCTION(Server, Reliable)
+	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_PlaceBuilding(
-		TSubclassOf<AActor> BuildingClass, 
-		FVector Location, 
-		FRotator Rotation, 
-		FGameplayTag MaterialTag1, 
+		TSubclassOf<AActor> BuildingClass,
+		FVector Location,
+		FRotator Rotation,
+		FGameplayTag MaterialTag1,
+		int32 MaterialAmount1,
+		FGameplayTag MaterialTag2,
+		int32 MaterialAmount2
+	);
+	bool Server_PlaceBuilding_Validate(
+		TSubclassOf<AActor> BuildingClass,
+		FVector Location,
+		FRotator Rotation,
+		FGameplayTag MaterialTag1,
 		int32 MaterialAmount1,
 		FGameplayTag MaterialTag2,
 		int32 MaterialAmount2

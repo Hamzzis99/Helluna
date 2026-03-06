@@ -34,6 +34,8 @@ AInv_PlayerController::AInv_PlayerController()
 void AInv_PlayerController::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	if (InventoryComponent.IsValid() && InventoryComponent->IsMenuOpen()) return;
+	if (bIsViewingContainer) return;
 	TraceForInteractables();
 }
 
@@ -337,9 +339,11 @@ void AInv_PlayerController::PrimaryInteract()
 
 bool AInv_PlayerController::Server_Interact_Validate(AActor* TargetActor)
 {
-	// 기본 검증: nullptr은 허용 (함수 내에서 처리)
-	// 추가 검증이 필요하면 여기에 추가
-	return true;
+	if (!TargetActor) return true;
+	APawn* MyPawn = GetPawn();
+	if (!MyPawn) return true;
+	const double MaxDist = TraceLength * 2.0;
+	return FVector::DistSquared(MyPawn->GetActorLocation(), TargetActor->GetActorLocation()) <= FMath::Square(MaxDist);
 }
 
 void AInv_PlayerController::Server_Interact_Implementation(AActor* TargetActor)
@@ -1699,6 +1703,11 @@ AInv_EquipActor* AInv_PlayerController::GetCurrentEquipActor() const
 // Phase 9: 컨테이너 RPC 구현
 // ════════════════════════════════════════════════════════════════
 
+bool AInv_PlayerController::Server_OpenContainer_Validate(UInv_LootContainerComponent* Container)
+{
+	return true;
+}
+
 void AInv_PlayerController::Server_OpenContainer_Implementation(UInv_LootContainerComponent* Container)
 {
 	if (!IsValid(Container)) return;
@@ -1722,6 +1731,11 @@ void AInv_PlayerController::Server_OpenContainer_Implementation(UInv_LootContain
 	ActiveContainerComp = Container;
 
 	Client_ShowContainerUI(Container);
+}
+
+bool AInv_PlayerController::Server_CloseContainer_Validate()
+{
+	return true;
 }
 
 void AInv_PlayerController::Server_CloseContainer_Implementation()

@@ -344,12 +344,14 @@ public:
 	bool IsViewingContainer() const { return bIsViewingContainer; }
 
 	/** [클라이언트 → 서버] 컨테이너 열기 요청 */
-	UFUNCTION(Server, Reliable)
+	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_OpenContainer(UInv_LootContainerComponent* Container);
+	bool Server_OpenContainer_Validate(UInv_LootContainerComponent* Container);
 
 	/** [클라이언트 → 서버] 컨테이너 닫기 요청 */
-	UFUNCTION(Server, Reliable)
+	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_CloseContainer();
+	bool Server_CloseContainer_Validate();
 
 	/** [서버 → 클라이언트] 컨테이너 UI 표시 */
 	UFUNCTION(Client, Reliable)

@@ -385,6 +385,11 @@ void UWeaponBridgeComponent::DestroyHandWeapon()
 // ⭐ 소유 클라이언트 → 서버: 부착물 전달 요청
 // ⭐ 서버에서 EquipActor 데이터가 존재하므로 서버에서 읽어서 Multicast
 // ============================================
+bool UWeaponBridgeComponent::Server_RequestAttachmentTransfer_Validate(AInv_EquipActor* EquipActor)
+{
+	return true;
+}
+
 void UWeaponBridgeComponent::Server_RequestAttachmentTransfer_Implementation(AInv_EquipActor* EquipActor)
 {
 	if (!IsValid(EquipActor)) return;

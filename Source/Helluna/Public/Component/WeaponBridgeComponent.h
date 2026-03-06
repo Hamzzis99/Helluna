@@ -182,8 +182,9 @@ private:
 	// ⭐ 멀티플레이 부착물 시각 리플리케이션
 	// ============================================
 	// 소유 클라이언트 → 서버: 부착물 전달 요청
-	UFUNCTION(Server, Reliable)
+	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_RequestAttachmentTransfer(AInv_EquipActor* EquipActor);
+	bool Server_RequestAttachmentTransfer_Validate(AInv_EquipActor* EquipActor);
 
 	// 서버 → 모든 클라이언트: 부착물 시각 데이터 전송
 	UFUNCTION(NetMulticast, Reliable)

@@ -39,8 +39,10 @@ void AHellunaLoginController::BeginPlay()
 {
 	Super::BeginPlay();
 
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 	// 📌 디버깅: 클라이언트/서버 구분을 위한 태그
 	FString RoleTag = HasAuthority() ? TEXT("SERVER") : TEXT("CLIENT");
+#endif
 
 #if HELLUNA_DEBUG_LOGINCONTROLLER
 	UE_LOG(LogHelluna, Warning, TEXT(""));
@@ -65,7 +67,9 @@ void AHellunaLoginController::BeginPlay()
 
 	if (!LoginWidgetClass)
 	{
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 		UE_LOG(LogHelluna, Error, TEXT("[LoginController][%s] LoginWidgetClass 미설정!"), *RoleTag);
+#endif
 // [Step4] 프로덕션 빌드에서 디버그 메시지 제거
 #if HELLUNA_DEBUG_LOGINCONTROLLER
 		if (GEngine)
@@ -78,7 +82,9 @@ void AHellunaLoginController::BeginPlay()
 
 	if (!GameControllerClass)
 	{
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 		UE_LOG(LogHelluna, Error, TEXT("[LoginController][%s] GameControllerClass 미설정!"), *RoleTag);
+#endif
 #if HELLUNA_DEBUG_LOGINCONTROLLER
 		if (GEngine)
 		{
@@ -138,7 +144,9 @@ void AHellunaLoginController::BeginPlay()
 
 void AHellunaLoginController::ShowLoginWidget()
 {
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 	FString RoleTag = HasAuthority() ? TEXT("SERVER") : TEXT("CLIENT");
+#endif
 
 #if HELLUNA_DEBUG_LOGINCONTROLLER
 	UE_LOG(LogHelluna, Warning, TEXT(""));
@@ -318,6 +326,11 @@ void AHellunaLoginController::OnLoginButtonClicked(const FString& PlayerId, cons
 // ShowLoginWidget()에서 이미 로그인된 상태 감지 시 호출
 // 서버에서 SwapToGameController() 실행
 // ============================================
+bool AHellunaLoginController::Server_RequestSwapAfterTravel_Validate()
+{
+	return true;
+}
+
 void AHellunaLoginController::Server_RequestSwapAfterTravel_Implementation()
 {
 #if HELLUNA_DEBUG_LOGINCONTROLLER
@@ -370,6 +383,11 @@ void AHellunaLoginController::Server_RequestSwapAfterTravel_Implementation()
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[LoginController] ⚠️ GameMode를 찾을 수 없음!"));
 	}
+}
+
+bool AHellunaLoginController::Server_RequestLogin_Validate(const FString& PlayerId, const FString& Password)
+{
+	return PlayerId.Len() <= 64 && Password.Len() <= 128;
 }
 
 void AHellunaLoginController::Server_RequestLogin_Implementation(const FString& PlayerId, const FString& Password)
@@ -475,6 +493,11 @@ void AHellunaLoginController::ShowLoginResult(bool bSuccess, const FString& Mess
 // ============================================
 // 🎭 캐릭터 선택 시스템 (Phase 3)
 // ============================================
+
+bool AHellunaLoginController::Server_SelectCharacter_Validate(int32 CharacterIndex)
+{
+	return CharacterIndex >= 0 && CharacterIndex <= 2;
+}
 
 void AHellunaLoginController::Server_SelectCharacter_Implementation(int32 CharacterIndex)
 {

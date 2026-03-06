@@ -512,6 +512,18 @@ void UInv_BuildingComponent::TryPlaceBuilding()
 #endif
 }
 
+bool UInv_BuildingComponent::Server_PlaceBuilding_Validate(
+	TSubclassOf<AActor> BuildingClass,
+	FVector Location,
+	FRotator Rotation,
+	FGameplayTag MaterialTag1,
+	int32 MaterialAmount1,
+	FGameplayTag MaterialTag2,
+	int32 MaterialAmount2)
+{
+	return BuildingClass != nullptr && MaterialAmount1 >= 0 && MaterialAmount2 >= 0 && !Location.ContainsNaN() && !Rotation.ContainsNaN();
+}
+
 void UInv_BuildingComponent::Server_PlaceBuilding_Implementation(
 	TSubclassOf<AActor> BuildingClass, 
 	FVector Location, 
