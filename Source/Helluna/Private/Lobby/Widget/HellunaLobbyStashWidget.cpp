@@ -38,6 +38,7 @@
 #include "Components/ScrollBox.h"
 #include "Components/EditableTextBox.h"
 #include "Components/VerticalBox.h"
+#include "Components/HorizontalBox.h"
 
 // 로그 카테고리 (공유 헤더 — DEFINE은 HellunaLobbyGameMode.cpp)
 #include "Lobby/HellunaLobbyLog.h"
@@ -415,6 +416,9 @@ void UHellunaLobbyStashWidget::SwitchToTab(int32 TabIndex)
 	if (TabIndex == LobbyTab::Play)
 	{
 		UpdateStartButtonForPartyState();
+
+		// [Phase 12j] 네임태그 갱신
+		UpdateNameTagOverlays();
 	}
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] SwitchToTab(%d) — %s"),
@@ -537,6 +541,9 @@ void UHellunaLobbyStashWidget::SetupCenterPreview(AHellunaCharacterSelectSceneV2
 
 	// [Phase 12h] 초기 버튼 상태 설정
 	UpdateStartButtonForPartyState();
+
+	// [Phase 12j] 초기 네임태그
+	UpdateNameTagOverlays();
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -753,6 +760,9 @@ void UHellunaLobbyStashWidget::OnPartyStateChangedHandler(const FHellunaPartyInf
 
 	// [Phase 12i] 채팅 패널 표시/숨김
 	UpdatePlayChatVisibility();
+
+	// [Phase 12j] 네임태그 오버레이
+	UpdateNameTagOverlays();
 }
 
 void UHellunaLobbyStashWidget::UpdateStartButtonForPartyState()
@@ -900,4 +910,150 @@ void UHellunaLobbyStashWidget::UpdatePlayChatVisibility()
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase 12i] 채팅 패널: %s"),
 		bInParty ? TEXT("Visible") : TEXT("Collapsed"));
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 12j] 네임태그 오버레이
+// ════════════════════════════════════════════════════════════════════════════════
+
+void UHellunaLobbyStashWidget::UpdateNameTagOverlays()
+{
+	AHellunaLobbyController* LobbyPC = GetLobbyController();
+	if (!LobbyPC)
+	{
+		HideAllNameTags();
+		return;
+	}
+
+	const FHellunaPartyInfo& Info = LobbyPC->CurrentPartyInfo;
+	const bool bInParty = Info.IsValid() && Info.Members.Num() >= 2;
+
+	if (bInParty)
+	{
+		// 파티 모드 — 솔로 숨기고 슬롯 3개 표시
+		if (NameTag_Solo)
+		{
+			NameTag_Solo->SetVisibility(ESlateVisibility::Collapsed);
+		}
+
+		UVerticalBox* SlotWidgets[3] = { NameTag_Slot0, NameTag_Slot1, NameTag_Slot2 };
+
+		for (int32 i = 0; i < 3; ++i)
+		{
+			if (!SlotWidgets[i]) continue;
+
+			if (i < Info.Members.Num())
+			{
+				const auto& Member = Info.Members[i];
+				const bool bMemberIsLeader = (Member.Role == EHellunaPartyRole::Leader);
+				SetNameTagContent(SlotWidgets[i], Member.DisplayName, Member.bIsReady, bMemberIsLeader);
+				SlotWidgets[i]->SetVisibility(ESlateVisibility::HitTestInvisible);
+			}
+			else
+			{
+				SlotWidgets[i]->SetVisibility(ESlateVisibility::Collapsed);
+			}
+		}
+
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase 12j] 파티 네임태그 %d명 표시"), Info.Members.Num());
+	}
+	else
+	{
+		// 솔로 모드 — 슬롯 숨기고 솔로 표시
+		for (UVerticalBox* Tag : { NameTag_Slot0, NameTag_Slot1, NameTag_Slot2 })
+		{
+			if (Tag) Tag->SetVisibility(ESlateVisibility::Collapsed);
+		}
+
+		if (NameTag_Solo)
+		{
+			const FString PlayerName = LobbyPC->GetPlayerId();
+			SetNameTagContent(NameTag_Solo, PlayerName, false, false);
+			NameTag_Solo->SetVisibility(ESlateVisibility::HitTestInvisible);
+		}
+
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase 12j] 솔로 네임태그 표시"));
+	}
+}
+
+void UHellunaLobbyStashWidget::SetNameTagContent(UVerticalBox* NameTag, const FString& PlayerName, bool bIsReady, bool bIsLeader)
+{
+	if (!NameTag) return;
+
+	// NameTag 내부 구조 (BP에서 생성):
+	// VBox
+	//   [0] HBox_NameRow
+	//       [0] Image_LeaderStar (리더만 Visible)
+	//       [1] Text_PlayerName
+	//   [1] HBox_ReadyRow
+	//       [0] Image_ReadyLED
+	//       [1] Text_ReadyStatus
+	if (NameTag->GetChildrenCount() < 2) return;
+
+	UWidget* NameRow = NameTag->GetChildAt(0);
+	UWidget* ReadyRow = NameTag->GetChildAt(1);
+
+	// ── 닉네임 ──
+	if (UHorizontalBox* HNameRow = Cast<UHorizontalBox>(NameRow))
+	{
+		if (HNameRow->GetChildrenCount() >= 2)
+		{
+			// 리더 별 아이콘
+			UWidget* StarWidget = HNameRow->GetChildAt(0);
+			if (StarWidget)
+			{
+				StarWidget->SetVisibility(bIsLeader ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+			}
+
+			// 닉네임 텍스트
+			if (UTextBlock* NameText = Cast<UTextBlock>(HNameRow->GetChildAt(1)))
+			{
+				NameText->SetText(FText::FromString(PlayerName));
+
+				// 리더 = 골드, 멤버 = 밝은 회색
+				const FLinearColor NameColor = bIsLeader
+					? FLinearColor(0.918f, 0.702f, 0.031f, 1.f)   // #EAB308
+					: FLinearColor(0.63f, 0.63f, 0.67f, 1.f);     // #A1A1AA
+				NameText->SetColorAndOpacity(FSlateColor(NameColor));
+			}
+		}
+	}
+
+	// ── Ready 상태 ──
+	if (UHorizontalBox* HReadyRow = Cast<UHorizontalBox>(ReadyRow))
+	{
+		if (HReadyRow->GetChildrenCount() >= 2)
+		{
+			// Ready LED (Image)
+			if (UImage* LED = Cast<UImage>(HReadyRow->GetChildAt(0)))
+			{
+				const FLinearColor LEDColor = bIsReady
+					? FLinearColor(0.133f, 0.773f, 0.369f, 1.f)   // #22C55E
+					: FLinearColor(0.322f, 0.322f, 0.353f, 1.f);  // #52525B
+				LED->SetColorAndOpacity(LEDColor);
+			}
+
+			// Ready 텍스트
+			if (UTextBlock* ReadyText = Cast<UTextBlock>(HReadyRow->GetChildAt(1)))
+			{
+				ReadyText->SetText(FText::FromString(bIsReady ? TEXT("READY") : TEXT("NOT READY")));
+
+				const FLinearColor ReadyColor = bIsReady
+					? FLinearColor(0.133f, 0.773f, 0.369f, 1.f)
+					: FLinearColor(0.322f, 0.322f, 0.353f, 1.f);
+				ReadyText->SetColorAndOpacity(FSlateColor(ReadyColor));
+			}
+		}
+	}
+}
+
+void UHellunaLobbyStashWidget::HideAllNameTags()
+{
+	for (UVerticalBox* Tag : { NameTag_Slot0, NameTag_Slot1, NameTag_Slot2, NameTag_Solo })
+	{
+		if (Tag)
+		{
+			Tag->SetVisibility(ESlateVisibility::Collapsed);
+		}
+	}
 }

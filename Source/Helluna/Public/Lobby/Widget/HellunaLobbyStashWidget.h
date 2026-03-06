@@ -188,6 +188,22 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UVerticalBox> PlayChatBox;
 
+	// ── [Phase 12j] 캐릭터 네임태그 오버레이 ──
+	// 3개의 네임태그 컨테이너 (파티 슬롯 0=좌, 1=중앙(리더), 2=우)
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UVerticalBox> NameTag_Slot0;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UVerticalBox> NameTag_Slot1;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UVerticalBox> NameTag_Slot2;
+
+	// 솔로 모드 네임태그
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UVerticalBox> NameTag_Solo;
+
 	// ── Loadout 탭 (Page 1) — 기존 ──
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UHellunaLobbyPanel> StashPanel;
@@ -308,6 +324,19 @@ private:
 
 	/** 파티 상태에 따라 채팅 패널 표시/숨김 */
 	void UpdatePlayChatVisibility();
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 12j] 네임태그 갱신
+	// ════════════════════════════════════════════════════════════════
+
+	/** 파티 상태에 따라 네임태그 업데이트 */
+	void UpdateNameTagOverlays();
+
+	/** 개별 슬롯 네임태그 설정 */
+	void SetNameTagContent(UVerticalBox* NameTag, const FString& PlayerName, bool bIsReady, bool bIsLeader);
+
+	/** 네임태그 전부 숨기기 */
+	void HideAllNameTags();
 
 	// ════════════════════════════════════════════════════════════════
 	// 내부 상태
