@@ -43,6 +43,9 @@
 // 🦸 히어로 캐릭터 (HellunaHeroCharacter - EndPlay 저장, 입력 바인딩, 무기 스폰/파괴, 우주선 수리)
 #define HELLUNA_DEBUG_HERO 0
 
+// 🔫 무기 브릿지 (WeaponBridgeComponent - 장비 요청, 어태치먼트 비주얼, 무기 장착/해제)
+#define HELLUNA_DEBUG_WEAPON_BRIDGE 0
+
 // ════════════════════════════════════════════════════════════════════════════════
 
 DECLARE_LOG_CATEGORY_EXTERN(LogHelluna, Log, All);

@@ -66,21 +66,26 @@ void AHellunaLoginController::BeginPlay()
 	if (!LoginWidgetClass)
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[LoginController][%s] LoginWidgetClass 미설정!"), *RoleTag);
+// [Step4] 프로덕션 빌드에서 디버그 메시지 제거
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 		if (GEngine)
 		{
 			GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Red,
 				TEXT("LoginWidgetClass 미설정! BP에서 설정 필요"));
 		}
+#endif
 	}
 
 	if (!GameControllerClass)
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[LoginController][%s] GameControllerClass 미설정!"), *RoleTag);
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 		if (GEngine)
 		{
 			GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Red,
 				TEXT("GameControllerClass 미설정! BP에서 설정 필요"));
 		}
+#endif
 	}
 
 	// 📌 클라이언트에서만 위젯 표시
@@ -91,11 +96,13 @@ void AHellunaLoginController::BeginPlay()
 #endif
 
 		// 📌 화면에 디버그 메시지 표시 (클라이언트에서만 보임)
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 		if (GEngine)
 		{
 			GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Green,
 				FString::Printf(TEXT("✅ LoginController BeginPlay - 위젯 타이머 시작! (IsLocal: TRUE)")));
 		}
+#endif
 
 		FInputModeUIOnly InputMode;
 		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
@@ -113,6 +120,7 @@ void AHellunaLoginController::BeginPlay()
 #endif
 
 		// 📌 화면에 디버그 메시지 표시 (왜 스킵되는지 확인)
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 		if (GEngine && !HasAuthority())  // 클라이언트에서만 표시
 		{
 			GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Red,
@@ -120,6 +128,7 @@ void AHellunaLoginController::BeginPlay()
 					IsLocalController() ? TEXT("T") : TEXT("F"),
 					LoginWidgetClass ? TEXT("OK") : TEXT("NULL")));
 		}
+#endif
 	}
 
 #if HELLUNA_DEBUG_LOGINCONTROLLER
@@ -215,6 +224,7 @@ void AHellunaLoginController::ShowLoginWidget()
 		UE_LOG(LogHelluna, Warning, TEXT("[LoginController] 위젯 생성: %s"), LoginWidget ? TEXT("✅ 성공") : TEXT("❌ 실패"));
 #endif
 
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 		if (GEngine)
 		{
 			if (LoginWidget)
@@ -228,6 +238,7 @@ void AHellunaLoginController::ShowLoginWidget()
 					TEXT("❌ 로그인 위젯 생성 실패!"));
 			}
 		}
+#endif
 	}
 
 	if (LoginWidget && !LoginWidget->IsInViewport())
@@ -238,11 +249,13 @@ void AHellunaLoginController::ShowLoginWidget()
 #endif
 
 		// 📌 화면에 성공 메시지 표시
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 		if (GEngine)
 		{
 			GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Green,
 				TEXT("✅ 로그인 위젯이 Viewport에 추가됨!"));
 		}
+#endif
 	}
 	else
 	{
@@ -761,9 +774,11 @@ void AHellunaLoginController::SpawnPreviewActors()
 			if (const FString* Path = HighlightPaths.Find(HeroType))
 			{
 				HighlightMat = Cast<UMaterialInterface>(StaticLoadObject(UMaterialInterface::StaticClass(), nullptr, **Path));
+#if HELLUNA_DEBUG_CHARACTER_PREVIEW
 				UE_LOG(LogTemp, Warning, TEXT("[V1 Highlight Fallback] %s → %s"),
 					*UEnum::GetValueAsString(HeroType),
 					HighlightMat ? *HighlightMat->GetName() : TEXT("LOAD FAILED"));
+#endif
 			}
 		}
 

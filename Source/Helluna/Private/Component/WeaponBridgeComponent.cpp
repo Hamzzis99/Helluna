@@ -25,6 +25,7 @@
 #include "Weapon/HellunaHeroWeapon.h"
 #include "Abilities/GameplayAbility.h"
 #include "Net/UnrealNetwork.h"
+#include "Helluna.h"  // [Step4] HELLUNA_DEBUG_WEAPON_BRIDGE 매크로
 
 // ============================================
 // ⭐ 생성자
@@ -51,6 +52,41 @@ void UWeaponBridgeComponent::BeginPlay()
 }
 
 // ============================================
+// [Step4 H-05] EndPlay - 델리게이트 및 타이머 정리
+// ============================================
+// BeginPlay에서 EquipmentComponent/InventoryComponent에 바인딩한 델리게이트를
+// 컴포넌트 파괴 시 명시적으로 해제한다.
+// 해제하지 않으면 EquipmentComponent가 이벤트를 브로드캐스트할 때
+// 이미 파괴된 WeaponBridgeComponent의 함수를 호출하여 크래시 발생 가능.
+// ============================================
+void UWeaponBridgeComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	// 델리게이트 해제 — EquipmentComponent
+	if (EquipmentComponent.IsValid())
+	{
+		EquipmentComponent->OnWeaponEquipRequested.RemoveDynamic(this, &ThisClass::OnWeaponEquipRequested);
+	}
+
+	// 델리게이트 해제 — InventoryComponent (부착물 시각 변경)
+	if (InventoryComponent.IsValid())
+	{
+		if (UInv_InventoryComponent* InvComp = InventoryComponent.Get())
+		{
+			InvComp->OnWeaponAttachmentVisualChanged.RemoveDynamic(this, &ThisClass::OnWeaponAttachmentVisualChanged);
+		}
+	}
+
+	// 타이머 정리
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(AttachmentTransferTimerHandle);
+		World->GetTimerManager().ClearTimer(MulticastVisualTimerHandle);
+	}
+
+	Super::EndPlay(EndPlayReason);
+}
+
+// ============================================
 // ⭐ SetEquipping
 // ⭐ 장착 애니메이션 진행 상태 변경
 // ⭐ true: 장착 중 (무기 전환 차단)
@@ -66,8 +102,10 @@ void UWeaponBridgeComponent::SetEquipping(bool bNewEquipping)
 		EquipmentComponent->SetWeaponEquipping(bNewEquipping);
 	}
 	
-	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] SetEquipping: %s"), 
+#if HELLUNA_DEBUG_WEAPON_BRIDGE
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] SetEquipping: %s"),
 		bIsEquipping ? TEXT("true (장착 중 - 전환 차단)") : TEXT("false (장착 완료 - 전환 허용)"));
+#endif
 }
 
 // ============================================
@@ -77,40 +115,52 @@ void UWeaponBridgeComponent::SetEquipping(bool bNewEquipping)
 // ============================================
 void UWeaponBridgeComponent::InitializeWeaponBridge()
 {
+#if HELLUNA_DEBUG_WEAPON_BRIDGE
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] InitializeWeaponBridge 시작"));
-	
+#endif
+
 	// ⭐ Character 참조 가져오기
 	// 이 컴포넌트는 HellunaHeroCharacter에 부착됨
 	OwningCharacter = Cast<AHellunaHeroCharacter>(GetOwner());
 	if (!OwningCharacter.IsValid())
 	{
-		UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] OwningCharacter가 null! GetOwner: %s"), 
+#if HELLUNA_DEBUG_WEAPON_BRIDGE
+		UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] OwningCharacter가 null! GetOwner: %s"),
 			GetOwner() ? *GetOwner()->GetName() : TEXT("nullptr"));
+#endif
 		return;
 	}
+#if HELLUNA_DEBUG_WEAPON_BRIDGE
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] OwningCharacter 찾음: %s"), *OwningCharacter->GetName());
-	
+#endif
+
 	// ⭐ ASC 참조 가져오기 (GA 활성화에 필수!)
 	AbilitySystemComponent = Cast<UHellunaAbilitySystemComponent>(
 		OwningCharacter->GetAbilitySystemComponent()
 	);
 	if (AbilitySystemComponent.IsValid())
 	{
+#if HELLUNA_DEBUG_WEAPON_BRIDGE
 		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] AbilitySystemComponent 찾음"));
+#endif
 	}
 	else
 	{
+#if HELLUNA_DEBUG_WEAPON_BRIDGE
 		UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] AbilitySystemComponent를 찾을 수 없음!"));
+#endif
 	}
 	
 	// ⭐ EquipmentComponent 찾기
 	// EquipmentComponent는 PlayerController에 부착되어 있음
 	if (APlayerController* PC = Cast<APlayerController>(OwningCharacter->GetController()))
 	{
+#if HELLUNA_DEBUG_WEAPON_BRIDGE
 		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] PlayerController 찾음: %s"), *PC->GetName());
-		
+#endif
+
 		EquipmentComponent = PC->FindComponentByClass<UInv_EquipmentComponent>();
-		
+
 		if (EquipmentComponent.IsValid())
 		{
 			// ⭐ 델리게이트 바인딩
@@ -118,12 +168,16 @@ void UWeaponBridgeComponent::InitializeWeaponBridge()
 			if (!EquipmentComponent->OnWeaponEquipRequested.IsAlreadyBound(this, &ThisClass::OnWeaponEquipRequested))
 			{
 				EquipmentComponent->OnWeaponEquipRequested.AddDynamic(this, &ThisClass::OnWeaponEquipRequested);
+#if HELLUNA_DEBUG_WEAPON_BRIDGE
 				UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 델리게이트 바인딩 성공!"));
+#endif
 			}
 		}
 		else
 		{
+#if HELLUNA_DEBUG_WEAPON_BRIDGE
 			UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] EquipmentComponent를 찾을 수 없음!"));
+#endif
 		}
 
 		// ============================================
@@ -137,13 +191,17 @@ void UWeaponBridgeComponent::InitializeWeaponBridge()
 			if (!InvComp->OnWeaponAttachmentVisualChanged.IsAlreadyBound(this, &ThisClass::OnWeaponAttachmentVisualChanged))
 			{
 				InvComp->OnWeaponAttachmentVisualChanged.AddDynamic(this, &ThisClass::OnWeaponAttachmentVisualChanged);
+#if HELLUNA_DEBUG_WEAPON_BRIDGE
 				UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 부착물 시각 변경 델리게이트 바인딩 성공!"));
+#endif
 			}
 		}
 	}
 	else
 	{
+#if HELLUNA_DEBUG_WEAPON_BRIDGE
 		UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] PlayerController를 찾을 수 없음!"));
+#endif
 	}
 }
 
@@ -164,17 +222,18 @@ void UWeaponBridgeComponent::OnWeaponEquipRequested(
 	bool bEquip,
 	int32 WeaponSlotIndex)
 {
-
+#if HELLUNA_DEBUG_WEAPON_BRIDGE
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] OnWeaponEquipRequested 수신!"));
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] - WeaponTag: %s"), *WeaponTag.ToString());
-	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] - BackWeaponActor: %s"), 
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] - BackWeaponActor: %s"),
 		BackWeaponActor ? *BackWeaponActor->GetName() : TEXT("nullptr"));
-	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] - SpawnWeaponAbility: %s"), 
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] - SpawnWeaponAbility: %s"),
 		SpawnWeaponAbility ? *SpawnWeaponAbility->GetName() : TEXT("nullptr"));
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] - bEquip: %s"), bEquip ? TEXT("true (꺼내기)") : TEXT("false (집어넣기)"));
-	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] - WeaponSlotIndex: %d (%s)"), 
+	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] - WeaponSlotIndex: %d (%s)"),
 		WeaponSlotIndex, WeaponSlotIndex == 0 ? TEXT("주무기") : TEXT("보조무기"));
-	
+#endif
+
 	if (bEquip)
 	{
 		// ⭐ 무기 꺼내기 - GA 활성화
@@ -209,21 +268,29 @@ void UWeaponBridgeComponent::OnWeaponEquipRequested(
 // ============================================
 void UWeaponBridgeComponent::SpawnHandWeapon(TSubclassOf<UGameplayAbility> SpawnWeaponAbility)
 {
+#if HELLUNA_DEBUG_WEAPON_BRIDGE
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] SpawnHandWeapon 시작 (GA 방식)"));
-	
+#endif
+
 	if (!SpawnWeaponAbility)
 	{
+#if HELLUNA_DEBUG_WEAPON_BRIDGE
 		UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] SpawnWeaponAbility가 null!"));
+#endif
 		return;
 	}
-	
+
 	if (!AbilitySystemComponent.IsValid())
 	{
+#if HELLUNA_DEBUG_WEAPON_BRIDGE
 		UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] AbilitySystemComponent가 null!"));
+#endif
 		return;
 	}
-	
+
+#if HELLUNA_DEBUG_WEAPON_BRIDGE
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] GA 활성화 시도: %s"), *SpawnWeaponAbility->GetName());
+#endif
 	
 	// ⭐ GA 활성화!
 	// 팀원의 GA_SpawnWeapon 내부에서 Server_RequestSpawnWeapon, 몽타주 등 처리됨
@@ -231,8 +298,10 @@ void UWeaponBridgeComponent::SpawnHandWeapon(TSubclassOf<UGameplayAbility> Spawn
 	
 	if (bSuccess)
 	{
+#if HELLUNA_DEBUG_WEAPON_BRIDGE
 		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] GA 활성화 성공!"));
-		
+#endif
+
 		// ⭐ 장착 애니메이션 시작 → 무기 전환 차단
 		// GA_SpawnWeapon::OnEquipFinished/OnEquipInterrupted에서 SetEquipping(false) 호출
 		bIsEquipping = true;
@@ -240,14 +309,20 @@ void UWeaponBridgeComponent::SpawnHandWeapon(TSubclassOf<UGameplayAbility> Spawn
 		{
 			EquipmentComponent->SetWeaponEquipping(true);
 		}
+#if HELLUNA_DEBUG_WEAPON_BRIDGE
 		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] bIsEquipping = true (장착 중 - 전환 차단)"));
+#endif
 	}
 	else
 	{
+#if HELLUNA_DEBUG_WEAPON_BRIDGE
 		UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] GA 활성화 실패!"));
+#endif
 	}
-	
+
+#if HELLUNA_DEBUG_WEAPON_BRIDGE
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] SpawnHandWeapon 완료"));
+#endif
 }
 
 // ============================================
@@ -261,7 +336,9 @@ void UWeaponBridgeComponent::SpawnHandWeapon(TSubclassOf<UGameplayAbility> Spawn
 // ============================================
 void UWeaponBridgeComponent::DestroyHandWeapon()
 {
+#if HELLUNA_DEBUG_WEAPON_BRIDGE
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] DestroyHandWeapon 시작"));
+#endif
 
 	// ⭐ [김기현] 부착물 전달 대기 중이면 취소 (서버 타이머)
 	if (AttachmentTransferTimerHandle.IsValid())
@@ -285,16 +362,22 @@ void UWeaponBridgeComponent::DestroyHandWeapon()
 
 	if (!OwningCharacter.IsValid())
 	{
+#if HELLUNA_DEBUG_WEAPON_BRIDGE
 		UE_LOG(LogTemp, Error, TEXT("⭐ [WeaponBridge] OwningCharacter가 null!"));
+#endif
 		return;
 	}
 
 	// ⭐ Server RPC 호출하여 서버에서 Destroy
 	// CurrentWeapon은 서버에서 스폰되어 리플리케이트된 액터이므로 서버에서만 Destroy 가능
+#if HELLUNA_DEBUG_WEAPON_BRIDGE
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] Server_RequestDestroyWeapon 호출"));
+#endif
 	OwningCharacter->Server_RequestDestroyWeapon();
 
+#if HELLUNA_DEBUG_WEAPON_BRIDGE
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] DestroyHandWeapon 완료"));
+#endif
 }
 
 // ============================================
@@ -366,9 +449,11 @@ void UWeaponBridgeComponent::WaitAndTransferAttachments()
 	// 타임아웃 체크
 	if (AttachmentTransferRetryCount >= MaxAttachmentTransferRetries)
 	{
+#if HELLUNA_DEBUG_WEAPON_BRIDGE
 		UE_LOG(LogTemp, Warning,
 			TEXT("⭐ [WeaponBridge] 부착물 전달 타임아웃: HandWeapon이 %d회(%.1f초) 시도 후에도 유효하지 않음"),
 			MaxAttachmentTransferRetries, MaxAttachmentTransferRetries * 0.05f);
+#endif
 
 		if (UWorld* World = GetWorld())
 		{
@@ -449,9 +534,11 @@ void UWeaponBridgeComponent::OnMulticastVisualTimerTick()
 	// 타임아웃 (100회 = 5초)
 	if (MulticastVisualRetryCount >= MaxAttachmentTransferRetries)
 	{
+#if HELLUNA_DEBUG_WEAPON_BRIDGE
 		UE_LOG(LogTemp, Warning,
 			TEXT("⭐ [WeaponBridge] Multicast 부착물 적용 타임아웃: HandWeapon이 %d회 시도 후에도 유효하지 않음"),
 			MaxAttachmentTransferRetries);
+#endif
 
 		if (UWorld* World = GetWorld())
 		{
@@ -484,8 +571,10 @@ void UWeaponBridgeComponent::ApplyVisualsToHandWeapon(const TArray<FInv_Attachme
 		);
 	}
 
+#if HELLUNA_DEBUG_WEAPON_BRIDGE
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 부착물 시각 적용 완료: %d개 → HandWeapon: %s"),
 		Visuals.Num(), *HandWeapon->GetName());
+#endif
 }
 
 // ============================================
@@ -515,8 +604,10 @@ void UWeaponBridgeComponent::TransferAttachmentVisuals(AInv_EquipActor* EquipAct
 		);
 	}
 
+#if HELLUNA_DEBUG_WEAPON_BRIDGE
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 부착물 시각 전달 완료: %d개 (EquipActor: %s → HandWeapon: %s)"),
 		Visuals.Num(), *EquipActor->GetName(), *HandWeapon->GetName());
+#endif
 }
 
 // ============================================
@@ -541,6 +632,8 @@ void UWeaponBridgeComponent::OnWeaponAttachmentVisualChanged(AInv_EquipActor* Eq
 	// Multicast로 모든 클라이언트에 전송 (Clear + Apply)
 	Multicast_ApplyAttachmentVisuals(Visuals);
 
+#if HELLUNA_DEBUG_WEAPON_BRIDGE
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 실시간 부착물 변경 → HandWeapon 전파: %d개 부착물"),
 		Visuals.Num());
+#endif
 }

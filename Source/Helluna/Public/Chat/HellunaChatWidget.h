@@ -84,6 +84,10 @@ protected:
 
 	virtual void NativeConstruct() override;
 
+	// [Step4 H-06] NativeDestruct - 위젯 파괴 시 델리게이트 해제
+	// OnTextCommitted가 파괴된 위젯을 참조하지 않도록 명시적 해제
+	virtual void NativeDestruct() override;
+
 	// ════════════════════════════════════════════════════════════════════════════
 	// 내부 함수
 	// ════════════════════════════════════════════════════════════════════════════

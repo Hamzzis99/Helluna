@@ -45,6 +45,11 @@ protected:
 	// ⭐ BeginPlay - 초기화 시작점
 	virtual void BeginPlay() override;
 
+	// [Step4 H-05] EndPlay - 델리게이트 해제 (댕글링 콜백 크래시 방지)
+	// BeginPlay에서 바인딩한 OnWeaponEquipRequested, OnWeaponAttachmentVisualChanged를
+	// 컴포넌트 파괴 시 명시적으로 해제. 타이머도 정리.
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
 private:
 	// ============================================
 	// ⭐ 장착 애니메이션 진행 중 플래그
