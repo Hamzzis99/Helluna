@@ -815,7 +815,7 @@ void UInv_InventoryComponent::Server_CraftItem_Implementation(TSubclassOf<AActor
 #endif
 
 	// 서버 권한 체크
-	if (!GetOwner()->HasAuthority())
+	if (!GetOwner() || !GetOwner()->HasAuthority())
 	{
 #if INV_DEBUG_INVENTORY
 		UE_LOG(LogTemp, Error, TEXT("[SERVER CRAFT] 권한 없음! 서버에서만 실행 가능!"));
@@ -964,7 +964,7 @@ void UInv_InventoryComponent::Server_CraftItemWithMaterials_Implementation(
 #endif
 
 	// 서버 권한 체크
-	if (!GetOwner()->HasAuthority())
+	if (!GetOwner() || !GetOwner()->HasAuthority())
 	{
 #if INV_DEBUG_INVENTORY
 		UE_LOG(LogTemp, Error, TEXT("[SERVER CRAFT] 권한 없음!"));

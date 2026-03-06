@@ -186,7 +186,7 @@ UInv_InventoryItem* UInv_LootContainerComponent::AddItem(UInv_ItemComponent* Ite
 
 bool UInv_LootContainerComponent::IsEmpty() const
 {
-	return ContainerInventoryList.GetAllItems().Num() == 0;
+	return ContainerInventoryList.Entries.Num() == 0;
 }
 
 void UInv_LootContainerComponent::SetCurrentUser(APlayerController* PC)

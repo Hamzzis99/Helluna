@@ -318,7 +318,7 @@ private:
 		meta = (DisplayName = "인벤토리 메뉴 클래스", Tooltip = "인벤토리 메뉴로 사용할 위젯 블루프린트 클래스를 지정합니다."))
 	TSubclassOf<UInv_InventoryBase> InventoryMenuClass;
 
-	bool bInventoryMenuOpen; //인벤토리 메뉴 열림 여부
+	bool bInventoryMenuOpen = false; //인벤토리 메뉴 열림 여부
 	void OpenInventoryMenu();
 	void CloseInventoryMenu();
 	void CloseOtherMenus(); // BuildMenu와 CraftingMenu 닫기

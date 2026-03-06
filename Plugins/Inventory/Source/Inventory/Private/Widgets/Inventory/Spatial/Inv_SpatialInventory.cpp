@@ -39,19 +39,19 @@ void UInv_SpatialInventory::NativeOnInitialized()
 
 	//인벤토리 장비 칸들
 	// U24: AddUniqueDynamic — NativeOnInitialized 재호출 시 중복 바인딩 방지
-	Button_Equippables->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowEquippables);
-	Button_Consumables->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowConsumables);
-	Button_Craftables->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowCraftables);
-	
+	if (Button_Equippables) { Button_Equippables->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowEquippables); }
+	if (Button_Consumables) { Button_Consumables->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowConsumables); }
+	if (Button_Craftables) { Button_Craftables->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowCraftables); }
+
 	// 툴팁 캔버스 설정
-	Grid_Equippables->SetOwningCanvas(CanvasPanel);
-	Grid_Consumables->SetOwningCanvas(CanvasPanel);
-	Grid_Craftables->SetOwningCanvas(CanvasPanel);
+	if (Grid_Equippables) { Grid_Equippables->SetOwningCanvas(CanvasPanel); }
+	if (Grid_Consumables) { Grid_Consumables->SetOwningCanvas(CanvasPanel); }
+	if (Grid_Craftables) { Grid_Craftables->SetOwningCanvas(CanvasPanel); }
 
 	// [Phase 11] Alt+LMB 빠른 장착 델리게이트 바인딩
-	Grid_Equippables->OnQuickEquipRequested.AddUniqueDynamic(this, &ThisClass::OnGridQuickEquipRequested);
-	Grid_Consumables->OnQuickEquipRequested.AddUniqueDynamic(this, &ThisClass::OnGridQuickEquipRequested);
-	Grid_Craftables->OnQuickEquipRequested.AddUniqueDynamic(this, &ThisClass::OnGridQuickEquipRequested);
+	if (Grid_Equippables) { Grid_Equippables->OnQuickEquipRequested.AddUniqueDynamic(this, &ThisClass::OnGridQuickEquipRequested); }
+	if (Grid_Consumables) { Grid_Consumables->OnQuickEquipRequested.AddUniqueDynamic(this, &ThisClass::OnGridQuickEquipRequested); }
+	if (Grid_Craftables) { Grid_Craftables->OnQuickEquipRequested.AddUniqueDynamic(this, &ThisClass::OnGridQuickEquipRequested); }
 
 	ShowEquippables(); // 기본값으로 장비창을 보여주자.
 

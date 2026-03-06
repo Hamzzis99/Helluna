@@ -65,19 +65,6 @@ void UInv_AttachmentPanel::NativeOnInitialized()
 }
 
 // ════════════════════════════════════════════════════════════════
-// 📌 NativeConstruct
-// ════════════════════════════════════════════════════════════════
-// ⚠️ CachedPreviewImageSize 캐싱은 여기서 하지 않음!
-//    이유: 위젯이 초기 Collapsed 상태일 때 NativeConstruct는
-//    SetVisibility(Visible) 시점에야 호출되므로,
-//    그보다 먼저 실행되는 SetupWeaponPreview()에서 캐싱값이 (0,0)이 됨.
-//    → 캐싱은 NativeOnInitialized에서 수행.
-void UInv_AttachmentPanel::NativeConstruct()
-{
-	Super::NativeConstruct();
-}
-
-// ════════════════════════════════════════════════════════════════
 // 📌 NativeTick — 매 프레임 호출 (하이라이트 + 드래그 회전)
 // ════════════════════════════════════════════════════════════════
 void UInv_AttachmentPanel::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)

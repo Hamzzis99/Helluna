@@ -19,7 +19,7 @@ void UInv_BuildingButton::NativeOnInitialized()
 	// 버튼 클릭 이벤트 바인딩
 	if (IsValid(Button_Main))
 	{
-		Button_Main->OnClicked.AddDynamic(this, &ThisClass::OnButtonClicked);
+		Button_Main->OnClicked.AddUniqueDynamic(this, &ThisClass::OnButtonClicked);
 	}
 	else
 	{

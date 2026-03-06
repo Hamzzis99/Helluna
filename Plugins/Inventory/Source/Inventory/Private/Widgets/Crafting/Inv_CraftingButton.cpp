@@ -55,7 +55,7 @@ void UInv_CraftingButton::NativeOnInitialized()
 
 	if (IsValid(Button_Main))
 	{
-		Button_Main->OnClicked.AddDynamic(this, &ThisClass::OnButtonClicked);
+		Button_Main->OnClicked.AddUniqueDynamic(this, &ThisClass::OnButtonClicked);
 	}
 }
 

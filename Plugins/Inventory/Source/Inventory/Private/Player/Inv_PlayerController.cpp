@@ -22,7 +22,7 @@
 #include "InventoryManagement/Utils/Inv_InventoryStatics.h"
 #include "InventoryManagement/Components/Inv_LootContainerComponent.h"
 #include "Widgets/Inventory/Container/Inv_ContainerWidget.h"
-#include "Interfaces/Inv_Interface_Primary.cpp"
+#include "Interfaces/Inv_Interface_Primary.h"
 
 AInv_PlayerController::AInv_PlayerController()
 {
@@ -500,6 +500,7 @@ TArray<FInv_SavedItemData> AInv_PlayerController::CollectInventoryGridState()
 {
 	TArray<FInv_SavedItemData> Result;
 
+#if INV_DEBUG_INVENTORY
 	// ── 🔍 [진단] CollectGridState 호출 컨텍스트 확인 ──
 	UE_LOG(LogTemp, Error, TEXT("🔍 [CollectGridState 진단] Controller=%s, IsLocal=%s, HasAuth=%s, Role=%d"),
 		*GetName(),
@@ -532,6 +533,7 @@ TArray<FInv_SavedItemData> AInv_PlayerController::CollectInventoryGridState()
 	{
 		UE_LOG(LogTemp, Error, TEXT("🔍 [진단] InventoryComponent=INVALID ❌"));
 	}
+#endif
 
 #if INV_DEBUG_PLAYER
 	UE_LOG(LogTemp, Warning, TEXT(""));
@@ -626,12 +628,14 @@ TArray<FInv_SavedItemData> AInv_PlayerController::CollectInventoryGridState()
 		}
 	}
 
+#if INV_DEBUG_INVENTORY
 	UE_LOG(LogTemp, Error, TEXT("[Step3.5진단] EquippedItemPtrs 구성: %d개"), EquippedItemPtrs.Num());
 	for (UInv_InventoryItem* EqDiagPtr : EquippedItemPtrs)
 	{
 		UE_LOG(LogTemp, Error, TEXT("[Step3.5진단]   -> 포인터=%p, Type=%s"),
 			EqDiagPtr, *EqDiagPtr->GetItemManifest().GetItemType().ToString());
 	}
+#endif
 
 #if INV_DEBUG_PLAYER
 	UE_LOG(LogTemp, Warning, TEXT(""));

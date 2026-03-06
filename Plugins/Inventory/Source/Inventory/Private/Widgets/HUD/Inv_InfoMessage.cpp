@@ -20,7 +20,9 @@ void UInv_InfoMessage::SetMessage(const FText& Message)
 	}
 	bIsMessageActive = true;
 
-	GetWorld()->GetTimerManager().SetTimer(MessageTimer, [this]()
+	UWorld* World = GetWorld();
+	if (!World) return;
+	World->GetTimerManager().SetTimer(MessageTimer, [this]()
 		{
 			MessageHide();
 			bIsMessageActive = false;

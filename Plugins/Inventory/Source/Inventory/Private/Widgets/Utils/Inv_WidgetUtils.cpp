@@ -57,6 +57,7 @@ int32 UInv_WidgetUtils::GetIndexFromPosition(const FIntPoint& Position, const in
 
 FIntPoint UInv_WidgetUtils::GetPositionFromIndex(const int32 Index, const int32 Columns)
 {
+	if (Columns <= 0) return FIntPoint::ZeroValue;
 	return FIntPoint(Index % Columns, Index / Columns); // X = Index % Columns, Y = Index / Columns
 }
 

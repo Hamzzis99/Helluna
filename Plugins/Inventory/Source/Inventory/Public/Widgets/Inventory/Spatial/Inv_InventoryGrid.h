@@ -508,8 +508,8 @@ private:
 	// 아이템이 유효한 위치에 그리드를 클릭하면 배치될 인덱스
 	int32 ItemDropIndex{ INDEX_NONE };
 	FInv_SpaceQueryResult CurrentQueryResult; // 현재 쿼리 결과
-	bool bMouseWithinCanvas;
-	bool bLastMouseWithinCanvas;
+	bool bMouseWithinCanvas = false;
+	bool bLastMouseWithinCanvas = false;
 	// [최적화] HoverItem을 들고 있을 때만 true → NativeTick에서 계산 수행
 	bool bShouldTickForHover = false;
 
@@ -544,8 +544,8 @@ private:
 	// R키 회전: 회전 상태에 따른 DrawSize 계산
 	FVector2D GetDrawSizeRotated(const FInv_GridFragment* GridFragment, bool bRotated) const;
 
-	int32 LastHighlightedIndex;
-	FIntPoint LastHighlightedDimensions;
+	int32 LastHighlightedIndex = INDEX_NONE;
+	FIntPoint LastHighlightedDimensions = FIntPoint::ZeroValue;
 
 	// ════════════════════════════════════════════════════════════════
 	// 📌 [부착물 시스템 Phase 3] 부착물 패널 위젯

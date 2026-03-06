@@ -617,6 +617,7 @@ FIntPoint UInv_InventoryGrid::CalculateHoveredCoordinates(const FVector2D& Canva
 {
 	// 타일 사분면, 타일 인덱스와 좌표를 계산하기
 	// Calculate the tile quadrant, tile index, and coordinates
+	if (TileSize <= 0.f) return FIntPoint::ZeroValue;
 	return FIntPoint // 와 이런 것도 가능하다고? ㅋㅋ 근데 왜 굳이 이렇게 짜지?
 	{
 		static_cast<int32>(FMath::FloorToInt((MousePosition.X - CanvasPosition.X) / TileSize)),
@@ -627,10 +628,11 @@ FIntPoint UInv_InventoryGrid::CalculateHoveredCoordinates(const FVector2D& Canva
 // 타일 사분면 계산
 EInv_TileQuadrant UInv_InventoryGrid::CalculateTileQuadrant(const FVector2D& CanvasPosition, const FVector2D& MousePosition) const
 {
+	if (TileSize <= 0.f) return EInv_TileQuadrant::None;
 	//현재 타일 내에서의 상대 위치를 계산하는 곳.
 	//Calculate the relative position within the current tile.
 	const float TileLocalX = FMath::Fmod(MousePosition.X - CanvasPosition.X, TileSize); // Fmod가 뭐지?
-	const float TileLocalY = FMath::Fmod(MousePosition.Y - CanvasPosition.Y, TileSize); // 
+	const float TileLocalY = FMath::Fmod(MousePosition.Y - CanvasPosition.Y, TileSize); //
 
 	// 마우스가 어느 사분면에 있는지 결정하는 부분.
 	// Determine which quadrant the mouse is in.
@@ -836,6 +838,7 @@ bool UInv_InventoryGrid::DoesItemTypeMatch(const UInv_InventoryItem* SubItem, co
 bool UInv_InventoryGrid::IsInGridBounds(const int32 StartIndex, const FIntPoint& ItemDimensions) const
 {
 	if (StartIndex < 0 || StartIndex >= GridSlots.Num()) return false;
+	if (Columns <= 0) return false;
 	const int32 EndColumn = (StartIndex % Columns) + ItemDimensions.X;
 	const int32 EndRow = (StartIndex / Columns) + ItemDimensions.Y;
 	return EndColumn <= Columns && EndRow <= Rows;
@@ -945,6 +948,7 @@ void UInv_InventoryGrid::AssignHoverItem(UInv_InventoryItem* InventoryItem, cons
 	AssignHoverItem(InventoryItem);
 
 	HoverItem->SetPreviousGridIndex(PreviousGridIndex);
+	if (!GridSlots.IsValidIndex(GridIndex)) return;
 	HoverItem->UpdateStackCount(InventoryItem->IsStackable() ? GridSlots[GridIndex]->GetStackCount() : 0);
 }
 
@@ -1330,6 +1334,7 @@ void UInv_InventoryGrid::AddStacks(const FInv_SlotAvailabilityResult& Result)
 // 슬롯에 있는 아이템을 마우스로 클릭했을 때 
 void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEvent& MouseEvent)
 {
+#if INV_DEBUG_INVENTORY
 	// [진단] 클릭 이벤트 추적
 	UE_LOG(LogTemp, Warning, TEXT("[SlottedClick진단] GridIndex=%d | HoverItem=%s | LobbyMode=%d | LobbyTarget=%d | TargetHasHover=%d | Category=%d"),
 		GridIndex,
@@ -1338,6 +1343,7 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 		LobbyTargetGrid.IsValid() ? 1 : 0,
 		(LobbyTargetGrid.IsValid() && LobbyTargetGrid->HasHoverItem()) ? 1 : 0,
 		(int32)ItemCategory);
+#endif
 
 	// 마우스를 가장자리 넘을 때 언호버 처리 해서 자연스러운 아이템 Detail칸 열게 하기
 	UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer()); // 아이템 언호버 처리
@@ -1534,6 +1540,7 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 		// Should we consume the hover item's stacks? (Room in the clicked slot == 0 && HoveredStackCound < MaxStackSize)
 		const int32 ClickedStackCount = GridSlots[GridIndex]->GetStackCount(); // 클릭된 슬롯의 스택 수
 		const FInv_StackableFragment* StackableFragment = ClickedInventoryItem->GetItemManifest().GetFragmentOfType<FInv_StackableFragment>(); // 그리드의 최대스택 쌓을 수 있는지 얻기 위해
+		if (!StackableFragment) return; // nullptr 안전 가드
 		const int32 MaxStackSize = StackableFragment->GetMaxStackSize(); // 최대 쌓기 스택을 얻기 위한 것
 		const int32 RoomInClickedSlot = MaxStackSize - ClickedStackCount; // 클릭된 슬롯의 남은 공간 계산
 		const int32 HoveredStackCount = HoverItem->GetStackCount(); // 호버된 아이템의 스택 수
@@ -3111,6 +3118,7 @@ bool UInv_InventoryGrid::ShouldSwapStackCounts(const int32 RoomInClickedSlot, co
 
 void UInv_InventoryGrid::SwapStackCounts(const int32 ClickedStackCount, const int32 HoveredStackCount, const int32 Index)
 {
+	if (!GridSlots.IsValidIndex(Index)) return;
 	UInv_GridSlot* GridSlot = GridSlots[Index]; // 그리드 슬롯 가져오기
 	GridSlot->SetStackCount(HoveredStackCount);
 	
@@ -3129,9 +3137,10 @@ bool UInv_InventoryGrid::ShouldConsumeHoverItemStacks(const int32 HoveredStackCo
 // 스택을 어떻게 채울지에 대한 구현 부분?
 void UInv_InventoryGrid::ConsumeHoverItemStacks(const int32 ClickedStackCount, const int32 HoveredStackCount, const int32 Index)
 {
+	if (!GridSlots.IsValidIndex(Index)) return;
 	const int32 AmountToTransfer = HoveredStackCount;
 	const int32 NewClickedStackCount = ClickedStackCount + AmountToTransfer;
-	
+
 	// UI 업데이트
 	GridSlots[Index]->SetStackCount(NewClickedStackCount); // 그리드 슬롯 스택 수 업데이트
 	if (UInv_SlottedItem* SI = SlottedItems.FindRef(Index)) SI->UpdateStackCount(NewClickedStackCount); // U26: null 안전
@@ -3172,6 +3181,7 @@ bool UInv_InventoryGrid::ShouldFillInStack(const int32 RoomInClickedSlot, const 
 
 void UInv_InventoryGrid::FillInStack(const int32 FillAmount, const int32 Remainder, const int32 Index)
 {
+	if (!GridSlots.IsValidIndex(Index)) return;
 	UInv_GridSlot* GridSlot = GridSlots[Index]; // 그리드 슬롯 가져오기
 	const int32 NewStackCount = GridSlot->GetStackCount() + FillAmount; // 새로운 스택 수 계산 -> 합칠 때 스택 개수를 어떻게 할지
 	
@@ -3535,6 +3545,7 @@ void UInv_InventoryGrid::OnPopUpMenuRotate(int32 Index)
 	});
 
 	// 그리드 경계 밖으로 나가는지도 확인 (ForEach2D는 경계 초과 시 콜백을 호출하지 않을 수 있음)
+	if (Columns <= 0) return;
 	{
 		const int32 Row = LookupIndex / Columns;
 		const int32 Col = LookupIndex % Columns;
@@ -3701,6 +3712,7 @@ int32 UInv_InventoryGrid::GetTotalMaterialCountFromSlots(const FGameplayTag& Mat
 		if (Item->GetItemManifest().GetItemType().MatchesTagExact(MaterialTag))
 		{
 			// ⭐ UI의 StackCount 읽기 (Split된 스택 반영!)
+			if (!GridSlots.IsValidIndex(UpperLeftIndex)) continue;
 			const int32 StackCount = GridSlots[UpperLeftIndex]->GetStackCount();
 			TotalCount += StackCount;
 
@@ -3735,6 +3747,8 @@ bool UInv_InventoryGrid::HasRoomInActualGrid(const FInv_ItemManifest& Manifest) 
 	UE_LOG(LogTemp, Warning, TEXT("[ACTUAL GRID CHECK] 아이템 크기: %dx%d"), ItemSize.X, ItemSize.Y);
 	UE_LOG(LogTemp, Warning, TEXT("[ACTUAL GRID CHECK] Grid 크기: %dx%d"), Columns, Rows);
 #endif
+
+	if (Columns <= 0) return false;
 
 	// 실제 GridSlots 순회 (UI의 정확한 상태!)
 	for (int32 StartIndex = 0; StartIndex < GridSlots.Num(); ++StartIndex)
@@ -4568,6 +4582,7 @@ bool UInv_InventoryGrid::MoveItemByCurrentIndex(int32 CurrentIndex, const FIntPo
 	// ⭐ Step 4.5: 기존 위치의 StackCount 저장 (핵심 수정!)
 	// ============================================
 	// ⭐ Phase 5: SavedStackCount가 전달되면 그 값을 사용, 아니면 현재 슬롯의 StackCount 사용
+	if (!GridSlots.IsValidIndex(CurrentIndex)) return false;
 	const int32 OriginalStackCount = (SavedStackCount > 0) ? SavedStackCount : GridSlots[CurrentIndex]->GetStackCount();
 #if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("    │     📦 기존 StackCount: %d (SavedStackCount=%d)"), OriginalStackCount, SavedStackCount);
