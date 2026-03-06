@@ -506,7 +506,7 @@ void AHellunaCharacterSelectSceneV2::SetPartyPreview(
 		}
 
 		// SkeletalMeshComponent 생성 (이름에 카운터 추가 — GC 전 재호출 시 이름 충돌 방지)
-		static int32 PartyMeshGenCounter = 0;
+		// [Fix47-L1] static→멤버 변수 (ClearPartyPreview에서 리셋 가능)
 		const FName CompName = *FString::Printf(TEXT("PartyMesh_%d_%d"), S, PartyMeshGenCounter++);
 		USkeletalMeshComponent* MeshComp = NewObject<USkeletalMeshComponent>(this, CompName);
 		if (!MeshComp)
@@ -623,6 +623,7 @@ void AHellunaCharacterSelectSceneV2::ClearPartyPreview()
 	PartySpotLights.Empty();
 
 	CachedPartyHeroTypes.Empty();
+	PartyMeshGenCounter = 0; // [Fix47-L1] FName 풀 누적 방지
 	bPartyMode = false;
 
 	// 기존 PreviewMeshes + CharacterSpotLights 복원

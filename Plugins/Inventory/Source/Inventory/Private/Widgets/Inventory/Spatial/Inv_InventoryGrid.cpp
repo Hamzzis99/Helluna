@@ -3619,6 +3619,12 @@ void UInv_InventoryGrid::OpenAttachmentPanel(UInv_InventoryItem* WeaponItem, int
 
 		// WBP 루트 CanvasPanel의 첫 자식(Overlay)을 화면 중앙 배치 (고정 크기)
 		UCanvasPanel* RootCanvas = Cast<UCanvasPanel>(AttachmentPanel->GetRootWidget());
+		if (RootCanvas)
+		{
+			// 루트 CanvasPanel이 전체 화면을 차지하므로 SelfHitTestInvisible 설정
+			// → Overlay(고정 크기) 밖의 클릭이 인벤토리 등 뒤쪽 위젯으로 통과
+			RootCanvas->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		}
 		if (RootCanvas && RootCanvas->GetChildrenCount() > 0)
 		{
 			UWidget* OverlayChild = RootCanvas->GetChildAt(0);

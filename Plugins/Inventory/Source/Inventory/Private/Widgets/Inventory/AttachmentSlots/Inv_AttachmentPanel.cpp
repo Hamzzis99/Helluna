@@ -173,8 +173,9 @@ void UInv_AttachmentPanel::OpenForWeapon(UInv_InventoryItem* WeaponItem, int32 W
 	// Phase 8: 3D 무기 프리뷰 설정
 	SetupWeaponPreview();
 
-	// 패널 보이기
-	SetVisibility(ESlateVisibility::Visible);
+	// 패널 보이기 (SelfHitTestInvisible: 패널 자체는 히트 테스트 제외,
+	// 자식 위젯(슬롯/버튼/프리뷰)만 히트 테스트 참여 → 패널 밖 클릭이 인벤토리로 전달)
+	SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 	bIsOpen = true;
 
 #if INV_DEBUG_ATTACHMENT

@@ -525,7 +525,7 @@ private:
 	 * 실제 아이템 전송 처리 (서버에서만 실행)
 	 *
 	 * @param SourceComp     원본 InvComp (아이템 출처)
-	 * @param TargetComp     대상 InvComp (아이템 목적지)
+	 * @param TargetComp     대상 InvComp (아이템 목적지?h 
 	 * @param ItemEntryIndex 전송할 아이템의 Entry 인덱스
 	 * @return 전송 성공 여부
 	 */
