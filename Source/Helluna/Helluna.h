@@ -46,6 +46,21 @@
 // 🔫 무기 브릿지 (WeaponBridgeComponent - 장비 요청, 어태치먼트 비주얼, 무기 장착/해제)
 #define HELLUNA_DEBUG_WEAPON_BRIDGE 0
 
+// 🔧 Debug::Print 유틸리티 (DebugHelper.h - 화면 메시지 + LogTemp 출력)
+#define HELLUNA_DEBUG_PRINT 0
+
+// 🔧 수리 시스템 (RepairComponent, RepairMaterialWidget, HeroGameplayAbility_Repair/InRepair)
+#define HELLUNA_DEBUG_REPAIR 0
+
+// 👾 적 AI/전투 (AnimNotify, STTask_Enrage, EnemyMassTrait, EnemyGameplayAbility_RangedAttack)
+#define HELLUNA_DEBUG_ENEMY 0
+
+// 👤 플레이어 상태 (HellunaPlayerState - 로그인/로그아웃/캐릭터 선택)
+#define HELLUNA_DEBUG_PLAYERSTATE 0
+
+// 🏆 게임 결과 (HellunaGameResultWidget - 로비 복귀)
+#define HELLUNA_DEBUG_GAMERESULT 0
+
 // ════════════════════════════════════════════════════════════════════════════════
 
 DECLARE_LOG_CATEGORY_EXTERN(LogHelluna, Log, All);
