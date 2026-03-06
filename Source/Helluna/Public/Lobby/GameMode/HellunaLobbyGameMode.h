@@ -216,6 +216,9 @@ public:
 	/** PendingDeploy 자동 해제 타이머 */
 	TMap<int32, FTimerHandle> PendingDeployTimers;
 
+	/** [Fix46-M6] 오래된 파티 주기적 정리 타이머 */
+	FTimerHandle StalePartyCleanupTimer;
+
 	/** 연결 끊김 시 파티 탈퇴 유예 타이머 (30초) */
 	TMap<FString, FTimerHandle> PartyLeaveTimers;
 

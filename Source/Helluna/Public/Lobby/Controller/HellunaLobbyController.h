@@ -40,6 +40,13 @@ class ACameraActor;
 class USkeletalMesh;
 class UHellunaLobbyCharSelectWidget;
 
+// [Fix46-M3] Validate 상한 공통 상수
+namespace LobbyValidation
+{
+	/** RPC 파라미터 인덱스 상한 (실제 Grid 크기 기반) */
+	constexpr int32 MaxInventoryIndex = 10000;
+}
+
 // ════════════════════════════════════════════════════════════════════════════════
 // 전송 방향 열거형
 // ════════════════════════════════════════════════════════════════════════════════
@@ -504,6 +511,9 @@ private:
 
 	/** [Fix35] Per-interaction save: Transfer/Swap 성공 후 Stash+Loadout DB 즉시 저장 */
 	void SaveBothComponentsAfterInteraction();
+
+	/** [Fix46-M1] LobbyGameMode + PlayerId 획득 헬퍼 — 10곳 이상의 반복 패턴 통합 */
+	AHellunaLobbyGameMode* GetLobbyGameMode() const;
 
 	// ════════════════════════════════════════════════════════════════
 	// 내부 전송 로직

@@ -296,12 +296,14 @@ void AHellunaDefenseGameState::PrintUDSDebug()
     else if (FDoubleProperty* DLDProp = CastField<FDoubleProperty>(CachedProp_DayLength))
         DayLength = (float)DLDProp->GetPropertyValue_InContainer(UDS);
 
+#if HELLUNA_DEBUG_UDS
     UE_LOG(LogTemp, Warning, TEXT("[UDS Debug] %s | Phase=%s | TimeOfDay=%.2f | Animate=%s | DayLength=%.2f"),
         HasAuthority() ? TEXT("SERVER") : TEXT("CLIENT"),
         Phase == EDefensePhase::Day ? TEXT("Day") : TEXT("Night"),
         TimeOfDay,
         bAnimate ? TEXT("ON") : TEXT("OFF"),
         DayLength);
+#endif
 }
 
 
@@ -374,14 +376,18 @@ void AHellunaDefenseGameState::BeginPlay()
         if (GI && GI->bIsMapTransitioning)
         {
             // Case A: 정상적인 맵 이동(이사)으로 넘어온 경우 -> 데이터 로드
+#if HELLUNA_DEBUG_DEFENSE
             UE_LOG(LogTemp, Warning, TEXT("[HellunaGameState] '맵 이동' 확인증 발견! 데이터를 유지합니다."));
+#endif
             bShouldLoad = true;
             GI->bIsMapTransitioning = false; // 확인증 회수
         }
         else
         {
             // Case B: 새 게임이거나, 에디터 시작 -> 데이터 초기화
+#if HELLUNA_DEBUG_DEFENSE
             UE_LOG(LogTemp, Warning, TEXT("[HellunaGameState] 확인증 없음 (새 게임). 기존 데이터를 파기합니다."));
+#endif
             if (UGameplayStatics::DoesSaveGameExist(SaveSlotName, 0))
             {
                 UGameplayStatics::DeleteGameInSlot(SaveSlotName, 0);
@@ -419,13 +425,17 @@ void AHellunaDefenseGameState::BeginPlay()
                     // }
                     // -----------------------------------------------------------------------------------------
 
+#if HELLUNA_DEBUG_DEFENSE
                     UE_LOG(LogTemp, Warning, TEXT("[HellunaGameState] 데이터 로드 완료! (MDF 객체 수: %d)"), SavedDeformationMap.Num());
+#endif
                 }
             }
         }
         else
         {
+#if HELLUNA_DEBUG_DEFENSE
             UE_LOG(LogTemp, Log, TEXT("[HellunaGameState] 신규 시작이므로 데이터를 로드하지 않았습니다."));
+#endif
         }
     }
 }
@@ -522,7 +532,9 @@ void AHellunaDefenseGameState::WriteDataToDisk()
         }
         else
         {
+#if HELLUNA_DEBUG_DEFENSE
             UE_LOG(LogTemp, Error, TEXT("[HellunaGameState] 디스크 저장 실패!"));
+#endif
         }
     }
 }

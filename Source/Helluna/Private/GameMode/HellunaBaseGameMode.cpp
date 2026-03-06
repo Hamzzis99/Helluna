@@ -969,7 +969,15 @@ void AHellunaBaseGameMode::SwapToGameController(AHellunaLoginController* LoginCo
 	FVector SpawnLocation = LoginController->GetFocalLocation();
 	FRotator SpawnRotation = LoginController->GetControlRotation();
 
-	APlayerController* NewController = GetWorld()->SpawnActor<APlayerController>(
+	// [Fix46-M8] GetWorld() null 체크
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[BaseGameMode] SwapToGameController - GetWorld() nullptr!"));
+		return;
+	}
+
+	APlayerController* NewController = World->SpawnActor<APlayerController>(
 		GameControllerClass, SpawnLocation, SpawnRotation, SpawnParams);
 
 	if (!NewController)
@@ -1143,7 +1151,15 @@ void AHellunaBaseGameMode::SpawnHeroCharacter(APlayerController* PlayerControlle
 	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
 	SpawnParams.Owner = PlayerController;
 
-	APawn* NewPawn = GetWorld()->SpawnActor<APawn>(SpawnClass, SpawnLocation, SpawnRotation, SpawnParams);
+	// [Fix46-M8] GetWorld() null 체크
+	UWorld* SpawnWorld = GetWorld();
+	if (!SpawnWorld)
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[BaseGameMode] SpawnHeroCharacter - GetWorld() nullptr!"));
+		return;
+	}
+
+	APawn* NewPawn = SpawnWorld->SpawnActor<APawn>(SpawnClass, SpawnLocation, SpawnRotation, SpawnParams);
 
 	if (!NewPawn)
 	{
@@ -2358,7 +2374,9 @@ void AHellunaBaseGameMode::DebugForceAutoSave()
 void AHellunaBaseGameMode::DebugTestLoadInventory()
 {
 #if !UE_BUILD_SHIPPING
-	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	UWorld* DebugWorld = GetWorld();
+	if (!DebugWorld) { return; }
+	for (FConstPlayerControllerIterator It = DebugWorld->GetPlayerControllerIterator(); It; ++It)
 	{
 		APlayerController* PC = It->Get();
 		if (IsValid(PC))

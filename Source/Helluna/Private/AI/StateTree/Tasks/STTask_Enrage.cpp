@@ -13,6 +13,7 @@
 #include "GameFramework/Pawn.h"
 #include "Character/HellunaEnemyCharacter.h"
 #include "EngineUtils.h"
+#include "Helluna.h"
 
 // ============================================================================
 // EnterState
@@ -29,21 +30,27 @@ EStateTreeRunStatus FSTTask_Enrage::EnterState(
 	AAIController* AIController = InstanceData.AIController;
 	if (!AIController)
 	{
+#if HELLUNA_DEBUG_ENEMY
 		UE_LOG(LogTemp, Warning, TEXT("[STTask_Enrage] AIController is null"));
+#endif
 		return EStateTreeRunStatus::Failed;
 	}
 
 	APawn* Pawn = AIController->GetPawn();
 	if (!Pawn)
 	{
+#if HELLUNA_DEBUG_ENEMY
 		UE_LOG(LogTemp, Warning, TEXT("[STTask_Enrage] Pawn is null"));
+#endif
 		return EStateTreeRunStatus::Failed;
 	}
 
 	AHellunaEnemyCharacter* Enemy = Cast<AHellunaEnemyCharacter>(Pawn);
 	if (!Enemy)
 	{
+#if HELLUNA_DEBUG_ENEMY
 		UE_LOG(LogTemp, Warning, TEXT("[STTask_Enrage] Pawn is not AHellunaEnemyCharacter"));
+#endif
 		return EStateTreeRunStatus::Failed;
 	}
 
@@ -53,8 +60,10 @@ EStateTreeRunStatus FSTTask_Enrage::EnterState(
 	if (!TargetData.TargetActor.IsValid() ||
 		TargetData.TargetType != EHellunaTargetType::Player)
 	{
+#if HELLUNA_DEBUG_ENEMY
 		UE_LOG(LogTemp, Warning,
 			TEXT("[STTask_Enrage] 플레이어 타겟 없음 - 광폭화 진입 불가 (%s)"), *Enemy->GetName());
+#endif
 		return EStateTreeRunStatus::Failed;
 	}
 
@@ -75,7 +84,9 @@ EStateTreeRunStatus FSTTask_Enrage::EnterState(
 		InstanceDataPtr->bMontageFinished = true;
 	});
 
+#if HELLUNA_DEBUG_ENEMY
 	UE_LOG(LogTemp, Log, TEXT("[STTask_Enrage] %s 광폭화 시작"), *Enemy->GetName());
+#endif
 
 	return EStateTreeRunStatus::Running;
 }
@@ -93,14 +104,18 @@ EStateTreeRunStatus FSTTask_Enrage::Tick(
 	// 락온 대상 소멸 → 즉시 종료
 	if (!TargetData.TargetActor.IsValid())
 	{
+#if HELLUNA_DEBUG_ENEMY
 		UE_LOG(LogTemp, Log, TEXT("[STTask_Enrage] 락온 대상 소멸 → 종료"));
+#endif
 		return EStateTreeRunStatus::Succeeded;
 	}
 
 	// 광폭화 몽타주 완료 → EnrageLoop State로 전환
 	if (InstanceData.bMontageFinished)
 	{
+#if HELLUNA_DEBUG_ENEMY
 		UE_LOG(LogTemp, Log, TEXT("[STTask_Enrage] 몽타주 완료 → EnrageLoop 전환"));
+#endif
 		return EStateTreeRunStatus::Succeeded;
 	}
 

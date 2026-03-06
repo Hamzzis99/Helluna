@@ -100,6 +100,27 @@ void AHellunaLobbyGameMode::BeginPlay()
 		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] BeginPlay: CleanupStaleParties(24h) 완료"));
 	}
 
+	// [Fix46-M6] 1시간 주기 파티 정리 타이머 (서버 장기 가동 시 DB 누적 방지)
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().SetTimer(
+			StalePartyCleanupTimer,
+			[this]()
+			{
+				if (SQLiteSubsystem)
+				{
+					const int32 Cleaned = SQLiteSubsystem->CleanupStaleParties(24);
+					if (Cleaned > 0)
+					{
+						UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix46-M6] 주기적 CleanupStaleParties: %d개 정리"), Cleaned);
+					}
+				}
+			},
+			3600.f, // 1시간 간격
+			true    // 반복
+		);
+	}
+
 	// [Phase 13] AccountSaveGame 로드 (로비 로그인용)
 	LobbyAccountSaveGame = UHellunaAccountSaveGame::LoadOrCreate();
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] BeginPlay: AccountSaveGame %s | 계정 수=%d"),
@@ -759,6 +780,8 @@ void AHellunaLobbyGameMode::LoadStashToComponent(AHellunaLobbyController* LobbyP
 		return;
 	}
 
+	// [Fix46-M7] 사전 진단: Shipping 빌드에서는 실행 불필요 (RestoreFromSaveData에서 동일 리졸브 수행)
+#if !UE_BUILD_SHIPPING
 	// ── 로드된 아이템 상세 로그 + 리졸브 사전 진단 ──
 	int32 DiagResolveFail = 0;
 	for (int32 i = 0; i < StashItems.Num(); ++i)
@@ -783,6 +806,7 @@ void AHellunaLobbyGameMode::LoadStashToComponent(AHellunaLobbyController* LobbyP
 		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] ◆ 사전 진단 결과: %d/%d개 아이템이 리졸브 실패! (파괴적 캐스케이드 위험)"),
 			DiagResolveFail, StashItems.Num());
 	}
+#endif
 
 	// ── 로드된 아이템 수 기록 (파괴적 캐스케이드 방지용) ──
 	const int32 LoadedStashItemCount = StashItems.Num();

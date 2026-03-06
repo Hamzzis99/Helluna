@@ -2034,33 +2034,34 @@ bool UHellunaSQLiteSubsystem::HasPendingLoadout(const FString& PlayerId)
 		return false;
 	}
 
-	const TCHAR* CountSQL = TEXT("SELECT COUNT(*) FROM player_loadout WHERE player_id = ?1;");
-	FSQLitePreparedStatement CountStmt = Database->PrepareStatement(CountSQL);
-	if (!CountStmt.IsValid())
+	// [Fix46-M5] SELECT 1 LIMIT 1 — 존재 여부만 판별 (COUNT(*) 불필요)
+	const TCHAR* ExistsSQL = TEXT("SELECT 1 FROM player_loadout WHERE player_id = ?1 LIMIT 1;");
+	FSQLitePreparedStatement ExistsStmt = Database->PrepareStatement(ExistsSQL);
+	if (!ExistsStmt.IsValid())
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ HasPendingLoadout: PrepareStatement 실패 | 에러: %s"), *Database->GetLastError());
 		return false;
 	}
 
-	CountStmt.SetBindingValueByIndex(1, PlayerId);
+	ExistsStmt.SetBindingValueByIndex(1, PlayerId);
 
-	int64 Count = 0;
-	CountStmt.Execute([&Count](const FSQLitePreparedStatement& Stmt) -> ESQLitePreparedStatementExecuteRowResult
+	bool bFound = false;
+	ExistsStmt.Execute([&bFound](const FSQLitePreparedStatement& Stmt) -> ESQLitePreparedStatementExecuteRowResult
 	{
-		Stmt.GetColumnValueByIndex(0, Count);
+		bFound = true;
 		return ESQLitePreparedStatementExecuteRowResult::Stop;
 	});
 
-	if (Count > 0)
+	if (bFound)
 	{
-		UE_LOG(LogHelluna, Warning, TEXT("[SQLite] ⚠ HasPendingLoadout: Loadout 잔존 감지! (비정상 종료 의심) | PlayerId=%s | 잔존 %lld개"), *PlayerId, Count);
+		UE_LOG(LogHelluna, Warning, TEXT("[SQLite] ⚠ HasPendingLoadout: Loadout 잔존 감지! (비정상 종료 의심) | PlayerId=%s"), *PlayerId);
 	}
 	else
 	{
 		UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ HasPendingLoadout: 잔존 없음 (정상) | PlayerId=%s"), *PlayerId);
 	}
 
-	return Count > 0;
+	return bFound;
 }
 
 // ──────────────────────────────────────────────────────────────

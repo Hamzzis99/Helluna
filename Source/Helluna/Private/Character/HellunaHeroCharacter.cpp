@@ -988,8 +988,10 @@ void AHellunaHeroCharacter::OnHeroDeath(AActor* DeadActor, AActor* KillerActor)
 			// 사체 유지 (LifeSpan=0 → 파괴하지 않음)
 			SetLifeSpan(0.f);
 
+#if HELLUNA_DEBUG_HERO
 			UE_LOG(LogTemp, Log, TEXT("[HeroCharacter] OnHeroDeath: %s → 사체 컨테이너 활성화 (%d아이템)"),
 				*GetName(), CollectedItems.Num());
+#endif
 		}
 	}
 

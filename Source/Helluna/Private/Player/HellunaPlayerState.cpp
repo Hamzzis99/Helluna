@@ -47,6 +47,7 @@
 
 #include "Player/HellunaPlayerState.h"
 #include "HellunaTypes.h"
+#include "Helluna.h"
 #include "Net/UnrealNetwork.h"
 
 AHellunaPlayerState::AHellunaPlayerState()
@@ -96,14 +97,18 @@ void AHellunaPlayerState::SetLoginInfo(const FString& InPlayerId)
 	// ============================================
 	if (!HasAuthority())
 	{
+#if HELLUNA_DEBUG_PLAYERSTATE
 		UE_LOG(LogTemp, Warning, TEXT("[HellunaPlayerState] SetLoginInfo는 서버에서만 호출해야 합니다!"));
+#endif
 		return;
 	}
 
 	PlayerUniqueId = InPlayerId;
 	bIsLoggedIn = true;
 
+#if HELLUNA_DEBUG_PLAYERSTATE
 	UE_LOG(LogTemp, Log, TEXT("[HellunaPlayerState] 로그인 성공: PlayerUniqueId = %s"), *PlayerUniqueId);
+#endif
 }
 
 // ============================================
@@ -131,11 +136,15 @@ void AHellunaPlayerState::ClearLoginInfo()
 	// ============================================
 	if (!HasAuthority())
 	{
+#if HELLUNA_DEBUG_PLAYERSTATE
 		UE_LOG(LogTemp, Warning, TEXT("[HellunaPlayerState] ClearLoginInfo는 서버에서만 호출해야 합니다!"));
+#endif
 		return;
 	}
 
+#if HELLUNA_DEBUG_PLAYERSTATE
 	UE_LOG(LogTemp, Log, TEXT("[HellunaPlayerState] 로그아웃: PlayerUniqueId = %s"), *PlayerUniqueId);
+#endif
 
 	PlayerUniqueId = TEXT("");
 	bIsLoggedIn = false;
@@ -148,13 +157,17 @@ void AHellunaPlayerState::SetSelectedHeroType(EHellunaHeroType InHeroType)
 {
 	if (!HasAuthority())
 	{
+#if HELLUNA_DEBUG_PLAYERSTATE
 		UE_LOG(LogTemp, Warning, TEXT("[HellunaPlayerState] SetSelectedHeroType는 서버에서만 호출해야 합니다!"));
+#endif
 		return;
 	}
 
 	SelectedHeroType = InHeroType;
-	UE_LOG(LogTemp, Log, TEXT("[HellunaPlayerState] 캐릭터 선택: %s (Index: %d)"), 
+#if HELLUNA_DEBUG_PLAYERSTATE
+	UE_LOG(LogTemp, Log, TEXT("[HellunaPlayerState] 캐릭터 선택: %s (Index: %d)"),
 		*UEnum::GetValueAsString(SelectedHeroType), HeroTypeToIndex(SelectedHeroType));
+#endif
 }
 
 // ============================================
@@ -193,11 +206,15 @@ void AHellunaPlayerState::ClearSelectedCharacter()
 {
 	if (!HasAuthority())
 	{
+#if HELLUNA_DEBUG_PLAYERSTATE
 		UE_LOG(LogTemp, Warning, TEXT("[HellunaPlayerState] ClearSelectedCharacter는 서버에서만 호출해야 합니다!"));
+#endif
 		return;
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[HellunaPlayerState] 캐릭터 선택 초기화 (이전: %s)"), 
+#if HELLUNA_DEBUG_PLAYERSTATE
+	UE_LOG(LogTemp, Log, TEXT("[HellunaPlayerState] 캐릭터 선택 초기화 (이전: %s)"),
 		*UEnum::GetValueAsString(SelectedHeroType));
+#endif
 	SelectedHeroType = EHellunaHeroType::None;
 }

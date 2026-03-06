@@ -26,9 +26,11 @@
 
 AHellunaDefenseGameMode::AHellunaDefenseGameMode()
 {
+#if HELLUNA_DEBUG_DEFENSE
     UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] Constructor"));
     UE_LOG(LogTemp, Warning, TEXT("  PlayerControllerClass: %s"), PlayerControllerClass ? *PlayerControllerClass->GetName() : TEXT("nullptr"));
     UE_LOG(LogTemp, Warning, TEXT("  DefaultPawnClass: %s"),      DefaultPawnClass      ? *DefaultPawnClass->GetName()      : TEXT("nullptr"));
+#endif
 }
 
 void AHellunaDefenseGameMode::BeginPlay()
@@ -67,8 +69,10 @@ void AHellunaDefenseGameMode::BeginPlay()
     CacheMeleeSpawnPoints();
     CacheRangeSpawnPoints();
 
+#if HELLUNA_DEBUG_DEFENSE
     UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] BeginPlay 완료 — BossSpawn:%d / MeleeSpawn:%d / RangeSpawn:%d"),
         BossSpawnPoints.Num(), MeleeSpawnPoints.Num(), RangeSpawnPoints.Num());
+#endif
 }
 
 // ============================================================
@@ -78,12 +82,16 @@ void AHellunaDefenseGameMode::InitializeGame()
 {
     if (bGameInitialized)
     {
+#if HELLUNA_DEBUG_DEFENSE
         UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] 이미 초기화됨, 스킵"));
+#endif
         return;
     }
     bGameInitialized = true;
 
+#if HELLUNA_DEBUG_DEFENSE
     UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] 게임 시작!"));
+#endif
     Debug::Print(TEXT("[DefenseGameMode] InitializeGame - 게임 시작!"), FColor::Green);
 
     EnterDay();
@@ -103,8 +111,10 @@ void AHellunaDefenseGameMode::CacheBossSpawnPoints()
             if (TP->ActorHasTag(BossSpawnPointTag))
                 BossSpawnPoints.Add(TP);
 
+#if HELLUNA_DEBUG_DEFENSE
     UE_LOG(LogTemp, Warning, TEXT("[CacheBossSpawnPoints] BossSpawnPoints: %d개 (태그: %s)"),
         BossSpawnPoints.Num(), *BossSpawnPointTag.ToString());
+#endif
 }
 
 void AHellunaDefenseGameMode::CacheMeleeSpawnPoints()
@@ -212,13 +222,17 @@ void AHellunaDefenseGameMode::EnterNight()
     const FBossSpawnEntry* FoundEntry = BossSchedule.FindByPredicate(
         [this](const FBossSpawnEntry& E){ return E.SpawnDay == CurrentDay; });
 
+#if HELLUNA_DEBUG_DEFENSE
     UE_LOG(LogTemp, Warning, TEXT("[EnterNight] BossSchedule 체크 — CurrentDay=%d | Schedule 항목수=%d | FoundEntry=%s"),
         CurrentDay, BossSchedule.Num(), FoundEntry ? TEXT("찾음 ✅") : TEXT("없음"));
+#endif
     if (FoundEntry)
     {
+#if HELLUNA_DEBUG_DEFENSE
         UE_LOG(LogTemp, Warning, TEXT("[EnterNight] FoundEntry — SpawnDay=%d | BossClass=%s"),
             FoundEntry->SpawnDay,
             FoundEntry->BossClass ? *FoundEntry->BossClass->GetName() : TEXT("null ⚠️"));
+#endif
     }
 
     if (FoundEntry)
@@ -514,7 +528,9 @@ void AHellunaDefenseGameMode::TrySummonBoss(const FBossSpawnEntry& Entry)
     if (BossSpawnPoints.IsEmpty())
     {
         Debug::Print(TEXT("[TrySummonBoss] BossSpawnPoints 없음 — TargetPoint에 'BossSpawn' 태그를 추가하세요."), FColor::Red);
+#if HELLUNA_DEBUG_DEFENSE
         UE_LOG(LogTemp, Error, TEXT("[TrySummonBoss] BossSpawnPoints 없음! BossSpawnPointTag=%s"), *BossSpawnPointTag.ToString());
+#endif
         return;
     }
 

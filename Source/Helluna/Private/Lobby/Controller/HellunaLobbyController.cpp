@@ -53,6 +53,15 @@
 #include "Lobby/HellunaLobbyLog.h"
 
 // ════════════════════════════════════════════════════════════════════════════════
+// [Fix46-M1] GetLobbyGameMode — LobbyGameMode 안전 획득 헬퍼
+// ════════════════════════════════════════════════════════════════════════════════
+AHellunaLobbyGameMode* AHellunaLobbyController::GetLobbyGameMode() const
+{
+	UWorld* World = GetWorld();
+	return World ? World->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
 // 생성자 — StashComp + LoadoutComp 생성
 // ════════════════════════════════════════════════════════════════════════════════
 //
@@ -138,10 +147,11 @@ bool AHellunaLobbyController::Server_TransferItem_Validate(int32 ItemEntryIndex,
 {
 	// [Fix29-B] Deploy 진행 중에는 Transfer 차단 — Deploy의 Stash/Loadout 저장과 동시 수정 시 아이템 복제 위험
 	// [Fix31] TargetGridIndex 검증: INDEX_NONE(자동 배치) 또는 유효 범위
+	// [Fix46-M3] 공통 상수 사용
 	return !bDeployInProgress
-		&& ItemEntryIndex >= 0 && ItemEntryIndex < 10000
+		&& ItemEntryIndex >= 0 && ItemEntryIndex < LobbyValidation::MaxInventoryIndex
 		&& (Direction == ELobbyTransferDirection::StashToLoadout || Direction == ELobbyTransferDirection::LoadoutToStash)
-		&& (TargetGridIndex == INDEX_NONE || (TargetGridIndex >= 0 && TargetGridIndex < 10000));
+		&& (TargetGridIndex == INDEX_NONE || (TargetGridIndex >= 0 && TargetGridIndex < LobbyValidation::MaxInventoryIndex));
 }
 
 void AHellunaLobbyController::Server_TransferItem_Implementation(int32 ItemEntryIndex, ELobbyTransferDirection Direction, int32 TargetGridIndex)
@@ -267,9 +277,10 @@ bool AHellunaLobbyController::Server_SwapTransferItem_Validate(int32 RepID_A, in
 	// 자기 자신과의 Swap은 Implementation에서 CompA != CompB + 실제 아이템 검증으로 방지
 	// [Fix29-B] Deploy 진행 중에는 Swap 차단
 	// [Fix31] TargetGridIndex 검증
+	// [Fix46-M3] 공통 상수 사용 (100000→10000 통일)
 	return !bDeployInProgress
-		&& RepID_A >= 0 && RepID_A < 100000 && RepID_B >= 0 && RepID_B < 100000
-		&& (TargetGridIndex == INDEX_NONE || (TargetGridIndex >= 0 && TargetGridIndex < 10000));
+		&& RepID_A >= 0 && RepID_A < LobbyValidation::MaxInventoryIndex && RepID_B >= 0 && RepID_B < LobbyValidation::MaxInventoryIndex
+		&& (TargetGridIndex == INDEX_NONE || (TargetGridIndex >= 0 && TargetGridIndex < LobbyValidation::MaxInventoryIndex));
 }
 
 void AHellunaLobbyController::Server_SwapTransferItem_Implementation(int32 RepID_A, int32 RepID_B, int32 TargetGridIndex)
@@ -382,8 +393,8 @@ void AHellunaLobbyController::SaveBothComponentsAfterInteraction()
 		return;
 	}
 
-	// ── PlayerId 획득 ──
-	AHellunaLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr;
+	// ── PlayerId 획득 ── [Fix46-M1] 헬퍼 사용
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode();
 	if (!LobbyGM)
 	{
 		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] [Fix35] SaveAfterInteraction: GameMode 캐스팅 실패 → 스킵"));
@@ -494,13 +505,15 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_Deploy 시작"));
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ══════════════════════════════════════"));
 
+	// [Fix46-M1/M2] GetLobbyGameMode 헬퍼 사용 (GetWorld() 3회→1회)
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode();
+
 	// ── [Phase 12e] 파티 가입 상태면 솔로 Deploy 차단 ──
 	{
-		AHellunaLobbyGameMode* PartyCheckGM = GetWorld() ? GetWorld()->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr;
-		if (PartyCheckGM)
+		if (LobbyGM)
 		{
-			const FString CheckId = PartyCheckGM->GetLobbyPlayerId(this);
-			if (PartyCheckGM->PlayerToPartyMap.Contains(CheckId))
+			const FString CheckId = LobbyGM->GetLobbyPlayerId(this);
+			if (LobbyGM->PlayerToPartyMap.Contains(CheckId))
 			{
 				UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] Server_Deploy: 파티 가입 상태 — 솔로 Deploy 차단"));
 				Client_DeployFailed(TEXT("파티 준비 버튼을 사용하세요"));
@@ -540,10 +553,9 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 		return;
 	}
 
-	// ── [2단계] PlayerId 획득 ──
-	// GameMode의 public 래퍼 사용 (protected GetPlayerSaveId에 직접 접근 불가)
+	// ── [2단계] PlayerId 획득 ── [Fix46-M1] LobbyGM은 함수 초반에 캐시됨
 	FString PlayerId;
-	if (AHellunaLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr)
+	if (LobbyGM)
 	{
 		PlayerId = LobbyGM->GetLobbyPlayerId(this);
 		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy: PlayerId 획득 → '%s'"), *PlayerId);
@@ -649,14 +661,14 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 	DB->SetPlayerDeployed(PlayerId, true);
 
 	// ── [4단계] [Phase 12e] 채널 기반 Deploy (빈 채널 자동 배정) ──
+	// [Fix46-M2] LobbyGM 재사용 (GetWorld() 3회→1회 완료)
 	{
-		AHellunaLobbyGameMode* DeployGM = GetWorld() ? GetWorld()->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr;
-		if (DeployGM)
+		if (LobbyGM)
 		{
 			FGameChannelInfo EmptyChannel;
-			if (DeployGM->FindEmptyChannel(EmptyChannel))
+			if (LobbyGM->FindEmptyChannel(EmptyChannel))
 			{
-				DeployGM->MarkChannelAsPendingDeploy(EmptyChannel.Port);
+				LobbyGM->MarkChannelAsPendingDeploy(EmptyChannel.Port);
 				UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [4]: 채널 배정 | Port=%d"), EmptyChannel.Port);
 				Client_ExecutePartyDeploy(EmptyChannel.Port);
 			}
@@ -889,7 +901,7 @@ void AHellunaLobbyController::Server_RequestLobbyLogin_Implementation(const FStr
 {
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_RequestLobbyLogin | PlayerId=%s"), *PlayerId);
 
-	AHellunaLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr;
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode(); // [Fix46-M1]
 	if (!LobbyGM)
 	{
 		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Server_RequestLobbyLogin: GameMode 캐스팅 실패!"));
@@ -913,7 +925,7 @@ void AHellunaLobbyController::Server_RequestLobbySignup_Implementation(const FSt
 {
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_RequestLobbySignup | PlayerId=%s"), *PlayerId);
 
-	AHellunaLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr;
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode(); // [Fix46-M1]
 	if (!LobbyGM)
 	{
 		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Server_RequestLobbySignup: GameMode 캐스팅 실패!"));
@@ -1048,7 +1060,8 @@ void AHellunaLobbyController::Server_SelectLobbyCharacter_Implementation(int32 C
 {
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_SelectLobbyCharacter | Index=%d"), CharacterIndex);
 
-	AHellunaLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr;
+	// [Fix46-M1] 헬퍼 사용
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode();
 	if (!LobbyGM)
 	{
 		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Server_SelectLobbyCharacter: GameMode 캐스팅 실패!"));
@@ -1417,7 +1430,7 @@ bool AHellunaLobbyController::Server_CreateParty_Validate()
 
 void AHellunaLobbyController::Server_CreateParty_Implementation()
 {
-	AHellunaLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr;
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode(); // [Fix46-M1]
 	if (!LobbyGM)
 	{
 		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Server_CreateParty: GameMode 없음"));
@@ -1442,7 +1455,7 @@ bool AHellunaLobbyController::Server_JoinParty_Validate(const FString& PartyCode
 
 void AHellunaLobbyController::Server_JoinParty_Implementation(const FString& PartyCode)
 {
-	AHellunaLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr;
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode(); // [Fix46-M1]
 	if (!LobbyGM)
 	{
 		return;
@@ -1466,7 +1479,7 @@ bool AHellunaLobbyController::Server_LeaveParty_Validate()
 
 void AHellunaLobbyController::Server_LeaveParty_Implementation()
 {
-	AHellunaLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr;
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode(); // [Fix46-M1]
 	if (!LobbyGM)
 	{
 		return;
@@ -1484,7 +1497,7 @@ bool AHellunaLobbyController::Server_SetPartyReady_Validate(bool bReady)
 
 void AHellunaLobbyController::Server_SetPartyReady_Implementation(bool bReady)
 {
-	AHellunaLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr;
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode(); // [Fix46-M1]
 	if (!LobbyGM)
 	{
 		return;
@@ -1502,7 +1515,7 @@ bool AHellunaLobbyController::Server_KickPartyMember_Validate(const FString& Tar
 
 void AHellunaLobbyController::Server_KickPartyMember_Implementation(const FString& TargetPlayerId)
 {
-	AHellunaLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr;
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode(); // [Fix46-M1]
 	if (!LobbyGM)
 	{
 		return;
@@ -1520,7 +1533,7 @@ bool AHellunaLobbyController::Server_SendPartyChatMessage_Validate(const FString
 
 void AHellunaLobbyController::Server_SendPartyChatMessage_Implementation(const FString& Message)
 {
-	AHellunaLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr;
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode(); // [Fix46-M1]
 	if (!LobbyGM)
 	{
 		return;

@@ -1,7 +1,7 @@
 ﻿	// Capstone Project Helluna
 
 #include "AbilitySystem/EnemyAbility/EnemyGameplayAbility_RangedAttack.h"
-
+#include "Helluna.h"
 #include "AbilitySystemComponent.h"
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "GameplayTagContainer.h"
@@ -161,7 +161,9 @@ void UEnemyGameplayAbility_RangedAttack::SpawnAndLaunchProjectile()
 
 	if (!ProjectileClass)
 	{
+#if HELLUNA_DEBUG_ENEMY
 		UE_LOG(LogTemp, Warning, TEXT("[RangedAttack] ProjectileClass null — %s GA BP 에서 설정 필요"), *Enemy->GetName());
+#endif
 		return;
 	}
 

@@ -20,18 +20,27 @@ void UHellunaLoginWidget::NativeConstruct()
 #endif
 
 	bool bHasError = false;
+#if HELLUNA_DEBUG_LOGIN
 	if (!IDInputTextBox) { UE_LOG(LogTemp, Error, TEXT("[LoginWidget] IDInputTextBox 없음!")); bHasError = true; }
 	if (!PasswordInputTextBox) { UE_LOG(LogTemp, Error, TEXT("[LoginWidget] PasswordInputTextBox 없음!")); bHasError = true; }
 	if (!LoginButton) { UE_LOG(LogTemp, Error, TEXT("[LoginWidget] LoginButton 없음!")); bHasError = true; }
 	if (!MessageText) { UE_LOG(LogTemp, Error, TEXT("[LoginWidget] MessageText 없음!")); bHasError = true; }
+#else
+	if (!IDInputTextBox) { bHasError = true; }
+	if (!PasswordInputTextBox) { bHasError = true; }
+	if (!LoginButton) { bHasError = true; }
+	if (!MessageText) { bHasError = true; }
+#endif
 
 	if (bHasError)
 	{
+#if HELLUNA_DEBUG_LOGIN
 		if (GEngine)
 		{
 			GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Red,
 				TEXT("[LoginWidget] 필수 위젯 없음!"));
 		}
+#endif
 		return;
 	}
 
@@ -98,7 +107,9 @@ void UHellunaLoginWidget::OnLoginButtonClicked()
 	}
 	else
 	{
+#if HELLUNA_DEBUG_LOGIN
 		UE_LOG(LogTemp, Error, TEXT("[LoginWidget] LoginController 없음! (PC: %s)"), PC ? *PC->GetClass()->GetName() : TEXT("nullptr"));
+#endif
 		ShowMessage(TEXT("Controller 오류!"), true);
 
 		// 로딩 화면 해제
@@ -159,10 +170,12 @@ void UHellunaLoginWidget::ShowCharacterSelection_Implementation(const TArray<boo
 	// 1. CharacterSelectWidgetClass 체크
 	if (!CharacterSelectWidgetClass)
 	{
+#if HELLUNA_DEBUG_LOGIN
 		UE_LOG(LogTemp, Error, TEXT("║ ❌ CharacterSelectWidgetClass가 설정되지 않음!"));
 		UE_LOG(LogTemp, Error, TEXT("║    → BP에서 CharacterSelectWidgetClass 설정 필요"));
 		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
-		
+#endif
+
 		ShowMessage(TEXT("캐릭터 선택 위젯 설정 오류!"), true);
 		return;
 	}
@@ -179,24 +192,30 @@ void UHellunaLoginWidget::ShowCharacterSelection_Implementation(const TArray<boo
 	UWorld* CharSelectWorld = GetWorld();
 	if (!CharSelectWorld)
 	{
+#if HELLUNA_DEBUG_LOGIN
 		UE_LOG(LogTemp, Error, TEXT("║ ❌ World 없음!"));
 		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
 		return;
 	}
 	APlayerController* PC = UGameplayStatics::GetPlayerController(CharSelectWorld, 0);
 	if (!PC)
 	{
+#if HELLUNA_DEBUG_LOGIN
 		UE_LOG(LogTemp, Error, TEXT("║ ❌ PlayerController 없음!"));
 		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
 		return;
 	}
 
 	CharacterSelectWidget = CreateWidget<UHellunaCharacterSelectWidget>(PC, CharacterSelectWidgetClass);
 	if (!CharacterSelectWidget)
 	{
+#if HELLUNA_DEBUG_LOGIN
 		UE_LOG(LogTemp, Error, TEXT("║ ❌ 캐릭터 선택 위젯 생성 실패!"));
 		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
-		
+#endif
+
 		SetVisibility(ESlateVisibility::Visible);
 		ShowMessage(TEXT("캐릭터 선택 위젯 생성 실패!"), true);
 		return;

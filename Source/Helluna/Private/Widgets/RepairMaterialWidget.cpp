@@ -12,12 +12,15 @@
 #include "Kismet/GameplayStatics.h"
 
 #include "DebugHelper.h"
+#include "Helluna.h"
 
 void URepairMaterialWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
 
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("=== [RepairMaterialWidget] NativeConstruct ==="));
+#endif
 
 	// 버튼 이벤트 바인딩
 	if (Button_Confirm)
@@ -46,7 +49,9 @@ void URepairMaterialWidget::NativeDestruct()
 {
 	Super::NativeDestruct();
 
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("=== [RepairMaterialWidget] NativeDestruct ==="));
+#endif
 }
 
 // ========================================
@@ -55,14 +60,18 @@ void URepairMaterialWidget::NativeDestruct()
 
 void URepairMaterialWidget::InitializeWidget(URepairComponent* InRepairComponent, UInv_InventoryComponent* InInventoryComponent)
 {
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("=== [InitializeWidget] 시작 ==="));
+#endif
 
 	RepairComponent = InRepairComponent;
 	InventoryComponent = InInventoryComponent;
 
 	if (!RepairComponent || !InventoryComponent)
 	{
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Error, TEXT("  ❌ RepairComponent 또는 InventoryComponent가 nullptr!"));
+#endif
 		return;
 	}
 
@@ -74,7 +83,9 @@ void URepairMaterialWidget::InitializeWidget(URepairComponent* InRepairComponent
 	Material1MaxAvailable = InventoryComponent->GetTotalMaterialCount(Material1Tag);
 	Material1UseAmount = 0;
 
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("  📦 재료 1: %s, 보유량: %d"), *Material1Tag.ToString(), Material1MaxAvailable);
+#endif
 
 	// UI 업데이트
 	if (Text_Material1Name)
@@ -98,7 +109,9 @@ void URepairMaterialWidget::InitializeWidget(URepairComponent* InRepairComponent
 		if (Material1MaxAvailable <= 0)
 		{
 			Slider_Material1->SetIsEnabled(false);
+#if HELLUNA_DEBUG_REPAIR
 			UE_LOG(LogTemp, Warning, TEXT("  ⚠️ 재료 1 보유량 0 → 슬라이더 비활성화"));
+#endif
 		}
 		else
 		{
@@ -125,7 +138,9 @@ void URepairMaterialWidget::InitializeWidget(URepairComponent* InRepairComponent
 	Material2MaxAvailable = InventoryComponent->GetTotalMaterialCount(Material2Tag);
 	Material2UseAmount = 0;
 
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("  📦 재료 2: %s, 보유량: %d"), *Material2Tag.ToString(), Material2MaxAvailable);
+#endif
 
 	// UI 업데이트
 	if (Text_Material2Name)
@@ -149,7 +164,9 @@ void URepairMaterialWidget::InitializeWidget(URepairComponent* InRepairComponent
 		if (Material2MaxAvailable <= 0)
 		{
 			Slider_Material2->SetIsEnabled(false);
+#if HELLUNA_DEBUG_REPAIR
 			UE_LOG(LogTemp, Warning, TEXT("  ⚠️ 재료 2 보유량 0 → 슬라이더 비활성화"));
+#endif
 		}
 		else
 		{
@@ -171,7 +188,9 @@ void URepairMaterialWidget::InitializeWidget(URepairComponent* InRepairComponent
 	// 총 자원량 초기화
 	UpdateTotalResourceUI();
 
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("=== [InitializeWidget] 완료 ==="));
+#endif
 }
 
 // ========================================
@@ -180,11 +199,15 @@ void URepairMaterialWidget::InitializeWidget(URepairComponent* InRepairComponent
 
 void URepairMaterialWidget::OnConfirmClicked()
 {
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("=== [OnConfirmClicked] 확인 버튼 클릭! ==="));
+#endif
 
 	if (!RepairComponent)
 	{
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Error, TEXT("  ❌ RepairComponent가 nullptr!"));
+#endif
 		return;
 	}
 
@@ -192,32 +215,42 @@ void URepairMaterialWidget::OnConfirmClicked()
 	int32 TotalUse = Material1UseAmount + Material2UseAmount;
 	if (TotalUse <= 0)
 	{
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Warning, TEXT("  ⚠️ 사용할 재료가 없습니다!"));
+#endif
 		return;
 	}
 
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("  📤 Repair 요청 전송:"));
 	UE_LOG(LogTemp, Warning, TEXT("    - 재료 1: %s x %d"), *Material1Tag.ToString(), Material1UseAmount);
 	UE_LOG(LogTemp, Warning, TEXT("    - 재료 2: %s x %d"), *Material2Tag.ToString(), Material2UseAmount);
+#endif
 
 	// ⭐ PlayerController에서 HeroCharacter 가져오기
 	APlayerController* PC = GetOwningPlayer();
 	if (!PC)
 	{
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Error, TEXT("  ❌ PlayerController를 찾을 수 없음!"));
+#endif
 		return;
 	}
 
 	AHellunaHeroCharacter* HeroCharacter = Cast<AHellunaHeroCharacter>(PC->GetPawn());
 	if (!HeroCharacter)
 	{
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Error, TEXT("  ❌ HeroCharacter 캐스팅 실패!"));
+#endif
 		return;
 	}
 
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("  ✅ HeroCharacter 찾음: %s"), *HeroCharacter->GetName());
 	UE_LOG(LogTemp, Warning, TEXT("  🔧 HeroCharacter->Server_RepairSpaceShip() 호출"));
-	
+#endif
+
 	// ⭐⭐⭐ HeroCharacter의 Server RPC 호출
 	// 재료 정보를 전달하면 서버에서:
 	// 1. SpaceShip에 실제로 들어간 양만큼만
@@ -227,7 +260,9 @@ void URepairMaterialWidget::OnConfirmClicked()
 	// ⭐ 입력 모드 복원 (게임 모드로 전환)
 	PC->SetInputMode(FInputModeGameOnly());
 	PC->bShowMouseCursor = false;
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("  🖱️ 마우스 커서 비활성화!"));
+#endif
 
 	// Widget 닫기
 	RemoveFromParent();
@@ -235,7 +270,9 @@ void URepairMaterialWidget::OnConfirmClicked()
 
 void URepairMaterialWidget::OnCancelClicked()
 {
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("=== [OnCancelClicked] 취소 버튼 클릭! ==="));
+#endif
 
 	// ⭐ 입력 모드 복원 (게임 모드로 전환)
 	APlayerController* PC = GetOwningPlayer();
@@ -243,7 +280,9 @@ void URepairMaterialWidget::OnCancelClicked()
 	{
 		PC->SetInputMode(FInputModeGameOnly());
 		PC->bShowMouseCursor = false;
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Warning, TEXT("  🖱️ 마우스 커서 비활성화!"));
+#endif
 	}
 
 	// Widget 닫기
@@ -269,7 +308,9 @@ void URepairMaterialWidget::OnMaterial1SliderChanged(float Value)
 
 void URepairMaterialWidget::CloseWidget()
 {
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("=== [CloseWidget] Widget 닫기 ==="));
+#endif
 
 	// 입력 모드 복원
 	APlayerController* PC = GetOwningPlayer();
@@ -277,7 +318,9 @@ void URepairMaterialWidget::CloseWidget()
 	{
 		PC->SetInputMode(FInputModeGameOnly());
 		PC->bShowMouseCursor = false;
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Warning, TEXT("  🖱️ 마우스 커서 비활성화!"));
+#endif
 	}
 
 	// Widget 제거

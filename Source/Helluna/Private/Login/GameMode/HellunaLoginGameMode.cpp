@@ -76,11 +76,13 @@ void AHellunaLoginGameMode::TravelToGameMap()
 	if (GameMap.IsNull())
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[LoginGameMode] GameMap 미설정! BP에서 설정 필요"));
+#if HELLUNA_DEBUG_SERVERCONNECTION
 		if (GEngine)
 		{
 			GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Red,
 				TEXT("GameMap 미설정! BP_LoginGameMode에서 설정 필요"));
 		}
+#endif
 		return;
 	}
 

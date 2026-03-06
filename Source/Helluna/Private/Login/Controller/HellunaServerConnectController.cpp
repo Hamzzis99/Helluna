@@ -31,11 +31,13 @@ void AHellunaServerConnectController::BeginPlay()
 	if (!ConnectWidgetClass)
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[ServerConnectController] ConnectWidgetClass 미설정!"));
+#if HELLUNA_DEBUG_SERVERCONNECTION
 		if (GEngine)
 		{
 			GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Red,
 				TEXT("ConnectWidgetClass 미설정! BP에서 설정 필요"));
 		}
+#endif
 		return;
 	}
 

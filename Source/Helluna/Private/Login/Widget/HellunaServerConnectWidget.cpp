@@ -18,17 +18,25 @@ void UHellunaServerConnectWidget::NativeConstruct()
 #endif
 
 	bool bHasError = false;
+#if HELLUNA_DEBUG_SERVERCONNECTION
 	if (!IPInputTextBox) { UE_LOG(LogTemp, Error, TEXT("[ServerConnectWidget] IPInputTextBox 없음!")); bHasError = true; }
 	if (!ConnectButton) { UE_LOG(LogTemp, Error, TEXT("[ServerConnectWidget] ConnectButton 없음!")); bHasError = true; }
 	if (!MessageText) { UE_LOG(LogTemp, Error, TEXT("[ServerConnectWidget] MessageText 없음!")); bHasError = true; }
+#else
+	if (!IPInputTextBox) { bHasError = true; }
+	if (!ConnectButton) { bHasError = true; }
+	if (!MessageText) { bHasError = true; }
+#endif
 
 	if (bHasError)
 	{
+#if HELLUNA_DEBUG_SERVERCONNECTION
 		if (GEngine)
 		{
 			GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Red,
 				TEXT("[ServerConnectWidget] 필수 위젯 없음!"));
 		}
+#endif
 		return;
 	}
 
@@ -62,7 +70,9 @@ void UHellunaServerConnectWidget::OnConnectButtonClicked()
 	}
 	else
 	{
+#if HELLUNA_DEBUG_SERVERCONNECTION
 		UE_LOG(LogTemp, Error, TEXT("[ServerConnectWidget] ServerConnectController 없음!"));
+#endif
 		ShowMessage(TEXT("Controller 오류!"), true);
 	}
 }
