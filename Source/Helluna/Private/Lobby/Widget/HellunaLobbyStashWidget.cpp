@@ -988,23 +988,56 @@ void UHellunaLobbyStashWidget::UpdateNameTagOverlays()
 			NameTag_Solo->SetVisibility(ESlateVisibility::Collapsed);
 		}
 
+		// 슬롯 매핑: 리더→Slot1(중앙), 멤버1→Slot0(좌), 멤버2→Slot2(우)
+		// (3D 프리뷰 HellunaCharacterSelectSceneV2::SetPartyPreview와 동일 배치)
 		UVerticalBox* SlotWidgets[3] = { NameTag_Slot0, NameTag_Slot1, NameTag_Slot2 };
 
+		// 모든 슬롯 초기화 (숨김)
 		for (int32 i = 0; i < 3; ++i)
 		{
-			if (!SlotWidgets[i]) continue;
+			if (SlotWidgets[i]) SlotWidgets[i]->SetVisibility(ESlateVisibility::Collapsed);
+		}
 
-			if (i < Info.Members.Num())
+		// 리더 찾기
+		int32 LeaderIdx = 0;
+		for (int32 i = 0; i < Info.Members.Num(); ++i)
+		{
+			if (Info.Members[i].Role == EHellunaPartyRole::Leader)
 			{
-				const auto& Member = Info.Members[i];
-				const bool bMemberIsLeader = (Member.Role == EHellunaPartyRole::Leader);
-				SetNameTagContent(SlotWidgets[i], Member.DisplayName, Member.bIsReady, bMemberIsLeader);
-				SlotWidgets[i]->SetVisibility(ESlateVisibility::HitTestInvisible);
+				LeaderIdx = i;
+				break;
 			}
-			else
-			{
-				SlotWidgets[i]->SetVisibility(ESlateVisibility::Collapsed);
-			}
+		}
+
+		// 멤버(리더 제외) 수집
+		TArray<int32> MemberIndices;
+		for (int32 i = 0; i < Info.Members.Num(); ++i)
+		{
+			if (i != LeaderIdx) MemberIndices.Add(i);
+		}
+
+		// 리더 → Slot1(중앙)
+		if (SlotWidgets[1])
+		{
+			const auto& Leader = Info.Members[LeaderIdx];
+			SetNameTagContent(SlotWidgets[1], Leader.DisplayName, Leader.bIsReady, true);
+			SlotWidgets[1]->SetVisibility(ESlateVisibility::HitTestInvisible);
+		}
+
+		// 멤버1 → Slot2(우) — 3D Slot0(Y=-200)이 화면 오른쪽이므로 위젯 Slot2에 매핑
+		if (MemberIndices.Num() >= 1 && SlotWidgets[2])
+		{
+			const auto& M = Info.Members[MemberIndices[0]];
+			SetNameTagContent(SlotWidgets[2], M.DisplayName, M.bIsReady, false);
+			SlotWidgets[2]->SetVisibility(ESlateVisibility::HitTestInvisible);
+		}
+
+		// 멤버2 → Slot0(좌) — 3D Slot2(Y=+200)이 화면 왼쪽이므로 위젯 Slot0에 매핑
+		if (MemberIndices.Num() >= 2 && SlotWidgets[0])
+		{
+			const auto& M = Info.Members[MemberIndices[1]];
+			SetNameTagContent(SlotWidgets[0], M.DisplayName, M.bIsReady, false);
+			SlotWidgets[0]->SetVisibility(ESlateVisibility::HitTestInvisible);
 		}
 
 		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase 12j] 파티 네임태그 %d명 표시"), Info.Members.Num());
@@ -1050,17 +1083,20 @@ void UHellunaLobbyStashWidget::SetNameTagContent(UVerticalBox* NameTag, const FS
 	{
 		if (HNameRow->GetChildrenCount() >= 2)
 		{
-			// 리더 별 아이콘
+			// [Phase 12j Fix] 리더 별 아이콘 — Image 대신 텍스트 접두사 사용
 			UWidget* StarWidget = HNameRow->GetChildAt(0);
 			if (StarWidget)
 			{
-				StarWidget->SetVisibility(bIsLeader ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+				StarWidget->SetVisibility(ESlateVisibility::Collapsed); // Image 항상 숨김
 			}
 
-			// 닉네임 텍스트
+			// 닉네임 텍스트 — 리더는 "★ " 접두사
 			if (UTextBlock* NameText = Cast<UTextBlock>(HNameRow->GetChildAt(1)))
 			{
-				NameText->SetText(FText::FromString(PlayerName));
+				const FString DisplayName = bIsLeader
+					? FString::Printf(TEXT("\u2605 %s"), *PlayerName)
+					: PlayerName;
+				NameText->SetText(FText::FromString(DisplayName));
 
 				// 리더 = 골드, 멤버 = 밝은 회색
 				const FLinearColor NameColor = bIsLeader
