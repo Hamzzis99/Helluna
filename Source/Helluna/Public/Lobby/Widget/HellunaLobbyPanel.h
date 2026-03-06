@@ -47,6 +47,7 @@ class HELLUNA_API UHellunaLobbyPanel : public UUserWidget
 
 public:
 	virtual void NativeOnInitialized() override;
+	virtual void NativeDestruct() override;
 
 	// ════════════════════════════════════════════════════════════════
 	// 초기화

@@ -55,6 +55,7 @@ class HELLUNA_API UHellunaLobbyStashWidget : public UUserWidget
 
 public:
 	virtual void NativeOnInitialized() override;
+	virtual void NativeDestruct() override;
 
 	// ════════════════════════════════════════════════════════════════
 	// 초기화

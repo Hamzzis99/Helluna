@@ -44,6 +44,56 @@
 #include "Lobby/HellunaLobbyLog.h"
 
 // ════════════════════════════════════════════════════════════════════════════════
+// [Fix45-H1] NativeDestruct — 위젯 파괴 시 모든 델리게이트 해제
+// ════════════════════════════════════════════════════════════════════════════════
+void UHellunaLobbyStashWidget::NativeDestruct()
+{
+	// ── NativeOnInitialized 바인딩 해제 ──
+	if (Button_Tab_Play) { Button_Tab_Play->OnClicked.RemoveDynamic(this, &ThisClass::OnTabPlayClicked); }
+	if (Button_Tab_Loadout) { Button_Tab_Loadout->OnClicked.RemoveDynamic(this, &ThisClass::OnTabLoadoutClicked); }
+	if (Button_Tab_Character) { Button_Tab_Character->OnClicked.RemoveDynamic(this, &ThisClass::OnTabCharacterClicked); }
+	if (Button_Start) { Button_Start->OnClicked.RemoveDynamic(this, &ThisClass::OnStartClicked); }
+	if (Button_Party) { Button_Party->OnClicked.RemoveDynamic(this, &ThisClass::OnPartyClicked); }
+	if (Button_Deploy) { Button_Deploy->OnClicked.RemoveDynamic(this, &ThisClass::OnDeployClicked); }
+	if (CharacterSelectPanel) { CharacterSelectPanel->OnCharacterSelected.RemoveDynamic(this, &ThisClass::OnCharacterSelectedHandler); }
+	if (PlayChatSendButton) { PlayChatSendButton->OnClicked.RemoveDynamic(this, &ThisClass::OnPlayChatSendClicked); }
+	if (PlayChatInput) { PlayChatInput->OnTextCommitted.RemoveDynamic(this, &ThisClass::OnPlayChatInputCommitted); }
+
+	// ── LobbyPC 외부 오브젝트 바인딩 해제 ──
+	if (AHellunaLobbyController* LobbyPC = GetLobbyController())
+	{
+		LobbyPC->OnPartyStateChanged.RemoveDynamic(this, &ThisClass::OnPartyStateChangedHandler);
+		LobbyPC->OnPartyChatReceived.RemoveDynamic(this, &ThisClass::HandlePlayChatReceived);
+	}
+
+	// ── InitializePanels 바인딩 해제 ──
+	if (StashPanel) { StashPanel->OnPanelTransferRequested.RemoveDynamic(this, &ThisClass::OnStashItemTransferRequested); }
+	if (LoadoutSpatialInventory) { LoadoutSpatialInventory->OnSpatialTransferRequested.RemoveDynamic(this, &ThisClass::OnLoadoutItemTransferRequested); }
+
+	// ── CrossSwap Grid 바인딩 해제 ──
+	auto UnbindCrossSwap = [this](UInv_InventoryGrid* Grid)
+	{
+		if (Grid) { Grid->OnLobbyCrossSwapRequested.RemoveDynamic(this, &ThisClass::OnCrossSwapRequested); }
+	};
+	if (StashPanel)
+	{
+		UnbindCrossSwap(StashPanel->GetGrid_Equippables());
+		UnbindCrossSwap(StashPanel->GetGrid_Consumables());
+		UnbindCrossSwap(StashPanel->GetGrid_Craftables());
+	}
+	if (LoadoutSpatialInventory)
+	{
+		UnbindCrossSwap(LoadoutSpatialInventory->GetGrid_Equippables());
+		UnbindCrossSwap(LoadoutSpatialInventory->GetGrid_Consumables());
+		UnbindCrossSwap(LoadoutSpatialInventory->GetGrid_Craftables());
+	}
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Fix45-H1] NativeDestruct — 모든 델리게이트 해제 완료"));
+
+	Super::NativeDestruct();
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
 // NativeOnInitialized — 위젯 생성 시 초기화
 // ════════════════════════════════════════════════════════════════════════════════
 void UHellunaLobbyStashWidget::NativeOnInitialized()
@@ -267,16 +317,18 @@ void UHellunaLobbyStashWidget::InitializePanels(UInv_InventoryComponent* StashCo
 	if (StashPanel)
 	{
 		StashPanel->EnableLobbyTransferMode();
+		// [Fix45-H5] AddDynamic→AddUniqueDynamic (Remove+Add 패턴 유지하되 안전성 강화)
 		StashPanel->OnPanelTransferRequested.RemoveDynamic(this, &ThisClass::OnStashItemTransferRequested);
-		StashPanel->OnPanelTransferRequested.AddDynamic(this, &ThisClass::OnStashItemTransferRequested);
+		StashPanel->OnPanelTransferRequested.AddUniqueDynamic(this, &ThisClass::OnStashItemTransferRequested);
 		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] StashPanel → 우클릭 전송 모드 ON (→ Loadout)"));
 	}
 
 	if (LoadoutSpatialInventory)
 	{
 		LoadoutSpatialInventory->EnableLobbyTransferMode();
+		// [Fix45-H5] AddDynamic→AddUniqueDynamic
 		LoadoutSpatialInventory->OnSpatialTransferRequested.RemoveDynamic(this, &ThisClass::OnLoadoutItemTransferRequested);
-		LoadoutSpatialInventory->OnSpatialTransferRequested.AddDynamic(this, &ThisClass::OnLoadoutItemTransferRequested);
+		LoadoutSpatialInventory->OnSpatialTransferRequested.AddUniqueDynamic(this, &ThisClass::OnLoadoutItemTransferRequested);
 		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] LoadoutSpatialInventory → 우클릭 전송 모드 ON (→ Stash)"));
 	}
 

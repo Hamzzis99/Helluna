@@ -15,6 +15,16 @@
 
 #include "Lobby/HellunaLobbyLog.h"
 
+// [Fix45-H2] NativeDestruct — 버튼 델리게이트 해제
+void UHellunaLobbyLoginWidget::NativeDestruct()
+{
+	if (LoginButton) { LoginButton->OnClicked.RemoveDynamic(this, &UHellunaLobbyLoginWidget::OnLoginButtonClicked); }
+	if (LoginTabButton) { LoginTabButton->OnClicked.RemoveDynamic(this, &UHellunaLobbyLoginWidget::OnLoginTabClicked); }
+	if (SignupTabButton) { SignupTabButton->OnClicked.RemoveDynamic(this, &UHellunaLobbyLoginWidget::OnSignupTabClicked); }
+
+	Super::NativeDestruct();
+}
+
 void UHellunaLobbyLoginWidget::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();

@@ -49,6 +49,7 @@ public:
 
 protected:
 	virtual void NativeOnInitialized() override;
+	virtual void NativeDestruct() override;
 
 	/** 로그인/회원가입 버튼 클릭 */
 	UFUNCTION()
