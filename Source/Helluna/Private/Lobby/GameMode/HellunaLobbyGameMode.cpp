@@ -265,7 +265,6 @@ void AHellunaLobbyGameMode::ProcessLobbyLogin(AHellunaLobbyController* LobbyPC, 
 		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ProcessLobbyLogin: RegisterLogin 완료 | PlayerId=%s"), *PlayerId);
 	}
 
-	LobbyPC->SetReplicatedPlayerId(PlayerId);
 	InitializeLobbyForPlayer(LobbyPC, PlayerId);
 }
 
@@ -639,11 +638,13 @@ void AHellunaLobbyGameMode::Logout(AController* Exiting)
 				if (World)
 				{
 					FString CapturedPlayerId = LogoutPlayerId;
-					World->GetTimerManager().SetTimer(LeaveTimer, [this, CapturedPlayerId]()
+					TWeakObjectPtr<AHellunaLobbyGameMode> WeakThis(this);
+					World->GetTimerManager().SetTimer(LeaveTimer, [WeakThis, CapturedPlayerId]()
 					{
+						if (!WeakThis.IsValid()) return;
 						UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] 30초 유예 만료 — 파티 자동 탈퇴 | PlayerId=%s"), *CapturedPlayerId);
-						LeavePartyForPlayer(CapturedPlayerId);
-						PartyLeaveTimers.Remove(CapturedPlayerId);
+						WeakThis->LeavePartyForPlayer(CapturedPlayerId);
+						WeakThis->PartyLeaveTimers.Remove(CapturedPlayerId);
 					}, 30.f, false);
 
 					UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] Logout: 30초 파티 탈퇴 타이머 시작 | PlayerId=%s"), *LogoutPlayerId);
@@ -1350,10 +1351,12 @@ void AHellunaLobbyGameMode::MarkChannelAsPendingDeploy(int32 Port)
 	UWorld* World = GetWorld();
 	if (World)
 	{
-		World->GetTimerManager().SetTimer(TimerHandle, [this, Port]()
+		TWeakObjectPtr<AHellunaLobbyGameMode> WeakThis(this);
+		World->GetTimerManager().SetTimer(TimerHandle, [WeakThis, Port]()
 		{
-			PendingDeployChannels.Remove(Port);
-			PendingDeployTimers.Remove(Port);
+			if (!WeakThis.IsValid()) return;
+			WeakThis->PendingDeployChannels.Remove(Port);
+			WeakThis->PendingDeployTimers.Remove(Port);
 			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] PendingDeploy 타이머 해제 | Port=%d"), Port);
 		}, 30.f, false);
 	}

@@ -211,6 +211,9 @@ protected:
 	UPROPERTY()
 	TObjectPtr<UHellunaLoginWidget> LoginWidget;
 
+	/** 위젯 표시 지연 타이머 핸들 */
+	FTimerHandle RetryTimerHandle;
+
 	/**
 	 * 로그인 성공 후 교체할 Controller 클래스
 	 * BP에서 BP_InvPlayerController 등으로 설정

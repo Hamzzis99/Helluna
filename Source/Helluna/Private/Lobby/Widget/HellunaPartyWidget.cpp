@@ -198,6 +198,14 @@ void UHellunaPartyWidget::AddChatMessage(const FHellunaPartyChatMessage& ChatMes
 		MsgText->SetFont(FontInfo);
 
 		ScrollBox_PartyChat->AddChild(MsgText);
+
+		// ScrollBox에 자식이 너무 많으면 가장 오래된 것 제거
+		const int32 MaxMessages = 100;
+		while (ScrollBox_PartyChat->GetChildrenCount() > MaxMessages)
+		{
+			ScrollBox_PartyChat->RemoveChildAt(0);
+		}
+
 		ScrollBox_PartyChat->ScrollToEnd();
 	}
 }

@@ -101,8 +101,7 @@ void AHellunaLoginController::BeginPlay()
 		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 		SetInputMode(InputMode);
 
-		FTimerHandle TimerHandle;
-		GetWorldTimerManager().SetTimer(TimerHandle, this, &AHellunaLoginController::ShowLoginWidget, 0.3f, false);
+		GetWorldTimerManager().SetTimer(RetryTimerHandle, this, &AHellunaLoginController::ShowLoginWidget, 0.3f, false);
 	}
 	else
 	{
@@ -157,7 +156,8 @@ void AHellunaLoginController::ShowLoginWidget()
 	// 문제: PlayerState 복원 전에 ShowLoginWidget이 먼저 호출됨
 	// 해결: bIsMapTransitioning 플래그로 SeamlessTravel 상황 감지
 	// ========================================
-	if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance()))
+	UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance());
+	if (GI)
 	{
 		if (GI->bIsMapTransitioning)
 		{
@@ -197,9 +197,9 @@ void AHellunaLoginController::ShowLoginWidget()
 	}
 
 	// 로딩 화면 해제 (서버 접속 완료 후)
-	if (UMDF_GameInstance* GI2 = Cast<UMDF_GameInstance>(GetGameInstance()))
+	if (GI)
 	{
-		GI2->HideLoadingScreen();
+		GI->HideLoadingScreen();
 	}
 
 	if (!LoginWidgetClass)

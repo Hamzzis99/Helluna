@@ -91,7 +91,9 @@ void AHellunaLoginGameMode::TravelToGameMap()
 	UE_LOG(LogHelluna, Warning, TEXT("[LoginGameMode] ServerTravel: %s"), *TravelURL);
 #endif
 
-	GetWorld()->ServerTravel(TravelURL);
+	UWorld* World = GetWorld();
+	if (!World) return;
+	World->ServerTravel(TravelURL);
 
 #if HELLUNA_DEBUG_SERVERCONNECTION
 	UE_LOG(LogHelluna, Warning, TEXT(""));

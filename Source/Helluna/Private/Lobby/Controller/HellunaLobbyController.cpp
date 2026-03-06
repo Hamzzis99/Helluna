@@ -861,6 +861,7 @@ void AHellunaLobbyController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 // ════════════════════════════════════════════════════════════════════════════════
 bool AHellunaLobbyController::Server_RequestLobbyLogin_Validate(const FString& PlayerId, const FString& Password)
 {
+	if (PlayerId.Len() > 64 || Password.Len() > 128) return false;
 	return !PlayerId.IsEmpty() && !Password.IsEmpty();
 }
 
@@ -884,6 +885,7 @@ void AHellunaLobbyController::Server_RequestLobbyLogin_Implementation(const FStr
 // ════════════════════════════════════════════════════════════════════════════════
 bool AHellunaLobbyController::Server_RequestLobbySignup_Validate(const FString& PlayerId, const FString& Password)
 {
+	if (PlayerId.Len() > 64 || Password.Len() > 128) return false;
 	return !PlayerId.IsEmpty() && !Password.IsEmpty();
 }
 
@@ -990,12 +992,14 @@ void AHellunaLobbyController::Client_LobbyLoginResult_Implementation(bool bSucce
 
 			// 0.3초 후 위젯 제거 + 로비 UI 표시
 			FTimerHandle RemoveTimer;
-			GetWorldTimerManager().SetTimer(RemoveTimer, [this]()
+			TWeakObjectPtr<AHellunaLobbyController> WeakThis(this);
+			GetWorldTimerManager().SetTimer(RemoveTimer, [WeakThis]()
 			{
-				if (LobbyLoginWidgetInstance)
+				if (!WeakThis.IsValid()) return;
+				if (WeakThis->LobbyLoginWidgetInstance)
 				{
-					LobbyLoginWidgetInstance->RemoveFromParent();
-					LobbyLoginWidgetInstance = nullptr;
+					WeakThis->LobbyLoginWidgetInstance->RemoveFromParent();
+					WeakThis->LobbyLoginWidgetInstance = nullptr;
 				}
 				// 로비 위젯은 서버가 Client_ShowLobbyUI로 표시 지시
 				// (InitializeLobbyForPlayer에서 0.5초 후 호출)

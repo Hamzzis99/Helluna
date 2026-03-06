@@ -4,15 +4,18 @@
 #include "Components/TextBlock.h"
 #include "Components/Button.h"
 #include "Kismet/GameplayStatics.h"
+#include "Helluna.h"
 
 void UHellunaServerConnectWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
 
+#if HELLUNA_DEBUG_SERVERCONNECTION
 	UE_LOG(LogTemp, Warning, TEXT(""));
 	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
 	UE_LOG(LogTemp, Warning, TEXT("║     [ServerConnectWidget] NativeConstruct                  ║"));
 	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
 
 	bool bHasError = false;
 	if (!IPInputTextBox) { UE_LOG(LogTemp, Error, TEXT("[ServerConnectWidget] IPInputTextBox 없음!")); bHasError = true; }
@@ -31,22 +34,28 @@ void UHellunaServerConnectWidget::NativeConstruct()
 
 	if (ConnectButton)
 	{
-		ConnectButton->OnClicked.AddDynamic(this, &UHellunaServerConnectWidget::OnConnectButtonClicked);
+		ConnectButton->OnClicked.AddUniqueDynamic(this, &UHellunaServerConnectWidget::OnConnectButtonClicked);
 	}
 
 	ShowMessage(TEXT("IP 빈칸 → 호스트 / IP 입력 → 접속"), false);
 
+#if HELLUNA_DEBUG_SERVERCONNECTION
 	UE_LOG(LogTemp, Warning, TEXT("[ServerConnectWidget] 초기화 완료"));
 	UE_LOG(LogTemp, Warning, TEXT(""));
+#endif
 }
 
 void UHellunaServerConnectWidget::OnConnectButtonClicked()
 {
+#if HELLUNA_DEBUG_SERVERCONNECTION
 	UE_LOG(LogTemp, Warning, TEXT("[ServerConnectWidget] OnConnectButtonClicked"));
+#endif
 
 	FString IP = GetIPAddress();
 
-	APlayerController* PC = UGameplayStatics::GetPlayerController(GetWorld(), 0);
+	UWorld* World = GetWorld();
+	if (!World) return;
+	APlayerController* PC = UGameplayStatics::GetPlayerController(World, 0);
 	if (AHellunaServerConnectController* ConnectController = Cast<AHellunaServerConnectController>(PC))
 	{
 		ConnectController->OnConnectButtonClicked(IP);
