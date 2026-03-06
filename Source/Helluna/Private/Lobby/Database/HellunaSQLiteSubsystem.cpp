@@ -1129,6 +1129,11 @@ bool UHellunaSQLiteSubsystem::InitializeSchema()
 	}
 	UE_LOG(LogHelluna, Log, TEXT("[SQLite]   CREATE TABLE player_equipment ✓"));
 
+	// ── [Phase 14a] player_deploy_state 마이그레이션: deployed_port, deployed_hero_type 추가 ──
+	// 기존 테이블에 컬럼이 없을 수 있으므로 ALTER TABLE (이미 있으면 에러 무시)
+	Database->Execute(TEXT("ALTER TABLE player_deploy_state ADD COLUMN deployed_port INTEGER NOT NULL DEFAULT 0;"));
+	Database->Execute(TEXT("ALTER TABLE player_deploy_state ADD COLUMN deployed_hero_type INTEGER NOT NULL DEFAULT 3;"));
+
 	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ InitializeSchema 완료 (테이블 8개, 인덱스 7개)"));
 	return true;
 }
@@ -2337,6 +2342,105 @@ bool UHellunaSQLiteSubsystem::IsPlayerDeployed(const FString& PlayerId)
 	// 행 없음 = 한 번도 출격한 적 없음 → false
 	UE_LOG(LogHelluna, Log, TEXT("[SQLite] [Fix36] ✓ IsPlayerDeployed: 기록 없음 (미출격) | PlayerId=%s"), *PlayerId);
 	return false;
+}
+
+// ──────────────────────────────────────────────────────────────
+// [Phase 14a] SetPlayerDeployedWithPort — 출격 상태 + 포트/영웅타입 저장
+// ──────────────────────────────────────────────────────────────
+bool UHellunaSQLiteSubsystem::SetPlayerDeployedWithPort(const FString& PlayerId, bool bDeployed, int32 ServerPort, int32 HeroTypeIndex)
+{
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] [Phase14] ▶ SetPlayerDeployedWithPort | PlayerId=%s | bDeployed=%s | Port=%d | HeroType=%d"),
+		*PlayerId, bDeployed ? TEXT("true") : TEXT("false"), ServerPort, HeroTypeIndex);
+
+	if (PlayerId.IsEmpty())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] [Phase14] ✗ SetPlayerDeployedWithPort: PlayerId가 비어있음"));
+		return false;
+	}
+
+	if (!IsDatabaseReady())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] [Phase14] ✗ SetPlayerDeployedWithPort: DB가 준비되지 않음"));
+		return false;
+	}
+
+	FSQLitePreparedStatement Statement;
+	Statement.Create(*Database,
+		TEXT("INSERT OR REPLACE INTO player_deploy_state (player_id, is_deployed, deployed_port, deployed_hero_type, deployed_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP);"),
+		ESQLitePreparedStatementFlags::Persistent);
+
+	if (!Statement.IsValid())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] [Phase14] ✗ SetPlayerDeployedWithPort: PrepareStatement 실패 | 에러: %s"), *Database->GetLastError());
+		return false;
+	}
+
+	Statement.SetBindingValueByIndex(1, PlayerId);
+	Statement.SetBindingValueByIndex(2, static_cast<int64>(bDeployed ? 1 : 0));
+	Statement.SetBindingValueByIndex(3, static_cast<int64>(ServerPort));
+	Statement.SetBindingValueByIndex(4, static_cast<int64>(HeroTypeIndex));
+
+	if (!Statement.Execute())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] [Phase14] ✗ SetPlayerDeployedWithPort: Execute 실패 | 에러: %s"), *Database->GetLastError());
+		return false;
+	}
+
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] [Phase14] ✓ SetPlayerDeployedWithPort 완료 | PlayerId=%s | Port=%d | HeroType=%d"),
+		*PlayerId, ServerPort, HeroTypeIndex);
+	return true;
+}
+
+// ──────────────────────────────────────────────────────────────
+// [Phase 14a] GetPlayerDeployedPort — 출격 플레이어의 게임서버 포트 조회
+// ──────────────────────────────────────────────────────────────
+int32 UHellunaSQLiteSubsystem::GetPlayerDeployedPort(const FString& PlayerId)
+{
+	if (PlayerId.IsEmpty() || !IsDatabaseReady()) return 0;
+
+	FSQLitePreparedStatement Statement;
+	Statement.Create(*Database,
+		TEXT("SELECT deployed_port FROM player_deploy_state WHERE player_id = ? AND is_deployed = 1;"),
+		ESQLitePreparedStatementFlags::Persistent);
+
+	if (!Statement.IsValid()) return 0;
+
+	Statement.SetBindingValueByIndex(1, PlayerId);
+
+	if (Statement.Step() == ESQLitePreparedStatementStepResult::Row)
+	{
+		int64 Port = 0;
+		Statement.GetColumnValueByIndex(0, Port);
+		return static_cast<int32>(Port);
+	}
+
+	return 0;
+}
+
+// ──────────────────────────────────────────────────────────────
+// [Phase 14a] GetPlayerDeployedHeroType — 출격 플레이어의 영웅타입 인덱스 조회
+// ──────────────────────────────────────────────────────────────
+int32 UHellunaSQLiteSubsystem::GetPlayerDeployedHeroType(const FString& PlayerId)
+{
+	if (PlayerId.IsEmpty() || !IsDatabaseReady()) return 3; // 3 = None
+
+	FSQLitePreparedStatement Statement;
+	Statement.Create(*Database,
+		TEXT("SELECT deployed_hero_type FROM player_deploy_state WHERE player_id = ? AND is_deployed = 1;"),
+		ESQLitePreparedStatementFlags::Persistent);
+
+	if (!Statement.IsValid()) return 3;
+
+	Statement.SetBindingValueByIndex(1, PlayerId);
+
+	if (Statement.Step() == ESQLitePreparedStatementStepResult::Row)
+	{
+		int64 HeroType = 3;
+		Statement.GetColumnValueByIndex(0, HeroType);
+		return static_cast<int32>(HeroType);
+	}
+
+	return 3;
 }
 
 

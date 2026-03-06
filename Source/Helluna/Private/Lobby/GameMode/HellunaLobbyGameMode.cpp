@@ -422,6 +422,28 @@ void AHellunaLobbyGameMode::InitializeLobbyForPlayer(AHellunaLobbyController* Lo
 		}
 	}
 
+	// ── 0.5) [Phase 14d] 재참가 감지 ──
+	if (!bGameResultProcessed && SQLiteSubsystem->IsPlayerDeployed(PlayerId))
+	{
+		const int32 DeployedPort = SQLiteSubsystem->GetPlayerDeployedPort(PlayerId);
+		if (DeployedPort > 0 && IsGameServerRunning(DeployedPort))
+		{
+			UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] [Phase14] 재참가 후보 감지! | PlayerId=%s | Port=%d"),
+				*PlayerId, DeployedPort);
+			LobbyPC->SetReplicatedPlayerId(PlayerId);
+			LobbyPC->PendingRejoinPort = DeployedPort;
+			LobbyPC->Client_ShowRejoinPrompt(DeployedPort);
+			// 초기화 중단 — 플레이어 결정 대기 (HandleRejoinAccepted / HandleRejoinDeclined)
+			return;
+		}
+		else
+		{
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Phase14] 게임서버 비활성 → 기존 크래시 복구 진행 | PlayerId=%s | Port=%d"),
+				*PlayerId, DeployedPort);
+			// fall-through to crash recovery below
+		}
+	}
+
 	// ── 1) [Fix36] 크래시 복구 ──
 	if (!bGameResultProcessed)
 	{
@@ -1958,8 +1980,8 @@ void AHellunaLobbyGameMode::ExecutePartyDeploy(int32 PartyId)
 				SQLiteSubsystem->SavePlayerStash(Member.PlayerId, StashItems);
 			}
 
-			// [Phase 12 Fix] 크래시 복구를 위한 출격 상태 설정
-			SQLiteSubsystem->SetPlayerDeployed(Member.PlayerId, true);
+			// [Phase 14c] 크래시 복구 + 재참가를 위한 출격 상태 설정 (포트+영웅타입 포함)
+			SQLiteSubsystem->SetPlayerDeployedWithPort(Member.PlayerId, true, EmptyChannel.Port, Member.SelectedHeroType);
 		}
 	}
 
@@ -1982,6 +2004,134 @@ void AHellunaLobbyGameMode::ExecutePartyDeploy(int32 PartyId)
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ✓ ExecutePartyDeploy 완료 | PartyId=%d | Port=%d | Members=%d"),
 		PartyId, EmptyChannel.Port, Info.Members.Num());
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 14d] 재참가 시스템 — 로비 측 헬퍼
+// ════════════════════════════════════════════════════════════════════════════════
+
+bool AHellunaLobbyGameMode::IsGameServerRunning(int32 Port)
+{
+	const FString RegistryDir = GetRegistryDirectoryPath();
+	const FString FilePath = FPaths::Combine(RegistryDir, FString::Printf(TEXT("channel_%d.json"), Port));
+
+	FString JsonString;
+	if (!FFileHelper::LoadFileToString(JsonString, *FilePath))
+	{
+		return false;
+	}
+
+	TSharedPtr<FJsonObject> JsonObj;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonString);
+	if (!FJsonSerializer::Deserialize(Reader, JsonObj) || !JsonObj.IsValid())
+	{
+		return false;
+	}
+
+	const FString StatusStr = JsonObj->GetStringField(TEXT("status"));
+	if (StatusStr != TEXT("playing"))
+	{
+		return false;
+	}
+
+	// lastUpdate 60초 이내 확인
+	FString LastUpdateStr = JsonObj->GetStringField(TEXT("lastUpdate"));
+	FDateTime LastUpdate;
+	if (FDateTime::ParseIso8601(*LastUpdateStr, LastUpdate))
+	{
+		const FTimespan Age = FDateTime::UtcNow() - LastUpdate;
+		if (Age.GetTotalSeconds() > 60.0)
+		{
+			UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] IsGameServerRunning: Port=%d 타임아웃 (%.0f초)"), Port, Age.GetTotalSeconds());
+			return false;
+		}
+	}
+
+	return true;
+}
+
+void AHellunaLobbyGameMode::HandleRejoinAccepted(AHellunaLobbyController* LobbyPC)
+{
+	if (!LobbyPC || !SQLiteSubsystem) return;
+
+	const FString PlayerId = GetLobbyPlayerId(LobbyPC);
+	if (PlayerId.IsEmpty()) return;
+
+	const int32 Port = SQLiteSubsystem->GetPlayerDeployedPort(PlayerId);
+	const int32 HeroTypeIdx = SQLiteSubsystem->GetPlayerDeployedHeroType(PlayerId);
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Phase14] HandleRejoinAccepted | PlayerId=%s | Port=%d | HeroType=%d"),
+		*PlayerId, Port, HeroTypeIdx);
+
+	// 영웅타입 복원
+	const EHellunaHeroType HeroType = IndexToHeroType(HeroTypeIdx);
+	if (HeroType != EHellunaHeroType::None)
+	{
+		LobbyPC->ForceSetSelectedHeroType(HeroType);
+	}
+
+	// deploy_state는 true 유지 → 게임서버가 재접속을 감지
+	LobbyPC->SetDeployInProgress(true);
+	LobbyPC->Client_ExecutePartyDeploy(Port);
+}
+
+void AHellunaLobbyGameMode::HandleRejoinDeclined(AHellunaLobbyController* LobbyPC)
+{
+	if (!LobbyPC || !SQLiteSubsystem) return;
+
+	const FString PlayerId = GetLobbyPlayerId(LobbyPC);
+	if (PlayerId.IsEmpty()) return;
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Phase14] HandleRejoinDeclined | PlayerId=%s"), *PlayerId);
+
+	// 출격 상태 해제
+	SQLiteSubsystem->SetPlayerDeployed(PlayerId, false);
+
+	// Loadout 삭제 (아이템 포기)
+	SQLiteSubsystem->DeletePlayerLoadout(PlayerId);
+	SQLiteSubsystem->DeletePlayerEquipment(PlayerId);
+
+	// 정상 로비 초기화 이어서 진행
+	ContinueLobbyInitAfterRejoinDecision(LobbyPC, PlayerId);
+}
+
+void AHellunaLobbyGameMode::ContinueLobbyInitAfterRejoinDecision(AHellunaLobbyController* LobbyPC, const FString& PlayerId)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Phase14] ContinueLobbyInitAfterRejoinDecision | PlayerId=%s"), *PlayerId);
+
+	// Step 2: Stash 로드
+	LoadStashToComponent(LobbyPC, PlayerId);
+
+	// Step 2.5: Loadout 로드
+	LoadLoadoutToComponent(LobbyPC, PlayerId);
+
+	// Step 3: Controller-PlayerId 매핑
+	RegisterControllerPlayerId(LobbyPC, PlayerId);
+
+	// Step 4: 가용 캐릭터 정보 전달
+	{
+		TArray<bool> UsedCharacters = GetLobbyAvailableCharacters();
+		LobbyPC->Client_ShowLobbyCharacterSelectUI(UsedCharacters);
+	}
+
+	// ReplicatedPlayerId 설정 (이미 Step 0.5에서 했지만 안전장치)
+	LobbyPC->SetReplicatedPlayerId(PlayerId);
+
+	// Step 5: 파티 자동 복귀
+	PlayerIdToControllerMap.Add(PlayerId, LobbyPC);
+	{
+		const int32 ExistingPartyId = SQLiteSubsystem->GetPlayerPartyId(PlayerId);
+		if (ExistingPartyId > 0)
+		{
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Phase14] 파티 자동 복귀 | PlayerId=%s | PartyId=%d"), *PlayerId, ExistingPartyId);
+			SQLiteSubsystem->UpdateMemberReady(PlayerId, false);
+			RefreshPartyCache(ExistingPartyId);
+			BroadcastPartyState(ExistingPartyId);
+		}
+	}
+
+	// 로비 UI 표시
+	LobbyPC->Client_ShowLobbyUI();
 }
 
 void AHellunaLobbyGameMode::BroadcastPartyState(int32 PartyId)

@@ -188,6 +188,22 @@ public:
 	/** 파티 Deploy 실행 (채널 선택 + Save + Travel) */
 	void ExecutePartyDeploy(int32 PartyId);
 
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 14d] 재참가 시스템
+	// ════════════════════════════════════════════════════════════════
+
+	/** 게임서버 포트의 레지스트리가 유효한지 확인 (status=playing + 60초 이내) */
+	bool IsGameServerRunning(int32 Port);
+
+	/** 재참가 수락 → 게임서버로 Travel */
+	void HandleRejoinAccepted(AHellunaLobbyController* LobbyPC);
+
+	/** 재참가 거부 → 아이템 포기 + 로비 정상 진입 */
+	void HandleRejoinDeclined(AHellunaLobbyController* LobbyPC);
+
+	/** InitializeLobbyForPlayer의 Step 1~5 실행 (재참가 결정 후 호출) */
+	void ContinueLobbyInitAfterRejoinDecision(AHellunaLobbyController* LobbyPC, const FString& PlayerId);
+
 	/** 파티 상태를 전원에게 RPC */
 	void BroadcastPartyState(int32 PartyId);
 

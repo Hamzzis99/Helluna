@@ -352,6 +352,15 @@ public:
 	/** [Fix36] 플레이어가 출격 중인지 확인 (크래시 감지용) */
 	virtual bool IsPlayerDeployed(const FString& PlayerId) override;
 
+	/** [Phase 14a] 출격 상태 설정 + 포트/영웅타입 저장 (재참가용) */
+	bool SetPlayerDeployedWithPort(const FString& PlayerId, bool bDeployed, int32 ServerPort, int32 HeroTypeIndex);
+
+	/** [Phase 14a] 출격 플레이어의 게임서버 포트 조회 (0=미등록) */
+	int32 GetPlayerDeployedPort(const FString& PlayerId);
+
+	/** [Phase 14a] 출격 플레이어의 영웅타입 인덱스 조회 (3=None) */
+	int32 GetPlayerDeployedHeroType(const FString& PlayerId);
+
 	// ════════════════════════════════════════════════════════════════
 	// IInventoryDatabase 인터페이스 구현 — 게임 캐릭터 중복 방지
 	// ════════════════════════════════════════════════════════════════

@@ -22,6 +22,7 @@
 // ════════════════════════════════════════════════════════════════════════════════
 
 #include "GameMode/HellunaBaseGameMode.h"
+#include "GameMode/HellunaDefenseGameMode.h"  // [Phase 14] 재접속 분기
 #include "Helluna.h"  // 전처리기 플래그
 #include "GameMode/HellunaBaseGameState.h"
 #include "Login/Controller/HellunaLoginController.h"
@@ -417,6 +418,26 @@ void AHellunaBaseGameMode::PostLogin(APlayerController* NewPlayer)
 
 		// 4. Controller → PlayerId 매핑 등록
 		RegisterControllerPlayerId(NewPlayer, DeployPlayerId);
+
+		// [Phase 14] 재접속 체크 — DisconnectedPlayers에 있으면 상태 복원
+		{
+			AHellunaDefenseGameMode* DefenseGM = Cast<AHellunaDefenseGameMode>(this);
+			if (DefenseGM && DefenseGM->HasDisconnectedPlayer(DeployPlayerId))
+			{
+				UE_LOG(LogHelluna, Warning, TEXT("[Phase14] PostLogin — 재접속 감지! → RestoreReconnectedPlayer | PlayerId=%s"), *DeployPlayerId);
+
+				AInv_PlayerController* InvPC = Cast<AInv_PlayerController>(NewPlayer);
+				if (IsValid(InvPC))
+				{
+					InvPC->OnControllerEndPlay.AddDynamic(this, &AHellunaBaseGameMode::OnInvControllerEndPlay);
+				}
+
+				DefenseGM->RestoreReconnectedPlayer(NewPlayer, DeployPlayerId);
+
+				Super::PostLogin(NewPlayer);
+				return;
+			}
+		}
 
 		// Phase 6: 크래시 복구 체크 (이전 게임 세션의 Loadout 잔존 → Stash 복귀)
 		CheckAndRecoverFromCrash(DeployPlayerId);

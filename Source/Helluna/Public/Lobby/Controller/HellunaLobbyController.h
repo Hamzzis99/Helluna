@@ -37,6 +37,7 @@ class UInv_InventoryItem;
 class UHellunaLobbyStashWidget;
 class UHellunaLobbyLoginWidget;
 class UHellunaPartyWidget;
+class UHellunaRejoinWidget;
 class AHellunaCharacterSelectSceneV2;
 class ACameraActor;
 class USkeletalMesh;
@@ -93,6 +94,25 @@ public:
 
 	/** 로그인 완료 여부 */
 	bool IsLoggedIn() const { return bIsLoggedIn; }
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 14f] 재참가 시스템 RPC
+	// ════════════════════════════════════════════════════════════════
+
+	/** [서버 → 클라이언트] 재참가 프롬프트 표시 */
+	UFUNCTION(Client, Reliable)
+	void Client_ShowRejoinPrompt(int32 GameServerPort);
+
+	/** [클라이언트 → 서버] 재참가 수락 */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_RejoinGame();
+
+	/** [클라이언트 → 서버] 재참가 포기 (아이템 손실) */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_AbandonGame();
+
+	/** 대기 중인 재참가 포트 (Client RPC에서 설정) */
+	int32 PendingRejoinPort = 0;
 
 	// ════════════════════════════════════════════════════════════════
 	// 컴포넌트 Getter
@@ -369,6 +389,15 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "로비|로그인",
 		meta = (DisplayName = "Lobby Login Widget Class (로비 로그인 위젯 클래스)"))
 	TSubclassOf<UHellunaLobbyLoginWidget> LobbyLoginWidgetClass;
+
+	/** [Phase 14f] 재참가 위젯 클래스 (BP에서 WBP_RejoinWidget 지정) */
+	UPROPERTY(EditDefaultsOnly, Category = "로비|재참가",
+		meta = (DisplayName = "Rejoin Widget Class (재참가 위젯 클래스)"))
+	TSubclassOf<UHellunaRejoinWidget> RejoinWidgetClass;
+
+	/** 현재 생성된 재참가 위젯 인스턴스 */
+	UPROPERTY()
+	TObjectPtr<UHellunaRejoinWidget> RejoinWidgetInstance;
 
 	/** 현재 생성된 로그인 위젯 인스턴스 */
 	UPROPERTY()

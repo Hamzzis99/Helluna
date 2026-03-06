@@ -39,6 +39,7 @@
 #include "Lobby/Widget/HellunaLobbyLoginWidget.h"
 #include "Lobby/Widget/HellunaPartyWidget.h"
 #include "Lobby/Widget/HellunaLobbyCharSelectWidget.h"
+#include "Lobby/Widget/HellunaRejoinWidget.h"
 #include "Lobby/Database/HellunaSQLiteSubsystem.h"
 #include "Login/Preview/HellunaCharacterSelectSceneV2.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
@@ -657,9 +658,6 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 		}
 	}
 
-	// ── [3d] [Fix36] 출격 상태 설정 ──
-	DB->SetPlayerDeployed(PlayerId, true);
-
 	// ── [4단계] [Phase 12e] 채널 기반 Deploy (빈 채널 자동 배정) ──
 	// [Fix46-M2] LobbyGM 재사용 (GetWorld() 3회→1회 완료)
 	{
@@ -669,6 +667,8 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 			if (LobbyGM->FindEmptyChannel(EmptyChannel))
 			{
 				LobbyGM->MarkChannelAsPendingDeploy(EmptyChannel.Port);
+				// [Phase 14c] 포트+영웅타입 포함 출격 상태 설정
+				DB->SetPlayerDeployedWithPort(PlayerId, true, EmptyChannel.Port, HeroTypeToIndex(SelectedHeroType));
 				UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [4]: 채널 배정 | Port=%d"), EmptyChannel.Port);
 				Client_ExecutePartyDeploy(EmptyChannel.Port);
 			}
@@ -678,6 +678,8 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 				if (!DeployMapURL.IsEmpty())
 				{
 					const int32 HeroIndex = HeroTypeToIndex(SelectedHeroType);
+					// [Phase 14c] 포트 없는 폴백 경로 — 기존 함수로 출격 상태 설정
+					DB->SetPlayerDeployed(PlayerId, true);
 					const FString FinalURL = FString::Printf(TEXT("%s?HeroType=%d?PlayerId=%s"),
 						*DeployMapURL, HeroIndex, *PlayerId);
 					UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [4]: 빈 채널 없음 → DeployMapURL 폴백 | %s"), *FinalURL);
@@ -1649,5 +1651,61 @@ void AHellunaLobbyController::TogglePartyWidget()
 	{
 		PartyWidgetInstance->SetVisibility(ESlateVisibility::Visible);
 		UE_LOG(LogHellunaLobby, Verbose, TEXT("[LobbyPC] 파티 위젯 보이기"));
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 14f] 재참가 시스템 RPC
+// ════════════════════════════════════════════════════════════════════════════════
+
+void AHellunaLobbyController::Client_ShowRejoinPrompt_Implementation(int32 GameServerPort)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Client_ShowRejoinPrompt 수신 | Port=%d"), GameServerPort);
+	PendingRejoinPort = GameServerPort;
+
+	if (!RejoinWidgetClass)
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] RejoinWidgetClass 미설정! 자동 재참가 시도"));
+		Server_RejoinGame();
+		return;
+	}
+
+	RejoinWidgetInstance = CreateWidget<UHellunaRejoinWidget>(this, RejoinWidgetClass);
+	if (RejoinWidgetInstance)
+	{
+		RejoinWidgetInstance->SetRejoinInfo(GameServerPort);
+		RejoinWidgetInstance->AddToViewport(200);
+	}
+}
+
+bool AHellunaLobbyController::Server_RejoinGame_Validate()
+{
+	return true;
+}
+
+void AHellunaLobbyController::Server_RejoinGame_Implementation()
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_RejoinGame 수신"));
+
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode();
+	if (LobbyGM)
+	{
+		LobbyGM->HandleRejoinAccepted(this);
+	}
+}
+
+bool AHellunaLobbyController::Server_AbandonGame_Validate()
+{
+	return true;
+}
+
+void AHellunaLobbyController::Server_AbandonGame_Implementation()
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_AbandonGame 수신"));
+
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode();
+	if (LobbyGM)
+	{
+		LobbyGM->HandleRejoinDeclined(this);
 	}
 }
