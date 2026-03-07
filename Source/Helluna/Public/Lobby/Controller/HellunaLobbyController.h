@@ -535,8 +535,11 @@ protected:
 	/** Deploy 중복 실행 방지 플래그 */
 	bool bDeployInProgress = false;
 
+public:
 	/** [Phase 16] 플레이어가 선택한 맵 키 */
 	FString SelectedMapKey;
+
+protected:
 
 	// ════════════════════════════════════════════════════════════════
 	// 파괴적 캐스케이드 방지 — DB에서 로드된 Stash 아이템 수 기록

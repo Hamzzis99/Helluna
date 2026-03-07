@@ -117,9 +117,12 @@ protected:
 	UPROPERTY()
 	TObjectPtr<UHellunaSQLiteSubsystem> SQLiteSubsystem;
 
-	/** [Phase 16] 서버 프로세스 매니저 */
+public:
+	/** [Phase 16] 서버 프로세스 매니저 (Controller에서 접근) */
 	UPROPERTY()
 	TObjectPtr<UHellunaGameServerManager> GameServerManager;
+
+protected:
 
 	/** [Phase 13] 계정 SaveGame (BeginPlay에서 LoadOrCreate) */
 	UPROPERTY()

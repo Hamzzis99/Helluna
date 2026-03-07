@@ -40,6 +40,8 @@
 #include "Components/EditableTextBox.h"
 #include "Components/VerticalBox.h"
 #include "Components/HorizontalBox.h"
+#include "Components/ComboBoxString.h"
+#include "Lobby/GameMode/HellunaLobbyGameMode.h"
 
 // 로그 카테고리 (공유 헤더 — DEFINE은 HellunaLobbyGameMode.cpp)
 #include "Lobby/HellunaLobbyLog.h"
@@ -63,6 +65,8 @@ void UHellunaLobbyStashWidget::NativeDestruct()
 	if (Button_Mode_Solo) { Button_Mode_Solo->OnClicked.RemoveDynamic(this, &ThisClass::OnSoloModeClicked); }
 	if (Button_Mode_Party) { Button_Mode_Party->OnClicked.RemoveDynamic(this, &ThisClass::OnPartyModeClicked); }
 	if (Button_CancelMatchmaking) { Button_CancelMatchmaking->OnClicked.RemoveDynamic(this, &ThisClass::OnCancelMatchmakingClicked); }
+	// [Phase 16]
+	if (ComboBox_MapSelect) { ComboBox_MapSelect->OnSelectionChanged.RemoveDynamic(this, &ThisClass::OnMapSelectionChanged); }
 
 	// ── LobbyPC 외부 오브젝트 바인딩 해제 ──
 	if (AHellunaLobbyController* LobbyPC = GetLobbyController())
@@ -166,6 +170,47 @@ void UHellunaLobbyStashWidget::NativeOnInitialized()
 	}
 	// 초기 모드 비주얼
 	UpdateModeButtonVisuals();
+
+	// ── [Phase 16] 맵 선택 콤보박스 바인딩 ──
+	if (ComboBox_MapSelect)
+	{
+		ComboBox_MapSelect->OnSelectionChanged.AddUniqueDynamic(this, &ThisClass::OnMapSelectionChanged);
+
+		// LobbyGameMode에서 맵 목록 가져오기 (서버 권한이라 클라이언트는 비어있을 수 있음)
+		if (UWorld* World = GetWorld())
+		{
+			if (AHellunaLobbyGameMode* LobbyGM = Cast<AHellunaLobbyGameMode>(World->GetAuthGameMode()))
+			{
+				for (const FHellunaGameMapInfo& MapInfo : LobbyGM->AvailableMapConfigs)
+				{
+					ComboBox_MapSelect->AddOption(MapInfo.DisplayName);
+				}
+				// 기본 선택
+				SelectedMapKey = LobbyGM->DefaultMapKey;
+				for (const FHellunaGameMapInfo& MapInfo : LobbyGM->AvailableMapConfigs)
+				{
+					if (MapInfo.MapKey == SelectedMapKey)
+					{
+						ComboBox_MapSelect->SetSelectedOption(MapInfo.DisplayName);
+						break;
+					}
+				}
+			}
+		}
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] ComboBox_MapSelect 바인딩 완료 | Options=%d"),
+			ComboBox_MapSelect->GetOptionCount());
+	}
+	else
+	{
+		// ComboBox 없으면 DefaultMapKey 고정
+		if (UWorld* World = GetWorld())
+		{
+			if (AHellunaLobbyGameMode* LobbyGM = Cast<AHellunaLobbyGameMode>(World->GetAuthGameMode()))
+			{
+				SelectedMapKey = LobbyGM->DefaultMapKey;
+			}
+		}
+	}
 
 	// ── Loadout 탭: 출격 버튼 바인딩 (기존) ──
 	if (Button_Deploy)
@@ -1315,5 +1360,36 @@ void UHellunaLobbyStashWidget::UpdateModeButtonVisuals()
 	{
 		Button_Mode_Party->SetBackgroundColor(
 			bPartyMode ? ActiveTabColor : InactiveTabColor);
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 16] 맵 선택 콤보박스 콜백
+// ════════════════════════════════════════════════════════════════════════════════
+
+void UHellunaLobbyStashWidget::OnMapSelectionChanged(FString SelectedItem, ESelectInfo::Type SelectionType)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase16] 맵 선택 변경: %s"), *SelectedItem);
+
+	// DisplayName → MapKey 변환
+	if (UWorld* World = GetWorld())
+	{
+		if (AHellunaLobbyGameMode* LobbyGM = Cast<AHellunaLobbyGameMode>(World->GetAuthGameMode()))
+		{
+			for (const FHellunaGameMapInfo& MapInfo : LobbyGM->AvailableMapConfigs)
+			{
+				if (MapInfo.DisplayName == SelectedItem)
+				{
+					SelectedMapKey = MapInfo.MapKey;
+					break;
+				}
+			}
+		}
+	}
+
+	// 서버에 맵 선택 전달
+	if (AHellunaLobbyController* LobbyPC = GetLobbyController())
+	{
+		LobbyPC->Server_SetSelectedMap(SelectedMapKey);
 	}
 }

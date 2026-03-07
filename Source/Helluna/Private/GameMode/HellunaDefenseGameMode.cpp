@@ -69,6 +69,17 @@ void AHellunaDefenseGameMode::BeginPlay()
     CacheMeleeSpawnPoints();
     CacheRangeSpawnPoints();
 
+    // [Phase 16] 유휴 자동 종료 타이머 (접속자 0이면 IdleShutdownSeconds 후 자동 종료)
+    if (IdleShutdownSeconds > 0.f)
+    {
+        if (UWorld* W = GetWorld())
+        {
+            W->GetTimerManager().SetTimer(IdleShutdownTimer, this,
+                &AHellunaDefenseGameMode::CheckIdleShutdown, IdleShutdownSeconds, false);
+            UE_LOG(LogHelluna, Log, TEXT("[DefenseGameMode] [Phase16] 유휴 종료 타이머 시작 (%.0f초)"), IdleShutdownSeconds);
+        }
+    }
+
 #if HELLUNA_DEBUG_DEFENSE
     UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] BeginPlay 완료 — BossSpawn:%d / MeleeSpawn:%d / RangeSpawn:%d"),
         BossSpawnPoints.Num(), MeleeSpawnPoints.Num(), RangeSpawnPoints.Num());
@@ -646,6 +657,12 @@ void AHellunaDefenseGameMode::PostLogin(APlayerController* NewPlayer)
     WriteRegistryFile(TEXT("playing"), CurrentPlayerCount);
     UE_LOG(LogHelluna, Log, TEXT("[DefenseGameMode] PostLogin 레지스트리 갱신 | Players=%d"), CurrentPlayerCount);
 
+    // [Phase 16] 유휴 종료 타이머 해제 (첫 접속 시)
+    if (UWorld* W = GetWorld())
+    {
+        W->GetTimerManager().ClearTimer(IdleShutdownTimer);
+    }
+
     // Phase 10: 접속 메시지
     if (bGameInitialized && IsValid(NewPlayer))
     {
@@ -823,6 +840,19 @@ void AHellunaDefenseGameMode::EndGame(EHellunaGameEndReason Reason)
     }
 
     UE_LOG(LogHelluna, Log, TEXT("[Phase7] EndGame 완료 — 모든 플레이어 결과 처리됨"));
+
+    // [Phase 16] EndGame 후 서버 자동 종료 (레지스트리 삭제 + RequestExit)
+    if (UWorld* W = GetWorld())
+    {
+        W->GetTimerManager().SetTimer(ShutdownTimer, [this]()
+        {
+            UE_LOG(LogHelluna, Log, TEXT("[Phase16] 서버 자동 종료 실행"));
+            DeleteRegistryFile();
+            FGenericPlatformMisc::RequestExit(false);
+        }, ShutdownDelaySeconds, false);
+
+        UE_LOG(LogHelluna, Log, TEXT("[Phase16] 서버 자동 종료 타이머 시작 (%.0f초 후)"), ShutdownDelaySeconds);
+    }
 }
 
 // ============================================================
@@ -978,6 +1008,17 @@ void AHellunaDefenseGameMode::Logout(AController* Exiting)
     WriteRegistryFile(CurrentPlayerCount > 0 ? TEXT("playing") : TEXT("empty"), CurrentPlayerCount);
     UE_LOG(LogHelluna, Log, TEXT("[DefenseGameMode] Logout 레지스트리 갱신 | Players=%d"), CurrentPlayerCount);
 
+    // [Phase 16] 전원 이탈 시 유휴 종료 타이머 재시작
+    if (CurrentPlayerCount == 0 && !bGameEnded && IdleShutdownSeconds > 0.f)
+    {
+        if (UWorld* W = GetWorld())
+        {
+            W->GetTimerManager().SetTimer(IdleShutdownTimer, this,
+                &AHellunaDefenseGameMode::CheckIdleShutdown, IdleShutdownSeconds, false);
+            UE_LOG(LogHelluna, Log, TEXT("[Phase16] 전원 이탈 — 유휴 종료 타이머 재시작 (%.0f초)"), IdleShutdownSeconds);
+        }
+    }
+
     Super::Logout(Exiting);
 }
 
@@ -1003,6 +1044,9 @@ void AHellunaDefenseGameMode::EndPlay(const EEndPlayReason::Type EndPlayReason)
     if (UWorld* W = GetWorld())
     {
         W->GetTimerManager().ClearTimer(RegistryHeartbeatTimer);
+        // [Phase 16] 종료/유휴 타이머 정리
+        W->GetTimerManager().ClearTimer(ShutdownTimer);
+        W->GetTimerManager().ClearTimer(IdleShutdownTimer);
     }
     DeleteRegistryFile();
     UE_LOG(LogHelluna, Log, TEXT("[DefenseGameMode] EndPlay: 레지스트리 파일 삭제"));
@@ -1205,5 +1249,19 @@ void AHellunaDefenseGameMode::DeleteRegistryFile()
     {
         IFileManager::Get().Delete(*FilePath);
         UE_LOG(LogHelluna, Log, TEXT("[DefenseGameMode] 레지스트리 파일 삭제: %s"), *FilePath);
+    }
+}
+
+// ============================================================
+// [Phase 16] CheckIdleShutdown
+// ============================================================
+
+void AHellunaDefenseGameMode::CheckIdleShutdown()
+{
+    if (CurrentPlayerCount == 0 && !bGameEnded)
+    {
+        UE_LOG(LogHelluna, Log, TEXT("[Phase16] 유휴 종료 — 접속자 0, 서버 종료"));
+        DeleteRegistryFile();
+        FGenericPlatformMisc::RequestExit(false);
     }
 }

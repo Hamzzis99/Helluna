@@ -35,6 +35,7 @@
 
 #include "Lobby/Controller/HellunaLobbyController.h"
 #include "Lobby/GameMode/HellunaLobbyGameMode.h"
+#include "Lobby/ServerManager/HellunaGameServerManager.h"
 #include "Lobby/Widget/HellunaLobbyStashWidget.h"
 #include "Lobby/Widget/HellunaLobbyLoginWidget.h"
 #include "Lobby/Widget/HellunaPartyWidget.h"
@@ -667,19 +668,57 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 		}
 	}
 
-	// ── [4단계] [Phase 12e] 채널 기반 Deploy (빈 채널 자동 배정) ──
-	// [Fix46-M2] LobbyGM 재사용 (GetWorld() 3회→1회 완료)
+	// ── [4단계] [Phase 12e+16] 채널 기반 Deploy (빈 채널 자동 배정 + 동적 스폰) ──
 	{
 		if (LobbyGM)
 		{
+			// [Phase 16] 맵 키 기반 채널 검색
+			const FString DeployMapKey = SelectedMapKey.IsEmpty() ? LobbyGM->DefaultMapKey : SelectedMapKey;
 			FGameChannelInfo EmptyChannel;
-			if (LobbyGM->FindEmptyChannel(EmptyChannel))
+
+			if (LobbyGM->FindEmptyChannelForMap(DeployMapKey, EmptyChannel))
 			{
 				LobbyGM->MarkChannelAsPendingDeploy(EmptyChannel.Port);
-				// [Phase 14c] 포트+영웅타입 포함 출격 상태 설정
 				DB->SetPlayerDeployedWithPort(PlayerId, true, EmptyChannel.Port, HeroTypeToIndex(SelectedHeroType));
-				UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [4]: 채널 배정 | Port=%d"), EmptyChannel.Port);
+				UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [4]: 채널 배정 | Port=%d | Map=%s"), EmptyChannel.Port, *DeployMapKey);
 				Client_ExecutePartyDeploy(EmptyChannel.Port);
+			}
+			else if (LobbyGM->GameServerManager)
+			{
+				// [Phase 16] 빈 채널 없음 → 동적 서버 스폰
+				const FString MapPath = LobbyGM->GetMapPathByKey(DeployMapKey);
+				if (MapPath.IsEmpty())
+				{
+					UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Deploy: 맵 경로를 찾을 수 없음 | MapKey=%s"), *DeployMapKey);
+					Client_DeployFailed(TEXT("맵 설정 오류"));
+					bDeployInProgress = false;
+					return;
+				}
+
+				const int32 SpawnedPort = LobbyGM->GameServerManager->SpawnGameServer(MapPath);
+				if (SpawnedPort < 0)
+				{
+					UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Deploy: 서버 스폰 실패"));
+					Client_DeployFailed(TEXT("서버 용량 초과 또는 스폰 실패"));
+					bDeployInProgress = false;
+					return;
+				}
+
+				LobbyGM->MarkChannelAsPendingDeploy(SpawnedPort);
+
+				// WaitAndDeploy로 비동기 대기
+				FMatchmakingQueueEntry SoloEntry;
+				SoloEntry.EntryId = 0;
+				SoloEntry.PartyId = 0;
+				SoloEntry.PlayerIds.Add(PlayerId);
+				SoloEntry.HeroTypes.Add(HeroTypeToIndex(SelectedHeroType));
+				SoloEntry.SelectedMapKey = DeployMapKey;
+
+				TArray<FMatchmakingQueueEntry> SoloMatched;
+				SoloMatched.Add(MoveTemp(SoloEntry));
+
+				UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [4]: 서버 스폰 시작 → WaitAndDeploy | Port=%d"), SpawnedPort);
+				LobbyGM->WaitAndDeploy(SpawnedPort, MoveTemp(SoloMatched));
 			}
 			else
 			{
@@ -687,16 +726,15 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 				if (!DeployMapURL.IsEmpty())
 				{
 					const int32 HeroIndex = HeroTypeToIndex(SelectedHeroType);
-					// [Phase 14c] 포트 없는 폴백 경로 — 기존 함수로 출격 상태 설정
 					DB->SetPlayerDeployed(PlayerId, true);
 					const FString FinalURL = FString::Printf(TEXT("%s?HeroType=%d?PlayerId=%s"),
 						*DeployMapURL, HeroIndex, *PlayerId);
-					UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [4]: 빈 채널 없음 → DeployMapURL 폴백 | %s"), *FinalURL);
+					UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [4]: DeployMapURL 폴백 | %s"), *FinalURL);
 					Client_ExecuteDeploy(FinalURL);
 				}
 				else
 				{
-					UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Deploy: 빈 채널 없음 + DeployMapURL도 없음!"));
+					UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Deploy: 빈 채널 없음 + 서버매니저 없음 + DeployMapURL도 없음!"));
 					Client_DeployFailed(TEXT("빈 채널이 없습니다"));
 					bDeployInProgress = false;
 					return;
@@ -1783,6 +1821,23 @@ void AHellunaLobbyController::Server_AbandonGame_Implementation()
 // [Phase 15] 매치메이킹 RPC
 // ============================================================================
 
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 16] Server_SetSelectedMap
+// ════════════════════════════════════════════════════════════════════════════════
+
+bool AHellunaLobbyController::Server_SetSelectedMap_Validate(const FString& MapKey)
+{
+	return !MapKey.IsEmpty();
+}
+
+void AHellunaLobbyController::Server_SetSelectedMap_Implementation(const FString& MapKey)
+{
+	SelectedMapKey = MapKey;
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_SetSelectedMap | MapKey=%s"), *MapKey);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+
 bool AHellunaLobbyController::Server_EnterMatchmaking_Validate()
 {
 	return !bDeployInProgress;
@@ -1790,7 +1845,7 @@ bool AHellunaLobbyController::Server_EnterMatchmaking_Validate()
 
 void AHellunaLobbyController::Server_EnterMatchmaking_Implementation()
 {
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_EnterMatchmaking 수신"));
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_EnterMatchmaking 수신 | SelectedMapKey=%s"), *SelectedMapKey);
 
 	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode();
 	if (!LobbyGM)
@@ -1805,7 +1860,8 @@ void AHellunaLobbyController::Server_EnterMatchmaking_Implementation()
 		return;
 	}
 
-	LobbyGM->EnterMatchmakingQueue(PlayerId);
+	// [Phase 16] 맵 키 전달
+	LobbyGM->EnterMatchmakingQueue(PlayerId, SelectedMapKey);
 }
 
 bool AHellunaLobbyController::Server_LeaveMatchmaking_Validate()
