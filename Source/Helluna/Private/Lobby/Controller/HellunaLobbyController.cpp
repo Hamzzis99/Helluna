@@ -521,6 +521,15 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 				bDeployInProgress = false;
 				return;
 			}
+
+			// [Phase 15] 매칭 큐 대기 중 솔로 Deploy 차단
+			if (LobbyGM->IsPlayerInQueue(CheckId))
+			{
+				UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] Server_Deploy: 매칭 큐 대기 중 — 솔로 Deploy 차단"));
+				Client_DeployFailed(TEXT("매칭 대기 중입니다. 매칭을 취소 후 시도하세요."));
+				bDeployInProgress = false;
+				return;
+			}
 		}
 	}
 
@@ -1708,4 +1717,76 @@ void AHellunaLobbyController::Server_AbandonGame_Implementation()
 	{
 		LobbyGM->HandleRejoinDeclined(this);
 	}
+}
+
+// ============================================================================
+// [Phase 15] 매치메이킹 RPC
+// ============================================================================
+
+bool AHellunaLobbyController::Server_EnterMatchmaking_Validate()
+{
+	return !bDeployInProgress;
+}
+
+void AHellunaLobbyController::Server_EnterMatchmaking_Implementation()
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_EnterMatchmaking 수신"));
+
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode();
+	if (!LobbyGM)
+	{
+		return;
+	}
+
+	const FString PlayerId = LobbyGM->GetLobbyPlayerId(this);
+	if (PlayerId.IsEmpty())
+	{
+		Client_MatchmakingError(TEXT("플레이어 ID를 가져올 수 없습니다"));
+		return;
+	}
+
+	LobbyGM->EnterMatchmakingQueue(PlayerId);
+}
+
+bool AHellunaLobbyController::Server_LeaveMatchmaking_Validate()
+{
+	return true;
+}
+
+void AHellunaLobbyController::Server_LeaveMatchmaking_Implementation()
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_LeaveMatchmaking 수신"));
+
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode();
+	if (!LobbyGM)
+	{
+		return;
+	}
+
+	const FString PlayerId = LobbyGM->GetLobbyPlayerId(this);
+	LobbyGM->LeaveMatchmakingQueue(PlayerId);
+
+	// 큐 퇴장 상태를 클라이언트에 전송
+	FMatchmakingStatusInfo CancelInfo;
+	CancelInfo.Status = EMatchmakingStatus::None;
+	Client_MatchmakingStatusUpdate(CancelInfo);
+}
+
+void AHellunaLobbyController::Client_MatchmakingStatusUpdate_Implementation(const FMatchmakingStatusInfo& StatusInfo)
+{
+	UE_LOG(LogHellunaLobby, Verbose, TEXT("[LobbyPC] Client_MatchmakingStatusUpdate | Status=%d | Elapsed=%.1f | %d/%d"),
+		static_cast<int32>(StatusInfo.Status), StatusInfo.ElapsedTime,
+		StatusInfo.CurrentPlayerCount, StatusInfo.TargetPlayerCount);
+
+	OnMatchmakingStatusChanged.Broadcast(StatusInfo);
+}
+
+void AHellunaLobbyController::Client_MatchmakingError_Implementation(const FString& ErrorMessage)
+{
+	UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] Client_MatchmakingError: %s"), *ErrorMessage);
+
+	// 에러 시 None 상태로 전환
+	FMatchmakingStatusInfo CancelInfo;
+	CancelInfo.Status = EMatchmakingStatus::None;
+	OnMatchmakingStatusChanged.Broadcast(CancelInfo);
 }

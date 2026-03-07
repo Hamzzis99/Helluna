@@ -21,7 +21,11 @@
 
 UMDF_MiniGameComponent::UMDF_MiniGameComponent()
 {
-    PrimaryComponentTick.bCanEverTick = true; 
+#if ENABLE_DRAW_DEBUG
+    PrimaryComponentTick.bCanEverTick = true;
+#else
+    PrimaryComponentTick.bCanEverTick = false;
+#endif
     SetIsReplicatedByDefault(true);
 }
 
@@ -379,7 +383,7 @@ void UMDF_MiniGameComponent::ApplyVisualMeshCut(int32 Index)
 float UMDF_MiniGameComponent::CalculateHPFromBox(const FBox& Box) const
 {
     FVector Size = Box.GetSize();
-    float LocalVolume = Size.X * Size.Y * Size.Z;
+    float LocalVolume = FMath::Abs(Size.X * Size.Y * Size.Z);
     
     // [수정] 스케일 이중 적용 제거 - LocalBox는 이미 로컬 좌표
     return 100.0f + (LocalVolume * HPDensityMultiplier * 0.005f);

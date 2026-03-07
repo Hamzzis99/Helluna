@@ -71,16 +71,16 @@ protected:
     TObjectPtr<USceneComponent> MuzzleLocation;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|스탯", meta = (DisplayName = "최대 탄약/배터리"))
-    float MaxAmmo;
+    float MaxAmmo = 100.f;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "메시변형|스탯", meta = (DisplayName = "현재 탄약"))
-    float CurrentAmmo;
+    float CurrentAmmo = 100.f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|스탯", meta = (DisplayName = "연사 속도 (초 단위)"))
-    float FireRate;
+    float FireRate = 0.2f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|스탯", meta = (DisplayName = "사거리"))
-    float FireRange;
+    float FireRange = 2000.f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|이펙트", meta = (DisplayName = "발사 효과음"))
     TObjectPtr<USoundBase> FireSound;

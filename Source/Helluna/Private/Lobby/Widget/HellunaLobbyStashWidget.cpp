@@ -23,6 +23,7 @@
 // ════════════════════════════════════════════════════════════════════════════════
 
 #include "Lobby/Widget/HellunaLobbyStashWidget.h"
+#include "Lobby/Party/HellunaMatchmakingTypes.h"
 #include "Lobby/Widget/HellunaLobbyPanel.h"
 #include "Lobby/Widget/HellunaLobbyCharSelectWidget.h"
 #include "Widgets/Inventory/Spatial/Inv_SpatialInventory.h"
@@ -58,12 +59,17 @@ void UHellunaLobbyStashWidget::NativeDestruct()
 	if (CharacterSelectPanel) { CharacterSelectPanel->OnCharacterSelected.RemoveDynamic(this, &ThisClass::OnCharacterSelectedHandler); }
 	if (PlayChatSendButton) { PlayChatSendButton->OnClicked.RemoveDynamic(this, &ThisClass::OnPlayChatSendClicked); }
 	if (PlayChatInput) { PlayChatInput->OnTextCommitted.RemoveDynamic(this, &ThisClass::OnPlayChatInputCommitted); }
+	// [Phase 15]
+	if (Button_Mode_Solo) { Button_Mode_Solo->OnClicked.RemoveDynamic(this, &ThisClass::OnSoloModeClicked); }
+	if (Button_Mode_Party) { Button_Mode_Party->OnClicked.RemoveDynamic(this, &ThisClass::OnPartyModeClicked); }
+	if (Button_CancelMatchmaking) { Button_CancelMatchmaking->OnClicked.RemoveDynamic(this, &ThisClass::OnCancelMatchmakingClicked); }
 
 	// ── LobbyPC 외부 오브젝트 바인딩 해제 ──
 	if (AHellunaLobbyController* LobbyPC = GetLobbyController())
 	{
 		LobbyPC->OnPartyStateChanged.RemoveDynamic(this, &ThisClass::OnPartyStateChangedHandler);
 		LobbyPC->OnPartyChatReceived.RemoveDynamic(this, &ThisClass::HandlePlayChatReceived);
+		LobbyPC->OnMatchmakingStatusChanged.RemoveDynamic(this, &ThisClass::HandleMatchmakingStatusChanged); // Phase 15
 	}
 
 	// ── InitializePanels 바인딩 해제 ──
@@ -140,6 +146,27 @@ void UHellunaLobbyStashWidget::NativeOnInitialized()
 		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   Button_Party=OK (바인딩 완료)"));
 	}
 
+	// ── [Phase 15] 모드 토글 + 매칭 취소 바인딩 (Optional) ──
+	if (Button_Mode_Solo)
+	{
+		Button_Mode_Solo->OnClicked.AddUniqueDynamic(this, &ThisClass::OnSoloModeClicked);
+	}
+	if (Button_Mode_Party)
+	{
+		Button_Mode_Party->OnClicked.AddUniqueDynamic(this, &ThisClass::OnPartyModeClicked);
+	}
+	if (Button_CancelMatchmaking)
+	{
+		Button_CancelMatchmaking->OnClicked.AddUniqueDynamic(this, &ThisClass::OnCancelMatchmakingClicked);
+	}
+	// 매칭 오버레이 초기 숨김
+	if (MatchmakingOverlay)
+	{
+		MatchmakingOverlay->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	// 초기 모드 비주얼
+	UpdateModeButtonVisuals();
+
 	// ── Loadout 탭: 출격 버튼 바인딩 (기존) ──
 	if (Button_Deploy)
 	{
@@ -162,7 +189,9 @@ void UHellunaLobbyStashWidget::NativeOnInitialized()
 	if (AHellunaLobbyController* LobbyPC = GetLobbyController())
 	{
 		LobbyPC->OnPartyStateChanged.AddUniqueDynamic(this, &ThisClass::OnPartyStateChangedHandler);
-		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] OnPartyStateChanged 바인딩 완료"));
+		// [Phase 15] 매칭 상태 변경 바인딩
+		LobbyPC->OnMatchmakingStatusChanged.AddUniqueDynamic(this, &ThisClass::HandleMatchmakingStatusChanged);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] OnPartyStateChanged + OnMatchmakingStatusChanged 바인딩 완료"));
 	}
 
 	// ── [Phase 12i] Play 탭 파티 채팅 바인딩 ──
@@ -516,7 +545,19 @@ void UHellunaLobbyStashWidget::UpdateTabVisuals(int32 ActiveTabIndex)
 
 void UHellunaLobbyStashWidget::OnStartClicked()
 {
-	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] START/READY 버튼 클릭!"));
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] START/READY 버튼 클릭! | bPartyMode=%s | bInMatchmaking=%s"),
+		bPartyMode ? TEXT("Party") : TEXT("Solo"), bInMatchmaking ? TEXT("true") : TEXT("false"));
+
+	// [Phase 15] 매칭 큐에 있으면 취소
+	if (bInMatchmaking)
+	{
+		AHellunaLobbyController* LobbyPC = GetLobbyController();
+		if (LobbyPC)
+		{
+			LobbyPC->Server_LeaveMatchmaking();
+		}
+		return;
+	}
 
 	// 캐릭터 미선택 체크 (클라이언트 UX 방어 — 서버에서도 별도 체크)
 	if (!IsCharacterSelected())
@@ -536,20 +577,29 @@ void UHellunaLobbyStashWidget::OnStartClicked()
 		return;
 	}
 
-	// [Phase 12h] 파티 모드 분기
-	if (LobbyPC->CurrentPartyInfo.IsValid()
-		&& LobbyPC->CurrentPartyInfo.Members.Num() >= 2)
+	if (bPartyMode)
 	{
-		// 파티 모드 → Ready 토글
-		bLocalPlayerReady = !bLocalPlayerReady;
-		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] → Server_SetPartyReady(%s)"),
-			bLocalPlayerReady ? TEXT("true") : TEXT("false"));
-		LobbyPC->Server_SetPartyReady(bLocalPlayerReady);
-		UpdateStartButtonForPartyState();
+		// ── 파티 모드 ──
+		if (LobbyPC->CurrentPartyInfo.IsValid()
+			&& LobbyPC->CurrentPartyInfo.Members.Num() >= 2)
+		{
+			// 파티 가입 상태 → Ready 토글 (→ TryAutoDeployParty → EnterQueue)
+			bLocalPlayerReady = !bLocalPlayerReady;
+			UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] → Server_SetPartyReady(%s)"),
+				bLocalPlayerReady ? TEXT("true") : TEXT("false"));
+			LobbyPC->Server_SetPartyReady(bLocalPlayerReady);
+			UpdateStartButtonForPartyState();
+		}
+		else
+		{
+			// 파티 미가입 → 솔로로 매칭 큐 진입
+			UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] → Server_EnterMatchmaking RPC 호출 (솔로 매칭)"));
+			LobbyPC->Server_EnterMatchmaking();
+		}
 	}
 	else
 	{
-		// 솔로 모드 → 즉시 Deploy (기존)
+		// ── 솔로 모드 → 즉시 Deploy (기존) ──
 		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] → Server_Deploy RPC 호출 (START)"));
 		LobbyPC->Server_Deploy();
 	}
@@ -819,6 +869,12 @@ void UHellunaLobbyStashWidget::OnPartyStateChangedHandler(const FHellunaPartyInf
 
 void UHellunaLobbyStashWidget::UpdateStartButtonForPartyState()
 {
+	// [Phase 15] 매칭 큐 중이면 CANCEL 유지 (HandleMatchmakingStatusChanged가 제어)
+	if (bInMatchmaking)
+	{
+		return;
+	}
+
 	// Text_StartLabel 찾기: BindWidgetOptional 우선, 없으면 Button_Start의 자식 탐색
 	UTextBlock* StartLabel = Text_StartLabel;
 	if (!StartLabel && Button_Start && Button_Start->GetChildrenCount() > 0)
@@ -836,8 +892,9 @@ void UHellunaLobbyStashWidget::UpdateStartButtonForPartyState()
 		&& LobbyPC->CurrentPartyInfo.IsValid()
 		&& LobbyPC->CurrentPartyInfo.Members.Num() >= 2;
 
-	if (bInParty)
+	if (bPartyMode && bInParty)
 	{
+		// 파티 모드 + 파티 가입 → READY / CANCEL READY
 		if (bLocalPlayerReady)
 		{
 			StartLabel->SetText(FText::FromString(TEXT("CANCEL READY")));
@@ -849,8 +906,16 @@ void UHellunaLobbyStashWidget::UpdateStartButtonForPartyState()
 			UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] 버튼 → READY"));
 		}
 	}
+	else if (bPartyMode)
+	{
+		// 파티 모드 + 파티 미가입 → FIND MATCH
+		StartLabel->SetText(FText::FromString(TEXT("FIND MATCH")));
+		bLocalPlayerReady = false;
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] 버튼 → FIND MATCH (파티 모드 솔로)"));
+	}
 	else
 	{
+		// 솔로 모드
 		StartLabel->SetText(FText::FromString(TEXT("START")));
 		bLocalPlayerReady = false;
 		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] 버튼 → START (솔로)"));
@@ -1143,5 +1208,112 @@ void UHellunaLobbyStashWidget::HideAllNameTags()
 		{
 			Tag->SetVisibility(ESlateVisibility::Collapsed);
 		}
+	}
+}
+
+// ============================================================================
+// [Phase 15] 모드 토글 + 매칭 오버레이
+// ============================================================================
+
+void UHellunaLobbyStashWidget::OnSoloModeClicked()
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase15] Solo 모드 선택"));
+	bPartyMode = false;
+	UpdateModeButtonVisuals();
+	UpdateStartButtonForPartyState();
+
+	// 매칭 큐에 있으면 자동 취소
+	if (bInMatchmaking)
+	{
+		AHellunaLobbyController* LobbyPC = GetLobbyController();
+		if (LobbyPC)
+		{
+			LobbyPC->Server_LeaveMatchmaking();
+		}
+	}
+}
+
+void UHellunaLobbyStashWidget::OnPartyModeClicked()
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase15] Party 모드 선택"));
+	bPartyMode = true;
+	UpdateModeButtonVisuals();
+	UpdateStartButtonForPartyState();
+}
+
+void UHellunaLobbyStashWidget::OnCancelMatchmakingClicked()
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase15] 매칭 취소 버튼 클릭"));
+	AHellunaLobbyController* LobbyPC = GetLobbyController();
+	if (LobbyPC)
+	{
+		LobbyPC->Server_LeaveMatchmaking();
+	}
+}
+
+void UHellunaLobbyStashWidget::HandleMatchmakingStatusChanged(const FMatchmakingStatusInfo& StatusInfo)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase15] 매칭 상태 변경 | Status=%d | %.1fs | %d/%d"),
+		static_cast<int32>(StatusInfo.Status), StatusInfo.ElapsedTime,
+		StatusInfo.CurrentPlayerCount, StatusInfo.TargetPlayerCount);
+
+	if (StatusInfo.Status == EMatchmakingStatus::Searching)
+	{
+		bInMatchmaking = true;
+
+		if (MatchmakingOverlay)
+		{
+			MatchmakingOverlay->SetVisibility(ESlateVisibility::Visible);
+		}
+		if (Text_MatchmakingTimer)
+		{
+			const int32 Minutes = FMath::FloorToInt(StatusInfo.ElapsedTime / 60.f);
+			const int32 Seconds = FMath::FloorToInt(FMath::Fmod(StatusInfo.ElapsedTime, 60.f));
+			Text_MatchmakingTimer->SetText(FText::FromString(
+				FString::Printf(TEXT("%02d:%02d"), Minutes, Seconds)));
+		}
+		if (Text_MatchmakingCount)
+		{
+			Text_MatchmakingCount->SetText(FText::FromString(
+				FString::Printf(TEXT("%d/%d"), StatusInfo.CurrentPlayerCount, StatusInfo.TargetPlayerCount)));
+		}
+
+		// START 버튼 텍스트를 CANCEL로 변경
+		UTextBlock* StartLabel = Text_StartLabel;
+		if (!StartLabel && Button_Start && Button_Start->GetChildrenCount() > 0)
+		{
+			StartLabel = Cast<UTextBlock>(Button_Start->GetChildAt(0));
+		}
+		if (StartLabel)
+		{
+			StartLabel->SetText(FText::FromString(TEXT("CANCEL")));
+		}
+	}
+	else
+	{
+		// None / Found / Deploying → 오버레이 숨김
+		bInMatchmaking = false;
+
+		if (MatchmakingOverlay)
+		{
+			MatchmakingOverlay->SetVisibility(ESlateVisibility::Collapsed);
+		}
+
+		// 버튼 텍스트 복원
+		UpdateStartButtonForPartyState();
+	}
+}
+
+void UHellunaLobbyStashWidget::UpdateModeButtonVisuals()
+{
+	if (Button_Mode_Solo)
+	{
+		Button_Mode_Solo->SetBackgroundColor(
+			bPartyMode ? InactiveTabColor : ActiveTabColor);
+	}
+	if (Button_Mode_Party)
+	{
+		Button_Mode_Party->SetBackgroundColor(
+			bPartyMode ? ActiveTabColor : InactiveTabColor);
 	}
 }

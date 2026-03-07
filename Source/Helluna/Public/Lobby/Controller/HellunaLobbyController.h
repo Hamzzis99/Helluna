@@ -27,6 +27,7 @@
 #include "Player/Inv_PlayerController.h"  // FInv_SavedItemData 구조체 사용
 #include "HellunaTypes.h"
 #include "Lobby/Party/HellunaPartyTypes.h"
+#include "Lobby/Party/HellunaMatchmakingTypes.h"
 #include "HellunaLobbyController.generated.h"
 
 class AHellunaLobbyGameMode;
@@ -228,6 +229,30 @@ public:
 	/** Deploy 중 여부 (public getter/setter) */
 	bool IsDeployInProgress() const { return bDeployInProgress; }
 	void SetDeployInProgress(bool bInProgress) { bDeployInProgress = bInProgress; }
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 15] 매치메이킹 RPC
+	// ════════════════════════════════════════════════════════════════
+
+	/** [클라이언트 → 서버] 매칭 큐 참가 */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_EnterMatchmaking();
+
+	/** [클라이언트 → 서버] 매칭 큐 취소 */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_LeaveMatchmaking();
+
+	/** [서버 → 클라이언트] 매칭 상태 업데이트 */
+	UFUNCTION(Client, Reliable)
+	void Client_MatchmakingStatusUpdate(const FMatchmakingStatusInfo& StatusInfo);
+
+	/** [서버 → 클라이언트] 매칭 에러 알림 */
+	UFUNCTION(Client, Reliable)
+	void Client_MatchmakingError(const FString& ErrorMessage);
+
+	/** 매칭 상태 변경 이벤트 (위젯 바인딩용) */
+	UPROPERTY(BlueprintAssignable, Category = "로비|매치메이킹")
+	FOnMatchmakingStatusChanged OnMatchmakingStatusChanged;
 
 	// ── [Phase 12g-2] 파티 프리뷰 ──
 

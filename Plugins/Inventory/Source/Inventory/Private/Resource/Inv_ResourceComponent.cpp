@@ -105,7 +105,9 @@ void UInv_ResourceComponent::OnOwnerTakeDamage(AActor* DamagedActor, float Damag
 		return;
 	}
 
-	const bool bIsServer = GetOwner()->HasAuthority();
+	AActor* Owner = GetOwner();
+	if (!Owner) return;
+	const bool bIsServer = Owner->HasAuthority();
 	const FString RoleStr = bIsServer ? TEXT("🔴 서버") : TEXT("🔵 클라이언트");
 
 #if INV_DEBUG_RESOURCE

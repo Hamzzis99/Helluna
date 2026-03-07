@@ -12,9 +12,9 @@ FVector2D UInv_ItemDescription::GetBoxSize() const
 
 void UInv_ItemDescription::SetVisibility(ESlateVisibility InVisibility)
 {
-	for (auto Child : GetChildren())
+	for (UWidget* Child : GetChildren())
 	{
-		Child->Collapse();
+		if (Child) Child->SetVisibility(ESlateVisibility::Collapsed);
 	}
 	
 	Super::SetVisibility(InVisibility);

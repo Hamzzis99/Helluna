@@ -39,6 +39,7 @@ class UScrollBox;
 class UEditableTextBox;
 class UVerticalBox;
 enum class EHellunaHeroType : uint8;
+struct FMatchmakingStatusInfo;
 
 // 탭 인덱스 상수
 namespace LobbyTab
@@ -205,6 +206,26 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UVerticalBox> NameTag_Solo;
 
+	// ── [Phase 15] 모드 토글 + 매칭 오버레이 ──
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> Button_Mode_Solo;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> Button_Mode_Party;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> MatchmakingOverlay;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Text_MatchmakingTimer;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Text_MatchmakingCount;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> Button_CancelMatchmaking;
+
 	// ── Loadout 탭 (Page 1) — 기존 ──
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UHellunaLobbyPanel> StashPanel;
@@ -340,6 +361,26 @@ private:
 	void HideAllNameTags();
 
 	// ════════════════════════════════════════════════════════════════
+	// [Phase 15] 모드 토글 + 매칭 오버레이
+	// ════════════════════════════════════════════════════════════════
+
+	UFUNCTION()
+	void OnSoloModeClicked();
+
+	UFUNCTION()
+	void OnPartyModeClicked();
+
+	UFUNCTION()
+	void OnCancelMatchmakingClicked();
+
+	/** 매칭 상태 변경 핸들러 */
+	UFUNCTION()
+	void HandleMatchmakingStatusChanged(const FMatchmakingStatusInfo& StatusInfo);
+
+	/** 모드 버튼 비주얼 업데이트 */
+	void UpdateModeButtonVisuals();
+
+	// ════════════════════════════════════════════════════════════════
 	// 내부 상태
 	// ════════════════════════════════════════════════════════════════
 
@@ -348,6 +389,12 @@ private:
 
 	/** [Phase 12h] 로컬 플레이어의 현재 Ready 상태 캐시 */
 	bool bLocalPlayerReady = false;
+
+	/** [Phase 15] 현재 모드 (false=Solo, true=Party) */
+	bool bPartyMode = false;
+
+	/** [Phase 15] 현재 매칭 큐에 있는지 */
+	bool bInMatchmaking = false;
 
 	// 프리뷰 씬 캐시 (Solo 모드 전환용)
 	TWeakObjectPtr<AHellunaCharacterSelectSceneV2> CachedPreviewScene;
