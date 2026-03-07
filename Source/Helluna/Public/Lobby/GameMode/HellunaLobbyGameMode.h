@@ -137,10 +137,10 @@ public:
 	 * 해당 캐릭터가 현재 로비에서 사용 가능한지 확인
 	 * 메모리 맵(같은 로비) + SQLite(다른 서버 간) 교차 체크
 	 */
-	bool IsLobbyCharacterAvailable(EHellunaHeroType HeroType) const;
+	bool IsLobbyCharacterAvailable(EHellunaHeroType HeroType, const FString& RequestingPlayerId) const;
 
-	/** 현재 로비에서 가용한 캐릭터 목록 (3개 bool, true=사용중) */
-	TArray<bool> GetLobbyAvailableCharacters() const;
+	/** 현재 로비에서 가용한 캐릭터 목록 (3개 bool, true=사용중, 파티 기준) */
+	TArray<bool> GetLobbyAvailableCharacters(const FString& RequestingPlayerId) const;
 
 	/** 캐릭터 사용 등록 (같은 로비 + SQLite) */
 	void RegisterLobbyCharacterUse(EHellunaHeroType HeroType, const FString& PlayerId);
@@ -323,10 +323,11 @@ public:
 
 private:
 	/**
-	 * 같은 로비 내 캐릭터 사용 맵 (메모리)
-	 * Key: HeroType, Value: PlayerId
+	 * 플레이어별 선택 캐릭터 맵 (메모리)
+	 * Key: PlayerId, Value: HeroType
+	 * 같은 캐릭터를 여러 플레이어가 선택 가능 (파티 내에서만 중복 제한)
 	 */
-	TMap<EHellunaHeroType, FString> LobbyUsedCharacterMap;
+	TMap<FString, EHellunaHeroType> PlayerSelectedHeroMap;
 
 	/** 로비 서버 고유 ID (active_game_characters.server_id용) */
 	FString LobbyServerId;

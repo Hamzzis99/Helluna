@@ -1126,9 +1126,9 @@ void AHellunaLobbyController::Server_SelectLobbyCharacter_Implementation(int32 C
 		return;
 	}
 
-	// GameMode에서 가용성 체크 + 등록
+	// GameMode에서 가용성 체크 + 등록 (같은 파티 내에서만 중복 제한)
 	const FString PlayerId = LobbyGM->GetLobbyPlayerId(this);
-	if (!LobbyGM->IsLobbyCharacterAvailable(HeroType))
+	if (!LobbyGM->IsLobbyCharacterAvailable(HeroType, PlayerId))
 	{
 		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] 캐릭터 %d 이미 사용 중!"), CharacterIndex);
 		Client_LobbyCharacterSelectionResult(false, TEXT("다른 플레이어가 사용 중입니다"));
