@@ -1272,6 +1272,15 @@ void AHellunaLobbyController::SpawnPreviewSceneV2()
 		{
 			CamComp->SetFieldOfView(SpawnedPreviewSceneV2->GetCameraFOV());
 			CamComp->bConstrainAspectRatio = false;  // 레터박스(검은 여백) 방지
+
+			// Auto Exposure 범위 제한 — 어두운 동굴에서 과도한 밝기 보정 방지
+			CamComp->PostProcessSettings.bOverride_AutoExposureMinBrightness = true;
+			CamComp->PostProcessSettings.AutoExposureMinBrightness = 0.5f;
+			CamComp->PostProcessSettings.bOverride_AutoExposureMaxBrightness = true;
+			CamComp->PostProcessSettings.AutoExposureMaxBrightness = 2.0f;
+			CamComp->PostProcessSettings.bOverride_AutoExposureBias = true;
+			CamComp->PostProcessSettings.AutoExposureBias = 0.0f;  // 노출 보정 없음
+			CamComp->PostProcessBlendWeight = 1.0f;  // PostProcess 설정 활성화
 		}
 
 		// 직접 뷰포트에 카메라 설정 (블렌드 없이 즉시)
