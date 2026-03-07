@@ -41,6 +41,7 @@ class UVerticalBox;
 class UComboBoxString;
 enum class EHellunaHeroType : uint8;
 struct FMatchmakingStatusInfo;
+struct FMatchmakingFoundInfo;
 
 // 탭 인덱스 상수
 namespace LobbyTab
@@ -227,6 +228,16 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Button_CancelMatchmaking;
 
+	// ── [Phase 17] 카운트다운 UI ──
+
+	/** 카운트다운 숫자 텍스트 ("5", "4", "3", "2", "1") */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Text_Countdown;
+
+	/** 영웅 재배정 알림 텍스트 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Text_HeroReassignNotice;
+
 	/** [Phase 16] 맵 선택 콤보박스 */
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UComboBoxString> ComboBox_MapSelect;
@@ -381,6 +392,20 @@ private:
 	/** 매칭 상태 변경 핸들러 */
 	UFUNCTION()
 	void HandleMatchmakingStatusChanged(const FMatchmakingStatusInfo& StatusInfo);
+
+	// ── [Phase 17] 카운트다운 핸들러 ──
+
+	/** 매칭 완료 핸들러 — 카운트다운 시작 + 프리뷰 전환 */
+	UFUNCTION()
+	void HandleMatchmakingFound(const FMatchmakingFoundInfo& FoundInfo);
+
+	/** 카운트다운 틱 핸들러 — 숫자 갱신 */
+	UFUNCTION()
+	void HandleMatchmakingCountdown(int32 RemainingSeconds);
+
+	/** 카운트다운 취소 핸들러 — UI 복원 */
+	UFUNCTION()
+	void HandleMatchmakingCancelled(const FString& Reason);
 
 	/** 모드 버튼 비주얼 업데이트 */
 	void UpdateModeButtonVisuals();

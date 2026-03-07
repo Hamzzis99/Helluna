@@ -74,6 +74,10 @@ void UHellunaLobbyStashWidget::NativeDestruct()
 		LobbyPC->OnPartyStateChanged.RemoveDynamic(this, &ThisClass::OnPartyStateChangedHandler);
 		LobbyPC->OnPartyChatReceived.RemoveDynamic(this, &ThisClass::HandlePlayChatReceived);
 		LobbyPC->OnMatchmakingStatusChanged.RemoveDynamic(this, &ThisClass::HandleMatchmakingStatusChanged); // Phase 15
+		// [Phase 17]
+		LobbyPC->OnMatchmakingFound.RemoveDynamic(this, &ThisClass::HandleMatchmakingFound);
+		LobbyPC->OnMatchmakingCountdown.RemoveDynamic(this, &ThisClass::HandleMatchmakingCountdown);
+		LobbyPC->OnMatchmakingCancelled.RemoveDynamic(this, &ThisClass::HandleMatchmakingCancelled);
 	}
 
 	// ── InitializePanels 바인딩 해제 ──
@@ -236,7 +240,11 @@ void UHellunaLobbyStashWidget::NativeOnInitialized()
 		LobbyPC->OnPartyStateChanged.AddUniqueDynamic(this, &ThisClass::OnPartyStateChangedHandler);
 		// [Phase 15] 매칭 상태 변경 바인딩
 		LobbyPC->OnMatchmakingStatusChanged.AddUniqueDynamic(this, &ThisClass::HandleMatchmakingStatusChanged);
-		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] OnPartyStateChanged + OnMatchmakingStatusChanged 바인딩 완료"));
+		// [Phase 17] 카운트다운 바인딩
+		LobbyPC->OnMatchmakingFound.AddUniqueDynamic(this, &ThisClass::HandleMatchmakingFound);
+		LobbyPC->OnMatchmakingCountdown.AddUniqueDynamic(this, &ThisClass::HandleMatchmakingCountdown);
+		LobbyPC->OnMatchmakingCancelled.AddUniqueDynamic(this, &ThisClass::HandleMatchmakingCancelled);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] OnPartyStateChanged + OnMatchmakingStatusChanged + Phase17 바인딩 완료"));
 	}
 
 	// ── [Phase 12i] Play 탭 파티 채팅 바인딩 ──
@@ -1347,6 +1355,96 @@ void UHellunaLobbyStashWidget::HandleMatchmakingStatusChanged(const FMatchmaking
 		// 버튼 텍스트 복원
 		UpdateStartButtonForPartyState();
 	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 17] 카운트다운 핸들러
+// ════════════════════════════════════════════════════════════════════════════════
+
+void UHellunaLobbyStashWidget::HandleMatchmakingFound(const FMatchmakingFoundInfo& FoundInfo)
+{
+	// 매칭 오버레이 표시
+	if (MatchmakingOverlay)
+	{
+		MatchmakingOverlay->SetVisibility(ESlateVisibility::Visible);
+	}
+
+	// 카운트다운 숫자 표시
+	if (Text_Countdown)
+	{
+		Text_Countdown->SetVisibility(ESlateVisibility::Visible);
+		Text_Countdown->SetText(FText::AsNumber(FoundInfo.CountdownSeconds));
+	}
+
+	// 매칭 타이머/카운트/취소 버튼 숨김 (카운트다운으로 대체)
+	if (Text_MatchmakingTimer) Text_MatchmakingTimer->SetVisibility(ESlateVisibility::Collapsed);
+	if (Text_MatchmakingCount) Text_MatchmakingCount->SetVisibility(ESlateVisibility::Collapsed);
+	if (Button_CancelMatchmaking) Button_CancelMatchmaking->SetVisibility(ESlateVisibility::Collapsed);
+
+	// 영웅 재배정 알림
+	if (FoundInfo.bHeroWasReassigned && Text_HeroReassignNotice)
+	{
+		FString HeroName;
+		switch (FoundInfo.AssignedHeroType)
+		{
+		case 0: HeroName = TEXT("루이 (Lui)"); break;
+		case 1: HeroName = TEXT("루나 (Luna)"); break;
+		case 2: HeroName = TEXT("리암 (Liam)"); break;
+		default: HeroName = TEXT("알 수 없음"); break;
+		}
+
+		Text_HeroReassignNotice->SetText(
+			FText::FromString(FString::Printf(
+				TEXT("캐릭터가 중복되어 [%s](으)로 변경되었습니다"), *HeroName)));
+		Text_HeroReassignNotice->SetVisibility(ESlateVisibility::Visible);
+
+		// 3초 후 자동 숨김
+		if (UWorld* World = GetWorld())
+		{
+			FTimerHandle TempHandle;
+			TWeakObjectPtr<UTextBlock> WeakNotice(Text_HeroReassignNotice);
+			World->GetTimerManager().SetTimer(TempHandle,
+				[WeakNotice]()
+				{
+					if (WeakNotice.IsValid())
+					{
+						WeakNotice->SetVisibility(ESlateVisibility::Collapsed);
+					}
+				},
+				3.0f, false);
+		}
+	}
+
+	bInMatchmaking = true;
+}
+
+void UHellunaLobbyStashWidget::HandleMatchmakingCountdown(int32 RemainingSeconds)
+{
+	if (Text_Countdown)
+	{
+		if (RemainingSeconds > 0)
+		{
+			Text_Countdown->SetText(FText::AsNumber(RemainingSeconds));
+		}
+		else
+		{
+			Text_Countdown->SetText(FText::FromString(TEXT("서버 접속 중...")));
+		}
+	}
+}
+
+void UHellunaLobbyStashWidget::HandleMatchmakingCancelled(const FString& Reason)
+{
+	// 카운트다운 UI 숨김
+	if (Text_Countdown) Text_Countdown->SetVisibility(ESlateVisibility::Collapsed);
+	if (Text_HeroReassignNotice) Text_HeroReassignNotice->SetVisibility(ESlateVisibility::Collapsed);
+
+	// Searching 상태 UI 복원
+	if (Text_MatchmakingTimer) Text_MatchmakingTimer->SetVisibility(ESlateVisibility::Visible);
+	if (Text_MatchmakingCount) Text_MatchmakingCount->SetVisibility(ESlateVisibility::Visible);
+	if (Button_CancelMatchmaking) Button_CancelMatchmaking->SetVisibility(ESlateVisibility::Visible);
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase17] 카운트다운 취소 | %s"), *Reason);
 }
 
 void UHellunaLobbyStashWidget::UpdateModeButtonVisuals()

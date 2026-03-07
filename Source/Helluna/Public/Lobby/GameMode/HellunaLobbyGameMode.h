@@ -312,11 +312,42 @@ public:
 	/** 큐 엔트리 제거 */
 	void RemoveQueueEntry(int32 EntryId);
 
-	/** 매칭 간 영웅 중복 검사 — true=중복 없음(유효) */
+	/** [Phase 17 deprecated] 매칭 간 영웅 중복 검사 — ResolveHeroDuplication으로 대체 */
 	bool ValidateMatchHeroDuplication(const TArray<FMatchmakingQueueEntry>& Entries) const;
 
 	/** 큐 엔트리 영웅 타입 갱신 */
 	void UpdateQueueEntryHeroType(const FString& PlayerId, int32 NewHeroType);
+
+	// ── [Phase 17] 매칭 카운트다운 + 영웅 자동 재배정 ──
+
+	/** 카운트다운 대기 중인 매칭 그룹 */
+	struct FPendingCountdownMatch
+	{
+		TArray<FMatchmakingQueueEntry> MatchedEntries;
+		/** PlayerId -> {원래HeroType, 새HeroType} */
+		TMap<FString, TPair<int32, int32>> ReassignedHeroes;
+		int32 RemainingSeconds = 5;
+		FTimerHandle CountdownTimerHandle;
+		int32 MatchGroupId = 0;
+	};
+
+	TArray<FPendingCountdownMatch> PendingCountdownMatches;
+	int32 NextMatchGroupId = 1;
+
+	/** 영웅 중복 해소 — Matched 배열 직접 수정 + 변경 맵 반환 */
+	TMap<FString, TPair<int32, int32>> ResolveHeroDuplication(TArray<FMatchmakingQueueEntry>& Matched);
+
+	/** 카운트다운 시작 (TryFormMatch에서 호출) */
+	void StartMatchCountdown(TArray<FMatchmakingQueueEntry> Matched, TMap<FString, TPair<int32, int32>> ReassignedHeroes);
+
+	/** 매초 카운트다운 틱 */
+	void TickMatchCountdown(int32 MatchGroupId);
+
+	/** 카운트다운 완료 -> Deploy 시작 */
+	void OnCountdownFinished(int32 MatchGroupId);
+
+	/** 카운트다운 중 플레이어 이탈 처리 */
+	void HandleCountdownPlayerDisconnect(const FString& PlayerId);
 
 	/** 캐시 갱신 (DB에서 다시 로드) */
 	void RefreshPartyCache(int32 PartyId);

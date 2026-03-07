@@ -2036,3 +2036,80 @@ void AHellunaLobbyController::Client_MatchmakingError_Implementation(const FStri
 	CancelInfo.Status = EMatchmakingStatus::None;
 	OnMatchmakingStatusChanged.Broadcast(CancelInfo);
 }
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 17] 매칭 카운트다운 RPC
+// ════════════════════════════════════════════════════════════════════════════════
+
+void AHellunaLobbyController::Client_MatchmakingFound_Implementation(const FMatchmakingFoundInfo& FoundInfo)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] [Phase17] 매칭 완료 수신 | Members=%d | Reassigned=%s"),
+		FoundInfo.MatchedMembers.Num(), FoundInfo.bHeroWasReassigned ? TEXT("YES") : TEXT("NO"));
+
+	// 프리뷰 씬에 3명 캐릭터 모이는 연출
+	if (IsValid(SpawnedPreviewSceneV2))
+	{
+		TMap<int32, USkeletalMesh*> MeshMap;
+		TMap<int32, TSubclassOf<UAnimInstance>> AnimMap;
+
+		for (const auto& Pair : PreviewMeshMap)
+		{
+			const int32 Idx = HeroTypeToIndex(Pair.Key);
+			if (Idx < 0) continue;
+			USkeletalMesh* LoadedMesh = Pair.Value.Get();
+			if (!LoadedMesh) LoadedMesh = Pair.Value.LoadSynchronous();
+			if (LoadedMesh)
+			{
+				MeshMap.Add(Idx, LoadedMesh);
+			}
+		}
+		for (const auto& Pair : PreviewAnimClassMap)
+		{
+			const int32 Idx = HeroTypeToIndex(Pair.Key);
+			if (Idx >= 0 && Pair.Value)
+			{
+				AnimMap.Add(Idx, Pair.Value);
+			}
+		}
+
+		SpawnedPreviewSceneV2->SetPartyPreview(
+			FoundInfo.MatchedMembers,
+			ReplicatedPlayerId,
+			MeshMap,
+			AnimMap);
+	}
+
+	// 재배정된 경우 SelectedHeroType 갱신
+	if (FoundInfo.bHeroWasReassigned)
+	{
+		SelectedHeroType = IndexToHeroType(FoundInfo.AssignedHeroType);
+	}
+
+	OnMatchmakingFound.Broadcast(FoundInfo);
+}
+
+void AHellunaLobbyController::Client_MatchmakingCountdown_Implementation(int32 RemainingSeconds)
+{
+	OnMatchmakingCountdown.Broadcast(RemainingSeconds);
+}
+
+void AHellunaLobbyController::Client_MatchmakingCancelled_Implementation(const FString& Reason)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] [Phase17] 카운트다운 취소 | Reason=%s"), *Reason);
+
+	// Solo 프리뷰로 복귀
+	if (IsValid(SpawnedPreviewSceneV2))
+	{
+		SpawnedPreviewSceneV2->ClearPartyPreview();
+		if (SelectedHeroType != EHellunaHeroType::None)
+		{
+			const int32 HeroIndex = HeroTypeToIndex(SelectedHeroType);
+			if (HeroIndex >= 0)
+			{
+				SpawnedPreviewSceneV2->SetSoloCharacter(HeroIndex);
+			}
+		}
+	}
+
+	OnMatchmakingCancelled.Broadcast(Reason);
+}
