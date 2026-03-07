@@ -25,6 +25,7 @@
 #include "GameMode/HellunaBaseGameMode.h"
 #include "HellunaTypes.h"
 #include "Lobby/Party/HellunaPartyTypes.h"
+#include "Lobby/Party/HellunaMatchmakingTypes.h"
 #include "HellunaLobbyGameMode.generated.h"
 
 // 전방 선언
@@ -204,6 +205,19 @@ public:
 	/** InitializeLobbyForPlayer의 Step 1~5 실행 (재참가 결정 후 호출) */
 	void ContinueLobbyInitAfterRejoinDecision(AHellunaLobbyController* LobbyPC, const FString& PlayerId);
 
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 15] 매치메이킹 시스템
+	// ════════════════════════════════════════════════════════════════
+
+	/** 매칭 큐 참가 (파티면 파티 전원, 솔로면 1인 엔트리) */
+	void EnterMatchmakingQueue(const FString& PlayerId);
+
+	/** 매칭 큐 퇴장 */
+	void LeaveMatchmakingQueue(const FString& PlayerId);
+
+	/** 큐 상태 확인 */
+	bool IsPlayerInQueue(const FString& PlayerId) const;
+
 	/** 파티 상태를 전원에게 RPC */
 	void BroadcastPartyState(int32 PartyId);
 
@@ -237,6 +251,41 @@ public:
 
 	/** 연결 끊김 시 파티 탈퇴 유예 타이머 (30초) */
 	TMap<FString, FTimerHandle> PartyLeaveTimers;
+
+	// ── [Phase 15] 매치메이킹 큐 데이터 ──
+
+	/** FIFO 매칭 큐 */
+	TArray<FMatchmakingQueueEntry> MatchmakingQueue;
+
+	/** PlayerId → EntryId 빠른 조회 */
+	TMap<FString, int32> PlayerToQueueEntryMap;
+
+	/** 다음 엔트리 ID */
+	int32 NextQueueEntryId = 1;
+
+	/** 1초 매칭 틱 타이머 */
+	FTimerHandle MatchmakingTickTimer;
+
+	/** 매초 매칭 시도 */
+	void TickMatchmaking();
+
+	/** 큐에 있는 전원에게 상태 브로드캐스트 */
+	void BroadcastMatchmakingStatus();
+
+	/** 매칭 알고리즘 — 조합 찾으면 true */
+	bool TryFormMatch();
+
+	/** 매칭 완료 → Deploy 실행 */
+	void ExecuteMatchedDeploy(const TArray<FMatchmakingQueueEntry>& Matched);
+
+	/** 큐 엔트리 제거 */
+	void RemoveQueueEntry(int32 EntryId);
+
+	/** 매칭 간 영웅 중복 검사 — true=중복 없음(유효) */
+	bool ValidateMatchHeroDuplication(const TArray<FMatchmakingQueueEntry>& Entries) const;
+
+	/** 큐 엔트리 영웅 타입 갱신 */
+	void UpdateQueueEntryHeroType(const FString& PlayerId, int32 NewHeroType);
 
 	/** 캐시 갱신 (DB에서 다시 로드) */
 	void RefreshPartyCache(int32 PartyId);

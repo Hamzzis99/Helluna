@@ -187,7 +187,7 @@ void AInv_CraftingStation::ForceCloseMenu(APlayerController* PC)
 	// Timer 정지
 	if (PlayerTimerMap.Contains(PC))
 	{
-		GetWorld()->GetTimerManager().ClearTimer(PlayerTimerMap[PC]);
+		if (UWorld* World = GetWorld()) World->GetTimerManager().ClearTimer(PlayerTimerMap[PC]);
 		PlayerTimerMap.Remove(PC);
 	}
 
