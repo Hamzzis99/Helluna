@@ -38,6 +38,7 @@ class UTextBlock;
 class UScrollBox;
 class UEditableTextBox;
 class UVerticalBox;
+class UComboBoxString;
 enum class EHellunaHeroType : uint8;
 struct FMatchmakingStatusInfo;
 
@@ -145,21 +146,21 @@ protected:
 	// ════════════════════════════════════════════════════════════════
 
 	/** 메인 WidgetSwitcher — Page0=Play, Page1=Loadout, Page2=Character */
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UWidgetSwitcher> MainSwitcher;
 
 	// ── 탑 네비게이션 탭 버튼 ──
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Button_Tab_Play;
 
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Button_Tab_Loadout;
 
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Button_Tab_Character;
 
 	// ── Play 탭 (Page 0) ──
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Button_Start;
 
 	/** [Phase 12g] 파티 팝업 열기 버튼 (선택적 — WBP에 없으면 무시) */
@@ -226,18 +227,22 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Button_CancelMatchmaking;
 
+	/** [Phase 16] 맵 선택 콤보박스 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UComboBoxString> ComboBox_MapSelect;
+
 	// ── Loadout 탭 (Page 1) — 기존 ──
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UHellunaLobbyPanel> StashPanel;
 
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UInv_SpatialInventory> LoadoutSpatialInventory;
 
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Button_Deploy;
 
 	// ── Character 탭 (Page 2) — 기존 ──
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UHellunaLobbyCharSelectWidget> CharacterSelectPanel;
 
 	// ════════════════════════════════════════════════════════════════
@@ -380,6 +385,10 @@ private:
 	/** 모드 버튼 비주얼 업데이트 */
 	void UpdateModeButtonVisuals();
 
+	/** [Phase 16] 맵 선택 변경 콜백 */
+	UFUNCTION()
+	void OnMapSelectionChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
+
 	// ════════════════════════════════════════════════════════════════
 	// 내부 상태
 	// ════════════════════════════════════════════════════════════════
@@ -395,6 +404,9 @@ private:
 
 	/** [Phase 15] 현재 매칭 큐에 있는지 */
 	bool bInMatchmaking = false;
+
+	/** [Phase 16] 현재 선택된 맵 키 */
+	FString SelectedMapKey;
 
 	// 프리뷰 씬 캐시 (Solo 모드 전환용)
 	TWeakObjectPtr<AHellunaCharacterSelectSceneV2> CachedPreviewScene;

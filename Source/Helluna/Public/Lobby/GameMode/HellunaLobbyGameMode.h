@@ -33,6 +33,7 @@ class AHellunaLobbyController;
 class UHellunaSQLiteSubsystem;
 class UInv_InventoryComponent;
 class UHellunaAccountSaveGame;
+class UHellunaGameServerManager;
 
 UCLASS()
 class HELLUNA_API AHellunaLobbyGameMode : public AHellunaBaseGameMode
@@ -47,6 +48,7 @@ public:
 	// ════════════════════════════════════════════════════════════════
 
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void PostLogin(APlayerController* NewPlayer) override;
 	virtual void Logout(AController* Exiting) override;
 
@@ -115,6 +117,10 @@ protected:
 	UPROPERTY()
 	TObjectPtr<UHellunaSQLiteSubsystem> SQLiteSubsystem;
 
+	/** [Phase 16] 서버 프로세스 매니저 */
+	UPROPERTY()
+	TObjectPtr<UHellunaGameServerManager> GameServerManager;
+
 	/** [Phase 13] 계정 SaveGame (BeginPlay에서 LoadOrCreate) */
 	UPROPERTY()
 	TObjectPtr<UHellunaAccountSaveGame> LobbyAccountSaveGame;
@@ -148,6 +154,12 @@ public:
 
 	/** 빈 채널(status=empty, PendingDeploy 제외) 찾기 — null이면 빈 채널 없음 */
 	bool FindEmptyChannel(FGameChannelInfo& OutChannel);
+
+	/** [Phase 16] 특정 맵의 빈 채널 검색 */
+	bool FindEmptyChannelForMap(const FString& MapKey, FGameChannelInfo& OutChannel);
+
+	/** [Phase 16] 맵키로 MapPath 조회 */
+	FString GetMapPathByKey(const FString& MapKey) const;
 
 	/** Deploy 결정 후 즉시 채널 예약 (이중 배정 방지) */
 	void MarkChannelAsPendingDeploy(int32 Port);
@@ -209,8 +221,8 @@ public:
 	// [Phase 15] 매치메이킹 시스템
 	// ════════════════════════════════════════════════════════════════
 
-	/** 매칭 큐 참가 (파티면 파티 전원, 솔로면 1인 엔트리) */
-	void EnterMatchmakingQueue(const FString& PlayerId);
+	/** [Phase 16] 매칭 큐 참가 (파티면 파티 전원, 솔로면 1인 엔트리) */
+	void EnterMatchmakingQueue(const FString& PlayerId, const FString& MapKey = TEXT(""));
 
 	/** 매칭 큐 퇴장 */
 	void LeaveMatchmakingQueue(const FString& PlayerId);
@@ -240,6 +252,16 @@ public:
 	/** 파티 채팅 기록 (메모리 전용, 최대 50개/파티) */
 	TMap<int32, TArray<FHellunaPartyChatMessage>> PartyChatHistory;
 
+	/** [Phase 16] 사용 가능한 맵 목록 (BP에서 설정) */
+	UPROPERTY(EditDefaultsOnly, Category = "Lobby|Maps",
+		meta = (DisplayName = "Available Map List (사용 가능 맵 목록)"))
+	TArray<FHellunaGameMapInfo> AvailableMapConfigs;
+
+	/** [Phase 16] 기본 맵 키 */
+	UPROPERTY(EditDefaultsOnly, Category = "Lobby|Maps",
+		meta = (DisplayName = "Default Map Key (기본 맵 키)"))
+	FString DefaultMapKey = TEXT("GihyeonMap");
+
 	/** Deploy 예약된 채널 포트 (이중 배정 방지) */
 	TSet<int32> PendingDeployChannels;
 
@@ -266,6 +288,9 @@ public:
 	/** 1초 매칭 틱 타이머 */
 	FTimerHandle MatchmakingTickTimer;
 
+	/** [Phase 16] WaitAndDeploy 폴링 타이머 (포트별) */
+	TMap<int32, FTimerHandle> WaitAndDeployTimers;
+
 	/** 매초 매칭 시도 */
 	void TickMatchmaking();
 
@@ -275,8 +300,11 @@ public:
 	/** 매칭 알고리즘 — 조합 찾으면 true */
 	bool TryFormMatch();
 
-	/** 매칭 완료 → Deploy 실행 */
+	/** 매칭 완료 → Deploy 실행 (서버 없으면 비동기 스폰 대기) */
 	void ExecuteMatchedDeploy(const TArray<FMatchmakingQueueEntry>& Matched);
+
+	/** [Phase 16] 비동기 Deploy (서버 스폰 대기) */
+	void WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEntry> Matched);
 
 	/** 큐 엔트리 제거 */
 	void RemoveQueueEntry(int32 EntryId);

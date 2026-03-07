@@ -34,6 +34,25 @@ enum class EMatchmakingStatus : uint8
 // USTRUCT
 // ============================================================================
 
+/** 게임 맵 설정 정보 */
+USTRUCT(BlueprintType)
+struct FHellunaGameMapInfo
+{
+	GENERATED_BODY()
+
+	/** 맵 식별 키 (예: "GihyeonMap", "GihyeonMap2") */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Map")
+	FString MapKey;
+
+	/** UI 표시 이름 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Map")
+	FString DisplayName;
+
+	/** UE 맵 경로 (예: "/Game/Maps/GihyeonMap") */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Map")
+	FString MapPath;
+};
+
 /** 큐 엔트리 (1 파티 or 1 솔로 = 1 엔트리) — 서버 전용 */
 USTRUCT()
 struct FMatchmakingQueueEntry
@@ -53,6 +72,9 @@ struct FMatchmakingQueueEntry
 
 	/** 큐 진입 서버 시간 (FPlatformTime::Seconds) */
 	double QueueEnterTime = 0.0;
+
+	/** [Phase 16] 선택한 맵 키 (같은 맵끼리만 매칭) */
+	FString SelectedMapKey;
 
 	int32 GetPlayerCount() const { return PlayerIds.Num(); }
 };

@@ -255,6 +255,10 @@ public:
 	// [Phase 15] 매치메이킹 RPC
 	// ════════════════════════════════════════════════════════════════
 
+	/** [Phase 16] 맵 선택 변경 RPC */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_SetSelectedMap(const FString& MapKey);
+
 	/** [클라이언트 → 서버] 매칭 큐 참가 */
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_EnterMatchmaking();
@@ -530,6 +534,9 @@ protected:
 
 	/** Deploy 중복 실행 방지 플래그 */
 	bool bDeployInProgress = false;
+
+	/** [Phase 16] 플레이어가 선택한 맵 키 */
+	FString SelectedMapKey;
 
 	// ════════════════════════════════════════════════════════════════
 	// 파괴적 캐스케이드 방지 — DB에서 로드된 Stash 아이템 수 기록

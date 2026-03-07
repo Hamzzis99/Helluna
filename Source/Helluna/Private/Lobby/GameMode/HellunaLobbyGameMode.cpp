@@ -36,6 +36,7 @@
 #include "Lobby/GameMode/HellunaLobbyGameMode.h"
 #include "Lobby/Controller/HellunaLobbyController.h"
 #include "Lobby/Database/HellunaSQLiteSubsystem.h"
+#include "Lobby/ServerManager/HellunaGameServerManager.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
 #include "Persistence/Inv_SaveTypes.h"
 #include "Items/Components/Inv_ItemComponent.h"
@@ -126,7 +127,36 @@ void AHellunaLobbyGameMode::BeginPlay()
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] BeginPlay: AccountSaveGame %s | 계정 수=%d"),
 		LobbyAccountSaveGame ? TEXT("로드 성공") : TEXT("로드 실패"),
 		LobbyAccountSaveGame ? LobbyAccountSaveGame->GetAccountCount() : 0);
+
+	// [Phase 16] GameServerManager 초기화
+	GameServerManager = NewObject<UHellunaGameServerManager>(this);
+	GameServerManager->Initialize(GetWorld(), GetRegistryDirectoryPath());
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] BeginPlay: GameServerManager 초기화 완료"));
 }
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 16] EndPlay
+// ════════════════════════════════════════════════════════════════════════════════
+
+void AHellunaLobbyGameMode::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	// WaitAndDeploy 타이머 전부 해제
+	if (UWorld* World = GetWorld())
+	{
+		for (auto& Pair : WaitAndDeployTimers)
+		{
+			World->GetTimerManager().ClearTimer(Pair.Value);
+		}
+		WaitAndDeployTimers.Empty();
+	}
+
+	// 서버 매니저 정리
+	if (GameServerManager)
+	{
+		GameServerManager->ShutdownAll();
+	}
+
+	Super::EndPlay(EndPlayReason);
 
 // ════════════════════════════════════════════════════════════════════════════════
 // PostLogin — 플레이어가 로비에 진입할 때 호출 (서버에서만 실행)

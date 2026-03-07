@@ -315,6 +315,29 @@ protected:
 
 	void DeleteRegistryFile();
 
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 16] 동적 서버 자동 종료
+	// ════════════════════════════════════════════════════════════════
+
+	/** EndGame 후 서버 자동 종료 대기 시간 (초) */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|Server(서버)",
+		meta = (DisplayName = "Shutdown Delay Seconds (종료 대기 시간)", ClampMin = "1.0"))
+	float ShutdownDelaySeconds = 15.f;
+
+	/** 유휴 자동 종료 시간 (초, 0=비활성) */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|Server(서버)",
+		meta = (DisplayName = "Idle Shutdown Seconds (유휴 종료 시간)"))
+	float IdleShutdownSeconds = 120.f;
+
+	/** 종료 타이머 핸들 */
+	FTimerHandle ShutdownTimer;
+
+	/** 유휴 종료 타이머 */
+	FTimerHandle IdleShutdownTimer;
+
+	/** 유휴 종료 체크 */
+	void CheckIdleShutdown();
+
 	/** 결과 UI 위젯 클래스 (BP에서 설정) */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|GameEnd(게임종료)",
 		meta = (DisplayName = "결과 위젯 클래스"))
