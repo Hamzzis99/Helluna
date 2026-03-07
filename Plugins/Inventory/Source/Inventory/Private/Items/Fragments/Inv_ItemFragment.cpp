@@ -117,83 +117,83 @@ void FInv_HealthPotionFragment::OnConsume(APlayerController* PC)
 	// 힐링을 위한 인터페이스 함수 호출
 	
 	//디버그 메시지
-	GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Green, 
-		FString::Printf(TEXT("Health Potion consumed! Healing by: %f"), GetValue()));
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Green,
+			FString::Printf(TEXT("Health Potion consumed! Healing by: %f"), GetValue()));
+	}
 }
 
 void FInv_ManaPotionFragment::OnConsume(APlayerController* PC)
 {
 	//Replenish mana however you wish
-	
+
 	//디버그 메시지
-	GEngine->AddOnScreenDebugMessage(-1,5.f,FColor::Blue,
-		FString::Printf(TEXT("Consumed Mana Potion! Healed for %f HP"), GetValue()));
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1,5.f,FColor::Blue,
+			FString::Printf(TEXT("Consumed Mana Potion! Healed for %f HP"), GetValue()));
+	}
 }
 
 //장비 장착 관련
 void FInv_StrengthModifier::OnEquip(APlayerController* PC)
 {
 	//디버그 메시지
-	GEngine->AddOnScreenDebugMessage(
-		-1,
-		5.f,
-		FColor::Green,
-		FString::Printf(TEXT("Strength increased by: %f"),
-			GetValue()));
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Green,
+			FString::Printf(TEXT("Strength increased by: %f"), GetValue()));
+	}
 }
 
 void FInv_StrengthModifier::OnUnequip(APlayerController* PC)
 {
 	//디버그 메시지
-	GEngine->AddOnScreenDebugMessage(
-		-1,
-		5.f,
-		FColor::Red,
-		FString::Printf(TEXT("Item unequipped. Strength decreased by: %f"),
-			GetValue()));
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red,
+			FString::Printf(TEXT("Item unequipped. Strength decreased by: %f"), GetValue()));
+	}
 }
 
 
 // 각 장비마다 방어구 장비 관련 장착 아이템들
 void FInv_ArmorModifier::OnEquip(APlayerController* PC)
 {
-	GEngine->AddOnScreenDebugMessage(
-		-1,
-		5.f,
-		FColor::Green,
-		FString::Printf(TEXT("Item equipped. Armor increased by: %f"),
-			GetValue()));
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Green,
+			FString::Printf(TEXT("Item equipped. Armor increased by: %f"), GetValue()));
+	}
 }
 
 void FInv_ArmorModifier::OnUnequip(APlayerController* PC)
 {
-	GEngine->AddOnScreenDebugMessage(
-		-1,
-		5.f,
-		FColor::Red,
-		FString::Printf(TEXT("Item unequipped. Armor decreased by: %f"),
-			GetValue()));
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red,
+			FString::Printf(TEXT("Item unequipped. Armor decreased by: %f"), GetValue()));
+	}
 }
 
 //무기 장비 관련 장착 아이템들
 void FInv_DamageModifier::OnEquip(APlayerController* PC)
 {
-	GEngine->AddOnScreenDebugMessage(
-		-1,
-		5.f,
-		FColor::Green,
-		FString::Printf(TEXT("Item equipped. Damage increased by: %f"),
-			GetValue()));
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Green,
+			FString::Printf(TEXT("Item equipped. Damage increased by: %f"), GetValue()));
+	}
 }
 
 void FInv_DamageModifier::OnUnequip(APlayerController* PC)
 {
-	GEngine->AddOnScreenDebugMessage(
-		-1,
-		5.f,
-		FColor::Red,
-		FString::Printf(TEXT("Item equipped. Damage increased by: %f"),
-			GetValue()));
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red,
+			FString::Printf(TEXT("Item unequipped. Damage decreased by: %f"), GetValue()));
+	}
 }
 // 여기까지가 무기 관련 장착 장비들
 
@@ -264,7 +264,10 @@ AInv_EquipActor* FInv_EquipmentFragment::SpawnAttachedActor(USkeletalMeshCompone
 
 	if (!IsValid(EquipActorClass) || !IsValid(AttachMesh)) return nullptr;
 
-	AInv_EquipActor* SpawnedActor = AttachMesh->GetWorld()->SpawnActor<AInv_EquipActor>(EquipActorClass);
+	UWorld* World = AttachMesh->GetWorld();
+	if (!World) return nullptr;
+
+	AInv_EquipActor* SpawnedActor = World->SpawnActor<AInv_EquipActor>(EquipActorClass);
 	if (!IsValid(SpawnedActor)) return nullptr; // 장착 아이템이 없을 시 크래쉬 예외 처리 제거
 	
 #if INV_DEBUG_EQUIP

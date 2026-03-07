@@ -41,6 +41,7 @@ void FMDFHitData::PostReplicatedAdd(const FMDFHitDataArray& InArraySerializer)
 
     // 포인터 연산으로 정확한 인덱스 확보 (IndexOfByKey/operator== 불필요)
     int32 MyIndex = static_cast<int32>(this - InArraySerializer.Items.GetData());
+    if (MyIndex < 0 || MyIndex >= InArraySerializer.Items.Num()) return;
 
     // 배치 추적: 첫 아이템이면 시작 인덱스 기록
     if (Comp->PendingAddStartIndex == INDEX_NONE)
@@ -52,8 +53,10 @@ void FMDFHitData::PostReplicatedAdd(const FMDFHitDataArray& InArraySerializer)
     // 다음 틱에서 한 번만 처리 (bool 플래그로 중복 등록 방지)
     if (!Comp->bFastArrayBatchPending)
     {
+        UWorld* World = Comp->GetWorld();
+        if (!World) return;
         Comp->bFastArrayBatchPending = true;
-        Comp->GetWorld()->GetTimerManager().SetTimerForNextTick([Comp]()
+        World->GetTimerManager().SetTimerForNextTick([Comp]()
         {
             if (!IsValid(Comp)) return;
             Comp->bFastArrayBatchPending = false;  // 반드시 먼저 리셋
@@ -94,8 +97,10 @@ void FMDFHitData::PreReplicatedRemove(const FMDFHitDataArray& InArraySerializer)
     // bool 플래그로 중복 등록 방지
     if (!Comp->bFastArrayBatchPending)
     {
+        UWorld* World = Comp->GetWorld();
+        if (!World) return;
         Comp->bFastArrayBatchPending = true;
-        Comp->GetWorld()->GetTimerManager().SetTimerForNextTick([Comp]()
+        World->GetTimerManager().SetTimerForNextTick([Comp]()
         {
             if (!IsValid(Comp)) return;
             Comp->bFastArrayBatchPending = false;  // 반드시 먼저 리셋
@@ -261,14 +266,20 @@ void UMDF_DeformableComponent::HandlePointDamage(AActor* DamagedActor, float Dam
         // [디버그] 타격 위치 표시
         if (bShowDebugPoints)
         {
-            DrawDebugPoint(GetWorld(), HitLocation, 10.0f, FColor::Red, false, 3.0f);
+            if (UWorld* DebugWorld = GetWorld())
+            {
+                DrawDebugPoint(DebugWorld, HitLocation, 10.0f, FColor::Red, false, 3.0f);
+            }
         }
 
         // 7. 배칭 타이머 시작 (아직 안 돌고 있다면)
         if (!BatchTimerHandle.IsValid())
         {
-            float Delay = FMath::Max(0.001f, BatchProcessDelay);
-            GetWorld()->GetTimerManager().SetTimer(BatchTimerHandle, this, &UMDF_DeformableComponent::ProcessDeformationBatch, Delay, false);
+            if (UWorld* TimerWorld = GetWorld())
+            {
+                float Delay = FMath::Max(0.001f, BatchProcessDelay);
+                TimerWorld->GetTimerManager().SetTimer(BatchTimerHandle, this, &UMDF_DeformableComponent::ProcessDeformationBatch, Delay, false);
+            }
         }
     }
 }
@@ -336,21 +347,25 @@ void UMDF_DeformableComponent::ProcessDeformationBatch()
     // [디버그] 개발자 모드 자동 복구
     if (bDevMode_AutoRepair)
     {
-        // 기존 타이머가 있으면 리셋 (마지막 타격 기준으로 딜레이 재시작)
-        GetWorld()->GetTimerManager().ClearTimer(DevMode_RepairTimerHandle);
+        UWorld* TimerWorld = GetWorld();
+        if (TimerWorld)
+        {
+            // 기존 타이머가 있으면 리셋 (마지막 타격 기준으로 딜레이 재시작)
+            TimerWorld->GetTimerManager().ClearTimer(DevMode_RepairTimerHandle);
 
-        float Delay = FMath::Max(0.5f, DevMode_RepairDelay);
-        GetWorld()->GetTimerManager().SetTimer(
-            DevMode_RepairTimerHandle,
-            this,
-            &UMDF_DeformableComponent::RepairMesh,
-            Delay,
-            false // 반복 아님
-        );
+            float Delay = FMath::Max(0.5f, DevMode_RepairDelay);
+            TimerWorld->GetTimerManager().SetTimer(
+                DevMode_RepairTimerHandle,
+                this,
+                &UMDF_DeformableComponent::RepairMesh,
+                Delay,
+                false // 반복 아님
+            );
 
 #if MDF_DEBUG_DEFORM
-        UE_LOG(LogMeshDeform, Log, TEXT("[MDF] [DevMode] %.1f초 후 자동 복구 예약됨"), Delay);
+            UE_LOG(LogMeshDeform, Log, TEXT("[MDF] [DevMode] %.1f초 후 자동 복구 예약됨"), Delay);
 #endif
+        }
     }
 }
 
@@ -361,8 +376,11 @@ void UMDF_DeformableComponent::StartBatchTimer()
 {
     if (!BatchTimerHandle.IsValid())
     {
+        UWorld* World = GetWorld();
+        if (!World) return;
+
         float Delay = FMath::Max(0.001f, BatchProcessDelay);
-        GetWorld()->GetTimerManager().SetTimer(
+        World->GetTimerManager().SetTimer(
             BatchTimerHandle,
             this,
             &UMDF_DeformableComponent::ProcessDeformationBatch,
@@ -393,8 +411,9 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
 #endif
 
     // 변형 계산 준비
-    const double RadiusSq = FMath::Square((double)DeformRadius);
-    const double InverseRadius = 1.0 / (double)DeformRadius;
+    const double SafeRadius = FMath::Max((double)DeformRadius, 0.01);
+    const double RadiusSq = FMath::Square(SafeRadius);
+    const double InverseRadius = 1.0 / SafeRadius;
 
     double MinDebugDistSq = DBL_MAX;
     bool bAnyModified = false;
@@ -411,7 +430,10 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
 
         if (bShowDebugPoints)
         {
-            DrawDebugPoint(GetWorld(), WorldPos, 15.0f, FColor::Blue, false, 5.0f);
+            if (UWorld* DebugWorld = GetWorld())
+            {
+                DrawDebugPoint(DebugWorld, WorldPos, 15.0f, FColor::Blue, false, 5.0f);
+            }
         }
     }
 
@@ -623,7 +645,10 @@ void UMDF_DeformableComponent::RepairMesh()
     // [디버그] 자동 복구 타이머 정리
     if (DevMode_RepairTimerHandle.IsValid())
     {
-        GetWorld()->GetTimerManager().ClearTimer(DevMode_RepairTimerHandle);
+        if (UWorld* World = GetWorld())
+        {
+            World->GetTimerManager().ClearTimer(DevMode_RepairTimerHandle);
+        }
     }
 
     // FFastArray 초기화

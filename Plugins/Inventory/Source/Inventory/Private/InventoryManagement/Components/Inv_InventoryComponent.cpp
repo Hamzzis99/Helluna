@@ -2444,7 +2444,11 @@ void UInv_InventoryComponent::SyncGridSizesFromWidget()
 void UInv_InventoryComponent::ConstructInventory()
 {
 	OwningController = Cast<APlayerController>(GetOwner());
-	checkf(OwningController.IsValid(), TEXT("Inventory Component should have a Player Controller as Owner."))
+	if (!OwningController.IsValid())
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Inventory] ConstructInventory: Owner가 PlayerController가 아님! Owner=%s"), *GetNameSafe(GetOwner()));
+		return;
+	}
 	if (!OwningController->IsLocalController()) return;
 
 	//블루프린터 위젯 클래스가 설정되어 있는지 확인

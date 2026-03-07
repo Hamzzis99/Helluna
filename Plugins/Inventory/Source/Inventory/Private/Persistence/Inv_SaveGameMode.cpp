@@ -159,7 +159,10 @@ int32 AInv_SaveGameMode::SaveAllPlayersInventory()
 {
 	int32 SavedCount = 0;
 
-	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	UWorld* World = GetWorld();
+	if (!World) return 0;
+
+	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
 	{
 		APlayerController* PC = It->Get();
 		if (!IsValid(PC)) continue;
@@ -218,7 +221,10 @@ int32 AInv_SaveGameMode::SaveAllPlayersInventoryDirect()
 
 	int32 SavedCount = 0;
 
-	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	UWorld* World = GetWorld();
+	if (!World) return 0;
+
+	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
 	{
 		APlayerController* PC = It->Get();
 		if (!IsValid(PC)) continue;
@@ -679,7 +685,10 @@ void AInv_SaveGameMode::RequestAllPlayersInventoryState()
 	// 응답 대기할 플레이어 수 카운트
 	int32 RequestCount = 0;
 
-	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
 	{
 		APlayerController* PC = It->Get();
 		if (!IsValid(PC)) continue;

@@ -186,7 +186,9 @@ void UInv_BuildingComponent::StartBuildMode()
 	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
 	// 플레이어 앞에 스폰
-	FVector SpawnLocation = OwningPC->GetPawn()->GetActorLocation() + (OwningPC->GetPawn()->GetActorForwardVector() * 300.0f);
+	APawn* OwnerPawn = OwningPC->GetPawn();
+	if (!OwnerPawn) return;
+	FVector SpawnLocation = OwnerPawn->GetActorLocation() + (OwnerPawn->GetActorForwardVector() * 300.0f);
 	FRotator SpawnRotation = FRotator::ZeroRotator;
 
 	UWorld* World = GetWorld();
