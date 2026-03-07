@@ -43,6 +43,7 @@
 #include "Lobby/Widget/HellunaRejoinWidget.h"
 #include "Lobby/Database/HellunaSQLiteSubsystem.h"
 #include "Login/Preview/HellunaCharacterSelectSceneV2.h"
+#include "Lobby/Camera/HellunaLobbyCameraAnchor.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
 #include "Blueprint/UserWidget.h"
 #include "Camera/CameraActor.h"
@@ -1446,63 +1447,180 @@ void AHellunaLobbyController::OnBackgroundLevelLoaded()
 {
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] OnBackgroundLevelLoaded: '%s' 로드 완료"), *CurrentLoadedLevel.ToString());
 
-	// 탭별 카메라 Transform 적용
 	if (!LobbyCamera)
 	{
 		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] OnBackgroundLevelLoaded: LobbyCamera 없음 → 카메라 설정 스킵"));
 		return;
 	}
 
-	const FLobbyCameraTransform* CamTransform = nullptr;
-	if (PendingBackgroundTabIndex == 0)
-	{
-		CamTransform = &PlayCameraTransform;
-	}
-	else if (PendingBackgroundTabIndex == 2)
-	{
-		CamTransform = &CharacterCameraTransform;
-	}
+	// 1단계: 앵커 캐시 재구축 (새 서브레벨의 앵커 포함)
+	RebuildAnchorCache();
 
-	if (CamTransform)
-	{
-		LobbyCamera->SetActorLocation(CamTransform->Location);
-		LobbyCamera->SetActorRotation(CamTransform->Rotation);
+	// 2단계: 앵커 우선 검색 (SlotIndex=0, 기본 뷰)
+	const bool bAnchorApplied = ApplyCameraFromAnchor(PendingBackgroundTabIndex, 0);
 
-		UCameraComponent* CamComp = LobbyCamera->GetCameraComponent();
-		if (CamComp)
+	// 3단계: 앵커 실패 시 기존 FLobbyCameraTransform 폴백
+	if (!bAnchorApplied)
+	{
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 앵커 없음 → FLobbyCameraTransform 폴백"));
+
+		const FLobbyCameraTransform* CamTransform = nullptr;
+		if (PendingBackgroundTabIndex == 0)
 		{
-			CamComp->SetFieldOfView(CamTransform->FOV);
+			CamTransform = &PlayCameraTransform;
+		}
+		else if (PendingBackgroundTabIndex == 2)
+		{
+			CamTransform = &CharacterCameraTransform;
 		}
 
-		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 배경 카메라 설정 적용 | Tab=%d Pos=%s Rot=%s FOV=%.1f"),
-			PendingBackgroundTabIndex, *CamTransform->Location.ToString(), *CamTransform->Rotation.ToString(), CamTransform->FOV);
-
-		// 프리뷰 씬도 카메라 앞으로 이동 (캐릭터가 화면에 보이도록)
-		if (IsValid(SpawnedPreviewSceneV2))
+		if (CamTransform)
 		{
-			const FVector CamOffset = SpawnedPreviewSceneV2->GetCameraOffset();
-			// CameraOffset = 씬 루트 → 카메라 로컬 오프셋 (X=전방거리, Z=높이)
-			// 카메라 Forward 방향으로 X거리만큼 앞에 씬을 배치하고, Z 높이 보정
-			const FVector CamForward = CamTransform->Rotation.Vector();
-			const FVector CamRight = FRotationMatrix(CamTransform->Rotation).GetScaledAxis(EAxis::Y);
-			const FVector CamUp = FRotationMatrix(CamTransform->Rotation).GetScaledAxis(EAxis::Z);
+			LobbyCamera->SetActorLocation(CamTransform->Location);
+			LobbyCamera->SetActorRotation(CamTransform->Rotation);
 
-			// 씬 위치 = 카메라 위치 + Forward * 전방거리 + Right * 좌우 + Up * 높이 (부호 반전: 카메라가 씬보다 위)
-			const FVector NewScenePos = CamTransform->Location
-				+ CamForward * CamOffset.X
-				+ CamRight * CamOffset.Y
-				- CamUp * CamOffset.Z;  // 카메라가 씬보다 Z만큼 높으므로 씬은 아래로
+			UCameraComponent* CamComp = LobbyCamera->GetCameraComponent();
+			if (CamComp)
+			{
+				CamComp->SetFieldOfView(CamTransform->FOV);
+			}
 
-			// 씬 회전: 카메라를 바라보도록 (카메라 Forward의 반대 방향)
-			const FRotator SceneRot = (-CamForward).Rotation();
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 폴백 카메라 적용 | Tab=%d Pos=%s Rot=%s FOV=%.1f"),
+				PendingBackgroundTabIndex, *CamTransform->Location.ToString(),
+				*CamTransform->Rotation.ToString(), CamTransform->FOV);
 
-			SpawnedPreviewSceneV2->SetActorLocation(NewScenePos);
-			SpawnedPreviewSceneV2->SetActorRotation(SceneRot);
-
-			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 프리뷰 씬 이동 | NewPos=%s Rot=%s (CamOffset=%s)"),
-				*NewScenePos.ToString(), *SceneRot.ToString(), *CamOffset.ToString());
+			// 프리뷰 씬 이동
+			MovePreviewSceneToCamera(CamTransform->Location, CamTransform->Rotation);
 		}
 	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 카메라 앵커 시스템
+// ════════════════════════════════════════════════════════════════════════════════
+
+void AHellunaLobbyController::RebuildAnchorCache()
+{
+	CachedAnchors.Empty();
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	TArray<AActor*> FoundAnchors;
+	UGameplayStatics::GetAllActorsOfClass(World, AHellunaLobbyCameraAnchor::StaticClass(), FoundAnchors);
+
+	for (AActor* Actor : FoundAnchors)
+	{
+		AHellunaLobbyCameraAnchor* Anchor = Cast<AHellunaLobbyCameraAnchor>(Actor);
+		if (Anchor)
+		{
+			const int32 Key = Anchor->GetTabIndex() * 1000 + Anchor->GetSlotIndex();
+			CachedAnchors.Add(Key, Anchor);
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 앵커 캐시: Tab=%d Slot=%d Key=%d Pos=%s"),
+				Anchor->GetTabIndex(), Anchor->GetSlotIndex(), Key, *Anchor->GetActorLocation().ToString());
+		}
+	}
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 앵커 캐시 구축 완료 | 총 %d개"), CachedAnchors.Num());
+}
+
+bool AHellunaLobbyController::ApplyCameraFromAnchor(int32 InTabIndex, int32 InSlotIndex)
+{
+	if (!LobbyCamera)
+	{
+		return false;
+	}
+
+	// 요청된 슬롯으로 검색
+	const int32 Key = InTabIndex * 1000 + InSlotIndex;
+	TObjectPtr<AHellunaLobbyCameraAnchor>* FoundPtr = CachedAnchors.Find(Key);
+
+	// 못 찾으면 SlotIndex=0으로 폴백
+	if (!FoundPtr && InSlotIndex != 0)
+	{
+		const int32 FallbackKey = InTabIndex * 1000;
+		FoundPtr = CachedAnchors.Find(FallbackKey);
+		if (FoundPtr)
+		{
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 앵커 Slot=%d 없음 → Slot=0 폴백"), InSlotIndex);
+		}
+	}
+
+	if (!FoundPtr || !IsValid(*FoundPtr))
+	{
+		return false;
+	}
+
+	AHellunaLobbyCameraAnchor* Anchor = *FoundPtr;
+
+	// 카메라 Transform 적용
+	LobbyCamera->SetActorLocation(Anchor->GetActorLocation());
+	LobbyCamera->SetActorRotation(Anchor->GetActorRotation());
+
+	UCameraComponent* CamComp = LobbyCamera->GetCameraComponent();
+	if (CamComp)
+	{
+		CamComp->SetFieldOfView(Anchor->GetFOV());
+	}
+
+	CurrentSlotIndex = InSlotIndex;
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 앵커 카메라 적용 | Tab=%d Slot=%d Pos=%s Rot=%s FOV=%.1f"),
+		InTabIndex, InSlotIndex,
+		*Anchor->GetActorLocation().ToString(),
+		*Anchor->GetActorRotation().ToString(),
+		Anchor->GetFOV());
+
+	// 프리뷰 씬 이동
+	MovePreviewSceneToCamera(Anchor->GetActorLocation(), Anchor->GetActorRotation());
+
+	return true;
+}
+
+void AHellunaLobbyController::SwitchCameraSlot(int32 NewSlotIndex)
+{
+	if (!LobbyCamera)
+	{
+		return;
+	}
+
+	if (!ApplyCameraFromAnchor(PendingBackgroundTabIndex, NewSlotIndex))
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] SwitchCameraSlot: Tab=%d Slot=%d 앵커 없음"),
+			PendingBackgroundTabIndex, NewSlotIndex);
+	}
+}
+
+void AHellunaLobbyController::MovePreviewSceneToCamera(const FVector& CamLocation, const FRotator& CamRotation)
+{
+	if (!IsValid(SpawnedPreviewSceneV2))
+	{
+		return;
+	}
+
+	const FVector CamOffset = SpawnedPreviewSceneV2->GetCameraOffset();
+	// CameraOffset = 씬 루트 → 카메라 로컬 오프셋 (X=전방거리, Z=높이)
+	const FVector CamForward = CamRotation.Vector();
+	const FVector CamRight = FRotationMatrix(CamRotation).GetScaledAxis(EAxis::Y);
+	const FVector CamUp = FRotationMatrix(CamRotation).GetScaledAxis(EAxis::Z);
+
+	// 씬 위치 = 카메라 위치 + Forward * 전방거리 + Right * 좌우 - Up * 높이
+	const FVector NewScenePos = CamLocation
+		+ CamForward * CamOffset.X
+		+ CamRight * CamOffset.Y
+		- CamUp * CamOffset.Z;
+
+	// 씬 회전: 카메라를 바라보도록 (카메라 Forward의 반대 방향)
+	const FRotator SceneRot = (-CamForward).Rotation();
+
+	SpawnedPreviewSceneV2->SetActorLocation(NewScenePos);
+	SpawnedPreviewSceneV2->SetActorRotation(SceneRot);
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 프리뷰 씬 이동 | NewPos=%s Rot=%s (CamOffset=%s)"),
+		*NewScenePos.ToString(), *SceneRot.ToString(), *CamOffset.ToString());
 }
 
 void AHellunaLobbyController::OnBackgroundLevelUnloaded()

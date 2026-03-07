@@ -43,6 +43,7 @@ class AHellunaCharacterSelectSceneV2;
 class ACameraActor;
 class USkeletalMesh;
 class UHellunaLobbyCharSelectWidget;
+class AHellunaLobbyCameraAnchor;
 
 // [Fix46-M3] Validate 상한 공통 상수
 namespace LobbyValidation
@@ -519,6 +520,17 @@ protected:
 	int32 PendingBackgroundTabIndex = -1;
 
 	// ════════════════════════════════════════════════════════════════
+	// 카메라 앵커 시스템
+	// ════════════════════════════════════════════════════════════════
+
+	/** 앵커 캐시 (Key = TabIndex * 1000 + SlotIndex) */
+	UPROPERTY()
+	TMap<int32, TObjectPtr<AHellunaLobbyCameraAnchor>> CachedAnchors;
+
+	/** 현재 활성 슬롯 인덱스 */
+	int32 CurrentSlotIndex = 0;
+
+	// ════════════════════════════════════════════════════════════════
 	// 캐릭터 선택 상태
 	// ════════════════════════════════════════════════════════════════
 
@@ -582,6 +594,11 @@ public:
 		meta = (DisplayName = "Load Background For Tab (탭별 배경 로드)"))
 	void LoadBackgroundForTab(int32 TabIndex);
 
+	/** 같은 탭 내 카메라 슬롯 전환 (스킨/무기 뷰 전환용) */
+	UFUNCTION(BlueprintCallable, Category = "로비|카메라",
+		meta = (DisplayName = "Switch Camera Slot (카메라 슬롯 전환)"))
+	void SwitchCameraSlot(int32 NewSlotIndex);
+
 private:
 	// ════════════════════════════════════════════════════════════════
 	// V2 프리뷰 내부 함수
@@ -604,6 +621,19 @@ private:
 	/** 배경 레벨 언로드 완료 콜백 */
 	UFUNCTION()
 	void OnBackgroundLevelUnloaded();
+
+	// ════════════════════════════════════════════════════════════════
+	// 카메라 앵커 시스템
+	// ════════════════════════════════════════════════════════════════
+
+	/** 서브레벨의 앵커 액터를 검색하여 캐시 구축 */
+	void RebuildAnchorCache();
+
+	/** 앵커 기반 카메라 적용 (성공 시 true, 앵커 없으면 false) */
+	bool ApplyCameraFromAnchor(int32 InTabIndex, int32 InSlotIndex);
+
+	/** 프리뷰 씬을 카메라 앞 적절한 위치로 이동 */
+	void MovePreviewSceneToCamera(const FVector& CamLocation, const FRotator& CamRotation);
 
 	// ════════════════════════════════════════════════════════════════
 	// Per-Interaction Save
