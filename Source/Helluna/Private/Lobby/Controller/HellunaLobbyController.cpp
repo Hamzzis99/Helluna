@@ -1271,6 +1271,7 @@ void AHellunaLobbyController::SpawnPreviewSceneV2()
 		if (CamComp)
 		{
 			CamComp->SetFieldOfView(SpawnedPreviewSceneV2->GetCameraFOV());
+			CamComp->bConstrainAspectRatio = false;  // 레터박스(검은 여백) 방지
 		}
 
 		// 직접 뷰포트에 카메라 설정 (블렌드 없이 즉시)
@@ -1483,6 +1484,7 @@ void AHellunaLobbyController::OnBackgroundLevelLoaded()
 			if (CamComp)
 			{
 				CamComp->SetFieldOfView(CamTransform->FOV);
+			CamComp->bConstrainAspectRatio = false;  // 레터박스 방지
 			}
 
 			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 폴백 카메라 적용 | Tab=%d Pos=%s Rot=%s FOV=%.1f"),
@@ -1564,6 +1566,7 @@ bool AHellunaLobbyController::ApplyCameraFromAnchor(int32 InTabIndex, int32 InSl
 	if (CamComp)
 	{
 		CamComp->SetFieldOfView(Anchor->GetFOV());
+		CamComp->bConstrainAspectRatio = false;  // 레터박스 방지
 	}
 
 	CurrentSlotIndex = InSlotIndex;
