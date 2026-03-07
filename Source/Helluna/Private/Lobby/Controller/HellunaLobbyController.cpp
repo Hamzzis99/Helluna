@@ -1407,6 +1407,38 @@ void AHellunaLobbyController::UnloadBackgroundLevel(FName LevelName)
 void AHellunaLobbyController::OnBackgroundLevelLoaded()
 {
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] OnBackgroundLevelLoaded: '%s' 로드 완료"), *CurrentLoadedLevel.ToString());
+
+	// 탭별 카메라 Transform 적용
+	if (!LobbyCamera)
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] OnBackgroundLevelLoaded: LobbyCamera 없음 → 카메라 설정 스킵"));
+		return;
+	}
+
+	const FLobbyCameraTransform* CamTransform = nullptr;
+	if (PendingBackgroundTabIndex == 0)
+	{
+		CamTransform = &PlayCameraTransform;
+	}
+	else if (PendingBackgroundTabIndex == 2)
+	{
+		CamTransform = &CharacterCameraTransform;
+	}
+
+	if (CamTransform)
+	{
+		LobbyCamera->SetActorLocation(CamTransform->Location);
+		LobbyCamera->SetActorRotation(CamTransform->Rotation);
+
+		UCameraComponent* CamComp = LobbyCamera->GetCameraComponent();
+		if (CamComp)
+		{
+			CamComp->SetFieldOfView(CamTransform->FOV);
+		}
+
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 배경 카메라 설정 적용 | Tab=%d Pos=%s Rot=%s FOV=%.1f"),
+			PendingBackgroundTabIndex, *CamTransform->Location.ToString(), *CamTransform->Rotation.ToString(), CamTransform->FOV);
+	}
 }
 
 void AHellunaLobbyController::OnBackgroundLevelUnloaded()
@@ -1419,10 +1451,12 @@ void AHellunaLobbyController::LoadBackgroundForTab(int32 TabIndex)
 	// 탭 인덱스에 맞는 배경 레벨 로드 (0=Play, 2=Character, 기타=유지)
 	if (TabIndex == 0) // LobbyTab::Play
 	{
+		PendingBackgroundTabIndex = 0;
 		LoadBackgroundLevel(PlayBackgroundLevel);
 	}
 	else if (TabIndex == 2) // LobbyTab::Character
 	{
+		PendingBackgroundTabIndex = 2;
 		LoadBackgroundLevel(CharacterBackgroundLevel);
 	}
 	// Loadout 탭(1): 배경 유지 (변경 없음)

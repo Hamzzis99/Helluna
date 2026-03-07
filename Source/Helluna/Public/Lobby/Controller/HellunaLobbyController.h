@@ -52,6 +52,27 @@ namespace LobbyValidation
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
+// 배경 카메라 설정 구조체
+// ════════════════════════════════════════════════════════════════════════════════
+USTRUCT(BlueprintType)
+struct FLobbyCameraTransform
+{
+	GENERATED_BODY()
+
+	/** 카메라 위치 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, meta = (DisplayName = "카메라 위치 (Location)"))
+	FVector Location = FVector::ZeroVector;
+
+	/** 카메라 회전 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, meta = (DisplayName = "카메라 회전 (Rotation)"))
+	FRotator Rotation = FRotator::ZeroRotator;
+
+	/** 카메라 시야각 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, meta = (DisplayName = "카메라 FOV"))
+	float FOV = 90.0f;
+};
+
+// ════════════════════════════════════════════════════════════════════════════════
 // 전송 방향 열거형
 // ════════════════════════════════════════════════════════════════════════════════
 UENUM(BlueprintType)
@@ -477,8 +498,21 @@ protected:
 		meta = (DisplayName = "Character Tab Background Level (Character 탭 배경 레벨)"))
 	FName CharacterBackgroundLevel;
 
+	/** Play 탭 배경 카메라 설정 */
+	UPROPERTY(EditDefaultsOnly, Category = "로비|배경",
+		meta = (DisplayName = "Play Tab Camera Transform (Play 탭 카메라 설정)"))
+	FLobbyCameraTransform PlayCameraTransform;
+
+	/** Character 탭 배경 카메라 설정 */
+	UPROPERTY(EditDefaultsOnly, Category = "로비|배경",
+		meta = (DisplayName = "Character Tab Camera Transform (Character 탭 카메라 설정)"))
+	FLobbyCameraTransform CharacterCameraTransform = { FVector(-837.4, -488.3, 98.0), FRotator(0.0, -140.0, 0.0), 90.0f };
+
 	/** 현재 로딩된 배경 레벨 이름 */
 	FName CurrentLoadedLevel;
+
+	/** 로드 완료 콜백에서 사용할 대기 중인 탭 인덱스 */
+	int32 PendingBackgroundTabIndex = -1;
 
 	// ════════════════════════════════════════════════════════════════
 	// 캐릭터 선택 상태
