@@ -35,14 +35,20 @@ void UMDF_WeaponComponent::EquipWeaponByIndex(int32 SlotIndex)
     // 1. 기존 무기 제거 (UnEquip)
     UnEquipWeapon();
 
-    // 2. 새 무기 스폰
+    // 2. 새 무기 스폰 (서버에서만 실행)
+    AActor* Owner = GetOwner();
+    if (!Owner || !Owner->HasAuthority()) return;
+
     if (WeaponSlots[SlotIndex])
     {
-        FActorSpawnParameters SpawnParams;
-        SpawnParams.Owner = GetOwner(); // 무기의 주인은 캐릭터
-        SpawnParams.Instigator = Cast<APawn>(GetOwner());
+        UWorld* World = GetWorld();
+        if (!World) return;
 
-        CurrentWeaponActor = GetWorld()->SpawnActor<AMDF_BaseWeapon>(WeaponSlots[SlotIndex], GetOwner()->GetActorTransform(), SpawnParams);
+        FActorSpawnParameters SpawnParams;
+        SpawnParams.Owner = Owner; // 무기의 주인은 캐릭터
+        SpawnParams.Instigator = Cast<APawn>(Owner);
+
+        CurrentWeaponActor = World->SpawnActor<AMDF_BaseWeapon>(WeaponSlots[SlotIndex], Owner->GetActorTransform(), SpawnParams);
         
         if (CurrentWeaponActor)
         {

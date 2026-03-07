@@ -52,7 +52,7 @@ void UInv_ResourceComponent::BeginPlay()
 #endif
 		}
 
-		Owner->OnTakeAnyDamage.AddDynamic(this, &UInv_ResourceComponent::OnOwnerTakeDamage);
+		Owner->OnTakeAnyDamage.AddUniqueDynamic(this, &UInv_ResourceComponent::OnOwnerTakeDamage);
 
 #if INV_DEBUG_RESOURCE
 		UE_LOG(LogTemp, Warning, TEXT("========================================"));

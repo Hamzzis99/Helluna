@@ -91,7 +91,7 @@ void UInv_SpatialInventory::CollectEquippedGridSlots()
 			// 델리게이트 중복 바인딩 방지
 			if (!EquippedGridSlot->EquippedGridSlotClicked.IsAlreadyBound(this, &ThisClass::EquippedGridSlotClicked))
 			{
-				EquippedGridSlot->EquippedGridSlotClicked.AddDynamic(this, &ThisClass::EquippedGridSlotClicked);
+				EquippedGridSlot->EquippedGridSlotClicked.AddUniqueDynamic(this, &ThisClass::EquippedGridSlotClicked);
 			}
 
 #if INV_DEBUG_WIDGET
@@ -207,7 +207,7 @@ void UInv_SpatialInventory::EnableLobbyTransferMode()
 		Grid->SetLobbyTransferMode(true);
 		if (!Grid->OnLobbyTransferRequested.IsAlreadyBound(this, &ThisClass::OnGridTransferRequested))
 		{
-			Grid->OnLobbyTransferRequested.AddDynamic(this, &ThisClass::OnGridTransferRequested);
+			Grid->OnLobbyTransferRequested.AddUniqueDynamic(this, &ThisClass::OnGridTransferRequested);
 		}
 		UE_LOG(LogTemp, Log, TEXT("[SpatialInventory]   %s → 전송 모드 ON"), Name);
 	};
@@ -285,7 +285,7 @@ void UInv_SpatialInventory::EquippedGridSlotClicked(UInv_EquippedGridSlot* Equip
 		EquipmentTypeTag,
 		TileSize
 	);
-	EquippedSlottedItem->OnEquippedSlottedItemClicked.AddDynamic(this, &ThisClass::EquippedSlottedItemClicked);
+	EquippedSlottedItem->OnEquippedSlottedItemClicked.AddUniqueDynamic(this, &ThisClass::EquippedSlottedItemClicked);
 
 	// Inform the server that we've equipped an item (potentially unequipping an item as well)
 	// 아이템을 장착했음을 서버에 알리기(잠재적으로 아이템을 해제하기도 함)
@@ -482,7 +482,7 @@ void UInv_SpatialInventory::MakeEquippedSlottedItem(UInv_EquippedSlottedItem* Eq
 		ItemToEquip,
 		EquippedSlottedItem->GetEquipmentTypeTag(),
 		GetTileSize());
-	if (IsValid(SlottedItem))SlottedItem->OnEquippedSlottedItemClicked.AddDynamic(this, &ThisClass::EquippedSlottedItemClicked);
+	if (IsValid(SlottedItem))SlottedItem->OnEquippedSlottedItemClicked.AddUniqueDynamic(this, &ThisClass::EquippedSlottedItemClicked);
 	
 	//새로 아이템을 장착할 바인딩 되길 바람
 	EquippedGridSlot->SetEquippedSlottedItem(SlottedItem);
@@ -526,7 +526,7 @@ UInv_EquippedSlottedItem* UInv_SpatialInventory::RestoreEquippedItem(UInv_Equipp
 	if (IsValid(EquippedSlottedItem))
 	{
 		// ⚠️ 핵심: 클릭 델리게이트 바인딩 (드래그&드롭 장착 해제용)
-		EquippedSlottedItem->OnEquippedSlottedItemClicked.AddDynamic(this, &ThisClass::EquippedSlottedItemClicked);
+		EquippedSlottedItem->OnEquippedSlottedItemClicked.AddUniqueDynamic(this, &ThisClass::EquippedSlottedItemClicked);
 
 #if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("[RestoreEquippedItem] ✅ 델리게이트 바인딩 완료: %s → 슬롯 %d"),
@@ -897,7 +897,7 @@ void UInv_SpatialInventory::OnGridQuickEquipRequested(UInv_InventoryItem* Item, 
 	);
 	if (IsValid(NewEquippedSlottedItem))
 	{
-		NewEquippedSlottedItem->OnEquippedSlottedItemClicked.AddDynamic(this, &ThisClass::EquippedSlottedItemClicked);
+		NewEquippedSlottedItem->OnEquippedSlottedItemClicked.AddUniqueDynamic(this, &ThisClass::EquippedSlottedItemClicked);
 	}
 
 	// 5) HoverItem 정리

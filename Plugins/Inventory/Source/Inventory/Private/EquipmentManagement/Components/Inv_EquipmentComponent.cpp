@@ -92,7 +92,7 @@ void UInv_EquipmentComponent::InitPlayerController()
 		}
 		else
 		{
-			OwningPlayerController->OnPossessedPawnChanged.AddDynamic(this, &ThisClass::OnPossessedPawnChange);  //컨트롤러를 멀티캐스트 델리게이트 식으로. 위임하는 부분. (이미 완료 됐을 경우 이걸 호출 안 하니 깔끔해진다.)
+			OwningPlayerController->OnPossessedPawnChanged.AddUniqueDynamic(this, &ThisClass::OnPossessedPawnChange);  //컨트롤러를 멀티캐스트 델리게이트 식으로. 위임하는 부분. (이미 완료 됐을 경우 이걸 호출 안 하니 깔끔해진다.)
 		}
 	}
 }
@@ -116,12 +116,12 @@ void UInv_EquipmentComponent::InitInventoryComponent()
 	// 델리게이트 바인딩 
 	if (!InventoryComponent->OnItemEquipped.IsAlreadyBound(this, &ThisClass::OnItemEquipped))
 	{
-		InventoryComponent->OnItemEquipped.AddDynamic(this, &ThisClass::OnItemEquipped);
+		InventoryComponent->OnItemEquipped.AddUniqueDynamic(this, &ThisClass::OnItemEquipped);
 	}
 	// 델리게이트 바인딩
 	if (!InventoryComponent->OnItemUnequipped.IsAlreadyBound(this, &ThisClass::OnItemUnequipped))
 	{
-		InventoryComponent->OnItemUnequipped.AddDynamic(this, &ThisClass::OnItemUnequipped);
+		InventoryComponent->OnItemUnequipped.AddUniqueDynamic(this, &ThisClass::OnItemUnequipped);
 	}
 }
 

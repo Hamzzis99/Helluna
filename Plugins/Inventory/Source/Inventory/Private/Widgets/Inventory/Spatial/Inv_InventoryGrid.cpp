@@ -60,11 +60,11 @@ void UInv_InventoryGrid::NativeOnInitialized()
 		UE_LOG(LogTemp, Error, TEXT("[InventoryGrid] NativeOnInitialized: InventoryComponent를 찾을 수 없음!"));
 		return;
 	}
-	InventoryComponent->OnItemAdded.AddDynamic(this, &ThisClass::AddItem); // 델리게이트 바인딩
-	InventoryComponent->OnStackChange.AddDynamic(this, &ThisClass::AddStacks); // 스택 변경 델리게이트 바인딩
-	InventoryComponent->OnInventoryMenuToggled.AddDynamic(this, &ThisClass::OnInventoryMenuToggled);
-	InventoryComponent->OnItemRemoved.AddDynamic(this, &ThisClass::RemoveItem); // 아이템 제거 델리게이트 바인딩
-	InventoryComponent->OnMaterialStacksChanged.AddDynamic(this, &ThisClass::UpdateMaterialStacksByTag); // Building 재료 업데이트 바인딩
+	InventoryComponent->OnItemAdded.AddUniqueDynamic(this, &ThisClass::AddItem); // 델리게이트 바인딩
+	InventoryComponent->OnStackChange.AddUniqueDynamic(this, &ThisClass::AddStacks); // 스택 변경 델리게이트 바인딩
+	InventoryComponent->OnInventoryMenuToggled.AddUniqueDynamic(this, &ThisClass::OnInventoryMenuToggled);
+	InventoryComponent->OnItemRemoved.AddUniqueDynamic(this, &ThisClass::RemoveItem); // 아이템 제거 델리게이트 바인딩
+	InventoryComponent->OnMaterialStacksChanged.AddUniqueDynamic(this, &ThisClass::UpdateMaterialStacksByTag); // Building 재료 업데이트 바인딩
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -129,11 +129,11 @@ void UInv_InventoryGrid::SetInventoryComponent(UInv_InventoryComponent* InComp)
 
 	// 새 컴포넌트 바인딩
 	InventoryComponent = InComp;
-	InventoryComponent->OnItemAdded.AddDynamic(this, &ThisClass::AddItem);
-	InventoryComponent->OnStackChange.AddDynamic(this, &ThisClass::AddStacks);
-	InventoryComponent->OnInventoryMenuToggled.AddDynamic(this, &ThisClass::OnInventoryMenuToggled);
-	InventoryComponent->OnItemRemoved.AddDynamic(this, &ThisClass::RemoveItem);
-	InventoryComponent->OnMaterialStacksChanged.AddDynamic(this, &ThisClass::UpdateMaterialStacksByTag);
+	InventoryComponent->OnItemAdded.AddUniqueDynamic(this, &ThisClass::AddItem);
+	InventoryComponent->OnStackChange.AddUniqueDynamic(this, &ThisClass::AddStacks);
+	InventoryComponent->OnInventoryMenuToggled.AddUniqueDynamic(this, &ThisClass::OnInventoryMenuToggled);
+	InventoryComponent->OnItemRemoved.AddUniqueDynamic(this, &ThisClass::RemoveItem);
+	InventoryComponent->OnMaterialStacksChanged.AddUniqueDynamic(this, &ThisClass::UpdateMaterialStacksByTag);
 
 	UE_LOG(LogTemp, Log, TEXT("[InventoryGrid] SetInventoryComponent 완료 → InvComp=%s, Category=%d"),
 		*InComp->GetName(), (int32)ItemCategory);
@@ -2784,7 +2784,7 @@ UInv_SlottedItem* UInv_InventoryGrid::CreateSlottedItem(UInv_InventoryItem* Item
 	// ⭐ [최적화 #6] 풀에서 재사용된 위젯은 이미 바인딩되어 있을 수 있으므로 중복 방지
 	if (!SlottedItem->OnSlottedItemClicked.IsAlreadyBound(this, &ThisClass::OnSlottedItemClicked))
 	{
-		SlottedItem->OnSlottedItemClicked.AddDynamic(this, &ThisClass::OnSlottedItemClicked);
+		SlottedItem->OnSlottedItemClicked.AddUniqueDynamic(this, &ThisClass::OnSlottedItemClicked);
 	}
 
 	return SlottedItem;
@@ -2899,9 +2899,9 @@ void UInv_InventoryGrid::ConstructGrid()
 			GridCPS->SetPosition(TilePosition * TileSize); // 위치 조정
 			
 			GridSlots.Add(GridSlot);
-			GridSlot->GridSlotClicked.AddDynamic(this, &ThisClass::OnGridSlotClicked); // 그리드 슬롯 클릭 델리게이트 바인딩
-			GridSlot->GridSlotHovered.AddDynamic(this, &ThisClass::OnGridSlotHovered); // 그리드 슬롯 호버 델리게이트 바인딩
-			GridSlot->GridSlotUnhovered.AddDynamic(this, &ThisClass::OnGridSlotUnhovered); // 그리드 슬롯 언호버 델리게이트 바인딩
+			GridSlot->GridSlotClicked.AddUniqueDynamic(this, &ThisClass::OnGridSlotClicked); // 그리드 슬롯 클릭 델리게이트 바인딩
+			GridSlot->GridSlotHovered.AddUniqueDynamic(this, &ThisClass::OnGridSlotHovered); // 그리드 슬롯 호버 델리게이트 바인딩
+			GridSlot->GridSlotUnhovered.AddUniqueDynamic(this, &ThisClass::OnGridSlotUnhovered); // 그리드 슬롯 언호버 델리게이트 바인딩
 		}
 	}
 }
@@ -3645,7 +3645,7 @@ void UInv_InventoryGrid::OpenAttachmentPanel(UInv_InventoryItem* WeaponItem, int
 		UE_LOG(LogTemp, Log, TEXT("[Attachment UI] 뷰포트 중앙 배치 (Fix25: 인게임+로비 공통)"));
 
 		// 패널 닫힘 콜백 바인딩
-		AttachmentPanel->OnPanelClosed.AddDynamic(this, &ThisClass::OnAttachmentPanelClosed);
+		AttachmentPanel->OnPanelClosed.AddUniqueDynamic(this, &ThisClass::OnAttachmentPanelClosed);
 	}
 
 	// 참조 설정 (패널이 직접 Server RPC 호출)

@@ -35,7 +35,7 @@ void UMDF_MiniGameComponent::OnRep_WeakSpots()
 {
     for (int32 i = 0; i < WeakSpots.Num(); ++i)
     {
-        if (WeakSpots[i].bIsBroken && !LocallyProcessedIndices.Contains(i))
+        if (WeakSpots[i].bIsBroken && !LocallyProcessedGuids.Contains(WeakSpots[i].ID))
         {
             ApplyVisualMeshCut(i);
         }
@@ -197,7 +197,7 @@ void UMDF_MiniGameComponent::EndMarking(FVector WorldLocation)
     // -------------------------------------------------------------------------
     if (bIsValidCut)
     {
-        if (GetOwner()->HasAuthority())
+        if (GetOwner() && GetOwner()->HasAuthority())
         {
             // 서버: 직접 생성
             Internal_CreateWeakSpot(CurrentPreviewBox);
@@ -306,8 +306,8 @@ void UMDF_MiniGameComponent::ExecuteDestruction(int32 WeakSpotIndex)
 void UMDF_MiniGameComponent::ApplyVisualMeshCut(int32 Index)
 {
     if (!WeakSpots.IsValidIndex(Index)) return;
-    if (LocallyProcessedIndices.Contains(Index)) return;
-    LocallyProcessedIndices.Add(Index);
+    if (LocallyProcessedGuids.Contains(WeakSpots[Index].ID)) return;
+    LocallyProcessedGuids.Add(WeakSpots[Index].ID);
 
     UDynamicMeshComponent* DynComp = GetOwner() ? GetOwner()->FindComponentByClass<UDynamicMeshComponent>() : nullptr;
     if (!DynComp || !DynComp->GetDynamicMesh()) return;

@@ -183,15 +183,17 @@ void UInv_CraftingButton::OnButtonClicked()
 
 	// ⭐ 쿨다운 후 버튼 상태 재검사 타이머 설정
 	FTimerHandle CooldownTimerHandle;
+	TWeakObjectPtr<UInv_CraftingButton> WeakThis = this;
 	World->GetTimerManager().SetTimer(
 		CooldownTimerHandle,
-		[this]()
+		[WeakThis]()
 		{
+			if (!WeakThis.IsValid()) return;
 			// ⭐ 쿨다운 종료 후 재료 UI 강제 업데이트 (10/10 버그 방지!)
-			UpdateMaterialUI();
-			
+			WeakThis->UpdateMaterialUI();
+
 			// 쿨다운 종료 후 재료 다시 체크해서 버튼 상태 업데이트
-			UpdateButtonState();
+			WeakThis->UpdateButtonState();
 #if INV_DEBUG_CRAFT
 			UE_LOG(LogTemp, Log, TEXT("제작 쿨다운 완료! 버튼 상태 재계산"));
 #endif
@@ -448,23 +450,23 @@ void UInv_CraftingButton::BindInventoryDelegates()
 
 	if (!InvComp->OnItemAdded.IsAlreadyBound(this, &ThisClass::OnInventoryItemAdded))
 	{
-		InvComp->OnItemAdded.AddDynamic(this, &ThisClass::OnInventoryItemAdded);
+		InvComp->OnItemAdded.AddUniqueDynamic(this, &ThisClass::OnInventoryItemAdded);
 	}
 
 	if (!InvComp->OnItemRemoved.IsAlreadyBound(this, &ThisClass::OnInventoryItemRemoved))
 	{
-		InvComp->OnItemRemoved.AddDynamic(this, &ThisClass::OnInventoryItemRemoved);
+		InvComp->OnItemRemoved.AddUniqueDynamic(this, &ThisClass::OnInventoryItemRemoved);
 	}
 
 	if (!InvComp->OnStackChange.IsAlreadyBound(this, &ThisClass::OnInventoryStackChanged))
 	{
-		InvComp->OnStackChange.AddDynamic(this, &ThisClass::OnInventoryStackChanged);
+		InvComp->OnStackChange.AddUniqueDynamic(this, &ThisClass::OnInventoryStackChanged);
 	}
 
 	// ⭐ OnMaterialStacksChanged 델리게이트 바인딩 (Tag 기반 - 안전!)
 	if (!InvComp->OnMaterialStacksChanged.IsAlreadyBound(this, &ThisClass::OnMaterialStacksChanged))
 	{
-		InvComp->OnMaterialStacksChanged.AddDynamic(this, &ThisClass::OnMaterialStacksChanged);
+		InvComp->OnMaterialStacksChanged.AddUniqueDynamic(this, &ThisClass::OnMaterialStacksChanged);
 	}
 
 #if INV_DEBUG_CRAFT

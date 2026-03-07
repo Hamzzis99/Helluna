@@ -699,7 +699,7 @@ void AInv_SaveGameMode::RequestAllPlayersInventoryState()
 		// 델리게이트 바인딩 (중복 방지)
 		if (!InvPC->OnInventoryStateReceived.IsBound())
 		{
-			InvPC->OnInventoryStateReceived.AddDynamic(this, &AInv_SaveGameMode::OnPlayerInventoryStateReceived);
+			InvPC->OnInventoryStateReceived.AddUniqueDynamic(this, &AInv_SaveGameMode::OnPlayerInventoryStateReceived);
 		}
 
 		RequestPlayerInventoryState(PC);
@@ -987,7 +987,7 @@ void AInv_SaveGameMode::BindInventoryEndPlay(AInv_PlayerController* InvPC)
 {
 	if (IsValid(InvPC))
 	{
-		InvPC->OnControllerEndPlay.AddDynamic(this, &AInv_SaveGameMode::OnInventoryControllerEndPlay);
+		InvPC->OnControllerEndPlay.AddUniqueDynamic(this, &AInv_SaveGameMode::OnInventoryControllerEndPlay);
 	}
 }
 
