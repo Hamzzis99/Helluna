@@ -1438,6 +1438,32 @@ void AHellunaLobbyController::OnBackgroundLevelLoaded()
 
 		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 배경 카메라 설정 적용 | Tab=%d Pos=%s Rot=%s FOV=%.1f"),
 			PendingBackgroundTabIndex, *CamTransform->Location.ToString(), *CamTransform->Rotation.ToString(), CamTransform->FOV);
+
+		// 프리뷰 씬도 카메라 앞으로 이동 (캐릭터가 화면에 보이도록)
+		if (IsValid(SpawnedPreviewSceneV2))
+		{
+			const FVector CamOffset = SpawnedPreviewSceneV2->GetCameraOffset();
+			// CameraOffset = 씬 루트 → 카메라 로컬 오프셋 (X=전방거리, Z=높이)
+			// 카메라 Forward 방향으로 X거리만큼 앞에 씬을 배치하고, Z 높이 보정
+			const FVector CamForward = CamTransform->Rotation.Vector();
+			const FVector CamRight = FRotationMatrix(CamTransform->Rotation).GetScaledAxis(EAxis::Y);
+			const FVector CamUp = FRotationMatrix(CamTransform->Rotation).GetScaledAxis(EAxis::Z);
+
+			// 씬 위치 = 카메라 위치 + Forward * 전방거리 + Right * 좌우 + Up * 높이 (부호 반전: 카메라가 씬보다 위)
+			const FVector NewScenePos = CamTransform->Location
+				+ CamForward * CamOffset.X
+				+ CamRight * CamOffset.Y
+				- CamUp * CamOffset.Z;  // 카메라가 씬보다 Z만큼 높으므로 씬은 아래로
+
+			// 씬 회전: 카메라를 바라보도록 (카메라 Forward의 반대 방향)
+			const FRotator SceneRot = (-CamForward).Rotation();
+
+			SpawnedPreviewSceneV2->SetActorLocation(NewScenePos);
+			SpawnedPreviewSceneV2->SetActorRotation(SceneRot);
+
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 프리뷰 씬 이동 | NewPos=%s Rot=%s (CamOffset=%s)"),
+				*NewScenePos.ToString(), *SceneRot.ToString(), *CamOffset.ToString());
+		}
 	}
 }
 
