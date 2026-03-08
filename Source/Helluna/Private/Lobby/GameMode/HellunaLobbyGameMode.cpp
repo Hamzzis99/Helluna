@@ -2698,30 +2698,32 @@ void AHellunaLobbyGameMode::ExecuteMatchedDeploy(const TArray<FMatchmakingQueueE
 			return;
 		}
 
-		// [Phase 19] 아무 빈 서버 찾기 → 커맨드 파일로 맵 전환
+		// [Phase 19] 아무 빈 서버 찾기 → 종료 후 같은 포트에 새 맵으로 재스폰
+		// (ServerTravel은 UE 5.7 World Partition 크래시 유발 → 프로세스 재시작 방식)
 		FGameChannelInfo AnyEmptyChannel;
 		if (FindEmptyChannel(AnyEmptyChannel))
 		{
-			// 빈 서버 발견 → 커맨드 파일로 맵 전환 지시
-			MarkChannelAsPendingDeploy(AnyEmptyChannel.Port);
-			WriteMapSwitchCommand(AnyEmptyChannel.Port, MapPath);
-
-			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Phase19] 빈 서버에 맵 전환 커맨드 전송 | Port=%d | MapPath=%s"),
-				AnyEmptyChannel.Port, *MapPath);
-
-			// 큐에서 제거 (대기 중 재매칭 방지)
-			for (const FMatchmakingQueueEntry& Entry : Matched)
+			const int32 RespawnedPort = GameServerManager->RespawnGameServer(AnyEmptyChannel.Port, MapPath);
+			if (RespawnedPort > 0)
 			{
-				RemoveQueueEntry(Entry.EntryId);
-			}
+				MarkChannelAsPendingDeploy(RespawnedPort);
+				UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Phase19] 빈 서버 재스폰 | Port=%d | MapPath=%s"),
+					RespawnedPort, *MapPath);
 
-			// 비동기 대기 시작 (맵 키로 준비 확인)
-			TArray<FMatchmakingQueueEntry> MatchedCopy = Matched;
-			WaitAndDeploy(AnyEmptyChannel.Port, MoveTemp(MatchedCopy), MapKey);
-			return;
+				for (const FMatchmakingQueueEntry& Entry : Matched)
+				{
+					RemoveQueueEntry(Entry.EntryId);
+				}
+
+				TArray<FMatchmakingQueueEntry> MatchedCopy = Matched;
+				WaitAndDeploy(RespawnedPort, MoveTemp(MatchedCopy));
+				return;
+			}
+			// RespawnGameServer 실패 시 아래로 fallthrough → 새 포트에 스폰
+			UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] [Phase19] RespawnGameServer 실패 → 새 프로세스 스폰 시도"));
 		}
 
-		// [Phase 16] 빈 서버도 없음 → 새 프로세스 스폰
+		// [Phase 16] 빈 서버 없거나 재스폰 실패 → 새 프로세스 스폰
 		const int32 SpawnedPort = GameServerManager->SpawnGameServer(MapPath);
 		if (SpawnedPort < 0)
 		{

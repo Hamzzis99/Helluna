@@ -36,6 +36,9 @@ public:
 	/** 해당 포트의 서버가 ready(registry에 empty 상태 + 60초 이내) 인지 확인 */
 	bool IsServerReady(int32 Port) const;
 
+	/** [Phase 19] 빈 서버 종료 후 같은 포트에 새 맵으로 재스폰. 실패 시 -1 반환 */
+	int32 RespawnGameServer(int32 Port, const FString& NewMapPath);
+
 	/** [Phase 19] 해당 포트의 서버가 ready + 지정 맵인지 확인 */
 	bool IsServerReadyForMap(int32 Port, const FString& MapKey) const;
 
@@ -69,6 +72,9 @@ private:
 
 	/** 서버 실행 파일 경로 (에디터 vs 패키징 자동 감지) */
 	FString GetServerExecutablePath() const;
+
+	/** 지정 포트에 서버 프로세스 스폰 (내부 전용) */
+	int32 SpawnGameServerOnPort(int32 Port, const FString& MapPath);
 
 	/** 정리 타이머 */
 	FTimerHandle CleanupTimer;

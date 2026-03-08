@@ -1384,7 +1384,7 @@ void AHellunaDefenseGameMode::PollForCommand()
     // 커맨드 파일 삭제 (먼저 삭제 — 중복 실행 방지)
     IFileManager::Get().Delete(*CmdPath);
 
-    // 타이머 정리 (ServerTravel 전)
+    // 타이머 정리
     StopCommandPollTimer();
     if (UWorld* W = GetWorld())
     {
@@ -1392,12 +1392,9 @@ void AHellunaDefenseGameMode::PollForCommand()
         W->GetTimerManager().ClearTimer(RegistryHeartbeatTimer);
     }
 
-    UE_LOG(LogHelluna, Log, TEXT("[Phase19] 커맨드 파일 감지 → ServerTravel | MapPath=%s"), *MapPath);
-
-    if (UWorld* W = GetWorld())
-    {
-        W->ServerTravel(MapPath);
-    }
+    // [Phase 19 수정] ServerTravel은 UE 5.7 World Partition 크래시 유발 → RequestExit로 프로세스 종료
+    UE_LOG(LogHelluna, Log, TEXT("[Phase19] 커맨드 파일 감지 → RequestExit (ServerTravel 대신) | MapPath=%s"), *MapPath);
+    FGenericPlatformMisc::RequestExit(false);
 }
 
 void AHellunaDefenseGameMode::StartCommandPollTimer()

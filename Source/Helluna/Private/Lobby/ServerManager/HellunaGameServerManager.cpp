@@ -102,6 +102,91 @@ int32 UHellunaGameServerManager::SpawnGameServer(const FString& MapPath)
 }
 
 // ============================================================================
+// [Phase 19] SpawnGameServerOnPort — 지정 포트에 스폰
+// ============================================================================
+
+int32 UHellunaGameServerManager::SpawnGameServerOnPort(int32 Port, const FString& MapPath)
+{
+	const FString ServerExe = GetServerExecutablePath();
+	if (ServerExe.IsEmpty())
+	{
+		UE_LOG(LogHellunaLobby, Error, TEXT("[ServerManager] SpawnGameServerOnPort: 서버 실행 파일 경로를 찾을 수 없음"));
+		return -1;
+	}
+
+	const FString LobbyURL = FString::Printf(TEXT("127.0.0.1:7777"));
+
+	FString Args;
+#if WITH_EDITOR
+	const FString ProjectPath = FPaths::ConvertRelativePathToFull(FPaths::GetProjectFilePath());
+	Args = FString::Printf(TEXT("\"%s\" %s -server -port=%d -log -LobbyURL=%s"),
+		*ProjectPath, *MapPath, Port, *LobbyURL);
+#else
+	Args = FString::Printf(TEXT("%s -server -port=%d -log -LobbyURL=%s"),
+		*MapPath, Port, *LobbyURL);
+#endif
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[ServerManager] SpawnGameServerOnPort | Port=%d | Args=%s"), Port, *Args);
+
+	FProcHandle Handle = FPlatformProcess::CreateProc(
+		*ServerExe, *Args, true, false, false, nullptr, 0, nullptr, nullptr);
+
+	if (!Handle.IsValid())
+	{
+		UE_LOG(LogHellunaLobby, Error, TEXT("[ServerManager] SpawnGameServerOnPort: CreateProc 실패 | Port=%d"), Port);
+		return -1;
+	}
+
+	FActiveServerInfo Info;
+	Info.ProcessHandle = Handle;
+	Info.Port = Port;
+	Info.MapPath = MapPath;
+	Info.SpawnTime = FPlatformTime::Seconds();
+	ActiveServers.Add(MoveTemp(Info));
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[ServerManager] SpawnGameServerOnPort 성공 | Port=%d | MapPath=%s | ActiveCount=%d"),
+		Port, *MapPath, ActiveServers.Num());
+
+	return Port;
+}
+
+// ============================================================================
+// [Phase 19] RespawnGameServer — 종료 후 같은 포트에 새 맵으로 재스폰
+// ============================================================================
+
+int32 UHellunaGameServerManager::RespawnGameServer(int32 Port, const FString& NewMapPath)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[ServerManager] RespawnGameServer 시작 | Port=%d | NewMapPath=%s"), Port, *NewMapPath);
+
+	// 1. 기존 프로세스 종료 + ActiveServers에서 제거
+	for (int32 i = ActiveServers.Num() - 1; i >= 0; --i)
+	{
+		if (ActiveServers[i].Port == Port)
+		{
+			if (FPlatformProcess::IsProcRunning(ActiveServers[i].ProcessHandle))
+			{
+				FPlatformProcess::TerminateProc(ActiveServers[i].ProcessHandle, true);
+				UE_LOG(LogHellunaLobby, Log, TEXT("[ServerManager] 기존 프로세스 종료 | Port=%d"), Port);
+			}
+			FPlatformProcess::CloseProc(ActiveServers[i].ProcessHandle);
+			ActiveServers.RemoveAt(i);
+			break;
+		}
+	}
+
+	// 2. 레지스트리 파일 삭제 (새 서버가 깨끗하게 시작하도록)
+	const FString RegistryFile = FPaths::Combine(RegistryDir, FString::Printf(TEXT("channel_%d.json"), Port));
+	if (IFileManager::Get().FileExists(*RegistryFile))
+	{
+		IFileManager::Get().Delete(*RegistryFile);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[ServerManager] 레지스트리 파일 삭제 | %s"), *RegistryFile);
+	}
+
+	// 3. 같은 포트에 새 맵으로 스폰
+	return SpawnGameServerOnPort(Port, NewMapPath);
+}
+
+// ============================================================================
 // IsServerReady
 // ============================================================================
 
