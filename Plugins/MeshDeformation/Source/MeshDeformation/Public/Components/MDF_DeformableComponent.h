@@ -214,6 +214,26 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|설정", meta = (DisplayName = "절단/관통 데미지 타입"))
     TSubclassOf<UDamageType> BreachDamageType;
     // -------------------------------------------------------------------------
+    // [Phase 18: Substrate 비주얼 데미지]
+    // -------------------------------------------------------------------------
+
+    /** 비주얼 데미지 활성화 (Vertex Color 페인팅) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|비주얼 데미지", meta = (DisplayName = "비주얼 데미지 활성화"))
+    bool bEnableVisualDamage = true;
+
+    /** Substrate 마스터 머티리얼 (Vertex Color 기반 데미지 레이어) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|비주얼 데미지", meta = (DisplayName = "데미지 마스터 머티리얼"))
+    TObjectPtr<UMaterialInterface> DamageMasterMaterial;
+
+    /** 데미지 색상 강도 스케일 (1.0 = 기본) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|비주얼 데미지", meta = (DisplayName = "데미지 색상 강도", ClampMin = "0.1", ClampMax = "5.0"))
+    float DamageColorIntensityScale = 1.0f;
+
+    /** 런타임 다이나믹 머티리얼 인스턴스 */
+    UPROPERTY(Transient)
+    TObjectPtr<UMaterialInstanceDynamic> DamageMaterialInstance;
+
+    // -------------------------------------------------------------------------
     // [Step 9: 월드 파티션 영속성 지원]
     // -------------------------------------------------------------------------
 

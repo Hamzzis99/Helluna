@@ -17,7 +17,8 @@
 #include "GeometryScript/MeshPrimitiveFunctions.h"
 #include "GeometryScript/MeshNormalsFunctions.h"
 #include "GeometryScript/MeshUVFunctions.h"
-#include "GeometryScript/GeometryScriptTypes.h" 
+#include "GeometryScript/GeometryScriptTypes.h"
+#include "GeometryScript/MeshVertexColorFunctions.h" 
 
 UMDF_MiniGameComponent::UMDF_MiniGameComponent()
 {
@@ -347,6 +348,19 @@ void UMDF_MiniGameComponent::ApplyVisualMeshCut(int32 Index)
     
     // 충돌 업데이트 (서버 + 클라 모두)
     DynComp->UpdateCollision(true);
+
+    // [Phase 18] Boolean 절단 후 새 정점의 Vertex Color 재초기화
+    // Boolean 연산으로 생성된 새 정점은 Color Overlay가 없을 수 있으므로
+    // 전체를 다시 초기화한 뒤 기존 변형 히스토리를 재적용
+    if (bEnableVisualDamage)
+    {
+        UGeometryScriptLibrary_MeshVertexColorFunctions::SetMeshConstantVertexColor(
+            TargetMesh,
+            FLinearColor(0.f, 0.f, 0.f, 0.f),
+            FGeometryScriptColorFlags(),
+            true
+        );
+    }
 
     // 렌더링 업데이트 (클라이언트 전용)
     if (!IsRunningDedicatedServer())

@@ -34,6 +34,7 @@ public class MeshDeformation : ModuleRules
 				"GeometryScriptingCore",
 				"Niagara",
 				"NetCore",
+				"RenderCore",
 			}
 		);
 			
