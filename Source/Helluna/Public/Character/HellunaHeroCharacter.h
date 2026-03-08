@@ -20,7 +20,11 @@ class UHelluna_FindResourceComponent;
 class UWeaponBridgeComponent;
 class AHeroWeapon_GunBase;
 class UHellunaHealthComponent;
+
 class UWeaponHUDWidget;
+
+class UInv_LootContainerComponent;
+
 
 /**
  * 
@@ -147,7 +151,8 @@ public:
 	void Multicast_PlayEquipMontageExceptOwner(UAnimMontage* Montage);
 	
 	// 서버에 애니 재생 요청
-	UFUNCTION(Server, Reliable)
+	// Unreliable: 코스메틱 애니메이션 동기화. 유실돼도 다음 애니메이션에서 보정
+	UFUNCTION(Server, Unreliable)
 	void Server_RequestPlayMontageExceptOwner(UAnimMontage* Montage);
 
 
@@ -231,6 +236,11 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Component",
 		meta = (DisplayName = "체력 컴포넌트"))
 	TObjectPtr<UHellunaHealthComponent> HeroHealthComponent = nullptr;
+
+	/** Phase 9: 사체 루팅용 컨테이너 (사망 시 아이템 이전) */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Component",
+		meta = (DisplayName = "루트 컨테이너 컴포넌트"))
+	TObjectPtr<UInv_LootContainerComponent> LootContainerComponent = nullptr;
 
 	UFUNCTION()
 	void OnHeroHealthChanged(UActorComponent* HealthComp, float OldHealth, float NewHealth, AActor* InstigatorActor);

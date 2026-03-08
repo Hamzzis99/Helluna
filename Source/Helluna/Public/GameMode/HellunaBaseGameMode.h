@@ -33,6 +33,21 @@ class AHellunaLoginController;
 class AInv_PlayerController;
 class UDataTable;
 
+// ════════════════════════════════════════════════════════════════════════════════
+// Phase 6: 로비 배포 정보 (ClientTravel URL에서 파싱)
+// ════════════════════════════════════════════════════════════════════════════════
+USTRUCT()
+struct FLobbyDeployInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	FString PlayerId;
+
+	UPROPERTY()
+	EHellunaHeroType HeroType = EHellunaHeroType::None;
+};
+
 UCLASS()
 class HELLUNA_API AHellunaBaseGameMode : public AInv_SaveGameMode
 {
@@ -43,15 +58,31 @@ class HELLUNA_API AHellunaBaseGameMode : public AInv_SaveGameMode
 public:
 	AHellunaBaseGameMode();
 
+	// ── 부모 Override (인벤토리 저장/로드) — public: 사체 루팅 등 외부에서 호출 필요 ──
+	virtual TSubclassOf<AActor> ResolveItemClass(const FGameplayTag& ItemType) override;
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
+	// ── Phase 6: InitNewPlayer — URL Options에서 로비 배포 정보 파싱 ──
+	virtual FString InitNewPlayer(APlayerController* NewPlayerController,
+		const FUniqueNetIdRepl& UniqueId, const FString& Options,
+		const FString& Portal = TEXT("")) override;
+
 	// ── 부모 Override (인벤토리 저장/로드) ──
-	virtual TSubclassOf<AActor> ResolveItemClass(const FGameplayTag& ItemType) override;
 	virtual FString GetPlayerSaveId(APlayerController* PC) const override;
 
+	/** 크래시 복구 체크 — PostLogin 시 호출하여 비정상 종료 시 Loadout → Stash 복구 */
+	void CheckAndRecoverFromCrash(const FString& PlayerId);
+
 public:
+	// ── Phase 3: SQLite 저장/로드 전환 ──
+	/** SQLite 저장 → 실패 시 .sav 폴백 */
+	virtual bool SaveCollectedItems(const FString& PlayerId, const TArray<FInv_SavedItemData>& Items) override;
+	/** SQLite 로드 → 실패 시 .sav 폴백 */
+	virtual void LoadAndSendInventoryToClient(APlayerController* PC) override;
+
 	virtual void PostLogin(APlayerController* NewPlayer) override;
 	virtual void Logout(AController* Exiting) override;
 	virtual void HandleSeamlessTravelPlayer(AController*& C) override;
@@ -106,6 +137,9 @@ protected:
 	void OnLoginTimeout(APlayerController* PlayerController);
 	void SwapToGameController(AHellunaLoginController* LoginController, const FString& PlayerId, EHellunaHeroType SelectedHeroType = EHellunaHeroType::None);
 	void SpawnHeroCharacter(APlayerController* PlayerController);
+
+	/** 인벤토리 데이터 사전 로드 (디스크 I/O를 캐릭터 스폰 전에 완료) */
+	void PreCacheInventoryForPlayer(const FString& PlayerId);
 
 	// ════════════════════════════════════════════════════════════════════════════════
 	// 🎭 캐릭터 선택 시스템
@@ -204,6 +238,10 @@ protected:
 	UPROPERTY()
 	TMap<APlayerController*, FTimerHandle> LoginTimeoutTimers;
 
+	/** Phase 6: 로비 배포 대기 맵 (InitNewPlayer에서 추가, PostLogin에서 소비) */
+	UPROPERTY()
+	TMap<TObjectPtr<APlayerController>, FLobbyDeployInfo> PendingLobbyDeployMap;
+
 	// ════════════════════════════════════════════════════════════════════════════════
 	// 캐릭터 선택
 	// ════════════════════════════════════════════════════════════════════════════════
@@ -219,4 +257,11 @@ protected:
 	/** 현재 사용 중인 캐릭터 맵 (타입 → PlayerId) */
 	UPROPERTY()
 	TMap<EHellunaHeroType, FString> UsedCharacterMap;
+
+	/** 사전 로드된 인벤토리 캐시 (PlayerId → SaveData) — SpawnHeroCharacter 전에 채워짐 */
+	TMap<FString, FInv_PlayerSaveData> PreCachedInventoryMap;
+
+	// [Fix26] 람다 기반 fire-and-forget 타이머 핸들 수집 배열
+	// ClearAllTimersForObject(this)는 람다 타이머를 해제하지 않으므로, EndPlay에서 개별 ClearTimer 필요
+	TArray<FTimerHandle> LambdaTimerHandles;
 };

@@ -36,6 +36,10 @@ public:
 	void SetImageBrush(const FSlateBrush& Brush) const; // 이미지 브러시 설정
 	void UpdateStackCount(int32 StackCount); // 아이템 스택 수량 업데이트
 
+	// R키 아이템 회전 상태
+	bool IsRotated() const { return bRotated; }
+	void SetRotated(bool bValue) { bRotated = bValue; }
+
 	FSlottedItemClicked OnSlottedItemClicked; // 마우스로 슬롯 아이템 클릭 델리게이트
 
 private:
@@ -50,6 +54,7 @@ private:
 	FIntPoint GridDimensions;
 	TWeakObjectPtr<UInv_InventoryItem> InventoryItem;
 	bool bIsStackable{ false };
+	bool bRotated{ false }; // R키 회전 상태
 };
 
 

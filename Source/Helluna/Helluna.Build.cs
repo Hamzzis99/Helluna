@@ -34,7 +34,18 @@ public class Helluna : ModuleRules
             "NetCore",            // 네트워크 코어 (리플리케이션 기반 - 향후 MassReplication 대비)
 
             //김기현이 따로 추가한 파일들
-            "MeshDeformation", "Inventory", "Niagara", "GeometryFramework"
+            "MeshDeformation", "Inventory", "Niagara", "GeometryFramework",
+
+            // [로비/창고 시스템] SQLite 백엔드 (Phase 1)
+            // 엔진 내장 SQLiteCore 모듈 — 별도 설치 불필요
+            // TODO: [SQL전환] REST API/PostgreSQL 전환 시 이 모듈 의존성을 교체
+            "SQLiteCore",
+
+            // [로비/창고 시스템] JSON 직렬화 (부착물 attachments_json 컬럼용)
+            "Json", "JsonUtilities",
+
+            // [Phase 12g] 클립보드 복사 (파티 코드)
+            "ApplicationCore"
         });
         PrivateDependencyModuleNames.AddRange(new string[] { });
 

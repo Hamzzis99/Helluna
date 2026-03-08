@@ -14,6 +14,7 @@
 // ════════════════════════════════════════════════════════════════
 
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
+#include "InventoryManagement/Components/Inv_LootContainerComponent.h"
 
 #include "Inventory.h"  // INV_DEBUG_INVENTORY 매크로 정의
 #include "Items/Components/Inv_ItemComponent.h"
@@ -146,6 +147,17 @@ void UInv_InventoryComponent::TryAddItem(UInv_ItemComponent* ItemComponent)
 #if INV_DEBUG_INVENTORY
 	UE_LOG(LogTemp, Warning, TEXT("=== [PICKUP] TryAddItem 완료 ==="));
 #endif
+}
+
+// ════════════════════════════════════════════════════════════════
+// WithValidation: 파라미터 범위/null 검사 (빠른 early reject, 치팅 방지)
+// ════════════════════════════════════════════════════════════════
+
+bool UInv_InventoryComponent::Server_AddNewItem_Validate(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder)
+{
+	// UObject 포인터는 리플리케이션 타이밍으로 일시적 invalid 가능 → Validate에서 체크하면 강제 킥됨
+	// null 체크는 _Implementation에서 수행
+	return StackCount >= 0 && Remainder >= 0;
 }
 
 void UInv_InventoryComponent::Server_AddNewItem_Implementation(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder) // 서버에서 새로운 아이템 추가 구현
@@ -366,7 +378,12 @@ void UInv_InventoryComponent::RestoreFromSaveData(
 					// 부착물 Fragment 역직렬화
 					if (AttSave.SerializedManifest.Num() > 0)
 					{
-						AttachedData.ItemManifestCopy.DeserializeAndApplyFragments(AttSave.SerializedManifest);
+						if (!AttachedData.ItemManifestCopy.DeserializeAndApplyFragments(AttSave.SerializedManifest))
+						{
+							UE_LOG(LogTemp, Warning,
+								TEXT("[RestoreFromSaveData] ⚠️ 부착물 Fragment 역직렬화 실패 → CDO 기본값 사용 | AttachType=%s"),
+								*AttSave.AttachmentItemType.ToString());
+						}
 					}
 
 					HostFrag->AttachItem(AttSave.SlotIndex, AttachedData);
@@ -377,7 +394,14 @@ void UInv_InventoryComponent::RestoreFromSaveData(
 		// ── 메인 아이템 Fragment 역직렬화 ──
 		if (ItemData.SerializedManifest.Num() > 0)
 		{
-			ManifestCopy.DeserializeAndApplyFragments(ItemData.SerializedManifest);
+			const bool bDeserializeOk = ManifestCopy.DeserializeAndApplyFragments(ItemData.SerializedManifest);
+			if (!bDeserializeOk)
+			{
+				// [Fix26] 역직렬화 실패 → CDO 기본 Fragment로 계속 진행 (아이템 유실 방지)
+				UE_LOG(LogTemp, Warning,
+					TEXT("[RestoreFromSaveData] ⚠️ Fragment 역직렬화 실패 → CDO 기본값 사용 | ItemType=%s | SerializedSize=%d"),
+					*ItemData.ItemType.ToString(), ItemData.SerializedManifest.Num());
+			}
 		}
 
 		// ── 디자인타임 전용 값 복원 (CDO 템플릿에서 추출) ──
@@ -406,9 +430,25 @@ void UInv_InventoryComponent::RestoreFromSaveData(
 		if (!NewItem) continue;
 
 		// ── 그리드 위치 복원 ──
+		// [Fix30-A] GridPosition이 음수(-1,-1 등)일 때 INDEX_NONE으로 방어
+		// 음수 좌표 → (-1)*8+(-1)=-9 같은 잘못된 인덱스 방지
 		const int32 Columns = GridColumns > 0 ? GridColumns : 8;
-		int32 SavedGridIndex = ItemData.GridPosition.Y * Columns + ItemData.GridPosition.X;
+		int32 SavedGridIndex;
+		if (ItemData.GridPosition.X < 0 || ItemData.GridPosition.Y < 0)
+		{
+			SavedGridIndex = INDEX_NONE;
+		}
+		else
+		{
+			SavedGridIndex = ItemData.GridPosition.Y * Columns + ItemData.GridPosition.X;
+		}
 		SetLastEntryGridPosition(SavedGridIndex, ItemData.GridCategory);
+
+		// ── R키 회전 상태 복원 ──
+		if (InventoryList.Entries.Num() > 0)
+		{
+			InventoryList.Entries.Last().bRotated = ItemData.bRotated;
+		}
 
 		// ── 부착물 FastArray Entry 생성 + OriginalItem 연결 ──
 		if (ItemData.Attachments.Num() > 0 && IsValid(NewItem))
@@ -428,7 +468,12 @@ void UInv_InventoryComponent::RestoreFromSaveData(
 					// Fragment 역직렬화 (저장된 스탯 복원)
 					if (AttSave.SerializedManifest.Num() > 0)
 					{
-						AttachManifest.DeserializeAndApplyFragments(AttSave.SerializedManifest);
+						if (!AttachManifest.DeserializeAndApplyFragments(AttSave.SerializedManifest))
+						{
+							UE_LOG(LogTemp, Warning,
+								TEXT("[RestoreFromSaveData] ⚠️ 부착물(Entry) Fragment 역직렬화 실패 → CDO 기본값 사용 | AttachType=%s"),
+								*AttSave.AttachmentItemType.ToString());
+						}
 					}
 
 					// FastArray에 Entry 추가 (그리드 숨김 상태)
@@ -461,6 +506,7 @@ void UInv_InventoryComponent::RestoreFromSaveData(
 
 		// Fix 7: 장착된 아이템의 서버 FastArray Entry GridIndex 클리어 — Phase 5 저장 시 좌표 중복 방지
 		// Fix 13: bIsEquipped 플래그 설정 — PostReplicatedAdd에서 그리드 배치 스킵
+		// [Fix14] WeaponSlotIndex도 Entry에 기록 — 저장/전송 시 슬롯 정보 보존
 		for (UInv_InventoryItem* EquippedItem : ProcessedEquipItems)
 		{
 			for (int32 i = 0; i < InventoryList.Entries.Num(); i++)
@@ -470,9 +516,22 @@ void UInv_InventoryComponent::RestoreFromSaveData(
 					InventoryList.Entries[i].GridIndex = INDEX_NONE;
 					InventoryList.Entries[i].GridCategory = 0;
 					InventoryList.Entries[i].bIsEquipped = true;
+
+					// [Fix14] SaveData에서 WeaponSlotIndex를 가져와서 Entry에도 기록
+					// ProcessedEquipItems에서 원본 SaveData의 WeaponSlotIndex를 찾기
+					for (const FInv_SavedItemData& ItemData : SaveData.Items)
+					{
+						if (ItemData.bEquipped && ItemData.ItemType == EquippedItem->GetItemManifest().GetItemType())
+						{
+							InventoryList.Entries[i].WeaponSlotIndex = ItemData.WeaponSlotIndex;
+							break;
+						}
+					}
+
 					// MarkItemDirty 호출 금지! 리플리케이션 트리거 시 PostReplicatedChange → AddItem으로 아이템이 Grid에 다시 나타남
 					// bIsEquipped는 이미 dirty 상태인 Entry에 포함되어 리플리케이션됨 (같은 프레임)
-					UE_LOG(LogTemp, Warning, TEXT("[Fix7-Restore] 장착 아이템 GridIndex 클리어 + bIsEquipped 설정: %s (Entry[%d])"),
+					UE_LOG(LogTemp, Warning, TEXT("[Fix14-Restore] 장착 아이템 bIsEquipped=true, WeaponSlotIndex=%d: %s (Entry[%d])"),
+						InventoryList.Entries[i].WeaponSlotIndex,
 						*EquippedItem->GetItemManifest().GetItemType().ToString(), i);
 					break;
 				}
@@ -602,6 +661,13 @@ void UInv_InventoryComponent::Server_AddStacksToItem_Implementation(UInv_ItemCom
 	}
 }
 
+bool UInv_InventoryComponent::Server_DropItem_Validate(UInv_InventoryItem* Item, int32 StackCount)
+{
+	// UObject 포인터는 리플리케이션 타이밍으로 일시적 invalid 가능 → Validate에서 체크하면 강제 킥됨
+	// null 체크는 _Implementation에서 수행
+	return StackCount > 0;
+}
+
 //아이템 드롭 상호작용을 누른 뒤 서버에서 어떻게 처리를 할지.
 void UInv_InventoryComponent::Server_DropItem_Implementation(UInv_InventoryItem* Item, int32 StackCount)
 {
@@ -720,6 +786,11 @@ void UInv_InventoryComponent::Server_ConsumeItem_Implementation(UInv_InventoryIt
 	{
 		ConsumableFragment->OnConsume(OwningController.Get());
 	}
+}
+
+bool UInv_InventoryComponent::Server_CraftItem_Validate(TSubclassOf<AActor> ItemActorClass)
+{
+	return ItemActorClass != nullptr;
 }
 
 // 크래프팅: 서버에서 아이템 생성 및 인벤토리 추가 (ItemManifest 직접 사용!)
@@ -853,6 +924,16 @@ bool UInv_InventoryComponent::HasRequiredMaterialsOnServer(const FGameplayTag& M
 	}
 
 	return true;
+}
+
+bool UInv_InventoryComponent::Server_CraftItemWithMaterials_Validate(
+	TSubclassOf<AActor> ItemActorClass,
+	const FGameplayTag& MaterialTag1, int32 Amount1,
+	const FGameplayTag& MaterialTag2, int32 Amount2,
+	const FGameplayTag& MaterialTag3, int32 Amount3,
+	int32 CraftedAmount)
+{
+	return ItemActorClass != nullptr && Amount1 >= 0 && Amount2 >= 0 && Amount3 >= 0 && CraftedAmount > 0;
 }
 
 // ⭐ 크래프팅 통합 RPC: [안전성 강화] 서버 측 재료 검증 추가
@@ -1716,6 +1797,7 @@ void UInv_InventoryComponent::Multicast_EquipSlotClicked_Implementation(UInv_Inv
 	OnItemUnequipped.Broadcast(ItemToUnequip, WeaponSlotIndex);
 
 	// Fix 7: 장착 시 서버 FastArray Entry의 GridIndex 클리어 — Phase 5 좌표 중복 방지
+	// [Fix14] 장착 상태 + 슬롯 인덱스 기록
 	if (GetOwner() && GetOwner()->HasAuthority() && IsValid(ItemToEquip))
 	{
 		for (int32 i = 0; i < InventoryList.Entries.Num(); i++)
@@ -1724,10 +1806,30 @@ void UInv_InventoryComponent::Multicast_EquipSlotClicked_Implementation(UInv_Inv
 			{
 				InventoryList.Entries[i].GridIndex = INDEX_NONE;
 				InventoryList.Entries[i].GridCategory = 0;
+				InventoryList.Entries[i].bIsEquipped = true;
+				InventoryList.Entries[i].WeaponSlotIndex = WeaponSlotIndex;
 				// MarkItemDirty 호출 금지! 리플리케이션 트리거 시 PostReplicatedChange → AddItem으로 아이템이 Grid에 다시 나타남
 #if INV_DEBUG_INVENTORY
-				UE_LOG(LogTemp, Warning, TEXT("[Fix7] 장착 아이템 GridIndex 클리어: %s (Entry[%d])"),
-					*ItemToEquip->GetItemManifest().GetItemType().ToString(), i);
+				UE_LOG(LogTemp, Warning, TEXT("[Fix14] 장착 아이템 bIsEquipped=true, WeaponSlotIndex=%d, GridIndex 클리어: %s (Entry[%d])"),
+					WeaponSlotIndex, *ItemToEquip->GetItemManifest().GetItemType().ToString(), i);
+#endif
+				break;
+			}
+		}
+	}
+
+	// [Fix14] 해제되는 아이템의 장착 플래그 클리어
+	if (GetOwner() && GetOwner()->HasAuthority() && IsValid(ItemToUnequip))
+	{
+		for (int32 i = 0; i < InventoryList.Entries.Num(); i++)
+		{
+			if (InventoryList.Entries[i].Item == ItemToUnequip)
+			{
+				InventoryList.Entries[i].bIsEquipped = false;
+				InventoryList.Entries[i].WeaponSlotIndex = -1;
+#if INV_DEBUG_INVENTORY
+				UE_LOG(LogTemp, Warning, TEXT("[Fix14] 해제 아이템 bIsEquipped=false: %s (Entry[%d])"),
+					*ItemToUnequip->GetItemManifest().GetItemType().ToString(), i);
 #endif
 				break;
 			}
@@ -1747,6 +1849,11 @@ void UInv_InventoryComponent::Multicast_EquipSlotClicked_Implementation(UInv_Inv
 //   5. 무기 장비 슬롯 장착 중이면 부착물 스탯 적용
 //   6. 리플리케이션 (MarkItemDirty + 리슨서버 분기)
 // ════════════════════════════════════════════════════════════════
+bool UInv_InventoryComponent::Server_AttachItemToWeapon_Validate(int32 WeaponEntryIndex, int32 AttachmentEntryIndex, int32 SlotIndex)
+{
+	return WeaponEntryIndex >= 0 && AttachmentEntryIndex >= 0 && SlotIndex >= 0;
+}
+
 void UInv_InventoryComponent::Server_AttachItemToWeapon_Implementation(int32 WeaponEntryIndex, int32 AttachmentEntryIndex, int32 SlotIndex)
 {
 #if INV_DEBUG_ATTACHMENT
@@ -2467,7 +2574,7 @@ void UInv_InventoryComponent::Server_SplitItemEntry_Implementation(UInv_Inventor
 }
 
 // ⭐ [Phase 4 방법2] 클라이언트 Grid 위치를 서버 Entry에 동기화
-void UInv_InventoryComponent::Server_UpdateItemGridPosition_Implementation(UInv_InventoryItem* Item, int32 GridIndex, uint8 GridCategory)
+void UInv_InventoryComponent::Server_UpdateItemGridPosition_Implementation(UInv_InventoryItem* Item, int32 GridIndex, uint8 GridCategory, bool bRotated)
 {
 	if (!IsValid(Item))
 	{
@@ -2484,6 +2591,7 @@ void UInv_InventoryComponent::Server_UpdateItemGridPosition_Implementation(UInv_
 		{
 			InventoryList.Entries[i].GridIndex = GridIndex;
 			InventoryList.Entries[i].GridCategory = GridCategory;
+			InventoryList.Entries[i].bRotated = bRotated;
 			// Fix 11: MarkItemDirty 제거 — Server_UpdateItemGridPosition은 항상 클라→서버 RPC이므로
 			// 클라이언트가 이미 올바른 GridIndex를 알고 있음. 서버→클라 역리플리케이션은 불필요하며,
 			// PostReplicatedChange → AddItem → UpdateGridSlots → RPC 순환 오염의 원인.
@@ -2957,6 +3065,14 @@ TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave(
 		int32 GridIndex = Entry.GridIndex;
 		uint8 GridCategory = Entry.GridCategory;
 
+		// ⭐ [Fix11] 비스택(장비) 아이템은 TotalStackCount가 0일 수 있음
+		// Stackable Fragment가 없는 아이템은 "존재 = 1개"이므로 최소 1로 보정
+		if (StackCount <= 0 && !Entry.Item->IsStackable())
+		{
+			StackCount = 1;
+			UE_LOG(LogTemp, Log, TEXT("[Fix11] Entry[%d] %s: 비스택 아이템 StackCount 0→1 보정"), i, *ItemType.ToString());
+		}
+
 #if INV_DEBUG_ITEM_POINTER
 		// ── [포인터 진단] Entry별 아이템 포인터 & 부착물 상태 추적 ──
 		{
@@ -3001,15 +3117,21 @@ TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave(
 			GridPosition = FIntPoint(-1, -1);  // 미배치
 		}
 
-		// [Fix10-Save진단] 저장 시 GridPosition 출처 확인
-		UE_LOG(LogTemp, Error, TEXT("[Fix10-Save진단] Entry[%d] %s: Entry.GridIndex=%d, GridColumns=%d, SavedItem.GridPosition=(%d,%d), GridCat=%d"),
+		// [Fix10-Save진단] 저장 시 GridPosition + StackCount 출처 확인
+		UE_LOG(LogTemp, Error, TEXT("[Fix10-Save진단] Entry[%d] %s: StackCount=%d, Entry.GridIndex=%d, GridColumns=%d, SavedItem.GridPosition=(%d,%d), GridCat=%d"),
 			i, *ItemType.ToString(),
+			StackCount,
 			GridIndex, LocalGridColumns,
 			GridPosition.X, GridPosition.Y,
 			GridCategory);
 
 		// FInv_SavedItemData 생성
 		FInv_SavedItemData SavedItem(ItemType, StackCount, GridPosition, GridCategory);
+
+		// [Fix14] Entry의 장착 상태를 SavedItem에 전파
+		SavedItem.bEquipped = Entry.bIsEquipped;
+		SavedItem.WeaponSlotIndex = Entry.WeaponSlotIndex;
+		SavedItem.bRotated = Entry.bRotated;
 
 		// ── [Phase 6 Attachment] 부착물 데이터 수집 ──
 		// 무기 아이템인 경우 AttachmentHostFragment의 AttachedItems 수집
@@ -3131,4 +3253,650 @@ TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave(
 #endif
 
 	return Result;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 📌 [Phase 4 Lobby] TransferItemTo — 크로스 컴포넌트 아이템 전송
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 📌 역할:
+//   이 InvComp(Source)에서 아이템을 꺼내 TargetComp에 넣는다.
+//   로비에서 Stash↔Loadout 간 아이템 이동에 사용.
+//
+// 📌 왜 이 함수가 플러그인(Inventory 모듈) 안에 있는가?
+//   FInv_InventoryFastArray는 USTRUCT이며 INVENTORY_API 매크로가 없음
+//   → InventoryList.Entries, Entry.Item 등 private 멤버에 외부 모듈(Helluna)에서 접근 불가
+//   → LNK2019 unresolved external 에러 발생
+//   → 해결: UInv_InventoryComponent는 INVENTORY_API UCLASS이므로 DLL export됨
+//     + InventoryList의 friend 접근 가능
+//     → 이 함수에서 FastArray 조작을 수행
+//
+// 📌 처리 순서:
+//   1) Authority 체크 (서버에서만 FastArray 수정 가능)
+//   2) InventoryList.Entries를 순회하여 유효한 아이템 목록 구축
+//      - IsValid(Entry.Item) && !Entry.bIsAttachedToWeapon
+//      - bIsAttachedToWeapon: 무기에 부착된 부착물은 전송 대상에서 제외
+//   3) ItemIndex번째 유효 아이템의 Manifest + StackCount 추출
+//   4) Manifest를 복사하여 TargetComp->AddItemFromManifest()로 대상에 추가
+//      - 새 UInv_InventoryItem이 생성되고 FastArray에 추가됨
+//      - 실패 시(공간 부족 등) nullptr 반환 → 전송 중단 (원본 유지)
+//   5) Source의 InventoryList.RemoveEntry()로 원본 제거
+//      - FastArray MarkItemDirty → 리플리케이션 트리거
+//
+// 📌 리플리케이션:
+//   AddItemFromManifest + RemoveEntry가 각각 FastArray를 Dirty 마킹
+//   → 다음 리플리케이션 프레임에 클라이언트에 자동 동기화
+//   → 클라이언트의 Grid가 OnItemAdded/OnItemRemoved 델리게이트로 UI 자동 업데이트
+//
+// TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 연결
+// ════════════════════════════════════════════════════════════════════════════════
+bool UInv_InventoryComponent::TransferItemTo(int32 ItemIndex, UInv_InventoryComponent* TargetComp, int32 TargetGridIndex)
+{
+	// ── Authority 체크 (서버 전용) ──
+	if (!TargetComp || !GetOwner() || !GetOwner()->HasAuthority())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[InvComp] TransferItemTo: 조건 미충족!"));
+		UE_LOG(LogTemp, Warning, TEXT("[InvComp]   TargetComp=%s | Owner=%s | HasAuthority=%s"),
+			TargetComp ? TEXT("O") : TEXT("X"),
+			GetOwner() ? *GetOwner()->GetName() : TEXT("nullptr"),
+			(GetOwner() && GetOwner()->HasAuthority()) ? TEXT("Y") : TEXT("N (클라에서 직접 호출 불가!)"));
+		return false;
+	}
+
+	// ── 1) 유효한 아이템 목록 구축 ──
+	// Entries에서 무효(IsValid 실패) + 부착물(bIsAttachedToWeapon) 제외
+	TArray<UInv_InventoryItem*> ValidItems;
+	for (const FInv_InventoryEntry& Entry : InventoryList.Entries)
+	{
+		if (IsValid(Entry.Item) && !Entry.bIsAttachedToWeapon)
+		{
+			ValidItems.Add(Entry.Item);
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[InvComp] TransferItemTo: 유효 아이템 %d개 (전체 Entry %d개) | 요청 Index=%d"),
+		ValidItems.Num(), InventoryList.Entries.Num(), ItemIndex);
+
+	// ── 2) 인덱스 검증 ──
+	if (!ValidItems.IsValidIndex(ItemIndex))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[InvComp] TransferItemTo: 잘못된 ItemIndex=%d (유효 범위: 0~%d)"),
+			ItemIndex, ValidItems.Num() - 1);
+		return false;
+	}
+
+	UInv_InventoryItem* Item = ValidItems[ItemIndex];
+	if (!IsValid(Item))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[InvComp] TransferItemTo: Item이 IsValid 실패!"));
+		return false;
+	}
+
+	// ── 3) 아이템 정보 추출 ──
+	const FInv_ItemManifest& SourceManifest = Item->GetItemManifest();
+	const int32 StackCount = Item->GetTotalStackCount();
+	const FGameplayTag ItemType = SourceManifest.GetItemType();
+
+	UE_LOG(LogTemp, Log, TEXT("[InvComp] TransferItemTo: %s x%d | Source=%s → Target=%s"),
+		*ItemType.ToString(), StackCount, *GetName(), *TargetComp->GetName());
+
+	// ── 3-1) 대상 인벤토리 용량 체크 ──
+	// 꽉 찬 그리드에 아이템 전송 방지
+	if (!TargetComp->HasRoomInInventoryList(SourceManifest))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[InvComp] TransferItemTo: 대상 인벤토리 공간 부족! %s 전송 불가"), *ItemType.ToString());
+		return false;
+	}
+
+	// ── 3-2) 전송 전 소스 Entry의 GridCategory 캡처 (Target Entry에 설정용) ──
+	uint8 SourceGridCategory = 0;
+	for (const FInv_InventoryEntry& Entry : InventoryList.Entries)
+	{
+		if (Entry.Item == Item)
+		{
+			SourceGridCategory = Entry.GridCategory;
+			break;
+		}
+	}
+
+	// ── 4) Manifest 복사 → Target에 추가 ──
+	// AddItemFromManifest: 새 UInv_InventoryItem 생성 → FastArray 추가 → MarkDirty
+	FInv_ItemManifest ManifestCopy = SourceManifest;
+	UInv_InventoryItem* NewItem = TargetComp->AddItemFromManifest(ManifestCopy, StackCount);
+	if (!NewItem)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[InvComp] TransferItemTo: Target 추가 실패!"));
+		UE_LOG(LogTemp, Warning, TEXT("[InvComp]   → Target에 공간이 부족하거나 아이템 생성 실패"));
+		UE_LOG(LogTemp, Warning, TEXT("[InvComp]   → ItemType=%s, StackCount=%d"), *ItemType.ToString(), StackCount);
+		return false;
+	}
+
+	// ── 4-1) [Fix31] 새 Entry에 TargetGridIndex 설정 → 리플리케이션으로 클라이언트가 해당 위치에 배치 ──
+	if (TargetGridIndex != INDEX_NONE)
+	{
+		bool bFound = false;
+		for (int32 i = 0; i < TargetComp->InventoryList.Entries.Num(); ++i)
+		{
+			FInv_InventoryEntry& Entry = TargetComp->InventoryList.Entries[i];
+			if (Entry.Item == NewItem)
+			{
+				Entry.GridIndex = TargetGridIndex;
+				Entry.GridCategory = SourceGridCategory;
+				TargetComp->InventoryList.MarkItemDirty(Entry);
+				UE_LOG(LogTemp, Warning, TEXT("[InvComp-Fix31진단] TransferItemTo: Entry[%d] GridIndex=%d→%d, GridCategory=%d 설정 완료 | Target=%s"),
+					i, Entry.GridIndex, TargetGridIndex, SourceGridCategory, *TargetComp->GetName());
+				bFound = true;
+				break;
+			}
+		}
+		if (!bFound)
+		{
+			UE_LOG(LogTemp, Error, TEXT("[InvComp-Fix31진단] TransferItemTo: NewItem을 TargetComp에서 찾지 못함! TargetGridIndex=%d"), TargetGridIndex);
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[InvComp-Fix31진단] TransferItemTo: TargetGridIndex=INDEX_NONE → 자동 배치"));
+	}
+
+	// ── 5) Source에서 제거 ──
+	// RemoveEntry: FastArray에서 해당 Entry 제거 → MarkDirty → 리플리케이션
+	//
+	// [Phase 4 Fix] EntryIndex를 미리 저장 — RemoveEntry 후 OnItemRemoved를 수동 broadcast
+	// RemoveEntry는 OnItemRemoved를 broadcast하지 않음 (PreReplicatedRemove에 의존)
+	// Standalone/ListenServer에서는 즉시 리플리케이션이 안 돌아서 Grid가 갱신 안 됨
+	int32 RemovedEntryIndex = INDEX_NONE;
+	for (int32 i = 0; i < InventoryList.Entries.Num(); ++i)
+	{
+		if (InventoryList.Entries[i].Item == Item)
+		{
+			RemovedEntryIndex = i;
+			break;
+		}
+	}
+
+	InventoryList.RemoveEntry(Item);
+
+	// 수동 broadcast — Grid가 즉시 아이템을 제거하도록
+	if (RemovedEntryIndex != INDEX_NONE)
+	{
+		OnItemRemoved.Broadcast(Item, RemovedEntryIndex);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[InvComp] TransferItemTo 완료: %s x%d | %s → %s"),
+		*ItemType.ToString(), StackCount, *GetName(), *TargetComp->GetName());
+	return true;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [CrossSwap] SwapItemWith — 두 InvComp 간 아이템 교환
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// TransferItemTo를 두 번 호출하면 HasRoomInInventoryList가 Swap을 차단함
+// (꽉 찬 Grid에 아이템 추가 불가). 따라서:
+//   1) 양쪽 Manifest 수집
+//   2) 양쪽 아이템 제거
+//   3) 교차 추가
+//   4) 실패 시 롤백
+//
+// ════════════════════════════════════════════════════════════════════════════════
+bool UInv_InventoryComponent::SwapItemWith(int32 MyItemIndex, UInv_InventoryComponent* OtherComp, int32 OtherItemIndex, int32 TargetGridIndex)
+{
+	if (!OtherComp || !GetOwner() || !GetOwner()->HasAuthority())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[InvComp] SwapItemWith: 조건 미충족!"));
+		return false;
+	}
+
+	// ── 1) ValidItems 구축 (양쪽) ──
+	auto BuildValidItems = [](UInv_InventoryComponent* Comp) -> TArray<UInv_InventoryItem*>
+	{
+		TArray<UInv_InventoryItem*> Items;
+		for (const FInv_InventoryEntry& Entry : Comp->InventoryList.Entries)
+		{
+			if (IsValid(Entry.Item) && !Entry.bIsAttachedToWeapon)
+			{
+				Items.Add(Entry.Item);
+			}
+		}
+		return Items;
+	};
+
+	TArray<UInv_InventoryItem*> MyValidItems = BuildValidItems(this);
+	TArray<UInv_InventoryItem*> OtherValidItems = BuildValidItems(OtherComp);
+
+	if (!MyValidItems.IsValidIndex(MyItemIndex) || !OtherValidItems.IsValidIndex(OtherItemIndex))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[InvComp] SwapItemWith: 인덱스 범위 초과! MyIndex=%d/%d, OtherIndex=%d/%d"),
+			MyItemIndex, MyValidItems.Num(), OtherItemIndex, OtherValidItems.Num());
+		return false;
+	}
+
+	UInv_InventoryItem* MyItem = MyValidItems[MyItemIndex];
+	UInv_InventoryItem* OtherItem = OtherValidItems[OtherItemIndex];
+
+	if (!IsValid(MyItem) || !IsValid(OtherItem))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[InvComp] SwapItemWith: Item이 IsValid 실패!"));
+		return false;
+	}
+
+	// ── 2) Manifest & StackCount 수집 (제거 전에!) ──
+	FInv_ItemManifest MyManifest = MyItem->GetItemManifest();
+	const int32 MyStackCount = MyItem->GetTotalStackCount();
+	const FGameplayTag MyType = MyManifest.GetItemType();
+
+	FInv_ItemManifest OtherManifest = OtherItem->GetItemManifest();
+	const int32 OtherStackCount = OtherItem->GetTotalStackCount();
+	const FGameplayTag OtherType = OtherManifest.GetItemType();
+
+	// [Fix30-C] 제거 전 양쪽 Entry의 위치 정보 캡처 (교차 할당용)
+	int32 MyGridIndex = INDEX_NONE;
+	uint8 MyGridCategory = 0;
+	bool bMyRotated = false;
+	int32 OtherGridIndex = INDEX_NONE;
+	uint8 OtherGridCategory = 0;
+	bool bOtherRotated = false;
+
+	for (const FInv_InventoryEntry& Entry : InventoryList.Entries)
+	{
+		if (Entry.Item == MyItem)
+		{
+			MyGridIndex = Entry.GridIndex;
+			MyGridCategory = Entry.GridCategory;
+			bMyRotated = Entry.bRotated;
+			break;
+		}
+	}
+	for (const FInv_InventoryEntry& Entry : OtherComp->InventoryList.Entries)
+	{
+		if (Entry.Item == OtherItem)
+		{
+			OtherGridIndex = Entry.GridIndex;
+			OtherGridCategory = Entry.GridCategory;
+			bOtherRotated = Entry.bRotated;
+			break;
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[InvComp] SwapItemWith: %s x%d (%s) ↔ %s x%d (%s)"),
+		*MyType.ToString(), MyStackCount, *GetName(),
+		*OtherType.ToString(), OtherStackCount, *OtherComp->GetName());
+	UE_LOG(LogTemp, Log, TEXT("[InvComp] SwapItemWith 위치캡처: My(Grid=%d,Cat=%d,Rot=%d) Other(Grid=%d,Cat=%d,Rot=%d)"),
+		MyGridIndex, MyGridCategory, bMyRotated, OtherGridIndex, OtherGridCategory, bOtherRotated);
+
+	// ── 3) 양쪽 아이템 제거 ──
+	// MyItem 제거
+	int32 MyRemovedIdx = INDEX_NONE;
+	for (int32 i = 0; i < InventoryList.Entries.Num(); ++i)
+	{
+		if (InventoryList.Entries[i].Item == MyItem)
+		{
+			MyRemovedIdx = i;
+			break;
+		}
+	}
+	InventoryList.RemoveEntry(MyItem);
+	if (MyRemovedIdx != INDEX_NONE)
+	{
+		OnItemRemoved.Broadcast(MyItem, MyRemovedIdx);
+	}
+
+	// OtherItem 제거
+	int32 OtherRemovedIdx = INDEX_NONE;
+	for (int32 i = 0; i < OtherComp->InventoryList.Entries.Num(); ++i)
+	{
+		if (OtherComp->InventoryList.Entries[i].Item == OtherItem)
+		{
+			OtherRemovedIdx = i;
+			break;
+		}
+	}
+	OtherComp->InventoryList.RemoveEntry(OtherItem);
+	if (OtherRemovedIdx != INDEX_NONE)
+	{
+		OtherComp->OnItemRemoved.Broadcast(OtherItem, OtherRemovedIdx);
+	}
+
+	// ── 4) 교차 추가 ──
+	// MyItem의 Manifest → OtherComp에 추가
+	UInv_InventoryItem* NewItemInOther = OtherComp->AddItemFromManifest(MyManifest, MyStackCount);
+	// OtherItem의 Manifest → 이 Comp에 추가
+	UInv_InventoryItem* NewItemInMe = AddItemFromManifest(OtherManifest, OtherStackCount);
+
+	// ── 5) 실패 시 롤백 ──
+	if (!NewItemInOther || !NewItemInMe)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[InvComp] SwapItemWith: 교차 추가 실패! 롤백 시도"));
+
+		// 추가된 것이 있으면 제거
+		if (NewItemInOther)
+		{
+			OtherComp->InventoryList.RemoveEntry(NewItemInOther);
+		}
+		if (NewItemInMe)
+		{
+			InventoryList.RemoveEntry(NewItemInMe);
+		}
+
+		// 원본 복원
+		AddItemFromManifest(MyManifest, MyStackCount);
+		OtherComp->AddItemFromManifest(OtherManifest, OtherStackCount);
+
+		UE_LOG(LogTemp, Error, TEXT("[InvComp] SwapItemWith: 롤백 완료 — 원본 상태 복원"));
+		return false;
+	}
+
+	// [Fix30-C] 교차 위치 할당: 각 새 아이템은 같은 컴포넌트에서 제거된 아이템의 위치를 상속
+	// NewItemInMe (OtherItem 데이터) → MyItem이 있던 자리 (MyGridIndex, MyGridCategory)
+	for (FInv_InventoryEntry& Entry : InventoryList.Entries)
+	{
+		if (Entry.Item == NewItemInMe)
+		{
+			Entry.GridIndex = MyGridIndex;
+			Entry.GridCategory = MyGridCategory;
+			Entry.bRotated = bMyRotated;
+			InventoryList.MarkItemDirty(Entry);
+			break;
+		}
+	}
+	// NewItemInOther (MyItem 데이터) → OtherItem이 있던 자리 (OtherGridIndex, OtherGridCategory)
+	// [Fix31] TargetGridIndex가 지정되면 해당 위치로 오버라이드 (유저가 드롭한 위치)
+	for (FInv_InventoryEntry& Entry : OtherComp->InventoryList.Entries)
+	{
+		if (Entry.Item == NewItemInOther)
+		{
+			Entry.GridIndex = (TargetGridIndex != INDEX_NONE) ? TargetGridIndex : OtherGridIndex;
+			Entry.GridCategory = OtherGridCategory;
+			Entry.bRotated = bOtherRotated;
+			OtherComp->InventoryList.MarkItemDirty(Entry);
+			UE_LOG(LogTemp, Log, TEXT("[InvComp] SwapItemWith: [Fix31] NewItemInOther.GridIndex=%d (Target=%d, Fallback=%d)"),
+				Entry.GridIndex, TargetGridIndex, OtherGridIndex);
+			break;
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[InvComp] SwapItemWith 완료: %s x%d ↔ %s x%d (위치 교차 할당됨)"),
+		*MyType.ToString(), MyStackCount, *OtherType.ToString(), OtherStackCount);
+	return true;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 📌 [Phase 4 Fix] FindValidItemIndexByReplicationID
+// ════════════════════════════════════════════════════════════════════════════════
+// FastArray의 ReplicationID로 ValidItems 배열 인덱스를 찾는다.
+// ReplicationID는 Entry가 추가될 때 부여되며, 다른 Entry의 제거로 배열이 밀려도 변하지 않는다.
+// TransferItemTo()가 사용하는 ValidItems 인덱스(무효/부착물 제외)와 동일한 기준으로 필터링.
+// ════════════════════════════════════════════════════════════════════════════════
+int32 UInv_InventoryComponent::FindValidItemIndexByReplicationID(int32 InReplicationID) const
+{
+	int32 ValidIdx = 0;
+	for (const FInv_InventoryEntry& Entry : InventoryList.Entries)
+	{
+		if (IsValid(Entry.Item) && !Entry.bIsAttachedToWeapon)
+		{
+			if (Entry.ReplicationID == InReplicationID)
+			{
+				return ValidIdx;
+			}
+			ValidIdx++;
+		}
+	}
+	return INDEX_NONE;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 9] 컨테이너 아이템 전송 RPC 구현
+// ════════════════════════════════════════════════════════════════════════════════
+
+// ⚠️ Fix18 준수: Validate에서 UObject IsValid() 금지, 값 타입만 검증
+bool UInv_InventoryComponent::Server_TakeItemFromContainer_Validate(
+	UInv_LootContainerComponent* Container,
+	int32 ContainerEntryIndex,
+	int32 TargetGridIndex)
+{
+	return ContainerEntryIndex >= 0;
+}
+
+void UInv_InventoryComponent::Server_TakeItemFromContainer_Implementation(
+	UInv_LootContainerComponent* Container,
+	int32 ContainerEntryIndex,
+	int32 TargetGridIndex)
+{
+	if (!IsValid(Container)) return;
+
+	// 잠금 확인: 요청한 PC가 CurrentUser인지
+	APlayerController* PC = Cast<APlayerController>(GetOwner());
+	if (!IsValid(PC) || Container->CurrentUser != PC)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Phase 9] Server_TakeItemFromContainer: 잠금 불일치 (요청 PC != CurrentUser)"));
+		return;
+	}
+
+	// 컨테이너 FastArray에서 아이템 검색
+	FInv_InventoryFastArray& ContainerList = Container->ContainerInventoryList;
+	if (!ContainerList.Entries.IsValidIndex(ContainerEntryIndex))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Phase 9] Server_TakeItemFromContainer: 유효하지 않은 EntryIndex=%d"), ContainerEntryIndex);
+		return;
+	}
+
+	FInv_InventoryEntry& ContainerEntry = ContainerList.Entries[ContainerEntryIndex];
+	if (!IsValid(ContainerEntry.Item))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Phase 9] Server_TakeItemFromContainer: Entry[%d] Item이 nullptr"), ContainerEntryIndex);
+		return;
+	}
+
+	// 내 인벤토리에 공간 확인
+	FInv_ItemManifest Manifest = ContainerEntry.Item->GetItemManifest();
+	if (!HasRoomInInventoryList(Manifest))
+	{
+		UE_LOG(LogTemp, Log, TEXT("[Phase 9] Server_TakeItemFromContainer: 인벤토리 공간 부족"));
+		NoRoomInInventory.Broadcast();
+		return;
+	}
+
+	// 아이템 정보 캐시 (RemoveEntry 전에 복사)
+	UInv_InventoryItem* ItemToMove = ContainerEntry.Item;
+	int32 StackCount = ItemToMove->GetTotalStackCount();
+	FGameplayTag ItemType = Manifest.GetItemType();
+
+	// 내 인벤토리에 추가
+	FInv_InventoryEntry& NewEntry = InventoryList.Entries.AddDefaulted_GetRef();
+	NewEntry.Item = ItemToMove;
+
+	// Grid 위치 설정
+	if (TargetGridIndex >= 0)
+	{
+		NewEntry.GridIndex = TargetGridIndex;
+	}
+	NewEntry.GridCategory = static_cast<uint8>(Manifest.GetItemCategory());
+
+	// 리플리케이션 서브오브젝트 이전: 컨테이너에서 해제 → 내 InvComp에 등록
+	if (Container->IsUsingRegisteredSubObjectList() && IsValid(ItemToMove))
+	{
+		Container->RemoveReplicatedSubObject(ItemToMove);
+	}
+	AddRepSubObj(ItemToMove);
+
+	InventoryList.MarkItemDirty(NewEntry);
+	InventoryList.RebuildItemTypeIndex();
+
+	// 컨테이너에서 제거 (Entry만 제거, Item 객체는 유지 — 내 InvComp으로 이동했으므로)
+	ContainerList.Entries.RemoveAt(ContainerEntryIndex);
+	ContainerList.MarkArrayDirty();
+	ContainerList.RebuildItemTypeIndex();
+
+	UE_LOG(LogTemp, Log, TEXT("[Phase 9] Server_TakeItemFromContainer: %s (x%d) 가져옴"),
+		*ItemType.ToString(), StackCount);
+
+	// 리슨서버 호스트 UI 갱신
+	if (IsListenServerOrStandalone())
+	{
+		OnItemAdded.Broadcast(ItemToMove, InventoryList.Entries.Num() - 1);
+	}
+
+	// 비어있으면 파괴 (설정에 따라)
+	if (Container->bDestroyOwnerWhenEmpty && Container->IsEmpty())
+	{
+		AActor* ContainerOwner = Container->GetOwner();
+		if (IsValid(ContainerOwner))
+		{
+			ContainerOwner->Destroy();
+		}
+	}
+}
+
+bool UInv_InventoryComponent::Server_PutItemInContainer_Validate(
+	UInv_LootContainerComponent* Container,
+	int32 PlayerEntryIndex,
+	int32 TargetGridIndex)
+{
+	return PlayerEntryIndex >= 0;
+}
+
+void UInv_InventoryComponent::Server_PutItemInContainer_Implementation(
+	UInv_LootContainerComponent* Container,
+	int32 PlayerEntryIndex,
+	int32 TargetGridIndex)
+{
+	if (!IsValid(Container)) return;
+
+	// 잠금 확인
+	APlayerController* PC = Cast<APlayerController>(GetOwner());
+	if (!IsValid(PC) || Container->CurrentUser != PC)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Phase 9] Server_PutItemInContainer: 잠금 불일치"));
+		return;
+	}
+
+	// 내 FastArray에서 아이템 검색
+	if (!InventoryList.Entries.IsValidIndex(PlayerEntryIndex))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Phase 9] Server_PutItemInContainer: 유효하지 않은 EntryIndex=%d"), PlayerEntryIndex);
+		return;
+	}
+
+	FInv_InventoryEntry& PlayerEntry = InventoryList.Entries[PlayerEntryIndex];
+	if (!IsValid(PlayerEntry.Item))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Phase 9] Server_PutItemInContainer: Entry[%d] Item이 nullptr"), PlayerEntryIndex);
+		return;
+	}
+
+	// 아이템 정보 캐시
+	UInv_InventoryItem* ItemToMove = PlayerEntry.Item;
+	int32 StackCount = ItemToMove->GetTotalStackCount();
+	FGameplayTag ItemType = ItemToMove->GetItemManifest().GetItemType();
+
+	// 컨테이너에 추가
+	FInv_InventoryFastArray& ContainerList = Container->ContainerInventoryList;
+	FInv_InventoryEntry& NewEntry = ContainerList.Entries.AddDefaulted_GetRef();
+	NewEntry.Item = ItemToMove;
+
+	if (TargetGridIndex >= 0)
+	{
+		NewEntry.GridIndex = TargetGridIndex;
+	}
+
+	// 리플리케이션 서브오브젝트 이전: 내 InvComp에서 해제 → 컨테이너에 등록
+	RemoveRepSubObj(ItemToMove);
+	if (Container->IsUsingRegisteredSubObjectList() && Container->IsReadyForReplication() && IsValid(ItemToMove))
+	{
+		Container->AddReplicatedSubObject(ItemToMove);
+	}
+
+	ContainerList.MarkItemDirty(NewEntry);
+	ContainerList.RebuildItemTypeIndex();
+
+	// 내 인벤토리에서 제거
+	InventoryList.Entries.RemoveAt(PlayerEntryIndex);
+	InventoryList.MarkArrayDirty();
+	InventoryList.RebuildItemTypeIndex();
+
+	UE_LOG(LogTemp, Log, TEXT("[Phase 9] Server_PutItemInContainer: %s (x%d) 넣음"),
+		*ItemType.ToString(), StackCount);
+
+	// 리슨서버 호스트 UI 갱신
+	if (IsListenServerOrStandalone())
+	{
+		OnItemRemoved.Broadcast(ItemToMove, PlayerEntryIndex);
+	}
+}
+
+void UInv_InventoryComponent::Server_TakeAllFromContainer_Implementation(
+	UInv_LootContainerComponent* Container)
+{
+	if (!IsValid(Container)) return;
+
+	// 잠금 확인
+	APlayerController* PC = Cast<APlayerController>(GetOwner());
+	if (!IsValid(PC) || Container->CurrentUser != PC)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Phase 9] Server_TakeAllFromContainer: 잠금 불일치"));
+		return;
+	}
+
+	FInv_InventoryFastArray& ContainerList = Container->ContainerInventoryList;
+	int32 TakenCount = 0;
+
+	// 역순으로 가져오기 (인덱스 시프트 안전)
+	for (int32 i = ContainerList.Entries.Num() - 1; i >= 0; --i)
+	{
+		if (!ContainerList.Entries.IsValidIndex(i)) continue;
+
+		FInv_InventoryEntry& ContainerEntry = ContainerList.Entries[i];
+		if (!IsValid(ContainerEntry.Item)) continue;
+
+		// 공간 확인
+		FInv_ItemManifest Manifest = ContainerEntry.Item->GetItemManifest();
+		if (!HasRoomInInventoryList(Manifest))
+		{
+			UE_LOG(LogTemp, Log, TEXT("[Phase 9] Server_TakeAllFromContainer: 공간 부족으로 중단 (%d개 가져옴)"), TakenCount);
+			break;
+		}
+
+		// 아이템 이동
+		UInv_InventoryItem* ItemToMove = ContainerEntry.Item;
+
+		FInv_InventoryEntry& NewEntry = InventoryList.Entries.AddDefaulted_GetRef();
+		NewEntry.Item = ItemToMove;
+		NewEntry.GridCategory = static_cast<uint8>(Manifest.GetItemCategory());
+
+		// 리플리케이션 서브오브젝트 이전
+		if (Container->IsUsingRegisteredSubObjectList() && IsValid(ItemToMove))
+		{
+			Container->RemoveReplicatedSubObject(ItemToMove);
+		}
+		AddRepSubObj(ItemToMove);
+
+		InventoryList.MarkItemDirty(NewEntry);
+
+		// 컨테이너에서 제거
+		ContainerList.Entries.RemoveAt(i);
+		TakenCount++;
+
+		// 리슨서버 호스트 UI 갱신
+		if (IsListenServerOrStandalone())
+		{
+			OnItemAdded.Broadcast(ItemToMove, InventoryList.Entries.Num() - 1);
+		}
+	}
+
+	ContainerList.MarkArrayDirty();
+	ContainerList.RebuildItemTypeIndex();
+	InventoryList.RebuildItemTypeIndex();
+
+	UE_LOG(LogTemp, Log, TEXT("[Phase 9] Server_TakeAllFromContainer: %d개 아이템 가져옴"), TakenCount);
+
+	// 비어있으면 파괴
+	if (Container->bDestroyOwnerWhenEmpty && Container->IsEmpty())
+	{
+		AActor* ContainerOwner = Container->GetOwner();
+		if (IsValid(ContainerOwner))
+		{
+			ContainerOwner->Destroy();
+		}
+	}
 }

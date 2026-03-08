@@ -35,6 +35,8 @@ void UInv_GridSlot::SetInventoryItem(UInv_InventoryItem* Item)
 void UInv_GridSlot::SetItemPopUp(UInv_ItemPopUp* PopUp)
 {
 	ItemPopUp = PopUp; // 아이템 팝업 설정
+	// U8: PopUp null 체크
+	if (!IsValid(ItemPopUp.Get())) return;
 	ItemPopUp->SetGridIndex(GetIndex()); // 팝업 아이템에 그리드 인덱스 설정
 	ItemPopUp->OnNativeDestruct.AddUObject(this, &ThisClass::OnItemPopUpDestruct); // 팝업 아이템이 파괴될 때 호출되는 델리게이트 바인딩
 }

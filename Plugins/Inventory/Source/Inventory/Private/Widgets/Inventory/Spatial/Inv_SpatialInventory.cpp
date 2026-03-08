@@ -38,14 +38,20 @@ void UInv_SpatialInventory::NativeOnInitialized()
 #endif
 
 	//인벤토리 장비 칸들
-	Button_Equippables->OnClicked.AddDynamic(this, &ThisClass::ShowEquippables);
-	Button_Consumables->OnClicked.AddDynamic(this, &ThisClass::ShowConsumables);
-	Button_Craftables->OnClicked.AddDynamic(this, &ThisClass::ShowCraftables);
+	// U24: AddUniqueDynamic — NativeOnInitialized 재호출 시 중복 바인딩 방지
+	Button_Equippables->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowEquippables);
+	Button_Consumables->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowConsumables);
+	Button_Craftables->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowCraftables);
 	
 	// 툴팁 캔버스 설정
 	Grid_Equippables->SetOwningCanvas(CanvasPanel);
 	Grid_Consumables->SetOwningCanvas(CanvasPanel);
 	Grid_Craftables->SetOwningCanvas(CanvasPanel);
+
+	// [Phase 11] Alt+LMB 빠른 장착 델리게이트 바인딩
+	Grid_Equippables->OnQuickEquipRequested.AddUniqueDynamic(this, &ThisClass::OnGridQuickEquipRequested);
+	Grid_Consumables->OnQuickEquipRequested.AddUniqueDynamic(this, &ThisClass::OnGridQuickEquipRequested);
+	Grid_Craftables->OnQuickEquipRequested.AddUniqueDynamic(this, &ThisClass::OnGridQuickEquipRequested);
 
 	ShowEquippables(); // 기본값으로 장비창을 보여주자.
 
@@ -126,6 +132,139 @@ void UInv_SpatialInventory::RefreshEquippedSlotLayouts()
 #endif
 }
 
+// ════════════════════════════════════════════════════════════════
+// [Phase 4 Lobby] SetInventoryComponent — 외부 InvComp 수동 바인딩
+// ════════════════════════════════════════════════════════════════
+//
+// 📌 사용 시점: 로비에서 LoadoutComp를 SpatialInventory에 연결할 때
+// 📌 내부 동작:
+//   1) BoundInventoryComponent 캐시
+//   2) 3개 Grid에 SetInventoryComponent 전파
+//   3) EquippedGridSlots 수집 (아직 안 되었으면)
+//
+// 📌 인게임 영향: 없음 (인게임에서는 호출하지 않음)
+// TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 연결
+// ════════════════════════════════════════════════════════════════
+void UInv_SpatialInventory::SetInventoryComponent(UInv_InventoryComponent* InComp)
+{
+	UE_LOG(LogTemp, Log, TEXT("[SpatialInventory] SetInventoryComponent 호출 | InComp=%s"),
+		InComp ? *InComp->GetName() : TEXT("nullptr"));
+
+	// 캐시 저장
+	BoundInventoryComponent = InComp;
+
+	// 3개 Grid에 전파
+	if (Grid_Equippables)
+	{
+		Grid_Equippables->SetInventoryComponent(InComp);
+		UE_LOG(LogTemp, Log, TEXT("[SpatialInventory]   → Grid_Equippables 바인딩 완료"));
+	}
+	if (Grid_Consumables)
+	{
+		Grid_Consumables->SetInventoryComponent(InComp);
+		UE_LOG(LogTemp, Log, TEXT("[SpatialInventory]   → Grid_Consumables 바인딩 완료"));
+	}
+	if (Grid_Craftables)
+	{
+		Grid_Craftables->SetInventoryComponent(InComp);
+		UE_LOG(LogTemp, Log, TEXT("[SpatialInventory]   → Grid_Craftables 바인딩 완료"));
+	}
+
+	// EquippedGridSlots가 아직 수집 안 되었으면 수집
+	CollectEquippedGridSlots();
+
+	UE_LOG(LogTemp, Log, TEXT("[SpatialInventory] SetInventoryComponent 완료"));
+}
+
+// ════════════════════════════════════════════════════════════════
+// [Phase 4 Lobby] GetBoundInventoryComponent — 캐시 우선 반환
+// ════════════════════════════════════════════════════════════════
+//
+// BoundInventoryComponent가 유효하면 반환 (로비 모드)
+// 비어있으면 기존 자동 탐색(UInv_InventoryStatics::GetInventoryComponent) 폴백
+// → 인게임에서는 항상 폴백 경로 사용 (BoundInventoryComponent가 비어있으므로)
+// ════════════════════════════════════════════════════════════════
+UInv_InventoryComponent* UInv_SpatialInventory::GetBoundInventoryComponent() const
+{
+	if (BoundInventoryComponent.IsValid())
+	{
+		return BoundInventoryComponent.Get();
+	}
+	// 폴백: 기존 자동 탐색
+	return UInv_InventoryStatics::GetInventoryComponent(GetOwningPlayer());
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 4 Fix] EnableLobbyTransferMode — 3개 Grid에 전송 모드 활성화
+// ════════════════════════════════════════════════════════════════════════════════
+void UInv_SpatialInventory::EnableLobbyTransferMode()
+{
+	UE_LOG(LogTemp, Log, TEXT("[SpatialInventory] EnableLobbyTransferMode 활성화"));
+
+	auto BindGrid = [this](UInv_InventoryGrid* Grid, const TCHAR* Name)
+	{
+		if (!Grid) return;
+		Grid->SetLobbyTransferMode(true);
+		if (!Grid->OnLobbyTransferRequested.IsAlreadyBound(this, &ThisClass::OnGridTransferRequested))
+		{
+			Grid->OnLobbyTransferRequested.AddDynamic(this, &ThisClass::OnGridTransferRequested);
+		}
+		UE_LOG(LogTemp, Log, TEXT("[SpatialInventory]   %s → 전송 모드 ON"), Name);
+	};
+
+	BindGrid(Grid_Equippables, TEXT("Grid_Equippables"));
+	BindGrid(Grid_Consumables, TEXT("Grid_Consumables"));
+	BindGrid(Grid_Craftables, TEXT("Grid_Craftables"));
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 9] LinkContainerGrid — 컨테이너 Grid ↔ SpatialInventory 3개 Grid 크로스 링크
+// ════════════════════════════════════════════════════════════════════════════════
+void UInv_SpatialInventory::LinkContainerGrid(UInv_InventoryGrid* ContainerGrid)
+{
+	if (!IsValid(ContainerGrid)) return;
+	LinkedContainerGridRef = ContainerGrid;
+
+	// 3개 플레이어 Grid → 컨테이너 Grid 연결
+	if (IsValid(Grid_Equippables)) Grid_Equippables->SetLinkedContainerGrid(ContainerGrid);
+	if (IsValid(Grid_Consumables)) Grid_Consumables->SetLinkedContainerGrid(ContainerGrid);
+	if (IsValid(Grid_Craftables))  Grid_Craftables->SetLinkedContainerGrid(ContainerGrid);
+
+	// 컨테이너 Grid → 현재 활성 플레이어 Grid 역방향 연결
+	if (ActiveGrid.IsValid())
+	{
+		ContainerGrid->SetLinkedContainerGrid(ActiveGrid.Get());
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[SpatialInventory] LinkContainerGrid 완료: ContainerGrid=%s, ActiveGrid=%s"),
+		*ContainerGrid->GetName(),
+		ActiveGrid.IsValid() ? *ActiveGrid->GetName() : TEXT("nullptr"));
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 9] UnlinkContainerGrid — 모든 크로스 링크 해제
+// ════════════════════════════════════════════════════════════════════════════════
+void UInv_SpatialInventory::UnlinkContainerGrid()
+{
+	if (IsValid(Grid_Equippables)) Grid_Equippables->SetLinkedContainerGrid(nullptr);
+	if (IsValid(Grid_Consumables)) Grid_Consumables->SetLinkedContainerGrid(nullptr);
+	if (IsValid(Grid_Craftables))  Grid_Craftables->SetLinkedContainerGrid(nullptr);
+
+	if (LinkedContainerGridRef.IsValid())
+	{
+		LinkedContainerGridRef->SetLinkedContainerGrid(nullptr);
+	}
+	LinkedContainerGridRef.Reset();
+
+	UE_LOG(LogTemp, Log, TEXT("[SpatialInventory] UnlinkContainerGrid 완료"));
+}
+
+void UInv_SpatialInventory::OnGridTransferRequested(int32 EntryIndex, int32 TargetGridIndex)
+{
+	UE_LOG(LogTemp, Log, TEXT("[SpatialInventory] Grid 전송 요청 전달 → EntryIndex=%d, TargetGridIndex=%d"), EntryIndex, TargetGridIndex);
+	OnSpatialTransferRequested.Broadcast(EntryIndex, TargetGridIndex);
+}
+
 // 장착된 그리드 슬롯이 클릭되었을 때 호출되는 함수
 void UInv_SpatialInventory::EquippedGridSlotClicked(UInv_EquippedGridSlot* EquippedGridSlot, const FGameplayTag& EquipmentTypeTag) // 콜백함수 
 {
@@ -137,8 +276,9 @@ void UInv_SpatialInventory::EquippedGridSlotClicked(UInv_EquippedGridSlot* Equip
 	
 	// Create an Equipped Slotted Item and add it to the Equipped Grid Slot (call EquippedGridSlot->OnItemEquipped())
 	// 장착된 슬롯 아이템을 만들고 장착된 그리드 슬롯에 (EquippedGridSlot->OnItemEquipped()) 추가
-	const float TileSize = UInv_InventoryStatics::GetInventoryWidget(GetOwningPlayer())->GetTileSize();
-	
+	// [Phase 4 Lobby] GetTileSize() 사용 (GetInventoryWidget 대신 — 로비에서도 안전)
+	const float TileSize = GetTileSize();
+
 	// 장착시킨 그리드 슬롯에 실제 아이템 장착
 	UInv_EquippedSlottedItem* EquippedSlottedItem = EquippedGridSlot->OnItemEquipped(
 		HoverItem->GetInventoryItem(),
@@ -146,12 +286,18 @@ void UInv_SpatialInventory::EquippedGridSlotClicked(UInv_EquippedGridSlot* Equip
 		TileSize
 	);
 	EquippedSlottedItem->OnEquippedSlottedItemClicked.AddDynamic(this, &ThisClass::EquippedSlottedItemClicked);
-	
+
 	// Inform the server that we've equipped an item (potentially unequipping an item as well)
 	// 아이템을 장착했음을 서버에 알리기(잠재적으로 아이템을 해제하기도 함)
-	UInv_InventoryComponent* InventoryComponent = UInv_InventoryStatics::GetInventoryComponent(GetOwningPlayer());
-	check(IsValid(InventoryComponent)); 
-	
+	// [Phase 4 Lobby] GetBoundInventoryComponent() 사용 (캐시 우선, 폴백 자동탐색)
+	UInv_InventoryComponent* InventoryComponent = GetBoundInventoryComponent();
+	// [Fix26] check() → safe return (데디서버 프로세스 종료 방지)
+	if (!IsValid(InventoryComponent))
+	{
+		UE_LOG(LogInventory, Error, TEXT("[SpatialInventory] EquippedGridSlotClicked — InventoryComponent null, RPC 스킵"));
+		return;
+	}
+
 	// ⭐ [WeaponBridge] 무기 슬롯 인덱스 전달
 	int32 WeaponSlotIndex = EquippedGridSlot->GetWeaponSlotIndex();
 #if INV_DEBUG_WIDGET
@@ -223,6 +369,8 @@ void UInv_SpatialInventory::EquippedSlottedItemClicked(UInv_EquippedSlottedItem*
 // 마우스 버튼 다운 이벤트 처리 인벤토리 아이템 드롭
 FReply UInv_SpatialInventory::NativeOnMouseButtonDown(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
 {
+	// U9: ActiveGrid null 체크 (탭 전환 전이나 초기화 전 클릭 방어)
+	if (!ActiveGrid.IsValid()) return FReply::Handled();
 	ActiveGrid->DropItem();
 	return FReply::Handled();
 }
@@ -329,10 +477,11 @@ void UInv_SpatialInventory::MakeEquippedSlottedItem(UInv_EquippedSlottedItem* Eq
 {
 	if (!IsValid(EquippedGridSlot)) return;
 	
+	// [Phase 4 Lobby] GetTileSize() 사용 (GetInventoryWidget 대신 — 로비에서도 안전)
 	UInv_EquippedSlottedItem* SlottedItem = EquippedGridSlot->OnItemEquipped(
-		ItemToEquip, 
-		EquippedSlottedItem->GetEquipmentTypeTag(), 
-		UInv_InventoryStatics::GetInventoryWidget(GetOwningPlayer())->GetTileSize());
+		ItemToEquip,
+		EquippedSlottedItem->GetEquipmentTypeTag(),
+		GetTileSize());
 	if (IsValid(SlottedItem))SlottedItem->OnEquippedSlottedItemClicked.AddDynamic(this, &ThisClass::EquippedSlottedItemClicked);
 	
 	//새로 아이템을 장착할 바인딩 되길 바람
@@ -396,8 +545,14 @@ UInv_EquippedSlottedItem* UInv_SpatialInventory::RestoreEquippedItem(UInv_Equipp
 
 void UInv_SpatialInventory::BroadcastSlotClickedDelegates(UInv_InventoryItem* ItemToEquip, UInv_InventoryItem* ItemToUnequip, int32 WeaponSlotIndex) const
 {
-	UInv_InventoryComponent* InventoryComponent = UInv_InventoryStatics::GetInventoryComponent(GetOwningPlayer());
-	check(IsValid(InventoryComponent));
+	// [Phase 4 Lobby] GetBoundInventoryComponent() 사용 (캐시 우선, 폴백 자동탐색)
+	UInv_InventoryComponent* InventoryComponent = GetBoundInventoryComponent();
+	// [Fix26] check() → safe return (데디서버 프로세스 종료 방지)
+	if (!IsValid(InventoryComponent))
+	{
+		UE_LOG(LogInventory, Error, TEXT("[SpatialInventory] BroadcastSlotClickedDelegates — InventoryComponent null, RPC 스킵"));
+		return;
+	}
 	InventoryComponent->Server_EquipSlotClicked(ItemToEquip, ItemToUnequip, WeaponSlotIndex);
 	
 	// StandAlone/ListenServer는 Multicast_EquipSlotClicked에서 이미 Broadcast 됨 → 이중 스폰 방지
@@ -435,30 +590,48 @@ FInv_SlotAvailabilityResult UInv_SpatialInventory::HasRoomForItem(UInv_ItemCompo
 // 아이템이 호버되었을 때 호출되는 함수 (설명 칸 보일 때 쓰는 부분들임)
 void UInv_SpatialInventory::OnItemHovered(UInv_InventoryItem* Item)
 {
+	// [Fix26] Item null 체크
+	if (!IsValid(Item)) return;
+	// [Fix26] GetOwningPlayer null 체크 (위젯 teardown 시 크래시 방지)
+	APlayerController* OwningPC = GetOwningPlayer();
+	if (!OwningPC) return;
+
 	const auto& Manifest = Item->GetItemManifest(); // 아이템 매니페스트 가져오기
 	UInv_ItemDescription* DescriptionWidget = GetItemDescription();
+	if (!DescriptionWidget) return;
 	DescriptionWidget->SetVisibility(ESlateVisibility::Collapsed);
-	
-	GetOwningPlayer()->GetWorldTimerManager().ClearTimer(DescriptionTimer); // 기존 타이머 클리어
-	GetOwningPlayer()->GetWorldTimerManager().ClearTimer(EquippedDescriptionTimer); // 두 번째 장비 보이는 것. (장착 장비)
-	
+
+	OwningPC->GetWorldTimerManager().ClearTimer(DescriptionTimer); // 기존 타이머 클리어
+	OwningPC->GetWorldTimerManager().ClearTimer(EquippedDescriptionTimer); // 두 번째 장비 보이는 것. (장착 장비)
+
 	FTimerDelegate DescriptionTimerDelegate;
-	DescriptionTimerDelegate.BindLambda([this, Item, &Manifest, DescriptionWidget]()
+	// U11: &Manifest 참조 캡처 → 값 복사로 변경 (타이머 지연 중 아이템 제거 시 Use-After-Free 방지)
+	FInv_ItemManifest ManifestCopy = Item->GetItemManifest();
+	// [Fix26] raw this/DescriptionWidget → TWeakObjectPtr (위젯 파괴 후 타이머 발동 시 댕글링 방지)
+	TWeakObjectPtr<UInv_SpatialInventory> WeakThis(this);
+	TWeakObjectPtr<UInv_InventoryItem> WeakItem(Item);
+	TWeakObjectPtr<UInv_ItemDescription> WeakDesc(DescriptionWidget);
+	DescriptionTimerDelegate.BindLambda([WeakThis, WeakItem, ManifestCopy, WeakDesc]()
 	{
-		// Assimalate the manifest into the Item Description widget.
+		// 아이템/위젯이 타이머 지연 중 제거되었을 수 있으므로 체크
+		if (!WeakThis.IsValid() || !WeakItem.IsValid() || !WeakDesc.IsValid()) return;
+		UInv_SpatialInventory* Self = WeakThis.Get();
+		UInv_InventoryItem* ItemPtr = WeakItem.Get();
 		// 아이템 설명 위젯에 매니페스트 동화
-		GetItemDescription()->SetVisibility(ESlateVisibility::HitTestInvisible); // 설명 위젯 보이기
-		Manifest.AssimilateInventoryFragments(DescriptionWidget);
-		
+		Self->GetItemDescription()->SetVisibility(ESlateVisibility::HitTestInvisible); // 설명 위젯 보이기
+		ManifestCopy.AssimilateInventoryFragments(WeakDesc.Get());
+
 		// For the second item description, showing the equipped item of this type.
 		// 두 번째 아이템 설명의 경우, 이 유형의 장착된 아이템을 보여줌.
+		APlayerController* PC = Self->GetOwningPlayer();
+		if (!PC) return;
 		FTimerDelegate EquippedDescriptionTimerDelegate;
-		EquippedDescriptionTimerDelegate.BindUObject(this, &ThisClass::ShowEquippedItemDescription, Item);
-		GetOwningPlayer()->GetWorldTimerManager().SetTimer(EquippedDescriptionTimer, EquippedDescriptionTimerDelegate, EquippedDescriptionTimerDelay, false);
+		EquippedDescriptionTimerDelegate.BindUObject(Self, &UInv_SpatialInventory::ShowEquippedItemDescription, ItemPtr);
+		PC->GetWorldTimerManager().SetTimer(Self->EquippedDescriptionTimer, EquippedDescriptionTimerDelegate, Self->EquippedDescriptionTimerDelay, false);
 	});
-	
+
 	// 타이머 설정
-	GetOwningPlayer()->GetWorldTimerManager().SetTimer(DescriptionTimer, DescriptionTimerDelegate, DescriptionTimerDelay, false);
+	OwningPC->GetWorldTimerManager().SetTimer(DescriptionTimer, DescriptionTimerDelegate, DescriptionTimerDelay, false);
 }
 
 //아이템에서 마우스에 손을 땔 떄
@@ -493,23 +666,30 @@ float UInv_SpatialInventory::GetTileSize() const
 
 void UInv_SpatialInventory::ShowEquippedItemDescription(UInv_InventoryItem* Item)
 {
+	// [Fix26] Item null 체크 (타이머 콜백에서 GC된 아이템 역참조 방지)
+	if (!IsValid(Item)) return;
+
 	const auto& Manifest = Item->GetItemManifest();
 	const FInv_EquipmentFragment* EquipmentFragment = Manifest.GetFragmentOfType<FInv_EquipmentFragment>();
 	if (!EquipmentFragment) return;
 
 	const FGameplayTag HoveredEquipmentType = EquipmentFragment->GetEquipmentType();
-	
+
 	auto EquippedGridSlot = EquippedGridSlots.FindByPredicate([Item](const UInv_EquippedGridSlot* GridSlot)
 	{
-		return GridSlot->GetInventoryItem() == Item;
+		return IsValid(GridSlot) ? GridSlot->GetInventoryItem() == Item : false;
 	});
 	if (EquippedGridSlot != nullptr) return; // The hovered item is already equipped, we're already showing its Item Description
 
 	// It's not equipped, so find the equipped item with the same equipment type
+	// [Fix26] GetFragmentOfType null 체크 추가 (Equipment Fragment 없는 아이템 크래시 방지)
 	auto FoundEquippedSlot = EquippedGridSlots.FindByPredicate([HoveredEquipmentType](const UInv_EquippedGridSlot* GridSlot)
 	{
+		if (!IsValid(GridSlot)) return false;
 		UInv_InventoryItem* InventoryItem = GridSlot->GetInventoryItem().Get();
-		return IsValid(InventoryItem) ? InventoryItem->GetItemManifest().GetFragmentOfType<FInv_EquipmentFragment>()->GetEquipmentType() == HoveredEquipmentType : false ;
+		if (!IsValid(InventoryItem)) return false;
+		const FInv_EquipmentFragment* Frag = InventoryItem->GetItemManifest().GetFragmentOfType<FInv_EquipmentFragment>();
+		return Frag ? (Frag->GetEquipmentType() == HoveredEquipmentType) : false;
 	});
 	UInv_EquippedGridSlot* EquippedSlot = FoundEquippedSlot ? *FoundEquippedSlot : nullptr;
 	if (!IsValid(EquippedSlot)) return; // No equipped item with the same equipment type
@@ -576,7 +756,7 @@ void UInv_SpatialInventory::DisableButton(UButton* Button)
 }
 
 // 그리드가 활성 되면 등장하는 것들.
-void UInv_SpatialInventory::SetActiveGrid(UInv_InventoryGrid* Grid, UButton* Button) 
+void UInv_SpatialInventory::SetActiveGrid(UInv_InventoryGrid* Grid, UButton* Button)
 {
 	if (ActiveGrid.IsValid())
 	{
@@ -587,6 +767,12 @@ void UInv_SpatialInventory::SetActiveGrid(UInv_InventoryGrid* Grid, UButton* But
 	if (ActiveGrid.IsValid()) ActiveGrid->ShowCursor();
 	DisableButton(Button);
 	Switcher->SetActiveWidget(Grid);
+
+	// ★ [Phase 9] 컨테이너 연결 시 → 컨테이너 Grid의 역방향 링크 업데이트
+	if (LinkedContainerGridRef.IsValid() && ActiveGrid.IsValid())
+	{
+		LinkedContainerGridRef->SetLinkedContainerGrid(ActiveGrid.Get());
+	}
 }
 
 // ⭐ UI 기반 재료 개수 세기 (Split된 스택도 정확히 계산!)
@@ -611,5 +797,123 @@ int32 UInv_SpatialInventory::GetTotalMaterialCountFromUI(const FGameplayTag& Mat
 	UE_LOG(LogTemp, Log, TEXT("GetTotalMaterialCountFromUI(%s) = %d (모든 그리드 합산)"), *MaterialTag.ToString(), TotalCount);
 #endif
 	return TotalCount;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 11] NativeDestruct — Quick Equip 델리게이트 해제
+// ════════════════════════════════════════════════════════════════════════════════
+void UInv_SpatialInventory::NativeDestruct()
+{
+	// Quick Equip 델리게이트 해제
+	if (IsValid(Grid_Equippables))
+	{
+		Grid_Equippables->OnQuickEquipRequested.RemoveDynamic(this, &ThisClass::OnGridQuickEquipRequested);
+	}
+	if (IsValid(Grid_Consumables))
+	{
+		Grid_Consumables->OnQuickEquipRequested.RemoveDynamic(this, &ThisClass::OnGridQuickEquipRequested);
+	}
+	if (IsValid(Grid_Craftables))
+	{
+		Grid_Craftables->OnQuickEquipRequested.RemoveDynamic(this, &ThisClass::OnGridQuickEquipRequested);
+	}
+
+	Super::NativeDestruct();
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 11] OnGridQuickEquipRequested — Alt+LMB 빠른 장착 처리
+// Grid에서 아이템을 들지 않고(HoverItem 없이) 바로 장착 슬롯에 장착
+// ════════════════════════════════════════════════════════════════════════════════
+void UInv_SpatialInventory::OnGridQuickEquipRequested(UInv_InventoryItem* Item, int32 EntryIndex)
+{
+	if (!IsValid(Item)) return;
+
+	// 장비 Fragment 확인
+	const FInv_EquipmentFragment* EquipFrag = Item->GetItemManifest().GetFragmentOfType<FInv_EquipmentFragment>();
+	if (!EquipFrag) return;
+
+	const FGameplayTag EquipmentType = EquipFrag->GetEquipmentType();
+
+	// 장착 타입에 맞는 빈 슬롯 찾기
+	UInv_EquippedGridSlot* TargetSlot = nullptr;
+	UInv_InventoryItem* ItemToUnequip = nullptr;
+
+	for (UInv_EquippedGridSlot* EquipSlot : EquippedGridSlots)
+	{
+		if (!IsValid(EquipSlot)) continue;
+
+		// 슬롯의 장비 타입 태그가 아이템의 장비 타입과 일치하는지 확인
+		if (!EquipmentType.MatchesTag(EquipSlot->GetEquipmentTypeTag())) continue;
+
+		// 빈 슬롯 우선
+		if (!EquipSlot->GetInventoryItem().IsValid())
+		{
+			TargetSlot = EquipSlot;
+			break;
+		}
+
+		// 같은 타입 슬롯이지만 이미 장착된 경우 → 교체 후보
+		if (!TargetSlot)
+		{
+			TargetSlot = EquipSlot;
+			ItemToUnequip = EquipSlot->GetInventoryItem().Get();
+		}
+	}
+
+	if (!TargetSlot) return; // 호환 슬롯 없음
+
+	// ────────────────────────────────────────────────────────────
+	// Grid에서 아이템을 PickUp → HoverItem으로 전환 → 장착 슬롯에 장착
+	// 기존 EquippedGridSlotClicked 플로우를 활용
+	// ────────────────────────────────────────────────────────────
+
+	// 1) 활성 Grid에서 아이템 들기 (HoverItem으로)
+	// 아이템이 Equippable 카테고리이므로 Grid_Equippables에서 처리
+	UInv_InventoryGrid* SourceGrid = Grid_Equippables;
+	if (!IsValid(SourceGrid)) return;
+
+	// Grid에서 아이템 제거 + HoverItem 할당
+	SourceGrid->AssignHoverItem(Item);
+
+	// 2) Grid에서 SlottedItem 제거
+	SourceGrid->RemoveSlottedItemByPointer(Item);
+
+	// 3) 기존 슬롯에 장착된 아이템이 있으면 해제 처리
+	if (IsValid(ItemToUnequip))
+	{
+		// 기존 장착 아이템의 EquippedSlottedItem 찾아서 제거
+		UInv_EquippedSlottedItem* OldEquippedSlottedItem = TargetSlot->GetEquippedSlottedItem();
+		ClearSlotOfItem(TargetSlot);
+		// 기존 아이템을 Grid에 돌려놓기
+		SourceGrid->AssignHoverItem(ItemToUnequip);
+		SourceGrid->DropItem(); // Grid의 첫 번째 빈 슬롯에 배치
+		RemoveEquippedSlottedItem(OldEquippedSlottedItem);
+	}
+
+	// 4) 새 아이템 장착
+	UInv_HoverItem* CurrentHoverItem = SourceGrid->GetHoverItem();
+	if (!IsValid(CurrentHoverItem)) return;
+
+	const float CurrentTileSize = GetTileSize();
+	UInv_EquippedSlottedItem* NewEquippedSlottedItem = TargetSlot->OnItemEquipped(
+		Item,
+		EquipmentType,
+		CurrentTileSize
+	);
+	if (IsValid(NewEquippedSlottedItem))
+	{
+		NewEquippedSlottedItem->OnEquippedSlottedItemClicked.AddDynamic(this, &ThisClass::EquippedSlottedItemClicked);
+	}
+
+	// 5) HoverItem 정리
+	SourceGrid->ClearHoverItem();
+
+	// 6) 서버 RPC + 클라이언트 브로드캐스트
+	int32 WeaponSlotIndex = TargetSlot->GetWeaponSlotIndex();
+	BroadcastSlotClickedDelegates(Item, ItemToUnequip, WeaponSlotIndex);
+
+	UE_LOG(LogTemp, Log, TEXT("[OnGridQuickEquipRequested] Alt+LMB 빠른 장착 완료 → WeaponSlot=%d, Item=%s"),
+		WeaponSlotIndex, *Item->GetItemManifest().GetItemType().ToString());
 }
 

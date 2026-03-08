@@ -28,16 +28,19 @@
 #define INV_DEBUG_RESOURCE 0
 
 // 플레이어 (PlayerController)
-#define INV_DEBUG_PLAYER 1
+#define INV_DEBUG_PLAYER 0
 
 // 부착물 시스템 (AttachmentFragments, AttachmentPanel, FastArray 부착진단)
 #define INV_DEBUG_ATTACHMENT 1
 
 // 저장/로드 시스템 (SaveGameMode, 로드 복원)
-#define INV_DEBUG_SAVE 1
+#define INV_DEBUG_SAVE 0
 
 // 아이템 포인터/부착물 저장 진단 (CollectInventoryDataForSave 포인터 추적)
-#define INV_DEBUG_ITEM_POINTER 1
+#define INV_DEBUG_ITEM_POINTER 0
+
+// 상호작용 시스템 (HighlightableStaticMesh, Interaction 관련)
+#define INV_DEBUG_INTERACTION 0
 
 // ============================================
 

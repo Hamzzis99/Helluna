@@ -8,6 +8,21 @@
 
 #include "Inv_InventoryGrid.generated.h"
 
+// ════════════════════════════════════════════════════════════════
+// [Phase 4 Fix] 로비 전송 델리게이트 — 우클릭 시 상대 패널로 아이템 전송
+// ════════════════════════════════════════════════════════════════
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnLobbyTransferRequested, int32, EntryIndex, int32, TargetGridIndex);
+
+// [CrossSwap] 크로스 Grid Swap 델리게이트 — 양쪽 아이템 RepID + 대상 위치 전달
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnLobbyCrossSwapRequested, int32, RepID_A, int32, RepID_B, int32, TargetGridIndex);
+
+class UInv_InventoryItem; // [Phase 11] 빠른 장착 델리게이트 forward declaration
+
+// ════════════════════════════════════════════════════════════════
+// [Phase 11] 빠른 장착 델리게이트 — Alt+LMB 시 SpatialInventory에서 장착 처리
+// ════════════════════════════════════════════════════════════════
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnQuickEquipRequested, UInv_InventoryItem*, Item, int32, EntryIndex);
+
 class UInv_ItemPopUp;
 class UInv_HoverItem;
 struct FInv_ImageFragment;
@@ -18,9 +33,20 @@ struct FInv_ItemManifest;
 class UCanvasPanel;
 class UInv_GridSlot;
 class UInv_InventoryComponent;
+class UInv_LootContainerComponent;
 class UInv_AttachmentPanel;
 struct FGameplayTag;
 enum class EInv_GridSlotState : uint8;
+
+// ════════════════════════════════════════════════════════════════
+// [Phase 9] Grid 소유자 타입 — 플레이어 인벤토리 vs 컨테이너
+// ════════════════════════════════════════════════════════════════
+UENUM()
+enum class EGridOwnerType : uint8
+{
+	Player,      // 플레이어 인벤토리 Grid
+	Container,   // 컨테이너 (상자/사체) Grid
+};
 
 // ════════════════════════════════════════════════════════════════════════
 // TODO [Phase C - 데이터/뷰 분리] 상용화 리팩토링
@@ -55,9 +81,109 @@ class INVENTORY_API UInv_InventoryGrid : public UUserWidget
 
 public:
 	virtual void NativeOnInitialized() override; // Viewport를 동시에 생성하는 것이 NativeConstruct?
+	virtual void NativeDestruct() override; // U19: 위젯 파괴 시 InvComp 델리게이트 해제
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override; // 매 프레임마다 호출되는 틱 함수 (마우스 Hover에 사용)
+	virtual FReply NativeOnKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent) override; // R키 아이템 회전
 
 	EInv_ItemCategory GetItemCategory() const { return ItemCategory; }
+
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [Phase 4 Lobby] 외부 InvComp 수동 바인딩 (로비 듀얼 Grid용)
+	// ════════════════════════════════════════════════════════════════
+	//
+	// 로비에서는 플레이어에 StashComp + LoadoutComp 2개가 붙어있으므로
+	// 기존 자동 바인딩(GetInventoryComponent)은 첫 번째 것만 잡음.
+	// → 이 함수로 원하는 InvComp를 수동 지정한 뒤 Grid 델리게이트를 바인딩.
+	//
+	// 사용법:
+	//   Grid->SetSkipAutoInit(true);  // BP WBP 디자이너에서 체크, 또는 C++에서 호출
+	//   Grid->SetInventoryComponent(StashComp);  // NativeOnInitialized 이후 호출
+	//
+	// 기존 인게임 Grid는 영향 없음 (bSkipAutoInit 기본값 false)
+	// TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 연결
+	// ════════════════════════════════════════════════════════════════
+
+	/**
+	 * 외부에서 InvComp를 수동 지정 + 델리게이트 바인딩
+	 * NativeOnInitialized에서 자동 바인딩을 건너뛰고 (bSkipAutoInit=true)
+	 * 이 함수로 원하는 InventoryComponent에 연결한다.
+	 *
+	 * @param InComp  바인딩할 InventoryComponent
+	 */
+	UFUNCTION(BlueprintCallable, Category = "인벤토리|로비",
+		meta = (DisplayName = "인벤토리 컴포넌트 수동 설정"))
+	void SetInventoryComponent(UInv_InventoryComponent* InComp);
+
+	/** [Phase 9] 컨테이너 Grid용 — InvComp 참조만 저장 (델리게이트/Sync 없음, RPC 호출용) */
+	void SetInventoryComponentForRPC(UInv_InventoryComponent* InComp);
+
+	/** [Phase 9] 컨테이너의 기존 아이템을 Grid에 동기화 */
+	void SyncContainerItems(UInv_LootContainerComponent* ContainerComp);
+
+	/** NativeOnInitialized에서 자동 바인딩을 건너뛸지 여부 */
+	UFUNCTION(BlueprintCallable, Category = "인벤토리|로비",
+		meta = (DisplayName = "자동 초기화 스킵 설정"))
+	void SetSkipAutoInit(bool bSkip) { bSkipAutoInit = bSkip; }
+
+	/** 현재 바인딩된 InventoryComponent 반환 */
+	UInv_InventoryComponent* GetInventoryComponent() const { return InventoryComponent.Get(); }
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 4 Fix] 로비 전송 모드 — 우클릭 시 팝업 대신 전송 델리게이트 발동
+	// ════════════════════════════════════════════════════════════════
+
+	/** 로비 전송 모드 활성화/비활성화 */
+	void SetLobbyTransferMode(bool bEnable) { bLobbyTransferMode = bEnable; }
+
+	// ════════════════════════════════════════════════════════════════
+	// [Fix19] 로비 전송 대상 Grid — 전송 전 용량 사전 체크용
+	// ════════════════════════════════════════════════════════════════
+	// Stash Grid → Loadout Grid (같은 카테고리)
+	// Loadout Grid → Stash Grid (같은 카테고리)
+	// InitializePanels에서 교차 설정됨
+	// ════════════════════════════════════════════════════════════════
+
+	/** 전송 대상 Grid 설정 (같은 카테고리 Grid 교차 연결) */
+	void SetLobbyTargetGrid(UInv_InventoryGrid* InTargetGrid) { LobbyTargetGrid = InTargetGrid; }
+
+	/** 로비 전송 요청 델리게이트 — 우클릭 시 EntryIndex를 전달 */
+	UPROPERTY(BlueprintAssignable, Category = "인벤토리|로비")
+	FOnLobbyTransferRequested OnLobbyTransferRequested;
+
+	/** [CrossSwap] 크로스 Grid Swap 요청 델리게이트 — 양쪽 아이템 RepID 전달 */
+	UPROPERTY(BlueprintAssignable, Category = "인벤토리|로비")
+	FOnLobbyCrossSwapRequested OnLobbyCrossSwapRequested;
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 11] 빠른 장착 델리게이트 — Alt+LMB 시 SpatialInventory가 장착 처리
+	// ════════════════════════════════════════════════════════════════
+	UPROPERTY(BlueprintAssignable, Category = "인벤토리")
+	FOnQuickEquipRequested OnQuickEquipRequested;
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 9] 컨테이너 Grid 크로스 드래그 & 드롭
+	// ════════════════════════════════════════════════════════════════
+
+	/** Grid 소유자 타입 설정 (Player/Container) */
+	void SetOwnerType(EGridOwnerType InType) { OwnerType = InType; }
+	EGridOwnerType GetOwnerType() const { return OwnerType; }
+
+	/** 크로스 Grid 드래그용: 반대편 Grid 참조 */
+	void SetLinkedContainerGrid(UInv_InventoryGrid* OtherGrid);
+
+	/** 크로스 Grid 드래그: 연결된 Grid에 HoverItem이 있는지 */
+	bool HasLinkedHoverItem() const;
+	UInv_HoverItem* GetLinkedHoverItem() const;
+
+	/** 로비 크로스 Grid: LobbyTargetGrid에 HoverItem이 있는지 */
+	bool HasLobbyLinkedHoverItem() const;
+
+	/** 로비 크로스 Grid Swap: 상대 Grid HoverItem과 이 Grid 아이템 교환 */
+	bool TryCrossGridSwap(int32 GridIndex);
+
+	/** 컨테이너 컴포넌트 참조 설정 (컨테이너 Grid용) */
+	void SetContainerComponent(UInv_LootContainerComponent* InContainerComp);
+	UInv_LootContainerComponent* GetContainerComponent() const;
 
 	void ShowCursor();
 	void HideCursor();
@@ -164,24 +290,66 @@ private:
 	// ⭐ 로드 중 RPC 억제 플래그
 	bool bSuppressServerSync = false;
 
+	// [Phase 4 Fix] 로비 전송 모드 플래그 — true이면 우클릭 시 팝업 대신 전송 델리게이트
+	bool bLobbyTransferMode = false;
+
+	// [Fix19] 로비 전송 대상 Grid (같은 카테고리, 교차 연결)
+	TWeakObjectPtr<UInv_InventoryGrid> LobbyTargetGrid;
+
+	// [Fix20] 상대 Grid의 HoverItem을 이쪽으로 전송 (패널 간 드래그 앤 드롭)
+	bool TryTransferFromTargetGrid(int32 TargetGridIndex = INDEX_NONE);
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 11] 타르코프 스타일 단축키 헬퍼 함수
+	// ════════════════════════════════════════════════════════════════
+	void HandleQuickTransfer(int32 GridIndex);  // Ctrl+LMB: 빠른 전송
+	void HandleQuickEquip(int32 GridIndex);     // Alt+LMB: 빠른 장착/해제
+	void HandleQuickSplit(int32 GridIndex);     // Shift+LMB: 스택 반분할
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 9] 컨테이너 Grid 관련 private 멤버
+	// ════════════════════════════════════════════════════════════════
+
+	// Grid 소유자 타입 (기본: Player)
+	EGridOwnerType OwnerType = EGridOwnerType::Player;
+
+	// 크로스 Grid 드래그용: 반대편 Grid 참조 (LobbyTargetGrid와 별도)
+	TWeakObjectPtr<UInv_InventoryGrid> LinkedContainerGrid;
+
+	// 컨테이너 컴포넌트 참조 (Container Grid에서만 유효)
+	TWeakObjectPtr<UInv_LootContainerComponent> ContainerComp;
+
+	// 크로스 Grid에서 아이템 전송 시도 (OnGridSlotClicked에서 호출)
+	bool TryTransferFromLinkedContainerGrid(int32 GridIndex);
+
+	// [Phase 4 Fix] 기존 아이템 동기화 — SetInventoryComponent 후 이미 InvComp에 있는 아이템을 Grid에 표시
+	void SyncExistingItems();
+
+	// ⭐ [Phase 4 Lobby] true이면 NativeOnInitialized에서 자동 바인딩 스킵
+	// 로비 듀얼 Grid에서 SetInventoryComponent()로 수동 바인딩할 때 사용
+	UPROPERTY(EditAnywhere, Category = "인벤토리|로비",
+		meta = (DisplayName = "자동 초기화 스킵", Tooltip = "true이면 NativeOnInitialized에서 InventoryComponent 자동 바인딩을 건너뜁니다. 로비 Grid에서 수동 바인딩할 때 사용합니다."))
+	bool bSkipAutoInit = false;
+
 	TWeakObjectPtr<UInv_InventoryComponent> InventoryComponent;
 	TWeakObjectPtr<UCanvasPanel> OwningCanvasPanel;
 	
 	void ConstructGrid();
-	void AddItemToIndices(const FInv_SlotAvailabilityResult& Result, UInv_InventoryItem* NewItem); // 아이템을 인덱스에 추가
+	void AddItemToIndices(const FInv_SlotAvailabilityResult& Result, UInv_InventoryItem* NewItem, bool bRotated = false); // 아이템을 인덱스에 추가
 	bool MatchesCategory(const UInv_InventoryItem* Item) const; // 카테고리 일치 여부 확인
 	FVector2D GetDrawSize(const FInv_GridFragment* GridFragment) const; // 그리드 조각의 그리기 크기 가져오기
-	void SetSlottedItemImage(const UInv_SlottedItem* SlottedItem, const FInv_GridFragment* GridFragment, const FInv_ImageFragment* ImageFragment) const; // 슬로티드 아이템 이미지 설정
-	void AddItemAtIndex(UInv_InventoryItem* Item, const int32 Index, const bool bStackable, const int32 StackAmount, const int32 EntryIndex); // 인덱스에 아이템 추가
+	void SetSlottedItemImage(const UInv_SlottedItem* SlottedItem, const FInv_GridFragment* GridFragment, const FInv_ImageFragment* ImageFragment, bool bRotated = false) const; // 슬로티드 아이템 이미지 설정
+	void AddItemAtIndex(UInv_InventoryItem* Item, const int32 Index, const bool bStackable, const int32 StackAmount, const int32 EntryIndex, bool bRotated = false); // 인덱스에 아이템 추가
 	UInv_SlottedItem* CreateSlottedItem(UInv_InventoryItem* Item,
 		const bool bStackable,
 		const int32 StackAmount,
 		const FInv_GridFragment* GridFragment,
 		const FInv_ImageFragment* ImageFragment,
 		const int32 Index,
-		const int32 EntryIndex); // ⭐ EntryIndex 추가
-	void AddSlottedItemToCanvas(const int32 Index, const FInv_GridFragment* GridFragment, UInv_SlottedItem* SlottedItem) const;
-	void UpdateGridSlots(UInv_InventoryItem* NewItem, const int32 Index, bool bStackableItem, const int32 StackAmount); // 그리드 슬롯 업데이트
+		const int32 EntryIndex,
+		bool bRotated = false); // ⭐ EntryIndex 추가 + 회전 상태
+	void AddSlottedItemToCanvas(const int32 Index, const FInv_GridFragment* GridFragment, UInv_SlottedItem* SlottedItem, bool bRotated = false) const;
+	void UpdateGridSlots(UInv_InventoryItem* NewItem, const int32 Index, bool bStackableItem, const int32 StackAmount, bool bRotated = false); // 그리드 슬롯 업데이트
 	bool IsIndexClaimed(const TSet<int32>& CheckedIndices, const int32 Index) const; // 인덱스가 이미 점유되었는지 확인
 	bool HasRoomAtIndex(const UInv_GridSlot* GridSlot,
 		const FIntPoint& Dimensions,
@@ -280,11 +448,19 @@ private:
 	UFUNCTION()
 	void OnPopUpMenuAttachment(int32 Index);
 
+	// 로비 전송 버튼 상호작용 (PopupMenu에서 Transfer 클릭)
+	UFUNCTION()
+	void OnPopUpMenuTransfer(int32 Index);
+
+	// [Phase 11] 아이템 제자리 90도 회전 (PopupMenu에서 Rotate 클릭)
+	UFUNCTION()
+	void OnPopUpMenuRotate(int32 Index);
+
 	UFUNCTION()
 	void OnInventoryMenuToggled(bool bOpen); // 인벤토리 메뉴 토글 (내가 뭔가 들 때 bool 값 반환하는 함수)
 	
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (AllowPrivateAccess = "true", DisplayName = "아이템 카테고리", Tooltip = "이 그리드가 담당하는 아이템 카테고리입니다. (장비, 소모품, 제작 재료 등)"), Category = "인벤토리")
-	EInv_ItemCategory ItemCategory;
+	EInv_ItemCategory ItemCategory = EInv_ItemCategory::Equippable;
 	UUserWidget* GetVisibleCursorWidget(); // 마우스 커서 보이게 하는 함수
 
 	//2차원 격자를 만드는 것 Tarray로
@@ -308,13 +484,14 @@ private:
 	FVector2D ItemPopUpOffset; // 마우스 우클릭 팝업 위치 조정하기 (누르자마자 뜨는 부분)
 	
 	// 왜 굳이 int32로?
+	// U18: 안전한 기본값 설정 (TileSize=0이면 나눗셈 NaN/Inf 발생)
 	UPROPERTY(EditAnywhere, Category = "인벤토리|그리드", meta = (DisplayName = "행 수", Tooltip = "그리드의 행(세로) 개수입니다."))
-	int32 Rows;
+	int32 Rows = 5;
 	UPROPERTY(EditAnywhere, Category = "인벤토리|그리드", meta = (DisplayName = "열 수", Tooltip = "그리드의 열(가로) 개수입니다."))
-	int32 Columns;
+	int32 Columns = 10;
 
 	UPROPERTY(EditAnywhere, Category = "인벤토리|그리드", meta = (DisplayName = "타일 크기", Tooltip = "그리드 슬롯 한 칸의 크기(픽셀)입니다."))
-	float TileSize;
+	float TileSize = 50.f;
 
 	//포인터를 생성하기 위한 보조 클래스
 	UPROPERTY(EditAnywhere, Category = "인벤토리", meta = (DisplayName = "호버 아이템 클래스", Tooltip = "마우스로 아이템을 집었을 때 표시되는 호버 위젯의 블루프린트 클래스입니다."))
@@ -355,6 +532,18 @@ private:
 
 	// ⭐ [최적화 #5] 영역이 비어있는지 비트마스크로 빠르게 확인
 	bool IsAreaFree(int32 StartIndex, const FIntPoint& Dimensions) const;
+	// [Fix21] HoverItem 브러시의 현재 TileSize 추적 (크로스 Grid 리사이즈용)
+	float HoverItemCurrentTileSize = 0.f;
+
+	// [Fix21] HoverItem 브러시를 TargetTileSize에 맞게 리사이즈
+	void RefreshHoverItemBrushSize(float TargetTileSize);
+
+	// R키 회전: 회전 적용된 실효 크기 (Dimensions XY 교환)
+	static FIntPoint GetEffectiveDimensions(const FInv_GridFragment* GridFragment, bool bRotated);
+
+	// R키 회전: 회전 상태에 따른 DrawSize 계산
+	FVector2D GetDrawSizeRotated(const FInv_GridFragment* GridFragment, bool bRotated) const;
+
 	int32 LastHighlightedIndex;
 	FIntPoint LastHighlightedDimensions;
 

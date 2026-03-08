@@ -4,16 +4,17 @@
 
 #include "CoreMinimal.h"
 #include "Widgets/Inventory/InventoryBase/Inv_InventoryBase.h"
+#include "Widgets/Inventory/Spatial/Inv_InventoryGrid.h" // FOnLobbyTransferRequested 델리게이트 사용
 #include "Inv_SpatialInventory.generated.h"
 
 struct FGameplayTag;
 class UInv_ItemDescription;
-class UInv_InventoryGrid;
 class UWidgetSwitcher;
 class UButton;
 class UCanvasPanel;
 class UInv_HoverItem;
 class UInv_EquippedGridSlot;
+class UInv_InventoryComponent;
 
 // UI 연동 부분들
 
@@ -58,8 +59,57 @@ public:
 
 	// 🆕 [Phase 8] 인벤토리 열릴 때 장착 슬롯 레이아웃 갱신
 	void RefreshEquippedSlotLayouts();
-	
-private: 
+
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [Phase 4 Lobby] 외부 InvComp 수동 바인딩
+	// ════════════════════════════════════════════════════════════════
+	//
+	// 로비에서 LoadoutComp를 수동 지정할 때 사용.
+	// 호출 시 내부 3개 Grid에도 SetInventoryComponent를 전파한다.
+	// 인게임에서는 호출하지 않으므로 기존 동작에 영향 없음.
+	//
+	// TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 연결
+	// ════════════════════════════════════════════════════════════════
+
+	UFUNCTION(BlueprintCallable, Category = "인벤토리|로비",
+		meta = (DisplayName = "인벤토리 컴포넌트 수동 설정 (SpatialInventory)"))
+	void SetInventoryComponent(UInv_InventoryComponent* InComp);
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 4 Fix] 로비 전송 모드 — 3개 Grid에 일괄 활성화
+	// ════════════════════════════════════════════════════════════════
+
+	/** 3개 Grid에 로비 전송 모드 활성화 + 통합 델리게이트 바인딩 */
+	void EnableLobbyTransferMode();
+
+	/** 통합 전송 요청 델리게이트 — 어느 Grid에서든 우클릭 시 EntryIndex 전달 */
+	UPROPERTY(BlueprintAssignable, Category = "인벤토리|로비")
+	FOnLobbyTransferRequested OnSpatialTransferRequested;
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 9] 컨테이너 Grid 연결 — SpatialInventory ↔ ContainerGrid 크로스 링크
+	// ════════════════════════════════════════════════════════════════
+
+	/** 컨테이너 Grid 연결 — 3개 Grid 모두에 LinkedContainerGrid 설정 + 활성 Grid 역방향 연결 */
+	void LinkContainerGrid(UInv_InventoryGrid* ContainerGrid);
+
+	/** 컨테이너 Grid 연결 해제 */
+	void UnlinkContainerGrid();
+
+	virtual void NativeDestruct() override; // [Phase 11] Quick Equip 델리게이트 해제
+
+private:
+	// [Phase 4 Fix] Grid → SpatialInventory 통합 전달 콜백
+	UFUNCTION()
+	void OnGridTransferRequested(int32 EntryIndex, int32 TargetGridIndex);
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 11] Alt+LMB 빠른 장착 핸들러
+	// ════════════════════════════════════════════════════════════════
+	UFUNCTION()
+	void OnGridQuickEquipRequested(UInv_InventoryItem* Item, int32 EntryIndex);
+
+	// ──────────────────────────────────────────────────────────────── 
 	// 여기 있는 UPROPERTY와 위젯과의 이름이 동일해야만함.
 	
 	//장착 슬롯 늘리는 부분
@@ -147,4 +197,17 @@ private:
 	void BroadcastSlotClickedDelegates(UInv_InventoryItem* ItemToEquip, UInv_InventoryItem* ItemToUnequip, int32 WeaponSlotIndex = -1) const; // 슬롯 클릭 델리게이트 방송
 	
 	TWeakObjectPtr<UInv_InventoryGrid> ActiveGrid; // 활성 그리드가 생기면 늘 활성해주는 포인터.
+
+	/** [Phase 9] 연결된 컨테이너 Grid 참조 (탭 전환 시 역방향 업데이트용) */
+	TWeakObjectPtr<UInv_InventoryGrid> LinkedContainerGridRef;
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 4 Lobby] 수동 바인딩된 InvComp 캐시
+	// ════════════════════════════════════════════════════════════════
+	// 로비에서 LoadoutComp를 지정할 때 사용.
+	// 비어있으면 기존 자동 탐색(UInv_InventoryStatics::GetInventoryComponent) 사용.
+	TWeakObjectPtr<UInv_InventoryComponent> BoundInventoryComponent;
+
+	// 캐시된 InvComp 우선 반환 (없으면 자동 탐색 폴백)
+	UInv_InventoryComponent* GetBoundInventoryComponent() const;
 };

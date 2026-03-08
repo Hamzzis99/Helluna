@@ -20,6 +20,8 @@
 #include "Items/Fragments/Inv_AttachmentFragments.h"
 #include "Widgets/Inventory/SlottedItems/Inv_EquippedSlottedItem.h"
 #include "InventoryManagement/Utils/Inv_InventoryStatics.h"
+#include "InventoryManagement/Components/Inv_LootContainerComponent.h"
+#include "Widgets/Inventory/Container/Inv_ContainerWidget.h"
 #include "Interfaces/Inv_Interface_Primary.cpp"
 
 AInv_PlayerController::AInv_PlayerController()
@@ -37,12 +39,23 @@ void AInv_PlayerController::Tick(float DeltaSeconds)
 
 void AInv_PlayerController::ToggleInventory()
 {
+	// Phase 9: 컨테이너 열려있으면 닫기
+	if (bIsViewingContainer)
+	{
+		Server_CloseContainer();
+		return;
+	}
+
 	if (!InventoryComponent.IsValid()) return;
 	InventoryComponent->ToggleInventoryMenu();
 
 	if (InventoryComponent->IsMenuOpen())
 	{
-		HUDWidget->SetVisibility(ESlateVisibility::Hidden);
+		// U10: HUDWidget null 체크
+		if (IsValid(HUDWidget))
+		{
+			HUDWidget->SetVisibility(ESlateVisibility::Hidden);
+		}
 
 #if INV_DEBUG_ATTACHMENT
 		// ★ [부착진단-UI] 인벤토리 열기 시 InventoryList 아이템 부착물 상태 확인 ★
@@ -78,7 +91,11 @@ void AInv_PlayerController::ToggleInventory()
 	}
 	else
 	{
-		HUDWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+		// U10: HUDWidget null 체크
+		if (IsValid(HUDWidget))
+		{
+			HUDWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+		}
 	}
 }
 
@@ -133,6 +150,14 @@ void AInv_PlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	UE_LOG(LogTemp, Warning, TEXT("║ HasAuthority: %s"), HasAuthority() ? TEXT("TRUE") : TEXT("FALSE"));
 	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 #endif
+
+	// Phase 9: 컨테이너 잠금 해제
+	if (ActiveContainerComp.IsValid())
+	{
+		ActiveContainerComp->ClearCurrentUser();
+		ActiveContainerComp.Reset();
+	}
+	bIsViewingContainer = false;
 
 	// ⭐ 서버에서만 처리 (인벤토리 저장 + 로그아웃)
 	if (HasAuthority())
@@ -238,6 +263,9 @@ void AInv_PlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	UE_LOG(LogTemp, Warning, TEXT(""));
 #endif
 
+	// [Fix26] 람다 타이머 핸들 해제
+	GetWorldTimerManager().ClearTimer(GridRestoreTimerHandle);
+
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -245,7 +273,13 @@ void AInv_PlayerController::SetupInputComponent()
 {
 	Super::SetupInputComponent();
 
-	UEnhancedInputComponent* EnhancedInputComponent = CastChecked<UEnhancedInputComponent>(InputComponent);
+	// [Fix26] CastChecked → Cast + null 체크 (프로세스 종료 방지)
+	UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(InputComponent);
+	if (!EnhancedInputComponent)
+	{
+		UE_LOG(LogInventory, Error, TEXT("[InvPlayerController] InputComponent가 UEnhancedInputComponent가 아닙니다! 입력 바인딩 스킵"));
+		return;
+	}
 
 	EnhancedInputComponent->BindAction(PrimaryInteractAction, ETriggerEvent::Started, this, &AInv_PlayerController::PrimaryInteract);
 	EnhancedInputComponent->BindAction(ToggleInventoryAction, ETriggerEvent::Started, this, &AInv_PlayerController::ToggleInventory);
@@ -264,6 +298,21 @@ void AInv_PlayerController::SetupInputComponent()
 void AInv_PlayerController::PrimaryInteract()
 {
 	if (!ThisActor.IsValid()) return;
+
+	// Phase 9: 컨테이너 상호작용
+	UInv_LootContainerComponent* ContainerComp = ThisActor->FindComponentByClass<UInv_LootContainerComponent>();
+	if (IsValid(ContainerComp))
+	{
+		if (bIsViewingContainer)
+		{
+			Server_CloseContainer();
+		}
+		else
+		{
+			Server_OpenContainer(ContainerComp);
+		}
+		return;
+	}
 
 	if (ThisActor->Implements<UInv_Interface_Primary>())
 	{
@@ -341,7 +390,10 @@ void AInv_PlayerController::TraceForInteractables()
 
 	const FVector TraceEnd = TraceStart + (Forward * TraceLength);
 	FHitResult HitResult;
-	GetWorld()->LineTraceSingleByChannel(HitResult, TraceStart, TraceEnd, ItemTraceChannel);
+	// [Fix26] GetWorld() null 체크 (레벨 전환 중 Tick 크래시 방지)
+	UWorld* TraceWorld = GetWorld();
+	if (!TraceWorld) return;
+	TraceWorld->LineTraceSingleByChannel(HitResult, TraceStart, TraceEnd, ItemTraceChannel);
 
 	LastActor = ThisActor;
 	ThisActor = HitResult.GetActor();
@@ -394,10 +446,19 @@ void AInv_PlayerController::TraceForInteractables()
 			}
 			else
 			{
-				UInv_ItemComponent* ItemComponent = ThisActor->FindComponentByClass<UInv_ItemComponent>();
-				if (IsValid(ItemComponent))
+				// Phase 9: 컨테이너 표시 이름
+				UInv_LootContainerComponent* LootComp = ThisActor->FindComponentByClass<UInv_LootContainerComponent>();
+				if (IsValid(LootComp))
 				{
-					HUDWidget->ShowPickupMessage(ItemComponent->GetPickupMessage());
+					HUDWidget->ShowPickupMessage(LootComp->ContainerDisplayName.ToString());
+				}
+				else
+				{
+					UInv_ItemComponent* ItemComponent = ThisActor->FindComponentByClass<UInv_ItemComponent>();
+					if (IsValid(ItemComponent))
+					{
+						HUDWidget->ShowPickupMessage(ItemComponent->GetPickupMessage());
+					}
 				}
 			}
 		}
@@ -1244,17 +1305,49 @@ void AInv_PlayerController::Client_RequestInventoryState_Implementation()
 	TArray<FInv_SavedItemData> CollectedData = CollectInventoryGridState();
 
 	// Step 2: 서버로 전송
+	// [Fix15] 청크 분할 전송 — 65KB RPC 번치 크기 제한 초과 방지
+	// 아이템당 SerializedManifest(바이너리 BLOB)가 커서 12개 이상이면 65KB 초과 가능
+	constexpr int32 ChunkSize = 5; // 아이템 5개씩 분할 (안전 마진 확보)
+
 #if INV_DEBUG_PLAYER
 	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("▶ [Step 2] Server_ReceiveInventoryState() RPC로 서버에 전송..."));
-	UE_LOG(LogTemp, Warning, TEXT("   전송할 아이템: %d개"), CollectedData.Num());
+	UE_LOG(LogTemp, Warning, TEXT("▶ [Step 2] Server_ReceiveInventoryStateChunk() RPC로 서버에 청크 전송..."));
+	UE_LOG(LogTemp, Warning, TEXT("   전송할 아이템: %d개, 청크 크기: %d"), CollectedData.Num(), ChunkSize);
 #endif
 
-	Server_ReceiveInventoryState(CollectedData);
+	if (CollectedData.Num() <= ChunkSize)
+	{
+		// 소량 → 단일 청크로 전송
+		Server_ReceiveInventoryStateChunk(CollectedData, true);
+	}
+	else
+	{
+		// 대량 → 분할 전송
+		const int32 TotalItems = CollectedData.Num();
+		for (int32 StartIdx = 0; StartIdx < TotalItems; StartIdx += ChunkSize)
+		{
+			const int32 EndIdx = FMath::Min(StartIdx + ChunkSize, TotalItems);
+			const bool bIsLast = (EndIdx >= TotalItems);
+
+			TArray<FInv_SavedItemData> Chunk;
+			Chunk.Reserve(EndIdx - StartIdx);
+			for (int32 i = StartIdx; i < EndIdx; i++)
+			{
+				Chunk.Add(CollectedData[i]);
+			}
+
+#if INV_DEBUG_PLAYER
+			UE_LOG(LogTemp, Warning, TEXT("   청크 전송: [%d~%d] (%d개), bIsLast=%s"),
+				StartIdx, EndIdx - 1, Chunk.Num(), bIsLast ? TEXT("true") : TEXT("false"));
+#endif
+
+			Server_ReceiveInventoryStateChunk(Chunk, bIsLast);
+		}
+	}
 
 #if INV_DEBUG_PLAYER
 	UE_LOG(LogTemp, Warning, TEXT(""));
-	UE_LOG(LogTemp, Warning, TEXT("✅ 클라이언트 → 서버 전송 완료!"));
+	UE_LOG(LogTemp, Warning, TEXT("✅ 클라이언트 → 서버 청크 전송 완료!"));
 	UE_LOG(LogTemp, Warning, TEXT("════════════════════════════════════════════════════════════════════════════════"));
 #endif
 }
@@ -1327,6 +1420,60 @@ void AInv_PlayerController::Server_ReceiveInventoryState_Implementation(const TA
 #endif
 }
 
+// ════════════════════════════════════════════════════════════════════════════════
+// [Fix15] Server_ReceiveInventoryStateChunk — 청크 분할 수신
+// ════════════════════════════════════════════════════════════════════════════════
+// 클라이언트가 인벤토리 데이터를 N개씩 나눠 보낼 때 사용.
+// 각 청크를 PendingServerChunkItems에 누적, bIsLastChunk=true일 때 델리게이트 브로드캐스트.
+// ════════════════════════════════════════════════════════════════════════════════
+
+bool AInv_PlayerController::Server_ReceiveInventoryStateChunk_Validate(
+	const TArray<FInv_SavedItemData>& ChunkItems, bool bIsLastChunk)
+{
+	// 청크당 최대 100개, 누적 최대 1000개
+	if (ChunkItems.Num() > 100)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Server_ReceiveInventoryStateChunk_Validate] 청크 아이템 수 초과: %d"), ChunkItems.Num());
+		return false;
+	}
+	return true;
+}
+
+void AInv_PlayerController::Server_ReceiveInventoryStateChunk_Implementation(
+	const TArray<FInv_SavedItemData>& ChunkItems, bool bIsLastChunk)
+{
+	UE_LOG(LogTemp, Log, TEXT("[Fix15] Server_ReceiveInventoryStateChunk: 청크 수신 %d개, bIsLastChunk=%s, 누적=%d"),
+		ChunkItems.Num(), bIsLastChunk ? TEXT("true") : TEXT("false"), PendingServerChunkItems.Num());
+
+	PendingServerChunkItems.Append(ChunkItems);
+
+	if (!bIsLastChunk)
+	{
+		return; // 아직 더 올 청크가 있음
+	}
+
+	// 마지막 청크 → 누적된 전체 데이터로 델리게이트 브로드캐스트
+	UE_LOG(LogTemp, Log, TEXT("[Fix15] 마지막 청크 수신. 총 %d개 아이템 → 델리게이트 브로드캐스트"),
+		PendingServerChunkItems.Num());
+
+#if INV_DEBUG_PLAYER
+	UE_LOG(LogTemp, Warning, TEXT(""));
+	UE_LOG(LogTemp, Warning, TEXT("▶ [Fix15] OnInventoryStateReceived 델리게이트 브로드캐스트 (청크 누적 완료)..."));
+#endif
+
+	if (OnInventoryStateReceived.IsBound())
+	{
+		OnInventoryStateReceived.Broadcast(this, PendingServerChunkItems);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Fix15] 델리게이트 바인딩 안 됨! (GameMode에서 바인딩 필요)"));
+	}
+
+	// 누적 버퍼 초기화
+	PendingServerChunkItems.Empty();
+}
+
 // ============================================
 // 📌 인벤토리 로드 RPC 구현 (Phase 5)
 // ============================================
@@ -1385,8 +1532,8 @@ void AInv_PlayerController::Client_ReceiveInventoryData_Implementation(const TAr
 	// SavedItems 복사본 생성 (타이머 람다에서 사용)
 	TArray<FInv_SavedItemData> SavedItemsCopy = SavedItems;
 
-	FTimerHandle TimerHandle;
-	GetWorldTimerManager().SetTimer(TimerHandle, [this, SavedItemsCopy]()
+	// [Fix26] 로컬 핸들 → 멤버 변수 (EndPlay에서 해제 가능)
+	GetWorldTimerManager().SetTimer(GridRestoreTimerHandle, [this, SavedItemsCopy]()
 	{
 		DelayedRestoreGridPositions(SavedItemsCopy);
 	}, 0.5f, false);
@@ -1542,4 +1689,133 @@ AInv_EquipActor* AInv_PlayerController::GetCurrentEquipActor() const
 		return EquipmentComponent->GetActiveWeaponActor();
 	}
 	return nullptr;
+}
+
+// ════════════════════════════════════════════════════════════════
+// Phase 9: 컨테이너 RPC 구현
+// ════════════════════════════════════════════════════════════════
+
+void AInv_PlayerController::Server_OpenContainer_Implementation(UInv_LootContainerComponent* Container)
+{
+	if (!IsValid(Container)) return;
+
+	// 활성화 체크
+	if (!Container->IsActivated())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Inv_PlayerController] 컨테이너 미활성화 → 열기 거부"));
+		return;
+	}
+
+	// 잠금 체크: 이미 다른 플레이어가 사용 중
+	if (IsValid(Container->CurrentUser) && Container->CurrentUser != this)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Inv_PlayerController] 컨테이너 잠금 → %s가 사용 중"),
+			*Container->CurrentUser->GetName());
+		return;
+	}
+
+	Container->SetCurrentUser(this);
+	ActiveContainerComp = Container;
+
+	Client_ShowContainerUI(Container);
+}
+
+void AInv_PlayerController::Server_CloseContainer_Implementation()
+{
+	if (ActiveContainerComp.IsValid())
+	{
+		ActiveContainerComp->ClearCurrentUser();
+		ActiveContainerComp.Reset();
+	}
+
+	Client_HideContainerUI();
+}
+
+void AInv_PlayerController::Client_ShowContainerUI_Implementation(UInv_LootContainerComponent* Container)
+{
+	if (!IsValid(Container) || !InventoryComponent.IsValid()) return;
+
+	// 1. 인벤토리 열기 (닫혀있으면) — SpatialInventory(풀 인벤토리 UI)를 함께 표시
+	if (!InventoryComponent->IsMenuOpen())
+	{
+		InventoryComponent->ToggleInventoryMenu();
+	}
+
+	// 2. SpatialInventory 참조 확보 (크로스 링크용)
+	UInv_SpatialInventory* SpatialInv = Cast<UInv_SpatialInventory>(InventoryComponent->GetInventoryMenu());
+	if (!IsValid(SpatialInv))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Inv_PlayerController] SpatialInventory 캐스트 실패"));
+		return;
+	}
+
+	// 3. 컨테이너 위젯 생성 (최초 1회)
+	if (!IsValid(ContainerWidget))
+	{
+		if (!ContainerWidgetClass)
+		{
+			UE_LOG(LogTemp, Error, TEXT("[Inv_PlayerController] ContainerWidgetClass가 설정되지 않음"));
+			return;
+		}
+		ContainerWidget = CreateWidget<UInv_ContainerWidget>(this, ContainerWidgetClass);
+	}
+
+	if (!IsValid(ContainerWidget)) return;
+
+	// 4. 이전 컨테이너 패널이 열려있으면 정리 후 재초기화
+	if (ContainerWidget->IsInViewport())
+	{
+		ContainerWidget->CleanupPanels();
+		ContainerWidget->RemoveFromParent();
+	}
+
+	// 5. 초기화 + 표시 (SpatialInventory 전달)
+	ContainerWidget->InitializePanels(Container, InventoryComponent.Get(), SpatialInv);
+	ContainerWidget->AddToViewport();
+
+	bIsViewingContainer = true;
+	ActiveContainerComp = Container;
+
+	// HUD 숨기기
+	if (IsValid(HUDWidget))
+	{
+		HUDWidget->SetVisibility(ESlateVisibility::Hidden);
+	}
+
+	// 마우스 커서 표시
+	SetShowMouseCursor(true);
+	SetInputMode(FInputModeGameAndUI());
+
+	UE_LOG(LogTemp, Log, TEXT("[Inv_PlayerController] 컨테이너 UI 표시 (SpatialInventory 통합): %s"),
+		*Container->ContainerDisplayName.ToString());
+}
+
+void AInv_PlayerController::Client_HideContainerUI_Implementation()
+{
+	// 1. ContainerWidget 정리 (SpatialInventory 링크 해제 포함)
+	if (IsValid(ContainerWidget))
+	{
+		ContainerWidget->CleanupPanels();
+		ContainerWidget->RemoveFromParent();
+	}
+
+	bIsViewingContainer = false;
+	ActiveContainerComp.Reset();
+
+	// 2. 인벤토리도 닫기 (열려있으면) — ToggleInventoryMenu가 HUD/커서/입력모드 처리
+	if (InventoryComponent.IsValid() && InventoryComponent->IsMenuOpen())
+	{
+		InventoryComponent->ToggleInventoryMenu();
+	}
+
+	// 3. 안전을 위해 상태 보장 (ToggleInventoryMenu에서 이미 처리되지만 방어 코드)
+	if (IsValid(HUDWidget))
+	{
+		HUDWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+
+	SetShowMouseCursor(false);
+	SetInputMode(FInputModeGameOnly());
+
+	UE_LOG(LogTemp, Log, TEXT("[Inv_PlayerController] 컨테이너 UI 닫기 (인벤토리 함께 닫기)"));
 }

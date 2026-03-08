@@ -46,6 +46,11 @@ public:
 	UInv_InventoryItem* GetOriginalSplitItem() const { return OriginalSplitItem.Get(); }
 	void SetOriginalSplitItem(UInv_InventoryItem* Item);
 
+	// R키 아이템 회전 (90도 토글)
+	bool IsRotated() const { return bRotated; }
+	void SetRotated(bool bValue) { bRotated = bValue; }
+	UImage* GetImageIcon() const { return Image_Icon; } // 아이콘 이미지 접근 (RenderTransform용)
+
 private:
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UImage> Image_Icon;
@@ -54,7 +59,7 @@ private:
 	TObjectPtr<UTextBlock> Text_StackCount;
 
 	//이전 그리드 인덱스를 알아내는 변수 우리가 Grid에서 알아내야 할 변수들
-	int32 PreviousGridIndex;
+	int32 PreviousGridIndex{ INDEX_NONE }; // U27: 미초기화 방지
 	int32 EntryIndex{ INDEX_NONE }; // ⭐ FastArray Entry Index
 	FIntPoint GridDimensions;
 	TWeakObjectPtr<UInv_InventoryItem> InventoryItem;
@@ -65,4 +70,6 @@ private:
 	bool bIsSplitItem{ false }; // Split으로 생성된 HoverItem인지 플래그
 	TWeakObjectPtr<UInv_InventoryItem> OriginalSplitItem; // Split 시 원본 아이템 (서버 RPC용)
 
+	// R키 회전 상태 (0° ↔ 90° 토글)
+	bool bRotated{ false };
 };

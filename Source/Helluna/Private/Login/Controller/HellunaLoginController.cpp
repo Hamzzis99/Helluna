@@ -1,5 +1,5 @@
 #include "Login/Controller/HellunaLoginController.h"
-#include "Helluna.h"  // 전처리기 플래그
+#include "Helluna.h"
 #include "Login/Widget/HellunaLoginWidget.h"
 #include "Login/Widget/HellunaCharacterSelectWidget.h"
 #include "Login/Widget/HellunaCharSelectWidget_V1.h"
@@ -11,6 +11,7 @@
 #include "Player/HellunaPlayerState.h"
 #include "Blueprint/UserWidget.h"
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
+#include "Components/SceneCaptureComponent2D.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/SkeletalMesh.h"
 #include "Kismet/GameplayStatics.h"
@@ -195,6 +196,12 @@ void AHellunaLoginController::ShowLoginWidget()
 		}
 	}
 
+	// 로딩 화면 해제 (서버 접속 완료 후)
+	if (UMDF_GameInstance* GI2 = Cast<UMDF_GameInstance>(GetGameInstance()))
+	{
+		GI2->HideLoadingScreen();
+	}
+
 	if (!LoginWidgetClass)
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[LoginController] LoginWidgetClass가 nullptr!"));
@@ -329,7 +336,10 @@ void AHellunaLoginController::Server_RequestSwapAfterTravel_Implementation()
 #endif
 
 	// GameMode에서 SwapToGameController 호출
-	if (AHellunaBaseGameMode* GM = GetWorld()->GetAuthGameMode<AHellunaBaseGameMode>())
+	// [Fix26] GetWorld() null 체크
+	UWorld* World = GetWorld();
+	if (!World) return;
+	if (AHellunaBaseGameMode* GM = World->GetAuthGameMode<AHellunaBaseGameMode>())
 	{
 		if (!PlayerId.IsEmpty())
 		{
@@ -363,7 +373,9 @@ void AHellunaLoginController::Server_RequestLogin_Implementation(const FString& 
 	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 #endif
 
-	AHellunaBaseGameMode* GM = Cast<AHellunaBaseGameMode>(GetWorld()->GetAuthGameMode());
+	// [Fix26] GetWorld() null 체크
+	UWorld* LoginWorld = GetWorld();
+	AHellunaBaseGameMode* GM = LoginWorld ? Cast<AHellunaBaseGameMode>(LoginWorld->GetAuthGameMode()) : nullptr;
 	if (GM)
 	{
 		GM->ProcessLogin(this, PlayerId, Password);
@@ -425,6 +437,15 @@ void AHellunaLoginController::Client_PrepareControllerSwap_Implementation()
 
 void AHellunaLoginController::ShowLoginResult(bool bSuccess, const FString& Message)
 {
+	// 로그인 실패 시 로딩 화면 해제
+	if (!bSuccess)
+	{
+		if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance()))
+		{
+			GI->HideLoadingScreen();
+		}
+	}
+
 	if (!LoginWidget) return;
 
 	if (bSuccess)
@@ -454,7 +475,9 @@ void AHellunaLoginController::Server_SelectCharacter_Implementation(int32 Charac
 	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 #endif
 
-	AHellunaBaseGameMode* GM = Cast<AHellunaBaseGameMode>(GetWorld()->GetAuthGameMode());
+	// [Fix26] GetWorld() null 체크
+	UWorld* SelectWorld = GetWorld();
+	AHellunaBaseGameMode* GM = SelectWorld ? Cast<AHellunaBaseGameMode>(SelectWorld->GetAuthGameMode()) : nullptr;
 	if (GM)
 	{
 		// int32 → EHellunaHeroType 변환
@@ -494,12 +517,18 @@ void AHellunaLoginController::Client_CharacterSelectionResult_Implementation(boo
 	}
 
 	// ════════════════════════════════════════════
-	// 📌 선택 성공 시 프리뷰 액터 파괴 (비용 0)
+	// 선택 성공 시 프리뷰 액터 파괴 + 로딩 화면 표시
 	// ════════════════════════════════════════════
 	if (bSuccess)
 	{
 		DestroyPreviewActors();   // V1
 		DestroyPreviewSceneV2();  // V2
+
+		// 게임 진입 대기 로딩 화면 표시 (맵 전환 시 자동 파괴됨)
+		if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance()))
+		{
+			GI->ShowLoadingScreen(TEXT("게임 준비 중..."));
+		}
 	}
 }
 
@@ -517,6 +546,12 @@ void AHellunaLoginController::Client_ShowCharacterSelectUI_Implementation(const 
 	}
 	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 #endif
+
+	// 로딩 화면 해제 (로그인 성공 → 캐릭터 선택 UI 표시 전)
+	if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance()))
+	{
+		GI->HideLoadingScreen();
+	}
 
 	// LoginWidget에 캐릭터 선택 UI 표시 요청
 	if (!LoginWidget) return;
@@ -920,12 +955,57 @@ void AHellunaLoginController::SpawnPreviewSceneV2()
 	}
 
 	// ════════════════════════════════════════════
-	// 📌 씬 초기화
+	// 📌 씬 초기화 (RT는 더 이상 Scene에 전달하지 않음)
 	// ════════════════════════════════════════════
-	SpawnedPreviewSceneV2->InitializeScene(Meshes, AnimClasses, PreviewV2RenderTarget);
+	SpawnedPreviewSceneV2->InitializeScene(Meshes, AnimClasses);
+
+	// ════════════════════════════════════════════
+	// 📌 로그인 전용 SceneCapture 생성 (로비에서는 직접 뷰포트 사용)
+	// ════════════════════════════════════════════
+	LoginSceneCapture = NewObject<USceneCaptureComponent2D>(SpawnedPreviewSceneV2, TEXT("LoginSceneCapture"));
+	if (LoginSceneCapture)
+	{
+		LoginSceneCapture->RegisterComponent();
+		LoginSceneCapture->AttachToComponent(SpawnedPreviewSceneV2->GetRootComponent(),
+			FAttachmentTransformRules::KeepRelativeTransform);
+
+		// 카메라 설정 (Scene의 카메라 값 참조)
+		LoginSceneCapture->SetRelativeLocation(SpawnedPreviewSceneV2->GetCameraOffset());
+		LoginSceneCapture->SetRelativeRotation(SpawnedPreviewSceneV2->GetCameraRotation());
+		LoginSceneCapture->FOVAngle = SpawnedPreviewSceneV2->GetCameraFOV();
+
+		// RT 바인딩
+		LoginSceneCapture->TextureTarget = PreviewV2RenderTarget;
+
+		// 캡처 설정
+		LoginSceneCapture->bCaptureEveryFrame = true;
+		LoginSceneCapture->bCaptureOnMovement = false;
+		LoginSceneCapture->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;
+		LoginSceneCapture->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;
+
+		// ShowFlags
+		LoginSceneCapture->ShowFlags.SetAtmosphere(false);
+		LoginSceneCapture->ShowFlags.SetFog(false);
+		LoginSceneCapture->ShowFlags.SetVolumetricFog(false);
+		LoginSceneCapture->ShowFlags.SetSkyLighting(false);
+		LoginSceneCapture->ShowFlags.SetDynamicShadows(false);
+		LoginSceneCapture->ShowFlags.SetGlobalIllumination(false);
+		LoginSceneCapture->ShowFlags.SetScreenSpaceReflections(false);
+		LoginSceneCapture->ShowFlags.SetAmbientOcclusion(false);
+		LoginSceneCapture->ShowFlags.SetReflectionEnvironment(false);
+
+		// AutoExposure
+		LoginSceneCapture->PostProcessSettings.bOverride_AutoExposureBias = true;
+		LoginSceneCapture->PostProcessSettings.AutoExposureBias = 3.0f;
+		LoginSceneCapture->PostProcessBlendWeight = 1.0f;
+
+		// ShowOnlyActors
+		LoginSceneCapture->ShowOnlyActors.Empty();
+		LoginSceneCapture->ShowOnlyActors.Add(SpawnedPreviewSceneV2);
+	}
 
 #if HELLUNA_DEBUG_CHARACTER_PREVIEW_V2
-	UE_LOG(LogHelluna, Warning, TEXT("║ ✅ V2 프리뷰 씬 스폰 및 초기화 완료"));
+	UE_LOG(LogHelluna, Warning, TEXT("║ V2 프리뷰 씬 스폰 및 초기화 완료 (로그인 전용 SceneCapture)"));
 	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 	UE_LOG(LogHelluna, Warning, TEXT(""));
 #endif
@@ -939,6 +1019,9 @@ void AHellunaLoginController::DestroyPreviewSceneV2()
 		UE_LOG(LogHelluna, Warning, TEXT("[로그인컨트롤러] 🗑️ V2 프리뷰 씬 파괴"));
 	}
 #endif
+
+	// LoginSceneCapture는 SpawnedPreviewSceneV2의 자식이므로 Destroy 시 함께 정리됨
+	LoginSceneCapture = nullptr;
 
 	if (IsValid(SpawnedPreviewSceneV2))
 	{

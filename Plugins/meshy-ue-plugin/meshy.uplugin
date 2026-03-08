@@ -1,0 +1,30 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1.3",
+	"FriendlyName": "meshy",
+	"Description": "meshy_bridge",
+	"Category": "Other",
+	"CreatedBy": "wyn",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": false,
+	"Installed": true,
+	"SupportedTargetPlatforms": [
+		"Win64",
+		"Mac"
+	],
+	"Modules": [
+		{
+			"Name": "meshy",
+			"Type": "Editor",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [
+				"Win64",
+				"Mac"
+			]
+		}
+	]
+}

@@ -9,6 +9,7 @@ class UHellunaLoginWidget;
 class AHellunaCharacterPreviewActor;
 class AHellunaCharacterSelectSceneV2;
 class UTextureRenderTarget2D;
+class USceneCaptureComponent2D;
 class USkeletalMesh;
 class UMaterialInterface;
 
@@ -274,6 +275,10 @@ protected:
 	/** V2 RenderTarget (GC 방지) */
 	UPROPERTY()
 	TObjectPtr<UTextureRenderTarget2D> PreviewV2RenderTarget;
+
+	/** V2 SceneCapture (로그인 화면 전용 — 로비에서는 직접 뷰포트 사용) */
+	UPROPERTY()
+	TObjectPtr<USceneCaptureComponent2D> LoginSceneCapture;
 
 	/** V2 프리뷰 씬 스폰 */
 	void SpawnPreviewSceneV2();

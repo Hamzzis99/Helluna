@@ -23,6 +23,19 @@
 
 class ATargetPoint;
 class AHellunaEnemyMassSpawner;
+class UHellunaGameResultWidget;
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Phase 7: 게임 종료 사유
+// ════════════════════════════════════════════════════════════════════════════════
+UENUM(BlueprintType)
+enum class EHellunaGameEndReason : uint8
+{
+	None,
+	Escaped        UMETA(DisplayName = "탈출 성공"),
+	AllDead        UMETA(DisplayName = "전원 사망"),
+	ServerShutdown UMETA(DisplayName = "서버 셧다운"),
+};
 
 UCLASS()
 class HELLUNA_API AHellunaDefenseGameMode : public AHellunaBaseGameMode
@@ -257,4 +270,61 @@ protected:
 	 * FBossSpawnEntry를 찾은 뒤 이 함수에 전달한다.
 	 */
 	void TrySummonBoss(const FBossSpawnEntry& Entry);
+
+	// ════════════════════════════════════════════════════════════════════════════════
+	// Phase 7: 게임 종료 + 결과 반영 + 로비 복귀
+	// ════════════════════════════════════════════════════════════════════════════════
+public:
+	UFUNCTION(BlueprintCallable, Category = "Defense(게임)|GameEnd(게임종료)",
+		meta = (DisplayName = "게임 종료 (EndGame)"))
+	void EndGame(EHellunaGameEndReason Reason);
+
+	virtual void PostLogin(APlayerController* NewPlayer) override;
+	virtual void Logout(AController* Exiting) override;
+
+protected:
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
+	/** 게임 종료 완료 플래그 (중복 호출 방지) */
+	UPROPERTY(BlueprintReadOnly, Category = "Defense(게임)|GameEnd(게임종료)")
+	bool bGameEnded = false;
+
+	/** 로비 서버 URL (BP에서 설정, Phase 12f 이후 폴백용) */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|GameEnd(게임종료)",
+		meta = (DisplayName = "로비 서버 URL (Fallback)"))
+	FString LobbyServerURL;
+
+	// ════════════════════════════════════════════════════════════════
+	// Phase 12b: 서버 레지스트리 — 채널 JSON 파일 관리
+	// ════════════════════════════════════════════════════════════════
+
+	/** 현재 접속 플레이어 수 (레지스트리 갱신용) */
+	int32 CurrentPlayerCount = 0;
+
+	FString GetRegistryDirectoryPath() const;
+	FString GetRegistryFilePath() const;
+	int32 GetServerPort() const;
+	void WriteRegistryFile(const FString& Status, int32 PlayerCount);
+
+	/** 하트비트 타이머 핸들 (30초마다 레지스트리 갱신) */
+	FTimerHandle RegistryHeartbeatTimer;
+
+	void DeleteRegistryFile();
+
+	/** 결과 UI 위젯 클래스 (BP에서 설정) */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|GameEnd(게임종료)",
+		meta = (DisplayName = "결과 위젯 클래스"))
+	TSubclassOf<UHellunaGameResultWidget> GameResultWidgetClass;
+
+	/** 결과 UI 표시 → 로비 복귀까지 대기 시간 (초) */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|GameEnd(게임종료)",
+		meta = (DisplayName = "결과 화면 표시 시간(초)", ClampMin = "1.0"))
+	float ResultDisplayDuration = 10.f;
+
+public:
+	/** 콘솔 커맨드 핸들러 (디버그용): EndGame Escaped / EndGame AllDead */
+	static void CmdEndGame(const TArray<FString>& Args, UWorld* World);
+
+private:
+	void ProcessPlayerGameResult(APlayerController* PC, bool bSurvived);
 };

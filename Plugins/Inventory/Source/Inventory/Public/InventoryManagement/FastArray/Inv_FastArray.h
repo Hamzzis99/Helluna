@@ -8,6 +8,7 @@
 #include "Inv_FastArray.generated.h"
 
 class UInv_InventoryComponent;
+class UInv_LootContainerComponent;
 class UInv_InventoryItem;
 class UInv_ItemComponent;
 
@@ -55,6 +56,15 @@ private:
 	// true면 PostReplicatedAdd에서 그리드 배치를 스킵 (공간 선점 방지)
 	UPROPERTY()
 	bool bIsEquipped = false;
+
+	// ⭐ [Fix14] 장착 무기 슬롯 인덱스 (-1=미장착, 0=주무기, 1=보조무기)
+	// bIsEquipped=true일 때 어느 슬롯에 장착됐는지 기록
+	UPROPERTY()
+	int32 WeaponSlotIndex = -1;
+
+	// R키 아이템 회전 상태 (90도 회전 여부)
+	UPROPERTY()
+	bool bRotated = false;
 };
 
 /* List of inventory Items 
@@ -103,6 +113,7 @@ private:
 	// ⭐ [최적화 #4] 아이템 타입 인덱스 재구축
 	void RebuildItemTypeIndex();
 	friend UInv_InventoryComponent;
+	friend UInv_LootContainerComponent; // ⭐ [Phase 9] 컨테이너 Entries 접근용
 	friend class UInv_InventoryGrid; // ⭐ Entries 접근용
 
 	// Replicated list of items 

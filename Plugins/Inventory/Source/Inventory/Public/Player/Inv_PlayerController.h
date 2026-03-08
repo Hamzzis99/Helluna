@@ -11,6 +11,8 @@ class AInv_EquipActor;
 class UInputMappingContext;
 class UInputAction;
 class UInv_HUDWidget;
+class UInv_ContainerWidget;
+class UInv_LootContainerComponent;
 
 // ════════════════════════════════════════════════════════════════
 // 📌 [Phase 6] 부착물 저장 데이터
@@ -198,6 +200,11 @@ struct INVENTORY_API FInv_SavedItemData
 		meta = (DisplayName = "무기 슬롯 인덱스", Tooltip = "무기 슬롯 인덱스입니다. -1은 미장착, 0은 주무기, 1은 보조무기입니다."))
 	int32 WeaponSlotIndex;
 
+	// R키 아이템 회전 상태 (90도 회전 여부)
+	UPROPERTY(BlueprintReadWrite, Category = "인벤토리|저장",
+		meta = (DisplayName = "회전 여부 (Rotated)", Tooltip = "90도 회전 상태입니다."))
+	bool bRotated = false;
+
 	// ============================================
 	// 📌 [Phase 6 Attachment] 부착물 저장 데이터
 	// ============================================
@@ -327,6 +334,31 @@ public:
 		meta = (DisplayName = "인벤토리 토글"))
 	void ToggleInventory();
 
+	// ═══════════════════════════════════════════
+	// Phase 9: 컨테이너 상호작용
+	// ═══════════════════════════════════════════
+
+	/** 컨테이너 UI가 열려있는지 확인 */
+	UFUNCTION(BlueprintCallable, Category = "인벤토리|컨테이너",
+		meta = (DisplayName = "Is Viewing Container (컨테이너 보는 중)"))
+	bool IsViewingContainer() const { return bIsViewingContainer; }
+
+	/** [클라이언트 → 서버] 컨테이너 열기 요청 */
+	UFUNCTION(Server, Reliable)
+	void Server_OpenContainer(UInv_LootContainerComponent* Container);
+
+	/** [클라이언트 → 서버] 컨테이너 닫기 요청 */
+	UFUNCTION(Server, Reliable)
+	void Server_CloseContainer();
+
+	/** [서버 → 클라이언트] 컨테이너 UI 표시 */
+	UFUNCTION(Client, Reliable)
+	void Client_ShowContainerUI(UInv_LootContainerComponent* Container);
+
+	/** [서버 → 클라이언트] 컨테이너 UI 숨기기 */
+	UFUNCTION(Client, Reliable)
+	void Client_HideContainerUI();
+
 	// ============================================
 	// 🆕 [Phase 7.5] 현재 활성 무기의 EquipActor 반환
 	// ============================================
@@ -449,6 +481,11 @@ public:
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_ReceiveInventoryState(const TArray<FInv_SavedItemData>& SavedItems);
 
+	/** [Fix15] 청크 분할 전송 — 65KB RPC 제한 초과 방지
+	 *  클라이언트가 N개씩 나눠 보내고, bIsLastChunk=true일 때 델리게이트 브로드캐스트 */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_ReceiveInventoryStateChunk(const TArray<FInv_SavedItemData>& ChunkItems, bool bIsLastChunk);
+
 	/**
 	 * 서버에서 인벤토리 상태 수신 시 브로드캐스트되는 델리게이트
 	 * GameMode에서 바인딩하여 저장 처리
@@ -512,13 +549,19 @@ private:
 	TWeakObjectPtr<UInv_InventoryComponent> InventoryComponent;
 	TWeakObjectPtr<UInv_EquipmentComponent> EquipmentComponent;
 
-	/** [네트워크 최적화] 청크 분할 수신 시 누적 버퍼 */
+	/** [네트워크 최적화] 클라이언트→서버 청크 분할 수신 시 누적 버퍼 (Client_ReceiveInventoryDataChunk용) */
 	TArray<FInv_SavedItemData> PendingSavedItems;
+
+	/** [Fix15] 서버측 청크 누적 버퍼 (Server_ReceiveInventoryStateChunk용) */
+	TArray<FInv_SavedItemData> PendingServerChunkItems;
 
 	/** [네트워크 최적화] FastArray 폴링 복원용 */
 	TArray<FInv_SavedItemData> PendingRestoreItems;
 	FTimerHandle PendingRestoreTimerHandle;
 	int32 PendingRestoreRetryCount = 0;
+
+	// [Fix26] 로컬 람다 타이머 핸들 → 멤버로 승격 (EndPlay에서 해제)
+	FTimerHandle GridRestoreTimerHandle;
 
 	UPROPERTY(EditDefaultsOnly, Category = "인벤토리",
 		meta = (DisplayName = "기본 입력 매핑 컨텍스트", Tooltip = "기본 입력 매핑 컨텍스트 배열입니다. 인벤토리 관련 입력을 바인딩합니다."))
@@ -564,4 +607,19 @@ private:
 	TWeakObjectPtr<AActor> ThisActor;
 	TWeakObjectPtr<AActor> LastActor;
 	TWeakObjectPtr<AActor> CurrentCraftingStation;
+
+	// ═══════════════════════════════════════════
+	// Phase 9: 컨테이너 UI
+	// ═══════════════════════════════════════════
+
+	UPROPERTY(EditDefaultsOnly, Category = "인벤토리|컨테이너",
+		meta = (DisplayName = "Container Widget Class (컨테이너 위젯 클래스)"))
+	TSubclassOf<UInv_ContainerWidget> ContainerWidgetClass;
+
+	UPROPERTY()
+	TObjectPtr<UInv_ContainerWidget> ContainerWidget;
+
+	bool bIsViewingContainer = false;
+
+	TWeakObjectPtr<UInv_LootContainerComponent> ActiveContainerComp;
 };

@@ -240,6 +240,14 @@ bool FInv_ItemManifest::DeserializeAndApplyFragments(const TArray<uint8>& InData
 	int32 FragmentCount = 0;
 	Reader << FragmentCount;
 
+	// [Fix26] CDO Fragment 수와 저장 데이터 비교 (불일치 = BP 수정 후 구버전 데이터 로드)
+	if (FragmentCount != Fragments.Num())
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[ManifestSerialize] ⚠️ Fragment 수 불일치: 저장=%d, CDO=%d | ItemType=%s — BP 수정 후 구버전 데이터일 수 있음"),
+			FragmentCount, Fragments.Num(), *ItemType.ToString());
+	}
+
 	// 개수 유효성 검증 (음수이거나 비정상적으로 크면 거부)
 	if (FragmentCount < 0 || FragmentCount > 100)
 	{
@@ -262,8 +270,9 @@ bool FInv_ItemManifest::DeserializeAndApplyFragments(const TArray<uint8>& InData
 		if (!NewFragment.IsValid())
 		{
 			UE_LOG(LogTemp, Error,
-				TEXT("[ManifestSerialize] ❌ Fragment[%d] 역직렬화 실패 (IsValid=false) — 전체 복원 중단. ItemType=%s"),
-				i, *ItemType.ToString());
+				TEXT("[ManifestSerialize] ❌ Fragment[%d/%d] 역직렬화 실패 (IsValid=false) — 전체 복원 중단. ItemType=%s | ReaderPos=%lld/%lld | ReaderError=%d"),
+				i, FragmentCount, *ItemType.ToString(),
+				MemReader.Tell(), MemReader.TotalSize(), Reader.IsError() ? 1 : 0);
 			return false;
 		}
 

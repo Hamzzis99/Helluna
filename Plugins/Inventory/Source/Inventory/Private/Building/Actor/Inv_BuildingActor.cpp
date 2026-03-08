@@ -1,6 +1,7 @@
 // Gihyeon's Inventory Project
 
 #include "Building/Actor/Inv_BuildingActor.h"
+#include "Inventory.h"
 #include "Components/StaticMeshComponent.h"
 
 // Sets default values
@@ -48,6 +49,8 @@ void AInv_BuildingActor::OnBuildingPlaced_Implementation()
 {
 	// 블루프린트에서 오버라이드하여 사용
 	// 예: 이펙트 재생, 사운드 재생 등
+#if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("Building placed: %s"), *GetName());
+#endif
 }
 

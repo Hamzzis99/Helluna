@@ -17,6 +17,7 @@ class UInv_InventoryItem;
 class UInv_InventoryBase;
 class UInv_InventoryGrid;
 class AInv_EquipActor;
+class UInv_LootContainerComponent;
 struct FInv_ItemManifest;
 struct FInv_PlayerSaveData;
 
@@ -51,13 +52,13 @@ public:
 	void TryAddItem(UInv_ItemComponent* ItemComponent);
 
 	//서버 부분 RPC로 만들 것
-	UFUNCTION(Server, Reliable) // 신뢰하는 것? 서버에 전달하는 것?
+	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_AddNewItem(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder);
 
 	UFUNCTION(Server, Reliable) // 신뢰하는 것? 서버에 전달하는 것?
 	void Server_AddStacksToItem(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder);
 
-	UFUNCTION(Server, Reliable) // 신뢰하는 것? 서버에 전달하는 것?
+	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_DropItem(UInv_InventoryItem* Item, int32 StackCount); // 아이템을 서버에다 어떻게 버릴지
 	
 	UFUNCTION(Server, Reliable) // 신뢰하는 것? 서버에 전달하는 것?
@@ -77,14 +78,15 @@ public:
 
 	// ⭐ [Phase 4 방법2] 클라이언트 Grid 위치를 서버 Entry에 동기화
 	// 클라이언트에서 아이템을 Grid에 배치/이동할 때 호출
-	UFUNCTION(Server, Reliable)
-	void Server_UpdateItemGridPosition(UInv_InventoryItem* Item, int32 GridIndex, uint8 GridCategory);
+	// Unreliable: 시각적 정보이며 MarkDirty 스킵. 유실 시에도 다음 이동에서 보정됨
+	UFUNCTION(Server, Unreliable)
+	void Server_UpdateItemGridPosition(UInv_InventoryItem* Item, int32 GridIndex, uint8 GridCategory, bool bRotated = false);
 
-	UFUNCTION(Server, Reliable) // 크래프팅: 서버에서 아이템 생성 및 인벤토리 추가
+	UFUNCTION(Server, Reliable, WithValidation) // 크래프팅: 서버에서 아이템 생성 및 인벤토리 추가
 	void Server_CraftItem(TSubclassOf<AActor> ItemActorClass);
 
 	// ⭐ 크래프팅 통합 RPC: 공간 체크 → 재료 차감 → 아이템 생성
-	UFUNCTION(Server, Reliable)
+	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_CraftItemWithMaterials(TSubclassOf<AActor> ItemActorClass,
 		const FGameplayTag& MaterialTag1, int32 Amount1,
 		const FGameplayTag& MaterialTag2, int32 Amount2,
@@ -106,7 +108,7 @@ public:
 	// ════════════════════════════════════════════════════════════════
 
 	// 부착물 장착: 인벤토리 Grid에서 부착물을 무기 슬롯에 장착
-	UFUNCTION(Server, Reliable)
+	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_AttachItemToWeapon(int32 WeaponEntryIndex, int32 AttachmentEntryIndex, int32 SlotIndex);
 
 	// 부착물 분리: 무기 슬롯에서 부착물을 분리하여 인벤토리 Grid로 복귀
@@ -116,6 +118,28 @@ public:
 	// 호환성 체크 (UI에서 드래그 중 슬롯 하이라이트용, 읽기 전용)
 	UFUNCTION(BlueprintCallable, Category = "인벤토리|부착물", meta = (DisplayName = "무기에 부착 가능 여부"))
 	bool CanAttachToWeapon(int32 WeaponEntryIndex, int32 AttachmentEntryIndex, int32 SlotIndex) const;
+
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [Phase 9] 컨테이너 아이템 전송 RPC
+	// ════════════════════════════════════════════════════════════════
+
+	/** 컨테이너 → 내 인벤토리 (아이템 가져오기) */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_TakeItemFromContainer(
+		UInv_LootContainerComponent* Container,
+		int32 ContainerEntryIndex,
+		int32 TargetGridIndex);   // 내 Grid에 놓을 위치 (-1이면 자동 배치)
+
+	/** 내 인벤토리 → 컨테이너 (아이템 넣기) */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_PutItemInContainer(
+		UInv_LootContainerComponent* Container,
+		int32 PlayerEntryIndex,
+		int32 TargetGridIndex);   // 컨테이너 Grid에 놓을 위치 (-1이면 자동 배치)
+
+	/** 컨테이너 전체 아이템 가져오기 */
+	UFUNCTION(Server, Reliable)
+	void Server_TakeAllFromContainer(UInv_LootContainerComponent* Container);
 	
 	UFUNCTION(NetMulticast, Reliable) // 멀티캐스트 함수 (서버에서 모든 클라이언트로 호출)
 	void Multicast_EquipSlotClicked(UInv_InventoryItem* ItemToEquip, UInv_InventoryItem* ItemToUnequip, int32 WeaponSlotIndex = -1);
@@ -185,7 +209,44 @@ public:
 	// ⭐ [Phase 4 개선] 서버에서 직접 인벤토리 데이터 수집 (Logout 시 저장용)
 	// RPC 없이 서버의 FastArray에서 직접 읽어서 반환
 	TArray<FInv_SavedItemData> CollectInventoryDataForSave() const;
-	
+
+	// ════════════════════════════════════════════════════════════════
+	// 📌 [Phase 4 Lobby] 크로스 컴포넌트 전송 (로비 Stash↔Loadout용)
+	// ════════════════════════════════════════════════════════════════
+	/**
+	 * 이 InvComp에서 아이템을 제거하고 대상 InvComp에 추가
+	 * FastArray 내부 접근이 필요하므로 INVENTORY_API가 붙은 이 클래스에서 수행
+	 *
+	 * @param ItemIndex   이 InvComp의 아이템 인덱스 (GetAllItems 기준)
+	 * @param TargetComp  아이템을 받을 대상 InvComp
+	 * @return 전송 성공 여부
+	 *
+	 * TODO: [DragDrop] 추후 드래그앤드롭 크로스 패널 구현 시 여기에 연결
+	 */
+	bool TransferItemTo(int32 ItemIndex, UInv_InventoryComponent* TargetComp, int32 TargetGridIndex = INDEX_NONE);
+
+	/**
+	 * [CrossSwap] 두 InvComp 간 아이템 교환 (서버 전용)
+	 *
+	 * 📌 TransferItemTo와 달리 HasRoomInInventoryList를 개별 체크하지 않음
+	 *   양쪽 아이템을 먼저 제거한 뒤 교차 추가하므로 "꽉 찬 Grid" Swap 가능
+	 *   실패 시 롤백 (양쪽 원본 Comp에 복원)
+	 *
+	 * @param MyItemIndex     이 InvComp의 아이템 ValidIndex
+	 * @param OtherComp       교환 상대 InvComp
+	 * @param OtherItemIndex  상대 InvComp의 아이템 ValidIndex
+	 * @return 교환 성공 여부
+	 */
+	bool SwapItemWith(int32 MyItemIndex, UInv_InventoryComponent* OtherComp, int32 OtherItemIndex, int32 TargetGridIndex = INDEX_NONE);
+
+	/**
+	 * [Phase 4 Fix] ReplicationID → ValidItems 배열 인덱스 변환
+	 * FastArray Entry의 ReplicationID는 배열이 밀려도 안정적으로 유지됨
+	 * @param ReplicationID   FFastArraySerializerItem::ReplicationID
+	 * @return ValidItems 배열 인덱스 (INDEX_NONE이면 미발견)
+	 */
+	int32 FindValidItemIndexByReplicationID(int32 ReplicationID) const;
+
 	// 서버 브로드캐스트 함수들.
 	FInventoryItemChange OnItemAdded;
 	FInventoryItemChange OnItemRemoved;

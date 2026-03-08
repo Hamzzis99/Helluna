@@ -1,4 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+// Fill out your copyright notice in the Description page of Project Settings.
 
 
 #include "Character/HellunaHeroCharacter.h"
@@ -36,8 +36,12 @@
 #include "DebugHelper.h"
 #include "Animation/AnimInstance.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
+
 #include "UI/Weapon/WeaponHUDWidget.h"
 #include "Blueprint/UserWidget.h"
+
+#include "InventoryManagement/Components/Inv_LootContainerComponent.h"
+
 
 
 AHellunaHeroCharacter::AHellunaHeroCharacter()
@@ -75,6 +79,12 @@ AHellunaHeroCharacter::AHellunaHeroCharacter()
 
 	// ★ 추가: 플레이어 체력 컴포넌트
 	HeroHealthComponent = CreateDefaultSubobject<UHellunaHealthComponent>(TEXT("HeroHealthComponent"));
+
+	// Phase 9: 사체 루팅용 컨테이너 (비활성 상태로 생성, 사망 시 Activate)
+	LootContainerComponent = CreateDefaultSubobject<UInv_LootContainerComponent>(TEXT("LootContainerComponent"));
+	LootContainerComponent->bActivated = false;
+	LootContainerComponent->bDestroyOwnerWhenEmpty = false;
+	LootContainerComponent->ContainerDisplayName = FText::FromString(TEXT("사체"));
 }
 
 void AHellunaHeroCharacter::BeginPlay()
@@ -239,6 +249,8 @@ void AHellunaHeroCharacter::Input_Move(const FInputActionValue& InputActionValue
 
 	const FVector2D MovementVector = InputActionValue.Get<FVector2D>();
 
+	// [Fix26] Controller null 체크 (Unpossess 상태에서 크래시 방지)
+	if (!Controller) return;
 	const FRotator MovementRotation(0.f, Controller->GetControlRotation().Yaw, 0.f);
 
 	if (MovementVector.Y != 0.f)
@@ -320,17 +332,37 @@ void AHellunaHeroCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInp
 		return;
 	}
 	
-	checkf(InputConfigDataAsset, TEXT("InputConfigDataAsset이 설정되지 않았습니다!"));
+	// [Fix26] check()/checkf()/CastChecked → safe return (데디서버 프로세스 종료 방지)
+	if (!InputConfigDataAsset)
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[HeroCharacter] InputConfigDataAsset이 설정되지 않았습니다! 입력 바인딩 스킵"));
+		return;
+	}
 
-	ULocalPlayer* LocalPlayer = GetController<APlayerController>()->GetLocalPlayer();
+	APlayerController* PC = GetController<APlayerController>();
+	if (!PC)
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[HeroCharacter] GetController<APlayerController>() null — 입력 바인딩 스킵"));
+		return;
+	}
+	ULocalPlayer* LocalPlayer = PC->GetLocalPlayer();
 
 	UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(LocalPlayer);
 
-	check(Subsystem);
+	if (!Subsystem)
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[HeroCharacter] EnhancedInputLocalPlayerSubsystem null — 입력 바인딩 스킵"));
+		return;
+	}
 
 	Subsystem->AddMappingContext(InputConfigDataAsset->DefaultMappingContext, 0);
 
-	UHellunaInputComponent* HellunaInputComponent = CastChecked<UHellunaInputComponent>(PlayerInputComponent);
+	UHellunaInputComponent* HellunaInputComponent = Cast<UHellunaInputComponent>(PlayerInputComponent);
+	if (!HellunaInputComponent)
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[HeroCharacter] PlayerInputComponent가 UHellunaInputComponent가 아닙니다! 입력 바인딩 스킵"));
+		return;
+	}
 
 	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Move, ETriggerEvent::Triggered, this, &ThisClass::Input_Move);
 	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Look, ETriggerEvent::Triggered, this, &ThisClass::Input_Look);
@@ -922,6 +954,54 @@ void AHellunaHeroCharacter::OnHeroDeath(AActor* DeadActor, AActor* KillerActor)
 	if (DeathMontage)
 	{
 		Multicast_PlayHeroDeath();
+	}
+
+	// Phase 9: 사체에 인벤토리 아이템 이전
+	if (IsValid(LootContainerComponent))
+	{
+		// B8: 사망 시 GetController()가 nullptr일 수 있음 (UnPossess 타이밍)
+		APlayerController* PC = Cast<APlayerController>(GetController());
+		if (!PC)
+		{
+			UE_LOG(LogHelluna, Warning, TEXT("[HeroCharacter] OnHeroDeath: GetController() nullptr — 사체에 아이템 없음 (%s)"), *GetName());
+		}
+		UInv_InventoryComponent* InvComp = PC ? PC->FindComponentByClass<UInv_InventoryComponent>() : nullptr;
+
+		if (IsValid(InvComp))
+		{
+			// 인벤토리 데이터 수집
+			TArray<FInv_SavedItemData> CollectedItems = InvComp->CollectInventoryDataForSave();
+
+			if (CollectedItems.Num() > 0)
+			{
+				// GameMode에서 Resolver 생성
+				AHellunaBaseGameMode* GM = Cast<AHellunaBaseGameMode>(UGameplayStatics::GetGameMode(GetWorld()));
+				if (IsValid(GM))
+				{
+					FInv_ItemTemplateResolver Resolver;
+					Resolver.BindLambda([GM](const FGameplayTag& ItemType) -> UInv_ItemComponent*
+					{
+						TSubclassOf<AActor> ActorClass = GM->ResolveItemClass(ItemType);
+						if (!ActorClass) return nullptr;
+						AActor* CDO = ActorClass->GetDefaultObject<AActor>();
+						return CDO ? CDO->FindComponentByClass<UInv_ItemComponent>() : nullptr;
+					});
+
+					LootContainerComponent->InitializeWithItems(CollectedItems, Resolver);
+				}
+			}
+
+			// 컨테이너 활성화
+			LootContainerComponent->ActivateContainer();
+			LootContainerComponent->SetContainerDisplayName(
+				FText::FromString(FString::Printf(TEXT("%s의 사체"), *GetName())));
+
+			// 사체 유지 (LifeSpan=0 → 파괴하지 않음)
+			SetLifeSpan(0.f);
+
+			UE_LOG(LogTemp, Log, TEXT("[HeroCharacter] OnHeroDeath: %s → 사체 컨테이너 활성화 (%d아이템)"),
+				*GetName(), CollectedItems.Num());
+		}
 	}
 }
 

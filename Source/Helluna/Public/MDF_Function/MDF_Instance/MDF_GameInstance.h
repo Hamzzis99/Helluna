@@ -4,6 +4,8 @@
 #include "Engine/GameInstance.h"
 #include "MDF_GameInstance.generated.h"
 
+class UHellunaLoadingWidget;
+
 /**
  * ============================================
  * 📌 MDF_GameInstance
@@ -46,6 +48,7 @@
  * │ DefenseGameMode::Logout()                                │
  * │   └─ GameInstance->RegisterLogout(PlayerId)              │
  * │       → LoggedInPlayerIds에서 제거                       │
+ *
  * └─────────────────────────────────────────────────────────┘
  * 
  * ============================================
@@ -130,4 +133,55 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Login")
 	int32 GetLoggedInPlayerCount() const;
+
+	// ============================================
+	// 📌 서버 접속 IP 관리 (Phase 12c)
+	// ============================================
+
+	/**
+	 * 접속한 서버 IP (로그인 시 저장, Deploy/로비 복귀에 재사용)
+	 *
+	 * 예: "192.168.1.100" (포트 제외)
+	 * 설정 시점: HellunaServerConnectController::OnConnectButtonClicked
+	 * 사용 시점: Deploy → ClientTravel, 게임 종료 → 로비 복귀
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Connection")
+	FString ConnectedServerIP;
+
+	/**
+	 * 로비서버 포트 (기본 7777)
+	 * Deploy 후 로비 복귀 시 IP + 이 포트로 Travel
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Connection")
+	int32 LobbyServerPort = 7777;
+
+	// ============================================
+	// 로딩 화면 (Loading Screen)
+	// ============================================
+
+	/**
+	 * 로딩 화면 표시
+	 * 전환 구간(서버 접속, 로그인, 캐릭터 선택 등)에서 호출
+	 * 이미 표시 중이면 메시지만 갱신
+	 *
+	 * @param Message - 표시할 로딩 메시지
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Loading")
+	void ShowLoadingScreen(const FString& Message);
+
+	/**
+	 * 로딩 화면 숨김
+	 * 전환 완료 후 호출
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Loading")
+	void HideLoadingScreen();
+
+protected:
+	/** 로딩 위젯 클래스 (BP에서 설정: WBP_HellunaLoadingWidget) */
+	UPROPERTY(EditDefaultsOnly, Category = "Loading", meta = (DisplayName = "Loading Widget Class (로딩 위젯 클래스)"))
+	TSubclassOf<UHellunaLoadingWidget> LoadingWidgetClass;
+
+	/** 현재 활성화된 로딩 위젯 인스턴스 */
+	UPROPERTY()
+	TObjectPtr<UHellunaLoadingWidget> LoadingWidget;
 };

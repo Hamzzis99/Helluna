@@ -16,7 +16,11 @@ FReply UInv_SlottedItem::NativeOnMouseButtonDown(const FGeometry& MyGeometry, co
 // 아이템 Description 설명 부분들 아이템을 마우스 댈 때
 void UInv_SlottedItem::NativeOnMouseEnter(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
 {
-	UInv_InventoryStatics::ItemHovered(GetOwningPlayer(), InventoryItem.Get());
+	// U17: GC된 아이템 weak ptr null 전달 방지
+	if (InventoryItem.IsValid())
+	{
+		UInv_InventoryStatics::ItemHovered(GetOwningPlayer(), InventoryItem.Get());
+	}
 }
 
 // 아이템 Description 설명 부분들 아이템을 마우스 땔 때
