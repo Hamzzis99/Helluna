@@ -1582,6 +1582,18 @@ void UHellunaLobbyStashWidget::UpdateMapDisplay()
 		Popup_MapDescription->SetText(FText::GetEmpty());
 	}
 
+	// [Phase 17.1] 도트 인디케이터 업데이트
+	if (Popup_MapIndicator)
+	{
+		FString Dots;
+		for (int32 i = 0; i < CachedMapConfigs.Num(); ++i)
+		{
+			if (i > 0) Dots += TEXT("  ");
+			Dots += (i == PopupBrowsingIndex) ? TEXT("\u25CF") : TEXT("\u25CB");
+		}
+		Popup_MapIndicator->SetText(FText::FromString(Dots));
+	}
+
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase17.1] 팝업 맵 탐색: [%d] %s (%s)"),
 		PopupBrowsingIndex, *MapInfo.DisplayName, *MapInfo.MapKey);
 }

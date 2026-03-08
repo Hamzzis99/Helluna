@@ -290,6 +290,10 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Button_CloseMapPopup;
 
+	/** [Phase 17.1] 맵 도트 인디케이터 (● ○ 형태) */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Popup_MapIndicator;
+
 	// ── Loadout 탭 (Page 1) — 기존 ──
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UHellunaLobbyPanel> StashPanel;
