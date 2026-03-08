@@ -593,6 +593,17 @@ void UMDF_DeformableComponent::InitializeDynamicMesh()
 
         if (Outcome == EGeometryScriptOutcomePins::Success)
         {
+            // 머티리얼 복사 (SourceStaticMesh → DynamicMeshComponent)
+            const int32 NumMaterials = SourceStaticMesh->GetStaticMaterials().Num();
+            for (int32 i = 0; i < NumMaterials; ++i)
+            {
+                UMaterialInterface* Material = SourceStaticMesh->GetMaterial(i);
+                if (Material)
+                {
+                    MeshComp->SetMaterial(i, Material);
+                }
+            }
+
             // 충돌 업데이트 (서버 + 클라 모두)
             MeshComp->UpdateCollision();
 
