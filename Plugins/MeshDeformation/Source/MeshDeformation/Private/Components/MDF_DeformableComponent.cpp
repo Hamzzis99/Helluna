@@ -524,8 +524,8 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
                     float ClampedIntensity = FMath::Clamp(MaxDamageIntensity, 0.0f, 1.0f);
                     EditMesh.EnumerateVertexTriangles(VertexID, [&](int32 TriangleID)
                     {
-                        FIndex3i TriElements = ColorOverlay->GetTriangle(TriangleID);
-                        FIndex3i TriVertices = EditMesh.GetTriangle(TriangleID);
+                        UE::Geometry::FIndex3i TriElements = ColorOverlay->GetTriangle(TriangleID);
+                        UE::Geometry::FIndex3i TriVertices = EditMesh.GetTriangle(TriangleID);
 
                         for (int32 SubIdx = 0; SubIdx < 3; ++SubIdx)
                         {

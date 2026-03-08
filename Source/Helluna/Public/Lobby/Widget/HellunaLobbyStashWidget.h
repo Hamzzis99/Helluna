@@ -43,6 +43,15 @@ struct FHellunaGameMapInfo;
 struct FMatchmakingStatusInfo;
 struct FMatchmakingFoundInfo;
 
+/** [Phase 18] 로비 게임 모드 (Solo/Duo/Squad) */
+UENUM(BlueprintType)
+enum class ELobbyGameMode : uint8
+{
+	Solo   = 0  UMETA(DisplayName = "Solo (솔로)"),
+	Duo    = 1  UMETA(DisplayName = "Duo (듀오)"),
+	Squad  = 2  UMETA(DisplayName = "Squad (스쿼드)")
+};
+
 // 탭 인덱스 상수
 namespace LobbyTab
 {
@@ -212,6 +221,9 @@ protected:
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Button_Mode_Solo;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> Button_Mode_Duo;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Button_Mode_Party;
@@ -436,10 +448,16 @@ private:
 	void OnSoloModeClicked();
 
 	UFUNCTION()
+	void OnDuoModeClicked();
+
+	UFUNCTION()
 	void OnPartyModeClicked();
 
 	UFUNCTION()
 	void OnCancelMatchmakingClicked();
+
+	/** [Phase 18] 파티 인원 수에 따라 모드 버튼 Visible/Collapsed + 자동 모드 전환 */
+	void UpdateModeButtonsForPartySize(int32 PartySize);
 
 	/** 매칭 상태 변경 핸들러 */
 	UFUNCTION()
@@ -508,8 +526,8 @@ private:
 	/** [Phase 12h] 로컬 플레이어의 현재 Ready 상태 캐시 */
 	bool bLocalPlayerReady = false;
 
-	/** [Phase 15] 현재 모드 (false=Solo, true=Party) */
-	bool bPartyMode = false;
+	/** [Phase 18] 현재 게임 모드 */
+	ELobbyGameMode CurrentGameMode = ELobbyGameMode::Solo;
 
 	/** [Phase 15] 현재 매칭 큐에 있는지 */
 	bool bInMatchmaking = false;
