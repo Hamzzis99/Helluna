@@ -14,6 +14,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Engine/Texture2D.h"
 #include "Lobby/Party/HellunaPartyTypes.h"
 #include "HellunaMatchmakingTypes.generated.h"
 
@@ -52,6 +53,10 @@ struct FHellunaGameMapInfo
 	/** UE 맵 경로 (예: "/Game/Maps/GihyeonMap") */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Map")
 	FString MapPath;
+
+	/** [Phase 17] 맵 썸네일 이미지 (PUBG식 맵 카드 UI) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Map")
+	TSoftObjectPtr<UTexture2D> MapThumbnail;
 };
 
 /** 큐 엔트리 (1 파티 or 1 솔로 = 1 엔트리) — 서버 전용 */
