@@ -593,6 +593,9 @@ void UMDF_DeformableComponent::InitializeDynamicMesh()
 
         if (Outcome == EGeometryScriptOutcomePins::Success)
         {
+            // 기존 머티리얼 오버라이드 초기화 (메시 교체 시 이전 슬롯 잔존 방지)
+            MeshComp->EmptyOverrideMaterials();
+
             // 머티리얼 복사 (SourceStaticMesh → DynamicMeshComponent)
             const int32 NumMaterials = SourceStaticMesh->GetStaticMaterials().Num();
             for (int32 i = 0; i < NumMaterials; ++i)
