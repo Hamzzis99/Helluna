@@ -40,7 +40,7 @@
 #include "Components/EditableTextBox.h"
 #include "Components/VerticalBox.h"
 #include "Components/HorizontalBox.h"
-#include "Components/ComboBoxString.h"
+#include "Engine/Texture2D.h"
 #include "Lobby/GameMode/HellunaLobbyGameMode.h"
 
 // 로그 카테고리 (공유 헤더 — DEFINE은 HellunaLobbyGameMode.cpp)
@@ -65,8 +65,9 @@ void UHellunaLobbyStashWidget::NativeDestruct()
 	if (Button_Mode_Solo) { Button_Mode_Solo->OnClicked.RemoveDynamic(this, &ThisClass::OnSoloModeClicked); }
 	if (Button_Mode_Party) { Button_Mode_Party->OnClicked.RemoveDynamic(this, &ThisClass::OnPartyModeClicked); }
 	if (Button_CancelMatchmaking) { Button_CancelMatchmaking->OnClicked.RemoveDynamic(this, &ThisClass::OnCancelMatchmakingClicked); }
-	// [Phase 16]
-	if (ComboBox_MapSelect) { ComboBox_MapSelect->OnSelectionChanged.RemoveDynamic(this, &ThisClass::OnMapSelectionChanged); }
+	// [Phase 17] 맵 선택 카드
+	if (Button_MapPrev) { Button_MapPrev->OnClicked.RemoveDynamic(this, &ThisClass::OnMapPrevClicked); }
+	if (Button_MapNext) { Button_MapNext->OnClicked.RemoveDynamic(this, &ThisClass::OnMapNextClicked); }
 
 	// ── LobbyPC 외부 오브젝트 바인딩 해제 ──
 	if (AHellunaLobbyController* LobbyPC = GetLobbyController())
@@ -175,46 +176,8 @@ void UHellunaLobbyStashWidget::NativeOnInitialized()
 	// 초기 모드 비주얼
 	UpdateModeButtonVisuals();
 
-	// ── [Phase 16] 맵 선택 콤보박스 바인딩 ──
-	if (ComboBox_MapSelect)
-	{
-		ComboBox_MapSelect->OnSelectionChanged.AddUniqueDynamic(this, &ThisClass::OnMapSelectionChanged);
-
-		// LobbyGameMode에서 맵 목록 가져오기 (서버 권한이라 클라이언트는 비어있을 수 있음)
-		if (UWorld* World = GetWorld())
-		{
-			if (AHellunaLobbyGameMode* LobbyGM = Cast<AHellunaLobbyGameMode>(World->GetAuthGameMode()))
-			{
-				for (const FHellunaGameMapInfo& MapInfo : LobbyGM->AvailableMapConfigs)
-				{
-					ComboBox_MapSelect->AddOption(MapInfo.DisplayName);
-				}
-				// 기본 선택
-				SelectedMapKey = LobbyGM->DefaultMapKey;
-				for (const FHellunaGameMapInfo& MapInfo : LobbyGM->AvailableMapConfigs)
-				{
-					if (MapInfo.MapKey == SelectedMapKey)
-					{
-						ComboBox_MapSelect->SetSelectedOption(MapInfo.DisplayName);
-						break;
-					}
-				}
-			}
-		}
-		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] ComboBox_MapSelect 바인딩 완료 | Options=%d"),
-			ComboBox_MapSelect->GetOptionCount());
-	}
-	else
-	{
-		// ComboBox 없으면 DefaultMapKey 고정
-		if (UWorld* World = GetWorld())
-		{
-			if (AHellunaLobbyGameMode* LobbyGM = Cast<AHellunaLobbyGameMode>(World->GetAuthGameMode()))
-			{
-				SelectedMapKey = LobbyGM->DefaultMapKey;
-			}
-		}
-	}
+	// ── [Phase 17] PUBG식 맵 선택 카드 초기화 ──
+	InitializeMapSelector();
 
 	// ── Loadout 탭: 출격 버튼 바인딩 (기존) ──
 	if (Button_Deploy)
@@ -1462,32 +1425,119 @@ void UHellunaLobbyStashWidget::UpdateModeButtonVisuals()
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
-// [Phase 16] 맵 선택 콤보박스 콜백
+// [Phase 17] PUBG식 맵 선택 카드
 // ════════════════════════════════════════════════════════════════════════════════
 
-void UHellunaLobbyStashWidget::OnMapSelectionChanged(FString SelectedItem, ESelectInfo::Type SelectionType)
+void UHellunaLobbyStashWidget::InitializeMapSelector()
 {
-	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase16] 맵 선택 변경: %s"), *SelectedItem);
+	// 버튼 바인딩
+	if (Button_MapPrev)
+	{
+		Button_MapPrev->OnClicked.AddUniqueDynamic(this, &ThisClass::OnMapPrevClicked);
+	}
+	if (Button_MapNext)
+	{
+		Button_MapNext->OnClicked.AddUniqueDynamic(this, &ThisClass::OnMapNextClicked);
+	}
 
-	// DisplayName → MapKey 변환
+	// LobbyGameMode에서 맵 목록 캐시
 	if (UWorld* World = GetWorld())
 	{
 		if (AHellunaLobbyGameMode* LobbyGM = Cast<AHellunaLobbyGameMode>(World->GetAuthGameMode()))
 		{
-			for (const FHellunaGameMapInfo& MapInfo : LobbyGM->AvailableMapConfigs)
+			CachedMapConfigs = LobbyGM->AvailableMapConfigs;
+			SelectedMapKey = LobbyGM->DefaultMapKey;
+
+			// DefaultMapKey에 해당하는 인덱스 찾기
+			for (int32 i = 0; i < CachedMapConfigs.Num(); ++i)
 			{
-				if (MapInfo.DisplayName == SelectedItem)
+				if (CachedMapConfigs[i].MapKey == SelectedMapKey)
 				{
-					SelectedMapKey = MapInfo.MapKey;
+					CurrentMapIndex = i;
 					break;
 				}
 			}
 		}
 	}
 
-	// 서버에 맵 선택 전달
+	// 초기 표시
+	UpdateMapDisplay();
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase17] 맵 선택 카드 초기화 완료 | Maps=%d | Current=%s"),
+		CachedMapConfigs.Num(), *SelectedMapKey);
+}
+
+void UHellunaLobbyStashWidget::OnMapPrevClicked()
+{
+	if (CachedMapConfigs.Num() == 0) return;
+
+	CurrentMapIndex = (CurrentMapIndex - 1 + CachedMapConfigs.Num()) % CachedMapConfigs.Num();
+	UpdateMapDisplay();
+}
+
+void UHellunaLobbyStashWidget::OnMapNextClicked()
+{
+	if (CachedMapConfigs.Num() == 0) return;
+
+	CurrentMapIndex = (CurrentMapIndex + 1) % CachedMapConfigs.Num();
+	UpdateMapDisplay();
+}
+
+void UHellunaLobbyStashWidget::UpdateMapDisplay()
+{
+	if (!CachedMapConfigs.IsValidIndex(CurrentMapIndex))
+	{
+		// 맵 목록 비어있으면 숨기기
+		if (MapSelectContainer)
+		{
+			MapSelectContainer->SetVisibility(ESlateVisibility::Collapsed);
+		}
+		return;
+	}
+
+	const FHellunaGameMapInfo& MapInfo = CachedMapConfigs[CurrentMapIndex];
+
+	// 썸네일 이미지 업데이트
+	if (Img_MapThumbnail)
+	{
+		if (!MapInfo.MapThumbnail.IsNull())
+		{
+			UTexture2D* LoadedTexture = MapInfo.MapThumbnail.LoadSynchronous();
+			if (LoadedTexture)
+			{
+				Img_MapThumbnail->SetBrushFromTexture(LoadedTexture);
+				Img_MapThumbnail->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+			}
+			else
+			{
+				Img_MapThumbnail->SetVisibility(ESlateVisibility::Collapsed);
+			}
+		}
+		else
+		{
+			Img_MapThumbnail->SetVisibility(ESlateVisibility::Collapsed);
+		}
+	}
+
+	// 맵 이름 업데이트
+	if (Text_MapName)
+	{
+		Text_MapName->SetText(FText::FromString(MapInfo.DisplayName));
+	}
+
+	// 컨테이너 표시
+	if (MapSelectContainer)
+	{
+		MapSelectContainer->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	}
+
+	// SelectedMapKey 갱신 + 서버 RPC
+	SelectedMapKey = MapInfo.MapKey;
 	if (AHellunaLobbyController* LobbyPC = GetLobbyController())
 	{
 		LobbyPC->Server_SetSelectedMap(SelectedMapKey);
 	}
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase17] 맵 전환: [%d] %s (%s)"),
+		CurrentMapIndex, *MapInfo.DisplayName, *MapInfo.MapKey);
 }

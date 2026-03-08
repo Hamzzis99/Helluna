@@ -38,8 +38,8 @@ class UTextBlock;
 class UScrollBox;
 class UEditableTextBox;
 class UVerticalBox;
-class UComboBoxString;
 enum class EHellunaHeroType : uint8;
+struct FHellunaGameMapInfo;
 struct FMatchmakingStatusInfo;
 struct FMatchmakingFoundInfo;
 
@@ -238,9 +238,27 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> Text_HeroReassignNotice;
 
-	/** [Phase 16] 맵 선택 콤보박스 */
+	// ── [Phase 17] PUBG식 맵 선택 카드 ──
+
+	/** 맵 썸네일 이미지 (크게) */
 	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UComboBoxString> ComboBox_MapSelect;
+	TObjectPtr<UImage> Img_MapThumbnail;
+
+	/** 맵 이름 텍스트 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Text_MapName;
+
+	/** 왼쪽 화살표 버튼 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> Button_MapPrev;
+
+	/** 오른쪽 화살표 버튼 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> Button_MapNext;
+
+	/** 맵 선택 컨테이너 (왼쪽 아래 배치용) */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> MapSelectContainer;
 
 	// ── Loadout 탭 (Page 1) — 기존 ──
 	UPROPERTY(meta = (BindWidgetOptional))
@@ -410,9 +428,21 @@ private:
 	/** 모드 버튼 비주얼 업데이트 */
 	void UpdateModeButtonVisuals();
 
-	/** [Phase 16] 맵 선택 변경 콜백 */
+	// ── [Phase 17] 맵 선택 카드 ──
+
+	/** 맵 목록 캐시 + 기본맵 표시 */
+	void InitializeMapSelector();
+
+	/** 왼쪽 화살표 클릭 (순환) */
 	UFUNCTION()
-	void OnMapSelectionChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
+	void OnMapPrevClicked();
+
+	/** 오른쪽 화살표 클릭 (순환) */
+	UFUNCTION()
+	void OnMapNextClicked();
+
+	/** Img/Text 업데이트 + Server_SetSelectedMap RPC 호출 */
+	void UpdateMapDisplay();
 
 	// ════════════════════════════════════════════════════════════════
 	// 내부 상태
@@ -432,6 +462,12 @@ private:
 
 	/** [Phase 16] 현재 선택된 맵 키 */
 	FString SelectedMapKey;
+
+	/** [Phase 17] 현재 선택된 맵 인덱스 */
+	int32 CurrentMapIndex = 0;
+
+	/** [Phase 17] 맵 목록 로컬 캐시 */
+	TArray<FHellunaGameMapInfo> CachedMapConfigs;
 
 	// 프리뷰 씬 캐시 (Solo 모드 전환용)
 	TWeakObjectPtr<AHellunaCharacterSelectSceneV2> CachedPreviewScene;
