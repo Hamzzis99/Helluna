@@ -11,10 +11,12 @@ Claude.md
 Content/Collections/
 Content/Developers/
 Content/Migration/
-Content/Fab/
-
+Content/InventoryAssets/
 Plugins/Developer/
 Plugins/Inventory/Content/InventoryAssets/
+Content/Assets/
+Content/Fab/
+
 # Unreal Engine build artifacts
 Build/
 Builds/
