@@ -74,6 +74,9 @@ public:
 protected:
 	FTimerHandle TimerHandle_ToNight;
 	FTimerHandle TimerHandle_ToDay;
+	FTimerHandle TimerHandle_DayCountdown; // 낮 남은 시간 1초마다 갱신
+
+	void TickDayCountdown(); // 1초마다 DayTimeRemaining 감소
 
 	/**
 	 * 현재 진행 일(Day) 수. EnterDay() 호출마다 1 증가.

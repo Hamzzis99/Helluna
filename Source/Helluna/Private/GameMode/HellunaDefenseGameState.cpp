@@ -1,4 +1,4 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Fill out your copyright notice in the Description page of Project Settings.
 
 
 #include "GameMode/HellunaDefenseGameState.h"
@@ -44,7 +44,11 @@ void AHellunaDefenseGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProper
     // UsedCharacters는 Base(AHellunaBaseGameState)에서 복제됨
     DOREPLIFETIME(AHellunaDefenseGameState, SpaceShip);
     DOREPLIFETIME_CONDITION_NOTIFY(AHellunaDefenseGameState, Phase, COND_None, REPNOTIFY_Always);
-    DOREPLIFETIME(AHellunaDefenseGameState, AliveMonsterCount);
+    DOREPLIFETIME_CONDITION_NOTIFY(AHellunaDefenseGameState, AliveMonsterCount, COND_None, REPNOTIFY_Always);
+    DOREPLIFETIME(AHellunaDefenseGameState, DayTimeRemaining);
+    DOREPLIFETIME(AHellunaDefenseGameState, TotalMonstersThisNight);
+    DOREPLIFETIME(AHellunaDefenseGameState, CurrentDayForUI);
+    DOREPLIFETIME(AHellunaDefenseGameState, bIsBossNight);
 }
 
 void AHellunaDefenseGameState::SetPhase(EDefensePhase NewPhase)
@@ -320,7 +324,32 @@ void AHellunaDefenseGameState::SetAliveMonsterCount(int32 NewCount)
 
     // ✅ 음수 방지(안전)
     AliveMonsterCount = FMath::Max(0, NewCount);
+    ForceNetUpdate(); // 즉시 복제 강제
 }
+void AHellunaDefenseGameState::SetDayTimeRemaining(float InTime)
+{
+    if (!HasAuthority()) return;
+    DayTimeRemaining = FMath::Max(0.f, InTime);
+}
+
+void AHellunaDefenseGameState::SetTotalMonstersThisNight(int32 InTotal)
+{
+    if (!HasAuthority()) return;
+    TotalMonstersThisNight = FMath::Max(0, InTotal);
+}
+
+void AHellunaDefenseGameState::SetCurrentDayForUI(int32 InDay)
+{
+    if (!HasAuthority()) return;
+    CurrentDayForUI = InDay;
+}
+
+void AHellunaDefenseGameState::SetIsBossNight(bool bInVal)
+{
+    if (!HasAuthority()) return;
+    bIsBossNight = bInVal;
+}
+
 
 // =============================================================================================================================
 // [김기현 작업 영역 시작] MDF 구현 및 저장 시스템

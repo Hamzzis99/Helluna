@@ -93,6 +93,14 @@ void UEnemyActorSpawnProcessor::DespawnActorToEntity(
 	AActor* Actor,
 	UEnemyActorPool* Pool)
 {
+	// 폭발 등으로 이미 파괴 중인 Actor는 컴포넌트 접근 자체를 건너뜀
+	if (!IsValid(Actor) || Actor->IsActorBeingDestroyed())
+	{
+		SpawnState.bHasSpawnedActor = false;
+		SpawnState.SpawnedActor = nullptr;
+		return;
+	}
+
 	if (UHellunaHealthComponent* HC = Actor->FindComponentByClass<UHellunaHealthComponent>())
 	{
 		Data.CurrentHP = HC->GetHealth();
@@ -166,14 +174,16 @@ bool UEnemyActorSpawnProcessor::TrySpawnActor(
 
 	const FTransform SpawnTransform = Transform.GetTransform();
 
+	// [수정 포인트] ActivateActor(Transform, HP, MaxHP) → ActivateActor(EnemyClass, Transform, HP, MaxHP)
+	// 멀티 Pool 구조에서 어떤 Pool에서 꺼낼지 클래스를 명시해야 올바른 Actor를 반환받음
 	AHellunaEnemyCharacter* SpawnedActor = Pool->ActivateActor(
-		SpawnTransform, Data.CurrentHP, Data.MaxHP);
+		Data.EnemyClass, SpawnTransform, Data.CurrentHP, Data.MaxHP);
 
 	if (!SpawnedActor)
 	{
 		UE_LOG(LogECSEnemy, Warning,
 			TEXT("[Spawn] Pool 소진! Active: %d, Inactive: %d"),
-			Pool->GetActiveCount(), Pool->GetInactiveCount());
+			Pool->GetActiveCount(Data.EnemyClass), Pool->GetInactiveCount(Data.EnemyClass));
 		return false;
 	}
 
@@ -301,29 +311,49 @@ void UEnemyActorSpawnProcessor::Execute(
 			// Step 0.5: Pool 초기화 (첫 틱만)
 			//  - 여기서도 return 하지 말고, 서버 로직만 "이번 프레임 스킵"한다.
 			// ------------------------------------------------------------------
-			if (!Pool->IsPoolInitialized())
-			{
-				EntityQuery.ForEachEntityChunk(EntityManager, Context,
-					[&](FMassExecutionContext& ChunkCtx)
+			// ------------------------------------------------------------------
+			// Step 0.5: EnemyClass별 Pool 초기화 (클래스별 최초 1회)
+			//
+			// [핵심 설계 원칙]
+			//   Pool 초기화와 스폰 로직을 완전히 분리한다.
+			//
+			// [이전 구조의 버그]
+			//   bAnyPoolUninitialized 플래그로 초기화/스폰을 if/else로 분기했기 때문에
+			//   "어떤 클래스라도 초기화가 안 됐으면" 스폰 로직 전체가 매 틱 건너뜀.
+			//   → 근거리 Pool 초기화 완료 후에도 원거리 Pool이 미완이면
+			//     근거리 엔티티 역시 영원히 Actor로 변환되지 않는 버그.
+			//
+			// [수정된 구조]
+			//   1단계: 미초기화 클래스만 InitializePool 호출 (초기화 완료 클래스는 스킵)
+			//   2단계: 초기화 여부와 무관하게 스폰/디스폰 로직 실행
+			//          단, 개별 Chunk 처리 시 해당 클래스의 Pool이 준비된 경우에만 스폰
+			// ------------------------------------------------------------------
+
+			// 1단계: 미초기화 클래스만 골라서 초기화 (매 틱 실행되지만 bInitialized 체크로 비용 거의 0)
+			EntityQuery.ForEachEntityChunk(EntityManager, Context,
+				[&](FMassExecutionContext& ChunkCtx)
+				{
+					auto DataList = ChunkCtx.GetFragmentView<FEnemyDataFragment>();
+
+					// Chunk 내 모든 엔티티를 순회하여 미초기화 클래스 초기화.
+					// DataList[0]만 보면 Chunk에 다른 클래스가 섞여있을 때 누락되므로
+					// TSet으로 중복 초기화를 방지하면서 전체 순회.
+					TSet<TSubclassOf<AHellunaEnemyCharacter>> SeenThisChunk;
+					for (int32 di = 0; di < DataList.Num(); ++di)
 					{
-						if (Pool->IsPoolInitialized()) return;
+						const FEnemyDataFragment& Data = DataList[di];
+						if (!Data.EnemyClass || SeenThisChunk.Contains(Data.EnemyClass)) continue;
+						SeenThisChunk.Add(Data.EnemyClass);
 
-						auto DataList = ChunkCtx.GetFragmentView<FEnemyDataFragment>();
-						if (DataList.Num() > 0)
+						if (!Pool->IsPoolInitialized(Data.EnemyClass))
 						{
-							const FEnemyDataFragment& Data = DataList[0];
-							if (Data.EnemyClass)
-							{
-								Pool->InitializePool(Data.EnemyClass, Data.PoolSize);
-								Debug::Print(TEXT("[EnemyProc] Pool initialized"), FColor::Green);
-							}
+							Pool->InitializePool(Data.EnemyClass, Data.PoolSize);
 						}
-					});
+					}
+				});
 
-				// ✅ Pool 초기화 프레임에는 Actor 스폰/디스폰만 스킵
-				// (아래 시각화는 계속 돌아야 함)
-			}
-			else
+			// 2단계: 스폰/디스폰 로직 — 초기화 완료 여부와 무관하게 항상 실행
+			//        (Pool이 없는 클래스의 엔티티는 ActivateActor에서 nullptr 반환 → 스킵됨)
 			{
 				// ------------------------------------------------------------------
 				// Step 1: 플레이어 위치 수집
@@ -497,7 +527,7 @@ void UEnemyActorSpawnProcessor::Execute(
 						Debug::Print(
 							FString::Printf(TEXT("[ServerStatus] Active=%d/%d | Players=%d | Pool(A=%d I=%d)"),
 								ActiveActorCount, MaxConcurrentActorsValue, PlayerLocations.Num(),
-								Pool->GetActiveCount(), Pool->GetInactiveCount()),
+								Pool->GetTotalActiveCount(), Pool->GetTotalInactiveCount()),
 							FColor::Cyan);
 					}
 				}

@@ -4,9 +4,20 @@
  * Phase 2 최적화: Actor Object Pooling (UWorldSubsystem).
  *
  * ■ 이 파일이 뭔가요? (팀원용)
- *   적 Actor를 미리 60개 만들어놓고, 필요할 때 꺼내 쓰고 다 쓰면 돌려놓는 "대여소"입니다.
+ *   적 Actor를 미리 만들어놓고, 필요할 때 꺼내 쓰고 다 쓰면 돌려놓는 "대여소"입니다.
  *   매번 새로 만들고(SpawnActor ~2ms) 부수는(Destroy → GC 스파이크) 대신,
  *   숨겼다 보여주는 방식(~0.1ms)으로 전환하여 프레임 드랍을 방지합니다.
+ *
+ * ■ [버그 수정] EnemyClass별 분리 Pool (멀티 스포너 지원)
+ *   이전 구조: Pool이 단 하나 → InitializePool()이 처음 호출된 EnemyClass로 고정됨
+ *              → 두 번째 스포너(원거리 등)의 InitializePool() 호출은 bInitialized=true로 무시됨
+ *              → 원거리 엔티티가 ActivateActor()를 호출해도 Pool에는 근거리 Actor만 있어
+ *                 근거리 Actor가 2마리 나오는 버그 발생
+ *
+ *   수정 구조: EnemyClass → FActorPoolData 매핑(TMap)으로 변경
+ *              → 근거리/원거리 클래스마다 독립된 Pool 유지
+ *              → IsPoolInitialized(EnemyClass)로 클래스별 초기화 여부 확인
+ *              → ActivateActor/DeactivateActor도 EnemyClass 기준으로 올바른 Pool에서 동작
  *
  * ■ 시스템 내 위치
  *   - 의존: AHellunaEnemyCharacter (스폰 대상), UHellunaHealthComponent (HP 복원),
@@ -15,32 +26,19 @@
  *   - 접근: World->GetSubsystem<UEnemyActorPool>()
  *
  * ■ 작동 원리
- *   1. Processor 첫 틱: InitializePool() → PoolSize(60)개 Actor 사전 생성
- *      - Hidden + TickOff + CollisionOff + ReplicateOff, Controller 없음 (AutoPossessAI 꺼짐)
- *   2. Entity→Actor 전환: ActivateActor()
- *      - Pool에서 꺼내기 → 위치/HP 설정 → 보이기
- *      - 첫 활성화: SpawnDefaultController() → Possess → StateTree 자동 시작 (에러 0)
- *      - 재활성화: Controller 존재 → RestartLogic만 호출
- *      - 리플리케이션 On
- *   3. Actor→Entity 복귀: DeactivateActor()
- *      - AI StopLogic → 숨기기 → TickOff + CollisionOff + ReplicateOff → Pool 반납
- *      - Controller는 Possess 유지 (재활성화 시 즉시 사용 가능)
- *   4. 전투 사망: Actor가 외부에서 Destroy됨 → CleanupAndReplenish()가 Pool 보충
- *
- * ■ Phase 1과의 관계
- *   Phase 1: SpawnActor/Destroy로 생성/파괴 (비용 높음, ~2ms/회)
- *   Phase 2: Pool의 Activate/Deactivate로 교체 (비용 거의 0, ~0.1ms/회)
- *   → DespawnActorToEntity/TrySpawnActor 내부 호출만 교체, 외부 흐름 동일
+ *   1. Processor 첫 틱: InitializePool(EnemyClass, PoolSize) → 클래스별 Actor 사전 생성
+ *      - 근거리 Processor → InitializePool(MeleeClass, 60)
+ *      - 원거리 Processor → InitializePool(RangeClass, 60)  ← 별도 Pool에 정상 등록됨
+ *   2. Entity→Actor 전환: ActivateActor(EnemyClass, ...)
+ *      - EnemyClass에 해당하는 Pool에서 꺼내기 → 위치/HP → 보이기
+ *   3. Actor→Entity 복귀: DeactivateActor(Actor)
+ *      - Actor의 클래스를 키로 해당 Pool에 반납
+ *   4. 전투 사망: CleanupAndReplenish() → 클래스별 Pool을 모두 순회하여 보충
  *
  * ■ 디버깅 팁
  *   - LogECSPool 카테고리로 모든 Pool 이벤트 확인
  *   - 콘솔: `Log LogECSPool Verbose`
- *   - GetActiveCount() / GetInactiveCount()로 Pool 상태 확인
- *   - 문제별 대응은 파일 하단 [디버깅 가이드] 참조
- *
- * ■ 에디터 사용법
- *   Pool 크기는 MassEntityConfig → EnemyMassTrait → PoolSize에서 설정.
- *   코드 수정 없이 에디터에서 60→80 등으로 변경 가능.
+ *   - GetActiveCount(EnemyClass) / GetInactiveCount(EnemyClass)로 클래스별 Pool 상태 확인
  */
 
 // File: Source/Helluna/Public/ECS/Pool/EnemyActorPool.h
@@ -55,16 +53,39 @@
 class AHellunaEnemyCharacter;
 
 // ============================================================================
+// FActorPoolData — 단일 EnemyClass에 대한 Pool 데이터
+// ============================================================================
+// ■ 역할: 하나의 적 클래스에 대한 비활성/활성 Actor 목록과 메타데이터를 묶은 구조체.
+// ■ 왜 USTRUCT: UPROPERTY로 GC(가비지 컬렉터) 추적이 가능해야 Actor가 실수로 파괴되지 않음.
+// ■ 멀티 Pool 구조에서 TMap의 Value 타입으로 사용됨.
+// ============================================================================
+USTRUCT()
+struct FActorPoolData
+{
+	GENERATED_BODY()
+
+	/** 대기 중인 비활성 Actor 배열 (Hidden, TickOff 상태) */
+	UPROPERTY()
+	TArray<TObjectPtr<AHellunaEnemyCharacter>> InactiveActors;
+
+	/** 현재 활성화된 Actor 배열 (월드에 보이는 상태) */
+	UPROPERTY()
+	TArray<TObjectPtr<AHellunaEnemyCharacter>> ActiveActors;
+
+	/** 목표 Pool 크기 (Active + Inactive 합계 유지 목표) */
+	int32 DesiredPoolSize = 0;
+
+	/** 이 Pool의 초기화 완료 여부 */
+	bool bInitialized = false;
+};
+
+// ============================================================================
 // UEnemyActorPool
 // ============================================================================
-// ■ 역할: 적 Actor의 Object Pooling을 관리하는 UWorldSubsystem.
-// ■ 왜 필요: SpawnActor/Destroy 비용(~2ms)을 Activate/Deactivate(~0.1ms)로 대체.
-// ■ 왜 UWorldSubsystem: 월드당 하나 자동 생성, World->GetSubsystem<T>()로 어디서든 접근.
-// ■ 생명주기:
-//   World 생성 → ShouldCreateSubsystem(true) → 서브시스템 자동 생성
-//   → Processor 첫 틱 → InitializePool() 호출 (PoolSize개 Actor 사전 생성)
-//   → 게임 중: Activate/Deactivate 반복
-//   → World 소멸 → Deinitialize() → 모든 Pool Actor 파괴
+// ■ 역할: EnemyClass별 독립 Pool을 관리하는 UWorldSubsystem.
+// ■ 핵심 변경: 단일 Pool → TMap<EnemyClass, FActorPoolData> 멀티 Pool
+//   → 근거리/원거리 등 서로 다른 클래스를 사용하는 여러 스포너를 동시에 지원.
+// ■ 왜 UWorldSubsystem: 월드당 하나 자동 생성, GetSubsystem<T>()로 어디서든 접근.
 // ============================================================================
 UCLASS()
 class HELLUNA_API UEnemyActorPool : public UWorldSubsystem
@@ -77,93 +98,137 @@ public:
 	/** 서브시스템 생성 여부. 항상 true (모든 월드에서 사용) */
 	virtual bool ShouldCreateSubsystem(UObject* Outer) const override;
 
-	/** 월드 소멸 시 Pool의 모든 Actor 파괴 */
+	/** 월드 소멸 시 모든 EnemyClass의 Pool Actor 전부 파괴 */
 	virtual void Deinitialize() override;
 
-	// === Pool 초기화 ===
+	// =========================================================================
+	// Pool 초기화
+	// =========================================================================
 
 	/**
-	 * Pool을 초기화하고 PoolSize개의 Actor를 사전 생성한다.
-	 * Processor의 첫 틱에서 Fragment 데이터를 읽어 호출.
-	 * 중복 호출 시 무시된다 (로그 Warning).
+	 * 특정 EnemyClass에 대한 Pool을 초기화하고 Actor를 사전 생성한다.
+	 * Processor의 첫 틱에서 Fragment의 EnemyClass를 읽어 호출.
 	 *
-	 * @param EnemyClass  스폰할 적 블루프린트 클래스 (Trait에서 설정)
-	 * @param InPoolSize  사전 생성할 Actor 수 (기본 60 = MaxActors 50 + 버퍼 10)
+	 * [기존 단일 Pool 방식의 문제]
+	 *   InitializePool(근거리Class) 이후 InitializePool(원거리Class)가 호출되면
+	 *   bInitialized=true 체크로 두 번째 호출이 완전히 무시됨.
+	 *   → 원거리 Pool이 생성되지 않아 원거리 엔티티가 근거리 Actor를 꺼내 쓰는 버그.
+	 *
+	 * [수정된 동작]
+	 *   EnemyClass가 다르면 별도의 FActorPoolData를 생성하여 독립 Pool을 만든다.
+	 *   같은 클래스로 중복 호출 시에만 무시(Warning 로그).
+	 *
+	 * @param EnemyClass  이 Pool에서 관리할 적 블루프린트 클래스
+	 * @param InPoolSize  사전 생성할 Actor 수 (기본 60)
 	 */
 	void InitializePool(TSubclassOf<AHellunaEnemyCharacter> EnemyClass, int32 InPoolSize);
 
-	/** Pool이 초기화되었는지 여부 */
-	bool IsPoolInitialized() const { return bInitialized; }
+	/**
+	 * 특정 EnemyClass의 Pool이 초기화되었는지 확인한다.
+	 * Processor에서 "이 클래스의 Pool이 준비됐는가"를 매 틱 체크하는 데 사용.
+	 *
+	 * @param EnemyClass  확인할 적 클래스
+	 * @return            해당 클래스의 Pool이 초기화되어 있으면 true
+	 */
+	bool IsPoolInitialized(TSubclassOf<AHellunaEnemyCharacter> EnemyClass) const;
 
-	// === Actor 활성화/비활성화 ===
+	// =========================================================================
+	// Actor 활성화 / 비활성화
+	// =========================================================================
 
 	/**
-	 * Pool에서 비활성 Actor를 꺼내 활성화한다.
-	 * 위치 설정 → 보이기 → Collision/Tick On → AI RestartLogic → HP 복원 → 리플리케이션 On.
+	 * 지정한 EnemyClass의 Pool에서 비활성 Actor를 꺼내 활성화한다.
+	 * [EnemyClass 파라미터 추가 이유]
+	 *   단일 Pool일 때는 Pool이 하나뿐이라 클래스 구분이 불필요했으나,
+	 *   멀티 Pool에서는 어떤 Pool에서 꺼낼지를 반드시 지정해야 한다.
 	 *
-	 * @param SpawnTransform  Actor를 배치할 위치/회전 (Fragment의 Transform)
-	 * @param CurrentHP       복원할 HP (-1이면 풀 HP 사용 = 첫 스폰)
+	 * @param EnemyClass      꺼낼 Actor의 클래스 (근거리/원거리 구분)
+	 * @param SpawnTransform  배치할 위치/회전
+	 * @param CurrentHP       복원할 HP (-1이면 MaxHP 사용)
 	 * @param MaxHP           최대 HP (로그용)
-	 * @return                활성화된 Actor. Pool이 비어있으면 nullptr.
+	 * @return                활성화된 Actor. 해당 클래스 Pool이 없거나 비어있으면 nullptr.
 	 */
 	AHellunaEnemyCharacter* ActivateActor(
+		TSubclassOf<AHellunaEnemyCharacter> EnemyClass,
 		const FTransform& SpawnTransform,
 		float CurrentHP,
 		float MaxHP);
 
 	/**
-	 * Actor를 비활성화하고 Pool에 반납한다.
-	 * AI StopLogic → Tick/Collision Off → 숨김 → 리플리케이션 Off → 숨김 위치 이동.
+	 * Actor를 비활성화하고 해당 클래스의 Pool에 반납한다.
+	 * Actor 자신의 GetClass()를 키로 사용하여 올바른 Pool을 자동으로 찾는다.
 	 *
-	 * @param Actor  비활성화할 Actor (nullptr이거나 유효하지 않으면 무시)
+	 * @param Actor  반납할 Actor (nullptr 또는 유효하지 않으면 무시)
 	 */
 	void DeactivateActor(AHellunaEnemyCharacter* Actor);
 
-	// === Pool 유지보수 ===
+	// =========================================================================
+	// Pool 유지보수
+	// =========================================================================
 
 	/**
 	 * 전투 사망 등으로 파괴된 Pool Actor를 정리하고 새로 보충한다.
+	 * 모든 EnemyClass의 Pool을 순회하여 IsValid가 false인 Actor를 제거하고 보충.
 	 * Processor의 Execute()에서 60프레임마다 호출.
-	 * 파괴된 Actor가 없으면 아무것도 하지 않는다.
 	 */
 	void CleanupAndReplenish();
 
-	// === 상태 조회 ===
+	// =========================================================================
+	// 상태 조회
+	// =========================================================================
 
-	/** 현재 활성 (월드에 보이는) Actor 수 */
-	int32 GetActiveCount() const { return ActiveActors.Num(); }
+	/**
+	 * 특정 EnemyClass의 활성(월드에 보이는) Actor 수 반환.
+	 * Pool이 없으면 0 반환.
+	 */
+	int32 GetActiveCount(TSubclassOf<AHellunaEnemyCharacter> EnemyClass) const;
 
-	/** 현재 비활성 (Pool 대기 중) Actor 수 */
-	int32 GetInactiveCount() const { return InactiveActors.Num(); }
+	/**
+	 * 특정 EnemyClass의 비활성(대기 중) Actor 수 반환.
+	 * Pool이 없으면 0 반환.
+	 */
+	int32 GetInactiveCount(TSubclassOf<AHellunaEnemyCharacter> EnemyClass) const;
+
+	/** 전체 EnemyClass를 합산한 활성 Actor 총 수 (디버그/로그용) */
+	int32 GetTotalActiveCount() const;
+
+	/** 전체 EnemyClass를 합산한 비활성 Actor 총 수 (디버그/로그용) */
+	int32 GetTotalInactiveCount() const;
 
 private:
-	/** 비활성 Actor Pool (대기 중, Hidden 상태) */
+	// =========================================================================
+	// 내부 데이터
+	// =========================================================================
+
+	/**
+	 * EnemyClass → FActorPoolData 매핑.
+	 *
+	 * [핵심 수정 포인트]
+	 * 이전: InactiveActors/ActiveActors를 멤버로 직접 보유 (단일 Pool)
+	 * 이후: TMap으로 클래스별 독립 Pool 관리
+	 *
+	 * 예시:
+	 *   PerClassPools[BP_MeleeEnemy]  → FActorPoolData { Inactive:[60개], Active:[] }
+	 *   PerClassPools[BP_RangeEnemy]  → FActorPoolData { Inactive:[60개], Active:[] }
+	 *
+	 * UPROPERTY 필요 이유: TMap 내부의 UPROPERTY TArray가 GC 추적되려면
+	 *   외부 컨테이너도 UPROPERTY여야 함.
+	 */
 	UPROPERTY()
-	TArray<TObjectPtr<AHellunaEnemyCharacter>> InactiveActors;
-
-	/** 활성 Actor 목록 (월드에 보이는 상태) */
-	UPROPERTY()
-	TArray<TObjectPtr<AHellunaEnemyCharacter>> ActiveActors;
-
-	/** 캐싱된 적 블루프린트 클래스 (Pool 보충 시 사용) */
-	UPROPERTY()
-	TSubclassOf<AHellunaEnemyCharacter> CachedEnemyClass;
-
-	/** 목표 Pool 크기 (Active + Inactive 합계) */
-	int32 DesiredPoolSize = 0;
-
-	/** 초기화 완료 여부 */
-	bool bInitialized = false;
+	TMap<TSubclassOf<AHellunaEnemyCharacter>, FActorPoolData> PerClassPools;
 
 	/**
 	 * 단일 Actor를 사전 생성한다.
 	 * Hidden + TickOff + CollisionOff + ReplicateOff 상태로 생성.
-	 * AutoPossessAI = Disabled로 Controller를 만들지 않는다 (StateTree 에러 방지).
-	 * Controller는 ActivateActor 첫 호출 시 SpawnDefaultController()로 생성.
+	 * AutoPossessAI = Disabled → Controller 없음 (StateTree 에러 방지).
+	 * Controller는 ActivateActor 첫 호출 시 생성.
+	 *
+	 * @param EnemyClass  생성할 적 블루프린트 클래스
+	 * @return            생성된 Actor. 실패 시 nullptr.
 	 */
-	AHellunaEnemyCharacter* CreatePooledActor();
+	AHellunaEnemyCharacter* CreatePooledActor(TSubclassOf<AHellunaEnemyCharacter> EnemyClass);
 
-	/** Pool Actor 보관용 숨김 위치 (맵 아래 Z=-50000) */
+	/** Pool Actor 보관용 숨김 위치 (맵 아래 Z=-50000, 렌더링/물리/Perception 범위 밖) */
 	static const FVector PoolHiddenLocation;
 };
 

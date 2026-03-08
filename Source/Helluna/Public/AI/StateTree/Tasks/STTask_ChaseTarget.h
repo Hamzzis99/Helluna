@@ -46,6 +46,14 @@ struct FSTTask_ChaseTargetInstanceData
 	// EQS 재실행까지 남은 시간
 	UPROPERTY()
 	float TimeUntilNextEQS = 0.f;
+
+	// 현재 이동 목표 박스 인덱스 (-1 = 미설정)
+	UPROPERTY()
+	int32 CurrentBoxIndex = -1;
+
+	// Stuck 누적 시간 (이 시간이 임계값을 넘으면 다른 박스로 전환)
+	UPROPERTY()
+	float StuckAccumTime = 0.f;
 };
 
 USTRUCT(meta = (DisplayName = "Helluna: Chase Target", Category = "Helluna|AI"))
@@ -98,4 +106,10 @@ public:
 			ToolTip = "공격 위치 EQS를 다시 실행하는 간격입니다.\n값이 작을수록 더 자주 위치를 갱신합니다.",
 			ClampMin = "0.1"))
 	float EQSInterval = 1.0f;
+
+	UPROPERTY(EditAnywhere, Category = "설정",
+		meta = (DisplayName = "우주선 접근 분산 반경 (cm)",
+			ToolTip = "우주선 주변 박스 위치에서 몬스터가 흩어지는 랜덤 반경입니다.\n값이 클수록 더 넓게 분산됩니다.",
+			ClampMin = "0.0"))
+	float ShipSpreadRadius = 200.f;
 };

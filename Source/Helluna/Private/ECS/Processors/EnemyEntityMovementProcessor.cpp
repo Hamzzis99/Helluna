@@ -19,6 +19,7 @@
 
 #include "EngineUtils.h"
 #include "Engine/World.h"
+#include "Components/PrimitiveComponent.h"
 
 // ============================================================================
 // 생성자
@@ -49,6 +50,7 @@ void UEnemyEntityMovementProcessor::ConfigureQueries(const TSharedRef<FMassEntit
 	// GoalLocation 캐싱 쿼리 (별도 분리)
 	GoalCacheQuery.RegisterWithProcessor(*this);
 	GoalCacheQuery.AddRequirement<FEnemyDataFragment>(EMassFragmentAccess::ReadWrite);
+	GoalCacheQuery.AddRequirement<FTransformFragment>(EMassFragmentAccess::ReadOnly);
 }
 
 // ============================================================================
@@ -63,37 +65,91 @@ void UEnemyEntityMovementProcessor::Execute(
 	// ----------------------------------------------------------------
 	// Step 0: GoalLocation 캐싱 (StateTree에 의존하지 않고 직접 처리)
 	// 60프레임마다 갱신 (우주선이 움직일 수도 있으므로)
+	//
+	// [버그 수정] 우주선 중심점(GetActorLocation)을 GoalLocation으로 쓰면
+	// Entity가 콜리전 없이 순수 수학 이동을 하므로 우주선 메쉬를 관통해
+	// 중심까지 파고드는 현상이 발생.
+	//
+	// 해결: GoalActorTag Actor에서 "ShipCombatCollision" 태그가 붙은
+	// UBoxComponent들을 수집한 뒤, 각 Entity 위치에서 가장 가까운 박스 중심을
+	// GoalLocation으로 사용. 박스가 없으면 중심점 폴백.
 	// ----------------------------------------------------------------
 	if (GFrameCounter % 60 == 0)
 	{
 		UWorld* World = Context.GetWorld();
 		if (World)
 		{
-			GoalCacheQuery.ForEachEntityChunk(Context,
-				[&](FMassExecutionContext& ChunkCtx)
+			// 우주선 Actor와 ShipCombatCollision 박스들을 미리 수집 (모든 Entity 공통)
+			AActor* GoalActor = nullptr;
+			TArray<FVector> ApproachPoints;
+
+			for (TActorIterator<AActor> It(World); It; ++It)
+			{
+				// GoalActorTag는 모든 Entity가 "SpaceShip"으로 동일하므로 첫 번째만 사용
+				if (It->ActorHasTag(TEXT("SpaceShip")))
 				{
-					const TArrayView<FEnemyDataFragment> DataList =
-						ChunkCtx.GetMutableFragmentView<FEnemyDataFragment>();
+					GoalActor = *It;
 
-					for (int32 i = 0; i < ChunkCtx.GetNumEntities(); ++i)
+					// ShipCombatCollision 태그 컴포넌트 수집
+					TArray<UPrimitiveComponent*> Prims;
+					GoalActor->GetComponents<UPrimitiveComponent>(Prims);
+					for (UPrimitiveComponent* Prim : Prims)
 					{
-						FEnemyDataFragment& Data = DataList[i];
-						if (Data.bGoalLocationCached)
-							continue;
+						if (Prim && Prim->ComponentHasTag(TEXT("ShipCombatCollision")))
+							ApproachPoints.Add(Prim->GetComponentLocation());
+					}
+					break;
+				}
+			}
 
-						for (TActorIterator<AActor> It(World); It; ++It)
+			if (GoalActor)
+			{
+				const FVector FallbackLoc = GoalActor->GetActorLocation();
+
+				GoalCacheQuery.ForEachEntityChunk(Context,
+					[&](FMassExecutionContext& ChunkCtx)
+					{
+						const TArrayView<FEnemyDataFragment> DataList =
+							ChunkCtx.GetMutableFragmentView<FEnemyDataFragment>();
+						const TConstArrayView<FTransformFragment> TransformList =
+							ChunkCtx.GetFragmentView<FTransformFragment>();
+
+						for (int32 i = 0; i < ChunkCtx.GetNumEntities(); ++i)
 						{
-							if (It->ActorHasTag(Data.GoalActorTag))
-							{
-								Data.GoalLocation = It->GetActorLocation();
-								Data.bGoalLocationCached = true;
+							FEnemyDataFragment& Data = DataList[i];
+							if (Data.bGoalLocationCached)
+								continue;
 
-								break;
+							if (ApproachPoints.Num() > 0)
+							{
+								// Entity 위치에서 가장 가까운 ShipCombatCollision 박스 선택
+								const FVector EntityLoc = TransformList[i].GetTransform().GetLocation();
+								FVector BestPoint = ApproachPoints[0];
+								float BestDistSq = FVector::DistSquared(EntityLoc, BestPoint);
+
+								for (int32 j = 1; j < ApproachPoints.Num(); ++j)
+								{
+									const float DistSq = FVector::DistSquared(EntityLoc, ApproachPoints[j]);
+									if (DistSq < BestDistSq)
+									{
+										BestDistSq = DistSq;
+										BestPoint = ApproachPoints[j];
+									}
+								}
+
+								Data.GoalLocation = BestPoint;
 							}
+							else
+							{
+								// 박스가 없으면 중심점 폴백
+								Data.GoalLocation = FallbackLoc;
+							}
+
+							Data.bGoalLocationCached = true;
 						}
 					}
-				}	
-			);
+				);
+			}
 		}
 	}
 

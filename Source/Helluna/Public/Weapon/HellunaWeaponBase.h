@@ -7,7 +7,8 @@
 #include "HellunaWeaponBase.generated.h"
 
 class UBoxComponent;
-class UStaticMesh; // 김기현 — 부착물 시각 복제용
+class UStaticMesh;
+class UTexture2D;
 
 UCLASS()
 class HELLUNA_API AHellunaWeaponBase : public AActor
@@ -24,8 +25,17 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Stats", meta = (DisplayName = "공격 간격(n초에 1번 공격)"))
 	float AttackSpeed = 0.1f;
 
-protected:
+	/** 에디터에서 무기별로 지정하는 HUD 아이콘 이미지 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|UI",
+		meta = (DisplayName = "무기 아이콘"))
+	TObjectPtr<UTexture2D> WeaponIcon = nullptr;
 
+	/** 에디터에서 직접 입력하는 무기 표시 이름 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|UI",
+		meta = (DisplayName = "무기 표시 이름"))
+	FText WeaponDisplayName = FText::GetEmpty();
+
+protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapons")
 	UStaticMeshComponent* WeaponMesh;
@@ -36,22 +46,13 @@ protected:
 public:	
 
 	FORCEINLINE UBoxComponent* GetWeaponCollisionBox() const { return WeaponCollisionBox; }
+	FORCEINLINE UTexture2D* GetWeaponIcon() const { return WeaponIcon; }
+	FORCEINLINE FText GetWeaponDisplayName() const { return WeaponDisplayName; }
 
-	// ════════════════════════════════════════════════════════════════
-	// 📌 부착물 시각 복제 (WeaponBridgeComponent에서 호출)
-	// 작성: 김기현 (인벤토리 부착물 시스템 연동)
-	// ════════════════════════════════════════════════════════════════
-	// EquipActor(등 무기)의 부착물 시각 정보를 읽어서
-	// 이 무기의 WeaponMesh 소켓에 동일하게 부착한다.
-
-	// 부착물 메시를 이 무기의 WeaponMesh 소켓에 부착
 	void ApplyAttachmentVisual(int32 SlotIndex, UStaticMesh* Mesh, FName SocketName, const FTransform& Offset);
-
-	// 모든 부착물 메시 제거
 	void ClearAttachmentVisuals();
 
 private:
-	// 슬롯 인덱스 → 스폰된 부착물 메시 컴포넌트 (김기현)
 	UPROPERTY()
 	TMap<int32, TObjectPtr<UStaticMeshComponent>> AttachmentVisualComponents;
 };

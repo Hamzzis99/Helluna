@@ -14,6 +14,7 @@
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
+#include "Components/PrimitiveComponent.h"
 #include "Components/StateTreeComponent.h"
 #include "HellunaGameplayTags.h"
 
@@ -134,8 +135,23 @@ void FSTEvaluator_TargetSelector::Tick(FStateTreeExecutionContext& Context, cons
 	}
 	else
 	{
-		// 플레이어 없음 → 우주선 타겟 거리 갱신
+		// 플레이어 없음 → 우주선 타겟 거리 갱신 (표면 거리로 계산)
 		if (TargetData.TargetActor.IsValid())
-			TargetData.DistanceToTarget = FVector::Dist(PawnLocation, TargetData.TargetActor->GetActorLocation());
+		{
+			TArray<UPrimitiveComponent*> Prims;
+			TargetData.TargetActor->GetComponents<UPrimitiveComponent>(Prims);
+
+			float MinDist = MAX_FLT;
+			bool bFound = false;
+			for (UPrimitiveComponent* Prim : Prims)
+			{
+				if (!Prim || !Prim->ComponentHasTag(TEXT("ShipCombatCollision"))) continue;
+				const float D = FVector::Dist(PawnLocation, Prim->GetComponentLocation());
+				if (D < MinDist) { MinDist = D; bFound = true; }
+			}
+			TargetData.DistanceToTarget = bFound
+				? MinDist
+				: FVector::Dist(PawnLocation, TargetData.TargetActor->GetActorLocation());
+		}
 	}
 }
