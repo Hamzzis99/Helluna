@@ -64,7 +64,7 @@ void UHellunaLobbyStashWidget::NativeDestruct()
 	// [Phase 15]
 	if (Button_Mode_Solo) { Button_Mode_Solo->OnClicked.RemoveDynamic(this, &ThisClass::OnSoloModeClicked); }
 	if (Button_Mode_Duo) { Button_Mode_Duo->OnClicked.RemoveDynamic(this, &ThisClass::OnDuoModeClicked); }
-	if (Button_Mode_Party) { Button_Mode_Party->OnClicked.RemoveDynamic(this, &ThisClass::OnPartyModeClicked); }
+	if (Button_Mode_Squad) { Button_Mode_Squad->OnClicked.RemoveDynamic(this, &ThisClass::OnPartyModeClicked); }
 	if (Button_CancelMatchmaking) { Button_CancelMatchmaking->OnClicked.RemoveDynamic(this, &ThisClass::OnCancelMatchmakingClicked); }
 	// [Phase 17] 맵 선택 카드
 	if (Button_MapPrev) { Button_MapPrev->OnClicked.RemoveDynamic(this, &ThisClass::OnMapPrevClicked); }
@@ -169,9 +169,9 @@ void UHellunaLobbyStashWidget::NativeOnInitialized()
 	{
 		Button_Mode_Duo->OnClicked.AddUniqueDynamic(this, &ThisClass::OnDuoModeClicked);
 	}
-	if (Button_Mode_Party)
+	if (Button_Mode_Squad)
 	{
-		Button_Mode_Party->OnClicked.AddUniqueDynamic(this, &ThisClass::OnPartyModeClicked);
+		Button_Mode_Squad->OnClicked.AddUniqueDynamic(this, &ThisClass::OnPartyModeClicked);
 	}
 	if (Button_CancelMatchmaking)
 	{
@@ -627,7 +627,7 @@ void UHellunaLobbyStashWidget::OnStartClicked()
 		if (LobbyPC->CurrentPartyInfo.IsValid()
 			&& LobbyPC->CurrentPartyInfo.Members.Num() >= 2)
 		{
-			// 파티 가입 상태 → Ready 토글 (→ TryAutoDeployParty → EnterQueue)
+			// 파티 가입 상태 → Ready 토글 (→ TryAutoDeployParty → 정원충족시 직접Deploy / 미달시 EnterQueue)
 			bLocalPlayerReady = !bLocalPlayerReady;
 			UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] → Server_SetPartyReady(%s)"),
 				bLocalPlayerReady ? TEXT("true") : TEXT("false"));
@@ -1268,10 +1268,12 @@ void UHellunaLobbyStashWidget::OnSoloModeClicked()
 	UpdateModeButtonVisuals();
 	UpdateStartButtonForPartyState();
 
-	// 매칭 큐에 있으면 자동 취소
-	if (bInMatchmaking)
+	if (AHellunaLobbyController* LobbyPC = GetLobbyController())
 	{
-		if (AHellunaLobbyController* LobbyPC = GetLobbyController())
+		LobbyPC->Server_SetGameMode(ELobbyGameMode::Solo);
+
+		// 매칭 큐에 있으면 자동 취소
+		if (bInMatchmaking)
 		{
 			LobbyPC->Server_LeaveMatchmaking();
 		}
@@ -1285,10 +1287,12 @@ void UHellunaLobbyStashWidget::OnDuoModeClicked()
 	UpdateModeButtonVisuals();
 	UpdateStartButtonForPartyState();
 
-	// 매칭 큐에 있으면 자동 취소
-	if (bInMatchmaking)
+	if (AHellunaLobbyController* LobbyPC = GetLobbyController())
 	{
-		if (AHellunaLobbyController* LobbyPC = GetLobbyController())
+		LobbyPC->Server_SetGameMode(ELobbyGameMode::Duo);
+
+		// 매칭 큐에 있으면 자동 취소
+		if (bInMatchmaking)
 		{
 			LobbyPC->Server_LeaveMatchmaking();
 		}
@@ -1301,6 +1305,11 @@ void UHellunaLobbyStashWidget::OnPartyModeClicked()
 	CurrentGameMode = ELobbyGameMode::Squad;
 	UpdateModeButtonVisuals();
 	UpdateStartButtonForPartyState();
+
+	if (AHellunaLobbyController* LobbyPC = GetLobbyController())
+	{
+		LobbyPC->Server_SetGameMode(ELobbyGameMode::Squad);
+	}
 }
 
 void UHellunaLobbyStashWidget::OnCancelMatchmakingClicked()
@@ -1468,28 +1477,30 @@ void UHellunaLobbyStashWidget::UpdateModeButtonVisuals()
 		Button_Mode_Duo->SetBackgroundColor(
 			CurrentGameMode == ELobbyGameMode::Duo ? ActiveTabColor : InactiveTabColor);
 	}
-	if (Button_Mode_Party)
+	if (Button_Mode_Squad)
 	{
-		Button_Mode_Party->SetBackgroundColor(
+		Button_Mode_Squad->SetBackgroundColor(
 			CurrentGameMode == ELobbyGameMode::Squad ? ActiveTabColor : InactiveTabColor);
 	}
 }
 
 void UHellunaLobbyStashWidget::UpdateModeButtonsForPartySize(int32 PartySize)
 {
+	const ELobbyGameMode PrevMode = CurrentGameMode;
+
 	if (PartySize <= 1)
 	{
 		// 솔로: [SOLO] [DUO] [SQUAD] 3등분
 		if (Button_Mode_Solo)  Button_Mode_Solo->SetVisibility(ESlateVisibility::Visible);
 		if (Button_Mode_Duo)   Button_Mode_Duo->SetVisibility(ESlateVisibility::Visible);
-		if (Button_Mode_Party) Button_Mode_Party->SetVisibility(ESlateVisibility::Visible);
+		if (Button_Mode_Squad) Button_Mode_Squad->SetVisibility(ESlateVisibility::Visible);
 	}
 	else if (PartySize == 2)
 	{
 		// 듀오: [DUO] [SQUAD] 반반 (SOLO 숨김)
 		if (Button_Mode_Solo)  Button_Mode_Solo->SetVisibility(ESlateVisibility::Collapsed);
 		if (Button_Mode_Duo)   Button_Mode_Duo->SetVisibility(ESlateVisibility::Visible);
-		if (Button_Mode_Party) Button_Mode_Party->SetVisibility(ESlateVisibility::Visible);
+		if (Button_Mode_Squad) Button_Mode_Squad->SetVisibility(ESlateVisibility::Visible);
 		if (CurrentGameMode == ELobbyGameMode::Solo)
 		{
 			CurrentGameMode = ELobbyGameMode::Duo;
@@ -1500,8 +1511,17 @@ void UHellunaLobbyStashWidget::UpdateModeButtonsForPartySize(int32 PartySize)
 		// 스쿼드: [SQUAD] 꽉참 (SOLO/DUO 숨김)
 		if (Button_Mode_Solo)  Button_Mode_Solo->SetVisibility(ESlateVisibility::Collapsed);
 		if (Button_Mode_Duo)   Button_Mode_Duo->SetVisibility(ESlateVisibility::Collapsed);
-		if (Button_Mode_Party) Button_Mode_Party->SetVisibility(ESlateVisibility::Visible);
+		if (Button_Mode_Squad) Button_Mode_Squad->SetVisibility(ESlateVisibility::Visible);
 		CurrentGameMode = ELobbyGameMode::Squad;
+	}
+
+	// [Phase 18] 모드가 자동 변경되었으면 서버에 동기화
+	if (CurrentGameMode != PrevMode)
+	{
+		if (AHellunaLobbyController* LobbyPC = GetLobbyController())
+		{
+			LobbyPC->Server_SetGameMode(CurrentGameMode);
+		}
 	}
 
 	UpdateModeButtonVisuals();

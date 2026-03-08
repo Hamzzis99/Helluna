@@ -22,6 +22,15 @@
 // UENUM
 // ============================================================================
 
+/** [Phase 18] 로비 게임 모드 (Solo/Duo/Squad) */
+UENUM(BlueprintType)
+enum class ELobbyGameMode : uint8
+{
+	Solo   = 0  UMETA(DisplayName = "Solo (솔로)"),
+	Duo    = 1  UMETA(DisplayName = "Duo (듀오)"),
+	Squad  = 2  UMETA(DisplayName = "Squad (스쿼드)")
+};
+
 /** 매칭 큐 상태 */
 UENUM(BlueprintType)
 enum class EMatchmakingStatus : uint8
@@ -153,3 +162,19 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FOnMatchmakingCancelledChanged, const FString&, Reason);
+
+// ============================================================================
+// [Phase 18] 모드 유틸
+// ============================================================================
+
+/** 게임 모드의 최대 인원 (Solo=1, Duo=2, Squad=3) */
+inline int32 GetModeCapacity(ELobbyGameMode Mode)
+{
+	switch (Mode)
+	{
+	case ELobbyGameMode::Solo:  return 1;
+	case ELobbyGameMode::Duo:   return 2;
+	case ELobbyGameMode::Squad: return 3;
+	default:                    return 3;
+	}
+}

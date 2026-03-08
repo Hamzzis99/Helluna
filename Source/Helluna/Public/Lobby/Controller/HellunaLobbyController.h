@@ -260,6 +260,10 @@ public:
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_SetSelectedMap(const FString& MapKey);
 
+	/** [Phase 18] 게임 모드 변경 RPC (Solo/Duo/Squad) */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_SetGameMode(ELobbyGameMode Mode);
+
 	/** [클라이언트 → 서버] 매칭 큐 참가 */
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_EnterMatchmaking();
@@ -576,6 +580,9 @@ protected:
 public:
 	/** [Phase 16] 플레이어가 선택한 맵 키 */
 	FString SelectedMapKey;
+
+	/** [Phase 18] 플레이어가 선택한 게임 모드 */
+	ELobbyGameMode SelectedGameMode = ELobbyGameMode::Solo;
 
 protected:
 

@@ -21,6 +21,7 @@
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
 #include "Lobby/Party/HellunaPartyTypes.h"
+#include "Lobby/Party/HellunaMatchmakingTypes.h"
 #include "HellunaLobbyStashWidget.generated.h"
 
 // 전방 선언
@@ -39,18 +40,6 @@ class UScrollBox;
 class UEditableTextBox;
 class UVerticalBox;
 enum class EHellunaHeroType : uint8;
-struct FHellunaGameMapInfo;
-struct FMatchmakingStatusInfo;
-struct FMatchmakingFoundInfo;
-
-/** [Phase 18] 로비 게임 모드 (Solo/Duo/Squad) */
-UENUM(BlueprintType)
-enum class ELobbyGameMode : uint8
-{
-	Solo   = 0  UMETA(DisplayName = "Solo (솔로)"),
-	Duo    = 1  UMETA(DisplayName = "Duo (듀오)"),
-	Squad  = 2  UMETA(DisplayName = "Squad (스쿼드)")
-};
 
 // 탭 인덱스 상수
 namespace LobbyTab
@@ -226,7 +215,7 @@ protected:
 	TObjectPtr<UButton> Button_Mode_Duo;
 
 	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UButton> Button_Mode_Party;
+	TObjectPtr<UButton> Button_Mode_Squad;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> MatchmakingOverlay;

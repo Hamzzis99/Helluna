@@ -2004,9 +2004,69 @@ void AHellunaLobbyGameMode::TryAutoDeployParty(int32 PartyId)
 	}
 
 	// 전원 Ready + 중복 없음 + 캐릭터 선택 완료 → Deploy!
-	// [Phase 15] 매칭 큐 경유 → TryFormMatch가 Deploy 처리
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] TryAutoDeployParty: 전원 Ready — 매칭 큐 진입 | PartyId=%d"), PartyId);
-	EnterMatchmakingQueue(Info.LeaderId);
+
+	// [Phase 18] 리더의 게임 모드에 따라 직접 Deploy vs 매칭 큐 분기
+	auto* LeaderPCPtr = PlayerIdToControllerMap.Find(Info.LeaderId);
+	ELobbyGameMode LeaderMode = ELobbyGameMode::Squad; // 기본값: 안전하게 Squad
+	if (LeaderPCPtr && LeaderPCPtr->IsValid())
+	{
+		LeaderMode = LeaderPCPtr->Get()->SelectedGameMode;
+	}
+
+	const int32 ModeCapacity = GetModeCapacity(LeaderMode);
+	const int32 PartySize = Info.Members.Num();
+
+	if (PartySize >= ModeCapacity)
+	{
+		// 파티가 모드 정원 이상 → 직접 Deploy (매칭 큐 불필요)
+		UE_LOG(LogHellunaLobby, Log,
+			TEXT("[LobbyGM] [Phase18] TryAutoDeployParty: 파티 정원 충족 → 직접 Deploy | PartyId=%d | Mode=%d | PartySize=%d | Capacity=%d"),
+			PartyId, static_cast<int32>(LeaderMode), PartySize, ModeCapacity);
+
+		// 리더의 맵 키 가져오기
+		FString MapKey;
+		if (LeaderPCPtr && LeaderPCPtr->IsValid())
+		{
+			MapKey = LeaderPCPtr->Get()->SelectedMapKey;
+		}
+		if (MapKey.IsEmpty())
+		{
+			MapKey = DefaultMapKey;
+		}
+
+		// 합성 큐 엔트리 생성 (ExecuteMatchedDeploy 재활용)
+		FMatchmakingQueueEntry SyntheticEntry;
+		SyntheticEntry.EntryId = NextQueueEntryId++;
+		SyntheticEntry.PartyId = PartyId;
+		SyntheticEntry.QueueEnterTime = FPlatformTime::Seconds();
+		SyntheticEntry.SelectedMapKey = MapKey;
+
+		for (const FHellunaPartyMemberInfo& Member : Info.Members)
+		{
+			SyntheticEntry.PlayerIds.Add(Member.PlayerId);
+			SyntheticEntry.HeroTypes.Add(Member.SelectedHeroType);
+		}
+
+		TArray<FMatchmakingQueueEntry> DirectMatched;
+		DirectMatched.Add(MoveTemp(SyntheticEntry));
+		ExecuteMatchedDeploy(DirectMatched);
+
+		// Ready 리셋 (Deploy 완료 후)
+		if (SQLiteSubsystem)
+		{
+			SQLiteSubsystem->ResetAllReadyStates(PartyId);
+		}
+		RefreshPartyCache(PartyId);
+		BroadcastPartyState(PartyId);
+	}
+	else
+	{
+		// 파티가 모드 정원 미달 → 매칭 큐 진입 (추가 플레이어 필요)
+		UE_LOG(LogHellunaLobby, Log,
+			TEXT("[LobbyGM] [Phase18] TryAutoDeployParty: 정원 미달 → 매칭 큐 진입 | PartyId=%d | Mode=%d | PartySize=%d | Capacity=%d"),
+			PartyId, static_cast<int32>(LeaderMode), PartySize, ModeCapacity);
+		EnterMatchmakingQueue(Info.LeaderId);
+	}
 }
 
 void AHellunaLobbyGameMode::ExecutePartyDeploy(int32 PartyId)

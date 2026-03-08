@@ -20,6 +20,7 @@
 #include "Player/Inv_PlayerController.h"
 #include "HAL/IConsoleManager.h"
 #include "Chat/HellunaChatTypes.h"
+#include "Login/Controller/HellunaLoginController.h"  // [Fix50]
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "HAL/FileManager.h"
@@ -953,6 +954,22 @@ void AHellunaDefenseGameMode::ProcessPlayerGameResult(APlayerController* PC, boo
 // ============================================================
 void AHellunaDefenseGameMode::Logout(AController* Exiting)
 {
+    // [Fix50] LoginController → HeroController 스왑 시 Logout 스킵
+    // SwapPlayerControllers가 LoginController를 파괴하면 Logout이 호출되지만,
+    // 이것은 실제 플레이어 이탈이 아닌 컨트롤러 교체.
+    if (AHellunaLoginController* ExitingLC = Cast<AHellunaLoginController>(Exiting))
+    {
+        AHellunaPlayerState* PS = ExitingLC->GetPlayerState<AHellunaPlayerState>();
+        bool bIsControllerSwap = (!PS || PS->GetPlayerUniqueId().IsEmpty());
+        if (bIsControllerSwap)
+        {
+            UE_LOG(LogHelluna, Log, TEXT("[Fix50] LoginController 스왑 감지 — Logout 처리 스킵 | Controller=%s"),
+                *GetNameSafe(Exiting));
+            Super::Logout(Exiting);
+            return;
+        }
+    }
+
     // Phase 10: 퇴장 메시지
     if (bGameInitialized)
     {
