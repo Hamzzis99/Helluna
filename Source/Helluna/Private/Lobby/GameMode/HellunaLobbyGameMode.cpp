@@ -2040,6 +2040,7 @@ void AHellunaLobbyGameMode::TryAutoDeployParty(int32 PartyId)
 		SyntheticEntry.PartyId = PartyId;
 		SyntheticEntry.QueueEnterTime = FPlatformTime::Seconds();
 		SyntheticEntry.SelectedMapKey = MapKey;
+		SyntheticEntry.GameMode = LeaderMode;
 
 		for (const FHellunaPartyMemberInfo& Member : Info.Members)
 		{
@@ -2434,6 +2435,12 @@ void AHellunaLobbyGameMode::EnterMatchmakingQueue(const FString& PlayerId, const
 		}
 	}
 
+	// [Phase 18] 게임 모드 저장
+	if (PCPtr && PCPtr->IsValid())
+	{
+		NewEntry.GameMode = PCPtr->Get()->SelectedGameMode;
+	}
+
 	// 큐에 추가
 	MatchmakingQueue.Add(NewEntry);
 	for (const FString& PId : NewEntry.PlayerIds)
@@ -2525,7 +2532,7 @@ void AHellunaLobbyGameMode::BroadcastMatchmakingStatus()
 		StatusInfo.Status = EMatchmakingStatus::Searching;
 		StatusInfo.ElapsedTime = static_cast<float>(Now - Entry.QueueEnterTime);
 		StatusInfo.CurrentPlayerCount = MapKeyPlayerCounts.FindRef(Entry.SelectedMapKey);
-		StatusInfo.TargetPlayerCount = 3;
+		StatusInfo.TargetPlayerCount = GetModeCapacity(Entry.GameMode);
 
 		for (const FString& PId : Entry.PlayerIds)
 		{
@@ -2640,7 +2647,7 @@ void AHellunaLobbyGameMode::ExecuteMatchedDeploy(const TArray<FMatchmakingQueueE
 	}
 	else
 	{
-		// [Phase 16] 빈 채널 없음 → 동적 서버 스폰
+		// [Phase 16/19] 빈 채널 없음 → 맵 전환 or 동적 서버 스폰
 		if (!GameServerManager)
 		{
 			UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [Phase16] GameServerManager 없음!"));
@@ -2676,6 +2683,30 @@ void AHellunaLobbyGameMode::ExecuteMatchedDeploy(const TArray<FMatchmakingQueueE
 			return;
 		}
 
+		// [Phase 19] 아무 빈 서버 찾기 → 커맨드 파일로 맵 전환
+		FGameChannelInfo AnyEmptyChannel;
+		if (FindEmptyChannel(AnyEmptyChannel))
+		{
+			// 빈 서버 발견 → 커맨드 파일로 맵 전환 지시
+			MarkChannelAsPendingDeploy(AnyEmptyChannel.Port);
+			WriteMapSwitchCommand(AnyEmptyChannel.Port, MapPath);
+
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Phase19] 빈 서버에 맵 전환 커맨드 전송 | Port=%d | MapPath=%s"),
+				AnyEmptyChannel.Port, *MapPath);
+
+			// 큐에서 제거 (대기 중 재매칭 방지)
+			for (const FMatchmakingQueueEntry& Entry : Matched)
+			{
+				RemoveQueueEntry(Entry.EntryId);
+			}
+
+			// 비동기 대기 시작 (맵 키로 준비 확인)
+			TArray<FMatchmakingQueueEntry> MatchedCopy = Matched;
+			WaitAndDeploy(AnyEmptyChannel.Port, MoveTemp(MatchedCopy), MapKey);
+			return;
+		}
+
+		// [Phase 16] 빈 서버도 없음 → 새 프로세스 스폰
 		const int32 SpawnedPort = GameServerManager->SpawnGameServer(MapPath);
 		if (SpawnedPort < 0)
 		{
@@ -2791,7 +2822,7 @@ void AHellunaLobbyGameMode::ExecuteMatchedDeploy(const TArray<FMatchmakingQueueE
 // [Phase 16] WaitAndDeploy — 서버 스폰 후 준비 대기
 // ════════════════════════════════════════════════════════════════════════════════
 
-void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEntry> Matched)
+void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEntry> Matched, const FString& MapKey)
 {
 	UWorld* World = GetWorld();
 	if (!World)
@@ -2806,8 +2837,9 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 	FTimerHandle& TimerHandle = WaitAndDeployTimers.FindOrAdd(Port);
 	TWeakObjectPtr<AHellunaLobbyGameMode> WeakThis(this);
 
+	// [Phase 19] MapKey 캡처 — 비어있으면 맵 무관 체크 (기존 동작), 있으면 맵 일치 체크
 	World->GetTimerManager().SetTimer(TimerHandle,
-		[WeakThis, Port, Matched = MoveTemp(Matched), StartTime, TimeoutSeconds]() mutable
+		[WeakThis, Port, Matched = MoveTemp(Matched), StartTime, TimeoutSeconds, MapKey]() mutable
 		{
 			if (!WeakThis.IsValid())
 			{
@@ -2850,8 +2882,15 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 				return;
 			}
 
-			// 서버 준비 확인
-			if (!Self->GameServerManager || !Self->GameServerManager->IsServerReady(Port))
+			// [Phase 19] 서버 준비 확인 — MapKey가 있으면 맵 일치까지 체크
+			if (!Self->GameServerManager)
+			{
+				return;
+			}
+			const bool bReady = MapKey.IsEmpty()
+				? Self->GameServerManager->IsServerReady(Port)
+				: Self->GameServerManager->IsServerReadyForMap(Port, MapKey);
+			if (!bReady)
 			{
 				return; // 아직 미준비 → 다음 폴링 대기
 			}
@@ -2932,6 +2971,26 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 		},
 		PollInterval, true // 반복
 	);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 19] WriteMapSwitchCommand — 빈 서버에 맵 전환 커맨드 파일 작성
+// ════════════════════════════════════════════════════════════════════════════════
+
+void AHellunaLobbyGameMode::WriteMapSwitchCommand(int32 Port, const FString& MapPath)
+{
+	const FString CmdPath = FPaths::Combine(
+		GetRegistryDirectoryPath(),
+		FString::Printf(TEXT("command_%d.json"), Port));
+
+	const FString Json = FString::Printf(
+		TEXT("{\"command\":\"servertravel\",\"mapPath\":\"%s\",\"timestamp\":\"%s\"}"),
+		*MapPath, *FDateTime::UtcNow().ToIso8601());
+
+	FFileHelper::SaveStringToFile(Json, *CmdPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[Phase19] WriteMapSwitchCommand | Port=%d | MapPath=%s | Path=%s"),
+		Port, *MapPath, *CmdPath);
 }
 
 void AHellunaLobbyGameMode::RemoveQueueEntry(int32 EntryId)

@@ -81,6 +81,9 @@ void AHellunaDefenseGameMode::BeginPlay()
         }
     }
 
+    // [Phase 19] 빈 상태에서 커맨드 파일 폴링 시작
+    StartCommandPollTimer();
+
 #if HELLUNA_DEBUG_DEFENSE
     UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] BeginPlay 완료 — BossSpawn:%d / MeleeSpawn:%d / RangeSpawn:%d"),
         BossSpawnPoints.Num(), MeleeSpawnPoints.Num(), RangeSpawnPoints.Num());
@@ -707,6 +710,9 @@ void AHellunaDefenseGameMode::PostLogin(APlayerController* NewPlayer)
         W->GetTimerManager().ClearTimer(IdleShutdownTimer);
     }
 
+    // [Phase 19] 커맨드 폴링 중지 (플레이어 접속)
+    StopCommandPollTimer();
+
     // Phase 10: 접속 메시지
     if (bGameInitialized && IsValid(NewPlayer))
     {
@@ -1079,6 +1085,12 @@ void AHellunaDefenseGameMode::Logout(AController* Exiting)
         }
     }
 
+    // [Phase 19] 전원 이탈 → 커맨드 폴링 재시작
+    if (CurrentPlayerCount == 0 && !bGameEnded)
+    {
+        StartCommandPollTimer();
+    }
+
     Super::Logout(Exiting);
 }
 
@@ -1323,5 +1335,81 @@ void AHellunaDefenseGameMode::CheckIdleShutdown()
         UE_LOG(LogHelluna, Log, TEXT("[Phase16] 유휴 종료 — 접속자 0, 서버 종료"));
         DeleteRegistryFile();
         FGenericPlatformMisc::RequestExit(false);
+    }
+}
+
+// ============================================================
+// [Phase 19] 커맨드 파일 폴링 — 빈 서버 맵 전환
+// ============================================================
+
+void AHellunaDefenseGameMode::PollForCommand()
+{
+    if (CurrentPlayerCount > 0 || bGameEnded)
+    {
+        return;
+    }
+
+    const FString CmdPath = FPaths::Combine(
+        GetRegistryDirectoryPath(),
+        FString::Printf(TEXT("command_%d.json"), GetServerPort()));
+
+    FString JsonString;
+    if (!FFileHelper::LoadFileToString(JsonString, *CmdPath))
+    {
+        return;
+    }
+
+    TSharedPtr<FJsonObject> JsonObj;
+    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonString);
+    if (!FJsonSerializer::Deserialize(Reader, JsonObj) || !JsonObj.IsValid())
+    {
+        return;
+    }
+
+    const FString Command = JsonObj->GetStringField(TEXT("command"));
+    if (Command != TEXT("servertravel"))
+    {
+        return;
+    }
+
+    const FString MapPath = JsonObj->GetStringField(TEXT("mapPath"));
+    if (MapPath.IsEmpty())
+    {
+        return;
+    }
+
+    // 커맨드 파일 삭제 (먼저 삭제 — 중복 실행 방지)
+    IFileManager::Get().Delete(*CmdPath);
+
+    // 타이머 정리 (ServerTravel 전)
+    StopCommandPollTimer();
+    if (UWorld* W = GetWorld())
+    {
+        W->GetTimerManager().ClearTimer(IdleShutdownTimer);
+        W->GetTimerManager().ClearTimer(RegistryHeartbeatTimer);
+    }
+
+    UE_LOG(LogHelluna, Log, TEXT("[Phase19] 커맨드 파일 감지 → ServerTravel | MapPath=%s"), *MapPath);
+
+    if (UWorld* W = GetWorld())
+    {
+        W->ServerTravel(MapPath);
+    }
+}
+
+void AHellunaDefenseGameMode::StartCommandPollTimer()
+{
+    if (UWorld* W = GetWorld())
+    {
+        W->GetTimerManager().SetTimer(CommandPollTimer, this,
+            &AHellunaDefenseGameMode::PollForCommand, 2.0f, true);
+    }
+}
+
+void AHellunaDefenseGameMode::StopCommandPollTimer()
+{
+    if (UWorld* W = GetWorld())
+    {
+        W->GetTimerManager().ClearTimer(CommandPollTimer);
     }
 }

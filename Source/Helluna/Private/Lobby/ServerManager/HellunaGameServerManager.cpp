@@ -144,6 +144,55 @@ bool UHellunaGameServerManager::IsServerReady(int32 Port) const
 }
 
 // ============================================================================
+// [Phase 19] IsServerReadyForMap
+// ============================================================================
+
+bool UHellunaGameServerManager::IsServerReadyForMap(int32 Port, const FString& MapKey) const
+{
+	const FString FilePath = FPaths::Combine(RegistryDir, FString::Printf(TEXT("channel_%d.json"), Port));
+
+	FString JsonString;
+	if (!FFileHelper::LoadFileToString(JsonString, *FilePath))
+	{
+		return false;
+	}
+
+	TSharedPtr<FJsonObject> JsonObj;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonString);
+	if (!FJsonSerializer::Deserialize(Reader, JsonObj) || !JsonObj.IsValid())
+	{
+		return false;
+	}
+
+	const FString Status = JsonObj->GetStringField(TEXT("status"));
+	if (Status != TEXT("empty"))
+	{
+		return false;
+	}
+
+	// 맵 일치 확인
+	const FString MapName = JsonObj->GetStringField(TEXT("mapName"));
+	if (!MapName.Contains(MapKey))
+	{
+		return false;
+	}
+
+	// lastUpdate 60초 이내 확인
+	const FString LastUpdateStr = JsonObj->GetStringField(TEXT("lastUpdate"));
+	FDateTime LastUpdate;
+	if (FDateTime::ParseIso8601(*LastUpdateStr, LastUpdate))
+	{
+		const FTimespan Age = FDateTime::UtcNow() - LastUpdate;
+		if (Age.GetTotalSeconds() > 60.0)
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+// ============================================================================
 // AllocatePort
 // ============================================================================
 

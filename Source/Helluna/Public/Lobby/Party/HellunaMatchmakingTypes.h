@@ -91,6 +91,9 @@ struct FMatchmakingQueueEntry
 	/** [Phase 16] 선택한 맵 키 (같은 맵끼리만 매칭) */
 	FString SelectedMapKey;
 
+	/** [Phase 18] 큐 진입 시 게임 모드 (Solo/Duo/Squad) */
+	ELobbyGameMode GameMode = ELobbyGameMode::Squad;
+
 	int32 GetPlayerCount() const { return PlayerIds.Num(); }
 };
 

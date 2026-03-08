@@ -341,6 +341,22 @@ protected:
 	/** 유휴 종료 체크 */
 	void CheckIdleShutdown();
 
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 19] 커맨드 파일 맵 전환 — 빈 서버 재활용
+	// ════════════════════════════════════════════════════════════════
+
+	/** 커맨드 파일 폴링 타이머 (2초 간격, 빈 상태에서만 동작) */
+	FTimerHandle CommandPollTimer;
+
+	/** 커맨드 파일 확인 + ServerTravel 실행 */
+	void PollForCommand();
+
+	/** 커맨드 폴링 타이머 시작 */
+	void StartCommandPollTimer();
+
+	/** 커맨드 폴링 타이머 정지 */
+	void StopCommandPollTimer();
+
 	/** 결과 UI 위젯 클래스 (BP에서 설정) */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|GameEnd(게임종료)",
 		meta = (DisplayName = "결과 위젯 클래스"))

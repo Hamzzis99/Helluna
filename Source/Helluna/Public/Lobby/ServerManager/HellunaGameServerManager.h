@@ -36,6 +36,9 @@ public:
 	/** 해당 포트의 서버가 ready(registry에 empty 상태 + 60초 이내) 인지 확인 */
 	bool IsServerReady(int32 Port) const;
 
+	/** [Phase 19] 해당 포트의 서버가 ready + 지정 맵인지 확인 */
+	bool IsServerReadyForMap(int32 Port, const FString& MapKey) const;
+
 	/** 포트 할당: 레지스트리 + ActiveServers 스캔 -> [7778, 7798] 범위에서 미사용 포트 */
 	int32 AllocatePort() const;
 
