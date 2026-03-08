@@ -2925,65 +2925,79 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 			}
 			Self->WaitAndDeployTimers.Remove(Port);
 
-			// 전원 Save + Deploy
-			for (const FMatchmakingQueueEntry& Entry : Matched)
+			// [Fix51] Deploy 작업을 다음 틱으로 분리 (타이머 콜백 내 캡처 데이터 접근 크래시 방지)
+			TArray<FMatchmakingQueueEntry> DeployMatched = MoveTemp(Matched);
+			TWeakObjectPtr<AHellunaLobbyGameMode> DeployWeakSelf = WeakThis;
+			const int32 DeployPort = Port;
+
+			if (UWorld* W = Self->GetWorld())
 			{
-				for (int32 Idx = 0; Idx < Entry.PlayerIds.Num(); ++Idx)
+				W->GetTimerManager().SetTimerForNextTick([DeployWeakSelf, DeployPort, DeployMatched = MoveTemp(DeployMatched)]()
 				{
-					const FString& PId = Entry.PlayerIds[Idx];
-					const int32 HeroType = Entry.HeroTypes.IsValidIndex(Idx) ? Entry.HeroTypes[Idx] : 3;
+					if (!DeployWeakSelf.IsValid()) return;
+					AHellunaLobbyGameMode* GM = DeployWeakSelf.Get();
 
-					auto* PCPtr = Self->PlayerIdToControllerMap.Find(PId);
-					if (!PCPtr || !PCPtr->IsValid())
+					// 전원 Save + Deploy
+					for (const FMatchmakingQueueEntry& Entry : DeployMatched)
 					{
-						UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [Phase16] Controller 없음 | PlayerId=%s"), *PId);
-						continue;
-					}
-
-					AHellunaLobbyController* MemberPC = PCPtr->Get();
-					UInv_InventoryComponent* LoadoutComp = MemberPC->GetLoadoutComponent();
-					UInv_InventoryComponent* StashComp = MemberPC->GetStashComponent();
-
-					if (Self->SQLiteSubsystem && Self->SQLiteSubsystem->IsDatabaseReady())
-					{
-						if (LoadoutComp)
+						for (int32 Idx = 0; Idx < Entry.PlayerIds.Num(); ++Idx)
 						{
-							TArray<FInv_SavedItemData> LoadoutItems = LoadoutComp->CollectInventoryDataForSave();
-							if (LoadoutItems.Num() > 0)
+							const FString& PId = Entry.PlayerIds[Idx];
+							const int32 HeroType = Entry.HeroTypes.IsValidIndex(Idx) ? Entry.HeroTypes[Idx] : 3;
+
+							auto* PCPtr = GM->PlayerIdToControllerMap.Find(PId);
+							if (!PCPtr || !PCPtr->IsValid())
 							{
-								Self->SQLiteSubsystem->SavePlayerLoadout(PId, LoadoutItems);
-								Self->SQLiteSubsystem->ExportLoadoutToFile(PId, LoadoutItems, HeroType);
+								UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [Phase16] Controller 없음 | PlayerId=%s"), *PId);
+								continue;
+							}
+
+							AHellunaLobbyController* MemberPC = PCPtr->Get();
+							UInv_InventoryComponent* LoadoutComp = MemberPC->GetLoadoutComponent();
+							UInv_InventoryComponent* StashComp = MemberPC->GetStashComponent();
+
+							if (GM->SQLiteSubsystem && GM->SQLiteSubsystem->IsDatabaseReady())
+							{
+								if (LoadoutComp)
+								{
+									TArray<FInv_SavedItemData> LoadoutItems = LoadoutComp->CollectInventoryDataForSave();
+									if (LoadoutItems.Num() > 0)
+									{
+										GM->SQLiteSubsystem->SavePlayerLoadout(PId, LoadoutItems);
+										GM->SQLiteSubsystem->ExportLoadoutToFile(PId, LoadoutItems, HeroType);
+									}
+								}
+								if (StashComp)
+								{
+									TArray<FInv_SavedItemData> StashItems = StashComp->CollectInventoryDataForSave();
+									GM->SQLiteSubsystem->SavePlayerStash(PId, StashItems);
+								}
+
+								GM->SQLiteSubsystem->SetPlayerDeployedWithPort(PId, true, DeployPort, HeroType);
 							}
 						}
-						if (StashComp)
-						{
-							TArray<FInv_SavedItemData> StashItems = StashComp->CollectInventoryDataForSave();
-							Self->SQLiteSubsystem->SavePlayerStash(PId, StashItems);
-						}
-
-						Self->SQLiteSubsystem->SetPlayerDeployedWithPort(PId, true, Port, HeroType);
 					}
-				}
-			}
 
-			// 전원 Client Deploy RPC
-			for (const FMatchmakingQueueEntry& Entry : Matched)
-			{
-				for (const FString& PId : Entry.PlayerIds)
-				{
-					auto* PCPtr = Self->PlayerIdToControllerMap.Find(PId);
-					if (!PCPtr || !PCPtr->IsValid())
+					// 전원 Client Deploy RPC
+					for (const FMatchmakingQueueEntry& Entry : DeployMatched)
 					{
-						continue;
+						for (const FString& PId : Entry.PlayerIds)
+						{
+							auto* PCPtr = GM->PlayerIdToControllerMap.Find(PId);
+							if (!PCPtr || !PCPtr->IsValid())
+							{
+								continue;
+							}
+
+							AHellunaLobbyController* MemberPC = PCPtr->Get();
+							MemberPC->SetDeployInProgress(true);
+							MemberPC->Client_ExecutePartyDeploy(DeployPort);
+
+							UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Phase16] Client_ExecutePartyDeploy 전송 | PlayerId=%s | Port=%d"),
+								*PId, DeployPort);
+						}
 					}
-
-					AHellunaLobbyController* MemberPC = PCPtr->Get();
-					MemberPC->SetDeployInProgress(true);
-					MemberPC->Client_ExecutePartyDeploy(Port);
-
-					UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Phase16] Client_ExecutePartyDeploy 전송 | PlayerId=%s | Port=%d"),
-						*PId, Port);
-				}
+				});
 			}
 		},
 		PollInterval, true // 반복
