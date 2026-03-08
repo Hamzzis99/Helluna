@@ -14,6 +14,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Lobby/Party/HellunaPartyTypes.h"
 #include "HellunaMatchmakingTypes.generated.h"
 
 // ============================================================================
@@ -107,3 +108,43 @@ struct FMatchmakingStatusInfo
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FOnMatchmakingStatusChanged, const FMatchmakingStatusInfo&, StatusInfo);
+
+// ============================================================================
+// [Phase 17] 매칭 카운트다운 구조체 + 델리게이트
+// ============================================================================
+
+/** 매칭 완료 시 클라이언트에 전달할 정보 */
+USTRUCT(BlueprintType)
+struct FMatchmakingFoundInfo
+{
+	GENERATED_BODY()
+
+	/** 매칭된 전원의 파티 멤버 정보 (SetPartyPreview 호출용) */
+	UPROPERTY(BlueprintReadOnly, Category = "Matchmaking")
+	TArray<FHellunaPartyMemberInfo> MatchedMembers;
+
+	/** 카운트다운 총 시간 (초) */
+	UPROPERTY(BlueprintReadOnly, Category = "Matchmaking")
+	int32 CountdownSeconds = 5;
+
+	/** 본인 영웅이 재배정 되었는지 */
+	UPROPERTY(BlueprintReadOnly, Category = "Matchmaking")
+	bool bHeroWasReassigned = false;
+
+	/** 원래 선택했던 영웅 (재배정 시에만 유효) */
+	UPROPERTY(BlueprintReadOnly, Category = "Matchmaking")
+	int32 OriginalHeroType = 3; // None
+
+	/** 새로 배정된 영웅 (재배정 시에만 유효) */
+	UPROPERTY(BlueprintReadOnly, Category = "Matchmaking")
+	int32 AssignedHeroType = 3; // None
+};
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FOnMatchmakingFoundChanged, const FMatchmakingFoundInfo&, FoundInfo);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FOnMatchmakingCountdownChanged, int32, RemainingSeconds);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FOnMatchmakingCancelledChanged, const FString&, Reason);

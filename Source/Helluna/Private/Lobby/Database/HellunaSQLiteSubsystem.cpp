@@ -2788,6 +2788,29 @@ bool UHellunaSQLiteSubsystem::UnregisterAllActiveGameCharactersForServer(const F
 	}
 }
 
+// ──────────────────────────────────────────────────────────────
+// ClearAllActiveGameCharacters — 전체 캐릭터 등록 해제 (서버 시작 시 stale 정리)
+// ──────────────────────────────────────────────────────────────
+bool UHellunaSQLiteSubsystem::ClearAllActiveGameCharacters()
+{
+	if (!IsDatabaseReady())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ClearAllActiveGameCharacters: DB 미준비"));
+		return false;
+	}
+
+	if (Database->Execute(TEXT("DELETE FROM active_game_characters;")))
+	{
+		UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ ClearAllActiveGameCharacters 완료"));
+		return true;
+	}
+	else
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ ClearAllActiveGameCharacters 실패 | 에러: %s"), *Database->GetLastError());
+		return false;
+	}
+}
+
 
 // ════════════════════════════════════════════════════════════════════════════════
 // 디버그 콘솔 명령어 (Phase 2 Step 2-6) — 비출시 빌드 전용
