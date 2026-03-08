@@ -11,11 +11,9 @@ Claude.md
 Content/Collections/
 Content/Developers/
 Content/Migration/
-Content/InventoryAssets/
 Plugins/Developer/
-Plugins/Inventory/Content/InventoryAssets/
 Content/Assets/
-Content/Fab/
+Plugins/Inventory/Content/InventoryAssets/
 
 # Unreal Engine build artifacts
 Build/
