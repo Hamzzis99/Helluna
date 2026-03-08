@@ -615,7 +615,7 @@ void AHellunaDefenseGameMode::TickDayCountdown()
 
     float Remaining = FMath::Max(0.f, GS->DayTimeRemaining - 1.f);
     GS->SetDayTimeRemaining(Remaining);
-
+}
 // ============================================================
 // Phase 10: PostLogin — 접속 채팅 + Phase 12b 레지스트리
 // ============================================================
