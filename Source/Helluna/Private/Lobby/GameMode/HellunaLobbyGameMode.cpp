@@ -2872,7 +2872,10 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 				UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [Phase16] WaitAndDeploy 타임아웃 | Port=%d | %.1f초"),
 					Port, Elapsed);
 
-				// 타이머 해제
+				// [Fix51-B] ClearTimer 전에 데이터를 먼저 꺼냄 (ClearTimer가 람다 캡처를 즉시 파괴할 수 있음)
+				TArray<FMatchmakingQueueEntry> TimeoutMatched = MoveTemp(Matched);
+
+				// 타이머 해제 (Matched는 이미 이동됨 → 빈 배열 → 소멸 안전)
 				if (UWorld* W = Self->GetWorld())
 				{
 					FTimerHandle* TH = Self->WaitAndDeployTimers.Find(Port);
@@ -2884,8 +2887,8 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 				Self->WaitAndDeployTimers.Remove(Port);
 				Self->PendingDeployChannels.Remove(Port);
 
-				// 에러 전송
-				for (const FMatchmakingQueueEntry& Entry : Matched)
+				// 에러 전송 (안전한 로컬 복사본 사용)
+				for (const FMatchmakingQueueEntry& Entry : TimeoutMatched)
 				{
 					for (const FString& PId : Entry.PlayerIds)
 					{
@@ -2914,7 +2917,12 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 
 			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Phase16] 서버 준비 완료 | Port=%d | %.1f초 대기"), Port, Elapsed);
 
-			// 타이머 해제
+			// [Fix51-B] ClearTimer 전에 데이터를 먼저 꺼냄 (ClearTimer가 람다 캡처를 즉시 파괴할 수 있음)
+			TArray<FMatchmakingQueueEntry> DeployMatched = MoveTemp(Matched);
+			TWeakObjectPtr<AHellunaLobbyGameMode> DeployWeakSelf = WeakThis;
+			const int32 DeployPort = Port;
+
+			// 타이머 해제 (Matched는 이미 이동됨 → 빈 배열 → 소멸 안전)
 			if (UWorld* W = Self->GetWorld())
 			{
 				FTimerHandle* TH = Self->WaitAndDeployTimers.Find(Port);
@@ -2925,10 +2933,6 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 			}
 			Self->WaitAndDeployTimers.Remove(Port);
 
-			// [Fix51] Deploy 작업을 다음 틱으로 분리 (타이머 콜백 내 캡처 데이터 접근 크래시 방지)
-			TArray<FMatchmakingQueueEntry> DeployMatched = MoveTemp(Matched);
-			TWeakObjectPtr<AHellunaLobbyGameMode> DeployWeakSelf = WeakThis;
-			const int32 DeployPort = Port;
 
 			if (UWorld* W = Self->GetWorld())
 			{
