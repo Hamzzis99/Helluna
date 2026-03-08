@@ -377,6 +377,9 @@ public:
 	/** 특정 서버의 모든 캐릭터 등록 해제 */
 	virtual bool UnregisterAllActiveGameCharactersForServer(const FString& ServerId) override;
 
+	/** 전체 캐릭터 등록 해제 (서버 시작 시 stale 데이터 정리) */
+	bool ClearAllActiveGameCharacters();
+
 	// ════════════════════════════════════════════════════════════════
 	// IInventoryDatabase — 장착 상태 관리 (player_equipment)
 	// ════════════════════════════════════════════════════════════════

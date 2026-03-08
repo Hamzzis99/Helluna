@@ -280,6 +280,32 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "로비|매치메이킹")
 	FOnMatchmakingStatusChanged OnMatchmakingStatusChanged;
 
+	// ── [Phase 17] 매칭 카운트다운 RPC ──
+
+	/** [서버 -> 클라이언트] 매칭 완료 + 멤버 정보 + 카운트다운 시작 */
+	UFUNCTION(Client, Reliable)
+	void Client_MatchmakingFound(const FMatchmakingFoundInfo& FoundInfo);
+
+	/** [서버 -> 클라이언트] 카운트다운 동기화 */
+	UFUNCTION(Client, Reliable)
+	void Client_MatchmakingCountdown(int32 RemainingSeconds);
+
+	/** [서버 -> 클라이언트] 카운트다운 취소 */
+	UFUNCTION(Client, Reliable)
+	void Client_MatchmakingCancelled(const FString& Reason);
+
+	/** 매칭 완료 이벤트 */
+	UPROPERTY(BlueprintAssignable, Category = "로비|매치메이킹")
+	FOnMatchmakingFoundChanged OnMatchmakingFound;
+
+	/** 카운트다운 숫자 변경 이벤트 */
+	UPROPERTY(BlueprintAssignable, Category = "로비|매치메이킹")
+	FOnMatchmakingCountdownChanged OnMatchmakingCountdown;
+
+	/** 카운트다운 취소 이벤트 */
+	UPROPERTY(BlueprintAssignable, Category = "로비|매치메이킹")
+	FOnMatchmakingCancelledChanged OnMatchmakingCancelled;
+
 	// ── [Phase 12g-2] 파티 프리뷰 ──
 
 	/** 파티 상태 변경 시 3D 프리뷰 갱신 (2명 이상이면 Party 모드, 1명 이하면 Solo 복귀) */

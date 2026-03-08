@@ -137,10 +137,10 @@ public:
 	 * 해당 캐릭터가 현재 로비에서 사용 가능한지 확인
 	 * 메모리 맵(같은 로비) + SQLite(다른 서버 간) 교차 체크
 	 */
-	bool IsLobbyCharacterAvailable(EHellunaHeroType HeroType) const;
+	bool IsLobbyCharacterAvailable(EHellunaHeroType HeroType, const FString& RequestingPlayerId) const;
 
-	/** 현재 로비에서 가용한 캐릭터 목록 (3개 bool, true=사용중) */
-	TArray<bool> GetLobbyAvailableCharacters() const;
+	/** 현재 로비에서 가용한 캐릭터 목록 (3개 bool, true=사용중, 파티 기준) */
+	TArray<bool> GetLobbyAvailableCharacters(const FString& RequestingPlayerId) const;
 
 	/** 캐릭터 사용 등록 (같은 로비 + SQLite) */
 	void RegisterLobbyCharacterUse(EHellunaHeroType HeroType, const FString& PlayerId);
@@ -312,21 +312,53 @@ public:
 	/** 큐 엔트리 제거 */
 	void RemoveQueueEntry(int32 EntryId);
 
-	/** 매칭 간 영웅 중복 검사 — true=중복 없음(유효) */
+	/** [Phase 17 deprecated] 매칭 간 영웅 중복 검사 — ResolveHeroDuplication으로 대체 */
 	bool ValidateMatchHeroDuplication(const TArray<FMatchmakingQueueEntry>& Entries) const;
 
 	/** 큐 엔트리 영웅 타입 갱신 */
 	void UpdateQueueEntryHeroType(const FString& PlayerId, int32 NewHeroType);
+
+	// ── [Phase 17] 매칭 카운트다운 + 영웅 자동 재배정 ──
+
+	/** 카운트다운 대기 중인 매칭 그룹 */
+	struct FPendingCountdownMatch
+	{
+		TArray<FMatchmakingQueueEntry> MatchedEntries;
+		/** PlayerId -> {원래HeroType, 새HeroType} */
+		TMap<FString, TPair<int32, int32>> ReassignedHeroes;
+		int32 RemainingSeconds = 5;
+		FTimerHandle CountdownTimerHandle;
+		int32 MatchGroupId = 0;
+	};
+
+	TArray<FPendingCountdownMatch> PendingCountdownMatches;
+	int32 NextMatchGroupId = 1;
+
+	/** 영웅 중복 해소 — Matched 배열 직접 수정 + 변경 맵 반환 */
+	TMap<FString, TPair<int32, int32>> ResolveHeroDuplication(TArray<FMatchmakingQueueEntry>& Matched);
+
+	/** 카운트다운 시작 (TryFormMatch에서 호출) */
+	void StartMatchCountdown(TArray<FMatchmakingQueueEntry> Matched, TMap<FString, TPair<int32, int32>> ReassignedHeroes);
+
+	/** 매초 카운트다운 틱 */
+	void TickMatchCountdown(int32 MatchGroupId);
+
+	/** 카운트다운 완료 -> Deploy 시작 */
+	void OnCountdownFinished(int32 MatchGroupId);
+
+	/** 카운트다운 중 플레이어 이탈 처리 */
+	void HandleCountdownPlayerDisconnect(const FString& PlayerId);
 
 	/** 캐시 갱신 (DB에서 다시 로드) */
 	void RefreshPartyCache(int32 PartyId);
 
 private:
 	/**
-	 * 같은 로비 내 캐릭터 사용 맵 (메모리)
-	 * Key: HeroType, Value: PlayerId
+	 * 플레이어별 선택 캐릭터 맵 (메모리)
+	 * Key: PlayerId, Value: HeroType
+	 * 같은 캐릭터를 여러 플레이어가 선택 가능 (파티 내에서만 중복 제한)
 	 */
-	TMap<EHellunaHeroType, FString> LobbyUsedCharacterMap;
+	TMap<FString, EHellunaHeroType> PlayerSelectedHeroMap;
 
 	/** 로비 서버 고유 ID (active_game_characters.server_id용) */
 	FString LobbyServerId;
