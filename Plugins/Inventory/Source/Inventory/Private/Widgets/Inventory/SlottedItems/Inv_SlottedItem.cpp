@@ -36,11 +36,12 @@ void UInv_SlottedItem::SetInventoryItem(UInv_InventoryItem* Item)
 
 void UInv_SlottedItem::SetImageBrush(const FSlateBrush& Brush) const
 {
-	Image_Icon->SetBrush(Brush);
+	if (Image_Icon) Image_Icon->SetBrush(Brush);
 }
 
 void UInv_SlottedItem::UpdateStackCount(int32 StackCount) // 아이템 텍스트 스택 업데이트 부분
 {
+	if (!Text_StackCount) return;
 	if (StackCount > 0)
 	{
 		Text_StackCount->SetVisibility(ESlateVisibility::Visible);

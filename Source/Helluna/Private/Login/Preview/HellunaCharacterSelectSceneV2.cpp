@@ -31,12 +31,18 @@ AHellunaCharacterSelectSceneV2::AHellunaCharacterSelectSceneV2()
 	MainLight->SetAttenuationRadius(2000.f);
 	MainLight->SetRelativeLocation(FVector(300.f, 0.f, 300.f));
 
+	MainLight->LightingChannels.bChannel0 = false;  // 배경 안 밝힘
+	MainLight->LightingChannels.bChannel1 = true;   // 캐릭터만 밝힘
+
 	// 보조 조명
 	FillLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("FillLight"));
 	FillLight->SetupAttachment(SceneRoot);
 	FillLight->SetIntensity(20000.f);
 	FillLight->SetAttenuationRadius(2000.f);
 	FillLight->SetRelativeLocation(FVector(-200.f, -300.f, 150.f));
+
+	FillLight->LightingChannels.bChannel0 = false;  // 배경 안 밝힘
+	FillLight->LightingChannels.bChannel1 = true;   // 캐릭터만 밝힘
 }
 
 // ============================================
@@ -135,6 +141,9 @@ void AHellunaCharacterSelectSceneV2::InitializeScene(
 
 		PreviewMeshes.Add(MeshComp);
 
+		// LightChannel 1 활성화 — 프리뷰 전용 조명을 받기 위해
+		MeshComp->LightingChannels.bChannel1 = true;
+
 #if HELLUNA_DEBUG_CHARACTER_PREVIEW_V2
 		UE_LOG(LogHelluna, Warning, TEXT("║ [%d] Mesh: %s, Loc: %s, Rot: %s"),
 			i, *InMeshes[i]->GetName(), *MeshLocation.ToString(), *MeshRotation.ToString());
@@ -172,6 +181,9 @@ void AHellunaCharacterSelectSceneV2::InitializeScene(
 
 		Spot->SetIntensity(80000.f);
 		Spot->SetAttenuationRadius(1000.f);
+
+		Spot->LightingChannels.bChannel0 = false;  // 배경 안 밝힘
+		Spot->LightingChannels.bChannel1 = true;   // 캐릭터만 밝힘
 		Spot->SetInnerConeAngle(15.f);
 		Spot->SetOuterConeAngle(35.f);
 
@@ -325,6 +337,8 @@ void AHellunaCharacterSelectSceneV2::SetSoloCharacter(int32 CharacterIndex)
 
 		// 애님 클래스 복사
 		SoloCenterMesh->SetAnimInstanceClass(SourceMesh->GetAnimClass());
+
+	SoloCenterMesh->LightingChannels.bChannel1 = true;  // 프리뷰 조명 수신
 
 		// 머티리얼 복사 (오버레이 등)
 		for (int32 MatIdx = 0; MatIdx < SourceMesh->GetNumMaterials(); ++MatIdx)
@@ -506,7 +520,7 @@ void AHellunaCharacterSelectSceneV2::SetPartyPreview(
 		}
 
 		// SkeletalMeshComponent 생성 (이름에 카운터 추가 — GC 전 재호출 시 이름 충돌 방지)
-		static int32 PartyMeshGenCounter = 0;
+		// [Fix47-L1] static→멤버 변수 (ClearPartyPreview에서 리셋 가능)
 		const FName CompName = *FString::Printf(TEXT("PartyMesh_%d_%d"), S, PartyMeshGenCounter++);
 		USkeletalMeshComponent* MeshComp = NewObject<USkeletalMeshComponent>(this, CompName);
 		if (!MeshComp)
@@ -565,6 +579,8 @@ void AHellunaCharacterSelectSceneV2::SetPartyPreview(
 		MeshComp->SetVisibility(true);
 		PartyPreviewMeshes.Add(MeshComp);
 
+		MeshComp->LightingChannels.bChannel1 = true;  // 프리뷰 조명 수신
+
 		// ── 스포트라이트 ── (카운터로 이름 충돌 방지)
 		static int32 PartySpotGenCounter = 0;
 		const FName LightName = *FString::Printf(TEXT("PartySpot_%d_%d"), S, PartySpotGenCounter++);
@@ -578,6 +594,9 @@ void AHellunaCharacterSelectSceneV2::SetPartyPreview(
 			// 로컬 플레이어는 밝게, 다른 멤버는 보통 (기존 80000 기준 비율 적용)
 			Spot->SetIntensity(Slot.bIsLocal ? 80000.f : 80000.f * 0.6f);
 			Spot->SetAttenuationRadius(1000.f);
+
+		Spot->LightingChannels.bChannel0 = false;  // 배경 안 밝힘
+		Spot->LightingChannels.bChannel1 = true;   // 캐릭터만 밝힘
 			Spot->SetInnerConeAngle(15.f);
 			Spot->SetOuterConeAngle(35.f);
 			Spot->SetVisibility(true);
@@ -623,6 +642,7 @@ void AHellunaCharacterSelectSceneV2::ClearPartyPreview()
 	PartySpotLights.Empty();
 
 	CachedPartyHeroTypes.Empty();
+	PartyMeshGenCounter = 0; // [Fix47-L1] FName 풀 누적 방지
 	bPartyMode = false;
 
 	// 기존 PreviewMeshes + CharacterSpotLights 복원

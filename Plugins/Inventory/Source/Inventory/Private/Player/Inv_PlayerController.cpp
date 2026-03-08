@@ -22,7 +22,7 @@
 #include "InventoryManagement/Utils/Inv_InventoryStatics.h"
 #include "InventoryManagement/Components/Inv_LootContainerComponent.h"
 #include "Widgets/Inventory/Container/Inv_ContainerWidget.h"
-#include "Interfaces/Inv_Interface_Primary.cpp"
+#include "Interfaces/Inv_Interface_Primary.h"
 
 AInv_PlayerController::AInv_PlayerController()
 {
@@ -34,6 +34,8 @@ AInv_PlayerController::AInv_PlayerController()
 void AInv_PlayerController::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	if (InventoryComponent.IsValid() && InventoryComponent->IsMenuOpen()) return;
+	if (bIsViewingContainer) return;
 	TraceForInteractables();
 }
 
@@ -337,9 +339,11 @@ void AInv_PlayerController::PrimaryInteract()
 
 bool AInv_PlayerController::Server_Interact_Validate(AActor* TargetActor)
 {
-	// 기본 검증: nullptr은 허용 (함수 내에서 처리)
-	// 추가 검증이 필요하면 여기에 추가
-	return true;
+	if (!TargetActor) return true;
+	APawn* MyPawn = GetPawn();
+	if (!MyPawn) return true;
+	const double MaxDist = TraceLength * 2.0;
+	return FVector::DistSquared(MyPawn->GetActorLocation(), TargetActor->GetActorLocation()) <= FMath::Square(MaxDist);
 }
 
 void AInv_PlayerController::Server_Interact_Implementation(AActor* TargetActor)
@@ -500,6 +504,7 @@ TArray<FInv_SavedItemData> AInv_PlayerController::CollectInventoryGridState()
 {
 	TArray<FInv_SavedItemData> Result;
 
+#if INV_DEBUG_INVENTORY
 	// ── 🔍 [진단] CollectGridState 호출 컨텍스트 확인 ──
 	UE_LOG(LogTemp, Error, TEXT("🔍 [CollectGridState 진단] Controller=%s, IsLocal=%s, HasAuth=%s, Role=%d"),
 		*GetName(),
@@ -532,6 +537,7 @@ TArray<FInv_SavedItemData> AInv_PlayerController::CollectInventoryGridState()
 	{
 		UE_LOG(LogTemp, Error, TEXT("🔍 [진단] InventoryComponent=INVALID ❌"));
 	}
+#endif
 
 #if INV_DEBUG_PLAYER
 	UE_LOG(LogTemp, Warning, TEXT(""));
@@ -626,12 +632,14 @@ TArray<FInv_SavedItemData> AInv_PlayerController::CollectInventoryGridState()
 		}
 	}
 
+#if INV_DEBUG_INVENTORY
 	UE_LOG(LogTemp, Error, TEXT("[Step3.5진단] EquippedItemPtrs 구성: %d개"), EquippedItemPtrs.Num());
 	for (UInv_InventoryItem* EqDiagPtr : EquippedItemPtrs)
 	{
 		UE_LOG(LogTemp, Error, TEXT("[Step3.5진단]   -> 포인터=%p, Type=%s"),
 			EqDiagPtr, *EqDiagPtr->GetItemManifest().GetItemType().ToString());
 	}
+#endif
 
 #if INV_DEBUG_PLAYER
 	UE_LOG(LogTemp, Warning, TEXT(""));
@@ -1695,6 +1703,11 @@ AInv_EquipActor* AInv_PlayerController::GetCurrentEquipActor() const
 // Phase 9: 컨테이너 RPC 구현
 // ════════════════════════════════════════════════════════════════
 
+bool AInv_PlayerController::Server_OpenContainer_Validate(UInv_LootContainerComponent* Container)
+{
+	return true;
+}
+
 void AInv_PlayerController::Server_OpenContainer_Implementation(UInv_LootContainerComponent* Container)
 {
 	if (!IsValid(Container)) return;
@@ -1718,6 +1731,11 @@ void AInv_PlayerController::Server_OpenContainer_Implementation(UInv_LootContain
 	ActiveContainerComp = Container;
 
 	Client_ShowContainerUI(Container);
+}
+
+bool AInv_PlayerController::Server_CloseContainer_Validate()
+{
+	return true;
 }
 
 void AInv_PlayerController::Server_CloseContainer_Implementation()

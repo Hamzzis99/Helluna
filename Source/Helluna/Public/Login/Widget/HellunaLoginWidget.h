@@ -116,15 +116,6 @@ public:
 	void ShowCharacterSelection(const TArray<bool>& AvailableCharacters);
 
 	/**
-	 * 캐릭터 선택 완료 시 호출 (BP에서 호출)
-	 * 선택된 캐릭터 인덱스를 서버로 전송
-	 * 
-	 * @param CharacterIndex - 선택한 캐릭터 인덱스 (0: Lui, 1: Luna, 2: Liam)
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Login|Character Select (캐릭터 선택)")
-	void OnCharacterSelected(int32 CharacterIndex);
-
-	/**
 	 * 현재 활성화된 캐릭터 선택 위젯 반환
 	 */
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Login|Character Select (캐릭터 선택)")

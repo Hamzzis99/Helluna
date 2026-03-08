@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Helluna.h"  // 디버그 매크로 정의 (HELLUNA_DEBUG_DEFENSE - Phase/DayNight/몬스터/날씨)
 #include "GameMode/HellunaBaseGameState.h"
 
 // [MDF 추가] 플러그인 인터페이스 및 컴포넌트 헤더
@@ -265,14 +266,12 @@ protected:
     UPROPERTY(Replicated, BlueprintReadOnly, Category = "Defense|Monster")
     int32 AliveMonsterCount = 0;
 
-    // 디버그용
+#if HELLUNA_DEBUG_DEFENSE
+    // 디버그용 (HELLUNA_DEBUG_DEFENSE가 1일 때만 컴파일)
     FTimerHandle TimerHandle_NightDebug;
-
-    // ✅ 출력 간격(원인 파악 끝나면 지우기 쉬움)
     float NightDebugInterval = 5.f;
-
-    // ✅ 2.5초마다 호출될 함수(몹 수 출력)
     void PrintNightDebug();
+#endif
 
     // ═══════════════════════════════════════════════════════════════════════════
     // 🔍 UDS 디버그 타이머 (1초마다 Time of Day 로깅)
@@ -342,6 +341,17 @@ protected:
     AActor* GetUDSActor();
     AActor* GetUDWActor();
     void SetUDSTimeOfDay(float Time);
+
+    // ---------------------------------------------------------------
+    // [Step3 O-02] UDS 리플렉션 프로퍼티 캐시
+    // FindFProperty는 비용이 높으므로 BeginPlay에서 1회만 조회하여 캐싱
+    // ---------------------------------------------------------------
+    FProperty* CachedProp_TimeOfDay = nullptr;    // "Time of Day" (Float or Double)
+    FProperty* CachedProp_Animate = nullptr;      // "Animate Time of Day" (Bool)
+    FProperty* CachedProp_DayLength = nullptr;    // "Day Length" (Float or Double)
+
+    /** BeginPlay에서 UDS 프로퍼티를 캐싱하는 헬퍼 */
+    void CacheUDSProperties();
     
     /** 데디서버에서 UDS/UDW가 존재하는지 (BeginPlay에서 1회 체크) */
     bool bHasUDS = false;

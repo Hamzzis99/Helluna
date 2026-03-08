@@ -39,19 +39,19 @@ void UInv_SpatialInventory::NativeOnInitialized()
 
 	//인벤토리 장비 칸들
 	// U24: AddUniqueDynamic — NativeOnInitialized 재호출 시 중복 바인딩 방지
-	Button_Equippables->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowEquippables);
-	Button_Consumables->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowConsumables);
-	Button_Craftables->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowCraftables);
-	
+	if (Button_Equippables) { Button_Equippables->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowEquippables); }
+	if (Button_Consumables) { Button_Consumables->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowConsumables); }
+	if (Button_Craftables) { Button_Craftables->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowCraftables); }
+
 	// 툴팁 캔버스 설정
-	Grid_Equippables->SetOwningCanvas(CanvasPanel);
-	Grid_Consumables->SetOwningCanvas(CanvasPanel);
-	Grid_Craftables->SetOwningCanvas(CanvasPanel);
+	if (Grid_Equippables) { Grid_Equippables->SetOwningCanvas(CanvasPanel); }
+	if (Grid_Consumables) { Grid_Consumables->SetOwningCanvas(CanvasPanel); }
+	if (Grid_Craftables) { Grid_Craftables->SetOwningCanvas(CanvasPanel); }
 
 	// [Phase 11] Alt+LMB 빠른 장착 델리게이트 바인딩
-	Grid_Equippables->OnQuickEquipRequested.AddUniqueDynamic(this, &ThisClass::OnGridQuickEquipRequested);
-	Grid_Consumables->OnQuickEquipRequested.AddUniqueDynamic(this, &ThisClass::OnGridQuickEquipRequested);
-	Grid_Craftables->OnQuickEquipRequested.AddUniqueDynamic(this, &ThisClass::OnGridQuickEquipRequested);
+	if (Grid_Equippables) { Grid_Equippables->OnQuickEquipRequested.AddUniqueDynamic(this, &ThisClass::OnGridQuickEquipRequested); }
+	if (Grid_Consumables) { Grid_Consumables->OnQuickEquipRequested.AddUniqueDynamic(this, &ThisClass::OnGridQuickEquipRequested); }
+	if (Grid_Craftables) { Grid_Craftables->OnQuickEquipRequested.AddUniqueDynamic(this, &ThisClass::OnGridQuickEquipRequested); }
 
 	ShowEquippables(); // 기본값으로 장비창을 보여주자.
 
@@ -91,7 +91,7 @@ void UInv_SpatialInventory::CollectEquippedGridSlots()
 			// 델리게이트 중복 바인딩 방지
 			if (!EquippedGridSlot->EquippedGridSlotClicked.IsAlreadyBound(this, &ThisClass::EquippedGridSlotClicked))
 			{
-				EquippedGridSlot->EquippedGridSlotClicked.AddDynamic(this, &ThisClass::EquippedGridSlotClicked);
+				EquippedGridSlot->EquippedGridSlotClicked.AddUniqueDynamic(this, &ThisClass::EquippedGridSlotClicked);
 			}
 
 #if INV_DEBUG_WIDGET
@@ -207,7 +207,7 @@ void UInv_SpatialInventory::EnableLobbyTransferMode()
 		Grid->SetLobbyTransferMode(true);
 		if (!Grid->OnLobbyTransferRequested.IsAlreadyBound(this, &ThisClass::OnGridTransferRequested))
 		{
-			Grid->OnLobbyTransferRequested.AddDynamic(this, &ThisClass::OnGridTransferRequested);
+			Grid->OnLobbyTransferRequested.AddUniqueDynamic(this, &ThisClass::OnGridTransferRequested);
 		}
 		UE_LOG(LogTemp, Log, TEXT("[SpatialInventory]   %s → 전송 모드 ON"), Name);
 	};
@@ -285,7 +285,7 @@ void UInv_SpatialInventory::EquippedGridSlotClicked(UInv_EquippedGridSlot* Equip
 		EquipmentTypeTag,
 		TileSize
 	);
-	EquippedSlottedItem->OnEquippedSlottedItemClicked.AddDynamic(this, &ThisClass::EquippedSlottedItemClicked);
+	EquippedSlottedItem->OnEquippedSlottedItemClicked.AddUniqueDynamic(this, &ThisClass::EquippedSlottedItemClicked);
 
 	// Inform the server that we've equipped an item (potentially unequipping an item as well)
 	// 아이템을 장착했음을 서버에 알리기(잠재적으로 아이템을 해제하기도 함)
@@ -482,7 +482,7 @@ void UInv_SpatialInventory::MakeEquippedSlottedItem(UInv_EquippedSlottedItem* Eq
 		ItemToEquip,
 		EquippedSlottedItem->GetEquipmentTypeTag(),
 		GetTileSize());
-	if (IsValid(SlottedItem))SlottedItem->OnEquippedSlottedItemClicked.AddDynamic(this, &ThisClass::EquippedSlottedItemClicked);
+	if (IsValid(SlottedItem))SlottedItem->OnEquippedSlottedItemClicked.AddUniqueDynamic(this, &ThisClass::EquippedSlottedItemClicked);
 	
 	//새로 아이템을 장착할 바인딩 되길 바람
 	EquippedGridSlot->SetEquippedSlottedItem(SlottedItem);
@@ -501,28 +501,22 @@ UInv_EquippedSlottedItem* UInv_SpatialInventory::RestoreEquippedItem(UInv_Equipp
 		return nullptr;
 	}
 
-	// TileSize 가져오기
-	auto* InventoryWidget = UInv_InventoryStatics::GetInventoryWidget(GetOwningPlayer());
-	if (!IsValid(InventoryWidget))
+	// TileSize 가져오기 — this(SpatialInventory) 자체의 GetTileSize() 사용
+	// [Fix40] 로비에서는 InventoryMenuClass 미설정 → GetInventoryWidget() = nullptr 이므로
+	// UInv_InventoryStatics::GetInventoryWidget() 대신 자체 Grid에서 직접 조회
+	const float TileSize = GetTileSize();
+	if (TileSize <= 0.f)
 	{
 #if INV_DEBUG_WIDGET
-		UE_LOG(LogTemp, Error, TEXT("[RestoreEquippedItem] ❌ InventoryWidget이 nullptr!"));
+		UE_LOG(LogTemp, Error, TEXT("[RestoreEquippedItem] TileSize=%.1f (Grid 미초기화)"), TileSize);
 #endif
 		return nullptr;
 	}
-	const float TileSize = InventoryWidget->GetTileSize();
 
 #if INV_DEBUG_WIDGET
-	// 🔍 [Phase 8] TileSize 디버깅
-	UE_LOG(LogTemp, Warning, TEXT("[RestoreEquippedItem] InventoryWidget: %s, TileSize: %.1f"),
-		*InventoryWidget->GetName(), TileSize);
-
-	if (TileSize <= 0.f)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[RestoreEquippedItem] ❌ TileSize가 0 이하! 위젯이 안 보일 수 있음!"));
-	}
+	UE_LOG(LogTemp, Warning, TEXT("[RestoreEquippedItem] TileSize: %.1f"), TileSize);
 #endif
-	
+
 	// 장착 아이템의 태그 가져오기
 	FGameplayTag EquipmentTag = ItemToEquip->GetItemManifest().GetItemType();
 	
@@ -532,7 +526,7 @@ UInv_EquippedSlottedItem* UInv_SpatialInventory::RestoreEquippedItem(UInv_Equipp
 	if (IsValid(EquippedSlottedItem))
 	{
 		// ⚠️ 핵심: 클릭 델리게이트 바인딩 (드래그&드롭 장착 해제용)
-		EquippedSlottedItem->OnEquippedSlottedItemClicked.AddDynamic(this, &ThisClass::EquippedSlottedItemClicked);
+		EquippedSlottedItem->OnEquippedSlottedItemClicked.AddUniqueDynamic(this, &ThisClass::EquippedSlottedItemClicked);
 
 #if INV_DEBUG_WIDGET
 		UE_LOG(LogTemp, Warning, TEXT("[RestoreEquippedItem] ✅ 델리게이트 바인딩 완료: %s → 슬롯 %d"),
@@ -903,7 +897,7 @@ void UInv_SpatialInventory::OnGridQuickEquipRequested(UInv_InventoryItem* Item, 
 	);
 	if (IsValid(NewEquippedSlottedItem))
 	{
-		NewEquippedSlottedItem->OnEquippedSlottedItemClicked.AddDynamic(this, &ThisClass::EquippedSlottedItemClicked);
+		NewEquippedSlottedItem->OnEquippedSlottedItemClicked.AddUniqueDynamic(this, &ThisClass::EquippedSlottedItemClicked);
 	}
 
 	// 5) HoverItem 정리

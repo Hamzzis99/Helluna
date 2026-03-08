@@ -38,14 +38,14 @@ protected:
 
 protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|스탯", meta = (DisplayName = "초당 배터리 소모량"))
-	float BatteryDrainRate;
+	float BatteryDrainRate = 20.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|이펙트", meta = (DisplayName = "레이저 색상 (디버그)"))
-	FColor LaserColor;
+	FColor LaserColor = FColor::Red;
 
 	/** true: 화면 중앙(크로스헤어) 기준, false: 총구(Muzzle) 기준 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|스탯", meta = (DisplayName = "화면 중앙 기준 사용"))
-	bool bUseScreenCenter;
+	bool bUseScreenCenter = true;
 
 private:
 	// 현재 마킹 중인 벽 컴포넌트 (기억용)

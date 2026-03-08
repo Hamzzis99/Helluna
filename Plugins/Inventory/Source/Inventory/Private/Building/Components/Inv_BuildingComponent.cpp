@@ -118,7 +118,9 @@ void UInv_BuildingComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 		QueryParams.AddIgnoredActor(GhostActorInstance); // 고스트 액터 자신 무시
 
 		// 라인 트레이스 실행 (ECC_Visibility 채널 사용)
-		if (GetWorld()->LineTraceSingleByChannel(HitResult, TraceStart, TraceEnd, ECC_Visibility, QueryParams))
+		UWorld* World = GetWorld();
+		if (!World) return;
+		if (World->LineTraceSingleByChannel(HitResult, TraceStart, TraceEnd, ECC_Visibility, QueryParams))
 		{
 			// 히트된 위치에 고스트 액터 배치
 			GhostActorInstance->SetActorLocation(HitResult.Location);
@@ -133,8 +135,8 @@ void UInv_BuildingComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 			
 			// 디버그 라인 (빨강: 불가능, 초록: 가능)
 			const FColor DebugColor = bCanPlaceBuilding ? FColor::Green : FColor::Red;
-			DrawDebugLine(GetWorld(), TraceStart, HitResult.Location, DebugColor, false, 0.0f, 0, 2.0f);
-			DrawDebugPoint(GetWorld(), HitResult.Location, 10.0f, DebugColor, false, 0.0f);
+			DrawDebugLine(World, TraceStart, HitResult.Location, DebugColor, false, 0.0f, 0, 2.0f);
+			DrawDebugPoint(World, HitResult.Location, 10.0f, DebugColor, false, 0.0f);
 		}
 		else
 		{
@@ -145,7 +147,7 @@ void UInv_BuildingComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 			GhostActorInstance->SetActorLocation(TraceEnd);
 			
 			// 디버그 라인 (회색: 바닥 없음)
-			DrawDebugLine(GetWorld(), TraceStart, TraceEnd, FColor::Silver, false, 0.0f, 0, 1.0f);
+			DrawDebugLine(World, TraceStart, TraceEnd, FColor::Silver, false, 0.0f, 0, 1.0f);
 		}
 	}
 }
@@ -184,10 +186,14 @@ void UInv_BuildingComponent::StartBuildMode()
 	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
 	// 플레이어 앞에 스폰
-	FVector SpawnLocation = OwningPC->GetPawn()->GetActorLocation() + (OwningPC->GetPawn()->GetActorForwardVector() * 300.0f);
+	APawn* OwnerPawn = OwningPC->GetPawn();
+	if (!OwnerPawn) return;
+	FVector SpawnLocation = OwnerPawn->GetActorLocation() + (OwnerPawn->GetActorForwardVector() * 300.0f);
 	FRotator SpawnRotation = FRotator::ZeroRotator;
 
-	GhostActorInstance = GetWorld()->SpawnActor<AActor>(SelectedGhostClass, SpawnLocation, SpawnRotation, SpawnParams);
+	UWorld* World = GetWorld();
+	if (!World) return;
+	GhostActorInstance = World->SpawnActor<AActor>(SelectedGhostClass, SpawnLocation, SpawnRotation, SpawnParams);
 
 	if (IsValid(GhostActorInstance))
 	{
@@ -508,6 +514,18 @@ void UInv_BuildingComponent::TryPlaceBuilding()
 #endif
 }
 
+bool UInv_BuildingComponent::Server_PlaceBuilding_Validate(
+	TSubclassOf<AActor> BuildingClass,
+	FVector Location,
+	FRotator Rotation,
+	FGameplayTag MaterialTag1,
+	int32 MaterialAmount1,
+	FGameplayTag MaterialTag2,
+	int32 MaterialAmount2)
+{
+	return BuildingClass != nullptr && MaterialAmount1 >= 0 && MaterialAmount2 >= 0 && !Location.ContainsNaN() && !Rotation.ContainsNaN();
+}
+
 void UInv_BuildingComponent::Server_PlaceBuilding_Implementation(
 	TSubclassOf<AActor> BuildingClass, 
 	FVector Location, 
@@ -581,7 +599,9 @@ void UInv_BuildingComponent::Server_PlaceBuilding_Implementation(
 	SpawnParams.Owner = OwningPC.Get();
 	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
 
-	AActor* PlacedBuilding = GetWorld()->SpawnActor<AActor>(BuildingClass, Location, Rotation, SpawnParams);
+	UWorld* World = GetWorld();
+	if (!World) return;
+	AActor* PlacedBuilding = World->SpawnActor<AActor>(BuildingClass, Location, Rotation, SpawnParams);
 
 	if (IsValid(PlacedBuilding))
 	{

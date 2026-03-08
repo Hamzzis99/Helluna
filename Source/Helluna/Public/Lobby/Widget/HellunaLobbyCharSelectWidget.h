@@ -44,6 +44,7 @@ class HELLUNA_API UHellunaLobbyCharSelectWidget : public UUserWidget
 
 public:
 	virtual void NativeOnInitialized() override;
+	virtual void NativeDestruct() override;
 
 	// ════════════════════════════════════════════════════════════════
 	// 초기화

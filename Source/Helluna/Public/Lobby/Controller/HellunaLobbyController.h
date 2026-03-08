@@ -27,17 +27,51 @@
 #include "Player/Inv_PlayerController.h"  // FInv_SavedItemData 구조체 사용
 #include "HellunaTypes.h"
 #include "Lobby/Party/HellunaPartyTypes.h"
+#include "Lobby/Party/HellunaMatchmakingTypes.h"
 #include "HellunaLobbyController.generated.h"
+
+class AHellunaLobbyGameMode;
 
 // 전방 선언
 class UInv_InventoryComponent;
 class UInv_InventoryItem;
 class UHellunaLobbyStashWidget;
+class UHellunaLobbyLoginWidget;
 class UHellunaPartyWidget;
+class UHellunaRejoinWidget;
 class AHellunaCharacterSelectSceneV2;
 class ACameraActor;
 class USkeletalMesh;
 class UHellunaLobbyCharSelectWidget;
+class AHellunaLobbyCameraAnchor;
+
+// [Fix46-M3] Validate 상한 공통 상수
+namespace LobbyValidation
+{
+	/** RPC 파라미터 인덱스 상한 (실제 Grid 크기 기반) */
+	constexpr int32 MaxInventoryIndex = 10000;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 배경 카메라 설정 구조체
+// ════════════════════════════════════════════════════════════════════════════════
+USTRUCT(BlueprintType)
+struct FLobbyCameraTransform
+{
+	GENERATED_BODY()
+
+	/** 카메라 위치 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, meta = (DisplayName = "카메라 위치 (Location)"))
+	FVector Location = FVector::ZeroVector;
+
+	/** 카메라 회전 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, meta = (DisplayName = "카메라 회전 (Rotation)"))
+	FRotator Rotation = FRotator::ZeroRotator;
+
+	/** 카메라 시야각 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, meta = (DisplayName = "카메라 FOV"))
+	float FOV = 90.0f;
+};
 
 // ════════════════════════════════════════════════════════════════════════════════
 // 전송 방향 열거형
@@ -56,6 +90,52 @@ class HELLUNA_API AHellunaLobbyController : public APlayerController
 
 public:
 	AHellunaLobbyController();
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 13] 로비 로그인 RPC
+	// ════════════════════════════════════════════════════════════════
+
+	/** [클라이언트 → 서버] 로비 로그인 요청 */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_RequestLobbyLogin(const FString& PlayerId, const FString& Password);
+
+	/** [클라이언트 → 서버] 로비 회원가입 요청 */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_RequestLobbySignup(const FString& PlayerId, const FString& Password);
+
+	/** [서버 → 클라이언트] 로그인 위젯 표시 지시 */
+	UFUNCTION(Client, Reliable)
+	void Client_ShowLobbyLoginUI();
+
+	/** [서버 → 클라이언트] 로그인 결과 통보 */
+	UFUNCTION(Client, Reliable)
+	void Client_LobbyLoginResult(bool bSuccess, const FString& ErrorMessage);
+
+	/** [서버 → 클라이언트] 회원가입 결과 통보 */
+	UFUNCTION(Client, Reliable)
+	void Client_LobbySignupResult(bool bSuccess, const FString& Message);
+
+	/** 로그인 완료 여부 */
+	bool IsLoggedIn() const { return bIsLoggedIn; }
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 14f] 재참가 시스템 RPC
+	// ════════════════════════════════════════════════════════════════
+
+	/** [서버 → 클라이언트] 재참가 프롬프트 표시 */
+	UFUNCTION(Client, Reliable)
+	void Client_ShowRejoinPrompt(int32 GameServerPort);
+
+	/** [클라이언트 → 서버] 재참가 수락 */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_RejoinGame();
+
+	/** [클라이언트 → 서버] 재참가 포기 (아이템 손실) */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_AbandonGame();
+
+	/** 대기 중인 재참가 포트 (Client RPC에서 설정) */
+	int32 PendingRejoinPort = 0;
 
 	// ════════════════════════════════════════════════════════════════
 	// 컴포넌트 Getter
@@ -172,6 +252,34 @@ public:
 	bool IsDeployInProgress() const { return bDeployInProgress; }
 	void SetDeployInProgress(bool bInProgress) { bDeployInProgress = bInProgress; }
 
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 15] 매치메이킹 RPC
+	// ════════════════════════════════════════════════════════════════
+
+	/** [Phase 16] 맵 선택 변경 RPC */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_SetSelectedMap(const FString& MapKey);
+
+	/** [클라이언트 → 서버] 매칭 큐 참가 */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_EnterMatchmaking();
+
+	/** [클라이언트 → 서버] 매칭 큐 취소 */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_LeaveMatchmaking();
+
+	/** [서버 → 클라이언트] 매칭 상태 업데이트 */
+	UFUNCTION(Client, Reliable)
+	void Client_MatchmakingStatusUpdate(const FMatchmakingStatusInfo& StatusInfo);
+
+	/** [서버 → 클라이언트] 매칭 에러 알림 */
+	UFUNCTION(Client, Reliable)
+	void Client_MatchmakingError(const FString& ErrorMessage);
+
+	/** 매칭 상태 변경 이벤트 (위젯 바인딩용) */
+	UPROPERTY(BlueprintAssignable, Category = "로비|매치메이킹")
+	FOnMatchmakingStatusChanged OnMatchmakingStatusChanged;
+
 	// ── [Phase 12g-2] 파티 프리뷰 ──
 
 	/** 파티 상태 변경 시 3D 프리뷰 갱신 (2명 이상이면 Party 모드, 1명 이하면 Solo 복귀) */
@@ -254,6 +362,12 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "로비|캐릭터선택")
 	EHellunaHeroType GetSelectedHeroType() const { return SelectedHeroType; }
 
+	/** [Fix43] 캐릭터 선택 리셋 (파티 충돌 시 서버에서 호출) */
+	void ResetSelectedHeroType() { SelectedHeroType = EHellunaHeroType::None; }
+
+	/** [Fix43] 캐릭터 선택 강제 설정 (서버 권한, 파티 복원 시 사용) */
+	void ForceSetSelectedHeroType(EHellunaHeroType InType) { SelectedHeroType = InType; }
+
 	/** 로그인 PlayerId Getter (서버에서 설정, Replicated) */
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "로비|플레이어")
 	FString GetPlayerId() const { return ReplicatedPlayerId; }
@@ -319,6 +433,31 @@ protected:
 	TObjectPtr<UHellunaPartyWidget> PartyWidgetInstance;
 
 	// ════════════════════════════════════════════════════════════════
+	// [Phase 13] 로비 로그인 위젯 설정
+	// ════════════════════════════════════════════════════════════════
+
+	/** 로비 로그인 위젯 클래스 (BP에서 WBP_LobbyLoginWidget 지정) */
+	UPROPERTY(EditDefaultsOnly, Category = "로비|로그인",
+		meta = (DisplayName = "Lobby Login Widget Class (로비 로그인 위젯 클래스)"))
+	TSubclassOf<UHellunaLobbyLoginWidget> LobbyLoginWidgetClass;
+
+	/** [Phase 14f] 재참가 위젯 클래스 (BP에서 WBP_RejoinWidget 지정) */
+	UPROPERTY(EditDefaultsOnly, Category = "로비|재참가",
+		meta = (DisplayName = "Rejoin Widget Class (재참가 위젯 클래스)"))
+	TSubclassOf<UHellunaRejoinWidget> RejoinWidgetClass;
+
+	/** 현재 생성된 재참가 위젯 인스턴스 */
+	UPROPERTY()
+	TObjectPtr<UHellunaRejoinWidget> RejoinWidgetInstance;
+
+	/** 현재 생성된 로그인 위젯 인스턴스 */
+	UPROPERTY()
+	TObjectPtr<UHellunaLobbyLoginWidget> LobbyLoginWidgetInstance;
+
+	/** 로그인 완료 여부 */
+	bool bIsLoggedIn = false;
+
+	// ════════════════════════════════════════════════════════════════
 	// 캐릭터 프리뷰 V2 시스템 (LoginController에서 복사)
 	// ════════════════════════════════════════════════════════════════
 
@@ -364,8 +503,32 @@ protected:
 		meta = (DisplayName = "Character Tab Background Level (Character 탭 배경 레벨)"))
 	FName CharacterBackgroundLevel;
 
+	/** Play 탭 배경 카메라 설정 */
+	UPROPERTY(EditDefaultsOnly, Category = "로비|배경",
+		meta = (DisplayName = "Play Tab Camera Transform (Play 탭 카메라 설정)"))
+	FLobbyCameraTransform PlayCameraTransform;
+
+	/** Character 탭 배경 카메라 설정 */
+	UPROPERTY(EditDefaultsOnly, Category = "로비|배경",
+		meta = (DisplayName = "Character Tab Camera Transform (Character 탭 카메라 설정)"))
+	FLobbyCameraTransform CharacterCameraTransform = { FVector(-837.4, -488.3, 98.0), FRotator(0.0, -140.0, 0.0), 90.0f };
+
 	/** 현재 로딩된 배경 레벨 이름 */
 	FName CurrentLoadedLevel;
+
+	/** 로드 완료 콜백에서 사용할 대기 중인 탭 인덱스 */
+	int32 PendingBackgroundTabIndex = -1;
+
+	// ════════════════════════════════════════════════════════════════
+	// 카메라 앵커 시스템
+	// ════════════════════════════════════════════════════════════════
+
+	/** 앵커 캐시 (Key = TabIndex * 1000 + SlotIndex) */
+	UPROPERTY()
+	TMap<int32, TObjectPtr<AHellunaLobbyCameraAnchor>> CachedAnchors;
+
+	/** 현재 활성 슬롯 인덱스 */
+	int32 CurrentSlotIndex = 0;
 
 	// ════════════════════════════════════════════════════════════════
 	// 캐릭터 선택 상태
@@ -383,6 +546,12 @@ protected:
 
 	/** Deploy 중복 실행 방지 플래그 */
 	bool bDeployInProgress = false;
+
+public:
+	/** [Phase 16] 플레이어가 선택한 맵 키 */
+	FString SelectedMapKey;
+
+protected:
 
 	// ════════════════════════════════════════════════════════════════
 	// 파괴적 캐스케이드 방지 — DB에서 로드된 Stash 아이템 수 기록
@@ -425,6 +594,11 @@ public:
 		meta = (DisplayName = "Load Background For Tab (탭별 배경 로드)"))
 	void LoadBackgroundForTab(int32 TabIndex);
 
+	/** 같은 탭 내 카메라 슬롯 전환 (스킨/무기 뷰 전환용) */
+	UFUNCTION(BlueprintCallable, Category = "로비|카메라",
+		meta = (DisplayName = "Switch Camera Slot (카메라 슬롯 전환)"))
+	void SwitchCameraSlot(int32 NewSlotIndex);
+
 private:
 	// ════════════════════════════════════════════════════════════════
 	// V2 프리뷰 내부 함수
@@ -449,11 +623,27 @@ private:
 	void OnBackgroundLevelUnloaded();
 
 	// ════════════════════════════════════════════════════════════════
+	// 카메라 앵커 시스템
+	// ════════════════════════════════════════════════════════════════
+
+	/** 서브레벨의 앵커 액터를 검색하여 캐시 구축 */
+	void RebuildAnchorCache();
+
+	/** 앵커 기반 카메라 적용 (성공 시 true, 앵커 없으면 false) */
+	bool ApplyCameraFromAnchor(int32 InTabIndex, int32 InSlotIndex);
+
+	/** 프리뷰 씬을 카메라 앞 적절한 위치로 이동 */
+	void MovePreviewSceneToCamera(const FVector& CamLocation, const FRotator& CamRotation);
+
+	// ════════════════════════════════════════════════════════════════
 	// Per-Interaction Save
 	// ════════════════════════════════════════════════════════════════
 
 	/** [Fix35] Per-interaction save: Transfer/Swap 성공 후 Stash+Loadout DB 즉시 저장 */
 	void SaveBothComponentsAfterInteraction();
+
+	/** [Fix46-M1] LobbyGameMode + PlayerId 획득 헬퍼 — 10곳 이상의 반복 패턴 통합 */
+	AHellunaLobbyGameMode* GetLobbyGameMode() const;
 
 	// ════════════════════════════════════════════════════════════════
 	// 내부 전송 로직
@@ -463,7 +653,7 @@ private:
 	 * 실제 아이템 전송 처리 (서버에서만 실행)
 	 *
 	 * @param SourceComp     원본 InvComp (아이템 출처)
-	 * @param TargetComp     대상 InvComp (아이템 목적지)
+	 * @param TargetComp     대상 InvComp (아이템 목적지?h 
 	 * @param ItemEntryIndex 전송할 아이템의 Entry 인덱스
 	 * @return 전송 성공 여부
 	 */

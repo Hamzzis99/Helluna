@@ -70,9 +70,11 @@ public:
 	/** 보스 소환 진단용 — TrySummonBoss에서 호출 */
 	void DebugPrintBossStatus() const
 	{
+#if HELLUNA_DEBUG_PRINT
 		Debug::Print(FString::Printf(TEXT("  HealthComp  : %s"), HealthComponent ? TEXT("✅ 있음") : TEXT("❌ 없음")), FColor::Cyan);
 		Debug::Print(FString::Printf(TEXT("  StartUpData : %s"),
 			CharacterStartUpData.IsNull() ? TEXT("❌ 없음 — GA_Death 부여 안 됨") : TEXT("✅ 있음")), FColor::Cyan);
+#endif
 	}
 
 	// =========================================================

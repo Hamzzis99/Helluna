@@ -60,14 +60,20 @@ void AInv_ProxyMesh::DelayedInitializeOwner()
 
 	SourceMesh = CharacterMesh;
 	Mesh->SetSkeletalMesh(SourceMesh->GetSkeletalMeshAsset());
-	Mesh->SetAnimInstanceClass(SourceMesh->GetAnimInstance()->GetClass());
+	if (UAnimInstance* AnimInst = SourceMesh->GetAnimInstance())
+	{
+		Mesh->SetAnimInstanceClass(AnimInst->GetClass());
+	}
 
 	EquipmentComponent->InitializeOwner(PC);
 }
 
 void AInv_ProxyMesh::DelayedInitialization()
 {
+	UWorld* World = GetWorld();
+	if (!World) return;
+
 	FTimerDelegate TimerDelegate;
 	TimerDelegate.BindUObject(this, &ThisClass::DelayedInitializeOwner);
-	GetWorld()->GetTimerManager().SetTimerForNextTick(TimerDelegate);
+	World->GetTimerManager().SetTimerForNextTick(TimerDelegate);
 }

@@ -73,7 +73,6 @@ class INVENTORY_API UInv_AttachmentPanel : public UUserWidget
 
 public:
 	virtual void NativeOnInitialized() override;
-	virtual void NativeConstruct() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 	// ── 마우스 이벤트 (드래그 회전) ──

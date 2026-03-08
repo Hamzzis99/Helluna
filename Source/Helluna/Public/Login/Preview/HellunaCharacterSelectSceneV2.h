@@ -318,4 +318,7 @@ protected:
 
 	/** 캐시 — 영웅 타입 변화 없으면 재생성 스킵 */
 	TArray<int32> CachedPartyHeroTypes;
+
+	/** [Fix47-L1] 파티 메시 생성 카운터 (FName 충돌 방지, ClearPartyPreview에서 리셋) */
+	int32 PartyMeshGenCounter = 0;
 };

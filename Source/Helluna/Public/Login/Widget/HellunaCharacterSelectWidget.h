@@ -49,6 +49,7 @@ class HELLUNA_API UHellunaCharacterSelectWidget : public UUserWidget
 
 protected:
 	virtual void NativeConstruct() override;
+	virtual void NativeDestruct() override;
 
 public:
 	// ============================================

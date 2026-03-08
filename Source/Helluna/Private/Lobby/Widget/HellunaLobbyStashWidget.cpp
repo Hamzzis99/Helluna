@@ -23,20 +23,85 @@
 // ════════════════════════════════════════════════════════════════════════════════
 
 #include "Lobby/Widget/HellunaLobbyStashWidget.h"
+#include "Lobby/Party/HellunaMatchmakingTypes.h"
 #include "Lobby/Widget/HellunaLobbyPanel.h"
 #include "Lobby/Widget/HellunaLobbyCharSelectWidget.h"
 #include "Widgets/Inventory/Spatial/Inv_SpatialInventory.h"
 #include "Lobby/Controller/HellunaLobbyController.h"
 #include "Login/Preview/HellunaCharacterSelectSceneV2.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
+#include "Widgets/Inventory/GridSlots/Inv_EquippedGridSlot.h"
 #include "HellunaTypes.h"
 #include "Components/Button.h"
 #include "Components/WidgetSwitcher.h"
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
+#include "Components/ScrollBox.h"
+#include "Components/EditableTextBox.h"
+#include "Components/VerticalBox.h"
+#include "Components/HorizontalBox.h"
+#include "Components/ComboBoxString.h"
+#include "Lobby/GameMode/HellunaLobbyGameMode.h"
 
 // 로그 카테고리 (공유 헤더 — DEFINE은 HellunaLobbyGameMode.cpp)
 #include "Lobby/HellunaLobbyLog.h"
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Fix45-H1] NativeDestruct — 위젯 파괴 시 모든 델리게이트 해제
+// ════════════════════════════════════════════════════════════════════════════════
+void UHellunaLobbyStashWidget::NativeDestruct()
+{
+	// ── NativeOnInitialized 바인딩 해제 ──
+	if (Button_Tab_Play) { Button_Tab_Play->OnClicked.RemoveDynamic(this, &ThisClass::OnTabPlayClicked); }
+	if (Button_Tab_Loadout) { Button_Tab_Loadout->OnClicked.RemoveDynamic(this, &ThisClass::OnTabLoadoutClicked); }
+	if (Button_Tab_Character) { Button_Tab_Character->OnClicked.RemoveDynamic(this, &ThisClass::OnTabCharacterClicked); }
+	if (Button_Start) { Button_Start->OnClicked.RemoveDynamic(this, &ThisClass::OnStartClicked); }
+	if (Button_Party) { Button_Party->OnClicked.RemoveDynamic(this, &ThisClass::OnPartyClicked); }
+	if (Button_Deploy) { Button_Deploy->OnClicked.RemoveDynamic(this, &ThisClass::OnDeployClicked); }
+	if (CharacterSelectPanel) { CharacterSelectPanel->OnCharacterSelected.RemoveDynamic(this, &ThisClass::OnCharacterSelectedHandler); }
+	if (PlayChatSendButton) { PlayChatSendButton->OnClicked.RemoveDynamic(this, &ThisClass::OnPlayChatSendClicked); }
+	if (PlayChatInput) { PlayChatInput->OnTextCommitted.RemoveDynamic(this, &ThisClass::OnPlayChatInputCommitted); }
+	// [Phase 15]
+	if (Button_Mode_Solo) { Button_Mode_Solo->OnClicked.RemoveDynamic(this, &ThisClass::OnSoloModeClicked); }
+	if (Button_Mode_Party) { Button_Mode_Party->OnClicked.RemoveDynamic(this, &ThisClass::OnPartyModeClicked); }
+	if (Button_CancelMatchmaking) { Button_CancelMatchmaking->OnClicked.RemoveDynamic(this, &ThisClass::OnCancelMatchmakingClicked); }
+	// [Phase 16]
+	if (ComboBox_MapSelect) { ComboBox_MapSelect->OnSelectionChanged.RemoveDynamic(this, &ThisClass::OnMapSelectionChanged); }
+
+	// ── LobbyPC 외부 오브젝트 바인딩 해제 ──
+	if (AHellunaLobbyController* LobbyPC = GetLobbyController())
+	{
+		LobbyPC->OnPartyStateChanged.RemoveDynamic(this, &ThisClass::OnPartyStateChangedHandler);
+		LobbyPC->OnPartyChatReceived.RemoveDynamic(this, &ThisClass::HandlePlayChatReceived);
+		LobbyPC->OnMatchmakingStatusChanged.RemoveDynamic(this, &ThisClass::HandleMatchmakingStatusChanged); // Phase 15
+	}
+
+	// ── InitializePanels 바인딩 해제 ──
+	if (StashPanel) { StashPanel->OnPanelTransferRequested.RemoveDynamic(this, &ThisClass::OnStashItemTransferRequested); }
+	if (LoadoutSpatialInventory) { LoadoutSpatialInventory->OnSpatialTransferRequested.RemoveDynamic(this, &ThisClass::OnLoadoutItemTransferRequested); }
+
+	// ── CrossSwap Grid 바인딩 해제 ──
+	auto UnbindCrossSwap = [this](UInv_InventoryGrid* Grid)
+	{
+		if (Grid) { Grid->OnLobbyCrossSwapRequested.RemoveDynamic(this, &ThisClass::OnCrossSwapRequested); }
+	};
+	if (StashPanel)
+	{
+		UnbindCrossSwap(StashPanel->GetGrid_Equippables());
+		UnbindCrossSwap(StashPanel->GetGrid_Consumables());
+		UnbindCrossSwap(StashPanel->GetGrid_Craftables());
+	}
+	if (LoadoutSpatialInventory)
+	{
+		UnbindCrossSwap(LoadoutSpatialInventory->GetGrid_Equippables());
+		UnbindCrossSwap(LoadoutSpatialInventory->GetGrid_Consumables());
+		UnbindCrossSwap(LoadoutSpatialInventory->GetGrid_Craftables());
+	}
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Fix45-H1] NativeDestruct — 모든 델리게이트 해제 완료"));
+
+	Super::NativeDestruct();
+}
 
 // ════════════════════════════════════════════════════════════════════════════════
 // NativeOnInitialized — 위젯 생성 시 초기화
@@ -85,6 +150,68 @@ void UHellunaLobbyStashWidget::NativeOnInitialized()
 		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget]   Button_Party=OK (바인딩 완료)"));
 	}
 
+	// ── [Phase 15] 모드 토글 + 매칭 취소 바인딩 (Optional) ──
+	if (Button_Mode_Solo)
+	{
+		Button_Mode_Solo->OnClicked.AddUniqueDynamic(this, &ThisClass::OnSoloModeClicked);
+	}
+	if (Button_Mode_Party)
+	{
+		Button_Mode_Party->OnClicked.AddUniqueDynamic(this, &ThisClass::OnPartyModeClicked);
+	}
+	if (Button_CancelMatchmaking)
+	{
+		Button_CancelMatchmaking->OnClicked.AddUniqueDynamic(this, &ThisClass::OnCancelMatchmakingClicked);
+	}
+	// 매칭 오버레이 초기 숨김
+	if (MatchmakingOverlay)
+	{
+		MatchmakingOverlay->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	// 초기 모드 비주얼
+	UpdateModeButtonVisuals();
+
+	// ── [Phase 16] 맵 선택 콤보박스 바인딩 ──
+	if (ComboBox_MapSelect)
+	{
+		ComboBox_MapSelect->OnSelectionChanged.AddUniqueDynamic(this, &ThisClass::OnMapSelectionChanged);
+
+		// LobbyGameMode에서 맵 목록 가져오기 (서버 권한이라 클라이언트는 비어있을 수 있음)
+		if (UWorld* World = GetWorld())
+		{
+			if (AHellunaLobbyGameMode* LobbyGM = Cast<AHellunaLobbyGameMode>(World->GetAuthGameMode()))
+			{
+				for (const FHellunaGameMapInfo& MapInfo : LobbyGM->AvailableMapConfigs)
+				{
+					ComboBox_MapSelect->AddOption(MapInfo.DisplayName);
+				}
+				// 기본 선택
+				SelectedMapKey = LobbyGM->DefaultMapKey;
+				for (const FHellunaGameMapInfo& MapInfo : LobbyGM->AvailableMapConfigs)
+				{
+					if (MapInfo.MapKey == SelectedMapKey)
+					{
+						ComboBox_MapSelect->SetSelectedOption(MapInfo.DisplayName);
+						break;
+					}
+				}
+			}
+		}
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] ComboBox_MapSelect 바인딩 완료 | Options=%d"),
+			ComboBox_MapSelect->GetOptionCount());
+	}
+	else
+	{
+		// ComboBox 없으면 DefaultMapKey 고정
+		if (UWorld* World = GetWorld())
+		{
+			if (AHellunaLobbyGameMode* LobbyGM = Cast<AHellunaLobbyGameMode>(World->GetAuthGameMode()))
+			{
+				SelectedMapKey = LobbyGM->DefaultMapKey;
+			}
+		}
+	}
+
 	// ── Loadout 탭: 출격 버튼 바인딩 (기존) ──
 	if (Button_Deploy)
 	{
@@ -102,6 +229,30 @@ void UHellunaLobbyStashWidget::NativeOnInitialized()
 	{
 		Text_NoCharWarning->SetVisibility(ESlateVisibility::Collapsed);
 	}
+
+	// ── [Phase 12h] 파티 상태 변경 → START/READY 버튼 텍스트 갱신 ──
+	if (AHellunaLobbyController* LobbyPC = GetLobbyController())
+	{
+		LobbyPC->OnPartyStateChanged.AddUniqueDynamic(this, &ThisClass::OnPartyStateChangedHandler);
+		// [Phase 15] 매칭 상태 변경 바인딩
+		LobbyPC->OnMatchmakingStatusChanged.AddUniqueDynamic(this, &ThisClass::HandleMatchmakingStatusChanged);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] OnPartyStateChanged + OnMatchmakingStatusChanged 바인딩 완료"));
+	}
+
+	// ── [Phase 12i] Play 탭 파티 채팅 바인딩 ──
+	if (PlayChatSendButton)
+	{
+		PlayChatSendButton->OnClicked.AddUniqueDynamic(this, &ThisClass::OnPlayChatSendClicked);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] PlayChatSendButton 바인딩 완료"));
+	}
+	if (PlayChatInput)
+	{
+		PlayChatInput->OnTextCommitted.AddUniqueDynamic(this, &ThisClass::OnPlayChatInputCommitted);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] PlayChatInput Enter 바인딩 완료"));
+	}
+
+	// 초기 채팅 패널 숨김 (파티 없으면)
+	UpdatePlayChatVisibility();
 
 	// ── 시작 탭: Play ──
 	SwitchToTab(LobbyTab::Play);
@@ -151,20 +302,107 @@ void UHellunaLobbyStashWidget::InitializePanels(UInv_InventoryComponent* StashCo
 			LoadoutComp ? TEXT("O") : TEXT("X (LobbyController 생성자 확인)"));
 	}
 
+	// ── [Fix39] 로비 복귀 시 장착 아이템 EquippedGridSlot 복원 ──
+	// Inv_PlayerController::Client_RestoreEquippedItems (Phase 6)와 동일한 패턴
+	// 로비 컨트롤러는 Inv_PlayerController를 상속하지 않으므로 여기서 직접 처리
+	if (LoadoutSpatialInventory && LoadoutComp)
+	{
+		LoadoutSpatialInventory->CollectEquippedGridSlots();
+		const TArray<TObjectPtr<UInv_EquippedGridSlot>>& EquippedSlots = LoadoutSpatialInventory->GetEquippedGridSlots();
+
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Fix39] EquippedSlots=%d개"), EquippedSlots.Num());
+		for (int32 s = 0; s < EquippedSlots.Num(); s++)
+		{
+			UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Fix39]   Slot[%d] Valid=%s WeaponSlotIndex=%d"),
+				s, IsValid(EquippedSlots[s]) ? TEXT("Y") : TEXT("N"),
+				IsValid(EquippedSlots[s]) ? EquippedSlots[s]->GetWeaponSlotIndex() : -99);
+		}
+
+		if (EquippedSlots.Num() > 0)
+		{
+			TArray<FInv_SavedItemData> SavedItems = LoadoutComp->CollectInventoryDataForSave();
+
+			UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Fix39] SavedItems=%d개"), SavedItems.Num());
+			for (int32 d = 0; d < SavedItems.Num(); d++)
+			{
+				UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Fix39]   Item[%d] %s bEquipped=%s WeaponSlot=%d"),
+					d, *SavedItems[d].ItemType.ToString(),
+					SavedItems[d].bEquipped ? TEXT("Y") : TEXT("N"),
+					SavedItems[d].WeaponSlotIndex);
+			}
+
+			TSet<UInv_InventoryItem*> ProcessedItems;
+			int32 RestoredCount = 0;
+
+			for (const FInv_SavedItemData& ItemData : SavedItems)
+			{
+				if (!ItemData.bEquipped || ItemData.WeaponSlotIndex < 0)
+					continue;
+
+				// WeaponSlotIndex에 맞는 EquippedGridSlot 찾기
+				UInv_EquippedGridSlot* TargetSlot = nullptr;
+				for (const TObjectPtr<UInv_EquippedGridSlot>& EquipSlot : EquippedSlots)
+				{
+					if (IsValid(EquipSlot) && EquipSlot->GetWeaponSlotIndex() == ItemData.WeaponSlotIndex)
+					{
+						TargetSlot = EquipSlot.Get();
+						break;
+					}
+				}
+
+				if (!TargetSlot)
+				{
+					UE_LOG(LogHellunaLobby, Warning, TEXT("[StashWidget] [Fix39] WeaponSlot %d 슬롯 없음 → 스킵"), ItemData.WeaponSlotIndex);
+					continue;
+				}
+
+				UInv_InventoryItem* FoundItem = LoadoutComp->FindItemByTypeExcluding(ItemData.ItemType, ProcessedItems);
+				if (!FoundItem)
+				{
+					UE_LOG(LogHellunaLobby, Warning, TEXT("[StashWidget] [Fix39] 아이템 못 찾음: %s"), *ItemData.ItemType.ToString());
+					continue;
+				}
+
+				UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Fix39] RestoreEquippedItem 시도: Slot=%d Item=%s"),
+					ItemData.WeaponSlotIndex, *ItemData.ItemType.ToString());
+
+				UInv_EquippedSlottedItem* Result = LoadoutSpatialInventory->RestoreEquippedItem(TargetSlot, FoundItem);
+				if (Result)
+				{
+					ProcessedItems.Add(FoundItem);
+					RestoredCount++;
+					UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Fix39] ✓ 복원 성공: Slot=%d"), ItemData.WeaponSlotIndex);
+				}
+				else
+				{
+					UE_LOG(LogHellunaLobby, Warning, TEXT("[StashWidget] [Fix39] ✗ RestoreEquippedItem 실패: Slot=%d"), ItemData.WeaponSlotIndex);
+				}
+			}
+
+			UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Fix39] 장착 아이템 복원 완료: %d개"), RestoredCount);
+		}
+		else
+		{
+			UE_LOG(LogHellunaLobby, Warning, TEXT("[StashWidget] [Fix39] EquippedSlots 비어있음 → 복원 스킵"));
+		}
+	}
+
 	// ── [Phase 4 Fix] 우클릭 전송 모드 활성화 ──
 	if (StashPanel)
 	{
 		StashPanel->EnableLobbyTransferMode();
+		// [Fix45-H5] AddDynamic→AddUniqueDynamic (Remove+Add 패턴 유지하되 안전성 강화)
 		StashPanel->OnPanelTransferRequested.RemoveDynamic(this, &ThisClass::OnStashItemTransferRequested);
-		StashPanel->OnPanelTransferRequested.AddDynamic(this, &ThisClass::OnStashItemTransferRequested);
+		StashPanel->OnPanelTransferRequested.AddUniqueDynamic(this, &ThisClass::OnStashItemTransferRequested);
 		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] StashPanel → 우클릭 전송 모드 ON (→ Loadout)"));
 	}
 
 	if (LoadoutSpatialInventory)
 	{
 		LoadoutSpatialInventory->EnableLobbyTransferMode();
+		// [Fix45-H5] AddDynamic→AddUniqueDynamic
 		LoadoutSpatialInventory->OnSpatialTransferRequested.RemoveDynamic(this, &ThisClass::OnLoadoutItemTransferRequested);
-		LoadoutSpatialInventory->OnSpatialTransferRequested.AddDynamic(this, &ThisClass::OnLoadoutItemTransferRequested);
+		LoadoutSpatialInventory->OnSpatialTransferRequested.AddUniqueDynamic(this, &ThisClass::OnLoadoutItemTransferRequested);
 		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] LoadoutSpatialInventory → 우클릭 전송 모드 ON (→ Stash)"));
 	}
 
@@ -222,6 +460,13 @@ void UHellunaLobbyStashWidget::InitializePanels(UInv_InventoryComponent* StashCo
 		BindCrossSwap(LoadoutSpatialInventory->GetGrid_Craftables());
 
 		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [CrossSwap] 크로스 Grid Swap 델리게이트 바인딩 완료"));
+	}
+
+	// ── [Phase 12i] OnPartyChatReceived 바인딩 ──
+	if (AHellunaLobbyController* LobbyPC = GetLobbyController())
+	{
+		LobbyPC->OnPartyChatReceived.AddUniqueDynamic(this, &ThisClass::HandlePlayChatReceived);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase 12i] OnPartyChatReceived 바인딩 완료"));
 	}
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] ── InitializePanels 완료 ──"));
@@ -293,6 +538,15 @@ void UHellunaLobbyStashWidget::SwitchToTab(int32 TabIndex)
 		Text_NoCharWarning->SetVisibility(bShowWarning ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	}
 
+	// ── [Phase 12h] Play 탭 진입 시 START/READY 버튼 텍스트 갱신 ──
+	if (TabIndex == LobbyTab::Play)
+	{
+		UpdateStartButtonForPartyState();
+
+		// [Phase 12j] 네임태그 갱신
+		UpdateNameTagOverlays();
+	}
+
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] SwitchToTab(%d) — %s"),
 		TabIndex,
 		TabIndex == LobbyTab::Play ? TEXT("Play") :
@@ -336,7 +590,19 @@ void UHellunaLobbyStashWidget::UpdateTabVisuals(int32 ActiveTabIndex)
 
 void UHellunaLobbyStashWidget::OnStartClicked()
 {
-	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] START 버튼 클릭!"));
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] START/READY 버튼 클릭! | bPartyMode=%s | bInMatchmaking=%s"),
+		bPartyMode ? TEXT("Party") : TEXT("Solo"), bInMatchmaking ? TEXT("true") : TEXT("false"));
+
+	// [Phase 15] 매칭 큐에 있으면 취소
+	if (bInMatchmaking)
+	{
+		AHellunaLobbyController* LobbyPC = GetLobbyController();
+		if (LobbyPC)
+		{
+			LobbyPC->Server_LeaveMatchmaking();
+		}
+		return;
+	}
 
 	// 캐릭터 미선택 체크 (클라이언트 UX 방어 — 서버에서도 별도 체크)
 	if (!IsCharacterSelected())
@@ -356,8 +622,32 @@ void UHellunaLobbyStashWidget::OnStartClicked()
 		return;
 	}
 
-	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] → Server_Deploy RPC 호출 (START)"));
-	LobbyPC->Server_Deploy();
+	if (bPartyMode)
+	{
+		// ── 파티 모드 ──
+		if (LobbyPC->CurrentPartyInfo.IsValid()
+			&& LobbyPC->CurrentPartyInfo.Members.Num() >= 2)
+		{
+			// 파티 가입 상태 → Ready 토글 (→ TryAutoDeployParty → EnterQueue)
+			bLocalPlayerReady = !bLocalPlayerReady;
+			UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] → Server_SetPartyReady(%s)"),
+				bLocalPlayerReady ? TEXT("true") : TEXT("false"));
+			LobbyPC->Server_SetPartyReady(bLocalPlayerReady);
+			UpdateStartButtonForPartyState();
+		}
+		else
+		{
+			// 파티 미가입 → 솔로로 매칭 큐 진입
+			UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] → Server_EnterMatchmaking RPC 호출 (솔로 매칭)"));
+			LobbyPC->Server_EnterMatchmaking();
+		}
+	}
+	else
+	{
+		// ── 솔로 모드 → 즉시 Deploy (기존) ──
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] → Server_Deploy RPC 호출 (START)"));
+		LobbyPC->Server_Deploy();
+	}
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -395,6 +685,12 @@ void UHellunaLobbyStashWidget::SetupCenterPreview(AHellunaCharacterSelectSceneV2
 			UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] SetupCenterPreview: 초기 Solo 모드 → Index %d"), HeroIndex);
 		}
 	}
+
+	// [Phase 12h] 초기 버튼 상태 설정
+	UpdateStartButtonForPartyState();
+
+	// [Phase 12j] 초기 네임태그
+	UpdateNameTagOverlays();
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -590,5 +886,510 @@ void UHellunaLobbyStashWidget::OnCharacterSelectedHandler(EHellunaHeroType Selec
 				UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] Play 탭 Solo 프리뷰 업데이트 → Index %d"), HeroIndex);
 			}
 		}
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 12h] 파티 상태 변경 → START/READY 버튼 전환
+// ════════════════════════════════════════════════════════════════════════════════
+
+void UHellunaLobbyStashWidget::OnPartyStateChangedHandler(const FHellunaPartyInfo& PartyInfo)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase 12h] 파티 상태 변경 수신 → 버튼 갱신"));
+
+	// 파티 해산 시 Ready 상태 리셋
+	if (!PartyInfo.IsValid() || PartyInfo.Members.Num() < 2)
+	{
+		bLocalPlayerReady = false;
+	}
+
+	UpdateStartButtonForPartyState();
+
+	// [Phase 12i] 채팅 패널 표시/숨김
+	UpdatePlayChatVisibility();
+
+	// [Phase 12j] 네임태그 오버레이
+	UpdateNameTagOverlays();
+}
+
+void UHellunaLobbyStashWidget::UpdateStartButtonForPartyState()
+{
+	// [Phase 15] 매칭 큐 중이면 CANCEL 유지 (HandleMatchmakingStatusChanged가 제어)
+	if (bInMatchmaking)
+	{
+		return;
+	}
+
+	// Text_StartLabel 찾기: BindWidgetOptional 우선, 없으면 Button_Start의 자식 탐색
+	UTextBlock* StartLabel = Text_StartLabel;
+	if (!StartLabel && Button_Start && Button_Start->GetChildrenCount() > 0)
+	{
+		StartLabel = Cast<UTextBlock>(Button_Start->GetChildAt(0));
+	}
+
+	if (!StartLabel)
+	{
+		return;
+	}
+
+	AHellunaLobbyController* LobbyPC = GetLobbyController();
+	const bool bInParty = LobbyPC
+		&& LobbyPC->CurrentPartyInfo.IsValid()
+		&& LobbyPC->CurrentPartyInfo.Members.Num() >= 2;
+
+	if (bPartyMode && bInParty)
+	{
+		// 파티 모드 + 파티 가입 → READY / CANCEL READY
+		if (bLocalPlayerReady)
+		{
+			StartLabel->SetText(FText::FromString(TEXT("CANCEL READY")));
+			UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] 버튼 → CANCEL READY"));
+		}
+		else
+		{
+			StartLabel->SetText(FText::FromString(TEXT("READY")));
+			UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] 버튼 → READY"));
+		}
+	}
+	else if (bPartyMode)
+	{
+		// 파티 모드 + 파티 미가입 → FIND MATCH
+		StartLabel->SetText(FText::FromString(TEXT("FIND MATCH")));
+		bLocalPlayerReady = false;
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] 버튼 → FIND MATCH (파티 모드 솔로)"));
+	}
+	else
+	{
+		// 솔로 모드
+		StartLabel->SetText(FText::FromString(TEXT("START")));
+		bLocalPlayerReady = false;
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] 버튼 → START (솔로)"));
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 12i] Play 탭 파티 채팅
+// ════════════════════════════════════════════════════════════════════════════════
+
+void UHellunaLobbyStashWidget::HandlePlayChatReceived(const FHellunaPartyChatMessage& ChatMessage)
+{
+	AddPlayChatMessage(ChatMessage);
+}
+
+void UHellunaLobbyStashWidget::AddPlayChatMessage(const FHellunaPartyChatMessage& ChatMessage)
+{
+	if (!PlayChatScrollBox)
+	{
+		return;
+	}
+
+	// 메시지 누적 제한 (100개 초과 시 오래된 것 삭제)
+	if (PlayChatScrollBox->GetChildrenCount() > 100)
+	{
+		PlayChatScrollBox->RemoveChildAt(0);
+	}
+
+	UTextBlock* MsgText = NewObject<UTextBlock>(this);
+	if (!MsgText)
+	{
+		return;
+	}
+
+	const FString FormattedMsg = FString::Printf(TEXT("[%s] %s"),
+		*ChatMessage.SenderName, *ChatMessage.Message);
+	MsgText->SetText(FText::FromString(FormattedMsg));
+
+	FSlateFontInfo FontInfo = MsgText->GetFont();
+	FontInfo.Size = 11;
+	MsgText->SetFont(FontInfo);
+
+	// 발신자 색상: 본인이면 골드, 아니면 회색
+	AHellunaLobbyController* LobbyPC = GetLobbyController();
+	const bool bIsSelf = LobbyPC && ChatMessage.SenderName == LobbyPC->GetPlayerId();
+	MsgText->SetColorAndOpacity(FSlateColor(bIsSelf
+		? FLinearColor(0.918f, 0.702f, 0.031f, 1.f)   // 골드
+		: FLinearColor(0.63f, 0.63f, 0.67f, 1.f)));    // 회색
+
+	PlayChatScrollBox->AddChild(MsgText);
+	PlayChatScrollBox->ScrollToEnd();
+
+	UE_LOG(LogHellunaLobby, Verbose, TEXT("[StashWidget] [Phase 12i] 채팅 표시: [%s] %s"),
+		*ChatMessage.SenderName, *ChatMessage.Message);
+}
+
+void UHellunaLobbyStashWidget::OnPlayChatSendClicked()
+{
+	if (!PlayChatInput)
+	{
+		return;
+	}
+
+	AHellunaLobbyController* LobbyPC = GetLobbyController();
+	if (!LobbyPC)
+	{
+		return;
+	}
+
+	const FString Msg = PlayChatInput->GetText().ToString().TrimStartAndEnd();
+	if (Msg.IsEmpty())
+	{
+		return;
+	}
+
+	LobbyPC->Server_SendPartyChatMessage(Msg);
+	PlayChatInput->SetText(FText::GetEmpty());
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase 12i] 채팅 전송: %s"), *Msg);
+}
+
+void UHellunaLobbyStashWidget::OnPlayChatInputCommitted(const FText& Text, ETextCommit::Type CommitMethod)
+{
+	if (CommitMethod == ETextCommit::OnEnter)
+	{
+		OnPlayChatSendClicked();
+	}
+}
+
+void UHellunaLobbyStashWidget::UpdatePlayChatVisibility()
+{
+	AHellunaLobbyController* LobbyPC = GetLobbyController();
+	const bool bInParty = LobbyPC
+		&& LobbyPC->CurrentPartyInfo.IsValid()
+		&& LobbyPC->CurrentPartyInfo.Members.Num() >= 2;
+
+	const ESlateVisibility ChatVis = bInParty
+		? ESlateVisibility::Visible
+		: ESlateVisibility::Collapsed;
+
+	if (PlayChatBox)
+	{
+		PlayChatBox->SetVisibility(ChatVis);
+	}
+	if (Img_ChatBackground)
+	{
+		Img_ChatBackground->SetVisibility(ChatVis);
+	}
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase 12i] 채팅 패널: %s"),
+		bInParty ? TEXT("Visible") : TEXT("Collapsed"));
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 12j] 네임태그 오버레이
+// ════════════════════════════════════════════════════════════════════════════════
+
+void UHellunaLobbyStashWidget::UpdateNameTagOverlays()
+{
+	AHellunaLobbyController* LobbyPC = GetLobbyController();
+	if (!LobbyPC)
+	{
+		HideAllNameTags();
+		return;
+	}
+
+	const FHellunaPartyInfo& Info = LobbyPC->CurrentPartyInfo;
+	const bool bInParty = Info.IsValid() && Info.Members.Num() >= 2;
+
+	if (bInParty)
+	{
+		// 파티 모드 — 솔로 숨기고 슬롯 3개 표시
+		if (NameTag_Solo)
+		{
+			NameTag_Solo->SetVisibility(ESlateVisibility::Collapsed);
+		}
+
+		// 슬롯 매핑: 리더→Slot1(중앙), 멤버1→Slot0(좌), 멤버2→Slot2(우)
+		// (3D 프리뷰 HellunaCharacterSelectSceneV2::SetPartyPreview와 동일 배치)
+		UVerticalBox* SlotWidgets[3] = { NameTag_Slot0, NameTag_Slot1, NameTag_Slot2 };
+
+		// 모든 슬롯 초기화 (숨김)
+		for (int32 i = 0; i < 3; ++i)
+		{
+			if (SlotWidgets[i]) SlotWidgets[i]->SetVisibility(ESlateVisibility::Collapsed);
+		}
+
+		// 리더 찾기
+		int32 LeaderIdx = 0;
+		for (int32 i = 0; i < Info.Members.Num(); ++i)
+		{
+			if (Info.Members[i].Role == EHellunaPartyRole::Leader)
+			{
+				LeaderIdx = i;
+				break;
+			}
+		}
+
+		// 멤버(리더 제외) 수집
+		TArray<int32> MemberIndices;
+		for (int32 i = 0; i < Info.Members.Num(); ++i)
+		{
+			if (i != LeaderIdx) MemberIndices.Add(i);
+		}
+
+		// 리더 → Slot1(중앙)
+		if (SlotWidgets[1])
+		{
+			const auto& Leader = Info.Members[LeaderIdx];
+			SetNameTagContent(SlotWidgets[1], Leader.DisplayName, Leader.bIsReady, true);
+			SlotWidgets[1]->SetVisibility(ESlateVisibility::HitTestInvisible);
+		}
+
+		// 멤버1 → Slot2(우) — 3D Slot0(Y=-200)이 화면 오른쪽이므로 위젯 Slot2에 매핑
+		if (MemberIndices.Num() >= 1 && SlotWidgets[2])
+		{
+			const auto& M = Info.Members[MemberIndices[0]];
+			SetNameTagContent(SlotWidgets[2], M.DisplayName, M.bIsReady, false);
+			SlotWidgets[2]->SetVisibility(ESlateVisibility::HitTestInvisible);
+		}
+
+		// 멤버2 → Slot0(좌) — 3D Slot2(Y=+200)이 화면 왼쪽이므로 위젯 Slot0에 매핑
+		if (MemberIndices.Num() >= 2 && SlotWidgets[0])
+		{
+			const auto& M = Info.Members[MemberIndices[1]];
+			SetNameTagContent(SlotWidgets[0], M.DisplayName, M.bIsReady, false);
+			SlotWidgets[0]->SetVisibility(ESlateVisibility::HitTestInvisible);
+		}
+
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase 12j] 파티 네임태그 %d명 표시"), Info.Members.Num());
+	}
+	else
+	{
+		// 솔로 모드 — 슬롯 숨기고 솔로 표시
+		for (UVerticalBox* Tag : { NameTag_Slot0, NameTag_Slot1, NameTag_Slot2 })
+		{
+			if (Tag) Tag->SetVisibility(ESlateVisibility::Collapsed);
+		}
+
+		if (NameTag_Solo)
+		{
+			const FString PlayerName = LobbyPC->GetPlayerId();
+			SetNameTagContent(NameTag_Solo, PlayerName, false, false);
+			NameTag_Solo->SetVisibility(ESlateVisibility::HitTestInvisible);
+		}
+
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase 12j] 솔로 네임태그 표시"));
+	}
+}
+
+void UHellunaLobbyStashWidget::SetNameTagContent(UVerticalBox* NameTag, const FString& PlayerName, bool bIsReady, bool bIsLeader)
+{
+	if (!NameTag) return;
+
+	// NameTag 내부 구조 (BP에서 생성):
+	// VBox
+	//   [0] HBox_NameRow
+	//       [0] Image_LeaderStar (리더만 Visible)
+	//       [1] Text_PlayerName
+	//   [1] HBox_ReadyRow
+	//       [0] Image_ReadyLED
+	//       [1] Text_ReadyStatus
+	if (NameTag->GetChildrenCount() < 2) return;
+
+	UWidget* NameRow = NameTag->GetChildAt(0);
+	UWidget* ReadyRow = NameTag->GetChildAt(1);
+
+	// ── 닉네임 ──
+	if (UHorizontalBox* HNameRow = Cast<UHorizontalBox>(NameRow))
+	{
+		if (HNameRow->GetChildrenCount() >= 2)
+		{
+			// [Phase 12j Fix] 리더 별 아이콘 — Image 대신 텍스트 접두사 사용
+			UWidget* StarWidget = HNameRow->GetChildAt(0);
+			if (StarWidget)
+			{
+				StarWidget->SetVisibility(ESlateVisibility::Collapsed); // Image 항상 숨김
+			}
+
+			// 닉네임 텍스트 — 리더는 "★ " 접두사
+			if (UTextBlock* NameText = Cast<UTextBlock>(HNameRow->GetChildAt(1)))
+			{
+				const FString DisplayName = bIsLeader
+					? FString::Printf(TEXT("\u2605 %s"), *PlayerName)
+					: PlayerName;
+				NameText->SetText(FText::FromString(DisplayName));
+
+				// 리더 = 골드, 멤버 = 밝은 회색
+				const FLinearColor NameColor = bIsLeader
+					? FLinearColor(0.918f, 0.702f, 0.031f, 1.f)   // #EAB308
+					: FLinearColor(0.63f, 0.63f, 0.67f, 1.f);     // #A1A1AA
+				NameText->SetColorAndOpacity(FSlateColor(NameColor));
+			}
+		}
+	}
+
+	// ── Ready 상태 ──
+	if (UHorizontalBox* HReadyRow = Cast<UHorizontalBox>(ReadyRow))
+	{
+		if (HReadyRow->GetChildrenCount() >= 2)
+		{
+			// Ready LED (Image)
+			if (UImage* LED = Cast<UImage>(HReadyRow->GetChildAt(0)))
+			{
+				const FLinearColor LEDColor = bIsReady
+					? FLinearColor(0.133f, 0.773f, 0.369f, 1.f)   // #22C55E
+					: FLinearColor(0.322f, 0.322f, 0.353f, 1.f);  // #52525B
+				LED->SetColorAndOpacity(LEDColor);
+			}
+
+			// Ready 텍스트
+			if (UTextBlock* ReadyText = Cast<UTextBlock>(HReadyRow->GetChildAt(1)))
+			{
+				ReadyText->SetText(FText::FromString(bIsReady ? TEXT("READY") : TEXT("NOT READY")));
+
+				const FLinearColor ReadyColor = bIsReady
+					? FLinearColor(0.133f, 0.773f, 0.369f, 1.f)
+					: FLinearColor(0.322f, 0.322f, 0.353f, 1.f);
+				ReadyText->SetColorAndOpacity(FSlateColor(ReadyColor));
+			}
+		}
+	}
+}
+
+void UHellunaLobbyStashWidget::HideAllNameTags()
+{
+	for (UVerticalBox* Tag : { NameTag_Slot0, NameTag_Slot1, NameTag_Slot2, NameTag_Solo })
+	{
+		if (Tag)
+		{
+			Tag->SetVisibility(ESlateVisibility::Collapsed);
+		}
+	}
+}
+
+// ============================================================================
+// [Phase 15] 모드 토글 + 매칭 오버레이
+// ============================================================================
+
+void UHellunaLobbyStashWidget::OnSoloModeClicked()
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase15] Solo 모드 선택"));
+	bPartyMode = false;
+	UpdateModeButtonVisuals();
+	UpdateStartButtonForPartyState();
+
+	// 매칭 큐에 있으면 자동 취소
+	if (bInMatchmaking)
+	{
+		AHellunaLobbyController* LobbyPC = GetLobbyController();
+		if (LobbyPC)
+		{
+			LobbyPC->Server_LeaveMatchmaking();
+		}
+	}
+}
+
+void UHellunaLobbyStashWidget::OnPartyModeClicked()
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase15] Party 모드 선택"));
+	bPartyMode = true;
+	UpdateModeButtonVisuals();
+	UpdateStartButtonForPartyState();
+}
+
+void UHellunaLobbyStashWidget::OnCancelMatchmakingClicked()
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase15] 매칭 취소 버튼 클릭"));
+	AHellunaLobbyController* LobbyPC = GetLobbyController();
+	if (LobbyPC)
+	{
+		LobbyPC->Server_LeaveMatchmaking();
+	}
+}
+
+void UHellunaLobbyStashWidget::HandleMatchmakingStatusChanged(const FMatchmakingStatusInfo& StatusInfo)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase15] 매칭 상태 변경 | Status=%d | %.1fs | %d/%d"),
+		static_cast<int32>(StatusInfo.Status), StatusInfo.ElapsedTime,
+		StatusInfo.CurrentPlayerCount, StatusInfo.TargetPlayerCount);
+
+	if (StatusInfo.Status == EMatchmakingStatus::Searching)
+	{
+		bInMatchmaking = true;
+
+		if (MatchmakingOverlay)
+		{
+			MatchmakingOverlay->SetVisibility(ESlateVisibility::Visible);
+		}
+		if (Text_MatchmakingTimer)
+		{
+			const int32 Minutes = FMath::FloorToInt(StatusInfo.ElapsedTime / 60.f);
+			const int32 Seconds = FMath::FloorToInt(FMath::Fmod(StatusInfo.ElapsedTime, 60.f));
+			Text_MatchmakingTimer->SetText(FText::FromString(
+				FString::Printf(TEXT("%02d:%02d"), Minutes, Seconds)));
+		}
+		if (Text_MatchmakingCount)
+		{
+			Text_MatchmakingCount->SetText(FText::FromString(
+				FString::Printf(TEXT("%d/%d"), StatusInfo.CurrentPlayerCount, StatusInfo.TargetPlayerCount)));
+		}
+
+		// START 버튼 텍스트를 CANCEL로 변경
+		UTextBlock* StartLabel = Text_StartLabel;
+		if (!StartLabel && Button_Start && Button_Start->GetChildrenCount() > 0)
+		{
+			StartLabel = Cast<UTextBlock>(Button_Start->GetChildAt(0));
+		}
+		if (StartLabel)
+		{
+			StartLabel->SetText(FText::FromString(TEXT("CANCEL")));
+		}
+	}
+	else
+	{
+		// None / Found / Deploying → 오버레이 숨김
+		bInMatchmaking = false;
+
+		if (MatchmakingOverlay)
+		{
+			MatchmakingOverlay->SetVisibility(ESlateVisibility::Collapsed);
+		}
+
+		// 버튼 텍스트 복원
+		UpdateStartButtonForPartyState();
+	}
+}
+
+void UHellunaLobbyStashWidget::UpdateModeButtonVisuals()
+{
+	if (Button_Mode_Solo)
+	{
+		Button_Mode_Solo->SetBackgroundColor(
+			bPartyMode ? InactiveTabColor : ActiveTabColor);
+	}
+	if (Button_Mode_Party)
+	{
+		Button_Mode_Party->SetBackgroundColor(
+			bPartyMode ? ActiveTabColor : InactiveTabColor);
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 16] 맵 선택 콤보박스 콜백
+// ════════════════════════════════════════════════════════════════════════════════
+
+void UHellunaLobbyStashWidget::OnMapSelectionChanged(FString SelectedItem, ESelectInfo::Type SelectionType)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase16] 맵 선택 변경: %s"), *SelectedItem);
+
+	// DisplayName → MapKey 변환
+	if (UWorld* World = GetWorld())
+	{
+		if (AHellunaLobbyGameMode* LobbyGM = Cast<AHellunaLobbyGameMode>(World->GetAuthGameMode()))
+		{
+			for (const FHellunaGameMapInfo& MapInfo : LobbyGM->AvailableMapConfigs)
+			{
+				if (MapInfo.DisplayName == SelectedItem)
+				{
+					SelectedMapKey = MapInfo.MapKey;
+					break;
+				}
+			}
+		}
+	}
+
+	// 서버에 맵 선택 전달
+	if (AHellunaLobbyController* LobbyPC = GetLobbyController())
+	{
+		LobbyPC->Server_SetSelectedMap(SelectedMapKey);
 	}
 }

@@ -69,6 +69,16 @@ void UHellunaLobbyCharSelectWidget::NativeOnInitialized()
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
+// NativeDestruct — 외부 참조 정리
+// ════════════════════════════════════════════════════════════════════════════════
+void UHellunaLobbyCharSelectWidget::NativeDestruct()
+{
+	CachedPreviewScene = nullptr;
+
+	Super::NativeDestruct();
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
 // SetAvailableCharacters — 사용 중인 캐릭터 버튼 비활성화
 // ════════════════════════════════════════════════════════════════════════════════
 void UHellunaLobbyCharSelectWidget::SetAvailableCharacters(const TArray<bool>& InUsedCharacters)

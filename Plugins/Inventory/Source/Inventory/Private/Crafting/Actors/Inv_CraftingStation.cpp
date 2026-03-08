@@ -72,11 +72,14 @@ void AInv_CraftingStation::OnInteract_Implementation(APlayerController* PlayerCo
 		PlayerMenuMap.Add(PlayerController, NewMenu);
 
 		// Timer 시작 (Lambda로 PlayerController 전달)
+		UWorld* World = GetWorld();
+		if (!World) return;
+
 		FTimerHandle TimerHandle;
 		FTimerDelegate TimerDelegate;
 		TimerDelegate.BindUFunction(this, FName("CheckDistanceToPlayer"), PlayerController);
-		
-		GetWorld()->GetTimerManager().SetTimer(
+
+		World->GetTimerManager().SetTimer(
 			TimerHandle,
 			TimerDelegate,
 			DistanceCheckInterval,
@@ -130,7 +133,7 @@ void AInv_CraftingStation::CheckDistanceToPlayer(APlayerController* PC)
 		// Timer 정지
 		if (PlayerTimerMap.Contains(PC))
 		{
-			GetWorld()->GetTimerManager().ClearTimer(PlayerTimerMap[PC]);
+			if (UWorld* World = GetWorld()) World->GetTimerManager().ClearTimer(PlayerTimerMap[PC]);
 			PlayerTimerMap.Remove(PC);
 		}
 		return;
@@ -184,7 +187,7 @@ void AInv_CraftingStation::ForceCloseMenu(APlayerController* PC)
 	// Timer 정지
 	if (PlayerTimerMap.Contains(PC))
 	{
-		GetWorld()->GetTimerManager().ClearTimer(PlayerTimerMap[PC]);
+		if (UWorld* World = GetWorld()) World->GetTimerManager().ClearTimer(PlayerTimerMap[PC]);
 		PlayerTimerMap.Remove(PC);
 	}
 

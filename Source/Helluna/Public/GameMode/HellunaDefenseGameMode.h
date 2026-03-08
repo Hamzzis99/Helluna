@@ -19,11 +19,14 @@
 #include "CoreMinimal.h"
 #include "GameMode/HellunaBaseGameMode.h"
 #include "HellunaTypes.h"
+#include "Persistence/Inv_SaveTypes.h"
 #include "HellunaDefenseGameMode.generated.h"
 
 class ATargetPoint;
 class AHellunaEnemyMassSpawner;
 class UHellunaGameResultWidget;
+class UInv_InventoryComponent;
+class UHellunaHealthComponent;
 
 // ════════════════════════════════════════════════════════════════════════════════
 // Phase 7: 게임 종료 사유
@@ -188,6 +191,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Defense(게임)|Monster(몬스터)")
 	void NotifyMonsterDied(AActor* DeadMonster);
 
+	/** 플레이어 사망 알림. 전원 사망 시 EndGame(AllDead) 호출 */
+	UFUNCTION(BlueprintCallable, Category = "Defense(게임)|GameEnd(게임종료)")
+	void NotifyPlayerDied(APlayerController* DeadPC);
+
 	UFUNCTION(BlueprintPure, Category = "Defense(게임)|Monster(몬스터)")
 	int32 GetRemainingMonsterCount() const { return RemainingMonstersThisNight; }
 
@@ -311,6 +318,29 @@ protected:
 
 	void DeleteRegistryFile();
 
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 16] 동적 서버 자동 종료
+	// ════════════════════════════════════════════════════════════════
+
+	/** EndGame 후 서버 자동 종료 대기 시간 (초) */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|Server(서버)",
+		meta = (DisplayName = "Shutdown Delay Seconds (종료 대기 시간)", ClampMin = "1.0"))
+	float ShutdownDelaySeconds = 15.f;
+
+	/** 유휴 자동 종료 시간 (초, 0=비활성) */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|Server(서버)",
+		meta = (DisplayName = "Idle Shutdown Seconds (유휴 종료 시간)"))
+	float IdleShutdownSeconds = 120.f;
+
+	/** 종료 타이머 핸들 */
+	FTimerHandle ShutdownTimer;
+
+	/** 유휴 종료 타이머 */
+	FTimerHandle IdleShutdownTimer;
+
+	/** 유휴 종료 체크 */
+	void CheckIdleShutdown();
+
 	/** 결과 UI 위젯 클래스 (BP에서 설정) */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|GameEnd(게임종료)",
 		meta = (DisplayName = "결과 위젯 클래스"))
@@ -324,6 +354,39 @@ protected:
 public:
 	/** 콘솔 커맨드 핸들러 (디버그용): EndGame Escaped / EndGame AllDead */
 	static void CmdEndGame(const TArray<FString>& Args, UWorld* World);
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 14] 재참가 시스템 — Disconnect Grace Period
+	// ════════════════════════════════════════════════════════════════
+
+	/** 연결 끊김 유예 시간 (초). 이 시간 내 재접속하면 상태 복원. */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|Rejoin(재참가)",
+		meta = (DisplayName = "Disconnect Grace Period (연결 끊김 유예 시간, 초)", ClampMin = "10.0"))
+	float DisconnectGracePeriodSeconds = 180.f;
+
+	/** 끊긴 플레이어가 있는지 확인 */
+	bool HasDisconnectedPlayer(const FString& PlayerId) const;
+
+	/** 재접속한 플레이어 상태 복원 */
+	void RestoreReconnectedPlayer(APlayerController* PC, const FString& PlayerId);
+
+protected:
+	struct FDisconnectedPlayerData
+	{
+		FString PlayerId;
+		EHellunaHeroType HeroType = EHellunaHeroType::None;
+		TArray<FInv_SavedItemData> SavedInventory;
+		FVector LastLocation = FVector::ZeroVector;
+		FRotator LastRotation = FRotator::ZeroRotator;
+		float Health = 0.f;
+		float MaxHealth = 0.f;
+		FTimerHandle GraceTimerHandle;
+		TWeakObjectPtr<APawn> PreservedPawn;
+	};
+
+	TMap<FString, FDisconnectedPlayerData> DisconnectedPlayers;
+
+	void OnGracePeriodExpired(FString PlayerId);
 
 private:
 	void ProcessPlayerGameResult(APlayerController* PC, bool bSurvived);

@@ -20,9 +20,13 @@ void UInv_InfoMessage::SetMessage(const FText& Message)
 	}
 	bIsMessageActive = true;
 
-	GetWorld()->GetTimerManager().SetTimer(MessageTimer, [this]()
+	UWorld* World = GetWorld();
+	if (!World) return;
+	TWeakObjectPtr<UInv_InfoMessage> WeakThis = this;
+	World->GetTimerManager().SetTimer(MessageTimer, [WeakThis]()
 		{
-			MessageHide();
-			bIsMessageActive = false;
+			if (!WeakThis.IsValid()) return;
+			WeakThis->MessageHide();
+			WeakThis->bIsMessageActive = false;
 		}, MessageLifetime, false);
 }

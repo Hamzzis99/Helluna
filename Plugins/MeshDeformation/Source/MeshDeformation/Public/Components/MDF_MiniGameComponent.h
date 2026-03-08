@@ -107,8 +107,8 @@ protected:
     UPROPERTY(ReplicatedUsing = OnRep_WeakSpots, VisibleAnywhere, BlueprintReadOnly, Category = "메시변형|미니게임")
     TArray<FWeakSpotData> WeakSpots;
 
-    // [네트워크] 클라이언트가 이미 깎은 인덱스를 추적하여 중복 연산 방지
-    TArray<int32> LocallyProcessedIndices;
+    // [네트워크] 클라이언트가 이미 깎은 GUID를 추적하여 중복 연산 방지 (인덱스 시프트 내성)
+    TSet<FGuid> LocallyProcessedGuids;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|설정", meta = (DisplayName = "HP 밀도 배율"))
     float HPDensityMultiplier = 0.1f;

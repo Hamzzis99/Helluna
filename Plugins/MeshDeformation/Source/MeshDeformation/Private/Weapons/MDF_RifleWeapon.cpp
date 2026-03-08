@@ -32,13 +32,16 @@ void AMDF_RifleWeapon::Fire()
     Params.AddIgnoredActor(this);
     Params.AddIgnoredActor(GetOwner());
 
-    bool bHit = GetWorld()->LineTraceSingleByChannel(HitResult, Start, End, ECC_Visibility, Params);
+    UWorld* World = GetWorld();
+    if (!World) return;
+
+    bool bHit = World->LineTraceSingleByChannel(HitResult, Start, End, ECC_Visibility, Params);
 
     if (bHit && HitResult.GetActor())
     {
         // [시각화] 총알 궤적
-        DrawDebugLine(GetWorld(), Start, HitResult.Location, FColor::Yellow, false, 0.05f, 0, 1.0f);
-        DrawDebugPoint(GetWorld(), HitResult.Location, 10.0f, FColor::Yellow, false, 0.05f);
+        DrawDebugLine(World, Start, HitResult.Location, FColor::Yellow, false, 0.05f, 0, 1.0f);
+        DrawDebugPoint(World, HitResult.Location, 10.0f, FColor::Yellow, false, 0.05f);
 
         // ---------------------------------------------------------------------
         // [핵심 변경] 언리얼 표준 데미지 시스템 사용
@@ -63,6 +66,6 @@ void AMDF_RifleWeapon::Fire()
     }
     else
     {
-        DrawDebugLine(GetWorld(), Start, End, FColor::Red, false, 0.05f, 0, 1.0f);
+        DrawDebugLine(World, Start, End, FColor::Red, false, 0.05f, 0, 1.0f);
     }
 }

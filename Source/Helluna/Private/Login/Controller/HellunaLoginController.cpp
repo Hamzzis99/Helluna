@@ -39,8 +39,10 @@ void AHellunaLoginController::BeginPlay()
 {
 	Super::BeginPlay();
 
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 	// 📌 디버깅: 클라이언트/서버 구분을 위한 태그
 	FString RoleTag = HasAuthority() ? TEXT("SERVER") : TEXT("CLIENT");
+#endif
 
 #if HELLUNA_DEBUG_LOGINCONTROLLER
 	UE_LOG(LogHelluna, Warning, TEXT(""));
@@ -65,22 +67,31 @@ void AHellunaLoginController::BeginPlay()
 
 	if (!LoginWidgetClass)
 	{
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 		UE_LOG(LogHelluna, Error, TEXT("[LoginController][%s] LoginWidgetClass 미설정!"), *RoleTag);
+#endif
+// [Step4] 프로덕션 빌드에서 디버그 메시지 제거
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 		if (GEngine)
 		{
 			GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Red,
 				TEXT("LoginWidgetClass 미설정! BP에서 설정 필요"));
 		}
+#endif
 	}
 
 	if (!GameControllerClass)
 	{
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 		UE_LOG(LogHelluna, Error, TEXT("[LoginController][%s] GameControllerClass 미설정!"), *RoleTag);
+#endif
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 		if (GEngine)
 		{
 			GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Red,
 				TEXT("GameControllerClass 미설정! BP에서 설정 필요"));
 		}
+#endif
 	}
 
 	// 📌 클라이언트에서만 위젯 표시
@@ -91,18 +102,19 @@ void AHellunaLoginController::BeginPlay()
 #endif
 
 		// 📌 화면에 디버그 메시지 표시 (클라이언트에서만 보임)
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 		if (GEngine)
 		{
 			GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Green,
 				FString::Printf(TEXT("✅ LoginController BeginPlay - 위젯 타이머 시작! (IsLocal: TRUE)")));
 		}
+#endif
 
 		FInputModeUIOnly InputMode;
 		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 		SetInputMode(InputMode);
 
-		FTimerHandle TimerHandle;
-		GetWorldTimerManager().SetTimer(TimerHandle, this, &AHellunaLoginController::ShowLoginWidget, 0.3f, false);
+		GetWorldTimerManager().SetTimer(RetryTimerHandle, this, &AHellunaLoginController::ShowLoginWidget, 0.3f, false);
 	}
 	else
 	{
@@ -114,6 +126,7 @@ void AHellunaLoginController::BeginPlay()
 #endif
 
 		// 📌 화면에 디버그 메시지 표시 (왜 스킵되는지 확인)
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 		if (GEngine && !HasAuthority())  // 클라이언트에서만 표시
 		{
 			GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Red,
@@ -121,6 +134,7 @@ void AHellunaLoginController::BeginPlay()
 					IsLocalController() ? TEXT("T") : TEXT("F"),
 					LoginWidgetClass ? TEXT("OK") : TEXT("NULL")));
 		}
+#endif
 	}
 
 #if HELLUNA_DEBUG_LOGINCONTROLLER
@@ -130,7 +144,9 @@ void AHellunaLoginController::BeginPlay()
 
 void AHellunaLoginController::ShowLoginWidget()
 {
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 	FString RoleTag = HasAuthority() ? TEXT("SERVER") : TEXT("CLIENT");
+#endif
 
 #if HELLUNA_DEBUG_LOGINCONTROLLER
 	UE_LOG(LogHelluna, Warning, TEXT(""));
@@ -157,7 +173,8 @@ void AHellunaLoginController::ShowLoginWidget()
 	// 문제: PlayerState 복원 전에 ShowLoginWidget이 먼저 호출됨
 	// 해결: bIsMapTransitioning 플래그로 SeamlessTravel 상황 감지
 	// ========================================
-	if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance()))
+	UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance());
+	if (GI)
 	{
 		if (GI->bIsMapTransitioning)
 		{
@@ -197,9 +214,9 @@ void AHellunaLoginController::ShowLoginWidget()
 	}
 
 	// 로딩 화면 해제 (서버 접속 완료 후)
-	if (UMDF_GameInstance* GI2 = Cast<UMDF_GameInstance>(GetGameInstance()))
+	if (GI)
 	{
-		GI2->HideLoadingScreen();
+		GI->HideLoadingScreen();
 	}
 
 	if (!LoginWidgetClass)
@@ -215,6 +232,7 @@ void AHellunaLoginController::ShowLoginWidget()
 		UE_LOG(LogHelluna, Warning, TEXT("[LoginController] 위젯 생성: %s"), LoginWidget ? TEXT("✅ 성공") : TEXT("❌ 실패"));
 #endif
 
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 		if (GEngine)
 		{
 			if (LoginWidget)
@@ -228,6 +246,7 @@ void AHellunaLoginController::ShowLoginWidget()
 					TEXT("❌ 로그인 위젯 생성 실패!"));
 			}
 		}
+#endif
 	}
 
 	if (LoginWidget && !LoginWidget->IsInViewport())
@@ -238,11 +257,13 @@ void AHellunaLoginController::ShowLoginWidget()
 #endif
 
 		// 📌 화면에 성공 메시지 표시
+#if HELLUNA_DEBUG_LOGINCONTROLLER
 		if (GEngine)
 		{
 			GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Green,
 				TEXT("✅ 로그인 위젯이 Viewport에 추가됨!"));
 		}
+#endif
 	}
 	else
 	{
@@ -305,6 +326,11 @@ void AHellunaLoginController::OnLoginButtonClicked(const FString& PlayerId, cons
 // ShowLoginWidget()에서 이미 로그인된 상태 감지 시 호출
 // 서버에서 SwapToGameController() 실행
 // ============================================
+bool AHellunaLoginController::Server_RequestSwapAfterTravel_Validate()
+{
+	return true;
+}
+
 void AHellunaLoginController::Server_RequestSwapAfterTravel_Implementation()
 {
 #if HELLUNA_DEBUG_LOGINCONTROLLER
@@ -357,6 +383,11 @@ void AHellunaLoginController::Server_RequestSwapAfterTravel_Implementation()
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[LoginController] ⚠️ GameMode를 찾을 수 없음!"));
 	}
+}
+
+bool AHellunaLoginController::Server_RequestLogin_Validate(const FString& PlayerId, const FString& Password)
+{
+	return PlayerId.Len() <= 64 && Password.Len() <= 128;
 }
 
 void AHellunaLoginController::Server_RequestLogin_Implementation(const FString& PlayerId, const FString& Password)
@@ -462,6 +493,11 @@ void AHellunaLoginController::ShowLoginResult(bool bSuccess, const FString& Mess
 // ============================================
 // 🎭 캐릭터 선택 시스템 (Phase 3)
 // ============================================
+
+bool AHellunaLoginController::Server_SelectCharacter_Validate(int32 CharacterIndex)
+{
+	return CharacterIndex >= 0 && CharacterIndex <= 2;
+}
 
 void AHellunaLoginController::Server_SelectCharacter_Implementation(int32 CharacterIndex)
 {
@@ -761,9 +797,11 @@ void AHellunaLoginController::SpawnPreviewActors()
 			if (const FString* Path = HighlightPaths.Find(HeroType))
 			{
 				HighlightMat = Cast<UMaterialInterface>(StaticLoadObject(UMaterialInterface::StaticClass(), nullptr, **Path));
+#if HELLUNA_DEBUG_CHARACTER_PREVIEW
 				UE_LOG(LogTemp, Warning, TEXT("[V1 Highlight Fallback] %s → %s"),
 					*UEnum::GetValueAsString(HeroType),
 					HighlightMat ? *HighlightMat->GetName() : TEXT("LOAD FAILED"));
+#endif
 			}
 		}
 

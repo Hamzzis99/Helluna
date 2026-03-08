@@ -9,6 +9,7 @@
 #include "Components/VerticalBox.h"
 #include "Kismet/GameplayStatics.h"
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
+#include "Helluna.h"
 
 void UHellunaGameResultWidget::NativeConstruct()
 {
@@ -38,7 +39,9 @@ void UHellunaGameResultWidget::ReturnToLobby()
 	APlayerController* PC = GetOwningPlayer();
 	if (!PC)
 	{
+#if HELLUNA_DEBUG_GAMERESULT
 		UE_LOG(LogTemp, Error, TEXT("[GameResultWidget] ReturnToLobby: OwningPlayer가 null!"));
+#endif
 		return;
 	}
 
@@ -49,16 +52,22 @@ void UHellunaGameResultWidget::ReturnToLobby()
 		if (GI && !GI->ConnectedServerIP.IsEmpty())
 		{
 			LobbyURL = FString::Printf(TEXT("%s:%d"), *GI->ConnectedServerIP, GI->LobbyServerPort);
+#if HELLUNA_DEBUG_GAMERESULT
 			UE_LOG(LogTemp, Log, TEXT("[GameResultWidget] LobbyURL 동적 구성: %s"), *LobbyURL);
+#endif
 		}
 		else
 		{
+#if HELLUNA_DEBUG_GAMERESULT
 			UE_LOG(LogTemp, Error, TEXT("[GameResultWidget] ReturnToLobby: LobbyURL이 비어있고 ConnectedServerIP도 없음!"));
+#endif
 			return;
 		}
 	}
 
+#if HELLUNA_DEBUG_GAMERESULT
 	UE_LOG(LogTemp, Log, TEXT("[GameResultWidget] ReturnToLobby: ClientTravel → %s"), *LobbyURL);
+#endif
 
 	RemoveFromParent();
 	PC->ClientTravel(LobbyURL, TRAVEL_Absolute);

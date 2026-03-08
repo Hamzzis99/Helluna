@@ -24,6 +24,14 @@ void AMDF_LaserWeapon::BeginPlay() { Super::BeginPlay(); }
 void AMDF_LaserWeapon::StartFire()
 {
     if (CurrentAmmo <= 0.0f) return;
+
+    // [네트워크] 원격 클라이언트 → 서버로 위임
+    if (!HasAuthority())
+    {
+        Server_StartFire();
+        return;
+    }
+
     SetActorTickEnabled(true);
 #if MDF_DEBUG_WEAPON
     UE_LOG(LogMeshDeform, Log, TEXT("[레이저] 가동 시작"));
@@ -32,8 +40,15 @@ void AMDF_LaserWeapon::StartFire()
 
 void AMDF_LaserWeapon::StopFire()
 {
+    // [네트워크] 원격 클라이언트 → 서버로 위임
+    if (!HasAuthority())
+    {
+        Server_StopFire();
+        return;
+    }
+
     SetActorTickEnabled(false);
-    
+
     if (CurrentTargetComp)
     {
         // 마지막 히트 위치로 EndMarking
@@ -48,9 +63,13 @@ void AMDF_LaserWeapon::StopFire()
 void AMDF_LaserWeapon::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
+
+    // 서버에서만 탄약 소모 및 레이저 로직 실행
+    if (!HasAuthority()) return;
+
     CurrentAmmo -= BatteryDrainRate * DeltaTime;
     if (CurrentAmmo <= 0.0f) { CurrentAmmo = 0.0f; StopFire(); return; }
-    
+
     ProcessLaserTrace();
 }
 
@@ -95,24 +114,27 @@ void AMDF_LaserWeapon::ProcessLaserTrace()
     Params.AddIgnoredActor(this);
     Params.AddIgnoredActor(GetOwner());
 
-    bool bHit = GetWorld()->LineTraceSingleByChannel(HitResult, Start, End, ECC_Visibility, Params);
+    UWorld* World = GetWorld();
+    if (!World) return;
+
+    bool bHit = World->LineTraceSingleByChannel(HitResult, Start, End, ECC_Visibility, Params);
 
     // [디버깅] 레이저 궤적 그리기
     if (bHit)
     {
         // 화면 중앙 모드일 때는 총구에서 히트 지점까지 레이저 그리기 (시각적)
         FVector LaserStart = MuzzleLocation ? MuzzleLocation->GetComponentLocation() : GetActorLocation();
-        DrawDebugLine(GetWorld(), LaserStart, HitResult.Location, LaserColor, false, -1.0f, 0, 2.0f);
-        DrawDebugPoint(GetWorld(), HitResult.Location, 10.0f, FColor::Blue, false, -1.0f);
-        
+        DrawDebugLine(World, LaserStart, HitResult.Location, LaserColor, false, -1.0f, 0, 2.0f);
+        DrawDebugPoint(World, HitResult.Location, 10.0f, FColor::Blue, false, -1.0f);
+
         LastHitLocation = HitResult.Location;  // 마지막 히트 위치 저장
     }
     else
     {
         FVector LaserStart = MuzzleLocation ? MuzzleLocation->GetComponentLocation() : GetActorLocation();
         FVector LaserEnd = LaserStart + ((End - Start).GetSafeNormal() * FireRange);
-        DrawDebugLine(GetWorld(), LaserStart, LaserEnd, LaserColor, false, -1.0f, 0, 1.0f);
-        
+        DrawDebugLine(World, LaserStart, LaserEnd, LaserColor, false, -1.0f, 0, 1.0f);
+
         LastHitLocation = LaserEnd;
     }
 

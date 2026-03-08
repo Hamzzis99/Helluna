@@ -27,19 +27,19 @@ void UHellunaCharacterSelectWidget::NativeConstruct()
 	if (LuiButton && LunaButton && LiamButton
 		&& !LuiButton->OnClicked.IsAlreadyBound(this, &UHellunaCharacterSelectWidget::OnLuiButtonClicked))
 	{
-		LuiButton->OnClicked.AddDynamic(this, &UHellunaCharacterSelectWidget::OnLuiButtonClicked);
-		LunaButton->OnClicked.AddDynamic(this, &UHellunaCharacterSelectWidget::OnLunaButtonClicked);
-		LiamButton->OnClicked.AddDynamic(this, &UHellunaCharacterSelectWidget::OnLiamButtonClicked);
+		LuiButton->OnClicked.AddUniqueDynamic(this, &UHellunaCharacterSelectWidget::OnLuiButtonClicked);
+		LunaButton->OnClicked.AddUniqueDynamic(this, &UHellunaCharacterSelectWidget::OnLunaButtonClicked);
+		LiamButton->OnClicked.AddUniqueDynamic(this, &UHellunaCharacterSelectWidget::OnLiamButtonClicked);
 
 		// ════════════════════════════════════════════
 		// 📌 호버 이벤트 바인딩 (베이스에서 한 번만)
 		// ════════════════════════════════════════════
-		LuiButton->OnHovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Lui);
-		LuiButton->OnUnhovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Lui);
-		LunaButton->OnHovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Luna);
-		LunaButton->OnUnhovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Luna);
-		LiamButton->OnHovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Liam);
-		LiamButton->OnUnhovered.AddDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Liam);
+		LuiButton->OnHovered.AddUniqueDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Lui);
+		LuiButton->OnUnhovered.AddUniqueDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Lui);
+		LunaButton->OnHovered.AddUniqueDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Luna);
+		LunaButton->OnUnhovered.AddUniqueDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Luna);
+		LiamButton->OnHovered.AddUniqueDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewHovered_Liam);
+		LiamButton->OnUnhovered.AddUniqueDynamic(this, &UHellunaCharacterSelectWidget::OnPreviewUnhovered_Liam);
 	}
 	else if (!LuiButton || !LunaButton || !LiamButton)
 	{
@@ -54,9 +54,11 @@ void UHellunaCharacterSelectWidget::NativeConstruct()
 	// ════════════════════════════════════════════
 	// 📌 GameState 델리게이트 바인딩 — 다른 플레이어 캐릭터 선택 시 UI 자동 갱신
 	// ════════════════════════════════════════════
-	if (AHellunaBaseGameState* GS = GetWorld()->GetGameState<AHellunaBaseGameState>())
+	UWorld* World = GetWorld();
+	if (!World) return;
+	if (AHellunaBaseGameState* GS = World->GetGameState<AHellunaBaseGameState>())
 	{
-		GS->OnUsedCharactersChanged.AddDynamic(this, &UHellunaCharacterSelectWidget::OnCharacterAvailabilityChanged);
+		GS->OnUsedCharactersChanged.AddUniqueDynamic(this, &UHellunaCharacterSelectWidget::OnCharacterAvailabilityChanged);
 #if HELLUNA_DEBUG_CHARACTER_SELECT
 		UE_LOG(LogHelluna, Warning, TEXT("[캐릭터선택위젯] GameState 델리게이트 바인딩 완료"));
 #endif
@@ -77,6 +79,23 @@ void UHellunaCharacterSelectWidget::NativeConstruct()
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
+// 📌 NativeDestruct — 델리게이트 해제
+// ════════════════════════════════════════════════════════════════════════════════
+
+void UHellunaCharacterSelectWidget::NativeDestruct()
+{
+	if (UWorld* World = GetWorld())
+	{
+		if (AHellunaBaseGameState* GS = World->GetGameState<AHellunaBaseGameState>())
+		{
+			GS->OnUsedCharactersChanged.RemoveDynamic(this, &UHellunaCharacterSelectWidget::OnCharacterAvailabilityChanged);
+		}
+	}
+
+	Super::NativeDestruct();
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
 // 📌 공통 함수
 // ════════════════════════════════════════════════════════════════════════════════
 
@@ -91,7 +110,7 @@ void UHellunaCharacterSelectWidget::SetAvailableCharacters(const TArray<bool>& A
 
 	CachedAvailableCharacters = AvailableCharacters;
 
-	if (AvailableCharacters.IsValidIndex(0))
+	if (AvailableCharacters.IsValidIndex(0) && LuiButton)
 	{
 		LuiButton->SetIsEnabled(AvailableCharacters[0]);
 #if HELLUNA_DEBUG_CHARACTER_SELECT
@@ -99,7 +118,7 @@ void UHellunaCharacterSelectWidget::SetAvailableCharacters(const TArray<bool>& A
 #endif
 	}
 
-	if (AvailableCharacters.IsValidIndex(1))
+	if (AvailableCharacters.IsValidIndex(1) && LunaButton)
 	{
 		LunaButton->SetIsEnabled(AvailableCharacters[1]);
 #if HELLUNA_DEBUG_CHARACTER_SELECT
@@ -107,7 +126,7 @@ void UHellunaCharacterSelectWidget::SetAvailableCharacters(const TArray<bool>& A
 #endif
 	}
 
-	if (AvailableCharacters.IsValidIndex(2))
+	if (AvailableCharacters.IsValidIndex(2) && LiamButton)
 	{
 		LiamButton->SetIsEnabled(AvailableCharacters[2]);
 #if HELLUNA_DEBUG_CHARACTER_SELECT
@@ -138,9 +157,18 @@ void UHellunaCharacterSelectWidget::SetLoadingState(bool bLoading)
 {
 	bIsLoading = bLoading;
 
-	LuiButton->SetIsEnabled(!bLoading && CachedAvailableCharacters.IsValidIndex(0) && CachedAvailableCharacters[0]);
-	LunaButton->SetIsEnabled(!bLoading && CachedAvailableCharacters.IsValidIndex(1) && CachedAvailableCharacters[1]);
-	LiamButton->SetIsEnabled(!bLoading && CachedAvailableCharacters.IsValidIndex(2) && CachedAvailableCharacters[2]);
+	if (LuiButton)
+	{
+		LuiButton->SetIsEnabled(!bLoading && CachedAvailableCharacters.IsValidIndex(0) && CachedAvailableCharacters[0]);
+	}
+	if (LunaButton)
+	{
+		LunaButton->SetIsEnabled(!bLoading && CachedAvailableCharacters.IsValidIndex(1) && CachedAvailableCharacters[1]);
+	}
+	if (LiamButton)
+	{
+		LiamButton->SetIsEnabled(!bLoading && CachedAvailableCharacters.IsValidIndex(2) && CachedAvailableCharacters[2]);
+	}
 
 #if HELLUNA_DEBUG_CHARACTER_SELECT
 	UE_LOG(LogHelluna, Warning, TEXT("[캐릭터선택위젯] 로딩 상태: %s"), bLoading ? TEXT("ON") : TEXT("OFF"));
@@ -264,7 +292,9 @@ void UHellunaCharacterSelectWidget::OnCharacterAvailabilityChanged()
 
 void UHellunaCharacterSelectWidget::RefreshAvailableCharacters()
 {
-	AHellunaBaseGameState* GS = GetWorld()->GetGameState<AHellunaBaseGameState>();
+	UWorld* RefreshWorld = GetWorld();
+	if (!RefreshWorld) return;
+	AHellunaBaseGameState* GS = RefreshWorld->GetGameState<AHellunaBaseGameState>();
 	if (!GS)
 	{
 #if HELLUNA_DEBUG_CHARACTER_SELECT

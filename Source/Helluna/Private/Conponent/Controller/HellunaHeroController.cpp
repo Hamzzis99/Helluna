@@ -177,6 +177,16 @@ void AHellunaHeroController::InitializeVoteWidget()
 // [투표 시스템] Server RPC - 클라이언트 → 서버
 // ============================================================================
 
+// ============================================================================
+// [Step3] Server_SubmitVote Validate
+// bool 파라미터는 범위가 제한적이므로 항상 true 반환
+// WithValidation 자체가 UE 네트워크 스택의 기본 무결성 검증을 활성화함
+// ============================================================================
+bool AHellunaHeroController::Server_SubmitVote_Validate(bool bAgree)
+{
+	return true;
+}
+
 void AHellunaHeroController::Server_SubmitVote_Implementation(bool bAgree)
 {
 	// 1. PlayerState 가져오기 (서버에서 실행되므로 항상 유효)
@@ -379,7 +389,7 @@ void AHellunaHeroController::InitializeChatWidget()
 			if (UEnhancedInputLocalPlayerSubsystem* Subsystem = LocalPlayer->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
 			{
 				// 채팅 IMC를 항상 활성화
-				Subsystem->AddMappingContext(ChatMappingContext, 0);
+				Subsystem->AddMappingContext(ChatMappingContext, 10);
 				UE_LOG(LogHellunaChat, Log, TEXT("[HeroController] ChatMappingContext 추가 완료"));
 			}
 		}
@@ -400,6 +410,8 @@ void AHellunaHeroController::InitializeChatWidget()
 
 void AHellunaHeroController::OnChatToggleInput(const FInputActionValue& Value)
 {
+	UE_LOG(LogHellunaChat, Warning, TEXT("[HeroController] OnChatToggleInput 호출됨!"));
+
 	// W6: 채팅 입력 활성 상태에서 Enter는 TextBox의 OnTextCommitted가 처리
 	// Enhanced Input과 TextBox 양쪽에서 Enter가 동시 처리되는 충돌 방지
 	if (IsValid(ChatWidgetInstance) && ChatWidgetInstance->IsChatInputActive())

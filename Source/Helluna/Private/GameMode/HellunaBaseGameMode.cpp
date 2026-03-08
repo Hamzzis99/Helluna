@@ -22,6 +22,7 @@
 // ════════════════════════════════════════════════════════════════════════════════
 
 #include "GameMode/HellunaBaseGameMode.h"
+#include "GameMode/HellunaDefenseGameMode.h"  // [Phase 14] 재접속 분기
 #include "Helluna.h"  // 전처리기 플래그
 #include "GameMode/HellunaBaseGameState.h"
 #include "Login/Controller/HellunaLoginController.h"
@@ -417,6 +418,26 @@ void AHellunaBaseGameMode::PostLogin(APlayerController* NewPlayer)
 
 		// 4. Controller → PlayerId 매핑 등록
 		RegisterControllerPlayerId(NewPlayer, DeployPlayerId);
+
+		// [Phase 14] 재접속 체크 — DisconnectedPlayers에 있으면 상태 복원
+		{
+			AHellunaDefenseGameMode* DefenseGM = Cast<AHellunaDefenseGameMode>(this);
+			if (DefenseGM && DefenseGM->HasDisconnectedPlayer(DeployPlayerId))
+			{
+				UE_LOG(LogHelluna, Warning, TEXT("[Phase14] PostLogin — 재접속 감지! → RestoreReconnectedPlayer | PlayerId=%s"), *DeployPlayerId);
+
+				AInv_PlayerController* InvPC = Cast<AInv_PlayerController>(NewPlayer);
+				if (IsValid(InvPC))
+				{
+					InvPC->OnControllerEndPlay.AddDynamic(this, &AHellunaBaseGameMode::OnInvControllerEndPlay);
+				}
+
+				DefenseGM->RestoreReconnectedPlayer(NewPlayer, DeployPlayerId);
+
+				Super::PostLogin(NewPlayer);
+				return;
+			}
+		}
 
 		// Phase 6: 크래시 복구 체크 (이전 게임 세션의 Loadout 잔존 → Stash 복귀)
 		CheckAndRecoverFromCrash(DeployPlayerId);
@@ -969,7 +990,15 @@ void AHellunaBaseGameMode::SwapToGameController(AHellunaLoginController* LoginCo
 	FVector SpawnLocation = LoginController->GetFocalLocation();
 	FRotator SpawnRotation = LoginController->GetControlRotation();
 
-	APlayerController* NewController = GetWorld()->SpawnActor<APlayerController>(
+	// [Fix46-M8] GetWorld() null 체크
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[BaseGameMode] SwapToGameController - GetWorld() nullptr!"));
+		return;
+	}
+
+	APlayerController* NewController = World->SpawnActor<APlayerController>(
 		GameControllerClass, SpawnLocation, SpawnRotation, SpawnParams);
 
 	if (!NewController)
@@ -1143,7 +1172,15 @@ void AHellunaBaseGameMode::SpawnHeroCharacter(APlayerController* PlayerControlle
 	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
 	SpawnParams.Owner = PlayerController;
 
-	APawn* NewPawn = GetWorld()->SpawnActor<APawn>(SpawnClass, SpawnLocation, SpawnRotation, SpawnParams);
+	// [Fix46-M8] GetWorld() null 체크
+	UWorld* SpawnWorld = GetWorld();
+	if (!SpawnWorld)
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[BaseGameMode] SpawnHeroCharacter - GetWorld() nullptr!"));
+		return;
+	}
+
+	APawn* NewPawn = SpawnWorld->SpawnActor<APawn>(SpawnClass, SpawnLocation, SpawnRotation, SpawnParams);
 
 	if (!NewPawn)
 	{
@@ -2287,12 +2324,16 @@ void AHellunaBaseGameMode::DebugTestItemTypeMapping()
 // ════════════════════════════════════════════════════════════════════════════════
 // 📌 DebugPrintAllItemMappings - 모든 아이템 매핑 출력
 // ════════════════════════════════════════════════════════════════════════════════
+// [Step3] Shipping 빌드에서 디버그 전용 함수 비활성화
+// UFUNCTION 선언은 유지 (BP 참조 보호), 내부 로직만 #if 가드
 void AHellunaBaseGameMode::DebugPrintAllItemMappings()
 {
+#if !UE_BUILD_SHIPPING
 	if (IsValid(ItemTypeMappingDataTable))
 	{
 		UHellunaItemTypeMapping::DebugPrintAllMappings(ItemTypeMappingDataTable);
 	}
+#endif
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -2305,6 +2346,7 @@ void AHellunaBaseGameMode::DebugPrintAllItemMappings()
 // ════════════════════════════════════════════════════════════════════════════════
 void AHellunaBaseGameMode::DebugTestInventorySaveGame()
 {
+#if !UE_BUILD_SHIPPING
 	const FString TestPlayerId = TEXT("TestPlayer_Debug");
 
 	// 테스트 데이터 생성
@@ -2323,14 +2365,18 @@ void AHellunaBaseGameMode::DebugTestInventorySaveGame()
 
 	UE_LOG(LogHelluna, Warning, TEXT("[BaseGameMode] DebugTestInventorySaveGame: SaveCollectedItems 호출 완료 (PlayerId=%s, Items=%d)"),
 		*TestPlayerId, TestItems.Num());
+#endif
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// 📌 DebugRequestSaveAllInventory - 디버그용 전체 인벤토리 저장 요청
-// ════════════════════════════════════════════════════════════════════════════════
+// ================================================================
+// [Step3 O-06] 중복 제거: DebugRequestSaveAllInventory는 DebugForceAutoSave의 래퍼
+// 두 함수 모두 BlueprintCallable이므로 선언은 유지하되, 구현을 통합
+// ================================================================
 void AHellunaBaseGameMode::DebugRequestSaveAllInventory()
 {
-	ForceAutoSave();
+#if !UE_BUILD_SHIPPING
+	DebugForceAutoSave();
+#endif
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -2338,7 +2384,9 @@ void AHellunaBaseGameMode::DebugRequestSaveAllInventory()
 // ════════════════════════════════════════════════════════════════════════════════
 void AHellunaBaseGameMode::DebugForceAutoSave()
 {
+#if !UE_BUILD_SHIPPING
 	ForceAutoSave();
+#endif
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -2346,7 +2394,10 @@ void AHellunaBaseGameMode::DebugForceAutoSave()
 // ════════════════════════════════════════════════════════════════════════════════
 void AHellunaBaseGameMode::DebugTestLoadInventory()
 {
-	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+#if !UE_BUILD_SHIPPING
+	UWorld* DebugWorld = GetWorld();
+	if (!DebugWorld) { return; }
+	for (FConstPlayerControllerIterator It = DebugWorld->GetPlayerControllerIterator(); It; ++It)
 	{
 		APlayerController* PC = It->Get();
 		if (IsValid(PC))
@@ -2355,4 +2406,5 @@ void AHellunaBaseGameMode::DebugTestLoadInventory()
 			return;
 		}
 	}
+#endif
 }

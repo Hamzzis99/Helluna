@@ -61,8 +61,11 @@ void AMDF_BaseWeapon::StartFire()
     }
 
     // 서버/스탠드얼론: 직접 실행
+    UWorld* World = GetWorld();
+    if (!World) return;
+
     Fire();
-    GetWorld()->GetTimerManager().SetTimer(FireTimerHandle, this, &AMDF_BaseWeapon::Fire, FireRate, true);
+    World->GetTimerManager().SetTimer(FireTimerHandle, this, &AMDF_BaseWeapon::Fire, FireRate, true);
 }
 
 void AMDF_BaseWeapon::StopFire()
@@ -74,7 +77,10 @@ void AMDF_BaseWeapon::StopFire()
         return;
     }
 
-    GetWorld()->GetTimerManager().ClearTimer(FireTimerHandle);
+    if (UWorld* World = GetWorld())
+    {
+        World->GetTimerManager().ClearTimer(FireTimerHandle);
+    }
 }
 
 void AMDF_BaseWeapon::Fire()

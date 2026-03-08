@@ -13,6 +13,7 @@
 #include "TimerManager.h"
 
 #include "DebugHelper.h"
+#include "Helluna.h"
 #include "Items/Components/Inv_ItemComponent.h"
 #include "Items/Manifest/Inv_ItemManifest.h"
 
@@ -26,7 +27,9 @@ void URepairComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("[RepairComponent] BeginPlay - Owner: %s"), *GetOwner()->GetName());
+#endif
 
 	// ⭐ 서버에서만 델리게이트 바인딩
 	if (GetOwner()->HasAuthority())
@@ -64,22 +67,28 @@ void URepairComponent::Server_ProcessRepairRequest_Implementation(
 	FGameplayTag Material2Tag,
 	int32 Material2Amount)
 {
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("=== [Server_ProcessRepairRequest] 시작 ==="));
 	UE_LOG(LogTemp, Warning, TEXT("  Player: %s"), PlayerController ? *PlayerController->GetName() : TEXT("nullptr"));
 	UE_LOG(LogTemp, Warning, TEXT("  Material1: %s x %d"), *Material1Tag.ToString(), Material1Amount);
 	UE_LOG(LogTemp, Warning, TEXT("  Material2: %s x %d"), *Material2Tag.ToString(), Material2Amount);
+#endif
 
 	// 서버가 아니면 실행 금지
 	if (!GetOwner()->HasAuthority())
 	{
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Error, TEXT("  ❌ 서버가 아님! 실행 중단"));
+#endif
 		return;
 	}
 
 	// 유효성 검증
 	if (!PlayerController)
 	{
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Error, TEXT("  ❌ PlayerController가 nullptr!"));
+#endif
 		return;
 	}
 
@@ -93,17 +102,23 @@ void URepairComponent::Server_ProcessRepairRequest_Implementation(
 
 	// 큐에 추가
 	RepairQueue.Add(NewRequest);
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("  ✅ Repair 요청 큐에 추가됨! 큐 크기: %d"), RepairQueue.Num());
+#endif
 
 	// 현재 처리 중이 아니면 즉시 처리 시작
 	if (!bProcessingRepair)
 	{
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Warning, TEXT("  🔧 즉시 처리 시작!"));
+#endif
 		ProcessNextRepairRequest();
 	}
 	else
 	{
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Warning, TEXT("  ⏳ 다른 Repair 처리 중... 큐에서 대기"));
+#endif
 	}
 }
 
@@ -113,12 +128,16 @@ void URepairComponent::Server_ProcessRepairRequest_Implementation(
 
 void URepairComponent::ProcessNextRepairRequest()
 {
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("=== [ProcessNextRepairRequest] 시작 ==="));
+#endif
 
 	// 큐가 비어있으면 종료
 	if (RepairQueue.Num() == 0)
 	{
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Warning, TEXT("  ✅ Repair 큐 비어있음. 처리 완료!"));
+#endif
 		bProcessingRepair = false;
 		return;
 	}
@@ -129,10 +148,12 @@ void URepairComponent::ProcessNextRepairRequest()
 	FRepairRequest Request = RepairQueue[0];
 	RepairQueue.RemoveAt(0);
 
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("  📋 처리할 요청: Player=%s, Material1=%s x %d, Material2=%s x %d"),
 		Request.PlayerController ? *Request.PlayerController->GetName() : TEXT("nullptr"),
 		*Request.Material1Tag.ToString(), Request.Material1Amount,
 		*Request.Material2Tag.ToString(), Request.Material2Amount);
+#endif
 
 	// ========================================
 	// 1. 재료 유효성 검증
@@ -146,7 +167,9 @@ void URepairComponent::ProcessNextRepairRequest()
 		bMaterial1Valid = ValidateMaterial(Request.PlayerController, Request.Material1Tag, Request.Material1Amount);
 		if (!bMaterial1Valid)
 		{
+#if HELLUNA_DEBUG_REPAIR
 			UE_LOG(LogTemp, Error, TEXT("  ❌ 재료 1 유효성 검증 실패!"));
+#endif
 		}
 	}
 
@@ -155,14 +178,18 @@ void URepairComponent::ProcessNextRepairRequest()
 		bMaterial2Valid = ValidateMaterial(Request.PlayerController, Request.Material2Tag, Request.Material2Amount);
 		if (!bMaterial2Valid)
 		{
+#if HELLUNA_DEBUG_REPAIR
 			UE_LOG(LogTemp, Error, TEXT("  ❌ 재료 2 유효성 검증 실패!"));
+#endif
 		}
 	}
 
 	// 하나라도 유효하면 진행
 	if (!bMaterial1Valid && !bMaterial2Valid)
 	{
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Error, TEXT("  ❌ 모든 재료 유효성 검증 실패! 다음 요청으로 넘어감"));
+#endif
 		ProcessNextRepairRequest();
 		return;
 	}
@@ -177,14 +204,18 @@ void URepairComponent::ProcessNextRepairRequest()
 	{
 		ConsumeMaterialFromInventory(Request.PlayerController, Request.Material1Tag, Request.Material1Amount);
 		TotalResource += Request.Material1Amount * MaterialToResourceRatio;
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Warning, TEXT("  ✅ 재료 1 소비 완료! 자원: +%d"), Request.Material1Amount * MaterialToResourceRatio);
+#endif
 	}
 
 	if (bMaterial2Valid)
 	{
 		ConsumeMaterialFromInventory(Request.PlayerController, Request.Material2Tag, Request.Material2Amount);
 		TotalResource += Request.Material2Amount * MaterialToResourceRatio;
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Warning, TEXT("  ✅ 재료 2 소비 완료! 자원: +%d"), Request.Material2Amount * MaterialToResourceRatio);
+#endif
 	}
 
 	// ========================================
@@ -192,7 +223,9 @@ void URepairComponent::ProcessNextRepairRequest()
 	// ========================================
 
 	AddResourceToTarget(TotalResource);
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("  ✅ SpaceShip에 자원 추가 완료! 총 자원: %d"), TotalResource);
+#endif
 
 	// ========================================
 	// 4. 애니메이션 재생 (멀티캐스트)
@@ -202,7 +235,9 @@ void URepairComponent::ProcessNextRepairRequest()
 	FVector OwnerLocation = GetOwner()->GetActorLocation();
 
 	Multicast_PlayRepairAnimation(OwnerLocation, TotalAmount);
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("  🎬 애니메이션 재생 요청! 총 개수: %d"), TotalAmount);
+#endif
 
 	// ========================================
 	// 5. 다음 요청 처리 (애니메이션 시간 후)
@@ -219,8 +254,10 @@ void URepairComponent::ProcessNextRepairRequest()
 		false
 	);
 
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("  ⏱️ 다음 요청 처리 예약: %.2f초 후"), AnimationDuration);
 	UE_LOG(LogTemp, Warning, TEXT("=== [ProcessNextRepairRequest] 완료 ==="));
+#endif
 }
 
 // ========================================
@@ -232,7 +269,9 @@ bool URepairComponent::ValidateMaterial(APlayerController* PlayerController, FGa
 	// 1. AllowedMaterialTags에 포함되어 있는지 확인
 	if (AllowedMaterialTags.Num() > 0 && !AllowedMaterialTags.Contains(MaterialTag))
 	{
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Error, TEXT("  ❌ 허용되지 않은 재료: %s"), *MaterialTag.ToString());
+#endif
 		return false;
 	}
 
@@ -240,7 +279,9 @@ bool URepairComponent::ValidateMaterial(APlayerController* PlayerController, FGa
 	UInv_InventoryComponent* InvComp = UInv_InventoryStatics::GetInventoryComponent(PlayerController);
 	if (!InvComp)
 	{
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Error, TEXT("  ❌ Inventory Component를 찾을 수 없음!"));
+#endif
 		return false;
 	}
 
@@ -248,11 +289,15 @@ bool URepairComponent::ValidateMaterial(APlayerController* PlayerController, FGa
 	int32 AvailableAmount = InvComp->GetTotalMaterialCount(MaterialTag);
 	if (AvailableAmount < Amount)
 	{
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Error, TEXT("  ❌ 재료 부족! 필요: %d, 보유: %d"), Amount, AvailableAmount);
+#endif
 		return false;
 	}
 
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("  ✅ 재료 유효성 검증 통과! %s x %d (보유: %d)"), *MaterialTag.ToString(), Amount, AvailableAmount);
+#endif
 	return true;
 }
 
@@ -266,20 +311,28 @@ void URepairComponent::ConsumeMaterialFromInventory(APlayerController* PlayerCon
 	UInv_InventoryComponent* InvComp = UInv_InventoryStatics::GetInventoryComponent(PlayerController);
 	if (!InvComp)
 	{
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Error, TEXT("  ❌ ConsumeMaterial: InventoryComponent를 찾을 수 없음!"));
+#endif
 		return;
 	}
 
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("  🔧 인벤토리에서 재료 소비 시작: %s x %d"), *MaterialTag.ToString(), Amount);
+#endif
 	
 	// ⭐ Component는 GetOwner()->HasAuthority()로 체크!
 	AActor* Owner = GetOwner();
 	bool bIsServer = Owner && Owner->HasAuthority();
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("      서버 여부: %s"), bIsServer ? TEXT("서버 ✅") : TEXT("클라이언트 ❌"));
+#endif
 
 	// ⭐ 소비 전 보유량 확인 (로그용)
 	int32 BeforeAmount = InvComp->GetTotalMaterialCount(MaterialTag);
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("      소비 전 보유량: %d"), BeforeAmount);
+#endif
 
 	// ⭐ Inventory의 Server RPC 호출 (FastArray 리플리케이션 자동 실행!)
 	InvComp->Server_ConsumeMaterialsMultiStack(MaterialTag, Amount);
@@ -287,12 +340,16 @@ void URepairComponent::ConsumeMaterialFromInventory(APlayerController* PlayerCon
 	// ⭐ 소비 후 보유량 확인 (로그용) - 서버에서만 즉시 반영됨
 	if (bIsServer)
 	{
+#if HELLUNA_DEBUG_REPAIR
 		int32 AfterAmount = InvComp->GetTotalMaterialCount(MaterialTag);
 		UE_LOG(LogTemp, Warning, TEXT("      소비 후 보유량: %d"), AfterAmount);
 		UE_LOG(LogTemp, Warning, TEXT("      실제 소비량: %d"), BeforeAmount - AfterAmount);
+#endif
 	}
 
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("  ✅ 재료 소비 RPC 호출 완료! (FastArray 리플리케이션 자동 실행 예정)"));
+#endif
 }
 
 // ========================================
@@ -301,26 +358,34 @@ void URepairComponent::ConsumeMaterialFromInventory(APlayerController* PlayerCon
 
 void URepairComponent::AddResourceToTarget(int32 TotalResource)
 {
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("=== [AddResourceToTarget] 호출됨! ==="));
 	UE_LOG(LogTemp, Warning, TEXT("  추가할 자원: %d"), TotalResource);
-	
+#endif
+
 	// Owner가 SpaceShip인지 확인
 	AResourceUsingObject_SpaceShip* SpaceShip = Cast<AResourceUsingObject_SpaceShip>(GetOwner());
 	if (!SpaceShip)
 	{
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Error, TEXT("  ❌ Owner가 SpaceShip이 아님! Owner: %s"), GetOwner() ? *GetOwner()->GetName() : TEXT("nullptr"));
+#endif
 		return;
 	}
 
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("  ✅ SpaceShip 찾음: %s"), *SpaceShip->GetName());
 	UE_LOG(LogTemp, Warning, TEXT("  🔧 AddRepairResource(%d) 호출 전"), TotalResource);
+#endif
 	
 	// SpaceShip에 자원 추가 (실제 추가된 양 반환)
 	int32 ActualAdded = SpaceShip->AddRepairResource(TotalResource);
 
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("  🔧 AddRepairResource 호출 후! 실제 추가: %d"), ActualAdded);
 	UE_LOG(LogTemp, Warning, TEXT("  📊 현재 수리 진행도: %d / %d"), SpaceShip->GetCurrentResource(), SpaceShip->GetNeedResource());
 	UE_LOG(LogTemp, Warning, TEXT("=== [AddResourceToTarget] 완료! ==="));
+#endif
 }
 
 // ========================================
@@ -329,8 +394,10 @@ void URepairComponent::AddResourceToTarget(int32 TotalResource)
 
 void URepairComponent::Multicast_PlaySingleRepairEffect_Implementation(FVector RepairLocation)
 {
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("=== [Multicast_PlaySingleRepairEffect] 시작 ==="));
 	UE_LOG(LogTemp, Warning, TEXT("  위치: %s"), *RepairLocation.ToString());
+#endif
 
 	// 파티클 이펙트 재생 (1회)
 	if (RepairParticleEffect)
@@ -340,7 +407,9 @@ void URepairComponent::Multicast_PlaySingleRepairEffect_Implementation(FVector R
 			RepairParticleEffect,
 			RepairLocation
 		);
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Warning, TEXT("  🎨 파티클 이펙트 재생!"));
+#endif
 	}
 
 	// 3D 사운드 재생 (1회)
@@ -357,10 +426,14 @@ void URepairComponent::Multicast_PlaySingleRepairEffect_Implementation(FVector R
 			nullptr,  // ConcurrencySettings
 			nullptr   // InitialOwner
 		);
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Warning, TEXT("  🔊 3D 사운드 재생!"));
+#endif
 	}
 
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("=== [Multicast_PlaySingleRepairEffect] 완료 ==="));
+#endif
 }
 
 // ========================================
@@ -369,8 +442,10 @@ void URepairComponent::Multicast_PlaySingleRepairEffect_Implementation(FVector R
 
 void URepairComponent::Multicast_PlayRepairAnimation_Implementation(FVector RepairLocation, int32 TotalAmount)
 {
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("=== [Multicast_PlayRepairAnimation] 시작 ==="));
 	UE_LOG(LogTemp, Warning, TEXT("  위치: %s, 개수: %d"), *RepairLocation.ToString(), TotalAmount);
+#endif
 
 	// 애니메이션 설정
 	AnimationLocation = RepairLocation;
@@ -406,7 +481,9 @@ void URepairComponent::PlayMaterialInsertAnimationStep()
 
 	CurrentAnimationCount++;
 
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Log, TEXT("  🎬 애니메이션 재생: %d/%d"), CurrentAnimationCount, TargetAnimationCount);
+#endif
 
 	// 파티클 이펙트 재생
 	if (RepairParticleEffect)
@@ -435,8 +512,10 @@ void URepairComponent::PlayMaterialInsertAnimationStep()
 
 void URepairComponent::OnAnimationComplete()
 {
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("  ✅ 애니메이션 완료!"));
 	UE_LOG(LogTemp, Warning, TEXT("=== [Multicast_PlayRepairAnimation] 완료 ==="));
+#endif
 }
 
 // ========================================
@@ -478,26 +557,34 @@ void URepairComponent::Server_TestConsumeMaterial_Implementation(APlayerControll
 {
 #if UE_BUILD_SHIPPING
 	// 프로덕션(Shipping) 빌드에서는 테스트 RPC 무효화
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("[RepairComponent] Server_TestConsumeMaterial: Shipping 빌드에서 차단"));
+#endif
 	return;
 #endif
 
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("=== [Server_TestConsumeMaterial] 테스트 시작 ==="));
 	UE_LOG(LogTemp, Warning, TEXT("  PlayerController: %s"), PlayerController ? *PlayerController->GetName() : TEXT("nullptr"));
 	UE_LOG(LogTemp, Warning, TEXT("  MaterialTag: %s"), *MaterialTag.ToString());
 	UE_LOG(LogTemp, Warning, TEXT("  Amount: %d"), Amount);
+#endif
 
 	// ⭐ Component는 GetOwner()->HasAuthority()로 체크!
 	AActor* Owner = GetOwner();
 	if (!Owner || !Owner->HasAuthority())
 	{
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Error, TEXT("  ❌ 서버가 아님!"));
+#endif
 		return;
 	}
 
 	if (!PlayerController)
 	{
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Error, TEXT("  ❌ PlayerController가 nullptr!"));
+#endif
 		return;
 	}
 
@@ -505,30 +592,40 @@ void URepairComponent::Server_TestConsumeMaterial_Implementation(APlayerControll
 	UInv_InventoryComponent* InvComp = UInv_InventoryStatics::GetInventoryComponent(PlayerController);
 	if (!InvComp)
 	{
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Error, TEXT("  ❌ InventoryComponent를 찾을 수 없음!"));
+#endif
 		return;
 	}
 
 	// 소비 전 보유량
 	int32 BeforeAmount = InvComp->GetTotalMaterialCount(MaterialTag);
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("  📦 소비 전 보유량: %d"), BeforeAmount);
+#endif
 
 	if (BeforeAmount < Amount)
 	{
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Error, TEXT("  ❌ 재료 부족! 필요: %d, 보유: %d"), Amount, BeforeAmount);
+#endif
 		return;
 	}
 
 	// ⭐ 재료 소비 RPC 호출
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("  🔧 Server_ConsumeMaterialsMultiStack() 호출..."));
+#endif
 	InvComp->Server_ConsumeMaterialsMultiStack(MaterialTag, Amount);
 
 	// 소비 후 보유량 (서버에서만 즉시 확인 가능)
 	int32 AfterAmount = InvComp->GetTotalMaterialCount(MaterialTag);
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("  📦 소비 후 보유량: %d"), AfterAmount);
 	UE_LOG(LogTemp, Warning, TEXT("  ✅ 실제 소비량: %d"), BeforeAmount - AfterAmount);
 
 	UE_LOG(LogTemp, Warning, TEXT("=== [Server_TestConsumeMaterial] 완료 ==="));
+#endif
 }
 
 // ========================================
@@ -566,9 +663,11 @@ void URepairComponent::BindToAllPlayerInventories()
 		{
 			InvComp->OnMaterialStacksChanged.AddDynamic(this, &URepairComponent::OnMaterialConsumed);
 			BoundInventoryComponents.Add(InvComp);
-			
-			UE_LOG(LogTemp, Warning, TEXT("[RepairComponent] ✅ InventoryComponent 델리게이트 바인딩 완료! (Player: %s)"), 
+
+#if HELLUNA_DEBUG_REPAIR
+			UE_LOG(LogTemp, Warning, TEXT("[RepairComponent] ✅ InventoryComponent 델리게이트 바인딩 완료! (Player: %s)"),
 				*PC->GetName());
+#endif
 		}
 	}
 }
@@ -585,13 +684,17 @@ void URepairComponent::OnMaterialConsumed(const FGameplayTag& MaterialTag)
 		return;
 	}
 
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("=== [RepairComponent] OnMaterialConsumed 호출됨! ==="));
 	UE_LOG(LogTemp, Warning, TEXT("  재료 Tag: %s"), *MaterialTag.ToString());
+#endif
 
 	// ⭐ 허용된 재료인지 체크
 	if (!IsMaterialAllowed(MaterialTag))
 	{
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Warning, TEXT("  ⚠️ 허용되지 않은 재료입니다. 스킵"));
+#endif
 		return;
 	}
 
@@ -600,12 +703,16 @@ void URepairComponent::OnMaterialConsumed(const FGameplayTag& MaterialTag)
 	// 일단은 1:1로 처리 (MaterialToResourceRatio 적용)
 	int32 ResourceToAdd = MaterialToResourceRatio;
 
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("  🔧 SpaceShip에 자원 추가: +%d"), ResourceToAdd);
+#endif
 
 	// SpaceShip에 자원 추가
 	AddResourceToTarget(ResourceToAdd);
 
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("=== [RepairComponent] OnMaterialConsumed 완료! ==="));
+#endif
 }
 
 // ========================================
@@ -614,32 +721,42 @@ void URepairComponent::OnMaterialConsumed(const FGameplayTag& MaterialTag)
 
 void URepairComponent::Server_AddRepairResourceFromMaterials_Implementation(int32 TotalResource)
 {
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("=== [Server_AddRepairResourceFromMaterials] 호출됨! ==="));
 	UE_LOG(LogTemp, Warning, TEXT("  추가할 자원: %d"), TotalResource);
 	UE_LOG(LogTemp, Warning, TEXT("  서버 여부: %s"), GetOwner()->HasAuthority() ? TEXT("서버 ✅") : TEXT("클라이언트 ❌"));
+#endif
 
 	// 서버 권한 체크
 	if (!GetOwner() || !GetOwner()->HasAuthority())
 	{
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Error, TEXT("  ❌ 서버가 아님!"));
+#endif
 		return;
 	}
 
 	// 자원이 0 이하면 무시
 	if (TotalResource <= 0)
 	{
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Warning, TEXT("  ⚠️ 자원이 0 이하! 무시"));
+#endif
 		return;
 	}
 
 	// MaterialToResourceRatio 적용
 	int32 FinalResource = TotalResource * MaterialToResourceRatio;
-	UE_LOG(LogTemp, Warning, TEXT("  MaterialToResourceRatio 적용: %d x %d = %d"), 
+#if HELLUNA_DEBUG_REPAIR
+	UE_LOG(LogTemp, Warning, TEXT("  MaterialToResourceRatio 적용: %d x %d = %d"),
 		TotalResource, MaterialToResourceRatio, FinalResource);
+#endif
 
 	// SpaceShip에 자원 추가
 	AddResourceToTarget(FinalResource);
 
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("  ✅ SpaceShip에 자원 추가 완료!"));
 	UE_LOG(LogTemp, Warning, TEXT("=== [Server_AddRepairResourceFromMaterials] 완료! ==="));
+#endif
 }

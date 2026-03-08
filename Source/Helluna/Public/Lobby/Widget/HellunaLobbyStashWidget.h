@@ -20,6 +20,7 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "Lobby/Party/HellunaPartyTypes.h"
 #include "HellunaLobbyStashWidget.generated.h"
 
 // 전방 선언
@@ -34,7 +35,12 @@ class AHellunaLobbyController;
 class AHellunaCharacterSelectSceneV2;
 class UImage;
 class UTextBlock;
+class UScrollBox;
+class UEditableTextBox;
+class UVerticalBox;
+class UComboBoxString;
 enum class EHellunaHeroType : uint8;
+struct FMatchmakingStatusInfo;
 
 // 탭 인덱스 상수
 namespace LobbyTab
@@ -51,6 +57,7 @@ class HELLUNA_API UHellunaLobbyStashWidget : public UUserWidget
 
 public:
 	virtual void NativeOnInitialized() override;
+	virtual void NativeDestruct() override;
 
 	// ════════════════════════════════════════════════════════════════
 	// 초기화
@@ -139,42 +146,103 @@ protected:
 	// ════════════════════════════════════════════════════════════════
 
 	/** 메인 WidgetSwitcher — Page0=Play, Page1=Loadout, Page2=Character */
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UWidgetSwitcher> MainSwitcher;
 
 	// ── 탑 네비게이션 탭 버튼 ──
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Button_Tab_Play;
 
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Button_Tab_Loadout;
 
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Button_Tab_Character;
 
 	// ── Play 탭 (Page 0) ──
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Button_Start;
 
 	/** [Phase 12g] 파티 팝업 열기 버튼 (선택적 — WBP에 없으면 무시) */
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Button_Party;
 
+	/** [Phase 12h] START 버튼 자식 TextBlock — 없으면 GetChildAt(0)으로 탐색 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Text_StartLabel;
+
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> Text_NoCharWarning;
 
+	// ── [Phase 12i] Play 탭 파티 채팅 ──
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UScrollBox> PlayChatScrollBox;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UEditableTextBox> PlayChatInput;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> PlayChatSendButton;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> Img_ChatBackground;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UVerticalBox> PlayChatBox;
+
+	// ── [Phase 12j] 캐릭터 네임태그 오버레이 ──
+	// 3개의 네임태그 컨테이너 (파티 슬롯 0=좌, 1=중앙(리더), 2=우)
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UVerticalBox> NameTag_Slot0;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UVerticalBox> NameTag_Slot1;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UVerticalBox> NameTag_Slot2;
+
+	// 솔로 모드 네임태그
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UVerticalBox> NameTag_Solo;
+
+	// ── [Phase 15] 모드 토글 + 매칭 오버레이 ──
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> Button_Mode_Solo;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> Button_Mode_Party;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> MatchmakingOverlay;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Text_MatchmakingTimer;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Text_MatchmakingCount;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> Button_CancelMatchmaking;
+
+	/** [Phase 16] 맵 선택 콤보박스 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UComboBoxString> ComboBox_MapSelect;
+
 	// ── Loadout 탭 (Page 1) — 기존 ──
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UHellunaLobbyPanel> StashPanel;
 
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UInv_SpatialInventory> LoadoutSpatialInventory;
 
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Button_Deploy;
 
 	// ── Character 탭 (Page 2) — 기존 ──
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UHellunaLobbyCharSelectWidget> CharacterSelectPanel;
 
 	// ════════════════════════════════════════════════════════════════
@@ -252,11 +320,93 @@ private:
 	void OnPartyClicked();
 
 	// ════════════════════════════════════════════════════════════════
+	// [Phase 12h] START/READY 버튼 전환
+	// ════════════════════════════════════════════════════════════════
+
+	/** 파티 상태 변경 시 버튼 텍스트 갱신 */
+	UFUNCTION()
+	void OnPartyStateChangedHandler(const FHellunaPartyInfo& PartyInfo);
+
+	/** START/READY 버튼 텍스트 업데이트 */
+	void UpdateStartButtonForPartyState();
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 12i] Play 탭 파티 채팅
+	// ════════════════════════════════════════════════════════════════
+
+	/** 파티 채팅 메시지 수신 핸들러 */
+	UFUNCTION()
+	void HandlePlayChatReceived(const FHellunaPartyChatMessage& ChatMessage);
+
+	/** Play 탭 채팅 전송 */
+	UFUNCTION()
+	void OnPlayChatSendClicked();
+
+	/** Play 탭 채팅 Enter 키 전송 */
+	UFUNCTION()
+	void OnPlayChatInputCommitted(const FText& Text, ETextCommit::Type CommitMethod);
+
+	/** Play 탭 채팅 메시지를 ScrollBox에 추가 */
+	void AddPlayChatMessage(const FHellunaPartyChatMessage& ChatMessage);
+
+	/** 파티 상태에 따라 채팅 패널 표시/숨김 */
+	void UpdatePlayChatVisibility();
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 12j] 네임태그 갱신
+	// ════════════════════════════════════════════════════════════════
+
+	/** 파티 상태에 따라 네임태그 업데이트 */
+	void UpdateNameTagOverlays();
+
+	/** 개별 슬롯 네임태그 설정 */
+	void SetNameTagContent(UVerticalBox* NameTag, const FString& PlayerName, bool bIsReady, bool bIsLeader);
+
+	/** 네임태그 전부 숨기기 */
+	void HideAllNameTags();
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 15] 모드 토글 + 매칭 오버레이
+	// ════════════════════════════════════════════════════════════════
+
+	UFUNCTION()
+	void OnSoloModeClicked();
+
+	UFUNCTION()
+	void OnPartyModeClicked();
+
+	UFUNCTION()
+	void OnCancelMatchmakingClicked();
+
+	/** 매칭 상태 변경 핸들러 */
+	UFUNCTION()
+	void HandleMatchmakingStatusChanged(const FMatchmakingStatusInfo& StatusInfo);
+
+	/** 모드 버튼 비주얼 업데이트 */
+	void UpdateModeButtonVisuals();
+
+	/** [Phase 16] 맵 선택 변경 콜백 */
+	UFUNCTION()
+	void OnMapSelectionChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
+
+	// ════════════════════════════════════════════════════════════════
 	// 내부 상태
 	// ════════════════════════════════════════════════════════════════
 
 	// 현재 활성 탭 인덱스
 	int32 CurrentTabIndex = LobbyTab::Play;
+
+	/** [Phase 12h] 로컬 플레이어의 현재 Ready 상태 캐시 */
+	bool bLocalPlayerReady = false;
+
+	/** [Phase 15] 현재 모드 (false=Solo, true=Party) */
+	bool bPartyMode = false;
+
+	/** [Phase 15] 현재 매칭 큐에 있는지 */
+	bool bInMatchmaking = false;
+
+	/** [Phase 16] 현재 선택된 맵 키 */
+	FString SelectedMapKey;
 
 	// 프리뷰 씬 캐시 (Solo 모드 전환용)
 	TWeakObjectPtr<AHellunaCharacterSelectSceneV2> CachedPreviewScene;

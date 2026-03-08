@@ -12,6 +12,7 @@
 
 #include "GameMode/HellunaBaseGameState.h"
 #include "GameMode/HellunaBaseGameMode.h"
+#include "Helluna.h"
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
 #include "Net/UnrealNetwork.h"
 
@@ -43,7 +44,9 @@ void AHellunaBaseGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 
 void AHellunaBaseGameState::OnRep_UsedCharacters()
 {
+#if HELLUNA_DEBUG_GAMEMODE
 	UE_LOG(LogTemp, Warning, TEXT("[BaseGameState] OnRep_UsedCharacters - 사용 중인 캐릭터: %d명"), UsedCharacters.Num());
+#endif
 
 	// 델리게이트 브로드캐스트 → 모든 바인딩된 UI 갱신!
 	OnUsedCharactersChanged.Broadcast();
@@ -63,8 +66,10 @@ void AHellunaBaseGameState::AddUsedCharacter(EHellunaHeroType HeroType)
 	if (!UsedCharacters.Contains(HeroType))
 	{
 		UsedCharacters.Add(HeroType);
+#if HELLUNA_DEBUG_GAMEMODE
 		UE_LOG(LogTemp, Warning, TEXT("[BaseGameState] 캐릭터 사용 등록: %s (총 %d명)"),
 			*UEnum::GetValueAsString(HeroType), UsedCharacters.Num());
+#endif
 
 		// 서버에서도 델리게이트 호출 (Listen Server용)
 		OnUsedCharactersChanged.Broadcast();
@@ -78,8 +83,10 @@ void AHellunaBaseGameState::RemoveUsedCharacter(EHellunaHeroType HeroType)
 	if (UsedCharacters.Contains(HeroType))
 	{
 		UsedCharacters.Remove(HeroType);
+#if HELLUNA_DEBUG_GAMEMODE
 		UE_LOG(LogTemp, Warning, TEXT("[BaseGameState] 캐릭터 사용 해제: %s (총 %d명)"),
 			*UEnum::GetValueAsString(HeroType), UsedCharacters.Num());
+#endif
 
 		// 서버에서도 델리게이트 호출 (Listen Server용)
 		OnUsedCharactersChanged.Broadcast();
@@ -96,22 +103,31 @@ void AHellunaBaseGameState::Server_SaveAndMoveLevel(FName NextLevelName)
 
 	if (NextLevelName.IsNone())
 	{
+#if HELLUNA_DEBUG_GAMEMODE
 		UE_LOG(LogTemp, Error, TEXT("[BaseGameState] 이동할 맵 이름이 없습니다!"));
+#endif
 		return;
 	}
 
+#if HELLUNA_DEBUG_GAMEMODE
 	UE_LOG(LogTemp, Warning, TEXT("[BaseGameState] 맵 이동 요청(%s). 저장 및 플래그 설정..."), *NextLevelName.ToString());
+#endif
 
 	// ============================================
 	// 0. 모든 플레이어 인벤토리 저장 (맵 이동 전!)
 	// ============================================
-	if (AHellunaBaseGameMode* GM = GetWorld()->GetAuthGameMode<AHellunaBaseGameMode>())
+	// [Fix46-M8] GetWorld() null 체크
+	UWorld* StateWorld = GetWorld();
+	if (!StateWorld) { return; }
+	if (AHellunaBaseGameMode* GM = StateWorld->GetAuthGameMode<AHellunaBaseGameMode>())
 	{
 		GM->SaveAllPlayersInventory();
 	}
 	else
 	{
+#if HELLUNA_DEBUG_GAMEMODE
 		UE_LOG(LogTemp, Warning, TEXT("[BaseGameState] ⚠️ GameMode 없음 - 인벤토리 저장 생략"));
+#endif
 	}
 
 	// 1. 자식 클래스 전용 저장 (가상함수 훅)
@@ -122,11 +138,15 @@ void AHellunaBaseGameState::Server_SaveAndMoveLevel(FName NextLevelName)
 	if (GI)
 	{
 		GI->bIsMapTransitioning = true;
+#if HELLUNA_DEBUG_GAMEMODE
 		UE_LOG(LogTemp, Warning, TEXT("[BaseGameState] 이사 확인증 발급 완료 (bIsMapTransitioning = true)"));
+#endif
 	}
 	else
 	{
+#if HELLUNA_DEBUG_GAMEMODE
 		UE_LOG(LogTemp, Error, TEXT("[BaseGameState] GameInstance 형변환 실패! 프로젝트 설정을 확인하세요."));
+#endif
 	}
 
 	// 3. ServerTravel 실행

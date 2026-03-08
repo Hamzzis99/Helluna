@@ -31,11 +31,13 @@ void AHellunaServerConnectController::BeginPlay()
 	if (!ConnectWidgetClass)
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[ServerConnectController] ConnectWidgetClass 미설정!"));
+#if HELLUNA_DEBUG_SERVERCONNECTION
 		if (GEngine)
 		{
 			GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Red,
 				TEXT("ConnectWidgetClass 미설정! BP에서 설정 필요"));
 		}
+#endif
 		return;
 	}
 
@@ -114,7 +116,9 @@ void AHellunaServerConnectController::OnConnectButtonClicked(const FString& IPAd
 			ConnectWidget->SetLoadingState(true);
 		}
 
-		AHellunaLoginGameMode* GM = Cast<AHellunaLoginGameMode>(GetWorld()->GetAuthGameMode());
+		UWorld* World = GetWorld();
+		if (!World) return;
+		AHellunaLoginGameMode* GM = Cast<AHellunaLoginGameMode>(World->GetAuthGameMode());
 		if (GM)
 		{
 			GM->TravelToGameMap();
@@ -159,7 +163,16 @@ void AHellunaServerConnectController::OnConnectButtonClicked(const FString& IPAd
 			GI->ShowLoadingScreen(TEXT("서버 접속 중..."));
 		}
 
-		FString Command = FString::Printf(TEXT("open %s"), *IPAddress);
+		// IP 형식 검증 - 위험 문자 차단
+		FString SafeIP = IPAddress;
+		SafeIP.ReplaceInline(TEXT(";"), TEXT(""));
+		SafeIP.ReplaceInline(TEXT("\""), TEXT(""));
+		SafeIP.ReplaceInline(TEXT("'"), TEXT(""));
+		SafeIP.ReplaceInline(TEXT("|"), TEXT(""));
+		SafeIP.ReplaceInline(TEXT("&"), TEXT(""));
+		if (SafeIP.IsEmpty()) return;
+
+		FString Command = FString::Printf(TEXT("open %s"), *SafeIP);
 #if HELLUNA_DEBUG_SERVERCONNECTION
 		UE_LOG(LogHelluna, Warning, TEXT("[ServerConnectController] 명령: %s"), *Command);
 #endif

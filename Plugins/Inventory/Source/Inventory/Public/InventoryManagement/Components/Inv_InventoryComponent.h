@@ -55,32 +55,39 @@ public:
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_AddNewItem(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder);
 
-	UFUNCTION(Server, Reliable) // 신뢰하는 것? 서버에 전달하는 것?
+	UFUNCTION(Server, Reliable, WithValidation) // 신뢰하는 것? 서버에 전달하는 것?
 	void Server_AddStacksToItem(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder);
+	bool Server_AddStacksToItem_Validate(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder);
 
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_DropItem(UInv_InventoryItem* Item, int32 StackCount); // 아이템을 서버에다 어떻게 버릴지
 	
-	UFUNCTION(Server, Reliable) // 신뢰하는 것? 서버에 전달하는 것?
+	UFUNCTION(Server, Reliable, WithValidation) // 신뢰하는 것? 서버에 전달하는 것?
 	void Server_ConsumeItem(UInv_InventoryItem* Item);
+	bool Server_ConsumeItem_Validate(UInv_InventoryItem* Item);
 
-	UFUNCTION(Server, Reliable) // 재료 소비 (Building 시스템용)
+	UFUNCTION(Server, Reliable, WithValidation) // 재료 소비 (Building 시스템용)
 	void Server_ConsumeMaterials(const FGameplayTag& MaterialTag, int32 Amount);
+	bool Server_ConsumeMaterials_Validate(const FGameplayTag& MaterialTag, int32 Amount);
 
-	UFUNCTION(Server, Reliable) // 재료 소비 - 여러 스택에서 차감 (Building 시스템용)
+	UFUNCTION(Server, Reliable, WithValidation) // 재료 소비 - 여러 스택에서 차감 (Building 시스템용)
 	void Server_ConsumeMaterialsMultiStack(const FGameplayTag& MaterialTag, int32 Amount);
+	bool Server_ConsumeMaterialsMultiStack_Validate(const FGameplayTag& MaterialTag, int32 Amount);
 
-	UFUNCTION(Server, Reliable) // Split 시 서버의 TotalStackCount 업데이트
+	UFUNCTION(Server, Reliable, WithValidation) // Split 시 서버의 TotalStackCount 업데이트
 	void Server_UpdateItemStackCount(UInv_InventoryItem* Item, int32 NewStackCount);
+	bool Server_UpdateItemStackCount_Validate(UInv_InventoryItem* Item, int32 NewStackCount);
 
-	UFUNCTION(Server, Reliable) // ⭐ Phase 8: Split 시 서버에서 새 Entry 생성 (포인터 분리)
+	UFUNCTION(Server, Reliable, WithValidation) // ⭐ Phase 8: Split 시 서버에서 새 Entry 생성 (포인터 분리)
 	void Server_SplitItemEntry(UInv_InventoryItem* OriginalItem, int32 OriginalNewStackCount, int32 SplitStackCount, int32 TargetGridIndex = INDEX_NONE);
+	bool Server_SplitItemEntry_Validate(UInv_InventoryItem* OriginalItem, int32 OriginalNewStackCount, int32 SplitStackCount, int32 TargetGridIndex);
 
 	// ⭐ [Phase 4 방법2] 클라이언트 Grid 위치를 서버 Entry에 동기화
 	// 클라이언트에서 아이템을 Grid에 배치/이동할 때 호출
 	// Unreliable: 시각적 정보이며 MarkDirty 스킵. 유실 시에도 다음 이동에서 보정됨
-	UFUNCTION(Server, Unreliable)
+	UFUNCTION(Server, Unreliable, WithValidation)
 	void Server_UpdateItemGridPosition(UInv_InventoryItem* Item, int32 GridIndex, uint8 GridCategory, bool bRotated = false);
+	bool Server_UpdateItemGridPosition_Validate(UInv_InventoryItem* Item, int32 GridIndex, uint8 GridCategory, bool bRotated);
 
 	UFUNCTION(Server, Reliable, WithValidation) // 크래프팅: 서버에서 아이템 생성 및 인벤토리 추가
 	void Server_CraftItem(TSubclassOf<AActor> ItemActorClass);
@@ -100,8 +107,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "인벤토리", meta = (DisplayName = "총 재료 수량 가져오기"))
 	int32 GetTotalMaterialCount(const FGameplayTag& MaterialTag) const;
 	
-	UFUNCTION(Server, Reliable) // 신뢰하는 것? 서버에 전달하는 것?
+	UFUNCTION(Server, Reliable, WithValidation) // 신뢰하는 것? 서버에 전달하는 것?
 	void Server_EquipSlotClicked(UInv_InventoryItem* ItemToEquip, UInv_InventoryItem* ItemToUnequip, int32 WeaponSlotIndex = -1);
+	bool Server_EquipSlotClicked_Validate(UInv_InventoryItem* ItemToEquip, UInv_InventoryItem* ItemToUnequip, int32 WeaponSlotIndex);
 
 	// ════════════════════════════════════════════════════════════════
 	// 📌 [부착물 시스템 Phase 2] 부착/분리 Server RPC
@@ -112,8 +120,9 @@ public:
 	void Server_AttachItemToWeapon(int32 WeaponEntryIndex, int32 AttachmentEntryIndex, int32 SlotIndex);
 
 	// 부착물 분리: 무기 슬롯에서 부착물을 분리하여 인벤토리 Grid로 복귀
-	UFUNCTION(Server, Reliable)
+	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_DetachItemFromWeapon(int32 WeaponEntryIndex, int32 SlotIndex);
+	bool Server_DetachItemFromWeapon_Validate(int32 WeaponEntryIndex, int32 SlotIndex);
 
 	// 호환성 체크 (UI에서 드래그 중 슬롯 하이라이트용, 읽기 전용)
 	UFUNCTION(BlueprintCallable, Category = "인벤토리|부착물", meta = (DisplayName = "무기에 부착 가능 여부"))
@@ -138,8 +147,9 @@ public:
 		int32 TargetGridIndex);   // 컨테이너 Grid에 놓을 위치 (-1이면 자동 배치)
 
 	/** 컨테이너 전체 아이템 가져오기 */
-	UFUNCTION(Server, Reliable)
+	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_TakeAllFromContainer(UInv_LootContainerComponent* Container);
+	bool Server_TakeAllFromContainer_Validate(UInv_LootContainerComponent* Container);
 	
 	UFUNCTION(NetMulticast, Reliable) // 멀티캐스트 함수 (서버에서 모든 클라이언트로 호출)
 	void Multicast_EquipSlotClicked(UInv_InventoryItem* ItemToEquip, UInv_InventoryItem* ItemToUnequip, int32 WeaponSlotIndex = -1);
@@ -318,7 +328,7 @@ private:
 		meta = (DisplayName = "인벤토리 메뉴 클래스", Tooltip = "인벤토리 메뉴로 사용할 위젯 블루프린트 클래스를 지정합니다."))
 	TSubclassOf<UInv_InventoryBase> InventoryMenuClass;
 
-	bool bInventoryMenuOpen; //인벤토리 메뉴 열림 여부
+	bool bInventoryMenuOpen = false; //인벤토리 메뉴 열림 여부
 	void OpenInventoryMenu();
 	void CloseInventoryMenu();
 	void CloseOtherMenus(); // BuildMenu와 CraftingMenu 닫기

@@ -7,6 +7,7 @@ void UInv_Composite::NativeOnInitialized() // 위젯 초기화 메서드
 {
 	Super::NativeOnInitialized(); // 부모 클래스의 초기화 메서드 호출
 
+	if (!WidgetTree) return;
 	WidgetTree->ForEachWidget([this](UWidget* Widget) // 모든 위젯에 대해 반복
 	{
 		if (UInv_CompositeBase* Composite = Cast<UInv_CompositeBase>(Widget); IsValid(Composite)) // 위젯이 UInv_CompositeBase 타입인지 확인

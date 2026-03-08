@@ -58,6 +58,21 @@
 //    → InitializeWithComponent()가 나중에 호출되어야 Grid에 아이템이 표시됨
 //
 // ════════════════════════════════════════════════════════════════════════════════
+// [Fix45-H3] NativeDestruct — 버튼 + Grid 전송 델리게이트 해제
+void UHellunaLobbyPanel::NativeDestruct()
+{
+	if (Button_Equippables) { Button_Equippables->OnClicked.RemoveDynamic(this, &ThisClass::ShowEquippables); }
+	if (Button_Consumables) { Button_Consumables->OnClicked.RemoveDynamic(this, &ThisClass::ShowConsumables); }
+	if (Button_Craftables) { Button_Craftables->OnClicked.RemoveDynamic(this, &ThisClass::ShowCraftables); }
+
+	// EnableLobbyTransferMode에서 바인딩한 Grid→OnLobbyTransferRequested 해제
+	if (Grid_Equippables) { Grid_Equippables->OnLobbyTransferRequested.RemoveDynamic(this, &ThisClass::OnGridTransferRequested); }
+	if (Grid_Consumables) { Grid_Consumables->OnLobbyTransferRequested.RemoveDynamic(this, &ThisClass::OnGridTransferRequested); }
+	if (Grid_Craftables) { Grid_Craftables->OnLobbyTransferRequested.RemoveDynamic(this, &ThisClass::OnGridTransferRequested); }
+
+	Super::NativeDestruct();
+}
+
 void UHellunaLobbyPanel::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
@@ -253,10 +268,8 @@ void UHellunaLobbyPanel::EnableLobbyTransferMode()
 	{
 		if (!Grid) return;
 		Grid->SetLobbyTransferMode(true);
-		if (!Grid->OnLobbyTransferRequested.IsAlreadyBound(this, &ThisClass::OnGridTransferRequested))
-		{
-			Grid->OnLobbyTransferRequested.AddDynamic(this, &ThisClass::OnGridTransferRequested);
-		}
+		// [Fix45-H5] AddDynamic→AddUniqueDynamic (IsAlreadyBound 체크 제거 — AddUniqueDynamic이 내부 처리)
+		Grid->OnLobbyTransferRequested.AddUniqueDynamic(this, &ThisClass::OnGridTransferRequested);
 		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPanel]   %s → 전송 모드 ON"), Name);
 	};
 

@@ -25,12 +25,15 @@
 #include "GameMode/HellunaBaseGameMode.h"
 #include "HellunaTypes.h"
 #include "Lobby/Party/HellunaPartyTypes.h"
+#include "Lobby/Party/HellunaMatchmakingTypes.h"
 #include "HellunaLobbyGameMode.generated.h"
 
 // 전방 선언
 class AHellunaLobbyController;
 class UHellunaSQLiteSubsystem;
 class UInv_InventoryComponent;
+class UHellunaAccountSaveGame;
+class UHellunaGameServerManager;
 
 UCLASS()
 class HELLUNA_API AHellunaLobbyGameMode : public AHellunaBaseGameMode
@@ -45,6 +48,7 @@ public:
 	// ════════════════════════════════════════════════════════════════
 
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void PostLogin(APlayerController* NewPlayer) override;
 	virtual void Logout(AController* Exiting) override;
 
@@ -54,6 +58,19 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "로비",
 		meta = (DisplayName = "플레이어 ID 가져오기"))
 	FString GetLobbyPlayerId(APlayerController* PC) const { return bDebugSkipLogin ? TEXT("DebugPlayer") : GetPlayerSaveId(PC); }
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 13] 로비 로그인 시스템
+	// ════════════════════════════════════════════════════════════════
+
+	/** 로비 로그인 처리 (AccountSaveGame 검증 + 동시접속 체크) */
+	void ProcessLobbyLogin(AHellunaLobbyController* LobbyPC, const FString& PlayerId, const FString& Password);
+
+	/** 로비 회원가입 처리 (ID 중복 체크 + 계정 생성) */
+	void ProcessLobbySignup(AHellunaLobbyController* LobbyPC, const FString& PlayerId, const FString& Password);
+
+	/** 로그인 성공 후 로비 초기화 (게임결과 처리, Stash/Loadout 로드, 캐릭터선택, 파티복구) */
+	void InitializeLobbyForPlayer(AHellunaLobbyController* LobbyPC, const FString& PlayerId);
 
 protected:
 	// ════════════════════════════════════════════════════════════════
@@ -100,6 +117,17 @@ protected:
 	UPROPERTY()
 	TObjectPtr<UHellunaSQLiteSubsystem> SQLiteSubsystem;
 
+public:
+	/** [Phase 16] 서버 프로세스 매니저 (Controller에서 접근) */
+	UPROPERTY()
+	TObjectPtr<UHellunaGameServerManager> GameServerManager;
+
+protected:
+
+	/** [Phase 13] 계정 SaveGame (BeginPlay에서 LoadOrCreate) */
+	UPROPERTY()
+	TObjectPtr<UHellunaAccountSaveGame> LobbyAccountSaveGame;
+
 	// ════════════════════════════════════════════════════════════════
 	// 캐릭터 중복 방지 (같은 로비 내)
 	// ════════════════════════════════════════════════════════════════
@@ -129,6 +157,12 @@ public:
 
 	/** 빈 채널(status=empty, PendingDeploy 제외) 찾기 — null이면 빈 채널 없음 */
 	bool FindEmptyChannel(FGameChannelInfo& OutChannel);
+
+	/** [Phase 16] 특정 맵의 빈 채널 검색 */
+	bool FindEmptyChannelForMap(const FString& MapKey, FGameChannelInfo& OutChannel);
+
+	/** [Phase 16] 맵키로 MapPath 조회 */
+	FString GetMapPathByKey(const FString& MapKey) const;
 
 	/** Deploy 결정 후 즉시 채널 예약 (이중 배정 방지) */
 	void MarkChannelAsPendingDeploy(int32 Port);
@@ -170,6 +204,35 @@ public:
 	/** 파티 Deploy 실행 (채널 선택 + Save + Travel) */
 	void ExecutePartyDeploy(int32 PartyId);
 
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 14d] 재참가 시스템
+	// ════════════════════════════════════════════════════════════════
+
+	/** 게임서버 포트의 레지스트리가 유효한지 확인 (status=playing + 60초 이내) */
+	bool IsGameServerRunning(int32 Port);
+
+	/** 재참가 수락 → 게임서버로 Travel */
+	void HandleRejoinAccepted(AHellunaLobbyController* LobbyPC);
+
+	/** 재참가 거부 → 아이템 포기 + 로비 정상 진입 */
+	void HandleRejoinDeclined(AHellunaLobbyController* LobbyPC);
+
+	/** InitializeLobbyForPlayer의 Step 1~5 실행 (재참가 결정 후 호출) */
+	void ContinueLobbyInitAfterRejoinDecision(AHellunaLobbyController* LobbyPC, const FString& PlayerId);
+
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 15] 매치메이킹 시스템
+	// ════════════════════════════════════════════════════════════════
+
+	/** [Phase 16] 매칭 큐 참가 (파티면 파티 전원, 솔로면 1인 엔트리) */
+	void EnterMatchmakingQueue(const FString& PlayerId, const FString& MapKey = TEXT(""));
+
+	/** 매칭 큐 퇴장 */
+	void LeaveMatchmakingQueue(const FString& PlayerId);
+
+	/** 큐 상태 확인 */
+	bool IsPlayerInQueue(const FString& PlayerId) const;
+
 	/** 파티 상태를 전원에게 RPC */
 	void BroadcastPartyState(int32 PartyId);
 
@@ -192,14 +255,68 @@ public:
 	/** 파티 채팅 기록 (메모리 전용, 최대 50개/파티) */
 	TMap<int32, TArray<FHellunaPartyChatMessage>> PartyChatHistory;
 
+	/** [Phase 16] 사용 가능한 맵 목록 (BP에서 설정) */
+	UPROPERTY(EditDefaultsOnly, Category = "Lobby|Maps",
+		meta = (DisplayName = "Available Map List (사용 가능 맵 목록)"))
+	TArray<FHellunaGameMapInfo> AvailableMapConfigs;
+
+	/** [Phase 16] 기본 맵 키 */
+	UPROPERTY(EditDefaultsOnly, Category = "Lobby|Maps",
+		meta = (DisplayName = "Default Map Key (기본 맵 키)"))
+	FString DefaultMapKey = TEXT("GihyeonMap");
+
 	/** Deploy 예약된 채널 포트 (이중 배정 방지) */
 	TSet<int32> PendingDeployChannels;
 
 	/** PendingDeploy 자동 해제 타이머 */
 	TMap<int32, FTimerHandle> PendingDeployTimers;
 
+	/** [Fix46-M6] 오래된 파티 주기적 정리 타이머 */
+	FTimerHandle StalePartyCleanupTimer;
+
 	/** 연결 끊김 시 파티 탈퇴 유예 타이머 (30초) */
 	TMap<FString, FTimerHandle> PartyLeaveTimers;
+
+	// ── [Phase 15] 매치메이킹 큐 데이터 ──
+
+	/** FIFO 매칭 큐 */
+	TArray<FMatchmakingQueueEntry> MatchmakingQueue;
+
+	/** PlayerId → EntryId 빠른 조회 */
+	TMap<FString, int32> PlayerToQueueEntryMap;
+
+	/** 다음 엔트리 ID */
+	int32 NextQueueEntryId = 1;
+
+	/** 1초 매칭 틱 타이머 */
+	FTimerHandle MatchmakingTickTimer;
+
+	/** [Phase 16] WaitAndDeploy 폴링 타이머 (포트별) */
+	TMap<int32, FTimerHandle> WaitAndDeployTimers;
+
+	/** 매초 매칭 시도 */
+	void TickMatchmaking();
+
+	/** 큐에 있는 전원에게 상태 브로드캐스트 */
+	void BroadcastMatchmakingStatus();
+
+	/** 매칭 알고리즘 — 조합 찾으면 true */
+	bool TryFormMatch();
+
+	/** 매칭 완료 → Deploy 실행 (서버 없으면 비동기 스폰 대기) */
+	void ExecuteMatchedDeploy(const TArray<FMatchmakingQueueEntry>& Matched);
+
+	/** [Phase 16] 비동기 Deploy (서버 스폰 대기) */
+	void WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEntry> Matched);
+
+	/** 큐 엔트리 제거 */
+	void RemoveQueueEntry(int32 EntryId);
+
+	/** 매칭 간 영웅 중복 검사 — true=중복 없음(유효) */
+	bool ValidateMatchHeroDuplication(const TArray<FMatchmakingQueueEntry>& Entries) const;
+
+	/** 큐 엔트리 영웅 타입 갱신 */
+	void UpdateQueueEntryHeroType(const FString& PlayerId, int32 NewHeroType);
 
 	/** 캐시 갱신 (DB에서 다시 로드) */
 	void RefreshPartyCache(int32 PartyId);

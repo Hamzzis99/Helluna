@@ -65,19 +65,6 @@ void UInv_AttachmentPanel::NativeOnInitialized()
 }
 
 // ════════════════════════════════════════════════════════════════
-// 📌 NativeConstruct
-// ════════════════════════════════════════════════════════════════
-// ⚠️ CachedPreviewImageSize 캐싱은 여기서 하지 않음!
-//    이유: 위젯이 초기 Collapsed 상태일 때 NativeConstruct는
-//    SetVisibility(Visible) 시점에야 호출되므로,
-//    그보다 먼저 실행되는 SetupWeaponPreview()에서 캐싱값이 (0,0)이 됨.
-//    → 캐싱은 NativeOnInitialized에서 수행.
-void UInv_AttachmentPanel::NativeConstruct()
-{
-	Super::NativeConstruct();
-}
-
-// ════════════════════════════════════════════════════════════════
 // 📌 NativeTick — 매 프레임 호출 (하이라이트 + 드래그 회전)
 // ════════════════════════════════════════════════════════════════
 void UInv_AttachmentPanel::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
@@ -186,8 +173,9 @@ void UInv_AttachmentPanel::OpenForWeapon(UInv_InventoryItem* WeaponItem, int32 W
 	// Phase 8: 3D 무기 프리뷰 설정
 	SetupWeaponPreview();
 
-	// 패널 보이기
-	SetVisibility(ESlateVisibility::Visible);
+	// 패널 보이기 (SelfHitTestInvisible: 패널 자체는 히트 테스트 제외,
+	// 자식 위젯(슬롯/버튼/프리뷰)만 히트 테스트 참여 → 패널 밖 클릭이 인벤토리로 전달)
+	SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 	bIsOpen = true;
 
 #if INV_DEBUG_ATTACHMENT

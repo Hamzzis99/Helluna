@@ -21,7 +21,11 @@
 
 UMDF_MiniGameComponent::UMDF_MiniGameComponent()
 {
-    PrimaryComponentTick.bCanEverTick = true; 
+#if ENABLE_DRAW_DEBUG
+    PrimaryComponentTick.bCanEverTick = true;
+#else
+    PrimaryComponentTick.bCanEverTick = false;
+#endif
     SetIsReplicatedByDefault(true);
 }
 
@@ -35,7 +39,7 @@ void UMDF_MiniGameComponent::OnRep_WeakSpots()
 {
     for (int32 i = 0; i < WeakSpots.Num(); ++i)
     {
-        if (WeakSpots[i].bIsBroken && !LocallyProcessedIndices.Contains(i))
+        if (WeakSpots[i].bIsBroken && !LocallyProcessedGuids.Contains(WeakSpots[i].ID))
         {
             ApplyVisualMeshCut(i);
         }
@@ -197,7 +201,7 @@ void UMDF_MiniGameComponent::EndMarking(FVector WorldLocation)
     // -------------------------------------------------------------------------
     if (bIsValidCut)
     {
-        if (GetOwner()->HasAuthority())
+        if (GetOwner() && GetOwner()->HasAuthority())
         {
             // 서버: 직접 생성
             Internal_CreateWeakSpot(CurrentPreviewBox);
@@ -306,8 +310,8 @@ void UMDF_MiniGameComponent::ExecuteDestruction(int32 WeakSpotIndex)
 void UMDF_MiniGameComponent::ApplyVisualMeshCut(int32 Index)
 {
     if (!WeakSpots.IsValidIndex(Index)) return;
-    if (LocallyProcessedIndices.Contains(Index)) return;
-    LocallyProcessedIndices.Add(Index);
+    if (LocallyProcessedGuids.Contains(WeakSpots[Index].ID)) return;
+    LocallyProcessedGuids.Add(WeakSpots[Index].ID);
 
     UDynamicMeshComponent* DynComp = GetOwner() ? GetOwner()->FindComponentByClass<UDynamicMeshComponent>() : nullptr;
     if (!DynComp || !DynComp->GetDynamicMesh()) return;
@@ -379,7 +383,7 @@ void UMDF_MiniGameComponent::ApplyVisualMeshCut(int32 Index)
 float UMDF_MiniGameComponent::CalculateHPFromBox(const FBox& Box) const
 {
     FVector Size = Box.GetSize();
-    float LocalVolume = Size.X * Size.Y * Size.Z;
+    float LocalVolume = FMath::Abs(Size.X * Size.Y * Size.Z);
     
     // [수정] 스케일 이중 적용 제거 - LocalBox는 이미 로컬 좌표
     return 100.0f + (LocalVolume * HPDensityMultiplier * 0.005f);

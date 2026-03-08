@@ -2,6 +2,7 @@
 
 #include "AnimInstance/AnimNotify_AttackCollisionEnd.h"
 #include "Character/HellunaEnemyCharacter.h"
+#include "Helluna.h"
 
 void UAnimNotify_AttackCollisionEnd::Notify(
 	USkeletalMeshComponent* MeshComp,
@@ -21,8 +22,10 @@ void UAnimNotify_AttackCollisionEnd::Notify(
 	if (EnemyCharacter)
 	{
 		EnemyCharacter->StopAttackTrace();
-		
-		UE_LOG(LogTemp, Log, TEXT("AnimNotify_AttackCollisionEnd: %s stopped attack trace"), 
+
+#if HELLUNA_DEBUG_ENEMY
+		UE_LOG(LogTemp, Log, TEXT("AnimNotify_AttackCollisionEnd: %s stopped attack trace"),
 			*EnemyCharacter->GetName());
+#endif
 	}
 }

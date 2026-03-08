@@ -9,21 +9,28 @@
 #include "GameMode/HellunaDefenseGameState.h"
 
 #include "DebugHelper.h"
+#include "Helluna.h"
 
 void UHeroGameplayAbility_InRepair::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData)
 {
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("[InRepair] ActivateAbility 호출됨"));
+#endif
 	
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
 
 	if (!ActorInfo || !ActorInfo->IsLocallyControlled())
 	{
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Warning, TEXT("[InRepair] IsLocallyControlled = FALSE, return"));
+#endif
 		return;
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("[InRepair] ShowRepairUI 호출 전, RepairWidgetInstance = %s"), 
+#if HELLUNA_DEBUG_REPAIR
+	UE_LOG(LogTemp, Warning, TEXT("[InRepair] ShowRepairUI 호출 전, RepairWidgetInstance = %s"),
 		RepairWidgetInstance ? TEXT("EXISTS") : TEXT("nullptr"));
+#endif
 
 	ShowRepairUI(ActorInfo);
 
@@ -38,12 +45,16 @@ void UHeroGameplayAbility_InRepair::ActivateAbility(const FGameplayAbilitySpecHa
 
 void UHeroGameplayAbility_InRepair::EndAbility(	const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled)
 {
-	UE_LOG(LogTemp, Warning, TEXT("[InRepair] EndAbility 호출됨, bWasCancelled = %s"), 
+#if HELLUNA_DEBUG_REPAIR
+	UE_LOG(LogTemp, Warning, TEXT("[InRepair] EndAbility 호출됨, bWasCancelled = %s"),
 		bWasCancelled ? TEXT("TRUE") : TEXT("FALSE"));
+#endif
 
 	if (ActorInfo && ActorInfo->IsLocallyControlled())
 	{
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Warning, TEXT("[InRepair] RemoveRepairUI 호출"));
+#endif
 		RemoveRepairUI();
 	}
 
@@ -52,13 +63,17 @@ void UHeroGameplayAbility_InRepair::EndAbility(	const FGameplayAbilitySpecHandle
 
 void UHeroGameplayAbility_InRepair::ShowRepairUI(const FGameplayAbilityActorInfo* ActorInfo)
 {
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("[InRepair] ShowRepairUI - RepairWidgetClass=%s, RepairWidgetInstance=%s"),
 		RepairWidgetClass ? TEXT("Valid") : TEXT("nullptr"),
 		RepairWidgetInstance ? TEXT("EXISTS ❌") : TEXT("nullptr ✅"));
+#endif
 
 	if (!RepairWidgetClass || RepairWidgetInstance || !ActorInfo)
 	{
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Warning, TEXT("[InRepair] ShowRepairUI 조건 불충족! return"));
+#endif
 		return;
 	}
 
@@ -66,7 +81,9 @@ void UHeroGameplayAbility_InRepair::ShowRepairUI(const FGameplayAbilityActorInfo
 	APlayerController* PC = Pawn ? Cast<APlayerController>(Pawn->GetController()) : nullptr;
 	if (!PC)
 	{
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Warning, TEXT("[InRepair] PC nullptr! return"));
+#endif
 		return;
 	}
 
@@ -74,20 +91,26 @@ void UHeroGameplayAbility_InRepair::ShowRepairUI(const FGameplayAbilityActorInfo
 	if (RepairWidgetInstance)
 	{
 		RepairWidgetInstance->AddToViewport();
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Warning, TEXT("[InRepair] ✅ 위젯 생성 및 Viewport 추가 완료"));
+#endif
 	}
 }
 
 void UHeroGameplayAbility_InRepair::RemoveRepairUI()
 {
+#if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("[InRepair] RemoveRepairUI - RepairWidgetInstance=%s"),
 		RepairWidgetInstance ? TEXT("EXISTS") : TEXT("nullptr"));
+#endif
 
 	if (RepairWidgetInstance)
 	{
 		RepairWidgetInstance->RemoveFromParent();
 		RepairWidgetInstance = nullptr;
+#if HELLUNA_DEBUG_REPAIR
 		UE_LOG(LogTemp, Warning, TEXT("[InRepair] ✅ 위젯 제거 완료, RepairWidgetInstance = nullptr"));
+#endif
 	}
 }
 

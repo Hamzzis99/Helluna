@@ -35,11 +35,15 @@
 
 #include "Lobby/Controller/HellunaLobbyController.h"
 #include "Lobby/GameMode/HellunaLobbyGameMode.h"
+#include "Lobby/ServerManager/HellunaGameServerManager.h"
 #include "Lobby/Widget/HellunaLobbyStashWidget.h"
+#include "Lobby/Widget/HellunaLobbyLoginWidget.h"
 #include "Lobby/Widget/HellunaPartyWidget.h"
 #include "Lobby/Widget/HellunaLobbyCharSelectWidget.h"
+#include "Lobby/Widget/HellunaRejoinWidget.h"
 #include "Lobby/Database/HellunaSQLiteSubsystem.h"
 #include "Login/Preview/HellunaCharacterSelectSceneV2.h"
+#include "Lobby/Camera/HellunaLobbyCameraAnchor.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
 #include "Blueprint/UserWidget.h"
 #include "Camera/CameraActor.h"
@@ -50,6 +54,15 @@
 
 // 로그 카테고리 (공유 헤더 — DEFINE은 HellunaLobbyGameMode.cpp)
 #include "Lobby/HellunaLobbyLog.h"
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Fix46-M1] GetLobbyGameMode — LobbyGameMode 안전 획득 헬퍼
+// ════════════════════════════════════════════════════════════════════════════════
+AHellunaLobbyGameMode* AHellunaLobbyController::GetLobbyGameMode() const
+{
+	UWorld* World = GetWorld();
+	return World ? World->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr;
+}
 
 // ════════════════════════════════════════════════════════════════════════════════
 // 생성자 — StashComp + LoadoutComp 생성
@@ -86,10 +99,9 @@ AHellunaLobbyController::AHellunaLobbyController()
 // ════════════════════════════════════════════════════════════════════════════════
 //
 // 📌 서버+클라 모두 호출됨
-// 📌 클라이언트(IsLocalController)에서만 UI 생성
-// 📌 0.5초 딜레이: 서버에서 StashComp에 데이터 복원이 완료되고
-//    리플리케이션으로 클라이언트에 도달할 시간을 확보하기 위함
-//    (BeginPlay 시점에서는 아직 Stash 데이터가 도착하지 않았을 수 있음)
+// 📌 [Phase 13] UI 표시는 서버가 제어:
+//    bDebugSkipLogin=true → PostLogin에서 바로 초기화 + Client_ShowLobbyUI
+//    bDebugSkipLogin=false → PostLogin에서 Client_ShowLobbyLoginUI → 로그인 후 초기화
 //
 // ════════════════════════════════════════════════════════════════════════════════
 void AHellunaLobbyController::BeginPlay()
@@ -110,19 +122,10 @@ void AHellunaLobbyController::BeginPlay()
 		DeployMapURL.IsEmpty() ? TEXT("(비어있음 — BP에서 설정 필요!)") : *DeployMapURL);
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ──────────────────────────────────────"));
 
-	// 클라이언트에서 자동으로 UI 표시 (로컬 컨트롤러일 때만)
-	// 서버의 Dedicated Server에는 로컬 컨트롤러가 없으므로 이 블록은 실행 안 됨
-	if (IsLocalController())
-	{
-		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 로컬 컨트롤러 → 0.5초 후 ShowLobbyWidget 예약"));
-		// 타이머 딜레이: 서버→클라 리플리케이션 대기 (Stash 데이터 도착 시간)
-		FTimerHandle UITimerHandle;
-		GetWorldTimerManager().SetTimer(UITimerHandle, this, &AHellunaLobbyController::ShowLobbyWidget, 0.5f, false);
-	}
-	else
-	{
-		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 비로컬 컨트롤러 → UI 생성 스킵 (서버 또는 다른 클라의 PC)"));
-	}
+	// [Phase 13] UI 표시는 서버 PostLogin에서 RPC로 제어
+	// bDebugSkipLogin=true → 서버가 0.5초 후 Client_ShowLobbyUI 호출
+	// bDebugSkipLogin=false → 서버가 Client_ShowLobbyLoginUI 호출 → 로그인 성공 후 Client_ShowLobbyUI
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] [Phase 13] UI 표시는 서버 PostLogin에서 RPC로 제어"));
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -147,10 +150,11 @@ bool AHellunaLobbyController::Server_TransferItem_Validate(int32 ItemEntryIndex,
 {
 	// [Fix29-B] Deploy 진행 중에는 Transfer 차단 — Deploy의 Stash/Loadout 저장과 동시 수정 시 아이템 복제 위험
 	// [Fix31] TargetGridIndex 검증: INDEX_NONE(자동 배치) 또는 유효 범위
+	// [Fix46-M3] 공통 상수 사용
 	return !bDeployInProgress
-		&& ItemEntryIndex >= 0 && ItemEntryIndex < 10000
+		&& ItemEntryIndex >= 0 && ItemEntryIndex < LobbyValidation::MaxInventoryIndex
 		&& (Direction == ELobbyTransferDirection::StashToLoadout || Direction == ELobbyTransferDirection::LoadoutToStash)
-		&& (TargetGridIndex == INDEX_NONE || (TargetGridIndex >= 0 && TargetGridIndex < 10000));
+		&& (TargetGridIndex == INDEX_NONE || (TargetGridIndex >= 0 && TargetGridIndex < LobbyValidation::MaxInventoryIndex));
 }
 
 void AHellunaLobbyController::Server_TransferItem_Implementation(int32 ItemEntryIndex, ELobbyTransferDirection Direction, int32 TargetGridIndex)
@@ -276,9 +280,10 @@ bool AHellunaLobbyController::Server_SwapTransferItem_Validate(int32 RepID_A, in
 	// 자기 자신과의 Swap은 Implementation에서 CompA != CompB + 실제 아이템 검증으로 방지
 	// [Fix29-B] Deploy 진행 중에는 Swap 차단
 	// [Fix31] TargetGridIndex 검증
+	// [Fix46-M3] 공통 상수 사용 (100000→10000 통일)
 	return !bDeployInProgress
-		&& RepID_A >= 0 && RepID_A < 100000 && RepID_B >= 0 && RepID_B < 100000
-		&& (TargetGridIndex == INDEX_NONE || (TargetGridIndex >= 0 && TargetGridIndex < 10000));
+		&& RepID_A >= 0 && RepID_A < LobbyValidation::MaxInventoryIndex && RepID_B >= 0 && RepID_B < LobbyValidation::MaxInventoryIndex
+		&& (TargetGridIndex == INDEX_NONE || (TargetGridIndex >= 0 && TargetGridIndex < LobbyValidation::MaxInventoryIndex));
 }
 
 void AHellunaLobbyController::Server_SwapTransferItem_Implementation(int32 RepID_A, int32 RepID_B, int32 TargetGridIndex)
@@ -380,14 +385,19 @@ void AHellunaLobbyController::SaveBothComponentsAfterInteraction()
 	// ── DB 서브시스템 획득 (Deploy 흐름과 동일 패턴) ──
 	UGameInstance* GI = GetGameInstance();
 	UHellunaSQLiteSubsystem* DB = GI ? GI->GetSubsystem<UHellunaSQLiteSubsystem>() : nullptr;
+	// [Fix41] ReleaseDatabaseConnection 후 DB가 닫혀있을 수 있으므로 재오픈 시도
+	if (DB && !DB->IsDatabaseReady())
+	{
+		DB->TryReopenDatabase();
+	}
 	if (!DB || !DB->IsDatabaseReady())
 	{
 		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] [Fix35] SaveAfterInteraction: DB 미준비 → 스킵"));
 		return;
 	}
 
-	// ── PlayerId 획득 ──
-	AHellunaLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr;
+	// ── PlayerId 획득 ── [Fix46-M1] 헬퍼 사용
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode();
 	if (!LobbyGM)
 	{
 		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] [Fix35] SaveAfterInteraction: GameMode 캐스팅 실패 → 스킵"));
@@ -410,11 +420,37 @@ void AHellunaLobbyController::SaveBothComponentsAfterInteraction()
 			const bool bLoadoutOk = DB->SavePlayerLoadout(PlayerId, LoadoutItems);
 			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] [Fix35] SavePlayerLoadout %s | %d개 | PlayerId=%s"),
 				bLoadoutOk ? TEXT("성공") : TEXT("실패"), LoadoutItems.Num(), *PlayerId);
+
+			// 장착 상태 동기화 (per-interaction)
+			TArray<FHellunaEquipmentSlotData> EquipSlots;
+			for (const FInv_SavedItemData& Item : LoadoutItems)
+			{
+				if (Item.bEquipped && Item.WeaponSlotIndex >= 0)
+				{
+					FHellunaEquipmentSlotData Slot;
+					Slot.SlotId = FString::Printf(TEXT("weapon_%d"), Item.WeaponSlotIndex);
+					Slot.ItemType = Item.ItemType;
+					EquipSlots.Add(Slot);
+				}
+			}
+			// [Fix44-C4] Equipment 저장 반환값 검증
+			const bool bEquipOk = DB->SavePlayerEquipment(PlayerId, EquipSlots);
+			if (!bEquipOk)
+			{
+				UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] [Fix44] SavePlayerEquipment 실패! Loadout/Equipment 불일치 가능 | PlayerId=%s"), *PlayerId);
+			}
 		}
 		else
 		{
 			// Loadout이 비어있으면 기존 player_loadout 삭제 (빈 행 정리, Fix36: 크래시 감지와 무관)
-			DB->DeletePlayerLoadout(PlayerId);
+			// [Fix44-C3] Delete 반환값 검증
+			const bool bDelLoadout = DB->DeletePlayerLoadout(PlayerId);
+			const bool bDelEquip = DB->DeletePlayerEquipment(PlayerId);
+			if (!bDelLoadout || !bDelEquip)
+			{
+				UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] [Fix44] Delete 실패: Loadout=%s Equipment=%s | PlayerId=%s"),
+					bDelLoadout ? TEXT("OK") : TEXT("FAIL"), bDelEquip ? TEXT("OK") : TEXT("FAIL"), *PlayerId);
+			}
 			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] [Fix35] Loadout 비어있음 → DeletePlayerLoadout (빈 행 정리) | PlayerId=%s"), *PlayerId);
 		}
 	}
@@ -426,6 +462,12 @@ void AHellunaLobbyController::SaveBothComponentsAfterInteraction()
 		const bool bStashOk = DB->SavePlayerStash(PlayerId, StashItems);
 		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] [Fix35] SavePlayerStash %s | %d개 | PlayerId=%s"),
 			bStashOk ? TEXT("성공") : TEXT("실패"), StashItems.Num(), *PlayerId);
+
+		// [Fix44-C2] Stash 저장 실패 시 Loadout과 불일치 경고
+		if (!bStashOk)
+		{
+			UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] [Fix44] SavePlayerStash 실패! Loadout 성공+Stash 실패 → 데이터 불일치 가능 | PlayerId=%s"), *PlayerId);
+		}
 	}
 }
 
@@ -466,16 +508,27 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_Deploy 시작"));
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ══════════════════════════════════════"));
 
+	// [Fix46-M1/M2] GetLobbyGameMode 헬퍼 사용 (GetWorld() 3회→1회)
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode();
+
 	// ── [Phase 12e] 파티 가입 상태면 솔로 Deploy 차단 ──
 	{
-		AHellunaLobbyGameMode* PartyCheckGM = GetWorld() ? GetWorld()->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr;
-		if (PartyCheckGM)
+		if (LobbyGM)
 		{
-			const FString CheckId = PartyCheckGM->GetLobbyPlayerId(this);
-			if (PartyCheckGM->PlayerToPartyMap.Contains(CheckId))
+			const FString CheckId = LobbyGM->GetLobbyPlayerId(this);
+			if (LobbyGM->PlayerToPartyMap.Contains(CheckId))
 			{
 				UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] Server_Deploy: 파티 가입 상태 — 솔로 Deploy 차단"));
 				Client_DeployFailed(TEXT("파티 준비 버튼을 사용하세요"));
+				bDeployInProgress = false;
+				return;
+			}
+
+			// [Phase 15] 매칭 큐 대기 중 솔로 Deploy 차단
+			if (LobbyGM->IsPlayerInQueue(CheckId))
+			{
+				UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] Server_Deploy: 매칭 큐 대기 중 — 솔로 Deploy 차단"));
+				Client_DeployFailed(TEXT("매칭 대기 중입니다. 매칭을 취소 후 시도하세요."));
 				bDeployInProgress = false;
 				return;
 			}
@@ -494,6 +547,12 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 	// ── [1단계] SQLite 서브시스템 획득 ──
 	UGameInstance* GI = GetGameInstance();
 	UHellunaSQLiteSubsystem* DB = GI ? GI->GetSubsystem<UHellunaSQLiteSubsystem>() : nullptr;
+	// [Fix41] ReleaseDatabaseConnection 후 DB가 닫혀있을 수 있으므로 재오픈 시도
+	if (DB && !DB->IsDatabaseReady())
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] Server_Deploy: DB 미준비 → TryReopenDatabase 시도"));
+		DB->TryReopenDatabase();
+	}
 	if (!DB || !DB->IsDatabaseReady())
 	{
 		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Server_Deploy: SQLite 서브시스템 없음!"));
@@ -506,10 +565,9 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 		return;
 	}
 
-	// ── [2단계] PlayerId 획득 ──
-	// GameMode의 public 래퍼 사용 (protected GetPlayerSaveId에 직접 접근 불가)
+	// ── [2단계] PlayerId 획득 ── [Fix46-M1] LobbyGM은 함수 초반에 캐시됨
 	FString PlayerId;
-	if (AHellunaLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr)
+	if (LobbyGM)
 	{
 		PlayerId = LobbyGM->GetLobbyPlayerId(this);
 		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy: PlayerId 획득 → '%s'"), *PlayerId);
@@ -558,6 +616,23 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 			return;
 		}
 
+		// ── [3a-2] 출격 시점 장착 스냅샷 저장 ──
+		{
+			TArray<FHellunaEquipmentSlotData> EquipSlots;
+			for (const FInv_SavedItemData& Item : LoadoutItems)
+			{
+				if (Item.bEquipped && Item.WeaponSlotIndex >= 0)
+				{
+					FHellunaEquipmentSlotData Slot;
+					Slot.SlotId = FString::Printf(TEXT("weapon_%d"), Item.WeaponSlotIndex);
+					Slot.ItemType = Item.ItemType;
+					EquipSlots.Add(Slot);
+				}
+			}
+			DB->SavePlayerEquipment(PlayerId, EquipSlots);
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [3a-2]: SavePlayerEquipment %d개 슬롯"), EquipSlots.Num());
+		}
+
 		// ── [3b] Loadout을 JSON 파일로도 내보내기 (DB 잠금 회피용) ──
 		const int32 HeroIndex = HeroTypeToIndex(SelectedHeroType);
 		const bool bExportOk = DB->ExportLoadoutToFile(PlayerId, LoadoutItems, HeroIndex);
@@ -594,20 +669,57 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 		}
 	}
 
-	// ── [3d] [Fix36] 출격 상태 설정 ──
-	DB->SetPlayerDeployed(PlayerId, true);
-
-	// ── [4단계] [Phase 12e] 채널 기반 Deploy (빈 채널 자동 배정) ──
+	// ── [4단계] [Phase 12e+16] 채널 기반 Deploy (빈 채널 자동 배정 + 동적 스폰) ──
 	{
-		AHellunaLobbyGameMode* DeployGM = GetWorld() ? GetWorld()->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr;
-		if (DeployGM)
+		if (LobbyGM)
 		{
+			// [Phase 16] 맵 키 기반 채널 검색
+			const FString DeployMapKey = SelectedMapKey.IsEmpty() ? LobbyGM->DefaultMapKey : SelectedMapKey;
 			FGameChannelInfo EmptyChannel;
-			if (DeployGM->FindEmptyChannel(EmptyChannel))
+
+			if (LobbyGM->FindEmptyChannelForMap(DeployMapKey, EmptyChannel))
 			{
-				DeployGM->MarkChannelAsPendingDeploy(EmptyChannel.Port);
-				UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [4]: 채널 배정 | Port=%d"), EmptyChannel.Port);
+				LobbyGM->MarkChannelAsPendingDeploy(EmptyChannel.Port);
+				DB->SetPlayerDeployedWithPort(PlayerId, true, EmptyChannel.Port, HeroTypeToIndex(SelectedHeroType));
+				UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [4]: 채널 배정 | Port=%d | Map=%s"), EmptyChannel.Port, *DeployMapKey);
 				Client_ExecutePartyDeploy(EmptyChannel.Port);
+			}
+			else if (LobbyGM->GameServerManager)
+			{
+				// [Phase 16] 빈 채널 없음 → 동적 서버 스폰
+				const FString MapPath = LobbyGM->GetMapPathByKey(DeployMapKey);
+				if (MapPath.IsEmpty())
+				{
+					UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Deploy: 맵 경로를 찾을 수 없음 | MapKey=%s"), *DeployMapKey);
+					Client_DeployFailed(TEXT("맵 설정 오류"));
+					bDeployInProgress = false;
+					return;
+				}
+
+				const int32 SpawnedPort = LobbyGM->GameServerManager->SpawnGameServer(MapPath);
+				if (SpawnedPort < 0)
+				{
+					UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Deploy: 서버 스폰 실패"));
+					Client_DeployFailed(TEXT("서버 용량 초과 또는 스폰 실패"));
+					bDeployInProgress = false;
+					return;
+				}
+
+				LobbyGM->MarkChannelAsPendingDeploy(SpawnedPort);
+
+				// WaitAndDeploy로 비동기 대기
+				FMatchmakingQueueEntry SoloEntry;
+				SoloEntry.EntryId = 0;
+				SoloEntry.PartyId = 0;
+				SoloEntry.PlayerIds.Add(PlayerId);
+				SoloEntry.HeroTypes.Add(HeroTypeToIndex(SelectedHeroType));
+				SoloEntry.SelectedMapKey = DeployMapKey;
+
+				TArray<FMatchmakingQueueEntry> SoloMatched;
+				SoloMatched.Add(MoveTemp(SoloEntry));
+
+				UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [4]: 서버 스폰 시작 → WaitAndDeploy | Port=%d"), SpawnedPort);
+				LobbyGM->WaitAndDeploy(SpawnedPort, MoveTemp(SoloMatched));
 			}
 			else
 			{
@@ -615,14 +727,15 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 				if (!DeployMapURL.IsEmpty())
 				{
 					const int32 HeroIndex = HeroTypeToIndex(SelectedHeroType);
+					DB->SetPlayerDeployed(PlayerId, true);
 					const FString FinalURL = FString::Printf(TEXT("%s?HeroType=%d?PlayerId=%s"),
 						*DeployMapURL, HeroIndex, *PlayerId);
-					UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [4]: 빈 채널 없음 → DeployMapURL 폴백 | %s"), *FinalURL);
+					UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [4]: DeployMapURL 폴백 | %s"), *FinalURL);
 					Client_ExecuteDeploy(FinalURL);
 				}
 				else
 				{
-					UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Deploy: 빈 채널 없음 + DeployMapURL도 없음!"));
+					UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Deploy: 빈 채널 없음 + 서버매니저 없음 + DeployMapURL도 없음!"));
 					Client_DeployFailed(TEXT("빈 채널이 없습니다"));
 					bDeployInProgress = false;
 					return;
@@ -666,6 +779,9 @@ void AHellunaLobbyController::Client_DeployFailed_Implementation(const FString& 
 // ════════════════════════════════════════════════════════════════════════════════
 void AHellunaLobbyController::Client_ExecuteDeploy_Implementation(const FString& TravelURL)
 {
+	// [Fix44-C1] Deploy 성공 → 플래그 리셋 (ClientTravel 실패 시 영구 차단 방지)
+	bDeployInProgress = false;
+
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ══════════════════════════════════════"));
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Client_ExecuteDeploy: ClientTravel 시작"));
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC]   TravelURL=%s"), *TravelURL);
@@ -800,6 +916,12 @@ void AHellunaLobbyController::GetLifetimeReplicatedProps(TArray<FLifetimePropert
 // ════════════════════════════════════════════════════════════════════════════════
 void AHellunaLobbyController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (LobbyLoginWidgetInstance)
+	{
+		LobbyLoginWidgetInstance->RemoveFromParent();
+		LobbyLoginWidgetInstance = nullptr;
+	}
+
 	if (LobbyStashWidgetInstance)
 	{
 		LobbyStashWidgetInstance->RemoveFromParent();
@@ -817,6 +939,166 @@ void AHellunaLobbyController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
+// [Phase 13] Server_RequestLobbyLogin — 로비 로그인 요청 (Server RPC)
+// ════════════════════════════════════════════════════════════════════════════════
+bool AHellunaLobbyController::Server_RequestLobbyLogin_Validate(const FString& PlayerId, const FString& Password)
+{
+	if (PlayerId.Len() > 64 || Password.Len() > 128) return false;
+	return !PlayerId.IsEmpty() && !Password.IsEmpty();
+}
+
+void AHellunaLobbyController::Server_RequestLobbyLogin_Implementation(const FString& PlayerId, const FString& Password)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_RequestLobbyLogin | PlayerId=%s"), *PlayerId);
+
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode(); // [Fix46-M1]
+	if (!LobbyGM)
+	{
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Server_RequestLobbyLogin: GameMode 캐스팅 실패!"));
+		Client_LobbyLoginResult(false, TEXT("서버 오류"));
+		return;
+	}
+
+	LobbyGM->ProcessLobbyLogin(this, PlayerId, Password);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 13] Server_RequestLobbySignup — 로비 회원가입 요청 (Server RPC)
+// ════════════════════════════════════════════════════════════════════════════════
+bool AHellunaLobbyController::Server_RequestLobbySignup_Validate(const FString& PlayerId, const FString& Password)
+{
+	if (PlayerId.Len() > 64 || Password.Len() > 128) return false;
+	return !PlayerId.IsEmpty() && !Password.IsEmpty();
+}
+
+void AHellunaLobbyController::Server_RequestLobbySignup_Implementation(const FString& PlayerId, const FString& Password)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_RequestLobbySignup | PlayerId=%s"), *PlayerId);
+
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode(); // [Fix46-M1]
+	if (!LobbyGM)
+	{
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Server_RequestLobbySignup: GameMode 캐스팅 실패!"));
+		Client_LobbySignupResult(false, TEXT("서버 오류"));
+		return;
+	}
+
+	LobbyGM->ProcessLobbySignup(this, PlayerId, Password);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 13] Client_LobbySignupResult — 회원가입 결과 (Client RPC)
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaLobbyController::Client_LobbySignupResult_Implementation(bool bSuccess, const FString& Message)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Client_LobbySignupResult | bSuccess=%s | Msg=%s"),
+		bSuccess ? TEXT("true") : TEXT("false"), *Message);
+
+	if (LobbyLoginWidgetInstance)
+	{
+		LobbyLoginWidgetInstance->HandleSignupResult(bSuccess, Message);
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 13] Client_ShowLobbyLoginUI — 로그인 위젯 표시 (Client RPC)
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaLobbyController::Client_ShowLobbyLoginUI_Implementation()
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Client_ShowLobbyLoginUI 수신"));
+
+	// ── [Phase 13] 게임에서 로비 복귀 시 자동 재로그인 ──
+	// GameInstance는 ClientTravel 사이에도 유지됨
+	UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance());
+	if (GI && !GI->CachedLoginId.IsEmpty() && !GI->CachedLoginPassword.IsEmpty())
+	{
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 캐시된 자격증명 발견 → 자동 재로그인 | PlayerId=%s"), *GI->CachedLoginId);
+		Server_RequestLobbyLogin(GI->CachedLoginId, GI->CachedLoginPassword);
+		return;
+	}
+
+	if (!LobbyLoginWidgetClass)
+	{
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] LobbyLoginWidgetClass 미설정! BP에서 지정 필요"));
+		return;
+	}
+
+	if (!LobbyLoginWidgetInstance)
+	{
+		LobbyLoginWidgetInstance = CreateWidget<UHellunaLobbyLoginWidget>(this, LobbyLoginWidgetClass);
+		if (LobbyLoginWidgetInstance)
+		{
+			LobbyLoginWidgetInstance->AddToViewport(10);
+
+			// 마우스 커서 표시 + UI 입력 모드
+			SetShowMouseCursor(true);
+			FInputModeUIOnly InputMode;
+			InputMode.SetWidgetToFocus(LobbyLoginWidgetInstance->TakeWidget());
+			SetInputMode(InputMode);
+
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 로그인 위젯 생성 + Viewport 추가 완료"));
+		}
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 13] Client_LobbyLoginResult — 로그인 결과 (Client RPC)
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaLobbyController::Client_LobbyLoginResult_Implementation(bool bSuccess, const FString& ErrorMessage)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Client_LobbyLoginResult | bSuccess=%s | Msg=%s"),
+		bSuccess ? TEXT("true") : TEXT("false"), *ErrorMessage);
+
+	if (bSuccess)
+	{
+		bIsLoggedIn = true;
+
+		// ── [Phase 13] 자격증명 캐시 (로비 복귀 시 자동 재로그인용) ──
+		UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance());
+		if (GI)
+		{
+			if (LobbyLoginWidgetInstance)
+			{
+				// 위젯에서 입력값 가져오기
+				GI->CachedLoginId = LobbyLoginWidgetInstance->GetEnteredPlayerId();
+				GI->CachedLoginPassword = LobbyLoginWidgetInstance->GetEnteredPassword();
+			}
+			// 자동 재로그인 경로(위젯 없음)에서는 이미 캐시에 값이 있으므로 스킵
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 자격증명 캐시 완료 | PlayerId=%s"), *GI->CachedLoginId);
+		}
+
+		// 로그인 위젯 제거
+		if (LobbyLoginWidgetInstance)
+		{
+			LobbyLoginWidgetInstance->ShowSuccess();
+
+			// 0.3초 후 위젯 제거 + 로비 UI 표시
+			FTimerHandle RemoveTimer;
+			TWeakObjectPtr<AHellunaLobbyController> WeakThis(this);
+			GetWorldTimerManager().SetTimer(RemoveTimer, [WeakThis]()
+			{
+				if (!WeakThis.IsValid()) return;
+				if (WeakThis->LobbyLoginWidgetInstance)
+				{
+					WeakThis->LobbyLoginWidgetInstance->RemoveFromParent();
+					WeakThis->LobbyLoginWidgetInstance = nullptr;
+				}
+				// 로비 위젯은 서버가 Client_ShowLobbyUI로 표시 지시
+				// (InitializeLobbyForPlayer에서 0.5초 후 호출)
+			}, 0.3f, false);
+		}
+	}
+	else
+	{
+		// 실패: 위젯에 에러 메시지 표시
+		if (LobbyLoginWidgetInstance)
+		{
+			LobbyLoginWidgetInstance->ShowError(ErrorMessage);
+		}
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
 // Server_SelectLobbyCharacter — 캐릭터 선택 (Server RPC)
 // ════════════════════════════════════════════════════════════════════════════════
 bool AHellunaLobbyController::Server_SelectLobbyCharacter_Validate(int32 CharacterIndex)
@@ -828,7 +1110,8 @@ void AHellunaLobbyController::Server_SelectLobbyCharacter_Implementation(int32 C
 {
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_SelectLobbyCharacter | Index=%d"), CharacterIndex);
 
-	AHellunaLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr;
+	// [Fix46-M1] 헬퍼 사용
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode();
 	if (!LobbyGM)
 	{
 		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Server_SelectLobbyCharacter: GameMode 캐스팅 실패!"));
@@ -988,6 +1271,16 @@ void AHellunaLobbyController::SpawnPreviewSceneV2()
 		if (CamComp)
 		{
 			CamComp->SetFieldOfView(SpawnedPreviewSceneV2->GetCameraFOV());
+			CamComp->bConstrainAspectRatio = false;  // 레터박스(검은 여백) 방지
+
+			// Auto Exposure 범위 제한 — 어두운 동굴에서 과도한 밝기 보정 방지
+			CamComp->PostProcessSettings.bOverride_AutoExposureMinBrightness = true;
+			CamComp->PostProcessSettings.AutoExposureMinBrightness = 0.5f;
+			CamComp->PostProcessSettings.bOverride_AutoExposureMaxBrightness = true;
+			CamComp->PostProcessSettings.AutoExposureMaxBrightness = 2.0f;
+			CamComp->PostProcessSettings.bOverride_AutoExposureBias = true;
+			CamComp->PostProcessSettings.AutoExposureBias = 0.0f;  // 노출 보정 없음
+			CamComp->PostProcessBlendWeight = 1.0f;  // PostProcess 설정 활성화
 		}
 
 		// 직접 뷰포트에 카메라 설정 (블렌드 없이 즉시)
@@ -1163,6 +1456,183 @@ void AHellunaLobbyController::UnloadBackgroundLevel(FName LevelName)
 void AHellunaLobbyController::OnBackgroundLevelLoaded()
 {
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] OnBackgroundLevelLoaded: '%s' 로드 완료"), *CurrentLoadedLevel.ToString());
+
+	if (!LobbyCamera)
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] OnBackgroundLevelLoaded: LobbyCamera 없음 → 카메라 설정 스킵"));
+		return;
+	}
+
+	// 1단계: 앵커 캐시 재구축 (새 서브레벨의 앵커 포함)
+	RebuildAnchorCache();
+
+	// 2단계: 앵커 우선 검색 (SlotIndex=0, 기본 뷰)
+	const bool bAnchorApplied = ApplyCameraFromAnchor(PendingBackgroundTabIndex, 0);
+
+	// 3단계: 앵커 실패 시 기존 FLobbyCameraTransform 폴백
+	if (!bAnchorApplied)
+	{
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 앵커 없음 → FLobbyCameraTransform 폴백"));
+
+		const FLobbyCameraTransform* CamTransform = nullptr;
+		if (PendingBackgroundTabIndex == 0)
+		{
+			CamTransform = &PlayCameraTransform;
+		}
+		else if (PendingBackgroundTabIndex == 2)
+		{
+			CamTransform = &CharacterCameraTransform;
+		}
+
+		if (CamTransform)
+		{
+			LobbyCamera->SetActorLocation(CamTransform->Location);
+			LobbyCamera->SetActorRotation(CamTransform->Rotation);
+
+			UCameraComponent* CamComp = LobbyCamera->GetCameraComponent();
+			if (CamComp)
+			{
+				CamComp->SetFieldOfView(CamTransform->FOV);
+			CamComp->bConstrainAspectRatio = false;  // 레터박스 방지
+			}
+
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 폴백 카메라 적용 | Tab=%d Pos=%s Rot=%s FOV=%.1f"),
+				PendingBackgroundTabIndex, *CamTransform->Location.ToString(),
+				*CamTransform->Rotation.ToString(), CamTransform->FOV);
+
+			// 프리뷰 씬 이동
+			MovePreviewSceneToCamera(CamTransform->Location, CamTransform->Rotation);
+		}
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 카메라 앵커 시스템
+// ════════════════════════════════════════════════════════════════════════════════
+
+void AHellunaLobbyController::RebuildAnchorCache()
+{
+	CachedAnchors.Empty();
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	TArray<AActor*> FoundAnchors;
+	UGameplayStatics::GetAllActorsOfClass(World, AHellunaLobbyCameraAnchor::StaticClass(), FoundAnchors);
+
+	for (AActor* Actor : FoundAnchors)
+	{
+		AHellunaLobbyCameraAnchor* Anchor = Cast<AHellunaLobbyCameraAnchor>(Actor);
+		if (Anchor)
+		{
+			const int32 Key = Anchor->GetTabIndex() * 1000 + Anchor->GetSlotIndex();
+			CachedAnchors.Add(Key, Anchor);
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 앵커 캐시: Tab=%d Slot=%d Key=%d Pos=%s"),
+				Anchor->GetTabIndex(), Anchor->GetSlotIndex(), Key, *Anchor->GetActorLocation().ToString());
+		}
+	}
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 앵커 캐시 구축 완료 | 총 %d개"), CachedAnchors.Num());
+}
+
+bool AHellunaLobbyController::ApplyCameraFromAnchor(int32 InTabIndex, int32 InSlotIndex)
+{
+	if (!LobbyCamera)
+	{
+		return false;
+	}
+
+	// 요청된 슬롯으로 검색
+	const int32 Key = InTabIndex * 1000 + InSlotIndex;
+	TObjectPtr<AHellunaLobbyCameraAnchor>* FoundPtr = CachedAnchors.Find(Key);
+
+	// 못 찾으면 SlotIndex=0으로 폴백
+	if (!FoundPtr && InSlotIndex != 0)
+	{
+		const int32 FallbackKey = InTabIndex * 1000;
+		FoundPtr = CachedAnchors.Find(FallbackKey);
+		if (FoundPtr)
+		{
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 앵커 Slot=%d 없음 → Slot=0 폴백"), InSlotIndex);
+		}
+	}
+
+	if (!FoundPtr || !IsValid(*FoundPtr))
+	{
+		return false;
+	}
+
+	AHellunaLobbyCameraAnchor* Anchor = *FoundPtr;
+
+	// 카메라 Transform 적용
+	LobbyCamera->SetActorLocation(Anchor->GetActorLocation());
+	LobbyCamera->SetActorRotation(Anchor->GetActorRotation());
+
+	UCameraComponent* CamComp = LobbyCamera->GetCameraComponent();
+	if (CamComp)
+	{
+		CamComp->SetFieldOfView(Anchor->GetFOV());
+		CamComp->bConstrainAspectRatio = false;  // 레터박스 방지
+	}
+
+	CurrentSlotIndex = InSlotIndex;
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 앵커 카메라 적용 | Tab=%d Slot=%d Pos=%s Rot=%s FOV=%.1f"),
+		InTabIndex, InSlotIndex,
+		*Anchor->GetActorLocation().ToString(),
+		*Anchor->GetActorRotation().ToString(),
+		Anchor->GetFOV());
+
+	// 프리뷰 씬 이동
+	MovePreviewSceneToCamera(Anchor->GetActorLocation(), Anchor->GetActorRotation());
+
+	return true;
+}
+
+void AHellunaLobbyController::SwitchCameraSlot(int32 NewSlotIndex)
+{
+	if (!LobbyCamera)
+	{
+		return;
+	}
+
+	if (!ApplyCameraFromAnchor(PendingBackgroundTabIndex, NewSlotIndex))
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] SwitchCameraSlot: Tab=%d Slot=%d 앵커 없음"),
+			PendingBackgroundTabIndex, NewSlotIndex);
+	}
+}
+
+void AHellunaLobbyController::MovePreviewSceneToCamera(const FVector& CamLocation, const FRotator& CamRotation)
+{
+	if (!IsValid(SpawnedPreviewSceneV2))
+	{
+		return;
+	}
+
+	const FVector CamOffset = SpawnedPreviewSceneV2->GetCameraOffset();
+	// CameraOffset = 씬 루트 → 카메라 로컬 오프셋 (X=전방거리, Z=높이)
+	const FVector CamForward = CamRotation.Vector();
+	const FVector CamRight = FRotationMatrix(CamRotation).GetScaledAxis(EAxis::Y);
+	const FVector CamUp = FRotationMatrix(CamRotation).GetScaledAxis(EAxis::Z);
+
+	// 씬 위치 = 카메라 위치 + Forward * 전방거리 + Right * 좌우 - Up * 높이
+	const FVector NewScenePos = CamLocation
+		+ CamForward * CamOffset.X
+		+ CamRight * CamOffset.Y
+		- CamUp * CamOffset.Z;
+
+	// 씬 회전: 카메라를 바라보도록 (카메라 Forward의 반대 방향)
+	const FRotator SceneRot = (-CamForward).Rotation();
+
+	SpawnedPreviewSceneV2->SetActorLocation(NewScenePos);
+	SpawnedPreviewSceneV2->SetActorRotation(SceneRot);
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] 프리뷰 씬 이동 | NewPos=%s Rot=%s (CamOffset=%s)"),
+		*NewScenePos.ToString(), *SceneRot.ToString(), *CamOffset.ToString());
 }
 
 void AHellunaLobbyController::OnBackgroundLevelUnloaded()
@@ -1175,10 +1645,12 @@ void AHellunaLobbyController::LoadBackgroundForTab(int32 TabIndex)
 	// 탭 인덱스에 맞는 배경 레벨 로드 (0=Play, 2=Character, 기타=유지)
 	if (TabIndex == 0) // LobbyTab::Play
 	{
+		PendingBackgroundTabIndex = 0;
 		LoadBackgroundLevel(PlayBackgroundLevel);
 	}
 	else if (TabIndex == 2) // LobbyTab::Character
 	{
+		PendingBackgroundTabIndex = 2;
 		LoadBackgroundLevel(CharacterBackgroundLevel);
 	}
 	// Loadout 탭(1): 배경 유지 (변경 없음)
@@ -1197,7 +1669,7 @@ bool AHellunaLobbyController::Server_CreateParty_Validate()
 
 void AHellunaLobbyController::Server_CreateParty_Implementation()
 {
-	AHellunaLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr;
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode(); // [Fix46-M1]
 	if (!LobbyGM)
 	{
 		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Server_CreateParty: GameMode 없음"));
@@ -1222,7 +1694,7 @@ bool AHellunaLobbyController::Server_JoinParty_Validate(const FString& PartyCode
 
 void AHellunaLobbyController::Server_JoinParty_Implementation(const FString& PartyCode)
 {
-	AHellunaLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr;
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode(); // [Fix46-M1]
 	if (!LobbyGM)
 	{
 		return;
@@ -1246,7 +1718,7 @@ bool AHellunaLobbyController::Server_LeaveParty_Validate()
 
 void AHellunaLobbyController::Server_LeaveParty_Implementation()
 {
-	AHellunaLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr;
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode(); // [Fix46-M1]
 	if (!LobbyGM)
 	{
 		return;
@@ -1264,7 +1736,7 @@ bool AHellunaLobbyController::Server_SetPartyReady_Validate(bool bReady)
 
 void AHellunaLobbyController::Server_SetPartyReady_Implementation(bool bReady)
 {
-	AHellunaLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr;
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode(); // [Fix46-M1]
 	if (!LobbyGM)
 	{
 		return;
@@ -1282,7 +1754,7 @@ bool AHellunaLobbyController::Server_KickPartyMember_Validate(const FString& Tar
 
 void AHellunaLobbyController::Server_KickPartyMember_Implementation(const FString& TargetPlayerId)
 {
-	AHellunaLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr;
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode(); // [Fix46-M1]
 	if (!LobbyGM)
 	{
 		return;
@@ -1300,7 +1772,7 @@ bool AHellunaLobbyController::Server_SendPartyChatMessage_Validate(const FString
 
 void AHellunaLobbyController::Server_SendPartyChatMessage_Implementation(const FString& Message)
 {
-	AHellunaLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AHellunaLobbyGameMode>() : nullptr;
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode(); // [Fix46-M1]
 	if (!LobbyGM)
 	{
 		return;
@@ -1366,6 +1838,9 @@ void AHellunaLobbyController::Client_ReceivePartyChatMessage_Implementation(cons
 
 void AHellunaLobbyController::Client_ExecutePartyDeploy_Implementation(int32 GameServerPort)
 {
+	// [Fix44-C1] Deploy 성공 → 플래그 리셋 (ClientTravel 실패 시 영구 차단 방지)
+	bDeployInProgress = false;
+
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Client_ExecutePartyDeploy | Port=%d"), GameServerPort);
 
 	UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance());
@@ -1414,4 +1889,150 @@ void AHellunaLobbyController::TogglePartyWidget()
 		PartyWidgetInstance->SetVisibility(ESlateVisibility::Visible);
 		UE_LOG(LogHellunaLobby, Verbose, TEXT("[LobbyPC] 파티 위젯 보이기"));
 	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 14f] 재참가 시스템 RPC
+// ════════════════════════════════════════════════════════════════════════════════
+
+void AHellunaLobbyController::Client_ShowRejoinPrompt_Implementation(int32 GameServerPort)
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Client_ShowRejoinPrompt 수신 | Port=%d"), GameServerPort);
+	PendingRejoinPort = GameServerPort;
+
+	if (!RejoinWidgetClass)
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] RejoinWidgetClass 미설정! 자동 재참가 시도"));
+		Server_RejoinGame();
+		return;
+	}
+
+	RejoinWidgetInstance = CreateWidget<UHellunaRejoinWidget>(this, RejoinWidgetClass);
+	if (RejoinWidgetInstance)
+	{
+		RejoinWidgetInstance->SetRejoinInfo(GameServerPort);
+		RejoinWidgetInstance->AddToViewport(200);
+	}
+}
+
+bool AHellunaLobbyController::Server_RejoinGame_Validate()
+{
+	return true;
+}
+
+void AHellunaLobbyController::Server_RejoinGame_Implementation()
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_RejoinGame 수신"));
+
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode();
+	if (LobbyGM)
+	{
+		LobbyGM->HandleRejoinAccepted(this);
+	}
+}
+
+bool AHellunaLobbyController::Server_AbandonGame_Validate()
+{
+	return true;
+}
+
+void AHellunaLobbyController::Server_AbandonGame_Implementation()
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_AbandonGame 수신"));
+
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode();
+	if (LobbyGM)
+	{
+		LobbyGM->HandleRejoinDeclined(this);
+	}
+}
+
+// ============================================================================
+// [Phase 15] 매치메이킹 RPC
+// ============================================================================
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 16] Server_SetSelectedMap
+// ════════════════════════════════════════════════════════════════════════════════
+
+bool AHellunaLobbyController::Server_SetSelectedMap_Validate(const FString& MapKey)
+{
+	return !MapKey.IsEmpty();
+}
+
+void AHellunaLobbyController::Server_SetSelectedMap_Implementation(const FString& MapKey)
+{
+	SelectedMapKey = MapKey;
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_SetSelectedMap | MapKey=%s"), *MapKey);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+
+bool AHellunaLobbyController::Server_EnterMatchmaking_Validate()
+{
+	return !bDeployInProgress;
+}
+
+void AHellunaLobbyController::Server_EnterMatchmaking_Implementation()
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_EnterMatchmaking 수신 | SelectedMapKey=%s"), *SelectedMapKey);
+
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode();
+	if (!LobbyGM)
+	{
+		return;
+	}
+
+	const FString PlayerId = LobbyGM->GetLobbyPlayerId(this);
+	if (PlayerId.IsEmpty())
+	{
+		Client_MatchmakingError(TEXT("플레이어 ID를 가져올 수 없습니다"));
+		return;
+	}
+
+	// [Phase 16] 맵 키 전달
+	LobbyGM->EnterMatchmakingQueue(PlayerId, SelectedMapKey);
+}
+
+bool AHellunaLobbyController::Server_LeaveMatchmaking_Validate()
+{
+	return true;
+}
+
+void AHellunaLobbyController::Server_LeaveMatchmaking_Implementation()
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_LeaveMatchmaking 수신"));
+
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode();
+	if (!LobbyGM)
+	{
+		return;
+	}
+
+	const FString PlayerId = LobbyGM->GetLobbyPlayerId(this);
+	LobbyGM->LeaveMatchmakingQueue(PlayerId);
+
+	// 큐 퇴장 상태를 클라이언트에 전송
+	FMatchmakingStatusInfo CancelInfo;
+	CancelInfo.Status = EMatchmakingStatus::None;
+	Client_MatchmakingStatusUpdate(CancelInfo);
+}
+
+void AHellunaLobbyController::Client_MatchmakingStatusUpdate_Implementation(const FMatchmakingStatusInfo& StatusInfo)
+{
+	UE_LOG(LogHellunaLobby, Verbose, TEXT("[LobbyPC] Client_MatchmakingStatusUpdate | Status=%d | Elapsed=%.1f | %d/%d"),
+		static_cast<int32>(StatusInfo.Status), StatusInfo.ElapsedTime,
+		StatusInfo.CurrentPlayerCount, StatusInfo.TargetPlayerCount);
+
+	OnMatchmakingStatusChanged.Broadcast(StatusInfo);
+}
+
+void AHellunaLobbyController::Client_MatchmakingError_Implementation(const FString& ErrorMessage)
+{
+	UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] Client_MatchmakingError: %s"), *ErrorMessage);
+
+	// 에러 시 None 상태로 전환
+	FMatchmakingStatusInfo CancelInfo;
+	CancelInfo.Status = EMatchmakingStatus::None;
+	OnMatchmakingStatusChanged.Broadcast(CancelInfo);
 }

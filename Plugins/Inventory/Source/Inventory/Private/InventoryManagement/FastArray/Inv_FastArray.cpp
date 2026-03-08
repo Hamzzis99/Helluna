@@ -74,10 +74,12 @@ void FInv_InventoryFastArray::PreReplicatedRemove(const TArrayView<int32> Remove
 			// ⭐ OnItemRemoved 델리게이트 브로드캐스트 (모든 아이템)
 			if (IsValid(IC))
 			{
+				#if INV_DEBUG_INVENTORY
 				// [Fix29진단] Remove Broadcast 직전
 				UE_LOG(LogTemp, Warning, TEXT("[PreRepRemove진단] Broadcast: IC=%s (ptr=%p) | Item=%s (ptr=%p) | EntryIdx=%d"),
 					*IC->GetName(), IC,
 					*ItemType.ToString(), RemovedItem, Index);
+#endif
 				IC->OnItemRemoved.Broadcast(RemovedItem, Index);
 			}
 			else if (IsValid(ContainerComp))
@@ -128,11 +130,13 @@ void FInv_InventoryFastArray::PostReplicatedAdd(const TArrayView<int32> AddedInd
 		if (!IsValid(ContainerComp)) return;
 	}
 
+#if INV_DEBUG_INVENTORY
 	// [진단] PostReplicatedAdd 시점 Owner 정보
 	AActor* DiagOwner = IsValid(IC) ? IC->GetOwner() : (IsValid(ContainerComp) ? ContainerComp->GetOwner() : nullptr);
 	UE_LOG(LogTemp, Error, TEXT("[PostRepAdd진단] IC=%p, ContainerComp=%p, Entries=%d, AddedIndices=%d, Owner=%s"),
 		IC, ContainerComp, Entries.Num(), AddedIndices.Num(),
 		DiagOwner ? *DiagOwner->GetName() : TEXT("nullptr"));
+#endif
 
 #if INV_DEBUG_INVENTORY
 	UE_LOG(LogTemp, Warning, TEXT("=== PostReplicatedAdd 호출됨! (FastArray) ==="));
@@ -209,12 +213,14 @@ void FInv_InventoryFastArray::PostReplicatedAdd(const TArrayView<int32> AddedInd
 		// ⭐ [Phase 9] InventoryComponent 또는 LootContainerComponent 분기
 		if (IsValid(IC))
 		{
+	#if INV_DEBUG_INVENTORY
 			// [Fix29진단] Broadcast 직전 — 어떤 IC에서 발생하는지 확인
 			UE_LOG(LogTemp, Warning, TEXT("[PostRepAdd진단] Broadcast: IC=%s (ptr=%p) | ItemCat=%d | Item=%s | EntryIdx=%d"),
 				*IC->GetName(), IC,
 				(int32)Entries[Index].Item->GetItemManifest().GetItemCategory(),
 				*Entries[Index].Item->GetItemManifest().GetItemType().ToString(),
 				Index);
+#endif
 			IC->OnItemAdded.Broadcast(Entries[Index].Item, Index);
 		}
 		else if (IsValid(ContainerComp))
@@ -406,11 +412,13 @@ UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_ItemComponent* ItemCo
 	// [Fix29-H] check() → safe return (Shipping 빌드에서 프로세스 종료 방지)
 	if (!OwnerComponent) { UE_LOG(LogTemp, Error, TEXT("[FastArray] AddEntry(ItemComp): OwnerComponent is null!")); return nullptr; }
 
+#if INV_DEBUG_INVENTORY
 	// [진단] AddEntry 호출 시 콜스택 추적 (아이템 중복 원인 파악)
 	UE_LOG(LogTemp, Error, TEXT("[AddEntry진단] 호출됨! 현재 Entries=%d, ItemType=%s"),
 		Entries.Num(),
 		*ItemComponent->GetItemManifest().GetItemType().ToString());
 	FDebug::DumpStackTraceToLog(ELogVerbosity::Error);
+#endif
 
 	AActor* OwningActor = OwnerComponent->GetOwner(); // 소유자 확보
 	if (!OwningActor || !OwningActor->HasAuthority()) return nullptr; // C4: 안전한 early return (check 크래시 방지)

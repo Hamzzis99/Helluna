@@ -15,6 +15,7 @@
 #include "MassEntityTemplateRegistry.h"
 #include "MassCommonFragments.h"
 #include "Character/HellunaEnemyCharacter.h"
+#include "Helluna.h"
 
 // 이동/조향 관련
 #include "MassMovementFragments.h"        // Velocity, Force
@@ -56,10 +57,12 @@ void UEnemyMassTrait::BuildTemplate(
 	Data.EntitySeparationRadius = EntitySeparationRadius;
 	Data.bMove2DOnly = bMove2DOnly;
 	
+#if HELLUNA_DEBUG_ENEMY
 	UE_LOG(LogTemp, Log,
 		TEXT("[EnemyMassTrait] BuildTemplate 완료 - Class: %s, Spawn: %.0f, Despawn: %.0f"),
 		EnemyClass ? *EnemyClass->GetName() : TEXT("None"),
 		SpawnThreshold, DespawnThreshold);
+#endif
 	
 	// ========================================================================
 	// 이동/조향 Fragment 추가
@@ -82,7 +85,9 @@ void UEnemyMassTrait::BuildTemplate(
 	FAgentRadiusFragment& AgentRadius = BuildContext.AddFragment_GetRef<FAgentRadiusFragment>();
 	AgentRadius.Radius = EntitySeparationRadius;  // Trait에서 설정한 반경 사용
 
+#if HELLUNA_DEBUG_ENEMY
 	UE_LOG(LogTemp, Log,
 		TEXT("[EnemyMassTrait] Fragment 추가 완료 - 이동 속도: %.0f cm/s, 충돌 반경: %.0f cm"),
 		EntityMoveSpeed, AgentRadius.Radius);
+#endif
 }

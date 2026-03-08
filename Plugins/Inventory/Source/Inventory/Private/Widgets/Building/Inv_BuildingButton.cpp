@@ -19,7 +19,7 @@ void UInv_BuildingButton::NativeOnInitialized()
 	// 버튼 클릭 이벤트 바인딩
 	if (IsValid(Button_Main))
 	{
-		Button_Main->OnClicked.AddDynamic(this, &ThisClass::OnButtonClicked);
+		Button_Main->OnClicked.AddUniqueDynamic(this, &ThisClass::OnButtonClicked);
 	}
 	else
 	{
@@ -243,7 +243,7 @@ void UInv_BuildingButton::BindInventoryDelegates()
 	// 델리게이트 바인딩 (이미 바인딩되어 있으면 건너뜀)
 	if (!InvComp->OnItemAdded.IsAlreadyBound(this, &ThisClass::OnInventoryItemAdded))
 	{
-		InvComp->OnItemAdded.AddDynamic(this, &ThisClass::OnInventoryItemAdded);
+		InvComp->OnItemAdded.AddUniqueDynamic(this, &ThisClass::OnInventoryItemAdded);
 #if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Log, TEXT("BuildingButton: OnItemAdded 델리게이트 바인딩 완료"));
 #endif
@@ -251,7 +251,7 @@ void UInv_BuildingButton::BindInventoryDelegates()
 
 	if (!InvComp->OnItemRemoved.IsAlreadyBound(this, &ThisClass::OnInventoryItemRemoved))
 	{
-		InvComp->OnItemRemoved.AddDynamic(this, &ThisClass::OnInventoryItemRemoved);
+		InvComp->OnItemRemoved.AddUniqueDynamic(this, &ThisClass::OnInventoryItemRemoved);
 #if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Log, TEXT("BuildingButton: OnItemRemoved 델리게이트 바인딩 완료"));
 #endif
@@ -259,7 +259,7 @@ void UInv_BuildingButton::BindInventoryDelegates()
 
 	if (!InvComp->OnStackChange.IsAlreadyBound(this, &ThisClass::OnInventoryStackChanged))
 	{
-		InvComp->OnStackChange.AddDynamic(this, &ThisClass::OnInventoryStackChanged);
+		InvComp->OnStackChange.AddUniqueDynamic(this, &ThisClass::OnInventoryStackChanged);
 #if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Log, TEXT("BuildingButton: OnStackChange 델리게이트 바인딩 완료"));
 #endif

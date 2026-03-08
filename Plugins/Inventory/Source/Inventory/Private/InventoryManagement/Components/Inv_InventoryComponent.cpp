@@ -507,6 +507,27 @@ void UInv_InventoryComponent::RestoreFromSaveData(
 		// Fix 7: 장착된 아이템의 서버 FastArray Entry GridIndex 클리어 — Phase 5 저장 시 좌표 중복 방지
 		// Fix 13: bIsEquipped 플래그 설정 — PostReplicatedAdd에서 그리드 배치 스킵
 		// [Fix14] WeaponSlotIndex도 Entry에 기록 — 저장/전송 시 슬롯 정보 보존
+		// [Fix40] Item 포인터 → SaveData 매핑 구축 (같은 ItemType 다중 장착 지원)
+		TMap<UInv_InventoryItem*, int32> ItemToWeaponSlotMap;
+		{
+			TSet<int32> UsedSaveDataIndices;
+			for (UInv_InventoryItem* EqItem : ProcessedEquipItems)
+			{
+				const FGameplayTag& EqType = EqItem->GetItemManifest().GetItemType();
+				for (int32 s = 0; s < SaveData.Items.Num(); s++)
+				{
+					if (UsedSaveDataIndices.Contains(s)) continue;
+					const FInv_SavedItemData& SD = SaveData.Items[s];
+					if (SD.bEquipped && SD.ItemType == EqType)
+					{
+						ItemToWeaponSlotMap.Add(EqItem, SD.WeaponSlotIndex);
+						UsedSaveDataIndices.Add(s);
+						break;
+					}
+				}
+			}
+		}
+
 		for (UInv_InventoryItem* EquippedItem : ProcessedEquipItems)
 		{
 			for (int32 i = 0; i < InventoryList.Entries.Num(); i++)
@@ -517,16 +538,9 @@ void UInv_InventoryComponent::RestoreFromSaveData(
 					InventoryList.Entries[i].GridCategory = 0;
 					InventoryList.Entries[i].bIsEquipped = true;
 
-					// [Fix14] SaveData에서 WeaponSlotIndex를 가져와서 Entry에도 기록
-					// ProcessedEquipItems에서 원본 SaveData의 WeaponSlotIndex를 찾기
-					for (const FInv_SavedItemData& ItemData : SaveData.Items)
-					{
-						if (ItemData.bEquipped && ItemData.ItemType == EquippedItem->GetItemManifest().GetItemType())
-						{
-							InventoryList.Entries[i].WeaponSlotIndex = ItemData.WeaponSlotIndex;
-							break;
-						}
-					}
+					// [Fix40] 미리 구축한 매핑에서 정확한 WeaponSlotIndex 사용
+					const int32* MappedSlot = ItemToWeaponSlotMap.Find(EquippedItem);
+					InventoryList.Entries[i].WeaponSlotIndex = MappedSlot ? *MappedSlot : 0;
 
 					// MarkItemDirty 호출 금지! 리플리케이션 트리거 시 PostReplicatedChange → AddItem으로 아이템이 Grid에 다시 나타남
 					// bIsEquipped는 이미 dirty 상태인 Entry에 포함되어 리플리케이션됨 (같은 프레임)
@@ -540,6 +554,11 @@ void UInv_InventoryComponent::RestoreFromSaveData(
 	}
 
 	bInventoryRestored = true;
+}
+
+bool UInv_InventoryComponent::Server_AddStacksToItem_Validate(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder)
+{
+	return StackCount >= 0 && Remainder >= 0;
 }
 
 void UInv_InventoryComponent::Server_AddStacksToItem_Implementation(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder) // 서버에서 아이템 스택 개수를 세어주는 역할.
@@ -718,6 +737,11 @@ void UInv_InventoryComponent::SpawnDroppedItem(UInv_InventoryItem* Item, int32 S
 	ItemManifest.SpawnPickupActor(this,SpawnLocation, SpawnRotation); // 아이템 매니페스트로 픽업 액터 생성
 }
 
+bool UInv_InventoryComponent::Server_ConsumeItem_Validate(UInv_InventoryItem* Item)
+{
+	return true;
+}
+
 // 아이템 소비 상호작용을 누른 뒤 서버에서 어떻게 처리를 할지.
 void UInv_InventoryComponent::Server_ConsumeItem_Implementation(UInv_InventoryItem* Item)
 {
@@ -801,7 +825,7 @@ void UInv_InventoryComponent::Server_CraftItem_Implementation(TSubclassOf<AActor
 #endif
 
 	// 서버 권한 체크
-	if (!GetOwner()->HasAuthority())
+	if (!GetOwner() || !GetOwner()->HasAuthority())
 	{
 #if INV_DEBUG_INVENTORY
 		UE_LOG(LogTemp, Error, TEXT("[SERVER CRAFT] 권한 없음! 서버에서만 실행 가능!"));
@@ -950,7 +974,7 @@ void UInv_InventoryComponent::Server_CraftItemWithMaterials_Implementation(
 #endif
 
 	// 서버 권한 체크
-	if (!GetOwner()->HasAuthority())
+	if (!GetOwner() || !GetOwner()->HasAuthority())
 	{
 #if INV_DEBUG_INVENTORY
 		UE_LOG(LogTemp, Error, TEXT("[SERVER CRAFT] 권한 없음!"));
@@ -1343,6 +1367,11 @@ void UInv_InventoryComponent::Server_CraftItemWithMaterials_Implementation(
 #endif
 }
 
+bool UInv_InventoryComponent::Server_ConsumeMaterials_Validate(const FGameplayTag& MaterialTag, int32 Amount)
+{
+	return MaterialTag.IsValid() && Amount > 0;
+}
+
 // 재료 소비 (Building 시스템용) - Server_DropItem과 동일한 로직 사용
 void UInv_InventoryComponent::Server_ConsumeMaterials_Implementation(const FGameplayTag& MaterialTag, int32 Amount)
 {
@@ -1485,6 +1514,11 @@ int32 UInv_InventoryComponent::GetTotalMaterialCount(const FGameplayTag& Materia
 		*MaterialTag.ToString(), TotalCount);
 #endif
 	return TotalCount;
+}
+
+bool UInv_InventoryComponent::Server_ConsumeMaterialsMultiStack_Validate(const FGameplayTag& MaterialTag, int32 Amount)
+{
+	return MaterialTag.IsValid() && Amount > 0;
 }
 
 // 재료 소비 - 여러 스택에서 차감 (Building 시스템용)
@@ -1642,6 +1676,11 @@ void UInv_InventoryComponent::Server_ConsumeMaterialsMultiStack_Implementation(c
 #endif
 }
 
+bool UInv_InventoryComponent::Server_UpdateItemStackCount_Validate(UInv_InventoryItem* Item, int32 NewStackCount)
+{
+	return NewStackCount > 0;
+}
+
 // Split 시 서버의 TotalStackCount 업데이트
 void UInv_InventoryComponent::Server_UpdateItemStackCount_Implementation(UInv_InventoryItem* Item, int32 NewStackCount)
 {
@@ -1780,6 +1819,11 @@ void UInv_InventoryComponent::Multicast_ConsumeMaterialsUI_Implementation(const 
 	UE_LOG(LogTemp, Warning, TEXT("✅ UI(GridSlot) 차감 완료!"));
 	UE_LOG(LogTemp, Warning, TEXT("=== Multicast_ConsumeMaterialsUI 완료 ==="));
 #endif
+}
+
+bool UInv_InventoryComponent::Server_EquipSlotClicked_Validate(UInv_InventoryItem* ItemToEquip, UInv_InventoryItem* ItemToUnequip, int32 WeaponSlotIndex)
+{
+	return WeaponSlotIndex >= -1 && WeaponSlotIndex <= 1;
 }
 
 // 아이템 장착 상호작용을 누른 뒤 서버에서 어떻게 처리를 할지.
@@ -2107,6 +2151,11 @@ void UInv_InventoryComponent::Server_AttachItemToWeapon_Implementation(int32 Wea
 //   6. 무기 장비 슬롯 장착 중이면 부착물 스탯 해제
 //   7. 리플리케이션
 // ════════════════════════════════════════════════════════════════
+bool UInv_InventoryComponent::Server_DetachItemFromWeapon_Validate(int32 WeaponEntryIndex, int32 SlotIndex)
+{
+	return WeaponEntryIndex >= 0 && SlotIndex >= 0;
+}
+
 void UInv_InventoryComponent::Server_DetachItemFromWeapon_Implementation(int32 WeaponEntryIndex, int32 SlotIndex)
 {
 #if INV_DEBUG_ATTACHMENT
@@ -2395,7 +2444,11 @@ void UInv_InventoryComponent::SyncGridSizesFromWidget()
 void UInv_InventoryComponent::ConstructInventory()
 {
 	OwningController = Cast<APlayerController>(GetOwner());
-	checkf(OwningController.IsValid(), TEXT("Inventory Component should have a Player Controller as Owner."))
+	if (!OwningController.IsValid())
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Inventory] ConstructInventory: Owner가 PlayerController가 아님! Owner=%s"), *GetNameSafe(GetOwner()));
+		return;
+	}
 	if (!OwningController->IsLocalController()) return;
 
 	//블루프린터 위젯 클래스가 설정되어 있는지 확인
@@ -2464,6 +2517,11 @@ void UInv_InventoryComponent::CloseOtherMenus()
 }
 
 // ⭐ InventoryList 기반 공간 체크 (서버 전용, UI 없이 작동!)
+bool UInv_InventoryComponent::Server_SplitItemEntry_Validate(UInv_InventoryItem* OriginalItem, int32 OriginalNewStackCount, int32 SplitStackCount, int32 TargetGridIndex)
+{
+	return OriginalNewStackCount > 0 && SplitStackCount > 0;
+}
+
 // ⭐ Phase 8: Split 시 서버에서 새 Entry 생성 (포인터 분리)
 void UInv_InventoryComponent::Server_SplitItemEntry_Implementation(UInv_InventoryItem* OriginalItem, int32 OriginalNewStackCount, int32 SplitStackCount, int32 TargetGridIndex)
 {
@@ -2571,6 +2629,11 @@ void UInv_InventoryComponent::Server_SplitItemEntry_Implementation(UInv_Inventor
 	{
 		OnItemAdded.Broadcast(NewItem, NewEntryIndex);
 	}
+}
+
+bool UInv_InventoryComponent::Server_UpdateItemGridPosition_Validate(UInv_InventoryItem* Item, int32 GridIndex, uint8 GridCategory, bool bRotated)
+{
+	return GridCategory <= 2;
 }
 
 // ⭐ [Phase 4 방법2] 클라이언트 Grid 위치를 서버 Entry에 동기화
@@ -3823,6 +3886,11 @@ void UInv_InventoryComponent::Server_PutItemInContainer_Implementation(
 	{
 		OnItemRemoved.Broadcast(ItemToMove, PlayerEntryIndex);
 	}
+}
+
+bool UInv_InventoryComponent::Server_TakeAllFromContainer_Validate(UInv_LootContainerComponent* Container)
+{
+	return true;
 }
 
 void UInv_InventoryComponent::Server_TakeAllFromContainer_Implementation(
