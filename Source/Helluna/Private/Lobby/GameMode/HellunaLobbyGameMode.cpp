@@ -2547,10 +2547,11 @@ void AHellunaLobbyGameMode::BroadcastMatchmakingStatus()
 
 bool AHellunaLobbyGameMode::TryFormMatch()
 {
-	// Pass 1: 3인 엔트리 → 카운트다운 시작
+	// Pass 1: 단일 엔트리가 모드 정원 이상 → 즉시 매칭 (SOLO=1, DUO=2, SQUAD=3)
 	for (int32 i = MatchmakingQueue.Num() - 1; i >= 0; --i)
 	{
-		if (MatchmakingQueue[i].GetPlayerCount() >= 3)
+		const int32 Capacity = GetModeCapacity(MatchmakingQueue[i].GameMode);
+		if (MatchmakingQueue[i].GetPlayerCount() >= Capacity)
 		{
 			TArray<FMatchmakingQueueEntry> Matched;
 			Matched.Add(MatchmakingQueue[i]);
@@ -2560,24 +2561,19 @@ bool AHellunaLobbyGameMode::TryFormMatch()
 		}
 	}
 
-	// Pass 2: 2인 + 1인 조합 — [Phase 16] 같은 MapKey만
+	// Pass 2: SQUAD 2인 + 1인 조합 — 같은 MapKey + 같은 GameMode
 	for (int32 a = 0; a < MatchmakingQueue.Num(); ++a)
 	{
-		if (MatchmakingQueue[a].GetPlayerCount() != 2)
-		{
-			continue;
-		}
+		if (MatchmakingQueue[a].GameMode != ELobbyGameMode::Squad) continue;
+		if (MatchmakingQueue[a].GetPlayerCount() != 2) continue;
+
 		for (int32 b = 0; b < MatchmakingQueue.Num(); ++b)
 		{
-			if (b == a || MatchmakingQueue[b].GetPlayerCount() != 1)
-			{
-				continue;
-			}
-			// [Phase 16] 맵 키 필터
-			if (MatchmakingQueue[a].SelectedMapKey != MatchmakingQueue[b].SelectedMapKey)
-			{
-				continue;
-			}
+			if (b == a) continue;
+			if (MatchmakingQueue[b].GameMode != ELobbyGameMode::Squad) continue;
+			if (MatchmakingQueue[b].GetPlayerCount() != 1) continue;
+			if (MatchmakingQueue[a].SelectedMapKey != MatchmakingQueue[b].SelectedMapKey) continue;
+
 			TArray<FMatchmakingQueueEntry> Matched;
 			Matched.Add(MatchmakingQueue[a]);
 			Matched.Add(MatchmakingQueue[b]);
@@ -2587,38 +2583,57 @@ bool AHellunaLobbyGameMode::TryFormMatch()
 		}
 	}
 
-	// Pass 3: 1인 + 1인 + 1인 조합 (시간순, 브루트포스) — [Phase 16] 같은 MapKey만
-	TArray<int32> SoloIndices;
-	for (int32 i = 0; i < MatchmakingQueue.Num(); ++i)
+	// Pass 3: DUO 1인 + 1인 조합 — 같은 MapKey + 같은 GameMode
+	for (int32 a = 0; a < MatchmakingQueue.Num(); ++a)
 	{
-		if (MatchmakingQueue[i].GetPlayerCount() == 1)
+		if (MatchmakingQueue[a].GameMode != ELobbyGameMode::Duo) continue;
+		if (MatchmakingQueue[a].GetPlayerCount() != 1) continue;
+
+		for (int32 b = a + 1; b < MatchmakingQueue.Num(); ++b)
 		{
-			SoloIndices.Add(i);
+			if (MatchmakingQueue[b].GameMode != ELobbyGameMode::Duo) continue;
+			if (MatchmakingQueue[b].GetPlayerCount() != 1) continue;
+			if (MatchmakingQueue[a].SelectedMapKey != MatchmakingQueue[b].SelectedMapKey) continue;
+
+			TArray<FMatchmakingQueueEntry> Matched;
+			Matched.Add(MatchmakingQueue[a]);
+			Matched.Add(MatchmakingQueue[b]);
+			auto ReassignedMap = ResolveHeroDuplication(Matched);
+			StartMatchCountdown(MoveTemp(Matched), MoveTemp(ReassignedMap));
+			return true;
 		}
 	}
 
-	if (SoloIndices.Num() >= 3)
+	// Pass 4: SQUAD 1인 + 1인 + 1인 조합 — 같은 MapKey + 같은 GameMode
+	TArray<int32> SquadSoloIndices;
+	for (int32 i = 0; i < MatchmakingQueue.Num(); ++i)
 	{
-		for (int32 a = 0; a < SoloIndices.Num() - 2; ++a)
+		if (MatchmakingQueue[i].GameMode == ELobbyGameMode::Squad && MatchmakingQueue[i].GetPlayerCount() == 1)
 		{
-			for (int32 b = a + 1; b < SoloIndices.Num() - 1; ++b)
+			SquadSoloIndices.Add(i);
+		}
+	}
+
+	if (SquadSoloIndices.Num() >= 3)
+	{
+		for (int32 a = 0; a < SquadSoloIndices.Num() - 2; ++a)
+		{
+			for (int32 b = a + 1; b < SquadSoloIndices.Num() - 1; ++b)
 			{
-				// [Phase 16] 맵 키 필터
-				if (MatchmakingQueue[SoloIndices[a]].SelectedMapKey != MatchmakingQueue[SoloIndices[b]].SelectedMapKey)
+				if (MatchmakingQueue[SquadSoloIndices[a]].SelectedMapKey != MatchmakingQueue[SquadSoloIndices[b]].SelectedMapKey)
 				{
 					continue;
 				}
-				for (int32 c = b + 1; c < SoloIndices.Num(); ++c)
+				for (int32 c = b + 1; c < SquadSoloIndices.Num(); ++c)
 				{
-					// [Phase 16] 맵 키 필터
-					if (MatchmakingQueue[SoloIndices[a]].SelectedMapKey != MatchmakingQueue[SoloIndices[c]].SelectedMapKey)
+					if (MatchmakingQueue[SquadSoloIndices[a]].SelectedMapKey != MatchmakingQueue[SquadSoloIndices[c]].SelectedMapKey)
 					{
 						continue;
 					}
 					TArray<FMatchmakingQueueEntry> Matched;
-					Matched.Add(MatchmakingQueue[SoloIndices[a]]);
-					Matched.Add(MatchmakingQueue[SoloIndices[b]]);
-					Matched.Add(MatchmakingQueue[SoloIndices[c]]);
+					Matched.Add(MatchmakingQueue[SquadSoloIndices[a]]);
+					Matched.Add(MatchmakingQueue[SquadSoloIndices[b]]);
+					Matched.Add(MatchmakingQueue[SquadSoloIndices[c]]);
 					auto ReassignedMap = ResolveHeroDuplication(Matched);
 					StartMatchCountdown(MoveTemp(Matched), MoveTemp(ReassignedMap));
 					return true;

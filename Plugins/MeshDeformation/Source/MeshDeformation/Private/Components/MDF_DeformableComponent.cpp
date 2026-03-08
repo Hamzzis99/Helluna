@@ -500,7 +500,7 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
                         {
                             MaxDamageIntensity = Intensity;
                             // 데미지 타입 인코딩: Ranged=0.0, Melee=0.5, Breach=1.0
-                            if (Hit.DamageTypeClass && MeleeDamageType && Hit.DamageTypeClass->IsChildOf(MeleeDamageType))
+                            if (Hit.DamageTypeClass && MeleeDamageType && Hit.DamageTypeClass->IsChildkㅇ연히Of(MeleeDamageType))
                                 DamageTypeEncoded = 0.5f;
                             else if (Hit.DamageTypeClass && BreachDamageType && Hit.DamageTypeClass->IsChildOf(BreachDamageType))
                                 DamageTypeEncoded = 1.0f;

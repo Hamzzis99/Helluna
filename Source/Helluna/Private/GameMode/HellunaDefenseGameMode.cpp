@@ -24,6 +24,9 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "HAL/FileManager.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
+#include "Dom/JsonObject.h"
 
 AHellunaDefenseGameMode::AHellunaDefenseGameMode()
 {
