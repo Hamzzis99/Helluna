@@ -260,6 +260,36 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> MapSelectContainer;
 
+	// ── [Phase 17.1] 맵 카드 클릭 → 팝업 ──
+
+	/** MapCardPanel 안의 클릭 가능 버튼 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> Button_MapCard;
+
+	/** 맵 선택 팝업 오버레이 (전체 화면 반투명 배경 + 중앙 카드) — 초기 Collapsed */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> MapSelectPopupOverlay;
+
+	/** 팝업 내 큰 썸네일 이미지 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> Popup_MapThumbnail;
+
+	/** 팝업 내 맵 이름 텍스트 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Popup_MapName;
+
+	/** 팝업 내 맵 설명 텍스트 (선택적) */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Popup_MapDescription;
+
+	/** 선택 확정 버튼 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> Button_MapConfirm;
+
+	/** 팝업 닫기 버튼 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> Button_CloseMapPopup;
+
 	// ── Loadout 탭 (Page 1) — 기존 ──
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UHellunaLobbyPanel> StashPanel;
@@ -433,16 +463,36 @@ private:
 	/** 맵 목록 캐시 + 기본맵 표시 */
 	void InitializeMapSelector();
 
-	/** 왼쪽 화살표 클릭 (순환) */
+	/** 왼쪽 화살표 클릭 — 팝업 내 맵 순환 */
 	UFUNCTION()
 	void OnMapPrevClicked();
 
-	/** 오른쪽 화살표 클릭 (순환) */
+	/** 오른쪽 화살표 클릭 — 팝업 내 맵 순환 */
 	UFUNCTION()
 	void OnMapNextClicked();
 
-	/** Img/Text 업데이트 + Server_SetSelectedMap RPC 호출 */
+	/** 팝업 내부 맵 정보 업데이트 (Server RPC 호출 안 함) */
 	void UpdateMapDisplay();
+
+	// ── [Phase 17.1] 맵 선택 팝업 ──
+
+	/** 작은 카드(MapCardPanel)의 썸네일/이름 업데이트 */
+	void UpdateSmallCardDisplay();
+
+	/** 맵 카드 클릭 → 팝업 열기 */
+	UFUNCTION()
+	void OnMapCardClicked();
+
+	void OpenMapSelectPopup();
+	void CloseMapSelectPopup();
+
+	/** 팝업 확인 → 맵 확정 + Server RPC + 작은 카드 갱신 */
+	UFUNCTION()
+	void OnMapConfirmClicked();
+
+	/** 팝업 닫기(취소) */
+	UFUNCTION()
+	void OnCloseMapPopupClicked();
 
 	// ════════════════════════════════════════════════════════════════
 	// 내부 상태
@@ -463,8 +513,11 @@ private:
 	/** [Phase 16] 현재 선택된 맵 키 */
 	FString SelectedMapKey;
 
-	/** [Phase 17] 현재 선택된 맵 인덱스 */
+	/** [Phase 17] 현재 확정된 맵 인덱스 */
 	int32 CurrentMapIndex = 0;
+
+	/** [Phase 17.1] 팝업에서 탐색 중인 임시 인덱스 (확인 전까지 SelectedMapKey에 영향 없음) */
+	int32 PopupBrowsingIndex = 0;
 
 	/** [Phase 17] 맵 목록 로컬 캐시 */
 	TArray<FHellunaGameMapInfo> CachedMapConfigs;

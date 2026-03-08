@@ -68,6 +68,10 @@ void UHellunaLobbyStashWidget::NativeDestruct()
 	// [Phase 17] 맵 선택 카드
 	if (Button_MapPrev) { Button_MapPrev->OnClicked.RemoveDynamic(this, &ThisClass::OnMapPrevClicked); }
 	if (Button_MapNext) { Button_MapNext->OnClicked.RemoveDynamic(this, &ThisClass::OnMapNextClicked); }
+	// [Phase 17.1] 맵 선택 팝업
+	if (Button_MapCard) { Button_MapCard->OnClicked.RemoveDynamic(this, &ThisClass::OnMapCardClicked); }
+	if (Button_MapConfirm) { Button_MapConfirm->OnClicked.RemoveDynamic(this, &ThisClass::OnMapConfirmClicked); }
+	if (Button_CloseMapPopup) { Button_CloseMapPopup->OnClicked.RemoveDynamic(this, &ThisClass::OnCloseMapPopupClicked); }
 
 	// ── LobbyPC 외부 오브젝트 바인딩 해제 ──
 	if (AHellunaLobbyController* LobbyPC = GetLobbyController())
@@ -178,6 +182,25 @@ void UHellunaLobbyStashWidget::NativeOnInitialized()
 
 	// ── [Phase 17] PUBG식 맵 선택 카드 초기화 ──
 	InitializeMapSelector();
+
+	// ── [Phase 17.1] 맵 카드 버튼 + 팝업 버튼 바인딩 ──
+	if (Button_MapCard)
+	{
+		Button_MapCard->OnClicked.AddUniqueDynamic(this, &ThisClass::OnMapCardClicked);
+	}
+	if (Button_MapConfirm)
+	{
+		Button_MapConfirm->OnClicked.AddUniqueDynamic(this, &ThisClass::OnMapConfirmClicked);
+	}
+	if (Button_CloseMapPopup)
+	{
+		Button_CloseMapPopup->OnClicked.AddUniqueDynamic(this, &ThisClass::OnCloseMapPopupClicked);
+	}
+	// 팝업 초기 숨김
+	if (MapSelectPopupOverlay)
+	{
+		MapSelectPopupOverlay->SetVisibility(ESlateVisibility::Collapsed);
+	}
 
 	// ── Loadout 탭: 출격 버튼 바인딩 (기존) ──
 	if (Button_Deploy)
@@ -1425,12 +1448,12 @@ void UHellunaLobbyStashWidget::UpdateModeButtonVisuals()
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
-// [Phase 17] PUBG식 맵 선택 카드
+// [Phase 17 + 17.1] PUBG식 맵 선택 카드 + 팝업
 // ════════════════════════════════════════════════════════════════════════════════
 
 void UHellunaLobbyStashWidget::InitializeMapSelector()
 {
-	// 버튼 바인딩
+	// 팝업 내 화살표 버튼 바인딩
 	if (Button_MapPrev)
 	{
 		Button_MapPrev->OnClicked.AddUniqueDynamic(this, &ThisClass::OnMapPrevClicked);
@@ -1460,18 +1483,30 @@ void UHellunaLobbyStashWidget::InitializeMapSelector()
 		}
 	}
 
-	// 초기 표시
-	UpdateMapDisplay();
+	// [Phase 17.1] 작은 카드 초기 표시
+	UpdateSmallCardDisplay();
+
+	// 초기 맵 선택 서버 동기화
+	if (CachedMapConfigs.IsValidIndex(CurrentMapIndex))
+	{
+		SelectedMapKey = CachedMapConfigs[CurrentMapIndex].MapKey;
+		if (AHellunaLobbyController* LobbyPC = GetLobbyController())
+		{
+			LobbyPC->Server_SetSelectedMap(SelectedMapKey);
+		}
+	}
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase17] 맵 선택 카드 초기화 완료 | Maps=%d | Current=%s"),
 		CachedMapConfigs.Num(), *SelectedMapKey);
 }
 
+// ── 팝업 내 화살표 (PopupBrowsingIndex 순환) ──
+
 void UHellunaLobbyStashWidget::OnMapPrevClicked()
 {
 	if (CachedMapConfigs.Num() == 0) return;
 
-	CurrentMapIndex = (CurrentMapIndex - 1 + CachedMapConfigs.Num()) % CachedMapConfigs.Num();
+	PopupBrowsingIndex = (PopupBrowsingIndex - 1 + CachedMapConfigs.Num()) % CachedMapConfigs.Num();
 	UpdateMapDisplay();
 }
 
@@ -1479,15 +1514,65 @@ void UHellunaLobbyStashWidget::OnMapNextClicked()
 {
 	if (CachedMapConfigs.Num() == 0) return;
 
-	CurrentMapIndex = (CurrentMapIndex + 1) % CachedMapConfigs.Num();
+	PopupBrowsingIndex = (PopupBrowsingIndex + 1) % CachedMapConfigs.Num();
 	UpdateMapDisplay();
 }
 
+// ── 팝업 내부 맵 정보 업데이트 (Server RPC 호출 안 함) ──
+
 void UHellunaLobbyStashWidget::UpdateMapDisplay()
+{
+	if (!CachedMapConfigs.IsValidIndex(PopupBrowsingIndex))
+	{
+		return;
+	}
+
+	const FHellunaGameMapInfo& MapInfo = CachedMapConfigs[PopupBrowsingIndex];
+
+	// 팝업 썸네일 업데이트
+	if (Popup_MapThumbnail)
+	{
+		if (!MapInfo.MapThumbnail.IsNull())
+		{
+			UTexture2D* LoadedTexture = MapInfo.MapThumbnail.LoadSynchronous();
+			if (LoadedTexture)
+			{
+				Popup_MapThumbnail->SetBrushFromTexture(LoadedTexture);
+				Popup_MapThumbnail->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+			}
+			else
+			{
+				Popup_MapThumbnail->SetVisibility(ESlateVisibility::Collapsed);
+			}
+		}
+		else
+		{
+			Popup_MapThumbnail->SetVisibility(ESlateVisibility::Collapsed);
+		}
+	}
+
+	// 팝업 맵 이름 업데이트
+	if (Popup_MapName)
+	{
+		Popup_MapName->SetText(FText::FromString(MapInfo.DisplayName));
+	}
+
+	// 팝업 맵 설명 (선택적 — 추후 FHellunaGameMapInfo에 Description 추가 시 활용)
+	if (Popup_MapDescription)
+	{
+		Popup_MapDescription->SetText(FText::GetEmpty());
+	}
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase17.1] 팝업 맵 탐색: [%d] %s (%s)"),
+		PopupBrowsingIndex, *MapInfo.DisplayName, *MapInfo.MapKey);
+}
+
+// ── [Phase 17.1] 작은 카드 표시 ──
+
+void UHellunaLobbyStashWidget::UpdateSmallCardDisplay()
 {
 	if (!CachedMapConfigs.IsValidIndex(CurrentMapIndex))
 	{
-		// 맵 목록 비어있으면 숨기기
 		if (MapSelectContainer)
 		{
 			MapSelectContainer->SetVisibility(ESlateVisibility::Collapsed);
@@ -1497,7 +1582,7 @@ void UHellunaLobbyStashWidget::UpdateMapDisplay()
 
 	const FHellunaGameMapInfo& MapInfo = CachedMapConfigs[CurrentMapIndex];
 
-	// 썸네일 이미지 업데이트
+	// 작은 카드 썸네일
 	if (Img_MapThumbnail)
 	{
 		if (!MapInfo.MapThumbnail.IsNull())
@@ -1519,7 +1604,7 @@ void UHellunaLobbyStashWidget::UpdateMapDisplay()
 		}
 	}
 
-	// 맵 이름 업데이트
+	// 작은 카드 맵 이름
 	if (Text_MapName)
 	{
 		Text_MapName->SetText(FText::FromString(MapInfo.DisplayName));
@@ -1530,14 +1615,70 @@ void UHellunaLobbyStashWidget::UpdateMapDisplay()
 	{
 		MapSelectContainer->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 	}
+}
 
-	// SelectedMapKey 갱신 + 서버 RPC
-	SelectedMapKey = MapInfo.MapKey;
-	if (AHellunaLobbyController* LobbyPC = GetLobbyController())
+// ── [Phase 17.1] 팝업 열기/닫기 ──
+
+void UHellunaLobbyStashWidget::OnMapCardClicked()
+{
+	OpenMapSelectPopup();
+}
+
+void UHellunaLobbyStashWidget::OpenMapSelectPopup()
+{
+	// 팝업 열 때 현재 확정된 맵으로 브라우징 인덱스 초기화
+	PopupBrowsingIndex = CurrentMapIndex;
+	UpdateMapDisplay();
+
+	if (MapSelectPopupOverlay)
 	{
-		LobbyPC->Server_SetSelectedMap(SelectedMapKey);
+		MapSelectPopupOverlay->SetVisibility(ESlateVisibility::Visible);
 	}
 
-	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase17] 맵 전환: [%d] %s (%s)"),
-		CurrentMapIndex, *MapInfo.DisplayName, *MapInfo.MapKey);
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase17.1] 맵 선택 팝업 열림 | CurrentMap=[%d] %s"),
+		CurrentMapIndex, *SelectedMapKey);
+}
+
+void UHellunaLobbyStashWidget::CloseMapSelectPopup()
+{
+	if (MapSelectPopupOverlay)
+	{
+		MapSelectPopupOverlay->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase17.1] 맵 선택 팝업 닫힘"));
+}
+
+// ── [Phase 17.1] 팝업 확인/취소 ──
+
+void UHellunaLobbyStashWidget::OnMapConfirmClicked()
+{
+	// 팝업에서 탐색한 인덱스를 확정
+	CurrentMapIndex = PopupBrowsingIndex;
+
+	if (CachedMapConfigs.IsValidIndex(CurrentMapIndex))
+	{
+		SelectedMapKey = CachedMapConfigs[CurrentMapIndex].MapKey;
+
+		// 서버 RPC는 확정 시에만 호출
+		if (AHellunaLobbyController* LobbyPC = GetLobbyController())
+		{
+			LobbyPC->Server_SetSelectedMap(SelectedMapKey);
+		}
+
+		UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase17.1] 맵 선택 확정: [%d] %s (%s)"),
+			CurrentMapIndex, *CachedMapConfigs[CurrentMapIndex].DisplayName, *SelectedMapKey);
+	}
+
+	// 작은 카드 업데이트
+	UpdateSmallCardDisplay();
+
+	// 팝업 닫기
+	CloseMapSelectPopup();
+}
+
+void UHellunaLobbyStashWidget::OnCloseMapPopupClicked()
+{
+	// 취소 — 아무것도 변경하지 않고 닫기
+	CloseMapSelectPopup();
 }
