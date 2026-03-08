@@ -1463,23 +1463,42 @@ void UHellunaLobbyStashWidget::InitializeMapSelector()
 		Button_MapNext->OnClicked.AddUniqueDynamic(this, &ThisClass::OnMapNextClicked);
 	}
 
-	// LobbyGameMode에서 맵 목록 캐시
+	// LobbyGameMode에서 맵 목록 캐시 (서버)
 	if (UWorld* World = GetWorld())
 	{
 		if (AHellunaLobbyGameMode* LobbyGM = Cast<AHellunaLobbyGameMode>(World->GetAuthGameMode()))
 		{
 			CachedMapConfigs = LobbyGM->AvailableMapConfigs;
 			SelectedMapKey = LobbyGM->DefaultMapKey;
+		}
+	}
 
-			// DefaultMapKey에 해당하는 인덱스 찾기
-			for (int32 i = 0; i < CachedMapConfigs.Num(); ++i)
+	// [Hotfix] 클라이언트 폴백: BP CDO에서 맵 목록 로드
+	if (CachedMapConfigs.Num() == 0)
+	{
+		UClass* GMClass = StaticLoadClass(
+			AHellunaLobbyGameMode::StaticClass(), nullptr,
+			TEXT("/Game/Gihyeon/Lobby/BP_HellunaLobbyGameMode.BP_HellunaLobbyGameMode_C"));
+		if (GMClass)
+		{
+			if (AHellunaLobbyGameMode* GMCDO = Cast<AHellunaLobbyGameMode>(GMClass->GetDefaultObject()))
 			{
-				if (CachedMapConfigs[i].MapKey == SelectedMapKey)
-				{
-					CurrentMapIndex = i;
-					break;
-				}
+				CachedMapConfigs = GMCDO->AvailableMapConfigs;
+				SelectedMapKey = GMCDO->DefaultMapKey;
+				UE_LOG(LogHellunaLobby, Log,
+					TEXT("[StashWidget] [Hotfix] 클라이언트 폴백: BP CDO에서 맵 %d개 로드"),
+					CachedMapConfigs.Num());
 			}
+		}
+	}
+
+	// DefaultMapKey에 해당하는 인덱스 찾기
+	for (int32 i = 0; i < CachedMapConfigs.Num(); ++i)
+	{
+		if (CachedMapConfigs[i].MapKey == SelectedMapKey)
+		{
+			CurrentMapIndex = i;
+			break;
 		}
 	}
 
