@@ -11,6 +11,8 @@
 
 // 에너미의 HitNiagaraEffect / MulticastPlayEffect 호출용
 #include "Character/HellunaEnemyCharacter.h"
+#include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
+#include "GameFramework/Pawn.h"
 
 AHellunaProjectile_Enemy::AHellunaProjectile_Enemy()
 {
@@ -27,9 +29,8 @@ AHellunaProjectile_Enemy::AHellunaProjectile_Enemy()
 	CollisionSphere->SetGenerateOverlapEvents(true);
 	CollisionSphere->SetCollisionObjectType(ECC_WorldDynamic);
 	CollisionSphere->SetCollisionResponseToAllChannels(ECR_Ignore);
-	CollisionSphere->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Overlap);
-	CollisionSphere->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Overlap);
-	CollisionSphere->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+	CollisionSphere->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Overlap); // 우주선 DynamicMesh (WorldStatic)
+	CollisionSphere->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);         // 플레이어
 	CollisionSphere->OnComponentBeginOverlap.AddDynamic(this, &AHellunaProjectile_Enemy::OnBeginOverlap);
 
 	// ── 이동 컴포넌트 (중력 0 = 직진형) ─────────────────────
@@ -104,7 +105,14 @@ void AHellunaProjectile_Enemy::OnBeginOverlap(
 	if (bHit)            return;
 	if (!OtherActor || OtherActor == this || OtherActor == GetOwner() || OtherActor == GetInstigator()) return;
 
-	// FVector_NetQuantize 는 FVector 로 명시적 변환 필요
+	UE_LOG(LogTemp, Warning, TEXT("[EnemyProjectile] Overlap: %s | Comp: %s"),
+		*OtherActor->GetName(), *GetNameSafe(OtherComp));
+
+	// 플레이어(Pawn) 또는 우주선 DynamicMesh에만 데미지 적용, 나머지 무시
+	const bool bIsSpaceShip = (Cast<AResourceUsingObject_SpaceShip>(OtherActor) != nullptr);
+	const bool bIsPawn      = (Cast<APawn>(OtherActor) != nullptr);
+	if (!bIsSpaceShip && !bIsPawn) return;
+
 	const FVector HitLocation = bFromSweep ? FVector(SweepResult.ImpactPoint) : GetActorLocation();
 	HitTarget(OtherActor, HitLocation);
 }

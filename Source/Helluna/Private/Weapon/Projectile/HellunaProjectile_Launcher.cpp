@@ -6,11 +6,14 @@
 #include "Components/BoxComponent.h"
 #include "GameFramework/ProjectileMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "Engine/World.h"
+#include "Engine/OverlapResult.h"
 #include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
 
 #include "DebugHelper.h"
 #include "DrawDebugHelpers.h"
+#include "Character/HellunaEnemyCharacter.h"
 
 AHellunaProjectile_Launcher::AHellunaProjectile_Launcher()
 {
@@ -149,17 +152,64 @@ void AHellunaProjectile_Launcher::Explode(const FVector& ExplosionLocation)
 	if (AActor* OwnerActor = GetOwner()) Ignore.Add(OwnerActor);
 	if (APawn* InstigatorPawn = GetInstigator()) Ignore.Add(InstigatorPawn);
 
-	UGameplayStatics::ApplyRadialDamage(
-		this,
-		Damage,
-		ExplosionLocation,
-		Radius,
-		UDamageType::StaticClass(),
-		Ignore,
-		this,
-		GetInstigatorController(),
-		true
-	);
+	// 폭발 범위 내 Pawn 수집 후, WorldStatic에 막히지 않은 대상에게만 데미지
+	if (UWorld* World = GetWorld())
+	{
+		TArray<FOverlapResult> Overlaps;
+		FCollisionQueryParams QueryParams;
+		QueryParams.AddIgnoredActors(Ignore);
+
+		// Pawn 채널만 수집 — 몬스터/플레이어만 대상
+		World->OverlapMultiByObjectType(
+			Overlaps,
+			ExplosionLocation,
+			FQuat::Identity,
+			FCollisionObjectQueryParams(ECC_Pawn),
+			FCollisionShape::MakeSphere(Radius),
+			QueryParams
+		);
+
+		TSet<AActor*> DamagedActors;
+		for (const FOverlapResult& Overlap : Overlaps)
+		{
+			AActor* Victim = Overlap.OverlapObjectHandle.FetchActor();
+			if (!Victim || DamagedActors.Contains(Victim)) continue;
+			if (!Victim->CanBeDamaged()) continue;
+
+			// 적(HellunaEnemyCharacter)인지 확인 — 적에게만 데미지 적용
+			if (!Cast<AHellunaEnemyCharacter>(Victim)) continue;
+
+			// bIgnoreWorldStatic=false일 때만 WorldStatic 차단 체크
+			if (!bIgnoreWorldStatic)
+			{
+				FHitResult Hit;
+				FCollisionQueryParams LineParams;
+				LineParams.AddIgnoredActors(Ignore);
+				LineParams.AddIgnoredActor(Victim);
+
+				const bool bBlocked = World->LineTraceSingleByObjectType(
+					Hit,
+					ExplosionLocation,
+					Victim->GetActorLocation(),
+					FCollisionObjectQueryParams(ECC_WorldStatic),
+					LineParams
+				);
+
+				if (bBlocked) continue;
+			}
+
+			DamagedActors.Add(Victim);
+			UGameplayStatics::ApplyPointDamage(
+				Victim,
+				Damage,
+				(Victim->GetActorLocation() - ExplosionLocation).GetSafeNormal(),
+				FHitResult(),
+				GetInstigatorController(),
+				this,
+				UDamageType::StaticClass()
+			);
+		}
+	}
 
 	//디버그 용 구체
 	if (bDebugDrawRadialDamage)

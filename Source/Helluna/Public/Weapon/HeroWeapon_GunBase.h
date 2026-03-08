@@ -107,6 +107,7 @@ protected:
 	UFUNCTION()
 	void OnRep_CurrentAmmoInMag();
 
+public:
 	void BroadcastAmmoChanged();
 
 public:

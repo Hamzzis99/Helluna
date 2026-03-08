@@ -19,7 +19,14 @@ void AHeroWeapon_GunBase::BeginPlay()
 {
 	Super::BeginPlay();
 
-	CurrentMag = MaxMag;
+	// 서버에서만 MaxMag로 초기화한다.
+	// 클라이언트는 BeginPlay에서 초기화하지 않고,
+	// OnRep_CurrentWeapon → ApplySavedCurrentMagByClass 경로로 올바른 값을 받는다.
+	// (클라이언트에서 MaxMag로 초기화하면 OnRep 이전에 30/30이 잠깐 표시되는 문제가 발생)
+	if (HasAuthority())
+	{
+		CurrentMag = MaxMag;
+	}
 }
 
 bool AHeroWeapon_GunBase::CanFire() const

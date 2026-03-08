@@ -1,4 +1,4 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Fill out your copyright notice in the Description page of Project Settings.
 
 #pragma once
 
@@ -171,6 +171,29 @@ public:
 
     // ✅ 서버(GameMode)에서만 값을 갱신하도록 하는 Setter
     void SetAliveMonsterCount(int32 NewCount);
+
+    // ── 낮/밤 UI용 복제 변수 ────────────────────────────────────────────────
+
+    /** 낮에 밤까지 남은 시간(초) — GameMode에서 매 틱 갱신 */
+    UPROPERTY(Replicated, BlueprintReadOnly, Category = "Defense|UI")
+    float DayTimeRemaining = 0.f;
+
+    /** 이번 밤 총 소환 몬스터 수 */
+    UPROPERTY(Replicated, BlueprintReadOnly, Category = "Defense|UI")
+    int32 TotalMonstersThisNight = 0;
+
+    /** 현재 진행 중인 Day 번호 (1-based) */
+    UPROPERTY(Replicated, BlueprintReadOnly, Category = "Defense|UI")
+    int32 CurrentDayForUI = 0;
+
+    /** 이번 밤이 보스 출현 밤인지 */
+    UPROPERTY(Replicated, BlueprintReadOnly, Category = "Defense|UI")
+    bool bIsBossNight = false;
+
+    void SetDayTimeRemaining(float InTime);
+    void SetTotalMonstersThisNight(int32 InTotal);
+    void SetCurrentDayForUI(int32 InDay);
+    void SetIsBossNight(bool bInVal);
 
     // =========================================================================================
     // [김기현 작업 영역 시작] MDF Interface 구현 및 시스템 함수

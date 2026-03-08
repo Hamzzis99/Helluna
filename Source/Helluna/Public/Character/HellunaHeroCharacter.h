@@ -20,6 +20,7 @@ class UHelluna_FindResourceComponent;
 class UWeaponBridgeComponent;
 class AHeroWeapon_GunBase;
 class UHellunaHealthComponent;
+class UWeaponHUDWidget;
 
 /**
  * 
@@ -68,7 +69,7 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon", meta = (AllowPrivateAccess = "true", DisplayName = "무기 브릿지 컴포넌트"))
 	UWeaponBridgeComponent* WeaponBridgeComponent;
 
-	UPROPERTY(Replicated, VisibleInstanceOnly, Category = "Weapon")
+	UPROPERTY(ReplicatedUsing = OnRep_CurrentWeapon, VisibleInstanceOnly, Category = "Weapon")
 	TObjectPtr<AHellunaHeroWeapon> CurrentWeapon;
 
 
@@ -98,7 +99,30 @@ public:
 
 
 	AHellunaHeroWeapon* GetCurrentWeapon() const { return CurrentWeapon; }
-	void SetCurrentWeapon(AHellunaHeroWeapon* NewWeapon) { CurrentWeapon = NewWeapon; }
+	void SetCurrentWeapon(AHellunaHeroWeapon* NewWeapon);
+
+	// ── 무기 HUD ────────────────────────────────────────────────────
+
+	/** BP에서 사용할 WeaponHUD 위젯 클래스 (에디터에서 지정) */
+	UPROPERTY(EditDefaultsOnly, Category = "UI|Weapon",
+		meta = (DisplayName = "무기 HUD 위젯 클래스"))
+	TSubclassOf<UWeaponHUDWidget> WeaponHUDWidgetClass;
+
+	/** 생성된 WeaponHUD 위젯 인스턴스 */
+	UPROPERTY()
+	TObjectPtr<UWeaponHUDWidget> WeaponHUDWidget;
+
+	/** 낮/밤 HUD 위젯 클래스 (에디터에서 지정) */
+	UPROPERTY(EditDefaultsOnly, Category = "UI|DayNight",
+		meta = (DisplayName = "낮밤 HUD 위젯 클래스"))
+	TSubclassOf<UUserWidget> DayNightHUDWidgetClass;
+
+	/** 생성된 낮/밤 HUD 위젯 인스턴스 */
+	UPROPERTY()
+	TObjectPtr<UUserWidget> DayNightHUDWidget;
+
+	/** 로컬 플레이어 전용 HUD 생성 및 뷰포트 추가 */
+	void InitWeaponHUD();
 
 	// ⭐ SpaceShip 수리 RPC (PlayerController가 소유하므로 작동!)
 	// @param Material1Tag - 재료 1 태그
@@ -161,6 +185,9 @@ protected:
 	// ✅ OnRep: 클라에서 태그를 ASC에 적용
 	UFUNCTION()
 	void OnRep_CurrentWeaponTag();
+
+	UFUNCTION()
+	void OnRep_CurrentWeapon();
 
 	// ✅ 서버/클라 공통으로 태그 적용 유틸
 	void ApplyTagToASC(const FGameplayTag& OldTag, const FGameplayTag& NewTag);

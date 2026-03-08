@@ -136,12 +136,20 @@ void AHellunaDefenseGameMode::EnterDay()
     {
         GS->SetPhase(EDefensePhase::Day);
         GS->SetAliveMonsterCount(0);
+        GS->SetCurrentDayForUI(CurrentDay);
+        GS->SetDayTimeRemaining(TestDayDuration);
+        GS->SetTotalMonstersThisNight(0);
+        GS->SetIsBossNight(false);
         GS->MulticastPrintDay();
         GS->NetMulticast_OnDawnPassed(TestDayDuration);
     }
 
     GetWorldTimerManager().ClearTimer(TimerHandle_ToNight);
     GetWorldTimerManager().SetTimer(TimerHandle_ToNight, this, &ThisClass::EnterNight, TestDayDuration, false);
+
+    // 1초마다 남은 낮 시간 감소
+    GetWorldTimerManager().ClearTimer(TimerHandle_DayCountdown);
+    GetWorldTimerManager().SetTimer(TimerHandle_DayCountdown, this, &ThisClass::TickDayCountdown, 1.f, true);
 }
 
 void AHellunaDefenseGameMode::EnterNight()
@@ -155,8 +163,12 @@ void AHellunaDefenseGameMode::EnterNight()
     if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
     {
         GS->SetPhase(EDefensePhase::Night);
-        GS->SetAliveMonsterCount(0);
+        GS->SetDayTimeRemaining(0.f);   // 밤엔 낮 타이머 0
+        // AliveMonsterCount는 TriggerMassSpawning/보스 소환 확정 후 설정
     }
+
+    // 낮 카운트다운 타이머 정지
+    GetWorldTimerManager().ClearTimer(TimerHandle_DayCountdown);
 
     // ── 보스 소환 일 체크 ──────────────────────────────────────────────
     // BossSchedule 배열에서 CurrentDay와 일치하는 항목을 찾는다.
@@ -180,6 +192,14 @@ void AHellunaDefenseGameMode::EnterNight()
             CurrentDay,
             FoundEntry->BossClass ? *FoundEntry->BossClass->GetName() : TEXT("null")),
             FColor::Red);
+
+        // 보스 1마리 소환 → UI용 몬스터 수 설정
+        if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
+        {
+            GS->SetIsBossNight(true);
+            GS->SetTotalMonstersThisNight(1);
+            GS->SetAliveMonsterCount(1);
+        }
 
         SetBossReady(true);
         TrySummonBoss(*FoundEntry);
@@ -311,6 +331,13 @@ void AHellunaDefenseGameMode::TriggerMassSpawning()
             TEXT("[TriggerMassSpawning] 원거리 RequestSpawn(%d): %s | 누적: %d"),
             RangeCount, *Spawner->GetName(), RemainingMonstersThisNight), FColor::Green);
     }
+
+    // 총 소환 수 확정 후 GameState에 반영 — Total과 Alive를 동시에 설정
+    if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
+    {
+        GS->SetTotalMonstersThisNight(RemainingMonstersThisNight);
+        GS->SetAliveMonsterCount(RemainingMonstersThisNight);
+    }
 }
 
 // ============================================================
@@ -360,15 +387,10 @@ void AHellunaDefenseGameMode::NotifyMonsterDied(AActor* DeadMonster)
 
     // ── 일반 몬스터: 카운터 차감 ──────────────────────────────────────
     RemainingMonstersThisNight = FMath::Max(0, RemainingMonstersThisNight - 1);
-
-    Debug::Print(FString::Printf(
-        TEXT("[NotifyMonsterDied] %s 사망 | 남은: %d"),
-        *DeadMonster->GetName(), RemainingMonstersThisNight),
-        FColor::Orange);
+    GS->SetAliveMonsterCount(RemainingMonstersThisNight); // UI 갱신
 
     if (RemainingMonstersThisNight <= 0)
     {
-        Debug::Print(TEXT("[NotifyMonsterDied] ✅ 전멸 → 낮 전환 타이머 시작"), FColor::Yellow);
         GetWorldTimerManager().ClearTimer(TimerHandle_ToDay);
         GetWorldTimerManager().SetTimer(TimerHandle_ToDay, this, &ThisClass::EnterDay, TestNightFailToDayDelay, false);
     }
@@ -403,6 +425,12 @@ void AHellunaDefenseGameMode::NotifyBossDied(AActor* DeadBoss)
         FColor::Red);
 
     // TODO: 보스/세미보스 사망 후속 처리 (보상, 연출, 클리어 조건 등) 이후 구현
+
+    // 보스 사망 -> AliveMonsterCount 0으로 설정
+    if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
+    {
+        GS->SetAliveMonsterCount(0);
+    }
 }
 
 // ============================================================
@@ -525,4 +553,13 @@ void AHellunaDefenseGameMode::RestartGame()
     if (!HasAuthority()) return;
     bGameInitialized = false;
     GetWorld()->ServerTravel(TEXT("/Game/Minwoo/MinwooTestMap?listen"));
+}
+
+void AHellunaDefenseGameMode::TickDayCountdown()
+{
+    AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>();
+    if (!GS) return;
+
+    float Remaining = FMath::Max(0.f, GS->DayTimeRemaining - 1.f);
+    GS->SetDayTimeRemaining(Remaining);
 }

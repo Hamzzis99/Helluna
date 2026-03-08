@@ -137,13 +137,6 @@ void UHeroGameplayAbility_Shoot::Shoot()
 		if (AController* Controller = Hero->GetController())
 		{
 			Weapon->Fire(Controller);  // 여기서 ApplyPointDamage + MulticastFireFX
-
-			Debug::Print(FString::Printf(
-				TEXT("weapon name : %s, mag : %d/%d"),
-				*GetNameSafe(Weapon),
-				Weapon->CurrentMag,
-				Weapon->MaxMag
-			));
 		}
 	}
 

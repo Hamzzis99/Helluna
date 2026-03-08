@@ -1,4 +1,4 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Fill out your copyright notice in the Description page of Project Settings.
 
 
 #include "Character/HellunaHeroCharacter.h"
@@ -36,6 +36,8 @@
 #include "DebugHelper.h"
 #include "Animation/AnimInstance.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
+#include "UI/Weapon/WeaponHUDWidget.h"
+#include "Blueprint/UserWidget.h"
 
 
 AHellunaHeroCharacter::AHellunaHeroCharacter()
@@ -84,6 +86,67 @@ void AHellunaHeroCharacter::BeginPlay()
 	{
 		HeroHealthComponent->OnHealthChanged.AddUniqueDynamic(this, &AHellunaHeroCharacter::OnHeroHealthChanged);
 		HeroHealthComponent->OnDeath.AddUniqueDynamic(this, &AHellunaHeroCharacter::OnHeroDeath);
+	}
+
+	// 로컬 플레이어 전용 무기 HUD 생성
+	InitWeaponHUD();
+}
+
+// ============================================================================
+// SetCurrentWeapon - 무기 교체 시 WeaponHUD 갱신
+// ============================================================================
+void AHellunaHeroCharacter::SetCurrentWeapon(AHellunaHeroWeapon* NewWeapon)
+{
+	CurrentWeapon = NewWeapon;
+
+	if (IsLocallyControlled() && WeaponHUDWidget)
+	{
+		WeaponHUDWidget->UpdateWeapon(NewWeapon);
+	}
+}
+
+// ============================================================================
+// OnRep_CurrentWeapon — 클라이언트에서 무기 복제 수신 시 HUD 갱신
+// ============================================================================
+void AHellunaHeroCharacter::OnRep_CurrentWeapon()
+{
+	if (!IsLocallyControlled()) return;
+
+	// 클라이언트에서도 SavedMag 기준으로 탄약을 즉시 복원한다.
+	// (서버의 OnRep 복제가 BeginPlay의 MaxMag 초기화보다 늦게 올 수 있어서
+	//  클라이언트 자체적으로 저장된 값을 반영해 딜레이를 없앤다.)
+	ApplySavedCurrentMagByClass(CurrentWeapon);
+
+	if (WeaponHUDWidget)
+	{
+		WeaponHUDWidget->UpdateWeapon(CurrentWeapon);
+	}
+}
+
+// ============================================================================
+// InitWeaponHUD - 로컬 플레이어 전용 HUD 생성
+// ============================================================================
+void AHellunaHeroCharacter::InitWeaponHUD()
+{
+	if (!IsLocallyControlled()) return;
+
+	if (WeaponHUDWidgetClass)
+	{
+		WeaponHUDWidget = CreateWidget<UWeaponHUDWidget>(GetWorld(), WeaponHUDWidgetClass);
+		if (WeaponHUDWidget)
+		{
+			WeaponHUDWidget->AddToViewport(0);
+			if (CurrentWeapon)
+				WeaponHUDWidget->UpdateWeapon(CurrentWeapon);
+		}
+	}
+
+	// 낮/밤 HUD 생성
+	if (DayNightHUDWidgetClass)
+	{
+		DayNightHUDWidget = CreateWidget<UUserWidget>(GetWorld(), DayNightHUDWidgetClass);
+		if (DayNightHUDWidget)
+			DayNightHUDWidget->AddToViewport(0);
 	}
 }
 
@@ -546,11 +609,12 @@ void AHellunaHeroCharacter::Server_RequestSpawnWeapon_Implementation(
 		InAttachSocket
 	);
 
-	// 현재 손에 든 무기 포인터 갱신
+	// 탄약 먼저 복원 → SetCurrentWeapon 이전에 CurrentMag를 올바른 값으로 맞춰둔다.
+	// (SetCurrentWeapon 내부에서 HUD가 갱신되므로 순서가 중요하다.)
+	ApplySavedCurrentMagByClass(NewWeapon);
+
+	// 현재 손에 새 무기 지정 — 내부에서 WeaponHUDWidget->UpdateWeapon() 호출
 	SetCurrentWeapon(NewWeapon);
-
-	ApplySavedCurrentMagByClass(NewWeapon); // [ADD]
-
 	// ------------------------------------------------------------------------
 	// ✅ 무기 태그 처리(ASC가 있을 때만)
 	// - OldTag 제거, NewTag 추가
@@ -687,7 +751,7 @@ void AHellunaHeroCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
-	DOREPLIFETIME(AHellunaHeroCharacter, CurrentWeapon);
+	DOREPLIFETIME(AHellunaHeroCharacter, CurrentWeapon);  // OnRep_CurrentWeapon → HUD 갱신
 	DOREPLIFETIME(AHellunaHeroCharacter, CurrentWeaponTag);
 }
 
@@ -783,6 +847,7 @@ void AHellunaHeroCharacter::Server_RequestPlayMontageExceptOwner_Implementation(
 }
 void AHellunaHeroCharacter::SaveCurrentMagByClass(AHellunaHeroWeapon* Weapon)
 {
+	// 서버에서만 저장 (탄약은 서버가 권위를 가짐)
 	if (!HasAuthority()) return;
 	if (!IsValid(Weapon)) return;
 
@@ -792,12 +857,12 @@ void AHellunaHeroCharacter::SaveCurrentMagByClass(AHellunaHeroWeapon* Weapon)
 	TSubclassOf<AHellunaHeroWeapon> WeaponClass = Weapon->GetClass();
 	if (!WeaponClass) return;
 
+	// 무기 클래스를 키로 현재 탄약 저장 → 다음에 같은 종류 무기를 들 때 복원
 	SavedMagByWeaponClass.FindOrAdd(WeaponClass) = FMath::Clamp(Gun->CurrentMag, 0, Gun->MaxMag);
 }
 
 void AHellunaHeroCharacter::ApplySavedCurrentMagByClass(AHellunaHeroWeapon* Weapon)
 {
-	if (!HasAuthority()) return;
 	if (!IsValid(Weapon)) return;
 
 	AHeroWeapon_GunBase* Gun = Cast<AHeroWeapon_GunBase>(Weapon);
@@ -806,12 +871,19 @@ void AHellunaHeroCharacter::ApplySavedCurrentMagByClass(AHellunaHeroWeapon* Weap
 	TSubclassOf<AHellunaHeroWeapon> WeaponClass = Weapon->GetClass();
 	if (!WeaponClass) return;
 
+	// 저장된 탄약이 없으면 (처음 드는 무기) 복원하지 않는다
 	const int32* SavedMag = SavedMagByWeaponClass.Find(WeaponClass);
-	if (!SavedMag)
-		return;
+	if (!SavedMag) return;
 
+	// 저장된 탄약을 현재 무기에 즉시 반영
 	Gun->CurrentMag = FMath::Clamp(*SavedMag, 0, Gun->MaxMag);
-	Gun->ForceNetUpdate();
+
+	// 서버에서는 복제 트리거, 클라이언트에서는 로컬 값 직접 반영
+	if (HasAuthority())
+	{
+		Gun->BroadcastAmmoChanged();
+		Gun->ForceNetUpdate();
+	}
 }
 
 // =========================================================

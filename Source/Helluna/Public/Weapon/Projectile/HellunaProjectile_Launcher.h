@@ -75,6 +75,9 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Projectile|FX", meta = (DisplayName = "디버그 표시"))
 	bool bDebugDrawRadialDamage = false;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Projectile|Tuning", meta = (DisplayName = "벽 통과"))
+	bool bIgnoreWorldStatic = false;
+
 private:
 	// 서버에서만 사용(복제 X)
 	float Damage = 0.f;

@@ -53,20 +53,82 @@ static void IssueMoveToLocation(AAIController* AIController, const FVector& Goal
 }
 
 // ============================================================================
-// 헬퍼: 우주선 주변 NavMesh 위 랜덤 접근 위치 반환
+// 헬퍼: 우주선의 ShipCombatCollision 박스 목록 수집
 // ============================================================================
-static bool FindShipApproachPoint(UWorld* World, const FVector& ShipCenter, float Radius, FVector& OutPoint)
+static void CollectShipBoxes(AActor* ShipActor, TArray<UPrimitiveComponent*>& OutBoxes)
 {
-	if (!World) return false;
+	if (!ShipActor) return;
+	TArray<UPrimitiveComponent*> Prims;
+	ShipActor->GetComponents<UPrimitiveComponent>(Prims);
+	for (UPrimitiveComponent* Prim : Prims)
+	{
+		if (Prim && Prim->ComponentHasTag(TEXT("ShipCombatCollision")))
+			OutBoxes.Add(Prim);
+	}
+}
+
+// ============================================================================
+// 헬퍼: 지정 박스 인덱스 위치 → NavMesh 투영 후 이동 명령
+// 박스가 없거나 투영 실패 시 폴백 처리
+// ============================================================================
+static bool FindShipApproachPoint(
+	UWorld* World,
+	const FVector& PawnLocation,
+	AActor* ShipActor,
+	int32 BoxIndex,
+	const TArray<UPrimitiveComponent*>& Boxes,
+	float SpreadRadius,
+	float FallbackRadius,
+	FVector& OutPoint)
+{
+	if (!World || !ShipActor) return false;
+
 	UNavigationSystemV1* NavSys = UNavigationSystemV1::GetCurrent(World);
 	if (!NavSys) return false;
 
-	FNavLocation NavLoc;
-	if (!NavSys->GetRandomReachablePointInRadius(ShipCenter, Radius, NavLoc))
-		return false;
+	// 유효한 박스 인덱스면 해당 박스 XY 사용, 없으면 우주선 중심 XY
+	FVector BaseXY;
+	if (Boxes.IsValidIndex(BoxIndex))
+	{
+		const FVector BoxLoc = Boxes[BoxIndex]->GetComponentLocation();
+		BaseXY = FVector(BoxLoc.X, BoxLoc.Y, PawnLocation.Z);
+	}
+	else
+	{
+		const FVector ShipLoc = ShipActor->GetActorLocation();
+		BaseXY = FVector(ShipLoc.X, ShipLoc.Y, PawnLocation.Z);
+	}
 
-	OutPoint = NavLoc.Location;
-	return true;
+	// 랜덤 오프셋으로 분산
+	const FVector RandomOffset(
+		FMath::RandRange(-SpreadRadius, SpreadRadius),
+		FMath::RandRange(-SpreadRadius, SpreadRadius),
+		0.f
+	);
+
+	const FVector Extent(100.f, 100.f, 500.f);
+	FNavLocation NavLoc;
+
+	// 1차: 오프셋 포함 투영
+	if (NavSys->ProjectPointToNavigation(BaseXY + RandomOffset, NavLoc, Extent))
+	{
+		OutPoint = NavLoc.Location;
+		return true;
+	}
+	// 2차: 오프셋 없이 재시도
+	if (NavSys->ProjectPointToNavigation(BaseXY, NavLoc, Extent))
+	{
+		OutPoint = NavLoc.Location;
+		return true;
+	}
+	// 3차: 우주선 주변 NavMesh 랜덤 폴백
+	if (NavSys->GetRandomReachablePointInRadius(ShipActor->GetActorLocation(), FallbackRadius, NavLoc))
+	{
+		OutPoint = NavLoc.Location;
+		return true;
+	}
+
+	return false;
 }
 
 // ============================================================================
@@ -114,10 +176,19 @@ static void RunAttackPositionEQS(
 // ============================================================================
 // 우주선 이동 명령 발행 헬퍼
 // ============================================================================
-static void IssueShipMove(AAIController* AIController, AActor* ShipActor, float AcceptanceRadius)
+static void IssueShipMove(
+	AAIController* AIController,
+	AActor* ShipActor,
+	float AcceptanceRadius,
+	float ShipSpreadRadius,
+	int32 BoxIndex,
+	const TArray<UPrimitiveComponent*>& Boxes)
 {
+	APawn* Pawn = AIController->GetPawn();
+	const FVector PawnLoc = Pawn ? Pawn->GetActorLocation() : ShipActor->GetActorLocation();
+
 	FVector Goal;
-	if (FindShipApproachPoint(AIController->GetWorld(), ShipActor->GetActorLocation(), 800.f, Goal))
+	if (FindShipApproachPoint(AIController->GetWorld(), PawnLoc, ShipActor, BoxIndex, Boxes, ShipSpreadRadius, 800.f, Goal))
 		IssueMoveToLocation(AIController, Goal, AcceptanceRadius);
 	else
 		AIController->MoveToActor(ShipActor, AcceptanceRadius, true, true, false, nullptr, true);
@@ -152,11 +223,35 @@ EStateTreeRunStatus FSTTask_ChaseTarget::EnterState(
 
 	InstanceData.TimeSinceRepath  = 0.f;
 	InstanceData.TimeUntilNextEQS = 0.f;
+	InstanceData.StuckAccumTime   = 0.f;
 
 	if (bIsSpaceShip)
 	{
-		// 우주선: FindShipApproachPoint로 NavMesh 위 랜덤 접근 위치로 이동
-		IssueShipMove(AIController, TargetActor, AcceptanceRadius);
+		// 박스 수집 후 가장 가까운 박스를 초기 목표로 선택
+		TArray<UPrimitiveComponent*> Boxes;
+		CollectShipBoxes(TargetActor, Boxes);
+
+		if (Boxes.Num() > 0)
+		{
+			const FVector PawnLoc = AIController->GetPawn()
+				? AIController->GetPawn()->GetActorLocation()
+				: TargetActor->GetActorLocation();
+
+			int32 BestIdx = 0;
+			float BestDistSq = MAX_FLT;
+			for (int32 i = 0; i < Boxes.Num(); ++i)
+			{
+				const float DistSq = FVector::DistSquared(PawnLoc, Boxes[i]->GetComponentLocation());
+				if (DistSq < BestDistSq) { BestDistSq = DistSq; BestIdx = i; }
+			}
+			InstanceData.CurrentBoxIndex = BestIdx;
+			IssueShipMove(AIController, TargetActor, AcceptanceRadius, ShipSpreadRadius, BestIdx, Boxes);
+		}
+		else
+		{
+			InstanceData.CurrentBoxIndex = -1;
+			IssueShipMove(AIController, TargetActor, AcceptanceRadius, ShipSpreadRadius, -1, Boxes);
+		}
 	}
 	else
 	{
@@ -212,32 +307,73 @@ EStateTreeRunStatus FSTTask_ChaseTarget::Tick(
 
 	if (bIsSpaceShip)
 	{
-		// ── 우주선 ──────────────────────────────────────────────
-		// EQS 사용 안 함. FindShipApproachPoint로 NavMesh 위 접근 위치 사용.
-		// Stuck: Moving 중인데 속도가 거의 없을 때만 재발행
-		bool bStuck = false;
-		if (UPathFollowingComponent* PFC = AIController->GetPathFollowingComponent())
-		{
-			const bool bMoving = (PFC->GetStatus() == EPathFollowingStatus::Moving);
-			const bool bSlow   = (Pawn->GetVelocity().SizeSquared2D() < 30.f * 30.f);
-			const bool bFar    = (TargetData.DistanceToTarget > AcceptanceRadius + 150.f);
-			bStuck = bMoving && bSlow && bFar;
-		}
+		// ── 우주선 ──────────────────────────────────────────────────────────
+		// 박스 목록 수집 (Tick마다 하지 않고 캐싱된 인덱스 활용)
+		TArray<UPrimitiveComponent*> Boxes;
+		CollectShipBoxes(TargetActor, Boxes);
 
-		// Idle이고 멀리 있으면 이동 명령 재발행 (EnterState 실패 대비)
-		bool bNeedMove = false;
-		if (UPathFollowingComponent* PFC = AIController->GetPathFollowingComponent())
+		// 타겟이 바뀌었거나 아직 박스 미설정이면 가장 가까운 박스로 초기화
+		if (bTargetChanged || InstanceData.CurrentBoxIndex < 0)
 		{
-			const bool bIdle = (PFC->GetStatus() == EPathFollowingStatus::Idle);
-			const bool bFar  = (TargetData.DistanceToTarget > AcceptanceRadius + 200.f);
-			bNeedMove = bIdle && bFar;
+			const FVector PawnLoc = Pawn->GetActorLocation();
+			int32 BestIdx = 0;
+			float BestDistSq = MAX_FLT;
+			for (int32 i = 0; i < Boxes.Num(); ++i)
+			{
+				const float D = FVector::DistSquared(PawnLoc, Boxes[i]->GetComponentLocation());
+				if (D < BestDistSq) { BestDistSq = D; BestIdx = i; }
+			}
+			InstanceData.CurrentBoxIndex = BestIdx;
+			InstanceData.StuckAccumTime  = 0.f;
+			IssueShipMove(AIController, TargetActor, AcceptanceRadius, ShipSpreadRadius, InstanceData.CurrentBoxIndex, Boxes);
+			InstanceData.LastMoveTarget = TargetData.TargetActor;
 		}
-
-		if (bTargetChanged || bStuck || bNeedMove)
+		else
 		{
-			IssueShipMove(AIController, TargetActor, AcceptanceRadius);
-			InstanceData.LastMoveTarget  = TargetData.TargetActor;
-			InstanceData.TimeSinceRepath = 0.f;
+			// Stuck 감지: Moving 중인데 느리면 누적
+			bool bMovingSlow = false;
+			bool bIdle       = false;
+			if (UPathFollowingComponent* PFC = AIController->GetPathFollowingComponent())
+			{
+				bIdle = (PFC->GetStatus() == EPathFollowingStatus::Idle);
+				const bool bMoving = (PFC->GetStatus() == EPathFollowingStatus::Moving);
+				const bool bSlow   = (Pawn->GetVelocity().SizeSquared2D() < 30.f * 30.f);
+				const bool bFar    = (TargetData.DistanceToTarget > AcceptanceRadius + 150.f);
+				bMovingSlow = bMoving && bSlow && bFar;
+			}
+
+			if (bMovingSlow)
+				InstanceData.StuckAccumTime += DeltaTime;
+			else
+				InstanceData.StuckAccumTime = FMath::Max(0.f, InstanceData.StuckAccumTime - DeltaTime);
+
+			// 2초 이상 Stuck → 다음 박스로 전환 (점유 적은 박스 우선)
+			const bool bStuckConfirmed = (InstanceData.StuckAccumTime >= 1.f);
+
+			// Idle이고 아직 멀면 재발행 (EnterState 실패 대비)
+			const bool bNeedMove = bIdle && (TargetData.DistanceToTarget > AcceptanceRadius + 200.f);
+
+			if (bStuckConfirmed || bNeedMove)
+			{
+				if (bStuckConfirmed && Boxes.Num() > 1)
+				{
+					// 현재 박스 제외 → 나머지 중 가장 가까운 박스 선택
+					const FVector PawnLoc = Pawn->GetActorLocation();
+					int32 NextIdx = InstanceData.CurrentBoxIndex;
+					float BestDistSq = MAX_FLT;
+					for (int32 i = 0; i < Boxes.Num(); ++i)
+					{
+						if (i == InstanceData.CurrentBoxIndex) continue;
+						const float D = FVector::DistSquared(PawnLoc, Boxes[i]->GetComponentLocation());
+						if (D < BestDistSq) { BestDistSq = D; NextIdx = i; }
+					}
+					InstanceData.CurrentBoxIndex = NextIdx;
+				}
+
+				InstanceData.StuckAccumTime = 0.f;
+				IssueShipMove(AIController, TargetActor, AcceptanceRadius, ShipSpreadRadius, InstanceData.CurrentBoxIndex, Boxes);
+				InstanceData.LastMoveTarget = TargetData.TargetActor;
+			}
 		}
 	}
 	else
