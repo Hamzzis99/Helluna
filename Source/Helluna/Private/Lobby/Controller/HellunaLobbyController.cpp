@@ -1966,6 +1966,19 @@ void AHellunaLobbyController::Server_SetSelectedMap_Implementation(const FString
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_SetSelectedMap | MapKey=%s"), *MapKey);
 }
 
+// [Phase 18] 게임 모드 설정
+
+bool AHellunaLobbyController::Server_SetGameMode_Validate(ELobbyGameMode Mode)
+{
+	return static_cast<uint8>(Mode) <= 2;
+}
+
+void AHellunaLobbyController::Server_SetGameMode_Implementation(ELobbyGameMode Mode)
+{
+	SelectedGameMode = Mode;
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] [Phase18] Server_SetGameMode | Mode=%d"), static_cast<int32>(Mode));
+}
+
 // ════════════════════════════════════════════════════════════════════════════════
 
 bool AHellunaLobbyController::Server_EnterMatchmaking_Validate()

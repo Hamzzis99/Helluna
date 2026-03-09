@@ -20,9 +20,13 @@
 #include "Player/Inv_PlayerController.h"
 #include "HAL/IConsoleManager.h"
 #include "Chat/HellunaChatTypes.h"
+#include "Login/Controller/HellunaLoginController.h"  // [Fix50]
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "HAL/FileManager.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
+#include "Dom/JsonObject.h"
 
 AHellunaDefenseGameMode::AHellunaDefenseGameMode()
 {
@@ -79,6 +83,9 @@ void AHellunaDefenseGameMode::BeginPlay()
             UE_LOG(LogHelluna, Log, TEXT("[DefenseGameMode] [Phase16] 유휴 종료 타이머 시작 (%.0f초)"), IdleShutdownSeconds);
         }
     }
+
+    // [Phase 19] 빈 상태에서 커맨드 파일 폴링 시작
+    StartCommandPollTimer();
 
 #if HELLUNA_DEBUG_DEFENSE
     UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] BeginPlay 완료 — BossSpawn:%d / MeleeSpawn:%d / RangeSpawn:%d"),
@@ -706,6 +713,9 @@ void AHellunaDefenseGameMode::PostLogin(APlayerController* NewPlayer)
         W->GetTimerManager().ClearTimer(IdleShutdownTimer);
     }
 
+    // [Phase 19] 커맨드 폴링 중지 (플레이어 접속)
+    StopCommandPollTimer();
+
     // Phase 10: 접속 메시지
     if (bGameInitialized && IsValid(NewPlayer))
     {
@@ -953,6 +963,22 @@ void AHellunaDefenseGameMode::ProcessPlayerGameResult(APlayerController* PC, boo
 // ============================================================
 void AHellunaDefenseGameMode::Logout(AController* Exiting)
 {
+    // [Fix50] LoginController → HeroController 스왑 시 Logout 스킵
+    // SwapPlayerControllers가 LoginController를 파괴하면 Logout이 호출되지만,
+    // 이것은 실제 플레이어 이탈이 아닌 컨트롤러 교체.
+    if (AHellunaLoginController* ExitingLC = Cast<AHellunaLoginController>(Exiting))
+    {
+        AHellunaPlayerState* PS = ExitingLC->GetPlayerState<AHellunaPlayerState>();
+        bool bIsControllerSwap = (!PS || PS->GetPlayerUniqueId().IsEmpty());
+        if (bIsControllerSwap)
+        {
+            UE_LOG(LogHelluna, Log, TEXT("[Fix50] LoginController 스왑 감지 — Logout 처리 스킵 | Controller=%s"),
+                *GetNameSafe(Exiting));
+            Super::Logout(Exiting);
+            return;
+        }
+    }
+
     // Phase 10: 퇴장 메시지
     if (bGameInitialized)
     {
@@ -1060,6 +1086,12 @@ void AHellunaDefenseGameMode::Logout(AController* Exiting)
                 &AHellunaDefenseGameMode::CheckIdleShutdown, IdleShutdownSeconds, false);
             UE_LOG(LogHelluna, Log, TEXT("[Phase16] 전원 이탈 — 유휴 종료 타이머 재시작 (%.0f초)"), IdleShutdownSeconds);
         }
+    }
+
+    // [Phase 19] 전원 이탈 → 커맨드 폴링 재시작
+    if (CurrentPlayerCount == 0 && !bGameEnded)
+    {
+        StartCommandPollTimer();
     }
 
     Super::Logout(Exiting);
@@ -1306,5 +1338,78 @@ void AHellunaDefenseGameMode::CheckIdleShutdown()
         UE_LOG(LogHelluna, Log, TEXT("[Phase16] 유휴 종료 — 접속자 0, 서버 종료"));
         DeleteRegistryFile();
         FGenericPlatformMisc::RequestExit(false);
+    }
+}
+
+// ============================================================
+// [Phase 19] 커맨드 파일 폴링 — 빈 서버 맵 전환
+// ============================================================
+
+void AHellunaDefenseGameMode::PollForCommand()
+{
+    if (CurrentPlayerCount > 0 || bGameEnded)
+    {
+        return;
+    }
+
+    const FString CmdPath = FPaths::Combine(
+        GetRegistryDirectoryPath(),
+        FString::Printf(TEXT("command_%d.json"), GetServerPort()));
+
+    FString JsonString;
+    if (!FFileHelper::LoadFileToString(JsonString, *CmdPath))
+    {
+        return;
+    }
+
+    TSharedPtr<FJsonObject> JsonObj;
+    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonString);
+    if (!FJsonSerializer::Deserialize(Reader, JsonObj) || !JsonObj.IsValid())
+    {
+        return;
+    }
+
+    const FString Command = JsonObj->GetStringField(TEXT("command"));
+    if (Command != TEXT("servertravel"))
+    {
+        return;
+    }
+
+    const FString MapPath = JsonObj->GetStringField(TEXT("mapPath"));
+    if (MapPath.IsEmpty())
+    {
+        return;
+    }
+
+    // 커맨드 파일 삭제 (먼저 삭제 — 중복 실행 방지)
+    IFileManager::Get().Delete(*CmdPath);
+
+    // 타이머 정리
+    StopCommandPollTimer();
+    if (UWorld* W = GetWorld())
+    {
+        W->GetTimerManager().ClearTimer(IdleShutdownTimer);
+        W->GetTimerManager().ClearTimer(RegistryHeartbeatTimer);
+    }
+
+    // [Phase 19 수정] ServerTravel은 UE 5.7 World Partition 크래시 유발 → RequestExit로 프로세스 종료
+    UE_LOG(LogHelluna, Log, TEXT("[Phase19] 커맨드 파일 감지 → RequestExit (ServerTravel 대신) | MapPath=%s"), *MapPath);
+    FGenericPlatformMisc::RequestExit(false);
+}
+
+void AHellunaDefenseGameMode::StartCommandPollTimer()
+{
+    if (UWorld* W = GetWorld())
+    {
+        W->GetTimerManager().SetTimer(CommandPollTimer, this,
+            &AHellunaDefenseGameMode::PollForCommand, 2.0f, true);
+    }
+}
+
+void AHellunaDefenseGameMode::StopCommandPollTimer()
+{
+    if (UWorld* W = GetWorld())
+    {
+        W->GetTimerManager().ClearTimer(CommandPollTimer);
     }
 }

@@ -2004,9 +2004,70 @@ void AHellunaLobbyGameMode::TryAutoDeployParty(int32 PartyId)
 	}
 
 	// 전원 Ready + 중복 없음 + 캐릭터 선택 완료 → Deploy!
-	// [Phase 15] 매칭 큐 경유 → TryFormMatch가 Deploy 처리
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] TryAutoDeployParty: 전원 Ready — 매칭 큐 진입 | PartyId=%d"), PartyId);
-	EnterMatchmakingQueue(Info.LeaderId);
+
+	// [Phase 18] 리더의 게임 모드에 따라 직접 Deploy vs 매칭 큐 분기
+	auto* LeaderPCPtr = PlayerIdToControllerMap.Find(Info.LeaderId);
+	ELobbyGameMode LeaderMode = ELobbyGameMode::Squad; // 기본값: 안전하게 Squad
+	if (LeaderPCPtr && LeaderPCPtr->IsValid())
+	{
+		LeaderMode = LeaderPCPtr->Get()->SelectedGameMode;
+	}
+
+	const int32 ModeCapacity = GetModeCapacity(LeaderMode);
+	const int32 PartySize = Info.Members.Num();
+
+	if (PartySize >= ModeCapacity)
+	{
+		// 파티가 모드 정원 이상 → 직접 Deploy (매칭 큐 불필요)
+		UE_LOG(LogHellunaLobby, Log,
+			TEXT("[LobbyGM] [Phase18] TryAutoDeployParty: 파티 정원 충족 → 직접 Deploy | PartyId=%d | Mode=%d | PartySize=%d | Capacity=%d"),
+			PartyId, static_cast<int32>(LeaderMode), PartySize, ModeCapacity);
+
+		// 리더의 맵 키 가져오기
+		FString MapKey;
+		if (LeaderPCPtr && LeaderPCPtr->IsValid())
+		{
+			MapKey = LeaderPCPtr->Get()->SelectedMapKey;
+		}
+		if (MapKey.IsEmpty())
+		{
+			MapKey = DefaultMapKey;
+		}
+
+		// 합성 큐 엔트리 생성 (ExecuteMatchedDeploy 재활용)
+		FMatchmakingQueueEntry SyntheticEntry;
+		SyntheticEntry.EntryId = NextQueueEntryId++;
+		SyntheticEntry.PartyId = PartyId;
+		SyntheticEntry.QueueEnterTime = FPlatformTime::Seconds();
+		SyntheticEntry.SelectedMapKey = MapKey;
+		SyntheticEntry.GameMode = LeaderMode;
+
+		for (const FHellunaPartyMemberInfo& Member : Info.Members)
+		{
+			SyntheticEntry.PlayerIds.Add(Member.PlayerId);
+			SyntheticEntry.HeroTypes.Add(Member.SelectedHeroType);
+		}
+
+		TArray<FMatchmakingQueueEntry> DirectMatched;
+		DirectMatched.Add(MoveTemp(SyntheticEntry));
+		ExecuteMatchedDeploy(DirectMatched);
+
+		// Ready 리셋 (Deploy 완료 후)
+		if (SQLiteSubsystem)
+		{
+			SQLiteSubsystem->ResetAllReadyStates(PartyId);
+		}
+		RefreshPartyCache(PartyId);
+		BroadcastPartyState(PartyId);
+	}
+	else
+	{
+		// 파티가 모드 정원 미달 → 매칭 큐 진입 (추가 플레이어 필요)
+		UE_LOG(LogHellunaLobby, Log,
+			TEXT("[LobbyGM] [Phase18] TryAutoDeployParty: 정원 미달 → 매칭 큐 진입 | PartyId=%d | Mode=%d | PartySize=%d | Capacity=%d"),
+			PartyId, static_cast<int32>(LeaderMode), PartySize, ModeCapacity);
+		EnterMatchmakingQueue(Info.LeaderId);
+	}
 }
 
 void AHellunaLobbyGameMode::ExecutePartyDeploy(int32 PartyId)
@@ -2374,6 +2435,12 @@ void AHellunaLobbyGameMode::EnterMatchmakingQueue(const FString& PlayerId, const
 		}
 	}
 
+	// [Phase 18] 게임 모드 저장
+	if (PCPtr && PCPtr->IsValid())
+	{
+		NewEntry.GameMode = PCPtr->Get()->SelectedGameMode;
+	}
+
 	// 큐에 추가
 	MatchmakingQueue.Add(NewEntry);
 	for (const FString& PId : NewEntry.PlayerIds)
@@ -2465,7 +2532,7 @@ void AHellunaLobbyGameMode::BroadcastMatchmakingStatus()
 		StatusInfo.Status = EMatchmakingStatus::Searching;
 		StatusInfo.ElapsedTime = static_cast<float>(Now - Entry.QueueEnterTime);
 		StatusInfo.CurrentPlayerCount = MapKeyPlayerCounts.FindRef(Entry.SelectedMapKey);
-		StatusInfo.TargetPlayerCount = 3;
+		StatusInfo.TargetPlayerCount = GetModeCapacity(Entry.GameMode);
 
 		for (const FString& PId : Entry.PlayerIds)
 		{
@@ -2480,10 +2547,11 @@ void AHellunaLobbyGameMode::BroadcastMatchmakingStatus()
 
 bool AHellunaLobbyGameMode::TryFormMatch()
 {
-	// Pass 1: 3인 엔트리 → 카운트다운 시작
+	// Pass 1: 단일 엔트리가 모드 정원 이상 → 즉시 매칭 (SOLO=1, DUO=2, SQUAD=3)
 	for (int32 i = MatchmakingQueue.Num() - 1; i >= 0; --i)
 	{
-		if (MatchmakingQueue[i].GetPlayerCount() >= 3)
+		const int32 Capacity = GetModeCapacity(MatchmakingQueue[i].GameMode);
+		if (MatchmakingQueue[i].GetPlayerCount() >= Capacity)
 		{
 			TArray<FMatchmakingQueueEntry> Matched;
 			Matched.Add(MatchmakingQueue[i]);
@@ -2493,24 +2561,19 @@ bool AHellunaLobbyGameMode::TryFormMatch()
 		}
 	}
 
-	// Pass 2: 2인 + 1인 조합 — [Phase 16] 같은 MapKey만
+	// Pass 2: SQUAD 2인 + 1인 조합 — 같은 MapKey + 같은 GameMode
 	for (int32 a = 0; a < MatchmakingQueue.Num(); ++a)
 	{
-		if (MatchmakingQueue[a].GetPlayerCount() != 2)
-		{
-			continue;
-		}
+		if (MatchmakingQueue[a].GameMode != ELobbyGameMode::Squad) continue;
+		if (MatchmakingQueue[a].GetPlayerCount() != 2) continue;
+
 		for (int32 b = 0; b < MatchmakingQueue.Num(); ++b)
 		{
-			if (b == a || MatchmakingQueue[b].GetPlayerCount() != 1)
-			{
-				continue;
-			}
-			// [Phase 16] 맵 키 필터
-			if (MatchmakingQueue[a].SelectedMapKey != MatchmakingQueue[b].SelectedMapKey)
-			{
-				continue;
-			}
+			if (b == a) continue;
+			if (MatchmakingQueue[b].GameMode != ELobbyGameMode::Squad) continue;
+			if (MatchmakingQueue[b].GetPlayerCount() != 1) continue;
+			if (MatchmakingQueue[a].SelectedMapKey != MatchmakingQueue[b].SelectedMapKey) continue;
+
 			TArray<FMatchmakingQueueEntry> Matched;
 			Matched.Add(MatchmakingQueue[a]);
 			Matched.Add(MatchmakingQueue[b]);
@@ -2520,38 +2583,57 @@ bool AHellunaLobbyGameMode::TryFormMatch()
 		}
 	}
 
-	// Pass 3: 1인 + 1인 + 1인 조합 (시간순, 브루트포스) — [Phase 16] 같은 MapKey만
-	TArray<int32> SoloIndices;
-	for (int32 i = 0; i < MatchmakingQueue.Num(); ++i)
+	// Pass 3: DUO 1인 + 1인 조합 — 같은 MapKey + 같은 GameMode
+	for (int32 a = 0; a < MatchmakingQueue.Num(); ++a)
 	{
-		if (MatchmakingQueue[i].GetPlayerCount() == 1)
+		if (MatchmakingQueue[a].GameMode != ELobbyGameMode::Duo) continue;
+		if (MatchmakingQueue[a].GetPlayerCount() != 1) continue;
+
+		for (int32 b = a + 1; b < MatchmakingQueue.Num(); ++b)
 		{
-			SoloIndices.Add(i);
+			if (MatchmakingQueue[b].GameMode != ELobbyGameMode::Duo) continue;
+			if (MatchmakingQueue[b].GetPlayerCount() != 1) continue;
+			if (MatchmakingQueue[a].SelectedMapKey != MatchmakingQueue[b].SelectedMapKey) continue;
+
+			TArray<FMatchmakingQueueEntry> Matched;
+			Matched.Add(MatchmakingQueue[a]);
+			Matched.Add(MatchmakingQueue[b]);
+			auto ReassignedMap = ResolveHeroDuplication(Matched);
+			StartMatchCountdown(MoveTemp(Matched), MoveTemp(ReassignedMap));
+			return true;
 		}
 	}
 
-	if (SoloIndices.Num() >= 3)
+	// Pass 4: SQUAD 1인 + 1인 + 1인 조합 — 같은 MapKey + 같은 GameMode
+	TArray<int32> SquadSoloIndices;
+	for (int32 i = 0; i < MatchmakingQueue.Num(); ++i)
 	{
-		for (int32 a = 0; a < SoloIndices.Num() - 2; ++a)
+		if (MatchmakingQueue[i].GameMode == ELobbyGameMode::Squad && MatchmakingQueue[i].GetPlayerCount() == 1)
 		{
-			for (int32 b = a + 1; b < SoloIndices.Num() - 1; ++b)
+			SquadSoloIndices.Add(i);
+		}
+	}
+
+	if (SquadSoloIndices.Num() >= 3)
+	{
+		for (int32 a = 0; a < SquadSoloIndices.Num() - 2; ++a)
+		{
+			for (int32 b = a + 1; b < SquadSoloIndices.Num() - 1; ++b)
 			{
-				// [Phase 16] 맵 키 필터
-				if (MatchmakingQueue[SoloIndices[a]].SelectedMapKey != MatchmakingQueue[SoloIndices[b]].SelectedMapKey)
+				if (MatchmakingQueue[SquadSoloIndices[a]].SelectedMapKey != MatchmakingQueue[SquadSoloIndices[b]].SelectedMapKey)
 				{
 					continue;
 				}
-				for (int32 c = b + 1; c < SoloIndices.Num(); ++c)
+				for (int32 c = b + 1; c < SquadSoloIndices.Num(); ++c)
 				{
-					// [Phase 16] 맵 키 필터
-					if (MatchmakingQueue[SoloIndices[a]].SelectedMapKey != MatchmakingQueue[SoloIndices[c]].SelectedMapKey)
+					if (MatchmakingQueue[SquadSoloIndices[a]].SelectedMapKey != MatchmakingQueue[SquadSoloIndices[c]].SelectedMapKey)
 					{
 						continue;
 					}
 					TArray<FMatchmakingQueueEntry> Matched;
-					Matched.Add(MatchmakingQueue[SoloIndices[a]]);
-					Matched.Add(MatchmakingQueue[SoloIndices[b]]);
-					Matched.Add(MatchmakingQueue[SoloIndices[c]]);
+					Matched.Add(MatchmakingQueue[SquadSoloIndices[a]]);
+					Matched.Add(MatchmakingQueue[SquadSoloIndices[b]]);
+					Matched.Add(MatchmakingQueue[SquadSoloIndices[c]]);
 					auto ReassignedMap = ResolveHeroDuplication(Matched);
 					StartMatchCountdown(MoveTemp(Matched), MoveTemp(ReassignedMap));
 					return true;
@@ -2580,7 +2662,7 @@ void AHellunaLobbyGameMode::ExecuteMatchedDeploy(const TArray<FMatchmakingQueueE
 	}
 	else
 	{
-		// [Phase 16] 빈 채널 없음 → 동적 서버 스폰
+		// [Phase 16/19] 빈 채널 없음 → 맵 전환 or 동적 서버 스폰
 		if (!GameServerManager)
 		{
 			UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [Phase16] GameServerManager 없음!"));
@@ -2616,6 +2698,32 @@ void AHellunaLobbyGameMode::ExecuteMatchedDeploy(const TArray<FMatchmakingQueueE
 			return;
 		}
 
+		// [Phase 19] 아무 빈 서버 찾기 → 종료 후 같은 포트에 새 맵으로 재스폰
+		// (ServerTravel은 UE 5.7 World Partition 크래시 유발 → 프로세스 재시작 방식)
+		FGameChannelInfo AnyEmptyChannel;
+		if (FindEmptyChannel(AnyEmptyChannel))
+		{
+			const int32 RespawnedPort = GameServerManager->RespawnGameServer(AnyEmptyChannel.Port, MapPath);
+			if (RespawnedPort > 0)
+			{
+				MarkChannelAsPendingDeploy(RespawnedPort);
+				UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Phase19] 빈 서버 재스폰 | Port=%d | MapPath=%s"),
+					RespawnedPort, *MapPath);
+
+				for (const FMatchmakingQueueEntry& Entry : Matched)
+				{
+					RemoveQueueEntry(Entry.EntryId);
+				}
+
+				TArray<FMatchmakingQueueEntry> MatchedCopy = Matched;
+				WaitAndDeploy(RespawnedPort, MoveTemp(MatchedCopy));
+				return;
+			}
+			// RespawnGameServer 실패 시 아래로 fallthrough → 새 포트에 스폰
+			UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] [Phase19] RespawnGameServer 실패 → 새 프로세스 스폰 시도"));
+		}
+
+		// [Phase 16] 빈 서버 없거나 재스폰 실패 → 새 프로세스 스폰
 		const int32 SpawnedPort = GameServerManager->SpawnGameServer(MapPath);
 		if (SpawnedPort < 0)
 		{
@@ -2731,7 +2839,7 @@ void AHellunaLobbyGameMode::ExecuteMatchedDeploy(const TArray<FMatchmakingQueueE
 // [Phase 16] WaitAndDeploy — 서버 스폰 후 준비 대기
 // ════════════════════════════════════════════════════════════════════════════════
 
-void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEntry> Matched)
+void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEntry> Matched, const FString& MapKey)
 {
 	UWorld* World = GetWorld();
 	if (!World)
@@ -2746,8 +2854,9 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 	FTimerHandle& TimerHandle = WaitAndDeployTimers.FindOrAdd(Port);
 	TWeakObjectPtr<AHellunaLobbyGameMode> WeakThis(this);
 
+	// [Phase 19] MapKey 캡처 — 비어있으면 맵 무관 체크 (기존 동작), 있으면 맵 일치 체크
 	World->GetTimerManager().SetTimer(TimerHandle,
-		[WeakThis, Port, Matched = MoveTemp(Matched), StartTime, TimeoutSeconds]() mutable
+		[WeakThis, Port, Matched = MoveTemp(Matched), StartTime, TimeoutSeconds, MapKey]() mutable
 		{
 			if (!WeakThis.IsValid())
 			{
@@ -2763,7 +2872,10 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 				UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [Phase16] WaitAndDeploy 타임아웃 | Port=%d | %.1f초"),
 					Port, Elapsed);
 
-				// 타이머 해제
+				// [Fix51-B] ClearTimer 전에 데이터를 먼저 꺼냄 (ClearTimer가 람다 캡처를 즉시 파괴할 수 있음)
+				TArray<FMatchmakingQueueEntry> TimeoutMatched = MoveTemp(Matched);
+
+				// 타이머 해제 (Matched는 이미 이동됨 → 빈 배열 → 소멸 안전)
 				if (UWorld* W = Self->GetWorld())
 				{
 					FTimerHandle* TH = Self->WaitAndDeployTimers.Find(Port);
@@ -2775,8 +2887,8 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 				Self->WaitAndDeployTimers.Remove(Port);
 				Self->PendingDeployChannels.Remove(Port);
 
-				// 에러 전송
-				for (const FMatchmakingQueueEntry& Entry : Matched)
+				// 에러 전송 (안전한 로컬 복사본 사용)
+				for (const FMatchmakingQueueEntry& Entry : TimeoutMatched)
 				{
 					for (const FString& PId : Entry.PlayerIds)
 					{
@@ -2790,15 +2902,27 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 				return;
 			}
 
-			// 서버 준비 확인
-			if (!Self->GameServerManager || !Self->GameServerManager->IsServerReady(Port))
+			// [Phase 19] 서버 준비 확인 — MapKey가 있으면 맵 일치까지 체크
+			if (!Self->GameServerManager)
+			{
+				return;
+			}
+			const bool bReady = MapKey.IsEmpty()
+				? Self->GameServerManager->IsServerReady(Port)
+				: Self->GameServerManager->IsServerReadyForMap(Port, MapKey);
+			if (!bReady)
 			{
 				return; // 아직 미준비 → 다음 폴링 대기
 			}
 
 			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Phase16] 서버 준비 완료 | Port=%d | %.1f초 대기"), Port, Elapsed);
 
-			// 타이머 해제
+			// [Fix51-B] ClearTimer 전에 데이터를 먼저 꺼냄 (ClearTimer가 람다 캡처를 즉시 파괴할 수 있음)
+			TArray<FMatchmakingQueueEntry> DeployMatched = MoveTemp(Matched);
+			TWeakObjectPtr<AHellunaLobbyGameMode> DeployWeakSelf = WeakThis;
+			const int32 DeployPort = Port;
+
+			// 타이머 해제 (Matched는 이미 이동됨 → 빈 배열 → 소멸 안전)
 			if (UWorld* W = Self->GetWorld())
 			{
 				FTimerHandle* TH = Self->WaitAndDeployTimers.Find(Port);
@@ -2809,69 +2933,99 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 			}
 			Self->WaitAndDeployTimers.Remove(Port);
 
-			// 전원 Save + Deploy
-			for (const FMatchmakingQueueEntry& Entry : Matched)
+
+			if (UWorld* W = Self->GetWorld())
 			{
-				for (int32 Idx = 0; Idx < Entry.PlayerIds.Num(); ++Idx)
+				W->GetTimerManager().SetTimerForNextTick([DeployWeakSelf, DeployPort, DeployMatched = MoveTemp(DeployMatched)]()
 				{
-					const FString& PId = Entry.PlayerIds[Idx];
-					const int32 HeroType = Entry.HeroTypes.IsValidIndex(Idx) ? Entry.HeroTypes[Idx] : 3;
+					if (!DeployWeakSelf.IsValid()) return;
+					AHellunaLobbyGameMode* GM = DeployWeakSelf.Get();
 
-					auto* PCPtr = Self->PlayerIdToControllerMap.Find(PId);
-					if (!PCPtr || !PCPtr->IsValid())
+					// 전원 Save + Deploy
+					for (const FMatchmakingQueueEntry& Entry : DeployMatched)
 					{
-						UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [Phase16] Controller 없음 | PlayerId=%s"), *PId);
-						continue;
-					}
-
-					AHellunaLobbyController* MemberPC = PCPtr->Get();
-					UInv_InventoryComponent* LoadoutComp = MemberPC->GetLoadoutComponent();
-					UInv_InventoryComponent* StashComp = MemberPC->GetStashComponent();
-
-					if (Self->SQLiteSubsystem && Self->SQLiteSubsystem->IsDatabaseReady())
-					{
-						if (LoadoutComp)
+						for (int32 Idx = 0; Idx < Entry.PlayerIds.Num(); ++Idx)
 						{
-							TArray<FInv_SavedItemData> LoadoutItems = LoadoutComp->CollectInventoryDataForSave();
-							if (LoadoutItems.Num() > 0)
+							const FString& PId = Entry.PlayerIds[Idx];
+							const int32 HeroType = Entry.HeroTypes.IsValidIndex(Idx) ? Entry.HeroTypes[Idx] : 3;
+
+							auto* PCPtr = GM->PlayerIdToControllerMap.Find(PId);
+							if (!PCPtr || !PCPtr->IsValid())
 							{
-								Self->SQLiteSubsystem->SavePlayerLoadout(PId, LoadoutItems);
-								Self->SQLiteSubsystem->ExportLoadoutToFile(PId, LoadoutItems, HeroType);
+								UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [Phase16] Controller 없음 | PlayerId=%s"), *PId);
+								continue;
+							}
+
+							AHellunaLobbyController* MemberPC = PCPtr->Get();
+							UInv_InventoryComponent* LoadoutComp = MemberPC->GetLoadoutComponent();
+							UInv_InventoryComponent* StashComp = MemberPC->GetStashComponent();
+
+							if (GM->SQLiteSubsystem && GM->SQLiteSubsystem->IsDatabaseReady())
+							{
+								if (LoadoutComp)
+								{
+									TArray<FInv_SavedItemData> LoadoutItems = LoadoutComp->CollectInventoryDataForSave();
+									if (LoadoutItems.Num() > 0)
+									{
+										GM->SQLiteSubsystem->SavePlayerLoadout(PId, LoadoutItems);
+										GM->SQLiteSubsystem->ExportLoadoutToFile(PId, LoadoutItems, HeroType);
+									}
+								}
+								if (StashComp)
+								{
+									TArray<FInv_SavedItemData> StashItems = StashComp->CollectInventoryDataForSave();
+									GM->SQLiteSubsystem->SavePlayerStash(PId, StashItems);
+								}
+
+								GM->SQLiteSubsystem->SetPlayerDeployedWithPort(PId, true, DeployPort, HeroType);
 							}
 						}
-						if (StashComp)
-						{
-							TArray<FInv_SavedItemData> StashItems = StashComp->CollectInventoryDataForSave();
-							Self->SQLiteSubsystem->SavePlayerStash(PId, StashItems);
-						}
-
-						Self->SQLiteSubsystem->SetPlayerDeployedWithPort(PId, true, Port, HeroType);
 					}
-				}
-			}
 
-			// 전원 Client Deploy RPC
-			for (const FMatchmakingQueueEntry& Entry : Matched)
-			{
-				for (const FString& PId : Entry.PlayerIds)
-				{
-					auto* PCPtr = Self->PlayerIdToControllerMap.Find(PId);
-					if (!PCPtr || !PCPtr->IsValid())
+					// 전원 Client Deploy RPC
+					for (const FMatchmakingQueueEntry& Entry : DeployMatched)
 					{
-						continue;
+						for (const FString& PId : Entry.PlayerIds)
+						{
+							auto* PCPtr = GM->PlayerIdToControllerMap.Find(PId);
+							if (!PCPtr || !PCPtr->IsValid())
+							{
+								continue;
+							}
+
+							AHellunaLobbyController* MemberPC = PCPtr->Get();
+							MemberPC->SetDeployInProgress(true);
+							MemberPC->Client_ExecutePartyDeploy(DeployPort);
+
+							UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Phase16] Client_ExecutePartyDeploy 전송 | PlayerId=%s | Port=%d"),
+								*PId, DeployPort);
+						}
 					}
-
-					AHellunaLobbyController* MemberPC = PCPtr->Get();
-					MemberPC->SetDeployInProgress(true);
-					MemberPC->Client_ExecutePartyDeploy(Port);
-
-					UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Phase16] Client_ExecutePartyDeploy 전송 | PlayerId=%s | Port=%d"),
-						*PId, Port);
-				}
+				});
 			}
 		},
 		PollInterval, true // 반복
 	);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 19] WriteMapSwitchCommand — 빈 서버에 맵 전환 커맨드 파일 작성
+// ════════════════════════════════════════════════════════════════════════════════
+
+void AHellunaLobbyGameMode::WriteMapSwitchCommand(int32 Port, const FString& MapPath)
+{
+	const FString CmdPath = FPaths::Combine(
+		GetRegistryDirectoryPath(),
+		FString::Printf(TEXT("command_%d.json"), Port));
+
+	const FString Json = FString::Printf(
+		TEXT("{\"command\":\"servertravel\",\"mapPath\":\"%s\",\"timestamp\":\"%s\"}"),
+		*MapPath, *FDateTime::UtcNow().ToIso8601());
+
+	FFileHelper::SaveStringToFile(Json, *CmdPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[Phase19] WriteMapSwitchCommand | Port=%d | MapPath=%s | Path=%s"),
+		Port, *MapPath, *CmdPath);
 }
 
 void AHellunaLobbyGameMode::RemoveQueueEntry(int32 EntryId)

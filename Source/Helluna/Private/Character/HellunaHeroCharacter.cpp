@@ -50,6 +50,10 @@ AHellunaHeroCharacter::AHellunaHeroCharacter()
 {
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.f);
 
+	// ⭐ 모든 캐릭터 BP가 UHellunaInputComponent를 사용하도록 보장
+	// BP에서 개별 설정 누락 시 기본 UInputComponent → Cast 실패 → 입력 바인딩 스킵 버그 방지
+	OverrideInputComponentClass = UHellunaInputComponent::StaticClass();
+
 	bUseControllerRotationPitch = false;
 	bUseControllerRotationYaw = false;
 	bUseControllerRotationRoll = false;

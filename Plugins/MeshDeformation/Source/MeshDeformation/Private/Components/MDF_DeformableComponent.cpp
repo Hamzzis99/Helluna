@@ -18,6 +18,8 @@
 #include "DynamicMesh/DynamicMesh3.h"
 #include "GeometryScript/MeshAssetFunctions.h"
 #include "GeometryScript/MeshNormalsFunctions.h"
+#include "GeometryScript/MeshVertexColorFunctions.h"
+#include "Materials/MaterialInstanceDynamic.h"
 
 // [★필수 추가] 탄젠트 옵션 구조체 정의 헤더
 // (이게 없으면 FGeometryScriptTangentsOptions 에러가 발생할 수 있습니다)
@@ -248,13 +250,13 @@ void UMDF_DeformableComponent::HandlePointDamage(AActor* DamagedActor, float Dam
     }
 
     // 4. 컴포넌트 찾기
-    UDynamicMeshComponent* MeshComp = Cast<UDynamicMeshComponent>(FHitComponent);
-    if (!IsValid(MeshComp))
+    UDynamicMeshComponent* HitMeshComp = Cast<UDynamicMeshComponent>(FHitComponent);
+    if (!IsValid(HitMeshComp))
     {
-        MeshComp = GetOwner()->FindComponentByClass<UDynamicMeshComponent>();
+        HitMeshComp = GetOwner()->FindComponentByClass<UDynamicMeshComponent>();
     }
 
-    if (IsValid(MeshComp))
+    if (IsValid(HitMeshComp))
     {
         // 5. 좌표 변환 (월드 좌표 -> 메쉬 로컬 좌표)
         FVector LocalPos = ConvertWorldToLocal(HitLocation);
@@ -398,8 +400,8 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
     AActor* Owner = GetOwner();
     if (!IsValid(Owner)) return;
 
-    UDynamicMeshComponent* MeshComp = Owner->FindComponentByClass<UDynamicMeshComponent>();
-    if (!IsValid(MeshComp) || !IsValid(MeshComp->GetDynamicMesh())) return;
+    UDynamicMeshComponent* DeformMeshComp = Owner->FindComponentByClass<UDynamicMeshComponent>();
+    if (!IsValid(DeformMeshComp) || !IsValid(DeformMeshComp->GetDynamicMesh())) return;
 
     int32 EndIndex = FMath::Min(StartIndex + Count, HitHistoryArray.Items.Num());
     if (StartIndex >= EndIndex) return;
@@ -422,7 +424,7 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
     // [디버그] 적용할 지점 표시
     for (int32 i = StartIndex; i < EndIndex; ++i)
     {
-        FVector WorldPos = MeshComp->GetComponentTransform().TransformPosition(HitHistoryArray.Items[i].LocalLocation);
+        FVector WorldPos = DeformMeshComp->GetComponentTransform().TransformPosition(HitHistoryArray.Items[i].LocalLocation);
 #if MDF_DEBUG_DEFORM
         UE_LOG(LogMeshDeform, Verbose, TEXT("[MDF Deform] Hit[%d] LocalPos: %s, Damage: %.1f"),
             i, *HitHistoryArray.Items[i].LocalLocation.ToString(), HitHistoryArray.Items[i].Damage);
@@ -439,14 +441,27 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
 
     // 메쉬 편집 시작 (Vertex 순회)
     int32 TotalVertexCount = 0;
-    MeshComp->GetDynamicMesh()->EditMesh([&](UE::Geometry::FDynamicMesh3& EditMesh)
+    const bool bPaintVertexColor = bEnableVisualDamage && !IsRunningDedicatedServer();
+
+    DeformMeshComp->GetDynamicMesh()->EditMesh([&](UE::Geometry::FDynamicMesh3& EditMesh)
     {
+        // [Phase 18] Vertex Color Overlay 접근
+        UE::Geometry::FDynamicMeshColorOverlay* ColorOverlay = nullptr;
+        if (bPaintVertexColor && EditMesh.HasAttributes())
+        {
+            ColorOverlay = EditMesh.Attributes()->PrimaryColors();
+        }
+
         for (int32 VertexID : EditMesh.VertexIndicesItr())
         {
             TotalVertexCount++;
             FVector3d VertexPos = EditMesh.GetVertex(VertexID);
             FVector3d TotalOffset(0.0, 0.0, 0.0);
             bool bModified = false;
+
+            // [Phase 18] Vertex Color 페인팅 변수
+            float MaxDamageIntensity = 0.0f;
+            float DamageTypeEncoded = 0.0f;
 
             // 새로 추가된 히트 데이터들만 순회하며 오프셋 누적
             for (int32 i = StartIndex; i < EndIndex; ++i)
@@ -476,6 +491,23 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
                     // 총알 방향으로 밀어넣기
                     TotalOffset += (FVector3d)Hit.LocalDirection * (double)(CurrentStrength * Falloff);
                     bModified = true;
+
+                    // [Phase 18] Vertex Color 강도 계산
+                    if (bPaintVertexColor)
+                    {
+                        float Intensity = static_cast<float>(Falloff) * DamageFactor * DamageColorIntensityScale;
+                        if (Intensity > MaxDamageIntensity)
+                        {
+                            MaxDamageIntensity = Intensity;
+                            // 데미지 타입 인코딩: Ranged=0.0, Melee=0.5, Breach=1.0
+                            if (Hit.DamageTypeClass && MeleeDamageType && Hit.DamageTypeClass->IsChildOf(MeleeDamageType))
+                                DamageTypeEncoded = 0.5f;
+                            else if (Hit.DamageTypeClass && BreachDamageType && Hit.DamageTypeClass->IsChildOf(BreachDamageType))
+                                DamageTypeEncoded = 1.0f;
+                            else
+                                DamageTypeEncoded = 0.0f;
+                        }
+                    }
                 }
             }
 
@@ -485,6 +517,32 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
                 EditMesh.SetVertex(VertexID, VertexPos + TotalOffset);
                 bAnyModified = true;
                 ModifiedVertexCount++;
+
+                // [Phase 18] Vertex Color 페인팅
+                if (ColorOverlay && MaxDamageIntensity > 0.0f)
+                {
+                    float ClampedIntensity = FMath::Clamp(MaxDamageIntensity, 0.0f, 1.0f);
+                    EditMesh.EnumerateVertexTriangles(VertexID, [&](int32 TriangleID)
+                    {
+                        UE::Geometry::FIndex3i TriElements = ColorOverlay->GetTriangle(TriangleID);
+                        UE::Geometry::FIndex3i TriVertices = EditMesh.GetTriangle(TriangleID);
+
+                        for (int32 SubIdx = 0; SubIdx < 3; ++SubIdx)
+                        {
+                            if (TriVertices[SubIdx] == VertexID)
+                            {
+                                int32 ElementID = TriElements[SubIdx];
+                                if (ColorOverlay->IsElement(ElementID))
+                                {
+                                    FVector4f Existing = ColorOverlay->GetElement(ElementID);
+                                    Existing.X = FMath::Max(Existing.X, ClampedIntensity); // R: 최대 강도
+                                    Existing.Y = DamageTypeEncoded;                         // G: 타입
+                                    ColorOverlay->SetElement(ElementID, Existing);
+                                }
+                            }
+                        }
+                    });
+                }
             }
         }
     }, EDynamicMeshChangeType::GeneralEdit);
@@ -507,14 +565,14 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
     }
 
     // 충돌 업데이트 (서버 + 클라 모두)
-    MeshComp->UpdateCollision();
+    DeformMeshComp->UpdateCollision();
 
     // 렌더링 업데이트 (클라이언트 전용)
     if (!IsRunningDedicatedServer())
     {
-        UGeometryScriptLibrary_MeshNormalsFunctions::RecomputeNormals(MeshComp->GetDynamicMesh(), FGeometryScriptCalculateNormalsOptions());
-        UGeometryScriptLibrary_MeshNormalsFunctions::ComputeTangents(MeshComp->GetDynamicMesh(), FGeometryScriptTangentsOptions());
-        MeshComp->NotifyMeshUpdated();
+        UGeometryScriptLibrary_MeshNormalsFunctions::RecomputeNormals(DeformMeshComp->GetDynamicMesh(), FGeometryScriptCalculateNormalsOptions());
+        UGeometryScriptLibrary_MeshNormalsFunctions::ComputeTangents(DeformMeshComp->GetDynamicMesh(), FGeometryScriptTangentsOptions());
+        DeformMeshComp->NotifyMeshUpdated();
     }
 
 #if MDF_DEBUG_DEFORM
@@ -546,10 +604,10 @@ void UMDF_DeformableComponent::NetMulticast_PlayEffects_Implementation(const TAr
     AActor* Owner = GetOwner();
     if (!IsValid(Owner)) return;
 
-    UDynamicMeshComponent* MeshComp = Owner->FindComponentByClass<UDynamicMeshComponent>();
-    if (!IsValid(MeshComp)) return;
+    UDynamicMeshComponent* EffectMeshComp = Owner->FindComponentByClass<UDynamicMeshComponent>();
+    if (!IsValid(EffectMeshComp)) return;
 
-    const FTransform& ComponentTransform = MeshComp->GetComponentTransform();
+    const FTransform& ComponentTransform = EffectMeshComp->GetComponentTransform();
 
     for (const FMDFHitData& Hit : NewHits)
     {
@@ -578,9 +636,9 @@ void UMDF_DeformableComponent::InitializeDynamicMesh()
     if (!IsValid(SourceStaticMesh)) return;
 
     AActor* Owner = GetOwner();
-    UDynamicMeshComponent* MeshComp = IsValid(Owner) ? Owner->FindComponentByClass<UDynamicMeshComponent>() : nullptr;
+    UDynamicMeshComponent* InitMeshComp = IsValid(Owner) ? Owner->FindComponentByClass<UDynamicMeshComponent>() : nullptr;
 
-    if (IsValid(MeshComp) && IsValid(MeshComp->GetDynamicMesh()))
+    if (IsValid(InitMeshComp) && IsValid(InitMeshComp->GetDynamicMesh()))
     {
         FGeometryScriptCopyMeshFromAssetOptions AssetOptions;
         AssetOptions.bApplyBuildSettings = true;
@@ -588,11 +646,14 @@ void UMDF_DeformableComponent::InitializeDynamicMesh()
 
         // 복사 실행
         UGeometryScriptLibrary_StaticMeshFunctions::CopyMeshFromStaticMesh(
-            SourceStaticMesh, MeshComp->GetDynamicMesh(), AssetOptions, FGeometryScriptMeshReadLOD(), Outcome
+            SourceStaticMesh, InitMeshComp->GetDynamicMesh(), AssetOptions, FGeometryScriptMeshReadLOD(), Outcome
         );
 
         if (Outcome == EGeometryScriptOutcomePins::Success)
         {
+            // 기존 머티리얼 오버라이드 초기화 (메시 교체 시 이전 슬롯 잔존 방지)
+            InitMeshComp->EmptyOverrideMaterials();
+
             // 머티리얼 복사 (SourceStaticMesh → DynamicMeshComponent)
             const int32 NumMaterials = SourceStaticMesh->GetStaticMaterials().Num();
             for (int32 i = 0; i < NumMaterials; ++i)
@@ -600,26 +661,47 @@ void UMDF_DeformableComponent::InitializeDynamicMesh()
                 UMaterialInterface* Material = SourceStaticMesh->GetMaterial(i);
                 if (Material)
                 {
-                    MeshComp->SetMaterial(i, Material);
+                    InitMeshComp->SetMaterial(i, Material);
+                }
+            }
+
+            // [Phase 18] Vertex Color 초기화 (전체 검정 = 손상 없음)
+            if (bEnableVisualDamage)
+            {
+                UGeometryScriptLibrary_MeshVertexColorFunctions::SetMeshConstantVertexColor(
+                    InitMeshComp->GetDynamicMesh(),
+                    FLinearColor(0.f, 0.f, 0.f, 0.f),
+                    FGeometryScriptColorFlags(),
+                    true
+                );
+
+                // DamageMasterMaterial이 설정되어 있으면 MID 생성 후 슬롯 0에 적용
+                if (IsValid(DamageMasterMaterial))
+                {
+                    DamageMaterialInstance = UMaterialInstanceDynamic::Create(DamageMasterMaterial, this);
+                    if (DamageMaterialInstance)
+                    {
+                        InitMeshComp->SetMaterial(0, DamageMaterialInstance);
+                    }
                 }
             }
 
             // 충돌 업데이트 (서버 + 클라 모두)
-            MeshComp->UpdateCollision();
+            InitMeshComp->UpdateCollision();
 
             // 렌더링 업데이트 (클라이언트 전용)
             if (!IsRunningDedicatedServer())
             {
                 // 1. 법선 재계산
-                UGeometryScriptLibrary_MeshNormalsFunctions::RecomputeNormals(MeshComp->GetDynamicMesh(), FGeometryScriptCalculateNormalsOptions());
+                UGeometryScriptLibrary_MeshNormalsFunctions::RecomputeNormals(InitMeshComp->GetDynamicMesh(), FGeometryScriptCalculateNormalsOptions());
 
                 // -------------------------------------------------------------------------
                 // [★핵심 추가] 초기화 시 탄젠트 재계산
                 // 처음 생성될 때부터 메쉬가 투명하게 보이지 않도록 합니다.
                 // -------------------------------------------------------------------------
-                UGeometryScriptLibrary_MeshNormalsFunctions::ComputeTangents(MeshComp->GetDynamicMesh(), FGeometryScriptTangentsOptions());
+                UGeometryScriptLibrary_MeshNormalsFunctions::ComputeTangents(InitMeshComp->GetDynamicMesh(), FGeometryScriptTangentsOptions());
 
-                MeshComp->NotifyMeshUpdated();
+                InitMeshComp->NotifyMeshUpdated();
             }
         }
     }
@@ -630,19 +712,19 @@ void UMDF_DeformableComponent::InitializeDynamicMesh()
 // -----------------------------------------------------------------------------
 FVector UMDF_DeformableComponent::ConvertWorldToLocal(FVector WorldLocation)
 {
-    UDynamicMeshComponent* MeshComp = nullptr;
-    if (GetOwner()) MeshComp = GetOwner()->FindComponentByClass<UDynamicMeshComponent>();
+    UDynamicMeshComponent* DynMeshComp = nullptr;
+    if (GetOwner()) DynMeshComp = GetOwner()->FindComponentByClass<UDynamicMeshComponent>();
 
-    if (IsValid(MeshComp)) return MeshComp->GetComponentTransform().InverseTransformPosition(WorldLocation);
+    if (IsValid(DynMeshComp)) return DynMeshComp->GetComponentTransform().InverseTransformPosition(WorldLocation);
     return IsValid(GetOwner()) ? GetOwner()->GetActorTransform().InverseTransformPosition(WorldLocation) : WorldLocation;
 }
 
 FVector UMDF_DeformableComponent::ConvertWorldDirectionToLocal(FVector WorldDirection)
 {
-    UDynamicMeshComponent* MeshComp = nullptr;
-    if (GetOwner()) MeshComp = GetOwner()->FindComponentByClass<UDynamicMeshComponent>();
+    UDynamicMeshComponent* DynMeshComp = nullptr;
+    if (GetOwner()) DynMeshComp = GetOwner()->FindComponentByClass<UDynamicMeshComponent>();
 
-    if (IsValid(MeshComp)) return MeshComp->GetComponentTransform().InverseTransformVector(WorldDirection);
+    if (IsValid(DynMeshComp)) return DynMeshComp->GetComponentTransform().InverseTransformVector(WorldDirection);
     return IsValid(GetOwner()) ? GetOwner()->GetActorTransform().InverseTransformVector(WorldDirection) : WorldDirection;
 }
 

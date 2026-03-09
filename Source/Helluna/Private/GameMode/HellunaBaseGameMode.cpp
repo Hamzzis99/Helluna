@@ -1314,6 +1314,19 @@ void AHellunaBaseGameMode::Logout(AController* Exiting)
 		return;
 	}
 
+	// [Fix50] LoginController 스왑 감지 — 실제 이탈이 아니면 스킵
+	if (AHellunaLoginController* ExitingLC = Cast<AHellunaLoginController>(Exiting))
+	{
+		AHellunaPlayerState* PS = ExitingLC->GetPlayerState<AHellunaPlayerState>();
+		bool bIsControllerSwap = (!PS || PS->GetPlayerUniqueId().IsEmpty());
+		if (bIsControllerSwap)
+		{
+			UE_LOG(LogHelluna, Log, TEXT("[Fix50] BaseGameMode: LoginController 스왑 감지 — Logout 처리 스킵"));
+			Super::Logout(Exiting);
+			return;
+		}
+	}
+
 	// 타임아웃 타이머 정리
 	if (APlayerController* PC = Cast<APlayerController>(Exiting))
 	{

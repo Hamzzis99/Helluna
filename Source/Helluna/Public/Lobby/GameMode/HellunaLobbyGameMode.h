@@ -306,8 +306,11 @@ public:
 	/** 매칭 완료 → Deploy 실행 (서버 없으면 비동기 스폰 대기) */
 	void ExecuteMatchedDeploy(const TArray<FMatchmakingQueueEntry>& Matched);
 
-	/** [Phase 16] 비동기 Deploy (서버 스폰 대기) */
-	void WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEntry> Matched);
+	/** [Phase 16/19] 비동기 Deploy (서버 스폰/맵 전환 대기). MapKey 비어있으면 맵 무관 체크 */
+	void WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEntry> Matched, const FString& MapKey = TEXT(""));
+
+	/** [Phase 19] 빈 서버에 맵 전환 커맨드 파일 작성 */
+	void WriteMapSwitchCommand(int32 Port, const FString& MapPath);
 
 	/** 큐 엔트리 제거 */
 	void RemoveQueueEntry(int32 EntryId);
