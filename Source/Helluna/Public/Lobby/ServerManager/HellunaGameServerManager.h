@@ -28,7 +28,7 @@ class HELLUNA_API UHellunaGameServerManager : public UObject
 
 public:
 	/** 초기화 (LobbyGameMode::BeginPlay에서 호출) */
-	void Initialize(UWorld* InWorld, const FString& InRegistryDir);
+	void Initialize(UWorld* InWorld, const FString& InRegistryDir, const FString& InLobbyReturnURL = FString());
 
 	/** 서버 프로세스 스폰 -- 포트 자동 할당, 맵 경로 지정. 실패 시 -1 반환 */
 	int32 SpawnGameServer(const FString& MapPath);
@@ -69,6 +69,7 @@ private:
 
 	/** 레지스트리 경로 캐시 */
 	FString RegistryDir;
+	FString LobbyReturnURL;
 
 	/** 서버 실행 파일 경로 (에디터 vs 패키징 자동 감지) */
 	FString GetServerExecutablePath() const;

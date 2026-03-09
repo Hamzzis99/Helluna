@@ -16,10 +16,11 @@
 // Initialize
 // ============================================================================
 
-void UHellunaGameServerManager::Initialize(UWorld* InWorld, const FString& InRegistryDir)
+void UHellunaGameServerManager::Initialize(UWorld* InWorld, const FString& InRegistryDir, const FString& InLobbyReturnURL)
 {
 	WorldRef = InWorld;
 	RegistryDir = InRegistryDir;
+	LobbyReturnURL = InLobbyReturnURL;
 
 	// 30초마다 종료된 프로세스 정리
 	if (InWorld)
@@ -31,7 +32,7 @@ void UHellunaGameServerManager::Initialize(UWorld* InWorld, const FString& InReg
 		);
 	}
 
-	UE_LOG(LogHellunaLobby, Log, TEXT("[ServerManager] Initialize | RegistryDir=%s"), *RegistryDir);
+	UE_LOG(LogHellunaLobby, Log, TEXT("[ServerManager] Initialize | RegistryDir=%s | LobbyReturnURL='%s'"), *RegistryDir, *LobbyReturnURL);
 }
 
 // ============================================================================
@@ -55,19 +56,22 @@ int32 UHellunaGameServerManager::SpawnGameServer(const FString& MapPath)
 	}
 
 	// LobbyURL 구성 (로비 서버 주소 전달)
-	const FString LobbyURL = FString::Printf(TEXT("127.0.0.1:7777"));
-
 	FString Args;
 #if WITH_EDITOR
 	// 에디터 모드: UE 에디터가 -server 모드로 재실행
 	const FString ProjectPath = FPaths::ConvertRelativePathToFull(FPaths::GetProjectFilePath());
-	Args = FString::Printf(TEXT("\"%s\" %s -server -port=%d -log -LobbyURL=%s"),
-		*ProjectPath, *MapPath, Port, *LobbyURL);
+	Args = FString::Printf(TEXT("\"%s\" %s -server -port=%d -log"),
+		*ProjectPath, *MapPath, Port);
 #else
 	// 패키징 모드
-	Args = FString::Printf(TEXT("%s -server -port=%d -log -LobbyURL=%s"),
-		*MapPath, Port, *LobbyURL);
+	Args = FString::Printf(TEXT("%s -server -port=%d -log"),
+		*MapPath, Port);
 #endif
+
+	if (!LobbyReturnURL.IsEmpty())
+	{
+		Args += FString::Printf(TEXT(" -LobbyURL=%s"), *LobbyReturnURL);
+	}
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[ServerManager] SpawnGameServer | Exe=%s | Args=%s"), *ServerExe, *Args);
 
@@ -114,17 +118,20 @@ int32 UHellunaGameServerManager::SpawnGameServerOnPort(int32 Port, const FString
 		return -1;
 	}
 
-	const FString LobbyURL = FString::Printf(TEXT("127.0.0.1:7777"));
-
 	FString Args;
 #if WITH_EDITOR
 	const FString ProjectPath = FPaths::ConvertRelativePathToFull(FPaths::GetProjectFilePath());
-	Args = FString::Printf(TEXT("\"%s\" %s -server -port=%d -log -LobbyURL=%s"),
-		*ProjectPath, *MapPath, Port, *LobbyURL);
+	Args = FString::Printf(TEXT("\"%s\" %s -server -port=%d -log"),
+		*ProjectPath, *MapPath, Port);
 #else
-	Args = FString::Printf(TEXT("%s -server -port=%d -log -LobbyURL=%s"),
-		*MapPath, Port, *LobbyURL);
+	Args = FString::Printf(TEXT("%s -server -port=%d -log"),
+		*MapPath, Port);
 #endif
+
+	if (!LobbyReturnURL.IsEmpty())
+	{
+		Args += FString::Printf(TEXT(" -LobbyURL=%s"), *LobbyReturnURL);
+	}
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[ServerManager] SpawnGameServerOnPort | Port=%d | Args=%s"), Port, *Args);
 
