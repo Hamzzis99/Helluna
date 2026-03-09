@@ -11,22 +11,22 @@
 #define HELLUNA_DEBUG_SERVERCONNECTION 0
 
 // 🔐 로그인 컨트롤러 (HellunaLoginController - BeginPlay, 위젯 생성, RPC 등)
-#define HELLUNA_DEBUG_LOGINCONTROLLER 0
+#define HELLUNA_DEBUG_LOGINCONTROLLER 1
 
 // 🔐 로그인 처리 (BaseGameMode - ProcessLogin, OnLoginSuccess 등)
-#define HELLUNA_DEBUG_LOGIN 0
+#define HELLUNA_DEBUG_LOGIN 1
 
 // 🎮 게임모드 (BaseGameMode - PostLogin, SpawnHeroCharacter 등)
-#define HELLUNA_DEBUG_GAMEMODE 0
+#define HELLUNA_DEBUG_GAMEMODE 1
 
 // 🎭 캐릭터 선택 (ProcessCharacterSelection, RegisterCharacterUse 등)
-#define HELLUNA_DEBUG_CHARACTER_SELECT 0
+#define HELLUNA_DEBUG_CHARACTER_SELECT 1
 
 // 🎭 캐릭터 프리뷰 (PreviewActor 스폰/파괴, SceneCapture, Hover 등)
-#define HELLUNA_DEBUG_CHARACTER_PREVIEW 0
+#define HELLUNA_DEBUG_CHARACTER_PREVIEW 1
 
 // 🎭 캐릭터 프리뷰 V2 (SceneV2 - 3캐릭터 1카메라, Overlay Highlight 등)
-#define HELLUNA_DEBUG_CHARACTER_PREVIEW_V2 0
+#define HELLUNA_DEBUG_CHARACTER_PREVIEW_V2 1
 
 // ☀️ UDS 날씨/시간 디버그 (PrintUDSDebug - 1초마다 TimeOfDay, Animate, Phase 출력)
 #define HELLUNA_DEBUG_UDS 0
