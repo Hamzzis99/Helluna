@@ -1,6 +1,7 @@
 Plugins/Developer/
 
 # Visual Studio
+.codex/
 .vs/
 .claude/
 Content/UltraDynamicSky/
