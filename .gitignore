@@ -1,11 +1,13 @@
 Plugins/Developer/
 
 # Visual Studio
+.codex/
 .vs/
 .claude/
 Content/UltraDynamicSky/
 Reedme/
 Claude.md
+Codexreedme/
 
 # Content Folder
 Content/Collections/
@@ -14,7 +16,7 @@ Content/Migration/
 Plugins/Developer/
 Content/Assets/
 Plugins/Inventory/Content/InventoryAssets/
-
+Plugins/UnrealMCP
 # Unreal Engine build artifacts
 Build/
 Builds/

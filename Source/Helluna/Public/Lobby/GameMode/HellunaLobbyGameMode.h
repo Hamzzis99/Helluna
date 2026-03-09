@@ -73,6 +73,8 @@ public:
 	void InitializeLobbyForPlayer(AHellunaLobbyController* LobbyPC, const FString& PlayerId);
 
 protected:
+	UPROPERTY(EditDefaultsOnly, Category = "Lobby|Server")
+	FString LobbyReturnURL;
 	// ════════════════════════════════════════════════════════════════
 	// Stash 로드/저장 헬퍼
 	// ════════════════════════════════════════════════════════════════

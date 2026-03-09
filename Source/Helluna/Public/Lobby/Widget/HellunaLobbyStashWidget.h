@@ -39,6 +39,7 @@ class UTextBlock;
 class UScrollBox;
 class UEditableTextBox;
 class UVerticalBox;
+class UWidgetAnimation;
 enum class EHellunaHeroType : uint8;
 
 // 탭 인덱스 상수
@@ -141,6 +142,25 @@ public:
 
 protected:
 	// ════════════════════════════════════════════════════════════════
+	// BP 이벤트 — 애니메이션 재생용
+	// ════════════════════════════════════════════════════════════════
+
+	/** 매칭 오버레이가 표시될 때 호출 (BP에서 페이드인 애니메이션 재생) */
+	UFUNCTION(BlueprintImplementableEvent, Category = "로비|매칭",
+		meta = (DisplayName = "On Matchmaking Overlay Show (매칭 오버레이 표시)"))
+	void BP_OnMatchmakingOverlayShow();
+
+	/** 카운트다운 숫자가 변경될 때 호출 (BP에서 바운스 애니메이션 재생) */
+	UFUNCTION(BlueprintImplementableEvent, Category = "로비|매칭",
+		meta = (DisplayName = "On Countdown Tick (카운트다운 틱)"))
+	void BP_OnCountdownTick(int32 RemainingSeconds);
+
+	/** 히어로 재배정 알림이 표시될 때 호출 (BP에서 슬라이드업 애니메이션 재생) */
+	UFUNCTION(BlueprintImplementableEvent, Category = "로비|매칭",
+		meta = (DisplayName = "On Hero Reassign Notice (히어로 재배정 알림)"))
+	void BP_OnHeroReassignNotice();
+
+	// ════════════════════════════════════════════════════════════════
 	// BindWidget — BP에서 연결
 	// ════════════════════════════════════════════════════════════════
 
@@ -228,6 +248,17 @@ protected:
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Button_CancelMatchmaking;
+
+	// ── [Phase 17] 위젯 애니메이션 바인딩 ──
+
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetAnimOptional), Transient)
+	TObjectPtr<UWidgetAnimation> Anim_MatchmakingFadeIn;
+
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetAnimOptional), Transient)
+	TObjectPtr<UWidgetAnimation> Anim_CountdownBounce;
+
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetAnimOptional), Transient)
+	TObjectPtr<UWidgetAnimation> Anim_ReassignNotice;
 
 	// ── [Phase 17] 카운트다운 UI ──
 

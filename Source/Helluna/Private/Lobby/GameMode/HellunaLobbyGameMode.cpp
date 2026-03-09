@@ -84,6 +84,13 @@ void AHellunaLobbyGameMode::BeginPlay()
 {
 	Super::BeginPlay();
 
+	FString CmdLobbyReturnURL;
+	if (FParse::Value(FCommandLine::Get(), TEXT("-LobbyReturnURL="), CmdLobbyReturnURL))
+	{
+		LobbyReturnURL = CmdLobbyReturnURL;
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] BeginPlay: LobbyReturnURL override = '%s'"), *LobbyReturnURL);
+	}
+
 	// SQLite 서브시스템 캐시 (PostLogin 보다 앞서 초기화)
 	if (!SQLiteSubsystem)
 	{
@@ -134,7 +141,7 @@ void AHellunaLobbyGameMode::BeginPlay()
 
 	// [Phase 16] GameServerManager 초기화
 	GameServerManager = NewObject<UHellunaGameServerManager>(this);
-	GameServerManager->Initialize(GetWorld(), GetRegistryDirectoryPath());
+	GameServerManager->Initialize(GetWorld(), GetRegistryDirectoryPath(), LobbyReturnURL);
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] BeginPlay: GameServerManager 초기화 완료"));
 }
 
@@ -3369,7 +3376,7 @@ void AHellunaLobbyGameMode::HandleCountdownPlayerDisconnect(const FString& Playe
 			// 재배정된 영웅이면 원래 영웅으로 복원
 			int32 OriginalHero = Entry.HeroTypes.IsValidIndex(Idx) ? Entry.HeroTypes[Idx] : 3;
 			if (auto* Pair = PendingMatch.ReassignedHeroes.Find(PId))
-			{
+			{ 
 				OriginalHero = Pair->Key; // 원래 영웅으로 복원
 			}
 
