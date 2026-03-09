@@ -3369,7 +3369,7 @@ void AHellunaLobbyGameMode::HandleCountdownPlayerDisconnect(const FString& Playe
 			// 재배정된 영웅이면 원래 영웅으로 복원
 			int32 OriginalHero = Entry.HeroTypes.IsValidIndex(Idx) ? Entry.HeroTypes[Idx] : 3;
 			if (auto* Pair = PendingMatch.ReassignedHeroes.Find(PId))
-			{
+			{ 
 				OriginalHero = Pair->Key; // 원래 영웅으로 복원
 			}
 

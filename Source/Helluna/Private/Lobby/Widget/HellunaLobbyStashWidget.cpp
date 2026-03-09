@@ -1335,6 +1335,7 @@ void UHellunaLobbyStashWidget::HandleMatchmakingStatusChanged(const FMatchmaking
 		if (MatchmakingOverlay)
 		{
 			MatchmakingOverlay->SetVisibility(ESlateVisibility::Visible);
+			BP_OnMatchmakingOverlayShow();
 		}
 		if (Text_MatchmakingTimer)
 		{
@@ -1385,6 +1386,7 @@ void UHellunaLobbyStashWidget::HandleMatchmakingFound(const FMatchmakingFoundInf
 	if (MatchmakingOverlay)
 	{
 		MatchmakingOverlay->SetVisibility(ESlateVisibility::Visible);
+		BP_OnMatchmakingOverlayShow();
 	}
 
 	// 카운트다운 숫자 표시
@@ -1392,6 +1394,7 @@ void UHellunaLobbyStashWidget::HandleMatchmakingFound(const FMatchmakingFoundInf
 	{
 		Text_Countdown->SetVisibility(ESlateVisibility::Visible);
 		Text_Countdown->SetText(FText::AsNumber(FoundInfo.CountdownSeconds));
+		BP_OnCountdownTick(FoundInfo.CountdownSeconds);
 	}
 
 	// 매칭 타이머/카운트/취소 버튼 숨김 (카운트다운으로 대체)
@@ -1415,6 +1418,7 @@ void UHellunaLobbyStashWidget::HandleMatchmakingFound(const FMatchmakingFoundInf
 			FText::FromString(FString::Printf(
 				TEXT("캐릭터가 중복되어 [%s](으)로 변경되었습니다"), *HeroName)));
 		Text_HeroReassignNotice->SetVisibility(ESlateVisibility::Visible);
+		BP_OnHeroReassignNotice();
 
 		// 3초 후 자동 숨김
 		if (UWorld* World = GetWorld())
@@ -1443,6 +1447,7 @@ void UHellunaLobbyStashWidget::HandleMatchmakingCountdown(int32 RemainingSeconds
 		if (RemainingSeconds > 0)
 		{
 			Text_Countdown->SetText(FText::AsNumber(RemainingSeconds));
+			BP_OnCountdownTick(RemainingSeconds);
 		}
 		else
 		{

@@ -14,7 +14,7 @@ Content/Migration/
 Plugins/Developer/
 Content/Assets/
 Plugins/Inventory/Content/InventoryAssets/
-
+Plugins/UnrealMCP
 # Unreal Engine build artifacts
 Build/
 Builds/
