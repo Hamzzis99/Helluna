@@ -8,6 +8,10 @@ namespace GameItems
 		{
 			UE_DEFINE_GAMEPLAY_TAG(Axe, "GameItems.Equipment.Weapons.Axe")
 			UE_DEFINE_GAMEPLAY_TAG(Sword, "GameItems.Equipment.Weapons.Sword")
+			UE_DEFINE_GAMEPLAY_TAG(AssaultRifle, "GameItems.Equipment.Weapons.AssaultRifle")
+			UE_DEFINE_GAMEPLAY_TAG(ShotGun, "GameItems.Equipment.Weapons.ShotGun")
+			UE_DEFINE_GAMEPLAY_TAG(SniperRifle, "GameItems.Equipment.Weapons.SniperRifle")
+			UE_DEFINE_GAMEPLAY_TAG(Launcher, "GameItems.Equipment.Weapons.Launcher")
 		}
 
 		namespace Cloaks
