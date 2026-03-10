@@ -3059,6 +3059,7 @@ void AHellunaLobbyGameMode::EnqueueMatchmakingEntry(FMatchmakingQueueEntry Entry
 		if (!World->GetTimerManager().IsTimerActive(MatchmakingTickTimer))
 		{
 			World->GetTimerManager().SetTimer(MatchmakingTickTimer, this, &AHellunaLobbyGameMode::TickMatchmaking, 1.0f, true);
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Phase15] 매칭 틱 타이머 시작"));
 		}
 	}
 }
@@ -3079,6 +3080,12 @@ void AHellunaLobbyGameMode::RequeueMatchEntries(
 			const FString& PId = Entry.PlayerIds[Idx];
 			if (PId == ExcludedPlayerId)
 			{
+				continue;
+			}
+			const TWeakObjectPtr<AHellunaLobbyController>* PCPtr = PlayerIdToControllerMap.Find(PId);
+			if (!PCPtr || !PCPtr->IsValid())
+			{
+				UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] [Phase17] 재큐잉 스킵 | PlayerId=%s | Controller 없음"), *PId);
 				continue;
 			}
 
@@ -3158,7 +3165,6 @@ void AHellunaLobbyGameMode::UpdateQueueEntryHeroType(const FString& PlayerId, in
 
 FString AHellunaLobbyGameMode::CreateDebugLobbyPlayerId(APlayerController* LobbyPC) const
 {
-#if WITH_EDITOR
 	if (const FString* ExistingId = ControllerToPlayerIdMap.Find(LobbyPC))
 	{
 		if (!ExistingId->IsEmpty())
@@ -3168,9 +3174,6 @@ FString AHellunaLobbyGameMode::CreateDebugLobbyPlayerId(APlayerController* Lobby
 	}
 
 	return FString::Printf(TEXT("DEBUG_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-#else
-	return TEXT("DebugPlayer");
-#endif
 }
 
 // ════════════════════════════════════════════════════════════════════════════════

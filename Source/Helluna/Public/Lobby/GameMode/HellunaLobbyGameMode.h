@@ -53,7 +53,7 @@ public:
 	virtual void Logout(AController* Exiting) override;
 
 	/** PlayerId 획득 (public 래퍼 — Controller에서 호출용) */
-	// 📌 디버그 모드(bDebugSkipLogin=true)에서는 고정 ID "DebugPlayer" 반환
+	// 📌 로그인/디버그 공통 PlayerId 반환
 	//    PostLogin에서도 동일한 ID를 사용하므로 Deploy 시에도 일치
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "로비",
 		meta = (DisplayName = "플레이어 ID 가져오기"))

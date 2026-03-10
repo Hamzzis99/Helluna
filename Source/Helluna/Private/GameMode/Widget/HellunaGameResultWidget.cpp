@@ -18,6 +18,8 @@ void UHellunaGameResultWidget::NativeConstruct()
 	// 버튼 클릭 바인딩
 	if (IsValid(Btn_ReturnToLobby))
 	{
+		Btn_ReturnToLobby->SetIsEnabled(true);
+		Btn_ReturnToLobby->SetVisibility(ESlateVisibility::Visible);
 		Btn_ReturnToLobby->OnClicked.AddUniqueDynamic(this, &UHellunaGameResultWidget::OnReturnToLobbyClicked);
 	}
 }
@@ -70,7 +72,7 @@ void UHellunaGameResultWidget::ReturnToLobby()
 #endif
 
 	RemoveFromParent();
-	PC->ClientTravel(LobbyURL, TRAVEL_Absolute);
+	PC->ConsoleCommand(FString::Printf(TEXT("open %s"), *LobbyURL));
 }
 
 void UHellunaGameResultWidget::OnReturnToLobbyClicked()
@@ -83,7 +85,11 @@ void UHellunaGameResultWidget::UpdateUI()
 	// 생존/사망 상태 텍스트
 	if (IsValid(Text_SurvivalStatus))
 	{
-		if (bSurvived)
+		if (!bSurvived && EndReason == TEXT("전원 사망"))
+		{
+			Text_SurvivalStatus->SetText(FText::FromString(TEXT("GAME OVER")));
+		}
+		else if (bSurvived)
 		{
 			Text_SurvivalStatus->SetText(FText::FromString(TEXT("탈출 성공!")));
 		}
@@ -104,5 +110,12 @@ void UHellunaGameResultWidget::UpdateUI()
 	{
 		const FString ItemCountStr = FString::Printf(TEXT("보존 아이템: %d개"), ResultItems.Num());
 		Text_ItemCount->SetText(FText::FromString(ItemCountStr));
+	}
+
+	// 게임오버/생존 여부와 무관하게 로비 복귀는 항상 허용
+	if (IsValid(Btn_ReturnToLobby))
+	{
+		Btn_ReturnToLobby->SetIsEnabled(true);
+		Btn_ReturnToLobby->SetVisibility(ESlateVisibility::Visible);
 	}
 }

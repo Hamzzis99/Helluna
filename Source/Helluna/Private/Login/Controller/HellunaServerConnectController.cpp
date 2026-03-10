@@ -116,6 +116,13 @@ void AHellunaServerConnectController::OnConnectButtonClicked(const FString& IPAd
 			ConnectWidget->SetLoadingState(true);
 		}
 
+		if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance()))
+		{
+			GI->ConnectedServerIP = TEXT("127.0.0.1");
+			UE_LOG(LogHelluna, Log, TEXT("[ServerConnectController] Host 모드 ConnectedServerIP 저장: %s"), *GI->ConnectedServerIP);
+			GI->ShowLoadingScreen(TEXT("서버 시작 중..."));
+		}
+
 		UWorld* World = GetWorld();
 		if (!World) return;
 		AHellunaLoginGameMode* GM = Cast<AHellunaLoginGameMode>(World->GetAuthGameMode());
