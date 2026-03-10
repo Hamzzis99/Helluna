@@ -29,6 +29,7 @@
 // ⭐ [Phase 4 개선] EndPlay 인벤토리 저장용
 #include "Player/HellunaPlayerState.h"
 #include "GameMode/HellunaDefenseGameMode.h"
+#include "GameMode/HellunaDefenseGameState.h"
 #include "Player/Inv_PlayerController.h"  // FInv_SavedItemData
 // ⭐ [Phase 6 Fix] 맵 이동 중 저장 스킵용
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
@@ -140,11 +141,14 @@ void AHellunaHeroCharacter::OnRep_CurrentWeapon()
 }
 
 // ============================================================================
-// InitWeaponHUD - 로컬 플레이어 전용 HUD 생성
+// InitWeaponHUD - 로컬 플레이어 전용 HUD 생성 (DefenseGameState일 때만)
 // ============================================================================
 void AHellunaHeroCharacter::InitWeaponHUD()
 {
 	if (!IsLocallyControlled()) return;
+
+	// GameState로 판단 (GameMode는 클라이언트에서 nullptr이므로 GameState 사용)
+	if (!Cast<AHellunaDefenseGameState>(UGameplayStatics::GetGameState(GetWorld()))) return;
 
 	if (WeaponHUDWidgetClass)
 	{
