@@ -63,6 +63,10 @@ void FSTEvaluator_TargetSelector::Tick(FStateTreeExecutionContext& Context, cons
 
 	const FVector PawnLocation = ControlledPawn->GetActorLocation();
 
+	// ── 광폭화 완료: 타겟 선택 전체 차단 ────────────────────────────
+	if (TargetData.bEnraged)
+		return;
+
 	// ── 플레이어 락온 중: 타겟 변경 차단 ──────────────────────────────
 	if (TargetData.bPlayerLocked)
 	{
@@ -98,8 +102,17 @@ void FSTEvaluator_TargetSelector::Tick(FStateTreeExecutionContext& Context, cons
 				FStateTreeEvent EnrageEvent;
 				EnrageEvent.Tag = HellunaGameplayTags::Enemy_Event_Enrage;
 				STComp->SendStateTreeEvent(EnrageEvent);
+
+				// 광폭화 확정 - 이후 타겟 변경 완전 차단
+				TargetData.bEnraged      = true;
+				TargetData.bPlayerLocked = true;
 			}
 		}
+
+		// 광폭화 후에는 타겟 선택 로직 전체를 건너뜀
+		if (TargetData.bEnraged)
+			return;
+
 		return;
 	}
 
