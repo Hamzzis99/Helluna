@@ -46,6 +46,41 @@
 // 로그 카테고리 (공유 헤더 — DEFINE은 HellunaLobbyGameMode.cpp)
 #include "Lobby/HellunaLobbyLog.h"
 
+namespace
+{
+	constexpr float GSearchRingOuterDegreesPerSecond = 360.0f;
+	constexpr float GSearchRingInnerDegreesPerSecond = -240.0f;
+	const FVector2D GSearchRingBackdropSize(108.0f, 108.0f);
+	const FVector2D GSearchRingOuterSize(108.0f, 108.0f);
+	const FVector2D GSearchRingInnerSize(84.0f, 84.0f);
+	const TCHAR* GSearchRingBackdropTexturePath = TEXT("/Game/Migration/VFX/EasyAtmos/Textures/systemTextures/T_circle_01.T_circle_01");
+	const TCHAR* GSearchRingOuterTexturePath = TEXT("/Game/Migration/VFX/NiagaraExplosion01/Textures/T_Ring_002.T_Ring_002");
+	const TCHAR* GSearchRingInnerTexturePath = TEXT("/Game/Migration/VFX/NiagaraExplosion01/Textures/T_Ring_004.T_Ring_004");
+
+	void ApplySearchRingStyle(UImage* Image, const TCHAR* TexturePath, const FVector2D& BrushSize, const FLinearColor& Tint)
+	{
+		if (!IsValid(Image))
+		{
+			return;
+		}
+
+		if (UTexture2D* Texture = LoadObject<UTexture2D>(nullptr, TexturePath))
+		{
+			Image->SetBrushFromTexture(Texture, false);
+			Image->SetDesiredSizeOverride(BrushSize);
+		}
+		else
+		{
+			UE_LOG(LogHellunaLobby, Warning, TEXT("[StashWidget] Search spinner texture load failed: %s"), TexturePath);
+		}
+
+		Image->SetColorAndOpacity(Tint);
+		Image->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+		Image->SetRenderOpacity(Tint.A);
+		Image->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	}
+}
+
 // ════════════════════════════════════════════════════════════════════════════════
 // [Fix45-H1] NativeDestruct — 위젯 파괴 시 모든 델리게이트 해제
 // ════════════════════════════════════════════════════════════════════════════════
@@ -116,6 +151,7 @@ void UHellunaLobbyStashWidget::NativeDestruct()
 // ════════════════════════════════════════════════════════════════════════════════
 // NativeOnInitialized — 위젯 생성 시 초기화
 // ════════════════════════════════════════════════════════════════════════════════
+
 void UHellunaLobbyStashWidget::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
@@ -253,6 +289,9 @@ void UHellunaLobbyStashWidget::NativeOnInitialized()
 	// 초기 채팅 패널 숨김 (파티 없으면)
 	UpdatePlayChatVisibility();
 
+	ConfigureSearchSpinnerVisuals();
+	SetSearchSpinnerVisible(false);
+
 	// ── 시작 탭: Play ──
 	SwitchToTab(LobbyTab::Play);
 
@@ -262,6 +301,117 @@ void UHellunaLobbyStashWidget::NativeOnInitialized()
 // ════════════════════════════════════════════════════════════════════════════════
 // InitializePanels — 양쪽 패널을 각각의 InvComp와 바인딩
 // ════════════════════════════════════════════════════════════════════════════════
+void UHellunaLobbyStashWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+
+	if (!ShouldAnimateSearchSpinner() || InDeltaTime <= 0.0f)
+	{
+		return;
+	}
+
+	SearchRingOuterAngle = FMath::Fmod(SearchRingOuterAngle + (GSearchRingOuterDegreesPerSecond * InDeltaTime), 360.0f);
+	SearchRingInnerAngle = FMath::Fmod(SearchRingInnerAngle + (GSearchRingInnerDegreesPerSecond * InDeltaTime), 360.0f);
+
+	if (SearchRingOuterAngle < 0.0f)
+	{
+		SearchRingOuterAngle += 360.0f;
+	}
+	if (SearchRingInnerAngle < 0.0f)
+	{
+		SearchRingInnerAngle += 360.0f;
+	}
+
+	if (Image_SearchRingOuter)
+	{
+		Image_SearchRingOuter->SetRenderTransformAngle(SearchRingOuterAngle);
+	}
+	if (Image_SearchRingInner)
+	{
+		Image_SearchRingInner->SetRenderTransformAngle(SearchRingInnerAngle);
+	}
+}
+
+void UHellunaLobbyStashWidget::ConfigureSearchSpinnerVisuals()
+{
+	if (bSearchSpinnerConfigured)
+	{
+		return;
+	}
+
+	bSearchSpinnerConfigured = true;
+
+	if (!Overlay_SearchSpinner && !Image_SearchRingBackdrop && !Image_SearchRingOuter && !Image_SearchRingInner)
+	{
+		UE_LOG(LogHellunaLobby, Verbose, TEXT("[StashWidget] Search spinner widgets are not bound."));
+		return;
+	}
+
+	if (Overlay_SearchSpinner)
+	{
+		Overlay_SearchSpinner->SetRenderOpacity(1.0f);
+	}
+
+	ApplySearchRingStyle(Image_SearchRingBackdrop, GSearchRingBackdropTexturePath, GSearchRingBackdropSize, FLinearColor(0.34f, 0.40f, 0.95f, 0.16f));
+	ApplySearchRingStyle(Image_SearchRingOuter, GSearchRingOuterTexturePath, GSearchRingOuterSize, FLinearColor(0.42f, 0.54f, 1.0f, 0.90f));
+	ApplySearchRingStyle(Image_SearchRingInner, GSearchRingInnerTexturePath, GSearchRingInnerSize, FLinearColor(0.80f, 0.46f, 1.0f, 0.82f));
+
+	SearchRingOuterAngle = 0.0f;
+	SearchRingInnerAngle = 0.0f;
+
+	if (Image_SearchRingOuter)
+	{
+		Image_SearchRingOuter->SetRenderTransformAngle(SearchRingOuterAngle);
+	}
+	if (Image_SearchRingInner)
+	{
+		Image_SearchRingInner->SetRenderTransformAngle(SearchRingInnerAngle);
+	}
+}
+
+void UHellunaLobbyStashWidget::SetSearchSpinnerVisible(bool bVisible)
+{
+	const ESlateVisibility SpinnerVisibility = bVisible ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed;
+
+	if (Overlay_SearchSpinner)
+	{
+		Overlay_SearchSpinner->SetVisibility(SpinnerVisibility);
+		Overlay_SearchSpinner->SetRenderOpacity(bVisible ? 1.0f : 0.0f);
+	}
+	if (Image_SearchRingBackdrop)
+	{
+		Image_SearchRingBackdrop->SetVisibility(SpinnerVisibility);
+	}
+	if (Image_SearchRingOuter)
+	{
+		Image_SearchRingOuter->SetVisibility(SpinnerVisibility);
+	}
+	if (Image_SearchRingInner)
+	{
+		Image_SearchRingInner->SetVisibility(SpinnerVisibility);
+	}
+
+	if (bVisible)
+	{
+		SearchRingOuterAngle = 0.0f;
+		SearchRingInnerAngle = 0.0f;
+	}
+}
+
+bool UHellunaLobbyStashWidget::ShouldAnimateSearchSpinner() const
+{
+	if (!bInMatchmaking)
+	{
+		return false;
+	}
+
+	if (Text_Countdown && Text_Countdown->GetVisibility() == ESlateVisibility::Visible)
+	{
+		return false;
+	}
+
+	return Overlay_SearchSpinner && Overlay_SearchSpinner->GetVisibility() != ESlateVisibility::Collapsed;
+}
 void UHellunaLobbyStashWidget::InitializePanels(UInv_InventoryComponent* StashComp, UInv_InventoryComponent* LoadoutComp)
 {
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] ── InitializePanels 시작 ──"));
@@ -1336,6 +1486,8 @@ void UHellunaLobbyStashWidget::HandleMatchmakingStatusChanged(const FMatchmaking
 		{
 			MatchmakingOverlay->SetVisibility(ESlateVisibility::Visible);
 			BP_OnMatchmakingOverlayShow();
+			ConfigureSearchSpinnerVisuals();
+			SetSearchSpinnerVisible(true);
 		}
 		if (Text_MatchmakingTimer)
 		{
@@ -1369,6 +1521,7 @@ void UHellunaLobbyStashWidget::HandleMatchmakingStatusChanged(const FMatchmaking
 		if (MatchmakingOverlay)
 		{
 			MatchmakingOverlay->SetVisibility(ESlateVisibility::Collapsed);
+			SetSearchSpinnerVisible(false);
 		}
 
 		// 버튼 텍스트 복원
@@ -1401,6 +1554,7 @@ void UHellunaLobbyStashWidget::HandleMatchmakingFound(const FMatchmakingFoundInf
 	if (Text_MatchmakingTimer) Text_MatchmakingTimer->SetVisibility(ESlateVisibility::Collapsed);
 	if (Text_MatchmakingCount) Text_MatchmakingCount->SetVisibility(ESlateVisibility::Collapsed);
 	if (Button_CancelMatchmaking) Button_CancelMatchmaking->SetVisibility(ESlateVisibility::Collapsed);
+	SetSearchSpinnerVisible(false);
 
 	// 영웅 재배정 알림
 	if (FoundInfo.bHeroWasReassigned && Text_HeroReassignNotice)
@@ -1466,6 +1620,7 @@ void UHellunaLobbyStashWidget::HandleMatchmakingCancelled(const FString& Reason)
 	if (Text_MatchmakingTimer) Text_MatchmakingTimer->SetVisibility(ESlateVisibility::Visible);
 	if (Text_MatchmakingCount) Text_MatchmakingCount->SetVisibility(ESlateVisibility::Visible);
 	if (Button_CancelMatchmaking) Button_CancelMatchmaking->SetVisibility(ESlateVisibility::Visible);
+	SetSearchSpinnerVisible(false);
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase17] 카운트다운 취소 | %s"), *Reason);
 }
