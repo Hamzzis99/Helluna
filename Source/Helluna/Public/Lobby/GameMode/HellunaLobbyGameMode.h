@@ -53,11 +53,11 @@ public:
 	virtual void Logout(AController* Exiting) override;
 
 	/** PlayerId 획득 (public 래퍼 — Controller에서 호출용) */
-	// 📌 디버그 모드(bDebugSkipLogin=true)에서는 고정 ID "DebugPlayer" 반환
+	// 📌 로그인/디버그 공통 PlayerId 반환
 	//    PostLogin에서도 동일한 ID를 사용하므로 Deploy 시에도 일치
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "로비",
 		meta = (DisplayName = "플레이어 ID 가져오기"))
-	FString GetLobbyPlayerId(APlayerController* PC) const { return bDebugSkipLogin ? TEXT("DebugPlayer") : GetPlayerSaveId(PC); }
+	FString GetLobbyPlayerId(APlayerController* PC) const { return GetPlayerSaveId(PC); }
 
 	// ════════════════════════════════════════════════════════════════
 	// [Phase 13] 로비 로그인 시스템
@@ -323,6 +323,15 @@ public:
 	/** 큐 엔트리 영웅 타입 갱신 */
 	void UpdateQueueEntryHeroType(const FString& PlayerId, int32 NewHeroType);
 
+	/** 큐 엔트리 추가 + 공통 후처리 */
+	void EnqueueMatchmakingEntry(FMatchmakingQueueEntry Entry, bool bTryMatchImmediately = true);
+
+	/** 재큐잉용 엔트리 복구 */
+	void RequeueMatchEntries(
+		const TArray<FMatchmakingQueueEntry>& Entries,
+		const FString& ExcludedPlayerId = FString(),
+		const TMap<FString, TPair<int32, int32>>* ReassignedHeroes = nullptr);
+
 	// ── [Phase 17] 매칭 카운트다운 + 영웅 자동 재배정 ──
 
 	/** 카운트다운 대기 중인 매칭 그룹 */
@@ -356,6 +365,9 @@ public:
 
 	/** 캐시 갱신 (DB에서 다시 로드) */
 	void RefreshPartyCache(int32 PartyId);
+
+	/** 로비 디버그 로그인용 고유 ID 생성 */
+	FString CreateDebugLobbyPlayerId(APlayerController* LobbyPC) const;
 
 private:
 	/**
