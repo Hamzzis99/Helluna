@@ -248,6 +248,10 @@ public:
 	UFUNCTION(Client, Reliable)
 	void Client_ExecutePartyDeploy(int32 GameServerPort);
 
+	/** ClientTravel 준비 실패를 서버에 알려 deploy 상태를 롤백 */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_ReportPartyDeployFailure(int32 GameServerPort, const FString& Reason);
+
 	/** Deploy 중 여부 (public getter/setter) */
 	bool IsDeployInProgress() const { return bDeployInProgress; }
 	void SetDeployInProgress(bool bInProgress) { bDeployInProgress = bInProgress; }

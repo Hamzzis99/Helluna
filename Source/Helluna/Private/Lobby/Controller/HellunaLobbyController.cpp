@@ -1843,10 +1843,18 @@ void AHellunaLobbyController::Client_ExecutePartyDeploy_Implementation(int32 Gam
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Client_ExecutePartyDeploy | Port=%d"), GameServerPort);
 
+	if (GameServerPort <= 0)
+	{
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Client_ExecutePartyDeploy: invalid port"));
+		Server_ReportPartyDeployFailure(GameServerPort, TEXT("유효하지 않은 게임 서버 포트입니다."));
+		return;
+	}
+
 	UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance());
 	if (!GI || GI->ConnectedServerIP.IsEmpty())
 	{
 		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] Client_ExecutePartyDeploy: ConnectedServerIP가 비어있음!"));
+		Server_ReportPartyDeployFailure(GameServerPort, TEXT("ConnectedServerIP가 비어 있어 이동할 수 없습니다."));
 		return;
 	}
 
@@ -1858,6 +1866,33 @@ void AHellunaLobbyController::Client_ExecutePartyDeploy_Implementation(int32 Gam
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ClientTravel: %s"), *TravelURL);
 	ClientTravel(TravelURL, TRAVEL_Absolute);
+}
+
+bool AHellunaLobbyController::Server_ReportPartyDeployFailure_Validate(int32 GameServerPort, const FString& Reason)
+{
+	return GameServerPort >= 0 && GameServerPort <= 65535 && Reason.Len() <= 256;
+}
+
+void AHellunaLobbyController::Server_ReportPartyDeployFailure_Implementation(int32 GameServerPort, const FString& Reason)
+{
+	UE_LOG(LogHellunaLobby, Warning,
+		TEXT("[LobbyPC] Server_ReportPartyDeployFailure | Port=%d | Reason=%s"),
+		GameServerPort, *Reason);
+
+	bDeployInProgress = false;
+	PendingRejoinPort = 0;
+
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode();
+	if (LobbyGM)
+	{
+		const FString PlayerId = LobbyGM->GetLobbyPlayerId(this);
+		if (!PlayerId.IsEmpty())
+		{
+			LobbyGM->RollbackDeployStateForPlayer(PlayerId, GameServerPort);
+		}
+	}
+
+	Client_DeployFailed(Reason);
 }
 
 void AHellunaLobbyController::TogglePartyWidget()
@@ -1917,7 +1952,7 @@ void AHellunaLobbyController::Client_ShowRejoinPrompt_Implementation(int32 GameS
 
 bool AHellunaLobbyController::Server_RejoinGame_Validate()
 {
-	return true;
+	return PendingRejoinPort >= 0;
 }
 
 void AHellunaLobbyController::Server_RejoinGame_Implementation()
@@ -1925,15 +1960,24 @@ void AHellunaLobbyController::Server_RejoinGame_Implementation()
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_RejoinGame 수신"));
 
 	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode();
-	if (LobbyGM)
+	if (!LobbyGM)
 	{
-		LobbyGM->HandleRejoinAccepted(this);
+		Client_DeployFailed(TEXT("로비 게임 모드를 찾을 수 없습니다."));
+		return;
 	}
+
+	if (PendingRejoinPort <= 0)
+	{
+		Client_DeployFailed(TEXT("재참가 가능한 세션이 없습니다."));
+		return;
+	}
+
+	LobbyGM->HandleRejoinAccepted(this);
 }
 
 bool AHellunaLobbyController::Server_AbandonGame_Validate()
 {
-	return true;
+	return PendingRejoinPort >= 0;
 }
 
 void AHellunaLobbyController::Server_AbandonGame_Implementation()
@@ -1941,10 +1985,13 @@ void AHellunaLobbyController::Server_AbandonGame_Implementation()
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_AbandonGame 수신"));
 
 	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode();
-	if (LobbyGM)
+	if (!LobbyGM)
 	{
-		LobbyGM->HandleRejoinDeclined(this);
+		Client_DeployFailed(TEXT("로비 게임 모드를 찾을 수 없습니다."));
+		return;
 	}
+
+	LobbyGM->HandleRejoinDeclined(this);
 }
 
 // ============================================================================
@@ -1957,11 +2004,18 @@ void AHellunaLobbyController::Server_AbandonGame_Implementation()
 
 bool AHellunaLobbyController::Server_SetSelectedMap_Validate(const FString& MapKey)
 {
-	return !MapKey.IsEmpty();
+	return !MapKey.IsEmpty() && MapKey.Len() <= 64;
 }
 
 void AHellunaLobbyController::Server_SetSelectedMap_Implementation(const FString& MapKey)
 {
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode();
+	if (LobbyGM && !LobbyGM->IsValidConfiguredMapKey(MapKey))
+	{
+		Client_MatchmakingError(TEXT("유효하지 않은 맵 선택입니다."));
+		return;
+	}
+
 	SelectedMapKey = MapKey;
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_SetSelectedMap | MapKey=%s"), *MapKey);
 }
@@ -1975,6 +2029,20 @@ bool AHellunaLobbyController::Server_SetGameMode_Validate(ELobbyGameMode Mode)
 
 void AHellunaLobbyController::Server_SetGameMode_Implementation(ELobbyGameMode Mode)
 {
+	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode();
+	if (!LobbyGM)
+	{
+		return;
+	}
+
+	const FString PlayerId = LobbyGM->GetLobbyPlayerId(this);
+	FString ErrorMessage;
+	if (!LobbyGM->ValidateRequestedGameModeForPlayer(PlayerId, Mode, ErrorMessage))
+	{
+		Client_PartyError(ErrorMessage);
+		return;
+	}
+
 	SelectedGameMode = Mode;
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] [Phase18] Server_SetGameMode | Mode=%d"), static_cast<int32>(Mode));
 }
@@ -2023,12 +2091,19 @@ void AHellunaLobbyController::Server_LeaveMatchmaking_Implementation()
 	}
 
 	const FString PlayerId = LobbyGM->GetLobbyPlayerId(this);
-	LobbyGM->LeaveMatchmakingQueue(PlayerId);
+	if (LobbyGM->IsPlayerInQueue(PlayerId))
+	{
+		LobbyGM->LeaveMatchmakingQueue(PlayerId);
+	}
+	else
+	{
+		FMatchmakingStatusInfo CancelInfo;
+		CancelInfo.Status = EMatchmakingStatus::None;
+		Client_MatchmakingStatusUpdate(CancelInfo);
+		return;
+	}
 
 	// 큐 퇴장 상태를 클라이언트에 전송
-	FMatchmakingStatusInfo CancelInfo;
-	CancelInfo.Status = EMatchmakingStatus::None;
-	Client_MatchmakingStatusUpdate(CancelInfo);
 }
 
 void AHellunaLobbyController::Client_MatchmakingStatusUpdate_Implementation(const FMatchmakingStatusInfo& StatusInfo)
@@ -2048,6 +2123,7 @@ void AHellunaLobbyController::Client_MatchmakingError_Implementation(const FStri
 	FMatchmakingStatusInfo CancelInfo;
 	CancelInfo.Status = EMatchmakingStatus::None;
 	OnMatchmakingStatusChanged.Broadcast(CancelInfo);
+	OnMatchmakingCancelled.Broadcast(ErrorMessage);
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
