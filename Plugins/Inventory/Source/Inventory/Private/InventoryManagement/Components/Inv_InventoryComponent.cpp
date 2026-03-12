@@ -3094,6 +3094,11 @@ UInv_InventoryItem* UInv_InventoryComponent::FindItemByTypeExcluding(const FGame
 TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave() const
 {
 	TArray<FInv_SavedItemData> Result;
+	int32 SavedEquippedCount = 0;
+	int32 SavedGridCount = 0;
+	int32 SavedAttachmentCount = 0;
+	int32 SkippedAttachedCount = 0;
+	int32 SkippedNullCount = 0;
 
 #if INV_DEBUG_INVENTORY
 	UE_LOG(LogTemp, Warning, TEXT(""));
@@ -3117,6 +3122,7 @@ TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave(
 		// Item 유효성 체크
 		if (!Entry.Item)
 		{
+			++SkippedNullCount;
 #if INV_DEBUG_INVENTORY
 			UE_LOG(LogTemp, Warning, TEXT("║ [%d] ⚠️ Item nullptr - 스킵                               ║"), i);
 #endif
@@ -3127,6 +3133,7 @@ TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave(
 		// 부착물 데이터는 무기의 SavedItem.Attachments에 이미 포함됨
 		if (Entry.bIsAttachedToWeapon)
 		{
+			++SkippedAttachedCount;
 #if INV_DEBUG_ATTACHMENT
 			UE_LOG(LogTemp, Log, TEXT("║ [%d] bIsAttachedToWeapon=true → 저장 스킵 (무기 Attachments에 포함됨)"), i);
 #endif
@@ -3287,6 +3294,15 @@ TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave(
 		}
 
 		Result.Add(SavedItem);
+		if (SavedItem.bEquipped)
+		{
+			++SavedEquippedCount;
+		}
+		else
+		{
+			++SavedGridCount;
+		}
+		SavedAttachmentCount += SavedItem.Attachments.Num();
 
 #if INV_DEBUG_ITEM_POINTER
 		UE_LOG(LogTemp, Warning, TEXT("[ItemPointer] → 저장 완료: Entry[%d] %s | Attachments=%d | bEquipped=%s"),
@@ -3327,6 +3343,17 @@ TArray<FInv_SavedItemData> UInv_InventoryComponent::CollectInventoryDataForSave(
 	UE_LOG(LogTemp, Warning, TEXT(""));
 #endif
 
+#if INV_DEBUG_SAVE
+	UE_LOG(LogTemp, Warning,
+		TEXT("[SaveFlow] CollectInventoryDataForSave | Owner=%s | Saved=%d | Grid=%d | Equipped=%d | Attachments=%d | SkippedNull=%d | SkippedAttached=%d"),
+		*GetNameSafe(GetOwner()),
+		Result.Num(),
+		SavedGridCount,
+		SavedEquippedCount,
+		SavedAttachmentCount,
+		SkippedNullCount,
+		SkippedAttachedCount);
+#endif
 	return Result;
 }
 

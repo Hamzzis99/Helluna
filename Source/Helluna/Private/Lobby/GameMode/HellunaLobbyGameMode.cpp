@@ -2881,6 +2881,25 @@ bool AHellunaLobbyGameMode::PersistDeployDataForPlayer(
 
 		double StepStartSeconds = FPlatformTime::Seconds();
 		TArray<FInv_SavedItemData> TimedLoadoutItems = LoadoutComp->CollectInventoryDataForSave();
+		{
+			int32 EquippedCount = 0;
+			int32 AttachmentCount = 0;
+			for (const FInv_SavedItemData& SavedItem : TimedLoadoutItems)
+			{
+				if (SavedItem.bEquipped)
+				{
+					++EquippedCount;
+				}
+				AttachmentCount += SavedItem.Attachments.Num();
+			}
+			UE_LOG(LogHellunaLobby, Log,
+				TEXT("[LobbyGM] PersistDeployDataForPlayer collect | PlayerId=%s | Loadout=%d | Equipped=%d | Grid=%d | Attachments=%d"),
+				*PlayerId,
+				TimedLoadoutItems.Num(),
+				EquippedCount,
+				TimedLoadoutItems.Num() - EquippedCount,
+				AttachmentCount);
+		}
 		LogPersistStep(TEXT("CollectLoadout"), StepStartSeconds);
 		if (TimedLoadoutItems.Num() > 0)
 		{
@@ -2918,6 +2937,10 @@ bool AHellunaLobbyGameMode::PersistDeployDataForPlayer(
 		{
 			StepStartSeconds = FPlatformTime::Seconds();
 			const TArray<FInv_SavedItemData> TimedStashItems = TimedStashComp->CollectInventoryDataForSave();
+			UE_LOG(LogHellunaLobby, Log,
+				TEXT("[LobbyGM] PersistDeployDataForPlayer collect | PlayerId=%s | Stash=%d"),
+				*PlayerId,
+				TimedStashItems.Num());
 			LogPersistStep(TEXT("CollectStash"), StepStartSeconds);
 
 			StepStartSeconds = FPlatformTime::Seconds();

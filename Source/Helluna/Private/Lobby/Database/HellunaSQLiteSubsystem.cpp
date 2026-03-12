@@ -1376,6 +1376,7 @@ TArray<FInv_SavedItemData> UHellunaSQLiteSubsystem::LoadPlayerStash(const FStrin
 {
 	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ▶ LoadPlayerStash | PlayerId=%s"), *PlayerId);
 
+
 	if (PlayerId.IsEmpty())
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ LoadPlayerStash: PlayerId가 비어있음 — 중단"));
@@ -1709,6 +1710,21 @@ TArray<FInv_SavedItemData> UHellunaSQLiteSubsystem::LoadPlayerLoadout(const FStr
 // ──────────────────────────────────────────────────────────────
 bool UHellunaSQLiteSubsystem::SavePlayerLoadout(const FString& PlayerId, const TArray<FInv_SavedItemData>& Items)
 {
+	int32 EquippedCount = 0;
+	int32 GridCount = 0;
+	int32 AttachmentCount = 0;
+	for (const FInv_SavedItemData& Item : Items)
+	{
+		if (Item.bEquipped)
+		{
+			++EquippedCount;
+		}
+		else
+		{
+			++GridCount;
+		}
+		AttachmentCount += Item.Attachments.Num();
+	}
 	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ▶ SavePlayerLoadout | PlayerId=%s | 출격 아이템 %d개"), *PlayerId, Items.Num());
 
 	if (PlayerId.IsEmpty())
@@ -1751,6 +1767,9 @@ bool UHellunaSQLiteSubsystem::SavePlayerLoadout(const FString& PlayerId, const T
 
 	// (a) player_loadout에 Items INSERT
 	//     [Fix14] is_equipped 컬럼 추가 → 10개 바인딩 (?1~?10)
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] SavePlayerLoadout detail | PlayerId=%s | Grid=%d | Equipped=%d | Attachments=%d"),
+		*PlayerId, GridCount, EquippedCount, AttachmentCount);
+
 	const TCHAR* InsertSQL = TEXT(
 		"INSERT INTO player_loadout "
 		"(player_id, item_type, stack_count, grid_position_x, grid_position_y, "

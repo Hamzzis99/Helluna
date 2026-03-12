@@ -865,6 +865,17 @@ TArray<FInv_SavedItemData> AInv_PlayerController::CollectInventoryGridState()
 	UE_LOG(LogTemp, Warning, TEXT(""));
 #endif
 
+#if INV_DEBUG_SAVE
+	UE_LOG(LogTemp, Warning,
+		TEXT("[SaveFlow] CollectInventoryGridState | Controller=%s | Total=%d | Grid=%d | Equipped=%d | GridEquippable=%d | GridConsumable=%d | GridCraftable=%d"),
+		*GetName(),
+		Result.Num(),
+		TotalCollected,
+		EquippedItemCount,
+		EquipCount,
+		ConsumeCount,
+		CraftCount);
+#endif
 	return Result;
 }
 
