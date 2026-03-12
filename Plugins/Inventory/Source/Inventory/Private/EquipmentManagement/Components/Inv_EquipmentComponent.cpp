@@ -148,6 +148,8 @@ void UInv_EquipmentComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		}
 	}
 	EquippedActors.Empty();
+	PrimaryEquippedActor = nullptr;
+	SecondaryEquippedActor = nullptr;
 	
 #if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("   ✅ 장착 액터 정리 완료!"));
@@ -175,6 +177,8 @@ void UInv_EquipmentComponent::InitPlayerController()
 void UInv_EquipmentComponent::OnPossessedPawnChange(APawn* OldPawn, APawn* NewPawn)
 {
 	APawn* EffectivePawn = NewPawn;
+	PrimaryEquippedActor = nullptr;
+	SecondaryEquippedActor = nullptr;
 	if (!IsValid(EffectivePawn) && OwningPlayerController.IsValid())
 	{
 		EffectivePawn = OwningPlayerController->GetPawn();
@@ -256,6 +260,41 @@ AInv_EquipActor* UInv_EquipmentComponent::FindEquippedActor(const FGameplayTag& 
 }
 
 // ⭐ [WeaponBridge] WeaponSlotIndex를 고려하여 정확한 무기 제거
+AInv_EquipActor* UInv_EquipmentComponent::FindEquippedActorBySlot(const FGameplayTag& EquipmentTypeTag, int32 WeaponSlotIndex) const
+{
+	auto FoundActor = EquippedActors.FindByPredicate([&EquipmentTypeTag, WeaponSlotIndex](const AInv_EquipActor* EquippedActor)
+	{
+		return IsValid(EquippedActor)
+			&& EquippedActor->GetEquipmentType().MatchesTagExact(EquipmentTypeTag)
+			&& EquippedActor->GetWeaponSlotIndex() == WeaponSlotIndex;
+	});
+	return FoundActor ? *FoundActor : nullptr;
+}
+
+void UInv_EquipmentComponent::CacheEquippedActor(int32 WeaponSlotIndex, AInv_EquipActor* EquipActor)
+{
+	if (WeaponSlotIndex == 0)
+	{
+		PrimaryEquippedActor = EquipActor;
+	}
+	else if (WeaponSlotIndex == 1)
+	{
+		SecondaryEquippedActor = EquipActor;
+	}
+}
+
+void UInv_EquipmentComponent::ClearEquippedActorCache(int32 WeaponSlotIndex)
+{
+	if (WeaponSlotIndex == 0)
+	{
+		PrimaryEquippedActor = nullptr;
+	}
+	else if (WeaponSlotIndex == 1)
+	{
+		SecondaryEquippedActor = nullptr;
+	}
+}
+
 void UInv_EquipmentComponent::RemoveEquippedActor(const FGameplayTag& EquipmentTypeTag, int32 WeaponSlotIndex)
 {
 	AInv_EquipActor* ActorToRemove = nullptr;
@@ -361,7 +400,8 @@ void UInv_EquipmentComponent::OnItemEquipped(UInv_InventoryItem* EquippedItem, i
 			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] SpawnedEquipActor WeaponSlotIndex: %d"), SpawnedEquipActor->GetWeaponSlotIndex());
 #endif
 
-			EquippedActors.Add(SpawnedEquipActor);
+			EquippedActors.AddUnique(SpawnedEquipActor);
+			CacheEquippedActor(WeaponSlotIndex, SpawnedEquipActor);
 #if INV_DEBUG_EQUIP
 			DebugDumpEquipmentState(TEXT("OnItemEquipped_ServerAfterAdd"));
 #endif
@@ -440,7 +480,8 @@ void UInv_EquipmentComponent::OnItemEquipped(UInv_InventoryItem* EquippedItem, i
 		AInv_EquipActor* ReplicatedActor = EquipmentFragment->GetEquippedActor();
 		if (IsValid(ReplicatedActor))
 		{
-			EquippedActors.Add(ReplicatedActor);
+			EquippedActors.AddUnique(ReplicatedActor);
+			CacheEquippedActor(WeaponSlotIndex, ReplicatedActor);
 #if INV_DEBUG_EQUIP
 			DebugDumpEquipmentState(TEXT("OnItemEquipped_ClientAfterAdd"));
 #endif
@@ -464,6 +505,7 @@ void UInv_EquipmentComponent::OnItemUnequipped(UInv_InventoryItem* UnequippedIte
 {
 	AActor* OwnerActor = GetOwner();
 	bool bIsServer = OwnerActor ? OwnerActor->HasAuthority() : false;
+	ClearEquippedActorCache(WeaponSlotIndex);
 	
 #if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] OnItemUnequipped 호출됨 - %s (WeaponSlotIndex: %d)"),
@@ -874,6 +916,18 @@ AInv_EquipActor* UInv_EquipmentComponent::FindPrimaryWeaponActor()
 
 	FGameplayTag WeaponsTag = FGameplayTag::RequestGameplayTag(FName("GameItems.Equipment.Weapons"));
 
+	if (IsValid(PrimaryEquippedActor) && PrimaryEquippedActor->GetEquipmentType().MatchesTag(WeaponsTag))
+	{
+#if INV_DEBUG_EQUIP
+		UE_LOG(LogTemp, Warning, TEXT("? [WeaponBridge] ??? ?? (Cache): %s"), *PrimaryEquippedActor->GetName());
+#endif
+		return PrimaryEquippedActor;
+	}
+	if (PrimaryEquippedActor.Get() && !IsValid(PrimaryEquippedActor.Get()))
+	{
+		PrimaryEquippedActor = nullptr;
+	}
+
 	if (!OwningSkeletalMesh.IsValid() && OwningPlayerController.IsValid())
 	{
 		if (ACharacter* CurrentCharacter = Cast<ACharacter>(OwningPlayerController->GetPawn()); IsValid(CurrentCharacter))
@@ -895,6 +949,7 @@ AInv_EquipActor* UInv_EquipmentComponent::FindPrimaryWeaponActor()
 			const int32 SlotIndex = Actor->GetWeaponSlotIndex();
 			if (SlotIndex == 0)
 			{
+				CacheEquippedActor(0, Actor);
 #if INV_DEBUG_EQUIP
 				UE_LOG(LogTemp, Warning, TEXT("? [WeaponBridge] ??? ?? (SlotIndex=0): %s"), *Actor->GetName());
 #endif
@@ -910,6 +965,7 @@ AInv_EquipActor* UInv_EquipmentComponent::FindPrimaryWeaponActor()
 
 	if (FirstWeaponWithUnsetIndex)
 	{
+		CacheEquippedActor(0, FirstWeaponWithUnsetIndex);
 #if INV_DEBUG_EQUIP
 		UE_LOG(LogTemp, Warning, TEXT("? [WeaponBridge] ??? ?? (SlotIndex ??? - ? ??): %s"), *FirstWeaponWithUnsetIndex->GetName());
 #endif
@@ -936,8 +992,9 @@ AInv_EquipActor* UInv_EquipmentComponent::FindPrimaryWeaponActor()
 #endif
 							if (!EquippedActors.Contains(EquipActor))
 							{
-								EquippedActors.Add(EquipActor);
+								EquippedActors.AddUnique(EquipActor);
 							}
+							CacheEquippedActor(0, EquipActor);
 							return EquipActor;
 						}
 					}
@@ -967,6 +1024,18 @@ AInv_EquipActor* UInv_EquipmentComponent::FindSecondaryWeaponActor()
 
 	FGameplayTag WeaponsTag = FGameplayTag::RequestGameplayTag(FName("GameItems.Equipment.Weapons"));
 
+	if (IsValid(SecondaryEquippedActor) && SecondaryEquippedActor->GetEquipmentType().MatchesTag(WeaponsTag))
+	{
+#if INV_DEBUG_EQUIP
+		UE_LOG(LogTemp, Warning, TEXT("? [WeaponBridge] ???? ?? (Cache): %s"), *SecondaryEquippedActor->GetName());
+#endif
+		return SecondaryEquippedActor;
+	}
+	if (SecondaryEquippedActor.Get() && !IsValid(SecondaryEquippedActor.Get()))
+	{
+		SecondaryEquippedActor = nullptr;
+	}
+
 	if (!OwningSkeletalMesh.IsValid() && OwningPlayerController.IsValid())
 	{
 		if (ACharacter* CurrentCharacter = Cast<ACharacter>(OwningPlayerController->GetPawn()); IsValid(CurrentCharacter))
@@ -989,6 +1058,7 @@ AInv_EquipActor* UInv_EquipmentComponent::FindSecondaryWeaponActor()
 			const int32 SlotIndex = Actor->GetWeaponSlotIndex();
 			if (SlotIndex == 1)
 			{
+				CacheEquippedActor(1, Actor);
 #if INV_DEBUG_EQUIP
 				UE_LOG(LogTemp, Warning, TEXT("? [WeaponBridge] ???? ?? (SlotIndex=1): %s"), *Actor->GetName());
 #endif
@@ -1008,6 +1078,7 @@ AInv_EquipActor* UInv_EquipmentComponent::FindSecondaryWeaponActor()
 
 	if (SecondWeaponWithUnsetIndex)
 	{
+		CacheEquippedActor(1, SecondWeaponWithUnsetIndex);
 #if INV_DEBUG_EQUIP
 		UE_LOG(LogTemp, Warning, TEXT("? [WeaponBridge] ???? ?? (SlotIndex ??? - ? ??): %s"), *SecondWeaponWithUnsetIndex->GetName());
 #endif
@@ -1035,8 +1106,9 @@ AInv_EquipActor* UInv_EquipmentComponent::FindSecondaryWeaponActor()
 #endif
 							if (!EquippedActors.Contains(EquipActor))
 							{
-								EquippedActors.Add(EquipActor);
+								EquippedActors.AddUnique(EquipActor);
 							}
+							CacheEquippedActor(1, EquipActor);
 							return EquipActor;
 						}
 
@@ -1044,11 +1116,12 @@ AInv_EquipActor* UInv_EquipmentComponent::FindSecondaryWeaponActor()
 						{
 							if (!EquippedActors.Contains(EquipActor))
 							{
-								EquippedActors.Add(EquipActor);
+								EquippedActors.AddUnique(EquipActor);
 							}
 							++UnsetWeaponCount;
 							if (UnsetWeaponCount == 2)
 							{
+								CacheEquippedActor(1, EquipActor);
 #if INV_DEBUG_EQUIP
 								UE_LOG(LogTemp, Warning, TEXT("? [WeaponBridge] 2?? - ???? ?? (SlotIndex ??? - ? ??): %s"), *EquipActor->GetName());
 #endif

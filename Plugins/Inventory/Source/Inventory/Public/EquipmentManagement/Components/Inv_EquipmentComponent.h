@@ -127,8 +127,16 @@ private:
 	UPROPERTY()
 	TArray<TObjectPtr<AInv_EquipActor>> EquippedActors;
 
+	UPROPERTY()
+	TObjectPtr<AInv_EquipActor> PrimaryEquippedActor = nullptr;
+
+	UPROPERTY()
+	TObjectPtr<AInv_EquipActor> SecondaryEquippedActor = nullptr;
+
 	AInv_EquipActor* FindEquippedActor(const FGameplayTag& EquipmentTypeTag);
 	AInv_EquipActor* FindEquippedActorBySlot(const FGameplayTag& EquipmentTypeTag, int32 WeaponSlotIndex) const;
+	void CacheEquippedActor(int32 WeaponSlotIndex, AInv_EquipActor* EquipActor);
+	void ClearEquippedActorCache(int32 WeaponSlotIndex);
 	void RemoveEquippedActor(const FGameplayTag& EquipmentTypeTag, int32 WeaponSlotIndex = -1);
 	void DebugDumpEquipmentState(const TCHAR* Context) const;
 
