@@ -1,4 +1,4 @@
-﻿// Gihyeon's Inventory Project
+// Gihyeon's Inventory Project
 #include "Widgets/Inventory/Spatial/Inv_InventoryGrid.h"
 
 #include "Inventory.h"
@@ -5080,12 +5080,6 @@ void UInv_InventoryGrid::HandleQuickEquip(int32 GridIndex)
 	{
 		// 이미 장착됨 → 해제 RPC (Server_EquipSlotClicked에 ItemToEquip=nullptr, ItemToUnequip=Item)
 		InventoryComponent->Server_EquipSlotClicked(nullptr, Item, Entry.WeaponSlotIndex);
-
-		// 클라이언트 브로드캐스트 (데디서버)
-		if (GetOwningPlayer() && GetOwningPlayer()->GetNetMode() == NM_Client)
-		{
-			InventoryComponent->OnItemUnequipped.Broadcast(Item, Entry.WeaponSlotIndex);
-		}
 
 		UE_LOG(LogTemp, Log, TEXT("[HandleQuickEquip] Alt+LMB 빠른 해제 → WeaponSlot=%d"), Entry.WeaponSlotIndex);
 	}

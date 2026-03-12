@@ -307,13 +307,6 @@ void UInv_SpatialInventory::EquippedGridSlotClicked(UInv_EquippedGridSlot* Equip
 	//장착된 곳에 서버RPC를 생성하는 부분
 	InventoryComponent->Server_EquipSlotClicked(HoverItem->GetInventoryItem(), nullptr, WeaponSlotIndex);
 	
-	//데디케이티드 서버 제약 조건 설정 (민우님에게도 알려줄 것.)
-	// StandAlone/ListenServer는 Multicast_EquipSlotClicked에서 이미 Broadcast 됨 → 이중 스폰 방지
-	if (GetOwningPlayer()->GetNetMode() == NM_Client)
-	{
-		InventoryComponent->OnItemEquipped.Broadcast(HoverItem->GetInventoryItem(), WeaponSlotIndex); // 아이템 장착 델리게이트 방송
-	}
-	
 	// Clear the Hover item
 	// 호버 아이템 지우기
 	Grid_Equippables->ClearHoverItem();
@@ -551,20 +544,6 @@ void UInv_SpatialInventory::BroadcastSlotClickedDelegates(UInv_InventoryItem* It
 		return;
 	}
 	InventoryComponent->Server_EquipSlotClicked(ItemToEquip, ItemToUnequip, WeaponSlotIndex);
-	
-	// StandAlone/ListenServer는 Multicast_EquipSlotClicked에서 이미 Broadcast 됨 → 이중 스폰 방지
-	if (GetOwningPlayer()->GetNetMode() == NM_Client)
-	{
-		// ⭐ [WeaponBridge] 유효한 아이템이 있을 때만 브로드캐스트
-		if (IsValid(ItemToEquip))
-		{
-			InventoryComponent->OnItemEquipped.Broadcast(ItemToEquip, WeaponSlotIndex);
-		}
-		if (IsValid(ItemToUnequip))
-		{
-			InventoryComponent->OnItemUnequipped.Broadcast(ItemToUnequip, WeaponSlotIndex);
-		}
-	}
 }
 
 
