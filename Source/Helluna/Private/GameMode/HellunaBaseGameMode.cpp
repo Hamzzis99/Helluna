@@ -302,26 +302,136 @@ void AHellunaBaseGameMode::InitializeGame()
 //    → PostLogin에서 이 맵을 확인하여 로비 배포 분기 처리
 //
 // ════════════════════════════════════════════════════════════════════════════════
+bool AHellunaBaseGameMode::ShouldEnforceLobbyDeployAdmission() const
+{
+	return GetNetMode() == NM_DedicatedServer && Cast<AHellunaDefenseGameMode>(this) != nullptr;
+}
+
+bool AHellunaBaseGameMode::ParseLobbyDeployOptions(const FString& Options, FString& OutPlayerId, int32& OutHeroTypeIndex) const
+{
+	OutPlayerId = UGameplayStatics::ParseOption(Options, TEXT("PlayerId"));
+	const FString OptionHeroType = UGameplayStatics::ParseOption(Options, TEXT("HeroType"));
+	OutHeroTypeIndex = INDEX_NONE;
+
+	if (OutPlayerId.IsEmpty() || OutPlayerId.Len() > 64)
+	{
+		return false;
+	}
+
+	if (OptionHeroType.IsEmpty() || !OptionHeroType.IsNumeric())
+	{
+		return false;
+	}
+
+	OutHeroTypeIndex = FCString::Atoi(*OptionHeroType);
+	return AHellunaBaseGameMode::IndexToHeroType(OutHeroTypeIndex) != EHellunaHeroType::None;
+}
+
+bool AHellunaBaseGameMode::ValidateLobbyDeployAdmission(const FString& PlayerId, int32 HeroTypeIndex, FString& OutErrorMessage) const
+{
+	OutErrorMessage.Reset();
+
+	if (PlayerId.IsEmpty() || PlayerId.Len() > 64)
+	{
+		OutErrorMessage = TEXT("INVALID_PLAYER_ID");
+		return false;
+	}
+
+	const EHellunaHeroType ParsedHeroType = AHellunaBaseGameMode::IndexToHeroType(HeroTypeIndex);
+	if (ParsedHeroType == EHellunaHeroType::None)
+	{
+		OutErrorMessage = TEXT("INVALID_HERO_TYPE");
+		return false;
+	}
+
+	const UWorld* World = GetWorld();
+	const int32 CurrentServerPort = World ? World->URL.Port : 0;
+	if (CurrentServerPort <= 0)
+	{
+		OutErrorMessage = TEXT("SERVER_PORT_UNAVAILABLE");
+		return false;
+	}
+
+	UE_LOG(LogHelluna, Verbose,
+		TEXT("[DeployGate] ValidateLobbyDeployAdmission passed | PlayerId=%s | HeroType=%d | ServerPort=%d"),
+		*PlayerId, HeroTypeIndex, CurrentServerPort);
+
+	return true;
+}
+
+void AHellunaBaseGameMode::PreLogin(const FString& Options, const FString& Address, const FUniqueNetIdRepl& UniqueId, FString& ErrorMessage)
+{
+	Super::PreLogin(Options, Address, UniqueId, ErrorMessage);
+	if (!ErrorMessage.IsEmpty())
+	{
+		return;
+	}
+
+	if (!ShouldEnforceLobbyDeployAdmission())
+	{
+		return;
+	}
+
+	FString PlayerId;
+	int32 HeroTypeIndex = INDEX_NONE;
+	if (!ParseLobbyDeployOptions(Options, PlayerId, HeroTypeIndex))
+	{
+		ErrorMessage = TEXT("INVALID_DEPLOY_OPTIONS");
+		UE_LOG(LogHelluna, Warning, TEXT("[DeployGate] PreLogin rejected | Reason=%s | Address=%s"), *ErrorMessage, *Address);
+		return;
+	}
+
+	UE_LOG(LogHelluna, Log, TEXT("[DeployGate] PreLogin accepted | Address=%s | PlayerId=%s | HeroType=%d"),
+		*Address, *PlayerId, HeroTypeIndex);
+}
+
 FString AHellunaBaseGameMode::InitNewPlayer(APlayerController* NewPlayerController,
 	const FUniqueNetIdRepl& UniqueId, const FString& Options,
 	const FString& Portal)
 {
 	FString ErrorMessage = Super::InitNewPlayer(NewPlayerController, UniqueId, Options, Portal);
+	if (!ErrorMessage.IsEmpty())
+	{
+		return ErrorMessage;
+	}
 
-	// Options에서 PlayerId & HeroType 파싱
-	const FString OptionPlayerId = UGameplayStatics::ParseOption(Options, TEXT("PlayerId"));
-	const FString OptionHeroType = UGameplayStatics::ParseOption(Options, TEXT("HeroType"));
+	FString OptionPlayerId;
+	int32 OptionHeroTypeIndex = INDEX_NONE;
+	const bool bHasValidDeployOptions = ParseLobbyDeployOptions(Options, OptionPlayerId, OptionHeroTypeIndex);
 
-	if (!OptionPlayerId.IsEmpty() && !OptionHeroType.IsEmpty())
+	if (ShouldEnforceLobbyDeployAdmission())
+	{
+		if (!bHasValidDeployOptions)
+		{
+			ErrorMessage = TEXT("INVALID_DEPLOY_OPTIONS");
+			UE_LOG(LogHelluna, Warning, TEXT("[DeployGate] InitNewPlayer rejected | Reason=%s"), *ErrorMessage);
+			return ErrorMessage;
+		}
+
+		FString AdmissionError;
+		if (!ValidateLobbyDeployAdmission(OptionPlayerId, OptionHeroTypeIndex, AdmissionError))
+		{
+			ErrorMessage = AdmissionError.IsEmpty() ? TEXT("DEPLOY_ADMISSION_FAILED") : AdmissionError;
+			const int32 CurrentServerPort = GetWorld() ? GetWorld()->URL.Port : 0;
+			UE_LOG(LogHelluna, Warning,
+				TEXT("[DeployGate] InitNewPlayer rejected | Reason=%s | PlayerId=%s | HeroType=%d | ServerPort=%d"),
+				*ErrorMessage, *OptionPlayerId, OptionHeroTypeIndex, CurrentServerPort);
+			return ErrorMessage;
+		}
+	}
+
+	if (bHasValidDeployOptions)
 	{
 		FLobbyDeployInfo DeployInfo;
 		DeployInfo.PlayerId = OptionPlayerId;
-		DeployInfo.HeroType = IndexToHeroType(FCString::Atoi(*OptionHeroType));
+		DeployInfo.HeroType = IndexToHeroType(OptionHeroTypeIndex);
 
 		PendingLobbyDeployMap.Add(NewPlayerController, DeployInfo);
 
-		UE_LOG(LogHelluna, Warning, TEXT("[Phase6] InitNewPlayer: 로비 배포 감지! PlayerId=%s, HeroType=%d"),
-			*OptionPlayerId, static_cast<int32>(DeployInfo.HeroType));
+		const int32 CurrentServerPort = GetWorld() ? GetWorld()->URL.Port : 0;
+		UE_LOG(LogHelluna, Log,
+			TEXT("[DeployGate] InitNewPlayer accepted | PlayerId=%s | HeroType=%d | ServerPort=%d"),
+			*OptionPlayerId, OptionHeroTypeIndex, CurrentServerPort);
 	}
 
 	return ErrorMessage;

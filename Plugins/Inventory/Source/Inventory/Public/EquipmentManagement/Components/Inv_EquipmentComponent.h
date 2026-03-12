@@ -129,6 +129,7 @@ private:
 
 	AInv_EquipActor* FindEquippedActor(const FGameplayTag& EquipmentTypeTag);
 	void RemoveEquippedActor(const FGameplayTag& EquipmentTypeTag, int32 WeaponSlotIndex = -1);
+	void DebugDumpEquipmentState(const TCHAR* Context) const;
 
 	UFUNCTION()
 	void OnPossessedPawnChange(APawn* OldPawn, APawn* NewPawn); // 멀티플레이 장착 아이템 변경 할 떄 폰 변경 시 호출되는 함수

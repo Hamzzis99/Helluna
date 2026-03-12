@@ -19,6 +19,83 @@
 //디버그용
 #include "Engine/Engine.h"
 
+void UInv_EquipmentComponent::DebugDumpEquipmentState(const TCHAR* Context) const
+{
+#if INV_DEBUG_EQUIP
+	const AActor* OwnerActor = GetOwner();
+	const bool bIsServer = OwnerActor ? OwnerActor->HasAuthority() : false;
+	const APlayerController* Controller = OwningPlayerController.Get();
+	const USkeletalMeshComponent* Mesh = OwningSkeletalMesh.Get();
+	const AActor* MeshOwner = Mesh ? Mesh->GetOwner() : nullptr;
+
+	UE_LOG(LogTemp, Warning, TEXT("=== [EquipmentDebug] Context=%s Owner=%s Controller=%s MeshOwner=%s Net=%s ActiveSlot=%d Count=%d Proxy=%s Equipping=%s ==="),
+		Context ? Context : TEXT("Unknown"),
+		*GetNameSafe(OwnerActor),
+		*GetNameSafe(Controller),
+		*GetNameSafe(MeshOwner),
+		bIsServer ? TEXT("Server") : TEXT("Client"),
+		static_cast<int32>(ActiveWeaponSlot),
+		EquippedActors.Num(),
+		bIsProxy ? TEXT("true") : TEXT("false"),
+		bIsWeaponEquipping ? TEXT("true") : TEXT("false"));
+
+	int32 Index = 0;
+	for (const TObjectPtr<AInv_EquipActor>& ActorPtr : EquippedActors)
+	{
+		const AInv_EquipActor* Actor = ActorPtr.Get();
+		if (!IsValid(Actor))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("  [Array:%d] Invalid actor entry"), Index);
+			++Index;
+			continue;
+		}
+
+		const TSubclassOf<UGameplayAbility> SpawnAbility = Actor->GetSpawnWeaponAbility();
+		UE_LOG(LogTemp, Warning, TEXT("  [Array:%d] Name=%s Tag=%s SlotIndex=%d Hidden=%s Owner=%s AttachParent=%s SpawnAbility=%s"),
+			Index,
+			*GetNameSafe(Actor),
+			*Actor->GetEquipmentType().ToString(),
+			Actor->GetWeaponSlotIndex(),
+			Actor->IsWeaponHidden() ? TEXT("true") : TEXT("false"),
+			*GetNameSafe(Actor->GetOwner()),
+			*GetNameSafe(Actor->GetAttachParentActor()),
+			*GetNameSafe(SpawnAbility.Get()));
+		++Index;
+	}
+
+	if (MeshOwner)
+	{
+		TArray<AActor*> AttachedActors;
+		MeshOwner->GetAttachedActors(AttachedActors, true);
+		UE_LOG(LogTemp, Warning, TEXT("  AttachedActors=%d"), AttachedActors.Num());
+		int32 AttachedIndex = 0;
+		for (const AActor* AttachedActor : AttachedActors)
+		{
+			if (const AInv_EquipActor* EquipActor = Cast<AInv_EquipActor>(AttachedActor))
+			{
+				const TSubclassOf<UGameplayAbility> SpawnAbility = EquipActor->GetSpawnWeaponAbility();
+				UE_LOG(LogTemp, Warning, TEXT("  [Attached:%d] EquipActor=%s Tag=%s SlotIndex=%d Hidden=%s Owner=%s SpawnAbility=%s"),
+					AttachedIndex,
+					*GetNameSafe(EquipActor),
+					*EquipActor->GetEquipmentType().ToString(),
+					EquipActor->GetWeaponSlotIndex(),
+					EquipActor->IsWeaponHidden() ? TEXT("true") : TEXT("false"),
+					*GetNameSafe(EquipActor->GetOwner()),
+					*GetNameSafe(SpawnAbility.Get()));
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("  [Attached:%d] Actor=%s Class=%s"),
+					AttachedIndex,
+					*GetNameSafe(AttachedActor),
+					AttachedActor ? *AttachedActor->GetClass()->GetName() : TEXT("None"));
+			}
+			++AttachedIndex;
+		}
+	}
+}
+#endif
+
 //프록시 매시 부분
 void UInv_EquipmentComponent::SetOwningSkeletalMesh(USkeletalMeshComponent* OwningMesh)
 {
@@ -112,7 +189,15 @@ void UInv_EquipmentComponent::InitInventoryComponent()
 {
 	// 인벤토리 컴포넌트 가져오기
 	InventoryComponent = UInv_InventoryStatics::GetInventoryComponent(OwningPlayerController.Get());
-	if (!InventoryComponent.IsValid()) return;
+	if (!InventoryComponent.IsValid())
+	{
+#if INV_DEBUG_EQUIP
+		UE_LOG(LogTemp, Error, TEXT("=== [EquipmentDebug] InitInventoryComponent failed | Owner=%s Controller=%s ==="),
+			*GetNameSafe(GetOwner()),
+			*GetNameSafe(OwningPlayerController.Get()));
+#endif
+		return;
+	}
 	// 델리게이트 바인딩 
 	if (!InventoryComponent->OnItemEquipped.IsAlreadyBound(this, &ThisClass::OnItemEquipped))
 	{
@@ -123,6 +208,13 @@ void UInv_EquipmentComponent::InitInventoryComponent()
 	{
 		InventoryComponent->OnItemUnequipped.AddUniqueDynamic(this, &ThisClass::OnItemUnequipped);
 	}
+#if INV_DEBUG_EQUIP
+	UE_LOG(LogTemp, Warning, TEXT("=== [EquipmentDebug] InitInventoryComponent success | Owner=%s Controller=%s Inventory=%s ==="),
+		*GetNameSafe(GetOwner()),
+		*GetNameSafe(OwningPlayerController.Get()),
+		*GetNameSafe(InventoryComponent.Get()));
+	DebugDumpEquipmentState(TEXT("InitInventoryComponent_AfterBind"));
+#endif
 }
 
 // 장착된 액터 스폰
@@ -209,6 +301,15 @@ void UInv_EquipmentComponent::OnItemEquipped(UInv_InventoryItem* EquippedItem, i
 	FInv_ItemManifest& ItemManifest = EquippedItem->GetItemManifestMutable();
 	FInv_EquipmentFragment* EquipmentFragment = ItemManifest.GetFragmentOfTypeMutable<FInv_EquipmentFragment>();
 	if (!EquipmentFragment) return;
+#if INV_DEBUG_EQUIP
+	UE_LOG(LogTemp, Warning, TEXT("=== [EquipmentDebug] OnItemEquipped | Item=%s Tag=%s SlotIndex=%d Owner=%s Net=%s ==="),
+		*GetNameSafe(EquippedItem),
+		*EquipmentFragment->GetEquipmentType().ToString(),
+		WeaponSlotIndex,
+		*GetNameSafe(OwnerActor),
+		bIsServer ? TEXT("Server") : TEXT("Client"));
+	DebugDumpEquipmentState(TEXT("OnItemEquipped_Before"));
+#endif
 	
 	// ⭐ 서버에서만 OnEquip 콜백과 액터 스폰 실행
 	if (bIsServer)
@@ -244,6 +345,9 @@ void UInv_EquipmentComponent::OnItemEquipped(UInv_InventoryItem* EquippedItem, i
 #endif
 
 			EquippedActors.Add(SpawnedEquipActor);
+#if INV_DEBUG_EQUIP
+			DebugDumpEquipmentState(TEXT("OnItemEquipped_ServerAfterAdd"));
+#endif
 #if INV_DEBUG_EQUIP
 			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] 서버: EquippedActors에 추가됨: %s (총 %d개) - this: %p"),
 				*SpawnedEquipActor->GetName(), EquippedActors.Num(), this);
@@ -321,6 +425,9 @@ void UInv_EquipmentComponent::OnItemEquipped(UInv_InventoryItem* EquippedItem, i
 		{
 			EquippedActors.Add(ReplicatedActor);
 #if INV_DEBUG_EQUIP
+			DebugDumpEquipmentState(TEXT("OnItemEquipped_ClientAfterAdd"));
+#endif
+#if INV_DEBUG_EQUIP
 			UE_LOG(LogTemp, Warning, TEXT("⭐ [EquipmentComponent] 클라이언트: 리플리케이트된 액터 추가: %s (총 %d개) - this: %p"),
 				*ReplicatedActor->GetName(), EquippedActors.Num(), this);
 #endif
@@ -351,6 +458,15 @@ void UInv_EquipmentComponent::OnItemUnequipped(UInv_InventoryItem* UnequippedIte
 	FInv_ItemManifest& ItemManifest = UnequippedItem->GetItemManifestMutable();
 	FInv_EquipmentFragment* EquipmentFragment = ItemManifest.GetFragmentOfTypeMutable<FInv_EquipmentFragment>();
 	if (!EquipmentFragment) return;
+#if INV_DEBUG_EQUIP
+	UE_LOG(LogTemp, Warning, TEXT("=== [EquipmentDebug] OnItemUnequipped | Item=%s Tag=%s SlotIndex=%d Owner=%s Net=%s ==="),
+		*GetNameSafe(UnequippedItem),
+		*EquipmentFragment->GetEquipmentType().ToString(),
+		WeaponSlotIndex,
+		*GetNameSafe(OwnerActor),
+		bIsServer ? TEXT("Server") : TEXT("Client"));
+	DebugDumpEquipmentState(TEXT("OnItemUnequipped_Before"));
+#endif
 	
 	// ⭐ [WeaponBridge] 무기 해제 시 손에 들고 있는 무기도 처리 (클라이언트에서 실행)
 	FGameplayTag WeaponsTag = FGameplayTag::RequestGameplayTag(FName("GameItems.Equipment.Weapons"));
@@ -428,6 +544,9 @@ void UInv_EquipmentComponent::OnItemUnequipped(UInv_InventoryItem* UnequippedIte
 	// ⭐ [WeaponBridge] 장비 제거하는 부분 (등 무기 Destroy)
 	// ⭐ WeaponSlotIndex를 전달하여 정확한 무기만 제거
 	RemoveEquippedActor(EquipmentFragment->GetEquipmentType(), WeaponSlotIndex);
+#if INV_DEBUG_EQUIP
+	DebugDumpEquipmentState(TEXT("OnItemUnequipped_AfterRemove"));
+#endif
 }
 
 // ============================================
@@ -448,6 +567,9 @@ void UInv_EquipmentComponent::SetWeaponEquipping(bool bNewEquipping)
 
 void UInv_EquipmentComponent::HandlePrimaryWeaponInput()
 {
+#if INV_DEBUG_EQUIP
+	DebugDumpEquipmentState(TEXT("HandlePrimaryWeaponInput_Begin"));
+#endif
 #if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] HandlePrimaryWeaponInput 호출됨 (1키)"));
 #endif
@@ -497,6 +619,9 @@ void UInv_EquipmentComponent::HandlePrimaryWeaponInput()
 
 void UInv_EquipmentComponent::HandleSecondaryWeaponInput()
 {
+#if INV_DEBUG_EQUIP
+	DebugDumpEquipmentState(TEXT("HandleSecondaryWeaponInput_Begin"));
+#endif
 #if INV_DEBUG_EQUIP
 	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] HandleSecondaryWeaponInput 호출됨 (2키)"));
 #endif
@@ -718,6 +843,9 @@ void UInv_EquipmentComponent::UnequipWeapon()
 
 AInv_EquipActor* UInv_EquipmentComponent::FindPrimaryWeaponActor()
 {
+#if INV_DEBUG_EQUIP
+	DebugDumpEquipmentState(TEXT("FindPrimaryWeaponActor_Begin"));
+#endif
 	// ============================================
 	// ⭐ [WeaponBridge] 주무기 찾기
 	// ⭐ 1순위: WeaponSlotIndex == 0
@@ -811,6 +939,9 @@ AInv_EquipActor* UInv_EquipmentComponent::FindPrimaryWeaponActor()
 
 AInv_EquipActor* UInv_EquipmentComponent::FindSecondaryWeaponActor()
 {
+#if INV_DEBUG_EQUIP
+	DebugDumpEquipmentState(TEXT("FindSecondaryWeaponActor_Begin"));
+#endif
 	// ============================================
 	// ⭐ [WeaponBridge] 보조무기 찾기
 	// ⭐ 1순위: WeaponSlotIndex == 1
