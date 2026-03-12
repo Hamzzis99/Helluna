@@ -940,7 +940,7 @@ void UInv_InventoryGrid::AssignHoverItem(UInv_InventoryItem* InventoryItem, cons
 	if (!IsValid(InventoryItem))
 	{
 #if INV_DEBUG_WIDGET
-		UE_LOG(LogTemp, Error, TEXT("[AssignHoverItem] ❌ InventoryItem이 nullptr입니다! GridIndex=%d"), GridIndex);
+		UE_LOG(LogTemp, Error, TEXT("[AssignHoverItem] InventoryItem이 nullptr입니다!"), GridIndex);
 #endif
 		return;
 	}
@@ -949,7 +949,10 @@ void UInv_InventoryGrid::AssignHoverItem(UInv_InventoryItem* InventoryItem, cons
 
 	HoverItem->SetPreviousGridIndex(PreviousGridIndex);
 	if (!GridSlots.IsValidIndex(GridIndex)) return;
-	HoverItem->UpdateStackCount(InventoryItem->IsStackable() ? GridSlots[GridIndex]->GetStackCount() : 0);
+	const int32 HoverStackCount = InventoryItem->IsStackable()
+		? FMath::Max(1, GridSlots[GridIndex]->GetStackCount())
+		: 1;
+	HoverItem->UpdateStackCount(HoverStackCount);
 }
 
 void UInv_InventoryGrid::RemoveItemFromGrid(UInv_InventoryItem* InventoryItem, const int32 GridIndex) // 아이템을 Hover 한 뒤로.
@@ -1862,8 +1865,19 @@ void UInv_InventoryGrid::DropItem()
 
 	// TODO : Tell the server to actually drop the item
 	// TODO : 서버에서 실제로 아이템을 떨어뜨리도록 지시하는 일
-	if (!InventoryComponent.IsValid()) return; // C1: TWeakObjectPtr 무효 시 크래시 방지
-	InventoryComponent->Server_DropItem(HoverItem->GetInventoryItem(), HoverItem->GetStackCount()); // 서버에 아이템 드롭 요청
+	if (!InventoryComponent.IsValid()) return; //C1: TWeakObjectPtr 무효 시 크래시 방지
+	const int32 RawStackCount = HoverItem->GetStackCount();
+	const int32 EffectiveStackCount = HoverItem->IsStackable()
+		? FMath::Max(1, RawStackCount)
+		: 1;
+#if INV_DEBUG_WIDGET
+	UE_LOG(LogTemp, Warning, TEXT("[InventoryGrid] DropItem | Item=%s RawStack=%d EffectiveStack=%d Stackable=%s"),
+		IsValid(HoverItem->GetInventoryItem()) ? *HoverItem->GetInventoryItem()->GetItemManifest().GetItemType().ToString() : TEXT("NULL"),
+		RawStackCount,
+		EffectiveStackCount,
+		HoverItem->IsStackable() ? TEXT("Y") : TEXT("N"));
+#endif
+	InventoryComponent->Server_DropItem(HoverItem->GetInventoryItem(), EffectiveStackCount); 
 	
 	ClearHoverItem();
 	ShowCursor();

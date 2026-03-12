@@ -682,18 +682,32 @@ void UInv_InventoryComponent::Server_AddStacksToItem_Implementation(UInv_ItemCom
 
 bool UInv_InventoryComponent::Server_DropItem_Validate(UInv_InventoryItem* Item, int32 StackCount)
 {
-	// UObject 포인터는 리플리케이션 타이밍으로 일시적 invalid 가능 → Validate에서 체크하면 강제 킥됨
-	// null 체크는 _Implementation에서 수행
-	return StackCount > 0;
+	// Validate failure disconnects the client. Runtime-sanitize malformed values
+	// in _Implementation so UI timing issues do not force a connection loss.
+	return true;
 }
 
 //아이템 드롭 상호작용을 누른 뒤 서버에서 어떻게 처리를 할지.
 void UInv_InventoryComponent::Server_DropItem_Implementation(UInv_InventoryItem* Item, int32 StackCount)
 {
-	if (!IsValid(Item)) return;
+	if (!IsValid(Item))
+	{
+		UE_LOG(LogInventory, Warning, TEXT("[InventoryComponent] Server_DropItem ignored: invalid item"));
+		return;
+	}
 
-	//단순히 항목을 제거하는지 단순 업데이트를 하는지
-	const int32 NewStackCount = Item->GetTotalStackCount() - StackCount;
+	const int32 TotalStackCount = FMath::Max(1, Item->GetTotalStackCount());
+	int32 EffectiveStackCount = StackCount;
+	if (EffectiveStackCount <= 0)
+	{
+		EffectiveStackCount = Item->IsStackable() ? TotalStackCount : 1;
+		UE_LOG(LogInventory, Warning,
+			TEXT("[InventoryComponent] Server_DropItem corrected invalid stack count. Item=%s Requested=%d Effective=%d Total=%d"),
+			*Item->GetItemManifest().GetItemType().ToString(), StackCount, EffectiveStackCount, TotalStackCount);
+	}
+	EffectiveStackCount = FMath::Clamp(EffectiveStackCount, 1, TotalStackCount);
+
+	const int32 NewStackCount = TotalStackCount - EffectiveStackCount;
 	if (NewStackCount <= 0)
 	{
 		InventoryList.RemoveEntry(Item);
@@ -701,7 +715,6 @@ void UInv_InventoryComponent::Server_DropItem_Implementation(UInv_InventoryItem*
 	else
 	{
 		Item->SetTotalStackCount(NewStackCount);
-		// ⚠️ 부분 드롭 시 MarkItemDirty 필수 — 없으면 데디서버 클라이언트에서 스택 수 미갱신
 		const int32 DropEntryIdx = FindEntryIndexForItem(Item);
 		if (InventoryList.Entries.IsValidIndex(DropEntryIdx))
 		{
@@ -709,8 +722,7 @@ void UInv_InventoryComponent::Server_DropItem_Implementation(UInv_InventoryItem*
 		}
 	}
 
-	SpawnDroppedItem(Item, StackCount); // 떨어진 아이템 생성 함수 호출
-	
+	SpawnDroppedItem(Item, EffectiveStackCount);
 }
 
 //무언가를 떨어뜨렸기 때문에 아이템도 생성 및 이벤트 효과들 보이게 하는 부분의 코드들

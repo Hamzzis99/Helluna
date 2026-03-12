@@ -339,10 +339,10 @@ void UInv_SpatialInventory::EquippedSlottedItemClicked(UInv_EquippedSlottedItem*
 	// 이 아이템을 보유한 장착된 그리드 슬롯 가져오기
 	UInv_EquippedGridSlot* EquippedGridSlot = FindSlotWithEquippedItem(ItemToUnequip);
 	
-	// ⭐ [WeaponBridge] 장착 해제 시 WeaponSlotIndex 가져오기
+	// [WeaponBridge] 장착 해제 시 WeaponSlotIndex 가져오기
 	int32 WeaponSlotIndex = IsValid(EquippedGridSlot) ? EquippedGridSlot->GetWeaponSlotIndex() : -1;
 #if INV_DEBUG_WIDGET
-	UE_LOG(LogTemp, Warning, TEXT("⭐ [SpatialInventory] 장착 슬롯 아이템 클릭 (해제) - WeaponSlotIndex: %d"), WeaponSlotIndex);
+	UE_LOG(LogTemp, Warning, TEXT("? [SpatialInventory] 장착 슬롯 아이템 클릭 (해제) - WeaponSlotIndex: %d"), WeaponSlotIndex);
 #endif
 	
 	// Clear the equipped slot of this item (set it's inventory item to nullptr)
@@ -357,9 +357,12 @@ void UInv_SpatialInventory::EquippedSlottedItemClicked(UInv_EquippedSlottedItem*
 	// 장착된 그리드 슬롯에서 장착된 슬롯 아이템 제거 (OnEquippedSlottedItemClicked에서 바인딩 해제)
 	RemoveEquippedSlottedItem(EquippedSlottedItem);
 	
-	// Make a new equipped slotted item (for the item we held in HoverItem)
-	// 호버 아이템에 들고 있던 아이템을 위한 새로운 장착된 슬롯 아이템 만들기
-	MakeEquippedSlottedItem(EquippedSlottedItem, EquippedGridSlot, ItemToEquip);
+	if (IsValid(ItemToEquip))
+	{
+		// Make a new equipped slotted item (for the item we held in HoverItem)
+		// 장착된 그리드 슬롯에서 장착된 슬롯 아이템 제거 (OnEquippedSlottedItemClicked에서 바인딩 해제)
+		MakeEquippedSlottedItem(EquippedSlottedItem, EquippedGridSlot, ItemToEquip);
+	}
 	
 	// Broadcast delegates for OnItemEquipped/OnItemUnequipped (from the IC)
 	// IC에서 OnItemEquipped/OnItemUnequipped에 대한 델리게이트 방송
@@ -475,7 +478,7 @@ void UInv_SpatialInventory::RemoveEquippedSlottedItem(UInv_EquippedSlottedItem* 
 // 장착된 슬롯에 아이템 만들기
 void UInv_SpatialInventory::MakeEquippedSlottedItem(UInv_EquippedSlottedItem* EquippedSlottedItem, UInv_EquippedGridSlot* EquippedGridSlot, UInv_InventoryItem* ItemToEquip) 
 {
-	if (!IsValid(EquippedGridSlot)) return;
+	if (!IsValid(EquippedGridSlot) || !IsValid(ItemToEquip)) return;
 	
 	// [Phase 4 Lobby] GetTileSize() 사용 (GetInventoryWidget 대신 — 로비에서도 안전)
 	UInv_EquippedSlottedItem* SlottedItem = EquippedGridSlot->OnItemEquipped(
