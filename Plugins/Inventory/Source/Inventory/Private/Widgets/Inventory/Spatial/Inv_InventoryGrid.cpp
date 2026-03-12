@@ -1010,13 +1010,12 @@ void UInv_InventoryGrid::RemoveItemFromGrid(UInv_InventoryItem* InventoryItem, c
 
 void UInv_InventoryGrid::AssignHoverItem(UInv_InventoryItem* InventoryItem) // 이걸 참조하면 나중에 그걸 만들 수 있겠지? 창고
 {
-	// ⭐ Nullptr 체크 (EXCEPTION_ACCESS_VIOLATION 방지)
+	// ? Nullptr ?? (EXCEPTION_ACCESS_VIOLATION ??)
 	if (!IsValid(InventoryItem))
 	{
 #if INV_DEBUG_WIDGET
-		UE_LOG(LogTemp, Error, TEXT("[AssignHoverItem] ❌ InventoryItem이 nullptr입니다!"));
+		UE_LOG(LogTemp, Error, TEXT("[AssignHoverItem] ? InventoryItem? nullptr???!"));
 #endif
-		// U1: HoverItem이 아직 생성되지 않았을 수 있으므로 null 체크
 		if (IsValid(HoverItem))
 		{
 			HoverItem->SetVisibility(ESlateVisibility::Hidden);
@@ -1032,22 +1031,31 @@ void UInv_InventoryGrid::AssignHoverItem(UInv_InventoryItem* InventoryItem) // �
 	const FInv_ImageFragment* ImageFragment = GetFragment<FInv_ImageFragment>(InventoryItem, FragmentTags::IconFragment);
 	if (!GridFragment || !ImageFragment) return;
 
-	// 이미지 불러오는 것들.
 	const FVector2D DrawSize = GetDrawSize(GridFragment);
 
 	FSlateBrush IconBrush;
 	IconBrush.SetResourceObject(ImageFragment->GetIcon());
 	IconBrush.DrawAs = ESlateBrushDrawType::Image;
-	IconBrush.ImageSize = DrawSize * UWidgetLayoutLibrary::GetViewportScale(this); // 뷰포트 스케일로 곱해주기. (왜 뷰포트로 곱해줄까?)
+	IconBrush.ImageSize = DrawSize * UWidgetLayoutLibrary::GetViewportScale(this);
 
 	HoverItem->SetImageBrush(IconBrush);
 	HoverItem->SetGridDimensions(GridFragment->GetGridSize());
 	HoverItem->SetInventoryItem(InventoryItem);
 	HoverItem->SetIsStackable(InventoryItem->IsStackable());
 
-	GetOwningPlayer()->SetMouseCursorWidget(EMouseCursor::Default, HoverItem); // 마우스 커서 위젯 설정
-	bShouldTickForHover = true; // [최적화] Tick 활성화
-	HoverItemCurrentTileSize = TileSize; // [Fix21] 크로스 Grid 리사이즈 추적
+	int32 HoverStackCount = 1;
+	if (InventoryItem->IsStackable())
+	{
+		if (const FInv_StackableFragment* StackableFragment = InventoryItem->GetItemManifest().GetFragmentOfType<FInv_StackableFragment>())
+		{
+			HoverStackCount = FMath::Max(1, StackableFragment->GetStackCount());
+		}
+	}
+	HoverItem->UpdateStackCount(HoverStackCount);
+
+	GetOwningPlayer()->SetMouseCursorWidget(EMouseCursor::Default, HoverItem);
+	bShouldTickForHover = true;
+	HoverItemCurrentTileSize = TileSize;
 }
 
 void UInv_InventoryGrid::OnHide()

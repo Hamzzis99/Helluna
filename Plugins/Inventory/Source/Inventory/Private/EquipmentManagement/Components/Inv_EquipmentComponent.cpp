@@ -160,16 +160,13 @@ void UInv_EquipmentComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 // 플레이어 컨트롤러 초기화
 void UInv_EquipmentComponent::InitPlayerController()
 {
-	
-	if (OwningPlayerController = Cast<APlayerController>(GetOwner()); OwningPlayerController.IsValid()) // 소유자가 플레이어 컨트롤러인지 확인
+	if (OwningPlayerController = Cast<APlayerController>(GetOwner()); OwningPlayerController.IsValid())
 	{
-		if (ACharacter* OwnerCharacter = Cast<ACharacter>(OwningPlayerController->GetPawn()); IsValid(OwnerCharacter)) // 플레이어 컨트롤러의 폰이 캐릭터인지 확인
+		OwningPlayerController->OnPossessedPawnChanged.AddUniqueDynamic(this, &ThisClass::OnPossessedPawnChange);
+
+		if (APawn* CurrentPawn = OwningPlayerController->GetPawn(); IsValid(CurrentPawn))
 		{
-			OnPossessedPawnChange(nullptr, OwnerCharacter); // 이미 폰이 소유된 경우 즉시 호출
-		}
-		else
-		{
-			OwningPlayerController->OnPossessedPawnChanged.AddUniqueDynamic(this, &ThisClass::OnPossessedPawnChange);  //컨트롤러를 멀티캐스트 델리게이트 식으로. 위임하는 부분. (이미 완료 됐을 경우 이걸 호출 안 하니 깔끔해진다.)
+			OnPossessedPawnChange(nullptr, CurrentPawn);
 		}
 	}
 }
@@ -177,11 +174,31 @@ void UInv_EquipmentComponent::InitPlayerController()
 // 폰 변경 시 호출되는 함수 (컨트롤러 소유권?) <- 아이템을 장착하면 Pawn이 바뀌니까 그 것을 이제 다시 절차적으로 검증 시키는 역할 (말투 정교화가 필요하다.)
 void UInv_EquipmentComponent::OnPossessedPawnChange(APawn* OldPawn, APawn* NewPawn)
 {
-	if (ACharacter* OwnerCharacter = Cast<ACharacter>(OwningPlayerController->GetPawn()); IsValid(OwnerCharacter)) // 플레이어 컨트롤러의 폰이 캐릭터인지 확인
+	APawn* EffectivePawn = NewPawn;
+	if (!IsValid(EffectivePawn) && OwningPlayerController.IsValid())
 	{
-		OwningSkeletalMesh = OwnerCharacter->GetMesh(); // 멀티플레이를 코딩할 때 이 부분이 중요함. (지금 InitInventoryComponent) 부분을 보면 Nullptr이 반환 되잖아. (멀티플레이에 고려해야 할 것은 Controller 부분이구나.)
+		EffectivePawn = OwningPlayerController->GetPawn();
 	}
+
+	if (ACharacter* OwnerCharacter = Cast<ACharacter>(EffectivePawn); IsValid(OwnerCharacter))
+	{
+		OwningSkeletalMesh = OwnerCharacter->GetMesh();
+	}
+	else
+	{
+		OwningSkeletalMesh.Reset();
+	}
+#if INV_DEBUG_EQUIP
+	UE_LOG(LogTemp, Warning, TEXT("=== [EquipmentDebug] OnPossessedPawnChange | OldPawn=%s NewPawn=%s EffectivePawn=%s MeshOwner=%s ==="),
+		*GetNameSafe(OldPawn),
+		*GetNameSafe(NewPawn),
+		*GetNameSafe(EffectivePawn),
+		*GetNameSafe(OwningSkeletalMesh.IsValid() ? OwningSkeletalMesh->GetOwner() : nullptr));
+#endif
 	InitInventoryComponent();
+#if INV_DEBUG_EQUIP
+	DebugDumpEquipmentState(TEXT("OnPossessedPawnChange_AfterInit"));
+#endif
 }
 
 
@@ -841,83 +858,81 @@ void UInv_EquipmentComponent::UnequipWeapon()
 
 }
 
+
 AInv_EquipActor* UInv_EquipmentComponent::FindPrimaryWeaponActor()
 {
 #if INV_DEBUG_EQUIP
 	DebugDumpEquipmentState(TEXT("FindPrimaryWeaponActor_Begin"));
 #endif
-	// ============================================
-	// ⭐ [WeaponBridge] 주무기 찾기
-	// ⭐ 1순위: WeaponSlotIndex == 0
-	// ⭐ 2순위: WeaponSlotIndex == -1 (미설정)인 첫 번째 무기
-	// ============================================
-	
 	AActor* OwnerActor = GetOwner();
 	bool bIsServer = OwnerActor ? OwnerActor->HasAuthority() : false;
-	
+
 #if INV_DEBUG_EQUIP
-	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] FindPrimaryWeaponActor 시작 - %s"), 
-		bIsServer ? TEXT("서버") : TEXT("클라이언트"));
+	UE_LOG(LogTemp, Warning, TEXT("? [WeaponBridge] FindPrimaryWeaponActor ?? - %s"),
+		bIsServer ? TEXT("??") : TEXT("?????"));
 #endif
-	
+
 	FGameplayTag WeaponsTag = FGameplayTag::RequestGameplayTag(FName("GameItems.Equipment.Weapons"));
-	
-	// 1단계: EquippedActors 배열에서 찾기
+
+	if (!OwningSkeletalMesh.IsValid() && OwningPlayerController.IsValid())
+	{
+		if (ACharacter* CurrentCharacter = Cast<ACharacter>(OwningPlayerController->GetPawn()); IsValid(CurrentCharacter))
+		{
+			OwningSkeletalMesh = CurrentCharacter->GetMesh();
+#if INV_DEBUG_EQUIP
+			UE_LOG(LogTemp, Warning, TEXT("=== [EquipmentDebug] FindWeaponActor reacquired mesh | Pawn=%s MeshOwner=%s ==="),
+				*GetNameSafe(CurrentCharacter),
+				*GetNameSafe(OwningSkeletalMesh.IsValid() ? OwningSkeletalMesh->GetOwner() : nullptr));
+#endif
+		}
+	}
+
 	AInv_EquipActor* FirstWeaponWithUnsetIndex = nullptr;
-	
 	for (AInv_EquipActor* Actor : EquippedActors)
 	{
 		if (IsValid(Actor) && Actor->GetEquipmentType().MatchesTag(WeaponsTag))
 		{
-			int32 SlotIndex = Actor->GetWeaponSlotIndex();
-			
-			// 정확히 SlotIndex == 0인 무기 (1순위)
+			const int32 SlotIndex = Actor->GetWeaponSlotIndex();
 			if (SlotIndex == 0)
 			{
 #if INV_DEBUG_EQUIP
-				UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 주무기 찾음 (SlotIndex=0): %s"), *Actor->GetName());
+				UE_LOG(LogTemp, Warning, TEXT("? [WeaponBridge] ??? ?? (SlotIndex=0): %s"), *Actor->GetName());
 #endif
 				return Actor;
 			}
-			
-			// SlotIndex == -1 (미설정)인 첫 번째 무기 기억 (2순위)
+
 			if (SlotIndex == -1 && !FirstWeaponWithUnsetIndex)
 			{
 				FirstWeaponWithUnsetIndex = Actor;
 			}
 		}
 	}
-	
-	// SlotIndex == 0인 무기가 없으면 미설정(-1)인 첫 번째 무기 반환
+
 	if (FirstWeaponWithUnsetIndex)
 	{
 #if INV_DEBUG_EQUIP
-		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 주무기 찾음 (SlotIndex 미설정, 첫 번째): %s"), *FirstWeaponWithUnsetIndex->GetName());
+		UE_LOG(LogTemp, Warning, TEXT("? [WeaponBridge] ??? ?? (SlotIndex ??? - ? ??): %s"), *FirstWeaponWithUnsetIndex->GetName());
 #endif
 		return FirstWeaponWithUnsetIndex;
 	}
-	
-	// 2단계: 클라이언트에서 월드 검색
+
 	if (!bIsServer && OwningSkeletalMesh.IsValid())
 	{
 		TArray<AActor*> AttachedActors;
 		if (AActor* MeshOwner = OwningSkeletalMesh->GetOwner())
 		{
 			MeshOwner->GetAttachedActors(AttachedActors, true);
-			
 			for (AActor* AttachedActor : AttachedActors)
 			{
 				if (AInv_EquipActor* EquipActor = Cast<AInv_EquipActor>(AttachedActor))
 				{
 					if (EquipActor->GetEquipmentType().MatchesTag(WeaponsTag))
 					{
-						int32 SlotIndex = EquipActor->GetWeaponSlotIndex();
-						
-						// SlotIndex == 0 또는 -1(미설정)인 첫 번째 무기
+						const int32 SlotIndex = EquipActor->GetWeaponSlotIndex();
 						if (SlotIndex == 0 || SlotIndex == -1)
 						{
 #if INV_DEBUG_EQUIP
-							UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 2단계 - 주무기 찾음 (SlotIndex=%d): %s"), SlotIndex, *EquipActor->GetName());
+							UE_LOG(LogTemp, Warning, TEXT("? [WeaponBridge] 2?? - ??? ?? (SlotIndex=%d): %s"), SlotIndex, *EquipActor->GetName());
 #endif
 							if (!EquippedActors.Contains(EquipActor))
 							{
@@ -930,9 +945,9 @@ AInv_EquipActor* UInv_EquipmentComponent::FindPrimaryWeaponActor()
 			}
 		}
 	}
-	
+
 #if INV_DEBUG_EQUIP
-	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 주무기 없음"));
+	UE_LOG(LogTemp, Warning, TEXT("? [WeaponBridge] ??? ??"));
 #endif
 	return nullptr;
 }
@@ -942,45 +957,47 @@ AInv_EquipActor* UInv_EquipmentComponent::FindSecondaryWeaponActor()
 #if INV_DEBUG_EQUIP
 	DebugDumpEquipmentState(TEXT("FindSecondaryWeaponActor_Begin"));
 #endif
-	// ============================================
-	// ⭐ [WeaponBridge] 보조무기 찾기
-	// ⭐ 1순위: WeaponSlotIndex == 1
-	// ⭐ 2순위: WeaponSlotIndex == -1 (미설정)인 두 번째 무기
-	// ============================================
-	
 	AActor* OwnerActor = GetOwner();
 	bool bIsServer = OwnerActor ? OwnerActor->HasAuthority() : false;
-	
+
 #if INV_DEBUG_EQUIP
-	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] FindSecondaryWeaponActor 시작 - %s"), 
-		bIsServer ? TEXT("서버") : TEXT("클라이언트"));
+	UE_LOG(LogTemp, Warning, TEXT("? [WeaponBridge] FindSecondaryWeaponActor ?? - %s"),
+		bIsServer ? TEXT("??") : TEXT("?????"));
 #endif
-	
+
 	FGameplayTag WeaponsTag = FGameplayTag::RequestGameplayTag(FName("GameItems.Equipment.Weapons"));
-	
-	// 1단계: EquippedActors 배열에서 찾기
+
+	if (!OwningSkeletalMesh.IsValid() && OwningPlayerController.IsValid())
+	{
+		if (ACharacter* CurrentCharacter = Cast<ACharacter>(OwningPlayerController->GetPawn()); IsValid(CurrentCharacter))
+		{
+			OwningSkeletalMesh = CurrentCharacter->GetMesh();
+#if INV_DEBUG_EQUIP
+			UE_LOG(LogTemp, Warning, TEXT("=== [EquipmentDebug] FindWeaponActor reacquired mesh | Pawn=%s MeshOwner=%s ==="),
+				*GetNameSafe(CurrentCharacter),
+				*GetNameSafe(OwningSkeletalMesh.IsValid() ? OwningSkeletalMesh->GetOwner() : nullptr));
+#endif
+		}
+	}
+
 	int32 UnsetWeaponCount = 0;
 	AInv_EquipActor* SecondWeaponWithUnsetIndex = nullptr;
-	
 	for (AInv_EquipActor* Actor : EquippedActors)
 	{
 		if (IsValid(Actor) && Actor->GetEquipmentType().MatchesTag(WeaponsTag))
 		{
-			int32 SlotIndex = Actor->GetWeaponSlotIndex();
-			
-			// 정확히 SlotIndex == 1인 무기 (1순위)
+			const int32 SlotIndex = Actor->GetWeaponSlotIndex();
 			if (SlotIndex == 1)
 			{
 #if INV_DEBUG_EQUIP
-				UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 보조무기 찾음 (SlotIndex=1): %s"), *Actor->GetName());
+				UE_LOG(LogTemp, Warning, TEXT("? [WeaponBridge] ???? ?? (SlotIndex=1): %s"), *Actor->GetName());
 #endif
 				return Actor;
 			}
-			
-			// SlotIndex == -1 (미설정)인 무기 카운트
+
 			if (SlotIndex == -1)
 			{
-				UnsetWeaponCount++;
+				++UnsetWeaponCount;
 				if (UnsetWeaponCount == 2)
 				{
 					SecondWeaponWithUnsetIndex = Actor;
@@ -988,24 +1005,21 @@ AInv_EquipActor* UInv_EquipmentComponent::FindSecondaryWeaponActor()
 			}
 		}
 	}
-	
-	// SlotIndex == 1인 무기가 없으면 미설정(-1)인 두 번째 무기 반환
+
 	if (SecondWeaponWithUnsetIndex)
 	{
 #if INV_DEBUG_EQUIP
-		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 보조무기 찾음 (SlotIndex 미설정, 두 번째): %s"), *SecondWeaponWithUnsetIndex->GetName());
+		UE_LOG(LogTemp, Warning, TEXT("? [WeaponBridge] ???? ?? (SlotIndex ??? - ? ??): %s"), *SecondWeaponWithUnsetIndex->GetName());
 #endif
 		return SecondWeaponWithUnsetIndex;
 	}
-	
-	// 2단계: 클라이언트에서 월드 검색
+
 	if (!bIsServer && OwningSkeletalMesh.IsValid())
 	{
 		TArray<AActor*> AttachedActors;
 		if (AActor* MeshOwner = OwningSkeletalMesh->GetOwner())
 		{
 			MeshOwner->GetAttachedActors(AttachedActors, true);
-			
 			UnsetWeaponCount = 0;
 			for (AActor* AttachedActor : AttachedActors)
 			{
@@ -1013,13 +1027,11 @@ AInv_EquipActor* UInv_EquipmentComponent::FindSecondaryWeaponActor()
 				{
 					if (EquipActor->GetEquipmentType().MatchesTag(WeaponsTag))
 					{
-						int32 SlotIndex = EquipActor->GetWeaponSlotIndex();
-						
-						// SlotIndex == 1인 무기
+						const int32 SlotIndex = EquipActor->GetWeaponSlotIndex();
 						if (SlotIndex == 1)
 						{
 #if INV_DEBUG_EQUIP
-							UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 2단계 - 보조무기 찾음 (SlotIndex=1): %s"), *EquipActor->GetName());
+							UE_LOG(LogTemp, Warning, TEXT("? [WeaponBridge] 2?? - ???? ?? (SlotIndex=1): %s"), *EquipActor->GetName());
 #endif
 							if (!EquippedActors.Contains(EquipActor))
 							{
@@ -1027,19 +1039,18 @@ AInv_EquipActor* UInv_EquipmentComponent::FindSecondaryWeaponActor()
 							}
 							return EquipActor;
 						}
-						
-						// SlotIndex == -1 (미설정)인 두 번째 무기
+
 						if (SlotIndex == -1)
 						{
 							if (!EquippedActors.Contains(EquipActor))
 							{
 								EquippedActors.Add(EquipActor);
 							}
-							UnsetWeaponCount++;
+							++UnsetWeaponCount;
 							if (UnsetWeaponCount == 2)
 							{
 #if INV_DEBUG_EQUIP
-								UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 2단계 - 보조무기 찾음 (SlotIndex 미설정, 두 번째): %s"), *EquipActor->GetName());
+								UE_LOG(LogTemp, Warning, TEXT("? [WeaponBridge] 2?? - ???? ?? (SlotIndex ??? - ? ??): %s"), *EquipActor->GetName());
 #endif
 								return EquipActor;
 							}
@@ -1049,13 +1060,12 @@ AInv_EquipActor* UInv_EquipmentComponent::FindSecondaryWeaponActor()
 			}
 		}
 	}
-	
+
 #if INV_DEBUG_EQUIP
-	UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] 보조무기 없음"));
+	UE_LOG(LogTemp, Warning, TEXT("? [WeaponBridge] ???? ??"));
 #endif
 	return nullptr;
 }
-
 //================== 김민우 수정 =====================
 //		UnequipWeapon(); 외부에서 호출하는 함수	추가
 //==================================================
