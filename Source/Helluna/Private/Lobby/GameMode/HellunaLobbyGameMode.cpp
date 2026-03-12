@@ -74,6 +74,34 @@ void BuildEquipmentSlotsFromLoadout(
 		OutSlots.Add(MoveTemp(Slot));
 	}
 }
+
+FString NormalizeLobbyMapIdentifier(const FString& InValue)
+{
+	FString Normalized = InValue;
+	Normalized.TrimStartAndEndInline();
+
+	if (Normalized.IsEmpty())
+	{
+		return Normalized;
+	}
+
+	if (Normalized.Contains(TEXT("/")) || Normalized.Contains(TEXT("\\")))
+	{
+		Normalized = FPaths::GetBaseFilename(Normalized);
+	}
+
+	return Normalized;
+}
+
+bool DoesLobbyRegistryMapMatch(const FString& RegistryMapName, const FString& RequestedMapIdentifier)
+{
+	const FString NormalizedRegistry = NormalizeLobbyMapIdentifier(RegistryMapName);
+	const FString NormalizedRequested = NormalizeLobbyMapIdentifier(RequestedMapIdentifier);
+
+	return !NormalizedRegistry.IsEmpty()
+		&& !NormalizedRequested.IsEmpty()
+		&& NormalizedRegistry.Equals(NormalizedRequested, ESearchCase::IgnoreCase);
+}
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -112,6 +140,12 @@ void AHellunaLobbyGameMode::BeginPlay()
 	{
 		LobbyReturnURL = CmdLobbyReturnURL;
 		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] BeginPlay: LobbyReturnURL override = '%s'"), *LobbyReturnURL);
+	}
+
+	if (LobbyReturnURL.IsEmpty())
+	{
+		UE_LOG(LogHellunaLobby, Warning,
+			TEXT("[LobbyGM] BeginPlay: LobbyReturnURL is empty. Spawned game servers will rely on the client-side cached lobby address."));
 	}
 
 	// SQLite 서브시스템 캐시 (PostLogin 보다 앞서 초기화)
@@ -1488,6 +1522,42 @@ bool AHellunaLobbyGameMode::FindEmptyChannel(FGameChannelInfo& OutChannel)
 
 bool AHellunaLobbyGameMode::FindEmptyChannelForMap(const FString& MapKey, FGameChannelInfo& OutChannel)
 {
+	const bool bUseNormalizedMapMatching = FPlatformTime::Cycles64() >= 0;
+	if (bUseNormalizedMapMatching)
+	{
+		const TArray<FGameChannelInfo> Channels = ScanAvailableChannels();
+		const FString ResolvedMapPath = GetMapPathByKey(MapKey);
+		const FString RequestedMapIdentifier = NormalizeLobbyMapIdentifier(ResolvedMapPath.IsEmpty() ? MapKey : ResolvedMapPath);
+
+		if (RequestedMapIdentifier.IsEmpty())
+		{
+			UE_LOG(LogHellunaLobby, Warning,
+				TEXT("[LobbyGM] FindEmptyChannelForMap: normalized map identifier is empty | MapKey=%s"),
+				*MapKey);
+			return false;
+		}
+
+		for (const FGameChannelInfo& Ch : Channels)
+		{
+			if (Ch.Status == EChannelStatus::Empty && !PendingDeployChannels.Contains(Ch.Port))
+			{
+				if (DoesLobbyRegistryMapMatch(Ch.MapName, RequestedMapIdentifier))
+				{
+					OutChannel = Ch;
+					UE_LOG(LogHellunaLobby, Log,
+						TEXT("[LobbyGM] FindEmptyChannelForMap: %s (Port=%d, RegistryMap=%s, RequestedMap=%s)"),
+						*Ch.ChannelId, Ch.Port, *Ch.MapName, *RequestedMapIdentifier);
+					return true;
+				}
+			}
+		}
+
+		UE_LOG(LogHellunaLobby, Log,
+			TEXT("[LobbyGM] FindEmptyChannelForMap: no empty channel for MapKey=%s (RequestedMap=%s)"),
+			*MapKey, *RequestedMapIdentifier);
+		return false;
+	}
+
 	const TArray<FGameChannelInfo> Channels = ScanAvailableChannels();
 
 	for (const FGameChannelInfo& Ch : Channels)
@@ -2788,6 +2858,102 @@ bool AHellunaLobbyGameMode::PersistDeployDataForPlayer(
 		return false;
 	}
 
+	const bool bUseTimedDeployPersistence = FPlatformTime::Cycles64() >= 0;
+	if (bUseTimedDeployPersistence)
+	{
+		const double PersistStartSeconds = FPlatformTime::Seconds();
+		auto LogPersistStep = [&PlayerId](const TCHAR* StepName, const double StepStartSeconds)
+		{
+			const double StepMs = (FPlatformTime::Seconds() - StepStartSeconds) * 1000.0;
+			if (StepMs >= 100.0)
+			{
+				UE_LOG(LogHellunaLobby, Warning,
+					TEXT("[LobbyGM] PersistDeployDataForPlayer step slow | PlayerId=%s | Step=%s | %.2f ms"),
+					*PlayerId, StepName, StepMs);
+			}
+			else
+			{
+				UE_LOG(LogHellunaLobby, Verbose,
+					TEXT("[LobbyGM] PersistDeployDataForPlayer step | PlayerId=%s | Step=%s | %.2f ms"),
+					*PlayerId, StepName, StepMs);
+			}
+		};
+
+		double StepStartSeconds = FPlatformTime::Seconds();
+		TArray<FInv_SavedItemData> TimedLoadoutItems = LoadoutComp->CollectInventoryDataForSave();
+		LogPersistStep(TEXT("CollectLoadout"), StepStartSeconds);
+		if (TimedLoadoutItems.Num() > 0)
+		{
+			StepStartSeconds = FPlatformTime::Seconds();
+			if (!SQLiteSubsystem->SavePlayerLoadout(PlayerId, TimedLoadoutItems))
+			{
+				OutError = TEXT("Loadout ??μ뿉 ?ㅽ뙣?덉뒿?덈떎.");
+				return false;
+			}
+			LogPersistStep(TEXT("SavePlayerLoadout"), StepStartSeconds);
+
+			TArray<FHellunaEquipmentSlotData> TimedEquipSlots;
+			StepStartSeconds = FPlatformTime::Seconds();
+			BuildEquipmentSlotsFromLoadout(TimedLoadoutItems, TimedEquipSlots);
+			LogPersistStep(TEXT("BuildEquipmentSlots"), StepStartSeconds);
+
+			StepStartSeconds = FPlatformTime::Seconds();
+			if (!SQLiteSubsystem->SavePlayerEquipment(PlayerId, TimedEquipSlots))
+			{
+				OutError = TEXT("?λ퉬 ?щ’ ??μ뿉 ?ㅽ뙣?덉뒿?덈떎.");
+				return false;
+			}
+			LogPersistStep(TEXT("SavePlayerEquipment"), StepStartSeconds);
+
+			StepStartSeconds = FPlatformTime::Seconds();
+			if (!SQLiteSubsystem->ExportLoadoutToFile(PlayerId, TimedLoadoutItems, HeroType))
+			{
+				OutError = TEXT("Loadout ?뚯씪 ?대낫?닿린???ㅽ뙣?덉뒿?덈떎.");
+				return false;
+			}
+			LogPersistStep(TEXT("ExportLoadoutToFile"), StepStartSeconds);
+		}
+
+		if (UInv_InventoryComponent* TimedStashComp = LobbyPC->GetStashComponent())
+		{
+			StepStartSeconds = FPlatformTime::Seconds();
+			const TArray<FInv_SavedItemData> TimedStashItems = TimedStashComp->CollectInventoryDataForSave();
+			LogPersistStep(TEXT("CollectStash"), StepStartSeconds);
+
+			StepStartSeconds = FPlatformTime::Seconds();
+			if (!SQLiteSubsystem->SavePlayerStash(PlayerId, TimedStashItems))
+			{
+				OutError = TEXT("Stash ??μ뿉 ?ㅽ뙣?덉뒿?덈떎.");
+				return false;
+			}
+			LogPersistStep(TEXT("SavePlayerStash"), StepStartSeconds);
+		}
+
+		StepStartSeconds = FPlatformTime::Seconds();
+		if (!SQLiteSubsystem->SetPlayerDeployedWithPort(PlayerId, true, ServerPort, HeroType))
+		{
+			OutError = TEXT("異쒓꺽 ?곹깭 ??μ뿉 ?ㅽ뙣?덉뒿?덈떎.");
+			return false;
+		}
+		LogPersistStep(TEXT("SetPlayerDeployedWithPort"), StepStartSeconds);
+
+		const double TotalPersistMs = (FPlatformTime::Seconds() - PersistStartSeconds) * 1000.0;
+		if (TotalPersistMs >= 500.0)
+		{
+			UE_LOG(LogHellunaLobby, Warning,
+				TEXT("[LobbyGM] PersistDeployDataForPlayer total slow | PlayerId=%s | Port=%d | HeroType=%d | %.2f ms"),
+				*PlayerId, ServerPort, HeroType, TotalPersistMs);
+		}
+		else
+		{
+			UE_LOG(LogHellunaLobby, Log,
+				TEXT("[LobbyGM] PersistDeployDataForPlayer total | PlayerId=%s | Port=%d | HeroType=%d | %.2f ms"),
+				*PlayerId, ServerPort, HeroType, TotalPersistMs);
+		}
+
+		return true;
+	}
+
 	TArray<FInv_SavedItemData> LoadoutItems = LoadoutComp->CollectInventoryDataForSave();
 	if (LoadoutItems.Num() > 0)
 	{
@@ -3687,13 +3853,15 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 		const double StartTime = FPlatformTime::Seconds();
 		constexpr double TimeoutSeconds = 30.0;
 		constexpr float PollInterval = 0.5f;
+		const FString ResolvedMapPath = GetMapPathByKey(MapKey);
+		const FString ExpectedMapIdentifier = NormalizeLobbyMapIdentifier(ResolvedMapPath.IsEmpty() ? MapKey : ResolvedMapPath);
 
 		FTimerHandle& TimerHandle = WaitAndDeployTimers.FindOrAdd(Port);
 		TWeakObjectPtr<AHellunaLobbyGameMode> WeakThis(this);
 
 		World->GetTimerManager().SetTimer(
 			TimerHandle,
-			[WeakThis, Port, Matched = MoveTemp(Matched), StartTime, TimeoutSeconds, MapKey, bRequeueOnFailure]() mutable
+			[WeakThis, Port, Matched = MoveTemp(Matched), StartTime, TimeoutSeconds, MapKey, ExpectedMapIdentifier, bRequeueOnFailure]() mutable
 			{
 				AHellunaLobbyGameMode* Self = WeakThis.Get();
 				if (!Self)
@@ -3809,7 +3977,9 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 
 				const bool bReady = MapKey.IsEmpty()
 					? Self->GameServerManager->IsServerReady(Port)
-					: Self->GameServerManager->IsServerReadyForMap(Port, MapKey);
+					: Self->GameServerManager->IsServerReadyForMap(
+						Port,
+						ExpectedMapIdentifier.IsEmpty() ? MapKey : ExpectedMapIdentifier);
 				if (!bReady)
 				{
 					return;

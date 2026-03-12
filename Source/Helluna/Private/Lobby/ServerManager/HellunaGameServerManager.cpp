@@ -12,6 +12,37 @@
 #include "Dom/JsonObject.h"
 #include "Lobby/HellunaLobbyLog.h"
 
+namespace
+{
+FString NormalizeServerRegistryMapIdentifier(const FString& InValue)
+{
+	FString Normalized = InValue;
+	Normalized.TrimStartAndEndInline();
+
+	if (Normalized.IsEmpty())
+	{
+		return Normalized;
+	}
+
+	if (Normalized.Contains(TEXT("/")) || Normalized.Contains(TEXT("\\")))
+	{
+		Normalized = FPaths::GetBaseFilename(Normalized);
+	}
+
+	return Normalized;
+}
+
+bool DoesServerRegistryMapMatch(const FString& RegistryMapName, const FString& RequestedMapIdentifier)
+{
+	const FString NormalizedRegistry = NormalizeServerRegistryMapIdentifier(RegistryMapName);
+	const FString NormalizedRequested = NormalizeServerRegistryMapIdentifier(RequestedMapIdentifier);
+
+	return !NormalizedRegistry.IsEmpty()
+		&& !NormalizedRequested.IsEmpty()
+		&& NormalizedRegistry.Equals(NormalizedRequested, ESearchCase::IgnoreCase);
+}
+}
+
 // ============================================================================
 // Initialize
 // ============================================================================
@@ -33,6 +64,11 @@ void UHellunaGameServerManager::Initialize(UWorld* InWorld, const FString& InReg
 	}
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[ServerManager] Initialize | RegistryDir=%s | LobbyReturnURL='%s'"), *RegistryDir, *LobbyReturnURL);
+	if (LobbyReturnURL.IsEmpty())
+	{
+		UE_LOG(LogHellunaLobby, Warning,
+			TEXT("[ServerManager] Initialize: LobbyReturnURL is empty. Spawned game servers will not receive an explicit return URL."));
+	}
 }
 
 // ============================================================================
@@ -71,6 +107,12 @@ int32 UHellunaGameServerManager::SpawnGameServer(const FString& MapPath)
 	if (!LobbyReturnURL.IsEmpty())
 	{
 		Args += FString::Printf(TEXT(" -LobbyURL=%s"), *LobbyReturnURL);
+	}
+	else
+	{
+		UE_LOG(LogHellunaLobby, Warning,
+			TEXT("[ServerManager] SpawnGameServer: launching without -LobbyURL | Port=%d | MapPath=%s"),
+			Port, *MapPath);
 	}
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[ServerManager] SpawnGameServer | Exe=%s | Args=%s"), *ServerExe, *Args);
@@ -131,6 +173,12 @@ int32 UHellunaGameServerManager::SpawnGameServerOnPort(int32 Port, const FString
 	if (!LobbyReturnURL.IsEmpty())
 	{
 		Args += FString::Printf(TEXT(" -LobbyURL=%s"), *LobbyReturnURL);
+	}
+	else
+	{
+		UE_LOG(LogHellunaLobby, Warning,
+			TEXT("[ServerManager] SpawnGameServerOnPort: launching without -LobbyURL | Port=%d | MapPath=%s"),
+			Port, *MapPath);
 	}
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[ServerManager] SpawnGameServerOnPort | Port=%d | Args=%s"), Port, *Args);
@@ -264,7 +312,7 @@ bool UHellunaGameServerManager::IsServerReadyForMap(int32 Port, const FString& M
 
 	// 맵 일치 확인
 	const FString MapName = JsonObj->GetStringField(TEXT("mapName"));
-	if (!MapName.Contains(MapKey))
+	if (!DoesServerRegistryMapMatch(MapName, MapKey))
 	{
 		return false;
 	}
