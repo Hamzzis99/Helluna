@@ -865,6 +865,17 @@ TArray<FInv_SavedItemData> AInv_PlayerController::CollectInventoryGridState()
 	UE_LOG(LogTemp, Warning, TEXT(""));
 #endif
 
+#if INV_DEBUG_SAVE
+	UE_LOG(LogTemp, Warning,
+		TEXT("[SaveFlow] CollectInventoryGridState | Controller=%s | Total=%d | Grid=%d | Equipped=%d | GridEquippable=%d | GridConsumable=%d | GridCraftable=%d"),
+		*GetName(),
+		Result.Num(),
+		TotalCollected,
+		EquippedItemCount,
+		EquipCount,
+		ConsumeCount,
+		CraftCount);
+#endif
 	return Result;
 }
 
@@ -1310,7 +1321,47 @@ void AInv_PlayerController::Client_RequestInventoryState_Implementation()
 	UE_LOG(LogTemp, Warning, TEXT("▶ [Step 1] CollectInventoryGridState() 호출하여 UI 상태 수집..."));
 #endif
 
-	TArray<FInv_SavedItemData> CollectedData = CollectInventoryGridState();
+	TArray<FInv_SavedItemData> CollectedData;
+	if (InventoryComponent.IsValid())
+	{
+		CollectedData = InventoryComponent->CollectInventoryDataForSave();
+#if INV_DEBUG_PLAYER || INV_DEBUG_SAVE
+		UE_LOG(LogTemp, Warning, TEXT("[Step3] Client_RequestInventoryState authoritative collect | Controller=%s | Items=%d"),
+			*GetName(), CollectedData.Num());
+#endif
+
+		// Step 3 안정화:
+		// 패키지 클라이언트에서는 복제 타이밍에 따라 FastArray 기반 수집이 0개가 되는 경우가 있다.
+		// 이 경우에만 기존 UI 수집 경로로 한 번 더 보정한다.
+		if (CollectedData.Num() == 0)
+		{
+			TArray<FInv_SavedItemData> FallbackData = CollectInventoryGridState();
+			if (FallbackData.Num() > 0)
+			{
+#if INV_DEBUG_PLAYER || INV_DEBUG_SAVE
+				UE_LOG(LogTemp, Warning,
+					TEXT("[Step3] Client_RequestInventoryState UI fallback 사용 | Controller=%s | Authoritative=0 | Fallback=%d"),
+					*GetName(), FallbackData.Num());
+#endif
+				CollectedData = MoveTemp(FallbackData);
+			}
+			else
+			{
+#if INV_DEBUG_PLAYER || INV_DEBUG_SAVE
+				UE_LOG(LogTemp, Warning,
+					TEXT("[Step3] Client_RequestInventoryState fallback도 비어 있음 | Controller=%s"),
+					*GetName());
+#endif
+			}
+		}
+	}
+	else
+	{
+#if INV_DEBUG_PLAYER
+		UE_LOG(LogTemp, Warning, TEXT("[Step3] InventoryComponent invalid - CollectInventoryGridState() fallback 사용"));
+#endif
+		CollectedData = CollectInventoryGridState();
+	}
 
 	// Step 2: 서버로 전송
 	// [Fix15] 청크 분할 전송 — 65KB RPC 번치 크기 제한 초과 방지

@@ -1,4 +1,4 @@
-﻿// Gihyeon's Inventory Project
+// Gihyeon's Inventory Project
 #include "Widgets/Inventory/Spatial/Inv_InventoryGrid.h"
 
 #include "Inventory.h"
@@ -940,7 +940,7 @@ void UInv_InventoryGrid::AssignHoverItem(UInv_InventoryItem* InventoryItem, cons
 	if (!IsValid(InventoryItem))
 	{
 #if INV_DEBUG_WIDGET
-		UE_LOG(LogTemp, Error, TEXT("[AssignHoverItem] ❌ InventoryItem이 nullptr입니다! GridIndex=%d"), GridIndex);
+		UE_LOG(LogTemp, Error, TEXT("[AssignHoverItem] InventoryItem이 nullptr입니다!"), GridIndex);
 #endif
 		return;
 	}
@@ -949,7 +949,10 @@ void UInv_InventoryGrid::AssignHoverItem(UInv_InventoryItem* InventoryItem, cons
 
 	HoverItem->SetPreviousGridIndex(PreviousGridIndex);
 	if (!GridSlots.IsValidIndex(GridIndex)) return;
-	HoverItem->UpdateStackCount(InventoryItem->IsStackable() ? GridSlots[GridIndex]->GetStackCount() : 0);
+	const int32 HoverStackCount = InventoryItem->IsStackable()
+		? FMath::Max(1, GridSlots[GridIndex]->GetStackCount())
+		: 1;
+	HoverItem->UpdateStackCount(HoverStackCount);
 }
 
 void UInv_InventoryGrid::RemoveItemFromGrid(UInv_InventoryItem* InventoryItem, const int32 GridIndex) // 아이템을 Hover 한 뒤로.
@@ -1010,13 +1013,12 @@ void UInv_InventoryGrid::RemoveItemFromGrid(UInv_InventoryItem* InventoryItem, c
 
 void UInv_InventoryGrid::AssignHoverItem(UInv_InventoryItem* InventoryItem) // 이걸 참조하면 나중에 그걸 만들 수 있겠지? 창고
 {
-	// ⭐ Nullptr 체크 (EXCEPTION_ACCESS_VIOLATION 방지)
+	// ? Nullptr ?? (EXCEPTION_ACCESS_VIOLATION ??)
 	if (!IsValid(InventoryItem))
 	{
 #if INV_DEBUG_WIDGET
-		UE_LOG(LogTemp, Error, TEXT("[AssignHoverItem] ❌ InventoryItem이 nullptr입니다!"));
+		UE_LOG(LogTemp, Error, TEXT("[AssignHoverItem] ? InventoryItem? nullptr???!"));
 #endif
-		// U1: HoverItem이 아직 생성되지 않았을 수 있으므로 null 체크
 		if (IsValid(HoverItem))
 		{
 			HoverItem->SetVisibility(ESlateVisibility::Hidden);
@@ -1032,22 +1034,31 @@ void UInv_InventoryGrid::AssignHoverItem(UInv_InventoryItem* InventoryItem) // �
 	const FInv_ImageFragment* ImageFragment = GetFragment<FInv_ImageFragment>(InventoryItem, FragmentTags::IconFragment);
 	if (!GridFragment || !ImageFragment) return;
 
-	// 이미지 불러오는 것들.
 	const FVector2D DrawSize = GetDrawSize(GridFragment);
 
 	FSlateBrush IconBrush;
 	IconBrush.SetResourceObject(ImageFragment->GetIcon());
 	IconBrush.DrawAs = ESlateBrushDrawType::Image;
-	IconBrush.ImageSize = DrawSize * UWidgetLayoutLibrary::GetViewportScale(this); // 뷰포트 스케일로 곱해주기. (왜 뷰포트로 곱해줄까?)
+	IconBrush.ImageSize = DrawSize * UWidgetLayoutLibrary::GetViewportScale(this);
 
 	HoverItem->SetImageBrush(IconBrush);
 	HoverItem->SetGridDimensions(GridFragment->GetGridSize());
 	HoverItem->SetInventoryItem(InventoryItem);
 	HoverItem->SetIsStackable(InventoryItem->IsStackable());
 
-	GetOwningPlayer()->SetMouseCursorWidget(EMouseCursor::Default, HoverItem); // 마우스 커서 위젯 설정
-	bShouldTickForHover = true; // [최적화] Tick 활성화
-	HoverItemCurrentTileSize = TileSize; // [Fix21] 크로스 Grid 리사이즈 추적
+	int32 HoverStackCount = 1;
+	if (InventoryItem->IsStackable())
+	{
+		if (const FInv_StackableFragment* StackableFragment = InventoryItem->GetItemManifest().GetFragmentOfType<FInv_StackableFragment>())
+		{
+			HoverStackCount = FMath::Max(1, StackableFragment->GetStackCount());
+		}
+	}
+	HoverItem->UpdateStackCount(HoverStackCount);
+
+	GetOwningPlayer()->SetMouseCursorWidget(EMouseCursor::Default, HoverItem);
+	bShouldTickForHover = true;
+	HoverItemCurrentTileSize = TileSize;
 }
 
 void UInv_InventoryGrid::OnHide()
@@ -1854,8 +1865,19 @@ void UInv_InventoryGrid::DropItem()
 
 	// TODO : Tell the server to actually drop the item
 	// TODO : 서버에서 실제로 아이템을 떨어뜨리도록 지시하는 일
-	if (!InventoryComponent.IsValid()) return; // C1: TWeakObjectPtr 무효 시 크래시 방지
-	InventoryComponent->Server_DropItem(HoverItem->GetInventoryItem(), HoverItem->GetStackCount()); // 서버에 아이템 드롭 요청
+	if (!InventoryComponent.IsValid()) return; //C1: TWeakObjectPtr 무효 시 크래시 방지
+	const int32 RawStackCount = HoverItem->GetStackCount();
+	const int32 EffectiveStackCount = HoverItem->IsStackable()
+		? FMath::Max(1, RawStackCount)
+		: 1;
+#if INV_DEBUG_WIDGET
+	UE_LOG(LogTemp, Warning, TEXT("[InventoryGrid] DropItem | Item=%s RawStack=%d EffectiveStack=%d Stackable=%s"),
+		IsValid(HoverItem->GetInventoryItem()) ? *HoverItem->GetInventoryItem()->GetItemManifest().GetItemType().ToString() : TEXT("NULL"),
+		RawStackCount,
+		EffectiveStackCount,
+		HoverItem->IsStackable() ? TEXT("Y") : TEXT("N"));
+#endif
+	InventoryComponent->Server_DropItem(HoverItem->GetInventoryItem(), EffectiveStackCount); 
 	
 	ClearHoverItem();
 	ShowCursor();
@@ -5058,12 +5080,6 @@ void UInv_InventoryGrid::HandleQuickEquip(int32 GridIndex)
 	{
 		// 이미 장착됨 → 해제 RPC (Server_EquipSlotClicked에 ItemToEquip=nullptr, ItemToUnequip=Item)
 		InventoryComponent->Server_EquipSlotClicked(nullptr, Item, Entry.WeaponSlotIndex);
-
-		// 클라이언트 브로드캐스트 (데디서버)
-		if (GetOwningPlayer() && GetOwningPlayer()->GetNetMode() == NM_Client)
-		{
-			InventoryComponent->OnItemUnequipped.Broadcast(Item, Entry.WeaponSlotIndex);
-		}
 
 		UE_LOG(LogTemp, Log, TEXT("[HandleQuickEquip] Alt+LMB 빠른 해제 → WeaponSlot=%d"), Entry.WeaponSlotIndex);
 	}

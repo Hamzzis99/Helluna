@@ -44,10 +44,10 @@
 #define HELLUNA_DEBUG_HERO 0
 
 // 🔫 무기 브릿지 (WeaponBridgeComponent - 장비 요청, 어태치먼트 비주얼, 무기 장착/해제)
-#define HELLUNA_DEBUG_WEAPON_BRIDGE 0
+#define HELLUNA_DEBUG_WEAPON_BRIDGE 1
 
 // 🔧 Debug::Print 유틸리티 (DebugHelper.h - 화면 메시지 + LogTemp 출력)
-#define HELLUNA_DEBUG_PRINT 0
+#define HELLUNA_DEBUG_PRINT 1
 
 // 🔧 수리 시스템 (RepairComponent, RepairMaterialWidget, HeroGameplayAbility_Repair/InRepair)
 #define HELLUNA_DEBUG_REPAIR 0

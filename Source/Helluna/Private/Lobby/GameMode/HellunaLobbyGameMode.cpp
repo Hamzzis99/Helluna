@@ -53,6 +53,57 @@
 #include "Lobby/HellunaLobbyLog.h"
 DEFINE_LOG_CATEGORY(LogHellunaLobby);
 
+namespace
+{
+void BuildEquipmentSlotsFromLoadout(
+	const TArray<FInv_SavedItemData>& LoadoutItems,
+	TArray<FHellunaEquipmentSlotData>& OutSlots)
+{
+	OutSlots.Reset();
+
+	for (const FInv_SavedItemData& Item : LoadoutItems)
+	{
+		if (!Item.bEquipped || Item.WeaponSlotIndex < 0)
+		{
+			continue;
+		}
+
+		FHellunaEquipmentSlotData Slot;
+		Slot.SlotId = FString::Printf(TEXT("weapon_%d"), Item.WeaponSlotIndex);
+		Slot.ItemType = Item.ItemType;
+		OutSlots.Add(MoveTemp(Slot));
+	}
+}
+
+FString NormalizeLobbyMapIdentifier(const FString& InValue)
+{
+	FString Normalized = InValue;
+	Normalized.TrimStartAndEndInline();
+
+	if (Normalized.IsEmpty())
+	{
+		return Normalized;
+	}
+
+	if (Normalized.Contains(TEXT("/")) || Normalized.Contains(TEXT("\\")))
+	{
+		Normalized = FPaths::GetBaseFilename(Normalized);
+	}
+
+	return Normalized;
+}
+
+bool DoesLobbyRegistryMapMatch(const FString& RegistryMapName, const FString& RequestedMapIdentifier)
+{
+	const FString NormalizedRegistry = NormalizeLobbyMapIdentifier(RegistryMapName);
+	const FString NormalizedRequested = NormalizeLobbyMapIdentifier(RequestedMapIdentifier);
+
+	return !NormalizedRegistry.IsEmpty()
+		&& !NormalizedRequested.IsEmpty()
+		&& NormalizedRegistry.Equals(NormalizedRequested, ESearchCase::IgnoreCase);
+}
+}
+
 // ════════════════════════════════════════════════════════════════════════════════
 // 생성자
 // ════════════════════════════════════════════════════════════════════════════════
@@ -89,6 +140,12 @@ void AHellunaLobbyGameMode::BeginPlay()
 	{
 		LobbyReturnURL = CmdLobbyReturnURL;
 		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] BeginPlay: LobbyReturnURL override = '%s'"), *LobbyReturnURL);
+	}
+
+	if (LobbyReturnURL.IsEmpty())
+	{
+		UE_LOG(LogHellunaLobby, Warning,
+			TEXT("[LobbyGM] BeginPlay: LobbyReturnURL is empty. Spawned game servers will rely on the client-side cached lobby address."));
 	}
 
 	// SQLite 서브시스템 캐시 (PostLogin 보다 앞서 초기화)
@@ -151,15 +208,31 @@ void AHellunaLobbyGameMode::BeginPlay()
 
 void AHellunaLobbyGameMode::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	// WaitAndDeploy 타이머 전부 해제
 	if (UWorld* World = GetWorld())
 	{
+		World->GetTimerManager().ClearTimer(StalePartyCleanupTimer);
+		World->GetTimerManager().ClearTimer(MatchmakingTickTimer);
+
 		for (auto& Pair : WaitAndDeployTimers)
 		{
 			World->GetTimerManager().ClearTimer(Pair.Value);
 		}
 		WaitAndDeployTimers.Empty();
+
+		for (auto& Pair : PendingDeployTimers)
+		{
+			World->GetTimerManager().ClearTimer(Pair.Value);
+		}
+		PendingDeployTimers.Empty();
+
+		for (auto& Pair : PartyLeaveTimers)
+		{
+			World->GetTimerManager().ClearTimer(Pair.Value);
+		}
+		PartyLeaveTimers.Empty();
 	}
+
+	PendingDeployChannels.Empty();
 
 	// 서버 매니저 정리
 	if (GameServerManager)
@@ -1449,6 +1522,42 @@ bool AHellunaLobbyGameMode::FindEmptyChannel(FGameChannelInfo& OutChannel)
 
 bool AHellunaLobbyGameMode::FindEmptyChannelForMap(const FString& MapKey, FGameChannelInfo& OutChannel)
 {
+	const bool bUseNormalizedMapMatching = FPlatformTime::Cycles64() >= 0;
+	if (bUseNormalizedMapMatching)
+	{
+		const TArray<FGameChannelInfo> Channels = ScanAvailableChannels();
+		const FString ResolvedMapPath = GetMapPathByKey(MapKey);
+		const FString RequestedMapIdentifier = NormalizeLobbyMapIdentifier(ResolvedMapPath.IsEmpty() ? MapKey : ResolvedMapPath);
+
+		if (RequestedMapIdentifier.IsEmpty())
+		{
+			UE_LOG(LogHellunaLobby, Warning,
+				TEXT("[LobbyGM] FindEmptyChannelForMap: normalized map identifier is empty | MapKey=%s"),
+				*MapKey);
+			return false;
+		}
+
+		for (const FGameChannelInfo& Ch : Channels)
+		{
+			if (Ch.Status == EChannelStatus::Empty && !PendingDeployChannels.Contains(Ch.Port))
+			{
+				if (DoesLobbyRegistryMapMatch(Ch.MapName, RequestedMapIdentifier))
+				{
+					OutChannel = Ch;
+					UE_LOG(LogHellunaLobby, Log,
+						TEXT("[LobbyGM] FindEmptyChannelForMap: %s (Port=%d, RegistryMap=%s, RequestedMap=%s)"),
+						*Ch.ChannelId, Ch.Port, *Ch.MapName, *RequestedMapIdentifier);
+					return true;
+				}
+			}
+		}
+
+		UE_LOG(LogHellunaLobby, Log,
+			TEXT("[LobbyGM] FindEmptyChannelForMap: no empty channel for MapKey=%s (RequestedMap=%s)"),
+			*MapKey, *RequestedMapIdentifier);
+		return false;
+	}
+
 	const TArray<FGameChannelInfo> Channels = ScanAvailableChannels();
 
 	for (const FGameChannelInfo& Ch : Channels)
@@ -1498,6 +1607,69 @@ FString AHellunaLobbyGameMode::GetMapPathByKey(const FString& MapKey) const
 	}
 
 	return FString();
+}
+
+bool AHellunaLobbyGameMode::IsValidConfiguredMapKey(const FString& MapKey) const
+{
+	if (MapKey.IsEmpty())
+	{
+		return false;
+	}
+
+	for (const FHellunaGameMapInfo& Info : AvailableMapConfigs)
+	{
+		if (Info.MapKey == MapKey)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+bool AHellunaLobbyGameMode::ValidateRequestedGameModeForPlayer(
+	const FString& PlayerId,
+	ELobbyGameMode Mode,
+	FString& OutError) const
+{
+	if (PlayerId.IsEmpty())
+	{
+		OutError = TEXT("플레이어 식별자가 없습니다.");
+		return false;
+	}
+
+	if (static_cast<uint8>(Mode) > static_cast<uint8>(ELobbyGameMode::Squad))
+	{
+		OutError = TEXT("지원하지 않는 게임 모드입니다.");
+		return false;
+	}
+
+	const int32* PartyIdPtr = PlayerToPartyMap.Find(PlayerId);
+	if (!PartyIdPtr || *PartyIdPtr <= 0)
+	{
+		return true;
+	}
+
+	const FHellunaPartyInfo* Info = ActivePartyCache.Find(*PartyIdPtr);
+	if (!Info || !Info->IsValid())
+	{
+		OutError = TEXT("파티 정보를 확인할 수 없습니다.");
+		return false;
+	}
+
+	if (Info->LeaderId != PlayerId)
+	{
+		OutError = TEXT("파티 리더만 게임 모드를 변경할 수 있습니다.");
+		return false;
+	}
+
+	if (Info->Members.Num() > GetModeCapacity(Mode))
+	{
+		OutError = TEXT("현재 파티 인원과 맞지 않는 게임 모드입니다.");
+		return false;
+	}
+
+	return true;
 }
 
 void AHellunaLobbyGameMode::MarkChannelAsPendingDeploy(int32 Port)
@@ -1567,20 +1739,55 @@ void AHellunaLobbyGameMode::RefreshPartyCache(int32 PartyId)
 		return;
 	}
 
+	TArray<FString> PreviousMembers;
+	if (const FHellunaPartyInfo* ExistingInfo = ActivePartyCache.Find(PartyId))
+	{
+		for (const FHellunaPartyMemberInfo& Member : ExistingInfo->Members)
+		{
+			PreviousMembers.Add(Member.PlayerId);
+		}
+	}
+
 	FHellunaPartyInfo Info = SQLiteSubsystem->LoadPartyInfo(PartyId);
 	if (Info.IsValid())
 	{
 		ActivePartyCache.Add(PartyId, Info);
 
+		TSet<FString> CurrentMembers;
+
 		// PlayerToPartyMap 갱신
 		for (const FHellunaPartyMemberInfo& Member : Info.Members)
 		{
+			CurrentMembers.Add(Member.PlayerId);
 			PlayerToPartyMap.Add(Member.PlayerId, PartyId);
+		}
+
+		for (const FString& PlayerId : PreviousMembers)
+		{
+			if (CurrentMembers.Contains(PlayerId))
+			{
+				continue;
+			}
+
+			const int32* CachedPartyId = PlayerToPartyMap.Find(PlayerId);
+			if (CachedPartyId && *CachedPartyId == PartyId)
+			{
+				PlayerToPartyMap.Remove(PlayerId);
+			}
 		}
 	}
 	else
 	{
 		// 파티가 삭제됨
+		for (const FString& PlayerId : PreviousMembers)
+		{
+			const int32* CachedPartyId = PlayerToPartyMap.Find(PlayerId);
+			if (CachedPartyId && *CachedPartyId == PartyId)
+			{
+				PlayerToPartyMap.Remove(PlayerId);
+			}
+		}
+
 		ActivePartyCache.Remove(PartyId);
 	}
 }
@@ -2027,6 +2234,52 @@ void AHellunaLobbyGameMode::TryAutoDeployParty(int32 PartyId)
 	const int32 ModeCapacity = GetModeCapacity(LeaderMode);
 	const int32 PartySize = Info.Members.Num();
 
+	FString ModeError;
+	if (!ValidateRequestedGameModeForPlayer(Info.LeaderId, LeaderMode, ModeError))
+	{
+		if (SQLiteSubsystem)
+		{
+			SQLiteSubsystem->ResetAllReadyStates(PartyId);
+		}
+
+		RefreshPartyCache(PartyId);
+		for (const FHellunaPartyMemberInfo& Member : Info.Members)
+		{
+			auto* PC = PlayerIdToControllerMap.Find(Member.PlayerId);
+			if (PC && PC->IsValid())
+			{
+				(*PC)->Client_PartyError(ModeError);
+			}
+		}
+		BroadcastPartyState(PartyId);
+		return;
+	}
+
+	for (const FHellunaPartyMemberInfo& Member : Info.Members)
+	{
+		if (IsPlayerOnlineInLobby(Member.PlayerId))
+		{
+			continue;
+		}
+
+		if (SQLiteSubsystem)
+		{
+			SQLiteSubsystem->ResetAllReadyStates(PartyId);
+		}
+
+		RefreshPartyCache(PartyId);
+		for (const FHellunaPartyMemberInfo& NotifyMember : Info.Members)
+		{
+			auto* PC = PlayerIdToControllerMap.Find(NotifyMember.PlayerId);
+			if (PC && PC->IsValid())
+			{
+				(*PC)->Client_PartyError(TEXT("로비에 연결되지 않은 파티원이 있어 출격할 수 없습니다."));
+			}
+		}
+		BroadcastPartyState(PartyId);
+		return;
+	}
+
 	if (PartySize >= ModeCapacity)
 	{
 		// 파티가 모드 정원 이상 → 직접 Deploy (매칭 큐 불필요)
@@ -2083,6 +2336,112 @@ void AHellunaLobbyGameMode::TryAutoDeployParty(int32 PartyId)
 
 void AHellunaLobbyGameMode::ExecutePartyDeploy(int32 PartyId)
 {
+	const bool bUseSafePartyDeployFlow = FPlatformTime::Cycles64() >= 0;
+	if (bUseSafePartyDeployFlow)
+	{
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ExecutePartyDeploy | PartyId=%d"), PartyId);
+
+		const FHellunaPartyInfo* SafeInfoPtr = ActivePartyCache.Find(PartyId);
+		if (!SafeInfoPtr || SafeInfoPtr->Members.Num() == 0)
+		{
+			UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] ExecutePartyDeploy: missing party cache | PartyId=%d"), PartyId);
+			return;
+		}
+
+		const FHellunaPartyInfo SafeInfo = *SafeInfoPtr;
+		TArray<FString> PreparedPlayerIds;
+
+		FGameChannelInfo SafeEmptyChannel;
+		if (!FindEmptyChannel(SafeEmptyChannel))
+		{
+			for (const FHellunaPartyMemberInfo& Member : SafeInfo.Members)
+			{
+				const TWeakObjectPtr<AHellunaLobbyController>* NotifyPC = PlayerIdToControllerMap.Find(Member.PlayerId);
+				if (NotifyPC && NotifyPC->IsValid())
+				{
+					(*NotifyPC)->Client_PartyError(TEXT("빈 채널이 없습니다. 잠시 후 다시 시도해주세요."));
+				}
+			}
+
+			if (SQLiteSubsystem)
+			{
+				SQLiteSubsystem->ResetAllReadyStates(PartyId);
+			}
+			RefreshPartyCache(PartyId);
+			BroadcastPartyState(PartyId);
+			return;
+		}
+
+		MarkChannelAsPendingDeploy(SafeEmptyChannel.Port);
+
+		for (const FHellunaPartyMemberInfo& Member : SafeInfo.Members)
+		{
+			const TWeakObjectPtr<AHellunaLobbyController>* PCPtr = PlayerIdToControllerMap.Find(Member.PlayerId);
+			if (!PCPtr || !PCPtr->IsValid())
+			{
+				RollbackDeployStateForPlayers(PreparedPlayerIds, SafeEmptyChannel.Port);
+				if (SQLiteSubsystem)
+				{
+					SQLiteSubsystem->ResetAllReadyStates(PartyId);
+				}
+				RefreshPartyCache(PartyId);
+
+				for (const FHellunaPartyMemberInfo& NotifyMember : SafeInfo.Members)
+				{
+					const TWeakObjectPtr<AHellunaLobbyController>* NotifyPC = PlayerIdToControllerMap.Find(NotifyMember.PlayerId);
+					if (NotifyPC && NotifyPC->IsValid())
+					{
+						(*NotifyPC)->Client_PartyError(TEXT("로비 컨트롤러가 유효하지 않아 출격을 중단했습니다."));
+					}
+				}
+
+				BroadcastPartyState(PartyId);
+				return;
+			}
+
+			FString PersistError;
+			if (!PersistDeployDataForPlayer(PCPtr->Get(), Member.PlayerId, Member.SelectedHeroType, SafeEmptyChannel.Port, PersistError))
+			{
+				RollbackDeployStateForPlayer(Member.PlayerId, SafeEmptyChannel.Port);
+				RollbackDeployStateForPlayers(PreparedPlayerIds, SafeEmptyChannel.Port);
+				if (SQLiteSubsystem)
+				{
+					SQLiteSubsystem->ResetAllReadyStates(PartyId);
+				}
+				RefreshPartyCache(PartyId);
+
+				for (const FHellunaPartyMemberInfo& NotifyMember : SafeInfo.Members)
+				{
+					const TWeakObjectPtr<AHellunaLobbyController>* NotifyPC = PlayerIdToControllerMap.Find(NotifyMember.PlayerId);
+					if (NotifyPC && NotifyPC->IsValid())
+					{
+						(*NotifyPC)->Client_PartyError(PersistError);
+					}
+				}
+
+				BroadcastPartyState(PartyId);
+				return;
+			}
+
+			PreparedPlayerIds.Add(Member.PlayerId);
+		}
+
+		for (const FHellunaPartyMemberInfo& Member : SafeInfo.Members)
+		{
+			const TWeakObjectPtr<AHellunaLobbyController>* PCPtr = PlayerIdToControllerMap.Find(Member.PlayerId);
+			if (!PCPtr || !PCPtr->IsValid())
+			{
+				continue;
+			}
+
+			AHellunaLobbyController* MemberPC = PCPtr->Get();
+			MemberPC->SetDeployInProgress(true);
+			MemberPC->Client_ExecutePartyDeploy(SafeEmptyChannel.Port);
+		}
+
+		return;
+	}
+
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ▶ ExecutePartyDeploy | PartyId=%d"), PartyId);
 
 	// [Phase 12 Fix] 값 복사 — RefreshPartyCache가 ActivePartyCache를 변경할 수 있으므로
@@ -2094,6 +2453,7 @@ void AHellunaLobbyGameMode::ExecutePartyDeploy(int32 PartyId)
 	}
 	FHellunaPartyInfo Info = *InfoPtr;
 	InfoPtr = nullptr;
+	TArray<FString> PreparedPlayerIds;
 
 	// Step 1: 빈 채널 선택
 	FGameChannelInfo EmptyChannel;
@@ -2224,6 +2584,61 @@ bool AHellunaLobbyGameMode::IsGameServerRunning(int32 Port)
 
 void AHellunaLobbyGameMode::HandleRejoinAccepted(AHellunaLobbyController* LobbyPC)
 {
+	const bool bUseSafeRejoinAcceptFlow = FPlatformTime::Cycles64() >= 0;
+	if (bUseSafeRejoinAcceptFlow)
+	{
+	if (!LobbyPC || !SQLiteSubsystem)
+	{
+		return;
+	}
+
+	const FString PlayerId = GetLobbyPlayerId(LobbyPC);
+	if (PlayerId.IsEmpty())
+	{
+		LobbyPC->Client_DeployFailed(TEXT("플레이어 식별자를 확인할 수 없습니다."));
+		return;
+	}
+
+	const int32 Port = SQLiteSubsystem->GetPlayerDeployedPort(PlayerId);
+	const int32 HeroTypeIdx = SQLiteSubsystem->GetPlayerDeployedHeroType(PlayerId);
+
+	if (!SQLiteSubsystem->IsPlayerDeployed(PlayerId) || Port <= 0 || LobbyPC->PendingRejoinPort <= 0 || LobbyPC->PendingRejoinPort != Port)
+	{
+		UE_LOG(LogHellunaLobby, Warning,
+			TEXT("[LobbyGM] HandleRejoinAccepted rejected | PlayerId=%s | PendingPort=%d | StoredPort=%d"),
+			*PlayerId, LobbyPC->PendingRejoinPort, Port);
+
+		RollbackDeployStateForPlayer(PlayerId, Port);
+		LobbyPC->Client_DeployFailed(TEXT("재참가 가능한 세션이 없습니다."));
+		ContinueLobbyInitAfterRejoinDecision(LobbyPC, PlayerId);
+		return;
+	}
+
+	if (!IsGameServerRunning(Port))
+	{
+		UE_LOG(LogHellunaLobby, Warning,
+			TEXT("[LobbyGM] HandleRejoinAccepted: stale server | PlayerId=%s | Port=%d"),
+			*PlayerId, Port);
+
+		RollbackDeployStateForPlayer(PlayerId, Port);
+		CheckAndRecoverFromCrash(PlayerId);
+		LobbyPC->Client_DeployFailed(TEXT("재참가 가능한 게임 서버가 더 이상 없습니다."));
+		ContinueLobbyInitAfterRejoinDecision(LobbyPC, PlayerId);
+		return;
+	}
+
+	const EHellunaHeroType HeroType = IndexToHeroType(HeroTypeIdx);
+	if (HeroType != EHellunaHeroType::None)
+	{
+		LobbyPC->ForceSetSelectedHeroType(HeroType);
+	}
+
+	LobbyPC->PendingRejoinPort = 0;
+	LobbyPC->SetDeployInProgress(true);
+	LobbyPC->Client_ExecutePartyDeploy(Port);
+	return;
+	}
+
 	if (!LobbyPC || !SQLiteSubsystem) return;
 
 	const FString PlayerId = GetLobbyPlayerId(LobbyPC);
@@ -2249,6 +2664,48 @@ void AHellunaLobbyGameMode::HandleRejoinAccepted(AHellunaLobbyController* LobbyP
 
 void AHellunaLobbyGameMode::HandleRejoinDeclined(AHellunaLobbyController* LobbyPC)
 {
+	const bool bUseSafeRejoinDeclineFlow = FPlatformTime::Cycles64() >= 0;
+	if (bUseSafeRejoinDeclineFlow)
+	{
+	if (!LobbyPC || !SQLiteSubsystem)
+	{
+		return;
+	}
+
+	const FString PlayerId = GetLobbyPlayerId(LobbyPC);
+	if (PlayerId.IsEmpty())
+	{
+		LobbyPC->Client_DeployFailed(TEXT("플레이어 식별자를 확인할 수 없습니다."));
+		return;
+	}
+
+	const int32 Port = SQLiteSubsystem->GetPlayerDeployedPort(PlayerId);
+	const bool bValidPendingRejoin =
+		SQLiteSubsystem->IsPlayerDeployed(PlayerId) &&
+		Port > 0 &&
+		LobbyPC->PendingRejoinPort > 0 &&
+		LobbyPC->PendingRejoinPort == Port;
+
+	if (!bValidPendingRejoin)
+	{
+		UE_LOG(LogHellunaLobby, Warning,
+			TEXT("[LobbyGM] HandleRejoinDeclined ignored | PlayerId=%s | PendingPort=%d | StoredPort=%d"),
+			*PlayerId, LobbyPC->PendingRejoinPort, Port);
+
+		ContinueLobbyInitAfterRejoinDecision(LobbyPC, PlayerId);
+		return;
+	}
+
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] HandleRejoinDeclined | PlayerId=%s"), *PlayerId);
+
+	SQLiteSubsystem->SetPlayerDeployed(PlayerId, false);
+	SQLiteSubsystem->DeletePlayerLoadout(PlayerId);
+	SQLiteSubsystem->DeletePlayerEquipment(PlayerId);
+
+	ContinueLobbyInitAfterRejoinDecision(LobbyPC, PlayerId);
+	return;
+	}
+
 	if (!LobbyPC || !SQLiteSubsystem) return;
 
 	const FString PlayerId = GetLobbyPlayerId(LobbyPC);
@@ -2270,6 +2727,14 @@ void AHellunaLobbyGameMode::HandleRejoinDeclined(AHellunaLobbyController* LobbyP
 void AHellunaLobbyGameMode::ContinueLobbyInitAfterRejoinDecision(AHellunaLobbyController* LobbyPC, const FString& PlayerId)
 {
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Phase14] ContinueLobbyInitAfterRejoinDecision | PlayerId=%s"), *PlayerId);
+
+	if (!LobbyPC || PlayerId.IsEmpty())
+	{
+		return;
+	}
+
+	LobbyPC->PendingRejoinPort = 0;
+	LobbyPC->SetDeployInProgress(false);
 
 	// Step 2: Stash 로드
 	LoadStashToComponent(LobbyPC, PlayerId);
@@ -2304,6 +2769,292 @@ void AHellunaLobbyGameMode::ContinueLobbyInitAfterRejoinDecision(AHellunaLobbyCo
 
 	// 로비 UI 표시
 	LobbyPC->Client_ShowLobbyUI();
+}
+
+void AHellunaLobbyGameMode::ResetMatchmakingStatusForPlayers(const TArray<FString>& PlayerIds, EMatchmakingStatus Status)
+{
+	FMatchmakingStatusInfo StatusInfo;
+	StatusInfo.Status = Status;
+
+	TSet<FString> UniquePlayerIds;
+	for (const FString& PlayerId : PlayerIds)
+	{
+		if (PlayerId.IsEmpty() || UniquePlayerIds.Contains(PlayerId))
+		{
+			continue;
+		}
+
+		UniquePlayerIds.Add(PlayerId);
+
+		const TWeakObjectPtr<AHellunaLobbyController>* PCPtr = PlayerIdToControllerMap.Find(PlayerId);
+		if (PCPtr && PCPtr->IsValid())
+		{
+			(*PCPtr)->Client_MatchmakingStatusUpdate(StatusInfo);
+		}
+	}
+}
+
+void AHellunaLobbyGameMode::SendMatchmakingErrorToPlayers(const TArray<FString>& PlayerIds, const FString& ErrorMessage)
+{
+	TSet<FString> UniquePlayerIds;
+	for (const FString& PlayerId : PlayerIds)
+	{
+		if (PlayerId.IsEmpty() || UniquePlayerIds.Contains(PlayerId))
+		{
+			continue;
+		}
+
+		UniquePlayerIds.Add(PlayerId);
+
+		const TWeakObjectPtr<AHellunaLobbyController>* PCPtr = PlayerIdToControllerMap.Find(PlayerId);
+		if (PCPtr && PCPtr->IsValid())
+		{
+			(*PCPtr)->Client_MatchmakingError(ErrorMessage);
+		}
+	}
+}
+
+bool AHellunaLobbyGameMode::IsPlayerOnlineInLobby(const FString& PlayerId) const
+{
+	const TWeakObjectPtr<AHellunaLobbyController>* PCPtr = PlayerIdToControllerMap.Find(PlayerId);
+	return PCPtr && PCPtr->IsValid();
+}
+
+bool AHellunaLobbyGameMode::PersistDeployDataForPlayer(
+	AHellunaLobbyController* LobbyPC,
+	const FString& PlayerId,
+	int32 HeroType,
+	int32 ServerPort,
+	FString& OutError)
+{
+	if (!LobbyPC)
+	{
+		OutError = TEXT("유효하지 않은 로비 컨트롤러입니다.");
+		return false;
+	}
+
+	if (PlayerId.IsEmpty())
+	{
+		OutError = TEXT("플레이어 식별자가 없습니다.");
+		return false;
+	}
+
+	if (ServerPort <= 0)
+	{
+		OutError = TEXT("유효하지 않은 게임 서버 포트입니다.");
+		return false;
+	}
+
+	if (!SQLiteSubsystem || !SQLiteSubsystem->IsDatabaseReady())
+	{
+		OutError = TEXT("데이터베이스가 준비되지 않았습니다.");
+		return false;
+	}
+
+	UInv_InventoryComponent* LoadoutComp = LobbyPC->GetLoadoutComponent();
+	if (!LoadoutComp)
+	{
+		OutError = TEXT("Loadout 컴포넌트를 찾을 수 없습니다.");
+		return false;
+	}
+
+	const bool bUseTimedDeployPersistence = FPlatformTime::Cycles64() >= 0;
+	if (bUseTimedDeployPersistence)
+	{
+		const double PersistStartSeconds = FPlatformTime::Seconds();
+		auto LogPersistStep = [&PlayerId](const TCHAR* StepName, const double StepStartSeconds)
+		{
+			const double StepMs = (FPlatformTime::Seconds() - StepStartSeconds) * 1000.0;
+			if (StepMs >= 100.0)
+			{
+				UE_LOG(LogHellunaLobby, Warning,
+					TEXT("[LobbyGM] PersistDeployDataForPlayer step slow | PlayerId=%s | Step=%s | %.2f ms"),
+					*PlayerId, StepName, StepMs);
+			}
+			else
+			{
+				UE_LOG(LogHellunaLobby, Verbose,
+					TEXT("[LobbyGM] PersistDeployDataForPlayer step | PlayerId=%s | Step=%s | %.2f ms"),
+					*PlayerId, StepName, StepMs);
+			}
+		};
+
+		double StepStartSeconds = FPlatformTime::Seconds();
+		TArray<FInv_SavedItemData> TimedLoadoutItems = LoadoutComp->CollectInventoryDataForSave();
+		{
+			int32 EquippedCount = 0;
+			int32 AttachmentCount = 0;
+			for (const FInv_SavedItemData& SavedItem : TimedLoadoutItems)
+			{
+				if (SavedItem.bEquipped)
+				{
+					++EquippedCount;
+				}
+				AttachmentCount += SavedItem.Attachments.Num();
+			}
+			UE_LOG(LogHellunaLobby, Log,
+				TEXT("[LobbyGM] PersistDeployDataForPlayer collect | PlayerId=%s | Loadout=%d | Equipped=%d | Grid=%d | Attachments=%d"),
+				*PlayerId,
+				TimedLoadoutItems.Num(),
+				EquippedCount,
+				TimedLoadoutItems.Num() - EquippedCount,
+				AttachmentCount);
+		}
+		LogPersistStep(TEXT("CollectLoadout"), StepStartSeconds);
+		if (TimedLoadoutItems.Num() > 0)
+		{
+			StepStartSeconds = FPlatformTime::Seconds();
+			if (!SQLiteSubsystem->SavePlayerLoadout(PlayerId, TimedLoadoutItems))
+			{
+				OutError = TEXT("Loadout ??μ뿉 ?ㅽ뙣?덉뒿?덈떎.");
+				return false;
+			}
+			LogPersistStep(TEXT("SavePlayerLoadout"), StepStartSeconds);
+
+			TArray<FHellunaEquipmentSlotData> TimedEquipSlots;
+			StepStartSeconds = FPlatformTime::Seconds();
+			BuildEquipmentSlotsFromLoadout(TimedLoadoutItems, TimedEquipSlots);
+			LogPersistStep(TEXT("BuildEquipmentSlots"), StepStartSeconds);
+
+			StepStartSeconds = FPlatformTime::Seconds();
+			if (!SQLiteSubsystem->SavePlayerEquipment(PlayerId, TimedEquipSlots))
+			{
+				OutError = TEXT("?λ퉬 ?щ’ ??μ뿉 ?ㅽ뙣?덉뒿?덈떎.");
+				return false;
+			}
+			LogPersistStep(TEXT("SavePlayerEquipment"), StepStartSeconds);
+
+			StepStartSeconds = FPlatformTime::Seconds();
+			if (!SQLiteSubsystem->ExportLoadoutToFile(PlayerId, TimedLoadoutItems, HeroType))
+			{
+				OutError = TEXT("Loadout ?뚯씪 ?대낫?닿린???ㅽ뙣?덉뒿?덈떎.");
+				return false;
+			}
+			LogPersistStep(TEXT("ExportLoadoutToFile"), StepStartSeconds);
+		}
+
+		if (UInv_InventoryComponent* TimedStashComp = LobbyPC->GetStashComponent())
+		{
+			StepStartSeconds = FPlatformTime::Seconds();
+			const TArray<FInv_SavedItemData> TimedStashItems = TimedStashComp->CollectInventoryDataForSave();
+			UE_LOG(LogHellunaLobby, Log,
+				TEXT("[LobbyGM] PersistDeployDataForPlayer collect | PlayerId=%s | Stash=%d"),
+				*PlayerId,
+				TimedStashItems.Num());
+			LogPersistStep(TEXT("CollectStash"), StepStartSeconds);
+
+			StepStartSeconds = FPlatformTime::Seconds();
+			if (!SQLiteSubsystem->SavePlayerStash(PlayerId, TimedStashItems))
+			{
+				OutError = TEXT("Stash ??μ뿉 ?ㅽ뙣?덉뒿?덈떎.");
+				return false;
+			}
+			LogPersistStep(TEXT("SavePlayerStash"), StepStartSeconds);
+		}
+
+		StepStartSeconds = FPlatformTime::Seconds();
+		if (!SQLiteSubsystem->SetPlayerDeployedWithPort(PlayerId, true, ServerPort, HeroType))
+		{
+			OutError = TEXT("異쒓꺽 ?곹깭 ??μ뿉 ?ㅽ뙣?덉뒿?덈떎.");
+			return false;
+		}
+		LogPersistStep(TEXT("SetPlayerDeployedWithPort"), StepStartSeconds);
+
+		const double TotalPersistMs = (FPlatformTime::Seconds() - PersistStartSeconds) * 1000.0;
+		if (TotalPersistMs >= 500.0)
+		{
+			UE_LOG(LogHellunaLobby, Warning,
+				TEXT("[LobbyGM] PersistDeployDataForPlayer total slow | PlayerId=%s | Port=%d | HeroType=%d | %.2f ms"),
+				*PlayerId, ServerPort, HeroType, TotalPersistMs);
+		}
+		else
+		{
+			UE_LOG(LogHellunaLobby, Log,
+				TEXT("[LobbyGM] PersistDeployDataForPlayer total | PlayerId=%s | Port=%d | HeroType=%d | %.2f ms"),
+				*PlayerId, ServerPort, HeroType, TotalPersistMs);
+		}
+
+		return true;
+	}
+
+	TArray<FInv_SavedItemData> LoadoutItems = LoadoutComp->CollectInventoryDataForSave();
+	if (LoadoutItems.Num() > 0)
+	{
+		if (!SQLiteSubsystem->SavePlayerLoadout(PlayerId, LoadoutItems))
+		{
+			OutError = TEXT("Loadout 저장에 실패했습니다.");
+			return false;
+		}
+
+		TArray<FHellunaEquipmentSlotData> EquipSlots;
+		BuildEquipmentSlotsFromLoadout(LoadoutItems, EquipSlots);
+		if (!SQLiteSubsystem->SavePlayerEquipment(PlayerId, EquipSlots))
+		{
+			OutError = TEXT("장비 슬롯 저장에 실패했습니다.");
+			return false;
+		}
+
+		if (!SQLiteSubsystem->ExportLoadoutToFile(PlayerId, LoadoutItems, HeroType))
+		{
+			OutError = TEXT("Loadout 파일 내보내기에 실패했습니다.");
+			return false;
+		}
+	}
+
+	if (UInv_InventoryComponent* StashComp = LobbyPC->GetStashComponent())
+	{
+		const TArray<FInv_SavedItemData> StashItems = StashComp->CollectInventoryDataForSave();
+		if (!SQLiteSubsystem->SavePlayerStash(PlayerId, StashItems))
+		{
+			OutError = TEXT("Stash 저장에 실패했습니다.");
+			return false;
+		}
+	}
+
+	if (!SQLiteSubsystem->SetPlayerDeployedWithPort(PlayerId, true, ServerPort, HeroType))
+	{
+		OutError = TEXT("출격 상태 저장에 실패했습니다.");
+		return false;
+	}
+
+	return true;
+}
+
+void AHellunaLobbyGameMode::RollbackDeployStateForPlayer(const FString& PlayerId, int32 ExpectedPort)
+{
+	if (PlayerId.IsEmpty() || !SQLiteSubsystem || !SQLiteSubsystem->IsDatabaseReady())
+	{
+		return;
+	}
+
+	if (!SQLiteSubsystem->IsPlayerDeployed(PlayerId))
+	{
+		return;
+	}
+
+	if (ExpectedPort > 0)
+	{
+		const int32 CurrentPort = SQLiteSubsystem->GetPlayerDeployedPort(PlayerId);
+		if (CurrentPort != ExpectedPort)
+		{
+			return;
+		}
+	}
+
+	if (!SQLiteSubsystem->SetPlayerDeployed(PlayerId, false))
+	{
+		UE_LOG(LogHellunaLobby, Warning,
+			TEXT("[LobbyGM] RollbackDeployStateForPlayer 실패 | PlayerId=%s | ExpectedPort=%d"),
+			*PlayerId, ExpectedPort);
+	}
+}
+
+void AHellunaLobbyGameMode::RollbackDeployStateForPlayers(const TArray<FString>& PlayerIds, int32 ExpectedPort)
+{
+	for (const FString& PlayerId : PlayerIds)
+	{
+		RollbackDeployStateForPlayer(PlayerId, ExpectedPort);
+	}
 }
 
 void AHellunaLobbyGameMode::BroadcastPartyState(int32 PartyId)
@@ -2359,6 +3110,128 @@ void AHellunaLobbyGameMode::BroadcastPartyChatMessage(int32 PartyId, const FHell
 
 void AHellunaLobbyGameMode::EnterMatchmakingQueue(const FString& PlayerId, const FString& MapKey)
 {
+	const bool bUseSafeQueueEntryFlow = FPlatformTime::Cycles64() >= 0;
+	if (bUseSafeQueueEntryFlow)
+	{
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] EnterMatchmakingQueue | PlayerId=%s | MapKey=%s"), *PlayerId, *MapKey);
+
+		const TWeakObjectPtr<AHellunaLobbyController>* RequesterPtr = PlayerIdToControllerMap.Find(PlayerId);
+		if (!RequesterPtr || !RequesterPtr->IsValid())
+		{
+			return;
+		}
+
+		AHellunaLobbyController* RequesterPC = RequesterPtr->Get();
+		if (PlayerId.IsEmpty())
+		{
+			RequesterPC->Client_MatchmakingError(TEXT("플레이어 식별자를 확인할 수 없습니다."));
+			return;
+		}
+
+		if (PlayerToQueueEntryMap.Contains(PlayerId))
+		{
+			RequesterPC->Client_MatchmakingError(TEXT("이미 매칭 대기 중입니다."));
+			return;
+		}
+
+		FString ResolvedMapKey = MapKey;
+		if (ResolvedMapKey.IsEmpty())
+		{
+			ResolvedMapKey = RequesterPC->SelectedMapKey;
+		}
+		if (ResolvedMapKey.IsEmpty())
+		{
+			ResolvedMapKey = DefaultMapKey;
+		}
+
+		if (!IsValidConfiguredMapKey(ResolvedMapKey))
+		{
+			RequesterPC->Client_MatchmakingError(TEXT("유효하지 않은 맵 선택입니다."));
+			return;
+		}
+
+		FString ModeError;
+		if (!ValidateRequestedGameModeForPlayer(PlayerId, RequesterPC->SelectedGameMode, ModeError))
+		{
+			RequesterPC->Client_MatchmakingError(ModeError);
+			return;
+		}
+
+		FMatchmakingQueueEntry NewEntry;
+		NewEntry.SelectedMapKey = ResolvedMapKey;
+		NewEntry.GameMode = RequesterPC->SelectedGameMode;
+
+		const int32 NoneHeroType = HeroTypeToIndex(EHellunaHeroType::None);
+		const int32* PartyIdPtr = PlayerToPartyMap.Find(PlayerId);
+		if (PartyIdPtr && *PartyIdPtr > 0)
+		{
+			const FHellunaPartyInfo* Info = ActivePartyCache.Find(*PartyIdPtr);
+			if (!Info || !Info->IsValid())
+			{
+				RequesterPC->Client_MatchmakingError(TEXT("파티 정보를 확인할 수 없습니다."));
+				return;
+			}
+
+			if (Info->LeaderId != PlayerId)
+			{
+				RequesterPC->Client_MatchmakingError(TEXT("파티 리더만 매칭을 시작할 수 있습니다."));
+				return;
+			}
+
+			if (Info->Members.Num() > GetModeCapacity(NewEntry.GameMode))
+			{
+				RequesterPC->Client_MatchmakingError(TEXT("현재 파티 인원과 맞지 않는 게임 모드입니다."));
+				return;
+			}
+
+			NewEntry.PartyId = *PartyIdPtr;
+			for (const FHellunaPartyMemberInfo& Member : Info->Members)
+			{
+				if (!IsPlayerOnlineInLobby(Member.PlayerId))
+				{
+					RequesterPC->Client_MatchmakingError(TEXT("로비에 연결되지 않은 파티원이 있어 매칭을 시작할 수 없습니다."));
+					return;
+				}
+
+				if (!Member.bIsReady)
+				{
+					RequesterPC->Client_MatchmakingError(TEXT("모든 파티원이 준비 완료 상태여야 합니다."));
+					return;
+				}
+
+				if (Member.SelectedHeroType == NoneHeroType)
+				{
+					RequesterPC->Client_MatchmakingError(TEXT("모든 파티원이 영웅을 선택해야 합니다."));
+					return;
+				}
+
+				if (PlayerToQueueEntryMap.Contains(Member.PlayerId))
+				{
+					RequesterPC->Client_MatchmakingError(TEXT("파티원 중 이미 매칭 대기 중인 플레이어가 있습니다."));
+					return;
+				}
+
+				NewEntry.PlayerIds.Add(Member.PlayerId);
+				NewEntry.HeroTypes.Add(Member.SelectedHeroType);
+			}
+		}
+		else
+		{
+			if (RequesterPC->GetSelectedHeroType() == EHellunaHeroType::None)
+			{
+				RequesterPC->Client_MatchmakingError(TEXT("영웅을 먼저 선택해주세요."));
+				return;
+			}
+
+			NewEntry.PartyId = 0;
+			NewEntry.PlayerIds.Add(PlayerId);
+			NewEntry.HeroTypes.Add(static_cast<int32>(RequesterPC->GetSelectedHeroType()));
+		}
+
+		EnqueueMatchmakingEntry(MoveTemp(NewEntry));
+		return;
+	}
+
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Phase15] EnterMatchmakingQueue | PlayerId=%s | MapKey=%s"), *PlayerId, *MapKey);
 
 	// 이미 큐에 있으면 무시
@@ -2455,6 +3328,42 @@ void AHellunaLobbyGameMode::EnterMatchmakingQueue(const FString& PlayerId, const
 
 void AHellunaLobbyGameMode::LeaveMatchmakingQueue(const FString& PlayerId)
 {
+	const bool bUseSafeQueueLeaveFlow = FPlatformTime::Cycles64() >= 0;
+	if (bUseSafeQueueLeaveFlow)
+	{
+		const int32* EntryIdPtr = PlayerToQueueEntryMap.Find(PlayerId);
+		if (!EntryIdPtr)
+		{
+			return;
+		}
+
+		const int32 EntryId = *EntryIdPtr;
+		TArray<FString> RemovedPlayerIds;
+		for (const FMatchmakingQueueEntry& Entry : MatchmakingQueue)
+		{
+			if (Entry.EntryId == EntryId)
+			{
+				RemovedPlayerIds = Entry.PlayerIds;
+				break;
+			}
+		}
+
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] LeaveMatchmakingQueue | PlayerId=%s | EntryId=%d"), *PlayerId, EntryId);
+
+		RemoveQueueEntry(EntryId);
+		ResetMatchmakingStatusForPlayers(RemovedPlayerIds);
+		BroadcastMatchmakingStatus();
+
+		if (MatchmakingQueue.Num() == 0)
+		{
+			if (UWorld* World = GetWorld())
+			{
+				World->GetTimerManager().ClearTimer(MatchmakingTickTimer);
+			}
+		}
+		return;
+	}
+
 	const int32* EntryIdPtr = PlayerToQueueEntryMap.Find(PlayerId);
 	if (!EntryIdPtr)
 	{
@@ -2631,8 +3540,136 @@ bool AHellunaLobbyGameMode::TryFormMatch()
 	return false;
 }
 
-void AHellunaLobbyGameMode::ExecuteMatchedDeploy(const TArray<FMatchmakingQueueEntry>& Matched)
+void AHellunaLobbyGameMode::ExecuteMatchedDeploy(const TArray<FMatchmakingQueueEntry>& Matched, bool bRequeueOnFailure)
 {
+	const bool bUseSafeMatchedDeployFlow = FPlatformTime::Cycles64() >= 0;
+	if (bUseSafeMatchedDeployFlow)
+	{
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ExecuteMatchedDeploy | Entries=%d | RequeueOnFailure=%s"),
+			Matched.Num(), bRequeueOnFailure ? TEXT("true") : TEXT("false"));
+
+		TArray<FString> MatchedPlayerIds;
+		for (const FMatchmakingQueueEntry& Entry : Matched)
+		{
+			MatchedPlayerIds.Append(Entry.PlayerIds);
+		}
+
+		auto FailMatchedDeploy = [this, &Matched, &MatchedPlayerIds, bRequeueOnFailure](const FString& ErrorMessage)
+		{
+			SendMatchmakingErrorToPlayers(MatchedPlayerIds, ErrorMessage);
+			if (bRequeueOnFailure)
+			{
+				RequeueMatchEntries(Matched, FString(), nullptr, false);
+			}
+		};
+
+		if (Matched.Num() == 0)
+		{
+			return;
+		}
+
+		const FString MapKey = Matched[0].SelectedMapKey.IsEmpty() ? DefaultMapKey : Matched[0].SelectedMapKey;
+		if (!IsValidConfiguredMapKey(MapKey))
+		{
+			FailMatchedDeploy(TEXT("유효하지 않은 맵 설정입니다."));
+			return;
+		}
+
+		FGameChannelInfo EmptyChannel;
+		if (!FindEmptyChannelForMap(MapKey, EmptyChannel))
+		{
+			if (!GameServerManager)
+			{
+				FailMatchedDeploy(TEXT("게임 서버 관리자가 준비되지 않았습니다."));
+				return;
+			}
+
+			const FString MapPath = GetMapPathByKey(MapKey);
+			if (MapPath.IsEmpty())
+			{
+				FailMatchedDeploy(TEXT("맵 경로를 확인할 수 없습니다."));
+				return;
+			}
+
+			FGameChannelInfo AnyEmptyChannel;
+			if (FindEmptyChannel(AnyEmptyChannel))
+			{
+				const int32 RespawnedPort = GameServerManager->RespawnGameServer(AnyEmptyChannel.Port, MapPath);
+				if (RespawnedPort > 0)
+				{
+					MarkChannelAsPendingDeploy(RespawnedPort);
+					WaitAndDeploy(RespawnedPort, Matched, MapKey, bRequeueOnFailure);
+					return;
+				}
+			}
+
+			const int32 SpawnedPort = GameServerManager->SpawnGameServer(MapPath);
+			if (SpawnedPort < 0)
+			{
+				FailMatchedDeploy(TEXT("게임 서버 스폰에 실패했습니다."));
+				return;
+			}
+
+			MarkChannelAsPendingDeploy(SpawnedPort);
+			WaitAndDeploy(SpawnedPort, Matched, MapKey, bRequeueOnFailure);
+			return;
+		}
+
+		MarkChannelAsPendingDeploy(EmptyChannel.Port);
+
+		TArray<FString> PreparedPlayerIds;
+		for (const FMatchmakingQueueEntry& Entry : Matched)
+		{
+			for (int32 Idx = 0; Idx < Entry.PlayerIds.Num(); ++Idx)
+			{
+				const FString& PlayerId = Entry.PlayerIds[Idx];
+				const int32 HeroType = Entry.HeroTypes.IsValidIndex(Idx) ? Entry.HeroTypes[Idx] : HeroTypeToIndex(EHellunaHeroType::None);
+
+				const TWeakObjectPtr<AHellunaLobbyController>* PCPtr = PlayerIdToControllerMap.Find(PlayerId);
+				if (!PCPtr || !PCPtr->IsValid())
+				{
+					RollbackDeployStateForPlayers(PreparedPlayerIds, EmptyChannel.Port);
+					FailMatchedDeploy(TEXT("로비 컨트롤러가 유효하지 않아 매칭 출격을 중단했습니다."));
+					return;
+				}
+
+				FString PersistError;
+				if (!PersistDeployDataForPlayer(PCPtr->Get(), PlayerId, HeroType, EmptyChannel.Port, PersistError))
+				{
+					RollbackDeployStateForPlayer(PlayerId, EmptyChannel.Port);
+					RollbackDeployStateForPlayers(PreparedPlayerIds, EmptyChannel.Port);
+					FailMatchedDeploy(PersistError);
+					return;
+				}
+
+				PreparedPlayerIds.Add(PlayerId);
+			}
+		}
+
+		for (const FMatchmakingQueueEntry& Entry : Matched)
+		{
+			for (const FString& PlayerId : Entry.PlayerIds)
+			{
+				const TWeakObjectPtr<AHellunaLobbyController>* PCPtr = PlayerIdToControllerMap.Find(PlayerId);
+				if (!PCPtr || !PCPtr->IsValid())
+				{
+					continue;
+				}
+
+				AHellunaLobbyController* MemberPC = PCPtr->Get();
+				MemberPC->SetDeployInProgress(true);
+				MemberPC->Client_ExecutePartyDeploy(EmptyChannel.Port);
+			}
+		}
+
+		for (const FMatchmakingQueueEntry& Entry : Matched)
+		{
+			RemoveQueueEntry(Entry.EntryId);
+		}
+
+		return;
+	}
+
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Phase15] ExecuteMatchedDeploy | Entries=%d"), Matched.Num());
 
 	// [Phase 16] 맵 키 추출 (첫 엔트리 기준)
@@ -2825,8 +3862,409 @@ void AHellunaLobbyGameMode::ExecuteMatchedDeploy(const TArray<FMatchmakingQueueE
 // [Phase 16] WaitAndDeploy — 서버 스폰 후 준비 대기
 // ════════════════════════════════════════════════════════════════════════════════
 
-void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEntry> Matched, const FString& MapKey)
+void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEntry> Matched, const FString& MapKey, bool bRequeueOnFailure)
 {
+	const bool bUseCrashFixedWaitAndDeployFlow = FPlatformTime::Cycles64() >= 0;
+	if (bUseCrashFixedWaitAndDeployFlow)
+	{
+		UWorld* World = GetWorld();
+		if (!World)
+		{
+			return;
+		}
+
+		const double StartTime = FPlatformTime::Seconds();
+		constexpr double TimeoutSeconds = 30.0;
+		constexpr float PollInterval = 0.5f;
+		const FString ResolvedMapPath = GetMapPathByKey(MapKey);
+		const FString ExpectedMapIdentifier = NormalizeLobbyMapIdentifier(ResolvedMapPath.IsEmpty() ? MapKey : ResolvedMapPath);
+
+		FTimerHandle& TimerHandle = WaitAndDeployTimers.FindOrAdd(Port);
+		TWeakObjectPtr<AHellunaLobbyGameMode> WeakThis(this);
+
+		World->GetTimerManager().SetTimer(
+			TimerHandle,
+			[WeakThis, Port, Matched = MoveTemp(Matched), StartTime, TimeoutSeconds, MapKey, ExpectedMapIdentifier, bRequeueOnFailure]() mutable
+			{
+				AHellunaLobbyGameMode* Self = WeakThis.Get();
+				if (!Self)
+				{
+					return;
+				}
+
+				UWorld* InnerWorld = Self->GetWorld();
+				if (!InnerWorld)
+				{
+					Self->WaitAndDeployTimers.Remove(Port);
+					Self->PendingDeployTimers.Remove(Port);
+					Self->PendingDeployChannels.Remove(Port);
+					return;
+				}
+
+				auto ScheduleWaitCleanup = [WeakThis, Port]()
+				{
+					AHellunaLobbyGameMode* CleanupSelf = WeakThis.Get();
+					if (!CleanupSelf)
+					{
+						return;
+					}
+
+					UWorld* CleanupWorld = CleanupSelf->GetWorld();
+					if (!CleanupWorld)
+					{
+						CleanupSelf->WaitAndDeployTimers.Remove(Port);
+						CleanupSelf->PendingDeployTimers.Remove(Port);
+						CleanupSelf->PendingDeployChannels.Remove(Port);
+						return;
+					}
+
+					// Clear the looping timer after the current callback returns.
+					CleanupWorld->GetTimerManager().SetTimerForNextTick(
+						[WeakThis, Port]()
+						{
+							AHellunaLobbyGameMode* NextTickSelf = WeakThis.Get();
+							if (!NextTickSelf)
+							{
+								return;
+							}
+
+							if (UWorld* NextTickWorld = NextTickSelf->GetWorld())
+							{
+								if (FTimerHandle* WaitHandle = NextTickSelf->WaitAndDeployTimers.Find(Port))
+								{
+									NextTickWorld->GetTimerManager().ClearTimer(*WaitHandle);
+								}
+
+								if (FTimerHandle* PendingHandle = NextTickSelf->PendingDeployTimers.Find(Port))
+								{
+									NextTickWorld->GetTimerManager().ClearTimer(*PendingHandle);
+								}
+							}
+
+							NextTickSelf->WaitAndDeployTimers.Remove(Port);
+							NextTickSelf->PendingDeployTimers.Remove(Port);
+							NextTickSelf->PendingDeployChannels.Remove(Port);
+						});
+				};
+
+				auto HandleFailure = [Self, Port, bRequeueOnFailure](const TArray<FMatchmakingQueueEntry>& FailedMatched, const FString& ErrorMessage)
+				{
+					TArray<FString> PlayerIds;
+					for (const FMatchmakingQueueEntry& Entry : FailedMatched)
+					{
+						PlayerIds.Append(Entry.PlayerIds);
+					}
+
+					const bool bIsSoloDeployFailure =
+						!bRequeueOnFailure &&
+						FailedMatched.Num() == 1 &&
+						FailedMatched[0].EntryId == 0 &&
+						PlayerIds.Num() == 1;
+
+					if (bIsSoloDeployFailure)
+					{
+						const TWeakObjectPtr<AHellunaLobbyController>* PCPtr = Self->PlayerIdToControllerMap.Find(PlayerIds[0]);
+						if (PCPtr && PCPtr->IsValid())
+						{
+							(*PCPtr)->Client_DeployFailed(ErrorMessage);
+						}
+					}
+					else
+					{
+						Self->SendMatchmakingErrorToPlayers(PlayerIds, ErrorMessage);
+					}
+
+					if (bRequeueOnFailure)
+					{
+						Self->RequeueMatchEntries(FailedMatched, FString(), nullptr, false);
+					}
+					else
+					{
+						Self->RollbackDeployStateForPlayers(PlayerIds, Port);
+					}
+				};
+
+				const double Elapsed = FPlatformTime::Seconds() - StartTime;
+				if (Elapsed > TimeoutSeconds)
+				{
+					TArray<FMatchmakingQueueEntry> FailedMatched = MoveTemp(Matched);
+					ScheduleWaitCleanup();
+					HandleFailure(FailedMatched, TEXT("게임 서버 준비 시간이 초과되었습니다."));
+					return;
+				}
+
+				if (!Self->GameServerManager)
+				{
+					return;
+				}
+
+				const bool bReady = MapKey.IsEmpty()
+					? Self->GameServerManager->IsServerReady(Port)
+					: Self->GameServerManager->IsServerReadyForMap(
+						Port,
+						ExpectedMapIdentifier.IsEmpty() ? MapKey : ExpectedMapIdentifier);
+				if (!bReady)
+				{
+					return;
+				}
+
+				TArray<FMatchmakingQueueEntry> DeployMatched = MoveTemp(Matched);
+				ScheduleWaitCleanup();
+
+				InnerWorld->GetTimerManager().SetTimerForNextTick(
+					[WeakThis, DeployPort = Port, DeployMatched = MoveTemp(DeployMatched), bRequeueOnFailure]() mutable
+					{
+						AHellunaLobbyGameMode* GM = WeakThis.Get();
+						if (!GM)
+						{
+							return;
+						}
+
+						TArray<FString> MatchedPlayerIds;
+						for (const FMatchmakingQueueEntry& Entry : DeployMatched)
+						{
+							MatchedPlayerIds.Append(Entry.PlayerIds);
+						}
+
+						TArray<FString> PreparedPlayerIds;
+						for (const FMatchmakingQueueEntry& Entry : DeployMatched)
+						{
+							for (int32 Idx = 0; Idx < Entry.PlayerIds.Num(); ++Idx)
+							{
+								const FString& PlayerId = Entry.PlayerIds[Idx];
+								const int32 HeroType = Entry.HeroTypes.IsValidIndex(Idx)
+									? Entry.HeroTypes[Idx]
+									: HeroTypeToIndex(EHellunaHeroType::None);
+
+								const TWeakObjectPtr<AHellunaLobbyController>* PCPtr = GM->PlayerIdToControllerMap.Find(PlayerId);
+								if (!PCPtr || !PCPtr->IsValid())
+								{
+									GM->RollbackDeployStateForPlayers(PreparedPlayerIds, DeployPort);
+									GM->SendMatchmakingErrorToPlayers(MatchedPlayerIds, TEXT("로비 컨트롤러가 유효하지 않아 출격을 중단했습니다."));
+									if (bRequeueOnFailure)
+									{
+										GM->RequeueMatchEntries(DeployMatched, FString(), nullptr, false);
+									}
+									return;
+								}
+
+								FString PersistError;
+								if (!GM->PersistDeployDataForPlayer(PCPtr->Get(), PlayerId, HeroType, DeployPort, PersistError))
+								{
+									GM->RollbackDeployStateForPlayer(PlayerId, DeployPort);
+									GM->RollbackDeployStateForPlayers(PreparedPlayerIds, DeployPort);
+									GM->SendMatchmakingErrorToPlayers(MatchedPlayerIds, PersistError);
+									if (bRequeueOnFailure)
+									{
+										GM->RequeueMatchEntries(DeployMatched, FString(), nullptr, false);
+									}
+									return;
+								}
+
+								PreparedPlayerIds.Add(PlayerId);
+							}
+						}
+
+						for (const FMatchmakingQueueEntry& Entry : DeployMatched)
+						{
+							for (const FString& PlayerId : Entry.PlayerIds)
+							{
+								const TWeakObjectPtr<AHellunaLobbyController>* PCPtr = GM->PlayerIdToControllerMap.Find(PlayerId);
+								if (!PCPtr || !PCPtr->IsValid())
+								{
+									continue;
+								}
+
+								AHellunaLobbyController* MemberPC = PCPtr->Get();
+								MemberPC->SetDeployInProgress(true);
+								MemberPC->Client_ExecutePartyDeploy(DeployPort);
+							}
+						}
+					});
+			},
+			PollInterval,
+			true);
+		return;
+	}
+
+	const bool bUseSafeWaitAndDeployFlow = FPlatformTime::Cycles64() >= 0;
+	if (bUseSafeWaitAndDeployFlow)
+	{
+		UWorld* World = GetWorld();
+		if (!World)
+		{
+			return;
+		}
+
+		const double StartTime = FPlatformTime::Seconds();
+		constexpr double TimeoutSeconds = 30.0;
+		constexpr float PollInterval = 0.5f;
+
+		FTimerHandle& TimerHandle = WaitAndDeployTimers.FindOrAdd(Port);
+		TWeakObjectPtr<AHellunaLobbyGameMode> WeakThis(this);
+
+		World->GetTimerManager().SetTimer(TimerHandle,
+			[WeakThis, Port, Matched = MoveTemp(Matched), StartTime, TimeoutSeconds, MapKey, bRequeueOnFailure]() mutable
+			{
+				if (!WeakThis.IsValid())
+				{
+					return;
+				}
+
+				AHellunaLobbyGameMode* Self = WeakThis.Get();
+				const double Elapsed = FPlatformTime::Seconds() - StartTime;
+
+				auto ClearPendingState = [Self, Port]()
+				{
+					if (UWorld* InnerWorld = Self->GetWorld())
+					{
+						if (FTimerHandle* TH = Self->WaitAndDeployTimers.Find(Port))
+						{
+							InnerWorld->GetTimerManager().ClearTimer(*TH);
+						}
+					}
+
+					Self->WaitAndDeployTimers.Remove(Port);
+					Self->PendingDeployChannels.Remove(Port);
+				};
+
+				auto HandleFailure = [Self, &Matched, Port, bRequeueOnFailure](const FString& ErrorMessage)
+				{
+					TArray<FString> PlayerIds;
+					for (const FMatchmakingQueueEntry& Entry : Matched)
+					{
+						PlayerIds.Append(Entry.PlayerIds);
+					}
+
+					const bool bIsSoloDeployFailure =
+						!bRequeueOnFailure &&
+						Matched.Num() == 1 &&
+						Matched[0].EntryId == 0 &&
+						PlayerIds.Num() == 1;
+
+					if (bIsSoloDeployFailure)
+					{
+						const TWeakObjectPtr<AHellunaLobbyController>* PCPtr = Self->PlayerIdToControllerMap.Find(PlayerIds[0]);
+						if (PCPtr && PCPtr->IsValid())
+						{
+							(*PCPtr)->Client_DeployFailed(ErrorMessage);
+						}
+					}
+					else
+					{
+						Self->SendMatchmakingErrorToPlayers(PlayerIds, ErrorMessage);
+					}
+
+					if (bRequeueOnFailure)
+					{
+						Self->RequeueMatchEntries(Matched, FString(), nullptr, false);
+					}
+					else
+					{
+						Self->RollbackDeployStateForPlayers(PlayerIds, Port);
+					}
+				};
+
+				if (Elapsed > TimeoutSeconds)
+				{
+					ClearPendingState();
+					HandleFailure(TEXT("게임 서버 준비 시간이 초과되었습니다."));
+					return;
+				}
+
+				if (!Self->GameServerManager)
+				{
+					return;
+				}
+
+				const bool bReady = MapKey.IsEmpty()
+					? Self->GameServerManager->IsServerReady(Port)
+					: Self->GameServerManager->IsServerReadyForMap(Port, MapKey);
+				if (!bReady)
+				{
+					return;
+				}
+
+				ClearPendingState();
+
+				TWeakObjectPtr<AHellunaLobbyGameMode> DeployWeakSelf = WeakThis;
+				const int32 DeployPort = Port;
+				if (UWorld* InnerWorld = Self->GetWorld())
+				{
+					InnerWorld->GetTimerManager().SetTimerForNextTick(
+						[DeployWeakSelf, DeployPort, DeployMatched = MoveTemp(Matched), bRequeueOnFailure]() mutable
+						{
+							if (!DeployWeakSelf.IsValid())
+							{
+								return;
+							}
+
+							AHellunaLobbyGameMode* GM = DeployWeakSelf.Get();
+							TArray<FString> MatchedPlayerIds;
+							for (const FMatchmakingQueueEntry& Entry : DeployMatched)
+							{
+								MatchedPlayerIds.Append(Entry.PlayerIds);
+							}
+
+							TArray<FString> PreparedPlayerIds;
+							for (const FMatchmakingQueueEntry& Entry : DeployMatched)
+							{
+								for (int32 Idx = 0; Idx < Entry.PlayerIds.Num(); ++Idx)
+								{
+									const FString& PlayerId = Entry.PlayerIds[Idx];
+									const int32 HeroType = Entry.HeroTypes.IsValidIndex(Idx) ? Entry.HeroTypes[Idx] : HeroTypeToIndex(EHellunaHeroType::None);
+
+									const TWeakObjectPtr<AHellunaLobbyController>* PCPtr = GM->PlayerIdToControllerMap.Find(PlayerId);
+									if (!PCPtr || !PCPtr->IsValid())
+									{
+										GM->RollbackDeployStateForPlayers(PreparedPlayerIds, DeployPort);
+										GM->SendMatchmakingErrorToPlayers(MatchedPlayerIds, TEXT("로비 컨트롤러가 유효하지 않아 출격을 중단했습니다."));
+										if (bRequeueOnFailure)
+										{
+											GM->RequeueMatchEntries(DeployMatched, FString(), nullptr, false);
+										}
+										return;
+									}
+
+									FString PersistError;
+									if (!GM->PersistDeployDataForPlayer(PCPtr->Get(), PlayerId, HeroType, DeployPort, PersistError))
+									{
+										GM->RollbackDeployStateForPlayer(PlayerId, DeployPort);
+										GM->RollbackDeployStateForPlayers(PreparedPlayerIds, DeployPort);
+										GM->SendMatchmakingErrorToPlayers(MatchedPlayerIds, PersistError);
+										if (bRequeueOnFailure)
+										{
+											GM->RequeueMatchEntries(DeployMatched, FString(), nullptr, false);
+										}
+										return;
+									}
+
+									PreparedPlayerIds.Add(PlayerId);
+								}
+							}
+
+							for (const FMatchmakingQueueEntry& Entry : DeployMatched)
+							{
+								for (const FString& PlayerId : Entry.PlayerIds)
+								{
+									const TWeakObjectPtr<AHellunaLobbyController>* PCPtr = GM->PlayerIdToControllerMap.Find(PlayerId);
+									if (!PCPtr || !PCPtr->IsValid())
+									{
+										continue;
+									}
+
+									AHellunaLobbyController* MemberPC = PCPtr->Get();
+									MemberPC->SetDeployInProgress(true);
+									MemberPC->Client_ExecutePartyDeploy(DeployPort);
+								}
+							}
+						});
+				}
+			},
+			PollInterval, true);
+		return;
+	}
+
 	UWorld* World = GetWorld();
 	if (!World)
 	{
@@ -3067,7 +4505,8 @@ void AHellunaLobbyGameMode::EnqueueMatchmakingEntry(FMatchmakingQueueEntry Entry
 void AHellunaLobbyGameMode::RequeueMatchEntries(
 	const TArray<FMatchmakingQueueEntry>& Entries,
 	const FString& ExcludedPlayerId,
-	const TMap<FString, TPair<int32, int32>>* ReassignedHeroes)
+	const TMap<FString, TPair<int32, int32>>* ReassignedHeroes,
+	bool bTryMatchImmediately)
 {
 	for (const FMatchmakingQueueEntry& Entry : Entries)
 	{
@@ -3112,7 +4551,7 @@ void AHellunaLobbyGameMode::RequeueMatchEntries(
 			RequeueEntry.PartyId = 0;
 		}
 
-		EnqueueMatchmakingEntry(MoveTemp(RequeueEntry));
+		EnqueueMatchmakingEntry(MoveTemp(RequeueEntry), bTryMatchImmediately);
 	}
 }
 
@@ -3404,7 +4843,7 @@ void AHellunaLobbyGameMode::OnCountdownFinished(int32 MatchGroupId)
 	}
 
 	// 기존 ExecuteMatchedDeploy 호출
-	ExecuteMatchedDeploy(PendingMatch.MatchedEntries);
+	ExecuteMatchedDeploy(PendingMatch.MatchedEntries, true);
 
 	UE_LOG(LogHellunaLobby, Log,
 		TEXT("[LobbyGM] [Phase17] 카운트다운 완료 -> Deploy | GroupId=%d"), MatchGroupId);

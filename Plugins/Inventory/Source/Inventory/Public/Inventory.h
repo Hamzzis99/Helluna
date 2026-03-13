@@ -10,7 +10,7 @@
 // ============================================
 
 // 장착 시스템 (EquipmentComponent, EquipActor, EquippedGridSlot, ItemFragment)
-#define INV_DEBUG_EQUIP 0
+#define INV_DEBUG_EQUIP 1
 
 // 인벤토리 관리 (InventoryComponent, FastArray)
 #define INV_DEBUG_INVENTORY 0
@@ -28,13 +28,13 @@
 #define INV_DEBUG_RESOURCE 0
 
 // 플레이어 (PlayerController)
-#define INV_DEBUG_PLAYER 0
+#define INV_DEBUG_PLAYER 1
 
 // 부착물 시스템 (AttachmentFragments, AttachmentPanel, FastArray 부착진단)
 #define INV_DEBUG_ATTACHMENT 1
 
 // 저장/로드 시스템 (SaveGameMode, 로드 복원)
-#define INV_DEBUG_SAVE 0
+#define INV_DEBUG_SAVE 1
 
 // 아이템 포인터/부착물 저장 진단 (CollectInventoryDataForSave 포인터 추적)
 #define INV_DEBUG_ITEM_POINTER 0

@@ -57,6 +57,7 @@ class HELLUNA_API UHellunaLobbyStashWidget : public UUserWidget
 
 public:
 	virtual void NativeOnInitialized() override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 	virtual void NativeDestruct() override;
 
 	// ════════════════════════════════════════════════════════════════
@@ -239,6 +240,18 @@ protected:
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> MatchmakingOverlay;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Overlay_SearchSpinner;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> Image_SearchRingBackdrop;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> Image_SearchRingOuter;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> Image_SearchRingInner;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> Text_MatchmakingTimer;
@@ -483,6 +496,10 @@ private:
 	UFUNCTION()
 	void HandleMatchmakingStatusChanged(const FMatchmakingStatusInfo& StatusInfo);
 
+	void ConfigureSearchSpinnerVisuals();
+	void SetSearchSpinnerVisible(bool bVisible);
+	bool ShouldAnimateSearchSpinner() const;
+
 	// ── [Phase 17] 카운트다운 핸들러 ──
 
 	/** 매칭 완료 핸들러 — 카운트다운 시작 + 프리뷰 전환 */
@@ -560,6 +577,10 @@ private:
 
 	/** [Phase 17.1] 팝업에서 탐색 중인 임시 인덱스 (확인 전까지 SelectedMapKey에 영향 없음) */
 	int32 PopupBrowsingIndex = 0;
+
+	bool bSearchSpinnerConfigured = false;
+	float SearchRingOuterAngle = 0.0f;
+	float SearchRingInnerAngle = 0.0f;
 
 	/** [Phase 17] 맵 목록 로컬 캐시 */
 	TArray<FHellunaGameMapInfo> CachedMapConfigs;

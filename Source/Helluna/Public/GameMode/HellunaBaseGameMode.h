@@ -66,6 +66,9 @@ protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	// ── Phase 6: InitNewPlayer — URL Options에서 로비 배포 정보 파싱 ──
+	virtual void PreLogin(const FString& Options, const FString& Address,
+		const FUniqueNetIdRepl& UniqueId, FString& ErrorMessage) override;
+
 	virtual FString InitNewPlayer(APlayerController* NewPlayerController,
 		const FUniqueNetIdRepl& UniqueId, const FString& Options,
 		const FString& Portal = TEXT("")) override;
@@ -75,6 +78,9 @@ protected:
 
 	/** 크래시 복구 체크 — PostLogin 시 호출하여 비정상 종료 시 Loadout → Stash 복구 */
 	void CheckAndRecoverFromCrash(const FString& PlayerId);
+	bool ShouldEnforceLobbyDeployAdmission() const;
+	bool ParseLobbyDeployOptions(const FString& Options, FString& OutPlayerId, int32& OutHeroTypeIndex) const;
+	bool ValidateLobbyDeployAdmission(const FString& PlayerId, int32 HeroTypeIndex, FString& OutErrorMessage) const;
 
 public:
 	// ── Phase 3: SQLite 저장/로드 전환 ──

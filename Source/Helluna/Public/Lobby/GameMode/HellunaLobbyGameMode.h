@@ -166,6 +166,9 @@ public:
 	/** [Phase 16] 맵키로 MapPath 조회 */
 	FString GetMapPathByKey(const FString& MapKey) const;
 
+	/** 설정된 맵 키인지 검증 */
+	bool IsValidConfiguredMapKey(const FString& MapKey) const;
+
 	/** Deploy 결정 후 즉시 채널 예약 (이중 배정 방지) */
 	void MarkChannelAsPendingDeploy(int32 Port);
 
@@ -212,6 +215,9 @@ public:
 
 	/** 게임서버 포트의 레지스트리가 유효한지 확인 (status=playing + 60초 이내) */
 	bool IsGameServerRunning(int32 Port);
+
+	/** 플레이어가 현재 게임 모드를 사용할 수 있는지 검증 */
+	bool ValidateRequestedGameModeForPlayer(const FString& PlayerId, ELobbyGameMode Mode, FString& OutError) const;
 
 	/** 재참가 수락 → 게임서버로 Travel */
 	void HandleRejoinAccepted(AHellunaLobbyController* LobbyPC);
@@ -302,14 +308,32 @@ public:
 	/** 큐에 있는 전원에게 상태 브로드캐스트 */
 	void BroadcastMatchmakingStatus();
 
+	/** 지정된 플레이어들에게 매칭 상태를 명시적으로 리셋 */
+	void ResetMatchmakingStatusForPlayers(const TArray<FString>& PlayerIds, EMatchmakingStatus Status = EMatchmakingStatus::None);
+
+	/** 지정된 플레이어들에게 매칭 에러를 전송 */
+	void SendMatchmakingErrorToPlayers(const TArray<FString>& PlayerIds, const FString& ErrorMessage);
+
+	/** 현재 로비에 유효한 컨트롤러가 연결된 플레이어인지 확인 */
+	bool IsPlayerOnlineInLobby(const FString& PlayerId) const;
+
+	/** 플레이어 1명의 deploy 전 영속화 수행 */
+	bool PersistDeployDataForPlayer(AHellunaLobbyController* LobbyPC, const FString& PlayerId, int32 HeroType, int32 ServerPort, FString& OutError);
+
+	/** 플레이어 1명의 deploy 상태 롤백 */
+	void RollbackDeployStateForPlayer(const FString& PlayerId, int32 ExpectedPort = INDEX_NONE);
+
+	/** 여러 플레이어의 deploy 상태 롤백 */
+	void RollbackDeployStateForPlayers(const TArray<FString>& PlayerIds, int32 ExpectedPort = INDEX_NONE);
+
 	/** 매칭 알고리즘 — 조합 찾으면 true */
 	bool TryFormMatch();
 
 	/** 매칭 완료 → Deploy 실행 (서버 없으면 비동기 스폰 대기) */
-	void ExecuteMatchedDeploy(const TArray<FMatchmakingQueueEntry>& Matched);
+	void ExecuteMatchedDeploy(const TArray<FMatchmakingQueueEntry>& Matched, bool bRequeueOnFailure = false);
 
 	/** [Phase 16/19] 비동기 Deploy (서버 스폰/맵 전환 대기). MapKey 비어있으면 맵 무관 체크 */
-	void WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEntry> Matched, const FString& MapKey = TEXT(""));
+	void WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEntry> Matched, const FString& MapKey = TEXT(""), bool bRequeueOnFailure = false);
 
 	/** [Phase 19] 빈 서버에 맵 전환 커맨드 파일 작성 */
 	void WriteMapSwitchCommand(int32 Port, const FString& MapPath);
@@ -330,7 +354,8 @@ public:
 	void RequeueMatchEntries(
 		const TArray<FMatchmakingQueueEntry>& Entries,
 		const FString& ExcludedPlayerId = FString(),
-		const TMap<FString, TPair<int32, int32>>* ReassignedHeroes = nullptr);
+		const TMap<FString, TPair<int32, int32>>* ReassignedHeroes = nullptr,
+		bool bTryMatchImmediately = false);
 
 	// ── [Phase 17] 매칭 카운트다운 + 영웅 자동 재배정 ──
 

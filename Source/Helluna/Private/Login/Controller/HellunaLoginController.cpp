@@ -275,7 +275,8 @@ void AHellunaLoginController::ShowLoginWidget()
 	}
 
 #if HELLUNA_DEBUG_LOGINCONTROLLER
-	UE_LOG(LogHelluna, Warning, TEXT(""));
+	UE_LOG(LogHelluna, Warning, TEXT(""
+								  ""));
 #endif
 }
 
