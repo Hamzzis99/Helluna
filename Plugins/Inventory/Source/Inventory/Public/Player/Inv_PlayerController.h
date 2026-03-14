@@ -8,6 +8,7 @@
 class UInv_InventoryComponent;
 class UInv_EquipmentComponent;
 class AInv_EquipActor;
+class UInv_InventoryItem;
 class UInputMappingContext;
 class UInputAction;
 class UInv_HUDWidget;
@@ -288,6 +289,34 @@ struct INVENTORY_API FInv_SavedItemData
 
 		return Result;
 	}
+};
+
+USTRUCT(BlueprintType)
+struct INVENTORY_API FInv_GridPositionSyncData
+{
+	GENERATED_BODY()
+
+	FInv_GridPositionSyncData() = default;
+
+	FInv_GridPositionSyncData(UInv_InventoryItem* InItem, int32 InGridIndex, uint8 InGridCategory, bool bInRotated)
+		: Item(InItem)
+		, GridIndex(InGridIndex)
+		, GridCategory(InGridCategory)
+		, bRotated(bInRotated)
+	{
+	}
+
+	UPROPERTY()
+	TObjectPtr<UInv_InventoryItem> Item = nullptr;
+
+	UPROPERTY()
+	int32 GridIndex = INDEX_NONE;
+
+	UPROPERTY()
+	uint8 GridCategory = 0;
+
+	UPROPERTY()
+	bool bRotated = false;
 };
 
 // ============================================
