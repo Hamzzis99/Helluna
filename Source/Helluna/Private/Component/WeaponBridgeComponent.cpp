@@ -17,6 +17,7 @@
 
 #include "Component/WeaponBridgeComponent.h"
 #include "Character/HellunaHeroCharacter.h"
+#include "GameFramework/PlayerController.h"
 #include "AbilitySystem/HellunaAbilitySystemComponent.h"
 #include "EquipmentManagement/Components/Inv_EquipmentComponent.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
@@ -31,6 +32,29 @@
 // ⭐ 생성자
 // ⭐ Tick 비활성화 (이벤트 기반으로만 동작)
 // ============================================
+namespace
+{
+bool IsOwnedEquipActorForBridge(const UWeaponBridgeComponent* WeaponBridge, const AInv_EquipActor* EquipActor)
+{
+	if (!IsValid(WeaponBridge) || !IsValid(EquipActor))
+	{
+		return false;
+	}
+
+	const AHellunaHeroCharacter* OwningCharacter = Cast<AHellunaHeroCharacter>(WeaponBridge->GetOwner());
+	const APlayerController* OwningController = IsValid(OwningCharacter)
+		? Cast<APlayerController>(OwningCharacter->GetController())
+		: nullptr;
+	if (!IsValid(OwningController) || EquipActor->GetOwner() != OwningController)
+	{
+		return false;
+	}
+
+	const UInv_EquipmentComponent* EquipComponent = OwningController->FindComponentByClass<UInv_EquipmentComponent>();
+	return IsValid(EquipComponent) && EquipComponent->GetEquippedActors().Contains(const_cast<AInv_EquipActor*>(EquipActor));
+}
+}
+
 UWeaponBridgeComponent::UWeaponBridgeComponent()
 {
 	// Tick 사용 안 함 - 델리게이트 이벤트 기반으로 동작
@@ -387,12 +411,16 @@ void UWeaponBridgeComponent::DestroyHandWeapon()
 // ============================================
 bool UWeaponBridgeComponent::Server_RequestAttachmentTransfer_Validate(AInv_EquipActor* EquipActor)
 {
-	return true;
+	return IsOwnedEquipActorForBridge(this, EquipActor);
 }
 
 void UWeaponBridgeComponent::Server_RequestAttachmentTransfer_Implementation(AInv_EquipActor* EquipActor)
 {
-	if (!IsValid(EquipActor)) return;
+	if (!IsOwnedEquipActorForBridge(this, EquipActor))
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[WeaponBridge] Server_RequestAttachmentTransfer ignored: invalid equip actor ownership"));
+		return;
+	}
 
 	PendingAttachmentSource = EquipActor;
 	AttachmentTransferRetryCount = 0;

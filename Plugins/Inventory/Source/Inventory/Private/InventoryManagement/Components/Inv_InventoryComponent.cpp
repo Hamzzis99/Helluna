@@ -45,6 +45,34 @@
 //    Server_CraftItemWithMaterials, Server_ConsumeItem 등 서버 RPC 구현부
 //
 // ════════════════════════════════════════════════════════════════════════════════
+namespace
+{
+bool IsInventoryItemOwnedByThisComponent(const UInv_InventoryComponent* InventoryComponent, const UInv_InventoryItem* Item)
+{
+	if (!IsValid(InventoryComponent) || !IsValid(Item))
+	{
+		return false;
+	}
+
+	return IsValid(InventoryComponent->GetOwner()) && Item->GetOuter() == InventoryComponent->GetOwner();
+}
+
+int32 FindOwnedInventoryEntryIndex(const UInv_InventoryComponent* InventoryComponent, const UInv_InventoryItem* Item)
+{
+	if (!IsInventoryItemOwnedByThisComponent(InventoryComponent, Item))
+	{
+		return INDEX_NONE;
+	}
+
+	return InventoryComponent->FindEntryIndexForItem(Item);
+}
+
+bool HasEquipmentFragment(const UInv_InventoryItem* Item)
+{
+	return IsValid(Item) && Item->GetItemManifest().GetFragmentOfType<FInv_EquipmentFragment>() != nullptr;
+}
+}
+
 bool UInv_InventoryComponent::IsListenServerOrStandalone() const
 {
 	return GetOwner() &&
@@ -684,7 +712,7 @@ bool UInv_InventoryComponent::Server_DropItem_Validate(UInv_InventoryItem* Item,
 {
 	// Validate failure disconnects the client. Runtime-sanitize malformed values
 	// in _Implementation so UI timing issues do not force a connection loss.
-	return true;
+	return !IsValid(Item) || IsInventoryItemOwnedByThisComponent(this, Item);
 }
 
 //아이템 드롭 상호작용을 누른 뒤 서버에서 어떻게 처리를 할지.
@@ -693,6 +721,13 @@ void UInv_InventoryComponent::Server_DropItem_Implementation(UInv_InventoryItem*
 	if (!IsValid(Item))
 	{
 		UE_LOG(LogInventory, Warning, TEXT("[InventoryComponent] Server_DropItem ignored: invalid item"));
+		return;
+	}
+
+	const int32 TrackedEntryIndex = FindOwnedInventoryEntryIndex(this, Item);
+	if (TrackedEntryIndex == INDEX_NONE)
+	{
+		UE_LOG(LogInventory, Warning, TEXT("[InventoryComponent] Server_DropItem ignored: item is not tracked by this inventory"));
 		return;
 	}
 
@@ -715,10 +750,9 @@ void UInv_InventoryComponent::Server_DropItem_Implementation(UInv_InventoryItem*
 	else
 	{
 		Item->SetTotalStackCount(NewStackCount);
-		const int32 DropEntryIdx = FindEntryIndexForItem(Item);
-		if (InventoryList.Entries.IsValidIndex(DropEntryIdx))
+		if (InventoryList.Entries.IsValidIndex(TrackedEntryIndex))
 		{
-			InventoryList.MarkItemDirty(InventoryList.Entries[DropEntryIdx]);
+			InventoryList.MarkItemDirty(InventoryList.Entries[TrackedEntryIndex]);
 		}
 	}
 
@@ -1835,7 +1869,22 @@ void UInv_InventoryComponent::Multicast_ConsumeMaterialsUI_Implementation(const 
 
 bool UInv_InventoryComponent::Server_EquipSlotClicked_Validate(UInv_InventoryItem* ItemToEquip, UInv_InventoryItem* ItemToUnequip, int32 WeaponSlotIndex)
 {
-	return WeaponSlotIndex >= -1 && WeaponSlotIndex <= 1;
+	if (WeaponSlotIndex < 0 || WeaponSlotIndex > 1)
+	{
+		return false;
+	}
+
+	if (IsValid(ItemToEquip) && !IsInventoryItemOwnedByThisComponent(this, ItemToEquip))
+	{
+		return false;
+	}
+
+	if (IsValid(ItemToUnequip) && !IsInventoryItemOwnedByThisComponent(this, ItemToUnequip))
+	{
+		return false;
+	}
+
+	return true;
 }
 
 // 아이템 장착 상호작용을 누른 뒤 서버에서 어떻게 처리를 할지.
@@ -1849,6 +1898,51 @@ void UInv_InventoryComponent::Multicast_EquipSlotClicked_Implementation(UInv_Inv
 {
 	// Equipment Component will listen to these delegates
 	// 장비 컴포넌트가 이 델리게이트를 수신 대기합니다.
+	if (!IsValid(ItemToEquip) && !IsValid(ItemToUnequip))
+	{
+		UE_LOG(LogInventory, Warning, TEXT("[InventoryComponent] Multicast_EquipSlotClicked ignored: no items supplied"));
+		return;
+	}
+
+	if (IsValid(ItemToEquip))
+	{
+		const int32 EquipEntryIndex = FindOwnedInventoryEntryIndex(this, ItemToEquip);
+		if (EquipEntryIndex == INDEX_NONE || !HasEquipmentFragment(ItemToEquip))
+		{
+			UE_LOG(LogInventory, Warning, TEXT("[InventoryComponent] Multicast_EquipSlotClicked ignored: equip item is invalid or not tracked"));
+			return;
+		}
+
+		if (InventoryList.Entries[EquipEntryIndex].bIsAttachedToWeapon)
+		{
+			UE_LOG(LogInventory, Warning, TEXT("[InventoryComponent] Multicast_EquipSlotClicked ignored: equip item is attached to another weapon"));
+			return;
+		}
+	}
+
+	if (IsValid(ItemToUnequip))
+	{
+		const int32 UnequipEntryIndex = FindOwnedInventoryEntryIndex(this, ItemToUnequip);
+		if (UnequipEntryIndex == INDEX_NONE || !HasEquipmentFragment(ItemToUnequip))
+		{
+			UE_LOG(LogInventory, Warning, TEXT("[InventoryComponent] Multicast_EquipSlotClicked ignored: unequip item is invalid or not tracked"));
+			return;
+		}
+
+		const FInv_InventoryEntry& UnequipEntry = InventoryList.Entries[UnequipEntryIndex];
+		if (UnequipEntry.WeaponSlotIndex != INDEX_NONE && UnequipEntry.WeaponSlotIndex != WeaponSlotIndex)
+		{
+			UE_LOG(LogInventory, Warning, TEXT("[InventoryComponent] Multicast_EquipSlotClicked ignored: slot mismatch for unequip item"));
+			return;
+		}
+	}
+
+	if (IsValid(ItemToEquip) && IsValid(ItemToUnequip) && ItemToEquip == ItemToUnequip)
+	{
+		UE_LOG(LogInventory, Warning, TEXT("[InventoryComponent] Multicast_EquipSlotClicked ignored: equip and unequip target are identical"));
+		return;
+	}
+
 	OnItemEquipped.Broadcast(ItemToEquip, WeaponSlotIndex);
 	OnItemUnequipped.Broadcast(ItemToUnequip, WeaponSlotIndex);
 
