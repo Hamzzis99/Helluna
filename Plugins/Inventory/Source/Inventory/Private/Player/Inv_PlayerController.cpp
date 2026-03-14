@@ -1263,12 +1263,14 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 	// PostReplicatedAdd 시 장착 아이템(GridIndex=INDEX_NONE)이 "first available" 슬롯에
 	// 배치되면서 Server_UpdateItemGridPosition RPC가 서버의 GridIndex를 덮어씀.
 	// MoveItemByCurrentIndex는 RPC를 보내지 않으므로, 복원 후 명시적으로 동기화 필요.
+	// Step 4: 복원 직후 경로만 배치 RPC로 묶고, 일반 드래그/드롭 단건 RPC는 유지한다.
+	TArray<FInv_GridPositionSyncData> RestoreSyncRequests;
 	for (const FGridRestoreInfo& GridInfo : Grids)
 	{
 		if (IsValid(GridInfo.Grid))
 		{
-			GridInfo.Grid->SendAllItemPositionsToServer();
-			UE_LOG(LogTemp, Warning, TEXT("[Fix10] %s 위치 서버 동기화 완료"), GridInfo.Name);
+			const int32 AddedCount = GridInfo.Grid->AppendItemPositionSyncRequests(RestoreSyncRequests);
+			UE_LOG(LogTemp, Warning, TEXT("[Fix10] %s 위치 서버 동기화 요청 추가: %d개"), GridInfo.Name, AddedCount);
 		}
 	}
 
@@ -1280,10 +1282,16 @@ void AInv_PlayerController::RestoreInventoryFromState(const TArray<FInv_SavedIte
 		{
 			if (IsValid(EquippedItem))
 			{
-				InventoryComponent->Server_UpdateItemGridPosition(EquippedItem, INDEX_NONE, 0);
+				RestoreSyncRequests.Emplace(EquippedItem, INDEX_NONE, 0, false);
 				UE_LOG(LogTemp, Warning, TEXT("[Fix10] 장착 아이템 GridIndex 서버 클리어: %s (WeaponSlot=%d)"),
 					*EquippedItem->GetItemManifest().GetItemType().ToString(), SlotIdx);
 			}
+		}
+
+		if (RestoreSyncRequests.Num() > 0)
+		{
+			InventoryComponent->Server_UpdateItemGridPositionsBatch(RestoreSyncRequests);
+			UE_LOG(LogTemp, Warning, TEXT("[Step4] 복원 후 배치 위치 서버 동기화 완료: %d개 요청"), RestoreSyncRequests.Num());
 		}
 	}
 

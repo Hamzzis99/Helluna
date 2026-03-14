@@ -2645,18 +2645,17 @@ void UInv_InventoryComponent::Server_SplitItemEntry_Implementation(UInv_Inventor
 
 bool UInv_InventoryComponent::Server_UpdateItemGridPosition_Validate(UInv_InventoryItem* Item, int32 GridIndex, uint8 GridCategory, bool bRotated)
 {
-	return GridCategory <= 2;
+	return GridIndex >= INDEX_NONE && GridCategory <= 2;
 }
 
-// ⭐ [Phase 4 방법2] 클라이언트 Grid 위치를 서버 Entry에 동기화
-void UInv_InventoryComponent::Server_UpdateItemGridPosition_Implementation(UInv_InventoryItem* Item, int32 GridIndex, uint8 GridCategory, bool bRotated)
+bool UInv_InventoryComponent::ApplyItemGridPositionSync(UInv_InventoryItem* Item, int32 GridIndex, uint8 GridCategory, bool bRotated)
 {
 	if (!IsValid(Item))
 	{
 #if INV_DEBUG_INVENTORY
 		UE_LOG(LogTemp, Warning, TEXT("[Server_UpdateItemGridPosition] Item이 유효하지 않음!"));
 #endif
-		return;
+		return false;
 	}
 
 	// Entry 찾아서 GridIndex, GridCategory 업데이트
@@ -2675,12 +2674,57 @@ void UInv_InventoryComponent::Server_UpdateItemGridPosition_Implementation(UInv_
 			UE_LOG(LogTemp, Log, TEXT("[Server_UpdateItemGridPosition] Entry[%d] 업데이트: %s → Grid%d Index=%d (MarkItemDirty 스킵)"),
 				i, *Item->GetItemManifest().GetItemType().ToString(), GridCategory, GridIndex);
 #endif
-			return;
+			return true;
 		}
 	}
 
 #if INV_DEBUG_INVENTORY
 	UE_LOG(LogTemp, Warning, TEXT("[Server_UpdateItemGridPosition] Entry를 찾지 못함: %s"), *Item->GetItemManifest().GetItemType().ToString());
+#endif
+	return false;
+}
+
+// ⭐ [Phase 4 방법2] 클라이언트 Grid 위치를 서버 Entry에 동기화
+void UInv_InventoryComponent::Server_UpdateItemGridPosition_Implementation(UInv_InventoryItem* Item, int32 GridIndex, uint8 GridCategory, bool bRotated)
+{
+	ApplyItemGridPositionSync(Item, GridIndex, GridCategory, bRotated);
+}
+
+bool UInv_InventoryComponent::Server_UpdateItemGridPositionsBatch_Validate(const TArray<FInv_GridPositionSyncData>& SyncRequests)
+{
+	if (SyncRequests.Num() > 128)
+	{
+		return false;
+	}
+
+	for (const FInv_GridPositionSyncData& Request : SyncRequests)
+	{
+		if (Request.GridIndex < INDEX_NONE || Request.GridCategory > 2)
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+void UInv_InventoryComponent::Server_UpdateItemGridPositionsBatch_Implementation(const TArray<FInv_GridPositionSyncData>& SyncRequests)
+{
+	int32 AppliedCount = 0;
+
+	for (const FInv_GridPositionSyncData& Request : SyncRequests)
+	{
+		if (ApplyItemGridPositionSync(Request.Item, Request.GridIndex, Request.GridCategory, Request.bRotated))
+		{
+			++AppliedCount;
+		}
+	}
+
+#if INV_DEBUG_INVENTORY
+	if (SyncRequests.Num() > 0)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[Server_UpdateItemGridPositionsBatch] 요청=%d 적용=%d"), SyncRequests.Num(), AppliedCount);
+	}
 #endif
 }
 
