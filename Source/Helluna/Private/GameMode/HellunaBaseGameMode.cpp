@@ -304,7 +304,8 @@ void AHellunaBaseGameMode::InitializeGame()
 // ════════════════════════════════════════════════════════════════════════════════
 bool AHellunaBaseGameMode::ShouldEnforceLobbyDeployAdmission() const
 {
-	return GetNetMode() == NM_DedicatedServer && Cast<AHellunaDefenseGameMode>(this) != nullptr;
+	// bDebugSkipLogin 시 deploy options 검증 비활성화 → PostLogin에서 디버그 흐름 처리
+	return !bDebugSkipLogin && GetNetMode() == NM_DedicatedServer && Cast<AHellunaDefenseGameMode>(this) != nullptr;
 }
 
 bool AHellunaBaseGameMode::ParseLobbyDeployOptions(const FString& Options, FString& OutPlayerId, int32& OutHeroTypeIndex) const
@@ -647,21 +648,22 @@ void AHellunaBaseGameMode::PostLogin(APlayerController* NewPlayer)
 	// ────────────────────────────────────────────────────────────────────────────
 	else if (bDebugSkipLogin)
 	{
-#if WITH_EDITOR
 		FString DebugPlayerId = FString::Printf(TEXT("DEBUG_%s"), *FGuid::NewGuid().ToString());
 
 		UE_LOG(LogHelluna, Warning, TEXT(""));
 		UE_LOG(LogHelluna, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
-		UE_LOG(LogHelluna, Warning, TEXT("║  🔧 [BaseGameMode] 개발자 모드 - 로그인 스킵              ║"));
+		UE_LOG(LogHelluna, Warning, TEXT("║  [BaseGameMode] 개발자 모드 - 로그인/캐릭터선택 스킵      ║"));
 		UE_LOG(LogHelluna, Warning, TEXT("╠════════════════════════════════════════════════════════════╣"));
 		UE_LOG(LogHelluna, Warning, TEXT("║ DebugPlayerId: %s"), *DebugPlayerId);
+		UE_LOG(LogHelluna, Warning, TEXT("║ DebugHeroType: %d"), static_cast<int32>(DebugHeroType));
 		UE_LOG(LogHelluna, Warning, TEXT("║ Controller: %s"), *GetNameSafe(NewPlayer));
 		UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 
-		// 1. PlayerState에 GUID 부여
+		// 1. PlayerState에 GUID + 캐릭터 타입 부여
 		if (PS)
 		{
 			PS->SetLoginInfo(DebugPlayerId);
+			PS->SetSelectedHeroType(DebugHeroType);
 		}
 
 		// 2. GameInstance에 로그인 등록
@@ -670,63 +672,57 @@ void AHellunaBaseGameMode::PostLogin(APlayerController* NewPlayer)
 			GI->RegisterLogin(DebugPlayerId);
 		}
 
-		// 3. ControllerToPlayerIdMap 등록 (Logout/인벤토리 저장 시 필요)
+		// 3. 캐릭터 사용 등록
+		RegisterCharacterUse(DebugHeroType, DebugPlayerId);
+
+		// 4. ControllerToPlayerIdMap 등록 (Logout/인벤토리 저장 시 필요)
 		RegisterControllerPlayerId(NewPlayer, DebugPlayerId);
 
-		// Phase 3: 크래시 복구 체크 (비정상 종료 시 Loadout → Stash 복구)
+		// 5. 크래시 복구 체크 (비정상 종료 시 Loadout → Stash 복구)
 		CheckAndRecoverFromCrash(DebugPlayerId);
 
-		// 4. Controller EndPlay 델리게이트 바인딩 (인벤토리 저장용)
-		// 주의: bDebugSkipLogin 경로에서 NewPlayer는 LoginController이므로 InvPC 캐스트 실패할 수 있음
-		// → EndPlay 저장은 부모 GameMode::EndPlay에서 커버됨
-		AInv_PlayerController* InvPC = Cast<AInv_PlayerController>(NewPlayer);
-		if (IsValid(InvPC))
+		// 6. 인벤토리 사전 로드 (디스크 I/O를 스폰 전에 완료)
+		PreCacheInventoryForPlayer(DebugPlayerId);
+
+		// 7. LoginController → GameController 스왑 또는 직접 스폰
+		AHellunaLoginController* LC = Cast<AHellunaLoginController>(NewPlayer);
+		if (LC && LC->GetGameControllerClass())
 		{
-			InvPC->OnControllerEndPlay.AddDynamic(this, &AHellunaBaseGameMode::OnInvControllerEndPlay);
+			// LoginController인 경우: GameController로 스왑 → 스왑 내부에서 SpawnHeroCharacter 호출
+			FTimerHandle& SwapTimer = LambdaTimerHandles.AddDefaulted_GetRef();
+			GetWorldTimerManager().SetTimer(SwapTimer, [this, LC, DebugPlayerId, DebugHeroType = this->DebugHeroType]()
+			{
+				if (IsValid(LC))
+				{
+					SwapToGameController(LC, DebugPlayerId, DebugHeroType);
+				}
+			}, 0.5f, false);
 		}
 		else
 		{
-			UE_LOG(LogHelluna, Warning, TEXT("[BaseGameMode] DebugSkipLogin: InvPC 캐스트 실패 - Controller=%s (EndPlay 저장은 GameMode::EndPlay에서 처리)"),
-				*GetNameSafe(NewPlayer));
-		}
+			// LoginController가 아닌 경우 (이미 GameController) → 직접 스폰
+			AInv_PlayerController* InvPC = Cast<AInv_PlayerController>(NewPlayer);
+			if (IsValid(InvPC))
+			{
+				InvPC->OnControllerEndPlay.AddDynamic(this, &AHellunaBaseGameMode::OnInvControllerEndPlay);
+			}
 
-		// 5. 인벤토리 사전 로드 (디스크 I/O를 스폰 전에 완료)
-		PreCacheInventoryForPlayer(DebugPlayerId);
+			if (!bGameInitialized)
+			{
+				InitializeGame();
+			}
 
-		// 6. 게임 초기화 (첫 플레이어일 때)
-		if (!bGameInitialized)
-		{
-			InitializeGame();
-		}
-
-		// 7. 인벤토리 복원 — Pre-Cache 있으면 0.1초, 없으면 1.0초 딜레이
-		{
-			const bool bHasCache = PreCachedInventoryMap.Contains(DebugPlayerId);
-			const float LoadDelay = bHasCache ? 0.1f : 1.0f;
-			// [Fix26] 로컬 핸들 → LambdaTimerHandles 등록
-			FTimerHandle& InventoryLoadTimer = LambdaTimerHandles.AddDefaulted_GetRef();
-			GetWorldTimerManager().SetTimer(InventoryLoadTimer, [this, NewPlayer]()
+			FTimerHandle& SpawnTimer = LambdaTimerHandles.AddDefaulted_GetRef();
+			GetWorldTimerManager().SetTimer(SpawnTimer, [this, NewPlayer]()
 			{
 				if (IsValid(NewPlayer))
 				{
-					LoadAndSendInventoryToClient(NewPlayer);
+					SpawnHeroCharacter(NewPlayer);
 				}
-			}, LoadDelay, false);
+			}, 0.3f, false);
 		}
 
 		// 타임아웃 타이머 시작하지 않음!
-#else
-		// 에디터 외 빌드에서는 개발자 모드 무시 → 정상 로그인 흐름
-		UE_LOG(LogHelluna, Error, TEXT("[BaseGameMode] bDebugSkipLogin은 에디터 전용입니다!"));
-		FTimerHandle& TimeoutTimer = LoginTimeoutTimers.FindOrAdd(NewPlayer);
-		GetWorldTimerManager().SetTimer(TimeoutTimer, [this, NewPlayer]()
-		{
-			if (IsValid(NewPlayer))
-			{
-				OnLoginTimeout(NewPlayer);
-			}
-		}, LoginTimeoutSeconds, false);
-#endif
 	}
 	// ────────────────────────────────────────────────────────────────────────────
 	// 📌 로그인 필요 (일반 접속)

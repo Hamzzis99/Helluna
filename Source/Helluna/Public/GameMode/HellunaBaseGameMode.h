@@ -110,13 +110,20 @@ public:
 
 	/**
 	 * ⭐ 디버그: 로그인 절차 스킵
-	 * true 시 PostLogin에서 자동으로 디버그 GUID 부여 → 타임아웃 없이 바로 플레이 가능
+	 * true 시 PostLogin에서 자동으로 디버그 GUID 부여 → 로그인/캐릭터선택 없이 바로 플레이 가능
 	 * BP_DefenseGameMode 등에서 에디터 체크박스로 On/Off
 	 *
 	 * ⚠️ 릴리즈 빌드에서는 반드시 false!
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Debug(디버그)", meta = (DisplayName = "개발자 모드(로그인 장면 스킵)"))
 	bool bDebugSkipLogin = false;
+
+	/**
+	 * 디버그 모드에서 자동 선택할 캐릭터 타입
+	 * bDebugSkipLogin == true일 때 이 캐릭터로 자동 스폰됨
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Debug(디버그)", meta = (DisplayName = "디버그 캐릭터 타입", EditCondition = "bDebugSkipLogin"))
+	EHellunaHeroType DebugHeroType = EHellunaHeroType::Lui;
 
 	// ════════════════════════════════════════════════════════════════════════════════
 	// 🔐 로그인 시스템
