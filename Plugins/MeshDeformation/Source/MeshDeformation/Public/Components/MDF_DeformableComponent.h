@@ -155,6 +155,33 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|설정", meta = (DisplayName = "변형 강도"))
     float DeformStrength = 30.0f;
 
+    // -------------------------------------------------------------------------
+    // [Phase 19: 현실적 변형 알고리즘 파라미터]
+    // -------------------------------------------------------------------------
+
+    /** [Phase 19] 배치당 최대 변위 제한 (관통 방지).
+     *  증분 적용 구조이므로 '원본 대비 총 변위'가 아닌 '1회 배치 내 변위'를 제한합니다. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|설정", meta = (DisplayName = "배치당 최대 변위", ClampMin = "1.0", ClampMax = "500.0"))
+    float MaxDisplacementPerBatch = 50.0f;
+
+    /** [Phase 19] 변위 방향 블렌딩 비율.
+     *  1.0 = 히트→버텍스 방향(충격 중심 기준 안쪽), 0.0 = 총알 비행 방향만 사용.
+     *  표면 법선 Overlay 접근 없이 자연스러운 함몰을 만듭니다. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|설정", meta = (DisplayName = "법선 블렌딩 비율", ClampMin = "0.0", ClampMax = "1.0"))
+    float NormalBlendRatio = 0.7f;
+
+    /** [Phase 19] 가장자리 융기(Rim/Bulge) 강도.
+     *  충격 반경의 바깥 영역에서 버텍스가 바깥으로 솟아오르는 효과.
+     *  0.0 = 비활성화, 0.25 = 함몰 강도의 25% 만큼 솟아오름. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|설정", meta = (DisplayName = "가장자리 융기 강도", ClampMin = "0.0", ClampMax = "1.0"))
+    float RimStrength = 0.25f;
+
+    /** [Phase 19] 융기 시작 반경 비율.
+     *  0.6 = 반경의 60% 지점까지 함몰, 60~100%에서 융기.
+     *  값이 작을수록 함몰 영역이 좁고 융기 영역이 넓어집니다. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|설정", meta = (DisplayName = "융기 시작 반경 비율", ClampMin = "0.3", ClampMax = "0.9"))
+    float RimStartRatio = 0.6f;
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|디버그", meta = (DisplayName = "디버그 포인트 표시"))
     bool bShowDebugPoints = true;
 

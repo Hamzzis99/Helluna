@@ -21,6 +21,13 @@ class UInv_LootContainerComponent;
 struct FInv_ItemManifest;
 struct FInv_PlayerSaveData;
 
+// RPC 파라미터 인덱스 상한 (Validate에서 값 타입 검증용)
+namespace InvValidation
+{
+	constexpr int32 MaxGridIndex = 10000;
+	constexpr int32 MaxEntryIndex = 10000;
+}
+
 // 아이템 템플릿 리졸버 — SaveGameMode가 게임별 매핑을 제공
 DECLARE_DELEGATE_RetVal_OneParam(
 	UInv_ItemComponent*,             // 반환: ItemComponent 템플릿 (CDO)

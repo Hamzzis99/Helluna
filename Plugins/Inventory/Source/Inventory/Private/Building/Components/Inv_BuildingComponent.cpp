@@ -13,6 +13,7 @@
 #include "Blueprint/UserWidget.h"
 #include "Blueprint/WidgetBlueprintLibrary.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
+#include "Widgets/Building/Inv_BuildModeHUD.h"
 
 
 // Sets default values for this component's properties
@@ -142,12 +143,18 @@ void UInv_BuildingComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 		{
 			// 바닥을 못 찾으면 설치 불가능
 			bCanPlaceBuilding = false;
-			
+
 			// 고스트를 트레이스 끝 지점에 배치 (공중)
 			GhostActorInstance->SetActorLocation(TraceEnd);
-			
+
 			// 디버그 라인 (회색: 바닥 없음)
 			DrawDebugLine(World, TraceStart, TraceEnd, FColor::Silver, false, 0.0f, 0, 1.0f);
+		}
+
+		// ★ HUD 배치 상태 실시간 업데이트
+		if (IsValid(BuildModeHUDInstance))
+		{
+			BuildModeHUDInstance->UpdatePlacementStatus(bCanPlaceBuilding);
 		}
 	}
 }
@@ -210,6 +217,15 @@ void UInv_BuildingComponent::StartBuildMode()
 		UE_LOG(LogTemp, Error, TEXT("Failed to spawn Ghost Actor!"));
 #endif
 	}
+
+	// ★ 빌드 모드 HUD 표시 (로컬 클라이언트만!)
+	UE_LOG(LogTemp, Warning, TEXT("[BuildModeHUD-Debug] StartBuildMode → ShowBuildModeHUD 호출 직전. IsLocalController=%s"),
+		OwningPC->IsLocalController() ? TEXT("TRUE") : TEXT("FALSE"));
+	if (OwningPC->IsLocalController())
+	{
+		ShowBuildModeHUD();
+	}
+	UE_LOG(LogTemp, Warning, TEXT("[BuildModeHUD-Debug] StartBuildMode → ShowBuildModeHUD 호출 완료"));
 }
 
 void UInv_BuildingComponent::EndBuildMode()
@@ -218,6 +234,12 @@ void UInv_BuildingComponent::EndBuildMode()
 #if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("=== Build Mode ENDED ==="));
 #endif
+
+	// ★ 빌드 모드 HUD 제거 (로컬 클라이언트만!)
+	if (OwningPC.IsValid() && OwningPC->IsLocalController())
+	{
+		HideBuildModeHUD();
+	}
 
 	// ★ BuildMode 종료 시 입력 비활성화 (IMC 제거 + 바인딩 해제)
 	DisableBuildModeInput();
@@ -292,6 +314,13 @@ void UInv_BuildingComponent::OpenBuildMenu()
 	UE_LOG(LogTemp, Warning, TEXT("=== OPENING BUILD MENU ==="));
 #endif
 
+	// 방안 B: 인벤토리 열려있으면 닫기
+	UInv_InventoryComponent* InvComp = OwningPC->FindComponentByClass<UInv_InventoryComponent>();
+	if (IsValid(InvComp) && InvComp->IsMenuOpen())
+	{
+		InvComp->ToggleInventoryMenu();
+	}
+
 	// Crafting Menu가 열려있으면 닫기
 	CloseCraftingMenuIfOpen();
 
@@ -348,6 +377,14 @@ void UInv_BuildingComponent::CloseBuildMenu()
 #endif
 }
 
+void UInv_BuildingComponent::ForceEndBuildMode()
+{
+	if (bIsInBuildMode)
+	{
+		EndBuildMode();
+	}
+}
+
 void UInv_BuildingComponent::CloseCraftingMenuIfOpen()
 {
 	if (!OwningPC.IsValid() || !GetWorld()) return;
@@ -360,28 +397,21 @@ void UInv_BuildingComponent::CloseCraftingMenuIfOpen()
 	{
 		if (!IsValid(Widget)) continue;
 
-		// 클래스 이름에 "CraftingMenu"가 포함되어 있으면 제거
+		// 클래스 이름에 "CraftingMenu" 또는 "Repair"가 포함되어 있으면 제거
 		FString WidgetClassName = Widget->GetClass()->GetName();
-		if (WidgetClassName.Contains(TEXT("CraftingMenu")))
+		if (WidgetClassName.Contains(TEXT("CraftingMenu")) || WidgetClassName.Contains(TEXT("Repair")))
 		{
 			Widget->RemoveFromParent();
 #if INV_DEBUG_BUILD
-			UE_LOG(LogTemp, Log, TEXT("Crafting Menu 닫힘: %s (BuildMenu 열림)"), *WidgetClassName);
+			UE_LOG(LogTemp, Log, TEXT("위젯 닫힘: %s (BuildMenu 열림)"), *WidgetClassName);
 #endif
 		}
 	}
 }
 
-void UInv_BuildingComponent::OnBuildingSelectedFromWidget(
-	TSubclassOf<AActor> GhostClass, 
-	TSubclassOf<AActor> ActualBuildingClass, 
-	int32 BuildingID, 
-	FGameplayTag MaterialTag1, 
-	int32 MaterialAmount1,
-	FGameplayTag MaterialTag2,
-	int32 MaterialAmount2)
+void UInv_BuildingComponent::OnBuildingSelectedFromWidget(const FInv_BuildingSelectionInfo& Info)
 {
-	if (!GhostClass || !ActualBuildingClass)
+	if (!Info.GhostClass || !Info.ActualBuildingClass)
 	{
 #if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Error, TEXT("OnBuildingSelectedFromWidget: Invalid class parameters!"));
@@ -391,26 +421,35 @@ void UInv_BuildingComponent::OnBuildingSelectedFromWidget(
 
 #if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("=== BUILDING SELECTED FROM WIDGET ==="));
-	UE_LOG(LogTemp, Warning, TEXT("BuildingID: %d"), BuildingID);
+	UE_LOG(LogTemp, Warning, TEXT("BuildingName: %s, BuildingID: %d"), *Info.BuildingName.ToString(), Info.BuildingID);
 
-	if (MaterialTag1.IsValid() && MaterialAmount1 > 0)
+	if (Info.MaterialTag1.IsValid() && Info.MaterialAmount1 > 0)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Required Material 1: %s x %d"), *MaterialTag1.ToString(), MaterialAmount1);
+		UE_LOG(LogTemp, Warning, TEXT("Required Material 1: %s x %d"), *Info.MaterialTag1.ToString(), Info.MaterialAmount1);
 	}
-	if (MaterialTag2.IsValid() && MaterialAmount2 > 0)
+	if (Info.MaterialTag2.IsValid() && Info.MaterialAmount2 > 0)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Required Material 2: %s x %d"), *MaterialTag2.ToString(), MaterialAmount2);
+		UE_LOG(LogTemp, Warning, TEXT("Required Material 2: %s x %d"), *Info.MaterialTag2.ToString(), Info.MaterialAmount2);
+	}
+	if (Info.MaterialTag3.IsValid() && Info.MaterialAmount3 > 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Required Material 3: %s x %d"), *Info.MaterialTag3.ToString(), Info.MaterialAmount3);
 	}
 #endif
 
-	// 선택된 건물 정보 저장
-	SelectedGhostClass = GhostClass;
-	SelectedBuildingClass = ActualBuildingClass;
-	CurrentBuildingID = BuildingID;
-	CurrentMaterialTag = MaterialTag1;
-	CurrentMaterialAmount = MaterialAmount1;
-	CurrentMaterialTag2 = MaterialTag2;
-	CurrentMaterialAmount2 = MaterialAmount2;
+	// 통합 정보 저장 (HUD에서 사용)
+	CurrentBuildingInfo = Info;
+
+	// 개별 변수에도 저장 (기존 로직 호환)
+	SelectedGhostClass = Info.GhostClass;
+	SelectedBuildingClass = Info.ActualBuildingClass;
+	CurrentBuildingID = Info.BuildingID;
+	CurrentMaterialTag = Info.MaterialTag1;
+	CurrentMaterialAmount = Info.MaterialAmount1;
+	CurrentMaterialTag2 = Info.MaterialTag2;
+	CurrentMaterialAmount2 = Info.MaterialAmount2;
+	CurrentMaterialTag3 = Info.MaterialTag3;
+	CurrentMaterialAmount3 = Info.MaterialAmount3;
 
 	// 빌드 메뉴 닫기
 	CloseBuildMenu();
@@ -490,7 +529,21 @@ void UInv_BuildingComponent::TryPlaceBuilding()
 			UE_LOG(LogTemp, Warning, TEXT("=== 배치 실패: 재료2가 부족합니다! ==="));
 			UE_LOG(LogTemp, Warning, TEXT("필요한 재료2: %s x %d"), *CurrentMaterialTag2.ToString(), CurrentMaterialAmount2);
 #endif
-			EndBuildMode(); // 빌드 모드 종료
+			EndBuildMode();
+			return;
+		}
+	}
+
+	// 재료 3 체크
+	if (CurrentMaterialTag3.IsValid() && CurrentMaterialAmount3 > 0)
+	{
+		if (!HasRequiredMaterials(CurrentMaterialTag3, CurrentMaterialAmount3))
+		{
+#if INV_DEBUG_BUILD
+			UE_LOG(LogTemp, Warning, TEXT("=== 배치 실패: 재료3이 부족합니다! ==="));
+			UE_LOG(LogTemp, Warning, TEXT("필요한 재료3: %s x %d"), *CurrentMaterialTag3.ToString(), CurrentMaterialAmount3);
+#endif
+			EndBuildMode();
 			return;
 		}
 	}
@@ -499,13 +552,16 @@ void UInv_BuildingComponent::TryPlaceBuilding()
 	UE_LOG(LogTemp, Warning, TEXT("=== TRY PLACING BUILDING (Client Request) ==="));
 	UE_LOG(LogTemp, Warning, TEXT("BuildingID: %d"), CurrentBuildingID);
 #endif
-	
+
 	// 고스트 액터의 현재 위치와 회전 가져오기
 	const FVector BuildingLocation = GhostActorInstance->GetActorLocation();
 	const FRotator BuildingRotation = GhostActorInstance->GetActorRotation();
-	
-	// 서버에 실제 건물 배치 요청 (재료 정보도 함께 전달!)
-	Server_PlaceBuilding(SelectedBuildingClass, BuildingLocation, BuildingRotation, CurrentMaterialTag, CurrentMaterialAmount, CurrentMaterialTag2, CurrentMaterialAmount2);
+
+	// 서버에 실제 건물 배치 요청 (재료 3개 정보 함께 전달!)
+	Server_PlaceBuilding(SelectedBuildingClass, BuildingLocation, BuildingRotation,
+		CurrentMaterialTag, CurrentMaterialAmount,
+		CurrentMaterialTag2, CurrentMaterialAmount2,
+		CurrentMaterialTag3, CurrentMaterialAmount3);
 
 	// 건물 배치 성공 시 빌드 모드 종료
 	EndBuildMode();
@@ -521,19 +577,23 @@ bool UInv_BuildingComponent::Server_PlaceBuilding_Validate(
 	FGameplayTag MaterialTag1,
 	int32 MaterialAmount1,
 	FGameplayTag MaterialTag2,
-	int32 MaterialAmount2)
+	int32 MaterialAmount2,
+	FGameplayTag MaterialTag3,
+	int32 MaterialAmount3)
 {
-	return BuildingClass != nullptr && MaterialAmount1 >= 0 && MaterialAmount2 >= 0 && !Location.ContainsNaN() && !Rotation.ContainsNaN();
+	return BuildingClass != nullptr && MaterialAmount1 >= 0 && MaterialAmount2 >= 0 && MaterialAmount3 >= 0 && !Location.ContainsNaN() && !Rotation.ContainsNaN();
 }
 
 void UInv_BuildingComponent::Server_PlaceBuilding_Implementation(
-	TSubclassOf<AActor> BuildingClass, 
-	FVector Location, 
-	FRotator Rotation, 
-	FGameplayTag MaterialTag1, 
+	TSubclassOf<AActor> BuildingClass,
+	FVector Location,
+	FRotator Rotation,
+	FGameplayTag MaterialTag1,
 	int32 MaterialAmount1,
 	FGameplayTag MaterialTag2,
-	int32 MaterialAmount2)
+	int32 MaterialAmount2,
+	FGameplayTag MaterialTag3,
+	int32 MaterialAmount3)
 {
 	if (!GetWorld())
 	{
@@ -593,7 +653,24 @@ void UInv_BuildingComponent::Server_PlaceBuilding_Implementation(
 			*MaterialTag2.ToString(), MaterialAmount2);
 #endif
 	}
-	
+
+	// 재료 3 검증
+	if (MaterialTag3.IsValid() && MaterialAmount3 > 0)
+	{
+		if (!HasRequiredMaterials(MaterialTag3, MaterialAmount3))
+		{
+#if INV_DEBUG_BUILD
+			UE_LOG(LogTemp, Error, TEXT("❌ Server: 재료3 부족! 건설 차단. (Tag: %s, 필요: %d)"),
+				*MaterialTag3.ToString(), MaterialAmount3);
+#endif
+			return; // 건설 중단!
+		}
+#if INV_DEBUG_BUILD
+		UE_LOG(LogTemp, Warning, TEXT("✅ Server: 재료3 검증 통과 (Tag: %s, 필요: %d)"),
+			*MaterialTag3.ToString(), MaterialAmount3);
+#endif
+	}
+
 	// 서버에서 실제 건물 액터 스폰
 	FActorSpawnParameters SpawnParams;
 	SpawnParams.Owner = OwningPC.Get();
@@ -637,8 +714,20 @@ void UInv_BuildingComponent::Server_PlaceBuilding_Implementation(
 #endif
 		}
 
+		// 재료 3 차감
+		if (MaterialTag3.IsValid() && MaterialAmount3 > 0)
+		{
+#if INV_DEBUG_BUILD
+			UE_LOG(LogTemp, Warning, TEXT("재료3 차감 조건 만족! ConsumeMaterials 호출..."));
+#endif
+			ConsumeMaterials(MaterialTag3, MaterialAmount3);
+#if INV_DEBUG_BUILD
+			UE_LOG(LogTemp, Warning, TEXT("Server: 재료3 차감 완료! (%s x %d)"), *MaterialTag3.ToString(), MaterialAmount3);
+#endif
+		}
+
 		// 재료가 하나도 설정되지 않은 경우 로그
-		if (!MaterialTag1.IsValid() && !MaterialTag2.IsValid())
+		if (!MaterialTag1.IsValid() && !MaterialTag2.IsValid() && !MaterialTag3.IsValid())
 		{
 #if INV_DEBUG_BUILD
 			UE_LOG(LogTemp, Warning, TEXT("재료가 필요 없는 건물입니다."));
@@ -789,6 +878,66 @@ void UInv_BuildingComponent::EnableBuildModeInput()
 			UE_LOG(LogTemp, Warning, TEXT("IA_CancelBuilding BOUND (Handle: %u)"), CancelBuildingBindingHandle);
 #endif
 		}
+	}
+}
+
+void UInv_BuildingComponent::ShowBuildModeHUD()
+{
+	if (!OwningPC.IsValid()) return;
+
+	// BuildModeHUDClass가 NULL이면 직접 로드 시도 (BP CDO 저장 실패 대비)
+	if (!BuildModeHUDClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[BuildModeHUD-Debug] BuildModeHUDClass가 NULL! 직접 로드 시도..."));
+		UClass* LoadedClass = LoadClass<UInv_BuildModeHUD>(nullptr, TEXT("/Inventory/Widgets/Building/WBP_Inv_BuildModeHUD.WBP_Inv_BuildModeHUD_C"));
+		if (LoadedClass)
+		{
+			BuildModeHUDClass = LoadedClass;
+			UE_LOG(LogTemp, Warning, TEXT("[BuildModeHUD-Debug] 직접 로드 성공: %s"), *LoadedClass->GetName());
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("[BuildModeHUD-Debug] 직접 로드도 실패! HUD를 표시할 수 없습니다."));
+			return;
+		}
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[BuildModeHUD-Debug] ShowBuildModeHUD 진입. OwningPC=%s, BuildModeHUDClass=%s"),
+		TEXT("Valid"), *BuildModeHUDClass->GetName());
+
+	// 이미 표시 중이면 제거 후 재생성
+	HideBuildModeHUD();
+
+	BuildModeHUDInstance = CreateWidget<UInv_BuildModeHUD>(OwningPC.Get(), BuildModeHUDClass);
+
+	UE_LOG(LogTemp, Warning, TEXT("[BuildModeHUD-Debug] CreateWidget 결과: %s"),
+		IsValid(BuildModeHUDInstance) ? TEXT("성공") : TEXT("실패!"));
+
+	if (!IsValid(BuildModeHUDInstance)) return;
+
+	// 건물 정보 설정
+	BuildModeHUDInstance->SetBuildingInfo(
+		CurrentBuildingInfo.BuildingName,
+		CurrentBuildingInfo.BuildingIcon,
+		CurrentBuildingInfo.MaterialIcon1, CurrentBuildingInfo.MaterialAmount1, CurrentBuildingInfo.MaterialTag1,
+		CurrentBuildingInfo.MaterialIcon2, CurrentBuildingInfo.MaterialAmount2, CurrentBuildingInfo.MaterialTag2,
+		CurrentBuildingInfo.MaterialIcon3, CurrentBuildingInfo.MaterialAmount3, CurrentBuildingInfo.MaterialTag3
+	);
+
+	BuildModeHUDInstance->AddToViewport();
+
+	UE_LOG(LogTemp, Warning, TEXT("[BuildModeHUD-Debug] AddToViewport 완료! BuildingName=%s"), *CurrentBuildingInfo.BuildingName.ToString());
+}
+
+void UInv_BuildingComponent::HideBuildModeHUD()
+{
+	if (IsValid(BuildModeHUDInstance))
+	{
+		BuildModeHUDInstance->RemoveFromParent();
+		BuildModeHUDInstance = nullptr;
+#if INV_DEBUG_BUILD
+		UE_LOG(LogTemp, Warning, TEXT("BuildModeHUD: 제거됨"));
+#endif
 	}
 }
 

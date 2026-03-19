@@ -4,7 +4,7 @@
 
 namespace GameItems
 {
-	namespace Equipmnt
+	namespace Equipment
 	{
 		namespace Weapons
 		{

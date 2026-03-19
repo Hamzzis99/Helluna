@@ -635,6 +635,10 @@ private:
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_Interact(AActor* TargetActor);
 
+	// 방안 B: 인벤토리 메뉴 상태 변경 시 HUD 자동 관리 (델리게이트 핸들러)
+	UFUNCTION()
+	void OnInventoryMenuStateChanged(bool bOpen);
+
 	TWeakObjectPtr<AActor> ThisActor;
 	TWeakObjectPtr<AActor> LastActor;
 	TWeakObjectPtr<AActor> CurrentCraftingStation;

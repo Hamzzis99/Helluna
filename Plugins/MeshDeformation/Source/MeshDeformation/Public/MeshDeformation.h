@@ -11,7 +11,7 @@
 // ============================================
 
 // 변형 시스템 (DeformableComponent - 변형, 배칭, GUID, 히스토리, 수리)
-#define MDF_DEBUG_DEFORM 0
+#define MDF_DEBUG_DEFORM 1
 
 // 미니게임 시스템 (MiniGameComponent - 마킹, 약점, 절단)
 #define MDF_DEBUG_MINIGAME 0

@@ -456,7 +456,7 @@ UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_ItemComponent* ItemCo
 #endif
 
 	FInv_InventoryEntry& NewEntry = Entries.AddDefaulted_GetRef(); // 새 항목 추가
-	NewEntry.Item = ItemComponent->GetItemManifest().Manifest(OwningActor); // 항목 매니페스트에서 항목 가져오기 (새로 생성된 아이템의 소유자 지정)
+	NewEntry.Item = ItemComponent->GetItemManifestMutable().Manifest(OwningActor); // 항목 매니페스트에서 항목 가져오기 (새로 생성된 아이템의 소유자 지정)
 
 	// ⭐ [Fix11] 비스택 아이템은 Manifest() 후 TotalStackCount가 0으로 남음
 	// "아이템이 존재한다 = 최소 1개"이므로 비스택 아이템은 TotalStackCount=1로 초기화

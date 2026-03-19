@@ -8,6 +8,8 @@
 #include "Kismet/GameplayStatics.h"
 
 #include "DebugHelper.h"
+#include "AbilitySystem/HeroAbility/HeroGameplayAbility_GunParry.h"
+#include "Character/HellunaEnemyCharacter.h"
 
 UHellunaHealthComponent::UHellunaHealthComponent()
 {
@@ -73,6 +75,10 @@ void UHellunaHealthComponent::ApplyDirectDamage(float Damage, AActor* Instigator
 	if (Damage <= 0.f)
 		return;
 
+	// [GunParry] 무적 상태면 데미지 무시
+	if (UHeroGameplayAbility_GunParry::ShouldBlockDamage(Owner))
+		return;
+
 	Internal_SetHealth(Health - Damage, InstigatorActor);
 }
 
@@ -128,6 +134,14 @@ void UHellunaHealthComponent::HandleDeath(AActor* KillerActor)
 	AActor* Owner = GetOwner();
 	if (!Owner || !Owner->HasAuthority())
 		return;
+
+	// [GunParry] 처형 중이면 사망 보류 (OnDeath도 안 함)
+	if (UHeroGameplayAbility_GunParry::ShouldDeferDeath(Owner))
+	{
+		if (AHellunaEnemyCharacter* EnemyChar = Cast<AHellunaEnemyCharacter>(Owner))
+			EnemyChar->bParryDeferredDeath = true;
+		return;
+	}
 
 	// OnDeath 브로드캐스트 → EnemyCharacter::OnMonsterDeath → StateTree Signal
 	OnDeath.Broadcast(Owner, KillerActor);

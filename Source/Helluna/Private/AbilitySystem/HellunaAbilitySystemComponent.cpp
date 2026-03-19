@@ -231,13 +231,16 @@ bool UHellunaAbilitySystemComponent::CancelAbilityByTag(const FGameplayTag Abili
 void UHellunaAbilitySystemComponent::AddStateTag(const FGameplayTag& Tag)
 {
 	if (!Tag.IsValid()) return;
-	AddLooseGameplayTag(Tag);
+	// [Fix: gun-parry-bug-002] TagOnly로 서버→클라 리플리케이트 활성화
+	// 기본값 None은 리플리케이트 안 됨. 패링 윈도우 태그(Parryable) 등
+	// 클라이언트에서도 감지해야 하므로 TagOnly 사용.
+	AddLooseGameplayTag(Tag, 1, EGameplayTagReplicationState::TagOnly);
 }
 
 void UHellunaAbilitySystemComponent::RemoveStateTag(const FGameplayTag& Tag)
 {
 	if (!Tag.IsValid()) return;
-	RemoveLooseGameplayTag(Tag);
+	RemoveLooseGameplayTag(Tag, 1, EGameplayTagReplicationState::TagOnly);
 }
 
 bool UHellunaAbilitySystemComponent::HasStateTag(const FGameplayTag& Tag) const

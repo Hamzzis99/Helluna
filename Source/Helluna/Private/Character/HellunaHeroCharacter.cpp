@@ -36,6 +36,10 @@
 
 #include "DebugHelper.h"
 #include "Helluna.h"  // [Step3] HELLUNA_DEBUG_HERO 매크로 (EndPlay/Input/Weapon/Repair 디버그 로그)
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraComponent.h"
+#include "AbilitySystem/HeroAbility/HeroGameplayAbility_GunParry.h"
+#include "VFX/GhostTrailActor.h"
 #include "Animation/AnimInstance.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
 
@@ -857,6 +861,7 @@ void AHellunaHeroCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 
 	DOREPLIFETIME(AHellunaHeroCharacter, CurrentWeapon);  // OnRep_CurrentWeapon → HUD 갱신
 	DOREPLIFETIME(AHellunaHeroCharacter, CurrentWeaponTag);
+	DOREPLIFETIME(AHellunaHeroCharacter, PlayFullBody);   // 전신 몽타주 플래그 — CLIENT B ABP 동기화
 }
 
 
@@ -1088,6 +1093,9 @@ void AHellunaHeroCharacter::OnHeroDeath(AActor* DeadActor, AActor* KillerActor)
 
 void AHellunaHeroCharacter::Multicast_PlayHeroHitReact_Implementation()
 {
+	// [GunParry] 무적 상태 피격 모션 차단
+	if (UHeroGameplayAbility_GunParry::ShouldBlockDamage(this)) return;
+
 	if (!HitReactMontage) return;
 
 	USkeletalMeshComponent* SkelMesh = GetMesh();
@@ -1110,4 +1118,140 @@ void AHellunaHeroCharacter::Multicast_PlayHeroDeath_Implementation()
 	if (!AnimInst) return;
 
 	AnimInst->Montage_Play(DeathMontage);
+}
+
+// =========================================================
+// ★ 건패링 워프 VFX 멀티캐스트 (Step 2b)
+// 서버에서 호출 → 모든 클라이언트에서 나이아가라 이펙트 스폰
+// =========================================================
+void AHellunaHeroCharacter::Multicast_PlayParryWarpVFX_Implementation(
+	UNiagaraSystem* Effect, FVector Location, FRotator Rotation, float Scale, FLinearColor Color, bool bGhostMesh, float GhostOpacity)
+{
+	if (!Effect)
+	{
+		return;
+	}
+
+	// 데디케이티드 서버에서는 렌더링 불필요 — 스킵
+	if (GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+
+	UNiagaraComponent* Comp = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+		GetWorld(),
+		Effect,
+		Location,
+		Rotation,
+		FVector(Scale),
+		true,  // bAutoDestroy
+		true,  // bAutoActivate
+		ENCPoolMethod::None
+	);
+
+	if (Comp)
+	{
+		Comp->SetNiagaraVariableLinearColor(TEXT("WarpColor"), Color);
+
+		// Step 5: 고스트 메시 — Hero의 SkeletalMesh를 나이아가라에 전달
+		if (bGhostMesh)
+		{
+			if (USkeletalMeshComponent* HeroMesh = GetMesh())
+			{
+				UNiagaraFunctionLibrary::OverrideSystemUserVariableSkeletalMeshComponent(
+					Comp, TEXT("SkeletalMesh"), HeroMesh);
+			}
+			Comp->SetNiagaraVariableFloat(TEXT("GhostOpacity"), GhostOpacity);
+			Comp->SetNiagaraVariableBool(TEXT("bGhostMesh"), true);
+		}
+		else
+		{
+			Comp->SetNiagaraVariableBool(TEXT("bGhostMesh"), false);
+		}
+
+		ActiveParryVFX.Add(Comp);
+	}
+
+	UE_LOG(LogGunParry, Verbose,
+		TEXT("[Multicast_PlayParryWarpVFX] VFX 스폰 — Effect=%s, Location=%s, Scale=%.1f, Ghost=%s"),
+		*Effect->GetName(),
+		*Location.ToString(),
+		Scale,
+		bGhostMesh ? TEXT("Y") : TEXT("N"));
+}
+
+// =========================================================
+// ★ 건패링 워프 VFX 중단 (Step 2b-5)
+// AN_ParryExecutionFire 타이밍에 호출 → 기존 파티클만 페이드아웃
+// =========================================================
+void AHellunaHeroCharacter::Multicast_StopParryWarpVFX_Implementation()
+{
+	int32 DeactivatedCount = 0;
+
+	for (TWeakObjectPtr<UNiagaraComponent>& WeakComp : ActiveParryVFX)
+	{
+		if (UNiagaraComponent* Comp = WeakComp.Get())
+		{
+			Comp->Deactivate();
+			++DeactivatedCount;
+		}
+	}
+
+	UE_LOG(LogGunParry, Verbose,
+		TEXT("[Multicast_StopParryWarpVFX] VFX Deactivate — %d개 컴포넌트"),
+		DeactivatedCount);
+
+	ActiveParryVFX.Empty();
+}
+
+// =========================================================
+// Multicast_SpawnParryGhostTrail — 패링 잔상(PoseableMesh) 전 클라이언트 스폰
+// =========================================================
+void AHellunaHeroCharacter::Multicast_SpawnParryGhostTrail_Implementation(
+	int32 Count, float FadeDuration,
+	FVector StartLocation, FVector EndLocation, FRotator TrailRotation,
+	FLinearColor GhostColor, UMaterialInterface* TrailMaterial)
+{
+	// 데디케이티드 서버에서는 렌더링 불필요
+	if (GetNetMode() == NM_DedicatedServer) return;
+
+	USkeletalMeshComponent* HeroMesh = GetMesh();
+	if (!HeroMesh || !HeroMesh->GetSkeletalMeshAsset()) return;
+
+	// 머티리얼 폴백
+	UMaterialInterface* Mat = TrailMaterial;
+	if (!Mat)
+	{
+		Mat = LoadObject<UMaterialInterface>(nullptr,
+			TEXT("/Game/Gihyeon/Combat/Materials/M_GhostTrail"));
+	}
+	if (!Mat) return;
+
+	for (int32 i = 0; i < Count; i++)
+	{
+		const float Alpha = (float)(i + 1) / (float)(Count + 1);
+		// 도착지(StartLocation)에서 출발지(EndLocation) 방향으로 잔상 배치 — 카메라 시야 안에 들어옴
+		FVector TrailLoc = FMath::Lerp(StartLocation, EndLocation, Alpha * 0.4f);
+		// [Fix: 공중 부유] 캐릭터 위치는 캡슐 중심이므로 메시 오프셋만큼 Z 보정
+		if (USkeletalMeshComponent* MyMesh = GetMesh())
+		{
+			TrailLoc.Z += MyMesh->GetRelativeLocation().Z;
+		}
+		const float OpacityMul = 1.f - Alpha * 0.3f;
+
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+		AGhostTrailActor* Ghost = GetWorld()->SpawnActor<AGhostTrailActor>(
+			AGhostTrailActor::StaticClass(), TrailLoc, TrailRotation, SpawnParams);
+
+		if (Ghost)
+		{
+			Ghost->Initialize(HeroMesh, Mat, FadeDuration, 0.85f * OpacityMul, GhostColor);
+		}
+	}
+
+	UE_LOG(LogGunParry, Warning,
+		TEXT("[Multicast_SpawnParryGhostTrail] 잔상 %d개 스폰 — Start=%s, FadeDuration=%.1f"),
+		Count, *StartLocation.ToString(), FadeDuration);
 }

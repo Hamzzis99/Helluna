@@ -3,15 +3,16 @@
 #include "Crafting/Actors/Inv_CraftingStation.h"
 #include "Inventory.h"
 #include "Blueprint/UserWidget.h"
+#include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Components/StaticMeshComponent.h"
+#include "Widgets/Crafting/Inv_TabbedCraftingMenu.h"
+#include "InventoryManagement/Components/Inv_InventoryComponent.h"
+#include "Building/Components/Inv_BuildingComponent.h"
 
 AInv_CraftingStation::AInv_CraftingStation()
 {
-	PrimaryActorTick.bCanEverTick = false;
-
-	// 스테이션 메시 컴포넌트 생성
-	StationMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("StationMesh"));
-	RootComponent = StationMesh;
+	// 부모(Inv_BuildableActor → Inv_BuildingActor)에서 BuildingMesh + RootComponent 이미 생성됨
+	// StationMesh 제거 → 부모의 BuildingMesh 사용
 }
 
 void AInv_CraftingStation::BeginPlay()
@@ -56,12 +57,48 @@ void AInv_CraftingStation::OnInteract_Implementation(APlayerController* PlayerCo
 		return;
 	}
 
+	// 방안 B: 다른 위젯(Inventory, BuildMenu) 열려있으면 먼저 닫기
+	UInv_InventoryComponent* InvComp = PlayerController->FindComponentByClass<UInv_InventoryComponent>();
+	if (IsValid(InvComp) && InvComp->IsMenuOpen())
+	{
+		InvComp->ToggleInventoryMenu();
+	}
+	UInv_BuildingComponent* BuildComp = PlayerController->FindComponentByClass<UInv_BuildingComponent>();
+	if (IsValid(BuildComp))
+	{
+		BuildComp->ForceEndBuildMode();
+		BuildComp->CloseBuildMenu();
+	}
+
+	// RepairWidget 열려있으면 닫기
+	if (UWorld* CraftWorld = GetWorld())
+	{
+		TArray<UUserWidget*> FoundWidgets;
+		UWidgetBlueprintLibrary::GetAllWidgetsOfClass(CraftWorld, FoundWidgets, UUserWidget::StaticClass(), false);
+		for (UUserWidget* Widget : FoundWidgets)
+		{
+			if (!IsValid(Widget)) continue;
+			if (Widget->GetClass()->GetName().Contains(TEXT("Repair")))
+			{
+				Widget->RemoveFromParent();
+			}
+		}
+	}
+
 	// 크래프팅 메뉴 생성 및 표시
 	UUserWidget* NewMenu = CreateWidget<UUserWidget>(PlayerController, CraftingMenuClass);
 	if (IsValid(NewMenu))
 	{
 		NewMenu->AddToViewport();
-		
+
+		// 탭형 크래프팅 메뉴인 경우 레시피 데이터 초기화
+		// AddToViewport 이후 호출 (NativeConstruct에서 델리게이트 바인딩 완료 후)
+		// 기존 CraftingMenu는 Cast 실패로 무시됨
+		if (UInv_TabbedCraftingMenu* TabbedMenu = Cast<UInv_TabbedCraftingMenu>(NewMenu))
+		{
+			TabbedMenu->InitializeWithRecipes(CraftingRecipeData);
+		}
+
 		// 입력 모드를 UI로 변경
 		FInputModeGameAndUI InputMode;
 		InputMode.SetWidgetToFocus(NewMenu->TakeWidget());
@@ -129,7 +166,7 @@ void AInv_CraftingStation::CheckDistanceToPlayer(APlayerController* PC)
 #if INV_DEBUG_CRAFT
 		UE_LOG(LogTemp, Log, TEXT("메뉴가 이미 닫혔음. Timer 정지. (Player: %s)"), *PC->GetName());
 #endif
-		
+
 		// Timer 정지
 		if (PlayerTimerMap.Contains(PC))
 		{
@@ -137,6 +174,19 @@ void AInv_CraftingStation::CheckDistanceToPlayer(APlayerController* PC)
 			PlayerTimerMap.Remove(PC);
 		}
 		return;
+	}
+
+	// 방안 B: 위젯이 뷰포트에서 이미 제거된 경우 (다른 시스템이 닫은 경우) stale 엔트리 정리
+	{
+		UUserWidget* Menu = PlayerMenuMap[PC];
+		if (!IsValid(Menu) || !Menu->IsInViewport())
+		{
+#if INV_DEBUG_CRAFT
+			UE_LOG(LogTemp, Log, TEXT("크래프팅 메뉴가 외부에서 제거됨. stale 엔트리 정리. (Player: %s)"), *PC->GetName());
+#endif
+			ForceCloseMenu(PC);
+			return;
+		}
 	}
 
 	// PlayerController의 Pawn 가져오기
@@ -179,10 +229,20 @@ void AInv_CraftingStation::ForceCloseMenu(APlayerController* PC)
 		PlayerMenuMap.Remove(PC);
 	}
 
-	// 입력 모드 복구
-	FInputModeGameOnly InputMode;
-	PC->SetInputMode(InputMode);
-	PC->SetShowMouseCursor(false);
+	// 방안 B: 다른 위젯이 열려있으면 입력 모드 변경 안 함
+	bool bOtherMenuOpen = false;
+	UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
+	if (IsValid(InvComp) && InvComp->IsMenuOpen()) bOtherMenuOpen = true;
+	UInv_BuildingComponent* BuildComp = PC->FindComponentByClass<UInv_BuildingComponent>();
+	if (IsValid(BuildComp) && BuildComp->IsBuildMenuOpen()) bOtherMenuOpen = true;
+
+	if (!bOtherMenuOpen)
+	{
+		// 입력 모드 복구
+		FInputModeGameOnly InputMode;
+		PC->SetInputMode(InputMode);
+		PC->SetShowMouseCursor(false);
+	}
 
 	// Timer 정지
 	if (PlayerTimerMap.Contains(PC))
@@ -192,6 +252,7 @@ void AInv_CraftingStation::ForceCloseMenu(APlayerController* PC)
 	}
 
 #if INV_DEBUG_CRAFT
-	UE_LOG(LogTemp, Log, TEXT("크래프팅 메뉴 강제 닫힘. Timer 정지됨. (Player: %s)"), *PC->GetName());
+	UE_LOG(LogTemp, Log, TEXT("크래프팅 메뉴 강제 닫힘. Timer 정지됨. bOtherMenuOpen=%s (Player: %s)"),
+		bOtherMenuOpen ? TEXT("TRUE") : TEXT("FALSE"), *PC->GetName());
 #endif
 }

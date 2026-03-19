@@ -19,8 +19,8 @@ public:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	void InitItemManifest(FInv_ItemManifest CopyOfManifest); // 아이템 매니페스트 초기화 함수
-	FInv_ItemManifest GetItemManifest() const { return ItemManifest; } // 아이템 매니페스트 반환 함수
-	FInv_ItemManifest GetItemManifestMutable() { return ItemManifest; } 
+	const FInv_ItemManifest& GetItemManifest() const { return ItemManifest; } // 아이템 매니페스트 반환 함수 (const 참조)
+	FInv_ItemManifest& GetItemManifestMutable() { return ItemManifest; } // 수정 가능한 참조 반환
 	FString GetPickupMessage() const { return PickupMessage;  }
 	void PickedUp(); // 아이템이 줍혔을 때 호출되는 함수
 

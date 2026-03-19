@@ -1,4 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+// Fill out your copyright notice in the Description page of Project Settings.
 
 #pragma once
 
@@ -207,6 +207,20 @@ private:
 	/** ⭐ 재료 2 표시 이름 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Repair|Settings|Material 2", meta = (AllowPrivateAccess = "true", DisplayName = "표시 이름"))
 	FText Material2DisplayName = FText::FromString(TEXT("재료 2"));
+
+	// ==================== 위젯 레이아웃 (Viewport) ====================
+
+	/** 위젯의 뷰포트 내 크기 (Width, Height) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Repair|Layout", meta = (AllowPrivateAccess = "true", DisplayName = "위젯 크기"))
+	FVector2D WidgetSize = FVector2D(500.0f, 400.0f);
+
+	/** 위젯의 뷰포트 내 앵커 (0~1, 0.5/0.5 = 화면 중앙) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Repair|Layout", meta = (AllowPrivateAccess = "true", DisplayName = "앵커 위치"))
+	FVector2D WidgetAnchor = FVector2D(0.5f, 0.5f);
+
+	/** 위젯의 정렬 기준점 (0~1, 0.5/0.5 = 위젯 중심 기준) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Repair|Layout", meta = (AllowPrivateAccess = "true", DisplayName = "정렬"))
+	FVector2D WidgetAlignment = FVector2D(0.5f, 0.5f);
 
 	// ==================== 기타 ====================
 

@@ -55,4 +55,20 @@ namespace HellunaGameplayTags
 	/** Enemy Event tags **/
 	UE_DEFINE_GAMEPLAY_TAG(Enemy_Event_Enrage, "Enemy.Event.Enrage");
 
+	// ═══════════════════════════════════════════════════════════
+	// Gun Parry System Tags
+	// ═══════════════════════════════════════════════════════════
+
+	UE_DEFINE_GAMEPLAY_TAG(Player_Ability_GunParry, "Player.Ability.GunParry");
+	UE_DEFINE_GAMEPLAY_TAG(Player_State_ParryExecution, "Player.State.ParryExecution");
+	UE_DEFINE_GAMEPLAY_TAG(Player_State_Invincible, "Player.State.Invincible");
+	UE_DEFINE_GAMEPLAY_TAG(Player_State_PostParryInvincible, "Player.State.PostParryInvincible");
+	UE_DEFINE_GAMEPLAY_TAG(Weapon_CanParry, "Weapon.CanParry");
+	UE_DEFINE_GAMEPLAY_TAG(Enemy_State_AnimLocked, "Enemy.State.AnimLocked");
+	UE_DEFINE_GAMEPLAY_TAG(Enemy_State_PendingDeath, "Enemy.State.PendingDeath");
+	UE_DEFINE_GAMEPLAY_TAG(Enemy_Ability_Parryable, "Enemy.Ability.Parryable");
+	UE_DEFINE_GAMEPLAY_TAG(Enemy_Type_Humanoid, "Enemy.Type.Humanoid");
+	UE_DEFINE_GAMEPLAY_TAG(Enemy_State_Staggered, "Enemy.State.Staggered");
+	UE_DEFINE_GAMEPLAY_TAG(Event_Parry_Fire, "Event.Parry.Fire");
+
 }

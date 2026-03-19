@@ -20,6 +20,8 @@ class UHelluna_FindResourceComponent;
 class UWeaponBridgeComponent;
 class AHeroWeapon_GunBase;
 class UHellunaHealthComponent;
+class UNiagaraSystem;
+class UNiagaraComponent;
 
 class UWeaponHUDWidget;
 
@@ -212,7 +214,7 @@ private:
 	
 	// 애니메이션을 전체 재생할 것인가
 public:
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Animation")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Replicated, Category="Animation")
 	bool PlayFullBody = false;
 
 	// =========================================================
@@ -255,4 +257,27 @@ protected:
 	/** 사망 몽타주 멀티캐스트 */
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayHeroDeath();
+
+public:
+	// =========================================================
+	// ★ 건패링 워프 VFX 멀티캐스트 (Step 2b)
+	// =========================================================
+
+	/** 워프 잔상 나이아가라 이펙트 — 서버에서 호출, 모든 클라에서 스폰 */
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_PlayParryWarpVFX(UNiagaraSystem* Effect, FVector Location, FRotator Rotation, float Scale, FLinearColor Color, bool bGhostMesh, float GhostOpacity);
+
+	/** 워프 잔상 VFX 중단 — AN_ParryExecutionFire 타이밍에 서버에서 호출 */
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_StopParryWarpVFX();
+
+	/** 패링 잔상(Ghost Trail) 스폰 — 서버에서 호출, 모든 클라에서 PoseableMesh 스폰 */
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_SpawnParryGhostTrail(int32 Count, float FadeDuration,
+		FVector StartLocation, FVector EndLocation, FRotator TrailRotation,
+		FLinearColor GhostColor, UMaterialInterface* TrailMaterial);
+
+private:
+	/** 현재 활성 상태인 패링 워프 VFX 컴포넌트 (Deactivate용 추적) */
+	TArray<TWeakObjectPtr<UNiagaraComponent>> ActiveParryVFX;
 };

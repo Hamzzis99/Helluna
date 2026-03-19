@@ -5,6 +5,8 @@
 #include "AbilitySystemComponent.h"
 #include "Character/HellunaHeroCharacter.h"
 #include "Weapon/HeroWeapon_GunBase.h"
+#include "AbilitySystem/HeroAbility/HeroGameplayAbility_GunParry.h"
+#include "AbilitySystem/HellunaAbilitySystemComponent.h"
 
 #include "DebugHelper.h"
 
@@ -42,6 +44,16 @@ void UHeroGameplayAbility_Shoot::ActivateAbility(const FGameplayAbilitySpecHandl
 		Debug::Print(TEXT("No Mag"), FColor::Red);
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
+	}
+
+	// ═══════════════ 건패링 분기 ═══════════════
+	if (UHellunaAbilitySystemComponent* HellunaASC = Hero->GetHellunaAbilitySystemComponent())
+	{
+		if (UHeroGameplayAbility_GunParry::TryParryInstead(HellunaASC, Weapon))
+		{
+			EndAbility(Handle, ActorInfo, ActivationInfo, true, false);
+			return;
+		}
 	}
 
 	UWorld* World = GetWorld();

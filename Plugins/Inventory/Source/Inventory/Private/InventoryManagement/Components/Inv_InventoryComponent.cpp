@@ -31,6 +31,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Persistence/Inv_SaveGameMode.h"  // [최적화] FindItemComponentTemplate 사용
 #include "Player/Inv_PlayerController.h"  // FInv_SavedItemData 사용
+#include "Blueprint/WidgetBlueprintLibrary.h"  // CloseOtherMenus에서 CraftingMenu 검색용
 
 // ════════════════════════════════════════════════════════════════════════════════
 // 📌 IsListenServerOrStandalone
@@ -2578,6 +2579,9 @@ void UInv_InventoryComponent::OpenInventoryMenu()
 {
 	if (!IsValid(InventoryMenu)) return;
 
+	// 방안 B: 다른 위젯(BuildMenu, CraftingMenu) 열려있으면 먼저 닫기
+	CloseOtherMenus();
+
 	InventoryMenu->SetVisibility(ESlateVisibility::Visible);
 	bInventoryMenuOpen = true;
 
@@ -2609,17 +2613,32 @@ void UInv_InventoryComponent::CloseOtherMenus()
 {
 	if (!OwningController.IsValid() || !GetWorld()) return;
 
-	// BuildMenu 닫기
+	// BuildMode(고스트 액터) + BuildMenu 닫기
 	UInv_BuildingComponent* BuildingComp = OwningController->FindComponentByClass<UInv_BuildingComponent>();
 	if (IsValid(BuildingComp))
 	{
+		BuildingComp->ForceEndBuildMode();
 		BuildingComp->CloseBuildMenu();
 #if INV_DEBUG_INVENTORY
-		UE_LOG(LogTemp, Log, TEXT("인벤토리 닫힘: BuildMenu도 함께 닫힘"));
+		UE_LOG(LogTemp, Log, TEXT("CloseOtherMenus: BuildMode/BuildMenu 닫힘"));
 #endif
 	}
 
-	// CraftingMenu는 거리 체크로 자동으로 닫힘 (Timer 방식)
+	// CraftingMenu 닫기 (위젯 검색 방식)
+	TArray<UUserWidget*> FoundWidgets;
+	UWidgetBlueprintLibrary::GetAllWidgetsOfClass(GetWorld(), FoundWidgets, UUserWidget::StaticClass(), false);
+	for (UUserWidget* Widget : FoundWidgets)
+	{
+		if (!IsValid(Widget)) continue;
+		const FString WidgetClassName = Widget->GetClass()->GetName();
+		if (WidgetClassName.Contains(TEXT("CraftingMenu")) || WidgetClassName.Contains(TEXT("Repair")))
+		{
+			Widget->RemoveFromParent();
+#if INV_DEBUG_INVENTORY
+			UE_LOG(LogTemp, Log, TEXT("CloseOtherMenus: 위젯 닫힘: %s"), *WidgetClassName);
+#endif
+		}
+	}
 }
 
 // ⭐ InventoryList 기반 공간 체크 (서버 전용, UI 없이 작동!)
@@ -2739,7 +2758,7 @@ void UInv_InventoryComponent::Server_SplitItemEntry_Implementation(UInv_Inventor
 
 bool UInv_InventoryComponent::Server_UpdateItemGridPosition_Validate(UInv_InventoryItem* Item, int32 GridIndex, uint8 GridCategory, bool bRotated)
 {
-	return GridIndex >= INDEX_NONE && GridCategory <= 2;
+	return GridIndex >= INDEX_NONE && GridIndex < InvValidation::MaxGridIndex && GridCategory <= 2;
 }
 
 bool UInv_InventoryComponent::ApplyItemGridPositionSync(UInv_InventoryItem* Item, int32 GridIndex, uint8 GridCategory, bool bRotated)
@@ -3895,7 +3914,8 @@ bool UInv_InventoryComponent::Server_TakeItemFromContainer_Validate(
 	int32 ContainerEntryIndex,
 	int32 TargetGridIndex)
 {
-	return ContainerEntryIndex >= 0;
+	return ContainerEntryIndex >= 0 && ContainerEntryIndex < InvValidation::MaxEntryIndex
+		&& (TargetGridIndex == INDEX_NONE || (TargetGridIndex >= 0 && TargetGridIndex < InvValidation::MaxGridIndex));
 }
 
 void UInv_InventoryComponent::Server_TakeItemFromContainer_Implementation(
@@ -3993,7 +4013,8 @@ bool UInv_InventoryComponent::Server_PutItemInContainer_Validate(
 	int32 PlayerEntryIndex,
 	int32 TargetGridIndex)
 {
-	return PlayerEntryIndex >= 0;
+	return PlayerEntryIndex >= 0 && PlayerEntryIndex < InvValidation::MaxEntryIndex
+		&& (TargetGridIndex == INDEX_NONE || (TargetGridIndex >= 0 && TargetGridIndex < InvValidation::MaxGridIndex));
 }
 
 void UInv_InventoryComponent::Server_PutItemInContainer_Implementation(

@@ -54,8 +54,31 @@ namespace HellunaGameplayTags
 	/** Enemy Event tags **/
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Enemy_Event_Enrage);
 
+	// ═══════════════════════════════════════════════════════════
+	// Gun Parry System Tags
+	// ═══════════════════════════════════════════════════════════
 
+	/** 건패링 - 플레이어 어빌리티 **/
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_Ability_GunParry);
 
+	/** 건패링 - 플레이어 상태 **/
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_State_ParryExecution);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_State_Invincible);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_State_PostParryInvincible);
 
+	/** 건패링 - 무기 속성 **/
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Weapon_CanParry);
+
+	/** 건패링 - 적 상태 **/
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Enemy_State_AnimLocked);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Enemy_State_PendingDeath);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Enemy_Ability_Parryable);
+
+	/** 건패링 - Phase 2 확장용 **/
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Enemy_Type_Humanoid);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Enemy_State_Staggered);
+
+	/** 건패링 - GameplayEvent **/
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Event_Parry_Fire);
 
 }
