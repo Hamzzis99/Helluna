@@ -98,6 +98,31 @@ public:
 	const FGunAnimationSet& GetAnimSet() const { return GunAnimSet; }
 
 	// ═══════════════════════════════════════════════════════════
+	// [Aim Zoom] 무기별 조준 줌 설정
+	// 우클릭 조준 시 이 무기의 FOV 줌인 값.
+	// 0이면 줌 없음 (기본 FOV 유지).
+	// BP 에디터에서 무기별로 다르게 설정 가능.
+	// ═══════════════════════════════════════════════════════════
+
+	/** 조준 시 적용할 FOV. 0이면 줌 없음(기본 FOV 유지). 낮을수록 강한 줌인. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Aim",
+		meta = (DisplayName = "Aim FOV (조준 FOV)", ClampMin = "0.0", ClampMax = "120.0",
+			ToolTip = "우클릭 조준 시 적용할 FOV. 0이면 줌 없음. 45=스나이퍼급, 70=권총급."))
+	float AimZoomFOV = 65.f;
+
+	/** 조준 시 카메라 줌인 속도 (FInterpTo InterpSpeed). 높을수록 빠르게 줌. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Aim",
+		meta = (DisplayName = "Aim Interp Speed (줌 보간 속도)", ClampMin = "1.0", ClampMax = "30.0",
+			ToolTip = "조준 시 FOV 전환 속도. 10=보통, 20=빠름, 5=느림."))
+	float AimZoomInterpSpeed = 10.f;
+
+	/** 조준 시 카메라 거리 배율 (1.0=변화없음, 0.7=가까이). 0이면 비활성. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Aim",
+		meta = (DisplayName = "Aim Arm Length Multiplier (조준 카메라 거리 배율)", ClampMin = "0.0", ClampMax = "2.0",
+			ToolTip = "조준 시 카메라 거리 배율. 1.0=변화없음, 0.7=가까이 줌인. 0이면 거리 변화 없음."))
+	float AimArmLengthMultiplier = 0.85f;
+
+	// ═══════════════════════════════════════════════════════════
 	// 건패링 관련 — bCanParry=true일 때만 하위 옵션 표시
 	// ═══════════════════════════════════════════════════════════
 

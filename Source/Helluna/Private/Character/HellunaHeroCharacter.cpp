@@ -54,6 +54,9 @@
 
 AHellunaHeroCharacter::AHellunaHeroCharacter()
 {
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bStartWithTickEnabled = true;
+
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.f);
 
 	// ⭐ 모든 캐릭터 BP가 UHellunaInputComponent를 사용하도록 보장
@@ -141,47 +144,12 @@ void AHellunaHeroCharacter::BeginPlay()
 }
 
 // ============================================================================
-// Tick — OTS 카메라 조준 보간
+// Tick
 // ============================================================================
 void AHellunaHeroCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
-
-	// 로컬 플레이어만 카메라 보간 처리
-	if (!IsLocallyControlled()) return;
-	if (!CameraBoom || !FollowCamera) return;
-
-	// ── ASC에서 조준 태그 확인 ──
-	bool bWantsAim = false;
-	if (UHellunaAbilitySystemComponent* ASC = GetHellunaAbilitySystemComponent())
-	{
-		bWantsAim = ASC->HasMatchingGameplayTag(HellunaGameplayTags::Player_status_Aim);
-	}
-	bIsCurrentlyAiming = bWantsAim;
-
-	// ── 디버그: 조준 상태 변경 로그 (상태 전환 시에만) ──
-	if (bIsCurrentlyAiming != bWasAimingLastFrame)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[OTS Camera] Aim State Changed — bAiming: %s → %s"),
-			bWasAimingLastFrame ? TEXT("true") : TEXT("false"),
-			bIsCurrentlyAiming ? TEXT("true") : TEXT("false"));
-		bWasAimingLastFrame = bIsCurrentlyAiming;
-	}
-
-	// ── 목표값 결정 ──
-	const float TargetArmLen = bIsCurrentlyAiming ? AimTargetArmLength : DefaultTargetArmLength;
-	const float TargetFOV = bIsCurrentlyAiming ? AimFOV : DefaultFOV;
-	const FVector TargetOffset = bIsCurrentlyAiming ? AimSocketOffset : DefaultSocketOffset;
-
-	// ── 부드러운 보간 ──
-	CameraBoom->TargetArmLength = FMath::FInterpTo(
-		CameraBoom->TargetArmLength, TargetArmLen, DeltaTime, AimInterpSpeed);
-
-	FollowCamera->SetFieldOfView(FMath::FInterpTo(
-		FollowCamera->FieldOfView, TargetFOV, DeltaTime, AimInterpSpeed));
-
-	CameraBoom->SocketOffset = FMath::VInterpTo(
-		CameraBoom->SocketOffset, TargetOffset, DeltaTime, AimInterpSpeed);
+	// 카메라 줌 보간은 이제 GA의 AT_AimCameraInterp AbilityTask에서 처리
 }
 
 // ============================================================================

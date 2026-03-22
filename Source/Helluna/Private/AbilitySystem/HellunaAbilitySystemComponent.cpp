@@ -4,6 +4,7 @@
 #include "AbilitySystem/HellunaAbilitySystemComponent.h"
 #include "HellunaGameplayTags.h"
 #include "AbilitySystem/HellunaHeroGameplayAbility.h"
+#include "AbilitySystem/HeroAbility/HeroGameplayAbility_Aim.h"
 #include "Helluna.h"
 #include "DebugHelper.h"
 
@@ -183,9 +184,31 @@ void UHellunaAbilitySystemComponent::OnAbilityInputReleased(const FGameplayTag& 
 		{
 			if (AbilitySpec.IsActive())
 			{
-				CancelAbilityHandle(AbilitySpec.Handle);  // -> EndAbility
+				// Aim GA: InputReleased 호출 (Phase 3 줌아웃 기회 제공)
+				// 나머지 Hold GA: 기존대로 Cancel
+				if (AbilitySpec.Ability && AbilitySpec.Ability->IsA<UHeroGameplayAbility_Aim>())
+				{
+					// InstancedPerActor이므로 CDO가 아닌 실제 인스턴스에서 호출해야 함
+					if (UGameplayAbility* Instance = AbilitySpec.GetPrimaryInstance())
+					{
+						Instance->InputReleased(
+							AbilitySpec.Handle,
+							AbilityActorInfo.Get(),
+							AbilitySpec.ActivationInfo
+						);
+					}
+					else
+					{
+						// 인스턴스 없으면 폴백: Cancel
+						CancelAbilityHandle(AbilitySpec.Handle);
+					}
+				}
+				else
+				{
+					CancelAbilityHandle(AbilitySpec.Handle);
+				}
 			}
-			continue; 
+			continue;
 		}
 
 		if (Policy == EHellunaInputActionPolicy::Toggle)
