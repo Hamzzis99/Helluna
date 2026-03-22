@@ -33,6 +33,7 @@ UHeroGameplayAbility_MeleeKick::UHeroGameplayAbility_MeleeKick()
 	AbilityActivationPolicy = EHellunaAbilityActivationPolicy::OnTriggered;
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::LocalPredicted;
+	bIgnoreParryBlock = true;
 }
 
 // ═══════════════════════════════════════════════════════════

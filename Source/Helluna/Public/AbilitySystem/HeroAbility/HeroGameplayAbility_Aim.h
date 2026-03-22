@@ -61,6 +61,11 @@ private:
 	float CachedDefaultArmLength = 0.f;
 	FVector CachedDefaultSocketOffset = FVector::ZeroVector;
 
+	/** 캐싱: 조준 전 회전 방식 */
+	bool CachedOrientRotationToMovement = true;
+	bool CachedUseControllerDesiredRotation = false;
+	FRotator CachedRotationRate = FRotator::ZeroRotator;
+
 	/** 현재 페이즈 (디버그용) */
 	int32 CurrentPhase = 0;
 

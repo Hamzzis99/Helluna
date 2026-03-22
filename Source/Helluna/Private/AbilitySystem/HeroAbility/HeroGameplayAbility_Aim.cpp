@@ -42,11 +42,21 @@ void UHeroGameplayAbility_Aim::ActivateAbility(
 	if (UCharacterMovementComponent* MoveComp = Hero->GetCharacterMovement())
 	{
 		CachedDefaultMaxWalkSpeed = MoveComp->MaxWalkSpeed;
-		// 이동속도는 서버에서만 변경 (MaxWalkSpeed는 서버→클라 복제됨)
-		if (Hero->HasAuthority())
-		{
-			MoveComp->MaxWalkSpeed = AimMaxWalkSpeed;
-		}
+		// LocalPredicted: 서버/클라 양쪽에서 동일하게 변경해야 예측 불일치 방지
+		MoveComp->MaxWalkSpeed = AimMaxWalkSpeed;
+
+		// ── [Aim Rotation] 조준 시 캐릭터가 카메라 방향을 따라 회전 (RE4 스타일) ──
+		CachedOrientRotationToMovement = MoveComp->bOrientRotationToMovement;
+		CachedUseControllerDesiredRotation = MoveComp->bUseControllerDesiredRotation;
+		CachedRotationRate = MoveComp->RotationRate;
+
+		MoveComp->bOrientRotationToMovement = false;
+		MoveComp->bUseControllerDesiredRotation = true;
+		MoveComp->RotationRate = FRotator(0.f, 720.f, 0.f);
+
+		UE_LOG(LogTemp, Warning, TEXT("[Aim GA] Rotation → Camera Direction (bOrientToMovement: %s→false, bUseControllerDesired: %s→true)"),
+			CachedOrientRotationToMovement ? TEXT("true") : TEXT("false"),
+			CachedUseControllerDesiredRotation ? TEXT("true") : TEXT("false"));
 	}
 
 	if (UCameraComponent* Cam = Hero->GetFollowCamera())
@@ -121,20 +131,7 @@ void UHeroGameplayAbility_Aim::StartZoomOut()
 {
 	CurrentPhase = 3;
 
-	// ── 이동속도 복원 (서버에서만) ──
-	if (CachedDefaultMaxWalkSpeed > 0.f)
-	{
-		if (AHellunaHeroCharacter* Hero = GetHeroCharacterFromActorInfo())
-		{
-			if (Hero->HasAuthority())
-			{
-				if (UCharacterMovementComponent* MoveComp = Hero->GetCharacterMovement())
-				{
-					MoveComp->MaxWalkSpeed = CachedDefaultMaxWalkSpeed;
-				}
-			}
-		}
-	}
+	// 이동속도 복원은 EndAbility에서 처리 (서버/클라 양쪽에서 호출되므로)
 
 	// ── Phase 3: 줌아웃 AbilityTask ──
 	ZoomOutTask = UAT_AimCameraInterp::CreateTask(
@@ -158,11 +155,28 @@ void UHeroGameplayAbility_Aim::EndAbility(
 	const FGameplayAbilityActivationInfo ActivationInfo,
 	bool bReplicateEndAbility, bool bWasCancelled)
 {
-	// GA 취소(무기 교체 등)로 EndAbility가 호출된 경우
-	// → 줌아웃이 안 끝났을 수 있으므로 카메라 즉시 복원
-	if (bWasCancelled && CurrentPhase < 3)
+	if (AHellunaHeroCharacter* Hero = GetHeroCharacterFromActorInfo())
 	{
-		if (AHellunaHeroCharacter* Hero = GetHeroCharacterFromActorInfo())
+		// ── 이동속도 + 회전 복원: 서버/클라 양쪽에서 동일하게 (LocalPredicted) ──
+		if (UCharacterMovementComponent* MoveComp = Hero->GetCharacterMovement())
+		{
+			if (CachedDefaultMaxWalkSpeed > 0.f)
+			{
+				MoveComp->MaxWalkSpeed = CachedDefaultMaxWalkSpeed;
+			}
+
+			// ── [Aim Rotation] 회전 방식 복원 ──
+			MoveComp->bOrientRotationToMovement = CachedOrientRotationToMovement;
+			MoveComp->bUseControllerDesiredRotation = CachedUseControllerDesiredRotation;
+			MoveComp->RotationRate = CachedRotationRate;
+
+			UE_LOG(LogTemp, Warning, TEXT("[Aim GA] Rotation Restored → bOrientToMovement=%s, bUseControllerDesired=%s"),
+				CachedOrientRotationToMovement ? TEXT("true") : TEXT("false"),
+				CachedUseControllerDesiredRotation ? TEXT("true") : TEXT("false"));
+		}
+
+		// ── 카메라 즉시 복원: 취소 시 줌아웃 미완료 상태면 스냅 (로컬만) ──
+		if (bWasCancelled && CurrentPhase < 3 && Hero->IsLocallyControlled())
 		{
 			if (UCameraComponent* Cam = Hero->GetFollowCamera())
 			{
@@ -173,15 +187,8 @@ void UHeroGameplayAbility_Aim::EndAbility(
 				Boom->TargetArmLength = CachedDefaultArmLength;
 				Boom->SocketOffset = CachedDefaultSocketOffset;
 			}
-			if (UCharacterMovementComponent* MoveComp = Hero->GetCharacterMovement())
-			{
-				if (CachedDefaultMaxWalkSpeed > 0.f && Hero->HasAuthority())
-				{
-					MoveComp->MaxWalkSpeed = CachedDefaultMaxWalkSpeed;
-				}
-			}
+			UE_LOG(LogTemp, Warning, TEXT("[Aim GA] 취소됨 — 카메라 즉시 복원"));
 		}
-		UE_LOG(LogTemp, Warning, TEXT("[Aim GA] 취소됨 — 카메라/속도 즉시 복원"));
 	}
 
 	CurrentPhase = 0;

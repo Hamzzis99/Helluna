@@ -74,6 +74,7 @@ UHeroGameplayAbility_GunParry::UHeroGameplayAbility_GunParry()
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::LocalPredicted;
 
 	SetAssetTags(FGameplayTagContainer(HellunaGameplayTags::Player_Ability_GunParry));
+	bIgnoreParryBlock = true;
 }
 
 // ═══════════════════════════════════════════════════════════
