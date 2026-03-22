@@ -12,6 +12,7 @@ class UButton;
 class UImage;
 class UTextBlock;
 class UHorizontalBox;
+class UInv_InventoryComponent;
 
 // 건설 카드 클릭 델리게이트 (BuildMenu에서 바인딩)
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnBuildingCardClicked, UInv_BuildingButton*, ClickedButton);
@@ -58,7 +59,6 @@ protected:
 	virtual void NativeOnInitialized() override;
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
-	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 private:
 	// 버튼 클릭 이벤트
@@ -69,25 +69,14 @@ private:
 	bool HasRequiredMaterials();
 	void UpdateButtonState();
 
-	// 재료 UI 업데이트 (이미지 표시/숨김)
+	// 재료 UI 업데이트 (이미지 표시/숨김) — BuildMenu에서 일괄 호출
 	void UpdateMaterialUI();
 
 	// CDO 캐시 헬퍼
 	const AInv_BuildableActor* GetCDO() const;
 
-	// 델리게이트 바인딩/언바인딩
-	void BindInventoryDelegates();
-	void UnbindInventoryDelegates();
-
-	// 인벤토리 변경 시 호출될 콜백 함수들
-	UFUNCTION()
-	void OnInventoryItemAdded(UInv_InventoryItem* Item, int32 EntryIndex);
-
-	UFUNCTION()
-	void OnInventoryItemRemoved(UInv_InventoryItem* Item, int32 EntryIndex);
-
-	UFUNCTION()
-	void OnInventoryStackChanged(const FInv_SlotAvailabilityResult& Result);
+	// [최적화] 인벤토리 변경 시 BuildMenu에서 일괄 호출
+	friend class UInv_BuildMenu;
 
 	// === 블루프린트에서 바인딩할 위젯들 ===
 
@@ -121,6 +110,10 @@ private:
 	TObjectPtr<UImage> Image_Material3;
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UTextBlock> Text_Material3Amount;
+
+	// [최적화] 캐싱된 InventoryComponent (FindComponentByClass 반복 호출 방지)
+	TWeakObjectPtr<UInv_InventoryComponent> CachedInvComp;
+	UInv_InventoryComponent* GetCachedInventoryComponent();
 
 	// === 핵심: 건설 액터 클래스 참조 (이것 하나만 설정하면 됨) ===
 

@@ -44,8 +44,9 @@ AInv_BuildingPreviewActor::AInv_BuildingPreviewActor()
 	SceneCapture = CreateDefaultSubobject<USceneCaptureComponent2D>(TEXT("SceneCapture"));
 	SceneCapture->SetupAttachment(CameraBoom);
 	SceneCapture->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;
-	SceneCapture->bCaptureEveryFrame = true;
-	SceneCapture->bCaptureOnMovement = true;
+	// [최적화] 매 프레임 캡처 비활성화 — SetPreviewMesh/RotatePreview에서만 수동 캡처
+	SceneCapture->bCaptureEveryFrame = false;
+	SceneCapture->bCaptureOnMovement = false;
 	SceneCapture->CaptureSource = ESceneCaptureSource::SCS_SceneColorHDR;
 	SceneCapture->bAlwaysPersistRenderingState = true;
 
@@ -157,6 +158,9 @@ void AInv_BuildingPreviewActor::SetPreviewMesh(UStaticMesh* InMesh, const FRotat
 
 	EnsureRenderTarget();
 
+	// [최적화] bCaptureEveryFrame=false이므로 수동 캡처
+	CaptureNow();
+
 	const float ActualDistance = IsValid(CameraBoom) ? CameraBoom->TargetArmLength : -1.f;
 	UE_LOG(LogTemp, Warning, TEXT("[BuildingPreview] SetPreviewMesh: Mesh=%s, RotOffset=%s, CamDist=%.1f → 실제 Distance=%.1f"),
 		*InMesh->GetName(), *RotationOffset.ToString(), CameraDistance, ActualDistance);
@@ -171,6 +175,9 @@ void AInv_BuildingPreviewActor::RotatePreview(float YawDelta, float PitchDelta)
 	AccumulatedPitch = NewPitch;
 
 	PreviewMeshComponent->AddRelativeRotation(FRotator(ClampedPitchDelta, YawDelta, 0.f));
+
+	// [최적화] bCaptureEveryFrame=false이므로 회전 후 수동 캡처
+	CaptureNow();
 }
 
 UTextureRenderTarget2D* AInv_BuildingPreviewActor::GetRenderTarget() const

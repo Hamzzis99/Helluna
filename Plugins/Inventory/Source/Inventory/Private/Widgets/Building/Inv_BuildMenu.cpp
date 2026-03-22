@@ -14,6 +14,7 @@
 #include "Widgets/Building/Inv_BuildingButton.h"
 #include "Building/Preview/Inv_BuildingPreviewActor.h"
 #include "Building/Components/Inv_BuildingComponent.h"
+#include "InventoryManagement/Components/Inv_InventoryComponent.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Blueprint/WidgetLayoutLibrary.h"
@@ -94,6 +95,9 @@ void UInv_BuildMenu::NativeOnInitialized()
 
 	// BuildCategory별로 BuildingButton을 올바른 WrapBox에 동적 배치
 	DistributeBuildingButtonsToWrapBoxes();
+
+	// [최적화] 인벤토리 델리게이트를 BuildMenu에서 1번만 바인딩
+	BindInventoryDelegates();
 
 	// === 초기 탭 = 지원 ===
 	ShowSupport();
@@ -586,6 +590,74 @@ void UInv_BuildMenu::DistributeBuildingButtonsToWrapBoxes()
 		}
 	}
 
+	// [최적화] 수집된 버튼 배열 저장 (일괄 업데이트용)
+	CollectedBuildingButtons.Empty();
+	for (UInv_BuildingButton* Btn : AllButtons)
+	{
+		CollectedBuildingButtons.Add(Btn);
+	}
+
 	UE_LOG(LogTemp, Warning, TEXT("[BuildMenu] BuildingButton 동적 배치 완료: Support=%d, Auxiliary=%d, Construction=%d"),
 		SupportCount, AuxiliaryCount, ConstructionCount);
+}
+
+// ════════════════════════════════════════════════════════════════
+// [최적화] 인벤토리 델리게이트 일괄 관리
+// ════════════════════════════════════════════════════════════════
+// 기존: N개 BuildingButton이 각각 OnItemAdded/Removed/StackChange 구독
+//       → 1번 인벤토리 변경 시 N*3회 인벤토리 순회 (60~90회)
+// 변경: BuildMenu에서 1번만 구독 → 모든 BuildingButton 일괄 업데이트
+//       → 1번 인벤토리 변경 시 1회 순회 후 N번 UI 갱신
+
+void UInv_BuildMenu::BindInventoryDelegates()
+{
+	APlayerController* PC = GetOwningPlayer();
+	if (!IsValid(PC)) return;
+
+	UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
+	if (!IsValid(InvComp)) return;
+
+	CachedInventoryComponent = InvComp;
+
+	InvComp->OnItemAdded.AddUniqueDynamic(this, &ThisClass::OnInventoryChanged_ItemAdded);
+	InvComp->OnItemRemoved.AddUniqueDynamic(this, &ThisClass::OnInventoryChanged_ItemRemoved);
+	InvComp->OnStackChange.AddUniqueDynamic(this, &ThisClass::OnInventoryChanged_StackChanged);
+}
+
+void UInv_BuildMenu::UnbindInventoryDelegates()
+{
+	if (!CachedInventoryComponent.IsValid()) return;
+
+	CachedInventoryComponent->OnItemAdded.RemoveAll(this);
+	CachedInventoryComponent->OnItemRemoved.RemoveAll(this);
+	CachedInventoryComponent->OnStackChange.RemoveAll(this);
+
+	CachedInventoryComponent.Reset();
+}
+
+void UInv_BuildMenu::OnInventoryChanged_ItemAdded(UInv_InventoryItem* Item, int32 EntryIndex)
+{
+	RefreshAllBuildingButtons();
+}
+
+void UInv_BuildMenu::OnInventoryChanged_ItemRemoved(UInv_InventoryItem* Item, int32 EntryIndex)
+{
+	RefreshAllBuildingButtons();
+}
+
+void UInv_BuildMenu::OnInventoryChanged_StackChanged(const FInv_SlotAvailabilityResult& Result)
+{
+	RefreshAllBuildingButtons();
+}
+
+void UInv_BuildMenu::RefreshAllBuildingButtons()
+{
+	for (TObjectPtr<UInv_BuildingButton>& Btn : CollectedBuildingButtons)
+	{
+		if (IsValid(Btn))
+		{
+			Btn->UpdateMaterialUI();
+			Btn->UpdateButtonState();
+		}
+	}
 }

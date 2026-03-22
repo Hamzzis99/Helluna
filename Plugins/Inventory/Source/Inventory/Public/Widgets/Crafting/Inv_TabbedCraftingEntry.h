@@ -46,6 +46,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "제작")
 	void RefreshMaterialUI();
 
+	// 특정 재료 태그를 사용하는지 확인 (선택적 갱신용)
+	bool UsesMaterial(const FGameplayTag& MaterialTag) const;
+
 protected:
 	virtual void NativeOnInitialized() override;
 	virtual void NativeConstruct() override;

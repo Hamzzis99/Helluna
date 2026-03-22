@@ -256,7 +256,21 @@ void UInv_TabbedCraftingMenu::UnbindInventoryDelegates()
 
 void UInv_TabbedCraftingMenu::OnInventoryChanged(UInv_InventoryItem* Item, int32 EntryIndex)
 {
-	RefreshAllEntryUI();
+	// [최적화] 변경된 아이템 타입을 재료로 사용하는 엔트리만 갱신
+	if (!IsValid(Item))
+	{
+		RefreshAllEntryUI();
+		return;
+	}
+
+	const FGameplayTag ItemType = Item->GetItemManifest().GetItemType();
+	for (const TObjectPtr<UInv_TabbedCraftingEntry>& Entry : AllEntryWidgets)
+	{
+		if (IsValid(Entry) && Entry->UsesMaterial(ItemType))
+		{
+			Entry->RefreshMaterialUI();
+		}
+	}
 }
 
 void UInv_TabbedCraftingMenu::OnStackChanged(const FInv_SlotAvailabilityResult& Result)
@@ -266,7 +280,20 @@ void UInv_TabbedCraftingMenu::OnStackChanged(const FInv_SlotAvailabilityResult& 
 
 void UInv_TabbedCraftingMenu::OnMaterialChanged(const FGameplayTag& MaterialTag)
 {
-	RefreshAllEntryUI();
+	// [최적화] 해당 재료 태그를 사용하는 엔트리만 갱신
+	if (!MaterialTag.IsValid())
+	{
+		RefreshAllEntryUI();
+		return;
+	}
+
+	for (const TObjectPtr<UInv_TabbedCraftingEntry>& Entry : AllEntryWidgets)
+	{
+		if (IsValid(Entry) && Entry->UsesMaterial(MaterialTag))
+		{
+			Entry->RefreshMaterialUI();
+		}
+	}
 }
 
 void UInv_TabbedCraftingMenu::RefreshAllEntryUI()

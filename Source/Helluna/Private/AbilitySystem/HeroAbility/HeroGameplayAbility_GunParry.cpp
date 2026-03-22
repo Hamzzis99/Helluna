@@ -29,6 +29,9 @@
 #include "Engine/OverlapResult.h"
 #include "GameMode/HellunaDefenseGameMode.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
+#include "NiagaraFunctionLibrary.h"
+#include "Blueprint/UserWidget.h"
+#include "Curves/CurveFloat.h"
 
 DEFINE_LOG_CATEGORY(LogGunParry);
 
@@ -166,6 +169,15 @@ bool UHeroGameplayAbility_GunParry::CanActivateAbility(
 
 	const AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(ActorInfo->AvatarActor.Get());
 	if (!Hero) { UE_LOG(LogGunParry, Warning, TEXT("[CanActivate] Hero 캐스트 실패")); return false; }
+
+	// 점프/공중 상태에서는 패링 불가
+	if (const UCharacterMovementComponent* CMC = Hero->GetCharacterMovement())
+	{
+		if (CMC->IsFalling())
+		{
+			return false;
+		}
+	}
 
 	const AHeroWeapon_GunBase* Weapon = Cast<AHeroWeapon_GunBase>(Hero->GetCurrentWeapon());
 	if (!Weapon) { UE_LOG(LogGunParry, Warning, TEXT("[CanActivate] Weapon 없음")); return false; }
@@ -305,11 +317,15 @@ void UHeroGameplayAbility_GunParry::ActivateAbility(
 	// 클라이언트에서도 Enemy 참조 필요 (워프/몽타주용)
 	if (!bIsServer && !Enemy)
 	{
-		Enemy = FindParryableEnemyStatic(Hero);
+		Enemy = FindParryableEnemyStatic(Hero, true);  // bSkipAnimLocked=true: 서버가 이미 AnimLocked 부여했을 수 있음
 		if (Enemy)
 		{
 			ParryTarget = Enemy;
-			UE_LOG(LogGunParry, Warning, TEXT("[ActivateAbility] CLIENT: ParryTarget 설정=%s"), *Enemy->GetName());
+			UE_LOG(LogGunParry, Warning, TEXT("[ActivateAbility] CLIENT: FindParryableEnemyStatic(bSkipAnimLocked=true) → %s"), *Enemy->GetName());
+		}
+		else
+		{
+			UE_LOG(LogGunParry, Warning, TEXT("[ActivateAbility] CLIENT: FindParryableEnemyStatic(bSkipAnimLocked=true) → nullptr"));
 		}
 	}
 
@@ -354,6 +370,17 @@ void UHeroGameplayAbility_GunParry::ActivateAbility(
 		CachedParryRagdollImpulse = Weapon->ParryRagdollImpulse;
 		CachedParryRagdollUpwardRatio = Weapon->ParryRagdollUpwardRatio;
 		CachedParryRagdollLifeSpan = Weapon->ParryRagdollLifeSpan;
+
+		// Phase 2 VFX 캐싱
+		CachedKillMotionBlurAmount = Weapon->ParryKillMotionBlurAmount;
+		CachedKillMotionBlurDuration = Weapon->ParryKillMotionBlurDuration;
+		CachedWarpShakeClass = Weapon->ParryWarpCameraShake;
+		CachedWarpShakeScale = Weapon->ParryWarpShakeScale;
+
+		// CurveFloat 카메라 캐싱
+		CachedArmCurve = Weapon->ParryCameraArmCurve;
+		CachedFOVCurve = Weapon->ParryCameraFOVCurve;
+		CachedYawCurve = Weapon->ParryCameraYawCurve;
 
 		UE_LOG(LogGunParry, Warning, TEXT("[ActivateAbility] 무기 카메라 설정: Weapon=%s, ArmMul=%.2f, FOVMul=%.2f, YawOffset=%.1f, WarpAngle=%.1f, ExecDist=%.0f, Shake=%s, ShakeScale=%.1f"),
 			*Weapon->GetName(), CachedArmLengthMul, CachedFOVMul, CachedYawOffset, CachedWarpAngleOffset, CachedExecutionDistance,
@@ -445,21 +472,16 @@ void UHeroGameplayAbility_GunParry::ActivateAbility(
 			UE_LOG(LogGunParry, Verbose, TEXT("[GhostTrail] bParryGhostTrail=false — 잔상 스킵"));
 		}
 
-		Hero->SetActorLocationAndRotation(WarpLocation, WarpRotation);
-
-		// [Fix: collision] 처형 중 캐릭터 충돌 비활성화 — 적과 겹침 방지
-		if (UCapsuleComponent* Capsule = Hero->GetCapsuleComponent())
-		{
-			Capsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-		}
-
-		// ─── bUseControllerRotationYaw 비활성화 — 서버+클라 공통 ───
-		// CMC가 ControlRotation으로 ActorRotation을 덮어쓰는 것을 방지
-		// 서버에서도 비활성화해야 워프 회전이 CLIENT B에 정상 리플리케이션됨
+		// ★ 워프 전에 bUseControllerRotationYaw 비활성화 — CMC가 워프 회전을 덮어쓰지 않도록
 		bSavedUseControllerRotationYaw = Hero->bUseControllerRotationYaw;
 		Hero->bUseControllerRotationYaw = false;
+		if (UCharacterMovementComponent* HeroCMC = Hero->GetCharacterMovement())
+		{
+			bSavedOrientRotationToMovement = HeroCMC->bOrientRotationToMovement;
+			HeroCMC->bOrientRotationToMovement = false;
+		}
 
-		// ─── 히어로 캡슐 충돌 비활성화 — 패링 중 카메라 충돌 방지 ───
+		// ★ 워프 전에 히어로 캡슐 충돌 비활성화 — 충돌로 워프 위치 밀림 방지
 		if (UCapsuleComponent* HeroCapsule = Hero->GetCapsuleComponent())
 		{
 			SavedHeroCapsuleCollision = HeroCapsule->GetCollisionEnabled();
@@ -468,6 +490,33 @@ void UHeroGameplayAbility_GunParry::ActivateAbility(
 			UE_LOG(LogGunParry, Warning, TEXT("[ActivateAbility] 히어로 캡슐 NoCollision (이전: %s)"),
 				*UEnum::GetValueAsString(SavedHeroCapsuleCollision));
 		}
+
+		Hero->SetActorLocationAndRotation(WarpLocation, WarpRotation);
+
+		// 워프 후 이동 완전 정지 (점프 중 패링 시 추락 방지)
+		if (UCharacterMovementComponent* CMC = Hero->GetCharacterMovement())
+		{
+			CMC->StopMovementImmediately();  // Velocity 즉시 0
+			CMC->DisableMovement();           // MOVE_None → 중력 안 받음
+			UE_LOG(LogGunParry, Warning, TEXT("[ActivateAbility] 히어로 이동 정지 + DisableMovement"));
+		}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 		// ─── ControlRotation 세팅 — 서버+클라 공통 ───
 		if (APlayerController* PC = Cast<APlayerController>(Hero->GetController()))
@@ -489,9 +538,10 @@ void UHeroGameplayAbility_GunParry::ActivateAbility(
 				if (CachedCameraEntryDuration <= 0.f)
 				{
 					// Duration=0 → 즉시 세팅 (기존 동작)
-					PC->SetControlRotation(CameraRotation);
-					UE_LOG(LogGunParry, Warning, TEXT("[CameraEntry] Duration=0 — 즉시 SetControlRotation Yaw=%.1f"),
-						CameraRotation.Yaw);
+					FRotator SnapRotation = PC->GetControlRotation();
+					SnapRotation.Yaw = CameraRotation.Yaw;  // Pitch는 현재 값 유지
+					PC->SetControlRotation(SnapRotation);
+					UE_LOG(LogGunParry, Warning, TEXT("[CameraEntry] Duration=0 Yaw=%.1f (Pitch preserved)"), SnapRotation.Yaw);
 				}
 				else
 				{
@@ -530,11 +580,10 @@ void UHeroGameplayAbility_GunParry::ActivateAbility(
 
 								// 시작 회전 → 목표 회전으로 선형 보간
 								const float NewYaw = FMath::Lerp(StartCameraEntryRotation.Yaw, TargetCameraEntryRotation.Yaw, Alpha);
-								const float NewPitch = FMath::Lerp(StartCameraEntryRotation.Pitch, TargetCameraEntryRotation.Pitch, Alpha);
 
+								// Pitch는 현재 값 유지 (강제 Lerp 제거 — 위/아래 튀는 버그 수정)
 								FRotator CurCtrl = LambdaPC->GetControlRotation();
 								CurCtrl.Yaw = NewYaw;
-								CurCtrl.Pitch = NewPitch;
 								LambdaPC->SetControlRotation(CurCtrl);
 
 								// 완료 판정 (Alpha >= 1.0)
@@ -801,6 +850,62 @@ void UHeroGameplayAbility_GunParry::BeginExecutionMontage()
 				bIsPlaying ? TEXT("YES") : TEXT("NO"),
 				MontagePos, PlayRate);
 		}
+
+		// CurveFloat 카메라 타이머 시작 — 커브가 하나라도 있으면
+		const bool bHasAnyCurve = CachedArmCurve || CachedFOVCurve || CachedYawCurve;
+		if (bHasAnyCurve && Hero->IsLocallyControlled())
+		{
+			CurveStartTime = Hero->GetWorld()->GetTimeSeconds();
+			CurveDuration = CachedExecutionMontage->GetPlayLength();
+
+			constexpr float CurveTickRate = 0.016f;
+			Hero->GetWorld()->GetTimerManager().SetTimer(CameraCurveTimerHandle,
+				FTimerDelegate::CreateWeakLambda(this, [this]()
+				{
+					AHellunaHeroCharacter* CurveHero = GetHeroCharacterFromActorInfo();
+					if (!CurveHero || CurveDuration <= 0.f) return;
+
+					const float Elapsed = CurveHero->GetWorld()->GetTimeSeconds() - CurveStartTime;
+					const float Alpha = FMath::Clamp(Elapsed / CurveDuration, 0.f, 1.f);
+
+					USpringArmComponent* Boom = CurveHero->GetCameraBoom();
+					UCameraComponent* Camera = CurveHero->GetFollowCamera();
+
+					if (CachedArmCurve && Boom)
+					{
+						const float Mul = CachedArmCurve->GetFloatValue(Alpha);
+						Boom->TargetArmLength = SavedArmLength * Mul;
+					}
+
+					if (CachedFOVCurve && Camera)
+					{
+						const float Mul = CachedFOVCurve->GetFloatValue(Alpha);
+						Camera->SetFieldOfView(SavedFOV * Mul);
+					}
+
+					if (CachedYawCurve)
+					{
+						if (APlayerController* PC = Cast<APlayerController>(CurveHero->GetController()))
+						{
+							const float YawOffset = CachedYawCurve->GetFloatValue(Alpha);
+							FRotator Ctrl = PC->GetControlRotation();
+							Ctrl.Yaw = TargetCameraEntryRotation.Yaw + YawOffset;
+							PC->SetControlRotation(Ctrl);
+						}
+					}
+
+					if (Alpha >= 1.f)
+					{
+						CurveHero->GetWorld()->GetTimerManager().ClearTimer(CameraCurveTimerHandle);
+					}
+				}), CurveTickRate, true);
+
+			UE_LOG(LogGunParry, Warning, TEXT("[CameraCurve] 시작 — Duration=%.2f, HasArm=%s, HasFOV=%s, HasYaw=%s"),
+				CurveDuration,
+				CachedArmCurve ? TEXT("Y") : TEXT("N"),
+				CachedFOVCurve ? TEXT("Y") : TEXT("N"),
+				CachedYawCurve ? TEXT("Y") : TEXT("N"));
+		}
 	}
 	else
 	{
@@ -881,6 +986,42 @@ void UHeroGameplayAbility_GunParry::OnParryExecutionFireEvent(FGameplayEventData
 
 	PlayParryExecutionCameraShake(Hero);
 
+	// Phase 2 VFX: 머즐플래시 + 임팩트 (로컬만)
+	if (Hero->IsLocallyControlled())
+	{
+		AHeroWeapon_GunBase* Weapon = Cast<AHeroWeapon_GunBase>(Hero->GetCurrentWeapon());
+
+		// 머즐플래시: 히어로 전방에서 스폰
+		if (Weapon && Weapon->ParryMuzzleFlashEffect)
+		{
+			const FVector MuzzleLoc = Hero->GetActorLocation() + Hero->GetActorForwardVector() * 80.f;
+			const FRotator MuzzleRot = Hero->GetActorRotation();
+
+			UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+				Hero->GetWorld(), Weapon->ParryMuzzleFlashEffect,
+				MuzzleLoc, MuzzleRot,
+				FVector(Weapon->ParryMuzzleFlashScale), true, true);
+
+			UE_LOG(LogGunParry, Warning, TEXT("[KillVFX] 머즐플래시 스폰 — %s @ %s"),
+				*Weapon->ParryMuzzleFlashEffect->GetName(), *MuzzleLoc.ToString());
+		}
+
+		// 임팩트 VFX: 적 위치에서 스폰
+		if (Weapon && Weapon->ParryImpactEffect && Enemy)
+		{
+			const FVector ImpactLoc = Enemy->GetMesh() ? Enemy->GetMesh()->GetComponentLocation() : Enemy->GetActorLocation();
+			const FRotator ImpactRot = (Hero->GetActorLocation() - ImpactLoc).Rotation();
+
+			UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+				Hero->GetWorld(), Weapon->ParryImpactEffect,
+				ImpactLoc, ImpactRot,
+				FVector(Weapon->ParryImpactScale), true, true);
+
+			UE_LOG(LogGunParry, Warning, TEXT("[KillVFX] 임팩트 VFX 스폰 — %s @ %s"),
+				*Weapon->ParryImpactEffect->GetName(), *ImpactLoc.ToString());
+		}
+	}
+
 	// 킬 순간 다이나믹 VFX (FOV punch + Vignette + Desaturation)
 	if (Hero->IsLocallyControlled())
 	{
@@ -890,6 +1031,71 @@ void UHeroGameplayAbility_GunParry::OnParryExecutionFireEvent(FGameplayEventData
 	if (Hero->HasAuthority())
 	{
 		ProcessExecutionKill(false);
+
+		// [스태거 시스템] 총 발사 순간 즉시 주변 적 넉백 + Staggered 부여
+		if (Enemy && ParryStaggerRadius > 0.f)
+		{
+			TArray<FOverlapResult> StaggerOverlaps;
+			FCollisionQueryParams StaggerParams;
+			StaggerParams.AddIgnoredActor(Hero);
+			StaggerParams.AddIgnoredActor(Enemy);
+
+			Hero->GetWorld()->OverlapMultiByChannel(
+				StaggerOverlaps,
+				Enemy->GetActorLocation(),
+				FQuat::Identity,
+				ECC_Pawn,
+				FCollisionShape::MakeSphere(ParryStaggerRadius),
+				StaggerParams
+			);
+
+			int32 StaggerCount = 0;
+			for (const FOverlapResult& Overlap : StaggerOverlaps)
+			{
+				AHellunaEnemyCharacter* NearbyEnemy = Cast<AHellunaEnemyCharacter>(Overlap.GetActor());
+				if (!NearbyEnemy) continue;
+
+				if (UHellunaHealthComponent* HC = NearbyEnemy->FindComponentByClass<UHellunaHealthComponent>())
+				{
+					if (HC->IsDead()) continue;
+				}
+
+				FVector KnockDir = (NearbyEnemy->GetActorLocation() - Enemy->GetActorLocation()).GetSafeNormal();
+				KnockDir.Z = 0.3f;
+				KnockDir.Normalize();
+				NearbyEnemy->LaunchCharacter(KnockDir * ParryStaggerKnockback, true, false);
+
+				if (UHellunaAbilitySystemComponent* NearbyASC = NearbyEnemy->GetHellunaAbilitySystemComponent())
+				{
+					NearbyASC->AddStateTag(HellunaGameplayTags::Enemy_State_Staggered);
+					StaggerCount++;
+
+					NearbyEnemy->Multicast_SetStaggerVisual(StaggerOverlayMaterial, StaggerMontage, true);
+
+					FTimerHandle StaggerTimer;
+					TWeakObjectPtr<AHellunaEnemyCharacter> WeakEnemy = NearbyEnemy;
+					const float Duration = ParryStaggerDuration;
+					Hero->GetWorld()->GetTimerManager().SetTimer(StaggerTimer,
+						FTimerDelegate::CreateWeakLambda(NearbyEnemy, [WeakEnemy]()
+						{
+							if (WeakEnemy.IsValid())
+							{
+								if (UHellunaAbilitySystemComponent* ASC = WeakEnemy->GetHellunaAbilitySystemComponent())
+								{
+									ASC->RemoveStateTag(HellunaGameplayTags::Enemy_State_Staggered);
+								}
+								WeakEnemy->Multicast_SetStaggerVisual(nullptr, nullptr, false);
+							}
+						}), Duration, false);
+				}
+			}
+
+			if (StaggerCount > 0)
+			{
+				UE_LOG(LogGunParry, Warning, TEXT("[ParryNotify] 총 발사 즉시 주변 적 %d마리 Staggered (반경=%.0f, 지속=%.1f초)"),
+					StaggerCount, ParryStaggerRadius, ParryStaggerDuration);
+			}
+		}
 	}
 	else
 	{
@@ -964,12 +1170,22 @@ void UHeroGameplayAbility_GunParry::ProcessExecutionKill(bool bIsFallback)
 			UE_LOG(LogGunParry, Warning, TEXT("[ProcessExecutionKill] bParryRagdollDeath=false — 기존 사망 처리"));
 		}
 
-		// AnimLocked 해제 + 이동 잠금 해제
+		// AnimLocked 해제 + 이동 잠금 해제 + 캡슐 복원
 		if (UHellunaAbilitySystemComponent* EnemyASC = Enemy->GetHellunaAbilitySystemComponent())
 		{
 			EnemyASC->RemoveStateTag(HellunaGameplayTags::Enemy_State_AnimLocked);
 		}
 		Enemy->UnlockMovement();
+
+		// 적 캡슐 충돌 복원 (ActivateAbility에서 NoCollision 설정함)
+		if (UCapsuleComponent* EnemyCapsule = Enemy->GetCapsuleComponent())
+		{
+			EnemyCapsule->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+		}
+		if (UCharacterMovementComponent* EnemyMove = Enemy->GetCharacterMovement())
+		{
+			EnemyMove->SetMovementMode(MOVE_Walking);
+		}
 
 		bEnemyCleanedUp = true;
 	}
@@ -1046,6 +1262,8 @@ void UHeroGameplayAbility_GunParry::HandleExecutionFinished(bool bWasCancelled)
 			bPostInvincible ? TEXT("Y") : TEXT("N"));
 	}
 
+	bool bKnockbackStarted = false;
+
 	// ═══════════════════════════════════════════════════════════
 	// 서버 전용: 적 사망 + 태그 정리 + 넉백
 	// (클라이언트에서는 절대 실행하지 않음)
@@ -1075,6 +1293,16 @@ void UHeroGameplayAbility_GunParry::HandleExecutionFinished(bool bWasCancelled)
 				EnemyASC->RemoveStateTag(HellunaGameplayTags::Enemy_State_AnimLocked);
 			}
 			Enemy->UnlockMovement();
+
+			// 적 캡슐+이동 복원 (폴백)
+			if (UCapsuleComponent* EnemyCapsule = Enemy->GetCapsuleComponent())
+			{
+				EnemyCapsule->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+			}
+			if (UCharacterMovementComponent* EnemyMove = Enemy->GetCharacterMovement())
+			{
+				EnemyMove->SetMovementMode(MOVE_Walking);
+			}
 		}
 		else if (bEnemyCleanedUp)
 		{
@@ -1108,15 +1336,55 @@ void UHeroGameplayAbility_GunParry::HandleExecutionFinished(bool bWasCancelled)
 			}
 		}
 
-		// 넉백
-		if (!bWasCancelled && Enemy && bKillProcessed)
+		// 넉백 — 슬라이딩 방식 (AddMovementInput 타이머)
+		if (!bWasCancelled && Enemy && bKillProcessed && PostParryKnockbackStrength > 0.f)
 		{
+			bKnockbackStarted = true;
+
 			FVector KnockbackDir = (Hero->GetActorLocation() - Enemy->GetActorLocation()).GetSafeNormal();
 			KnockbackDir.Z = 0.f;
 			KnockbackDir.Normalize();
-			Hero->LaunchCharacter(KnockbackDir * PostParryKnockbackStrength, true, false);
-			UE_LOG(LogGunParry, Warning, TEXT("[HandleExecutionFinished] SERVER: 넉백 적용 (%.0f)"), PostParryKnockbackStrength);
+
+			const float KnockbackDuration = 0.3f;
+			const float KnockbackTickRate = 0.016f;
+			const int32 TotalTicks = FMath::CeilToInt(KnockbackDuration / KnockbackTickRate);
+			const float PerTickStrength = PostParryKnockbackStrength / TotalTicks;
+
+			TSharedPtr<FTimerHandle> KnockbackTimer = MakeShared<FTimerHandle>();
+			TSharedPtr<int32> TickCount = MakeShared<int32>(0);
+			TWeakObjectPtr<AHellunaHeroCharacter> WeakHero = Hero;
+			const bool LocalSavedOrient = bSavedOrientRotationToMovement;
+
+			Hero->GetWorld()->GetTimerManager().SetTimer(*KnockbackTimer,
+				FTimerDelegate::CreateLambda([WeakHero, KnockbackDir, PerTickStrength, TotalTicks, TickCount, KnockbackTimer, LocalSavedOrient]()
+				{
+					if (!WeakHero.IsValid()) return;
+
+					++(*TickCount);
+					const float Alpha = 1.f - (float(*TickCount) / float(TotalTicks));
+					WeakHero->AddMovementInput(KnockbackDir, PerTickStrength * Alpha);
+
+					if (*TickCount >= TotalTicks)
+					{
+						if (UWorld* World = WeakHero->GetWorld())
+						{
+							World->GetTimerManager().ClearTimer(*KnockbackTimer);
+						}
+						// 넉백 완료 → bOrientRotationToMovement 복원
+						if (UCharacterMovementComponent* CMC = WeakHero->GetCharacterMovement())
+						{
+							CMC->bOrientRotationToMovement = LocalSavedOrient;
+						}
+						UE_LOG(LogGunParry, Warning, TEXT("[Knockback] 완료 — bOrientRotationToMovement 복원=%s"),
+							LocalSavedOrient ? TEXT("T") : TEXT("F"));
+						return;
+					}
+				}), KnockbackTickRate, true);
+
+			UE_LOG(LogGunParry, Warning, TEXT("[HandleExecutionFinished] SERVER: 슬라이딩 넉백 시작 — Dir=%s, Strength=%.0f, Duration=%.2f"),
+				*KnockbackDir.ToString(), PostParryKnockbackStrength, KnockbackDuration);
 		}
+
 	}
 
 	// ═══════════════════════════════════════════════════════════
@@ -1140,6 +1408,13 @@ void UHeroGameplayAbility_GunParry::HandleExecutionFinished(bool bWasCancelled)
 				*UEnum::GetValueAsString(SavedHeroCapsuleCollision));
 		}
 
+		// 이동 모드 복원 (워프 시 DisableMovement 했으므로)
+		if (UCharacterMovementComponent* CMC = Hero->GetCharacterMovement())
+		{
+			CMC->SetMovementMode(MOVE_Walking);
+			UE_LOG(LogGunParry, Warning, TEXT("[HandleExecutionFinished] 히어로 이동 복원 (Walking)"));
+		}
+
 		// 이동+시점 잠금 즉시 해제 (Lock은 IsLocallyControlled에서만 호출되므로 Unlock도 동일)
 		if (Hero->IsLocallyControlled())
 		{
@@ -1151,9 +1426,31 @@ void UHeroGameplayAbility_GunParry::HandleExecutionFinished(bool bWasCancelled)
 					PC->GetControlRotation().Yaw, Hero->bUseControllerRotationYaw ? TEXT("T") : TEXT("F"));
 			}
 
-			// [Reverted: yaw-snap 제거] 카메라 Yaw 유지 — CMC가 캐릭터를 카메라 방향으로 자연스럽게 맞춤
+			// [Fix:yaw-sync] bUseControllerRotationYaw 복원 전에 캐릭터를 카메라 방향으로 맞춤
+			if (bSavedUseControllerRotationYaw)
+			{
+				if (APlayerController* SyncPC = Cast<APlayerController>(Hero->GetController()))
+				{
+					FRotator HeroRot = Hero->GetActorRotation();
+					HeroRot.Yaw = SyncPC->GetControlRotation().Yaw;
+					Hero->SetActorRotation(HeroRot);
+					UE_LOG(LogGunParry, Warning, TEXT("[Fix:yaw-sync] CLIENT: 캐릭터 Yaw를 카메라 방향으로 맞춤 — ActorYaw=%.1f (=CameraYaw)"),
+						HeroRot.Yaw);
+				}
+			}
 			Hero->UnlockLookInput();
 			Hero->bUseControllerRotationYaw = bSavedUseControllerRotationYaw;
+			// bOrientRotationToMovement는 넉백 완료 후 복원 (넉백 타이머 콜백에서)
+			if (!bKnockbackStarted)
+			{
+				if (UCharacterMovementComponent* HeroCMC = Hero->GetCharacterMovement())
+				{
+					HeroCMC->bOrientRotationToMovement = bSavedOrientRotationToMovement;
+				}
+			}
+			UE_LOG(LogGunParry, Warning, TEXT("[HandleExecutionFinished] bKnockbackStarted=%s → bOrientRotation 즉시복원=%s"),
+				bKnockbackStarted ? TEXT("T") : TEXT("F"),
+				bKnockbackStarted ? TEXT("F") : TEXT("T"));
 
 			if (APlayerController* PC = Cast<APlayerController>(Hero->GetController()))
 			{
@@ -1165,15 +1462,41 @@ void UHeroGameplayAbility_GunParry::HandleExecutionFinished(bool bWasCancelled)
 		// 서버(비로컬): bUseControllerRotationYaw + ControlRotation 원복
 		if (!Hero->IsLocallyControlled())
 		{
-			// [Reverted: yaw-snap 제거] SERVER도 카메라 Yaw 유지
+			// [Fix:yaw-sync] SERVER도 복원 전 캐릭터→카메라 Yaw 동기화
+			if (bSavedUseControllerRotationYaw)
+			{
+				if (APlayerController* SyncPC = Cast<APlayerController>(Hero->GetController()))
+				{
+					FRotator HeroRot = Hero->GetActorRotation();
+					HeroRot.Yaw = SyncPC->GetControlRotation().Yaw;
+					Hero->SetActorRotation(HeroRot);
+					UE_LOG(LogGunParry, Warning, TEXT("[Fix:yaw-sync] SERVER: 캐릭터 Yaw를 카메라 방향으로 맞춤 — ActorYaw=%.1f"),
+						HeroRot.Yaw);
+				}
+			}
 			Hero->bUseControllerRotationYaw = bSavedUseControllerRotationYaw;
-			UE_LOG(LogGunParry, Warning, TEXT("[HandleExecutionFinished] SERVER: bUseControllerRotationYaw 원복"));
+			if (!bKnockbackStarted)
+			{
+				if (UCharacterMovementComponent* HeroCMC = Hero->GetCharacterMovement())
+				{
+					HeroCMC->bOrientRotationToMovement = bSavedOrientRotationToMovement;
+				}
+			}
+			UE_LOG(LogGunParry, Warning, TEXT("[HandleExecutionFinished] SERVER: bUseControllerRotationYaw 원복, bOrientRestore즉시=%s"),
+				bKnockbackStarted ? TEXT("F(넉백후)") : TEXT("T"));
 		}
 
 		// 킬 VFX 종료 (PostProcess override 리셋)
 		if (Hero->IsLocallyControlled())
 		{
 			EndKillVFX(Hero);
+		}
+
+		// CurveFloat 카메라 타이머 클리어
+		if (CameraCurveTimerHandle.IsValid())
+		{
+			if (UWorld* World = GetWorld())
+				World->GetTimerManager().ClearTimer(CameraCurveTimerHandle);
 		}
 
 		// 카메라 복귀 (SpringArm/FOV만 InterpTo, LookInput은 이미 해제됨)
@@ -1237,12 +1560,32 @@ void UHeroGameplayAbility_GunParry::EndAbility(
 				if (SavedHeroCapsuleProfile != NAME_None)
 					HeroCapsule->SetCollisionProfileName(SavedHeroCapsuleProfile);
 			}
+			// 이동 모드 복원
+			if (UCharacterMovementComponent* CMC = Hero->GetCharacterMovement())
+			{
+				CMC->SetMovementMode(MOVE_Walking);
+			}
 			Hero->UnlockMoveInput();
 			if (Hero->IsLocallyControlled())
 			{
-				// [Reverted: yaw-snap 제거] 카메라 Yaw 유지
+				// [Fix:yaw-sync] CLIENT 폴백: 캐릭터→카메라 Yaw 동기화
+				if (bSavedUseControllerRotationYaw)
+				{
+					if (APlayerController* SyncPC = Cast<APlayerController>(Hero->GetController()))
+					{
+						FRotator HeroRot = Hero->GetActorRotation();
+						HeroRot.Yaw = SyncPC->GetControlRotation().Yaw;
+						Hero->SetActorRotation(HeroRot);
+						UE_LOG(LogGunParry, Warning, TEXT("[Fix:yaw-sync] EndAbility CLIENT: 캐릭터 Yaw 동기화 — ActorYaw=%.1f"),
+							HeroRot.Yaw);
+					}
+				}
 				Hero->UnlockLookInput();
 				Hero->bUseControllerRotationYaw = bSavedUseControllerRotationYaw;
+				if (UCharacterMovementComponent* HeroCMC = Hero->GetCharacterMovement())
+				{
+					HeroCMC->bOrientRotationToMovement = bSavedOrientRotationToMovement;
+				}
 			}
 			EndCameraEffect(Hero);
 		}
@@ -1265,6 +1608,10 @@ void UHeroGameplayAbility_GunParry::EndAbility(
 			if (!Hero->IsLocallyControlled())
 			{
 				Hero->bUseControllerRotationYaw = bSavedUseControllerRotationYaw;
+				if (UCharacterMovementComponent* HeroCMC = Hero->GetCharacterMovement())
+				{
+					HeroCMC->bOrientRotationToMovement = bSavedOrientRotationToMovement;
+				}
 			}
 		}
 	}
@@ -1279,6 +1626,7 @@ void UHeroGameplayAbility_GunParry::EndAbility(
 			World->GetTimerManager().ClearTimer(KillPostProcessFadeTimerHandle);
 			World->GetTimerManager().ClearTimer(DOFTransitionTimerHandle);
 			World->GetTimerManager().ClearTimer(OrbitTimerHandle);
+			World->GetTimerManager().ClearTimer(CameraCurveTimerHandle);
 		}
 		if (ActorInfo && ActorInfo->AvatarActor.IsValid())
 		{
@@ -1356,7 +1704,9 @@ AHellunaEnemyCharacter* UHeroGameplayAbility_GunParry::FindParryableEnemy(const 
 		Sphere,
 		Params))
 	{
-		UE_LOG(LogGunParry, Verbose, TEXT("[FindParryableEnemy] OverlapMulti 결과 없음"));
+		UE_LOG(LogGunParry, Warning, TEXT("[FindParryableEnemy] OverlapMulti 결과 없음! Hero위치=%s, Range=%.0f, IsServer=%s"),
+			*HeroLocation.ToString(), ParryDetectionRange,
+			Hero->HasAuthority() ? TEXT("SERVER") : TEXT("CLIENT"));
 		return nullptr;
 	}
 
@@ -1386,7 +1736,7 @@ AHellunaEnemyCharacter* UHeroGameplayAbility_GunParry::FindParryableEnemy(const 
 		}
 
 		const bool bHasParryable = UHellunaFunctionLibrary::NativeDoesActorHaveTag(Enemy, HellunaGameplayTags::Enemy_Ability_Parryable);
-		if (!bHasParryable)
+		if (!bHasParryable && !Enemy->bEnraged) // bEnraged 폴백: 테스트 적용 (공격 GA 없는 적도 패링 가능)
 		{
 			UE_LOG(LogGunParry, Warning, TEXT("[FindParryableEnemy] %s: Parryable 태그 없음 (bEnraged=%d) → 스킵"),
 				*Enemy->GetName(), Enemy->bEnraged);
@@ -1397,6 +1747,21 @@ AHellunaEnemyCharacter* UHeroGameplayAbility_GunParry::FindParryableEnemy(const 
 		{
 			UE_LOG(LogGunParry, Warning, TEXT("[FindParryableEnemy] %s: AnimLocked → 스킵"), *Enemy->GetName());
 			continue;
+		}
+
+		// [NEW] 적이 나(Hero)를 타겟으로 하는지 체크
+		if (bRequireEnemyTargetingMe)
+		{
+			AAIController* EnemyAI = Cast<AAIController>(Enemy->GetController());
+			AActor* EnemyFocus = EnemyAI ? EnemyAI->GetFocusActor() : nullptr;
+
+			if (EnemyFocus != Hero)
+			{
+				UE_LOG(LogGunParry, Warning, TEXT("[FindParryableEnemy] %s: 나를 타겟하지 않음 (Focus=%s) → 스킵"),
+					*Enemy->GetName(),
+					EnemyFocus ? *EnemyFocus->GetName() : TEXT("None"));
+				continue;
+			}
 		}
 
 		const float DistSq = FVector::DistSquared(HeroLocation, Enemy->GetActorLocation());
@@ -1419,7 +1784,7 @@ AHellunaEnemyCharacter* UHeroGameplayAbility_GunParry::FindParryableEnemy(const 
 // FindParryableEnemyStatic — TryParryInstead용 사전 체크
 // ═══════════════════════════════════════════════════════════
 
-AHellunaEnemyCharacter* UHeroGameplayAbility_GunParry::FindParryableEnemyStatic(const AHellunaHeroCharacter* Hero)
+AHellunaEnemyCharacter* UHeroGameplayAbility_GunParry::FindParryableEnemyStatic(const AHellunaHeroCharacter* Hero, bool bSkipAnimLocked)
 {
 	if (!Hero) return nullptr;
 
@@ -1457,10 +1822,10 @@ AHellunaEnemyCharacter* UHeroGameplayAbility_GunParry::FindParryableEnemyStatic(
 		const FVector ToEnemy = (Enemy->GetActorLocation() - HeroLocation).GetSafeNormal();
 		if (FVector::DotProduct(HeroForward, ToEnemy) < CosHalfAngle) continue;
 
-		if (!UHellunaFunctionLibrary::NativeDoesActorHaveTag(Enemy, HellunaGameplayTags::Enemy_Ability_Parryable))
+		if (!UHellunaFunctionLibrary::NativeDoesActorHaveTag(Enemy, HellunaGameplayTags::Enemy_Ability_Parryable) && !Enemy->bEnraged)
 			continue;
 
-		if (UHellunaFunctionLibrary::NativeDoesActorHaveTag(Enemy, HellunaGameplayTags::Enemy_State_AnimLocked))
+		if (!bSkipAnimLocked && UHellunaFunctionLibrary::NativeDoesActorHaveTag(Enemy, HellunaGameplayTags::Enemy_State_AnimLocked))
 			continue;
 
 		const float DistSq = FVector::DistSquared(HeroLocation, Enemy->GetActorLocation());
@@ -1509,7 +1874,11 @@ void UHeroGameplayAbility_GunParry::BeginCameraEffect(AHellunaHeroCharacter* Her
 	if (USpringArmComponent* Boom = Hero->GetCameraBoom())
 	{
 		SavedArmLength = Boom->TargetArmLength;
-		Boom->TargetArmLength = SavedArmLength * CachedArmLengthMul;
+		// 커브가 있으면 정적 ArmLength 배율 적용 안 함 (커브 타이머가 제어)
+		if (!CachedArmCurve)
+		{
+			Boom->TargetArmLength = SavedArmLength * CachedArmLengthMul;
+		}
 
 		// CameraTargetOffset → SocketOffset에 더하기
 		if (!CachedCameraTargetOffset.IsZero())
@@ -1526,7 +1895,11 @@ void UHeroGameplayAbility_GunParry::BeginCameraEffect(AHellunaHeroCharacter* Her
 	if (UCameraComponent* Camera = Hero->GetFollowCamera())
 	{
 		SavedFOV = Camera->FieldOfView;
-		Camera->SetFieldOfView(SavedFOV * CachedFOVMul);
+		// 커브가 있으면 정적 FOV 배율 적용 안 함 (커브 타이머가 제어)
+		if (!CachedFOVCurve)
+		{
+			Camera->SetFieldOfView(SavedFOV * CachedFOVMul);
+		}
 	}
 
 	bCameraEffectActive = true;
@@ -1723,6 +2096,16 @@ void UHeroGameplayAbility_GunParry::BeginWarpVFX(AHellunaHeroCharacter* Hero)
 		else
 		{
 			CachedExecutionFOVValue = SavedFOV * CachedFOVMul;
+		}
+	}
+
+	// 워프 셰이크
+	if (CachedWarpShakeClass)
+	{
+		if (APlayerController* PC = Cast<APlayerController>(Hero->GetController()))
+		{
+			PC->ClientStartCameraShake(CachedWarpShakeClass, CachedWarpShakeScale);
+			UE_LOG(LogGunParry, Warning, TEXT("[WarpVFX] 워프 셰이크 재생 — Scale=%.1f"), CachedWarpShakeScale);
 		}
 	}
 
@@ -1938,6 +2321,43 @@ void UHeroGameplayAbility_GunParry::BeginKillVFX(AHellunaHeroCharacter* Hero)
 		}
 	}
 
+	// 가짜 슬로우: 모션블러 강화
+	if (CachedKillMotionBlurAmount > 0.f)
+	{
+		Camera->PostProcessSettings.bOverride_MotionBlurAmount = true;
+		Camera->PostProcessSettings.MotionBlurAmount = CachedKillMotionBlurAmount;
+		UE_LOG(LogGunParry, Warning, TEXT("[KillVFX] 모션블러 시작 — Amount=%.1f"), CachedKillMotionBlurAmount);
+	}
+
+	// 블러드 스플래시 UI
+	{
+		AHeroWeapon_GunBase* Weapon = Cast<AHeroWeapon_GunBase>(Hero->GetCurrentWeapon());
+		if (Weapon && Weapon->ParryBloodSplashWidgetClass)
+		{
+			if (APlayerController* PC = Cast<APlayerController>(Hero->GetController()))
+			{
+				UUserWidget* Splash = CreateWidget<UUserWidget>(PC, Weapon->ParryBloodSplashWidgetClass);
+				if (Splash)
+				{
+					Splash->AddToViewport(200);
+
+					FTimerHandle SplashTimer;
+					const float Duration = Weapon->ParryBloodSplashDuration;
+					Hero->GetWorld()->GetTimerManager().SetTimer(SplashTimer,
+						FTimerDelegate::CreateWeakLambda(Splash, [Splash]()
+						{
+							if (Splash && Splash->IsInViewport())
+							{
+								Splash->RemoveFromParent();
+							}
+						}), Duration, false);
+
+					UE_LOG(LogGunParry, Warning, TEXT("[KillVFX] 블러드 스플래시 표시 — Duration=%.1f"), Duration);
+				}
+			}
+		}
+	}
+
 	// A-6. Vignette + Desaturation — 영화 느낌
 	bool bHasPostProcess = false;
 
@@ -2031,6 +2451,8 @@ void UHeroGameplayAbility_GunParry::EndKillVFX(AHellunaHeroCharacter* Hero)
 		Camera->PostProcessSettings.VignetteIntensity = 0.f;
 		Camera->PostProcessSettings.bOverride_ColorSaturation = false;
 		Camera->PostProcessSettings.ColorSaturation = FVector4(1, 1, 1, 1);
+		Camera->PostProcessSettings.bOverride_MotionBlurAmount = false;
+		Camera->PostProcessSettings.MotionBlurAmount = 0.f;
 	}
 
 	// DOF 페이드아웃 시작
@@ -2120,6 +2542,9 @@ void UHeroGameplayAbility_GunParry::ResetAllDynamicVFX(AHellunaHeroCharacter* He
 		Camera->PostProcessSettings.bOverride_DepthOfFieldFstop = false;
 		Camera->PostProcessSettings.bOverride_DepthOfFieldFocalDistance = false;
 
+		// 모션블러 안전 해제
+		Camera->PostProcessSettings.bOverride_MotionBlurAmount = false;
+
 		Camera->PostProcessBlendWeight = SavedPostProcessBlendWeight;
 	}
 
@@ -2128,6 +2553,13 @@ void UHeroGameplayAbility_GunParry::ResetAllDynamicVFX(AHellunaHeroCharacter* He
 	{
 		Boom->bEnableCameraLag = bSavedEnableCameraLag;
 		Boom->CameraLagSpeed = SavedCameraLagSpeed;
+	}
+
+	// CurveFloat 카메라 타이머 안전 클리어
+	if (CameraCurveTimerHandle.IsValid())
+	{
+		if (UWorld* World = Hero->GetWorld())
+			World->GetTimerManager().ClearTimer(CameraCurveTimerHandle);
 	}
 
 	// 오빗 정지
@@ -2144,6 +2576,14 @@ void UHeroGameplayAbility_GunParry::ResetAllDynamicVFX(AHellunaHeroCharacter* He
 			if (SavedHeroCapsuleProfile != NAME_None)
 				HeroCapsule->SetCollisionProfileName(SavedHeroCapsuleProfile);
 			UE_LOG(LogGunParry, Warning, TEXT("[ResetAllDynamicVFX] 히어로 캡슐 안전 복원"));
+		}
+	}
+	// 이동 모드 안전 복원
+	if (UCharacterMovementComponent* CMC = Hero->GetCharacterMovement())
+	{
+		if (CMC->MovementMode == MOVE_None)
+		{
+			CMC->SetMovementMode(MOVE_Walking);
 		}
 	}
 }

@@ -22,6 +22,7 @@ class AHeroWeapon_GunBase;
 class UHellunaHealthComponent;
 class UNiagaraSystem;
 class UNiagaraComponent;
+class UMeleeTraceComponent;
 
 class UWeaponHUDWidget;
 
@@ -67,6 +68,9 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat", meta = (AllowPrivateAccess = "true"))
 	UHeroCombatComponent* HeroCombatComponent;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UMeleeTraceComponent> MeleeTraceComponent;
+
 	// ============================================
 	// ⭐ [WeaponBridge] Inventory 연동 컴포넌트
 	// ⭐ Inventory 플러그인의 EquipmentComponent와 통신
@@ -100,6 +104,7 @@ private:
 
 public:
 	FORCEINLINE UHeroCombatComponent* GetHeroCombatComponent() const { return HeroCombatComponent; }
+	FORCEINLINE UMeleeTraceComponent* GetMeleeTraceComponent() const { return MeleeTraceComponent; }
 	FORCEINLINE UCameraComponent* GetFollowCamera() const { return FollowCamera;}
 	FORCEINLINE USpringArmComponent* GetCameraBoom() const { return CameraBoom; }
 

@@ -17,6 +17,9 @@ class UImage;
 class UTextBlock;
 class UVerticalBox;
 class AInv_BuildingPreviewActor;
+class UInv_InventoryComponent;
+class UInv_InventoryItem;
+struct FInv_SlotAvailabilityResult;
 
 /**
  * 빌드 메뉴 메인 위젯
@@ -163,4 +166,30 @@ private:
 
 	// WidgetTree에서 BuildingButton들을 찾아서 BuildCategory에 따라 WrapBox에 재배치
 	void DistributeBuildingButtonsToWrapBoxes();
+
+	// === [최적화] 인벤토리 델리게이트 일괄 관리 ===
+	// BuildMenu에서 1번만 바인딩 → 모든 BuildingButton 일괄 업데이트
+	// (개별 BuildingButton이 각각 바인딩하면 N*3회 인벤토리 순회 발생)
+
+	void BindInventoryDelegates();
+	void UnbindInventoryDelegates();
+
+	// 모든 BuildingButton의 재료 UI + 버튼 상태 일괄 업데이트
+	void RefreshAllBuildingButtons();
+
+	UFUNCTION()
+	void OnInventoryChanged_ItemAdded(UInv_InventoryItem* Item, int32 EntryIndex);
+
+	UFUNCTION()
+	void OnInventoryChanged_ItemRemoved(UInv_InventoryItem* Item, int32 EntryIndex);
+
+	UFUNCTION()
+	void OnInventoryChanged_StackChanged(const FInv_SlotAvailabilityResult& Result);
+
+	// 수집된 BuildingButton 배열 (일괄 업데이트용)
+	UPROPERTY()
+	TArray<TObjectPtr<UInv_BuildingButton>> CollectedBuildingButtons;
+
+	// 캐싱된 InventoryComponent
+	TWeakObjectPtr<UInv_InventoryComponent> CachedInventoryComponent;
 };

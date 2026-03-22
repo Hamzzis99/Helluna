@@ -15,8 +15,25 @@
 #include "Engine/StaticMesh.h"
 
 // ════════════════════════════════════════════════════════════════
-// CDO 캐시 헬퍼
+// 캐시 헬퍼
 // ════════════════════════════════════════════════════════════════
+
+// [최적화] FindComponentByClass 캐싱 — 1회 탐색 후 WeakPtr로 재사용
+UInv_InventoryComponent* UInv_BuildingButton::GetCachedInventoryComponent()
+{
+	if (CachedInvComp.IsValid()) return CachedInvComp.Get();
+
+	APlayerController* PC = GetOwningPlayer();
+	if (!IsValid(PC)) return nullptr;
+
+	UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
+	if (IsValid(InvComp))
+	{
+		CachedInvComp = InvComp;
+	}
+	return InvComp;
+}
+
 const AInv_BuildableActor* UInv_BuildingButton::GetCDO() const
 {
 	if (!BuildableActorClass) return nullptr;
@@ -191,10 +208,8 @@ void UInv_BuildingButton::NativeConstruct()
 		static_cast<uint8>(CDO->BuildCategory),
 		CDO->GetEffectivePreviewMesh() ? *CDO->GetEffectivePreviewMesh()->GetName() : TEXT("NULL"));
 
-	// 델리게이트 바인딩
-	BindInventoryDelegates();
-
-	// 재료 UI + 버튼 상태 업데이트
+	// [최적화] 인벤토리 델리게이트는 BuildMenu에서 1번만 바인딩하여 일괄 업데이트
+	// 재료 UI + 버튼 상태 초기 업데이트
 	UpdateMaterialUI();
 	UpdateButtonState();
 }
@@ -270,17 +285,9 @@ void UInv_BuildingButton::ExecuteBuild()
 	BuildingComp->OnBuildingSelectedFromWidget(Info);
 }
 
-void UInv_BuildingButton::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
-{
-	Super::NativeTick(MyGeometry, InDeltaTime);
-}
-
 bool UInv_BuildingButton::HasRequiredMaterials()
 {
-	APlayerController* PC = GetOwningPlayer();
-	if (!IsValid(PC)) return false;
-
-	UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
+	UInv_InventoryComponent* InvComp = GetCachedInventoryComponent();
 	if (!IsValid(InvComp)) return false;
 
 	const AInv_BuildableActor* CDO = GetCDO();
@@ -323,66 +330,13 @@ void UInv_BuildingButton::UpdateButtonState()
 
 void UInv_BuildingButton::NativeDestruct()
 {
-	UnbindInventoryDelegates();
+	// [최적화] 인벤토리 델리게이트는 BuildMenu에서 관리 — 개별 해제 불필요
 	Super::NativeDestruct();
-}
-
-void UInv_BuildingButton::BindInventoryDelegates()
-{
-	APlayerController* PC = GetOwningPlayer();
-	if (!IsValid(PC)) return;
-
-	UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
-	if (!IsValid(InvComp)) return;
-
-	if (!InvComp->OnItemAdded.IsAlreadyBound(this, &ThisClass::OnInventoryItemAdded))
-		InvComp->OnItemAdded.AddUniqueDynamic(this, &ThisClass::OnInventoryItemAdded);
-	if (!InvComp->OnItemRemoved.IsAlreadyBound(this, &ThisClass::OnInventoryItemRemoved))
-		InvComp->OnItemRemoved.AddUniqueDynamic(this, &ThisClass::OnInventoryItemRemoved);
-	if (!InvComp->OnStackChange.IsAlreadyBound(this, &ThisClass::OnInventoryStackChanged))
-		InvComp->OnStackChange.AddUniqueDynamic(this, &ThisClass::OnInventoryStackChanged);
-}
-
-void UInv_BuildingButton::UnbindInventoryDelegates()
-{
-	APlayerController* PC = GetOwningPlayer();
-	if (!IsValid(PC)) return;
-
-	UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
-	if (!IsValid(InvComp)) return;
-
-	if (InvComp->OnItemAdded.IsAlreadyBound(this, &ThisClass::OnInventoryItemAdded))
-		InvComp->OnItemAdded.RemoveDynamic(this, &ThisClass::OnInventoryItemAdded);
-	if (InvComp->OnItemRemoved.IsAlreadyBound(this, &ThisClass::OnInventoryItemRemoved))
-		InvComp->OnItemRemoved.RemoveDynamic(this, &ThisClass::OnInventoryItemRemoved);
-	if (InvComp->OnStackChange.IsAlreadyBound(this, &ThisClass::OnInventoryStackChanged))
-		InvComp->OnStackChange.RemoveDynamic(this, &ThisClass::OnInventoryStackChanged);
-}
-
-void UInv_BuildingButton::OnInventoryItemAdded(UInv_InventoryItem* Item, int32 EntryIndex)
-{
-	UpdateMaterialUI();
-	UpdateButtonState();
-}
-
-void UInv_BuildingButton::OnInventoryItemRemoved(UInv_InventoryItem* Item, int32 EntryIndex)
-{
-	UpdateMaterialUI();
-	UpdateButtonState();
-}
-
-void UInv_BuildingButton::OnInventoryStackChanged(const FInv_SlotAvailabilityResult& Result)
-{
-	UpdateMaterialUI();
-	UpdateButtonState();
 }
 
 void UInv_BuildingButton::UpdateMaterialUI()
 {
-	APlayerController* PC = GetOwningPlayer();
-	if (!IsValid(PC)) return;
-
-	UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
+	UInv_InventoryComponent* InvComp = GetCachedInventoryComponent();
 	const AInv_BuildableActor* CDO = GetCDO();
 
 	// 헬퍼 람다: 재료 행 UI 업데이트

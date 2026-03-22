@@ -18,6 +18,7 @@
 #include "Widgets/Inventory/InventoryBase/Inv_InventoryBase.h"
 #include "Widgets/Inventory/Spatial/Inv_SpatialInventory.h"
 #include "Widgets/Inventory/Spatial/Inv_InventoryGrid.h"
+#include "Persistence/Inv_SaveGameMode.h"
 
 void UInv_TabbedCraftingEntry::NativeOnInitialized()
 {
@@ -79,30 +80,48 @@ void UInv_TabbedCraftingEntry::RefreshMaterialUI()
 {
 	UInv_InventoryComponent* InvComp = UInv_InventoryStatics::GetInventoryComponent(GetOwningPlayer());
 
-	// === 재료 1 UI 업데이트 ===
-	if (CachedRecipe.MaterialTag1.IsValid() && CachedRecipe.MaterialAmount1 > 0)
+	// [최적화] GetAllItems() 1회 호출, 3개 재료 동시 카운트 (기존 3회 → 1회)
+	const bool bNeedMat1 = CachedRecipe.MaterialTag1.IsValid() && CachedRecipe.MaterialAmount1 > 0;
+	const bool bNeedMat2 = CachedRecipe.MaterialTag2.IsValid() && CachedRecipe.MaterialAmount2 > 0;
+	const bool bNeedMat3 = CachedRecipe.MaterialTag3.IsValid() && CachedRecipe.MaterialAmount3 > 0;
+
+	int32 Count1 = 0, Count2 = 0, Count3 = 0;
+
+	if (IsValid(InvComp) && (bNeedMat1 || bNeedMat2 || bNeedMat3))
+	{
+		const auto& AllItems = InvComp->GetInventoryList().GetAllItems();
+		for (UInv_InventoryItem* Item : AllItems)
+		{
+			if (!IsValid(Item)) continue;
+
+			const FGameplayTag ItemType = Item->GetItemManifest().GetItemType();
+			const int32 StackCount = Item->GetTotalStackCount();
+
+			if (bNeedMat1 && ItemType.MatchesTagExact(CachedRecipe.MaterialTag1))
+			{
+				Count1 += StackCount;
+			}
+			if (bNeedMat2 && ItemType.MatchesTagExact(CachedRecipe.MaterialTag2))
+			{
+				Count2 += StackCount;
+			}
+			if (bNeedMat3 && ItemType.MatchesTagExact(CachedRecipe.MaterialTag3))
+			{
+				Count3 += StackCount;
+			}
+		}
+	}
+
+	// === 재료 1 UI ===
+	if (bNeedMat1)
 	{
 		if (IsValid(HorizontalBox_Material1))
 		{
 			HorizontalBox_Material1->SetVisibility(ESlateVisibility::Visible);
 		}
-
 		if (IsValid(Text_Material1Amount))
 		{
-			int32 CurrentAmount = 0;
-
-			if (IsValid(InvComp))
-			{
-				const auto& AllItems = InvComp->GetInventoryList().GetAllItems();
-				for (UInv_InventoryItem* Item : AllItems)
-				{
-					if (!IsValid(Item)) continue;
-					if (!Item->GetItemManifest().GetItemType().MatchesTagExact(CachedRecipe.MaterialTag1)) continue;
-					CurrentAmount += Item->GetTotalStackCount();
-				}
-			}
-
-			FString AmountText = FString::Printf(TEXT("%d/%d"), CurrentAmount, CachedRecipe.MaterialAmount1);
+			FString AmountText = FString::Printf(TEXT("%d/%d"), Count1, CachedRecipe.MaterialAmount1);
 			Text_Material1Amount->SetText(FText::FromString(AmountText));
 		}
 	}
@@ -114,30 +133,16 @@ void UInv_TabbedCraftingEntry::RefreshMaterialUI()
 		}
 	}
 
-	// === 재료 2 UI 업데이트 ===
-	if (CachedRecipe.MaterialTag2.IsValid() && CachedRecipe.MaterialAmount2 > 0)
+	// === 재료 2 UI ===
+	if (bNeedMat2)
 	{
 		if (IsValid(HorizontalBox_Material2))
 		{
 			HorizontalBox_Material2->SetVisibility(ESlateVisibility::Visible);
 		}
-
 		if (IsValid(Text_Material2Amount))
 		{
-			int32 CurrentAmount = 0;
-
-			if (IsValid(InvComp))
-			{
-				const auto& AllItems = InvComp->GetInventoryList().GetAllItems();
-				for (UInv_InventoryItem* Item : AllItems)
-				{
-					if (!IsValid(Item)) continue;
-					if (!Item->GetItemManifest().GetItemType().MatchesTagExact(CachedRecipe.MaterialTag2)) continue;
-					CurrentAmount += Item->GetTotalStackCount();
-				}
-			}
-
-			FString AmountText = FString::Printf(TEXT("%d/%d"), CurrentAmount, CachedRecipe.MaterialAmount2);
+			FString AmountText = FString::Printf(TEXT("%d/%d"), Count2, CachedRecipe.MaterialAmount2);
 			Text_Material2Amount->SetText(FText::FromString(AmountText));
 		}
 	}
@@ -149,30 +154,16 @@ void UInv_TabbedCraftingEntry::RefreshMaterialUI()
 		}
 	}
 
-	// === 재료 3 UI 업데이트 ===
-	if (CachedRecipe.MaterialTag3.IsValid() && CachedRecipe.MaterialAmount3 > 0)
+	// === 재료 3 UI ===
+	if (bNeedMat3)
 	{
 		if (IsValid(HorizontalBox_Material3))
 		{
 			HorizontalBox_Material3->SetVisibility(ESlateVisibility::Visible);
 		}
-
 		if (IsValid(Text_Material3Amount))
 		{
-			int32 CurrentAmount = 0;
-
-			if (IsValid(InvComp))
-			{
-				const auto& AllItems = InvComp->GetInventoryList().GetAllItems();
-				for (UInv_InventoryItem* Item : AllItems)
-				{
-					if (!IsValid(Item)) continue;
-					if (!Item->GetItemManifest().GetItemType().MatchesTagExact(CachedRecipe.MaterialTag3)) continue;
-					CurrentAmount += Item->GetTotalStackCount();
-				}
-			}
-
-			FString AmountText = FString::Printf(TEXT("%d/%d"), CurrentAmount, CachedRecipe.MaterialAmount3);
+			FString AmountText = FString::Printf(TEXT("%d/%d"), Count3, CachedRecipe.MaterialAmount3);
 			Text_Material3Amount->SetText(FText::FromString(AmountText));
 		}
 	}
@@ -189,6 +180,15 @@ void UInv_TabbedCraftingEntry::RefreshMaterialUI()
 #endif
 
 	UpdateButtonState();
+}
+
+bool UInv_TabbedCraftingEntry::UsesMaterial(const FGameplayTag& MaterialTag) const
+{
+	if (!MaterialTag.IsValid()) return false;
+
+	return MaterialTag.MatchesTagExact(CachedRecipe.MaterialTag1)
+		|| MaterialTag.MatchesTagExact(CachedRecipe.MaterialTag2)
+		|| MaterialTag.MatchesTagExact(CachedRecipe.MaterialTag3);
 }
 
 bool UInv_TabbedCraftingEntry::HasRequiredMaterials() const
@@ -372,43 +372,19 @@ void UInv_TabbedCraftingEntry::AddCraftedItemToInventory()
 		return;
 	}
 
-	// 클라이언트 측 공간 체크 (서버 RPC 전에!)
-	// 임시 Actor 스폰하여 ItemManifest 추출
-	UWorld* World = GetWorld();
-	if (!IsValid(World))
+	// [최적화] CDO 기반 ItemManifest 추출 (SpawnActorDeferred 제거)
+	// AInv_SaveGameMode::FindItemComponentTemplate — Blueprint SCS 노드까지 검색
+	UInv_ItemComponent* ItemCompTemplate = AInv_SaveGameMode::FindItemComponentTemplate(CachedRecipe.ResultActorClass);
+	if (!IsValid(ItemCompTemplate))
 	{
 #if INV_DEBUG_CRAFT
-		UE_LOG(LogTemp, Error, TEXT("TabbedCraftingEntry: [CLIENT] World가 유효하지 않습니다!"));
+		UE_LOG(LogTemp, Error, TEXT("TabbedCraftingEntry: [CLIENT] CDO에서 ItemComponent를 찾을 수 없습니다!"));
 #endif
 		return;
 	}
 
-	FTransform TempTransform(FRotator::ZeroRotator, FVector(0, 0, -50000));
-
-	AActor* TempActor = World->SpawnActorDeferred<AActor>(
-		CachedRecipe.ResultActorClass, TempTransform, nullptr, nullptr,
-		ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
-	if (!IsValid(TempActor))
-	{
-#if INV_DEBUG_CRAFT
-		UE_LOG(LogTemp, Error, TEXT("TabbedCraftingEntry: [CLIENT] 임시 Actor 스폰 실패!"));
-#endif
-		return;
-	}
-
-	TempActor->FinishSpawning(TempTransform);
-
-	UInv_ItemComponent* ItemComp = TempActor->FindComponentByClass<UInv_ItemComponent>();
-	if (!IsValid(ItemComp))
-	{
-#if INV_DEBUG_CRAFT
-		UE_LOG(LogTemp, Error, TEXT("TabbedCraftingEntry: [CLIENT] ItemComponent를 찾을 수 없습니다!"));
-#endif
-		TempActor->Destroy();
-		return;
-	}
-
-	FInv_ItemManifest ItemManifest = ItemComp->GetItemManifest();
+	FInv_ItemManifest ItemManifest = ItemCompTemplate->GetItemManifest();
+	ItemManifest.BuildFragmentCache(); // Fragment 조회 O(1) 보장
 	EInv_ItemCategory Category = ItemManifest.GetItemCategory();
 
 	// StackableFragment에서 제작 개수 자동 읽기
@@ -427,9 +403,6 @@ void UInv_TabbedCraftingEntry::AddCraftedItemToInventory()
 		UE_LOG(LogTemp, Warning, TEXT("TabbedCraftingEntry: [CLIENT] StackableFragment 감지! CraftedAmount=%d"), CraftedAmount);
 #endif
 	}
-
-	// 임시 Actor 파괴
-	TempActor->Destroy();
 
 	// InventoryMenu 가져오기
 	UInv_InventoryBase* InventoryMenu = InvComp->GetInventoryMenu();

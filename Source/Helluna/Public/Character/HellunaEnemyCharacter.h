@@ -181,6 +181,10 @@ public:
 			ToolTip = "체크 해제하면 이 몬스터는 건패링 대상이 되지 않습니다.\n보스, 세미보스 등 특수 몬스터에서 해제하세요."))
 	bool bCanBeParried = true;
 
+	/** Stagger 전 원본 머티리얼 저장 */
+	UPROPERTY()
+	TArray<TObjectPtr<UMaterialInterface>> SavedOriginalMaterials;
+
 	/** 건패링 처형 당할 때 몬스터 측 몽타주 */
 	UPROPERTY(EditDefaultsOnly, Category = "Animation|Parry",
 		meta = (DisplayName = "패링 피격 몽타주",
@@ -197,6 +201,10 @@ public:
 	/** 처형 후 래그돌 전환 + 임펄스 (서버 → 전체 클라, 시각적) */
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_ActivateRagdoll(FVector Impulse, FVector ImpulseLocation);
+
+	/** Stagger 비주얼 ON/OFF (서버→모든 클라이언트) */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_SetStaggerVisual(UMaterialInterface* StaggerMat, UAnimMontage* StaggerAnim, bool bEnable);
 
 public:
 	/** 피격 몽타주 재생 (서버 → 멀티캐스트) */

@@ -34,6 +34,7 @@
 // ⭐ [Phase 6 Fix] 맵 이동 중 저장 스킵용
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
 
+#include "Combat/MeleeTraceComponent.h"
 #include "DebugHelper.h"
 #include "Helluna.h"  // [Step3] HELLUNA_DEBUG_HERO 매크로 (EndPlay/Input/Weapon/Repair 디버그 로그)
 #include "NiagaraFunctionLibrary.h"
@@ -79,6 +80,8 @@ AHellunaHeroCharacter::AHellunaHeroCharacter()
 	GetCharacterMovement()->BrakingDecelerationWalking = 2000.f;
 
 	HeroCombatComponent = CreateDefaultSubobject<UHeroCombatComponent>(TEXT("HeroCombatComponent"));
+
+	MeleeTraceComponent = CreateDefaultSubobject<UMeleeTraceComponent>(TEXT("MeleeTraceComponent"));
 
 	FindResourceComponent = CreateDefaultSubobject<UHelluna_FindResourceComponent>(TEXT("파밍 자원 찾기 컴포넌트"));
 

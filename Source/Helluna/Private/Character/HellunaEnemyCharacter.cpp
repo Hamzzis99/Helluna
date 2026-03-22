@@ -314,6 +314,48 @@ void AHellunaEnemyCharacter::Multicast_ActivateRagdoll_Implementation(
 }
 
 // ============================================================
+// Multicast_SetStaggerVisual — Stagger 비주얼 ON/OFF
+// ============================================================
+void AHellunaEnemyCharacter::Multicast_SetStaggerVisual_Implementation(
+	UMaterialInterface* StaggerMat, UAnimMontage* StaggerAnim, bool bEnable)
+{
+	if (GetNetMode() == NM_DedicatedServer) return;
+
+	USkeletalMeshComponent* EnemyMesh = GetMesh();
+	if (!EnemyMesh) return;
+
+	if (bEnable)
+	{
+		// 원본 머티리얼 저장
+		SavedOriginalMaterials.Empty();
+		for (int32 i = 0; i < EnemyMesh->GetNumMaterials(); i++)
+		{
+			SavedOriginalMaterials.Add(EnemyMesh->GetMaterial(i));
+		}
+
+		// Stagger 오버레이 머티리얼 교체
+		if (StaggerMat)
+		{
+			EnemyMesh->SetOverlayMaterial(StaggerMat);
+		}
+
+		// Stagger 몽타주 재생
+		if (StaggerAnim)
+		{
+			PlayAnimMontage(StaggerAnim, 1.0f);
+		}
+	}
+	else
+	{
+		// 오버레이 제거
+		EnemyMesh->SetOverlayMaterial(nullptr);
+
+		// Stagger 몽타주 중단
+		StopAnimMontage(nullptr);
+	}
+}
+
+// ============================================================
 // Multicast_PlayDeath — 사망 몽타주 (모든 클라이언트)
 // ============================================================
 void AHellunaEnemyCharacter::Multicast_PlayDeath_Implementation()

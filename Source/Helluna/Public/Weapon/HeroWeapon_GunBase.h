@@ -16,6 +16,8 @@
 
 class AHellunaHeroCharacter;
 class UCameraShakeBase;
+class UUserWidget;
+class UCurveFloat;
 
 UENUM(BlueprintType)
 enum class EWeaponFireMode : uint8
@@ -390,6 +392,92 @@ public:
 			EditCondition = "bCanParry", EditConditionHides,
 			ToolTip = "카메라 슬로우 오빗 최대 회전 각도(도). 이 각도까지 회전하면 멈춤."))
 	float ExecutionOrbitTotalAngle = 15.f;
+
+	// ═══════════════════════════════════════════════════════════
+	// 건패링 Phase 2 VFX (머즐플래시, 임팩트, 블러드, 모션블러, 워프셰이크)
+	// ═══════════════════════════════════════════════════════════
+
+	/** 킬 순간 총구에서 재생할 머즐플래시 나이아가라. None이면 비활성. */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Parry|VFX",
+		meta = (EditCondition = "bCanParry", EditConditionHides,
+		ToolTip = "킬 순간 총구에서 재생할 머즐플래시 나이아가라. None이면 비활성."))
+	TObjectPtr<UNiagaraSystem> ParryMuzzleFlashEffect = nullptr;
+
+	/** 킬 순간 적 피격 위치에 재생할 임팩트 VFX. None이면 비활성. */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Parry|VFX",
+		meta = (EditCondition = "bCanParry", EditConditionHides,
+		ToolTip = "킬 순간 적 피격 위치에 재생할 임팩트 VFX. None이면 비활성."))
+	TObjectPtr<UNiagaraSystem> ParryImpactEffect = nullptr;
+
+	/** 머즐플래시 크기 배율 */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Parry|VFX",
+		meta = (EditCondition = "bCanParry", EditConditionHides, ClampMin = "0.1", ClampMax = "5.0",
+		ToolTip = "머즐플래시 크기 배율."))
+	float ParryMuzzleFlashScale = 1.0f;
+
+	/** 임팩트 VFX 크기 배율 */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Parry|VFX",
+		meta = (EditCondition = "bCanParry", EditConditionHides, ClampMin = "0.1", ClampMax = "5.0",
+		ToolTip = "임팩트 VFX 크기 배율."))
+	float ParryImpactScale = 1.5f;
+
+	/** 킬 순간 화면에 표시할 블러드 스플래시 위젯 클래스. None이면 비활성. */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Parry|VFX",
+		meta = (EditCondition = "bCanParry", EditConditionHides,
+		ToolTip = "킬 순간 화면에 표시할 블러드 스플래시 위젯 클래스. None이면 비활성."))
+	TSubclassOf<UUserWidget> ParryBloodSplashWidgetClass = nullptr;
+
+	/** 블러드 스플래시 표시 시간(초) */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Parry|VFX",
+		meta = (EditCondition = "bCanParry", EditConditionHides, ClampMin = "0.1", ClampMax = "3.0",
+		ToolTip = "블러드 스플래시 표시 시간(초). 이 시간 후 자동 제거."))
+	float ParryBloodSplashDuration = 0.5f;
+
+	/** 킬 순간 모션블러 강도. 0이면 비활성. */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Parry|VFX",
+		meta = (EditCondition = "bCanParry", EditConditionHides, ClampMin = "0.0", ClampMax = "5.0",
+		ToolTip = "킬 순간 모션블러 강도. 0이면 비활성. 높을수록 잔상이 강해서 슬로우 느낌."))
+	float ParryKillMotionBlurAmount = 0.0f;
+
+	/** 킬 모션블러 유지 시간(초) */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Parry|VFX",
+		meta = (EditCondition = "bCanParry", EditConditionHides, ClampMin = "0.05", ClampMax = "1.0",
+		ToolTip = "킬 모션블러 유지 시간(초)."))
+	float ParryKillMotionBlurDuration = 0.2f;
+
+	/** 패링 시작(워프) 순간 카메라 셰이크. None이면 비활성. */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Parry|Camera",
+		meta = (EditCondition = "bCanParry", EditConditionHides,
+		ToolTip = "패링 시작(워프) 순간 재생할 카메라 셰이크. None이면 비활성. 킬 셰이크와 별도."))
+	TSubclassOf<UCameraShakeBase> ParryWarpCameraShake = nullptr;
+
+	/** 패링 시작 셰이크 강도 배율 */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Parry|Camera",
+		meta = (EditCondition = "bCanParry", EditConditionHides, ClampMin = "0.0", ClampMax = "5.0",
+		ToolTip = "패링 시작 셰이크 강도 배율."))
+	float ParryWarpShakeScale = 1.0f;
+
+	// ═══════════════════════════════════════════════════════════
+	// 건패링 CurveFloat 카메라 (무기별 커브 에셋)
+	// ═══════════════════════════════════════════════════════════
+
+	/** 처형 중 ArmLength 배율 커브 (X=정규화 시간 0~1, Y=배율). None이면 CameraArmLengthMultiplier 사용. */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Parry|Camera",
+		meta = (EditCondition = "bCanParry", EditConditionHides,
+		ToolTip = "처형 중 ArmLength 배율 커브 (X=정규화 시간 0~1, Y=배율). None이면 CameraArmLengthMultiplier 사용."))
+	TObjectPtr<UCurveFloat> ParryCameraArmCurve = nullptr;
+
+	/** 처형 중 FOV 배율 커브 (X=정규화 시간 0~1, Y=배율). None이면 CameraFOVMultiplier 사용. */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Parry|Camera",
+		meta = (EditCondition = "bCanParry", EditConditionHides,
+		ToolTip = "처형 중 FOV 배율 커브 (X=정규화 시간 0~1, Y=배율). None이면 CameraFOVMultiplier 사용."))
+	TObjectPtr<UCurveFloat> ParryCameraFOVCurve = nullptr;
+
+	/** 처형 중 Yaw 오프셋 커브 (X=정규화 시간 0~1, Y=도). None이면 CameraExecutionYawOffset 사용. */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Parry|Camera",
+		meta = (EditCondition = "bCanParry", EditConditionHides,
+		ToolTip = "처형 중 Yaw 오프셋 커브 (X=정규화 시간 0~1, Y=도). None이면 CameraExecutionYawOffset 사용."))
+	TObjectPtr<UCurveFloat> ParryCameraYawCurve = nullptr;
 
 	// ═══════════════════════════════════════════════════════════
 	// 건패링 래그돌 사망

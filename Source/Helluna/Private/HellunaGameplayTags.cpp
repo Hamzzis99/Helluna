@@ -18,6 +18,7 @@ namespace HellunaGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(InputTag_Repair, "InputTag.Repair");
 	UE_DEFINE_GAMEPLAY_TAG(InputTag_Farming, "InputTag.Farming");
 	UE_DEFINE_GAMEPLAY_TAG(InputTag_Reload, "InputTag.Reload");
+	UE_DEFINE_GAMEPLAY_TAG(InputTag_Kick, "InputTag.Kick");
 
 	/** Player Ability tags **/
 
@@ -70,5 +71,9 @@ namespace HellunaGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Enemy_Type_Humanoid, "Enemy.Type.Humanoid");
 	UE_DEFINE_GAMEPLAY_TAG(Enemy_State_Staggered, "Enemy.State.Staggered");
 	UE_DEFINE_GAMEPLAY_TAG(Event_Parry_Fire, "Event.Parry.Fire");
+
+	// 발차기 시스템
+	UE_DEFINE_GAMEPLAY_TAG(Event_Kick_Impact, "Event.Kick.Impact");
+	UE_DEFINE_GAMEPLAY_TAG(Hero_State_Kicking, "Hero.State.Kicking");
 
 }
