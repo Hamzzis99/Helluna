@@ -45,6 +45,7 @@ public:
 protected:
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 	virtual void BeginPlay() override;
+	virtual void Tick(float DeltaTime) override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;  // ⭐ 인벤토리 저장용
 
 	virtual void PossessedBy(AController* NewController) override;
@@ -285,4 +286,34 @@ public:
 private:
 	/** 현재 활성 상태인 패링 워프 VFX 컴포넌트 (Deactivate용 추적) */
 	TArray<TWeakObjectPtr<UNiagaraComponent>> ActiveParryVFX;
+
+	// ═══════════════════════════════════════════════════════════
+	// OTS 카메라 — 조준(Aim) 줌인 보간
+	// ═══════════════════════════════════════════════════════════
+
+	// ── 조준 카메라 기본값 (BeginPlay에서 캐싱) ──
+	float DefaultTargetArmLength = 250.f;
+	float DefaultFOV = 90.f;
+	FVector DefaultSocketOffset = FVector(0.f, 60.f, 55.f);
+
+	// ── 조준 시 카메라 목표값 (에디터에서 조정 가능) ──
+	UPROPERTY(EditDefaultsOnly, Category = "Camera|Aim",
+		meta = (DisplayName = "Aim Target Arm Length (조준 시 카메라 거리)", ClampMin = "50.0", ClampMax = "400.0"))
+	float AimTargetArmLength = 120.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Camera|Aim",
+		meta = (DisplayName = "Aim FOV (조준 시 FOV)", ClampMin = "40.0", ClampMax = "120.0"))
+	float AimFOV = 65.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Camera|Aim",
+		meta = (DisplayName = "Aim Socket Offset (조준 시 SocketOffset)"))
+	FVector AimSocketOffset = FVector(0.f, 70.f, 45.f);
+
+	UPROPERTY(EditDefaultsOnly, Category = "Camera|Aim",
+		meta = (DisplayName = "Aim Interp Speed (카메라 보간 속도)", ClampMin = "1.0", ClampMax = "30.0"))
+	float AimInterpSpeed = 10.f;
+
+	/** 현재 조준 상태 (ASC 태그 기반) */
+	bool bIsCurrentlyAiming = false;
+	bool bWasAimingLastFrame = false;
 };

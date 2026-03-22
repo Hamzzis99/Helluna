@@ -66,16 +66,20 @@ AHellunaHeroCharacter::AHellunaHeroCharacter()
 
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
 	CameraBoom->SetupAttachment(GetRootComponent());
-	CameraBoom->TargetArmLength = 200.f;
-	CameraBoom->SocketOffset = FVector(0.f, 55.f, 65.f);
+	CameraBoom->TargetArmLength = 250.f;
+	CameraBoom->SocketOffset = FVector(0.f, 60.f, 55.f);
 	CameraBoom->bUsePawnControlRotation = true;
+	CameraBoom->bEnableCameraLag = true;
+	CameraBoom->CameraLagSpeed = 15.f;
+	CameraBoom->CameraLagMaxDistance = 50.f;
 
 	FollowCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FollowCamera"));
 	FollowCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
 	FollowCamera->bUsePawnControlRotation = false;
 
-	GetCharacterMovement()->bOrientRotationToMovement = true;
-	GetCharacterMovement()->RotationRate = FRotator(0.f, 500.f, 0.f);
+	GetCharacterMovement()->bOrientRotationToMovement = false;
+	GetCharacterMovement()->bUseControllerDesiredRotation = true;
+	GetCharacterMovement()->RotationRate = FRotator(0.f, 720.f, 0.f);
 	GetCharacterMovement()->MaxWalkSpeed = 400.f;
 	GetCharacterMovement()->BrakingDecelerationWalking = 2000.f;
 
@@ -99,6 +103,13 @@ AHellunaHeroCharacter::AHellunaHeroCharacter()
 	LootContainerComponent->bActivated = false;
 	LootContainerComponent->bDestroyOwnerWhenEmpty = false;
 	LootContainerComponent->ContainerDisplayName = FText::FromString(TEXT("사체"));
+
+	// [OTS Camera] 생성자 디버그 로그
+	UE_LOG(LogTemp, Warning, TEXT("[OTS Camera] Constructor — ArmLength=%.1f, SocketOffset=%s, bOrientToMovement=%s, bUseControllerDesiredRotation=%s"),
+		CameraBoom->TargetArmLength,
+		*CameraBoom->SocketOffset.ToString(),
+		GetCharacterMovement()->bOrientRotationToMovement ? TEXT("true") : TEXT("false"),
+		GetCharacterMovement()->bUseControllerDesiredRotation ? TEXT("true") : TEXT("false"));
 }
 
 void AHellunaHeroCharacter::BeginPlay()
@@ -114,6 +125,63 @@ void AHellunaHeroCharacter::BeginPlay()
 
 	// 로컬 플레이어 전용 무기 HUD 생성
 	InitWeaponHUD();
+
+	// ── OTS 카메라 기본값 캐싱 ──
+	if (FollowCamera)
+	{
+		DefaultFOV = FollowCamera->FieldOfView;
+	}
+	if (CameraBoom)
+	{
+		DefaultTargetArmLength = CameraBoom->TargetArmLength;
+		DefaultSocketOffset = CameraBoom->SocketOffset;
+	}
+	UE_LOG(LogTemp, Warning, TEXT("[OTS Camera] BeginPlay — DefaultFOV=%.1f, DefaultArmLength=%.1f, DefaultSocketOffset=%s"),
+		DefaultFOV, DefaultTargetArmLength, *DefaultSocketOffset.ToString());
+}
+
+// ============================================================================
+// Tick — OTS 카메라 조준 보간
+// ============================================================================
+void AHellunaHeroCharacter::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+
+	// 로컬 플레이어만 카메라 보간 처리
+	if (!IsLocallyControlled()) return;
+	if (!CameraBoom || !FollowCamera) return;
+
+	// ── ASC에서 조준 태그 확인 ──
+	bool bWantsAim = false;
+	if (UHellunaAbilitySystemComponent* ASC = GetHellunaAbilitySystemComponent())
+	{
+		bWantsAim = ASC->HasMatchingGameplayTag(HellunaGameplayTags::Player_status_Aim);
+	}
+	bIsCurrentlyAiming = bWantsAim;
+
+	// ── 디버그: 조준 상태 변경 로그 (상태 전환 시에만) ──
+	if (bIsCurrentlyAiming != bWasAimingLastFrame)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[OTS Camera] Aim State Changed — bAiming: %s → %s"),
+			bWasAimingLastFrame ? TEXT("true") : TEXT("false"),
+			bIsCurrentlyAiming ? TEXT("true") : TEXT("false"));
+		bWasAimingLastFrame = bIsCurrentlyAiming;
+	}
+
+	// ── 목표값 결정 ──
+	const float TargetArmLen = bIsCurrentlyAiming ? AimTargetArmLength : DefaultTargetArmLength;
+	const float TargetFOV = bIsCurrentlyAiming ? AimFOV : DefaultFOV;
+	const FVector TargetOffset = bIsCurrentlyAiming ? AimSocketOffset : DefaultSocketOffset;
+
+	// ── 부드러운 보간 ──
+	CameraBoom->TargetArmLength = FMath::FInterpTo(
+		CameraBoom->TargetArmLength, TargetArmLen, DeltaTime, AimInterpSpeed);
+
+	FollowCamera->SetFieldOfView(FMath::FInterpTo(
+		FollowCamera->FieldOfView, TargetFOV, DeltaTime, AimInterpSpeed));
+
+	CameraBoom->SocketOffset = FMath::VInterpTo(
+		CameraBoom->SocketOffset, TargetOffset, DeltaTime, AimInterpSpeed);
 }
 
 // ============================================================================
@@ -310,10 +378,8 @@ void AHellunaHeroCharacter::Input_Look(const FInputActionValue& InputActionValue
 
 	float SensitivityScale = 1.f;
 
-	const float DefaultFov = 120.f;  
-	const float AimFov = GetFollowCamera()->FieldOfView;  
-
-	SensitivityScale = AimFov / DefaultFov; 
+	const float CurrentFov = GetFollowCamera()->FieldOfView;
+	SensitivityScale = (DefaultFOV > 0.f) ? (CurrentFov / DefaultFOV) : 1.f; 
 
 	if (LookAxisVector.X != 0.f)
 	{
