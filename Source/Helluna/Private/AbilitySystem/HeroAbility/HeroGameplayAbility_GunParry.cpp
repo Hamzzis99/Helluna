@@ -1664,6 +1664,15 @@ void UHeroGameplayAbility_GunParry::EndAbility(
 		UE_LOG(LogGunParry, Warning, TEXT("[EndAbility] 캐릭터 메시 Visibility 안전 원복"));
 	}
 
+	// bParryCameraReturning 안전 원복
+	if (ActorInfo && ActorInfo->AvatarActor.IsValid())
+	{
+		if (AHellunaHeroCharacter* CamHero = Cast<AHellunaHeroCharacter>(ActorInfo->AvatarActor.Get()))
+		{
+			CamHero->bParryCameraReturning = false;
+		}
+	}
+
 	bHandleExecutionFinishedCalled = false;
 	bKillProcessed = false;
 	bEnemyCleanedUp = false;
@@ -2055,6 +2064,16 @@ void UHeroGameplayAbility_GunParry::EndCameraEffect(AHellunaHeroCharacter* Hero)
 					WeakPC.IsValid() ? WeakPC->GetControlRotation().Yaw : 0.f);
 			}
 
+			// 카메라 복귀 완료 — 액션 차단 플래그 해제
+			if (WeakBoom.IsValid())
+			{
+				if (AHellunaHeroCharacter* ReturnHero = Cast<AHellunaHeroCharacter>(WeakBoom->GetOwner()))
+				{
+					ReturnHero->bParryCameraReturning = false;
+					UE_LOG(LogGunParry, Warning, TEXT("[CameraReturn] bParryCameraReturning = false (카메라 복귀 완료)"));
+				}
+			}
+
 			UE_LOG(LogGunParry, Warning, TEXT("[CameraReturn] 완료 — ArmLength=%.0f, FOV=%.0f (소요 프레임=%d, Yaw 미제어)"),
 				TargetArmLength, TargetFOV, *TickCount);
 
@@ -2062,6 +2081,9 @@ void UHeroGameplayAbility_GunParry::EndCameraEffect(AHellunaHeroCharacter* Hero)
 				WeakWorld->GetTimerManager().ClearTimer(*TimerHandle);
 		}
 	};
+
+	Hero->bParryCameraReturning = true;
+	UE_LOG(LogGunParry, Warning, TEXT("[CameraReturn] bParryCameraReturning = true"));
 
 	World->GetTimerManager().SetTimer(
 		*TimerHandle,

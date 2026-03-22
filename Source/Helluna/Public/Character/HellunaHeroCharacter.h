@@ -223,6 +223,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Replicated, Category="Animation")
 	bool PlayFullBody = false;
 
+	/** 패링 카메라 복귀 진행 중 — 다른 GA 차단용 */
+	UPROPERTY(BlueprintReadOnly, Category = "GunParry")
+	bool bParryCameraReturning = false;
+
 	// =========================================================
 	// ★ 추가: 피격 / 사망 애니메이션
 	// =========================================================

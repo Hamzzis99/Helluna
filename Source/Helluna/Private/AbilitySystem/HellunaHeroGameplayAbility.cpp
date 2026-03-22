@@ -27,6 +27,15 @@ bool UHellunaHeroGameplayAbility::CanActivateAbility(
 		{
 			return false;
 		}
+
+		// 카메라 복귀 중 차단 (패링 후 FOV/ArmLength 복귀 완료까지)
+		if (const AHellunaHeroCharacter* HeroChar = Cast<AHellunaHeroCharacter>(Avatar))
+		{
+			if (HeroChar->bParryCameraReturning)
+			{
+				return false;
+			}
+		}
 	}
 
 	return true;
