@@ -1664,12 +1664,15 @@ void UHeroGameplayAbility_GunParry::EndAbility(
 		UE_LOG(LogGunParry, Warning, TEXT("[EndAbility] 캐릭터 메시 Visibility 안전 원복"));
 	}
 
-	// bParryCameraReturning 안전 원복
+	// bParryCameraReturning 안전 원복 — 카메라 복귀 타이머가 활성 상태가 아닌 경우에만
 	if (ActorInfo && ActorInfo->AvatarActor.IsValid())
 	{
 		if (AHellunaHeroCharacter* CamHero = Cast<AHellunaHeroCharacter>(ActorInfo->AvatarActor.Get()))
 		{
-			CamHero->bParryCameraReturning = false;
+			if (!CameraReturnTimerHandle.IsValid() || !CameraReturnTimerHandle->IsValid())
+			{
+				CamHero->bParryCameraReturning = false;
+			}
 		}
 	}
 
