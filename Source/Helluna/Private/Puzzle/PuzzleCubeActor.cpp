@@ -114,22 +114,12 @@ void APuzzleCubeActor::GeneratePuzzle()
 	// 4. 경로에 파이프 배치
 	PlacePathPipes(Path);
 
-	// 5. 나머지 빈 셀 랜덤 채우기
-	for (int32 i = 0; i < Size * Size; ++i)
-	{
-		if (PuzzleGrid.Cells[i].PipeType == EPuzzlePipeType::None)
-		{
-			PuzzleGrid.Cells[i].PipeType = FMath::RandBool()
-				? EPuzzlePipeType::Straight
-				: EPuzzlePipeType::Curve;
-			PuzzleGrid.Cells[i].Rotation = FMath::RandRange(0, 3) * 90;
-		}
-	}
+	// 5. 경로 외 셀은 None 유지 (빈 셀로 표시)
 
-	// 6. 모든 비잠금 셀 회전 셔플 (플레이어가 풀어야 함)
+	// 6. 경로 셀(비잠금)만 회전 셔플 (플레이어가 풀어야 함)
 	for (int32 i = 0; i < Size * Size; ++i)
 	{
-		if (!PuzzleGrid.Cells[i].bLocked)
+		if (!PuzzleGrid.Cells[i].bLocked && PuzzleGrid.Cells[i].PipeType != EPuzzlePipeType::None)
 		{
 			PuzzleGrid.Cells[i].Rotation = FMath::RandRange(0, 3) * 90;
 		}
@@ -137,11 +127,16 @@ void APuzzleCubeActor::GeneratePuzzle()
 
 	// 로그 #1
 	const int32 PathLength = Path.Num();
+	int32 EmptyCells = 0;
+	for (int32 i = 0; i < Size * Size; ++i)
+	{
+		if (PuzzleGrid.Cells[i].PipeType == EPuzzlePipeType::None) ++EmptyCells;
+	}
 	const FPuzzleCell& LogStart = PuzzleGrid.Cells[PuzzleGrid.StartIndex];
 	const FPuzzleCell& LogEnd = PuzzleGrid.Cells[PuzzleGrid.EndIndex];
 	UE_LOG(LogTemp, Warning,
-		TEXT("[PuzzleCube] GeneratePuzzle: Grid generated, Start=(%d,%d), End=(%d,%d), PathLength=%d"),
-		LogStart.Row, LogStart.Col, LogEnd.Row, LogEnd.Col, PathLength);
+		TEXT("[PuzzleCube] GeneratePuzzle: PathLength=%d, EmptyCells=%d, Start=(%d,%d), End=(%d,%d)"),
+		PathLength, EmptyCells, LogStart.Row, LogStart.Col, LogEnd.Row, LogEnd.Col);
 }
 
 bool APuzzleCubeActor::FindPathDFS(TArray<int32>& Path, TSet<int32>& Visited, int32 CurrentIndex)
@@ -294,6 +289,11 @@ void APuzzleCubeActor::RotateCell(int32 CellIndex)
 	FPuzzleCell& Cell = PuzzleGrid.Cells[CellIndex];
 
 	if (Cell.bLocked)
+	{
+		return;
+	}
+
+	if (Cell.PipeType == EPuzzlePipeType::None)
 	{
 		return;
 	}

@@ -3,12 +3,10 @@
 #include "Puzzle/PuzzleGridWidget.h"
 #include "Puzzle/PuzzleCubeActor.h"
 #include "Puzzle/PuzzleTypes.h"
+#include "Puzzle/PuzzleCellWidget.h"
 #include "Controller/HellunaHeroController.h"
 #include "Components/UniformGridPanel.h"
 #include "Components/TextBlock.h"
-#include "Components/Image.h"
-#include "Components/Overlay.h"
-#include "Components/OverlaySlot.h"
 #include "TimerManager.h"
 
 // ============================================================================
@@ -63,69 +61,40 @@ void UPuzzleGridWidget::InitGrid(APuzzleCubeActor* Cube)
 	Cube->OnPuzzleGridUpdated.AddUniqueDynamic(this, &UPuzzleGridWidget::RefreshGrid);
 	Cube->OnPuzzleLockChanged.AddUniqueDynamic(this, &UPuzzleGridWidget::OnLockChanged);
 
-	// GridPanel이 없으면 종료
-	if (!GridPanel)
+	// GridPanel / PuzzleCellWidgetClass 체크
+	if (!GridPanel || !PuzzleCellWidgetClass)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[PuzzleWidget] InitGrid: GridPanel이 null — BP에서 바인딩 필요"));
+		UE_LOG(LogTemp, Warning,
+			TEXT("[PuzzleWidget] InitGrid: GridPanel 또는 PuzzleCellWidgetClass가 null"));
 		return;
 	}
 
 	// 기존 셀 정리
 	GridPanel->ClearChildren();
-	CellPipeImages.Empty();
-	CellSelectionImages.Empty();
+	CellWidgets.Empty();
 
-	// 4x4 셀 생성
+	// 4x4 셀 생성 — WBP에서 정의된 셀 위젯 인스턴스화
 	for (int32 Row = 0; Row < GridSize; ++Row)
 	{
 		for (int32 Col = 0; Col < GridSize; ++Col)
 		{
-			// Overlay (배경 + 파이프 + 선택)
-			UOverlay* CellOverlay = NewObject<UOverlay>(this);
-
-			// 배경 이미지
-			UImage* BgImage = NewObject<UImage>(this);
-			if (EmptyCellTexture)
+			UPuzzleCellWidget* Cell = CreateWidget<UPuzzleCellWidget>(this, PuzzleCellWidgetClass);
+			if (!Cell)
 			{
-				BgImage->SetBrushFromTexture(EmptyCellTexture);
-			}
-			UOverlaySlot* BgSlot = Cast<UOverlaySlot>(CellOverlay->AddChild(BgImage));
-			if (BgSlot)
-			{
-				BgSlot->SetHorizontalAlignment(HAlign_Fill);
-				BgSlot->SetVerticalAlignment(VAlign_Fill);
+				continue;
 			}
 
-			// 파이프 이미지 (회전 적용)
-			UImage* PipeImage = NewObject<UImage>(this);
-			PipeImage->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
-			UOverlaySlot* PipeSlot = Cast<UOverlaySlot>(CellOverlay->AddChild(PipeImage));
-			if (PipeSlot)
-			{
-				PipeSlot->SetHorizontalAlignment(HAlign_Fill);
-				PipeSlot->SetVerticalAlignment(VAlign_Fill);
-			}
-			CellPipeImages.Add(PipeImage);
+			// 배경 텍스처 설정
+			Cell->SetBgTexture(EmptyCellTexture);
 
-			// 선택 하이라이트 이미지 (기본 숨김)
-			UImage* SelectionImage = NewObject<UImage>(this);
-			if (SelectedCellTexture)
-			{
-				SelectionImage->SetBrushFromTexture(SelectedCellTexture);
-			}
-			SelectionImage->SetVisibility(ESlateVisibility::Collapsed);
-			UOverlaySlot* SelSlot = Cast<UOverlaySlot>(CellOverlay->AddChild(SelectionImage));
-			if (SelSlot)
-			{
-				SelSlot->SetHorizontalAlignment(HAlign_Fill);
-				SelSlot->SetVerticalAlignment(VAlign_Fill);
-			}
-			CellSelectionImages.Add(SelectionImage);
-
-			// UniformGridPanel에 추가
-			GridPanel->AddChildToUniformGrid(CellOverlay, Row, Col);
+			CellWidgets.Add(Cell);
+			GridPanel->AddChildToUniformGrid(Cell, Row, Col);
 		}
 	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[PuzzleWidget] InitGrid: Created %d cell widgets using %s"),
+		CellWidgets.Num(), *GetNameSafe(PuzzleCellWidgetClass));
 
 	// 초기 상태
 	SelectedRow = 0;
@@ -163,23 +132,15 @@ void UPuzzleGridWidget::RefreshGrid()
 	// 연결 상태 계산
 	ConnectedCells = PuzzleUtils::GetConnectedCells(Grid);
 
-	// 로그
-	UE_LOG(LogTemp, Warning, TEXT("[PuzzleWidget] RefreshGrid: Connected cells = %d / %d"),
-		ConnectedCells.Num(), TotalCells);
-
-	// 연결 Tint 색상
-	static const FLinearColor ConnectedColor = FLinearColor(0.0f, 0.8f, 1.0f, 1.0f); // 시안
-	static const FLinearColor DefaultColor = FLinearColor(1.0f, 1.0f, 1.0f, 1.0f);   // 흰색
-
-	for (int32 i = 0; i < TotalCells && i < CellPipeImages.Num(); ++i)
+	for (int32 i = 0; i < TotalCells && i < CellWidgets.Num(); ++i)
 	{
-		if (!Grid.Cells.IsValidIndex(i) || !IsValid(CellPipeImages[i]))
+		if (!Grid.Cells.IsValidIndex(i) || !IsValid(CellWidgets[i]))
 		{
 			continue;
 		}
 
 		const FPuzzleCell& Cell = Grid.Cells[i];
-		UImage* PipeImage = CellPipeImages[i];
+		UPuzzleCellWidget* CellWidget = CellWidgets[i];
 
 		// 파이프 타입에 따른 텍스처 선택
 		UTexture2D* Texture = nullptr;
@@ -189,21 +150,18 @@ void UPuzzleGridWidget::RefreshGrid()
 		case EPuzzlePipeType::Curve:    Texture = CurvePipeTexture;    break;
 		case EPuzzlePipeType::Start:    Texture = StartNodeTexture;    break;
 		case EPuzzlePipeType::End:      Texture = EndNodeTexture;      break;
-		default:                        Texture = EmptyCellTexture;    break;
+		default:                        Texture = nullptr;             break;
 		}
 
-		if (Texture)
-		{
-			PipeImage->SetBrushFromTexture(Texture);
-		}
-
-		// 회전 적용 (RenderTransform Angle)
-		PipeImage->SetRenderTransformAngle(static_cast<float>(Cell.Rotation));
-
-		// 연결 상태에 따른 Tint 색상
-		const bool bConnected = ConnectedCells.Contains(i);
-		PipeImage->SetColorAndOpacity(bConnected ? ConnectedColor : DefaultColor);
+		// 셀 위젯에 로직만 전달 — 렌더링은 WBP가 담당
+		CellWidget->SetPipeTexture(Texture, static_cast<float>(Cell.Rotation));
+		CellWidget->SetConnectedTint(ConnectedCells.Contains(i));
 	}
+
+	// 로그
+	UE_LOG(LogTemp, Warning,
+		TEXT("[PuzzleWidget] RefreshGrid: Updated %d cells, Connected=%d"),
+		FMath::Min(TotalCells, CellWidgets.Num()), ConnectedCells.Num());
 
 	UpdateSelectionHighlight();
 }
@@ -268,23 +226,16 @@ void UPuzzleGridWidget::UpdateSelectionHighlight()
 {
 	const int32 GridSize = OwningCube.IsValid() ? OwningCube->PuzzleGrid.GridSize : 4;
 
-	UE_LOG(LogTemp, Warning, TEXT("[PuzzleWidget] UpdateSelectionHighlight: (%d,%d)"),
-		SelectedRow, SelectedCol);
-
-	for (int32 i = 0; i < CellSelectionImages.Num(); ++i)
+	for (int32 i = 0; i < CellWidgets.Num(); ++i)
 	{
-		if (!IsValid(CellSelectionImages[i]))
+		if (!IsValid(CellWidgets[i]))
 		{
 			continue;
 		}
 
 		const int32 Row = i / GridSize;
 		const int32 Col = i % GridSize;
-
-		const bool bSelected = (Row == SelectedRow && Col == SelectedCol);
-		CellSelectionImages[i]->SetVisibility(
-			bSelected ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed
-		);
+		CellWidgets[i]->SetSelected(Row == SelectedRow && Col == SelectedCol);
 	}
 }
 

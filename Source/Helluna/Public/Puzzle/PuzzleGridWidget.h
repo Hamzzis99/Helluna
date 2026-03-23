@@ -11,6 +11,7 @@ class UTextBlock;
 class UImage;
 class APuzzleCubeActor;
 class AHellunaHeroController;
+class UPuzzleCellWidget;
 
 /**
  * 4x4 퍼즐 그리드 위젯
@@ -112,13 +113,14 @@ private:
 	/** 연결된 큐브 */
 	TWeakObjectPtr<APuzzleCubeActor> OwningCube;
 
-	/** 셀 파이프 이미지 배열 (GridSize*GridSize) */
-	UPROPERTY()
-	TArray<UImage*> CellPipeImages;
+	/** 셀 위젯 클래스 (WBP_PuzzleCell 할당) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Puzzle|UI",
+		meta = (DisplayName = "Puzzle Cell Widget Class (퍼즐 셀 위젯 클래스)"))
+	TSubclassOf<UPuzzleCellWidget> PuzzleCellWidgetClass;
 
-	/** 셀 선택 하이라이트 이미지 배열 */
+	/** 셀 위젯 배열 (GridSize*GridSize) */
 	UPROPERTY()
-	TArray<UImage*> CellSelectionImages;
+	TArray<UPuzzleCellWidget*> CellWidgets;
 
 	/** 연결 상태 캐시 (RefreshGrid마다 갱신) */
 	TSet<int32> ConnectedCells;
