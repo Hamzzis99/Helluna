@@ -230,6 +230,23 @@ void AHellunaHeroCharacter::InitWeaponHUD()
 // ============================================
 void AHellunaHeroCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	// [Downed/Revive] 타이머 + 관계 정리
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ReviveTickTimerHandle);
+	}
+	if (ReviveTarget)
+	{
+		ReviveTarget->CurrentReviver = nullptr;
+		ReviveTarget->ReviveProgress = 0.f;
+		ReviveTarget = nullptr;
+	}
+	if (CurrentReviver)
+	{
+		CurrentReviver->ReviveTarget = nullptr;
+		CurrentReviver = nullptr;
+	}
+
 #if HELLUNA_DEBUG_HERO // [Step3] 프로덕션 빌드에서 디버그 로그 제거
 	UE_LOG(LogTemp, Warning, TEXT(""));
 	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
@@ -904,6 +921,7 @@ void AHellunaHeroCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 	DOREPLIFETIME(AHellunaHeroCharacter, CurrentWeapon);  // OnRep_CurrentWeapon → HUD 갱신
 	DOREPLIFETIME(AHellunaHeroCharacter, CurrentWeaponTag);
 	DOREPLIFETIME(AHellunaHeroCharacter, PlayFullBody);   // 전신 몽타주 플래그 — CLIENT B ABP 동기화
+	DOREPLIFETIME(AHellunaHeroCharacter, ReviveProgress);  // [Downed/Revive] 부활 진행률
 }
 
 
@@ -1316,4 +1334,276 @@ void AHellunaHeroCharacter::Multicast_SpawnParryGhostTrail_Implementation(
 	UE_LOG(LogGunParry, Warning,
 		TEXT("[Multicast_SpawnParryGhostTrail] 잔상 %d개 스폰 — Start=%s, FadeDuration=%.1f"),
 		Count, *StartLocation.ToString(), FadeDuration);
+}
+
+// =========================================================
+// ★ Downed/Revive System (다운/부활)
+// =========================================================
+
+void AHellunaHeroCharacter::OnHeroDowned(AActor* DownedActor, AActor* InstigatorActor)
+{
+	if (!HasAuthority()) return;
+
+	// 솔로 체크: 접속자 1명이면 즉사
+	if (AHellunaDefenseGameMode* DefenseGM = Cast<AHellunaDefenseGameMode>(
+		UGameplayStatics::GetGameMode(GetWorld())))
+	{
+		if (DefenseGM->ShouldSkipDowned())
+		{
+			if (HeroHealthComponent)
+			{
+				HeroHealthComponent->ForceKillFromDowned();
+			}
+			return;
+		}
+
+		// 마지막 생존자 체크
+		DefenseGM->NotifyPlayerDowned(Cast<APlayerController>(GetController()));
+	}
+
+	// ASC에 다운 태그 추가 + 진행 중 어빌리티 전체 취소
+	if (AbilitySystemComponent)
+	{
+		AbilitySystemComponent->AddLooseGameplayTag(HellunaGameplayTags::Player_State_Downed);
+		AbilitySystemComponent->CancelAllAbilities();
+	}
+
+	// 이동/시야 잠금
+	LockMoveInput();
+	LockLookInput();
+
+	// 이동 비활성화
+	if (UCharacterMovementComponent* CMC = GetCharacterMovement())
+	{
+		CMC->DisableMovement();
+	}
+
+	// 무기 파괴
+	if (CurrentWeapon)
+	{
+		Server_RequestDestroyWeapon();
+	}
+
+	// 다운 몽타주 + 카메라
+	Multicast_PlayHeroDowned();
+
+	UE_LOG(LogHelluna, Log, TEXT("[Downed] %s → 다운 상태 진입"), *GetName());
+}
+
+void AHellunaHeroCharacter::Multicast_PlayHeroDowned_Implementation()
+{
+	// 다운 몽타주
+	if (DownedMontage)
+	{
+		if (USkeletalMeshComponent* SkelMesh = GetMesh())
+		{
+			if (UAnimInstance* AnimInst = SkelMesh->GetAnimInstance())
+			{
+				AnimInst->Montage_Play(DownedMontage);
+			}
+		}
+	}
+
+	// 로컬 클라에서만 카메라 낮추기
+	if (IsLocallyControlled() && CameraBoom)
+	{
+		CameraBoom->TargetArmLength = DownedCameraArmLength;
+		CameraBoom->SocketOffset = DownedCameraSocketOffset;
+	}
+}
+
+void AHellunaHeroCharacter::Multicast_PlayHeroRevived_Implementation()
+{
+	// 부활 몽타주
+	if (ReviveMontage)
+	{
+		if (USkeletalMeshComponent* SkelMesh = GetMesh())
+		{
+			if (UAnimInstance* AnimInst = SkelMesh->GetAnimInstance())
+			{
+				AnimInst->Montage_Play(ReviveMontage);
+			}
+		}
+	}
+
+	// 로컬 클라에서 카메라 복구
+	if (IsLocallyControlled() && CameraBoom)
+	{
+		CameraBoom->TargetArmLength = DefaultTargetArmLength;
+		CameraBoom->SocketOffset = DefaultSocketOffset;
+	}
+}
+
+// ── Revive 입력 ──
+
+void AHellunaHeroCharacter::Input_ReviveStarted(const FInputActionValue& Value)
+{
+	// 자신이 다운/사망이면 부활 불가
+	if (HeroHealthComponent && (HeroHealthComponent->IsDowned() || HeroHealthComponent->IsDead()))
+		return;
+
+	// 근처 다운 팀원 탐색
+	AHellunaHeroCharacter* Target = FindNearestDownedHero();
+	if (!Target) return;
+
+	Server_StartRevive(Target);
+}
+
+void AHellunaHeroCharacter::Input_ReviveCompleted(const FInputActionValue& Value)
+{
+	Server_StopRevive();
+}
+
+AHellunaHeroCharacter* AHellunaHeroCharacter::FindNearestDownedHero() const
+{
+	UWorld* World = GetWorld();
+	if (!World) return nullptr;
+
+	const FVector MyLoc = GetActorLocation();
+	AHellunaHeroCharacter* Best = nullptr;
+	float BestDistSq = ReviveRange * ReviveRange;
+
+	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+	{
+		APlayerController* PC = It->Get();
+		if (!IsValid(PC)) continue;
+
+		AHellunaHeroCharacter* OtherHero = Cast<AHellunaHeroCharacter>(PC->GetPawn());
+		if (!OtherHero || OtherHero == this) continue;
+
+		UHellunaHealthComponent* HC = OtherHero->HeroHealthComponent;
+		if (!HC || !HC->IsDowned()) continue;
+
+		// 이미 다른 사람이 부활 중이면 스킵 (1:1 제한)
+		if (OtherHero->CurrentReviver != nullptr) continue;
+
+		const float DistSq = FVector::DistSquared(MyLoc, OtherHero->GetActorLocation());
+		if (DistSq < BestDistSq)
+		{
+			BestDistSq = DistSq;
+			Best = OtherHero;
+		}
+	}
+
+	return Best;
+}
+
+void AHellunaHeroCharacter::Server_StartRevive_Implementation(AHellunaHeroCharacter* TargetHero)
+{
+	if (!IsValid(TargetHero)) return;
+	if (!TargetHero->HeroHealthComponent || !TargetHero->HeroHealthComponent->IsDowned()) return;
+	if (HeroHealthComponent && (HeroHealthComponent->IsDowned() || HeroHealthComponent->IsDead())) return;
+
+	// 거리 재검증 (서버 측)
+	const float DistSq = FVector::DistSquared(GetActorLocation(), TargetHero->GetActorLocation());
+	if (DistSq > ReviveRange * ReviveRange) return;
+
+	// 1:1 제한 체크
+	if (TargetHero->CurrentReviver != nullptr && TargetHero->CurrentReviver != this) return;
+
+	// 이전 타겟 정리
+	if (ReviveTarget && ReviveTarget != TargetHero)
+	{
+		ReviveTarget->CurrentReviver = nullptr;
+		ReviveTarget->ReviveProgress = 0.f;
+	}
+
+	ReviveTarget = TargetHero;
+	TargetHero->CurrentReviver = this;
+	TargetHero->ReviveProgress = 0.f;
+
+	// 0.1초 간격 Revive 틱
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().SetTimer(
+			ReviveTickTimerHandle, this, &ThisClass::TickRevive, 0.1f, true);
+	}
+
+	UE_LOG(LogHelluna, Log, TEXT("[Revive] %s → %s 부활 시작"), *GetName(), *TargetHero->GetName());
+}
+
+void AHellunaHeroCharacter::Server_StopRevive_Implementation()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ReviveTickTimerHandle);
+	}
+
+	if (ReviveTarget)
+	{
+		ReviveTarget->CurrentReviver = nullptr;
+		ReviveTarget->ReviveProgress = 0.f;
+		ReviveTarget = nullptr;
+	}
+}
+
+void AHellunaHeroCharacter::TickRevive()
+{
+	// 유효성 체크: 대상 유효 + 다운 + 본인 생존
+	if (!IsValid(ReviveTarget) || !ReviveTarget->HeroHealthComponent
+		|| !ReviveTarget->HeroHealthComponent->IsDowned()
+		|| (HeroHealthComponent && (HeroHealthComponent->IsDowned() || HeroHealthComponent->IsDead())))
+	{
+		Server_StopRevive_Implementation();
+		return;
+	}
+
+	// 거리 체크
+	const float DistSq = FVector::DistSquared(GetActorLocation(), ReviveTarget->GetActorLocation());
+	if (DistSq > ReviveRange * ReviveRange)
+	{
+		Server_StopRevive_Implementation();
+		return;
+	}
+
+	// 진행률 증가 (0.1초 / ReviveDuration)
+	const float ProgressPerTick = (ReviveDuration > 0.f) ? (0.1f / ReviveDuration) : 1.f;
+	ReviveTarget->ReviveProgress = FMath::Clamp(ReviveTarget->ReviveProgress + ProgressPerTick, 0.f, 1.f);
+
+	// 완료
+	if (ReviveTarget->ReviveProgress >= 1.f)
+	{
+		AHellunaHeroCharacter* Target = ReviveTarget;
+
+		// 타이머 클리어 먼저 (ClearTimer 후 캡처 접근 금지 규칙)
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(ReviveTickTimerHandle);
+		}
+
+		// 참조 정리
+		Target->CurrentReviver = nullptr;
+		Target->ReviveProgress = 0.f;
+		ReviveTarget = nullptr;
+
+		// HealthComponent 부활 처리
+		if (Target->HeroHealthComponent)
+		{
+			Target->HeroHealthComponent->Revive(Target->ReviveHealthPercent);
+		}
+
+		// 다운 태그 제거
+		if (Target->AbilitySystemComponent)
+		{
+			Target->AbilitySystemComponent->RemoveLooseGameplayTag(HellunaGameplayTags::Player_State_Downed);
+		}
+
+		// 이동/시야 잠금 해제
+		Target->UnlockMoveInput();
+		Target->UnlockLookInput();
+		if (UCharacterMovementComponent* CMC = Target->GetCharacterMovement())
+		{
+			CMC->SetMovementMode(MOVE_Walking);
+		}
+
+		// 부활 몽타주 + 카메라 복구
+		Target->Multicast_PlayHeroRevived();
+
+		UE_LOG(LogHelluna, Log, TEXT("[Revive] %s → %s 부활 완료"), *GetName(), *Target->GetName());
+	}
+}
+
+void AHellunaHeroCharacter::OnRep_ReviveProgress()
+{
+	// 클라이언트에서 UI 업데이트용 — 추후 위젯에서 바인딩
 }
