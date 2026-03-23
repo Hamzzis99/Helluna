@@ -84,7 +84,7 @@ void UHellunaAbilitySystemComponent::OnAbilityInputPressed(const FGameplayTag& I
 	// ============================================
 	// ⭐ [멀티플레이 버그 수정] 로컬 제어 캐릭터만 입력 처리
 	// ============================================
-	AActor* MyAvatarActor = GetAvatarActor();
+	MyAvatarActor = GetAvatarActor();
 	if (APawn* Pawn = Cast<APawn>(MyAvatarActor))
 	{
 		if (!Pawn->IsLocallyControlled())

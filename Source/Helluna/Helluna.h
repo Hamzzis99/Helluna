@@ -32,7 +32,7 @@
 #define HELLUNA_DEBUG_UDS 0
 
 // 🎮 어빌리티 시스템 (ASC - OnAbilityInputPressed/Released, TryActivateAbility 등)
-#define HELLUNA_DEBUG_ASC 0
+#define HELLUNA_DEBUG_ASC 1
 
 // 📦 인벤토리 저장/로드 (SaveAllPlayersInventory, LoadAndSendInventoryToClient 등)
 #define HELLUNA_DEBUG_INVENTORY_SAVE 0

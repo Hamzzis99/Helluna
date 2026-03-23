@@ -73,8 +73,8 @@ void AHellunaHeroController::BeginPlay()
 		{
 			if (UEnhancedInputLocalPlayerSubsystem* PuzzleSub = PuzzleLP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
 			{
-				PuzzleSub->AddMappingContext(PuzzleMappingContext, 5);
-				UE_LOG(LogTemp, Log, TEXT("[HeroController] PuzzleMappingContext 추가 완료"));
+				PuzzleSub->AddMappingContext(PuzzleMappingContext, 10);
+				UE_LOG(LogTemp, Warning, TEXT("[PuzzleInput] PuzzleMappingContext 추가 완료 (priority=10)"));
 			}
 		}
 

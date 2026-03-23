@@ -465,12 +465,17 @@ void AHellunaEnemyCharacter::OnMonsterDeath(AActor* DeadActor, AActor* KillerAct
 	{
 		Capsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	}
+	// 메시 충돌도 완전 비활성화 (Physical Asset 바디가 캐릭터를 밀지 않도록)
+	if (USkeletalMeshComponent* EnemyMesh = GetMesh())
+	{
+		EnemyMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
 	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
 	{
 		MoveComp->StopMovementImmediately();
 		MoveComp->DisableMovement();
 	}
-	UE_LOG(LogTemp, Warning, TEXT("[OnMonsterDeath] %s 캡슐 충돌 OFF + 이동 비활성화"), *GetName());
+	UE_LOG(LogTemp, Warning, TEXT("[OnMonsterDeath] %s 캡슐+메시 충돌 OFF + 이동 비활성화"), *GetName());
 
 	UE_LOG(LogTemp, Warning, TEXT("[OnMonsterDeath] ✅ Death 이벤트 전송 — %s"), *GetName());
 	STComp->SendStateTreeEvent(DeathTag);
