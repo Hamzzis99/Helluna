@@ -17,6 +17,16 @@ bool UHellunaHeroGameplayAbility::CanActivateAbility(
 	if (!Super::CanActivateAbility(Handle, ActorInfo, SourceTags, TargetTags, OptionalRelevantTags))
 		return false;
 
+	// [Downed] 다운 상태: bIgnoreParryBlock과 무관하게 모든 GA 차단
+	if (ActorInfo && ActorInfo->AvatarActor.IsValid())
+	{
+		if (UHellunaFunctionLibrary::NativeDoesActorHaveTag(
+			ActorInfo->AvatarActor.Get(), HellunaGameplayTags::Player_State_Downed))
+		{
+			return false;
+		}
+	}
+
 	// 패링/킥 중 다른 GA 차단 (GunParry/MeleeKick 자신은 bIgnoreParryBlock=true로 스킵)
 	if (!bIgnoreParryBlock && ActorInfo && ActorInfo->AvatarActor.IsValid())
 	{
