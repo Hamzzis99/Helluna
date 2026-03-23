@@ -23,6 +23,11 @@
 #include "InputMappingContext.h"
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
 
+// [Puzzle] 퍼즐 시스템
+#include "Puzzle/PuzzleCubeActor.h"
+#include "Puzzle/PuzzleGridWidget.h"
+#include "EngineUtils.h" // TActorIterator
+
 
 
 AHellunaHeroController::AHellunaHeroController()
@@ -61,6 +66,25 @@ void AHellunaHeroController::BeginPlay()
 		UE_LOG(LogHellunaVote, Log, TEXT("[HellunaHeroController] 투표 위젯 초기화 타이머 설정 (0.5초)"));
 	}
 
+	// [Puzzle] 퍼즐 입력 바인딩 (로컬 플레이어만, GameState 불필요)
+	if (IsLocalController() && PuzzleInteractAction && PuzzleMappingContext)
+	{
+		if (ULocalPlayer* PuzzleLP = GetLocalPlayer())
+		{
+			if (UEnhancedInputLocalPlayerSubsystem* PuzzleSub = PuzzleLP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
+			{
+				PuzzleSub->AddMappingContext(PuzzleMappingContext, 5);
+				UE_LOG(LogTemp, Log, TEXT("[HeroController] PuzzleMappingContext 추가 완료"));
+			}
+		}
+
+		if (UEnhancedInputComponent* PuzzleEIC = Cast<UEnhancedInputComponent>(InputComponent))
+		{
+			PuzzleEIC->BindAction(PuzzleInteractAction, ETriggerEvent::Triggered, this, &AHellunaHeroController::OnPuzzleInteractInput);
+			UE_LOG(LogTemp, Log, TEXT("[HeroController] PuzzleInteractAction 바인딩 완료"));
+		}
+	}
+
 	// [Phase 10] 채팅 위젯 초기화 (로컬 플레이어만)
 	if (IsLocalController() && ChatWidgetClass)
 	{
@@ -85,6 +109,14 @@ void AHellunaHeroController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	// C5: 타이머 핸들 정리 (파괴 후 콜백 방지)
 	GetWorldTimerManager().ClearTimer(VoteWidgetInitTimerHandle);
 	GetWorldTimerManager().ClearTimer(ChatWidgetInitTimerHandle);
+
+	// [Puzzle] 퍼즐 위젯 정리
+	if (IsValid(ActivePuzzleWidget))
+	{
+		ActivePuzzleWidget->RemoveFromParent();
+		ActivePuzzleWidget = nullptr;
+	}
+	bInPuzzleMode = false;
 
 	// B7: 채팅 델리게이트 언바인딩 (GameState가 파괴된 위젯 참조 방지)
 	if (IsValid(ChatWidgetInstance))
@@ -478,4 +510,244 @@ void AHellunaHeroController::Server_SendChatMessage_Implementation(const FString
 	{
 		UE_LOG(LogHellunaChat, Warning, TEXT("[HeroController] Server_SendChatMessage: GameState가 null!"));
 	}
+}
+
+// ============================================================================
+// [Puzzle] 퍼즐 시스템
+// ============================================================================
+
+void AHellunaHeroController::OnPuzzleInteractInput(const FInputActionValue& Value)
+{
+	if (bInPuzzleMode)
+	{
+		return;
+	}
+
+	// 클라이언트 측: 근처 퍼즐 큐브 확인
+	APawn* MyPawn = GetPawn();
+	if (!IsValid(MyPawn))
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	APuzzleCubeActor* NearestCube = nullptr;
+	float NearestDist = FLT_MAX;
+
+	for (TActorIterator<APuzzleCubeActor> It(World); It; ++It)
+	{
+		APuzzleCubeActor* Cube = *It;
+		if (!IsValid(Cube))
+		{
+			continue;
+		}
+
+		const float Dist = FVector::Dist(MyPawn->GetActorLocation(), Cube->GetActorLocation());
+		if (Dist < Cube->GetInteractionRadius() && Dist < NearestDist)
+		{
+			NearestDist = Dist;
+			NearestCube = Cube;
+		}
+	}
+
+	if (!NearestCube)
+	{
+		return;
+	}
+
+	LocalTargetPuzzleCube = NearestCube;
+
+	// 로그 #12
+	UE_LOG(LogTemp, Warning,
+		TEXT("[PuzzleController] TryEnterPuzzle: Cube=%s, Distance=%.1f"),
+		*GetNameSafe(NearestCube), NearestDist);
+
+	Server_PuzzleTryEnter();
+}
+
+// --- ExitPuzzle ---
+
+void AHellunaHeroController::ExitPuzzle()
+{
+	// 로그 #13
+	UE_LOG(LogTemp, Warning, TEXT("[PuzzleController] ExitPuzzle"));
+
+	if (IsValid(ActivePuzzleWidget))
+	{
+		ActivePuzzleWidget->RemoveFromParent();
+		ActivePuzzleWidget = nullptr;
+	}
+
+	bInPuzzleMode = false;
+
+	// 입력 모드 복원
+	SetInputMode(FInputModeGameOnly());
+
+	// 서버에 퇴출 알림
+	Server_PuzzleExit();
+}
+
+// --- RequestPuzzleRotateCell ---
+
+void AHellunaHeroController::RequestPuzzleRotateCell(int32 CellIndex)
+{
+	Server_PuzzleRotateCell(CellIndex);
+}
+
+// --- Server_PuzzleTryEnter ---
+
+bool AHellunaHeroController::Server_PuzzleTryEnter_Validate()
+{
+	return true;
+}
+
+void AHellunaHeroController::Server_PuzzleTryEnter_Implementation()
+{
+	APawn* MyPawn = GetPawn();
+	if (!IsValid(MyPawn))
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	// 서버 측 근처 퍼즐 큐브 탐색 (보안 검증)
+	APuzzleCubeActor* NearestCube = nullptr;
+	float NearestDist = FLT_MAX;
+
+	for (TActorIterator<APuzzleCubeActor> It(World); It; ++It)
+	{
+		APuzzleCubeActor* Cube = *It;
+		if (!IsValid(Cube))
+		{
+			continue;
+		}
+
+		const float Dist = FVector::Dist(MyPawn->GetActorLocation(), Cube->GetActorLocation());
+		if (Dist < Cube->GetInteractionRadius() && Dist < NearestDist)
+		{
+			NearestDist = Dist;
+			NearestCube = Cube;
+		}
+	}
+
+	if (!NearestCube)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PuzzleController] Server_PuzzleTryEnter: 근처에 PuzzleCube 없음"));
+		return;
+	}
+
+	if (NearestCube->TryEnterPuzzle(this))
+	{
+		ServerPuzzleCube = NearestCube;
+		Client_PuzzleEntered();
+	}
+}
+
+// --- Server_PuzzleRotateCell ---
+
+bool AHellunaHeroController::Server_PuzzleRotateCell_Validate(int32 CellIndex)
+{
+	return CellIndex >= 0 && CellIndex < 16;
+}
+
+void AHellunaHeroController::Server_PuzzleRotateCell_Implementation(int32 CellIndex)
+{
+	if (!ServerPuzzleCube.IsValid())
+	{
+		return;
+	}
+
+	ServerPuzzleCube->RotateCell(CellIndex);
+}
+
+// --- Server_PuzzleExit ---
+
+bool AHellunaHeroController::Server_PuzzleExit_Validate()
+{
+	return true;
+}
+
+void AHellunaHeroController::Server_PuzzleExit_Implementation()
+{
+	if (ServerPuzzleCube.IsValid())
+	{
+		ServerPuzzleCube->ExitPuzzle(this);
+		ServerPuzzleCube = nullptr;
+	}
+}
+
+// --- Client_PuzzleEntered ---
+
+void AHellunaHeroController::Client_PuzzleEntered_Implementation()
+{
+	if (bInPuzzleMode)
+	{
+		return;
+	}
+
+	if (!PuzzleGridWidgetClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PuzzleController] PuzzleGridWidgetClass가 설정되지 않음 — BP에서 설정 필요"));
+		return;
+	}
+
+	if (!LocalTargetPuzzleCube.IsValid())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PuzzleController] LocalTargetPuzzleCube가 null"));
+		return;
+	}
+
+	// 기존 위젯 제거
+	if (IsValid(ActivePuzzleWidget))
+	{
+		ActivePuzzleWidget->RemoveFromParent();
+		ActivePuzzleWidget = nullptr;
+	}
+
+	// 위젯 생성
+	ActivePuzzleWidget = CreateWidget<UPuzzleGridWidget>(this, PuzzleGridWidgetClass);
+	if (!IsValid(ActivePuzzleWidget))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[PuzzleController] 퍼즐 위젯 생성 실패!"));
+		return;
+	}
+
+	ActivePuzzleWidget->AddToViewport(50);
+	ActivePuzzleWidget->InitGrid(LocalTargetPuzzleCube.Get());
+
+	bInPuzzleMode = true;
+
+	// GameAndUI 모드: WASD/마우스 유지 + 위젯 키보드 포커스
+	FInputModeGameAndUI InputMode;
+	InputMode.SetWidgetToFocus(ActivePuzzleWidget->TakeWidget());
+	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	SetInputMode(InputMode);
+
+	UE_LOG(LogTemp, Log, TEXT("[PuzzleController] 퍼즐 모드 진입 완료"));
+}
+
+// --- Client_PuzzleForceExit ---
+
+void AHellunaHeroController::Client_PuzzleForceExit_Implementation()
+{
+	UE_LOG(LogTemp, Warning, TEXT("[PuzzleController] Client_PuzzleForceExit: 서버에 의한 강제 퇴출"));
+
+	if (IsValid(ActivePuzzleWidget))
+	{
+		ActivePuzzleWidget->RemoveFromParent();
+		ActivePuzzleWidget = nullptr;
+	}
+
+	bInPuzzleMode = false;
+	SetInputMode(FInputModeGameOnly());
 }

@@ -13,6 +13,8 @@ class UHellunaGameResultWidget;
 class UHellunaChatWidget;
 class UInputAction;
 class UInputMappingContext;
+class APuzzleCubeActor;
+class UPuzzleGridWidget;
 
 /**
  * @brief   Helluna 영웅 전용 PlayerController
@@ -195,4 +197,65 @@ private:
 	/** 생성된 결과 위젯 인스턴스 */
 	UPROPERTY()
 	TObjectPtr<UHellunaGameResultWidget> GameResultWidgetInstance;
+
+	// =========================================================================================
+	// [Puzzle] 퍼즐 시스템
+	// =========================================================================================
+public:
+	/** 퍼즐 모드 종료 (위젯/입력에서 호출) */
+	void ExitPuzzle();
+
+	/** 퍼즐 셀 회전 요청 (위젯에서 호출 → Server RPC) */
+	void RequestPuzzleRotateCell(int32 CellIndex);
+
+	/** 현재 퍼즐 모드 여부 */
+	UPROPERTY(BlueprintReadOnly, Category = "Puzzle (퍼즐)")
+	bool bInPuzzleMode = false;
+
+	// --- Server RPCs ---
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_PuzzleTryEnter();
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_PuzzleRotateCell(int32 CellIndex);
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_PuzzleExit();
+
+	// --- Client RPCs ---
+	UFUNCTION(Client, Reliable)
+	void Client_PuzzleEntered();
+
+	UFUNCTION(Client, Reliable)
+	void Client_PuzzleForceExit();
+
+protected:
+	/** 퍼즐 위젯 클래스 (BP에서 설정) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Puzzle|UI (퍼즐|UI)",
+		meta = (DisplayName = "Puzzle Grid Widget Class (퍼즐 그리드 위젯 클래스)"))
+	TSubclassOf<UPuzzleGridWidget> PuzzleGridWidgetClass;
+
+	/** 퍼즐 상호작용 입력 액션 (F 홀드에 매핑) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Puzzle|Input (퍼즐|입력)",
+		meta = (DisplayName = "Puzzle Interact Action (퍼즐 상호작용 액션)"))
+	TObjectPtr<UInputAction> PuzzleInteractAction;
+
+	/** 퍼즐 입력 매핑 컨텍스트 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Puzzle|Input (퍼즐|입력)",
+		meta = (DisplayName = "Puzzle Mapping Context (퍼즐 입력 매핑)"))
+	TObjectPtr<UInputMappingContext> PuzzleMappingContext;
+
+private:
+	/** 현재 활성 퍼즐 위젯 */
+	UPROPERTY()
+	TObjectPtr<UPuzzleGridWidget> ActivePuzzleWidget;
+
+	/** 클라이언트 측 타겟 퍼즐 큐브 */
+	TWeakObjectPtr<APuzzleCubeActor> LocalTargetPuzzleCube;
+
+	/** 서버 측 현재 퍼즐 큐브 */
+	TWeakObjectPtr<APuzzleCubeActor> ServerPuzzleCube;
+
+	/** 퍼즐 상호작용 입력 핸들러 (F 홀드 완료) */
+	void OnPuzzleInteractInput(const struct FInputActionValue& Value);
 };
