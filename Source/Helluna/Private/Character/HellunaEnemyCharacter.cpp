@@ -302,6 +302,8 @@ void AHellunaEnemyCharacter::Multicast_ActivateRagdoll_Implementation(
 
 	// 래그돌 활성화
 	EnemyMesh->SetCollisionProfileName(TEXT("Ragdoll"));
+	// Pawn 채널 Ignore — 래그돌이 캐릭터를 막지 않도록 (바닥/벽 충돌은 유지)
+	EnemyMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
 	EnemyMesh->SetAllBodiesSimulatePhysics(true);
 	EnemyMesh->SetSimulatePhysics(true);
 	EnemyMesh->WakeAllRigidBodies();
