@@ -86,4 +86,14 @@ namespace HellunaGameplayTags
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Event_Kick_Impact);
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Hero_State_Kicking);
 
+	// ═══════════════════════════════════════════════════════════
+	// Downed/Revive System Tags
+	// ═══════════════════════════════════════════════════════════
+
+	/** 다운 상태 (Downed State) — 어빌리티 차단용 **/
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_State_Downed);
+
+	/** 부활 입력 (Revive Input) — F키 홀드 **/
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Revive);
+
 }

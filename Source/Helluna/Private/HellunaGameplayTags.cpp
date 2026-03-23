@@ -76,4 +76,8 @@ namespace HellunaGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Event_Kick_Impact, "Event.Kick.Impact");
 	UE_DEFINE_GAMEPLAY_TAG(Hero_State_Kicking, "Hero.State.Kicking");
 
+	// Downed/Revive System
+	UE_DEFINE_GAMEPLAY_TAG(Player_State_Downed, "Player.State.Downed");
+	UE_DEFINE_GAMEPLAY_TAG(InputTag_Revive, "InputTag.Revive");
+
 }

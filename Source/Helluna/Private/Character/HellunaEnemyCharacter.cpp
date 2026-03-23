@@ -460,6 +460,18 @@ void AHellunaEnemyCharacter::OnMonsterDeath(AActor* DeadActor, AActor* KillerAct
 		return;
 	}
 
+	// 사망 즉시 캡슐 충돌 비활성화 — 사망 애니메이션 중 Overlap 판정 방지
+	if (UCapsuleComponent* Capsule = GetCapsuleComponent())
+	{
+		Capsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
+	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
+	{
+		MoveComp->StopMovementImmediately();
+		MoveComp->DisableMovement();
+	}
+	UE_LOG(LogTemp, Warning, TEXT("[OnMonsterDeath] %s 캡슐 충돌 OFF + 이동 비활성화"), *GetName());
+
 	UE_LOG(LogTemp, Warning, TEXT("[OnMonsterDeath] ✅ Death 이벤트 전송 — %s"), *GetName());
 	STComp->SendStateTreeEvent(DeathTag);
 }

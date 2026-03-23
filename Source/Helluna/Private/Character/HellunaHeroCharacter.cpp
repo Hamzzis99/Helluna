@@ -124,6 +124,7 @@ void AHellunaHeroCharacter::BeginPlay()
 	{
 		HeroHealthComponent->OnHealthChanged.AddUniqueDynamic(this, &AHellunaHeroCharacter::OnHeroHealthChanged);
 		HeroHealthComponent->OnDeath.AddUniqueDynamic(this, &AHellunaHeroCharacter::OnHeroDeath);
+		HeroHealthComponent->OnDowned.AddUniqueDynamic(this, &AHellunaHeroCharacter::OnHeroDowned);
 	}
 
 	// 로컬 플레이어 전용 무기 HUD 생성
@@ -433,6 +434,10 @@ void AHellunaHeroCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInp
 
 	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Move, ETriggerEvent::Triggered, this, &ThisClass::Input_Move);
 	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Look, ETriggerEvent::Triggered, this, &ThisClass::Input_Look);
+
+	// [Downed/Revive] F키 부활 입력 바인딩
+	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Revive, ETriggerEvent::Started, this, &ThisClass::Input_ReviveStarted);
+	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Revive, ETriggerEvent::Completed, this, &ThisClass::Input_ReviveCompleted);
 
 	HellunaInputComponent->BindAbilityInputAction(InputConfigDataAsset, this, &ThisClass::Input_AbilityInputPressed, &ThisClass::Input_AbilityInputReleased);
 }
@@ -1053,16 +1058,36 @@ void AHellunaHeroCharacter::OnHeroHealthChanged(
 			*GetName(), Delta, OldHealth, NewHealth), FColor::Yellow);
 	}
 
-	// 피격 애니메이션 (데미지를 받았고 살아있을 때만)
+	// 피격 애니메이션 (데미지를 받았고 살아있을 때만, 다운 중 제외)
 	if (Delta > 0.f && NewHealth > 0.f && HitReactMontage)
 	{
-		Multicast_PlayHeroHitReact();
+		if (!HeroHealthComponent || !HeroHealthComponent->IsDowned())
+		{
+			Multicast_PlayHeroHitReact();
+		}
 	}
 }
 
 void AHellunaHeroCharacter::OnHeroDeath(AActor* DeadActor, AActor* KillerActor)
 {
 	if (!HasAuthority()) return;
+
+	// [Downed] 다운 태그 제거 (Downed→사망 경로)
+	if (AbilitySystemComponent)
+	{
+		AbilitySystemComponent->RemoveLooseGameplayTag(HellunaGameplayTags::Player_State_Downed);
+	}
+	// [Downed] Revive 관계 정리
+	if (CurrentReviver)
+	{
+		CurrentReviver->ReviveTarget = nullptr;
+		if (UWorld* W = GetWorld())
+		{
+			W->GetTimerManager().ClearTimer(CurrentReviver->ReviveTickTimerHandle);
+		}
+		CurrentReviver = nullptr;
+	}
+	ReviveProgress = 0.f;
 
 	// 사망 애니메이션
 	if (DeathMontage)

@@ -243,6 +243,57 @@ public:
 			ToolTip = "HP가 0이 되어 사망할 때 재생할 Death 애니메이션 몽타주입니다."))
 	TObjectPtr<UAnimMontage> DeathMontage = nullptr;
 
+	// =========================================================
+	// ★ Downed/Revive System (다운/부활)
+	// =========================================================
+
+	/** 다운 시 쓰러지는 몽타주 */
+	UPROPERTY(EditDefaultsOnly, Category = "Animation|Downed",
+		meta = (DisplayName = "Downed 몽타주 (Downed Montage)"))
+	TObjectPtr<UAnimMontage> DownedMontage = nullptr;
+
+	/** 부활 시 일어나는 몽타주 */
+	UPROPERTY(EditDefaultsOnly, Category = "Animation|Downed",
+		meta = (DisplayName = "Revive 몽타주 (Revive Montage)"))
+	TObjectPtr<UAnimMontage> ReviveMontage = nullptr;
+
+	/** 부활 시 HP 비율 (MaxHP * 비율) */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|Revive",
+		meta = (DisplayName = "Revive HP Percent (부활 시 HP 비율)", ClampMin = "0.01", ClampMax = "1.0"))
+	float ReviveHealthPercent = 0.2f;
+
+	/** 부활 소요 시간 (초) */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|Revive",
+		meta = (DisplayName = "Revive Duration (부활 소요 시간, 초)", ClampMin = "0.5"))
+	float ReviveDuration = 5.f;
+
+	/** 부활 가능 거리 (cm) */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|Revive",
+		meta = (DisplayName = "Revive Range (부활 거리, cm)", ClampMin = "50.0"))
+	float ReviveRange = 250.f;
+
+	/** 현재 Revive 진행률 (0~1, 서버→클라 Replicated, UI용) */
+	UPROPERTY(ReplicatedUsing = OnRep_ReviveProgress, BlueprintReadOnly, Category = "Downed|Revive")
+	float ReviveProgress = 0.f;
+
+	/** 나를 부활시키고 있는 사람 (서버 전용) */
+	UPROPERTY()
+	TObjectPtr<AHellunaHeroCharacter> CurrentReviver = nullptr;
+
+	/** 내가 부활시키고 있는 대상 (서버 전용) */
+	UPROPERTY()
+	TObjectPtr<AHellunaHeroCharacter> ReviveTarget = nullptr;
+
+	/** 다운 카메라 거리 */
+	UPROPERTY(EditDefaultsOnly, Category = "Camera|Downed",
+		meta = (DisplayName = "Downed Camera Arm Length (다운 시 카메라 거리)"))
+	float DownedCameraArmLength = 150.f;
+
+	/** 다운 카메라 오프셋 */
+	UPROPERTY(EditDefaultsOnly, Category = "Camera|Downed",
+		meta = (DisplayName = "Downed Camera Socket Offset (다운 시 카메라 오프셋)"))
+	FVector DownedCameraSocketOffset = FVector(0.f, 60.f, 20.f);
+
 protected:
 	/** HealthComponent (피격/사망 처리) */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Component",
@@ -260,6 +311,10 @@ protected:
 	UFUNCTION()
 	void OnHeroDeath(AActor* DeadActor, AActor* KillerActor);
 
+	/** 다운 델리게이트 바인딩 */
+	UFUNCTION()
+	void OnHeroDowned(AActor* DownedActor, AActor* InstigatorActor);
+
 	/** 피격 몽타주 멀티캐스트 */
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayHeroHitReact();
@@ -267,6 +322,35 @@ protected:
 	/** 사망 몽타주 멀티캐스트 */
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayHeroDeath();
+
+	/** 다운 몽타주 + 카메라 멀티캐스트 */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_PlayHeroDowned();
+
+	/** 부활 몽타주 + 카메라 복구 멀티캐스트 */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_PlayHeroRevived();
+
+	// ── Revive 입력 (F키 홀드) ──
+	void Input_ReviveStarted(const FInputActionValue& Value);
+	void Input_ReviveCompleted(const FInputActionValue& Value);
+
+	/** 서버 RPC: 부활 시작 */
+	UFUNCTION(Server, Reliable)
+	void Server_StartRevive(AHellunaHeroCharacter* TargetHero);
+
+	/** 서버 RPC: 부활 중단 */
+	UFUNCTION(Server, Reliable)
+	void Server_StopRevive();
+
+	UFUNCTION()
+	void OnRep_ReviveProgress();
+
+	FTimerHandle ReviveTickTimerHandle;
+	void TickRevive();
+
+	/** 로컬: 근처 다운 팀원 탐색 */
+	AHellunaHeroCharacter* FindNearestDownedHero() const;
 
 public:
 	// =========================================================
