@@ -221,6 +221,71 @@ namespace PuzzleUtils
 	}
 
 	/**
+	 * Start에서 BFS로 현재 연결된 셀 인덱스 집합 반환
+	 * CheckSolved와 동일 로직이지만 End 도달 여부와 무관하게 연결된 모든 셀 반환
+	 */
+	inline TSet<int32> GetConnectedCells(const FPuzzleGridData& Grid)
+	{
+		TSet<int32> Connected;
+		const int32 TotalCells = Grid.GridSize * Grid.GridSize;
+		if (Grid.Cells.Num() != TotalCells || !Grid.Cells.IsValidIndex(Grid.StartIndex))
+		{
+			return Connected;
+		}
+
+		TArray<int32> Queue;
+		Queue.Add(Grid.StartIndex);
+		Connected.Add(Grid.StartIndex);
+		int32 QueueHead = 0;
+
+		while (QueueHead < Queue.Num())
+		{
+			const int32 CurrentIndex = Queue[QueueHead++];
+			const FPuzzleCell& CurrentCell = Grid.Cells[CurrentIndex];
+			const TArray<FIntPoint> Connections = GetConnections(CurrentCell);
+
+			for (const FIntPoint& Dir : Connections)
+			{
+				const int32 NewRow = CurrentCell.Row + Dir.X;
+				const int32 NewCol = CurrentCell.Col + Dir.Y;
+
+				if (NewRow < 0 || NewRow >= Grid.GridSize || NewCol < 0 || NewCol >= Grid.GridSize)
+				{
+					continue;
+				}
+
+				const int32 NewIndex = NewRow * Grid.GridSize + NewCol;
+				if (Connected.Contains(NewIndex))
+				{
+					continue;
+				}
+
+				const FPuzzleCell& AdjacentCell = Grid.Cells[NewIndex];
+				const TArray<FIntPoint> AdjConnections = GetConnections(AdjacentCell);
+				const FIntPoint ReverseDir = GetOppositeDirection(Dir);
+
+				bool bMutualConnection = false;
+				for (const FIntPoint& AdjDir : AdjConnections)
+				{
+					if (AdjDir == ReverseDir)
+					{
+						bMutualConnection = true;
+						break;
+					}
+				}
+
+				if (bMutualConnection)
+				{
+					Connected.Add(NewIndex);
+					Queue.Add(NewIndex);
+				}
+			}
+		}
+
+		return Connected;
+	}
+
+	/**
 	 * 두 연결 방향으로부터 파이프 타입과 회전 결정
 	 * @param Conn1  첫 번째 연결 방향
 	 * @param Conn2  두 번째 연결 방향

@@ -160,8 +160,16 @@ void UPuzzleGridWidget::RefreshGrid()
 	const FPuzzleGridData& Grid = OwningCube->PuzzleGrid;
 	const int32 TotalCells = Grid.GridSize * Grid.GridSize;
 
-	// 로그 #11
-	UE_LOG(LogTemp, Warning, TEXT("[PuzzleWidget] RefreshGrid: Updating %d cells"), TotalCells);
+	// 연결 상태 계산
+	ConnectedCells = PuzzleUtils::GetConnectedCells(Grid);
+
+	// 로그
+	UE_LOG(LogTemp, Warning, TEXT("[PuzzleWidget] RefreshGrid: Connected cells = %d / %d"),
+		ConnectedCells.Num(), TotalCells);
+
+	// 연결 Tint 색상
+	static const FLinearColor ConnectedColor = FLinearColor(0.0f, 0.8f, 1.0f, 1.0f); // 시안
+	static const FLinearColor DefaultColor = FLinearColor(1.0f, 1.0f, 1.0f, 1.0f);   // 흰색
 
 	for (int32 i = 0; i < TotalCells && i < CellPipeImages.Num(); ++i)
 	{
@@ -191,6 +199,10 @@ void UPuzzleGridWidget::RefreshGrid()
 
 		// 회전 적용 (RenderTransform Angle)
 		PipeImage->SetRenderTransformAngle(static_cast<float>(Cell.Rotation));
+
+		// 연결 상태에 따른 Tint 색상
+		const bool bConnected = ConnectedCells.Contains(i);
+		PipeImage->SetColorAndOpacity(bConnected ? ConnectedColor : DefaultColor);
 	}
 
 	UpdateSelectionHighlight();
@@ -255,6 +267,9 @@ void UPuzzleGridWidget::RotateSelectedCell()
 void UPuzzleGridWidget::UpdateSelectionHighlight()
 {
 	const int32 GridSize = OwningCube.IsValid() ? OwningCube->PuzzleGrid.GridSize : 4;
+
+	UE_LOG(LogTemp, Warning, TEXT("[PuzzleWidget] UpdateSelectionHighlight: (%d,%d)"),
+		SelectedRow, SelectedCol);
 
 	for (int32 i = 0; i < CellSelectionImages.Num(); ++i)
 	{

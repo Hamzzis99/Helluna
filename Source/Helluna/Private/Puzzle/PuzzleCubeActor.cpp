@@ -319,6 +319,14 @@ void APuzzleCubeActor::RotateCell(int32 CellIndex)
 	{
 		UnlockDamage();
 	}
+
+	// Standalone/Listen 서버에서는 OnRep이 자동 호출되지 않으므로 수동 브로드캐스트
+	// 데디서버에서도 구조체 내부 변경의 더티 마킹 보장을 위해 안전하게 호출
+	if (HasAuthority())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PuzzleCube] RotateCell: Broadcasting OnRep_PuzzleGrid (server-side manual call)"));
+		OnRep_PuzzleGrid();
+	}
 }
 
 float APuzzleCubeActor::GetInteractionRadius() const
@@ -346,6 +354,7 @@ void APuzzleCubeActor::UnlockDamage()
 		TEXT("[PuzzleCube] UnlockDamage: DamageableTime=%.1f"), DamageableTime);
 
 	// OnRep은 서버에서 자동 호출되지 않으므로 서버 측 수동 호출
+	UE_LOG(LogTemp, Warning, TEXT("[PuzzleCube] UnlockDamage: Broadcasting OnRep_bPuzzleLocked (server-side)"));
 	OnRep_bPuzzleLocked();
 }
 

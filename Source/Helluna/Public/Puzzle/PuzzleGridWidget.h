@@ -120,6 +120,9 @@ private:
 	UPROPERTY()
 	TArray<UImage*> CellSelectionImages;
 
+	/** 연결 상태 캐시 (RefreshGrid마다 갱신) */
+	TSet<int32> ConnectedCells;
+
 	/** 클라이언트 측 타이머 카운트다운 */
 	float ClientTimerRemaining = 0.f;
 	FTimerHandle ClientTimerHandle;
