@@ -137,8 +137,8 @@ private:
 		int32 MaterialAmount3
 	);
 
-	// 멀티캐스트 RPC: 모든 클라이언트에게 건물 배치 알림
-	UFUNCTION(NetMulticast, Reliable)
+	// 멀티캐스트 RPC: 모든 클라이언트에게 건물 배치 알림 (Unreliable: 이펙트/사운드 용도, Actor 자체는 Replication으로 동기화)
+	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_OnBuildingPlaced(AActor* PlacedBuilding);
 
 	// PlayerController 약한 참조

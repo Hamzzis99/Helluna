@@ -46,7 +46,7 @@ void UInv_LootContainerComponent::GetLifetimeReplicatedProps(TArray<FLifetimePro
 	DOREPLIFETIME(UInv_LootContainerComponent, ContainerInventoryList);
 	DOREPLIFETIME(UInv_LootContainerComponent, CurrentUser);
 	DOREPLIFETIME(UInv_LootContainerComponent, bActivated);
-	DOREPLIFETIME(UInv_LootContainerComponent, ContainerDisplayName);
+	DOREPLIFETIME_CONDITION(UInv_LootContainerComponent, ContainerDisplayName, COND_InitialOnly);
 }
 
 // ════════════════════════════════════════════════════════════════

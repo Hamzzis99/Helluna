@@ -1732,6 +1732,16 @@ AHellunaEnemyCharacter* UHeroGameplayAbility_GunParry::FindParryableEnemy(const 
 		AHellunaEnemyCharacter* Enemy = Cast<AHellunaEnemyCharacter>(Overlap.GetActor());
 		if (!Enemy) continue;
 
+		// 사망한 적 스킵
+		if (UHellunaHealthComponent* HC = Enemy->FindComponentByClass<UHellunaHealthComponent>())
+		{
+			if (HC->IsDead())
+			{
+				UE_LOG(LogGunParry, Verbose, TEXT("[FindParryableEnemy] %s: IsDead → 스킵"), *Enemy->GetName());
+				continue;
+			}
+		}
+
 		// 각 조건별 실패 원인 디버그
 		if (!Enemy->bCanBeParried)
 		{
@@ -1830,6 +1840,13 @@ AHellunaEnemyCharacter* UHeroGameplayAbility_GunParry::FindParryableEnemyStatic(
 	{
 		AHellunaEnemyCharacter* Enemy = Cast<AHellunaEnemyCharacter>(Overlap.GetActor());
 		if (!Enemy) continue;
+
+		// 사망한 적 스킵
+		if (UHellunaHealthComponent* HC = Enemy->FindComponentByClass<UHellunaHealthComponent>())
+		{
+			if (HC->IsDead()) continue;
+		}
+
 		if (!Enemy->bCanBeParried) continue;
 
 		const FVector ToEnemy = (Enemy->GetActorLocation() - HeroLocation).GetSafeNormal();
