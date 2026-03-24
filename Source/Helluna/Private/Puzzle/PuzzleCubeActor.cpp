@@ -116,12 +116,40 @@ void APuzzleCubeActor::GeneratePuzzle()
 
 	// 5. 경로 외 셀은 None 유지 (빈 셀로 표시)
 
-	// 6. 경로 셀(비잠금)만 회전 셔플 (플레이어가 풀어야 함)
-	for (int32 i = 0; i < Size * Size; ++i)
+	// 6. 경로 셀(비잠금)만 회전 셔플 — 정답 상태 방지
+	constexpr int32 MaxShuffleAttempts = 10;
+	for (int32 Attempt = 0; Attempt < MaxShuffleAttempts; ++Attempt)
 	{
-		if (!PuzzleGrid.Cells[i].bLocked && PuzzleGrid.Cells[i].PipeType != EPuzzlePipeType::None)
+		for (int32 i = 0; i < Size * Size; ++i)
 		{
-			PuzzleGrid.Cells[i].Rotation = FMath::RandRange(0, 3) * 90;
+			if (!PuzzleGrid.Cells[i].bLocked && PuzzleGrid.Cells[i].PipeType != EPuzzlePipeType::None)
+			{
+				PuzzleGrid.Cells[i].Rotation = FMath::RandRange(0, 3) * 90;
+			}
+		}
+
+		if (!PuzzleUtils::CheckSolved(PuzzleGrid))
+		{
+			break;
+		}
+
+		UE_LOG(LogTemp, Warning,
+			TEXT("[PuzzleCube] GeneratePuzzle: Shuffle attempt %d was already solved, re-shuffling"),
+			Attempt + 1);
+
+		// 마지막 시도에서도 정답이면 하나의 셀을 강제로 1회전
+		if (Attempt == MaxShuffleAttempts - 1)
+		{
+			for (int32 i = 0; i < Size * Size; ++i)
+			{
+				if (!PuzzleGrid.Cells[i].bLocked && PuzzleGrid.Cells[i].PipeType != EPuzzlePipeType::None)
+				{
+					PuzzleGrid.Cells[i].Rotation = (PuzzleGrid.Cells[i].Rotation + 90) % 360;
+					UE_LOG(LogTemp, Warning,
+						TEXT("[PuzzleCube] GeneratePuzzle: Force-rotated cell %d to break solution"), i);
+					break;
+				}
+			}
 		}
 	}
 
