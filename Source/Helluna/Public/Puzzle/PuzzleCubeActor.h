@@ -67,6 +67,11 @@ public:
 		meta = (DisplayName = "Max Health (최대 체력)"))
 	float MaxHealth = 1000.f;
 
+	/** 퍼즐 제한시간 (초) */
+	UPROPERTY(Replicated, EditAnywhere, BlueprintReadOnly, Category = "Puzzle",
+		meta = (DisplayName = "Puzzle Time Limit (퍼즐 제한시간)"))
+	float PuzzleTimeLimit = 30.f;
+
 	// =========================================================================================
 	// 델리게이트
 	// =========================================================================================
@@ -76,6 +81,10 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "Puzzle|Events")
 	FOnPuzzleLockChanged OnPuzzleLockChanged;
+
+	/** 시간 초과 델리게이트 (위젯에서 바인딩) */
+	UPROPERTY(BlueprintAssignable, Category = "Puzzle|Events")
+	FOnPuzzleGridUpdated OnPuzzleTimedOutDelegate;
 
 	// =========================================================================================
 	// 퍼즐 상호작용 (서버 권한 함수)
@@ -152,4 +161,25 @@ private:
 
 	/** Tick 로그 1초 1회 제한용 */
 	int32 LastLoggedSecond = -1;
+
+	// =========================================================================================
+	// 퍼즐 제한시간
+	// =========================================================================================
+
+	/** 퍼즐 타임아웃 타이머 (서버 전용) */
+	FTimerHandle PuzzleTimeoutTimerHandle;
+
+	/** 타이머 시작 (서버) */
+	void StartPuzzleTimer();
+
+	/** 시간 초과 처리 (서버) */
+	void OnPuzzleTimeout();
+
+	/** 기존 경로 유지, 회전만 셔플 (서버) */
+	void ReshufflePuzzle();
+
+	/** 시간 초과 알림 (서버→모든 클라) */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_PuzzleTimedOut();
+
 };

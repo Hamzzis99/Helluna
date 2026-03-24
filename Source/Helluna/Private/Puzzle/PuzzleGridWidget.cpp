@@ -6,7 +6,9 @@
 #include "Puzzle/PuzzleCellWidget.h"
 #include "Controller/HellunaHeroController.h"
 #include "Components/UniformGridPanel.h"
+#include "Components/CanvasPanel.h"
 #include "Components/TextBlock.h"
+#include "Components/Image.h"
 #include "TimerManager.h"
 
 // ============================================================================
@@ -26,12 +28,15 @@ void UPuzzleGridWidget::NativeDestruct()
 	{
 		OwningCube->OnPuzzleGridUpdated.RemoveDynamic(this, &UPuzzleGridWidget::RefreshGrid);
 		OwningCube->OnPuzzleLockChanged.RemoveDynamic(this, &UPuzzleGridWidget::OnLockChanged);
+		OwningCube->OnPuzzleTimedOutDelegate.RemoveDynamic(this, &UPuzzleGridWidget::OnPuzzleTimedOut);
 	}
 
 	// 타이머 정리
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(ClientTimerHandle);
+		World->GetTimerManager().ClearTimer(PuzzleCountdownTimerHandle);
+		World->GetTimerManager().ClearTimer(SuccessAnimTimerHandle);
 	}
 
 	Super::NativeDestruct();
@@ -60,6 +65,7 @@ void UPuzzleGridWidget::InitGrid(APuzzleCubeActor* Cube)
 	// 델리게이트 바인딩
 	Cube->OnPuzzleGridUpdated.AddUniqueDynamic(this, &UPuzzleGridWidget::RefreshGrid);
 	Cube->OnPuzzleLockChanged.AddUniqueDynamic(this, &UPuzzleGridWidget::OnLockChanged);
+	Cube->OnPuzzleTimedOutDelegate.AddUniqueDynamic(this, &UPuzzleGridWidget::OnPuzzleTimedOut);
 
 	// GridPanel / PuzzleCellWidgetClass 체크
 	if (!GridPanel || !PuzzleCellWidgetClass)
@@ -113,6 +119,12 @@ void UPuzzleGridWidget::InitGrid(APuzzleCubeActor* Cube)
 	// 초기 그리드 표시
 	RefreshGrid();
 	UpdateSelectionHighlight();
+
+	// 퍼즐 카운트다운 시작
+	if (OwningCube.IsValid())
+	{
+		StartCountdown(OwningCube->PuzzleTimeLimit);
+	}
 }
 
 // ============================================================================
@@ -164,6 +176,13 @@ void UPuzzleGridWidget::RefreshGrid()
 		FMath::Min(TotalCells, CellWidgets.Num()), ConnectedCells.Num());
 
 	UpdateSelectionHighlight();
+
+	// FAIL 표시 중이었으면 카운트다운 재시작 (서버가 셔플 완료)
+	if (bShowingFail && OwningCube.IsValid())
+	{
+		StartCountdown(OwningCube->PuzzleTimeLimit);
+		UE_LOG(LogTemp, Warning, TEXT("[PuzzleWidget] Countdown restarted after reshuffle"));
+	}
 }
 
 // ============================================================================
@@ -172,6 +191,8 @@ void UPuzzleGridWidget::RefreshGrid()
 
 void UPuzzleGridWidget::MoveSelection(FIntPoint Direction)
 {
+	if (bShowingFail || bPlayingSuccessAnim) { return; }
+
 	const int32 OldRow = SelectedRow;
 	const int32 OldCol = SelectedCol;
 
@@ -190,6 +211,8 @@ void UPuzzleGridWidget::MoveSelection(FIntPoint Direction)
 
 void UPuzzleGridWidget::RotateSelectedCell()
 {
+	if (bShowingFail || bPlayingSuccessAnim) { return; }
+
 	if (!OwningCube.IsValid())
 	{
 		return;
@@ -259,11 +282,20 @@ void UPuzzleGridWidget::OnLockChanged(bool bLocked)
 {
 	if (!bLocked)
 	{
-		// 해제 성공
+		// 해제 성공 — 퍼즐 카운트다운 정지
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(PuzzleCountdownTimerHandle);
+		}
+
+		// SUCCESS 오버레이가 대체 — StatusText 숨기기
 		if (StatusText)
 		{
-			StatusText->SetText(FText::FromString(TEXT("해제 성공!")));
+			StatusText->SetText(FText::GetEmpty());
 		}
+
+		// SUCCESS 애니메이션 재생
+		PlaySuccessAnimation();
 
 		// 클라이언트 측 타이머 시작
 		ClientTimerRemaining = OwningCube.IsValid() ? OwningCube->DamageableTime : 10.f;
@@ -318,3 +350,251 @@ void UPuzzleGridWidget::UpdateClientTimer()
 }
 
 // NativeOnKeyDown 제거 — Enhanced Input(IMC_Puzzle)이 방향키/E/ESC 처리
+
+// ============================================================================
+// 퍼즐 제한시간 카운트다운
+// ============================================================================
+
+void UPuzzleGridWidget::StartCountdown(float TimeLimit)
+{
+	PuzzleTimeRemaining = TimeLimit;
+	bShowingFail = false;
+
+	if (StatusText)
+	{
+		StatusText->SetText(FText::FromString(TEXT("퍼즐 해제")));
+	}
+
+	if (TimerText)
+	{
+		TimerText->SetText(FText::AsNumber(FMath::CeilToInt(PuzzleTimeRemaining)));
+	}
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(PuzzleCountdownTimerHandle);
+		World->GetTimerManager().SetTimer(
+			PuzzleCountdownTimerHandle, this,
+			&UPuzzleGridWidget::TickCountdown,
+			1.0f, true);
+	}
+}
+
+void UPuzzleGridWidget::TickCountdown()
+{
+	PuzzleTimeRemaining -= 1.0f;
+
+	if (TimerText)
+	{
+		const int32 Seconds = FMath::Max(0, FMath::CeilToInt(PuzzleTimeRemaining));
+		TimerText->SetText(FText::AsNumber(Seconds));
+	}
+
+	if (PuzzleTimeRemaining <= 0.f)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(PuzzleCountdownTimerHandle);
+		}
+		ShowFailMessage();
+	}
+}
+
+void UPuzzleGridWidget::ShowFailMessage()
+{
+	bShowingFail = true;
+
+	if (StatusText)
+	{
+		StatusText->SetText(FText::FromString(TEXT("FAIL!")));
+	}
+	if (TimerText)
+	{
+		TimerText->SetText(FText::GetEmpty());
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[PuzzleWidget] FAIL! Waiting for reshuffle..."));
+}
+
+void UPuzzleGridWidget::OnPuzzleTimedOut()
+{
+	// Multicast에서 호출됨 — ShowFailMessage 트리거
+	ShowFailMessage();
+}
+
+// ============================================================================
+// SUCCESS 애니메이션
+// ============================================================================
+
+void UPuzzleGridWidget::PlaySuccessAnimation()
+{
+	if (!SuccessOverlay)
+	{
+		// WBP에 오버레이 미구성 시 기존 텍스트 폴백
+		if (StatusText)
+		{
+			StatusText->SetText(FText::FromString(TEXT("해제 성공!")));
+		}
+		return;
+	}
+
+	bPlayingSuccessAnim = true;
+	SuccessAnimProgress = 0.f;
+
+	// 오버레이 표시
+	SuccessOverlay->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+
+	// 초기 상태 설정
+	if (SuccessGlowImage)
+	{
+		SuccessGlowImage->SetRenderScale(FVector2D(0.3f, 0.3f));
+		SuccessGlowImage->SetRenderOpacity(0.f);
+	}
+	if (ScanlineTopImage)
+	{
+		ScanlineTopImage->SetRenderScale(FVector2D(0.f, 1.f));
+		ScanlineTopImage->SetRenderOpacity(0.f);
+	}
+	if (ScanlineBottomImage)
+	{
+		ScanlineBottomImage->SetRenderScale(FVector2D(0.f, 1.f));
+		ScanlineBottomImage->SetRenderOpacity(0.f);
+	}
+	if (SuccessMainText)
+	{
+		SuccessMainText->SetRenderScale(FVector2D(0.f, 1.5f));
+		SuccessMainText->SetRenderOpacity(0.f);
+	}
+	if (SuccessSubText)
+	{
+		SuccessSubText->SetRenderOpacity(0.f);
+	}
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(SuccessAnimTimerHandle);
+		World->GetTimerManager().SetTimer(
+			SuccessAnimTimerHandle, this,
+			&UPuzzleGridWidget::TickSuccessAnimation,
+			0.016f, true); // ~60fps
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[PuzzleWidget] PlaySuccessAnimation started"));
+}
+
+void UPuzzleGridWidget::TickSuccessAnimation()
+{
+	SuccessAnimProgress += 0.016f;
+	const float T = SuccessAnimProgress;
+
+	// Phase 1: 0.0 ~ 0.3초 — 글로우 확장 + 스캔라인 + 텍스트 등장
+	if (T <= 0.3f)
+	{
+		const float Phase = T / 0.3f; // 0→1
+
+		// 글로우: Scale 0.3→1.2, Opacity 0→0.8
+		if (SuccessGlowImage)
+		{
+			const float S = FMath::Lerp(0.3f, 1.2f, Phase);
+			SuccessGlowImage->SetRenderScale(FVector2D(S, S));
+			SuccessGlowImage->SetRenderOpacity(FMath::Lerp(0.f, 0.8f, Phase));
+		}
+
+		// 스캔라인: ScaleX 0→1.5, Opacity flash
+		if (ScanlineTopImage)
+		{
+			ScanlineTopImage->SetRenderScale(FVector2D(FMath::Lerp(0.f, 1.5f, Phase), 1.f));
+			ScanlineTopImage->SetRenderOpacity(Phase < 0.5f ? Phase * 2.f : (1.f - Phase) * 2.f);
+		}
+		if (ScanlineBottomImage)
+		{
+			const float Delayed = FMath::Max(0.f, (T - 0.05f) / 0.25f);
+			ScanlineBottomImage->SetRenderScale(FVector2D(FMath::Lerp(0.f, 1.5f, Delayed), 1.f));
+			ScanlineBottomImage->SetRenderOpacity(Delayed < 0.5f ? Delayed * 2.f : (1.f - Delayed) * 2.f);
+		}
+
+		// 텍스트: ScaleX 0→1.15 (찢어지듯), Opacity 0→1
+		if (SuccessMainText && T >= 0.1f)
+		{
+			const float TextPhase = FMath::Min(1.f, (T - 0.1f) / 0.2f);
+			// 이징: 빠르게 나타나고 살짝 오버슈트
+			const float EasedScale = TextPhase < 0.6f
+				? FMath::Lerp(0.f, 1.15f, TextPhase / 0.6f)
+				: FMath::Lerp(1.15f, 1.0f, (TextPhase - 0.6f) / 0.4f);
+			const float YScale = TextPhase < 0.6f
+				? FMath::Lerp(1.5f, 0.95f, TextPhase / 0.6f)
+				: FMath::Lerp(0.95f, 1.0f, (TextPhase - 0.6f) / 0.4f);
+			SuccessMainText->SetRenderScale(FVector2D(EasedScale, YScale));
+			SuccessMainText->SetRenderOpacity(FMath::Min(1.f, TextPhase * 3.f));
+		}
+	}
+	// Phase 2: 0.3 ~ 0.5초 — 서브텍스트 페이드인, 글로우 안정화
+	else if (T <= 0.5f)
+	{
+		const float Phase = (T - 0.3f) / 0.2f;
+
+		if (SuccessGlowImage)
+		{
+			const float S = FMath::Lerp(1.2f, 1.0f, Phase);
+			SuccessGlowImage->SetRenderScale(FVector2D(S, S));
+			SuccessGlowImage->SetRenderOpacity(FMath::Lerp(0.8f, 0.6f, Phase));
+		}
+
+		if (SuccessSubText)
+		{
+			SuccessSubText->SetRenderOpacity(Phase);
+		}
+	}
+	// Phase 3: 0.5 ~ 1.5초 — 유지 (글로우 펄스)
+	else if (T <= 1.5f)
+	{
+		if (SuccessGlowImage)
+		{
+			const float Pulse = 1.0f + FMath::Sin((T - 0.5f) * 4.f) * 0.05f;
+			SuccessGlowImage->SetRenderScale(FVector2D(Pulse, Pulse));
+		}
+	}
+	// Phase 4: 1.5 ~ 2.5초 — 페이드아웃
+	else if (T <= 2.5f)
+	{
+		const float Phase = (T - 1.5f) / 1.0f; // 0→1
+		const float FadeOut = 1.f - Phase;
+
+		if (SuccessGlowImage)
+		{
+			const float S = FMath::Lerp(1.0f, 1.5f, Phase);
+			SuccessGlowImage->SetRenderScale(FVector2D(S, S));
+			SuccessGlowImage->SetRenderOpacity(0.6f * FadeOut);
+		}
+		if (SuccessMainText)
+		{
+			SuccessMainText->SetRenderOpacity(FadeOut);
+		}
+		if (SuccessSubText)
+		{
+			SuccessSubText->SetRenderOpacity(FadeOut);
+		}
+	}
+	// 완료
+	else
+	{
+		FinishSuccessAnimation();
+	}
+}
+
+void UPuzzleGridWidget::FinishSuccessAnimation()
+{
+	bPlayingSuccessAnim = false;
+
+	if (SuccessOverlay)
+	{
+		SuccessOverlay->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(SuccessAnimTimerHandle);
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[PuzzleWidget] SuccessAnimation finished"));
+}

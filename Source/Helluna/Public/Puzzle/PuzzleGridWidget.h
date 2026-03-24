@@ -7,6 +7,7 @@
 #include "PuzzleGridWidget.generated.h"
 
 class UUniformGridPanel;
+class UCanvasPanel;
 class UTextBlock;
 class UImage;
 class APuzzleCubeActor;
@@ -38,6 +39,34 @@ public:
 	/** 데미지 타임 카운트다운 */
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> TimerText;
+
+	// =========================================================================================
+	// SUCCESS 애니메이션 위젯
+	// =========================================================================================
+
+	/** 성공 오버레이 (전체 화면, 기본 Collapsed) */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UCanvasPanel> SuccessOverlay;
+
+	/** 방사형 시안 글로우 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> SuccessGlowImage;
+
+	/** 상단 스캔라인 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> ScanlineTopImage;
+
+	/** 하단 스캔라인 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> ScanlineBottomImage;
+
+	/** "SUCCESS" 메인 텍스트 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> SuccessMainText;
+
+	/** "PUZZLE UNLOCKED" 서브 텍스트 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> SuccessSubText;
 
 	// =========================================================================================
 	// 텍스처 (에디터에서 할당)
@@ -136,10 +165,52 @@ private:
 	/** 연결 상태 캐시 (RefreshGrid마다 갱신) */
 	TSet<int32> ConnectedCells;
 
-	/** 클라이언트 측 타이머 카운트다운 */
+	/** 클라이언트 측 데미지 타이머 카운트다운 */
 	float ClientTimerRemaining = 0.f;
 	FTimerHandle ClientTimerHandle;
 
-	/** 클라이언트 측 타이머 갱신 */
+	/** 클라이언트 측 데미지 타이머 갱신 */
 	void UpdateClientTimer();
+
+	// =========================================================================================
+	// 퍼즐 제한시간 카운트다운
+	// =========================================================================================
+
+	/** 퍼즐 카운트다운 타이머 */
+	FTimerHandle PuzzleCountdownTimerHandle;
+	float PuzzleTimeRemaining = 30.f;
+
+	/** FAIL 표시 중 입력 차단 */
+	bool bShowingFail = false;
+
+	/** 카운트다운 시작 */
+	void StartCountdown(float TimeLimit);
+
+	/** 매초 카운트다운 업데이트 */
+	void TickCountdown();
+
+	/** 시간 초과 시 FAIL 표시 */
+	void ShowFailMessage();
+
+	/** 타임아웃 델리게이트 핸들러 */
+	UFUNCTION()
+	void OnPuzzleTimedOut();
+
+	// =========================================================================================
+	// SUCCESS 애니메이션
+	// =========================================================================================
+
+	/** SUCCESS 애니메이션 타이머 */
+	FTimerHandle SuccessAnimTimerHandle;
+	float SuccessAnimProgress = 0.f;
+	bool bPlayingSuccessAnim = false;
+
+	/** SUCCESS 애니메이션 재생 */
+	void PlaySuccessAnimation();
+
+	/** SUCCESS 애니메이션 프레임 업데이트 */
+	void TickSuccessAnimation();
+
+	/** SUCCESS 애니메이션 종료 */
+	void FinishSuccessAnimation();
 };

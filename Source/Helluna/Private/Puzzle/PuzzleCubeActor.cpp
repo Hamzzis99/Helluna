@@ -54,6 +54,7 @@ void APuzzleCubeActor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 	DOREPLIFETIME(APuzzleCubeActor, bPuzzleInUse);
 	DOREPLIFETIME(APuzzleCubeActor, CurrentHealth);
 	DOREPLIFETIME(APuzzleCubeActor, DamageableTime);
+	DOREPLIFETIME(APuzzleCubeActor, PuzzleTimeLimit);
 }
 
 // ============================================================================
@@ -285,6 +286,10 @@ bool APuzzleCubeActor::TryEnterPuzzle(AController* Player)
 
 	bPuzzleInUse = true;
 	CurrentPuzzleUser = Player;
+
+	// 퍼즐 제한시간 타이머 시작
+	StartPuzzleTimer();
+
 	return true;
 }
 
@@ -299,6 +304,9 @@ void APuzzleCubeActor::ExitPuzzle(AController* Player)
 	{
 		bPuzzleInUse = false;
 		CurrentPuzzleUser = nullptr;
+
+		// 퍼즐 제한시간 타이머 정지
+		GetWorldTimerManager().ClearTimer(PuzzleTimeoutTimerHandle);
 	}
 }
 
@@ -368,6 +376,9 @@ float APuzzleCubeActor::GetInteractionRadius() const
 
 void APuzzleCubeActor::UnlockDamage()
 {
+	// 퍼즐 성공 → 제한시간 타이머 정지
+	GetWorldTimerManager().ClearTimer(PuzzleTimeoutTimerHandle);
+
 	bPuzzleLocked = false;
 	RelockTimer = DamageableTime;
 	LastLoggedSecond = FMath::CeilToInt(RelockTimer);
@@ -490,4 +501,103 @@ void APuzzleCubeActor::OnRep_bPuzzleLocked()
 void APuzzleCubeActor::OnRep_CurrentHealth()
 {
 	// 필요 시 체력 변경 비주얼 처리
+}
+
+// ============================================================================
+// 퍼즐 제한시간
+// ============================================================================
+
+void APuzzleCubeActor::StartPuzzleTimer()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	GetWorldTimerManager().ClearTimer(PuzzleTimeoutTimerHandle);
+	GetWorldTimerManager().SetTimer(
+		PuzzleTimeoutTimerHandle, this,
+		&APuzzleCubeActor::OnPuzzleTimeout,
+		PuzzleTimeLimit, false);
+
+	UE_LOG(LogTemp, Warning, TEXT("[PuzzleCube] Timer started: %.0f seconds"), PuzzleTimeLimit);
+}
+
+void APuzzleCubeActor::OnPuzzleTimeout()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[PuzzleCube] Time's up! Reshuffling in 3 seconds..."));
+
+	// 클라이언트에 실패 알림
+	Multicast_PuzzleTimedOut();
+
+	// 3초 후 셔플 + 타이머 재시작
+	FTimerHandle ReshuffleDelayHandle;
+	GetWorldTimerManager().SetTimer(ReshuffleDelayHandle, FTimerDelegate::CreateWeakLambda(this, [this]()
+	{
+		ReshufflePuzzle();
+
+		// 사용자가 아직 퍼즐 내에 있으면 타이머 재시작
+		if (bPuzzleInUse)
+		{
+			StartPuzzleTimer();
+		}
+
+		// 서버 측 OnRep 수동 호출
+		if (HasAuthority())
+		{
+			OnRep_PuzzleGrid();
+		}
+	}), 3.0f, false);
+}
+
+void APuzzleCubeActor::ReshufflePuzzle()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	const int32 Size = PuzzleGrid.GridSize;
+
+	// 비잠금 셀만 회전 셔플 — 정답 방지
+	constexpr int32 MaxShuffleAttempts = 10;
+	for (int32 Attempt = 0; Attempt < MaxShuffleAttempts; ++Attempt)
+	{
+		for (int32 i = 0; i < Size * Size; ++i)
+		{
+			if (!PuzzleGrid.Cells[i].bLocked && PuzzleGrid.Cells[i].PipeType != EPuzzlePipeType::None)
+			{
+				PuzzleGrid.Cells[i].Rotation = FMath::RandRange(0, 3) * 90;
+			}
+		}
+
+		if (!PuzzleUtils::CheckSolved(PuzzleGrid))
+		{
+			break;
+		}
+
+		if (Attempt == MaxShuffleAttempts - 1)
+		{
+			for (int32 i = 0; i < Size * Size; ++i)
+			{
+				if (!PuzzleGrid.Cells[i].bLocked && PuzzleGrid.Cells[i].PipeType != EPuzzlePipeType::None)
+				{
+					PuzzleGrid.Cells[i].Rotation = (PuzzleGrid.Cells[i].Rotation + 90) % 360;
+					break;
+				}
+			}
+		}
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[PuzzleCube] ReshufflePuzzle: Cells reshuffled"));
+}
+
+void APuzzleCubeActor::Multicast_PuzzleTimedOut_Implementation()
+{
+	OnPuzzleTimedOutDelegate.Broadcast();
 }
