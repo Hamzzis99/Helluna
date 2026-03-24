@@ -39,6 +39,8 @@ void UPuzzleGridWidget::NativeDestruct()
 		World->GetTimerManager().ClearTimer(SuccessAnimTimerHandle);
 		World->GetTimerManager().ClearTimer(FailAnimTimerHandle);
 		World->GetTimerManager().ClearTimer(ShakeTimerHandle);
+		World->GetTimerManager().ClearTimer(OpenAnimTimerHandle);
+		World->GetTimerManager().ClearTimer(CloseAnimTimerHandle);
 	}
 
 	Super::NativeDestruct();
@@ -127,6 +129,9 @@ void UPuzzleGridWidget::InitGrid(APuzzleCubeActor* Cube)
 	{
 		StartCountdown(OwningCube->PuzzleTimeLimit);
 	}
+
+	// 등장 애니메이션
+	PlayOpenAnimation();
 }
 
 // ============================================================================
@@ -193,7 +198,7 @@ void UPuzzleGridWidget::RefreshGrid()
 
 void UPuzzleGridWidget::MoveSelection(FIntPoint Direction)
 {
-	if (bShowingFail || bPlayingSuccessAnim || bPlayingFailAnim) { return; }
+	if (bShowingFail || bPlayingSuccessAnim || bPlayingFailAnim || bPlayingOpenAnim || bPlayingCloseAnim) { return; }
 
 	const int32 OldRow = SelectedRow;
 	const int32 OldCol = SelectedCol;
@@ -213,7 +218,7 @@ void UPuzzleGridWidget::MoveSelection(FIntPoint Direction)
 
 void UPuzzleGridWidget::RotateSelectedCell()
 {
-	if (bShowingFail || bPlayingSuccessAnim || bPlayingFailAnim) { return; }
+	if (bShowingFail || bPlayingSuccessAnim || bPlayingFailAnim || bPlayingOpenAnim || bPlayingCloseAnim) { return; }
 
 	if (!OwningCube.IsValid())
 	{
@@ -859,4 +864,147 @@ void UPuzzleGridWidget::StopGridShake()
 	{
 		World->GetTimerManager().ClearTimer(ShakeTimerHandle);
 	}
+}
+
+// ============================================================================
+// 등장 애니메이션 (0.5초)
+// ============================================================================
+
+void UPuzzleGridWidget::PlayOpenAnimation()
+{
+	bPlayingOpenAnim = true;
+	OpenAnimProgress = 0.f;
+
+	// 초기 상태: 오른쪽에서 기울어진 채로 투명
+	FWidgetTransform InitTransform;
+	InitTransform.Translation = FVector2D(60.f, 0.f);
+	InitTransform.Scale = FVector2D(0.7f, 1.0f);
+	InitTransform.Shear = FVector2D(0.15f, 0.f);
+	SetRenderTransform(InitTransform);
+	SetRenderOpacity(0.f);
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(OpenAnimTimerHandle);
+		World->GetTimerManager().SetTimer(
+			OpenAnimTimerHandle, this,
+			&UPuzzleGridWidget::TickOpenAnimation,
+			0.016f, true);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[PuzzleWidget] PlayOpenAnimation started"));
+}
+
+void UPuzzleGridWidget::TickOpenAnimation()
+{
+	OpenAnimProgress += 0.016f;
+	const float T = OpenAnimProgress;
+
+	if (T <= 0.3f)
+	{
+		// Phase 1: 슬라이드인 (ease-out cubic)
+		const float P = T / 0.3f;
+		const float EaseP = 1.f - FMath::Pow(1.f - P, 3.f);
+
+		FWidgetTransform Tr;
+		Tr.Translation = FVector2D(FMath::Lerp(60.f, -5.f, EaseP), 0.f);
+		Tr.Scale = FVector2D(FMath::Lerp(0.7f, 1.02f, EaseP), 1.f);
+		Tr.Shear = FVector2D(FMath::Lerp(0.15f, 0.09f, EaseP), 0.f);
+		SetRenderTransform(Tr);
+		SetRenderOpacity(FMath::Min(1.f, EaseP * 2.5f));
+	}
+	else if (T <= 0.5f)
+	{
+		// Phase 2: 안정화 (오버슈트 복원)
+		const float P = (T - 0.3f) / 0.2f;
+
+		FWidgetTransform Tr;
+		Tr.Translation = FVector2D(FMath::Lerp(-5.f, 0.f, P), 0.f);
+		Tr.Scale = FVector2D(FMath::Lerp(1.02f, 1.0f, P), 1.f);
+		Tr.Shear = FVector2D(FMath::Lerp(0.09f, 0.08f, P), 0.f);
+		SetRenderTransform(Tr);
+		SetRenderOpacity(1.f);
+	}
+	else
+	{
+		FinishOpenAnimation();
+	}
+}
+
+void UPuzzleGridWidget::FinishOpenAnimation()
+{
+	bPlayingOpenAnim = false;
+
+	// 최종 기울임 상태 (idle)
+	FWidgetTransform FinalTr;
+	FinalTr.Translation = FVector2D(0.f, 0.f);
+	FinalTr.Scale = FVector2D(1.f, 1.f);
+	FinalTr.Shear = FVector2D(0.08f, 0.f);
+	SetRenderTransform(FinalTr);
+	SetRenderOpacity(1.f);
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(OpenAnimTimerHandle);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[PuzzleWidget] OpenAnimation finished"));
+}
+
+// ============================================================================
+// 퇴장 애니메이션 (0.4초)
+// ============================================================================
+
+void UPuzzleGridWidget::PlayCloseAnimation()
+{
+	bPlayingCloseAnim = true;
+	CloseAnimProgress = 0.f;
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(CloseAnimTimerHandle);
+		World->GetTimerManager().SetTimer(
+			CloseAnimTimerHandle, this,
+			&UPuzzleGridWidget::TickCloseAnimation,
+			0.016f, true);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[PuzzleWidget] PlayCloseAnimation started"));
+}
+
+void UPuzzleGridWidget::TickCloseAnimation()
+{
+	CloseAnimProgress += 0.016f;
+	const float T = CloseAnimProgress;
+
+	if (T <= 0.4f)
+	{
+		const float P = T / 0.4f;
+		const float EaseP = P * P; // ease-in quad
+
+		FWidgetTransform Tr;
+		Tr.Translation = FVector2D(FMath::Lerp(0.f, 40.f, EaseP), 0.f);
+		Tr.Scale = FVector2D(FMath::Lerp(1.0f, 0.8f, EaseP), 1.f);
+		Tr.Shear = FVector2D(FMath::Lerp(0.08f, 0.15f, EaseP), 0.f);
+		SetRenderTransform(Tr);
+		SetRenderOpacity(1.f - EaseP);
+	}
+	else
+	{
+		FinishCloseAnimation();
+	}
+}
+
+void UPuzzleGridWidget::FinishCloseAnimation()
+{
+	bPlayingCloseAnim = false;
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(CloseAnimTimerHandle);
+	}
+
+	SetVisibility(ESlateVisibility::Collapsed);
+
+	UE_LOG(LogTemp, Log, TEXT("[PuzzleWidget] CloseAnimation finished"));
 }

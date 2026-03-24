@@ -139,6 +139,13 @@ public:
 	TObjectPtr<UTexture2D> RotateFlashTexture;
 
 	// =========================================================================================
+	// 등장/퇴장 애니메이션 (Controller에서 호출)
+	// =========================================================================================
+
+	/** 퇴장 애니메이션 재생 (ExitPuzzle에서 호출) */
+	void PlayCloseAnimation();
+
+	// =========================================================================================
 	// 공개 함수
 	// =========================================================================================
 
@@ -285,4 +292,33 @@ private:
 
 	/** 그리드 흔들림 정지 + 위치 복원 */
 	void StopGridShake();
+
+	// =========================================================================================
+	// 등장/퇴장 애니메이션
+	// =========================================================================================
+
+	/** 등장 애니메이션 타이머 */
+	FTimerHandle OpenAnimTimerHandle;
+	float OpenAnimProgress = 0.f;
+	bool bPlayingOpenAnim = false;
+
+	/** 퇴장 애니메이션 타이머 */
+	FTimerHandle CloseAnimTimerHandle;
+	float CloseAnimProgress = 0.f;
+	bool bPlayingCloseAnim = false;
+
+	/** 등장 애니메이션 재생 */
+	void PlayOpenAnimation();
+
+	/** 등장 애니메이션 프레임 업데이트 */
+	void TickOpenAnimation();
+
+	/** 등장 애니메이션 종료 */
+	void FinishOpenAnimation();
+
+	/** 퇴장 애니메이션 프레임 업데이트 */
+	void TickCloseAnimation();
+
+	/** 퇴장 애니메이션 종료 */
+	void FinishCloseAnimation();
 };

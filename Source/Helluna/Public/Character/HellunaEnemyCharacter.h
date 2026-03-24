@@ -25,6 +25,16 @@ class HELLUNA_API AHellunaEnemyCharacter : public AHellunaBaseCharacter
 public:
 	AHellunaEnemyCharacter();
 
+	/**
+	 * TakeDamage 오버라이드 — PuzzleShieldComponent 보호막 필터링
+	 *
+	 * [보스전 로드맵]
+	 * PuzzleShieldComponent가 부착된 경우 bShieldActive=true면 데미지 0 반환.
+	 * 컴포넌트 미부착 시 기존 로직 그대로 통과.
+	 */
+	virtual float TakeDamage(float DamageAmount, struct FDamageEvent const& DamageEvent,
+		class AController* EventInstigator, AActor* DamageCauser) override;
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;

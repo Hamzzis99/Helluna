@@ -39,6 +39,9 @@
 // 리플리케이션
 #include "Net/UnrealNetwork.h"
 
+// 퍼즐 보호막
+#include "Puzzle/PuzzleShieldComponent.h"
+
 // ============================================================
 // 생성자
 // ============================================================
@@ -174,6 +177,31 @@ void AHellunaEnemyCharacter::InitEnemyStartUpData()
 //
 // 수정: HealthComponent 바인딩은 컨트롤러 유무와 무관하게 항상 수행.
 // PossessedBy에서도 동일하게 바인딩(AddUniqueDynamic)하므로 중복 등록 없음.
+// ============================================================
+
+// ============================================================
+// TakeDamage — PuzzleShieldComponent 보호막 필터링
+// ============================================================
+float AHellunaEnemyCharacter::TakeDamage(float DamageAmount,
+	FDamageEvent const& DamageEvent, AController* EventInstigator, AActor* DamageCauser)
+{
+	// PuzzleShieldComponent가 부착되어 있으면 보호막 필터링
+	if (UPuzzleShieldComponent* Shield = FindComponentByClass<UPuzzleShieldComponent>())
+	{
+		const float FilteredDamage = Shield->FilterDamage(DamageAmount);
+		if (FilteredDamage <= 0.f)
+		{
+			UE_LOG(LogTemp, Log,
+				TEXT("[EnemyCharacter] TakeDamage blocked by shield: %.1f on %s"),
+				DamageAmount, *GetNameSafe(this));
+			return 0.f;
+		}
+		DamageAmount = FilteredDamage;
+	}
+
+	return Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
+}
+
 // ============================================================
 void AHellunaEnemyCharacter::BeginPlay()
 {

@@ -606,30 +606,61 @@ void AHellunaHeroController::OnPuzzleInteractInput(const FInputActionValue& Valu
 
 void AHellunaHeroController::ExitPuzzle()
 {
+	if (!bInPuzzleMode) { return; }
+
 	UE_LOG(LogTemp, Warning, TEXT("[PuzzleController] ExitPuzzle"));
 
+	// 퇴장 애니메이션 재생 → 0.5초 후 실제 정리
 	if (IsValid(ActivePuzzleWidget))
 	{
-		ActivePuzzleWidget->RemoveFromParent();
-		ActivePuzzleWidget = nullptr;
-	}
+		ActivePuzzleWidget->PlayCloseAnimation();
 
-	bInPuzzleMode = false;
-
-	// IMC_Puzzle priority를 기본(10)으로 복원
-	if (ULocalPlayer* LP = GetLocalPlayer())
-	{
-		if (UEnhancedInputLocalPlayerSubsystem* Sub = LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
+		// 애니메이션 완료 대기 후 정리 (SetTimerForNextTick 아닌 0.5초 딜레이)
+		FTimerHandle CleanupHandle;
+		GetWorldTimerManager().SetTimer(CleanupHandle, [this]()
 		{
-			Sub->RemoveMappingContext(PuzzleMappingContext);
-			Sub->AddMappingContext(PuzzleMappingContext, 10);
-			UE_LOG(LogTemp, Warning, TEXT("[PuzzleInput] IMC_Puzzle priority restored to 10 (normal mode)"));
-		}
+			if (IsValid(ActivePuzzleWidget))
+			{
+				ActivePuzzleWidget->RemoveFromParent();
+				ActivePuzzleWidget = nullptr;
+			}
+
+			bInPuzzleMode = false;
+
+			// IMC_Puzzle priority를 기본(10)으로 복원
+			if (ULocalPlayer* LP = GetLocalPlayer())
+			{
+				if (UEnhancedInputLocalPlayerSubsystem* Sub = LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
+				{
+					Sub->RemoveMappingContext(PuzzleMappingContext);
+					Sub->AddMappingContext(PuzzleMappingContext, 10);
+					UE_LOG(LogTemp, Warning, TEXT("[PuzzleInput] IMC_Puzzle priority restored to 10 (normal mode)"));
+				}
+			}
+
+			SetInputMode(FInputModeGameOnly());
+
+			Server_PuzzleExit();
+		}, 0.5f, false);
 	}
+	else
+	{
+		// 위젯 없으면 즉시 정리
+		bInPuzzleMode = false;
 
-	SetInputMode(FInputModeGameOnly());
+		if (ULocalPlayer* LP = GetLocalPlayer())
+		{
+			if (UEnhancedInputLocalPlayerSubsystem* Sub = LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
+			{
+				Sub->RemoveMappingContext(PuzzleMappingContext);
+				Sub->AddMappingContext(PuzzleMappingContext, 10);
+			}
+		}
 
-	Server_PuzzleExit();
+		SetInputMode(FInputModeGameOnly());
+
+		Server_PuzzleExit();
+	}
 }
 
 // --- RequestPuzzleRotateCell ---
