@@ -106,6 +106,16 @@ void UPuzzleGridWidget::InitGrid(APuzzleCubeActor* Cube)
 		TEXT("[PuzzleWidget] InitGrid: Created %d cell widgets using %s"),
 		CellWidgets.Num(), *GetNameSafe(PuzzleCellWidgetClass));
 
+	// 셀 초기 숨김 (등장 애니메이션에서 순차 팝업)
+	for (int32 i = 0; i < CellWidgets.Num(); ++i)
+	{
+		if (IsValid(CellWidgets[i]))
+		{
+			CellWidgets[i]->SetRenderOpacity(0.f);
+			CellWidgets[i]->SetRenderScale(FVector2D(0.3f, 0.3f));
+		}
+	}
+
 	// 초기 상태
 	SelectedRow = 0;
 	SelectedCol = 0;
@@ -316,24 +326,20 @@ void UPuzzleGridWidget::OnLockChanged(bool bLocked)
 	}
 	else
 	{
-		// 재잠금
-		if (StatusText)
-		{
-			StatusText->SetText(FText::FromString(TEXT("퍼즐 풀기")));
-		}
-
-		if (TimerText)
-		{
-			TimerText->SetText(FText::GetEmpty());
-		}
-
+		// 재잠금 = 딜타임 종료 → 퍼즐 UI 자동 닫기
 		if (UWorld* World = GetWorld())
 		{
 			World->GetTimerManager().ClearTimer(ClientTimerHandle);
+			World->GetTimerManager().ClearTimer(PuzzleCountdownTimerHandle);
 		}
 
-		// 새 퍼즐로 그리드 갱신
-		RefreshGrid();
+		UE_LOG(LogTemp, Warning, TEXT("[PuzzleWidget] Relock received — auto-closing puzzle UI"));
+
+		AHellunaHeroController* Controller = Cast<AHellunaHeroController>(GetOwningPlayer());
+		if (IsValid(Controller))
+		{
+			Controller->ExitPuzzle();
+		}
 	}
 }
 
@@ -925,7 +931,38 @@ void UPuzzleGridWidget::TickOpenAnimation()
 		SetRenderTransform(Tr);
 		SetRenderOpacity(1.f);
 	}
-	else
+
+	// Phase 3: 셀 순차 팝업 (좌상단부터 대각선)
+	if (T >= 0.15f && T <= 0.6f)
+	{
+		const int32 GridSize = OwningCube.IsValid() ? OwningCube->PuzzleGrid.GridSize : 4;
+
+		for (int32 i = 0; i < CellWidgets.Num(); ++i)
+		{
+			if (!IsValid(CellWidgets[i])) continue;
+
+			const int32 Row = i / GridSize;
+			const int32 Col = i % GridSize;
+			const int32 DiagIndex = Row + Col;
+
+			const float CellStartTime = 0.15f + DiagIndex * 0.04f;
+			const float CellDuration = 0.15f;
+
+			if (T >= CellStartTime)
+			{
+				const float CellProgress = FMath::Min(1.f, (T - CellStartTime) / CellDuration);
+				// ease-out back (살짝 오버슈트)
+				const float Scale = CellProgress < 0.7f
+					? FMath::Lerp(0.3f, 1.05f, CellProgress / 0.7f)
+					: FMath::Lerp(1.05f, 1.0f, (CellProgress - 0.7f) / 0.3f);
+
+				CellWidgets[i]->SetRenderOpacity(FMath::Min(1.f, CellProgress * 2.f));
+				CellWidgets[i]->SetRenderScale(FVector2D(Scale, Scale));
+			}
+		}
+	}
+
+	if (T > 0.6f)
 	{
 		FinishOpenAnimation();
 	}
@@ -942,6 +979,16 @@ void UPuzzleGridWidget::FinishOpenAnimation()
 	FinalTr.Shear = FVector2D(0.08f, 0.f);
 	SetRenderTransform(FinalTr);
 	SetRenderOpacity(1.f);
+
+	// 모든 셀 최종 상태 보장 (애니메이션 도중 끊겨도 안전)
+	for (int32 i = 0; i < CellWidgets.Num(); ++i)
+	{
+		if (IsValid(CellWidgets[i]))
+		{
+			CellWidgets[i]->SetRenderOpacity(1.f);
+			CellWidgets[i]->SetRenderScale(FVector2D(1.f, 1.f));
+		}
+	}
 
 	if (UWorld* World = GetWorld())
 	{
@@ -977,6 +1024,34 @@ void UPuzzleGridWidget::TickCloseAnimation()
 	CloseAnimProgress += 0.016f;
 	const float T = CloseAnimProgress;
 
+	// 셀 역순 사라짐 (우하단부터 대각선)
+	if (T <= 0.3f)
+	{
+		const int32 GridSize = OwningCube.IsValid() ? OwningCube->PuzzleGrid.GridSize : 4;
+		const int32 MaxDiag = (GridSize - 1) * 2;
+
+		for (int32 i = 0; i < CellWidgets.Num(); ++i)
+		{
+			if (!IsValid(CellWidgets[i])) continue;
+
+			const int32 Row = i / GridSize;
+			const int32 Col = i % GridSize;
+			const int32 DiagIndex = MaxDiag - (Row + Col); // 역순
+
+			const float CellStartTime = DiagIndex * 0.03f;
+
+			if (T >= CellStartTime)
+			{
+				const float CellProgress = FMath::Min(1.f, (T - CellStartTime) / 0.1f);
+				CellWidgets[i]->SetRenderOpacity(1.f - CellProgress);
+				CellWidgets[i]->SetRenderScale(FVector2D(
+					FMath::Lerp(1.f, 0.5f, CellProgress),
+					FMath::Lerp(1.f, 0.5f, CellProgress)));
+			}
+		}
+	}
+
+	// 위젯 전체 퇴장 (Shear 슬라이드아웃)
 	if (T <= 0.4f)
 	{
 		const float P = T / 0.4f;
