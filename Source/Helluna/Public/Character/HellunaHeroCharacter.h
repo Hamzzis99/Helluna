@@ -349,7 +349,8 @@ protected:
 	FTimerHandle ReviveTickTimerHandle;
 	void TickRevive();
 
-	/** 로컬: 근처 다운 팀원 탐색 */
+public:
+	/** 로컬: 근처 다운 팀원 탐색 (GA_Repair 등 외부에서도 호출) */
 	AHellunaHeroCharacter* FindNearestDownedHero() const;
 
 public:

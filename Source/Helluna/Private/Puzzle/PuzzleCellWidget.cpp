@@ -12,7 +12,7 @@ void UPuzzleCellWidget::SetPipeTexture(UTexture2D* Texture, float RotationAngle)
 
 	if (Texture)
 	{
-		PipeImage->SetBrushFromTexture(Texture);
+		PipeImage->SetBrushResourceObject(Texture);
 		PipeImage->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 	}
 	else
@@ -29,7 +29,7 @@ void UPuzzleCellWidget::SetBgTexture(UTexture2D* Texture)
 	{
 		return;
 	}
-	BgImage->SetBrushFromTexture(Texture);
+	BgImage->SetBrushResourceObject(Texture);
 }
 
 void UPuzzleCellWidget::SetSelected(bool bSelected)

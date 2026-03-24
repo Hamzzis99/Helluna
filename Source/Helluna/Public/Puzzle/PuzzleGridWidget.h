@@ -114,7 +114,7 @@ private:
 	TWeakObjectPtr<APuzzleCubeActor> OwningCube;
 
 	/** 셀 위젯 클래스 (WBP_PuzzleCell 할당) */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Puzzle|UI",
+	UPROPERTY(EditDefaultsOnly, Category = "Puzzle|UI",
 		meta = (DisplayName = "Puzzle Cell Widget Class (퍼즐 셀 위젯 클래스)"))
 	TSubclassOf<UPuzzleCellWidget> PuzzleCellWidgetClass;
 

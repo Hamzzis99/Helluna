@@ -44,6 +44,13 @@ void UHeroGameplayAbility_Repair::Repair(const FGameplayAbilityActorInfo* ActorI
 
 	if (!Hero->IsLocallyControlled()) return;
 
+	// [Phase 21] 다운된 팀원 근처면 수리 UI를 열지 않음 (F키 Revive 우선)
+	if (Hero->FindNearestDownedHero() != nullptr)
+	{
+		UE_LOG(LogHelluna, Log, TEXT("[Repair] 근처에 다운 팀원 있음 → 수리 UI 스킵 (Revive 우선)"));
+		return;
+	}
+
 	UE_LOG(LogTemp, Warning, TEXT("[Repair] Repair() called. this=%p, CurrentWidget=%p, IsValid=%s"),
 		this, CurrentWidget.Get(),
 		IsValid(CurrentWidget) ? TEXT("true") : TEXT("false"));
