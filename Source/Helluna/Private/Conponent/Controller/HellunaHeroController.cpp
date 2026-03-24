@@ -606,6 +606,19 @@ void AHellunaHeroController::Server_SendChatMessage_Implementation(const FString
 // [Puzzle] 퍼즐 시스템
 // ============================================================================
 
+void AHellunaHeroController::TryEnterPuzzleFromCube(APuzzleCubeActor* Cube)
+{
+	if (bInPuzzleMode || !IsValid(Cube)) return;
+
+	LocalTargetPuzzleCube = Cube;
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[PuzzleController] TryEnterPuzzleFromCube: Cube=%s"),
+		*GetNameSafe(Cube));
+
+	Server_PuzzleTryEnter();
+}
+
 void AHellunaHeroController::OnPuzzleInteractInput(const FInputActionValue& Value)
 {
 	if (bInPuzzleMode)
@@ -652,11 +665,20 @@ void AHellunaHeroController::OnPuzzleInteractInput(const FInputActionValue& Valu
 
 	LocalTargetPuzzleCube = NearestCube;
 
+	// [Guard] IMC Hold 트리거가 직렬화에서 풀릴 수 있으므로
+	// C++에서 직접 홀드 프로그레스 완료를 체크 (1.5초)
+	if (NearestCube->GetLocalHoldProgress() < 0.95f)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[PuzzleController] Hold not complete yet (%.2f), ignoring"), NearestCube->GetLocalHoldProgress());
+		return;
+	}
+
 	// 로그 #12
 	UE_LOG(LogTemp, Warning,
 		TEXT("[PuzzleController] TryEnterPuzzle: Cube=%s, Distance=%.1f"),
 		*GetNameSafe(NearestCube), NearestDist);
 
+	
 	Server_PuzzleTryEnter();
 }
 

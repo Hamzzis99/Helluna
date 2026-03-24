@@ -393,6 +393,11 @@ float APuzzleCubeActor::GetInteractionRadius() const
 	return InteractionSphere ? InteractionSphere->GetScaledSphereRadius() : 500.f;
 }
 
+float APuzzleCubeActor::GetLocalHoldProgress() const
+{
+	return LocalHoldProgress;
+}
+
 // ============================================================================
 // 데미지 게이팅
 // ============================================================================
@@ -518,9 +523,13 @@ void APuzzleCubeActor::Tick(float DeltaTime)
 				// 화면 흑백 전환 (F 홀드 프로그레스에 비례)
 				HeroPC->SetDesaturationByProgress(LocalHoldProgress);
 
-				if (LocalHoldProgress >= 1.f)
+				if (LocalHoldProgress >= 1.f && !bHoldCompleted)
 				{
+					bHoldCompleted = true;
 					InteractWidgetInstance->ShowCompleted();
+
+					HeroPC->TryEnterPuzzleFromCube(this);
+					UE_LOG(LogTemp, Warning, TEXT("[PuzzleCube] Hold complete (1.5s) — TryEnterPuzzleFromCube called"));
 				}
 			}
 			else
@@ -786,6 +795,7 @@ void APuzzleCubeActor::UpdateInteractWidgetVisibility()
 		InteractWidgetComp->SetVisibility(false);
 		bInteractWidgetVisible = false;
 		LocalHoldProgress = 0.f;
+		bHoldCompleted = false;
 
 		UE_LOG(LogTemp, Log, TEXT("[PuzzleCube] 3D Interact widget hidden"));
 	}

@@ -28,6 +28,9 @@ class UWeaponHUDWidget;
 
 class UInv_LootContainerComponent;
 
+class UWidgetComponent;
+class UHellunaReviveWidget;
+
 
 /**
  * 
@@ -293,6 +296,32 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Camera|Downed",
 		meta = (DisplayName = "Downed Camera Socket Offset (다운 시 카메라 오프셋)"))
 	FVector DownedCameraSocketOffset = FVector(0.f, 60.f, 20.f);
+
+	// =========================================================
+	// 3D 부활 위젯 (다운된 캐릭터 머리 위 표시)
+	// =========================================================
+
+	/** 3D 부활 위젯 컴포넌트 (Screen Space, 모든 클라에게 표시) */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Downed|UI")
+	TObjectPtr<UWidgetComponent> ReviveWidgetComp;
+
+	/** 위젯 BP 클래스 (에디터에서 할당) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Downed|UI",
+		meta = (DisplayName = "Revive Widget Class (부활 위젯 클래스)"))
+	TSubclassOf<UHellunaReviveWidget> ReviveWidgetClass;
+
+	/** 위젯 인스턴스 캐시 */
+	UPROPERTY()
+	TObjectPtr<UHellunaReviveWidget> ReviveWidgetInstance;
+
+	/** 3D 위젯 표시 (클라이언트에서 호출) */
+	void ShowReviveWidget();
+
+	/** 3D 위젯 숨김 (클라이언트에서 호출) */
+	void HideReviveWidget();
+
+	/** 출혈 잔여시간을 위젯에 업데이트 (클라이언트 Tick) */
+	void UpdateReviveWidgetBleedout();
 
 protected:
 	/** HealthComponent (피격/사망 처리) */

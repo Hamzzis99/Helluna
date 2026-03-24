@@ -243,6 +243,12 @@ public:
 	 */
 	void PlayColorReveal();
 
+	/** 
+	 * PuzzleCubeActor에서 F 홀드 완료 시 호출 (IMC Hold 트리거 우회용)
+	 * LocalTargetPuzzleCube 설정 + Server RPC 호출
+	 */
+	void TryEnterPuzzleFromCube(class APuzzleCubeActor* Cube);
+
 	/** 색채의 개방 나이아가라 이펙트 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Puzzle|HackMode",
 		meta = (DisplayName = "색채의 개방 VFX"))

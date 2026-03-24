@@ -50,6 +50,9 @@
 #include "InventoryManagement/Components/Inv_LootContainerComponent.h"
 #include "Items/Components/Inv_ItemComponent.h"  // [Step3] FindComponentByClass<UInv_ItemComponent> 완전한 타입 필요
 
+#include "Components/WidgetComponent.h"
+#include "Downed/HellunaReviveWidget.h"
+
 
 
 AHellunaHeroCharacter::AHellunaHeroCharacter()
@@ -107,6 +110,15 @@ AHellunaHeroCharacter::AHellunaHeroCharacter()
 	LootContainerComponent->bDestroyOwnerWhenEmpty = false;
 	LootContainerComponent->ContainerDisplayName = FText::FromString(TEXT("사체"));
 
+	// [Phase 21] 3D 부활 위젯 컴포넌트 (다운 시 머리 위 표시)
+	ReviveWidgetComp = CreateDefaultSubobject<UWidgetComponent>(TEXT("ReviveWidgetComp"));
+	ReviveWidgetComp->SetupAttachment(GetMesh());
+	ReviveWidgetComp->SetRelativeLocation(FVector(0.f, 0.f, 200.f)); // 캐릭터 머리 위
+	ReviveWidgetComp->SetDrawSize(FVector2D(250.f, 80.f));
+	ReviveWidgetComp->SetWidgetSpace(EWidgetSpace::Screen); // 항상 카메라를 바라봄
+	ReviveWidgetComp->SetVisibility(false); // 기본 숨김
+	ReviveWidgetComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
 	// [OTS Camera] 생성자 디버그 로그
 	UE_LOG(LogTemp, Warning, TEXT("[OTS Camera] Constructor — ArmLength=%.1f, SocketOffset=%s, bOrientToMovement=%s, bUseControllerDesiredRotation=%s"),
 		CameraBoom->TargetArmLength,
@@ -130,6 +142,25 @@ void AHellunaHeroCharacter::BeginPlay()
 	// 로컬 플레이어 전용 무기 HUD 생성
 	InitWeaponHUD();
 
+	// [Phase 21] 3D 부활 위젯 클래스 설정 (데디케이티드 서버 제외)
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] BeginPlay: %s | NetMode=%d | ReviveWidgetComp=%s | ReviveWidgetClass=%s"),
+		*GetName(),
+		(int32)GetNetMode(),
+		ReviveWidgetComp ? TEXT("Valid") : TEXT("NULL"),
+		ReviveWidgetClass ? *ReviveWidgetClass->GetName() : TEXT("NULL"));
+	if (GetNetMode() != NM_DedicatedServer && ReviveWidgetComp && ReviveWidgetClass)
+	{
+		ReviveWidgetComp->SetWidgetClass(ReviveWidgetClass);
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] BeginPlay: WidgetClass 설정 완료 → %s"), *ReviveWidgetClass->GetName());
+	}
+	else
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] BeginPlay: WidgetClass 설정 스킵! (DediServer=%s, Comp=%s, Class=%s)"),
+			GetNetMode() == NM_DedicatedServer ? TEXT("Y") : TEXT("N"),
+			ReviveWidgetComp ? TEXT("Y") : TEXT("N"),
+			ReviveWidgetClass ? TEXT("Y") : TEXT("N"));
+	}
+
 	// ── OTS 카메라 기본값 캐싱 ──
 	if (FollowCamera)
 	{
@@ -151,6 +182,9 @@ void AHellunaHeroCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 	// 카메라 줌 보간은 이제 GA의 AT_AimCameraInterp AbilityTask에서 처리
+
+	// [Phase 21] 3D 부활 위젯 출혈 타이머 업데이트 (클라이언트)
+	UpdateReviveWidgetBleedout();
 }
 
 // ============================================================================
@@ -1189,6 +1223,9 @@ void AHellunaHeroCharacter::Multicast_PlayHeroHitReact_Implementation()
 
 void AHellunaHeroCharacter::Multicast_PlayHeroDeath_Implementation()
 {
+	// [Phase 21] 사망 시 부활 위젯 숨김 (다운→사망 경로)
+	HideReviveWidget();
+
 	if (!DeathMontage) return;
 
 	USkeletalMeshComponent* SkelMesh = GetMesh();
@@ -1344,11 +1381,19 @@ void AHellunaHeroCharacter::OnHeroDowned(AActor* DownedActor, AActor* Instigator
 {
 	if (!HasAuthority()) return;
 
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] OnHeroDowned 진입: %s | DownedMontage=%s | ReviveWidgetClass=%s"),
+		*GetName(),
+		DownedMontage ? *DownedMontage->GetName() : TEXT("NULL"),
+		ReviveWidgetClass ? *ReviveWidgetClass->GetName() : TEXT("NULL"));
+
 	// 솔로 체크: 접속자 1명이면 즉사
 	if (AHellunaDefenseGameMode* DefenseGM = Cast<AHellunaDefenseGameMode>(
 		UGameplayStatics::GetGameMode(GetWorld())))
 	{
-		if (DefenseGM->ShouldSkipDowned())
+		bool bSkip = DefenseGM->ShouldSkipDowned();
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] ShouldSkipDowned=%s"), bSkip ? TEXT("TRUE (즉사)") : TEXT("FALSE (다운 진입)"));
+
+		if (bSkip)
 		{
 			if (HeroHealthComponent)
 			{
@@ -1385,6 +1430,10 @@ void AHellunaHeroCharacter::OnHeroDowned(AActor* DownedActor, AActor* Instigator
 	}
 
 	// 다운 몽타주 + 카메라
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] Multicast_PlayHeroDowned 호출 직전: %s | DownedMontage=%s | ReviveWidgetComp=%s"),
+		*GetName(),
+		DownedMontage ? *DownedMontage->GetName() : TEXT("NULL"),
+		ReviveWidgetComp ? TEXT("Valid") : TEXT("NULL"));
 	Multicast_PlayHeroDowned();
 
 	UE_LOG(LogHelluna, Log, TEXT("[Downed] %s → 다운 상태 진입"), *GetName());
@@ -1392,16 +1441,42 @@ void AHellunaHeroCharacter::OnHeroDowned(AActor* DownedActor, AActor* Instigator
 
 void AHellunaHeroCharacter::Multicast_PlayHeroDowned_Implementation()
 {
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] Multicast_PlayHeroDowned: %s | IsLocal=%s | HasAuth=%s | NetMode=%d"),
+		*GetName(),
+		IsLocallyControlled() ? TEXT("Y") : TEXT("N"),
+		HasAuthority() ? TEXT("Y") : TEXT("N"),
+		(int32)GetNetMode());
+
 	// 다운 몽타주
 	if (DownedMontage)
 	{
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] DownedMontage: %s"), *DownedMontage->GetName());
 		if (USkeletalMeshComponent* SkelMesh = GetMesh())
 		{
 			if (UAnimInstance* AnimInst = SkelMesh->GetAnimInstance())
 			{
-				AnimInst->Montage_Play(DownedMontage);
+				float Duration = AnimInst->Montage_Play(DownedMontage);
+				UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] Montage_Play 결과: Duration=%.2f (0이면 실패)"), Duration);
+				if (Duration <= 0.f)
+				{
+					UE_LOG(LogHelluna, Error, TEXT("[Phase21-Debug] 몽타주 재생 실패! MontageSkel=%s, MeshSkel=%s"),
+						DownedMontage->GetSkeleton() ? *DownedMontage->GetSkeleton()->GetName() : TEXT("NULL"),
+						SkelMesh->GetSkeletalMeshAsset() ? (SkelMesh->GetSkeletalMeshAsset()->GetSkeleton() ? *SkelMesh->GetSkeletalMeshAsset()->GetSkeleton()->GetName() : TEXT("NULL")) : TEXT("NoMesh"));
+				}
+			}
+			else
+			{
+				UE_LOG(LogHelluna, Error, TEXT("[Phase21-Debug] AnimInstance NULL!"));
 			}
 		}
+		else
+		{
+			UE_LOG(LogHelluna, Error, TEXT("[Phase21-Debug] Mesh NULL!"));
+		}
+	}
+	else
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] DownedMontage NULL! (몽타주 미설정)"));
 	}
 
 	// 로컬 클라에서만 카메라 낮추기
@@ -1409,7 +1484,12 @@ void AHellunaHeroCharacter::Multicast_PlayHeroDowned_Implementation()
 	{
 		CameraBoom->TargetArmLength = DownedCameraArmLength;
 		CameraBoom->SocketOffset = DownedCameraSocketOffset;
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] 카메라 다운 전환: ArmLength=%.1f, Offset=%s"),
+			DownedCameraArmLength, *DownedCameraSocketOffset.ToString());
 	}
+
+	// [Phase 21] 3D 부활 위젯 표시 (모든 클라이언트)
+	ShowReviveWidget();
 }
 
 void AHellunaHeroCharacter::Multicast_PlayHeroRevived_Implementation()
@@ -1432,6 +1512,9 @@ void AHellunaHeroCharacter::Multicast_PlayHeroRevived_Implementation()
 		CameraBoom->TargetArmLength = DefaultTargetArmLength;
 		CameraBoom->SocketOffset = DefaultSocketOffset;
 	}
+
+	// [Phase 21] 3D 부활 위젯 숨김 (모든 클라이언트)
+	HideReviveWidget();
 }
 
 // ── Revive 입력 ──
@@ -1605,5 +1688,80 @@ void AHellunaHeroCharacter::TickRevive()
 
 void AHellunaHeroCharacter::OnRep_ReviveProgress()
 {
-	// 클라이언트에서 UI 업데이트용 — 추후 위젯에서 바인딩
+	// [Phase 21] 3D 부활 위젯에 프로그레스 반영
+	if (ReviveWidgetInstance)
+	{
+		ReviveWidgetInstance->SetReviveProgress(ReviveProgress);
+	}
+}
+
+// =========================================================
+// 3D 부활 위젯 — Show/Hide/Update
+// =========================================================
+
+void AHellunaHeroCharacter::ShowReviveWidget()
+{
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] ShowReviveWidget 진입: %s | ReviveWidgetComp=%s | NetMode=%d"),
+		*GetName(),
+		ReviveWidgetComp ? TEXT("Valid") : TEXT("NULL"),
+		(int32)GetNetMode());
+
+	if (!ReviveWidgetComp) return;
+
+	// 데디케이티드 서버에서는 위젯 불필요
+	if (GetNetMode() == NM_DedicatedServer) return;
+
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] ShowReviveWidget: WidgetClass=%s, CurrentWidget=%s, Visibility 전=%s"),
+		ReviveWidgetComp->GetWidgetClass() ? *ReviveWidgetComp->GetWidgetClass()->GetName() : TEXT("NULL"),
+		ReviveWidgetComp->GetWidget() ? *ReviveWidgetComp->GetWidget()->GetName() : TEXT("NULL"),
+		ReviveWidgetComp->IsVisible() ? TEXT("Visible") : TEXT("Hidden"));
+
+	ReviveWidgetComp->SetVisibility(true);
+
+	// 위젯 인스턴스 캐시
+	if (!ReviveWidgetInstance)
+	{
+		ReviveWidgetInstance = Cast<UHellunaReviveWidget>(ReviveWidgetComp->GetWidget());
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] ShowReviveWidget: ReviveWidgetInstance 캐시 → %s"),
+			ReviveWidgetInstance ? *ReviveWidgetInstance->GetName() : TEXT("NULL (캐스트 실패 또는 위젯 없음)"));
+	}
+
+	if (ReviveWidgetInstance)
+	{
+		ReviveWidgetInstance->ResetState();
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] ShowReviveWidget: ResetState 완료"));
+	}
+	else
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[Phase21-Debug] ShowReviveWidget: ReviveWidgetInstance가 여전히 NULL! DrawSize=%s, Space=%d"),
+			*ReviveWidgetComp->GetDrawSize().ToString(),
+			(int32)ReviveWidgetComp->GetWidgetSpace());
+	}
+
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] ReviveWidget 표시 완료: %s | Visible=%s"),
+		*GetName(),
+		ReviveWidgetComp->IsVisible() ? TEXT("Y") : TEXT("N"));
+}
+
+void AHellunaHeroCharacter::HideReviveWidget()
+{
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] HideReviveWidget 호출: %s"), *GetName());
+
+	if (!ReviveWidgetComp) return;
+	if (GetNetMode() == NM_DedicatedServer) return;
+
+	ReviveWidgetComp->SetVisibility(false);
+	ReviveWidgetInstance = nullptr;
+}
+
+void AHellunaHeroCharacter::UpdateReviveWidgetBleedout()
+{
+	if (!ReviveWidgetInstance) return;
+	if (!HeroHealthComponent) return;
+
+	// 다운 상태일 때만 출혈 타이머 업데이트
+	if (HeroHealthComponent->IsDowned())
+	{
+		ReviveWidgetInstance->SetBleedoutTime(HeroHealthComponent->GetBleedoutTimeRemaining());
+	}
 }

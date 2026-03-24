@@ -149,6 +149,9 @@ void UHellunaHealthComponent::Internal_SetHealth(float NewHealth, AActor* Instig
 			bDowned = true;
 			BleedoutTimeRemaining = BleedoutDuration;
 
+			UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] HealthComp: 다운 진입! %s | HP=1, BleedoutDuration=%.1f"),
+				*GetNameSafe(Owner), BleedoutDuration);
+
 			// 1초 간격 출혈 타이머 시작
 			if (UWorld* World = GetWorld())
 			{
@@ -156,7 +159,9 @@ void UHellunaHealthComponent::Internal_SetHealth(float NewHealth, AActor* Instig
 					BleedoutTimerHandle, this, &ThisClass::TickBleedout, 1.f, true);
 			}
 
+			UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] HealthComp: OnDowned.Broadcast 호출 직전"));
 			OnDowned.Broadcast(Owner, InstigatorActor);
+			UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] HealthComp: OnDowned.Broadcast 완료"));
 			return;  // bDead로 가지 않음
 		}
 
@@ -245,6 +250,9 @@ void UHellunaHealthComponent::ForceKillFromDowned()
 	AActor* Owner = GetOwner();
 	if (!Owner || !Owner->HasAuthority()) return;
 	if (!bDowned) return;
+
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] ForceKillFromDowned 호출: %s | BleedoutRemaining=%.1f"),
+		*GetNameSafe(Owner), BleedoutTimeRemaining);
 
 	// 출혈 타이머 정리
 	if (UWorld* World = GetWorld())

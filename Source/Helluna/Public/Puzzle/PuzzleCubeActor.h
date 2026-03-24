@@ -120,6 +120,9 @@ public:
 	/** 상호작용 반경 조회 */
 	float GetInteractionRadius() const;
 
+	/** 홀드 프로그레스 getter (Controller에서 접근용) */
+	float GetLocalHoldProgress() const;
+
 	// =========================================================================================
 	// 3D 상호작용 위젯
 	// =========================================================================================
@@ -251,6 +254,9 @@ private:
 
 	/** F키 홀드 프로그레스 (0.0~1.0, 로컬 클라이언트에서 관리) */
 	float LocalHoldProgress = 0.f;
+
+	/** 홀드 완료 플래그 (1회만 실행) */
+	bool bHoldCompleted = false;
 
 	/** 위젯 현재 표시 중인지 */
 	bool bInteractWidgetVisible = false;
