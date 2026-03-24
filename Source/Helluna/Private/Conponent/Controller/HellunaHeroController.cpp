@@ -81,7 +81,33 @@ void AHellunaHeroController::BeginPlay()
 		if (UEnhancedInputComponent* PuzzleEIC = Cast<UEnhancedInputComponent>(InputComponent))
 		{
 			PuzzleEIC->BindAction(PuzzleInteractAction, ETriggerEvent::Triggered, this, &AHellunaHeroController::OnPuzzleInteractInput);
-			UE_LOG(LogTemp, Log, TEXT("[HeroController] PuzzleInteractAction 바인딩 완료"));
+
+			if (PuzzleUpAction)
+			{
+				PuzzleEIC->BindAction(PuzzleUpAction, ETriggerEvent::Started, this, &AHellunaHeroController::OnPuzzleUpInput);
+			}
+			if (PuzzleDownAction)
+			{
+				PuzzleEIC->BindAction(PuzzleDownAction, ETriggerEvent::Started, this, &AHellunaHeroController::OnPuzzleDownInput);
+			}
+			if (PuzzleLeftAction)
+			{
+				PuzzleEIC->BindAction(PuzzleLeftAction, ETriggerEvent::Started, this, &AHellunaHeroController::OnPuzzleLeftInput);
+			}
+			if (PuzzleRightAction)
+			{
+				PuzzleEIC->BindAction(PuzzleRightAction, ETriggerEvent::Started, this, &AHellunaHeroController::OnPuzzleRightInput);
+			}
+			if (PuzzleRotateAction)
+			{
+				PuzzleEIC->BindAction(PuzzleRotateAction, ETriggerEvent::Started, this, &AHellunaHeroController::OnPuzzleRotateInput);
+			}
+			if (PuzzleExitAction)
+			{
+				PuzzleEIC->BindAction(PuzzleExitAction, ETriggerEvent::Started, this, &AHellunaHeroController::OnPuzzleExitInput);
+			}
+
+			UE_LOG(LogTemp, Log, TEXT("[HeroController] PuzzleInteractAction + Navigate/Rotate/Exit 바인딩 완료"));
 		}
 	}
 
@@ -574,7 +600,6 @@ void AHellunaHeroController::OnPuzzleInteractInput(const FInputActionValue& Valu
 
 void AHellunaHeroController::ExitPuzzle()
 {
-	// 로그 #13
 	UE_LOG(LogTemp, Warning, TEXT("[PuzzleController] ExitPuzzle"));
 
 	if (IsValid(ActivePuzzleWidget))
@@ -585,10 +610,19 @@ void AHellunaHeroController::ExitPuzzle()
 
 	bInPuzzleMode = false;
 
-	// 입력 모드 복원
+	// IMC_Puzzle priority를 기본(10)으로 복원
+	if (ULocalPlayer* LP = GetLocalPlayer())
+	{
+		if (UEnhancedInputLocalPlayerSubsystem* Sub = LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
+		{
+			Sub->RemoveMappingContext(PuzzleMappingContext);
+			Sub->AddMappingContext(PuzzleMappingContext, 10);
+			UE_LOG(LogTemp, Warning, TEXT("[PuzzleInput] IMC_Puzzle priority restored to 10 (normal mode)"));
+		}
+	}
+
 	SetInputMode(FInputModeGameOnly());
 
-	// 서버에 퇴출 알림
 	Server_PuzzleExit();
 }
 
@@ -727,11 +761,20 @@ void AHellunaHeroController::Client_PuzzleEntered_Implementation()
 
 	bInPuzzleMode = true;
 
-	// GameAndUI 모드: WASD/마우스 유지 + 위젯 키보드 포커스
-	FInputModeGameAndUI InputMode;
-	InputMode.SetWidgetToFocus(ActivePuzzleWidget->TakeWidget());
-	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-	SetInputMode(InputMode);
+	// IMC_Puzzle priority를 100으로 올려 방향키를 퍼즐이 먼저 소비
+	if (ULocalPlayer* LP = GetLocalPlayer())
+	{
+		if (UEnhancedInputLocalPlayerSubsystem* Sub = LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
+		{
+			Sub->RemoveMappingContext(PuzzleMappingContext);
+			Sub->AddMappingContext(PuzzleMappingContext, 100);
+			UE_LOG(LogTemp, Warning, TEXT("[PuzzleInput] IMC_Puzzle priority raised to 100 (puzzle mode)"));
+		}
+	}
+
+	// Enhanced Input이 처리하므로 위젯 포커스 불필요
+	// GameOnly 모드: 마우스 클릭 후에도 Enhanced Input이 방향키를 받음
+	SetInputMode(FInputModeGameOnly());
 
 	UE_LOG(LogTemp, Log, TEXT("[PuzzleController] 퍼즐 모드 진입 완료"));
 }
@@ -749,5 +792,74 @@ void AHellunaHeroController::Client_PuzzleForceExit_Implementation()
 	}
 
 	bInPuzzleMode = false;
+
+	// IMC_Puzzle priority 복원
+	if (ULocalPlayer* LP = GetLocalPlayer())
+	{
+		if (UEnhancedInputLocalPlayerSubsystem* Sub = LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
+		{
+			Sub->RemoveMappingContext(PuzzleMappingContext);
+			Sub->AddMappingContext(PuzzleMappingContext, 10);
+		}
+	}
+
 	SetInputMode(FInputModeGameOnly());
+}
+
+// --- Enhanced Input: 퍼즐 방향키 (개별 Boolean) ---
+
+void AHellunaHeroController::OnPuzzleUpInput(const FInputActionValue& Value)
+{
+	if (!bInPuzzleMode || !IsValid(ActivePuzzleWidget)) { return; }
+	UE_LOG(LogTemp, Warning, TEXT("[PuzzleInput] Up"));
+	ActivePuzzleWidget->MoveSelection(FIntPoint(-1, 0));
+}
+
+void AHellunaHeroController::OnPuzzleDownInput(const FInputActionValue& Value)
+{
+	if (!bInPuzzleMode || !IsValid(ActivePuzzleWidget)) { return; }
+	UE_LOG(LogTemp, Warning, TEXT("[PuzzleInput] Down"));
+	ActivePuzzleWidget->MoveSelection(FIntPoint(1, 0));
+}
+
+void AHellunaHeroController::OnPuzzleLeftInput(const FInputActionValue& Value)
+{
+	if (!bInPuzzleMode || !IsValid(ActivePuzzleWidget)) { return; }
+	UE_LOG(LogTemp, Warning, TEXT("[PuzzleInput] Left"));
+	ActivePuzzleWidget->MoveSelection(FIntPoint(0, -1));
+}
+
+void AHellunaHeroController::OnPuzzleRightInput(const FInputActionValue& Value)
+{
+	if (!bInPuzzleMode || !IsValid(ActivePuzzleWidget)) { return; }
+	UE_LOG(LogTemp, Warning, TEXT("[PuzzleInput] Right"));
+	ActivePuzzleWidget->MoveSelection(FIntPoint(0, 1));
+}
+
+// --- Enhanced Input: 퍼즐 회전 ---
+
+void AHellunaHeroController::OnPuzzleRotateInput(const FInputActionValue& Value)
+{
+	if (!bInPuzzleMode || !IsValid(ActivePuzzleWidget))
+	{
+		return;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[PuzzleInput] OnPuzzleRotateInput: Rotating cell (%d,%d)"),
+		ActivePuzzleWidget->GetSelectedRow(), ActivePuzzleWidget->GetSelectedCol());
+
+	ActivePuzzleWidget->RotateSelectedCell();
+}
+
+// --- Enhanced Input: 퍼즐 나가기 ---
+
+void AHellunaHeroController::OnPuzzleExitInput(const FInputActionValue& Value)
+{
+	if (!bInPuzzleMode)
+	{
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[PuzzleInput] OnPuzzleExitInput: Exiting puzzle"));
+	ExitPuzzle();
 }

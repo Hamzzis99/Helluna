@@ -245,6 +245,33 @@ protected:
 		meta = (DisplayName = "Puzzle Mapping Context (퍼즐 입력 매핑)"))
 	TObjectPtr<UInputMappingContext> PuzzleMappingContext;
 
+	/** 방향키 → 셀 이동 (개별 Boolean) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Puzzle|Input (퍼즐|입력)",
+		meta = (DisplayName = "Puzzle Up Action (퍼즐 위)"))
+	TObjectPtr<UInputAction> PuzzleUpAction;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Puzzle|Input (퍼즐|입력)",
+		meta = (DisplayName = "Puzzle Down Action (퍼즐 아래)"))
+	TObjectPtr<UInputAction> PuzzleDownAction;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Puzzle|Input (퍼즐|입력)",
+		meta = (DisplayName = "Puzzle Left Action (퍼즐 왼쪽)"))
+	TObjectPtr<UInputAction> PuzzleLeftAction;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Puzzle|Input (퍼즐|입력)",
+		meta = (DisplayName = "Puzzle Right Action (퍼즐 오른쪽)"))
+	TObjectPtr<UInputAction> PuzzleRightAction;
+
+	/** E키 → 셀 회전 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Puzzle|Input (퍼즐|입력)",
+		meta = (DisplayName = "Puzzle Rotate Action (퍼즐 회전)"))
+	TObjectPtr<UInputAction> PuzzleRotateAction;
+
+	/** ESC → 퍼즐 나가기 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Puzzle|Input (퍼즐|입력)",
+		meta = (DisplayName = "Puzzle Exit Action (퍼즐 나가기)"))
+	TObjectPtr<UInputAction> PuzzleExitAction;
+
 private:
 	/** 현재 활성 퍼즐 위젯 */
 	UPROPERTY()
@@ -258,4 +285,16 @@ private:
 
 	/** 퍼즐 상호작용 입력 핸들러 (F 홀드 완료) */
 	void OnPuzzleInteractInput(const struct FInputActionValue& Value);
+
+	/** 퍼즐 방향키 핸들러 (Enhanced Input, 개별 Boolean) */
+	void OnPuzzleUpInput(const struct FInputActionValue& Value);
+	void OnPuzzleDownInput(const struct FInputActionValue& Value);
+	void OnPuzzleLeftInput(const struct FInputActionValue& Value);
+	void OnPuzzleRightInput(const struct FInputActionValue& Value);
+
+	/** 퍼즐 회전 핸들러 (Enhanced Input) */
+	void OnPuzzleRotateInput(const struct FInputActionValue& Value);
+
+	/** 퍼즐 나가기 핸들러 (Enhanced Input) */
+	void OnPuzzleExitInput(const struct FInputActionValue& Value);
 };

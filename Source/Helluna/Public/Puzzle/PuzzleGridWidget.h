@@ -91,10 +91,19 @@ public:
 	UFUNCTION()
 	void OnLockChanged(bool bLocked);
 
+	/** 방향키 입력으로 선택 셀 이동 (Controller에서 호출) */
+	void MoveSelection(FIntPoint Direction);
+
+	/** 선택된 셀 회전 요청 (Controller에서 호출) */
+	void RotateSelectedCell();
+
+	/** 선택 행/열 getter */
+	int32 GetSelectedRow() const { return SelectedRow; }
+	int32 GetSelectedCol() const { return SelectedCol; }
+
 protected:
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
-	virtual FReply NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
 
 private:
 	// =========================================================================================
@@ -104,12 +113,6 @@ private:
 	/** 현재 선택된 셀 행/열 */
 	int32 SelectedRow = 0;
 	int32 SelectedCol = 0;
-
-	/** 방향키 입력으로 선택 셀 이동 */
-	void MoveSelection(FIntPoint Direction);
-
-	/** 선택된 셀 회전 요청 */
-	void RotateSelectedCell();
 
 	/** 선택 하이라이트 갱신 */
 	void UpdateSelectionHighlight();
