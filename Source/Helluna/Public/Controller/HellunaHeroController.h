@@ -385,6 +385,9 @@ private:
 	/** 색채의 개방 연출 중인지 */
 	bool bPlayingColorReveal = false;
 
+	/** ColorReveal VFX already spawned flag */
+	bool bColorRevealVFXSpawned = false;
+
 	/** 색채의 개방 타임라인 진행도 (초) */
 	float ColorRevealProgress = 0.f;
 

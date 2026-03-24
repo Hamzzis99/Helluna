@@ -1067,6 +1067,7 @@ void AHellunaHeroController::PlayColorReveal()
 
 	bPlayingColorReveal = true;
 	ColorRevealProgress = 0.f;
+	bColorRevealVFXSpawned = false;
 
 	// 즉시 섬광 피크
 	FPostProcessSettings& S = DesaturationPostProcess->Settings;
@@ -1075,18 +1076,6 @@ void AHellunaHeroController::PlayColorReveal()
 	S.VignetteIntensity = 0.f;
 	// Saturation은 아직 흑백 유지
 	S.ColorSaturation = FVector4(0.f, 0.f, 0.f, 1.f);
-
-	if (ColorRevealVFX)
-	{
-		if (APawn* MyPawn = GetPawn())
-		{
-			UNiagaraFunctionLibrary::SpawnSystemAtLocation(
-				GetWorld(), ColorRevealVFX,
-				MyPawn->GetActorLocation() + FVector(0.f, 0.f, 100.f),
-				MyPawn->GetActorRotation());
-			UE_LOG(LogTemp, Warning, TEXT("[HackMode] ColorReveal VFX spawned at pawn location"));
-		}
-	}
 
 	UE_LOG(LogTemp, Warning, TEXT("[HackMode] PlayColorReveal — flash!"));
 }
@@ -1114,6 +1103,20 @@ void AHellunaHeroController::TickColorReveal(float DeltaTime)
 		// 빛: 6 → 1 (페이드아웃)
 		const float Tint = FMath::Lerp(6.f, 1.f, EasePhase);
 		S.SceneColorTint = FLinearColor(Tint, Tint, Tint, 1.f);
+
+		// Niagara VFX spawn (1 time only, at fade-out start)
+		if (!bColorRevealVFXSpawned && ColorRevealVFX)
+		{
+			bColorRevealVFXSpawned = true;
+			if (APawn* MyPawn = GetPawn())
+			{
+				UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+					GetWorld(), ColorRevealVFX,
+					MyPawn->GetActorLocation() + FVector(0.f, 0.f, 100.f),
+					MyPawn->GetActorRotation());
+				UE_LOG(LogTemp, Warning, TEXT("[HackMode] ColorReveal VFX spawned (during fade-out)"));
+			}
+		}
 
 		// 흑백 → 컬러 (빛 뒤에서 드러남)
 		const float Sat = FMath::Lerp(0.f, 1.f, EasePhase);
