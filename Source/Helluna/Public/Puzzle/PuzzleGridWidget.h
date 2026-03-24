@@ -67,6 +67,14 @@ public:
 		meta = (DisplayName = "Selected Cell Texture (선택 하이라이트)"))
 	TObjectPtr<UTexture2D> SelectedCellTexture;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Puzzle|Textures",
+		meta = (DisplayName = "Select Burst FX Texture (이동 이펙트)"))
+	TObjectPtr<UTexture2D> SelectBurstTexture;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Puzzle|Textures",
+		meta = (DisplayName = "Rotate Flash FX Texture (회전 이펙트)"))
+	TObjectPtr<UTexture2D> RotateFlashTexture;
+
 	// =========================================================================================
 	// 공개 함수
 	// =========================================================================================

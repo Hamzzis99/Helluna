@@ -28,6 +28,10 @@ public:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UImage> SelectionImage;
 
+	/** 이펙트 전용 이미지 (WBP에서 배치, 기본 Collapsed) */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> EffectImage;
+
 	/** 파이프 텍스처 + 회전 각도 설정 */
 	UFUNCTION(BlueprintCallable, Category = "Puzzle")
 	void SetPipeTexture(UTexture2D* Texture, float RotationAngle);
@@ -43,4 +47,24 @@ public:
 	/** 연결 상태에 따른 Tint 색상 */
 	UFUNCTION(BlueprintCallable, Category = "Puzzle")
 	void SetConnectedTint(bool bConnected);
+
+	/** 이동 시 — 링이 퍼지는 이펙트 */
+	UFUNCTION(BlueprintCallable, Category = "Puzzle|Effects")
+	void PlaySelectBurst(UTexture2D* BurstTexture);
+
+	/** 회전 시 — 강한 플래시 버스트 이펙트 */
+	UFUNCTION(BlueprintCallable, Category = "Puzzle|Effects")
+	void PlayRotateFlash(UTexture2D* FlashTexture);
+
+protected:
+	virtual void NativeDestruct() override;
+
+private:
+	FTimerHandle SelectBurstTimerHandle;
+	FTimerHandle RotateFlashTimerHandle;
+	float SelectBurstProgress = 0.f;
+	float RotateFlashProgress = 0.f;
+
+	void TickSelectBurst();
+	void TickRotateFlash();
 };

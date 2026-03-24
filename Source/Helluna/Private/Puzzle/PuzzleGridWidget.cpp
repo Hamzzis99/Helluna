@@ -220,6 +220,12 @@ void UPuzzleGridWidget::RotateSelectedCell()
 	{
 		Controller->RequestPuzzleRotateCell(CellIndex);
 	}
+
+	// 로컬 이펙트 즉시 재생
+	if (CellWidgets.IsValidIndex(CellIndex) && IsValid(CellWidgets[CellIndex]))
+	{
+		CellWidgets[CellIndex]->PlayRotateFlash(RotateFlashTexture);
+	}
 }
 
 void UPuzzleGridWidget::UpdateSelectionHighlight()
@@ -235,7 +241,13 @@ void UPuzzleGridWidget::UpdateSelectionHighlight()
 
 		const int32 Row = i / GridSize;
 		const int32 Col = i % GridSize;
-		CellWidgets[i]->SetSelected(Row == SelectedRow && Col == SelectedCol);
+		const bool bSelected = (Row == SelectedRow && Col == SelectedCol);
+		CellWidgets[i]->SetSelected(bSelected);
+
+		if (bSelected)
+		{
+			CellWidgets[i]->PlaySelectBurst(SelectBurstTexture);
+		}
 	}
 }
 
