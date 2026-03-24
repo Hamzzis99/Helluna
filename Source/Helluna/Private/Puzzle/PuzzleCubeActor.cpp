@@ -374,6 +374,14 @@ float APuzzleCubeActor::GetInteractionRadius() const
 // 데미지 게이팅
 // ============================================================================
 
+/**
+ * 퍼즐 해제 성공 → 데미지 허용 상태 전환
+ *
+ * [보스전] DeactivateShield()로 대체:
+ *   bShieldActive = false → 전원 보스에게 딜 가능
+ *   ShieldDownDuration(5분) 타이머 시작
+ *   보호막 해제 이펙트 재생
+ */
 void APuzzleCubeActor::UnlockDamage()
 {
 	// 퍼즐 성공 → 제한시간 타이머 정지
@@ -397,6 +405,14 @@ void APuzzleCubeActor::UnlockDamage()
 	OnRep_bPuzzleLocked();
 }
 
+/**
+ * 딜타임 종료 → 퍼즐 재잠금
+ *
+ * [보스전] ReactivateShield()로 대체:
+ *   bShieldActive = true → 보스 다시 무적
+ *   퍼즐 리셋 (ReshufflePuzzle)
+ *   보호막 재활성화 이펙트 재생
+ */
 void APuzzleCubeActor::RelockPuzzle()
 {
 	// 로그 #6

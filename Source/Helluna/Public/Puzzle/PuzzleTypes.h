@@ -6,6 +6,15 @@
 #include "PuzzleTypes.generated.h"
 
 /**
+ * 퍼즐 타입/유틸리티
+ *
+ * [보스전 로드맵]
+ * FPuzzleGridData, FPuzzleCell, EPuzzlePipeType, PuzzleUtils는
+ * 보스 보호막 시스템에서도 그대로 재사용.
+ * 보스 페이즈별 GridSize 변경(4→5) 시 이 구조체 수정 불필요 (GridSize가 이미 변수).
+ */
+
+/**
  * 퍼즐 파이프 타입
  */
 UENUM(BlueprintType)

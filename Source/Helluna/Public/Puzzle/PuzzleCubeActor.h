@@ -15,9 +15,22 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnPuzzleGridUpdated);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnPuzzleLockChanged, bool, bLocked);
 
 /**
- * 퍼즐 큐브 액터
+ * 퍼즐 큐브 액터 — 프로토타입용 엔티티
  * 에너지 회로(파이프) 퍼즐을 풀어야 데미지를 입힐 수 있는 시스템.
  * 퍼즐 상태 변경/데미지 판정/타이머는 서버 권한(HasAuthority).
+ *
+ * [보스전 로드맵]
+ * 이 액터의 퍼즐 로직(PuzzleGrid, GeneratePuzzle, RotateCell, CheckSolved 등)은
+ * 추후 UPuzzleShieldComponent로 이관하여 보스 캐릭터에 부착할 예정.
+ *
+ * 보스 보호막 패턴:
+ *   보호막 ON (무적) → 퍼즐 풀기 → 보호막 OFF (딜타임 5분) → 보호막 ON → 반복
+ *   bPuzzleLocked → bShieldActive
+ *   UnlockDamage() → DeactivateShield()
+ *   RelockPuzzle() → ReactivateShield()
+ *   DamageTimeSeconds(10초) → ShieldDownDuration(300초/5분)
+ *
+ * 참고: reedme/pattern/puzzle-boss-shield-roadmap.md
  */
 UCLASS()
 class HELLUNA_API APuzzleCubeActor : public AActor

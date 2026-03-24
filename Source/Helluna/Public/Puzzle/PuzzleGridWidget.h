@@ -15,8 +15,14 @@ class AHellunaHeroController;
 class UPuzzleCellWidget;
 
 /**
- * 4x4 퍼즐 그리드 위젯
- * 방향키로 셀 선택, Enter/Space로 회전, ESC로 퇴출
+ * 퍼즐 그리드 위젯 — 4×4 에너지 회로 퍼즐 UI
+ * 방향키로 셀 선택, E키로 회전, ESC로 퇴출
+ *
+ * [보스전 로드맵]
+ * 보스 버전에서도 이 위젯을 그대로 사용.
+ * PuzzleShieldComponent가 PuzzleCubeActor 역할을 대체하므로
+ * OwningCube → OwningShieldComponent로 참조만 변경하면 됨.
+ * SUCCESS 후 전원 HUD에 "보호막 해제!" 알림 + 딜타임(5분) 카운트다운 표시 필요.
  */
 UCLASS()
 class HELLUNA_API UPuzzleGridWidget : public UUserWidget
@@ -67,6 +73,34 @@ public:
 	/** "PUZZLE UNLOCKED" 서브 텍스트 */
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> SuccessSubText;
+
+	// =========================================================================================
+	// FAIL 애니메이션 위젯
+	// =========================================================================================
+
+	/** 실패 오버레이 (전체 화면, 기본 Collapsed) */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UCanvasPanel> FailOverlay;
+
+	/** 빨간 전체 플래시 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> FailFlashImage;
+
+	/** 빨간 비네트 (가장자리) */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> FailVignetteImage;
+
+	/** 빨간 스캔라인 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> FailScanlineImage;
+
+	/** "FAIL" 메인 텍스트 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> FailMainText;
+
+	/** "TIME EXPIRED" 서브 텍스트 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> FailSubText;
 
 	// =========================================================================================
 	// 텍스처 (에디터에서 할당)
@@ -213,4 +247,42 @@ private:
 
 	/** SUCCESS 애니메이션 종료 */
 	void FinishSuccessAnimation();
+
+	// =========================================================================================
+	// FAIL 애니메이션
+	// =========================================================================================
+
+	/** FAIL 애니메이션 타이머 */
+	FTimerHandle FailAnimTimerHandle;
+	float FailAnimProgress = 0.f;
+	bool bPlayingFailAnim = false;
+
+	/** FAIL 애니메이션 재생 */
+	void PlayFailAnimation();
+
+	/** FAIL 애니메이션 프레임 업데이트 */
+	void TickFailAnimation();
+
+	/** FAIL 애니메이션 종료 */
+	void FinishFailAnimation();
+
+	// =========================================================================================
+	// 그리드 흔들림
+	// =========================================================================================
+
+	/** 흔들림 타이머 */
+	FTimerHandle ShakeTimerHandle;
+	float ShakeProgress = 0.f;
+
+	/** GridPanel 원래 위치 저장 */
+	FVector2D GridOriginalPosition;
+
+	/** 그리드 흔들림 시작 */
+	void StartGridShake();
+
+	/** 그리드 흔들림 프레임 업데이트 */
+	void TickGridShake();
+
+	/** 그리드 흔들림 정지 + 위치 복원 */
+	void StopGridShake();
 };

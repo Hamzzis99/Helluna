@@ -37,6 +37,8 @@ void UPuzzleGridWidget::NativeDestruct()
 		World->GetTimerManager().ClearTimer(ClientTimerHandle);
 		World->GetTimerManager().ClearTimer(PuzzleCountdownTimerHandle);
 		World->GetTimerManager().ClearTimer(SuccessAnimTimerHandle);
+		World->GetTimerManager().ClearTimer(FailAnimTimerHandle);
+		World->GetTimerManager().ClearTimer(ShakeTimerHandle);
 	}
 
 	Super::NativeDestruct();
@@ -191,7 +193,7 @@ void UPuzzleGridWidget::RefreshGrid()
 
 void UPuzzleGridWidget::MoveSelection(FIntPoint Direction)
 {
-	if (bShowingFail || bPlayingSuccessAnim) { return; }
+	if (bShowingFail || bPlayingSuccessAnim || bPlayingFailAnim) { return; }
 
 	const int32 OldRow = SelectedRow;
 	const int32 OldCol = SelectedCol;
@@ -211,7 +213,7 @@ void UPuzzleGridWidget::MoveSelection(FIntPoint Direction)
 
 void UPuzzleGridWidget::RotateSelectedCell()
 {
-	if (bShowingFail || bPlayingSuccessAnim) { return; }
+	if (bShowingFail || bPlayingSuccessAnim || bPlayingFailAnim) { return; }
 
 	if (!OwningCube.IsValid())
 	{
@@ -346,6 +348,14 @@ void UPuzzleGridWidget::UpdateClientTimer()
 		{
 			World->GetTimerManager().ClearTimer(ClientTimerHandle);
 		}
+
+		// 데미지 타임 종료 → 퍼즐 UI 자동 닫기
+		AHellunaHeroController* Controller = Cast<AHellunaHeroController>(GetOwningPlayer());
+		if (IsValid(Controller))
+		{
+			Controller->ExitPuzzle();
+			UE_LOG(LogTemp, Warning, TEXT("[PuzzleWidget] Damage time expired — auto-closing puzzle UI"));
+		}
 	}
 }
 
@@ -406,12 +416,15 @@ void UPuzzleGridWidget::ShowFailMessage()
 
 	if (StatusText)
 	{
-		StatusText->SetText(FText::FromString(TEXT("FAIL!")));
+		StatusText->SetText(FText::GetEmpty()); // FAIL 오버레이가 대체
 	}
 	if (TimerText)
 	{
 		TimerText->SetText(FText::GetEmpty());
 	}
+
+	// FAIL 애니메이션 재생
+	PlayFailAnimation();
 
 	UE_LOG(LogTemp, Warning, TEXT("[PuzzleWidget] FAIL! Waiting for reshuffle..."));
 }
@@ -597,4 +610,253 @@ void UPuzzleGridWidget::FinishSuccessAnimation()
 	}
 
 	UE_LOG(LogTemp, Warning, TEXT("[PuzzleWidget] SuccessAnimation finished"));
+}
+
+// ============================================================================
+// FAIL 애니메이션
+// ============================================================================
+
+void UPuzzleGridWidget::PlayFailAnimation()
+{
+	if (!FailOverlay)
+	{
+		// WBP에 오버레이 미구성 시 기존 텍스트 폴백
+		if (StatusText)
+		{
+			StatusText->SetText(FText::FromString(TEXT("FAIL!")));
+		}
+		return;
+	}
+
+	bPlayingFailAnim = true;
+	FailAnimProgress = 0.f;
+
+	FailOverlay->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+
+	// 초기 상태
+	if (FailFlashImage)
+	{
+		FailFlashImage->SetRenderOpacity(0.f);
+	}
+	if (FailVignetteImage)
+	{
+		FailVignetteImage->SetRenderOpacity(0.f);
+	}
+	if (FailScanlineImage)
+	{
+		FailScanlineImage->SetRenderScale(FVector2D(0.f, 1.f));
+		FailScanlineImage->SetRenderOpacity(0.f);
+	}
+	if (FailMainText)
+	{
+		FailMainText->SetRenderScale(FVector2D(1.8f, 1.8f));
+		FailMainText->SetRenderOpacity(0.f);
+	}
+	if (FailSubText)
+	{
+		FailSubText->SetRenderOpacity(0.f);
+	}
+
+	// 그리드 흔들림 시작
+	StartGridShake();
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(FailAnimTimerHandle);
+		World->GetTimerManager().SetTimer(
+			FailAnimTimerHandle, this,
+			&UPuzzleGridWidget::TickFailAnimation,
+			0.016f, true);
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[PuzzleWidget] PlayFailAnimation started"));
+}
+
+void UPuzzleGridWidget::TickFailAnimation()
+{
+	FailAnimProgress += 0.016f;
+	const float T = FailAnimProgress;
+
+	// Phase 1: 0.0 ~ 0.3초 — 빨간 플래시 + 텍스트 팍! 등장
+	if (T <= 0.3f)
+	{
+		const float Phase = T / 0.3f;
+
+		// 빨간 전체 플래시: 빠르게 번쩍 후 사라짐
+		if (FailFlashImage)
+		{
+			float FlashOpacity;
+			if (Phase < 0.3f)
+			{
+				FlashOpacity = Phase / 0.3f;
+			}
+			else
+			{
+				FlashOpacity = FMath::Max(0.f, 1.f - (Phase - 0.3f) / 0.7f);
+			}
+			FailFlashImage->SetRenderOpacity(FlashOpacity * 0.6f);
+		}
+
+		// 비네트: 올라감
+		if (FailVignetteImage)
+		{
+			FailVignetteImage->SetRenderOpacity(FMath::Min(1.f, Phase * 1.5f) * 0.7f);
+		}
+
+		// 스캔라인 스윕
+		if (FailScanlineImage)
+		{
+			FailScanlineImage->SetRenderScale(FVector2D(FMath::Lerp(0.f, 1.5f, Phase), 1.f));
+			const float ScanOpacity = Phase < 0.5f ? Phase * 2.f : (1.f - Phase) * 2.f;
+			FailScanlineImage->SetRenderOpacity(ScanOpacity);
+		}
+
+		// FAIL 텍스트: 크게 → 바운스
+		if (FailMainText && T >= 0.05f)
+		{
+			const float TextPhase = FMath::Min(1.f, (T - 0.05f) / 0.2f);
+			float Scale;
+			if (TextPhase < 0.5f)
+			{
+				Scale = FMath::Lerp(1.8f, 0.95f, TextPhase / 0.5f);
+			}
+			else
+			{
+				Scale = FMath::Lerp(0.95f, 1.0f, (TextPhase - 0.5f) / 0.5f);
+			}
+			FailMainText->SetRenderScale(FVector2D(Scale, Scale));
+			FailMainText->SetRenderOpacity(FMath::Min(1.f, TextPhase * 3.f));
+		}
+	}
+	// Phase 2: 0.3 ~ 0.5초 — 서브텍스트 + 안정화
+	else if (T <= 0.5f)
+	{
+		const float Phase = (T - 0.3f) / 0.2f;
+
+		if (FailFlashImage)
+		{
+			FailFlashImage->SetRenderOpacity(FMath::Max(0.f, 0.2f - Phase * 0.2f));
+		}
+		if (FailVignetteImage)
+		{
+			FailVignetteImage->SetRenderOpacity(FMath::Lerp(0.7f, 0.5f, Phase));
+		}
+		if (FailSubText)
+		{
+			FailSubText->SetRenderOpacity(Phase);
+		}
+	}
+	// Phase 3: 0.5 ~ 1.2초 — 유지
+	else if (T <= 1.2f)
+	{
+		// 유지
+	}
+	// Phase 4: 1.2 ~ 2.0초 — 페이드아웃
+	else if (T <= 2.0f)
+	{
+		const float Phase = (T - 1.2f) / 0.8f;
+		const float FadeOut = 1.f - Phase;
+
+		if (FailVignetteImage)
+		{
+			FailVignetteImage->SetRenderOpacity(0.5f * FadeOut);
+		}
+		if (FailMainText)
+		{
+			FailMainText->SetRenderOpacity(FadeOut);
+		}
+		if (FailSubText)
+		{
+			FailSubText->SetRenderOpacity(FadeOut);
+		}
+	}
+	// 완료
+	else
+	{
+		FinishFailAnimation();
+	}
+}
+
+void UPuzzleGridWidget::FinishFailAnimation()
+{
+	bPlayingFailAnim = false;
+
+	if (FailOverlay)
+	{
+		FailOverlay->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(FailAnimTimerHandle);
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[PuzzleWidget] FailAnimation finished"));
+}
+
+// ============================================================================
+// 그리드 흔들림
+// ============================================================================
+
+void UPuzzleGridWidget::StartGridShake()
+{
+	if (!GridPanel)
+	{
+		return;
+	}
+
+	ShakeProgress = 0.f;
+	GridOriginalPosition = GridPanel->GetRenderTransform().Translation;
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ShakeTimerHandle);
+		World->GetTimerManager().SetTimer(
+			ShakeTimerHandle, this,
+			&UPuzzleGridWidget::TickGridShake,
+			0.016f, true);
+	}
+}
+
+void UPuzzleGridWidget::TickGridShake()
+{
+	ShakeProgress += 0.016f;
+
+	if (ShakeProgress >= 0.5f)
+	{
+		StopGridShake();
+		return;
+	}
+
+	if (!GridPanel)
+	{
+		return;
+	}
+
+	// 감쇠 진동 (시간이 갈수록 약해짐)
+	const float Decay = 1.f - (ShakeProgress / 0.5f);
+	const float Intensity = 8.f * Decay;
+	const float Frequency = 25.f;
+
+	const float OffsetX = FMath::Sin(ShakeProgress * Frequency * 2.f * UE_PI) * Intensity;
+	const float OffsetY = FMath::Cos(ShakeProgress * Frequency * 1.7f * 2.f * UE_PI) * Intensity * 0.5f;
+
+	FWidgetTransform Transform = GridPanel->GetRenderTransform();
+	Transform.Translation = GridOriginalPosition + FVector2D(OffsetX, OffsetY);
+	GridPanel->SetRenderTransform(Transform);
+}
+
+void UPuzzleGridWidget::StopGridShake()
+{
+	if (GridPanel)
+	{
+		FWidgetTransform Transform = GridPanel->GetRenderTransform();
+		Transform.Translation = GridOriginalPosition;
+		GridPanel->SetRenderTransform(Transform);
+	}
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ShakeTimerHandle);
+	}
 }
