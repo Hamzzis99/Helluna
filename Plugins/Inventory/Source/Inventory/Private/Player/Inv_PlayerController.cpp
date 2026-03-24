@@ -394,7 +394,17 @@ void AInv_PlayerController::TraceForInteractables()
 	// [Fix26] GetWorld() null 체크 (레벨 전환 중 Tick 크래시 방지)
 	UWorld* TraceWorld = GetWorld();
 	if (!TraceWorld) return;
-	TraceWorld->LineTraceSingleByChannel(HitResult, TraceStart, TraceEnd, ItemTraceChannel);
+
+	// [Phase18] SphereTrace로 아이템 줍기 쉽게 (TraceRadius > 0이면 SphereTrace)
+	if (TraceRadius > 0.f)
+	{
+		const FCollisionShape SphereShape = FCollisionShape::MakeSphere(TraceRadius);
+		TraceWorld->SweepSingleByChannel(HitResult, TraceStart, TraceEnd, FQuat::Identity, ItemTraceChannel, SphereShape);
+	}
+	else
+	{
+		TraceWorld->LineTraceSingleByChannel(HitResult, TraceStart, TraceEnd, ItemTraceChannel);
+	}
 
 	LastActor = ThisActor;
 	ThisActor = HitResult.GetActor();
@@ -418,6 +428,13 @@ void AInv_PlayerController::TraceForInteractables()
 			{
 				IInv_Highlightable::Execute_UnHighlight(Highlightable);
 			}
+
+			// [Phase18] 이전 아이템의 3D 위젯 숨김
+			UInv_ItemComponent* LastItemComp = LastActor->FindComponentByClass<UInv_ItemComponent>();
+			if (IsValid(LastItemComp))
+			{
+				LastItemComp->HideInteractWidget();
+			}
 		}
 		if (IsValid(HUDWidget))
 		{
@@ -428,6 +445,21 @@ void AInv_PlayerController::TraceForInteractables()
 
 	if (ThisActor == LastActor) return;
 
+	// [Phase18] 이전 대상의 3D 위젯 숨김 + Unhighlight
+	if (LastActor.IsValid())
+	{
+		if (UActorComponent* Highlightable = LastActor->FindComponentByInterface(UInv_Highlightable::StaticClass()); IsValid(Highlightable))
+		{
+			IInv_Highlightable::Execute_UnHighlight(Highlightable);
+		}
+
+		UInv_ItemComponent* LastItemComp = LastActor->FindComponentByClass<UInv_ItemComponent>();
+		if (IsValid(LastItemComp))
+		{
+			LastItemComp->HideInteractWidget();
+		}
+	}
+
 	if (ThisActor.IsValid())
 	{
 		if (UActorComponent* Highlightable = ThisActor->FindComponentByInterface(UInv_Highlightable::StaticClass()); IsValid(Highlightable))
@@ -435,43 +467,63 @@ void AInv_PlayerController::TraceForInteractables()
 			IInv_Highlightable::Execute_Highlight(Highlightable);
 		}
 
-		if (IsValid(HUDWidget))
+		if (bIsCraftingStation)
 		{
-			if (bIsCraftingStation)
+			AInv_CraftingStation* CraftingStation = Cast<AInv_CraftingStation>(ThisActor.Get());
+			if (IsValid(CraftingStation) && IsValid(HUDWidget))
 			{
-				AInv_CraftingStation* CraftingStation = Cast<AInv_CraftingStation>(ThisActor.Get());
-				if (IsValid(CraftingStation))
+				HUDWidget->ShowPickupMessage(CraftingStation->GetPickupMessage());
+			}
+		}
+		else
+		{
+			// Phase 9: 컨테이너 표시 이름
+			UInv_LootContainerComponent* LootComp = ThisActor->FindComponentByClass<UInv_LootContainerComponent>();
+			if (IsValid(LootComp))
+			{
+				if (IsValid(HUDWidget))
 				{
-					HUDWidget->ShowPickupMessage(CraftingStation->GetPickupMessage());
+					HUDWidget->ShowPickupMessage(LootComp->ContainerDisplayName.ToString());
 				}
 			}
 			else
 			{
-				// Phase 9: 컨테이너 표시 이름
-				UInv_LootContainerComponent* LootComp = ThisActor->FindComponentByClass<UInv_LootContainerComponent>();
-				if (IsValid(LootComp))
+				// [Phase18] 아이템: 3D 위젯 우선, 실패 시 기존 2D HUD fallback
+				UInv_ItemComponent* ItemComponent = ThisActor->FindComponentByClass<UInv_ItemComponent>();
+				if (IsValid(ItemComponent))
 				{
-					HUDWidget->ShowPickupMessage(LootComp->ContainerDisplayName.ToString());
-				}
-				else
-				{
-					UInv_ItemComponent* ItemComponent = ThisActor->FindComponentByClass<UInv_ItemComponent>();
-					if (IsValid(ItemComponent))
+					const FString BoundKey = GetBoundInteractKeyName();
+					if (!ItemComponent->ShowInteractWidget(BoundKey))
 					{
-						HUDWidget->ShowPickupMessage(ItemComponent->GetPickupMessage());
+						// 3D 위젯 미설정 → 기존 2D HUD fallback
+						if (IsValid(HUDWidget))
+						{
+							HUDWidget->ShowPickupMessage(ItemComponent->GetPickupMessage());
+						}
 					}
 				}
 			}
 		}
 	}
+}
 
-	if (LastActor.IsValid())
+FString AInv_PlayerController::GetBoundInteractKeyName() const
+{
+	if (!PrimaryInteractAction) return TEXT("F");
+
+	const ULocalPlayer* LP = GetLocalPlayer();
+	if (!LP) return TEXT("F");
+
+	UEnhancedInputLocalPlayerSubsystem* Subsystem =
+		ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(LP);
+	if (!Subsystem) return TEXT("F");
+
+	TArray<FKey> Keys = Subsystem->QueryKeysMappedToAction(PrimaryInteractAction);
+	if (Keys.Num() > 0)
 	{
-		if (UActorComponent* Highlightable = LastActor->FindComponentByInterface(UInv_Highlightable::StaticClass()); IsValid(Highlightable))
-		{
-			IInv_Highlightable::Execute_UnHighlight(Highlightable);
-		}
+		return Keys[0].GetDisplayName().ToString();
 	}
+	return TEXT("F");
 }
 
 void AInv_PlayerController::HandlePrimaryWeapon()

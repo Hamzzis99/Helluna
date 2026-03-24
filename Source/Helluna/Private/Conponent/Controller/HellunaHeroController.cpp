@@ -28,6 +28,8 @@
 #include "Puzzle/PuzzleGridWidget.h"
 #include "EngineUtils.h" // TActorIterator
 #include "Components/PostProcessComponent.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
 
 
 
@@ -174,6 +176,7 @@ void AHellunaHeroController::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 	TickDesaturation(DeltaTime);
+	TickColorReveal(DeltaTime);
 }
 
 // ============================================================================
@@ -1020,6 +1023,8 @@ void AHellunaHeroController::SetDesaturationByProgress(float HoldProgress)
 void AHellunaHeroController::TickDesaturation(float DeltaTime)
 {
 	if (!DesaturationPostProcess) { return; }
+	// 색채의 개방 연출 중에는 TickColorReveal이 PostProcess를 직접 제어
+	if (bPlayingColorReveal) { return; }
 	if (FMath::IsNearlyEqual(CurrentSaturation, TargetSaturation, 0.001f))
 	{
 		CurrentSaturation = TargetSaturation;
@@ -1043,4 +1048,108 @@ void AHellunaHeroController::TickDesaturation(float DeltaTime)
 	S.ColorContrast = FVector4(ContrastBoost, ContrastBoost, ContrastBoost, 1.f);
 
 	S.VignetteIntensity = (1.f - CurrentSaturation) * 0.6f;
+}
+
+// ============================================================================
+// 색채의 개방 — 순백 섬광 → 페이드아웃 → 흑백에서 컬러 복원
+// ============================================================================
+
+void AHellunaHeroController::PlayColorReveal()
+{
+	if (!DesaturationPostProcess) { return; }
+
+	// ESC 퇴출 시 bInHackMode가 이미 false → 플래시 스킵, 기존 SetDesaturation으로 처리됨
+	if (!bInHackMode)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[HackMode] PlayColorReveal skipped — not in hack mode (ESC exit path)"));
+		return;
+	}
+
+	bPlayingColorReveal = true;
+	ColorRevealProgress = 0.f;
+
+	// 즉시 섬광 피크
+	FPostProcessSettings& S = DesaturationPostProcess->Settings;
+	S.bOverride_SceneColorTint = true;
+	S.SceneColorTint = FLinearColor(6.f, 6.f, 6.f, 1.f);
+	S.VignetteIntensity = 0.f;
+	// Saturation은 아직 흑백 유지
+	S.ColorSaturation = FVector4(0.f, 0.f, 0.f, 1.f);
+
+	if (ColorRevealVFX)
+	{
+		if (APawn* MyPawn = GetPawn())
+		{
+			UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+				GetWorld(), ColorRevealVFX,
+				MyPawn->GetActorLocation() + FVector(0.f, 0.f, 100.f),
+				MyPawn->GetActorRotation());
+			UE_LOG(LogTemp, Warning, TEXT("[HackMode] ColorReveal VFX spawned at pawn location"));
+		}
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[HackMode] PlayColorReveal — flash!"));
+}
+
+void AHellunaHeroController::TickColorReveal(float DeltaTime)
+{
+	if (!bPlayingColorReveal) { return; }
+	if (!DesaturationPostProcess) { return; }
+
+	ColorRevealProgress += DeltaTime;
+	FPostProcessSettings& S = DesaturationPostProcess->Settings;
+
+	if (ColorRevealProgress <= 0.3f)
+	{
+		// [0~0.3초] 섬광 유지
+		S.SceneColorTint = FLinearColor(6.f, 6.f, 6.f, 1.f);
+		S.ColorSaturation = FVector4(0.f, 0.f, 0.f, 1.f); // 아직 흑백
+	}
+	else if (ColorRevealProgress <= 1.8f)
+	{
+		// [0.3~1.8초] 빛 페이드아웃 + 컬러 복원 (동시 진행)
+		const float Phase = (ColorRevealProgress - 0.3f) / 1.5f; // 0→1
+		const float EasePhase = Phase * Phase * (3.f - 2.f * Phase); // smoothstep
+
+		// 빛: 6 → 1 (페이드아웃)
+		const float Tint = FMath::Lerp(6.f, 1.f, EasePhase);
+		S.SceneColorTint = FLinearColor(Tint, Tint, Tint, 1.f);
+
+		// 흑백 → 컬러 (빛 뒤에서 드러남)
+		const float Sat = FMath::Lerp(0.f, 1.f, EasePhase);
+		S.ColorSaturation = FVector4(Sat, Sat, Sat, 1.f);
+
+		// 콘트라스트 정상화
+		const float Con = FMath::Lerp(1.2f, 1.f, EasePhase);
+		S.ColorContrast = FVector4(Con, Con, Con, 1.f);
+
+		CurrentSaturation = Sat;
+	}
+	else
+	{
+		// [1.8초+] 완료
+		FinishColorReveal();
+	}
+}
+
+void AHellunaHeroController::FinishColorReveal()
+{
+	bPlayingColorReveal = false;
+
+	if (DesaturationPostProcess)
+	{
+		FPostProcessSettings& S = DesaturationPostProcess->Settings;
+		S.SceneColorTint = FLinearColor(1.f, 1.f, 1.f, 1.f);
+		S.bOverride_SceneColorTint = false;
+		S.ColorSaturation = FVector4(1.f, 1.f, 1.f, 1.f);
+		S.ColorContrast = FVector4(1.f, 1.f, 1.f, 1.f);
+		S.VignetteIntensity = 0.f;
+	}
+
+	CurrentSaturation = 1.f;
+	TargetSaturation = 1.f;
+	SaturationLerpSpeed = 0.f;
+	bInHackMode = false;
+
+	UE_LOG(LogTemp, Warning, TEXT("[HackMode] ColorReveal finished — full color restored"));
 }

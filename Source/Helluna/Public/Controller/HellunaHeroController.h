@@ -7,6 +7,8 @@
 #include "GenericTeamAgentInterface.h"
 #include "HellunaHeroController.generated.h"
 
+class UNiagaraSystem;
+
 class UVoteWidget;
 class UVoteManagerComponent;
 class UHellunaGameResultWidget;
@@ -230,6 +232,22 @@ public:
 	 */
 	void SetDesaturationByProgress(float HoldProgress);
 
+	/**
+	 * 색채의 개방 (The Reveal)
+	 * 퍼즐 성공 시 호출 — 순백 섬광 → 페이드아웃 → 흑백에서 컬러 복원
+	 * bInHackMode=true일 때만 실행 (ESC 퇴출 시 스킵)
+	 *
+	 * [보스전 로드맵]
+	 * 보스 보호막 해제 성공 시에도 동일 연출.
+	 * 나이아가라 파티클(빛 입자 산란)을 페이드아웃과 함께 재생하면 더 극적.
+	 */
+	void PlayColorReveal();
+
+	/** 색채의 개방 나이아가라 이펙트 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Puzzle|HackMode",
+		meta = (DisplayName = "색채의 개방 VFX"))
+	TObjectPtr<UNiagaraSystem> ColorRevealVFX;
+
 	// --- Server RPCs ---
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_PuzzleTryEnter();
@@ -359,4 +377,20 @@ private:
 
 	/** Tick에서 Saturation Lerp 업데이트 */
 	void TickDesaturation(float DeltaTime);
+
+	// =========================================================================================
+	// 색채의 개방 (순백 섬광 → 페이드아웃 → 컬러 복원)
+	// =========================================================================================
+
+	/** 색채의 개방 연출 중인지 */
+	bool bPlayingColorReveal = false;
+
+	/** 색채의 개방 타임라인 진행도 (초) */
+	float ColorRevealProgress = 0.f;
+
+	/** Tick에서 색채의 개방 업데이트 */
+	void TickColorReveal(float DeltaTime);
+
+	/** 색채의 개방 완료 — PostProcess 기본값 복원 */
+	void FinishColorReveal();
 };

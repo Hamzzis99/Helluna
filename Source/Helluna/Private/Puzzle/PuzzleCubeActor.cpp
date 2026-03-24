@@ -721,7 +721,10 @@ void APuzzleCubeActor::Multicast_HackModeEnded_Implementation()
 		AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(PC);
 		if (HeroPC)
 		{
-			HeroPC->SetDesaturation(1.f, 1.5f); // 1.5초에 걸쳐 컬러 복원
+			// 성공: PlayColorReveal (순백 섬광 → 페이드아웃 → 컬러 복원)
+			// ESC: PlayColorReveal 내부에서 bInHackMode=false 확인 → 스킵
+			//       → ExitPuzzle의 SetDesaturation(1.f, 1.0f)이 이미 처리함
+			HeroPC->PlayColorReveal();
 		}
 	}
 	UE_LOG(LogTemp, Warning, TEXT("[PuzzleCube] Multicast_HackModeEnded"));
