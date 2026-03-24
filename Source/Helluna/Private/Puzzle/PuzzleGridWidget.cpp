@@ -150,6 +150,14 @@ void UPuzzleGridWidget::InitGrid(APuzzleCubeActor* Cube)
 
 void UPuzzleGridWidget::RefreshGrid()
 {
+	// 성공 애니메이션 또는 데미지 타임 진행 중이면 리프레시 스킵
+	// (서버 RelockPuzzle 후 OnRep으로 새 퍼즐이 와도 표시하지 않음)
+	if (bPlayingSuccessAnim || ClientTimerRemaining > 0.f)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[PuzzleWidget] RefreshGrid skipped — success state active"));
+		return;
+	}
+
 	if (!OwningCube.IsValid())
 	{
 		return;

@@ -1,8 +1,10 @@
 // Source/Helluna/Private/Puzzle/PuzzleCubeActor.cpp
 
 #include "Puzzle/PuzzleCubeActor.h"
+#include "Puzzle/PuzzleInteractWidget.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/WidgetComponent.h"
 #include "Net/UnrealNetwork.h"
 #include "Controller/HellunaHeroController.h"
 
@@ -13,7 +15,7 @@
 APuzzleCubeActor::APuzzleCubeActor()
 {
 	PrimaryActorTick.bCanEverTick = true;
-	PrimaryActorTick.bStartWithTickEnabled = false; // 데미지 타이머 활성 시에만 Tick
+	PrimaryActorTick.bStartWithTickEnabled = true; // 3D 위젯 표시용 + 데미지 타이머용
 
 	bReplicates = true;
 
@@ -27,6 +29,15 @@ APuzzleCubeActor::APuzzleCubeActor()
 	InteractionSphere->SetCollisionProfileName(TEXT("OverlapAllDynamic"));
 	InteractionSphere->SetGenerateOverlapEvents(true);
 	InteractionSphere->SetupAttachment(MeshComp);
+
+	// 3D 상호작용 위젯
+	InteractWidgetComp = CreateDefaultSubobject<UWidgetComponent>(TEXT("InteractWidgetComp"));
+	InteractWidgetComp->SetupAttachment(MeshComp);
+	InteractWidgetComp->SetRelativeLocation(FVector(0.f, 0.f, 120.f)); // 큐브 위에
+	InteractWidgetComp->SetDrawSize(FVector2D(200.f, 60.f));
+	InteractWidgetComp->SetWidgetSpace(EWidgetSpace::Screen); // 항상 카메라를 바라봄
+	InteractWidgetComp->SetVisibility(false); // 기본 숨김
+	InteractWidgetComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 }
 
 // ============================================================================
@@ -42,6 +53,12 @@ void APuzzleCubeActor::BeginPlay()
 	if (HasAuthority())
 	{
 		GeneratePuzzle();
+	}
+
+	// 3D 상호작용 위젯 클래스 설정 (클라이언트+리슨서버)
+	if (InteractWidgetComp && InteractWidgetClass)
+	{
+		InteractWidgetComp->SetWidgetClass(InteractWidgetClass);
 	}
 }
 
@@ -290,6 +307,9 @@ bool APuzzleCubeActor::TryEnterPuzzle(AController* Player)
 	// 퍼즐 제한시간 타이머 시작
 	StartPuzzleTimer();
 
+	// 해킹 모드 시작 (전원 흑백)
+	Multicast_HackModeStarted();
+
 	return true;
 }
 
@@ -307,6 +327,9 @@ void APuzzleCubeActor::ExitPuzzle(AController* Player)
 
 		// 퍼즐 제한시간 타이머 정지
 		GetWorldTimerManager().ClearTimer(PuzzleTimeoutTimerHandle);
+
+		// 해킹 모드 종료 (전원 컬러 복원)
+		Multicast_HackModeEnded();
 	}
 }
 
@@ -396,6 +419,9 @@ void APuzzleCubeActor::UnlockDamage()
 	bPuzzleInUse = false;
 	CurrentPuzzleUser = nullptr;
 
+	// 해킹 모드 종료 (전원 컬러 복원)
+	Multicast_HackModeEnded();
+
 	// 로그 #5
 	UE_LOG(LogTemp, Warning,
 		TEXT("[PuzzleCube] UnlockDamage: DamageableTime=%.1f"), DamageableTime);
@@ -449,25 +475,70 @@ void APuzzleCubeActor::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	if (!HasAuthority() || bPuzzleLocked)
+	// --- 서버: 데미지 타이머 ---
+	if (HasAuthority() && !bPuzzleLocked)
 	{
-		return;
+		RelockTimer -= DeltaTime;
+
+		// 매초 1회 로그
+		const int32 CurrSecond = FMath::CeilToInt(FMath::Max(RelockTimer, 0.f));
+		if (CurrSecond != LastLoggedSecond)
+		{
+			LastLoggedSecond = CurrSecond;
+			UE_LOG(LogTemp, Warning,
+				TEXT("[PuzzleCube] DamageTimer: %.1f remaining"), RelockTimer);
+		}
+
+		if (RelockTimer <= 0.f)
+		{
+			RelockPuzzle();
+		}
 	}
 
-	RelockTimer -= DeltaTime;
-
-	// 매초 1회 로그
-	const int32 CurrSecond = FMath::CeilToInt(FMath::Max(RelockTimer, 0.f));
-	if (CurrSecond != LastLoggedSecond)
+	// --- 클라이언트: 3D 상호작용 위젯 ---
+	if (!HasAuthority() || !IsRunningDedicatedServer())
 	{
-		LastLoggedSecond = CurrSecond;
-		UE_LOG(LogTemp, Warning,
-			TEXT("[PuzzleCube] DamageTimer: %.1f remaining"), RelockTimer);
-	}
+		UpdateInteractWidgetVisibility();
 
-	if (RelockTimer <= 0.f)
-	{
-		RelockPuzzle();
+		// F키 홀드 프로그레스 업데이트
+		if (bInteractWidgetVisible && InteractWidgetInstance)
+		{
+			UWorld* World = GetWorld();
+			if (!World) { return; }
+
+			APlayerController* PC = World->GetFirstPlayerController();
+			AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(PC);
+
+			if (HeroPC && HeroPC->IsHoldingPuzzleInteract())
+			{
+				// 프로그레스 증가 (0.5초에 완료)
+				LocalHoldProgress = FMath::Min(1.f, LocalHoldProgress + DeltaTime / 1.5f);
+				InteractWidgetInstance->SetProgress(LocalHoldProgress);
+
+				// 화면 흑백 전환 (F 홀드 프로그레스에 비례)
+				HeroPC->SetDesaturationByProgress(LocalHoldProgress);
+
+				if (LocalHoldProgress >= 1.f)
+				{
+					InteractWidgetInstance->ShowCompleted();
+				}
+			}
+			else
+			{
+				// F키 안 누르면 프로그레스 빠르게 감소
+				if (LocalHoldProgress > 0.f)
+				{
+					LocalHoldProgress = FMath::Max(0.f, LocalHoldProgress - DeltaTime * 3.f);
+					InteractWidgetInstance->SetProgress(LocalHoldProgress);
+
+					// 컬러 복원 (프로그레스 감소에 비례)
+					if (HeroPC)
+					{
+						HeroPC->SetDesaturationByProgress(LocalHoldProgress);
+					}
+				}
+			}
+		}
 	}
 }
 
@@ -616,4 +687,103 @@ void APuzzleCubeActor::ReshufflePuzzle()
 void APuzzleCubeActor::Multicast_PuzzleTimedOut_Implementation()
 {
 	OnPuzzleTimedOutDelegate.Broadcast();
+}
+
+// ============================================================================
+// 해킹 모드 — 화면 흑백 전환
+// ============================================================================
+
+void APuzzleCubeActor::Multicast_HackModeStarted_Implementation()
+{
+	UWorld* World = GetWorld();
+	if (!World) { return; }
+
+	APlayerController* PC = World->GetFirstPlayerController();
+	if (PC && PC->IsLocalController())
+	{
+		AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(PC);
+		if (HeroPC)
+		{
+			HeroPC->SetDesaturation(0.f, 0.3f); // 0.3초에 걸쳐 흑백
+		}
+	}
+	UE_LOG(LogTemp, Warning, TEXT("[PuzzleCube] Multicast_HackModeStarted"));
+}
+
+void APuzzleCubeActor::Multicast_HackModeEnded_Implementation()
+{
+	UWorld* World = GetWorld();
+	if (!World) { return; }
+
+	APlayerController* PC = World->GetFirstPlayerController();
+	if (PC && PC->IsLocalController())
+	{
+		AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(PC);
+		if (HeroPC)
+		{
+			HeroPC->SetDesaturation(1.f, 1.5f); // 1.5초에 걸쳐 컬러 복원
+		}
+	}
+	UE_LOG(LogTemp, Warning, TEXT("[PuzzleCube] Multicast_HackModeEnded"));
+}
+
+// ============================================================================
+// 3D 상호작용 위젯 표시/숨김 (클라이언트 전용)
+// ============================================================================
+
+void APuzzleCubeActor::UpdateInteractWidgetVisibility()
+{
+	if (!InteractWidgetComp) { return; }
+
+	UWorld* World = GetWorld();
+	if (!World) { return; }
+
+	APlayerController* PC = World->GetFirstPlayerController();
+	if (!PC || !PC->IsLocalController()) { return; }
+
+	APawn* Pawn = PC->GetPawn();
+	if (!Pawn) { return; }
+
+	// 조건 1: 거리 체크 (InteractionRadius 내)
+	const float Dist = FVector::Dist(Pawn->GetActorLocation(), GetActorLocation());
+	const bool bInRange = Dist < GetInteractionRadius();
+
+	// 조건 2: 퍼즐이 사용 중이 아님
+	const bool bNotInUse = !bPuzzleInUse;
+
+	// 조건 3: 퍼즐이 잠겨있음 (이미 해제 상태면 표시 불필요)
+	const bool bIsLocked = bPuzzleLocked;
+
+	// 조건 4: 카메라 뷰포트에 보이는지
+	const bool bOnScreen = WasRecentlyRendered(0.2f);
+
+	const bool bShouldShow = bInRange && bNotInUse && bIsLocked && bOnScreen;
+
+	if (bShouldShow && !bInteractWidgetVisible)
+	{
+		// 위젯 표시
+		InteractWidgetComp->SetVisibility(true);
+		bInteractWidgetVisible = true;
+
+		// 위젯 인스턴스 캐시
+		if (!InteractWidgetInstance)
+		{
+			InteractWidgetInstance = Cast<UPuzzleInteractWidget>(InteractWidgetComp->GetWidget());
+		}
+		if (InteractWidgetInstance)
+		{
+			InteractWidgetInstance->ResetState();
+		}
+
+		UE_LOG(LogTemp, Log, TEXT("[PuzzleCube] 3D Interact widget shown (dist=%.0f)"), Dist);
+	}
+	else if (!bShouldShow && bInteractWidgetVisible)
+	{
+		// 위젯 숨김
+		InteractWidgetComp->SetVisibility(false);
+		bInteractWidgetVisible = false;
+		LocalHoldProgress = 0.f;
+
+		UE_LOG(LogTemp, Log, TEXT("[PuzzleCube] 3D Interact widget hidden"));
+	}
 }

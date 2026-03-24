@@ -15,6 +15,7 @@ class UInputAction;
 class UInputMappingContext;
 class APuzzleCubeActor;
 class UPuzzleGridWidget;
+class UPostProcessComponent;
 
 /**
  * @brief   Helluna 영웅 전용 PlayerController
@@ -78,6 +79,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void Tick(float DeltaTime) override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override; // C5: 타이머/델리게이트 정리
 
 	// =========================================================================================
@@ -212,6 +214,22 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Puzzle (퍼즐)")
 	bool bInPuzzleMode = false;
 
+	/** F키 홀드 상태 (3D 위젯 프로그레스용) */
+	UFUNCTION(BlueprintCallable, Category = "Puzzle")
+	bool IsHoldingPuzzleInteract() const { return bHoldingPuzzleInteract; }
+
+	/**
+	 * Desaturation 목표 설정 (PuzzleCubeActor Multicast에서 호출)
+	 * @param TargetValue  0.0 = 완전 흑백, 1.0 = 완전 컬러
+	 * @param Duration     전환에 걸리는 시간 (초)
+	 */
+	void SetDesaturation(float TargetValue, float Duration);
+
+	/**
+	 * F 홀드 프로그레스에 따른 로컬 Desaturation 즉시 적용
+	 */
+	void SetDesaturationByProgress(float HoldProgress);
+
 	// --- Server RPCs ---
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_PuzzleTryEnter();
@@ -297,4 +315,48 @@ private:
 
 	/** 퍼즐 나가기 핸들러 (Enhanced Input) */
 	void OnPuzzleExitInput(const struct FInputActionValue& Value);
+
+	/** F키 홀드 시작 (3D 위젯 프로그레스용) */
+	void OnPuzzleInteractOngoing(const struct FInputActionValue& Value);
+
+	/** F키 홀드 종료 (3D 위젯 프로그레스용) */
+	void OnPuzzleInteractReleased(const struct FInputActionValue& Value);
+
+	/** F키 홀드 상태 추적 */
+	bool bHoldingPuzzleInteract = false;
+
+	// =========================================================================================
+	// 해킹 모드 (화면 흑백 전환)
+	// =========================================================================================
+
+	/**
+	 * PostProcess Desaturation 제어
+	 * F 홀드 프로그레스 → 로컬 전환 (0.5초)
+	 * 해킹 모드 → 전원 전환 (Multicast)
+	 *
+	 * [미래 작업: 영역 기반 흑백]
+	 * 현재: 개인 PostProcessComponent로 전체 화면 Saturation 제어
+	 * 레이드 전환 시: 이 함수 대신 PostProcessVolume 사용
+	 * → F 홀드 프로그레스 중 로컬 흑백은 이 함수 유지 (로컬 프리뷰)
+	 * → 해킹 모드 전환은 볼륨으로 대체
+	 */
+
+	/** 카메라에 부착된 PostProcess 컴포넌트 */
+	UPROPERTY()
+	TObjectPtr<UPostProcessComponent> DesaturationPostProcess;
+
+	/** 목표 Saturation 값 (0=흑백, 1=컬러) */
+	float TargetSaturation = 1.f;
+
+	/** 현재 Saturation 값 */
+	float CurrentSaturation = 1.f;
+
+	/** 전환 속도 (초당 변화량) */
+	float SaturationLerpSpeed = 0.f;
+
+	/** 해킹 모드 중인지 */
+	bool bInHackMode = false;
+
+	/** Tick에서 Saturation Lerp 업데이트 */
+	void TickDesaturation(float DeltaTime);
 };

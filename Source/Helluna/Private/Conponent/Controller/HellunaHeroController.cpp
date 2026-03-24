@@ -27,11 +27,13 @@
 #include "Puzzle/PuzzleCubeActor.h"
 #include "Puzzle/PuzzleGridWidget.h"
 #include "EngineUtils.h" // TActorIterator
+#include "Components/PostProcessComponent.h"
 
 
 
 AHellunaHeroController::AHellunaHeroController()
 {
+	PrimaryActorTick.bCanEverTick = true;
 	HeroTeamID = FGenericTeamId(0);
 }
 
@@ -82,6 +84,11 @@ void AHellunaHeroController::BeginPlay()
 		{
 			PuzzleEIC->BindAction(PuzzleInteractAction, ETriggerEvent::Triggered, this, &AHellunaHeroController::OnPuzzleInteractInput);
 
+			// F키 홀드 상태 추적 (3D 위젯 프로그레스용)
+			PuzzleEIC->BindAction(PuzzleInteractAction, ETriggerEvent::Ongoing, this, &AHellunaHeroController::OnPuzzleInteractOngoing);
+			PuzzleEIC->BindAction(PuzzleInteractAction, ETriggerEvent::Completed, this, &AHellunaHeroController::OnPuzzleInteractReleased);
+			PuzzleEIC->BindAction(PuzzleInteractAction, ETriggerEvent::Canceled, this, &AHellunaHeroController::OnPuzzleInteractReleased);
+
 			if (PuzzleUpAction)
 			{
 				PuzzleEIC->BindAction(PuzzleUpAction, ETriggerEvent::Started, this, &AHellunaHeroController::OnPuzzleUpInput);
@@ -111,6 +118,39 @@ void AHellunaHeroController::BeginPlay()
 		}
 	}
 
+	// [HackMode] PostProcess 지연 초기화 (Pawn 스폰 대기)
+	if (IsLocalController())
+	{
+		FTimerHandle PostProcessInitHandle;
+		GetWorldTimerManager().SetTimer(PostProcessInitHandle, [this]()
+		{
+			APawn* MyPawn = GetPawn();
+			if (!IsValid(MyPawn)) { return; }
+			if (DesaturationPostProcess) { return; } // 이미 생성됨
+
+			DesaturationPostProcess = NewObject<UPostProcessComponent>(MyPawn);
+			if (DesaturationPostProcess)
+			{
+				DesaturationPostProcess->RegisterComponent();
+				DesaturationPostProcess->AttachToComponent(
+					MyPawn->GetRootComponent(),
+					FAttachmentTransformRules::KeepRelativeTransform);
+				DesaturationPostProcess->bUnbound = true;
+				DesaturationPostProcess->Priority = 10.f;
+
+				FPostProcessSettings& Settings = DesaturationPostProcess->Settings;
+				Settings.bOverride_ColorSaturation = true;
+				Settings.ColorSaturation = FVector4(1.f, 1.f, 1.f, 1.f);
+				Settings.bOverride_ColorContrast = true;
+				Settings.ColorContrast = FVector4(1.f, 1.f, 1.f, 1.f);
+				Settings.bOverride_VignetteIntensity = true;
+				Settings.VignetteIntensity = 0.f;
+
+				UE_LOG(LogTemp, Log, TEXT("[HackMode] PostProcessComponent created"));
+			}
+		}, 0.5f, false);
+	}
+
 	// [Phase 10] 채팅 위젯 초기화 (로컬 플레이어만)
 	if (IsLocalController() && ChatWidgetClass)
 	{
@@ -124,6 +164,16 @@ void AHellunaHeroController::BeginPlay()
 
 		UE_LOG(LogHellunaChat, Log, TEXT("[HellunaHeroController] 채팅 위젯 초기화 타이머 설정 (0.5초)"));
 	}
+}
+
+// ============================================================================
+// Tick — Desaturation Lerp
+// ============================================================================
+
+void AHellunaHeroController::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+	TickDesaturation(DeltaTime);
 }
 
 // ============================================================================
@@ -143,6 +193,11 @@ void AHellunaHeroController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		ActivePuzzleWidget = nullptr;
 	}
 	bInPuzzleMode = false;
+
+	// [HackMode] Saturation 즉시 복원
+	CurrentSaturation = 1.f;
+	TargetSaturation = 1.f;
+	bInHackMode = false;
 
 	// B7: 채팅 델리게이트 언바인딩 (GameState가 파괴된 위젯 참조 방지)
 	if (IsValid(ChatWidgetInstance))
@@ -640,6 +695,10 @@ void AHellunaHeroController::ExitPuzzle()
 
 			SetInputMode(FInputModeGameOnly());
 
+			// 해킹 모드 종료 (컬러 복원)
+			SetDesaturation(1.f, 1.0f);
+			bInHackMode = false;
+
 			Server_PuzzleExit();
 		}, 0.5f, false);
 	}
@@ -647,6 +706,10 @@ void AHellunaHeroController::ExitPuzzle()
 	{
 		// 위젯 없으면 즉시 정리
 		bInPuzzleMode = false;
+
+		// 해킹 모드 종료
+		SetDesaturation(1.f, 1.0f);
+		bInHackMode = false;
 
 		if (ULocalPlayer* LP = GetLocalPlayer())
 		{
@@ -813,6 +876,8 @@ void AHellunaHeroController::Client_PuzzleEntered_Implementation()
 	// GameOnly 모드: 마우스 클릭 후에도 Enhanced Input이 방향키를 받음
 	SetInputMode(FInputModeGameOnly());
 
+	bInHackMode = true;
+
 	UE_LOG(LogTemp, Log, TEXT("[PuzzleController] 퍼즐 모드 진입 완료"));
 }
 
@@ -899,4 +964,83 @@ void AHellunaHeroController::OnPuzzleExitInput(const FInputActionValue& Value)
 
 	UE_LOG(LogTemp, Warning, TEXT("[PuzzleInput] OnPuzzleExitInput: Exiting puzzle"));
 	ExitPuzzle();
+}
+
+void AHellunaHeroController::OnPuzzleInteractOngoing(const FInputActionValue& Value)
+{
+	bHoldingPuzzleInteract = true;
+}
+
+void AHellunaHeroController::OnPuzzleInteractReleased(const FInputActionValue& Value)
+{
+	bHoldingPuzzleInteract = false;
+}
+
+// ============================================================================
+// 해킹 모드 — PostProcess Desaturation
+// ============================================================================
+
+void AHellunaHeroController::SetDesaturation(float InTargetValue, float Duration)
+{
+	TargetSaturation = FMath::Clamp(InTargetValue, 0.f, 1.f);
+
+	if (Duration <= 0.f)
+	{
+		CurrentSaturation = TargetSaturation;
+		SaturationLerpSpeed = 0.f;
+	}
+	else
+	{
+		SaturationLerpSpeed = FMath::Abs(TargetSaturation - CurrentSaturation) / Duration;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[HackMode] SetDesaturation: target=%.2f, duration=%.1fs, current=%.2f"),
+		TargetSaturation, Duration, CurrentSaturation);
+}
+
+void AHellunaHeroController::SetDesaturationByProgress(float HoldProgress)
+{
+	// F 홀드 프로그레스(0~1)를 Saturation(1~0)으로 매핑
+	CurrentSaturation = 1.f - FMath::Clamp(HoldProgress, 0.f, 1.f);
+	TargetSaturation = CurrentSaturation;
+	SaturationLerpSpeed = 0.f; // 즉시 적용
+
+	if (DesaturationPostProcess)
+	{
+		FPostProcessSettings& S = DesaturationPostProcess->Settings;
+		S.ColorSaturation = FVector4(CurrentSaturation, CurrentSaturation, CurrentSaturation, 1.f);
+
+		const float ContrastBoost = 1.f + (1.f - CurrentSaturation) * 0.2f;
+		S.ColorContrast = FVector4(ContrastBoost, ContrastBoost, ContrastBoost, 1.f);
+
+		S.VignetteIntensity = (1.f - CurrentSaturation) * 0.6f;
+	}
+}
+
+void AHellunaHeroController::TickDesaturation(float DeltaTime)
+{
+	if (!DesaturationPostProcess) { return; }
+	if (FMath::IsNearlyEqual(CurrentSaturation, TargetSaturation, 0.001f))
+	{
+		CurrentSaturation = TargetSaturation;
+		return;
+	}
+
+	// Lerp
+	if (CurrentSaturation < TargetSaturation)
+	{
+		CurrentSaturation = FMath::Min(CurrentSaturation + SaturationLerpSpeed * DeltaTime, TargetSaturation);
+	}
+	else
+	{
+		CurrentSaturation = FMath::Max(CurrentSaturation - SaturationLerpSpeed * DeltaTime, TargetSaturation);
+	}
+
+	FPostProcessSettings& S = DesaturationPostProcess->Settings;
+	S.ColorSaturation = FVector4(CurrentSaturation, CurrentSaturation, CurrentSaturation, 1.f);
+
+	const float ContrastBoost = 1.f + (1.f - CurrentSaturation) * 0.2f;
+	S.ColorContrast = FVector4(ContrastBoost, ContrastBoost, ContrastBoost, 1.f);
+
+	S.VignetteIntensity = (1.f - CurrentSaturation) * 0.6f;
 }

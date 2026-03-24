@@ -9,7 +9,9 @@
 
 class USphereComponent;
 class UStaticMeshComponent;
+class UWidgetComponent;
 class AHellunaHeroController;
+class UPuzzleInteractWidget;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnPuzzleGridUpdated);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnPuzzleLockChanged, bool, bLocked);
@@ -118,6 +120,25 @@ public:
 	/** 상호작용 반경 조회 */
 	float GetInteractionRadius() const;
 
+	// =========================================================================================
+	// 3D 상호작용 위젯
+	// =========================================================================================
+
+	/**
+	 * 3D 공간에 떠있는 상호작용 위젯 컴포넌트
+	 *
+	 * [보스전 로드맵]
+	 * 보스 버전에서는 PuzzleShieldComponent에 이 WidgetComponent를 이관.
+	 * 보스 머리 위 또는 보호막 근처에 배치.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Puzzle|UI")
+	TObjectPtr<UWidgetComponent> InteractWidgetComp;
+
+	/** 3D 위젯에 사용할 위젯 클래스 (BP에서 할당) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Puzzle|UI",
+		meta = (DisplayName = "Interact Widget Class (상호작용 위젯 클래스)"))
+	TSubclassOf<UPuzzleInteractWidget> InteractWidgetClass;
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
@@ -195,4 +216,42 @@ private:
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PuzzleTimedOut();
 
+	// =========================================================================================
+	// 해킹 모드 (화면 흑백 전환)
+	// =========================================================================================
+
+	/**
+	 * [해킹 모드] 퍼즐 진입 시 화면 흑백 전환
+	 *
+	 * [미래 작업: 영역 기반 흑백]
+	 * 현재: Multicast로 모든 클라이언트의 PostProcessComponent Saturation 변경
+	 * 레이드 전환 시: 서버에서 내부 영역 PostProcessVolume의 Saturation만 변경
+	 * → 내부 플레이어만 자동 흑백, 외부 플레이어 영향 없음
+	 * 참고: reedme/plans/puzzle-desaturation-hack-mode-prompt.md
+	 */
+
+	/** 해킹 모드 시작 (전원 흑백) */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_HackModeStarted();
+
+	/** 해킹 모드 종료 (전원 컬러 복원) */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_HackModeEnded();
+
+	// =========================================================================================
+	// 3D 상호작용 위젯 (클라이언트 전용)
+	// =========================================================================================
+
+	/** 현재 상호작용 위젯 인스턴스 (캐시) */
+	UPROPERTY()
+	TObjectPtr<UPuzzleInteractWidget> InteractWidgetInstance;
+
+	/** 로컬 플레이어 기준 위젯 표시 여부 업데이트 (Tick에서 호출) */
+	void UpdateInteractWidgetVisibility();
+
+	/** F키 홀드 프로그레스 (0.0~1.0, 로컬 클라이언트에서 관리) */
+	float LocalHoldProgress = 0.f;
+
+	/** 위젯 현재 표시 중인지 */
+	bool bInteractWidgetVisible = false;
 };
