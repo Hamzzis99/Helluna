@@ -468,6 +468,12 @@ void AHellunaHeroController::InitializeChatWidget()
 
 void AHellunaHeroController::OnChatToggleInput(const FInputActionValue& Value)
 {
+	// 퍼즐 모드 중에는 채팅 차단
+	if (bInPuzzleMode)
+	{
+		return;
+	}
+
 	UE_LOG(LogHellunaChat, Warning, TEXT("[HeroController] OnChatToggleInput 호출됨!"));
 
 	// W6: 채팅 입력 활성 상태에서 Enter는 TextBox의 OnTextCommitted가 처리
