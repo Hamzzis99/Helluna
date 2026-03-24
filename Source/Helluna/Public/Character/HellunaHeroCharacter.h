@@ -30,6 +30,7 @@ class UInv_LootContainerComponent;
 
 class UWidgetComponent;
 class UHellunaReviveWidget;
+class UHellunaReviveProgressWidget;
 
 
 /**
@@ -322,6 +323,28 @@ public:
 
 	/** 출혈 잔여시간을 위젯에 업데이트 (클라이언트 Tick) */
 	void UpdateReviveWidgetBleedout();
+
+	// =========================================================
+	// 부활 진행 HUD (부활 수행자 화면에 표시)
+	// =========================================================
+
+	/** 부활 진행 HUD 위젯 클래스 (에디터에서 할당) */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|UI",
+		meta = (DisplayName = "Revive Progress Widget Class (부활 진행 HUD)"))
+	TSubclassOf<class UHellunaReviveProgressWidget> ReviveProgressWidgetClass;
+
+	/** 부활 진행 HUD 인스턴스 */
+	UPROPERTY()
+	TObjectPtr<class UHellunaReviveProgressWidget> ReviveProgressWidget;
+
+	/** 부활 HUD 표시 (부활 수행자 로컬) */
+	void ShowReviveProgressHUD(const FString& TargetName);
+
+	/** 부활 HUD 숨김 */
+	void HideReviveProgressHUD();
+
+	/** 부활 HUD 업데이트 (Tick에서 호출) */
+	void UpdateReviveProgressHUD();
 
 protected:
 	/** HealthComponent (피격/사망 처리) */

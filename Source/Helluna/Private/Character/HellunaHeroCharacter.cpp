@@ -52,6 +52,7 @@
 
 #include "Components/WidgetComponent.h"
 #include "Downed/HellunaReviveWidget.h"
+#include "Downed/HellunaReviveProgressWidget.h"
 
 
 
@@ -185,6 +186,9 @@ void AHellunaHeroCharacter::Tick(float DeltaTime)
 
 	// [Phase 21] 3D 부활 위젯 출혈 타이머 업데이트 (클라이언트)
 	UpdateReviveWidgetBleedout();
+
+	// [Phase 21] 부활 진행 HUD 업데이트 (부활 수행자 로컬)
+	UpdateReviveProgressHUD();
 }
 
 // ============================================================================
@@ -1223,6 +1227,9 @@ void AHellunaHeroCharacter::Multicast_PlayHeroHitReact_Implementation()
 
 void AHellunaHeroCharacter::Multicast_PlayHeroDeath_Implementation()
 {
+	// [Fix] PlayFullBody 원복 (다운→사망 경로)
+	PlayFullBody = false;
+
 	// [Phase 21] 사망 시 부활 위젯 숨김 (다운→사망 경로)
 	HideReviveWidget();
 
@@ -1455,8 +1462,11 @@ void AHellunaHeroCharacter::Multicast_PlayHeroDowned_Implementation()
 		{
 			if (UAnimInstance* AnimInst = SkelMesh->GetAnimInstance())
 			{
+				// [Fix] PlayFullBody=true → ABP가 locomotion 대신 전신 몽타주 슬롯 사용
+				PlayFullBody = true;
+
 				float Duration = AnimInst->Montage_Play(DownedMontage);
-				UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] Montage_Play 결과: Duration=%.2f (0이면 실패)"), Duration);
+				UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] Montage_Play 결과: Duration=%.2f (0이면 실패) | PlayFullBody=true"), Duration);
 				if (Duration <= 0.f)
 				{
 					UE_LOG(LogHelluna, Error, TEXT("[Phase21-Debug] 몽타주 재생 실패! MontageSkel=%s, MeshSkel=%s"),
@@ -1494,6 +1504,9 @@ void AHellunaHeroCharacter::Multicast_PlayHeroDowned_Implementation()
 
 void AHellunaHeroCharacter::Multicast_PlayHeroRevived_Implementation()
 {
+	// [Fix] PlayFullBody 원복 → locomotion 복귀
+	PlayFullBody = false;
+
 	// 부활 몽타주
 	if (ReviveMontage)
 	{
@@ -1521,20 +1534,38 @@ void AHellunaHeroCharacter::Multicast_PlayHeroRevived_Implementation()
 
 void AHellunaHeroCharacter::Input_ReviveStarted(const FInputActionValue& Value)
 {
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] Input_ReviveStarted 호출! %s | IsLocal=%s"),
+		*GetName(), IsLocallyControlled() ? TEXT("Y") : TEXT("N"));
+
 	// 자신이 다운/사망이면 부활 불가
 	if (HeroHealthComponent && (HeroHealthComponent->IsDowned() || HeroHealthComponent->IsDead()))
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] Input_ReviveStarted: 자신이 다운/사망 → 리턴"));
 		return;
+	}
 
 	// 근처 다운 팀원 탐색
 	AHellunaHeroCharacter* Target = FindNearestDownedHero();
-	if (!Target) return;
+	if (!Target)
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] Input_ReviveStarted: 근처 다운 팀원 없음 → 리턴"));
+		return;
+	}
 
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] Input_ReviveStarted: 타겟=%s → Server_StartRevive 호출"),
+		*Target->GetName());
 	Server_StartRevive(Target);
+
+	// [Phase 21] 부활 진행 HUD 표시 (로컬)
+	ShowReviveProgressHUD(Target->GetName());
 }
 
 void AHellunaHeroCharacter::Input_ReviveCompleted(const FInputActionValue& Value)
 {
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] Input_ReviveCompleted: %s → Server_StopRevive"),
+		*GetName());
 	Server_StopRevive();
+	HideReviveProgressHUD();
 }
 
 AHellunaHeroCharacter* AHellunaHeroCharacter::FindNearestDownedHero() const
@@ -1546,21 +1577,35 @@ AHellunaHeroCharacter* AHellunaHeroCharacter::FindNearestDownedHero() const
 	AHellunaHeroCharacter* Best = nullptr;
 	float BestDistSq = ReviveRange * ReviveRange;
 
-	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
-	{
-		APlayerController* PC = It->Get();
-		if (!IsValid(PC)) continue;
+	int32 CheckedCount = 0;
 
-		AHellunaHeroCharacter* OtherHero = Cast<AHellunaHeroCharacter>(PC->GetPawn());
+	// [Fix] 클라이언트에서도 동작하도록 PlayerControllerIterator 대신 캐릭터 직접 탐색
+	TArray<AActor*> AllHeroes;
+	UGameplayStatics::GetAllActorsOfClass(World, AHellunaHeroCharacter::StaticClass(), AllHeroes);
+
+	for (AActor* Actor : AllHeroes)
+	{
+		AHellunaHeroCharacter* OtherHero = Cast<AHellunaHeroCharacter>(Actor);
 		if (!OtherHero || OtherHero == this) continue;
 
+		CheckedCount++;
 		UHellunaHealthComponent* HC = OtherHero->HeroHealthComponent;
-		if (!HC || !HC->IsDowned()) continue;
+		bool bIsDowned = HC ? HC->IsDowned() : false;
+		bool bHasReviver = OtherHero->CurrentReviver != nullptr;
+		float Dist = FVector::Dist(MyLoc, OtherHero->GetActorLocation());
+
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] FindNearestDownedHero: %s | Downed=%s | HasReviver=%s | Dist=%.0f (Range=%.0f)"),
+			*OtherHero->GetName(),
+			bIsDowned ? TEXT("Y") : TEXT("N"),
+			bHasReviver ? TEXT("Y") : TEXT("N"),
+			Dist, ReviveRange);
+
+		if (!HC || !bIsDowned) continue;
 
 		// 이미 다른 사람이 부활 중이면 스킵 (1:1 제한)
-		if (OtherHero->CurrentReviver != nullptr) continue;
+		if (bHasReviver) continue;
 
-		const float DistSq = FVector::DistSquared(MyLoc, OtherHero->GetActorLocation());
+		const float DistSq = Dist * Dist;
 		if (DistSq < BestDistSq)
 		{
 			BestDistSq = DistSq;
@@ -1568,18 +1613,28 @@ AHellunaHeroCharacter* AHellunaHeroCharacter::FindNearestDownedHero() const
 		}
 	}
 
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] FindNearestDownedHero: 체크=%d명, 결과=%s"),
+		CheckedCount, Best ? *Best->GetName() : TEXT("NULL"));
 	return Best;
 }
 
 void AHellunaHeroCharacter::Server_StartRevive_Implementation(AHellunaHeroCharacter* TargetHero)
 {
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] Server_StartRevive: %s → %s"),
+		*GetName(), IsValid(TargetHero) ? *TargetHero->GetName() : TEXT("INVALID"));
+
 	if (!IsValid(TargetHero)) return;
 	if (!TargetHero->HeroHealthComponent || !TargetHero->HeroHealthComponent->IsDowned()) return;
 	if (HeroHealthComponent && (HeroHealthComponent->IsDowned() || HeroHealthComponent->IsDead())) return;
 
 	// 거리 재검증 (서버 측)
 	const float DistSq = FVector::DistSquared(GetActorLocation(), TargetHero->GetActorLocation());
-	if (DistSq > ReviveRange * ReviveRange) return;
+	if (DistSq > ReviveRange * ReviveRange)
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] Server_StartRevive: 거리 초과 (%.0f > %.0f)"),
+			FMath::Sqrt(DistSq), ReviveRange);
+		return;
+	}
 
 	// 1:1 제한 체크
 	if (TargetHero->CurrentReviver != nullptr && TargetHero->CurrentReviver != this) return;
@@ -1642,6 +1697,9 @@ void AHellunaHeroCharacter::TickRevive()
 	// 진행률 증가 (0.1초 / ReviveDuration)
 	const float ProgressPerTick = (ReviveDuration > 0.f) ? (0.1f / ReviveDuration) : 1.f;
 	ReviveTarget->ReviveProgress = FMath::Clamp(ReviveTarget->ReviveProgress + ProgressPerTick, 0.f, 1.f);
+
+	UE_LOG(LogHelluna, Log, TEXT("[Phase21-Debug] TickRevive: %s → %s | Progress=%.1f%% | Duration=%.1f"),
+		*GetName(), *ReviveTarget->GetName(), ReviveTarget->ReviveProgress * 100.f, ReviveDuration);
 
 	// 완료
 	if (ReviveTarget->ReviveProgress >= 1.f)
@@ -1763,5 +1821,69 @@ void AHellunaHeroCharacter::UpdateReviveWidgetBleedout()
 	if (HeroHealthComponent->IsDowned())
 	{
 		ReviveWidgetInstance->SetBleedoutTime(HeroHealthComponent->GetBleedoutTimeRemaining());
+	}
+}
+
+// =========================================================
+// 부활 진행 HUD — Show/Hide/Update (부활 수행자 화면)
+// =========================================================
+
+void AHellunaHeroCharacter::ShowReviveProgressHUD(const FString& TargetName)
+{
+	if (!IsLocallyControlled()) return;
+
+	if (!ReviveProgressWidget && ReviveProgressWidgetClass)
+	{
+		ReviveProgressWidget = CreateWidget<UHellunaReviveProgressWidget>(GetWorld(), ReviveProgressWidgetClass);
+		if (ReviveProgressWidget)
+		{
+			ReviveProgressWidget->AddToViewport(50);
+		}
+	}
+
+	if (ReviveProgressWidget)
+	{
+		ReviveProgressWidget->SetProgress(0.f);
+		ReviveProgressWidget->SetRemainingTime(ReviveDuration);
+		ReviveProgressWidget->SetTargetName(TargetName);
+		ReviveProgressWidget->SetVisibility(ESlateVisibility::Visible);
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] ReviveProgressHUD 표시: 대상=%s, Duration=%.1f초"), *TargetName, ReviveDuration);
+	}
+}
+
+void AHellunaHeroCharacter::HideReviveProgressHUD()
+{
+	if (ReviveProgressWidget)
+	{
+		ReviveProgressWidget->SetVisibility(ESlateVisibility::Collapsed);
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] ReviveProgressHUD 숨김"));
+	}
+}
+
+void AHellunaHeroCharacter::UpdateReviveProgressHUD()
+{
+	if (!IsLocallyControlled()) return;
+	if (!ReviveProgressWidget) return;
+	if (ReviveProgressWidget->GetVisibility() != ESlateVisibility::Visible) return;
+
+	// 가장 가까운 다운 팀원의 ReviveProgress 읽기
+	AHellunaHeroCharacter* NearestDowned = FindNearestDownedHero();
+	if (NearestDowned && NearestDowned->ReviveProgress > 0.f)
+	{
+		float Progress = NearestDowned->ReviveProgress;
+		float Remaining = ReviveDuration * (1.f - Progress);
+		ReviveProgressWidget->SetProgress(Progress);
+		ReviveProgressWidget->SetRemainingTime(Remaining);
+
+		// 완료 시 자동 숨김
+		if (Progress >= 1.f)
+		{
+			HideReviveProgressHUD();
+		}
+	}
+	else
+	{
+		// 타겟 없거나 진행률 0 → 서버에서 취소된 상태 → 숨김
+		HideReviveProgressHUD();
 	}
 }
