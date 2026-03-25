@@ -86,8 +86,8 @@ void AHellunaHeroController::BeginPlay()
 		{
 			PuzzleEIC->BindAction(PuzzleInteractAction, ETriggerEvent::Triggered, this, &AHellunaHeroController::OnPuzzleInteractInput);
 
-			// F키 홀드 상태 추적 (3D 위젯 프로그레스용)
-			PuzzleEIC->BindAction(PuzzleInteractAction, ETriggerEvent::Ongoing, this, &AHellunaHeroController::OnPuzzleInteractOngoing);
+			// F키 홀드 상태 추적 — Ongoing은 명시적 트리거 없으면 발동 안 함, Started 사용
+			PuzzleEIC->BindAction(PuzzleInteractAction, ETriggerEvent::Started, this, &AHellunaHeroController::OnPuzzleInteractOngoing);
 			PuzzleEIC->BindAction(PuzzleInteractAction, ETriggerEvent::Completed, this, &AHellunaHeroController::OnPuzzleInteractReleased);
 			PuzzleEIC->BindAction(PuzzleInteractAction, ETriggerEvent::Canceled, this, &AHellunaHeroController::OnPuzzleInteractReleased);
 
@@ -621,6 +621,9 @@ void AHellunaHeroController::TryEnterPuzzleFromCube(APuzzleCubeActor* Cube)
 
 void AHellunaHeroController::OnPuzzleInteractInput(const FInputActionValue& Value)
 {
+	// [Fix] Started가 놓쳐도 Triggered 매 틱에서 홀드 상태 보장
+	bHoldingPuzzleInteract = true;
+
 	if (bInPuzzleMode)
 	{
 		return;
@@ -707,14 +710,16 @@ void AHellunaHeroController::ExitPuzzle()
 
 			bInPuzzleMode = false;
 
-			// IMC_Puzzle priority를 기본(10)으로 복원
+			// 퍼즐 모드 전용 IMC 제거 (방향/회전/나가기 키 해제)
 			if (ULocalPlayer* LP = GetLocalPlayer())
 			{
 				if (UEnhancedInputLocalPlayerSubsystem* Sub = LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
 				{
-					Sub->RemoveMappingContext(PuzzleMappingContext);
-					Sub->AddMappingContext(PuzzleMappingContext, 10);
-					UE_LOG(LogTemp, Warning, TEXT("[PuzzleInput] IMC_Puzzle priority restored to 10 (normal mode)"));
+					if (PuzzleModeMappingContext)
+					{
+						Sub->RemoveMappingContext(PuzzleModeMappingContext);
+					}
+					UE_LOG(LogTemp, Warning, TEXT("[PuzzleInput] PuzzleModeMappingContext removed (puzzle exit)"));
 				}
 			}
 
@@ -740,8 +745,10 @@ void AHellunaHeroController::ExitPuzzle()
 		{
 			if (UEnhancedInputLocalPlayerSubsystem* Sub = LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
 			{
-				Sub->RemoveMappingContext(PuzzleMappingContext);
-				Sub->AddMappingContext(PuzzleMappingContext, 10);
+				if (PuzzleModeMappingContext)
+				{
+					Sub->RemoveMappingContext(PuzzleModeMappingContext);
+				}
 			}
 		}
 
@@ -886,14 +893,16 @@ void AHellunaHeroController::Client_PuzzleEntered_Implementation()
 
 	bInPuzzleMode = true;
 
-	// IMC_Puzzle priority를 100으로 올려 방향키를 퍼즐이 먼저 소비
+	// 퍼즐 모드 전용 IMC 추가 (방향/회전/나가기 키, priority=100으로 일반 키 우선 소비)
 	if (ULocalPlayer* LP = GetLocalPlayer())
 	{
 		if (UEnhancedInputLocalPlayerSubsystem* Sub = LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
 		{
-			Sub->RemoveMappingContext(PuzzleMappingContext);
-			Sub->AddMappingContext(PuzzleMappingContext, 100);
-			UE_LOG(LogTemp, Warning, TEXT("[PuzzleInput] IMC_Puzzle priority raised to 100 (puzzle mode)"));
+			if (PuzzleModeMappingContext)
+			{
+				Sub->AddMappingContext(PuzzleModeMappingContext, 100);
+			}
+			UE_LOG(LogTemp, Warning, TEXT("[PuzzleInput] PuzzleModeMappingContext added (priority=100, puzzle mode)"));
 		}
 	}
 
@@ -920,13 +929,15 @@ void AHellunaHeroController::Client_PuzzleForceExit_Implementation()
 
 	bInPuzzleMode = false;
 
-	// IMC_Puzzle priority 복원
+	// 퍼즐 모드 전용 IMC 제거
 	if (ULocalPlayer* LP = GetLocalPlayer())
 	{
 		if (UEnhancedInputLocalPlayerSubsystem* Sub = LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
 		{
-			Sub->RemoveMappingContext(PuzzleMappingContext);
-			Sub->AddMappingContext(PuzzleMappingContext, 10);
+			if (PuzzleModeMappingContext)
+			{
+				Sub->RemoveMappingContext(PuzzleModeMappingContext);
+			}
 		}
 	}
 
@@ -1080,10 +1091,10 @@ void AHellunaHeroController::PlayColorReveal()
 {
 	if (!DesaturationPostProcess) { return; }
 
-	// ESC 퇴출 시 bInHackMode가 이미 false → 플래시 스킵, 기존 SetDesaturation으로 처리됨
+	// E키 퇴출 시 bInHackMode가 이미 false → 플래시 스킵, 기존 SetDesaturation으로 처리됨
 	if (!bInHackMode)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[HackMode] PlayColorReveal skipped — not in hack mode (ESC exit path)"));
+		UE_LOG(LogTemp, Log, TEXT("[HackMode] PlayColorReveal skipped — not in hack mode (E key exit path)"));
 		return;
 	}
 

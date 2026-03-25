@@ -282,10 +282,19 @@ protected:
 		meta = (DisplayName = "Puzzle Interact Action (퍼즐 상호작용 액션)"))
 	TObjectPtr<UInputAction> PuzzleInteractAction;
 
-	/** 퍼즐 입력 매핑 컨텍스트 */
+	/** 퍼즐 입력 매핑 컨텍스트 — 항상 활성 (F키 홀드용, priority=10) */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Puzzle|Input (퍼즐|입력)",
-		meta = (DisplayName = "Puzzle Mapping Context (퍼즐 입력 매핑)"))
+		meta = (DisplayName = "Puzzle Mapping Context (퍼즐 상호작용 매핑)"))
 	TObjectPtr<UInputMappingContext> PuzzleMappingContext;
+
+	/**
+	 * 퍼즐 모드 전용 매핑 컨텍스트 — 퍼즐 모드 진입 시에만 추가 (priority=100)
+	 * 방향키(WASD) + 회전 + 나가기(E) 등 일반 게임과 키가 겹치는 액션용.
+	 * 퍼즐 모드가 아닐 때는 제거되어 IMC_Default와 키 충돌 없음.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Puzzle|Input (퍼즐|입력)",
+		meta = (DisplayName = "Puzzle Mode Mapping Context (퍼즐 모드 전용 매핑)"))
+	TObjectPtr<UInputMappingContext> PuzzleModeMappingContext;
 
 	/** 방향키 → 셀 이동 (개별 Boolean) */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Puzzle|Input (퍼즐|입력)",
@@ -309,7 +318,7 @@ protected:
 		meta = (DisplayName = "Puzzle Rotate Action (퍼즐 회전)"))
 	TObjectPtr<UInputAction> PuzzleRotateAction;
 
-	/** ESC → 퍼즐 나가기 */
+	/** E → 퍼즐 나가기 (PuzzleModeMappingContext에 매핑) */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Puzzle|Input (퍼즐|입력)",
 		meta = (DisplayName = "Puzzle Exit Action (퍼즐 나가기)"))
 	TObjectPtr<UInputAction> PuzzleExitAction;

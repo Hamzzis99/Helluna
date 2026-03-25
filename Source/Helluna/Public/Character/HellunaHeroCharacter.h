@@ -340,6 +340,12 @@ public:
 	UPROPERTY()
 	TObjectPtr<class UHellunaReviveProgressWidget> ReviveProgressWidget;
 
+	/** ReviveProgressHUD가 Show된 시점 (Grace Period용) */
+	float ReviveProgressShowTime = 0.f;
+
+	/** ReviveProgressHUD Grace Period (초) — 이 시간 동안 Progress=0이어도 숨기지 않음 */
+	static constexpr float REVIVE_HUD_GRACE_PERIOD = 0.5f;
+
 	/** 부활 HUD 표시 (부활 수행자 로컬) */
 	void ShowReviveProgressHUD(const FString& TargetName);
 
@@ -375,17 +381,43 @@ public:
 		meta = (DisplayName = "Downed PP Material (다운 PP 머티리얼)"))
 	TObjectPtr<UMaterialInterface> DownedPPMaterial;
 
-	/** 다운 화면 효과 현재 강도 (0=효과없음, 1=최대) */
-	float DownedEffectIntensity = 0.f;
-
-	/** 다운 화면 효과 목표 강도 */
-	float DownedEffectTargetIntensity = 0.f;
-
 	/** 다운 화면 효과 활성 여부 */
 	bool bDownedEffectActive = false;
 
 	/** 다운 효과 Tick 로그 제한용 타이머 */
 	float DownedEffectLogTimer = 0.f;
+
+	// ── Downed Screen Effect v2: 3단계 + 심장박동 펄스 ──
+
+	float DownedIR = 0.55f;           // 현재 InnerRadius
+	float DownedIRTarget = 0.55f;     // 목표 InnerRadius
+	float DownedOpacity = 0.f;        // 현재 Opacity
+	float DownedOpacityTarget = 0.f;  // 목표 Opacity
+	float DownedBrightness = 1.f;     // 화면 밝기 (40% 이하에서 어두워짐)
+	float DownedBrightnessTarget = 1.f;
+	float DownedBlackout = 0.f;       // 완전 암전 (5% 이하)
+	float DownedBlackoutTarget = 0.f;
+
+	// 심장박동 펄스
+	float PulseTimer = 0.f;
+	float PulsePeriod = 2.0f;
+	float PulseIRBoost = 0.f;
+	float PulseOpacityBoost = 0.f;
+
+	// 상수
+	static constexpr float IR_START = 0.55f;
+	static constexpr float IR_END = 0.10f;
+	static constexpr float OP_START = 0.5f;
+	static constexpr float OP_END = 1.0f;
+	static constexpr float OUTER_RADIUS = 0.75f;
+	static constexpr float DARKEN_START = 0.40f;
+	static constexpr float BLACKOUT_START = 0.05f;
+	static constexpr float PULSE_IR_AMOUNT = 0.05f;
+	static constexpr float PULSE_OP_AMOUNT = 0.08f;
+	static constexpr float PULSE_PERIOD_MAX = 2.0f;
+	static constexpr float PULSE_PERIOD_MIN = 0.4f;
+	static constexpr float PULSE_DECAY_SPEED = 5.0f;
+	static constexpr float EFFECT_INTERP_SPEED = 3.0f;
 
 	/** 다운 효과 시작 (로컬 전용, Multicast_PlayHeroDowned에서 호출) */
 	void StartDownedScreenEffect();

@@ -1886,7 +1886,19 @@ void AHellunaHeroCharacter::ShowReviveProgressHUD(const FString& TargetName)
 
 	if (!ReviveProgressWidget && ReviveProgressWidgetClass)
 	{
-		ReviveProgressWidget = CreateWidget<UHellunaReviveProgressWidget>(GetWorld(), ReviveProgressWidgetClass);
+		// [Phase21-Fix] As A Client 모드에서 CreateWidget(World) 실패 → PC 기반으로 변경
+		APlayerController* PC = Cast<APlayerController>(GetController());
+		if (!PC)
+		{
+			PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+		}
+		if (PC)
+		{
+			ReviveProgressWidget = CreateWidget<UHellunaReviveProgressWidget>(PC, ReviveProgressWidgetClass);
+		}
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] ReviveProgressHUD CreateWidget: PC=%s | Widget=%s"),
+			PC ? *PC->GetName() : TEXT("NULL"),
+			ReviveProgressWidget ? *ReviveProgressWidget->GetName() : TEXT("NULL"));
 		if (ReviveProgressWidget)
 		{
 			ReviveProgressWidget->AddToViewport(50);
@@ -1899,7 +1911,12 @@ void AHellunaHeroCharacter::ShowReviveProgressHUD(const FString& TargetName)
 		ReviveProgressWidget->SetRemainingTime(ReviveDuration);
 		ReviveProgressWidget->SetTargetName(TargetName);
 		ReviveProgressWidget->SetVisibility(ESlateVisibility::Visible);
-		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] ReviveProgressHUD 표시: 대상=%s, Duration=%.1f초"), *TargetName, ReviveDuration);
+		if (UWorld* World = GetWorld())
+		{
+			ReviveProgressShowTime = World->GetTimeSeconds();
+		}
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] ReviveProgressHUD Show: Time=%.2f, 대상=%s, Duration=%.1f초"),
+			ReviveProgressShowTime, *TargetName, ReviveDuration);
 	}
 }
 
@@ -1935,8 +1952,17 @@ void AHellunaHeroCharacter::UpdateReviveProgressHUD()
 	}
 	else
 	{
-		// 타겟 없거나 진행률 0 → 서버에서 취소된 상태 → 숨김
-		HideReviveProgressHUD();
+		// Grace Period: Show 직후 0.5초간은 Progress=0이어도 숨기지 않음
+		// (서버 TickRevive 시작 + 네트워크 Replication 지연 대기)
+		const UWorld* World = GetWorld();
+		const float ElapsedSinceShow = World ? (World->GetTimeSeconds() - ReviveProgressShowTime) : 999.f;
+		if (ElapsedSinceShow > REVIVE_HUD_GRACE_PERIOD)
+		{
+			UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] ReviveProgressHUD Hide: Grace만료, Elapsed=%.2f"),
+				ElapsedSinceShow);
+			HideReviveProgressHUD();
+		}
+		// else: Grace Period 내 → 대기 (숨기지 않음)
 	}
 }
 
@@ -1946,16 +1972,26 @@ void AHellunaHeroCharacter::UpdateReviveProgressHUD()
 
 void AHellunaHeroCharacter::StartDownedScreenEffect()
 {
-	// 데디케이티드 서버에서는 위젯/PP 생성 금지
-	if (GetNetMode() == NM_DedicatedServer)
-	{
-		return;
-	}
+	if (GetNetMode() == NM_DedicatedServer) return;
 
 	bDownedEffectActive = true;
-	DownedEffectIntensity = 0.f;
-	DownedEffectTargetIntensity = 0.f;
 	DownedEffectLogTimer = 0.f;
+
+	// v2: 50%에서 시작 (다운 즉시 위기감)
+	DownedIR = IR_START;
+	DownedIRTarget = IR_START;
+	DownedOpacity = OP_START;
+	DownedOpacityTarget = OP_START;
+	DownedBrightness = 1.0f;
+	DownedBrightnessTarget = 1.0f;
+	DownedBlackout = 0.f;
+	DownedBlackoutTarget = 0.f;
+
+	// 첫 심장박동 펄스 즉시 발생
+	PulseTimer = 0.f;
+	PulsePeriod = PULSE_PERIOD_MAX;
+	PulseIRBoost = PULSE_IR_AMOUNT;
+	PulseOpacityBoost = PULSE_OP_AMOUNT;
 
 	// PostProcessComponent 생성 (재활용: 이미 있으면 새로 만들지 않음)
 	if (!DownedPostProcess)
@@ -1966,21 +2002,23 @@ void AHellunaHeroCharacter::StartDownedScreenEffect()
 			DownedPostProcess->RegisterComponent();
 			DownedPostProcess->AttachToComponent(GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
 			DownedPostProcess->bUnbound = true;
-			DownedPostProcess->Priority = 15.f; // HackMode PP(10)보다 높게
+			DownedPostProcess->Priority = 15.f;
 		}
 	}
 
 	if (DownedPostProcess)
 	{
-		// PP 초기값 설정
 		DownedPostProcess->Settings.bOverride_VignetteIntensity = true;
 		DownedPostProcess->Settings.VignetteIntensity = 0.f;
 		DownedPostProcess->Settings.bOverride_ColorSaturation = true;
 		DownedPostProcess->Settings.ColorSaturation = FVector4(1.f, 1.f, 1.f, 1.f);
+		DownedPostProcess->Settings.bOverride_SceneFringeIntensity = true;
+		DownedPostProcess->Settings.SceneFringeIntensity = 0.f;
 		DownedPostProcess->bEnabled = true;
+		DownedPostProcess->MarkRenderStateDirty();
 	}
 
-	// PP MID 생성 (DownedPPMaterial 설정 시에만)
+	// MID (기존 로직 유지)
 	if (DownedPPMaterial && DownedPostProcess)
 	{
 		DownedPPMID = UMaterialInstanceDynamic::Create(DownedPPMaterial, this);
@@ -1992,7 +2030,7 @@ void AHellunaHeroCharacter::StartDownedScreenEffect()
 		}
 	}
 
-	// 선혈 오버레이 위젯 생성 (DownedOverlayWidgetClass 설정 시에만)
+	// 위젯 생성 — PlayerController 기반
 	if (DownedOverlayWidgetClass)
 	{
 		APlayerController* PC = Cast<APlayerController>(GetController());
@@ -2006,7 +2044,7 @@ void AHellunaHeroCharacter::StartDownedScreenEffect()
 			if (DownedOverlayWidget)
 			{
 				DownedOverlayWidget->AddToViewport(50);
-				DownedOverlayWidget->SetRenderOpacity(0.f); // 페이드인으로 등장
+				DownedOverlayWidget->SetRenderOpacity(DownedOpacity);
 			}
 		}
 		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-C] CreateWidget: PC=%s | Widget=%s"),
@@ -2014,24 +2052,29 @@ void AHellunaHeroCharacter::StartDownedScreenEffect()
 			DownedOverlayWidget ? *DownedOverlayWidget->GetName() : TEXT("NULL"));
 	}
 
-	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-C] StartDownedEffect: %s | PPComp=%s | Widget=%s | MID=%s"),
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-C] StartDownedEffect: %s | PP=%s | Widget=%s | IR=%.2f | Op=%.2f"),
 		*GetName(),
 		DownedPostProcess ? TEXT("Valid") : TEXT("NULL"),
 		DownedOverlayWidget ? TEXT("Valid") : TEXT("NULL"),
-		DownedPPMID ? TEXT("Valid") : TEXT("NULL"));
+		DownedIR, DownedOpacity);
 }
 
 void AHellunaHeroCharacter::StopDownedScreenEffect()
 {
-	if (!bDownedEffectActive)
-	{
-		return;
-	}
+	if (!bDownedEffectActive) return;
 
-	const float PrevIntensity = DownedEffectIntensity;
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-C] StopDownedEffect: %s | IR=%.2f | Op=%.2f | Blackout=%.2f"),
+		*GetName(), DownedIR, DownedOpacity, DownedBlackout);
+
 	bDownedEffectActive = false;
-	DownedEffectIntensity = 0.f;
-	DownedEffectTargetIntensity = 0.f;
+
+	// 모든 값 초기화
+	DownedIR = IR_START;
+	DownedOpacity = 0.f;
+	DownedBrightness = 1.0f;
+	DownedBlackout = 0.f;
+	PulseIRBoost = 0.f;
+	PulseOpacityBoost = 0.f;
 
 	// PP 복원
 	if (DownedPostProcess)
@@ -2040,13 +2083,15 @@ void AHellunaHeroCharacter::StopDownedScreenEffect()
 		DownedPostProcess->Settings.VignetteIntensity = 0.f;
 		DownedPostProcess->Settings.bOverride_ColorSaturation = true;
 		DownedPostProcess->Settings.ColorSaturation = FVector4(1.f, 1.f, 1.f, 1.f);
+		DownedPostProcess->Settings.bOverride_ColorGain = true;
+		DownedPostProcess->Settings.ColorGain = FVector4(1.f, 1.f, 1.f, 1.f);
 		DownedPostProcess->MarkRenderStateDirty();
 		DownedPostProcess->bEnabled = false;
 
-		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-C] PP 복원: Vignette=0 | Saturation=1.0"));
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-C] PP 복원: Vignette=0 | Saturation=1.0 | Brightness=1.0"));
 	}
 
-	// MID weight 리셋
+	// MID 리셋
 	if (DownedPPMID && DownedPostProcess)
 	{
 		if (DownedPostProcess->Settings.WeightedBlendables.Array.Num() > 0)
@@ -2062,86 +2107,127 @@ void AHellunaHeroCharacter::StopDownedScreenEffect()
 		DownedOverlayWidget->RemoveFromParent();
 		DownedOverlayWidget = nullptr;
 	}
-
-	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-C] StopDownedEffect: %s | Intensity=%.2f→0"),
-		*GetName(), PrevIntensity);
 }
 
 void AHellunaHeroCharacter::TickDownedScreenEffect(float DeltaTime)
 {
-	// HealthComponent에서 출혈 잔여 비율 계산
 	UHellunaHealthComponent* HC = FindComponentByClass<UHellunaHealthComponent>();
-	if (!HC)
-	{
-		return;
-	}
+	if (!HC) return;
 
 	const float BleedoutDuration = HC->GetBleedoutDuration();
-	if (BleedoutDuration <= 0.f)
+	if (BleedoutDuration <= 0.f) return;
+
+	// 출혈 잔여 비율: 1.0(방금 다운) → 0.0(사망 직전)
+	const float BleedoutRatio = FMath::Clamp(
+		HC->GetBleedoutTimeRemaining() / BleedoutDuration, 0.f, 1.f);
+
+	// ── 1단계: InnerRadius + Opacity (전 구간) ──
+	DownedIRTarget = IR_END + (IR_START - IR_END) * BleedoutRatio;
+	DownedOpacityTarget = OP_END - (OP_END - OP_START) * BleedoutRatio;
+
+	// ── 2단계: 밝기 (40% 이하에서 어두워짐) ──
+	if (BleedoutRatio > DARKEN_START)
 	{
-		return;
+		DownedBrightnessTarget = 1.0f;
+	}
+	else if (BleedoutRatio > BLACKOUT_START)
+	{
+		const float DarkenProgress = 1.0f - ((BleedoutRatio - BLACKOUT_START) / (DARKEN_START - BLACKOUT_START));
+		DownedBrightnessTarget = 1.0f - (DarkenProgress * 0.7f);
+	}
+	else
+	{
+		DownedBrightnessTarget = 0.3f;
 	}
 
-	const float BleedoutRatio = FMath::Clamp(
-		HC->GetBleedoutTimeRemaining() / BleedoutDuration,
-		0.f, 1.f);
-	// BleedoutRatio: 1.0(방금 다운) → 0.0(사망 직전)
+	// ── 3단계: 암전 (5% 이하) ──
+	if (BleedoutRatio <= BLACKOUT_START)
+	{
+		const float BlackoutProgress = 1.0f - (BleedoutRatio / BLACKOUT_START);
+		DownedBlackoutTarget = BlackoutProgress;
+	}
+	else
+	{
+		DownedBlackoutTarget = 0.f;
+	}
 
-	// 목표 강도: 출혈 잔여가 적을수록 강해짐
-	DownedEffectTargetIntensity = 1.0f - BleedoutRatio;
+	// ── 심장박동 펄스 ──
+	PulsePeriod = PULSE_PERIOD_MIN + (PULSE_PERIOD_MAX - PULSE_PERIOD_MIN) * BleedoutRatio;
 
-	// 보간
-	DownedEffectIntensity = FMath::FInterpTo(
-		DownedEffectIntensity,
-		DownedEffectTargetIntensity,
-		DeltaTime,
-		2.0f);
+	PulseTimer += DeltaTime;
+	if (PulseTimer >= PulsePeriod)
+	{
+		PulseTimer -= PulsePeriod;
+		PulseIRBoost = PULSE_IR_AMOUNT;
+		PulseOpacityBoost = PULSE_OP_AMOUNT;
+	}
+	PulseIRBoost = FMath::Max(0.f, PulseIRBoost - PULSE_DECAY_SPEED * DeltaTime * PULSE_IR_AMOUNT);
+	PulseOpacityBoost = FMath::Max(0.f, PulseOpacityBoost - PULSE_DECAY_SPEED * DeltaTime * PULSE_OP_AMOUNT);
 
-	// PP 파라미터 적용
+	// ── 보간 ──
+	DownedIR = FMath::FInterpTo(DownedIR, DownedIRTarget, DeltaTime, EFFECT_INTERP_SPEED);
+	DownedOpacity = FMath::FInterpTo(DownedOpacity, DownedOpacityTarget, DeltaTime, EFFECT_INTERP_SPEED);
+	DownedBrightness = FMath::FInterpTo(DownedBrightness, DownedBrightnessTarget, DeltaTime, EFFECT_INTERP_SPEED);
+	DownedBlackout = FMath::FInterpTo(DownedBlackout, DownedBlackoutTarget, DeltaTime, 4.0f);
+
+	// ── 최종 값 (펄스 적용) ──
+	const float FinalIR = FMath::Max(0.02f, DownedIR - PulseIRBoost);
+	const float FinalOpacity = FMath::Min(1.0f, DownedOpacity + PulseOpacityBoost);
+
+	// ── PP 적용 ──
 	if (DownedPostProcess)
 	{
-		// 비네트: 0 ~ 0.8
-		const float VignetteValue = FMath::Lerp(0.0f, 0.8f, DownedEffectIntensity);
-		// 채도: 1.0(정상) ~ 0.4(60% 탈색) — W=1.0 유지 (전체 밝기)
-		const float SaturationValue = FMath::Lerp(1.0f, 0.4f, DownedEffectIntensity);
+		const float SaturationValue = FMath::Lerp(0.45f, 1.0f, BleedoutRatio);
 
 		DownedPostProcess->Settings.bOverride_VignetteIntensity = true;
-		DownedPostProcess->Settings.VignetteIntensity = VignetteValue;
+		DownedPostProcess->Settings.VignetteIntensity = FMath::Lerp(0.f, 0.8f, FinalOpacity);
 		DownedPostProcess->Settings.bOverride_ColorSaturation = true;
-		DownedPostProcess->Settings.ColorSaturation = FVector4(
-			SaturationValue, SaturationValue, SaturationValue, 1.0f);
+		DownedPostProcess->Settings.ColorSaturation = FVector4(SaturationValue, SaturationValue, SaturationValue, 1.0f);
 
-		// 렌더 상태 갱신 알림
+		// 밝기: ColorGain으로 제어
+		DownedPostProcess->Settings.bOverride_ColorGain = true;
+		DownedPostProcess->Settings.ColorGain = FVector4(DownedBrightness, DownedBrightness, DownedBrightness, 1.0f);
+
 		DownedPostProcess->MarkRenderStateDirty();
 	}
 
-	// PP MID weight (빨간 비네트 머티리얼 강도)
+	// ── MID 파라미터 (InnerRadius 동적 제어) ──
+	if (DownedPPMID)
+	{
+		DownedPPMID->SetScalarParameterValue(FName("InnerRadius"), FinalIR);
+		DownedPPMID->SetScalarParameterValue(FName("Intensity"), FinalOpacity);
+	}
+
+	// ── MID Weight ──
 	if (DownedPPMID && DownedPostProcess)
 	{
 		if (DownedPostProcess->Settings.WeightedBlendables.Array.Num() > 0)
 		{
-			DownedPostProcess->Settings.WeightedBlendables.Array[0].Weight = DownedEffectIntensity;
+			DownedPostProcess->Settings.WeightedBlendables.Array[0].Weight = FinalOpacity;
 		}
 	}
 
-	// 위젯 투명도 (PP보다 1.5배 빨리 등장)
+	// ── 위젯 Opacity ──
 	if (DownedOverlayWidget)
 	{
-		const float WidgetOpacity = FMath::Clamp(DownedEffectIntensity * 1.5f, 0.f, 1.f);
-		DownedOverlayWidget->SetRenderOpacity(WidgetOpacity);
+		DownedOverlayWidget->SetRenderOpacity(FinalOpacity);
 	}
 
-	// 로그: 매 1초마다만 출력
+	// ── 암전: PP ColorGain에 Blackout 추가 반영 ──
+	if (DownedPostProcess && DownedBlackout > 0.01f)
+	{
+		const float BlackBrightness = DownedBrightness * (1.0f - DownedBlackout);
+		DownedPostProcess->Settings.ColorGain = FVector4(BlackBrightness, BlackBrightness, BlackBrightness, 1.0f);
+		DownedPostProcess->MarkRenderStateDirty();
+	}
+
+	// ── 로그 (1초마다) ──
 	DownedEffectLogTimer += DeltaTime;
 	if (DownedEffectLogTimer >= 1.0f)
 	{
 		DownedEffectLogTimer = 0.f;
-
-		const float VignetteLog = FMath::Lerp(0.0f, 0.8f, DownedEffectIntensity);
-		const float SaturationLog = FMath::Lerp(1.0f, 0.4f, DownedEffectIntensity);
-
 		UE_LOG(LogHelluna, Warning,
-			TEXT("[Phase21-C] DownedEffect Tick: BleedoutRatio=%.2f | Intensity=%.2f | Vignette=%.2f | Saturation=%.2f"),
-			BleedoutRatio, DownedEffectIntensity, VignetteLog, SaturationLog);
+			TEXT("[Phase21-C] Tick: Bleed=%.0f%% | IR=%.2f | Op=%.2f | Bright=%.2f | Blackout=%.2f | Pulse=%.1fs"),
+			BleedoutRatio * 100.f, FinalIR, FinalOpacity, DownedBrightness, DownedBlackout, PulsePeriod);
 	}
 }
