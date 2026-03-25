@@ -31,6 +31,9 @@ class UInv_LootContainerComponent;
 class UWidgetComponent;
 class UHellunaReviveWidget;
 class UHellunaReviveProgressWidget;
+class UPostProcessComponent;
+class UMaterialInstanceDynamic;
+class UMaterialInterface;
 
 
 /**
@@ -345,6 +348,53 @@ public:
 
 	/** 부활 HUD 업데이트 (Tick에서 호출) */
 	void UpdateReviveProgressHUD();
+
+	// =========================================================
+	// ★ Downed Screen Effect (다운 선혈 화면 효과) [Phase21-C]
+	// =========================================================
+
+	/** 다운 선혈 오버레이 위젯 클래스 (WBP_DownedOverlay) */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|Effect",
+		meta = (DisplayName = "Downed Overlay Widget Class (다운 오버레이 위젯)"))
+	TSubclassOf<UUserWidget> DownedOverlayWidgetClass;
+
+	/** 다운 선혈 오버레이 위젯 인스턴스 (로컬 전용) */
+	UPROPERTY()
+	TObjectPtr<UUserWidget> DownedOverlayWidget;
+
+	/** 다운 전용 PostProcessComponent (HackMode PP와 별개) */
+	UPROPERTY()
+	TObjectPtr<UPostProcessComponent> DownedPostProcess;
+
+	/** 다운 PP Material Instance Dynamic */
+	UPROPERTY()
+	TObjectPtr<UMaterialInstanceDynamic> DownedPPMID;
+
+	/** 다운 PP 기본 머티리얼 (M_DownedVignette) */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|Effect",
+		meta = (DisplayName = "Downed PP Material (다운 PP 머티리얼)"))
+	TObjectPtr<UMaterialInterface> DownedPPMaterial;
+
+	/** 다운 화면 효과 현재 강도 (0=효과없음, 1=최대) */
+	float DownedEffectIntensity = 0.f;
+
+	/** 다운 화면 효과 목표 강도 */
+	float DownedEffectTargetIntensity = 0.f;
+
+	/** 다운 화면 효과 활성 여부 */
+	bool bDownedEffectActive = false;
+
+	/** 다운 효과 Tick 로그 제한용 타이머 */
+	float DownedEffectLogTimer = 0.f;
+
+	/** 다운 효과 시작 (로컬 전용, Multicast_PlayHeroDowned에서 호출) */
+	void StartDownedScreenEffect();
+
+	/** 다운 효과 종료 (로컬 전용, Revive/Death에서 호출) */
+	void StopDownedScreenEffect();
+
+	/** 다운 효과 Tick 업데이트 (로컬 전용) */
+	void TickDownedScreenEffect(float DeltaTime);
 
 protected:
 	/** HealthComponent (피격/사망 처리) */

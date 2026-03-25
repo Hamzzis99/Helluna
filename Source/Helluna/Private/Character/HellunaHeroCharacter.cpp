@@ -54,6 +54,10 @@
 #include "Downed/HellunaReviveWidget.h"
 #include "Downed/HellunaReviveProgressWidget.h"
 
+// [Phase21-C] 다운 선혈 화면 효과
+#include "Components/PostProcessComponent.h"
+#include "Materials/MaterialInstanceDynamic.h"
+
 
 
 AHellunaHeroCharacter::AHellunaHeroCharacter()
@@ -189,6 +193,12 @@ void AHellunaHeroCharacter::Tick(float DeltaTime)
 
 	// [Phase 21] 부활 진행 HUD 업데이트 (부활 수행자 로컬)
 	UpdateReviveProgressHUD();
+
+	// [Phase21-C] 다운 선혈 화면 효과 업데이트
+	if (bDownedEffectActive && IsLocallyControlled())
+	{
+		TickDownedScreenEffect(DeltaTime);
+	}
 }
 
 // ============================================================================
@@ -1230,18 +1240,48 @@ void AHellunaHeroCharacter::Multicast_PlayHeroDeath_Implementation()
 	// [Fix] PlayFullBody 원복 (다운→사망 경로)
 	PlayFullBody = false;
 
+	// [Phase21-C] 다운 선혈 화면 효과 종료 (로컬 전용, 다운→사망 경로)
+	if (IsLocallyControlled())
+	{
+		StopDownedScreenEffect();
+	}
+
 	// [Phase 21] 사망 시 부활 위젯 숨김 (다운→사망 경로)
 	HideReviveWidget();
 
-	if (!DeathMontage) return;
+	// ── [Phase21-Fix] 래그돌 전환 ──
+	if (USkeletalMeshComponent* SkelMesh = GetMesh())
+	{
+		// 진행 중 몽타주 즉시 정지 (다운 몽타주 포함)
+		if (UAnimInstance* AnimInst = SkelMesh->GetAnimInstance())
+		{
+			AnimInst->Montage_Stop(0.f);
+		}
 
-	USkeletalMeshComponent* SkelMesh = GetMesh();
-	if (!SkelMesh) return;
+		// 래그돌 활성화
+		SkelMesh->SetCollisionProfileName(TEXT("Ragdoll"));
+		SkelMesh->SetAllBodiesSimulatePhysics(true);
+		SkelMesh->SetSimulatePhysics(true);
+		SkelMesh->WakeAllRigidBodies();
+		SkelMesh->bBlendPhysics = true;
 
-	UAnimInstance* AnimInst = SkelMesh->GetAnimInstance();
-	if (!AnimInst) return;
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] 래그돌 전환: %s"), *GetName());
+	}
 
-	AnimInst->Montage_Play(DeathMontage);
+	// 캡슐 콜리전 비활성화 (래그돌과 겹치지 않도록)
+	if (UCapsuleComponent* Capsule = GetCapsuleComponent())
+	{
+		Capsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] 캡슐 콜리전 비활성화: %s"), *GetName());
+	}
+
+	// 이동 컴포넌트 비활성화
+	if (UCharacterMovementComponent* MovComp = GetCharacterMovement())
+	{
+		MovComp->StopMovementImmediately();
+		MovComp->DisableMovement();
+		MovComp->SetComponentTickEnabled(false);
+	}
 }
 
 // =========================================================
@@ -1500,6 +1540,12 @@ void AHellunaHeroCharacter::Multicast_PlayHeroDowned_Implementation()
 
 	// [Phase 21] 3D 부활 위젯 표시 (모든 클라이언트)
 	ShowReviveWidget();
+
+	// [Phase21-C] 다운 선혈 화면 효과 시작 (로컬 전용)
+	if (IsLocallyControlled())
+	{
+		StartDownedScreenEffect();
+	}
 }
 
 void AHellunaHeroCharacter::Multicast_PlayHeroRevived_Implementation()
@@ -1524,6 +1570,12 @@ void AHellunaHeroCharacter::Multicast_PlayHeroRevived_Implementation()
 	{
 		CameraBoom->TargetArmLength = DefaultTargetArmLength;
 		CameraBoom->SocketOffset = DefaultSocketOffset;
+	}
+
+	// [Phase21-C] 다운 선혈 화면 효과 종료 (로컬 전용)
+	if (IsLocallyControlled())
+	{
+		StopDownedScreenEffect();
 	}
 
 	// [Phase 21] 3D 부활 위젯 숨김 (모든 클라이언트)
@@ -1885,5 +1937,211 @@ void AHellunaHeroCharacter::UpdateReviveProgressHUD()
 	{
 		// 타겟 없거나 진행률 0 → 서버에서 취소된 상태 → 숨김
 		HideReviveProgressHUD();
+	}
+}
+
+// =========================================================
+// ★ [Phase21-C] 다운 선혈 화면 효과
+// =========================================================
+
+void AHellunaHeroCharacter::StartDownedScreenEffect()
+{
+	// 데디케이티드 서버에서는 위젯/PP 생성 금지
+	if (GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+
+	bDownedEffectActive = true;
+	DownedEffectIntensity = 0.f;
+	DownedEffectTargetIntensity = 0.f;
+	DownedEffectLogTimer = 0.f;
+
+	// PostProcessComponent 생성 (재활용: 이미 있으면 새로 만들지 않음)
+	if (!DownedPostProcess)
+	{
+		DownedPostProcess = NewObject<UPostProcessComponent>(this, TEXT("DownedPostProcess"));
+		if (DownedPostProcess)
+		{
+			DownedPostProcess->RegisterComponent();
+			DownedPostProcess->AttachToComponent(GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
+			DownedPostProcess->bUnbound = true;
+			DownedPostProcess->Priority = 15.f; // HackMode PP(10)보다 높게
+		}
+	}
+
+	if (DownedPostProcess)
+	{
+		// PP 초기값 설정
+		DownedPostProcess->Settings.bOverride_VignetteIntensity = true;
+		DownedPostProcess->Settings.VignetteIntensity = 0.f;
+		DownedPostProcess->Settings.bOverride_ColorSaturation = true;
+		DownedPostProcess->Settings.ColorSaturation = FVector4(1.f, 1.f, 1.f, 1.f);
+		DownedPostProcess->bEnabled = true;
+	}
+
+	// PP MID 생성 (DownedPPMaterial 설정 시에만)
+	if (DownedPPMaterial && DownedPostProcess)
+	{
+		DownedPPMID = UMaterialInstanceDynamic::Create(DownedPPMaterial, this);
+		if (DownedPPMID)
+		{
+			DownedPostProcess->Settings.WeightedBlendables.Array.Empty();
+			DownedPostProcess->Settings.WeightedBlendables.Array.Add(
+				FWeightedBlendable(0.f, DownedPPMID));
+		}
+	}
+
+	// 선혈 오버레이 위젯 생성 (DownedOverlayWidgetClass 설정 시에만)
+	if (DownedOverlayWidgetClass)
+	{
+		APlayerController* PC = Cast<APlayerController>(GetController());
+		if (!PC)
+		{
+			PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+		}
+		if (PC)
+		{
+			DownedOverlayWidget = CreateWidget<UUserWidget>(PC, DownedOverlayWidgetClass);
+			if (DownedOverlayWidget)
+			{
+				DownedOverlayWidget->AddToViewport(50);
+				DownedOverlayWidget->SetRenderOpacity(0.f); // 페이드인으로 등장
+			}
+		}
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-C] CreateWidget: PC=%s | Widget=%s"),
+			PC ? *PC->GetName() : TEXT("NULL"),
+			DownedOverlayWidget ? *DownedOverlayWidget->GetName() : TEXT("NULL"));
+	}
+
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-C] StartDownedEffect: %s | PPComp=%s | Widget=%s | MID=%s"),
+		*GetName(),
+		DownedPostProcess ? TEXT("Valid") : TEXT("NULL"),
+		DownedOverlayWidget ? TEXT("Valid") : TEXT("NULL"),
+		DownedPPMID ? TEXT("Valid") : TEXT("NULL"));
+}
+
+void AHellunaHeroCharacter::StopDownedScreenEffect()
+{
+	if (!bDownedEffectActive)
+	{
+		return;
+	}
+
+	const float PrevIntensity = DownedEffectIntensity;
+	bDownedEffectActive = false;
+	DownedEffectIntensity = 0.f;
+	DownedEffectTargetIntensity = 0.f;
+
+	// PP 복원
+	if (DownedPostProcess)
+	{
+		DownedPostProcess->Settings.bOverride_VignetteIntensity = true;
+		DownedPostProcess->Settings.VignetteIntensity = 0.f;
+		DownedPostProcess->Settings.bOverride_ColorSaturation = true;
+		DownedPostProcess->Settings.ColorSaturation = FVector4(1.f, 1.f, 1.f, 1.f);
+		DownedPostProcess->MarkRenderStateDirty();
+		DownedPostProcess->bEnabled = false;
+
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-C] PP 복원: Vignette=0 | Saturation=1.0"));
+	}
+
+	// MID weight 리셋
+	if (DownedPPMID && DownedPostProcess)
+	{
+		if (DownedPostProcess->Settings.WeightedBlendables.Array.Num() > 0)
+		{
+			DownedPostProcess->Settings.WeightedBlendables.Array[0].Weight = 0.f;
+		}
+		DownedPPMID = nullptr;
+	}
+
+	// 위젯 제거
+	if (DownedOverlayWidget)
+	{
+		DownedOverlayWidget->RemoveFromParent();
+		DownedOverlayWidget = nullptr;
+	}
+
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-C] StopDownedEffect: %s | Intensity=%.2f→0"),
+		*GetName(), PrevIntensity);
+}
+
+void AHellunaHeroCharacter::TickDownedScreenEffect(float DeltaTime)
+{
+	// HealthComponent에서 출혈 잔여 비율 계산
+	UHellunaHealthComponent* HC = FindComponentByClass<UHellunaHealthComponent>();
+	if (!HC)
+	{
+		return;
+	}
+
+	const float BleedoutDuration = HC->GetBleedoutDuration();
+	if (BleedoutDuration <= 0.f)
+	{
+		return;
+	}
+
+	const float BleedoutRatio = FMath::Clamp(
+		HC->GetBleedoutTimeRemaining() / BleedoutDuration,
+		0.f, 1.f);
+	// BleedoutRatio: 1.0(방금 다운) → 0.0(사망 직전)
+
+	// 목표 강도: 출혈 잔여가 적을수록 강해짐
+	DownedEffectTargetIntensity = 1.0f - BleedoutRatio;
+
+	// 보간
+	DownedEffectIntensity = FMath::FInterpTo(
+		DownedEffectIntensity,
+		DownedEffectTargetIntensity,
+		DeltaTime,
+		2.0f);
+
+	// PP 파라미터 적용
+	if (DownedPostProcess)
+	{
+		// 비네트: 0 ~ 0.8
+		const float VignetteValue = FMath::Lerp(0.0f, 0.8f, DownedEffectIntensity);
+		// 채도: 1.0(정상) ~ 0.4(60% 탈색) — W=1.0 유지 (전체 밝기)
+		const float SaturationValue = FMath::Lerp(1.0f, 0.4f, DownedEffectIntensity);
+
+		DownedPostProcess->Settings.bOverride_VignetteIntensity = true;
+		DownedPostProcess->Settings.VignetteIntensity = VignetteValue;
+		DownedPostProcess->Settings.bOverride_ColorSaturation = true;
+		DownedPostProcess->Settings.ColorSaturation = FVector4(
+			SaturationValue, SaturationValue, SaturationValue, 1.0f);
+
+		// 렌더 상태 갱신 알림
+		DownedPostProcess->MarkRenderStateDirty();
+	}
+
+	// PP MID weight (빨간 비네트 머티리얼 강도)
+	if (DownedPPMID && DownedPostProcess)
+	{
+		if (DownedPostProcess->Settings.WeightedBlendables.Array.Num() > 0)
+		{
+			DownedPostProcess->Settings.WeightedBlendables.Array[0].Weight = DownedEffectIntensity;
+		}
+	}
+
+	// 위젯 투명도 (PP보다 1.5배 빨리 등장)
+	if (DownedOverlayWidget)
+	{
+		const float WidgetOpacity = FMath::Clamp(DownedEffectIntensity * 1.5f, 0.f, 1.f);
+		DownedOverlayWidget->SetRenderOpacity(WidgetOpacity);
+	}
+
+	// 로그: 매 1초마다만 출력
+	DownedEffectLogTimer += DeltaTime;
+	if (DownedEffectLogTimer >= 1.0f)
+	{
+		DownedEffectLogTimer = 0.f;
+
+		const float VignetteLog = FMath::Lerp(0.0f, 0.8f, DownedEffectIntensity);
+		const float SaturationLog = FMath::Lerp(1.0f, 0.4f, DownedEffectIntensity);
+
+		UE_LOG(LogHelluna, Warning,
+			TEXT("[Phase21-C] DownedEffect Tick: BleedoutRatio=%.2f | Intensity=%.2f | Vignette=%.2f | Saturation=%.2f"),
+			BleedoutRatio, DownedEffectIntensity, VignetteLog, SaturationLog);
 	}
 }

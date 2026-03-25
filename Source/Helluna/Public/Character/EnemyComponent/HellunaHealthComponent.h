@@ -75,6 +75,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Health|Downed")
 	float GetBleedoutTimeRemaining() const { return BleedoutTimeRemaining; }
 
+	/** [Phase21-C] 출혈 총 시간 (getter) */
+	UFUNCTION(BlueprintPure, Category = "Health|Downed")
+	float GetBleedoutDuration() const { return BleedoutDuration; }
+
 	/** 서버: 다운 상태에서 강제 사망 (생존 팀원 없을 때) */
 	void ForceKillFromDowned();
 
