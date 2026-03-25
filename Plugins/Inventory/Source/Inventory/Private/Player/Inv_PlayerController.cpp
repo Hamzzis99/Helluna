@@ -487,10 +487,11 @@ void AInv_PlayerController::TraceForInteractables()
 				const FString BoundKey = GetBoundInteractKeyName();
 				if (!CraftingStation->ShowInteractWidget(BoundKey))
 				{
-					// 3D 위젯 미설정 → 기존 2D HUD fallback
+					// 3D 위젯 미설정 → 기존 2D HUD fallback (동적 키 조합)
 					if (IsValid(HUDWidget))
 					{
-						HUDWidget->ShowPickupMessage(CraftingStation->GetPickupMessage());
+						const FString DynamicMsg = BoundKey + TEXT(" - ") + CraftingStation->GetPickupMessage();
+						HUDWidget->ShowPickupMessage(DynamicMsg);
 					}
 				}
 			}
@@ -515,10 +516,11 @@ void AInv_PlayerController::TraceForInteractables()
 					const FString BoundKey = GetBoundInteractKeyName();
 					if (!ItemComponent->ShowInteractWidget(BoundKey))
 					{
-						// 3D 위젯 미설정 → 기존 2D HUD fallback
+						// 3D 위젯 미설정 → 기존 2D HUD fallback (동적 키 조합)
 						if (IsValid(HUDWidget))
 						{
-							HUDWidget->ShowPickupMessage(ItemComponent->GetPickupMessage());
+							const FString DynamicMsg = BoundKey + TEXT(" - ") + ItemComponent->GetPickupMessage();
+							HUDWidget->ShowPickupMessage(DynamicMsg);
 						}
 					}
 				}

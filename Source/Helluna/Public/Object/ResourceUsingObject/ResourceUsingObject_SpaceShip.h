@@ -6,6 +6,8 @@
 #include "Object/ResourceUsingObject/HellunaBaseResourceUsingObject.h"
 #include "ResourceUsingObject_SpaceShip.generated.h"
 
+class UWidgetComponent;
+
 /**
  * 
  */
@@ -72,5 +74,25 @@ public:
     // ⭐ 새로 추가: 수리 완료 이벤트 (Blueprint에서도 오버라이드 가능)
     UFUNCTION(BlueprintNativeEvent, Category = "Repair")
     void OnRepairCompleted();
-	
+
+	// =========================================================
+	// ★ [Phase18] 3D 상호작용 프롬프트 위젯
+	// =========================================================
+protected:
+	/** 3D 프롬프트 WidgetComponent */
+	UPROPERTY()
+	TObjectPtr<UWidgetComponent> InteractWidgetComp;
+
+	/** 3D 프롬프트 위젯 클래스 (BP에서 할당 — WBP_Inv_InteractPrompt) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Repair|Widget",
+		meta = (DisplayName = "Interact Widget Class (3D 상호작용 위젯 클래스)"))
+	TSubclassOf<UUserWidget> InteractWidgetClass;
+
+	/** 위젯 Z 오프셋 (우주선 위에 떠있는 높이) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Repair|Widget",
+		meta = (DisplayName = "Widget Z Offset (위젯 높이 오프셋)", ClampMin = "0", ClampMax = "500"))
+	float InteractWidgetZOffset = 200.0f;
+
+private:
+	bool bInteractWidgetVisible = false;
 };

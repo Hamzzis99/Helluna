@@ -44,40 +44,22 @@ void AInv_CraftingStation::BeginPlay()
 	InteractWidgetComp->RegisterComponent();
 
 	InteractWidgetInstance = Cast<UInv_InteractPromptWidget>(InteractWidgetComp->GetWidget());
+
+	// 제작대: Fragment 없음 → PickupMessage 단순 파싱
+	// "E - 제작대 열기" → ItemNameText="제작대 열기", ActionText=""
+	// 제작대는 ItemManifest가 없으므로 PickupMessage가 유일한 텍스트 소스
 	if (InteractWidgetInstance)
 	{
-		// PickupMessage 파싱 (이중 대시 지원)
-		// "E - 제작대 열기" → Key="E", ItemName="제작대 열기"
-		// "E - 무기 제작대 - 열기" → Key="E", ItemName="무기 제작대", Action="열기"
-		FString ParsedKey = TEXT("E");
-		FString ParsedItemName;
-		FString ParsedAction;
-
-		int32 FirstDash = INDEX_NONE;
-		if (PickupMessage.FindChar(TEXT('-'), FirstDash) && FirstDash <= 3)
+		FString ParsedAction = PickupMessage;
+		int32 DashIdx = INDEX_NONE;
+		if (PickupMessage.FindChar(TEXT('-'), DashIdx) && DashIdx <= 3)
 		{
-			ParsedKey = PickupMessage.Left(FirstDash).TrimEnd();
-			FString Remainder = PickupMessage.Mid(FirstDash + 1).TrimStart();
-
-			int32 SecondDash = INDEX_NONE;
-			if (Remainder.FindChar(TEXT('-'), SecondDash))
-			{
-				ParsedItemName = Remainder.Left(SecondDash).TrimEnd();
-				ParsedAction = Remainder.Mid(SecondDash + 1).TrimStart();
-			}
-			else
-			{
-				ParsedItemName = Remainder;
-			}
+			ParsedAction = PickupMessage.Mid(DashIdx + 1).TrimStart();
 		}
-		else
-		{
-			ParsedItemName = PickupMessage;
-		}
-
-		InteractWidgetInstance->SetKeyText(ParsedKey);
-		InteractWidgetInstance->SetItemName(ParsedItemName);
-		InteractWidgetInstance->SetActionText(!ParsedAction.IsEmpty() ? ParsedAction : TEXT(""));
+		// 하얀 글씨 = PickupMessage에서 키 제거한 텍스트 ("제작대 열기")
+		InteractWidgetInstance->SetItemName(ParsedAction);
+		// 파란 글씨 = 비움 (제작대는 액션 텍스트 불필요)
+		InteractWidgetInstance->SetActionText(TEXT(""));
 		InteractWidgetInstance->ResetState();
 	}
 

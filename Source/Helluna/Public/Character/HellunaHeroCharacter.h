@@ -34,6 +34,8 @@ class UHellunaReviveProgressWidget;
 class UPostProcessComponent;
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
+class UInv_InteractPromptWidget;
+class AHellunaEnemyCharacter;
 
 
 /**
@@ -539,4 +541,41 @@ private:
 	/** 현재 조준 상태 (ASC 태그 기반) */
 	bool bIsCurrentlyAiming = false;
 	bool bWasAimingLastFrame = false;
+
+	// =========================================================
+	// ★ [Phase18] 킥 3D 프롬프트 위젯
+	// =========================================================
+protected:
+	/** 킥 프롬프트 WidgetComponent (플로팅 — Staggered 적 위치로 이동) */
+	UPROPERTY()
+	TObjectPtr<UWidgetComponent> KickPromptWidgetComp;
+
+	/** 킥 프롬프트 위젯 클래스 (BP에서 할당 — WBP_Inv_InteractPrompt) */
+	UPROPERTY(EditDefaultsOnly, Category = "Kick|Widget",
+		meta = (DisplayName = "Kick Prompt Widget Class (킥 프롬프트 위젯 클래스)"))
+	TSubclassOf<UUserWidget> KickPromptWidgetClass;
+
+	/** 킥 프롬프트 위젯 인스턴스 */
+	UPROPERTY()
+	TObjectPtr<UUserWidget> KickPromptWidgetInstance;
+
+	/** 현재 킥 프롬프트가 표시 중인지 */
+	bool bKickPromptVisible = false;
+
+	/** 킥 감지 범위 (GA_MeleeKick과 동일하게 설정) */
+	UPROPERTY(EditDefaultsOnly, Category = "Kick|Widget",
+		meta = (DisplayName = "Kick Prompt Range (킥 감지 범위)"))
+	float KickPromptRange = 200.f;
+
+	/** 킥 감지 전방각 (도) */
+	UPROPERTY(EditDefaultsOnly, Category = "Kick|Widget",
+		meta = (DisplayName = "Kick Prompt Half Angle (킥 감지 전방각)"))
+	float KickPromptHalfAngle = 60.f;
+
+	/** 킥 프롬프트 업데이트 (Tick에서 호출) */
+	void UpdateKickPrompt(float DeltaTime);
+
+private:
+	/** 킥 프롬프트 로그 타이머 (1초 1회 제한) */
+	float KickPromptLogTimer = 0.f;
 };

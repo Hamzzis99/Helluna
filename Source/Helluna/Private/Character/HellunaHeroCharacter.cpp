@@ -58,6 +58,12 @@
 #include "Components/PostProcessComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
 
+// [Phase18] 킥 3D 프롬프트 위젯
+#include "HellunaFunctionLibrary.h"
+#include "Character/HellunaEnemyCharacter.h"
+#include "Engine/OverlapResult.h"
+#include "Widgets/HUD/Inv_InteractPromptWidget.h"
+
 
 
 AHellunaHeroCharacter::AHellunaHeroCharacter()
@@ -124,6 +130,15 @@ AHellunaHeroCharacter::AHellunaHeroCharacter()
 	ReviveWidgetComp->SetVisibility(false); // 기본 숨김
 	ReviveWidgetComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
+	// [Phase18] 킥 3D 프롬프트 위젯 컴포넌트 (Staggered 적 머리 위 표시)
+	KickPromptWidgetComp = CreateDefaultSubobject<UWidgetComponent>(TEXT("KickPromptWidgetComp"));
+	KickPromptWidgetComp->SetupAttachment(GetRootComponent());
+	KickPromptWidgetComp->SetRelativeLocation(FVector(0.f, 0.f, 200.f));
+	KickPromptWidgetComp->SetDrawSize(FVector2D(200.f, 50.f));
+	KickPromptWidgetComp->SetWidgetSpace(EWidgetSpace::Screen);
+	KickPromptWidgetComp->SetVisibility(false);
+	KickPromptWidgetComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
 	// [OTS Camera] 생성자 디버그 로그
 	UE_LOG(LogTemp, Warning, TEXT("[OTS Camera] Constructor — ArmLength=%.1f, SocketOffset=%s, bOrientToMovement=%s, bUseControllerDesiredRotation=%s"),
 		CameraBoom->TargetArmLength,
@@ -178,6 +193,22 @@ void AHellunaHeroCharacter::BeginPlay()
 	}
 	UE_LOG(LogTemp, Warning, TEXT("[OTS Camera] BeginPlay — DefaultFOV=%.1f, DefaultArmLength=%.1f, DefaultSocketOffset=%s"),
 		DefaultFOV, DefaultTargetArmLength, *DefaultSocketOffset.ToString());
+
+	// [Phase18] 킥 프롬프트 3D 위젯 초기화 (클라이언트만)
+	if (GetNetMode() != NM_DedicatedServer && KickPromptWidgetComp && KickPromptWidgetClass)
+	{
+		KickPromptWidgetComp->SetWidgetClass(KickPromptWidgetClass);
+
+		// 위젯 인스턴스 캐시 + 텍스트 설정
+		KickPromptWidgetInstance = KickPromptWidgetComp->GetWidget();
+		if (UInv_InteractPromptWidget* Prompt = Cast<UInv_InteractPromptWidget>(KickPromptWidgetInstance))
+		{
+			Prompt->SetKeyText(TEXT("F"));
+			Prompt->SetItemName(TEXT("처형"));
+			Prompt->SetActionText(TEXT(""));
+		}
+		UE_LOG(LogHelluna, Log, TEXT("[Phase18] KickPrompt 위젯 초기화: %s"), *GetName());
+	}
 }
 
 // ============================================================================
@@ -198,6 +229,12 @@ void AHellunaHeroCharacter::Tick(float DeltaTime)
 	if (bDownedEffectActive && IsLocallyControlled())
 	{
 		TickDownedScreenEffect(DeltaTime);
+	}
+
+	// [Phase18] 킥 프롬프트 업데이트 (로컬 플레이어만)
+	if (IsLocallyControlled())
+	{
+		UpdateKickPrompt(DeltaTime);
 	}
 }
 
@@ -2229,5 +2266,94 @@ void AHellunaHeroCharacter::TickDownedScreenEffect(float DeltaTime)
 		UE_LOG(LogHelluna, Warning,
 			TEXT("[Phase21-C] Tick: Bleed=%.0f%% | IR=%.2f | Op=%.2f | Bright=%.2f | Blackout=%.2f | Pulse=%.1fs"),
 			BleedoutRatio * 100.f, FinalIR, FinalOpacity, DownedBrightness, DownedBlackout, PulsePeriod);
+	}
+}
+
+// ============================================================================
+// [Phase18] 킥 3D 프롬프트 — Staggered 적 머리 위에 "F: 처형" 표시
+// ============================================================================
+void AHellunaHeroCharacter::UpdateKickPrompt(float DeltaTime)
+{
+	if (!KickPromptWidgetComp) return;
+
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	const FVector MyLocation = GetActorLocation();
+	const FVector MyForward = GetActorForwardVector();
+	const float CosHalfAngle = FMath::Cos(FMath::DegreesToRadians(KickPromptHalfAngle));
+
+	// Staggered 적 탐색 (GA_MeleeKick::FindStaggeredEnemy와 동일 로직)
+	AHellunaEnemyCharacter* BestEnemy = nullptr;
+	float BestDistSq = KickPromptRange * KickPromptRange;
+
+	TArray<FOverlapResult> Overlaps;
+	FCollisionShape Sphere = FCollisionShape::MakeSphere(KickPromptRange);
+	FCollisionQueryParams Params;
+	Params.AddIgnoredActor(this);
+
+	if (World->OverlapMultiByObjectType(
+		Overlaps, MyLocation, FQuat::Identity,
+		FCollisionObjectQueryParams(ECC_Pawn), Sphere, Params))
+	{
+		for (const FOverlapResult& Overlap : Overlaps)
+		{
+			AHellunaEnemyCharacter* Enemy = Cast<AHellunaEnemyCharacter>(Overlap.GetActor());
+			if (!Enemy) continue;
+
+			// Staggered 태그 체크
+			if (!UHellunaFunctionLibrary::NativeDoesActorHaveTag(Enemy, HellunaGameplayTags::Enemy_State_Staggered))
+				continue;
+
+			// 사망 체크
+			if (UHellunaHealthComponent* HC = Enemy->FindComponentByClass<UHellunaHealthComponent>())
+			{
+				if (HC->IsDead()) continue;
+			}
+
+			// 전방각 체크
+			const FVector ToEnemy = (Enemy->GetActorLocation() - MyLocation).GetSafeNormal();
+			if (FVector::DotProduct(MyForward, ToEnemy) < CosHalfAngle) continue;
+
+			const float DistSq = FVector::DistSquared(MyLocation, Enemy->GetActorLocation());
+			if (DistSq < BestDistSq)
+			{
+				BestDistSq = DistSq;
+				BestEnemy = Enemy;
+			}
+		}
+	}
+
+	if (BestEnemy)
+	{
+		// 적 머리 위로 위젯 이동
+		const FVector EnemyHead = BestEnemy->GetActorLocation() + FVector(0.f, 0.f, 150.f);
+		KickPromptWidgetComp->SetWorldLocation(EnemyHead);
+
+		if (!bKickPromptVisible)
+		{
+			KickPromptWidgetComp->SetVisibility(true);
+			bKickPromptVisible = true;
+		}
+	}
+	else
+	{
+		if (bKickPromptVisible)
+		{
+			KickPromptWidgetComp->SetVisibility(false);
+			bKickPromptVisible = false;
+		}
+	}
+
+	// 디버그 로그 (1초마다)
+	KickPromptLogTimer += DeltaTime;
+	if (KickPromptLogTimer >= 1.0f)
+	{
+		KickPromptLogTimer = 0.f;
+		if (bKickPromptVisible && BestEnemy)
+		{
+			UE_LOG(LogHelluna, Log, TEXT("[Phase18] KickPrompt 표시: %s → 적=%s"),
+				*GetName(), *BestEnemy->GetName());
+		}
 	}
 }
