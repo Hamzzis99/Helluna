@@ -4,6 +4,8 @@
 #include "Net/UnrealNetwork.h"
 #include "Components/WidgetComponent.h"
 #include "Widgets/HUD/Inv_InteractPromptWidget.h"
+#include "Items/Fragments/Inv_FragmentTags.h"
+#include "Items/Fragments/Inv_ItemFragment.h"
 
 // Sets default values for this component's properties
 UInv_ItemComponent::UInv_ItemComponent()
@@ -49,20 +51,37 @@ void UInv_ItemComponent::BeginPlay()
 	InteractWidgetComp->SetVisibility(false);
 	InteractWidgetComp->RegisterComponent();
 
-	// 위젯 인스턴스 캐시 + 초기 텍스트 설정
+	// 위젯 인스턴스 캐시 + Fragment 기반 아이템 이름 + PickupMessage 액션 텍스트
 	InteractWidgetInstance = Cast<UInv_InteractPromptWidget>(InteractWidgetComp->GetWidget());
 	if (InteractWidgetInstance)
 	{
-		// PickupMessage에서 키 접두사 제거 ("E - 무기 집기!" → "무기 집기!")
-		FString DisplayName = PickupMessage;
-		int32 DashIdx = INDEX_NONE;
-		if (DisplayName.FindChar(TEXT('-'), DashIdx) && DashIdx <= 3)
+		// === ItemNameFragment에서 아이템 이름 읽기 ===
+		// BP의 ItemManifest → Fragments → FragmentTags::ItemNameFragment
+		// 하얀 글씨(ItemNameText)에 표시: AK47, 소음기, 2배율 스코프 등
+		const FInv_TextFragment* NameFrag = ItemManifest.GetFragmentOfTypeWithTag<FInv_TextFragment>(FragmentTags::ItemNameFragment);
+		if (NameFrag)
 		{
-			DisplayName = DisplayName.Mid(DashIdx + 1).TrimStart();
+			InteractWidgetInstance->SetItemName(NameFrag->GetText().ToString());
 		}
-		InteractWidgetInstance->SetItemName(DisplayName);
-		InteractWidgetInstance->SetActionText(TEXT("줍기"));
+		else
+		{
+			InteractWidgetInstance->SetItemName(TEXT(""));
+		}
+
+		// === PickupMessage에서 액션 텍스트 추출 ===
+		// "E - 무기 집기!" → 파란 글씨(ActionText) = "무기 집기!"
+		FString ParsedAction = PickupMessage;
+		int32 DashIdx = INDEX_NONE;
+		if (PickupMessage.FindChar(TEXT('-'), DashIdx) && DashIdx <= 3)
+		{
+			ParsedAction = PickupMessage.Mid(DashIdx + 1).TrimStart();
+		}
+		InteractWidgetInstance->SetActionText(ParsedAction);
+
 		InteractWidgetInstance->ResetState();
+
+		UE_LOG(LogTemp, Log, TEXT("[Phase18] 3D 위젯: Name='%s' Action='%s'"),
+			NameFrag ? *NameFrag->GetText().ToString() : TEXT("(none)"), *ParsedAction);
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("[Phase18] InteractWidgetComp 생성 성공: Owner=%s, WidgetClass=%s"),

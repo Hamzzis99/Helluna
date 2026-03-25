@@ -9,6 +9,8 @@
 
 class UUserWidget;
 class UInv_CraftingRecipeDA;
+class UWidgetComponent;
+class UInv_InteractPromptWidget;
 
 /**
  * 크래프팅 스테이션 베이스 액터
@@ -34,6 +36,17 @@ public:
 	// 상호작용 메시지 가져오기 (ItemComponent와 동일한 방식)
 	UFUNCTION(BlueprintCallable, Category = "제작", meta = (DisplayName = "상호작용 메시지 가져오기"))
 	FString GetPickupMessage() const { return PickupMessage; }
+
+	// === 3D 상호작용 위젯 (Phase 18) ===
+
+	/** 3D 위젯 표시 (바인딩 키 이름 전달) */
+	bool ShowInteractWidget(const FString& KeyName = TEXT("E"));
+
+	/** 3D 위젯 숨기기 */
+	void HideInteractWidget();
+
+	/** 3D 위젯이 있는지 */
+	bool HasInteractWidget() const { return InteractWidgetComp != nullptr; }
 
 protected:
 	virtual void BeginPlay() override;
@@ -62,6 +75,29 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "제작",
 		meta = (DisplayName = "거리 체크 간격", Tooltip = "플레이어와의 거리를 확인하는 주기(초). 메뉴가 열린 상태에서 거리를 벗어나면 자동으로 닫힙니다.", ClampMin = "0.1", ClampMax = "5.0"))
 	float DistanceCheckInterval = 0.5f;
+
+	// === 3D 상호작용 위젯 프로퍼티 ===
+
+	/** 3D 상호작용 위젯 컴포넌트 */
+	UPROPERTY()
+	TObjectPtr<UWidgetComponent> InteractWidgetComp;
+
+	/** 3D 위젯 클래스 (에디터에서 할당) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "제작|위젯",
+		meta = (DisplayName = "3D Interact Widget Class (3D 상호작용 위젯 클래스)"))
+	TSubclassOf<UInv_InteractPromptWidget> InteractWidgetClass;
+
+	/** 3D 위젯 인스턴스 (런타임) */
+	UPROPERTY()
+	TObjectPtr<UInv_InteractPromptWidget> InteractWidgetInstance;
+
+	/** 위젯 표시 여부 */
+	bool bInteractWidgetVisible = false;
+
+	/** 3D 위젯 Z오프셋 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "제작|위젯",
+		meta = (DisplayName = "Widget Height Offset (위젯 높이 오프셋)", ClampMin = "0", ClampMax = "300"))
+	float InteractWidgetZOffset = 80.0f;
 
 private:
 	// 플레이어별 크래프팅 메뉴 맵 (멀티플레이 지원)

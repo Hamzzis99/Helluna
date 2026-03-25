@@ -5,6 +5,8 @@
 #include "Blueprint/UserWidget.h"
 #include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/WidgetComponent.h"
+#include "Widgets/HUD/Inv_InteractPromptWidget.h"
 #include "Widgets/Crafting/Inv_TabbedCraftingMenu.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
 #include "Building/Components/Inv_BuildingComponent.h"
@@ -18,6 +20,91 @@ AInv_CraftingStation::AInv_CraftingStation()
 void AInv_CraftingStation::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// [Phase18] 3D 상호작용 위젯 생성 (클라이언트만)
+	if (!InteractWidgetClass) return;
+
+	UWorld* World = GetWorld();
+	if (!World) return;
+	if (World->GetNetMode() == NM_DedicatedServer) return;
+
+	USceneComponent* RootComp = GetRootComponent();
+	if (!RootComp) return;
+
+	InteractWidgetComp = NewObject<UWidgetComponent>(this, UWidgetComponent::StaticClass(), TEXT("CraftInteractWidgetComp"));
+	if (!InteractWidgetComp) return;
+
+	InteractWidgetComp->SetupAttachment(RootComp);
+	InteractWidgetComp->SetRelativeLocation(FVector(0.f, 0.f, InteractWidgetZOffset));
+	InteractWidgetComp->SetWidgetSpace(EWidgetSpace::Screen);
+	InteractWidgetComp->SetDrawSize(FVector2D(200.f, 50.f));
+	InteractWidgetComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	InteractWidgetComp->SetWidgetClass(InteractWidgetClass);
+	InteractWidgetComp->SetVisibility(false);
+	InteractWidgetComp->RegisterComponent();
+
+	InteractWidgetInstance = Cast<UInv_InteractPromptWidget>(InteractWidgetComp->GetWidget());
+	if (InteractWidgetInstance)
+	{
+		// PickupMessage 파싱 (이중 대시 지원)
+		// "E - 제작대 열기" → Key="E", ItemName="제작대 열기"
+		// "E - 무기 제작대 - 열기" → Key="E", ItemName="무기 제작대", Action="열기"
+		FString ParsedKey = TEXT("E");
+		FString ParsedItemName;
+		FString ParsedAction;
+
+		int32 FirstDash = INDEX_NONE;
+		if (PickupMessage.FindChar(TEXT('-'), FirstDash) && FirstDash <= 3)
+		{
+			ParsedKey = PickupMessage.Left(FirstDash).TrimEnd();
+			FString Remainder = PickupMessage.Mid(FirstDash + 1).TrimStart();
+
+			int32 SecondDash = INDEX_NONE;
+			if (Remainder.FindChar(TEXT('-'), SecondDash))
+			{
+				ParsedItemName = Remainder.Left(SecondDash).TrimEnd();
+				ParsedAction = Remainder.Mid(SecondDash + 1).TrimStart();
+			}
+			else
+			{
+				ParsedItemName = Remainder;
+			}
+		}
+		else
+		{
+			ParsedItemName = PickupMessage;
+		}
+
+		InteractWidgetInstance->SetKeyText(ParsedKey);
+		InteractWidgetInstance->SetItemName(ParsedItemName);
+		InteractWidgetInstance->SetActionText(!ParsedAction.IsEmpty() ? ParsedAction : TEXT(""));
+		InteractWidgetInstance->ResetState();
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[Phase18] CraftingStation 3D 위젯 생성: %s, Msg='%s'"),
+		*GetName(), *PickupMessage);
+}
+
+bool AInv_CraftingStation::ShowInteractWidget(const FString& KeyName)
+{
+	if (!InteractWidgetComp) return false;
+	if (bInteractWidgetVisible) return true;
+
+	if (InteractWidgetInstance)
+	{
+		InteractWidgetInstance->SetKeyText(KeyName);
+	}
+
+	InteractWidgetComp->SetVisibility(true);
+	bInteractWidgetVisible = true;
+	return true;
+}
+
+void AInv_CraftingStation::HideInteractWidget()
+{
+	if (!InteractWidgetComp || !bInteractWidgetVisible) return;
+	InteractWidgetComp->SetVisibility(false);
+	bInteractWidgetVisible = false;
 }
 
 void AInv_CraftingStation::OnInteract_Implementation(APlayerController* PlayerController)

@@ -435,6 +435,12 @@ void AInv_PlayerController::TraceForInteractables()
 			{
 				LastItemComp->HideInteractWidget();
 			}
+			// [Phase18] 이전 제작대의 3D 위젯 숨김
+			AInv_CraftingStation* LastCraftStation = Cast<AInv_CraftingStation>(LastActor.Get());
+			if (IsValid(LastCraftStation))
+			{
+				LastCraftStation->HideInteractWidget();
+			}
 		}
 		if (IsValid(HUDWidget))
 		{
@@ -458,6 +464,12 @@ void AInv_PlayerController::TraceForInteractables()
 		{
 			LastItemComp->HideInteractWidget();
 		}
+		// [Phase18] 이전 제작대의 3D 위젯 숨김
+		AInv_CraftingStation* LastCraftStation = Cast<AInv_CraftingStation>(LastActor.Get());
+		if (IsValid(LastCraftStation))
+		{
+			LastCraftStation->HideInteractWidget();
+		}
 	}
 
 	if (ThisActor.IsValid())
@@ -470,9 +482,17 @@ void AInv_PlayerController::TraceForInteractables()
 		if (bIsCraftingStation)
 		{
 			AInv_CraftingStation* CraftingStation = Cast<AInv_CraftingStation>(ThisActor.Get());
-			if (IsValid(CraftingStation) && IsValid(HUDWidget))
+			if (IsValid(CraftingStation))
 			{
-				HUDWidget->ShowPickupMessage(CraftingStation->GetPickupMessage());
+				const FString BoundKey = GetBoundInteractKeyName();
+				if (!CraftingStation->ShowInteractWidget(BoundKey))
+				{
+					// 3D 위젯 미설정 → 기존 2D HUD fallback
+					if (IsValid(HUDWidget))
+					{
+						HUDWidget->ShowPickupMessage(CraftingStation->GetPickupMessage());
+					}
+				}
 			}
 		}
 		else
