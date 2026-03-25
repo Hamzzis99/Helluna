@@ -730,10 +730,17 @@ void APuzzleCubeActor::Multicast_HackModeEnded_Implementation()
 		AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(PC);
 		if (HeroPC)
 		{
-			// 성공: PlayColorReveal (순백 섬광 → 페이드아웃 → 컬러 복원)
-			// ESC: PlayColorReveal 내부에서 bInHackMode=false 확인 → 스킵
-			//       → ExitPuzzle의 SetDesaturation(1.f, 1.0f)이 이미 처리함
-			HeroPC->PlayColorReveal();
+			if (HeroPC->IsInHackMode())
+			{
+				// 퍼즐 푼 사람: 순백 섬광 → 페이드아웃 → 컬러 복원
+				HeroPC->PlayColorReveal();
+			}
+			else
+			{
+				// 다른 팀원 / E키 퇴출: 단순 컬러 복원 (1초)
+				HeroPC->SetDesaturation(1.f, 1.0f);
+				UE_LOG(LogTemp, Warning, TEXT("[PuzzleCube] 팀원 흑백 해제: SetDesaturation(1.0, 1.0s)"));
+			}
 		}
 	}
 	UE_LOG(LogTemp, Warning, TEXT("[PuzzleCube] Multicast_HackModeEnded"));

@@ -220,6 +220,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Puzzle")
 	bool IsHoldingPuzzleInteract() const { return bHoldingPuzzleInteract; }
 
+	/** 현재 해킹 모드(퍼즐 풀기) 중인지 — 퍼즐 사용자만 true */
+	bool IsInHackMode() const { return bInHackMode; }
+
 	/**
 	 * Desaturation 목표 설정 (PuzzleCubeActor Multicast에서 호출)
 	 * @param TargetValue  0.0 = 완전 흑백, 1.0 = 완전 컬러
