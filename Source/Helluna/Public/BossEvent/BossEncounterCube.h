@@ -11,6 +11,8 @@ class UStaticMeshComponent;
 class UWidgetComponent;
 class UHoldInteractWidget;
 class AHellunaHeroController;
+class UMaterialParameterCollection;
+class UHellunaHealthComponent;
 
 /**
  * 중간보스 조우 큐브 — F키 홀드로 보스 소환 이벤트 시작
@@ -61,12 +63,82 @@ public:
 	float GetInteractionRadius() const;
 
 	// =========================================================================================
+	// [Step 2] 보스 스폰
+	// =========================================================================================
+
+	/** 스폰할 보스 캐릭터 클래스 (BP에서 설정) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BossEncounter|Spawn",
+		meta = (DisplayName = "Boss Class (보스 클래스)"))
+	TSubclassOf<APawn> BossClass;
+
+	/** 큐브 기준 보스 스폰 오프셋 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter|Spawn",
+		meta = (DisplayName = "Boss Spawn Offset (스폰 오프셋)"))
+	FVector BossSpawnOffset = FVector(0.f, 0.f, 150.f);
+
+	// =========================================================================================
+	// [Step 4] Custom Depth / Stencil (플레이어·보스 컬러 유지)
+	// =========================================================================================
+
+	/**
+	 * 보스 조우 전용 Stencil 값.
+	 * PP Material에서 이 값을 가진 픽셀은 흑백 대신 원본 컬러를 유지한다.
+	 * 다른 시스템(퍼즐 등)과 충돌하지 않도록 예약된 값.
+	 */
+	static constexpr int32 BossEncounterStencilValue = 1;
+
+	// =========================================================================================
+	// [Step 3] 영역 흑백 전환
+	// =========================================================================================
+
+	/**
+	 * MPC_BossEncounter 에셋 참조 (BP에서 할당)
+	 * DesatAmount, ColorWaveRadius, WaveOriginXYZ 파라미터를
+	 * PP Material과 꽃 Material이 공유.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BossEncounter|Desaturation",
+		meta = (DisplayName = "MPC Boss Encounter (MPC 에셋)"))
+	TObjectPtr<UMaterialParameterCollection> MPC_BossEncounter;
+
+	/** 흑백 전환 시간 (초) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter|Desaturation",
+		meta = (DisplayName = "Desat Transition Duration (흑백 전환 시간)", ClampMin = "0.5", ClampMax = "10.0"))
+	float DesatTransitionDuration = 3.f;
+
+	// =========================================================================================
+	// [Step 5] 컬러 웨이브 (보스 처치 후)
+	// =========================================================================================
+
+	/** 컬러 웨이브 확산 속도 (cm/s) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter|ColorWave",
+		meta = (DisplayName = "Color Wave Speed (웨이브 속도)", ClampMin = "1000", ClampMax = "20000"))
+	float ColorWaveSpeed = 5000.f;
+
+	/** 웨이브 최대 반경 — 도달 시 DesatAmount=0으로 완전 컬러 복원 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter|ColorWave",
+		meta = (DisplayName = "Color Wave Max Radius (최대 반경)", ClampMin = "1000", ClampMax = "50000"))
+	float ColorWaveMaxRadius = 10000.f;
+
+	// =========================================================================================
 	// 리플리케이션
 	// =========================================================================================
 
-	/** 이미 활성화됨 (중복 방지) */
+	/** 이미 활성화됨 (보스 소환 완료) */
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "BossEncounter")
 	bool bActivated = false;
+
+	/** 보스 처치 완료 (컬러 웨이브 이후) — 늦은 접속 클라이언트 판별용 */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "BossEncounter")
+	bool bBossDefeated = false;
+
+	/**
+	 * [Step 8] 영역 고유 식별자 — 영속 저장 시 키로 사용
+	 * 레벨에 여러 보스 영역을 배치할 경우 각각 다른 ID를 설정.
+	 * TODO: 향후 SQLite/SaveGame 연동 시 이 ID로 클리어 상태 저장/로드
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter",
+		meta = (DisplayName = "Encounter ID (영역 고유 ID)"))
+	FName EncounterId = NAME_None;
 
 	// =========================================================================================
 	// 서버 함수 (HellunaHeroController에서 호출)
@@ -74,9 +146,22 @@ public:
 
 	/**
 	 * 보스 조우 활성화 (서버 권한)
+	 * 보스 스폰 + Multicast로 클라이언트에 흑백 전환 신호 전달
 	 * @return 활성화 성공 여부
 	 */
 	bool TryActivate(AController* Activator);
+
+	// =========================================================================================
+	// Multicast RPC — 서버 → 모든 클라이언트
+	// =========================================================================================
+
+	/** 보스 조우 시작 알림 (클라이언트: 흑백 전환 시작) */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_BossEncounterStarted();
+
+	/** [Step 5] 보스 처치 알림 (클라이언트: 컬러 웨이브 시작) */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_BossDefeated(FVector DeathLocation);
 
 protected:
 	virtual void BeginPlay() override;
@@ -103,4 +188,63 @@ private:
 
 	/** 홀드 완료 플래그 (중복 RPC 방지) */
 	bool bHoldCompleted = false;
+
+	// =========================================================================================
+	// [Step 2] 보스 스폰 내부
+	// =========================================================================================
+
+	/** 스폰된 보스 (서버 전용, 사망 감지용) */
+	TWeakObjectPtr<APawn> SpawnedBoss;
+
+	// =========================================================================================
+	// [Step 4] Custom Depth 내부
+	// =========================================================================================
+
+	/**
+	 * 현재 존재하는 모든 플레이어 캐릭터 + 보스에 Custom Depth/Stencil 활성화.
+	 * Multicast(정상 흐름) 및 BeginPlay(늦은 접속) 양쪽에서 호출.
+	 */
+	void EnableBossEncounterCustomDepth();
+
+	/**
+	 * 액터의 모든 PrimitiveComponent + 부착된 자식 액터(무기 등)에
+	 * CustomDepth/Stencil을 재귀적으로 설정한다.
+	 */
+	static void SetCustomDepthOnActor(AActor* Actor, bool bEnable, int32 StencilValue);
+
+	// =========================================================================================
+	// [Step 3] 흑백 전환 내부 (클라이언트)
+	// =========================================================================================
+
+	/** 흑백 전환 진행 중 */
+	bool bDesatTransitioning = false;
+
+	/** 흑백 전환 프로그레스 (0→1) */
+	float DesatProgress = 0.f;
+
+	/** 클라이언트 Tick에서 MPC DesatAmount 업데이트 */
+	void TickDesaturation(float DeltaTime);
+
+	// =========================================================================================
+	// [Step 5] 컬러 웨이브 내부
+	// =========================================================================================
+
+	/** 보스 사망 시 HealthComponent::OnDeath 콜백 (서버 전용) */
+	UFUNCTION()
+	void OnSpawnedBossDied(AActor* DeadActor, AActor* KillerActor);
+
+	/** 클라이언트 Tick에서 MPC ColorWaveRadius 확장 */
+	void TickColorWave(float DeltaTime);
+
+	/** 모든 플레이어·보스의 Custom Depth 비활성화 (웨이브 완료 후 정리) */
+	void DisableBossEncounterCustomDepth();
+
+	/** 컬러 웨이브 활성 중 */
+	bool bColorWaveActive = false;
+
+	/** 현재 웨이브 반경 (cm) */
+	float ColorWaveRadius = 0.f;
+
+	/** 웨이브 원점 (보스 사망 위치) */
+	FVector WaveOrigin = FVector::ZeroVector;
 };
