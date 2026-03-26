@@ -18,6 +18,7 @@ namespace HellunaGameplayTags
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Repair);
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Farming);
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Reload);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Kick);
 
 	/** Player Ability tags **/
 
@@ -54,8 +55,45 @@ namespace HellunaGameplayTags
 	/** Enemy Event tags **/
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Enemy_Event_Enrage);
 
+	// ═══════════════════════════════════════════════════════════
+	// Gun Parry System Tags
+	// ═══════════════════════════════════════════════════════════
 
+	/** 건패링 - 플레이어 어빌리티 **/
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_Ability_GunParry);
 
+	/** 건패링 - 플레이어 상태 **/
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_State_ParryExecution);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_State_Invincible);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_State_PostParryInvincible);
 
+	/** 건패링 - 무기 속성 **/
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Weapon_CanParry);
+
+	/** 건패링 - 적 상태 **/
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Enemy_State_AnimLocked);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Enemy_State_PendingDeath);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Enemy_Ability_Parryable);
+
+	/** 건패링 - Phase 2 확장용 **/
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Enemy_Type_Humanoid);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Enemy_State_Staggered);
+
+	/** 건패링 - GameplayEvent **/
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Event_Parry_Fire);
+
+	/** 발차기 시스템 **/
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Event_Kick_Impact);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Hero_State_Kicking);
+
+	// ═══════════════════════════════════════════════════════════
+	// Downed/Revive System Tags
+	// ═══════════════════════════════════════════════════════════
+
+	/** 다운 상태 (Downed State) — 어빌리티 차단용 **/
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_State_Downed);
+
+	/** 부활 입력 (Revive Input) — F키 홀드 **/
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Revive);
 
 }

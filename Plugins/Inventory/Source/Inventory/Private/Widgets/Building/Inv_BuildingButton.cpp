@@ -6,17 +6,155 @@
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
 #include "Components/HorizontalBox.h"
+#include "Components/StaticMeshComponent.h"
 #include "Building/Components/Inv_BuildingComponent.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
 #include "Items/Inv_InventoryItem.h"
 #include "Items/Fragments/Inv_ItemFragment.h"
 #include "GameFramework/PlayerController.h"
+#include "Engine/StaticMesh.h"
+
+// ════════════════════════════════════════════════════════════════
+// 캐시 헬퍼
+// ════════════════════════════════════════════════════════════════
+
+// [최적화] FindComponentByClass 캐싱 — 1회 탐색 후 WeakPtr로 재사용
+UInv_InventoryComponent* UInv_BuildingButton::GetCachedInventoryComponent()
+{
+	if (CachedInvComp.IsValid()) return CachedInvComp.Get();
+
+	APlayerController* PC = GetOwningPlayer();
+	if (!IsValid(PC)) return nullptr;
+
+	UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
+	if (IsValid(InvComp))
+	{
+		CachedInvComp = InvComp;
+	}
+	return InvComp;
+}
+
+const AInv_BuildableActor* UInv_BuildingButton::GetCDO() const
+{
+	if (!BuildableActorClass) return nullptr;
+	return BuildableActorClass->GetDefaultObject<AInv_BuildableActor>();
+}
+
+// ════════════════════════════════════════════════════════════════
+// Getter 함수들 — CDO에서 데이터 읽기
+// ════════════════════════════════════════════════════════════════
+EBuildCategory UInv_BuildingButton::GetBuildCategory() const
+{
+	const AInv_BuildableActor* CDO = GetCDO();
+	return CDO ? CDO->BuildCategory : EBuildCategory::Construction;
+}
+
+FText UInv_BuildingButton::GetBuildingName() const
+{
+	const AInv_BuildableActor* CDO = GetCDO();
+	return CDO ? CDO->BuildingDisplayName : FText::GetEmpty();
+}
+
+FText UInv_BuildingButton::GetBuildingDescription() const
+{
+	const AInv_BuildableActor* CDO = GetCDO();
+	return CDO ? CDO->BuildingDescription : FText::GetEmpty();
+}
+
+UStaticMesh* UInv_BuildingButton::GetPreviewMesh() const
+{
+	const AInv_BuildableActor* CDO = GetCDO();
+	return CDO ? CDO->GetEffectivePreviewMesh() : nullptr;
+}
+
+FRotator UInv_BuildingButton::GetPreviewRotationOffset() const
+{
+	const AInv_BuildableActor* CDO = GetCDO();
+	return CDO ? CDO->PreviewRotationOffset : FRotator::ZeroRotator;
+}
+
+float UInv_BuildingButton::GetPreviewCameraDistance() const
+{
+	const AInv_BuildableActor* CDO = GetCDO();
+	return CDO ? CDO->PreviewCameraDistance : 0.f;
+}
+
+TSubclassOf<AActor> UInv_BuildingButton::GetGhostActorClass() const
+{
+	const AInv_BuildableActor* CDO = GetCDO();
+	if (!CDO) return nullptr;
+	// GhostActorClass가 None이면 자기 자신의 클래스를 고스트로 사용
+	return CDO->GhostActorClass ? CDO->GhostActorClass : BuildableActorClass;
+}
+
+int32 UInv_BuildingButton::GetBuildingID() const
+{
+	const AInv_BuildableActor* CDO = GetCDO();
+	return CDO ? CDO->BuildingID : 0;
+}
+
+FGameplayTag UInv_BuildingButton::GetRequiredMaterialTag() const
+{
+	const AInv_BuildableActor* CDO = GetCDO();
+	return CDO ? CDO->RequiredMaterialTag1 : FGameplayTag();
+}
+
+int32 UInv_BuildingButton::GetRequiredAmount() const
+{
+	const AInv_BuildableActor* CDO = GetCDO();
+	return CDO ? CDO->RequiredAmount1 : 0;
+}
+
+UTexture2D* UInv_BuildingButton::GetMaterialIcon1() const
+{
+	const AInv_BuildableActor* CDO = GetCDO();
+	return CDO ? CDO->MaterialIcon1 : nullptr;
+}
+
+FGameplayTag UInv_BuildingButton::GetRequiredMaterialTag2() const
+{
+	const AInv_BuildableActor* CDO = GetCDO();
+	return CDO ? CDO->RequiredMaterialTag2 : FGameplayTag();
+}
+
+int32 UInv_BuildingButton::GetRequiredAmount2() const
+{
+	const AInv_BuildableActor* CDO = GetCDO();
+	return CDO ? CDO->RequiredAmount2 : 0;
+}
+
+UTexture2D* UInv_BuildingButton::GetMaterialIcon2() const
+{
+	const AInv_BuildableActor* CDO = GetCDO();
+	return CDO ? CDO->MaterialIcon2 : nullptr;
+}
+
+FGameplayTag UInv_BuildingButton::GetRequiredMaterialTag3() const
+{
+	const AInv_BuildableActor* CDO = GetCDO();
+	return CDO ? CDO->RequiredMaterialTag3 : FGameplayTag();
+}
+
+int32 UInv_BuildingButton::GetRequiredAmount3() const
+{
+	const AInv_BuildableActor* CDO = GetCDO();
+	return CDO ? CDO->RequiredAmount3 : 0;
+}
+
+UTexture2D* UInv_BuildingButton::GetMaterialIcon3() const
+{
+	const AInv_BuildableActor* CDO = GetCDO();
+	return CDO ? CDO->MaterialIcon3 : nullptr;
+}
+
+// ════════════════════════════════════════════════════════════════
+// 초기화
+// ════════════════════════════════════════════════════════════════
 
 void UInv_BuildingButton::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
 
-	// 버튼 클릭 이벤트 바인딩
 	if (IsValid(Button_Main))
 	{
 		Button_Main->OnClicked.AddUniqueDynamic(this, &ThisClass::OnButtonClicked);
@@ -24,7 +162,7 @@ void UInv_BuildingButton::NativeOnInitialized()
 	else
 	{
 #if INV_DEBUG_BUILD
-		UE_LOG(LogTemp, Error, TEXT("Inv_BuildingButton: Button_Main is not bound! Make sure the widget has a Button named 'Button_Main'."));
+		UE_LOG(LogTemp, Error, TEXT("Inv_BuildingButton: Button_Main is not bound!"));
 #endif
 	}
 }
@@ -33,83 +171,82 @@ void UInv_BuildingButton::NativeConstruct()
 {
 	Super::NativeConstruct();
 
-	// 위젯이 생성될 때 UI 업데이트
+	const AInv_BuildableActor* CDO = GetCDO();
+	if (!CDO)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[BuildingButton] CDO 로드 실패: BuildableActorClass=NULL"));
+		return;
+	}
+
+	// UI 채우기 (CDO에서 자동 로드)
 	if (IsValid(Text_BuildingName))
 	{
-		Text_BuildingName->SetText(BuildingName);
+		Text_BuildingName->SetText(CDO->BuildingDisplayName);
 	}
 
-	if (IsValid(Image_Icon) && IsValid(BuildingIcon))
+	if (IsValid(Image_Icon) && IsValid(CDO->BuildingIcon))
 	{
-		Image_Icon->SetBrushFromTexture(BuildingIcon);
+		Image_Icon->SetBrushFromTexture(CDO->BuildingIcon);
 	}
 
-	// 재료 아이콘 초기 설정 (Blueprint에서 설정한 값 사용)
-	if (IsValid(Image_Material1) && IsValid(MaterialIcon1))
+	// 재료 아이콘 설정
+	if (IsValid(Image_Material1) && IsValid(CDO->MaterialIcon1))
 	{
-		Image_Material1->SetBrushFromTexture(MaterialIcon1);
+		Image_Material1->SetBrushFromTexture(CDO->MaterialIcon1);
 	}
-
-	if (IsValid(Image_Material2) && IsValid(MaterialIcon2))
+	if (IsValid(Image_Material2) && IsValid(CDO->MaterialIcon2))
 	{
-		Image_Material2->SetBrushFromTexture(MaterialIcon2);
+		Image_Material2->SetBrushFromTexture(CDO->MaterialIcon2);
 	}
-
-	if (IsValid(Image_Material3) && IsValid(MaterialIcon3))
+	if (IsValid(Image_Material3) && IsValid(CDO->MaterialIcon3))
 	{
-		Image_Material3->SetBrushFromTexture(MaterialIcon3);
+		Image_Material3->SetBrushFromTexture(CDO->MaterialIcon3);
 	}
 
-	// 델리게이트 바인딩 (인벤토리 변경 감지)
-	BindInventoryDelegates();
+	UE_LOG(LogTemp, Warning, TEXT("[BuildingButton] CDO 로드: %s (Category=%d, Mesh=%s)"),
+		*CDO->BuildingDisplayName.ToString(),
+		static_cast<uint8>(CDO->BuildCategory),
+		CDO->GetEffectivePreviewMesh() ? *CDO->GetEffectivePreviewMesh()->GetName() : TEXT("NULL"));
 
-	// 재료 UI 업데이트 (이미지 표시/숨김)
+	// [최적화] 인벤토리 델리게이트는 BuildMenu에서 1번만 바인딩하여 일괄 업데이트
+	// 재료 UI + 버튼 상태 초기 업데이트
 	UpdateMaterialUI();
-
-	// 초기 버튼 상태 업데이트
 	UpdateButtonState();
-}
-
-void UInv_BuildingButton::SetBuildingInfo(const FText& Name, UTexture2D* Icon, TSubclassOf<AActor> GhostClass, TSubclassOf<AActor> BuildingClass, int32 ID)
-{
-	BuildingName = Name;
-	BuildingIcon = Icon;
-	GhostActorClass = GhostClass;
-	ActualBuildingClass = BuildingClass;
-	BuildingID = ID;
-
-	// UI 업데이트
-	if (IsValid(Text_BuildingName))
-	{
-		Text_BuildingName->SetText(BuildingName);
-	}
-
-	if (IsValid(Image_Icon) && IsValid(BuildingIcon))
-	{
-		Image_Icon->SetBrushFromTexture(BuildingIcon);
-	}
 }
 
 void UInv_BuildingButton::OnButtonClicked()
 {
+	UE_LOG(LogTemp, Warning, TEXT("[BuildingButton] 카드 클릭 → 디테일 패널 열기 요청: %s"),
+		*GetBuildingName().ToString());
+
+	OnCardClicked.Broadcast(this);
+}
+
+void UInv_BuildingButton::ExecuteBuild()
+{
+	const AInv_BuildableActor* CDO = GetCDO();
+	if (!CDO)
+	{
 #if INV_DEBUG_BUILD
-	UE_LOG(LogTemp, Warning, TEXT("=== BUILDING BUTTON CLICKED ==="));
-	UE_LOG(LogTemp, Warning, TEXT("Building Name: %s"), *BuildingName.ToString());
-	UE_LOG(LogTemp, Warning, TEXT("Building ID: %d"), BuildingID);
+		UE_LOG(LogTemp, Error, TEXT("ExecuteBuild: BuildableActorClass CDO is null!"));
+#endif
+		return;
+	}
+
+#if INV_DEBUG_BUILD
+	UE_LOG(LogTemp, Warning, TEXT("=== BUILDING EXECUTE ==="));
+	UE_LOG(LogTemp, Warning, TEXT("Building Name: %s"), *CDO->BuildingDisplayName.ToString());
+	UE_LOG(LogTemp, Warning, TEXT("Building ID: %d"), CDO->BuildingID);
 #endif
 
-	// 재료 체크
 	if (!HasRequiredMaterials())
 	{
 #if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Warning, TEXT("=== 재료가 부족합니다! ==="));
-		UE_LOG(LogTemp, Warning, TEXT("필요한 재료: %s x %d"), *RequiredMaterialTag.ToString(), RequiredAmount);
 #endif
-		// TODO: UI 팝업 표시
 		return;
 	}
 
-	// PlayerController 가져오기
 	APlayerController* PC = GetOwningPlayer();
 	if (!IsValid(PC))
 	{
@@ -119,89 +256,61 @@ void UInv_BuildingButton::OnButtonClicked()
 		return;
 	}
 
-	// BuildingComponent 가져오기
 	UInv_BuildingComponent* BuildingComp = PC->FindComponentByClass<UInv_BuildingComponent>();
 	if (!IsValid(BuildingComp))
 	{
 #if INV_DEBUG_BUILD
-		UE_LOG(LogTemp, Error, TEXT("Inv_BuildingButton: BuildingComponent not found on Player Controller!"));
+		UE_LOG(LogTemp, Error, TEXT("Inv_BuildingButton: BuildingComponent not found!"));
 #endif
 		return;
 	}
 
-	// Component에 건물 선택 알림 (재료 정보 포함!)
-	BuildingComp->OnBuildingSelectedFromWidget(
-		GhostActorClass, 
-		ActualBuildingClass, 
-		BuildingID, 
-		RequiredMaterialTag, 
-		RequiredAmount,
-		RequiredMaterialTag2,
-		RequiredAmount2
-	);
-}
+	// CDO에서 데이터 추출하여 구조체로 전달
+	FInv_BuildingSelectionInfo Info;
+	Info.BuildingName = CDO->BuildingDisplayName;
+	Info.BuildingIcon = CDO->BuildingIcon;
+	Info.GhostClass = CDO->GhostActorClass ? CDO->GhostActorClass : (CDO->ActualBuildingClass ? CDO->ActualBuildingClass : BuildableActorClass);
+	Info.ActualBuildingClass = CDO->ActualBuildingClass ? CDO->ActualBuildingClass : BuildableActorClass;
+	Info.BuildingID = CDO->BuildingID;
+	Info.MaterialTag1 = CDO->RequiredMaterialTag1;
+	Info.MaterialAmount1 = CDO->RequiredAmount1;
+	Info.MaterialIcon1 = CDO->MaterialIcon1;
+	Info.MaterialTag2 = CDO->RequiredMaterialTag2;
+	Info.MaterialAmount2 = CDO->RequiredAmount2;
+	Info.MaterialIcon2 = CDO->MaterialIcon2;
+	Info.MaterialTag3 = CDO->RequiredMaterialTag3;
+	Info.MaterialAmount3 = CDO->RequiredAmount3;
+	Info.MaterialIcon3 = CDO->MaterialIcon3;
 
-void UInv_BuildingButton::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
-{
-	Super::NativeTick(MyGeometry, InDeltaTime);
-
-	// 매 프레임 업데이트 제거 → 델리게이트로 대체
-	// 성능 최적화: 인벤토리 변경 시에만 UpdateButtonState() 호출됨
+	BuildingComp->OnBuildingSelectedFromWidget(Info);
 }
 
 bool UInv_BuildingButton::HasRequiredMaterials()
 {
-	// PlayerController 가져오기
-	APlayerController* PC = GetOwningPlayer();
-	if (!IsValid(PC)) return false;
-
-	// InventoryComponent 가져오기
-	UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
+	UInv_InventoryComponent* InvComp = GetCachedInventoryComponent();
 	if (!IsValid(InvComp)) return false;
 
-	// === 재료 1 체크 (모든 스택 합산!) ===
-	if (RequiredMaterialTag.IsValid() && RequiredAmount > 0)
+	const AInv_BuildableActor* CDO = GetCDO();
+	if (!CDO) return false;
+
+	if (CDO->RequiredMaterialTag1.IsValid() && CDO->RequiredAmount1 > 0)
 	{
-		int32 TotalAmount1 = InvComp->GetTotalMaterialCount(RequiredMaterialTag);
-		if (TotalAmount1 < RequiredAmount)
-		{
-#if INV_DEBUG_BUILD
-			UE_LOG(LogTemp, Warning, TEXT("재료1 부족: %d/%d (%s)"), TotalAmount1, RequiredAmount, *RequiredMaterialTag.ToString());
-#endif
-			return false; // 재료1 개수 부족
-		}
+		if (InvComp->GetTotalMaterialCount(CDO->RequiredMaterialTag1) < CDO->RequiredAmount1)
+			return false;
 	}
 
-	// === 재료 2 체크 (모든 스택 합산!) ===
-	if (RequiredMaterialTag2.IsValid() && RequiredAmount2 > 0)
+	if (CDO->RequiredMaterialTag2.IsValid() && CDO->RequiredAmount2 > 0)
 	{
-		int32 TotalAmount2 = InvComp->GetTotalMaterialCount(RequiredMaterialTag2);
-		if (TotalAmount2 < RequiredAmount2)
-		{
-#if INV_DEBUG_BUILD
-			UE_LOG(LogTemp, Warning, TEXT("재료2 부족: %d/%d (%s)"), TotalAmount2, RequiredAmount2, *RequiredMaterialTag2.ToString());
-#endif
-			return false; // 재료2 개수 부족
-		}
+		if (InvComp->GetTotalMaterialCount(CDO->RequiredMaterialTag2) < CDO->RequiredAmount2)
+			return false;
 	}
 
-	// === 재료 3 체크 (모든 스택 합산!) ===
-	if (RequiredMaterialTag3.IsValid() && RequiredAmount3 > 0)
+	if (CDO->RequiredMaterialTag3.IsValid() && CDO->RequiredAmount3 > 0)
 	{
-		int32 TotalAmount3 = InvComp->GetTotalMaterialCount(RequiredMaterialTag3);
-		if (TotalAmount3 < RequiredAmount3)
-		{
-#if INV_DEBUG_BUILD
-			UE_LOG(LogTemp, Warning, TEXT("재료3 부족: %d/%d (%s)"), TotalAmount3, RequiredAmount3, *RequiredMaterialTag3.ToString());
-#endif
-			return false; // 재료3 개수 부족
-		}
+		if (InvComp->GetTotalMaterialCount(CDO->RequiredMaterialTag3) < CDO->RequiredAmount3)
+			return false;
 	}
 
-	// 모든 재료 충족!
-#if INV_DEBUG_BUILD
-	UE_LOG(LogTemp, Log, TEXT("모든 재료 충족!"));
-#endif
 	return true;
 }
 
@@ -209,12 +318,9 @@ void UInv_BuildingButton::UpdateButtonState()
 {
 	if (!IsValid(Button_Main)) return;
 
-	bool bHasMaterials = HasRequiredMaterials();
-
-	// 버튼 활성화/비활성화
+	const bool bHasMaterials = HasRequiredMaterials();
 	Button_Main->SetIsEnabled(bHasMaterials);
 
-	// 텍스트 색상 변경 (재료 부족 시 빨간색)
 	if (IsValid(Text_BuildingName))
 	{
 		FLinearColor TextColor = bHasMaterials ? FLinearColor::White : FLinearColor::Red;
@@ -224,233 +330,54 @@ void UInv_BuildingButton::UpdateButtonState()
 
 void UInv_BuildingButton::NativeDestruct()
 {
-	// 델리게이트 언바인딩 (메모리 누수 방지)
-	UnbindInventoryDelegates();
-
+	// [최적화] 인벤토리 델리게이트는 BuildMenu에서 관리 — 개별 해제 불필요
 	Super::NativeDestruct();
-}
-
-void UInv_BuildingButton::BindInventoryDelegates()
-{
-	// PlayerController 가져오기
-	APlayerController* PC = GetOwningPlayer();
-	if (!IsValid(PC)) return;
-
-	// InventoryComponent 가져오기
-	UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
-	if (!IsValid(InvComp)) return;
-
-	// 델리게이트 바인딩 (이미 바인딩되어 있으면 건너뜀)
-	if (!InvComp->OnItemAdded.IsAlreadyBound(this, &ThisClass::OnInventoryItemAdded))
-	{
-		InvComp->OnItemAdded.AddUniqueDynamic(this, &ThisClass::OnInventoryItemAdded);
-#if INV_DEBUG_BUILD
-		UE_LOG(LogTemp, Log, TEXT("BuildingButton: OnItemAdded 델리게이트 바인딩 완료"));
-#endif
-	}
-
-	if (!InvComp->OnItemRemoved.IsAlreadyBound(this, &ThisClass::OnInventoryItemRemoved))
-	{
-		InvComp->OnItemRemoved.AddUniqueDynamic(this, &ThisClass::OnInventoryItemRemoved);
-#if INV_DEBUG_BUILD
-		UE_LOG(LogTemp, Log, TEXT("BuildingButton: OnItemRemoved 델리게이트 바인딩 완료"));
-#endif
-	}
-
-	if (!InvComp->OnStackChange.IsAlreadyBound(this, &ThisClass::OnInventoryStackChanged))
-	{
-		InvComp->OnStackChange.AddUniqueDynamic(this, &ThisClass::OnInventoryStackChanged);
-#if INV_DEBUG_BUILD
-		UE_LOG(LogTemp, Log, TEXT("BuildingButton: OnStackChange 델리게이트 바인딩 완료"));
-#endif
-	}
-}
-
-void UInv_BuildingButton::UnbindInventoryDelegates()
-{
-	// PlayerController 가져오기
-	APlayerController* PC = GetOwningPlayer();
-	if (!IsValid(PC)) return;
-
-	// InventoryComponent 가져오기
-	UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
-	if (!IsValid(InvComp)) return;
-
-	// 델리게이트 언바인딩
-	if (InvComp->OnItemAdded.IsAlreadyBound(this, &ThisClass::OnInventoryItemAdded))
-	{
-		InvComp->OnItemAdded.RemoveDynamic(this, &ThisClass::OnInventoryItemAdded);
-	}
-
-	if (InvComp->OnItemRemoved.IsAlreadyBound(this, &ThisClass::OnInventoryItemRemoved))
-	{
-		InvComp->OnItemRemoved.RemoveDynamic(this, &ThisClass::OnInventoryItemRemoved);
-	}
-
-	if (InvComp->OnStackChange.IsAlreadyBound(this, &ThisClass::OnInventoryStackChanged))
-	{
-		InvComp->OnStackChange.RemoveDynamic(this, &ThisClass::OnInventoryStackChanged);
-	}
-
-#if INV_DEBUG_BUILD
-	UE_LOG(LogTemp, Log, TEXT("BuildingButton: 모든 델리게이트 언바인딩 완료"));
-#endif
-}
-
-void UInv_BuildingButton::OnInventoryItemAdded(UInv_InventoryItem* Item, int32 EntryIndex)
-{
-	// 아이템이 추가되었을 때 (픽업, PutDown 포함)
-#if INV_DEBUG_BUILD
-	UE_LOG(LogTemp, Log, TEXT("BuildingButton: 아이템 추가됨! EntryIndex=%d, 버튼 상태 재계산..."), EntryIndex);
-#endif
-	UpdateMaterialUI(); // 재료 UI 업데이트
-	UpdateButtonState();
-}
-
-void UInv_BuildingButton::OnInventoryItemRemoved(UInv_InventoryItem* Item, int32 EntryIndex)
-{
-	// 아이템이 제거되었을 때 (드롭, 소비 포함)
-#if INV_DEBUG_BUILD
-	UE_LOG(LogTemp, Log, TEXT("BuildingButton: 아이템 제거됨! EntryIndex=%d, 버튼 상태 재계산..."), EntryIndex);
-#endif
-	UpdateMaterialUI(); // 재료 UI 업데이트
-	UpdateButtonState();
-}
-
-void UInv_BuildingButton::OnInventoryStackChanged(const FInv_SlotAvailabilityResult& Result)
-{
-	// 아이템 스택이 변경되었을 때 (Split, Combine 포함)
-#if INV_DEBUG_BUILD
-	UE_LOG(LogTemp, Log, TEXT("BuildingButton: 스택 변경됨! 버튼 상태 재계산..."));
-#endif
-	UpdateMaterialUI(); // 재료 UI 업데이트
-	UpdateButtonState();
 }
 
 void UInv_BuildingButton::UpdateMaterialUI()
 {
-	APlayerController* PC = GetOwningPlayer();
-	if (!IsValid(PC)) return;
+	UInv_InventoryComponent* InvComp = GetCachedInventoryComponent();
+	const AInv_BuildableActor* CDO = GetCDO();
 
-	UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>();
-
-	// === 재료 1 UI 업데이트 ===
-	if (RequiredMaterialTag.IsValid() && RequiredAmount > 0)
+	// 헬퍼 람다: 재료 행 UI 업데이트
+	auto UpdateMaterialRow = [&InvComp](const FGameplayTag& Tag, int32 Required,
+		UHorizontalBox* Container, UTextBlock* AmountText)
 	{
-		// 컨테이너 Visible
-		if (IsValid(HorizontalBox_Material1))
+		if (Tag.IsValid() && Required > 0)
 		{
-			HorizontalBox_Material1->SetVisibility(ESlateVisibility::Visible);
-		}
+			if (IsValid(Container))
+				Container->SetVisibility(ESlateVisibility::Visible);
 
-		// 개수 텍스트 업데이트 (실시간!)
-		if (IsValid(Text_Material1Amount))
-		{
-			int32 CurrentAmount = 0;
-			
-			if (IsValid(InvComp))
+			if (IsValid(AmountText) && IsValid(InvComp))
 			{
+				int32 CurrentAmount = 0;
 				const auto& AllItems = InvComp->GetInventoryList().GetAllItems();
 				for (UInv_InventoryItem* Item : AllItems)
 				{
 					if (!IsValid(Item)) continue;
-					if (!Item->GetItemManifest().GetItemType().MatchesTagExact(RequiredMaterialTag)) continue;
+					if (!Item->GetItemManifest().GetItemType().MatchesTagExact(Tag)) continue;
 					CurrentAmount += Item->GetTotalStackCount();
 				}
+				AmountText->SetText(FText::FromString(FString::Printf(TEXT("%d/%d"), CurrentAmount, Required)));
 			}
-			
-			FString AmountText = FString::Printf(TEXT("%d/%d"), CurrentAmount, RequiredAmount);
-			Text_Material1Amount->SetText(FText::FromString(AmountText));
 		}
+		else
+		{
+			if (IsValid(Container))
+				Container->SetVisibility(ESlateVisibility::Hidden);
+		}
+	};
+
+	if (CDO)
+	{
+		UpdateMaterialRow(CDO->RequiredMaterialTag1, CDO->RequiredAmount1, HorizontalBox_Material1, Text_Material1Amount);
+		UpdateMaterialRow(CDO->RequiredMaterialTag2, CDO->RequiredAmount2, HorizontalBox_Material2, Text_Material2Amount);
+		UpdateMaterialRow(CDO->RequiredMaterialTag3, CDO->RequiredAmount3, HorizontalBox_Material3, Text_Material3Amount);
 	}
 	else
 	{
-		// Material Tag가 없으면 컨테이너 Hidden
-		if (IsValid(HorizontalBox_Material1))
-		{
-			HorizontalBox_Material1->SetVisibility(ESlateVisibility::Hidden);
-		}
+		if (IsValid(HorizontalBox_Material1)) HorizontalBox_Material1->SetVisibility(ESlateVisibility::Hidden);
+		if (IsValid(HorizontalBox_Material2)) HorizontalBox_Material2->SetVisibility(ESlateVisibility::Hidden);
+		if (IsValid(HorizontalBox_Material3)) HorizontalBox_Material3->SetVisibility(ESlateVisibility::Hidden);
 	}
-
-	// === 재료 2 UI 업데이트 ===
-	if (RequiredMaterialTag2.IsValid() && RequiredAmount2 > 0)
-	{
-		// 컨테이너 Visible
-		if (IsValid(HorizontalBox_Material2))
-		{
-			HorizontalBox_Material2->SetVisibility(ESlateVisibility::Visible);
-		}
-
-		// 개수 텍스트 업데이트
-		if (IsValid(Text_Material2Amount))
-		{
-			int32 CurrentAmount = 0;
-			
-			if (IsValid(InvComp))
-			{
-				const auto& AllItems = InvComp->GetInventoryList().GetAllItems();
-				for (UInv_InventoryItem* Item : AllItems)
-				{
-					if (!IsValid(Item)) continue;
-					if (!Item->GetItemManifest().GetItemType().MatchesTagExact(RequiredMaterialTag2)) continue;
-					CurrentAmount += Item->GetTotalStackCount();
-				}
-			}
-			
-			FString AmountText = FString::Printf(TEXT("%d/%d"), CurrentAmount, RequiredAmount2);
-			Text_Material2Amount->SetText(FText::FromString(AmountText));
-		}
-	}
-	else
-	{
-		// Material Tag2가 없으면 컨테이너 Hidden
-		if (IsValid(HorizontalBox_Material2))
-		{
-			HorizontalBox_Material2->SetVisibility(ESlateVisibility::Hidden);
-		}
-	}
-
-	// === 재료 3 UI 업데이트 ===
-	if (RequiredMaterialTag3.IsValid() && RequiredAmount3 > 0)
-	{
-		// 컨테이너 Visible
-		if (IsValid(HorizontalBox_Material3))
-		{
-			HorizontalBox_Material3->SetVisibility(ESlateVisibility::Visible);
-		}
-
-		// 개수 텍스트 업데이트
-		if (IsValid(Text_Material3Amount))
-		{
-			int32 CurrentAmount = 0;
-			
-			if (IsValid(InvComp))
-			{
-				const auto& AllItems = InvComp->GetInventoryList().GetAllItems();
-				for (UInv_InventoryItem* Item : AllItems)
-				{
-					if (!IsValid(Item)) continue;
-					if (!Item->GetItemManifest().GetItemType().MatchesTagExact(RequiredMaterialTag3)) continue;
-					CurrentAmount += Item->GetTotalStackCount();
-				}
-			}
-			
-			FString AmountText = FString::Printf(TEXT("%d/%d"), CurrentAmount, RequiredAmount3);
-			Text_Material3Amount->SetText(FText::FromString(AmountText));
-		}
-	}
-	else
-	{
-		// Material Tag3가 없으면 컨테이너 Hidden
-		if (IsValid(HorizontalBox_Material3))
-		{
-			HorizontalBox_Material3->SetVisibility(ESlateVisibility::Hidden);
-		}
-	}
-
-#if INV_DEBUG_BUILD
-	UE_LOG(LogTemp, Log, TEXT("BuildingButton: 재료 UI 업데이트 완료"));
-#endif
 }
-
-

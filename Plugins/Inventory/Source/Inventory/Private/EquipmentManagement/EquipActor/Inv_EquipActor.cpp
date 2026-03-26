@@ -19,15 +19,16 @@ void AInv_EquipActor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutL
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	
-	// ⭐ [WeaponBridge] WeaponSlotIndex 리플리케이트
-	DOREPLIFETIME(AInv_EquipActor, WeaponSlotIndex);
-	
-	// ⭐ [WeaponBridge] bIsWeaponHidden 리플리케이트
+	// ⭐ [WeaponBridge] WeaponSlotIndex — 스폰 시 1회 설정, 이후 변경 없음
+	DOREPLIFETIME_CONDITION(AInv_EquipActor, WeaponSlotIndex, COND_InitialOnly);
+
+	// ⭐ [WeaponBridge] bIsWeaponHidden — 모든 클라이언트가 시각적으로 필요
 	DOREPLIFETIME(AInv_EquipActor, bIsWeaponHidden);
 
 	// [Phase 7] 부착물 효과 리플리케이션
 	DOREPLIFETIME(AInv_EquipActor, bSuppressed);
-	DOREPLIFETIME(AInv_EquipActor, OverrideZoomFOV);
+	// OverrideZoomFOV — ADS 줌은 소유 클라이언트만 필요
+	DOREPLIFETIME_CONDITION(AInv_EquipActor, OverrideZoomFOV, COND_OwnerOnly);
 	DOREPLIFETIME(AInv_EquipActor, bLaserActive);
 
 	// ★ [Phase 5 리플리케이션] 부착물 비주얼 데이터
@@ -363,21 +364,57 @@ void AInv_EquipActor::OnRep_bLaserActive()
 // ════════════════════════════════════════════════════════════════
 void AInv_EquipActor::OnRep_AttachmentVisuals()
 {
-	// 기존 동적 생성 메시 모두 제거
-	for (auto& Pair : AttachmentMeshComponents)
-	{
-		if (IsValid(Pair.Value))
-		{
-			Pair.Value->DestroyComponent();
-		}
-	}
-	AttachmentMeshComponents.Empty();
+	// Diff 기반 업데이트 — 변경된 슬롯만 파괴/재생성
 
-	// 리플리케이트된 배열 기반으로 메시 재생성
+	// 1) 새 데이터의 SlotIndex → Info 매핑 구축
+	TMap<int32, const FInv_AttachmentVisualInfo*> NewSlotMap;
 	for (const FInv_AttachmentVisualInfo& Info : ReplicatedAttachmentVisuals)
 	{
+		NewSlotMap.Add(Info.SlotIndex, &Info);
+	}
+
+	// 2) 기존에 있지만 새 데이터에 없는 슬롯 제거
+	TArray<int32> SlotsToRemove;
+	for (auto& Pair : AttachmentMeshComponents)
+	{
+		if (!NewSlotMap.Contains(Pair.Key))
+		{
+			if (IsValid(Pair.Value))
+			{
+				Pair.Value->DestroyComponent();
+			}
+			SlotsToRemove.Add(Pair.Key);
+		}
+	}
+	for (const int32 Slot : SlotsToRemove)
+	{
+		AttachmentMeshComponents.Remove(Slot);
+	}
+
+	// 3) 새 데이터 순회 — 동일 메시면 스킵, 다르면 교체
+	for (const auto& SlotPair : NewSlotMap)
+	{
+		const int32 SlotIndex = SlotPair.Key;
+		const FInv_AttachmentVisualInfo& Info = *SlotPair.Value;
+
 		if (!IsValid(Info.Mesh)) continue;
 
+		// 기존 메시가 동일하면 스킵 (불필요한 파괴/재생성 방지)
+		if (TObjectPtr<UStaticMeshComponent>* ExistingPtr = AttachmentMeshComponents.Find(SlotIndex))
+		{
+			if (IsValid(*ExistingPtr) && (*ExistingPtr)->GetStaticMesh() == Info.Mesh)
+			{
+				continue;
+			}
+			// 메시가 다르면 기존 것 파괴
+			if (IsValid(*ExistingPtr))
+			{
+				(*ExistingPtr)->DestroyComponent();
+			}
+			AttachmentMeshComponents.Remove(SlotIndex);
+		}
+
+		// 새 메시 생성
 		UStaticMeshComponent* MeshComp = NewObject<UStaticMeshComponent>(this);
 		if (!IsValid(MeshComp)) continue;
 
@@ -390,11 +427,11 @@ void AInv_EquipActor::OnRep_AttachmentVisuals()
 		MeshComp->SetRelativeTransform(Info.Offset);
 		MeshComp->RegisterComponent();
 
-		AttachmentMeshComponents.Add(Info.SlotIndex, MeshComp);
+		AttachmentMeshComponents.Add(SlotIndex, MeshComp);
 	}
 
 #if INV_DEBUG_ATTACHMENT
-	UE_LOG(LogTemp, Warning, TEXT("★ [Phase 5 OnRep] 클라이언트: 부착물 메시 %d개 재생성 완료 (Actor: %s)"),
+	UE_LOG(LogTemp, Warning, TEXT("★ [Phase 5 OnRep] 클라이언트: 부착물 Diff 업데이트 완료 (슬롯 %d개, Actor: %s)"),
 		ReplicatedAttachmentVisuals.Num(), *GetName());
 #endif
 }

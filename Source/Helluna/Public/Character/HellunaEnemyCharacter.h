@@ -25,6 +25,16 @@ class HELLUNA_API AHellunaEnemyCharacter : public AHellunaBaseCharacter
 public:
 	AHellunaEnemyCharacter();
 
+	/**
+	 * TakeDamage 오버라이드 — PuzzleShieldComponent 보호막 필터링
+	 *
+	 * [보스전 로드맵]
+	 * PuzzleShieldComponent가 부착된 경우 bShieldActive=true면 데미지 0 반환.
+	 * 컴포넌트 미부착 시 기존 로직 그대로 통과.
+	 */
+	virtual float TakeDamage(float DamageAmount, struct FDamageEvent const& DamageEvent,
+		class AController* EventInstigator, AActor* DamageCauser) override;
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
@@ -170,6 +180,41 @@ public:
 	DECLARE_DELEGATE(FOnEnrageMontageFinished)
 	FOnEnrageMontageFinished OnEnrageMontageFinished;
 
+
+	// =========================================================
+	// 건패링 관련
+	// =========================================================
+
+	/** 이 몬스터가 건패링 당할 수 있는지 (보스/특정 몬스터는 해제) */
+	UPROPERTY(EditDefaultsOnly, Category = "Combat|Parry",
+		meta = (DisplayName = "건패링 가능 여부",
+			ToolTip = "체크 해제하면 이 몬스터는 건패링 대상이 되지 않습니다.\n보스, 세미보스 등 특수 몬스터에서 해제하세요."))
+	bool bCanBeParried = true;
+
+	/** Stagger 전 원본 머티리얼 저장 */
+	UPROPERTY()
+	TArray<TObjectPtr<UMaterialInterface>> SavedOriginalMaterials;
+
+	/** 건패링 처형 당할 때 몬스터 측 몽타주 */
+	UPROPERTY(EditDefaultsOnly, Category = "Animation|Parry",
+		meta = (DisplayName = "패링 피격 몽타주",
+			ToolTip = "건패링 처형을 당할 때 이 몬스터가 재생할 애니메이션입니다."))
+	TObjectPtr<UAnimMontage> ParryVictimMontage = nullptr;
+
+	/** 처형 중 HP가 0이 돼서 사망이 보류된 상태 (지연 사망) */
+	bool bParryDeferredDeath = false;
+
+	/** 처형 몽타주 멀티캐스트 (서버 → 전체 클라) */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_PlayParryVictim();
+
+	/** 처형 후 래그돌 전환 + 임펄스 (서버 → 전체 클라, 시각적) */
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_ActivateRagdoll(FVector Impulse, FVector ImpulseLocation);
+
+	/** Stagger 비주얼 ON/OFF (서버→모든 클라이언트) */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_SetStaggerVisual(UMaterialInterface* StaggerMat, UAnimMontage* StaggerAnim, bool bEnable);
 
 public:
 	/** 피격 몽타주 재생 (서버 → 멀티캐스트) */

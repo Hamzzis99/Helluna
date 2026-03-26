@@ -1060,9 +1060,9 @@ void AHellunaDefenseGameMode::NotifyPlayerDied(APlayerController* DeadPC)
         if (!IsValid(Pawn)) continue;
 
         UHellunaHealthComponent* HealthComp = Pawn->FindComponentByClass<UHellunaHealthComponent>();
-        if (HealthComp && !HealthComp->IsDead())
+        if (HealthComp && HealthComp->IsAliveAndNotDowned())
         {
-            // 생존자 있음 → 게임 계속
+            // 생존자 있음 (다운 상태 제외) → 게임 계속
             UE_LOG(LogHelluna, Log, TEXT("[NotifyPlayerDied] 생존자 있음: %s"), *GetNameSafe(PC));
             return;
         }
@@ -1071,6 +1071,92 @@ void AHellunaDefenseGameMode::NotifyPlayerDied(APlayerController* DeadPC)
     // 전원 사망 → 패배
     UE_LOG(LogHelluna, Warning, TEXT("[Defeat] 전원 사망! EndGame(AllDead) 호출"));
     EndGame(EHellunaGameEndReason::AllDead);
+}
+
+// ============================================================
+// [Phase 21] Downed/Revive — 솔로 감지 / 전원사망 판정
+// ============================================================
+
+bool AHellunaDefenseGameMode::ShouldSkipDowned() const
+{
+    if (!HasAuthority()) return true;
+
+    UWorld* World = GetWorld();
+    if (!World) return true;
+
+    int32 AlivePlayerCount = 0;
+    for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+    {
+        APlayerController* PC = It->Get();
+        if (!IsValid(PC)) continue;
+
+        APawn* Pawn = PC->GetPawn();
+        if (IsValid(Pawn))
+        {
+            ++AlivePlayerCount;
+        }
+    }
+
+    // Pawn 보유 플레이어 1명 이하 → 솔로 → 다운 없이 즉사
+    return (AlivePlayerCount <= 1);
+}
+
+void AHellunaDefenseGameMode::NotifyPlayerDowned(APlayerController* DownedPC)
+{
+    if (!HasAuthority() || !bGameInitialized || bGameEnded) return;
+
+    UE_LOG(LogHelluna, Log, TEXT("[Phase21] NotifyPlayerDowned: %s"), *GetNameSafe(DownedPC));
+
+    UWorld* World = GetWorld();
+    if (!World) return;
+
+    // 생존자(IsAliveAndNotDowned) 가 1명이라도 있는지 확인
+    bool bAnyAlive = false;
+    for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+    {
+        APlayerController* PC = It->Get();
+        if (!IsValid(PC)) continue;
+
+        APawn* Pawn = PC->GetPawn();
+        if (!IsValid(Pawn)) continue;
+
+        UHellunaHealthComponent* HealthComp = Pawn->FindComponentByClass<UHellunaHealthComponent>();
+        if (HealthComp && HealthComp->IsAliveAndNotDowned())
+        {
+            bAnyAlive = true;
+            break;
+        }
+    }
+
+    if (!bAnyAlive)
+    {
+        UE_LOG(LogHelluna, Warning, TEXT("[Phase21] 생존자 없음 → ForceKillAllDownedPlayers"));
+        ForceKillAllDownedPlayers();
+    }
+}
+
+void AHellunaDefenseGameMode::ForceKillAllDownedPlayers()
+{
+    if (!HasAuthority()) return;
+
+    UWorld* World = GetWorld();
+    if (!World) return;
+
+    for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+    {
+        APlayerController* PC = It->Get();
+        if (!IsValid(PC)) continue;
+
+        APawn* Pawn = PC->GetPawn();
+        if (!IsValid(Pawn)) continue;
+
+        UHellunaHealthComponent* HealthComp = Pawn->FindComponentByClass<UHellunaHealthComponent>();
+        if (HealthComp && HealthComp->IsDowned())
+        {
+            UE_LOG(LogHelluna, Log, TEXT("[Phase21] ForceKillFromDowned: %s"), *GetNameSafe(Pawn));
+            HealthComp->ForceKillFromDowned();
+        }
+    }
 }
 
 // ============================================================
@@ -1519,6 +1605,21 @@ void AHellunaDefenseGameMode::Logout(AController* Exiting)
         APlayerController* PC = Cast<APlayerController>(Exiting);
         if (IsValid(PC))
         {
+            // [Phase 21] 다운 중 연결 끊김 → 강제 사망 (Grace Period 대신)
+            APawn* PawnCheck = PC->GetPawn();
+            if (IsValid(PawnCheck))
+            {
+                UHellunaHealthComponent* HealthCheck = PawnCheck->FindComponentByClass<UHellunaHealthComponent>();
+                if (HealthCheck && HealthCheck->IsDowned())
+                {
+                    UE_LOG(LogHelluna, Warning, TEXT("[Phase21] 다운 중 Logout → ForceKillFromDowned | Player=%s"),
+                        *GetNameSafe(PC));
+                    HealthCheck->ForceKillFromDowned();
+                    // ForceKillFromDowned → HandleDeath → OnHeroDeath → NotifyPlayerDied 경유
+                    // Grace Period 진입 불필요
+                }
+            }
+
             const FString PlayerId = GetPlayerSaveId(PC);
             APawn* Pawn = PC->GetPawn();
 

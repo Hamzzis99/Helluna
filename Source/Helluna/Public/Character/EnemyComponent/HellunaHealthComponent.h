@@ -23,6 +23,12 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	AActor*, KillerActor
 );
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
+	FOnHellunaDowned,
+	AActor*, DownedActor,
+	AActor*, InstigatorActor
+);
+
 UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
 class HELLUNA_API UHellunaHealthComponent : public UActorComponent
 {
@@ -59,12 +65,38 @@ public:
 	void ApplyDirectDamage(float Damage, AActor* InstigatorActor = nullptr);
 
 
+	// ===== Downed System (다운/부활) =====
+	UFUNCTION(BlueprintPure, Category = "Health|Downed")
+	bool IsDowned() const { return bDowned; }
+
+	UFUNCTION(BlueprintPure, Category = "Health|Downed")
+	bool IsAliveAndNotDowned() const { return !bDead && !bDowned; }
+
+	UFUNCTION(BlueprintPure, Category = "Health|Downed")
+	float GetBleedoutTimeRemaining() const { return BleedoutTimeRemaining; }
+
+	/** [Phase21-C] 출혈 총 시간 (getter) */
+	UFUNCTION(BlueprintPure, Category = "Health|Downed")
+	float GetBleedoutDuration() const { return BleedoutDuration; }
+
+	/** 서버: 다운 상태에서 강제 사망 (생존 팀원 없을 때) */
+	void ForceKillFromDowned();
+
+	/** 서버: 부활 */
+	void Revive(float InReviveHealthPercent);
+
+	/** 서버: 다운 중 피격 → 출혈 가속 */
+	void ApplyBleedoutDamage(float Damage);
+
 	// ===== Events =====
 	UPROPERTY(BlueprintAssignable, Category = "Health|Event")
 	FOnHellunaHealthChanged OnHealthChanged;
 
 	UPROPERTY(BlueprintAssignable, Category = "Health|Event")
 	FOnHellunaDeath OnDeath;
+
+	UPROPERTY(BlueprintAssignable, Category = "Health|Event")
+	FOnHellunaDowned OnDowned;
 
 protected:
 	virtual void BeginPlay() override;
@@ -85,7 +117,26 @@ protected:
 	bool bDead = false;
 
 	// ✅ 사망 처리(Notify/파괴예약) 1회 보장용 (복제 X)
-	bool bDeathProcessed = false; 
+	bool bDeathProcessed = false;
+
+	// ===== Downed System =====
+	UPROPERTY(ReplicatedUsing = OnRep_Downed, BlueprintReadOnly, Category = "Health|Downed")
+	bool bDowned = false;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Health|Downed",
+		meta = (DisplayName = "Bleedout Duration (출혈 시간, 초)", ClampMin = "1.0"))
+	float BleedoutDuration = 100.f;
+
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Health|Downed")
+	float BleedoutTimeRemaining = 0.f;
+
+	UFUNCTION()
+	void OnRep_Downed();
+
+	FTimerHandle BleedoutTimerHandle;
+
+	/** 매 1초 출혈 카운트다운 */
+	void TickBleedout();
 
 
 	// 클라에서 체력이 복제되어 바꿔질 때 호출

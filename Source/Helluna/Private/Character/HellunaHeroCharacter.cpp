@@ -34,8 +34,13 @@
 // ⭐ [Phase 6 Fix] 맵 이동 중 저장 스킵용
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
 
+#include "Combat/MeleeTraceComponent.h"
 #include "DebugHelper.h"
 #include "Helluna.h"  // [Step3] HELLUNA_DEBUG_HERO 매크로 (EndPlay/Input/Weapon/Repair 디버그 로그)
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraComponent.h"
+#include "AbilitySystem/HeroAbility/HeroGameplayAbility_GunParry.h"
+#include "VFX/GhostTrailActor.h"
 #include "Animation/AnimInstance.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
 
@@ -45,10 +50,27 @@
 #include "InventoryManagement/Components/Inv_LootContainerComponent.h"
 #include "Items/Components/Inv_ItemComponent.h"  // [Step3] FindComponentByClass<UInv_ItemComponent> 완전한 타입 필요
 
+#include "Components/WidgetComponent.h"
+#include "Downed/HellunaReviveWidget.h"
+#include "Downed/HellunaReviveProgressWidget.h"
+
+// [Phase21-C] 다운 선혈 화면 효과
+#include "Components/PostProcessComponent.h"
+#include "Materials/MaterialInstanceDynamic.h"
+
+// [Phase18] 킥 3D 프롬프트 위젯
+#include "HellunaFunctionLibrary.h"
+#include "Character/HellunaEnemyCharacter.h"
+#include "Engine/OverlapResult.h"
+#include "Widgets/HUD/Inv_InteractPromptWidget.h"
+
 
 
 AHellunaHeroCharacter::AHellunaHeroCharacter()
 {
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bStartWithTickEnabled = true;
+
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.f);
 
 	// ⭐ 모든 캐릭터 BP가 UHellunaInputComponent를 사용하도록 보장
@@ -61,20 +83,26 @@ AHellunaHeroCharacter::AHellunaHeroCharacter()
 
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
 	CameraBoom->SetupAttachment(GetRootComponent());
-	CameraBoom->TargetArmLength = 200.f;
-	CameraBoom->SocketOffset = FVector(0.f, 55.f, 65.f);
+	CameraBoom->TargetArmLength = 250.f;
+	CameraBoom->SocketOffset = FVector(0.f, 60.f, 55.f);
 	CameraBoom->bUsePawnControlRotation = true;
+	CameraBoom->bEnableCameraLag = true;
+	CameraBoom->CameraLagSpeed = 15.f;
+	CameraBoom->CameraLagMaxDistance = 50.f;
 
 	FollowCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FollowCamera"));
 	FollowCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
 	FollowCamera->bUsePawnControlRotation = false;
 
-	GetCharacterMovement()->bOrientRotationToMovement = true;
-	GetCharacterMovement()->RotationRate = FRotator(0.f, 500.f, 0.f);
+	GetCharacterMovement()->bOrientRotationToMovement = false;
+	GetCharacterMovement()->bUseControllerDesiredRotation = true;
+	GetCharacterMovement()->RotationRate = FRotator(0.f, 720.f, 0.f);
 	GetCharacterMovement()->MaxWalkSpeed = 400.f;
 	GetCharacterMovement()->BrakingDecelerationWalking = 2000.f;
 
 	HeroCombatComponent = CreateDefaultSubobject<UHeroCombatComponent>(TEXT("HeroCombatComponent"));
+
+	MeleeTraceComponent = CreateDefaultSubobject<UMeleeTraceComponent>(TEXT("MeleeTraceComponent"));
 
 	FindResourceComponent = CreateDefaultSubobject<UHelluna_FindResourceComponent>(TEXT("파밍 자원 찾기 컴포넌트"));
 
@@ -92,6 +120,31 @@ AHellunaHeroCharacter::AHellunaHeroCharacter()
 	LootContainerComponent->bActivated = false;
 	LootContainerComponent->bDestroyOwnerWhenEmpty = false;
 	LootContainerComponent->ContainerDisplayName = FText::FromString(TEXT("사체"));
+
+	// [Phase 21] 3D 부활 위젯 컴포넌트 (다운 시 머리 위 표시)
+	ReviveWidgetComp = CreateDefaultSubobject<UWidgetComponent>(TEXT("ReviveWidgetComp"));
+	ReviveWidgetComp->SetupAttachment(GetMesh());
+	ReviveWidgetComp->SetRelativeLocation(FVector(0.f, 0.f, 200.f)); // 캐릭터 머리 위
+	ReviveWidgetComp->SetDrawSize(FVector2D(250.f, 80.f));
+	ReviveWidgetComp->SetWidgetSpace(EWidgetSpace::Screen); // 항상 카메라를 바라봄
+	ReviveWidgetComp->SetVisibility(false); // 기본 숨김
+	ReviveWidgetComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	// [Phase18] 킥 3D 프롬프트 위젯 컴포넌트 (Staggered 적 머리 위 표시)
+	KickPromptWidgetComp = CreateDefaultSubobject<UWidgetComponent>(TEXT("KickPromptWidgetComp"));
+	KickPromptWidgetComp->SetupAttachment(GetRootComponent());
+	KickPromptWidgetComp->SetRelativeLocation(FVector(0.f, 0.f, 200.f));
+	KickPromptWidgetComp->SetDrawSize(FVector2D(200.f, 50.f));
+	KickPromptWidgetComp->SetWidgetSpace(EWidgetSpace::Screen);
+	KickPromptWidgetComp->SetVisibility(false);
+	KickPromptWidgetComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	// [OTS Camera] 생성자 디버그 로그
+	UE_LOG(LogTemp, Warning, TEXT("[OTS Camera] Constructor — ArmLength=%.1f, SocketOffset=%s, bOrientToMovement=%s, bUseControllerDesiredRotation=%s"),
+		CameraBoom->TargetArmLength,
+		*CameraBoom->SocketOffset.ToString(),
+		GetCharacterMovement()->bOrientRotationToMovement ? TEXT("true") : TEXT("false"),
+		GetCharacterMovement()->bUseControllerDesiredRotation ? TEXT("true") : TEXT("false"));
 }
 
 void AHellunaHeroCharacter::BeginPlay()
@@ -103,10 +156,86 @@ void AHellunaHeroCharacter::BeginPlay()
 	{
 		HeroHealthComponent->OnHealthChanged.AddUniqueDynamic(this, &AHellunaHeroCharacter::OnHeroHealthChanged);
 		HeroHealthComponent->OnDeath.AddUniqueDynamic(this, &AHellunaHeroCharacter::OnHeroDeath);
+		HeroHealthComponent->OnDowned.AddUniqueDynamic(this, &AHellunaHeroCharacter::OnHeroDowned);
 	}
 
 	// 로컬 플레이어 전용 무기 HUD 생성
 	InitWeaponHUD();
+
+	// [Phase 21] 3D 부활 위젯 클래스 설정 (데디케이티드 서버 제외)
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] BeginPlay: %s | NetMode=%d | ReviveWidgetComp=%s | ReviveWidgetClass=%s"),
+		*GetName(),
+		(int32)GetNetMode(),
+		ReviveWidgetComp ? TEXT("Valid") : TEXT("NULL"),
+		ReviveWidgetClass ? *ReviveWidgetClass->GetName() : TEXT("NULL"));
+	if (GetNetMode() != NM_DedicatedServer && ReviveWidgetComp && ReviveWidgetClass)
+	{
+		ReviveWidgetComp->SetWidgetClass(ReviveWidgetClass);
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] BeginPlay: WidgetClass 설정 완료 → %s"), *ReviveWidgetClass->GetName());
+	}
+	else
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] BeginPlay: WidgetClass 설정 스킵! (DediServer=%s, Comp=%s, Class=%s)"),
+			GetNetMode() == NM_DedicatedServer ? TEXT("Y") : TEXT("N"),
+			ReviveWidgetComp ? TEXT("Y") : TEXT("N"),
+			ReviveWidgetClass ? TEXT("Y") : TEXT("N"));
+	}
+
+	// ── OTS 카메라 기본값 캐싱 ──
+	if (FollowCamera)
+	{
+		DefaultFOV = FollowCamera->FieldOfView;
+	}
+	if (CameraBoom)
+	{
+		DefaultTargetArmLength = CameraBoom->TargetArmLength;
+		DefaultSocketOffset = CameraBoom->SocketOffset;
+	}
+	UE_LOG(LogTemp, Warning, TEXT("[OTS Camera] BeginPlay — DefaultFOV=%.1f, DefaultArmLength=%.1f, DefaultSocketOffset=%s"),
+		DefaultFOV, DefaultTargetArmLength, *DefaultSocketOffset.ToString());
+
+	// [Phase18] 킥 프롬프트 3D 위젯 초기화 (클라이언트만)
+	if (GetNetMode() != NM_DedicatedServer && KickPromptWidgetComp && KickPromptWidgetClass)
+	{
+		KickPromptWidgetComp->SetWidgetClass(KickPromptWidgetClass);
+
+		// 위젯 인스턴스 캐시 + 텍스트 설정
+		KickPromptWidgetInstance = KickPromptWidgetComp->GetWidget();
+		if (UInv_InteractPromptWidget* Prompt = Cast<UInv_InteractPromptWidget>(KickPromptWidgetInstance))
+		{
+			Prompt->SetKeyText(TEXT("F"));
+			Prompt->SetItemName(TEXT("처형"));
+			Prompt->SetActionText(TEXT(""));
+		}
+		UE_LOG(LogHelluna, Log, TEXT("[Phase18] KickPrompt 위젯 초기화: %s"), *GetName());
+	}
+}
+
+// ============================================================================
+// Tick
+// ============================================================================
+void AHellunaHeroCharacter::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+	// 카메라 줌 보간은 이제 GA의 AT_AimCameraInterp AbilityTask에서 처리
+
+	// [Phase 21] 3D 부활 위젯 출혈 타이머 업데이트 (클라이언트)
+	UpdateReviveWidgetBleedout();
+
+	// [Phase 21] 부활 진행 HUD 업데이트 (부활 수행자 로컬)
+	UpdateReviveProgressHUD();
+
+	// [Phase21-C] 다운 선혈 화면 효과 업데이트
+	if (bDownedEffectActive && IsLocallyControlled())
+	{
+		TickDownedScreenEffect(DeltaTime);
+	}
+
+	// [Phase18] 킥 프롬프트 업데이트 (로컬 플레이어만)
+	if (IsLocallyControlled())
+	{
+		UpdateKickPrompt(DeltaTime);
+	}
 }
 
 // ============================================================================
@@ -186,6 +315,23 @@ void AHellunaHeroCharacter::InitWeaponHUD()
 // ============================================
 void AHellunaHeroCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	// [Downed/Revive] 타이머 + 관계 정리
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ReviveTickTimerHandle);
+	}
+	if (ReviveTarget)
+	{
+		ReviveTarget->CurrentReviver = nullptr;
+		ReviveTarget->ReviveProgress = 0.f;
+		ReviveTarget = nullptr;
+	}
+	if (CurrentReviver)
+	{
+		CurrentReviver->ReviveTarget = nullptr;
+		CurrentReviver = nullptr;
+	}
+
 #if HELLUNA_DEBUG_HERO // [Step3] 프로덕션 빌드에서 디버그 로그 제거
 	UE_LOG(LogTemp, Warning, TEXT(""));
 	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════╗"));
@@ -303,10 +449,8 @@ void AHellunaHeroCharacter::Input_Look(const FInputActionValue& InputActionValue
 
 	float SensitivityScale = 1.f;
 
-	const float DefaultFov = 120.f;  
-	const float AimFov = GetFollowCamera()->FieldOfView;  
-
-	SensitivityScale = AimFov / DefaultFov; 
+	const float CurrentFov = GetFollowCamera()->FieldOfView;
+	SensitivityScale = (DefaultFOV > 0.f) ? (CurrentFov / DefaultFOV) : 1.f; 
 
 	if (LookAxisVector.X != 0.f)
 	{
@@ -392,6 +536,10 @@ void AHellunaHeroCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInp
 
 	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Move, ETriggerEvent::Triggered, this, &ThisClass::Input_Move);
 	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Look, ETriggerEvent::Triggered, this, &ThisClass::Input_Look);
+
+	// [Downed/Revive] F키 부활 입력 바인딩
+	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Revive, ETriggerEvent::Started, this, &ThisClass::Input_ReviveStarted);
+	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Revive, ETriggerEvent::Completed, this, &ThisClass::Input_ReviveCompleted);
 
 	HellunaInputComponent->BindAbilityInputAction(InputConfigDataAsset, this, &ThisClass::Input_AbilityInputPressed, &ThisClass::Input_AbilityInputReleased);
 }
@@ -857,6 +1005,8 @@ void AHellunaHeroCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 
 	DOREPLIFETIME(AHellunaHeroCharacter, CurrentWeapon);  // OnRep_CurrentWeapon → HUD 갱신
 	DOREPLIFETIME(AHellunaHeroCharacter, CurrentWeaponTag);
+	DOREPLIFETIME(AHellunaHeroCharacter, PlayFullBody);   // 전신 몽타주 플래그 — CLIENT B ABP 동기화
+	DOREPLIFETIME(AHellunaHeroCharacter, ReviveProgress);  // [Downed/Revive] 부활 진행률
 }
 
 
@@ -1011,16 +1161,36 @@ void AHellunaHeroCharacter::OnHeroHealthChanged(
 			*GetName(), Delta, OldHealth, NewHealth), FColor::Yellow);
 	}
 
-	// 피격 애니메이션 (데미지를 받았고 살아있을 때만)
+	// 피격 애니메이션 (데미지를 받았고 살아있을 때만, 다운 중 제외)
 	if (Delta > 0.f && NewHealth > 0.f && HitReactMontage)
 	{
-		Multicast_PlayHeroHitReact();
+		if (!HeroHealthComponent || !HeroHealthComponent->IsDowned())
+		{
+			Multicast_PlayHeroHitReact();
+		}
 	}
 }
 
 void AHellunaHeroCharacter::OnHeroDeath(AActor* DeadActor, AActor* KillerActor)
 {
 	if (!HasAuthority()) return;
+
+	// [Downed] 다운 태그 제거 (Downed→사망 경로)
+	if (AbilitySystemComponent)
+	{
+		AbilitySystemComponent->RemoveLooseGameplayTag(HellunaGameplayTags::Player_State_Downed);
+	}
+	// [Downed] Revive 관계 정리
+	if (CurrentReviver)
+	{
+		CurrentReviver->ReviveTarget = nullptr;
+		if (UWorld* W = GetWorld())
+		{
+			W->GetTimerManager().ClearTimer(CurrentReviver->ReviveTickTimerHandle);
+		}
+		CurrentReviver = nullptr;
+	}
+	ReviveProgress = 0.f;
 
 	// 사망 애니메이션
 	if (DeathMontage)
@@ -1088,6 +1258,9 @@ void AHellunaHeroCharacter::OnHeroDeath(AActor* DeadActor, AActor* KillerActor)
 
 void AHellunaHeroCharacter::Multicast_PlayHeroHitReact_Implementation()
 {
+	// [GunParry] 무적 상태 피격 모션 차단
+	if (UHeroGameplayAbility_GunParry::ShouldBlockDamage(this)) return;
+
 	if (!HitReactMontage) return;
 
 	USkeletalMeshComponent* SkelMesh = GetMesh();
@@ -1101,13 +1274,1086 @@ void AHellunaHeroCharacter::Multicast_PlayHeroHitReact_Implementation()
 
 void AHellunaHeroCharacter::Multicast_PlayHeroDeath_Implementation()
 {
-	if (!DeathMontage) return;
+	// [Fix] PlayFullBody 원복 (다운→사망 경로)
+	PlayFullBody = false;
 
-	USkeletalMeshComponent* SkelMesh = GetMesh();
-	if (!SkelMesh) return;
+	// [Phase21-C] 다운 선혈 화면 효과 종료 (로컬 전용, 다운→사망 경로)
+	if (IsLocallyControlled())
+	{
+		StopDownedScreenEffect();
+	}
 
-	UAnimInstance* AnimInst = SkelMesh->GetAnimInstance();
-	if (!AnimInst) return;
+	// [Phase 21] 사망 시 부활 위젯 숨김 (다운→사망 경로)
+	HideReviveWidget();
 
-	AnimInst->Montage_Play(DeathMontage);
+	// ── [Phase21-Fix] 래그돌 전환 ──
+	if (USkeletalMeshComponent* SkelMesh = GetMesh())
+	{
+		// 진행 중 몽타주 즉시 정지 (다운 몽타주 포함)
+		if (UAnimInstance* AnimInst = SkelMesh->GetAnimInstance())
+		{
+			AnimInst->Montage_Stop(0.f);
+		}
+
+		// 래그돌 활성화
+		SkelMesh->SetCollisionProfileName(TEXT("Ragdoll"));
+		SkelMesh->SetAllBodiesSimulatePhysics(true);
+		SkelMesh->SetSimulatePhysics(true);
+		SkelMesh->WakeAllRigidBodies();
+		SkelMesh->bBlendPhysics = true;
+
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] 래그돌 전환: %s"), *GetName());
+	}
+
+	// 캡슐 콜리전 비활성화 (래그돌과 겹치지 않도록)
+	if (UCapsuleComponent* Capsule = GetCapsuleComponent())
+	{
+		Capsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] 캡슐 콜리전 비활성화: %s"), *GetName());
+	}
+
+	// 이동 컴포넌트 비활성화
+	if (UCharacterMovementComponent* MovComp = GetCharacterMovement())
+	{
+		MovComp->StopMovementImmediately();
+		MovComp->DisableMovement();
+		MovComp->SetComponentTickEnabled(false);
+	}
+}
+
+// =========================================================
+// ★ 건패링 워프 VFX 멀티캐스트 (Step 2b)
+// 서버에서 호출 → 모든 클라이언트에서 나이아가라 이펙트 스폰
+// =========================================================
+void AHellunaHeroCharacter::Multicast_PlayParryWarpVFX_Implementation(
+	UNiagaraSystem* Effect, FVector Location, FRotator Rotation, float Scale, FLinearColor Color, bool bGhostMesh, float GhostOpacity)
+{
+	if (!Effect)
+	{
+		return;
+	}
+
+	// 데디케이티드 서버에서는 렌더링 불필요 — 스킵
+	if (GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+
+	UNiagaraComponent* Comp = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+		GetWorld(),
+		Effect,
+		Location,
+		Rotation,
+		FVector(Scale),
+		true,  // bAutoDestroy
+		true,  // bAutoActivate
+		ENCPoolMethod::None
+	);
+
+	if (Comp)
+	{
+		Comp->SetNiagaraVariableLinearColor(TEXT("WarpColor"), Color);
+
+		// Step 5: 고스트 메시 — Hero의 SkeletalMesh를 나이아가라에 전달
+		if (bGhostMesh)
+		{
+			if (USkeletalMeshComponent* HeroMesh = GetMesh())
+			{
+				UNiagaraFunctionLibrary::OverrideSystemUserVariableSkeletalMeshComponent(
+					Comp, TEXT("SkeletalMesh"), HeroMesh);
+			}
+			Comp->SetNiagaraVariableFloat(TEXT("GhostOpacity"), GhostOpacity);
+			Comp->SetNiagaraVariableBool(TEXT("bGhostMesh"), true);
+		}
+		else
+		{
+			Comp->SetNiagaraVariableBool(TEXT("bGhostMesh"), false);
+		}
+
+		ActiveParryVFX.Add(Comp);
+	}
+
+	UE_LOG(LogGunParry, Verbose,
+		TEXT("[Multicast_PlayParryWarpVFX] VFX 스폰 — Effect=%s, Location=%s, Scale=%.1f, Ghost=%s"),
+		*Effect->GetName(),
+		*Location.ToString(),
+		Scale,
+		bGhostMesh ? TEXT("Y") : TEXT("N"));
+}
+
+// =========================================================
+// ★ 건패링 워프 VFX 중단 (Step 2b-5)
+// AN_ParryExecutionFire 타이밍에 호출 → 기존 파티클만 페이드아웃
+// =========================================================
+void AHellunaHeroCharacter::Multicast_StopParryWarpVFX_Implementation()
+{
+	int32 DeactivatedCount = 0;
+
+	for (TWeakObjectPtr<UNiagaraComponent>& WeakComp : ActiveParryVFX)
+	{
+		if (UNiagaraComponent* Comp = WeakComp.Get())
+		{
+			Comp->Deactivate();
+			++DeactivatedCount;
+		}
+	}
+
+	UE_LOG(LogGunParry, Verbose,
+		TEXT("[Multicast_StopParryWarpVFX] VFX Deactivate — %d개 컴포넌트"),
+		DeactivatedCount);
+
+	ActiveParryVFX.Empty();
+}
+
+// =========================================================
+// Multicast_SpawnParryGhostTrail — 패링 잔상(PoseableMesh) 전 클라이언트 스폰
+// =========================================================
+void AHellunaHeroCharacter::Multicast_SpawnParryGhostTrail_Implementation(
+	int32 Count, float FadeDuration,
+	FVector StartLocation, FVector EndLocation, FRotator TrailRotation,
+	FLinearColor GhostColor, UMaterialInterface* TrailMaterial)
+{
+	// 데디케이티드 서버에서는 렌더링 불필요
+	if (GetNetMode() == NM_DedicatedServer) return;
+
+	USkeletalMeshComponent* HeroMesh = GetMesh();
+	if (!HeroMesh || !HeroMesh->GetSkeletalMeshAsset()) return;
+
+	// 머티리얼 폴백
+	UMaterialInterface* Mat = TrailMaterial;
+	if (!Mat)
+	{
+		Mat = LoadObject<UMaterialInterface>(nullptr,
+			TEXT("/Game/Gihyeon/Combat/Materials/M_GhostTrail"));
+	}
+	if (!Mat) return;
+
+	for (int32 i = 0; i < Count; i++)
+	{
+		const float Alpha = (float)(i + 1) / (float)(Count + 1);
+		// 도착지(StartLocation)에서 출발지(EndLocation) 방향으로 잔상 배치 — 카메라 시야 안에 들어옴
+		FVector TrailLoc = FMath::Lerp(StartLocation, EndLocation, Alpha * 0.4f);
+		// [Fix: 공중 부유] 캐릭터 위치는 캡슐 중심이므로 메시 오프셋만큼 Z 보정
+		if (USkeletalMeshComponent* MyMesh = GetMesh())
+		{
+			TrailLoc.Z += MyMesh->GetRelativeLocation().Z;
+		}
+		const float OpacityMul = 1.f - Alpha * 0.3f;
+
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+		AGhostTrailActor* Ghost = GetWorld()->SpawnActor<AGhostTrailActor>(
+			AGhostTrailActor::StaticClass(), TrailLoc, TrailRotation, SpawnParams);
+
+		if (Ghost)
+		{
+			Ghost->Initialize(HeroMesh, Mat, FadeDuration, 0.85f * OpacityMul, GhostColor);
+		}
+	}
+
+	UE_LOG(LogGunParry, Warning,
+		TEXT("[Multicast_SpawnParryGhostTrail] 잔상 %d개 스폰 — Start=%s, FadeDuration=%.1f"),
+		Count, *StartLocation.ToString(), FadeDuration);
+}
+
+// =========================================================
+// ★ Downed/Revive System (다운/부활)
+// =========================================================
+
+void AHellunaHeroCharacter::OnHeroDowned(AActor* DownedActor, AActor* InstigatorActor)
+{
+	if (!HasAuthority()) return;
+
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] OnHeroDowned 진입: %s | DownedMontage=%s | ReviveWidgetClass=%s"),
+		*GetName(),
+		DownedMontage ? *DownedMontage->GetName() : TEXT("NULL"),
+		ReviveWidgetClass ? *ReviveWidgetClass->GetName() : TEXT("NULL"));
+
+	// 솔로 체크: 접속자 1명이면 즉사
+	if (AHellunaDefenseGameMode* DefenseGM = Cast<AHellunaDefenseGameMode>(
+		UGameplayStatics::GetGameMode(GetWorld())))
+	{
+		bool bSkip = DefenseGM->ShouldSkipDowned();
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] ShouldSkipDowned=%s"), bSkip ? TEXT("TRUE (즉사)") : TEXT("FALSE (다운 진입)"));
+
+		if (bSkip)
+		{
+			if (HeroHealthComponent)
+			{
+				HeroHealthComponent->ForceKillFromDowned();
+			}
+			return;
+		}
+
+		// 마지막 생존자 체크
+		DefenseGM->NotifyPlayerDowned(Cast<APlayerController>(GetController()));
+	}
+
+	// ASC에 다운 태그 추가 + 진행 중 어빌리티 전체 취소
+	if (AbilitySystemComponent)
+	{
+		AbilitySystemComponent->AddLooseGameplayTag(HellunaGameplayTags::Player_State_Downed);
+		AbilitySystemComponent->CancelAllAbilities();
+	}
+
+	// 이동/시야 잠금
+	LockMoveInput();
+	LockLookInput();
+
+	// 이동 비활성화
+	if (UCharacterMovementComponent* CMC = GetCharacterMovement())
+	{
+		CMC->DisableMovement();
+	}
+
+	// 무기 파괴
+	if (CurrentWeapon)
+	{
+		Server_RequestDestroyWeapon();
+	}
+
+	// 다운 몽타주 + 카메라
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] Multicast_PlayHeroDowned 호출 직전: %s | DownedMontage=%s | ReviveWidgetComp=%s"),
+		*GetName(),
+		DownedMontage ? *DownedMontage->GetName() : TEXT("NULL"),
+		ReviveWidgetComp ? TEXT("Valid") : TEXT("NULL"));
+	Multicast_PlayHeroDowned();
+
+	UE_LOG(LogHelluna, Log, TEXT("[Downed] %s → 다운 상태 진입"), *GetName());
+}
+
+void AHellunaHeroCharacter::Multicast_PlayHeroDowned_Implementation()
+{
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] Multicast_PlayHeroDowned: %s | IsLocal=%s | HasAuth=%s | NetMode=%d"),
+		*GetName(),
+		IsLocallyControlled() ? TEXT("Y") : TEXT("N"),
+		HasAuthority() ? TEXT("Y") : TEXT("N"),
+		(int32)GetNetMode());
+
+	// 다운 몽타주
+	if (DownedMontage)
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] DownedMontage: %s"), *DownedMontage->GetName());
+		if (USkeletalMeshComponent* SkelMesh = GetMesh())
+		{
+			if (UAnimInstance* AnimInst = SkelMesh->GetAnimInstance())
+			{
+				// [Fix] PlayFullBody=true → ABP가 locomotion 대신 전신 몽타주 슬롯 사용
+				PlayFullBody = true;
+
+				float Duration = AnimInst->Montage_Play(DownedMontage);
+				UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] Montage_Play 결과: Duration=%.2f (0이면 실패) | PlayFullBody=true"), Duration);
+				if (Duration <= 0.f)
+				{
+					UE_LOG(LogHelluna, Error, TEXT("[Phase21-Debug] 몽타주 재생 실패! MontageSkel=%s, MeshSkel=%s"),
+						DownedMontage->GetSkeleton() ? *DownedMontage->GetSkeleton()->GetName() : TEXT("NULL"),
+						SkelMesh->GetSkeletalMeshAsset() ? (SkelMesh->GetSkeletalMeshAsset()->GetSkeleton() ? *SkelMesh->GetSkeletalMeshAsset()->GetSkeleton()->GetName() : TEXT("NULL")) : TEXT("NoMesh"));
+				}
+			}
+			else
+			{
+				UE_LOG(LogHelluna, Error, TEXT("[Phase21-Debug] AnimInstance NULL!"));
+			}
+		}
+		else
+		{
+			UE_LOG(LogHelluna, Error, TEXT("[Phase21-Debug] Mesh NULL!"));
+		}
+	}
+	else
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] DownedMontage NULL! (몽타주 미설정)"));
+	}
+
+	// 로컬 클라에서만 카메라 낮추기
+	if (IsLocallyControlled() && CameraBoom)
+	{
+		CameraBoom->TargetArmLength = DownedCameraArmLength;
+		CameraBoom->SocketOffset = DownedCameraSocketOffset;
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] 카메라 다운 전환: ArmLength=%.1f, Offset=%s"),
+			DownedCameraArmLength, *DownedCameraSocketOffset.ToString());
+	}
+
+	// [Phase 21] 3D 부활 위젯 표시 (모든 클라이언트)
+	ShowReviveWidget();
+
+	// [Phase21-C] 다운 선혈 화면 효과 시작 (로컬 전용)
+	if (IsLocallyControlled())
+	{
+		StartDownedScreenEffect();
+	}
+}
+
+void AHellunaHeroCharacter::Multicast_PlayHeroRevived_Implementation()
+{
+	// [Fix] PlayFullBody 원복 → locomotion 복귀
+	PlayFullBody = false;
+
+	// 부활 몽타주
+	if (ReviveMontage)
+	{
+		if (USkeletalMeshComponent* SkelMesh = GetMesh())
+		{
+			if (UAnimInstance* AnimInst = SkelMesh->GetAnimInstance())
+			{
+				AnimInst->Montage_Play(ReviveMontage);
+			}
+		}
+	}
+
+	// 로컬 클라에서 카메라 복구
+	if (IsLocallyControlled() && CameraBoom)
+	{
+		CameraBoom->TargetArmLength = DefaultTargetArmLength;
+		CameraBoom->SocketOffset = DefaultSocketOffset;
+	}
+
+	// [Phase21-C] 다운 선혈 화면 효과 종료 (로컬 전용)
+	if (IsLocallyControlled())
+	{
+		StopDownedScreenEffect();
+	}
+
+	// [Phase 21] 3D 부활 위젯 숨김 (모든 클라이언트)
+	HideReviveWidget();
+}
+
+// ── Revive 입력 ──
+
+void AHellunaHeroCharacter::Input_ReviveStarted(const FInputActionValue& Value)
+{
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] Input_ReviveStarted 호출! %s | IsLocal=%s"),
+		*GetName(), IsLocallyControlled() ? TEXT("Y") : TEXT("N"));
+
+	// 자신이 다운/사망이면 부활 불가
+	if (HeroHealthComponent && (HeroHealthComponent->IsDowned() || HeroHealthComponent->IsDead()))
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] Input_ReviveStarted: 자신이 다운/사망 → 리턴"));
+		return;
+	}
+
+	// 근처 다운 팀원 탐색
+	AHellunaHeroCharacter* Target = FindNearestDownedHero();
+	if (!Target)
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] Input_ReviveStarted: 근처 다운 팀원 없음 → 리턴"));
+		return;
+	}
+
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] Input_ReviveStarted: 타겟=%s → Server_StartRevive 호출"),
+		*Target->GetName());
+	Server_StartRevive(Target);
+
+	// [Phase 21] 부활 진행 HUD 표시 (로컬)
+	ShowReviveProgressHUD(Target->GetName());
+}
+
+void AHellunaHeroCharacter::Input_ReviveCompleted(const FInputActionValue& Value)
+{
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] Input_ReviveCompleted: %s → Server_StopRevive"),
+		*GetName());
+	Server_StopRevive();
+	HideReviveProgressHUD();
+}
+
+AHellunaHeroCharacter* AHellunaHeroCharacter::FindNearestDownedHero() const
+{
+	UWorld* World = GetWorld();
+	if (!World) return nullptr;
+
+	const FVector MyLoc = GetActorLocation();
+	AHellunaHeroCharacter* Best = nullptr;
+	float BestDistSq = ReviveRange * ReviveRange;
+
+	int32 CheckedCount = 0;
+
+	// [Fix] 클라이언트에서도 동작하도록 PlayerControllerIterator 대신 캐릭터 직접 탐색
+	TArray<AActor*> AllHeroes;
+	UGameplayStatics::GetAllActorsOfClass(World, AHellunaHeroCharacter::StaticClass(), AllHeroes);
+
+	for (AActor* Actor : AllHeroes)
+	{
+		AHellunaHeroCharacter* OtherHero = Cast<AHellunaHeroCharacter>(Actor);
+		if (!OtherHero || OtherHero == this) continue;
+
+		CheckedCount++;
+		UHellunaHealthComponent* HC = OtherHero->HeroHealthComponent;
+		bool bIsDowned = HC ? HC->IsDowned() : false;
+		bool bHasReviver = OtherHero->CurrentReviver != nullptr;
+		float Dist = FVector::Dist(MyLoc, OtherHero->GetActorLocation());
+
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] FindNearestDownedHero: %s | Downed=%s | HasReviver=%s | Dist=%.0f (Range=%.0f)"),
+			*OtherHero->GetName(),
+			bIsDowned ? TEXT("Y") : TEXT("N"),
+			bHasReviver ? TEXT("Y") : TEXT("N"),
+			Dist, ReviveRange);
+
+		if (!HC || !bIsDowned) continue;
+
+		// 이미 다른 사람이 부활 중이면 스킵 (1:1 제한)
+		if (bHasReviver) continue;
+
+		const float DistSq = Dist * Dist;
+		if (DistSq < BestDistSq)
+		{
+			BestDistSq = DistSq;
+			Best = OtherHero;
+		}
+	}
+
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] FindNearestDownedHero: 체크=%d명, 결과=%s"),
+		CheckedCount, Best ? *Best->GetName() : TEXT("NULL"));
+	return Best;
+}
+
+void AHellunaHeroCharacter::Server_StartRevive_Implementation(AHellunaHeroCharacter* TargetHero)
+{
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] Server_StartRevive: %s → %s"),
+		*GetName(), IsValid(TargetHero) ? *TargetHero->GetName() : TEXT("INVALID"));
+
+	if (!IsValid(TargetHero)) return;
+	if (!TargetHero->HeroHealthComponent || !TargetHero->HeroHealthComponent->IsDowned()) return;
+	if (HeroHealthComponent && (HeroHealthComponent->IsDowned() || HeroHealthComponent->IsDead())) return;
+
+	// 거리 재검증 (서버 측)
+	const float DistSq = FVector::DistSquared(GetActorLocation(), TargetHero->GetActorLocation());
+	if (DistSq > ReviveRange * ReviveRange)
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] Server_StartRevive: 거리 초과 (%.0f > %.0f)"),
+			FMath::Sqrt(DistSq), ReviveRange);
+		return;
+	}
+
+	// 1:1 제한 체크
+	if (TargetHero->CurrentReviver != nullptr && TargetHero->CurrentReviver != this) return;
+
+	// 이전 타겟 정리
+	if (ReviveTarget && ReviveTarget != TargetHero)
+	{
+		ReviveTarget->CurrentReviver = nullptr;
+		ReviveTarget->ReviveProgress = 0.f;
+	}
+
+	ReviveTarget = TargetHero;
+	TargetHero->CurrentReviver = this;
+	TargetHero->ReviveProgress = 0.f;
+
+	// 0.1초 간격 Revive 틱
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().SetTimer(
+			ReviveTickTimerHandle, this, &ThisClass::TickRevive, 0.1f, true);
+	}
+
+	UE_LOG(LogHelluna, Log, TEXT("[Revive] %s → %s 부활 시작"), *GetName(), *TargetHero->GetName());
+}
+
+void AHellunaHeroCharacter::Server_StopRevive_Implementation()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ReviveTickTimerHandle);
+	}
+
+	if (ReviveTarget)
+	{
+		ReviveTarget->CurrentReviver = nullptr;
+		ReviveTarget->ReviveProgress = 0.f;
+		ReviveTarget = nullptr;
+	}
+}
+
+void AHellunaHeroCharacter::TickRevive()
+{
+	// 유효성 체크: 대상 유효 + 다운 + 본인 생존
+	if (!IsValid(ReviveTarget) || !ReviveTarget->HeroHealthComponent
+		|| !ReviveTarget->HeroHealthComponent->IsDowned()
+		|| (HeroHealthComponent && (HeroHealthComponent->IsDowned() || HeroHealthComponent->IsDead())))
+	{
+		Server_StopRevive_Implementation();
+		return;
+	}
+
+	// 거리 체크
+	const float DistSq = FVector::DistSquared(GetActorLocation(), ReviveTarget->GetActorLocation());
+	if (DistSq > ReviveRange * ReviveRange)
+	{
+		Server_StopRevive_Implementation();
+		return;
+	}
+
+	// 진행률 증가 (0.1초 / ReviveDuration)
+	const float ProgressPerTick = (ReviveDuration > 0.f) ? (0.1f / ReviveDuration) : 1.f;
+	ReviveTarget->ReviveProgress = FMath::Clamp(ReviveTarget->ReviveProgress + ProgressPerTick, 0.f, 1.f);
+
+	UE_LOG(LogHelluna, Log, TEXT("[Phase21-Debug] TickRevive: %s → %s | Progress=%.1f%% | Duration=%.1f"),
+		*GetName(), *ReviveTarget->GetName(), ReviveTarget->ReviveProgress * 100.f, ReviveDuration);
+
+	// 완료
+	if (ReviveTarget->ReviveProgress >= 1.f)
+	{
+		AHellunaHeroCharacter* Target = ReviveTarget;
+
+		// 타이머 클리어 먼저 (ClearTimer 후 캡처 접근 금지 규칙)
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(ReviveTickTimerHandle);
+		}
+
+		// 참조 정리
+		Target->CurrentReviver = nullptr;
+		Target->ReviveProgress = 0.f;
+		ReviveTarget = nullptr;
+
+		// HealthComponent 부활 처리
+		if (Target->HeroHealthComponent)
+		{
+			Target->HeroHealthComponent->Revive(Target->ReviveHealthPercent);
+		}
+
+		// 다운 태그 제거
+		if (Target->AbilitySystemComponent)
+		{
+			Target->AbilitySystemComponent->RemoveLooseGameplayTag(HellunaGameplayTags::Player_State_Downed);
+		}
+
+		// 이동/시야 잠금 해제
+		Target->UnlockMoveInput();
+		Target->UnlockLookInput();
+		if (UCharacterMovementComponent* CMC = Target->GetCharacterMovement())
+		{
+			CMC->SetMovementMode(MOVE_Walking);
+		}
+
+		// 부활 몽타주 + 카메라 복구
+		Target->Multicast_PlayHeroRevived();
+
+		UE_LOG(LogHelluna, Log, TEXT("[Revive] %s → %s 부활 완료"), *GetName(), *Target->GetName());
+	}
+}
+
+void AHellunaHeroCharacter::OnRep_ReviveProgress()
+{
+	// [Phase 21] 3D 부활 위젯에 프로그레스 반영
+	if (ReviveWidgetInstance)
+	{
+		ReviveWidgetInstance->SetReviveProgress(ReviveProgress);
+	}
+}
+
+// =========================================================
+// 3D 부활 위젯 — Show/Hide/Update
+// =========================================================
+
+void AHellunaHeroCharacter::ShowReviveWidget()
+{
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] ShowReviveWidget 진입: %s | ReviveWidgetComp=%s | NetMode=%d"),
+		*GetName(),
+		ReviveWidgetComp ? TEXT("Valid") : TEXT("NULL"),
+		(int32)GetNetMode());
+
+	if (!ReviveWidgetComp) return;
+
+	// 데디케이티드 서버에서는 위젯 불필요
+	if (GetNetMode() == NM_DedicatedServer) return;
+
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] ShowReviveWidget: WidgetClass=%s, CurrentWidget=%s, Visibility 전=%s"),
+		ReviveWidgetComp->GetWidgetClass() ? *ReviveWidgetComp->GetWidgetClass()->GetName() : TEXT("NULL"),
+		ReviveWidgetComp->GetWidget() ? *ReviveWidgetComp->GetWidget()->GetName() : TEXT("NULL"),
+		ReviveWidgetComp->IsVisible() ? TEXT("Visible") : TEXT("Hidden"));
+
+	ReviveWidgetComp->SetVisibility(true);
+
+	// 위젯 인스턴스 캐시
+	if (!ReviveWidgetInstance)
+	{
+		ReviveWidgetInstance = Cast<UHellunaReviveWidget>(ReviveWidgetComp->GetWidget());
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] ShowReviveWidget: ReviveWidgetInstance 캐시 → %s"),
+			ReviveWidgetInstance ? *ReviveWidgetInstance->GetName() : TEXT("NULL (캐스트 실패 또는 위젯 없음)"));
+	}
+
+	if (ReviveWidgetInstance)
+	{
+		ReviveWidgetInstance->ResetState();
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] ShowReviveWidget: ResetState 완료"));
+	}
+	else
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[Phase21-Debug] ShowReviveWidget: ReviveWidgetInstance가 여전히 NULL! DrawSize=%s, Space=%d"),
+			*ReviveWidgetComp->GetDrawSize().ToString(),
+			(int32)ReviveWidgetComp->GetWidgetSpace());
+	}
+
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] ReviveWidget 표시 완료: %s | Visible=%s"),
+		*GetName(),
+		ReviveWidgetComp->IsVisible() ? TEXT("Y") : TEXT("N"));
+}
+
+void AHellunaHeroCharacter::HideReviveWidget()
+{
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] HideReviveWidget 호출: %s"), *GetName());
+
+	if (!ReviveWidgetComp) return;
+	if (GetNetMode() == NM_DedicatedServer) return;
+
+	ReviveWidgetComp->SetVisibility(false);
+	ReviveWidgetInstance = nullptr;
+}
+
+void AHellunaHeroCharacter::UpdateReviveWidgetBleedout()
+{
+	if (!ReviveWidgetInstance) return;
+	if (!HeroHealthComponent) return;
+
+	// 다운 상태일 때만 출혈 타이머 업데이트
+	if (HeroHealthComponent->IsDowned())
+	{
+		ReviveWidgetInstance->SetBleedoutTime(HeroHealthComponent->GetBleedoutTimeRemaining());
+	}
+}
+
+// =========================================================
+// 부활 진행 HUD — Show/Hide/Update (부활 수행자 화면)
+// =========================================================
+
+void AHellunaHeroCharacter::ShowReviveProgressHUD(const FString& TargetName)
+{
+	if (!IsLocallyControlled()) return;
+
+	if (!ReviveProgressWidget && ReviveProgressWidgetClass)
+	{
+		// [Phase21-Fix] As A Client 모드에서 CreateWidget(World) 실패 → PC 기반으로 변경
+		APlayerController* PC = Cast<APlayerController>(GetController());
+		if (!PC)
+		{
+			PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+		}
+		if (PC)
+		{
+			ReviveProgressWidget = CreateWidget<UHellunaReviveProgressWidget>(PC, ReviveProgressWidgetClass);
+		}
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] ReviveProgressHUD CreateWidget: PC=%s | Widget=%s"),
+			PC ? *PC->GetName() : TEXT("NULL"),
+			ReviveProgressWidget ? *ReviveProgressWidget->GetName() : TEXT("NULL"));
+		if (ReviveProgressWidget)
+		{
+			ReviveProgressWidget->AddToViewport(50);
+		}
+	}
+
+	if (ReviveProgressWidget)
+	{
+		ReviveProgressWidget->SetProgress(0.f);
+		ReviveProgressWidget->SetRemainingTime(ReviveDuration);
+		ReviveProgressWidget->SetTargetName(TargetName);
+		ReviveProgressWidget->SetVisibility(ESlateVisibility::Visible);
+		if (UWorld* World = GetWorld())
+		{
+			ReviveProgressShowTime = World->GetTimeSeconds();
+		}
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] ReviveProgressHUD Show: Time=%.2f, 대상=%s, Duration=%.1f초"),
+			ReviveProgressShowTime, *TargetName, ReviveDuration);
+	}
+}
+
+void AHellunaHeroCharacter::HideReviveProgressHUD()
+{
+	if (ReviveProgressWidget)
+	{
+		ReviveProgressWidget->SetVisibility(ESlateVisibility::Collapsed);
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] ReviveProgressHUD 숨김"));
+	}
+}
+
+void AHellunaHeroCharacter::UpdateReviveProgressHUD()
+{
+	if (!IsLocallyControlled()) return;
+	if (!ReviveProgressWidget) return;
+	if (ReviveProgressWidget->GetVisibility() != ESlateVisibility::Visible) return;
+
+	// 가장 가까운 다운 팀원의 ReviveProgress 읽기
+	AHellunaHeroCharacter* NearestDowned = FindNearestDownedHero();
+	if (NearestDowned && NearestDowned->ReviveProgress > 0.f)
+	{
+		float Progress = NearestDowned->ReviveProgress;
+		float Remaining = ReviveDuration * (1.f - Progress);
+		ReviveProgressWidget->SetProgress(Progress);
+		ReviveProgressWidget->SetRemainingTime(Remaining);
+
+		// 완료 시 자동 숨김
+		if (Progress >= 1.f)
+		{
+			HideReviveProgressHUD();
+		}
+	}
+	else
+	{
+		// Grace Period: Show 직후 0.5초간은 Progress=0이어도 숨기지 않음
+		// (서버 TickRevive 시작 + 네트워크 Replication 지연 대기)
+		const UWorld* World = GetWorld();
+		const float ElapsedSinceShow = World ? (World->GetTimeSeconds() - ReviveProgressShowTime) : 999.f;
+		if (ElapsedSinceShow > REVIVE_HUD_GRACE_PERIOD)
+		{
+			UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] ReviveProgressHUD Hide: Grace만료, Elapsed=%.2f"),
+				ElapsedSinceShow);
+			HideReviveProgressHUD();
+		}
+		// else: Grace Period 내 → 대기 (숨기지 않음)
+	}
+}
+
+// =========================================================
+// ★ [Phase21-C] 다운 선혈 화면 효과
+// =========================================================
+
+void AHellunaHeroCharacter::StartDownedScreenEffect()
+{
+	if (GetNetMode() == NM_DedicatedServer) return;
+
+	bDownedEffectActive = true;
+	DownedEffectLogTimer = 0.f;
+
+	// v2: 50%에서 시작 (다운 즉시 위기감)
+	DownedIR = IR_START;
+	DownedIRTarget = IR_START;
+	DownedOpacity = OP_START;
+	DownedOpacityTarget = OP_START;
+	DownedBrightness = 1.0f;
+	DownedBrightnessTarget = 1.0f;
+	DownedBlackout = 0.f;
+	DownedBlackoutTarget = 0.f;
+
+	// 첫 심장박동 펄스 즉시 발생
+	PulseTimer = 0.f;
+	PulsePeriod = PULSE_PERIOD_MAX;
+	PulseIRBoost = PULSE_IR_AMOUNT;
+	PulseOpacityBoost = PULSE_OP_AMOUNT;
+
+	// PostProcessComponent 생성 (재활용: 이미 있으면 새로 만들지 않음)
+	if (!DownedPostProcess)
+	{
+		DownedPostProcess = NewObject<UPostProcessComponent>(this, TEXT("DownedPostProcess"));
+		if (DownedPostProcess)
+		{
+			DownedPostProcess->RegisterComponent();
+			DownedPostProcess->AttachToComponent(GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
+			DownedPostProcess->bUnbound = true;
+			DownedPostProcess->Priority = 15.f;
+		}
+	}
+
+	if (DownedPostProcess)
+	{
+		DownedPostProcess->Settings.bOverride_VignetteIntensity = true;
+		DownedPostProcess->Settings.VignetteIntensity = 0.f;
+		DownedPostProcess->Settings.bOverride_ColorSaturation = true;
+		DownedPostProcess->Settings.ColorSaturation = FVector4(1.f, 1.f, 1.f, 1.f);
+		DownedPostProcess->Settings.bOverride_SceneFringeIntensity = true;
+		DownedPostProcess->Settings.SceneFringeIntensity = 0.f;
+		DownedPostProcess->bEnabled = true;
+		DownedPostProcess->MarkRenderStateDirty();
+	}
+
+	// MID (기존 로직 유지)
+	if (DownedPPMaterial && DownedPostProcess)
+	{
+		DownedPPMID = UMaterialInstanceDynamic::Create(DownedPPMaterial, this);
+		if (DownedPPMID)
+		{
+			DownedPostProcess->Settings.WeightedBlendables.Array.Empty();
+			DownedPostProcess->Settings.WeightedBlendables.Array.Add(
+				FWeightedBlendable(0.f, DownedPPMID));
+		}
+	}
+
+	// 위젯 생성 — PlayerController 기반
+	if (DownedOverlayWidgetClass)
+	{
+		APlayerController* PC = Cast<APlayerController>(GetController());
+		if (!PC)
+		{
+			PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+		}
+		if (PC)
+		{
+			DownedOverlayWidget = CreateWidget<UUserWidget>(PC, DownedOverlayWidgetClass);
+			if (DownedOverlayWidget)
+			{
+				DownedOverlayWidget->AddToViewport(50);
+				DownedOverlayWidget->SetRenderOpacity(DownedOpacity);
+			}
+		}
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-C] CreateWidget: PC=%s | Widget=%s"),
+			PC ? *PC->GetName() : TEXT("NULL"),
+			DownedOverlayWidget ? *DownedOverlayWidget->GetName() : TEXT("NULL"));
+	}
+
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-C] StartDownedEffect: %s | PP=%s | Widget=%s | IR=%.2f | Op=%.2f"),
+		*GetName(),
+		DownedPostProcess ? TEXT("Valid") : TEXT("NULL"),
+		DownedOverlayWidget ? TEXT("Valid") : TEXT("NULL"),
+		DownedIR, DownedOpacity);
+}
+
+void AHellunaHeroCharacter::StopDownedScreenEffect()
+{
+	if (!bDownedEffectActive) return;
+
+	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-C] StopDownedEffect: %s | IR=%.2f | Op=%.2f | Blackout=%.2f"),
+		*GetName(), DownedIR, DownedOpacity, DownedBlackout);
+
+	bDownedEffectActive = false;
+
+	// 모든 값 초기화
+	DownedIR = IR_START;
+	DownedOpacity = 0.f;
+	DownedBrightness = 1.0f;
+	DownedBlackout = 0.f;
+	PulseIRBoost = 0.f;
+	PulseOpacityBoost = 0.f;
+
+	// PP 복원
+	if (DownedPostProcess)
+	{
+		DownedPostProcess->Settings.bOverride_VignetteIntensity = true;
+		DownedPostProcess->Settings.VignetteIntensity = 0.f;
+		DownedPostProcess->Settings.bOverride_ColorSaturation = true;
+		DownedPostProcess->Settings.ColorSaturation = FVector4(1.f, 1.f, 1.f, 1.f);
+		DownedPostProcess->Settings.bOverride_ColorGain = true;
+		DownedPostProcess->Settings.ColorGain = FVector4(1.f, 1.f, 1.f, 1.f);
+		DownedPostProcess->MarkRenderStateDirty();
+		DownedPostProcess->bEnabled = false;
+
+		UE_LOG(LogHelluna, Warning, TEXT("[Phase21-C] PP 복원: Vignette=0 | Saturation=1.0 | Brightness=1.0"));
+	}
+
+	// MID 리셋
+	if (DownedPPMID && DownedPostProcess)
+	{
+		if (DownedPostProcess->Settings.WeightedBlendables.Array.Num() > 0)
+		{
+			DownedPostProcess->Settings.WeightedBlendables.Array[0].Weight = 0.f;
+		}
+		DownedPPMID = nullptr;
+	}
+
+	// 위젯 제거
+	if (DownedOverlayWidget)
+	{
+		DownedOverlayWidget->RemoveFromParent();
+		DownedOverlayWidget = nullptr;
+	}
+}
+
+void AHellunaHeroCharacter::TickDownedScreenEffect(float DeltaTime)
+{
+	UHellunaHealthComponent* HC = FindComponentByClass<UHellunaHealthComponent>();
+	if (!HC) return;
+
+	const float BleedoutDuration = HC->GetBleedoutDuration();
+	if (BleedoutDuration <= 0.f) return;
+
+	// 출혈 잔여 비율: 1.0(방금 다운) → 0.0(사망 직전)
+	const float BleedoutRatio = FMath::Clamp(
+		HC->GetBleedoutTimeRemaining() / BleedoutDuration, 0.f, 1.f);
+
+	// ── 1단계: InnerRadius + Opacity (전 구간) ──
+	DownedIRTarget = IR_END + (IR_START - IR_END) * BleedoutRatio;
+	DownedOpacityTarget = OP_END - (OP_END - OP_START) * BleedoutRatio;
+
+	// ── 2단계: 밝기 (40% 이하에서 어두워짐) ──
+	if (BleedoutRatio > DARKEN_START)
+	{
+		DownedBrightnessTarget = 1.0f;
+	}
+	else if (BleedoutRatio > BLACKOUT_START)
+	{
+		const float DarkenProgress = 1.0f - ((BleedoutRatio - BLACKOUT_START) / (DARKEN_START - BLACKOUT_START));
+		DownedBrightnessTarget = 1.0f - (DarkenProgress * 0.7f);
+	}
+	else
+	{
+		DownedBrightnessTarget = 0.3f;
+	}
+
+	// ── 3단계: 암전 (5% 이하) ──
+	if (BleedoutRatio <= BLACKOUT_START)
+	{
+		const float BlackoutProgress = 1.0f - (BleedoutRatio / BLACKOUT_START);
+		DownedBlackoutTarget = BlackoutProgress;
+	}
+	else
+	{
+		DownedBlackoutTarget = 0.f;
+	}
+
+	// ── 심장박동 펄스 ──
+	PulsePeriod = PULSE_PERIOD_MIN + (PULSE_PERIOD_MAX - PULSE_PERIOD_MIN) * BleedoutRatio;
+
+	PulseTimer += DeltaTime;
+	if (PulseTimer >= PulsePeriod)
+	{
+		PulseTimer -= PulsePeriod;
+		PulseIRBoost = PULSE_IR_AMOUNT;
+		PulseOpacityBoost = PULSE_OP_AMOUNT;
+	}
+	PulseIRBoost = FMath::Max(0.f, PulseIRBoost - PULSE_DECAY_SPEED * DeltaTime * PULSE_IR_AMOUNT);
+	PulseOpacityBoost = FMath::Max(0.f, PulseOpacityBoost - PULSE_DECAY_SPEED * DeltaTime * PULSE_OP_AMOUNT);
+
+	// ── 보간 ──
+	DownedIR = FMath::FInterpTo(DownedIR, DownedIRTarget, DeltaTime, EFFECT_INTERP_SPEED);
+	DownedOpacity = FMath::FInterpTo(DownedOpacity, DownedOpacityTarget, DeltaTime, EFFECT_INTERP_SPEED);
+	DownedBrightness = FMath::FInterpTo(DownedBrightness, DownedBrightnessTarget, DeltaTime, EFFECT_INTERP_SPEED);
+	DownedBlackout = FMath::FInterpTo(DownedBlackout, DownedBlackoutTarget, DeltaTime, 4.0f);
+
+	// ── 최종 값 (펄스 적용) ──
+	const float FinalIR = FMath::Max(0.02f, DownedIR - PulseIRBoost);
+	const float FinalOpacity = FMath::Min(1.0f, DownedOpacity + PulseOpacityBoost);
+
+	// ── PP 적용 ──
+	if (DownedPostProcess)
+	{
+		const float SaturationValue = FMath::Lerp(0.45f, 1.0f, BleedoutRatio);
+
+		DownedPostProcess->Settings.bOverride_VignetteIntensity = true;
+		DownedPostProcess->Settings.VignetteIntensity = FMath::Lerp(0.f, 0.8f, FinalOpacity);
+		DownedPostProcess->Settings.bOverride_ColorSaturation = true;
+		DownedPostProcess->Settings.ColorSaturation = FVector4(SaturationValue, SaturationValue, SaturationValue, 1.0f);
+
+		// 밝기: ColorGain으로 제어
+		DownedPostProcess->Settings.bOverride_ColorGain = true;
+		DownedPostProcess->Settings.ColorGain = FVector4(DownedBrightness, DownedBrightness, DownedBrightness, 1.0f);
+
+		DownedPostProcess->MarkRenderStateDirty();
+	}
+
+	// ── MID 파라미터 (InnerRadius 동적 제어) ──
+	if (DownedPPMID)
+	{
+		DownedPPMID->SetScalarParameterValue(FName("InnerRadius"), FinalIR);
+		DownedPPMID->SetScalarParameterValue(FName("Intensity"), FinalOpacity);
+	}
+
+	// ── MID Weight ──
+	if (DownedPPMID && DownedPostProcess)
+	{
+		if (DownedPostProcess->Settings.WeightedBlendables.Array.Num() > 0)
+		{
+			DownedPostProcess->Settings.WeightedBlendables.Array[0].Weight = FinalOpacity;
+		}
+	}
+
+	// ── 위젯 Opacity ──
+	if (DownedOverlayWidget)
+	{
+		DownedOverlayWidget->SetRenderOpacity(FinalOpacity);
+	}
+
+	// ── 암전: PP ColorGain에 Blackout 추가 반영 ──
+	if (DownedPostProcess && DownedBlackout > 0.01f)
+	{
+		const float BlackBrightness = DownedBrightness * (1.0f - DownedBlackout);
+		DownedPostProcess->Settings.ColorGain = FVector4(BlackBrightness, BlackBrightness, BlackBrightness, 1.0f);
+		DownedPostProcess->MarkRenderStateDirty();
+	}
+
+	// ── 로그 (1초마다) ──
+	DownedEffectLogTimer += DeltaTime;
+	if (DownedEffectLogTimer >= 1.0f)
+	{
+		DownedEffectLogTimer = 0.f;
+		UE_LOG(LogHelluna, Warning,
+			TEXT("[Phase21-C] Tick: Bleed=%.0f%% | IR=%.2f | Op=%.2f | Bright=%.2f | Blackout=%.2f | Pulse=%.1fs"),
+			BleedoutRatio * 100.f, FinalIR, FinalOpacity, DownedBrightness, DownedBlackout, PulsePeriod);
+	}
+}
+
+// ============================================================================
+// [Phase18] 킥 3D 프롬프트 — Staggered 적 머리 위에 "F: 처형" 표시
+// ============================================================================
+void AHellunaHeroCharacter::UpdateKickPrompt(float DeltaTime)
+{
+	if (!KickPromptWidgetComp) return;
+
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	const FVector MyLocation = GetActorLocation();
+	const FVector MyForward = GetActorForwardVector();
+	const float CosHalfAngle = FMath::Cos(FMath::DegreesToRadians(KickPromptHalfAngle));
+
+	// Staggered 적 탐색 (GA_MeleeKick::FindStaggeredEnemy와 동일 로직)
+	AHellunaEnemyCharacter* BestEnemy = nullptr;
+	float BestDistSq = KickPromptRange * KickPromptRange;
+
+	TArray<FOverlapResult> Overlaps;
+	FCollisionShape Sphere = FCollisionShape::MakeSphere(KickPromptRange);
+	FCollisionQueryParams Params;
+	Params.AddIgnoredActor(this);
+
+	if (World->OverlapMultiByObjectType(
+		Overlaps, MyLocation, FQuat::Identity,
+		FCollisionObjectQueryParams(ECC_Pawn), Sphere, Params))
+	{
+		for (const FOverlapResult& Overlap : Overlaps)
+		{
+			AHellunaEnemyCharacter* Enemy = Cast<AHellunaEnemyCharacter>(Overlap.GetActor());
+			if (!Enemy) continue;
+
+			// Staggered 태그 체크
+			if (!UHellunaFunctionLibrary::NativeDoesActorHaveTag(Enemy, HellunaGameplayTags::Enemy_State_Staggered))
+				continue;
+
+			// 사망 체크
+			if (UHellunaHealthComponent* HC = Enemy->FindComponentByClass<UHellunaHealthComponent>())
+			{
+				if (HC->IsDead()) continue;
+			}
+
+			// 전방각 체크
+			const FVector ToEnemy = (Enemy->GetActorLocation() - MyLocation).GetSafeNormal();
+			if (FVector::DotProduct(MyForward, ToEnemy) < CosHalfAngle) continue;
+
+			const float DistSq = FVector::DistSquared(MyLocation, Enemy->GetActorLocation());
+			if (DistSq < BestDistSq)
+			{
+				BestDistSq = DistSq;
+				BestEnemy = Enemy;
+			}
+		}
+	}
+
+	if (BestEnemy)
+	{
+		// 적 머리 위로 위젯 이동
+		const FVector EnemyHead = BestEnemy->GetActorLocation() + FVector(0.f, 0.f, 150.f);
+		KickPromptWidgetComp->SetWorldLocation(EnemyHead);
+
+		if (!bKickPromptVisible)
+		{
+			KickPromptWidgetComp->SetVisibility(true);
+			bKickPromptVisible = true;
+		}
+	}
+	else
+	{
+		if (bKickPromptVisible)
+		{
+			KickPromptWidgetComp->SetVisibility(false);
+			bKickPromptVisible = false;
+		}
+	}
+
+	// 디버그 로그 (1초마다)
+	KickPromptLogTimer += DeltaTime;
+	if (KickPromptLogTimer >= 1.0f)
+	{
+		KickPromptLogTimer = 0.f;
+		if (bKickPromptVisible && BestEnemy)
+		{
+			UE_LOG(LogHelluna, Log, TEXT("[Phase18] KickPrompt 표시: %s → 적=%s"),
+				*GetName(), *BestEnemy->GetName());
+		}
+	}
 }

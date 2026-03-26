@@ -23,10 +23,19 @@
 #include "InputMappingContext.h"
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
 
+// [Puzzle] 퍼즐 시스템
+#include "Puzzle/PuzzleCubeActor.h"
+#include "Puzzle/PuzzleGridWidget.h"
+#include "EngineUtils.h" // TActorIterator
+#include "Components/PostProcessComponent.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
+
 
 
 AHellunaHeroController::AHellunaHeroController()
 {
+	PrimaryActorTick.bCanEverTick = true;
 	HeroTeamID = FGenericTeamId(0);
 }
 
@@ -61,6 +70,89 @@ void AHellunaHeroController::BeginPlay()
 		UE_LOG(LogHellunaVote, Log, TEXT("[HellunaHeroController] 투표 위젯 초기화 타이머 설정 (0.5초)"));
 	}
 
+	// [Puzzle] 퍼즐 입력 바인딩 (로컬 플레이어만, GameState 불필요)
+	if (IsLocalController() && PuzzleInteractAction && PuzzleMappingContext)
+	{
+		if (ULocalPlayer* PuzzleLP = GetLocalPlayer())
+		{
+			if (UEnhancedInputLocalPlayerSubsystem* PuzzleSub = PuzzleLP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
+			{
+				PuzzleSub->AddMappingContext(PuzzleMappingContext, 10);
+				UE_LOG(LogTemp, Warning, TEXT("[PuzzleInput] PuzzleMappingContext 추가 완료 (priority=10)"));
+			}
+		}
+
+		if (UEnhancedInputComponent* PuzzleEIC = Cast<UEnhancedInputComponent>(InputComponent))
+		{
+			PuzzleEIC->BindAction(PuzzleInteractAction, ETriggerEvent::Triggered, this, &AHellunaHeroController::OnPuzzleInteractInput);
+
+			// F키 홀드 상태 추적 — Ongoing은 명시적 트리거 없으면 발동 안 함, Started 사용
+			PuzzleEIC->BindAction(PuzzleInteractAction, ETriggerEvent::Started, this, &AHellunaHeroController::OnPuzzleInteractOngoing);
+			PuzzleEIC->BindAction(PuzzleInteractAction, ETriggerEvent::Completed, this, &AHellunaHeroController::OnPuzzleInteractReleased);
+			PuzzleEIC->BindAction(PuzzleInteractAction, ETriggerEvent::Canceled, this, &AHellunaHeroController::OnPuzzleInteractReleased);
+
+			if (PuzzleUpAction)
+			{
+				PuzzleEIC->BindAction(PuzzleUpAction, ETriggerEvent::Started, this, &AHellunaHeroController::OnPuzzleUpInput);
+			}
+			if (PuzzleDownAction)
+			{
+				PuzzleEIC->BindAction(PuzzleDownAction, ETriggerEvent::Started, this, &AHellunaHeroController::OnPuzzleDownInput);
+			}
+			if (PuzzleLeftAction)
+			{
+				PuzzleEIC->BindAction(PuzzleLeftAction, ETriggerEvent::Started, this, &AHellunaHeroController::OnPuzzleLeftInput);
+			}
+			if (PuzzleRightAction)
+			{
+				PuzzleEIC->BindAction(PuzzleRightAction, ETriggerEvent::Started, this, &AHellunaHeroController::OnPuzzleRightInput);
+			}
+			if (PuzzleRotateAction)
+			{
+				PuzzleEIC->BindAction(PuzzleRotateAction, ETriggerEvent::Started, this, &AHellunaHeroController::OnPuzzleRotateInput);
+			}
+			if (PuzzleExitAction)
+			{
+				PuzzleEIC->BindAction(PuzzleExitAction, ETriggerEvent::Started, this, &AHellunaHeroController::OnPuzzleExitInput);
+			}
+
+			UE_LOG(LogTemp, Log, TEXT("[HeroController] PuzzleInteractAction + Navigate/Rotate/Exit 바인딩 완료"));
+		}
+	}
+
+	// [HackMode] PostProcess 지연 초기화 (Pawn 스폰 대기)
+	if (IsLocalController())
+	{
+		FTimerHandle PostProcessInitHandle;
+		GetWorldTimerManager().SetTimer(PostProcessInitHandle, [this]()
+		{
+			APawn* MyPawn = GetPawn();
+			if (!IsValid(MyPawn)) { return; }
+			if (DesaturationPostProcess) { return; } // 이미 생성됨
+
+			DesaturationPostProcess = NewObject<UPostProcessComponent>(MyPawn);
+			if (DesaturationPostProcess)
+			{
+				DesaturationPostProcess->RegisterComponent();
+				DesaturationPostProcess->AttachToComponent(
+					MyPawn->GetRootComponent(),
+					FAttachmentTransformRules::KeepRelativeTransform);
+				DesaturationPostProcess->bUnbound = true;
+				DesaturationPostProcess->Priority = 10.f;
+
+				FPostProcessSettings& Settings = DesaturationPostProcess->Settings;
+				Settings.bOverride_ColorSaturation = true;
+				Settings.ColorSaturation = FVector4(1.f, 1.f, 1.f, 1.f);
+				Settings.bOverride_ColorContrast = true;
+				Settings.ColorContrast = FVector4(1.f, 1.f, 1.f, 1.f);
+				Settings.bOverride_VignetteIntensity = true;
+				Settings.VignetteIntensity = 0.f;
+
+				UE_LOG(LogTemp, Log, TEXT("[HackMode] PostProcessComponent created"));
+			}
+		}, 0.5f, false);
+	}
+
 	// [Phase 10] 채팅 위젯 초기화 (로컬 플레이어만)
 	if (IsLocalController() && ChatWidgetClass)
 	{
@@ -77,6 +169,17 @@ void AHellunaHeroController::BeginPlay()
 }
 
 // ============================================================================
+// Tick — Desaturation Lerp
+// ============================================================================
+
+void AHellunaHeroController::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+	TickDesaturation(DeltaTime);
+	TickColorReveal(DeltaTime);
+}
+
+// ============================================================================
 // C5+B7: EndPlay — 타이머 정리 + 채팅 델리게이트 해제
 // ============================================================================
 
@@ -85,6 +188,19 @@ void AHellunaHeroController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	// C5: 타이머 핸들 정리 (파괴 후 콜백 방지)
 	GetWorldTimerManager().ClearTimer(VoteWidgetInitTimerHandle);
 	GetWorldTimerManager().ClearTimer(ChatWidgetInitTimerHandle);
+
+	// [Puzzle] 퍼즐 위젯 정리
+	if (IsValid(ActivePuzzleWidget))
+	{
+		ActivePuzzleWidget->RemoveFromParent();
+		ActivePuzzleWidget = nullptr;
+	}
+	bInPuzzleMode = false;
+
+	// [HackMode] Saturation 즉시 복원
+	CurrentSaturation = 1.f;
+	TargetSaturation = 1.f;
+	bInHackMode = false;
 
 	// B7: 채팅 델리게이트 언바인딩 (GameState가 파괴된 위젯 참조 방지)
 	if (IsValid(ChatWidgetInstance))
@@ -410,6 +526,12 @@ void AHellunaHeroController::InitializeChatWidget()
 
 void AHellunaHeroController::OnChatToggleInput(const FInputActionValue& Value)
 {
+	// 퍼즐 모드 중에는 채팅 차단
+	if (bInPuzzleMode)
+	{
+		return;
+	}
+
 	UE_LOG(LogHellunaChat, Warning, TEXT("[HeroController] OnChatToggleInput 호출됨!"));
 
 	// W6: 채팅 입력 활성 상태에서 Enter는 TextBox의 OnTextCommitted가 처리
@@ -478,4 +600,592 @@ void AHellunaHeroController::Server_SendChatMessage_Implementation(const FString
 	{
 		UE_LOG(LogHellunaChat, Warning, TEXT("[HeroController] Server_SendChatMessage: GameState가 null!"));
 	}
+}
+
+// ============================================================================
+// [Puzzle] 퍼즐 시스템
+// ============================================================================
+
+void AHellunaHeroController::TryEnterPuzzleFromCube(APuzzleCubeActor* Cube)
+{
+	if (bInPuzzleMode || !IsValid(Cube)) return;
+
+	LocalTargetPuzzleCube = Cube;
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[PuzzleController] TryEnterPuzzleFromCube: Cube=%s"),
+		*GetNameSafe(Cube));
+
+	Server_PuzzleTryEnter();
+}
+
+void AHellunaHeroController::OnPuzzleInteractInput(const FInputActionValue& Value)
+{
+	// [Fix] Started가 놓쳐도 Triggered 매 틱에서 홀드 상태 보장
+	bHoldingPuzzleInteract = true;
+
+	if (bInPuzzleMode)
+	{
+		return;
+	}
+
+	// 클라이언트 측: 근처 퍼즐 큐브 확인
+	APawn* MyPawn = GetPawn();
+	if (!IsValid(MyPawn))
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	APuzzleCubeActor* NearestCube = nullptr;
+	float NearestDist = FLT_MAX;
+
+	for (TActorIterator<APuzzleCubeActor> It(World); It; ++It)
+	{
+		APuzzleCubeActor* Cube = *It;
+		if (!IsValid(Cube))
+		{
+			continue;
+		}
+
+		const float Dist = FVector::Dist(MyPawn->GetActorLocation(), Cube->GetActorLocation());
+		if (Dist < Cube->GetInteractionRadius() && Dist < NearestDist)
+		{
+			NearestDist = Dist;
+			NearestCube = Cube;
+		}
+	}
+
+	if (!NearestCube)
+	{
+		return;
+	}
+
+	LocalTargetPuzzleCube = NearestCube;
+
+	// [Guard] IMC Hold 트리거가 직렬화에서 풀릴 수 있으므로
+	// C++에서 직접 홀드 프로그레스 완료를 체크 (1.5초)
+	if (NearestCube->GetLocalHoldProgress() < 0.95f)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[PuzzleController] Hold not complete yet (%.2f), ignoring"), NearestCube->GetLocalHoldProgress());
+		return;
+	}
+
+	// 로그 #12
+	UE_LOG(LogTemp, Warning,
+		TEXT("[PuzzleController] TryEnterPuzzle: Cube=%s, Distance=%.1f"),
+		*GetNameSafe(NearestCube), NearestDist);
+
+	
+	Server_PuzzleTryEnter();
+}
+
+// --- ExitPuzzle ---
+
+void AHellunaHeroController::ExitPuzzle()
+{
+	if (!bInPuzzleMode) { return; }
+
+	UE_LOG(LogTemp, Warning, TEXT("[PuzzleController] ExitPuzzle"));
+
+	// 퇴장 애니메이션 재생 → 0.5초 후 실제 정리
+	if (IsValid(ActivePuzzleWidget))
+	{
+		ActivePuzzleWidget->PlayCloseAnimation();
+
+		// 애니메이션 완료 대기 후 정리 (SetTimerForNextTick 아닌 0.5초 딜레이)
+		FTimerHandle CleanupHandle;
+		GetWorldTimerManager().SetTimer(CleanupHandle, [this]()
+		{
+			if (IsValid(ActivePuzzleWidget))
+			{
+				ActivePuzzleWidget->RemoveFromParent();
+				ActivePuzzleWidget = nullptr;
+			}
+
+			bInPuzzleMode = false;
+
+			// 퍼즐 모드 전용 IMC 제거 (방향/회전/나가기 키 해제)
+			if (ULocalPlayer* LP = GetLocalPlayer())
+			{
+				if (UEnhancedInputLocalPlayerSubsystem* Sub = LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
+				{
+					if (PuzzleModeMappingContext)
+					{
+						Sub->RemoveMappingContext(PuzzleModeMappingContext);
+					}
+					UE_LOG(LogTemp, Warning, TEXT("[PuzzleInput] PuzzleModeMappingContext removed (puzzle exit)"));
+				}
+			}
+
+			SetInputMode(FInputModeGameOnly());
+
+			// 해킹 모드 종료 (컬러 복원)
+			SetDesaturation(1.f, 1.0f);
+			bInHackMode = false;
+
+			Server_PuzzleExit();
+		}, 0.5f, false);
+	}
+	else
+	{
+		// 위젯 없으면 즉시 정리
+		bInPuzzleMode = false;
+
+		// 해킹 모드 종료
+		SetDesaturation(1.f, 1.0f);
+		bInHackMode = false;
+
+		if (ULocalPlayer* LP = GetLocalPlayer())
+		{
+			if (UEnhancedInputLocalPlayerSubsystem* Sub = LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
+			{
+				if (PuzzleModeMappingContext)
+				{
+					Sub->RemoveMappingContext(PuzzleModeMappingContext);
+				}
+			}
+		}
+
+		SetInputMode(FInputModeGameOnly());
+
+		Server_PuzzleExit();
+	}
+}
+
+// --- RequestPuzzleRotateCell ---
+
+void AHellunaHeroController::RequestPuzzleRotateCell(int32 CellIndex)
+{
+	Server_PuzzleRotateCell(CellIndex);
+}
+
+// --- Server_PuzzleTryEnter ---
+
+bool AHellunaHeroController::Server_PuzzleTryEnter_Validate()
+{
+	return true;
+}
+
+void AHellunaHeroController::Server_PuzzleTryEnter_Implementation()
+{
+	APawn* MyPawn = GetPawn();
+	if (!IsValid(MyPawn))
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	// 서버 측 근처 퍼즐 큐브 탐색 (보안 검증)
+	APuzzleCubeActor* NearestCube = nullptr;
+	float NearestDist = FLT_MAX;
+
+	for (TActorIterator<APuzzleCubeActor> It(World); It; ++It)
+	{
+		APuzzleCubeActor* Cube = *It;
+		if (!IsValid(Cube))
+		{
+			continue;
+		}
+
+		const float Dist = FVector::Dist(MyPawn->GetActorLocation(), Cube->GetActorLocation());
+		if (Dist < Cube->GetInteractionRadius() && Dist < NearestDist)
+		{
+			NearestDist = Dist;
+			NearestCube = Cube;
+		}
+	}
+
+	if (!NearestCube)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PuzzleController] Server_PuzzleTryEnter: 근처에 PuzzleCube 없음"));
+		return;
+	}
+
+	if (NearestCube->TryEnterPuzzle(this))
+	{
+		ServerPuzzleCube = NearestCube;
+		Client_PuzzleEntered();
+	}
+}
+
+// --- Server_PuzzleRotateCell ---
+
+bool AHellunaHeroController::Server_PuzzleRotateCell_Validate(int32 CellIndex)
+{
+	return CellIndex >= 0 && CellIndex < 16;
+}
+
+void AHellunaHeroController::Server_PuzzleRotateCell_Implementation(int32 CellIndex)
+{
+	if (!ServerPuzzleCube.IsValid())
+	{
+		return;
+	}
+
+	ServerPuzzleCube->RotateCell(CellIndex);
+}
+
+// --- Server_PuzzleExit ---
+
+bool AHellunaHeroController::Server_PuzzleExit_Validate()
+{
+	return true;
+}
+
+void AHellunaHeroController::Server_PuzzleExit_Implementation()
+{
+	if (ServerPuzzleCube.IsValid())
+	{
+		ServerPuzzleCube->ExitPuzzle(this);
+		ServerPuzzleCube = nullptr;
+	}
+}
+
+// --- Client_PuzzleEntered ---
+
+void AHellunaHeroController::Client_PuzzleEntered_Implementation()
+{
+	if (bInPuzzleMode)
+	{
+		return;
+	}
+
+	if (!PuzzleGridWidgetClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PuzzleController] PuzzleGridWidgetClass가 설정되지 않음 — BP에서 설정 필요"));
+		return;
+	}
+
+	if (!LocalTargetPuzzleCube.IsValid())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PuzzleController] LocalTargetPuzzleCube가 null"));
+		return;
+	}
+
+	// 기존 위젯 제거
+	if (IsValid(ActivePuzzleWidget))
+	{
+		ActivePuzzleWidget->RemoveFromParent();
+		ActivePuzzleWidget = nullptr;
+	}
+
+	// 위젯 생성
+	ActivePuzzleWidget = CreateWidget<UPuzzleGridWidget>(this, PuzzleGridWidgetClass);
+	if (!IsValid(ActivePuzzleWidget))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[PuzzleController] 퍼즐 위젯 생성 실패!"));
+		return;
+	}
+
+	ActivePuzzleWidget->AddToViewport(50);
+	ActivePuzzleWidget->InitGrid(LocalTargetPuzzleCube.Get());
+
+	bInPuzzleMode = true;
+
+	// 퍼즐 모드 전용 IMC 추가 (방향/회전/나가기 키, priority=100으로 일반 키 우선 소비)
+	if (ULocalPlayer* LP = GetLocalPlayer())
+	{
+		if (UEnhancedInputLocalPlayerSubsystem* Sub = LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
+		{
+			if (PuzzleModeMappingContext)
+			{
+				Sub->AddMappingContext(PuzzleModeMappingContext, 100);
+			}
+			UE_LOG(LogTemp, Warning, TEXT("[PuzzleInput] PuzzleModeMappingContext added (priority=100, puzzle mode)"));
+		}
+	}
+
+	// Enhanced Input이 처리하므로 위젯 포커스 불필요
+	// GameOnly 모드: 마우스 클릭 후에도 Enhanced Input이 방향키를 받음
+	SetInputMode(FInputModeGameOnly());
+
+	bInHackMode = true;
+
+	UE_LOG(LogTemp, Log, TEXT("[PuzzleController] 퍼즐 모드 진입 완료"));
+}
+
+// --- Client_PuzzleForceExit ---
+
+void AHellunaHeroController::Client_PuzzleForceExit_Implementation()
+{
+	UE_LOG(LogTemp, Warning, TEXT("[PuzzleController] Client_PuzzleForceExit: 서버에 의한 강제 퇴출"));
+
+	if (IsValid(ActivePuzzleWidget))
+	{
+		ActivePuzzleWidget->RemoveFromParent();
+		ActivePuzzleWidget = nullptr;
+	}
+
+	bInPuzzleMode = false;
+
+	// 퍼즐 모드 전용 IMC 제거
+	if (ULocalPlayer* LP = GetLocalPlayer())
+	{
+		if (UEnhancedInputLocalPlayerSubsystem* Sub = LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
+		{
+			if (PuzzleModeMappingContext)
+			{
+				Sub->RemoveMappingContext(PuzzleModeMappingContext);
+			}
+		}
+	}
+
+	SetInputMode(FInputModeGameOnly());
+}
+
+// --- Enhanced Input: 퍼즐 방향키 (개별 Boolean) ---
+
+void AHellunaHeroController::OnPuzzleUpInput(const FInputActionValue& Value)
+{
+	if (!bInPuzzleMode || !IsValid(ActivePuzzleWidget)) { return; }
+	UE_LOG(LogTemp, Warning, TEXT("[PuzzleInput] Up"));
+	ActivePuzzleWidget->MoveSelection(FIntPoint(-1, 0));
+}
+
+void AHellunaHeroController::OnPuzzleDownInput(const FInputActionValue& Value)
+{
+	if (!bInPuzzleMode || !IsValid(ActivePuzzleWidget)) { return; }
+	UE_LOG(LogTemp, Warning, TEXT("[PuzzleInput] Down"));
+	ActivePuzzleWidget->MoveSelection(FIntPoint(1, 0));
+}
+
+void AHellunaHeroController::OnPuzzleLeftInput(const FInputActionValue& Value)
+{
+	if (!bInPuzzleMode || !IsValid(ActivePuzzleWidget)) { return; }
+	UE_LOG(LogTemp, Warning, TEXT("[PuzzleInput] Left"));
+	ActivePuzzleWidget->MoveSelection(FIntPoint(0, -1));
+}
+
+void AHellunaHeroController::OnPuzzleRightInput(const FInputActionValue& Value)
+{
+	if (!bInPuzzleMode || !IsValid(ActivePuzzleWidget)) { return; }
+	UE_LOG(LogTemp, Warning, TEXT("[PuzzleInput] Right"));
+	ActivePuzzleWidget->MoveSelection(FIntPoint(0, 1));
+}
+
+// --- Enhanced Input: 퍼즐 회전 ---
+
+void AHellunaHeroController::OnPuzzleRotateInput(const FInputActionValue& Value)
+{
+	if (!bInPuzzleMode || !IsValid(ActivePuzzleWidget))
+	{
+		return;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[PuzzleInput] OnPuzzleRotateInput: Rotating cell (%d,%d)"),
+		ActivePuzzleWidget->GetSelectedRow(), ActivePuzzleWidget->GetSelectedCol());
+
+	ActivePuzzleWidget->RotateSelectedCell();
+}
+
+// --- Enhanced Input: 퍼즐 나가기 ---
+
+void AHellunaHeroController::OnPuzzleExitInput(const FInputActionValue& Value)
+{
+	if (!bInPuzzleMode)
+	{
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[PuzzleInput] OnPuzzleExitInput: Exiting puzzle"));
+	ExitPuzzle();
+}
+
+void AHellunaHeroController::OnPuzzleInteractOngoing(const FInputActionValue& Value)
+{
+	bHoldingPuzzleInteract = true;
+}
+
+void AHellunaHeroController::OnPuzzleInteractReleased(const FInputActionValue& Value)
+{
+	bHoldingPuzzleInteract = false;
+}
+
+// ============================================================================
+// 해킹 모드 — PostProcess Desaturation
+// ============================================================================
+
+void AHellunaHeroController::SetDesaturation(float InTargetValue, float Duration)
+{
+	TargetSaturation = FMath::Clamp(InTargetValue, 0.f, 1.f);
+
+	if (Duration <= 0.f)
+	{
+		CurrentSaturation = TargetSaturation;
+		SaturationLerpSpeed = 0.f;
+	}
+	else
+	{
+		SaturationLerpSpeed = FMath::Abs(TargetSaturation - CurrentSaturation) / Duration;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[HackMode] SetDesaturation: target=%.2f, duration=%.1fs, current=%.2f"),
+		TargetSaturation, Duration, CurrentSaturation);
+}
+
+void AHellunaHeroController::SetDesaturationByProgress(float HoldProgress)
+{
+	// F 홀드 프로그레스(0~1)를 Saturation(1~0)으로 매핑
+	CurrentSaturation = 1.f - FMath::Clamp(HoldProgress, 0.f, 1.f);
+	TargetSaturation = CurrentSaturation;
+	SaturationLerpSpeed = 0.f; // 즉시 적용
+
+	if (DesaturationPostProcess)
+	{
+		FPostProcessSettings& S = DesaturationPostProcess->Settings;
+		S.ColorSaturation = FVector4(CurrentSaturation, CurrentSaturation, CurrentSaturation, 1.f);
+
+		const float ContrastBoost = 1.f + (1.f - CurrentSaturation) * 0.2f;
+		S.ColorContrast = FVector4(ContrastBoost, ContrastBoost, ContrastBoost, 1.f);
+
+		S.VignetteIntensity = (1.f - CurrentSaturation) * 0.6f;
+	}
+}
+
+void AHellunaHeroController::TickDesaturation(float DeltaTime)
+{
+	if (!DesaturationPostProcess) { return; }
+	// 색채의 개방 연출 중에는 TickColorReveal이 PostProcess를 직접 제어
+	if (bPlayingColorReveal) { return; }
+	if (FMath::IsNearlyEqual(CurrentSaturation, TargetSaturation, 0.001f))
+	{
+		CurrentSaturation = TargetSaturation;
+		return;
+	}
+
+	// Lerp
+	if (CurrentSaturation < TargetSaturation)
+	{
+		CurrentSaturation = FMath::Min(CurrentSaturation + SaturationLerpSpeed * DeltaTime, TargetSaturation);
+	}
+	else
+	{
+		CurrentSaturation = FMath::Max(CurrentSaturation - SaturationLerpSpeed * DeltaTime, TargetSaturation);
+	}
+
+	FPostProcessSettings& S = DesaturationPostProcess->Settings;
+	S.ColorSaturation = FVector4(CurrentSaturation, CurrentSaturation, CurrentSaturation, 1.f);
+
+	const float ContrastBoost = 1.f + (1.f - CurrentSaturation) * 0.2f;
+	S.ColorContrast = FVector4(ContrastBoost, ContrastBoost, ContrastBoost, 1.f);
+
+	S.VignetteIntensity = (1.f - CurrentSaturation) * 0.6f;
+}
+
+// ============================================================================
+// 색채의 개방 — 순백 섬광 → 페이드아웃 → 흑백에서 컬러 복원
+// ============================================================================
+
+void AHellunaHeroController::PlayColorReveal()
+{
+	if (!DesaturationPostProcess) { return; }
+
+	// E키 퇴출 시 bInHackMode가 이미 false → 플래시 스킵, 기존 SetDesaturation으로 처리됨
+	if (!bInHackMode)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[HackMode] PlayColorReveal skipped — not in hack mode (E key exit path)"));
+		return;
+	}
+
+	bPlayingColorReveal = true;
+	ColorRevealProgress = 0.f;
+	bColorRevealVFXSpawned = false;
+
+	// 즉시 섬광 피크
+	FPostProcessSettings& S = DesaturationPostProcess->Settings;
+	S.bOverride_SceneColorTint = true;
+	S.SceneColorTint = FLinearColor(6.f, 6.f, 6.f, 1.f);
+	S.VignetteIntensity = 0.f;
+	// Saturation은 아직 흑백 유지
+	S.ColorSaturation = FVector4(0.f, 0.f, 0.f, 1.f);
+
+	UE_LOG(LogTemp, Warning, TEXT("[HackMode] PlayColorReveal — flash!"));
+}
+
+void AHellunaHeroController::TickColorReveal(float DeltaTime)
+{
+	if (!bPlayingColorReveal) { return; }
+	if (!DesaturationPostProcess) { return; }
+
+	ColorRevealProgress += DeltaTime;
+	FPostProcessSettings& S = DesaturationPostProcess->Settings;
+
+	if (ColorRevealProgress <= 0.3f)
+	{
+		// [0~0.3초] 섬광 유지
+		S.SceneColorTint = FLinearColor(6.f, 6.f, 6.f, 1.f);
+		S.ColorSaturation = FVector4(0.f, 0.f, 0.f, 1.f); // 아직 흑백
+	}
+	else if (ColorRevealProgress <= 1.8f)
+	{
+		// [0.3~1.8초] 빛 페이드아웃 + 컬러 복원 (동시 진행)
+		const float Phase = (ColorRevealProgress - 0.3f) / 1.5f; // 0→1
+		const float EasePhase = Phase * Phase * (3.f - 2.f * Phase); // smoothstep
+
+		// 빛: 6 → 1 (페이드아웃)
+		const float Tint = FMath::Lerp(6.f, 1.f, EasePhase);
+		S.SceneColorTint = FLinearColor(Tint, Tint, Tint, 1.f);
+
+		// Niagara VFX spawn (1 time only, at fade-out start)
+		if (!bColorRevealVFXSpawned && ColorRevealVFX)
+		{
+			bColorRevealVFXSpawned = true;
+			if (APawn* MyPawn = GetPawn())
+			{
+				UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+					GetWorld(), ColorRevealVFX,
+					MyPawn->GetActorLocation() + FVector(0.f, 0.f, 100.f),
+					MyPawn->GetActorRotation());
+				UE_LOG(LogTemp, Warning, TEXT("[HackMode] ColorReveal VFX spawned (during fade-out)"));
+			}
+		}
+
+		// 흑백 → 컬러 (빛 뒤에서 드러남)
+		const float Sat = FMath::Lerp(0.f, 1.f, EasePhase);
+		S.ColorSaturation = FVector4(Sat, Sat, Sat, 1.f);
+
+		// 콘트라스트 정상화
+		const float Con = FMath::Lerp(1.2f, 1.f, EasePhase);
+		S.ColorContrast = FVector4(Con, Con, Con, 1.f);
+
+		CurrentSaturation = Sat;
+	}
+	else
+	{
+		// [1.8초+] 완료
+		FinishColorReveal();
+	}
+}
+
+void AHellunaHeroController::FinishColorReveal()
+{
+	bPlayingColorReveal = false;
+
+	if (DesaturationPostProcess)
+	{
+		FPostProcessSettings& S = DesaturationPostProcess->Settings;
+		S.SceneColorTint = FLinearColor(1.f, 1.f, 1.f, 1.f);
+		S.bOverride_SceneColorTint = false;
+		S.ColorSaturation = FVector4(1.f, 1.f, 1.f, 1.f);
+		S.ColorContrast = FVector4(1.f, 1.f, 1.f, 1.f);
+		S.VignetteIntensity = 0.f;
+	}
+
+	CurrentSaturation = 1.f;
+	TargetSaturation = 1.f;
+	SaturationLerpSpeed = 0.f;
+	bInHackMode = false;
+
+	UE_LOG(LogTemp, Warning, TEXT("[HackMode] ColorReveal finished — full color restored"));
 }

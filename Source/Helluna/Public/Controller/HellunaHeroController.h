@@ -7,12 +7,17 @@
 #include "GenericTeamAgentInterface.h"
 #include "HellunaHeroController.generated.h"
 
+class UNiagaraSystem;
+
 class UVoteWidget;
 class UVoteManagerComponent;
 class UHellunaGameResultWidget;
 class UHellunaChatWidget;
 class UInputAction;
 class UInputMappingContext;
+class APuzzleCubeActor;
+class UPuzzleGridWidget;
+class UPostProcessComponent;
 
 /**
  * @brief   Helluna 영웅 전용 PlayerController
@@ -76,6 +81,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void Tick(float DeltaTime) override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override; // C5: 타이머/델리게이트 정리
 
 	// =========================================================================================
@@ -195,4 +201,217 @@ private:
 	/** 생성된 결과 위젯 인스턴스 */
 	UPROPERTY()
 	TObjectPtr<UHellunaGameResultWidget> GameResultWidgetInstance;
+
+	// =========================================================================================
+	// [Puzzle] 퍼즐 시스템
+	// =========================================================================================
+public:
+	/** 퍼즐 모드 종료 (위젯/입력에서 호출) */
+	void ExitPuzzle();
+
+	/** 퍼즐 셀 회전 요청 (위젯에서 호출 → Server RPC) */
+	void RequestPuzzleRotateCell(int32 CellIndex);
+
+	/** 현재 퍼즐 모드 여부 */
+	UPROPERTY(BlueprintReadOnly, Category = "Puzzle (퍼즐)")
+	bool bInPuzzleMode = false;
+
+	/** F키 홀드 상태 (3D 위젯 프로그레스용) */
+	UFUNCTION(BlueprintCallable, Category = "Puzzle")
+	bool IsHoldingPuzzleInteract() const { return bHoldingPuzzleInteract; }
+
+	/** 현재 해킹 모드(퍼즐 풀기) 중인지 — 퍼즐 사용자만 true */
+	bool IsInHackMode() const { return bInHackMode; }
+
+	/**
+	 * Desaturation 목표 설정 (PuzzleCubeActor Multicast에서 호출)
+	 * @param TargetValue  0.0 = 완전 흑백, 1.0 = 완전 컬러
+	 * @param Duration     전환에 걸리는 시간 (초)
+	 */
+	void SetDesaturation(float TargetValue, float Duration);
+
+	/**
+	 * F 홀드 프로그레스에 따른 로컬 Desaturation 즉시 적용
+	 */
+	void SetDesaturationByProgress(float HoldProgress);
+
+	/**
+	 * 색채의 개방 (The Reveal)
+	 * 퍼즐 성공 시 호출 — 순백 섬광 → 페이드아웃 → 흑백에서 컬러 복원
+	 * bInHackMode=true일 때만 실행 (ESC 퇴출 시 스킵)
+	 *
+	 * [보스전 로드맵]
+	 * 보스 보호막 해제 성공 시에도 동일 연출.
+	 * 나이아가라 파티클(빛 입자 산란)을 페이드아웃과 함께 재생하면 더 극적.
+	 */
+	void PlayColorReveal();
+
+	/** 
+	 * PuzzleCubeActor에서 F 홀드 완료 시 호출 (IMC Hold 트리거 우회용)
+	 * LocalTargetPuzzleCube 설정 + Server RPC 호출
+	 */
+	void TryEnterPuzzleFromCube(class APuzzleCubeActor* Cube);
+
+	/** 색채의 개방 나이아가라 이펙트 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Puzzle|HackMode",
+		meta = (DisplayName = "색채의 개방 VFX"))
+	TObjectPtr<UNiagaraSystem> ColorRevealVFX;
+
+	// --- Server RPCs ---
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_PuzzleTryEnter();
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_PuzzleRotateCell(int32 CellIndex);
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_PuzzleExit();
+
+	// --- Client RPCs ---
+	UFUNCTION(Client, Reliable)
+	void Client_PuzzleEntered();
+
+	UFUNCTION(Client, Reliable)
+	void Client_PuzzleForceExit();
+
+protected:
+	/** 퍼즐 위젯 클래스 (BP에서 설정) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Puzzle|UI (퍼즐|UI)",
+		meta = (DisplayName = "Puzzle Grid Widget Class (퍼즐 그리드 위젯 클래스)"))
+	TSubclassOf<UPuzzleGridWidget> PuzzleGridWidgetClass;
+
+	/** 퍼즐 상호작용 입력 액션 (F 홀드에 매핑) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Puzzle|Input (퍼즐|입력)",
+		meta = (DisplayName = "Puzzle Interact Action (퍼즐 상호작용 액션)"))
+	TObjectPtr<UInputAction> PuzzleInteractAction;
+
+	/** 퍼즐 입력 매핑 컨텍스트 — 항상 활성 (F키 홀드용, priority=10) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Puzzle|Input (퍼즐|입력)",
+		meta = (DisplayName = "Puzzle Mapping Context (퍼즐 상호작용 매핑)"))
+	TObjectPtr<UInputMappingContext> PuzzleMappingContext;
+
+	/**
+	 * 퍼즐 모드 전용 매핑 컨텍스트 — 퍼즐 모드 진입 시에만 추가 (priority=100)
+	 * 방향키(WASD) + 회전 + 나가기(E) 등 일반 게임과 키가 겹치는 액션용.
+	 * 퍼즐 모드가 아닐 때는 제거되어 IMC_Default와 키 충돌 없음.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Puzzle|Input (퍼즐|입력)",
+		meta = (DisplayName = "Puzzle Mode Mapping Context (퍼즐 모드 전용 매핑)"))
+	TObjectPtr<UInputMappingContext> PuzzleModeMappingContext;
+
+	/** 방향키 → 셀 이동 (개별 Boolean) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Puzzle|Input (퍼즐|입력)",
+		meta = (DisplayName = "Puzzle Up Action (퍼즐 위)"))
+	TObjectPtr<UInputAction> PuzzleUpAction;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Puzzle|Input (퍼즐|입력)",
+		meta = (DisplayName = "Puzzle Down Action (퍼즐 아래)"))
+	TObjectPtr<UInputAction> PuzzleDownAction;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Puzzle|Input (퍼즐|입력)",
+		meta = (DisplayName = "Puzzle Left Action (퍼즐 왼쪽)"))
+	TObjectPtr<UInputAction> PuzzleLeftAction;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Puzzle|Input (퍼즐|입력)",
+		meta = (DisplayName = "Puzzle Right Action (퍼즐 오른쪽)"))
+	TObjectPtr<UInputAction> PuzzleRightAction;
+
+	/** E키 → 셀 회전 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Puzzle|Input (퍼즐|입력)",
+		meta = (DisplayName = "Puzzle Rotate Action (퍼즐 회전)"))
+	TObjectPtr<UInputAction> PuzzleRotateAction;
+
+	/** E → 퍼즐 나가기 (PuzzleModeMappingContext에 매핑) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Puzzle|Input (퍼즐|입력)",
+		meta = (DisplayName = "Puzzle Exit Action (퍼즐 나가기)"))
+	TObjectPtr<UInputAction> PuzzleExitAction;
+
+private:
+	/** 현재 활성 퍼즐 위젯 */
+	UPROPERTY()
+	TObjectPtr<UPuzzleGridWidget> ActivePuzzleWidget;
+
+	/** 클라이언트 측 타겟 퍼즐 큐브 */
+	TWeakObjectPtr<APuzzleCubeActor> LocalTargetPuzzleCube;
+
+	/** 서버 측 현재 퍼즐 큐브 */
+	TWeakObjectPtr<APuzzleCubeActor> ServerPuzzleCube;
+
+	/** 퍼즐 상호작용 입력 핸들러 (F 홀드 완료) */
+	void OnPuzzleInteractInput(const struct FInputActionValue& Value);
+
+	/** 퍼즐 방향키 핸들러 (Enhanced Input, 개별 Boolean) */
+	void OnPuzzleUpInput(const struct FInputActionValue& Value);
+	void OnPuzzleDownInput(const struct FInputActionValue& Value);
+	void OnPuzzleLeftInput(const struct FInputActionValue& Value);
+	void OnPuzzleRightInput(const struct FInputActionValue& Value);
+
+	/** 퍼즐 회전 핸들러 (Enhanced Input) */
+	void OnPuzzleRotateInput(const struct FInputActionValue& Value);
+
+	/** 퍼즐 나가기 핸들러 (Enhanced Input) */
+	void OnPuzzleExitInput(const struct FInputActionValue& Value);
+
+	/** F키 홀드 시작 (3D 위젯 프로그레스용) */
+	void OnPuzzleInteractOngoing(const struct FInputActionValue& Value);
+
+	/** F키 홀드 종료 (3D 위젯 프로그레스용) */
+	void OnPuzzleInteractReleased(const struct FInputActionValue& Value);
+
+	/** F키 홀드 상태 추적 */
+	bool bHoldingPuzzleInteract = false;
+
+	// =========================================================================================
+	// 해킹 모드 (화면 흑백 전환)
+	// =========================================================================================
+
+	/**
+	 * PostProcess Desaturation 제어
+	 * F 홀드 프로그레스 → 로컬 전환 (0.5초)
+	 * 해킹 모드 → 전원 전환 (Multicast)
+	 *
+	 * [미래 작업: 영역 기반 흑백]
+	 * 현재: 개인 PostProcessComponent로 전체 화면 Saturation 제어
+	 * 레이드 전환 시: 이 함수 대신 PostProcessVolume 사용
+	 * → F 홀드 프로그레스 중 로컬 흑백은 이 함수 유지 (로컬 프리뷰)
+	 * → 해킹 모드 전환은 볼륨으로 대체
+	 */
+
+	/** 카메라에 부착된 PostProcess 컴포넌트 */
+	UPROPERTY()
+	TObjectPtr<UPostProcessComponent> DesaturationPostProcess;
+
+	/** 목표 Saturation 값 (0=흑백, 1=컬러) */
+	float TargetSaturation = 1.f;
+
+	/** 현재 Saturation 값 */
+	float CurrentSaturation = 1.f;
+
+	/** 전환 속도 (초당 변화량) */
+	float SaturationLerpSpeed = 0.f;
+
+	/** 해킹 모드 중인지 */
+	bool bInHackMode = false;
+
+	/** Tick에서 Saturation Lerp 업데이트 */
+	void TickDesaturation(float DeltaTime);
+
+	// =========================================================================================
+	// 색채의 개방 (순백 섬광 → 페이드아웃 → 컬러 복원)
+	// =========================================================================================
+
+	/** 색채의 개방 연출 중인지 */
+	bool bPlayingColorReveal = false;
+
+	/** ColorReveal VFX already spawned flag */
+	bool bColorRevealVFXSpawned = false;
+
+	/** 색채의 개방 타임라인 진행도 (초) */
+	float ColorRevealProgress = 0.f;
+
+	/** Tick에서 색채의 개방 업데이트 */
+	void TickColorReveal(float DeltaTime);
+
+	/** 색채의 개방 완료 — PostProcess 기본값 복원 */
+	void FinishColorReveal();
 };

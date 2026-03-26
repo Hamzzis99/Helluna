@@ -148,8 +148,8 @@ private:
 	// 사운드 재생 (자원 위치에서 3D 사운드)
 	void PlaySoundAtResource(USoundBase* Sound);
 	
-	// Multicast RPC: 모든 클라이언트에 사운드 전파
-	UFUNCTION(NetMulticast, Reliable)
+	// Multicast RPC: 모든 클라이언트에 사운드 전파 (Unreliable: 사운드 유실 허용, 100몹 공격 시 대역폭 보호)
+	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_PlaySoundAtLocation(USoundBase* Sound, FVector Location);
 };
 

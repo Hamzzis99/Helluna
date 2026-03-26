@@ -1,16 +1,27 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
-
 #include "AbilitySystem/HeroAbility/HeroGameplayAbility_Repair.h"
 #include "GameMode/HellunaDefenseGameState.h"
 #include "Character/HellunaHeroCharacter.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 #include "Component/RepairComponent.h"
-#include "Widgets/RepairMaterialWidget.h"
+#include "Widgets/RepairWidget.h"
+#include "Blueprint/UserWidget.h"
+#include "Blueprint/WidgetBlueprintLibrary.h"
 #include "InventoryManagement/Utils/Inv_InventoryStatics.h"
+#include "InventoryManagement/Components/Inv_InventoryComponent.h"
+#include "Building/Components/Inv_BuildingComponent.h"
 
 #include "DebugHelper.h"
 #include "Helluna.h"
+
+UHeroGameplayAbility_Repair::UHeroGameplayAbility_Repair()
+{
+	// InstancedPerActor: 액터당 1개 인스턴스 → CurrentWidget 멤버 변수가 유지됨
+	// NonInstanced(기본값)이면 CDO를 공유하므로 CurrentWidget 토글이 불가능!
+	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
+	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::LocalOnly;
+}
 
 void UHeroGameplayAbility_Repair::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData)
 {
@@ -18,8 +29,6 @@ void UHeroGameplayAbility_Repair::ActivateAbility(const FGameplayAbilitySpecHand
 
 	Repair(ActorInfo);
 
-	// ⭐ Widget 열고 바로 종료! (Widget은 독립적으로 동작)
-	// 이렇게 해야 다음에 다시 활성화 가능
 	EndAbility(Handle, ActorInfo, ActivationInfo, false, false);
 }
 
@@ -31,93 +40,119 @@ void UHeroGameplayAbility_Repair::EndAbility(const FGameplayAbilitySpecHandle Ha
 void UHeroGameplayAbility_Repair::Repair(const FGameplayAbilityActorInfo* ActorInfo)
 {
 	AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(ActorInfo->AvatarActor.Get());
+	if (!Hero) return;
 
-	if (!Hero)
+	if (!Hero->IsLocallyControlled()) return;
+
+	// [Phase 21] 다운된 팀원 근처면 수리 UI를 열지 않음 (F키 Revive 우선)
+	if (Hero->FindNearestDownedHero() != nullptr)
 	{
+		UE_LOG(LogHelluna, Log, TEXT("[Repair] 근처에 다운 팀원 있음 → 수리 UI 스킵 (Revive 우선)"));
 		return;
 	}
 
-	// ⭐ 로컬 플레이어만 Widget 열기/닫기
-	if (Hero->IsLocallyControlled())
+	UE_LOG(LogTemp, Warning, TEXT("[Repair] Repair() called. this=%p, CurrentWidget=%p, IsValid=%s"),
+		this, CurrentWidget.Get(),
+		IsValid(CurrentWidget) ? TEXT("true") : TEXT("false"));
+
+	// F키 토글: Widget이 이미 열려있으면 닫기
+	const bool bIsInViewport = IsValid(CurrentWidget) && CurrentWidget->IsInViewport();
+	UE_LOG(LogTemp, Warning, TEXT("[Repair] Toggle detected, widget is in viewport: %s"),
+		bIsInViewport ? TEXT("true") : TEXT("false"));
+
+	if (bIsInViewport)
 	{
-		// ⭐⭐⭐ F키 토글: Widget이 이미 열려있으면 닫기!
-		if (CurrentWidget && CurrentWidget->IsInViewport())
+		UE_LOG(LogTemp, Warning, TEXT("[Repair] Closing widget, InputMode -> GameOnly"));
+		if (URepairWidget* RepairWidget = Cast<URepairWidget>(CurrentWidget))
 		{
-#if HELLUNA_DEBUG_REPAIR
-			UE_LOG(LogTemp, Warning, TEXT("=== [Repair Ability] Widget이 이미 열려있음! 닫기 ==="));
-#endif
-			CurrentWidget->CloseWidget();
-			CurrentWidget = nullptr;
-			return;
+			RepairWidget->CloseWidget();
 		}
-
-#if HELLUNA_DEBUG_REPAIR
-		UE_LOG(LogTemp, Warning, TEXT("=== [Repair Ability] Widget 열기 시작 ==="));
-#endif
-
-		// GameState에서 SpaceShip 가져오기
-		if (AHellunaDefenseGameState* GS = GetWorld()->GetGameState<AHellunaDefenseGameState>())
+		else
 		{
-			if (AResourceUsingObject_SpaceShip* Ship = GS->GetSpaceShip())
+			APlayerController* PC = Hero->GetController<APlayerController>();
+			if (PC)
 			{
-				// RepairComponent 찾기
-				URepairComponent* RepairComp = Ship->FindComponentByClass<URepairComponent>();
-				if (!RepairComp)
-				{
-#if HELLUNA_DEBUG_REPAIR
-					UE_LOG(LogTemp, Error, TEXT("  ❌ RepairComponent를 찾을 수 없음!"));
-#endif
-					return;
-				}
+				PC->SetInputMode(FInputModeGameOnly());
+				PC->bShowMouseCursor = false;
+			}
+			CurrentWidget->RemoveFromParent();
+		}
+		CurrentWidget = nullptr;
+		return;
+	}
 
-				// PlayerController 가져오기
-				APlayerController* PC = Hero->GetController<APlayerController>();
-				if (!PC)
-				{
-#if HELLUNA_DEBUG_REPAIR
-					UE_LOG(LogTemp, Error, TEXT("  ❌ PlayerController를 찾을 수 없음!"));
-#endif
-					return;
-				}
+	UE_LOG(LogTemp, Warning, TEXT("[Repair] Opening widget, InputMode -> GameAndUI"));
 
-				// InventoryComponent 가져오기
-				UInv_InventoryComponent* InvComp = UInv_InventoryStatics::GetInventoryComponent(PC);
-				if (!InvComp)
-				{
-#if HELLUNA_DEBUG_REPAIR
-					UE_LOG(LogTemp, Error, TEXT("  ❌ InventoryComponent를 찾을 수 없음!"));
-#endif
-					return;
-				}
+	AHellunaDefenseGameState* GS = GetWorld()->GetGameState<AHellunaDefenseGameState>();
+	if (!GS) return;
 
-				// ⭐ Widget 생성 및 표시
-				if (RepairMaterialWidgetClass)
-				{
-					CurrentWidget = CreateWidget<URepairMaterialWidget>(PC, RepairMaterialWidgetClass);
-					if (CurrentWidget)
-					{
-						CurrentWidget->InitializeWidget(RepairComp, InvComp);
-						CurrentWidget->AddToViewport(100);  // 최상위 Z-Order
+	AResourceUsingObject_SpaceShip* Ship = GS->GetSpaceShip();
+	if (!Ship) return;
 
-						// ⭐ 마우스 커서 표시 및 입력 모드 변경
-						PC->FlushPressedKeys();
-						PC->SetInputMode(FInputModeUIOnly());
-						PC->bShowMouseCursor = true;
+	URepairComponent* RepairComp = Ship->FindComponentByClass<URepairComponent>();
+	if (!RepairComp)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Repair] RepairComponent not found!"));
+		return;
+	}
 
-#if HELLUNA_DEBUG_REPAIR
-						UE_LOG(LogTemp, Warning, TEXT("  ✅ RepairMaterial Widget 생성 완료!"));
-						UE_LOG(LogTemp, Warning, TEXT("  🖱️ 마우스 커서 활성화!"));
-#endif
-					}
-				}
-				else
-				{
-#if HELLUNA_DEBUG_REPAIR
-					UE_LOG(LogTemp, Error, TEXT("  ❌ RepairMaterialWidgetClass가 설정되지 않음! Blueprint에서 설정하세요!"));
-#endif
-				}
+	APlayerController* PC = Hero->GetController<APlayerController>();
+	if (!PC) return;
+
+	UInv_InventoryComponent* InvComp = UInv_InventoryStatics::GetInventoryComponent(PC);
+	if (!InvComp) return;
+
+	// 방안 B: 다른 위젯 열려있으면 먼저 닫기
+	if (InvComp->IsMenuOpen())
+	{
+		InvComp->ToggleInventoryMenu();
+	}
+
+	UInv_BuildingComponent* BuildComp = PC->FindComponentByClass<UInv_BuildingComponent>();
+	if (IsValid(BuildComp))
+	{
+		BuildComp->ForceEndBuildMode();
+		BuildComp->CloseBuildMenu();
+	}
+
+	// CraftingMenu 열려있으면 닫기
+	if (UWorld* RepairWorld = GetWorld())
+	{
+		TArray<UUserWidget*> FoundWidgets;
+		UWidgetBlueprintLibrary::GetAllWidgetsOfClass(RepairWorld, FoundWidgets, UUserWidget::StaticClass(), false);
+		for (UUserWidget* Widget : FoundWidgets)
+		{
+			if (!IsValid(Widget)) continue;
+			if (Widget->GetClass()->GetName().Contains(TEXT("CraftingMenu")))
+			{
+				Widget->RemoveFromParent();
 			}
 		}
 	}
-}
 
+	if (!RepairMaterialWidgetClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Repair] RepairMaterialWidgetClass not set!"));
+		return;
+	}
+
+	CurrentWidget = CreateWidget<UUserWidget>(PC, RepairMaterialWidgetClass);
+	if (!CurrentWidget) return;
+
+	UE_LOG(LogTemp, Warning, TEXT("[Repair] Widget created: %p (%s)"),
+		CurrentWidget.Get(), *CurrentWidget->GetClass()->GetName());
+
+	// RepairWidget이면 InitializeWidget 호출
+	if (URepairWidget* RepairWidget = Cast<URepairWidget>(CurrentWidget))
+	{
+		RepairWidget->InitializeWidget(RepairComp, InvComp);
+	}
+
+	CurrentWidget->AddToViewport(100);
+
+	PC->FlushPressedKeys();
+	PC->SetInputMode(FInputModeGameAndUI());
+	PC->bShowMouseCursor = true;
+
+	UE_LOG(LogTemp, Warning, TEXT("[Repair] Widget added to viewport. CurrentWidget=%p"), CurrentWidget.Get());
+}

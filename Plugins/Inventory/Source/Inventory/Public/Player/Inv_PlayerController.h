@@ -632,12 +632,24 @@ private:
 		meta = (DisplayName = "아이템 추적 채널", Tooltip = "아이템 탐지용 콜리전 채널입니다."))
 	TEnumAsByte<ECollisionChannel> ItemTraceChannel = ECC_Visibility;
 
+	/** 트레이스 반경 (0이면 LineTrace, >0이면 SphereTrace로 아이템 줍기 쉬워짐) */
+	UPROPERTY(EditDefaultsOnly, Category = "인벤토리",
+		meta = (DisplayName = "추적 반경 (Sphere Trace)", Tooltip = "0 = 기존 LineTrace, 20~30 = 아이템 줍기 쉬움", ClampMin = "0", ClampMax = "100"))
+	float TraceRadius = 20.f;
+
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_Interact(AActor* TargetActor);
+
+	// 방안 B: 인벤토리 메뉴 상태 변경 시 HUD 자동 관리 (델리게이트 핸들러)
+	UFUNCTION()
+	void OnInventoryMenuStateChanged(bool bOpen);
 
 	TWeakObjectPtr<AActor> ThisActor;
 	TWeakObjectPtr<AActor> LastActor;
 	TWeakObjectPtr<AActor> CurrentCraftingStation;
+
+	/** Enhanced Input에서 PrimaryInteractAction에 바인딩된 키 이름 조회 */
+	FString GetBoundInteractKeyName() const;
 
 	// ═══════════════════════════════════════════
 	// Phase 9: 컨테이너 UI
