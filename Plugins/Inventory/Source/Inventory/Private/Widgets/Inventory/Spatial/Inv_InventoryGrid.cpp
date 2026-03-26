@@ -4326,18 +4326,19 @@ int32 UInv_InventoryGrid::RestoreItemPositions(const TArray<FInv_SavedItemData>&
 // ============================================
 // ⭐ [Phase 4 Fix] 복원 완료 후 서버에 올바른 위치 전송
 // ============================================
-void UInv_InventoryGrid::SendAllItemPositionsToServer()
+int32 UInv_InventoryGrid::AppendItemPositionSyncRequests(TArray<FInv_GridPositionSyncData>& OutRequests) const
 {
 	if (!InventoryComponent.IsValid())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[SendAllItemPositionsToServer] InventoryComponent 없음, 스킵"));
-		return;
+		UE_LOG(LogTemp, Warning, TEXT("[AppendItemPositionSyncRequests] InventoryComponent 없음, 스킵"));
+		return 0;
 	}
 
 	const int32 CategoryIndex = static_cast<int32>(ItemCategory);
 	const uint8 GridCategoryValue = static_cast<uint8>(ItemCategory);
-	
-	int32 SentCount = 0;
+	int32 AppendedCount = 0;
+
+	OutRequests.Reserve(OutRequests.Num() + SlottedItems.Num());
 	
 	for (const auto& Pair : SlottedItems)
 	{
@@ -4349,19 +4350,38 @@ void UInv_InventoryGrid::SendAllItemPositionsToServer()
 		UInv_InventoryItem* Item = SlottedItem->GetInventoryItem();
 		if (!IsValid(Item)) continue;
 		
-		// 서버에 올바른 위치 전송 (회전 상태 포함)
-		InventoryComponent->Server_UpdateItemGridPosition(Item, GridIndex, GridCategoryValue, SlottedItem->IsRotated());
-		SentCount++;
+		OutRequests.Emplace(Item, GridIndex, GridCategoryValue, SlottedItem->IsRotated());
+		AppendedCount++;
 		
 #if INV_DEBUG_WIDGET
-		UE_LOG(LogTemp, Log, TEXT("[SendAllItemPositionsToServer] Grid%d: %s → Index=%d"),
+		UE_LOG(LogTemp, Log, TEXT("[AppendItemPositionSyncRequests] Grid%d: %s → Index=%d"),
 			CategoryIndex, *Item->GetItemManifest().GetItemType().ToString(), GridIndex);
 #endif
 	}
 
+	return AppendedCount;
+}
+
+void UInv_InventoryGrid::SendAllItemPositionsToServer()
+{
+	if (!InventoryComponent.IsValid())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[SendAllItemPositionsToServer] InventoryComponent 없음, 스킵"));
+		return;
+	}
+
+	TArray<FInv_GridPositionSyncData> SyncRequests;
+	const int32 SentCount = AppendItemPositionSyncRequests(SyncRequests);
+	if (SentCount <= 0)
+	{
+		return;
+	}
+
+	InventoryComponent->Server_UpdateItemGridPositionsBatch(SyncRequests);
+
 #if INV_DEBUG_WIDGET
 	UE_LOG(LogTemp, Warning, TEXT("[SendAllItemPositionsToServer] Grid%d: %d개 아이템 위치 전송 완료"),
-		CategoryIndex, SentCount);
+		static_cast<int32>(ItemCategory), SentCount);
 #endif
 }
 

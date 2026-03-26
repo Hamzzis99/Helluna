@@ -89,6 +89,12 @@ public:
 	void Server_UpdateItemGridPosition(UInv_InventoryItem* Item, int32 GridIndex, uint8 GridCategory, bool bRotated = false);
 	bool Server_UpdateItemGridPosition_Validate(UInv_InventoryItem* Item, int32 GridIndex, uint8 GridCategory, bool bRotated);
 
+	// 복원 직후 레이아웃 동기화 전용 배치 RPC
+	// 일반 드래그/드롭은 기존 단건 RPC를 유지한다.
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_UpdateItemGridPositionsBatch(const TArray<FInv_GridPositionSyncData>& SyncRequests);
+	bool Server_UpdateItemGridPositionsBatch_Validate(const TArray<FInv_GridPositionSyncData>& SyncRequests);
+
 	UFUNCTION(Server, Reliable, WithValidation) // 크래프팅: 서버에서 아이템 생성 및 인벤토리 추가
 	void Server_CraftItem(TSubclassOf<AActor> ItemActorClass);
 
@@ -299,6 +305,7 @@ private:
 	// 현재는 서버에 GridSlot(UI)이 없어서 별도 구현한 중복 로직
 	// ⭐ 서버 전용: InventoryList 기반 공간 체크 (UI 없이 작동!)
 	bool HasRoomInInventoryList(const FInv_ItemManifest& Manifest) const;
+	bool ApplyItemGridPositionSync(UInv_InventoryItem* Item, int32 GridIndex, uint8 GridCategory, bool bRotated);
 
 	// ⭐ [SERVER-ONLY] 서버의 InventoryList를 기준으로 실제 재료 보유 여부를 확인합니다.
 	bool HasRequiredMaterialsOnServer(const FGameplayTag& MaterialTag, int32 RequiredAmount) const;

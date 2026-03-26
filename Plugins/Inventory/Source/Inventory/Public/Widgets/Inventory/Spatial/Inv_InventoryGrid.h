@@ -275,6 +275,7 @@ public:
 	 * 현재 Grid의 모든 아이템 위치를 서버에 전송
 	 * 복원 완료 후 호출하여 올바른 위치로 동기화
 	 */
+	int32 AppendItemPositionSyncRequests(TArray<FInv_GridPositionSyncData>& OutRequests) const;
 	void SendAllItemPositionsToServer();
 
 	// ════════════════════════════════════════════════════════════════
