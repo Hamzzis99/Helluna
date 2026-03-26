@@ -2216,8 +2216,9 @@ void AHellunaHeroCharacter::TickDownedScreenEffect(float DeltaTime)
 	{
 		const float SaturationValue = FMath::Lerp(0.45f, 1.0f, BleedoutRatio);
 
+		// PP VignetteIntensity 사용 안 함 — 빨간 비네트는 위젯(M_BloodVignette)이 담당
 		DownedPostProcess->Settings.bOverride_VignetteIntensity = true;
-		DownedPostProcess->Settings.VignetteIntensity = FMath::Lerp(0.f, 0.8f, FinalOpacity);
+		DownedPostProcess->Settings.VignetteIntensity = 0.f;
 		DownedPostProcess->Settings.bOverride_ColorSaturation = true;
 		DownedPostProcess->Settings.ColorSaturation = FVector4(SaturationValue, SaturationValue, SaturationValue, 1.0f);
 
@@ -2228,11 +2229,16 @@ void AHellunaHeroCharacter::TickDownedScreenEffect(float DeltaTime)
 		DownedPostProcess->MarkRenderStateDirty();
 	}
 
-	// ── MID 파라미터 (InnerRadius 동적 제어) ──
+	// ── MID 파라미터 (Hurt PP 전용) ──
 	if (DownedPPMID)
 	{
-		DownedPPMID->SetScalarParameterValue(FName("InnerRadius"), FinalIR);
-		DownedPPMID->SetScalarParameterValue(FName("Intensity"), FinalOpacity);
+		// Hurt PP의 "VIGNETTE INTENSITY" 파라미터로 비네트 강도 제어
+		DownedPPMID->SetScalarParameterValue(FName("VIGNETTE INTENSITY"), FinalOpacity);
+		// HeartBeat 파라미터로 심장박동 펄스 연동 (0.0~1.0)
+		DownedPPMID->SetScalarParameterValue(FName("HeartBeat"), PulseOpacityBoost / PULSE_OP_AMOUNT);
+		// HeartbeatStrength: 출혈 진행에 따라 0.25→1.0 (사망 직전 심장박동 극대화)
+		const float HBStrength = FMath::Lerp(1.0f, 0.25f, BleedoutRatio);
+		DownedPPMID->SetScalarParameterValue(FName("HeartbeatStrength"), HBStrength);
 	}
 
 	// ── MID Weight ──
@@ -2240,15 +2246,15 @@ void AHellunaHeroCharacter::TickDownedScreenEffect(float DeltaTime)
 	{
 		if (DownedPostProcess->Settings.WeightedBlendables.Array.Num() > 0)
 		{
-			DownedPostProcess->Settings.WeightedBlendables.Array[0].Weight = FinalOpacity;
+			// Hurt PP는 PostProcess/Opaque → Weight=1.0이면 원본 화면 100% 대체
+			// 혈흔 비네트를 부드럽게 보여주려면 0.0~0.35 범위로 제한
+			const float PPWeight = FinalOpacity * PP_WEIGHT_MAX;
+			DownedPostProcess->Settings.WeightedBlendables.Array[0].Weight = PPWeight;
 		}
 	}
 
-	// ── 위젯 Opacity ──
-	if (DownedOverlayWidget)
-	{
-		DownedOverlayWidget->SetRenderOpacity(FinalOpacity);
-	}
+	// 위젯 오버레이는 PP 머티리얼이 대체 — 위젯은 숨김 유지
+	// (WBP_DownedOverlay의 모든 Image는 Collapsed 상태)
 
 	// ── 암전: PP ColorGain에 Blackout 추가 반영 ──
 	if (DownedPostProcess && DownedBlackout > 0.01f)

@@ -421,6 +421,9 @@ public:
 	static constexpr float PULSE_DECAY_SPEED = 5.0f;
 	static constexpr float EFFECT_INTERP_SPEED = 3.0f;
 
+	/** PP 머티리얼 Weight 최대값 (PostProcess/Opaque는 1.0이면 화면 100% 대체) */
+	static constexpr float PP_WEIGHT_MAX = 0.35f;
+
 	/** 다운 효과 시작 (로컬 전용, Multicast_PlayHeroDowned에서 호출) */
 	void StartDownedScreenEffect();
 
