@@ -52,6 +52,10 @@ class HELLUNA_API AHellunaHeroCharacter : public AHellunaBaseCharacter
 public:
 	AHellunaHeroCharacter();
 
+	/** F키 상호작용 홀드 상태 (BossEncounterCube 등 Tick 프로그레스용) */
+	UFUNCTION(BlueprintCallable, Category = "Interaction")
+	bool IsHoldingInteraction() const { return bHoldingInteraction; }
+
 protected:
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 	virtual void BeginPlay() override;
@@ -540,6 +544,13 @@ protected:
 	// ── Revive 입력 (F키 홀드) ──
 	void Input_ReviveStarted(const FInputActionValue& Value);
 	void Input_ReviveCompleted(const FInputActionValue& Value);
+
+	// ── Interaction 입력 (F키 홀드 — BossEncounterCube 등) ──
+	void Input_InteractionStarted(const FInputActionValue& Value);
+	void Input_InteractionCompleted(const FInputActionValue& Value);
+
+	/** F키 홀드 상태 (BossEncounterCube 등에서 Tick 프로그레스 갱신용) */
+	bool bHoldingInteraction = false;
 
 	/** 서버 RPC: 부활 시작 */
 	UFUNCTION(Server, Reliable)

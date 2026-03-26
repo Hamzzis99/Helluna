@@ -590,6 +590,10 @@ void AHellunaHeroCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInp
 	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Revive, ETriggerEvent::Started, this, &ThisClass::Input_ReviveStarted);
 	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Revive, ETriggerEvent::Completed, this, &ThisClass::Input_ReviveCompleted);
 
+	// [BossEvent] F키 상호작용 입력 바인딩 (BossEncounterCube 등)
+	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Interaction, ETriggerEvent::Started, this, &ThisClass::Input_InteractionStarted);
+	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Interaction, ETriggerEvent::Completed, this, &ThisClass::Input_InteractionCompleted);
+
 	HellunaInputComponent->BindAbilityInputAction(InputConfigDataAsset, this, &ThisClass::Input_AbilityInputPressed, &ThisClass::Input_AbilityInputReleased);
 }
 
@@ -1710,6 +1714,20 @@ void AHellunaHeroCharacter::Input_ReviveCompleted(const FInputActionValue& Value
 		*GetName());
 	Server_StopRevive();
 	HideReviveProgressHUD();
+}
+
+// ============================================================================
+// [BossEvent] Interaction 입력 — F키 홀드 상태 전달
+// ============================================================================
+
+void AHellunaHeroCharacter::Input_InteractionStarted(const FInputActionValue& Value)
+{
+	bHoldingInteraction = true;
+}
+
+void AHellunaHeroCharacter::Input_InteractionCompleted(const FInputActionValue& Value)
+{
+	bHoldingInteraction = false;
 }
 
 AHellunaHeroCharacter* AHellunaHeroCharacter::FindNearestDownedHero() const
