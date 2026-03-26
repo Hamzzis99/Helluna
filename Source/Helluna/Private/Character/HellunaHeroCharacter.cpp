@@ -2239,6 +2239,9 @@ void AHellunaHeroCharacter::TickDownedScreenEffect(float DeltaTime)
 		// HeartbeatStrength: 출혈 진행에 따라 0.25→1.0 (사망 직전 심장박동 극대화)
 		const float HBStrength = FMath::Lerp(1.0f, 0.25f, BleedoutRatio);
 		DownedPPMID->SetScalarParameterValue(FName("HeartbeatStrength"), HBStrength);
+		// 혈관 흔들림 축소 (기본 0.18 → 0.05로 줄여 부드럽게)
+		DownedPPMID->SetScalarParameterValue(FName("VeinsOffsetX"), DownedVeinsOffsetX);
+		DownedPPMID->SetScalarParameterValue(FName("DropsNormalStrength"), DownedDropsNormalStrength);
 	}
 
 	// ── MID Weight ──

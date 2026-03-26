@@ -406,23 +406,89 @@ public:
 	float PulseIRBoost = 0.f;
 	float PulseOpacityBoost = 0.f;
 
-	// 상수
-	static constexpr float IR_START = 0.55f;
-	static constexpr float IR_END = 0.10f;
-	static constexpr float OP_START = 0.5f;
-	static constexpr float OP_END = 1.0f;
-	static constexpr float OUTER_RADIUS = 0.75f;
-	static constexpr float DARKEN_START = 0.40f;
-	static constexpr float BLACKOUT_START = 0.05f;
-	static constexpr float PULSE_IR_AMOUNT = 0.05f;
-	static constexpr float PULSE_OP_AMOUNT = 0.08f;
-	static constexpr float PULSE_PERIOD_MAX = 2.0f;
-	static constexpr float PULSE_PERIOD_MIN = 0.4f;
-	static constexpr float PULSE_DECAY_SPEED = 5.0f;
-	static constexpr float EFFECT_INTERP_SPEED = 3.0f;
+	// =========================================================
+	// ★ [Phase21] 다운 화면 효과 — BP 조절 가능 파라미터
+	// =========================================================
 
-	/** PP 머티리얼 Weight 최대값 (PostProcess/Opaque는 1.0이면 화면 100% 대체) */
-	static constexpr float PP_WEIGHT_MAX = 0.35f;
+	// --- 비네트 InnerRadius ---
+	/** 다운 시작 시 비네트 내부 반경 (클수록 중앙이 넓게 보임) */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|Vignette",
+		meta = (DisplayName = "비네트 시작 반경", ClampMin = "0.0", ClampMax = "1.0"))
+	float IR_START = 0.55f;
+
+	/** 사망 직전 비네트 내부 반경 (작을수록 화면이 좁아짐) */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|Vignette",
+		meta = (DisplayName = "비네트 종료 반경", ClampMin = "0.0", ClampMax = "1.0"))
+	float IR_END = 0.10f;
+
+	// --- 불투명도 ---
+	/** 다운 시작 시 효과 불투명도 */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|Vignette",
+		meta = (DisplayName = "시작 불투명도", ClampMin = "0.0", ClampMax = "1.0"))
+	float OP_START = 0.5f;
+
+	/** 사망 직전 효과 불투명도 */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|Vignette",
+		meta = (DisplayName = "종료 불투명도", ClampMin = "0.0", ClampMax = "1.0"))
+	float OP_END = 1.0f;
+
+	// --- 밝기/암전 ---
+	/** 어두워지기 시작하는 체력 비율 (0.4 = 40% 이하부터) */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|Brightness",
+		meta = (DisplayName = "어두워짐 시작 비율", ClampMin = "0.0", ClampMax = "1.0"))
+	float DARKEN_START = 0.40f;
+
+	/** 완전 암전 시작 체력 비율 (0.05 = 5% 이하부터) */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|Brightness",
+		meta = (DisplayName = "암전 시작 비율", ClampMin = "0.0", ClampMax = "0.5"))
+	float BLACKOUT_START = 0.05f;
+
+	// --- 심장박동 펄스 ---
+	/** 심장박동 주기 — 다운 직후 (초, 느린 두근) */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|Heartbeat",
+		meta = (DisplayName = "심장박동 최대 주기(초)", ClampMin = "0.2", ClampMax = "5.0"))
+	float PULSE_PERIOD_MAX = 2.0f;
+
+	/** 심장박동 주기 — 사망 직전 (초, 빠른 두근) */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|Heartbeat",
+		meta = (DisplayName = "심장박동 최소 주기(초)", ClampMin = "0.1", ClampMax = "2.0"))
+	float PULSE_PERIOD_MIN = 0.4f;
+
+	/** 심장박동 IR 부스트량 (펄스마다 비네트가 좁아지는 정도) */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|Heartbeat",
+		meta = (DisplayName = "펄스 IR 부스트", ClampMin = "0.0", ClampMax = "0.2"))
+	float PULSE_IR_AMOUNT = 0.05f;
+
+	/** 심장박동 Opacity 부스트량 (펄스마다 효과가 진해지는 정도) */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|Heartbeat",
+		meta = (DisplayName = "펄스 Opacity 부스트", ClampMin = "0.0", ClampMax = "0.3"))
+	float PULSE_OP_AMOUNT = 0.08f;
+
+	/** 심장박동 펄스 감쇠 속도 (클수록 빠르게 원래로 돌아옴) */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|Heartbeat",
+		meta = (DisplayName = "펄스 감쇠 속도", ClampMin = "1.0", ClampMax = "15.0"))
+	float PULSE_DECAY_SPEED = 5.0f;
+
+	// --- PP 머티리얼 (Vefects Hurt) ---
+	/** PP 머티리얼 Weight 최대값 (1.0이면 화면 100% 대체 → 0.35 권장) */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|PP Material",
+		meta = (DisplayName = "PP Weight 최대값", ClampMin = "0.05", ClampMax = "1.0"))
+	float PP_WEIGHT_MAX = 0.35f;
+
+	/** Hurt PP 혈관 흔들림 (0=정적, 0.18=기본값, 낮을수록 부드러움) */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|PP Material",
+		meta = (DisplayName = "혈관 흔들림 (VeinsOffsetX)", ClampMin = "0.0", ClampMax = "0.5"))
+	float DownedVeinsOffsetX = 0.05f;
+
+	/** Hurt PP 물방울 굴절 강도 (0=없음, 0.1=기본값) */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|PP Material",
+		meta = (DisplayName = "물방울 굴절 (DropsNormalStrength)", ClampMin = "0.0", ClampMax = "0.3"))
+	float DownedDropsNormalStrength = 0.03f;
+
+	/** 전체 효과 보간 속도 (클수록 즉각 반응) */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|General",
+		meta = (DisplayName = "효과 보간 속도", ClampMin = "1.0", ClampMax = "10.0"))
+	float EFFECT_INTERP_SPEED = 3.0f;
 
 	/** 다운 효과 시작 (로컬 전용, Multicast_PlayHeroDowned에서 호출) */
 	void StartDownedScreenEffect();
