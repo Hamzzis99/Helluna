@@ -54,6 +54,24 @@ struct FSTTask_ChaseTargetInstanceData
 	// Stuck 누적 시간 (이 시간이 임계값을 넘으면 다른 박스로 전환)
 	UPROPERTY()
 	float StuckAccumTime = 0.f;
+
+	// ─── 슬롯 관련 ────────────────────────────────────────────
+
+	/** 현재 배정된 슬롯 인덱스 (-1 = 미배정) */
+	UPROPERTY()
+	int32 AssignedSlotIndex = -1;
+
+	/** 배정된 슬롯 월드 위치 */
+	UPROPERTY()
+	FVector AssignedSlotLocation = FVector::ZeroVector;
+
+	/** 슬롯 재배정 시도까지 남은 쿨다운 */
+	UPROPERTY()
+	float SlotRetryTimer = 0.f;
+
+	/** 슬롯 위치에 도착했는지 */
+	UPROPERTY()
+	bool bSlotArrived = false;
 };
 
 USTRUCT(meta = (DisplayName = "Helluna: Chase Target", Category = "Helluna|AI"))
@@ -112,4 +130,15 @@ public:
 			ToolTip = "우주선 주변 박스 위치에서 몬스터가 흩어지는 랜덤 반경입니다.\n값이 클수록 더 넓게 분산됩니다.",
 			ClampMin = "0.0"))
 	float ShipSpreadRadius = 200.f;
+
+	UPROPERTY(EditAnywhere, Category = "설정",
+		meta = (DisplayName = "우주선 공격 슬롯 시스템 사용",
+			ToolTip = "체크: 우주선 주변 슬롯을 예약해서 이동합니다. (근거리 몬스터 권장)\n해제: 슬롯 없이 우주선 주변 랜덤 위치로 자유롭게 이동합니다. (원거리 몬스터 권장)"))
+	bool bUseSlotSystem = true;
+
+	UPROPERTY(EditAnywhere, Category = "설정",
+		meta = (DisplayName = "슬롯 진입 반경 (cm)",
+			ToolTip = "우주선으로부터 이 거리 안에 들어오면 슬롯 배정을 시도합니다.\n밖에서는 우주선을 향해 직접 이동합니다.\nSlotManager의 MaxRadius보다 크게 설정하세요.",
+			ClampMin = "100.0"))
+	float SlotEngageRadius = 800.f;
 };

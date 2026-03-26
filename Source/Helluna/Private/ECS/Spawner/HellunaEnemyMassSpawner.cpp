@@ -5,7 +5,6 @@
 #include "GameMode/HellunaDefenseGameMode.h"
 #include "GameMode/HellunaDefenseGameState.h"
 #include "Kismet/GameplayStatics.h"
-#include "DebugHelper.h"
 
 DEFINE_LOG_CATEGORY(LogHellunaSpawner);
 
@@ -35,6 +34,14 @@ void AHellunaEnemyMassSpawner::RequestSpawn(int32 InSpawnCount)
 
 	// 소환 수 확정: 0 이하면 BP 기본값 사용
 	RequestedSpawnCount = (InSpawnCount > 0) ? InSpawnCount : GetSpawnCount();
+
+	// GetSpawnCount()가 0을 반환하면 DoSpawning에서 Count가 덮어써지지 않아 이전 Count 잔재가 쓰임
+	if (RequestedSpawnCount <= 0)
+	{
+		UE_LOG(LogHellunaSpawner, Warning,
+			TEXT("[RequestSpawn] RequestedSpawnCount=%d — BP의 Count/GetSpawnCount() 반환값을 확인하세요. Spawner: %s"),
+			RequestedSpawnCount, *GetName());
+	}
 
 	GetWorldTimerManager().ClearTimer(DelayTimerHandle);
 
@@ -137,21 +144,35 @@ void AHellunaEnemyMassSpawner::ExecuteDelayedSpawn()
 	{
 		Count = RequestedSpawnCount;
 		ScaleSpawningCount(1.0f); // Scale을 1로 초기화 (이전 Scale 잔재 제거)
-
-		Debug::Print(FString::Printf(TEXT("[ExecuteDelayedSpawn] Count=%d 설정. Spawner: %s"),
-			Count, *GetName()), FColor::Cyan);
 	}
 
 	// EntityTypes 상태 진단 — BP에 설정된 타입 수와 Proportion 확인
-	Debug::Print(FString::Printf(TEXT("[ExecuteDelayedSpawn] EntityTypes:%d | Count:%d | Spawner:%s"),
-		EntityTypes.Num(), Count, *GetName()), FColor::Yellow);
+	// EntityTypes가 비어있으면 DoSpawning이 아무것도 생성하지 않음
+	if (EntityTypes.IsEmpty())
+	{
+		UE_LOG(LogHellunaSpawner, Error,
+			TEXT("[ExecuteDelayedSpawn] EntityTypes가 비어있음 — BP에서 EntityTypes를 설정했는지 확인하세요. Spawner: %s"), *GetName());
+	}
+
 	for (int32 i = 0; i < EntityTypes.Num(); ++i)
 	{
-		const FString ConfigName = EntityTypes[i].EntityConfig.IsNull()
+		const bool bConfigNull = EntityTypes[i].EntityConfig.IsNull();
+		const FString ConfigName = bConfigNull
 			? TEXT("null")
 			: EntityTypes[i].EntityConfig.ToSoftObjectPath().GetAssetName();
-		Debug::Print(FString::Printf(TEXT("  [%d] EntityConfig:%s | Proportion:%.2f"),
-			i, *ConfigName, EntityTypes[i].Proportion), FColor::Yellow);
+
+		if (bConfigNull)
+		{
+			UE_LOG(LogHellunaSpawner, Error,
+				TEXT("[ExecuteDelayedSpawn] EntityTypes[%d].EntityConfig가 null — 해당 타입은 스폰되지 않음. Spawner: %s"),
+				i, *GetName());
+		}
+		else
+		{
+			UE_LOG(LogHellunaSpawner, Log,
+				TEXT("[ExecuteDelayedSpawn] EntityTypes[%d]: Config=%s | Proportion=%.2f"),
+				i, *ConfigName, EntityTypes[i].Proportion);
+		}
 	}
 
 	UE_LOG(LogHellunaSpawner, Log,

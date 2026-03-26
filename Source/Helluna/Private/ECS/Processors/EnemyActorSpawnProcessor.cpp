@@ -28,7 +28,6 @@
 
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Components/SceneComponent.h"
-#include "DebugHelper.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogECSEnemy, Log, All);
 
@@ -303,7 +302,9 @@ void UEnemyActorSpawnProcessor::Execute(
 		if (!Pool)
 		{
 			// 서버에서 풀 없으면 서버 로직만 스킵
-			Debug::Print(TEXT("[EnemyProc] Pool missing - skip server actor logic"), FColor::Red);
+			// UEnemyActorPool이 WorldSubsystem으로 등록되어 있는지 확인 필요
+			UE_LOG(LogECSEnemy, Error,
+				TEXT("[EnemyProc] UEnemyActorPool 서브시스템 없음 — 서버 스폰 로직 전체 스킵. WorldSubsystem 등록 여부를 확인하세요."));
 		}
 		else
 		{
@@ -389,7 +390,10 @@ void UEnemyActorSpawnProcessor::Execute(
 					// Step 2: 엔티티 순회 준비
 					// ------------------------------------------------------------------
 					int32 ActiveActorCount = 0;
+					// [주의] MaxConcurrentActorsValue는 엔티티 순회 중 마지막 Data값으로 덮어써짐.
+					// 클래스별로 MaxConcurrentActors가 다르면 순회 순서에 따라 Cap이 달라지는 버그가 있음.
 					int32 MaxConcurrentActorsValue = 50;
+					int32 FirstSeenMaxConcurrent = -1; // 불일치 감지용
 
 					struct FSoftCapEntry
 					{
@@ -420,6 +424,20 @@ void UEnemyActorSpawnProcessor::Execute(
 								FTransformFragment& Transform = TransformList[i];
 
 								MaxConcurrentActorsValue = Data.MaxConcurrentActors;
+
+								// 클래스별 MaxConcurrentActors 불일치 감지
+								if (FirstSeenMaxConcurrent < 0)
+								{
+									FirstSeenMaxConcurrent = MaxConcurrentActorsValue;
+								}
+								else if (FirstSeenMaxConcurrent != MaxConcurrentActorsValue)
+								{
+									UE_LOG(LogECSEnemy, Warning,
+										TEXT("[SoftCap] MaxConcurrentActors 불일치: 첫값=%d vs 현재=%d "
+										     "클래스별 동일값을 쓰거나 전역 Cap으로 분리하세요."),
+										FirstSeenMaxConcurrent, MaxConcurrentActorsValue);
+									FirstSeenMaxConcurrent = MaxConcurrentActorsValue;
+								}
 
 								if (SpawnState.bHasSpawnedActor)
 								{
@@ -513,10 +531,9 @@ void UEnemyActorSpawnProcessor::Execute(
 							Removed++;
 						}
 
-						Debug::Print(
-							FString::Printf(TEXT("[SoftCap] %d -> %d (Removed=%d)"),
-								ActiveActorCount, ActiveActorCount - Removed, Removed),
-							FColor::Yellow);
+						UE_LOG(LogECSEnemy, Log,
+							TEXT("[SoftCap] %d -> %d (Removed=%d)"),
+							ActiveActorCount, ActiveActorCount - Removed, Removed);
 					}
 
 					// 디버그(300프레임마다)
@@ -524,11 +541,10 @@ void UEnemyActorSpawnProcessor::Execute(
 					if (CurrentFrame - LastDebugFrame >= 300)
 					{
 						LastDebugFrame = CurrentFrame;
-						Debug::Print(
-							FString::Printf(TEXT("[ServerStatus] Active=%d/%d | Players=%d | Pool(A=%d I=%d)"),
-								ActiveActorCount, MaxConcurrentActorsValue, PlayerLocations.Num(),
-								Pool->GetTotalActiveCount(), Pool->GetTotalInactiveCount()),
-							FColor::Cyan);
+						UE_LOG(LogECSEnemy, Log,
+							TEXT("[ServerStatus] Active=%d/%d | Players=%d | Pool(A=%d I=%d)"),
+							ActiveActorCount, MaxConcurrentActorsValue, PlayerLocations.Num(),
+							Pool->GetTotalActiveCount(), Pool->GetTotalInactiveCount());
 					}
 				}
 			}
@@ -622,12 +638,21 @@ void UEnemyActorSpawnProcessor::UpdateEntityVisualization(
 	// 새 인스턴스 생성
 	const int32 NewIndex = ISMC->AddInstance(InstanceTransform, true);
 
+	TArray<FMassEntityHandle>& InstanceEntities = MeshToInstanceEntities.FindOrAdd(Mesh);
+
+	// ISMC는 순서대로 Append하므로 NewIndex == InstanceEntities.Num()이어야 정상
+	if (NewIndex != InstanceEntities.Num())
+	{
+		UE_LOG(LogECSEnemy, Warning,
+			TEXT("[Visualization] ISMC 인덱스 불일치: NewIndex=%d, InstanceEntities.Num()=%d "
+			     "— 인스턴스 매핑이 깨졌을 수 있습니다. Mesh: %s"),
+			NewIndex, InstanceEntities.Num(), *Mesh->GetName());
+	}
+
 	FEntityInstanceRef NewRef;
 	NewRef.Mesh = Mesh;
 	NewRef.Index = NewIndex;
 	EntityToInstanceRef.Add(Entity, NewRef);
-
-	TArray<FMassEntityHandle>& InstanceEntities = MeshToInstanceEntities.FindOrAdd(Mesh);
 
 	// 방어: NewIndex 위치까지 채우기
 	while (InstanceEntities.Num() < NewIndex)

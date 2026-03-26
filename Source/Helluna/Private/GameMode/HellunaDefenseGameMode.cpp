@@ -9,6 +9,13 @@
 #include "debughelper.h"
 #include "AIController.h"
 #include "Components/StateTreeComponent.h"
+#include "PCGComponent.h"
+#include "PCGGraph.h"
+#include "PCGManagedResource.h"
+#include "PCGWorldActor.h"
+#include "Grid/PCGLandscapeCache.h"
+#include "Components/InstancedStaticMeshComponent.h"
+#include "DrawDebugHelpers.h"
 
 // Phase 7 게임 종료 + 결과 반영
 #include "Lobby/Database/HellunaSQLiteSubsystem.h"
@@ -72,6 +79,7 @@ void AHellunaDefenseGameMode::BeginPlay()
     CacheBossSpawnPoints();
     CacheMeleeSpawnPoints();
     CacheRangeSpawnPoints();
+    CacheNightPCGComponents();
 
     // [Phase 16] 유휴 자동 종료 타이머 (접속자 0이면 IdleShutdownSeconds 후 자동 종료)
     if (IdleShutdownSeconds > 0.f)
@@ -88,8 +96,8 @@ void AHellunaDefenseGameMode::BeginPlay()
     StartCommandPollTimer();
 
 #if HELLUNA_DEBUG_DEFENSE
-    UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] BeginPlay 완료 — BossSpawn:%d / MeleeSpawn:%d / RangeSpawn:%d"),
-        BossSpawnPoints.Num(), MeleeSpawnPoints.Num(), RangeSpawnPoints.Num());
+    UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] BeginPlay 완료 — BossSpawn:%d / MeleeSpawn:%d / RangeSpawn:%d / NightPCG:%d"),
+        BossSpawnPoints.Num(), MeleeSpawnPoints.Num(), RangeSpawnPoints.Num(), CachedNightPCGComponents.Num());
 #endif
 }
 
@@ -165,6 +173,503 @@ void AHellunaDefenseGameMode::CacheRangeSpawnPoints()
         RangeSpawnPoints.Num() > 0 ? FColor::Green : FColor::Red);
 }
 
+// ============================================================
+// PCG 밤 스폰 시스템
+// ============================================================
+
+void AHellunaDefenseGameMode::CacheNightPCGComponents()
+{
+    CachedNightPCGComponents.Empty();
+
+    UWorld* World = GetWorld();
+    if (!IsValid(World))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[CacheNightPCG] World가 nullptr — 캐싱 스킵"));
+        return;
+    }
+
+    // PCG Landscape Cache 자동 설정
+    {
+        TArray<AActor*> FoundWorldActors;
+        UGameplayStatics::GetAllActorsOfClass(World, APCGWorldActor::StaticClass(), FoundWorldActors);
+        UE_LOG(LogTemp, Log, TEXT("[CacheNightPCG] PCGWorldActor 검색: %d개"), FoundWorldActors.Num());
+
+        if (FoundWorldActors.Num() > 0)
+        {
+            APCGWorldActor* PCGWorldActor = Cast<APCGWorldActor>(FoundWorldActors[0]);
+            if (IsValid(PCGWorldActor) && IsValid(PCGWorldActor->LandscapeCacheObject))
+            {
+                UPCGLandscapeCache* LandscapeCache = PCGWorldActor->LandscapeCacheObject;
+                if (LandscapeCache->SerializationMode == EPCGLandscapeCacheSerializationMode::NeverSerialize)
+                {
+                    LandscapeCache->SerializationMode = EPCGLandscapeCacheSerializationMode::AlwaysSerialize;
+                    Debug::Print(TEXT("[CacheNightPCG] PCG Landscape Cache 자동 설정 (AlwaysSerialize)"), FColor::Cyan);
+                }
+            }
+        }
+    }
+
+    // 태그 기반 검색 (수동 배치 + 자동 스폰 액터)
+    TArray<AActor*> Found;
+    UGameplayStatics::GetAllActorsWithTag(World, NightPCGTag, Found);
+    UE_LOG(LogTemp, Log, TEXT("[CacheNightPCG] 태그 '%s' 검색 결과: %d개"), *NightPCGTag.ToString(), Found.Num());
+
+    for (AActor* Actor : Found)
+    {
+        if (!IsValid(Actor))
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[CacheNightPCG] 유효하지 않은 액터 스킵"));
+            continue;
+        }
+
+        UPCGComponent* PCGComp = Actor->FindComponentByClass<UPCGComponent>();
+        if (IsValid(PCGComp))
+        {
+            UPCGGraph* Graph = PCGComp->GetGraph();
+            PCGComp->GenerationTrigger = EPCGComponentGenerationTrigger::GenerateOnDemand;
+            PCGComp->CleanupLocal(/*bRemoveComponents=*/false);
+
+            CachedNightPCGComponents.Add(PCGComp);
+
+            UE_LOG(LogTemp, Log, TEXT("[CacheNightPCG] 캐싱 성공 | Actor=%s | Graph=%s | 위치=%s"),
+                *Actor->GetName(),
+                Graph ? *Graph->GetName() : TEXT("nullptr"),
+                *Actor->GetActorLocation().ToString());
+
+#if ENABLE_DRAW_DEBUG
+            const FVector Loc = Actor->GetActorLocation();
+            DrawDebugSphere(GetWorld(), Loc, 150.f, 12, FColor::Cyan, false, 10.f, 0, 2.f);
+            DrawDebugString(GetWorld(), Loc + FVector(0, 0, 200.f),
+                FString::Printf(TEXT("PCG Cached [%s]"), *Actor->GetName()),
+                nullptr, FColor::Cyan, 10.f, true);
+#endif
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[CacheNightPCG] Actor '%s'에 PCGComponent 없음 — 스킵"), *Actor->GetName());
+        }
+    }
+
+    const int32 CachedCount = CachedNightPCGComponents.Num();
+    UE_LOG(LogTemp, Log, TEXT("[CacheNightPCG] 최종 캐싱: %d개 | 태그: %s"),
+        CachedCount, *NightPCGTag.ToString());
+
+    Debug::Print(FString::Printf(TEXT("[CacheNightPCG] %d개 캐싱 완료 (태그: %s)"),
+        CachedCount, *NightPCGTag.ToString()),
+        CachedCount > 0 ? FColor::Green : FColor::Red);
+
+    if (CachedCount == 0)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[CacheNightPCG] PCG 컴포넌트가 0개! 레벨에 '%s' 태그 PCG 액터를 배치하세요."),
+            *NightPCGTag.ToString());
+        Debug::Print(TEXT("[CacheNightPCG] PCG 0개! 레벨에 NightPCG 태그 PCG 액터를 배치하세요"), FColor::Red);
+    }
+}
+
+void AHellunaDefenseGameMode::ActivateNightPCG()
+{
+    if (!HasAuthority()) return;
+
+    UE_LOG(LogTemp, Log, TEXT("[ActivateNightPCG] 시작 | 캐싱된 PCG: %d개"), CachedNightPCGComponents.Num());
+
+    if (CachedNightPCGComponents.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] 캐싱된 PCG가 0개 — 밤 광석 스폰 없음"));
+        Debug::Print(TEXT("[ActivateNightPCG] 캐싱된 PCG 0개 — 스폰 없음"), FColor::Red);
+        return;
+    }
+
+    static int32 NightCount = 0;
+    NightCount++;
+
+    int32 ActivatedCount = 0;
+    int32 InvalidCount = 0;
+
+    for (TWeakObjectPtr<UPCGComponent>& WeakComp : CachedNightPCGComponents)
+    {
+        UPCGComponent* PCGComp = WeakComp.Get();
+        if (!IsValid(PCGComp))
+        {
+            InvalidCount++;
+            UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] 유효하지 않은 PCGComponent 발견 (GC됨?)"));
+            continue;
+        }
+
+        AActor* PCGActor = PCGComp->GetOwner();
+        UPCGGraph* Graph = PCGComp->GetGraph();
+
+        UE_LOG(LogTemp, Log, TEXT("[ActivateNightPCG] Generate 호출 | Owner=%s | Graph=%s | 위치=%s"),
+            PCGActor ? *PCGActor->GetName() : TEXT("nullptr"),
+            Graph ? *Graph->GetName() : TEXT("nullptr"),
+            PCGActor ? *PCGActor->GetActorLocation().ToString() : TEXT("N/A"));
+
+        if (!Graph)
+        {
+            UE_LOG(LogTemp, Error, TEXT("[ActivateNightPCG] PCGComponent에 Graph가 nullptr! Owner=%s"),
+                PCGActor ? *PCGActor->GetName() : TEXT("nullptr"));
+            Debug::Print(TEXT("[ActivateNightPCG] Graph가 nullptr — Generate 스킵"), FColor::Red);
+            continue;
+        }
+
+        PCGComp->OnPCGGraphGeneratedDelegate.RemoveAll(this);
+        PCGComp->OnPCGGraphGeneratedDelegate.AddUObject(this, &AHellunaDefenseGameMode::OnNightPCGGraphGenerated);
+
+        // CleanupLocal 후 비활성화될 수 있으므로 재활성화
+        if (!PCGComp->IsActive())
+        {
+            PCGComp->Activate(/*bReset=*/true);
+            UE_LOG(LogTemp, Log, TEXT("[ActivateNightPCG] PCGComponent 재활성화"));
+        }
+
+        UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] Generate 직전 상태 | IsRegistered=%d | IsActive=%d | Graph=%s | GenerationTrigger=%d"),
+            PCGComp->IsRegistered(), PCGComp->IsActive(),
+            PCGComp->GetGraph() ? *PCGComp->GetGraph()->GetName() : TEXT("nullptr"),
+            (int32)PCGComp->GenerationTrigger);
+
+        PCGComp->GenerateLocal(/*bForce=*/true);
+        UE_LOG(LogTemp, Log, TEXT("[ActivateNightPCG] GenerateLocal 호출 완료"));
+
+        // 콜백이 동기로 올 수도 있고, 안 올 수도 있으므로 타이머로 폴백 확인
+        FTimerHandle DiagTimer;
+        TWeakObjectPtr<UPCGComponent> WeakPCG = PCGComp;
+        GetWorldTimerManager().SetTimer(DiagTimer, [WeakPCG]()
+        {
+            UPCGComponent* Comp = WeakPCG.Get();
+            if (!IsValid(Comp))
+            {
+                UE_LOG(LogTemp, Error, TEXT("[PCG 진단] 2초 후 — PCGComponent가 유효하지 않음 (GC됨?)"));
+                return;
+            }
+
+            AActor* Owner = Comp->GetOwner();
+            TArray<UObject*> ManagedObjects;
+            GetObjectsWithOuter(Comp, ManagedObjects, false);
+
+            int32 ChildCompCount = 0;
+            if (Owner)
+            {
+                TArray<UActorComponent*> AllComps;
+                Owner->GetComponents(AllComps);
+                ChildCompCount = AllComps.Num();
+            }
+
+            UE_LOG(LogTemp, Warning, TEXT("[PCG 진단] 2초 후 — ManagedObjects=%d | OwnerComponents=%d | IsGenerating=%d | Owner=%s"),
+                ManagedObjects.Num(), ChildCompCount, Comp->IsGenerating(),
+                Owner ? *Owner->GetName() : TEXT("nullptr"));
+
+            // 콜백은 이미 정상 발동 — 여기서는 진단 로그만 출력
+
+        }, 2.0f, false);
+
+        ActivatedCount++;
+
+#if ENABLE_DRAW_DEBUG
+        if (PCGActor)
+        {
+            const FVector Loc = PCGActor->GetActorLocation();
+            DrawDebugSphere(GetWorld(), Loc, 200.f, 12, FColor::Purple, false, 8.f, 0, 3.f);
+            DrawDebugString(GetWorld(), Loc + FVector(0, 0, 250.f),
+                FString::Printf(TEXT("PCG Generate [%s]"), *PCGActor->GetName()),
+                nullptr, FColor::Purple, 8.f, true);
+        }
+#endif
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("[ActivateNightPCG] 완료 | 활성화: %d개 / 무효: %d개 / 밤 횟수: %d"),
+        ActivatedCount, InvalidCount, NightCount);
+    Debug::Print(FString::Printf(TEXT("[ActivateNightPCG] %d개 PCG 그래프 실행 (Night #%d)"), ActivatedCount, NightCount), FColor::Purple);
+}
+
+void AHellunaDefenseGameMode::OnNightPCGGraphGenerated(UPCGComponent* InComponent)
+{
+    if (!IsValid(InComponent))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[PCG 생성 콜백] InComponent가 nullptr"));
+        return;
+    }
+
+    InComponent->OnPCGGraphGeneratedDelegate.RemoveAll(this);
+
+    AActor* PCGOwner = InComponent->GetOwner();
+    UE_LOG(LogTemp, Log, TEXT("[PCG 생성 콜백] 시작 | Owner=%s"),
+        PCGOwner ? *PCGOwner->GetName() : TEXT("nullptr"));
+
+    int32 ActorCount = 0;
+    int32 ISMInstanceCount = 0;
+
+    TArray<UObject*> PCGManagedObjects;
+    GetObjectsWithOuter(InComponent, PCGManagedObjects, /*bIncludeNestedOuters=*/false);
+
+    UE_LOG(LogTemp, Log, TEXT("[PCG 생성 콜백] ManagedObject: %d개"), PCGManagedObjects.Num());
+
+    for (UObject* Obj : PCGManagedObjects)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[PCG 생성 콜백]   오브젝트 타입: %s | 이름: %s"),
+            *Obj->GetClass()->GetName(), *Obj->GetName());
+
+        if (UPCGManagedActors* ManagedActors = Cast<UPCGManagedActors>(Obj))
+        {
+            const int32 Count = ManagedActors->GetConstGeneratedActors().Num();
+            ActorCount += Count;
+            UE_LOG(LogTemp, Log, TEXT("[PCG 생성 콜백]   ManagedActors: %d개"), Count);
+
+            int32 ValidCount = 0;
+            int32 NullCount = 0;
+            for (const TSoftObjectPtr<AActor>& SoftActor : ManagedActors->GetConstGeneratedActors())
+            {
+                AActor* SpawnedActor = SoftActor.LoadSynchronous();
+                if (IsValid(SpawnedActor))
+                {
+                    ValidCount++;
+                    // 처음 5개만 상세 로그
+                    if (ValidCount <= 5)
+                    {
+                        FString TagStr;
+                        for (const FName& Tag : SpawnedActor->Tags)
+                        {
+                            TagStr += Tag.ToString() + TEXT(" ");
+                        }
+                        UE_LOG(LogTemp, Warning, TEXT("[PCG 생성 콜백]     #%d %s | 클래스=%s | 위치=%s | 태그=[%s] | Hidden=%d"),
+                            ValidCount,
+                            *SpawnedActor->GetName(),
+                            *SpawnedActor->GetClass()->GetName(),
+                            *SpawnedActor->GetActorLocation().ToString(),
+                            TagStr.IsEmpty() ? TEXT("없음") : *TagStr.TrimEnd(),
+                            SpawnedActor->IsHidden());
+                    }
+                }
+                else
+                {
+                    NullCount++;
+                }
+            }
+            UE_LOG(LogTemp, Warning, TEXT("[PCG 생성 콜백]   유효: %d개 / nullptr: %d개"), ValidCount, NullCount);
+        }
+        else if (UPCGManagedISMComponent* ManagedISM = Cast<UPCGManagedISMComponent>(Obj))
+        {
+            if (UInstancedStaticMeshComponent* ISMComp = ManagedISM->GetComponent())
+            {
+                const int32 Count = ISMComp->GetInstanceCount();
+                ISMInstanceCount += Count;
+                UE_LOG(LogTemp, Log, TEXT("[PCG 생성 콜백]   ISM 인스턴스: %d개"), Count);
+            }
+        }
+    }
+
+    const int32 Total = ActorCount + ISMInstanceCount;
+
+    if (Total == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[PCG 생성 콜백] 생성된 오브젝트가 0개! PCG 그래프 설정을 확인하세요."));
+    }
+
+    Debug::Print(
+        FString::Printf(TEXT("[PCG 생성 완료] Actor: %d개 / ISM: %d개 / 합계: %d개"),
+            ActorCount, ISMInstanceCount, Total),
+        Total > 0 ? FColor::Green : FColor::Red
+    );
+
+    // 밀도 기반 후처리 컬링
+    PostProcessNightPCGDensity(InComponent);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// PCG 밀도 기반 후처리 컬링
+// ════════════════════════════════════════════════════════════════════════════════
+
+void AHellunaDefenseGameMode::PostProcessNightPCGDensity(UPCGComponent* InComponent)
+{
+    if (!IsValid(InComponent))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[밀도 컬링] InComponent가 nullptr"));
+        return;
+    }
+
+    UWorld* World = GetWorld();
+    if (!World) return;
+
+    // 1) PCG가 방금 생성한 액터 중 "Ore" 태그가 있는 것만 수집
+    TArray<AActor*> NewlySpawnedOres;
+    int32 TotalManagedActors = 0;
+    {
+        TArray<UObject*> PCGManagedObjects;
+        GetObjectsWithOuter(InComponent, PCGManagedObjects, /*bIncludeNestedOuters=*/false);
+        for (UObject* Obj : PCGManagedObjects)
+        {
+            UPCGManagedActors* ManagedActors = Cast<UPCGManagedActors>(Obj);
+            if (!ManagedActors) continue;
+
+            for (const TSoftObjectPtr<AActor>& SoftActor : ManagedActors->GetConstGeneratedActors())
+            {
+                AActor* Actor = SoftActor.Get();
+                TotalManagedActors++;
+                if (IsValid(Actor) && Actor->ActorHasTag(TEXT("Ore")))
+                {
+                    NewlySpawnedOres.Add(Actor);
+                }
+            }
+        }
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("[밀도 컬링] PCG 생성 액터: %d개 / 그 중 Ore 태그: %d개"),
+        TotalManagedActors, NewlySpawnedOres.Num());
+
+    if (NewlySpawnedOres.Num() == 0)
+    {
+        if (TotalManagedActors > 0)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[밀도 컬링] PCG가 %d개 액터를 생성했지만 'Ore' 태그가 있는 것이 없음! PCG 그래프에서 스폰하는 BP에 'Ore' 태그를 추가하세요."), TotalManagedActors);
+            Debug::Print(FString::Printf(TEXT("[밀도 컬링] %d개 액터 중 Ore 태그 0개 — BP에 태그 확인 필요"), TotalManagedActors), FColor::Red);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Log, TEXT("[밀도 컬링] Ore 태그 액터 없음 — 컬링 스킵"));
+        }
+        return;
+    }
+
+    // 2) 월드에 이미 존재하는 "Ore" 태그 액터 수집 (잔존 광석 포함)
+    TArray<AActor*> ExistingOres;
+    UGameplayStatics::GetAllActorsWithTag(World, FName(TEXT("Ore")), ExistingOres);
+
+    const int32 PreExistingCount = ExistingOres.Num() - NewlySpawnedOres.Num();
+    UE_LOG(LogTemp, Log, TEXT("[밀도 컬링] 월드 전체 Ore: %d개 (기존: %d개 + 신규: %d개) | 설정: 반경=%.0fcm, 최대이웃=%d, 최소유지=%.1f%%"),
+        ExistingOres.Num(), FMath::Max(PreExistingCount, 0), NewlySpawnedOres.Num(),
+        DensityCheckRadius, MaxNeighborOreCount, MinKeepRatio * 100.f);
+
+    // 3) 각 신규 광석에 대해 스폰 점수 계산 → 확률 컬링
+    const int32 BeforeCount = NewlySpawnedOres.Num();
+    int32 CulledCount = 0;
+
+    for (AActor* OreActor : NewlySpawnedOres)
+    {
+        if (!IsValid(OreActor)) continue;
+
+        const FVector Loc = OreActor->GetActorLocation();
+        const float Score = CalculateSpawnScore(Loc, ExistingOres);
+        const float Roll = FMath::FRand();
+
+        if (Roll > Score)
+        {
+            UE_LOG(LogTemp, Verbose, TEXT("[밀도 컬링]   제거: %s | 위치=%s | 점수=%.2f < 주사위=%.2f"),
+                *OreActor->GetName(), *Loc.ToString(), Score, Roll);
+            ExistingOres.Remove(OreActor);
+            OreActor->Destroy();
+            CulledCount++;
+        }
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("[밀도 컬링] 결과: 전 %d개 → 컬링 %d개 → 후 %d개"),
+        BeforeCount, CulledCount, BeforeCount - CulledCount);
+    Debug::Print(
+        FString::Printf(TEXT("[밀도 컬링] 전: %d개 → 컬링: %d개 → 후: %d개"),
+            BeforeCount, CulledCount, BeforeCount - CulledCount),
+        CulledCount > 0 ? FColor::Orange : FColor::Green
+    );
+}
+
+float AHellunaDefenseGameMode::CalculateSpawnScore(const FVector& Location, const TArray<AActor*>& ExistingOres) const
+{
+    float Score = 1.0f;
+
+    // Factor 1: 광석 밀도
+    Score *= CalculateOreDensityFactor(Location, ExistingOres);
+
+    // Factor 2: 방향 편향 (우주선 기준)
+    Score *= CalculateDirectionBiasFactor(Location);
+
+    return FMath::Clamp(Score, 0.f, 1.f);
+}
+
+float AHellunaDefenseGameMode::CalculateOreDensityFactor(const FVector& Location, const TArray<AActor*>& ExistingOres) const
+{
+    const float RadiusSq = DensityCheckRadius * DensityCheckRadius;
+    int32 NeighborCount = 0;
+
+    for (const AActor* Ore : ExistingOres)
+    {
+        if (!IsValid(Ore)) continue;
+        if (FVector::DistSquared(Location, Ore->GetActorLocation()) <= RadiusSq)
+        {
+            NeighborCount++;
+        }
+    }
+
+    // 이웃 수가 MaxNeighborOreCount 이상이면 MinKeepRatio, 0이면 1.0
+    const float Ratio = static_cast<float>(NeighborCount) / static_cast<float>(FMath::Max(MaxNeighborOreCount, 1));
+    return FMath::Clamp(1.0f - Ratio, MinKeepRatio, 1.0f);
+}
+
+float AHellunaDefenseGameMode::CalculateDirectionBiasFactor(const FVector& Location) const
+{
+    // 우주선 위치를 기준점으로 사용
+    FVector Origin = FVector::ZeroVector;
+
+    if (const AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
+    {
+        if (AResourceUsingObject_SpaceShip* Ship = GS->GetSpaceShip())
+        {
+            Origin = Ship->GetActorLocation();
+        }
+    }
+
+    const FVector Dir2D = FVector(Location.X - Origin.X, Location.Y - Origin.Y, 0.f).GetSafeNormal();
+    const FVector Bias2D = FVector(BiasDirection.X, BiasDirection.Y, 0.f).GetSafeNormal();
+
+    if (Dir2D.IsNearlyZero() || Bias2D.IsNearlyZero())
+    {
+        return 1.0f;
+    }
+
+    // Dot: +1(같은 방향) ~ -1(반대 방향) → 0~1 범위로 변환
+    const float Dot = FVector::DotProduct(Dir2D, Bias2D);
+    const float T = (Dot + 1.f) * 0.5f; // 0(반대) ~ 1(같은 방향)
+
+    return FMath::Lerp(MinBiasScore, 1.0f, T);
+}
+
+void AHellunaDefenseGameMode::DeactivateNightPCG()
+{
+    if (!HasAuthority()) return;
+
+    UE_LOG(LogTemp, Log, TEXT("[DeactivateNightPCG] 시작 | 캐싱된 PCG: %d개"), CachedNightPCGComponents.Num());
+
+    int32 CleanedCount = 0;
+    int32 InvalidCount = 0;
+
+    for (TWeakObjectPtr<UPCGComponent>& WeakComp : CachedNightPCGComponents)
+    {
+        UPCGComponent* PCGComp = WeakComp.Get();
+        if (!IsValid(PCGComp))
+        {
+            InvalidCount++;
+            continue;
+        }
+
+#if ENABLE_DRAW_DEBUG
+        if (AActor* PCGOwner = PCGComp->GetOwner())
+        {
+            const FVector Loc = PCGOwner->GetActorLocation();
+            DrawDebugSphere(GetWorld(), Loc, 200.f, 12, FColor::Yellow, false, 5.f, 0, 3.f);
+            DrawDebugString(GetWorld(), Loc + FVector(0, 0, 250.f),
+                FString::Printf(TEXT("PCG Cleanup [%s]"), *PCGOwner->GetName()),
+                nullptr, FColor::Yellow, 5.f, true);
+        }
+#endif
+
+        PCGComp->CleanupLocal(/*bRemoveComponents=*/false);
+        CleanedCount++;
+    }
+
+    if (InvalidCount > 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[DeactivateNightPCG] 유효하지 않은 PCGComponent: %d개 (GC됨?)"), InvalidCount);
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("[DeactivateNightPCG] 완료 | 정리: %d개 / 무효: %d개"), CleanedCount, InvalidCount);
+    Debug::Print(FString::Printf(TEXT("[DeactivateNightPCG] %d개 PCG 생성물 정리"), CleanedCount), FColor::Yellow);
+}
+
 // CurrentDay에 맞는 NightSpawnConfig 반환
 // FromDay <= CurrentDay 중 FromDay가 가장 큰 항목 선택
 const FNightSpawnConfig* AHellunaDefenseGameMode::GetCurrentNightConfig() const
@@ -194,6 +699,9 @@ void AHellunaDefenseGameMode::EnterDay()
     Debug::Print(FString::Printf(TEXT("[EnterDay] %d일차 낮 시작"), CurrentDay), FColor::Yellow);
 
     RemainingMonstersThisNight = 0;
+
+    // PCG 밤 생성물 정리
+    DeactivateNightPCG();
 
     // 낮 전환 시 대기 중인 스폰 타이머 전부 취소
     for (AHellunaEnemyMassSpawner* Spawner : CachedMeleeSpawners)
@@ -249,6 +757,9 @@ void AHellunaDefenseGameMode::EnterNight()
 
     // 낮 카운트다운 타이머 정지
     GetWorldTimerManager().ClearTimer(TimerHandle_DayCountdown);
+
+    // PCG 밤 스폰 실행
+    ActivateNightPCG();
 
     // ── 보스 소환 일 체크 ──────────────────────────────────────────────
     // BossSchedule 배열에서 CurrentDay와 일치하는 항목을 찾는다.

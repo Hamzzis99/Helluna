@@ -42,6 +42,7 @@ void FSTEvaluator_TargetSelector::TreeStart(FStateTreeExecutionContext& Context)
 		if (It->ActorHasTag(FName("SpaceShip")))
 		{
 			TargetData.TargetActor = *It;
+			TargetData.TargetType  = EHellunaTargetType::SpaceShip; // 명시적 설정
 			break;
 		}
 	}
@@ -148,7 +149,13 @@ void FSTEvaluator_TargetSelector::Tick(FStateTreeExecutionContext& Context, cons
 	}
 	else
 	{
-		// 플레이어 없음 → 우주선 타겟 거리 갱신 (표면 거리로 계산)
+		// 플레이어 없음 → 우주선 타겟으로 복귀 + 거리 갱신
+		if (!TargetData.bTargetingPlayer)
+		{
+			TargetData.TargetType = EHellunaTargetType::SpaceShip;
+		}
+
+		// 우주선 거리 갱신 (표면 거리로 계산)
 		if (TargetData.TargetActor.IsValid())
 		{
 			TArray<UPrimitiveComponent*> Prims;

@@ -358,38 +358,73 @@ void AHellunaEnemyCharacter::OnMonsterDeath(AActor* DeadActor, AActor* KillerAct
 }
 
 // ============================================================
-// DespawnMassEntityOnServer — Mass 엔티티 제거 (재생성 방지)
+// DespawnMassEntityOnServer — Mass 엔티티 제거 + 액터 파괴
 // ============================================================
 void AHellunaEnemyCharacter::DespawnMassEntityOnServer(const TCHAR* Where)
 {
 	if (!HasAuthority()) return;
 
+	// 중복 호출 방지
+	if (bDespawnStarted) return;
+	bDespawnStarted = true;
+
+	// 1. 모든 콜리전 즉시 비활성화 — 디퍼드 오버랩 이벤트 방지
+	SetActorEnableCollision(false);
+	TArray<UPrimitiveComponent*> Prims;
+	GetComponents<UPrimitiveComponent>(Prims);
+	for (UPrimitiveComponent* Prim : Prims)
+	{
+		if (Prim && Prim->IsRegistered())
+		{
+			Prim->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			Prim->SetGenerateOverlapEvents(false);
+		}
+	}
+
+	// 2. Mass Entity 정리
 	if (!MassAgentComp)
 	{
 		MassAgentComp = FindComponentByClass<UMassAgentComponent>();
 	}
 
-	if (!MassAgentComp)
+	if (MassAgentComp)
 	{
-		Destroy();
-		return;
+		const FMassEntityHandle Entity = MassAgentComp->GetEntityHandle();
+		if (Entity.IsValid())
+		{
+			UWorld* W = GetWorld();
+			if (W)
+			{
+				if (UMassEntitySubsystem* ES = W->GetSubsystem<UMassEntitySubsystem>())
+				{
+					FMassEntityManager& EM = ES->GetMutableEntityManager();
+					EM.DestroyEntity(Entity);
+				}
+			}
+		}
+
+		MassAgentComp->DestroyComponent();
+		MassAgentComp = nullptr;
 	}
 
-	const FMassEntityHandle Entity = MassAgentComp->GetEntityHandle();
-	if (!Entity.IsValid())
-	{
-		Destroy();
-		return;
-	}
-
+	// 3. Destroy()를 다음 틱으로 지연 — 같은 프레임 내 DestroyComponent()의
+	//    OnUnregister 콜백이 오버랩 플러시를 유발하여 형제 컴포넌트를
+	//    재진입(re-entrant) Unregister하는 것을 방지한다.
 	UWorld* W = GetWorld();
-	if (!W) return;
-
-	UMassEntitySubsystem* ES = W->GetSubsystem<UMassEntitySubsystem>();
-	if (!ES) return;
-
-	FMassEntityManager& EM = ES->GetMutableEntityManager();
-	EM.DestroyEntity(Entity);
+	if (W)
+	{
+		W->GetTimerManager().SetTimerForNextTick([WeakThis = TWeakObjectPtr<AHellunaEnemyCharacter>(this)]()
+		{
+			if (WeakThis.IsValid())
+			{
+				WeakThis->Destroy();
+			}
+		});
+	}
+	else
+	{
+		Destroy();
+	}
 }
 
 // ============================================================
