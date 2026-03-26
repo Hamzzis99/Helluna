@@ -2282,51 +2282,47 @@ void AHellunaHeroCharacter::UpdateKickPrompt(float DeltaTime)
 	const FVector MyLocation = GetActorLocation();
 	const FVector MyForward = GetActorForwardVector();
 	const float CosHalfAngle = FMath::Cos(FMath::DegreesToRadians(KickPromptHalfAngle));
+	const float RangeSq = KickPromptRange * KickPromptRange;
 
-	// Staggered 적 탐색 (GA_MeleeKick::FindStaggeredEnemy와 동일 로직)
 	AHellunaEnemyCharacter* BestEnemy = nullptr;
-	float BestDistSq = KickPromptRange * KickPromptRange;
+	float BestDistSq = RangeSq;
 
-	TArray<FOverlapResult> Overlaps;
-	FCollisionShape Sphere = FCollisionShape::MakeSphere(KickPromptRange);
-	FCollisionQueryParams Params;
-	Params.AddIgnoredActor(this);
+	// GetAllActorsOfClass로 모든 적을 순회 (OverlapMulti보다 안정적)
+	TArray<AActor*> AllEnemies;
+	UGameplayStatics::GetAllActorsOfClass(World, AHellunaEnemyCharacter::StaticClass(), AllEnemies);
 
-	if (World->OverlapMultiByObjectType(
-		Overlaps, MyLocation, FQuat::Identity,
-		FCollisionObjectQueryParams(ECC_Pawn), Sphere, Params))
+	for (AActor* Actor : AllEnemies)
 	{
-		for (const FOverlapResult& Overlap : Overlaps)
+		AHellunaEnemyCharacter* Enemy = Cast<AHellunaEnemyCharacter>(Actor);
+		if (!Enemy) continue;
+
+		// 거리 체크
+		const float DistSq = FVector::DistSquared(MyLocation, Enemy->GetActorLocation());
+		if (DistSq > RangeSq) continue;
+
+		// Staggered 태그 체크
+		if (!UHellunaFunctionLibrary::NativeDoesActorHaveTag(Enemy, HellunaGameplayTags::Enemy_State_Staggered))
+			continue;
+
+		// 사망 체크
+		if (UHellunaHealthComponent* HC = Enemy->FindComponentByClass<UHellunaHealthComponent>())
 		{
-			AHellunaEnemyCharacter* Enemy = Cast<AHellunaEnemyCharacter>(Overlap.GetActor());
-			if (!Enemy) continue;
+			if (HC->IsDead()) continue;
+		}
 
-			// Staggered 태그 체크
-			if (!UHellunaFunctionLibrary::NativeDoesActorHaveTag(Enemy, HellunaGameplayTags::Enemy_State_Staggered))
-				continue;
+		// 전방각 체크
+		const FVector ToEnemy = (Enemy->GetActorLocation() - MyLocation).GetSafeNormal();
+		if (FVector::DotProduct(MyForward, ToEnemy) < CosHalfAngle) continue;
 
-			// 사망 체크
-			if (UHellunaHealthComponent* HC = Enemy->FindComponentByClass<UHellunaHealthComponent>())
-			{
-				if (HC->IsDead()) continue;
-			}
-
-			// 전방각 체크
-			const FVector ToEnemy = (Enemy->GetActorLocation() - MyLocation).GetSafeNormal();
-			if (FVector::DotProduct(MyForward, ToEnemy) < CosHalfAngle) continue;
-
-			const float DistSq = FVector::DistSquared(MyLocation, Enemy->GetActorLocation());
-			if (DistSq < BestDistSq)
-			{
-				BestDistSq = DistSq;
-				BestEnemy = Enemy;
-			}
+		if (DistSq < BestDistSq)
+		{
+			BestDistSq = DistSq;
+			BestEnemy = Enemy;
 		}
 	}
 
 	if (BestEnemy)
 	{
-		// 적 머리 위로 위젯 이동
 		const FVector EnemyHead = BestEnemy->GetActorLocation() + FVector(0.f, 0.f, 150.f);
 		KickPromptWidgetComp->SetWorldLocation(EnemyHead);
 
@@ -2345,15 +2341,30 @@ void AHellunaHeroCharacter::UpdateKickPrompt(float DeltaTime)
 		}
 	}
 
-	// 디버그 로그 (1초마다)
+	// 디버그 로그 (1초마다) — 가장 가까운 적의 Staggered 여부도 출력
 	KickPromptLogTimer += DeltaTime;
 	if (KickPromptLogTimer >= 1.0f)
 	{
 		KickPromptLogTimer = 0.f;
-		if (bKickPromptVisible && BestEnemy)
+
+		float ClosestDist = MAX_FLT;
+		AHellunaEnemyCharacter* ClosestEnemy = nullptr;
+		for (AActor* Actor : AllEnemies)
 		{
-			UE_LOG(LogHelluna, Log, TEXT("[Phase18] KickPrompt 표시: %s → 적=%s"),
-				*GetName(), *BestEnemy->GetName());
+			AHellunaEnemyCharacter* E = Cast<AHellunaEnemyCharacter>(Actor);
+			if (!E) continue;
+			float D = FVector::Dist(MyLocation, E->GetActorLocation());
+			if (D < ClosestDist) { ClosestDist = D; ClosestEnemy = E; }
+		}
+
+		if (ClosestEnemy)
+		{
+			bool bIsStaggered = UHellunaFunctionLibrary::NativeDoesActorHaveTag(ClosestEnemy, HellunaGameplayTags::Enemy_State_Staggered);
+			UE_LOG(LogHelluna, Warning, TEXT("[Phase18] KickPrompt: Closest=%s Dist=%.0f Staggered=%s | Best=%s Visible=%s"),
+				*ClosestEnemy->GetName(), ClosestDist,
+				bIsStaggered ? TEXT("Y") : TEXT("N"),
+				BestEnemy ? *BestEnemy->GetName() : TEXT("None"),
+				bKickPromptVisible ? TEXT("Y") : TEXT("N"));
 		}
 	}
 }
