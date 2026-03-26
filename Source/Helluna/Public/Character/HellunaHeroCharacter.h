@@ -36,6 +36,7 @@ class UMaterialInstanceDynamic;
 class UMaterialInterface;
 class UInv_InteractPromptWidget;
 class AHellunaEnemyCharacter;
+class UImage;
 
 
 /**
@@ -647,4 +648,46 @@ protected:
 private:
 	/** 킥 프롬프트 로그 타이머 (1초 1회 제한) */
 	float KickPromptLogTimer = 0.f;
+
+	// =========================================================
+	// ★ [Phase21] 8방향 피격 혈흔 (별도 위젯: WBP_BloodHitOverlay)
+	// =========================================================
+public:
+	/** 피격 방향 혈흔 표시 (Multicast — 로컬 플레이어만 표시) */
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_ShowBloodHitDirection(uint8 DirIndex);
+
+protected:
+	/** 피격 혈흔 위젯 클래스 (BP에서 WBP_BloodHitOverlay 할당) */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|Blood Hit",
+		meta = (DisplayName = "Blood Hit Widget Class (피격 혈흔 위젯 클래스)"))
+	TSubclassOf<UUserWidget> BloodHitWidgetClass;
+
+	/** 피격 혈흔 위젯 인스턴스 (런타임 생성) */
+	UPROPERTY()
+	TObjectPtr<UUserWidget> BloodHitWidget;
+
+	/** 피격 혈흔 이미지 배열 (WBP_BloodHitOverlay에서 바인딩) — BeginPlay에서 초기화 */
+	UPROPERTY()
+	TArray<TObjectPtr<UImage>> BloodHitImages;
+
+	/** 피격 혈흔 페이드아웃 시간 (초) */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|Blood Hit",
+		meta = (DisplayName = "Blood Hit Fade Duration (피격 혈흔 페이드 시간, 초)", ClampMin = "0.1", ClampMax = "2.0"))
+	float BloodHitFadeDuration = 0.4f;
+
+	/** 피격 혈흔 텍스처 (8개 Image의 Brush에 할당, 미설정 시 WBP 기본 Brush 사용) */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|Blood Hit",
+		meta = (DisplayName = "Blood Hit Texture (피격 혈흔 텍스처)"))
+	TObjectPtr<UTexture2D> BloodHitTexture;
+
+	/** 현재 진행 중인 페이드 타이머 핸들 (방향별) */
+	FTimerHandle BloodHitTimers[8];
+
+private:
+	/** 방향 인덱스로 해당 Image 페이드 시작 */
+	void PlayBloodHitFade(uint8 DirIndex);
+
+	/** 피격 방향 계산 (서버) — 0~7 반환 */
+	uint8 CalcHitDirection(AActor* InstigatorActor) const;
 };

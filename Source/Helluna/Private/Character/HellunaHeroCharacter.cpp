@@ -63,6 +63,7 @@
 #include "Character/HellunaEnemyCharacter.h"
 #include "Engine/OverlapResult.h"
 #include "Widgets/HUD/Inv_InteractPromptWidget.h"
+#include "Components/Image.h"
 
 
 
@@ -208,6 +209,54 @@ void AHellunaHeroCharacter::BeginPlay()
 			Prompt->SetActionText(TEXT(""));
 		}
 		UE_LOG(LogHelluna, Log, TEXT("[Phase18] KickPrompt 위젯 초기화: %s"), *GetName());
+	}
+
+	// [Phase21] 피격 혈흔 전용 위젯 생성 (다운 오버레이와 분리)
+	if (BloodHitWidgetClass)
+	{
+		APlayerController* PC = Cast<APlayerController>(GetController());
+		if (PC && PC->IsLocalController())
+		{
+			BloodHitWidget = CreateWidget<UUserWidget>(PC, BloodHitWidgetClass);
+			if (BloodHitWidget)
+			{
+				BloodHitWidget->AddToViewport(1);
+
+				// BloodHitImages 배열 초기화 — BloodHitWidget에서 가져옴
+				BloodHitImages.SetNum(8);
+				BloodHitImages[0] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodTop")));
+				BloodHitImages[1] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodCornerTR")));
+				BloodHitImages[2] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodRight")));
+				BloodHitImages[3] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodCornerBR")));
+				BloodHitImages[4] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodBottom")));
+				BloodHitImages[5] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodCornerBL")));
+				BloodHitImages[6] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodLeft")));
+				BloodHitImages[7] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodCornerTL")));
+
+				// 텍스처는 WBP에서 이미 할당됨 (T_Puzzle_FX_RedVignette)
+				// BloodHitTexture 프로퍼티로 런타임 오버라이드도 가능
+				if (BloodHitTexture)
+				{
+					for (UImage* Img : BloodHitImages)
+					{
+						if (Img)
+						{
+							FSlateBrush Brush;
+							Brush.SetResourceObject(BloodHitTexture);
+							Brush.DrawAs = ESlateBrushDrawType::Image;
+							Brush.ImageSize = FVector2D(256, 256);
+							Img->SetBrush(Brush);
+							Img->SetColorAndOpacity(FLinearColor(1.0f, 0.1f, 0.05f, 1.0f));
+							Img->SetRenderOpacity(0.f);
+							Img->SetVisibility(ESlateVisibility::Collapsed);
+						}
+					}
+				}
+
+				const int32 ValidCount = BloodHitImages.FilterByPredicate([](UImage* I) { return I != nullptr; }).Num();
+				UE_LOG(LogHelluna, Log, TEXT("[Phase21] BloodHitOverlay 위젯 생성 완료: %d/8 Images valid"), ValidCount);
+			}
+		}
 	}
 }
 
@@ -1159,6 +1208,12 @@ void AHellunaHeroCharacter::OnHeroHealthChanged(
 	{
 		Debug::Print(FString::Printf(TEXT("[PlayerHP] %s: -%.1f 데미지 (%.1f → %.1f)"),
 			*GetName(), Delta, OldHealth, NewHealth), FColor::Yellow);
+
+		// [Phase21] 피격 방향 혈흔 → 클라이언트에 전송
+		const uint8 DirIndex = CalcHitDirection(InstigatorActor);
+		UE_LOG(LogHelluna, Warning, TEXT("[BloodHit] 서버: %s 피격! Dir=%d, Instigator=%s"),
+			*GetName(), DirIndex, InstigatorActor ? *InstigatorActor->GetName() : TEXT("nullptr"));
+		Multicast_ShowBloodHitDirection(DirIndex);
 	}
 
 	// 피격 애니메이션 (데미지를 받았고 살아있을 때만, 다운 중 제외)
@@ -2138,7 +2193,7 @@ void AHellunaHeroCharacter::StopDownedScreenEffect()
 		DownedPPMID = nullptr;
 	}
 
-	// 위젯 제거
+	// 다운 오버레이 위젯 제거 (피격 혈흔은 BloodHitWidget으로 분리됨)
 	if (DownedOverlayWidget)
 	{
 		DownedOverlayWidget->RemoveFromParent();
@@ -2376,4 +2431,143 @@ void AHellunaHeroCharacter::UpdateKickPrompt(float DeltaTime)
 				bKickPromptVisible ? TEXT("Y") : TEXT("N"));
 		}
 	}
+}
+
+// =========================================================
+// ★ [Phase21] 8방향 피격 혈흔 시스템
+// =========================================================
+
+uint8 AHellunaHeroCharacter::CalcHitDirection(AActor* InstigatorActor) const
+{
+	if (!InstigatorActor) return 0; // 기본: Top (전방)
+
+	const FVector HitDir = (InstigatorActor->GetActorLocation() - GetActorLocation()).GetSafeNormal();
+	const float Forward = FVector::DotProduct(HitDir, GetActorForwardVector());
+	const float Right = FVector::DotProduct(HitDir, GetActorRightVector());
+
+	// atan2(Right, Forward) → 각도 (라디안)
+	// 0=전방, PI/2=우측, PI=후방, -PI/2=좌측
+	float AngleDeg = FMath::RadiansToDegrees(FMath::Atan2(Right, Forward));
+	if (AngleDeg < 0.f) AngleDeg += 360.f;
+
+	// 8방향 매핑 (45도 단위, 22.5도 오프셋)
+	// 0=Top(전방), 1=TR, 2=Right, 3=BR, 4=Bottom(후방), 5=BL, 6=Left, 7=TL
+	const int32 Index = FMath::RoundToInt(AngleDeg / 45.f) % 8;
+	return static_cast<uint8>(Index);
+}
+
+void AHellunaHeroCharacter::Multicast_ShowBloodHitDirection_Implementation(uint8 DirIndex)
+{
+	// Multicast는 모든 클라이언트에서 실행 — 로컬 플레이어만 혈흔 표시
+	if (!IsLocallyControlled()) return;
+
+	if (DirIndex >= 8) return;
+	PlayBloodHitFade(DirIndex);
+}
+
+void AHellunaHeroCharacter::PlayBloodHitFade(uint8 DirIndex)
+{
+	// [Phase21] 지연 초기화 — BeginPlay 시점에 Controller가 없을 수 있음 (멀티플레이)
+	if (!BloodHitWidget && BloodHitWidgetClass)
+	{
+		APlayerController* PC = Cast<APlayerController>(GetController());
+		if (PC && PC->IsLocalController())
+		{
+			BloodHitWidget = CreateWidget<UUserWidget>(PC, BloodHitWidgetClass);
+			if (BloodHitWidget)
+			{
+				BloodHitWidget->AddToViewport(1);
+
+				BloodHitImages.SetNum(8);
+				BloodHitImages[0] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodTop")));
+				BloodHitImages[1] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodCornerTR")));
+				BloodHitImages[2] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodRight")));
+				BloodHitImages[3] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodCornerBR")));
+				BloodHitImages[4] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodBottom")));
+				BloodHitImages[5] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodCornerBL")));
+				BloodHitImages[6] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodLeft")));
+				BloodHitImages[7] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodCornerTL")));
+
+				if (BloodHitTexture)
+				{
+					for (UImage* Img : BloodHitImages)
+					{
+						if (Img)
+						{
+							FSlateBrush Brush;
+							Brush.SetResourceObject(BloodHitTexture);
+							Brush.DrawAs = ESlateBrushDrawType::Image;
+							Brush.ImageSize = FVector2D(256, 256);
+							Img->SetBrush(Brush);
+							Img->SetColorAndOpacity(FLinearColor(1.0f, 0.1f, 0.05f, 1.0f));
+							Img->SetRenderOpacity(0.f);
+							Img->SetVisibility(ESlateVisibility::Collapsed);
+						}
+					}
+				}
+
+				BloodHitWidget->SetRenderOpacity(1.0f);
+				UE_LOG(LogHelluna, Warning, TEXT("[Phase21] BloodHitWidget 지연 초기화 완료: %s, WidgetOpacity=%.2f"),
+					*GetName(), BloodHitWidget->GetRenderOpacity());
+			}
+		}
+	}
+
+	UE_LOG(LogHelluna, Warning, TEXT("[BloodHit] PlayFade: Dir=%d, Widget=%s, Class=%s, ImgNum=%d"),
+		DirIndex, BloodHitWidget ? TEXT("Y") : TEXT("N"),
+		BloodHitWidgetClass ? TEXT("Y") : TEXT("N"),
+		BloodHitImages.Num());
+	if (!BloodHitWidget) return;
+	if (DirIndex >= static_cast<uint8>(BloodHitImages.Num())) return;
+
+	UImage* Img = BloodHitImages[DirIndex];
+	UE_LOG(LogHelluna, Warning, TEXT("[BloodHit] PlayFade: Img[%d]=%s"), DirIndex, Img ? TEXT("VALID") : TEXT("NULL"));
+	if (!Img) return;
+
+	UWorld* W = GetWorld();
+	if (!W) return;
+
+	// 기존 페이드 중이면 리셋
+	W->GetTimerManager().ClearTimer(BloodHitTimers[DirIndex]);
+
+	// 즉시 표시
+	Img->SetVisibility(ESlateVisibility::HitTestInvisible);
+	Img->SetRenderOpacity(1.0f);
+	
+	UE_LOG(LogHelluna, Warning, TEXT("[BloodHit] Image SHOW: Dir=%d, Vis=%d, Opacity=%.2f, DesiredSize=%.0fx%.0f"),
+		DirIndex,
+		(int32)Img->GetVisibility(),
+		Img->GetRenderOpacity(),
+		Img->GetDesiredSize().X, Img->GetDesiredSize().Y);
+
+	// 페이드아웃 (0.016초 간격 루핑 타이머)
+	const float FadeStep = 0.016f;
+	const float DecayPerStep = FadeStep / BloodHitFadeDuration;
+
+	W->GetTimerManager().SetTimer(
+		BloodHitTimers[DirIndex],
+		FTimerDelegate::CreateWeakLambda(this, [this, DirIndex, DecayPerStep]()
+		{
+			if (DirIndex >= static_cast<uint8>(BloodHitImages.Num())) return;
+			UImage* FadeImg = BloodHitImages[DirIndex];
+			if (!FadeImg) return;
+
+			float NewOpacity = FadeImg->GetRenderOpacity() - DecayPerStep;
+			if (NewOpacity <= 0.f)
+			{
+				FadeImg->SetRenderOpacity(0.f);
+				FadeImg->SetVisibility(ESlateVisibility::Collapsed);
+				if (UWorld* TimerWorld = GetWorld())
+				{
+					TimerWorld->GetTimerManager().ClearTimer(BloodHitTimers[DirIndex]);
+				}
+			}
+			else
+			{
+				FadeImg->SetRenderOpacity(NewOpacity);
+			}
+		}),
+		FadeStep,
+		true  // looping
+	);
 }
