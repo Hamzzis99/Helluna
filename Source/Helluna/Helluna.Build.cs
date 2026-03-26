@@ -45,7 +45,10 @@ public class Helluna : ModuleRules
             "Json", "JsonUtilities",
 
             // [Phase 12g] 클립보드 복사 (파티 코드)
-            "ApplicationCore"
+            "ApplicationCore",
+
+            // [PCG] 밤 시작 시 런타임 PCG 생성 (장애물/환경 스폰)
+            "PCG"
         });
         PrivateDependencyModuleNames.AddRange(new string[] { });
 

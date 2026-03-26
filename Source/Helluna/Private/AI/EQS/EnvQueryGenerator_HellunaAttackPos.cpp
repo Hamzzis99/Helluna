@@ -57,7 +57,7 @@ void UEnvQueryGenerator_HellunaAttackPos::GenerateItems(FEnvQueryInstance& Query
 				FVector CandidatePos(
 					Center.X + FMath::Cos(Rad) * Radius,
 					Center.Y + FMath::Sin(Rad) * Radius,
-					Center.Z
+					QuerierLocation.Z
 				);
 
 				// Filter 1: NavMesh
@@ -111,7 +111,7 @@ void UEnvQueryGenerator_HellunaAttackPos::GenerateItems(FEnvQueryInstance& Query
 					FVector CandidatePos(
 						Center.X + FMath::Cos(Rad) * Radius,
 						Center.Y + FMath::Sin(Rad) * Radius,
-						Center.Z
+						QuerierLocation.Z
 					);
 					if (NavSys)
 					{

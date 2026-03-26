@@ -2,6 +2,7 @@
 
 
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
+#include "AI/SpaceShipAttackSlotManager.h"
 #include "Character/HellunaHeroCharacter.h"
 #include "AbilitySystem/HellunaAbilitySystemComponent.h"
 #include "HellunaGameplayTags.h"
@@ -120,6 +121,9 @@ AResourceUsingObject_SpaceShip::AResourceUsingObject_SpaceShip()
 {
 	bReplicates = true;
 	bAlwaysRelevant = true;
+
+	// 공격 슬롯 매니저 자동 생성
+	AttackSlotManager = CreateDefaultSubobject<USpaceShipAttackSlotManager>(TEXT("AttackSlotManager"));
 }
 
 // 게임 시작시 게임 상태에 우주선 등록

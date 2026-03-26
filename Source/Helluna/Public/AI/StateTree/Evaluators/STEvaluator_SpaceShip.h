@@ -1,13 +1,5 @@
 /**
  * STEvaluator_SpaceShip.h
- *
- * StateTree Evaluator: 우주선 위치 정보를 매 틱 갱신해서 Task에 제공한다.
- *
- * EnrageLoop State의 ChaseTarget / AttackTarget Task는
- * 이 Evaluator의 SpaceShipData를 바인딩해서 사용한다.
- * 우주선이 씬에 없거나 소멸된 경우 TargetActor가 null로 유지된다.
- *
- * @author 김민우
  */
 
 #pragma once
@@ -18,6 +10,7 @@
 #include "STEvaluator_SpaceShip.generated.h"
 
 class AAIController;
+class USpaceShipAttackSlotManager;
 
 USTRUCT()
 struct FSTEvaluator_SpaceShipInstanceData

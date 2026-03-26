@@ -24,6 +24,7 @@
 #include "AbilitySystem/HellunaEnemyGameplayAbility.h"
 #include "AbilitySystem/EnemyAbility/EnemyGameplayAbility_Attack.h"
 #include "AbilitySystem/EnemyAbility/EnemyGameplayAbility_RangedAttack.h"
+#include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 
 EStateTreeRunStatus FSTTask_AttackTarget::EnterState(
 	FStateTreeExecutionContext& Context,
@@ -40,15 +41,27 @@ EStateTreeRunStatus FSTTask_AttackTarget::EnterState(
 	APawn* Pawn = InstanceData.AIController->GetPawn();
 	if (UCharacterMovementComponent* MoveComp = Pawn ? Cast<UCharacterMovementComponent>(Pawn->GetMovementComponent()) : nullptr)
 	{
-		// bOrientRotationToMovement OFF, bUseControllerDesiredRotation ON
-		// → SetFocus 방향으로 부드럽게 회전
 		MoveComp->bOrientRotationToMovement     = false;
 		MoveComp->bUseControllerDesiredRotation = true;
 	}
 
 	const FHellunaAITargetData& TargetData = Context.GetInstanceData(*this).TargetData;
+
+	// 광폭화 상태인데 타겟이 플레이어로 잘못 설정된 경우 → SpaceShip으로 강제 교정
 	if (TargetData.HasValidTarget())
-		InstanceData.AIController->SetFocus(TargetData.TargetActor.Get());
+	{
+		AActor* TargetActor = TargetData.TargetActor.Get();
+		const bool bIsSpaceShip = (Cast<AResourceUsingObject_SpaceShip>(TargetActor) != nullptr);
+
+		// 광폭화 후에는 우주선만 공격 (플레이어가 타겟이면 포커스 설정 스킵)
+		if (TargetData.bEnraged && !bIsSpaceShip)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[AttackTarget] 광폭화 상태에서 플레이어 타겟 감지 → 공격 스킵"));
+			return EStateTreeRunStatus::Failed;
+		}
+
+		InstanceData.AIController->SetFocus(TargetActor);
+	}
 
 	InstanceData.CooldownRemaining = InitialAttackDelay;
 

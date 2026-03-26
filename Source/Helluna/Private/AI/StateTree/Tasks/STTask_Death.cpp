@@ -95,8 +95,8 @@ EStateTreeRunStatus FSTTask_Death::Tick(
 			{
 				if (AHellunaEnemyCharacter* Enemy = Cast<AHellunaEnemyCharacter>(AIC->GetPawn()))
 				{
+					// DespawnMassEntityOnServer가 Mass Entity 정리 + Destroy()까지 처리
 					Enemy->DespawnMassEntityOnServer(TEXT("STTask_Death_Fallback"));
-					Enemy->SetLifeSpan(0.1f);
 				}
 			}
 			return EStateTreeRunStatus::Succeeded;

@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Object/ResourceUsingObject/HellunaBaseResourceUsingObject.h"
+#include "AI/SpaceShipAttackSlotManager.h"
 #include "ResourceUsingObject_SpaceShip.generated.h"
 
 /**
@@ -72,5 +73,10 @@ public:
     // ⭐ 새로 추가: 수리 완료 이벤트 (Blueprint에서도 오버라이드 가능)
     UFUNCTION(BlueprintNativeEvent, Category = "Repair")
     void OnRepairCompleted();
+
+    // ─── 공격 슬롯 매니저 ─────────────────────────────────────────
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Slot",
+        meta=(DisplayName="공격 슬롯 매니저"))
+    TObjectPtr<USpaceShipAttackSlotManager> AttackSlotManager;
 	
 };

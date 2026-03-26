@@ -33,8 +33,22 @@ void UEnemyGameplayAbility_Death::ActivateAbility(
 	// 이동 정지 / 콜리전 비활성화
 	if (UCharacterMovementComponent* MoveComp = Enemy->GetCharacterMovement())
 		MoveComp->DisableMovement();
-	if (UCapsuleComponent* Capsule = Enemy->GetCapsuleComponent())
-		Capsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	// 캡슐뿐 아니라 모든 PrimitiveComponent의 콜리전을 비활성화.
+	// 캡슐만 끄면 SkeletalMesh 등 다른 콜리전 컴포넌트가 남아 있어서
+	// Destroy() → UnregisterAllComponents() 과정에서 EndOverlap 발생 시
+	// 이미 등록해제된 형제 컴포넌트를 참조하여 bRegistered assertion이 발생한다.
+	Enemy->SetActorEnableCollision(false);
+	TArray<UPrimitiveComponent*> Prims;
+	Enemy->GetComponents<UPrimitiveComponent>(Prims);
+	for (UPrimitiveComponent* Prim : Prims)
+	{
+		if (Prim && Prim->IsRegistered())
+		{
+			Prim->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			Prim->SetGenerateOverlapEvents(false);
+		}
+	}
 
 	UAnimMontage* DeathMontage = Enemy->DeathMontage;
 	if (!DeathMontage)
@@ -99,13 +113,17 @@ void UEnemyGameplayAbility_Death::HandleDeathFinished()
 		GM->NotifyMonsterDied(Enemy);
 	}
 
-	Enemy->DespawnMassEntityOnServer(TEXT("GA_Death"));
-	Enemy->SetLifeSpan(0.1f);
+	// Destroy 전 남은 콜리전 완전 비활성화 — bRegistered assertion 방지
+	Enemy->SetActorEnableCollision(false);
 
+	// EndAbility를 Destroy 전에 호출 — Destroy 후에는 ActorInfo가 무효화될 수 있음
 	const FGameplayAbilitySpecHandle Handle         = GetCurrentAbilitySpecHandle();
 	const FGameplayAbilityActorInfo* ActorInfo      = GetCurrentActorInfo();
 	const FGameplayAbilityActivationInfo ActivationInfo = GetCurrentActivationInfo();
 	EndAbility(Handle, ActorInfo, ActivationInfo, true, false);
+
+	// DespawnMassEntityOnServer가 Mass Entity 정리 + Destroy()까지 처리
+	Enemy->DespawnMassEntityOnServer(TEXT("GA_Death"));
 }
 
 void UEnemyGameplayAbility_Death::EndAbility(

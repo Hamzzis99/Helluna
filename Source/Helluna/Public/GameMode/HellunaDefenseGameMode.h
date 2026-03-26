@@ -27,6 +27,7 @@ class AHellunaEnemyMassSpawner;
 class UHellunaGameResultWidget;
 class UInv_InventoryComponent;
 class UHellunaHealthComponent;
+class UPCGComponent;
 
 // ════════════════════════════════════════════════════════════════════════════════
 // Phase 7: 게임 종료 사유
@@ -105,6 +106,78 @@ protected:
 
 	/** 우주선 수리 완료 여부 체크 */
 	bool IsSpaceShipFullyRepaired(int32& OutCurrent, int32& OutNeed) const;
+
+	// ════════════════════════════════════════════════════════════════════════════════
+	// PCG 밤 스폰 시스템 — 밤 시작 시 PCG 그래프 실행, 낮 시작 시 정리
+	// ════════════════════════════════════════════════════════════════════════════════
+protected:
+	/** 밤 시작 시 활성화할 PCG 컴포넌트 태그. 레벨에 배치된 PCG 액터에 이 태그를 부여하면 자동 캐싱 대상이 된다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)",
+		meta = (DisplayName = "PCG 액터 태그"))
+	FName NightPCGTag = TEXT("NightPCG");
+
+	/** BeginPlay에서 태그 기반으로 캐싱한 PCG 컴포넌트 목록 */
+	UPROPERTY()
+	TArray<TWeakObjectPtr<UPCGComponent>> CachedNightPCGComponents;
+
+	/** 태그 기반 PCG 컴포넌트 캐싱 */
+	void CacheNightPCGComponents();
+
+	/** 밤 시작: PCG 그래프 실행 */
+	void ActivateNightPCG();
+
+	/** 낮 시작: PCG 생성물 정리 */
+	void DeactivateNightPCG();
+
+	/** PCG 생성 완료 콜백 — 스폰된 광석 수 디버그 출력 + 밀도 컬링 */
+	void OnNightPCGGraphGenerated(UPCGComponent* InComponent);
+
+	// ────────────────────────────────────────────────────────────────────────────
+	// PCG 밀도 기반 후처리 컬링
+	// ────────────────────────────────────────────────────────────────────────────
+
+	/** 밀도 체크 반경 (cm). 이 범위 내 기존 광석 수를 센다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)",
+		meta = (DisplayName = "밀도 체크 반경(cm)", ClampMin = "100.0"))
+	float DensityCheckRadius = 1500.f;
+
+	/** 이 수 이상 이웃 광석이 있으면 최소 유지 확률로 떨어진다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)",
+		meta = (DisplayName = "최대 이웃 광석 수", ClampMin = "1"))
+	int32 MaxNeighborOreCount = 5;
+
+	/** 아무리 밀집해도 이 비율만큼은 유지한다 (0~1). */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)",
+		meta = (DisplayName = "최소 유지 비율", ClampMin = "0.0", ClampMax = "1.0"))
+	float MinKeepRatio = 0.2f;
+
+	/**
+	 * 스폰 점수 계산.
+	 * 광석 밀도 + 방향 편향을 곱해서 최종 생존 확률을 결정한다.
+	 */
+	float CalculateSpawnScore(const FVector& Location, const TArray<AActor*>& ExistingOres) const;
+
+	/** 광석 밀도 팩터: 주변 광석이 많을수록 낮은 값 반환 (MinKeepRatio ~ 1.0) */
+	float CalculateOreDensityFactor(const FVector& Location, const TArray<AActor*>& ExistingOres) const;
+
+	/**
+	 * 방향 편향 팩터: 우주선 기준 특정 방향일수록 높은 값 반환.
+	 * BiasDirection 방향이면 1.0, 반대면 MinBiasScore.
+	 */
+	float CalculateDirectionBiasFactor(const FVector& Location) const;
+
+	/** 편향 방향 (우주선 기준, 정규화). 기본값은 -Y (왼쪽) */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)",
+		meta = (DisplayName = "광석 편향 방향"))
+	FVector BiasDirection = FVector(0.f, -1.f, 0.f);
+
+	/** 편향 반대쪽의 최소 생존 점수 (0이면 반대쪽은 전부 제거) */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)",
+		meta = (DisplayName = "편향 반대쪽 최소 점수", ClampMin = "0.0", ClampMax = "1.0"))
+	float MinBiasScore = 0.1f;
+
+	/** PCG 생성 직후 밀도 기반으로 광석을 제거하는 후처리 */
+	void PostProcessNightPCGDensity(UPCGComponent* InComponent);
 
 	// ════════════════════════════════════════════════════════════════════════════════
 	// 몬스터 스폰 시스템

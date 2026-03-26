@@ -374,5 +374,8 @@ protected:
 	// MassAgent가 이미 붙어있다면 캐싱(없으면 FindComponentByClass로 찾아씀)
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Mass")
 	TObjectPtr<UMassAgentComponent> MassAgentComp = nullptr;
+
+	// DespawnMassEntityOnServer 중복 호출 방지 플래그
+	bool bDespawnStarted = false;
 };
 	

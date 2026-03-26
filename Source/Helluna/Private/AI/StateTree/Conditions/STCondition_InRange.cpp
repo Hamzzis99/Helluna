@@ -104,8 +104,13 @@ bool FSTCondition_InRange::TestCondition(FStateTreeExecutionContext& Context) co
 	const FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
 	const FHellunaAITargetData& TargetData = InstanceData.TargetData;
 
-	// 타겟이 없으면 bCheckInside 반전 반환 (범위 밖 판정)
-	if (!TargetData.HasValidTarget()) return !bCheckInside;
+	// [DBG] 타겟 유효성 체크
+	if (!TargetData.HasValidTarget())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[InRange] ❌ TargetData 유효하지 않음 (TargetActor=nullptr) → %s 반환"),
+			!bCheckInside ? TEXT("true") : TEXT("false"));
+		return !bCheckInside;
+	}
 
 	AActor* TargetActor = TargetData.TargetActor.Get();
 	const bool bIsSpaceShip = (TargetData.TargetType == EHellunaTargetType::SpaceShip);
@@ -126,5 +131,29 @@ bool FSTCondition_InRange::TestCondition(FStateTreeExecutionContext& Context) co
 	}
 
 	const bool bIsInside = (EffectiveDist <= EffectiveRange);
-	return bCheckInside ? bIsInside : !bIsInside;
+	const bool bResult = bCheckInside ? bIsInside : !bIsInside;
+
+	// [DBG] 결과 로그 (매 틱 대신 결과가 false일 때만 출력해 스팸 방지)
+	if (!bResult)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[InRange] ⚠️ 조건 실패 | Target=%s | bIsSpaceShip=%d | Dist=%.1f | Range=%.1f | bCheckInside=%d | bIsInside=%d"),
+			*GetNameSafe(TargetActor),
+			(int)bIsSpaceShip,
+			EffectiveDist,
+			EffectiveRange,
+			(int)bCheckInside,
+			(int)bIsInside);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Log,
+			TEXT("[InRange] ✅ 조건 통과 | Target=%s | Dist=%.1f | Range=%.1f | bCheckInside=%d"),
+			*GetNameSafe(TargetActor),
+			EffectiveDist,
+			EffectiveRange,
+			(int)bCheckInside);
+	}
+
+	return bResult;
 }
