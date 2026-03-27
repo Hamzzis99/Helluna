@@ -19,6 +19,8 @@
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
+#include "Materials/MaterialInterface.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "EngineUtils.h"
 
 // ============================================================================
@@ -81,6 +83,7 @@ void ABossEncounterCube::BeginPlay()
 			AuraVFXSpawnedFoliageHashes.Empty();
 			CachedFoliageLocations.Empty();
 			bFoliageCached = false;
+			ActiveWireframeOverlays.Empty();
 			UE_LOG(LogTemp, Log, TEXT("[BossEncounterCube] Late join — boss defeated, color + flowers restored"));
 		}
 		else
@@ -129,6 +132,9 @@ void ABossEncounterCube::Tick(float DeltaTime)
 
 	// [Cinematic] 시네마틱 Lerp 처리 (FOV·크로마·섬광·채도)
 	TickCinematic(DeltaTime);
+
+	// [Wave VFX] 와이어프레임 오버레이 페이드 애니메이션
+	TickWireframeOverlays(DeltaTime);
 
 	UpdateInteractWidgetVisibility();
 
@@ -492,6 +498,16 @@ void ABossEncounterCube::TickColorWave(float DeltaTime)
 		CachedFoliageLocations.Empty();
 		bFoliageCached = false;
 
+		// 혹시 남아있는 오버레이 메시 정리
+		for (auto& Overlay : ActiveWireframeOverlays)
+		{
+			if (Overlay.OverlayMesh.IsValid())
+			{
+				Overlay.OverlayMesh->DestroyComponent();
+			}
+		}
+		ActiveWireframeOverlays.Empty();
+
 		UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] Color wave complete — full color restored (flowers persist)"));
 	}
 }
@@ -523,10 +539,10 @@ void ABossEncounterCube::DisableBossEncounterCustomDepth()
 
 void ABossEncounterCube::SpawnWaveAuraVFX(float DeltaTime)
 {
-	// VFX 미할당이면 전체 스킵
-	if (!WaveAuraVFX)
+	// VFX/머티리얼 전부 미할당이면 전체 스킵
+	if (!WaveAuraVFX && !WaveHoloVFX && !WaveWireframeMaterial)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[WaveVFX DEBUG] WaveAuraVFX is NULL — skipping!"));
+		UE_LOG(LogTemp, Warning, TEXT("[WaveVFX DEBUG] All wave effects NULL — skipping!"));
 		return;
 	}
 
@@ -610,31 +626,7 @@ void ABossEncounterCube::SpawnWaveAuraVFX(float DeltaTime)
 		const float Dist = FVector::Dist(Actor->GetActorLocation(), WaveOrigin);
 		if (Dist >= InnerRadius && Dist <= OuterRadius)
 		{
-			// VFX 스폰 (bAutoDestroy=false — WaveAuraLifetime 타이머로 수동 제어)
-			UNiagaraComponent* SpawnedComp = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
-				World, WaveAuraVFX, Actor->GetActorLocation(),
-				FRotator::ZeroRotator, FVector(WaveAuraScale),
-				false, true);
-
-			if (SpawnedComp)
-			{
-				TWeakObjectPtr<UNiagaraComponent> WeakComp(SpawnedComp);
-				FTimerHandle DestroyTimerHandle;
-				World->GetTimerManager().SetTimer(
-					DestroyTimerHandle,
-					FTimerDelegate::CreateLambda([WeakComp]()
-					{
-						if (WeakComp.IsValid())
-						{
-							WeakComp->DeactivateImmediate();
-							WeakComp->DestroyComponent();
-						}
-					}),
-					WaveAuraLifetime,
-					false
-				);
-			}
-
+			ApplyWaveEffectsOnActor(Actor, World);
 			AuraVFXSpawnedActors.Add(WeakActor);
 			SpawnedThisFrame++;
 		}
@@ -717,9 +709,18 @@ void ABossEncounterCube::SpawnWaveAuraVFX(float DeltaTime)
 		const float Dist = FVector::Dist(FoliageLoc, WaveOrigin);
 		if (Dist >= InnerRadius && Dist <= OuterRadius)
 		{
+			// 폴리지: Effect A(홀로) 우선, 없으면 WaveAuraVFX 폴백. Effect C(와이어프레임)는 ISM 특성상 불가
+			UNiagaraSystem* FoliageNS = WaveHoloVFX ? WaveHoloVFX.Get() : WaveAuraVFX.Get();
+			if (!FoliageNS)
+			{
+				AuraVFXSpawnedFoliageHashes.Add(Hash);
+				SpawnedThisFrame++;
+				continue;
+			}
+
 			// 폴리지 VFX는 구조물보다 작게 (×0.6)
 			UNiagaraComponent* SpawnedComp = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
-				World, WaveAuraVFX, FoliageLoc,
+				World, FoliageNS, FoliageLoc,
 				FRotator::ZeroRotator, FVector(WaveAuraScale * 0.6f),
 				false, true);
 
@@ -752,6 +753,201 @@ LogAndReturn:
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[WaveVFX DEBUG] Spawned %d VFX (radius=%.0f, actors=%d, foliage=%d)"),
 			SpawnedThisFrame, ColorWaveRadius, AuraVFXSpawnedActors.Num(), AuraVFXSpawnedFoliageHashes.Num());
+	}
+}
+
+// ============================================================================
+// [Wave VFX] 홀로그램 + 와이어프레임 효과 적용
+// ============================================================================
+
+void ABossEncounterCube::ApplyWaveEffectsOnActor(AActor* Actor, UWorld* World)
+{
+	if (!IsValid(Actor) || !World)
+	{
+		return;
+	}
+
+	// ── 바운딩 박스 크기 계산 ──
+	FVector Origin, BoxExtent;
+	Actor->GetActorBounds(false, Origin, BoxExtent);
+	// BoxExtent는 반(half) 크기 — 전체 크기 = BoxExtent * 2
+	// NS_cosmic_Holo 기본 크기(BaseSize)에 대한 비율로 비균일 스케일 계산
+	const float BaseSize = 100.f; // 나이아가라 에디터에서 확인 후 조절
+	FVector HoloScale(
+		FMath::Max(BoxExtent.X * 2.f / BaseSize, 0.5f),
+		FMath::Max(BoxExtent.Y * 2.f / BaseSize, 0.5f),
+		FMath::Max(BoxExtent.Z * 2.f / BaseSize, 0.5f)
+	);
+	HoloScale *= WaveAuraScale;
+
+	// ── Effect A: 홀로그램 나이아가라 (바운딩박스 비균일 스케일) ──
+	if (WaveHoloVFX)
+	{
+		UNiagaraComponent* HoloComp = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+			World, WaveHoloVFX, Origin,
+			FRotator::ZeroRotator, HoloScale,
+			false, true);
+
+		if (HoloComp)
+		{
+			TWeakObjectPtr<UNiagaraComponent> WeakComp(HoloComp);
+			const float Lifetime = WaveAuraLifetime;
+			FTimerHandle H;
+			World->GetTimerManager().SetTimer(H,
+				FTimerDelegate::CreateLambda([WeakComp]()
+				{
+					if (WeakComp.IsValid())
+					{
+						WeakComp->DeactivateImmediate();
+						WeakComp->DestroyComponent();
+					}
+				}), Lifetime, false);
+
+			UE_LOG(LogTemp, Warning, TEXT("[WaveVFX] Effect A: Holo spawned at %s scale=(%s) for %s"),
+				*Origin.ToString(), *HoloScale.ToString(), *Actor->GetName());
+		}
+	}
+	// WaveHoloVFX가 nullptr이면 기존 WaveAuraVFX로 폴백
+	else if (WaveAuraVFX)
+	{
+		UNiagaraComponent* AuraComp = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+			World, WaveAuraVFX, Actor->GetActorLocation(),
+			FRotator::ZeroRotator, FVector(WaveAuraScale),
+			false, true);
+
+		if (AuraComp)
+		{
+			TWeakObjectPtr<UNiagaraComponent> WeakComp(AuraComp);
+			const float Lifetime = WaveAuraLifetime;
+			FTimerHandle H;
+			World->GetTimerManager().SetTimer(H,
+				FTimerDelegate::CreateLambda([WeakComp]()
+				{
+					if (WeakComp.IsValid())
+					{
+						WeakComp->DeactivateImmediate();
+						WeakComp->DestroyComponent();
+					}
+				}), Lifetime, false);
+		}
+	}
+
+	// ── Effect C: 와이어프레임 오버레이 (스캔 라인) ──
+	if (WaveWireframeMaterial)
+	{
+		UStaticMeshComponent* OrigSMC = Actor->FindComponentByClass<UStaticMeshComponent>();
+		if (OrigSMC && OrigSMC->GetStaticMesh())
+		{
+			// 바운딩 박스 계산
+			FVector BoundsOrigin, BoundsExtent;
+			Actor->GetActorBounds(false, BoundsOrigin, BoundsExtent);
+			const float BottomZ = BoundsOrigin.Z - BoundsExtent.Z;
+			const float TopZ = BoundsOrigin.Z + BoundsExtent.Z;
+
+			UStaticMeshComponent* OverlayMesh = NewObject<UStaticMeshComponent>(Actor);
+			if (OverlayMesh)
+			{
+				OverlayMesh->SetStaticMesh(OrigSMC->GetStaticMesh());
+				OverlayMesh->SetWorldTransform(OrigSMC->GetComponentTransform());
+				OverlayMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+				// DMI 생성 — ScanHeight 파라미터 제어용
+				UMaterialInstanceDynamic* DMI = UMaterialInstanceDynamic::Create(WaveWireframeMaterial, this);
+				if (DMI)
+				{
+					// 초기값: ScanHeight = BottomZ (바닥에서 시작)
+					DMI->SetScalarParameterValue(TEXT("ScanHeight"), BottomZ);
+
+					// 밴드 두께
+					const float BandWidth = FMath::Max((TopZ - BottomZ) * ScanBandRatio, 10.f);
+					DMI->SetScalarParameterValue(TEXT("BandWidth"), BandWidth);
+
+					// 모든 슬롯에 DMI 적용
+					const int32 NumMats = OrigSMC->GetNumMaterials();
+					for (int32 i = 0; i < NumMats; ++i)
+					{
+						OverlayMesh->SetMaterial(i, DMI);
+					}
+
+					// 스케일 고정 — Tick에서 스케일 변경하지 않음
+					FVector OrigScale = OrigSMC->GetComponentScale();
+					OverlayMesh->SetWorldScale3D(OrigScale * 1.02f);
+
+					// Visibility 항상 true — ScanHeight가 범위 밖이면 머티리얼이 알아서 투명 처리
+					OverlayMesh->SetVisibility(true);
+
+					OverlayMesh->RegisterComponent();
+					if (Actor->GetRootComponent())
+					{
+						OverlayMesh->AttachToComponent(
+							Actor->GetRootComponent(),
+							FAttachmentTransformRules::KeepWorldTransform);
+					}
+
+					// 스캔 추적 구조체
+					FWireframeOverlay Overlay;
+					Overlay.OverlayMesh = OverlayMesh;
+					Overlay.DMI = DMI;
+					Overlay.ScanProgress = 0.f;
+					Overlay.BottomZ = BottomZ;
+					Overlay.TopZ = TopZ;
+					Overlay.OrigScaleZ = OrigScale.X;
+					Overlay.OrigLocation = OrigSMC->GetComponentLocation();
+					Overlay.TargetActor = Actor;
+					ActiveWireframeOverlays.Add(Overlay);
+
+					UE_LOG(LogTemp, Warning, TEXT("[WaveVFX] Effect C: Scan overlay spawned on %s (Z=%.0f~%.0f, band=%.0f, %d mats)"),
+						*Actor->GetName(), BottomZ, TopZ, BandWidth, NumMats);
+				}
+			}
+		}
+	}
+}
+
+// ============================================================================
+// [Wave VFX] 와이어프레임 오버레이 스캔 라인 애니메이션
+// ============================================================================
+
+void ABossEncounterCube::TickWireframeOverlays(float DeltaTime)
+{
+	for (int32 i = ActiveWireframeOverlays.Num() - 1; i >= 0; --i)
+	{
+		FWireframeOverlay& Overlay = ActiveWireframeOverlays[i];
+
+		if (!Overlay.OverlayMesh.IsValid())
+		{
+			ActiveWireframeOverlays.RemoveAt(i);
+			continue;
+		}
+
+		// 스캔 진행 (0→1)
+		Overlay.ScanProgress += DeltaTime / ScanDuration;
+
+		if (Overlay.ScanProgress >= 1.0f)
+		{
+			// 스캔 완료 — 오버레이 제거
+			Overlay.OverlayMesh->DestroyComponent();
+			ActiveWireframeOverlays.RemoveAt(i);
+			continue;
+		}
+
+		// ── ScanHeight 계산: BottomZ → TopZ로 Lerp ──
+		const float CurrentScanZ = FMath::Lerp(Overlay.BottomZ, Overlay.TopZ, Overlay.ScanProgress);
+
+		// ── DMI에 ScanHeight 업데이트 ──
+		if (Overlay.DMI)
+		{
+			Overlay.DMI->SetScalarParameterValue(TEXT("ScanHeight"), CurrentScanZ);
+
+			// 밴드 두께: 메시 높이의 ScanBandRatio
+			const float MeshHeight = Overlay.TopZ - Overlay.BottomZ;
+			const float BandWidth = FMath::Max(MeshHeight * ScanBandRatio, 10.f);
+			Overlay.DMI->SetScalarParameterValue(TEXT("BandWidth"), BandWidth);
+		}
+
+		UE_LOG(LogTemp, Verbose, TEXT("[WaveVFX] Scan: progress=%.2f, scanZ=%.0f, actor=%s"),
+			Overlay.ScanProgress, CurrentScanZ,
+			Overlay.TargetActor.IsValid() ? *Overlay.TargetActor->GetName() : TEXT("None"));
 	}
 }
 

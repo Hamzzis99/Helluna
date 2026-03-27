@@ -17,6 +17,9 @@ class UNiagaraSystem;
 class UNiagaraComponent;
 class UPostProcessComponent;
 class UCameraComponent;
+class UMaterialInterface;
+class UMaterialInstanceDynamic;
+class UStaticMeshComponent;
 
 /**
  * 중간보스 조우 큐브 — F키 홀드로 보스 소환 이벤트 시작
@@ -206,6 +209,26 @@ public:
 		meta = (DisplayName = "Foliage Sample Rate (폴리지 샘플링)", ClampMin = "0.01", ClampMax = "1.0"))
 	float FoliageSampleRate = 0.08f;
 
+	/** [Effect A] 홀로그램 나이아가라 (NS_cosmic_Holo, BP에서 할당) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter|WaveVFX",
+		meta = (DisplayName = "Wave Holo VFX (홀로그램)"))
+	TObjectPtr<UNiagaraSystem> WaveHoloVFX;
+
+	/** [Effect C] 와이어프레임 오버레이 머티리얼 (M_Wire_Earth, BP에서 할당) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter|WaveVFX",
+		meta = (DisplayName = "Wave Wireframe Material (와이어프레임)"))
+	TObjectPtr<UMaterialInterface> WaveWireframeMaterial;
+
+	/** 스캔 라인 이동 속도 (0→1 진행 시간, 초) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter|WaveVFX",
+		meta = (DisplayName = "Scan Duration (스캔 시간)", ClampMin = "0.5", ClampMax = "5.0"))
+	float ScanDuration = 2.5f;
+
+	/** 스캔 밴드 높이 비율 (메시 전체 높이 대비, 0.2 = 20%) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter|WaveVFX",
+		meta = (DisplayName = "Scan Band Ratio (밴드 비율)", ClampMin = "0.05", ClampMax = "0.5"))
+	float ScanBandRatio = 0.2f;
+
 	// =========================================================================================
 	// 리플리케이션
 	// =========================================================================================
@@ -341,6 +364,32 @@ private:
 
 	/** 웨이브 경계의 사물에 오라 VFX 스폰 (TickColorWave에서 호출) */
 	void SpawnWaveAuraVFX(float DeltaTime);
+
+	/** 웨이브가 액터에 닿을 때 홀로+와이어프레임 효과 적용 */
+	void ApplyWaveEffectsOnActor(AActor* Actor, UWorld* World);
+
+	/** 와이어프레임 오버레이 스캔 애니메이션 Tick */
+	void TickWireframeOverlays(float DeltaTime);
+
+	/** 와이어프레임 오버레이 스캔 상태 */
+	struct FWireframeOverlay
+	{
+		TWeakObjectPtr<UStaticMeshComponent> OverlayMesh;
+		TObjectPtr<UMaterialInstanceDynamic> DMI;
+
+		// 스캔 진행도: 0.0 = 바닥, 1.0 = 꼭대기
+		float ScanProgress = 0.f;
+
+		// 원본 메시 바운딩 (스캔 범위)
+		float BottomZ = 0.f;
+		float TopZ = 0.f;
+		float OrigScaleZ = 1.f;
+		FVector OrigLocation = FVector::ZeroVector;
+
+		// 컬러 복원용 원본 액터 추적
+		TWeakObjectPtr<AActor> TargetActor;
+	};
+	TArray<FWireframeOverlay> ActiveWireframeOverlays;
 
 	/** 이미 오라 VFX가 스폰된 액터 추적 (중복 방지) */
 	TSet<TWeakObjectPtr<AActor>> AuraVFXSpawnedActors;
