@@ -6,13 +6,17 @@
 #include "Components/StaticMeshComponent.h"
 #include "Components/WidgetComponent.h"
 #include "Components/PrimitiveComponent.h"
+#include "Components/PostProcessComponent.h"
+#include "Camera/CameraComponent.h"
 #include "Net/UnrealNetwork.h"
 #include "Character/HellunaHeroCharacter.h"
 #include "Character/HellunaEnemyCharacter.h"
 #include "Controller/HellunaHeroController.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
 #include "Kismet/KismetMaterialLibrary.h"
+#include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialParameterCollection.h"
+#include "NiagaraFunctionLibrary.h"
 #include "EngineUtils.h"
 
 // ============================================================================
@@ -116,6 +120,9 @@ void ABossEncounterCube::Tick(float DeltaTime)
 
 	// [Step 5] 컬러 웨이브 MPC 업데이트 (클라이언트)
 	TickColorWave(DeltaTime);
+
+	// [Cinematic] 시네마틱 Lerp 처리 (FOV·크로마·섬광·채도)
+	TickCinematic(DeltaTime);
 
 	UpdateInteractWidgetVisibility();
 
@@ -428,7 +435,10 @@ void ABossEncounterCube::Multicast_BossDefeated_Implementation(FVector DeathLoca
 			this, MPC_BossEncounter, TEXT("ColorWaveRadius"), 0.f);
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] Multicast — color wave started from %s"),
+	// [Cinematic] 시네마틱 시퀀스 시작 (컬러 웨이브와 병행)
+	StartCinematicSequence(DeathLocation);
+
+	UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] Multicast — color wave + cinematic started from %s"),
 		*DeathLocation.ToString());
 }
 
@@ -490,6 +500,337 @@ void ABossEncounterCube::DisableBossEncounterCustomDepth()
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("[BossEncounterCube] Custom Depth disabled on all characters"));
+}
+
+// ============================================================================
+// [Cinematic] 보스 사망 시네마틱 연출
+// ============================================================================
+
+void ABossEncounterCube::CreateCinematicPostProcess()
+{
+	if (CinematicPostProcess)
+	{
+		return;
+	}
+
+	CinematicPostProcess = NewObject<UPostProcessComponent>(this, TEXT("CinematicPostProcess"));
+	if (!CinematicPostProcess)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[BossEncounterCube] Failed to create CinematicPostProcess"));
+		return;
+	}
+
+	CinematicPostProcess->RegisterComponent();
+	CinematicPostProcess->bUnbound = true; // 화면 전체에 적용
+	CinematicPostProcess->Priority = 100.f; // 다른 PP보다 높은 우선순위
+
+	UE_LOG(LogTemp, Log, TEXT("[BossEncounterCube] CinematicPostProcess created (unbound, priority=100)"));
+}
+
+void ABossEncounterCube::StartCinematicSequence(FVector DeathLocation)
+{
+	CinematicDeathLocation = DeathLocation;
+
+	// Phase 0 즉시 시작
+	CinematicPhase0_SlowMotion();
+
+	UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] Cinematic sequence started at %s"),
+		*DeathLocation.ToString());
+}
+
+void ABossEncounterCube::CinematicPhase0_SlowMotion()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	// 슬로모션 적용
+	UGameplayStatics::SetGlobalTimeDilation(World, SlowMotionScale);
+	UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] Phase0: SlowMotion = %.2f for %.2fs (game time)"),
+		SlowMotionScale, SlowMotionDuration);
+
+	// Phase 1을 SlowMotionDuration 뒤에 호출
+	// 타이머는 게임 시간 기준이므로 실제 체감은 더 길어짐 (0.3/0.3 ≈ 1초)
+	World->GetTimerManager().SetTimer(
+		CinematicTimer_Phase1,
+		this,
+		&ABossEncounterCube::CinematicPhase1_Explosion,
+		SlowMotionDuration,
+		false);
+}
+
+void ABossEncounterCube::CinematicPhase1_Explosion()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	// ── 슬로모션 복원 (이후 모든 타이머는 정상 속도) ──
+	UGameplayStatics::SetGlobalTimeDilation(World, 1.0f);
+	UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] Phase1: TimeDilation restored to 1.0"));
+
+	// ── 시네마틱 PostProcess 생성 ──
+	CreateCinematicPostProcess();
+
+	APlayerController* PC = World->GetFirstPlayerController();
+
+	// ── 카메라 셰이크 ──
+	if (PC && BossDeathCameraShake)
+	{
+		PC->ClientStartCameraShake(BossDeathCameraShake, 1.0f);
+		UE_LOG(LogTemp, Log, TEXT("[BossEncounterCube] Phase1: Camera shake started"));
+	}
+
+	// ── FOV 펀치 ──
+	if (PC)
+	{
+		APawn* Pawn = PC->GetPawn();
+		if (Pawn)
+		{
+			UCameraComponent* Cam = Pawn->FindComponentByClass<UCameraComponent>();
+			if (Cam)
+			{
+				CinematicOriginalFOV = Cam->FieldOfView;
+				Cam->SetFieldOfView(CinematicOriginalFOV + FOVPunchAmount);
+				bCinematicFOVActive = true;
+				UE_LOG(LogTemp, Log, TEXT("[BossEncounterCube] Phase1: FOV punch %.1f → %.1f"),
+					CinematicOriginalFOV, CinematicOriginalFOV + FOVPunchAmount);
+			}
+		}
+	}
+
+	// ── 크로매틱 수차 ──
+	if (CinematicPostProcess)
+	{
+		CinematicPostProcess->Settings.bOverride_SceneFringeIntensity = true;
+		CinematicPostProcess->Settings.SceneFringeIntensity = 5.0f;
+		bCinematicChromaActive = true;
+		UE_LOG(LogTemp, Log, TEXT("[BossEncounterCube] Phase1: Chromatic aberration = 5.0"));
+	}
+
+	// ── 보스 사망 VFX (나이아가라) ──
+	if (BossDeathVFX)
+	{
+		UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+			World, BossDeathVFX, CinematicDeathLocation,
+			FRotator::ZeroRotator, FVector(1.f), true, true);
+		UE_LOG(LogTemp, Log, TEXT("[BossEncounterCube] Phase1: Boss death VFX spawned at %s"),
+			*CinematicDeathLocation.ToString());
+	}
+
+	// ── 바람 VFX (나이아가라) ──
+	if (WindVFX)
+	{
+		UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+			World, WindVFX, CinematicDeathLocation,
+			FRotator::ZeroRotator, FVector(1.f), true, true);
+		UE_LOG(LogTemp, Log, TEXT("[BossEncounterCube] Phase1: Wind VFX spawned at %s"),
+			*CinematicDeathLocation.ToString());
+	}
+
+	// ── 사운드 ──
+	if (BossDeathSound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(
+			World, BossDeathSound, CinematicDeathLocation);
+		UE_LOG(LogTemp, Log, TEXT("[BossEncounterCube] Phase1: Boss death sound played"));
+	}
+
+	// ── 후속 Phase 타이머 체인 (정상 속도) ──
+	// Phase 2: 0.5초 뒤 (순백 섬광)
+	World->GetTimerManager().SetTimer(
+		CinematicTimer_Phase2,
+		this,
+		&ABossEncounterCube::CinematicPhase2_WhiteFlash,
+		0.5f,
+		false);
+
+	// Phase 4: 3.2초 뒤 (채도 오버슈트 — 웨이브 ~80%)
+	World->GetTimerManager().SetTimer(
+		CinematicTimer_Phase4,
+		this,
+		&ABossEncounterCube::CinematicPhase4_SaturationOvershoot,
+		3.2f,
+		false);
+
+	// Phase 5: 4.7초 뒤 (전체 정리)
+	World->GetTimerManager().SetTimer(
+		CinematicTimer_Phase5,
+		this,
+		&ABossEncounterCube::CinematicPhase5_Cleanup,
+		4.7f,
+		false);
+
+	UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] Phase1: Explosion complete — timers chained (Phase2=0.5s, Phase4=3.2s, Phase5=4.7s)"));
+}
+
+void ABossEncounterCube::CinematicPhase2_WhiteFlash()
+{
+	if (!CinematicPostProcess)
+	{
+		return;
+	}
+
+	// 순백 섬광: 과노출 화이트 (3,3,3,1) → Tick에서 (1,1,1,1)로 Lerp
+	CinematicPostProcess->Settings.bOverride_SceneColorTint = true;
+	CinematicPostProcess->Settings.SceneColorTint = FLinearColor(3.f, 3.f, 3.f, 1.f);
+
+	bCinematicFlashActive = true;
+	CinematicFlashAlpha = 1.f;
+
+	UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] Phase2: White flash — SceneColorTint = (3,3,3)"));
+}
+
+void ABossEncounterCube::CinematicPhase4_SaturationOvershoot()
+{
+	if (!CinematicPostProcess)
+	{
+		return;
+	}
+
+	// 채도 오버슈트: SaturationOvershootScale → Tick에서 1.0으로 Lerp
+	CinematicPostProcess->Settings.bOverride_ColorSaturation = true;
+	CinematicPostProcess->Settings.ColorSaturation = FVector4(
+		SaturationOvershootScale, SaturationOvershootScale, SaturationOvershootScale, 1.f);
+
+	bCinematicSatBoostActive = true;
+
+	UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] Phase4: Saturation overshoot = %.2f"), SaturationOvershootScale);
+}
+
+void ABossEncounterCube::CinematicPhase5_Cleanup()
+{
+	// ── 모든 시네마틱 플래그 리셋 ──
+	bCinematicFOVActive = false;
+	bCinematicChromaActive = false;
+	bCinematicFlashActive = false;
+	bCinematicSatBoostActive = false;
+
+	// ── FOV 복원 ──
+	UWorld* World = GetWorld();
+	if (World)
+	{
+		APlayerController* PC = World->GetFirstPlayerController();
+		if (PC)
+		{
+			APawn* Pawn = PC->GetPawn();
+			if (Pawn)
+			{
+				UCameraComponent* Cam = Pawn->FindComponentByClass<UCameraComponent>();
+				if (Cam)
+				{
+					Cam->SetFieldOfView(CinematicOriginalFOV);
+				}
+			}
+		}
+
+		// 슬로모션 안전 복원 (만약 Phase1이 실행되지 않았을 경우를 대비)
+		UGameplayStatics::SetGlobalTimeDilation(World, 1.0f);
+	}
+
+	// ── PostProcess 제거 ──
+	if (CinematicPostProcess)
+	{
+		CinematicPostProcess->DestroyComponent();
+		CinematicPostProcess = nullptr;
+	}
+
+	// ── 타이머 전부 정리 ──
+	if (World)
+	{
+		World->GetTimerManager().ClearTimer(CinematicTimer_Phase1);
+		World->GetTimerManager().ClearTimer(CinematicTimer_Phase2);
+		World->GetTimerManager().ClearTimer(CinematicTimer_Phase4);
+		World->GetTimerManager().ClearTimer(CinematicTimer_Phase5);
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] Phase5: Cinematic cleanup complete — all effects reset"));
+}
+
+void ABossEncounterCube::TickCinematic(float DeltaTime)
+{
+	// ── FOV Lerp (0.5초에 걸쳐 원래 FOV로 복귀) ──
+	if (bCinematicFOVActive)
+	{
+		UWorld* World = GetWorld();
+		if (World)
+		{
+			APlayerController* PC = World->GetFirstPlayerController();
+			if (PC)
+			{
+				APawn* Pawn = PC->GetPawn();
+				if (Pawn)
+				{
+					UCameraComponent* Cam = Pawn->FindComponentByClass<UCameraComponent>();
+					if (Cam)
+					{
+						const float Current = Cam->FieldOfView;
+						const float NewFOV = FMath::FInterpTo(Current, CinematicOriginalFOV, DeltaTime, 4.f); // ~0.5초
+						Cam->SetFieldOfView(NewFOV);
+
+						if (FMath::IsNearlyEqual(NewFOV, CinematicOriginalFOV, 0.1f))
+						{
+							Cam->SetFieldOfView(CinematicOriginalFOV);
+							bCinematicFOVActive = false;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// ── 크로매틱 수차 페이드아웃 (0.5초) ──
+	if (bCinematicChromaActive && CinematicPostProcess)
+	{
+		float& Intensity = CinematicPostProcess->Settings.SceneFringeIntensity;
+		Intensity = FMath::FInterpTo(Intensity, 0.f, DeltaTime, 4.f); // ~0.5초
+
+		if (Intensity < 0.01f)
+		{
+			Intensity = 0.f;
+			CinematicPostProcess->Settings.bOverride_SceneFringeIntensity = false;
+			bCinematicChromaActive = false;
+		}
+	}
+
+	// ── 순백 섬광 페이드아웃 (WhiteFlashDuration) ──
+	if (bCinematicFlashActive && CinematicPostProcess)
+	{
+		const float FlashSpeed = 1.f / FMath::Max(WhiteFlashDuration, 0.01f);
+		CinematicFlashAlpha = FMath::Max(0.f, CinematicFlashAlpha - DeltaTime * FlashSpeed);
+
+		// (3,3,3) → (1,1,1) Lerp
+		const float TintValue = FMath::Lerp(1.f, 3.f, CinematicFlashAlpha);
+		CinematicPostProcess->Settings.SceneColorTint = FLinearColor(TintValue, TintValue, TintValue, 1.f);
+
+		if (CinematicFlashAlpha <= 0.f)
+		{
+			CinematicPostProcess->Settings.SceneColorTint = FLinearColor(1.f, 1.f, 1.f, 1.f);
+			CinematicPostProcess->Settings.bOverride_SceneColorTint = false;
+			bCinematicFlashActive = false;
+		}
+	}
+
+	// ── 채도 오버슈트 Lerp (1.5초에 걸쳐 1.0으로 복귀) ──
+	if (bCinematicSatBoostActive && CinematicPostProcess)
+	{
+		FVector4& Sat = CinematicPostProcess->Settings.ColorSaturation;
+		const float Current = Sat.X;
+		const float NewVal = FMath::FInterpTo(Current, 1.f, DeltaTime, 1.5f); // ~1.5초
+
+		Sat = FVector4(NewVal, NewVal, NewVal, 1.f);
+
+		if (FMath::IsNearlyEqual(NewVal, 1.f, 0.005f))
+		{
+			Sat = FVector4(1.f, 1.f, 1.f, 1.f);
+			CinematicPostProcess->Settings.bOverride_ColorSaturation = false;
+			bCinematicSatBoostActive = false;
+		}
+	}
 }
 
 // ============================================================================

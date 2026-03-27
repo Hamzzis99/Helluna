@@ -13,6 +13,9 @@ class UHoldInteractWidget;
 class AHellunaHeroController;
 class UMaterialParameterCollection;
 class UHellunaHealthComponent;
+class UNiagaraSystem;
+class UPostProcessComponent;
+class UCameraComponent;
 
 /**
  * 중간보스 조우 큐브 — F키 홀드로 보스 소환 이벤트 시작
@@ -118,6 +121,55 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter|ColorWave",
 		meta = (DisplayName = "Color Wave Max Radius (최대 반경)", ClampMin = "1000", ClampMax = "50000"))
 	float ColorWaveMaxRadius = 10000.f;
+
+	// =========================================================================================
+	// [Cinematic] 보스 사망 시네마틱 연출
+	// =========================================================================================
+
+	/** 보스 폭발 나이아가라 VFX (BP에서 할당, nullptr이면 스킵) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter|Cinematic",
+		meta = (DisplayName = "Boss Death VFX (폭발 이펙트)"))
+	TObjectPtr<UNiagaraSystem> BossDeathVFX;
+
+	/** 바람 나이아가라 VFX (BP에서 할당, nullptr이면 스킵) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter|Cinematic",
+		meta = (DisplayName = "Wind VFX (바람 이펙트)"))
+	TObjectPtr<UNiagaraSystem> WindVFX;
+
+	/** 보스 사망 사운드 (BP에서 할당, nullptr이면 스킵) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter|Cinematic",
+		meta = (DisplayName = "Boss Death Sound (사망 사운드)"))
+	TObjectPtr<USoundBase> BossDeathSound;
+
+	/** 카메라 셰이크 클래스 (BP에서 할당, nullptr이면 스킵) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter|Cinematic",
+		meta = (DisplayName = "Boss Death Camera Shake (카메라 흔들림)"))
+	TSubclassOf<UCameraShakeBase> BossDeathCameraShake;
+
+	/** 슬로모션 배율 (0.3 = 30% 속도) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter|Cinematic",
+		meta = (DisplayName = "Slow Motion Scale (슬로모션 배율)", ClampMin = "0.1", ClampMax = "1.0"))
+	float SlowMotionScale = 0.3f;
+
+	/** 슬로모션 지속시간 (게임 시간 기준, 실제 체감은 더 길어짐) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter|Cinematic",
+		meta = (DisplayName = "Slow Motion Duration (슬로모션 시간)", ClampMin = "0.1", ClampMax = "2.0"))
+	float SlowMotionDuration = 0.3f;
+
+	/** FOV 펀치 크기 (현재 FOV에 더하는 값) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter|Cinematic",
+		meta = (DisplayName = "FOV Punch Amount (FOV 펀치)", ClampMin = "5", ClampMax = "40"))
+	float FOVPunchAmount = 15.f;
+
+	/** 순백 섬광 지속시간 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter|Cinematic",
+		meta = (DisplayName = "White Flash Duration (섬광 시간)", ClampMin = "0.1", ClampMax = "2.0"))
+	float WhiteFlashDuration = 0.4f;
+
+	/** 채도 오버슈트 배율 (1.3 = 30% 더 선명) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter|Cinematic",
+		meta = (DisplayName = "Saturation Overshoot (채도 오버슈트)", ClampMin = "1.0", ClampMax = "2.0"))
+	float SaturationOvershootScale = 1.3f;
 
 	// =========================================================================================
 	// 리플리케이션
@@ -247,4 +299,63 @@ private:
 
 	/** 웨이브 원점 (보스 사망 위치) */
 	FVector WaveOrigin = FVector::ZeroVector;
+
+	// =========================================================================================
+	// [Cinematic] 시네마틱 내부
+	// =========================================================================================
+
+	/** 시네마틱 시퀀스 시작 (Multicast에서 호출) */
+	void StartCinematicSequence(FVector DeathLocation);
+
+	/** Phase 0: 슬로모션 */
+	void CinematicPhase0_SlowMotion();
+
+	/**
+	 * Phase 1: 폭발 임팩트
+	 * 슬로모션 종료 + 카메라 셰이크 + FOV 펀치 + 크로매틱 수차 + VFX + 사운드
+	 * 이 함수 내에서 나머지 Phase 타이머를 체인으로 설정
+	 */
+	void CinematicPhase1_Explosion();
+
+	/** Phase 2: 순백 섬광 */
+	void CinematicPhase2_WhiteFlash();
+
+	/** Phase 4: 채도 오버슈트 (웨이브 80% 시점) */
+	void CinematicPhase4_SaturationOvershoot();
+
+	/** Phase 5: 전체 정리 — PostProcess 리셋, FOV 복원 */
+	void CinematicPhase5_Cleanup();
+
+	/** Tick에서 시네마틱 Lerp 처리 (FOV·크로마·섬광·채도) */
+	void TickCinematic(float DeltaTime);
+
+	/** 시네마틱 전용 PostProcessComponent 동적 생성 */
+	void CreateCinematicPostProcess();
+
+	/** 시네마틱용 PostProcessComponent (클라이언트에서 동적 생성, Unbound) */
+	UPROPERTY()
+	TObjectPtr<UPostProcessComponent> CinematicPostProcess;
+
+	/** 보스 사망 위치 캐시 (VFX 스폰용) */
+	FVector CinematicDeathLocation = FVector::ZeroVector;
+
+	// 타이머 핸들
+	FTimerHandle CinematicTimer_Phase1;
+	FTimerHandle CinematicTimer_Phase2;
+	FTimerHandle CinematicTimer_Phase4;
+	FTimerHandle CinematicTimer_Phase5;
+
+	// FOV Lerp
+	bool bCinematicFOVActive = false;
+	float CinematicOriginalFOV = 90.f;
+
+	// 크로매틱 수차 페이드아웃
+	bool bCinematicChromaActive = false;
+
+	// 순백 섬광 페이드아웃
+	bool bCinematicFlashActive = false;
+	float CinematicFlashAlpha = 0.f;
+
+	// 채도 오버슈트 Lerp
+	bool bCinematicSatBoostActive = false;
 };
