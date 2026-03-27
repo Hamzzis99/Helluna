@@ -93,11 +93,22 @@ void ABossEncounterCube::BeginPlay()
 				this, MPC_BossEncounter, TEXT("DesatAmount"), 1.f);
 			DesatProgress = 1.f;
 
+			// 보스 영역 중심/반경 MPC 설정 (늦은 접속)
+			const FVector AreaCenter = GetActorLocation();
+			UKismetMaterialLibrary::SetScalarParameterValue(
+				this, MPC_BossEncounter, TEXT("BossAreaCenterX"), AreaCenter.X);
+			UKismetMaterialLibrary::SetScalarParameterValue(
+				this, MPC_BossEncounter, TEXT("BossAreaCenterY"), AreaCenter.Y);
+			UKismetMaterialLibrary::SetScalarParameterValue(
+				this, MPC_BossEncounter, TEXT("BossAreaCenterZ"), AreaCenter.Z);
+			UKismetMaterialLibrary::SetScalarParameterValue(
+				this, MPC_BossEncounter, TEXT("BossAreaRadius"), BossAreaRadius);
+
 			FTimerHandle CustomDepthTimerHandle;
 			GetWorldTimerManager().SetTimer(CustomDepthTimerHandle, this,
 				&ABossEncounterCube::EnableBossEncounterCustomDepth, 1.f, false);
 
-			UE_LOG(LogTemp, Log, TEXT("[BossEncounterCube] Late join — MPC DesatAmount snapped to 1.0"));
+			UE_LOG(LogTemp, Log, TEXT("[BossEncounterCube] Late join — MPC DesatAmount snapped to 1.0, BossArea set"));
 		}
 	}
 }
@@ -270,6 +281,23 @@ void ABossEncounterCube::Multicast_BossEncounterStarted_Implementation()
 
 	bDesatTransitioning = true;
 	DesatProgress = 0.f;
+
+	// 보스 영역 중심/반경을 MPC에 설정 (PP 머티리얼에서 영역 마스킹에 사용)
+	if (MPC_BossEncounter)
+	{
+		const FVector AreaCenter = GetActorLocation();
+		UKismetMaterialLibrary::SetScalarParameterValue(
+			this, MPC_BossEncounter, TEXT("BossAreaCenterX"), AreaCenter.X);
+		UKismetMaterialLibrary::SetScalarParameterValue(
+			this, MPC_BossEncounter, TEXT("BossAreaCenterY"), AreaCenter.Y);
+		UKismetMaterialLibrary::SetScalarParameterValue(
+			this, MPC_BossEncounter, TEXT("BossAreaCenterZ"), AreaCenter.Z);
+		UKismetMaterialLibrary::SetScalarParameterValue(
+			this, MPC_BossEncounter, TEXT("BossAreaRadius"), BossAreaRadius);
+
+		UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] BossArea set: Center=%s, Radius=%.0f"),
+			*AreaCenter.ToString(), BossAreaRadius);
+	}
 
 	// [Step 4] 플레이어·보스 메시에 Custom Depth/Stencil 활성화
 	EnableBossEncounterCustomDepth();

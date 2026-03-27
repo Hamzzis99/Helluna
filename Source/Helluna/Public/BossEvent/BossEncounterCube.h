@@ -112,6 +112,11 @@ public:
 		meta = (DisplayName = "Desat Transition Duration (흑백 전환 시간)", ClampMin = "0.5", ClampMax = "10.0"))
 	float DesatTransitionDuration = 3.f;
 
+	/** 보스 영역 반경 — 이 범위 안의 사물만 흑백 적용 (cm) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter|Area",
+		meta = (DisplayName = "Boss Area Radius (영역 반경)", ClampMin = "1000", ClampMax = "50000"))
+	float BossAreaRadius = 5000.f;
+
 	// =========================================================================================
 	// [Step 5] 컬러 웨이브 (보스 처치 후)
 	// =========================================================================================
