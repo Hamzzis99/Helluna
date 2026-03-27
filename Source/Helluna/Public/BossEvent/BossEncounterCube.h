@@ -14,6 +14,7 @@ class AHellunaHeroController;
 class UMaterialParameterCollection;
 class UHellunaHealthComponent;
 class UNiagaraSystem;
+class UNiagaraComponent;
 class UPostProcessComponent;
 class UCameraComponent;
 
@@ -172,6 +173,40 @@ public:
 	float SaturationOvershootScale = 1.3f;
 
 	// =========================================================================================
+	// [Wave VFX] 컬러 웨이브 오라 스폰
+	// =========================================================================================
+
+	/** 웨이브가 사물에 닿을 때 스폰할 오라 VFX (BP에서 할당, nullptr이면 스킵) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter|WaveVFX",
+		meta = (DisplayName = "Wave Aura VFX (웨이브 오라)"))
+	TObjectPtr<UNiagaraSystem> WaveAuraVFX;
+
+	/** 오라 VFX 스케일 (기본 0.5 — 사물 크기에 맞게 조절) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter|WaveVFX",
+		meta = (DisplayName = "Wave Aura Scale (오라 크기)", ClampMin = "0.1", ClampMax = "3.0"))
+	float WaveAuraScale = 0.5f;
+
+	/** 오라 VFX 수명 (초) — 이 시간 후 강제 소멸. Loop VFX 제어용 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter|WaveVFX",
+		meta = (DisplayName = "Wave Aura Lifetime (오라 수명)", ClampMin = "0.5", ClampMax = "5.0"))
+	float WaveAuraLifetime = 2.0f;
+
+	/** 웨이브 경계에서 VFX를 스폰할 두께 (cm) — 웨이브 반경 - 이 값 ~ 반경 사이 액터 대상 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter|WaveVFX",
+		meta = (DisplayName = "Wave Edge Thickness (경계 두께)", ClampMin = "100", ClampMax = "1000"))
+	float WaveEdgeThickness = 300.f;
+
+	/** 프레임당 최대 VFX 스폰 수 — 성능 보호 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter|WaveVFX",
+		meta = (DisplayName = "Max VFX Per Frame (프레임당 최대)", ClampMin = "1", ClampMax = "10"))
+	int32 MaxVFXPerFrame = 3;
+
+	/** 폴리지 인스턴스 중 VFX를 스폰할 비율 (0.08 = 8%) — 성능 보호 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter|WaveVFX",
+		meta = (DisplayName = "Foliage Sample Rate (폴리지 샘플링)", ClampMin = "0.01", ClampMax = "1.0"))
+	float FoliageSampleRate = 0.08f;
+
+	// =========================================================================================
 	// 리플리케이션
 	// =========================================================================================
 
@@ -299,6 +334,28 @@ private:
 
 	/** 웨이브 원점 (보스 사망 위치) */
 	FVector WaveOrigin = FVector::ZeroVector;
+
+	// =========================================================================================
+	// [Wave VFX] 오라 스폰 내부
+	// =========================================================================================
+
+	/** 웨이브 경계의 사물에 오라 VFX 스폰 (TickColorWave에서 호출) */
+	void SpawnWaveAuraVFX(float DeltaTime);
+
+	/** 이미 오라 VFX가 스폰된 액터 추적 (중복 방지) */
+	TSet<TWeakObjectPtr<AActor>> AuraVFXSpawnedActors;
+
+	/** 이미 VFX가 스폰된 폴리지 인스턴스 위치 추적 (위치 해시 기반 중복 방지) */
+	TSet<int32> AuraVFXSpawnedFoliageHashes;
+
+	/** 폴리지 인스턴스 사전 수집 캐시 (웨이브 시작 시 한 번만 수집) */
+	TArray<FVector> CachedFoliageLocations;
+
+	/** 폴리지 캐시 완료 여부 */
+	bool bFoliageCached = false;
+
+	/** VFX 스폰 쿨다운 타이머 (초) */
+	float WaveVFXCooldown = 0.f;
 
 	// =========================================================================================
 	// [Cinematic] 시네마틱 내부

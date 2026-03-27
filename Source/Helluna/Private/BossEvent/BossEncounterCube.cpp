@@ -17,6 +17,8 @@
 #include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialParameterCollection.h"
 #include "NiagaraFunctionLibrary.h"
+#include "NiagaraComponent.h"
+#include "Components/InstancedStaticMeshComponent.h"
 #include "EngineUtils.h"
 
 // ============================================================================
@@ -75,6 +77,10 @@ void ABossEncounterCube::BeginPlay()
 				this, MPC_BossEncounter, TEXT("DesatAmount"), 0.f);
 			UKismetMaterialLibrary::SetScalarParameterValue(
 				this, MPC_BossEncounter, TEXT("ColorWaveRadius"), ColorWaveMaxRadius);
+			AuraVFXSpawnedActors.Empty();
+			AuraVFXSpawnedFoliageHashes.Empty();
+			CachedFoliageLocations.Empty();
+			bFoliageCached = false;
 			UE_LOG(LogTemp, Log, TEXT("[BossEncounterCube] Late join — boss defeated, color + flowers restored"));
 		}
 		else
@@ -462,6 +468,9 @@ void ABossEncounterCube::TickColorWave(float DeltaTime)
 	UKismetMaterialLibrary::SetScalarParameterValue(
 		this, MPC_BossEncounter, TEXT("ColorWaveRadius"), ColorWaveRadius);
 
+	// [Wave VFX] 웨이브 경계 사물에 오라 스폰
+	SpawnWaveAuraVFX(DeltaTime);
+
 	// 최대 반경 도달 → 완전 컬러 복원
 	if (ColorWaveRadius >= ColorWaveMaxRadius)
 	{
@@ -476,6 +485,12 @@ void ABossEncounterCube::TickColorWave(float DeltaTime)
 
 		// Custom Depth 해제 (더 이상 불필요)
 		DisableBossEncounterCustomDepth();
+
+		// 오라 VFX 추적 초기화
+		AuraVFXSpawnedActors.Empty();
+		AuraVFXSpawnedFoliageHashes.Empty();
+		CachedFoliageLocations.Empty();
+		bFoliageCached = false;
 
 		UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] Color wave complete — full color restored (flowers persist)"));
 	}
@@ -500,6 +515,244 @@ void ABossEncounterCube::DisableBossEncounterCustomDepth()
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("[BossEncounterCube] Custom Depth disabled on all characters"));
+}
+
+// ============================================================================
+// [Wave VFX] 웨이브 경계 사물에 오라 VFX 스폰
+// ============================================================================
+
+void ABossEncounterCube::SpawnWaveAuraVFX(float DeltaTime)
+{
+	// VFX 미할당이면 전체 스킵
+	if (!WaveAuraVFX)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[WaveVFX DEBUG] WaveAuraVFX is NULL — skipping!"));
+		return;
+	}
+
+	// 데디서버 체크 (Tick 가드와 중복이지만 안전장치)
+	if (IsRunningDedicatedServer())
+	{
+		return;
+	}
+
+	// 쿨다운 — 매 프레임이 아닌 0.1초 간격으로 스폰
+	WaveVFXCooldown -= DeltaTime;
+	if (WaveVFXCooldown > 0.f)
+	{
+		return;
+	}
+	WaveVFXCooldown = 0.1f;
+	
+	UE_LOG(LogTemp, Warning, TEXT("[WaveVFX DEBUG] Tick — radius=%.0f, edge=[%.0f ~ %.0f]"),
+		ColorWaveRadius, FMath::Max(0.f, ColorWaveRadius - WaveEdgeThickness), ColorWaveRadius);
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	// 웨이브 경계 범위: [ColorWaveRadius - WaveEdgeThickness, ColorWaveRadius]
+	const float InnerRadius = FMath::Max(0.f, ColorWaveRadius - WaveEdgeThickness);
+	const float OuterRadius = ColorWaveRadius;
+
+	int32 SpawnedThisFrame = 0;
+
+	// ──────────────────────────────────────────────────────
+	// Part A: 일반 StaticMeshActor (나무·바위·구조물 등)
+	// ──────────────────────────────────────────────────────
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (SpawnedThisFrame >= MaxVFXPerFrame)
+		{
+			break;
+		}
+
+		AActor* Actor = *It;
+		if (!IsValid(Actor))
+		{
+			continue;
+		}
+
+		// 자기 자신 스킵
+		if (Actor == this)
+		{
+			continue;
+		}
+
+		// 화이트리스트: UStaticMeshComponent가 있는 액터만 대상
+		if (!Actor->FindComponentByClass<UStaticMeshComponent>())
+		{
+			continue;
+		}
+
+		// Pawn 제외 (플레이어·보스는 별도 연출)
+		if (Actor->IsA(APawn::StaticClass()))
+		{
+			continue;
+		}
+
+		// ISM 액터는 Part B에서 별도 처리 — 여기선 스킵
+		if (Actor->FindComponentByClass<UInstancedStaticMeshComponent>())
+		{
+			continue;
+		}
+
+		// 이미 스폰된 액터 스킵
+		TWeakObjectPtr<AActor> WeakActor(Actor);
+		if (AuraVFXSpawnedActors.Contains(WeakActor))
+		{
+			continue;
+		}
+
+		// 거리 체크: 웨이브 경계 밴드 안에 있는지
+		const float Dist = FVector::Dist(Actor->GetActorLocation(), WaveOrigin);
+		if (Dist >= InnerRadius && Dist <= OuterRadius)
+		{
+			// VFX 스폰 (bAutoDestroy=false — WaveAuraLifetime 타이머로 수동 제어)
+			UNiagaraComponent* SpawnedComp = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+				World, WaveAuraVFX, Actor->GetActorLocation(),
+				FRotator::ZeroRotator, FVector(WaveAuraScale),
+				false, true);
+
+			if (SpawnedComp)
+			{
+				TWeakObjectPtr<UNiagaraComponent> WeakComp(SpawnedComp);
+				FTimerHandle DestroyTimerHandle;
+				World->GetTimerManager().SetTimer(
+					DestroyTimerHandle,
+					FTimerDelegate::CreateLambda([WeakComp]()
+					{
+						if (WeakComp.IsValid())
+						{
+							WeakComp->DeactivateImmediate();
+							WeakComp->DestroyComponent();
+						}
+					}),
+					WaveAuraLifetime,
+					false
+				);
+			}
+
+			AuraVFXSpawnedActors.Add(WeakActor);
+			SpawnedThisFrame++;
+		}
+	}
+
+	// ──────────────────────────────────────────────────────
+	// Part B: 폴리지 인스턴스 (InstancedStaticMesh)
+	// ──────────────────────────────────────────────────────
+	if (SpawnedThisFrame >= MaxVFXPerFrame)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[WaveVFX DEBUG] Part A filled limit (%d) — skipping Part B"), MaxVFXPerFrame);
+		goto LogAndReturn;
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("[WaveVFX DEBUG] Entering Part B (Part A spawned %d, cached=%s)"),
+		SpawnedThisFrame, bFoliageCached ? TEXT("YES") : TEXT("NO"));
+
+	// 폴리지 위치 캐시 (웨이브 시작 후 최초 1회)
+	if (!bFoliageCached)
+	{
+		CachedFoliageLocations.Empty();
+
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			AActor* Actor = *It;
+			if (!IsValid(Actor))
+			{
+				continue;
+			}
+
+			// ISM 컴포넌트가 있는 액터만 (폴리지)
+			TInlineComponentArray<UInstancedStaticMeshComponent*> ISMs;
+			Actor->GetComponents<UInstancedStaticMeshComponent>(ISMs);
+
+			for (UInstancedStaticMeshComponent* ISM : ISMs)
+			{
+				if (!ISM)
+				{
+					continue;
+				}
+
+				const int32 Count = ISM->GetInstanceCount();
+				for (int32 i = 0; i < Count; ++i)
+				{
+					// 랜덤 샘플링 — FoliageSampleRate 비율만 수집
+					if (FMath::FRand() > FoliageSampleRate)
+					{
+						continue;
+					}
+
+					FTransform InstanceTransform;
+					if (ISM->GetInstanceTransform(i, InstanceTransform, true))
+					{
+						CachedFoliageLocations.Add(InstanceTransform.GetLocation());
+					}
+				}
+			}
+		}
+
+		bFoliageCached = true;
+		UE_LOG(LogTemp, Warning, TEXT("[WaveVFX DEBUG] Foliage cached: %d sampled locations (rate=%.0f%%)"),
+			CachedFoliageLocations.Num(), FoliageSampleRate * 100.f);
+	}
+
+	// 캐시된 폴리지 위치 순회
+	for (const FVector& FoliageLoc : CachedFoliageLocations)
+	{
+		if (SpawnedThisFrame >= MaxVFXPerFrame)
+		{
+			break;
+		}
+
+		// 위치 해시로 중복 방지
+		const int32 Hash = GetTypeHash(FoliageLoc);
+		if (AuraVFXSpawnedFoliageHashes.Contains(Hash))
+		{
+			continue;
+		}
+
+		const float Dist = FVector::Dist(FoliageLoc, WaveOrigin);
+		if (Dist >= InnerRadius && Dist <= OuterRadius)
+		{
+			// 폴리지 VFX는 구조물보다 작게 (×0.6)
+			UNiagaraComponent* SpawnedComp = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+				World, WaveAuraVFX, FoliageLoc,
+				FRotator::ZeroRotator, FVector(WaveAuraScale * 0.6f),
+				false, true);
+
+			if (SpawnedComp)
+			{
+				TWeakObjectPtr<UNiagaraComponent> WeakComp(SpawnedComp);
+				FTimerHandle DestroyTimerHandle;
+				World->GetTimerManager().SetTimer(
+					DestroyTimerHandle,
+					FTimerDelegate::CreateLambda([WeakComp]()
+					{
+						if (WeakComp.IsValid())
+						{
+							WeakComp->DeactivateImmediate();
+							WeakComp->DestroyComponent();
+						}
+					}),
+					WaveAuraLifetime,
+					false
+				);
+			}
+
+			AuraVFXSpawnedFoliageHashes.Add(Hash);
+			SpawnedThisFrame++;
+		}
+	}
+
+LogAndReturn:
+	if (SpawnedThisFrame > 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[WaveVFX DEBUG] Spawned %d VFX (radius=%.0f, actors=%d, foliage=%d)"),
+			SpawnedThisFrame, ColorWaveRadius, AuraVFXSpawnedActors.Num(), AuraVFXSpawnedFoliageHashes.Num());
+	}
 }
 
 // ============================================================================
