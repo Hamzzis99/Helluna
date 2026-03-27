@@ -586,11 +586,8 @@ void AHellunaHeroCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInp
 	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Move, ETriggerEvent::Triggered, this, &ThisClass::Input_Move);
 	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Look, ETriggerEvent::Triggered, this, &ThisClass::Input_Look);
 
-	// [Downed/Revive] F키 부활 입력 바인딩
-	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Revive, ETriggerEvent::Started, this, &ThisClass::Input_ReviveStarted);
-	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Revive, ETriggerEvent::Completed, this, &ThisClass::Input_ReviveCompleted);
-
-	// [BossEvent] F키 상호작용 입력 바인딩 (BossEncounterCube 등)
+	// [F키 통합] InputTag.Interaction 하나로 Revive + BossEncounterCube 통합
+	// InputTag_Revive 바인딩 제거 — Input_InteractionStarted에서 컨텍스트 분기
 	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Interaction, ETriggerEvent::Started, this, &ThisClass::Input_InteractionStarted);
 	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Interaction, ETriggerEvent::Completed, this, &ThisClass::Input_InteractionCompleted);
 
@@ -1722,12 +1719,41 @@ void AHellunaHeroCharacter::Input_ReviveCompleted(const FInputActionValue& Value
 
 void AHellunaHeroCharacter::Input_InteractionStarted(const FInputActionValue& Value)
 {
+	// [F키 통합] 다운/사망 상태면 무시
+	if (HeroHealthComponent && (HeroHealthComponent->IsDowned() || HeroHealthComponent->IsDead()))
+	{
+		return;
+	}
+
 	bHoldingInteraction = true;
+	bIsRevivingLocal = false;
+
+	// 우선순위 1: 근처 다운된 팀원 → 부활
+	AHellunaHeroCharacter* DownedTarget = FindNearestDownedHero();
+	if (DownedTarget)
+	{
+		bIsRevivingLocal = true;
+		Server_StartRevive(DownedTarget);
+		ShowReviveProgressHUD(DownedTarget->GetName());
+		return;
+	}
+
+	// 우선순위 2: 보스큐브 등 기타 상호작용
+	// → bHoldingInteraction = true 상태로 BossEncounterCube::Tick이 처리
+	// → IsReviving() == false 이므로 큐브 프로그레스 정상 증가
 }
 
 void AHellunaHeroCharacter::Input_InteractionCompleted(const FInputActionValue& Value)
 {
 	bHoldingInteraction = false;
+
+	// [F키 통합] 부활 중이었으면 중단
+	if (bIsRevivingLocal)
+	{
+		bIsRevivingLocal = false;
+		Server_StopRevive();
+		HideReviveProgressHUD();
+	}
 }
 
 AHellunaHeroCharacter* AHellunaHeroCharacter::FindNearestDownedHero() const

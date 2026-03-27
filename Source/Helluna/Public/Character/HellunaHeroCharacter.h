@@ -56,6 +56,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Interaction")
 	bool IsHoldingInteraction() const { return bHoldingInteraction; }
 
+	/** 부활 수행 중인지 (BossEncounterCube에서 큐브 프로그레스 차단용) */
+	UFUNCTION(BlueprintCallable, Category = "Interaction")
+	bool IsReviving() const { return bIsRevivingLocal; }
+
 protected:
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 	virtual void BeginPlay() override;
@@ -551,6 +555,9 @@ protected:
 
 	/** F키 홀드 상태 (BossEncounterCube 등에서 Tick 프로그레스 갱신용) */
 	bool bHoldingInteraction = false;
+
+	/** 로컬: 현재 부활 수행 중인지 (클라이언트용 플래그, ReviveTarget은 서버 전용이라 사용 불가) */
+	bool bIsRevivingLocal = false;
 
 	/** 서버 RPC: 부활 시작 */
 	UFUNCTION(Server, Reliable)

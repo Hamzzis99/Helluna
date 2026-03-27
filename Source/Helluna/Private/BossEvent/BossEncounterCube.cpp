@@ -144,7 +144,7 @@ void ABossEncounterCube::Tick(float DeltaTime)
 		AHellunaHeroCharacter* HeroChar = Cast<AHellunaHeroCharacter>(PC->GetPawn());
 		AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(PC);
 
-		if (HeroChar && HeroChar->IsHoldingInteraction())
+		if (HeroChar && HeroChar->IsHoldingInteraction() && !HeroChar->IsReviving())
 		{
 			// 프로그레스 증가
 			LocalHoldProgress = FMath::Min(1.f, LocalHoldProgress + DeltaTime / HoldDuration);
