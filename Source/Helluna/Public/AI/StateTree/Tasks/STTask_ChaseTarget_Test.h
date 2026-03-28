@@ -137,51 +137,86 @@ public:
 			ClampMin = "10.0"))
 	float AcceptanceRadius = 50.f;
 
-	// ─── Stuck 감지 (위치 기반) ────────────────────────────────
+	// ═══════════════════════════════════════════════════════════
+	// ★ 기능 토글 (원하는 조합으로 ON/OFF 가능)
+	// ═══════════════════════════════════════════════════════════
+
+	UPROPERTY(EditAnywhere, Category = "★ 기능 토글",
+		meta = (DisplayName = "[1] EQS 공격 위치 시스템",
+			ToolTip = "ON: EQS 쿼리로 최적 공격 위치를 계산해서 이동. EQS 에셋 필요.\nOFF: 타겟에게 직선 MoveToActor.\n슬롯과 중첩 가능 (EQS=플레이어, 슬롯=우주선)."))
+	bool bUseEQS = false;
+
+	UPROPERTY(EditAnywhere, Category = "★ 기능 토글",
+		meta = (DisplayName = "[2] 슬롯 시스템 (우주선 전용)",
+			ToolTip = "ON: 우주선 주변 슬롯 위치로 분산 이동 (근거리 권장).\nOFF: 슬롯 없이 자유 접근 (원거리 권장).\nStuck 감지와 중첩 가능."))
+	bool bUseSlotSystem = true;
+
+	UPROPERTY(EditAnywhere, Category = "★ 기능 토글",
+		meta = (DisplayName = "[3] Stuck 자동 우회",
+			ToolTip = "ON: 위치 변화 없으면 좌/우 자동 우회. 연속 시 강도 증가 (최대 3배).\nOFF: Stuck 감지 비활성화.\n슬롯 모드에서는 Stuck 시 슬롯 재배정."))
+	bool bUseStuckDetour = true;
+
+	// ═══════════════════════════════════════════════════════════
+	// Stuck 감지 설정 (bUseStuckDetour = true 일 때 활성)
+	// ═══════════════════════════════════════════════════════════
 
 	UPROPERTY(EditAnywhere, Category = "Stuck 감지",
-		meta = (DisplayName = "Stuck 체크 간격 (초)", ClampMin = "0.1"))
+		meta = (DisplayName = "Stuck 체크 간격 (초)",
+			ToolTip = "이 간격마다 위치를 비교. 짧을수록 민감. 권장: 0.3~1.0초",
+			ClampMin = "0.1", EditCondition = "bUseStuckDetour"))
 	float StuckCheckInterval = 0.5f;
 
 	UPROPERTY(EditAnywhere, Category = "Stuck 감지",
-		meta = (DisplayName = "Stuck 거리 임계치 (cm)", ClampMin = "1.0"))
+		meta = (DisplayName = "Stuck 거리 임계치 (cm)",
+			ToolTip = "이동 거리가 이 값 이하이면 Stuck 판정. 권장: 20~50cm",
+			ClampMin = "1.0", EditCondition = "bUseStuckDetour"))
 	float StuckDistThreshold = 30.f;
 
 	UPROPERTY(EditAnywhere, Category = "Stuck 감지",
-		meta = (DisplayName = "우회 오프셋 (cm)", ClampMin = "50.0"))
+		meta = (DisplayName = "우회 오프셋 (cm)",
+			ToolTip = "Stuck 시 좌/우 우회 거리. 연속 시 x횟수(최대 3배). 권장: 200~500cm",
+			ClampMin = "50.0", EditCondition = "bUseStuckDetour"))
 	float DetourOffset = 300.f;
 
-	// ─── 우주선 전용 설정 ──────────────────────────────────────
+	// ═══════════════════════════════════════════════════════════
+	// 우주선 전용 설정
+	// ═══════════════════════════════════════════════════════════
 
 	UPROPERTY(EditAnywhere, Category = "우주선",
 		meta = (DisplayName = "우주선 근접 기준 거리 (cm)",
-			ToolTip = "표면 거리가 이 값 이하이면 도착으로 판정합니다.\nStuck 감지에서도 이 범위 내이면 Stuck으로 판정하지 않습니다.",
+			ToolTip = "표면 거리가 이 값 이하이면 도착 판정. Stuck 감지에서도 이 범위 내는 무시. 권장: 150~400cm",
 			ClampMin = "50.0"))
 	float AttackRange = 250.f;
 
 	UPROPERTY(EditAnywhere, Category = "우주선",
-		meta = (DisplayName = "우주선 공격 슬롯 시스템 사용",
-			ToolTip = "체크: 우주선 주변 슬롯을 예약해서 이동합니다. (근거리 몬스터 권장)\n해제: 슬롯 없이 우주선 방향으로 자유롭게 이동합니다. (원거리 몬스터 권장)"))
-	bool bUseSlotSystem = true;
-
-	UPROPERTY(EditAnywhere, Category = "우주선",
 		meta = (DisplayName = "슬롯 진입 반경 (cm)",
-			ToolTip = "우주선 중심으로부터 이 거리 안에 들어오면 슬롯 배정을 시도합니다.\n밖에서는 NavMesh 경유점으로 접근합니다.",
+			ToolTip = "우주선 중심에서 이 거리 안이면 슬롯 배정 시도. 밖에서는 NavMesh 경유점 접근. 권장: 600~1200cm",
 			ClampMin = "100.0", EditCondition = "bUseSlotSystem"))
 	float SlotEngageRadius = 800.f;
 
-	// ─── 플레이어 전용 설정 ────────────────────────────────────
+	// ═══════════════════════════════════════════════════════════
+	// EQS 설정 (bUseEQS = true 일 때 활성)
+	// ═══════════════════════════════════════════════════════════
 
-	UPROPERTY(EditAnywhere, Category = "플레이어",
-		meta = (DisplayName = "공격 위치 EQS",
-			ToolTip = "EQ_HellunaAttackPosition 에셋을 연결하세요.\n비워두면 타겟에게 직접 달려갑니다."))
+	UPROPERTY(EditAnywhere, Category = "EQS",
+		meta = (DisplayName = "공격 위치 EQS 에셋",
+			ToolTip = "EQS 에셋 연결. 타겟 주변 최적 위치 계산. 비워두면 직접 이동으로 폴백.",
+			EditCondition = "bUseEQS"))
 	TObjectPtr<UEnvQuery> AttackPositionQuery = nullptr;
 
-	UPROPERTY(EditAnywhere, Category = "플레이어",
-		meta = (DisplayName = "EQS 재실행 간격 (초)", ClampMin = "0.1"))
+	UPROPERTY(EditAnywhere, Category = "EQS",
+		meta = (DisplayName = "EQS 재실행 간격 (초)",
+			ToolTip = "EQS 쿼리 재실행 간격. 짧을수록 정확하지만 CPU 부하 증가. 권장: 0.5~2.0초",
+			ClampMin = "0.1", EditCondition = "bUseEQS"))
 	float EQSInterval = 1.0f;
 
+	// ═══════════════════════════════════════════════════════════
+	// 플레이어 전용 설정
+	// ═══════════════════════════════════════════════════════════
+
 	UPROPERTY(EditAnywhere, Category = "플레이어",
-		meta = (DisplayName = "플레이어 공격 범위 (cm)", ClampMin = "50.0"))
+		meta = (DisplayName = "플레이어 공격 범위 (cm)",
+			ToolTip = "플레이어와의 거리가 이 값 이하이면 추적 완료(Succeeded).",
+			ClampMin = "50.0"))
 	float PlayerAttackRange = 200.f;
 };

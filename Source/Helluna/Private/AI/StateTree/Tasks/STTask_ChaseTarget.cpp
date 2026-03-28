@@ -34,7 +34,7 @@
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 #include "AI/SpaceShipAttackSlotManager.h"
 
-namespace {
+namespace ChaseTargetHelpers {
 // ============================================================================
 // 헬퍼: 위치로 이동 명령
 // ============================================================================
@@ -103,7 +103,8 @@ void RunAttackPositionEQS(
 				}
 			}));
 }
-} // anonymous namespace
+} // namespace ChaseTargetHelpers
+using namespace ChaseTargetHelpers;
 
 // ============================================================================
 // EnterState

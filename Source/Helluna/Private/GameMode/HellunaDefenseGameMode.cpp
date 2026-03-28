@@ -332,9 +332,8 @@ void AHellunaDefenseGameMode::ActivateNightPCG()
         PCGComp->OnPCGGraphGeneratedDelegate.RemoveAll(this);
         PCGComp->OnPCGGraphGeneratedDelegate.AddUObject(this, &AHellunaDefenseGameMode::OnNightPCGGraphGenerated);
 
-        // 이전 생성물을 컴포넌트 포함 완전 정리 후 재활성화
-        // bRemoveComponents=true로 해야 내부 상태가 완전 초기화되어 재생성 가능
-        PCGComp->CleanupLocal(/*bRemoveComponents=*/true);
+        // [TEST] DeactivateNightPCG()에서 이미 정리했으므로 이중 CleanupLocal 방지
+        // PCGComp->CleanupLocal(/*bRemoveComponents=*/true);
 
         if (!PCGComp->IsActive())
         {

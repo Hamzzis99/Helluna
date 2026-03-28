@@ -16,6 +16,7 @@
 #include "DataAsset/DataAsset_HeroStartUpData.h"
 #include "Conponent/HeroCombatComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "GameFramework/GameStateBase.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 #include "Component/RepairComponent.h"
 #include "Weapon/HellunaHeroWeapon.h"
@@ -29,7 +30,6 @@
 // ⭐ [Phase 4 개선] EndPlay 인벤토리 저장용
 #include "Player/HellunaPlayerState.h"
 #include "GameMode/HellunaDefenseGameMode.h"
-#include "GameMode/HellunaDefenseGameState.h"
 #include "Player/Inv_PlayerController.h"  // FInv_SavedItemData
 // ⭐ [Phase 6 Fix] 맵 이동 중 저장 스킵용
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
@@ -245,9 +245,22 @@ void AHellunaHeroCharacter::SetCurrentWeapon(AHellunaHeroWeapon* NewWeapon)
 {
 	CurrentWeapon = NewWeapon;
 
-	if (IsLocallyControlled() && WeaponHUDWidget)
+	UE_LOG(LogTemp, Warning, TEXT("[WeaponHUD] SetCurrentWeapon | Weapon=%s | IsLocal=%d | Widget=%s"),
+		NewWeapon ? *NewWeapon->GetName() : TEXT("NULL"),
+		IsLocallyControlled(),
+		WeaponHUDWidget ? TEXT("EXISTS") : TEXT("NULL"));
+
+	if (IsLocallyControlled())
 	{
-		WeaponHUDWidget->UpdateWeapon(NewWeapon);
+		if (!WeaponHUDWidget)
+		{
+			InitWeaponHUD();
+		}
+
+		if (WeaponHUDWidget)
+		{
+			WeaponHUDWidget->UpdateWeapon(NewWeapon);
+		}
 	}
 }
 
@@ -256,12 +269,19 @@ void AHellunaHeroCharacter::SetCurrentWeapon(AHellunaHeroWeapon* NewWeapon)
 // ============================================================================
 void AHellunaHeroCharacter::OnRep_CurrentWeapon()
 {
+	UE_LOG(LogTemp, Warning, TEXT("[WeaponHUD] OnRep_CurrentWeapon | Weapon=%s | IsLocal=%d | Widget=%s"),
+		CurrentWeapon ? *CurrentWeapon->GetName() : TEXT("NULL"),
+		IsLocallyControlled(),
+		WeaponHUDWidget ? TEXT("EXISTS") : TEXT("NULL"));
+
 	if (!IsLocallyControlled()) return;
 
-	// 클라이언트에서도 SavedMag 기준으로 탄약을 즉시 복원한다.
-	// (서버의 OnRep 복제가 BeginPlay의 MaxMag 초기화보다 늦게 올 수 있어서
-	//  클라이언트 자체적으로 저장된 값을 반영해 딜레이를 없앤다.)
 	ApplySavedCurrentMagByClass(CurrentWeapon);
+
+	if (!WeaponHUDWidget)
+	{
+		InitWeaponHUD();
+	}
 
 	if (WeaponHUDWidget)
 	{
@@ -270,14 +290,36 @@ void AHellunaHeroCharacter::OnRep_CurrentWeapon()
 }
 
 // ============================================================================
-// InitWeaponHUD - 로컬 플레이어 전용 HUD 생성 (DefenseGameState일 때만)
+// InitWeaponHUD - 로컬 플레이어 전용 HUD 생성
 // ============================================================================
 void AHellunaHeroCharacter::InitWeaponHUD()
 {
+	UE_LOG(LogTemp, Warning, TEXT("[WeaponHUD] InitWeaponHUD 호출 | IsLocal=%d | WidgetClass=%s | Widget=%s | GameState=%s"),
+		IsLocallyControlled(),
+		WeaponHUDWidgetClass ? *WeaponHUDWidgetClass->GetName() : TEXT("NULL"),
+		WeaponHUDWidget ? TEXT("EXISTS") : TEXT("NULL"),
+		UGameplayStatics::GetGameState(GetWorld()) ? *UGameplayStatics::GetGameState(GetWorld())->GetClass()->GetName() : TEXT("NULL"));
+
 	if (!IsLocallyControlled()) return;
 
-	// GameState로 판단 (GameMode는 클라이언트에서 nullptr이므로 GameState 사용)
-	if (!Cast<AHellunaDefenseGameState>(UGameplayStatics::GetGameState(GetWorld()))) return;
+	// GameState가 아직 복제되지 않았으면 0.5초 후 재시도
+	if (!UGameplayStatics::GetGameState(GetWorld()))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[WeaponHUD] GameState 없음 — 0.5초 후 재시도"));
+		if (UWorld* W = GetWorld())
+		{
+			W->GetTimerManager().SetTimer(InitWeaponHUDRetryTimer, this,
+				&AHellunaHeroCharacter::InitWeaponHUD, 0.5f, false);
+		}
+		return;
+	}
+
+	// 이미 생성됐으면 스킵 (재시도 시 중복 방지)
+	if (WeaponHUDWidget)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[WeaponHUD] 이미 생성됨 — 스킵"));
+		return;
+	}
 
 	if (WeaponHUDWidgetClass)
 	{
@@ -285,13 +327,23 @@ void AHellunaHeroCharacter::InitWeaponHUD()
 		if (WeaponHUDWidget)
 		{
 			WeaponHUDWidget->AddToViewport(0);
+			UE_LOG(LogTemp, Warning, TEXT("[WeaponHUD] 위젯 생성 + AddToViewport 완료 | CurrentWeapon=%s"),
+				CurrentWeapon ? *CurrentWeapon->GetName() : TEXT("NULL"));
 			if (CurrentWeapon)
 				WeaponHUDWidget->UpdateWeapon(CurrentWeapon);
 		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("[WeaponHUD] CreateWidget 실패!"));
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("[WeaponHUD] WeaponHUDWidgetClass가 NULL — BP에서 설정 필요"));
 	}
 
 	// 낮/밤 HUD 생성
-	if (DayNightHUDWidgetClass)
+	if (!DayNightHUDWidget && DayNightHUDWidgetClass)
 	{
 		DayNightHUDWidget = CreateWidget<UUserWidget>(GetWorld(), DayNightHUDWidgetClass);
 		if (DayNightHUDWidget)

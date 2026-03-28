@@ -43,7 +43,7 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogChaseTarget, Log, All);
 
-namespace {
+namespace ChaseTargetTestHelpers {
 // ============================================================================
 // 헬퍼: 우주선 방향 NavMesh 위 중간 경유점 계산
 // ============================================================================
@@ -297,7 +297,8 @@ bool CheckPositionBasedStuck(
 
 	return bStuck;
 }
-} // anonymous namespace
+} // namespace ChaseTargetTestHelpers
+using namespace ChaseTargetTestHelpers;
 
 // ============================================================================
 // EnterState
@@ -476,10 +477,11 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 				AIC->GetPathFollowingComponent() ? (int32)AIC->GetPathFollowingComponent()->GetStatus() : -1);
 		}
 
-		// ── Stuck 감지 ──────────────────────────────────────
-		const bool bStuck = CheckPositionBasedStuck(
-			D, PawnLoc, SurfaceDist, AttackRange,
-			DeltaTime, StuckCheckInterval, StuckDistThreshold);
+		// ── Stuck 감지 (토글: bUseStuckDetour) ──────────────
+		const bool bStuck = bUseStuckDetour
+			? CheckPositionBasedStuck(D, PawnLoc, SurfaceDist, AttackRange,
+				DeltaTime, StuckCheckInterval, StuckDistThreshold)
+			: false;
 
 		if (bStuck)
 		{
@@ -655,10 +657,11 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 			return EStateTreeRunStatus::Succeeded;
 		}
 
-		// Stuck 감지
-		const bool bStuck = CheckPositionBasedStuck(
-			D, Pawn->GetActorLocation(), DistToTarget, PlayerAttackRange,
-			DeltaTime, StuckCheckInterval, StuckDistThreshold);
+		// Stuck 감지 (토글: bUseStuckDetour)
+		const bool bStuck = bUseStuckDetour
+			? CheckPositionBasedStuck(D, Pawn->GetActorLocation(), DistToTarget, PlayerAttackRange,
+				DeltaTime, StuckCheckInterval, StuckDistThreshold)
+			: false;
 
 		bool bIdle = false;
 		if (UPathFollowingComponent* PFC = AIC->GetPathFollowingComponent())
@@ -682,7 +685,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 					ComputeDetourGoal(Pawn->GetActorLocation(), TargetActor->GetActorLocation(), AIC, DetourOffset * Mult),
 					AcceptanceRadius);
 			}
-			else if (AttackPositionQuery && D.TimeUntilNextEQS <= 0.f)
+			else if (bUseEQS && AttackPositionQuery && D.TimeUntilNextEQS <= 0.f)
 			{
 				RunPlayerAttackEQS(AttackPositionQuery, AIC, AcceptanceRadius, TargetActor);
 				D.TimeUntilNextEQS = EQSInterval;

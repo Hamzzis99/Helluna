@@ -145,6 +145,9 @@ public:
 	/** 로컬 플레이어 전용 HUD 생성 및 뷰포트 추가 */
 	void InitWeaponHUD();
 
+	/** GameState 복제 지연 대비 — InitWeaponHUD 재시도 타이머 */
+	FTimerHandle InitWeaponHUDRetryTimer;
+
 	// ⭐ SpaceShip 수리 RPC (PlayerController가 소유하므로 작동!)
 	// @param Material1Tag - 재료 1 태그
 	// @param Material1Amount - 재료 1 개수

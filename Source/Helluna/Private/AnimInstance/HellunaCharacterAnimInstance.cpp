@@ -29,16 +29,32 @@ void UHellunaCharacterAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 	// GameThread에서 WeaponTag를 읽어 카테고리 결정
 	WeaponAnimType = ResolveWeaponAnimType();
 
-	// Idle 애니메이션 매핑
+	// Idle 애니메이션 매핑 (키가 없으면 Unarmed 폴백, 그것도 없으면 nullptr)
 	if (const TObjectPtr<UAnimSequence>* FoundIdle = IdleAnimMap.Find(WeaponAnimType))
 	{
 		CurrentIdleAnim = *FoundIdle;
 	}
+	else if (const TObjectPtr<UAnimSequence>* FallbackIdle = IdleAnimMap.Find(EWeaponAnimType::Unarmed))
+	{
+		CurrentIdleAnim = *FallbackIdle;
+	}
+	else
+	{
+		CurrentIdleAnim = nullptr;
+	}
 
-	// 블렌드 스페이스 매핑
+	// 블렌드 스페이스 매핑 (키가 없으면 Unarmed 폴백, 그것도 없으면 nullptr)
 	if (const TObjectPtr<UBlendSpace>* Found = LocomotionBlendSpaceMap.Find(WeaponAnimType))
 	{
 		CurrentLocomotionBlendSpace = *Found;
+	}
+	else if (const TObjectPtr<UBlendSpace>* FallbackBS = LocomotionBlendSpaceMap.Find(EWeaponAnimType::Unarmed))
+	{
+		CurrentLocomotionBlendSpace = *FallbackBS;
+	}
+	else
+	{
+		CurrentLocomotionBlendSpace = nullptr;
 	}
 }
 

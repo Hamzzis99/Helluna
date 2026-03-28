@@ -6,6 +6,7 @@
 #include "ResourceUsingObject_HealTurret.generated.h"
 
 class USphereComponent;
+class UStaticMeshComponent;
 class UNiagaraComponent;
 class UNiagaraSystem;
 class AHellunaHeroCharacter;
@@ -24,6 +25,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void Tick(float DeltaTime) override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	// =========================================================
@@ -33,6 +35,39 @@ protected:
 	/** 힐 범위 탐지용 구체 콜리전 — 디테일 패널에서 반경을 직접 설정 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Turret|Detection")
 	TObjectPtr<USphereComponent> HealRangeSphere;
+
+	// =========================================================
+	// 메쉬 파트 (4분할)
+	// =========================================================
+
+	/** 파트2 메쉬 (고정) — BP에서 스태틱메쉬 지정 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Turret|Components",
+		meta = (DisplayName = "파트2 메쉬 (고정)"))
+	TObjectPtr<UStaticMeshComponent> MeshPart2;
+
+	/** 파트3 메쉬 (고정) — BP에서 스태틱메쉬 지정 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Turret|Components",
+		meta = (DisplayName = "파트3 메쉬 (고정)"))
+	TObjectPtr<UStaticMeshComponent> MeshPart3;
+
+	/** 회전 피벗 — 이 하위의 메쉬가 빙글빙글 회전합니다 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Turret|Components",
+		meta = (DisplayName = "회전 피벗"))
+	TObjectPtr<USceneComponent> SpinRoot;
+
+	/** 회전 파트 메쉬 — SpinRoot 하위에서 회전 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Turret|Components",
+		meta = (DisplayName = "회전 파트 메쉬"))
+	TObjectPtr<UStaticMeshComponent> MeshSpin;
+
+	// =========================================================
+	// 회전 설정
+	// =========================================================
+
+	/** 회전 속도 (도/초) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Turret|Spin",
+		meta = (DisplayName = "회전 속도 (도/초)", ClampMin = "0.0", ClampMax = "720.0"))
+	float SpinSpeed = 90.f;
 
 	// =========================================================
 	// 힐 설정

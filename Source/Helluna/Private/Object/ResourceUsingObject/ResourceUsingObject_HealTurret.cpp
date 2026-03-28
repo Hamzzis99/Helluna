@@ -10,6 +10,7 @@
 #include "TimerManager.h"
 #include "Kismet/GameplayStatics.h"
 #include "Components/DynamicMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
 
 
 // =========================================================
@@ -18,12 +19,39 @@
 
 AResourceUsingObject_HealTurret::AResourceUsingObject_HealTurret()
 {
-	PrimaryActorTick.bCanEverTick = false;
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.TickInterval = 0.f; // 매 프레임 (회전 보간)
 
 	bReplicates = true;
 	bAlwaysRelevant = true;
 
-	// 힐 범위 구체
+	// ── [파트1] 베이스 메쉬 (고정) — Base 클래스의 DynamicMeshComponent ──
+
+	// ── [파트2] 고정 메쉬 ────────────────────────────────────
+	MeshPart2 = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MeshPart2"));
+	if (DynamicMeshComponent)
+	{
+		MeshPart2->SetupAttachment(DynamicMeshComponent);
+	}
+
+	// ── [파트3] 고정 메쉬 ────────────────────────────────────
+	MeshPart3 = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MeshPart3"));
+	if (DynamicMeshComponent)
+	{
+		MeshPart3->SetupAttachment(DynamicMeshComponent);
+	}
+
+	// ── [파트4] 회전 파트 ────────────────────────────────────
+	SpinRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SpinRoot"));
+	if (DynamicMeshComponent)
+	{
+		SpinRoot->SetupAttachment(DynamicMeshComponent);
+	}
+
+	MeshSpin = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MeshSpin"));
+	MeshSpin->SetupAttachment(SpinRoot);
+
+	// ── 힐 범위 구체 ────────────────────────────────────────
 	HealRangeSphere = CreateDefaultSubobject<USphereComponent>(TEXT("HealRangeSphere"));
 	if (DynamicMeshComponent)
 	{
@@ -35,13 +63,27 @@ AResourceUsingObject_HealTurret::AResourceUsingObject_HealTurret()
 	HealRangeSphere->SetCollisionResponseToAllChannels(ECR_Ignore);
 	HealRangeSphere->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
 
-	// 범위 표시 나이아가라 컴포넌트 — 에디터에서 에셋·위치·크기 직접 조절 가능
+	// ── 범위 표시 나이아가라 ─────────────────────────────────
 	RangeIndicatorComponent = CreateDefaultSubobject<UNiagaraComponent>(TEXT("RangeIndicatorComponent"));
 	if (DynamicMeshComponent)
 	{
 		RangeIndicatorComponent->SetupAttachment(DynamicMeshComponent);
 	}
 	RangeIndicatorComponent->bAutoActivate = true;
+}
+
+// =========================================================
+// Tick — 회전 파트 회전
+// =========================================================
+
+void AResourceUsingObject_HealTurret::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+
+	if (SpinRoot && SpinSpeed != 0.f)
+	{
+		SpinRoot->AddLocalRotation(FRotator(0.f, SpinSpeed * DeltaTime, 0.f));
+	}
 }
 
 // =========================================================
