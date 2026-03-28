@@ -7,6 +7,7 @@
 #include "ResourceUsingObject_SpaceShip.generated.h"
 
 class UWidgetComponent;
+class USpaceShipAttackSlotManager;
 
 /**
  * 
@@ -74,6 +75,13 @@ public:
     // ⭐ 새로 추가: 수리 완료 이벤트 (Blueprint에서도 오버라이드 가능)
     UFUNCTION(BlueprintNativeEvent, Category = "Repair")
     void OnRepairCompleted();
+
+	// =========================================================
+	// ★ 공격 슬롯 매니저
+	// =========================================================
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat",
+		meta = (DisplayName = "Attack Slot Manager (공격 슬롯 매니저)"))
+	TObjectPtr<USpaceShipAttackSlotManager> AttackSlotManager;
 
 	// =========================================================
 	// ★ [Phase18] 3D 상호작용 프롬프트 위젯

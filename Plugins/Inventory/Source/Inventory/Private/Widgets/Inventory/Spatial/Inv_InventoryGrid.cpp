@@ -501,8 +501,11 @@ FInv_SpaceQueryResult UInv_InventoryGrid::CheckHoverPosition(const FIntPoint& Po
 	if (OccupiedUpperLeftIndices.Num() == 1) // single item at position - it's valid for swapping/combining
 	{
 		const int32 Index = *OccupiedUpperLeftIndices.CreateConstIterator();
-		Result.ValidItem = GridSlots[Index]->GetInventoryItem(); // 격자 슬롯에 배치
-		Result.UpperLeftIndex = GridSlots[Index]->GetUpperLeftIndex(); // 왼쪽 위 인덱스 설정
+		if (GridSlots.IsValidIndex(Index)) // [Fix54] 배열 바운드 검사
+		{
+			Result.ValidItem = GridSlots[Index]->GetInventoryItem(); // 격자 슬롯에 배치
+			Result.UpperLeftIndex = GridSlots[Index]->GetUpperLeftIndex(); // 왼쪽 위 인덱스 설정
+		}
 	}
 	return Result;
 }
@@ -1328,6 +1331,7 @@ void UInv_InventoryGrid::AddStacks(const FInv_SlotAvailabilityResult& Result)
 	// 기존 로직: SlotAvailabilities가 있을 때
 	for (const auto& Availability : Result.SlotAvailabilities)
 	{
+		if (!GridSlots.IsValidIndex(Availability.Index)) continue; // [Fix54] 배열 바운드 검사
 		if (Availability.bItemAtIndex) // 해당 인덱스에 아이템이 있는 경우
 		{
 			const auto& GridSlot = GridSlots[Availability.Index];

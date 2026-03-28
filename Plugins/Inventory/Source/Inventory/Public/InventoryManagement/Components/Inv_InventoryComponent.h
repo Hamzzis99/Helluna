@@ -26,6 +26,7 @@ namespace InvValidation
 {
 	constexpr int32 MaxGridIndex = 10000;
 	constexpr int32 MaxEntryIndex = 10000;
+	constexpr int32 MaxSlotIndex = 64; // [Fix60] 부착 슬롯 상한
 }
 
 // 아이템 템플릿 리졸버 — SaveGameMode가 게임별 매핑을 제공

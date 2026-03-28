@@ -63,6 +63,7 @@
 #include "Character/HellunaEnemyCharacter.h"
 #include "Engine/OverlapResult.h"
 #include "Widgets/HUD/Inv_InteractPromptWidget.h"
+#include "Components/Image.h"
 
 
 
@@ -208,6 +209,54 @@ void AHellunaHeroCharacter::BeginPlay()
 			Prompt->SetActionText(TEXT(""));
 		}
 		UE_LOG(LogHelluna, Log, TEXT("[Phase18] KickPrompt 위젯 초기화: %s"), *GetName());
+	}
+
+	// [Phase21] 피격 혈흔 전용 위젯 생성 (다운 오버레이와 분리)
+	if (BloodHitWidgetClass)
+	{
+		APlayerController* PC = Cast<APlayerController>(GetController());
+		if (PC && PC->IsLocalController())
+		{
+			BloodHitWidget = CreateWidget<UUserWidget>(PC, BloodHitWidgetClass);
+			if (BloodHitWidget)
+			{
+				BloodHitWidget->AddToViewport(1);
+
+				// BloodHitImages 배열 초기화 — BloodHitWidget에서 가져옴
+				BloodHitImages.SetNum(8);
+				BloodHitImages[0] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodTop")));
+				BloodHitImages[1] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodCornerTR")));
+				BloodHitImages[2] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodRight")));
+				BloodHitImages[3] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodCornerBR")));
+				BloodHitImages[4] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodBottom")));
+				BloodHitImages[5] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodCornerBL")));
+				BloodHitImages[6] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodLeft")));
+				BloodHitImages[7] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodCornerTL")));
+
+				// 텍스처는 WBP에서 이미 할당됨 (T_Puzzle_FX_RedVignette)
+				// BloodHitTexture 프로퍼티로 런타임 오버라이드도 가능
+				if (BloodHitTexture)
+				{
+					for (UImage* Img : BloodHitImages)
+					{
+						if (Img)
+						{
+							FSlateBrush Brush;
+							Brush.SetResourceObject(BloodHitTexture);
+							Brush.DrawAs = ESlateBrushDrawType::Image;
+							Brush.ImageSize = FVector2D(256, 256);
+							Img->SetBrush(Brush);
+							Img->SetColorAndOpacity(FLinearColor(1.0f, 0.1f, 0.05f, 1.0f));
+							Img->SetRenderOpacity(0.f);
+							Img->SetVisibility(ESlateVisibility::Collapsed);
+						}
+					}
+				}
+
+				const int32 ValidCount = BloodHitImages.FilterByPredicate([](UImage* I) { return I != nullptr; }).Num();
+				UE_LOG(LogHelluna, Log, TEXT("[Phase21] BloodHitOverlay 위젯 생성 완료: %d/8 Images valid"), ValidCount);
+			}
+		}
 	}
 }
 
@@ -537,9 +586,10 @@ void AHellunaHeroCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInp
 	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Move, ETriggerEvent::Triggered, this, &ThisClass::Input_Move);
 	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Look, ETriggerEvent::Triggered, this, &ThisClass::Input_Look);
 
-	// [Downed/Revive] F키 부활 입력 바인딩
-	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Revive, ETriggerEvent::Started, this, &ThisClass::Input_ReviveStarted);
-	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Revive, ETriggerEvent::Completed, this, &ThisClass::Input_ReviveCompleted);
+	// [F키 통합] InputTag.Interaction 하나로 Revive + BossEncounterCube 통합
+	// InputTag_Revive 바인딩 제거 — Input_InteractionStarted에서 컨텍스트 분기
+	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Interaction, ETriggerEvent::Started, this, &ThisClass::Input_InteractionStarted);
+	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Interaction, ETriggerEvent::Completed, this, &ThisClass::Input_InteractionCompleted);
 
 	HellunaInputComponent->BindAbilityInputAction(InputConfigDataAsset, this, &ThisClass::Input_AbilityInputPressed, &ThisClass::Input_AbilityInputReleased);
 }
@@ -1159,6 +1209,12 @@ void AHellunaHeroCharacter::OnHeroHealthChanged(
 	{
 		Debug::Print(FString::Printf(TEXT("[PlayerHP] %s: -%.1f 데미지 (%.1f → %.1f)"),
 			*GetName(), Delta, OldHealth, NewHealth), FColor::Yellow);
+
+		// [Phase21] 피격 방향 혈흔 → 클라이언트에 전송
+		const uint8 DirIndex = CalcHitDirection(InstigatorActor);
+		UE_LOG(LogHelluna, Warning, TEXT("[BloodHit] 서버: %s 피격! Dir=%d, Instigator=%s"),
+			*GetName(), DirIndex, InstigatorActor ? *InstigatorActor->GetName() : TEXT("nullptr"));
+		Multicast_ShowBloodHitDirection(DirIndex);
 	}
 
 	// 피격 애니메이션 (데미지를 받았고 살아있을 때만, 다운 중 제외)
@@ -1657,6 +1713,49 @@ void AHellunaHeroCharacter::Input_ReviveCompleted(const FInputActionValue& Value
 	HideReviveProgressHUD();
 }
 
+// ============================================================================
+// [BossEvent] Interaction 입력 — F키 홀드 상태 전달
+// ============================================================================
+
+void AHellunaHeroCharacter::Input_InteractionStarted(const FInputActionValue& Value)
+{
+	// [F키 통합] 다운/사망 상태면 무시
+	if (HeroHealthComponent && (HeroHealthComponent->IsDowned() || HeroHealthComponent->IsDead()))
+	{
+		return;
+	}
+
+	bHoldingInteraction = true;
+	bIsRevivingLocal = false;
+
+	// 우선순위 1: 근처 다운된 팀원 → 부활
+	AHellunaHeroCharacter* DownedTarget = FindNearestDownedHero();
+	if (DownedTarget)
+	{
+		bIsRevivingLocal = true;
+		Server_StartRevive(DownedTarget);
+		ShowReviveProgressHUD(DownedTarget->GetName());
+		return;
+	}
+
+	// 우선순위 2: 보스큐브 등 기타 상호작용
+	// → bHoldingInteraction = true 상태로 BossEncounterCube::Tick이 처리
+	// → IsReviving() == false 이므로 큐브 프로그레스 정상 증가
+}
+
+void AHellunaHeroCharacter::Input_InteractionCompleted(const FInputActionValue& Value)
+{
+	bHoldingInteraction = false;
+
+	// [F키 통합] 부활 중이었으면 중단
+	if (bIsRevivingLocal)
+	{
+		bIsRevivingLocal = false;
+		Server_StopRevive();
+		HideReviveProgressHUD();
+	}
+}
+
 AHellunaHeroCharacter* AHellunaHeroCharacter::FindNearestDownedHero() const
 {
 	UWorld* World = GetWorld();
@@ -2138,7 +2237,7 @@ void AHellunaHeroCharacter::StopDownedScreenEffect()
 		DownedPPMID = nullptr;
 	}
 
-	// 위젯 제거
+	// 다운 오버레이 위젯 제거 (피격 혈흔은 BloodHitWidget으로 분리됨)
 	if (DownedOverlayWidget)
 	{
 		DownedOverlayWidget->RemoveFromParent();
@@ -2216,8 +2315,9 @@ void AHellunaHeroCharacter::TickDownedScreenEffect(float DeltaTime)
 	{
 		const float SaturationValue = FMath::Lerp(0.45f, 1.0f, BleedoutRatio);
 
+		// PP VignetteIntensity 사용 안 함 — 빨간 비네트는 위젯(M_BloodVignette)이 담당
 		DownedPostProcess->Settings.bOverride_VignetteIntensity = true;
-		DownedPostProcess->Settings.VignetteIntensity = FMath::Lerp(0.f, 0.8f, FinalOpacity);
+		DownedPostProcess->Settings.VignetteIntensity = 0.f;
 		DownedPostProcess->Settings.bOverride_ColorSaturation = true;
 		DownedPostProcess->Settings.ColorSaturation = FVector4(SaturationValue, SaturationValue, SaturationValue, 1.0f);
 
@@ -2228,11 +2328,19 @@ void AHellunaHeroCharacter::TickDownedScreenEffect(float DeltaTime)
 		DownedPostProcess->MarkRenderStateDirty();
 	}
 
-	// ── MID 파라미터 (InnerRadius 동적 제어) ──
+	// ── MID 파라미터 (Hurt PP 전용) ──
 	if (DownedPPMID)
 	{
-		DownedPPMID->SetScalarParameterValue(FName("InnerRadius"), FinalIR);
-		DownedPPMID->SetScalarParameterValue(FName("Intensity"), FinalOpacity);
+		// Hurt PP의 "VIGNETTE INTENSITY" 파라미터로 비네트 강도 제어
+		DownedPPMID->SetScalarParameterValue(FName("VIGNETTE INTENSITY"), FinalOpacity);
+		// HeartBeat 파라미터로 심장박동 펄스 연동 (0.0~1.0)
+		DownedPPMID->SetScalarParameterValue(FName("HeartBeat"), PulseOpacityBoost / PULSE_OP_AMOUNT);
+		// HeartbeatStrength: 출혈 진행에 따라 0.25→1.0 (사망 직전 심장박동 극대화)
+		const float HBStrength = FMath::Lerp(1.0f, 0.25f, BleedoutRatio);
+		DownedPPMID->SetScalarParameterValue(FName("HeartbeatStrength"), HBStrength);
+		// 혈관 흔들림 축소 (기본 0.18 → 0.05로 줄여 부드럽게)
+		DownedPPMID->SetScalarParameterValue(FName("VeinsOffsetX"), DownedVeinsOffsetX);
+		DownedPPMID->SetScalarParameterValue(FName("DropsNormalStrength"), DownedDropsNormalStrength);
 	}
 
 	// ── MID Weight ──
@@ -2240,15 +2348,15 @@ void AHellunaHeroCharacter::TickDownedScreenEffect(float DeltaTime)
 	{
 		if (DownedPostProcess->Settings.WeightedBlendables.Array.Num() > 0)
 		{
-			DownedPostProcess->Settings.WeightedBlendables.Array[0].Weight = FinalOpacity;
+			// Hurt PP는 PostProcess/Opaque → Weight=1.0이면 원본 화면 100% 대체
+			// 혈흔 비네트를 부드럽게 보여주려면 0.0~0.35 범위로 제한
+			const float PPWeight = FinalOpacity * PP_WEIGHT_MAX;
+			DownedPostProcess->Settings.WeightedBlendables.Array[0].Weight = PPWeight;
 		}
 	}
 
-	// ── 위젯 Opacity ──
-	if (DownedOverlayWidget)
-	{
-		DownedOverlayWidget->SetRenderOpacity(FinalOpacity);
-	}
+	// 위젯 오버레이는 PP 머티리얼이 대체 — 위젯은 숨김 유지
+	// (WBP_DownedOverlay의 모든 Image는 Collapsed 상태)
 
 	// ── 암전: PP ColorGain에 Blackout 추가 반영 ──
 	if (DownedPostProcess && DownedBlackout > 0.01f)
@@ -2282,51 +2390,47 @@ void AHellunaHeroCharacter::UpdateKickPrompt(float DeltaTime)
 	const FVector MyLocation = GetActorLocation();
 	const FVector MyForward = GetActorForwardVector();
 	const float CosHalfAngle = FMath::Cos(FMath::DegreesToRadians(KickPromptHalfAngle));
+	const float RangeSq = KickPromptRange * KickPromptRange;
 
-	// Staggered 적 탐색 (GA_MeleeKick::FindStaggeredEnemy와 동일 로직)
 	AHellunaEnemyCharacter* BestEnemy = nullptr;
-	float BestDistSq = KickPromptRange * KickPromptRange;
+	float BestDistSq = RangeSq;
 
-	TArray<FOverlapResult> Overlaps;
-	FCollisionShape Sphere = FCollisionShape::MakeSphere(KickPromptRange);
-	FCollisionQueryParams Params;
-	Params.AddIgnoredActor(this);
+	// GetAllActorsOfClass로 모든 적을 순회 (OverlapMulti보다 안정적)
+	TArray<AActor*> AllEnemies;
+	UGameplayStatics::GetAllActorsOfClass(World, AHellunaEnemyCharacter::StaticClass(), AllEnemies);
 
-	if (World->OverlapMultiByObjectType(
-		Overlaps, MyLocation, FQuat::Identity,
-		FCollisionObjectQueryParams(ECC_Pawn), Sphere, Params))
+	for (AActor* Actor : AllEnemies)
 	{
-		for (const FOverlapResult& Overlap : Overlaps)
+		AHellunaEnemyCharacter* Enemy = Cast<AHellunaEnemyCharacter>(Actor);
+		if (!Enemy) continue;
+
+		// 거리 체크
+		const float DistSq = FVector::DistSquared(MyLocation, Enemy->GetActorLocation());
+		if (DistSq > RangeSq) continue;
+
+		// Staggered 태그 체크
+		if (!UHellunaFunctionLibrary::NativeDoesActorHaveTag(Enemy, HellunaGameplayTags::Enemy_State_Staggered))
+			continue;
+
+		// 사망 체크
+		if (UHellunaHealthComponent* HC = Enemy->FindComponentByClass<UHellunaHealthComponent>())
 		{
-			AHellunaEnemyCharacter* Enemy = Cast<AHellunaEnemyCharacter>(Overlap.GetActor());
-			if (!Enemy) continue;
+			if (HC->IsDead()) continue;
+		}
 
-			// Staggered 태그 체크
-			if (!UHellunaFunctionLibrary::NativeDoesActorHaveTag(Enemy, HellunaGameplayTags::Enemy_State_Staggered))
-				continue;
+		// 전방각 체크
+		const FVector ToEnemy = (Enemy->GetActorLocation() - MyLocation).GetSafeNormal();
+		if (FVector::DotProduct(MyForward, ToEnemy) < CosHalfAngle) continue;
 
-			// 사망 체크
-			if (UHellunaHealthComponent* HC = Enemy->FindComponentByClass<UHellunaHealthComponent>())
-			{
-				if (HC->IsDead()) continue;
-			}
-
-			// 전방각 체크
-			const FVector ToEnemy = (Enemy->GetActorLocation() - MyLocation).GetSafeNormal();
-			if (FVector::DotProduct(MyForward, ToEnemy) < CosHalfAngle) continue;
-
-			const float DistSq = FVector::DistSquared(MyLocation, Enemy->GetActorLocation());
-			if (DistSq < BestDistSq)
-			{
-				BestDistSq = DistSq;
-				BestEnemy = Enemy;
-			}
+		if (DistSq < BestDistSq)
+		{
+			BestDistSq = DistSq;
+			BestEnemy = Enemy;
 		}
 	}
 
 	if (BestEnemy)
 	{
-		// 적 머리 위로 위젯 이동
 		const FVector EnemyHead = BestEnemy->GetActorLocation() + FVector(0.f, 0.f, 150.f);
 		KickPromptWidgetComp->SetWorldLocation(EnemyHead);
 
@@ -2345,15 +2449,169 @@ void AHellunaHeroCharacter::UpdateKickPrompt(float DeltaTime)
 		}
 	}
 
-	// 디버그 로그 (1초마다)
+	// 디버그 로그 (1초마다) — 가장 가까운 적의 Staggered 여부도 출력
 	KickPromptLogTimer += DeltaTime;
 	if (KickPromptLogTimer >= 1.0f)
 	{
 		KickPromptLogTimer = 0.f;
-		if (bKickPromptVisible && BestEnemy)
+
+		float ClosestDist = MAX_FLT;
+		AHellunaEnemyCharacter* ClosestEnemy = nullptr;
+		for (AActor* Actor : AllEnemies)
 		{
-			UE_LOG(LogHelluna, Log, TEXT("[Phase18] KickPrompt 표시: %s → 적=%s"),
-				*GetName(), *BestEnemy->GetName());
+			AHellunaEnemyCharacter* E = Cast<AHellunaEnemyCharacter>(Actor);
+			if (!E) continue;
+			float D = FVector::Dist(MyLocation, E->GetActorLocation());
+			if (D < ClosestDist) { ClosestDist = D; ClosestEnemy = E; }
+		}
+
+		if (ClosestEnemy)
+		{
+			bool bIsStaggered = UHellunaFunctionLibrary::NativeDoesActorHaveTag(ClosestEnemy, HellunaGameplayTags::Enemy_State_Staggered);
+			UE_LOG(LogHelluna, Warning, TEXT("[Phase18] KickPrompt: Closest=%s Dist=%.0f Staggered=%s | Best=%s Visible=%s"),
+				*ClosestEnemy->GetName(), ClosestDist,
+				bIsStaggered ? TEXT("Y") : TEXT("N"),
+				BestEnemy ? *BestEnemy->GetName() : TEXT("None"),
+				bKickPromptVisible ? TEXT("Y") : TEXT("N"));
 		}
 	}
+}
+
+// =========================================================
+// ★ [Phase21] 8방향 피격 혈흔 시스템
+// =========================================================
+
+uint8 AHellunaHeroCharacter::CalcHitDirection(AActor* InstigatorActor) const
+{
+	if (!InstigatorActor) return 0; // 기본: Top (전방)
+
+	const FVector HitDir = (InstigatorActor->GetActorLocation() - GetActorLocation()).GetSafeNormal();
+	const float Forward = FVector::DotProduct(HitDir, GetActorForwardVector());
+	const float Right = FVector::DotProduct(HitDir, GetActorRightVector());
+
+	// atan2(Right, Forward) → 각도 (라디안)
+	// 0=전방, PI/2=우측, PI=후방, -PI/2=좌측
+	float AngleDeg = FMath::RadiansToDegrees(FMath::Atan2(Right, Forward));
+	if (AngleDeg < 0.f) AngleDeg += 360.f;
+
+	// 8방향 매핑 (45도 단위, 22.5도 오프셋)
+	// 0=Top(전방), 1=TR, 2=Right, 3=BR, 4=Bottom(후방), 5=BL, 6=Left, 7=TL
+	const int32 Index = FMath::RoundToInt(AngleDeg / 45.f) % 8;
+	return static_cast<uint8>(Index);
+}
+
+void AHellunaHeroCharacter::Multicast_ShowBloodHitDirection_Implementation(uint8 DirIndex)
+{
+	// Multicast는 모든 클라이언트에서 실행 — 로컬 플레이어만 혈흔 표시
+	if (!IsLocallyControlled()) return;
+
+	if (DirIndex >= 8) return;
+	PlayBloodHitFade(DirIndex);
+}
+
+void AHellunaHeroCharacter::PlayBloodHitFade(uint8 DirIndex)
+{
+	// [Phase21] 지연 초기화 — BeginPlay 시점에 Controller가 없을 수 있음 (멀티플레이)
+	if (!BloodHitWidget && BloodHitWidgetClass)
+	{
+		APlayerController* PC = Cast<APlayerController>(GetController());
+		if (PC && PC->IsLocalController())
+		{
+			BloodHitWidget = CreateWidget<UUserWidget>(PC, BloodHitWidgetClass);
+			if (BloodHitWidget)
+			{
+				BloodHitWidget->AddToViewport(1);
+
+				BloodHitImages.SetNum(8);
+				BloodHitImages[0] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodTop")));
+				BloodHitImages[1] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodCornerTR")));
+				BloodHitImages[2] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodRight")));
+				BloodHitImages[3] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodCornerBR")));
+				BloodHitImages[4] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodBottom")));
+				BloodHitImages[5] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodCornerBL")));
+				BloodHitImages[6] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodLeft")));
+				BloodHitImages[7] = Cast<UImage>(BloodHitWidget->GetWidgetFromName(TEXT("BloodCornerTL")));
+
+				if (BloodHitTexture)
+				{
+					for (UImage* Img : BloodHitImages)
+					{
+						if (Img)
+						{
+							FSlateBrush Brush;
+							Brush.SetResourceObject(BloodHitTexture);
+							Brush.DrawAs = ESlateBrushDrawType::Image;
+							Brush.ImageSize = FVector2D(256, 256);
+							Img->SetBrush(Brush);
+							Img->SetColorAndOpacity(FLinearColor(1.0f, 0.1f, 0.05f, 1.0f));
+							Img->SetRenderOpacity(0.f);
+							Img->SetVisibility(ESlateVisibility::Collapsed);
+						}
+					}
+				}
+
+				BloodHitWidget->SetRenderOpacity(1.0f);
+				UE_LOG(LogHelluna, Warning, TEXT("[Phase21] BloodHitWidget 지연 초기화 완료: %s, WidgetOpacity=%.2f"),
+					*GetName(), BloodHitWidget->GetRenderOpacity());
+			}
+		}
+	}
+
+	UE_LOG(LogHelluna, Warning, TEXT("[BloodHit] PlayFade: Dir=%d, Widget=%s, Class=%s, ImgNum=%d"),
+		DirIndex, BloodHitWidget ? TEXT("Y") : TEXT("N"),
+		BloodHitWidgetClass ? TEXT("Y") : TEXT("N"),
+		BloodHitImages.Num());
+	if (!BloodHitWidget) return;
+	if (DirIndex >= static_cast<uint8>(BloodHitImages.Num())) return;
+
+	UImage* Img = BloodHitImages[DirIndex];
+	UE_LOG(LogHelluna, Warning, TEXT("[BloodHit] PlayFade: Img[%d]=%s"), DirIndex, Img ? TEXT("VALID") : TEXT("NULL"));
+	if (!Img) return;
+
+	UWorld* W = GetWorld();
+	if (!W) return;
+
+	// 기존 페이드 중이면 리셋
+	W->GetTimerManager().ClearTimer(BloodHitTimers[DirIndex]);
+
+	// 즉시 표시
+	Img->SetVisibility(ESlateVisibility::HitTestInvisible);
+	Img->SetRenderOpacity(1.0f);
+	
+	UE_LOG(LogHelluna, Warning, TEXT("[BloodHit] Image SHOW: Dir=%d, Vis=%d, Opacity=%.2f, DesiredSize=%.0fx%.0f"),
+		DirIndex,
+		(int32)Img->GetVisibility(),
+		Img->GetRenderOpacity(),
+		Img->GetDesiredSize().X, Img->GetDesiredSize().Y);
+
+	// 페이드아웃 (0.016초 간격 루핑 타이머)
+	const float FadeStep = 0.016f;
+	const float DecayPerStep = FadeStep / BloodHitFadeDuration;
+
+	W->GetTimerManager().SetTimer(
+		BloodHitTimers[DirIndex],
+		FTimerDelegate::CreateWeakLambda(this, [this, DirIndex, DecayPerStep]()
+		{
+			if (DirIndex >= static_cast<uint8>(BloodHitImages.Num())) return;
+			UImage* FadeImg = BloodHitImages[DirIndex];
+			if (!FadeImg) return;
+
+			float NewOpacity = FadeImg->GetRenderOpacity() - DecayPerStep;
+			if (NewOpacity <= 0.f)
+			{
+				FadeImg->SetRenderOpacity(0.f);
+				FadeImg->SetVisibility(ESlateVisibility::Collapsed);
+				if (UWorld* TimerWorld = GetWorld())
+				{
+					TimerWorld->GetTimerManager().ClearTimer(BloodHitTimers[DirIndex]);
+				}
+			}
+			else
+			{
+				FadeImg->SetRenderOpacity(NewOpacity);
+			}
+		}),
+		FadeStep,
+		true  // looping
+	);
 }
