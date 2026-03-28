@@ -27,27 +27,22 @@ AResourceUsingObject_HealTurret::AResourceUsingObject_HealTurret()
 
 	// ── [파트1] 베이스 메쉬 (고정) — Base 클래스의 DynamicMeshComponent ──
 
-	// ── [파트2] 고정 메쉬 ────────────────────────────────────
-	MeshPart2 = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MeshPart2"));
-	if (DynamicMeshComponent)
-	{
-		MeshPart2->SetupAttachment(DynamicMeshComponent);
-	}
-
-	// ── [파트3] 고정 메쉬 ────────────────────────────────────
-	MeshPart3 = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MeshPart3"));
-	if (DynamicMeshComponent)
-	{
-		MeshPart3->SetupAttachment(DynamicMeshComponent);
-	}
-
-	// ── [파트4] 회전 파트 ────────────────────────────────────
+	// ── [회전 피벗] ─────────────────────────────────────────
 	SpinRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SpinRoot"));
 	if (DynamicMeshComponent)
 	{
 		SpinRoot->SetupAttachment(DynamicMeshComponent);
 	}
 
+	// ── [파트2] 회전 메쉬 — SpinRoot 하위 ────────────────────
+	MeshPart2 = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MeshPart2"));
+	MeshPart2->SetupAttachment(SpinRoot);
+
+	// ── [파트3] 회전 메쉬 — SpinRoot 하위 ────────────────────
+	MeshPart3 = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MeshPart3"));
+	MeshPart3->SetupAttachment(SpinRoot);
+
+	// ── [파트4] 회전 메쉬 — SpinRoot 하위 ────────────────────
 	MeshSpin = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MeshSpin"));
 	MeshSpin->SetupAttachment(SpinRoot);
 

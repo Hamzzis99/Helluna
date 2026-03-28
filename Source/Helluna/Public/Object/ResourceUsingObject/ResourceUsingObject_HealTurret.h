@@ -40,14 +40,14 @@ protected:
 	// 메쉬 파트 (4분할)
 	// =========================================================
 
-	/** 파트2 메쉬 (고정) — BP에서 스태틱메쉬 지정 */
+	/** 파트2 메쉬 (회전) — SpinRoot 하위, BP에서 스태틱메쉬 지정 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Turret|Components",
-		meta = (DisplayName = "파트2 메쉬 (고정)"))
+		meta = (DisplayName = "파트2 메쉬 (회전)"))
 	TObjectPtr<UStaticMeshComponent> MeshPart2;
 
-	/** 파트3 메쉬 (고정) — BP에서 스태틱메쉬 지정 */
+	/** 파트3 메쉬 (회전) — SpinRoot 하위, BP에서 스태틱메쉬 지정 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Turret|Components",
-		meta = (DisplayName = "파트3 메쉬 (고정)"))
+		meta = (DisplayName = "파트3 메쉬 (회전)"))
 	TObjectPtr<UStaticMeshComponent> MeshPart3;
 
 	/** 회전 피벗 — 이 하위의 메쉬가 빙글빙글 회전합니다 */
