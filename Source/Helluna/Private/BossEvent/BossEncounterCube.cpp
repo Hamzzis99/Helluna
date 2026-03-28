@@ -69,6 +69,13 @@ void ABossEncounterCube::BeginPlay()
 		InteractWidgetComp->SetWidgetClass(InteractWidgetClass);
 	}
 
+	// 평시 어두움: 보스 이벤트와 무관하게 세계가 어두움
+	if (!IsRunningDedicatedServer() && MPC_BossEncounter)
+	{
+		UKismetMaterialLibrary::SetScalarParameterValue(
+			this, MPC_BossEncounter, TEXT("DarknessAmount"), DarknessAmount);
+	}
+
 	// 늦은 접속 클라이언트
 	if (!IsRunningDedicatedServer() && bActivated && MPC_BossEncounter)
 	{
@@ -77,6 +84,8 @@ void ABossEncounterCube::BeginPlay()
 			// 보스 이미 처치됨 → 컬러 유지 + 꽃 표시 (ColorWaveRadius 최대)
 			UKismetMaterialLibrary::SetScalarParameterValue(
 				this, MPC_BossEncounter, TEXT("DesatAmount"), 0.f);
+			UKismetMaterialLibrary::SetScalarParameterValue(
+				this, MPC_BossEncounter, TEXT("DarknessAmount"), 0.f);
 			UKismetMaterialLibrary::SetScalarParameterValue(
 				this, MPC_BossEncounter, TEXT("ColorWaveRadius"), ColorWaveMaxRadius);
 			AuraVFXSpawnedActors.Empty();
@@ -95,12 +104,9 @@ void ABossEncounterCube::BeginPlay()
 
 			// 보스 영역 중심/반경 MPC 설정 (늦은 접속)
 			const FVector AreaCenter = GetActorLocation();
-			UKismetMaterialLibrary::SetScalarParameterValue(
-				this, MPC_BossEncounter, TEXT("BossAreaCenterX"), AreaCenter.X);
-			UKismetMaterialLibrary::SetScalarParameterValue(
-				this, MPC_BossEncounter, TEXT("BossAreaCenterY"), AreaCenter.Y);
-			UKismetMaterialLibrary::SetScalarParameterValue(
-				this, MPC_BossEncounter, TEXT("BossAreaCenterZ"), AreaCenter.Z);
+			UKismetMaterialLibrary::SetVectorParameterValue(
+				this, MPC_BossEncounter, TEXT("BossAreaCenter"),
+				FLinearColor(AreaCenter.X, AreaCenter.Y, AreaCenter.Z, 0.f));
 			UKismetMaterialLibrary::SetScalarParameterValue(
 				this, MPC_BossEncounter, TEXT("BossAreaRadius"), BossAreaRadius);
 
@@ -286,17 +292,16 @@ void ABossEncounterCube::Multicast_BossEncounterStarted_Implementation()
 	if (MPC_BossEncounter)
 	{
 		const FVector AreaCenter = GetActorLocation();
-		UKismetMaterialLibrary::SetScalarParameterValue(
-			this, MPC_BossEncounter, TEXT("BossAreaCenterX"), AreaCenter.X);
-		UKismetMaterialLibrary::SetScalarParameterValue(
-			this, MPC_BossEncounter, TEXT("BossAreaCenterY"), AreaCenter.Y);
-		UKismetMaterialLibrary::SetScalarParameterValue(
-			this, MPC_BossEncounter, TEXT("BossAreaCenterZ"), AreaCenter.Z);
+		UKismetMaterialLibrary::SetVectorParameterValue(
+			this, MPC_BossEncounter, TEXT("BossAreaCenter"),
+			FLinearColor(AreaCenter.X, AreaCenter.Y, AreaCenter.Z, 0.f));
 		UKismetMaterialLibrary::SetScalarParameterValue(
 			this, MPC_BossEncounter, TEXT("BossAreaRadius"), BossAreaRadius);
+		UKismetMaterialLibrary::SetScalarParameterValue(
+			this, MPC_BossEncounter, TEXT("DarknessAmount"), DarknessAmount);
 
-		UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] BossArea set: Center=%s, Radius=%.0f"),
-			*AreaCenter.ToString(), BossAreaRadius);
+		UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] BossArea set: Center=%s, Radius=%.0f, Darkness=%.2f"),
+			*AreaCenter.ToString(), BossAreaRadius, DarknessAmount);
 	}
 
 	// [Step 4] 플레이어·보스 메시에 Custom Depth/Stencil 활성화
@@ -465,12 +470,9 @@ void ABossEncounterCube::Multicast_BossDefeated_Implementation(FVector DeathLoca
 	// MPC에 웨이브 원점 설정
 	if (MPC_BossEncounter)
 	{
-		UKismetMaterialLibrary::SetScalarParameterValue(
-			this, MPC_BossEncounter, TEXT("WaveOriginX"), WaveOrigin.X);
-		UKismetMaterialLibrary::SetScalarParameterValue(
-			this, MPC_BossEncounter, TEXT("WaveOriginY"), WaveOrigin.Y);
-		UKismetMaterialLibrary::SetScalarParameterValue(
-			this, MPC_BossEncounter, TEXT("WaveOriginZ"), WaveOrigin.Z);
+		UKismetMaterialLibrary::SetVectorParameterValue(
+			this, MPC_BossEncounter, TEXT("WaveOrigin"),
+			FLinearColor(WaveOrigin.X, WaveOrigin.Y, WaveOrigin.Z, 0.f));
 		UKismetMaterialLibrary::SetScalarParameterValue(
 			this, MPC_BossEncounter, TEXT("ColorWaveRadius"), 0.f);
 	}
@@ -510,9 +512,11 @@ void ABossEncounterCube::TickColorWave(float DeltaTime)
 	{
 		bColorWaveActive = false;
 
-		// 흑백 해제 (DesatAmount=0 → PP Material이 원본 컬러 출력)
+		// 흑백 해제 (DesatAmount=0, DarknessAmount=0 → 전체 원색 복원)
 		UKismetMaterialLibrary::SetScalarParameterValue(
 			this, MPC_BossEncounter, TEXT("DesatAmount"), 0.f);
+		UKismetMaterialLibrary::SetScalarParameterValue(
+			this, MPC_BossEncounter, TEXT("DarknessAmount"), 0.f);
 
 		// ⚠️ ColorWaveRadius는 리셋하지 않음 — 꽃 WPO가 이 값을 참조하므로
 		// MaxRadius 유지해야 꽃이 올라온 상태를 유지한다

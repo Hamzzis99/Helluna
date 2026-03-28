@@ -117,6 +117,11 @@ public:
 		meta = (DisplayName = "Boss Area Radius (영역 반경)", ClampMin = "1000", ClampMax = "50000"))
 	float BossAreaRadius = 5000.f;
 
+	/** 평시 어두움 강도 — 0=원색, 1=완전 어둡게 (Substrate Mix에 직접 사용) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter|Area",
+		meta = (DisplayName = "Darkness Amount (어두움 강도)", ClampMin = "0.0", ClampMax = "1.0"))
+	float DarknessAmount = 0.85f;
+
 	// =========================================================================================
 	// [Step 5] 컬러 웨이브 (보스 처치 후)
 	// =========================================================================================
