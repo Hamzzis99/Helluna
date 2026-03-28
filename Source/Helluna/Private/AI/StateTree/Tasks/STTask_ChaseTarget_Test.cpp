@@ -371,7 +371,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::EnterState(
 			return EStateTreeRunStatus::Running;
 		}
 
-		USpaceShipAttackSlotManager* SlotMgr = bUseSlotSystem ? GetSlotManager(TargetActor) : nullptr;
+		USpaceShipAttackSlotManager* SlotMgr = bUseSlotSystem ? ChaseTargetTestHelpers::GetSlotManager(TargetActor) : nullptr;
 		const float CenterDist = FVector::Dist(Pawn->GetActorLocation(), TargetActor->GetActorLocation());
 
 		if (SlotMgr && CenterDist <= SlotEngageRadius)
@@ -496,7 +496,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 			bIdle = (PFC->GetStatus() == EPathFollowingStatus::Idle);
 
 		// ── 슬롯 시스템 분기 ────────────────────────────────
-		USpaceShipAttackSlotManager* SlotMgr = bUseSlotSystem ? GetSlotManager(TargetActor) : nullptr;
+		USpaceShipAttackSlotManager* SlotMgr = bUseSlotSystem ? ChaseTargetTestHelpers::GetSlotManager(TargetActor) : nullptr;
 
 		if (SlotMgr)
 		{
@@ -728,7 +728,7 @@ void FSTTask_ChaseTarget_Test::ExitState(
 		const FHellunaAITargetData& TD = D.TargetData;
 		if (TD.HasValidTarget())
 		{
-			if (USpaceShipAttackSlotManager* SlotMgr = GetSlotManager(TD.TargetActor.Get()))
+			if (USpaceShipAttackSlotManager* SlotMgr = ChaseTargetTestHelpers::GetSlotManager(TD.TargetActor.Get()))
 			{
 				if (IsValid(D.AIController))
 				{
