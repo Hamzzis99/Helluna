@@ -34,6 +34,9 @@ protected:
 	virtual void EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled) override;
 
 
+	// ✅ 몽타주 1회 재생 (타겟 검증 → 스냅 → 회전 → 데미지 → 몽타주)
+	void PlayFarmingMontage();
+
 	UFUNCTION()
 	void OnFarmingFinished();
 
@@ -53,8 +56,23 @@ private:
 	// ✅ 로컬 체감: 즉시 Yaw만 회전
 	void FaceToTarget_InstantLocalOnly(const FGameplayAbilityActorInfo* ActorInfo, const FVector& TargetLocation) const;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Farming|Look")  // 크로스헤어 X 위치 기준 (0.0 ~ 1.0) 
+	UPROPERTY(EditDefaultsOnly, Category = "Farming|Look")  // 크로스헤어 X 위치 기준 (0.0 ~ 1.0)
 	float CrosshairXNormalized = 0.57f;
+
+	/**
+	 * 몽타주 재생 시작 후 데미지가 적용되는 시점 (0.0 ~ 1.0).
+	 * 0.26 = 몽타주 26% 지점에서 데미지 적용.
+	 * 나중에 AnimNotify로 교체 가능.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Farming|Damage",
+		meta = (DisplayName = "데미지 적용 시점 (비율)", ClampMin = "0.0", ClampMax = "1.0"))
+	float DamageTimingRatio = 0.26f;
+
+	/** 데미지 지연 적용용 타이머 */
+	FTimerHandle DamageTimerHandle;
+
+	/** 타이머 콜백: 실제 데미지 적용 */
+	void ApplyFarmingDamage();
 
 	UPROPERTY()
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> FarmingTask = nullptr;

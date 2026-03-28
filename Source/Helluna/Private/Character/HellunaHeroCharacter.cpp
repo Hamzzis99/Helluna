@@ -725,6 +725,7 @@ void AHellunaHeroCharacter::Server_RequestSpawnWeapon_Implementation(
 
 		// 서버에서 현재 태그 갱신 → 클라에서 OnRep_CurrentWeaponTag()로 반영
 		CurrentWeaponTag = NewTag;
+
 	}
 
 
@@ -785,6 +786,7 @@ void AHellunaHeroCharacter::OnRep_CurrentWeaponTag()
 
 	// 다음 OnRep에서 이전값을 알 수 있도록 캐시 갱신
 	LastAppliedWeaponTag = CurrentWeaponTag;
+
 }
 
 void AHellunaHeroCharacter::Multicast_PlayEquipMontageExceptOwner_Implementation(UAnimMontage* Montage)

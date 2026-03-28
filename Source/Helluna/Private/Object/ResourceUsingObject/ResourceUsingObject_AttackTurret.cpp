@@ -11,6 +11,7 @@
 #include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
 #include "Components/DynamicMeshComponent.h"
+#include "DrawDebugHelpers.h"
 
 
 // =========================================================
@@ -135,6 +136,17 @@ void AResourceUsingObject_AttackTurret::Tick(float DeltaTime)
 	if (IsFacingTarget())
 	{
 		PerformAttack();
+	}
+
+	// 디버그: 공격 범위 시각화
+	if (bShowAttackRange)
+	{
+		const float Radius = DetectionSphere->GetScaledSphereRadius();
+		const FVector Center = DetectionSphere->GetComponentLocation();
+		const FColor RangeColor = CurrentTarget.Get() ? FColor::Red : FColor::Green;
+		DrawDebugCircle(GetWorld(), Center, Radius, 64,
+			RangeColor, false, -1.f, 0, 2.f,
+			FVector(1, 0, 0), FVector(0, 1, 0), false);
 	}
 }
 

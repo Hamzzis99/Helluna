@@ -16,6 +16,6 @@ class HELLUNA_API UHellunaBaseAnimInstance : public UAnimInstance
 	GENERATED_BODY()
 	
 protected:
-	UFUNCTION(BlueprintPure, meta = (BlueprintThreadSafe))
+	UFUNCTION(BlueprintPure, meta = (BlueprintThreadSafe, DisplayName = "소유자가 태그를 가지고 있는지"))
 	bool DoesOwnerHaveTag(FGameplayTag TagToCheck) const;
 };

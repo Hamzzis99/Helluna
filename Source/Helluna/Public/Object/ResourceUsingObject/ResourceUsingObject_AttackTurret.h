@@ -82,6 +82,11 @@ protected:
 		meta = (DisplayName = "발사 허용 각도(도)", ClampMin = "1.0", ClampMax = "45.0"))
 	float FireAngleThreshold = 5.f;
 
+	/** 탐지 범위를 게임 화면에 표시 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Turret|Debug",
+		meta = (DisplayName = "공격 범위 표시"))
+	bool bShowAttackRange = true;
+
 
 	// =========================================================
 	// VFX / 사운드
