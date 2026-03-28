@@ -241,6 +241,13 @@ void UMDF_MiniGameComponent::Server_RequestCreateWeakSpot_Implementation(FVector
         return;
     }
 
+    // [Fix60] 뒤집힌 박스 거부 (Min > Max)
+    if (BoxMin.X > BoxMax.X || BoxMin.Y > BoxMax.Y || BoxMin.Z > BoxMax.Z)
+    {
+        UE_LOG(LogMeshDeform, Warning, TEXT("[MiniGame] 서버: 뒤집힌 박스 거부 (Min > Max)"));
+        return;
+    }
+
     // 서버에서 실행됨 - 클라이언트가 보낸 박스 데이터로 약점 생성
     FBox ReceivedBox(BoxMin, BoxMax);
 

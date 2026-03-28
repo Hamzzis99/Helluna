@@ -341,7 +341,12 @@ UInv_InventoryItem* UInv_InventoryComponent::AddAttachedItemFromManifest(FInv_It
 	NewItem->SetTotalStackCount(1);
 
 	// ⭐ 부착 상태 플래그 설정 — 그리드에서 숨김
-	int32 LastIdx = InventoryList.Entries.Num() - 1;
+	const int32 LastIdx = InventoryList.Entries.Num() - 1;
+	if (!InventoryList.Entries.IsValidIndex(LastIdx)) // [Fix60] AddEntry 실패 방어
+	{
+		UE_LOG(LogInventory, Error, TEXT("[InventoryComponent] AddAttachedItemFromManifest: AddEntry 후 Entries가 비어있음"));
+		return nullptr;
+	}
 	InventoryList.Entries[LastIdx].bIsAttachedToWeapon = true;
 	InventoryList.Entries[LastIdx].GridIndex = INDEX_NONE;
 	InventoryList.MarkItemDirty(InventoryList.Entries[LastIdx]);
@@ -1908,7 +1913,7 @@ void UInv_InventoryComponent::Multicast_EquipSlotClicked_Implementation(UInv_Inv
 	if (IsValid(ItemToEquip))
 	{
 		const int32 EquipEntryIndex = FindOwnedInventoryEntryIndex(this, ItemToEquip);
-		if (EquipEntryIndex == INDEX_NONE || !HasEquipmentFragment(ItemToEquip))
+		if (EquipEntryIndex == INDEX_NONE || !InventoryList.Entries.IsValidIndex(EquipEntryIndex) || !HasEquipmentFragment(ItemToEquip)) // [Fix60] IsValidIndex 추가
 		{
 			UE_LOG(LogInventory, Warning, TEXT("[InventoryComponent] Multicast_EquipSlotClicked ignored: equip item is invalid or not tracked"));
 			return;
@@ -1924,7 +1929,7 @@ void UInv_InventoryComponent::Multicast_EquipSlotClicked_Implementation(UInv_Inv
 	if (IsValid(ItemToUnequip))
 	{
 		const int32 UnequipEntryIndex = FindOwnedInventoryEntryIndex(this, ItemToUnequip);
-		if (UnequipEntryIndex == INDEX_NONE || !HasEquipmentFragment(ItemToUnequip))
+		if (UnequipEntryIndex == INDEX_NONE || !InventoryList.Entries.IsValidIndex(UnequipEntryIndex) || !HasEquipmentFragment(ItemToUnequip)) // [Fix60] IsValidIndex 추가
 		{
 			UE_LOG(LogInventory, Warning, TEXT("[InventoryComponent] Multicast_EquipSlotClicked ignored: unequip item is invalid or not tracked"));
 			return;
@@ -2002,8 +2007,8 @@ void UInv_InventoryComponent::Multicast_EquipSlotClicked_Implementation(UInv_Inv
 // ════════════════════════════════════════════════════════════════
 bool UInv_InventoryComponent::Server_AttachItemToWeapon_Validate(int32 WeaponEntryIndex, int32 AttachmentEntryIndex, int32 SlotIndex)
 {
-	// [Fix54] 상한 검증 추가 — 클라이언트가 임의 인덱스 전송 시 OOB 방지
-	if (WeaponEntryIndex < 0 || AttachmentEntryIndex < 0 || SlotIndex < 0)
+	// [Fix54+Fix60] 상한 검증 — 클라이언트가 임의 인덱스 전송 시 OOB 방지
+	if (WeaponEntryIndex < 0 || AttachmentEntryIndex < 0 || SlotIndex < 0 || SlotIndex > InvValidation::MaxSlotIndex)
 	{
 		return false;
 	}
@@ -2822,7 +2827,7 @@ bool UInv_InventoryComponent::Server_UpdateItemGridPositionsBatch_Validate(const
 
 	for (const FInv_GridPositionSyncData& Request : SyncRequests)
 	{
-		if (Request.GridIndex < INDEX_NONE || Request.GridCategory > 2)
+		if (Request.GridIndex < INDEX_NONE || Request.GridIndex > InvValidation::MaxGridIndex || Request.GridCategory > 2) // [Fix60] GridIndex 상한 추가
 		{
 			return false;
 		}

@@ -411,6 +411,9 @@ protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
+	/** [Fix60] 로그인 성공 후 위젯 제거 타이머 — EndPlay에서 정리 보장 */
+	FTimerHandle LoginWidgetRemoveTimer;
+
 	// ════════════════════════════════════════════════════════════════
 	// 인벤토리 컴포넌트 (Stash + Loadout)
 	// ════════════════════════════════════════════════════════════════
