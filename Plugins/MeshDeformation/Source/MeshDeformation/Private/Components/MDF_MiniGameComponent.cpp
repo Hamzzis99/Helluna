@@ -233,9 +233,17 @@ void UMDF_MiniGameComponent::EndMarking(FVector WorldLocation)
 // -----------------------------------------------------------------------------
 void UMDF_MiniGameComponent::Server_RequestCreateWeakSpot_Implementation(FVector BoxMin, FVector BoxMax)
 {
+    // [Fix54] NaN/Inf 좌표 검증 — 악의적 클라이언트 DoS 방지
+    if (!FMath::IsFinite(BoxMin.X) || !FMath::IsFinite(BoxMin.Y) || !FMath::IsFinite(BoxMin.Z) ||
+        !FMath::IsFinite(BoxMax.X) || !FMath::IsFinite(BoxMax.Y) || !FMath::IsFinite(BoxMax.Z))
+    {
+        UE_LOG(LogMeshDeform, Warning, TEXT("[MiniGame] 서버: NaN/Inf 좌표 거부"));
+        return;
+    }
+
     // 서버에서 실행됨 - 클라이언트가 보낸 박스 데이터로 약점 생성
     FBox ReceivedBox(BoxMin, BoxMax);
-    
+
     // 간단한 검증: 박스 크기가 너무 크거나 작으면 거부
     FVector BoxSize = ReceivedBox.GetSize();
     if (BoxSize.GetMin() < 1.0f || BoxSize.GetMax() > 10000.0f)
@@ -320,7 +328,18 @@ void UMDF_MiniGameComponent::ApplyVisualMeshCut(int32 Index)
     UDynamicMesh* TargetMesh = DynComp->GetDynamicMesh();
 
     UDynamicMesh* ToolMesh = NewObject<UDynamicMesh>(GetTransientPackage());
-    
+    // [Fix54] ToolMesh 생성 실패 안전 검사
+    if (!ToolMesh) return;
+
+    // [Fix54] 스코프 종료 시 ToolMesh 정리 보장 — early return 경로 누수 방지
+    ON_SCOPE_EXIT
+    {
+        if (ToolMesh)
+        {
+            ToolMesh->ConditionalBeginDestroy();
+        }
+    };
+
     // [핵심] X축 좌/우, Z축 위/아래 방향으로 확장
     FBox OriginalBox = WeakSpots[Index].LocalBox;
     FBox CutBox = FBox(
@@ -380,10 +399,7 @@ void UMDF_MiniGameComponent::ApplyVisualMeshCut(int32 Index)
         DynComp->MarkRenderStateDirty();
     }
 
-    if (ToolMesh)
-    {
-        ToolMesh->ConditionalBeginDestroy();
-    }
+    // [Fix54] ToolMesh 정리는 ON_SCOPE_EXIT에서 자동 처리
 
 #if MDF_DEBUG_MINIGAME
     UE_LOG(LogMeshDeform, Log, TEXT("[MDF] 절단 완료! X확장(좌/우): %.1f/%.1f, Z확장(아래/위): %.1f/%.1f (Index: %d)"),

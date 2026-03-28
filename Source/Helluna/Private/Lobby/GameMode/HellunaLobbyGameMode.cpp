@@ -2399,8 +2399,21 @@ void AHellunaLobbyGameMode::ExecutePartyDeploy(int32 PartyId)
 				return;
 			}
 
+			AHellunaLobbyController* MemberPC_Persist = PCPtr->Get(); // [Fix54] Get() 후 즉시 nullptr 검사
+			if (!MemberPC_Persist)
+			{
+				RollbackDeployStateForPlayers(PreparedPlayerIds, SafeEmptyChannel.Port);
+				if (SQLiteSubsystem)
+				{
+					SQLiteSubsystem->ResetAllReadyStates(PartyId);
+				}
+				RefreshPartyCache(PartyId);
+				BroadcastPartyState(PartyId);
+				return;
+			}
+
 			FString PersistError;
-			if (!PersistDeployDataForPlayer(PCPtr->Get(), Member.PlayerId, Member.SelectedHeroType, SafeEmptyChannel.Port, PersistError))
+			if (!PersistDeployDataForPlayer(MemberPC_Persist, Member.PlayerId, Member.SelectedHeroType, SafeEmptyChannel.Port, PersistError))
 			{
 				RollbackDeployStateForPlayer(Member.PlayerId, SafeEmptyChannel.Port);
 				RollbackDeployStateForPlayers(PreparedPlayerIds, SafeEmptyChannel.Port);
@@ -2435,6 +2448,7 @@ void AHellunaLobbyGameMode::ExecutePartyDeploy(int32 PartyId)
 			}
 
 			AHellunaLobbyController* MemberPC = PCPtr->Get();
+			if (!MemberPC) continue; // [Fix54] Get() 후 nullptr 안전 검사
 			MemberPC->SetDeployInProgress(true);
 			MemberPC->Client_ExecutePartyDeploy(SafeEmptyChannel.Port);
 		}
@@ -2491,6 +2505,11 @@ void AHellunaLobbyGameMode::ExecutePartyDeploy(int32 PartyId)
 		}
 
 		AHellunaLobbyController* MemberPC = PCPtr->Get();
+		if (!MemberPC) // [Fix54] Get() 후 nullptr 안전 검사
+		{
+			UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] ExecutePartyDeploy: MemberPC became invalid | PlayerId=%s"), *Member.PlayerId);
+			continue;
+		}
 		UInv_InventoryComponent* LoadoutComp = MemberPC->GetLoadoutComponent();
 		UInv_InventoryComponent* StashComp = MemberPC->GetStashComponent();
 
@@ -2527,6 +2546,7 @@ void AHellunaLobbyGameMode::ExecutePartyDeploy(int32 PartyId)
 		}
 
 		AHellunaLobbyController* MemberPC = PCPtr->Get();
+		if (!MemberPC) continue; // [Fix54] Get() 후 nullptr 안전 검사
 		MemberPC->SetDeployInProgress(true);
 		MemberPC->Client_ExecutePartyDeploy(EmptyChannel.Port);
 

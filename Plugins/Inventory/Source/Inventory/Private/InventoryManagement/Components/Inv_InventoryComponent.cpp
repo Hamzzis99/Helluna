@@ -2002,7 +2002,17 @@ void UInv_InventoryComponent::Multicast_EquipSlotClicked_Implementation(UInv_Inv
 // ════════════════════════════════════════════════════════════════
 bool UInv_InventoryComponent::Server_AttachItemToWeapon_Validate(int32 WeaponEntryIndex, int32 AttachmentEntryIndex, int32 SlotIndex)
 {
-	return WeaponEntryIndex >= 0 && AttachmentEntryIndex >= 0 && SlotIndex >= 0;
+	// [Fix54] 상한 검증 추가 — 클라이언트가 임의 인덱스 전송 시 OOB 방지
+	if (WeaponEntryIndex < 0 || AttachmentEntryIndex < 0 || SlotIndex < 0)
+	{
+		return false;
+	}
+	if (!InventoryList.Entries.IsValidIndex(WeaponEntryIndex) ||
+		!InventoryList.Entries.IsValidIndex(AttachmentEntryIndex))
+	{
+		return false;
+	}
+	return true;
 }
 
 void UInv_InventoryComponent::Server_AttachItemToWeapon_Implementation(int32 WeaponEntryIndex, int32 AttachmentEntryIndex, int32 SlotIndex)

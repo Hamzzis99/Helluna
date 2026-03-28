@@ -462,7 +462,10 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
     int32 ClampedVertexCount = 0;
 #endif
 
-    DeformMeshComp->GetDynamicMesh()->EditMesh([&](UE::Geometry::FDynamicMesh3& EditMesh)
+    // [Fix54] GetDynamicMesh() 로컬 캐시 — 유효성 검사와 사용 사이 파괴 방지
+    UDynamicMesh* CachedDynamicMesh = DeformMeshComp->GetDynamicMesh();
+    if (!CachedDynamicMesh) return;
+    CachedDynamicMesh->EditMesh([&](UE::Geometry::FDynamicMesh3& EditMesh)
     {
         // [Phase 18] Vertex Color Overlay 접근
         UE::Geometry::FDynamicMeshColorOverlay* ColorOverlay = nullptr;
