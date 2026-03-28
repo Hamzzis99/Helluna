@@ -298,7 +298,9 @@ bool CheckPositionBasedStuck(
 	return bStuck;
 }
 } // namespace ChaseTargetTestHelpers
-using namespace ChaseTargetTestHelpers;
+// Unity Build에서 ChaseTargetHelpers와 이름 충돌 방지를 위해
+// using namespace 대신 명시적 네임스페이스 사용
+namespace CTH = ChaseTargetTestHelpers;
 
 // ============================================================================
 // EnterState
@@ -359,7 +361,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::EnterState(
 	// ── 이동 시작 ────────────────────────────────────────────
 	if (bIsSpaceShip)
 	{
-		const float SurfaceDist = ComputeSurfaceDistance(Pawn->GetActorLocation(), TargetActor);
+		const float SurfaceDist = CTH::ComputeSurfaceDistance(Pawn->GetActorLocation(), TargetActor);
 
 		// 이미 공격 범위 안이면 Running 대기 (Attack State 전환 대기)
 		if (SurfaceDist <= AttackRange)
@@ -371,7 +373,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::EnterState(
 			return EStateTreeRunStatus::Running;
 		}
 
-		USpaceShipAttackSlotManager* SlotMgr = bUseSlotSystem ? ChaseTargetTestHelpers::GetSlotManager(TargetActor) : nullptr;
+		USpaceShipAttackSlotManager* SlotMgr = bUseSlotSystem ? CTH::GetSlotManager(TargetActor) : nullptr;
 		const float CenterDist = FVector::Dist(Pawn->GetActorLocation(), TargetActor->GetActorLocation());
 
 		if (SlotMgr && CenterDist <= SlotEngageRadius)
@@ -383,7 +385,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::EnterState(
 			{
 				D.AssignedSlotIndex    = SlotIdx;
 				D.AssignedSlotLocation = SlotLoc;
-				IssueMoveToLocation(AIC, SlotLoc, AcceptanceRadius);
+				CTH::IssueMoveToLocation(AIC, SlotLoc, AcceptanceRadius);
 				UE_LOG(LogChaseTarget, Log,
 					TEXT("[Chase] EnterState - [%s] 슬롯 배정 성공: %d -> %s"),
 					*Pawn->GetName(), SlotIdx, *SlotLoc.ToString());
@@ -392,15 +394,15 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::EnterState(
 			{
 				FVector WaitLoc;
 				if (SlotMgr->GetWaitingPosition(Pawn, WaitLoc))
-					IssueMoveToLocation(AIC, WaitLoc, AcceptanceRadius);
+					CTH::IssueMoveToLocation(AIC, WaitLoc, AcceptanceRadius);
 				else
-					IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius);
+					CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius);
 			}
 		}
 		else
 		{
 			// 원거리 또는 슬롯 미사용: NavMesh 경유점 접근
-			IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius);
+			CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius);
 		}
 	}
 	else
@@ -443,7 +445,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 	if (!IsValid(TargetActor)) return EStateTreeRunStatus::Failed;
 
 	// ── 공격 중이면 이동 정지 ────────────────────────────────
-	if (IsAttacking(Pawn))
+	if (CTH::IsAttacking(Pawn))
 	{
 		AIC->StopMovement();
 		return EStateTreeRunStatus::Running;
@@ -461,7 +463,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 		// ══════════════════════════════════════════════════════
 
 		const FVector PawnLoc = Pawn->GetActorLocation();
-		const float SurfaceDist = ComputeSurfaceDistance(PawnLoc, TargetActor);
+		const float SurfaceDist = CTH::ComputeSurfaceDistance(PawnLoc, TargetActor);
 		const float CenterDist = FVector::Dist(PawnLoc, TargetActor->GetActorLocation());
 
 		// ── 디버그 로그 (2초마다) ────────────────────────────
@@ -479,7 +481,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 
 		// ── Stuck 감지 (토글: bUseStuckDetour) ──────────────
 		const bool bStuck = bUseStuckDetour
-			? CheckPositionBasedStuck(D, PawnLoc, SurfaceDist, AttackRange,
+			? CTH::CheckPositionBasedStuck(D, PawnLoc, SurfaceDist, AttackRange,
 				DeltaTime, StuckCheckInterval, StuckDistThreshold)
 			: false;
 
@@ -496,7 +498,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 			bIdle = (PFC->GetStatus() == EPathFollowingStatus::Idle);
 
 		// ── 슬롯 시스템 분기 ────────────────────────────────
-		USpaceShipAttackSlotManager* SlotMgr = bUseSlotSystem ? ChaseTargetTestHelpers::GetSlotManager(TargetActor) : nullptr;
+		USpaceShipAttackSlotManager* SlotMgr = bUseSlotSystem ? CTH::GetSlotManager(TargetActor) : nullptr;
 
 		if (SlotMgr)
 		{
@@ -526,13 +528,13 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 						if (bStuck)
 						{
 							const float Mult = FMath::Min((float)D.ConsecutiveStuckCount, 3.f);
-							IssueMoveToLocation(AIC,
-								ComputeDetourGoal(PawnLoc, TargetActor->GetActorLocation(), AIC, DetourOffset * Mult),
+							CTH::IssueMoveToLocation(AIC,
+								CTH::ComputeDetourGoal(PawnLoc, TargetActor->GetActorLocation(), AIC, DetourOffset * Mult),
 								AcceptanceRadius);
 						}
 						else
 						{
-							IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius);
+							CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius);
 						}
 						D.TimeSinceRepath = 0.f;
 					}
@@ -551,15 +553,15 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 						D.AssignedSlotIndex    = SlotIdx;
 						D.AssignedSlotLocation = SlotLoc;
 						D.bSlotArrived         = false;
-						IssueMoveToLocation(AIC, SlotLoc, AcceptanceRadius);
+						CTH::IssueMoveToLocation(AIC, SlotLoc, AcceptanceRadius);
 					}
 					else
 					{
 						FVector WaitLoc;
 						if (SlotMgr->GetWaitingPosition(Pawn, WaitLoc))
-							IssueMoveToLocation(AIC, WaitLoc, AcceptanceRadius);
+							CTH::IssueMoveToLocation(AIC, WaitLoc, AcceptanceRadius);
 						else
-							IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius);
+							CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius);
 					}
 				}
 				return EStateTreeRunStatus::Running;
@@ -609,19 +611,19 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 			if (bStuck)
 			{
 				const float Mult = FMath::Min((float)D.ConsecutiveStuckCount, 3.f);
-				const FVector DetourGoal = ComputeDetourGoal(
+				const FVector DetourGoal = CTH::ComputeDetourGoal(
 					PawnLoc, TargetActor->GetActorLocation(), AIC, DetourOffset * Mult);
 
 				UE_LOG(LogChaseTarget, Log,
 					TEXT("[Chase] Tick - [%s] 우주선 Stuck 우회 | 배수=%.1f"),
 					*Pawn->GetName(), Mult);
 
-				IssueMoveToLocation(AIC, DetourGoal, AcceptanceRadius);
+				CTH::IssueMoveToLocation(AIC, DetourGoal, AcceptanceRadius);
 				D.TimeSinceRepath = 0.f;
 			}
 			else if ((bIdle && SurfaceDist > AttackRange + 100.f) || D.TimeSinceRepath >= RepathInterval)
 			{
-				IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius);
+				CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius);
 				D.TimeSinceRepath = 0.f;
 			}
 		}
@@ -659,7 +661,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 
 		// Stuck 감지 (토글: bUseStuckDetour)
 		const bool bStuck = bUseStuckDetour
-			? CheckPositionBasedStuck(D, Pawn->GetActorLocation(), DistToTarget, PlayerAttackRange,
+			? CTH::CheckPositionBasedStuck(D, Pawn->GetActorLocation(), DistToTarget, PlayerAttackRange,
 				DeltaTime, StuckCheckInterval, StuckDistThreshold)
 			: false;
 
@@ -681,13 +683,13 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 			if (bStuck)
 			{
 				const float Mult = FMath::Min((float)D.ConsecutiveStuckCount, 3.f);
-				IssueMoveToLocation(AIC,
-					ComputeDetourGoal(Pawn->GetActorLocation(), TargetActor->GetActorLocation(), AIC, DetourOffset * Mult),
+				CTH::IssueMoveToLocation(AIC,
+					CTH::ComputeDetourGoal(Pawn->GetActorLocation(), TargetActor->GetActorLocation(), AIC, DetourOffset * Mult),
 					AcceptanceRadius);
 			}
 			else if (bUseEQS && AttackPositionQuery && D.TimeUntilNextEQS <= 0.f)
 			{
-				RunPlayerAttackEQS(AttackPositionQuery, AIC, AcceptanceRadius, TargetActor);
+				CTH::RunPlayerAttackEQS(AttackPositionQuery, AIC, AcceptanceRadius, TargetActor);
 				D.TimeUntilNextEQS = EQSInterval;
 			}
 			else
@@ -728,7 +730,7 @@ void FSTTask_ChaseTarget_Test::ExitState(
 		const FHellunaAITargetData& TD = D.TargetData;
 		if (TD.HasValidTarget())
 		{
-			if (USpaceShipAttackSlotManager* SlotMgr = ChaseTargetTestHelpers::GetSlotManager(TD.TargetActor.Get()))
+			if (USpaceShipAttackSlotManager* SlotMgr = CTH::GetSlotManager(TD.TargetActor.Get()))
 			{
 				if (IsValid(D.AIController))
 				{

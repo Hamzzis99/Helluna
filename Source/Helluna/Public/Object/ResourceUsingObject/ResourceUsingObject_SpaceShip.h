@@ -101,10 +101,6 @@ protected:
 		meta = (DisplayName = "Widget Z Offset (위젯 높이 오프셋)", ClampMin = "0", ClampMax = "500"))
 	float InteractWidgetZOffset = 200.0f;
 
-	/** AI 공격 슬롯 매니저 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<USpaceShipAttackSlotManager> AttackSlotManager;
-
 private:
 	bool bInteractWidgetVisible = false;
 };
