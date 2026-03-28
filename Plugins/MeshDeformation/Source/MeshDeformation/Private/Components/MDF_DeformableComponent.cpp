@@ -407,27 +407,38 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
     if (StartIndex >= EndIndex) return;
 
 #if MDF_DEBUG_DEFORM
-    UE_LOG(LogMeshDeform, Verbose, TEXT("[MDF Deform] ========== 변형 시작 =========="));
-    UE_LOG(LogMeshDeform, Verbose, TEXT("[MDF Deform] StartIndex: %d, EndIndex: %d"), StartIndex, EndIndex);
-    UE_LOG(LogMeshDeform, Verbose, TEXT("[MDF Deform] DeformRadius: %.1f, DeformStrength: %.1f"), DeformRadius, DeformStrength);
+    UE_LOG(LogMeshDeform, Log, TEXT("[MDF Deform] ========== Phase 19 변형 시작 =========="));
+    UE_LOG(LogMeshDeform, Log, TEXT("[MDF Deform] StartIndex: %d, EndIndex: %d, HitCount: %d"), StartIndex, EndIndex, EndIndex - StartIndex);
+    UE_LOG(LogMeshDeform, Log, TEXT("[MDF Deform] DeformRadius: %.1f, DeformStrength: %.1f"), DeformRadius, DeformStrength);
+    UE_LOG(LogMeshDeform, Log, TEXT("[MDF Deform] Falloff: SmoothStep | DamageFactor: LogScale"));
+    UE_LOG(LogMeshDeform, Log, TEXT("[MDF Deform] NormalBlend: %.2f | RimStrength: %.2f | RimStart: %.2f | MaxDisp: %.1f"),
+        NormalBlendRatio, RimStrength, RimStartRatio, MaxDisplacementPerBatch);
 #endif
 
-    // 변형 계산 준비
+    // -------------------------------------------------------------------------
+    // [Phase 19] 변형 계산 준비
+    // -------------------------------------------------------------------------
     const double SafeRadius = FMath::Max((double)DeformRadius, 0.01);
     const double RadiusSq = FMath::Square(SafeRadius);
     const double InverseRadius = 1.0 / SafeRadius;
+    const double RimStart = FMath::Clamp((double)RimStartRatio, 0.3, 0.9);
+    const double RimRange = 1.0 - RimStart;
 
     double MinDebugDistSq = DBL_MAX;
     bool bAnyModified = false;
     int32 ModifiedVertexCount = 0;
 
-    // [디버그] 적용할 지점 표시
+    // [디버그] 적용할 히트 지점 표시 및 DamageFactor 미리보기
     for (int32 i = StartIndex; i < EndIndex; ++i)
     {
         FVector WorldPos = DeformMeshComp->GetComponentTransform().TransformPosition(HitHistoryArray.Items[i].LocalLocation);
 #if MDF_DEBUG_DEFORM
-        UE_LOG(LogMeshDeform, Verbose, TEXT("[MDF Deform] Hit[%d] LocalPos: %s, Damage: %.1f"),
-            i, *HitHistoryArray.Items[i].LocalLocation.ToString(), HitHistoryArray.Items[i].Damage);
+        // [Phase 19] 로그 스케일 DamageFactor 미리보기 (기존 선형과 비교)
+        float LinearFactor = HitHistoryArray.Items[i].Damage * 0.15f;
+        float LogFactor = FMath::Loge(1.0f + HitHistoryArray.Items[i].Damage * 0.1f);
+        UE_LOG(LogMeshDeform, Log, TEXT("[MDF Deform] Hit[%d] Pos: %s | Dmg: %.1f | Factor(Linear->Log): %.2f -> %.2f"),
+            i, *HitHistoryArray.Items[i].LocalLocation.ToString(),
+            HitHistoryArray.Items[i].Damage, LinearFactor, LogFactor);
 #endif
 
         if (bShowDebugPoints)
@@ -439,9 +450,17 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
         }
     }
 
-    // 메쉬 편집 시작 (Vertex 순회)
+    // -------------------------------------------------------------------------
+    // [Phase 19] 메쉬 편집 (Vertex 순회) - 개선된 변형 알고리즘
+    // -------------------------------------------------------------------------
     int32 TotalVertexCount = 0;
     const bool bPaintVertexColor = bEnableVisualDamage && !IsRunningDedicatedServer();
+
+#if MDF_DEBUG_DEFORM
+    int32 RimAffectedCount = 0;
+    double MaxOffsetMagnitude = 0.0;
+    int32 ClampedVertexCount = 0;
+#endif
 
     DeformMeshComp->GetDynamicMesh()->EditMesh([&](UE::Geometry::FDynamicMesh3& EditMesh)
     {
@@ -476,10 +495,17 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
                 if (DistSq < RadiusSq)
                 {
                     double Distance = FMath::Sqrt(DistSq);
-                    double Falloff = 1.0 - (Distance * InverseRadius); // 중심일수록 1.0, 멀어지면 0.0
+                    double t = Distance * InverseRadius; // 0(중심) ~ 1(가장자리)
 
-                    // [수정] 데미지에 따른 강도 조절 - 계수를 0.05 → 0.15로 상향
-                    float DamageFactor = Hit.Damage * 0.15f;
+                    // [Phase 19] SmoothStep Falloff (Hermite 보간)
+                    // 선형(1-t) 대비: 중심부가 더 평탄하고 가장자리에서 급격히 감쇠
+                    double SmoothT = t * t * (3.0 - 2.0 * t);
+                    double Falloff = 1.0 - SmoothT;
+
+                    // [Phase 19] 로그 스케일 DamageFactor (고데미지 수렴)
+                    // 기존 선형(Damage*0.15): D10=1.5, D50=7.5, D100=15.0
+                    // 로그 스케일:            D10=0.69, D50=1.79, D100=2.40
+                    float DamageFactor = FMath::Loge(1.0f + Hit.Damage * 0.1f);
                     float CurrentStrength = DeformStrength * DamageFactor;
 
                     // 데미지 타입별 가중치 (근접은 더 세게, 원거리는 약하게)
@@ -488,11 +514,56 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
                     else if (Hit.DamageTypeClass && RangedDamageType && Hit.DamageTypeClass->IsChildOf(RangedDamageType))
                         CurrentStrength *= 0.5f;
 
-                    // 총알 방향으로 밀어넣기
-                    TotalOffset += (FVector3d)Hit.LocalDirection * (double)(CurrentStrength * Falloff);
+                    // -------------------------------------------------------
+                    // [Phase 19] 방향 계산: 히트→버텍스 방향 블렌딩
+                    // 법선 Overlay 접근 없이 충격 중심 기준 자연스러운 안쪽 변위
+                    // -------------------------------------------------------
+                    FVector3d HitToVertex = VertexPos - (FVector3d)Hit.LocalLocation;
+                    double HitToVertexLen = HitToVertex.Length();
+                    FVector3d InwardDir = (HitToVertexLen > KINDA_SMALL_NUMBER)
+                        ? -HitToVertex / HitToVertexLen  // 안쪽 방향 (히트 중심을 향해)
+                        : (FVector3d)Hit.LocalDirection;  // 정확히 히트 지점이면 총알 방향 사용
+
+                    FVector3d BulletDir = ((FVector3d)Hit.LocalDirection).GetSafeNormal();
+
+                    // NormalBlendRatio: 1.0 = 히트→버텍스만, 0.0 = 총알 방향만
+                    double BlendR = (double)NormalBlendRatio;
+                    FVector3d BlendedDir = (InwardDir * BlendR + BulletDir * (1.0 - BlendR));
+                    double BlendedLen = BlendedDir.Length();
+                    if (BlendedLen > KINDA_SMALL_NUMBER)
+                        BlendedDir /= BlendedLen;
+                    else
+                        BlendedDir = BulletDir;
+
+                    // -------------------------------------------------------
+                    // [Phase 19] 가장자리 융기(Rim) 효과
+                    // 중심(t < RimStart): 안쪽 함몰
+                    // 가장자리(RimStart ~ 1.0): 바깥으로 솟아오름
+                    // -------------------------------------------------------
+                    if (t < RimStart)
+                    {
+                        // 함몰 영역: 블렌딩된 방향으로 밀어넣기
+                        TotalOffset += BlendedDir * (double)(CurrentStrength * Falloff);
+                    }
+                    else if (RimStrength > KINDA_SMALL_NUMBER)
+                    {
+                        // 융기 영역: 바깥 방향(히트에서 멀어지는 방향)으로 솟아오름
+                        double RimT = (t - RimStart) / FMath::Max(RimRange, 0.01); // 0~1 정규화
+                        double RimFalloff = FMath::Sin(RimT * PI) * (double)RimStrength;
+
+                        FVector3d OutwardDir = (HitToVertexLen > KINDA_SMALL_NUMBER)
+                            ? HitToVertex / HitToVertexLen  // 바깥 방향
+                            : -BulletDir;
+
+                        TotalOffset += OutwardDir * (double)(CurrentStrength * RimFalloff);
+#if MDF_DEBUG_DEFORM
+                        RimAffectedCount++;
+#endif
+                    }
+
                     bModified = true;
 
-                    // [Phase 18] Vertex Color 강도 계산
+                    // [Phase 18] Vertex Color 강도 계산 (Substrate 준비)
                     if (bPaintVertexColor)
                     {
                         float Intensity = static_cast<float>(Falloff) * DamageFactor * DamageColorIntensityScale;
@@ -511,14 +582,31 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
                 }
             }
 
-            // 실제 버텍스 위치 이동
+            // -------------------------------------------------------
+            // [Phase 19] 배치당 최대 변위 클램프 + 버텍스 이동
+            // -------------------------------------------------------
             if (bModified)
             {
+                double OffsetLength = TotalOffset.Length();
+
+#if MDF_DEBUG_DEFORM
+                if (OffsetLength > MaxOffsetMagnitude)
+                    MaxOffsetMagnitude = OffsetLength;
+#endif
+
+                if (OffsetLength > (double)MaxDisplacementPerBatch)
+                {
+                    TotalOffset = (TotalOffset / OffsetLength) * (double)MaxDisplacementPerBatch;
+#if MDF_DEBUG_DEFORM
+                    ClampedVertexCount++;
+#endif
+                }
+
                 EditMesh.SetVertex(VertexID, VertexPos + TotalOffset);
                 bAnyModified = true;
                 ModifiedVertexCount++;
 
-                // [Phase 18] Vertex Color 페인팅
+                // [Phase 18] Vertex Color 페인팅 (Substrate 데이터)
                 if (ColorOverlay && MaxDamageIntensity > 0.0f)
                 {
                     float ClampedIntensity = FMath::Clamp(MaxDamageIntensity, 0.0f, 1.0f);
@@ -535,8 +623,9 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
                                 if (ColorOverlay->IsElement(ElementID))
                                 {
                                     FVector4f Existing = ColorOverlay->GetElement(ElementID);
-                                    Existing.X = FMath::Max(Existing.X, ClampedIntensity); // R: 최대 강도
-                                    Existing.Y = DamageTypeEncoded;                         // G: 타입
+                                    Existing.X = FMath::Max(Existing.X, ClampedIntensity); // R: 데미지 강도
+                                    Existing.Y = DamageTypeEncoded;                         // G: 데미지 타입
+                                    // B, A: 향후 Substrate 확장용 (예: 균열 방향, 습기 등)
                                     ColorOverlay->SetElement(ElementID, Existing);
                                 }
                             }
@@ -547,20 +636,31 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
         }
     }, EDynamicMeshChangeType::GeneralEdit);
 
+    // -------------------------------------------------------------------------
+    // [Phase 19] 변형 결과 요약 로깅
+    // -------------------------------------------------------------------------
     double MinDist = FMath::Sqrt(MinDebugDistSq);
-#if MDF_DEBUG_DEFORM
-    UE_LOG(LogMeshDeform, Verbose, TEXT("[MDF Deform] 총 버텍스: %d, 수정된 버텍스: %d"), TotalVertexCount, ModifiedVertexCount);
-    UE_LOG(LogMeshDeform, Verbose, TEXT("[MDF Deform] 최소 거리: %.2f, 반경: %.1f"), (float)MinDist, DeformRadius);
-#endif
 
     if (!bAnyModified)
     {
-        UE_LOG(LogMeshDeform, Error, TEXT("[MDF Deform] >>> 변형 실패! 반경 내 버텍스 없음!"));
+        UE_LOG(LogMeshDeform, Warning, TEXT("[MDF Deform] >>> 변형 실패! 반경(%.1f) 내 버텍스 없음. 최소거리: %.2f"),
+            DeformRadius, (float)MinDist);
     }
     else
     {
 #if MDF_DEBUG_DEFORM
-        UE_LOG(LogMeshDeform, Log, TEXT("[MDF Deform] >>> 변형 성공! %d개 버텍스 이동"), ModifiedVertexCount);
+        UE_LOG(LogMeshDeform, Log, TEXT("[MDF Deform] === Phase 19 변형 결과 ==="));
+        UE_LOG(LogMeshDeform, Log, TEXT("[MDF Deform] 총 버텍스: %d | 변형됨: %d (%.1f%%)"),
+            TotalVertexCount, ModifiedVertexCount,
+            TotalVertexCount > 0 ? (float)ModifiedVertexCount / TotalVertexCount * 100.f : 0.f);
+        UE_LOG(LogMeshDeform, Log, TEXT("[MDF Deform] 최대 오프셋: %.2f UU | 클램프됨: %d개 (한도: %.1f)"),
+            (float)MaxOffsetMagnitude, ClampedVertexCount, MaxDisplacementPerBatch);
+        UE_LOG(LogMeshDeform, Log, TEXT("[MDF Deform] Rim(융기) 영향 버텍스: %d개"), RimAffectedCount);
+        UE_LOG(LogMeshDeform, Log, TEXT("[MDF Deform] 최소 히트거리: %.2f | 반경: %.1f"), (float)MinDist, DeformRadius);
+        if (bPaintVertexColor)
+        {
+            UE_LOG(LogMeshDeform, Log, TEXT("[MDF Deform] [Substrate] VertexColor 페인팅 활성 (R=강도, G=타입, B/A=예약)"));
+        }
 #endif
     }
 
@@ -576,7 +676,7 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
     }
 
 #if MDF_DEBUG_DEFORM
-    UE_LOG(LogMeshDeform, Verbose, TEXT("[MDF Deform] ========== 변형 완료 =========="));
+    UE_LOG(LogMeshDeform, Log, TEXT("[MDF Deform] ========== Phase 19 변형 완료 =========="));
 #endif
 }
 

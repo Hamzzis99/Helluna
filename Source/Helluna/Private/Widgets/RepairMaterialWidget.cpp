@@ -18,8 +18,17 @@ void URepairMaterialWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
 
+	// ========================================
+	// [위젯 Viewport 레이아웃] - BP에서 설정한 값 적용
+	// ========================================
+	SetDesiredSizeInViewport(WidgetSize);
+	SetAnchorsInViewport(FAnchors(WidgetAnchor.X, WidgetAnchor.Y, WidgetAnchor.X, WidgetAnchor.Y));
+	SetAlignmentInViewport(WidgetAlignment);
+
 #if HELLUNA_DEBUG_REPAIR
 	UE_LOG(LogTemp, Warning, TEXT("=== [RepairMaterialWidget] NativeConstruct ==="));
+	UE_LOG(LogTemp, Warning, TEXT("  WidgetSize: (%.0f, %.0f)"), WidgetSize.X, WidgetSize.Y);
+	UE_LOG(LogTemp, Warning, TEXT("  Anchor: (%.2f, %.2f), Alignment: (%.2f, %.2f)"), WidgetAnchor.X, WidgetAnchor.Y, WidgetAlignment.X, WidgetAlignment.Y);
 #endif
 
 	// 버튼 이벤트 바인딩

@@ -50,55 +50,40 @@ void AInv_PlayerController::ToggleInventory()
 
 	if (!InventoryComponent.IsValid()) return;
 	InventoryComponent->ToggleInventoryMenu();
-
-	if (InventoryComponent->IsMenuOpen())
-	{
-		// U10: HUDWidget null 체크
-		if (IsValid(HUDWidget))
-		{
-			HUDWidget->SetVisibility(ESlateVisibility::Hidden);
-		}
+	// HUD 관리는 OnInventoryMenuStateChanged 델리게이트에서 처리
 
 #if INV_DEBUG_ATTACHMENT
-		// ★ [부착진단-UI] 인벤토리 열기 시 InventoryList 아이템 부착물 상태 확인 ★
+	// ★ [부착진단-UI] 인벤토리 열기 시 InventoryList 아이템 부착물 상태 확인 ★
+	if (InventoryComponent->IsMenuOpen())
+	{
+		TArray<UInv_InventoryItem*> DiagAllItems = InventoryComponent->GetInventoryList().GetAllItems();
+		UE_LOG(LogTemp, Error, TEXT("[부착진단-UI] 인벤토리 열기: InventoryList 총 아이템=%d"), DiagAllItems.Num());
+		for (int32 d = 0; d < DiagAllItems.Num(); d++)
 		{
-			TArray<UInv_InventoryItem*> DiagAllItems = InventoryComponent->GetInventoryList().GetAllItems();
-			UE_LOG(LogTemp, Error, TEXT("[부착진단-UI] 인벤토리 열기: InventoryList 총 아이템=%d"), DiagAllItems.Num());
-			for (int32 d = 0; d < DiagAllItems.Num(); d++)
-			{
-				UInv_InventoryItem* DiagItem = DiagAllItems[d];
-				if (!IsValid(DiagItem)) continue;
-				if (!DiagItem->HasAttachmentSlots()) continue;
+			UInv_InventoryItem* DiagItem = DiagAllItems[d];
+			if (!IsValid(DiagItem)) continue;
+			if (!DiagItem->HasAttachmentSlots()) continue;
 
-				const FInv_AttachmentHostFragment* DiagHost =
-					DiagItem->GetItemManifest().GetFragmentOfType<FInv_AttachmentHostFragment>();
-				UE_LOG(LogTemp, Error, TEXT("[부착진단-UI]   [%d] %s, HasSlots=Y, HostFrag=%s, AttachedItems=%d"),
-					d,
-					*DiagItem->GetItemManifest().GetItemType().ToString(),
-					DiagHost ? TEXT("유효") : TEXT("nullptr"),
-					DiagHost ? DiagHost->GetAttachedItems().Num() : -1);
-				if (DiagHost)
+			const FInv_AttachmentHostFragment* DiagHost =
+				DiagItem->GetItemManifest().GetFragmentOfType<FInv_AttachmentHostFragment>();
+			UE_LOG(LogTemp, Error, TEXT("[부착진단-UI]   [%d] %s, HasSlots=Y, HostFrag=%s, AttachedItems=%d"),
+				d,
+				*DiagItem->GetItemManifest().GetItemType().ToString(),
+				DiagHost ? TEXT("유효") : TEXT("nullptr"),
+				DiagHost ? DiagHost->GetAttachedItems().Num() : -1);
+			if (DiagHost)
+			{
+				for (int32 a = 0; a < DiagHost->GetAttachedItems().Num(); a++)
 				{
-					for (int32 a = 0; a < DiagHost->GetAttachedItems().Num(); a++)
-					{
-						const FInv_AttachedItemData& DiagData = DiagHost->GetAttachedItems()[a];
-						UE_LOG(LogTemp, Error, TEXT("[부착진단-UI]     [%d] Type=%s (Slot=%d), ManifestCopy.ItemType=%s"),
-							a, *DiagData.AttachmentItemType.ToString(), DiagData.SlotIndex,
-							*DiagData.ItemManifestCopy.GetItemType().ToString());
-					}
+					const FInv_AttachedItemData& DiagData = DiagHost->GetAttachedItems()[a];
+					UE_LOG(LogTemp, Error, TEXT("[부착진단-UI]     [%d] Type=%s (Slot=%d), ManifestCopy.ItemType=%s"),
+						a, *DiagData.AttachmentItemType.ToString(), DiagData.SlotIndex,
+						*DiagData.ItemManifestCopy.GetItemType().ToString());
 				}
 			}
 		}
+	}
 #endif
-	}
-	else
-	{
-		// U10: HUDWidget null 체크
-		if (IsValid(HUDWidget))
-		{
-			HUDWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
-		}
-	}
 }
 
 void AInv_PlayerController::BeginPlay()
@@ -129,6 +114,12 @@ void AInv_PlayerController::BeginPlay()
 
 	InventoryComponent = FindComponentByClass<UInv_InventoryComponent>();
 	EquipmentComponent = FindComponentByClass<UInv_EquipmentComponent>();
+
+	// 방안 B: 인벤토리 메뉴 상태 변경 시 HUD 자동 관리
+	if (InventoryComponent.IsValid())
+	{
+		InventoryComponent->OnInventoryMenuToggled.AddDynamic(this, &AInv_PlayerController::OnInventoryMenuStateChanged);
+	}
 
 	if (EquipmentComponent.IsValid())
 	{
@@ -381,6 +372,12 @@ void AInv_PlayerController::CreateHUDWidget()
 	}
 }
 
+void AInv_PlayerController::OnInventoryMenuStateChanged(bool bOpen)
+{
+	if (!IsValid(HUDWidget)) return;
+	HUDWidget->SetVisibility(bOpen ? ESlateVisibility::Hidden : ESlateVisibility::HitTestInvisible);
+}
+
 void AInv_PlayerController::TraceForInteractables()
 {
 	if (!IsValid(GEngine) || !IsValid(GEngine->GameViewport)) return;
@@ -397,7 +394,17 @@ void AInv_PlayerController::TraceForInteractables()
 	// [Fix26] GetWorld() null 체크 (레벨 전환 중 Tick 크래시 방지)
 	UWorld* TraceWorld = GetWorld();
 	if (!TraceWorld) return;
-	TraceWorld->LineTraceSingleByChannel(HitResult, TraceStart, TraceEnd, ItemTraceChannel);
+
+	// [Phase18] SphereTrace로 아이템 줍기 쉽게 (TraceRadius > 0이면 SphereTrace)
+	if (TraceRadius > 0.f)
+	{
+		const FCollisionShape SphereShape = FCollisionShape::MakeSphere(TraceRadius);
+		TraceWorld->SweepSingleByChannel(HitResult, TraceStart, TraceEnd, FQuat::Identity, ItemTraceChannel, SphereShape);
+	}
+	else
+	{
+		TraceWorld->LineTraceSingleByChannel(HitResult, TraceStart, TraceEnd, ItemTraceChannel);
+	}
 
 	LastActor = ThisActor;
 	ThisActor = HitResult.GetActor();
@@ -421,6 +428,19 @@ void AInv_PlayerController::TraceForInteractables()
 			{
 				IInv_Highlightable::Execute_UnHighlight(Highlightable);
 			}
+
+			// [Phase18] 이전 아이템의 3D 위젯 숨김
+			UInv_ItemComponent* LastItemComp = LastActor->FindComponentByClass<UInv_ItemComponent>();
+			if (IsValid(LastItemComp))
+			{
+				LastItemComp->HideInteractWidget();
+			}
+			// [Phase18] 이전 제작대의 3D 위젯 숨김
+			AInv_CraftingStation* LastCraftStation = Cast<AInv_CraftingStation>(LastActor.Get());
+			if (IsValid(LastCraftStation))
+			{
+				LastCraftStation->HideInteractWidget();
+			}
 		}
 		if (IsValid(HUDWidget))
 		{
@@ -431,6 +451,27 @@ void AInv_PlayerController::TraceForInteractables()
 
 	if (ThisActor == LastActor) return;
 
+	// [Phase18] 이전 대상의 3D 위젯 숨김 + Unhighlight
+	if (LastActor.IsValid())
+	{
+		if (UActorComponent* Highlightable = LastActor->FindComponentByInterface(UInv_Highlightable::StaticClass()); IsValid(Highlightable))
+		{
+			IInv_Highlightable::Execute_UnHighlight(Highlightable);
+		}
+
+		UInv_ItemComponent* LastItemComp = LastActor->FindComponentByClass<UInv_ItemComponent>();
+		if (IsValid(LastItemComp))
+		{
+			LastItemComp->HideInteractWidget();
+		}
+		// [Phase18] 이전 제작대의 3D 위젯 숨김
+		AInv_CraftingStation* LastCraftStation = Cast<AInv_CraftingStation>(LastActor.Get());
+		if (IsValid(LastCraftStation))
+		{
+			LastCraftStation->HideInteractWidget();
+		}
+	}
+
 	if (ThisActor.IsValid())
 	{
 		if (UActorComponent* Highlightable = ThisActor->FindComponentByInterface(UInv_Highlightable::StaticClass()); IsValid(Highlightable))
@@ -438,43 +479,73 @@ void AInv_PlayerController::TraceForInteractables()
 			IInv_Highlightable::Execute_Highlight(Highlightable);
 		}
 
-		if (IsValid(HUDWidget))
+		if (bIsCraftingStation)
 		{
-			if (bIsCraftingStation)
+			AInv_CraftingStation* CraftingStation = Cast<AInv_CraftingStation>(ThisActor.Get());
+			if (IsValid(CraftingStation))
 			{
-				AInv_CraftingStation* CraftingStation = Cast<AInv_CraftingStation>(ThisActor.Get());
-				if (IsValid(CraftingStation))
+				const FString BoundKey = GetBoundInteractKeyName();
+				if (!CraftingStation->ShowInteractWidget(BoundKey))
 				{
-					HUDWidget->ShowPickupMessage(CraftingStation->GetPickupMessage());
+					// 3D 위젯 미설정 → 기존 2D HUD fallback (동적 키 조합)
+					if (IsValid(HUDWidget))
+					{
+						const FString DynamicMsg = BoundKey + TEXT(" - ") + CraftingStation->GetPickupMessage();
+						HUDWidget->ShowPickupMessage(DynamicMsg);
+					}
+				}
+			}
+		}
+		else
+		{
+			// Phase 9: 컨테이너 표시 이름
+			UInv_LootContainerComponent* LootComp = ThisActor->FindComponentByClass<UInv_LootContainerComponent>();
+			if (IsValid(LootComp))
+			{
+				if (IsValid(HUDWidget))
+				{
+					HUDWidget->ShowPickupMessage(LootComp->ContainerDisplayName.ToString());
 				}
 			}
 			else
 			{
-				// Phase 9: 컨테이너 표시 이름
-				UInv_LootContainerComponent* LootComp = ThisActor->FindComponentByClass<UInv_LootContainerComponent>();
-				if (IsValid(LootComp))
+				// [Phase18] 아이템: 3D 위젯 우선, 실패 시 기존 2D HUD fallback
+				UInv_ItemComponent* ItemComponent = ThisActor->FindComponentByClass<UInv_ItemComponent>();
+				if (IsValid(ItemComponent))
 				{
-					HUDWidget->ShowPickupMessage(LootComp->ContainerDisplayName.ToString());
-				}
-				else
-				{
-					UInv_ItemComponent* ItemComponent = ThisActor->FindComponentByClass<UInv_ItemComponent>();
-					if (IsValid(ItemComponent))
+					const FString BoundKey = GetBoundInteractKeyName();
+					if (!ItemComponent->ShowInteractWidget(BoundKey))
 					{
-						HUDWidget->ShowPickupMessage(ItemComponent->GetPickupMessage());
+						// 3D 위젯 미설정 → 기존 2D HUD fallback (동적 키 조합)
+						if (IsValid(HUDWidget))
+						{
+							const FString DynamicMsg = BoundKey + TEXT(" - ") + ItemComponent->GetPickupMessage();
+							HUDWidget->ShowPickupMessage(DynamicMsg);
+						}
 					}
 				}
 			}
 		}
 	}
+}
 
-	if (LastActor.IsValid())
+FString AInv_PlayerController::GetBoundInteractKeyName() const
+{
+	if (!PrimaryInteractAction) return TEXT("F");
+
+	const ULocalPlayer* LP = GetLocalPlayer();
+	if (!LP) return TEXT("F");
+
+	UEnhancedInputLocalPlayerSubsystem* Subsystem =
+		ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(LP);
+	if (!Subsystem) return TEXT("F");
+
+	TArray<FKey> Keys = Subsystem->QueryKeysMappedToAction(PrimaryInteractAction);
+	if (Keys.Num() > 0)
 	{
-		if (UActorComponent* Highlightable = LastActor->FindComponentByInterface(UInv_Highlightable::StaticClass()); IsValid(Highlightable))
-		{
-			IInv_Highlightable::Execute_UnHighlight(Highlightable);
-		}
+		return Keys[0].GetDisplayName().ToString();
 	}
+	return TEXT("F");
 }
 
 void AInv_PlayerController::HandlePrimaryWeapon()

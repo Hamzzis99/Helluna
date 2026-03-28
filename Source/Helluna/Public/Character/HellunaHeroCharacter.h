@@ -20,10 +20,22 @@ class UHelluna_FindResourceComponent;
 class UWeaponBridgeComponent;
 class AHeroWeapon_GunBase;
 class UHellunaHealthComponent;
+class UNiagaraSystem;
+class UNiagaraComponent;
+class UMeleeTraceComponent;
 
 class UWeaponHUDWidget;
 
 class UInv_LootContainerComponent;
+
+class UWidgetComponent;
+class UHellunaReviveWidget;
+class UHellunaReviveProgressWidget;
+class UPostProcessComponent;
+class UMaterialInstanceDynamic;
+class UMaterialInterface;
+class UInv_InteractPromptWidget;
+class AHellunaEnemyCharacter;
 
 
 /**
@@ -42,6 +54,7 @@ public:
 protected:
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 	virtual void BeginPlay() override;
+	virtual void Tick(float DeltaTime) override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;  // ⭐ 인벤토리 저장용
 
 	virtual void PossessedBy(AController* NewController) override;
@@ -64,6 +77,9 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat", meta = (AllowPrivateAccess = "true"))
 	UHeroCombatComponent* HeroCombatComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UMeleeTraceComponent> MeleeTraceComponent;
 
 	// ============================================
 	// ⭐ [WeaponBridge] Inventory 연동 컴포넌트
@@ -98,6 +114,7 @@ private:
 
 public:
 	FORCEINLINE UHeroCombatComponent* GetHeroCombatComponent() const { return HeroCombatComponent; }
+	FORCEINLINE UMeleeTraceComponent* GetMeleeTraceComponent() const { return MeleeTraceComponent; }
 	FORCEINLINE UCameraComponent* GetFollowCamera() const { return FollowCamera;}
 	FORCEINLINE USpringArmComponent* GetCameraBoom() const { return CameraBoom; }
 
@@ -212,8 +229,12 @@ private:
 	
 	// 애니메이션을 전체 재생할 것인가
 public:
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Animation")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Replicated, Category="Animation")
 	bool PlayFullBody = false;
+
+	/** 패링 카메라 복귀 진행 중 — 다른 GA 차단용 */
+	UPROPERTY(BlueprintReadOnly, Category = "GunParry")
+	bool bParryCameraReturning = false;
 
 	// =========================================================
 	// ★ 추가: 피격 / 사망 애니메이션
@@ -230,6 +251,184 @@ public:
 		meta = (DisplayName = "사망 몽타주",
 			ToolTip = "HP가 0이 되어 사망할 때 재생할 Death 애니메이션 몽타주입니다."))
 	TObjectPtr<UAnimMontage> DeathMontage = nullptr;
+
+	// =========================================================
+	// ★ Downed/Revive System (다운/부활)
+	// =========================================================
+
+	/** 다운 시 쓰러지는 몽타주 */
+	UPROPERTY(EditDefaultsOnly, Category = "Animation|Downed",
+		meta = (DisplayName = "Downed 몽타주 (Downed Montage)"))
+	TObjectPtr<UAnimMontage> DownedMontage = nullptr;
+
+	/** 부활 시 일어나는 몽타주 */
+	UPROPERTY(EditDefaultsOnly, Category = "Animation|Downed",
+		meta = (DisplayName = "Revive 몽타주 (Revive Montage)"))
+	TObjectPtr<UAnimMontage> ReviveMontage = nullptr;
+
+	/** 부활 시 HP 비율 (MaxHP * 비율) */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|Revive",
+		meta = (DisplayName = "Revive HP Percent (부활 시 HP 비율)", ClampMin = "0.01", ClampMax = "1.0"))
+	float ReviveHealthPercent = 0.2f;
+
+	/** 부활 소요 시간 (초) */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|Revive",
+		meta = (DisplayName = "Revive Duration (부활 소요 시간, 초)", ClampMin = "0.5"))
+	float ReviveDuration = 5.f;
+
+	/** 부활 가능 거리 (cm) */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|Revive",
+		meta = (DisplayName = "Revive Range (부활 거리, cm)", ClampMin = "50.0"))
+	float ReviveRange = 250.f;
+
+	/** 현재 Revive 진행률 (0~1, 서버→클라 Replicated, UI용) */
+	UPROPERTY(ReplicatedUsing = OnRep_ReviveProgress, BlueprintReadOnly, Category = "Downed|Revive")
+	float ReviveProgress = 0.f;
+
+	/** 나를 부활시키고 있는 사람 (서버 전용) */
+	UPROPERTY()
+	TObjectPtr<AHellunaHeroCharacter> CurrentReviver = nullptr;
+
+	/** 내가 부활시키고 있는 대상 (서버 전용) */
+	UPROPERTY()
+	TObjectPtr<AHellunaHeroCharacter> ReviveTarget = nullptr;
+
+	/** 다운 카메라 거리 */
+	UPROPERTY(EditDefaultsOnly, Category = "Camera|Downed",
+		meta = (DisplayName = "Downed Camera Arm Length (다운 시 카메라 거리)"))
+	float DownedCameraArmLength = 150.f;
+
+	/** 다운 카메라 오프셋 */
+	UPROPERTY(EditDefaultsOnly, Category = "Camera|Downed",
+		meta = (DisplayName = "Downed Camera Socket Offset (다운 시 카메라 오프셋)"))
+	FVector DownedCameraSocketOffset = FVector(0.f, 60.f, 20.f);
+
+	// =========================================================
+	// 3D 부활 위젯 (다운된 캐릭터 머리 위 표시)
+	// =========================================================
+
+	/** 3D 부활 위젯 컴포넌트 (Screen Space, 모든 클라에게 표시) */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Downed|UI")
+	TObjectPtr<UWidgetComponent> ReviveWidgetComp;
+
+	/** 위젯 BP 클래스 (에디터에서 할당) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Downed|UI",
+		meta = (DisplayName = "Revive Widget Class (부활 위젯 클래스)"))
+	TSubclassOf<UHellunaReviveWidget> ReviveWidgetClass;
+
+	/** 위젯 인스턴스 캐시 */
+	UPROPERTY()
+	TObjectPtr<UHellunaReviveWidget> ReviveWidgetInstance;
+
+	/** 3D 위젯 표시 (클라이언트에서 호출) */
+	void ShowReviveWidget();
+
+	/** 3D 위젯 숨김 (클라이언트에서 호출) */
+	void HideReviveWidget();
+
+	/** 출혈 잔여시간을 위젯에 업데이트 (클라이언트 Tick) */
+	void UpdateReviveWidgetBleedout();
+
+	// =========================================================
+	// 부활 진행 HUD (부활 수행자 화면에 표시)
+	// =========================================================
+
+	/** 부활 진행 HUD 위젯 클래스 (에디터에서 할당) */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|UI",
+		meta = (DisplayName = "Revive Progress Widget Class (부활 진행 HUD)"))
+	TSubclassOf<class UHellunaReviveProgressWidget> ReviveProgressWidgetClass;
+
+	/** 부활 진행 HUD 인스턴스 */
+	UPROPERTY()
+	TObjectPtr<class UHellunaReviveProgressWidget> ReviveProgressWidget;
+
+	/** ReviveProgressHUD가 Show된 시점 (Grace Period용) */
+	float ReviveProgressShowTime = 0.f;
+
+	/** ReviveProgressHUD Grace Period (초) — 이 시간 동안 Progress=0이어도 숨기지 않음 */
+	static constexpr float REVIVE_HUD_GRACE_PERIOD = 0.5f;
+
+	/** 부활 HUD 표시 (부활 수행자 로컬) */
+	void ShowReviveProgressHUD(const FString& TargetName);
+
+	/** 부활 HUD 숨김 */
+	void HideReviveProgressHUD();
+
+	/** 부활 HUD 업데이트 (Tick에서 호출) */
+	void UpdateReviveProgressHUD();
+
+	// =========================================================
+	// ★ Downed Screen Effect (다운 선혈 화면 효과) [Phase21-C]
+	// =========================================================
+
+	/** 다운 선혈 오버레이 위젯 클래스 (WBP_DownedOverlay) */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|Effect",
+		meta = (DisplayName = "Downed Overlay Widget Class (다운 오버레이 위젯)"))
+	TSubclassOf<UUserWidget> DownedOverlayWidgetClass;
+
+	/** 다운 선혈 오버레이 위젯 인스턴스 (로컬 전용) */
+	UPROPERTY()
+	TObjectPtr<UUserWidget> DownedOverlayWidget;
+
+	/** 다운 전용 PostProcessComponent (HackMode PP와 별개) */
+	UPROPERTY()
+	TObjectPtr<UPostProcessComponent> DownedPostProcess;
+
+	/** 다운 PP Material Instance Dynamic */
+	UPROPERTY()
+	TObjectPtr<UMaterialInstanceDynamic> DownedPPMID;
+
+	/** 다운 PP 기본 머티리얼 (M_DownedVignette) */
+	UPROPERTY(EditDefaultsOnly, Category = "Downed|Effect",
+		meta = (DisplayName = "Downed PP Material (다운 PP 머티리얼)"))
+	TObjectPtr<UMaterialInterface> DownedPPMaterial;
+
+	/** 다운 화면 효과 활성 여부 */
+	bool bDownedEffectActive = false;
+
+	/** 다운 효과 Tick 로그 제한용 타이머 */
+	float DownedEffectLogTimer = 0.f;
+
+	// ── Downed Screen Effect v2: 3단계 + 심장박동 펄스 ──
+
+	float DownedIR = 0.55f;           // 현재 InnerRadius
+	float DownedIRTarget = 0.55f;     // 목표 InnerRadius
+	float DownedOpacity = 0.f;        // 현재 Opacity
+	float DownedOpacityTarget = 0.f;  // 목표 Opacity
+	float DownedBrightness = 1.f;     // 화면 밝기 (40% 이하에서 어두워짐)
+	float DownedBrightnessTarget = 1.f;
+	float DownedBlackout = 0.f;       // 완전 암전 (5% 이하)
+	float DownedBlackoutTarget = 0.f;
+
+	// 심장박동 펄스
+	float PulseTimer = 0.f;
+	float PulsePeriod = 2.0f;
+	float PulseIRBoost = 0.f;
+	float PulseOpacityBoost = 0.f;
+
+	// 상수
+	static constexpr float IR_START = 0.55f;
+	static constexpr float IR_END = 0.10f;
+	static constexpr float OP_START = 0.5f;
+	static constexpr float OP_END = 1.0f;
+	static constexpr float OUTER_RADIUS = 0.75f;
+	static constexpr float DARKEN_START = 0.40f;
+	static constexpr float BLACKOUT_START = 0.05f;
+	static constexpr float PULSE_IR_AMOUNT = 0.05f;
+	static constexpr float PULSE_OP_AMOUNT = 0.08f;
+	static constexpr float PULSE_PERIOD_MAX = 2.0f;
+	static constexpr float PULSE_PERIOD_MIN = 0.4f;
+	static constexpr float PULSE_DECAY_SPEED = 5.0f;
+	static constexpr float EFFECT_INTERP_SPEED = 3.0f;
+
+	/** 다운 효과 시작 (로컬 전용, Multicast_PlayHeroDowned에서 호출) */
+	void StartDownedScreenEffect();
+
+	/** 다운 효과 종료 (로컬 전용, Revive/Death에서 호출) */
+	void StopDownedScreenEffect();
+
+	/** 다운 효과 Tick 업데이트 (로컬 전용) */
+	void TickDownedScreenEffect(float DeltaTime);
 
 protected:
 	/** HealthComponent (피격/사망 처리) */
@@ -248,6 +447,10 @@ protected:
 	UFUNCTION()
 	void OnHeroDeath(AActor* DeadActor, AActor* KillerActor);
 
+	/** 다운 델리게이트 바인딩 */
+	UFUNCTION()
+	void OnHeroDowned(AActor* DownedActor, AActor* InstigatorActor);
+
 	/** 피격 몽타주 멀티캐스트 */
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayHeroHitReact();
@@ -255,4 +458,124 @@ protected:
 	/** 사망 몽타주 멀티캐스트 */
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayHeroDeath();
+
+	/** 다운 몽타주 + 카메라 멀티캐스트 */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_PlayHeroDowned();
+
+	/** 부활 몽타주 + 카메라 복구 멀티캐스트 */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_PlayHeroRevived();
+
+	// ── Revive 입력 (F키 홀드) ──
+	void Input_ReviveStarted(const FInputActionValue& Value);
+	void Input_ReviveCompleted(const FInputActionValue& Value);
+
+	/** 서버 RPC: 부활 시작 */
+	UFUNCTION(Server, Reliable)
+	void Server_StartRevive(AHellunaHeroCharacter* TargetHero);
+
+	/** 서버 RPC: 부활 중단 */
+	UFUNCTION(Server, Reliable)
+	void Server_StopRevive();
+
+	UFUNCTION()
+	void OnRep_ReviveProgress();
+
+	FTimerHandle ReviveTickTimerHandle;
+	void TickRevive();
+
+public:
+	/** 로컬: 근처 다운 팀원 탐색 (GA_Repair 등 외부에서도 호출) */
+	AHellunaHeroCharacter* FindNearestDownedHero() const;
+
+public:
+	// =========================================================
+	// ★ 건패링 워프 VFX 멀티캐스트 (Step 2b)
+	// =========================================================
+
+	/** 워프 잔상 나이아가라 이펙트 — 서버에서 호출, 모든 클라에서 스폰 */
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_PlayParryWarpVFX(UNiagaraSystem* Effect, FVector Location, FRotator Rotation, float Scale, FLinearColor Color, bool bGhostMesh, float GhostOpacity);
+
+	/** 워프 잔상 VFX 중단 — AN_ParryExecutionFire 타이밍에 서버에서 호출 */
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_StopParryWarpVFX();
+
+	/** 패링 잔상(Ghost Trail) 스폰 — 서버에서 호출, 모든 클라에서 PoseableMesh 스폰 */
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_SpawnParryGhostTrail(int32 Count, float FadeDuration,
+		FVector StartLocation, FVector EndLocation, FRotator TrailRotation,
+		FLinearColor GhostColor, UMaterialInterface* TrailMaterial);
+
+private:
+	/** 현재 활성 상태인 패링 워프 VFX 컴포넌트 (Deactivate용 추적) */
+	TArray<TWeakObjectPtr<UNiagaraComponent>> ActiveParryVFX;
+
+	// ═══════════════════════════════════════════════════════════
+	// OTS 카메라 — 조준(Aim) 줌인 보간
+	// ═══════════════════════════════════════════════════════════
+
+	// ── 조준 카메라 기본값 (BeginPlay에서 캐싱) ──
+	float DefaultTargetArmLength = 250.f;
+	float DefaultFOV = 90.f;
+	FVector DefaultSocketOffset = FVector(0.f, 60.f, 55.f);
+
+	// ── 조준 시 카메라 목표값 (에디터에서 조정 가능) ──
+	UPROPERTY(EditDefaultsOnly, Category = "Camera|Aim",
+		meta = (DisplayName = "Aim Target Arm Length (조준 시 카메라 거리)", ClampMin = "50.0", ClampMax = "400.0"))
+	float AimTargetArmLength = 120.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Camera|Aim",
+		meta = (DisplayName = "Aim FOV (조준 시 FOV)", ClampMin = "40.0", ClampMax = "120.0"))
+	float AimFOV = 65.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Camera|Aim",
+		meta = (DisplayName = "Aim Socket Offset (조준 시 SocketOffset)"))
+	FVector AimSocketOffset = FVector(0.f, 70.f, 45.f);
+
+	UPROPERTY(EditDefaultsOnly, Category = "Camera|Aim",
+		meta = (DisplayName = "Aim Interp Speed (카메라 보간 속도)", ClampMin = "1.0", ClampMax = "30.0"))
+	float AimInterpSpeed = 10.f;
+
+	/** 현재 조준 상태 (ASC 태그 기반) */
+	bool bIsCurrentlyAiming = false;
+	bool bWasAimingLastFrame = false;
+
+	// =========================================================
+	// ★ [Phase18] 킥 3D 프롬프트 위젯
+	// =========================================================
+protected:
+	/** 킥 프롬프트 WidgetComponent (플로팅 — Staggered 적 위치로 이동) */
+	UPROPERTY()
+	TObjectPtr<UWidgetComponent> KickPromptWidgetComp;
+
+	/** 킥 프롬프트 위젯 클래스 (BP에서 할당 — WBP_Inv_InteractPrompt) */
+	UPROPERTY(EditDefaultsOnly, Category = "Kick|Widget",
+		meta = (DisplayName = "Kick Prompt Widget Class (킥 프롬프트 위젯 클래스)"))
+	TSubclassOf<UUserWidget> KickPromptWidgetClass;
+
+	/** 킥 프롬프트 위젯 인스턴스 */
+	UPROPERTY()
+	TObjectPtr<UUserWidget> KickPromptWidgetInstance;
+
+	/** 현재 킥 프롬프트가 표시 중인지 */
+	bool bKickPromptVisible = false;
+
+	/** 킥 감지 범위 (GA_MeleeKick과 동일하게 설정) */
+	UPROPERTY(EditDefaultsOnly, Category = "Kick|Widget",
+		meta = (DisplayName = "Kick Prompt Range (킥 감지 범위)"))
+	float KickPromptRange = 200.f;
+
+	/** 킥 감지 전방각 (도) */
+	UPROPERTY(EditDefaultsOnly, Category = "Kick|Widget",
+		meta = (DisplayName = "Kick Prompt Half Angle (킥 감지 전방각)"))
+	float KickPromptHalfAngle = 60.f;
+
+	/** 킥 프롬프트 업데이트 (Tick에서 호출) */
+	void UpdateKickPrompt(float DeltaTime);
+
+private:
+	/** 킥 프롬프트 로그 타이머 (1초 1회 제한) */
+	float KickPromptLogTimer = 0.f;
 };

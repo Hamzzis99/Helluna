@@ -2,6 +2,7 @@
 
 #include "Character/HellunaEnemyCharacter.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "Conponent/EnemyCombatComponent.h"
 #include "Engine/AssetManager.h"
 #include "DataAsset/DataAsset_EnemyStartUpData.h"
@@ -13,6 +14,7 @@
 #include "GameplayTagContainer.h"
 #include "AIController.h"
 #include "DebugHelper.h"
+#include "AbilitySystem/HeroAbility/HeroGameplayAbility_GunParry.h"
 
 // 타이머 기반 Trace 시스템용 헤더
 #include "DrawDebugHelpers.h"
@@ -36,6 +38,9 @@
 
 // 리플리케이션
 #include "Net/UnrealNetwork.h"
+
+// 퍼즐 보호막
+#include "Puzzle/PuzzleShieldComponent.h"
 
 // ============================================================
 // 생성자
@@ -173,6 +178,31 @@ void AHellunaEnemyCharacter::InitEnemyStartUpData()
 // 수정: HealthComponent 바인딩은 컨트롤러 유무와 무관하게 항상 수행.
 // PossessedBy에서도 동일하게 바인딩(AddUniqueDynamic)하므로 중복 등록 없음.
 // ============================================================
+
+// ============================================================
+// TakeDamage — PuzzleShieldComponent 보호막 필터링
+// ============================================================
+float AHellunaEnemyCharacter::TakeDamage(float DamageAmount,
+	FDamageEvent const& DamageEvent, AController* EventInstigator, AActor* DamageCauser)
+{
+	// PuzzleShieldComponent가 부착되어 있으면 보호막 필터링
+	if (UPuzzleShieldComponent* Shield = FindComponentByClass<UPuzzleShieldComponent>())
+	{
+		const float FilteredDamage = Shield->FilterDamage(DamageAmount);
+		if (FilteredDamage <= 0.f)
+		{
+			UE_LOG(LogTemp, Log,
+				TEXT("[EnemyCharacter] TakeDamage blocked by shield: %.1f on %s"),
+				DamageAmount, *GetNameSafe(this));
+			return 0.f;
+		}
+		DamageAmount = FilteredDamage;
+	}
+
+	return Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
+}
+
+// ============================================================
 void AHellunaEnemyCharacter::BeginPlay()
 {
 	// Pawn에 StateTreeComponent가 직접 붙어있고 컨트롤러가 없는 경우
@@ -237,6 +267,9 @@ void AHellunaEnemyCharacter::OnMonsterHealthChanged(
 // ============================================================
 void AHellunaEnemyCharacter::Multicast_PlayHitReact_Implementation()
 {
+	// [GunParry] 처형 중 피격 모션 차단
+	if (UHeroGameplayAbility_GunParry::ShouldBlockHitReact(this)) return;
+
 	if (!HitReactMontage) return;
 
 	USkeletalMeshComponent* SkelMesh = GetMesh();
@@ -246,6 +279,110 @@ void AHellunaEnemyCharacter::Multicast_PlayHitReact_Implementation()
 	if (!AnimInst) return;
 
 	AnimInst->Montage_Play(HitReactMontage);
+}
+
+// ============================================================
+// Multicast_PlayParryVictim — 건패링 처형 피격 몽타주 (모든 클라이언트)
+// ============================================================
+void AHellunaEnemyCharacter::Multicast_PlayParryVictim_Implementation()
+{
+	if (!ParryVictimMontage) return;
+
+	USkeletalMeshComponent* SkelMesh = GetMesh();
+	if (!SkelMesh) return;
+
+	UAnimInstance* AnimInst = SkelMesh->GetAnimInstance();
+	if (!AnimInst) return;
+
+	AnimInst->Montage_Play(ParryVictimMontage, 1.0f);
+}
+
+// ============================================================
+// Multicast_ActivateRagdoll — 래그돌 전환 + 임펄스 (모든 클라이언트)
+// ============================================================
+void AHellunaEnemyCharacter::Multicast_ActivateRagdoll_Implementation(
+	FVector Impulse, FVector ImpulseLocation)
+{
+	// 데디케이티드 서버에서는 시각적 래그돌 불필요
+	if (GetNetMode() == NM_DedicatedServer) return;
+
+	USkeletalMeshComponent* EnemyMesh = GetMesh();
+	if (!EnemyMesh) return;
+
+	// 몽타주 중단 (래그돌 전환 전에)
+	if (UAnimInstance* AnimInst = EnemyMesh->GetAnimInstance())
+	{
+		AnimInst->StopAllMontages(0.f);
+	}
+
+	// 캡슐 충돌 비활성화 (래그돌이 캡슐과 충돌하면 튀어오름)
+	if (UCapsuleComponent* Capsule = GetCapsuleComponent())
+	{
+		Capsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
+
+	// 이동 비활성화
+	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
+	{
+		MoveComp->DisableMovement();
+		MoveComp->StopMovementImmediately();
+	}
+
+	// 래그돌 활성화
+	EnemyMesh->SetCollisionProfileName(TEXT("Ragdoll"));
+	// Pawn 채널 Ignore — 래그돌이 캐릭터를 막지 않도록 (바닥/벽 충돌은 유지)
+	EnemyMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+	EnemyMesh->SetAllBodiesSimulatePhysics(true);
+	EnemyMesh->SetSimulatePhysics(true);
+	EnemyMesh->WakeAllRigidBodies();
+
+	// 임펄스 적용 (처형 방향으로 날려보내기)
+	EnemyMesh->AddImpulseAtLocation(Impulse, ImpulseLocation);
+
+	UE_LOG(LogGunParry, Warning, TEXT("[Ragdoll] 래그돌 활성화 — Impulse=%s"),
+		*Impulse.ToString());
+}
+
+// ============================================================
+// Multicast_SetStaggerVisual — Stagger 비주얼 ON/OFF
+// ============================================================
+void AHellunaEnemyCharacter::Multicast_SetStaggerVisual_Implementation(
+	UMaterialInterface* StaggerMat, UAnimMontage* StaggerAnim, bool bEnable)
+{
+	if (GetNetMode() == NM_DedicatedServer) return;
+
+	USkeletalMeshComponent* EnemyMesh = GetMesh();
+	if (!EnemyMesh) return;
+
+	if (bEnable)
+	{
+		// 원본 머티리얼 저장
+		SavedOriginalMaterials.Empty();
+		for (int32 i = 0; i < EnemyMesh->GetNumMaterials(); i++)
+		{
+			SavedOriginalMaterials.Add(EnemyMesh->GetMaterial(i));
+		}
+
+		// Stagger 오버레이 머티리얼 교체
+		if (StaggerMat)
+		{
+			EnemyMesh->SetOverlayMaterial(StaggerMat);
+		}
+
+		// Stagger 몽타주 재생
+		if (StaggerAnim)
+		{
+			PlayAnimMontage(StaggerAnim, 1.0f);
+		}
+	}
+	else
+	{
+		// 오버레이 제거
+		EnemyMesh->SetOverlayMaterial(nullptr);
+
+		// Stagger 몽타주 중단
+		StopAnimMontage(nullptr);
+	}
 }
 
 // ============================================================
@@ -352,6 +489,23 @@ void AHellunaEnemyCharacter::OnMonsterDeath(AActor* DeadActor, AActor* KillerAct
 		UE_LOG(LogTemp, Error, TEXT("[OnMonsterDeath] ❌ GameplayTag 'Enemy.State.Death' 없음"));
 		return;
 	}
+
+	// 사망 즉시 캡슐 충돌 비활성화 — 사망 애니메이션 중 Overlap 판정 방지
+	if (UCapsuleComponent* Capsule = GetCapsuleComponent())
+	{
+		Capsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
+	// 메시 충돌도 완전 비활성화 (Physical Asset 바디가 캐릭터를 밀지 않도록)
+	if (USkeletalMeshComponent* EnemyMesh = GetMesh())
+	{
+		EnemyMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
+	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
+	{
+		MoveComp->StopMovementImmediately();
+		MoveComp->DisableMovement();
+	}
+	UE_LOG(LogTemp, Warning, TEXT("[OnMonsterDeath] %s 캡슐+메시 충돌 OFF + 이동 비활성화"), *GetName());
 
 	UE_LOG(LogTemp, Warning, TEXT("[OnMonsterDeath] ✅ Death 이벤트 전송 — %s"), *GetName());
 	STComp->SendStateTreeEvent(DeathTag);

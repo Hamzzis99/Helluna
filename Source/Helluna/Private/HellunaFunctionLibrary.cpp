@@ -22,6 +22,7 @@ UHellunaAbilitySystemComponent* UHellunaFunctionLibrary::NativeGetHellunaASCFrom
 void UHellunaFunctionLibrary::AddGameplayTagToActorIfNone(AActor* InActor, FGameplayTag TagToAdd)
 {
     UHellunaAbilitySystemComponent* ASC = NativeGetHellunaASCFromActor(InActor);
+    if (!ASC) return;
 
     if (!ASC->HasMatchingGameplayTag(TagToAdd))
     {
@@ -32,6 +33,7 @@ void UHellunaFunctionLibrary::AddGameplayTagToActorIfNone(AActor* InActor, FGame
 void UHellunaFunctionLibrary::RemoveGameplayTagFromActorIfFound(AActor* InActor, FGameplayTag TagToRemove)
 {
     UHellunaAbilitySystemComponent* ASC = NativeGetHellunaASCFromActor(InActor);
+    if (!ASC) return;
 
     if (ASC->HasMatchingGameplayTag(TagToRemove))
     {
@@ -42,6 +44,7 @@ void UHellunaFunctionLibrary::RemoveGameplayTagFromActorIfFound(AActor* InActor,
 bool UHellunaFunctionLibrary::NativeDoesActorHaveTag(AActor* InActor, FGameplayTag TagToCheck)
 {
     UHellunaAbilitySystemComponent* ASC = NativeGetHellunaASCFromActor(InActor);
+    if (!ASC) return false;
 
     return ASC->HasMatchingGameplayTag(TagToCheck);
 }

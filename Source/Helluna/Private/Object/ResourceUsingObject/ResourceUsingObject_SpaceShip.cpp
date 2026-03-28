@@ -13,6 +13,10 @@
 
 #include "debughelper.h"
 
+// [Phase18] 3D 상호작용 위젯
+#include "Components/WidgetComponent.h"
+#include "Widgets/HUD/Inv_InteractPromptWidget.h"
+
 
 // 박스 범위내에 들어올시 수리 가능 범위 능력 활성화(UI)
 void AResourceUsingObject_SpaceShip::CollisionBoxBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
@@ -23,6 +27,13 @@ void AResourceUsingObject_SpaceShip::CollisionBoxBeginOverlap(UPrimitiveComponen
 	if (AHellunaHeroCharacter* OverlappedHeroCharacter = Cast<AHellunaHeroCharacter>(OtherActor))
 	{
 		OverlappedHeroCharacter->GetHellunaAbilitySystemComponent()->TryActivateAbilityByTag(HellunaGameplayTags::Player_Ability_InRepair);
+
+		// [Phase18] 3D 위젯 표시 (로컬 플레이어만, 수리 미완료 시)
+		if (InteractWidgetComp && OverlappedHeroCharacter->IsLocallyControlled() && !IsRepaired())
+		{
+			InteractWidgetComp->SetVisibility(true);
+			bInteractWidgetVisible = true;
+		}
 	}
 
 }
@@ -33,6 +44,13 @@ void AResourceUsingObject_SpaceShip::CollisionBoxEndOverlap(UPrimitiveComponent*
 	if (AHellunaHeroCharacter* OverlappedHeroCharacter = Cast<AHellunaHeroCharacter>(OtherActor))
 	{
 		OverlappedHeroCharacter->GetHellunaAbilitySystemComponent()->CancelAbilityByTag(HellunaGameplayTags::Player_Ability_InRepair);
+
+		// [Phase18] 3D 위젯 숨김
+		if (InteractWidgetComp && OverlappedHeroCharacter->IsLocallyControlled())
+		{
+			InteractWidgetComp->SetVisibility(false);
+			bInteractWidgetVisible = false;
+		}
 	}
 
 }
@@ -131,12 +149,44 @@ void AResourceUsingObject_SpaceShip::BeginPlay()
 {
 	Super::BeginPlay();
 
-	if (!HasAuthority())
-		return;
-
-	if (AHellunaDefenseGameState* GS = GetWorld()->GetGameState<AHellunaDefenseGameState>())
+	// 서버: GameState에 우주선 등록
+	if (HasAuthority())
 	{
-		GS->RegisterSpaceShip(this);
+		if (AHellunaDefenseGameState* GS = GetWorld()->GetGameState<AHellunaDefenseGameState>())
+		{
+			GS->RegisterSpaceShip(this);
+		}
+	}
+
+	// [Phase18] 3D 상호작용 위젯 생성 (클라이언트만)
+	if (GetNetMode() != NM_DedicatedServer && InteractWidgetClass)
+	{
+		USceneComponent* RootComp = GetRootComponent();
+		if (RootComp)
+		{
+			InteractWidgetComp = NewObject<UWidgetComponent>(this, UWidgetComponent::StaticClass(), TEXT("SpaceShipInteractWidgetComp"));
+			if (InteractWidgetComp)
+			{
+				InteractWidgetComp->SetupAttachment(RootComp);
+				InteractWidgetComp->SetRelativeLocation(FVector(0.f, 0.f, InteractWidgetZOffset));
+				InteractWidgetComp->SetWidgetSpace(EWidgetSpace::Screen);
+				InteractWidgetComp->SetDrawSize(FVector2D(200.f, 50.f));
+				InteractWidgetComp->SetWidgetClass(InteractWidgetClass);
+				InteractWidgetComp->SetVisibility(false);
+				InteractWidgetComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+				InteractWidgetComp->RegisterComponent();
+
+				// 텍스트 설정
+				if (UInv_InteractPromptWidget* Prompt = Cast<UInv_InteractPromptWidget>(InteractWidgetComp->GetWidget()))
+				{
+					Prompt->SetKeyText(TEXT("F"));
+					Prompt->SetItemName(TEXT("우주선 수리"));
+					Prompt->SetActionText(TEXT(""));
+				}
+
+				UE_LOG(LogTemp, Log, TEXT("[Phase18] SpaceShip 3D 위젯 생성: %s"), *GetName());
+			}
+		}
 	}
 }
 
@@ -147,7 +197,14 @@ void AResourceUsingObject_SpaceShip::OnRepairCompleted_Implementation()
 
 	// ⭐ 1. 델리게이트 브로드캐스트 (UI에서 승리 화면 표시)
 	OnRepairCompleted_Delegate.Broadcast();
-	UE_LOG(LogTemp, Warning, TEXT("  📢 OnRepairCompleted_Delegate 브로드캐스트!"));
+	UE_LOG(LogTemp, Warning, TEXT("  OnRepairCompleted_Delegate 브로드캐스트!"));
+
+	// [Phase18] 3D 위젯 영구 숨김
+	if (InteractWidgetComp)
+	{
+		InteractWidgetComp->SetVisibility(false);
+		bInteractWidgetVisible = false;
+	}
 
 	UE_LOG(LogTemp, Warning, TEXT("=== [OnRepairCompleted] 완료 ==="));
 }

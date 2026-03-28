@@ -36,7 +36,19 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Helluna|Input")
 	EHellunaInputActionPolicy InputActionPolicy = EHellunaInputActionPolicy::Trigger;
-	
+
+protected:
+	virtual bool CanActivateAbility(
+		const FGameplayAbilitySpecHandle Handle,
+		const FGameplayAbilityActorInfo* ActorInfo,
+		const FGameplayTagContainer* SourceTags = nullptr,
+		const FGameplayTagContainer* TargetTags = nullptr,
+		FGameplayTagContainer* OptionalRelevantTags = nullptr) const override;
+
+	/** true이면 ParryExecution/Kicking 중에도 발동 가능 (GunParry, MeleeKick 전용) */
+	UPROPERTY(EditDefaultsOnly, Category = "HellunaAbility")
+	bool bIgnoreParryBlock = false;
+
 private:
 	TWeakObjectPtr<AHellunaHeroCharacter> CachedHellunaHeroCharacter;
 	TWeakObjectPtr<AHellunaHeroController> CachedHellunaHeroController;

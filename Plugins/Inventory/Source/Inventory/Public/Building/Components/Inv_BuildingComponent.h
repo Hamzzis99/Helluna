@@ -9,6 +9,57 @@
 
 class UInputMappingContext;
 class UInputAction;
+class UInv_BuildModeHUD;
+class UTexture2D;
+
+/**
+ * 빌드 메뉴에서 건물 선택 시 전달되는 통합 정보 구조체
+ * 건물 이름, 아이콘, 고스트/실제 클래스, 재료 3개 정보를 포함
+ */
+USTRUCT(BlueprintType)
+struct FInv_BuildingSelectionInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설")
+	FText BuildingName;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설")
+	TObjectPtr<UTexture2D> BuildingIcon = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설")
+	TSubclassOf<AActor> GhostClass;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설")
+	TSubclassOf<AActor> ActualBuildingClass;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설")
+	int32 BuildingID = 0;
+
+	// 재료 1
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|재료")
+	FGameplayTag MaterialTag1;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|재료")
+	int32 MaterialAmount1 = 0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|재료")
+	TObjectPtr<UTexture2D> MaterialIcon1 = nullptr;
+
+	// 재료 2
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|재료")
+	FGameplayTag MaterialTag2;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|재료")
+	int32 MaterialAmount2 = 0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|재료")
+	TObjectPtr<UTexture2D> MaterialIcon2 = nullptr;
+
+	// 재료 3
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|재료")
+	FGameplayTag MaterialTag3;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|재료")
+	int32 MaterialAmount3 = 0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|재료")
+	TObjectPtr<UTexture2D> MaterialIcon3 = nullptr;
+};
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent), Blueprintable)
 class INVENTORY_API UInv_BuildingComponent : public UActorComponent
@@ -28,20 +79,18 @@ public:
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 public:
-	// 블루프린트에서 호출 가능: 위젯에서 건물 선택 시
+	// 블루프린트에서 호출 가능: 위젯에서 건물 선택 시 (구조체 방식)
 	UFUNCTION(BlueprintCallable, Category = "건설", meta = (DisplayName = "위젯에서 건물 선택됨"))
-	void OnBuildingSelectedFromWidget(
-		TSubclassOf<AActor> GhostClass,
-		TSubclassOf<AActor> ActualBuildingClass,
-		int32 BuildingID,
-		FGameplayTag MaterialTag1,
-		int32 MaterialAmount1,
-		FGameplayTag MaterialTag2,
-		int32 MaterialAmount2
-	);
+	void OnBuildingSelectedFromWidget(const FInv_BuildingSelectionInfo& Info);
 
 	// 빌드 메뉴 닫기 (외부에서 호출 가능 - 인벤토리 닫을 때 사용)
 	void CloseBuildMenu();
+
+	// 빌드 모드(고스트 액터) 강제 종료 (다른 위젯이 열릴 때 사용)
+	void ForceEndBuildMode();
+
+	// 빌드 메뉴 열림 여부 (CraftingStation의 ForceCloseMenu에서 사용)
+	bool IsBuildMenuOpen() const { return BuildMenuInstance != nullptr; }
 
 private:
 	// 빌드 모드 시작/종료 함수
@@ -63,7 +112,7 @@ private:
 	bool HasRequiredMaterials(const FGameplayTag& MaterialTag, int32 RequiredAmount) const;
 	void ConsumeMaterials(const FGameplayTag& MaterialTag, int32 Amount);
 
-	// 서버 RPC: 건물 배치 요청
+	// 서버 RPC: 건물 배치 요청 (재료 3개 지원)
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_PlaceBuilding(
 		TSubclassOf<AActor> BuildingClass,
@@ -72,7 +121,9 @@ private:
 		FGameplayTag MaterialTag1,
 		int32 MaterialAmount1,
 		FGameplayTag MaterialTag2,
-		int32 MaterialAmount2
+		int32 MaterialAmount2,
+		FGameplayTag MaterialTag3,
+		int32 MaterialAmount3
 	);
 	bool Server_PlaceBuilding_Validate(
 		TSubclassOf<AActor> BuildingClass,
@@ -81,11 +132,13 @@ private:
 		FGameplayTag MaterialTag1,
 		int32 MaterialAmount1,
 		FGameplayTag MaterialTag2,
-		int32 MaterialAmount2
+		int32 MaterialAmount2,
+		FGameplayTag MaterialTag3,
+		int32 MaterialAmount3
 	);
 
-	// 멀티캐스트 RPC: 모든 클라이언트에게 건물 배치 알림
-	UFUNCTION(NetMulticast, Reliable)
+	// 멀티캐스트 RPC: 모든 클라이언트에게 건물 배치 알림 (Unreliable: 이펙트/사운드 용도, Actor 자체는 Replication으로 동기화)
+	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_OnBuildingPlaced(AActor* PlacedBuilding);
 
 	// PlayerController 약한 참조
@@ -129,6 +182,31 @@ private:
 
 	UPROPERTY()
 	int32 CurrentMaterialAmount2 = 0;
+
+	// 세 번째 재료 정보
+	UPROPERTY()
+	FGameplayTag CurrentMaterialTag3;
+
+	UPROPERTY()
+	int32 CurrentMaterialAmount3 = 0;
+
+	// 현재 선택된 건물의 통합 정보 (HUD에서 사용)
+	FInv_BuildingSelectionInfo CurrentBuildingInfo;
+
+	// === 빌드 모드 HUD ===
+
+	// 빌드 모드 HUD 위젯 클래스 (블루프린트에서 WBP_Inv_BuildModeHUD 설정)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "건설|UI",
+		meta = (DisplayName = "빌드 모드 HUD 위젯 클래스", Tooltip = "빌드 모드일 때 화면 오른쪽에 표시되는 건물 정보 HUD 위젯 클래스.", AllowPrivateAccess = "true"))
+	TSubclassOf<UInv_BuildModeHUD> BuildModeHUDClass;
+
+	// 생성된 HUD 인스턴스
+	UPROPERTY()
+	TObjectPtr<UInv_BuildModeHUD> BuildModeHUDInstance;
+
+	// HUD 표시/제거 함수
+	void ShowBuildModeHUD();
+	void HideBuildModeHUD();
 
 	// === Input Mapping Context ===
 

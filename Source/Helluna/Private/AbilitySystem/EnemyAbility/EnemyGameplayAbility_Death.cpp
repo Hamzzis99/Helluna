@@ -8,6 +8,7 @@
 
 #include "Character/HellunaEnemyCharacter.h"
 #include "GameMode/HellunaDefenseGameMode.h"
+#include "AbilitySystem/HeroAbility/HeroGameplayAbility_GunParry.h"
 
 UEnemyGameplayAbility_Death::UEnemyGameplayAbility_Death()
 {
@@ -22,6 +23,13 @@ void UEnemyGameplayAbility_Death::ActivateAbility(
 	const FGameplayEventData* TriggerEventData)
 {
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
+
+	// [GunParry] 처형 중이면 GA_Death 차단 (GA_GunParry가 사망 처리를 직접 수행)
+	if (UHeroGameplayAbility_GunParry::ShouldDeferDeath(GetAvatarActorFromActorInfo()))
+	{
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, false);
+		return;
+	}
 
 	AHellunaEnemyCharacter* Enemy = GetEnemyCharacterFromActorInfo();
 	if (!Enemy)

@@ -4,6 +4,7 @@
 #include "AbilitySystem/HellunaAbilitySystemComponent.h"
 #include "HellunaGameplayTags.h"
 #include "AbilitySystem/HellunaHeroGameplayAbility.h"
+#include "AbilitySystem/HeroAbility/HeroGameplayAbility_Aim.h"
 #include "Helluna.h"
 #include "DebugHelper.h"
 
@@ -83,7 +84,7 @@ void UHellunaAbilitySystemComponent::OnAbilityInputPressed(const FGameplayTag& I
 	// ============================================
 	// ⭐ [멀티플레이 버그 수정] 로컬 제어 캐릭터만 입력 처리
 	// ============================================
-	AActor* MyAvatarActor = GetAvatarActor();
+	MyAvatarActor = GetAvatarActor();
 	if (APawn* Pawn = Cast<APawn>(MyAvatarActor))
 	{
 		if (!Pawn->IsLocallyControlled())
@@ -183,9 +184,31 @@ void UHellunaAbilitySystemComponent::OnAbilityInputReleased(const FGameplayTag& 
 		{
 			if (AbilitySpec.IsActive())
 			{
-				CancelAbilityHandle(AbilitySpec.Handle);  // -> EndAbility
+				// Aim GA: InputReleased 호출 (Phase 3 줌아웃 기회 제공)
+				// 나머지 Hold GA: 기존대로 Cancel
+				if (AbilitySpec.Ability && AbilitySpec.Ability->IsA<UHeroGameplayAbility_Aim>())
+				{
+					// InstancedPerActor이므로 CDO가 아닌 실제 인스턴스에서 호출해야 함
+					if (UGameplayAbility* Instance = AbilitySpec.GetPrimaryInstance())
+					{
+						Instance->InputReleased(
+							AbilitySpec.Handle,
+							AbilityActorInfo.Get(),
+							AbilitySpec.ActivationInfo
+						);
+					}
+					else
+					{
+						// 인스턴스 없으면 폴백: Cancel
+						CancelAbilityHandle(AbilitySpec.Handle);
+					}
+				}
+				else
+				{
+					CancelAbilityHandle(AbilitySpec.Handle);
+				}
 			}
-			continue; 
+			continue;
 		}
 
 		if (Policy == EHellunaInputActionPolicy::Toggle)
@@ -231,13 +254,16 @@ bool UHellunaAbilitySystemComponent::CancelAbilityByTag(const FGameplayTag Abili
 void UHellunaAbilitySystemComponent::AddStateTag(const FGameplayTag& Tag)
 {
 	if (!Tag.IsValid()) return;
-	AddLooseGameplayTag(Tag);
+	// [Fix: gun-parry-bug-002] TagOnly로 서버→클라 리플리케이트 활성화
+	// 기본값 None은 리플리케이트 안 됨. 패링 윈도우 태그(Parryable) 등
+	// 클라이언트에서도 감지해야 하므로 TagOnly 사용.
+	AddLooseGameplayTag(Tag, 1, EGameplayTagReplicationState::TagOnly);
 }
 
 void UHellunaAbilitySystemComponent::RemoveStateTag(const FGameplayTag& Tag)
 {
 	if (!Tag.IsValid()) return;
-	RemoveLooseGameplayTag(Tag);
+	RemoveLooseGameplayTag(Tag, 1, EGameplayTagReplicationState::TagOnly);
 }
 
 bool UHellunaAbilitySystemComponent::HasStateTag(const FGameplayTag& Tag) const

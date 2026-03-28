@@ -272,6 +272,19 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Defense(게임)|GameEnd(게임종료)")
 	void NotifyPlayerDied(APlayerController* DeadPC);
 
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 21] Downed/Revive System — 솔로 감지 / 전원사망 판정
+	// ════════════════════════════════════════════════════════════════
+
+	/** 솔로 여부 (접속자 Pawn 보유 1명 이하) → 다운 없이 즉사 */
+	bool ShouldSkipDowned() const;
+
+	/** 다운 알림 → 생존자(IsAliveAndNotDowned) 0명이면 전원 즉사 */
+	void NotifyPlayerDowned(APlayerController* DownedPC);
+
+	/** 다운 전원 강제 사망 */
+	void ForceKillAllDownedPlayers();
+
 	UFUNCTION(BlueprintPure, Category = "Defense(게임)|Monster(몬스터)")
 	int32 GetRemainingMonsterCount() const { return RemainingMonstersThisNight; }
 
