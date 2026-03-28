@@ -52,7 +52,7 @@ void USpaceShipAttackSlotManager::BuildSlots()
 	UNavigationSystemV1* NavSys = UNavigationSystemV1::GetCurrent(World);
 	if (!NavSys)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[SlotManager] NavMesh 없음 - 슬롯 생성 실패"));
+		UE_LOG(LogTemp, Verbose, TEXT("[SlotManager] NavMesh 없음 - 슬롯 생성 실패"));
 		return;
 	}
 
@@ -108,7 +108,7 @@ void USpaceShipAttackSlotManager::BuildSlots()
 		}
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("[SlotManager] 슬롯 생성 완료: %d / %d 유효 (우주선 위치: %s)"),
+	UE_LOG(LogTemp, Verbose, TEXT("[SlotManager] 슬롯 생성 완료: %d / %d 유효 (우주선 위치: %s)"),
 		ValidCount, TotalCount, *Center.ToString());
 
 	// ── 디버그: NavMesh가 우주선 주변을 실제로 커버하는지 체크 ──────────
@@ -194,7 +194,7 @@ bool USpaceShipAttackSlotManager::RequestSlot(AActor* Monster, int32& OutSlotInd
 
 	if (BestIdx < 0)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[SlotManager] 사용 가능한 슬롯 없음 (총 %d개)"), Slots.Num());
+		UE_LOG(LogTemp, Verbose, TEXT("[SlotManager] 사용 가능한 슬롯 없음 (총 %d개)"), Slots.Num());
 		return false;
 	}
 
@@ -340,7 +340,7 @@ void USpaceShipAttackSlotManager::TickComponent(float DeltaTime, ELevelTick Tick
 		FAttackSlot& Slot = Slots[i];
 		if (Slot.State != ESlotState::Free && !Slot.OccupyingMonster.IsValid())
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[SlotManager] 죽은 몬스터 슬롯 자동 반납: 인덱스=%d, 상태=%s"),
+			UE_LOG(LogTemp, Verbose, TEXT("[SlotManager] 죽은 몬스터 슬롯 자동 반납: 인덱스=%d, 상태=%s"),
 				i, Slot.State == ESlotState::Reserved ? TEXT("Reserved") : TEXT("Occupied"));
 			Slot.State = ESlotState::Free;
 			Slot.OccupyingMonster = nullptr;

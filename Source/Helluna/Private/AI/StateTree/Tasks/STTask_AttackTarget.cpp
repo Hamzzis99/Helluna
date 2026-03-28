@@ -56,7 +56,7 @@ EStateTreeRunStatus FSTTask_AttackTarget::EnterState(
 		// 광폭화 후에는 우주선만 공격 (플레이어가 타겟이면 포커스 설정 스킵)
 		if (TargetData.bEnraged && !bIsSpaceShip)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[AttackTarget] 광폭화 상태에서 플레이어 타겟 감지 → 공격 스킵"));
+			UE_LOG(LogTemp, Verbose, TEXT("[AttackTarget] 광폭화 상태에서 플레이어 타겟 감지 → 공격 스킵"));
 			return EStateTreeRunStatus::Failed;
 		}
 

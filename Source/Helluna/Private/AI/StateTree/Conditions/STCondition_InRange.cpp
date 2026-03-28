@@ -104,10 +104,9 @@ bool FSTCondition_InRange::TestCondition(FStateTreeExecutionContext& Context) co
 	const FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
 	const FHellunaAITargetData& TargetData = InstanceData.TargetData;
 
-	// [DBG] 타겟 유효성 체크
 	if (!TargetData.HasValidTarget())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[InRange] ❌ TargetData 유효하지 않음 (TargetActor=nullptr) → %s 반환"),
+		UE_LOG(LogTemp, Verbose, TEXT("[InRange] TargetData 유효하지 않음 → %s 반환"),
 			!bCheckInside ? TEXT("true") : TEXT("false"));
 		return !bCheckInside;
 	}
@@ -133,27 +132,16 @@ bool FSTCondition_InRange::TestCondition(FStateTreeExecutionContext& Context) co
 	const bool bIsInside = (EffectiveDist <= EffectiveRange);
 	const bool bResult = bCheckInside ? bIsInside : !bIsInside;
 
-	// [DBG] 결과 로그 (매 틱 대신 결과가 false일 때만 출력해 스팸 방지)
-	if (!bResult)
-	{
-		UE_LOG(LogTemp, Warning,
-			TEXT("[InRange] ⚠️ 조건 실패 | Target=%s | bIsSpaceShip=%d | Dist=%.1f | Range=%.1f | bCheckInside=%d | bIsInside=%d"),
-			*GetNameSafe(TargetActor),
-			(int)bIsSpaceShip,
-			EffectiveDist,
-			EffectiveRange,
-			(int)bCheckInside,
-			(int)bIsInside);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Log,
-			TEXT("[InRange] ✅ 조건 통과 | Target=%s | Dist=%.1f | Range=%.1f | bCheckInside=%d"),
-			*GetNameSafe(TargetActor),
-			EffectiveDist,
-			EffectiveRange,
-			(int)bCheckInside);
-	}
+	// [DBG] 결과 로그 — Verbose로 전환 (Warning 스팸이 FPS를 크게 저하시킴)
+	UE_LOG(LogTemp, Verbose,
+		TEXT("[InRange] %s | Target=%s | bIsSpaceShip=%d | Dist=%.1f | Range=%.1f | bCheckInside=%d | bIsInside=%d"),
+		bResult ? TEXT("PASS") : TEXT("FAIL"),
+		*GetNameSafe(TargetActor),
+		(int)bIsSpaceShip,
+		EffectiveDist,
+		EffectiveRange,
+		(int)bCheckInside,
+		(int)bIsInside);
 
 	return bResult;
 }

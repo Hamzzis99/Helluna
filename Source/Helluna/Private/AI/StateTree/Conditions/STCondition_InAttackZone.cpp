@@ -94,35 +94,22 @@ bool FSTCondition_InAttackZone::TestCondition(FStateTreeExecutionContext& Contex
 		}
 	}
 
+	// 디버그 드로잉은 콘솔변수로 명시 활성화 시에만 실행 (FPS 보호)
+	// 사용법: 콘솔에 `ai.debug.attackzone 1` 입력
 #if ENABLE_DRAW_DEBUG
 	{
-		const FColor ZoneColor = bOverlapping ? FColor::Green : FColor::Red;
-
-		// 박스 시각화 (폰 회전에 맞춰 회전된 박스)
-		DrawDebugBox(
-			World,
-			BoxCenter,
-			AttackZoneHalfExtent,
-			PawnRot,
-			ZoneColor,
-			false,   // bPersistent
-			0.f,     // LifeTime (1프레임)
-			0,
-			2.f      // Thickness
-		);
-
-		// 전방 방향 화살표
-		DrawDebugDirectionalArrow(
-			World,
-			PawnLoc,
-			PawnLoc + Forward * (ForwardOffset + AttackZoneHalfExtent.X),
-			30.f,
-			FColor::Yellow,
-			false,
-			0.f,
-			0,
-			1.5f
-		);
+		static IConsoleVariable* CVarDebug = IConsoleManager::Get().RegisterConsoleVariable(
+			TEXT("ai.debug.attackzone"), 0,
+			TEXT("1 = Draw AttackZone debug boxes"), ECVF_Cheat);
+		if (CVarDebug && CVarDebug->GetInt() > 0)
+		{
+			const FColor ZoneColor = bOverlapping ? FColor::Green : FColor::Red;
+			DrawDebugBox(World, BoxCenter, AttackZoneHalfExtent, PawnRot,
+				ZoneColor, false, 0.f, 0, 2.f);
+			DrawDebugDirectionalArrow(World, PawnLoc,
+				PawnLoc + Forward * (ForwardOffset + AttackZoneHalfExtent.X),
+				30.f, FColor::Yellow, false, 0.f, 0, 1.5f);
+		}
 	}
 #endif
 

@@ -7,6 +7,7 @@
 #include "BossEncounterCube.generated.h"
 
 class USphereComponent;
+class AStaticMeshActor;
 class UStaticMeshComponent;
 class UWidgetComponent;
 class UHoldInteractWidget;
@@ -400,6 +401,15 @@ private:
 		TWeakObjectPtr<AActor> TargetActor;
 	};
 	TArray<FWireframeOverlay> ActiveWireframeOverlays;
+
+	/** 동시 활성 와이어프레임 오버레이 최대 수 (성능 보호) */
+	static constexpr int32 MaxActiveOverlays = 15;
+
+	/** 동시 활성 홀로그램 Niagara 최대 수 */
+	static constexpr int32 MaxTotalHoloVFX = 30;
+
+	/** 현재 활성 홀로그램 수 (자동 감소) */
+	int32 TotalHoloSpawned = 0;
 
 	/** 이미 오라 VFX가 스폰된 액터 추적 (중복 방지) */
 	TSet<TWeakObjectPtr<AActor>> AuraVFXSpawnedActors;

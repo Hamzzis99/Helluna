@@ -22,6 +22,7 @@
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "EngineUtils.h"
+#include "Engine/StaticMeshActor.h"
 
 // ============================================================================
 // 생성자
@@ -182,7 +183,7 @@ void ABossEncounterCube::Tick(float DeltaTime)
 				if (HeroPC)
 				{
 					HeroPC->Server_BossEncounterActivate();
-					UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] Hold complete — Server_BossEncounterActivate called"));
+					UE_LOG(LogTemp, Verbose, TEXT("[BossEncounterCube] Hold complete — Server_BossEncounterActivate called"));
 				}
 			}
 		}
@@ -211,14 +212,14 @@ bool ABossEncounterCube::TryActivate(AController* Activator)
 
 	if (bActivated)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] Already activated"));
+		UE_LOG(LogTemp, Verbose, TEXT("[BossEncounterCube] Already activated"));
 		return false;
 	}
 
 	// ── [Step 2] 보스 스폰 (서버) ──
 	if (!BossClass)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] BossClass가 설정되지 않았습니다! BP에서 할당 필요"));
+		UE_LOG(LogTemp, Verbose, TEXT("[BossEncounterCube] BossClass가 설정되지 않았습니다! BP에서 할당 필요"));
 		return false;
 	}
 
@@ -254,10 +255,10 @@ bool ABossEncounterCube::TryActivate(AController* Activator)
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] Boss has no HellunaHealthComponent — death detection disabled"));
+		UE_LOG(LogTemp, Verbose, TEXT("[BossEncounterCube] Boss has no HellunaHealthComponent — death detection disabled"));
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] Boss spawned: %s at %s by %s"),
+	UE_LOG(LogTemp, Verbose, TEXT("[BossEncounterCube] Boss spawned: %s at %s by %s"),
 		*Boss->GetName(), *SpawnLocation.ToString(),
 		Activator ? *Activator->GetName() : TEXT("nullptr"));
 
@@ -300,14 +301,14 @@ void ABossEncounterCube::Multicast_BossEncounterStarted_Implementation()
 		UKismetMaterialLibrary::SetScalarParameterValue(
 			this, MPC_BossEncounter, TEXT("DarknessAmount"), DarknessAmount);
 
-		UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] BossArea set: Center=%s, Radius=%.0f, Darkness=%.2f"),
+		UE_LOG(LogTemp, Verbose, TEXT("[BossEncounterCube] BossArea set: Center=%s, Radius=%.0f, Darkness=%.2f"),
 			*AreaCenter.ToString(), BossAreaRadius, DarknessAmount);
 	}
 
 	// [Step 4] 플레이어·보스 메시에 Custom Depth/Stencil 활성화
 	EnableBossEncounterCustomDepth();
 
-	UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] Multicast received — starting desaturation transition (%.1fs)"),
+	UE_LOG(LogTemp, Verbose, TEXT("[BossEncounterCube] Multicast received — starting desaturation transition (%.1fs)"),
 		DesatTransitionDuration);
 }
 
@@ -324,7 +325,7 @@ void ABossEncounterCube::TickDesaturation(float DeltaTime)
 
 	if (!MPC_BossEncounter)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] MPC_BossEncounter 미설정 — 흑백 전환 불가"));
+		UE_LOG(LogTemp, Verbose, TEXT("[BossEncounterCube] MPC_BossEncounter 미설정 — 흑백 전환 불가"));
 		bDesatTransitioning = false;
 		return;
 	}
@@ -340,7 +341,7 @@ void ABossEncounterCube::TickDesaturation(float DeltaTime)
 	if (DesatProgress >= 1.f)
 	{
 		bDesatTransitioning = false;
-		UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] Desaturation complete — fully grayscale"));
+		UE_LOG(LogTemp, Verbose, TEXT("[BossEncounterCube] Desaturation complete — fully grayscale"));
 	}
 }
 
@@ -450,7 +451,7 @@ void ABossEncounterCube::OnSpawnedBossDied(AActor* DeadActor, AActor* KillerActo
 
 	bBossDefeated = true;
 
-	UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] Boss defeated at %s — starting color wave"),
+	UE_LOG(LogTemp, Verbose, TEXT("[BossEncounterCube] Boss defeated at %s — starting color wave"),
 		*DeathLocation.ToString());
 
 	Multicast_BossDefeated(DeathLocation);
@@ -480,7 +481,7 @@ void ABossEncounterCube::Multicast_BossDefeated_Implementation(FVector DeathLoca
 	// [Cinematic] 시네마틱 시퀀스 시작 (컬러 웨이브와 병행)
 	StartCinematicSequence(DeathLocation);
 
-	UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] Multicast — color wave + cinematic started from %s"),
+	UE_LOG(LogTemp, Verbose, TEXT("[BossEncounterCube] Multicast — color wave + cinematic started from %s"),
 		*DeathLocation.ToString());
 }
 
@@ -493,7 +494,7 @@ void ABossEncounterCube::TickColorWave(float DeltaTime)
 
 	if (!MPC_BossEncounter)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] MPC_BossEncounter 미설정 — 컬러 웨이브 불가"));
+		UE_LOG(LogTemp, Verbose, TEXT("[BossEncounterCube] MPC_BossEncounter 미설정 — 컬러 웨이브 불가"));
 		bColorWaveActive = false;
 		return;
 	}
@@ -529,6 +530,7 @@ void ABossEncounterCube::TickColorWave(float DeltaTime)
 		AuraVFXSpawnedFoliageHashes.Empty();
 		CachedFoliageLocations.Empty();
 		bFoliageCached = false;
+		TotalHoloSpawned = 0;
 
 		// 혹시 남아있는 오버레이 메시 정리
 		for (auto& Overlay : ActiveWireframeOverlays)
@@ -540,7 +542,7 @@ void ABossEncounterCube::TickColorWave(float DeltaTime)
 		}
 		ActiveWireframeOverlays.Empty();
 
-		UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] Color wave complete — full color restored (flowers persist)"));
+		UE_LOG(LogTemp, Verbose, TEXT("[BossEncounterCube] Color wave complete — full color restored (flowers persist)"));
 	}
 }
 
@@ -574,7 +576,6 @@ void ABossEncounterCube::SpawnWaveAuraVFX(float DeltaTime)
 	// VFX/머티리얼 전부 미할당이면 전체 스킵
 	if (!WaveAuraVFX && !WaveHoloVFX && !WaveWireframeMaterial)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[WaveVFX DEBUG] All wave effects NULL — skipping!"));
 		return;
 	}
 
@@ -584,22 +585,30 @@ void ABossEncounterCube::SpawnWaveAuraVFX(float DeltaTime)
 		return;
 	}
 
-	// 쿨다운 — 매 프레임이 아닌 0.1초 간격으로 스폰
+	// 쿨다운 — 0.15초 간격으로 스폰 (0.1→0.15 완화)
 	WaveVFXCooldown -= DeltaTime;
 	if (WaveVFXCooldown > 0.f)
 	{
 		return;
 	}
-	WaveVFXCooldown = 0.1f;
-	
-	UE_LOG(LogTemp, Warning, TEXT("[WaveVFX DEBUG] Tick — radius=%.0f, edge=[%.0f ~ %.0f]"),
-		ColorWaveRadius, FMath::Max(0.f, ColorWaveRadius - WaveEdgeThickness), ColorWaveRadius);
+	WaveVFXCooldown = 0.15f;
 
 	UWorld* World = GetWorld();
 	if (!World)
 	{
 		return;
 	}
+
+	// 카메라 위치 — 카메라에서 먼 액터는 VFX 스킵
+	FVector CameraLocation = FVector::ZeroVector;
+	if (const APlayerController* PC = World->GetFirstPlayerController())
+	{
+		if (const APlayerCameraManager* CM = PC->PlayerCameraManager)
+		{
+			CameraLocation = CM->GetCameraLocation();
+		}
+	}
+	const float MaxCameraDistSq = 7000.f * 7000.f; // 70m 이내만 VFX
 
 	// 웨이브 경계 범위: [ColorWaveRadius - WaveEdgeThickness, ColorWaveRadius]
 	const float InnerRadius = FMath::Max(0.f, ColorWaveRadius - WaveEdgeThickness);
@@ -608,41 +617,17 @@ void ABossEncounterCube::SpawnWaveAuraVFX(float DeltaTime)
 	int32 SpawnedThisFrame = 0;
 
 	// ──────────────────────────────────────────────────────
-	// Part A: 일반 StaticMeshActor (나무·바위·구조물 등)
+	// Part A: StaticMeshActor만 순회 (AActor 전체 순회 → 대폭 축소)
 	// ──────────────────────────────────────────────────────
-	for (TActorIterator<AActor> It(World); It; ++It)
+	for (TActorIterator<AStaticMeshActor> It(World); It; ++It)
 	{
 		if (SpawnedThisFrame >= MaxVFXPerFrame)
 		{
 			break;
 		}
 
-		AActor* Actor = *It;
+		AStaticMeshActor* Actor = *It;
 		if (!IsValid(Actor))
-		{
-			continue;
-		}
-
-		// 자기 자신 스킵
-		if (Actor == this)
-		{
-			continue;
-		}
-
-		// 화이트리스트: UStaticMeshComponent가 있는 액터만 대상
-		if (!Actor->FindComponentByClass<UStaticMeshComponent>())
-		{
-			continue;
-		}
-
-		// Pawn 제외 (플레이어·보스는 별도 연출)
-		if (Actor->IsA(APawn::StaticClass()))
-		{
-			continue;
-		}
-
-		// ISM 액터는 Part B에서 별도 처리 — 여기선 스킵
-		if (Actor->FindComponentByClass<UInstancedStaticMeshComponent>())
 		{
 			continue;
 		}
@@ -655,13 +640,45 @@ void ABossEncounterCube::SpawnWaveAuraVFX(float DeltaTime)
 		}
 
 		// 거리 체크: 웨이브 경계 밴드 안에 있는지
-		const float Dist = FVector::Dist(Actor->GetActorLocation(), WaveOrigin);
-		if (Dist >= InnerRadius && Dist <= OuterRadius)
+		const FVector ActorLoc = Actor->GetActorLocation();
+		const float Dist = FVector::Dist(ActorLoc, WaveOrigin);
+		if (Dist < InnerRadius || Dist > OuterRadius)
 		{
-			ApplyWaveEffectsOnActor(Actor, World);
-			AuraVFXSpawnedActors.Add(WeakActor);
-			SpawnedThisFrame++;
+			continue;
 		}
+
+		// 카메라 거리 필터: 70m 이내만 VFX 스폰
+		if (FVector::DistSquared(ActorLoc, CameraLocation) > MaxCameraDistSq)
+		{
+			// 너무 멀면 VFX 없이 "처리됨" 등록 (다시 검사 방지)
+			AuraVFXSpawnedActors.Add(WeakActor);
+			continue;
+		}
+
+		// 최소 크기 필터: 50cm 미만 소형 액터(무기/아이템 등) 스킵
+		FVector Origin, BoxExtent;
+		Actor->GetActorBounds(false, Origin, BoxExtent);
+		if (BoxExtent.GetMax() < 50.f)
+		{
+			AuraVFXSpawnedActors.Add(WeakActor);
+			continue;
+		}
+
+		// 부적절 액터 블랙리스트 (이름 기반)
+		const FString ActorName = Actor->GetName();
+		if (ActorName.Contains(TEXT("Ultra_Dynamic")) ||
+			ActorName.Contains(TEXT("Sky")) ||
+			ActorName.Contains(TEXT("Weather")) ||
+			ActorName.Contains(TEXT("Floor")) ||
+			ActorName.Contains(TEXT("Landscape")))
+		{
+			AuraVFXSpawnedActors.Add(WeakActor);
+			continue;
+		}
+
+		ApplyWaveEffectsOnActor(Actor, World);
+		AuraVFXSpawnedActors.Add(WeakActor);
+		SpawnedThisFrame++;
 	}
 
 	// ──────────────────────────────────────────────────────
@@ -669,12 +686,8 @@ void ABossEncounterCube::SpawnWaveAuraVFX(float DeltaTime)
 	// ──────────────────────────────────────────────────────
 	if (SpawnedThisFrame >= MaxVFXPerFrame)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[WaveVFX DEBUG] Part A filled limit (%d) — skipping Part B"), MaxVFXPerFrame);
-		goto LogAndReturn;
+		return;
 	}
-	
-	UE_LOG(LogTemp, Warning, TEXT("[WaveVFX DEBUG] Entering Part B (Part A spawned %d, cached=%s)"),
-		SpawnedThisFrame, bFoliageCached ? TEXT("YES") : TEXT("NO"));
 
 	// 폴리지 위치 캐시 (웨이브 시작 후 최초 1회)
 	if (!bFoliageCached)
@@ -689,7 +702,6 @@ void ABossEncounterCube::SpawnWaveAuraVFX(float DeltaTime)
 				continue;
 			}
 
-			// ISM 컴포넌트가 있는 액터만 (폴리지)
 			TInlineComponentArray<UInstancedStaticMeshComponent*> ISMs;
 			Actor->GetComponents<UInstancedStaticMeshComponent>(ISMs);
 
@@ -703,7 +715,6 @@ void ABossEncounterCube::SpawnWaveAuraVFX(float DeltaTime)
 				const int32 Count = ISM->GetInstanceCount();
 				for (int32 i = 0; i < Count; ++i)
 				{
-					// 랜덤 샘플링 — FoliageSampleRate 비율만 수집
 					if (FMath::FRand() > FoliageSampleRate)
 					{
 						continue;
@@ -719,7 +730,7 @@ void ABossEncounterCube::SpawnWaveAuraVFX(float DeltaTime)
 		}
 
 		bFoliageCached = true;
-		UE_LOG(LogTemp, Warning, TEXT("[WaveVFX DEBUG] Foliage cached: %d sampled locations (rate=%.0f%%)"),
+		UE_LOG(LogTemp, Log, TEXT("[WaveVFX] Foliage cached: %d sampled locations (rate=%.0f%%)"),
 			CachedFoliageLocations.Num(), FoliageSampleRate * 100.f);
 	}
 
@@ -731,7 +742,6 @@ void ABossEncounterCube::SpawnWaveAuraVFX(float DeltaTime)
 			break;
 		}
 
-		// 위치 해시로 중복 방지
 		const int32 Hash = GetTypeHash(FoliageLoc);
 		if (AuraVFXSpawnedFoliageHashes.Contains(Hash))
 		{
@@ -739,52 +749,52 @@ void ABossEncounterCube::SpawnWaveAuraVFX(float DeltaTime)
 		}
 
 		const float Dist = FVector::Dist(FoliageLoc, WaveOrigin);
-		if (Dist >= InnerRadius && Dist <= OuterRadius)
+		if (Dist < InnerRadius || Dist > OuterRadius)
 		{
-			// 폴리지: Effect A(홀로) 우선, 없으면 WaveAuraVFX 폴백. Effect C(와이어프레임)는 ISM 특성상 불가
-			UNiagaraSystem* FoliageNS = WaveHoloVFX ? WaveHoloVFX.Get() : WaveAuraVFX.Get();
-			if (!FoliageNS)
-			{
-				AuraVFXSpawnedFoliageHashes.Add(Hash);
-				SpawnedThisFrame++;
-				continue;
-			}
+			continue;
+		}
 
-			// 폴리지 VFX는 구조물보다 작게 (×0.6)
-			UNiagaraComponent* SpawnedComp = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
-				World, FoliageNS, FoliageLoc,
-				FRotator::ZeroRotator, FVector(WaveAuraScale * 0.6f),
-				false, true);
+		// 카메라 거리 필터 (폴리지도)
+		if (FVector::DistSquared(FoliageLoc, CameraLocation) > MaxCameraDistSq)
+		{
+			AuraVFXSpawnedFoliageHashes.Add(Hash);
+			continue;
+		}
 
-			if (SpawnedComp)
-			{
-				TWeakObjectPtr<UNiagaraComponent> WeakComp(SpawnedComp);
-				FTimerHandle DestroyTimerHandle;
-				World->GetTimerManager().SetTimer(
-					DestroyTimerHandle,
-					FTimerDelegate::CreateLambda([WeakComp]()
-					{
-						if (WeakComp.IsValid())
-						{
-							WeakComp->DeactivateImmediate();
-							WeakComp->DestroyComponent();
-						}
-					}),
-					WaveAuraLifetime,
-					false
-				);
-			}
-
+		UNiagaraSystem* FoliageNS = WaveHoloVFX ? WaveHoloVFX.Get() : WaveAuraVFX.Get();
+		if (!FoliageNS)
+		{
 			AuraVFXSpawnedFoliageHashes.Add(Hash);
 			SpawnedThisFrame++;
+			continue;
 		}
-	}
 
-LogAndReturn:
-	if (SpawnedThisFrame > 0)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[WaveVFX DEBUG] Spawned %d VFX (radius=%.0f, actors=%d, foliage=%d)"),
-			SpawnedThisFrame, ColorWaveRadius, AuraVFXSpawnedActors.Num(), AuraVFXSpawnedFoliageHashes.Num());
+		UNiagaraComponent* SpawnedComp = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+			World, FoliageNS, FoliageLoc,
+			FRotator::ZeroRotator, FVector(WaveAuraScale * 0.6f),
+			false, true);
+
+		if (SpawnedComp)
+		{
+			TWeakObjectPtr<UNiagaraComponent> WeakComp(SpawnedComp);
+			FTimerHandle DestroyTimerHandle;
+			World->GetTimerManager().SetTimer(
+				DestroyTimerHandle,
+				FTimerDelegate::CreateLambda([WeakComp]()
+				{
+					if (WeakComp.IsValid())
+					{
+						WeakComp->DeactivateImmediate();
+						WeakComp->DestroyComponent();
+					}
+				}),
+				WaveAuraLifetime,
+				false
+			);
+		}
+
+		AuraVFXSpawnedFoliageHashes.Add(Hash);
+		SpawnedThisFrame++;
 	}
 }
 
@@ -802,9 +812,7 @@ void ABossEncounterCube::ApplyWaveEffectsOnActor(AActor* Actor, UWorld* World)
 	// ── 바운딩 박스 크기 계산 ──
 	FVector Origin, BoxExtent;
 	Actor->GetActorBounds(false, Origin, BoxExtent);
-	// BoxExtent는 반(half) 크기 — 전체 크기 = BoxExtent * 2
-	// NS_cosmic_Holo 기본 크기(BaseSize)에 대한 비율로 비균일 스케일 계산
-	const float BaseSize = 100.f; // 나이아가라 에디터에서 확인 후 조절
+	const float BaseSize = 100.f;
 	FVector HoloScale(
 		FMath::Max(BoxExtent.X * 2.f / BaseSize, 0.5f),
 		FMath::Max(BoxExtent.Y * 2.f / BaseSize, 0.5f),
@@ -812,8 +820,8 @@ void ABossEncounterCube::ApplyWaveEffectsOnActor(AActor* Actor, UWorld* World)
 	);
 	HoloScale *= WaveAuraScale;
 
-	// ── Effect A: 홀로그램 나이아가라 (바운딩박스 비균일 스케일) ──
-	if (WaveHoloVFX)
+	// ── Effect A: 홀로그램 나이아가라 (동시 30개 제한) ──
+	if (WaveHoloVFX && TotalHoloSpawned < MaxTotalHoloVFX)
 	{
 		UNiagaraComponent* HoloComp = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
 			World, WaveHoloVFX, Origin,
@@ -822,25 +830,24 @@ void ABossEncounterCube::ApplyWaveEffectsOnActor(AActor* Actor, UWorld* World)
 
 		if (HoloComp)
 		{
+			++TotalHoloSpawned;
 			TWeakObjectPtr<UNiagaraComponent> WeakComp(HoloComp);
+			TWeakObjectPtr<ABossEncounterCube> WeakSelf(this);
 			const float Lifetime = WaveAuraLifetime;
 			FTimerHandle H;
 			World->GetTimerManager().SetTimer(H,
-				FTimerDelegate::CreateLambda([WeakComp]()
+				FTimerDelegate::CreateLambda([WeakComp, WeakSelf]()
 				{
+					if (WeakSelf.IsValid()) { --WeakSelf->TotalHoloSpawned; }
 					if (WeakComp.IsValid())
 					{
 						WeakComp->DeactivateImmediate();
 						WeakComp->DestroyComponent();
 					}
 				}), Lifetime, false);
-
-			UE_LOG(LogTemp, Warning, TEXT("[WaveVFX] Effect A: Holo spawned at %s scale=(%s) for %s"),
-				*Origin.ToString(), *HoloScale.ToString(), *Actor->GetName());
 		}
 	}
-	// WaveHoloVFX가 nullptr이면 기존 WaveAuraVFX로 폴백
-	else if (WaveAuraVFX)
+	else if (!WaveHoloVFX && WaveAuraVFX)
 	{
 		UNiagaraComponent* AuraComp = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
 			World, WaveAuraVFX, Actor->GetActorLocation(),
@@ -864,13 +871,12 @@ void ABossEncounterCube::ApplyWaveEffectsOnActor(AActor* Actor, UWorld* World)
 		}
 	}
 
-	// ── Effect C: 와이어프레임 오버레이 (스캔 라인) ──
-	if (WaveWireframeMaterial)
+	// ── Effect C: 와이어프레임 오버레이 (동시 15개 제한) ──
+	if (WaveWireframeMaterial && ActiveWireframeOverlays.Num() < MaxActiveOverlays)
 	{
 		UStaticMeshComponent* OrigSMC = Actor->FindComponentByClass<UStaticMeshComponent>();
 		if (OrigSMC && OrigSMC->GetStaticMesh())
 		{
-			// 바운딩 박스 계산
 			FVector BoundsOrigin, BoundsExtent;
 			Actor->GetActorBounds(false, BoundsOrigin, BoundsExtent);
 			const float BottomZ = BoundsOrigin.Z - BoundsExtent.Z;
@@ -883,31 +889,22 @@ void ABossEncounterCube::ApplyWaveEffectsOnActor(AActor* Actor, UWorld* World)
 				OverlayMesh->SetWorldTransform(OrigSMC->GetComponentTransform());
 				OverlayMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
-				// DMI 생성 — ScanHeight 파라미터 제어용
 				UMaterialInstanceDynamic* DMI = UMaterialInstanceDynamic::Create(WaveWireframeMaterial, this);
 				if (DMI)
 				{
-					// 초기값: ScanHeight = BottomZ (바닥에서 시작)
 					DMI->SetScalarParameterValue(TEXT("ScanHeight"), BottomZ);
-
-					// 밴드 두께
 					const float BandWidth = FMath::Max((TopZ - BottomZ) * ScanBandRatio, 10.f);
 					DMI->SetScalarParameterValue(TEXT("BandWidth"), BandWidth);
 
-					// 모든 슬롯에 DMI 적용
 					const int32 NumMats = OrigSMC->GetNumMaterials();
 					for (int32 i = 0; i < NumMats; ++i)
 					{
 						OverlayMesh->SetMaterial(i, DMI);
 					}
 
-					// 스케일 고정 — Tick에서 스케일 변경하지 않음
 					FVector OrigScale = OrigSMC->GetComponentScale();
 					OverlayMesh->SetWorldScale3D(OrigScale * 1.02f);
-
-					// Visibility 항상 true — ScanHeight가 범위 밖이면 머티리얼이 알아서 투명 처리
 					OverlayMesh->SetVisibility(true);
-
 					OverlayMesh->RegisterComponent();
 					if (Actor->GetRootComponent())
 					{
@@ -916,7 +913,6 @@ void ABossEncounterCube::ApplyWaveEffectsOnActor(AActor* Actor, UWorld* World)
 							FAttachmentTransformRules::KeepWorldTransform);
 					}
 
-					// 스캔 추적 구조체
 					FWireframeOverlay Overlay;
 					Overlay.OverlayMesh = OverlayMesh;
 					Overlay.DMI = DMI;
@@ -927,9 +923,6 @@ void ABossEncounterCube::ApplyWaveEffectsOnActor(AActor* Actor, UWorld* World)
 					Overlay.OrigLocation = OrigSMC->GetComponentLocation();
 					Overlay.TargetActor = Actor;
 					ActiveWireframeOverlays.Add(Overlay);
-
-					UE_LOG(LogTemp, Warning, TEXT("[WaveVFX] Effect C: Scan overlay spawned on %s (Z=%.0f~%.0f, band=%.0f, %d mats)"),
-						*Actor->GetName(), BottomZ, TopZ, BandWidth, NumMats);
 				}
 			}
 		}
@@ -977,7 +970,7 @@ void ABossEncounterCube::TickWireframeOverlays(float DeltaTime)
 			Overlay.DMI->SetScalarParameterValue(TEXT("BandWidth"), BandWidth);
 		}
 
-		UE_LOG(LogTemp, Verbose, TEXT("[WaveVFX] Scan: progress=%.2f, scanZ=%.0f, actor=%s"),
+		UE_LOG(LogTemp, VeryVerbose, TEXT("[WaveVFX] Scan: progress=%.2f, scanZ=%.0f, actor=%s"),
 			Overlay.ScanProgress, CurrentScanZ,
 			Overlay.TargetActor.IsValid() ? *Overlay.TargetActor->GetName() : TEXT("None"));
 	}
@@ -1015,7 +1008,7 @@ void ABossEncounterCube::StartCinematicSequence(FVector DeathLocation)
 	// Phase 0 즉시 시작
 	CinematicPhase0_SlowMotion();
 
-	UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] Cinematic sequence started at %s"),
+	UE_LOG(LogTemp, Verbose, TEXT("[BossEncounterCube] Cinematic sequence started at %s"),
 		*DeathLocation.ToString());
 }
 
@@ -1029,7 +1022,7 @@ void ABossEncounterCube::CinematicPhase0_SlowMotion()
 
 	// 슬로모션 적용
 	UGameplayStatics::SetGlobalTimeDilation(World, SlowMotionScale);
-	UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] Phase0: SlowMotion = %.2f for %.2fs (game time)"),
+	UE_LOG(LogTemp, Verbose, TEXT("[BossEncounterCube] Phase0: SlowMotion = %.2f for %.2fs (game time)"),
 		SlowMotionScale, SlowMotionDuration);
 
 	// Phase 1을 SlowMotionDuration 뒤에 호출
@@ -1052,7 +1045,7 @@ void ABossEncounterCube::CinematicPhase1_Explosion()
 
 	// ── 슬로모션 복원 (이후 모든 타이머는 정상 속도) ──
 	UGameplayStatics::SetGlobalTimeDilation(World, 1.0f);
-	UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] Phase1: TimeDilation restored to 1.0"));
+	UE_LOG(LogTemp, Verbose, TEXT("[BossEncounterCube] Phase1: TimeDilation restored to 1.0"));
 
 	// ── 시네마틱 PostProcess 생성 ──
 	CreateCinematicPostProcess();
@@ -1146,7 +1139,7 @@ void ABossEncounterCube::CinematicPhase1_Explosion()
 		4.7f,
 		false);
 
-	UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] Phase1: Explosion complete — timers chained (Phase2=0.5s, Phase4=3.2s, Phase5=4.7s)"));
+	UE_LOG(LogTemp, Verbose, TEXT("[BossEncounterCube] Phase1: Explosion complete — timers chained (Phase2=0.5s, Phase4=3.2s, Phase5=4.7s)"));
 }
 
 void ABossEncounterCube::CinematicPhase2_WhiteFlash()
@@ -1163,7 +1156,7 @@ void ABossEncounterCube::CinematicPhase2_WhiteFlash()
 	bCinematicFlashActive = true;
 	CinematicFlashAlpha = 1.f;
 
-	UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] Phase2: White flash — SceneColorTint = (3,3,3)"));
+	UE_LOG(LogTemp, Verbose, TEXT("[BossEncounterCube] Phase2: White flash — SceneColorTint = (3,3,3)"));
 }
 
 void ABossEncounterCube::CinematicPhase4_SaturationOvershoot()
@@ -1180,7 +1173,7 @@ void ABossEncounterCube::CinematicPhase4_SaturationOvershoot()
 
 	bCinematicSatBoostActive = true;
 
-	UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] Phase4: Saturation overshoot = %.2f"), SaturationOvershootScale);
+	UE_LOG(LogTemp, Verbose, TEXT("[BossEncounterCube] Phase4: Saturation overshoot = %.2f"), SaturationOvershootScale);
 }
 
 void ABossEncounterCube::CinematicPhase5_Cleanup()
@@ -1229,7 +1222,7 @@ void ABossEncounterCube::CinematicPhase5_Cleanup()
 		World->GetTimerManager().ClearTimer(CinematicTimer_Phase5);
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] Phase5: Cinematic cleanup complete — all effects reset"));
+	UE_LOG(LogTemp, Verbose, TEXT("[BossEncounterCube] Phase5: Cinematic cleanup complete — all effects reset"));
 }
 
 void ABossEncounterCube::TickCinematic(float DeltaTime)

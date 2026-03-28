@@ -115,31 +115,22 @@ static void ShipMove_RunEQS(UEnvQuery* Query, AAIController* AIC, float Radius, 
 				AAIController* Ctrl = WeakAIC.Get();
 				if (!IsValid(Ctrl))
 				{
-					UE_LOG(LogTemp, Error, TEXT("[ChaseShip][EQS] 콜백: AIController 무효"));
+					UE_LOG(LogTemp, Verbose, TEXT("[ChaseShip][EQS] 콜백: AIController 무효"));
 					return;
 				}
 
 				const bool bValid = Result.IsValid() && !Result->IsAborted();
 				const int32 ItemCount = bValid ? Result->Items.Num() : 0;
-				UE_LOG(LogTemp, Warning, TEXT("[ChaseShip][EQS] 콜백: bValid=%d | Items=%d | bAborted=%d"),
-					(int)bValid, ItemCount, bValid ? (int)Result->IsAborted() : -1);
-
 				if (bValid && ItemCount > 0)
 				{
 					const FVector Dest = Result->GetItemAsLocation(0);
-					UE_LOG(LogTemp, Warning, TEXT("[ChaseShip][EQS] MoveToLocation: %s"), *Dest.ToString());
 					ShipMove_MoveToLocation(Ctrl, Dest, Radius);
 				}
 				else if (AActor* F = WeakFallback.Get(); IsValid(F))
 				{
 					const FVector PawnLoc = Ctrl->GetPawn()->GetActorLocation();
 					const FVector Goal = ComputeNavGoalTowardShip(PawnLoc, F->GetActorLocation(), Ctrl);
-					UE_LOG(LogTemp, Warning, TEXT("[ChaseShip][EQS] 폴백 이동: %s"), *Goal.ToString());
 					ShipMove_MoveToLocation(Ctrl, Goal, Radius);
-				}
-				else
-				{
-					UE_LOG(LogTemp, Error, TEXT("[ChaseShip][EQS] 콜백: 결과도 없고 폴백도 무효"));
 				}
 			}));
 }

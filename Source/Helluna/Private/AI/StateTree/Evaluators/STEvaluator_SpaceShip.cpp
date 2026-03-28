@@ -37,7 +37,7 @@ void FSTEvaluator_SpaceShip::TreeStart(FStateTreeExecutionContext& Context) cons
 		{
 			SpaceShipData.TargetActor = *It;
 			SpaceShipData.TargetType  = EHellunaTargetType::SpaceShip;
-			UE_LOG(LogTemp, Warning, TEXT("[SpaceShipEval] ✅ 우주선 발견! Actor=%s (태그=%s, 탐색수=%d)"),
+			UE_LOG(LogTemp, Verbose, TEXT("[SpaceShipEval] 우주선 발견: Actor=%s (태그=%s, 탐색수=%d)"),
 				*GetNameSafe(*It), *SpaceShipTag.ToString(), SearchCount);
 			break;
 		}
@@ -45,7 +45,7 @@ void FSTEvaluator_SpaceShip::TreeStart(FStateTreeExecutionContext& Context) cons
 
 	if (!SpaceShipData.TargetActor.IsValid())
 	{
-		UE_LOG(LogTemp, Error, TEXT("[SpaceShipEval] ❌ 우주선을 찾지 못함! 태그='%s' 로 탐색했으나 없음. 월드 내 Actor 총 %d개"),
+		UE_LOG(LogTemp, Verbose, TEXT("[SpaceShipEval] 우주선 미발견: 태그='%s', Actor 총 %d개 (보스 테스트맵에서는 정상)"),
 			*SpaceShipTag.ToString(), SearchCount);
 	}
 }
@@ -58,9 +58,15 @@ void FSTEvaluator_SpaceShip::Tick(FStateTreeExecutionContext& Context, const flo
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
 	FHellunaAITargetData& SpaceShipData = InstanceData.SpaceShipData;
 
-	// 우주선이 소멸됐으면 재탐색 시도
+	// 우주선이 소멸됐으면 재탐색 시도 (매 프레임이 아닌 2초 간격)
 	if (!SpaceShipData.TargetActor.IsValid())
 	{
+		InstanceData.RespawnSearchTimer += DeltaTime;
+		if (InstanceData.RespawnSearchTimer < 2.f)
+			return;
+
+		InstanceData.RespawnSearchTimer = 0.f;
+
 		const UWorld* World = Context.GetWorld();
 		if (!World) return;
 

@@ -142,11 +142,8 @@ AHellunaHeroCharacter::AHellunaHeroCharacter()
 	KickPromptWidgetComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
 	// [OTS Camera] 생성자 디버그 로그
-	UE_LOG(LogTemp, Warning, TEXT("[OTS Camera] Constructor — ArmLength=%.1f, SocketOffset=%s, bOrientToMovement=%s, bUseControllerDesiredRotation=%s"),
-		CameraBoom->TargetArmLength,
-		*CameraBoom->SocketOffset.ToString(),
-		GetCharacterMovement()->bOrientRotationToMovement ? TEXT("true") : TEXT("false"),
-		GetCharacterMovement()->bUseControllerDesiredRotation ? TEXT("true") : TEXT("false"));
+	UE_LOG(LogTemp, Verbose, TEXT("[OTS Camera] Constructor — ArmLength=%.1f, SocketOffset=%s"),
+		CameraBoom->TargetArmLength, *CameraBoom->SocketOffset.ToString());
 }
 
 void AHellunaHeroCharacter::BeginPlay()
@@ -193,8 +190,8 @@ void AHellunaHeroCharacter::BeginPlay()
 		DefaultTargetArmLength = CameraBoom->TargetArmLength;
 		DefaultSocketOffset = CameraBoom->SocketOffset;
 	}
-	UE_LOG(LogTemp, Warning, TEXT("[OTS Camera] BeginPlay — DefaultFOV=%.1f, DefaultArmLength=%.1f, DefaultSocketOffset=%s"),
-		DefaultFOV, DefaultTargetArmLength, *DefaultSocketOffset.ToString());
+	UE_LOG(LogTemp, Verbose, TEXT("[OTS Camera] BeginPlay — DefaultFOV=%.1f, DefaultArmLength=%.1f"),
+		DefaultFOV, DefaultTargetArmLength);
 
 	// [Phase18] 킥 프롬프트 3D 위젯 초기화 (클라이언트만)
 	if (GetNetMode() != NM_DedicatedServer && KickPromptWidgetComp && KickPromptWidgetClass)
@@ -2507,7 +2504,7 @@ void AHellunaHeroCharacter::UpdateKickPrompt(float DeltaTime)
 		if (ClosestEnemy)
 		{
 			bool bIsStaggered = UHellunaFunctionLibrary::NativeDoesActorHaveTag(ClosestEnemy, HellunaGameplayTags::Enemy_State_Staggered);
-			UE_LOG(LogHelluna, Warning, TEXT("[Phase18] KickPrompt: Closest=%s Dist=%.0f Staggered=%s | Best=%s Visible=%s"),
+			UE_LOG(LogHelluna, Verbose, TEXT("[Phase18] KickPrompt: Closest=%s Dist=%.0f Staggered=%s | Best=%s Visible=%s"),
 				*ClosestEnemy->GetName(), ClosestDist,
 				bIsStaggered ? TEXT("Y") : TEXT("N"),
 				BestEnemy ? *BestEnemy->GetName() : TEXT("None"),
