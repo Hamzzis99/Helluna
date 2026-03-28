@@ -916,6 +916,9 @@ void AHellunaLobbyController::GetLifetimeReplicatedProps(TArray<FLifetimePropert
 // ════════════════════════════════════════════════════════════════════════════════
 void AHellunaLobbyController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	// [Fix60] 로그인 위젯 제거 타이머 정리
+	GetWorldTimerManager().ClearTimer(LoginWidgetRemoveTimer);
+
 	if (LobbyLoginWidgetInstance)
 	{
 		LobbyLoginWidgetInstance->RemoveFromParent();
@@ -1073,9 +1076,9 @@ void AHellunaLobbyController::Client_LobbyLoginResult_Implementation(bool bSucce
 			LobbyLoginWidgetInstance->ShowSuccess();
 
 			// 0.3초 후 위젯 제거 + 로비 UI 표시
-			FTimerHandle RemoveTimer;
+			// [Fix60] 로컬 변수 → 멤버 변수 (EndPlay에서 정리 보장)
 			TWeakObjectPtr<AHellunaLobbyController> WeakThis(this);
-			GetWorldTimerManager().SetTimer(RemoveTimer, [WeakThis]()
+			GetWorldTimerManager().SetTimer(LoginWidgetRemoveTimer, [WeakThis]()
 			{
 				if (!WeakThis.IsValid()) return;
 				if (WeakThis->LobbyLoginWidgetInstance)

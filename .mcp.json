@@ -1,0 +1,10 @@
+﻿{
+  "mcpServers": {
+    "unreal": {
+      "type": "stdio",
+      "command": "unrealmcp",
+      "args": [],
+      "env": {}
+    }
+  }
+}

@@ -52,16 +52,16 @@ void FMDFHitData::PostReplicatedAdd(const FMDFHitDataArray& InArraySerializer)
     }
     Comp->PendingAddCount++;
 
-    // 다음 틱에서 한 번만 처리 (bool 플래그로 중복 등록 방지)
-    if (!Comp->bFastArrayBatchPending)
+    // 다음 틱에서 한 번만 처리 — [Fix60] atomic exchange로 check-and-set 원자적 처리
+    bool bExpected = false;
+    if (Comp->bFastArrayBatchPending.compare_exchange_strong(bExpected, true))
     {
         UWorld* World = Comp->GetWorld();
-        if (!World) return;
-        Comp->bFastArrayBatchPending = true;
+        if (!World) { Comp->bFastArrayBatchPending.store(false); return; }
         World->GetTimerManager().SetTimerForNextTick([Comp]()
         {
             if (!IsValid(Comp)) return;
-            Comp->bFastArrayBatchPending = false;  // 반드시 먼저 리셋
+            Comp->bFastArrayBatchPending.store(false);  // 반드시 먼저 리셋
 
             if (Comp->bPendingDeformationReset)
             {
@@ -96,16 +96,16 @@ void FMDFHitData::PreReplicatedRemove(const FMDFHitDataArray& InArraySerializer)
     Comp->bPendingDeformationReset = true;
 
     // RepairMesh() 시에는 삭제만 있고 추가가 없으므로 PostReplicatedAdd가 안 불림.
-    // bool 플래그로 중복 등록 방지
-    if (!Comp->bFastArrayBatchPending)
+    // [Fix60] atomic exchange로 중복 등록 방지
+    bool bExpectedRemove = false;
+    if (Comp->bFastArrayBatchPending.compare_exchange_strong(bExpectedRemove, true))
     {
         UWorld* World = Comp->GetWorld();
-        if (!World) return;
-        Comp->bFastArrayBatchPending = true;
+        if (!World) { Comp->bFastArrayBatchPending.store(false); return; }
         World->GetTimerManager().SetTimerForNextTick([Comp]()
         {
             if (!IsValid(Comp)) return;
-            Comp->bFastArrayBatchPending = false;  // 반드시 먼저 리셋
+            Comp->bFastArrayBatchPending.store(false);  // 반드시 먼저 리셋
 
             if (Comp->bPendingDeformationReset)
             {
@@ -224,7 +224,8 @@ void UMDF_DeformableComponent::HandlePointDamage(AActor* DamagedActor, float Dam
     if (!IsValid(GetOwner()) || !GetOwner()->HasAuthority()) return;
 
     // 2. 기능 활성화 여부 및 유효 데미지 체크
-    if (!bIsDeformationEnabled || Damage <= 0.0f) return;
+    // [Fix60] NaN/Inf/음수 데미지 거부 — Loge 계산 시 NaN 전파 방지
+    if (!bIsDeformationEnabled || !FMath::IsFinite(Damage) || Damage <= 0.0f) return;
 
     // 3. 공격자 식별
     AActor* Attacker = DamageCauser;
@@ -462,7 +463,10 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
     int32 ClampedVertexCount = 0;
 #endif
 
-    DeformMeshComp->GetDynamicMesh()->EditMesh([&](UE::Geometry::FDynamicMesh3& EditMesh)
+    // [Fix54] GetDynamicMesh() 로컬 캐시 — 유효성 검사와 사용 사이 파괴 방지
+    UDynamicMesh* CachedDynamicMesh = DeformMeshComp->GetDynamicMesh();
+    if (!CachedDynamicMesh) return;
+    CachedDynamicMesh->EditMesh([&](UE::Geometry::FDynamicMesh3& EditMesh)
     {
         // [Phase 18] Vertex Color Overlay 접근
         UE::Geometry::FDynamicMeshColorOverlay* ColorOverlay = nullptr;
@@ -668,10 +672,14 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
     DeformMeshComp->UpdateCollision();
 
     // 렌더링 업데이트 (클라이언트 전용)
+    // [Fix60] GetDynamicMesh() 재호출 → 캐시 적용 (파괴 방지 + 중복 호출 제거)
     if (!IsRunningDedicatedServer())
     {
-        UGeometryScriptLibrary_MeshNormalsFunctions::RecomputeNormals(DeformMeshComp->GetDynamicMesh(), FGeometryScriptCalculateNormalsOptions());
-        UGeometryScriptLibrary_MeshNormalsFunctions::ComputeTangents(DeformMeshComp->GetDynamicMesh(), FGeometryScriptTangentsOptions());
+        if (UDynamicMesh* PostEditMesh = DeformMeshComp->GetDynamicMesh())
+        {
+            UGeometryScriptLibrary_MeshNormalsFunctions::RecomputeNormals(PostEditMesh, FGeometryScriptCalculateNormalsOptions());
+            UGeometryScriptLibrary_MeshNormalsFunctions::ComputeTangents(PostEditMesh, FGeometryScriptTangentsOptions());
+        }
         DeformMeshComp->NotifyMeshUpdated();
     }
 
