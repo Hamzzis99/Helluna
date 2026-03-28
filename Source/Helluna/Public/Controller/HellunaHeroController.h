@@ -16,6 +16,7 @@ class UHellunaChatWidget;
 class UInputAction;
 class UInputMappingContext;
 class APuzzleCubeActor;
+class ABossEncounterCube;
 class UPuzzleGridWidget;
 class UPostProcessComponent;
 
@@ -414,4 +415,15 @@ private:
 
 	/** 색채의 개방 완료 — PostProcess 기본값 복원 */
 	void FinishColorReveal();
+
+	// =========================================================================================
+	// [BossEvent] 보스 조우 큐브 상호작용
+	// =========================================================================================
+public:
+	/**
+	 * 보스 조우 활성화 Server RPC (클라이언트 → 서버)
+	 * BossEncounterCube에서 F키 홀드 완료 시 호출
+	 */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_BossEncounterActivate();
 };

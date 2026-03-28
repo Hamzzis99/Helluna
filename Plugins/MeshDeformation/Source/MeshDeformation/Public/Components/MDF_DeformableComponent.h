@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "Net/Serialization/FastArraySerializer.h"
+#include <atomic> // [Fix54] bFastArrayBatchPending 스레드 안전성
 #include "MDF_DeformableComponent.generated.h"
 
 class UDynamicMeshComponent;
@@ -125,8 +126,9 @@ public:
     int32 PendingAddStartIndex = INDEX_NONE;
     int32 PendingAddCount = 0;
 
-    /** FFastArray 콜백용: 다음 틱 Lambda 중복 등록 방지 플래그 */
-    bool bFastArrayBatchPending = false;
+    /** FFastArray 콜백용: 다음 틱 Lambda 중복 등록 방지 플래그
+     *  [Fix54] std::atomic — 리플리케이션 콜백과 타이머 람다 간 스레드 안전성 */
+    std::atomic<bool> bFastArrayBatchPending{false};
 
     /** 원본으로 사용할 StaticMesh 에셋 */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|설정", meta = (DisplayName = "스태틱 메시"))

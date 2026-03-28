@@ -30,7 +30,7 @@ Binaries/*
 Plugins/*/Binaries/*
 Plugins/*/Intermediate/
 Plugins/UnrealMCP
-
+Plugins/UnrealMCP_backup
 
 # User-specific files
 *.sln

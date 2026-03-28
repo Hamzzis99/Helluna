@@ -431,9 +431,13 @@ bool UHellunaSQLiteSubsystem::ExportLoadoutToFile(const FString& PlayerId, const
 			// JSON 문자열을 파싱하여 JSON 배열로 내장 (문자열이 아닌 구조체)
 			TSharedRef<TJsonReader<>> AttReader = TJsonReaderFactory<>::Create(AttJson);
 			TArray<TSharedPtr<FJsonValue>> AttArray;
-			if (FJsonSerializer::Deserialize(AttReader, AttArray))
+			if (FJsonSerializer::Deserialize(AttReader, AttArray) && AttArray.Num() > 0) // [Fix54] 빈 배열 검증
 			{
 				ItemObj->SetArrayField(TEXT("attachments"), AttArray);
+			}
+			else
+			{
+				UE_LOG(LogHelluna, Warning, TEXT("[SQLite] ExportLoadoutToFile: 부착물 JSON 파싱 실패 | ItemType=%s"), *Item.ItemType.ToString());
 			}
 		}
 
@@ -1488,14 +1492,14 @@ bool UHellunaSQLiteSubsystem::SavePlayerStash(const FString& PlayerId, const TAr
 		if (!DeleteStmt.IsValid())
 		{
 			UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SavePlayerStash: DELETE Prepare 실패 | 에러: %s"), *Database->GetLastError());
-			Database->Execute(TEXT("ROLLBACK;"));
+			if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 			return false;
 		}
 		DeleteStmt.SetBindingValueByIndex(1, PlayerId);
 		if (!DeleteStmt.Execute())
 		{
 			UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SavePlayerStash: DELETE 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
-			Database->Execute(TEXT("ROLLBACK;"));
+			if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 			return false;
 		}
 		UE_LOG(LogHelluna, Verbose, TEXT("[SQLite]   DELETE old stash ✓"));
@@ -1516,7 +1520,7 @@ bool UHellunaSQLiteSubsystem::SavePlayerStash(const FString& PlayerId, const TAr
 		if (!InsertStmt.IsValid())
 		{
 			UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SavePlayerStash: INSERT Prepare 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
-			Database->Execute(TEXT("ROLLBACK;"));
+			if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 			return false;
 		}
 
@@ -1559,7 +1563,7 @@ bool UHellunaSQLiteSubsystem::SavePlayerStash(const FString& PlayerId, const TAr
 			{
 				UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SavePlayerStash: INSERT[%d] 실패 — ROLLBACK | 아이템=%s | 에러: %s"),
 					i, *Item.ItemType.ToString(), *Database->GetLastError());
-				Database->Execute(TEXT("ROLLBACK;"));
+				if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 				return false;
 			}
 
@@ -1575,7 +1579,7 @@ bool UHellunaSQLiteSubsystem::SavePlayerStash(const FString& PlayerId, const TAr
 	if (!Database->Execute(TEXT("COMMIT;")))
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SavePlayerStash: COMMIT 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
-		Database->Execute(TEXT("ROLLBACK;"));
+		if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 		return false;
 	}
 
@@ -1781,7 +1785,7 @@ bool UHellunaSQLiteSubsystem::SavePlayerLoadout(const FString& PlayerId, const T
 	if (!InsertStmt.IsValid())
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SavePlayerLoadout: INSERT Prepare 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
-		Database->Execute(TEXT("ROLLBACK;"));
+		if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 		return false;
 	}
 
@@ -1823,7 +1827,7 @@ bool UHellunaSQLiteSubsystem::SavePlayerLoadout(const FString& PlayerId, const T
 		{
 			UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SavePlayerLoadout: Loadout INSERT[%d] 실패 — ROLLBACK | 아이템=%s | 에러: %s"),
 				i, *Item.ItemType.ToString(), *Database->GetLastError());
-			Database->Execute(TEXT("ROLLBACK;"));
+			if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 			return false;
 		}
 
@@ -1843,7 +1847,7 @@ bool UHellunaSQLiteSubsystem::SavePlayerLoadout(const FString& PlayerId, const T
 	if (!Database->Execute(TEXT("COMMIT;")))
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SavePlayerLoadout: COMMIT 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
-		Database->Execute(TEXT("ROLLBACK;"));
+		if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 		return false;
 	}
 
@@ -1951,7 +1955,7 @@ bool UHellunaSQLiteSubsystem::MergeGameResultToStash(const FString& PlayerId, co
 	if (!InsertStmt.IsValid())
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ MergeGameResultToStash: Prepare 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
-		Database->Execute(TEXT("ROLLBACK;"));
+		if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 		return false;
 	}
 
@@ -1999,7 +2003,7 @@ bool UHellunaSQLiteSubsystem::MergeGameResultToStash(const FString& PlayerId, co
 		{
 			UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ MergeGameResultToStash: INSERT[%d] 실패 — ROLLBACK | 아이템=%s | 에러: %s"),
 				i, *Item.ItemType.ToString(), *Database->GetLastError());
-			Database->Execute(TEXT("ROLLBACK;"));
+			if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 			return false;
 		}
 
@@ -2010,7 +2014,7 @@ bool UHellunaSQLiteSubsystem::MergeGameResultToStash(const FString& PlayerId, co
 	if (!Database->Execute(TEXT("COMMIT;")))
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ MergeGameResultToStash: COMMIT 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
-		Database->Execute(TEXT("ROLLBACK;"));
+		if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 		return false;
 	}
 
@@ -2137,7 +2141,7 @@ bool UHellunaSQLiteSubsystem::RecoverFromCrash(const FString& PlayerId)
 	if (!SelectStmt.IsValid())
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ RecoverFromCrash: SELECT Prepare 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
-		Database->Execute(TEXT("ROLLBACK;"));
+		if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 		return false;
 	}
 
@@ -2159,7 +2163,7 @@ bool UHellunaSQLiteSubsystem::RecoverFromCrash(const FString& PlayerId)
 	if (LoadoutItems.Num() == 0)
 	{
 		// Loadout이 비어있으면 복구할 것이 없음 → 정상 처리
-		Database->Execute(TEXT("ROLLBACK;"));
+		if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 		UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ RecoverFromCrash: Loadout이 비어있음 — 복구 불필요"));
 		return true;
 	}
@@ -2176,7 +2180,7 @@ bool UHellunaSQLiteSubsystem::RecoverFromCrash(const FString& PlayerId)
 	if (!InsertStmt.IsValid())
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ RecoverFromCrash: INSERT Prepare 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
-		Database->Execute(TEXT("ROLLBACK;"));
+		if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 		return false;
 	}
 
@@ -2217,7 +2221,7 @@ bool UHellunaSQLiteSubsystem::RecoverFromCrash(const FString& PlayerId)
 		{
 			UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ RecoverFromCrash: Stash INSERT[%d] 실패 — ROLLBACK | 아이템=%s | 에러: %s"),
 				i, *Item.ItemType.ToString(), *Database->GetLastError());
-			Database->Execute(TEXT("ROLLBACK;"));
+			if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 			return false;
 		}
 
@@ -2233,14 +2237,14 @@ bool UHellunaSQLiteSubsystem::RecoverFromCrash(const FString& PlayerId)
 		if (!DeleteStmt.IsValid())
 		{
 			UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ RecoverFromCrash: DELETE Prepare 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
-			Database->Execute(TEXT("ROLLBACK;"));
+			if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 			return false;
 		}
 		DeleteStmt.SetBindingValueByIndex(1, PlayerId);
 		if (!DeleteStmt.Execute())
 		{
 			UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ RecoverFromCrash: Loadout DELETE 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
-			Database->Execute(TEXT("ROLLBACK;"));
+			if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 			return false;
 		}
 		UE_LOG(LogHelluna, Log, TEXT("[SQLite]   Loadout DELETE ✓"));
@@ -2250,7 +2254,7 @@ bool UHellunaSQLiteSubsystem::RecoverFromCrash(const FString& PlayerId)
 	if (!Database->Execute(TEXT("COMMIT;")))
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ RecoverFromCrash: COMMIT 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
-		Database->Execute(TEXT("ROLLBACK;"));
+		if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 		return false;
 	}
 
@@ -2498,14 +2502,14 @@ bool UHellunaSQLiteSubsystem::SavePlayerEquipment(const FString& PlayerId, const
 			TEXT("DELETE FROM player_equipment WHERE player_id = ?1;"));
 		if (!DeleteStmt.IsValid())
 		{
-			Database->Execute(TEXT("ROLLBACK;"));
+			if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 			return false;
 		}
 		DeleteStmt.SetBindingValueByIndex(1, PlayerId);
 		if (!DeleteStmt.Execute())
 		{
 			UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SavePlayerEquipment: DELETE 실패 | 에러: %s"), *Database->GetLastError());
-			Database->Execute(TEXT("ROLLBACK;"));
+			if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 			return false;
 		}
 	}
@@ -2519,7 +2523,7 @@ bool UHellunaSQLiteSubsystem::SavePlayerEquipment(const FString& PlayerId, const
 		if (!InsertStmt.IsValid())
 		{
 			UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SavePlayerEquipment: INSERT Prepare 실패 | 에러: %s"), *Database->GetLastError());
-			Database->Execute(TEXT("ROLLBACK;"));
+			if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 			return false;
 		}
 
@@ -2533,7 +2537,7 @@ bool UHellunaSQLiteSubsystem::SavePlayerEquipment(const FString& PlayerId, const
 			{
 				UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SavePlayerEquipment: INSERT 실패 | slot=%s | 에러: %s"),
 					*Slot.SlotId, *Database->GetLastError());
-				Database->Execute(TEXT("ROLLBACK;"));
+				if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 				return false;
 			}
 			InsertStmt.Reset();
@@ -2544,7 +2548,7 @@ bool UHellunaSQLiteSubsystem::SavePlayerEquipment(const FString& PlayerId, const
 	if (!Database->Execute(TEXT("COMMIT;")))
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SavePlayerEquipment: COMMIT 실패 | 에러: %s"), *Database->GetLastError());
-		Database->Execute(TEXT("ROLLBACK;"));
+		if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 		return false;
 	}
 
@@ -2714,7 +2718,7 @@ bool UHellunaSQLiteSubsystem::RegisterActiveGameCharacter(int32 HeroType, const 
 	if (!InsertStmt.IsValid())
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] RegisterActiveGameCharacter: PrepareStatement 실패 | 에러: %s"), *Database->GetLastError());
-		Database->Execute(TEXT("ROLLBACK;"));
+		if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 		return false;
 	}
 
@@ -2730,7 +2734,7 @@ bool UHellunaSQLiteSubsystem::RegisterActiveGameCharacter(int32 HeroType, const 
 	}
 	else
 	{
-		Database->Execute(TEXT("ROLLBACK;"));
+		if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 		UE_LOG(LogHelluna, Warning, TEXT("[SQLite] ✗ RegisterActiveGameCharacter 실패 (중복?) | HeroType=%d | 에러: %s"),
 			HeroType, *Database->GetLastError());
 		return false;
@@ -3216,7 +3220,7 @@ int32 UHellunaSQLiteSubsystem::CreateParty(const FString& LeaderId, const FStrin
 		if (!InsertGroup.IsValid())
 		{
 			UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ CreateParty: INSERT party_groups Prepare 실패 | 에러: %s"), *Database->GetLastError());
-			Database->Execute(TEXT("ROLLBACK;"));
+			if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 			return 0;
 		}
 		InsertGroup.SetBindingValueByIndex(1, PartyCode);
@@ -3224,7 +3228,7 @@ int32 UHellunaSQLiteSubsystem::CreateParty(const FString& LeaderId, const FStrin
 		if (!InsertGroup.Execute())
 		{
 			UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ CreateParty: INSERT party_groups 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
-			Database->Execute(TEXT("ROLLBACK;"));
+			if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 			return 0;
 		}
 	}
@@ -3248,7 +3252,7 @@ int32 UHellunaSQLiteSubsystem::CreateParty(const FString& LeaderId, const FStrin
 	if (PartyId <= 0)
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ CreateParty: last_insert_rowid 실패 — ROLLBACK"));
-		Database->Execute(TEXT("ROLLBACK;"));
+		if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 		return 0;
 	}
 
@@ -3259,7 +3263,7 @@ int32 UHellunaSQLiteSubsystem::CreateParty(const FString& LeaderId, const FStrin
 		if (!InsertMember.IsValid())
 		{
 			UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ CreateParty: INSERT party_members Prepare 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
-			Database->Execute(TEXT("ROLLBACK;"));
+			if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 			return 0;
 		}
 		InsertMember.SetBindingValueByIndex(1, PartyId);
@@ -3271,7 +3275,7 @@ int32 UHellunaSQLiteSubsystem::CreateParty(const FString& LeaderId, const FStrin
 		if (!InsertMember.Execute())
 		{
 			UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ CreateParty: INSERT party_members 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
-			Database->Execute(TEXT("ROLLBACK;"));
+			if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 			return 0;
 		}
 	}
@@ -3280,7 +3284,7 @@ int32 UHellunaSQLiteSubsystem::CreateParty(const FString& LeaderId, const FStrin
 	if (!Database->Execute(TEXT("COMMIT;")))
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ CreateParty: COMMIT 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
-		Database->Execute(TEXT("ROLLBACK;"));
+		if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 		return 0;
 	}
 
@@ -3318,7 +3322,7 @@ bool UHellunaSQLiteSubsystem::JoinParty(int32 PartyId, const FString& PlayerId, 
 	if (!InsertStmt.IsValid())
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ JoinParty: Prepare 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
-		Database->Execute(TEXT("ROLLBACK;"));
+		if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 		return false;
 	}
 	InsertStmt.SetBindingValueByIndex(1, PartyId);
@@ -3330,14 +3334,14 @@ bool UHellunaSQLiteSubsystem::JoinParty(int32 PartyId, const FString& PlayerId, 
 	if (!InsertStmt.Execute())
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ JoinParty: INSERT 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
-		Database->Execute(TEXT("ROLLBACK;"));
+		if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 		return false;
 	}
 
 	if (!Database->Execute(TEXT("COMMIT;")))
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ JoinParty: COMMIT 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
-		Database->Execute(TEXT("ROLLBACK;"));
+		if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 		return false;
 	}
 
@@ -3385,14 +3389,14 @@ bool UHellunaSQLiteSubsystem::LeaveParty(const FString& PlayerId)
 		if (!DeleteStmt.IsValid())
 		{
 			UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ LeaveParty: DELETE Prepare 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
-			Database->Execute(TEXT("ROLLBACK;"));
+			if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 			return false;
 		}
 		DeleteStmt.SetBindingValueByIndex(1, PlayerId);
 		if (!DeleteStmt.Execute())
 		{
 			UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ LeaveParty: DELETE 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
-			Database->Execute(TEXT("ROLLBACK;"));
+			if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 			return false;
 		}
 	}
@@ -3494,7 +3498,7 @@ bool UHellunaSQLiteSubsystem::LeaveParty(const FString& PlayerId)
 	if (!Database->Execute(TEXT("COMMIT;")))
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ LeaveParty: COMMIT 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
-		Database->Execute(TEXT("ROLLBACK;"));
+		if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 		return false;
 	}
 
@@ -3533,13 +3537,13 @@ bool UHellunaSQLiteSubsystem::DisbandParty(int32 PartyId)
 			TEXT("DELETE FROM party_members WHERE party_id = ?1;"));
 		if (!DeleteMembers.IsValid())
 		{
-			Database->Execute(TEXT("ROLLBACK;"));
+			if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 			return false;
 		}
 		DeleteMembers.SetBindingValueByIndex(1, PartyId);
 		if (!DeleteMembers.Execute())
 		{
-			Database->Execute(TEXT("ROLLBACK;"));
+			if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 			return false;
 		}
 	}
@@ -3550,13 +3554,13 @@ bool UHellunaSQLiteSubsystem::DisbandParty(int32 PartyId)
 			TEXT("DELETE FROM party_groups WHERE id = ?1;"));
 		if (!DeleteGroup.IsValid())
 		{
-			Database->Execute(TEXT("ROLLBACK;"));
+			if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 			return false;
 		}
 		DeleteGroup.SetBindingValueByIndex(1, PartyId);
 		if (!DeleteGroup.Execute())
 		{
-			Database->Execute(TEXT("ROLLBACK;"));
+			if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 			return false;
 		}
 	}
@@ -3564,7 +3568,7 @@ bool UHellunaSQLiteSubsystem::DisbandParty(int32 PartyId)
 	if (!Database->Execute(TEXT("COMMIT;")))
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ DisbandParty: COMMIT 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
-		Database->Execute(TEXT("ROLLBACK;"));
+		if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 		return false;
 	}
 
@@ -3816,7 +3820,7 @@ bool UHellunaSQLiteSubsystem::TransferLeadership(int32 PartyId, const FString& N
 			TEXT("UPDATE party_members SET role = ?1 WHERE party_id = ?2 AND role = ?3;"));
 		if (!DemoteStmt.IsValid())
 		{
-			Database->Execute(TEXT("ROLLBACK;"));
+			if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 			return false;
 		}
 		DemoteStmt.SetBindingValueByIndex(1, static_cast<int32>(EHellunaPartyRole::Member));
@@ -3824,7 +3828,7 @@ bool UHellunaSQLiteSubsystem::TransferLeadership(int32 PartyId, const FString& N
 		DemoteStmt.SetBindingValueByIndex(3, static_cast<int32>(EHellunaPartyRole::Leader));
 		if (!DemoteStmt.Execute())
 		{
-			Database->Execute(TEXT("ROLLBACK;"));
+			if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 			return false;
 		}
 	}
@@ -3835,7 +3839,7 @@ bool UHellunaSQLiteSubsystem::TransferLeadership(int32 PartyId, const FString& N
 			TEXT("UPDATE party_members SET role = ?1 WHERE player_id = ?2 AND party_id = ?3;"));
 		if (!PromoteStmt.IsValid())
 		{
-			Database->Execute(TEXT("ROLLBACK;"));
+			if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 			return false;
 		}
 		PromoteStmt.SetBindingValueByIndex(1, static_cast<int32>(EHellunaPartyRole::Leader));
@@ -3843,7 +3847,7 @@ bool UHellunaSQLiteSubsystem::TransferLeadership(int32 PartyId, const FString& N
 		PromoteStmt.SetBindingValueByIndex(3, PartyId);
 		if (!PromoteStmt.Execute())
 		{
-			Database->Execute(TEXT("ROLLBACK;"));
+			if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 			return false;
 		}
 	}
@@ -3854,14 +3858,14 @@ bool UHellunaSQLiteSubsystem::TransferLeadership(int32 PartyId, const FString& N
 			TEXT("UPDATE party_groups SET leader_id = ?1 WHERE id = ?2;"));
 		if (!UpdateGroup.IsValid())
 		{
-			Database->Execute(TEXT("ROLLBACK;"));
+			if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 			return false;
 		}
 		UpdateGroup.SetBindingValueByIndex(1, NewLeaderId);
 		UpdateGroup.SetBindingValueByIndex(2, PartyId);
 		if (!UpdateGroup.Execute())
 		{
-			Database->Execute(TEXT("ROLLBACK;"));
+			if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 			return false;
 		}
 	}
@@ -3869,7 +3873,7 @@ bool UHellunaSQLiteSubsystem::TransferLeadership(int32 PartyId, const FString& N
 	if (!Database->Execute(TEXT("COMMIT;")))
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ TransferLeadership: COMMIT 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
-		Database->Execute(TEXT("ROLLBACK;"));
+		if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 		return false;
 	}
 
@@ -3965,7 +3969,7 @@ int32 UHellunaSQLiteSubsystem::CleanupStaleParties(int32 HoursOld)
 			TEXT("SELECT id FROM party_groups WHERE created_at < datetime('now', ?1);"));
 		if (!Stmt.IsValid())
 		{
-			Database->Execute(TEXT("ROLLBACK;"));
+			if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 			return 0;
 		}
 		FString TimeOffset = FString::Printf(TEXT("-%d hours"), HoursOld);
@@ -4005,7 +4009,7 @@ int32 UHellunaSQLiteSubsystem::CleanupStaleParties(int32 HoursOld)
 	if (!Database->Execute(TEXT("COMMIT;")))
 	{
 		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ CleanupStaleParties: COMMIT 실패 — ROLLBACK | 에러: %s"), *Database->GetLastError());
-		Database->Execute(TEXT("ROLLBACK;"));
+		if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
 		return 0;
 	}
 

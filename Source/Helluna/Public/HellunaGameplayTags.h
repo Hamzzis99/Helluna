@@ -19,6 +19,7 @@ namespace HellunaGameplayTags
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Farming);
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Reload);
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Kick);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Interaction);
 
 	/** Player Ability tags **/
 
