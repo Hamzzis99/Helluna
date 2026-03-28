@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using UnrealBuildTool;
+using System.IO;
 
 public class Helluna : ModuleRules
 {
@@ -10,6 +11,11 @@ public class Helluna : ModuleRules
 
         // 모듈 루트 폴더를 include 경로에 추가 (Helluna.h 접근용)
         PublicIncludePaths.Add(ModuleDirectory);
+
+        // [PCG] UBT가 PCG 모듈 include 경로를 자동 해석하지 못하므로 명시적 추가
+        string EngineDir = Path.GetFullPath(Target.RelativeEnginePath);
+        string PCGPublic = Path.Combine(EngineDir, "Plugins", "PCG", "Source", "PCG", "Public");
+        PublicIncludePaths.Add(PCGPublic);
 
         PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput" , "StructUtils", 
             "GameplayAbilities", "GameplayTags","GameplayTasks", "AIModule", "NavigationSystem","AnimGraphRuntime", "MotionWarping",
