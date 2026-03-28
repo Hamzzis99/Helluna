@@ -34,10 +34,11 @@
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 #include "AI/SpaceShipAttackSlotManager.h"
 
+namespace {
 // ============================================================================
 // 헬퍼: 위치로 이동 명령
 // ============================================================================
-static void IssueMoveToLocation(AAIController* AIController, const FVector& Goal, float AcceptanceRadius)
+void IssueMoveToLocation(AAIController* AIController, const FVector& Goal, float AcceptanceRadius)
 {
 	if (!AIController) return;
 
@@ -55,7 +56,7 @@ static void IssueMoveToLocation(AAIController* AIController, const FVector& Goal
 // ============================================================================
 // 헬퍼: SpaceShipAttackSlotManager 가져오기
 // ============================================================================
-static USpaceShipAttackSlotManager* GetSlotManager(AActor* SpaceShip)
+USpaceShipAttackSlotManager* GetSlotManager(AActor* SpaceShip)
 {
 	if (!SpaceShip) return nullptr;
 	return SpaceShip->FindComponentByClass<USpaceShipAttackSlotManager>();
@@ -64,7 +65,7 @@ static USpaceShipAttackSlotManager* GetSlotManager(AActor* SpaceShip)
 // ============================================================================
 // 헬퍼: EQS 실행 후 결과 위치로 이동 (플레이어 전용)
 // ============================================================================
-static void RunAttackPositionEQS(
+void RunAttackPositionEQS(
 	UEnvQuery* Query,
 	AAIController* AIController,
 	float AcceptanceRadius,
@@ -102,6 +103,7 @@ static void RunAttackPositionEQS(
 				}
 			}));
 }
+} // anonymous namespace
 
 // ============================================================================
 // EnterState

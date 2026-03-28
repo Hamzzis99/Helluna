@@ -43,10 +43,11 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogChaseTarget, Log, All);
 
+namespace {
 // ============================================================================
 // 헬퍼: 우주선 방향 NavMesh 위 중간 경유점 계산
 // ============================================================================
-static FVector ComputeNavGoalTowardShip(
+FVector ComputeNavGoalTowardShip(
 	const FVector& PawnLoc,
 	const FVector& ShipLoc,
 	AAIController* AIC,
@@ -67,7 +68,7 @@ static FVector ComputeNavGoalTowardShip(
 // ============================================================================
 // 헬퍼: 위치로 이동 (MoveTo 실패 시 중간 경유점 폴백)
 // ============================================================================
-static void IssueMoveToLocation(AAIController* AIC, const FVector& Goal, float Radius)
+void IssueMoveToLocation(AAIController* AIC, const FVector& Goal, float Radius)
 {
 	if (!IsValid(AIC)) return;
 
@@ -98,7 +99,7 @@ static void IssueMoveToLocation(AAIController* AIC, const FVector& Goal, float R
 // ============================================================================
 // 헬퍼: 우주선 방향 이동 (NavMesh 경계 도달 시 pathfinding OFF)
 // ============================================================================
-static void IssueMoveTowardShip(
+void IssueMoveTowardShip(
 	AAIController* AIC,
 	APawn* Pawn,
 	AActor* Ship,
@@ -132,7 +133,7 @@ static void IssueMoveTowardShip(
 // ============================================================================
 // 헬퍼: 우회 오프셋 목표 계산 (좌/우 랜덤)
 // ============================================================================
-static FVector ComputeDetourGoal(
+FVector ComputeDetourGoal(
 	const FVector& PawnLoc,
 	const FVector& TargetLoc,
 	AAIController* AIC,
@@ -155,7 +156,7 @@ static FVector ComputeDetourGoal(
 // ============================================================================
 // 헬퍼: EQS 실행 후 결과 위치로 이동 (플레이어 전용)
 // ============================================================================
-static void RunPlayerAttackEQS(
+void RunPlayerAttackEQS(
 	UEnvQuery* Query,
 	AAIController* AIController,
 	float InAcceptanceRadius,
@@ -197,7 +198,7 @@ static void RunPlayerAttackEQS(
 // ============================================================================
 // 헬퍼: 공격 태그 확인
 // ============================================================================
-static bool IsAttacking(APawn* Pawn)
+bool IsAttacking(APawn* Pawn)
 {
 	if (IAbilitySystemInterface* ASI = Cast<IAbilitySystemInterface>(Pawn))
 	{
@@ -216,7 +217,7 @@ static bool IsAttacking(APawn* Pawn)
 // 헬퍼: 표면 거리 계산
 //   우주선처럼 크기가 큰 Actor는 중심점 거리가 아닌 메시 표면까지 최단 거리.
 // ============================================================================
-static float ComputeSurfaceDistance(const FVector& FromLoc, const AActor* ToActor)
+float ComputeSurfaceDistance(const FVector& FromLoc, const AActor* ToActor)
 {
 	if (!ToActor) return MAX_FLT;
 
@@ -259,7 +260,7 @@ static float ComputeSurfaceDistance(const FVector& FromLoc, const AActor* ToActo
 // ============================================================================
 // 헬퍼: SpaceShipAttackSlotManager 가져오기
 // ============================================================================
-static USpaceShipAttackSlotManager* GetSlotManager(AActor* SpaceShip)
+USpaceShipAttackSlotManager* GetSlotManager(AActor* SpaceShip)
 {
 	if (!SpaceShip) return nullptr;
 	return SpaceShip->FindComponentByClass<USpaceShipAttackSlotManager>();
@@ -268,7 +269,7 @@ static USpaceShipAttackSlotManager* GetSlotManager(AActor* SpaceShip)
 // ============================================================================
 // 헬퍼: 위치 변화량 기반 Stuck 감지
 // ============================================================================
-static bool CheckPositionBasedStuck(
+bool CheckPositionBasedStuck(
 	FSTTask_ChaseTarget_TestInstanceData& D,
 	const FVector& CurrentLoc,
 	float SurfaceDist,
@@ -296,6 +297,7 @@ static bool CheckPositionBasedStuck(
 
 	return bStuck;
 }
+} // anonymous namespace
 
 // ============================================================================
 // EnterState
