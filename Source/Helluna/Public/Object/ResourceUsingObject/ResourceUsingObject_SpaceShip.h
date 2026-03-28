@@ -77,6 +77,13 @@ public:
     void OnRepairCompleted();
 
 	// =========================================================
+	// ★ 공격 슬롯 매니저
+	// =========================================================
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat",
+		meta = (DisplayName = "Attack Slot Manager (공격 슬롯 매니저)"))
+	TObjectPtr<USpaceShipAttackSlotManager> AttackSlotManager;
+
+	// =========================================================
 	// ★ [Phase18] 3D 상호작용 프롬프트 위젯
 	// =========================================================
 protected:

@@ -28,6 +28,9 @@
 #include "Puzzle/PuzzleGridWidget.h"
 #include "EngineUtils.h" // TActorIterator
 #include "Components/PostProcessComponent.h"
+
+// [BossEvent] 보스 조우 시스템
+#include "BossEvent/BossEncounterCube.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
 
@@ -1188,4 +1191,60 @@ void AHellunaHeroController::FinishColorReveal()
 	bInHackMode = false;
 
 	UE_LOG(LogTemp, Warning, TEXT("[HackMode] ColorReveal finished — full color restored"));
+}
+
+// =========================================================================================
+// [BossEvent] Server_BossEncounterActivate
+// =========================================================================================
+
+bool AHellunaHeroController::Server_BossEncounterActivate_Validate()
+{
+	return true;
+}
+
+void AHellunaHeroController::Server_BossEncounterActivate_Implementation()
+{
+	APawn* MyPawn = GetPawn();
+	if (!IsValid(MyPawn))
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	// 서버 측 근처 BossEncounterCube 탐색 (보안 검증)
+	ABossEncounterCube* NearestCube = nullptr;
+	float NearestDist = FLT_MAX;
+
+	for (TActorIterator<ABossEncounterCube> It(World); It; ++It)
+	{
+		ABossEncounterCube* Cube = *It;
+		if (!IsValid(Cube))
+		{
+			continue;
+		}
+
+		const float Dist = FVector::Dist(MyPawn->GetActorLocation(), Cube->GetActorLocation());
+		if (Dist < Cube->GetInteractionRadius() && Dist < NearestDist)
+		{
+			NearestDist = Dist;
+			NearestCube = Cube;
+		}
+	}
+
+	if (!NearestCube)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[BossEvent] Server_BossEncounterActivate: 근처에 BossEncounterCube 없음"));
+		return;
+	}
+
+	if (NearestCube->TryActivate(this))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[BossEvent] BossEncounterCube activated by %s"), *GetName());
+		// TODO: Step 3+ — 보스 스폰 매니저 호출, 이벤트 시작
+	}
 }
