@@ -45,6 +45,7 @@
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
 
 #include "UI/Weapon/WeaponHUDWidget.h"
+#include "UI/HUD/HellunaHealthHUDWidget.h"
 #include "Blueprint/UserWidget.h"
 
 #include "InventoryManagement/Components/Inv_LootContainerComponent.h"
@@ -298,6 +299,12 @@ void AHellunaHeroCharacter::SetCurrentWeapon(AHellunaHeroWeapon* NewWeapon)
 	{
 		WeaponHUDWidget->UpdateWeapon(NewWeapon);
 	}
+
+	// [HealthHUD] 주무기 아이콘 갱신
+	if (IsLocallyControlled() && HealthHUDWidget)
+	{
+		HealthHUDWidget->UpdatePrimaryWeapon(NewWeapon);
+	}
 }
 
 // ============================================================================
@@ -315,6 +322,12 @@ void AHellunaHeroCharacter::OnRep_CurrentWeapon()
 	if (WeaponHUDWidget)
 	{
 		WeaponHUDWidget->UpdateWeapon(CurrentWeapon);
+	}
+
+	// [HealthHUD] 주무기 아이콘 갱신 (클라이언트 복제 수신)
+	if (HealthHUDWidget)
+	{
+		HealthHUDWidget->UpdatePrimaryWeapon(CurrentWeapon);
 	}
 }
 
@@ -345,6 +358,26 @@ void AHellunaHeroCharacter::InitWeaponHUD()
 		DayNightHUDWidget = CreateWidget<UUserWidget>(GetWorld(), DayNightHUDWidgetClass);
 		if (DayNightHUDWidget)
 			DayNightHUDWidget->AddToViewport(0);
+	}
+
+	// ── 체력 HUD (270도 Arc) 생성 ──
+	if (HealthHUDWidgetClass)
+	{
+		HealthHUDWidget = CreateWidget<UHellunaHealthHUDWidget>(GetWorld(), HealthHUDWidgetClass);
+		if (HealthHUDWidget)
+		{
+			HealthHUDWidget->AddToViewport(0);
+			// 초기 체력 반영
+			if (HeroHealthComponent)
+			{
+				HealthHUDWidget->UpdateHealth(HeroHealthComponent->GetHealthNormalized());
+			}
+			// 현재 무기 반영
+			if (CurrentWeapon)
+			{
+				HealthHUDWidget->UpdatePrimaryWeapon(CurrentWeapon);
+			}
+		}
 	}
 }
 
@@ -1200,6 +1233,12 @@ void AHellunaHeroCharacter::OnHeroHealthChanged(
 	float NewHealth,
 	AActor* InstigatorActor)
 {
+	// [HealthHUD] 클라이언트에서도 HUD 갱신 (HasAuthority 체크 전)
+	if (IsLocallyControlled() && HealthHUDWidget && HeroHealthComponent)
+	{
+		HealthHUDWidget->UpdateHealth(HeroHealthComponent->GetHealthNormalized());
+	}
+
 	if (!HasAuthority()) return;
 
 	const float Delta = OldHealth - NewHealth;

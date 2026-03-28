@@ -25,6 +25,7 @@ class UNiagaraComponent;
 class UMeleeTraceComponent;
 
 class UWeaponHUDWidget;
+class UHellunaHealthHUDWidget;
 
 class UInv_LootContainerComponent;
 
@@ -150,6 +151,17 @@ public:
 	/** 생성된 낮/밤 HUD 위젯 인스턴스 */
 	UPROPERTY()
 	TObjectPtr<UUserWidget> DayNightHUDWidget;
+
+	// ── 체력 HUD (270도 Arc) ──────────────────────────────────────
+
+	/** 체력 HUD 위젯 클래스 (에디터에서 WBP_HellunaHealthHUD 지정) */
+	UPROPERTY(EditDefaultsOnly, Category = "UI|Health",
+		meta = (DisplayName = "체력 HUD 위젯 클래스"))
+	TSubclassOf<UHellunaHealthHUDWidget> HealthHUDWidgetClass;
+
+	/** 생성된 체력 HUD 위젯 인스턴스 */
+	UPROPERTY()
+	TObjectPtr<UHellunaHealthHUDWidget> HealthHUDWidget;
 
 	/** 로컬 플레이어 전용 HUD 생성 및 뷰포트 추가 */
 	void InitWeaponHUD();
