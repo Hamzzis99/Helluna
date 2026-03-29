@@ -10,6 +10,7 @@
 class UInputMappingContext;
 class UInputAction;
 class UInv_BuildModeHUD;
+class UMaterialInterface;
 class UTexture2D;
 
 /**
@@ -287,6 +288,31 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|회전",
 		meta = (DisplayName = "스냅 회전 각도 (Snap Rotation Angle)", Tooltip = "G키 탭 시 오른쪽으로 회전하는 각도(도)입니다.", ClampMin = "15.0", ClampMax = "180.0", AllowPrivateAccess = "true"))
 	float SnapRotationAngle = 45.0f;
+
+	// === 기본 배치 스캔 VFX (Inv_BuildingActor가 아닌 건물용 폴백) ===
+
+	// Inv_BuildingActor를 상속하지 않는 건물(터렛 등)에 적용할 기본 스캔 머티리얼
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "건설|VFX",
+		meta = (DisplayName = "Default Scan Material (기본 스캔 머티리얼)", Tooltip = "Inv_BuildingActor가 아닌 건물에 사용할 기본 스캔 VFX 머티리얼입니다. M_ScanBand_Wireframe_V2를 할당하세요.", AllowPrivateAccess = "true"))
+	TObjectPtr<UMaterialInterface> DefaultPlacementScanMaterial;
+
+	// 기본 스캔 시간 (초)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|VFX",
+		meta = (DisplayName = "Default Scan Duration (기본 스캔 시간)", ClampMin = "0.3", ClampMax = "5.0", AllowPrivateAccess = "true"))
+	float DefaultScanDuration = 1.5f;
+
+	// 기본 스캔 밴드 비율
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|VFX",
+		meta = (DisplayName = "Default Scan Band Ratio (기본 밴드 비율)", ClampMin = "0.05", ClampMax = "0.5", AllowPrivateAccess = "true"))
+	float DefaultScanBandRatio = 0.2f;
+
+	// 기본 오버레이 스케일 오프셋
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|VFX",
+		meta = (DisplayName = "Default Overlay Scale (기본 오버레이 스케일)", ClampMin = "1.0", ClampMax = "1.1", AllowPrivateAccess = "true"))
+	float DefaultOverlayScaleOffset = 1.02f;
+
+	/** 아무 액터에 스캔 VFX를 적용하는 범용 헬퍼 (타이머 기반 애니메이션) */
+	void ApplyScanVFXToAnyActor(AActor* TargetActor);
 
 	// === 동적 입력 바인딩 관리 ===
 	

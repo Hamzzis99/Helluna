@@ -15,6 +15,9 @@
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
 #include "Widgets/Building/Inv_BuildModeHUD.h"
 #include "Building/Actor/Inv_BuildingActor.h"
+#include "Materials/MaterialInterface.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Components/StaticMeshComponent.h"
 
 
 // Sets default values for this component's properties
@@ -783,7 +786,13 @@ void UInv_BuildingComponent::Multicast_OnBuildingPlaced_Implementation(AActor* P
 	// 배치 스캔 VFX 시작 (모든 클라이언트에서 재생)
 	if (AInv_BuildingActor* BuildingActor = Cast<AInv_BuildingActor>(PlacedBuilding))
 	{
+		// Inv_BuildingActor 계열: 자체 PlacementScanMaterial 사용
 		BuildingActor->StartPlacementScanVFX();
+	}
+	else
+	{
+		// 비-BuildingActor (터렛 등): BuildingComponent의 기본 머티리얼로 폴백
+		ApplyScanVFXToAnyActor(PlacedBuilding);
 	}
 }
 
@@ -1098,5 +1107,119 @@ void UInv_BuildingComponent::OnSnapRotate()
 	{
 		GhostActorInstance->SetActorRotation(FRotator(0.f, CurrentBuildRotationYaw, 0.f));
 	}
+}
+
+// ============================================================================
+// 범용 스캔 VFX (비-BuildingActor 건물용, BossEncounterCube 패턴)
+// ============================================================================
+
+void UInv_BuildingComponent::ApplyScanVFXToAnyActor(AActor* TargetActor)
+{
+	if (!IsValid(TargetActor) || !DefaultPlacementScanMaterial)
+	{
+		return;
+	}
+
+	UStaticMeshComponent* OrigSMC = TargetActor->FindComponentByClass<UStaticMeshComponent>();
+	if (!OrigSMC || !OrigSMC->GetStaticMesh())
+	{
+#if INV_DEBUG_BUILD
+		UE_LOG(LogTemp, Log, TEXT("[BuildingScanVFX] No StaticMeshComponent on %s — skipping"), *TargetActor->GetName());
+#endif
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	// 바운딩 박스
+	FVector BoundsOrigin, BoundsExtent;
+	TargetActor->GetActorBounds(false, BoundsOrigin, BoundsExtent);
+	const float BottomZ = BoundsOrigin.Z - BoundsExtent.Z;
+	const float TopZ = BoundsOrigin.Z + BoundsExtent.Z;
+	const float MeshHeight = TopZ - BottomZ;
+	if (MeshHeight < 1.f) return;
+
+	// 오버레이 메시 생성
+	UStaticMeshComponent* OverlayMesh = NewObject<UStaticMeshComponent>(TargetActor);
+	if (!OverlayMesh) return;
+
+	OverlayMesh->SetStaticMesh(OrigSMC->GetStaticMesh());
+	OverlayMesh->SetWorldTransform(OrigSMC->GetComponentTransform());
+	OverlayMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	// DMI 생성
+	UMaterialInstanceDynamic* DMI = UMaterialInstanceDynamic::Create(DefaultPlacementScanMaterial, TargetActor);
+	if (!DMI)
+	{
+		OverlayMesh->DestroyComponent();
+		return;
+	}
+
+	DMI->SetScalarParameterValue(TEXT("ScanHeight"), BottomZ);
+	const float BandWidth = FMath::Max(MeshHeight * DefaultScanBandRatio, 10.f);
+	DMI->SetScalarParameterValue(TEXT("BandWidth"), BandWidth);
+
+	const int32 NumMats = OrigSMC->GetNumMaterials();
+	for (int32 i = 0; i < NumMats; ++i)
+	{
+		OverlayMesh->SetMaterial(i, DMI);
+	}
+
+	OverlayMesh->SetWorldScale3D(OrigSMC->GetComponentScale() * DefaultOverlayScaleOffset);
+	OverlayMesh->SetVisibility(true);
+	OverlayMesh->RegisterComponent();
+
+	if (TargetActor->GetRootComponent())
+	{
+		OverlayMesh->AttachToComponent(
+			TargetActor->GetRootComponent(),
+			FAttachmentTransformRules::KeepWorldTransform);
+	}
+
+	// 타이머 기반 애니메이션 (BossEncounterCube 패턴)
+	TWeakObjectPtr<UStaticMeshComponent> WeakOverlay(OverlayMesh);
+	TSharedPtr<float> Progress = MakeShared<float>(0.f);
+	const float CapturedDuration = DefaultScanDuration;
+	const float CapturedBottomZ = BottomZ;
+	const float CapturedTopZ = TopZ;
+	const float CapturedBandRatio = DefaultScanBandRatio;
+	const float TickInterval = 1.f / 30.f; // 30fps 애니메이션
+
+	FTimerHandle ScanTimerHandle;
+	World->GetTimerManager().SetTimer(ScanTimerHandle,
+		FTimerDelegate::CreateLambda([WeakOverlay, DMI, Progress, CapturedDuration, CapturedBottomZ, CapturedTopZ, CapturedBandRatio, TickInterval]()
+		{
+			if (!WeakOverlay.IsValid())
+			{
+				return; // 오버레이 무효화됨 — 타이머는 월드 종료 시 정리
+			}
+
+			*Progress += TickInterval / FMath::Max(CapturedDuration, 0.1f);
+
+			if (*Progress >= 1.0f)
+			{
+				// 스캔 완료 — 오버레이 제거 (다음 콜백에서 WeakOverlay 무효화로 자동 종료)
+				WeakOverlay->DestroyComponent();
+				return;
+			}
+
+			// ScanHeight Lerp: BottomZ → TopZ
+			if (DMI)
+			{
+				const float CurrentZ = FMath::Lerp(CapturedBottomZ, CapturedTopZ, *Progress);
+				DMI->SetScalarParameterValue(TEXT("ScanHeight"), CurrentZ);
+
+				const float Height = CapturedTopZ - CapturedBottomZ;
+				const float BW = FMath::Max(Height * CapturedBandRatio, 10.f);
+				DMI->SetScalarParameterValue(TEXT("BandWidth"), BW);
+			}
+		}),
+		TickInterval, true);
+
+#if INV_DEBUG_BUILD
+	UE_LOG(LogTemp, Warning, TEXT("[BuildingScanVFX] Fallback scan started: %s (Bottom=%.0f, Top=%.0f, Duration=%.1fs)"),
+		*TargetActor->GetName(), BottomZ, TopZ, CapturedDuration);
+#endif
 }
 
