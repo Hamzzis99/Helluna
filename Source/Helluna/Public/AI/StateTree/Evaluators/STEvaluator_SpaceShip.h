@@ -23,6 +23,9 @@ struct FSTEvaluator_SpaceShipInstanceData
 	/** 우주선 타겟 데이터 (Task에서 바인딩해서 읽음) */
 	UPROPERTY(EditAnywhere, Category = "Output")
 	FHellunaAITargetData SpaceShipData;
+
+	/** 우주선 소멸 시 재탐색 쿨다운 타이머 (매 프레임 순회 방지) */
+	float RespawnSearchTimer = 0.f;
 };
 
 USTRUCT(meta = (DisplayName = "Helluna: SpaceShip Target", Category = "Helluna|AI"))

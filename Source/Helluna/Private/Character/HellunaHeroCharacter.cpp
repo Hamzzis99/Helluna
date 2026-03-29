@@ -16,7 +16,6 @@
 #include "DataAsset/DataAsset_HeroStartUpData.h"
 #include "Conponent/HeroCombatComponent.h"
 #include "Kismet/GameplayStatics.h"
-#include "GameFramework/GameStateBase.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 #include "Component/RepairComponent.h"
 #include "Weapon/HellunaHeroWeapon.h"
@@ -30,6 +29,7 @@
 // ⭐ [Phase 4 개선] EndPlay 인벤토리 저장용
 #include "Player/HellunaPlayerState.h"
 #include "GameMode/HellunaDefenseGameMode.h"
+#include "GameMode/HellunaDefenseGameState.h"
 #include "Player/Inv_PlayerController.h"  // FInv_SavedItemData
 // ⭐ [Phase 6 Fix] 맵 이동 중 저장 스킵용
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
@@ -45,6 +45,7 @@
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
 
 #include "UI/Weapon/WeaponHUDWidget.h"
+#include "UI/HUD/HellunaHealthHUDWidget.h"
 #include "Blueprint/UserWidget.h"
 
 #include "InventoryManagement/Components/Inv_LootContainerComponent.h"
@@ -141,11 +142,8 @@ AHellunaHeroCharacter::AHellunaHeroCharacter()
 	KickPromptWidgetComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
 	// [OTS Camera] 생성자 디버그 로그
-	UE_LOG(LogTemp, Warning, TEXT("[OTS Camera] Constructor — ArmLength=%.1f, SocketOffset=%s, bOrientToMovement=%s, bUseControllerDesiredRotation=%s"),
-		CameraBoom->TargetArmLength,
-		*CameraBoom->SocketOffset.ToString(),
-		GetCharacterMovement()->bOrientRotationToMovement ? TEXT("true") : TEXT("false"),
-		GetCharacterMovement()->bUseControllerDesiredRotation ? TEXT("true") : TEXT("false"));
+	UE_LOG(LogTemp, Verbose, TEXT("[OTS Camera] Constructor — ArmLength=%.1f, SocketOffset=%s"),
+		CameraBoom->TargetArmLength, *CameraBoom->SocketOffset.ToString());
 }
 
 void AHellunaHeroCharacter::BeginPlay()
@@ -192,8 +190,8 @@ void AHellunaHeroCharacter::BeginPlay()
 		DefaultTargetArmLength = CameraBoom->TargetArmLength;
 		DefaultSocketOffset = CameraBoom->SocketOffset;
 	}
-	UE_LOG(LogTemp, Warning, TEXT("[OTS Camera] BeginPlay — DefaultFOV=%.1f, DefaultArmLength=%.1f, DefaultSocketOffset=%s"),
-		DefaultFOV, DefaultTargetArmLength, *DefaultSocketOffset.ToString());
+	UE_LOG(LogTemp, Verbose, TEXT("[OTS Camera] BeginPlay — DefaultFOV=%.1f, DefaultArmLength=%.1f"),
+		DefaultFOV, DefaultTargetArmLength);
 
 	// [Phase18] 킥 프롬프트 3D 위젯 초기화 (클라이언트만)
 	if (GetNetMode() != NM_DedicatedServer && KickPromptWidgetComp && KickPromptWidgetClass)
@@ -294,22 +292,15 @@ void AHellunaHeroCharacter::SetCurrentWeapon(AHellunaHeroWeapon* NewWeapon)
 {
 	CurrentWeapon = NewWeapon;
 
-	UE_LOG(LogTemp, Warning, TEXT("[WeaponHUD] SetCurrentWeapon | Weapon=%s | IsLocal=%d | Widget=%s"),
-		NewWeapon ? *NewWeapon->GetName() : TEXT("NULL"),
-		IsLocallyControlled(),
-		WeaponHUDWidget ? TEXT("EXISTS") : TEXT("NULL"));
-
-	if (IsLocallyControlled())
+	if (IsLocallyControlled() && WeaponHUDWidget)
 	{
-		if (!WeaponHUDWidget)
-		{
-			InitWeaponHUD();
-		}
+		WeaponHUDWidget->UpdateWeapon(NewWeapon);
+	}
 
-		if (WeaponHUDWidget)
-		{
-			WeaponHUDWidget->UpdateWeapon(NewWeapon);
-		}
+	// [HealthHUD] 주무기 아이콘 갱신
+	if (IsLocallyControlled() && HealthHUDWidget)
+	{
+		HealthHUDWidget->UpdatePrimaryWeapon(NewWeapon);
 	}
 }
 
@@ -318,85 +309,73 @@ void AHellunaHeroCharacter::SetCurrentWeapon(AHellunaHeroWeapon* NewWeapon)
 // ============================================================================
 void AHellunaHeroCharacter::OnRep_CurrentWeapon()
 {
-	UE_LOG(LogTemp, Warning, TEXT("[WeaponHUD] OnRep_CurrentWeapon | Weapon=%s | IsLocal=%d | Widget=%s"),
-		CurrentWeapon ? *CurrentWeapon->GetName() : TEXT("NULL"),
-		IsLocallyControlled(),
-		WeaponHUDWidget ? TEXT("EXISTS") : TEXT("NULL"));
-
 	if (!IsLocallyControlled()) return;
 
+	// 클라이언트에서도 SavedMag 기준으로 탄약을 즉시 복원한다.
+	// (서버의 OnRep 복제가 BeginPlay의 MaxMag 초기화보다 늦게 올 수 있어서
+	//  클라이언트 자체적으로 저장된 값을 반영해 딜레이를 없앤다.)
 	ApplySavedCurrentMagByClass(CurrentWeapon);
-
-	if (!WeaponHUDWidget)
-	{
-		InitWeaponHUD();
-	}
 
 	if (WeaponHUDWidget)
 	{
 		WeaponHUDWidget->UpdateWeapon(CurrentWeapon);
 	}
+
+	// [HealthHUD] 주무기 아이콘 갱신 (클라이언트 복제 수신)
+	if (HealthHUDWidget)
+	{
+		HealthHUDWidget->UpdatePrimaryWeapon(CurrentWeapon);
+	}
 }
 
 // ============================================================================
-// InitWeaponHUD - 로컬 플레이어 전용 HUD 생성
+// InitWeaponHUD - 로컬 플레이어 전용 HUD 생성 (DefenseGameState일 때만)
 // ============================================================================
 void AHellunaHeroCharacter::InitWeaponHUD()
 {
-	UE_LOG(LogTemp, Warning, TEXT("[WeaponHUD] InitWeaponHUD 호출 | IsLocal=%d | WidgetClass=%s | Widget=%s | GameState=%s"),
-		IsLocallyControlled(),
-		WeaponHUDWidgetClass ? *WeaponHUDWidgetClass->GetName() : TEXT("NULL"),
-		WeaponHUDWidget ? TEXT("EXISTS") : TEXT("NULL"),
-		UGameplayStatics::GetGameState(GetWorld()) ? *UGameplayStatics::GetGameState(GetWorld())->GetClass()->GetName() : TEXT("NULL"));
-
 	if (!IsLocallyControlled()) return;
 
-	// GameState가 아직 복제되지 않았으면 0.5초 후 재시도
-	if (!UGameplayStatics::GetGameState(GetWorld()))
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[WeaponHUD] GameState 없음 — 0.5초 후 재시도"));
-		if (UWorld* W = GetWorld())
-		{
-			W->GetTimerManager().SetTimer(InitWeaponHUDRetryTimer, this,
-				&AHellunaHeroCharacter::InitWeaponHUD, 0.5f, false);
-		}
-		return;
-	}
+	// GameState로 판단 (GameMode는 클라이언트에서 nullptr이므로 GameState 사용)
+	if (!Cast<AHellunaDefenseGameState>(UGameplayStatics::GetGameState(GetWorld()))) return;
 
-	// 이미 생성됐으면 스킵 (재시도 시 중복 방지)
-	if (WeaponHUDWidget)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[WeaponHUD] 이미 생성됨 — 스킵"));
-		return;
-	}
-
-	if (WeaponHUDWidgetClass)
-	{
-		WeaponHUDWidget = CreateWidget<UWeaponHUDWidget>(GetWorld(), WeaponHUDWidgetClass);
-		if (WeaponHUDWidget)
-		{
-			WeaponHUDWidget->AddToViewport(0);
-			UE_LOG(LogTemp, Warning, TEXT("[WeaponHUD] 위젯 생성 + AddToViewport 완료 | CurrentWeapon=%s"),
-				CurrentWeapon ? *CurrentWeapon->GetName() : TEXT("NULL"));
-			if (CurrentWeapon)
-				WeaponHUDWidget->UpdateWeapon(CurrentWeapon);
-		}
-		else
-		{
-			UE_LOG(LogTemp, Error, TEXT("[WeaponHUD] CreateWidget 실패!"));
-		}
-	}
-	else
-	{
-		UE_LOG(LogTemp, Error, TEXT("[WeaponHUD] WeaponHUDWidgetClass가 NULL — BP에서 설정 필요"));
-	}
+	// [HealthHUD] 기존 WeaponHUD 임시 비활성화 — 새 HealthHUD로 통합
+	// if (WeaponHUDWidgetClass)
+	// {
+	// 	WeaponHUDWidget = CreateWidget<UWeaponHUDWidget>(GetWorld(), WeaponHUDWidgetClass);
+	// 	if (WeaponHUDWidget)
+	// 	{
+	// 		WeaponHUDWidget->AddToViewport(0);
+	// 		if (CurrentWeapon)
+	// 			WeaponHUDWidget->UpdateWeapon(CurrentWeapon);
+	// 	}
+	// }
 
 	// 낮/밤 HUD 생성
-	if (!DayNightHUDWidget && DayNightHUDWidgetClass)
+	if (DayNightHUDWidgetClass)
 	{
 		DayNightHUDWidget = CreateWidget<UUserWidget>(GetWorld(), DayNightHUDWidgetClass);
 		if (DayNightHUDWidget)
 			DayNightHUDWidget->AddToViewport(0);
+	}
+
+	// ── 체력 HUD (270도 Arc) 생성 ──
+	if (HealthHUDWidgetClass)
+	{
+		HealthHUDWidget = CreateWidget<UHellunaHealthHUDWidget>(GetWorld(), HealthHUDWidgetClass);
+		if (HealthHUDWidget)
+		{
+			HealthHUDWidget->AddToViewport(0);
+			// 초기 체력 반영
+			if (HeroHealthComponent)
+			{
+				HealthHUDWidget->UpdateHealth(HeroHealthComponent->GetHealthNormalized());
+			}
+			// 현재 무기 반영
+			if (CurrentWeapon)
+			{
+				HealthHUDWidget->UpdatePrimaryWeapon(CurrentWeapon);
+			}
+		}
 	}
 }
 
@@ -975,7 +954,6 @@ void AHellunaHeroCharacter::Server_RequestSpawnWeapon_Implementation(
 
 		// 서버에서 현재 태그 갱신 → 클라에서 OnRep_CurrentWeaponTag()로 반영
 		CurrentWeaponTag = NewTag;
-
 	}
 
 
@@ -1036,7 +1014,6 @@ void AHellunaHeroCharacter::OnRep_CurrentWeaponTag()
 
 	// 다음 OnRep에서 이전값을 알 수 있도록 캐시 갱신
 	LastAppliedWeaponTag = CurrentWeaponTag;
-
 }
 
 void AHellunaHeroCharacter::Multicast_PlayEquipMontageExceptOwner_Implementation(UAnimMontage* Montage)
@@ -1254,6 +1231,12 @@ void AHellunaHeroCharacter::OnHeroHealthChanged(
 	float NewHealth,
 	AActor* InstigatorActor)
 {
+	// [HealthHUD] 클라이언트에서도 HUD 갱신 (HasAuthority 체크 전)
+	if (IsLocallyControlled() && HealthHUDWidget && HeroHealthComponent)
+	{
+		HealthHUDWidget->UpdateHealth(HeroHealthComponent->GetHealthNormalized());
+	}
+
 	if (!HasAuthority()) return;
 
 	const float Delta = OldHealth - NewHealth;
@@ -2522,7 +2505,7 @@ void AHellunaHeroCharacter::UpdateKickPrompt(float DeltaTime)
 		if (ClosestEnemy)
 		{
 			bool bIsStaggered = UHellunaFunctionLibrary::NativeDoesActorHaveTag(ClosestEnemy, HellunaGameplayTags::Enemy_State_Staggered);
-			UE_LOG(LogHelluna, Warning, TEXT("[Phase18] KickPrompt: Closest=%s Dist=%.0f Staggered=%s | Best=%s Visible=%s"),
+			UE_LOG(LogHelluna, Verbose, TEXT("[Phase18] KickPrompt: Closest=%s Dist=%.0f Staggered=%s | Best=%s Visible=%s"),
 				*ClosestEnemy->GetName(), ClosestDist,
 				bIsStaggered ? TEXT("Y") : TEXT("N"),
 				BestEnemy ? *BestEnemy->GetName() : TEXT("None"),

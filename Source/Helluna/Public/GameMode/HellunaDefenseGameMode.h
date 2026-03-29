@@ -116,8 +116,7 @@ protected:
 		meta = (DisplayName = "PCG 액터 태그"))
 	FName NightPCGTag = TEXT("NightPCG");
 
-	/** BeginPlay에서 태그 기반으로 캐싱한 PCG 컴포넌트 목록 */
-	UPROPERTY()
+	/** BeginPlay에서 태그 기반으로 캐싱한 PCG 컴포넌트 목록 (TWeakObjectPtr — UPROPERTY 불필요) */
 	TArray<TWeakObjectPtr<UPCGComponent>> CachedNightPCGComponents;
 
 	/** 태그 기반 PCG 컴포넌트 캐싱 */

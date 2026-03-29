@@ -95,7 +95,7 @@ void AHellunaEnemyCharacter::PossessedBy(AController* NewController)
 {
 	Super::PossessedBy(NewController);
 
-	UE_LOG(LogTemp, Warning, TEXT("[PossessedBy] %s → Controller: %s"),
+	UE_LOG(LogTemp, Verbose, TEXT("[PossessedBy] %s → Controller: %s"),
 		*GetName(), NewController ? *NewController->GetName() : TEXT("null"));
 
 	// Pawn 자체에 StateTreeComponent가 붙어있는 경우:
@@ -103,7 +103,7 @@ void AHellunaEnemyCharacter::PossessedBy(AController* NewController)
 	if (UStateTreeComponent* STComp = FindComponentByClass<UStateTreeComponent>())
 	{
 		STComp->SetComponentTickEnabled(true);
-		UE_LOG(LogTemp, Warning, TEXT("[PossessedBy] Pawn의 StateTree 틱 재활성화"));
+		UE_LOG(LogTemp, Verbose, TEXT("[PossessedBy] Pawn의 StateTree 틱 재활성화"));
 	}
 
 	// AIController에 StateTreeComponent가 붙어있는 경우 (보스 포함 일반적인 구조):
@@ -112,8 +112,8 @@ void AHellunaEnemyCharacter::PossessedBy(AController* NewController)
 	if (AIC)
 	{
 		UStateTreeComponent* STComp = AIC->FindComponentByClass<UStateTreeComponent>();
-		UE_LOG(LogTemp, Warning, TEXT("[PossessedBy] AIController StateTree: %s"),
-			STComp ? TEXT("✅ 있음") : TEXT("❌ 없음"));
+		UE_LOG(LogTemp, Verbose, TEXT("[PossessedBy] AIController StateTree: %s"),
+			STComp ? TEXT("found") : TEXT("not found"));
 
 		if (STComp)
 		{
@@ -128,7 +128,7 @@ void AHellunaEnemyCharacter::PossessedBy(AController* NewController)
 				{
 					STCompPtr->StopLogic(TEXT("Restart after possess"));
 					STCompPtr->StartLogic();
-					UE_LOG(LogTemp, Warning, TEXT("[PossessedBy] NextTick StateTree Stop→Start 완료 — %s"), *SelfPtr->GetName());
+					UE_LOG(LogTemp, Verbose, TEXT("[PossessedBy] NextTick StateTree Stop→Start — %s"), *SelfPtr->GetName());
 				}
 			});
 		}
@@ -467,7 +467,7 @@ void AHellunaEnemyCharacter::OnMonsterDeath(AActor* DeadActor, AActor* KillerAct
 {
 	if (!HasAuthority()) return;
 
-	UE_LOG(LogTemp, Warning, TEXT("[OnMonsterDeath] %s 사망 처리 시작"), *GetName());
+	UE_LOG(LogTemp, Verbose, TEXT("[OnMonsterDeath] %s 사망 처리 시작"), *GetName());
 
 	AAIController* AIC = Cast<AAIController>(GetController());
 	if (!AIC)
@@ -505,9 +505,9 @@ void AHellunaEnemyCharacter::OnMonsterDeath(AActor* DeadActor, AActor* KillerAct
 		MoveComp->StopMovementImmediately();
 		MoveComp->DisableMovement();
 	}
-	UE_LOG(LogTemp, Warning, TEXT("[OnMonsterDeath] %s 캡슐+메시 충돌 OFF + 이동 비활성화"), *GetName());
+	UE_LOG(LogTemp, Verbose, TEXT("[OnMonsterDeath] %s collision OFF + movement disabled"), *GetName());
 
-	UE_LOG(LogTemp, Warning, TEXT("[OnMonsterDeath] ✅ Death 이벤트 전송 — %s"), *GetName());
+	UE_LOG(LogTemp, Verbose, TEXT("[OnMonsterDeath] Death event sent — %s"), *GetName());
 	STComp->SendStateTreeEvent(DeathTag);
 }
 
@@ -643,7 +643,7 @@ void AHellunaEnemyCharacter::PerformAttackTrace()
 	const FVector SocketLocation = GetMesh()->GetSocketLocation(CurrentTraceSocketName);
 	if (SocketLocation.IsNearlyZero())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[AttackTrace] %s: Socket '%s' not found"),
+		UE_LOG(LogTemp, Verbose, TEXT("[AttackTrace] %s: Socket '%s' not found"),
 			*GetName(), *CurrentTraceSocketName.ToString());
 		return;
 	}

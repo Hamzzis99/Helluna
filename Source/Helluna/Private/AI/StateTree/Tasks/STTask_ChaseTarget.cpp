@@ -125,7 +125,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget::EnterState(
 	const FHellunaAITargetData& TargetData = InstanceData.TargetData;
 	if (!TargetData.HasValidTarget())
 	{
-		UE_LOG(LogTemp, Error, TEXT("[ChaseTarget] ❌ EnterState: TargetData.TargetActor가 nullptr! 바인딩 확인 필요"));
+		UE_LOG(LogTemp, Verbose, TEXT("[ChaseTarget] EnterState: TargetData.TargetActor가 nullptr — 타겟 없음"));
 		InstanceData.LastMoveTarget      = nullptr;
 		InstanceData.TimeSinceRepath     = 0.f;
 		InstanceData.TimeUntilNextEQS    = 0.f;
@@ -137,7 +137,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget::EnterState(
 	AActor* TargetActor = TargetData.TargetActor.Get();
 	const bool bIsSpaceShip = (Cast<AResourceUsingObject_SpaceShip>(TargetActor) != nullptr);
 
-	UE_LOG(LogTemp, Warning, TEXT("[ChaseTarget] ✅ EnterState: Target=%s | bIsSpaceShip=%d | Dist=%.1f | bUseSlotSystem=%d"),
+	UE_LOG(LogTemp, Verbose, TEXT("[ChaseTarget] EnterState: Target=%s | bIsSpaceShip=%d | Dist=%.1f | bUseSlotSystem=%d"),
 		*GetNameSafe(TargetActor), (int)bIsSpaceShip, TargetData.DistanceToTarget, (int)bUseSlotSystem);
 
 	InstanceData.TimeSinceRepath    = 0.f;
@@ -170,7 +170,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget::EnterState(
 				if (NavSys && NavSys->ProjectPointToNavigation(RawGoal, NavGoal, FVector(200.f, 200.f, 500.f)))
 					FinalGoal = NavGoal.Location;
 
-				UE_LOG(LogTemp, Warning, TEXT("[ChaseTarget] EnterState 원거리 이동: 목표=%s | Dist=%.1f"), *FinalGoal.ToString(), DistToShip);
+				UE_LOG(LogTemp, Verbose, TEXT("[ChaseTarget] EnterState 원거리 이동: 목표=%s | Dist=%.1f"), *FinalGoal.ToString(), DistToShip);
 				IssueMoveToLocation(AIController, FinalGoal, AcceptanceRadius);
 			}
 			// 슬롯 진입 범위 안: 슬롯 배정 시도
@@ -214,12 +214,12 @@ EStateTreeRunStatus FSTTask_ChaseTarget::EnterState(
 	// ── 공통 디버그: MoveToActor/SlotMove 결과 및 NavMesh/PFC 상태 ──────
 	if (UPathFollowingComponent* PFC = AIController->GetPathFollowingComponent())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[ChaseTarget] EnterState 후 PFC 상태=%d (0=Idle,1=Waiting,2=Moving,3=Paused)"),
+		UE_LOG(LogTemp, Verbose, TEXT("[ChaseTarget] EnterState 후 PFC 상태=%d (0=Idle,1=Waiting,2=Moving,3=Paused)"),
 			(int)PFC->GetStatus());
 	}
 	else
 	{
-		UE_LOG(LogTemp, Error, TEXT("[ChaseTarget] ❌ PathFollowingComponent 없음! AIController 설정 확인 필요"));
+		UE_LOG(LogTemp, Verbose, TEXT("[ChaseTarget] PathFollowingComponent 없음"));
 	}
 
 	if (APawn* Pawn = AIController->GetPawn())
@@ -228,12 +228,12 @@ EStateTreeRunStatus FSTTask_ChaseTarget::EnterState(
 		{
 			FNavLocation NavLoc;
 			const bool bOnNav = NavSys->ProjectPointToNavigation(Pawn->GetActorLocation(), NavLoc, INVALID_NAVEXTENT, nullptr);
-			UE_LOG(LogTemp, Warning, TEXT("[ChaseTarget] Pawn 위치=%s | NavMesh 위=%d | NavProj=%s"),
+			UE_LOG(LogTemp, Verbose, TEXT("[ChaseTarget] Pawn 위치=%s | NavMesh 위=%d | NavProj=%s"),
 				*Pawn->GetActorLocation().ToString(), (int)bOnNav, *NavLoc.Location.ToString());
 		}
 		else
 		{
-			UE_LOG(LogTemp, Error, TEXT("[ChaseTarget] ❌ NavigationSystem 없음!"));
+			UE_LOG(LogTemp, Verbose, TEXT("[ChaseTarget] NavigationSystem 없음"));
 		}
 	}
 
@@ -279,7 +279,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget::Tick(
 
 	const bool bIsSpaceShip = (Cast<AResourceUsingObject_SpaceShip>(TargetActor) != nullptr);
 
-	// ── 2초마다 Tick 상태 덤프 ──────────────────────────────────────────
+	// ── 2초마다 Tick 상태 덤프 (Verbose — Warning 스팸 방지) ────────────
 	static float sDbgTimer = 0.f;
 	sDbgTimer += DeltaTime;
 	if (sDbgTimer >= 2.f)
@@ -287,7 +287,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget::Tick(
 		sDbgTimer = 0.f;
 		if (UPathFollowingComponent* PFC = AIController->GetPathFollowingComponent())
 		{
-			UE_LOG(LogTemp, Warning,
+			UE_LOG(LogTemp, Verbose,
 				TEXT("[ChaseTarget][Tick] bIsSpaceShip=%d | PFC=%d(0=Idle,2=Moving) | Velocity=%.1f | Dist=%.1f | SlotIdx=%d | SlotArrived=%d"),
 				(int)bIsSpaceShip,
 				(int)PFC->GetStatus(),
@@ -358,7 +358,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget::Tick(
 					if (NavSys && NavSys->ProjectPointToNavigation(RawGoal, NavGoal, FVector(200.f, 200.f, 500.f)))
 						FinalGoal = NavGoal.Location;
 
-					UE_LOG(LogTemp, Warning, TEXT("[ChaseTarget][Tick] 우주선 방향 이동: 목표=%s | Dist=%.1f | bRepathDue=%d | bIdle=%d"),
+					UE_LOG(LogTemp, Verbose, TEXT("[ChaseTarget][Tick] 우주선 방향 이동: 목표=%s | Dist=%.1f | bRepathDue=%d | bIdle=%d"),
 						*FinalGoal.ToString(), DistToShip, (int)bRepathDue, (int)bIdle);
 
 					IssueMoveToLocation(AIController, FinalGoal, AcceptanceRadius);
@@ -448,7 +448,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget::Tick(
 			// 슬롯 반납 후 재배정
 			if (SlotMgr)
 			{
-				UE_LOG(LogTemp, Warning, TEXT("[ChaseTarget] 슬롯 재배정 (이유: %s), 이전 슬롯=%d"),
+				UE_LOG(LogTemp, Verbose, TEXT("[ChaseTarget] 슬롯 재배정 (이유: %s), 이전 슬롯=%d"),
 					bStuck ? TEXT("Stuck") : TEXT("Idle"), InstanceData.AssignedSlotIndex);
 
 				SlotMgr->ReleaseSlotByIndex(InstanceData.AssignedSlotIndex);
