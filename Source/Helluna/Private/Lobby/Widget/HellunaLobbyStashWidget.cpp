@@ -323,30 +323,30 @@ void UHellunaLobbyStashWidget::ConfigureSearchSpinnerVisuals()
 		Overlay_SearchSpinner->SetRenderOpacity(1.0f);
 	}
 
-	// [Refactor] 텍스처/사이즈/색상은 WBP Designer에서 관리
-	// C++에서는 회전에 필요한 피벗만 설정
-	auto SetPivotIfValid = [](UImage* Img)
+	// 피벗 + Visibility만 설정 — 텍스처/사이즈/색상은 WBP Designer에서 관리
+	auto InitRing = [](UImage* Img)
 	{
 		if (IsValid(Img))
 		{
 			Img->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+			Img->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 		}
 	};
 
-	SetPivotIfValid(Image_SearchRingBackdrop);
-	SetPivotIfValid(Image_SearchRingOuter);
-	SetPivotIfValid(Image_SearchRingInner);
+	InitRing(Image_SearchRingBackdrop);
+	InitRing(Image_SearchRingOuter);
+	InitRing(Image_SearchRingInner);
 
 	SearchRingOuterAngle = 0.0f;
 	SearchRingInnerAngle = 0.0f;
 
 	if (Image_SearchRingOuter)
 	{
-		Image_SearchRingOuter->SetRenderTransformAngle(SearchRingOuterAngle);
+		Image_SearchRingOuter->SetRenderTransformAngle(0.0f);
 	}
 	if (Image_SearchRingInner)
 	{
-		Image_SearchRingInner->SetRenderTransformAngle(SearchRingInnerAngle);
+		Image_SearchRingInner->SetRenderTransformAngle(0.0f);
 	}
 }
 

@@ -11,7 +11,6 @@ class UInputMappingContext;
 class UInputAction;
 class UInv_BuildModeHUD;
 class UMaterialInterface;
-class UNiagaraSystem;
 class UTexture2D;
 
 /**
@@ -311,23 +310,6 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|VFX",
 		meta = (DisplayName = "Default Overlay Scale (기본 오버레이 스케일)", ClampMin = "1.0", ClampMax = "1.1", AllowPrivateAccess = "true"))
 	float DefaultOverlayScaleOffset = 1.02f;
-
-	// === 배치 나이아가라 VFX (BossEncounterCube NS_cosmic_Holo 패턴) ===
-
-	// 건물 배치 시 스폰할 홀로그램 나이아가라 시스템 (NS_cosmic_Holo 할당)
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "건설|VFX",
-		meta = (DisplayName = "Placement Holo VFX (배치 홀로그램)", Tooltip = "건물 배치 시 스폰되는 홀로그램 나이아가라 시스템. NS_cosmic_Holo를 할당하세요.", AllowPrivateAccess = "true"))
-	TObjectPtr<UNiagaraSystem> DefaultPlacementHoloVFX;
-
-	// 홀로그램 VFX 지속 시간 (초)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|VFX",
-		meta = (DisplayName = "Holo VFX Lifetime (홀로 VFX 수명)", ClampMin = "0.5", ClampMax = "5.0", AllowPrivateAccess = "true"))
-	float DefaultHoloVFXLifetime = 2.0f;
-
-	// 홀로그램 VFX 스케일 배율 (바운딩 박스 기반 계산 후 추가 곱)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|VFX",
-		meta = (DisplayName = "Holo VFX Scale (홀로 VFX 스케일)", ClampMin = "0.1", ClampMax = "3.0", AllowPrivateAccess = "true"))
-	float DefaultHoloVFXScale = 0.5f;
 
 	/** 아무 액터에 스캔 VFX를 적용하는 범용 헬퍼 (타이머 기반 애니메이션) */
 	void ApplyScanVFXToAnyActor(AActor* TargetActor);

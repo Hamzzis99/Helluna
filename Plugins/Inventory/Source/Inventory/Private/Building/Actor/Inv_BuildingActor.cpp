@@ -3,6 +3,7 @@
 #include "Building/Actor/Inv_BuildingActor.h"
 #include "Inventory.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/MeshComponent.h"
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialInstanceDynamic.h"
 
@@ -78,22 +79,25 @@ void AInv_BuildingActor::StartPlacementScanVFX()
 		return;
 	}
 
-	// 건물 메시가 없으면 스킵
-	if (!IsValid(BuildingMesh) || !BuildingMesh->GetStaticMesh())
-	{
-#if INV_DEBUG_BUILD
-		UE_LOG(LogTemp, Warning, TEXT("[BuildingScanVFX] BuildingMesh or StaticMesh is invalid — skipping"));
-#endif
-		return;
-	}
-
 	// 이미 스캔 중이면 무시
 	if (bScanActive)
 	{
 		return;
 	}
 
-	// 바운딩 박스에서 바닥/꼭대기 Z 계산
+	// 모든 MeshComponent 수집 (StaticMesh + DynamicMesh + SkeletalMesh)
+	TArray<UMeshComponent*> AllMeshes;
+	GetComponents<UMeshComponent>(AllMeshes);
+
+	if (AllMeshes.Num() == 0)
+	{
+#if INV_DEBUG_BUILD
+		UE_LOG(LogTemp, Warning, TEXT("[BuildingScanVFX] No MeshComponent found on %s — skipping"), *GetName());
+#endif
+		return;
+	}
+
+	// 액터 전체 바운딩 박스에서 바닥/꼭대기 Z 계산
 	FVector BoundsOrigin, BoundsExtent;
 	GetActorBounds(false, BoundsOrigin, BoundsExtent);
 	ScanBottomZ = BoundsOrigin.Z - BoundsExtent.Z;
@@ -106,48 +110,28 @@ void AInv_BuildingActor::StartPlacementScanVFX()
 		return;
 	}
 
-	// 오버레이 메시 컴포넌트 생성 (BuildingMesh와 동일한 스태틱메시 사용)
-	ScanOverlayMesh = NewObject<UStaticMeshComponent>(this);
-	if (!ScanOverlayMesh)
-	{
-		return;
-	}
-
-	ScanOverlayMesh->SetStaticMesh(BuildingMesh->GetStaticMesh());
-	ScanOverlayMesh->SetWorldTransform(BuildingMesh->GetComponentTransform());
-	ScanOverlayMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-
-	// DMI 생성 및 초기 파라미터 설정
-	ScanDMI = UMaterialInstanceDynamic::Create(PlacementScanMaterial, this);
-	if (!ScanDMI)
-	{
-		ScanOverlayMesh = nullptr;
-		return;
-	}
-
-	ScanDMI->SetScalarParameterValue(TEXT("ScanHeight"), ScanBottomZ);
 	const float BandWidth = FMath::Max(MeshHeight * ScanBandRatio, 10.f);
-	ScanDMI->SetScalarParameterValue(TEXT("BandWidth"), BandWidth);
 
-	// 모든 머티리얼 슬롯을 스캔 DMI로 교체
-	const int32 NumMats = BuildingMesh->GetNumMaterials();
-	for (int32 i = 0; i < NumMats; ++i)
+	// 각 MeshComponent에 SetOverlayMaterial 적용 (메시 복제 없이 오버레이)
+	for (UMeshComponent* MeshComp : AllMeshes)
 	{
-		ScanOverlayMesh->SetMaterial(i, ScanDMI);
+		if (!MeshComp || !MeshComp->IsVisible()) continue;
+
+		UMaterialInstanceDynamic* DMI = UMaterialInstanceDynamic::Create(PlacementScanMaterial, this);
+		if (!DMI) continue;
+
+		DMI->SetScalarParameterValue(TEXT("ScanHeight"), ScanBottomZ);
+		DMI->SetScalarParameterValue(TEXT("BandWidth"), BandWidth);
+
+		MeshComp->SetOverlayMaterial(DMI);
+		ScanOverlayTargets.Add(MeshComp);
+		ScanDMIs.Add(DMI);
 	}
 
-	// Z-fighting 방지: 원본보다 약간 크게
-	const FVector OrigScale = BuildingMesh->GetComponentScale();
-	ScanOverlayMesh->SetWorldScale3D(OrigScale * OverlayScaleOffset);
-	ScanOverlayMesh->SetVisibility(true);
-	ScanOverlayMesh->RegisterComponent();
-
-	// 건물 메시에 부착 (이동/회전 동기화)
-	if (GetRootComponent())
+	// 오버레이가 하나도 적용되지 않았으면 스킵
+	if (ScanOverlayTargets.Num() == 0)
 	{
-		ScanOverlayMesh->AttachToComponent(
-			GetRootComponent(),
-			FAttachmentTransformRules::KeepWorldTransform);
+		return;
 	}
 
 	// 스캔 시작
@@ -156,30 +140,28 @@ void AInv_BuildingActor::StartPlacementScanVFX()
 	SetActorTickEnabled(true);
 
 #if INV_DEBUG_BUILD
-	UE_LOG(LogTemp, Warning, TEXT("[BuildingScanVFX] Scan started: %s (Bottom=%.0f, Top=%.0f, Duration=%.1fs)"),
-		*GetName(), ScanBottomZ, ScanTopZ, ScanDuration);
+	UE_LOG(LogTemp, Warning, TEXT("[BuildingScanVFX] Scan started: %s (%d meshes, Bottom=%.0f, Top=%.0f, Duration=%.1fs)"),
+		*GetName(), ScanOverlayTargets.Num(), ScanBottomZ, ScanTopZ, ScanDuration);
 #endif
 }
 
 void AInv_BuildingActor::TickPlacementScan(float DeltaTime)
 {
-	if (!IsValid(ScanOverlayMesh))
-	{
-		// 오버레이가 무효화됨 — 정리
-		bScanActive = false;
-		SetActorTickEnabled(false);
-		return;
-	}
-
 	// 스캔 진행 (0→1)
 	ScanProgress += DeltaTime / FMath::Max(ScanDuration, 0.1f);
 
 	if (ScanProgress >= 1.0f)
 	{
-		// 스캔 완료 — 오버레이 제거
-		ScanOverlayMesh->DestroyComponent();
-		ScanOverlayMesh = nullptr;
-		ScanDMI = nullptr;
+		// 스캔 완료 — 모든 오버레이 머티리얼 제거
+		for (UMeshComponent* MeshComp : ScanOverlayTargets)
+		{
+			if (IsValid(MeshComp))
+			{
+				MeshComp->SetOverlayMaterial(nullptr);
+			}
+		}
+		ScanOverlayTargets.Empty();
+		ScanDMIs.Empty();
 		bScanActive = false;
 		SetActorTickEnabled(false);
 
@@ -189,16 +171,18 @@ void AInv_BuildingActor::TickPlacementScan(float DeltaTime)
 		return;
 	}
 
-	// ScanHeight 업데이트: BottomZ → TopZ로 Lerp
-	if (ScanDMI)
-	{
-		const float CurrentScanZ = FMath::Lerp(ScanBottomZ, ScanTopZ, ScanProgress);
-		ScanDMI->SetScalarParameterValue(TEXT("ScanHeight"), CurrentScanZ);
+	// 모든 DMI의 ScanHeight 업데이트: BottomZ → TopZ로 Lerp
+	const float CurrentScanZ = FMath::Lerp(ScanBottomZ, ScanTopZ, ScanProgress);
+	const float MeshHeight = ScanTopZ - ScanBottomZ;
+	const float BandWidth = FMath::Max(MeshHeight * ScanBandRatio, 10.f);
 
-		// 밴드 두께도 매 프레임 갱신 (에디터에서 실시간 조절 가능)
-		const float MeshHeight = ScanTopZ - ScanBottomZ;
-		const float BandWidth = FMath::Max(MeshHeight * ScanBandRatio, 10.f);
-		ScanDMI->SetScalarParameterValue(TEXT("BandWidth"), BandWidth);
+	for (UMaterialInstanceDynamic* DMI : ScanDMIs)
+	{
+		if (DMI)
+		{
+			DMI->SetScalarParameterValue(TEXT("ScanHeight"), CurrentScanZ);
+			DMI->SetScalarParameterValue(TEXT("BandWidth"), BandWidth);
+		}
 	}
 }
 

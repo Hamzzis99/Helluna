@@ -8,6 +8,7 @@
 
 class UMaterialInterface;
 class UMaterialInstanceDynamic;
+class UMeshComponent;
 
 /**
  * 리플리케이션이 가능한 건물 베이스 액터
@@ -69,13 +70,13 @@ public:
 private:
 	// === 스캔 오버레이 내부 상태 ===
 
-	/** 스캔 오버레이 메시 (런타임 동적 생성) */
+	/** SetOverlayMaterial이 적용된 메시 컴포넌트 배열 (Static/Dynamic/Skeletal 모두 대상) */
 	UPROPERTY()
-	TObjectPtr<UStaticMeshComponent> ScanOverlayMesh;
+	TArray<TObjectPtr<UMeshComponent>> ScanOverlayTargets;
 
-	/** 스캔 머티리얼 다이내믹 인스턴스 */
+	/** 스캔 머티리얼 다이내믹 인스턴스 배열 (ScanOverlayTargets와 1:1 대응) */
 	UPROPERTY()
-	TObjectPtr<UMaterialInstanceDynamic> ScanDMI;
+	TArray<TObjectPtr<UMaterialInstanceDynamic>> ScanDMIs;
 
 	/** 스캔 진행도 (0.0=바닥, 1.0=꼭대기) */
 	float ScanProgress = 0.f;
