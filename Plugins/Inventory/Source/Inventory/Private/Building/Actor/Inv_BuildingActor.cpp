@@ -112,7 +112,7 @@ void AInv_BuildingActor::StartPlacementScanVFX()
 
 	const float BandWidth = FMath::Max(MeshHeight * ScanBandRatio, 10.f);
 
-	// 각 MeshComponent에 SetOverlayMaterial 적용 (메시 복제 없이 오버레이)
+	// 각 MeshComponent 처리: StaticMesh→오버레이 복제, 기타→머티리얼 직접 교체
 	for (UMeshComponent* MeshComp : AllMeshes)
 	{
 		if (!MeshComp || !MeshComp->IsVisible()) continue;
@@ -123,13 +123,53 @@ void AInv_BuildingActor::StartPlacementScanVFX()
 		DMI->SetScalarParameterValue(TEXT("ScanHeight"), ScanBottomZ);
 		DMI->SetScalarParameterValue(TEXT("BandWidth"), BandWidth);
 
-		MeshComp->SetOverlayMaterial(DMI);
-		ScanOverlayTargets.Add(MeshComp);
+		if (UStaticMeshComponent* SMC = Cast<UStaticMeshComponent>(MeshComp))
+		{
+			// StaticMesh: 오버레이 메시 복제 (BossEncounterCube 패턴)
+			if (!SMC->GetStaticMesh()) continue;
+
+			UStaticMeshComponent* Overlay = NewObject<UStaticMeshComponent>(this);
+			if (!Overlay) continue;
+
+			Overlay->SetStaticMesh(SMC->GetStaticMesh());
+			Overlay->SetWorldTransform(SMC->GetComponentTransform());
+			Overlay->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+			const int32 NumMats = SMC->GetNumMaterials();
+			for (int32 i = 0; i < NumMats; ++i)
+			{
+				Overlay->SetMaterial(i, DMI);
+			}
+
+			Overlay->SetWorldScale3D(SMC->GetComponentScale() * OverlayScaleOffset);
+			Overlay->SetVisibility(true);
+			Overlay->RegisterComponent();
+
+			if (GetRootComponent())
+			{
+				Overlay->AttachToComponent(GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
+			}
+
+			ScanOverlayMeshes.Add(Overlay);
+		}
+		else
+		{
+			// DynamicMesh 등: 원본 머티리얼 저장 후 직접 교체
+			const int32 NumMats = MeshComp->GetNumMaterials();
+			for (int32 i = 0; i < NumMats; ++i)
+			{
+				ScanOriginalMaterials.Add(MeshComp->GetMaterial(i));
+				MeshComp->SetMaterial(i, DMI);
+			}
+			ScanSwappedMeshes.Add(MeshComp);
+			ScanSwappedSlotCounts.Add(NumMats);
+		}
+
 		ScanDMIs.Add(DMI);
 	}
 
-	// 오버레이가 하나도 적용되지 않았으면 스킵
-	if (ScanOverlayTargets.Num() == 0)
+	// 아무것도 적용되지 않았으면 스킵
+	if (ScanOverlayMeshes.Num() == 0 && ScanSwappedMeshes.Num() == 0)
 	{
 		return;
 	}
@@ -152,15 +192,38 @@ void AInv_BuildingActor::TickPlacementScan(float DeltaTime)
 
 	if (ScanProgress >= 1.0f)
 	{
-		// 스캔 완료 — 모든 오버레이 머티리얼 제거
-		for (UMeshComponent* MeshComp : ScanOverlayTargets)
+		// 스캔 완료 — 오버레이 메시 파괴
+		for (UStaticMeshComponent* Overlay : ScanOverlayMeshes)
 		{
-			if (IsValid(MeshComp))
+			if (IsValid(Overlay))
 			{
-				MeshComp->SetOverlayMaterial(nullptr);
+				Overlay->DestroyComponent();
 			}
 		}
-		ScanOverlayTargets.Empty();
+		ScanOverlayMeshes.Empty();
+
+		// 스캔 완료 — 머티리얼 교체된 메시 원본 복원
+		int32 MatOffset = 0;
+		for (int32 MeshIdx = 0; MeshIdx < ScanSwappedMeshes.Num(); ++MeshIdx)
+		{
+			UMeshComponent* MeshComp = ScanSwappedMeshes[MeshIdx];
+			const int32 SlotCount = ScanSwappedSlotCounts.IsValidIndex(MeshIdx) ? ScanSwappedSlotCounts[MeshIdx] : 0;
+			if (IsValid(MeshComp))
+			{
+				for (int32 i = 0; i < SlotCount; ++i)
+				{
+					if (ScanOriginalMaterials.IsValidIndex(MatOffset + i))
+					{
+						MeshComp->SetMaterial(i, ScanOriginalMaterials[MatOffset + i]);
+					}
+				}
+			}
+			MatOffset += SlotCount;
+		}
+		ScanSwappedMeshes.Empty();
+		ScanOriginalMaterials.Empty();
+		ScanSwappedSlotCounts.Empty();
+
 		ScanDMIs.Empty();
 		bScanActive = false;
 		SetActorTickEnabled(false);

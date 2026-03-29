@@ -262,6 +262,28 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Button_CancelMatchmaking;
 
+	// ── [Phase 18] 매칭 최소화 ──
+
+	/** 최소화 버튼 (CANCEL 옆) */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> Button_MinimizeMatchmaking;
+
+	/** 최소화 시 표시되는 미니 바 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> MatchmakingMiniBar;
+
+	/** 미니 바의 타이머 텍스트 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Text_MiniTimer;
+
+	/** 미니 바의 플레이어 카운트 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Text_MiniCount;
+
+	/** 미니 바의 확장 버튼 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> Button_ExpandMatchmaking;
+
 	// ── [Phase 17] 위젯 애니메이션 바인딩 ──
 
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetAnimOptional), Transient)
@@ -489,6 +511,20 @@ private:
 	UFUNCTION()
 	void OnCancelMatchmakingClicked();
 
+	// ── [Phase 18] 매칭 최소화/확장 ──
+
+	UFUNCTION()
+	void OnMinimizeMatchmakingClicked();
+
+	UFUNCTION()
+	void OnExpandMatchmakingClicked();
+
+	/** 매칭 오버레이를 최소화/확장 전환 */
+	void SetMatchmakingMinimized(bool bMinimize);
+
+	/** 매칭 중 탭 활성/비활성 처리 */
+	void SetTabsLockedForMatchmaking(bool bLocked);
+
 	/** [Phase 18] 파티 인원 수에 따라 모드 버튼 Visible/Collapsed + 자동 모드 전환 */
 	void UpdateModeButtonsForPartySize(int32 PartySize);
 
@@ -568,6 +604,9 @@ private:
 
 	/** [Phase 15] 현재 매칭 큐에 있는지 */
 	bool bInMatchmaking = false;
+
+	/** [Phase 18] 매칭 오버레이 최소화 상태 */
+	bool bMatchmakingMinimized = false;
 
 	/** [Phase 16] 현재 선택된 맵 키 */
 	FString SelectedMapKey;

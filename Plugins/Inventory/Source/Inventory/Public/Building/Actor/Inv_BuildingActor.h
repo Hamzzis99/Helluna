@@ -70,11 +70,22 @@ public:
 private:
 	// === 스캔 오버레이 내부 상태 ===
 
-	/** SetOverlayMaterial이 적용된 메시 컴포넌트 배열 (Static/Dynamic/Skeletal 모두 대상) */
+	/** 스캔 오버레이 메시 배열 (StaticMeshComponent 복제) */
 	UPROPERTY()
-	TArray<TObjectPtr<UMeshComponent>> ScanOverlayTargets;
+	TArray<TObjectPtr<UStaticMeshComponent>> ScanOverlayMeshes;
 
-	/** 스캔 머티리얼 다이내믹 인스턴스 배열 (ScanOverlayTargets와 1:1 대응) */
+	/** 머티리얼 교체된 비-Static 메시 (DynamicMesh 등, 원본 머티리얼 복원용) */
+	UPROPERTY()
+	TArray<TObjectPtr<UMeshComponent>> ScanSwappedMeshes;
+
+	/** 교체 전 원본 머티리얼 배열 (ScanSwappedMeshes 인덱스별 슬롯 수 합산) */
+	UPROPERTY()
+	TArray<TObjectPtr<UMaterialInterface>> ScanOriginalMaterials;
+
+	/** 교체된 메시별 머티리얼 슬롯 수 (원본 복원 시 오프셋 계산용) */
+	TArray<int32> ScanSwappedSlotCounts;
+
+	/** 스캔 머티리얼 다이내믹 인스턴스 배열 */
 	UPROPERTY()
 	TArray<TObjectPtr<UMaterialInstanceDynamic>> ScanDMIs;
 

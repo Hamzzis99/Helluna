@@ -72,6 +72,8 @@ void UHellunaLobbyStashWidget::NativeDestruct()
 	if (Button_Mode_Duo) { Button_Mode_Duo->OnClicked.RemoveDynamic(this, &ThisClass::OnDuoModeClicked); }
 	if (Button_Mode_Squad) { Button_Mode_Squad->OnClicked.RemoveDynamic(this, &ThisClass::OnPartyModeClicked); }
 	if (Button_CancelMatchmaking) { Button_CancelMatchmaking->OnClicked.RemoveDynamic(this, &ThisClass::OnCancelMatchmakingClicked); }
+	if (Button_MinimizeMatchmaking) { Button_MinimizeMatchmaking->OnClicked.RemoveDynamic(this, &ThisClass::OnMinimizeMatchmakingClicked); }
+	if (Button_ExpandMatchmaking) { Button_ExpandMatchmaking->OnClicked.RemoveDynamic(this, &ThisClass::OnExpandMatchmakingClicked); }
 	// [Phase 17] 맵 선택 카드
 	if (Button_MapPrev) { Button_MapPrev->OnClicked.RemoveDynamic(this, &ThisClass::OnMapPrevClicked); }
 	if (Button_MapNext) { Button_MapNext->OnClicked.RemoveDynamic(this, &ThisClass::OnMapNextClicked); }
@@ -183,6 +185,20 @@ void UHellunaLobbyStashWidget::NativeOnInitialized()
 	if (Button_CancelMatchmaking)
 	{
 		Button_CancelMatchmaking->OnClicked.AddUniqueDynamic(this, &ThisClass::OnCancelMatchmakingClicked);
+	}
+	// [Phase 18] 매칭 최소화/확장 버튼 바인딩
+	if (Button_MinimizeMatchmaking)
+	{
+		Button_MinimizeMatchmaking->OnClicked.AddUniqueDynamic(this, &ThisClass::OnMinimizeMatchmakingClicked);
+	}
+	if (Button_ExpandMatchmaking)
+	{
+		Button_ExpandMatchmaking->OnClicked.AddUniqueDynamic(this, &ThisClass::OnExpandMatchmakingClicked);
+	}
+	// [Phase 18] 미니 바 초기 숨김
+	if (MatchmakingMiniBar)
+	{
+		MatchmakingMiniBar->SetVisibility(ESlateVisibility::Collapsed);
 	}
 	// 매칭 오버레이 초기 숨김
 	if (MatchmakingOverlay)
@@ -1446,10 +1462,87 @@ void UHellunaLobbyStashWidget::OnPartyModeClicked()
 void UHellunaLobbyStashWidget::OnCancelMatchmakingClicked()
 {
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase15] 매칭 취소 버튼 클릭"));
+
+	// [Phase 18] 최소화 상태에서 취소 시 복원
+	if (bMatchmakingMinimized)
+	{
+		SetMatchmakingMinimized(false);
+	}
+
 	AHellunaLobbyController* LobbyPC = GetLobbyController();
 	if (LobbyPC)
 	{
 		LobbyPC->Server_LeaveMatchmaking();
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 18] 매칭 최소화/확장
+// ════════════════════════════════════════════════════════════════════════════════
+
+void UHellunaLobbyStashWidget::OnMinimizeMatchmakingClicked()
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase18] 매칭 최소화 클릭"));
+	SetMatchmakingMinimized(true);
+}
+
+void UHellunaLobbyStashWidget::OnExpandMatchmakingClicked()
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase18] 매칭 확장 클릭"));
+	SetMatchmakingMinimized(false);
+}
+
+void UHellunaLobbyStashWidget::SetMatchmakingMinimized(bool bMinimize)
+{
+	bMatchmakingMinimized = bMinimize;
+
+	if (bMinimize)
+	{
+		// 풀사이즈 오버레이 숨김
+		if (MatchmakingOverlay)
+		{
+			MatchmakingOverlay->SetVisibility(ESlateVisibility::Collapsed);
+		}
+		// 미니 바 표시
+		if (MatchmakingMiniBar)
+		{
+			MatchmakingMiniBar->SetVisibility(ESlateVisibility::Visible);
+		}
+		// 매칭 중 탭 잠금
+		SetTabsLockedForMatchmaking(true);
+	}
+	else
+	{
+		// 풀사이즈 오버레이 복원
+		if (MatchmakingOverlay && bInMatchmaking)
+		{
+			MatchmakingOverlay->SetVisibility(ESlateVisibility::Visible);
+		}
+		// 미니 바 숨김
+		if (MatchmakingMiniBar)
+		{
+			MatchmakingMiniBar->SetVisibility(ESlateVisibility::Collapsed);
+		}
+		// 탭 잠금 해제
+		SetTabsLockedForMatchmaking(false);
+	}
+}
+
+void UHellunaLobbyStashWidget::SetTabsLockedForMatchmaking(bool bLocked)
+{
+	if (Button_Tab_Loadout)
+	{
+		Button_Tab_Loadout->SetIsEnabled(!bLocked);
+	}
+	if (Button_Tab_Character)
+	{
+		Button_Tab_Character->SetIsEnabled(!bLocked);
+	}
+
+	// 최소화 시 자동으로 Play 탭으로 전환
+	if (bLocked && CurrentTabIndex != LobbyTab::Play)
+	{
+		SwitchToTab(LobbyTab::Play);
 	}
 }
 
@@ -1463,7 +1556,8 @@ void UHellunaLobbyStashWidget::HandleMatchmakingStatusChanged(const FMatchmaking
 	{
 		bInMatchmaking = true;
 
-		if (MatchmakingOverlay)
+		// [Phase 18] 최소화 상태가 아닐 때만 풀사이즈 오버레이 표시
+		if (MatchmakingOverlay && !bMatchmakingMinimized)
 		{
 			MatchmakingOverlay->SetVisibility(ESlateVisibility::Visible);
 			BP_OnMatchmakingOverlayShow();
@@ -1474,13 +1568,27 @@ void UHellunaLobbyStashWidget::HandleMatchmakingStatusChanged(const FMatchmaking
 		{
 			const int32 Minutes = FMath::FloorToInt(StatusInfo.ElapsedTime / 60.f);
 			const int32 Seconds = FMath::FloorToInt(FMath::Fmod(StatusInfo.ElapsedTime, 60.f));
-			Text_MatchmakingTimer->SetText(FText::FromString(
-				FString::Printf(TEXT("%02d:%02d"), Minutes, Seconds)));
+			const FString TimeStr = FString::Printf(TEXT("%02d:%02d"), Minutes, Seconds);
+			Text_MatchmakingTimer->SetText(FText::FromString(TimeStr));
+
+			// [Phase 18] 미니 바 타이머 동기화
+			if (Text_MiniTimer)
+			{
+				Text_MiniTimer->SetText(FText::FromString(
+					FString::Printf(TEXT("매칭 시간 : %s"), *TimeStr)));
+			}
 		}
 		if (Text_MatchmakingCount)
 		{
-			Text_MatchmakingCount->SetText(FText::FromString(
-				FString::Printf(TEXT("%d/%d"), StatusInfo.CurrentPlayerCount, StatusInfo.TargetPlayerCount)));
+			const FString CountStr = FString::Printf(TEXT("%d/%d"), StatusInfo.CurrentPlayerCount, StatusInfo.TargetPlayerCount);
+			Text_MatchmakingCount->SetText(FText::FromString(CountStr));
+
+			// [Phase 18] 미니 바 카운트도 동기화
+			if (Text_MiniCount)
+			{
+				Text_MiniCount->SetText(FText::FromString(
+					FString::Printf(TEXT("플레이어 : %d/%d"), StatusInfo.CurrentPlayerCount, StatusInfo.TargetPlayerCount)));
+			}
 		}
 
 		// START 버튼 텍스트를 CANCEL로 변경
@@ -1498,12 +1606,19 @@ void UHellunaLobbyStashWidget::HandleMatchmakingStatusChanged(const FMatchmaking
 	{
 		// None / Found / Deploying → 오버레이 숨김
 		bInMatchmaking = false;
+		bMatchmakingMinimized = false;
 
 		if (MatchmakingOverlay)
 		{
 			MatchmakingOverlay->SetVisibility(ESlateVisibility::Collapsed);
 			SetSearchSpinnerVisible(false);
 		}
+		// [Phase 18] 미니 바도 숨기고 탭 잠금 해제
+		if (MatchmakingMiniBar)
+		{
+			MatchmakingMiniBar->SetVisibility(ESlateVisibility::Collapsed);
+		}
+		SetTabsLockedForMatchmaking(false);
 
 		// 버튼 텍스트 복원
 		UpdateStartButtonForPartyState();
@@ -1516,6 +1631,12 @@ void UHellunaLobbyStashWidget::HandleMatchmakingStatusChanged(const FMatchmaking
 
 void UHellunaLobbyStashWidget::HandleMatchmakingFound(const FMatchmakingFoundInfo& FoundInfo)
 {
+	// [Phase 18] 매칭 찾으면 최소화 해제 — 카운트다운은 반드시 표시
+	if (bMatchmakingMinimized)
+	{
+		SetMatchmakingMinimized(false);
+	}
+
 	// 매칭 오버레이 표시
 	if (MatchmakingOverlay)
 	{
@@ -1602,6 +1723,14 @@ void UHellunaLobbyStashWidget::HandleMatchmakingCancelled(const FString& Reason)
 	if (Text_MatchmakingCount) Text_MatchmakingCount->SetVisibility(ESlateVisibility::Visible);
 	if (Button_CancelMatchmaking) Button_CancelMatchmaking->SetVisibility(ESlateVisibility::Visible);
 	SetSearchSpinnerVisible(false);
+
+	// [Phase 18] 미니 바 정리 + 탭 잠금 해제
+	bMatchmakingMinimized = false;
+	if (MatchmakingMiniBar)
+	{
+		MatchmakingMiniBar->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	SetTabsLockedForMatchmaking(false);
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase17] 카운트다운 취소 | %s"), *Reason);
 }

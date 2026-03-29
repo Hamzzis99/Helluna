@@ -780,19 +780,21 @@ void UInv_BuildingComponent::Multicast_OnBuildingPlaced_Implementation(AActor* P
 {
 	if (!IsValid(PlacedBuilding)) return;
 
-#if INV_DEBUG_BUILD
-	UE_LOG(LogTemp, Warning, TEXT("Multicast: Building placed notification received - %s"), *PlacedBuilding->GetName());
-#endif
+	// TODO: 디버그 확인 후 제거
+	UE_LOG(LogTemp, Warning, TEXT("[BuildingScanVFX] === Multicast received === Actor: %s, Class: %s"),
+		*PlacedBuilding->GetName(), *PlacedBuilding->GetClass()->GetName());
 
 	// 배치 스캔 VFX 시작 (모든 클라이언트에서 재생)
 	if (AInv_BuildingActor* BuildingActor = Cast<AInv_BuildingActor>(PlacedBuilding))
 	{
-		// Inv_BuildingActor 계열: 자체 PlacementScanMaterial 사용
+		UE_LOG(LogTemp, Warning, TEXT("[BuildingScanVFX] Path: Inv_BuildingActor, Material: %s"),
+			BuildingActor->PlacementScanMaterial ? *BuildingActor->PlacementScanMaterial->GetName() : TEXT("NULL"));
 		BuildingActor->StartPlacementScanVFX();
 	}
 	else
 	{
-		// 비-BuildingActor (터렛 등): BuildingComponent의 기본 머티리얼로 폴백
+		UE_LOG(LogTemp, Warning, TEXT("[BuildingScanVFX] Path: Fallback, DefaultMaterial: %s"),
+			DefaultPlacementScanMaterial ? *DefaultPlacementScanMaterial->GetName() : TEXT("NULL"));
 		ApplyScanVFXToAnyActor(PlacedBuilding);
 	}
 
@@ -1147,13 +1149,15 @@ void UInv_BuildingComponent::ApplyScanVFXToAnyActor(AActor* TargetActor)
 
 	const float BandWidth = FMath::Max(MeshHeight * DefaultScanBandRatio, 10.f);
 
-	// 각 MeshComponent에 SetOverlayMaterial 적용
-	struct FOverlayData
+	// 하이브리드 오버레이 데이터 구조체
+	struct FScanOverlayEntry
 	{
-		TWeakObjectPtr<UMeshComponent> WeakMesh;
+		TWeakObjectPtr<UStaticMeshComponent> OverlayMesh;        // StaticMesh 복제용
+		TWeakObjectPtr<UMeshComponent> SwappedMesh;              // 머티리얼 교체된 메시
+		TArray<TObjectPtr<UMaterialInterface>> OriginalMaterials; // 교체 전 원본
 		UMaterialInstanceDynamic* DMI = nullptr;
 	};
-	TSharedPtr<TArray<FOverlayData>> Overlays = MakeShared<TArray<FOverlayData>>();
+	TSharedPtr<TArray<FScanOverlayEntry>> Entries = MakeShared<TArray<FScanOverlayEntry>>();
 
 	for (UMeshComponent* MeshComp : AllMeshes)
 	{
@@ -1165,17 +1169,56 @@ void UInv_BuildingComponent::ApplyScanVFXToAnyActor(AActor* TargetActor)
 		DMI->SetScalarParameterValue(TEXT("ScanHeight"), BottomZ);
 		DMI->SetScalarParameterValue(TEXT("BandWidth"), BandWidth);
 
-		MeshComp->SetOverlayMaterial(DMI);
+		FScanOverlayEntry Entry;
+		Entry.DMI = DMI;
 
-		FOverlayData Data;
-		Data.WeakMesh = MeshComp;
-		Data.DMI = DMI;
-		Overlays->Add(Data);
+		if (UStaticMeshComponent* SMC = Cast<UStaticMeshComponent>(MeshComp))
+		{
+			// StaticMesh: 오버레이 메시 복제 (BossEncounterCube 패턴)
+			if (!SMC->GetStaticMesh()) continue;
+
+			UStaticMeshComponent* Overlay = NewObject<UStaticMeshComponent>(TargetActor);
+			if (!Overlay) continue;
+
+			Overlay->SetStaticMesh(SMC->GetStaticMesh());
+			Overlay->SetWorldTransform(SMC->GetComponentTransform());
+			Overlay->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+			const int32 NumMats = SMC->GetNumMaterials();
+			for (int32 i = 0; i < NumMats; ++i)
+			{
+				Overlay->SetMaterial(i, DMI);
+			}
+
+			Overlay->SetWorldScale3D(SMC->GetComponentScale() * DefaultOverlayScaleOffset);
+			Overlay->SetVisibility(true);
+			Overlay->RegisterComponent();
+
+			if (TargetActor->GetRootComponent())
+			{
+				Overlay->AttachToComponent(TargetActor->GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
+			}
+
+			Entry.OverlayMesh = Overlay;
+		}
+		else
+		{
+			// DynamicMesh 등: 원본 머티리얼 저장 후 직접 교체
+			const int32 NumMats = MeshComp->GetNumMaterials();
+			for (int32 i = 0; i < NumMats; ++i)
+			{
+				Entry.OriginalMaterials.Add(MeshComp->GetMaterial(i));
+				MeshComp->SetMaterial(i, DMI);
+			}
+			Entry.SwappedMesh = MeshComp;
+		}
+
+		Entries->Add(MoveTemp(Entry));
 	}
 
-	if (Overlays->Num() == 0) return;
+	if (Entries->Num() == 0) return;
 
-	// 타이머 기반 애니메이션 (BossEncounterCube 패턴)
+	// 타이머 기반 애니메이션
 	TSharedPtr<float> Progress = MakeShared<float>(0.f);
 	const float CapturedDuration = DefaultScanDuration;
 	const float CapturedBottomZ = BottomZ;
@@ -1185,21 +1228,28 @@ void UInv_BuildingComponent::ApplyScanVFXToAnyActor(AActor* TargetActor)
 
 	FTimerHandle ScanTimerHandle;
 	World->GetTimerManager().SetTimer(ScanTimerHandle,
-		FTimerDelegate::CreateLambda([Overlays, Progress, CapturedDuration, CapturedBottomZ, CapturedTopZ, CapturedBandRatio, TickInterval]()
+		FTimerDelegate::CreateLambda([Entries, Progress, CapturedDuration, CapturedBottomZ, CapturedTopZ, CapturedBandRatio, TickInterval]()
 		{
 			*Progress += TickInterval / FMath::Max(CapturedDuration, 0.1f);
 
 			if (*Progress >= 1.0f)
 			{
-				// 스캔 완료 — 모든 오버레이 머티리얼 제거
-				for (auto& Entry : *Overlays)
+				// 스캔 완료 — 오버레이 메시 파괴 + 교체 머티리얼 복원
+				for (auto& Entry : *Entries)
 				{
-					if (Entry.WeakMesh.IsValid())
+					if (Entry.OverlayMesh.IsValid())
 					{
-						Entry.WeakMesh->SetOverlayMaterial(nullptr);
+						Entry.OverlayMesh->DestroyComponent();
+					}
+					if (Entry.SwappedMesh.IsValid())
+					{
+						for (int32 i = 0; i < Entry.OriginalMaterials.Num(); ++i)
+						{
+							Entry.SwappedMesh->SetMaterial(i, Entry.OriginalMaterials[i]);
+						}
 					}
 				}
-				Overlays->Empty();
+				Entries->Empty();
 				return;
 			}
 
@@ -1208,9 +1258,9 @@ void UInv_BuildingComponent::ApplyScanVFXToAnyActor(AActor* TargetActor)
 			const float Height = CapturedTopZ - CapturedBottomZ;
 			const float BW = FMath::Max(Height * CapturedBandRatio, 10.f);
 
-			for (auto& Entry : *Overlays)
+			for (auto& Entry : *Entries)
 			{
-				if (Entry.DMI && Entry.WeakMesh.IsValid())
+				if (Entry.DMI)
 				{
 					Entry.DMI->SetScalarParameterValue(TEXT("ScanHeight"), CurrentZ);
 					Entry.DMI->SetScalarParameterValue(TEXT("BandWidth"), BW);
@@ -1221,7 +1271,7 @@ void UInv_BuildingComponent::ApplyScanVFXToAnyActor(AActor* TargetActor)
 
 #if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("[BuildingScanVFX] Fallback scan started: %s (%d meshes, Bottom=%.0f, Top=%.0f, Duration=%.1fs)"),
-		*TargetActor->GetName(), Overlays->Num(), BottomZ, TopZ, CapturedDuration);
+		*TargetActor->GetName(), Entries->Num(), BottomZ, TopZ, CapturedDuration);
 #endif
 }
 
