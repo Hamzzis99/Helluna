@@ -39,6 +39,7 @@ public class Inventory : ModuleRules
 				"EnhancedInput", 
 				"UMG",
 				"InputCore",
+				"Niagara",
 			}
 			);
 		

@@ -18,6 +18,8 @@
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Components/StaticMeshComponent.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraComponent.h"
 
 
 // Sets default values for this component's properties
@@ -793,6 +795,52 @@ void UInv_BuildingComponent::Multicast_OnBuildingPlaced_Implementation(AActor* P
 	{
 		// 비-BuildingActor (터렛 등): BuildingComponent의 기본 머티리얼로 폴백
 		ApplyScanVFXToAnyActor(PlacedBuilding);
+	}
+
+	// 나이아가라 홀로그램 VFX 스폰 (모든 건물 공통, BossEncounterCube 패턴)
+	if (DefaultPlacementHoloVFX)
+	{
+		UWorld* World = GetWorld();
+		if (World)
+		{
+			// 바운딩 박스 크기 계산
+			FVector Origin, BoxExtent;
+			PlacedBuilding->GetActorBounds(false, Origin, BoxExtent);
+			const float BaseSize = 100.f;
+			FVector HoloScale(
+				FMath::Max(BoxExtent.X * 2.f / BaseSize, 0.5f),
+				FMath::Max(BoxExtent.Y * 2.f / BaseSize, 0.5f),
+				FMath::Max(BoxExtent.Z * 2.f / BaseSize, 0.5f)
+			);
+			HoloScale *= DefaultHoloVFXScale;
+
+			UNiagaraComponent* HoloComp = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+				World, DefaultPlacementHoloVFX, Origin,
+				FRotator::ZeroRotator, HoloScale,
+				false, true);
+
+			if (HoloComp)
+			{
+				// 타이머 기반 자동 정리 (BossEncounterCube 패턴)
+				TWeakObjectPtr<UNiagaraComponent> WeakHolo(HoloComp);
+				const float CapturedLifetime = DefaultHoloVFXLifetime;
+				FTimerHandle HoloTimerHandle;
+				World->GetTimerManager().SetTimer(HoloTimerHandle,
+					FTimerDelegate::CreateLambda([WeakHolo]()
+					{
+						if (WeakHolo.IsValid())
+						{
+							WeakHolo->DeactivateImmediate();
+							WeakHolo->DestroyComponent();
+						}
+					}), CapturedLifetime, false);
+
+#if INV_DEBUG_BUILD
+				UE_LOG(LogTemp, Warning, TEXT("[BuildingHoloVFX] Spawned holo VFX at %s (Scale=%.2f, Lifetime=%.1fs)"),
+					*PlacedBuilding->GetName(), DefaultHoloVFXScale, CapturedLifetime);
+#endif
+			}
+		}
 	}
 }
 

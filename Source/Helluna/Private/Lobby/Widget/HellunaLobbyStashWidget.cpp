@@ -50,35 +50,6 @@ namespace
 {
 	constexpr float GSearchRingOuterDegreesPerSecond = 360.0f;
 	constexpr float GSearchRingInnerDegreesPerSecond = -240.0f;
-	const FVector2D GSearchRingBackdropSize(108.0f, 108.0f);
-	const FVector2D GSearchRingOuterSize(108.0f, 108.0f);
-	const FVector2D GSearchRingInnerSize(84.0f, 84.0f);
-	const TCHAR* GSearchRingBackdropTexturePath = TEXT("/Game/Migration/VFX/EasyAtmos/Textures/systemTextures/T_circle_01.T_circle_01");
-	const TCHAR* GSearchRingOuterTexturePath = TEXT("/Game/Migration/VFX/NiagaraExplosion01/Textures/T_Ring_002.T_Ring_002");
-	const TCHAR* GSearchRingInnerTexturePath = TEXT("/Game/Migration/VFX/NiagaraExplosion01/Textures/T_Ring_004.T_Ring_004");
-
-	void ApplySearchRingStyle(UImage* Image, const TCHAR* TexturePath, const FVector2D& BrushSize, const FLinearColor& Tint)
-	{
-		if (!IsValid(Image))
-		{
-			return;
-		}
-
-		if (UTexture2D* Texture = LoadObject<UTexture2D>(nullptr, TexturePath))
-		{
-			Image->SetBrushFromTexture(Texture, false);
-			Image->SetDesiredSizeOverride(BrushSize);
-		}
-		else
-		{
-			UE_LOG(LogHellunaLobby, Warning, TEXT("[StashWidget] Search spinner texture load failed: %s"), TexturePath);
-		}
-
-		Image->SetColorAndOpacity(Tint);
-		Image->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
-		Image->SetRenderOpacity(Tint.A);
-		Image->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-	}
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -352,9 +323,19 @@ void UHellunaLobbyStashWidget::ConfigureSearchSpinnerVisuals()
 		Overlay_SearchSpinner->SetRenderOpacity(1.0f);
 	}
 
-	ApplySearchRingStyle(Image_SearchRingBackdrop, GSearchRingBackdropTexturePath, GSearchRingBackdropSize, FLinearColor(0.34f, 0.40f, 0.95f, 0.16f));
-	ApplySearchRingStyle(Image_SearchRingOuter, GSearchRingOuterTexturePath, GSearchRingOuterSize, FLinearColor(0.42f, 0.54f, 1.0f, 0.90f));
-	ApplySearchRingStyle(Image_SearchRingInner, GSearchRingInnerTexturePath, GSearchRingInnerSize, FLinearColor(0.80f, 0.46f, 1.0f, 0.82f));
+	// [Refactor] 텍스처/사이즈/색상은 WBP Designer에서 관리
+	// C++에서는 회전에 필요한 피벗만 설정
+	auto SetPivotIfValid = [](UImage* Img)
+	{
+		if (IsValid(Img))
+		{
+			Img->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+		}
+	};
+
+	SetPivotIfValid(Image_SearchRingBackdrop);
+	SetPivotIfValid(Image_SearchRingOuter);
+	SetPivotIfValid(Image_SearchRingInner);
 
 	SearchRingOuterAngle = 0.0f;
 	SearchRingInnerAngle = 0.0f;
