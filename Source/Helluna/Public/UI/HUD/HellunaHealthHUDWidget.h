@@ -69,38 +69,38 @@ protected:
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 	virtual void NativeDestruct() override;
 
-	// ===== BindWidget (WBP에서 이름 매칭 필수) =====
+	// ===== BindWidgetOptional (WBP 또는 동적 생성 모두 지원) =====
 
 	/** 외곽 장식 링 */
-	UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
+	UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
 	TObjectPtr<UImage> OuterRingImage = nullptr;
 
 	/** 체력 게이지 (270도 아크) */
-	UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
+	UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
 	TObjectPtr<UImage> HealthArcImage = nullptr;
 
 	/** 내측 장식 링 */
-	UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
+	UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
 	TObjectPtr<UImage> InnerRingImage = nullptr;
 
 	/** 현재 탄약 수 텍스트 */
-	UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
+	UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> AmmoText = nullptr;
 
 	/** 주무기 아이콘 */
-	UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
+	UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
 	TObjectPtr<UImage> PrimaryWeaponIcon = nullptr;
 
 	/** 보조무기 아이콘 */
-	UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
+	UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
 	TObjectPtr<UImage> SecondaryWeaponIcon = nullptr;
 
 	/** 스태미나 바 */
-	UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
+	UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
 	TObjectPtr<UProgressBar> StaminaBar = nullptr;
 
 	/** 보조 게이지 바 */
-	UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
+	UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
 	TObjectPtr<UProgressBar> SubBar = nullptr;
 
 	// ===== 머티리얼 경로 (에디터 오버라이드 가능) =====

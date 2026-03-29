@@ -23,6 +23,7 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "EngineUtils.h"
 #include "Engine/StaticMeshActor.h"
+#include "Engine/PostProcessVolume.h"
 
 // ============================================================================
 // 생성자
@@ -70,11 +71,23 @@ void ABossEncounterCube::BeginPlay()
 		InteractWidgetComp->SetWidgetClass(InteractWidgetClass);
 	}
 
+	// PPV_BossEncounter 캐시 (클라이언트)
+	if (!IsRunningDedicatedServer())
+	{
+		CacheBossPostProcessVolume();
+	}
+
 	// 평시 어두움: 보스 이벤트와 무관하게 세계가 어두움
 	if (!IsRunningDedicatedServer() && MPC_BossEncounter)
 	{
 		UKismetMaterialLibrary::SetScalarParameterValue(
 			this, MPC_BossEncounter, TEXT("DarknessAmount"), DarknessAmount);
+		UE_LOG(LogTemp, Warning, TEXT("[BossEncounter_DIAG] BeginPlay — DarknessAmount=%.2f, bActivated=%d, bBossDefeated=%d, MPC=%s"),
+			DarknessAmount, (int)bActivated, (int)bBossDefeated, *MPC_BossEncounter->GetName());
+	}
+	else if (!MPC_BossEncounter)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[BossEncounter_DIAG] BeginPlay — MPC_BossEncounter is NULL! BP 설정 확인 필요"));
 	}
 
 	// 늦은 접속 클라이언트
@@ -94,7 +107,9 @@ void ABossEncounterCube::BeginPlay()
 			CachedFoliageLocations.Empty();
 			bFoliageCached = false;
 			ActiveWireframeOverlays.Empty();
-			UE_LOG(LogTemp, Log, TEXT("[BossEncounterCube] Late join — boss defeated, color + flowers restored"));
+			// PPV 비활성화 (보스 이미 처치 → PP 필요 없음)
+			SetBossPostProcessEnabled(false);
+			UE_LOG(LogTemp, Log, TEXT("[BossEncounterCube] Late join — boss defeated, color + flowers restored, PPV disabled"));
 		}
 		else
 		{
@@ -147,6 +162,15 @@ void ABossEncounterCube::Tick(float DeltaTime)
 
 	// [Step 5] 컬러 웨이브 MPC 업데이트 (클라이언트)
 	TickColorWave(DeltaTime);
+
+	// [Post-Wave] 보스 처치 후 웨이브 완료 → MPC 강제 유지 (다른 큐브 등에 의한 덮어쓰기 방지)
+	if (bBossDefeated && !bColorWaveActive && MPC_BossEncounter)
+	{
+		UKismetMaterialLibrary::SetScalarParameterValue(
+			this, MPC_BossEncounter, TEXT("DesatAmount"), 0.f);
+		UKismetMaterialLibrary::SetScalarParameterValue(
+			this, MPC_BossEncounter, TEXT("DarknessAmount"), 0.f);
+	}
 
 	// [Cinematic] 시네마틱 Lerp 처리 (FOV·크로마·섬광·채도)
 	TickCinematic(DeltaTime);
@@ -289,6 +313,9 @@ void ABossEncounterCube::Multicast_BossEncounterStarted_Implementation()
 	bDesatTransitioning = true;
 	DesatProgress = 0.f;
 
+	// PP 볼륨 활성화 (보스 이벤트 시작 시)
+	SetBossPostProcessEnabled(true);
+
 	// 보스 영역 중심/반경을 MPC에 설정 (PP 머티리얼에서 영역 마스킹에 사용)
 	if (MPC_BossEncounter)
 	{
@@ -341,6 +368,7 @@ void ABossEncounterCube::TickDesaturation(float DeltaTime)
 	if (DesatProgress >= 1.f)
 	{
 		bDesatTransitioning = false;
+		UE_LOG(LogTemp, Warning, TEXT("[BossEncounter_DIAG] Desaturation COMPLETE — DesatAmount=1.0"));
 		UE_LOG(LogTemp, Verbose, TEXT("[BossEncounterCube] Desaturation complete — fully grayscale"));
 	}
 }
@@ -451,7 +479,7 @@ void ABossEncounterCube::OnSpawnedBossDied(AActor* DeadActor, AActor* KillerActo
 
 	bBossDefeated = true;
 
-	UE_LOG(LogTemp, Verbose, TEXT("[BossEncounterCube] Boss defeated at %s — starting color wave"),
+	UE_LOG(LogTemp, Warning, TEXT("[BossEncounter_DIAG] OnSpawnedBossDied — DeathLoc=%s, calling Multicast"),
 		*DeathLocation.ToString());
 
 	Multicast_BossDefeated(DeathLocation);
@@ -468,6 +496,18 @@ void ABossEncounterCube::Multicast_BossDefeated_Implementation(FVector DeathLoca
 	bColorWaveActive = true;
 	ColorWaveRadius = 0.f;
 
+	// 흑백 전환이 아직 진행 중이면 강제 완료 (컬러 웨이브가 DesatAmount를 관리함)
+	if (bDesatTransitioning)
+	{
+		bDesatTransitioning = false;
+		DesatProgress = 1.f;
+		if (MPC_BossEncounter)
+		{
+			UKismetMaterialLibrary::SetScalarParameterValue(
+				this, MPC_BossEncounter, TEXT("DesatAmount"), 1.f);
+		}
+	}
+
 	// MPC에 웨이브 원점 설정
 	if (MPC_BossEncounter)
 	{
@@ -481,8 +521,19 @@ void ABossEncounterCube::Multicast_BossDefeated_Implementation(FVector DeathLoca
 	// [Cinematic] 시네마틱 시퀀스 시작 (컬러 웨이브와 병행)
 	StartCinematicSequence(DeathLocation);
 
-	UE_LOG(LogTemp, Verbose, TEXT("[BossEncounterCube] Multicast — color wave + cinematic started from %s"),
-		*DeathLocation.ToString());
+	UE_LOG(LogTemp, Warning, TEXT("[BossEncounter_DIAG] Multicast_BossDefeated — bColorWaveActive=%d, bDesatTransitioning=%d, MPC=%s, WaveSpeed=%.0f, WaveMax=%.0f"),
+		(int)bColorWaveActive, (int)bDesatTransitioning, MPC_BossEncounter ? TEXT("Valid") : TEXT("NULL"),
+		ColorWaveSpeed, ColorWaveMaxRadius);
+
+	// [Failsafe] 10초 후 MPC 값 강제 복원 — 웨이브가 정상 완료되면 타이머 자동 해제
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(MPC_FailsafeTimer);
+		World->GetTimerManager().SetTimer(
+			MPC_FailsafeTimer, this,
+			&ABossEncounterCube::ForceRestoreMPCValues,
+			10.f, false);
+	}
 }
 
 void ABossEncounterCube::TickColorWave(float DeltaTime)
@@ -502,6 +553,16 @@ void ABossEncounterCube::TickColorWave(float DeltaTime)
 	// 반경 확장
 	ColorWaveRadius += ColorWaveSpeed * DeltaTime;
 
+	// 진단: 웨이브 진행률 (1초마다)
+	static float DiagTimer = 0.f;
+	DiagTimer += DeltaTime;
+	if (DiagTimer >= 1.f)
+	{
+		DiagTimer = 0.f;
+		UE_LOG(LogTemp, Warning, TEXT("[BossEncounter_DIAG] TickColorWave — Radius=%.0f / Max=%.0f (%.0f%%)"),
+			ColorWaveRadius, ColorWaveMaxRadius, (ColorWaveRadius / ColorWaveMaxRadius) * 100.f);
+	}
+
 	UKismetMaterialLibrary::SetScalarParameterValue(
 		this, MPC_BossEncounter, TEXT("ColorWaveRadius"), ColorWaveRadius);
 
@@ -513,6 +574,9 @@ void ABossEncounterCube::TickColorWave(float DeltaTime)
 	{
 		bColorWaveActive = false;
 
+		// 혹시 남아있는 흑백 전환도 확실히 정지
+		bDesatTransitioning = false;
+
 		// 흑백 해제 (DesatAmount=0, DarknessAmount=0 → 전체 원색 복원)
 		UKismetMaterialLibrary::SetScalarParameterValue(
 			this, MPC_BossEncounter, TEXT("DesatAmount"), 0.f);
@@ -521,6 +585,9 @@ void ABossEncounterCube::TickColorWave(float DeltaTime)
 
 		// ⚠️ ColorWaveRadius는 리셋하지 않음 — 꽃 WPO가 이 값을 참조하므로
 		// MaxRadius 유지해야 꽃이 올라온 상태를 유지한다
+
+		// PP 볼륨 비활성화 (PP 머티리얼이 DesatAmount=0에서도 장면을 어둡게 하는 문제 방지)
+		SetBossPostProcessEnabled(false);
 
 		// Custom Depth 해제 (더 이상 불필요)
 		DisableBossEncounterCustomDepth();
@@ -542,7 +609,26 @@ void ABossEncounterCube::TickColorWave(float DeltaTime)
 		}
 		ActiveWireframeOverlays.Empty();
 
-		UE_LOG(LogTemp, Verbose, TEXT("[BossEncounterCube] Color wave complete — full color restored (flowers persist)"));
+		// [Failsafe] 정상 완료되었으므로 안전장치 타이머 해제
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(MPC_FailsafeTimer);
+		}
+
+		// MPC 값 읽기 검증 — 실제로 0이 되었는지 확인
+		{
+			const float ReadDesat = UKismetMaterialLibrary::GetScalarParameterValue(
+				this, MPC_BossEncounter, TEXT("DesatAmount"));
+			const float ReadDark = UKismetMaterialLibrary::GetScalarParameterValue(
+				this, MPC_BossEncounter, TEXT("DarknessAmount"));
+			const float ReadWave = UKismetMaterialLibrary::GetScalarParameterValue(
+				this, MPC_BossEncounter, TEXT("ColorWaveRadius"));
+
+			UE_LOG(LogTemp, Warning,
+				TEXT("[BossEncounter_DIAG] Color wave COMPLETE — MPC READBACK: DesatAmount=%.4f, DarknessAmount=%.4f, ColorWaveRadius=%.1f, World=%s"),
+				ReadDesat, ReadDark, ReadWave,
+				GetWorld() ? *GetWorld()->GetName() : TEXT("NULL"));
+		}
 	}
 }
 
@@ -565,6 +651,85 @@ void ABossEncounterCube::DisableBossEncounterCustomDepth()
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("[BossEncounterCube] Custom Depth disabled on all characters"));
+}
+
+// ============================================================================
+// [Failsafe] MPC 값 강제 복원
+// ============================================================================
+
+void ABossEncounterCube::ForceRestoreMPCValues()
+{
+	// 웨이브가 이미 완료되었으면 아무것도 안 함
+	if (!bColorWaveActive && !bDesatTransitioning)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[BossEncounter_DIAG] Failsafe fired but wave already completed — skipping"));
+		return;
+	}
+
+	UE_LOG(LogTemp, Error,
+		TEXT("[BossEncounter_DIAG] ⚠️ Failsafe TRIGGERED — wave did NOT complete in 10s! bColorWaveActive=%d, bDesatTransitioning=%d, Radius=%.0f/%.0f"),
+		(int)bColorWaveActive, (int)bDesatTransitioning, ColorWaveRadius, ColorWaveMaxRadius);
+
+	// 강제로 웨이브 완료 상태로 설정
+	bColorWaveActive = false;
+	bDesatTransitioning = false;
+
+	if (MPC_BossEncounter)
+	{
+		UKismetMaterialLibrary::SetScalarParameterValue(
+			this, MPC_BossEncounter, TEXT("DesatAmount"), 0.f);
+		UKismetMaterialLibrary::SetScalarParameterValue(
+			this, MPC_BossEncounter, TEXT("DarknessAmount"), 0.f);
+		UKismetMaterialLibrary::SetScalarParameterValue(
+			this, MPC_BossEncounter, TEXT("ColorWaveRadius"), ColorWaveMaxRadius);
+
+		UE_LOG(LogTemp, Warning,
+			TEXT("[BossEncounter_DIAG] Failsafe — MPC forced: DesatAmount=0, DarknessAmount=0, ColorWaveRadius=%.0f"),
+			ColorWaveMaxRadius);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error,
+			TEXT("[BossEncounter_DIAG] Failsafe — MPC_BossEncounter is NULL! Cannot restore"));
+	}
+
+	// PP 볼륨 비활성화
+	SetBossPostProcessEnabled(false);
+
+	// Custom Depth 해제
+	DisableBossEncounterCustomDepth();
+}
+
+// ============================================================================
+// [PPV 제어] 보스 이벤트 PP 볼륨 탐색/활성화
+// ============================================================================
+
+void ABossEncounterCube::CacheBossPostProcessVolume()
+{
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	for (TActorIterator<APostProcessVolume> It(World); It; ++It)
+	{
+		if (It->GetName().Contains(TEXT("BossEncounter")))
+		{
+			CachedBossPPV = *It;
+			UE_LOG(LogTemp, Log, TEXT("[BossEncounterCube] PPV cached: %s"), *It->GetName());
+			return;
+		}
+	}
+
+	UE_LOG(LogTemp, Verbose, TEXT("[BossEncounterCube] PPV_BossEncounter not found in level"));
+}
+
+void ABossEncounterCube::SetBossPostProcessEnabled(bool bEnable)
+{
+	if (APostProcessVolume* PPV = CachedBossPPV.Get())
+	{
+		PPV->bEnabled = bEnable;
+		UE_LOG(LogTemp, Log, TEXT("[BossEncounterCube] PPV %s"), bEnable ? TEXT("ENABLED") : TEXT("DISABLED"));
+	}
 }
 
 // ============================================================================

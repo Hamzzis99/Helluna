@@ -122,7 +122,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget::EnterState(
 	const FHellunaAITargetData& TargetData = InstanceData.TargetData;
 	if (!TargetData.HasValidTarget())
 	{
-		UE_LOG(LogTemp, Error, TEXT("[ChaseTarget] ❌ EnterState: TargetData.TargetActor가 nullptr! 바인딩 확인 필요"));
+		UE_LOG(LogTemp, Verbose, TEXT("[ChaseTarget] EnterState: TargetData.TargetActor가 nullptr — 타겟 없음"));
 		InstanceData.LastMoveTarget      = nullptr;
 		InstanceData.TimeSinceRepath     = 0.f;
 		InstanceData.TimeUntilNextEQS    = 0.f;

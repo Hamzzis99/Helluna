@@ -5,6 +5,9 @@
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
 #include "Components/ProgressBar.h"
+#include "Components/CanvasPanel.h"
+#include "Components/CanvasPanelSlot.h"
+#include "Blueprint/WidgetTree.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
 #include "Engine/Texture2D.h"
@@ -18,6 +21,77 @@
 void UHellunaHealthHUDWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
+
+	// ── BindWidgetOptional: WBP에 배치 안 된 위젯은 동적 생성 ──
+	UCanvasPanel* RootCanvas = Cast<UCanvasPanel>(GetRootWidget());
+	if (!RootCanvas)
+	{
+		RootCanvas = WidgetTree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass(), TEXT("RootCanvas"));
+		RootCanvas->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		WidgetTree->RootWidget = RootCanvas;
+	}
+
+	auto AddImageToCanvas = [&](TObjectPtr<UImage>& ImgPtr, const FName& Name, FVector2D Pos, FVector2D Size) -> UImage*
+	{
+		if (!ImgPtr)
+		{
+			ImgPtr = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), Name);
+			UCanvasPanelSlot* PanelSlot = RootCanvas->AddChildToCanvas(ImgPtr);
+			if (PanelSlot)
+			{
+				PanelSlot->SetAnchors(FAnchors(1.f, 1.f, 1.f, 1.f));
+				PanelSlot->SetOffsets(FMargin(Pos.X, Pos.Y, Size.X, Size.Y));
+				PanelSlot->SetAutoSize(false);
+			}
+		}
+		return ImgPtr;
+	};
+
+	const float RingSize = 256.f;
+	const float OffX = -(RingSize + 30.f);
+	const float OffY = -(RingSize + 60.f);
+
+	AddImageToCanvas(OuterRingImage, TEXT("OuterRingImage"), FVector2D(OffX, OffY), FVector2D(RingSize, RingSize));
+	AddImageToCanvas(HealthArcImage, TEXT("HealthArcImage"), FVector2D(OffX, OffY), FVector2D(RingSize, RingSize));
+	AddImageToCanvas(InnerRingImage, TEXT("InnerRingImage"), FVector2D(OffX, OffY), FVector2D(RingSize, RingSize));
+	AddImageToCanvas(PrimaryWeaponIcon, TEXT("PrimaryWeaponIcon"), FVector2D(OffX + 180.f, OffY + 100.f), FVector2D(80.f, 40.f));
+	AddImageToCanvas(SecondaryWeaponIcon, TEXT("SecondaryWeaponIcon"), FVector2D(OffX + 190.f, OffY + 150.f), FVector2D(60.f, 30.f));
+
+	if (!AmmoText)
+	{
+		AmmoText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("AmmoText"));
+		UCanvasPanelSlot* AmmoPanelSlot = RootCanvas->AddChildToCanvas(AmmoText);
+		if (AmmoPanelSlot)
+		{
+			AmmoPanelSlot->SetAnchors(FAnchors(1.f, 1.f, 1.f, 1.f));
+			AmmoPanelSlot->SetOffsets(FMargin(OffX + 190.f, OffY + 60.f, 60.f, 40.f));
+			AmmoPanelSlot->SetAutoSize(false);
+		}
+	}
+
+	if (!StaminaBar)
+	{
+		StaminaBar = WidgetTree->ConstructWidget<UProgressBar>(UProgressBar::StaticClass(), TEXT("StaminaBar"));
+		UCanvasPanelSlot* StaminaPanelSlot = RootCanvas->AddChildToCanvas(StaminaBar);
+		if (StaminaPanelSlot)
+		{
+			StaminaPanelSlot->SetAnchors(FAnchors(1.f, 1.f, 1.f, 1.f));
+			StaminaPanelSlot->SetOffsets(FMargin(OffX + 70.f, OffY + 210.f, 110.f, 6.f));
+			StaminaPanelSlot->SetAutoSize(false);
+		}
+	}
+
+	if (!SubBar)
+	{
+		SubBar = WidgetTree->ConstructWidget<UProgressBar>(UProgressBar::StaticClass(), TEXT("SubBar"));
+		UCanvasPanelSlot* SubPanelSlot = RootCanvas->AddChildToCanvas(SubBar);
+		if (SubPanelSlot)
+		{
+			SubPanelSlot->SetAnchors(FAnchors(1.f, 1.f, 1.f, 1.f));
+			SubPanelSlot->SetOffsets(FMargin(OffX + 70.f, OffY + 222.f, 110.f, 6.f));
+			SubPanelSlot->SetAutoSize(false);
+		}
+	}
 
 	// ── 체력 게이지 머티리얼 ──
 	if (HealthArcImage)
@@ -86,13 +160,25 @@ void UHellunaHealthHUDWidget::NativeConstruct()
 
 	// ── 초기값 설정 ──
 	if (AmmoText)
+	{
 		AmmoText->SetText(FText::FromString(TEXT("0")));
+		FSlateFontInfo FontInfo = AmmoText->GetFont();
+		FontInfo.Size = 28;
+		AmmoText->SetFont(FontInfo);
+		AmmoText->SetColorAndOpacity(FSlateColor(FLinearColor(1.f, 1.f, 1.f, 0.95f)));
+	}
 
 	if (PrimaryWeaponIcon)
+	{
+		PrimaryWeaponIcon->SetColorAndOpacity(FLinearColor(1.f, 1.f, 1.f, 0.9f));
 		PrimaryWeaponIcon->SetVisibility(ESlateVisibility::Collapsed);
+	}
 
 	if (SecondaryWeaponIcon)
+	{
+		SecondaryWeaponIcon->SetColorAndOpacity(FLinearColor(0.5f, 0.5f, 0.55f, 0.6f));
 		SecondaryWeaponIcon->SetVisibility(ESlateVisibility::Collapsed);
+	}
 
 	if (StaminaBar)
 	{

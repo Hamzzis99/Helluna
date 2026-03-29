@@ -338,16 +338,17 @@ void AHellunaHeroCharacter::InitWeaponHUD()
 	// GameState로 판단 (GameMode는 클라이언트에서 nullptr이므로 GameState 사용)
 	if (!Cast<AHellunaDefenseGameState>(UGameplayStatics::GetGameState(GetWorld()))) return;
 
-	if (WeaponHUDWidgetClass)
-	{
-		WeaponHUDWidget = CreateWidget<UWeaponHUDWidget>(GetWorld(), WeaponHUDWidgetClass);
-		if (WeaponHUDWidget)
-		{
-			WeaponHUDWidget->AddToViewport(0);
-			if (CurrentWeapon)
-				WeaponHUDWidget->UpdateWeapon(CurrentWeapon);
-		}
-	}
+	// [HealthHUD] 기존 WeaponHUD 임시 비활성화 — 새 HealthHUD로 통합
+	// if (WeaponHUDWidgetClass)
+	// {
+	// 	WeaponHUDWidget = CreateWidget<UWeaponHUDWidget>(GetWorld(), WeaponHUDWidgetClass);
+	// 	if (WeaponHUDWidget)
+	// 	{
+	// 		WeaponHUDWidget->AddToViewport(0);
+	// 		if (CurrentWeapon)
+	// 			WeaponHUDWidget->UpdateWeapon(CurrentWeapon);
+	// 	}
+	// }
 
 	// 낮/밤 HUD 생성
 	if (DayNightHUDWidgetClass)

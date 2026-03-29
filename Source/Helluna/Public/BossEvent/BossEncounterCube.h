@@ -484,4 +484,28 @@ private:
 
 	// 채도 오버슈트 Lerp
 	bool bCinematicSatBoostActive = false;
+
+	// =========================================================================================
+	// [Failsafe] MPC 강제 복원 타이머
+	// =========================================================================================
+
+	/** 웨이브 완료 실패 시 MPC 값을 강제 복원하는 안전장치 타이머 */
+	FTimerHandle MPC_FailsafeTimer;
+
+	/** MPC 값 강제 복원 (타이머 콜백) */
+	void ForceRestoreMPCValues();
+
+	// =========================================================================================
+	// [PPV 제어] 보스 이벤트 PP 볼륨 활성/비활성화
+	// =========================================================================================
+
+	/** 레벨에 배치된 PPV_BossEncounter 캐시 (BeginPlay에서 탐색) */
+	UPROPERTY()
+	TWeakObjectPtr<class APostProcessVolume> CachedBossPPV;
+
+	/** PPV_BossEncounter를 레벨에서 탐색·캐시 */
+	void CacheBossPostProcessVolume();
+
+	/** PPV 활성/비활성화 */
+	void SetBossPostProcessEnabled(bool bEnable);
 };
