@@ -27,24 +27,35 @@ AResourceUsingObject_HealTurret::AResourceUsingObject_HealTurret()
 
 	// ── [파트1] 베이스 메쉬 (고정) — Base 클래스의 DynamicMeshComponent ──
 
-	// ── [회전 피벗] ─────────────────────────────────────────
-	SpinRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SpinRoot"));
-	if (DynamicMeshComponent)
-	{
-		SpinRoot->SetupAttachment(DynamicMeshComponent);
-	}
+	// ── [파트2] 기울기 → 회전 → 메쉬 ────────────────────────
+	TiltPart2 = CreateDefaultSubobject<USceneComponent>(TEXT("TiltPart2"));
+	if (DynamicMeshComponent) { TiltPart2->SetupAttachment(DynamicMeshComponent); }
 
-	// ── [파트2] 회전 메쉬 — SpinRoot 하위 ────────────────────
+	SpinPart2 = CreateDefaultSubobject<USceneComponent>(TEXT("SpinPart2"));
+	SpinPart2->SetupAttachment(TiltPart2);
+
 	MeshPart2 = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MeshPart2"));
-	MeshPart2->SetupAttachment(SpinRoot);
+	MeshPart2->SetupAttachment(SpinPart2);
 
-	// ── [파트3] 회전 메쉬 — SpinRoot 하위 ────────────────────
+	// ── [파트3] 기울기 → 회전 → 메쉬 ────────────────────────
+	TiltPart3 = CreateDefaultSubobject<USceneComponent>(TEXT("TiltPart3"));
+	if (DynamicMeshComponent) { TiltPart3->SetupAttachment(DynamicMeshComponent); }
+
+	SpinPart3 = CreateDefaultSubobject<USceneComponent>(TEXT("SpinPart3"));
+	SpinPart3->SetupAttachment(TiltPart3);
+
 	MeshPart3 = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MeshPart3"));
-	MeshPart3->SetupAttachment(SpinRoot);
+	MeshPart3->SetupAttachment(SpinPart3);
 
-	// ── [파트4] 회전 메쉬 — SpinRoot 하위 ────────────────────
+	// ── [스핀 파트] 기울기 → 회전 → 메쉬 ────────────────────
+	TiltMeshSpin = CreateDefaultSubobject<USceneComponent>(TEXT("TiltMeshSpin"));
+	if (DynamicMeshComponent) { TiltMeshSpin->SetupAttachment(DynamicMeshComponent); }
+
+	SpinMeshSpin = CreateDefaultSubobject<USceneComponent>(TEXT("SpinMeshSpin"));
+	SpinMeshSpin->SetupAttachment(TiltMeshSpin);
+
 	MeshSpin = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MeshSpin"));
-	MeshSpin->SetupAttachment(SpinRoot);
+	MeshSpin->SetupAttachment(SpinMeshSpin);
 
 	// ── 힐 범위 구체 ────────────────────────────────────────
 	HealRangeSphere = CreateDefaultSubobject<USphereComponent>(TEXT("HealRangeSphere"));
@@ -75,9 +86,17 @@ void AResourceUsingObject_HealTurret::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	if (SpinRoot && SpinSpeed != 0.f)
+	if (SpinPart2)
 	{
-		SpinRoot->AddLocalRotation(FRotator(0.f, SpinSpeed * DeltaTime, 0.f));
+		SpinPart2->AddLocalRotation(SpinSpeedPart2 * DeltaTime);
+	}
+	if (SpinPart3)
+	{
+		SpinPart3->AddLocalRotation(SpinSpeedPart3 * DeltaTime);
+	}
+	if (SpinMeshSpin)
+	{
+		SpinMeshSpin->AddLocalRotation(SpinSpeedMeshSpin * DeltaTime);
 	}
 }
 

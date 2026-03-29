@@ -161,7 +161,8 @@ EStateTreeRunStatus FSTTask_ChaseTarget::EnterState(
 				APawn* P = AIController->GetPawn();
 				const FVector PawnLoc = P ? P->GetActorLocation() : TargetActor->GetActorLocation();
 				const FVector Dir     = (TargetActor->GetActorLocation() - PawnLoc).GetSafeNormal();
-				const FVector RawGoal = PawnLoc + Dir * FMath::Min(DistToShip - SlotEngageRadius * 0.5f, 1200.f);
+				// SlotEngageRadius * 0.8f 지점까지 이동 → SlotEngageRadius 내부로 확실히 진입하도록
+				const FVector RawGoal = PawnLoc + Dir * FMath::Min(DistToShip - SlotEngageRadius * 0.8f, 1500.f);
 
 				UNavigationSystemV1* NavSys = FNavigationSystem::GetCurrent<UNavigationSystemV1>(AIController->GetWorld());
 				FNavLocation NavGoal;
@@ -348,8 +349,8 @@ EStateTreeRunStatus FSTTask_ChaseTarget::Tick(
 					const FVector PawnLoc  = Pawn->GetActorLocation();
 					const FVector ShipLoc  = TargetActor->GetActorLocation();
 					const FVector Dir      = (ShipLoc - PawnLoc).GetSafeNormal();
-					// 우주선 방향으로 SlotEngageRadius 거리의 중간 목표 설정
-					const FVector RawGoal  = PawnLoc + Dir * FMath::Min(DistToShip - SlotEngageRadius * 0.5f, 1200.f);
+					// SlotEngageRadius * 0.8f 지점까지 이동 → SlotEngageRadius 내부로 확실히 진입하도록
+					const FVector RawGoal  = PawnLoc + Dir * FMath::Min(DistToShip - SlotEngageRadius * 0.8f, 1500.f);
 
 					UNavigationSystemV1* NavSys = FNavigationSystem::GetCurrent<UNavigationSystemV1>(AIController->GetWorld());
 					FNavLocation NavGoal;

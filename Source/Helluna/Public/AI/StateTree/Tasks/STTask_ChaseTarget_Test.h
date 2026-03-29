@@ -85,6 +85,9 @@ struct FSTTask_ChaseTarget_TestInstanceData
 	UPROPERTY()
 	int32 ConsecutiveStuckCount = 0;
 
+	UPROPERTY()
+	int32 DetourDirectionSign = 0;
+
 	// ─── 슬롯 시스템 (우주선 근거리) ────────────────────────
 
 	/** 현재 배정된 슬롯 인덱스 (-1 = 미배정) */
@@ -102,6 +105,14 @@ struct FSTTask_ChaseTarget_TestInstanceData
 	/** 슬롯 위치에 도착했는지 */
 	UPROPERTY()
 	bool bSlotArrived = false;
+
+	/** 슬롯 대기 중 이동 목표 (한 번 정하면 도착까지 유지) */
+	UPROPERTY()
+	FVector WaitingDestination = FVector::ZeroVector;
+
+	/** 대기 목표가 유효한지 */
+	UPROPERTY()
+	bool bHasWaitingDestination = false;
 };
 
 USTRUCT(meta = (DisplayName = "Helluna: Chase Target (Test)", Category = "Helluna|AI"))
@@ -177,6 +188,12 @@ public:
 			ToolTip = "Stuck 시 좌/우 우회 거리. 연속 시 x횟수(최대 3배). 권장: 200~500cm",
 			ClampMin = "50.0", EditCondition = "bUseStuckDetour"))
 	float DetourOffset = 300.f;
+
+	UPROPERTY(EditAnywhere, Category = "Stuck 媛먯?",
+		meta = (DisplayName = "Stuck Detour Direction Lock",
+			ToolTip = "ON: Reuse the first random left/right detour direction while the actor remains consecutively stuck.\nOFF: Pick a new random left/right direction on each stuck detour.",
+			EditCondition = "bUseStuckDetour"))
+	bool bUsePersistentDetourDirection = true;
 
 	// ═══════════════════════════════════════════════════════════
 	// 우주선 전용 설정

@@ -77,26 +77,29 @@ void USpaceShipAttackSlotManager::BuildSlots()
 			const float AngleRad = FMath::DegreesToRadians(i * AngleStep);
 			const FVector Offset(FMath::Cos(AngleRad) * Radius, FMath::Sin(AngleRad) * Radius, 0.f);
 
-			// Z는 우주선 중심 기준으로 높이 추적해서 지면을 찾음
-			const FVector CandidateXY = FVector(Center.X + Offset.X, Center.Y + Offset.Y, Center.Z + 500.f);
+			// 충분히 높은 곳에서 시작하여 경사 지형에서도 지면을 찾을 수 있도록
+			// Center.Z + 2000은 어떤 지형이든 지면 위에 있을 것
+			const FVector TraceStart = FVector(Center.X + Offset.X, Center.Y + Offset.Y, Center.Z + 2000.f);
+			const FVector TraceEnd   = FVector(Center.X + Offset.X, Center.Y + Offset.Y, Center.Z - 2000.f);
 
-			// 지면 LineTrace
+			// 지면 LineTrace (우주선 메시 무시)
 			FHitResult HitResult;
 			FCollisionQueryParams TraceParams;
 			TraceParams.AddIgnoredActor(Owner);
-			const FVector TraceEnd = FVector(CandidateXY.X, CandidateXY.Y, Center.Z - 1000.f);
 
-			FVector Candidate = CandidateXY;
-			if (World->LineTraceSingleByChannel(HitResult, CandidateXY, TraceEnd, ECC_WorldStatic, TraceParams))
+			FVector Candidate = TraceStart;
+			if (World->LineTraceSingleByChannel(HitResult, TraceStart, TraceEnd, ECC_WorldStatic, TraceParams))
 			{
 				Candidate = HitResult.ImpactPoint + FVector(0, 0, 10.f); // 지면 위 10cm
+			}
+			else
+			{
+				continue; // 지면을 못 찾으면 스킵
 			}
 
 			FVector NavLocation;
 			if (!ValidateSlotCandidate(Candidate, NavLocation))
 			{
-				UE_LOG(LogTemp, Verbose, TEXT("[SlotManager] 후보 거부: Ring=%d, Angle=%d, Pos=%s"),
-					Ring, i, *Candidate.ToString());
 				continue;
 			}
 
@@ -111,23 +114,13 @@ void USpaceShipAttackSlotManager::BuildSlots()
 	UE_LOG(LogTemp, Warning, TEXT("[SlotManager] 슬롯 생성 완료: %d / %d 유효 (우주선 위치: %s)"),
 		ValidCount, TotalCount, *Center.ToString());
 
-	// ── 디버그: NavMesh가 우주선 주변을 실제로 커버하는지 체크 ──────────
+	if (ValidCount == 0)
 	{
-		FNavLocation NavLocCenter;
-		const bool bShipOnNav = NavSys->ProjectPointToNavigation(
-			Center, NavLocCenter, FVector(500.f, 500.f, 500.f));
-		UE_LOG(LogTemp, Warning,
-			TEXT("[SlotManager] 우주선 중심 NavMesh 투영: %s → NavPos=%s (NavMesh 위=%d)"),
-			*Center.ToString(), *NavLocCenter.Location.ToString(), (int)bShipOnNav);
-
-		if (ValidCount == 0)
-		{
-			UE_LOG(LogTemp, Error,
-				TEXT("[SlotManager] ❌ 유효 슬롯 0개! 우주선 주변 NavMesh가 없거나 메시와 겹칩니다."));
-			UE_LOG(LogTemp, Error,
-				TEXT("[SlotManager] ❌ 확인 사항: 1) Show→Navigation 으로 NavMesh 범위 확인  2) MinRadius=%.0f / MaxRadius=%.0f 범위 안에 NavMesh 있는지 확인"),
-				MinRadius, MaxRadius);
-		}
+		UE_LOG(LogTemp, Error,
+			TEXT("[SlotManager] ❌ 유효 슬롯 0개! 우주선 주변 NavMesh가 없거나 메시와 겹칩니다."));
+		UE_LOG(LogTemp, Error,
+			TEXT("[SlotManager] ❌ 확인: Show→Navigation, MinRadius=%.0f / MaxRadius=%.0f"),
+			MinRadius, MaxRadius);
 	}
 
 	// 디버그 드로잉
@@ -157,9 +150,37 @@ bool USpaceShipAttackSlotManager::ValidateSlotCandidate(const FVector& Candidate
 	if (!NavSys->ProjectPointToNavigation(Candidate, NavLoc, Extent))
 		return false;
 
-	// 2. 우주선 메시와 겹침 여부 체크 — NavMesh 투영이 통과한 위치는 이미
-	//    도달 가능하다고 판단하므로, 우주선과의 Overlap으로 거부하지 않는다.
-	//    (우주선 메시가 크면 주변 유효 슬롯까지 모두 거부되는 문제 방지)
+	AActor* Owner = GetOwner();
+	if (Owner)
+	{
+		FCollisionQueryParams TraceParams;
+		TraceParams.AddIgnoredActor(nullptr);
+
+		// 2. 우주선 밑인지 체크 — 위로 Trace 쏴서 우주선에 막히면 거부
+		{
+			const FVector UpStart = NavLoc.Location + FVector(0, 0, 10.f);
+			const FVector UpEnd   = NavLoc.Location + FVector(0, 0, 1500.f);
+			FHitResult UpHit;
+			if (World->LineTraceSingleByChannel(UpHit, UpStart, UpEnd, ECC_Visibility, TraceParams))
+			{
+				if (UpHit.GetActor() == Owner)
+					return false;
+			}
+		}
+
+		// 3. 우주선 위인지 체크 — 아래로 Trace 쏴서 우주선에 맞으면 거부
+		//    (슬롯이 우주선 상부 표면 위에 생성되는 것 방지)
+		{
+			const FVector DownStart = NavLoc.Location + FVector(0, 0, 10.f);
+			const FVector DownEnd   = NavLoc.Location - FVector(0, 0, 500.f);
+			FHitResult DownHit;
+			if (World->LineTraceSingleByChannel(DownHit, DownStart, DownEnd, ECC_Visibility, TraceParams))
+			{
+				if (DownHit.GetActor() == Owner)
+					return false;
+			}
+		}
+	}
 
 	OutNavLocation = NavLoc.Location;
 	return true;
@@ -287,14 +308,14 @@ bool USpaceShipAttackSlotManager::GetWaitingPosition(AActor* Monster, FVector& O
 		const FVector CandidateXY = FVector(
 			Center.X + FMath::Cos(FMath::DegreesToRadians(Angle)) * Radius,
 			Center.Y + FMath::Sin(FMath::DegreesToRadians(Angle)) * Radius,
-			Center.Z + 500.f
+			Center.Z + 2000.f
 		);
 
 		// 지면 LineTrace
 		FHitResult HitResult;
 		FCollisionQueryParams TraceParams;
 		TraceParams.AddIgnoredActor(Owner);
-		const FVector TraceEnd = FVector(CandidateXY.X, CandidateXY.Y, Center.Z - 1000.f);
+		const FVector TraceEnd = FVector(CandidateXY.X, CandidateXY.Y, Center.Z - 2000.f);
 
 		FVector Candidate = CandidateXY;
 		if (World->LineTraceSingleByChannel(HitResult, CandidateXY, TraceEnd, ECC_WorldStatic, TraceParams))
@@ -304,6 +325,32 @@ bool USpaceShipAttackSlotManager::GetWaitingPosition(AActor* Monster, FVector& O
 		const FVector Extent(NavExtent * 2.f, NavExtent * 2.f, NavExtent * 8.f);
 		if (NavSys->ProjectPointToNavigation(Candidate, NavLoc, Extent))
 		{
+			FCollisionQueryParams WaitTraceParams;
+
+			// 우주선 밑인지 체크
+			{
+				const FVector UpStart = NavLoc.Location + FVector(0, 0, 10.f);
+				const FVector UpEnd   = NavLoc.Location + FVector(0, 0, 1500.f);
+				FHitResult UpHit;
+				if (World->LineTraceSingleByChannel(UpHit, UpStart, UpEnd, ECC_Visibility, WaitTraceParams))
+				{
+					if (UpHit.GetActor() == Owner)
+						continue;
+				}
+			}
+
+			// 우주선 위인지 체크
+			{
+				const FVector DownStart = NavLoc.Location + FVector(0, 0, 10.f);
+				const FVector DownEnd   = NavLoc.Location - FVector(0, 0, 500.f);
+				FHitResult DownHit;
+				if (World->LineTraceSingleByChannel(DownHit, DownStart, DownEnd, ECC_Visibility, WaitTraceParams))
+				{
+					if (DownHit.GetActor() == Owner)
+						continue;
+				}
+			}
+
 			OutLocation = NavLoc.Location;
 			return true;
 		}

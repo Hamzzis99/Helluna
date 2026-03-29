@@ -56,9 +56,6 @@ private:
 	// ✅ 로컬 체감: 즉시 Yaw만 회전
 	void FaceToTarget_InstantLocalOnly(const FGameplayAbilityActorInfo* ActorInfo, const FVector& TargetLocation) const;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Farming|Look")  // 크로스헤어 X 위치 기준 (0.0 ~ 1.0)
-	float CrosshairXNormalized = 0.57f;
-
 	/**
 	 * 몽타주 재생 시작 후 데미지가 적용되는 시점 (0.0 ~ 1.0).
 	 * 0.26 = 몽타주 26% 지점에서 데미지 적용.

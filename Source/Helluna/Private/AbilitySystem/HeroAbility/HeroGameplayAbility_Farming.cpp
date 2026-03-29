@@ -164,46 +164,13 @@ void UHeroGameplayAbility_Farming::FaceToTarget_InstantLocalOnly(
 	if (!Pawn || !Pawn->IsLocallyControlled())
 		return;
 
-	APlayerController* PC = Cast<APlayerController>(Pawn->GetController());
-	if (!PC) return;
+	// ✅ 캐릭터의 Yaw만 광석을 향하도록 회전 (카메라는 그대로)
+	const FVector PawnLoc = Pawn->GetActorLocation();
+	const FRotator LookAt = UKismetMathLibrary::FindLookAtRotation(PawnLoc, TargetLocation);
 
-	// ✅ TPS 안정 기준점
-	const FVector StartLoc = Pawn->GetPawnViewLocation();
-
-	// 1) 기본 LookAt
-	const FRotator LookAt = UKismetMathLibrary::FindLookAtRotation(StartLoc, TargetLocation);
-
-	// 2) 화면 크기 기반 "크로스헤어 X 오프셋" -> Yaw 보정 각도 계산
-	int32 SizeX = 0, SizeY = 0;
-	PC->GetViewportSize(SizeX, SizeY);
-	if (SizeX <= 0) return;
-
-
-	const float CenterX = SizeX * 0.5f;
-	const float CrossX = SizeX * CrosshairXNormalized;
-	const float Dx = CrossX - CenterX; // +면 오른쪽
-
-	// FOV 기반 픽셀 오프셋을 각도로 변환
-	const float FovDeg = (PC->PlayerCameraManager) ? PC->PlayerCameraManager->GetFOVAngle() : 90.f;
-	const float FovRad = FMath::DegreesToRadians(FovDeg);
-	const float FocalLengthPx = CenterX / FMath::Tan(FovRad * 0.5f); // f = (w/2)/tan(FOV/2)
-
-	const float OffsetYawDeg = FMath::RadiansToDegrees(FMath::Atan2(Dx, FocalLengthPx));
-	// ✅ 크로스헤어가 오른쪽이면(+Dx), 타겟을 그쪽으로 보내려면 Yaw를 "왼쪽으로"(-) 더 돌려야 함
-	const float TargetYawWithOffset = LookAt.Yaw - OffsetYawDeg;
-
-	// 3) 데드존 (미세 보정 무시)
-	constexpr float YawDeadZoneDeg = 0.25f;
-
-	const float CurrentYaw = PC->GetControlRotation().Yaw;
-	const float DeltaYaw = FMath::Abs(FMath::FindDeltaAngleDegrees(CurrentYaw, TargetYawWithOffset));
-	if (DeltaYaw <= YawDeadZoneDeg)
-		return;
-
-	// Pitch 유지, Yaw만 맞추기
-	FRotator NewRot = PC->GetControlRotation();
-	NewRot.Yaw = TargetYawWithOffset;
-	PC->SetControlRotation(NewRot);
+	FRotator NewRot = Pawn->GetActorRotation();
+	NewRot.Yaw = LookAt.Yaw;
+	Pawn->SetActorRotation(NewRot);
 }
 
 void UHeroGameplayAbility_Farming::ApplyFarmingDamage()

@@ -44,25 +44,95 @@
 DEFINE_LOG_CATEGORY_STATIC(LogChaseTarget, Log, All);
 
 namespace ChaseTargetTestHelpers {
+
+FVector ComputeDetourGoal(
+	const FVector& PawnLoc,
+	const FVector& TargetLoc,
+	AAIController* AIC,
+	float OffsetAmount,
+	int32 DirectionSign = 0);
+
+int32 ResolveDetourDirectionSign(
+	FSTTask_ChaseTarget_TestInstanceData& D,
+	bool bUsePersistentDirection);
+
+// 전방 선언: 우주선 밑/위인지 체크하는 공용 함수
+static bool IsUnderOrOnShip(UWorld* World, AActor* Ship, const FVector& Location)
+{
+	if (!World || !Ship) return false;
+
+	FCollisionQueryParams TraceParams;
+
+	// 위로 Trace: 우주선 밑인지
+	{
+		const FVector UpStart = Location + FVector(0, 0, 10.f);
+		const FVector UpEnd   = Location + FVector(0, 0, 1500.f);
+		FHitResult UpHit;
+		if (World->LineTraceSingleByChannel(UpHit, UpStart, UpEnd, ECC_Visibility, TraceParams))
+		{
+			if (UpHit.GetActor() == Ship) return true;
+		}
+	}
+
+	// 아래로 Trace: 우주선 위인지
+	{
+		const FVector DownStart = Location + FVector(0, 0, 10.f);
+		const FVector DownEnd   = Location - FVector(0, 0, 500.f);
+		FHitResult DownHit;
+		if (World->LineTraceSingleByChannel(DownHit, DownStart, DownEnd, ECC_Visibility, TraceParams))
+		{
+			if (DownHit.GetActor() == Ship) return true;
+		}
+	}
+
+	return false;
+}
+
 // ============================================================================
 // 헬퍼: 우주선 방향 NavMesh 위 중간 경유점 계산
+//   우주선 밑/위로 투영되는 경유점은 거부하고, 대안 경유점을 시도한다.
 // ============================================================================
 FVector ComputeNavGoalTowardShip(
 	const FVector& PawnLoc,
 	const FVector& ShipLoc,
 	AAIController* AIC,
+	AActor* ShipActor = nullptr,
 	float MaxStepDist = 1200.f)
 {
 	const float Dist = FVector::Dist(PawnLoc, ShipLoc);
 	const FVector Dir = (ShipLoc - PawnLoc).GetSafeNormal();
-	const FVector RawGoal = PawnLoc + Dir * FMath::Min(Dist * 0.8f, MaxStepDist);
 
 	UNavigationSystemV1* NavSys = FNavigationSystem::GetCurrent<UNavigationSystemV1>(AIC->GetWorld());
-	FNavLocation NavGoal;
-	if (NavSys && NavSys->ProjectPointToNavigation(RawGoal, NavGoal, FVector(200.f, 200.f, 500.f)))
-		return NavGoal.Location;
+	if (!NavSys) return PawnLoc;
 
-	return RawGoal;
+	// 여러 거리를 시도해서 유효한 경유점을 찾는다
+	// (가까운 것부터: 80%, 60%, 40%, 20% 거리)
+	const float Fractions[] = { 0.8f, 0.6f, 0.4f, 0.2f };
+
+	for (float Frac : Fractions)
+	{
+		const float StepDist = FMath::Min(Dist * Frac, MaxStepDist);
+		if (StepDist < 80.f) continue;  // 너무 가까우면 스킵
+
+		const FVector RawGoal = PawnLoc + Dir * StepDist;
+
+		FNavLocation NavGoal;
+		if (!NavSys->ProjectPointToNavigation(RawGoal, NavGoal, FVector(200.f, 200.f, 500.f)))
+			continue;
+
+		// 현재 위치와 너무 가까우면 스킵
+		if (FVector::Dist(PawnLoc, NavGoal.Location) < 80.f)
+			continue;
+
+		// 우주선 밑/위인지 체크
+		if (ShipActor && IsUnderOrOnShip(AIC->GetWorld(), ShipActor, NavGoal.Location))
+			continue;
+
+		return NavGoal.Location;
+	}
+
+	// 모든 직선 경유점이 실패 → 현재 위치 반환 (정지)
+	return PawnLoc;
 }
 
 // ============================================================================
@@ -85,7 +155,7 @@ void IssueMoveToLocation(AAIController* AIC, const FVector& Goal, float Radius)
 		if (!IsValid(Pawn)) return;
 
 		const FVector FallbackGoal = ComputeNavGoalTowardShip(
-			Pawn->GetActorLocation(), Goal, AIC);
+			Pawn->GetActorLocation(), Goal, AIC, nullptr);
 
 		FAIMoveRequest FallbackReq;
 		FallbackReq.SetGoalLocation(FallbackGoal);
@@ -97,7 +167,9 @@ void IssueMoveToLocation(AAIController* AIC, const FVector& Goal, float Radius)
 }
 
 // ============================================================================
-// 헬퍼: 우주선 방향 이동 (NavMesh 경계 도달 시 pathfinding OFF)
+// 헬퍼: 우주선 방향 이동
+//   NavMesh 경계에 도달하면 무리하게 직진하지 않고 정지한다.
+//   (pathfinding OFF 직진은 우주선 메시 아래로 파고드는 문제 유발)
 // ============================================================================
 void IssueMoveTowardShip(
 	AAIController* AIC,
@@ -107,23 +179,19 @@ void IssueMoveTowardShip(
 {
 	const FVector PawnLoc = Pawn->GetActorLocation();
 	const FVector ShipLoc = Ship->GetActorLocation();
-	const FVector NavGoal = ComputeNavGoalTowardShip(PawnLoc, ShipLoc, AIC);
+	const FVector NavGoal = ComputeNavGoalTowardShip(PawnLoc, ShipLoc, AIC, Ship);
 
-	const float DistToNavGoal = FVector::Dist(PawnLoc, NavGoal);
-
-	// NavMesh 경유점이 현재 위치에서 100cm 이내 → NavMesh 경계 도달
-	// pathfinding 없이 우주선 방향으로 직접 이동
-	if (DistToNavGoal < 100.f)
+	// 경유점이 현재 위치와 같으면 (제자리 반환) → 이동 불가, 정지
+	if (FVector::Dist(PawnLoc, NavGoal) < 50.f)
 	{
-		UE_LOG(LogChaseTarget, Log,
-			TEXT("[Chase] NavMesh 경계 도달 - [%s] pathfinding OFF 직접 이동 (NavGoal거리=%.1f)"),
-			*Pawn->GetName(), DistToNavGoal);
+		const FVector DetourGoal = ComputeDetourGoal(PawnLoc, ShipLoc, AIC, 300.f);
 
-		FAIMoveRequest Req;
-		Req.SetGoalActor(Ship);
-		Req.SetAcceptanceRadius(AcceptanceRadius);
-		Req.SetUsePathfinding(false);
-		AIC->MoveTo(Req);
+		UE_LOG(LogChaseTarget, Warning,
+			TEXT("[Chase][MoveTowardShip] NavGoal invalid -> Detour 시도 | Pawn=%s DetourGoal=%s"),
+			*Pawn->GetName(),
+			*DetourGoal.ToString());
+
+		IssueMoveToLocation(AIC, DetourGoal, AcceptanceRadius);
 		return;
 	}
 
@@ -137,11 +205,14 @@ FVector ComputeDetourGoal(
 	const FVector& PawnLoc,
 	const FVector& TargetLoc,
 	AAIController* AIC,
-	float OffsetAmount)
+	float OffsetAmount,
+	int32 DirectionSign)
 {
 	const FVector DirToTarget = (TargetLoc - PawnLoc).GetSafeNormal2D();
 	const FVector Right = FVector::CrossProduct(FVector::UpVector, DirToTarget).GetSafeNormal();
-	const float Sign = (FMath::RandBool()) ? 1.f : -1.f;
+	const float Sign = DirectionSign == 0
+		? ((FMath::RandBool()) ? 1.f : -1.f)
+		: (DirectionSign > 0 ? 1.f : -1.f);
 
 	const FVector RawGoal = PawnLoc + DirToTarget * OffsetAmount * 0.5f + Right * Sign * OffsetAmount;
 
@@ -151,6 +222,19 @@ FVector ComputeDetourGoal(
 		return NavGoal.Location;
 
 	return RawGoal;
+}
+
+int32 ResolveDetourDirectionSign(
+	FSTTask_ChaseTarget_TestInstanceData& D,
+	bool bUsePersistentDirection)
+{
+	if (!bUsePersistentDirection)
+		return FMath::RandBool() ? 1 : -1;
+
+	if (D.DetourDirectionSign == 0)
+		D.DetourDirectionSign = FMath::RandBool() ? 1 : -1;
+
+	return D.DetourDirectionSign;
 }
 
 // ============================================================================
@@ -290,7 +374,10 @@ bool CheckPositionBasedStuck(
 	if (bStuck)
 		D.ConsecutiveStuckCount++;
 	else
+	{
 		D.ConsecutiveStuckCount = 0;
+		D.DetourDirectionSign = 0;
+	}
 
 	D.LastCheckedLocation = CurrentLoc;
 	D.StuckCheckTimer = 0.f;
@@ -325,10 +412,13 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::EnterState(
 	D.TimeUntilNextEQS      = 0.f;
 	D.StuckCheckTimer       = 0.f;
 	D.ConsecutiveStuckCount = 0;
+	D.DetourDirectionSign   = 0;
 	D.AssignedSlotIndex     = -1;
 	D.AssignedSlotLocation  = FVector::ZeroVector;
 	D.SlotRetryTimer        = 0.f;
 	D.bSlotArrived          = false;
+	D.WaitingDestination    = FVector::ZeroVector;
+	D.bHasWaitingDestination = false;
 
 	APawn* Pawn = AIC->GetPawn();
 	if (IsValid(Pawn))
@@ -528,8 +618,9 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 						if (bStuck)
 						{
 							const float Mult = FMath::Min((float)D.ConsecutiveStuckCount, 3.f);
+							const int32 DetourDirectionSign = CTH::ResolveDetourDirectionSign(D, bUsePersistentDetourDirection);
 							CTH::IssueMoveToLocation(AIC,
-								CTH::ComputeDetourGoal(PawnLoc, TargetActor->GetActorLocation(), AIC, DetourOffset * Mult),
+								CTH::ComputeDetourGoal(PawnLoc, TargetActor->GetActorLocation(), AIC, DetourOffset * Mult, DetourDirectionSign),
 								AcceptanceRadius);
 						}
 						else
@@ -541,11 +632,11 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 					return EStateTreeRunStatus::Running;
 				}
 
-				// 슬롯 진입 범위 안: 배정 재시도 (1초 쿨다운)
+				// 슬롯 진입 범위 안: 배정 재시도 (2초 쿨다운)
 				D.SlotRetryTimer -= DeltaTime;
 				if (D.SlotRetryTimer <= 0.f)
 				{
-					D.SlotRetryTimer = 1.f;
+					D.SlotRetryTimer = 2.f;
 					int32 SlotIdx = -1;
 					FVector SlotLoc;
 					if (SlotMgr->RequestSlot(Pawn, SlotIdx, SlotLoc))
@@ -553,17 +644,30 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 						D.AssignedSlotIndex    = SlotIdx;
 						D.AssignedSlotLocation = SlotLoc;
 						D.bSlotArrived         = false;
+						D.bHasWaitingDestination = false;
 						CTH::IssueMoveToLocation(AIC, SlotLoc, AcceptanceRadius);
 					}
 					else
 					{
-						FVector WaitLoc;
-						if (SlotMgr->GetWaitingPosition(Pawn, WaitLoc))
-							CTH::IssueMoveToLocation(AIC, WaitLoc, AcceptanceRadius);
-						else
-							CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius);
+						// 슬롯 없음: 제자리에서 우주선을 바라보며 대기
+						// 불필요한 이동 명령을 내리지 않아 움찔거림 방지
+						AIC->StopMovement();
 					}
 				}
+
+				// 대기 중(슬롯 미배정 + 이동 없음): 우주선을 바라보고 서있기
+				if (bIdle)
+				{
+					const FVector ToShip = (TargetActor->GetActorLocation() - PawnLoc).GetSafeNormal2D();
+					if (!ToShip.IsNearlyZero())
+					{
+						Pawn->SetActorRotation(FMath::RInterpTo(
+							Pawn->GetActorRotation(),
+							FRotator(0.f, ToShip.Rotation().Yaw, 0.f),
+							DeltaTime, 5.f));
+					}
+				}
+
 				return EStateTreeRunStatus::Running;
 			}
 
@@ -601,18 +705,24 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 				SlotMgr->ReleaseSlotByIndex(D.AssignedSlotIndex);
 				D.AssignedSlotIndex     = -1;
 				D.ConsecutiveStuckCount = 0;
+				D.DetourDirectionSign   = 0;
 				D.SlotRetryTimer        = 0.f; // 즉시 재시도
 			}
 		}
 		else
 		{
 			// ─── 슬롯 시스템 OFF (자유 이동) ────────────────
+			// 이동 중(Moving)이면 Repath를 건너뛰어 경로 리셋 진동 방지
+			bool bMoving = false;
+			if (UPathFollowingComponent* PFC = AIC->GetPathFollowingComponent())
+				bMoving = (PFC->GetStatus() == EPathFollowingStatus::Moving);
 
 			if (bStuck)
 			{
 				const float Mult = FMath::Min((float)D.ConsecutiveStuckCount, 3.f);
+				const int32 DetourDirectionSign = CTH::ResolveDetourDirectionSign(D, bUsePersistentDetourDirection);
 				const FVector DetourGoal = CTH::ComputeDetourGoal(
-					PawnLoc, TargetActor->GetActorLocation(), AIC, DetourOffset * Mult);
+					PawnLoc, TargetActor->GetActorLocation(), AIC, DetourOffset * Mult, DetourDirectionSign);
 
 				UE_LOG(LogChaseTarget, Log,
 					TEXT("[Chase] Tick - [%s] 우주선 Stuck 우회 | 배수=%.1f"),
@@ -621,15 +731,25 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 				CTH::IssueMoveToLocation(AIC, DetourGoal, AcceptanceRadius);
 				D.TimeSinceRepath = 0.f;
 			}
-			else if ((bIdle && SurfaceDist > AttackRange + 100.f) || D.TimeSinceRepath >= RepathInterval)
+			else if (bIdle && SurfaceDist > AttackRange + 100.f)
 			{
+				// Idle인데 아직 멀면 재이동
+				CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius);
+				D.TimeSinceRepath = 0.f;
+			}
+			else if (!bMoving && D.TimeSinceRepath >= RepathInterval)
+			{
+				// 이동 중이 아닐 때만 Repath (이동 중 Repath는 경로 리셋 진동 유발)
 				CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius);
 				D.TimeSinceRepath = 0.f;
 			}
 		}
 
 		// 우주선 방향 회전 (슬롯 도착 상태가 아닐 때)
-		if (!D.bSlotArrived)
+		// CharacterMovement의 bOrientRotationToMovement가 이동 방향 회전을 처리하므로
+		// 이동 중에는 수동 회전을 하지 않는다 (두 시스템이 충돌하면 움찔거림 발생).
+		// 정지 상태(Idle)에서만 우주선을 향해 회전한다.
+		if (!D.bSlotArrived && bIdle)
 		{
 			const FVector ToShip = (TargetActor->GetActorLocation() - PawnLoc).GetSafeNormal2D();
 			if (!ToShip.IsNearlyZero())
@@ -675,6 +795,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 		if (bTargetChanged)
 		{
 			D.ConsecutiveStuckCount = 0;
+			D.DetourDirectionSign = 0;
 			D.TimeUntilNextEQS = 0.f;
 		}
 
@@ -683,8 +804,9 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 			if (bStuck)
 			{
 				const float Mult = FMath::Min((float)D.ConsecutiveStuckCount, 3.f);
+				const int32 DetourDirectionSign = CTH::ResolveDetourDirectionSign(D, bUsePersistentDetourDirection);
 				CTH::IssueMoveToLocation(AIC,
-					CTH::ComputeDetourGoal(Pawn->GetActorLocation(), TargetActor->GetActorLocation(), AIC, DetourOffset * Mult),
+					CTH::ComputeDetourGoal(Pawn->GetActorLocation(), TargetActor->GetActorLocation(), AIC, DetourOffset * Mult, DetourDirectionSign),
 					AcceptanceRadius);
 			}
 			else if (bUseEQS && AttackPositionQuery && D.TimeUntilNextEQS <= 0.f)
@@ -701,14 +823,17 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 			D.TimeSinceRepath = 0.f;
 		}
 
-		// 플레이어를 향해 회전
-		const FVector ToTarget = (TargetActor->GetActorLocation() - Pawn->GetActorLocation()).GetSafeNormal2D();
-		if (!ToTarget.IsNearlyZero())
+		// 플레이어를 향해 회전 (정지 상태에서만 — 이동 중은 CharacterMovement가 처리)
+		if (bIdle)
 		{
-			Pawn->SetActorRotation(FMath::RInterpTo(
-				Pawn->GetActorRotation(),
-				FRotator(0.f, ToTarget.Rotation().Yaw, 0.f),
-				DeltaTime, 5.f));
+			const FVector ToTarget = (TargetActor->GetActorLocation() - Pawn->GetActorLocation()).GetSafeNormal2D();
+			if (!ToTarget.IsNearlyZero())
+			{
+				Pawn->SetActorRotation(FMath::RInterpTo(
+					Pawn->GetActorRotation(),
+					FRotator(0.f, ToTarget.Rotation().Yaw, 0.f),
+					DeltaTime, 5.f));
+			}
 		}
 	}
 
