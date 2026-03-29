@@ -56,6 +56,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "HealthHUD")
 	void UpdateAmmoText(int32 CurrentAmmo);
 
+	/** 탄약 갱신 (현재/최대) — RE4R 스타일 */
+	UFUNCTION(BlueprintCallable, Category = "HealthHUD")
+	void UpdateAmmoFull(int32 Current, int32 Max);
+
 	/** 스태미나 바 갱신 (0~1) */
 	UFUNCTION(BlueprintCallable, Category = "HealthHUD")
 	void UpdateStaminaBar(float Percent);

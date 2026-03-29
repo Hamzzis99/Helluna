@@ -206,7 +206,7 @@ FVector ComputeDetourGoal(
 	const FVector& TargetLoc,
 	AAIController* AIC,
 	float OffsetAmount,
-	int32 DirectionSign)
+	int32 DirectionSign /* = 0 */)
 {
 	const FVector DirToTarget = (TargetLoc - PawnLoc).GetSafeNormal2D();
 	const FVector Right = FVector::CrossProduct(FVector::UpVector, DirToTarget).GetSafeNormal();

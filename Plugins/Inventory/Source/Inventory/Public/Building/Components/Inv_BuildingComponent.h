@@ -235,6 +235,23 @@ private:
 		meta = (DisplayName = "건설 취소 액션", Tooltip = "건설 모드를 취소하는 입력 액션. 우클릭에 바인딩됩니다.", AllowPrivateAccess = "true"))
 	TObjectPtr<UInputAction> IA_CancelBuilding;
 
+	// === 건물 회전 입력 액션 ===
+
+	// 오른쪽 연속 회전 액션 (R키 홀드)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "건설|입력",
+		meta = (DisplayName = "오른쪽 회전 액션 (Right Rotation Action)", Tooltip = "건물을 오른쪽(시계 방향)으로 연속 회전하는 입력 액션. R키에 바인딩됩니다.", AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> IA_RotateBuildingRight;
+
+	// 왼쪽 연속 회전 액션 (Q키 홀드)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "건설|입력",
+		meta = (DisplayName = "왼쪽 회전 액션 (Left Rotation Action)", Tooltip = "건물을 왼쪽(반시계 방향)으로 연속 회전하는 입력 액션. Q키에 바인딩됩니다.", AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> IA_RotateBuildingLeft;
+
+	// 스냅 회전 액션 (G키 탭)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "건설|입력",
+		meta = (DisplayName = "스냅 회전 액션 (Snap Rotation Action)", Tooltip = "건물을 지정된 각도만큼 오른쪽으로 스냅 회전하는 입력 액션. G키에 바인딩됩니다.", AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> IA_SnapRotateBuilding;
+
 	// === 고스트 액터 ===
 
 	// 실제 스폰된 고스트 액터 인스턴스
@@ -259,6 +276,18 @@ private:
 		meta = (DisplayName = "최대 바닥 각도", Tooltip = "건물 설치를 허용하는 최대 지면 경사각(도)입니다. 이보다 가파르면 설치할 수 없습니다.", AllowPrivateAccess = "true"))
 	float MaxGroundAngle = 45.0f;
 
+	// === 건물 회전 설정 ===
+
+	// 연속 회전 속도 (도/초) — R/Q 홀드 시 초당 회전 각도
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|회전",
+		meta = (DisplayName = "연속 회전 속도 (Continuous Rotation Speed)", Tooltip = "R/Q키 홀드 시 초당 회전 속도(도)입니다.", ClampMin = "30.0", ClampMax = "360.0", AllowPrivateAccess = "true"))
+	float ContinuousRotationSpeed = 90.0f;
+
+	// 스냅 회전 각도 (도) — G키 한 번 탭 시 회전 각도
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|회전",
+		meta = (DisplayName = "스냅 회전 각도 (Snap Rotation Angle)", Tooltip = "G키 탭 시 오른쪽으로 회전하는 각도(도)입니다.", ClampMin = "15.0", ClampMax = "180.0", AllowPrivateAccess = "true"))
+	float SnapRotationAngle = 45.0f;
+
 	// === 동적 입력 바인딩 관리 ===
 	
 	// 빌드 모드 입력 활성화/비활성화
@@ -268,6 +297,29 @@ private:
 	// 동적 바인딩 핸들 (제거용)
 	uint32 BuildActionBindingHandle = 0;
 	uint32 CancelBuildingBindingHandle = 0;
+
+	// === 건물 회전 내부 ===
+
+	// 회전 입력 콜백
+	void OnRotateRightStarted();
+	void OnRotateRightCompleted();
+	void OnRotateLeftStarted();
+	void OnRotateLeftCompleted();
+	void OnSnapRotate();
+
+	// 현재 건물 회전값 (Yaw) — 빌드 모드 간 유지 (같은 각도로 연속 배치 가능)
+	float CurrentBuildRotationYaw = 0.0f;
+
+	// 회전 상태 플래그
+	bool bIsRotatingRight = false;
+	bool bIsRotatingLeft = false;
+
+	// 회전 바인딩 핸들 (제거용)
+	uint32 RotateRightStartHandle = 0;
+	uint32 RotateRightStopHandle = 0;
+	uint32 RotateLeftStartHandle = 0;
+	uint32 RotateLeftStopHandle = 0;
+	uint32 SnapRotateHandle = 0;
 
 	// 빌드 모드 IMC 우선순위 (Combat IMC보다 높게 설정)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|입력",

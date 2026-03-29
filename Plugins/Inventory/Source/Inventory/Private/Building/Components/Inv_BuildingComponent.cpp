@@ -14,6 +14,7 @@
 #include "Blueprint/WidgetBlueprintLibrary.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
 #include "Widgets/Building/Inv_BuildModeHUD.h"
+#include "Building/Actor/Inv_BuildingActor.h"
 
 
 // Sets default values for this component's properties
@@ -151,6 +152,19 @@ void UInv_BuildingComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 			DrawDebugLine(World, TraceStart, TraceEnd, FColor::Silver, false, 0.0f, 0, 1.0f);
 		}
 
+		// ★ 건물 회전 적용 (위치와 무관하게 항상 처리)
+		if (bIsRotatingRight)
+		{
+			CurrentBuildRotationYaw += ContinuousRotationSpeed * DeltaTime;
+		}
+		if (bIsRotatingLeft)
+		{
+			CurrentBuildRotationYaw -= ContinuousRotationSpeed * DeltaTime;
+		}
+		// Yaw 정규화 (0~360)
+		CurrentBuildRotationYaw = FMath::Fmod(CurrentBuildRotationYaw + 360.f, 360.f);
+		GhostActorInstance->SetActorRotation(FRotator(0.f, CurrentBuildRotationYaw, 0.f));
+
 		// ★ HUD 배치 상태 실시간 업데이트
 		if (IsValid(BuildModeHUDInstance))
 		{
@@ -164,8 +178,11 @@ void UInv_BuildingComponent::StartBuildMode()
 	if (!OwningPC.IsValid() || !GetWorld()) return;
 
 	bIsInBuildMode = true;
+	bIsRotatingRight = false;
+	bIsRotatingLeft = false;
+	// CurrentBuildRotationYaw는 유지 — 같은 각도로 연속 배치 가능
 #if INV_DEBUG_BUILD
-	UE_LOG(LogTemp, Warning, TEXT("=== Build Mode STARTED ==="));
+	UE_LOG(LogTemp, Warning, TEXT("=== Build Mode STARTED (RotationYaw: %.1f) ==="), CurrentBuildRotationYaw);
 #endif
 
 	// 선택된 고스트 액터 클래스가 있는지 확인
@@ -231,6 +248,8 @@ void UInv_BuildingComponent::StartBuildMode()
 void UInv_BuildingComponent::EndBuildMode()
 {
 	bIsInBuildMode = false;
+	bIsRotatingRight = false;
+	bIsRotatingLeft = false;
 #if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("=== Build Mode ENDED ==="));
 #endif
@@ -760,8 +779,12 @@ void UInv_BuildingComponent::Multicast_OnBuildingPlaced_Implementation(AActor* P
 #if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("Multicast: Building placed notification received - %s"), *PlacedBuilding->GetName());
 #endif
-	
-	// 여기에 건물 배치 후 추가 로직 (이펙트, 사운드 등) 추가 가능
+
+	// 배치 스캔 VFX 시작 (모든 클라이언트에서 재생)
+	if (AInv_BuildingActor* BuildingActor = Cast<AInv_BuildingActor>(PlacedBuilding))
+	{
+		BuildingActor->StartPlacementScanVFX();
+	}
 }
 
 bool UInv_BuildingComponent::HasRequiredMaterials(const FGameplayTag& MaterialTag, int32 RequiredAmount) const
@@ -878,6 +901,36 @@ void UInv_BuildingComponent::EnableBuildModeInput()
 			UE_LOG(LogTemp, Warning, TEXT("IA_CancelBuilding BOUND (Handle: %u)"), CancelBuildingBindingHandle);
 #endif
 		}
+
+		// R키: 오른쪽 연속 회전 (Started=시작, Completed=종료)
+		if (IsValid(IA_RotateBuildingRight) && RotateRightStartHandle == 0)
+		{
+			RotateRightStartHandle = EnhancedInputComponent->BindAction(
+				IA_RotateBuildingRight, ETriggerEvent::Started, this, &UInv_BuildingComponent::OnRotateRightStarted
+			).GetHandle();
+			RotateRightStopHandle = EnhancedInputComponent->BindAction(
+				IA_RotateBuildingRight, ETriggerEvent::Completed, this, &UInv_BuildingComponent::OnRotateRightCompleted
+			).GetHandle();
+		}
+
+		// Q키: 왼쪽 연속 회전 (Started=시작, Completed=종료)
+		if (IsValid(IA_RotateBuildingLeft) && RotateLeftStartHandle == 0)
+		{
+			RotateLeftStartHandle = EnhancedInputComponent->BindAction(
+				IA_RotateBuildingLeft, ETriggerEvent::Started, this, &UInv_BuildingComponent::OnRotateLeftStarted
+			).GetHandle();
+			RotateLeftStopHandle = EnhancedInputComponent->BindAction(
+				IA_RotateBuildingLeft, ETriggerEvent::Completed, this, &UInv_BuildingComponent::OnRotateLeftCompleted
+			).GetHandle();
+		}
+
+		// G키: 스냅 회전 (Started만 — 탭 한 번에 SnapRotationAngle도 회전)
+		if (IsValid(IA_SnapRotateBuilding) && SnapRotateHandle == 0)
+		{
+			SnapRotateHandle = EnhancedInputComponent->BindAction(
+				IA_SnapRotateBuilding, ETriggerEvent::Started, this, &UInv_BuildingComponent::OnSnapRotate
+			).GetHandle();
+		}
 	}
 }
 
@@ -981,6 +1034,69 @@ void UInv_BuildingComponent::DisableBuildModeInput()
 #endif
 			CancelBuildingBindingHandle = 0;
 		}
+
+		// 회전 바인딩 해제
+		if (RotateRightStartHandle != 0)
+		{
+			EnhancedInputComponent->RemoveBindingByHandle(RotateRightStartHandle);
+			RotateRightStartHandle = 0;
+		}
+		if (RotateRightStopHandle != 0)
+		{
+			EnhancedInputComponent->RemoveBindingByHandle(RotateRightStopHandle);
+			RotateRightStopHandle = 0;
+		}
+		if (RotateLeftStartHandle != 0)
+		{
+			EnhancedInputComponent->RemoveBindingByHandle(RotateLeftStartHandle);
+			RotateLeftStartHandle = 0;
+		}
+		if (RotateLeftStopHandle != 0)
+		{
+			EnhancedInputComponent->RemoveBindingByHandle(RotateLeftStopHandle);
+			RotateLeftStopHandle = 0;
+		}
+		if (SnapRotateHandle != 0)
+		{
+			EnhancedInputComponent->RemoveBindingByHandle(SnapRotateHandle);
+			SnapRotateHandle = 0;
+		}
+	}
+}
+
+// ============================================================================
+// 건물 회전 콜백
+// ============================================================================
+
+void UInv_BuildingComponent::OnRotateRightStarted()
+{
+	bIsRotatingRight = true;
+}
+
+void UInv_BuildingComponent::OnRotateRightCompleted()
+{
+	bIsRotatingRight = false;
+}
+
+void UInv_BuildingComponent::OnRotateLeftStarted()
+{
+	bIsRotatingLeft = true;
+}
+
+void UInv_BuildingComponent::OnRotateLeftCompleted()
+{
+	bIsRotatingLeft = false;
+}
+
+void UInv_BuildingComponent::OnSnapRotate()
+{
+	CurrentBuildRotationYaw += SnapRotationAngle;
+	CurrentBuildRotationYaw = FMath::Fmod(CurrentBuildRotationYaw + 360.f, 360.f);
+
+	// 즉시 고스트 회전 적용 (다음 Tick 전에 시각 피드백)
+	if (IsValid(GhostActorInstance))
+	{
+		GhostActorInstance->SetActorRotation(FRotator(0.f, CurrentBuildRotationYaw, 0.f));
 	}
 }
 
