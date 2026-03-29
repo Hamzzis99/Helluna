@@ -184,7 +184,7 @@ void IssueMoveTowardShip(
 	// 경유점이 현재 위치와 같으면 (제자리 반환) → 이동 불가, 정지
 	if (FVector::Dist(PawnLoc, NavGoal) < 50.f)
 	{
-		const FVector DetourGoal = ComputeDetourGoal(PawnLoc, ShipLoc, AIC, 300.f);
+		const FVector DetourGoal = ComputeDetourGoal(PawnLoc, ShipLoc, AIC, 300.f, 0);
 
 		UE_LOG(LogChaseTarget, Warning,
 			TEXT("[Chase][MoveTowardShip] NavGoal invalid -> Detour 시도 | Pawn=%s DetourGoal=%s"),
