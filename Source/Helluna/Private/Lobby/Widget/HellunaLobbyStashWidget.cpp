@@ -1538,6 +1538,10 @@ void UHellunaLobbyStashWidget::SetTabsLockedForMatchmaking(bool bLocked)
 	{
 		Button_Tab_Character->SetIsEnabled(!bLocked);
 	}
+	if (Button_Party)
+	{
+		Button_Party->SetIsEnabled(!bLocked);
+	}
 
 	// 최소화 시 자동으로 Play 탭으로 전환
 	if (bLocked && CurrentTabIndex != LobbyTab::Play)
