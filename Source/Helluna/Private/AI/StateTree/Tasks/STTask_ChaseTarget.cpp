@@ -34,10 +34,11 @@
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 #include "AI/SpaceShipAttackSlotManager.h"
 
+namespace ChaseTargetHelpers {
 // ============================================================================
 // 헬퍼: 위치로 이동 명령
 // ============================================================================
-static void IssueMoveToLocation(AAIController* AIController, const FVector& Goal, float AcceptanceRadius)
+void IssueMoveToLocation(AAIController* AIController, const FVector& Goal, float AcceptanceRadius)
 {
 	if (!AIController) return;
 
@@ -55,7 +56,7 @@ static void IssueMoveToLocation(AAIController* AIController, const FVector& Goal
 // ============================================================================
 // 헬퍼: SpaceShipAttackSlotManager 가져오기
 // ============================================================================
-static USpaceShipAttackSlotManager* GetSlotManager(AActor* SpaceShip)
+USpaceShipAttackSlotManager* GetSlotManager(AActor* SpaceShip)
 {
 	if (!SpaceShip) return nullptr;
 	return SpaceShip->FindComponentByClass<USpaceShipAttackSlotManager>();
@@ -64,7 +65,7 @@ static USpaceShipAttackSlotManager* GetSlotManager(AActor* SpaceShip)
 // ============================================================================
 // 헬퍼: EQS 실행 후 결과 위치로 이동 (플레이어 전용)
 // ============================================================================
-static void RunAttackPositionEQS(
+void RunAttackPositionEQS(
 	UEnvQuery* Query,
 	AAIController* AIController,
 	float AcceptanceRadius,
@@ -102,6 +103,8 @@ static void RunAttackPositionEQS(
 				}
 			}));
 }
+} // namespace ChaseTargetHelpers
+using namespace ChaseTargetHelpers;
 
 // ============================================================================
 // EnterState
@@ -158,7 +161,8 @@ EStateTreeRunStatus FSTTask_ChaseTarget::EnterState(
 				APawn* P = AIController->GetPawn();
 				const FVector PawnLoc = P ? P->GetActorLocation() : TargetActor->GetActorLocation();
 				const FVector Dir     = (TargetActor->GetActorLocation() - PawnLoc).GetSafeNormal();
-				const FVector RawGoal = PawnLoc + Dir * FMath::Min(DistToShip - SlotEngageRadius * 0.5f, 1200.f);
+				// SlotEngageRadius * 0.8f 지점까지 이동 → SlotEngageRadius 내부로 확실히 진입하도록
+				const FVector RawGoal = PawnLoc + Dir * FMath::Min(DistToShip - SlotEngageRadius * 0.8f, 1500.f);
 
 				UNavigationSystemV1* NavSys = FNavigationSystem::GetCurrent<UNavigationSystemV1>(AIController->GetWorld());
 				FNavLocation NavGoal;
@@ -345,8 +349,8 @@ EStateTreeRunStatus FSTTask_ChaseTarget::Tick(
 					const FVector PawnLoc  = Pawn->GetActorLocation();
 					const FVector ShipLoc  = TargetActor->GetActorLocation();
 					const FVector Dir      = (ShipLoc - PawnLoc).GetSafeNormal();
-					// 우주선 방향으로 SlotEngageRadius 거리의 중간 목표 설정
-					const FVector RawGoal  = PawnLoc + Dir * FMath::Min(DistToShip - SlotEngageRadius * 0.5f, 1200.f);
+					// SlotEngageRadius * 0.8f 지점까지 이동 → SlotEngageRadius 내부로 확실히 진입하도록
+					const FVector RawGoal  = PawnLoc + Dir * FMath::Min(DistToShip - SlotEngageRadius * 0.8f, 1500.f);
 
 					UNavigationSystemV1* NavSys = FNavigationSystem::GetCurrent<UNavigationSystemV1>(AIController->GetWorld());
 					FNavLocation NavGoal;

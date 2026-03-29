@@ -7,6 +7,7 @@
 
 class AHellunaEnemyCharacter;
 class USphereComponent;
+class UStaticMeshComponent;
 class UNiagaraSystem;
 class USoundBase;
 
@@ -33,10 +34,25 @@ protected:
 	// 컴포넌트
 	// =========================================================
 
-	/** 터렛 루트 — 회전 기준점. DynamicMesh는 이 하위에서 방향 오프셋 조절 가능 */
+	/** 고정 루트 — 회전하지 않는 기준점 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Turret|Components",
-		meta = (DisplayName = "터렛 루트"))
+		meta = (DisplayName = "고정 루트"))
 	TObjectPtr<USceneComponent> TurretRoot;
+
+	/** 몸체 메쉬 (고정, 회전하지 않음) — BP에서 스태틱메쉬 지정 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Turret|Components",
+		meta = (DisplayName = "몸체 메쉬 (고정)"))
+	TObjectPtr<UStaticMeshComponent> MeshBody;
+
+	/** 헤드 회전 피벗 — 이 컴포넌트가 적을 향해 회전합니다 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Turret|Components",
+		meta = (DisplayName = "헤드 회전 피벗"))
+	TObjectPtr<USceneComponent> TurretHead;
+
+	/** 포신/헤드 메쉬 (회전, 적을 추적) — BP에서 스태틱메쉬 지정 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Turret|Components",
+		meta = (DisplayName = "헤드 메쉬 (회전)"))
+	TObjectPtr<UStaticMeshComponent> MeshHead;
 
 	/** 적 탐지용 구체 콜리전 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Turret|Components",
@@ -81,6 +97,11 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Turret|Attack",
 		meta = (DisplayName = "발사 허용 각도(도)", ClampMin = "1.0", ClampMax = "45.0"))
 	float FireAngleThreshold = 5.f;
+
+	/** 탐지 범위를 게임 화면에 표시 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Turret|Debug",
+		meta = (DisplayName = "공격 범위 표시"))
+	bool bShowAttackRange = true;
 
 
 	// =========================================================

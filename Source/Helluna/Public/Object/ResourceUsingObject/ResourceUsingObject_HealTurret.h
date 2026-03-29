@@ -6,6 +6,7 @@
 #include "ResourceUsingObject_HealTurret.generated.h"
 
 class USphereComponent;
+class UStaticMeshComponent;
 class UNiagaraComponent;
 class UNiagaraSystem;
 class AHellunaHeroCharacter;
@@ -24,6 +25,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void Tick(float DeltaTime) override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	// =========================================================
@@ -33,6 +35,68 @@ protected:
 	/** 힐 범위 탐지용 구체 콜리전 — 디테일 패널에서 반경을 직접 설정 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Turret|Detection")
 	TObjectPtr<USphereComponent> HealRangeSphere;
+
+	// =========================================================
+	// 메쉬 파트 — 각각 기울기·회전 독립
+	// =========================================================
+
+	// ── 파트2 ──
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Turret|Part2",
+		meta = (DisplayName = "파트2 기울기"))
+	TObjectPtr<USceneComponent> TiltPart2;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Turret|Part2",
+		meta = (DisplayName = "파트2 회전 피벗"))
+	TObjectPtr<USceneComponent> SpinPart2;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Turret|Part2",
+		meta = (DisplayName = "파트2 메쉬"))
+	TObjectPtr<UStaticMeshComponent> MeshPart2;
+
+	// ── 파트3 ──
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Turret|Part3",
+		meta = (DisplayName = "파트3 기울기"))
+	TObjectPtr<USceneComponent> TiltPart3;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Turret|Part3",
+		meta = (DisplayName = "파트3 회전 피벗"))
+	TObjectPtr<USceneComponent> SpinPart3;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Turret|Part3",
+		meta = (DisplayName = "파트3 메쉬"))
+	TObjectPtr<UStaticMeshComponent> MeshPart3;
+
+	// ── 스핀 파트 ──
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Turret|SpinPart",
+		meta = (DisplayName = "스핀 파트 기울기"))
+	TObjectPtr<USceneComponent> TiltMeshSpin;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Turret|SpinPart",
+		meta = (DisplayName = "스핀 파트 회전 피벗"))
+	TObjectPtr<USceneComponent> SpinMeshSpin;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Turret|SpinPart",
+		meta = (DisplayName = "스핀 파트 메쉬"))
+	TObjectPtr<UStaticMeshComponent> MeshSpin;
+
+	// =========================================================
+	// 회전 설정 — 파트별 개별 속도
+	// =========================================================
+
+	/** 파트2 회전 속도 (도/초) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Turret|Spin",
+		meta = (DisplayName = "파트2 회전 속도", ClampMin = "-720.0", ClampMax = "720.0"))
+	FRotator SpinSpeedPart2 = FRotator(0.f, 90.f, 0.f);
+
+	/** 파트3 회전 속도 (도/초) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Turret|Spin",
+		meta = (DisplayName = "파트3 회전 속도", ClampMin = "-720.0", ClampMax = "720.0"))
+	FRotator SpinSpeedPart3 = FRotator(0.f, 90.f, 0.f);
+
+	/** 스핀 파트 회전 속도 (도/초) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Turret|Spin",
+		meta = (DisplayName = "스핀 파트 회전 속도", ClampMin = "-720.0", ClampMax = "720.0"))
+	FRotator SpinSpeedMeshSpin = FRotator(0.f, 90.f, 0.f);
 
 	// =========================================================
 	// 힐 설정

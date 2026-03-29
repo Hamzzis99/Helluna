@@ -45,6 +45,7 @@ namespace HellunaGameplayTags
 	/** Player Weapon tags **/
 	UE_DEFINE_GAMEPLAY_TAG(Player_Weapon_Gun, "Player.Weapon.Gun");
 	UE_DEFINE_GAMEPLAY_TAG(Player_Weapon_Gun_Sniper, "Player.Weapon.Gun.Sniper");
+	UE_DEFINE_GAMEPLAY_TAG(Player_Weapon_Gun_Pistol, "Player.Weapon.Gun.Pistol");
 	UE_DEFINE_GAMEPLAY_TAG(Player_Weapon_Farming, "Player.Weapon.Farming");
 
 	/** Enemy tags **/

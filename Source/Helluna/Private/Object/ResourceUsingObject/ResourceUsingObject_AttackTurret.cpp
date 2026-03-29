@@ -11,6 +11,8 @@
 #include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
 #include "Components/DynamicMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "DrawDebugHelpers.h"
 
 
 // =========================================================
@@ -25,26 +27,33 @@ AResourceUsingObject_AttackTurret::AResourceUsingObject_AttackTurret()
 	bReplicates = true;
 	bAlwaysRelevant = true;
 
-	// 터렛 루트 — 회전 기준점 (DynamicMesh 위에 빈 SceneComponent)
+	// ── 고정 루트 (회전하지 않음) ────────────────────────────
 	TurretRoot = CreateDefaultSubobject<USceneComponent>(TEXT("TurretRoot"));
 	SetRootComponent(TurretRoot);
 
-	// DynamicMeshComponent를 TurretRoot 하위로 재배치
-	// → BP에서 DynamicMeshComponent의 Relative Rotation으로 메쉬 방향 조절 가능
+	// ── [파트1] 베이스 메쉬 (고정) — Base 클래스의 DynamicMeshComponent 재활용 ──
 	if (DynamicMeshComponent)
 	{
 		DynamicMeshComponent->SetupAttachment(TurretRoot);
 	}
 
-	// 총구 위치 (DynamicMesh 하위)
+	// ── [파트2] 몸체 메쉬 (고정) ─────────────────────────────
+	MeshBody = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MeshBody"));
+	MeshBody->SetupAttachment(TurretRoot);
+
+	// ── [파트3] 헤드 회전 피벗 + 헤드 메쉬 (적 추적 회전) ────
+	TurretHead = CreateDefaultSubobject<USceneComponent>(TEXT("TurretHead"));
+	TurretHead->SetupAttachment(TurretRoot);
+
+	MeshHead = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MeshHead"));
+	MeshHead->SetupAttachment(TurretHead);
+
+	// ── 총구 위치 (헤드 메쉬 하위 — 함께 회전) ──────────────
 	MuzzlePoint = CreateDefaultSubobject<USceneComponent>(TEXT("MuzzlePoint"));
-	if (DynamicMeshComponent)
-	{
-		MuzzlePoint->SetupAttachment(DynamicMeshComponent);
-	}
+	MuzzlePoint->SetupAttachment(MeshHead);
 	MuzzlePoint->SetRelativeLocation(FVector(100.f, 0.f, 0.f));
 
-	// 탐지 구체 (TurretRoot 하위 — 메쉬 회전과 무관하게 위치 유지)
+	// ── 탐지 구체 (고정 루트 하위 — 회전과 무관) ─────────────
 	DetectionSphere = CreateDefaultSubobject<USphereComponent>(TEXT("DetectionSphere"));
 	DetectionSphere->SetupAttachment(TurretRoot);
 	DetectionSphere->SetSphereRadius(1500.f);
@@ -135,6 +144,17 @@ void AResourceUsingObject_AttackTurret::Tick(float DeltaTime)
 	if (IsFacingTarget())
 	{
 		PerformAttack();
+	}
+
+	// 디버그: 공격 범위 시각화
+	if (bShowAttackRange)
+	{
+		const float Radius = DetectionSphere->GetScaledSphereRadius();
+		const FVector Center = DetectionSphere->GetComponentLocation();
+		const FColor RangeColor = CurrentTarget.Get() ? FColor::Red : FColor::Green;
+		DrawDebugCircle(GetWorld(), Center, Radius, 64,
+			RangeColor, false, -1.f, 0, 2.f,
+			FVector(1, 0, 0), FVector(0, 1, 0), false);
 	}
 }
 
@@ -375,19 +395,19 @@ bool AResourceUsingObject_AttackTurret::IsTargetValid() const
 bool AResourceUsingObject_AttackTurret::IsFacingTarget() const
 {
 	AActor* Target = CurrentTarget.Get();
-	if (!IsValid(Target))
+	if (!IsValid(Target) || !TurretHead)
 	{
 		return false;
 	}
 
-	const FVector Direction = (Target->GetActorLocation() - GetActorLocation()).GetSafeNormal();
+	const FVector Direction = (Target->GetActorLocation() - TurretHead->GetComponentLocation()).GetSafeNormal();
 	if (Direction.IsNearlyZero())
 	{
 		return true;
 	}
 
-	const FVector Forward = GetActorForwardVector();
-	// 2D (Yaw만) 비교
+	// TurretHead의 Forward 벡터 기준으로 판정
+	const FVector Forward = TurretHead->GetForwardVector();
 	const FVector Forward2D = FVector(Forward.X, Forward.Y, 0.f).GetSafeNormal();
 	const FVector Dir2D = FVector(Direction.X, Direction.Y, 0.f).GetSafeNormal();
 
@@ -526,7 +546,7 @@ void AResourceUsingObject_AttackTurret::OnTargetDeath(AActor* DeadActor, AActor*
 
 void AResourceUsingObject_AttackTurret::UpdateTurretRotation(float DeltaTime)
 {
-	if (bRotationPaused)
+	if (bRotationPaused || !TurretHead)
 	{
 		return;
 	}
@@ -537,20 +557,22 @@ void AResourceUsingObject_AttackTurret::UpdateTurretRotation(float DeltaTime)
 		return;
 	}
 
-	const FVector TurretLocation = GetActorLocation();
+	// 헤드 피벗의 월드 위치 기준으로 방향 계산
+	const FVector HeadLocation = TurretHead->GetComponentLocation();
 	const FVector TargetLocation = Target->GetActorLocation();
-	const FVector Direction = (TargetLocation - TurretLocation).GetSafeNormal();
+	const FVector Direction = (TargetLocation - HeadLocation).GetSafeNormal();
 
 	if (Direction.IsNearlyZero())
 	{
 		return;
 	}
 
+	// TurretHead만 회전 (Yaw만, 베이스/몸체는 고정)
 	const FRotator DesiredRotation = FRotator(0.f, Direction.Rotation().Yaw, 0.f);
-	const FRotator CurrentRotation = GetActorRotation();
+	const FRotator CurrentRotation = TurretHead->GetComponentRotation();
 
 	const FRotator NewRotation = FMath::RInterpConstantTo(CurrentRotation, DesiredRotation, DeltaTime, TurretRotationSpeed);
-	SetActorRotation(NewRotation);
+	TurretHead->SetWorldRotation(NewRotation);
 }
 
 void AResourceUsingObject_AttackTurret::OnPostAttackPauseEnd()

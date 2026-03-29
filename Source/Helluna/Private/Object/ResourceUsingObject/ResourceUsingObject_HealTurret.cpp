@@ -10,6 +10,7 @@
 #include "TimerManager.h"
 #include "Kismet/GameplayStatics.h"
 #include "Components/DynamicMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
 
 
 // =========================================================
@@ -18,12 +19,45 @@
 
 AResourceUsingObject_HealTurret::AResourceUsingObject_HealTurret()
 {
-	PrimaryActorTick.bCanEverTick = false;
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.TickInterval = 0.f; // 매 프레임 (회전 보간)
 
 	bReplicates = true;
 	bAlwaysRelevant = true;
 
-	// 힐 범위 구체
+	// ── [파트1] 베이스 메쉬 (고정) — Base 클래스의 DynamicMeshComponent ──
+
+	// ── [파트2] 기울기 → 회전 → 메쉬 ────────────────────────
+	TiltPart2 = CreateDefaultSubobject<USceneComponent>(TEXT("TiltPart2"));
+	if (DynamicMeshComponent) { TiltPart2->SetupAttachment(DynamicMeshComponent); }
+
+	SpinPart2 = CreateDefaultSubobject<USceneComponent>(TEXT("SpinPart2"));
+	SpinPart2->SetupAttachment(TiltPart2);
+
+	MeshPart2 = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MeshPart2"));
+	MeshPart2->SetupAttachment(SpinPart2);
+
+	// ── [파트3] 기울기 → 회전 → 메쉬 ────────────────────────
+	TiltPart3 = CreateDefaultSubobject<USceneComponent>(TEXT("TiltPart3"));
+	if (DynamicMeshComponent) { TiltPart3->SetupAttachment(DynamicMeshComponent); }
+
+	SpinPart3 = CreateDefaultSubobject<USceneComponent>(TEXT("SpinPart3"));
+	SpinPart3->SetupAttachment(TiltPart3);
+
+	MeshPart3 = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MeshPart3"));
+	MeshPart3->SetupAttachment(SpinPart3);
+
+	// ── [스핀 파트] 기울기 → 회전 → 메쉬 ────────────────────
+	TiltMeshSpin = CreateDefaultSubobject<USceneComponent>(TEXT("TiltMeshSpin"));
+	if (DynamicMeshComponent) { TiltMeshSpin->SetupAttachment(DynamicMeshComponent); }
+
+	SpinMeshSpin = CreateDefaultSubobject<USceneComponent>(TEXT("SpinMeshSpin"));
+	SpinMeshSpin->SetupAttachment(TiltMeshSpin);
+
+	MeshSpin = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MeshSpin"));
+	MeshSpin->SetupAttachment(SpinMeshSpin);
+
+	// ── 힐 범위 구체 ────────────────────────────────────────
 	HealRangeSphere = CreateDefaultSubobject<USphereComponent>(TEXT("HealRangeSphere"));
 	if (DynamicMeshComponent)
 	{
@@ -35,13 +69,35 @@ AResourceUsingObject_HealTurret::AResourceUsingObject_HealTurret()
 	HealRangeSphere->SetCollisionResponseToAllChannels(ECR_Ignore);
 	HealRangeSphere->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
 
-	// 범위 표시 나이아가라 컴포넌트 — 에디터에서 에셋·위치·크기 직접 조절 가능
+	// ── 범위 표시 나이아가라 ─────────────────────────────────
 	RangeIndicatorComponent = CreateDefaultSubobject<UNiagaraComponent>(TEXT("RangeIndicatorComponent"));
 	if (DynamicMeshComponent)
 	{
 		RangeIndicatorComponent->SetupAttachment(DynamicMeshComponent);
 	}
 	RangeIndicatorComponent->bAutoActivate = true;
+}
+
+// =========================================================
+// Tick — 회전 파트 회전
+// =========================================================
+
+void AResourceUsingObject_HealTurret::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+
+	if (SpinPart2)
+	{
+		SpinPart2->AddLocalRotation(SpinSpeedPart2 * DeltaTime);
+	}
+	if (SpinPart3)
+	{
+		SpinPart3->AddLocalRotation(SpinSpeedPart3 * DeltaTime);
+	}
+	if (SpinMeshSpin)
+	{
+		SpinMeshSpin->AddLocalRotation(SpinSpeedMeshSpin * DeltaTime);
+	}
 }
 
 // =========================================================

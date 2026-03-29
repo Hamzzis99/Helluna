@@ -5,6 +5,7 @@
 #include "AbilitySystemComponent.h"
 #include "Character/HellunaHeroCharacter.h"
 #include "Weapon/HeroWeapon_GunBase.h"
+#include "Weapon/HeroWeapon_Launcher.h"
 #include "AbilitySystem/HeroAbility/HeroGameplayAbility_GunParry.h"
 #include "AbilitySystem/HellunaAbilitySystemComponent.h"
 
@@ -141,10 +142,13 @@ void UHeroGameplayAbility_Shoot::Shoot()
 	}
 
 	// 2) ✅ 데미지/히트판정은 “권한 실행”에서만
+	// 런처는 AnimNotify_LauncherFire에서 발사하므로 여기서는 스킵
+	const bool bIsLauncher = Weapon->IsA<AHeroWeapon_Launcher>();
+
 	const bool bAuthorityExecution =
 		(GetCurrentActivationInfo().ActivationMode == EGameplayAbilityActivationMode::Authority);
 
-	if (bAuthorityExecution)
+	if (bAuthorityExecution && !bIsLauncher)
 	{
 		if (AController* Controller = Hero->GetController())
 		{

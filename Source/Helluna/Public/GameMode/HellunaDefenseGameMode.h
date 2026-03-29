@@ -178,6 +178,10 @@ protected:
 	/** PCG 생성 직후 밀도 기반으로 광석을 제거하는 후처리 */
 	void PostProcessNightPCGDensity(UPCGComponent* InComponent);
 
+	/** ActivateNightPCG 호출 직전 월드에 존재하던 Ore 액터 스냅샷 (신규 판별용) */
+	UPROPERTY()
+	TSet<TWeakObjectPtr<AActor>> PreGenerationOreSnapshot;
+
 	// ════════════════════════════════════════════════════════════════════════════════
 	// 몬스터 스폰 시스템
 	// ════════════════════════════════════════════════════════════════════════════════

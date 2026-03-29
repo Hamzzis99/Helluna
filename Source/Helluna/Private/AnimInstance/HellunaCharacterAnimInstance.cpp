@@ -5,6 +5,7 @@
 #include "Character/HellunaHeroCharacter.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "KismetAnimationLibrary.h"
+#include "HellunaGameplayTags.h"
 
 void UHellunaCharacterAnimInstance::NativeInitializeAnimation()
 {
@@ -13,6 +14,47 @@ void UHellunaCharacterAnimInstance::NativeInitializeAnimation()
 	if (OwningCharacter)
 	{
 		OwningMovementComponent = OwningCharacter->GetCharacterMovement();
+	}
+}
+
+void UHellunaCharacterAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
+{
+	Super::NativeUpdateAnimation(DeltaSeconds);
+
+	if (!OwningCharacter)
+	{
+		return;
+	}
+
+	// GameThread에서 WeaponTag를 읽어 카테고리 결정
+	WeaponAnimType = ResolveWeaponAnimType();
+
+	// Idle 애니메이션 매핑 (키가 없으면 Unarmed 폴백, 그것도 없으면 nullptr)
+	if (const TObjectPtr<UAnimSequence>* FoundIdle = IdleAnimMap.Find(WeaponAnimType))
+	{
+		CurrentIdleAnim = *FoundIdle;
+	}
+	else if (const TObjectPtr<UAnimSequence>* FallbackIdle = IdleAnimMap.Find(EWeaponAnimType::Unarmed))
+	{
+		CurrentIdleAnim = *FallbackIdle;
+	}
+	else
+	{
+		CurrentIdleAnim = nullptr;
+	}
+
+	// 블렌드 스페이스 매핑 (키가 없으면 Unarmed 폴백, 그것도 없으면 nullptr)
+	if (const TObjectPtr<UBlendSpace>* Found = LocomotionBlendSpaceMap.Find(WeaponAnimType))
+	{
+		CurrentLocomotionBlendSpace = *Found;
+	}
+	else if (const TObjectPtr<UBlendSpace>* FallbackBS = LocomotionBlendSpaceMap.Find(EWeaponAnimType::Unarmed))
+	{
+		CurrentLocomotionBlendSpace = *FallbackBS;
+	}
+	else
+	{
+		CurrentLocomotionBlendSpace = nullptr;
 	}
 }
 
@@ -37,9 +79,42 @@ void UHellunaCharacterAnimInstance::NativeThreadSafeUpdateAnimation(float DeltaS
 	}
 	else
 	{
-		//PlayFullBody = DoesOwnerHaveTag(FGameplayTag::RequestGameplayTag(FName("State.Enemy.Attacking")));
 		PlayFullBody = false;
 	}
 
 	LocomotionDirection = UKismetAnimationLibrary::CalculateDirection(OwningCharacter->GetVelocity(), OwningCharacter->GetActorRotation());
+}
+
+EWeaponAnimType UHellunaCharacterAnimInstance::ResolveWeaponAnimType() const
+{
+	const AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(OwningCharacter);
+	if (!Hero)
+	{
+		return EWeaponAnimType::Unarmed;
+	}
+
+	const FGameplayTag& Tag = Hero->CurrentWeaponTag;
+
+	if (!Tag.IsValid())
+	{
+		return EWeaponAnimType::Unarmed;
+	}
+
+	if (Tag.MatchesTag(HellunaGameplayTags::Player_Weapon_Farming))
+	{
+		return EWeaponAnimType::Pickaxe;
+	}
+
+	// 권총은 Gun의 하위 태그이므로 먼저 체크
+	if (Tag.MatchesTagExact(HellunaGameplayTags::Player_Weapon_Gun_Pistol))
+	{
+		return EWeaponAnimType::Pistol;
+	}
+
+	if (Tag.MatchesTag(HellunaGameplayTags::Player_Weapon_Gun))
+	{
+		return EWeaponAnimType::Gun;
+	}
+
+	return EWeaponAnimType::Unarmed;
 }

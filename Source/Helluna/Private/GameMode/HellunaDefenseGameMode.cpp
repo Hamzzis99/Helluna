@@ -227,7 +227,10 @@ void AHellunaDefenseGameMode::CacheNightPCGComponents()
         {
             UPCGGraph* Graph = PCGComp->GetGraph();
             PCGComp->GenerationTrigger = EPCGComponentGenerationTrigger::GenerateOnDemand;
-            PCGComp->CleanupLocal(/*bRemoveComponents=*/false);
+            // 런타임 온디맨드 생성 시 파티셔닝 비활성화 — 파티션 모드에서는
+            // managed resource Outer가 파티션 로컬 컴포넌트에 붙어 조회 실패
+            PCGComp->bIsComponentPartitioned = false;
+            PCGComp->CleanupLocal(/*bRemoveComponents=*/true);
 
             CachedNightPCGComponents.Add(PCGComp);
 
@@ -282,6 +285,21 @@ void AHellunaDefenseGameMode::ActivateNightPCG()
     static int32 NightCount = 0;
     NightCount++;
 
+    // 생성 전 월드의 기존 Ore 액터 스냅샷 (신규 판별용)
+    PreGenerationOreSnapshot.Empty();
+    {
+        TArray<AActor*> ExistingOres;
+        UGameplayStatics::GetAllActorsWithTag(GetWorld(), FName(TEXT("Ore")), ExistingOres);
+        for (AActor* Ore : ExistingOres)
+        {
+            if (IsValid(Ore))
+            {
+                PreGenerationOreSnapshot.Add(Ore);
+            }
+        }
+        UE_LOG(LogTemp, Log, TEXT("[ActivateNightPCG] 생성 전 Ore 스냅샷: %d개"), PreGenerationOreSnapshot.Num());
+    }
+
     int32 ActivatedCount = 0;
     int32 InvalidCount = 0;
 
@@ -314,17 +332,23 @@ void AHellunaDefenseGameMode::ActivateNightPCG()
         PCGComp->OnPCGGraphGeneratedDelegate.RemoveAll(this);
         PCGComp->OnPCGGraphGeneratedDelegate.AddUObject(this, &AHellunaDefenseGameMode::OnNightPCGGraphGenerated);
 
-        // CleanupLocal 후 비활성화될 수 있으므로 재활성화
+        // [TEST] DeactivateNightPCG()에서 이미 정리했으므로 이중 CleanupLocal 방지
+        // PCGComp->CleanupLocal(/*bRemoveComponents=*/true);
+
         if (!PCGComp->IsActive())
         {
             PCGComp->Activate(/*bReset=*/true);
             UE_LOG(LogTemp, Log, TEXT("[ActivateNightPCG] PCGComponent 재활성화"));
         }
 
-        UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] Generate 직전 상태 | IsRegistered=%d | IsActive=%d | Graph=%s | GenerationTrigger=%d"),
+        // 파티셔닝이 비활성화되었는지 재확인
+        PCGComp->bIsComponentPartitioned = false;
+
+        UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] Generate 직전 상태 | IsRegistered=%d | IsActive=%d | Graph=%s | GenerationTrigger=%d | bIsComponentPartitioned=%d"),
             PCGComp->IsRegistered(), PCGComp->IsActive(),
             PCGComp->GetGraph() ? *PCGComp->GetGraph()->GetName() : TEXT("nullptr"),
-            (int32)PCGComp->GenerationTrigger);
+            (int32)PCGComp->GenerationTrigger,
+            PCGComp->bIsComponentPartitioned);
 
         PCGComp->GenerateLocal(/*bForce=*/true);
         UE_LOG(LogTemp, Log, TEXT("[ActivateNightPCG] GenerateLocal 호출 완료"));
@@ -394,78 +418,71 @@ void AHellunaDefenseGameMode::OnNightPCGGraphGenerated(UPCGComponent* InComponen
     UE_LOG(LogTemp, Log, TEXT("[PCG 생성 콜백] 시작 | Owner=%s"),
         PCGOwner ? *PCGOwner->GetName() : TEXT("nullptr"));
 
-    int32 ActorCount = 0;
-    int32 ISMInstanceCount = 0;
-
-    TArray<UObject*> PCGManagedObjects;
-    GetObjectsWithOuter(InComponent, PCGManagedObjects, /*bIncludeNestedOuters=*/false);
-
-    UE_LOG(LogTemp, Log, TEXT("[PCG 생성 콜백] ManagedObject: %d개"), PCGManagedObjects.Num());
-
-    for (UObject* Obj : PCGManagedObjects)
+    // ── 방법 1: GetObjectsWithOuter (기존) ──
+    int32 ManagedActorCount = 0;
+    int32 ManagedISMCount = 0;
     {
-        UE_LOG(LogTemp, Warning, TEXT("[PCG 생성 콜백]   오브젝트 타입: %s | 이름: %s"),
-            *Obj->GetClass()->GetName(), *Obj->GetName());
+        TArray<UObject*> PCGManagedObjects;
+        GetObjectsWithOuter(InComponent, PCGManagedObjects, /*bIncludeNestedOuters=*/false);
+        UE_LOG(LogTemp, Log, TEXT("[PCG 생성 콜백] GetObjectsWithOuter: %d개"), PCGManagedObjects.Num());
 
-        if (UPCGManagedActors* ManagedActors = Cast<UPCGManagedActors>(Obj))
+        for (UObject* Obj : PCGManagedObjects)
         {
-            const int32 Count = ManagedActors->GetConstGeneratedActors().Num();
-            ActorCount += Count;
-            UE_LOG(LogTemp, Log, TEXT("[PCG 생성 콜백]   ManagedActors: %d개"), Count);
-
-            int32 ValidCount = 0;
-            int32 NullCount = 0;
-            for (const TSoftObjectPtr<AActor>& SoftActor : ManagedActors->GetConstGeneratedActors())
+            if (UPCGManagedActors* ManagedActors = Cast<UPCGManagedActors>(Obj))
             {
-                AActor* SpawnedActor = SoftActor.LoadSynchronous();
-                if (IsValid(SpawnedActor))
-                {
-                    ValidCount++;
-                    // 처음 5개만 상세 로그
-                    if (ValidCount <= 5)
-                    {
-                        FString TagStr;
-                        for (const FName& Tag : SpawnedActor->Tags)
-                        {
-                            TagStr += Tag.ToString() + TEXT(" ");
-                        }
-                        UE_LOG(LogTemp, Warning, TEXT("[PCG 생성 콜백]     #%d %s | 클래스=%s | 위치=%s | 태그=[%s] | Hidden=%d"),
-                            ValidCount,
-                            *SpawnedActor->GetName(),
-                            *SpawnedActor->GetClass()->GetName(),
-                            *SpawnedActor->GetActorLocation().ToString(),
-                            TagStr.IsEmpty() ? TEXT("없음") : *TagStr.TrimEnd(),
-                            SpawnedActor->IsHidden());
-                    }
-                }
-                else
-                {
-                    NullCount++;
-                }
+                ManagedActorCount += ManagedActors->GetConstGeneratedActors().Num();
             }
-            UE_LOG(LogTemp, Warning, TEXT("[PCG 생성 콜백]   유효: %d개 / nullptr: %d개"), ValidCount, NullCount);
-        }
-        else if (UPCGManagedISMComponent* ManagedISM = Cast<UPCGManagedISMComponent>(Obj))
-        {
-            if (UInstancedStaticMeshComponent* ISMComp = ManagedISM->GetComponent())
+            else if (UPCGManagedISMComponent* ManagedISM = Cast<UPCGManagedISMComponent>(Obj))
             {
-                const int32 Count = ISMComp->GetInstanceCount();
-                ISMInstanceCount += Count;
-                UE_LOG(LogTemp, Log, TEXT("[PCG 생성 콜백]   ISM 인스턴스: %d개"), Count);
+                if (UInstancedStaticMeshComponent* ISMComp = ManagedISM->GetComponent())
+                {
+                    ManagedISMCount += ISMComp->GetInstanceCount();
+                }
             }
         }
     }
 
-    const int32 Total = ActorCount + ISMInstanceCount;
+    // ── 방법 2: 월드 쿼리 (스냅샷 비교) — 파티션 모드에서도 안전 ──
+    int32 NewOreCount = 0;
+    {
+        TArray<AActor*> AllOres;
+        UGameplayStatics::GetAllActorsWithTag(GetWorld(), FName(TEXT("Ore")), AllOres);
+        for (AActor* Ore : AllOres)
+        {
+            if (IsValid(Ore) && !PreGenerationOreSnapshot.Contains(Ore))
+            {
+                NewOreCount++;
+                if (NewOreCount <= 5)
+                {
+                    FString TagStr;
+                    for (const FName& Tag : Ore->Tags)
+                    {
+                        TagStr += Tag.ToString() + TEXT(" ");
+                    }
+                    UE_LOG(LogTemp, Warning, TEXT("[PCG 생성 콜백] 신규 Ore #%d: %s | 클래스=%s | 위치=%s | 태그=[%s]"),
+                        NewOreCount,
+                        *Ore->GetName(),
+                        *Ore->GetClass()->GetName(),
+                        *Ore->GetActorLocation().ToString(),
+                        TagStr.IsEmpty() ? TEXT("없음") : *TagStr.TrimEnd());
+                }
+            }
+        }
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("[PCG 생성 콜백] Managed(Actor:%d ISM:%d) | 월드쿼리 신규Ore: %d개"),
+        ManagedActorCount, ManagedISMCount, NewOreCount);
+
+    const int32 Total = FMath::Max(ManagedActorCount + ManagedISMCount, NewOreCount);
 
     if (Total == 0)
     {
-        UE_LOG(LogTemp, Warning, TEXT("[PCG 생성 콜백] 생성된 오브젝트가 0개! PCG 그래프 설정을 확인하세요."));
+        UE_LOG(LogTemp, Error, TEXT("[PCG 생성 콜백] 생성된 오브젝트가 0개! PCG 그래프 설정을 확인하세요."));
     }
 
     Debug::Print(
-        FString::Printf(TEXT("[PCG 생성 완료] Actor: %d개 / ISM: %d개 / 합계: %d개"),
-            ActorCount, ISMInstanceCount, Total),
+        FString::Printf(TEXT("[PCG 생성 완료] Managed: %d개 / 월드쿼리 신규Ore: %d개"),
+            ManagedActorCount + ManagedISMCount, NewOreCount),
         Total > 0 ? FColor::Green : FColor::Red
     );
 
@@ -479,58 +496,31 @@ void AHellunaDefenseGameMode::OnNightPCGGraphGenerated(UPCGComponent* InComponen
 
 void AHellunaDefenseGameMode::PostProcessNightPCGDensity(UPCGComponent* InComponent)
 {
-    if (!IsValid(InComponent))
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[밀도 컬링] InComponent가 nullptr"));
-        return;
-    }
-
     UWorld* World = GetWorld();
     if (!World) return;
 
-    // 1) PCG가 방금 생성한 액터 중 "Ore" 태그가 있는 것만 수집
+    // 1) 월드 쿼리로 신규 광석 판별 (스냅샷 비교 — 파티션 모드에서도 동작)
     TArray<AActor*> NewlySpawnedOres;
-    int32 TotalManagedActors = 0;
-    {
-        TArray<UObject*> PCGManagedObjects;
-        GetObjectsWithOuter(InComponent, PCGManagedObjects, /*bIncludeNestedOuters=*/false);
-        for (UObject* Obj : PCGManagedObjects)
-        {
-            UPCGManagedActors* ManagedActors = Cast<UPCGManagedActors>(Obj);
-            if (!ManagedActors) continue;
+    TArray<AActor*> ExistingOres;
+    UGameplayStatics::GetAllActorsWithTag(World, FName(TEXT("Ore")), ExistingOres);
 
-            for (const TSoftObjectPtr<AActor>& SoftActor : ManagedActors->GetConstGeneratedActors())
-            {
-                AActor* Actor = SoftActor.Get();
-                TotalManagedActors++;
-                if (IsValid(Actor) && Actor->ActorHasTag(TEXT("Ore")))
-                {
-                    NewlySpawnedOres.Add(Actor);
-                }
-            }
+    for (AActor* Ore : ExistingOres)
+    {
+        if (IsValid(Ore) && !PreGenerationOreSnapshot.Contains(Ore))
+        {
+            NewlySpawnedOres.Add(Ore);
         }
     }
 
-    UE_LOG(LogTemp, Log, TEXT("[밀도 컬링] PCG 생성 액터: %d개 / 그 중 Ore 태그: %d개"),
-        TotalManagedActors, NewlySpawnedOres.Num());
+    UE_LOG(LogTemp, Log, TEXT("[밀도 컬링] 월드 Ore: %d개 / 스냅샷 기존: %d개 / 신규: %d개"),
+        ExistingOres.Num(), PreGenerationOreSnapshot.Num(), NewlySpawnedOres.Num());
 
     if (NewlySpawnedOres.Num() == 0)
     {
-        if (TotalManagedActors > 0)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("[밀도 컬링] PCG가 %d개 액터를 생성했지만 'Ore' 태그가 있는 것이 없음! PCG 그래프에서 스폰하는 BP에 'Ore' 태그를 추가하세요."), TotalManagedActors);
-            Debug::Print(FString::Printf(TEXT("[밀도 컬링] %d개 액터 중 Ore 태그 0개 — BP에 태그 확인 필요"), TotalManagedActors), FColor::Red);
-        }
-        else
-        {
-            UE_LOG(LogTemp, Log, TEXT("[밀도 컬링] Ore 태그 액터 없음 — 컬링 스킵"));
-        }
+        UE_LOG(LogTemp, Warning, TEXT("[밀도 컬링] 신규 Ore 0개 — 컬링 스킵. PCG 그래프가 Ore 태그 액터를 스폰하는지 확인 필요"));
+        Debug::Print(TEXT("[밀도 컬링] 신규 Ore 0개 — PCG 그래프 확인 필요"), FColor::Red);
         return;
     }
-
-    // 2) 월드에 이미 존재하는 "Ore" 태그 액터 수집 (잔존 광석 포함)
-    TArray<AActor*> ExistingOres;
-    UGameplayStatics::GetAllActorsWithTag(World, FName(TEXT("Ore")), ExistingOres);
 
     const int32 PreExistingCount = ExistingOres.Num() - NewlySpawnedOres.Num();
     UE_LOG(LogTemp, Log, TEXT("[밀도 컬링] 월드 전체 Ore: %d개 (기존: %d개 + 신규: %d개) | 설정: 반경=%.0fcm, 최대이웃=%d, 최소유지=%.1f%%"),
@@ -657,7 +647,7 @@ void AHellunaDefenseGameMode::DeactivateNightPCG()
         }
 #endif
 
-        PCGComp->CleanupLocal(/*bRemoveComponents=*/false);
+        PCGComp->CleanupLocal(/*bRemoveComponents=*/true);
         CleanedCount++;
     }
 
