@@ -321,6 +321,15 @@ void UInv_BuildingComponent::ToggleBuildMenu()
 
 void UInv_BuildingComponent::OpenBuildMenu()
 {
+	// ★ 11시 방향 BuildMenu UI 비활성화 (2026-03-30)
+	// 건설 메뉴 위젯(WBP_Inv_BuildMenu)을 화면에 표시하지 않음.
+	// 재활성화하려면 아래 return을 제거하고 주석 처리된 코드를 복원할 것.
+#if INV_DEBUG_BUILD
+	UE_LOG(LogTemp, Warning, TEXT("OpenBuildMenu: BuildMenu UI is disabled."));
+#endif
+	return;
+
+	/* --- 기존 BuildMenu 표시 로직 (비활성화됨) ---
 	if (!OwningPC.IsValid()) return;
 
 	// 이미 열려있으면 무시
@@ -374,6 +383,7 @@ void UInv_BuildingComponent::OpenBuildMenu()
 #if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("Build Menu opened successfully!"));
 #endif
+	--- 기존 BuildMenu 표시 로직 끝 --- */
 }
 
 void UInv_BuildingComponent::CloseBuildMenu()
