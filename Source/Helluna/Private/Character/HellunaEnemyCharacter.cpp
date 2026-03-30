@@ -885,6 +885,60 @@ void AHellunaEnemyCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty
 }
 
 // ============================================================
+// GetNetPriority — 거리 기반 적응형 네트워크 업데이트 빈도
+// ============================================================
+// UE5 리플리케이션 시스템은 NetPriority 값이 높을수록 해당 액터를
+// 더 자주 업데이트한다. 이를 이용해 플레이어와의 거리에 따라
+// AI 적 캐릭터의 업데이트 빈도를 동적으로 조절한다.
+//
+// 원리: 기본 Priority에 거리 기반 가중치를 곱한다.
+//   - 근접(0~2000cm): 가중치 1.0 → NetUpdateFrequency 30Hz 그대로
+//   - 중거리(2000~5000cm): 가중치 0.33 → 실효 ~10Hz
+//   - 원거리(5000cm+): 가중치 0.1 → 실효 ~3Hz
+//
+// CMC의 NetworkSimulatedSmoothLocationTime(0.15s)이 업데이트 간격을
+// 보간으로 채우므로, 원거리 AI도 뚝뚝 끊기지 않고 부드럽게 보인다.
+//
+// [엔진 소스] Engine/Source/Runtime/Engine/Private/Actor.cpp
+//   AActor::GetNetPriority — 기본 구현에서 Distance/Time 기반 계산
+// ============================================================
+float AHellunaEnemyCharacter::GetNetPriority(
+	const FVector& ViewPos, const FVector& ViewDir,
+	AActor* Viewer, AActor* ViewTarget,
+	UActorChannel* InChannel, float Time, bool bLowBandwidth)
+{
+	float BasePriority = Super::GetNetPriority(ViewPos, ViewDir, Viewer, ViewTarget, InChannel, Time, bLowBandwidth);
+
+	const float DistSq = FVector::DistSquared(GetActorLocation(), ViewPos);
+
+	// 거리 구간별 가중치
+	constexpr float NearDist   = 2000.f;   // 근접 경계 (cm)
+	constexpr float FarDist    = 5000.f;   // 원거리 경계 (cm)
+	constexpr float NearDistSq = NearDist * NearDist;
+	constexpr float FarDistSq  = FarDist * FarDist;
+
+	float DistanceWeight;
+	if (DistSq <= NearDistSq)
+	{
+		// 근접: 최대 빈도 유지
+		DistanceWeight = 1.0f;
+	}
+	else if (DistSq <= FarDistSq)
+	{
+		// 중거리: 선형 보간 (1.0 → 0.1)
+		const float Alpha = (FMath::Sqrt(DistSq) - NearDist) / (FarDist - NearDist);
+		DistanceWeight = FMath::Lerp(1.0f, 0.1f, Alpha);
+	}
+	else
+	{
+		// 원거리: 최저 빈도
+		DistanceWeight = 0.1f;
+	}
+
+	return BasePriority * DistanceWeight;
+}
+
+// ============================================================
 // EnterEnraged — 광폭화 진입 (서버 전용)
 // ============================================================
 void AHellunaEnemyCharacter::EnterEnraged()

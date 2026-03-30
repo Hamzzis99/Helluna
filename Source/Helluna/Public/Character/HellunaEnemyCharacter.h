@@ -25,6 +25,13 @@ class HELLUNA_API AHellunaEnemyCharacter : public AHellunaBaseCharacter
 public:
 	AHellunaEnemyCharacter();
 
+	// ── 거리 기반 적응형 네트워크 업데이트 ──
+	// 플레이어와의 거리에 따라 NetUpdateFrequency를 동적으로 조절:
+	//   근접(~2000cm): 30Hz, 중거리(~5000cm): 10Hz, 원거리(5000+): 3Hz
+	// UE5의 NetPriority 시스템을 통해 엔진이 자동으로 업데이트 빈도를 스케일링한다.
+	virtual float GetNetPriority(const FVector& ViewPos, const FVector& ViewDir,
+		AActor* Viewer, AActor* ViewTarget, UActorChannel* InChannel, float Time, bool bLowBandwidth) override;
+
 	/**
 	 * TakeDamage 오버라이드 — PuzzleShieldComponent 보호막 필터링
 	 *
