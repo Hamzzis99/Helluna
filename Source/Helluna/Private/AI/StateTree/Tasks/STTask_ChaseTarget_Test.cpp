@@ -464,9 +464,9 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::EnterState(
 		}
 
 		USpaceShipAttackSlotManager* SlotMgr = bUseSlotSystem ? CTH::GetSlotManager(TargetActor) : nullptr;
-		const float CenterDist = FVector::Dist(Pawn->GetActorLocation(), TargetActor->GetActorLocation());
 
-		if (SlotMgr && CenterDist <= SlotEngageRadius)
+		// 슬롯 진입 판정: 표면거리 기준 (우주선이 크면 중심거리가 항상 크므로)
+		if (SlotMgr && SurfaceDist <= SlotEngageRadius)
 		{
 			// 슬롯 진입 범위 안: 슬롯 배정 시도
 			int32 SlotIdx = -1;
@@ -610,8 +610,8 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 			// 슬롯 미배정 상태
 			if (D.AssignedSlotIndex < 0)
 			{
-				// 슬롯 진입 범위 밖: 우주선 방향 접근
-				if (CenterDist > SlotEngageRadius)
+				// 슬롯 진입 범위 밖: 우주선 방향 접근 (표면거리 기준)
+				if (SurfaceDist > SlotEngageRadius)
 				{
 					if (D.TimeSinceRepath >= RepathInterval || bIdle || bStuck)
 					{

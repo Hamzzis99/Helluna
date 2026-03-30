@@ -22,6 +22,12 @@ void UInv_BuildModeHUD::NativeConstruct()
 		Text_PlacementStatus->SetText(FText::FromString(TEXT("배치 대기 중...")));
 	}
 
+	// 프리뷰 이미지 숨김 — 고스트 액터가 월드에 이미 표시되므로 HUD 프리뷰 불필요
+	if (IsValid(Image_Preview))
+	{
+		Image_Preview->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
 	// 조작 가이드 텍스트를 실제 키 바인딩에 맞게 설정
 	auto SetControlText = [this](const FName& WidgetName, const FString& NewText)
 	{
@@ -31,11 +37,11 @@ void UInv_BuildModeHUD::NativeConstruct()
 		}
 	};
 
-	SetControlText(TEXT("Text_Control0"), TEXT("[LMB] 좌클릭 : 건축"));
-	SetControlText(TEXT("Text_Control1"), TEXT("[Shift+LMB] Shift+좌클릭 : 계속해서 건축"));
-	SetControlText(TEXT("Text_Control2"), TEXT("[RMB] 우클릭 : 건축 중단하기"));
-	SetControlText(TEXT("Text_Control3"), TEXT("[Q/E] Q / E : 회전"));
-	SetControlText(TEXT("Text_Control4"), TEXT("[G] G : 스냅 회전"));
+	SetControlText(TEXT("Text_Control0"), TEXT("LMB : 건축"));
+	SetControlText(TEXT("Text_Control1"), TEXT("Shift + LMB : 연속 건축"));
+	SetControlText(TEXT("Text_Control2"), TEXT("RMB : 건축 중단"));
+	SetControlText(TEXT("Text_Control3"), TEXT("Q / E : 회전"));
+	SetControlText(TEXT("Text_Control4"), TEXT("G : 스냅 회전"));
 }
 
 void UInv_BuildModeHUD::SetBuildingInfo(
