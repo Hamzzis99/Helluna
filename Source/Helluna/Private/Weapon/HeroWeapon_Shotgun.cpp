@@ -25,10 +25,9 @@ void AHeroWeapon_Shotgun::Fire(AController* InstigatorController)
 	if (!CanFire())
 		return;
 
-	// 카메라 기준 발사 시점
-	FVector ViewLoc;
-	FRotator ViewRot;
-	InstigatorController->GetPlayerViewPoint(ViewLoc, ViewRot);
+	// 서버에서도 정확한 방향/위치를 얻기 위해 GetControlRotation + GetPawnViewLocation 사용
+	const FRotator ViewRot = InstigatorController->GetControlRotation();
+	const FVector ViewLoc = Pawn->GetPawnViewLocation();
 
 	const FVector TraceStart = ViewLoc;
 
@@ -54,12 +53,8 @@ void AHeroWeapon_Shotgun::DoLineTraceAndDamage_Shotgun(
 	if (!World || !InstigatorController)
 		return;
 
-	// 카메라 기준 Forward 재계산 (TraceStart만 받으니까 여기서 다시 뽑음)
-	FVector ViewLoc;
-	FRotator ViewRot;
-	InstigatorController->GetPlayerViewPoint(ViewLoc, ViewRot);
-
-	const FVector Forward = ViewRot.Vector();
+	// 서버에서도 정확한 방향을 얻기 위해 GetControlRotation 사용
+	const FVector Forward = InstigatorController->GetControlRotation().Vector();
 	const float HalfAngleRad = FMath::DegreesToRadians(SpreadHalfAngleDeg);
 	const float JitterRad = FMath::DegreesToRadians(JitterDeg);
 

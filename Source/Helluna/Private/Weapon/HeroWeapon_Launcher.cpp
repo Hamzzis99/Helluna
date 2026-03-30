@@ -34,21 +34,15 @@ void AHeroWeapon_Launcher::Fire(AController* InstigatorController)
 	CurrentMag = FMath::Max(0, CurrentMag - 1);
 	BroadcastAmmoChanged();
 
-	// 카메라 기준
-	FVector ViewLoc;
-	FRotator ViewRot;
-	InstigatorController->GetPlayerViewPoint(ViewLoc, ViewRot);
+	// 서버에서는 카메라 매니저/스켈레탈 메시가 틱하지 않아 머즐 소켓 위치가 부정확함.
+	// ControlRotation(서버 동기화됨) + GetPawnViewLocation(BaseEyeHeight 기반)으로 안정적인 스폰 위치 계산.
+	const FRotator ViewRot = InstigatorController->GetControlRotation();
+	// 눈 높이에서 아래로 내려 어깨 높이에서 발사 (BaseEyeHeight 기준 약 30cm 아래)
+	const FVector ViewLoc = Pawn->GetPawnViewLocation() - FVector(0.f, 0.f, 30.f);
 
-	// 스폰: 머즐 소켓 우선, 없으면 카메라 앞
-	FVector SpawnLoc = ViewLoc + (ViewRot.Vector() * FallbackSpawnOffset);
-	FRotator SpawnRot = ViewRot;
-
-	if (WeaponMesh && !MuzzleSocketName.IsNone() && WeaponMesh->DoesSocketExist(MuzzleSocketName))
-	{
-		const FTransform MuzzleTM = WeaponMesh->GetSocketTransform(MuzzleSocketName);
-		SpawnLoc = MuzzleTM.GetLocation();
-		SpawnRot = MuzzleTM.GetRotation().Rotator();
-	}
+	// 어깨 위치에서 조준 방향으로 오프셋을 준 위치에서 스폰
+	const FVector SpawnLoc = ViewLoc + (ViewRot.Vector() * FallbackSpawnOffset);
+	const FRotator SpawnRot = ViewRot;
 
 	const FVector Dir = SpawnRot.Vector();
 

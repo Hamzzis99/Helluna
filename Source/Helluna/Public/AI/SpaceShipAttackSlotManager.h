@@ -182,6 +182,21 @@ public:
 		FActorComponentTickFunction* ThisTickFunction) override;
 
 private:
+	/** BuildSlots 재시도 래퍼 — 슬롯 0개 시 자동 재시도 */
+	void TryBuildSlots();
+
+	/** 재시도 타이머 핸들 */
+	FTimerHandle BuildSlotTimerHandle;
+
+	/** 재시도 횟수 카운터 */
+	int32 BuildSlotRetryCount = 0;
+
+	/** 최대 재시도 횟수 */
+	static constexpr int32 MaxBuildSlotRetries = 5;
+
+	/** 재시도 간격 (초) */
+	static constexpr float BuildSlotRetryInterval = 2.0f;
+
 	/** 슬롯 배열 */
 	UPROPERTY()
 	TArray<FAttackSlot> Slots;

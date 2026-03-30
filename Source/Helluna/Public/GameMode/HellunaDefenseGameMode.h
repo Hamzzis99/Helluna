@@ -108,7 +108,8 @@ protected:
 	bool IsSpaceShipFullyRepaired(int32& OutCurrent, int32& OutNeed) const;
 
 	// ════════════════════════════════════════════════════════════════════════════════
-	// PCG 밤 스폰 시스템 — 밤 시작 시 PCG 그래프 실행, 낮 시작 시 정리
+	// PCG 밤 스폰 시스템 — 밤마다 PCG 그래프 실행, 생성된 광석은 영구 유지
+	// 다음 밤에는 기존 광석 밀도를 고려하여 새 광석 생존 확률을 결정
 	// ════════════════════════════════════════════════════════════════════════════════
 protected:
 	/** 밤 시작 시 활성화할 PCG 컴포넌트 태그. 레벨에 배치된 PCG 액터에 이 태그를 부여하면 자동 캐싱 대상이 된다. */
@@ -124,9 +125,6 @@ protected:
 
 	/** 밤 시작: PCG 그래프 실행 */
 	void ActivateNightPCG();
-
-	/** 낮 시작: PCG 생성물 정리 */
-	void DeactivateNightPCG();
 
 	/** PCG 생성 완료 콜백 — 스폰된 광석 수 디버그 출력 + 밀도 컬링 */
 	void OnNightPCGGraphGenerated(UPCGComponent* InComponent);
