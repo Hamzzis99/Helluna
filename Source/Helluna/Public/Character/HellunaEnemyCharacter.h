@@ -195,6 +195,9 @@ public:
 	UPROPERTY()
 	TArray<TObjectPtr<UMaterialInterface>> SavedOriginalMaterials;
 
+	/** Stagger Unreliable 안전장치: OFF 패킷 누락 시 자동 해제 타이머 */
+	FTimerHandle StaggerAutoOffTimerHandle;
+
 	/** 건패링 처형 당할 때 몬스터 측 몽타주 */
 	UPROPERTY(EditDefaultsOnly, Category = "Animation|Parry",
 		meta = (DisplayName = "패링 피격 몽타주",
@@ -212,13 +215,13 @@ public:
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_ActivateRagdoll(FVector Impulse, FVector ImpulseLocation);
 
-	/** Stagger 비주얼 ON/OFF (서버→모든 클라이언트) */
-	UFUNCTION(NetMulticast, Reliable)
+	/** Stagger 비주얼 ON/OFF (서버→모든 클라이언트, 코스메틱이므로 Unreliable) */
+	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_SetStaggerVisual(UMaterialInterface* StaggerMat, UAnimMontage* StaggerAnim, bool bEnable);
 
 public:
-	/** 피격 몽타주 재생 (서버 → 멀티캐스트) */
-	UFUNCTION(NetMulticast, Reliable)
+	/** 피격 몽타주 재생 (서버 → 멀티캐스트, 코스메틱이므로 Unreliable) */
+	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_PlayHitReact();
 
 	/** 사망 몽타주 재생 (서버 → 멀티캐스트) */

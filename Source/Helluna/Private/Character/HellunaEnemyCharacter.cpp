@@ -396,6 +396,23 @@ void AHellunaEnemyCharacter::Multicast_SetStaggerVisual_Implementation(
 		{
 			PlayAnimMontage(StaggerAnim, 1.0f);
 		}
+
+		// [Unreliable 안전장치] OFF 패킷 누락 대비: 클라이언트 자체 타이머로 5초 후 자동 해제
+		if (GetNetMode() != NM_DedicatedServer)
+		{
+			if (UWorld* World = GetWorld())
+			{
+				World->GetTimerManager().ClearTimer(StaggerAutoOffTimerHandle);
+				World->GetTimerManager().SetTimer(StaggerAutoOffTimerHandle, [this]()
+				{
+					if (USkeletalMeshComponent* Mesh = GetMesh())
+					{
+						Mesh->SetOverlayMaterial(nullptr);
+					}
+					StopAnimMontage(nullptr);
+				}, 5.0f, false);
+			}
+		}
 	}
 	else
 	{
@@ -404,6 +421,12 @@ void AHellunaEnemyCharacter::Multicast_SetStaggerVisual_Implementation(
 
 		// Stagger 몽타주 중단
 		StopAnimMontage(nullptr);
+
+		// 자동 해제 타이머 정리
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(StaggerAutoOffTimerHandle);
+		}
 	}
 }
 

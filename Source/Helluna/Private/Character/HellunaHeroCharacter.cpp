@@ -1251,7 +1251,7 @@ void AHellunaHeroCharacter::OnHeroHealthChanged(
 		const uint8 DirIndex = CalcHitDirection(InstigatorActor);
 		UE_LOG(LogHelluna, Warning, TEXT("[BloodHit] 서버: %s 피격! Dir=%d, Instigator=%s"),
 			*GetName(), DirIndex, InstigatorActor ? *InstigatorActor->GetName() : TEXT("nullptr"));
-		Multicast_ShowBloodHitDirection(DirIndex);
+		Client_ShowBloodHitDirection(DirIndex);
 	}
 
 	// 피격 애니메이션 (데미지를 받았고 살아있을 때만, 다운 중 제외)
@@ -2537,11 +2537,9 @@ uint8 AHellunaHeroCharacter::CalcHitDirection(AActor* InstigatorActor) const
 	return static_cast<uint8>(Index);
 }
 
-void AHellunaHeroCharacter::Multicast_ShowBloodHitDirection_Implementation(uint8 DirIndex)
+void AHellunaHeroCharacter::Client_ShowBloodHitDirection_Implementation(uint8 DirIndex)
 {
-	// Multicast는 모든 클라이언트에서 실행 — 로컬 플레이어만 혈흔 표시
-	if (!IsLocallyControlled()) return;
-
+	// Client RPC — 피격당한 본인에게만 전송되므로 IsLocallyControlled 체크 불필요
 	if (DirIndex >= 8) return;
 	PlayBloodHitFade(DirIndex);
 }
