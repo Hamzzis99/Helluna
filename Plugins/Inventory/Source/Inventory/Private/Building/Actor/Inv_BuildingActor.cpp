@@ -40,6 +40,11 @@ void AInv_BuildingActor::BeginPlay()
 	{
 		OnBuildingPlaced();
 	}
+
+	// 모든 머신에서 즉시 스캔 VFX 시작 (Multicast 리플리케이션 대기 불필요)
+	// PlacementScanMaterial은 블루프린트 CDO에서 로드되므로 서버/클라이언트 모두 유효
+	// bScanActive 가드로 Multicast 도착 시 이중 적용 방지
+	StartPlacementScanVFX();
 }
 
 // Called every frame

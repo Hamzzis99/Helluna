@@ -707,9 +707,16 @@ void UInv_BuildingComponent::Server_PlaceBuilding_Implementation(
 
 	if (IsValid(PlacedBuilding))
 	{
-		// 건설 중 상태: 충돌 비활성 + 숨김 (스캔 VFX 시작 시 표시, 스캔 완료 후 충돌 활성화)
+		// 건설 중 상태: 충돌 비활성 (스캔 완료 후 활성화)
 		PlacedBuilding->SetActorEnableCollision(false);
-		PlacedBuilding->SetActorHiddenInGame(true);
+
+		// AInv_BuildingActor는 BeginPlay에서 즉시 스캔 VFX 시작 → 숨길 필요 없음
+		// 터렛 등 나머지 액터는 Multicast 도착까지 숨김 처리
+		const bool bIsBuildingActor = Cast<AInv_BuildingActor>(PlacedBuilding) != nullptr;
+		if (!bIsBuildingActor)
+		{
+			PlacedBuilding->SetActorHiddenInGame(true);
+		}
 
 #if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Warning, TEXT("건물 스폰 성공! 재료 차감 시도..."));
@@ -789,7 +796,12 @@ void UInv_BuildingComponent::Server_PlaceBuilding_Implementation(
 				}),
 				ReplicationDelay, false);
 
-			// 스캔 완료 후 건물 활성화 (리플리케이션 대기 + 스캔 시간)
+			// 스캔 완료 후 건물 활성화
+			// AInv_BuildingActor: BeginPlay 즉시 시작 → ScanDuration만 대기
+			// 터렛 등: Multicast 경유 → ReplicationDelay + ScanDuration 대기
+			const float ActivationDelay = bIsBuildingActor
+				? DefaultScanDuration
+				: (ReplicationDelay + DefaultScanDuration);
 			FTimerHandle ActivationTimer;
 			World->GetTimerManager().SetTimer(ActivationTimer,
 				FTimerDelegate::CreateLambda([WeakBuilding]()
@@ -803,7 +815,7 @@ void UInv_BuildingComponent::Server_PlaceBuilding_Implementation(
 #endif
 					}
 				}),
-				ReplicationDelay + DefaultScanDuration, false);
+				ActivationDelay, false);
 		}
 	}
 	else
