@@ -1370,14 +1370,20 @@ void UHeroGameplayAbility_GunParry::HandleExecutionFinished(bool bWasCancelled)
 						if (UWorld* World = WeakHero->GetWorld())
 						{
 							World->GetTimerManager().ClearTimer(*KnockbackTimer);
+							// [Fix54] ClearTimer 후 캡처 데이터 접근 금지 (use-after-free)
+							// 복원 작업을 NextTick으로 분리
+							World->GetTimerManager().SetTimerForNextTick(
+								FTimerDelegate::CreateLambda([WeakHero, LocalSavedOrient]()
+								{
+									if (!WeakHero.IsValid()) return;
+									if (UCharacterMovementComponent* CMC = WeakHero->GetCharacterMovement())
+									{
+										CMC->bOrientRotationToMovement = LocalSavedOrient;
+									}
+									UE_LOG(LogGunParry, Warning, TEXT("[Knockback] 완료 — bOrientRotationToMovement 복원=%s"),
+										LocalSavedOrient ? TEXT("T") : TEXT("F"));
+								}));
 						}
-						// 넉백 완료 → bOrientRotationToMovement 복원
-						if (UCharacterMovementComponent* CMC = WeakHero->GetCharacterMovement())
-						{
-							CMC->bOrientRotationToMovement = LocalSavedOrient;
-						}
-						UE_LOG(LogGunParry, Warning, TEXT("[Knockback] 완료 — bOrientRotationToMovement 복원=%s"),
-							LocalSavedOrient ? TEXT("T") : TEXT("F"));
 						return;
 					}
 				}), KnockbackTickRate, true);

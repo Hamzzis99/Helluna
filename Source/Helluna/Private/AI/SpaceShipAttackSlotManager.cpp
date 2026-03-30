@@ -27,8 +27,16 @@ void USpaceShipAttackSlotManager::BeginPlay()
 		return;
 	}
 
+<<<<<<< HEAD
 	// NavMesh 초기화 완료 후 슬롯 생성 (BeginPlay 즉시 호출 시 NavMesh 미준비로 0개 생성됨)
 	// 패키지 빌드에서는 NavMesh 로드가 더 오래 걸릴 수 있으므로 실패 시 재시도
+=======
+	// NavMesh 초기화 완료 후 슬롯 생성
+	// World Partition 맵에서는 NavMesh가 스트리밍으로 로드되므로
+	// 첫 시도에서 실패하면 ScheduleSlotRetry()가 자동으로 재시도한다.
+	SlotRetryCount = 0;
+	FTimerHandle TimerHandle;
+>>>>>>> main
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().SetTimer(BuildSlotTimerHandle, this,
@@ -132,17 +140,26 @@ void USpaceShipAttackSlotManager::BuildSlots()
 		}
 	}
 
-	UE_LOG(LogTemp, Verbose, TEXT("[SlotManager] 슬롯 생성 완료: %d / %d 유효 (우주선 위치: %s)"),
-		ValidCount, TotalCount, *Center.ToString());
-
 	if (ValidCount == 0)
 	{
-		UE_LOG(LogTemp, Error,
-			TEXT("[SlotManager] ❌ 유효 슬롯 0개! 우주선 주변 NavMesh가 없거나 메시와 겹칩니다."));
-		UE_LOG(LogTemp, Error,
-			TEXT("[SlotManager] ❌ 확인: Show→Navigation, MinRadius=%.0f / MaxRadius=%.0f"),
-			MinRadius, MaxRadius);
+		UE_LOG(LogTemp, Warning,
+			TEXT("[SlotManager] 유효 슬롯 0개 (시도 %d/%d) — NavMesh 스트리밍 대기 중. MinRadius=%.0f / MaxRadius=%.0f"),
+			SlotRetryCount + 1, MaxSlotRetryCount, MinRadius, MaxRadius);
+
+		// World Partition에서 NavMesh가 아직 스트리밍되지 않았을 수 있음 → 재시도
+		ScheduleSlotRetry();
+		return;
 	}
+
+	// 성공: 재시도 타이머 정리
+	if (UWorld* TimerWorld = GetWorld())
+	{
+		TimerWorld->GetTimerManager().ClearTimer(SlotRetryTimerHandle);
+	}
+	SlotRetryCount = 0;
+
+	UE_LOG(LogTemp, Log, TEXT("[SlotManager] 슬롯 생성 완료: %d / %d 유효 (우주선 위치: %s)"),
+		ValidCount, TotalCount, *Center.ToString());
 
 	// 디버그 드로잉
 	if (bDebugDraw)
@@ -443,4 +460,39 @@ void USpaceShipAttackSlotManager::TickComponent(float DeltaTime, ELevelTick Tick
 			FString::Printf(TEXT("[%d] %s"), i, *StateStr),
 			nullptr, Color, -1.f);
 	}
+}
+
+// ============================================================================
+// ScheduleSlotRetry — BuildSlots 실패 시 재시도 스케줄링
+//
+// [World Partition NavMesh 스트리밍 대응]
+// 패키징 빌드에서 서버 시작 직후에는 NavMesh 데이터가 아직 스트리밍되지 않아
+// BuildSlots가 유효 슬롯 0개를 생성할 수 있다.
+// 플레이어가 접속하고 World Partition 셀이 로드되면 NavMesh도 함께 로드되므로
+// 일정 간격으로 재시도하면 성공한다.
+// ============================================================================
+void USpaceShipAttackSlotManager::ScheduleSlotRetry()
+{
+	++SlotRetryCount;
+
+	if (SlotRetryCount >= MaxSlotRetryCount)
+	{
+		UE_LOG(LogTemp, Error,
+			TEXT("[SlotManager] BuildSlots %d회 재시도 후에도 유효 슬롯 0개. ")
+			TEXT("우주선 주변 NavMesh를 확인하세요. (Show Navigation → P키)"),
+			MaxSlotRetryCount);
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	World->GetTimerManager().SetTimer(
+		SlotRetryTimerHandle, this,
+		&USpaceShipAttackSlotManager::BuildSlots,
+		SlotRetryInterval, false);
+
+	UE_LOG(LogTemp, Log,
+		TEXT("[SlotManager] %.1f초 후 BuildSlots 재시도 예약 (%d/%d)"),
+		SlotRetryInterval, SlotRetryCount, MaxSlotRetryCount);
 }

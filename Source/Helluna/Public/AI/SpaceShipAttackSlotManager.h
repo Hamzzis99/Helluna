@@ -203,4 +203,20 @@ private:
 
 	/** 디버그 누적 시간 */
 	float DebugAccum = 0.f;
+
+	// ─── BuildSlots 재시도 (World Partition NavMesh 스트리밍 대응) ──
+	/** BuildSlots 재시도 타이머 핸들 */
+	FTimerHandle SlotRetryTimerHandle;
+
+	/** 현재까지 재시도한 횟수 */
+	int32 SlotRetryCount = 0;
+
+	/** 최대 재시도 횟수 */
+	static constexpr int32 MaxSlotRetryCount = 15;
+
+	/** 재시도 간격 (초) */
+	static constexpr float SlotRetryInterval = 2.0f;
+
+	/** BuildSlots 실패 시 재시도 스케줄링 */
+	void ScheduleSlotRetry();
 };

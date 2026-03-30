@@ -10,6 +10,7 @@
 #include "Net/UnrealNetwork.h"
 #include "GameMode/HellunaDefenseGameMode.h"
 #include "GameMode/HellunaDefenseGameState.h"
+#include "NavigationInvokerComponent.h"
 
 #include "debughelper.h"
 
@@ -142,6 +143,13 @@ AResourceUsingObject_SpaceShip::AResourceUsingObject_SpaceShip()
 
 	// 공격 슬롯 매니저 자동 생성
 	AttackSlotManager = CreateDefaultSubobject<USpaceShipAttackSlotManager>(TEXT("AttackSlotManager"));
+
+	// World Partition NavMesh 스트리밍 보장:
+	// 우주선 주변 NavMesh 데이터가 플레이어 접속 전에도 로드되도록 강제
+	// TileGenerationRadius: SlotManager의 MaxRadius(600) + 여유분
+	// TileRemovalRadius: 생성 반경보다 넓게 설정 (hysteresis)
+	NavigationInvoker = CreateDefaultSubobject<UNavigationInvokerComponent>(TEXT("NavigationInvoker"));
+	NavigationInvoker->SetGenerationRadii(1500.f, 2000.f);
 }
 
 // 게임 시작시 게임 상태에 우주선 등록

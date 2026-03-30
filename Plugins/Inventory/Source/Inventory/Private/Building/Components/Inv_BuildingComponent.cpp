@@ -14,6 +14,10 @@
 #include "Blueprint/WidgetBlueprintLibrary.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
 #include "Widgets/Building/Inv_BuildModeHUD.h"
+#include "Building/Actor/Inv_BuildingActor.h"
+#include "Materials/MaterialInterface.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Components/MeshComponent.h"
 
 
 // Sets default values for this component's properties
@@ -22,6 +26,9 @@ UInv_BuildingComponent::UInv_BuildingComponent()
 	// Set this component to be initialized when the game starts, and to be ticked every frame.  You can turn these features
 	// off to improve performance if you don't need them.
 	PrimaryComponentTick.bCanEverTick = true;
+
+	// RPC(Server/Multicast) 사용을 위해 컴포넌트 리플리케이션 활성화
+	SetIsReplicatedByDefault(true);
 
 	bIsInBuildMode = false;
 	bCanPlaceBuilding = false;
@@ -151,6 +158,19 @@ void UInv_BuildingComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 			DrawDebugLine(World, TraceStart, TraceEnd, FColor::Silver, false, 0.0f, 0, 1.0f);
 		}
 
+		// ★ 건물 회전 적용 (위치와 무관하게 항상 처리)
+		if (bIsRotatingRight)
+		{
+			CurrentBuildRotationYaw += ContinuousRotationSpeed * DeltaTime;
+		}
+		if (bIsRotatingLeft)
+		{
+			CurrentBuildRotationYaw -= ContinuousRotationSpeed * DeltaTime;
+		}
+		// Yaw 정규화 (0~360)
+		CurrentBuildRotationYaw = FMath::Fmod(CurrentBuildRotationYaw + 360.f, 360.f);
+		GhostActorInstance->SetActorRotation(FRotator(0.f, CurrentBuildRotationYaw, 0.f));
+
 		// ★ HUD 배치 상태 실시간 업데이트
 		if (IsValid(BuildModeHUDInstance))
 		{
@@ -164,8 +184,11 @@ void UInv_BuildingComponent::StartBuildMode()
 	if (!OwningPC.IsValid() || !GetWorld()) return;
 
 	bIsInBuildMode = true;
+	bIsRotatingRight = false;
+	bIsRotatingLeft = false;
+	// CurrentBuildRotationYaw는 유지 — 같은 각도로 연속 배치 가능
 #if INV_DEBUG_BUILD
-	UE_LOG(LogTemp, Warning, TEXT("=== Build Mode STARTED ==="));
+	UE_LOG(LogTemp, Warning, TEXT("=== Build Mode STARTED (RotationYaw: %.1f) ==="), CurrentBuildRotationYaw);
 #endif
 
 	// 선택된 고스트 액터 클래스가 있는지 확인
@@ -231,6 +254,8 @@ void UInv_BuildingComponent::StartBuildMode()
 void UInv_BuildingComponent::EndBuildMode()
 {
 	bIsInBuildMode = false;
+	bIsRotatingRight = false;
+	bIsRotatingLeft = false;
 #if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("=== Build Mode ENDED ==="));
 #endif
@@ -682,8 +707,16 @@ void UInv_BuildingComponent::Server_PlaceBuilding_Implementation(
 
 	if (IsValid(PlacedBuilding))
 	{
-		// 실제 건물이므로 충돌 활성화
-		PlacedBuilding->SetActorEnableCollision(true);
+		// 건설 중 상태: 충돌 비활성 (스캔 완료 후 활성화)
+		PlacedBuilding->SetActorEnableCollision(false);
+
+		// AInv_BuildingActor는 BeginPlay에서 즉시 스캔 VFX 시작 → 숨길 필요 없음
+		// 터렛 등 나머지 액터는 Multicast 도착까지 숨김 처리
+		const bool bIsBuildingActor = Cast<AInv_BuildingActor>(PlacedBuilding) != nullptr;
+		if (!bIsBuildingActor)
+		{
+			PlacedBuilding->SetActorHiddenInGame(true);
+		}
 
 #if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Warning, TEXT("건물 스폰 성공! 재료 차감 시도..."));
@@ -737,13 +770,53 @@ void UInv_BuildingComponent::Server_PlaceBuilding_Implementation(
 		// 리플리케이션 활성화 (중요!)
 		PlacedBuilding->SetReplicates(true);
 		PlacedBuilding->SetReplicateMovement(true);
-		
+
+
 #if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Warning, TEXT("Server: Building placed successfully at location: %s"), *Location.ToString());
 #endif
-		
-		// 모든 클라이언트에게 건물 배치 알림 (선택사항 - 추가 로직이 필요할 때)
-		Multicast_OnBuildingPlaced(PlacedBuilding);
+
+		// 리플리케이션 대기 후 Multicast 호출
+		// (SpawnActor 직후에는 클라이언트에 액터가 아직 도착하지 않아 파라미터가 NULL)
+		constexpr float ReplicationDelay = 0.5f;
+		if (World)
+		{
+			TWeakObjectPtr<AActor> WeakBuilding = PlacedBuilding;
+			TWeakObjectPtr<UInv_BuildingComponent> WeakThis = this;
+
+			// 0.5초 후 Multicast (액터 리플리케이션 완료 대기)
+			FTimerHandle ScanDelayTimer;
+			World->GetTimerManager().SetTimer(ScanDelayTimer,
+				FTimerDelegate::CreateLambda([WeakThis, WeakBuilding]()
+				{
+					if (WeakThis.IsValid() && WeakBuilding.IsValid())
+					{
+						WeakThis->Multicast_OnBuildingPlaced(WeakBuilding.Get());
+					}
+				}),
+				ReplicationDelay, false);
+
+			// 스캔 완료 후 건물 활성화
+			// AInv_BuildingActor: BeginPlay 즉시 시작 → ScanDuration만 대기
+			// 터렛 등: Multicast 경유 → ReplicationDelay + ScanDuration 대기
+			const float ActivationDelay = bIsBuildingActor
+				? DefaultScanDuration
+				: (ReplicationDelay + DefaultScanDuration);
+			FTimerHandle ActivationTimer;
+			World->GetTimerManager().SetTimer(ActivationTimer,
+				FTimerDelegate::CreateLambda([WeakBuilding]()
+				{
+					if (WeakBuilding.IsValid())
+					{
+						WeakBuilding->SetActorEnableCollision(true);
+#if INV_DEBUG_BUILD
+						UE_LOG(LogTemp, Warning, TEXT("[BuildingScanVFX] Construction complete — collision enabled: %s"),
+							*WeakBuilding->GetName());
+#endif
+					}
+				}),
+				ActivationDelay, false);
+		}
 	}
 	else
 	{
@@ -755,13 +828,34 @@ void UInv_BuildingComponent::Server_PlaceBuilding_Implementation(
 
 void UInv_BuildingComponent::Multicast_OnBuildingPlaced_Implementation(AActor* PlacedBuilding)
 {
+	// 디버그: Multicast 도달 여부 확인 (Actor가 null이어도 출력)
+	const bool bIsServer = GetOwner() && GetOwner()->HasAuthority();
+	UE_LOG(LogTemp, Warning, TEXT("[BuildingScanVFX] === Multicast received === IsServer=%d, Actor=%s, Material=%s"),
+		bIsServer,
+		PlacedBuilding ? *PlacedBuilding->GetName() : TEXT("NULL"),
+		DefaultPlacementScanMaterial ? *DefaultPlacementScanMaterial->GetName() : TEXT("NULL"));
+
 	if (!IsValid(PlacedBuilding)) return;
 
-#if INV_DEBUG_BUILD
-	UE_LOG(LogTemp, Warning, TEXT("Multicast: Building placed notification received - %s"), *PlacedBuilding->GetName());
-#endif
-	
-	// 여기에 건물 배치 후 추가 로직 (이펙트, 사운드 등) 추가 가능
+	// 숨김 해제 — 스캔 머티리얼이 적용되면서 바닥부터 물질화
+	PlacedBuilding->SetActorHiddenInGame(false);
+
+	// 배치 스캔 VFX 시작 (모든 클라이언트에서 재생)
+	if (AInv_BuildingActor* BuildingActor = Cast<AInv_BuildingActor>(PlacedBuilding))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[BuildingScanVFX] Path: Inv_BuildingActor, Material: %s"),
+			BuildingActor->PlacementScanMaterial ? *BuildingActor->PlacementScanMaterial->GetName() : TEXT("NULL"));
+		BuildingActor->StartPlacementScanVFX();
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[BuildingScanVFX] Path: Fallback, DefaultMaterial: %s"),
+			DefaultPlacementScanMaterial ? *DefaultPlacementScanMaterial->GetName() : TEXT("NULL"));
+		ApplyScanVFXToAnyActor(PlacedBuilding);
+	}
+
+	// 스캔 머티리얼이 바닥부터 물질화를 제어 (Masked 블렌드로 위쪽 자동 마스킹)
+
 }
 
 bool UInv_BuildingComponent::HasRequiredMaterials(const FGameplayTag& MaterialTag, int32 RequiredAmount) const
@@ -878,6 +972,36 @@ void UInv_BuildingComponent::EnableBuildModeInput()
 			UE_LOG(LogTemp, Warning, TEXT("IA_CancelBuilding BOUND (Handle: %u)"), CancelBuildingBindingHandle);
 #endif
 		}
+
+		// R키: 오른쪽 연속 회전 (Started=시작, Completed=종료)
+		if (IsValid(IA_RotateBuildingRight) && RotateRightStartHandle == 0)
+		{
+			RotateRightStartHandle = EnhancedInputComponent->BindAction(
+				IA_RotateBuildingRight, ETriggerEvent::Started, this, &UInv_BuildingComponent::OnRotateRightStarted
+			).GetHandle();
+			RotateRightStopHandle = EnhancedInputComponent->BindAction(
+				IA_RotateBuildingRight, ETriggerEvent::Completed, this, &UInv_BuildingComponent::OnRotateRightCompleted
+			).GetHandle();
+		}
+
+		// Q키: 왼쪽 연속 회전 (Started=시작, Completed=종료)
+		if (IsValid(IA_RotateBuildingLeft) && RotateLeftStartHandle == 0)
+		{
+			RotateLeftStartHandle = EnhancedInputComponent->BindAction(
+				IA_RotateBuildingLeft, ETriggerEvent::Started, this, &UInv_BuildingComponent::OnRotateLeftStarted
+			).GetHandle();
+			RotateLeftStopHandle = EnhancedInputComponent->BindAction(
+				IA_RotateBuildingLeft, ETriggerEvent::Completed, this, &UInv_BuildingComponent::OnRotateLeftCompleted
+			).GetHandle();
+		}
+
+		// G키: 스냅 회전 (Started만 — 탭 한 번에 SnapRotationAngle도 회전)
+		if (IsValid(IA_SnapRotateBuilding) && SnapRotateHandle == 0)
+		{
+			SnapRotateHandle = EnhancedInputComponent->BindAction(
+				IA_SnapRotateBuilding, ETriggerEvent::Started, this, &UInv_BuildingComponent::OnSnapRotate
+			).GetHandle();
+		}
 	}
 }
 
@@ -981,6 +1105,212 @@ void UInv_BuildingComponent::DisableBuildModeInput()
 #endif
 			CancelBuildingBindingHandle = 0;
 		}
+
+		// 회전 바인딩 해제
+		if (RotateRightStartHandle != 0)
+		{
+			EnhancedInputComponent->RemoveBindingByHandle(RotateRightStartHandle);
+			RotateRightStartHandle = 0;
+		}
+		if (RotateRightStopHandle != 0)
+		{
+			EnhancedInputComponent->RemoveBindingByHandle(RotateRightStopHandle);
+			RotateRightStopHandle = 0;
+		}
+		if (RotateLeftStartHandle != 0)
+		{
+			EnhancedInputComponent->RemoveBindingByHandle(RotateLeftStartHandle);
+			RotateLeftStartHandle = 0;
+		}
+		if (RotateLeftStopHandle != 0)
+		{
+			EnhancedInputComponent->RemoveBindingByHandle(RotateLeftStopHandle);
+			RotateLeftStopHandle = 0;
+		}
+		if (SnapRotateHandle != 0)
+		{
+			EnhancedInputComponent->RemoveBindingByHandle(SnapRotateHandle);
+			SnapRotateHandle = 0;
+		}
 	}
+}
+
+// ============================================================================
+// 건물 회전 콜백
+// ============================================================================
+
+void UInv_BuildingComponent::OnRotateRightStarted()
+{
+	bIsRotatingRight = true;
+}
+
+void UInv_BuildingComponent::OnRotateRightCompleted()
+{
+	bIsRotatingRight = false;
+}
+
+void UInv_BuildingComponent::OnRotateLeftStarted()
+{
+	bIsRotatingLeft = true;
+}
+
+void UInv_BuildingComponent::OnRotateLeftCompleted()
+{
+	bIsRotatingLeft = false;
+}
+
+void UInv_BuildingComponent::OnSnapRotate()
+{
+	CurrentBuildRotationYaw += SnapRotationAngle;
+	CurrentBuildRotationYaw = FMath::Fmod(CurrentBuildRotationYaw + 360.f, 360.f);
+
+	// 즉시 고스트 회전 적용 (다음 Tick 전에 시각 피드백)
+	if (IsValid(GhostActorInstance))
+	{
+		GhostActorInstance->SetActorRotation(FRotator(0.f, CurrentBuildRotationYaw, 0.f));
+	}
+}
+
+// ============================================================================
+// 범용 스캔 VFX (비-BuildingActor 건물용, BossEncounterCube 패턴)
+// ============================================================================
+
+void UInv_BuildingComponent::ApplyScanVFXToAnyActor(AActor* TargetActor)
+{
+	if (!IsValid(TargetActor) || !DefaultPlacementScanMaterial)
+	{
+		return;
+	}
+
+	// 모든 MeshComponent 수집 (StaticMesh + DynamicMesh + SkeletalMesh)
+	TArray<UMeshComponent*> AllMeshes;
+	TargetActor->GetComponents<UMeshComponent>(AllMeshes);
+
+	if (AllMeshes.Num() == 0)
+	{
+#if INV_DEBUG_BUILD
+		UE_LOG(LogTemp, Log, TEXT("[BuildingScanVFX] No MeshComponent on %s — skipping"), *TargetActor->GetName());
+#endif
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	// MeshComponent만의 바운딩 박스 합산 (DetectionSphere 등 비렌더링 컴포넌트 제외)
+	FBox MeshBounds(ForceInit);
+	for (UMeshComponent* MeshComp : AllMeshes)
+	{
+		if (MeshComp && MeshComp->IsVisible() && MeshComp->GetNumMaterials() > 0)
+		{
+			MeshBounds += MeshComp->Bounds.GetBox();
+		}
+	}
+	if (!MeshBounds.IsValid)
+	{
+		return;
+	}
+	const float BottomZ = MeshBounds.Min.Z;
+	const float TopZ = MeshBounds.Max.Z;
+	const float MeshHeight = TopZ - BottomZ;
+	if (MeshHeight < 1.f) return;
+
+	const float BandWidth = FMath::Max(MeshHeight * DefaultScanBandRatio, 10.f);
+
+	// 머티리얼 교체 데이터 구조체 (바닥→위 리빌 방식)
+	struct FScanSwapEntry
+	{
+		TWeakObjectPtr<UMeshComponent> Mesh;
+		TArray<TObjectPtr<UMaterialInterface>> OriginalMaterials;
+		UMaterialInstanceDynamic* DMI = nullptr;
+	};
+	TSharedPtr<TArray<FScanSwapEntry>> Entries = MakeShared<TArray<FScanSwapEntry>>();
+
+	// TODO: 디버그 확인 후 제거
+	UE_LOG(LogTemp, Warning, TEXT("[ScanVFX-Diag] Actor=%s MeshCount=%d BottomZ=%.0f TopZ=%.0f"),
+		*TargetActor->GetName(), AllMeshes.Num(), BottomZ, TopZ);
+	for (UMeshComponent* MeshComp : AllMeshes)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[ScanVFX-Diag]  Mesh=%s Class=%s Visible=%d NumMats=%d"),
+			*MeshComp->GetName(), *MeshComp->GetClass()->GetName(),
+			MeshComp->IsVisible(), MeshComp->GetNumMaterials());
+
+		if (!MeshComp || !MeshComp->IsVisible()) continue;
+
+		const int32 NumMats = MeshComp->GetNumMaterials();
+		if (NumMats <= 0) continue;
+
+		UMaterialInstanceDynamic* DMI = UMaterialInstanceDynamic::Create(DefaultPlacementScanMaterial, TargetActor);
+		if (!DMI) continue;
+
+		DMI->SetScalarParameterValue(TEXT("ScanHeight"), BottomZ);
+		DMI->SetScalarParameterValue(TEXT("BandWidth"), BandWidth);
+
+		FScanSwapEntry Entry;
+		Entry.Mesh = MeshComp;
+		Entry.DMI = DMI;
+
+		for (int32 i = 0; i < NumMats; ++i)
+		{
+			Entry.OriginalMaterials.Add(MeshComp->GetMaterial(i));
+			MeshComp->SetMaterial(i, DMI);
+		}
+
+		Entries->Add(MoveTemp(Entry));
+	}
+
+	if (Entries->Num() == 0) return;
+
+	// 타이머 기반 애니메이션 (바닥→위 리빌)
+	TSharedPtr<float> Progress = MakeShared<float>(0.f);
+	const float CapturedDuration = DefaultScanDuration;
+	const float CapturedBottomZ = BottomZ;
+	const float CapturedTopZ = TopZ;
+	const float CapturedBandRatio = DefaultScanBandRatio;
+	const float TickInterval = 1.f / 30.f;
+
+	FTimerHandle ScanTimerHandle;
+	World->GetTimerManager().SetTimer(ScanTimerHandle,
+		FTimerDelegate::CreateLambda([Entries, Progress, CapturedDuration, CapturedBottomZ, CapturedTopZ, CapturedBandRatio, TickInterval]()
+		{
+			*Progress += TickInterval / FMath::Max(CapturedDuration, 0.1f);
+
+			if (*Progress >= 1.0f)
+			{
+				// 스캔 완료 — 원본 머티리얼 복원
+				for (auto& Entry : *Entries)
+				{
+					if (Entry.Mesh.IsValid())
+					{
+						for (int32 i = 0; i < Entry.OriginalMaterials.Num(); ++i)
+						{
+							Entry.Mesh->SetMaterial(i, Entry.OriginalMaterials[i]);
+						}
+					}
+				}
+				Entries->Empty();
+				return;
+			}
+
+			// 모든 DMI의 ScanHeight Lerp: BottomZ → TopZ
+			const float CurrentZ = FMath::Lerp(CapturedBottomZ, CapturedTopZ, *Progress);
+			const float Height = CapturedTopZ - CapturedBottomZ;
+			const float BW = FMath::Max(Height * CapturedBandRatio, 10.f);
+
+			for (auto& Entry : *Entries)
+			{
+				if (Entry.DMI)
+				{
+					Entry.DMI->SetScalarParameterValue(TEXT("ScanHeight"), CurrentZ);
+					Entry.DMI->SetScalarParameterValue(TEXT("BandWidth"), BW);
+				}
+			}
+		}),
+		TickInterval, true);
+
+#if INV_DEBUG_BUILD
+	UE_LOG(LogTemp, Warning, TEXT("[BuildingScanVFX] Fallback scan started: %s (%d meshes, Bottom=%.0f, Top=%.0f, Duration=%.1fs)"),
+		*TargetActor->GetName(), Entries->Num(), BottomZ, TopZ, CapturedDuration);
+#endif
 }
 

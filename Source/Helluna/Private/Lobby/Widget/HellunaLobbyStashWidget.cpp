@@ -50,35 +50,6 @@ namespace
 {
 	constexpr float GSearchRingOuterDegreesPerSecond = 360.0f;
 	constexpr float GSearchRingInnerDegreesPerSecond = -240.0f;
-	const FVector2D GSearchRingBackdropSize(108.0f, 108.0f);
-	const FVector2D GSearchRingOuterSize(108.0f, 108.0f);
-	const FVector2D GSearchRingInnerSize(84.0f, 84.0f);
-	const TCHAR* GSearchRingBackdropTexturePath = TEXT("/Game/Migration/VFX/EasyAtmos/Textures/systemTextures/T_circle_01.T_circle_01");
-	const TCHAR* GSearchRingOuterTexturePath = TEXT("/Game/Migration/VFX/NiagaraExplosion01/Textures/T_Ring_002.T_Ring_002");
-	const TCHAR* GSearchRingInnerTexturePath = TEXT("/Game/Migration/VFX/NiagaraExplosion01/Textures/T_Ring_004.T_Ring_004");
-
-	void ApplySearchRingStyle(UImage* Image, const TCHAR* TexturePath, const FVector2D& BrushSize, const FLinearColor& Tint)
-	{
-		if (!IsValid(Image))
-		{
-			return;
-		}
-
-		if (UTexture2D* Texture = LoadObject<UTexture2D>(nullptr, TexturePath))
-		{
-			Image->SetBrushFromTexture(Texture, false);
-			Image->SetDesiredSizeOverride(BrushSize);
-		}
-		else
-		{
-			UE_LOG(LogHellunaLobby, Warning, TEXT("[StashWidget] Search spinner texture load failed: %s"), TexturePath);
-		}
-
-		Image->SetColorAndOpacity(Tint);
-		Image->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
-		Image->SetRenderOpacity(Tint.A);
-		Image->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-	}
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -101,6 +72,8 @@ void UHellunaLobbyStashWidget::NativeDestruct()
 	if (Button_Mode_Duo) { Button_Mode_Duo->OnClicked.RemoveDynamic(this, &ThisClass::OnDuoModeClicked); }
 	if (Button_Mode_Squad) { Button_Mode_Squad->OnClicked.RemoveDynamic(this, &ThisClass::OnPartyModeClicked); }
 	if (Button_CancelMatchmaking) { Button_CancelMatchmaking->OnClicked.RemoveDynamic(this, &ThisClass::OnCancelMatchmakingClicked); }
+	if (Button_MinimizeMatchmaking) { Button_MinimizeMatchmaking->OnClicked.RemoveDynamic(this, &ThisClass::OnMinimizeMatchmakingClicked); }
+	if (Button_ExpandMatchmaking) { Button_ExpandMatchmaking->OnClicked.RemoveDynamic(this, &ThisClass::OnExpandMatchmakingClicked); }
 	// [Phase 17] 맵 선택 카드
 	if (Button_MapPrev) { Button_MapPrev->OnClicked.RemoveDynamic(this, &ThisClass::OnMapPrevClicked); }
 	if (Button_MapNext) { Button_MapNext->OnClicked.RemoveDynamic(this, &ThisClass::OnMapNextClicked); }
@@ -212,6 +185,20 @@ void UHellunaLobbyStashWidget::NativeOnInitialized()
 	if (Button_CancelMatchmaking)
 	{
 		Button_CancelMatchmaking->OnClicked.AddUniqueDynamic(this, &ThisClass::OnCancelMatchmakingClicked);
+	}
+	// [Phase 18] 매칭 최소화/확장 버튼 바인딩
+	if (Button_MinimizeMatchmaking)
+	{
+		Button_MinimizeMatchmaking->OnClicked.AddUniqueDynamic(this, &ThisClass::OnMinimizeMatchmakingClicked);
+	}
+	if (Button_ExpandMatchmaking)
+	{
+		Button_ExpandMatchmaking->OnClicked.AddUniqueDynamic(this, &ThisClass::OnExpandMatchmakingClicked);
+	}
+	// [Phase 18] 미니 바 초기 숨김
+	if (MatchmakingMiniBar)
+	{
+		MatchmakingMiniBar->SetVisibility(ESlateVisibility::Collapsed);
 	}
 	// 매칭 오버레이 초기 숨김
 	if (MatchmakingOverlay)
@@ -352,20 +339,30 @@ void UHellunaLobbyStashWidget::ConfigureSearchSpinnerVisuals()
 		Overlay_SearchSpinner->SetRenderOpacity(1.0f);
 	}
 
-	ApplySearchRingStyle(Image_SearchRingBackdrop, GSearchRingBackdropTexturePath, GSearchRingBackdropSize, FLinearColor(0.34f, 0.40f, 0.95f, 0.16f));
-	ApplySearchRingStyle(Image_SearchRingOuter, GSearchRingOuterTexturePath, GSearchRingOuterSize, FLinearColor(0.42f, 0.54f, 1.0f, 0.90f));
-	ApplySearchRingStyle(Image_SearchRingInner, GSearchRingInnerTexturePath, GSearchRingInnerSize, FLinearColor(0.80f, 0.46f, 1.0f, 0.82f));
+	// 피벗 + Visibility만 설정 — 텍스처/사이즈/색상은 WBP Designer에서 관리
+	auto InitRing = [](UImage* Img)
+	{
+		if (IsValid(Img))
+		{
+			Img->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+			Img->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		}
+	};
+
+	InitRing(Image_SearchRingBackdrop);
+	InitRing(Image_SearchRingOuter);
+	InitRing(Image_SearchRingInner);
 
 	SearchRingOuterAngle = 0.0f;
 	SearchRingInnerAngle = 0.0f;
 
 	if (Image_SearchRingOuter)
 	{
-		Image_SearchRingOuter->SetRenderTransformAngle(SearchRingOuterAngle);
+		Image_SearchRingOuter->SetRenderTransformAngle(0.0f);
 	}
 	if (Image_SearchRingInner)
 	{
-		Image_SearchRingInner->SetRenderTransformAngle(SearchRingInnerAngle);
+		Image_SearchRingInner->SetRenderTransformAngle(0.0f);
 	}
 }
 
@@ -1465,10 +1462,121 @@ void UHellunaLobbyStashWidget::OnPartyModeClicked()
 void UHellunaLobbyStashWidget::OnCancelMatchmakingClicked()
 {
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase15] 매칭 취소 버튼 클릭"));
+
+	// [Phase 18] 최소화 상태에서 취소 시 복원
+	if (bMatchmakingMinimized)
+	{
+		SetMatchmakingMinimized(false);
+	}
+
 	AHellunaLobbyController* LobbyPC = GetLobbyController();
 	if (LobbyPC)
 	{
 		LobbyPC->Server_LeaveMatchmaking();
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Phase 18] 매칭 최소화/확장
+// ════════════════════════════════════════════════════════════════════════════════
+
+void UHellunaLobbyStashWidget::OnMinimizeMatchmakingClicked()
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase18] 매칭 최소화 클릭"));
+	SetMatchmakingMinimized(true);
+}
+
+void UHellunaLobbyStashWidget::OnExpandMatchmakingClicked()
+{
+	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase18] 매칭 확장 클릭"));
+	SetMatchmakingMinimized(false);
+}
+
+void UHellunaLobbyStashWidget::SetMatchmakingMinimized(bool bMinimize)
+{
+	bMatchmakingMinimized = bMinimize;
+
+	if (bMinimize)
+	{
+		// 풀사이즈 오버레이 숨김
+		if (MatchmakingOverlay)
+		{
+			MatchmakingOverlay->SetVisibility(ESlateVisibility::Collapsed);
+		}
+		// 미니 바 표시
+		if (MatchmakingMiniBar)
+		{
+			MatchmakingMiniBar->SetVisibility(ESlateVisibility::Visible);
+		}
+		// 매칭 중 탭 잠금
+		SetTabsLockedForMatchmaking(true);
+	}
+	else
+	{
+		// 풀사이즈 오버레이 복원
+		if (MatchmakingOverlay && bInMatchmaking)
+		{
+			MatchmakingOverlay->SetVisibility(ESlateVisibility::Visible);
+		}
+		// 미니 바 숨김
+		if (MatchmakingMiniBar)
+		{
+			MatchmakingMiniBar->SetVisibility(ESlateVisibility::Collapsed);
+		}
+		// 탭 잠금 해제
+		SetTabsLockedForMatchmaking(false);
+	}
+}
+
+void UHellunaLobbyStashWidget::SetTabsLockedForMatchmaking(bool bLocked)
+{
+	if (Button_Tab_Loadout)
+	{
+		Button_Tab_Loadout->SetIsEnabled(!bLocked);
+	}
+	if (Button_Tab_Character)
+	{
+		Button_Tab_Character->SetIsEnabled(!bLocked);
+	}
+	if (Button_Party)
+	{
+		Button_Party->SetIsEnabled(!bLocked);
+	}
+
+	// 최소화 시 자동으로 Play 탭으로 전환
+	if (bLocked && CurrentTabIndex != LobbyTab::Play)
+	{
+		SwitchToTab(LobbyTab::Play);
+	}
+}
+
+void UHellunaLobbyStashWidget::UpdatePlayerFillSlots(int32 CurrentCount, int32 TargetCount)
+{
+	// 슬롯별 활성 색상: 초록 → 노랑 → 파랑 (신호등/무지개)
+	static const FLinearColor SlotColors[] = {
+		FLinearColor(0.3f, 0.92f, 0.4f, 1.0f),   // 1번: 초록
+		FLinearColor(0.95f, 0.78f, 0.2f, 1.0f),   // 2번: 노랑
+		FLinearColor(0.35f, 0.7f, 1.0f, 1.0f),    // 3번: 파랑
+	};
+	static const FLinearColor DimColor(0.25f, 0.25f, 0.3f, 0.4f);
+
+	UImage* Slots[] = { Image_PlayerFillSlot1, Image_PlayerFillSlot2, Image_PlayerFillSlot3 };
+
+	for (int32 i = 0; i < 3; ++i)
+	{
+		if (!Slots[i]) continue;
+
+		// TargetCount 초과 슬롯은 숨김 (Duo=2개, Squad=3개)
+		if (i >= TargetCount)
+		{
+			Slots[i]->SetVisibility(ESlateVisibility::Collapsed);
+			continue;
+		}
+
+		Slots[i]->SetVisibility(ESlateVisibility::Visible);
+		const bool bFilled = (i < CurrentCount);
+		const FLinearColor Color = bFilled ? SlotColors[i] : DimColor;
+		Slots[i]->SetColorAndOpacity(Color);
 	}
 }
 
@@ -1482,7 +1590,8 @@ void UHellunaLobbyStashWidget::HandleMatchmakingStatusChanged(const FMatchmaking
 	{
 		bInMatchmaking = true;
 
-		if (MatchmakingOverlay)
+		// [Phase 18] 최소화 상태가 아닐 때만 풀사이즈 오버레이 표시
+		if (MatchmakingOverlay && !bMatchmakingMinimized)
 		{
 			MatchmakingOverlay->SetVisibility(ESlateVisibility::Visible);
 			BP_OnMatchmakingOverlayShow();
@@ -1493,14 +1602,31 @@ void UHellunaLobbyStashWidget::HandleMatchmakingStatusChanged(const FMatchmaking
 		{
 			const int32 Minutes = FMath::FloorToInt(StatusInfo.ElapsedTime / 60.f);
 			const int32 Seconds = FMath::FloorToInt(FMath::Fmod(StatusInfo.ElapsedTime, 60.f));
-			Text_MatchmakingTimer->SetText(FText::FromString(
-				FString::Printf(TEXT("%02d:%02d"), Minutes, Seconds)));
+			const FString TimeStr = FString::Printf(TEXT("%02d:%02d"), Minutes, Seconds);
+			Text_MatchmakingTimer->SetText(FText::FromString(TimeStr));
+
+			// [Phase 18] 미니 바 타이머 동기화
+			if (Text_MiniTimer)
+			{
+				Text_MiniTimer->SetText(FText::FromString(
+					FString::Printf(TEXT("매칭 시간 : %s"), *TimeStr)));
+			}
 		}
 		if (Text_MatchmakingCount)
 		{
-			Text_MatchmakingCount->SetText(FText::FromString(
-				FString::Printf(TEXT("%d/%d"), StatusInfo.CurrentPlayerCount, StatusInfo.TargetPlayerCount)));
+			const FString CountStr = FString::Printf(TEXT("%d/%d"), StatusInfo.CurrentPlayerCount, StatusInfo.TargetPlayerCount);
+			Text_MatchmakingCount->SetText(FText::FromString(CountStr));
+
+			// [Phase 18] 미니 바 카운트도 동기화
+			if (Text_MiniCount)
+			{
+				Text_MiniCount->SetText(FText::FromString(
+					FString::Printf(TEXT("플레이어 : %d/%d"), StatusInfo.CurrentPlayerCount, StatusInfo.TargetPlayerCount)));
+			}
 		}
+
+		// [Phase 18] 플레이어 슬롯 신호등 업데이트
+		UpdatePlayerFillSlots(StatusInfo.CurrentPlayerCount, StatusInfo.TargetPlayerCount);
 
 		// START 버튼 텍스트를 CANCEL로 변경
 		UTextBlock* StartLabel = Text_StartLabel;
@@ -1517,12 +1643,20 @@ void UHellunaLobbyStashWidget::HandleMatchmakingStatusChanged(const FMatchmaking
 	{
 		// None / Found / Deploying → 오버레이 숨김
 		bInMatchmaking = false;
+		bMatchmakingMinimized = false;
 
 		if (MatchmakingOverlay)
 		{
 			MatchmakingOverlay->SetVisibility(ESlateVisibility::Collapsed);
 			SetSearchSpinnerVisible(false);
 		}
+		// [Phase 18] 미니 바도 숨기고 탭 잠금 해제
+		if (MatchmakingMiniBar)
+		{
+			MatchmakingMiniBar->SetVisibility(ESlateVisibility::Collapsed);
+		}
+		SetTabsLockedForMatchmaking(false);
+		UpdatePlayerFillSlots(0, 3);
 
 		// 버튼 텍스트 복원
 		UpdateStartButtonForPartyState();
@@ -1535,6 +1669,12 @@ void UHellunaLobbyStashWidget::HandleMatchmakingStatusChanged(const FMatchmaking
 
 void UHellunaLobbyStashWidget::HandleMatchmakingFound(const FMatchmakingFoundInfo& FoundInfo)
 {
+	// [Phase 18] 매칭 찾으면 최소화 해제 — 카운트다운은 반드시 표시
+	if (bMatchmakingMinimized)
+	{
+		SetMatchmakingMinimized(false);
+	}
+
 	// 매칭 오버레이 표시
 	if (MatchmakingOverlay)
 	{
@@ -1621,6 +1761,14 @@ void UHellunaLobbyStashWidget::HandleMatchmakingCancelled(const FString& Reason)
 	if (Text_MatchmakingCount) Text_MatchmakingCount->SetVisibility(ESlateVisibility::Visible);
 	if (Button_CancelMatchmaking) Button_CancelMatchmaking->SetVisibility(ESlateVisibility::Visible);
 	SetSearchSpinnerVisible(false);
+
+	// [Phase 18] 미니 바 정리 + 탭 잠금 해제
+	bMatchmakingMinimized = false;
+	if (MatchmakingMiniBar)
+	{
+		MatchmakingMiniBar->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	SetTabsLockedForMatchmaking(false);
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase17] 카운트다운 취소 | %s"), *Reason);
 }

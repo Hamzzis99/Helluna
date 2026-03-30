@@ -10,6 +10,7 @@
 class UInputMappingContext;
 class UInputAction;
 class UInv_BuildModeHUD;
+class UMaterialInterface;
 class UTexture2D;
 
 /**
@@ -137,8 +138,8 @@ private:
 		int32 MaterialAmount3
 	);
 
-	// 멀티캐스트 RPC: 모든 클라이언트에게 건물 배치 알림 (Unreliable: 이펙트/사운드 용도, Actor 자체는 Replication으로 동기화)
-	UFUNCTION(NetMulticast, Unreliable)
+	// 멀티캐스트 RPC: 모든 클라이언트에게 건물 배치 알림 (Reliable: 액터 리플리케이션 완료 후 실행 보장)
+	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_OnBuildingPlaced(AActor* PlacedBuilding);
 
 	// PlayerController 약한 참조
@@ -235,6 +236,23 @@ private:
 		meta = (DisplayName = "건설 취소 액션", Tooltip = "건설 모드를 취소하는 입력 액션. 우클릭에 바인딩됩니다.", AllowPrivateAccess = "true"))
 	TObjectPtr<UInputAction> IA_CancelBuilding;
 
+	// === 건물 회전 입력 액션 ===
+
+	// 오른쪽 연속 회전 액션 (R키 홀드)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "건설|입력",
+		meta = (DisplayName = "오른쪽 회전 액션 (Right Rotation Action)", Tooltip = "건물을 오른쪽(시계 방향)으로 연속 회전하는 입력 액션. R키에 바인딩됩니다.", AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> IA_RotateBuildingRight;
+
+	// 왼쪽 연속 회전 액션 (Q키 홀드)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "건설|입력",
+		meta = (DisplayName = "왼쪽 회전 액션 (Left Rotation Action)", Tooltip = "건물을 왼쪽(반시계 방향)으로 연속 회전하는 입력 액션. Q키에 바인딩됩니다.", AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> IA_RotateBuildingLeft;
+
+	// 스냅 회전 액션 (G키 탭)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "건설|입력",
+		meta = (DisplayName = "스냅 회전 액션 (Snap Rotation Action)", Tooltip = "건물을 지정된 각도만큼 오른쪽으로 스냅 회전하는 입력 액션. G키에 바인딩됩니다.", AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> IA_SnapRotateBuilding;
+
 	// === 고스트 액터 ===
 
 	// 실제 스폰된 고스트 액터 인스턴스
@@ -259,6 +277,43 @@ private:
 		meta = (DisplayName = "최대 바닥 각도", Tooltip = "건물 설치를 허용하는 최대 지면 경사각(도)입니다. 이보다 가파르면 설치할 수 없습니다.", AllowPrivateAccess = "true"))
 	float MaxGroundAngle = 45.0f;
 
+	// === 건물 회전 설정 ===
+
+	// 연속 회전 속도 (도/초) — R/Q 홀드 시 초당 회전 각도
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|회전",
+		meta = (DisplayName = "연속 회전 속도 (Continuous Rotation Speed)", Tooltip = "R/Q키 홀드 시 초당 회전 속도(도)입니다.", ClampMin = "30.0", ClampMax = "360.0", AllowPrivateAccess = "true"))
+	float ContinuousRotationSpeed = 90.0f;
+
+	// 스냅 회전 각도 (도) — G키 한 번 탭 시 회전 각도
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|회전",
+		meta = (DisplayName = "스냅 회전 각도 (Snap Rotation Angle)", Tooltip = "G키 탭 시 오른쪽으로 회전하는 각도(도)입니다.", ClampMin = "15.0", ClampMax = "180.0", AllowPrivateAccess = "true"))
+	float SnapRotationAngle = 45.0f;
+
+	// === 기본 배치 스캔 VFX (Inv_BuildingActor가 아닌 건물용 폴백) ===
+
+	// Inv_BuildingActor를 상속하지 않는 건물(터렛 등)에 적용할 기본 스캔 머티리얼
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "건설|VFX",
+		meta = (DisplayName = "Default Scan Material (기본 스캔 머티리얼)", Tooltip = "Inv_BuildingActor가 아닌 건물에 사용할 기본 스캔 VFX 머티리얼입니다. M_ScanBand_Wireframe_V2를 할당하세요.", AllowPrivateAccess = "true"))
+	TObjectPtr<UMaterialInterface> DefaultPlacementScanMaterial;
+
+	// 기본 스캔 시간 (초)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|VFX",
+		meta = (DisplayName = "Default Scan Duration (기본 스캔 시간)", ClampMin = "0.3", ClampMax = "5.0", AllowPrivateAccess = "true"))
+	float DefaultScanDuration = 1.5f;
+
+	// 기본 스캔 밴드 비율
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|VFX",
+		meta = (DisplayName = "Default Scan Band Ratio (기본 밴드 비율)", ClampMin = "0.05", ClampMax = "0.5", AllowPrivateAccess = "true"))
+	float DefaultScanBandRatio = 0.2f;
+
+	// 기본 오버레이 스케일 오프셋
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|VFX",
+		meta = (DisplayName = "Default Overlay Scale (기본 오버레이 스케일)", ClampMin = "1.0", ClampMax = "1.1", AllowPrivateAccess = "true"))
+	float DefaultOverlayScaleOffset = 1.02f;
+
+	/** 아무 액터에 스캔 VFX를 적용하는 범용 헬퍼 (타이머 기반 애니메이션) */
+	void ApplyScanVFXToAnyActor(AActor* TargetActor);
+
 	// === 동적 입력 바인딩 관리 ===
 	
 	// 빌드 모드 입력 활성화/비활성화
@@ -268,6 +323,29 @@ private:
 	// 동적 바인딩 핸들 (제거용)
 	uint32 BuildActionBindingHandle = 0;
 	uint32 CancelBuildingBindingHandle = 0;
+
+	// === 건물 회전 내부 ===
+
+	// 회전 입력 콜백
+	void OnRotateRightStarted();
+	void OnRotateRightCompleted();
+	void OnRotateLeftStarted();
+	void OnRotateLeftCompleted();
+	void OnSnapRotate();
+
+	// 현재 건물 회전값 (Yaw) — 빌드 모드 간 유지 (같은 각도로 연속 배치 가능)
+	float CurrentBuildRotationYaw = 0.0f;
+
+	// 회전 상태 플래그
+	bool bIsRotatingRight = false;
+	bool bIsRotatingLeft = false;
+
+	// 회전 바인딩 핸들 (제거용)
+	uint32 RotateRightStartHandle = 0;
+	uint32 RotateRightStopHandle = 0;
+	uint32 RotateLeftStartHandle = 0;
+	uint32 RotateLeftStopHandle = 0;
+	uint32 SnapRotateHandle = 0;
 
 	// 빌드 모드 IMC 우선순위 (Combat IMC보다 높게 설정)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|입력",

@@ -184,7 +184,7 @@ void IssueMoveTowardShip(
 	// 경유점이 현재 위치와 같으면 (제자리 반환) → 이동 불가, 정지
 	if (FVector::Dist(PawnLoc, NavGoal) < 50.f)
 	{
-		const FVector DetourGoal = ComputeDetourGoal(PawnLoc, ShipLoc, AIC, 300.f);
+		const FVector DetourGoal = ComputeDetourGoal(PawnLoc, ShipLoc, AIC, 300.f, 0);
 
 		UE_LOG(LogChaseTarget, Warning,
 			TEXT("[Chase][MoveTowardShip] NavGoal invalid -> Detour 시도 | Pawn=%s DetourGoal=%s"),
@@ -206,7 +206,7 @@ FVector ComputeDetourGoal(
 	const FVector& TargetLoc,
 	AAIController* AIC,
 	float OffsetAmount,
-	int32 DirectionSign)
+	int32 DirectionSign /* = 0 */)
 {
 	const FVector DirToTarget = (TargetLoc - PawnLoc).GetSafeNormal2D();
 	const FVector Right = FVector::CrossProduct(FVector::UpVector, DirToTarget).GetSafeNormal();
@@ -419,6 +419,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::EnterState(
 	D.bSlotArrived          = false;
 	D.WaitingDestination    = FVector::ZeroVector;
 	D.bHasWaitingDestination = false;
+	D.ConsecutiveSlotFailures = 0;
 
 	APawn* Pawn = AIC->GetPawn();
 	if (IsValid(Pawn))
@@ -464,9 +465,9 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::EnterState(
 		}
 
 		USpaceShipAttackSlotManager* SlotMgr = bUseSlotSystem ? CTH::GetSlotManager(TargetActor) : nullptr;
-		const float CenterDist = FVector::Dist(Pawn->GetActorLocation(), TargetActor->GetActorLocation());
 
-		if (SlotMgr && CenterDist <= SlotEngageRadius)
+		// 슬롯 진입 판정: 표면거리 기준 (우주선이 크면 중심거리가 항상 크므로)
+		if (SlotMgr && SurfaceDist <= SlotEngageRadius)
 		{
 			// 슬롯 진입 범위 안: 슬롯 배정 시도
 			int32 SlotIdx = -1;
@@ -610,8 +611,8 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 			// 슬롯 미배정 상태
 			if (D.AssignedSlotIndex < 0)
 			{
-				// 슬롯 진입 범위 밖: 우주선 방향 접근
-				if (CenterDist > SlotEngageRadius)
+				// 슬롯 진입 범위 밖: 우주선 방향 접근 (표면거리 기준)
+				if (SurfaceDist > SlotEngageRadius)
 				{
 					if (D.TimeSinceRepath >= RepathInterval || bIdle || bStuck)
 					{
@@ -627,6 +628,17 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 						{
 							CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius);
 						}
+						D.TimeSinceRepath = 0.f;
+					}
+					return EStateTreeRunStatus::Running;
+				}
+
+				// 연속 실패 3회 이상: 슬롯 포기, 자유 이동
+				if (D.ConsecutiveSlotFailures >= 3)
+				{
+					if (D.TimeSinceRepath >= RepathInterval || bIdle || bStuck)
+					{
+						CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius);
 						D.TimeSinceRepath = 0.f;
 					}
 					return EStateTreeRunStatus::Running;
@@ -649,15 +661,19 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 					}
 					else
 					{
-						// 슬롯 없음: 제자리에서 우주선을 바라보며 대기
-						// 불필요한 이동 명령을 내리지 않아 움찔거림 방지
-						AIC->StopMovement();
+						// 슬롯 없음: 우주선 방향 자유 이동 (멍때림 방지)
+						CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius);
 					}
 				}
 
-				// 대기 중(슬롯 미배정 + 이동 없음): 우주선을 바라보고 서있기
-				if (bIdle)
+				// 대기 중(슬롯 미배정 + Idle): 우주선 방향 접근
+				if (bIdle && SurfaceDist > AttackRange + 100.f)
 				{
+					CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius);
+				}
+				else if (bIdle)
+				{
+					// 공격 범위 내 대기: 우주선을 바라보고 서있기
 					const FVector ToShip = (TargetActor->GetActorLocation() - PawnLoc).GetSafeNormal2D();
 					if (!ToShip.IsNearlyZero())
 					{
@@ -676,6 +692,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 			if (DistToSlot <= AcceptanceRadius + 30.f)
 			{
 				D.bSlotArrived = true;
+				D.ConsecutiveSlotFailures = 0;
 				AIC->StopMovement();
 				SlotMgr->OccupySlot(D.AssignedSlotIndex, Pawn);
 
@@ -697,16 +714,32 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 
 			if (bNeedReassign)
 			{
+				const bool bIdleRelease = !bStuck;
+
 				UE_LOG(LogChaseTarget, Warning,
-					TEXT("[Chase] Tick - [%s] 슬롯 재배정 (이유: %s), 이전 슬롯=%d"),
+					TEXT("[Chase] Tick - [%s] 슬롯 재배정 (이유: %s), 이전 슬롯=%d, 연속실패=%d"),
 					*Pawn->GetName(), bStuck ? TEXT("Stuck") : TEXT("Idle"),
-					D.AssignedSlotIndex);
+					D.AssignedSlotIndex, D.ConsecutiveSlotFailures);
 
 				SlotMgr->ReleaseSlotByIndex(D.AssignedSlotIndex);
 				D.AssignedSlotIndex     = -1;
 				D.ConsecutiveStuckCount = 0;
 				D.DetourDirectionSign   = 0;
-				D.SlotRetryTimer        = 0.f; // 즉시 재시도
+
+				if (bIdleRelease)
+				{
+					// PFC=Idle = 경로 미발견 → 쿨다운 부여 (매 프레임 재배정 방지)
+					D.ConsecutiveSlotFailures++;
+					D.SlotRetryTimer = 2.f;
+
+					// 대기 중 우주선 방향으로 자유 이동 (멍때림 방지)
+					CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius);
+				}
+				else
+				{
+					// Stuck: 빠른 재시도 허용
+					D.SlotRetryTimer = 0.5f;
+				}
 			}
 		}
 		else

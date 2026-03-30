@@ -10,9 +10,13 @@ Claude.md
 Codexreedme/
 
 # Content Folder
+Content/Maps/
+Content/Materials/
+Content/Texture/
+Content/VFX/
+
 Content/Collections/
 Content/Developers/
-Content/Migration/
 Plugins/Developer/
 Content/Assets/
 Plugins/Inventory/Content/InventoryAssets/
