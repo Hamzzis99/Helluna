@@ -27,41 +27,15 @@ void USpaceShipAttackSlotManager::BeginPlay()
 		return;
 	}
 
-<<<<<<< HEAD
-	// NavMesh 초기화 완료 후 슬롯 생성 (BeginPlay 즉시 호출 시 NavMesh 미준비로 0개 생성됨)
-	// 패키지 빌드에서는 NavMesh 로드가 더 오래 걸릴 수 있으므로 실패 시 재시도
-=======
 	// NavMesh 초기화 완료 후 슬롯 생성
 	// World Partition 맵에서는 NavMesh가 스트리밍으로 로드되므로
 	// 첫 시도에서 실패하면 ScheduleSlotRetry()가 자동으로 재시도한다.
 	SlotRetryCount = 0;
 	FTimerHandle TimerHandle;
->>>>>>> main
 	if (UWorld* World = GetWorld())
 	{
-		World->GetTimerManager().SetTimer(BuildSlotTimerHandle, this,
-			&USpaceShipAttackSlotManager::TryBuildSlots, 1.0f, false);
-	}
-}
-
-// ============================================================================
-// TryBuildSlots — BuildSlots 실행 후 슬롯이 0개면 재시도
-// ============================================================================
-void USpaceShipAttackSlotManager::TryBuildSlots()
-{
-	BuildSlots();
-
-	if (Slots.Num() == 0 && BuildSlotRetryCount < MaxBuildSlotRetries)
-	{
-		++BuildSlotRetryCount;
-		UE_LOG(LogTemp, Warning, TEXT("[SlotManager] 슬롯 0개 — %.1f초 후 재시도 (%d/%d)"),
-			BuildSlotRetryInterval, BuildSlotRetryCount, MaxBuildSlotRetries);
-
-		if (UWorld* World = GetWorld())
-		{
-			World->GetTimerManager().SetTimer(BuildSlotTimerHandle, this,
-				&USpaceShipAttackSlotManager::TryBuildSlots, BuildSlotRetryInterval, false);
-		}
+		World->GetTimerManager().SetTimer(TimerHandle, this,
+			&USpaceShipAttackSlotManager::BuildSlots, 1.0f, false);
 	}
 }
 
