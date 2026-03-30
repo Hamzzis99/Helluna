@@ -5,6 +5,10 @@
 #include "Components/TextBlock.h"
 #include "Components/Image.h"
 #include "Components/HorizontalBox.h"
+#include "Components/HorizontalBoxSlot.h"
+#include "Components/VerticalBox.h"
+#include "Components/VerticalBoxSlot.h"
+#include "Components/Border.h"
 #include "Engine/Texture2D.h"
 #include "GameFramework/PlayerController.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
@@ -13,7 +17,6 @@ void UInv_BuildModeHUD::NativeConstruct()
 {
 	Super::NativeConstruct();
 
-	// 초기 상태: 배치 불가로 시작
 	bPreviousCanPlace = false;
 	bPlacementStatusInitialized = false;
 
@@ -22,26 +25,123 @@ void UInv_BuildModeHUD::NativeConstruct()
 		Text_PlacementStatus->SetText(FText::FromString(TEXT("배치 대기 중...")));
 	}
 
-	// 프리뷰 이미지 숨김 — 고스트 액터가 월드에 이미 표시되므로 HUD 프리뷰 불필요
 	if (IsValid(Image_Preview))
 	{
 		Image_Preview->SetVisibility(ESlateVisibility::Collapsed);
 	}
 
-	// 조작 가이드 텍스트를 실제 키 바인딩에 맞게 설정
-	auto SetControlText = [this](const FName& WidgetName, const FString& NewText)
+	// 기존 Text_Control0~4 숨기기 (Keycap Box로 대체)
+	for (int32 i = 0; i <= 4; ++i)
 	{
-		if (UTextBlock* TB = Cast<UTextBlock>(GetWidgetFromName(WidgetName)))
+		if (UWidget* W = GetWidgetFromName(*FString::Printf(TEXT("Text_Control%d"), i)))
 		{
-			TB->SetText(FText::FromString(NewText));
+			W->SetVisibility(ESlateVisibility::Collapsed);
+		}
+	}
+
+	// === Keycap Box 스타일 조작 가이드 생성 ===
+	UVerticalBox* VBox = Cast<UVerticalBox>(GetWidgetFromName(TEXT("VBox_Main")));
+	if (!VBox) return;
+
+	// 색상 정의
+	const FLinearColor CyanColor(0.314f, 0.706f, 1.0f, 1.0f);    // #50B4FF
+	const FLinearColor KeyBgColor(0.15f, 0.15f, 0.15f, 0.6f);
+	const FLinearColor DescColor(0.75f, 0.75f, 0.75f, 1.0f);
+	const FLinearColor SepColor(0.5f, 0.5f, 0.5f, 0.7f);
+
+	// Keycap Border 브러시 (RoundedBox + 얇은 테두리)
+	FSlateBrush KeyBrush;
+	KeyBrush.DrawAs = ESlateBrushDrawType::RoundedBox;
+	KeyBrush.OutlineSettings.CornerRadii = FVector4(4.f, 4.f, 4.f, 4.f);
+	KeyBrush.OutlineSettings.RoundingType = ESlateBrushRoundingType::FixedRadius;
+	KeyBrush.OutlineSettings.Color = FSlateColor(FLinearColor(0.5f, 0.5f, 0.5f, 0.3f));
+	KeyBrush.OutlineSettings.Width = 0.5f;
+
+	// 키캡 위젯 생성 헬퍼
+	auto MakeKeycap = [&](const FString& KeyName) -> UBorder*
+	{
+		UBorder* Border = NewObject<UBorder>(this);
+		Border->SetBrush(KeyBrush);
+		Border->SetBrushColor(KeyBgColor);
+		Border->SetPadding(FMargin(6.f, 2.f, 6.f, 2.f));
+
+		UTextBlock* KeyText = NewObject<UTextBlock>(this);
+		FSlateFontInfo Font = KeyText->GetFont();
+		Font.Size = 11;
+		KeyText->SetFont(Font);
+		KeyText->SetText(FText::FromString(KeyName));
+		KeyText->SetColorAndOpacity(FSlateColor(CyanColor));
+		KeyText->SetJustification(ETextJustify::Center);
+
+		Border->AddChild(KeyText);
+		return Border;
+	};
+
+	auto MakeSeparator = [&](const FString& Sep) -> UTextBlock*
+	{
+		UTextBlock* Text = NewObject<UTextBlock>(this);
+		FSlateFontInfo Font = Text->GetFont();
+		Font.Size = 11;
+		Text->SetFont(Font);
+		Text->SetText(FText::FromString(Sep));
+		Text->SetColorAndOpacity(FSlateColor(SepColor));
+		return Text;
+	};
+
+	auto MakeDesc = [&](const FString& Desc) -> UTextBlock*
+	{
+		UTextBlock* Text = NewObject<UTextBlock>(this);
+		FSlateFontInfo Font = Text->GetFont();
+		Font.Size = 12;
+		Text->SetFont(Font);
+		Text->SetText(FText::FromString(Desc));
+		Text->SetColorAndOpacity(FSlateColor(DescColor));
+		return Text;
+	};
+
+	// 조작 가이드 행 생성 헬퍼
+	auto AddControlRow = [&](const TArray<FString>& Keys, const FString& Sep, const FString& Desc)
+	{
+		UHorizontalBox* HBox = NewObject<UHorizontalBox>(this);
+
+		for (int32 i = 0; i < Keys.Num(); ++i)
+		{
+			if (i > 0 && !Sep.IsEmpty())
+			{
+				UTextBlock* SepText = MakeSeparator(Sep);
+				if (UHorizontalBoxSlot* SepSlot = Cast<UHorizontalBoxSlot>(HBox->AddChild(SepText)))
+				{
+					SepSlot->SetPadding(FMargin(4.f, 0.f, 4.f, 0.f));
+					SepSlot->SetVerticalAlignment(VAlign_Center);
+				}
+			}
+
+			UBorder* Keycap = MakeKeycap(Keys[i]);
+			if (UHorizontalBoxSlot* KeySlot = Cast<UHorizontalBoxSlot>(HBox->AddChild(Keycap)))
+			{
+				KeySlot->SetVerticalAlignment(VAlign_Center);
+			}
+		}
+
+		UTextBlock* DescText = MakeDesc(Desc);
+		if (UHorizontalBoxSlot* DescSlot = Cast<UHorizontalBoxSlot>(HBox->AddChild(DescText)))
+		{
+			DescSlot->SetPadding(FMargin(10.f, 0.f, 0.f, 0.f));
+			DescSlot->SetVerticalAlignment(VAlign_Center);
+		}
+
+		if (UVerticalBoxSlot* RowSlot = Cast<UVerticalBoxSlot>(VBox->AddChild(HBox)))
+		{
+			RowSlot->SetPadding(FMargin(0.f, 2.f, 0.f, 2.f));
 		}
 	};
 
-	SetControlText(TEXT("Text_Control0"), TEXT("LMB : 건축"));
-	SetControlText(TEXT("Text_Control1"), TEXT("Shift + LMB : 연속 건축"));
-	SetControlText(TEXT("Text_Control2"), TEXT("RMB : 건축 중단"));
-	SetControlText(TEXT("Text_Control3"), TEXT("Q / E : 회전"));
-	SetControlText(TEXT("Text_Control4"), TEXT("G : 스냅 회전"));
+	// 조작 가이드 5행 생성
+	AddControlRow({TEXT("LMB")}, TEXT(""), TEXT("건축"));
+	AddControlRow({TEXT("Shift"), TEXT("LMB")}, TEXT("+"), TEXT("연속 건축"));
+	AddControlRow({TEXT("RMB")}, TEXT(""), TEXT("건축 중단"));
+	AddControlRow({TEXT("Q"), TEXT("E")}, TEXT("/"), TEXT("회전"));
+	AddControlRow({TEXT("G")}, TEXT(""), TEXT("스냅 회전"));
 }
 
 void UInv_BuildModeHUD::SetBuildingInfo(

@@ -113,6 +113,10 @@ struct FSTTask_ChaseTarget_TestInstanceData
 	/** 대기 목표가 유효한지 */
 	UPROPERTY()
 	bool bHasWaitingDestination = false;
+
+	/** 연속 슬롯 배정 실패 횟수 (Idle 재배정 누적) */
+	UPROPERTY()
+	int32 ConsecutiveSlotFailures = 0;
 };
 
 USTRUCT(meta = (DisplayName = "Helluna: Chase Target (Test)", Category = "Helluna|AI"))
