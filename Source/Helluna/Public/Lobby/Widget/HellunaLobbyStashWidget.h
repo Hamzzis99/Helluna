@@ -284,6 +284,16 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Button_ExpandMatchmaking;
 
+	/** [Phase 18] 플레이어 슬롯 신호등 이미지 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> Image_PlayerFillSlot1;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> Image_PlayerFillSlot2;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> Image_PlayerFillSlot3;
+
 	// ── [Phase 17] 위젯 애니메이션 바인딩 ──
 
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetAnimOptional), Transient)
@@ -524,6 +534,9 @@ private:
 
 	/** 매칭 중 탭 활성/비활성 처리 */
 	void SetTabsLockedForMatchmaking(bool bLocked);
+
+	/** [Phase 18] 플레이어 슬롯 신호등 업데이트 */
+	void UpdatePlayerFillSlots(int32 CurrentCount, int32 TargetCount);
 
 	/** [Phase 18] 파티 인원 수에 따라 모드 버튼 Visible/Collapsed + 자동 모드 전환 */
 	void UpdateModeButtonsForPartySize(int32 PartySize);

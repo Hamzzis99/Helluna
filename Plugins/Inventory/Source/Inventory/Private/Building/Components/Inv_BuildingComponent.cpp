@@ -17,7 +17,6 @@
 #include "Building/Actor/Inv_BuildingActor.h"
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialInstanceDynamic.h"
-#include "Components/StaticMeshComponent.h"
 #include "Components/MeshComponent.h"
 
 
@@ -27,6 +26,9 @@ UInv_BuildingComponent::UInv_BuildingComponent()
 	// Set this component to be initialized when the game starts, and to be ticked every frame.  You can turn these features
 	// off to improve performance if you don't need them.
 	PrimaryComponentTick.bCanEverTick = true;
+
+	// RPC(Server/Multicast) 사용을 위해 컴포넌트 리플리케이션 활성화
+	SetIsReplicatedByDefault(true);
 
 	bIsInBuildMode = false;
 	bCanPlaceBuilding = false;
@@ -705,8 +707,9 @@ void UInv_BuildingComponent::Server_PlaceBuilding_Implementation(
 
 	if (IsValid(PlacedBuilding))
 	{
-		// 실제 건물이므로 충돌 활성화
-		PlacedBuilding->SetActorEnableCollision(true);
+		// 건설 중 상태: 충돌 비활성 + 숨김 (스캔 VFX 시작 시 표시, 스캔 완료 후 충돌 활성화)
+		PlacedBuilding->SetActorEnableCollision(false);
+		PlacedBuilding->SetActorHiddenInGame(true);
 
 #if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Warning, TEXT("건물 스폰 성공! 재료 차감 시도..."));
@@ -760,13 +763,48 @@ void UInv_BuildingComponent::Server_PlaceBuilding_Implementation(
 		// 리플리케이션 활성화 (중요!)
 		PlacedBuilding->SetReplicates(true);
 		PlacedBuilding->SetReplicateMovement(true);
-		
+
+
 #if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Warning, TEXT("Server: Building placed successfully at location: %s"), *Location.ToString());
 #endif
-		
-		// 모든 클라이언트에게 건물 배치 알림 (선택사항 - 추가 로직이 필요할 때)
-		Multicast_OnBuildingPlaced(PlacedBuilding);
+
+		// 리플리케이션 대기 후 Multicast 호출
+		// (SpawnActor 직후에는 클라이언트에 액터가 아직 도착하지 않아 파라미터가 NULL)
+		constexpr float ReplicationDelay = 0.5f;
+		if (World)
+		{
+			TWeakObjectPtr<AActor> WeakBuilding = PlacedBuilding;
+			TWeakObjectPtr<UInv_BuildingComponent> WeakThis = this;
+
+			// 0.5초 후 Multicast (액터 리플리케이션 완료 대기)
+			FTimerHandle ScanDelayTimer;
+			World->GetTimerManager().SetTimer(ScanDelayTimer,
+				FTimerDelegate::CreateLambda([WeakThis, WeakBuilding]()
+				{
+					if (WeakThis.IsValid() && WeakBuilding.IsValid())
+					{
+						WeakThis->Multicast_OnBuildingPlaced(WeakBuilding.Get());
+					}
+				}),
+				ReplicationDelay, false);
+
+			// 스캔 완료 후 건물 활성화 (리플리케이션 대기 + 스캔 시간)
+			FTimerHandle ActivationTimer;
+			World->GetTimerManager().SetTimer(ActivationTimer,
+				FTimerDelegate::CreateLambda([WeakBuilding]()
+				{
+					if (WeakBuilding.IsValid())
+					{
+						WeakBuilding->SetActorEnableCollision(true);
+#if INV_DEBUG_BUILD
+						UE_LOG(LogTemp, Warning, TEXT("[BuildingScanVFX] Construction complete — collision enabled: %s"),
+							*WeakBuilding->GetName());
+#endif
+					}
+				}),
+				ReplicationDelay + DefaultScanDuration, false);
+		}
 	}
 	else
 	{
@@ -778,11 +816,17 @@ void UInv_BuildingComponent::Server_PlaceBuilding_Implementation(
 
 void UInv_BuildingComponent::Multicast_OnBuildingPlaced_Implementation(AActor* PlacedBuilding)
 {
+	// 디버그: Multicast 도달 여부 확인 (Actor가 null이어도 출력)
+	const bool bIsServer = GetOwner() && GetOwner()->HasAuthority();
+	UE_LOG(LogTemp, Warning, TEXT("[BuildingScanVFX] === Multicast received === IsServer=%d, Actor=%s, Material=%s"),
+		bIsServer,
+		PlacedBuilding ? *PlacedBuilding->GetName() : TEXT("NULL"),
+		DefaultPlacementScanMaterial ? *DefaultPlacementScanMaterial->GetName() : TEXT("NULL"));
+
 	if (!IsValid(PlacedBuilding)) return;
 
-	// TODO: 디버그 확인 후 제거
-	UE_LOG(LogTemp, Warning, TEXT("[BuildingScanVFX] === Multicast received === Actor: %s, Class: %s"),
-		*PlacedBuilding->GetName(), *PlacedBuilding->GetClass()->GetName());
+	// 숨김 해제 — 스캔 머티리얼이 적용되면서 바닥부터 물질화
+	PlacedBuilding->SetActorHiddenInGame(false);
 
 	// 배치 스캔 VFX 시작 (모든 클라이언트에서 재생)
 	if (AInv_BuildingActor* BuildingActor = Cast<AInv_BuildingActor>(PlacedBuilding))
@@ -797,6 +841,8 @@ void UInv_BuildingComponent::Multicast_OnBuildingPlaced_Implementation(AActor* P
 			DefaultPlacementScanMaterial ? *DefaultPlacementScanMaterial->GetName() : TEXT("NULL"));
 		ApplyScanVFXToAnyActor(PlacedBuilding);
 	}
+
+	// 스캔 머티리얼이 바닥부터 물질화를 제어 (Masked 블렌드로 위쪽 자동 마스킹)
 
 }
 
@@ -1139,29 +1185,48 @@ void UInv_BuildingComponent::ApplyScanVFXToAnyActor(AActor* TargetActor)
 	UWorld* World = GetWorld();
 	if (!World) return;
 
-	// 액터 전체 바운딩 박스
-	FVector BoundsOrigin, BoundsExtent;
-	TargetActor->GetActorBounds(false, BoundsOrigin, BoundsExtent);
-	const float BottomZ = BoundsOrigin.Z - BoundsExtent.Z;
-	const float TopZ = BoundsOrigin.Z + BoundsExtent.Z;
+	// MeshComponent만의 바운딩 박스 합산 (DetectionSphere 등 비렌더링 컴포넌트 제외)
+	FBox MeshBounds(ForceInit);
+	for (UMeshComponent* MeshComp : AllMeshes)
+	{
+		if (MeshComp && MeshComp->IsVisible() && MeshComp->GetNumMaterials() > 0)
+		{
+			MeshBounds += MeshComp->Bounds.GetBox();
+		}
+	}
+	if (!MeshBounds.IsValid)
+	{
+		return;
+	}
+	const float BottomZ = MeshBounds.Min.Z;
+	const float TopZ = MeshBounds.Max.Z;
 	const float MeshHeight = TopZ - BottomZ;
 	if (MeshHeight < 1.f) return;
 
 	const float BandWidth = FMath::Max(MeshHeight * DefaultScanBandRatio, 10.f);
 
-	// 하이브리드 오버레이 데이터 구조체
-	struct FScanOverlayEntry
+	// 머티리얼 교체 데이터 구조체 (바닥→위 리빌 방식)
+	struct FScanSwapEntry
 	{
-		TWeakObjectPtr<UStaticMeshComponent> OverlayMesh;        // StaticMesh 복제용
-		TWeakObjectPtr<UMeshComponent> SwappedMesh;              // 머티리얼 교체된 메시
-		TArray<TObjectPtr<UMaterialInterface>> OriginalMaterials; // 교체 전 원본
+		TWeakObjectPtr<UMeshComponent> Mesh;
+		TArray<TObjectPtr<UMaterialInterface>> OriginalMaterials;
 		UMaterialInstanceDynamic* DMI = nullptr;
 	};
-	TSharedPtr<TArray<FScanOverlayEntry>> Entries = MakeShared<TArray<FScanOverlayEntry>>();
+	TSharedPtr<TArray<FScanSwapEntry>> Entries = MakeShared<TArray<FScanSwapEntry>>();
 
+	// TODO: 디버그 확인 후 제거
+	UE_LOG(LogTemp, Warning, TEXT("[ScanVFX-Diag] Actor=%s MeshCount=%d BottomZ=%.0f TopZ=%.0f"),
+		*TargetActor->GetName(), AllMeshes.Num(), BottomZ, TopZ);
 	for (UMeshComponent* MeshComp : AllMeshes)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[ScanVFX-Diag]  Mesh=%s Class=%s Visible=%d NumMats=%d"),
+			*MeshComp->GetName(), *MeshComp->GetClass()->GetName(),
+			MeshComp->IsVisible(), MeshComp->GetNumMaterials());
+
 		if (!MeshComp || !MeshComp->IsVisible()) continue;
+
+		const int32 NumMats = MeshComp->GetNumMaterials();
+		if (NumMats <= 0) continue;
 
 		UMaterialInstanceDynamic* DMI = UMaterialInstanceDynamic::Create(DefaultPlacementScanMaterial, TargetActor);
 		if (!DMI) continue;
@@ -1169,48 +1234,14 @@ void UInv_BuildingComponent::ApplyScanVFXToAnyActor(AActor* TargetActor)
 		DMI->SetScalarParameterValue(TEXT("ScanHeight"), BottomZ);
 		DMI->SetScalarParameterValue(TEXT("BandWidth"), BandWidth);
 
-		FScanOverlayEntry Entry;
+		FScanSwapEntry Entry;
+		Entry.Mesh = MeshComp;
 		Entry.DMI = DMI;
 
-		if (UStaticMeshComponent* SMC = Cast<UStaticMeshComponent>(MeshComp))
+		for (int32 i = 0; i < NumMats; ++i)
 		{
-			// StaticMesh: 오버레이 메시 복제 (BossEncounterCube 패턴)
-			if (!SMC->GetStaticMesh()) continue;
-
-			UStaticMeshComponent* Overlay = NewObject<UStaticMeshComponent>(TargetActor);
-			if (!Overlay) continue;
-
-			Overlay->SetStaticMesh(SMC->GetStaticMesh());
-			Overlay->SetWorldTransform(SMC->GetComponentTransform());
-			Overlay->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-
-			const int32 NumMats = SMC->GetNumMaterials();
-			for (int32 i = 0; i < NumMats; ++i)
-			{
-				Overlay->SetMaterial(i, DMI);
-			}
-
-			Overlay->SetWorldScale3D(SMC->GetComponentScale() * DefaultOverlayScaleOffset);
-			Overlay->SetVisibility(true);
-			Overlay->RegisterComponent();
-
-			if (TargetActor->GetRootComponent())
-			{
-				Overlay->AttachToComponent(TargetActor->GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
-			}
-
-			Entry.OverlayMesh = Overlay;
-		}
-		else
-		{
-			// DynamicMesh 등: 원본 머티리얼 저장 후 직접 교체
-			const int32 NumMats = MeshComp->GetNumMaterials();
-			for (int32 i = 0; i < NumMats; ++i)
-			{
-				Entry.OriginalMaterials.Add(MeshComp->GetMaterial(i));
-				MeshComp->SetMaterial(i, DMI);
-			}
-			Entry.SwappedMesh = MeshComp;
+			Entry.OriginalMaterials.Add(MeshComp->GetMaterial(i));
+			MeshComp->SetMaterial(i, DMI);
 		}
 
 		Entries->Add(MoveTemp(Entry));
@@ -1218,7 +1249,7 @@ void UInv_BuildingComponent::ApplyScanVFXToAnyActor(AActor* TargetActor)
 
 	if (Entries->Num() == 0) return;
 
-	// 타이머 기반 애니메이션
+	// 타이머 기반 애니메이션 (바닥→위 리빌)
 	TSharedPtr<float> Progress = MakeShared<float>(0.f);
 	const float CapturedDuration = DefaultScanDuration;
 	const float CapturedBottomZ = BottomZ;
@@ -1234,18 +1265,14 @@ void UInv_BuildingComponent::ApplyScanVFXToAnyActor(AActor* TargetActor)
 
 			if (*Progress >= 1.0f)
 			{
-				// 스캔 완료 — 오버레이 메시 파괴 + 교체 머티리얼 복원
+				// 스캔 완료 — 원본 머티리얼 복원
 				for (auto& Entry : *Entries)
 				{
-					if (Entry.OverlayMesh.IsValid())
-					{
-						Entry.OverlayMesh->DestroyComponent();
-					}
-					if (Entry.SwappedMesh.IsValid())
+					if (Entry.Mesh.IsValid())
 					{
 						for (int32 i = 0; i < Entry.OriginalMaterials.Num(); ++i)
 						{
-							Entry.SwappedMesh->SetMaterial(i, Entry.OriginalMaterials[i]);
+							Entry.Mesh->SetMaterial(i, Entry.OriginalMaterials[i]);
 						}
 					}
 				}

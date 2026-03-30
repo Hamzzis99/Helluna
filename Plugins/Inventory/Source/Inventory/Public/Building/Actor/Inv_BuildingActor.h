@@ -62,19 +62,10 @@ public:
 		meta = (DisplayName = "Scan Band Ratio (밴드 비율)", ClampMin = "0.05", ClampMax = "0.5"))
 	float ScanBandRatio = 0.2f;
 
-	/** 오버레이 메시 스케일 오프셋 (원본보다 약간 크게 — Z-fighting 방지) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|VFX",
-		meta = (DisplayName = "Overlay Scale Offset (오버레이 스케일)", ClampMin = "1.0", ClampMax = "1.1"))
-	float OverlayScaleOffset = 1.02f;
-
 private:
-	// === 스캔 오버레이 내부 상태 ===
+	// === 스캔 내부 상태 (머티리얼 교체 방식) ===
 
-	/** 스캔 오버레이 메시 배열 (StaticMeshComponent 복제) */
-	UPROPERTY()
-	TArray<TObjectPtr<UStaticMeshComponent>> ScanOverlayMeshes;
-
-	/** 머티리얼 교체된 비-Static 메시 (DynamicMesh 등, 원본 머티리얼 복원용) */
+	/** 머티리얼 교체된 메시 (스캔 완료 시 원본 머티리얼 복원용) */
 	UPROPERTY()
 	TArray<TObjectPtr<UMeshComponent>> ScanSwappedMeshes;
 

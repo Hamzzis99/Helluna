@@ -1550,6 +1550,36 @@ void UHellunaLobbyStashWidget::SetTabsLockedForMatchmaking(bool bLocked)
 	}
 }
 
+void UHellunaLobbyStashWidget::UpdatePlayerFillSlots(int32 CurrentCount, int32 TargetCount)
+{
+	// 슬롯별 활성 색상: 초록 → 노랑 → 파랑 (신호등/무지개)
+	static const FLinearColor SlotColors[] = {
+		FLinearColor(0.3f, 0.92f, 0.4f, 1.0f),   // 1번: 초록
+		FLinearColor(0.95f, 0.78f, 0.2f, 1.0f),   // 2번: 노랑
+		FLinearColor(0.35f, 0.7f, 1.0f, 1.0f),    // 3번: 파랑
+	};
+	static const FLinearColor DimColor(0.25f, 0.25f, 0.3f, 0.4f);
+
+	UImage* Slots[] = { Image_PlayerFillSlot1, Image_PlayerFillSlot2, Image_PlayerFillSlot3 };
+
+	for (int32 i = 0; i < 3; ++i)
+	{
+		if (!Slots[i]) continue;
+
+		// TargetCount 초과 슬롯은 숨김 (Duo=2개, Squad=3개)
+		if (i >= TargetCount)
+		{
+			Slots[i]->SetVisibility(ESlateVisibility::Collapsed);
+			continue;
+		}
+
+		Slots[i]->SetVisibility(ESlateVisibility::Visible);
+		const bool bFilled = (i < CurrentCount);
+		const FLinearColor Color = bFilled ? SlotColors[i] : DimColor;
+		Slots[i]->SetColorAndOpacity(Color);
+	}
+}
+
 void UHellunaLobbyStashWidget::HandleMatchmakingStatusChanged(const FMatchmakingStatusInfo& StatusInfo)
 {
 	UE_LOG(LogHellunaLobby, Log, TEXT("[StashWidget] [Phase15] 매칭 상태 변경 | Status=%d | %.1fs | %d/%d"),
@@ -1595,6 +1625,9 @@ void UHellunaLobbyStashWidget::HandleMatchmakingStatusChanged(const FMatchmaking
 			}
 		}
 
+		// [Phase 18] 플레이어 슬롯 신호등 업데이트
+		UpdatePlayerFillSlots(StatusInfo.CurrentPlayerCount, StatusInfo.TargetPlayerCount);
+
 		// START 버튼 텍스트를 CANCEL로 변경
 		UTextBlock* StartLabel = Text_StartLabel;
 		if (!StartLabel && Button_Start && Button_Start->GetChildrenCount() > 0)
@@ -1623,6 +1656,7 @@ void UHellunaLobbyStashWidget::HandleMatchmakingStatusChanged(const FMatchmaking
 			MatchmakingMiniBar->SetVisibility(ESlateVisibility::Collapsed);
 		}
 		SetTabsLockedForMatchmaking(false);
+		UpdatePlayerFillSlots(0, 3);
 
 		// 버튼 텍스트 복원
 		UpdateStartButtonForPartyState();

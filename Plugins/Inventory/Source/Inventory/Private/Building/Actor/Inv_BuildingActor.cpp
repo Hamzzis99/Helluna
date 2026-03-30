@@ -2,7 +2,6 @@
 
 #include "Building/Actor/Inv_BuildingActor.h"
 #include "Inventory.h"
-#include "Components/StaticMeshComponent.h"
 #include "Components/MeshComponent.h"
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -97,11 +96,21 @@ void AInv_BuildingActor::StartPlacementScanVFX()
 		return;
 	}
 
-	// 액터 전체 바운딩 박스에서 바닥/꼭대기 Z 계산
-	FVector BoundsOrigin, BoundsExtent;
-	GetActorBounds(false, BoundsOrigin, BoundsExtent);
-	ScanBottomZ = BoundsOrigin.Z - BoundsExtent.Z;
-	ScanTopZ = BoundsOrigin.Z + BoundsExtent.Z;
+	// MeshComponent만의 바운딩 박스 합산 (DetectionSphere 등 비렌더링 컴포넌트 제외)
+	FBox MeshBounds(ForceInit);
+	for (UMeshComponent* MeshComp : AllMeshes)
+	{
+		if (MeshComp && MeshComp->IsVisible() && MeshComp->GetNumMaterials() > 0)
+		{
+			MeshBounds += MeshComp->Bounds.GetBox();
+		}
+	}
+	if (!MeshBounds.IsValid)
+	{
+		return;
+	}
+	ScanBottomZ = MeshBounds.Min.Z;
+	ScanTopZ = MeshBounds.Max.Z;
 
 	// 높이가 너무 작으면 스킵
 	const float MeshHeight = ScanTopZ - ScanBottomZ;
@@ -112,10 +121,13 @@ void AInv_BuildingActor::StartPlacementScanVFX()
 
 	const float BandWidth = FMath::Max(MeshHeight * ScanBandRatio, 10.f);
 
-	// 각 MeshComponent 처리: StaticMesh→오버레이 복제, 기타→머티리얼 직접 교체
+	// 모든 MeshComponent에 머티리얼 교체 (리빌 마스크로 바닥부터 물질화)
 	for (UMeshComponent* MeshComp : AllMeshes)
 	{
 		if (!MeshComp || !MeshComp->IsVisible()) continue;
+
+		const int32 NumMats = MeshComp->GetNumMaterials();
+		if (NumMats <= 0) continue;
 
 		UMaterialInstanceDynamic* DMI = UMaterialInstanceDynamic::Create(PlacementScanMaterial, this);
 		if (!DMI) continue;
@@ -123,53 +135,19 @@ void AInv_BuildingActor::StartPlacementScanVFX()
 		DMI->SetScalarParameterValue(TEXT("ScanHeight"), ScanBottomZ);
 		DMI->SetScalarParameterValue(TEXT("BandWidth"), BandWidth);
 
-		if (UStaticMeshComponent* SMC = Cast<UStaticMeshComponent>(MeshComp))
+		// 원본 머티리얼 저장 후 스캔 머티리얼로 교체
+		for (int32 i = 0; i < NumMats; ++i)
 		{
-			// StaticMesh: 오버레이 메시 복제 (BossEncounterCube 패턴)
-			if (!SMC->GetStaticMesh()) continue;
-
-			UStaticMeshComponent* Overlay = NewObject<UStaticMeshComponent>(this);
-			if (!Overlay) continue;
-
-			Overlay->SetStaticMesh(SMC->GetStaticMesh());
-			Overlay->SetWorldTransform(SMC->GetComponentTransform());
-			Overlay->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-
-			const int32 NumMats = SMC->GetNumMaterials();
-			for (int32 i = 0; i < NumMats; ++i)
-			{
-				Overlay->SetMaterial(i, DMI);
-			}
-
-			Overlay->SetWorldScale3D(SMC->GetComponentScale() * OverlayScaleOffset);
-			Overlay->SetVisibility(true);
-			Overlay->RegisterComponent();
-
-			if (GetRootComponent())
-			{
-				Overlay->AttachToComponent(GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
-			}
-
-			ScanOverlayMeshes.Add(Overlay);
+			ScanOriginalMaterials.Add(MeshComp->GetMaterial(i));
+			MeshComp->SetMaterial(i, DMI);
 		}
-		else
-		{
-			// DynamicMesh 등: 원본 머티리얼 저장 후 직접 교체
-			const int32 NumMats = MeshComp->GetNumMaterials();
-			for (int32 i = 0; i < NumMats; ++i)
-			{
-				ScanOriginalMaterials.Add(MeshComp->GetMaterial(i));
-				MeshComp->SetMaterial(i, DMI);
-			}
-			ScanSwappedMeshes.Add(MeshComp);
-			ScanSwappedSlotCounts.Add(NumMats);
-		}
-
+		ScanSwappedMeshes.Add(MeshComp);
+		ScanSwappedSlotCounts.Add(NumMats);
 		ScanDMIs.Add(DMI);
 	}
 
 	// 아무것도 적용되지 않았으면 스킵
-	if (ScanOverlayMeshes.Num() == 0 && ScanSwappedMeshes.Num() == 0)
+	if (ScanSwappedMeshes.Num() == 0)
 	{
 		return;
 	}
@@ -181,7 +159,7 @@ void AInv_BuildingActor::StartPlacementScanVFX()
 
 #if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("[BuildingScanVFX] Scan started: %s (%d meshes, Bottom=%.0f, Top=%.0f, Duration=%.1fs)"),
-		*GetName(), ScanOverlayTargets.Num(), ScanBottomZ, ScanTopZ, ScanDuration);
+		*GetName(), ScanSwappedMeshes.Num(), ScanBottomZ, ScanTopZ, ScanDuration);
 #endif
 }
 
@@ -192,16 +170,6 @@ void AInv_BuildingActor::TickPlacementScan(float DeltaTime)
 
 	if (ScanProgress >= 1.0f)
 	{
-		// 스캔 완료 — 오버레이 메시 파괴
-		for (UStaticMeshComponent* Overlay : ScanOverlayMeshes)
-		{
-			if (IsValid(Overlay))
-			{
-				Overlay->DestroyComponent();
-			}
-		}
-		ScanOverlayMeshes.Empty();
-
 		// 스캔 완료 — 머티리얼 교체된 메시 원본 복원
 		int32 MatOffset = 0;
 		for (int32 MeshIdx = 0; MeshIdx < ScanSwappedMeshes.Num(); ++MeshIdx)
