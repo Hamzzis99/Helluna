@@ -712,23 +712,57 @@ void ABossEncounterCube::CacheBossPostProcessVolume()
 
 	for (TActorIterator<APostProcessVolume> It(World); It; ++It)
 	{
-		if (It->GetName().Contains(TEXT("BossEncounter")))
+		APostProcessVolume* PPV = *It;
+		if (!PPV) continue;
+
+		// 1차: 에디터 라벨 검색 (PPV_BossEncounter)
+#if WITH_EDITOR
+		const FString Label = PPV->GetActorLabel();
+		if (Label.Contains(TEXT("BossEncounter")))
 		{
-			CachedBossPPV = *It;
-			UE_LOG(LogTemp, Log, TEXT("[BossEncounterCube] PPV cached: %s"), *It->GetName());
+			CachedBossPPV = PPV;
+			UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] PPV cached (label match): Name=%s, Label=%s"),
+				*PPV->GetName(), *Label);
+			return;
+		}
+#endif
+
+		// 2차: bUnbound + Blendable이 있는 PPV (PPV_BossEncounter는 bUnbound=true)
+		if (PPV->bUnbound && PPV->Settings.WeightedBlendables.Array.Num() > 0)
+		{
+			CachedBossPPV = PPV;
+			UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] PPV cached (unbound+blendable): Name=%s"),
+				*PPV->GetName());
 			return;
 		}
 	}
 
-	UE_LOG(LogTemp, Verbose, TEXT("[BossEncounterCube] PPV_BossEncounter not found in level"));
+	UE_LOG(LogTemp, Warning,
+		TEXT("[BossEncounterCube] PPV NOT FOUND — PPV 비활성화 불가! 레벨에 bUnbound PPV with Blendable 필요"));
 }
 
 void ABossEncounterCube::SetBossPostProcessEnabled(bool bEnable)
 {
-	if (APostProcessVolume* PPV = CachedBossPPV.Get())
+	APostProcessVolume* PPV = CachedBossPPV.Get();
+
+	// 캐시 미스 시 재탐색
+	if (!PPV)
+	{
+		CacheBossPostProcessVolume();
+		PPV = CachedBossPPV.Get();
+	}
+
+	if (PPV)
 	{
 		PPV->bEnabled = bEnable;
-		UE_LOG(LogTemp, Log, TEXT("[BossEncounterCube] PPV %s"), bEnable ? TEXT("ENABLED") : TEXT("DISABLED"));
+		PPV->BlendWeight = bEnable ? 1.f : 0.f;
+		UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] PPV %s (BlendWeight=%.1f, Name=%s)"),
+			bEnable ? TEXT("ENABLED") : TEXT("DISABLED"), PPV->BlendWeight, *PPV->GetName());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[BossEncounterCube] SetBossPostProcessEnabled(%d) — PPV NULL!"),
+			(int)bEnable);
 	}
 }
 

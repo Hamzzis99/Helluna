@@ -69,29 +69,7 @@ void UHellunaHealthHUDWidget::NativeConstruct()
 		}
 	}
 
-	if (!StaminaBar)
-	{
-		StaminaBar = WidgetTree->ConstructWidget<UProgressBar>(UProgressBar::StaticClass(), TEXT("StaminaBar"));
-		UCanvasPanelSlot* StaminaPanelSlot = RootCanvas->AddChildToCanvas(StaminaBar);
-		if (StaminaPanelSlot)
-		{
-			StaminaPanelSlot->SetAnchors(FAnchors(1.f, 1.f, 1.f, 1.f));
-			StaminaPanelSlot->SetOffsets(FMargin(OffX + 70.f, OffY + 210.f, 110.f, 6.f));
-			StaminaPanelSlot->SetAutoSize(false);
-		}
-	}
-
-	if (!SubBar)
-	{
-		SubBar = WidgetTree->ConstructWidget<UProgressBar>(UProgressBar::StaticClass(), TEXT("SubBar"));
-		UCanvasPanelSlot* SubPanelSlot = RootCanvas->AddChildToCanvas(SubBar);
-		if (SubPanelSlot)
-		{
-			SubPanelSlot->SetAnchors(FAnchors(1.f, 1.f, 1.f, 1.f));
-			SubPanelSlot->SetOffsets(FMargin(OffX + 70.f, OffY + 222.f, 110.f, 6.f));
-			SubPanelSlot->SetAutoSize(false);
-		}
-	}
+	// StaminaBar, SubBar 제거됨 (RE4R 스타일 전환)
 
 	// ── 체력 게이지 머티리얼 ──
 	if (HealthArcImage)
@@ -161,35 +139,24 @@ void UHellunaHealthHUDWidget::NativeConstruct()
 	// ── 초기값 설정 ──
 	if (AmmoText)
 	{
-		AmmoText->SetText(FText::FromString(TEXT("0")));
+		AmmoText->SetText(FText::GetEmpty());
 		FSlateFontInfo FontInfo = AmmoText->GetFont();
-		FontInfo.Size = 28;
+		FontInfo.Size = 22;
 		AmmoText->SetFont(FontInfo);
-		AmmoText->SetColorAndOpacity(FSlateColor(FLinearColor(1.f, 1.f, 1.f, 0.95f)));
+		AmmoText->SetColorAndOpacity(FSlateColor(FLinearColor(0.9f, 0.92f, 0.95f, 0.9f)));
+		AmmoText->SetJustification(ETextJustify::Center);
 	}
 
 	if (PrimaryWeaponIcon)
 	{
-		PrimaryWeaponIcon->SetColorAndOpacity(FLinearColor(1.f, 1.f, 1.f, 0.9f));
+		PrimaryWeaponIcon->SetColorAndOpacity(FLinearColor(0.85f, 0.85f, 0.9f, 0.85f));
 		PrimaryWeaponIcon->SetVisibility(ESlateVisibility::Collapsed);
 	}
 
 	if (SecondaryWeaponIcon)
 	{
-		SecondaryWeaponIcon->SetColorAndOpacity(FLinearColor(0.5f, 0.5f, 0.55f, 0.6f));
+		SecondaryWeaponIcon->SetColorAndOpacity(FLinearColor(0.5f, 0.5f, 0.55f, 0.5f));
 		SecondaryWeaponIcon->SetVisibility(ESlateVisibility::Collapsed);
-	}
-
-	if (StaminaBar)
-	{
-		StaminaBar->SetPercent(1.f);
-		StaminaBar->SetFillColorAndOpacity(FLinearColor(0.35f, 0.86f, 0.54f, 0.8f));
-	}
-
-	if (SubBar)
-	{
-		SubBar->SetPercent(0.65f);
-		SubBar->SetFillColorAndOpacity(FLinearColor(0.35f, 0.86f, 0.54f, 0.45f));
 	}
 }
 
@@ -223,7 +190,7 @@ void UHellunaHealthHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDe
 			if (Gun->CurrentMag != LastPolledAmmo)
 			{
 				LastPolledAmmo = Gun->CurrentMag;
-				UpdateAmmoText(Gun->CurrentMag);
+				UpdateAmmoFull(Gun->CurrentMag, Gun->MaxMag);
 			}
 		}
 	}
@@ -280,7 +247,7 @@ void UHellunaHealthHUDWidget::UpdatePrimaryWeapon(AHellunaWeaponBase* Weapon)
 
 	if (AHeroWeapon_GunBase* Gun = Cast<AHeroWeapon_GunBase>(Weapon))
 	{
-		UpdateAmmoText(Gun->CurrentMag);
+		UpdateAmmoFull(Gun->CurrentMag, Gun->MaxMag);
 	}
 	else
 	{
@@ -320,9 +287,19 @@ void UHellunaHealthHUDWidget::UpdateSecondaryWeapon(AHellunaWeaponBase* Weapon)
 // ============================================================================
 void UHellunaHealthHUDWidget::UpdateAmmoText(int32 CurrentAmmo)
 {
+	// RE4R 스타일: 현재탄/최대탄 표시는 NativeTick에서 처리
 	if (AmmoText)
 	{
 		AmmoText->SetText(FText::FromString(FString::Printf(TEXT("%d"), CurrentAmmo)));
+	}
+}
+
+/** 탄약 전체 표시 (현재/최대) */
+void UHellunaHealthHUDWidget::UpdateAmmoFull(int32 Current, int32 Max)
+{
+	if (AmmoText)
+	{
+		AmmoText->SetText(FText::FromString(FString::Printf(TEXT("%d/%d"), Current, Max)));
 	}
 }
 
