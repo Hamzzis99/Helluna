@@ -544,8 +544,8 @@ protected:
 	UFUNCTION()
 	void OnHeroDowned(AActor* DownedActor, AActor* InstigatorActor);
 
-	/** 피격 몽타주 멀티캐스트 (코스메틱이므로 Unreliable) */
-	UFUNCTION(NetMulticast, Unreliable)
+	/** 피격 몽타주 멀티캐스트 */
+	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayHeroHitReact();
 
 	/** 사망 몽타주 멀티캐스트 */
@@ -686,9 +686,9 @@ private:
 	// ★ [Phase21] 8방향 피격 혈흔 (별도 위젯: WBP_BloodHitOverlay)
 	// =========================================================
 public:
-	/** 피격 방향 혈흔 표시 (Client RPC — 피격당한 본인에게만 전송) */
-	UFUNCTION(Client, Unreliable)
-	void Client_ShowBloodHitDirection(uint8 DirIndex);
+	/** 피격 방향 혈흔 표시 (Multicast — 로컬 플레이어만 표시) */
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_ShowBloodHitDirection(uint8 DirIndex);
 
 protected:
 	/** 피격 혈흔 위젯 클래스 (BP에서 WBP_BloodHitOverlay 할당) */

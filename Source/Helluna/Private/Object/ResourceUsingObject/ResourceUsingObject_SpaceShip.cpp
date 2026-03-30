@@ -164,26 +164,6 @@ void AResourceUsingObject_SpaceShip::BeginPlay()
 		{
 			GS->RegisterSpaceShip(this);
 		}
-
-		// NavigationInvoker 반경을 우주선 실제 크기에 맞게 자동 조정
-		// (스케일이 큰 우주선에서 슬롯 영역까지 NavMesh가 스트리밍되도록)
-		if (NavigationInvoker && AttackSlotManager)
-		{
-			FVector Origin, BoxExtent;
-			GetActorBounds(true, Origin, BoxExtent);
-			const float MeshRadius2D = FVector2D(BoxExtent.X, BoxExtent.Y).Size();
-			const float SlotMaxRadius = MeshRadius2D + AttackSlotManager->MaxRadius;
-			const float GenRadius  = SlotMaxRadius + 500.f;
-			const float RemRadius  = GenRadius + 500.f;
-
-			if (GenRadius > NavigationInvoker->GetGenerationRadius())
-			{
-				NavigationInvoker->SetGenerationRadii(GenRadius, RemRadius);
-				UE_LOG(LogTemp, Log,
-					TEXT("[SpaceShip] NavigationInvoker 반경 자동 조정: 생성=%.0f, 제거=%.0f (메시2D반경=%.0f)"),
-					GenRadius, RemRadius, MeshRadius2D);
-			}
-		}
 	}
 
 	// [Phase18] 3D 상호작용 위젯 생성 (클라이언트만)

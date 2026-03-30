@@ -1,14 +1,11 @@
 #include "Object/ResourceUsingObject/HellunaBaseResourceUsingObject.h"
 #include "Components/BoxComponent.h"
-#include "Components/StaticMeshComponent.h"
+#include "Components/StaticMeshComponent.h" 
 
 // [김기현] 다이나믹 메쉬와 변형 컴포넌트 사용을 위한 헤더 추가
 #include "Components/DynamicMeshComponent.h"
 #include "Components/MDF_DeformableComponent.h"
-#include "Engine/StaticMesh.h"
-
-// 스캔 VFX
-#include "Materials/MaterialInstanceDynamic.h"
+#include "Engine/StaticMesh.h" 
 
 AHellunaBaseResourceUsingObject::AHellunaBaseResourceUsingObject()
 {
@@ -97,151 +94,6 @@ void AHellunaBaseResourceUsingObject::OnConstruction(const FTransform& Transform
 void AHellunaBaseResourceUsingObject::BeginPlay()
 {
     Super::BeginPlay();
-
-    // 모든 머신에서 즉시 스캔 VFX 시작
-    // PlacementScanMaterial은 BP CDO에서 설정 — null이면 스킵
-    StartPlacementScanVFX();
-}
-
-void AHellunaBaseResourceUsingObject::Tick(float DeltaTime)
-{
-    Super::Tick(DeltaTime);
-
-    if (bScanActive)
-    {
-        TickPlacementScan(DeltaTime);
-    }
-}
-
-// ============================================================================
-// 배치 스캔 VFX
-// ============================================================================
-
-void AHellunaBaseResourceUsingObject::StartPlacementScanVFX()
-{
-    if (!PlacementScanMaterial)
-    {
-        return;
-    }
-
-    if (bScanActive)
-    {
-        return;
-    }
-
-    // 모든 MeshComponent 수집
-    TArray<UMeshComponent*> AllMeshes;
-    GetComponents<UMeshComponent>(AllMeshes);
-
-    if (AllMeshes.Num() == 0)
-    {
-        return;
-    }
-
-    // MeshComponent만의 바운딩 박스 합산 (DetectionSphere 등 제외)
-    FBox MeshBounds(ForceInit);
-    for (UMeshComponent* MeshComp : AllMeshes)
-    {
-        if (MeshComp && MeshComp->IsVisible() && MeshComp->GetNumMaterials() > 0)
-        {
-            MeshBounds += MeshComp->Bounds.GetBox();
-        }
-    }
-    if (!MeshBounds.IsValid)
-    {
-        return;
-    }
-    ScanBottomZ = MeshBounds.Min.Z;
-    ScanTopZ = MeshBounds.Max.Z;
-
-    const float MeshHeight = ScanTopZ - ScanBottomZ;
-    if (MeshHeight < 1.f)
-    {
-        return;
-    }
-
-    const float BandWidth = FMath::Max(MeshHeight * ScanBandRatio, 10.f);
-
-    // 모든 MeshComponent에 머티리얼 교체
-    for (UMeshComponent* MeshComp : AllMeshes)
-    {
-        if (!MeshComp || !MeshComp->IsVisible()) continue;
-
-        const int32 NumMats = MeshComp->GetNumMaterials();
-        if (NumMats <= 0) continue;
-
-        UMaterialInstanceDynamic* DMI = UMaterialInstanceDynamic::Create(PlacementScanMaterial, this);
-        if (!DMI) continue;
-
-        DMI->SetScalarParameterValue(TEXT("ScanHeight"), ScanBottomZ);
-        DMI->SetScalarParameterValue(TEXT("BandWidth"), BandWidth);
-
-        for (int32 i = 0; i < NumMats; ++i)
-        {
-            ScanOriginalMaterials.Add(MeshComp->GetMaterial(i));
-            MeshComp->SetMaterial(i, DMI);
-        }
-        ScanSwappedMeshes.Add(MeshComp);
-        ScanSwappedSlotCounts.Add(NumMats);
-        ScanDMIs.Add(DMI);
-    }
-
-    if (ScanSwappedMeshes.Num() == 0)
-    {
-        return;
-    }
-
-    ScanProgress = 0.f;
-    bScanActive = true;
-    SetActorTickEnabled(true);
-}
-
-void AHellunaBaseResourceUsingObject::TickPlacementScan(float DeltaTime)
-{
-    ScanProgress += DeltaTime / FMath::Max(ScanDuration, 0.1f);
-
-    if (ScanProgress >= 1.0f)
-    {
-        // 스캔 완료 — 원본 머티리얼 복원
-        int32 MatOffset = 0;
-        for (int32 MeshIdx = 0; MeshIdx < ScanSwappedMeshes.Num(); ++MeshIdx)
-        {
-            UMeshComponent* MeshComp = ScanSwappedMeshes[MeshIdx];
-            const int32 SlotCount = ScanSwappedSlotCounts.IsValidIndex(MeshIdx) ? ScanSwappedSlotCounts[MeshIdx] : 0;
-            if (IsValid(MeshComp))
-            {
-                for (int32 i = 0; i < SlotCount; ++i)
-                {
-                    if (ScanOriginalMaterials.IsValidIndex(MatOffset + i))
-                    {
-                        MeshComp->SetMaterial(i, ScanOriginalMaterials[MatOffset + i]);
-                    }
-                }
-            }
-            MatOffset += SlotCount;
-        }
-        ScanSwappedMeshes.Empty();
-        ScanOriginalMaterials.Empty();
-        ScanSwappedSlotCounts.Empty();
-        ScanDMIs.Empty();
-        bScanActive = false;
-        SetActorTickEnabled(false);
-        return;
-    }
-
-    // DMI ScanHeight Lerp: BottomZ → TopZ
-    const float CurrentScanZ = FMath::Lerp(ScanBottomZ, ScanTopZ, ScanProgress);
-    const float MeshHeight = ScanTopZ - ScanBottomZ;
-    const float BandWidth = FMath::Max(MeshHeight * ScanBandRatio, 10.f);
-
-    for (UMaterialInstanceDynamic* DMI : ScanDMIs)
-    {
-        if (DMI)
-        {
-            DMI->SetScalarParameterValue(TEXT("ScanHeight"), CurrentScanZ);
-            DMI->SetScalarParameterValue(TEXT("BandWidth"), BandWidth);
-        }
-    }
 }
 
 // [기존 로직] UI 띄우기 (유지)

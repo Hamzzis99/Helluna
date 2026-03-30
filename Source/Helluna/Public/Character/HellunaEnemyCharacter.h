@@ -25,13 +25,6 @@ class HELLUNA_API AHellunaEnemyCharacter : public AHellunaBaseCharacter
 public:
 	AHellunaEnemyCharacter();
 
-	// ── 거리 기반 적응형 네트워크 업데이트 ──
-	// 플레이어와의 거리에 따라 NetUpdateFrequency를 동적으로 조절:
-	//   근접(~2000cm): 30Hz, 중거리(~5000cm): 10Hz, 원거리(5000+): 3Hz
-	// UE5의 NetPriority 시스템을 통해 엔진이 자동으로 업데이트 빈도를 스케일링한다.
-	virtual float GetNetPriority(const FVector& ViewPos, const FVector& ViewDir,
-		AActor* Viewer, AActor* ViewTarget, UActorChannel* InChannel, float Time, bool bLowBandwidth) override;
-
 	/**
 	 * TakeDamage 오버라이드 — PuzzleShieldComponent 보호막 필터링
 	 *
@@ -202,9 +195,6 @@ public:
 	UPROPERTY()
 	TArray<TObjectPtr<UMaterialInterface>> SavedOriginalMaterials;
 
-	/** Stagger Unreliable 안전장치: OFF 패킷 누락 시 자동 해제 타이머 */
-	FTimerHandle StaggerAutoOffTimerHandle;
-
 	/** 건패링 처형 당할 때 몬스터 측 몽타주 */
 	UPROPERTY(EditDefaultsOnly, Category = "Animation|Parry",
 		meta = (DisplayName = "패링 피격 몽타주",
@@ -222,13 +212,13 @@ public:
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_ActivateRagdoll(FVector Impulse, FVector ImpulseLocation);
 
-	/** Stagger 비주얼 ON/OFF (서버→모든 클라이언트, 코스메틱이므로 Unreliable) */
-	UFUNCTION(NetMulticast, Unreliable)
+	/** Stagger 비주얼 ON/OFF (서버→모든 클라이언트) */
+	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_SetStaggerVisual(UMaterialInterface* StaggerMat, UAnimMontage* StaggerAnim, bool bEnable);
 
 public:
-	/** 피격 몽타주 재생 (서버 → 멀티캐스트, 코스메틱이므로 Unreliable) */
-	UFUNCTION(NetMulticast, Unreliable)
+	/** 피격 몽타주 재생 (서버 → 멀티캐스트) */
+	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayHitReact();
 
 	/** 사망 몽타주 재생 (서버 → 멀티캐스트) */

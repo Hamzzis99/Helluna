@@ -59,28 +59,6 @@ AHellunaEnemyCharacter::AHellunaEnemyCharacter()
 	GetCharacterMovement()->MaxWalkSpeed                  = 300.f;
 	GetCharacterMovement()->BrakingDecelerationWalking    = 1000.f;
 
-	// ── 네트워크 리플리케이션 최적화 ──────────────────────────
-	// PIE는 서버/클라이언트가 같은 프로세스 → 지연 0ms, 대역폭 무제한.
-	// 패키징 데디서버에서는 실제 UDP 소켓을 경유하므로 아래 설정이 중요:
-	//
-	// NetUpdateFrequency: AI는 플레이어(100Hz) 만큼 자주 갱신할 필요 없음.
-	//   30Hz면 서버 60Hz 틱 대비 2틱당 1회 전송으로 대역폭 50% 절약.
-	// MinNetUpdateFrequency: 변화 없을 때 최저 빈도. 멈춘 AI는 5Hz면 충분.
-	NetUpdateFrequency    = 30.f;
-	MinNetUpdateFrequency = 5.f;
-
-	// 클라이언트 측 이동 스무딩: 서버에서 받은 위치를 보간하는 설정.
-	// NetworkMaxSmoothUpdateDistance: 이 거리 이내면 부드러운 보간, 초과하면 텔레포트.
-	//   기본값 256 → 384로 확대. 30Hz 업데이트에서 AI 최대속도(600cm/s) 기준
-	//   1틱(33ms) 이동량 ≈ 20cm이므로 384cm이면 충분한 여유.
-	// NetworkSimulatedSmoothLocationTime: 보간에 사용할 시간 버퍼(초).
-	//   기본 0.1s → 0.15s. 30Hz 간격(33ms)의 약 4.5배로, 패킷 지터를 흡수.
-	// NetworkSimulatedSmoothRotationTime: 회전 보간 시간.
-	//   기본 0.033s → 0.1s. AI 회전이 더 자연스러워진다.
-	GetCharacterMovement()->NetworkMaxSmoothUpdateDistance  = 384.f;
-	GetCharacterMovement()->NetworkSimulatedSmoothLocationTime = 0.15f;
-	GetCharacterMovement()->NetworkSimulatedSmoothRotationTime = 0.1f;
-
 	EnemyCombatComponent = CreateDefaultSubobject<UEnemyCombatComponent>("EnemyCombatComponent");
 	HealthComponent      = CreateDefaultSubobject<UHellunaHealthComponent>(TEXT("HealthComponent"));
 
@@ -396,23 +374,6 @@ void AHellunaEnemyCharacter::Multicast_SetStaggerVisual_Implementation(
 		{
 			PlayAnimMontage(StaggerAnim, 1.0f);
 		}
-
-		// [Unreliable 안전장치] OFF 패킷 누락 대비: 클라이언트 자체 타이머로 5초 후 자동 해제
-		if (GetNetMode() != NM_DedicatedServer)
-		{
-			if (UWorld* World = GetWorld())
-			{
-				World->GetTimerManager().ClearTimer(StaggerAutoOffTimerHandle);
-				World->GetTimerManager().SetTimer(StaggerAutoOffTimerHandle, [this]()
-				{
-					if (USkeletalMeshComponent* Mesh = GetMesh())
-					{
-						Mesh->SetOverlayMaterial(nullptr);
-					}
-					StopAnimMontage(nullptr);
-				}, 5.0f, false);
-			}
-		}
 	}
 	else
 	{
@@ -421,12 +382,6 @@ void AHellunaEnemyCharacter::Multicast_SetStaggerVisual_Implementation(
 
 		// Stagger 몽타주 중단
 		StopAnimMontage(nullptr);
-
-		// 자동 해제 타이머 정리
-		if (UWorld* World = GetWorld())
-		{
-			World->GetTimerManager().ClearTimer(StaggerAutoOffTimerHandle);
-		}
 	}
 }
 
@@ -882,60 +837,6 @@ void AHellunaEnemyCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(AHellunaEnemyCharacter, bEnraged);
-}
-
-// ============================================================
-// GetNetPriority — 거리 기반 적응형 네트워크 업데이트 빈도
-// ============================================================
-// UE5 리플리케이션 시스템은 NetPriority 값이 높을수록 해당 액터를
-// 더 자주 업데이트한다. 이를 이용해 플레이어와의 거리에 따라
-// AI 적 캐릭터의 업데이트 빈도를 동적으로 조절한다.
-//
-// 원리: 기본 Priority에 거리 기반 가중치를 곱한다.
-//   - 근접(0~2000cm): 가중치 1.0 → NetUpdateFrequency 30Hz 그대로
-//   - 중거리(2000~5000cm): 가중치 0.33 → 실효 ~10Hz
-//   - 원거리(5000cm+): 가중치 0.1 → 실효 ~3Hz
-//
-// CMC의 NetworkSimulatedSmoothLocationTime(0.15s)이 업데이트 간격을
-// 보간으로 채우므로, 원거리 AI도 뚝뚝 끊기지 않고 부드럽게 보인다.
-//
-// [엔진 소스] Engine/Source/Runtime/Engine/Private/Actor.cpp
-//   AActor::GetNetPriority — 기본 구현에서 Distance/Time 기반 계산
-// ============================================================
-float AHellunaEnemyCharacter::GetNetPriority(
-	const FVector& ViewPos, const FVector& ViewDir,
-	AActor* Viewer, AActor* ViewTarget,
-	UActorChannel* InChannel, float Time, bool bLowBandwidth)
-{
-	float BasePriority = Super::GetNetPriority(ViewPos, ViewDir, Viewer, ViewTarget, InChannel, Time, bLowBandwidth);
-
-	const float DistSq = FVector::DistSquared(GetActorLocation(), ViewPos);
-
-	// 거리 구간별 가중치
-	constexpr float NearDist   = 2000.f;   // 근접 경계 (cm)
-	constexpr float FarDist    = 5000.f;   // 원거리 경계 (cm)
-	constexpr float NearDistSq = NearDist * NearDist;
-	constexpr float FarDistSq  = FarDist * FarDist;
-
-	float DistanceWeight;
-	if (DistSq <= NearDistSq)
-	{
-		// 근접: 최대 빈도 유지
-		DistanceWeight = 1.0f;
-	}
-	else if (DistSq <= FarDistSq)
-	{
-		// 중거리: 선형 보간 (1.0 → 0.1)
-		const float Alpha = (FMath::Sqrt(DistSq) - NearDist) / (FarDist - NearDist);
-		DistanceWeight = FMath::Lerp(1.0f, 0.1f, Alpha);
-	}
-	else
-	{
-		// 원거리: 최저 빈도
-		DistanceWeight = 0.1f;
-	}
-
-	return BasePriority * DistanceWeight;
 }
 
 // ============================================================
