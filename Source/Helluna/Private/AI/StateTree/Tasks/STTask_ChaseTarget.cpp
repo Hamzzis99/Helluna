@@ -152,6 +152,10 @@ EStateTreeRunStatus FSTTask_ChaseTarget::EnterState(
 		USpaceShipAttackSlotManager* SlotMgr = bUseSlotSystem ? GetSlotManager(TargetActor) : nullptr;
 		const float DistToShip = TargetData.DistanceToTarget;
 
+		// 슬롯이 0개면 슬롯매니저가 없는 것과 동일 취급
+		if (SlotMgr && SlotMgr->GetSlots().Num() == 0)
+			SlotMgr = nullptr;
+
 		if (SlotMgr)
 		{
 			// 슬롯 진입 범위 밖: 우주선 방향 NavMesh 위 중간 지점으로 직접 이동
@@ -162,7 +166,12 @@ EStateTreeRunStatus FSTTask_ChaseTarget::EnterState(
 				const FVector PawnLoc = P ? P->GetActorLocation() : TargetActor->GetActorLocation();
 				const FVector Dir     = (TargetActor->GetActorLocation() - PawnLoc).GetSafeNormal();
 				// SlotEngageRadius * 0.8f 지점까지 이동 → SlotEngageRadius 내부로 확실히 진입하도록
-				const FVector RawGoal = PawnLoc + Dir * FMath::Min(DistToShip - SlotEngageRadius * 0.8f, 1500.f);
+				FVector RawGoal = PawnLoc + Dir * FMath::Min(DistToShip - SlotEngageRadius * 0.8f, 1500.f);
+
+				// 몬스터별 분산: 이동 방향의 수직 방향으로 랜덤 오프셋 추가 (뭉침 방지)
+				const FVector Perp = FVector(-Dir.Y, Dir.X, 0.f); // 수평면 수직 벡터
+				const float SpreadOffset = FMath::FRandRange(-ShipSpreadRadius, ShipSpreadRadius);
+				RawGoal += Perp * SpreadOffset;
 
 				UNavigationSystemV1* NavSys = FNavigationSystem::GetCurrent<UNavigationSystemV1>(AIController->GetWorld());
 				FNavLocation NavGoal;
@@ -303,7 +312,11 @@ EStateTreeRunStatus FSTTask_ChaseTarget::Tick(
 		// ── 슬롯 기반 우주선 이동 (근거리) vs 자유 이동 (원거리) ────────
 		USpaceShipAttackSlotManager* SlotMgr = bUseSlotSystem ? GetSlotManager(TargetActor) : nullptr;
 
-		// 슬롯 시스템 OFF (원거리) → 기존 랜덤 분산 이동
+		// 슬롯이 0개면 슬롯매니저가 없는 것과 동일 취급 (NavMesh 미준비 등)
+		if (SlotMgr && SlotMgr->GetSlots().Num() == 0)
+			SlotMgr = nullptr;
+
+		// 슬롯 시스템 OFF 또는 슬롯 0개 → 분산 이동
 		if (!SlotMgr)
 		{
 			const bool bRepathDue     = InstanceData.TimeSinceRepath >= RepathInterval;
@@ -313,14 +326,45 @@ EStateTreeRunStatus FSTTask_ChaseTarget::Tick(
 			if (UPathFollowingComponent* PFC = AIController->GetPathFollowingComponent())
 			{
 				const bool bIdle   = (PFC->GetStatus() == EPathFollowingStatus::Idle);
+				const bool bPaused = (PFC->GetStatus() == EPathFollowingStatus::Paused);
 				const bool bSlow   = (Pawn->GetVelocity().SizeSquared2D() < 30.f * 30.f);
 				const bool bFar    = (TargetData.DistanceToTarget > AcceptanceRadius + 150.f);
-				bStuck = bIdle && bSlow && bFar;
+				bStuck = (bIdle || bPaused) && bSlow && bFar;
 			}
 
 			if (bTargetChanged || bRepathDue || bStuck)
 			{
-				AIController->MoveToActor(TargetActor, AcceptanceRadius, true, true, false, nullptr, true);
+				// 슬롯 시스템 OFF 또는 슬롯 0개: 우주선 주변 랜덤 위치로 분산 이동
+				const FVector PawnLoc = Pawn->GetActorLocation();
+				const FVector ShipLoc = TargetActor->GetActorLocation();
+				const FVector Dir = (ShipLoc - PawnLoc).GetSafeNormal();
+				const FVector Perp = FVector(-Dir.Y, Dir.X, 0.f);
+				const float SpreadOffset = FMath::FRandRange(-ShipSpreadRadius, ShipSpreadRadius);
+				const FVector RawGoal = ShipLoc - Dir * AcceptanceRadius + Perp * SpreadOffset;
+
+				// NavMesh 투영 시도, 실패해도 원본 위치로 이동
+				UNavigationSystemV1* NavSys = FNavigationSystem::GetCurrent<UNavigationSystemV1>(AIController->GetWorld());
+				FNavLocation NavGoal;
+				FVector FinalGoal = RawGoal;
+				if (NavSys && NavSys->ProjectPointToNavigation(RawGoal, NavGoal, FVector(200.f, 200.f, 500.f)))
+					FinalGoal = NavGoal.Location;
+
+				// 일반 MoveTo 시도, 실패 시 AllowPartialPath로 최대한 가까이 이동
+				FAIMoveRequest Req;
+				Req.SetGoalLocation(FinalGoal);
+				Req.SetAcceptanceRadius(AcceptanceRadius);
+				Req.SetReachTestIncludesAgentRadius(false);
+				Req.SetUsePathfinding(true);
+				Req.SetAllowPartialPath(true);
+				Req.SetCanStrafe(true);
+				const FPathFollowingRequestResult Result = AIController->MoveTo(Req);
+
+				// MoveTo도 실패하면 MoveToActor로 우주선에 직접 접근
+				if (Result.Code == EPathFollowingRequestResult::Failed)
+				{
+					AIController->MoveToActor(TargetActor, AcceptanceRadius, true, true, false, nullptr, true);
+				}
+
 				InstanceData.LastMoveTarget  = TargetData.TargetActor;
 				InstanceData.TimeSinceRepath = 0.f;
 			}
@@ -350,7 +394,12 @@ EStateTreeRunStatus FSTTask_ChaseTarget::Tick(
 					const FVector ShipLoc  = TargetActor->GetActorLocation();
 					const FVector Dir      = (ShipLoc - PawnLoc).GetSafeNormal();
 					// SlotEngageRadius * 0.8f 지점까지 이동 → SlotEngageRadius 내부로 확실히 진입하도록
-					const FVector RawGoal  = PawnLoc + Dir * FMath::Min(DistToShip - SlotEngageRadius * 0.8f, 1500.f);
+					FVector RawGoal  = PawnLoc + Dir * FMath::Min(DistToShip - SlotEngageRadius * 0.8f, 1500.f);
+
+					// 몬스터별 분산: 이동 방향의 수직 방향으로 랜덤 오프셋 추가 (뭉침 방지)
+					const FVector Perp = FVector(-Dir.Y, Dir.X, 0.f);
+					const float SpreadOffset = FMath::FRandRange(-ShipSpreadRadius, ShipSpreadRadius);
+					RawGoal += Perp * SpreadOffset;
 
 					UNavigationSystemV1* NavSys = FNavigationSystem::GetCurrent<UNavigationSystemV1>(AIController->GetWorld());
 					FNavLocation NavGoal;

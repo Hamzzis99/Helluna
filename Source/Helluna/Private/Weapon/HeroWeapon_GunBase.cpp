@@ -110,9 +110,10 @@ void AHeroWeapon_GunBase::Fire(AController* InstigatorController)
 	if (!CanFire())
 		return;
 
-	FVector ViewLoc;
-	FRotator ViewRot;
-	InstigatorController->GetPlayerViewPoint(ViewLoc, ViewRot);  // 카메라 기준
+	// 서버에서도 정확한 방향/위치를 얻기 위해 GetControlRotation + GetPawnViewLocation 사용
+	// (GetPlayerViewPoint는 데디케이티드 서버에서 PlayerCameraManager가 없어 Pawn 발 위치를 반환)
+	const FRotator ViewRot = InstigatorController->GetControlRotation();
+	const FVector ViewLoc = Pawn->GetPawnViewLocation();
 
 	const FVector TraceStart = ViewLoc;
 	const FVector TraceEnd = TraceStart + (ViewRot.Vector() * Range);
