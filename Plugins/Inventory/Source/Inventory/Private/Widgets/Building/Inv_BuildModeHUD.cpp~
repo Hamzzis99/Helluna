@@ -25,22 +25,12 @@ void UInv_BuildModeHUD::NativeConstruct()
 		Text_PlacementStatus->SetText(FText::FromString(TEXT("배치 대기 중...")));
 	}
 
-	// Image_Preview 항상 숨김 (고스트 액터가 월드에 이미 표시됨)
 	if (IsValid(Image_Preview))
 	{
 		Image_Preview->SetVisibility(ESlateVisibility::Collapsed);
 	}
 
-	// Text_BuildingName 스타일 (16pt, 흰색)
-	if (IsValid(Text_BuildingName))
-	{
-		FSlateFontInfo NameFont = Text_BuildingName->GetFont();
-		NameFont.Size = 16;
-		Text_BuildingName->SetFont(NameFont);
-		Text_BuildingName->SetColorAndOpacity(FSlateColor(FLinearColor::White));
-	}
-
-	// 기존 Text_Control0~4, Spacer_Controls 숨기기 (동적 Keycap으로 대체)
+	// 기존 Text_Control0~4 숨기기 (Keycap Box로 대체)
 	for (int32 i = 0; i <= 4; ++i)
 	{
 		if (UWidget* W = GetWidgetFromName(*FString::Printf(TEXT("Text_Control%d"), i)))
@@ -48,44 +38,46 @@ void UInv_BuildModeHUD::NativeConstruct()
 			W->SetVisibility(ESlateVisibility::Collapsed);
 		}
 	}
-	if (UWidget* Spacer = GetWidgetFromName(TEXT("Spacer_Controls")))
-	{
-		Spacer->SetVisibility(ESlateVisibility::Collapsed);
-	}
 
-	// === 기존 동적 위젯 정리 (NativeConstruct 중복 실행 방지) ===
-	for (UWidget* W : DynamicControlRows)
-	{
-		if (IsValid(W))
-		{
-			W->RemoveFromParent();
-		}
-	}
-	DynamicControlRows.Empty();
-
-	// === Keycap 스타일 조작 가이드 생성 (TextBlock만 사용, Border 절대 금지) ===
+	// === Keycap Box 스타일 조작 가이드 생성 ===
 	UVerticalBox* VBox = Cast<UVerticalBox>(GetWidgetFromName(TEXT("VBox_Main")));
 	if (!VBox) return;
 
 	// 색상 정의
 	const FLinearColor CyanColor(0.314f, 0.706f, 1.0f, 1.0f);    // #50B4FF
+	const FLinearColor KeyBgColor(0.15f, 0.15f, 0.15f, 0.6f);
 	const FLinearColor DescColor(0.75f, 0.75f, 0.75f, 1.0f);
-	const FLinearColor SepColor(0.45f, 0.45f, 0.45f, 0.8f);
+	const FLinearColor SepColor(0.5f, 0.5f, 0.5f, 0.7f);
 
-	// 키 텍스트 생성 (Cyan, 12pt)
-	auto MakeKeyText = [&](const FString& KeyName) -> UTextBlock*
+	// Keycap Border 브러시 (RoundedBox + 얇은 테두리)
+	FSlateBrush KeyBrush;
+	KeyBrush.DrawAs = ESlateBrushDrawType::RoundedBox;
+	KeyBrush.OutlineSettings.CornerRadii = FVector4(4.f, 4.f, 4.f, 4.f);
+	KeyBrush.OutlineSettings.RoundingType = ESlateBrushRoundingType::FixedRadius;
+	KeyBrush.OutlineSettings.Color = FSlateColor(FLinearColor(0.5f, 0.5f, 0.5f, 0.3f));
+	KeyBrush.OutlineSettings.Width = 0.5f;
+
+	// 키캡 위젯 생성 헬퍼
+	auto MakeKeycap = [&](const FString& KeyName) -> UBorder*
 	{
-		UTextBlock* Text = NewObject<UTextBlock>(this);
-		FSlateFontInfo Font = Text->GetFont();
-		Font.Size = 12;
-		Text->SetFont(Font);
-		Text->SetText(FText::FromString(KeyName));
-		Text->SetColorAndOpacity(FSlateColor(CyanColor));
-		return Text;
+		UBorder* Border = NewObject<UBorder>(this);
+		Border->SetBrush(KeyBrush);
+		Border->SetBrushColor(KeyBgColor);
+		Border->SetPadding(FMargin(6.f, 2.f, 6.f, 2.f));
+
+		UTextBlock* KeyText = NewObject<UTextBlock>(this);
+		FSlateFontInfo Font = KeyText->GetFont();
+		Font.Size = 11;
+		KeyText->SetFont(Font);
+		KeyText->SetText(FText::FromString(KeyName));
+		KeyText->SetColorAndOpacity(FSlateColor(CyanColor));
+		KeyText->SetJustification(ETextJustify::Center);
+
+		Border->AddChild(KeyText);
+		return Border;
 	};
 
-	// 구분자 텍스트 생성 (회색, 11pt)
-	auto MakeSepText = [&](const FString& Sep) -> UTextBlock*
+	auto MakeSeparator = [&](const FString& Sep) -> UTextBlock*
 	{
 		UTextBlock* Text = NewObject<UTextBlock>(this);
 		FSlateFontInfo Font = Text->GetFont();
@@ -96,12 +88,11 @@ void UInv_BuildModeHUD::NativeConstruct()
 		return Text;
 	};
 
-	// 설명 텍스트 생성 (밝은 회색, 13pt)
-	auto MakeDescText = [&](const FString& Desc) -> UTextBlock*
+	auto MakeDesc = [&](const FString& Desc) -> UTextBlock*
 	{
 		UTextBlock* Text = NewObject<UTextBlock>(this);
 		FSlateFontInfo Font = Text->GetFont();
-		Font.Size = 13;
+		Font.Size = 12;
 		Text->SetFont(Font);
 		Text->SetText(FText::FromString(Desc));
 		Text->SetColorAndOpacity(FSlateColor(DescColor));
@@ -117,7 +108,7 @@ void UInv_BuildModeHUD::NativeConstruct()
 		{
 			if (i > 0 && !Sep.IsEmpty())
 			{
-				UTextBlock* SepText = MakeSepText(Sep);
+				UTextBlock* SepText = MakeSeparator(Sep);
 				if (UHorizontalBoxSlot* SepSlot = Cast<UHorizontalBoxSlot>(HBox->AddChild(SepText)))
 				{
 					SepSlot->SetPadding(FMargin(4.f, 0.f, 4.f, 0.f));
@@ -125,14 +116,14 @@ void UInv_BuildModeHUD::NativeConstruct()
 				}
 			}
 
-			UTextBlock* KeyText = MakeKeyText(Keys[i]);
-			if (UHorizontalBoxSlot* KeySlot = Cast<UHorizontalBoxSlot>(HBox->AddChild(KeyText)))
+			UBorder* Keycap = MakeKeycap(Keys[i]);
+			if (UHorizontalBoxSlot* KeySlot = Cast<UHorizontalBoxSlot>(HBox->AddChild(Keycap)))
 			{
 				KeySlot->SetVerticalAlignment(VAlign_Center);
 			}
 		}
 
-		UTextBlock* DescText = MakeDescText(Desc);
+		UTextBlock* DescText = MakeDesc(Desc);
 		if (UHorizontalBoxSlot* DescSlot = Cast<UHorizontalBoxSlot>(HBox->AddChild(DescText)))
 		{
 			DescSlot->SetPadding(FMargin(10.f, 0.f, 0.f, 0.f));
@@ -143,8 +134,6 @@ void UInv_BuildModeHUD::NativeConstruct()
 		{
 			RowSlot->SetPadding(FMargin(0.f, 2.f, 0.f, 2.f));
 		}
-
-		DynamicControlRows.Add(HBox);
 	};
 
 	// 조작 가이드 5행 생성
@@ -168,8 +157,13 @@ void UInv_BuildModeHUD::SetBuildingInfo(
 		Text_BuildingName->SetText(BuildingName);
 	}
 
-	// 미리보기 이미지 항상 숨김 (고스트 액터가 월드에 표시됨)
-	if (IsValid(Image_Preview))
+	// 미리보기 이미지 설정
+	if (IsValid(Image_Preview) && IsValid(BuildingIcon))
+	{
+		Image_Preview->SetBrushFromTexture(BuildingIcon);
+		Image_Preview->SetVisibility(ESlateVisibility::Visible);
+	}
+	else if (IsValid(Image_Preview))
 	{
 		Image_Preview->SetVisibility(ESlateVisibility::Collapsed);
 	}
@@ -250,12 +244,12 @@ void UInv_BuildModeHUD::UpdatePlacementStatus(bool bCanPlace)
 		if (bCanPlace)
 		{
 			Text_PlacementStatus->SetText(FText::FromString(TEXT("건축 가능")));
-			Text_PlacementStatus->SetColorAndOpacity(FSlateColor(FLinearColor(0.29f, 0.87f, 0.5f, 1.0f))); // #4ADE80
+			Text_PlacementStatus->SetColorAndOpacity(FSlateColor(FLinearColor::Green));
 		}
 		else
 		{
 			Text_PlacementStatus->SetText(FText::FromString(TEXT("건축 불가")));
-			Text_PlacementStatus->SetColorAndOpacity(FSlateColor(FLinearColor(0.97f, 0.44f, 0.44f, 1.0f))); // #F87171
+			Text_PlacementStatus->SetColorAndOpacity(FSlateColor(FLinearColor::Red));
 		}
 	}
 

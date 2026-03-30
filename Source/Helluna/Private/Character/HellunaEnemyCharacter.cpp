@@ -59,6 +59,28 @@ AHellunaEnemyCharacter::AHellunaEnemyCharacter()
 	GetCharacterMovement()->MaxWalkSpeed                  = 300.f;
 	GetCharacterMovement()->BrakingDecelerationWalking    = 1000.f;
 
+	// ── 네트워크 리플리케이션 최적화 ──────────────────────────
+	// PIE는 서버/클라이언트가 같은 프로세스 → 지연 0ms, 대역폭 무제한.
+	// 패키징 데디서버에서는 실제 UDP 소켓을 경유하므로 아래 설정이 중요:
+	//
+	// NetUpdateFrequency: AI는 플레이어(100Hz) 만큼 자주 갱신할 필요 없음.
+	//   30Hz면 서버 60Hz 틱 대비 2틱당 1회 전송으로 대역폭 50% 절약.
+	// MinNetUpdateFrequency: 변화 없을 때 최저 빈도. 멈춘 AI는 5Hz면 충분.
+	NetUpdateFrequency    = 30.f;
+	MinNetUpdateFrequency = 5.f;
+
+	// 클라이언트 측 이동 스무딩: 서버에서 받은 위치를 보간하는 설정.
+	// NetworkMaxSmoothUpdateDistance: 이 거리 이내면 부드러운 보간, 초과하면 텔레포트.
+	//   기본값 256 → 384로 확대. 30Hz 업데이트에서 AI 최대속도(600cm/s) 기준
+	//   1틱(33ms) 이동량 ≈ 20cm이므로 384cm이면 충분한 여유.
+	// NetworkSimulatedSmoothLocationTime: 보간에 사용할 시간 버퍼(초).
+	//   기본 0.1s → 0.15s. 30Hz 간격(33ms)의 약 4.5배로, 패킷 지터를 흡수.
+	// NetworkSimulatedSmoothRotationTime: 회전 보간 시간.
+	//   기본 0.033s → 0.1s. AI 회전이 더 자연스러워진다.
+	GetCharacterMovement()->NetworkMaxSmoothUpdateDistance  = 384.f;
+	GetCharacterMovement()->NetworkSimulatedSmoothLocationTime = 0.15f;
+	GetCharacterMovement()->NetworkSimulatedSmoothRotationTime = 0.1f;
+
 	EnemyCombatComponent = CreateDefaultSubobject<UEnemyCombatComponent>("EnemyCombatComponent");
 	HealthComponent      = CreateDefaultSubobject<UHellunaHealthComponent>(TEXT("HealthComponent"));
 

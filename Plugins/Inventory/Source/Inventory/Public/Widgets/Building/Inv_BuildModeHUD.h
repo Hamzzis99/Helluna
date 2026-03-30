@@ -103,4 +103,7 @@ private:
 	// 이전 배치 상태 (변경 시에만 로그 출력용)
 	bool bPreviousCanPlace = false;
 	bool bPlacementStatusInitialized = false;
+
+	// NativeConstruct에서 동적 생성한 조작 가이드 행 (중복 방지용)
+	TArray<TObjectPtr<UWidget>> DynamicControlRows;
 };

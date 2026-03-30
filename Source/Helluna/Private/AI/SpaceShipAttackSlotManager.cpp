@@ -61,10 +61,31 @@ void USpaceShipAttackSlotManager::BuildSlots()
 
 	const FVector Center = Owner->GetActorLocation();
 
+	// ── 우주선 실제 크기를 반영한 반경 자동 조정 ──────────────
+	// 우주선 스케일이 크면 (예: 15x) 메시 반경이 MaxRadius보다 클 수 있다.
+	// 이 경우 MinRadius/MaxRadius를 메시 바깥으로 오프셋하여
+	// 슬롯이 우주선 내부가 아닌 주변에 생성되도록 보장한다.
+	FVector ActorOrigin, ActorBoxExtent;
+	Owner->GetActorBounds(true, ActorOrigin, ActorBoxExtent);
+	const float MeshRadius2D = FVector2D(ActorBoxExtent.X, ActorBoxExtent.Y).Size();
+
+	float EffectiveMinRadius = MinRadius;
+	float EffectiveMaxRadius = MaxRadius;
+
+	if (MeshRadius2D > MaxRadius)
+	{
+		EffectiveMinRadius = MeshRadius2D + MinRadius;
+		EffectiveMaxRadius = MeshRadius2D + MaxRadius;
+
+		UE_LOG(LogTemp, Warning,
+			TEXT("[SlotManager] 우주선 바운드 2D반경(%.0f) > MaxRadius(%.0f) → 반경 자동 조정: %.0f ~ %.0f"),
+			MeshRadius2D, MaxRadius, EffectiveMinRadius, EffectiveMaxRadius);
+	}
+
 	// 반경 링 × 각도 간격으로 후보 생성
 	const int32 AngleCount = FMath::Max(1, FMath::RoundToInt(360.f / AngleStep));
 	const float RadiusStep = (RadiusRings > 1)
-		? (MaxRadius - MinRadius) / (RadiusRings - 1)
+		? (EffectiveMaxRadius - EffectiveMinRadius) / (RadiusRings - 1)
 		: 0.f;
 
 	int32 ValidCount = 0;
@@ -72,7 +93,7 @@ void USpaceShipAttackSlotManager::BuildSlots()
 
 	for (int32 Ring = 0; Ring < RadiusRings; ++Ring)
 	{
-		const float Radius = MinRadius + RadiusStep * Ring;
+		const float Radius = EffectiveMinRadius + RadiusStep * Ring;
 
 		for (int32 i = 0; i < AngleCount; ++i)
 		{

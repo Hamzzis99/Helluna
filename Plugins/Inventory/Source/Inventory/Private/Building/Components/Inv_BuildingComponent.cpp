@@ -1029,8 +1029,19 @@ void UInv_BuildingComponent::ShowBuildModeHUD()
 	UE_LOG(LogTemp, Warning, TEXT("[BuildModeHUD-Debug] ShowBuildModeHUD 진입. OwningPC=%s, BuildModeHUDClass=%s"),
 		TEXT("Valid"), *BuildModeHUDClass->GetName());
 
-	// 이미 표시 중이면 제거 후 재생성
-	HideBuildModeHUD();
+	// 이미 표시 중이면 건물 정보만 업데이트 (NativeConstruct 중복 실행 방지)
+	if (IsValid(BuildModeHUDInstance))
+	{
+		BuildModeHUDInstance->SetBuildingInfo(
+			CurrentBuildingInfo.BuildingName,
+			CurrentBuildingInfo.BuildingIcon,
+			CurrentBuildingInfo.MaterialIcon1, CurrentBuildingInfo.MaterialAmount1, CurrentBuildingInfo.MaterialTag1,
+			CurrentBuildingInfo.MaterialIcon2, CurrentBuildingInfo.MaterialAmount2, CurrentBuildingInfo.MaterialTag2,
+			CurrentBuildingInfo.MaterialIcon3, CurrentBuildingInfo.MaterialAmount3, CurrentBuildingInfo.MaterialTag3
+		);
+		UE_LOG(LogTemp, Warning, TEXT("[BuildModeHUD-Debug] 기존 HUD 인스턴스 재사용. BuildingName=%s"), *CurrentBuildingInfo.BuildingName.ToString());
+		return;
+	}
 
 	BuildModeHUDInstance = CreateWidget<UInv_BuildModeHUD>(OwningPC.Get(), BuildModeHUDClass);
 
