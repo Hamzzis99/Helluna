@@ -418,6 +418,33 @@ private:
 	void FinishColorReveal();
 
 	// =========================================================================================
+	// [DebugHUD] 디버그 HUD 시스템
+	// =========================================================================================
+public:
+	/** 디버그 HUD 생성 (클라이언트 BeginPlay에서 자동 호출) */
+	UFUNCTION(BlueprintCallable, Category = "Debug")
+	void CreateDebugHUD();
+
+protected:
+	/** 디버그 HUD 위젯 클래스 (BP에서 WBP_HellunaDebugHUD 지정) */
+	UPROPERTY(EditDefaultsOnly, Category = "Debug",
+		meta = (DisplayName = "Debug HUD Widget Class (디버그 HUD 위젯 클래스)"))
+	TSubclassOf<UHellunaDebugHUDWidget> DebugHUDWidgetClass;
+
+	/** F5 키 토글용 InputAction (에디터에서 IA_DebugHUD 지정) */
+	UPROPERTY(EditDefaultsOnly, Category = "Debug",
+		meta = (DisplayName = "Debug HUD Toggle Action (F5)"))
+	TObjectPtr<UInputAction> DebugHUDToggleAction;
+
+private:
+	/** 디버그 HUD 인스턴스 */
+	UPROPERTY()
+	TObjectPtr<UHellunaDebugHUDWidget> DebugHUDInstance;
+
+	/** F5 키 입력 핸들러 */
+	void OnDebugHUDToggle(const struct FInputActionValue& Value);
+
+	// =========================================================================================
 	// [BossEvent] 보스 조우 큐브 상호작용
 	// =========================================================================================
 public:
