@@ -19,6 +19,7 @@ class APuzzleCubeActor;
 class ABossEncounterCube;
 class UPuzzleGridWidget;
 class UPostProcessComponent;
+class UHellunaDebugHUDWidget;
 
 /**
  * @brief   Helluna 영웅 전용 PlayerController
