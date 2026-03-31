@@ -1,0 +1,72 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "4.0.3",
+	"FriendlyName": "FSR",
+	"Description": "FSR Upscaling and Frame Generation",
+	"Category": "Rendering",
+	"CreatedBy": "AMD",
+	"CreatedByURL": "https://gpuopen.com/unreal-engine/",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EngineVersion": "5.7.0",
+	"CanContainContent": true,
+	"Installed": true,
+	"SupportedTargetPlatforms": [
+		"Win64"
+	],
+	"Modules": [
+		{
+			"Name": "FFXShared",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit"
+		},
+		{
+			"Name": "FFXFSRApi",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit"
+		},
+		{
+			"Name": "FFXOpticalFlowApi",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit"
+		},
+		{
+			"Name": "FFXFrameInterpolationApi",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit"
+		},
+		{
+			"Name": "FFXD3D12",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit",
+			"PlatformAllowList": [
+				"Win64"
+			]
+		},
+		{
+			"Name": "FFXD3D12Backend",
+			"Type": "Runtime",
+			"LoadingPhase": "PostSplashScreen",
+			"PlatformAllowList": [
+				"Win64"
+			]
+		},
+		{
+			"Name": "FFXFSRTemporalUpscaling",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit"
+		},
+		{
+			"Name": "FFXFrameInterpolation",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit"
+		},
+		{
+			"Name": "FFXFSRSettings",
+			"Type": "Runtime",
+			"LoadingPhase": "EarliestPossible"
+		}
+	]
+}
