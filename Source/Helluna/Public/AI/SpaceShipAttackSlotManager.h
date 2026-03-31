@@ -122,6 +122,16 @@ public:
 	const TArray<FAttackSlot>& GetSlots() const { return Slots; }
 
 	/**
+	 * 특정 몬스터가 현재 어떤 슬롯을 들고 있는지 조회한다.
+	 * @param Monster      조회할 몬스터
+	 * @param OutSlotIndex 몬스터가 예약/점유 중인 슬롯 인덱스
+	 * @param OutState     해당 슬롯 상태
+	 * @return 슬롯을 보유 중이면 true
+	 */
+	UFUNCTION(BlueprintCallable, Category = "AI|Slot")
+	bool GetMonsterSlotInfo(const AActor* Monster, int32& OutSlotIndex, ESlotState& OutState) const;
+
+	/**
 	 * 슬롯이 없을 때 대기할 위치를 반환한다.
 	 * 우주선 주변 NavMesh 위 랜덤 위치로 천천히 배회하게 만든다.
 	 * @param Monster  대기할 몬스터
@@ -162,6 +172,16 @@ public:
 	UPROPERTY(EditAnywhere, Category = "슬롯 생성",
 		meta=(DisplayName="메시 겹침 체크 반경 (cm)", ClampMin="10"))
 	float MeshOverlapRadius = 40.f;
+
+	/** 지면 LineTrace 결과와 NavMesh 투영 높이 차이가 이 값을 넘으면 공중/상부 슬롯으로 보고 버린다. */
+	UPROPERTY(EditAnywhere, Category = "슬롯 생성",
+		meta=(DisplayName="Nav 투영 최대 높이 차 (cm)", ClampMin="0"))
+	float MaxNavProjectionHeightDelta = 120.f;
+
+	/** 슬롯 배정 시 몬스터와 슬롯의 높이 차가 너무 크면 후보에서 제외한다. */
+	UPROPERTY(EditAnywhere, Category = "슬롯 생성",
+		meta=(DisplayName="슬롯 배정 최대 높이 차 (cm)", ClampMin="0"))
+	float MaxSlotAssignmentHeightDelta = 250.f;
 
 	/** 슬롯을 다시 빌드 (런타임 재생성) */
 	UFUNCTION(BlueprintCallable, Category = "AI|Slot")

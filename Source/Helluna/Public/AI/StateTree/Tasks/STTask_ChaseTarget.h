@@ -72,6 +72,9 @@ struct FSTTask_ChaseTargetInstanceData
 	/** 슬롯 위치에 도착했는지 */
 	UPROPERTY()
 	bool bSlotArrived = false;
+
+	UPROPERTY()
+	float MovementDiagTimer = 0.f;
 };
 
 USTRUCT(meta = (DisplayName = "Helluna: Chase Target", Category = "Helluna|AI"))
