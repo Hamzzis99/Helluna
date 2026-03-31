@@ -34,6 +34,9 @@
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
 
+// [DebugHUD] 디버그 HUD 시스템
+#include "UI/HUD/HellunaDebugHUDWidget.h"
+
 
 
 AHellunaHeroController::AHellunaHeroController()
@@ -169,6 +172,24 @@ void AHellunaHeroController::BeginPlay()
 
 		UE_LOG(LogHellunaChat, Log, TEXT("[HellunaHeroController] 채팅 위젯 초기화 타이머 설정 (0.5초)"));
 	}
+
+	// ── [DebugHUD] 디버그 HUD 생성 + F5 입력 바인딩 (로컬 플레이어만) ──
+#if !UE_BUILD_SHIPPING
+	if (IsLocalController())
+	{
+		CreateDebugHUD();
+
+		// F5 키 바인딩 (DebugHUDToggleAction이 BP에서 설정된 경우)
+		if (DebugHUDToggleAction)
+		{
+			if (UEnhancedInputComponent* DebugEIC = Cast<UEnhancedInputComponent>(InputComponent))
+			{
+				DebugEIC->BindAction(DebugHUDToggleAction, ETriggerEvent::Started, this, &AHellunaHeroController::OnDebugHUDToggle);
+				UE_LOG(LogTemp, Log, TEXT("[DebugHUD] F5 토글 입력 바인딩 완료"));
+			}
+		}
+	}
+#endif
 }
 
 // ============================================================================
@@ -1246,5 +1267,46 @@ void AHellunaHeroController::Server_BossEncounterActivate_Implementation()
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[BossEvent] BossEncounterCube activated by %s"), *GetName());
 		// TODO: Step 3+ — 보스 스폰 매니저 호출, 이벤트 시작
+	}
+}
+
+// =========================================================================================
+// [DebugHUD] 디버그 HUD 생성 및 F5 토글
+// =========================================================================================
+
+void AHellunaHeroController::CreateDebugHUD()
+{
+#if UE_BUILD_SHIPPING
+	return; // Shipping 빌드에서는 생성하지 않음
+#else
+	if (!IsValid(DebugHUDWidgetClass))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[DebugHUD] DebugHUDWidgetClass 미설정 — BP_HellunaHeroController에서 지정 필요"));
+		return;
+	}
+
+	if (IsValid(DebugHUDInstance))
+	{
+		return; // 이미 생성됨
+	}
+
+	DebugHUDInstance = CreateWidget<UHellunaDebugHUDWidget>(this, DebugHUDWidgetClass);
+	if (IsValid(DebugHUDInstance))
+	{
+		DebugHUDInstance->AddToViewport(999); // 최상위 Z-Order
+		UE_LOG(LogTemp, Log, TEXT("[DebugHUD] 디버그 HUD 생성 완료 (ZOrder=999)"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("[DebugHUD] 디버그 HUD 생성 실패"));
+	}
+#endif
+}
+
+void AHellunaHeroController::OnDebugHUDToggle(const FInputActionValue& Value)
+{
+	if (IsValid(DebugHUDInstance))
+	{
+		DebugHUDInstance->ToggleVisibility();
 	}
 }

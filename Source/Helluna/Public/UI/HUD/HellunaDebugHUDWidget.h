@@ -34,6 +34,7 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "HellunaTypes.h"
 #include "HellunaDebugHUDWidget.generated.h"
 
 class UTextBlock;
