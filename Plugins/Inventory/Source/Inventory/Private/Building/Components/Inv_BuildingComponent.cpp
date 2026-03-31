@@ -708,15 +708,9 @@ void UInv_BuildingComponent::Server_PlaceBuilding_Implementation(
 	if (IsValid(PlacedBuilding))
 	{
 		// 건설 중 상태: 충돌 비활성 (스캔 완료 후 활성화)
+		// 숨김 처리 불필요 — 스캔 머티리얼의 Masked 블렌드가 가시성 제어
+		// (BeginPlay에서 즉시 적용되므로 원본 머티리얼 노출 없음)
 		PlacedBuilding->SetActorEnableCollision(false);
-
-		// AInv_BuildingActor는 BeginPlay에서 즉시 스캔 VFX 시작 → 숨길 필요 없음
-		// 터렛 등 나머지 액터는 Multicast 도착까지 숨김 처리
-		const bool bIsBuildingActor = Cast<AInv_BuildingActor>(PlacedBuilding) != nullptr;
-		if (!bIsBuildingActor)
-		{
-			PlacedBuilding->SetActorHiddenInGame(true);
-		}
 
 #if INV_DEBUG_BUILD
 		UE_LOG(LogTemp, Warning, TEXT("건물 스폰 성공! 재료 차감 시도..."));
@@ -776,32 +770,12 @@ void UInv_BuildingComponent::Server_PlaceBuilding_Implementation(
 		UE_LOG(LogTemp, Warning, TEXT("Server: Building placed successfully at location: %s"), *Location.ToString());
 #endif
 
-		// 리플리케이션 대기 후 Multicast 호출
-		// (SpawnActor 직후에는 클라이언트에 액터가 아직 도착하지 않아 파라미터가 NULL)
-		constexpr float ReplicationDelay = 0.5f;
+		// 스캔 VFX는 BeginPlay에서 모든 클라이언트가 즉시 시작하므로 Multicast 불필요
+		// (AInv_BuildingActor, AHellunaBaseResourceUsingObject 모두 BeginPlay 기반)
+		// 스캔 완료 후 건물 활성화 타이머 (서버 전용)
 		if (World)
 		{
 			TWeakObjectPtr<AActor> WeakBuilding = PlacedBuilding;
-			TWeakObjectPtr<UInv_BuildingComponent> WeakThis = this;
-
-			// 0.5초 후 Multicast (액터 리플리케이션 완료 대기)
-			FTimerHandle ScanDelayTimer;
-			World->GetTimerManager().SetTimer(ScanDelayTimer,
-				FTimerDelegate::CreateLambda([WeakThis, WeakBuilding]()
-				{
-					if (WeakThis.IsValid() && WeakBuilding.IsValid())
-					{
-						WeakThis->Multicast_OnBuildingPlaced(WeakBuilding.Get());
-					}
-				}),
-				ReplicationDelay, false);
-
-			// 스캔 완료 후 건물 활성화
-			// AInv_BuildingActor: BeginPlay 즉시 시작 → ScanDuration만 대기
-			// 터렛 등: Multicast 경유 → ReplicationDelay + ScanDuration 대기
-			const float ActivationDelay = bIsBuildingActor
-				? DefaultScanDuration
-				: (ReplicationDelay + DefaultScanDuration);
 			FTimerHandle ActivationTimer;
 			World->GetTimerManager().SetTimer(ActivationTimer,
 				FTimerDelegate::CreateLambda([WeakBuilding]()
@@ -815,7 +789,7 @@ void UInv_BuildingComponent::Server_PlaceBuilding_Implementation(
 #endif
 					}
 				}),
-				ActivationDelay, false);
+				DefaultScanDuration, false);
 		}
 	}
 	else
@@ -837,10 +811,7 @@ void UInv_BuildingComponent::Multicast_OnBuildingPlaced_Implementation(AActor* P
 
 	if (!IsValid(PlacedBuilding)) return;
 
-	// 숨김 해제 — 스캔 머티리얼이 적용되면서 바닥부터 물질화
-	PlacedBuilding->SetActorHiddenInGame(false);
-
-	// 배치 스캔 VFX 시작 (모든 클라이언트에서 재생)
+	// 배치 스캔 VFX 폴백 (BeginPlay에서 이미 시작된 경우 bScanActive 가드로 무시됨)
 	if (AInv_BuildingActor* BuildingActor = Cast<AInv_BuildingActor>(PlacedBuilding))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[BuildingScanVFX] Path: Inv_BuildingActor, Material: %s"),
