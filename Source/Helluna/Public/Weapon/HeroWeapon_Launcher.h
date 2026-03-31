@@ -17,6 +17,8 @@ class HELLUNA_API AHeroWeapon_Launcher : public AHeroWeapon_GunBase
 	GENERATED_BODY()
 	
 public:
+	void CacheAimFromController(AController* InstigatorController);
+
 	virtual void Fire(AController* InstigatorController) override;
 
 protected:
@@ -34,6 +36,14 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Projectile", meta = (DisplayName = "대체 스폰 오프셋"))
 	float FallbackSpawnOffset = 80.f;
-	
-	
+
+private:
+	bool BuildCachedAimData(AController* InstigatorController);
+	FVector ResolveProjectileSpawnLocation(const FVector& ViewLocation, const FVector& AimDirection) const;
+
+	bool bHasCachedAim = false;
+	FVector CachedAimStart = FVector::ZeroVector;
+	FVector CachedAimPoint = FVector::ZeroVector;
+	FVector CachedAimDirection = FVector::ForwardVector;
+
 };

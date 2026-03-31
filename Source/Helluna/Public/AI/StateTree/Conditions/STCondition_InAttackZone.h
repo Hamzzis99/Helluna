@@ -54,7 +54,7 @@ public:
 	 */
 	UPROPERTY(EditAnywhere, Category = "공격존",
 		meta = (DisplayName = "공격존 반크기 (X전방, Y좌우, Z높이)"))
-	FVector AttackZoneHalfExtent = FVector(100.f, 80.f, 80.f);
+	FVector AttackZoneHalfExtent = FVector(60.f, 45.f, 60.f);
 
 	/**
 	 * 폰 위치로부터 전방으로 박스 중심을 얼마나 오프셋할지 (cm).
@@ -62,7 +62,7 @@ public:
 	 */
 	UPROPERTY(EditAnywhere, Category = "공격존",
 		meta = (DisplayName = "전방 오프셋 (cm)", ClampMin = "0.0"))
-	float ForwardOffset = 100.f;
+	float ForwardOffset = 70.f;
 
 	/**
 	 * 판정 반전 플래그.

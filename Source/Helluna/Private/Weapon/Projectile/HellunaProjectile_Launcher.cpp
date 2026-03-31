@@ -26,8 +26,8 @@ AHellunaProjectile_Launcher::AHellunaProjectile_Launcher()
 	RootComponent = CollisionBox;
 
 	// ✅ QueryOnly + Overlap
-	CollisionBox->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-	CollisionBox->SetGenerateOverlapEvents(true);
+	CollisionBox->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	CollisionBox->SetGenerateOverlapEvents(false);
 	CollisionBox->SetCollisionObjectType(ECC_WorldDynamic);
 
 	// 기본: 필요한 채널만 오버랩(프로젝트에서 필요 시 조정)
@@ -44,10 +44,20 @@ AHellunaProjectile_Launcher::AHellunaProjectile_Launcher()
 	MoveComp->bRotationFollowsVelocity = true;
 	MoveComp->bShouldBounce = false;
 	MoveComp->ProjectileGravityScale = 0.f;
+	MoveComp->bInitialVelocityInLocalSpace = false;
 
 	TrailFX = CreateDefaultSubobject<UNiagaraComponent>(TEXT("TrailFX"));
 	TrailFX->SetupAttachment(RootComponent);
 	TrailFX->bAutoActivate = true;
+}
+
+void AHellunaProjectile_Launcher::SetProjectileCollisionEnabled(bool bEnabled)
+{
+	if (!CollisionBox)
+		return;
+
+	CollisionBox->SetCollisionEnabled(bEnabled ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
+	CollisionBox->SetGenerateOverlapEvents(bEnabled);
 }
 
 void AHellunaProjectile_Launcher::BeginPlay()
@@ -69,6 +79,19 @@ void AHellunaProjectile_Launcher::BeginPlay()
 	{
 		CollisionBox->IgnoreActorWhenMoving(InstigatorPawn, true);
 	}
+
+	SetProjectileCollisionEnabled(bInitialized);
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[LauncherFlight][BeginPlay] Projectile=%s Loc=%s Rot=%s Forward=%s Velocity=%s TrailWorldRot=%s TrailRelativeRot=%s Initialized=%s"),
+		*GetNameSafe(this),
+		*GetActorLocation().ToCompactString(),
+		*GetActorRotation().ToCompactString(),
+		*GetActorForwardVector().ToCompactString(),
+		MoveComp ? *MoveComp->Velocity.ToCompactString() : TEXT("None"),
+		TrailFX ? *TrailFX->GetComponentRotation().ToCompactString() : TEXT("None"),
+		TrailFX ? *TrailFX->GetRelativeRotation().ToCompactString() : TEXT("None"),
+		bInitialized ? TEXT("Y") : TEXT("N"));
 }
 
 void AHellunaProjectile_Launcher::InitProjectile(
@@ -81,6 +104,7 @@ void AHellunaProjectile_Launcher::InitProjectile(
 	// ✅ 데미지/반경은 무기에서만 세팅 -> 총알은 주입값만 사용
 	Damage = InDamage;
 	Radius = InRadius;
+	bInitialized = true;
 
 	if (MoveComp)
 	{
@@ -89,6 +113,32 @@ void AHellunaProjectile_Launcher::InitProjectile(
 		MoveComp->InitialSpeed = Speed;
 		MoveComp->MaxSpeed = Speed;
 	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[LauncherFlight][Init] Projectile=%s Loc=%s Rot=%s Forward=%s InVelocity=%s Speed=%.1f TrailWorldRot=%s TrailRelativeRot=%s"),
+		*GetNameSafe(this),
+		*GetActorLocation().ToCompactString(),
+		*GetActorRotation().ToCompactString(),
+		*GetActorForwardVector().ToCompactString(),
+		*InVelocity.ToCompactString(),
+		InVelocity.Size(),
+		TrailFX ? *TrailFX->GetComponentRotation().ToCompactString() : TEXT("None"),
+		TrailFX ? *TrailFX->GetRelativeRotation().ToCompactString() : TEXT("None"));
+
+	if (CollisionBox)
+	{
+		CollisionBox->SetBoxExtent(OverlapBoxExtent);
+		if (AActor* OwnerActor = GetOwner())
+		{
+			CollisionBox->IgnoreActorWhenMoving(OwnerActor, true);
+		}
+		if (APawn* InstigatorPawn = GetInstigator())
+		{
+			CollisionBox->IgnoreActorWhenMoving(InstigatorPawn, true);
+		}
+	}
+
+	SetProjectileCollisionEnabled(true);
 
 	// ✅ 최대거리 도달(수명 만료) 시 폭발
 	SetLifeSpan(FMath::Max(InLifeSeconds, 0.01f));
@@ -107,6 +157,9 @@ void AHellunaProjectile_Launcher::OnBeginOverlap(
 	if (!HasAuthority())
 		return;
 
+	if (!bInitialized)
+		return;
+
 	if (bExploded)
 		return;
 
@@ -118,6 +171,15 @@ void AHellunaProjectile_Launcher::OnBeginOverlap(
 	{
 		HitLoc = SweepResult.ImpactPoint;
 	}
+	UE_LOG(LogTemp, Warning,
+		TEXT("[DamageDiag][LauncherOverlap] Projectile=%s Other=%s Comp=%s FromSweep=%s HitLoc=%s Velocity=%s Forward=%s"),
+		*GetNameSafe(this),
+		*GetNameSafe(OtherActor),
+		*GetNameSafe(OtherComp),
+		bFromSweep ? TEXT("Y") : TEXT("N"),
+		*HitLoc.ToString(),
+		MoveComp ? *MoveComp->Velocity.ToCompactString() : TEXT("None"),
+		*GetActorForwardVector().ToCompactString());
 	// - 폭발 지점을 표면 법선 방향으로 살짝 띄워 ApplyRadialDamage를 바닥이 가리는 문제 완화했음
 	HitLoc += SweepResult.ImpactNormal * 10.f;
 
@@ -129,7 +191,7 @@ void AHellunaProjectile_Launcher::LifeSpanExpired()
 	
 
 	// ✅ 사거리 끝 도달 = 폭발
-	if (HasAuthority() && !bExploded)
+	if (HasAuthority() && bInitialized && !bExploded)
 	{
 		Explode(GetActorLocation());
 		return;
@@ -144,6 +206,19 @@ void AHellunaProjectile_Launcher::Explode(const FVector& ExplosionLocation)
 		return;
 
 	bExploded = true;
+	SetProjectileCollisionEnabled(false);
+	UE_LOG(LogTemp, Warning,
+		TEXT("[DamageDiag][LauncherExplode] Projectile=%s Location=%s Radius=%.1f Damage=%.1f Owner=%s Instigator=%s Velocity=%s Rot=%s Forward=%s TrailWorldRot=%s"),
+		*GetNameSafe(this),
+		*ExplosionLocation.ToString(),
+		Radius,
+		Damage,
+		*GetNameSafe(GetOwner()),
+		*GetNameSafe(GetInstigator()),
+		MoveComp ? *MoveComp->Velocity.ToCompactString() : TEXT("None"),
+		*GetActorRotation().ToCompactString(),
+		*GetActorForwardVector().ToCompactString(),
+		TrailFX ? *TrailFX->GetComponentRotation().ToCompactString() : TEXT("None"));
 
 
 	// ✅ 폭발 데미지는 서버에서만 처리했음
@@ -168,16 +243,43 @@ void AHellunaProjectile_Launcher::Explode(const FVector& ExplosionLocation)
 			FCollisionShape::MakeSphere(Radius),
 			QueryParams
 		);
+		UE_LOG(LogTemp, Warning,
+			TEXT("[DamageDiag][LauncherOverlapResult] Projectile=%s Count=%d"),
+			*GetNameSafe(this),
+			Overlaps.Num());
 
 		TSet<AActor*> DamagedActors;
 		for (const FOverlapResult& Overlap : Overlaps)
 		{
 			AActor* Victim = Overlap.OverlapObjectHandle.FetchActor();
-			if (!Victim || DamagedActors.Contains(Victim)) continue;
-			if (!Victim->CanBeDamaged()) continue;
+			if (!Victim)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[DamageDiag][LauncherSkip] Reason=NullVictim"));
+				continue;
+			}
+			if (DamagedActors.Contains(Victim))
+			{
+				UE_LOG(LogTemp, Warning,
+					TEXT("[DamageDiag][LauncherSkip] Victim=%s Reason=AlreadyProcessed"),
+					*GetNameSafe(Victim));
+				continue;
+			}
+			if (!Victim->CanBeDamaged())
+			{
+				UE_LOG(LogTemp, Warning,
+					TEXT("[DamageDiag][LauncherSkip] Victim=%s Reason=CanBeDamagedFalse"),
+					*GetNameSafe(Victim));
+				continue;
+			}
 
 			// 적(HellunaEnemyCharacter)인지 확인 — 적에게만 데미지 적용
-			if (!Cast<AHellunaEnemyCharacter>(Victim)) continue;
+			if (!Cast<AHellunaEnemyCharacter>(Victim))
+			{
+				UE_LOG(LogTemp, Warning,
+					TEXT("[DamageDiag][LauncherSkip] Victim=%s Reason=NotEnemyCharacter"),
+					*GetNameSafe(Victim));
+				continue;
+			}
 
 			// bIgnoreWorldStatic=false일 때만 WorldStatic 차단 체크
 			if (!bIgnoreWorldStatic)
@@ -195,10 +297,23 @@ void AHellunaProjectile_Launcher::Explode(const FVector& ExplosionLocation)
 					LineParams
 				);
 
-				if (bBlocked) continue;
+				if (bBlocked)
+				{
+					UE_LOG(LogTemp, Warning,
+						TEXT("[DamageDiag][LauncherSkip] Victim=%s Reason=BlockedByWorldStatic Blocker=%s BlockLoc=%s"),
+						*GetNameSafe(Victim),
+						*GetNameSafe(Hit.GetActor()),
+						*Hit.ImpactPoint.ToString());
+					continue;
+				}
 			}
 
 			DamagedActors.Add(Victim);
+			UE_LOG(LogTemp, Warning,
+				TEXT("[DamageDiag][LauncherApplyDamage] Victim=%s Damage=%.1f Distance=%.1f"),
+				*GetNameSafe(Victim),
+				Damage,
+				FVector::Dist(ExplosionLocation, Victim->GetActorLocation()));
 			UGameplayStatics::ApplyPointDamage(
 				Victim,
 				Damage,

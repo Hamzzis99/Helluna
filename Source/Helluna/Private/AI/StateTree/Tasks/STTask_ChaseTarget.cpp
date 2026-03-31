@@ -54,6 +54,27 @@ void IssueMoveToLocation(AAIController* AIController, const FVector& Goal, float
 }
 
 // ============================================================================
+// 헬퍼: 우주선 NavMesh 투영 이동 (MoveToActor 대체)
+// 우주선 Root가 메시 내부/상공 → NavMesh 도달 불가 → 멈춤 방지
+// ============================================================================
+void IssueMoveToActorNavProjected(AAIController* AIController, AActor* TargetActor, float AcceptanceRadius)
+{
+	if (!AIController || !TargetActor) return;
+
+	UNavigationSystemV1* NavSys = FNavigationSystem::GetCurrent<UNavigationSystemV1>(AIController->GetWorld());
+	if (NavSys)
+	{
+		FNavLocation NavLoc;
+		if (NavSys->ProjectPointToNavigation(TargetActor->GetActorLocation(), NavLoc, FVector(500.f, 500.f, 1000.f)))
+		{
+			IssueMoveToLocation(AIController, NavLoc.Location, AcceptanceRadius);
+			return;
+		}
+	}
+	IssueMoveToLocation(AIController, TargetActor->GetActorLocation(), AcceptanceRadius);
+}
+
+// ============================================================================
 // 헬퍼: SpaceShipAttackSlotManager 가져오기
 // ============================================================================
 USpaceShipAttackSlotManager* GetSlotManager(AActor* SpaceShip)
@@ -199,17 +220,17 @@ EStateTreeRunStatus FSTTask_ChaseTarget::EnterState(
 					if (SlotMgr->GetWaitingPosition(AIController->GetPawn(), WaitLoc))
 						IssueMoveToLocation(AIController, WaitLoc, AcceptanceRadius);
 					else
-						AIController->MoveToActor(TargetActor, AcceptanceRadius, true, true, false, nullptr, true);
+						IssueMoveToActorNavProjected(AIController, TargetActor, AcceptanceRadius);
 				}
 			}
 			else
 			{
-				AIController->MoveToActor(TargetActor, AcceptanceRadius, true, true, false, nullptr, true);
+				IssueMoveToActorNavProjected(AIController, TargetActor, AcceptanceRadius);
 			}
 		}
 		else
 		{
-			AIController->MoveToActor(TargetActor, AcceptanceRadius, true, true, false, nullptr, true);
+			IssueMoveToActorNavProjected(AIController, TargetActor, AcceptanceRadius);
 		}
 	}
 	else
@@ -334,22 +355,23 @@ EStateTreeRunStatus FSTTask_ChaseTarget::Tick(
 
 			if (bTargetChanged || bRepathDue || bStuck)
 			{
-				// 슬롯 시스템 OFF 또는 슬롯 0개: 우주선 주변 랜덤 위치로 분산 이동
 				const FVector PawnLoc = Pawn->GetActorLocation();
 				const FVector ShipLoc = TargetActor->GetActorLocation();
 				const FVector Dir = (ShipLoc - PawnLoc).GetSafeNormal();
+
+				// Stuck이 반복되면 분산 반경을 줄여 더 직접적으로 접근
+				const float EffectiveSpread = bStuck ? ShipSpreadRadius * 0.3f : ShipSpreadRadius;
 				const FVector Perp = FVector(-Dir.Y, Dir.X, 0.f);
-				const float SpreadOffset = FMath::FRandRange(-ShipSpreadRadius, ShipSpreadRadius);
+				const float SpreadOffset = FMath::FRandRange(-EffectiveSpread, EffectiveSpread);
 				const FVector RawGoal = ShipLoc - Dir * AcceptanceRadius + Perp * SpreadOffset;
 
-				// NavMesh 투영 시도, 실패해도 원본 위치로 이동
+				// NavMesh 투영 시도 (확장된 범위)
 				UNavigationSystemV1* NavSys = FNavigationSystem::GetCurrent<UNavigationSystemV1>(AIController->GetWorld());
 				FNavLocation NavGoal;
 				FVector FinalGoal = RawGoal;
-				if (NavSys && NavSys->ProjectPointToNavigation(RawGoal, NavGoal, FVector(200.f, 200.f, 500.f)))
+				if (NavSys && NavSys->ProjectPointToNavigation(RawGoal, NavGoal, FVector(300.f, 300.f, 800.f)))
 					FinalGoal = NavGoal.Location;
 
-				// 일반 MoveTo 시도, 실패 시 AllowPartialPath로 최대한 가까이 이동
 				FAIMoveRequest Req;
 				Req.SetGoalLocation(FinalGoal);
 				Req.SetAcceptanceRadius(AcceptanceRadius);
@@ -359,10 +381,20 @@ EStateTreeRunStatus FSTTask_ChaseTarget::Tick(
 				Req.SetCanStrafe(true);
 				const FPathFollowingRequestResult Result = AIController->MoveTo(Req);
 
-				// MoveTo도 실패하면 MoveToActor로 우주선에 직접 접근
+				// MoveTo 실패 시: NavMesh 투영 → 그래도 실패 시 우주선 방향 200cm 직접 이동
 				if (Result.Code == EPathFollowingRequestResult::Failed)
 				{
-					AIController->MoveToActor(TargetActor, AcceptanceRadius, true, true, false, nullptr, true);
+					IssueMoveToActorNavProjected(AIController, TargetActor, AcceptanceRadius);
+
+					// 최후 수단: 짧은 거리 직선 이동 (NavMesh 없는 지역 탈출용)
+					if (UPathFollowingComponent* PFC = AIController->GetPathFollowingComponent())
+					{
+						if (PFC->GetStatus() == EPathFollowingStatus::Idle)
+						{
+							const FVector DirectGoal = PawnLoc + Dir * 200.f;
+							IssueMoveToLocation(AIController, DirectGoal, AcceptanceRadius);
+						}
+					}
 				}
 
 				InstanceData.LastMoveTarget  = TargetData.TargetActor;
@@ -416,11 +448,11 @@ EStateTreeRunStatus FSTTask_ChaseTarget::Tick(
 				return EStateTreeRunStatus::Running;
 			}
 
-			// 진입 범위 안: 슬롯 배정 재시도 (1초 쿨다운)
+			// 진입 범위 안: 슬롯 배정 재시도 (0.5초 쿨다운)
 			InstanceData.SlotRetryTimer -= DeltaTime;
 			if (InstanceData.SlotRetryTimer <= 0.f)
 			{
-				InstanceData.SlotRetryTimer = 1.f;
+				InstanceData.SlotRetryTimer = 0.5f;
 				int32 SlotIdx = -1;
 				FVector SlotLoc;
 				if (SlotMgr->RequestSlot(Pawn, SlotIdx, SlotLoc))
@@ -432,22 +464,77 @@ EStateTreeRunStatus FSTTask_ChaseTarget::Tick(
 				}
 				else
 				{
-					// 슬롯 없음 → 우주선 주변 대기 위치 배회
+					// 슬롯 없음 → 대기 위치 → NavMesh 투영 → 최후 수단: 직접 우주선 방향으로 이동
 					FVector WaitLoc;
 					if (SlotMgr->GetWaitingPosition(Pawn, WaitLoc))
+					{
 						IssueMoveToLocation(AIController, WaitLoc, AcceptanceRadius);
+					}
 					else
-						AIController->MoveToActor(TargetActor, AcceptanceRadius, true, true, false, nullptr, true);
+					{
+						// NavMesh 투영 이동 시도
+						FAIMoveRequest Req;
+						Req.SetGoalActor(TargetActor);
+						Req.SetAcceptanceRadius(AcceptanceRadius);
+						Req.SetUsePathfinding(true);
+						Req.SetAllowPartialPath(true);
+						const FPathFollowingRequestResult Result = AIController->MoveTo(Req);
+
+						// 경로 탐색 완전 실패 시: 우주선 방향으로 NavMesh 없이 직접 이동
+						if (Result.Code == EPathFollowingRequestResult::Failed)
+						{
+							const FVector ToShip = (TargetActor->GetActorLocation() - Pawn->GetActorLocation()).GetSafeNormal2D();
+							const FVector DirectGoal = Pawn->GetActorLocation() + ToShip * 200.f;
+							IssueMoveToLocation(AIController, DirectGoal, AcceptanceRadius);
+						}
+					}
 				}
 			}
+
+			// 슬롯 대기 중에도 우주선 방향으로 회전 (공격존 진입 준비)
+			if (TargetActor)
+			{
+				const FVector ToShip = (TargetActor->GetActorLocation() - Pawn->GetActorLocation()).GetSafeNormal2D();
+				if (!ToShip.IsNearlyZero())
+				{
+					const FRotator CurrentRot = Pawn->GetActorRotation();
+					const FRotator TargetRot  = FRotator(0.f, ToShip.Rotation().Yaw, 0.f);
+					Pawn->SetActorRotation(FMath::RInterpTo(CurrentRot, TargetRot, DeltaTime, 10.f));
+				}
+			}
+
 			return EStateTreeRunStatus::Running;
 		}
 
 
-		// 이미 도착한 경우 정지 유지 (Attack State가 처리)
+		// 이미 도착한 경우 정지 유지 + 우주선 방향 회전 (Attack State가 처리)
 		if (InstanceData.bSlotArrived)
 		{
 			AIController->StopMovement();
+
+			if (TargetActor)
+			{
+				AIController->SetFocus(TargetActor);
+
+				// 우주선 방향으로 빠르게 회전 → 전방 공격존이 우주선을 향하도록
+				const FVector ToShip = (TargetActor->GetActorLocation() - Pawn->GetActorLocation()).GetSafeNormal2D();
+				if (!ToShip.IsNearlyZero())
+				{
+					const FRotator CurrentRot = Pawn->GetActorRotation();
+					const FRotator TargetRot  = FRotator(0.f, ToShip.Rotation().Yaw, 0.f);
+					const FRotator NewRot = FMath::RInterpTo(CurrentRot, TargetRot, DeltaTime, 15.f);
+					Pawn->SetActorRotation(NewRot);
+
+					if (AController* C = Pawn->GetController())
+						C->SetControlRotation(NewRot);
+
+					// 회전 차이가 클 때만 네트워크 업데이트 (매 틱 호출 방지)
+					const float YawDelta = FMath::Abs(FMath::FindDeltaAngleDegrees(CurrentRot.Yaw, TargetRot.Yaw));
+					if (YawDelta > 2.f)
+						Pawn->ForceNetUpdate();
+				}
+			}
+
 			return EStateTreeRunStatus::Running;
 		}
 
@@ -461,10 +548,17 @@ EStateTreeRunStatus FSTTask_ChaseTarget::Tick(
 			if (SlotMgr)
 				SlotMgr->OccupySlot(InstanceData.AssignedSlotIndex, Pawn);
 
-			// 우주선 방향 바라보기
+			// 우주선 방향 즉시 바라보기 + 네트워크 동기화
 			const FVector ToShip = (TargetActor->GetActorLocation() - Pawn->GetActorLocation()).GetSafeNormal2D();
 			if (!ToShip.IsNearlyZero())
+			{
+				const FRotator FaceRot(0.f, ToShip.Rotation().Yaw, 0.f);
+				Pawn->SetActorRotation(FaceRot);
+				if (AController* C = Pawn->GetController())
+					C->SetControlRotation(FaceRot);
 				AIController->SetFocalPoint(Pawn->GetActorLocation() + ToShip * 1000.f);
+				Pawn->ForceNetUpdate();
+			}
 
 			UE_LOG(LogTemp, Log, TEXT("[ChaseTarget] 슬롯 도착: %d, 거리=%.1f"),
 				InstanceData.AssignedSlotIndex, DistToSlot);
@@ -507,8 +601,8 @@ EStateTreeRunStatus FSTTask_ChaseTarget::Tick(
 			}
 			else
 			{
-				// SlotManager 없음 → 우주선 직접 재이동
-				AIController->MoveToActor(TargetActor, AcceptanceRadius, true, true, false, nullptr, true);
+				// SlotManager 없음 → NavMesh 투영 위치로 재이동
+				IssueMoveToActorNavProjected(AIController, TargetActor, AcceptanceRadius);
 				InstanceData.StuckAccumTime = 0.f;
 			}
 		}
@@ -544,13 +638,16 @@ EStateTreeRunStatus FSTTask_ChaseTarget::Tick(
 			InstanceData.TimeSinceRepath = 0.f;
 		}
 
-		// 플레이어를 향해 회전
+		// 플레이어를 향해 회전 + 네트워크 동기화
 		const FVector ToTarget = (TargetActor->GetActorLocation() - Pawn->GetActorLocation()).GetSafeNormal2D();
 		if (!ToTarget.IsNearlyZero())
 		{
 			const FRotator CurrentRot = Pawn->GetActorRotation();
 			const FRotator TargetRot  = FRotator(0.f, ToTarget.Rotation().Yaw, 0.f);
-			Pawn->SetActorRotation(FMath::RInterpTo(CurrentRot, TargetRot, DeltaTime, 5.f));
+			const FRotator NewRot = FMath::RInterpTo(CurrentRot, TargetRot, DeltaTime, 5.f);
+			Pawn->SetActorRotation(NewRot);
+			if (AController* C = Pawn->GetController())
+				C->SetControlRotation(NewRot);
 		}
 	}
 

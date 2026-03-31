@@ -1,6 +1,7 @@
 #include "GameMode/HellunaDefenseGameMode.h"
 #include "GameMode/HellunaDefenseGameState.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
+#include "AI/SpaceShipAttackSlotManager.h"
 #include "ECS/Spawner/HellunaEnemyMassSpawner.h"
 #include "Character/HellunaEnemyCharacter.h"
 #include "Engine/TargetPoint.h"
@@ -562,6 +563,45 @@ void AHellunaDefenseGameMode::ActivateNightPCG()
         CurrentDay, ActivatedCount, RestoredCount), FColor::Purple);
 }
 
+void AHellunaDefenseGameMode::CleanupInitialNightPCGArtifacts()
+{
+    if (!HasAuthority())
+    {
+        return;
+    }
+
+    UWorld* World = GetWorld();
+    if (!IsValid(World))
+    {
+        return;
+    }
+
+    for (const TWeakObjectPtr<UPCGComponent>& WeakPCGComp : CachedNightPCGComponents)
+    {
+        UPCGComponent* PCGComp = WeakPCGComp.Get();
+        if (!IsValid(PCGComp))
+        {
+            continue;
+        }
+
+        PCGComp->GenerationTrigger = EPCGComponentGenerationTrigger::GenerateOnDemand;
+        PCGComp->CleanupLocal(true);
+        PCGComp->Deactivate();
+    }
+
+    TArray<AActor*> ExistingOres;
+    UGameplayStatics::GetAllActorsWithTag(World, FName(TEXT("Ore")), ExistingOres);
+    for (AActor* OreActor : ExistingOres)
+    {
+        if (IsValid(OreActor))
+        {
+            OreActor->Destroy();
+        }
+    }
+
+    PreGenerationOreSnapshot.Empty();
+}
+
 void AHellunaDefenseGameMode::OnNightPCGGraphGenerated(UPCGComponent* InComponent)
 {
     if (!IsValid(InComponent))
@@ -879,6 +919,11 @@ void AHellunaDefenseGameMode::EnterDay()
 
     // 낮 카운터 증가 (게임 시작 첫 낮은 Day 1)
     CurrentDay++;
+
+    if (CurrentDay == 1)
+    {
+        CleanupInitialNightPCGArtifacts();
+    }
 
     Debug::Print(FString::Printf(TEXT("[EnterDay] %d일차 낮 시작"), CurrentDay), FColor::Yellow);
 
@@ -1496,6 +1541,19 @@ void AHellunaDefenseGameMode::PostLogin(APlayerController* NewPlayer)
 
     // [Phase 19] 커맨드 폴링 중지 (플레이어 접속)
     StopCommandPollTimer();
+
+    // 플레이어 접속 → 우주선 SlotManager 슬롯 재시도 트리거
+    // World Partition에서 플레이어 접속 후 NavMesh가 로드되므로 이 시점에 재시도
+    if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
+    {
+        if (AResourceUsingObject_SpaceShip* Ship = GS->GetSpaceShip())
+        {
+            if (USpaceShipAttackSlotManager* SlotMgr = Ship->FindComponentByClass<USpaceShipAttackSlotManager>())
+            {
+                SlotMgr->TriggerBuildSlotsIfEmpty();
+            }
+        }
+    }
 
     // Phase 10: 접속 메시지
     if (bGameInitialized && IsValid(NewPlayer))

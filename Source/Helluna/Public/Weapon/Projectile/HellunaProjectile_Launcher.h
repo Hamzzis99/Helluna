@@ -47,6 +47,8 @@ protected:
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_SpawnExplosionFX(FVector_NetQuantize ExplosionLocation);
 
+	void SetProjectileCollisionEnabled(bool bEnabled);
+
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Projectile|Components",
 		meta = (DisplayName = "충돌(박스)"))
@@ -84,4 +86,5 @@ private:
 	float Radius = 0.f;
 
 	bool bExploded = false;
+	bool bInitialized = false;
 };

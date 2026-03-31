@@ -26,6 +26,35 @@
 #include "AbilitySystem/EnemyAbility/EnemyGameplayAbility_RangedAttack.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 
+namespace HellunaAttackTarget
+{
+static void FaceCurrentTarget(AAIController* AIController, APawn* Pawn, AActor* TargetActor, float DeltaTime)
+{
+	if (!AIController || !Pawn || !TargetActor)
+	{
+		return;
+	}
+
+	const FVector ToTarget = (TargetActor->GetActorLocation() - Pawn->GetActorLocation()).GetSafeNormal2D();
+	if (ToTarget.IsNearlyZero())
+	{
+		return;
+	}
+
+	const FRotator CurrentRot = Pawn->GetActorRotation();
+	const FRotator TargetRot(0.f, ToTarget.Rotation().Yaw, 0.f);
+	const FRotator NewRot = FMath::RInterpTo(CurrentRot, TargetRot, DeltaTime, 12.f);
+	Pawn->SetActorRotation(NewRot);
+	AIController->SetControlRotation(NewRot);
+	AIController->SetFocus(TargetActor);
+
+	// 회전 차이가 클 때만 네트워크 업데이트 (매 틱 ForceNetUpdate 방지)
+	const float YawDelta = FMath::Abs(FMath::FindDeltaAngleDegrees(CurrentRot.Yaw, TargetRot.Yaw));
+	if (YawDelta > 2.f)
+		Pawn->ForceNetUpdate();
+}
+}
+
 EStateTreeRunStatus FSTTask_AttackTarget::EnterState(
 	FStateTreeExecutionContext& Context,
 	const FStateTreeTransitionResult& Transition) const
@@ -60,7 +89,7 @@ EStateTreeRunStatus FSTTask_AttackTarget::EnterState(
 			return EStateTreeRunStatus::Failed;
 		}
 
-		InstanceData.AIController->SetFocus(TargetActor);
+		HellunaAttackTarget::FaceCurrentTarget(InstanceData.AIController, Pawn, TargetActor, 1.f / 60.f);
 	}
 
 	InstanceData.CooldownRemaining = InitialAttackDelay;
@@ -100,7 +129,13 @@ EStateTreeRunStatus FSTTask_AttackTarget::Tick(
 		if (Spec.Ability && Spec.Ability->GetClass() == GAClass)
 		{
 			if (Spec.IsActive())
+			{
+				if (TargetData.HasValidTarget())
+				{
+					HellunaAttackTarget::FaceCurrentTarget(AIController, Pawn, TargetData.TargetActor.Get(), DeltaTime);
+				}
 				return EStateTreeRunStatus::Running;
+			}
 			break;
 		}
 	}
@@ -110,15 +145,18 @@ EStateTreeRunStatus FSTTask_AttackTarget::Tick(
 	{
 		InstanceData.CooldownRemaining -= DeltaTime;
 
-		// SetFocus로 타겟 방향 바라보기 (bOrientRotationToMovement 건드리지 않음)
 		if (TargetData.HasValidTarget())
-			AIController->SetFocus(TargetData.TargetActor.Get());
+		{
+			HellunaAttackTarget::FaceCurrentTarget(AIController, Pawn, TargetData.TargetActor.Get(), DeltaTime);
+		}
 
 		return EStateTreeRunStatus::Running;
 	}
 
-	// 쿨다운 끝 → 포커스 해제
-	AIController->ClearFocus(EAIFocusPriority::Gameplay);
+	if (TargetData.HasValidTarget())
+	{
+		HellunaAttackTarget::FaceCurrentTarget(AIController, Pawn, TargetData.TargetActor.Get(), DeltaTime);
+	}
 
 	// ③ 쿨다운 완료 → GA 발동
 	bool bAlreadyHas = false;

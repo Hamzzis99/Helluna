@@ -52,6 +52,8 @@ private:
 
 	// ✅ 로컬이면 FocusedActor, 서버면 ServerFarmingTarget을 가져온다
 	AActor* GetFarmingTarget(const FGameplayAbilityActorInfo* ActorInfo) const;
+	AActor* ResolveFarmingTarget(const FGameplayAbilityActorInfo* ActorInfo);
+	bool IsTargetWithinFarmingRange(const FGameplayAbilityActorInfo* ActorInfo, AActor* Target) const;
 
 	// ✅ 로컬 체감: 즉시 Yaw만 회전
 	void FaceToTarget_InstantLocalOnly(const FGameplayAbilityActorInfo* ActorInfo, const FVector& TargetLocation) const;
@@ -73,5 +75,7 @@ private:
 
 	UPROPERTY()
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> FarmingTask = nullptr;
+
+	TWeakObjectPtr<AActor> CachedFarmingTarget;
 };
 	

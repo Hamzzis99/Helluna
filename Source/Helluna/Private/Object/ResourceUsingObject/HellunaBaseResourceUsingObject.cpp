@@ -94,9 +94,39 @@ void AHellunaBaseResourceUsingObject::OnConstruction(const FTransform& Transform
 void AHellunaBaseResourceUsingObject::BeginPlay()
 {
     Super::BeginPlay();
+    EnsureRuntimeResourceInitialization();
 }
 
 // [기존 로직] UI 띄우기 (유지)
+void AHellunaBaseResourceUsingObject::EnsureRuntimeResourceInitialization()
+{
+    if (bRuntimeResourceInitialized)
+    {
+        return;
+    }
+
+    if (DeformableComponent)
+    {
+        DeformableComponent->InitializeDynamicMesh();
+    }
+
+    if (DynamicMeshComponent)
+    {
+        DynamicMeshComponent->SetCollisionProfileName(TEXT("BlockAll"));
+        DynamicMeshComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+        DynamicMeshComponent->SetComplexAsSimpleCollisionEnabled(true, true);
+        DynamicMeshComponent->UpdateCollision(true);
+    }
+
+    if (ResouceUsingCollisionBox)
+    {
+        ResouceUsingCollisionBox->SetCollisionProfileName(TEXT("Trigger"));
+        ResouceUsingCollisionBox->SetGenerateOverlapEvents(true);
+    }
+
+    bRuntimeResourceInitialized = true;
+}
+
 void AHellunaBaseResourceUsingObject::CollisionBoxBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
 {
 

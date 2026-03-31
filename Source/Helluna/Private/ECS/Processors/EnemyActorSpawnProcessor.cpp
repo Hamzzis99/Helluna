@@ -28,6 +28,7 @@
 
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Components/SceneComponent.h"
+#include "NavigationSystem.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogECSEnemy, Log, All);
 
@@ -142,6 +143,22 @@ void UEnemyActorSpawnProcessor::UpdateActorTickRate(
 
 	Actor->SetActorTickInterval(TickInterval);
 
+	// 거리별 NetUpdateFrequency 조절 — Tick은 줄였는데 레플리케이션만 100Hz인 불일치 방지
+	float NetFreq;
+	if (Distance < Data.NearDistance)
+	{
+		NetFreq = 15.f;   // 근거리: 15Hz
+	}
+	else if (Distance < Data.MidDistance)
+	{
+		NetFreq = 8.f;    // 중거리: 8Hz
+	}
+	else
+	{
+		NetFreq = 3.f;    // 원거리: 3Hz
+	}
+	Actor->SetNetUpdateFrequency(NetFreq);
+
 	if (APawn* Pawn = Cast<APawn>(Actor))
 	{
 		if (AController* Controller = Pawn->GetController())
@@ -171,7 +188,18 @@ bool UEnemyActorSpawnProcessor::TrySpawnActor(
 		return false;
 	}
 
-	const FTransform SpawnTransform = Transform.GetTransform();
+	FTransform SpawnTransform = Transform.GetTransform();
+
+	// Entity→Actor 변환 시 NavMesh 밖에 스폰되는 문제 방지
+	// NavMesh 투영으로 위치 보정
+	if (UNavigationSystemV1* NavSys = FNavigationSystem::GetCurrent<UNavigationSystemV1>(Pool->GetWorld()))
+	{
+		FNavLocation NavLoc;
+		if (NavSys->ProjectPointToNavigation(SpawnTransform.GetLocation(), NavLoc, FVector(200.f, 200.f, 500.f)))
+		{
+			SpawnTransform.SetLocation(NavLoc.Location);
+		}
+	}
 
 	// [수정 포인트] ActivateActor(Transform, HP, MaxHP) → ActivateActor(EnemyClass, Transform, HP, MaxHP)
 	// 멀티 Pool 구조에서 어떤 Pool에서 꺼낼지 클래스를 명시해야 올바른 Actor를 반환받음
@@ -390,6 +418,9 @@ void UEnemyActorSpawnProcessor::Execute(
 					// Step 2: 엔티티 순회 준비
 					// ------------------------------------------------------------------
 					int32 ActiveActorCount = 0;
+					// 한 프레임에 스폰할 수 있는 최대 수 (대량 스폰 시 pathfinding 스파이크 방지)
+					int32 SpawnsThisFrame = 0;
+					static constexpr int32 MaxSpawnsPerFrame = 5;
 					// [주의] MaxConcurrentActorsValue는 엔티티 순회 중 마지막 Data값으로 덮어써짐.
 					// 클래스별로 MaxConcurrentActors가 다르면 순회 순서에 따라 Cap이 달라지는 버그가 있음.
 					int32 MaxConcurrentActorsValue = 50;
@@ -489,11 +520,13 @@ void UEnemyActorSpawnProcessor::Execute(
 									const bool bNearPlayer = MinDistSq < SpawnSq;
 									const bool bNearGoal   = GoalDistSq < SpawnSq;
 
-									if ((bNearPlayer || bNearGoal) && ActiveActorCount < MaxConcurrentActorsValue)
+									if ((bNearPlayer || bNearGoal) && ActiveActorCount < MaxConcurrentActorsValue
+										&& SpawnsThisFrame < MaxSpawnsPerFrame)
 									{
 										if (TrySpawnActor(SpawnState, Data, Transform, Pool))
 										{
 											ActiveActorCount++;
+											SpawnsThisFrame++;
 										}
 									}
 								}

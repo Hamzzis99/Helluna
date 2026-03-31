@@ -141,7 +141,7 @@ public:
 	/** 우주선 중심에서 후보를 탐색할 최대 반경 (cm) */
 	UPROPERTY(EditAnywhere, Category = "슬롯 생성",
 		meta=(DisplayName="최대 반경 (cm)", ClampMin="100"))
-	float MaxRadius = 600.f;
+	float MaxRadius = 350.f;
 
 	/** 각도 간격 (도). 작을수록 슬롯 많아짐 (10도 = 링당 36개) */
 	UPROPERTY(EditAnywhere, Category = "슬롯 생성",
@@ -151,12 +151,12 @@ public:
 	/** 반경 링 개수 (MinRadius ~ MaxRadius 사이를 이 수로 나눔) */
 	UPROPERTY(EditAnywhere, Category = "슬롯 생성",
 		meta=(DisplayName="반경 링 수", ClampMin="1", ClampMax="5"))
-	int32 RadiusRings = 2;
+	int32 RadiusRings = 3;
 
-	/** NavMesh 투영 허용 오차 (cm) */
+	/** NavMesh 투영 허용 오차 (cm) — 경사 지형에서 슬롯 후보 탈락 방지를 위해 넉넉하게 설정 */
 	UPROPERTY(EditAnywhere, Category = "슬롯 생성",
 		meta=(DisplayName="NavMesh 허용 오차 (cm)", ClampMin="10"))
-	float NavExtent = 100.f;
+	float NavExtent = 200.f;
 
 	/** 슬롯 후보가 우주선 메시와 겹치는지 체크할 Trace 반경 (cm) */
 	UPROPERTY(EditAnywhere, Category = "슬롯 생성",
@@ -166,6 +166,13 @@ public:
 	/** 슬롯을 다시 빌드 (런타임 재생성) */
 	UFUNCTION(BlueprintCallable, Category = "AI|Slot")
 	void RebuildSlots();
+
+	/**
+	 * 플레이어 접속 시 호출 — 슬롯이 아직 0개면 즉시 BuildSlots 재시도.
+	 * World Partition에서 플레이어 접속 후 NavMesh가 로드되므로 이 시점에 재시도하면 성공 확률이 높다.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "AI|Slot")
+	void TriggerBuildSlotsIfEmpty();
 
 	/** 디버그 드로잉 활성화 */
 	UPROPERTY(EditAnywhere, Category = "디버그",
@@ -211,8 +218,8 @@ private:
 	/** 현재까지 재시도한 횟수 */
 	int32 SlotRetryCount = 0;
 
-	/** 최대 재시도 횟수 */
-	static constexpr int32 MaxSlotRetryCount = 15;
+	/** 최대 재시도 횟수 (패키징에서 NavMesh 스트리밍 지연이 길 수 있으므로 넉넉하게) */
+	static constexpr int32 MaxSlotRetryCount = 30;
 
 	/** 재시도 간격 (초) */
 	static constexpr float SlotRetryInterval = 2.0f;

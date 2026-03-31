@@ -352,6 +352,9 @@ protected:
 
     /** BeginPlay에서 UDS 프로퍼티를 캐싱하는 헬퍼 */
     void CacheUDSProperties();
+
+    /** 클라이언트 시작 시 맵에 남아있는 초기 Night PCG 산출물을 정리 */
+    void CleanupInitialNightPCGClientArtifacts();
     
     /** 데디서버에서 UDS/UDW가 존재하는지 (BeginPlay에서 1회 체크) */
     bool bHasUDS = false;
@@ -359,6 +362,9 @@ protected:
     
     /** 밤을 한 번이라도 거쳤는지 (첫 시작 시 새벽 전환 방지) */
     bool bHasBeenNight = false;
+
+    /** 클라이언트 초기 PCG 정리를 한 번만 수행하기 위한 가드 */
+    bool bInitialNightPCGArtifactsCleaned = false;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // [Phase 10] 채팅 히스토리 (서버 메모리 전용, 리플리케이션 안 함)

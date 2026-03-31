@@ -24,9 +24,16 @@ void UEnemyGameplayAbility_Death::ActivateAbility(
 {
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
 
+	UE_LOG(LogTemp, Warning,
+		TEXT("[DeathDiag][DeathGAActivate] Avatar=%s"),
+		*GetNameSafe(GetAvatarActorFromActorInfo()));
+
 	// [GunParry] 처형 중이면 GA_Death 차단 (GA_GunParry가 사망 처리를 직접 수행)
 	if (UHeroGameplayAbility_GunParry::ShouldDeferDeath(GetAvatarActorFromActorInfo()))
 	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[DeathDiag][DeathGADeferred] Avatar=%s Reason=ShouldDeferDeath"),
+			*GetNameSafe(GetAvatarActorFromActorInfo()));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, false);
 		return;
 	}
@@ -34,9 +41,15 @@ void UEnemyGameplayAbility_Death::ActivateAbility(
 	AHellunaEnemyCharacter* Enemy = GetEnemyCharacterFromActorInfo();
 	if (!Enemy)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[DeathDiag][DeathGAActivateFail] Reason=MissingEnemy"));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[DeathDiag][DeathGAEnemy] Enemy=%s Montage=%s"),
+		*GetNameSafe(Enemy),
+		*GetNameSafe(Enemy->DeathMontage));
 
 	// 이동 정지 / 콜리전 비활성화
 	if (UCharacterMovementComponent* MoveComp = Enemy->GetCharacterMovement())
@@ -61,6 +74,9 @@ void UEnemyGameplayAbility_Death::ActivateAbility(
 	UAnimMontage* DeathMontage = Enemy->DeathMontage;
 	if (!DeathMontage)
 	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[DeathDiag][DeathGANoMontage] Enemy=%s"),
+			*GetNameSafe(Enemy));
 		HandleDeathFinished();
 		return;
 	}
@@ -70,6 +86,9 @@ void UEnemyGameplayAbility_Death::ActivateAbility(
 
 	if (!MontageTask)
 	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[DeathDiag][DeathGAMontageTaskFail] Enemy=%s"),
+			*GetNameSafe(Enemy));
 		HandleDeathFinished();
 		return;
 	}
@@ -89,16 +108,28 @@ void UEnemyGameplayAbility_Death::ActivateAbility(
 			EarlyFinishTime, false);
 	}
 
+	UE_LOG(LogTemp, Warning,
+		TEXT("[DeathDiag][DeathGAMontageStart] Enemy=%s Length=%.2f EarlyFinish=%.2f"),
+		*GetNameSafe(Enemy),
+		DeathMontage->GetPlayLength(),
+		EarlyFinishTime);
+
 	MontageTask->ReadyForActivation();
 }
 
 void UEnemyGameplayAbility_Death::OnMontageCompleted()
 {
+	UE_LOG(LogTemp, Warning,
+		TEXT("[DeathDiag][DeathGAMontageCompleted] Enemy=%s"),
+		*GetNameSafe(GetEnemyCharacterFromActorInfo()));
 	HandleDeathFinished();
 }
 
 void UEnemyGameplayAbility_Death::OnMontageCancelled()
 {
+	UE_LOG(LogTemp, Warning,
+		TEXT("[DeathDiag][DeathGAMontageCancelled] Enemy=%s"),
+		*GetNameSafe(GetEnemyCharacterFromActorInfo()));
 	HandleDeathFinished();
 }
 
@@ -112,6 +143,10 @@ void UEnemyGameplayAbility_Death::HandleDeathFinished()
 
 	UWorld* World = Enemy->GetWorld();
 	if (!World) return;
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[DeathDiag][DeathGAHandleFinished] Enemy=%s"),
+		*GetNameSafe(Enemy));
 
 	Enemy->OnDeathMontageFinished.ExecuteIfBound();
 
@@ -131,6 +166,9 @@ void UEnemyGameplayAbility_Death::HandleDeathFinished()
 	EndAbility(Handle, ActorInfo, ActivationInfo, true, false);
 
 	// DespawnMassEntityOnServer가 Mass Entity 정리 + Destroy()까지 처리
+	UE_LOG(LogTemp, Warning,
+		TEXT("[DeathDiag][DeathGADespawn] Enemy=%s"),
+		*GetNameSafe(Enemy));
 	Enemy->DespawnMassEntityOnServer(TEXT("GA_Death"));
 }
 

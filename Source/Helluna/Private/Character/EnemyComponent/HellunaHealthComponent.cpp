@@ -72,14 +72,22 @@ void UHellunaHealthComponent::ApplyDirectDamage(float Damage, AActor* Instigator
 		return;
 
 	if (bDead)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[DeathDiag][DirectDamageIgnored] Owner=%s Damage=%.1f Reason=AlreadyDead"),
+			*GetNameSafe(Owner), Damage);
 		return;
+	}
 
 	if (Damage <= 0.f)
 		return;
 
 	// [GunParry] 무적 상태면 데미지 무시
 	if (UHeroGameplayAbility_GunParry::ShouldBlockDamage(Owner))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[ParryDiag][DirectDamageBlocked] Owner=%s Damage=%.1f Reason=ShouldBlockDamage"),
+			*GetNameSafe(Owner), Damage);
 		return;
+	}
 
 	// [Downed] 다운 상태면 출혈 가속
 	if (bDowned)
@@ -104,10 +112,20 @@ void UHellunaHealthComponent::HandleOwnerAnyDamage(
 		return;
 
 	if (bDead)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[DeathDiag][TakeAnyDamageIgnored] Owner=%s Damage=%.1f DamageCauser=%s Reason=AlreadyDead"),
+			*GetNameSafe(Owner), Damage, *GetNameSafe(DamageCauser));
 		return;
+	}
 
 	if (Damage <= 0.f)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[DamageDiag][TakeAnyDamageIgnored] Owner=%s Damage=%.1f DamageCauser=%s Reason=NonPositive"),
+			*GetNameSafe(Owner), Damage, *GetNameSafe(DamageCauser));
 		return;
+	}
 
 	AActor* InstigatorActor = DamageCauser;
 	if (!InstigatorActor && InstigatedBy)
@@ -118,6 +136,9 @@ void UHellunaHealthComponent::HandleOwnerAnyDamage(
 	// [Downed] 다운 상태면 출혈 가속
 	if (bDowned)
 	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[DeathDiag][TakeAnyDamageBleedout] Owner=%s Damage=%.1f DamageCauser=%s BleedoutRemaining=%.1f"),
+			*GetNameSafe(Owner), Damage, *GetNameSafe(InstigatorActor), BleedoutTimeRemaining);
 		ApplyBleedoutDamage(Damage);
 		return;
 	}
@@ -131,6 +152,16 @@ void UHellunaHealthComponent::Internal_SetHealth(float NewHealth, AActor* Instig
 
 	Health = FMath::Clamp(NewHealth, 0.f, MaxHealth);
 
+	UE_LOG(LogTemp, Warning,
+		TEXT("[DeathDiag][HealthSet] Owner=%s Old=%.1f Requested=%.1f New=%.1f Instigator=%s Dead=%s Downed=%s"),
+		*GetNameSafe(GetOwner()),
+		OldHealth,
+		NewHealth,
+		Health,
+		*GetNameSafe(InstigatorActor),
+		bDead ? TEXT("Y") : TEXT("N"),
+		bDowned ? TEXT("Y") : TEXT("N"));
+
 	if (!FMath::IsNearlyEqual(OldHealth, Health))
 	{
 		OnHealthChanged.Broadcast(this, OldHealth, Health, InstigatorActor);
@@ -141,6 +172,11 @@ void UHellunaHealthComponent::Internal_SetHealth(float NewHealth, AActor* Instig
 	if (!bDead && Health <= 0.f)
 	{
 		AActor* Owner = GetOwner();
+		UE_LOG(LogTemp, Warning,
+			TEXT("[DeathDiag][HealthZero] Owner=%s Instigator=%s IsHero=%s"),
+			*GetNameSafe(Owner),
+			*GetNameSafe(InstigatorActor),
+			(Owner && Owner->IsA(AHellunaHeroCharacter::StaticClass())) ? TEXT("Y") : TEXT("N"));
 
 		// [Downed] HeroCharacter + 아직 다운 아님 → 다운 진입
 		if (!bDowned && Owner && Owner->IsA(AHellunaHeroCharacter::StaticClass()))
@@ -176,15 +212,31 @@ void UHellunaHealthComponent::HandleDeath(AActor* KillerActor)
 	if (!Owner || !Owner->HasAuthority())
 		return;
 
+	UE_LOG(LogTemp, Warning,
+		TEXT("[DeathDiag][HandleDeath] Owner=%s Killer=%s Dead=%s Downed=%s AutoDestroy=%s"),
+		*GetNameSafe(Owner),
+		*GetNameSafe(KillerActor),
+		bDead ? TEXT("Y") : TEXT("N"),
+		bDowned ? TEXT("Y") : TEXT("N"),
+		bAutoDestroyOwnerOnDeath ? TEXT("Y") : TEXT("N"));
+
 	// [GunParry] 처형 중이면 사망 보류 (OnDeath도 안 함)
 	if (UHeroGameplayAbility_GunParry::ShouldDeferDeath(Owner))
 	{
 		if (AHellunaEnemyCharacter* EnemyChar = Cast<AHellunaEnemyCharacter>(Owner))
 			EnemyChar->bParryDeferredDeath = true;
+		UE_LOG(LogTemp, Warning,
+			TEXT("[ParryDiag][DeathDeferred] Owner=%s Killer=%s Reason=AnimLocked"),
+			*GetNameSafe(Owner),
+			*GetNameSafe(KillerActor));
 		return;
 	}
 
 	// OnDeath 브로드캐스트 → EnemyCharacter::OnMonsterDeath → StateTree Signal
+	UE_LOG(LogTemp, Warning,
+		TEXT("[DeathDiag][BroadcastOnDeath] Owner=%s Killer=%s"),
+		*GetNameSafe(Owner),
+		*GetNameSafe(KillerActor));
 	OnDeath.Broadcast(Owner, KillerActor);
 
 	if (bAutoDestroyOwnerOnDeath)

@@ -28,6 +28,8 @@ public:
 protected:
     virtual void BeginPlay() override;
 
+    void EnsureRuntimeResourceInitialization();
+
 protected:
     // ==================================================================================
     // [김기현 - MDF 시스템 영역] 
@@ -48,6 +50,8 @@ protected:
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "ResouceUsing")
     UBoxComponent* ResouceUsingCollisionBox;
+
+    bool bRuntimeResourceInitialized = false;
 
     UFUNCTION()
     virtual void CollisionBoxBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);

@@ -123,6 +123,14 @@ void UHeroGameplayAbility_Shoot::Shoot()
 		return;
 	}
 
+	if (AHeroWeapon_Launcher* Launcher = Cast<AHeroWeapon_Launcher>(Weapon))
+	{
+		if (AController* Controller = Hero->GetController())
+		{
+			Launcher->CacheAimFromController(Controller);
+		}
+	}
+
 	if (UAnimMontage* AttackMontage = Weapon->AnimSet.Attack)
 	{
 		if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())

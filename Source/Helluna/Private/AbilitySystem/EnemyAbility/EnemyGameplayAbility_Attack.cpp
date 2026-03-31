@@ -55,12 +55,19 @@ void UEnemyGameplayAbility_Attack::ActivateAbility(
 	}
 	Enemy->SetServerAttackPoseTickEnabled(true);
 
-	// ★ 몽타주 시작 즉시 이동만 잠금 (nullptr 전달 → 회전 없음)
-	// 회전은 몽타주가 완전히 끝난 OnMontageCompleted에서 처리한다.
-	Enemy->LockMovementAndFaceTarget(nullptr);
+	Enemy->LockMovementAndFaceTarget(CurrentTarget.Get());
 	
 	// 광폭화 상태이면 Enemy에 설정된 EnrageAttackMontagePlayRate 배율로 공격 애니메이션을 빠르게 재생
 	const float PlayRate = Enemy->bEnraged ? Enemy->EnrageAttackMontagePlayRate : 1.f;
+	const FVector ToTarget = CurrentTarget.IsValid()
+		? (CurrentTarget->GetActorLocation() - Enemy->GetActorLocation()).GetSafeNormal2D()
+		: FVector::ForwardVector;
+	const FRotator FacingRotation = ToTarget.IsNearlyZero()
+		? Enemy->GetActorRotation()
+		: FRotator(0.f, ToTarget.Rotation().Yaw, 0.f);
+
+	Enemy->ForceNetUpdate();
+	Enemy->Multicast_PlayAttackMontage(AttackMontage, PlayRate, FacingRotation);
 
 	UAbilityTask_PlayMontageAndWait* MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
 		this, NAME_None, AttackMontage, PlayRate, NAME_None, false

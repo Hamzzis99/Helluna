@@ -217,8 +217,8 @@ public:
 	void Multicast_SetStaggerVisual(UMaterialInterface* StaggerMat, UAnimMontage* StaggerAnim, bool bEnable);
 
 public:
-	/** 피격 몽타주 재생 (서버 → 멀티캐스트) */
-	UFUNCTION(NetMulticast, Reliable)
+	/** 피격 몽타주 재생 (서버 → 멀티캐스트, Unreliable — 동시 피격 시 네트워크 포화 방지) */
+	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_PlayHitReact();
 
 	/** 사망 몽타주 재생 (서버 → 멀티캐스트) */
@@ -347,17 +347,14 @@ private:
 	void PerformAttackTrace();
 	
 	/**
-	 * 서버 RPC: 데미지 적용 요청
-	 * AI는 서버에서만 실행되므로 직접 호출 가능
-	 * 
+	 * 서버 전용 데미지 적용 (일반 함수).
+	 * AI는 서버에서만 실행되므로 Server RPC가 불필요 — 직접 호출로 오버헤드 제거.
+	 *
 	 * @param Target - 데미지를 받을 플레이어
 	 * @param DamageAmount - 데미지량
 	 * @param HitLocation - 충돌 위치 (이펙트 재생)
 	 */
-	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerApplyDamage(AActor* Target, float DamageAmount, const FVector& HitLocation);
-	void ServerApplyDamage_Implementation(AActor* Target, float DamageAmount, const FVector& HitLocation);
-	bool ServerApplyDamage_Validate(AActor* Target, float DamageAmount, const FVector& HitLocation);
 	
 	/**
 	 * Multicast RPC: 이펙트 재생 (히트/광폭화 공용)
@@ -371,7 +368,7 @@ private:
 	 */
 
 public:
-	UFUNCTION(NetMulticast, Reliable)
+	UFUNCTION(NetMulticast, Unreliable)
 	void MulticastPlayEffect(const FVector& SpawnLocation, UNiagaraSystem* Effect,
 		float EffectScale, bool bPlaySound);
 	void MulticastPlayEffect_Implementation(const FVector& SpawnLocation, UNiagaraSystem* Effect,
@@ -385,9 +382,26 @@ public:
 	/** 이동 잠금 해제 (EndAbility에서 호출) */
 	void UnlockMovement();
 
+	/**
+	 * 이동 잠금/해제를 클라이언트에도 동기화.
+	 * bLock=true: 속도 0 + 회전 모드를 Controller 기반으로 전환 (공격 중 타겟 방향 유지)
+	 * bLock=false: 속도 복원 + 회전 모드를 이동 방향 기반으로 복원
+	 */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_SetMovementLocked(bool bLock, float WalkSpeed);
+
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_PlayAttackMontage(UAnimMontage* Montage, float PlayRate, FRotator FacingRotation);
+
 private:
 	float SavedMaxWalkSpeed = 300.f;
 	bool bMovementLocked = false;
+
+	/** 공격 전 CMC 네트워크 스무딩 모드 백업 (클라이언트) */
+	ENetworkSmoothingMode SavedSmoothingMode = ENetworkSmoothingMode::Exponential;
+
+	/** 히트 이펙트 RPC 쓰로틀링 — 0.1초 내 중복 호출 생략 */
+	double LastEffectRPCTime = 0.0;
 
 	EVisibilityBasedAnimTickOption SavedAnimTickOption = EVisibilityBasedAnimTickOption::OnlyTickPoseWhenRendered;
 

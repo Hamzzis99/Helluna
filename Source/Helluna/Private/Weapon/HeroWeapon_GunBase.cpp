@@ -155,12 +155,29 @@ void AHeroWeapon_GunBase::DoLineTraceAndDamage(AController* InstigatorController
 
 	// 맞았으면 히트 위치, 아니면 끝점
 	const FVector HitLocation = bHit ? Hit.ImpactPoint : TraceEnd;
+	const FVector PredictedDirection = (HitLocation - TraceStart).GetSafeNormal();
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[GunPredicted] Start=%s Target=%s Dir=%s Hit=%s"),
+		*TraceStart.ToCompactString(),
+		*HitLocation.ToCompactString(),
+		*PredictedDirection.ToCompactString(),
+		bHit ? TEXT("Y") : TEXT("N"));
 
 	if (bHit)
 	{
 		AActor* HitActor = Hit.GetActor();
 		if (HitActor)
 		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[DamageDiag][GunHit] Weapon=%s Instigator=%s Target=%s Damage=%.1f Bone=%s Loc=%s"),
+				*GetNameSafe(this),
+				*GetNameSafe(InstigatorController ? InstigatorController->GetPawn() : nullptr),
+				*GetNameSafe(HitActor),
+				Damage,
+				*Hit.BoneName.ToString(),
+				*Hit.ImpactPoint.ToString());
+
 			UGameplayStatics::ApplyPointDamage(
 				HitActor,
 				Damage,

@@ -114,6 +114,13 @@ void USpaceShipAttackSlotManager::BuildSlots()
 		}
 	}
 
+	// 후보/유효 비율 로그 — 경사 지형에서 슬롯 후보 전부 탈락 시 진단용
+	UE_LOG(LogTemp, Log,
+		TEXT("[SlotManager] 슬롯 후보/유효 비율: %d/%d (%.1f%%) — NavExtent=%.0f"),
+		ValidCount, TotalCount,
+		TotalCount > 0 ? (float)ValidCount / TotalCount * 100.f : 0.f,
+		NavExtent);
+
 	if (ValidCount == 0)
 	{
 		UE_LOG(LogTemp, Warning,
@@ -369,6 +376,19 @@ bool USpaceShipAttackSlotManager::GetWaitingPosition(AActor* Monster, FVector& O
 	}
 
 	return false;
+}
+
+// ============================================================================
+// TriggerBuildSlotsIfEmpty — 플레이어 접속 시 슬롯 재시도
+// ============================================================================
+void USpaceShipAttackSlotManager::TriggerBuildSlotsIfEmpty()
+{
+	if (Slots.Num() == 0)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[SlotManager] 플레이어 접속 → 슬롯 0개 → BuildSlots 재시도"));
+		SlotRetryCount = 0; // 카운터 리셋하여 재시도 가능하게
+		BuildSlots();
+	}
 }
 
 // ============================================================================

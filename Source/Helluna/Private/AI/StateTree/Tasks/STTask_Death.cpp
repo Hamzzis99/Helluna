@@ -25,11 +25,23 @@ EStateTreeRunStatus FSTTask_Death::EnterState(
 
 	AAIController* AIC = InstanceData.AIController;
 	if (!AIC)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[DeathDiag][DeathTaskEnterFail] Reason=MissingAIController"));
 		return EStateTreeRunStatus::Failed;
+	}
 
 	AHellunaEnemyCharacter* Enemy = Cast<AHellunaEnemyCharacter>(AIC->GetPawn());
 	if (!Enemy)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[DeathDiag][DeathTaskEnterFail] AIController=%s Reason=MissingEnemyPawn"),
+			*GetNameSafe(AIC));
 		return EStateTreeRunStatus::Failed;
+	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[DeathDiag][DeathTaskEnter] Enemy=%s AIController=%s"),
+		*GetNameSafe(Enemy),
+		*GetNameSafe(AIC));
 
 	AIC->StopMovement();
 
@@ -58,6 +70,9 @@ EStateTreeRunStatus FSTTask_Death::EnterState(
 		const bool bActivated = ASC->TryActivateAbilityByClass(UEnemyGameplayAbility_Death::StaticClass());
 		if (bActivated)
 		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[DeathDiag][DeathTaskActivateGA] Enemy=%s Result=Activated"),
+				*GetNameSafe(Enemy));
 			FInstanceDataType* DataPtr = &InstanceData;
 			Enemy->OnDeathMontageFinished.BindLambda([DataPtr]()
 			{
@@ -66,11 +81,17 @@ EStateTreeRunStatus FSTTask_Death::EnterState(
 		}
 		else
 		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[DeathDiag][DeathTaskActivateGA] Enemy=%s Result=Failed Fallback=Enabled"),
+				*GetNameSafe(Enemy));
 			InstanceData.bUseFallback = true;
 		}
 	}
 	else
 	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[DeathDiag][DeathTaskNoASC] Enemy=%s Fallback=Enabled"),
+			*GetNameSafe(Enemy));
 		InstanceData.bUseFallback = true;
 	}
 
@@ -84,7 +105,18 @@ EStateTreeRunStatus FSTTask_Death::Tick(
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
 
 	if (InstanceData.bMontageFinished)
+	{
+		if (AAIController* AIC = InstanceData.AIController)
+		{
+			if (AHellunaEnemyCharacter* Enemy = Cast<AHellunaEnemyCharacter>(AIC->GetPawn()))
+			{
+				UE_LOG(LogTemp, Warning,
+					TEXT("[DeathDiag][DeathTaskComplete] Enemy=%s Reason=MontageFinished"),
+					*GetNameSafe(Enemy));
+			}
+		}
 		return EStateTreeRunStatus::Succeeded;
+	}
 
 	if (InstanceData.bUseFallback)
 	{
@@ -95,6 +127,10 @@ EStateTreeRunStatus FSTTask_Death::Tick(
 			{
 				if (AHellunaEnemyCharacter* Enemy = Cast<AHellunaEnemyCharacter>(AIC->GetPawn()))
 				{
+					UE_LOG(LogTemp, Warning,
+						TEXT("[DeathDiag][DeathTaskFallbackDespawn] Enemy=%s Elapsed=%.2f"),
+						*GetNameSafe(Enemy),
+						InstanceData.FallbackTimer);
 					// DespawnMassEntityOnServer가 Mass Entity 정리 + Destroy()까지 처리
 					Enemy->DespawnMassEntityOnServer(TEXT("STTask_Death_Fallback"));
 				}

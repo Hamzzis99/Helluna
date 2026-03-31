@@ -10,6 +10,7 @@
 #include "TimerManager.h"
 // [김기현 추가] 저장 시스템 및 게임 인스턴스 헤더
 #include "Kismet/GameplayStatics.h"
+#include "PCGComponent.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"  // TActorIterator
 #include "Save/MDF_SaveActor.h"                    // 저장용 액터 클래스 (SaveGame)
@@ -79,6 +80,7 @@ void AHellunaDefenseGameState::OnRep_Phase()
 #if HELLUNA_DEBUG_DEFENSE
         UE_LOG(LogTemp, Warning, TEXT("[GameState] OnDayStarted 호출 시도"));
 #endif
+        CleanupInitialNightPCGClientArtifacts();
         OnDayStarted();
         if (bHasUDW) ApplyRandomWeather(true);
         break;
@@ -467,6 +469,53 @@ void AHellunaDefenseGameState::BeginPlay()
 #endif
         }
     }
+}
+
+void AHellunaDefenseGameState::CleanupInitialNightPCGClientArtifacts()
+{
+    if (HasAuthority() || bHasBeenNight || bInitialNightPCGArtifactsCleaned)
+    {
+        return;
+    }
+
+    UWorld* World = GetWorld();
+    if (!IsValid(World))
+    {
+        return;
+    }
+
+    TArray<AActor*> PCGActors;
+    UGameplayStatics::GetAllActorsWithTag(World, FName(TEXT("NightPCG")), PCGActors);
+    for (AActor* PCGActor : PCGActors)
+    {
+        if (!IsValid(PCGActor))
+        {
+            continue;
+        }
+
+        if (UPCGComponent* PCGComp = PCGActor->FindComponentByClass<UPCGComponent>())
+        {
+            PCGComp->GenerationTrigger = EPCGComponentGenerationTrigger::GenerateOnDemand;
+            PCGComp->CleanupLocal(true);
+            PCGComp->Deactivate();
+        }
+    }
+
+    TArray<AActor*> ExistingOres;
+    UGameplayStatics::GetAllActorsWithTag(World, FName(TEXT("Ore")), ExistingOres);
+    for (AActor* OreActor : ExistingOres)
+    {
+        if (!IsValid(OreActor))
+        {
+            continue;
+        }
+
+        OreActor->SetActorHiddenInGame(true);
+        OreActor->SetActorEnableCollision(false);
+        OreActor->SetActorTickEnabled(false);
+    }
+
+    bInitialNightPCGArtifactsCleaned = true;
 }
 
 void AHellunaDefenseGameState::EndPlay(const EEndPlayReason::Type EndPlayReason)
