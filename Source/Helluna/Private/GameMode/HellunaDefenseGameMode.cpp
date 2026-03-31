@@ -357,43 +357,69 @@ void AHellunaDefenseGameMode::ActivateNightPCG()
             continue;
         }
 
-        // ★ World Partition + PIE: PCG 비동기 CleanupTask의 ActorFolder 삭제 크래시 방지
-        //   WP(OFPA)에서 UActorFolder는 레벨 패키지와 별도의 외부 패키지를 가짐.
-        //   PCG가 폴더 삭제 시 check(InActorFolder->GetPackage()->IsDirty()) 를 통과하려면
-        //   UActorFolder 자체의 패키지를 Dirty로 마킹해야 함 (레벨 패키지만으로는 불충분).
+        // ★ World Partition + OFPA: PCG CleanupTask의 ActorFolder 삭제 크래시 방지
+        //   ULevel::RemoveActorFolder() 내부에서 check(InActorFolder->GetPackage()->IsDirty()) assertion이 있다.
+        //   PIE 환경에서는 MarkPackageDirty()가 GIsPlayInEditorWorld 체크에 의해 무시되므로
+        //   엔진의 Modify()도 패키지를 Dirty로 만들 수 없다.
+        //   → SetDirtyFlag(true)로 직접 bDirty 플래그를 설정해야 한다.
 #if WITH_EDITOR
         {
-            int32 DirtiedFolderCount = 0;
-            for (TObjectIterator<UActorFolder> It; It; ++It)
-            {
-                UActorFolder* Folder = *It;
-                if (!Folder) continue;
+            int32 DirtiedCount = 0;
 
-                UPackage* Pkg = Folder->GetPackage();
+            auto ForceMarkDirty = [](UPackage* Pkg)
+            {
                 if (Pkg && !Pkg->IsDirty())
                 {
-                    Pkg->MarkPackageDirty();
-                    DirtiedFolderCount++;
+                    Pkg->SetDirtyFlag(true);
+                    return true;
+                }
+                return false;
+            };
+
+            // 1) 모든 레벨의 ActorFolder 패키지를 SetDirtyFlag로 강제 마킹
+            if (UWorld* W = GetWorld())
+            {
+                for (ULevel* Level : W->GetLevels())
+                {
+                    if (!Level) continue;
+                    if (ForceMarkDirty(Level->GetPackage())) DirtiedCount++;
+
+                    Level->ForEachActorFolder([&](UActorFolder* Folder)
+                    {
+                        if (Folder)
+                        {
+                            if (UPackage* ExtPkg = Folder->GetExternalPackage())
+                            {
+                                if (ForceMarkDirty(ExtPkg)) DirtiedCount++;
+                            }
+                            if (ForceMarkDirty(Folder->GetPackage())) DirtiedCount++;
+                        }
+                        return true;
+                    });
                 }
             }
 
-            // 레벨 패키지도 함께 마킹 (폴더 외 다른 cleanup 작업 대비)
-            if (UWorld* W = GetWorld())
+            // 2) PCG 관리 액터들의 외부 패키지도 강제 마킹
+            TArray<UObject*> ManagedObjs;
+            GetObjectsWithOuter(PCGComp, ManagedObjs, false);
+            for (UObject* Obj : ManagedObjs)
             {
-                if (W->PersistentLevel)
+                if (UPackage* Pkg = Obj->GetExternalPackage())
                 {
-                    W->PersistentLevel->GetPackage()->MarkPackageDirty();
+                    if (ForceMarkDirty(Pkg)) DirtiedCount++;
                 }
             }
+
+            // 3) PCG 액터 자체 레벨 패키지
             if (PCGActor)
             {
                 if (ULevel* PCGLevel = PCGActor->GetLevel())
                 {
-                    PCGLevel->GetPackage()->MarkPackageDirty();
+                    ForceMarkDirty(PCGLevel->GetPackage());
                 }
             }
 
-            UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [WP 크래시 방지] ActorFolder %d개 + 레벨 패키지 Dirty 마킹 완료"), DirtiedFolderCount);
+            UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [WP 크래시 방지] SetDirtyFlag 강제 마킹: %d개"), DirtiedCount);
         }
 #endif
 
@@ -421,6 +447,42 @@ void AHellunaDefenseGameMode::ActivateNightPCG()
 
         PCGComp->GenerateLocal(/*bForce=*/true);
         UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [2/3] [%d] ✅ GenerateLocal 호출 완료"), i);
+
+#if WITH_EDITOR
+        // ★ 비동기 생성 중 온디맨드 로드되는 ActorFolder 패키지도 SetDirtyFlag 유지
+        {
+            TWeakObjectPtr<UPCGComponent> WeakPCGForDirty = PCGComp;
+            GetWorldTimerManager().ClearTimer(PCGActorFolderDirtyGuardTimer);
+            GetWorldTimerManager().SetTimer(PCGActorFolderDirtyGuardTimer, [this, WeakPCGForDirty]()
+            {
+                if (!WeakPCGForDirty.IsValid() || !WeakPCGForDirty->IsGenerating())
+                {
+                    GetWorldTimerManager().ClearTimer(PCGActorFolderDirtyGuardTimer);
+                    return;
+                }
+                if (UWorld* W = GetWorld())
+                {
+                    for (ULevel* Level : W->GetLevels())
+                    {
+                        if (!Level) continue;
+                        Level->ForEachActorFolder([](UActorFolder* Folder)
+                        {
+                            if (Folder)
+                            {
+                                if (UPackage* ExtPkg = Folder->GetExternalPackage())
+                                {
+                                    if (!ExtPkg->IsDirty()) ExtPkg->SetDirtyFlag(true);
+                                }
+                                UPackage* Pkg = Folder->GetPackage();
+                                if (Pkg && !Pkg->IsDirty()) Pkg->SetDirtyFlag(true);
+                            }
+                            return true;
+                        });
+                    }
+                }
+            }, 0.01f, true);
+        }
+#endif
 
         // 진단 타이머
         FTimerHandle DiagTimer;
