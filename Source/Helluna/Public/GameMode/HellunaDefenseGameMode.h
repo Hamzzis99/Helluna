@@ -128,8 +128,14 @@ protected:
 	/** BeginPlay에서 태그 기반으로 캐싱한 PCG 컴포넌트 목록 (TWeakObjectPtr — UPROPERTY 불필요) */
 	TArray<TWeakObjectPtr<UPCGComponent>> CachedNightPCGComponents;
 
+	/** PCG 비동기 생성 중 ActorFolder 패키지 Dirty 유지용 가드 타이머 (WP+PIE 크래시 방지) */
+	FTimerHandle PCGActorFolderDirtyGuardTimer;
+
 	/** 태그 기반 PCG 컴포넌트 캐싱 */
 	void CacheNightPCGComponents();
+
+	/** 첫 게임 시작 시 맵에 남아있는 초기 Night PCG 산출물을 정리 */
+	void CleanupInitialNightPCGArtifacts();
 
 	/** 밤 시작: PCG 그래프 실행 */
 	void ActivateNightPCG();

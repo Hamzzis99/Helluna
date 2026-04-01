@@ -1,60 +1,52 @@
-/**
- * STCondition_InAttackZone.cpp
- *
- * 몬스터 전방 Box 공격존 vs 타겟 콜리전 오버랩 판정.
- *
- * ─── 동작 흐름 ─────────────────────────────────────────────────
- *  1. 폰 위치 + 전방 오프셋 → 박스 중심 계산
- *  2. 폰 회전 → 박스 회전 (전방 방향에 맞춰 박스가 회전)
- *  3. OverlapMultiByObjectType 으로 월드 오버랩 쿼리
- *  4. 결과 중 타겟 Actor가 있으면 공격존 안으로 판정
- *
- * @author 김민우
- */
-
 #include "AI/StateTree/Conditions/STCondition_InAttackZone.h"
-#include "StateTreeExecutionContext.h"
-#include "AIController.h"
-#include "GameFramework/Pawn.h"
-#include "Components/PrimitiveComponent.h"
-#include "Engine/OverlapResult.h"
-#include "CollisionQueryParams.h"
-#include "DrawDebugHelpers.h"
 
-// ============================================================================
-// TestCondition
-// ============================================================================
+#include "AIController.h"
+#include "CollisionQueryParams.h"
+#include "Components/PrimitiveComponent.h"
+#include "DrawDebugHelpers.h"
+#include "Engine/OverlapResult.h"
+#include "GameFramework/Pawn.h"
+#include "StateTreeExecutionContext.h"
+
 bool FSTCondition_InAttackZone::TestCondition(FStateTreeExecutionContext& Context) const
 {
 	const FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
 	const FHellunaAITargetData& TargetData = InstanceData.TargetData;
 
 	if (!TargetData.HasValidTarget())
+	{
 		return !bCheckInside;
+	}
 
 	AActor* TargetActor = TargetData.TargetActor.Get();
 	if (!TargetActor)
+	{
 		return !bCheckInside;
+	}
 
-	AAIController* AIC = InstanceData.AIController;
-	if (!AIC)
+	AAIController* AIController = InstanceData.AIController;
+	if (!AIController)
+	{
 		return !bCheckInside;
+	}
 
-	const APawn* Pawn = AIC->GetPawn();
+	const APawn* Pawn = AIController->GetPawn();
 	if (!Pawn)
+	{
 		return !bCheckInside;
+	}
 
 	UWorld* World = Pawn->GetWorld();
 	if (!World)
+	{
 		return !bCheckInside;
+	}
 
-	// ── 박스 위치/회전 계산 ─────────────────────────────────────
-	const FVector PawnLoc  = Pawn->GetActorLocation();
-	const FQuat   PawnRot  = Pawn->GetActorQuat();
-	const FVector Forward  = PawnRot.GetForwardVector();
+	const FVector PawnLoc = Pawn->GetActorLocation();
+	const FQuat PawnRot = Pawn->GetActorQuat();
+	const FVector Forward = PawnRot.GetForwardVector();
 	const FVector BoxCenter = PawnLoc + Forward * ForwardOffset;
 
-	// ── 오버랩 쿼리 ────────────────────────────────────────────
 	const FCollisionShape BoxShape = FCollisionShape::MakeBox(AttackZoneHalfExtent);
 
 	FCollisionQueryParams QueryParams;
@@ -69,24 +61,23 @@ bool FSTCondition_InAttackZone::TestCondition(FStateTreeExecutionContext& Contex
 		BoxShape,
 		QueryParams);
 
-	// ── 타겟 Actor의 Block All 콜리전과 겹치는지 확인 ─────────
-	// UI 콜리전 박스(WorldDynamic 등)는 무시하고
-	// 우주선 본체 메시(Block All)에 닿았을 때만 공격 판정
 	bool bOverlapping = false;
 	for (const FOverlapResult& Result : Overlaps)
 	{
 		if (Result.GetActor() != TargetActor)
+		{
 			continue;
+		}
 
-		const UPrimitiveComponent* Comp = Result.GetComponent();
-		if (!Comp)
+		const UPrimitiveComponent* Component = Result.GetComponent();
+		if (!Component)
+		{
 			continue;
+		}
 
-		// Block All: 주요 채널 모두 Block인 컴포넌트만 허용
-		const bool bBlocksPawn   = (Comp->GetCollisionResponseToChannel(ECC_Pawn)         == ECR_Block);
-		const bool bBlocksStatic = (Comp->GetCollisionResponseToChannel(ECC_WorldStatic)  == ECR_Block);
-		const bool bBlocksDynamic= (Comp->GetCollisionResponseToChannel(ECC_WorldDynamic) == ECR_Block);
-
+		const bool bBlocksPawn = (Component->GetCollisionResponseToChannel(ECC_Pawn) == ECR_Block);
+		const bool bBlocksStatic = (Component->GetCollisionResponseToChannel(ECC_WorldStatic) == ECR_Block);
+		const bool bBlocksDynamic = (Component->GetCollisionResponseToChannel(ECC_WorldDynamic) == ECR_Block);
 		if (bBlocksPawn && bBlocksStatic && bBlocksDynamic)
 		{
 			bOverlapping = true;
@@ -94,21 +85,27 @@ bool FSTCondition_InAttackZone::TestCondition(FStateTreeExecutionContext& Contex
 		}
 	}
 
-	// 디버그 드로잉은 콘솔변수로 명시 활성화 시에만 실행 (FPS 보호)
-	// 사용법: 콘솔에 `ai.debug.attackzone 1` 입력
 #if ENABLE_DRAW_DEBUG
 	{
 		static IConsoleVariable* CVarDebug = IConsoleManager::Get().RegisterConsoleVariable(
-			TEXT("ai.debug.attackzone"), 0,
-			TEXT("1 = Draw AttackZone debug boxes"), ECVF_Cheat);
+			TEXT("ai.debug.attackzone"),
+			0,
+			TEXT("1 = Draw AttackZone debug boxes"),
+			ECVF_Cheat);
 		if (CVarDebug && CVarDebug->GetInt() > 0)
 		{
 			const FColor ZoneColor = bOverlapping ? FColor::Green : FColor::Red;
-			DrawDebugBox(World, BoxCenter, AttackZoneHalfExtent, PawnRot,
-				ZoneColor, false, 0.f, 0, 2.f);
-			DrawDebugDirectionalArrow(World, PawnLoc,
+			DrawDebugBox(World, BoxCenter, AttackZoneHalfExtent, PawnRot, ZoneColor, false, 0.f, 0, 2.f);
+			DrawDebugDirectionalArrow(
+				World,
+				PawnLoc,
 				PawnLoc + Forward * (ForwardOffset + AttackZoneHalfExtent.X),
-				30.f, FColor::Yellow, false, 0.f, 0, 1.5f);
+				30.f,
+				FColor::Yellow,
+				false,
+				0.f,
+				0,
+				1.5f);
 		}
 	}
 #endif

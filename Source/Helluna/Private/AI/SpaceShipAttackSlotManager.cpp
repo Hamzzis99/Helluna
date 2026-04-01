@@ -3,6 +3,8 @@
  */
 
 #include "AI/SpaceShipAttackSlotManager.h"
+#include "Character/HellunaEnemyCharacter.h"
+#include "Character/EnemyComponent/HellunaHealthComponent.h"
 #include "NavigationSystem.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
@@ -55,7 +57,7 @@ void USpaceShipAttackSlotManager::BuildSlots()
 	UNavigationSystemV1* NavSys = UNavigationSystemV1::GetCurrent(World);
 	if (!NavSys)
 	{
-		UE_LOG(LogTemp, Verbose, TEXT("[SlotManager] NavMesh 없음 - 슬롯 생성 실패"));
+		UE_LOG(LogTemp, Verbose, TEXT("[enemybugreport][SlotBuildFail] Reason=MissingNavMesh"));
 		return;
 	}
 
@@ -114,10 +116,17 @@ void USpaceShipAttackSlotManager::BuildSlots()
 		}
 	}
 
+	// 후보/유효 비율 로그 — 경사 지형에서 슬롯 후보 전부 탈락 시 진단용
+	UE_LOG(LogTemp, Log,
+		TEXT("[enemybugreport][SlotBuildRatio] Valid=%d Total=%d Ratio=%.1f NavExtent=%.0f"),
+		ValidCount, TotalCount,
+		TotalCount > 0 ? (float)ValidCount / TotalCount * 100.f : 0.f,
+		NavExtent);
+
 	if (ValidCount == 0)
 	{
 		UE_LOG(LogTemp, Warning,
-			TEXT("[SlotManager] 유효 슬롯 0개 (시도 %d/%d) — NavMesh 스트리밍 대기 중. MinRadius=%.0f / MaxRadius=%.0f"),
+			TEXT("[enemybugreport][SlotBuildFail] Reason=NoValidSlots Try=%d MaxTry=%d MinRadius=%.0f MaxRadius=%.0f"),
 			SlotRetryCount + 1, MaxSlotRetryCount, MinRadius, MaxRadius);
 
 		// World Partition에서 NavMesh가 아직 스트리밍되지 않았을 수 있음 → 재시도
@@ -132,7 +141,7 @@ void USpaceShipAttackSlotManager::BuildSlots()
 	}
 	SlotRetryCount = 0;
 
-	UE_LOG(LogTemp, Log, TEXT("[SlotManager] 슬롯 생성 완료: %d / %d 유효 (우주선 위치: %s)"),
+	UE_LOG(LogTemp, Log, TEXT("[enemybugreport][SlotBuildSuccess] Valid=%d Total=%d Owner=%s"),
 		ValidCount, TotalCount, *Center.ToString());
 
 	// 디버그 드로잉
@@ -160,6 +169,10 @@ bool USpaceShipAttackSlotManager::ValidateSlotCandidate(const FVector& Candidate
 	FNavLocation NavLoc;
 	const FVector Extent(NavExtent, NavExtent, NavExtent * 8.f);
 	if (!NavSys->ProjectPointToNavigation(Candidate, NavLoc, Extent))
+		return false;
+
+	// Ground trace 위치와 NavMesh 투영 결과의 높이 차가 너무 크면 공중 슬롯로 판단한다.
+	if (FMath::Abs(NavLoc.Location.Z - Candidate.Z) > MaxNavProjectionHeightDelta)
 		return false;
 
 	AActor* Owner = GetOwner();
@@ -205,19 +218,47 @@ bool USpaceShipAttackSlotManager::RequestSlot(AActor* Monster, int32& OutSlotInd
 {
 	if (!Monster) return false;
 
-	// 이미 슬롯을 갖고 있으면 기존 반납
-	ReleaseSlot(Monster);
+	// 이미 같은 몬스터가 슬롯을 갖고 있으면 그대로 재사용한다.
+	for (int32 i = 0; i < Slots.Num(); ++i)
+	{
+		if (Slots[i].OccupyingMonster.Get() != Monster)
+		{
+			continue;
+		}
+
+		OutSlotIndex = i;
+		OutLocation = Slots[i].WorldLocation;
+		UE_LOG(LogTemp, Log,
+			TEXT("[enemybugreport][SlotReuse] Monster=%s Slot=%d State=%s SlotLoc=%s"),
+			*GetNameSafe(Monster),
+			i,
+			Slots[i].State == ESlotState::Reserved ? TEXT("Reserved") :
+			(Slots[i].State == ESlotState::Occupied ? TEXT("Occupied") : TEXT("Free")),
+			*OutLocation.ToCompactString());
+		return true;
+	}
 
 	const FVector MonsterLoc = Monster->GetActorLocation();
 
 	int32 BestIdx = -1;
 	float BestDistSq = MAX_FLT;
+	int32 FreeCount = 0;
+	int32 ReservedCount = 0;
+	int32 OccupiedCount = 0;
 
 	for (int32 i = 0; i < Slots.Num(); ++i)
 	{
+		if (Slots[i].State == ESlotState::Free) ++FreeCount;
+		else if (Slots[i].State == ESlotState::Reserved) ++ReservedCount;
+		else if (Slots[i].State == ESlotState::Occupied) ++OccupiedCount;
+
 		if (Slots[i].State != ESlotState::Free) continue;
 
-		const float DistSq = FVector::DistSquared(MonsterLoc, Slots[i].WorldLocation);
+		const float HeightDelta = FMath::Abs(MonsterLoc.Z - Slots[i].WorldLocation.Z);
+		if (HeightDelta > MaxSlotAssignmentHeightDelta)
+			continue;
+
+		const float DistSq = FVector::DistSquared2D(MonsterLoc, Slots[i].WorldLocation);
 		if (DistSq < BestDistSq)
 		{
 			BestDistSq = DistSq;
@@ -227,7 +268,13 @@ bool USpaceShipAttackSlotManager::RequestSlot(AActor* Monster, int32& OutSlotInd
 
 	if (BestIdx < 0)
 	{
-		UE_LOG(LogTemp, Verbose, TEXT("[SlotManager] 사용 가능한 슬롯 없음 (총 %d개)"), Slots.Num());
+		UE_LOG(LogTemp, Warning,
+			TEXT("[enemybugreport][SlotRequestFail] Monster=%s Total=%d Free=%d Reserved=%d Occupied=%d"),
+			*GetNameSafe(Monster),
+			Slots.Num(),
+			FreeCount,
+			ReservedCount,
+			OccupiedCount);
 		return false;
 	}
 
@@ -237,8 +284,17 @@ bool USpaceShipAttackSlotManager::RequestSlot(AActor* Monster, int32& OutSlotInd
 	OutSlotIndex = BestIdx;
 	OutLocation  = Slots[BestIdx].WorldLocation;
 
-	UE_LOG(LogTemp, Log, TEXT("[SlotManager] 슬롯 예약: 인덱스=%d, 위치=%s, 몬스터=%s"),
+	UE_LOG(LogTemp, Log, TEXT("[enemybugreport][SlotReserveVerbose] Slot=%d Loc=%s Monster=%s"),
 		BestIdx, *OutLocation.ToString(), *Monster->GetName());
+	UE_LOG(LogTemp, Warning,
+		TEXT("[enemybugreport][SlotRequestSuccess] Monster=%s Slot=%d SlotLoc=%s Dist=%.1f Free=%d Reserved=%d Occupied=%d"),
+		*GetNameSafe(Monster),
+		BestIdx,
+		*OutLocation.ToCompactString(),
+		FMath::Sqrt(BestDistSq),
+		FreeCount,
+		ReservedCount,
+		OccupiedCount);
 
 	return true;
 }
@@ -253,7 +309,7 @@ void USpaceShipAttackSlotManager::OccupySlot(int32 SlotIndex, AActor* Monster)
 
 	Slots[SlotIndex].State = ESlotState::Occupied;
 
-	UE_LOG(LogTemp, Log, TEXT("[SlotManager] 슬롯 점유: 인덱스=%d, 몬스터=%s"),
+	UE_LOG(LogTemp, Log, TEXT("[enemybugreport][SlotOccupy] Slot=%d Monster=%s"),
 		SlotIndex, Monster ? *Monster->GetName() : TEXT("nullptr"));
 }
 
@@ -272,7 +328,7 @@ void USpaceShipAttackSlotManager::ReleaseSlot(AActor* Monster)
 			Slots[i].State = ESlotState::Free;
 			Slots[i].OccupyingMonster = nullptr;
 
-			UE_LOG(LogTemp, Log, TEXT("[SlotManager] 슬롯 반납: 인덱스=%d, 상태=%s, 몬스터=%s"),
+			UE_LOG(LogTemp, Log, TEXT("[enemybugreport][SlotRelease] Slot=%d PrevState=%s Monster=%s"),
 				i,
 				OldState == ESlotState::Reserved ? TEXT("Reserved") : TEXT("Occupied"),
 				*Monster->GetName());
@@ -290,6 +346,31 @@ void USpaceShipAttackSlotManager::ReleaseSlotByIndex(int32 SlotIndex)
 
 	Slots[SlotIndex].State = ESlotState::Free;
 	Slots[SlotIndex].OccupyingMonster = nullptr;
+}
+
+bool USpaceShipAttackSlotManager::GetMonsterSlotInfo(const AActor* Monster, int32& OutSlotIndex, ESlotState& OutState) const
+{
+	OutSlotIndex = INDEX_NONE;
+	OutState = ESlotState::Free;
+
+	if (!Monster)
+	{
+		return false;
+	}
+
+	for (int32 i = 0; i < Slots.Num(); ++i)
+	{
+		if (Slots[i].OccupyingMonster.Get() != Monster)
+		{
+			continue;
+		}
+
+		OutSlotIndex = i;
+		OutState = Slots[i].State;
+		return true;
+	}
+
+	return false;
 }
 
 // ============================================================================
@@ -364,11 +445,36 @@ bool USpaceShipAttackSlotManager::GetWaitingPosition(AActor* Monster, FVector& O
 			}
 
 			OutLocation = NavLoc.Location;
+			UE_LOG(LogTemp, Warning,
+				TEXT("[enemybugreport][WaitingPosition] Monster=%s WaitLoc=%s Try=%d"),
+				*GetNameSafe(Monster),
+				*OutLocation.ToCompactString(),
+				Try + 1);
 			return true;
 		}
 	}
 
+	UE_LOG(LogTemp, Warning,
+		TEXT("[enemybugreport][WaitingPositionFail] Monster=%s Owner=%s MaxRadius=%.1f WaitRadius=%.1f"),
+		*GetNameSafe(Monster),
+		*GetNameSafe(Owner),
+		MaxRadius,
+		WaitRadius);
+
 	return false;
+}
+
+// ============================================================================
+// TriggerBuildSlotsIfEmpty — 플레이어 접속 시 슬롯 재시도
+// ============================================================================
+void USpaceShipAttackSlotManager::TriggerBuildSlotsIfEmpty()
+{
+	if (Slots.Num() == 0)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[enemybugreport][SlotBuildRetry] Reason=PlayerJoinedSlotsEmpty"));
+		SlotRetryCount = 0; // 카운터 리셋하여 재시도 가능하게
+		BuildSlots();
+	}
 }
 
 // ============================================================================
@@ -397,9 +503,33 @@ void USpaceShipAttackSlotManager::TickComponent(float DeltaTime, ELevelTick Tick
 	for (int32 i = 0; i < Slots.Num(); ++i)
 	{
 		FAttackSlot& Slot = Slots[i];
-		if (Slot.State != ESlotState::Free && !Slot.OccupyingMonster.IsValid())
+		if (Slot.State == ESlotState::Free)
 		{
-			UE_LOG(LogTemp, Verbose, TEXT("[SlotManager] 죽은 몬스터 슬롯 자동 반납: 인덱스=%d, 상태=%s"),
+			continue;
+		}
+
+		AActor* OccupyingActor = Slot.OccupyingMonster.Get();
+		bool bShouldAutoRelease = !IsValid(OccupyingActor) || OccupyingActor->IsActorBeingDestroyed();
+
+		if (!bShouldAutoRelease && OccupyingActor)
+		{
+			bShouldAutoRelease = OccupyingActor->IsHidden() || !OccupyingActor->GetActorEnableCollision();
+		}
+
+		if (!bShouldAutoRelease)
+		{
+			if (const AHellunaEnemyCharacter* Enemy = Cast<AHellunaEnemyCharacter>(OccupyingActor))
+			{
+				if (const UHellunaHealthComponent* HealthComponent = Enemy->FindComponentByClass<UHellunaHealthComponent>())
+				{
+					bShouldAutoRelease = HealthComponent->IsDead();
+				}
+			}
+		}
+
+		if (bShouldAutoRelease)
+		{
+			UE_LOG(LogTemp, Verbose, TEXT("[enemybugreport][SlotAutoRelease] Slot=%d State=%s"),
 				i, Slot.State == ESlotState::Reserved ? TEXT("Reserved") : TEXT("Occupied"));
 			Slot.State = ESlotState::Free;
 			Slot.OccupyingMonster = nullptr;
@@ -452,8 +582,7 @@ void USpaceShipAttackSlotManager::ScheduleSlotRetry()
 	if (SlotRetryCount >= MaxSlotRetryCount)
 	{
 		UE_LOG(LogTemp, Error,
-			TEXT("[SlotManager] BuildSlots %d회 재시도 후에도 유효 슬롯 0개. ")
-			TEXT("우주선 주변 NavMesh를 확인하세요. (Show Navigation → P키)"),
+			TEXT("[enemybugreport][SlotBuildFail] Reason=RetryExhausted Try=%d"),
 			MaxSlotRetryCount);
 		return;
 	}
@@ -467,6 +596,6 @@ void USpaceShipAttackSlotManager::ScheduleSlotRetry()
 		SlotRetryInterval, false);
 
 	UE_LOG(LogTemp, Log,
-		TEXT("[SlotManager] %.1f초 후 BuildSlots 재시도 예약 (%d/%d)"),
+		TEXT("[enemybugreport][SlotBuildRetryScheduled] Delay=%.1f Try=%d MaxTry=%d"),
 		SlotRetryInterval, SlotRetryCount, MaxSlotRetryCount);
 }

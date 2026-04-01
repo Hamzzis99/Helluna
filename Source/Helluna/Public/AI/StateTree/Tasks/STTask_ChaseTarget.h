@@ -72,6 +72,9 @@ struct FSTTask_ChaseTargetInstanceData
 	/** 슬롯 위치에 도착했는지 */
 	UPROPERTY()
 	bool bSlotArrived = false;
+
+	UPROPERTY()
+	float MovementDiagTimer = 0.f;
 };
 
 USTRUCT(meta = (DisplayName = "Helluna: Chase Target", Category = "Helluna|AI"))
@@ -140,5 +143,5 @@ public:
 		meta = (DisplayName = "슬롯 진입 반경 (cm)",
 			ToolTip = "우주선으로부터 이 거리 안에 들어오면 슬롯 배정을 시도합니다.\n밖에서는 우주선을 향해 직접 이동합니다.\nSlotManager의 MaxRadius보다 크게 설정하세요.",
 			ClampMin = "100.0"))
-	float SlotEngageRadius = 800.f;
+	float SlotEngageRadius = 500.f;
 };

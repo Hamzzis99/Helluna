@@ -1,16 +1,76 @@
 // Capstone Project Helluna
 
-
 #include "Weapon/HeroWeapon_Launcher.h"
+
+#include "Engine/World.h"
+#include "GameFramework/Pawn.h"
 #include "Weapon/Projectile/HellunaProjectile_Launcher.h"
-
-
 
 #include "DebugHelper.h"
 
+bool AHeroWeapon_Launcher::BuildCachedAimData(AController* InstigatorController)
+{
+	if (!InstigatorController)
+	{
+		bHasCachedAim = false;
+		return false;
+	}
+
+	APawn* Pawn = InstigatorController->GetPawn();
+	UWorld* World = GetWorld();
+	if (!Pawn || !World)
+	{
+		bHasCachedAim = false;
+		return false;
+	}
+
+	const FRotator AimRotation = InstigatorController->GetControlRotation();
+	const FVector ViewLocation = Pawn->GetPawnViewLocation();
+	const FVector AimDirection = AimRotation.Vector().GetSafeNormal();
+	const FVector TraceStart = ViewLocation;
+	const FVector TraceEnd = TraceStart + (AimDirection * FMath::Max(Range, 1.f));
+
+	FCollisionQueryParams TraceParams(SCENE_QUERY_STAT(LauncherAimTrace), false);
+	TraceParams.AddIgnoredActor(this);
+	TraceParams.AddIgnoredActor(Pawn);
+
+	FHitResult Hit;
+	const bool bHit = World->LineTraceSingleByChannel(
+		Hit,
+		TraceStart,
+		TraceEnd,
+		TraceChannel,
+		TraceParams
+	);
+
+	CachedAimStart = TraceStart;
+	CachedAimPoint = bHit ? Hit.ImpactPoint : TraceEnd;
+	CachedAimDirection = AimDirection;
+	bHasCachedAim = true;
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[LauncherAimTrace] Start=%s Target=%s Dir=%s Hit=%s"),
+		*CachedAimStart.ToCompactString(),
+		*CachedAimPoint.ToCompactString(),
+		*CachedAimDirection.ToCompactString(),
+		bHit ? TEXT("Y") : TEXT("N"));
+
+	return true;
+}
+
+FVector AHeroWeapon_Launcher::ResolveProjectileSpawnLocation(const FVector& ViewLocation, const FVector& AimDirection) const
+{
+	const FVector AdjustedViewLocation = ViewLocation - FVector(0.f, 0.f, 30.f);
+	return AdjustedViewLocation + (AimDirection * FallbackSpawnOffset);
+}
+
+void AHeroWeapon_Launcher::CacheAimFromController(AController* InstigatorController)
+{
+	BuildCachedAimData(InstigatorController);
+}
+
 void AHeroWeapon_Launcher::Fire(AController* InstigatorController)
 {
-	// ✅ 서버에서만 발사(스폰/탄소모/권한 데미지)
 	if (!HasAuthority())
 		return;
 
@@ -30,52 +90,53 @@ void AHeroWeapon_Launcher::Fire(AController* InstigatorController)
 		return;
 	}
 
-	// 탄 소모
+	if (!bHasCachedAim && !BuildCachedAimData(InstigatorController))
+		return;
+
 	CurrentMag = FMath::Max(0, CurrentMag - 1);
 	BroadcastAmmoChanged();
 
-	// 서버에서는 카메라 매니저/스켈레탈 메시가 틱하지 않아 머즐 소켓 위치가 부정확함.
-	// ControlRotation(서버 동기화됨) + GetPawnViewLocation(BaseEyeHeight 기반)으로 안정적인 스폰 위치 계산.
-	const FRotator ViewRot = InstigatorController->GetControlRotation();
-	// 눈 높이에서 아래로 내려 어깨 높이에서 발사 (BaseEyeHeight 기준 약 30cm 아래)
-	const FVector ViewLoc = Pawn->GetPawnViewLocation() - FVector(0.f, 0.f, 30.f);
+	const FVector SpawnLoc = ResolveProjectileSpawnLocation(CachedAimStart, CachedAimDirection);
+	const FVector ToAimPoint = CachedAimPoint - SpawnLoc;
+	const FVector Dir = ToAimPoint.IsNearlyZero() ? CachedAimDirection : ToAimPoint.GetSafeNormal();
+	const FRotator SpawnRot = Dir.Rotation();
 
-	// 어깨 위치에서 조준 방향으로 오프셋을 준 위치에서 스폰
-	const FVector SpawnLoc = ViewLoc + (ViewRot.Vector() * FallbackSpawnOffset);
-	const FRotator SpawnRot = ViewRot;
-
-	const FVector Dir = SpawnRot.Vector();
+	UE_LOG(LogTemp, Warning,
+		TEXT("[LauncherPredicted] Spawn=%s Target=%s Dir=%s AimStart=%s"),
+		*SpawnLoc.ToCompactString(),
+		*CachedAimPoint.ToCompactString(),
+		*Dir.ToCompactString(),
+		*CachedAimStart.ToCompactString());
 
 	const float SafeSpeed = FMath::Max(ProjectileSpeed, 1.f);
 	const float SafeRange = FMath::Max(Range, 1.f);
-
 	const FVector Velocity = Dir * SafeSpeed;
 
-	// 최대거리 -> 수명(초)
 	float LifeSeconds = SafeRange / SafeSpeed;
 	LifeSeconds = FMath::Max(LifeSeconds, 0.01f);
 
-	FActorSpawnParameters Params;
-	Params.Owner = Pawn;
-	Params.Instigator = Pawn;
-	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
-	AHellunaProjectile_Launcher* Projectile = GetWorld()->SpawnActor<AHellunaProjectile_Launcher>(
+	const FTransform SpawnTransform(SpawnRot, SpawnLoc);
+	AHellunaProjectile_Launcher* Projectile = GetWorld()->SpawnActorDeferred<AHellunaProjectile_Launcher>(
 		ProjectileClass,
-		SpawnLoc,
-		SpawnRot,
-		Params
+		SpawnTransform,
+		Pawn,
+		Pawn,
+		ESpawnActorCollisionHandlingMethod::AlwaysSpawn
 	);
 
 	if (!Projectile)
+	{
+		bHasCachedAim = false;
 		return;
+	}
 
-	// ✅ 데미지(Damage)는 GunBase의 값을 사용
-	// ✅ 반경(ExplosionRadius)은 Launcher 무기에서만 설정
 	Projectile->InitProjectile(
 		Damage,
 		ProjectileExplosionRadius,
 		Velocity,
 		LifeSeconds
 	);
+	Projectile->FinishSpawning(SpawnTransform);
+
+	bHasCachedAim = false;
 }

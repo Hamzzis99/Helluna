@@ -51,6 +51,7 @@ struct FSTTask_AttackTargetInstanceData
 	// 런타임 쿨다운 상태 (에디터 노출 불필요)
 	UPROPERTY()
 	float CooldownRemaining = 0.f;
+
 };
 
 USTRUCT(meta = (DisplayName = "Helluna: Attack Target", Category = "Helluna|AI"))

@@ -122,6 +122,16 @@ public:
 	const TArray<FAttackSlot>& GetSlots() const { return Slots; }
 
 	/**
+	 * 특정 몬스터가 현재 어떤 슬롯을 들고 있는지 조회한다.
+	 * @param Monster      조회할 몬스터
+	 * @param OutSlotIndex 몬스터가 예약/점유 중인 슬롯 인덱스
+	 * @param OutState     해당 슬롯 상태
+	 * @return 슬롯을 보유 중이면 true
+	 */
+	UFUNCTION(BlueprintCallable, Category = "AI|Slot")
+	bool GetMonsterSlotInfo(const AActor* Monster, int32& OutSlotIndex, ESlotState& OutState) const;
+
+	/**
 	 * 슬롯이 없을 때 대기할 위치를 반환한다.
 	 * 우주선 주변 NavMesh 위 랜덤 위치로 천천히 배회하게 만든다.
 	 * @param Monster  대기할 몬스터
@@ -141,7 +151,7 @@ public:
 	/** 우주선 중심에서 후보를 탐색할 최대 반경 (cm) */
 	UPROPERTY(EditAnywhere, Category = "슬롯 생성",
 		meta=(DisplayName="최대 반경 (cm)", ClampMin="100"))
-	float MaxRadius = 600.f;
+	float MaxRadius = 350.f;
 
 	/** 각도 간격 (도). 작을수록 슬롯 많아짐 (10도 = 링당 36개) */
 	UPROPERTY(EditAnywhere, Category = "슬롯 생성",
@@ -151,21 +161,38 @@ public:
 	/** 반경 링 개수 (MinRadius ~ MaxRadius 사이를 이 수로 나눔) */
 	UPROPERTY(EditAnywhere, Category = "슬롯 생성",
 		meta=(DisplayName="반경 링 수", ClampMin="1", ClampMax="5"))
-	int32 RadiusRings = 2;
+	int32 RadiusRings = 3;
 
-	/** NavMesh 투영 허용 오차 (cm) */
+	/** NavMesh 투영 허용 오차 (cm) — 경사 지형에서 슬롯 후보 탈락 방지를 위해 넉넉하게 설정 */
 	UPROPERTY(EditAnywhere, Category = "슬롯 생성",
 		meta=(DisplayName="NavMesh 허용 오차 (cm)", ClampMin="10"))
-	float NavExtent = 100.f;
+	float NavExtent = 200.f;
 
 	/** 슬롯 후보가 우주선 메시와 겹치는지 체크할 Trace 반경 (cm) */
 	UPROPERTY(EditAnywhere, Category = "슬롯 생성",
 		meta=(DisplayName="메시 겹침 체크 반경 (cm)", ClampMin="10"))
 	float MeshOverlapRadius = 40.f;
 
+	/** 지면 LineTrace 결과와 NavMesh 투영 높이 차이가 이 값을 넘으면 공중/상부 슬롯으로 보고 버린다. */
+	UPROPERTY(EditAnywhere, Category = "슬롯 생성",
+		meta=(DisplayName="Nav 투영 최대 높이 차 (cm)", ClampMin="0"))
+	float MaxNavProjectionHeightDelta = 120.f;
+
+	/** 슬롯 배정 시 몬스터와 슬롯의 높이 차가 너무 크면 후보에서 제외한다. */
+	UPROPERTY(EditAnywhere, Category = "슬롯 생성",
+		meta=(DisplayName="슬롯 배정 최대 높이 차 (cm)", ClampMin="0"))
+	float MaxSlotAssignmentHeightDelta = 250.f;
+
 	/** 슬롯을 다시 빌드 (런타임 재생성) */
 	UFUNCTION(BlueprintCallable, Category = "AI|Slot")
 	void RebuildSlots();
+
+	/**
+	 * 플레이어 접속 시 호출 — 슬롯이 아직 0개면 즉시 BuildSlots 재시도.
+	 * World Partition에서 플레이어 접속 후 NavMesh가 로드되므로 이 시점에 재시도하면 성공 확률이 높다.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "AI|Slot")
+	void TriggerBuildSlotsIfEmpty();
 
 	/** 디버그 드로잉 활성화 */
 	UPROPERTY(EditAnywhere, Category = "디버그",
@@ -211,8 +238,8 @@ private:
 	/** 현재까지 재시도한 횟수 */
 	int32 SlotRetryCount = 0;
 
-	/** 최대 재시도 횟수 */
-	static constexpr int32 MaxSlotRetryCount = 15;
+	/** 최대 재시도 횟수 (패키징에서 NavMesh 스트리밍 지연이 길 수 있으므로 넉넉하게) */
+	static constexpr int32 MaxSlotRetryCount = 30;
 
 	/** 재시도 간격 (초) */
 	static constexpr float SlotRetryInterval = 2.0f;

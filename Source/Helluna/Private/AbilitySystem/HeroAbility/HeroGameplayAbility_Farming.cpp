@@ -58,6 +58,7 @@ void UHeroGameplayAbility_Farming::ActivateAbility(
 	}
 
 	Hero->PlayFullBody = true;
+	CachedFarmingTarget = ResolveFarmingTarget(ActorInfo);
 
 	// ✅ 첫 스윙 시작 (이후 OnFarmingFinished에서 반복)
 	PlayFarmingMontage();
@@ -73,8 +74,8 @@ void UHeroGameplayAbility_Farming::PlayFarmingMontage()
 	}
 
 	// ✅ 타겟 검증
-	AActor* Target = GetFarmingTarget(CurrentActorInfo);
-	if (!Target)
+	AActor* Target = ResolveFarmingTarget(CurrentActorInfo);
+	if (!Target || !IsTargetWithinFarmingRange(CurrentActorInfo, Target))
 	{
 		if (CurrentActorInfo && CurrentActorInfo->IsLocallyControlled())
 		{
@@ -153,6 +154,38 @@ AActor* UHeroGameplayAbility_Farming::GetFarmingTarget(const FGameplayAbilityAct
 	return FindComp->GetServerFarmingTarget();
 }
 
+AActor* UHeroGameplayAbility_Farming::ResolveFarmingTarget(const FGameplayAbilityActorInfo* ActorInfo)
+{
+	if (CachedFarmingTarget.IsValid() && IsTargetWithinFarmingRange(ActorInfo, CachedFarmingTarget.Get()))
+	{
+		return CachedFarmingTarget.Get();
+	}
+
+	AActor* NewTarget = GetFarmingTarget(ActorInfo);
+	if (IsTargetWithinFarmingRange(ActorInfo, NewTarget))
+	{
+		CachedFarmingTarget = NewTarget;
+		return NewTarget;
+	}
+
+	CachedFarmingTarget = nullptr;
+	return nullptr;
+}
+
+bool UHeroGameplayAbility_Farming::IsTargetWithinFarmingRange(
+	const FGameplayAbilityActorInfo* ActorInfo,
+	AActor* Target) const
+{
+	if (!ActorInfo || !ActorInfo->AvatarActor.IsValid() || !IsValid(Target))
+	{
+		return false;
+	}
+
+	const AActor* Avatar = ActorInfo->AvatarActor.Get();
+	const float MaxDistance = FMath::Max(FarmingSnapDistance, 200.f) + 80.f;
+	return FVector::DistSquared2D(Avatar->GetActorLocation(), Target->GetActorLocation()) <= FMath::Square(MaxDistance);
+}
+
 void UHeroGameplayAbility_Farming::FaceToTarget_InstantLocalOnly(
 	const FGameplayAbilityActorInfo* ActorInfo,
 	const FVector& TargetLocation) const
@@ -178,7 +211,7 @@ void UHeroGameplayAbility_Farming::ApplyFarmingDamage()
 	AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(GetAvatarActorFromActorInfo());
 	if (!Hero || !Hero->HasAuthority()) return;
 
-	AActor* Target = GetFarmingTarget(CurrentActorInfo);
+	AActor* Target = ResolveFarmingTarget(CurrentActorInfo);
 	if (!Target) return;
 
 	AHellunaFarmingWeapon* Pickaxe = Cast<AHellunaFarmingWeapon>(Hero->GetCurrentWeapon());
@@ -191,6 +224,12 @@ void UHeroGameplayAbility_Farming::ApplyFarmingDamage()
 void UHeroGameplayAbility_Farming::OnFarmingFinished()
 {
 	// ✅ 몽타주 1회 완료 → 홀딩 중이면 다음 스윙 시작
+	if (!ResolveFarmingTarget(CurrentActorInfo))
+	{
+		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
+		return;
+	}
+
 	PlayFarmingMontage();
 }
 
@@ -204,7 +243,15 @@ bool UHeroGameplayAbility_Farming::SnapHeroToFarmingDistance(
 	const FGameplayAbilityActorInfo* ActorInfo
 ) const
 {
-	AActor* Target = GetFarmingTarget(ActorInfo);
+	AActor* Target = CachedFarmingTarget.Get();
+	if (!Target)
+	{
+		Target = GetFarmingTarget(ActorInfo);
+	}
+	if (!Target)
+	{
+		return false;
+	}
 
 	AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(ActorInfo->AvatarActor.Get());
 	const FVector HeroLoc = Hero->GetActorLocation();
@@ -276,5 +323,6 @@ void UHeroGameplayAbility_Farming::EndAbility(
 
 		Hero->PlayFullBody = false;
 	}
+	CachedFarmingTarget = nullptr;
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }

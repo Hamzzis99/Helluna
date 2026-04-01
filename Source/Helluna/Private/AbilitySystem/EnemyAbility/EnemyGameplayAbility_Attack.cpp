@@ -7,7 +7,24 @@
 #include "GameplayTagContainer.h"
 
 #include "Character/HellunaEnemyCharacter.h"
+#include "GameMode/HellunaDefenseGameState.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
+
+namespace HellunaEnemyAttackUtils
+{
+static AActor* ResolveAttackTarget(const AHellunaEnemyCharacter* Enemy, AActor* TargetActor)
+{
+	if (TargetActor || !Enemy)
+	{
+		return TargetActor;
+	}
+
+	UWorld* World = Enemy->GetWorld();
+	AHellunaDefenseGameState* DefenseGameState = World ? World->GetGameState<AHellunaDefenseGameState>() : nullptr;
+	return DefenseGameState ? DefenseGameState->GetSpaceShip() : nullptr;
+}
+}
 
 UEnemyGameplayAbility_Attack::UEnemyGameplayAbility_Attack()
 {
@@ -55,12 +72,20 @@ void UEnemyGameplayAbility_Attack::ActivateAbility(
 	}
 	Enemy->SetServerAttackPoseTickEnabled(true);
 
-	// ★ 몽타주 시작 즉시 이동만 잠금 (nullptr 전달 → 회전 없음)
-	// 회전은 몽타주가 완전히 끝난 OnMontageCompleted에서 처리한다.
-	Enemy->LockMovementAndFaceTarget(nullptr);
+	AActor* AttackTarget = HellunaEnemyAttackUtils::ResolveAttackTarget(Enemy, CurrentTarget.Get());
+	Enemy->LockMovementAndFaceTarget(AttackTarget);
 	
 	// 광폭화 상태이면 Enemy에 설정된 EnrageAttackMontagePlayRate 배율로 공격 애니메이션을 빠르게 재생
 	const float PlayRate = Enemy->bEnraged ? Enemy->EnrageAttackMontagePlayRate : 1.f;
+	const FVector ToTarget = AttackTarget
+		? (AttackTarget->GetActorLocation() - Enemy->GetActorLocation()).GetSafeNormal2D()
+		: FVector::ForwardVector;
+	const FRotator FacingRotation = ToTarget.IsNearlyZero()
+		? Enemy->GetActorRotation()
+		: FRotator(0.f, ToTarget.Rotation().Yaw, 0.f);
+
+	Enemy->ForceNetUpdate();
+	Enemy->Multicast_PlayAttackMontage(AttackMontage, PlayRate, FacingRotation);
 
 	UAbilityTask_PlayMontageAndWait* MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
 		this, NAME_None, AttackMontage, PlayRate, NAME_None, false

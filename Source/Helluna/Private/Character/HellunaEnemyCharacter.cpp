@@ -59,6 +59,15 @@ AHellunaEnemyCharacter::AHellunaEnemyCharacter()
 	GetCharacterMovement()->MaxWalkSpeed                  = 300.f;
 	GetCharacterMovement()->BrakingDecelerationWalking    = 1000.f;
 
+	// === 네트워크 레플리케이션 빈도 제한 ===
+	// 50마리 × 100Hz = 초당 5000패킷 → 서버 포화 방지
+	SetNetUpdateFrequency(10.f);
+	SetMinNetUpdateFrequency(2.f);
+
+	// === 원거리 레플리케이션 컬링 ===
+	// 6000cm(60m) 밖의 몬스터는 레플리케이션 자체를 차단
+	SetNetCullDistanceSquared(6000.f * 6000.f);
+
 	EnemyCombatComponent = CreateDefaultSubobject<UEnemyCombatComponent>("EnemyCombatComponent");
 	HealthComponent      = CreateDefaultSubobject<UHellunaHealthComponent>(TEXT("HealthComponent"));
 
@@ -191,14 +200,30 @@ float AHellunaEnemyCharacter::TakeDamage(float DamageAmount,
 		const float FilteredDamage = Shield->FilterDamage(DamageAmount);
 		if (FilteredDamage <= 0.f)
 		{
-			UE_LOG(LogTemp, Log,
-				TEXT("[EnemyCharacter] TakeDamage blocked by shield: %.1f on %s"),
-				DamageAmount, *GetNameSafe(this));
+			UE_LOG(LogTemp, Warning,
+				TEXT("[DamageDiag][ShieldBlocked] Enemy=%s Incoming=%.1f Instigator=%s Causer=%s"),
+				*GetNameSafe(this),
+				DamageAmount,
+				*GetNameSafe(EventInstigator ? EventInstigator->GetPawn() : nullptr),
+				*GetNameSafe(DamageCauser));
 			return 0.f;
 		}
+		UE_LOG(LogTemp, Warning,
+			TEXT("[DamageDiag][ShieldFiltered] Enemy=%s Incoming=%.1f Filtered=%.1f Instigator=%s Causer=%s"),
+			*GetNameSafe(this),
+			DamageAmount,
+			FilteredDamage,
+			*GetNameSafe(EventInstigator ? EventInstigator->GetPawn() : nullptr),
+			*GetNameSafe(DamageCauser));
 		DamageAmount = FilteredDamage;
 	}
 
+	UE_LOG(LogTemp, Warning,
+		TEXT("[DamageDiag][TakeDamagePassThrough] Enemy=%s Damage=%.1f Instigator=%s Causer=%s"),
+		*GetNameSafe(this),
+		DamageAmount,
+		*GetNameSafe(EventInstigator ? EventInstigator->GetPawn() : nullptr),
+		*GetNameSafe(DamageCauser));
 	return Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
 }
 
@@ -255,6 +280,22 @@ void AHellunaEnemyCharacter::OnMonsterHealthChanged(
 	if (!HasAuthority()) return;
 
 	const float Delta = OldHealth - NewHealth;
+	UE_LOG(LogTemp, Warning,
+		TEXT("[DeathDiag][HealthChanged] Enemy=%s Old=%.1f New=%.1f Delta=%.1f Instigator=%s"),
+		*GetNameSafe(this),
+		OldHealth,
+		NewHealth,
+		Delta,
+		*GetNameSafe(InstigatorActor));
+
+	if (NewHealth <= 0.f)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[DeathDiag][HealthReachedZero] Enemy=%s Controller=%s"),
+			*GetNameSafe(this),
+			*GetNameSafe(GetController()));
+	}
+
 	// 살아있는 상태에서 데미지를 받았을 때만 피격 애니메이션 재생
 	if (Delta > 0.f && NewHealth > 0.f && HitReactMontage)
 	{
@@ -467,26 +508,39 @@ void AHellunaEnemyCharacter::OnMonsterDeath(AActor* DeadActor, AActor* KillerAct
 {
 	if (!HasAuthority()) return;
 
-	UE_LOG(LogTemp, Verbose, TEXT("[OnMonsterDeath] %s 사망 처리 시작"), *GetName());
+	UE_LOG(LogTemp, Warning,
+		TEXT("[DeathDiag][OnMonsterDeathBegin] Enemy=%s DeadActor=%s Killer=%s Controller=%s"),
+		*GetNameSafe(this),
+		*GetNameSafe(DeadActor),
+		*GetNameSafe(KillerActor),
+		*GetNameSafe(GetController()));
 
 	AAIController* AIC = Cast<AAIController>(GetController());
 	if (!AIC)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[OnMonsterDeath] ❌ AIController 없음 — %s"), *GetName());
+		UE_LOG(LogTemp, Error,
+			TEXT("[DeathDiag][OnMonsterDeathFail] Enemy=%s Reason=MissingAIController Controller=%s"),
+			*GetNameSafe(this),
+			*GetNameSafe(GetController()));
 		return;
 	}
 
 	UStateTreeComponent* STComp = AIC->FindComponentByClass<UStateTreeComponent>();
 	if (!STComp)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[OnMonsterDeath] ❌ AIController에 StateTreeComponent 없음 — AIC: %s"), *AIC->GetName());
+		UE_LOG(LogTemp, Error,
+			TEXT("[DeathDiag][OnMonsterDeathFail] Enemy=%s Reason=MissingStateTree AIController=%s"),
+			*GetNameSafe(this),
+			*GetNameSafe(AIC));
 		return;
 	}
 
 	FGameplayTag DeathTag = FGameplayTag::RequestGameplayTag(FName("Enemy.State.Death"), false);
 	if (!DeathTag.IsValid())
 	{
-		UE_LOG(LogTemp, Error, TEXT("[OnMonsterDeath] ❌ GameplayTag 'Enemy.State.Death' 없음"));
+		UE_LOG(LogTemp, Error,
+			TEXT("[DeathDiag][OnMonsterDeathFail] Enemy=%s Reason=MissingDeathTag"),
+			*GetNameSafe(this));
 		return;
 	}
 
@@ -505,9 +559,12 @@ void AHellunaEnemyCharacter::OnMonsterDeath(AActor* DeadActor, AActor* KillerAct
 		MoveComp->StopMovementImmediately();
 		MoveComp->DisableMovement();
 	}
-	UE_LOG(LogTemp, Verbose, TEXT("[OnMonsterDeath] %s collision OFF + movement disabled"), *GetName());
-
-	UE_LOG(LogTemp, Verbose, TEXT("[OnMonsterDeath] Death event sent — %s"), *GetName());
+	UE_LOG(LogTemp, Warning,
+		TEXT("[DeathDiag][OnMonsterDeathSendEvent] Enemy=%s AIController=%s StateTree=%s Tag=%s"),
+		*GetNameSafe(this),
+		*GetNameSafe(AIC),
+		*GetNameSafe(STComp),
+		*DeathTag.ToString());
 	STComp->SendStateTreeEvent(DeathTag);
 }
 
@@ -701,13 +758,12 @@ void AHellunaEnemyCharacter::PerformAttackTrace()
 // ============================================================
 // ServerApplyDamage — 서버 RPC: 거리 검증 후 데미지 적용
 // ============================================================
-void AHellunaEnemyCharacter::ServerApplyDamage_Implementation(AActor* Target, float DamageAmount,
+void AHellunaEnemyCharacter::ServerApplyDamage(AActor* Target, float DamageAmount,
 	const FVector& HitLocation)
 {
 	if (!HasAuthority() || !IsValid(Target)) return;
 
-	// 안티 치트: HitLocation 기준으로 거리 검증
-	// (우주선처럼 큰 오브젝트는 중심 거리보다 표면이 훨씬 가까울 수 있으므로 HitLocation 기준 사용)
+	// 거리 검증
 	const float DistanceToHit    = FVector::Dist(GetActorLocation(), HitLocation);
 	const float MaxAttackDistance = 600.f;
 
@@ -720,23 +776,14 @@ void AHellunaEnemyCharacter::ServerApplyDamage_Implementation(AActor* Target, fl
 
 	UGameplayStatics::ApplyDamage(Target, DamageAmount, GetController(), this, UDamageType::StaticClass());
 	UE_LOG(LogTemp, Log, TEXT("[Damage] %.1f -> %s"), DamageAmount, *GetNameSafe(Target));
-	MulticastPlayEffect(HitLocation, HitNiagaraEffect, HitEffectScale, true);
-}
 
-bool AHellunaEnemyCharacter::ServerApplyDamage_Validate(AActor* Target, float DamageAmount,
-	const FVector& HitLocation)
-{
-	if (DamageAmount < 0.f || DamageAmount > 1000.f) return false;
-	if (!IsValid(Target)) return false;
-
-	const float DistanceToHit = FVector::Dist(GetActorLocation(), HitLocation);
-	if (DistanceToHit > 600.f)
+	// 이펙트 RPC 쓰로틀링: 같은 몬스터에서 0.1초 내 중복 Multicast 생략
+	const double Now = FPlatformTime::Seconds();
+	if (Now - LastEffectRPCTime >= 0.1)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[Validate] Hit too far: %.1f cm"), DistanceToHit);
-		return false;
+		LastEffectRPCTime = Now;
+		MulticastPlayEffect(HitLocation, HitNiagaraEffect, HitEffectScale, true);
 	}
-
-	return true;
 }
 
 // ============================================================
@@ -783,6 +830,30 @@ void AHellunaEnemyCharacter::LockMovementAndFaceTarget(AActor* TargetActor)
 		bMovementLocked   = true;
 	}
 	MoveComp->MaxWalkSpeed = 0.f;
+
+	// 서버 회전 모드: 이동 방향 회전 OFF → 컨트롤러 기반으로 전환
+	MoveComp->bOrientRotationToMovement    = false;
+	MoveComp->bUseControllerDesiredRotation = true;
+
+	if (TargetActor)
+	{
+		const FVector ToTarget = (TargetActor->GetActorLocation() - GetActorLocation()).GetSafeNormal2D();
+		if (!ToTarget.IsNearlyZero())
+		{
+			const FRotator TargetRot(0.f, ToTarget.Rotation().Yaw, 0.f);
+			SetActorRotation(TargetRot);
+
+			if (AController* OwnerController = GetController())
+			{
+				OwnerController->SetControlRotation(TargetRot);
+			}
+		}
+	}
+
+	ForceNetUpdate();
+
+	// 클라이언트에도 즉시 동기화 (회전 모드 + 속도)
+	Multicast_SetMovementLocked(true, 0.f);
 }
 
 void AHellunaEnemyCharacter::UnlockMovement()
@@ -794,6 +865,80 @@ void AHellunaEnemyCharacter::UnlockMovement()
 
 	MoveComp->MaxWalkSpeed = SavedMaxWalkSpeed;
 	bMovementLocked        = false;
+
+	// 서버 회전 모드 복원: 이동 방향 회전 ON
+	MoveComp->bOrientRotationToMovement    = true;
+	MoveComp->bUseControllerDesiredRotation = false;
+
+	ForceNetUpdate();
+
+	// 클라이언트에도 복원 동기화 (회전 모드 + 속도)
+	Multicast_SetMovementLocked(false, SavedMaxWalkSpeed);
+}
+
+void AHellunaEnemyCharacter::Multicast_SetMovementLocked_Implementation(bool bLock, float WalkSpeed)
+{
+	// 서버는 이미 위에서 직접 설정했으므로 클라이언트에서만 적용
+	if (HasAuthority()) return;
+
+	UCharacterMovementComponent* MoveComp = GetCharacterMovement();
+	if (!MoveComp) return;
+
+	MoveComp->MaxWalkSpeed = WalkSpeed;
+
+	// 클라이언트 회전 모드 동기화
+	MoveComp->bOrientRotationToMovement    = !bLock;
+	MoveComp->bUseControllerDesiredRotation = bLock;
+
+	if (bLock)
+	{
+		// 공격 시작: CMC 네트워크 스무딩 비활성화 → 회전 snap 즉시 적용
+		// 스무딩이 켜져 있으면 180도 회전을 보간해서 뒤돌아보이는 현상 발생
+		SavedSmoothingMode = MoveComp->NetworkSmoothingMode;
+		MoveComp->NetworkSmoothingMode = ENetworkSmoothingMode::Disabled;
+	}
+	else
+	{
+		// 공격 종료: 스무딩 복원
+		MoveComp->NetworkSmoothingMode = SavedSmoothingMode;
+	}
+
+}
+
+void AHellunaEnemyCharacter::Multicast_PlayAttackMontage_Implementation(
+	UAnimMontage* Montage,
+	float PlayRate,
+	FRotator FacingRotation)
+{
+	if (HasAuthority() || GetNetMode() == NM_DedicatedServer || !Montage)
+	{
+		return;
+	}
+
+	// 즉시 회전 적용 — CMC 스무딩이 비활성화된 상태에서 snap
+	const FRotator AttackRot(0.f, FacingRotation.Yaw, 0.f);
+	SetActorRotation(AttackRot);
+
+	// 클라이언트 측 이동 즉시 정지
+	UCharacterMovementComponent* MoveComp = GetCharacterMovement();
+	if (MoveComp)
+	{
+		MoveComp->StopMovementImmediately();
+	}
+
+	USkeletalMeshComponent* SkelMesh = GetMesh();
+	if (!SkelMesh) return;
+
+	UAnimInstance* AnimInst = SkelMesh->GetAnimInstance();
+	if (!AnimInst) return;
+
+	// ASC 리플리케이션이 먼저 도착해서 재생 중이면 처음부터 재시작
+	// (ASC는 서버 시점 기준이라 중간부터 시작할 수 있음 → 처음부터 재생해야 자연스러움)
+	if (AnimInst->Montage_IsPlaying(Montage))
+	{
+		AnimInst->Montage_Stop(0.1f, Montage);
+	}
+	AnimInst->Montage_Play(Montage, PlayRate);
 }
 
 // ============================================================
