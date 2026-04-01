@@ -91,6 +91,13 @@ void ABossEncounterCube::BeginPlay()
 		UE_LOG(LogTemp, Error, TEXT("[BossEncounter_DIAG] BeginPlay — MPC_BossEncounter is NULL! BP 설정 확인 필요"));
 	}
 
+	// [BossRestore] 보스 미처치 상태 → 레벨 시작부터 영역 내 메쉬를 흑백 처리
+	// (보스 활성화 여부와 무관 — 처음 접속하면 이미 회색 환경)
+	if (!IsRunningDedicatedServer() && !bBossDefeated)
+	{
+		DarkenEnvironmentMeshes();
+	}
+
 	// 늦은 접속 클라이언트
 	if (!IsRunningDedicatedServer() && bActivated && MPC_BossEncounter)
 	{
@@ -130,9 +137,6 @@ void ABossEncounterCube::BeginPlay()
 			FTimerHandle CustomDepthTimerHandle;
 			GetWorldTimerManager().SetTimer(CustomDepthTimerHandle, this,
 				&ABossEncounterCube::EnableBossEncounterCustomDepth, 1.f, false);
-
-			// [BossRestore] 늦은 접속 시에도 메쉬 어둡게 처리
-			DarkenEnvironmentMeshes();
 
 			UE_LOG(LogTemp, Log, TEXT("[BossEncounterCube] Late join — MPC DesatAmount snapped to 1.0, BossArea set"));
 		}

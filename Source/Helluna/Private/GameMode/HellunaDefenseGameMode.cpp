@@ -811,6 +811,13 @@ const FNightSpawnConfig* AHellunaDefenseGameMode::GetCurrentNightConfig() const
 // ============================================================
 // 낮/밤 시스템
 // ============================================================
+float AHellunaDefenseGameMode::GetEffectiveDayDuration() const
+{
+    // Day 1(첫째 날): TestDayDuration (BP 기본 5초 — 빠른 첫 밤 진입)
+    // Day 2+: NormalDayDuration (BP 기본 300초 = 5분)
+    return (CurrentDay <= 1) ? TestDayDuration : NormalDayDuration;
+}
+
 void AHellunaDefenseGameMode::EnterDay()
 {
     if (!bGameInitialized) return;
@@ -818,7 +825,10 @@ void AHellunaDefenseGameMode::EnterDay()
     // 낮 카운터 증가 (게임 시작 첫 낮은 Day 1)
     CurrentDay++;
 
-    Debug::Print(FString::Printf(TEXT("[EnterDay] %d일차 낮 시작"), CurrentDay), FColor::Yellow);
+    // Day에 따라 적절한 낮 지속 시간 결정
+    const float EffectiveDayDuration = GetEffectiveDayDuration();
+
+    Debug::Print(FString::Printf(TEXT("[EnterDay] %d일차 낮 시작 (지속시간: %.0f초)"), CurrentDay, EffectiveDayDuration), FColor::Yellow);
 
     RemainingMonstersThisNight = 0;
 
@@ -835,7 +845,7 @@ void AHellunaDefenseGameMode::EnterDay()
         GS->SetPhase(EDefensePhase::Day);
         GS->SetAliveMonsterCount(0);
         GS->SetCurrentDayForUI(CurrentDay);
-        GS->SetDayTimeRemaining(TestDayDuration);
+        GS->SetDayTimeRemaining(EffectiveDayDuration);
         GS->SetTotalMonstersThisNight(0);
         GS->SetIsBossNight(false);
         GS->MulticastPrintDay();
@@ -843,11 +853,11 @@ void AHellunaDefenseGameMode::EnterDay()
         // Phase 10: 채팅 시스템 메시지
         GS->BroadcastChatMessage(TEXT(""), TEXT("낮이 시작됩니다"), EChatMessageType::System);
 
-        GS->NetMulticast_OnDawnPassed(TestDayDuration);
+        GS->NetMulticast_OnDawnPassed(EffectiveDayDuration);
     }
 
     GetWorldTimerManager().ClearTimer(TimerHandle_ToNight);
-    GetWorldTimerManager().SetTimer(TimerHandle_ToNight, this, &ThisClass::EnterNight, TestDayDuration, false);
+    GetWorldTimerManager().SetTimer(TimerHandle_ToNight, this, &ThisClass::EnterNight, EffectiveDayDuration, false);
 
     // 1초마다 남은 낮 시간 감소
     GetWorldTimerManager().ClearTimer(TimerHandle_DayCountdown);

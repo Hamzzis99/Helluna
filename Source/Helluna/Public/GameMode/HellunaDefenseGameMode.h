@@ -88,15 +88,23 @@ protected:
 		meta = (DisplayName = "현재 일(Day) 수"))
 	int32 CurrentDay = 0;
 
-	/** 낮 지속 시간 (초) */
+	/** 첫째 날(Day 1) 낮 지속 시간 (초). 빠르게 첫 밤에 진입하기 위해 짧게 설정. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Defense(게임)|DayNight(낮밤)",
-		meta = (DisplayName = "낮 지속 시간(초)"))
+		meta = (DisplayName = "첫째 날 낮 지속 시간(초)"))
 	float TestDayDuration = 10.f;
+
+	/** 둘째 날(Day 2) 이후 낮 지속 시간 (초). 첫 웨이브 클리어 후부터 적용. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Defense(게임)|DayNight(낮밤)",
+		meta = (DisplayName = "일반 낮 지속 시간(초)"))
+	float NormalDayDuration = 300.f;
 
 	/** 밤 실패 후 낮으로 돌아가는 딜레이 (초) */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Defense(게임)|DayNight(낮밤)",
 		meta = (DisplayName = "밤→낮 전환 딜레이(초)"))
 	float TestNightFailToDayDelay = 5.f;
+
+	/** CurrentDay에 따라 적절한 낮 지속 시간 반환 (Day 1 = TestDayDuration, Day 2+ = NormalDayDuration) */
+	float GetEffectiveDayDuration() const;
 
 	/** 낮 시작 */
 	void EnterDay();

@@ -136,8 +136,8 @@ void AHellunaDefenseGameState::NetMulticast_OnDawnPassed_Implementation(float Ro
     else if (FDoubleProperty* DProp = CastField<FDoubleProperty>(CachedProp_TimeOfDay))
         CurrentTime = (float)DProp->GetPropertyValue_InContainer(UDS);
 
-    // DawnTransitionDuration이 0 이하이거나, 첫 시작(밤 미경험)이면 즉시 전환
-    if (DawnTransitionDuration <= 0.f || !bHasBeenNight)
+    // DawnTransitionDuration이 0 이하이면 즉시 전환
+    if (DawnTransitionDuration <= 0.f)
     {
         SetUDSTimeOfDay(DayStartTime);
 
