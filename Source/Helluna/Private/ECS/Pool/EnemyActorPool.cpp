@@ -24,13 +24,16 @@
 
 #include "ECS/Pool/EnemyActorPool.h"
 
+#include "AI/SpaceShipAttackSlotManager.h"
 #include "Character/HellunaEnemyCharacter.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
 #include "Components/StateTreeComponent.h"
+#include "GameMode/HellunaDefenseGameState.h"
 
 #include "GameFramework/Controller.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Engine/World.h"
+#include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogECSPool, Log, All);
 
@@ -335,6 +338,22 @@ void UEnemyActorPool::DeactivateActor(AHellunaEnemyCharacter* Actor)
 		return;
 	}
 
+	Actor->UnlockMovement();
+
+	if (UWorld* World = Actor->GetWorld())
+	{
+		if (AHellunaDefenseGameState* DefenseGameState = World->GetGameState<AHellunaDefenseGameState>())
+		{
+			if (AResourceUsingObject_SpaceShip* SpaceShip = DefenseGameState->GetSpaceShip())
+			{
+				if (USpaceShipAttackSlotManager* SlotManager = SpaceShip->FindComponentByClass<USpaceShipAttackSlotManager>())
+				{
+					SlotManager->ReleaseSlot(Actor);
+				}
+			}
+		}
+	}
+
 	// 1. AI 정지
 	if (APawn* Pawn = Cast<APawn>(Actor))
 	{
@@ -375,12 +394,12 @@ void UEnemyActorPool::DeactivateActor(AHellunaEnemyCharacter* Actor)
 
 	// 4. 숨기기 + 비활성화
 	Actor->SetActorTickEnabled(false);
+	Actor->SetActorLocation(PoolHiddenLocation);
+	Actor->ForceNetUpdate();
 	Actor->SetActorHiddenInGame(true);
 	Actor->SetActorEnableCollision(false);
-	Actor->SetReplicates(false);
 
 	// 5. 숨김 위치로 이동
-	Actor->SetActorLocation(PoolHiddenLocation);
 
 	// 6. Pool 반납 (앞에서 이미 PoolData를 구했으므로 재조회 없이 직접 사용)
 	PoolData->ActiveActors.Remove(Actor);

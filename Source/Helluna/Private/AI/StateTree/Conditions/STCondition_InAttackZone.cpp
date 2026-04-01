@@ -1,13 +1,11 @@
 #include "AI/StateTree/Conditions/STCondition_InAttackZone.h"
 
-#include "AI/SpaceShipAttackSlotManager.h"
 #include "AIController.h"
 #include "CollisionQueryParams.h"
 #include "Components/PrimitiveComponent.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/OverlapResult.h"
 #include "GameFramework/Pawn.h"
-#include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 #include "StateTreeExecutionContext.h"
 
 bool FSTCondition_InAttackZone::TestCondition(FStateTreeExecutionContext& Context) const
@@ -42,20 +40,6 @@ bool FSTCondition_InAttackZone::TestCondition(FStateTreeExecutionContext& Contex
 	if (!World)
 	{
 		return !bCheckInside;
-	}
-
-	// Slot-based ship attackers must first finish moving into their reserved slot.
-	if (Cast<AResourceUsingObject_SpaceShip>(TargetActor))
-	{
-		if (const USpaceShipAttackSlotManager* SlotManager = TargetActor->FindComponentByClass<USpaceShipAttackSlotManager>())
-		{
-			int32 SlotIndex = INDEX_NONE;
-			ESlotState SlotState = ESlotState::Free;
-			if (SlotManager->GetMonsterSlotInfo(Pawn, SlotIndex, SlotState) && SlotState == ESlotState::Reserved)
-			{
-				return !bCheckInside;
-			}
-		}
 	}
 
 	const FVector PawnLoc = Pawn->GetActorLocation();

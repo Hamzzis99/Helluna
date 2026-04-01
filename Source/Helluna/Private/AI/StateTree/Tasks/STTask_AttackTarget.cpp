@@ -34,21 +34,6 @@ static USpaceShipAttackSlotManager* GetShipSlotManager(AActor* TargetActor)
 	return TargetActor ? TargetActor->FindComponentByClass<USpaceShipAttackSlotManager>() : nullptr;
 }
 
-static const TCHAR* SlotStateToString(ESlotState SlotState)
-{
-	switch (SlotState)
-	{
-	case ESlotState::Free:
-		return TEXT("Free");
-	case ESlotState::Reserved:
-		return TEXT("Reserved");
-	case ESlotState::Occupied:
-		return TEXT("Occupied");
-	default:
-		return TEXT("Unknown");
-	}
-}
-
 static void FaceCurrentTarget(AAIController* AIController, APawn* Pawn, AActor* TargetActor, float DeltaTime)
 {
 	if (!AIController || !Pawn || !TargetActor)
@@ -110,45 +95,10 @@ EStateTreeRunStatus FSTTask_AttackTarget::EnterState(
 			return EStateTreeRunStatus::Failed;
 		}
 
-		if (bIsSpaceShip)
-		{
-			if (USpaceShipAttackSlotManager* SlotManager = HellunaAttackTarget::GetShipSlotManager(TargetActor))
-			{
-				int32 SlotIndex = INDEX_NONE;
-				ESlotState SlotState = ESlotState::Free;
-				if (SlotManager->GetMonsterSlotInfo(Pawn, SlotIndex, SlotState) && SlotState != ESlotState::Occupied)
-				{
-					UE_LOG(LogTemp, Warning,
-						TEXT("[enemybugreport][AttackBlockedPendingSlot] Enemy=%s Slot=%d SlotState=%s Target=%s"),
-						*GetNameSafe(Pawn),
-						SlotIndex,
-						HellunaAttackTarget::SlotStateToString(SlotState),
-						*GetNameSafe(TargetActor));
-					return EStateTreeRunStatus::Failed;
-				}
-			}
-		}
-
 		HellunaAttackTarget::FaceCurrentTarget(InstanceData.AIController, Pawn, TargetActor, 1.f / 60.f);
 	}
 
 	InstanceData.CooldownRemaining = InitialAttackDelay;
-	InstanceData.MovementDiagTimer = 0.f;
-
-	if (TargetData.HasValidTarget())
-	{
-		AActor* TargetActor = TargetData.TargetActor.Get();
-		const FVector ToTarget = (TargetActor->GetActorLocation() - Pawn->GetActorLocation()).GetSafeNormal2D();
-		const float DesiredYaw = ToTarget.IsNearlyZero() ? Pawn->GetActorRotation().Yaw : ToTarget.Rotation().Yaw;
-		UE_LOG(LogTemp, Warning,
-			TEXT("[enemybugreport][AttackEnter] Enemy=%s Target=%s PawnRot=%s ControlRot=%s DesiredYaw=%.2f InitialDelay=%.2f"),
-			*GetNameSafe(Pawn),
-			*GetNameSafe(TargetActor),
-			*Pawn->GetActorRotation().ToCompactString(),
-			*InstanceData.AIController->GetControlRotation().ToCompactString(),
-			DesiredYaw,
-			InitialAttackDelay);
-	}
 
 	return EStateTreeRunStatus::Running;
 }
@@ -178,8 +128,6 @@ EStateTreeRunStatus FSTTask_AttackTarget::Tick(
 		: TSubclassOf<UHellunaEnemyGameplayAbility>(UHellunaEnemyGameplayAbility::StaticClass());
 
 	const FHellunaAITargetData& TargetData = InstanceData.TargetData;
-	InstanceData.MovementDiagTimer -= DeltaTime;
-
 	// ① GA 활성 중(몽타주 재생 + AttackRecoveryDelay)이면 아무것도 하지 않음
 	for (const FGameplayAbilitySpec& Spec : ASC->GetActivatableAbilities())
 	{
@@ -187,23 +135,6 @@ EStateTreeRunStatus FSTTask_AttackTarget::Tick(
 		{
 			if (Spec.IsActive())
 			{
-				if (TargetData.HasValidTarget() && InstanceData.MovementDiagTimer <= 0.f)
-				{
-					const FVector ToTarget = (TargetData.TargetActor->GetActorLocation() - Pawn->GetActorLocation()).GetSafeNormal2D();
-					const float DesiredYaw = ToTarget.IsNearlyZero() ? Pawn->GetActorRotation().Yaw : ToTarget.Rotation().Yaw;
-					const float YawDelta = FMath::Abs(FMath::FindDeltaAngleDegrees(Pawn->GetActorRotation().Yaw, DesiredYaw));
-					UE_LOG(LogTemp, Log,
-						TEXT("[enemybugreport][AttackTick] Enemy=%s Phase=ActiveGA Target=%s PawnRot=%s ControlRot=%s DesiredYaw=%.2f YawDelta=%.2f Focus=%s"),
-						*GetNameSafe(Pawn),
-						*GetNameSafe(TargetData.TargetActor.Get()),
-						*Pawn->GetActorRotation().ToCompactString(),
-						*AIController->GetControlRotation().ToCompactString(),
-						DesiredYaw,
-						YawDelta,
-						*GetNameSafe(AIController->GetFocusActor()));
-					InstanceData.MovementDiagTimer = 0.5f;
-				}
-
 				if (TargetData.HasValidTarget())
 				{
 					HellunaAttackTarget::FaceCurrentTarget(AIController, Pawn, TargetData.TargetActor.Get(), DeltaTime);
@@ -218,24 +149,6 @@ EStateTreeRunStatus FSTTask_AttackTarget::Tick(
 	if (InstanceData.CooldownRemaining > 0.f)
 	{
 		InstanceData.CooldownRemaining -= DeltaTime;
-
-		if (TargetData.HasValidTarget() && InstanceData.MovementDiagTimer <= 0.f)
-		{
-			const FVector ToTarget = (TargetData.TargetActor->GetActorLocation() - Pawn->GetActorLocation()).GetSafeNormal2D();
-			const float DesiredYaw = ToTarget.IsNearlyZero() ? Pawn->GetActorRotation().Yaw : ToTarget.Rotation().Yaw;
-			const float YawDelta = FMath::Abs(FMath::FindDeltaAngleDegrees(Pawn->GetActorRotation().Yaw, DesiredYaw));
-			UE_LOG(LogTemp, Log,
-				TEXT("[enemybugreport][AttackTick] Enemy=%s Phase=Cooldown Target=%s PawnRot=%s ControlRot=%s DesiredYaw=%.2f YawDelta=%.2f Cooldown=%.2f Focus=%s"),
-				*GetNameSafe(Pawn),
-				*GetNameSafe(TargetData.TargetActor.Get()),
-				*Pawn->GetActorRotation().ToCompactString(),
-				*AIController->GetControlRotation().ToCompactString(),
-				DesiredYaw,
-				YawDelta,
-				InstanceData.CooldownRemaining,
-				*GetNameSafe(AIController->GetFocusActor()));
-			InstanceData.MovementDiagTimer = 0.5f;
-		}
 
 		if (TargetData.HasValidTarget())
 		{
@@ -286,14 +199,6 @@ EStateTreeRunStatus FSTTask_AttackTarget::Tick(
 	{
 		const float CooldownMultiplier = Enemy->bEnraged ? Enemy->EnrageCooldownMultiplier : 1.f;
 		InstanceData.CooldownRemaining = AttackCooldown * CooldownMultiplier;
-		UE_LOG(LogTemp, Warning,
-			TEXT("[enemybugreport][AttackActivate] Enemy=%s Target=%s Cooldown=%.2f PawnRot=%s ControlRot=%s Focus=%s"),
-			*GetNameSafe(Pawn),
-			*GetNameSafe(TargetData.TargetActor.Get()),
-			InstanceData.CooldownRemaining,
-			*Pawn->GetActorRotation().ToCompactString(),
-			*AIController->GetControlRotation().ToCompactString(),
-			*GetNameSafe(AIController->GetFocusActor()));
 	}
 
 	return EStateTreeRunStatus::Running;
@@ -309,7 +214,7 @@ void FSTTask_AttackTarget::ExitState(
 		const FHellunaAITargetData& TargetData = InstanceData.TargetData;
 		const bool bKeepShipFocus = TargetData.HasValidTarget()
 			&& Cast<AResourceUsingObject_SpaceShip>(TargetData.TargetActor.Get()) != nullptr;
-		if (TargetData.HasValidTarget() && !bKeepShipFocus)
+		if (TargetData.HasValidTarget())
 		{
 			if (AActor* TargetActor = TargetData.TargetActor.Get())
 			{
@@ -326,12 +231,6 @@ void FSTTask_AttackTarget::ExitState(
 			}
 		}
 
-		UE_LOG(LogTemp, Warning,
-			TEXT("[enemybugreport][AttackExit] Enemy=%s Focus=%s PawnRot=%s ControlRot=%s"),
-			*GetNameSafe(AIC->GetPawn()),
-			*GetNameSafe(AIC->GetFocusActor()),
-			AIC->GetPawn() ? *AIC->GetPawn()->GetActorRotation().ToCompactString() : TEXT("None"),
-			*AIC->GetControlRotation().ToCompactString());
 		if (bKeepShipFocus)
 		{
 			AIC->SetFocus(TargetData.TargetActor.Get());

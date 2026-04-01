@@ -505,7 +505,7 @@ void AHellunaDefenseGameState::CleanupInitialNightPCGClientArtifacts()
     UGameplayStatics::GetAllActorsWithTag(World, FName(TEXT("Ore")), ExistingOres);
     for (AActor* OreActor : ExistingOres)
     {
-        if (!IsValid(OreActor))
+        if (!IsValid(OreActor) || OreActor->GetIsReplicated())
         {
             continue;
         }

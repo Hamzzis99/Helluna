@@ -117,6 +117,15 @@ struct FSTTask_ChaseTarget_TestInstanceData
 	/** 연속 슬롯 배정 실패 횟수 (Idle 재배정 누적) */
 	UPROPERTY()
 	int32 ConsecutiveSlotFailures = 0;
+
+	UPROPERTY()
+	FVector SimpleMoveDetourGoal = FVector::ZeroVector;
+
+	UPROPERTY()
+	bool bSimpleMoveDetourActive = false;
+
+	UPROPERTY()
+	int32 SimpleMoveDetourDirectionSign = 0;
 };
 
 USTRUCT(meta = (DisplayName = "Helluna: Chase Target (Test)", Category = "Helluna|AI"))
@@ -171,6 +180,11 @@ public:
 			ToolTip = "ON: 위치 변화 없으면 좌/우 자동 우회. 연속 시 강도 증가 (최대 3배).\nOFF: Stuck 감지 비활성화.\n슬롯 모드에서는 Stuck 시 슬롯 재배정."))
 	bool bUseStuckDetour = true;
 
+	UPROPERTY(EditAnywhere, Category = "??湲곕뒫 ?좉?",
+		meta = (DisplayName = "[4] Simple MoveToActor Test",
+			ToolTip = "ON: Ignore slot and EQS logic for spaceship targets. Use MoveToActor directly, and if stuck, sidestep before resuming MoveToActor."))
+	bool bUseSimpleMoveToActorTest = false;
+
 	// ═══════════════════════════════════════════════════════════
 	// Stuck 감지 설정 (bUseStuckDetour = true 일 때 활성)
 	// ═══════════════════════════════════════════════════════════
@@ -192,6 +206,12 @@ public:
 			ToolTip = "Stuck 시 좌/우 우회 거리. 연속 시 x횟수(최대 3배). 권장: 200~500cm",
 			ClampMin = "50.0", EditCondition = "bUseStuckDetour"))
 	float DetourOffset = 300.f;
+
+	UPROPERTY(EditAnywhere, Category = "Stuck 媛먯?",
+		meta = (DisplayName = "Simple Test Detour Distance (cm)",
+			ToolTip = "Fixed sidestep distance used by the Simple MoveToActor test mode after a stuck detection.",
+			ClampMin = "50.0", EditCondition = "bUseSimpleMoveToActorTest && bUseStuckDetour"))
+	float SimpleMoveToActorDetourDistance = 350.f;
 
 	UPROPERTY(EditAnywhere, Category = "Stuck 媛먯?",
 		meta = (DisplayName = "Stuck Detour Direction Lock",

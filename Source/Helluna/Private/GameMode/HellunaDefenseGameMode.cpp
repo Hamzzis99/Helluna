@@ -953,6 +953,8 @@ void AHellunaDefenseGameMode::EnterDay()
         GS->NetMulticast_OnDawnPassed(TestDayDuration);
     }
 
+    GetWorldTimerManager().SetTimerForNextTick(this, &ThisClass::ActivateNightPCG);
+
     GetWorldTimerManager().ClearTimer(TimerHandle_ToNight);
     GetWorldTimerManager().SetTimer(TimerHandle_ToNight, this, &ThisClass::EnterNight, TestDayDuration, false);
 
@@ -986,9 +988,6 @@ void AHellunaDefenseGameMode::EnterNight()
 
     // 낮 카운트다운 타이머 정지
     GetWorldTimerManager().ClearTimer(TimerHandle_DayCountdown);
-
-    // PCG 밤 스폰 실행
-    ActivateNightPCG();
 
     // ── 보스 소환 일 체크 ──────────────────────────────────────────────
     // BossSchedule 배열에서 CurrentDay와 일치하는 항목을 찾는다.

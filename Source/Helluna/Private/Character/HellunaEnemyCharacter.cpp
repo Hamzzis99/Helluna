@@ -902,6 +902,7 @@ void AHellunaEnemyCharacter::Multicast_SetMovementLocked_Implementation(bool bLo
 		// 공격 종료: 스무딩 복원
 		MoveComp->NetworkSmoothingMode = SavedSmoothingMode;
 	}
+
 }
 
 void AHellunaEnemyCharacter::Multicast_PlayAttackMontage_Implementation(

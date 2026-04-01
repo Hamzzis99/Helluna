@@ -3,6 +3,8 @@
  */
 
 #include "AI/SpaceShipAttackSlotManager.h"
+#include "Character/HellunaEnemyCharacter.h"
+#include "Character/EnemyComponent/HellunaHealthComponent.h"
 #include "NavigationSystem.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
@@ -501,7 +503,31 @@ void USpaceShipAttackSlotManager::TickComponent(float DeltaTime, ELevelTick Tick
 	for (int32 i = 0; i < Slots.Num(); ++i)
 	{
 		FAttackSlot& Slot = Slots[i];
-		if (Slot.State != ESlotState::Free && !Slot.OccupyingMonster.IsValid())
+		if (Slot.State == ESlotState::Free)
+		{
+			continue;
+		}
+
+		AActor* OccupyingActor = Slot.OccupyingMonster.Get();
+		bool bShouldAutoRelease = !IsValid(OccupyingActor) || OccupyingActor->IsActorBeingDestroyed();
+
+		if (!bShouldAutoRelease && OccupyingActor)
+		{
+			bShouldAutoRelease = OccupyingActor->IsHidden() || !OccupyingActor->GetActorEnableCollision();
+		}
+
+		if (!bShouldAutoRelease)
+		{
+			if (const AHellunaEnemyCharacter* Enemy = Cast<AHellunaEnemyCharacter>(OccupyingActor))
+			{
+				if (const UHellunaHealthComponent* HealthComponent = Enemy->FindComponentByClass<UHellunaHealthComponent>())
+				{
+					bShouldAutoRelease = HealthComponent->IsDead();
+				}
+			}
+		}
+
+		if (bShouldAutoRelease)
 		{
 			UE_LOG(LogTemp, Verbose, TEXT("[enemybugreport][SlotAutoRelease] Slot=%d State=%s"),
 				i, Slot.State == ESlotState::Reserved ? TEXT("Reserved") : TEXT("Occupied"));

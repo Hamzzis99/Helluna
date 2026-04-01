@@ -52,8 +52,6 @@ struct FSTTask_AttackTargetInstanceData
 	UPROPERTY()
 	float CooldownRemaining = 0.f;
 
-	UPROPERTY()
-	float MovementDiagTimer = 0.f;
 };
 
 USTRUCT(meta = (DisplayName = "Helluna: Attack Target", Category = "Helluna|AI"))

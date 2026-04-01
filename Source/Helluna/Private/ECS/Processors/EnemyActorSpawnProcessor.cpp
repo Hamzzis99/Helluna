@@ -485,8 +485,14 @@ void UEnemyActorSpawnProcessor::Execute(
 
 									const float MinDistSq = CalcMinDistSq(Actor->GetActorLocation(), PlayerLocations);
 									const float DespawnSq = Data.DespawnThreshold * Data.DespawnThreshold;
+									const float GoalProtectDist = FMath::Max(Data.SpawnThreshold, Data.DespawnThreshold * 0.5f);
+									const float GoalProtectSq = GoalProtectDist * GoalProtectDist;
+									const float GoalDistSq = Data.bGoalLocationCached
+										? FVector::DistSquared(Actor->GetActorLocation(), Data.GoalLocation)
+										: MAX_FLT;
+									const bool bNearGoal = GoalDistSq <= GoalProtectSq;
 
-									if (MinDistSq > DespawnSq)
+									if (MinDistSq > DespawnSq && !bNearGoal)
 									{
 										DespawnActorToEntity(SpawnState, Data, Transform, Actor, Pool);
 										continue;
@@ -496,10 +502,13 @@ void UEnemyActorSpawnProcessor::Execute(
 									UpdateActorTickRate(Actor, ActualDist, Data);
 
 									ActiveActorCount++;
-									SoftCapCandidates.Add({
-										SpawnState.SpawnedActor, MinDistSq,
-										&SpawnState, &Data, &Transform
-									});
+									if (!bNearGoal)
+									{
+										SoftCapCandidates.Add({
+											SpawnState.SpawnedActor, MinDistSq,
+											&SpawnState, &Data, &Transform
+										});
+									}
 								}
 								else
 								{

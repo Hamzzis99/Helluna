@@ -7,7 +7,24 @@
 #include "GameplayTagContainer.h"
 
 #include "Character/HellunaEnemyCharacter.h"
+#include "GameMode/HellunaDefenseGameState.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
+
+namespace HellunaEnemyAttackUtils
+{
+static AActor* ResolveAttackTarget(const AHellunaEnemyCharacter* Enemy, AActor* TargetActor)
+{
+	if (TargetActor || !Enemy)
+	{
+		return TargetActor;
+	}
+
+	UWorld* World = Enemy->GetWorld();
+	AHellunaDefenseGameState* DefenseGameState = World ? World->GetGameState<AHellunaDefenseGameState>() : nullptr;
+	return DefenseGameState ? DefenseGameState->GetSpaceShip() : nullptr;
+}
+}
 
 UEnemyGameplayAbility_Attack::UEnemyGameplayAbility_Attack()
 {
@@ -55,12 +72,13 @@ void UEnemyGameplayAbility_Attack::ActivateAbility(
 	}
 	Enemy->SetServerAttackPoseTickEnabled(true);
 
-	Enemy->LockMovementAndFaceTarget(CurrentTarget.Get());
+	AActor* AttackTarget = HellunaEnemyAttackUtils::ResolveAttackTarget(Enemy, CurrentTarget.Get());
+	Enemy->LockMovementAndFaceTarget(AttackTarget);
 	
 	// 광폭화 상태이면 Enemy에 설정된 EnrageAttackMontagePlayRate 배율로 공격 애니메이션을 빠르게 재생
 	const float PlayRate = Enemy->bEnraged ? Enemy->EnrageAttackMontagePlayRate : 1.f;
-	const FVector ToTarget = CurrentTarget.IsValid()
-		? (CurrentTarget->GetActorLocation() - Enemy->GetActorLocation()).GetSafeNormal2D()
+	const FVector ToTarget = AttackTarget
+		? (AttackTarget->GetActorLocation() - Enemy->GetActorLocation()).GetSafeNormal2D()
 		: FVector::ForwardVector;
 	const FRotator FacingRotation = ToTarget.IsNearlyZero()
 		? Enemy->GetActorRotation()
