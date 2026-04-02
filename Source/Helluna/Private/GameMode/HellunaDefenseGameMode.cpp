@@ -1130,14 +1130,17 @@ void AHellunaDefenseGameMode::TriggerMassSpawning()
     }
 
     // ── 매 밤: RequestSpawn 호출 + 카운터 확정 ───────────────────────
+    float SpawnSequenceDelay = 0.f;
+
     for (AHellunaEnemyMassSpawner* Spawner : CachedMeleeSpawners)
     {
         if (!IsValid(Spawner)) continue;
-        Spawner->RequestSpawn(MeleeCount);
+        Spawner->RequestSpawn(MeleeCount, SpawnSequenceDelay);
         RemainingMonstersThisNight += Spawner->GetRequestedSpawnCount();
         Debug::Print(FString::Printf(
-            TEXT("[TriggerMassSpawning] 근거리 RequestSpawn(%d): %s | 누적: %d"),
-            MeleeCount, *Spawner->GetName(), RemainingMonstersThisNight), FColor::Green);
+            TEXT("[TriggerMassSpawning] 근거리 RequestSpawn(%d, Delay=%.2f): %s | 누적: %d"),
+            MeleeCount, SpawnSequenceDelay, *Spawner->GetName(), RemainingMonstersThisNight), FColor::Green);
+        SpawnSequenceDelay += Spawner->GetEstimatedSpawnSequenceSpacing(MeleeCount);
     }
 
     for (AHellunaEnemyMassSpawner* Spawner : CachedRangeSpawners)
@@ -1148,11 +1151,12 @@ void AHellunaDefenseGameMode::TriggerMassSpawning()
             Debug::Print(FString::Printf(TEXT("[TriggerMassSpawning] 원거리 0마리 — %s 스킵"), *Spawner->GetName()), FColor::Yellow);
             continue;
         }
-        Spawner->RequestSpawn(RangeCount);
+        Spawner->RequestSpawn(RangeCount, SpawnSequenceDelay);
         RemainingMonstersThisNight += Spawner->GetRequestedSpawnCount();
         Debug::Print(FString::Printf(
-            TEXT("[TriggerMassSpawning] 원거리 RequestSpawn(%d): %s | 누적: %d"),
-            RangeCount, *Spawner->GetName(), RemainingMonstersThisNight), FColor::Green);
+            TEXT("[TriggerMassSpawning] 원거리 RequestSpawn(%d, Delay=%.2f): %s | 누적: %d"),
+            RangeCount, SpawnSequenceDelay, *Spawner->GetName(), RemainingMonstersThisNight), FColor::Green);
+        SpawnSequenceDelay += Spawner->GetEstimatedSpawnSequenceSpacing(RangeCount);
     }
 
     // 총 소환 수 확정 후 GameState에 반영 — Total과 Alive를 동시에 설정

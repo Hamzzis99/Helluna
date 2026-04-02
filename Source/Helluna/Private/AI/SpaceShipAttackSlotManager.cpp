@@ -5,11 +5,772 @@
 #include "AI/SpaceShipAttackSlotManager.h"
 #include "Character/HellunaEnemyCharacter.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
+#include "Components/PrimitiveComponent.h"
 #include "NavigationSystem.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
 #include "Engine/OverlapResult.h"
 #include "GameFramework/Actor.h"
+
+namespace SpaceShipSlotHelpers
+{
+static float NormalizeAngleDegrees(float AngleDegrees)
+{
+	const float Normalized = FMath::Fmod(AngleDegrees, 360.f);
+	return Normalized < 0.f ? Normalized + 360.f : Normalized;
+}
+
+static float ComputeShortestAngleDeltaDegrees(float A, float B)
+{
+	return FMath::Abs(FMath::FindDeltaAngleDegrees(A, B));
+}
+
+static void GatherShipCollisionPrimitives(const AActor* Owner, TArray<UPrimitiveComponent*>& OutPrimitives)
+{
+	OutPrimitives.Reset();
+
+	if (!Owner)
+	{
+		return;
+	}
+
+	TArray<UPrimitiveComponent*> AllPrimitives;
+	Owner->GetComponents<UPrimitiveComponent>(AllPrimitives);
+
+	bool bFoundTagged = false;
+	for (UPrimitiveComponent* Primitive : AllPrimitives)
+	{
+		if (!Primitive || Primitive->GetCollisionEnabled() == ECollisionEnabled::NoCollision)
+		{
+			continue;
+		}
+
+		if (!Primitive->ComponentHasTag(TEXT("ShipCombatCollision")))
+		{
+			continue;
+		}
+
+		OutPrimitives.Add(Primitive);
+		bFoundTagged = true;
+	}
+
+	if (bFoundTagged)
+	{
+		return;
+	}
+
+	for (UPrimitiveComponent* Primitive : AllPrimitives)
+	{
+		if (!Primitive || Primitive->GetCollisionEnabled() == ECollisionEnabled::NoCollision)
+		{
+			continue;
+		}
+
+		OutPrimitives.Add(Primitive);
+	}
+}
+
+static float GetShipSurfaceQueryDistance(const AActor* Owner, float ExtraPadding)
+{
+	if (!Owner)
+	{
+		return ExtraPadding;
+	}
+
+	FVector BoundsOrigin = FVector::ZeroVector;
+	FVector BoundsExtent = FVector::ZeroVector;
+	Owner->GetActorBounds(true, BoundsOrigin, BoundsExtent);
+
+	return BoundsExtent.Size2D() + ExtraPadding + 300.f;
+}
+
+static bool FindSurfacePointForDirection(const AActor* Owner, const FVector& Direction2D, float QueryDistance, FVector& OutSurfacePoint)
+{
+	if (!Owner || Direction2D.IsNearlyZero())
+	{
+		return false;
+	}
+
+	const FVector Center = Owner->GetActorLocation();
+	const FVector QueryPoint = Center + Direction2D.GetSafeNormal2D() * QueryDistance;
+
+	TArray<UPrimitiveComponent*> CollisionPrimitives;
+	GatherShipCollisionPrimitives(Owner, CollisionPrimitives);
+
+	float BestDistSq = MAX_FLT;
+	bool bFound = false;
+
+	for (const UPrimitiveComponent* Primitive : CollisionPrimitives)
+	{
+		if (!Primitive)
+		{
+			continue;
+		}
+
+		FVector ClosestPoint = FVector::ZeroVector;
+		const float DistanceToCollision = Primitive->GetClosestPointOnCollision(QueryPoint, ClosestPoint);
+		if (DistanceToCollision < 0.f)
+		{
+			continue;
+		}
+
+		const FVector FromCenter = ClosestPoint - Center;
+		if (!FromCenter.IsNearlyZero() &&
+			FVector::DotProduct(FromCenter.GetSafeNormal2D(), Direction2D.GetSafeNormal2D()) < 0.2f)
+		{
+			continue;
+		}
+
+		const float DistSq = FVector::DistSquared2D(QueryPoint, ClosestPoint);
+		if (DistSq < BestDistSq)
+		{
+			BestDistSq = DistSq;
+			OutSurfacePoint = ClosestPoint;
+			bFound = true;
+		}
+	}
+
+	if (bFound)
+	{
+		return true;
+	}
+
+	FVector BoundsOrigin = FVector::ZeroVector;
+	FVector BoundsExtent = FVector::ZeroVector;
+	Owner->GetActorBounds(true, BoundsOrigin, BoundsExtent);
+	const FVector Dir = Direction2D.GetSafeNormal2D();
+	const float ExtentAlongDir = FMath::Abs(Dir.X) * BoundsExtent.X + FMath::Abs(Dir.Y) * BoundsExtent.Y;
+	OutSurfacePoint = FVector(Center.X + Dir.X * ExtentAlongDir, Center.Y + Dir.Y * ExtentAlongDir, Center.Z);
+	return true;
+}
+
+static bool TraceGroundCandidate(UWorld* World, const AActor* Owner, const FVector& XYLocation, float TraceHalfHeight, FVector& OutGroundPoint)
+{
+	if (!World)
+	{
+		return false;
+	}
+
+	const FVector TraceStart = XYLocation + FVector(0.f, 0.f, TraceHalfHeight);
+	const FVector TraceEnd = XYLocation - FVector(0.f, 0.f, TraceHalfHeight);
+
+	FHitResult HitResult;
+	FCollisionQueryParams TraceParams;
+	if (Owner)
+	{
+		TraceParams.AddIgnoredActor(Owner);
+	}
+
+	if (!World->LineTraceSingleByChannel(HitResult, TraceStart, TraceEnd, ECC_WorldStatic, TraceParams))
+	{
+		return false;
+	}
+
+	OutGroundPoint = HitResult.ImpactPoint + FVector(0.f, 0.f, 10.f);
+	return true;
+}
+
+static bool IsTooCloseToExistingSlots(const TArray<FAttackSlot>& Slots, const FVector& Candidate, float MinDistance2D)
+{
+	const float MinDistSq = FMath::Square(MinDistance2D);
+
+	for (const FAttackSlot& Slot : Slots)
+	{
+		if (FVector::DistSquared2D(Slot.WorldLocation, Candidate) < MinDistSq)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+static bool ShouldReleaseReservationForActor(const AActor* OccupyingActor)
+{
+	if (!IsValid(OccupyingActor) || OccupyingActor->IsActorBeingDestroyed())
+	{
+		return true;
+	}
+
+	if (OccupyingActor->IsHidden() || !OccupyingActor->GetActorEnableCollision())
+	{
+		return true;
+	}
+
+	if (const AHellunaEnemyCharacter* Enemy = Cast<AHellunaEnemyCharacter>(OccupyingActor))
+	{
+		if (const UHellunaHealthComponent* HealthComponent = Enemy->FindComponentByClass<UHellunaHealthComponent>())
+		{
+			return HealthComponent->IsDead();
+		}
+	}
+
+	return false;
+}
+}
+
+float USpaceShipAttackSlotManager::ComputeSectorAngleDegrees(const FVector& WorldLocation) const
+{
+	const AActor* Owner = GetOwner();
+	if (!Owner)
+	{
+		return 0.f;
+	}
+
+	const FVector Dir = (WorldLocation - Owner->GetActorLocation()).GetSafeNormal2D();
+	return Dir.IsNearlyZero() ? 0.f : SpaceShipSlotHelpers::NormalizeAngleDegrees(Dir.Rotation().Yaw);
+}
+
+float USpaceShipAttackSlotManager::FindOrRememberPreferredSectorAngle(AActor* Monster, const FVector& ReferenceLocation)
+{
+	if (!Monster)
+	{
+		return 0.f;
+	}
+
+	const TWeakObjectPtr<AActor> MonsterKey = Monster;
+	if (const float* Existing = PreferredSectorAngles.Find(MonsterKey))
+	{
+		return *Existing;
+	}
+
+	const float SectorAngle = ComputeSectorAngleDegrees(ReferenceLocation);
+	PreferredSectorAngles.Add(MonsterKey, SectorAngle);
+	return SectorAngle;
+}
+
+void USpaceShipAttackSlotManager::RememberPreferredSectorAngle(AActor* Monster, float SectorAngleDegrees)
+{
+	if (!Monster)
+	{
+		return;
+	}
+
+	const TWeakObjectPtr<AActor> MonsterKey = Monster;
+	PreferredSectorAngles.FindOrAdd(MonsterKey) = SpaceShipSlotHelpers::NormalizeAngleDegrees(SectorAngleDegrees);
+}
+
+bool USpaceShipAttackSlotManager::GetPreferredSectorAngle(AActor* Monster, float& OutSectorAngleDegrees) const
+{
+	if (!Monster)
+	{
+		return false;
+	}
+
+	const TWeakObjectPtr<AActor> MonsterKey = Monster;
+	if (const float* Existing = PreferredSectorAngles.Find(MonsterKey))
+	{
+		OutSectorAngleDegrees = *Existing;
+		return true;
+	}
+
+	return false;
+}
+
+void USpaceShipAttackSlotManager::CleanupPreferredSectorAngles()
+{
+	for (auto It = PreferredSectorAngles.CreateIterator(); It; ++It)
+	{
+		if (!It.Key().IsValid())
+		{
+			It.RemoveCurrent();
+		}
+	}
+}
+
+void USpaceShipAttackSlotManager::CleanupSectorReservations()
+{
+	if (!bEnableSectorDistribution || SectorCount < 2)
+	{
+		ReservedSectorIndices.Reset();
+		return;
+	}
+
+	for (auto It = ReservedSectorIndices.CreateIterator(); It; ++It)
+	{
+		AActor* ReservedActor = It.Key().Get();
+		const int32 ReservedSector = It.Value();
+		if (!It.Key().IsValid()
+			|| SpaceShipSlotHelpers::ShouldReleaseReservationForActor(ReservedActor)
+			|| ReservedSector < 0
+			|| ReservedSector >= SectorCount)
+		{
+			It.RemoveCurrent();
+		}
+	}
+}
+
+float USpaceShipAttackSlotManager::GetSectorAngleDegrees(int32 SectorIndex) const
+{
+	if (SectorCount <= 0)
+	{
+		return 0.f;
+	}
+
+	const float SectorStep = 360.f / static_cast<float>(SectorCount);
+	return SpaceShipSlotHelpers::NormalizeAngleDegrees(SectorStep * SectorIndex);
+}
+
+int32 USpaceShipAttackSlotManager::GetReservedSectorOccupancy(int32 SectorIndex, const AActor* IgnoredMonster) const
+{
+	int32 Occupancy = 0;
+	for (const TPair<TWeakObjectPtr<AActor>, int32>& Pair : ReservedSectorIndices)
+	{
+		if (Pair.Value != SectorIndex)
+		{
+			continue;
+		}
+
+		AActor* ReservedActor = Pair.Key.Get();
+		if (!ReservedActor || ReservedActor == IgnoredMonster)
+		{
+			continue;
+		}
+
+		++Occupancy;
+	}
+
+	return Occupancy;
+}
+
+bool USpaceShipAttackSlotManager::FindApproachLocationForSector(
+	int32 SectorIndex,
+	const AActor* Monster,
+	const FVector& MonsterLocation,
+	FVector& OutApproachLocation) const
+{
+	if (!bEnableSectorDistribution || SectorCount < 2)
+	{
+		return false;
+	}
+
+	UWorld* World = GetWorld();
+	AActor* Owner = GetOwner();
+	UNavigationSystemV1* NavSys = World ? UNavigationSystemV1::GetCurrent(World) : nullptr;
+	if (!World || !Owner || !NavSys)
+	{
+		return false;
+	}
+
+	const float AngleDegrees = GetSectorAngleDegrees(SectorIndex);
+	uint32 MonsterHash = 0;
+	if (Monster)
+	{
+		MonsterHash = PointerHash(Monster);
+	}
+
+	const float JitterAlpha = (MonsterHash % 1000) / 999.f;
+	const float SignedJitter = (JitterAlpha * 2.f) - 1.f;
+	const float JitteredAngle = SpaceShipSlotHelpers::NormalizeAngleDegrees(
+		AngleDegrees + SectorAngleJitter * SignedJitter);
+	const FVector Direction2D(
+		FMath::Cos(FMath::DegreesToRadians(JitteredAngle)),
+		FMath::Sin(FMath::DegreesToRadians(JitteredAngle)),
+		0.f);
+	if (Direction2D.IsNearlyZero())
+	{
+		return false;
+	}
+
+	const float EffectiveMinDistance = FMath::Min(SectorApproachDistanceMin, SectorApproachDistanceMax);
+	const float EffectiveMaxDistance = FMath::Max(SectorApproachDistanceMin, SectorApproachDistanceMax);
+	const float QueryDistance = SpaceShipSlotHelpers::GetShipSurfaceQueryDistance(Owner, EffectiveMaxDistance + 200.f);
+
+	FVector SurfacePoint = FVector::ZeroVector;
+	if (!SpaceShipSlotHelpers::FindSurfacePointForDirection(Owner, Direction2D, QueryDistance, SurfacePoint))
+	{
+		return false;
+	}
+
+	const FVector Outward = Direction2D.GetSafeNormal2D();
+	const FVector Tangent = FVector::CrossProduct(FVector::UpVector, Outward).GetSafeNormal();
+	const float PreferredSide = FVector::DotProduct(Tangent, (MonsterLocation - SurfacePoint).GetSafeNormal2D()) >= 0.f ? 1.f : -1.f;
+	const float DistanceStep = FMath::Max(40.f, (EffectiveMaxDistance - EffectiveMinDistance) / 3.f);
+	const float LateralOffsets[] =
+	{
+		0.f,
+		SectorLateralSpread * PreferredSide,
+		-SectorLateralSpread * PreferredSide,
+		SectorLateralSpread * 2.f * PreferredSide,
+		-SectorLateralSpread * 2.f * PreferredSide
+	};
+
+	float BestScore = MAX_FLT;
+	FVector BestLocation = FVector::ZeroVector;
+
+	auto ConsiderLocation = [&](const FVector& Location, float CollisionDistanceScale)
+	{
+		if (FMath::Abs(Location.Z - MonsterLocation.Z) > MaxSlotAssignmentHeightDelta + 250.f)
+		{
+			return;
+		}
+
+		if (IsNearOwnerCollision(Location, MeshOverlapRadius))
+		{
+			return;
+		}
+
+		const float CollisionDistance = ComputeOwnerCollisionDistance(Location);
+		if (CollisionDistance < 0.f || CollisionDistance > EffectiveMaxDistance + 180.f)
+		{
+			return;
+		}
+
+		const float Score =
+			FVector::DistSquared2D(MonsterLocation, Location) +
+			FMath::Square(CollisionDistance * CollisionDistanceScale);
+		if (Score < BestScore)
+		{
+			BestScore = Score;
+			BestLocation = Location;
+		}
+	};
+
+	for (float Distance = EffectiveMinDistance; Distance <= EffectiveMaxDistance + KINDA_SMALL_NUMBER; Distance += DistanceStep)
+	{
+		for (const float LateralOffset : LateralOffsets)
+		{
+			const FVector CandidateXY = SurfacePoint + Outward * Distance + Tangent * LateralOffset;
+
+			FVector Candidate = FVector::ZeroVector;
+			if (!SpaceShipSlotHelpers::TraceGroundCandidate(World, Owner, CandidateXY, 3000.f, Candidate))
+			{
+				continue;
+			}
+
+			FVector NavLocation = FVector::ZeroVector;
+			if (!ValidateSlotCandidate(Candidate, NavLocation))
+			{
+				continue;
+			}
+
+			ConsiderLocation(NavLocation, 3.0f);
+		}
+	}
+
+	if (BestScore >= MAX_FLT)
+	{
+		const FVector ProjectionExtent(
+			FMath::Max(NavExtent * 2.f, 240.f),
+			FMath::Max(NavExtent * 2.f, 240.f),
+			FMath::Max(NavExtent * 10.f, 1200.f));
+		const float MidDistance = (EffectiveMinDistance + EffectiveMaxDistance) * 0.5f;
+		const FVector Seeds[] =
+		{
+			SurfacePoint + Outward * MidDistance,
+			SurfacePoint + Outward * EffectiveMaxDistance,
+			SurfacePoint + Outward * EffectiveMinDistance + Tangent * SectorLateralSpread * PreferredSide,
+			SurfacePoint + Outward * EffectiveMinDistance - Tangent * SectorLateralSpread * PreferredSide,
+			SurfacePoint
+		};
+
+		for (const FVector& Seed : Seeds)
+		{
+			FNavLocation NavLoc;
+			if (!NavSys->ProjectPointToNavigation(Seed, NavLoc, ProjectionExtent))
+			{
+				continue;
+			}
+
+			ConsiderLocation(NavLoc.Location, 2.0f);
+		}
+	}
+
+	if (BestScore >= MAX_FLT)
+	{
+		return false;
+	}
+
+	OutApproachLocation = BestLocation;
+	return true;
+}
+
+float USpaceShipAttackSlotManager::ComputeOwnerCollisionDistance(const FVector& Location) const
+{
+	const AActor* Owner = GetOwner();
+	if (!Owner)
+	{
+		return -1.f;
+	}
+
+	TArray<UPrimitiveComponent*> CollisionPrimitives;
+	SpaceShipSlotHelpers::GatherShipCollisionPrimitives(Owner, CollisionPrimitives);
+
+	float BestDistance = MAX_FLT;
+	for (const UPrimitiveComponent* Primitive : CollisionPrimitives)
+	{
+		if (!Primitive)
+		{
+			continue;
+		}
+
+		FVector ClosestPoint = FVector::ZeroVector;
+		const float DistanceToCollision = Primitive->GetClosestPointOnCollision(Location, ClosestPoint);
+		if (DistanceToCollision >= 0.f && DistanceToCollision < BestDistance)
+		{
+			BestDistance = DistanceToCollision;
+		}
+	}
+
+	return BestDistance < MAX_FLT ? BestDistance : -1.f;
+}
+
+bool USpaceShipAttackSlotManager::FindApproachLocationForSlot(
+	const FAttackSlot& Slot,
+	const FVector& MonsterLocation,
+	FVector& OutApproachLocation) const
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return false;
+	}
+
+	AActor* Owner = GetOwner();
+	if (!Owner)
+	{
+		return false;
+	}
+
+	UNavigationSystemV1* NavSys = UNavigationSystemV1::GetCurrent(World);
+	if (!NavSys)
+	{
+		return false;
+	}
+
+	const FVector Outward = Slot.SurfaceNormal.IsNearlyZero()
+		? (Slot.SurfaceLocation - Owner->GetActorLocation()).GetSafeNormal2D()
+		: Slot.SurfaceNormal.GetSafeNormal2D();
+	if (Outward.IsNearlyZero())
+	{
+		return false;
+	}
+
+	const FVector Tangent = FVector::CrossProduct(FVector::UpVector, Outward).GetSafeNormal();
+	const float PreferredSide = FVector::DotProduct(Tangent, (MonsterLocation - Slot.SurfaceLocation).GetSafeNormal2D()) >= 0.f ? 1.f : -1.f;
+	const float EffectiveApproachMin = FMath::Min(ApproachDistanceMin, ApproachDistanceMax);
+	const float EffectiveApproachMax = FMath::Max(ApproachDistanceMin, ApproachDistanceMax);
+	const float DistanceStep = FMath::Max(20.f, (EffectiveApproachMax - EffectiveApproachMin) / 2.f);
+	const float MaxAllowedCollisionDistance = EffectiveApproachMax + 40.f;
+	const float MaxAllowedSurfaceHeightDelta = FMath::Max(120.f, MaxNavProjectionHeightDelta);
+	const float RelaxedApproachMax = FMath::Max(EffectiveApproachMax + 120.f, EffectiveApproachMax * 1.75f);
+	const float RelaxedCollisionDistance = RelaxedApproachMax + 20.f;
+	const float RelaxedMonsterHeightDelta = MaxSlotAssignmentHeightDelta + 160.f;
+	const float RelaxedSurfaceHeightDelta = MaxAllowedSurfaceHeightDelta + 180.f;
+	const float LateralOffsets[] =
+	{
+		0.f,
+		ApproachLateralSpread * PreferredSide,
+		-ApproachLateralSpread * PreferredSide,
+		ApproachLateralSpread * 2.f * PreferredSide,
+		-ApproachLateralSpread * 2.f * PreferredSide
+	};
+	const float RelaxedLateralOffsets[] =
+	{
+		0.f,
+		ApproachLateralSpread * PreferredSide,
+		-ApproachLateralSpread * PreferredSide,
+		ApproachLateralSpread * 2.f * PreferredSide,
+		-ApproachLateralSpread * 2.f * PreferredSide,
+		ApproachLateralSpread * 3.f * PreferredSide,
+		-ApproachLateralSpread * 3.f * PreferredSide
+	};
+	const FVector RelaxedProjectionExtent(
+		FMath::Max(NavExtent * 2.f, 220.f),
+		FMath::Max(NavExtent * 2.f, 220.f),
+		FMath::Max(NavExtent * 12.f, 1400.f));
+
+	float BestDistSq = MAX_FLT;
+	FVector BestLocation = FVector::ZeroVector;
+
+	auto PassesShipVerticalChecks = [&](const FVector& Location) -> bool
+	{
+		FCollisionQueryParams TraceParams(SCENE_QUERY_STAT(SpaceShipApproachVerticalCheck), false);
+
+		const FVector UpStart = Location + FVector(0.f, 0.f, 10.f);
+		const FVector UpEnd = Location + FVector(0.f, 0.f, 1500.f);
+		FHitResult UpHit;
+		if (World->LineTraceSingleByChannel(UpHit, UpStart, UpEnd, ECC_Visibility, TraceParams)
+			&& UpHit.GetActor() == Owner)
+		{
+			return false;
+		}
+
+		const FVector DownStart = Location + FVector(0.f, 0.f, 10.f);
+		const FVector DownEnd = Location - FVector(0.f, 0.f, 500.f);
+		FHitResult DownHit;
+		if (World->LineTraceSingleByChannel(DownHit, DownStart, DownEnd, ECC_Visibility, TraceParams)
+			&& DownHit.GetActor() == Owner)
+		{
+			return false;
+		}
+
+		return true;
+	};
+
+	auto ConsiderLocation = [&](const FVector& NavLocation, float MaxMonsterHeightDelta, float MaxSurfaceHeightDelta, float MaxCollisionDistance) -> bool
+	{
+		if (FMath::Abs(NavLocation.Z - MonsterLocation.Z) > MaxMonsterHeightDelta)
+		{
+			return false;
+		}
+
+		if (FMath::Abs(NavLocation.Z - Slot.SurfaceLocation.Z) > MaxSurfaceHeightDelta)
+		{
+			return false;
+		}
+
+		if (IsNearOwnerCollision(NavLocation, MeshOverlapRadius))
+		{
+			return false;
+		}
+
+		if (!PassesShipVerticalChecks(NavLocation))
+		{
+			return false;
+		}
+
+		const float CollisionDistance = ComputeOwnerCollisionDistance(NavLocation);
+		if (CollisionDistance < 0.f || CollisionDistance > MaxCollisionDistance)
+		{
+			return false;
+		}
+
+		const float DistSq = FVector::DistSquared2D(MonsterLocation, NavLocation);
+		const float Score = DistSq + FMath::Square(CollisionDistance * 4.f);
+		if (Score < BestDistSq)
+		{
+			BestDistSq = Score;
+			BestLocation = NavLocation;
+			return true;
+		}
+
+		return false;
+	};
+
+	auto ConsiderLooseLocation = [&](const FVector& NavLocation, float MaxMonsterHeightDelta, float MaxSurfaceHeightDelta, float MaxCollisionDistance) -> bool
+	{
+		if (FMath::Abs(NavLocation.Z - MonsterLocation.Z) > MaxMonsterHeightDelta)
+		{
+			return false;
+		}
+
+		if (FMath::Abs(NavLocation.Z - Slot.SurfaceLocation.Z) > MaxSurfaceHeightDelta)
+		{
+			return false;
+		}
+
+		const float CollisionDistance = ComputeOwnerCollisionDistance(NavLocation);
+		if (CollisionDistance >= 0.f && CollisionDistance > MaxCollisionDistance)
+		{
+			return false;
+		}
+
+		const float EffectiveCollisionDistance = CollisionDistance >= 0.f ? CollisionDistance : 0.f;
+		const float DistSq = FVector::DistSquared2D(MonsterLocation, NavLocation);
+		const float SurfaceDistSq = FVector::DistSquared2D(NavLocation, Slot.SurfaceLocation);
+		const float Score = DistSq + SurfaceDistSq * 0.35f + FMath::Square(EffectiveCollisionDistance * 2.f);
+		if (Score < BestDistSq)
+		{
+			BestDistSq = Score;
+			BestLocation = NavLocation;
+			return true;
+		}
+
+		return false;
+	};
+
+	for (float Distance = EffectiveApproachMin; Distance <= EffectiveApproachMax + KINDA_SMALL_NUMBER; Distance += DistanceStep)
+	{
+		for (const float LateralOffset : LateralOffsets)
+		{
+			const FVector CandidateXY = Slot.SurfaceLocation + Outward * Distance + Tangent * LateralOffset;
+
+			FVector Candidate = FVector::ZeroVector;
+			if (!SpaceShipSlotHelpers::TraceGroundCandidate(World, Owner, CandidateXY, 3000.f, Candidate))
+			{
+				continue;
+			}
+
+			FVector NavLocation = FVector::ZeroVector;
+			if (!ValidateSlotCandidate(Candidate, NavLocation))
+			{
+				continue;
+			}
+
+			ConsiderLocation(NavLocation, MaxSlotAssignmentHeightDelta, MaxAllowedSurfaceHeightDelta, MaxAllowedCollisionDistance);
+		}
+	}
+
+	if (BestDistSq >= MAX_FLT)
+	{
+		const float RelaxedDistanceStep = FMath::Max(30.f, (RelaxedApproachMax - EffectiveApproachMin) / 3.f);
+		for (float Distance = EffectiveApproachMin; Distance <= RelaxedApproachMax + KINDA_SMALL_NUMBER; Distance += RelaxedDistanceStep)
+		{
+			for (const float LateralOffset : RelaxedLateralOffsets)
+			{
+				const FVector CandidateXY = Slot.SurfaceLocation + Outward * Distance + Tangent * LateralOffset;
+				const FVector CandidateSeeds[] =
+				{
+					FVector(CandidateXY.X, CandidateXY.Y, MonsterLocation.Z),
+					FVector(CandidateXY.X, CandidateXY.Y, Slot.SurfaceLocation.Z),
+					FVector(CandidateXY.X, CandidateXY.Y, FMath::Lerp(MonsterLocation.Z, Slot.SurfaceLocation.Z, 0.5f))
+				};
+
+				for (const FVector& CandidateSeed : CandidateSeeds)
+				{
+					FNavLocation NavLoc;
+					if (!NavSys->ProjectPointToNavigation(CandidateSeed, NavLoc, RelaxedProjectionExtent))
+					{
+						continue;
+					}
+
+					ConsiderLocation(NavLoc.Location, RelaxedMonsterHeightDelta, RelaxedSurfaceHeightDelta, RelaxedCollisionDistance);
+				}
+			}
+		}
+	}
+
+	if (BestDistSq >= MAX_FLT)
+	{
+		const float LooseCollisionDistance = FMath::Max(RelaxedCollisionDistance + 180.f, 420.f);
+		const float LooseMonsterHeightDelta = RelaxedMonsterHeightDelta + 120.f;
+		const float LooseSurfaceHeightDelta = RelaxedSurfaceHeightDelta + 120.f;
+		const FVector LooseProjectionExtent(
+			FMath::Max(NavExtent * 3.f, 320.f),
+			FMath::Max(NavExtent * 3.f, 320.f),
+			FMath::Max(NavExtent * 16.f, 2000.f));
+		const FVector LooseSeeds[] =
+		{
+			Slot.SurfaceLocation,
+			Slot.WorldLocation,
+			FVector(Slot.SurfaceLocation.X, Slot.SurfaceLocation.Y, MonsterLocation.Z),
+			Slot.SurfaceLocation + Outward * EffectiveApproachMin,
+			Slot.SurfaceLocation + Outward * EffectiveApproachMax,
+			Slot.SurfaceLocation + Tangent * ApproachLateralSpread * PreferredSide,
+			Slot.SurfaceLocation - Tangent * ApproachLateralSpread * PreferredSide
+		};
+
+		for (const FVector& LooseSeed : LooseSeeds)
+		{
+			FNavLocation NavLoc;
+			if (!NavSys->ProjectPointToNavigation(LooseSeed, NavLoc, LooseProjectionExtent))
+			{
+				continue;
+			}
+
+			ConsiderLooseLocation(NavLoc.Location, LooseMonsterHeightDelta, LooseSurfaceHeightDelta, LooseCollisionDistance);
+		}
+	}
+
+	if (BestDistSq >= MAX_FLT)
+	{
+		return false;
+	}
+
+	OutApproachLocation = BestLocation;
+	return true;
+}
 
 USpaceShipAttackSlotManager::USpaceShipAttackSlotManager()
 {
@@ -62,44 +823,46 @@ void USpaceShipAttackSlotManager::BuildSlots()
 	}
 
 	const FVector Center = Owner->GetActorLocation();
+	float EffectiveMinRadius = MinRadius;
+	float EffectiveMaxRadius = MaxRadius;
+	GetEffectiveSlotRadii(EffectiveMinRadius, EffectiveMaxRadius);
 
-	// 반경 링 × 각도 간격으로 후보 생성
-	const int32 AngleCount = FMath::Max(1, FMath::RoundToInt(360.f / AngleStep));
+	// 외곽 표면 방향 × 바깥 오프셋 링으로 후보 생성
+	const float EffectiveAngleStep = FMath::Clamp(AngleStep, 8.f, 45.f);
+	const int32 AngleCount = FMath::Max(1, FMath::RoundToInt(360.f / EffectiveAngleStep));
 	const float RadiusStep = (RadiusRings > 1)
-		? (MaxRadius - MinRadius) / (RadiusRings - 1)
+		? (EffectiveMaxRadius - EffectiveMinRadius) / (RadiusRings - 1)
 		: 0.f;
+	const float SurfaceQueryDistance = SpaceShipSlotHelpers::GetShipSurfaceQueryDistance(Owner, EffectiveMaxRadius);
+	const float GroundTraceHalfHeight = 3000.f;
+	const float MinSlotSpacing = FMath::Max(MeshOverlapRadius * 2.25f, 90.f);
 
 	int32 ValidCount = 0;
 	int32 TotalCount = 0;
 
-	for (int32 Ring = 0; Ring < RadiusRings; ++Ring)
+	for (int32 i = 0; i < AngleCount; ++i)
 	{
-		const float Radius = MinRadius + RadiusStep * Ring;
+		const float AngleRad = FMath::DegreesToRadians(i * EffectiveAngleStep);
+		const FVector Direction2D(FMath::Cos(AngleRad), FMath::Sin(AngleRad), 0.f);
+		FVector SurfacePoint = FVector::ZeroVector;
+		if (!SpaceShipSlotHelpers::FindSurfacePointForDirection(Owner, Direction2D, SurfaceQueryDistance, SurfacePoint))
+		{
+			continue;
+		}
 
-		for (int32 i = 0; i < AngleCount; ++i)
+		for (int32 Ring = 0; Ring < RadiusRings; ++Ring)
 		{
 			++TotalCount;
-			const float AngleRad = FMath::DegreesToRadians(i * AngleStep);
-			const FVector Offset(FMath::Cos(AngleRad) * Radius, FMath::Sin(AngleRad) * Radius, 0.f);
+			const float SurfaceOffset = EffectiveMinRadius + RadiusStep * Ring;
+			const FVector CandidateXY = FVector(
+				SurfacePoint.X + Direction2D.X * SurfaceOffset,
+				SurfacePoint.Y + Direction2D.Y * SurfaceOffset,
+				Center.Z);
 
-			// 충분히 높은 곳에서 시작하여 경사 지형에서도 지면을 찾을 수 있도록
-			// Center.Z + 2000은 어떤 지형이든 지면 위에 있을 것
-			const FVector TraceStart = FVector(Center.X + Offset.X, Center.Y + Offset.Y, Center.Z + 2000.f);
-			const FVector TraceEnd   = FVector(Center.X + Offset.X, Center.Y + Offset.Y, Center.Z - 2000.f);
-
-			// 지면 LineTrace (우주선 메시 무시)
-			FHitResult HitResult;
-			FCollisionQueryParams TraceParams;
-			TraceParams.AddIgnoredActor(Owner);
-
-			FVector Candidate = TraceStart;
-			if (World->LineTraceSingleByChannel(HitResult, TraceStart, TraceEnd, ECC_WorldStatic, TraceParams))
+			FVector Candidate = FVector::ZeroVector;
+			if (!SpaceShipSlotHelpers::TraceGroundCandidate(World, Owner, CandidateXY, GroundTraceHalfHeight, Candidate))
 			{
-				Candidate = HitResult.ImpactPoint + FVector(0, 0, 10.f); // 지면 위 10cm
-			}
-			else
-			{
-				continue; // 지면을 못 찾으면 스킵
+				continue;
 			}
 
 			FVector NavLocation;
@@ -108,9 +871,17 @@ void USpaceShipAttackSlotManager::BuildSlots()
 				continue;
 			}
 
+			if (SpaceShipSlotHelpers::IsTooCloseToExistingSlots(Slots, NavLocation, MinSlotSpacing))
+			{
+				continue;
+			}
+
 			FAttackSlot Slot;
-			Slot.WorldLocation = NavLocation;
+			Slot.WorldLocation = SurfacePoint - Direction2D * SurfaceOffset;
+			Slot.SurfaceLocation = SurfacePoint;
+			Slot.SurfaceNormal = Direction2D;
 			Slot.State = ESlotState::Free;
+			Slot.SectorAngleDegrees = SpaceShipSlotHelpers::NormalizeAngleDegrees(Direction2D.Rotation().Yaw);
 			Slots.Add(Slot);
 			++ValidCount;
 		}
@@ -118,16 +889,19 @@ void USpaceShipAttackSlotManager::BuildSlots()
 
 	// 후보/유효 비율 로그 — 경사 지형에서 슬롯 후보 전부 탈락 시 진단용
 	UE_LOG(LogTemp, Log,
-		TEXT("[enemybugreport][SlotBuildRatio] Valid=%d Total=%d Ratio=%.1f NavExtent=%.0f"),
+		TEXT("[enemybugreport][SlotBuildRatio] Valid=%d Total=%d Ratio=%.1f NavExtent=%.0f AngleStep=%.1f MinRadius=%.1f MaxRadius=%.1f"),
 		ValidCount, TotalCount,
 		TotalCount > 0 ? (float)ValidCount / TotalCount * 100.f : 0.f,
-		NavExtent);
+		NavExtent,
+		EffectiveAngleStep,
+		EffectiveMinRadius,
+		EffectiveMaxRadius);
 
 	if (ValidCount == 0)
 	{
 		UE_LOG(LogTemp, Warning,
 			TEXT("[enemybugreport][SlotBuildFail] Reason=NoValidSlots Try=%d MaxTry=%d MinRadius=%.0f MaxRadius=%.0f"),
-			SlotRetryCount + 1, MaxSlotRetryCount, MinRadius, MaxRadius);
+			SlotRetryCount + 1, MaxSlotRetryCount, EffectiveMinRadius, EffectiveMaxRadius);
 
 		// World Partition에서 NavMesh가 아직 스트리밍되지 않았을 수 있음 → 재시도
 		ScheduleSlotRetry();
@@ -154,6 +928,72 @@ void USpaceShipAttackSlotManager::BuildSlots()
 	}
 }
 
+void USpaceShipAttackSlotManager::GetEffectiveSlotRadii(float& OutMinRadius, float& OutMaxRadius) const
+{
+	OutMinRadius = FMath::Clamp(MinRadius, 40.f, 140.f);
+	OutMaxRadius = FMath::Clamp(MaxRadius, OutMinRadius + 20.f, 220.f);
+}
+
+bool USpaceShipAttackSlotManager::IsNearOwnerCollision(const FVector& Location, float Clearance) const
+{
+	if (Clearance <= 0.f)
+	{
+		return false;
+	}
+
+	const AActor* Owner = GetOwner();
+	if (!Owner)
+	{
+		return false;
+	}
+
+	TArray<UPrimitiveComponent*> TaggedPrimitiveComponents;
+	Owner->GetComponents<UPrimitiveComponent>(TaggedPrimitiveComponents);
+
+	bool bCheckedTaggedComponents = false;
+	for (const UPrimitiveComponent* Primitive : TaggedPrimitiveComponents)
+	{
+		if (!Primitive || Primitive->GetCollisionEnabled() == ECollisionEnabled::NoCollision)
+		{
+			continue;
+		}
+
+		if (!Primitive->ComponentHasTag(TEXT("ShipCombatCollision")))
+		{
+			continue;
+		}
+
+		bCheckedTaggedComponents = true;
+
+		FVector ClosestPoint = FVector::ZeroVector;
+		const float DistanceToCollision = Primitive->GetClosestPointOnCollision(Location, ClosestPoint);
+		if (DistanceToCollision >= 0.f && DistanceToCollision < Clearance)
+		{
+			return true;
+		}
+	}
+
+	if (bCheckedTaggedComponents)
+	{
+		return false;
+	}
+
+	if (const UPrimitiveComponent* RootPrimitive = Cast<UPrimitiveComponent>(Owner->GetRootComponent()))
+	{
+		if (RootPrimitive->GetCollisionEnabled() != ECollisionEnabled::NoCollision)
+		{
+			FVector ClosestPoint = FVector::ZeroVector;
+			const float DistanceToCollision = RootPrimitive->GetClosestPointOnCollision(Location, ClosestPoint);
+			if (DistanceToCollision >= 0.f && DistanceToCollision < Clearance)
+			{
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
 // ============================================================================
 // ValidateSlotCandidate — NavMesh 투영 + 메시 겹침 체크
 // ============================================================================
@@ -173,6 +1013,9 @@ bool USpaceShipAttackSlotManager::ValidateSlotCandidate(const FVector& Candidate
 
 	// Ground trace 위치와 NavMesh 투영 결과의 높이 차가 너무 크면 공중 슬롯로 판단한다.
 	if (FMath::Abs(NavLoc.Location.Z - Candidate.Z) > MaxNavProjectionHeightDelta)
+		return false;
+
+	if (IsNearOwnerCollision(NavLoc.Location, MeshOverlapRadius))
 		return false;
 
 	AActor* Owner = GetOwner();
@@ -218,6 +1061,8 @@ bool USpaceShipAttackSlotManager::RequestSlot(AActor* Monster, int32& OutSlotInd
 {
 	if (!Monster) return false;
 
+	CleanupPreferredSectorAngles();
+
 	// 이미 같은 몬스터가 슬롯을 갖고 있으면 그대로 재사용한다.
 	for (int32 i = 0; i < Slots.Num(); ++i)
 	{
@@ -227,7 +1072,12 @@ bool USpaceShipAttackSlotManager::RequestSlot(AActor* Monster, int32& OutSlotInd
 		}
 
 		OutSlotIndex = i;
-		OutLocation = Slots[i].WorldLocation;
+		if (!FindApproachLocationForSlot(Slots[i], Monster->GetActorLocation(), OutLocation))
+		{
+			OutLocation = Slots[i].SurfaceLocation.IsZero() ? Slots[i].WorldLocation : Slots[i].SurfaceLocation;
+			// 폴백 위치의 Z가 지하(우주선 높이)일 수 있으므로 몬스터 Z로 보정
+			OutLocation.Z = Monster->GetActorLocation().Z;
+		}
 		UE_LOG(LogTemp, Log,
 			TEXT("[enemybugreport][SlotReuse] Monster=%s Slot=%d State=%s SlotLoc=%s"),
 			*GetNameSafe(Monster),
@@ -239,9 +1089,11 @@ bool USpaceShipAttackSlotManager::RequestSlot(AActor* Monster, int32& OutSlotInd
 	}
 
 	const FVector MonsterLoc = Monster->GetActorLocation();
+	const float PreferredSectorAngle = FindOrRememberPreferredSectorAngle(Monster, MonsterLoc);
 
 	int32 BestIdx = -1;
-	float BestDistSq = MAX_FLT;
+	float BestScore = MAX_FLT;
+	FVector BestApproachLocation = FVector::ZeroVector;
 	int32 FreeCount = 0;
 	int32 ReservedCount = 0;
 	int32 OccupiedCount = 0;
@@ -254,15 +1106,31 @@ bool USpaceShipAttackSlotManager::RequestSlot(AActor* Monster, int32& OutSlotInd
 
 		if (Slots[i].State != ESlotState::Free) continue;
 
-		const float HeightDelta = FMath::Abs(MonsterLoc.Z - Slots[i].WorldLocation.Z);
-		if (HeightDelta > MaxSlotAssignmentHeightDelta)
-			continue;
-
-		const float DistSq = FVector::DistSquared2D(MonsterLoc, Slots[i].WorldLocation);
-		if (DistSq < BestDistSq)
+		FVector ApproachLocation = FVector::ZeroVector;
+		if (!FindApproachLocationForSlot(Slots[i], MonsterLoc, ApproachLocation))
 		{
-			BestDistSq = DistSq;
+			ApproachLocation = Slots[i].SurfaceLocation.IsZero() ? Slots[i].WorldLocation : Slots[i].SurfaceLocation;
+			// 폴백 위치의 Z가 지하(우주선 높이)일 수 있으므로 몬스터 Z로 보정
+			ApproachLocation.Z = MonsterLoc.Z;
+		}
+
+		const float HeightDelta = FMath::Abs(MonsterLoc.Z - ApproachLocation.Z);
+		if (HeightDelta > MaxSlotAssignmentHeightDelta + 1500.f)
+		{
+			continue;
+		}
+
+		const float DistSq = FVector::DistSquared2D(MonsterLoc, ApproachLocation);
+		const float SectorDelta = SpaceShipSlotHelpers::ComputeShortestAngleDeltaDegrees(
+			PreferredSectorAngle,
+			Slots[i].SectorAngleDegrees);
+		const float SectorPenalty = FMath::Square(SectorDelta * 18.f);
+		const float Score = DistSq + SectorPenalty;
+		if (Score < BestScore)
+		{
+			BestScore = Score;
 			BestIdx = i;
+			BestApproachLocation = ApproachLocation;
 		}
 	}
 
@@ -280,18 +1148,19 @@ bool USpaceShipAttackSlotManager::RequestSlot(AActor* Monster, int32& OutSlotInd
 
 	Slots[BestIdx].State = ESlotState::Reserved;
 	Slots[BestIdx].OccupyingMonster = Monster;
+	RememberPreferredSectorAngle(Monster, Slots[BestIdx].SectorAngleDegrees);
 
 	OutSlotIndex = BestIdx;
-	OutLocation  = Slots[BestIdx].WorldLocation;
+	OutLocation  = BestApproachLocation;
 
-	UE_LOG(LogTemp, Log, TEXT("[enemybugreport][SlotReserveVerbose] Slot=%d Loc=%s Monster=%s"),
-		BestIdx, *OutLocation.ToString(), *Monster->GetName());
+	UE_LOG(LogTemp, Log, TEXT("[enemybugreport][SlotReserveVerbose] Slot=%d Anchor=%s MoveLoc=%s Monster=%s PreferredSector=%.1f SlotSector=%.1f"),
+		BestIdx, *Slots[BestIdx].WorldLocation.ToString(), *OutLocation.ToString(), *Monster->GetName(), PreferredSectorAngle, Slots[BestIdx].SectorAngleDegrees);
 	UE_LOG(LogTemp, Warning,
 		TEXT("[enemybugreport][SlotRequestSuccess] Monster=%s Slot=%d SlotLoc=%s Dist=%.1f Free=%d Reserved=%d Occupied=%d"),
 		*GetNameSafe(Monster),
 		BestIdx,
 		*OutLocation.ToCompactString(),
-		FMath::Sqrt(BestDistSq),
+		FMath::Sqrt(FVector::DistSquared2D(MonsterLoc, OutLocation)),
 		FreeCount,
 		ReservedCount,
 		OccupiedCount);
@@ -306,6 +1175,9 @@ void USpaceShipAttackSlotManager::OccupySlot(int32 SlotIndex, AActor* Monster)
 {
 	if (!Slots.IsValidIndex(SlotIndex)) return;
 	if (Slots[SlotIndex].OccupyingMonster.Get() != Monster) return;
+
+	// 이미 Occupied 상태면 중복 호출 무시 (매 틱 호출 시 로그 폭발 방지)
+	if (Slots[SlotIndex].State == ESlotState::Occupied) return;
 
 	Slots[SlotIndex].State = ESlotState::Occupied;
 
@@ -346,6 +1218,100 @@ void USpaceShipAttackSlotManager::ReleaseSlotByIndex(int32 SlotIndex)
 
 	Slots[SlotIndex].State = ESlotState::Free;
 	Slots[SlotIndex].OccupyingMonster = nullptr;
+}
+
+bool USpaceShipAttackSlotManager::RequestSectorPosition(AActor* Monster, int32& OutSectorIndex, FVector& OutLocation)
+{
+	OutSectorIndex = INDEX_NONE;
+	OutLocation = FVector::ZeroVector;
+
+	if (!Monster || !bEnableSectorDistribution || SectorCount < 2)
+	{
+		return false;
+	}
+
+	CleanupPreferredSectorAngles();
+	CleanupSectorReservations();
+
+	const TWeakObjectPtr<AActor> MonsterKey = Monster;
+
+	if (const int32* ExistingSector = ReservedSectorIndices.Find(MonsterKey))
+	{
+		if (FindApproachLocationForSector(*ExistingSector, Monster, Monster->GetActorLocation(), OutLocation))
+		{
+			OutSectorIndex = *ExistingSector;
+			return true;
+		}
+
+		ReservedSectorIndices.Remove(MonsterKey);
+	}
+
+	const FVector MonsterLocation = Monster->GetActorLocation();
+	const float PreferredSectorAngle = FindOrRememberPreferredSectorAngle(Monster, MonsterLocation);
+	const float OccupancyPenaltyBase = FMath::Square(FMath::Max(260.f, SectorApproachDistanceMax));
+
+	float BestScore = MAX_FLT;
+	int32 BestSectorIndex = INDEX_NONE;
+	FVector BestLocation = FVector::ZeroVector;
+
+	for (int32 SectorIndex = 0; SectorIndex < SectorCount; ++SectorIndex)
+	{
+		FVector CandidateLocation = FVector::ZeroVector;
+		if (!FindApproachLocationForSector(SectorIndex, Monster, MonsterLocation, CandidateLocation))
+		{
+			continue;
+		}
+
+		const int32 Occupancy = GetReservedSectorOccupancy(SectorIndex, Monster);
+		const float SectorDelta = SpaceShipSlotHelpers::ComputeShortestAngleDeltaDegrees(
+			PreferredSectorAngle,
+			GetSectorAngleDegrees(SectorIndex));
+		const float Score =
+			FVector::DistSquared2D(MonsterLocation, CandidateLocation) +
+			FMath::Square(SectorDelta * 10.f) +
+			Occupancy * OccupancyPenaltyBase * 4.f;
+
+		if (Score < BestScore)
+		{
+			BestScore = Score;
+			BestSectorIndex = SectorIndex;
+			BestLocation = CandidateLocation;
+		}
+	}
+
+	if (BestSectorIndex == INDEX_NONE)
+	{
+		return false;
+	}
+
+	ReservedSectorIndices.FindOrAdd(MonsterKey) = BestSectorIndex;
+	RememberPreferredSectorAngle(Monster, GetSectorAngleDegrees(BestSectorIndex));
+
+	OutSectorIndex = BestSectorIndex;
+	OutLocation = BestLocation;
+	return true;
+}
+
+void USpaceShipAttackSlotManager::ReleaseSectorReservation(AActor* Monster)
+{
+	if (!Monster)
+	{
+		return;
+	}
+
+	const TWeakObjectPtr<AActor> MonsterKey = Monster;
+	ReservedSectorIndices.Remove(MonsterKey);
+}
+
+void USpaceShipAttackSlotManager::ReleaseEngagementReservation(AActor* Monster)
+{
+	if (!Monster)
+	{
+		return;
+	}
+
+	ReleaseSlot(Monster);
+	ReleaseSectorReservation(Monster);
 }
 
 bool USpaceShipAttackSlotManager::GetMonsterSlotInfo(const AActor* Monster, int32& OutSlotIndex, ESlotState& OutState) const
@@ -389,35 +1355,60 @@ bool USpaceShipAttackSlotManager::GetWaitingPosition(AActor* Monster, FVector& O
 	AActor* Owner = GetOwner();
 	if (!Owner) return false;
 
-	// 우주선 중심 기준 MaxRadius ~ MaxRadius*1.5 사이 랜덤 위치 탐색
-	// (슬롯 범위 바깥에서 대기하여 슬롯 자리가 나면 진입)
 	const FVector Center = Owner->GetActorLocation();
-	const float WaitRadius = MaxRadius * 1.2f;
+	float EffectiveMinRadius = MinRadius;
+	float EffectiveMaxRadius = MaxRadius;
+	GetEffectiveSlotRadii(EffectiveMinRadius, EffectiveMaxRadius);
+	const float SurfaceQueryDistance = SpaceShipSlotHelpers::GetShipSurfaceQueryDistance(Owner, EffectiveMaxRadius + 200.f);
+	const float WaitMinOffset = EffectiveMaxRadius + 100.f;
+	const float WaitMaxOffset = WaitMinOffset + 160.f;
+	const float GroundTraceHalfHeight = 3000.f;
+	float PreferredSectorAngle = 0.f;
+	const bool bHasPreferredSector = GetPreferredSectorAngle(Monster, PreferredSectorAngle);
 
 	for (int32 Try = 0; Try < 8; ++Try)
 	{
-		const float Angle = FMath::RandRange(0.f, 360.f);
-		const float Radius = FMath::RandRange(MaxRadius, WaitRadius);
+		const float Angle = bHasPreferredSector
+			? SpaceShipSlotHelpers::NormalizeAngleDegrees(PreferredSectorAngle + FMath::RandRange(-40.f, 40.f))
+			: FMath::RandRange(0.f, 360.f);
+		const FVector Direction2D(FMath::Cos(FMath::DegreesToRadians(Angle)), FMath::Sin(FMath::DegreesToRadians(Angle)), 0.f);
+		FVector SurfacePoint = FVector::ZeroVector;
+		if (!SpaceShipSlotHelpers::FindSurfacePointForDirection(Owner, Direction2D, SurfaceQueryDistance, SurfacePoint))
+		{
+			continue;
+		}
+
+		const float SurfaceOffset = FMath::RandRange(WaitMinOffset, WaitMaxOffset);
 		const FVector CandidateXY = FVector(
-			Center.X + FMath::Cos(FMath::DegreesToRadians(Angle)) * Radius,
-			Center.Y + FMath::Sin(FMath::DegreesToRadians(Angle)) * Radius,
-			Center.Z + 2000.f
-		);
+			SurfacePoint.X + Direction2D.X * SurfaceOffset,
+			SurfacePoint.Y + Direction2D.Y * SurfaceOffset,
+			Center.Z);
 
-		// 지면 LineTrace
-		FHitResult HitResult;
-		FCollisionQueryParams TraceParams;
-		TraceParams.AddIgnoredActor(Owner);
-		const FVector TraceEnd = FVector(CandidateXY.X, CandidateXY.Y, Center.Z - 2000.f);
-
-		FVector Candidate = CandidateXY;
-		if (World->LineTraceSingleByChannel(HitResult, CandidateXY, TraceEnd, ECC_WorldStatic, TraceParams))
-			Candidate = HitResult.ImpactPoint + FVector(0, 0, 10.f);
+		FVector Candidate = FVector::ZeroVector;
+		if (!SpaceShipSlotHelpers::TraceGroundCandidate(World, Owner, CandidateXY, GroundTraceHalfHeight, Candidate))
+		{
+			continue;
+		}
 
 		FNavLocation NavLoc;
 		const FVector Extent(NavExtent * 2.f, NavExtent * 2.f, NavExtent * 8.f);
 		if (NavSys->ProjectPointToNavigation(Candidate, NavLoc, Extent))
 		{
+			if (FMath::Abs(NavLoc.Location.Z - Candidate.Z) > MaxNavProjectionHeightDelta)
+			{
+				continue;
+			}
+
+			if (FMath::Abs(NavLoc.Location.Z - Monster->GetActorLocation().Z) > MaxWaitingPositionHeightDelta)
+			{
+				continue;
+			}
+
+			if (IsNearOwnerCollision(NavLoc.Location, MeshOverlapRadius))
+			{
+				continue;
+			}
+
 			FCollisionQueryParams WaitTraceParams;
 
 			// 우주선 밑인지 체크
@@ -455,11 +1446,11 @@ bool USpaceShipAttackSlotManager::GetWaitingPosition(AActor* Monster, FVector& O
 	}
 
 	UE_LOG(LogTemp, Warning,
-		TEXT("[enemybugreport][WaitingPositionFail] Monster=%s Owner=%s MaxRadius=%.1f WaitRadius=%.1f"),
+		TEXT("[enemybugreport][WaitingPositionFail] Monster=%s Owner=%s MaxRadius=%.1f WaitMaxOffset=%.1f"),
 		*GetNameSafe(Monster),
 		*GetNameSafe(Owner),
-		MaxRadius,
-		WaitRadius);
+		EffectiveMaxRadius,
+		WaitMaxOffset);
 
 	return false;
 }
@@ -499,6 +1490,9 @@ void USpaceShipAttackSlotManager::TickComponent(float DeltaTime, ELevelTick Tick
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
+	CleanupPreferredSectorAngles();
+	CleanupSectorReservations();
+
 	// 죽은 몬스터가 점유한 슬롯 자동 반납
 	for (int32 i = 0; i < Slots.Num(); ++i)
 	{
@@ -509,23 +1503,7 @@ void USpaceShipAttackSlotManager::TickComponent(float DeltaTime, ELevelTick Tick
 		}
 
 		AActor* OccupyingActor = Slot.OccupyingMonster.Get();
-		bool bShouldAutoRelease = !IsValid(OccupyingActor) || OccupyingActor->IsActorBeingDestroyed();
-
-		if (!bShouldAutoRelease && OccupyingActor)
-		{
-			bShouldAutoRelease = OccupyingActor->IsHidden() || !OccupyingActor->GetActorEnableCollision();
-		}
-
-		if (!bShouldAutoRelease)
-		{
-			if (const AHellunaEnemyCharacter* Enemy = Cast<AHellunaEnemyCharacter>(OccupyingActor))
-			{
-				if (const UHellunaHealthComponent* HealthComponent = Enemy->FindComponentByClass<UHellunaHealthComponent>())
-				{
-					bShouldAutoRelease = HealthComponent->IsDead();
-				}
-			}
-		}
+		const bool bShouldAutoRelease = SpaceShipSlotHelpers::ShouldReleaseReservationForActor(OccupyingActor);
 
 		if (bShouldAutoRelease)
 		{
@@ -563,6 +1541,37 @@ void USpaceShipAttackSlotManager::TickComponent(float DeltaTime, ELevelTick Tick
 		DrawDebugString(World, Slot.WorldLocation + FVector(0, 0, 50.f),
 			FString::Printf(TEXT("[%d] %s"), i, *StateStr),
 			nullptr, Color, -1.f);
+	}
+
+	if (bEnableSectorDistribution && SectorCount >= 2)
+	{
+		AActor* Owner = GetOwner();
+		if (Owner)
+		{
+			const FVector Center = Owner->GetActorLocation();
+			const float DebugDistance = FMath::Max(SectorApproachDistanceMax, SectorApproachDistanceMin);
+			const float SectorStep = 360.f / static_cast<float>(SectorCount);
+
+			for (int32 SectorIndex = 0; SectorIndex < SectorCount; ++SectorIndex)
+			{
+				const float AngleDegrees = SectorStep * SectorIndex;
+				const FVector Direction2D(
+					FMath::Cos(FMath::DegreesToRadians(AngleDegrees)),
+					FMath::Sin(FMath::DegreesToRadians(AngleDegrees)),
+					0.f);
+				const FVector OuterPoint = Center + Direction2D * DebugDistance;
+				const int32 Occupancy = GetReservedSectorOccupancy(SectorIndex, nullptr);
+
+				DrawDebugLine(World, Center, OuterPoint, FColor::Silver, false, -1.f, 0, 1.5f);
+				DrawDebugString(
+					World,
+					OuterPoint + FVector(0.f, 0.f, 40.f),
+					FString::Printf(TEXT("S%d (%d)"), SectorIndex, Occupancy),
+					nullptr,
+					FColor::Silver,
+					-1.f);
+			}
+		}
 	}
 }
 

@@ -13,6 +13,11 @@
 
 namespace HellunaEnemyAttackUtils
 {
+static FGameplayTag GetAttackingStateTag()
+{
+	return FGameplayTag::RequestGameplayTag(FName("State.Enemy.Attacking"), false);
+}
+
 static AActor* ResolveAttackTarget(const AHellunaEnemyCharacter* Enemy, AActor* TargetActor)
 {
 	if (TargetActor || !Enemy)
@@ -52,9 +57,11 @@ void UEnemyGameplayAbility_Attack::ActivateAbility(
 	if (ASC)
 	{
 		FGameplayTagContainer AttackingTag;
-		AttackingTag.AddTag(FGameplayTag::RequestGameplayTag(FName("State.Enemy.Attacking")));
+		AttackingTag.AddTag(HellunaEnemyAttackUtils::GetAttackingStateTag());
 		ASC->AddLooseGameplayTags(AttackingTag);
 	}
+
+	Enemy->SetCachedMeleeAttackDamage(AttackDamage);
 
 	// 건패링 윈도우 열기 (bOpensParryWindow + bCanBeParried 체크는 내부에서 처리)
 	TryOpenParryWindow();
@@ -70,8 +77,6 @@ void UEnemyGameplayAbility_Attack::ActivateAbility(
 		HandleAttackFinished();
 		return;
 	}
-	Enemy->SetServerAttackPoseTickEnabled(true);
-
 	AActor* AttackTarget = HellunaEnemyAttackUtils::ResolveAttackTarget(Enemy, CurrentTarget.Get());
 	Enemy->LockMovementAndFaceTarget(AttackTarget);
 	
@@ -84,7 +89,6 @@ void UEnemyGameplayAbility_Attack::ActivateAbility(
 		? Enemy->GetActorRotation()
 		: FRotator(0.f, ToTarget.Rotation().Yaw, 0.f);
 
-	Enemy->ForceNetUpdate();
 	Enemy->Multicast_PlayAttackMontage(AttackMontage, PlayRate, FacingRotation);
 
 	UAbilityTask_PlayMontageAndWait* MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
@@ -200,8 +204,8 @@ void UEnemyGameplayAbility_Attack::EndAbility(
 {
 	if (AHellunaEnemyCharacter* Enemy = GetEnemyCharacterFromActorInfo())
 	{
-		Enemy->SetServerAttackPoseTickEnabled(false);
 		Enemy->UnlockMovement();
+		Enemy->SetCachedMeleeAttackDamage(0.f);
 
 		if (bWasCancelled)
 		{
@@ -220,7 +224,7 @@ void UEnemyGameplayAbility_Attack::EndAbility(
 	if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
 	{
 		FGameplayTagContainer AttackingTag;
-		AttackingTag.AddTag(FGameplayTag::RequestGameplayTag(FName("State.Enemy.Attacking")));
+		AttackingTag.AddTag(HellunaEnemyAttackUtils::GetAttackingStateTag());
 		ASC->RemoveLooseGameplayTags(AttackingTag);
 	}
 

@@ -15,6 +15,7 @@
 #include "MassCommonFragments.h"
 #include "MassExecutionContext.h"
 #include "ECS/Fragments/EnemyMassFragments.h"
+#include "AI/SpaceShipAttackSlotManager.h"
 #include "DebugHelper.h"
 
 #include "EngineUtils.h"
@@ -35,7 +36,6 @@ UEnemyEntityMovementProcessor::UEnemyEntityMovementProcessor()
 	RegisterQuery(EntityQuery);
 	RegisterQuery(GoalCacheQuery);
 }
-
 // ============================================================================
 // ConfigureQueries
 // ============================================================================
@@ -52,7 +52,6 @@ void UEnemyEntityMovementProcessor::ConfigureQueries(const TSharedRef<FMassEntit
 	GoalCacheQuery.AddRequirement<FEnemyDataFragment>(EMassFragmentAccess::ReadWrite);
 	GoalCacheQuery.AddRequirement<FTransformFragment>(EMassFragmentAccess::ReadOnly);
 }
-
 // ============================================================================
 // Execute
 // ============================================================================
@@ -64,15 +63,17 @@ void UEnemyEntityMovementProcessor::Execute(
 
 	// ----------------------------------------------------------------
 	// Step 0: GoalLocation 캐싱 (StateTree에 의존하지 않고 직접 처리)
-	// 60프레임마다 갱신 (우주선이 움직일 수도 있으므로)
+	// 60프레임마다 갱신한다. Actor 단계는 슬롯 시스템이 분산을 담당하므로
+	// Entity 단계도 같은 슬롯/링 정보를 사용해 우주선 주변으로 퍼지게 만든다.
 	//
 	// [버그 수정] 우주선 중심점(GetActorLocation)을 GoalLocation으로 쓰면
 	// Entity가 콜리전 없이 순수 수학 이동을 하므로 우주선 메쉬를 관통해
 	// 중심까지 파고드는 현상이 발생.
 	//
-	// 해결: GoalActorTag Actor에서 "ShipCombatCollision" 태그가 붙은
-	// UBoxComponent들을 수집한 뒤, 각 Entity 위치에서 가장 가까운 박스 중심을
-	// GoalLocation으로 사용. 박스가 없으면 중심점 폴백.
+	// 해결:
+	//   1) 우주선 슬롯이 있으면 엔티티별 해시 기반으로 슬롯/근처 지점을 선택
+	//   2) 슬롯이 없으면 ShipCombatCollision 컴포넌트 주변으로 분산
+	//   3) 그것도 없으면 우주선 둘레 링으로 분산
 	// ----------------------------------------------------------------
 	if (GFrameCounter % 60 == 0)
 	{
@@ -82,6 +83,8 @@ void UEnemyEntityMovementProcessor::Execute(
 			// 우주선 Actor와 ShipCombatCollision 박스들을 미리 수집 (모든 Entity 공통)
 			AActor* GoalActor = nullptr;
 			TArray<FVector> ApproachPoints;
+			TArray<FVector> SlotPoints;
+			TArray<FVector> SlotNormals;
 
 			for (TActorIterator<AActor> It(World); It; ++It)
 			{
@@ -98,6 +101,35 @@ void UEnemyEntityMovementProcessor::Execute(
 						if (Prim && Prim->ComponentHasTag(TEXT("ShipCombatCollision")))
 							ApproachPoints.Add(Prim->GetComponentLocation());
 					}
+
+					if (USpaceShipAttackSlotManager* SlotManager =
+						GoalActor->FindComponentByClass<USpaceShipAttackSlotManager>())
+					{
+						for (const FAttackSlot& Slot : SlotManager->GetSlots())
+						{
+							if (Slot.IsValid())
+							{
+								const FVector SlotAnchor = Slot.SurfaceLocation.IsZero() ? Slot.WorldLocation : Slot.SurfaceLocation;
+								const FVector SlotNormal =
+									Slot.SurfaceNormal.IsNearlyZero()
+										? (SlotAnchor - GoalActor->GetActorLocation()).GetSafeNormal2D()
+										: Slot.SurfaceNormal.GetSafeNormal2D();
+								SlotPoints.Add(SlotAnchor);
+								SlotNormals.Add(SlotNormal);
+							}
+						}
+					}
+
+					FVector BoundsOrigin = FVector::ZeroVector;
+					FVector BoundsExtent = FVector::ZeroVector;
+					GoalActor->GetActorBounds(true, BoundsOrigin, BoundsExtent);
+					const float RingRadius = FMath::Max(BoundsExtent.Size2D() + 220.f, 260.f);
+					for (int32 RingIndex = 0; RingIndex < 8; ++RingIndex)
+					{
+						const float AngleRad = FMath::DegreesToRadians(360.f * static_cast<float>(RingIndex) / 8.f);
+						const FVector RingDir(FMath::Cos(AngleRad), FMath::Sin(AngleRad), 0.f);
+						ApproachPoints.Add(GoalActor->GetActorLocation() + RingDir * RingRadius);
+					}
 					break;
 				}
 			}
@@ -105,6 +137,22 @@ void UEnemyEntityMovementProcessor::Execute(
 			if (GoalActor)
 			{
 				const FVector FallbackLoc = GoalActor->GetActorLocation();
+				auto MakeSpreadOffset = [](uint32 Seed, const FVector& BasisDir, float MinRadius, float MaxRadius)
+				{
+					FVector Forward = FVector(BasisDir.X, BasisDir.Y, 0.f).GetSafeNormal();
+					if (Forward.IsNearlyZero())
+					{
+						const float FallbackAngle = FMath::DegreesToRadians(static_cast<float>(Seed % 360));
+						Forward = FVector(FMath::Cos(FallbackAngle), FMath::Sin(FallbackAngle), 0.f);
+					}
+
+					const FVector Right(-Forward.Y, Forward.X, 0.f);
+					const float AngleDeg = static_cast<float>((Seed >> 8) % 360);
+					const float RadiusAlpha = static_cast<float>((Seed >> 16) & 0xFF) / 255.f;
+					const float Radius = FMath::Lerp(MinRadius, MaxRadius, RadiusAlpha);
+					const float AngleRad = FMath::DegreesToRadians(AngleDeg);
+					return (Forward * FMath::Cos(AngleRad) + Right * FMath::Sin(AngleRad)) * Radius;
+				};
 
 				GoalCacheQuery.ForEachEntityChunk(Context,
 					[&](FMassExecutionContext& ChunkCtx)
@@ -117,34 +165,39 @@ void UEnemyEntityMovementProcessor::Execute(
 						for (int32 i = 0; i < ChunkCtx.GetNumEntities(); ++i)
 						{
 							FEnemyDataFragment& Data = DataList[i];
-							if (Data.bGoalLocationCached)
-								continue;
+							const FMassEntityHandle Entity = ChunkCtx.GetEntity(i);
+							const uint32 EntitySeed = GetTypeHash(Entity);
+							const FVector EntityLoc = TransformList[i].GetTransform().GetLocation();
 
-							if (ApproachPoints.Num() > 0)
+							if (SlotPoints.Num() > 0)
 							{
-								// Entity 위치에서 가장 가까운 ShipCombatCollision 박스 선택
-								const FVector EntityLoc = TransformList[i].GetTransform().GetLocation();
-								FVector BestPoint = ApproachPoints[0];
-								float BestDistSq = FVector::DistSquared(EntityLoc, BestPoint);
-
-								for (int32 j = 1; j < ApproachPoints.Num(); ++j)
-								{
-									const float DistSq = FVector::DistSquared(EntityLoc, ApproachPoints[j]);
-									if (DistSq < BestDistSq)
-									{
-										BestDistSq = DistSq;
-										BestPoint = ApproachPoints[j];
-									}
-								}
-
-								Data.GoalLocation = BestPoint;
+								const int32 SlotIndex = static_cast<int32>(EntitySeed % SlotPoints.Num());
+								const FVector SlotLoc = SlotPoints[SlotIndex];
+								const FVector BasisDir =
+									SlotNormals.IsValidIndex(SlotIndex) && !SlotNormals[SlotIndex].IsNearlyZero()
+										? SlotNormals[SlotIndex]
+										: (SlotLoc - FallbackLoc).GetSafeNormal2D();
+								const FVector Tangent(-BasisDir.Y, BasisDir.X, 0.f);
+								const float ForwardAlpha = static_cast<float>((EntitySeed >> 16) & 0xFF) / 255.f;
+								const float SideAlpha = static_cast<float>((EntitySeed >> 24) & 0xFF) / 255.f;
+								const float ForwardOffset = FMath::Lerp(70.f, 150.f, ForwardAlpha);
+								const float SideOffset = FMath::Lerp(-120.f, 120.f, SideAlpha);
+								Data.GoalLocation = SlotLoc + BasisDir * ForwardOffset + Tangent * SideOffset;
+							}
+							else if (ApproachPoints.Num() > 0)
+							{
+								const int32 PointIndex = static_cast<int32>(EntitySeed % ApproachPoints.Num());
+								const FVector AnchorPoint = ApproachPoints[PointIndex];
+								const FVector BasisDir = (AnchorPoint - FallbackLoc).GetSafeNormal2D();
+								Data.GoalLocation = AnchorPoint + MakeSpreadOffset(EntitySeed, BasisDir, 90.f, 240.f);
 							}
 							else
 							{
-								// 박스가 없으면 중심점 폴백
-								Data.GoalLocation = FallbackLoc;
+								const FVector ShipDir = (EntityLoc - FallbackLoc).GetSafeNormal2D();
+								Data.GoalLocation = FallbackLoc + MakeSpreadOffset(EntitySeed, ShipDir, 220.f, 520.f);
 							}
 
+							Data.GoalLocation.Z = FallbackLoc.Z;
 							Data.bGoalLocationCached = true;
 						}
 					}
@@ -288,4 +341,3 @@ void UEnemyEntityMovementProcessor::Execute(
 		}
 	}
 }
-	

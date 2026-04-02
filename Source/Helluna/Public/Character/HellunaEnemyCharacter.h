@@ -377,6 +377,9 @@ public:
 	UFUNCTION(BlueprintCallable)
 	void SetServerAttackPoseTickEnabled(bool bEnable);
 
+	void SetCachedMeleeAttackDamage(float InDamage) { CachedMeleeAttackDamage = FMath::Max(0.f, InDamage); }
+	float GetCachedMeleeAttackDamage() const { return CachedMeleeAttackDamage; }
+
 	void LockMovementAndFaceTarget(AActor* TargetActor);
 
 	/** 이동 잠금 해제 (EndAbility에서 호출) */
@@ -402,6 +405,9 @@ private:
 
 	/** 히트 이펙트 RPC 쓰로틀링 — 0.1초 내 중복 호출 생략 */
 	double LastEffectRPCTime = 0.0;
+
+	/** 애님 노티파이에서 바로 읽는 현재 근접 공격 데미지 캐시 */
+	float CachedMeleeAttackDamage = 0.f;
 
 	EVisibilityBasedAnimTickOption SavedAnimTickOption = EVisibilityBasedAnimTickOption::OnlyTickPoseWhenRendered;
 

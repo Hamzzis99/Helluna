@@ -51,9 +51,21 @@ struct FAttackSlot
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
 	FVector WorldLocation = FVector::ZeroVector;
 
+	/** 우주선 표면 기준 기준점 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
+	FVector SurfaceLocation = FVector::ZeroVector;
+
+	/** 표면에서 바깥을 향하는 2D 노멀 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
+	FVector SurfaceNormal = FVector::ForwardVector;
+
 	/** 현재 슬롯 상태 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
 	ESlotState State = ESlotState::Free;
+
+	/** 우주선 기준 슬롯 섹터 각도 (Yaw, 0~360) */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
+	float SectorAngleDegrees = 0.f;
 
 	/** 이 슬롯을 예약/점유한 몬스터 */
 	UPROPERTY()
@@ -83,6 +95,9 @@ protected:
 
 	/** 후보 점 하나가 슬롯으로 쓸 수 있는지 검증 */
 	bool ValidateSlotCandidate(const FVector& Candidate, FVector& OutNavLocation) const;
+
+	/** 우주선 실제 크기를 반영한 슬롯 생성 반경을 계산한다. */
+	void GetEffectiveSlotRadii(float& OutMinRadius, float& OutMaxRadius) const;
 
 public:
 	// ─── 공개 API ─────────────────────────────────────────────
@@ -118,6 +133,21 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "AI|Slot")
 	void ReleaseSlotByIndex(int32 SlotIndex);
 
+	/**
+	 * 슬롯보다 느슨한 "섹터 분산" 위치를 요청한다.
+	 * 정확한 1:1 슬롯 점유 대신 우주선 둘레 섹터별 점유 수를 균등화한다.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "AI|Sector")
+	bool RequestSectorPosition(AActor* Monster, int32& OutSectorIndex, FVector& OutLocation);
+
+	/** 섹터 예약을 반납한다. */
+	UFUNCTION(BlueprintCallable, Category = "AI|Sector")
+	void ReleaseSectorReservation(AActor* Monster);
+
+	/** 슬롯/섹터 예약을 한 번에 반납한다. */
+	UFUNCTION(BlueprintCallable, Category = "AI|Slot")
+	void ReleaseEngagementReservation(AActor* Monster);
+
 	/** 현재 슬롯 배열 읽기 전용 접근 */
 	const TArray<FAttackSlot>& GetSlots() const { return Slots; }
 
@@ -143,22 +173,22 @@ public:
 
 	// ─── 설정 ─────────────────────────────────────────────────
 
-	/** 우주선 중심에서 후보를 탐색할 최소 반경 (cm) */
+	/** 우주선 외곽 표면에서 바깥으로 띄울 최소 거리 (cm) */
 	UPROPERTY(EditAnywhere, Category = "슬롯 생성",
 		meta=(DisplayName="최소 반경 (cm)", ClampMin="50"))
-	float MinRadius = 200.f;
+	float MinRadius = 80.f;
 
-	/** 우주선 중심에서 후보를 탐색할 최대 반경 (cm) */
+	/** 우주선 외곽 표면에서 바깥으로 띄울 최대 거리 (cm) */
 	UPROPERTY(EditAnywhere, Category = "슬롯 생성",
 		meta=(DisplayName="최대 반경 (cm)", ClampMin="100"))
-	float MaxRadius = 350.f;
+	float MaxRadius = 140.f;
 
-	/** 각도 간격 (도). 작을수록 슬롯 많아짐 (10도 = 링당 36개) */
+	/** 외곽 표면 샘플 각도 간격 (도). 작을수록 슬롯 많아짐 */
 	UPROPERTY(EditAnywhere, Category = "슬롯 생성",
 		meta=(DisplayName="각도 간격 (도)", ClampMin="5", ClampMax="90"))
-	float AngleStep = 20.f;
+	float AngleStep = 15.f;
 
-	/** 반경 링 개수 (MinRadius ~ MaxRadius 사이를 이 수로 나눔) */
+	/** 외곽 표면 바깥 오프셋 링 개수 (MinRadius ~ MaxRadius 사이를 이 수로 나눔) */
 	UPROPERTY(EditAnywhere, Category = "슬롯 생성",
 		meta=(DisplayName="반경 링 수", ClampMin="1", ClampMax="5"))
 	int32 RadiusRings = 3;
@@ -182,6 +212,56 @@ public:
 	UPROPERTY(EditAnywhere, Category = "슬롯 생성",
 		meta=(DisplayName="슬롯 배정 최대 높이 차 (cm)", ClampMin="0"))
 	float MaxSlotAssignmentHeightDelta = 250.f;
+
+	/** 대기 위치가 몬스터와 너무 다른 층에 잡히는 것을 방지한다. */
+	UPROPERTY(EditAnywhere, Category = "슬롯 생성",
+		meta=(DisplayName="대기 위치 최대 높이 차 (cm)", ClampMin="0"))
+	float MaxWaitingPositionHeightDelta = 350.f;
+
+	/** 실제 이동 목표를 표면에서 얼마나 바깥쪽에 둘지 최소 거리 */
+	UPROPERTY(EditAnywhere, Category = "슬롯 생성",
+		meta=(DisplayName="공격 접근 최소 거리 (cm)", ClampMin="0"))
+	float ApproachDistanceMin = 80.f;
+
+	/** 실제 이동 목표를 표면에서 얼마나 바깥쪽에 둘지 최대 거리 */
+	UPROPERTY(EditAnywhere, Category = "슬롯 생성",
+		meta=(DisplayName="공격 접근 최대 거리 (cm)", ClampMin="0"))
+	float ApproachDistanceMax = 140.f;
+
+	/** 같은 섹터 안에서 좌우로 얼마나 퍼뜨릴지 */
+	UPROPERTY(EditAnywhere, Category = "슬롯 생성",
+		meta=(DisplayName="공격 접근 측면 분산 (cm)", ClampMin="0"))
+	float ApproachLateralSpread = 90.f;
+
+	/** 슬롯 시스템이 실패하거나 비활성일 때 사용할 섹터 기반 분산 활성화 */
+	UPROPERTY(EditAnywhere, Category = "섹터 분산",
+		meta=(DisplayName="섹터 분산 사용"))
+	bool bEnableSectorDistribution = true;
+
+	/** 우주선을 몇 개의 섹터로 나눠서 분산할지 */
+	UPROPERTY(EditAnywhere, Category = "섹터 분산",
+		meta=(DisplayName="섹터 수", ClampMin="2", ClampMax="16"))
+	int32 SectorCount = 6;
+
+	/** 섹터 접근 위치의 최소 거리 */
+	UPROPERTY(EditAnywhere, Category = "섹터 분산",
+		meta=(DisplayName="섹터 접근 최소 거리 (cm)", ClampMin="50"))
+	float SectorApproachDistanceMin = 180.f;
+
+	/** 섹터 접근 위치의 최대 거리 */
+	UPROPERTY(EditAnywhere, Category = "섹터 분산",
+		meta=(DisplayName="섹터 접근 최대 거리 (cm)", ClampMin="80"))
+	float SectorApproachDistanceMax = 420.f;
+
+	/** 같은 섹터 안에서 위치를 약간 퍼뜨리기 위한 각도 지터 */
+	UPROPERTY(EditAnywhere, Category = "섹터 분산",
+		meta=(DisplayName="섹터 각도 지터 (도)", ClampMin="0", ClampMax="45"))
+	float SectorAngleJitter = 10.f;
+
+	/** 같은 섹터 안에서 측면 분산 정도 */
+	UPROPERTY(EditAnywhere, Category = "섹터 분산",
+		meta=(DisplayName="섹터 측면 분산 (cm)", ClampMin="0"))
+	float SectorLateralSpread = 140.f;
 
 	/** 슬롯을 다시 빌드 (런타임 재생성) */
 	UFUNCTION(BlueprintCallable, Category = "AI|Slot")
@@ -209,6 +289,18 @@ public:
 		FActorComponentTickFunction* ThisTickFunction) override;
 
 private:
+	float ComputeSectorAngleDegrees(const FVector& WorldLocation) const;
+	float FindOrRememberPreferredSectorAngle(AActor* Monster, const FVector& ReferenceLocation);
+	void RememberPreferredSectorAngle(AActor* Monster, float SectorAngleDegrees);
+	bool GetPreferredSectorAngle(AActor* Monster, float& OutSectorAngleDegrees) const;
+	void CleanupPreferredSectorAngles();
+	void CleanupSectorReservations();
+	bool FindApproachLocationForSlot(const FAttackSlot& Slot, const FVector& MonsterLocation, FVector& OutApproachLocation) const;
+	bool FindApproachLocationForSector(int32 SectorIndex, const AActor* Monster, const FVector& MonsterLocation, FVector& OutApproachLocation) const;
+	float ComputeOwnerCollisionDistance(const FVector& Location) const;
+	int32 GetReservedSectorOccupancy(int32 SectorIndex, const AActor* IgnoredMonster = nullptr) const;
+	float GetSectorAngleDegrees(int32 SectorIndex) const;
+
 	/** BuildSlots 재시도 래퍼 — 슬롯 0개 시 자동 재시도 */
 	void TryBuildSlots();
 
@@ -228,6 +320,12 @@ private:
 	UPROPERTY()
 	TArray<FAttackSlot> Slots;
 
+	/** 몬스터별 선호 슬롯 섹터 캐시 */
+	TMap<TWeakObjectPtr<AActor>, float> PreferredSectorAngles;
+
+	/** 몬스터별 예약된 섹터 인덱스 */
+	TMap<TWeakObjectPtr<AActor>, int32> ReservedSectorIndices;
+
 	/** 디버그 누적 시간 */
 	float DebugAccum = 0.f;
 
@@ -246,4 +344,7 @@ private:
 
 	/** BuildSlots 실패 시 재시도 스케줄링 */
 	void ScheduleSlotRetry();
+
+	/** 우주선 메시 내부 또는 너무 가까운 지점인지 검사한다. */
+	bool IsNearOwnerCollision(const FVector& Location, float Clearance) const;
 };

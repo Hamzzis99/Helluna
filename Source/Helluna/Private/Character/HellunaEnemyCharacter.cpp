@@ -647,6 +647,7 @@ void AHellunaEnemyCharacter::StartAttackTrace(FName SocketName, float Radius, fl
 {
 	// 이전 트레이스가 살아있으면 먼저 중단
 	StopAttackTrace();
+	SetServerAttackPoseTickEnabled(true);
 
 	CurrentTraceSocketName = SocketName;
 	CurrentTraceRadius     = Radius;
@@ -668,12 +669,15 @@ void AHellunaEnemyCharacter::StartAttackTrace(FName SocketName, float Radius, fl
 
 void AHellunaEnemyCharacter::StopAttackTrace()
 {
+	SetServerAttackPoseTickEnabled(false);
+
 	if (AttackTraceTimerHandle.IsValid())
 	{
 		GetWorldTimerManager().ClearTimer(AttackTraceTimerHandle);
 		AttackTraceTimerHandle.Invalidate();
-		HitActorsThisAttack.Empty();
 	}
+
+	HitActorsThisAttack.Empty();
 }
 
 void AHellunaEnemyCharacter::PerformAttackTrace()
@@ -850,8 +854,6 @@ void AHellunaEnemyCharacter::LockMovementAndFaceTarget(AActor* TargetActor)
 		}
 	}
 
-	ForceNetUpdate();
-
 	// 클라이언트에도 즉시 동기화 (회전 모드 + 속도)
 	Multicast_SetMovementLocked(true, 0.f);
 }
@@ -869,8 +871,6 @@ void AHellunaEnemyCharacter::UnlockMovement()
 	// 서버 회전 모드 복원: 이동 방향 회전 ON
 	MoveComp->bOrientRotationToMovement    = true;
 	MoveComp->bUseControllerDesiredRotation = false;
-
-	ForceNetUpdate();
 
 	// 클라이언트에도 복원 동기화 (회전 모드 + 속도)
 	Multicast_SetMovementLocked(false, SavedMaxWalkSpeed);

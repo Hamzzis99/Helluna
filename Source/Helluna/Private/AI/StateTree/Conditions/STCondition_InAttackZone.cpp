@@ -62,6 +62,7 @@ bool FSTCondition_InAttackZone::TestCondition(FStateTreeExecutionContext& Contex
 		QueryParams);
 
 	bool bOverlapping = false;
+	bool bFoundTargetButWrongChannel = false;
 	for (const FOverlapResult& Result : Overlaps)
 	{
 		if (Result.GetActor() != TargetActor)
@@ -82,6 +83,30 @@ bool FSTCondition_InAttackZone::TestCondition(FStateTreeExecutionContext& Contex
 		{
 			bOverlapping = true;
 			break;
+		}
+		else
+		{
+			bFoundTargetButWrongChannel = true;
+		}
+	}
+
+	// 주기적 디버그 로그 (1초마다, 대표 몬스터 1마리만)
+	{
+		static double LastLogTime = 0.0;
+		const double Now = FPlatformTime::Seconds();
+		if (Now - LastLogTime >= 1.0)
+		{
+			LastLogTime = Now;
+			const float DistToTarget = FVector::Dist(PawnLoc, TargetActor->GetActorLocation());
+			const float DistToTarget2D = FVector::Dist2D(PawnLoc, TargetActor->GetActorLocation());
+			UE_LOG(LogTemp, Warning,
+				TEXT("[enemybugreport][AttackZoneCheck] Monster=%s Target=%s Overlap=%d WrongChannel=%d TotalOverlaps=%d BoxCenter=%s HalfExt=%s FwdOffset=%.1f Dist=%.1f Dist2D=%.1f FwdDir=%s"),
+				*Pawn->GetName(), *TargetActor->GetName(),
+				(int32)bOverlapping, (int32)bFoundTargetButWrongChannel,
+				Overlaps.Num(), *BoxCenter.ToString(),
+				*AttackZoneHalfExtent.ToString(), ForwardOffset,
+				DistToTarget, DistToTarget2D,
+				*Forward.ToString());
 		}
 	}
 

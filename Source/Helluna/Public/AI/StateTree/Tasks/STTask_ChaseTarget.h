@@ -61,9 +61,17 @@ struct FSTTask_ChaseTargetInstanceData
 	UPROPERTY()
 	int32 AssignedSlotIndex = -1;
 
+	/** 현재 배정된 섹터 인덱스 (-1 = 미배정) */
+	UPROPERTY()
+	int32 AssignedSectorIndex = -1;
+
 	/** 배정된 슬롯 월드 위치 */
 	UPROPERTY()
 	FVector AssignedSlotLocation = FVector::ZeroVector;
+
+	/** 배정된 섹터 월드 위치 */
+	UPROPERTY()
+	FVector AssignedSectorLocation = FVector::ZeroVector;
 
 	/** 슬롯 재배정 시도까지 남은 쿨다운 */
 	UPROPERTY()
@@ -72,6 +80,10 @@ struct FSTTask_ChaseTargetInstanceData
 	/** 슬롯 위치에 도착했는지 */
 	UPROPERTY()
 	bool bSlotArrived = false;
+
+	/** 섹터 위치에 도착했는지 */
+	UPROPERTY()
+	bool bSectorArrived = false;
 
 	UPROPERTY()
 	float MovementDiagTimer = 0.f;
@@ -138,6 +150,11 @@ public:
 		meta = (DisplayName = "우주선 공격 슬롯 시스템 사용",
 			ToolTip = "체크: 우주선 주변 슬롯을 예약해서 이동합니다. (근거리 몬스터 권장)\n해제: 슬롯 없이 우주선 주변 랜덤 위치로 자유롭게 이동합니다. (원거리 몬스터 권장)"))
 	bool bUseSlotSystem = true;
+
+	UPROPERTY(EditAnywhere, Category = "설정",
+		meta = (DisplayName = "우주선 섹터 분산 사용",
+			ToolTip = "체크: 슬롯이 꺼져 있거나 슬롯 배정이 실패했을 때 우주선 둘레 섹터를 균등하게 나눠 배정합니다.\n해제: 기존 랜덤 분산 방식만 사용합니다."))
+	bool bUseSectorDistribution = true;
 
 	UPROPERTY(EditAnywhere, Category = "설정",
 		meta = (DisplayName = "슬롯 진입 반경 (cm)",

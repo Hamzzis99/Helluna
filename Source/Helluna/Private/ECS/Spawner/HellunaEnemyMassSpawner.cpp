@@ -16,44 +16,48 @@ AHellunaEnemyMassSpawner::AHellunaEnemyMassSpawner()
 void AHellunaEnemyMassSpawner::BeginPlay()
 {
 	Super::BeginPlay();
+	DefaultSpawnCount = Count;
 	UE_LOG(LogHellunaSpawner, Log, TEXT("[HellunaEnemyMassSpawner] BeginPlay — 자동스폰 OFF"));
 }
 
 // ============================================================
 // RequestSpawn — 밤 시작 시 GameMode에서 호출
 // ============================================================
-void AHellunaEnemyMassSpawner::RequestSpawn(int32 InSpawnCount)
+void AHellunaEnemyMassSpawner::RequestSpawn(int32 InSpawnCount, float AdditionalStartDelay)
 {
 	if (GetWorld()->GetNetMode() == NM_Client) return;
 
-	if (DelayTimerHandle.IsValid() && GetWorldTimerManager().IsTimerActive(DelayTimerHandle))
+	if ((DelayTimerHandle.IsValid() && GetWorldTimerManager().IsTimerActive(DelayTimerHandle))
+		|| (SpawnBatchTimerHandle.IsValid() && GetWorldTimerManager().IsTimerActive(SpawnBatchTimerHandle)))
 	{
 		UE_LOG(LogHellunaSpawner, Warning,
-			TEXT("[RequestSpawn] ⚠️ 이전 타이머 활성 상태에서 재호출 — Spawner: %s"), *GetName());
+			TEXT("[RequestSpawn] 이전 스폰 시퀀스가 진행 중인 상태에서 재호출 — 기존 예약을 초기화합니다. Spawner: %s"), *GetName());
 	}
 
 	// 소환 수 확정: 0 이하면 BP 기본값 사용
-	RequestedSpawnCount = (InSpawnCount > 0) ? InSpawnCount : GetSpawnCount();
+	RequestedSpawnCount = (InSpawnCount > 0) ? InSpawnCount : DefaultSpawnCount;
+	PendingSpawnCount = RequestedSpawnCount;
+	PendingInitialDelay = FMath::Max(0.f, SpawnDelay + AdditionalStartDelay);
 
-	// GetSpawnCount()가 0을 반환하면 DoSpawning에서 Count가 덮어써지지 않아 이전 Count 잔재가 쓰임
+	// DefaultSpawnCount가 0이면 DoSpawning에서 Count가 덮어써지지 않아 이전 Count 잔재가 쓰일 수 있다.
 	if (RequestedSpawnCount <= 0)
 	{
 		UE_LOG(LogHellunaSpawner, Warning,
-			TEXT("[RequestSpawn] RequestedSpawnCount=%d — BP의 Count/GetSpawnCount() 반환값을 확인하세요. Spawner: %s"),
+			TEXT("[RequestSpawn] RequestedSpawnCount=%d — BP의 Count 기본값을 확인하세요. Spawner: %s"),
 			RequestedSpawnCount, *GetName());
 	}
 
 	GetWorldTimerManager().ClearTimer(DelayTimerHandle);
+	GetWorldTimerManager().ClearTimer(SpawnBatchTimerHandle);
 
 	const UMassSimulationSubsystem* Sim = UWorld::GetSubsystem<UMassSimulationSubsystem>(GetWorld());
 	if (Sim && Sim->IsSimulationStarted())
 	{
 		UE_LOG(LogHellunaSpawner, Log,
-			TEXT("[RequestSpawn] 시뮬레이션 준비됨 — %.1f초 후 %d마리 소환 예약. Spawner: %s"),
-			SpawnDelay, RequestedSpawnCount, *GetName());
+			TEXT("[RequestSpawn] 시뮬레이션 준비됨 — %.1f초 후 총 %d마리 순차 소환 예약 (Batch=%d, Interval=%.2f, ExtraDelay=%.2f). Spawner: %s"),
+			PendingInitialDelay, RequestedSpawnCount, SpawnBatchSize, SpawnBatchInterval, AdditionalStartDelay, *GetName());
 
-		GetWorldTimerManager().SetTimer(DelayTimerHandle, this,
-			&AHellunaEnemyMassSpawner::ExecuteDelayedSpawn, SpawnDelay, false);
+		ScheduleNextSpawnBatch(PendingInitialDelay, true);
 	}
 	else
 	{
@@ -74,9 +78,12 @@ void AHellunaEnemyMassSpawner::RequestSpawn(int32 InSpawnCount)
 void AHellunaEnemyMassSpawner::CancelPendingSpawn()
 {
 	const bool bTimerWasActive = DelayTimerHandle.IsValid() && GetWorldTimerManager().IsTimerActive(DelayTimerHandle);
+	const bool bBatchTimerWasActive = SpawnBatchTimerHandle.IsValid() && GetWorldTimerManager().IsTimerActive(SpawnBatchTimerHandle);
 	const bool bCallbackWasBound = HellunaSimStartedHandle.IsValid();
 
 	GetWorldTimerManager().ClearTimer(DelayTimerHandle);
+	GetWorldTimerManager().ClearTimer(SpawnBatchTimerHandle);
+	PendingSpawnCount = 0;
 
 	if (HellunaSimStartedHandle.IsValid())
 	{
@@ -85,9 +92,10 @@ void AHellunaEnemyMassSpawner::CancelPendingSpawn()
 	}
 
 	UE_LOG(LogHellunaSpawner, Log,
-		TEXT("[CancelPendingSpawn] Spawner: %s | 타이머 취소: %s | 콜백 해제: %s"),
+		TEXT("[CancelPendingSpawn] Spawner: %s | 시작 타이머 취소: %s | 배치 타이머 취소: %s | 콜백 해제: %s"),
 		*GetName(),
 		bTimerWasActive    ? TEXT("YES ⚠️") : TEXT("no"),
+		bBatchTimerWasActive ? TEXT("YES ⚠️") : TEXT("no"),
 		bCallbackWasBound  ? TEXT("YES ⚠️") : TEXT("no"));
 }
 
@@ -101,8 +109,7 @@ void AHellunaEnemyMassSpawner::OnSimulationReady(UWorld* InWorld)
 	UMassSimulationSubsystem::GetOnSimulationStarted().Remove(HellunaSimStartedHandle);
 	HellunaSimStartedHandle.Reset();
 
-	GetWorldTimerManager().SetTimer(DelayTimerHandle, this,
-		&AHellunaEnemyMassSpawner::ExecuteDelayedSpawn, SpawnDelay, false);
+	ScheduleNextSpawnBatch(PendingInitialDelay, true);
 }
 
 // ============================================================
@@ -137,12 +144,21 @@ void AHellunaEnemyMassSpawner::ExecuteDelayedSpawn()
 		}
 	}
 
-	// AMassSpawner::Count는 protected이지만 파생 클래스에서 직접 접근 가능.
-	// ScaleSpawningCount 방식은 BP 기본값에 의존하므로
-	// Count를 직접 덮어써서 정확한 수를 보장한다.
-	if (RequestedSpawnCount > 0)
+	if (PendingSpawnCount <= 0)
 	{
-		Count = RequestedSpawnCount;
+		UE_LOG(LogHellunaSpawner, Verbose,
+			TEXT("[ExecuteDelayedSpawn] PendingSpawnCount=0 — 시퀀스 종료. Spawner: %s"), *GetName());
+		return;
+	}
+
+	const int32 SpawnCountThisBatch =
+		(SpawnBatchSize > 0) ? FMath::Min(PendingSpawnCount, SpawnBatchSize) : PendingSpawnCount;
+
+	// AMassSpawner::Count는 protected이지만 파생 클래스에서 직접 접근 가능.
+	// Count를 직접 배치 수로 덮어써서 한 프레임에 전체 엔티티가 몰리지 않게 한다.
+	if (SpawnCountThisBatch > 0)
+	{
+		Count = SpawnCountThisBatch;
 		ScaleSpawningCount(1.0f); // Scale을 1로 초기화 (이전 Scale 잔재 제거)
 	}
 
@@ -176,11 +192,57 @@ void AHellunaEnemyMassSpawner::ExecuteDelayedSpawn()
 	}
 
 	UE_LOG(LogHellunaSpawner, Log,
-		TEXT("[ExecuteDelayedSpawn] DoSpawning 실행 (%d마리 x %d타입). Spawner: %s"),
-		RequestedSpawnCount, EntityTypes.Num(), *GetName());
+		TEXT("[ExecuteDelayedSpawn] 배치 스폰 실행 (이번 %d / 남은 %d / 총 %d, 타입 %d). Spawner: %s"),
+		SpawnCountThisBatch, PendingSpawnCount, RequestedSpawnCount, EntityTypes.Num(), *GetName());
 
 	DoSpawning();
 
+	PendingSpawnCount -= SpawnCountThisBatch;
+
 	UE_LOG(LogHellunaSpawner, Log,
-		TEXT("[ExecuteDelayedSpawn] 완료. Spawner: %s"), *GetName());
+		TEXT("[ExecuteDelayedSpawn] 배치 완료. 남은 수: %d. Spawner: %s"),
+		PendingSpawnCount, *GetName());
+
+	if (PendingSpawnCount > 0)
+	{
+		ScheduleNextSpawnBatch(SpawnBatchInterval, false);
+	}
+}
+
+void AHellunaEnemyMassSpawner::ScheduleNextSpawnBatch(float Delay, bool bUseInitialDelayTimer)
+{
+	if (!GetWorld())
+	{
+		return;
+	}
+
+	FTimerHandle& TargetTimerHandle = bUseInitialDelayTimer ? DelayTimerHandle : SpawnBatchTimerHandle;
+	GetWorldTimerManager().ClearTimer(TargetTimerHandle);
+
+	if (Delay <= 0.f)
+	{
+		GetWorldTimerManager().SetTimerForNextTick(this, &AHellunaEnemyMassSpawner::ExecuteDelayedSpawn);
+		return;
+	}
+
+	GetWorldTimerManager().SetTimer(TargetTimerHandle, this,
+		&AHellunaEnemyMassSpawner::ExecuteDelayedSpawn,
+		Delay, false);
+}
+
+float AHellunaEnemyMassSpawner::GetEstimatedSpawnSequenceSpacing(int32 InSpawnCount) const
+{
+	const int32 EffectiveSpawnCount = (InSpawnCount > 0) ? InSpawnCount : DefaultSpawnCount;
+	if (EffectiveSpawnCount <= 0)
+	{
+		return 0.f;
+	}
+
+	if (SpawnBatchSize <= 0 || SpawnBatchInterval <= 0.f)
+	{
+		return 0.f;
+	}
+
+	const int32 BatchCount = FMath::Max(1, FMath::DivideAndRoundUp(EffectiveSpawnCount, SpawnBatchSize));
+	return static_cast<float>(BatchCount) * SpawnBatchInterval;
 }
