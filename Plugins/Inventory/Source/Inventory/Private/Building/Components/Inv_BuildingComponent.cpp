@@ -55,6 +55,19 @@ void UInv_BuildingComponent::BeginPlay()
 	// 로컬 플레이어만 입력 등록
 	if (!OwningPC->IsLocalController()) return;
 
+	// [스캔 VFX 프리캐시] 첫 건설 시 셰이더 컴파일 히치 방지
+	// 게임 시작 시 throwaway DMI를 생성하여 셰이더/PSO를 미리 컴파일
+	if (DefaultPlacementScanMaterial)
+	{
+		UMaterialInstanceDynamic* PrecacheDMI = UMaterialInstanceDynamic::Create(DefaultPlacementScanMaterial, this);
+		if (PrecacheDMI)
+		{
+			PrecacheDMI->SetScalarParameterValue(TEXT("ScanHeight"), 0.f);
+			PrecacheDMI->SetScalarParameterValue(TEXT("BandWidth"), 10.f);
+			// DMI를 GC에 맡겨 자동 해제 — 셰이더는 캐시에 남음
+		}
+	}
+
 	// ★ BuildingMenuMappingContext만 여기서 추가 (B키 - 항상 활성화)
 	// ★ BuildingActionMappingContext는 BuildMode 진입 시에만 동적으로 추가됨
 	if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(OwningPC->GetLocalPlayer()))
@@ -176,6 +189,9 @@ void UInv_BuildingComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 		{
 			BuildModeHUDInstance->UpdatePlacementStatus(bCanPlaceBuilding);
 		}
+
+		// ★ 고스트 머티리얼 색상 업데이트 (파란/빨간 전환)
+		UpdateGhostColor(bCanPlaceBuilding);
 	}
 }
 
@@ -233,6 +249,9 @@ void UInv_BuildingComponent::StartBuildMode()
 
 		// 고스트 액터의 충돌 비활성화
 		GhostActorInstance->SetActorEnableCollision(false);
+
+		// 고스트 배치 피드백 머티리얼 적용 (반투명 파란/빨간)
+		ApplyGhostMaterial();
 	}
 	else
 	{
@@ -268,6 +287,11 @@ void UInv_BuildingComponent::EndBuildMode()
 
 	// ★ BuildMode 종료 시 입력 비활성화 (IMC 제거 + 바인딩 해제)
 	DisableBuildModeInput();
+
+	// 고스트 상태 초기화
+	GhostDMI = nullptr;
+	GhostSwappedMeshes.Empty();
+	bGhostPrevCanPlace = true;
 
 	// 고스트 메시 제거
 	if (IsValid(GhostActorInstance))
@@ -1294,5 +1318,57 @@ void UInv_BuildingComponent::ApplyScanVFXToAnyActor(AActor* TargetActor)
 	UE_LOG(LogTemp, Warning, TEXT("[BuildingScanVFX] Fallback scan started: %s (%d meshes, Bottom=%.0f, Top=%.0f, Duration=%.1fs)"),
 		*TargetActor->GetName(), Entries->Num(), BottomZ, TopZ, CapturedDuration);
 #endif
+}
+
+// ============================================================================
+// 고스트 배치 피드백 머티리얼 (파란=건설 가능, 빨간=건설 불가)
+// ============================================================================
+
+void UInv_BuildingComponent::ApplyGhostMaterial()
+{
+	if (!GhostPlacementMaterial || !IsValid(GhostActorInstance)) return;
+
+	// DMI 생성
+	GhostDMI = UMaterialInstanceDynamic::Create(GhostPlacementMaterial, this);
+	if (!GhostDMI) return;
+
+	// 초기 색상: 건설 가능 (파란)
+	GhostDMI->SetVectorParameterValue(TEXT("GhostColor"), GhostValidColor);
+	bGhostPrevCanPlace = true;
+
+	// 고스트 액터의 모든 메시에 DMI 적용
+	GhostSwappedMeshes.Empty();
+	TArray<UMeshComponent*> AllMeshes;
+	GhostActorInstance->GetComponents<UMeshComponent>(AllMeshes);
+
+	for (UMeshComponent* MeshComp : AllMeshes)
+	{
+		if (!MeshComp || !MeshComp->IsVisible()) continue;
+
+		const int32 NumMats = MeshComp->GetNumMaterials();
+		for (int32 i = 0; i < NumMats; ++i)
+		{
+			MeshComp->SetMaterial(i, GhostDMI);
+		}
+
+		// NumMats==0이어도 슬롯 0에 강제 적용 (DynamicMeshComponent 등)
+		if (NumMats == 0)
+		{
+			MeshComp->SetMaterial(0, GhostDMI);
+		}
+
+		GhostSwappedMeshes.Add(MeshComp);
+	}
+}
+
+void UInv_BuildingComponent::UpdateGhostColor(bool bCanPlace)
+{
+	// 상태가 변하지 않았으면 스킵 (매 프레임 DMI 업데이트 방지)
+	if (bCanPlace == bGhostPrevCanPlace) return;
+	if (!GhostDMI) return;
+
+	const FLinearColor& NewColor = bCanPlace ? GhostValidColor : GhostInvalidColor;
+	GhostDMI->SetVectorParameterValue(TEXT("GhostColor"), NewColor);
+	bGhostPrevCanPlace = bCanPlace;
 }
 

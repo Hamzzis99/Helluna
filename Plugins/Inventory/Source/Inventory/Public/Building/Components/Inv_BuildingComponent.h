@@ -11,6 +11,8 @@ class UInputMappingContext;
 class UInputAction;
 class UInv_BuildModeHUD;
 class UMaterialInterface;
+class UMaterialInstanceDynamic;
+class UMeshComponent;
 class UTexture2D;
 
 /**
@@ -351,4 +353,41 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|입력",
 		meta = (DisplayName = "입력 매핑 우선순위", Tooltip = "건설 모드 입력 매핑 컨텍스트의 우선순위. 전투 IMC보다 높게 설정하세요.", AllowPrivateAccess = "true"))
 	int32 BuildingMappingContextPriority = 10;
+
+	// =========================================================================================
+	// 고스트 배치 피드백 머티리얼 (파란=건설 가능, 빨간=건설 불가)
+	// =========================================================================================
+
+	/** 고스트 배치 피드백 머티리얼 (M_GhostPlacement 할당) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "건설|VFX",
+		meta = (DisplayName = "Ghost Placement Material (고스트 배치 머티리얼)", AllowPrivateAccess = "true"))
+	TObjectPtr<UMaterialInterface> GhostPlacementMaterial;
+
+	/** 건설 가능 색상 (파란) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|VFX",
+		meta = (DisplayName = "Valid Placement Color (배치 가능 색상)", AllowPrivateAccess = "true"))
+	FLinearColor GhostValidColor = FLinearColor(0.f, 0.5f, 1.f, 1.f);
+
+	/** 건설 불가 색상 (빨간) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|VFX",
+		meta = (DisplayName = "Invalid Placement Color (배치 불가 색상)", AllowPrivateAccess = "true"))
+	FLinearColor GhostInvalidColor = FLinearColor(1.f, 0.1f, 0.1f, 1.f);
+
+private:
+	/** 고스트 액터에 적용 중인 DMI */
+	UPROPERTY()
+	TObjectPtr<UMaterialInstanceDynamic> GhostDMI;
+
+	/** 고스트 머티리얼이 적용된 메시 배열 */
+	UPROPERTY()
+	TArray<TObjectPtr<UMeshComponent>> GhostSwappedMeshes;
+
+	/** 이전 프레임 배치 가능 여부 (불필요한 업데이트 방지) */
+	bool bGhostPrevCanPlace = true;
+
+	/** 고스트 액터에 배치 피드백 머티리얼 적용 */
+	void ApplyGhostMaterial();
+
+	/** 고스트 DMI 색상 업데이트 */
+	void UpdateGhostColor(bool bCanPlace);
 };
