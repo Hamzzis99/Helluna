@@ -88,6 +88,19 @@ struct FSTTask_ChaseTarget_TestInstanceData
 	UPROPERTY()
 	int32 DetourDirectionSign = 0;
 
+	// ─── 진척도 기반 Stuck 감지 (우주선 방향 진행 체크) ─────
+	/** 마지막 진척도 체크 시점의 SurfaceDist */
+	UPROPERTY()
+	float LastProgressSurfaceDist = MAX_FLT;
+
+	/** 진척도 체크 타이머 */
+	UPROPERTY()
+	float ProgressCheckTimer = 0.f;
+
+	/** 연속 무진척 횟수 (ForceDirectMove 트리거) */
+	UPROPERTY()
+	int32 ConsecutiveNoProgressCount = 0;
+
 	// ─── 슬롯 시스템 (우주선 근거리) ────────────────────────
 
 	/** 현재 배정된 슬롯 인덱스 (-1 = 미배정) */

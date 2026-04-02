@@ -1,28 +1,28 @@
-/**
+﻿/**
  * STTask_ChaseTarget_Test.cpp
  *
- * 우주선/플레이어 통합 추적 Task (v2).
+ * ?怨쀯폒?????쟿??곷선 ???? ?곕뗄??Task (v2).
  *
- * ─── 우주선 이동 (지형에 묻힌 우주선 대응) ──────────────────
+ * ?????? ?怨쀯폒????猷?(筌왖?類ㅻ퓠 ?얠궢???怨쀯폒?????? ????????????????????????????????????
  *
- *  [Phase 1: 원거리] 중심거리 > SlotEngageRadius
- *    NavMesh 위 중간 경유점으로 우주선 방향 접근.
- *    NavMesh 경계 도달 시 pathfinding OFF 직접 이동.
+ *  [Phase 1: ?癒?탢?? 餓λ쵐?뽩쳞怨뺚봺 > SlotEngageRadius
+ *    NavMesh ??餓λ쵌而?野껋럩??癒?몵嚥??怨쀯폒??獄쎻뫚堉??臾롫젏.
+ *    NavMesh 野껋럡???袁⑤뼎 ??pathfinding OFF 筌욊낯????猷?
  *
- *  [Phase 2: 근거리 슬롯] bUseSlotSystem && SlotManager 유효
- *    SlotManager에서 배정받은 NavMesh 검증 위치로 이동.
- *    도착 시 OccupySlot → Running 유지 (Attack State 전환 대기).
- *    Stuck/경로실패 시 슬롯 반납 후 재배정.
+ *  [Phase 2: 域뱀눊援끿뵳????? bUseSlotSystem && SlotManager ?醫륁뒞
+ *    SlotManager?癒?퐣 獄쏄퀣?숃쳸?? NavMesh 野꺜筌??袁⑺뒄嚥???猷?
+ *    ?袁⑷컩 ??OccupySlot ??Running ?醫? (Attack State ?袁れ넎 ??疫?.
+ *    Stuck/野껋럥以??쎈솭 ??????獄쏆꼶沅?????媛??
  *
- *  [Phase 2': 근거리 자유] 슬롯 OFF 또는 슬롯 없음
- *    NavMesh 경유점 접근 + NavMesh 경계 시 직접 이동.
+ *  [Phase 2': 域뱀눊援끿뵳??癒??] ????OFF ?癒?뮉 ??????곸벉
+ *    NavMesh 野껋럩????臾롫젏 + NavMesh 野껋럡????筌욊낯????猷?
  *
- * ─── 플레이어 이동 ───────────────────────────────────────────
- *  RepathInterval마다 MoveToActor / EQS 재발행.
- *  Stuck 시 랜덤 우회 후 재추적.
- *  DistanceToTarget <= PlayerAttackRange → Succeeded.
+ * ?????? ???쟿??곷선 ??猷???????????????????????????????????????????????????????????????????????????????????????
+ *  RepathInterval筌띾뜄??MoveToActor / EQS ??而??
+ *  Stuck ????뺣쑁 ?怨좎돳 ???????
+ *  DistanceToTarget <= PlayerAttackRange ??Succeeded.
  *
- * @author 김민우
+ * @author 繹먃沃섏눘??
  */
 
 #include "AI/StateTree/Tasks/STTask_ChaseTarget_Test.h"
@@ -48,6 +48,194 @@ DEFINE_LOG_CATEGORY_STATIC(LogChaseTarget, Log, All);
 
 namespace ChaseTargetTestHelpers {
 
+bool ForceDirectMove(APawn* Pawn, const FVector& Direction, float DeltaTime);
+
+const TCHAR* PathRequestResultToString(EPathFollowingRequestResult::Type Result)
+{
+	switch (Result)
+	{
+	case EPathFollowingRequestResult::Failed:
+		return TEXT("Failed");
+	case EPathFollowingRequestResult::AlreadyAtGoal:
+		return TEXT("AlreadyAtGoal");
+	case EPathFollowingRequestResult::RequestSuccessful:
+		return TEXT("RequestSuccessful");
+	default:
+		return TEXT("Unknown");
+	}
+}
+
+const TCHAR* PathFollowingStatusToString(EPathFollowingStatus::Type Status)
+{
+	switch (Status)
+	{
+	case EPathFollowingStatus::Idle:
+		return TEXT("Idle");
+	case EPathFollowingStatus::Waiting:
+		return TEXT("Waiting");
+	case EPathFollowingStatus::Paused:
+		return TEXT("Paused");
+	case EPathFollowingStatus::Moving:
+		return TEXT("Moving");
+	default:
+		return TEXT("Unknown");
+	}
+}
+
+void LogMoveToActorCall(
+	AAIController* AIC,
+	APawn* Pawn,
+	AActor* TargetActor,
+	const TCHAR* Phase,
+	EPathFollowingRequestResult::Type Result,
+	float SurfaceDist,
+	float CenterDist,
+	int32 SlotIndex)
+{
+	if (!IsValid(Pawn))
+	{
+		return;
+	}
+
+	EPathFollowingStatus::Type PFCStatus = EPathFollowingStatus::Idle;
+	if (UPathFollowingComponent* PFC = IsValid(AIC) ? AIC->GetPathFollowingComponent() : nullptr)
+	{
+		PFCStatus = PFC->GetStatus();
+	}
+
+	const FString Signature = FString::Printf(TEXT("%s|%d|%d"), Phase, (int32)Result, SlotIndex);
+	static TMap<uint32, FString> LastSignatureByPawn;
+	const uint32 PawnId = Pawn->GetUniqueID();
+	if (const FString* LastSignature = LastSignatureByPawn.Find(PawnId))
+	{
+		if (*LastSignature == Signature)
+		{
+			return;
+		}
+	}
+	LastSignatureByPawn.Add(PawnId, Signature);
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[enemybugreport][MoveToActorCall] Pawn=%s Phase=%s Slot=%d Result=%s PFC=%s SurfDist=%.1f CenterDist=%.1f Pos=%s Target=%s"),
+		*Pawn->GetName(),
+		Phase,
+		SlotIndex,
+		PathRequestResultToString(Result),
+		PathFollowingStatusToString(PFCStatus),
+		SurfaceDist,
+		CenterDist,
+		*Pawn->GetActorLocation().ToString(),
+		IsValid(TargetActor) ? *TargetActor->GetName() : TEXT("null"));
+}
+
+void LogMoveToActorStopReason(
+	AAIController* AIC,
+	APawn* Pawn,
+	AActor* TargetActor,
+	const TCHAR* Reason,
+	float SurfaceDist,
+	float CenterDist,
+	int32 SlotIndex,
+	bool bIdle,
+	bool bStuck,
+	bool bAttackLocked)
+{
+	if (!IsValid(Pawn))
+	{
+		return;
+	}
+
+	EPathFollowingStatus::Type PFCStatus = EPathFollowingStatus::Idle;
+	if (UPathFollowingComponent* PFC = IsValid(AIC) ? AIC->GetPathFollowingComponent() : nullptr)
+	{
+		PFCStatus = PFC->GetStatus();
+	}
+
+	const FString Signature = FString::Printf(
+		TEXT("%s|%d|%d|%d|%d|%s"),
+		Reason,
+		SlotIndex,
+		(int32)bIdle,
+		(int32)bStuck,
+		(int32)bAttackLocked,
+		PathFollowingStatusToString(PFCStatus));
+	static TMap<uint32, FString> LastSignatureByPawn;
+	const uint32 PawnId = Pawn->GetUniqueID();
+	if (const FString* LastSignature = LastSignatureByPawn.Find(PawnId))
+	{
+		if (*LastSignature == Signature)
+		{
+			return;
+		}
+	}
+	LastSignatureByPawn.Add(PawnId, Signature);
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[enemybugreport][MoveToActorStopReason] Pawn=%s Reason=%s Slot=%d PFC=%s Idle=%d Stuck=%d AttackLocked=%d SurfDist=%.1f CenterDist=%.1f Pos=%s Target=%s"),
+		*Pawn->GetName(),
+		Reason,
+		SlotIndex,
+		PathFollowingStatusToString(PFCStatus),
+		(int32)bIdle,
+		(int32)bStuck,
+		(int32)bAttackLocked,
+		SurfaceDist,
+		CenterDist,
+		*Pawn->GetActorLocation().ToString(),
+		IsValid(TargetActor) ? *TargetActor->GetName() : TEXT("null"));
+}
+
+void IssueDirectMoveTowardLocation(AAIController* AIC, APawn* Pawn, const FVector& Goal, float AcceptanceRadius, bool bNeedForceMove, float DeltaTime)
+{
+	if (!IsValid(AIC) || !IsValid(Pawn))
+	{
+		return;
+	}
+
+	const FVector PawnLoc = Pawn->GetActorLocation();
+	FVector GoalPoint = Goal;
+	GoalPoint.Z = PawnLoc.Z;
+
+	const float DistToGoal = FVector::Dist2D(PawnLoc, GoalPoint);
+	if (DistToGoal < 10.f)
+	{
+		return;
+	}
+
+	bool bIsIdle = true;
+	if (UPathFollowingComponent* PFC = AIC->GetPathFollowingComponent())
+	{
+		bIsIdle = (PFC->GetStatus() != EPathFollowingStatus::Moving);
+	}
+
+	const FVector DirToGoal = (GoalPoint - PawnLoc).GetSafeNormal2D();
+	if (DirToGoal.IsNearlyZero())
+	{
+		return;
+	}
+
+	if (bIsIdle)
+	{
+		if (bNeedForceMove)
+		{
+			ForceDirectMove(Pawn, DirToGoal, DeltaTime);
+		}
+		else
+		{
+			Pawn->AddMovementInput(DirToGoal, 1.f);
+		}
+	}
+	else
+	{
+		FAIMoveRequest Req;
+		Req.SetGoalLocation(GoalPoint);
+		Req.SetAcceptanceRadius(AcceptanceRadius);
+		Req.SetUsePathfinding(false);
+		Req.SetAllowPartialPath(true);
+		AIC->MoveTo(Req);
+	}
+}
+
 FVector ComputeDetourGoal(
 	const FVector& PawnLoc,
 	const FVector& TargetLoc,
@@ -59,20 +247,29 @@ int32 ResolveDetourDirectionSign(
 	FSTTask_ChaseTarget_TestInstanceData& D,
 	bool bUsePersistentDirection);
 
-// 전방 선언: 이동 + 표면 최근접점 + pathfinding OFF 직접 이동
+// ?袁④컩 ?醫롫섧: ??猷?+ ??뺛늺 筌ㅼ뮄??臾믪젎 + pathfinding OFF 筌욊낯????猷?
 bool IssueMoveToLocation(AAIController* AIC, const FVector& Goal, float Radius);
 FVector ComputeClosestSurfacePoint(const FVector& FromLoc, const AActor* ToActor);
-void IssueDirectMoveTowardShipSurface(AAIController* AIC, APawn* Pawn, AActor* Ship, float AcceptanceRadius, int32 ConsecutiveStuckCount = 0, float DeltaTime = 0.016f);
+void IssueDirectMoveTowardShipSurface(AAIController* AIC, APawn* Pawn, AActor* Ship, float AcceptanceRadius, bool bNeedForceMove = false, float DeltaTime = 0.016f);
+void IssueDirectMoveTowardLocation(AAIController* AIC, APawn* Pawn, const FVector& Goal, float AcceptanceRadius, bool bNeedForceMove = false, float DeltaTime = 0.016f);
+bool TryComputePostEngagementGoal(
+	AAIController* AIC,
+	APawn* Pawn,
+	AActor* Ship,
+	const USpaceShipAttackSlotManager* SlotMgr,
+	int32 SlotIndex,
+	float AttackRange,
+	FVector& OutGoal);
 bool ForceDirectMove(APawn* Pawn, const FVector& Direction, float DeltaTime);
 
-// 전방 선언: 우주선 밑/위인지 체크하는 공용 함수
+// ?袁④컩 ?醫롫섧: ?怨쀯폒??獄??袁⑹뵥筌왖 筌ｋ똾寃??롫뮉 ?⑤벊????λ땾
 static bool IsUnderOrOnShip(UWorld* World, AActor* Ship, const FVector& Location)
 {
 	if (!World || !Ship) return false;
 
 	FCollisionQueryParams TraceParams;
 
-	// 위로 Trace: 우주선 밑인지
+	// ?袁⑥쨮 Trace: ?怨쀯폒??獄쏅쵐?ㅿ쭪?
 	{
 		const FVector UpStart = Location + FVector(0, 0, 10.f);
 		const FVector UpEnd   = Location + FVector(0, 0, 1500.f);
@@ -83,7 +280,7 @@ static bool IsUnderOrOnShip(UWorld* World, AActor* Ship, const FVector& Location
 		}
 	}
 
-	// 아래로 Trace: 우주선 위인지
+	// ?袁⑥삋嚥?Trace: ?怨쀯폒???袁⑹뵥筌왖
 	{
 		const FVector DownStart = Location + FVector(0, 0, 10.f);
 		const FVector DownEnd   = Location - FVector(0, 0, 500.f);
@@ -98,8 +295,8 @@ static bool IsUnderOrOnShip(UWorld* World, AActor* Ship, const FVector& Location
 }
 
 // ============================================================================
-// 헬퍼: 우주선 방향 NavMesh 위 중간 경유점 계산
-//   우주선 밑/위로 투영되는 경유점은 거부하고, 대안 경유점을 시도한다.
+// ???? ?怨쀯폒??獄쎻뫚堉?NavMesh ??餓λ쵌而?野껋럩????④쑴沅?
+//   ?怨쀯폒??獄??袁⑥쨮 ?????롫뮉 野껋럩??癒? 椰꾧퀡???랁? ????野껋럩??癒?뱽 ??뺣즲??뺣뼄.
 // ============================================================================
 FVector ComputeNavGoalTowardShip(
 	const FVector& PawnLoc,
@@ -116,8 +313,8 @@ FVector ComputeNavGoalTowardShip(
 	if (!NavSys) return PawnLoc;
 	if (Dir.IsNearlyZero()) return PawnLoc;
 
-	// 여러 거리를 시도해서 유효한 경유점을 찾는다
-	// (가까운 것부터: 80%, 60%, 40%, 20% 거리)
+	// ????椰꾧퀡?곭몴???뺣즲??곴퐣 ?醫륁뒞??野껋럩??癒?뱽 筌≪뼔???
+	// (揶쎛繹먮슣??野껉퍓??? 80%, 60%, 40%, 20% 椰꾧퀡??
 	const float Fractions[] = { 0.8f, 0.6f, 0.4f, 0.2f };
 	const float AngleOffsets[] = { 0.f, -25.f, 25.f, -50.f, 50.f, -75.f, 75.f };
 	const FVector ProjectionExtent(260.f, 260.f, 900.f);
@@ -155,7 +352,7 @@ FVector ComputeNavGoalTowardShip(
 	for (float Frac : Fractions)
 	{
 		const float StepDist = FMath::Min(Dist * Frac, MaxStepDist);
-		if (StepDist < 80.f) continue;  // 너무 가까우면 스킵
+		if (StepDist < 80.f) continue;  // ??댭?揶쎛繹먮슣??쭖???쎄땁
 
 		for (const float AngleOffset : AngleOffsets)
 		{
@@ -174,11 +371,11 @@ FVector ComputeNavGoalTowardShip(
 		if (!NavSys->ProjectPointToNavigation(RawGoal, NavGoal, FVector(200.f, 200.f, 500.f)))
 			continue;
 
-		// 현재 위치와 너무 가까우면 스킵
+		// ?袁⑹삺 ?袁⑺뒄?? ??댭?揶쎛繹먮슣??쭖???쎄땁
 		if (FVector::Dist(PawnLoc, NavGoal.Location) < 80.f)
 			continue;
 
-		// 우주선 밑/위인지 체크
+		// ?怨쀯폒??獄??袁⑹뵥筌왖 筌ｋ똾寃?
 		if (ShipActor && IsUnderOrOnShip(AIC->GetWorld(), ShipActor, NavGoal.Location))
 			continue;
 
@@ -192,7 +389,7 @@ FVector ComputeNavGoalTowardShip(
 		}
 	}
 
-	// 모든 직선 경유점이 실패 → 현재 위치 반환 (정지)
+	// 筌뤴뫀諭?筌욊낯苑?野껋럩??癒?뵠 ??쎈솭 ???袁⑹삺 ?袁⑺뒄 獄쏆꼹??(?類?)
 	if (BestScore < MAX_FLT)
 	{
 		return BestGoal;
@@ -210,10 +407,10 @@ FVector ComputeNavGoalTowardShip(
 }
 
 // ============================================================================
-// 헬퍼: 위치로 이동 (MoveTo 실패 시 중간 경유점 폴백)
+// ???? ?袁⑺뒄嚥???猷?(MoveTo ??쎈솭 ??餓λ쵌而?野껋럩?????媛?
 // ============================================================================
-// IssueMoveToLocation 반환값: 실제 이동이 시작되었는지 여부
-// false = AlreadyAtGoal 또는 Failed (이동 불가 상태)
+// IssueMoveToLocation 獄쏆꼹?싧첎? ??쇱젫 ??猷????뽰삂??뤿??遺? ???
+// false = AlreadyAtGoal ?癒?뮉 Failed (??猷??븍뜃? ?怨밴묶)
 bool IssueMoveToLocation(AAIController* AIC, const FVector& Goal, float Radius)
 {
 	if (!IsValid(AIC)) return false;
@@ -230,20 +427,7 @@ bool IssueMoveToLocation(AAIController* AIC, const FVector& Goal, float Radius)
 		APawn* Pawn = AIC->GetPawn();
 		if (!IsValid(Pawn)) return false;
 
-		// 쓰로틀링: 같은 Pawn에서 2초마다만 로그
-		{
-			static TMap<uint32, double> LastLogTimes;
-			const uint32 PawnId = Pawn->GetUniqueID();
-			const double Now = FPlatformTime::Seconds();
-			double& LastTime = LastLogTimes.FindOrAdd(PawnId, 0.0);
-			if (Now - LastTime >= 2.0)
-			{
-				LastTime = Now;
-				UE_LOG(LogTemp, Warning,
-					TEXT("[enemybugreport][MoveToFailed] Pawn=%s Goal=%s Radius=%.1f -> Fallback"),
-					*Pawn->GetName(), *Goal.ToString(), Radius);
-			}
-		}
+		// ?怨뺤쨮??筌? 揶쏆늿? Pawn?癒?퐣 2?λ뜄彛??살춸 嚥≪뮄??
 
 		const FVector FallbackGoal = ComputeNavGoalTowardShip(
 			Pawn->GetActorLocation(), Goal, AIC, nullptr);
@@ -260,21 +444,7 @@ bool IssueMoveToLocation(AAIController* AIC, const FVector& Goal, float Radius)
 	else if (Result.Code == EPathFollowingRequestResult::AlreadyAtGoal)
 	{
 		APawn* Pawn = AIC->GetPawn();
-		// 쓰로틀링: 같은 Pawn에서 2초마다만 로그
-		{
-			static TMap<uint32, double> LastLogTimes;
-			const uint32 PawnId = IsValid(Pawn) ? Pawn->GetUniqueID() : 0;
-			const double Now = FPlatformTime::Seconds();
-			double& LastTime = LastLogTimes.FindOrAdd(PawnId, 0.0);
-			if (Now - LastTime >= 2.0)
-			{
-				LastTime = Now;
-				UE_LOG(LogTemp, Warning,
-					TEXT("[enemybugreport][AlreadyAtGoal] Pawn=%s Goal=%s Radius=%.1f PawnPos=%s"),
-					IsValid(Pawn) ? *Pawn->GetName() : TEXT("null"), *Goal.ToString(), Radius,
-					IsValid(Pawn) ? *Pawn->GetActorLocation().ToString() : TEXT("null"));
-			}
-		}
+		// ?怨뺤쨮??筌? 揶쏆늿? Pawn?癒?퐣 2?λ뜄彛??살춸 嚥≪뮄??
 		return false;
 	}
 
@@ -426,44 +596,27 @@ bool TryComputeStableShipApproachGoal(
 }
 
 // ============================================================================
-// 헬퍼: 우주선 방향 이동
-//   NavMesh 경계에 도달하면 무리하게 직진하지 않고 정지한다.
-//   (pathfinding OFF 직진은 우주선 메시 아래로 파고드는 문제 유발)
+// ???? ?怨쀯폒??獄쎻뫚堉???猷?
+//   NavMesh 野껋럡????袁⑤뼎??롢늺 ?얜????띿쓺 筌욊낯彛??? ??꾪??類???뺣뼄.
+//   (pathfinding OFF 筌욊낯彛?? ?怨쀯폒??筌롫뗄???袁⑥삋嚥??????뺣뮉 ?얜챷???醫딆뻣)
 // ============================================================================
 void IssueMoveTowardShip(
 	AAIController* AIC,
 	APawn* Pawn,
 	AActor* Ship,
 	float AcceptanceRadius,
-	int32 ConsecutiveStuckCount = 0,
+	bool bNeedForceMove = false,
 	float DeltaTime = 0.016f)
 {
 	const FVector PawnLoc = Pawn->GetActorLocation();
 	const FVector ShipLoc = Ship->GetActorLocation();
 
-	// 쓰로틀링용 로그 헬퍼
+	// ?怨뺤쨮??筌띻낯??嚥≪뮄??????
 	auto ThrottledLog = [&](const TCHAR* Method, const FVector& Goal, float ExtraDist = -1.f)
 	{
-		static TMap<uint32, double> LastLogTimes;
-		const uint32 PawnId = Pawn->GetUniqueID();
-		const double Now = FPlatformTime::Seconds();
-		double& LastTime = LastLogTimes.FindOrAdd(PawnId, 0.0);
-		if (Now - LastTime >= 2.0)
-		{
-			LastTime = Now;
-			if (ExtraDist >= 0.f)
-			{
-				UE_LOG(LogTemp, Warning,
-					TEXT("[enemybugreport][MoveTowardShip] Pawn=%s Method=%s Goal=%s GoalDist=%.1f PawnPos=%s"),
-					*Pawn->GetName(), Method, *Goal.ToString(), ExtraDist, *PawnLoc.ToString());
-			}
-			else
-			{
-				UE_LOG(LogTemp, Warning,
-					TEXT("[enemybugreport][MoveTowardShip] Pawn=%s Method=%s Goal=%s PawnPos=%s"),
-					*Pawn->GetName(), Method, *Goal.ToString(), *PawnLoc.ToString());
-			}
-		}
+		(void)Method;
+		(void)Goal;
+		(void)ExtraDist;
 	};
 
 	FVector StableApproachGoal = FVector::ZeroVector;
@@ -474,20 +627,20 @@ void IssueMoveTowardShip(
 		const bool bMoveStarted = IssueMoveToLocation(AIC, StableApproachGoal, AcceptanceRadius);
 		if (!bMoveStarted)
 		{
-			// NavMesh 경계 도달: AlreadyAtGoal 또는 Failed → pathfinding OFF 직접 이동
+			// NavMesh 野껋럡???袁⑤뼎: AlreadyAtGoal ?癒?뮉 Failed ??pathfinding OFF 筌욊낯????猷?
 			ThrottledLog(TEXT("DirectFallback(StableApproachFailed)"), ShipLoc);
-			IssueDirectMoveTowardShipSurface(AIC, Pawn, Ship, AcceptanceRadius, ConsecutiveStuckCount, DeltaTime);
+			IssueDirectMoveTowardShipSurface(AIC, Pawn, Ship, AcceptanceRadius, bNeedForceMove, DeltaTime);
 		}
 		return;
 	}
 
 	const FVector NavGoal = ComputeNavGoalTowardShip(PawnLoc, ShipLoc, AIC, Ship);
 
-	// 경유점이 현재 위치와 같으면 (제자리 반환) → NavMesh 경계 도달, 직접 이동
+	// 野껋럩??癒?뵠 ?袁⑹삺 ?袁⑺뒄?? 揶쏆늿?앾쭖?(??뽰쁽??獄쏆꼹?? ??NavMesh 野껋럡???袁⑤뼎, 筌욊낯????猷?
 	if (FVector::Dist(PawnLoc, NavGoal) < 50.f)
 	{
 		ThrottledLog(TEXT("DirectFallback(NavGoalTooClose)"), ShipLoc);
-		IssueDirectMoveTowardShipSurface(AIC, Pawn, Ship, AcceptanceRadius, ConsecutiveStuckCount, DeltaTime);
+		IssueDirectMoveTowardShipSurface(AIC, Pawn, Ship, AcceptanceRadius, bNeedForceMove, DeltaTime);
 		return;
 	}
 
@@ -495,14 +648,14 @@ void IssueMoveTowardShip(
 	const bool bMoveStarted = IssueMoveToLocation(AIC, NavGoal, AcceptanceRadius);
 	if (!bMoveStarted)
 	{
-		// NavMesh 이동 실패 → pathfinding OFF 직접 이동
+		// NavMesh ??猷???쎈솭 ??pathfinding OFF 筌욊낯????猷?
 		ThrottledLog(TEXT("DirectFallback(NavGoalFailed)"), ShipLoc);
-		IssueDirectMoveTowardShipSurface(AIC, Pawn, Ship, AcceptanceRadius, ConsecutiveStuckCount, DeltaTime);
+		IssueDirectMoveTowardShipSurface(AIC, Pawn, Ship, AcceptanceRadius, bNeedForceMove, DeltaTime);
 	}
 }
 
 // ============================================================================
-// 헬퍼: 우주선 표면 최근접점 계산
+// ???? ?怨쀯폒????뺛늺 筌ㅼ뮄??臾믪젎 ?④쑴沅?
 // ============================================================================
 FVector ComputeClosestSurfacePoint(const FVector& FromLoc, const AActor* ToActor)
 {
@@ -514,7 +667,7 @@ FVector ComputeClosestSurfacePoint(const FVector& FromLoc, const AActor* ToActor
 	float MinDist = MAX_FLT;
 	FVector BestPoint = ToActor->GetActorLocation();
 
-	// ShipCombatCollision 태그 우선
+	// ShipCombatCollision ??볥젃 ?怨쀪퐨
 	for (UPrimitiveComponent* Prim : Prims)
 	{
 		if (!Prim || Prim->GetCollisionEnabled() == ECollisionEnabled::NoCollision) continue;
@@ -530,7 +683,7 @@ FVector ComputeClosestSurfacePoint(const FVector& FromLoc, const AActor* ToActor
 	}
 	if (MinDist < MAX_FLT) return BestPoint;
 
-	// 폴백: 모든 콜리전 컴포넌트
+	// ??媛? 筌뤴뫀諭??꾩뮆????뚮똾猷??곕뱜
 	for (UPrimitiveComponent* Prim : Prims)
 	{
 		if (!Prim || Prim->GetCollisionEnabled() == ECollisionEnabled::NoCollision) continue;
@@ -547,26 +700,145 @@ FVector ComputeClosestSurfacePoint(const FVector& FromLoc, const AActor* ToActor
 	return BestPoint;
 }
 
+bool TryComputePostEngagementGoal(
+	AAIController* AIC,
+	APawn* Pawn,
+	AActor* Ship,
+	const USpaceShipAttackSlotManager* SlotMgr,
+	int32 SlotIndex,
+	float AttackRange,
+	FVector& OutGoal)
+{
+	if (!IsValid(AIC) || !IsValid(Pawn) || !IsValid(Ship))
+	{
+		return false;
+	}
+
+	UNavigationSystemV1* NavSys = FNavigationSystem::GetCurrent<UNavigationSystemV1>(AIC->GetWorld());
+	if (!NavSys)
+	{
+		return false;
+	}
+
+	const FVector PawnLoc = Pawn->GetActorLocation();
+	const FVector ShipLoc = Ship->GetActorLocation();
+
+	FVector SurfacePoint = ComputeClosestSurfacePoint(PawnLoc, Ship);
+	FVector Outward = (PawnLoc - SurfacePoint).GetSafeNormal2D();
+
+	if (SlotMgr)
+	{
+		const TArray<FAttackSlot>& Slots = SlotMgr->GetSlots();
+		if (Slots.IsValidIndex(SlotIndex))
+		{
+			const FAttackSlot& Slot = Slots[SlotIndex];
+			const FVector SlotSurface = Slot.SurfaceLocation.IsZero() ? SurfacePoint : Slot.SurfaceLocation;
+			SurfacePoint = SlotSurface;
+
+			if (!Slot.SurfaceNormal.IsNearlyZero())
+			{
+				Outward = Slot.SurfaceNormal.GetSafeNormal2D();
+			}
+			else if (Outward.IsNearlyZero())
+			{
+				Outward = (SlotSurface - ShipLoc).GetSafeNormal2D();
+			}
+		}
+	}
+
+	if (Outward.IsNearlyZero())
+	{
+		Outward = (SurfacePoint - ShipLoc).GetSafeNormal2D();
+	}
+
+	if (Outward.IsNearlyZero())
+	{
+		return false;
+	}
+
+	const FVector Tangent = FVector::CrossProduct(FVector::UpVector, Outward).GetSafeNormal();
+	const float DesiredSurfaceOffset = FMath::Clamp(AttackRange * 0.45f, 70.f, 140.f);
+	const float RelaxedSurfaceOffset = FMath::Clamp(AttackRange * 0.75f, DesiredSurfaceOffset + 20.f, 220.f);
+	const float LateralOffset = 90.f;
+
+	TArray<FVector> CandidateGoals;
+	CandidateGoals.Reserve(8);
+	CandidateGoals.Add(SurfacePoint + Outward * DesiredSurfaceOffset);
+	CandidateGoals.Add(SurfacePoint + Outward * RelaxedSurfaceOffset);
+	if (!Tangent.IsNearlyZero())
+	{
+		CandidateGoals.Add(SurfacePoint + Outward * DesiredSurfaceOffset + Tangent * LateralOffset);
+		CandidateGoals.Add(SurfacePoint + Outward * DesiredSurfaceOffset - Tangent * LateralOffset);
+		CandidateGoals.Add(SurfacePoint + Outward * RelaxedSurfaceOffset + Tangent * LateralOffset);
+		CandidateGoals.Add(SurfacePoint + Outward * RelaxedSurfaceOffset - Tangent * LateralOffset);
+	}
+	CandidateGoals.Add(FVector(SurfacePoint.X, SurfacePoint.Y, PawnLoc.Z));
+	CandidateGoals.Add(PawnLoc + (SurfacePoint - PawnLoc).GetSafeNormal2D() * FMath::Max(AttackRange * 0.5f, 120.f));
+
+	const FVector ProjectionExtent(240.f, 240.f, 1200.f);
+	float BestScore = MAX_FLT;
+	FVector BestGoal = FVector::ZeroVector;
+
+	for (const FVector& CandidateGoal : CandidateGoals)
+	{
+		FNavLocation NavLocation;
+		if (!NavSys->ProjectPointToNavigation(CandidateGoal, NavLocation, ProjectionExtent))
+		{
+			continue;
+		}
+
+		if (IsUnderOrOnShip(AIC->GetWorld(), Ship, NavLocation.Location))
+		{
+			continue;
+		}
+
+		const float MoveDist2D = FVector::Dist2D(PawnLoc, NavLocation.Location);
+		if (MoveDist2D < 10.f)
+		{
+			continue;
+		}
+
+		const float SurfaceGap = FVector::Dist2D(NavLocation.Location, SurfacePoint);
+		const float Score =
+			FMath::Abs(SurfaceGap - DesiredSurfaceOffset) * 4.f +
+			MoveDist2D * 0.35f +
+			FMath::Abs(NavLocation.Location.Z - PawnLoc.Z) * 0.2f;
+		if (Score < BestScore)
+		{
+			BestScore = Score;
+			BestGoal = NavLocation.Location;
+		}
+	}
+
+	if (BestScore == MAX_FLT)
+	{
+		return false;
+	}
+
+	OutGoal = BestGoal;
+	return true;
+}
+
 // ============================================================================
-// 헬퍼: NavMesh 경계 도달 후 우주선 표면까지 직접 이동 (pathfinding OFF)
-//   우주선 메시 표면의 최근접점을 목표로 직선 이동.
-//   CharacterMovementComponent가 콜리전 처리하므로 메시 관통 없음.
+// ???? NavMesh 野껋럡???袁⑤뼎 ???怨쀯폒????뺛늺繹먮슣? 筌욊낯????猷?(pathfinding OFF)
+//   ?怨쀯폒??筌롫뗄????뺛늺??筌ㅼ뮄??臾믪젎??筌뤴뫚紐닸에?筌욊낯苑???猷?
+//   CharacterMovementComponent揶쎛 ?꾩뮆???筌ｌ꼶????嚥?筌롫뗄???온????곸벉.
 // ============================================================================
-void IssueDirectMoveTowardShipSurface(AAIController* AIC, APawn* Pawn, AActor* Ship, float AcceptanceRadius, int32 ConsecutiveStuckCount, float DeltaTime)
+void IssueDirectMoveTowardShipSurface(AAIController* AIC, APawn* Pawn, AActor* Ship, float AcceptanceRadius, bool bNeedForceMove, float DeltaTime)
 {
 	if (!IsValid(AIC) || !IsValid(Pawn) || !IsValid(Ship)) return;
 
 	const FVector PawnLoc = Pawn->GetActorLocation();
 	FVector SurfacePoint = ComputeClosestSurfacePoint(PawnLoc, Ship);
 
-	// 표면점의 Z를 Pawn 높이로 보정 (지형 아래로 파고드는 것 방지)
+	// ??뺛늺?癒?벥 Z??Pawn ?誘れ뵠嚥?癰귣똻??(筌왖???袁⑥삋嚥??????뺣뮉 野?獄쎻뫗?)
 	SurfacePoint.Z = PawnLoc.Z;
 
 	const float DistToSurface = FVector::Dist2D(PawnLoc, SurfacePoint);
 	if (DistToSurface < 10.f) return;
 
-	// Idle 상태(MoveTo 비활성)일 때만 AddMovementInput 사용
-	// Moving 상태면 MoveTo가 제어 중이므로 간섭하지 않음
+	// Idle ?怨밴묶(MoveTo ??쑵????????춸 AddMovementInput ????
+	// Moving ?怨밴묶筌?MoveTo揶쎛 ??뽯선 餓λ쵐?좄첋?嚥?揶쏄쑴苑??? ??놁벉
 	bool bIsIdle = true;
 	if (UPathFollowingComponent* PFC = AIC->GetPathFollowingComponent())
 	{
@@ -578,8 +850,8 @@ void IssueDirectMoveTowardShipSurface(AAIController* AIC, APawn* Pawn, AActor* S
 		const FVector DirToSurface = (SurfacePoint - PawnLoc).GetSafeNormal2D();
 		if (!DirToSurface.IsNearlyZero())
 		{
-			// AddMovementInput이 2회 이상 실패 → SetActorLocation(sweep)으로 강제 이동
-			if (ConsecutiveStuckCount >= 2)
+			// AddMovementInput??2????곴맒 ??쎈솭 ??SetActorLocation(sweep)??곗쨮 揶쏅벡????猷?
+			if (bNeedForceMove)
 			{
 				ForceDirectMove(Pawn, DirToSurface, DeltaTime);
 			}
@@ -591,7 +863,7 @@ void IssueDirectMoveTowardShipSurface(AAIController* AIC, APawn* Pawn, AActor* S
 	}
 	else
 	{
-		// Moving 상태: MoveTo(pathfinding OFF)로 목표 갱신만
+		// Moving ?怨밴묶: MoveTo(pathfinding OFF)嚥?筌뤴뫚紐?揶쏄퉮?딉쭕?
 		FAIMoveRequest Req;
 		Req.SetGoalLocation(SurfacePoint);
 		Req.SetAcceptanceRadius(AcceptanceRadius);
@@ -600,24 +872,11 @@ void IssueDirectMoveTowardShipSurface(AAIController* AIC, APawn* Pawn, AActor* S
 		AIC->MoveTo(Req);
 	}
 
-	// 쓰로틀링: 같은 Pawn에서 2초마다만 로그
-	{
-		static TMap<uint32, double> LastLogTimes;
-		const uint32 PawnId = Pawn->GetUniqueID();
-		const double Now = FPlatformTime::Seconds();
-		double& LastTime = LastLogTimes.FindOrAdd(PawnId, 0.0);
-		if (Now - LastTime >= 2.0)
-		{
-			LastTime = Now;
-			UE_LOG(LogTemp, Warning,
-				TEXT("[enemybugreport][DirectMoveToShip] Pawn=%s Goal=%s Dist=%.1f PawnPos=%s"),
-				*Pawn->GetName(), *SurfacePoint.ToString(), DistToSurface, *PawnLoc.ToString());
-		}
-	}
+	// ?怨뺤쨮??筌? 揶쏆늿? Pawn?癒?퐣 2?λ뜄彛??살춸 嚥≪뮄??
 }
 
 // ============================================================================
-// 헬퍼: 우회 오프셋 목표 계산 (좌/우 랜덤)
+// ???? ?怨좎돳 ??쎈늄??筌뤴뫚紐??④쑴沅?(??????뺣쑁)
 // ============================================================================
 FVector ComputeDetourGoal(
 	const FVector& PawnLoc,
@@ -701,7 +960,7 @@ AActor* ResolveFallbackSpaceShip(AAIController* AIC)
 }
 
 // ============================================================================
-// 헬퍼: EQS 실행 후 결과 위치로 이동 (플레이어 전용)
+// ???? EQS ??쎈뻬 ??野껉퀗???袁⑺뒄嚥???猷?(???쟿??곷선 ?袁⑹뒠)
 // ============================================================================
 void RunPlayerAttackEQS(
 	UEnvQuery* Query,
@@ -750,7 +1009,7 @@ void RunPlayerAttackEQS(
 }
 
 // ============================================================================
-// 헬퍼: 공격 태그 확인
+// ???? ?⑤벀爰???볥젃 ?類ㅼ뵥
 // ============================================================================
 bool IsAttacking(APawn* Pawn)
 {
@@ -768,8 +1027,8 @@ bool IsAttacking(APawn* Pawn)
 }
 
 // ============================================================================
-// 헬퍼: 표면 거리 계산
-//   우주선처럼 크기가 큰 Actor는 중심점 거리가 아닌 메시 표면까지 최단 거리.
+// ???? ??뺛늺 椰꾧퀡???④쑴沅?
+//   ?怨쀯폒?醫롮퓗????由겼첎? ??Actor??餓λ쵐???椰꾧퀡?곩첎? ?袁⑤빒 筌롫뗄????뺛늺繹먮슣? 筌ㅼ뮆??椰꾧퀡??
 // ============================================================================
 float ComputeSurfaceDistance(const FVector& FromLoc, const AActor* ToActor)
 {
@@ -846,7 +1105,7 @@ float ComputeSurfaceDistance(const FVector& FromLoc, const AActor* ToActor)
 }
 
 // ============================================================================
-// 헬퍼: SpaceShipAttackSlotManager 가져오기
+// ???? SpaceShipAttackSlotManager 揶쎛?紐꾩궎疫?
 // ============================================================================
 USpaceShipAttackSlotManager* GetSlotManager(AActor* SpaceShip)
 {
@@ -855,7 +1114,7 @@ USpaceShipAttackSlotManager* GetSlotManager(AActor* SpaceShip)
 }
 
 // ============================================================================
-// 헬퍼: 위치 변화량 기반 Stuck 감지
+// ???? ?袁⑺뒄 癰궰?遺얠쎗 疫꿸퀡而?Stuck 揶쏅Ŋ?
 // ============================================================================
 bool CheckPositionBasedStuck(
 	FSTTask_ChaseTarget_TestInstanceData& D,
@@ -887,6 +1146,38 @@ bool CheckPositionBasedStuck(
 	D.StuckCheckTimer = 0.f;
 
 	return bStuck;
+}
+
+// ============================================================================
+// 헬퍼: 우주선 방향 진척도 기반 Stuck 감지
+//   위치가 변해도 SurfaceDist가 줄지 않으면 "무진척" 판정.
+//   진동(oscillation)을 정확히 잡아냄.
+// ============================================================================
+bool CheckProgressTowardTarget(
+	FSTTask_ChaseTarget_TestInstanceData& D,
+	float CurrentSurfaceDist,
+	float DeltaTime,
+	float CheckInterval = 1.0f,
+	float MinProgressDist = 20.f)
+{
+	D.ProgressCheckTimer += DeltaTime;
+
+	if (D.ProgressCheckTimer < CheckInterval)
+		return false; // 체크 주기 아직 안 됨
+
+	// SurfaceDist가 MinProgressDist 이상 줄었으면 진척 있음
+	const float ProgressMade = D.LastProgressSurfaceDist - CurrentSurfaceDist;
+	const bool bNoProgress = (ProgressMade < MinProgressDist);
+
+	if (bNoProgress)
+		D.ConsecutiveNoProgressCount++;
+	else
+		D.ConsecutiveNoProgressCount = 0;
+
+	D.LastProgressSurfaceDist = CurrentSurfaceDist;
+	D.ProgressCheckTimer = 0.f;
+
+	return bNoProgress;
 }
 
 static bool FindClosestFreeSlot(
@@ -954,16 +1245,36 @@ static float ComputeMaxSlotReservationTravelDistance(
 }
 
 // ============================================================================
-// 헬퍼: AddMovementInput 실패 시 강제 이동 (SetActorLocation + sweep)
-//   CMC 바닥 검증을 우회하여 NavMesh 엣지에서도 이동 가능.
-//   Sweep=true로 콜리전은 존중.
+// ???? AddMovementInput ??쎈솭 ??揶쏅벡????猷?(SetActorLocation + sweep)
+//   CMC 獄쏅뗀??野꺜筌앹빘???怨좎돳??뤿연 NavMesh ?節??癒?퐣????猷?揶쎛??
+//   Sweep=true嚥??꾩뮆??袁? 鈺곕똻夷?
 // ============================================================================
+// CMC MOVE_None toggle - disable CMC physics entirely so SetActorLocation sticks
+void SetForceMoveCMC(APawn* Pawn, bool bEnable)
+{
+	ACharacter* Character = Cast<ACharacter>(Pawn);
+	if (!Character) return;
+	UCharacterMovementComponent* CMC = Character->GetCharacterMovement();
+	if (!CMC) return;
+
+	if (bEnable && CMC->MovementMode != EMovementMode::MOVE_None)
+	{
+		CMC->DisableMovement(); // MOVE_None: no physics tick, no position snapback
+		UE_LOG(LogTemp, Warning, TEXT("[enemybugreport][CMC] %s -> MOVE_None (ForceMove)"), *Pawn->GetName());
+	}
+	else if (!bEnable && CMC->MovementMode == EMovementMode::MOVE_None)
+	{
+		CMC->SetMovementMode(EMovementMode::MOVE_Walking);
+		UE_LOG(LogTemp, Warning, TEXT("[enemybugreport][CMC] %s -> Walking (progress resumed)"), *Pawn->GetName());
+	}
+}
+
 bool ForceDirectMove(APawn* Pawn, const FVector& Direction, float DeltaTime)
 {
 	if (!IsValid(Pawn) || Direction.IsNearlyZero()) return false;
 
-	const ACharacter* Character = Cast<ACharacter>(Pawn);
-	float MoveSpeed = 400.f; // 기본 이동 속도
+	ACharacter* Character = Cast<ACharacter>(Pawn);
+	float MoveSpeed = 400.f;
 	if (Character)
 	{
 		if (const UCharacterMovementComponent* CMC = Character->GetCharacterMovement())
@@ -972,11 +1283,42 @@ bool ForceDirectMove(APawn* Pawn, const FVector& Direction, float DeltaTime)
 		}
 	}
 
-	const FVector Delta = Direction.GetSafeNormal2D() * MoveSpeed * DeltaTime;
-	FHitResult Hit;
-	const bool bMoved = Pawn->SetActorLocation(Pawn->GetActorLocation() + Delta, true, &Hit);
+	const FVector PrevLoc = Pawn->GetActorLocation();
+	const FVector HorizDir = Direction.GetSafeNormal2D();
 
-	// 쓰로틀링: 같은 Pawn에서 2초마다만 로그
+	// 1st try: horizontal + slight upward (slope handling)
+	const FVector MoveDir = (HorizDir + FVector(0.f, 0.f, 0.15f)).GetSafeNormal();
+	const FVector Delta = MoveDir * MoveSpeed * DeltaTime;
+	FHitResult Hit;
+	bool bMoved = Pawn->SetActorLocation(PrevLoc + Delta, true, &Hit);
+
+	// 2nd try: steeper upward
+	if (!bMoved || Hit.bBlockingHit)
+	{
+		const FVector SteepDir = (HorizDir + FVector(0.f, 0.f, 0.5f)).GetSafeNormal();
+		const FVector SteepDelta = SteepDir * MoveSpeed * DeltaTime;
+		FHitResult SteepHit;
+		const bool bSteepMoved = Pawn->SetActorLocation(PrevLoc + SteepDelta, true, &SteepHit);
+		if (bSteepMoved && !SteepHit.bBlockingHit)
+		{
+			bMoved = true;
+		}
+	}
+
+	// 3rd try: purely horizontal (no Z offset, in case slope logic overshoots)
+	if (!bMoved || (Hit.bBlockingHit && FVector::Dist(PrevLoc, Pawn->GetActorLocation()) < 1.f))
+	{
+		const FVector FlatDelta = HorizDir * MoveSpeed * DeltaTime;
+		FHitResult FlatHit;
+		const bool bFlatMoved = Pawn->SetActorLocation(PrevLoc + FlatDelta, true, &FlatHit);
+		if (bFlatMoved && !FlatHit.bBlockingHit)
+		{
+			bMoved = true;
+		}
+	}
+
+	const float ActualMoveDist = FVector::Dist(PrevLoc, Pawn->GetActorLocation());
+
 	{
 		static TMap<uint32, double> ForceMovLogTimes;
 		const uint32 PawnId = Pawn->GetUniqueID();
@@ -986,10 +1328,11 @@ bool ForceDirectMove(APawn* Pawn, const FVector& Direction, float DeltaTime)
 		{
 			LastTime = Now;
 			UE_LOG(LogTemp, Warning,
-				TEXT("[enemybugreport][ForceDirectMove] Pawn=%s Moved=%d Speed=%.0f Delta=%s Hit=%d Pos=%s"),
-				*Pawn->GetName(), (int32)bMoved, MoveSpeed,
-				*Delta.ToString(), (int32)Hit.bBlockingHit,
-				*Pawn->GetActorLocation().ToString());
+				TEXT("[enemybugreport][ForceDirectMove] Pawn=%s Moved=%d ActualDist=%.1f Speed=%.0f Hit=%d Pos=%s Dir=%s"),
+				*Pawn->GetName(), (int32)bMoved, ActualMoveDist, MoveSpeed,
+				(int32)Hit.bBlockingHit,
+				*Pawn->GetActorLocation().ToString(),
+				*HorizDir.ToString());
 		}
 	}
 
@@ -997,13 +1340,14 @@ bool ForceDirectMove(APawn* Pawn, const FVector& Direction, float DeltaTime)
 }
 
 } // namespace ChaseTargetTestHelpers
-// Unity Build에서 ChaseTargetHelpers와 이름 충돌 방지를 위해
-// using namespace 대신 명시적 네임스페이스 사용
+// Unity Build?癒?퐣 ChaseTargetHelpers?? ??已??겸뫖猷?獄쎻뫗????袁る퉸
+// using namespace ????筌뤿굞?????쇱뿫??쎈읂??곷뮞 ????
 namespace CTH = ChaseTargetTestHelpers;
 
 // ============================================================================
 // EnterState
 // ============================================================================
+#if 0
 EStateTreeRunStatus FSTTask_ChaseTarget_Test::EnterState(
 	FStateTreeExecutionContext& Context,
 	const FStateTreeTransitionResult& Transition) const
@@ -1013,18 +1357,21 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::EnterState(
 	AAIController* AIC = D.AIController;
 	if (!IsValid(AIC))
 	{
-		UE_LOG(LogChaseTarget, Warning, TEXT("[Chase] EnterState - AIController 무효. Failed 반환"));
+		UE_LOG(LogChaseTarget, Warning, TEXT("[Chase] EnterState - AIController ?얜똾?? Failed 獄쏆꼹??));
 		return EStateTreeRunStatus::Failed;
 	}
 
 	const FHellunaAITargetData& TD = D.TargetData;
 
-	// 인스턴스 데이터 초기화
+	// ?紐꾨뮞??곷뮞 ?怨쀬뵠???λ뜃由??
 	D.TimeSinceRepath       = 0.f;
 	D.TimeUntilNextEQS      = 0.f;
 	D.StuckCheckTimer       = 0.f;
 	D.ConsecutiveStuckCount = 0;
 	D.DetourDirectionSign   = 0;
+	D.LastProgressSurfaceDist = MAX_FLT;
+	D.ProgressCheckTimer    = 0.f;
+	D.ConsecutiveNoProgressCount = 0;
 	D.AssignedSlotIndex     = -1;
 	D.AssignedSectorIndex   = -1;
 	D.AssignedSlotLocation  = FVector::ZeroVector;
@@ -1046,7 +1393,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::EnterState(
 
 	if (!TD.HasValidTarget() && !IsValid(CTH::ResolveFallbackSpaceShip(AIC)))
 	{
-		UE_LOG(LogChaseTarget, Log, TEXT("[Chase] EnterState - [%s] 유효한 타겟 없음. Running 대기"),
+		UE_LOG(LogChaseTarget, Log, TEXT("[Chase] EnterState - [%s] ?醫륁뒞????野???곸벉. Running ??疫?),
 			IsValid(Pawn) ? *Pawn->GetName() : TEXT("NoPawn"));
 		D.LastMoveTarget = nullptr;
 		return EStateTreeRunStatus::Running;
@@ -1060,10 +1407,10 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::EnterState(
 	const bool bIsSpaceShip = (Cast<AResourceUsingObject_SpaceShip>(TargetActor) != nullptr);
 
 	UE_LOG(LogChaseTarget, Log,
-		TEXT("[Chase] EnterState - [%s] -> [%s] | 타입=%s | 거리=%.1f"),
+		TEXT("[Chase] EnterState - [%s] -> [%s] | ????%s | 椰꾧퀡??%.1f"),
 		IsValid(Pawn) ? *Pawn->GetName() : TEXT("NoPawn"),
 		*TargetActor->GetName(),
-		bIsSpaceShip ? TEXT("우주선") : TEXT("플레이어"),
+		bIsSpaceShip ? TEXT("?怨쀯폒??) : TEXT("???쟿??곷선"),
 		TD.DistanceToTarget);
 
 	if (!IsValid(Pawn))
@@ -1072,16 +1419,16 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::EnterState(
 		return EStateTreeRunStatus::Running;
 	}
 
-	// ── 이동 시작 ────────────────────────────────────────────
+	// ???? ??猷???뽰삂 ????????????????????????????????????????????????????????????????????????????????????????
 	if (bIsSpaceShip)
 	{
 		const float SurfaceDist = CTH::ComputeSurfaceDistance(Pawn->GetActorLocation(), TargetActor);
 
-		// 이미 공격 범위 안이면 Running 대기 (Attack State 전환 대기)
+		// ??? ?⑤벀爰?甕곕뗄????됱뵠筌?Running ??疫?(Attack State ?袁れ넎 ??疫?
 		if (SurfaceDist <= AttackRange)
 		{
 			UE_LOG(LogChaseTarget, Log,
-				TEXT("[Chase] EnterState - [%s] 우주선 공격 범위 내 (표면거리=%.1f). Running 대기"),
+				TEXT("[Chase] EnterState - [%s] ?怨쀯폒???⑤벀爰?甕곕뗄????(??뺛늺椰꾧퀡??%.1f). Running ??疫?),
 				*Pawn->GetName(), SurfaceDist);
 			D.LastMoveTarget = TargetActor;
 			return EStateTreeRunStatus::Running;
@@ -1102,9 +1449,6 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::EnterState(
 		if (SlotMgr && SlotMgr->GetSlots().Num() == 0)
 		{
 			SlotMgr->TriggerBuildSlotsIfEmpty();
-			UE_LOG(LogTemp, Warning,
-				TEXT("[enemybugreport][TestSlotBuildRetry] Enemy=%s Context=EnterState"),
-				*GetNameSafe(Pawn));
 			if (SlotMgr->GetSlots().Num() == 0)
 			{
 				SlotMgr = nullptr;
@@ -1135,7 +1479,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::EnterState(
 			return true;
 		};
 
-		// 슬롯 진입 판정: 표면거리 기준 (우주선이 크면 중심거리가 항상 크므로)
+		// ????筌욊쑴???癒?젟: ??뺛늺椰꾧퀡??疫꿸퀣? (?怨쀯폒?醫롮뵠 ????餓λ쵐?뽩쳞怨뺚봺揶쎛 ??湲????嚥?
 		if (SlotMgr && SurfaceDist <= SlotReserveRadius)
 		{
 			const float MaxSlotTravelDist = CTH::ComputeMaxSlotReservationTravelDistance(SlotMgr, SlotReserveRadius, AcceptanceRadius);
@@ -1149,7 +1493,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::EnterState(
 			return EStateTreeRunStatus::Running;
 		}
 
-			// 슬롯 진입 범위 안: 슬롯 배정 시도
+			// ????筌욊쑴??甕곕뗄???? ????獄쏄퀣????뺣즲
 			int32 SlotIdx = -1;
 			FVector SlotLoc;
 			if (SlotMgr->RequestSlot(Pawn, SlotIdx, SlotLoc))
@@ -1161,7 +1505,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::EnterState(
 				D.AssignedSlotMoveRetryCount = 0;
 				CTH::IssueMoveToLocation(AIC, SlotLoc, AcceptanceRadius);
 				UE_LOG(LogChaseTarget, Log,
-					TEXT("[Chase] EnterState - [%s] 슬롯 배정 성공: %d -> %s"),
+					TEXT("[Chase] EnterState - [%s] ????獄쏄퀣???源껊궗: %d -> %s"),
 					*Pawn->GetName(), SlotIdx, *SlotLoc.ToString());
 			}
 			else
@@ -1174,7 +1518,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::EnterState(
 		}
 		else
 		{
-			// 원거리 또는 슬롯 미사용: NavMesh 경유점 접근
+			// ?癒?탢???癒?뮉 ????沃섎챷沅?? NavMesh 野껋럩????臾롫젏
 			if (!SlotMgr && SurfaceDist <= SlotReserveRadius && TryAssignSectorMove())
 			{
 				D.LastMoveTarget = TargetActor;
@@ -1188,11 +1532,206 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::EnterState(
 	{
 		const float ActualPlayerDist = FVector::Dist(Pawn->GetActorLocation(), TargetActor->GetActorLocation());
 
-		// 플레이어: 이미 공격 범위면 즉시 Succeeded
+		// ???쟿??곷선: ??? ?⑤벀爰?甕곕뗄?욑쭖?筌앸맩??Succeeded
 		if (ActualPlayerDist <= PlayerAttackRange)
 		{
 			UE_LOG(LogChaseTarget, Log,
-				TEXT("[Chase] EnterState - [%s] 플레이어 공격 범위 내. Succeeded"),
+				TEXT("[Chase] EnterState - [%s] ???쟿??곷선 ?⑤벀爰?甕곕뗄???? Succeeded"),
+				*Pawn->GetName());
+			return EStateTreeRunStatus::Succeeded;
+		}
+
+		AIC->MoveToActor(TargetActor, AcceptanceRadius, true, true, false, nullptr, true);
+	}
+
+	D.LastMoveTarget = TargetActor;
+	return EStateTreeRunStatus::Running;
+}
+#endif
+
+EStateTreeRunStatus FSTTask_ChaseTarget_Test::EnterState(
+	FStateTreeExecutionContext& Context,
+	const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& D = Context.GetInstanceData(*this);
+
+	AAIController* AIC = D.AIController;
+	if (!IsValid(AIC))
+	{
+		UE_LOG(LogChaseTarget, Warning, TEXT("[Chase] EnterState - AIController is null. Failed."));
+		return EStateTreeRunStatus::Failed;
+	}
+
+	const FHellunaAITargetData& TD = D.TargetData;
+
+	D.TimeSinceRepath = 0.f;
+	D.TimeUntilNextEQS = 0.f;
+	D.StuckCheckTimer = 0.f;
+	D.ConsecutiveStuckCount = 0;
+	D.DetourDirectionSign = 0;
+	D.LastProgressSurfaceDist = MAX_FLT;
+	D.ProgressCheckTimer = 0.f;
+	D.ConsecutiveNoProgressCount = 0;
+	D.AssignedSlotIndex = -1;
+	D.AssignedSectorIndex = -1;
+	D.AssignedSlotLocation = FVector::ZeroVector;
+	D.AssignedSectorLocation = FVector::ZeroVector;
+	D.SlotRetryTimer = 0.f;
+	D.bSlotArrived = false;
+	D.bSectorArrived = false;
+	D.WaitingDestination = FVector::ZeroVector;
+	D.bHasWaitingDestination = false;
+	D.ConsecutiveSlotFailures = 0;
+	D.AssignedSlotMoveRetryCount = 0;
+	D.SimpleMoveDetourGoal = FVector::ZeroVector;
+	D.bSimpleMoveDetourActive = false;
+	D.SimpleMoveDetourDirectionSign = 0;
+
+	APawn* Pawn = AIC->GetPawn();
+	if (IsValid(Pawn))
+	{
+		D.LastCheckedLocation = Pawn->GetActorLocation();
+	}
+
+	if (!TD.HasValidTarget() && !IsValid(CTH::ResolveFallbackSpaceShip(AIC)))
+	{
+		UE_LOG(LogChaseTarget, Log,
+			TEXT("[Chase] EnterState - [%s] no valid target yet. Keep running."),
+			IsValid(Pawn) ? *Pawn->GetName() : TEXT("NoPawn"));
+		D.LastMoveTarget = nullptr;
+		return EStateTreeRunStatus::Running;
+	}
+
+	AActor* TargetActor = TD.TargetActor.Get();
+	if (!IsValid(TargetActor))
+	{
+		TargetActor = CTH::ResolveFallbackSpaceShip(AIC);
+	}
+
+	const bool bIsSpaceShip = (Cast<AResourceUsingObject_SpaceShip>(TargetActor) != nullptr);
+
+	UE_LOG(LogChaseTarget, Log,
+		TEXT("[Chase] EnterState - [%s] -> [%s] | Type=%s | Dist=%.1f"),
+		IsValid(Pawn) ? *Pawn->GetName() : TEXT("NoPawn"),
+		*TargetActor->GetName(),
+		bIsSpaceShip ? TEXT("SpaceShip") : TEXT("Player"),
+		TD.DistanceToTarget);
+
+	if (!IsValid(Pawn))
+	{
+		D.LastMoveTarget = TargetActor;
+		return EStateTreeRunStatus::Running;
+	}
+
+	if (bIsSpaceShip)
+	{
+		const float SurfaceDist = CTH::ComputeSurfaceDistance(Pawn->GetActorLocation(), TargetActor);
+
+		if (SurfaceDist <= AttackRange)
+		{
+			UE_LOG(LogChaseTarget, Log,
+				TEXT("[Chase] EnterState - [%s] already in spaceship attack range (surfaceDist=%.1f). Keep running."),
+				*Pawn->GetName(), SurfaceDist);
+			D.LastMoveTarget = TargetActor;
+			return EStateTreeRunStatus::Running;
+		}
+
+		if (bUseSimpleMoveToActorTest)
+		{
+			CTH::IssueMoveToActorDirect(AIC, TargetActor, AcceptanceRadius);
+			D.LastMoveTarget = TargetActor;
+			return EStateTreeRunStatus::Running;
+		}
+
+		USpaceShipAttackSlotManager* EngagementMgr = CTH::GetSlotManager(TargetActor);
+		USpaceShipAttackSlotManager* SlotMgr = (bUseSlotSystem && EngagementMgr) ? EngagementMgr : nullptr;
+		USpaceShipAttackSlotManager* SectorMgr =
+			(bUseSectorDistribution && EngagementMgr && EngagementMgr->bEnableSectorDistribution) ? EngagementMgr : nullptr;
+		const float SlotReserveRadius = FMath::Clamp(SlotEngageRadius * 0.6f, AcceptanceRadius + 100.f, SlotEngageRadius);
+
+		if (SlotMgr && SlotMgr->GetSlots().Num() == 0)
+		{
+			SlotMgr->TriggerBuildSlotsIfEmpty();
+			if (SlotMgr->GetSlots().Num() == 0)
+			{
+				SlotMgr = nullptr;
+			}
+		}
+
+		auto TryAssignSectorMove = [&]() -> bool
+		{
+			if (!SectorMgr)
+			{
+				return false;
+			}
+
+			int32 SectorIdx = INDEX_NONE;
+			FVector SectorLoc = FVector::ZeroVector;
+			if (!SectorMgr->RequestSectorPosition(Pawn, SectorIdx, SectorLoc))
+			{
+				return false;
+			}
+
+			D.AssignedSectorIndex = SectorIdx;
+			D.AssignedSectorLocation = SectorLoc;
+			D.bSectorArrived = false;
+			CTH::IssueMoveToLocation(AIC, SectorLoc, AcceptanceRadius);
+			UE_LOG(LogChaseTarget, Log,
+				TEXT("[Chase] EnterState - [%s] sector assigned: %d -> %s"),
+				*Pawn->GetName(), SectorIdx, *SectorLoc.ToString());
+			return true;
+		};
+
+		if (SlotMgr && SurfaceDist <= SlotReserveRadius)
+		{
+			const float MaxSlotTravelDist = CTH::ComputeMaxSlotReservationTravelDistance(SlotMgr, SlotReserveRadius, AcceptanceRadius);
+			float ClosestFreeSlotDist = MAX_FLT;
+			const bool bHasFreeSlot = CTH::FindClosestFreeSlot(SlotMgr, Pawn->GetActorLocation(), ClosestFreeSlotDist);
+
+			if (bHasFreeSlot && ClosestFreeSlotDist > MaxSlotTravelDist)
+			{
+				CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius);
+				D.LastMoveTarget = TargetActor;
+				return EStateTreeRunStatus::Running;
+			}
+
+			int32 SlotIdx = -1;
+			FVector SlotLoc = FVector::ZeroVector;
+			if (SlotMgr->RequestSlot(Pawn, SlotIdx, SlotLoc))
+			{
+				D.AssignedSlotIndex = SlotIdx;
+				D.AssignedSlotLocation = SlotLoc;
+				D.bSlotArrived = false;
+				D.ConsecutiveSlotFailures = 0;
+				D.AssignedSlotMoveRetryCount = 0;
+				CTH::IssueMoveToLocation(AIC, SlotLoc, AcceptanceRadius);
+				UE_LOG(LogChaseTarget, Log,
+					TEXT("[Chase] EnterState - [%s] slot assigned: %d -> %s"),
+					*Pawn->GetName(), SlotIdx, *SlotLoc.ToString());
+			}
+			else if (!TryAssignSectorMove())
+			{
+				CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius);
+			}
+		}
+		else
+		{
+			if (!SlotMgr && SurfaceDist <= SlotReserveRadius && TryAssignSectorMove())
+			{
+				D.LastMoveTarget = TargetActor;
+				return EStateTreeRunStatus::Running;
+			}
+
+			CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius);
+		}
+	}
+	else
+	{
+		const float ActualPlayerDist = FVector::Dist(Pawn->GetActorLocation(), TargetActor->GetActorLocation());
+		if (ActualPlayerDist <= PlayerAttackRange)
+		{
+			UE_LOG(LogChaseTarget, Log,
+				TEXT("[Chase] EnterState - [%s] already in player attack range. Succeeded."),
 				*Pawn->GetName());
 			return EStateTreeRunStatus::Succeeded;
 		}
@@ -1212,6 +1751,16 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 	float DeltaTime) const
 {
 	FInstanceDataType& D = Context.GetInstanceData(*this);
+
+	// Version marker (once per game session)
+	{
+		static bool bVersionLogged = false;
+		if (!bVersionLogged)
+		{
+			bVersionLogged = true;
+			UE_LOG(LogTemp, Warning, TEXT("[enemybugreport][ChaseTarget_Version] v6-DetourPathfinding ACTIVE"));
+		}
+	}
 
 	AAIController* AIC = D.AIController;
 	if (!IsValid(AIC)) return EStateTreeRunStatus::Failed;
@@ -1276,9 +1825,9 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 
 	if (bIsSpaceShip)
 	{
-		// ══════════════════════════════════════════════════════
-		// 우주선 이동
-		// ══════════════════════════════════════════════════════
+		// ?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름
+		// ?怨쀯폒????猷?
+		// ?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름
 
 		const FVector PawnLoc = Pawn->GetActorLocation();
 		const float SurfaceDist = CTH::ComputeSurfaceDistance(PawnLoc, TargetActor);
@@ -1287,25 +1836,36 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 
 		if (bAttackLocked && SurfaceDist <= AttackRange + AcceptanceRadius + 100.f)
 		{
+			CTH::LogMoveToActorStopReason(
+				AIC,
+				Pawn,
+				TargetActor,
+				TEXT("AttackLockedNearShip"),
+				SurfaceDist,
+				CenterDist,
+				D.AssignedSlotIndex,
+				false,
+				false,
+				true);
 			AIC->StopMovement();
 			D.LastMoveTarget = TargetActor;
 			return EStateTreeRunStatus::Running;
 		}
 
-		// ── 디버그 로그 (2초마다) ────────────────────────────
+		// ???? ?遺얠쒔域?嚥≪뮄??(2?λ뜄彛?? ????????????????????????????????????????????????????????
 		static float ShipDbgTimer = 0.f;
 		ShipDbgTimer += DeltaTime;
 		if (ShipDbgTimer >= 2.f)
 		{
 			ShipDbgTimer = 0.f;
 			UE_LOG(LogChaseTarget, Log,
-				TEXT("[Chase] Tick - [%s] 우주선 | 표면거리=%.1f 중심거리=%.1f | SlotIdx=%d SlotArrived=%d | PFC=%d"),
+                TEXT("[Chase] Tick - [%s] ship chase | SurfaceDist=%.1f CenterDist=%.1f | SlotIdx=%d SlotArrived=%d | PFC=%d"),
 				*Pawn->GetName(), SurfaceDist, CenterDist,
 				D.AssignedSlotIndex, (int)D.bSlotArrived,
 				AIC->GetPathFollowingComponent() ? (int32)AIC->GetPathFollowingComponent()->GetStatus() : -1);
 		}
 
-		// ── Stuck 감지 (토글: bUseStuckDetour) ──────────────
+        // Position-based stuck detection.
 		const bool bStuck = bUseStuckDetour
 			? CTH::CheckPositionBasedStuck(D, PawnLoc, SurfaceDist, AttackRange,
 				DeltaTime, StuckCheckInterval, StuckDistThreshold)
@@ -1314,16 +1874,42 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 		if (bStuck)
 		{
 			UE_LOG(LogChaseTarget, Warning,
-				TEXT("[Chase] Tick - [%s] *** STUCK *** | 연속=%d | 표면거리=%.1f"),
+                TEXT("[Chase] Tick - [%s] *** STUCK *** | Count=%d | SurfaceDist=%.1f"),
 				*Pawn->GetName(), D.ConsecutiveStuckCount, SurfaceDist);
 		}
+
+		// ── 진척도 체크 (우주선 접근 중에만) ────────────────
+		// AttackRange 이내 = 우주선 충분히 가까움 → 진척도 체크 무의미, 계속 밀어붙이기
+		// AttackRange 밖 = 아직 접근 중 → SurfaceDist 감소 여부 체크
+		bool bNoProgress = false;
+		if (SurfaceDist > AttackRange)
+		{
+			bNoProgress = CTH::CheckProgressTowardTarget(D, SurfaceDist, DeltaTime, 1.0f, 20.f);
+		}
+		else
+		{
+			// 우주선 근처 도착 → 진척 카운터 리셋 (AttackZone이 전환 판단)
+			D.ConsecutiveNoProgressCount = 0;
+			D.ProgressCheckTimer = 0.f;
+			D.LastProgressSurfaceDist = SurfaceDist;
+		}
+		const bool bNeedForceMove = (D.ConsecutiveNoProgressCount >= 3);
+
+		if (bNoProgress)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[enemybugreport][NoProgress] Pawn=%s NoProgressCount=%d SurfaceDist=%.1f NeedForce=%d"),
+				*Pawn->GetName(), D.ConsecutiveNoProgressCount, SurfaceDist, (int32)bNeedForceMove);
+		}
+
+		// (MOVE_None 불필요 — 우회는 정상 pathfinding 사용)
 
 		// ── Idle 감지 ───────────────────────────────────────
 		bool bIdle = false;
 		if (UPathFollowingComponent* PFC = AIC->GetPathFollowingComponent())
 			bIdle = (PFC->GetStatus() == EPathFollowingStatus::Idle);
 
-		// ── 슬롯 시스템 분기 ────────────────────────────────
+		// ???? ??????뽯뮞???브쑨由?????????????????????????????????????????????????????????????????
 		if (bUseSimpleMoveToActorTest)
 		{
 			const bool bTargetChanged = D.LastMoveTarget.Get() != TargetActor;
@@ -1400,6 +1986,34 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 			return EStateTreeRunStatus::Running;
 		}
 
+		// ═══════════════════════════════════════════════════════════
+		// ★ bNeedForceMove: 같은 NavMesh 데드존에 막힘 → 큰 측면 우회
+		//   MOVE_None/SetActorLocation 대신 정상 pathfinding으로 접근 각도 변경
+		//   (광폭화 시 다양한 각도로 접근하면 도달하는 것과 같은 원리)
+		// ═══════════════════════════════════════════════════════════
+		if (bNeedForceMove)
+		{
+			// 큰 우회 (600~800cm) → NavMesh 위 다른 지점으로 이동 후 재접근
+			const int32 DetourDir = CTH::ResolveDetourDirectionSign(D, bUsePersistentDetourDirection);
+			const float DetourDist = 600.f + FMath::FRandRange(0.f, 200.f);
+			const FVector DetourGoal = CTH::ComputeDetourGoal(
+				PawnLoc, TargetActor->GetActorLocation(), AIC, DetourDist, DetourDir);
+
+			CTH::IssueMoveToLocation(AIC, DetourGoal, AcceptanceRadius);
+
+			UE_LOG(LogTemp, Warning,
+				TEXT("[enemybugreport][ForceDetour] Pawn=%s Detour=%s Dist=%.0f Dir=%d SurfDist=%.1f"),
+				*Pawn->GetName(), *DetourGoal.ToString(), DetourDist, DetourDir, SurfaceDist);
+
+			// 카운터 리셋 → 우회에 시간 줌 (다음 3초간 정상 pathfinding)
+			D.ConsecutiveNoProgressCount = 0;
+			D.ProgressCheckTimer = 0.f;
+			D.LastProgressSurfaceDist = SurfaceDist;
+			D.TimeSinceRepath = 0.f;
+			D.LastMoveTarget = TargetActor;
+			return EStateTreeRunStatus::Running;
+		}
+
 		USpaceShipAttackSlotManager* EngagementMgr = CTH::GetSlotManager(TargetActor);
 		USpaceShipAttackSlotManager* SlotMgr = (bUseSlotSystem && EngagementMgr) ? EngagementMgr : nullptr;
 		USpaceShipAttackSlotManager* SectorMgr =
@@ -1407,20 +2021,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 		if (SlotMgr && SlotMgr->GetSlots().Num() == 0)
 		{
 			SlotMgr->TriggerBuildSlotsIfEmpty();
-			// 쓰로틀링: 5초마다
-			{
-				static TMap<uint32, double> LastLogTimes;
-				const uint32 PawnId = Pawn->GetUniqueID();
-				const double Now = FPlatformTime::Seconds();
-				double& LastTime = LastLogTimes.FindOrAdd(PawnId, 0.0);
-				if (Now - LastTime >= 5.0)
-				{
-					LastTime = Now;
-					UE_LOG(LogTemp, Warning,
-						TEXT("[enemybugreport][TestSlotBuildRetry] Enemy=%s Context=Tick"),
-						*GetNameSafe(Pawn));
-				}
-			}
+			// ?怨뺤쨮??筌? 5?λ뜄彛??
 			if (SlotMgr->GetSlots().Num() == 0)
 			{
 				SlotMgr = nullptr;
@@ -1429,12 +2030,15 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 
 		if (SlotMgr || SectorMgr)
 		{
-			// ─── 슬롯 시스템 ON ─────────────────────────────
+			// ?????? ??????뽯뮞??ON ??????????????????????????????????????????????????????????
 
-			// 공격 범위 근처: 슬롯 점유 + 직접 이동 계속
-			// (정지하면 AttackZone 박스가 안 닿으므로 멈추지 않고 우주선 표면까지 접근)
+			// ?⑤벀爰?甕곕뗄??域뱀눘荑? ?????癒?? + 筌욊낯????猷??④쑴??
+			// (?類???롢늺 AttackZone 獄쏅벡?ゅ첎? ????곗몵沃샕嚥?筌롫뜆?쏉쭪? ??꾪??怨쀯폒????뺛늺繹먮슣? ?臾롫젏)
 			if (SurfaceDist <= AttackRange)
 			{
+				D.WaitingDestination = FVector::ZeroVector;
+				D.bHasWaitingDestination = false;
+
 				if (D.AssignedSlotIndex >= 0)
 				{
 					SlotMgr->OccupySlot(D.AssignedSlotIndex, Pawn);
@@ -1444,151 +2048,136 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 				D.bSectorArrived = (D.AssignedSectorIndex >= 0);
 				D.ConsecutiveSlotFailures = 0;
 
-				// 우주선을 바라보면서 직접 전진 (AttackZone 트리거될 때까지)
+				// ?怨쀯폒?醫롮뱽 獄쏅뗀?よ퉪????筌욊낯???袁⑹춭 (AttackZone ?紐꺿봺椰꾧퀡留????돱筌왖)
 				const FVector ToShip = (TargetActor->GetActorLocation() - PawnLoc).GetSafeNormal2D();
 				if (!ToShip.IsNearlyZero())
 				{
 					AIC->SetFocalPoint(PawnLoc + ToShip * 1000.f);
-					// 항상 전진 — 우주선 콜리전이 자연스럽게 막아줌
-					Pawn->AddMovementInput(ToShip, 1.f);
-				}
-
-				// 쓰로틀링: 2초마다
-				{
-					static TMap<uint32, double> LastLogTimes;
-					const uint32 PawnId = Pawn->GetUniqueID();
-					const double Now = FPlatformTime::Seconds();
-					double& LastTime = LastLogTimes.FindOrAdd(PawnId, 0.0);
-					if (Now - LastTime >= 2.0)
+					// 진척 없으면 ForceDirectMove, 아니면 AddMovementInput
+					if (bNeedForceMove)
 					{
-						LastTime = Now;
-						UE_LOG(LogTemp, Warning,
-							TEXT("[enemybugreport][InAttackRange-Push] Monster=%s SurfDist=%.1f AttackRange=%.1f Slot=%d Pos=%s"),
-							*Pawn->GetName(), SurfaceDist, AttackRange,
-							D.AssignedSlotIndex, *PawnLoc.ToString());
+						AIC->StopMovement();
+						CTH::ForceDirectMove(Pawn, ToShip, DeltaTime);
+					}
+					else
+					{
+						Pawn->AddMovementInput(ToShip, 1.f);
 					}
 				}
+
 				return EStateTreeRunStatus::Running;
 			}
 
-			// 슬롯/섹터 도착 후: 우주선 방향으로 계속 전진
-			// (InAttackZone 조건이 트리거될 때까지 접근)
+			// ?????諭곴숲 ?袁⑷컩 ?? ?怨쀯폒??獄쎻뫚堉??곗쨮 ?④쑴???袁⑹춭
+			// (InAttackZone 鈺곌퀗援???紐꺿봺椰꾧퀡留????돱筌왖 ?臾롫젏)
 			if (D.bSlotArrived || D.bSectorArrived)
 			{
-				const bool bWasIdle = bIdle;
+
 				const bool bRepathDue = D.TimeSinceRepath >= RepathInterval;
 
-				// Stuck 감지: 콜리전에 막혀 위치 변화 없음
 				if (bStuck)
 				{
-					// 쓰로틀링: 2초마다
-					{
-						static TMap<uint32, double> LastLogTimes;
-						const uint32 PawnId = Pawn->GetUniqueID();
-						const double Now = FPlatformTime::Seconds();
-						double& LastTime = LastLogTimes.FindOrAdd(PawnId, 0.0);
-						if (Now - LastTime >= 2.0)
-						{
-							LastTime = Now;
-							UE_LOG(LogTemp, Warning,
-								TEXT("[enemybugreport][PostSlotAdvance-Stuck] Monster=%s SurfDist=%.1f StuckCount=%d Pos=%s"),
-								*Pawn->GetName(), SurfaceDist,
-								D.ConsecutiveStuckCount, *PawnLoc.ToString());
-						}
-					}
+					CTH::LogMoveToActorStopReason(
+						AIC,
+						Pawn,
+						TargetActor,
+						TEXT("PostSlotAdvanceStuck"),
+						SurfaceDist,
+						CenterDist,
+						D.AssignedSlotIndex,
+						bIdle,
+						true,
+						bAttackLocked);
 
-					// PathFollowing 정지 후 우주선 방향 직접 밀기
 					AIC->StopMovement();
-					const FVector DirToShip = (TargetActor->GetActorLocation() - PawnLoc).GetSafeNormal2D();
-					if (!DirToShip.IsNearlyZero())
+					const FVector DirectGoal =
+						D.bHasWaitingDestination ? D.WaitingDestination : CTH::ComputeClosestSurfacePoint(PawnLoc, TargetActor);
+					const FVector DirToGoal = (DirectGoal - PawnLoc).GetSafeNormal2D();
+					if (!DirToGoal.IsNearlyZero())
 					{
-						// AddMovementInput이 2회 이상 실패 → SetActorLocation(sweep)으로 강제 이동
-						if (D.ConsecutiveStuckCount >= 2)
-						{
-							CTH::ForceDirectMove(Pawn, DirToShip, DeltaTime);
-						}
-						else
-						{
-							Pawn->AddMovementInput(DirToShip, 1.f);
-						}
+						CTH::ForceDirectMove(Pawn, DirToGoal, DeltaTime);
 					}
 					D.TimeSinceRepath = 0.f;
 					return EStateTreeRunStatus::Running;
 				}
 
-				// 슬롯/섹터 도착 후: MoveToActor로 우주선에 접근
-				// Idle이면 NavMesh 한계 → AddMovementInput으로 직접 전진
 				if (bIdle || bRepathDue)
 				{
-					// 쓰로틀링: 2초마다
+					FVector PostEngagementGoal = FVector::ZeroVector;
+					if (CTH::TryComputePostEngagementGoal(
+						AIC,
+						Pawn,
+						TargetActor,
+						SlotMgr,
+						D.AssignedSlotIndex,
+						AttackRange,
+						PostEngagementGoal))
 					{
-						static TMap<uint32, double> LastLogTimes;
-						const uint32 PawnId = Pawn->GetUniqueID();
-						const double Now = FPlatformTime::Seconds();
-						double& LastTime = LastLogTimes.FindOrAdd(PawnId, 0.0);
-						if (Now - LastTime >= 2.0)
+						D.WaitingDestination = PostEngagementGoal;
+						D.bHasWaitingDestination = true;
+
+						const bool bMoveStarted = CTH::IssueMoveToLocation(AIC, PostEngagementGoal, AcceptanceRadius);
+						if (!bMoveStarted)
 						{
-							LastTime = Now;
-							UE_LOG(LogTemp, Warning,
-								TEXT("[enemybugreport][PostSlotAdvance-Advance] Monster=%s SurfDist=%.1f CenterDist=%.1f Idle=%d Repath=%d Pos=%s"),
-								*Pawn->GetName(), SurfaceDist, CenterDist,
-								(int32)bWasIdle, (int32)bRepathDue,
-								*PawnLoc.ToString());
+							CTH::IssueDirectMoveTowardLocation(
+								AIC,
+								Pawn,
+								PostEngagementGoal,
+								AcceptanceRadius,
+								bNeedForceMove,
+								DeltaTime);
 						}
 					}
-
-					// MoveToActor 시도 (pathfinding ON, partial path 허용)
-					const EPathFollowingRequestResult::Type MoveResult =
-						AIC->MoveToActor(TargetActor, AcceptanceRadius, true, true, false, nullptr, true);
-
-					// AlreadyAtGoal = NavMesh 경계 도달, 더 갈 수 없음 → 직접 전진
-					if (MoveResult == EPathFollowingRequestResult::AlreadyAtGoal)
+					else
 					{
-						const FVector DirToShip = (TargetActor->GetActorLocation() - PawnLoc).GetSafeNormal2D();
-						if (!DirToShip.IsNearlyZero())
-						{
-							// Idle+AlreadyAtGoal이 반복 = AddMovementInput 무력화 상태
-							if (D.ConsecutiveStuckCount >= 2)
-							{
-								CTH::ForceDirectMove(Pawn, DirToShip, DeltaTime);
-							}
-							else
-							{
-								Pawn->AddMovementInput(DirToShip, 1.f);
-							}
-						}
+						D.WaitingDestination = FVector::ZeroVector;
+						D.bHasWaitingDestination = false;
+						CTH::IssueDirectMoveTowardShipSurface(
+							AIC,
+							Pawn,
+							TargetActor,
+							AcceptanceRadius,
+							bNeedForceMove,
+							DeltaTime);
 					}
 					D.TimeSinceRepath = 0.f;
 				}
 				else
 				{
-					// MoveToActor 실행 중이더라도 매 틱 AddMovementInput 보조
-					// (partial path 끝점에 도달하면 Idle이 되기 전까지 시간이 걸릴 수 있음)
-					const FVector DirToShip = (TargetActor->GetActorLocation() - PawnLoc).GetSafeNormal2D();
-					if (!DirToShip.IsNearlyZero() && SurfaceDist < AttackRange * 1.5f)
+					// MoveToActor 실행 중이더라도 진척 없으면 ForceDirectMove 보조
+					const FVector AssistGoal =
+						D.bHasWaitingDestination ? D.WaitingDestination : CTH::ComputeClosestSurfacePoint(PawnLoc, TargetActor);
+					const FVector DirToGoal = (AssistGoal - PawnLoc).GetSafeNormal2D();
+					if (!DirToGoal.IsNearlyZero())
 					{
-						Pawn->AddMovementInput(DirToShip, 0.5f);
+						if (bNeedForceMove)
+						{
+							AIC->StopMovement();
+							CTH::ForceDirectMove(Pawn, DirToGoal, DeltaTime);
+						}
+						else if (SurfaceDist < AttackRange * 1.8f)
+						{
+							Pawn->AddMovementInput(DirToGoal, 0.5f);
+						}
 					}
 				}
 				return EStateTreeRunStatus::Running;
 			}
 
-			// 슬롯 미배정 상태
+			// ????沃섎챶媛???怨밴묶
 			if (D.AssignedSectorIndex >= 0 && SectorMgr)
 			{
 				const float DistToSector2D = FVector::Dist2D(PawnLoc, D.AssignedSectorLocation);
-				const float DistToSector3D = FVector::Dist(PawnLoc, D.AssignedSectorLocation);
-				const float SectorHeightDelta = FMath::Abs(PawnLoc.Z - D.AssignedSectorLocation.Z);
 				if (DistToSector2D <= AcceptanceRadius + 30.f)
 				{
-					// 섹터 방향 도착 → 우주선 방향으로 계속 전진
+					// ?諭곴숲 獄쎻뫚堉??袁⑷컩 ???怨쀯폒??獄쎻뫚堉??곗쨮 ?④쑴???袁⑹춭
 					D.bSectorArrived = true;
 
 					UE_LOG(LogChaseTarget, Log,
 						TEXT("[Chase] Tick - [%s] sector arrived -> continue toward ship | Sector=%d Dist2D=%.1f SurfDist=%.1f"),
 						*Pawn->GetName(), D.AssignedSectorIndex, DistToSector2D, SurfaceDist);
 
-					CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius, D.ConsecutiveStuckCount, DeltaTime);
+					CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius, bNeedForceMove, DeltaTime);
 					D.TimeSinceRepath = 0.f;
 					return EStateTreeRunStatus::Running;
 				}
@@ -1611,9 +2200,10 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 				return EStateTreeRunStatus::Running;
 			}
 
+			#if 0
 			if (SlotMgr && D.AssignedSlotIndex < 0)
 			{
-				// 슬롯 진입 범위 밖: 우주선 방향 접근 (표면거리 기준)
+				// ????筌욊쑴??甕곕뗄??獄? ?怨쀯폒??獄쎻뫚堉??臾롫젏 (??뺛늺椰꾧퀡??疫꿸퀣?)
 				const float SlotReserveRadius = FMath::Clamp(SlotEngageRadius * 0.6f, AcceptanceRadius + 100.f, SlotEngageRadius);
 				const float MaxSlotTravelDist = CTH::ComputeMaxSlotReservationTravelDistance(SlotMgr, SlotReserveRadius, AcceptanceRadius);
 				float ClosestFreeSlotDist = MAX_FLT;
@@ -1632,12 +2222,12 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 						}
 						else
 						{
-							CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius, D.ConsecutiveStuckCount, DeltaTime);
+							CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius, bNeedForceMove, DeltaTime);
 						}
 						D.TimeSinceRepath = 0.f;
 					}
 					return EStateTreeRunStatus::Running;
-				}
+					D.WaitingDestination = FVector::ZeroVector;
 
 				if (bHasFreeSlot && ClosestFreeSlotDist > MaxSlotTravelDist)
 				{
@@ -1653,14 +2243,14 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 						}
 						else
 						{
-							CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius, D.ConsecutiveStuckCount, DeltaTime);
+							CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius, bNeedForceMove, DeltaTime);
 						}
 						D.TimeSinceRepath = 0.f;
 					}
 					return EStateTreeRunStatus::Running;
 				}
 
-				// 연속 실패 3회 이상: 슬롯 포기, 자유 이동
+				// ?怨쀫꺗 ??쎈솭 3????곴맒: ??????由? ?癒?? ??猷?
 				if (D.ConsecutiveSlotFailures >= 3)
 				{
 					if (D.TimeSinceRepath >= RepathInterval || bIdle || bStuck)
@@ -1682,20 +2272,20 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 
 						if (!bAssignedSector)
 						{
-							CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius, D.ConsecutiveStuckCount, DeltaTime);
+							CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius, bNeedForceMove, DeltaTime);
 						}
 						D.TimeSinceRepath = 0.f;
 					}
 					return EStateTreeRunStatus::Running;
 				}
 
-				// 슬롯 진입 범위 안: 배정 재시도 (2초 쿨다운)
+				// ????筌욊쑴??甕곕뗄???? 獄쏄퀣???????(2???묅뫀???
 				D.SlotRetryTimer -= DeltaTime;
 				if (D.SlotRetryTimer <= 0.f)
 				{
 					D.SlotRetryTimer = 2.f;
 					int32 SlotIdx = -1;
-					FVector SlotLoc;
+					FVector SlotLoc = FVector::ZeroVector;
 					const bool bSlotRequested = SlotMgr->RequestSlot(Pawn, SlotIdx, SlotLoc);
 					if (!bSlotRequested)
 					{
@@ -1716,233 +2306,507 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 
 						if (!bAssignedSector)
 						{
-							CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius, D.ConsecutiveStuckCount, DeltaTime);
+							CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius, bNeedForceMove, DeltaTime);
 						}
 						return EStateTreeRunStatus::Running;
 					}
 
-					if (bSlotRequested)
+					D.AssignedSlotIndex = SlotIdx;
+					D.AssignedSlotLocation = SlotLoc;
+					D.bSlotArrived = false;
+					D.AssignedSlotMoveRetryCount = 0;
+
+					const bool bMoveStarted = CTH::IssueMoveToLocation(AIC, SlotLoc, AcceptanceRadius);
+					if (!bMoveStarted)
 					{
-						D.AssignedSlotIndex    = SlotIdx;
-						D.AssignedSlotLocation = SlotLoc;
-						D.bSlotArrived         = false;
-						D.bHasWaitingDestination = false;
-						D.ConsecutiveSlotFailures = 0;
-						D.AssignedSlotMoveRetryCount = 0;
-						CTH::IssueMoveToLocation(AIC, SlotLoc, AcceptanceRadius);
+						CTH::IssueDirectMoveTowardLocation(
+							AIC,
+							Pawn,
+							SlotLoc,
+							AcceptanceRadius,
+							bNeedForceMove,
+							DeltaTime);
+					}
+					D.TimeSinceRepath = 0.f;
+				}
+
+				const float DistToSlot2D = FVector::Dist2D(PawnLoc, D.AssignedSlotLocation);
+				if (DistToSlot2D <= AcceptanceRadius + 30.f)
+				{
+					D.bSlotArrived = true;
+					D.ConsecutiveSlotFailures = 0;
+					D.AssignedSlotMoveRetryCount = 0;
+					SlotMgr->OccupySlot(D.AssignedSlotIndex, Pawn);
+
+					UE_LOG(LogChaseTarget, Log,
+						TEXT("[Chase] Tick - [%s] Slot occupied -> continue toward ship | Slot=%d Dist2D=%.1f SurfDist=%.1f"),
+						*Pawn->GetName(), D.AssignedSlotIndex, DistToSlot2D, SurfaceDist);
+
+					FVector PostEngagementGoal = FVector::ZeroVector;
+					if (CTH::TryComputePostEngagementGoal(
+						AIC,
+						Pawn,
+						TargetActor,
+						SlotMgr,
+						D.AssignedSlotIndex,
+						AttackRange,
+						PostEngagementGoal))
+					{
+						D.WaitingDestination = PostEngagementGoal;
+						D.bHasWaitingDestination = true;
+
+						const bool bMoveStarted = CTH::IssueMoveToLocation(AIC, PostEngagementGoal, AcceptanceRadius);
+						if (!bMoveStarted)
+						{
+							CTH::IssueDirectMoveTowardLocation(
+								AIC,
+								Pawn,
+								PostEngagementGoal,
+								AcceptanceRadius,
+								bNeedForceMove,
+								DeltaTime);
+						}
 					}
 					else
 					{
-						// 슬롯 없음: 우주선 방향 자유 이동 (멍때림 방지)
-						CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius, D.ConsecutiveStuckCount, DeltaTime);
+						D.WaitingDestination = FVector::ZeroVector;
+						D.bHasWaitingDestination = false;
+						CTH::IssueDirectMoveTowardShipSurface(
+							AIC,
+							Pawn,
+							TargetActor,
+							AcceptanceRadius,
+							bNeedForceMove,
+							DeltaTime);
 					}
+					D.TimeSinceRepath = 0.f;
+					return EStateTreeRunStatus::Running;
 				}
 
-				// 대기 중(슬롯 미배정 + Idle): 우주선 방향 접근
-				if (bIdle && SurfaceDist > AttackRange + 100.f)
+				if (!bIdle)
 				{
-					CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius, D.ConsecutiveStuckCount, DeltaTime);
+					D.AssignedSlotMoveRetryCount = 0;
 				}
-				else if (bIdle)
+
+				if ((bIdle || bStuck) && DistToSlot2D <= AcceptanceRadius + 200.f)
 				{
-					// 공격 범위 내 대기: 우주선을 바라보고 서있기
-					const FVector ToShip = (TargetActor->GetActorLocation() - PawnLoc).GetSafeNormal2D();
-					if (!ToShip.IsNearlyZero())
+					AIC->StopMovement();
+					const FVector DirToSlot = (D.AssignedSlotLocation - PawnLoc).GetSafeNormal2D();
+					if (!DirToSlot.IsNearlyZero())
 					{
-						Pawn->SetActorRotation(FMath::RInterpTo(
-							Pawn->GetActorRotation(),
-							FRotator(0.f, ToShip.Rotation().Yaw, 0.f),
-							DeltaTime, 5.f));
+						if (bNeedForceMove)
+						{
+							CTH::ForceDirectMove(Pawn, DirToSlot, DeltaTime);
+						}
+						else
+						{
+							Pawn->AddMovementInput(DirToSlot, 1.f);
+						}
+					}
+					return EStateTreeRunStatus::Running;
+				}
+
+				if (bIdle && DistToSlot2D > AcceptanceRadius + 200.f && D.TimeSinceRepath >= RepathInterval)
+				{
+					int32 RefreshedSlotIdx = D.AssignedSlotIndex;
+					FVector RefreshedSlotLoc = D.AssignedSlotLocation;
+					const bool bRefreshedSlot =
+						SlotMgr->RequestSlot(Pawn, RefreshedSlotIdx, RefreshedSlotLoc) &&
+						RefreshedSlotIdx == D.AssignedSlotIndex;
+
+					if (bRefreshedSlot)
+					{
+						D.AssignedSlotLocation = RefreshedSlotLoc;
+					}
+
+					const bool bMoveStarted = CTH::IssueMoveToLocation(AIC, D.AssignedSlotLocation, AcceptanceRadius);
+					if (!bMoveStarted)
+					{
+						CTH::IssueDirectMoveTowardLocation(
+							AIC,
+							Pawn,
+							D.AssignedSlotLocation,
+							AcceptanceRadius,
+							bNeedForceMove,
+							DeltaTime);
+					}
+					D.TimeSinceRepath = 0.f;
+					D.AssignedSlotMoveRetryCount++;
+
+					UE_LOG(LogChaseTarget, Warning,
+						TEXT("[Chase] Tick - [%s] slot move retry | Slot=%d Retry=%d Refreshed=%d Dist2D=%.1f Goal=%s"),
+						*Pawn->GetName(),
+						D.AssignedSlotIndex,
+						D.AssignedSlotMoveRetryCount,
+						(int32)bRefreshedSlot,
+						DistToSlot2D,
+						*D.AssignedSlotLocation.ToString());
+
+					if (D.AssignedSlotMoveRetryCount < 3)
+					{
+						return EStateTreeRunStatus::Running;
 					}
 				}
 
+            if (bStuck)
+            {
+                AIC->StopMovement();
+                const FVector DirectGoal =
+                    D.bHasWaitingDestination ? D.WaitingDestination : CTH::ComputeClosestSurfacePoint(PawnLoc, TargetActor);
+                const FVector DirToGoal = (DirectGoal - PawnLoc).GetSafeNormal2D();
+                if (!DirToGoal.IsNearlyZero())
+                {
+                    if (bNeedForceMove)
+                    {
+                        CTH::ForceDirectMove(Pawn, DirToGoal, DeltaTime);
+                    }
+                    else
+                    {
+                        Pawn->AddMovementInput(DirToGoal, 1.f);
+                    }
+                }
+                return EStateTreeRunStatus::Running;
+            }
+
+            bool bNeedReassign = false;
+            if (bIdle && DistToSlot2D > AcceptanceRadius + 200.f && D.AssignedSlotMoveRetryCount >= 3)
+                bNeedReassign = true;
+
+            if (bNeedReassign)
+            {
+                const bool bIdleRelease = !bStuck;
+
+                UE_LOG(LogChaseTarget, Warning,
+                    TEXT("[Chase] Tick - [%s] ?? ??? (??: %s), ?? ??=%d, ????=%d"),
+                    *Pawn->GetName(), bStuck ? TEXT("Stuck") : TEXT("Idle"),
+                    D.AssignedSlotIndex, D.ConsecutiveSlotFailures);
+
+                SlotMgr->ReleaseSlotByIndex(D.AssignedSlotIndex);
+                D.AssignedSlotIndex = -1;
+                D.ConsecutiveStuckCount = 0;
+                D.DetourDirectionSign = 0;
+                D.AssignedSlotMoveRetryCount = 0;
+                D.bSlotArrived = false;
+                D.WaitingDestination = FVector::ZeroVector;
+                D.bHasWaitingDestination = false;
+
+                if (bIdleRelease)
+                {
+                    D.ConsecutiveSlotFailures++;
+                    D.SlotRetryTimer = 2.f;
+                    CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius, bNeedForceMove, DeltaTime);
+                }
+                else
+                {
+                    D.SlotRetryTimer = 0.5f;
+                }
+            }
+        }
+			#endif
+			if (SlotMgr && D.AssignedSlotIndex < 0)
+			{
+				const float SlotReserveRadius = FMath::Clamp(SlotEngageRadius * 0.6f, AcceptanceRadius + 100.f, SlotEngageRadius);
+				const float MaxSlotTravelDist = CTH::ComputeMaxSlotReservationTravelDistance(SlotMgr, SlotReserveRadius, AcceptanceRadius);
+				float ClosestFreeSlotDist = MAX_FLT;
+				const bool bHasFreeSlot = CTH::FindClosestFreeSlot(SlotMgr, PawnLoc, ClosestFreeSlotDist);
+
+				if (SurfaceDist > SlotReserveRadius)
+				{
+					D.WaitingDestination = FVector::ZeroVector;
+					D.bHasWaitingDestination = false;
+
+					if (D.TimeSinceRepath >= RepathInterval || bIdle || bStuck)
+					{
+						if (bStuck)
+						{
+							const float Mult = FMath::Min((float)D.ConsecutiveStuckCount, 3.f);
+							const int32 DetourDirectionSign = CTH::ResolveDetourDirectionSign(D, bUsePersistentDetourDirection);
+							CTH::IssueMoveToLocation(
+								AIC,
+								CTH::ComputeDetourGoal(PawnLoc, TargetActor->GetActorLocation(), AIC, DetourOffset * Mult, DetourDirectionSign),
+								AcceptanceRadius);
+						}
+						else
+						{
+							CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius, bNeedForceMove, DeltaTime);
+						}
+						D.TimeSinceRepath = 0.f;
+					}
+					return EStateTreeRunStatus::Running;
+				}
+
+				if (bHasFreeSlot && ClosestFreeSlotDist > MaxSlotTravelDist)
+				{
+					if (D.TimeSinceRepath >= RepathInterval || bIdle || bStuck)
+					{
+						if (bStuck)
+						{
+							const float Mult = FMath::Min((float)D.ConsecutiveStuckCount, 3.f);
+							const int32 DetourDirectionSign = CTH::ResolveDetourDirectionSign(D, bUsePersistentDetourDirection);
+							CTH::IssueMoveToLocation(
+								AIC,
+								CTH::ComputeDetourGoal(PawnLoc, TargetActor->GetActorLocation(), AIC, DetourOffset * Mult, DetourDirectionSign),
+								AcceptanceRadius);
+						}
+						else
+						{
+							CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius, bNeedForceMove, DeltaTime);
+						}
+						D.TimeSinceRepath = 0.f;
+					}
+					return EStateTreeRunStatus::Running;
+				}
+
+				if (D.ConsecutiveSlotFailures >= 3)
+				{
+					if (D.TimeSinceRepath >= RepathInterval || bIdle || bStuck)
+					{
+						bool bAssignedSector = false;
+						if (SectorMgr)
+						{
+							int32 SectorIdx = INDEX_NONE;
+							FVector SectorLoc = FVector::ZeroVector;
+							if (SectorMgr->RequestSectorPosition(Pawn, SectorIdx, SectorLoc))
+							{
+								D.AssignedSectorIndex = SectorIdx;
+								D.AssignedSectorLocation = SectorLoc;
+								D.bSectorArrived = false;
+								CTH::IssueMoveToLocation(AIC, SectorLoc, AcceptanceRadius);
+								bAssignedSector = true;
+							}
+						}
+
+						if (!bAssignedSector)
+						{
+							CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius, bNeedForceMove, DeltaTime);
+						}
+						D.TimeSinceRepath = 0.f;
+					}
+					return EStateTreeRunStatus::Running;
+				}
+
+				D.SlotRetryTimer -= DeltaTime;
+				if (D.SlotRetryTimer > 0.f)
+				{
+					return EStateTreeRunStatus::Running;
+				}
+
+				D.SlotRetryTimer = 2.f;
+				int32 SlotIdx = -1;
+				FVector SlotLoc = FVector::ZeroVector;
+				if (!SlotMgr->RequestSlot(Pawn, SlotIdx, SlotLoc))
+				{
+					bool bAssignedSector = false;
+					if (SectorMgr)
+					{
+						int32 SectorIdx = INDEX_NONE;
+						FVector SectorLoc = FVector::ZeroVector;
+						if (SectorMgr->RequestSectorPosition(Pawn, SectorIdx, SectorLoc))
+						{
+							D.AssignedSectorIndex = SectorIdx;
+							D.AssignedSectorLocation = SectorLoc;
+							D.bSectorArrived = false;
+							CTH::IssueMoveToLocation(AIC, SectorLoc, AcceptanceRadius);
+							bAssignedSector = true;
+						}
+					}
+
+					if (!bAssignedSector)
+					{
+						CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius, bNeedForceMove, DeltaTime);
+					}
+					return EStateTreeRunStatus::Running;
+				}
+
+				D.AssignedSlotIndex = SlotIdx;
+				D.AssignedSlotLocation = SlotLoc;
+				D.bSlotArrived = false;
+				D.AssignedSlotMoveRetryCount = 0;
+
+				const bool bMoveStarted = CTH::IssueMoveToLocation(AIC, SlotLoc, AcceptanceRadius);
+				if (!bMoveStarted)
+				{
+					CTH::IssueDirectMoveTowardLocation(
+						AIC,
+						Pawn,
+						SlotLoc,
+						AcceptanceRadius,
+						bNeedForceMove,
+						DeltaTime);
+				}
+				D.TimeSinceRepath = 0.f;
 				return EStateTreeRunStatus::Running;
 			}
-
-			// 슬롯 배정됨 → 도착 판정
-			if (!SlotMgr)
+			if (SlotMgr && D.AssignedSlotIndex >= 0)
 			{
-				bool bMoving = false;
-				if (UPathFollowingComponent* PFC = AIC->GetPathFollowingComponent())
+				const float DistToSlot2D = FVector::Dist2D(PawnLoc, D.AssignedSlotLocation);
+				if (DistToSlot2D <= AcceptanceRadius + 30.f)
 				{
-					bMoving = (PFC->GetStatus() == EPathFollowingStatus::Moving);
+					D.bSlotArrived = true;
+					D.ConsecutiveSlotFailures = 0;
+					D.AssignedSlotMoveRetryCount = 0;
+					SlotMgr->OccupySlot(D.AssignedSlotIndex, Pawn);
+
+					UE_LOG(LogChaseTarget, Log,
+						TEXT("[Chase] Tick - [%s] Slot occupied -> continue toward ship | Slot=%d Dist2D=%.1f SurfDist=%.1f"),
+						*Pawn->GetName(), D.AssignedSlotIndex, DistToSlot2D, SurfaceDist);
+
+					FVector PostEngagementGoal = FVector::ZeroVector;
+					if (CTH::TryComputePostEngagementGoal(
+						AIC,
+						Pawn,
+						TargetActor,
+						SlotMgr,
+						D.AssignedSlotIndex,
+						AttackRange,
+						PostEngagementGoal))
+					{
+						D.WaitingDestination = PostEngagementGoal;
+						D.bHasWaitingDestination = true;
+
+						const bool bMoveStarted = CTH::IssueMoveToLocation(AIC, PostEngagementGoal, AcceptanceRadius);
+						if (!bMoveStarted)
+						{
+							CTH::IssueDirectMoveTowardLocation(
+								AIC,
+								Pawn,
+								PostEngagementGoal,
+								AcceptanceRadius,
+								bNeedForceMove,
+								DeltaTime);
+						}
+					}
+					else
+					{
+						D.WaitingDestination = FVector::ZeroVector;
+						D.bHasWaitingDestination = false;
+						CTH::IssueDirectMoveTowardShipSurface(
+							AIC,
+							Pawn,
+							TargetActor,
+							AcceptanceRadius,
+							bNeedForceMove,
+							DeltaTime);
+					}
+					D.TimeSinceRepath = 0.f;
+					return EStateTreeRunStatus::Running;
 				}
 
-				const float SlotReserveRadius = FMath::Clamp(SlotEngageRadius * 0.6f, AcceptanceRadius + 100.f, SlotEngageRadius);
-				if (D.AssignedSectorIndex < 0 && SurfaceDist <= SlotReserveRadius &&
-					(D.TimeSinceRepath >= RepathInterval || bIdle || bStuck))
+				if (!bIdle)
 				{
-					int32 SectorIdx = INDEX_NONE;
-					FVector SectorLoc = FVector::ZeroVector;
-					if (SectorMgr && SectorMgr->RequestSectorPosition(Pawn, SectorIdx, SectorLoc))
+					D.AssignedSlotMoveRetryCount = 0;
+				}
+
+				if ((bIdle || bStuck) && DistToSlot2D <= AcceptanceRadius + 200.f)
+				{
+					AIC->StopMovement();
+					const FVector DirToSlot = (D.AssignedSlotLocation - PawnLoc).GetSafeNormal2D();
+					if (!DirToSlot.IsNearlyZero())
 					{
-						D.AssignedSectorIndex = SectorIdx;
-						D.AssignedSectorLocation = SectorLoc;
-						D.bSectorArrived = false;
-						CTH::IssueMoveToLocation(AIC, SectorLoc, AcceptanceRadius);
-						D.TimeSinceRepath = 0.f;
+						if (bNeedForceMove)
+						{
+							CTH::ForceDirectMove(Pawn, DirToSlot, DeltaTime);
+						}
+						else
+						{
+							Pawn->AddMovementInput(DirToSlot, 1.f);
+						}
+					}
+					return EStateTreeRunStatus::Running;
+				}
+
+				if (bIdle && DistToSlot2D > AcceptanceRadius + 200.f && D.TimeSinceRepath >= RepathInterval)
+				{
+					int32 RefreshedSlotIdx = D.AssignedSlotIndex;
+					FVector RefreshedSlotLoc = D.AssignedSlotLocation;
+					const bool bRefreshedSlot =
+						SlotMgr->RequestSlot(Pawn, RefreshedSlotIdx, RefreshedSlotLoc) &&
+						RefreshedSlotIdx == D.AssignedSlotIndex;
+
+					if (bRefreshedSlot)
+					{
+						D.AssignedSlotLocation = RefreshedSlotLoc;
+					}
+
+					const bool bMoveStarted = CTH::IssueMoveToLocation(AIC, D.AssignedSlotLocation, AcceptanceRadius);
+					if (!bMoveStarted)
+					{
+						CTH::IssueDirectMoveTowardLocation(
+							AIC,
+							Pawn,
+							D.AssignedSlotLocation,
+							AcceptanceRadius,
+							bNeedForceMove,
+							DeltaTime);
+					}
+					D.TimeSinceRepath = 0.f;
+					D.AssignedSlotMoveRetryCount++;
+
+					UE_LOG(LogChaseTarget, Warning,
+						TEXT("[Chase] Tick - [%s] slot move retry | Slot=%d Retry=%d Refreshed=%d Dist2D=%.1f Goal=%s"),
+						*Pawn->GetName(),
+						D.AssignedSlotIndex,
+						D.AssignedSlotMoveRetryCount,
+						(int32)bRefreshedSlot,
+						DistToSlot2D,
+						*D.AssignedSlotLocation.ToString());
+
+					if (D.AssignedSlotMoveRetryCount < 3)
+					{
 						return EStateTreeRunStatus::Running;
 					}
 				}
 
 				if (bStuck)
 				{
-					const float Mult = FMath::Min((float)D.ConsecutiveStuckCount, 3.f);
-					const int32 DetourDirectionSign = CTH::ResolveDetourDirectionSign(D, bUsePersistentDetourDirection);
-					const FVector DetourGoal = CTH::ComputeDetourGoal(
-						PawnLoc, TargetActor->GetActorLocation(), AIC, DetourOffset * Mult, DetourDirectionSign);
-					CTH::IssueMoveToLocation(AIC, DetourGoal, AcceptanceRadius);
-					D.TimeSinceRepath = 0.f;
-				}
-				else if (bIdle && SurfaceDist > AttackRange + 100.f)
-				{
-					CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius, D.ConsecutiveStuckCount, DeltaTime);
-					D.TimeSinceRepath = 0.f;
-				}
-				else if (!bMoving && D.TimeSinceRepath >= RepathInterval)
-				{
-					CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius, D.ConsecutiveStuckCount, DeltaTime);
-					D.TimeSinceRepath = 0.f;
-				}
-
-				return EStateTreeRunStatus::Running;
-			}
-
-			const float DistToSlot2D = FVector::Dist2D(PawnLoc, D.AssignedSlotLocation);
-			const float DistToSlot3D = FVector::Dist(PawnLoc, D.AssignedSlotLocation);
-			const float SlotHeightDelta = FMath::Abs(PawnLoc.Z - D.AssignedSlotLocation.Z);
-			if (DistToSlot2D <= AcceptanceRadius + 30.f)
-			{
-				// 슬롯 방향 도착 → 점유 후 우주선 방향으로 계속 전진
-				D.bSlotArrived = true;
-				D.ConsecutiveSlotFailures = 0;
-				D.AssignedSlotMoveRetryCount = 0;
-				SlotMgr->OccupySlot(D.AssignedSlotIndex, Pawn);
-
-				UE_LOG(LogChaseTarget, Log,
-					TEXT("[Chase] Tick - [%s] Slot occupied -> continue toward ship | Slot=%d Dist2D=%.1f SurfDist=%.1f"),
-					*Pawn->GetName(), D.AssignedSlotIndex, DistToSlot2D, SurfaceDist);
-
-				// 정지하지 않고 우주선 방향으로 계속 이동
-				CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius, D.ConsecutiveStuckCount, DeltaTime);
-				D.TimeSinceRepath = 0.f;
-				return EStateTreeRunStatus::Running;
-			}
-
-			if (!bIdle)
-			{
-				D.AssignedSlotMoveRetryCount = 0;
-			}
-
-			// Idle/Stuck = NavMesh로 슬롯에 도달 불가 → 우주선 방향 전진
-			if ((bIdle || bStuck) && DistToSlot2D <= AcceptanceRadius + 200.f)
-			{
-				AIC->StopMovement();
-				const FVector DirToShip = (TargetActor->GetActorLocation() - PawnLoc).GetSafeNormal2D();
-				if (!DirToShip.IsNearlyZero())
-				{
-					if (D.ConsecutiveStuckCount >= 2)
+					AIC->StopMovement();
+					const FVector DirectGoal =
+						D.bHasWaitingDestination ? D.WaitingDestination : CTH::ComputeClosestSurfacePoint(PawnLoc, TargetActor);
+					const FVector DirToGoal = (DirectGoal - PawnLoc).GetSafeNormal2D();
+					if (!DirToGoal.IsNearlyZero())
 					{
-						CTH::ForceDirectMove(Pawn, DirToShip, DeltaTime);
+						// Stuck 상태 = 항상 ForceDirectMove (AddMovementInput은 여기서 무력)
+						CTH::ForceDirectMove(Pawn, DirToGoal, DeltaTime);
 					}
-					else
-					{
-						Pawn->AddMovementInput(DirToShip, 1.f);
-					}
-				}
-				return EStateTreeRunStatus::Running;
-			}
-
-			if (bIdle && DistToSlot2D > AcceptanceRadius + 200.f && D.TimeSinceRepath >= RepathInterval)
-			{
-				int32 RefreshedSlotIdx = D.AssignedSlotIndex;
-				FVector RefreshedSlotLoc = D.AssignedSlotLocation;
-				const bool bRefreshedSlot = SlotMgr->RequestSlot(Pawn, RefreshedSlotIdx, RefreshedSlotLoc)
-					&& RefreshedSlotIdx == D.AssignedSlotIndex;
-
-				if (bRefreshedSlot)
-				{
-					D.AssignedSlotLocation = RefreshedSlotLoc;
-				}
-
-				CTH::IssueMoveToLocation(AIC, D.AssignedSlotLocation, AcceptanceRadius);
-				D.TimeSinceRepath = 0.f;
-				D.AssignedSlotMoveRetryCount++;
-
-				UE_LOG(LogChaseTarget, Warning,
-					TEXT("[Chase] Tick - [%s] 슬롯 이동 재시도 | Slot=%d Retry=%d Refreshed=%d Dist2D=%.1f Goal=%s"),
-					*Pawn->GetName(),
-					D.AssignedSlotIndex,
-					D.AssignedSlotMoveRetryCount,
-					(int32)bRefreshedSlot,
-					DistToSlot2D,
-					*D.AssignedSlotLocation.ToString());
-
-				if (D.AssignedSlotMoveRetryCount < 3)
-				{
 					return EStateTreeRunStatus::Running;
 				}
-			}
 
-			// Stuck: 슬롯 반납하지 않고 우주선 방향 전진
-			if (bStuck)
-			{
-				AIC->StopMovement();
-				const FVector DirToShip = (TargetActor->GetActorLocation() - PawnLoc).GetSafeNormal2D();
-				if (!DirToShip.IsNearlyZero())
+				bool bNeedReassign = false;
+				if (bIdle && DistToSlot2D > AcceptanceRadius + 200.f && D.AssignedSlotMoveRetryCount >= 3)
 				{
-					if (D.ConsecutiveStuckCount >= 2)
-					{
-						CTH::ForceDirectMove(Pawn, DirToShip, DeltaTime);
-					}
-					else
-					{
-						Pawn->AddMovementInput(DirToShip, 1.f);
-					}
+					bNeedReassign = true;
 				}
-				return EStateTreeRunStatus::Running;
-			}
 
-			// Idle: 슬롯 반납 후 재배정
-			bool bNeedReassign = false;
-			if (bIdle && DistToSlot2D > AcceptanceRadius + 200.f && D.AssignedSlotMoveRetryCount >= 3)
-				bNeedReassign = true;
-
-			if (bNeedReassign)
-			{
-				const bool bIdleRelease = !bStuck;
-
-				UE_LOG(LogChaseTarget, Warning,
-					TEXT("[Chase] Tick - [%s] 슬롯 재배정 (이유: %s), 이전 슬롯=%d, 연속실패=%d"),
-					*Pawn->GetName(), bStuck ? TEXT("Stuck") : TEXT("Idle"),
-					D.AssignedSlotIndex, D.ConsecutiveSlotFailures);
-
-				SlotMgr->ReleaseSlotByIndex(D.AssignedSlotIndex);
-				D.AssignedSlotIndex     = -1;
-				D.ConsecutiveStuckCount = 0;
-				D.DetourDirectionSign   = 0;
-				D.AssignedSlotMoveRetryCount = 0;
-
-				if (bIdleRelease)
+				if (bNeedReassign)
 				{
-					// PFC=Idle = 경로 미발견 → 쿨다운 부여 (매 프레임 재배정 방지)
+					UE_LOG(LogChaseTarget, Warning,
+						TEXT("[Chase] Tick - [%s] slot reassigned (reason=%s), previousSlot=%d, consecutiveFailures=%d"),
+						*Pawn->GetName(),
+						bStuck ? TEXT("Stuck") : TEXT("Idle"),
+						D.AssignedSlotIndex,
+						D.ConsecutiveSlotFailures);
+
+					SlotMgr->ReleaseSlotByIndex(D.AssignedSlotIndex);
+					D.AssignedSlotIndex = -1;
+					D.ConsecutiveStuckCount = 0;
+					D.DetourDirectionSign = 0;
+					D.AssignedSlotMoveRetryCount = 0;
+					D.bSlotArrived = false;
+					D.WaitingDestination = FVector::ZeroVector;
+					D.bHasWaitingDestination = false;
 					D.ConsecutiveSlotFailures++;
 					D.SlotRetryTimer = 2.f;
+					CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius, bNeedForceMove, DeltaTime);
+					return EStateTreeRunStatus::Running;
+				}
 
-					// 대기 중 우주선 방향으로 자유 이동 (멍때림 방지)
-					CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius, D.ConsecutiveStuckCount, DeltaTime);
-				}
-				else
-				{
-					// Stuck: 빠른 재시도 허용
-					D.SlotRetryTimer = 0.5f;
-				}
-			}
+			return EStateTreeRunStatus::Running;
+		}
 		}
 		else
 		{
-			// ─── 슬롯 시스템 OFF (자유 이동) ────────────────
-			// 이동 중(Moving)이면 Repath를 건너뛰어 경로 리셋 진동 방지
+			// ?????? ??????뽯뮞??OFF (?癒?? ??猷? ????????????????????????????????
+			// ??猷?餓?Moving)????Repath??椰꾨?瑗?怨쀫선 野껋럥以??귐딅?筌욊쑬猷?獄쎻뫗?
 			bool bMoving = false;
 			if (UPathFollowingComponent* PFC = AIC->GetPathFollowingComponent())
 				bMoving = (PFC->GetStatus() == EPathFollowingStatus::Moving);
@@ -1955,7 +2819,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 					PawnLoc, TargetActor->GetActorLocation(), AIC, DetourOffset * Mult, DetourDirectionSign);
 
 				UE_LOG(LogChaseTarget, Log,
-					TEXT("[Chase] Tick - [%s] 우주선 Stuck 우회 | 배수=%.1f"),
+                    TEXT("[Chase] Tick - [%s] ship stuck detour | Mult=%.1f"),
 					*Pawn->GetName(), Mult);
 
 				CTH::IssueMoveToLocation(AIC, DetourGoal, AcceptanceRadius);
@@ -1963,22 +2827,22 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 			}
 			else if (bIdle && SurfaceDist > AttackRange + 100.f)
 			{
-				// Idle인데 아직 멀면 재이동
-				CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius, D.ConsecutiveStuckCount, DeltaTime);
+                // Re-issue move if idle and still out of range.
+				CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius, bNeedForceMove, DeltaTime);
 				D.TimeSinceRepath = 0.f;
 			}
 			else if (!bMoving && D.TimeSinceRepath >= RepathInterval)
 			{
-				// 이동 중이 아닐 때만 Repath (이동 중 Repath는 경로 리셋 진동 유발)
-				CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius, D.ConsecutiveStuckCount, DeltaTime);
+                // Repath only when not already moving.
+				CTH::IssueMoveTowardShip(AIC, Pawn, TargetActor, AcceptanceRadius, bNeedForceMove, DeltaTime);
 				D.TimeSinceRepath = 0.f;
 			}
 		}
 
-		// 우주선 방향 회전 (슬롯 도착 상태가 아닐 때)
-		// CharacterMovement의 bOrientRotationToMovement가 이동 방향 회전을 처리하므로
-		// 이동 중에는 수동 회전을 하지 않는다 (두 시스템이 충돌하면 움찔거림 발생).
-		// 정지 상태(Idle)에서만 우주선을 향해 회전한다.
+		// ?怨쀯폒??獄쎻뫚堉????읈 (?????袁⑷컩 ?怨밴묶揶쎛 ?袁⑤빜 ??
+		// CharacterMovement??bOrientRotationToMovement揶쎛 ??猷?獄쎻뫚堉????읈??筌ｌ꼶????嚥?
+		// ??猷?餓λ쵐肉????롫짗 ???읈????? ??낅뮉??(????뽯뮞??뽰뵠 ?겸뫖猷??롢늺 ??筌〓떽援끿뵳?獄쏆뮇源?.
+		// ?類? ?怨밴묶(Idle)?癒?퐣筌??怨쀯폒?醫롮뱽 ?館鍮????읈??뺣뼄.
 		if (!D.bSlotArrived && bIdle)
 		{
 			const FVector ToShip = (TargetActor->GetActorLocation() - PawnLoc).GetSafeNormal2D();
@@ -1993,23 +2857,23 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 	}
 	else
 	{
-		// ══════════════════════════════════════════════════════
-		// 플레이어 이동
-		// ══════════════════════════════════════════════════════
+		// ?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름
+		// ???쟿??곷선 ??猷?
+		// ?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름?癒λ름
 
 		const float DistToTarget = FVector::Dist(Pawn->GetActorLocation(), TargetActor->GetActorLocation());
 
-		// 공격 범위 도달 → Succeeded
+        // Succeed once the player is inside attack range.
 		if (DistToTarget <= PlayerAttackRange)
 		{
 			UE_LOG(LogChaseTarget, Log,
-				TEXT("[Chase] Tick - [%s] 플레이어 공격 범위 도달 (거리=%.1f). Succeeded"),
+                TEXT("[Chase] Tick - [%s] player attack range reached (Dist=%.1f). Succeeded"),
 				*Pawn->GetName(), DistToTarget);
 			AIC->StopMovement();
 			return EStateTreeRunStatus::Succeeded;
 		}
 
-		// Stuck 감지 (토글: bUseStuckDetour)
+		// Stuck 揶쏅Ŋ? (?醫?: bUseStuckDetour)
 		const bool bStuck = bUseStuckDetour
 			? CTH::CheckPositionBasedStuck(D, Pawn->GetActorLocation(), DistToTarget, PlayerAttackRange,
 				DeltaTime, StuckCheckInterval, StuckDistThreshold)
@@ -2064,7 +2928,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 			D.TimeSinceRepath = 0.f;
 		}
 
-		// 플레이어를 향해 회전 (정지 상태에서만 — 이동 중은 CharacterMovement가 처리)
+		// ???쟿??곷선???館鍮????읈 (?類? ?怨밴묶?癒?퐣筌?????猷?餓λ쵐? CharacterMovement揶쎛 筌ｌ꼶??
 		if (bIdle)
 		{
 			const FVector ToTarget = (TargetActor->GetActorLocation() - Pawn->GetActorLocation()).GetSafeNormal2D();
@@ -2090,7 +2954,7 @@ void FSTTask_ChaseTarget_Test::ExitState(
 {
 	FInstanceDataType& D = Context.GetInstanceData(*this);
 
-	// 슬롯 반납
+    // Release reserved slot or sector state.
 	if ((D.AssignedSlotIndex >= 0 || D.AssignedSectorIndex >= 0) && IsValid(D.AIController))
 	{
 		const FHellunaAITargetData& TD = D.TargetData;
@@ -2102,7 +2966,7 @@ void FSTTask_ChaseTarget_Test::ExitState(
 				{
 					SlotMgr->ReleaseEngagementReservation(D.AIController->GetPawn());
 					UE_LOG(LogChaseTarget, Log,
-						TEXT("[Chase] ExitState 슬롯 반납: %d"), D.AssignedSlotIndex);
+                        TEXT("[Chase] ExitState released slot reservation: %d"), D.AssignedSlotIndex);
 				}
 			}
 		}

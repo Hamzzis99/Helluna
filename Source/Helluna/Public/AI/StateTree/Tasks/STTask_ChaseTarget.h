@@ -1,14 +1,25 @@
-﻿/**
+/**
  * STTask_ChaseTarget.h
  *
- * StateTree Task: 타겟 추적 (이동)
+ * StateTree Task: 2-Phase Chase (RUSH + SPREAD)
  *
- * [방안 C 적용]
- * 우주선: 고정 오브젝트이므로 EnterState / 타겟 변경 시에만 MoveTo 한 번 발행.
- *         이후 Tick에서 재발행하지 않고 RVO(CrowdFollowingComponent)에 회피 위임.
- * 플레이어: 움직이는 대상이므로 RepathInterval 재발행 유지.
+ * [Phase 1: RUSH]
+ *   Each monster gets a unique angle (0, 60, 120...).
+ *   Rush goal = point at assigned angle, SpreadPhaseRadius away from ship.
+ *   Forces each monster to take a different NavMesh path.
  *
- * @author 김민우
+ * [Phase 2: SPREAD]
+ *   Move to assigned angle position at StandoffRadius from ship.
+ *   On arrival, face ship and hold (Running, attack state handles transition).
+ *
+ * [Stuck -> Direct Move]
+ *   After N consecutive stucks, disable pathfinding and walk directly
+ *   toward the spread goal. CMC Walking mode still handles ground/collision.
+ *
+ * [Player]
+ *   MoveToActor with RepathInterval. Optional EQS.
+ *
+ * @author
  */
 
 #pragma once
@@ -21,6 +32,13 @@
 
 class AAIController;
 class UEnvQuery;
+
+UENUM()
+enum class EChasePhase : uint8
+{
+	Rush,
+	Spread,
+};
 
 USTRUCT()
 struct FSTTask_ChaseTargetInstanceData
@@ -39,54 +57,35 @@ struct FSTTask_ChaseTargetInstanceData
 	UPROPERTY()
 	float TimeSinceRepath = 0.f;
 
-	// EQS 결과로 받은 목적지 (-1이면 아직 결과 없음)
-	UPROPERTY()
-	FVector EQSDestination = FVector(FLT_MAX);
-
-	// EQS 재실행까지 남은 시간
 	UPROPERTY()
 	float TimeUntilNextEQS = 0.f;
 
-	// 현재 이동 목표 박스 인덱스 (-1 = 미설정)
-	UPROPERTY()
-	int32 CurrentBoxIndex = -1;
-
-	// Stuck 누적 시간 (이 시간이 임계값을 넘으면 다른 박스로 전환)
-	UPROPERTY()
-	float StuckAccumTime = 0.f;
-
-	// ─── 슬롯 관련 ────────────────────────────────────────────
-
-	/** 현재 배정된 슬롯 인덱스 (-1 = 미배정) */
-	UPROPERTY()
-	int32 AssignedSlotIndex = -1;
-
-	/** 현재 배정된 섹터 인덱스 (-1 = 미배정) */
-	UPROPERTY()
-	int32 AssignedSectorIndex = -1;
-
-	/** 배정된 슬롯 월드 위치 */
-	UPROPERTY()
-	FVector AssignedSlotLocation = FVector::ZeroVector;
-
-	/** 배정된 섹터 월드 위치 */
-	UPROPERTY()
-	FVector AssignedSectorLocation = FVector::ZeroVector;
-
-	/** 슬롯 재배정 시도까지 남은 쿨다운 */
-	UPROPERTY()
-	float SlotRetryTimer = 0.f;
-
-	/** 슬롯 위치에 도착했는지 */
-	UPROPERTY()
-	bool bSlotArrived = false;
-
-	/** 섹터 위치에 도착했는지 */
-	UPROPERTY()
-	bool bSectorArrived = false;
+	// --- Ship chase ---
 
 	UPROPERTY()
-	float MovementDiagTimer = 0.f;
+	EChasePhase Phase = EChasePhase::Rush;
+
+	UPROPERTY()
+	float AssignedAngleDeg = 0.f;
+
+	UPROPERTY()
+	FVector LastCheckedLocation = FVector::ZeroVector;
+
+	UPROPERTY()
+	float StuckCheckTimer = 0.f;
+
+	UPROPERTY()
+	int32 ConsecutiveStuckCount = 0;
+
+	UPROPERTY()
+	bool bSpreadArrived = false;
+
+	/** pathfinding OFF direct movement mode */
+	UPROPERTY()
+	bool bDirectMoveMode = false;
+
+	UPROPERTY()
+	float DiagTimer = 0.f;
 };
 
 USTRUCT(meta = (DisplayName = "Helluna: Chase Target", Category = "Helluna|AI"))
@@ -107,58 +106,93 @@ protected:
 	virtual void ExitState(FStateTreeExecutionContext& Context,
 		const FStateTreeTransitionResult& Transition) const override;
 
+	EStateTreeRunStatus TickShipChase(FStateTreeExecutionContext& Context,
+		FInstanceDataType& Data, AAIController* AIC, APawn* Pawn,
+		AActor* Ship, float DeltaTime) const;
+
+	EStateTreeRunStatus TickPlayerChase(FInstanceDataType& Data,
+		AAIController* AIC, APawn* Pawn, AActor* Target, float DeltaTime) const;
+
 public:
-	UPROPERTY(EditAnywhere, Category = "설정",
-		meta = (DisplayName = "재경로 탐색 간격 (초)",
-			ToolTip = "플레이어 타겟을 다시 추적하는 간격입니다.",
+
+	// ==========================================================
+
+	UPROPERTY(EditAnywhere, Category = "Common",
+		meta = (DisplayName = "Repath Interval",
+			ToolTip = "MoveTo Repath Interval (sec). \nPlayer: Re-Chase Interval. \nShip: Waypoint Refresh Interval.",
 			ClampMin = "0.1"))
 	float RepathInterval = 0.5f;
 
-	UPROPERTY(EditAnywhere, Category = "설정",
-		meta = (DisplayName = "도착 허용 반경 (cm)",
-			ToolTip = "이 거리 안에 들어오면 도착으로 판단합니다.",
+	UPROPERTY(EditAnywhere, Category = "Common",
+		meta = (DisplayName = "Acceptance Radius",
+			ToolTip = "MoveTo Acceptance Radius (cm).",
 			ClampMin = "10.0"))
 	float AcceptanceRadius = 50.f;
 
-	/**
-	 * 플레이어 타겟 추적 시 사용할 EQS 에셋.
-	 * 설정하면 타겟 직접 추적 대신 EQS로 최적 공격 위치를 찾아 이동.
-	 * 비워두면 기존 MoveToActor 방식으로 동작.
-	 */
-	UPROPERTY(EditAnywhere, Category = "설정",
-		meta = (DisplayName = "공격 위치 EQS",
-			ToolTip = "EQ_HellunaAttackPosition 에셋을 연결하세요.\n비워두면 타겟에게 직접 달려갑니다."))
+	// ==========================================================
+
+	UPROPERTY(EditAnywhere, Category = "Ship",
+		meta = (DisplayName = "Spread Phase Radius",
+			ToolTip = "Rush -> Spread Phase Switching Distance (cm). \nMust be larger than StandoffRadius.",
+			ClampMin = "100.0"))
+	float SpreadPhaseRadius = 1200.f;
+
+	UPROPERTY(EditAnywhere, Category = "Ship",
+		meta = (DisplayName = "Standoff Radius",
+			ToolTip = "Distance from ship center where monsters hold position (cm). \nThis is where they stand and attack.",
+			ClampMin = "50.0"))
+	float StandoffRadius = 350.f;
+
+	UPROPERTY(EditAnywhere, Category = "Ship",
+		meta = (DisplayName = "Rush Waypoint Step",
+			ToolTip = "Rush Phase Maximum Distance Per Waypoint (cm).",
+			ClampMin = "100.0"))
+	float RushWaypointStep = 800.f;
+
+	// ==========================================================
+
+	UPROPERTY(EditAnywhere, Category = "Stuck",
+		meta = (DisplayName = "Stuck Check Interval",
+			ToolTip = "Monster Stuck Check Interval (sec).",
+			ClampMin = "0.1"))
+	float StuckCheckInterval = 0.8f;
+
+	UPROPERTY(EditAnywhere, Category = "Stuck",
+		meta = (DisplayName = "Stuck Distance Threshold",
+			ToolTip = "Stuck if moved less than this in one check interval (cm).",
+			ClampMin = "1.0"))
+	float StuckDistThreshold = 50.f;
+
+	UPROPERTY(EditAnywhere, Category = "Stuck",
+		meta = (DisplayName = "Stuck Angle Rotation",
+			ToolTip = "Stuck Detected -> Rotate Assigned Angle (degrees).",
+			ClampMin = "10.0"))
+	float AngleRotationOnStuck = 90.f;
+
+	UPROPERTY(EditAnywhere, Category = "Stuck",
+		meta = (DisplayName = "Direct Move Stuck Threshold",
+			ToolTip = "This many consecutive stucks -> disable pathfinding and walk directly. \nNavMesh boundary Stuck Fix.",
+			ClampMin = "1"))
+	int32 DirectMoveStuckThreshold = 2;
+
+	// ==========================================================
+
+	UPROPERTY(EditAnywhere, Category = "EQS",
+		meta = (DisplayName = "Attack Position EQS",
+			ToolTip = "EQS Asset for Player Attack Position. Leave empty for direct MoveToActor."))
 	TObjectPtr<UEnvQuery> AttackPositionQuery = nullptr;
 
-	/**
-	 * EQS를 다시 실행하는 간격 (초).
-	 * 타겟이 움직이면 최적 위치도 바뀌므로 주기적으로 재실행.
-	 */
-	UPROPERTY(EditAnywhere, Category = "설정",
-		meta = (DisplayName = "EQS 재실행 간격 (초)",
-			ToolTip = "공격 위치 EQS를 다시 실행하는 간격입니다.\n값이 작을수록 더 자주 위치를 갱신합니다.",
+	UPROPERTY(EditAnywhere, Category = "EQS",
+		meta = (DisplayName = "EQS Interval",
+			ToolTip = "EQS Repeat Interval (sec).",
 			ClampMin = "0.1"))
 	float EQSInterval = 1.0f;
 
-	UPROPERTY(EditAnywhere, Category = "설정",
-		meta = (DisplayName = "우주선 접근 분산 반경 (cm)",
-			ToolTip = "우주선 주변 박스 위치에서 몬스터가 흩어지는 랜덤 반경입니다.\n값이 클수록 더 넓게 분산됩니다.",
-			ClampMin = "0.0"))
-	float ShipSpreadRadius = 200.f;
+	// ==========================================================
 
-	UPROPERTY(EditAnywhere, Category = "설정",
-		meta = (DisplayName = "우주선 공격 슬롯 시스템 사용",
-			ToolTip = "체크: 우주선 주변 슬롯을 예약해서 이동합니다. (근거리 몬스터 권장)\n해제: 슬롯 없이 우주선 주변 랜덤 위치로 자유롭게 이동합니다. (원거리 몬스터 권장)"))
-	bool bUseSlotSystem = true;
-
-	UPROPERTY(EditAnywhere, Category = "설정",
-		meta = (DisplayName = "우주선 섹터 분산 사용",
-			ToolTip = "체크: 슬롯이 꺼져 있거나 슬롯 배정이 실패했을 때 우주선 둘레 섹터를 균등하게 나눠 배정합니다.\n해제: 기존 랜덤 분산 방식만 사용합니다."))
-	bool bUseSectorDistribution = true;
-
-	UPROPERTY(EditAnywhere, Category = "설정",
-		meta = (DisplayName = "슬롯 진입 반경 (cm)",
-			ToolTip = "우주선으로부터 이 거리 안에 들어오면 슬롯 배정을 시도합니다.\n밖에서는 우주선을 향해 직접 이동합니다.\nSlotManager의 MaxRadius보다 크게 설정하세요.",
-			ClampMin = "100.0"))
-	float SlotEngageRadius = 500.f;
+	UPROPERTY(EditAnywhere, Category = "Player",
+		meta = (DisplayName = "Player Attack Range",
+			ToolTip = "Distance at which player chase completes (cm).",
+			ClampMin = "50.0"))
+	float PlayerAttackRange = 200.f;
 };

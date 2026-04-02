@@ -19,7 +19,7 @@
 #include "HellunaGameplayTags.h"
 
 // ============================================================================
-// TreeStart - ?? ?? ?? ??(???)?? ???
+// TreeStart - initialize the default spaceship target if one already exists.
 // ============================================================================
 void FSTEvaluator_TargetSelector::TreeStart(FStateTreeExecutionContext& Context) const
 {
