@@ -271,6 +271,8 @@ void UInv_BuildingButton::ExecuteBuild()
 	Info.BuildingIcon = CDO->BuildingIcon;
 	Info.GhostClass = CDO->GhostActorClass ? CDO->GhostActorClass : (CDO->ActualBuildingClass ? CDO->ActualBuildingClass : BuildableActorClass);
 	Info.ActualBuildingClass = CDO->ActualBuildingClass ? CDO->ActualBuildingClass : BuildableActorClass;
+	Info.PreviewMesh = CDO->GetEffectivePreviewMesh();
+	Info.PreviewMeshScale = CDO->GetBuildingMeshScale();
 	Info.BuildingID = CDO->BuildingID;
 	Info.MaterialTag1 = CDO->RequiredMaterialTag1;
 	Info.MaterialAmount1 = CDO->RequiredAmount1;

@@ -22,6 +22,7 @@
 #include "InputAction.h"
 #include "InputMappingContext.h"
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
+#include "Settings/Widget/HellunaGraphicsSettingsWidget.h"
 
 // [Puzzle] 퍼즐 시스템
 #include "Puzzle/PuzzleCubeActor.h"
@@ -1308,5 +1309,39 @@ void AHellunaHeroController::OnDebugHUDToggle(const FInputActionValue& Value)
 	if (IsValid(DebugHUDInstance))
 	{
 		DebugHUDInstance->ToggleVisibility();
+	}
+}
+
+// =========================================================================================
+// [GraphicsSettings] 그래픽 설정 위젯 토글
+// =========================================================================================
+
+void AHellunaHeroController::ToggleGraphicsSettings()
+{
+	if (!IsLocalController()) return;
+
+	// 이미 열려 있으면 닫기
+	if (IsValid(GraphicsSettingsInstance))
+	{
+		GraphicsSettingsInstance->RemoveFromParent();
+		GraphicsSettingsInstance = nullptr;
+		UE_LOG(LogTemp, Log, TEXT("[GraphicsSettings] 위젯 닫기"));
+		return;
+	}
+
+	// 위젯 클래스 미설정 시 경고
+	if (!IsValid(GraphicsSettingsWidgetClass))
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[GraphicsSettings] GraphicsSettingsWidgetClass 미설정 — BP_HellunaHeroController에서 지정 필요"));
+		return;
+	}
+
+	// 생성 및 표시
+	GraphicsSettingsInstance = CreateWidget<UHellunaGraphicsSettingsWidget>(this, GraphicsSettingsWidgetClass);
+	if (IsValid(GraphicsSettingsInstance))
+	{
+		GraphicsSettingsInstance->AddToViewport(100);
+		UE_LOG(LogTemp, Log, TEXT("[GraphicsSettings] 위젯 열기"));
 	}
 }

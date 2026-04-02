@@ -20,6 +20,7 @@ class ABossEncounterCube;
 class UPuzzleGridWidget;
 class UPostProcessComponent;
 class UHellunaDebugHUDWidget;
+class UHellunaGraphicsSettingsWidget;
 
 /**
  * @brief   Helluna 영웅 전용 PlayerController
@@ -454,4 +455,24 @@ public:
 	 */
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_BossEncounterActivate();
+
+	// =========================================================================================
+	// [그래픽 설정] 위젯 토글
+	// =========================================================================================
+public:
+	/** 그래픽 설정 위젯 토글 (CapsLock / ESC 메뉴에서 호출) */
+	UFUNCTION(BlueprintCallable, Category = "Settings (설정)",
+		meta = (DisplayName = "Toggle Graphics Settings (그래픽 설정 토글)"))
+	void ToggleGraphicsSettings();
+
+protected:
+	/** 그래픽 설정 위젯 클래스 (BP에서 WBP_HellunaGraphicsSettings 지정) */
+	UPROPERTY(EditDefaultsOnly, Category = "Settings (설정)",
+		meta = (DisplayName = "Graphics Settings Widget Class (그래픽 설정 위젯 클래스)"))
+	TSubclassOf<UHellunaGraphicsSettingsWidget> GraphicsSettingsWidgetClass;
+
+private:
+	/** 그래픽 설정 위젯 인스턴스 */
+	UPROPERTY()
+	TObjectPtr<UHellunaGraphicsSettingsWidget> GraphicsSettingsInstance;
 };

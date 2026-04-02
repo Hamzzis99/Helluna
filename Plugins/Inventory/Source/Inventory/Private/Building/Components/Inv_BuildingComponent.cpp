@@ -18,6 +18,8 @@
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Components/MeshComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
 
 
 // Sets default values for this component's properties
@@ -55,7 +57,7 @@ void UInv_BuildingComponent::BeginPlay()
 	// 로컬 플레이어만 입력 등록
 	if (!OwningPC->IsLocalController()) return;
 
-	// [스캔 VFX 프리캐시] 첫 건설 시 셰이더 컴파일 히치 방지
+	// [셰이더 프리캐시] 첫 건설 시 셰이더 컴파일 히치 방지
 	// 게임 시작 시 throwaway DMI를 생성하여 셰이더/PSO를 미리 컴파일
 	if (DefaultPlacementScanMaterial)
 	{
@@ -64,7 +66,32 @@ void UInv_BuildingComponent::BeginPlay()
 		{
 			PrecacheDMI->SetScalarParameterValue(TEXT("ScanHeight"), 0.f);
 			PrecacheDMI->SetScalarParameterValue(TEXT("BandWidth"), 10.f);
-			// DMI를 GC에 맡겨 자동 해제 — 셰이더는 캐시에 남음
+		}
+	}
+	if (GhostPlacementMaterial)
+	{
+		UMaterialInstanceDynamic* PrecacheGhost = UMaterialInstanceDynamic::Create(GhostPlacementMaterial, this);
+		if (PrecacheGhost)
+		{
+			PrecacheGhost->SetVectorParameterValue(TEXT("GhostColor"), FLinearColor(0.f, 0.5f, 1.f));
+		}
+	}
+
+	// [HUD 프리캐시] 첫 빌드 모드 진입 시 15초 프리즈 방지
+	// 위젯 클래스와 참조 에셋을 BeginPlay에서 미리 로드+생성
+	if (BuildModeHUDClass)
+	{
+		BuildModeHUDInstance = CreateWidget<UInv_BuildModeHUD>(OwningPC.Get(), BuildModeHUDClass);
+		// 뷰포트에 추가하지 않음 — ShowBuildModeHUD에서 AddToViewport
+	}
+	else
+	{
+		// BP CDO 저장 실패 대비: 직접 로드
+		UClass* LoadedClass = LoadClass<UInv_BuildModeHUD>(nullptr, TEXT("/Inventory/Widgets/Building/WBP_Inv_BuildModeHUD.WBP_Inv_BuildModeHUD_C"));
+		if (LoadedClass)
+		{
+			BuildModeHUDClass = LoadedClass;
+			BuildModeHUDInstance = CreateWidget<UInv_BuildModeHUD>(OwningPC.Get(), BuildModeHUDClass);
 		}
 	}
 
@@ -122,6 +149,13 @@ void UInv_BuildingComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
+	// [PerfTrace] 첫 Tick 타이밍 측정
+	double TickT0 = 0.0;
+	if (bIsInBuildMode && bPerfTraceFirstTick)
+	{
+		TickT0 = FPlatformTime::Seconds();
+	}
+
 	// 빌드 모드일 때 고스트 메시 위치 업데이트
 	if (bIsInBuildMode && IsValid(GhostActorInstance) && OwningPC.IsValid())
 	{
@@ -154,10 +188,7 @@ void UInv_BuildingComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 			// 설치 가능 여부 판단
 			bCanPlaceBuilding = (AngleDegrees <= MaxGroundAngle);
 			
-			// 디버그 라인 (빨강: 불가능, 초록: 가능)
-			const FColor DebugColor = bCanPlaceBuilding ? FColor::Green : FColor::Red;
-			DrawDebugLine(World, TraceStart, HitResult.Location, DebugColor, false, 0.0f, 0, 2.0f);
-			DrawDebugPoint(World, HitResult.Location, 10.0f, DebugColor, false, 0.0f);
+			// 디버그 라인 제거 — 고스트 머티리얼 색상이 배치 가능 여부를 시각적으로 표시
 		}
 		else
 		{
@@ -167,8 +198,7 @@ void UInv_BuildingComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 			// 고스트를 트레이스 끝 지점에 배치 (공중)
 			GhostActorInstance->SetActorLocation(TraceEnd);
 
-			// 디버그 라인 (회색: 바닥 없음)
-			DrawDebugLine(World, TraceStart, TraceEnd, FColor::Silver, false, 0.0f, 0, 1.0f);
+			// 디버그 라인 제거 — 고스트 머티리얼 빨간색이 바닥 없음을 표시
 		}
 
 		// ★ 건물 회전 적용 (위치와 무관하게 항상 처리)
@@ -192,6 +222,14 @@ void UInv_BuildingComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 
 		// ★ 고스트 머티리얼 색상 업데이트 (파란/빨간 전환)
 		UpdateGhostColor(bCanPlaceBuilding);
+
+		// [PerfTrace] 첫 빌드 Tick 완료 시간
+		if (bPerfTraceFirstTick)
+		{
+			double TickT1 = FPlatformTime::Seconds();
+			UE_LOG(LogTemp, Warning, TEXT("[PerfTrace-FirstTick] Duration=%.1fms"), (TickT1 - TickT0) * 1000.0);
+			bPerfTraceFirstTick = false;
+		}
 	}
 }
 
@@ -216,8 +254,12 @@ void UInv_BuildingComponent::StartBuildMode()
 		return;
 	}
 
+	double SM_T0 = FPlatformTime::Seconds();
+
 	// ★ BuildMode 진입 시 입력 활성화 (IMC 추가 + 바인딩)
 	EnableBuildModeInput();
+
+	double SM_T1 = FPlatformTime::Seconds();
 
 	// 이미 고스트 액터가 있다면 제거
 	if (IsValid(GhostActorInstance))
@@ -225,11 +267,6 @@ void UInv_BuildingComponent::StartBuildMode()
 		GhostActorInstance->Destroy();
 		GhostActorInstance = nullptr;
 	}
-
-	// 고스트 액터 스폰
-	FActorSpawnParameters SpawnParams;
-	SpawnParams.Owner = OwningPC.Get();
-	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
 	// 플레이어 앞에 스폰
 	APawn* OwnerPawn = OwningPC->GetPawn();
@@ -239,35 +276,47 @@ void UInv_BuildingComponent::StartBuildMode()
 
 	UWorld* World = GetWorld();
 	if (!World) return;
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = OwningPC.Get();
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	// 풀 BP 액터로 고스트 스폰 (원본 비주얼 그대로 사용)
 	GhostActorInstance = World->SpawnActor<AActor>(SelectedGhostClass, SpawnLocation, SpawnRotation, SpawnParams);
 
 	if (IsValid(GhostActorInstance))
 	{
-#if INV_DEBUG_BUILD
-		UE_LOG(LogTemp, Warning, TEXT("Ghost Actor spawned successfully! (BuildingID: %d)"), CurrentBuildingID);
-#endif
-
 		// 고스트 액터의 충돌 비활성화
 		GhostActorInstance->SetActorEnableCollision(false);
+
+		// ★ 고스트 모드: 모든 Tick 비활성화 (능력, AI, VFX 등 게임플레이 로직 차단)
+		// 설치 완료 시 실제 건물은 별도 스폰되므로 고스트의 Tick은 불필요
+		GhostActorInstance->SetActorTickEnabled(false);
+		TArray<UActorComponent*> AllGhostComps;
+		GhostActorInstance->GetComponents(AllGhostComps);
+		for (UActorComponent* Comp : AllGhostComps)
+		{
+			if (Comp)
+			{
+				Comp->SetComponentTickEnabled(false);
+			}
+		}
 
 		// 고스트 배치 피드백 머티리얼 적용 (반투명 파란/빨간)
 		ApplyGhostMaterial();
 	}
-	else
-	{
-#if INV_DEBUG_BUILD
-		UE_LOG(LogTemp, Error, TEXT("Failed to spawn Ghost Actor!"));
-#endif
-	}
+
+	double SM_T3 = FPlatformTime::Seconds();
 
 	// ★ 빌드 모드 HUD 표시 (로컬 클라이언트만!)
-	UE_LOG(LogTemp, Warning, TEXT("[BuildModeHUD-Debug] StartBuildMode → ShowBuildModeHUD 호출 직전. IsLocalController=%s"),
-		OwningPC->IsLocalController() ? TEXT("TRUE") : TEXT("FALSE"));
 	if (OwningPC->IsLocalController())
 	{
 		ShowBuildModeHUD();
 	}
-	UE_LOG(LogTemp, Warning, TEXT("[BuildModeHUD-Debug] StartBuildMode → ShowBuildModeHUD 호출 완료"));
+
+	double SM_T4 = FPlatformTime::Seconds();
+	UE_LOG(LogTemp, Warning, TEXT("[PerfTrace-StartBuildMode] EnableInput=%.1fms, Spawn+Material=%.1fms, ShowHUD=%.1fms, Total=%.1fms"),
+		(SM_T1 - SM_T0) * 1000.0, (SM_T3 - SM_T1) * 1000.0, (SM_T4 - SM_T3) * 1000.0, (SM_T4 - SM_T0) * 1000.0);
 }
 
 void UInv_BuildingComponent::EndBuildMode()
@@ -275,6 +324,9 @@ void UInv_BuildingComponent::EndBuildMode()
 	bIsInBuildMode = false;
 	bIsRotatingRight = false;
 	bIsRotatingLeft = false;
+
+	// [PerfTrace] 다음 빌드 모드 진입 시 첫 Tick 다시 측정
+	bPerfTraceFirstTick = true;
 #if INV_DEBUG_BUILD
 	UE_LOG(LogTemp, Warning, TEXT("=== Build Mode ENDED ==="));
 #endif
@@ -492,6 +544,8 @@ void UInv_BuildingComponent::OnBuildingSelectedFromWidget(const FInv_BuildingSel
 	// 개별 변수에도 저장 (기존 로직 호환)
 	SelectedGhostClass = Info.GhostClass;
 	SelectedBuildingClass = Info.ActualBuildingClass;
+	CurrentPreviewMesh = Info.PreviewMesh;
+	CurrentPreviewMeshScale = Info.PreviewMeshScale;
 	CurrentBuildingID = Info.BuildingID;
 	CurrentMaterialTag = Info.MaterialTag1;
 	CurrentMaterialAmount = Info.MaterialAmount1;
@@ -500,11 +554,20 @@ void UInv_BuildingComponent::OnBuildingSelectedFromWidget(const FInv_BuildingSel
 	CurrentMaterialTag3 = Info.MaterialTag3;
 	CurrentMaterialAmount3 = Info.MaterialAmount3;
 
+	// [PerfTrace] 전체 흐름 타이밍
+	double PerfT0 = FPlatformTime::Seconds();
+
 	// 빌드 메뉴 닫기
 	CloseBuildMenu();
 
+	double PerfT1 = FPlatformTime::Seconds();
+
 	// 빌드 모드 시작 (고스트 스폰)
 	StartBuildMode();
+
+	double PerfT2 = FPlatformTime::Seconds();
+	UE_LOG(LogTemp, Warning, TEXT("[PerfTrace] CloseBuildMenu=%.1fms, StartBuildMode=%.1fms, Total=%.1fms"),
+		(PerfT1 - PerfT0) * 1000.0, (PerfT2 - PerfT1) * 1000.0, (PerfT2 - PerfT0) * 1000.0);
 }
 
 void UInv_BuildingComponent::TryPlaceBuilding()
@@ -1007,26 +1070,22 @@ void UInv_BuildingComponent::ShowBuildModeHUD()
 	// BuildModeHUDClass가 NULL이면 직접 로드 시도 (BP CDO 저장 실패 대비)
 	if (!BuildModeHUDClass)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[BuildModeHUD-Debug] BuildModeHUDClass가 NULL! 직접 로드 시도..."));
 		UClass* LoadedClass = LoadClass<UInv_BuildModeHUD>(nullptr, TEXT("/Inventory/Widgets/Building/WBP_Inv_BuildModeHUD.WBP_Inv_BuildModeHUD_C"));
 		if (LoadedClass)
 		{
 			BuildModeHUDClass = LoadedClass;
-			UE_LOG(LogTemp, Warning, TEXT("[BuildModeHUD-Debug] 직접 로드 성공: %s"), *LoadedClass->GetName());
 		}
 		else
 		{
-			UE_LOG(LogTemp, Error, TEXT("[BuildModeHUD-Debug] 직접 로드도 실패! HUD를 표시할 수 없습니다."));
+			UE_LOG(LogTemp, Error, TEXT("[BuildModeHUD] 직접 로드도 실패! HUD를 표시할 수 없습니다."));
 			return;
 		}
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("[BuildModeHUD-Debug] ShowBuildModeHUD 진입. OwningPC=%s, BuildModeHUDClass=%s"),
-		TEXT("Valid"), *BuildModeHUDClass->GetName());
-
-	// 이미 표시 중이면 건물 정보만 업데이트 (NativeConstruct 중복 실행 방지)
+	// 미리 생성된 인스턴스가 있으면 재사용 (BeginPlay에서 프리캐시)
 	if (IsValid(BuildModeHUDInstance))
 	{
+		// 건물 정보 업데이트
 		BuildModeHUDInstance->SetBuildingInfo(
 			CurrentBuildingInfo.BuildingName,
 			CurrentBuildingInfo.BuildingIcon,
@@ -1034,18 +1093,23 @@ void UInv_BuildingComponent::ShowBuildModeHUD()
 			CurrentBuildingInfo.MaterialIcon2, CurrentBuildingInfo.MaterialAmount2, CurrentBuildingInfo.MaterialTag2,
 			CurrentBuildingInfo.MaterialIcon3, CurrentBuildingInfo.MaterialAmount3, CurrentBuildingInfo.MaterialTag3
 		);
-		UE_LOG(LogTemp, Warning, TEXT("[BuildModeHUD-Debug] 기존 HUD 인스턴스 재사용. BuildingName=%s"), *CurrentBuildingInfo.BuildingName.ToString());
+
+		// 뷰포트에 없으면 추가
+		if (!BuildModeHUDInstance->IsInViewport())
+		{
+			BuildModeHUDInstance->AddToViewport();
+		}
+		else
+		{
+			BuildModeHUDInstance->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		}
 		return;
 	}
 
+	// 인스턴스가 없으면 새로 생성 (정상적으로는 BeginPlay에서 이미 생성됨)
 	BuildModeHUDInstance = CreateWidget<UInv_BuildModeHUD>(OwningPC.Get(), BuildModeHUDClass);
-
-	UE_LOG(LogTemp, Warning, TEXT("[BuildModeHUD-Debug] CreateWidget 결과: %s"),
-		IsValid(BuildModeHUDInstance) ? TEXT("성공") : TEXT("실패!"));
-
 	if (!IsValid(BuildModeHUDInstance)) return;
 
-	// 건물 정보 설정
 	BuildModeHUDInstance->SetBuildingInfo(
 		CurrentBuildingInfo.BuildingName,
 		CurrentBuildingInfo.BuildingIcon,
@@ -1055,19 +1119,14 @@ void UInv_BuildingComponent::ShowBuildModeHUD()
 	);
 
 	BuildModeHUDInstance->AddToViewport();
-
-	UE_LOG(LogTemp, Warning, TEXT("[BuildModeHUD-Debug] AddToViewport 완료! BuildingName=%s"), *CurrentBuildingInfo.BuildingName.ToString());
 }
 
 void UInv_BuildingComponent::HideBuildModeHUD()
 {
 	if (IsValid(BuildModeHUDInstance))
 	{
-		BuildModeHUDInstance->RemoveFromParent();
-		BuildModeHUDInstance = nullptr;
-#if INV_DEBUG_BUILD
-		UE_LOG(LogTemp, Warning, TEXT("BuildModeHUD: 제거됨"));
-#endif
+		// RemoveFromParent 대신 Collapsed로 숨김 — 재생성 비용 방지
+		BuildModeHUDInstance->SetVisibility(ESlateVisibility::Collapsed);
 	}
 }
 
@@ -1326,38 +1385,113 @@ void UInv_BuildingComponent::ApplyScanVFXToAnyActor(AActor* TargetActor)
 
 void UInv_BuildingComponent::ApplyGhostMaterial()
 {
-	if (!GhostPlacementMaterial || !IsValid(GhostActorInstance)) return;
+	UE_LOG(LogTemp, Warning, TEXT("[GhostMat] ===== ApplyGhostMaterial 시작 ====="));
 
-	// DMI 생성
+	// 1. GhostPlacementMaterial 체크
+	if (!GhostPlacementMaterial)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[GhostMat] FAIL: GhostPlacementMaterial이 NULL! BP에서 M_GhostPlacement를 할당하세요."));
+		return;
+	}
+	UE_LOG(LogTemp, Warning, TEXT("[GhostMat] GhostPlacementMaterial = %s"), *GhostPlacementMaterial->GetName());
+
+	// 2. GhostActorInstance 체크
+	if (!IsValid(GhostActorInstance))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[GhostMat] FAIL: GhostActorInstance가 Invalid!"));
+		return;
+	}
+	UE_LOG(LogTemp, Warning, TEXT("[GhostMat] GhostActor = %s (Class: %s)"),
+		*GhostActorInstance->GetName(), *GhostActorInstance->GetClass()->GetName());
+
+	// 3. DMI 생성
 	GhostDMI = UMaterialInstanceDynamic::Create(GhostPlacementMaterial, this);
-	if (!GhostDMI) return;
+	if (!GhostDMI)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[GhostMat] FAIL: DMI 생성 실패!"));
+		return;
+	}
+	UE_LOG(LogTemp, Warning, TEXT("[GhostMat] DMI 생성 성공: %s"), *GhostDMI->GetName());
 
-	// 초기 색상: 건설 가능 (파란)
+	// 4. 초기 색상 설정
 	GhostDMI->SetVectorParameterValue(TEXT("GhostColor"), GhostValidColor);
 	bGhostPrevCanPlace = true;
+	UE_LOG(LogTemp, Warning, TEXT("[GhostMat] 초기 색상 = Valid(파란) R=%.2f G=%.2f B=%.2f"),
+		GhostValidColor.R, GhostValidColor.G, GhostValidColor.B);
 
-	// 고스트 액터의 모든 메시에 DMI 적용
+	// 5. 모든 MeshComponent 수집
 	GhostSwappedMeshes.Empty();
 	TArray<UMeshComponent*> AllMeshes;
 	GhostActorInstance->GetComponents<UMeshComponent>(AllMeshes);
+	UE_LOG(LogTemp, Warning, TEXT("[GhostMat] MeshComponent 총 개수: %d"), AllMeshes.Num());
 
-	for (UMeshComponent* MeshComp : AllMeshes)
+	int32 SwappedCount = 0;
+	int32 SkippedCount = 0;
+
+	for (int32 MeshIdx = 0; MeshIdx < AllMeshes.Num(); ++MeshIdx)
 	{
-		if (!MeshComp || !MeshComp->IsVisible()) continue;
+		UMeshComponent* MeshComp = AllMeshes[MeshIdx];
+
+		if (!MeshComp)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[GhostMat]   [%d] SKIP: nullptr"), MeshIdx);
+			++SkippedCount;
+			continue;
+		}
+
+		if (!MeshComp->IsVisible())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[GhostMat]   [%d] SKIP: '%s' (Class=%s) — IsVisible=false"),
+				MeshIdx, *MeshComp->GetName(), *MeshComp->GetClass()->GetName());
+			++SkippedCount;
+			continue;
+		}
 
 		const int32 NumMats = MeshComp->GetNumMaterials();
+
+		// 교체 전 원본 머티리얼 기록
+		UE_LOG(LogTemp, Warning, TEXT("[GhostMat]   [%d] SWAP: '%s' (Class=%s, NumMats=%d, Visible=true)"),
+			MeshIdx, *MeshComp->GetName(), *MeshComp->GetClass()->GetName(), NumMats);
+
 		for (int32 i = 0; i < NumMats; ++i)
 		{
+			UMaterialInterface* OrigMat = MeshComp->GetMaterial(i);
+			UE_LOG(LogTemp, Warning, TEXT("[GhostMat]     Slot[%d] 원본=%s → GhostDMI"),
+				i, OrigMat ? *OrigMat->GetName() : TEXT("NULL"));
 			MeshComp->SetMaterial(i, GhostDMI);
 		}
 
-		// NumMats==0이어도 슬롯 0에 강제 적용 (DynamicMeshComponent 등)
 		if (NumMats == 0)
 		{
+			UE_LOG(LogTemp, Warning, TEXT("[GhostMat]     NumMats=0 → Slot[0]에 강제 적용"));
 			MeshComp->SetMaterial(0, GhostDMI);
 		}
 
 		GhostSwappedMeshes.Add(MeshComp);
+		++SwappedCount;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[GhostMat] ===== 완료: 교체=%d, 스킵=%d, 총=%d ====="),
+		SwappedCount, SkippedCount, AllMeshes.Num());
+
+	// 6. 교체 후 검증 — 실제 머티리얼이 GhostDMI인지 확인
+	for (int32 i = 0; i < GhostSwappedMeshes.Num(); ++i)
+	{
+		UMeshComponent* MeshComp = GhostSwappedMeshes[i];
+		if (!IsValid(MeshComp)) continue;
+
+		const int32 NumMats = MeshComp->GetNumMaterials();
+		for (int32 Slot = 0; Slot < NumMats; ++Slot)
+		{
+			UMaterialInterface* CurrentMat = MeshComp->GetMaterial(Slot);
+			const bool bIsGhostDMI = (CurrentMat == GhostDMI);
+			if (!bIsGhostDMI)
+			{
+				UE_LOG(LogTemp, Error, TEXT("[GhostMat] VERIFY FAIL: '%s' Slot[%d] = %s (GhostDMI가 아님!)"),
+					*MeshComp->GetName(), Slot,
+					CurrentMat ? *CurrentMat->GetName() : TEXT("NULL"));
+			}
+		}
 	}
 }
 

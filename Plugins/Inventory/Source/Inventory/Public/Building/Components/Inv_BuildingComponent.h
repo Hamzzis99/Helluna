@@ -13,6 +13,7 @@ class UInv_BuildModeHUD;
 class UMaterialInterface;
 class UMaterialInstanceDynamic;
 class UMeshComponent;
+class UStaticMesh;
 class UTexture2D;
 
 /**
@@ -35,6 +36,14 @@ struct FInv_BuildingSelectionInfo
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설")
 	TSubclassOf<AActor> ActualBuildingClass;
+
+	/** 경량 고스트용 프리뷰 메시 (유효하면 풀 액터 대신 StaticMesh만 스폰) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설")
+	TObjectPtr<UStaticMesh> PreviewMesh = nullptr;
+
+	/** 프리뷰 메시에 적용할 스케일 (원본 BuildingMesh 컴포넌트의 RelativeScale3D) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설")
+	FVector PreviewMeshScale = FVector::OneVector;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설")
 	int32 BuildingID = 0;
@@ -167,6 +176,13 @@ private:
 	// 현재 선택된 실제 건물 액터 클래스
 	UPROPERTY()
 	TSubclassOf<AActor> SelectedBuildingClass;
+
+	// 경량 고스트용 프리뷰 메시
+	UPROPERTY()
+	TObjectPtr<UStaticMesh> CurrentPreviewMesh;
+
+	// 경량 고스트에 적용할 스케일 (원본 BuildingMesh의 RelativeScale3D)
+	FVector CurrentPreviewMeshScale = FVector::OneVector;
 
 	// 현재 선택된 건물 ID
 	UPROPERTY()
@@ -384,6 +400,9 @@ private:
 
 	/** 이전 프레임 배치 가능 여부 (불필요한 업데이트 방지) */
 	bool bGhostPrevCanPlace = true;
+
+	/** [PerfTrace] 첫 빌드 Tick 측정 플래그 (디버깅용) */
+	bool bPerfTraceFirstTick = true;
 
 	/** 고스트 액터에 배치 피드백 머티리얼 적용 */
 	void ApplyGhostMaterial();
