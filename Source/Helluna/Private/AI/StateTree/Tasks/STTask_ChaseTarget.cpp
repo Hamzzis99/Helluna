@@ -50,7 +50,7 @@ FVector ProjectToNav(UWorld* World, const FVector& Point, const FVector& Extent 
  * Issue MoveTo. Returns true if path request was accepted.
  * Returns false if pathfinding failed (no NavMesh path).
  */
-bool IssueMoveToLocation(AAIController* AIC, const FVector& Goal, float Radius, bool bUsePathfinding = true)
+static bool IssueMoveToLocation(AAIController* AIC, const FVector& Goal, float Radius, bool bUsePathfinding = true)
 {
 	if (!AIC) return false;
 	FAIMoveRequest Req;
