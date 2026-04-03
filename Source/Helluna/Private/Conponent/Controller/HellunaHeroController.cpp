@@ -38,6 +38,9 @@
 // [DebugHUD] 디버그 HUD 시스템
 #include "UI/HUD/HellunaDebugHUDWidget.h"
 
+// [PauseMenu] 위젯 애니메이션 재생
+#include "Blueprint/WidgetBlueprintGeneratedClass.h"
+
 
 
 AHellunaHeroController::AHellunaHeroController()
@@ -54,6 +57,20 @@ FGenericTeamId AHellunaHeroController::GetGenericTeamId() const
 // ============================================================================
 // 라이프사이클
 // ============================================================================
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [PauseMenu] ESC / U 키 바인딩
+// ════════════════════════════════════════════════════════════════════════════════
+
+void AHellunaHeroController::SetupInputComponent()
+{
+	Super::SetupInputComponent();
+	if (InputComponent)
+	{
+		InputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &ThisClass::TogglePauseMenu);
+		InputComponent->BindKey(EKeys::U, IE_Pressed, this, &ThisClass::TogglePauseMenu);
+	}
+}
 
 void AHellunaHeroController::BeginPlay()
 {
@@ -1348,6 +1365,36 @@ void AHellunaHeroController::TogglePauseMenu()
 	if (IsValid(PauseMenuInstance))
 	{
 		PauseMenuInstance->AddToViewport(200);
+
+		// [PauseMenu] SlideIn 애니메이션 재생
+		if (UWidgetBlueprintGeneratedClass* WBGC = Cast<UWidgetBlueprintGeneratedClass>(PauseMenuInstance->GetClass()))
+		{
+			UE_LOG(LogTemp, Log, TEXT("[PauseMenu] WBGC found, Animations: %d"), WBGC->Animations.Num());
+			bool bFoundAnim = false;
+			for (UWidgetAnimation* Anim : WBGC->Animations)
+			{
+				if (Anim)
+				{
+					FString Label = Anim->GetDisplayLabel().ToString();
+					UE_LOG(LogTemp, Log, TEXT("[PauseMenu] Anim: '%s'"), *Label);
+					if (Label.Equals(TEXT("SlideIn")))
+					{
+						PauseMenuInstance->PlayAnimation(Anim);
+						UE_LOG(LogTemp, Log, TEXT("[PauseMenu] SlideIn 애니메이션 재생"));
+						bFoundAnim = true;
+						break;
+					}
+				}
+			}
+			if (!bFoundAnim)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[PauseMenu] SlideIn 애니메이션 못 찾음!"));
+			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[PauseMenu] WBGC cast 실패!"));
+		}
 
 		// 마우스 커서 표시 + UI 입력 허용 (게임 입력도 유지)
 		SetShowMouseCursor(true);

@@ -65,6 +65,44 @@ AHellunaLobbyGameMode* AHellunaLobbyController::GetLobbyGameMode() const
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
+// [PauseMenu] ESC / U 키 바인딩 + 토글
+// ════════════════════════════════════════════════════════════════════════════════
+
+void AHellunaLobbyController::SetupInputComponent()
+{
+	Super::SetupInputComponent();
+	if (InputComponent)
+	{
+		InputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &ThisClass::TogglePauseMenu);
+		InputComponent->BindKey(EKeys::U, IE_Pressed, this, &ThisClass::TogglePauseMenu);
+	}
+}
+
+void AHellunaLobbyController::TogglePauseMenu()
+{
+	if (!IsLocalController()) return;
+
+	if (IsValid(PauseMenuInstance))
+	{
+		PauseMenuInstance->RemoveFromParent();
+		PauseMenuInstance = nullptr;
+		return;
+	}
+
+	if (!IsValid(PauseMenuWidgetClass))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PauseMenu] PauseMenuWidgetClass 미설정"));
+		return;
+	}
+
+	PauseMenuInstance = CreateWidget<UUserWidget>(this, PauseMenuWidgetClass);
+	if (IsValid(PauseMenuInstance))
+	{
+		PauseMenuInstance->AddToViewport(200);
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
 // 생성자 — StashComp + LoadoutComp 생성
 // ════════════════════════════════════════════════════════════════════════════════
 //
