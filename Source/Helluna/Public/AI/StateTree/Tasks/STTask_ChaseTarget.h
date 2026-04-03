@@ -155,7 +155,7 @@ public:
 		meta = (DisplayName = "Stuck Check Interval",
 			ToolTip = "Monster Stuck Check Interval (sec).",
 			ClampMin = "0.1"))
-	float StuckCheckInterval = 0.8f;
+	float StuckCheckInterval = 0.4f;
 
 	UPROPERTY(EditAnywhere, Category = "Stuck",
 		meta = (DisplayName = "Stuck Distance Threshold",
@@ -174,6 +174,17 @@ public:
 			ToolTip = "This many consecutive stucks -> disable pathfinding and walk directly. \nNavMesh boundary Stuck Fix.",
 			ClampMin = "1"))
 	int32 DirectMoveStuckThreshold = 2;
+
+	UPROPERTY(EditAnywhere, Category = "Stuck",
+		meta = (DisplayName = "DirectMode Force Arrive Threshold",
+			ToolTip = "In DirectMode, if stuck count reaches this -> force arrival. \nHandles collision barriers near the ship where AddMovementInput is blocked.",
+			ClampMin = "3"))
+	int32 DirectModeForceArriveThreshold = 8;
+
+	UPROPERTY(EditAnywhere, Category = "Stuck",
+		meta = (DisplayName = "Instant DirectMode on Path Fail",
+			ToolTip = "ON: MoveTo path fail -> instant DirectMode (0 sec delay). \nOFF: wait for Stuck detection only."))
+	bool bInstantDirectModeOnPathFail = false;
 
 	// ==========================================================
 

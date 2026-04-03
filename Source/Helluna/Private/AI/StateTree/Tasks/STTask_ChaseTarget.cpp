@@ -47,12 +47,12 @@ FVector ProjectToNav(UWorld* World, const FVector& Point, const FVector& Extent 
 }
 
 /**
- * Issue MoveTo. bUsePathfinding=true: normal NavMesh path.
- * bUsePathfinding=false: walk directly (CMC handles collision/ground).
+ * Issue MoveTo. Returns true if path request was accepted.
+ * Returns false if pathfinding failed (no NavMesh path).
  */
-void IssueMoveToLocation(AAIController* AIC, const FVector& Goal, float Radius, bool bUsePathfinding = true)
+bool IssueMoveToLocation(AAIController* AIC, const FVector& Goal, float Radius, bool bUsePathfinding = true)
 {
-	if (!AIC) return;
+	if (!AIC) return false;
 	FAIMoveRequest Req;
 	Req.SetGoalLocation(Goal);
 	Req.SetAcceptanceRadius(Radius);
@@ -61,7 +61,8 @@ void IssueMoveToLocation(AAIController* AIC, const FVector& Goal, float Radius, 
 	Req.SetUsePathfinding(bUsePathfinding);
 	Req.SetAllowPartialPath(true);
 	Req.SetCanStrafe(false);
-	AIC->MoveTo(Req);
+	const FPathFollowingRequestResult Result = AIC->MoveTo(Req);
+	return Result.Code != EPathFollowingRequestResult::Failed;
 }
 
 FVector AngleToWorldPos(const FVector& Center, float AngleDeg, float Radius)
@@ -383,6 +384,29 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickShipChase(
 					*GetNameSafe(Pawn), Data.ConsecutiveStuckCount, DistToShip2D);
 			}
 
+			// DirectMode force arrive: collision barrier blocks all directions
+			if (Data.bDirectMoveMode && Data.ConsecutiveStuckCount >= DirectModeForceArriveThreshold)
+			{
+				Data.bSpreadArrived = true;
+				AIC->StopMovement();
+				AIC->SetFocus(Ship);
+
+				const FVector ToShip = (ShipLoc - PawnLoc).GetSafeNormal2D();
+				if (!ToShip.IsNearlyZero())
+				{
+					const FRotator FaceRot(0.f, ToShip.Rotation().Yaw, 0.f);
+					Pawn->SetActorRotation(FaceRot);
+					if (AController* C = Pawn->GetController())
+						C->SetControlRotation(FaceRot);
+					Pawn->ForceNetUpdate();
+				}
+
+				UE_LOG(LogTemp, Warning,
+					TEXT("[enemybugreport][Chase] ForceArrive (DirectMode stuck): Enemy=%s StuckCnt=%d Dist2D=%.1f"),
+					*GetNameSafe(Pawn), Data.ConsecutiveStuckCount, DistToShip2D);
+				return EStateTreeRunStatus::Running;
+			}
+
 			// Rotate angle
 			Data.AssignedAngleDeg = FMath::Fmod(Data.AssignedAngleDeg + AngleRotationOnStuck, 360.f);
 
@@ -454,14 +478,34 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickShipChase(
 		}
 
 		// Walk directly toward spread target via AddMovementInput
-		const FVector MoveDir = (SpreadTarget - PawnLoc).GetSafeNormal2D();
-		if (!MoveDir.IsNearlyZero())
+		const FVector ToTarget2D = (SpreadTarget - PawnLoc).GetSafeNormal2D();
+		if (!ToTarget2D.IsNearlyZero())
 		{
+			FVector MoveDir = ToTarget2D;
+
+			// When stuck in DirectMode, add perpendicular sidestep + Z boost to escape collision
+			if (Data.ConsecutiveStuckCount >= DirectMoveStuckThreshold + 1)
+			{
+				// Perpendicular sidestep: alternate left/right based on stuck count
+				const float SideSign = (Data.ConsecutiveStuckCount % 2 == 0) ? 1.f : -1.f;
+				const FVector Side(- ToTarget2D.Y * SideSign, ToTarget2D.X * SideSign, 0.f);
+				// Blend: 60% forward + 40% sidestep + Z boost
+				MoveDir = (ToTarget2D * 0.6f + Side * 0.4f).GetSafeNormal();
+				MoveDir.Z = 0.3f;
+				MoveDir.Normalize();
+			}
+			else if (Data.ConsecutiveStuckCount > 0)
+			{
+				// Light Z boost to climb terrain
+				MoveDir.Z = 0.2f;
+				MoveDir.Normalize();
+			}
+
 			Pawn->AddMovementInput(MoveDir, 1.0f);
 
 			// Face movement direction while walking
 			const FRotator CurrentRot = Pawn->GetActorRotation();
-			const FRotator MoveRot(0.f, MoveDir.Rotation().Yaw, 0.f);
+			const FRotator MoveRot(0.f, ToTarget2D.Rotation().Yaw, 0.f);
 			const FRotator NewRot = FMath::RInterpTo(CurrentRot, MoveRot, DeltaTime, 8.f);
 			Pawn->SetActorRotation(NewRot);
 			if (AController* C = Pawn->GetController())
@@ -482,7 +526,16 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickShipChase(
 		{
 			const FVector Goal = ComputeRushGoal(PawnLoc, ShipLoc,
 				Data.AssignedAngleDeg, SpreadPhaseRadius, RushWaypointStep, Pawn->GetWorld());
-			IssueMoveToLocation(AIC, Goal, AcceptanceRadius);
+			const bool bPathOk = IssueMoveToLocation(AIC, Goal, AcceptanceRadius);
+
+			// Path failed -> NavMesh boundary. Instant DirectMode.
+			if (bInstantDirectModeOnPathFail && !bPathOk && !Data.bDirectMoveMode)
+			{
+				Data.bDirectMoveMode = true;
+				UE_LOG(LogTemp, Warning,
+					TEXT("[enemybugreport][Chase] DirectMode ON (PathFail): Enemy=%s Phase=Rush Dist2D=%.1f"),
+					*GetNameSafe(Pawn), DistToShip2D);
+			}
 			Data.TimeSinceRepath = 0.f;
 		}
 
@@ -532,7 +585,16 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickShipChase(
 
 		if (bRepathDue || bIdle)
 		{
-			IssueMoveToLocation(AIC, SpreadGoal, AcceptanceRadius);
+			const bool bPathOk = IssueMoveToLocation(AIC, SpreadGoal, AcceptanceRadius);
+
+			// Path failed -> NavMesh boundary. Instant DirectMode.
+			if (bInstantDirectModeOnPathFail && !bPathOk && !Data.bDirectMoveMode)
+			{
+				Data.bDirectMoveMode = true;
+				UE_LOG(LogTemp, Warning,
+					TEXT("[enemybugreport][Chase] DirectMode ON (PathFail): Enemy=%s Phase=Spread Dist2D=%.1f"),
+					*GetNameSafe(Pawn), DistToShip2D);
+			}
 			Data.TimeSinceRepath = 0.f;
 		}
 
