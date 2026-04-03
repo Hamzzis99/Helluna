@@ -1313,18 +1313,69 @@ void AHellunaHeroController::OnDebugHUDToggle(const FInputActionValue& Value)
 }
 
 // =========================================================================================
+// [PauseMenu] 일시정지 메뉴 위젯 토글
+// =========================================================================================
+
+void AHellunaHeroController::TogglePauseMenu()
+{
+	// 이미 열려 있으면 닫기
+	if (IsValid(PauseMenuInstance))
+	{
+		PauseMenuInstance->RemoveFromParent();
+		PauseMenuInstance = nullptr;
+
+		// 마우스 커서 숨기기 + 게임 입력 복귀
+		SetShowMouseCursor(false);
+		SetInputMode(FInputModeGameOnly());
+
+		UE_LOG(LogTemp, Log, TEXT("[PauseMenu] 위젯 닫기"));
+		return;
+	}
+
+	// 위젯 클래스 미설정 시 경고
+	if (!IsValid(PauseMenuWidgetClass))
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[PauseMenu] PauseMenuWidgetClass 미설정 — BP_HellunaHeroController에서 지정 필요"));
+		return;
+	}
+
+	// 생성 및 표시
+	UGameInstance* GI = GetGameInstance();
+	if (!IsValid(GI)) return;
+
+	PauseMenuInstance = CreateWidget<UUserWidget>(GI, PauseMenuWidgetClass);
+	if (IsValid(PauseMenuInstance))
+	{
+		PauseMenuInstance->AddToViewport(200);
+
+		// 마우스 커서 표시 + UI 입력 허용 (게임 입력도 유지)
+		SetShowMouseCursor(true);
+		FInputModeGameAndUI InputMode;
+		InputMode.SetWidgetToFocus(PauseMenuInstance->TakeWidget());
+		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+		SetInputMode(InputMode);
+
+		UE_LOG(LogTemp, Log, TEXT("[PauseMenu] 위젯 열기"));
+	}
+}
+
+// =========================================================================================
 // [GraphicsSettings] 그래픽 설정 위젯 토글
 // =========================================================================================
 
 void AHellunaHeroController::ToggleGraphicsSettings()
 {
-	if (!IsLocalController()) return;
-
 	// 이미 열려 있으면 닫기
 	if (IsValid(GraphicsSettingsInstance))
 	{
 		GraphicsSettingsInstance->RemoveFromParent();
 		GraphicsSettingsInstance = nullptr;
+
+		// 마우스 커서 숨기기 + 게임 입력 복귀
+		SetShowMouseCursor(false);
+		SetInputMode(FInputModeGameOnly());
+
 		UE_LOG(LogTemp, Log, TEXT("[GraphicsSettings] 위젯 닫기"));
 		return;
 	}
@@ -1337,11 +1388,22 @@ void AHellunaHeroController::ToggleGraphicsSettings()
 		return;
 	}
 
-	// 생성 및 표시
-	GraphicsSettingsInstance = CreateWidget<UHellunaGraphicsSettingsWidget>(this, GraphicsSettingsWidgetClass);
+	// 생성 및 표시 — GetGameInstance() 사용 (데디케이티드 서버 구조에서 LocalPlayerController 검증 우회)
+	UGameInstance* GI = GetGameInstance();
+	if (!IsValid(GI)) return;
+
+	GraphicsSettingsInstance = CreateWidget<UHellunaGraphicsSettingsWidget>(GI, GraphicsSettingsWidgetClass);
 	if (IsValid(GraphicsSettingsInstance))
 	{
 		GraphicsSettingsInstance->AddToViewport(100);
+
+		// 마우스 커서 표시 + UI 입력 허용 (게임 입력도 유지)
+		SetShowMouseCursor(true);
+		FInputModeGameAndUI InputMode;
+		InputMode.SetWidgetToFocus(GraphicsSettingsInstance->TakeWidget());
+		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+		SetInputMode(InputMode);
+
 		UE_LOG(LogTemp, Log, TEXT("[GraphicsSettings] 위젯 열기"));
 	}
 }

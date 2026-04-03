@@ -13,25 +13,23 @@
 #include "Kismet/KismetSystemLibrary.h"
 #include "RHI.h"
 
+// ── DLSS/Streamline Blueprint API ──
+#include "DLSSLibrary.h"
+#include "StreamlineLibrary.h"
+#include "StreamlineLibraryDLSSG.h"
+#include "StreamlineLibraryReflex.h"
+
 DEFINE_LOG_CATEGORY_STATIC(LogHellunaGraphics, Log, All);
 
 // ════════════════════════════════════════════════════════════════════════════════
-//  CVar 이름 상수
+//  CVar 이름 상수 (FSR + Scalability 전용, DLSS/Streamline은 Blueprint API 사용)
 // ════════════════════════════════════════════════════════════════════════════════
 namespace GraphicsCVars
 {
-	// DLSS
-	static const TCHAR* DLSSEnable          = TEXT("r.NGX.DLSS.Enable");
-	static const TCHAR* DLSSQuality         = TEXT("r.NGX.DLSS.Quality.Setting");
-
-	// FSR
-	static const TCHAR* FSREnable           = TEXT("r.FidelityFX.FSR3.Enabled");
-	static const TCHAR* FSRQuality          = TEXT("r.FidelityFX.FSR3.QualityMode");
+	// FSR  (Blueprint API 없음 → CVar 직접 제어)
+	static const TCHAR* FSREnable           = TEXT("r.FidelityFX.FSR.Enabled");
+	static const TCHAR* FSRQuality          = TEXT("r.FidelityFX.FSR.QualityMode");
 	static const TCHAR* FSRFrameInterp      = TEXT("r.FidelityFX.FI.Enabled");
-
-	// Streamline
-	static const TCHAR* DLSSGEnable         = TEXT("r.Streamline.DLSSG.Enable");
-	static const TCHAR* ReflexEnable        = TEXT("r.Streamline.Reflex.Enable");
 
 	// TSR / 공통
 	static const TCHAR* ScreenPercentage    = TEXT("r.ScreenPercentage");
@@ -234,8 +232,8 @@ void UHellunaGraphicsSettingsWidget::LoadCurrentSettings()
 {
 	bSuppressCallbacks = true;
 
-	// ── 업스케일러 판별 ──
-	const bool bDLSS = (GetCVarInt(GraphicsCVars::DLSSEnable) != 0);
+	// ── 업스케일러 판별 (DLSS=Blueprint API, FSR=CVar) ──
+	const bool bDLSS = UDLSSLibrary::IsDLSSEnabled();
 	const bool bFSR  = (GetCVarInt(GraphicsCVars::FSREnable) != 0);
 
 	if (bDLSS)        CurrentUpscaler = EHellunaUpscalerType::DLSS;
@@ -260,14 +258,14 @@ void UHellunaGraphicsSettingsWidget::LoadCurrentSettings()
 
 	PopulateUpscalerQualityOptions();
 
-	// ── 프레임 생성 상태 ──
-	const bool bDLSSG = (GetCVarInt(GraphicsCVars::DLSSGEnable) != 0);
+	// ── 프레임 생성 상태 (DLSS-G=Blueprint API, FSR FI=CVar) ──
+	const bool bDLSSG = (UStreamlineLibraryDLSSG::GetDLSSGMode() != EStreamlineDLSSGMode::Off);
 	const bool bFSRFI = (GetCVarInt(GraphicsCVars::FSRFrameInterp) != 0);
 	bFrameGenEnabled = bDLSSG || bFSRFI;
 	if (CheckBox_FrameGen) CheckBox_FrameGen->SetIsChecked(bFrameGenEnabled);
 
-	// ── 리플렉스 상태 ──
-	bReflexEnabled = (GetCVarInt(GraphicsCVars::ReflexEnable) != 0);
+	// ── 리플렉스 상태 (Blueprint API) ──
+	bReflexEnabled = (UStreamlineLibraryReflex::GetReflexMode() != EStreamlineReflexMode::Off);
 	if (CheckBox_Reflex) CheckBox_Reflex->SetIsChecked(bReflexEnabled);
 
 	// ── TSR 슬라이더 ──
@@ -370,17 +368,17 @@ void UHellunaGraphicsSettingsWidget::PopulateUpscalerQualityOptions()
 		ComboBox_UpscalerQuality->AddOption(TEXT("Balanced"));
 		ComboBox_UpscalerQuality->AddOption(TEXT("Quality"));
 		ComboBox_UpscalerQuality->AddOption(TEXT("DLAA"));
-		// 현재 설정 반영
+		// 현재 설정 반영 (Blueprint API)
 		{
-			const int32 Q = GetCVarInt(GraphicsCVars::DLSSQuality);
-			switch (Q)
+			const UDLSSMode Mode = UDLSSLibrary::GetDLSSMode();
+			switch (Mode)
 			{
-			case 0: ComboBox_UpscalerQuality->SetSelectedOption(TEXT("Ultra Performance")); break;
-			case 1: ComboBox_UpscalerQuality->SetSelectedOption(TEXT("Performance")); break;
-			case 2: ComboBox_UpscalerQuality->SetSelectedOption(TEXT("Balanced")); break;
-			case 3: ComboBox_UpscalerQuality->SetSelectedOption(TEXT("Quality")); break;
-			case 5: ComboBox_UpscalerQuality->SetSelectedOption(TEXT("DLAA")); break;
-			default: ComboBox_UpscalerQuality->SetSelectedOption(TEXT("Balanced")); break;
+			case UDLSSMode::UltraPerformance: ComboBox_UpscalerQuality->SetSelectedOption(TEXT("Ultra Performance")); break;
+			case UDLSSMode::Performance:      ComboBox_UpscalerQuality->SetSelectedOption(TEXT("Performance")); break;
+			case UDLSSMode::Balanced:         ComboBox_UpscalerQuality->SetSelectedOption(TEXT("Balanced")); break;
+			case UDLSSMode::Quality:          ComboBox_UpscalerQuality->SetSelectedOption(TEXT("Quality")); break;
+			case UDLSSMode::DLAA:             ComboBox_UpscalerQuality->SetSelectedOption(TEXT("DLAA")); break;
+			default:                          ComboBox_UpscalerQuality->SetSelectedOption(TEXT("Balanced")); break;
 			}
 		}
 		break;
@@ -416,15 +414,16 @@ void UHellunaGraphicsSettingsWidget::OnUpscalerChanged(FString SelectedItem, ESe
 {
 	if (bSuppressCallbacks) return;
 
-	// 이전 업스케일러 끄기
-	SetCVar(GraphicsCVars::DLSSEnable, 0);
+	// ── 이전 업스케일러 끄기 (DLSS=Blueprint API, FSR=CVar) ──
+	UDLSSLibrary::EnableDLSS(false);
 	SetCVar(GraphicsCVars::FSREnable, 0);
 
-	// 새 업스케일러 설정
+	// ── 새 업스케일러 설정 ──
 	if (SelectedItem == TEXT("DLSS"))
 	{
 		CurrentUpscaler = EHellunaUpscalerType::DLSS;
-		SetCVar(GraphicsCVars::DLSSEnable, 1);
+		UDLSSLibrary::EnableDLSS(true);
+		UDLSSLibrary::SetDLSSMode(this, UDLSSMode::Balanced); // 기본 Balanced
 	}
 	else if (SelectedItem == TEXT("FSR"))
 	{
@@ -441,9 +440,9 @@ void UHellunaGraphicsSettingsWidget::OnUpscalerChanged(FString SelectedItem, ESe
 		CurrentUpscaler = EHellunaUpscalerType::Off;
 	}
 
-	// 프레임 생성 리셋
+	// ── 프레임 생성 리셋 (DLSS-G=Blueprint API, FSR FI=CVar) ──
 	bFrameGenEnabled = false;
-	SetCVar(GraphicsCVars::DLSSGEnable, 0);
+	UStreamlineLibraryDLSSG::SetDLSSGMode(EStreamlineDLSSGMode::Off);
 	SetCVar(GraphicsCVars::FSRFrameInterp, 0);
 	if (CheckBox_FrameGen) CheckBox_FrameGen->SetIsChecked(false);
 
@@ -462,14 +461,15 @@ void UHellunaGraphicsSettingsWidget::OnUpscalerQualityChanged(FString SelectedIt
 
 	if (CurrentUpscaler == EHellunaUpscalerType::DLSS)
 	{
-		int32 QualitySetting = 2; // Balanced
-		if      (SelectedItem == TEXT("Ultra Performance")) QualitySetting = 0;
-		else if (SelectedItem == TEXT("Performance"))       QualitySetting = 1;
-		else if (SelectedItem == TEXT("Balanced"))          QualitySetting = 2;
-		else if (SelectedItem == TEXT("Quality"))           QualitySetting = 3;
-		else if (SelectedItem == TEXT("DLAA"))              QualitySetting = 5;
+		// DLSS 품질 모드: Blueprint API (CVar 없음)
+		UDLSSMode DLSSMode = UDLSSMode::Balanced;
+		if      (SelectedItem == TEXT("Ultra Performance")) DLSSMode = UDLSSMode::UltraPerformance;
+		else if (SelectedItem == TEXT("Performance"))       DLSSMode = UDLSSMode::Performance;
+		else if (SelectedItem == TEXT("Balanced"))          DLSSMode = UDLSSMode::Balanced;
+		else if (SelectedItem == TEXT("Quality"))           DLSSMode = UDLSSMode::Quality;
+		else if (SelectedItem == TEXT("DLAA"))              DLSSMode = UDLSSMode::DLAA;
 
-		SetCVar(GraphicsCVars::DLSSQuality, QualitySetting);
+		UDLSSLibrary::SetDLSSMode(this, DLSSMode);
 	}
 	else if (CurrentUpscaler == EHellunaUpscalerType::FSR)
 	{
@@ -510,10 +510,12 @@ void UHellunaGraphicsSettingsWidget::OnFrameGenToggled(bool bIsChecked)
 
 	if (CurrentUpscaler == EHellunaUpscalerType::DLSS)
 	{
-		SetCVar(GraphicsCVars::DLSSGEnable, bIsChecked ? 1 : 0);
+		// DLSS Frame Generation: Blueprint API
+		UStreamlineLibraryDLSSG::SetDLSSGMode(bIsChecked ? EStreamlineDLSSGMode::Auto : EStreamlineDLSSGMode::Off);
 	}
 	else if (CurrentUpscaler == EHellunaUpscalerType::FSR)
 	{
+		// FSR Frame Interpolation: CVar
 		SetCVar(GraphicsCVars::FSRFrameInterp, bIsChecked ? 1 : 0);
 	}
 
@@ -530,7 +532,8 @@ void UHellunaGraphicsSettingsWidget::OnReflexToggled(bool bIsChecked)
 	if (bSuppressCallbacks) return;
 
 	bReflexEnabled = bIsChecked;
-	SetCVar(GraphicsCVars::ReflexEnable, bIsChecked ? 1 : 0);
+	// Reflex: Blueprint API
+	UStreamlineLibraryReflex::SetReflexMode(bIsChecked ? EStreamlineReflexMode::Enabled : EStreamlineReflexMode::Off);
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -585,7 +588,7 @@ void UHellunaGraphicsSettingsWidget::UpdateReflexAvailability()
 		{
 			CheckBox_Reflex->SetIsChecked(false);
 			bReflexEnabled = false;
-			SetCVar(GraphicsCVars::ReflexEnable, 0);
+			UStreamlineLibraryReflex::SetReflexMode(EStreamlineReflexMode::Off);
 		}
 	}
 
@@ -768,13 +771,13 @@ void UHellunaGraphicsSettingsWidget::OnResetDefaultClicked()
 		Settings->ApplySettings(false);
 	}
 
-	// 업스케일러 기본값: DLSS
-	SetCVar(GraphicsCVars::DLSSEnable, 1);
+	// 업스케일러 기본값: DLSS (Blueprint API + CVar)
+	UDLSSLibrary::EnableDLSS(true);
+	UDLSSLibrary::SetDLSSMode(this, UDLSSMode::Balanced);
 	SetCVar(GraphicsCVars::FSREnable, 0);
-	SetCVar(GraphicsCVars::DLSSQuality, 2); // Balanced
-	SetCVar(GraphicsCVars::DLSSGEnable, 0);
+	UStreamlineLibraryDLSSG::SetDLSSGMode(EStreamlineDLSSGMode::Off);
 	SetCVar(GraphicsCVars::FSRFrameInterp, 0);
-	SetCVar(GraphicsCVars::ReflexEnable, 0);
+	UStreamlineLibraryReflex::SetReflexMode(EStreamlineReflexMode::Off);
 	SetCVar(GraphicsCVars::ScreenPercentage, 100.f);
 
 	LoadCurrentSettings();

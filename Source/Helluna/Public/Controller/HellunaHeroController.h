@@ -18,6 +18,7 @@ class UInputMappingContext;
 class APuzzleCubeActor;
 class ABossEncounterCube;
 class UPuzzleGridWidget;
+class UUserWidget;
 class UPostProcessComponent;
 class UHellunaDebugHUDWidget;
 class UHellunaGraphicsSettingsWidget;
@@ -455,6 +456,26 @@ public:
 	 */
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_BossEncounterActivate();
+
+	// =========================================================================================
+	// [일시정지 메뉴] 위젯 토글
+	// =========================================================================================
+public:
+	/** 일시정지 메뉴 위젯 토글 (Escape 키에서 호출) */
+	UFUNCTION(BlueprintCallable, Category = "UI (유아이)",
+		meta = (DisplayName = "Toggle Pause Menu (일시정지 메뉴 토글)"))
+	void TogglePauseMenu();
+
+protected:
+	/** 일시정지 메뉴 위젯 클래스 (BP에서 WBP_HellunaPauseMenu 지정) */
+	UPROPERTY(EditDefaultsOnly, Category = "UI (유아이)",
+		meta = (DisplayName = "Pause Menu Widget Class (일시정지 메뉴 위젯 클래스)"))
+	TSubclassOf<UUserWidget> PauseMenuWidgetClass;
+
+private:
+	/** 일시정지 메뉴 위젯 인스턴스 */
+	UPROPERTY()
+	TObjectPtr<UUserWidget> PauseMenuInstance;
 
 	// =========================================================================================
 	// [그래픽 설정] 위젯 토글
