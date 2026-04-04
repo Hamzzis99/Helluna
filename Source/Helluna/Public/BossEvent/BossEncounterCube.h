@@ -22,6 +22,37 @@ class UMaterialInterface;
 class UMaterialInstanceDynamic;
 class UStaticMeshComponent;
 
+/** 어둡게 처리된 메쉬 상태 — USTRUCT로 GC 추적 보장 (DMI 해제 방지) */
+USTRUCT()
+struct FDarkenedMesh
+{
+	GENERATED_BODY()
+
+	TWeakObjectPtr<AActor> TargetActor;
+	TWeakObjectPtr<UStaticMeshComponent> MeshComp;
+
+	/** 원본 머티리얼 백업 (슬롯별) — GC가 추적해야 해제 방지 */
+	UPROPERTY()
+	TArray<TObjectPtr<UMaterialInterface>> OriginalMaterials;
+
+	/** 복원용 DMI — GC가 추적해야 해제 방지 (크래시 원인) */
+	UPROPERTY()
+	TObjectPtr<UMaterialInstanceDynamic> DMI = nullptr;
+
+	/** 메쉬 바운딩 Z 범위 */
+	float BottomZ = 0.f;
+	float TopZ = 0.f;
+
+	/** 스캔 밴드 폭 (cm) */
+	float BandWidth = 50.f;
+
+	/** 복원 진행도: -1 = 웨이브 미도달, 0~1 = 복원 중 */
+	float ScanProgress = -1.f;
+
+	/** 복원 애니메이션 시작됨 */
+	bool bRestoreStarted = false;
+};
+
 /**
  * 중간보스 조우 큐브 — F키 홀드로 보스 소환 이벤트 시작
  *
@@ -449,33 +480,8 @@ private:
 	// [BossRestore] 환경 메쉬 어둡게 처리 + 스캔 복원 내부
 	// =========================================================================================
 
-	/** 어둡게 처리된 메쉬 상태 */
-	struct FDarkenedMesh
-	{
-		TWeakObjectPtr<AActor> TargetActor;
-		TWeakObjectPtr<UStaticMeshComponent> MeshComp;
-
-		/** 원본 머티리얼 백업 (슬롯별) */
-		TArray<TObjectPtr<UMaterialInterface>> OriginalMaterials;
-
-		/** 복원용 DMI */
-		TObjectPtr<UMaterialInstanceDynamic> DMI;
-
-		/** 메쉬 바운딩 Z 범위 */
-		float BottomZ = 0.f;
-		float TopZ = 0.f;
-
-		/** 스캔 밴드 폭 (cm) */
-		float BandWidth = 50.f;
-
-		/** 복원 진행도: -1 = 웨이브 미도달, 0~1 = 복원 중 */
-		float ScanProgress = -1.f;
-
-		/** 복원 애니메이션 시작됨 */
-		bool bRestoreStarted = false;
-	};
-
 	/** 어둡게 처리된 메쉬 목록 */
+	UPROPERTY()
 	TArray<FDarkenedMesh> DarkenedMeshes;
 
 	/** 보스 영역 내 메쉬 어둡게 처리 (보스 등장 시 호출) */
