@@ -23,6 +23,7 @@
 #include "InputMappingContext.h"
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
 #include "Settings/Widget/HellunaGraphicsSettingsWidget.h"
+#include "UI/PauseMenu/HellunaPauseMenuWidget.h"
 
 // [Puzzle] 퍼즐 시스템
 #include "Puzzle/PuzzleCubeActor.h"
@@ -39,7 +40,7 @@
 #include "UI/HUD/HellunaDebugHUDWidget.h"
 
 // [PauseMenu] 위젯 애니메이션 재생
-#include "Blueprint/WidgetBlueprintGeneratedClass.h"
+// WidgetBlueprintGeneratedClass는 PauseMenuWidget 내부로 이동
 
 
 
@@ -58,18 +59,9 @@ FGenericTeamId AHellunaHeroController::GetGenericTeamId() const
 // 라이프사이클
 // ============================================================================
 
-// ════════════════════════════════════════════════════════════════════════════════
-// [PauseMenu] ESC / U 키 바인딩
-// ════════════════════════════════════════════════════════════════════════════════
-
 void AHellunaHeroController::SetupInputComponent()
 {
 	Super::SetupInputComponent();
-	if (InputComponent)
-	{
-		InputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &ThisClass::TogglePauseMenu);
-		InputComponent->BindKey(EKeys::U, IE_Pressed, this, &ThisClass::TogglePauseMenu);
-	}
 }
 
 void AHellunaHeroController::BeginPlay()
@@ -189,6 +181,25 @@ void AHellunaHeroController::BeginPlay()
 		);
 
 		UE_LOG(LogHellunaChat, Log, TEXT("[HellunaHeroController] 채팅 위젯 초기화 타이머 설정 (0.5초)"));
+	}
+
+	// ── [PauseMenu] ESC/U 키 바인딩 (Enhanced Input) ──
+	if (IsLocalController() && PauseMenuToggleAction && PauseMenuMappingContext)
+	{
+		if (ULocalPlayer* PauseLP = GetLocalPlayer())
+		{
+			if (UEnhancedInputLocalPlayerSubsystem* PauseSub = PauseLP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
+			{
+				PauseSub->AddMappingContext(PauseMenuMappingContext, 10);
+				UE_LOG(LogTemp, Log, TEXT("[PauseMenu] PauseMenuMappingContext 추가 완료 (priority=10)"));
+			}
+		}
+
+		if (UEnhancedInputComponent* PauseEIC = Cast<UEnhancedInputComponent>(InputComponent))
+		{
+			PauseEIC->BindAction(PauseMenuToggleAction, ETriggerEvent::Started, this, &AHellunaHeroController::OnPauseMenuToggleInput);
+			UE_LOG(LogTemp, Log, TEXT("[PauseMenu] PauseMenuToggleAction 바인딩 완료 (ESC+U)"));
+		}
 	}
 
 	// ── [DebugHUD] 디버그 HUD 생성 + F5 입력 바인딩 (로컬 플레이어만) ──
@@ -1330,18 +1341,29 @@ void AHellunaHeroController::OnDebugHUDToggle(const FInputActionValue& Value)
 }
 
 // =========================================================================================
+// [PauseMenu] Enhanced Input 핸들러
+// =========================================================================================
+
+void AHellunaHeroController::OnPauseMenuToggleInput(const FInputActionValue& Value)
+{
+	TogglePauseMenu();
+}
+
+// =========================================================================================
 // [PauseMenu] 일시정지 메뉴 위젯 토글
 // =========================================================================================
 
 void AHellunaHeroController::TogglePauseMenu()
 {
-	// 이미 열려 있으면 닫기
+	// 서버 측 PlayerController에서는 위젯 생성 불가 — 로컬만 허용
+	if (!IsLocalController()) return;
+
+	// 이미 열려 있으면 직접 제거 (키 토글 / 애니메이션 완료 콜백 공용)
 	if (IsValid(PauseMenuInstance))
 	{
 		PauseMenuInstance->RemoveFromParent();
 		PauseMenuInstance = nullptr;
 
-		// 마우스 커서 숨기기 + 게임 입력 복귀
 		SetShowMouseCursor(false);
 		SetInputMode(FInputModeGameOnly());
 
@@ -1357,44 +1379,14 @@ void AHellunaHeroController::TogglePauseMenu()
 		return;
 	}
 
-	// 생성 및 표시
-	UGameInstance* GI = GetGameInstance();
-	if (!IsValid(GI)) return;
-
-	PauseMenuInstance = CreateWidget<UUserWidget>(GI, PauseMenuWidgetClass);
+	// 생성 및 표시 (PlayerController 소유 — GetOwningPlayer() 정상 동작)
+	PauseMenuInstance = CreateWidget<UHellunaPauseMenuWidget>(this, PauseMenuWidgetClass);
 	if (IsValid(PauseMenuInstance))
 	{
 		PauseMenuInstance->AddToViewport(200);
 
-		// [PauseMenu] SlideIn 애니메이션 재생
-		if (UWidgetBlueprintGeneratedClass* WBGC = Cast<UWidgetBlueprintGeneratedClass>(PauseMenuInstance->GetClass()))
-		{
-			UE_LOG(LogTemp, Log, TEXT("[PauseMenu] WBGC found, Animations: %d"), WBGC->Animations.Num());
-			bool bFoundAnim = false;
-			for (UWidgetAnimation* Anim : WBGC->Animations)
-			{
-				if (Anim)
-				{
-					FString Label = Anim->GetDisplayLabel().ToString();
-					UE_LOG(LogTemp, Log, TEXT("[PauseMenu] Anim: '%s'"), *Label);
-					if (Label.Equals(TEXT("SlideIn")))
-					{
-						PauseMenuInstance->PlayAnimation(Anim);
-						UE_LOG(LogTemp, Log, TEXT("[PauseMenu] SlideIn 애니메이션 재생"));
-						bFoundAnim = true;
-						break;
-					}
-				}
-			}
-			if (!bFoundAnim)
-			{
-				UE_LOG(LogTemp, Warning, TEXT("[PauseMenu] SlideIn 애니메이션 못 찾음!"));
-			}
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("[PauseMenu] WBGC cast 실패!"));
-		}
+		// SlideIn 애니메이션 재생
+		PauseMenuInstance->PlayOpenAnimation();
 
 		// 마우스 커서 표시 + UI 입력 허용 (게임 입력도 유지)
 		SetShowMouseCursor(true);
@@ -1403,7 +1395,8 @@ void AHellunaHeroController::TogglePauseMenu()
 		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 		SetInputMode(InputMode);
 
-		UE_LOG(LogTemp, Log, TEXT("[PauseMenu] 위젯 열기"));
+		UE_LOG(LogTemp, Log, TEXT("[PauseMenu] 위젯 열기 — 클래스: %s"),
+			*PauseMenuInstance->GetClass()->GetName());
 	}
 }
 

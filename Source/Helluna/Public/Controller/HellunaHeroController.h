@@ -18,10 +18,10 @@ class UInputMappingContext;
 class APuzzleCubeActor;
 class ABossEncounterCube;
 class UPuzzleGridWidget;
-class UUserWidget;
 class UPostProcessComponent;
 class UHellunaDebugHUDWidget;
 class UHellunaGraphicsSettingsWidget;
+class UHellunaPauseMenuWidget;
 
 /**
  * @brief   Helluna 영웅 전용 PlayerController
@@ -471,12 +471,25 @@ protected:
 	/** 일시정지 메뉴 위젯 클래스 (BP에서 WBP_HellunaPauseMenu 지정) */
 	UPROPERTY(EditDefaultsOnly, Category = "UI (유아이)",
 		meta = (DisplayName = "Pause Menu Widget Class (일시정지 메뉴 위젯 클래스)"))
-	TSubclassOf<UUserWidget> PauseMenuWidgetClass;
+	TSubclassOf<UHellunaPauseMenuWidget> PauseMenuWidgetClass;
+
+	/** 일시정지 메뉴 토글 입력 액션 (ESC/U 키에 매핑된 IA 에셋) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Input (유아이|입력)",
+		meta = (DisplayName = "Pause Menu Toggle Action (일시정지 메뉴 토글 액션)"))
+	TObjectPtr<UInputAction> PauseMenuToggleAction;
+
+	/** 일시정지 메뉴 입력 매핑 컨텍스트 (ESC+U → PauseMenuToggleAction) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Input (유아이|입력)",
+		meta = (DisplayName = "Pause Menu Mapping Context (일시정지 메뉴 입력 매핑)"))
+	TObjectPtr<UInputMappingContext> PauseMenuMappingContext;
 
 private:
 	/** 일시정지 메뉴 위젯 인스턴스 */
 	UPROPERTY()
-	TObjectPtr<UUserWidget> PauseMenuInstance;
+	TObjectPtr<UHellunaPauseMenuWidget> PauseMenuInstance;
+
+	/** PauseMenu Enhanced Input 핸들러 */
+	void OnPauseMenuToggleInput(const struct FInputActionValue& Value);
 
 	// =========================================================================================
 	// [그래픽 설정] 위젯 토글
