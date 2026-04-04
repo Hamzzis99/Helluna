@@ -1,15 +1,20 @@
 #include "Object/ResourceUsingObject/HellunaBaseResourceUsingObject.h"
 #include "Components/BoxComponent.h"
-#include "Components/StaticMeshComponent.h" 
+#include "Components/StaticMeshComponent.h"
 
 // [김기현] 다이나믹 메쉬와 변형 컴포넌트 사용을 위한 헤더 추가
 #include "Components/DynamicMeshComponent.h"
 #include "Components/MDF_DeformableComponent.h"
-#include "Engine/StaticMesh.h" 
+#include "Engine/StaticMesh.h"
+
+// [스캔 VFX]
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Components/MeshComponent.h"
 
 AHellunaBaseResourceUsingObject::AHellunaBaseResourceUsingObject()
 {
-    PrimaryActorTick.bCanEverTick = false;
+    PrimaryActorTick.bCanEverTick = true;
+    PrimaryActorTick.bStartWithTickEnabled = false;
     
     // ==================================================================================
     // [김기현 - MDF 시스템 1단계] 루트 컴포넌트 교체 (StaticMesh -> DynamicMesh)
@@ -95,6 +100,20 @@ void AHellunaBaseResourceUsingObject::BeginPlay()
 {
     Super::BeginPlay();
     EnsureRuntimeResourceInitialization();
+
+    UE_LOG(LogTemp, Warning, TEXT("[ScanVFX-Diag] BaseResourceUsing::BeginPlay → %s, HasAuth=%d, Material=%s"),
+        *GetName(), HasAuthority(),
+        PlacementScanMaterial ? *PlacementScanMaterial->GetName() : TEXT("NULL"));
+    StartPlacementScanVFX();
+}
+
+void AHellunaBaseResourceUsingObject::Tick(float DeltaTime)
+{
+    Super::Tick(DeltaTime);
+    if (bScanActive)
+    {
+        TickPlacementScan(DeltaTime);
+    }
 }
 
 // [기존 로직] UI 띄우기 (유지)
@@ -136,4 +155,161 @@ void AHellunaBaseResourceUsingObject::CollisionBoxBeginOverlap(UPrimitiveCompone
 void AHellunaBaseResourceUsingObject::CollisionBoxEndOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex)
 {
 
+}
+
+// ============================================================================
+// 배치 스캔 VFX
+// ============================================================================
+
+void AHellunaBaseResourceUsingObject::StartPlacementScanVFX()
+{
+    if (!PlacementScanMaterial)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[ScanVFX-Diag] %s: SKIP — PlacementScanMaterial is NULL"), *GetName());
+        return;
+    }
+
+    if (bScanActive)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[ScanVFX-Diag] %s: SKIP — bScanActive already true"), *GetName());
+        return;
+    }
+
+    TArray<UMeshComponent*> AllMeshes;
+    GetComponents<UMeshComponent>(AllMeshes);
+
+    if (AllMeshes.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[ScanVFX-Diag] %s: SKIP — no MeshComponent found"), *GetName());
+        return;
+    }
+
+    FBox MeshBounds(ForceInit);
+    int32 ValidMeshCount = 0;
+    for (UMeshComponent* MeshComp : AllMeshes)
+    {
+        if (MeshComp && MeshComp->IsVisible() && MeshComp->GetNumMaterials() > 0)
+        {
+            MeshBounds += MeshComp->Bounds.GetBox();
+            ++ValidMeshCount;
+        }
+        else if (MeshComp)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[ScanVFX-Diag] %s: mesh '%s' skipped (Visible=%d, NumMats=%d)"),
+                *GetName(), *MeshComp->GetName(), MeshComp->IsVisible(), MeshComp->GetNumMaterials());
+        }
+    }
+    UE_LOG(LogTemp, Warning, TEXT("[ScanVFX-Diag] %s: total meshes=%d, valid=%d"),
+        *GetName(), AllMeshes.Num(), ValidMeshCount);
+
+    if (!MeshBounds.IsValid)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[ScanVFX-Diag] %s: SKIP — MeshBounds invalid"), *GetName());
+        return;
+    }
+    ScanBottomZ = MeshBounds.Min.Z;
+    ScanTopZ = MeshBounds.Max.Z;
+
+    const float MeshHeight = ScanTopZ - ScanBottomZ;
+    UE_LOG(LogTemp, Warning, TEXT("[ScanVFX-Diag] %s: bounds Bottom=%.1f Top=%.1f Height=%.1f"),
+        *GetName(), ScanBottomZ, ScanTopZ, MeshHeight);
+
+    if (MeshHeight < 1.f)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[ScanVFX-Diag] %s: SKIP — MeshHeight %.1f < 1.0"), *GetName(), MeshHeight);
+        return;
+    }
+
+    const float BandWidth = FMath::Max(MeshHeight * ScanBandRatio, 10.f);
+
+    for (UMeshComponent* MeshComp : AllMeshes)
+    {
+        if (!MeshComp || !MeshComp->IsVisible()) continue;
+
+        const int32 NumMats = MeshComp->GetNumMaterials();
+        if (NumMats <= 0) continue;
+
+        UMaterialInstanceDynamic* DMI = UMaterialInstanceDynamic::Create(PlacementScanMaterial, this);
+        if (!DMI) continue;
+
+        DMI->SetScalarParameterValue(TEXT("ScanHeight"), ScanBottomZ);
+        DMI->SetScalarParameterValue(TEXT("BandWidth"), BandWidth);
+
+        for (int32 i = 0; i < NumMats; ++i)
+        {
+            ScanOriginalMaterials.Add(MeshComp->GetMaterial(i));
+            MeshComp->SetMaterial(i, DMI);
+        }
+        ScanSwappedMeshes.Add(MeshComp);
+        ScanSwappedSlotCounts.Add(NumMats);
+        ScanDMIs.Add(DMI);
+
+        UE_LOG(LogTemp, Warning, TEXT("[ScanVFX-Diag] %s: SWAPPED mesh '%s' (Class=%s, NumMats=%d)"),
+            *GetName(), *MeshComp->GetName(), *MeshComp->GetClass()->GetName(), NumMats);
+    }
+
+    if (ScanSwappedMeshes.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[ScanVFX-Diag] %s: SKIP — no meshes were swapped"), *GetName());
+        return;
+    }
+
+    ScanProgress = 0.f;
+    bScanActive = true;
+    SetActorTickEnabled(true);
+
+    UE_LOG(LogTemp, Warning, TEXT("[ScanVFX-Diag] %s: SCAN STARTED (%d meshes, Bottom=%.0f, Top=%.0f, Duration=%.1fs)"),
+        *GetName(), ScanSwappedMeshes.Num(), ScanBottomZ, ScanTopZ, ScanDuration);
+}
+
+void AHellunaBaseResourceUsingObject::TickPlacementScan(float DeltaTime)
+{
+    ScanProgress += DeltaTime / FMath::Max(ScanDuration, 0.1f);
+
+    if (ScanProgress >= 1.0f)
+    {
+        int32 MatOffset = 0;
+        for (int32 MeshIdx = 0; MeshIdx < ScanSwappedMeshes.Num(); ++MeshIdx)
+        {
+            UMeshComponent* MeshComp = ScanSwappedMeshes[MeshIdx];
+            const int32 SlotCount = ScanSwappedSlotCounts.IsValidIndex(MeshIdx) ? ScanSwappedSlotCounts[MeshIdx] : 0;
+            if (IsValid(MeshComp))
+            {
+                for (int32 i = 0; i < SlotCount; ++i)
+                {
+                    if (ScanOriginalMaterials.IsValidIndex(MatOffset + i))
+                    {
+                        MeshComp->SetMaterial(i, ScanOriginalMaterials[MatOffset + i]);
+                    }
+                }
+            }
+            MatOffset += SlotCount;
+        }
+        ScanSwappedMeshes.Empty();
+        ScanOriginalMaterials.Empty();
+        ScanSwappedSlotCounts.Empty();
+        ScanDMIs.Empty();
+        bScanActive = false;
+        SetActorTickEnabled(false);
+        return;
+    }
+
+    const float CurrentScanZ = FMath::Lerp(ScanBottomZ, ScanTopZ, ScanProgress);
+    const float MeshHeight = ScanTopZ - ScanBottomZ;
+    const float BandWidth = FMath::Max(MeshHeight * ScanBandRatio, 10.f);
+
+    if (ScanProgress < 0.02f || (ScanProgress > 0.49f && ScanProgress < 0.52f) || ScanProgress > 0.98f)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[ScanVFX-Diag] %s TICK: Progress=%.2f, ScanHeight=%.1f, DMIs=%d"),
+            *GetName(), ScanProgress, CurrentScanZ, ScanDMIs.Num());
+    }
+
+    for (UMaterialInstanceDynamic* DMI : ScanDMIs)
+    {
+        if (DMI)
+        {
+            DMI->SetScalarParameterValue(TEXT("ScanHeight"), CurrentScanZ);
+            DMI->SetScalarParameterValue(TEXT("BandWidth"), BandWidth);
+        }
+    }
 }

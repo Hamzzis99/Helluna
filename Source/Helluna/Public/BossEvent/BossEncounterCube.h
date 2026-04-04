@@ -241,6 +241,25 @@ public:
 	float ScanBandRatio = 0.2f;
 
 	// =========================================================================================
+	// [BossRestore] 보스 처치 시 환경 컬러 복원 (머티리얼 직접 교체)
+	// =========================================================================================
+
+	/** 보스 복원 머티리얼 (M_BossRestore, BP에서 할당) — nullptr이면 복원 VFX 스킵 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter|RestoreVFX",
+		meta = (DisplayName = "Boss Restore Material (보스 복원 머티리얼)"))
+	TObjectPtr<UMaterialInterface> BossRestoreMaterial;
+
+	/** 복원 스캔 시간 (초) — 개별 메쉬의 아래→위 스캔 소요 시간 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter|RestoreVFX",
+		meta = (DisplayName = "Restore Scan Duration (복원 스캔 시간)", ClampMin = "1.0", ClampMax = "5.0"))
+	float RestoreScanDuration = 2.5f;
+
+	/** 어둡게 처리할 최대 메쉬 수 (성능 보호) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossEncounter|RestoreVFX",
+		meta = (DisplayName = "Max Darkened Meshes (최대 어두운 메쉬)", ClampMin = "5", ClampMax = "100"))
+	int32 MaxDarkenedMeshes = 30;
+
+	// =========================================================================================
 	// 리플리케이션
 	// =========================================================================================
 
@@ -425,6 +444,51 @@ private:
 
 	/** VFX 스폰 쿨다운 타이머 (초) */
 	float WaveVFXCooldown = 0.f;
+
+	// =========================================================================================
+	// [BossRestore] 환경 메쉬 어둡게 처리 + 스캔 복원 내부
+	// =========================================================================================
+
+	/** 어둡게 처리된 메쉬 상태 */
+	struct FDarkenedMesh
+	{
+		TWeakObjectPtr<AActor> TargetActor;
+		TWeakObjectPtr<UStaticMeshComponent> MeshComp;
+
+		/** 원본 머티리얼 백업 (슬롯별) */
+		TArray<TObjectPtr<UMaterialInterface>> OriginalMaterials;
+
+		/** 복원용 DMI */
+		TObjectPtr<UMaterialInstanceDynamic> DMI;
+
+		/** 메쉬 바운딩 Z 범위 */
+		float BottomZ = 0.f;
+		float TopZ = 0.f;
+
+		/** 스캔 밴드 폭 (cm) */
+		float BandWidth = 50.f;
+
+		/** 복원 진행도: -1 = 웨이브 미도달, 0~1 = 복원 중 */
+		float ScanProgress = -1.f;
+
+		/** 복원 애니메이션 시작됨 */
+		bool bRestoreStarted = false;
+	};
+
+	/** 어둡게 처리된 메쉬 목록 */
+	TArray<FDarkenedMesh> DarkenedMeshes;
+
+	/** 보스 영역 내 메쉬 어둡게 처리 (보스 등장 시 호출) */
+	void DarkenEnvironmentMeshes();
+
+	/** 머티리얼에서 BaseColor 텍스처 추출 시도 — 실패 시 nullptr */
+	UTexture* ExtractBaseColorTexture(UMaterialInterface* Material);
+
+	/** 복원 스캔 Tick (ColorWave와 동기화) */
+	void TickBossRestore(float DeltaTime);
+
+	/** 개별 메쉬 원본 머티리얼 복원 */
+	void RestoreDarkenedMesh(FDarkenedMesh& Mesh);
 
 	// =========================================================================================
 	// [Cinematic] 시네마틱 내부

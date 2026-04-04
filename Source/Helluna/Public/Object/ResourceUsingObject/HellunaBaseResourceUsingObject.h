@@ -14,16 +14,46 @@ class UStaticMesh;
 // [기존 로직] UI 상호작용
 class UBoxComponent;
 
+// [스캔 VFX] 전방 선언
+class UMaterialInterface;
+class UMaterialInstanceDynamic;
+class UMeshComponent;
+
 UCLASS()
 class HELLUNA_API AHellunaBaseResourceUsingObject : public AActor
 {
     GENERATED_BODY()
     
-public: 
+public:
     AHellunaBaseResourceUsingObject();
 
     // 에디터에서 값 변경 시 프리뷰 업데이트
     virtual void OnConstruction(const FTransform& Transform) override;
+
+    virtual void Tick(float DeltaTime) override;
+
+    // =========================================================================================
+    // 배치 스캔 VFX (아래→위 메시 스캔 이펙트)
+    // =========================================================================================
+
+    /** 배치 스캔 VFX 시작 */
+    UFUNCTION(BlueprintCallable, Category = "건설|VFX", meta = (DisplayName = "Start Placement Scan VFX (배치 스캔 VFX 시작)"))
+    void StartPlacementScanVFX();
+
+    /** 스캔 VFX에 사용할 머티리얼 */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "건설|VFX",
+        meta = (DisplayName = "Placement Scan Material (배치 스캔 머티리얼)"))
+    TObjectPtr<UMaterialInterface> PlacementScanMaterial;
+
+    /** 스캔 완료까지 걸리는 시간 (초) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|VFX",
+        meta = (DisplayName = "Scan Duration (스캔 시간)", ClampMin = "0.3", ClampMax = "5.0"))
+    float ScanDuration = 1.5f;
+
+    /** 스캔 밴드 높이 비율 */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "건설|VFX",
+        meta = (DisplayName = "Scan Band Ratio (밴드 비율)", ClampMin = "0.05", ClampMax = "0.5"))
+    float ScanBandRatio = 0.2f;
 
 protected:
     virtual void BeginPlay() override;
@@ -58,4 +88,24 @@ protected:
 
     UFUNCTION()
     virtual void CollisionBoxEndOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex);
+
+private:
+    // === 스캔 내부 상태 ===
+    UPROPERTY()
+    TArray<TObjectPtr<UMeshComponent>> ScanSwappedMeshes;
+
+    UPROPERTY()
+    TArray<TObjectPtr<UMaterialInterface>> ScanOriginalMaterials;
+
+    TArray<int32> ScanSwappedSlotCounts;
+
+    UPROPERTY()
+    TArray<TObjectPtr<UMaterialInstanceDynamic>> ScanDMIs;
+
+    float ScanProgress = 0.f;
+    float ScanBottomZ = 0.f;
+    float ScanTopZ = 0.f;
+    bool bScanActive = false;
+
+    void TickPlacementScan(float DeltaTime);
 };

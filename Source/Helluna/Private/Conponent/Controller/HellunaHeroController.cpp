@@ -22,6 +22,8 @@
 #include "InputAction.h"
 #include "InputMappingContext.h"
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
+#include "Settings/Widget/HellunaGraphicsSettingsWidget.h"
+#include "UI/PauseMenu/HellunaPauseMenuWidget.h"
 
 // [Puzzle] 퍼즐 시스템
 #include "Puzzle/PuzzleCubeActor.h"
@@ -33,6 +35,12 @@
 #include "BossEvent/BossEncounterCube.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
+
+// [DebugHUD] 디버그 HUD 시스템
+#include "UI/HUD/HellunaDebugHUDWidget.h"
+
+// [PauseMenu] 위젯 애니메이션 재생
+// WidgetBlueprintGeneratedClass는 PauseMenuWidget 내부로 이동
 
 
 
@@ -50,6 +58,11 @@ FGenericTeamId AHellunaHeroController::GetGenericTeamId() const
 // ============================================================================
 // 라이프사이클
 // ============================================================================
+
+void AHellunaHeroController::SetupInputComponent()
+{
+	Super::SetupInputComponent();
+}
 
 void AHellunaHeroController::BeginPlay()
 {
@@ -169,6 +182,43 @@ void AHellunaHeroController::BeginPlay()
 
 		UE_LOG(LogHellunaChat, Log, TEXT("[HellunaHeroController] 채팅 위젯 초기화 타이머 설정 (0.5초)"));
 	}
+
+	// ── [PauseMenu] ESC/U 키 바인딩 (Enhanced Input) ──
+	if (IsLocalController() && PauseMenuToggleAction && PauseMenuMappingContext)
+	{
+		if (ULocalPlayer* PauseLP = GetLocalPlayer())
+		{
+			if (UEnhancedInputLocalPlayerSubsystem* PauseSub = PauseLP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
+			{
+				PauseSub->AddMappingContext(PauseMenuMappingContext, 10);
+				UE_LOG(LogTemp, Log, TEXT("[PauseMenu] PauseMenuMappingContext 추가 완료 (priority=10)"));
+			}
+		}
+
+		if (UEnhancedInputComponent* PauseEIC = Cast<UEnhancedInputComponent>(InputComponent))
+		{
+			PauseEIC->BindAction(PauseMenuToggleAction, ETriggerEvent::Started, this, &AHellunaHeroController::OnPauseMenuToggleInput);
+			UE_LOG(LogTemp, Log, TEXT("[PauseMenu] PauseMenuToggleAction 바인딩 완료 (ESC+U)"));
+		}
+	}
+
+	// ── [DebugHUD] 디버그 HUD 생성 + F5 입력 바인딩 (로컬 플레이어만) ──
+#if !UE_BUILD_SHIPPING
+	if (IsLocalController())
+	{
+		CreateDebugHUD();
+
+		// F5 키 바인딩 (DebugHUDToggleAction이 BP에서 설정된 경우)
+		if (DebugHUDToggleAction)
+		{
+			if (UEnhancedInputComponent* DebugEIC = Cast<UEnhancedInputComponent>(InputComponent))
+			{
+				DebugEIC->BindAction(DebugHUDToggleAction, ETriggerEvent::Started, this, &AHellunaHeroController::OnDebugHUDToggle);
+				UE_LOG(LogTemp, Log, TEXT("[DebugHUD] F5 토글 입력 바인딩 완료"));
+			}
+		}
+	}
+#endif
 }
 
 // ============================================================================
@@ -1246,5 +1296,154 @@ void AHellunaHeroController::Server_BossEncounterActivate_Implementation()
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[BossEvent] BossEncounterCube activated by %s"), *GetName());
 		// TODO: Step 3+ — 보스 스폰 매니저 호출, 이벤트 시작
+	}
+}
+
+// =========================================================================================
+// [DebugHUD] 디버그 HUD 생성 및 F5 토글
+// =========================================================================================
+
+void AHellunaHeroController::CreateDebugHUD()
+{
+#if UE_BUILD_SHIPPING
+	return; // Shipping 빌드에서는 생성하지 않음
+#else
+	if (!IsValid(DebugHUDWidgetClass))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[DebugHUD] DebugHUDWidgetClass 미설정 — BP_HellunaHeroController에서 지정 필요"));
+		return;
+	}
+
+	if (IsValid(DebugHUDInstance))
+	{
+		return; // 이미 생성됨
+	}
+
+	DebugHUDInstance = CreateWidget<UHellunaDebugHUDWidget>(this, DebugHUDWidgetClass);
+	if (IsValid(DebugHUDInstance))
+	{
+		DebugHUDInstance->AddToViewport(999); // 최상위 Z-Order
+		UE_LOG(LogTemp, Log, TEXT("[DebugHUD] 디버그 HUD 생성 완료 (ZOrder=999)"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("[DebugHUD] 디버그 HUD 생성 실패"));
+	}
+#endif
+}
+
+void AHellunaHeroController::OnDebugHUDToggle(const FInputActionValue& Value)
+{
+	if (IsValid(DebugHUDInstance))
+	{
+		DebugHUDInstance->ToggleVisibility();
+	}
+}
+
+// =========================================================================================
+// [PauseMenu] Enhanced Input 핸들러
+// =========================================================================================
+
+void AHellunaHeroController::OnPauseMenuToggleInput(const FInputActionValue& Value)
+{
+	TogglePauseMenu();
+}
+
+// =========================================================================================
+// [PauseMenu] 일시정지 메뉴 위젯 토글
+// =========================================================================================
+
+void AHellunaHeroController::TogglePauseMenu()
+{
+	// 서버 측 PlayerController에서는 위젯 생성 불가 — 로컬만 허용
+	if (!IsLocalController()) return;
+
+	// 이미 열려 있으면 직접 제거 (키 토글 / 애니메이션 완료 콜백 공용)
+	if (IsValid(PauseMenuInstance))
+	{
+		PauseMenuInstance->RemoveFromParent();
+		PauseMenuInstance = nullptr;
+
+		SetShowMouseCursor(false);
+		SetInputMode(FInputModeGameOnly());
+
+		UE_LOG(LogTemp, Log, TEXT("[PauseMenu] 위젯 닫기"));
+		return;
+	}
+
+	// 위젯 클래스 미설정 시 경고
+	if (!IsValid(PauseMenuWidgetClass))
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[PauseMenu] PauseMenuWidgetClass 미설정 — BP_HellunaHeroController에서 지정 필요"));
+		return;
+	}
+
+	// 생성 및 표시 (PlayerController 소유 — GetOwningPlayer() 정상 동작)
+	PauseMenuInstance = CreateWidget<UHellunaPauseMenuWidget>(this, PauseMenuWidgetClass);
+	if (IsValid(PauseMenuInstance))
+	{
+		PauseMenuInstance->AddToViewport(200);
+
+		// SlideIn 애니메이션 재생
+		PauseMenuInstance->PlayOpenAnimation();
+
+		// 마우스 커서 표시 + UI 입력 허용 (게임 입력도 유지)
+		SetShowMouseCursor(true);
+		FInputModeGameAndUI InputMode;
+		InputMode.SetWidgetToFocus(PauseMenuInstance->TakeWidget());
+		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+		SetInputMode(InputMode);
+
+		UE_LOG(LogTemp, Log, TEXT("[PauseMenu] 위젯 열기 — 클래스: %s"),
+			*PauseMenuInstance->GetClass()->GetName());
+	}
+}
+
+// =========================================================================================
+// [GraphicsSettings] 그래픽 설정 위젯 토글
+// =========================================================================================
+
+void AHellunaHeroController::ToggleGraphicsSettings()
+{
+	// 이미 열려 있으면 닫기
+	if (IsValid(GraphicsSettingsInstance))
+	{
+		GraphicsSettingsInstance->RemoveFromParent();
+		GraphicsSettingsInstance = nullptr;
+
+		// 마우스 커서 숨기기 + 게임 입력 복귀
+		SetShowMouseCursor(false);
+		SetInputMode(FInputModeGameOnly());
+
+		UE_LOG(LogTemp, Log, TEXT("[GraphicsSettings] 위젯 닫기"));
+		return;
+	}
+
+	// 위젯 클래스 미설정 시 경고
+	if (!IsValid(GraphicsSettingsWidgetClass))
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[GraphicsSettings] GraphicsSettingsWidgetClass 미설정 — BP_HellunaHeroController에서 지정 필요"));
+		return;
+	}
+
+	// 생성 및 표시 — GetGameInstance() 사용 (데디케이티드 서버 구조에서 LocalPlayerController 검증 우회)
+	UGameInstance* GI = GetGameInstance();
+	if (!IsValid(GI)) return;
+
+	GraphicsSettingsInstance = CreateWidget<UHellunaGraphicsSettingsWidget>(GI, GraphicsSettingsWidgetClass);
+	if (IsValid(GraphicsSettingsInstance))
+	{
+		GraphicsSettingsInstance->AddToViewport(100);
+
+		// 마우스 커서 표시 + UI 입력 허용 (게임 입력도 유지)
+		SetShowMouseCursor(true);
+		FInputModeGameAndUI InputMode;
+		InputMode.SetWidgetToFocus(GraphicsSettingsInstance->TakeWidget());
+		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+		SetInputMode(InputMode);
+
+		UE_LOG(LogTemp, Log, TEXT("[GraphicsSettings] 위젯 열기"));
 	}
 }

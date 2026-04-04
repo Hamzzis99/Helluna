@@ -1,7 +1,6 @@
 #include "GameMode/HellunaDefenseGameMode.h"
 #include "GameMode/HellunaDefenseGameState.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
-#include "AI/SpaceShipAttackSlotManager.h"
 #include "ECS/Spawner/HellunaEnemyMassSpawner.h"
 #include "Character/HellunaEnemyCharacter.h"
 #include "Engine/TargetPoint.h"
@@ -358,69 +357,43 @@ void AHellunaDefenseGameMode::ActivateNightPCG()
             continue;
         }
 
-        // ★ World Partition + OFPA: PCG CleanupTask의 ActorFolder 삭제 크래시 방지
-        //   ULevel::RemoveActorFolder() 내부에서 check(InActorFolder->GetPackage()->IsDirty()) assertion이 있다.
-        //   PIE 환경에서는 MarkPackageDirty()가 GIsPlayInEditorWorld 체크에 의해 무시되므로
-        //   엔진의 Modify()도 패키지를 Dirty로 만들 수 없다.
-        //   → SetDirtyFlag(true)로 직접 bDirty 플래그를 설정해야 한다.
+        // ★ World Partition + PIE: PCG 비동기 CleanupTask의 ActorFolder 삭제 크래시 방지
+        //   WP(OFPA)에서 UActorFolder는 레벨 패키지와 별도의 외부 패키지를 가짐.
+        //   PCG가 폴더 삭제 시 check(InActorFolder->GetPackage()->IsDirty()) 를 통과하려면
+        //   UActorFolder 자체의 패키지를 Dirty로 마킹해야 함 (레벨 패키지만으로는 불충분).
 #if WITH_EDITOR
         {
-            int32 DirtiedCount = 0;
-
-            auto ForceMarkDirty = [](UPackage* Pkg)
+            int32 DirtiedFolderCount = 0;
+            for (TObjectIterator<UActorFolder> It; It; ++It)
             {
+                UActorFolder* Folder = *It;
+                if (!Folder) continue;
+
+                UPackage* Pkg = Folder->GetPackage();
                 if (Pkg && !Pkg->IsDirty())
                 {
-                    Pkg->SetDirtyFlag(true);
-                    return true;
+                    Pkg->MarkPackageDirty();
+                    DirtiedFolderCount++;
                 }
-                return false;
-            };
+            }
 
-            // 1) 모든 레벨의 ActorFolder 패키지를 SetDirtyFlag로 강제 마킹
+            // 레벨 패키지도 함께 마킹 (폴더 외 다른 cleanup 작업 대비)
             if (UWorld* W = GetWorld())
             {
-                for (ULevel* Level : W->GetLevels())
+                if (W->PersistentLevel)
                 {
-                    if (!Level) continue;
-                    if (ForceMarkDirty(Level->GetPackage())) DirtiedCount++;
-
-                    Level->ForEachActorFolder([&](UActorFolder* Folder)
-                    {
-                        if (Folder)
-                        {
-                            if (UPackage* ExtPkg = Folder->GetExternalPackage())
-                            {
-                                if (ForceMarkDirty(ExtPkg)) DirtiedCount++;
-                            }
-                            if (ForceMarkDirty(Folder->GetPackage())) DirtiedCount++;
-                        }
-                        return true;
-                    });
+                    W->PersistentLevel->GetPackage()->MarkPackageDirty();
                 }
             }
-
-            // 2) PCG 관리 액터들의 외부 패키지도 강제 마킹
-            TArray<UObject*> ManagedObjs;
-            GetObjectsWithOuter(PCGComp, ManagedObjs, false);
-            for (UObject* Obj : ManagedObjs)
-            {
-                if (UPackage* Pkg = Obj->GetExternalPackage())
-                {
-                    if (ForceMarkDirty(Pkg)) DirtiedCount++;
-                }
-            }
-
-            // 3) PCG 액터 자체 레벨 패키지
             if (PCGActor)
             {
                 if (ULevel* PCGLevel = PCGActor->GetLevel())
                 {
-                    ForceMarkDirty(PCGLevel->GetPackage());
+                    PCGLevel->GetPackage()->MarkPackageDirty();
                 }
             }
 
-            UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [WP 크래시 방지] SetDirtyFlag 강제 마킹: %d개"), DirtiedCount);
+            UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [WP 크래시 방지] ActorFolder %d개 + 레벨 패키지 Dirty 마킹 완료"), DirtiedFolderCount);
         }
 #endif
 
@@ -448,42 +421,6 @@ void AHellunaDefenseGameMode::ActivateNightPCG()
 
         PCGComp->GenerateLocal(/*bForce=*/true);
         UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [2/3] [%d] ✅ GenerateLocal 호출 완료"), i);
-
-#if WITH_EDITOR
-        // ★ 비동기 생성 중 온디맨드 로드되는 ActorFolder 패키지도 SetDirtyFlag 유지
-        {
-            TWeakObjectPtr<UPCGComponent> WeakPCGForDirty = PCGComp;
-            GetWorldTimerManager().ClearTimer(PCGActorFolderDirtyGuardTimer);
-            GetWorldTimerManager().SetTimer(PCGActorFolderDirtyGuardTimer, [this, WeakPCGForDirty]()
-            {
-                if (!WeakPCGForDirty.IsValid() || !WeakPCGForDirty->IsGenerating())
-                {
-                    GetWorldTimerManager().ClearTimer(PCGActorFolderDirtyGuardTimer);
-                    return;
-                }
-                if (UWorld* W = GetWorld())
-                {
-                    for (ULevel* Level : W->GetLevels())
-                    {
-                        if (!Level) continue;
-                        Level->ForEachActorFolder([](UActorFolder* Folder)
-                        {
-                            if (Folder)
-                            {
-                                if (UPackage* ExtPkg = Folder->GetExternalPackage())
-                                {
-                                    if (!ExtPkg->IsDirty()) ExtPkg->SetDirtyFlag(true);
-                                }
-                                UPackage* Pkg = Folder->GetPackage();
-                                if (Pkg && !Pkg->IsDirty()) Pkg->SetDirtyFlag(true);
-                            }
-                            return true;
-                        });
-                    }
-                }
-            }, 0.01f, true);
-        }
-#endif
 
         // 진단 타이머
         FTimerHandle DiagTimer;
@@ -561,45 +498,6 @@ void AHellunaDefenseGameMode::ActivateNightPCG()
         CurrentDay, ActivatedCount, InvalidCount, RestoredCount);
     Debug::Print(FString::Printf(TEXT("[ActivateNightPCG] Day%d — %d개 PCG 실행 (복원Ore: %d개)"),
         CurrentDay, ActivatedCount, RestoredCount), FColor::Purple);
-}
-
-void AHellunaDefenseGameMode::CleanupInitialNightPCGArtifacts()
-{
-    if (!HasAuthority())
-    {
-        return;
-    }
-
-    UWorld* World = GetWorld();
-    if (!IsValid(World))
-    {
-        return;
-    }
-
-    for (const TWeakObjectPtr<UPCGComponent>& WeakPCGComp : CachedNightPCGComponents)
-    {
-        UPCGComponent* PCGComp = WeakPCGComp.Get();
-        if (!IsValid(PCGComp))
-        {
-            continue;
-        }
-
-        PCGComp->GenerationTrigger = EPCGComponentGenerationTrigger::GenerateOnDemand;
-        PCGComp->CleanupLocal(true);
-        PCGComp->Deactivate();
-    }
-
-    TArray<AActor*> ExistingOres;
-    UGameplayStatics::GetAllActorsWithTag(World, FName(TEXT("Ore")), ExistingOres);
-    for (AActor* OreActor : ExistingOres)
-    {
-        if (IsValid(OreActor))
-        {
-            OreActor->Destroy();
-        }
-    }
-
-    PreGenerationOreSnapshot.Empty();
 }
 
 void AHellunaDefenseGameMode::OnNightPCGGraphGenerated(UPCGComponent* InComponent)
@@ -913,6 +811,13 @@ const FNightSpawnConfig* AHellunaDefenseGameMode::GetCurrentNightConfig() const
 // ============================================================
 // 낮/밤 시스템
 // ============================================================
+float AHellunaDefenseGameMode::GetEffectiveDayDuration() const
+{
+    // Day 1(첫째 날): TestDayDuration (BP 기본 5초 — 빠른 첫 밤 진입)
+    // Day 2+: NormalDayDuration (BP 기본 300초 = 5분)
+    return (CurrentDay <= 1) ? TestDayDuration : NormalDayDuration;
+}
+
 void AHellunaDefenseGameMode::EnterDay()
 {
     if (!bGameInitialized) return;
@@ -920,12 +825,10 @@ void AHellunaDefenseGameMode::EnterDay()
     // 낮 카운터 증가 (게임 시작 첫 낮은 Day 1)
     CurrentDay++;
 
-    if (CurrentDay == 1)
-    {
-        CleanupInitialNightPCGArtifacts();
-    }
+    // Day에 따라 적절한 낮 지속 시간 결정
+    const float EffectiveDayDuration = GetEffectiveDayDuration();
 
-    Debug::Print(FString::Printf(TEXT("[EnterDay] %d일차 낮 시작"), CurrentDay), FColor::Yellow);
+    Debug::Print(FString::Printf(TEXT("[EnterDay] %d일차 낮 시작 (지속시간: %.0f초)"), CurrentDay, EffectiveDayDuration), FColor::Yellow);
 
     RemainingMonstersThisNight = 0;
 
@@ -942,7 +845,7 @@ void AHellunaDefenseGameMode::EnterDay()
         GS->SetPhase(EDefensePhase::Day);
         GS->SetAliveMonsterCount(0);
         GS->SetCurrentDayForUI(CurrentDay);
-        GS->SetDayTimeRemaining(TestDayDuration);
+        GS->SetDayTimeRemaining(EffectiveDayDuration);
         GS->SetTotalMonstersThisNight(0);
         GS->SetIsBossNight(false);
         GS->MulticastPrintDay();
@@ -950,13 +853,11 @@ void AHellunaDefenseGameMode::EnterDay()
         // Phase 10: 채팅 시스템 메시지
         GS->BroadcastChatMessage(TEXT(""), TEXT("낮이 시작됩니다"), EChatMessageType::System);
 
-        GS->NetMulticast_OnDawnPassed(TestDayDuration);
+        GS->NetMulticast_OnDawnPassed(EffectiveDayDuration);
     }
 
-    GetWorldTimerManager().SetTimerForNextTick(this, &ThisClass::ActivateNightPCG);
-
     GetWorldTimerManager().ClearTimer(TimerHandle_ToNight);
-    GetWorldTimerManager().SetTimer(TimerHandle_ToNight, this, &ThisClass::EnterNight, TestDayDuration, false);
+    GetWorldTimerManager().SetTimer(TimerHandle_ToNight, this, &ThisClass::EnterNight, EffectiveDayDuration, false);
 
     // 1초마다 남은 낮 시간 감소
     GetWorldTimerManager().ClearTimer(TimerHandle_DayCountdown);
@@ -988,6 +889,9 @@ void AHellunaDefenseGameMode::EnterNight()
 
     // 낮 카운트다운 타이머 정지
     GetWorldTimerManager().ClearTimer(TimerHandle_DayCountdown);
+
+    // PCG 밤 스폰 실행
+    ActivateNightPCG();
 
     // ── 보스 소환 일 체크 ──────────────────────────────────────────────
     // BossSchedule 배열에서 CurrentDay와 일치하는 항목을 찾는다.
@@ -1540,19 +1444,6 @@ void AHellunaDefenseGameMode::PostLogin(APlayerController* NewPlayer)
 
     // [Phase 19] 커맨드 폴링 중지 (플레이어 접속)
     StopCommandPollTimer();
-
-    // 플레이어 접속 → 우주선 SlotManager 슬롯 재시도 트리거
-    // World Partition에서 플레이어 접속 후 NavMesh가 로드되므로 이 시점에 재시도
-    if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
-    {
-        if (AResourceUsingObject_SpaceShip* Ship = GS->GetSpaceShip())
-        {
-            if (USpaceShipAttackSlotManager* SlotMgr = Ship->FindComponentByClass<USpaceShipAttackSlotManager>())
-            {
-                SlotMgr->TriggerBuildSlotsIfEmpty();
-            }
-        }
-    }
 
     // Phase 10: 접속 메시지
     if (bGameInitialized && IsValid(NewPlayer))

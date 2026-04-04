@@ -19,6 +19,9 @@ class APuzzleCubeActor;
 class ABossEncounterCube;
 class UPuzzleGridWidget;
 class UPostProcessComponent;
+class UHellunaDebugHUDWidget;
+class UHellunaGraphicsSettingsWidget;
+class UHellunaPauseMenuWidget;
 
 /**
  * @brief   Helluna 영웅 전용 PlayerController
@@ -82,6 +85,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void SetupInputComponent() override;
 	virtual void Tick(float DeltaTime) override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override; // C5: 타이머/델리게이트 정리
 
@@ -417,6 +421,33 @@ private:
 	void FinishColorReveal();
 
 	// =========================================================================================
+	// [DebugHUD] 디버그 HUD 시스템
+	// =========================================================================================
+public:
+	/** 디버그 HUD 생성 (클라이언트 BeginPlay에서 자동 호출) */
+	UFUNCTION(BlueprintCallable, Category = "Debug")
+	void CreateDebugHUD();
+
+protected:
+	/** 디버그 HUD 위젯 클래스 (BP에서 WBP_HellunaDebugHUD 지정) */
+	UPROPERTY(EditDefaultsOnly, Category = "Debug",
+		meta = (DisplayName = "Debug HUD Widget Class (디버그 HUD 위젯 클래스)"))
+	TSubclassOf<UHellunaDebugHUDWidget> DebugHUDWidgetClass;
+
+	/** F5 키 토글용 InputAction (에디터에서 IA_DebugHUD 지정) */
+	UPROPERTY(EditDefaultsOnly, Category = "Debug",
+		meta = (DisplayName = "Debug HUD Toggle Action (F5)"))
+	TObjectPtr<UInputAction> DebugHUDToggleAction;
+
+private:
+	/** 디버그 HUD 인스턴스 */
+	UPROPERTY()
+	TObjectPtr<UHellunaDebugHUDWidget> DebugHUDInstance;
+
+	/** F5 키 입력 핸들러 */
+	void OnDebugHUDToggle(const struct FInputActionValue& Value);
+
+	// =========================================================================================
 	// [BossEvent] 보스 조우 큐브 상호작용
 	// =========================================================================================
 public:
@@ -426,4 +457,57 @@ public:
 	 */
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_BossEncounterActivate();
+
+	// =========================================================================================
+	// [일시정지 메뉴] 위젯 토글
+	// =========================================================================================
+public:
+	/** 일시정지 메뉴 위젯 토글 (Escape 키에서 호출) */
+	UFUNCTION(BlueprintCallable, Category = "UI (유아이)",
+		meta = (DisplayName = "Toggle Pause Menu (일시정지 메뉴 토글)"))
+	void TogglePauseMenu();
+
+protected:
+	/** 일시정지 메뉴 위젯 클래스 (BP에서 WBP_HellunaPauseMenu 지정) */
+	UPROPERTY(EditDefaultsOnly, Category = "UI (유아이)",
+		meta = (DisplayName = "Pause Menu Widget Class (일시정지 메뉴 위젯 클래스)"))
+	TSubclassOf<UHellunaPauseMenuWidget> PauseMenuWidgetClass;
+
+	/** 일시정지 메뉴 토글 입력 액션 (ESC/U 키에 매핑된 IA 에셋) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Input (유아이|입력)",
+		meta = (DisplayName = "Pause Menu Toggle Action (일시정지 메뉴 토글 액션)"))
+	TObjectPtr<UInputAction> PauseMenuToggleAction;
+
+	/** 일시정지 메뉴 입력 매핑 컨텍스트 (ESC+U → PauseMenuToggleAction) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Input (유아이|입력)",
+		meta = (DisplayName = "Pause Menu Mapping Context (일시정지 메뉴 입력 매핑)"))
+	TObjectPtr<UInputMappingContext> PauseMenuMappingContext;
+
+private:
+	/** 일시정지 메뉴 위젯 인스턴스 */
+	UPROPERTY()
+	TObjectPtr<UHellunaPauseMenuWidget> PauseMenuInstance;
+
+	/** PauseMenu Enhanced Input 핸들러 */
+	void OnPauseMenuToggleInput(const struct FInputActionValue& Value);
+
+	// =========================================================================================
+	// [그래픽 설정] 위젯 토글
+	// =========================================================================================
+public:
+	/** 그래픽 설정 위젯 토글 (CapsLock / ESC 메뉴에서 호출) */
+	UFUNCTION(BlueprintCallable, Category = "Settings (설정)",
+		meta = (DisplayName = "Toggle Graphics Settings (그래픽 설정 토글)"))
+	void ToggleGraphicsSettings();
+
+protected:
+	/** 그래픽 설정 위젯 클래스 (BP에서 WBP_HellunaGraphicsSettings 지정) */
+	UPROPERTY(EditDefaultsOnly, Category = "Settings (설정)",
+		meta = (DisplayName = "Graphics Settings Widget Class (그래픽 설정 위젯 클래스)"))
+	TSubclassOf<UHellunaGraphicsSettingsWidget> GraphicsSettingsWidgetClass;
+
+private:
+	/** 그래픽 설정 위젯 인스턴스 */
+	UPROPERTY()
+	TObjectPtr<UHellunaGraphicsSettingsWidget> GraphicsSettingsInstance;
 };

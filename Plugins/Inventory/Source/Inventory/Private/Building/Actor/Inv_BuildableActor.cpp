@@ -34,3 +34,12 @@ UStaticMesh* AInv_BuildableActor::GetEffectivePreviewMesh() const
 	UE_LOG(LogTemp, Warning, TEXT("[BuildableActor] PreviewMesh=NULL (Source=없음)"));
 	return nullptr;
 }
+
+FVector AInv_BuildableActor::GetBuildingMeshScale() const
+{
+	if (IsValid(BuildingMesh))
+	{
+		return BuildingMesh->GetRelativeScale3D();
+	}
+	return FVector::OneVector;
+}

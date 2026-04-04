@@ -103,4 +103,5 @@ private:
 	// 이전 배치 상태 (변경 시에만 로그 출력용)
 	bool bPreviousCanPlace = false;
 	bool bPlacementStatusInitialized = false;
+
 };

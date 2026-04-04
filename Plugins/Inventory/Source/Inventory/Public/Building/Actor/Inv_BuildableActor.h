@@ -141,4 +141,8 @@ public:
 	// 실제 프리뷰 메시 반환 (PreviewMesh 우선, 없으면 BuildingMesh에서)
 	UFUNCTION(BlueprintCallable, Category = "건설|프리뷰")
 	UStaticMesh* GetEffectivePreviewMesh() const;
+
+	// BuildingMesh 컴포넌트의 RelativeScale3D 반환 (경량 고스트 스케일 적용용)
+	UFUNCTION(BlueprintCallable, Category = "건설|프리뷰")
+	FVector GetBuildingMeshScale() const;
 };

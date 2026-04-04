@@ -21,6 +21,7 @@
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Engine/Texture2D.h"
 #include "EngineUtils.h"
 #include "Engine/StaticMeshActor.h"
 #include "Engine/PostProcessVolume.h"
@@ -88,6 +89,13 @@ void ABossEncounterCube::BeginPlay()
 	else if (!MPC_BossEncounter)
 	{
 		UE_LOG(LogTemp, Error, TEXT("[BossEncounter_DIAG] BeginPlay — MPC_BossEncounter is NULL! BP 설정 확인 필요"));
+	}
+
+	// [BossRestore] 보스 미처치 상태 → 레벨 시작부터 영역 내 메쉬를 흑백 처리
+	// (보스 활성화 여부와 무관 — 처음 접속하면 이미 회색 환경)
+	if (!IsRunningDedicatedServer() && !bBossDefeated)
+	{
+		DarkenEnvironmentMeshes();
 	}
 
 	// 늦은 접속 클라이언트
@@ -177,6 +185,9 @@ void ABossEncounterCube::Tick(float DeltaTime)
 
 	// [Wave VFX] 와이어프레임 오버레이 페이드 애니메이션
 	TickWireframeOverlays(DeltaTime);
+
+	// [BossRestore] 환경 메쉬 컬러 복원 스캔 애니메이션
+	TickBossRestore(DeltaTime);
 
 	UpdateInteractWidgetVisibility();
 
@@ -334,6 +345,9 @@ void ABossEncounterCube::Multicast_BossEncounterStarted_Implementation()
 
 	// [Step 4] 플레이어·보스 메시에 Custom Depth/Stencil 활성화
 	EnableBossEncounterCustomDepth();
+
+	// [BossRestore] 영역 내 메쉬 물리적 어둡게 처리
+	DarkenEnvironmentMeshes();
 
 	UE_LOG(LogTemp, Verbose, TEXT("[BossEncounterCube] Multicast received — starting desaturation transition (%.1fs)"),
 		DesatTransitionDuration);
@@ -609,6 +623,13 @@ void ABossEncounterCube::TickColorWave(float DeltaTime)
 		}
 		ActiveWireframeOverlays.Empty();
 
+		// [BossRestore] 남아있는 어두운 메쉬 전부 원본 복원
+		for (FDarkenedMesh& DM : DarkenedMeshes)
+		{
+			RestoreDarkenedMesh(DM);
+		}
+		DarkenedMeshes.Empty();
+
 		// [Failsafe] 정상 완료되었으므로 안전장치 타이머 해제
 		if (UWorld* World = GetWorld())
 		{
@@ -873,6 +894,20 @@ void ABossEncounterCube::SpawnWaveAuraVFX(float DeltaTime)
 		{
 			AuraVFXSpawnedActors.Add(WeakActor);
 			continue;
+		}
+
+		// [BossRestore] 이 액터가 DarkenedMeshes에 있으면 복원 시작
+		bool bDarkenedRestoreTriggered = false;
+		for (FDarkenedMesh& DM : DarkenedMeshes)
+		{
+			if (DM.TargetActor.IsValid() && DM.TargetActor.Get() == Actor && !DM.bRestoreStarted)
+			{
+				DM.bRestoreStarted = true;
+				DM.ScanProgress = 0.f;
+				bDarkenedRestoreTriggered = true;
+				UE_LOG(LogTemp, Log, TEXT("[BossRestore] Restore started for: %s"), *Actor->GetName());
+				break;
+			}
 		}
 
 		ApplyWaveEffectsOnActor(Actor, World);
@@ -1563,4 +1598,286 @@ void ABossEncounterCube::UpdateInteractWidgetVisibility()
 
 		UE_LOG(LogTemp, Log, TEXT("[BossEncounterCube] 3D Interact widget hidden"));
 	}
+}
+
+// ============================================================================
+// [BossRestore] 보스 영역 내 환경 메쉬 어둡게 처리
+// ============================================================================
+
+void ABossEncounterCube::DarkenEnvironmentMeshes()
+{
+	if (!BossRestoreMaterial)
+	{
+		return;
+	}
+
+	// 이미 어둡게 처리된 상태면 스킵
+	if (DarkenedMeshes.Num() > 0)
+	{
+		return;
+	}
+
+	// 데디 서버에서는 비주얼 불필요
+	if (IsRunningDedicatedServer())
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	const FVector AreaCenter = GetActorLocation();
+	int32 DarkenedCount = 0;
+
+	for (TActorIterator<AStaticMeshActor> It(World); It; ++It)
+	{
+		if (DarkenedCount >= MaxDarkenedMeshes)
+		{
+			break;
+		}
+
+		AStaticMeshActor* Actor = *It;
+		if (!IsValid(Actor))
+		{
+			continue;
+		}
+
+		// 거리 체크
+		const float Dist = FVector::Dist(Actor->GetActorLocation(), AreaCenter);
+		if (Dist > BossAreaRadius)
+		{
+			continue;
+		}
+
+		// 블랙리스트 (하늘/날씨/바닥/랜드스케이프)
+		const FString ActorName = Actor->GetName();
+		if (ActorName.Contains(TEXT("Ultra_Dynamic")) ||
+			ActorName.Contains(TEXT("Sky")) ||
+			ActorName.Contains(TEXT("Weather")) ||
+			ActorName.Contains(TEXT("Floor")) ||
+			ActorName.Contains(TEXT("Landscape")))
+		{
+			continue;
+		}
+
+		// 최소 크기 필터
+		FVector Origin, BoxExtent;
+		Actor->GetActorBounds(false, Origin, BoxExtent);
+		if (BoxExtent.GetMax() < 50.f)
+		{
+			continue;
+		}
+
+		UStaticMeshComponent* SMC = Actor->FindComponentByClass<UStaticMeshComponent>();
+		if (!SMC || !SMC->GetStaticMesh())
+		{
+			continue;
+		}
+
+		// 바운딩 Z 계산
+		const float BottomZ = Origin.Z - BoxExtent.Z;
+		const float TopZ = Origin.Z + BoxExtent.Z;
+		const float MeshHeight = TopZ - BottomZ;
+		if (MeshHeight < 1.f)
+		{
+			continue;
+		}
+
+		// 원본 머티리얼 백업
+		const int32 NumMats = SMC->GetNumMaterials();
+		if (NumMats <= 0)
+		{
+			continue;
+		}
+
+		FDarkenedMesh DM;
+		DM.TargetActor = Actor;
+		DM.MeshComp = SMC;
+		DM.BottomZ = BottomZ;
+		DM.TopZ = TopZ;
+		DM.BandWidth = FMath::Max(MeshHeight * ScanBandRatio, 10.f);
+
+		for (int32 i = 0; i < NumMats; ++i)
+		{
+			DM.OriginalMaterials.Add(SMC->GetMaterial(i));
+		}
+
+		// DMI 생성
+		UMaterialInstanceDynamic* DMI = UMaterialInstanceDynamic::Create(BossRestoreMaterial, this);
+		if (!DMI)
+		{
+			continue;
+		}
+
+		// 텍스처 추출 시도 (슬롯 0의 원본 머티리얼에서)
+		UTexture* BaseColorTex = ExtractBaseColorTexture(DM.OriginalMaterials.IsValidIndex(0) ? DM.OriginalMaterials[0] : nullptr);
+		if (BaseColorTex)
+		{
+			DMI->SetTextureParameterValue(TEXT("BaseColorTexture"), BaseColorTex);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[BossRestore] Texture extraction failed for %s — using fallback"), *Actor->GetName());
+		}
+
+		// ScanHeight를 메쉬 바닥 아래로 설정 → 전체 어두움
+		DMI->SetScalarParameterValue(TEXT("ScanHeight"), BottomZ - 100.f);
+		DMI->SetScalarParameterValue(TEXT("BandWidth"), DM.BandWidth);
+
+		DM.DMI = DMI;
+
+		// 모든 슬롯에 DMI 적용
+		for (int32 i = 0; i < NumMats; ++i)
+		{
+			SMC->SetMaterial(i, DMI);
+		}
+
+		DarkenedMeshes.Add(MoveTemp(DM));
+		DarkenedCount++;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[BossRestore] Darkened %d meshes in boss area (Radius=%.0f)"),
+		DarkenedCount, BossAreaRadius);
+}
+
+// ============================================================================
+// [BossRestore] 머티리얼에서 BaseColor 텍스처 추출 시도
+// ============================================================================
+
+UTexture* ABossEncounterCube::ExtractBaseColorTexture(UMaterialInterface* Material)
+{
+	if (!Material)
+	{
+		return nullptr;
+	}
+
+	// 1순위: 일반적인 BaseColor 파라미터 이름으로 시도
+	static const FName BaseColorNames[] = {
+		TEXT("BaseColor"),
+		TEXT("Base Color"),
+		TEXT("Diffuse"),
+		TEXT("Albedo"),
+		TEXT("BaseColorTexture"),
+		TEXT("Texture"),
+	};
+
+	UTexture* OutTexture = nullptr;
+	for (const FName& ParamName : BaseColorNames)
+	{
+		FMaterialParameterInfo ParamInfo(ParamName);
+		if (Material->GetTextureParameterValue(ParamInfo, OutTexture))
+		{
+			if (OutTexture)
+			{
+				return OutTexture;
+			}
+		}
+	}
+
+	// 2순위: 모든 텍스처 파라미터를 열거하여 첫 번째 반환
+	TArray<FMaterialParameterInfo> TextureParams;
+	TArray<FGuid> Guids;
+	Material->GetAllTextureParameterInfo(TextureParams, Guids);
+
+	for (const FMaterialParameterInfo& Info : TextureParams)
+	{
+		if (Material->GetTextureParameterValue(Info, OutTexture))
+		{
+			if (OutTexture)
+			{
+				return OutTexture;
+			}
+		}
+	}
+
+	// 3순위: 머티리얼이 사용하는 모든 텍스처에서 첫 번째 Texture2D
+	TArray<UTexture*> UsedTextures;
+	Material->GetUsedTextures(UsedTextures);
+
+	for (UTexture* Tex : UsedTextures)
+	{
+		if (Tex && Tex->IsA<UTexture2D>())
+		{
+			return Tex;
+		}
+	}
+
+	return nullptr;
+}
+
+// ============================================================================
+// [BossRestore] 복원 스캔 Tick
+// ============================================================================
+
+void ABossEncounterCube::TickBossRestore(float DeltaTime)
+{
+	if (DarkenedMeshes.Num() == 0)
+	{
+		return;
+	}
+
+	for (int32 i = DarkenedMeshes.Num() - 1; i >= 0; --i)
+	{
+		FDarkenedMesh& DM = DarkenedMeshes[i];
+
+		// 아직 웨이브 미도달
+		if (!DM.bRestoreStarted)
+		{
+			continue;
+		}
+
+		// 타겟 유효성 체크
+		if (!DM.MeshComp.IsValid())
+		{
+			DarkenedMeshes.RemoveAt(i);
+			continue;
+		}
+
+		DM.ScanProgress += DeltaTime / FMath::Max(RestoreScanDuration, 0.1f);
+
+		if (DM.ScanProgress >= 1.0f)
+		{
+			// 복원 완료 → 원본 머티리얼 복원
+			RestoreDarkenedMesh(DM);
+			DarkenedMeshes.RemoveAt(i);
+			continue;
+		}
+
+		// ScanHeight 업데이트: BottomZ → TopZ
+		if (DM.DMI)
+		{
+			const float CurrentScanZ = FMath::Lerp(DM.BottomZ, DM.TopZ, DM.ScanProgress);
+			DM.DMI->SetScalarParameterValue(TEXT("ScanHeight"), CurrentScanZ);
+		}
+	}
+}
+
+// ============================================================================
+// [BossRestore] 개별 메쉬 원본 머티리얼 복원
+// ============================================================================
+
+void ABossEncounterCube::RestoreDarkenedMesh(FDarkenedMesh& Mesh)
+{
+	if (!Mesh.MeshComp.IsValid())
+	{
+		return;
+	}
+
+	UStaticMeshComponent* SMC = Mesh.MeshComp.Get();
+	const int32 NumSlots = FMath::Min(Mesh.OriginalMaterials.Num(), SMC->GetNumMaterials());
+
+	for (int32 i = 0; i < NumSlots; ++i)
+	{
+		if (Mesh.OriginalMaterials[i])
+		{
+			SMC->SetMaterial(i, Mesh.OriginalMaterials[i]);
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[BossRestore] Mesh restored: %s (%d slots)"),
+		Mesh.TargetActor.IsValid() ? *Mesh.TargetActor->GetName() : TEXT("INVALID"),
+		NumSlots);
 }
