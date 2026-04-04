@@ -329,6 +329,12 @@ protected:
     /** 배열에서 랜덤 날씨 선택 후 Change Weather 호출 */
     void ApplyRandomWeather(bool bIsDay);
 
+    /** 밤/낮 전환 시 볼류메트릭 클라우드 표시/숨김 토글 */
+    void SetVolumetricCloudVisible(bool bVisible);
+
+    /** 밤 전환 시 맑은 날씨 강제 적용 (오로라 가시성 확보) */
+    void ForceClearWeather();
+
     // ═══════════════════════════════════════════════════════════════════════════
     // 캐싱 (UDS/UDW 액터 + 리플렉션 프로퍼티)
     // ═══════════════════════════════════════════════════════════════════════════

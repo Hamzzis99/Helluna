@@ -1847,7 +1847,7 @@ void ABossEncounterCube::TickBossRestore(float DeltaTime)
 		}
 
 		// ScanHeight 업데이트: BottomZ → TopZ
-		if (DM.DMI)
+		if (IsValid(DM.DMI))
 		{
 			const float CurrentScanZ = FMath::Lerp(DM.BottomZ, DM.TopZ, DM.ScanProgress);
 			DM.DMI->SetScalarParameterValue(TEXT("ScanHeight"), CurrentScanZ);
