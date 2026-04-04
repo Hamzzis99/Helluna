@@ -13,6 +13,8 @@
 #include "MassSpawner.h"
 #include "HellunaEnemyMassSpawner.generated.h"
 
+class UNavigationInvokerComponent;
+
 DECLARE_LOG_CATEGORY_EXTERN(LogHellunaSpawner, Log, All);
 
 UCLASS(BlueprintType, Blueprintable, meta = (DisplayName = "Helluna Enemy Mass Spawner"))
@@ -81,4 +83,8 @@ private:
 	FDelegateHandle HellunaSimStartedHandle;
 	FTimerHandle DelayTimerHandle;
 	FTimerHandle SpawnBatchTimerHandle;
+
+	// ★ 스포너 주변 NavMesh 스트리밍 강제 생성
+	UPROPERTY(VisibleAnywhere, Category = "Navigation")
+	TObjectPtr<UNavigationInvokerComponent> NavInvoker;
 };

@@ -5,12 +5,18 @@
 #include "GameMode/HellunaDefenseGameMode.h"
 #include "GameMode/HellunaDefenseGameState.h"
 #include "Kismet/GameplayStatics.h"
+#include "NavigationInvokerComponent.h"
 
 DEFINE_LOG_CATEGORY(LogHellunaSpawner);
 
 AHellunaEnemyMassSpawner::AHellunaEnemyMassSpawner()
 {
 	bAutoSpawnOnBeginPlay = false;
+
+	// ★ NavMesh 스트리밍 보장: 스포너 주변에도 NavMesh가 생성되도록
+	// 몬스터가 스폰 직후 이동 가능하게 함
+	NavInvoker = CreateDefaultSubobject<UNavigationInvokerComponent>(TEXT("SpawnerNavInvoker"));
+	NavInvoker->SetGenerationRadii(3000.f, 4000.f);
 }
 
 void AHellunaEnemyMassSpawner::BeginPlay()

@@ -86,6 +86,17 @@ struct FSTTask_ChaseTargetInstanceData
 
 	UPROPERTY()
 	float DiagTimer = 0.f;
+
+	// --- Player chase ---
+
+	UPROPERTY()
+	int32 PlayerStuckCount = 0;
+
+	UPROPERTY()
+	float PlayerStuckTimer = 0.f;
+
+	UPROPERTY()
+	FVector PlayerLastCheckedLocation = FVector::ZeroVector;
 };
 
 USTRUCT(meta = (DisplayName = "Helluna: Chase Target", Category = "Helluna|AI"))
@@ -117,93 +128,99 @@ public:
 
 	// ==========================================================
 
-	UPROPERTY(EditAnywhere, Category = "Common",
-		meta = (DisplayName = "Repath Interval",
-			ToolTip = "MoveTo Repath Interval (sec). \nPlayer: Re-Chase Interval. \nShip: Waypoint Refresh Interval.",
+	UPROPERTY(EditAnywhere, Category = "공통",
+		meta = (DisplayName = "경로 재탐색 주기",
+			ToolTip = "MoveTo 경로 재탐색 주기 (초).\n플레이어: 재추적 주기.\n우주선: 웨이포인트 갱신 주기.",
 			ClampMin = "0.1"))
 	float RepathInterval = 0.5f;
 
-	UPROPERTY(EditAnywhere, Category = "Common",
-		meta = (DisplayName = "Acceptance Radius",
-			ToolTip = "MoveTo Acceptance Radius (cm).",
+	UPROPERTY(EditAnywhere, Category = "공통",
+		meta = (DisplayName = "도착 판정 반경",
+			ToolTip = "MoveTo 도착 판정 반경 (cm).",
 			ClampMin = "10.0"))
 	float AcceptanceRadius = 50.f;
 
 	// ==========================================================
 
-	UPROPERTY(EditAnywhere, Category = "Ship",
-		meta = (DisplayName = "Spread Phase Radius",
-			ToolTip = "Rush -> Spread Phase Switching Distance (cm). \nMust be larger than StandoffRadius.",
+	UPROPERTY(EditAnywhere, Category = "우주선",
+		meta = (DisplayName = "산개 전환 거리",
+			ToolTip = "돌진 -> 산개 페이즈 전환 거리 (cm).\n대기 반경보다 커야 합니다.",
 			ClampMin = "100.0"))
 	float SpreadPhaseRadius = 1200.f;
 
-	UPROPERTY(EditAnywhere, Category = "Ship",
-		meta = (DisplayName = "Standoff Radius",
-			ToolTip = "Distance from ship center where monsters hold position (cm). \nThis is where they stand and attack.",
+	UPROPERTY(EditAnywhere, Category = "우주선",
+		meta = (DisplayName = "대기 반경",
+			ToolTip = "우주선 중심에서 몬스터가 멈춰서 공격하는 거리 (cm).",
 			ClampMin = "50.0"))
 	float StandoffRadius = 350.f;
 
-	UPROPERTY(EditAnywhere, Category = "Ship",
-		meta = (DisplayName = "Rush Waypoint Step",
-			ToolTip = "Rush Phase Maximum Distance Per Waypoint (cm).",
+	UPROPERTY(EditAnywhere, Category = "우주선",
+		meta = (DisplayName = "돌진 웨이포인트 간격",
+			ToolTip = "돌진 페이즈에서 한 웨이포인트당 최대 이동 거리 (cm).",
 			ClampMin = "100.0"))
 	float RushWaypointStep = 800.f;
 
+	UPROPERTY(EditAnywhere, Category = "우주선",
+		meta = (DisplayName = "재추격 여유 거리",
+			ToolTip = "도착 후 우주선이 대기 반경 + 이 값 이상 멀어지면 다시 추격 (cm).",
+			ClampMin = "50.0"))
+	float SpreadReEngageMargin = 300.f;
+
 	// ==========================================================
 
-	UPROPERTY(EditAnywhere, Category = "Stuck",
-		meta = (DisplayName = "Stuck Check Interval",
-			ToolTip = "Monster Stuck Check Interval (sec).",
+	UPROPERTY(EditAnywhere, Category = "끼임 감지",
+		meta = (DisplayName = "끼임 감지 주기",
+			ToolTip = "몬스터 끼임 감지 주기 (초).",
 			ClampMin = "0.1"))
 	float StuckCheckInterval = 0.4f;
 
-	UPROPERTY(EditAnywhere, Category = "Stuck",
-		meta = (DisplayName = "Stuck Distance Threshold",
-			ToolTip = "Stuck if moved less than this in one check interval (cm).",
+	UPROPERTY(EditAnywhere, Category = "끼임 감지",
+		meta = (DisplayName = "끼임 판정 거리",
+			ToolTip = "감지 주기 동안 이 거리 미만으로 이동하면 끼임 판정 (cm).",
 			ClampMin = "1.0"))
 	float StuckDistThreshold = 50.f;
 
-	UPROPERTY(EditAnywhere, Category = "Stuck",
-		meta = (DisplayName = "Stuck Angle Rotation",
-			ToolTip = "Stuck Detected -> Rotate Assigned Angle (degrees).",
+	UPROPERTY(EditAnywhere, Category = "끼임 감지",
+		meta = (DisplayName = "끼임 시 각도 회전량",
+			ToolTip = "끼임 감지 시 할당 각도를 이만큼 회전 (도).",
 			ClampMin = "10.0"))
 	float AngleRotationOnStuck = 90.f;
 
-	UPROPERTY(EditAnywhere, Category = "Stuck",
-		meta = (DisplayName = "Direct Move Stuck Threshold",
-			ToolTip = "This many consecutive stucks -> disable pathfinding and walk directly. \nNavMesh boundary Stuck Fix.",
+	UPROPERTY(EditAnywhere, Category = "끼임 감지",
+		meta = (DisplayName = "직선이동 전환 횟수",
+			ToolTip = "이 횟수만큼 연속 끼이면 길찾기를 끄고 직선 이동으로 전환.\nNavMesh 경계 끼임 해결용.",
 			ClampMin = "1"))
 	int32 DirectMoveStuckThreshold = 2;
 
-	UPROPERTY(EditAnywhere, Category = "Stuck",
-		meta = (DisplayName = "DirectMode Force Arrive Threshold",
-			ToolTip = "In DirectMode, if stuck count reaches this -> force arrival. \nHandles collision barriers near the ship where AddMovementInput is blocked.",
+	UPROPERTY(EditAnywhere, Category = "끼임 감지",
+		meta = (DisplayName = "강제 도착 전환 횟수",
+			ToolTip = "직선이동 모드에서 이 횟수만큼 끼이면 강제 도착 처리.\n우주선 근처 충돌체에 막혔을 때 사용.",
 			ClampMin = "3"))
 	int32 DirectModeForceArriveThreshold = 8;
 
-	UPROPERTY(EditAnywhere, Category = "Stuck",
-		meta = (DisplayName = "Instant DirectMode on Path Fail",
-			ToolTip = "ON: MoveTo path fail -> instant DirectMode (0 sec delay). \nOFF: wait for Stuck detection only."))
+	UPROPERTY(EditAnywhere, Category = "끼임 감지",
+		meta = (DisplayName = "경로실패 시 즉시 직선이동",
+			ToolTip = "ON: MoveTo 경로 실패 시 즉시 직선이동 전환.\nOFF: 끼임 감지만으로 전환."))
 	bool bInstantDirectModeOnPathFail = false;
 
 	// ==========================================================
 
-	UPROPERTY(EditAnywhere, Category = "EQS",
-		meta = (DisplayName = "Attack Position EQS",
-			ToolTip = "EQS Asset for Player Attack Position. Leave empty for direct MoveToActor."))
-	TObjectPtr<UEnvQuery> AttackPositionQuery = nullptr;
-
-	UPROPERTY(EditAnywhere, Category = "EQS",
-		meta = (DisplayName = "EQS Interval",
-			ToolTip = "EQS Repeat Interval (sec).",
-			ClampMin = "0.1"))
-	float EQSInterval = 1.0f;
+	UPROPERTY(EditAnywhere, Category = "플레이어",
+		meta = (DisplayName = "플레이어 추격 직선이동 횟수",
+			ToolTip = "플레이어 추격 중 이 횟수만큼 연속 끼이면 직선이동으로 전환.",
+			ClampMin = "2"))
+	int32 PlayerDirectMoveThreshold = 4;
 
 	// ==========================================================
 
-	UPROPERTY(EditAnywhere, Category = "Player",
-		meta = (DisplayName = "Player Attack Range",
-			ToolTip = "Distance at which player chase completes (cm).",
-			ClampMin = "50.0"))
-	float PlayerAttackRange = 200.f;
+	UPROPERTY(EditAnywhere, Category = "EQS",
+		meta = (DisplayName = "공격 위치 EQS",
+			ToolTip = "플레이어 공격 위치용 EQS 에셋. 비우면 직접 MoveToActor 사용."))
+	TObjectPtr<UEnvQuery> AttackPositionQuery = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "EQS",
+		meta = (DisplayName = "EQS 실행 주기",
+			ToolTip = "EQS 반복 실행 주기 (초).",
+			ClampMin = "0.1"))
+	float EQSInterval = 1.0f;
 };

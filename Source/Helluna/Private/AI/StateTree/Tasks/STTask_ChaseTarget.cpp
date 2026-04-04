@@ -26,9 +26,7 @@
 
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 
-#include <atomic>
-
-static std::atomic<int32> GAngleCounter{0};
+static int32 GAngleCounter = 0;
 
 // ============================================================================
 // Helpers
@@ -154,9 +152,26 @@ void FaceTarget(APawn* Pawn, AActor* Target, float DeltaTime, float InterpSpeed 
 		C->SetControlRotation(NewRot);
 }
 
+/** 도착 처리 공통: 정지 -> 타겟 주시 -> 회전 -> 네트워크 갱신 */
+void HandleArrival(AAIController* AIC, APawn* Pawn, AActor* FocusTarget)
+{
+	if (!AIC || !Pawn || !FocusTarget) return;
+	AIC->StopMovement();
+	AIC->SetFocus(FocusTarget);
+
+	const FVector ToTarget = (FocusTarget->GetActorLocation() - Pawn->GetActorLocation()).GetSafeNormal2D();
+	if (!ToTarget.IsNearlyZero())
+	{
+		const FRotator FaceRot(0.f, ToTarget.Rotation().Yaw, 0.f);
+		Pawn->SetActorRotation(FaceRot);
+		if (AController* C = Pawn->GetController())
+			C->SetControlRotation(FaceRot);
+		Pawn->ForceNetUpdate();
+	}
+}
+
 } // namespace ChaseHelpers
 
-using namespace ChaseHelpers;
 
 // ============================================================================
 // EnterState
@@ -196,10 +211,13 @@ EStateTreeRunStatus FSTTask_ChaseTarget::EnterState(
 	Data.bDirectMoveMode = false;
 	Data.DiagTimer = 0.f;
 	Data.LastCheckedLocation = Pawn->GetActorLocation();
+	Data.PlayerStuckCount = 0;
+	Data.PlayerStuckTimer = 0.f;
+	Data.PlayerLastCheckedLocation = Pawn->GetActorLocation();
 
 	if (bIsShip)
 	{
-		const int32 AngleIndex = GAngleCounter.fetch_add(1);
+		const int32 AngleIndex = GAngleCounter++;
 		Data.AssignedAngleDeg = FMath::Fmod(AngleIndex * 60.f, 360.f);
 
 		const float DistToShip2D = FVector::Dist2D(Pawn->GetActorLocation(), Target->GetActorLocation());
@@ -207,19 +225,19 @@ EStateTreeRunStatus FSTTask_ChaseTarget::EnterState(
 		if (DistToShip2D > SpreadPhaseRadius)
 		{
 			Data.Phase = EChasePhase::Rush;
-			const FVector Goal = ComputeRushGoal(
+			const FVector Goal = ChaseHelpers::ComputeRushGoal(
 				Pawn->GetActorLocation(), Target->GetActorLocation(),
 				Data.AssignedAngleDeg, SpreadPhaseRadius, RushWaypointStep,
 				Pawn->GetWorld());
-			IssueMoveToLocation(AIC, Goal, AcceptanceRadius);
+			ChaseHelpers::IssueMoveToLocation(AIC, Goal, AcceptanceRadius);
 		}
 		else
 		{
 			Data.Phase = EChasePhase::Spread;
-			const FVector Goal = ComputeSpreadGoal(
+			const FVector Goal = ChaseHelpers::ComputeSpreadGoal(
 				Target->GetActorLocation(), Data.AssignedAngleDeg, StandoffRadius,
 				Pawn->GetWorld());
-			IssueMoveToLocation(AIC, Goal, AcceptanceRadius);
+			ChaseHelpers::IssueMoveToLocation(AIC, Goal, AcceptanceRadius);
 		}
 
 		UE_LOG(LogTemp, Warning,
@@ -256,13 +274,14 @@ EStateTreeRunStatus FSTTask_ChaseTarget::Tick(
 	if (!Pawn) return EStateTreeRunStatus::Failed;
 
 	AActor* Target = TD.TargetActor.Get();
+	if (!Target) return EStateTreeRunStatus::Failed;
 
 	// Stop if attacking
+	static const FGameplayTag AttackingTag = FGameplayTag::RequestGameplayTag(FName("State.Enemy.Attacking"), false);
 	if (IAbilitySystemInterface* ASI = Cast<IAbilitySystemInterface>(Pawn))
 	{
 		if (UAbilitySystemComponent* ASC = ASI->GetAbilitySystemComponent())
 		{
-			FGameplayTag AttackingTag = FGameplayTag::RequestGameplayTag(FName("State.Enemy.Attacking"), false);
 			if (AttackingTag.IsValid() && ASC->HasMatchingGameplayTag(AttackingTag))
 			{
 				AIC->StopMovement();
@@ -327,18 +346,26 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickShipChase(
 	// --- Already arrived ---
 	if (Data.bSpreadArrived)
 	{
-		AIC->StopMovement();
-		AIC->SetFocus(Ship);
-		FaceTarget(Pawn, Ship, DeltaTime, 15.f);
-
-		const FVector ToShip = (ShipLoc - PawnLoc).GetSafeNormal2D();
-		if (!ToShip.IsNearlyZero())
+		// Ship이 멀어지면 다시 추격
+		if (DistToShip2D > StandoffRadius + SpreadReEngageMargin)
 		{
-			const float YawDelta = FMath::Abs(FMath::FindDeltaAngleDegrees(
-				Pawn->GetActorRotation().Yaw, ToShip.Rotation().Yaw));
-			if (YawDelta > 2.f)
-				Pawn->ForceNetUpdate();
+			Data.bSpreadArrived = false;
+			Data.bDirectMoveMode = false;
+			Data.ConsecutiveStuckCount = 0;
+			Data.StuckCheckTimer = 0.f;
+			Data.LastCheckedLocation = PawnLoc;
+			Data.Phase = EChasePhase::Spread;
+
+			const FVector Goal = ChaseHelpers::ComputeSpreadGoal(ShipLoc, Data.AssignedAngleDeg, StandoffRadius, Pawn->GetWorld());
+			ChaseHelpers::IssueMoveToLocation(AIC, Goal, AcceptanceRadius);
+
+			UE_LOG(LogTemp, Warning,
+				TEXT("[enemybugreport][Chase] ReEngage: Enemy=%s DistShip=%.1f > %.1f"),
+				*GetNameSafe(Pawn), DistToShip2D, StandoffRadius + SpreadReEngageMargin);
+			return EStateTreeRunStatus::Running;
 		}
+
+		ChaseHelpers::FaceTarget(Pawn, Ship, DeltaTime, 15.f);
 		return EStateTreeRunStatus::Running;
 	}
 
@@ -353,8 +380,8 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickShipChase(
 
 		if (!Data.bDirectMoveMode)
 		{
-			const FVector Goal = ComputeSpreadGoal(ShipLoc, Data.AssignedAngleDeg, StandoffRadius, Pawn->GetWorld());
-			IssueMoveToLocation(AIC, Goal, AcceptanceRadius);
+			const FVector Goal = ChaseHelpers::ComputeSpreadGoal(ShipLoc, Data.AssignedAngleDeg, StandoffRadius, Pawn->GetWorld());
+			ChaseHelpers::IssueMoveToLocation(AIC, Goal, AcceptanceRadius);
 		}
 		// DirectMode: AddMovementInput handles movement in tick, no MoveTo needed
 
@@ -388,18 +415,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickShipChase(
 			if (Data.bDirectMoveMode && Data.ConsecutiveStuckCount >= DirectModeForceArriveThreshold)
 			{
 				Data.bSpreadArrived = true;
-				AIC->StopMovement();
-				AIC->SetFocus(Ship);
-
-				const FVector ToShip = (ShipLoc - PawnLoc).GetSafeNormal2D();
-				if (!ToShip.IsNearlyZero())
-				{
-					const FRotator FaceRot(0.f, ToShip.Rotation().Yaw, 0.f);
-					Pawn->SetActorRotation(FaceRot);
-					if (AController* C = Pawn->GetController())
-						C->SetControlRotation(FaceRot);
-					Pawn->ForceNetUpdate();
-				}
+				ChaseHelpers::HandleArrival(AIC, Pawn, Ship);
 
 				UE_LOG(LogTemp, Warning,
 					TEXT("[enemybugreport][Chase] ForceArrive (DirectMode stuck): Enemy=%s StuckCnt=%d Dist2D=%.1f"),
@@ -424,14 +440,14 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickShipChase(
 			}
 			else if (Data.Phase == EChasePhase::Rush)
 			{
-				const FVector Goal = ComputeRushGoal(PawnLoc, ShipLoc,
+				const FVector Goal = ChaseHelpers::ComputeRushGoal(PawnLoc, ShipLoc,
 					Data.AssignedAngleDeg, SpreadPhaseRadius, RushWaypointStep, Pawn->GetWorld());
-				IssueMoveToLocation(AIC, Goal, AcceptanceRadius);
+				ChaseHelpers::IssueMoveToLocation(AIC, Goal, AcceptanceRadius);
 			}
 			else
 			{
-				const FVector Goal = ComputeSpreadGoal(ShipLoc, Data.AssignedAngleDeg, StandoffRadius, Pawn->GetWorld());
-				IssueMoveToLocation(AIC, Goal, AcceptanceRadius);
+				const FVector Goal = ChaseHelpers::ComputeSpreadGoal(ShipLoc, Data.AssignedAngleDeg, StandoffRadius, Pawn->GetWorld());
+				ChaseHelpers::IssueMoveToLocation(AIC, Goal, AcceptanceRadius);
 			}
 		}
 		else
@@ -448,28 +464,22 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickShipChase(
 	// --- Direct move mode: AddMovementInput every tick (bypasses PathFollowing) ---
 	if (Data.bDirectMoveMode)
 	{
-		// Stop any active pathfollowing so it doesn't fight with AddMovementInput
-		AIC->StopMovement();
+		// Stop pathfollowing once on first DirectMode tick
+		if (UPathFollowingComponent* PFC = AIC->GetPathFollowingComponent())
+		{
+			if (PFC->GetStatus() != EPathFollowingStatus::Idle)
+				AIC->StopMovement();
+		}
 
 		// Target = standoff position at assigned angle
-		const FVector SpreadTarget = AngleToWorldPos(ShipLoc, Data.AssignedAngleDeg, StandoffRadius);
+		const FVector SpreadTarget = ChaseHelpers::AngleToWorldPos(ShipLoc, Data.AssignedAngleDeg, StandoffRadius);
 		const float DistToTarget2D = FVector::Dist2D(PawnLoc, SpreadTarget);
 
 		// Arrival check (generous: AcceptanceRadius + 100)
 		if (DistToTarget2D <= AcceptanceRadius + 100.f)
 		{
 			Data.bSpreadArrived = true;
-			AIC->SetFocus(Ship);
-
-			const FVector ToShip = (ShipLoc - PawnLoc).GetSafeNormal2D();
-			if (!ToShip.IsNearlyZero())
-			{
-				const FRotator FaceRot(0.f, ToShip.Rotation().Yaw, 0.f);
-				Pawn->SetActorRotation(FaceRot);
-				if (AController* C = Pawn->GetController())
-					C->SetControlRotation(FaceRot);
-				Pawn->ForceNetUpdate();
-			}
+			ChaseHelpers::HandleArrival(AIC, Pawn, Ship);
 
 			UE_LOG(LogTemp, Warning,
 				TEXT("[enemybugreport][Chase] DirectArrive: Enemy=%s Angle=%.0f DistTarget=%.1f DistShip=%.1f"),
@@ -483,22 +493,12 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickShipChase(
 		{
 			FVector MoveDir = ToTarget2D;
 
-			// When stuck in DirectMode, add perpendicular sidestep + Z boost to escape collision
+			// When stuck in DirectMode, add perpendicular sidestep to escape collision
 			if (Data.ConsecutiveStuckCount >= DirectMoveStuckThreshold + 1)
 			{
-				// Perpendicular sidestep: alternate left/right based on stuck count
 				const float SideSign = (Data.ConsecutiveStuckCount % 2 == 0) ? 1.f : -1.f;
-				const FVector Side(- ToTarget2D.Y * SideSign, ToTarget2D.X * SideSign, 0.f);
-				// Blend: 60% forward + 40% sidestep + Z boost
-				MoveDir = (ToTarget2D * 0.6f + Side * 0.4f).GetSafeNormal();
-				MoveDir.Z = 0.3f;
-				MoveDir.Normalize();
-			}
-			else if (Data.ConsecutiveStuckCount > 0)
-			{
-				// Light Z boost to climb terrain
-				MoveDir.Z = 0.2f;
-				MoveDir.Normalize();
+				const FVector Side(-ToTarget2D.Y * SideSign, ToTarget2D.X * SideSign, 0.f);
+				MoveDir = (ToTarget2D * 0.6f + Side * 0.4f).GetSafeNormal2D();
 			}
 
 			Pawn->AddMovementInput(MoveDir, 1.0f);
@@ -524,9 +524,9 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickShipChase(
 
 		if (bRepathDue || bIdle)
 		{
-			const FVector Goal = ComputeRushGoal(PawnLoc, ShipLoc,
+			const FVector Goal = ChaseHelpers::ComputeRushGoal(PawnLoc, ShipLoc,
 				Data.AssignedAngleDeg, SpreadPhaseRadius, RushWaypointStep, Pawn->GetWorld());
-			const bool bPathOk = IssueMoveToLocation(AIC, Goal, AcceptanceRadius);
+			const bool bPathOk = ChaseHelpers::IssueMoveToLocation(AIC, Goal, AcceptanceRadius);
 
 			// Path failed -> NavMesh boundary. Instant DirectMode.
 			if (bInstantDirectModeOnPathFail && !bPathOk && !Data.bDirectMoveMode)
@@ -553,24 +553,13 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickShipChase(
 	}
 	else // Spread (with pathfinding)
 	{
-		const FVector SpreadGoal = ComputeSpreadGoal(ShipLoc, Data.AssignedAngleDeg, StandoffRadius, Pawn->GetWorld());
+		const FVector SpreadGoal = ChaseHelpers::ComputeSpreadGoal(ShipLoc, Data.AssignedAngleDeg, StandoffRadius, Pawn->GetWorld());
 		const float DistToGoal2D = FVector::Dist2D(PawnLoc, SpreadGoal);
 
 		if (DistToGoal2D <= AcceptanceRadius + 50.f)
 		{
 			Data.bSpreadArrived = true;
-			AIC->StopMovement();
-			AIC->SetFocus(Ship);
-
-			const FVector ToShip = (ShipLoc - PawnLoc).GetSafeNormal2D();
-			if (!ToShip.IsNearlyZero())
-			{
-				const FRotator FaceRot(0.f, ToShip.Rotation().Yaw, 0.f);
-				Pawn->SetActorRotation(FaceRot);
-				if (AController* C = Pawn->GetController())
-					C->SetControlRotation(FaceRot);
-				Pawn->ForceNetUpdate();
-			}
+			ChaseHelpers::HandleArrival(AIC, Pawn, Ship);
 
 			UE_LOG(LogTemp, Warning,
 				TEXT("[enemybugreport][Chase] SpreadArrive: Enemy=%s Angle=%.0f DistGoal=%.1f DistShip=%.1f"),
@@ -585,7 +574,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickShipChase(
 
 		if (bRepathDue || bIdle)
 		{
-			const bool bPathOk = IssueMoveToLocation(AIC, SpreadGoal, AcceptanceRadius);
+			const bool bPathOk = ChaseHelpers::IssueMoveToLocation(AIC, SpreadGoal, AcceptanceRadius);
 
 			// Path failed -> NavMesh boundary. Instant DirectMode.
 			if (bInstantDirectModeOnPathFail && !bPathOk && !Data.bDirectMoveMode)
@@ -598,7 +587,17 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickShipChase(
 			Data.TimeSinceRepath = 0.f;
 		}
 
-		FaceTarget(Pawn, Ship, DeltaTime, 10.f);
+		// Spread: 이동 중에는 이동 방향을 바라봄 (도착 후에만 Ship을 바라봄)
+		const FVector Vel2D = Pawn->GetVelocity().GetSafeNormal2D();
+		if (!Vel2D.IsNearlyZero())
+		{
+			const FRotator CurrentRot = Pawn->GetActorRotation();
+			const FRotator MoveRot(0.f, Vel2D.Rotation().Yaw, 0.f);
+			const FRotator NewRot = FMath::RInterpTo(CurrentRot, MoveRot, DeltaTime, 8.f);
+			Pawn->SetActorRotation(NewRot);
+			if (AController* C = Pawn->GetController())
+				C->SetControlRotation(NewRot);
+		}
 	}
 
 	return EStateTreeRunStatus::Running;
@@ -611,23 +610,63 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickPlayerChase(
 	FInstanceDataType& Data, AAIController* AIC, APawn* Pawn,
 	AActor* Target, float DeltaTime) const
 {
+	const FVector PawnLoc = Pawn->GetActorLocation();
+	const FVector TargetLoc = Target->GetActorLocation();
+	const float DistToTarget2D = FVector::Dist2D(PawnLoc, TargetLoc);
+
+	// --- Player 끼임 감지 ---
+	Data.PlayerStuckTimer += DeltaTime;
+	if (Data.PlayerStuckTimer >= StuckCheckInterval)
+	{
+		Data.PlayerStuckTimer = 0.f;
+		const float Moved = FVector::Dist2D(PawnLoc, Data.PlayerLastCheckedLocation);
+		const bool bFar = (DistToTarget2D > AcceptanceRadius + 150.f);
+
+		if (Moved < StuckDistThreshold && bFar)
+			Data.PlayerStuckCount++;
+		else
+			Data.PlayerStuckCount = 0;
+
+		Data.PlayerLastCheckedLocation = PawnLoc;
+	}
+
+	// --- Player DirectMode: 끼임 N회 이상 -> AddMovementInput ---
+	if (Data.PlayerStuckCount >= PlayerDirectMoveThreshold)
+	{
+		if (UPathFollowingComponent* PFC = AIC->GetPathFollowingComponent())
+		{
+			if (PFC->GetStatus() != EPathFollowingStatus::Idle)
+				AIC->StopMovement();
+		}
+
+		const FVector ToTarget2D = (TargetLoc - PawnLoc).GetSafeNormal2D();
+		if (!ToTarget2D.IsNearlyZero())
+		{
+			Pawn->AddMovementInput(ToTarget2D, 1.0f);
+
+			const FRotator CurrentRot = Pawn->GetActorRotation();
+			const FRotator MoveRot(0.f, ToTarget2D.Rotation().Yaw, 0.f);
+			const FRotator NewRot = FMath::RInterpTo(CurrentRot, MoveRot, DeltaTime, 8.f);
+			Pawn->SetActorRotation(NewRot);
+			if (AController* C = Pawn->GetController())
+				C->SetControlRotation(NewRot);
+		}
+		return EStateTreeRunStatus::Running;
+	}
+
+	// --- Normal pathfinding ---
 	const bool bRepathDue = Data.TimeSinceRepath >= RepathInterval;
 	const bool bTargetChanged = Data.LastMoveTarget != Data.TargetData.TargetActor;
 
-	bool bStuck = false;
+	bool bIdle = false;
 	if (UPathFollowingComponent* PFC = AIC->GetPathFollowingComponent())
-	{
-		const bool bIdle = (PFC->GetStatus() == EPathFollowingStatus::Idle);
-		const bool bSlow = (Pawn->GetVelocity().SizeSquared2D() < 50.f * 50.f);
-		const bool bFar = (Data.TargetData.DistanceToTarget > (AcceptanceRadius + 150.f));
-		bStuck = bIdle && bSlow && bFar;
-	}
+		bIdle = (PFC->GetStatus() == EPathFollowingStatus::Idle);
 
-	if (bTargetChanged || bRepathDue || bStuck)
+	if (bTargetChanged || bRepathDue || bIdle)
 	{
 		if (AttackPositionQuery && Data.TimeUntilNextEQS <= 0.f)
 		{
-			RunAttackPositionEQS(AttackPositionQuery, AIC, AcceptanceRadius, Target);
+			ChaseHelpers::RunAttackPositionEQS(AttackPositionQuery, AIC, AcceptanceRadius, Target);
 			Data.TimeUntilNextEQS = EQSInterval;
 		}
 		else
@@ -639,7 +678,22 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickPlayerChase(
 		Data.TimeSinceRepath = 0.f;
 	}
 
-	FaceTarget(Pawn, Target, DeltaTime, 5.f);
+	// 이동 중에는 이동 방향, 멈춰있으면 타겟 방향
+	const FVector Vel2D = Pawn->GetVelocity().GetSafeNormal2D();
+	if (!Vel2D.IsNearlyZero())
+	{
+		const FRotator CurrentRot = Pawn->GetActorRotation();
+		const FRotator MoveRot(0.f, Vel2D.Rotation().Yaw, 0.f);
+		const FRotator NewRot = FMath::RInterpTo(CurrentRot, MoveRot, DeltaTime, 5.f);
+		Pawn->SetActorRotation(NewRot);
+		if (AController* C = Pawn->GetController())
+			C->SetControlRotation(NewRot);
+	}
+	else
+	{
+		ChaseHelpers::FaceTarget(Pawn, Target, DeltaTime, 5.f);
+	}
+
 	return EStateTreeRunStatus::Running;
 }
 
