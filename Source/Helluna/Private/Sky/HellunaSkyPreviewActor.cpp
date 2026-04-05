@@ -1,4 +1,4 @@
-// Capstone Project Helluna — 에디터 전용 밤/낮 미리보기 액터
+// Capstone Project Helluna — 에디터 전용 밤/낮 + 날씨 미리보기 액터
 
 #include "Sky/HellunaSkyPreviewActor.h"
 #include "EngineUtils.h"
@@ -7,12 +7,9 @@
 AHellunaSkyPreviewActor::AHellunaSkyPreviewActor()
 {
 	PrimaryActorTick.bCanEverTick = false;
-
-	// 에디터 전용 — 런타임(패키징)에 포함되지 않음
 	bIsEditorOnlyActor = true;
 
 #if WITH_EDITORONLY_DATA
-	// 에디터에서 보이는 아이콘 (빈 액터라 찾기 어려우므로)
 	if (!IsRunningCommandlet())
 	{
 		USceneComponent* Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
@@ -25,16 +22,27 @@ AActor* AHellunaSkyPreviewActor::FindUDSActor() const
 {
 	UWorld* World = GetWorld();
 	if (!World) return nullptr;
-
 	for (TActorIterator<AActor> It(World); It; ++It)
 	{
-		if (It->GetName().Contains(TEXT("Ultra_Dynamic_Sky")))
+		if (It->GetName().Contains(TEXT("Ultra_Dynamic_Sky")) && !It->GetName().Contains(TEXT("Weather")))
 			return *It;
 	}
 	return nullptr;
 }
 
-void AHellunaSkyPreviewActor::ApplyPreview()
+AActor* AHellunaSkyPreviewActor::FindUDWActor() const
+{
+	UWorld* World = GetWorld();
+	if (!World) return nullptr;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (It->GetName().Contains(TEXT("Ultra_Dynamic_Weather")))
+			return *It;
+	}
+	return nullptr;
+}
+
+void AHellunaSkyPreviewActor::ApplyTimePreview()
 {
 	AActor* UDS = FindUDSActor();
 	if (!UDS) return;
@@ -43,7 +51,7 @@ void AHellunaSkyPreviewActor::ApplyPreview()
 	const bool bIsNight = (PreviewMode == ESkyPreviewMode::Night);
 	const float TargetTime = bIsNight ? NightPreviewTime : DayPreviewTime;
 
-	// Time of Day 설정
+	// Time of Day
 	if (FProperty* TimeProp = FindFProperty<FProperty>(UDSClass, TEXT("Time of Day")))
 	{
 		if (FFloatProperty* FP = CastField<FFloatProperty>(TimeProp))
@@ -52,7 +60,7 @@ void AHellunaSkyPreviewActor::ApplyPreview()
 			DP->SetPropertyValue_InContainer(UDS, static_cast<double>(TargetTime));
 	}
 
-	// Animate OFF (미리보기 중 시간 고정)
+	// Animate OFF
 	if (FProperty* AnimProp = FindFProperty<FProperty>(UDSClass, TEXT("Animate Time of Day")))
 	{
 		if (FBoolProperty* BP = CastField<FBoolProperty>(AnimProp))
@@ -73,6 +81,61 @@ void AHellunaSkyPreviewActor::ApplyPreview()
 	}
 }
 
+void AHellunaSkyPreviewActor::ApplyWeatherPreview()
+{
+	AActor* UDW = FindUDWActor();
+	if (!UDW) return;
+
+	// Change Weather 함수 찾기
+	UFunction* Func = UDW->FindFunction(TEXT("Change Weather"));
+	if (!Func)
+		Func = UDW->FindFunction(TEXT("ChangeWeather"));
+	if (!Func) return;
+
+	if (WeatherPreset == ESkyWeatherPreset::None)
+	{
+		// None = 날씨 해제
+		struct { UObject* NewWeatherType; float TransitionTime; } Params;
+		Params.NewWeatherType = nullptr;
+		Params.TransitionTime = WeatherTransitionTime;
+		UDW->ProcessEvent(Func, &Params);
+		return;
+	}
+
+	// 프리셋 에셋 로드
+	const FString AssetPath = GetWeatherPresetPath(WeatherPreset);
+	if (AssetPath.IsEmpty()) return;
+
+	UObject* WeatherAsset = StaticLoadObject(UObject::StaticClass(), nullptr, *AssetPath);
+	if (!WeatherAsset) return;
+
+	struct { UObject* NewWeatherType; float TransitionTime; } Params;
+	Params.NewWeatherType = WeatherAsset;
+	Params.TransitionTime = WeatherTransitionTime;
+	UDW->ProcessEvent(Func, &Params);
+}
+
+FString AHellunaSkyPreviewActor::GetWeatherPresetPath(ESkyWeatherPreset Preset)
+{
+	static const TCHAR* BasePath = TEXT("/Game/UltraDynamicSky/Blueprints/Weather_Effects/Weather_Presets/");
+
+	switch (Preset)
+	{
+	case ESkyWeatherPreset::ClearSkies:   return FString(BasePath) + TEXT("Clear_Skies.Clear_Skies");
+	case ESkyWeatherPreset::PartlyCloudy: return FString(BasePath) + TEXT("Partly_Cloudy.Partly_Cloudy");
+	case ESkyWeatherPreset::Cloudy:       return FString(BasePath) + TEXT("Cloudy.Cloudy");
+	case ESkyWeatherPreset::Overcast:     return FString(BasePath) + TEXT("Overcast.Overcast");
+	case ESkyWeatherPreset::Foggy:        return FString(BasePath) + TEXT("Foggy.Foggy");
+	case ESkyWeatherPreset::RainLight:    return FString(BasePath) + TEXT("Rain_Light.Rain_Light");
+	case ESkyWeatherPreset::Rain:         return FString(BasePath) + TEXT("Rain.Rain");
+	case ESkyWeatherPreset::Thunderstorm: return FString(BasePath) + TEXT("Rain_Thunderstorm.Rain_Thunderstorm");
+	case ESkyWeatherPreset::SnowLight:    return FString(BasePath) + TEXT("Snow_Light.Snow_Light");
+	case ESkyWeatherPreset::Snow:         return FString(BasePath) + TEXT("Snow.Snow");
+	case ESkyWeatherPreset::Blizzard:     return FString(BasePath) + TEXT("Snow_Blizzard.Snow_Blizzard");
+	default: return FString();
+	}
+}
+
 #if WITH_EDITOR
 void AHellunaSkyPreviewActor::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
 {
@@ -82,11 +145,19 @@ void AHellunaSkyPreviewActor::PostEditChangeProperty(FPropertyChangedEvent& Prop
 
 	const FName PropName = PropertyChangedEvent.GetPropertyName();
 
+	// 시간 관련 변경
 	if (PropName == GET_MEMBER_NAME_CHECKED(AHellunaSkyPreviewActor, PreviewMode)
 		|| PropName == GET_MEMBER_NAME_CHECKED(AHellunaSkyPreviewActor, NightPreviewTime)
 		|| PropName == GET_MEMBER_NAME_CHECKED(AHellunaSkyPreviewActor, DayPreviewTime))
 	{
-		ApplyPreview();
+		ApplyTimePreview();
+	}
+
+	// 날씨 관련 변경
+	if (PropName == GET_MEMBER_NAME_CHECKED(AHellunaSkyPreviewActor, WeatherPreset)
+		|| PropName == GET_MEMBER_NAME_CHECKED(AHellunaSkyPreviewActor, WeatherTransitionTime))
+	{
+		ApplyWeatherPreview();
 	}
 }
 #endif
