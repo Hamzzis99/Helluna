@@ -1358,15 +1358,13 @@ void AHellunaHeroController::TogglePauseMenu()
 	// 서버 측 PlayerController에서는 위젯 생성 불가 — 로컬만 허용
 	if (!IsLocalController()) return;
 
-	// 이미 열려 있으면 직접 제거 (키 토글 / 애니메이션 완료 콜백 공용)
+	// 이미 열려 있으면 즉시 닫기
 	if (IsValid(PauseMenuInstance))
 	{
 		PauseMenuInstance->RemoveFromParent();
 		PauseMenuInstance = nullptr;
-
 		SetShowMouseCursor(false);
 		SetInputMode(FInputModeGameOnly());
-
 		UE_LOG(LogTemp, Log, TEXT("[PauseMenu] 위젯 닫기"));
 		return;
 	}
@@ -1398,6 +1396,20 @@ void AHellunaHeroController::TogglePauseMenu()
 		UE_LOG(LogTemp, Log, TEXT("[PauseMenu] 위젯 열기 — 클래스: %s"),
 			*PauseMenuInstance->GetClass()->GetName());
 	}
+}
+
+void AHellunaHeroController::ClearPauseMenuInstance()
+{
+	PauseMenuInstance = nullptr;
+	SetShowMouseCursor(false);
+	SetInputMode(FInputModeGameOnly());
+	UE_LOG(LogTemp, Log, TEXT("[PauseMenu] 인스턴스 해제 완료"));
+}
+
+void AHellunaHeroController::ClearPauseMenuInstanceOnly()
+{
+	PauseMenuInstance = nullptr;
+	UE_LOG(LogTemp, Log, TEXT("[PauseMenu] 인스턴스 레퍼런스만 해제 (커서/입력 유지)"));
 }
 
 // =========================================================================================

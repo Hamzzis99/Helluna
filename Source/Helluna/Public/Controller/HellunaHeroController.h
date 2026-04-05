@@ -467,6 +467,12 @@ public:
 		meta = (DisplayName = "Toggle Pause Menu (일시정지 메뉴 토글)"))
 	void TogglePauseMenu();
 
+	/** 일시정지 메뉴 인스턴스 해제 (위젯 내부에서 닫기 완료 시 호출) */
+	void ClearPauseMenuInstance();
+
+	/** 일시정지 메뉴 인스턴스만 해제 (커서/입력 복원 없이 — 설정 화면 전환용) */
+	void ClearPauseMenuInstanceOnly();
+
 protected:
 	/** 일시정지 메뉴 위젯 클래스 (BP에서 WBP_HellunaPauseMenu 지정) */
 	UPROPERTY(EditDefaultsOnly, Category = "UI (유아이)",

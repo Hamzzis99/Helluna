@@ -55,19 +55,23 @@ void UHellunaPauseMenuWidget::NativeOnInitialized()
 		Button_QuitGame->OnClicked.AddUniqueDynamic(this, &ThisClass::OnQuitGameClicked);
 	}
 
-	// ── 호버 바/화살표 초기 상태: 숨김 ──
-	auto HideWidget = [](UWidget* W)
+	// ── 호버 바/화살표 초기 상태: 투명 (공간은 유지하여 정렬 안정) ──
+	auto HideByOpacity = [](UWidget* W)
 	{
-		if (IsValid(W)) W->SetVisibility(ESlateVisibility::Collapsed);
+		if (IsValid(W))
+		{
+			W->SetVisibility(ESlateVisibility::HitTestInvisible);
+			W->SetRenderOpacity(0.0f);
+		}
 	};
-	HideWidget(Img_ResumeBar);
-	HideWidget(Img_SettingsBar);
-	HideWidget(Img_ReturnLobbyBar);
-	HideWidget(Img_QuitGameBar);
-	HideWidget(Text_ResumeArrow);
-	HideWidget(Text_SettingsArrow);
-	HideWidget(Text_ReturnLobbyArrow);
-	HideWidget(Text_QuitGameArrow);
+	HideByOpacity(Img_ResumeBar);
+	HideByOpacity(Img_SettingsBar);
+	HideByOpacity(Img_ReturnLobbyBar);
+	HideByOpacity(Img_QuitGameBar);
+	HideByOpacity(Text_ResumeArrow);
+	HideByOpacity(Text_SettingsArrow);
+	HideByOpacity(Text_ReturnLobbyArrow);
+	HideByOpacity(Text_QuitGameArrow);
 
 	// ── SlideIn 애니메이션: BindWidgetAnimOptional로 자동 바인딩 ──
 	UE_LOG(LogTemp, Log, TEXT("[PauseMenu] NativeOnInitialized — Anim_SlideIn=%s"),
@@ -92,38 +96,7 @@ void UHellunaPauseMenuWidget::NativeDestruct()
 
 void UHellunaPauseMenuWidget::PlayOpenAnimation()
 {
-	// BindWidgetAnimOptional 실패 시 WBGC에서 수동 탐색
-	if (!IsValid(Anim_SlideIn))
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[PauseMenu] Anim_SlideIn BindWidgetAnimOptional 실패 — WBGC 수동 탐색"));
-		if (UWidgetBlueprintGeneratedClass* WBGC = Cast<UWidgetBlueprintGeneratedClass>(GetClass()))
-		{
-			for (UWidgetAnimation* Anim : WBGC->Animations)
-			{
-				if (IsValid(Anim))
-				{
-					// DisplayLabel 또는 오브젝트 이름으로 매칭
-					FString ObjName = Anim->GetName();
-					if (ObjName.Contains(TEXT("SlideIn")))
-					{
-						Anim_SlideIn = Anim;
-						UE_LOG(LogTemp, Log, TEXT("[PauseMenu] WBGC에서 SlideIn 발견: %s"), *ObjName);
-						break;
-					}
-				}
-			}
-		}
-	}
-
-	if (IsValid(Anim_SlideIn))
-	{
-		PlayAnimation(Anim_SlideIn);
-		UE_LOG(LogTemp, Log, TEXT("[PauseMenu] SlideIn 애니메이션 재생"));
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[PauseMenu] Anim_SlideIn 없음 — 애니메이션 없이 표시"));
-	}
+	// 애니메이션 제거됨 — 즉시 표시
 }
 
 void UHellunaPauseMenuWidget::CloseWithAnimation()
@@ -131,31 +104,24 @@ void UHellunaPauseMenuWidget::CloseWithAnimation()
 	if (bClosing) return;
 	bClosing = true;
 
-	if (IsValid(Anim_SlideIn))
-	{
-		CloseAnimFinishedDelegate.BindDynamic(this, &ThisClass::OnCloseAnimationFinished);
-		BindToAnimationFinished(Anim_SlideIn, CloseAnimFinishedDelegate);
-		PlayAnimation(Anim_SlideIn, 0.f, 1, EUMGSequencePlayMode::Reverse);
-	}
-	else
-	{
-		OnCloseAnimationFinished();
-	}
-}
-
-void UHellunaPauseMenuWidget::OnCloseAnimationFinished()
-{
-	// 컨트롤러의 TogglePauseMenu 호출하여 상태 정리 (커서/InputMode 복원 포함)
 	if (APlayerController* PC = GetOwningPlayer())
 	{
 		if (AHellunaHeroController* HC = Cast<AHellunaHeroController>(PC))
 		{
-			HC->TogglePauseMenu();
-			return;
+			HC->ClearPauseMenuInstance();
+		}
+		else
+		{
+			PC->SetShowMouseCursor(false);
+			PC->SetInputMode(FInputModeGameOnly());
 		}
 	}
-	// 폴백: 직접 제거
 	RemoveFromParent();
+}
+
+void UHellunaPauseMenuWidget::OnCloseAnimationFinished()
+{
+	// 미사용 — 애니메이션 제거됨
 }
 
 
@@ -181,16 +147,16 @@ void UHellunaPauseMenuWidget::SetButtonHoverState(
 		}
 	}
 
-	// 작업 2: 왼쪽 세로 바 표시/숨김
+	// 작업 2: 왼쪽 세로 바 표시/숨김 (RenderOpacity로 레이아웃 유지)
 	if (IsValid(Bar))
 	{
-		Bar->SetVisibility(bHovered ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		Bar->SetRenderOpacity(bHovered ? 1.0f : 0.0f);
 	}
 
-	// 작업 3: 우측 › 화살표 표시/숨김
+	// 작업 3: 우측 › 화살표 표시/숨김 (RenderOpacity로 레이아웃 유지)
 	if (IsValid(Arrow))
 	{
-		Arrow->SetVisibility(bHovered ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		Arrow->SetRenderOpacity(bHovered ? 1.0f : 0.0f);
 	}
 }
 
@@ -243,11 +209,16 @@ void UHellunaPauseMenuWidget::OnResumeClicked()
 
 void UHellunaPauseMenuWidget::OnSettingsClicked()
 {
-	// 작업 5: 그래픽 설정 열기
+	// 일시정지 메뉴 닫고 → 그래픽 설정 열기 (커서/입력 모드는 건드리지 않음)
 	if (APlayerController* PC = GetOwningPlayer())
 	{
 		if (AHellunaHeroController* HC = Cast<AHellunaHeroController>(PC))
 		{
+			// 인스턴스 레퍼런스만 해제 (커서/입력 복원 안 함 — 그래픽 설정이 이어받음)
+			HC->ClearPauseMenuInstanceOnly();
+			RemoveFromParent();
+
+			// 그래픽 설정 열기 (내부에서 커서/입력 모드 설정함)
 			HC->ToggleGraphicsSettings();
 		}
 	}

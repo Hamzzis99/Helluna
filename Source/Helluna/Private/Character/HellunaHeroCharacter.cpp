@@ -150,16 +150,24 @@ void AHellunaHeroCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// ★ 추가: 서버에서만 피격/사망 델리게이트 바인딩
-	if (HasAuthority() && HeroHealthComponent)
+	// [Fix] 체력 변경은 서버+클라 모두 바인딩 (클라: OnRep_Health → HUD 갱신)
+	if (HeroHealthComponent)
 	{
 		HeroHealthComponent->OnHealthChanged.AddUniqueDynamic(this, &AHellunaHeroCharacter::OnHeroHealthChanged);
+	}
+
+	// 사망/다운은 서버에서만 처리
+	if (HasAuthority() && HeroHealthComponent)
+	{
 		HeroHealthComponent->OnDeath.AddUniqueDynamic(this, &AHellunaHeroCharacter::OnHeroDeath);
 		HeroHealthComponent->OnDowned.AddUniqueDynamic(this, &AHellunaHeroCharacter::OnHeroDowned);
 	}
 
 	// 로컬 플레이어 전용 무기 HUD 생성
 	InitWeaponHUD();
+
+	// [SpawnVFX] 입장 시 화면 번쩍 효과
+	InitSpawnVFX();
 
 	// [Phase 21] 3D 부활 위젯 클래스 설정 (데디케이티드 서버 제외)
 	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-Debug] BeginPlay: %s | NetMode=%d | ReviveWidgetComp=%s | ReviveWidgetClass=%s"),
@@ -282,6 +290,12 @@ void AHellunaHeroCharacter::Tick(float DeltaTime)
 	if (IsLocallyControlled())
 	{
 		UpdateKickPrompt(DeltaTime);
+	}
+
+	// [SpawnVFX] 화면 번쩍 페이드아웃
+	if (bSpawnVFXActive && IsLocallyControlled())
+	{
+		TickSpawnVFX(DeltaTime);
 	}
 }
 
@@ -2651,4 +2665,58 @@ void AHellunaHeroCharacter::PlayBloodHitFade(uint8 DirIndex)
 		FadeStep,
 		true  // looping
 	);
+}
+
+// ============================================================================
+// [SpawnVFX] 입장 시 SciFi Shield 화면 번쩍 효과
+// ============================================================================
+void AHellunaHeroCharacter::InitSpawnVFX()
+{
+	if (!IsLocallyControlled() || !SpawnVFXMaterial) return;
+
+	SpawnVFXPostProcess = NewObject<UPostProcessComponent>(this, TEXT("SpawnVFXPostProcess"));
+	if (!SpawnVFXPostProcess) return;
+
+	SpawnVFXPostProcess->RegisterComponent();
+	SpawnVFXPostProcess->AttachToComponent(GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
+	SpawnVFXPostProcess->bUnbound = true;
+	SpawnVFXPostProcess->Priority = 20.f;
+
+	SpawnVFXPostProcess->Settings.WeightedBlendables.Array.Empty();
+	SpawnVFXPostProcess->Settings.WeightedBlendables.Array.Add(
+		FWeightedBlendable(SpawnVFXMaxIntensity, SpawnVFXMaterial));
+
+	SpawnVFXPostProcess->bEnabled = true;
+	SpawnVFXPostProcess->MarkRenderStateDirty();
+
+	bSpawnVFXActive = true;
+	SpawnVFXElapsed = 0.f;
+
+	UE_LOG(LogHelluna, Log, TEXT("[SpawnVFX] Started (Duration=%.2f, Intensity=%.2f)"), SpawnVFXDuration, SpawnVFXMaxIntensity);
+}
+
+void AHellunaHeroCharacter::TickSpawnVFX(float DeltaTime)
+{
+	SpawnVFXElapsed += DeltaTime;
+	const float T = FMath::Clamp(SpawnVFXElapsed / SpawnVFXDuration, 0.f, 1.f);
+
+	// EaseOut sqrt: 처음엔 밝게 유지, 후반부에 급격히 사라짐
+	const float Alpha = FMath::Pow(FMath::Max(0.f, 1.f - T), 0.5f) * SpawnVFXMaxIntensity;
+
+	if (SpawnVFXPostProcess && SpawnVFXPostProcess->Settings.WeightedBlendables.Array.Num() > 0)
+	{
+		SpawnVFXPostProcess->Settings.WeightedBlendables.Array[0].Weight = Alpha;
+		SpawnVFXPostProcess->MarkRenderStateDirty();
+	}
+
+	if (T >= 1.f)
+	{
+		bSpawnVFXActive = false;
+		if (SpawnVFXPostProcess)
+		{
+			SpawnVFXPostProcess->bEnabled = false;
+			SpawnVFXPostProcess->MarkRenderStateDirty();
+		}
+		UE_LOG(LogHelluna, Log, TEXT("[SpawnVFX] Complete"));
+	}
 }
