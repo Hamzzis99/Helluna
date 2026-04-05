@@ -1,5 +1,4 @@
-﻿// Capstone Project Helluna
-
+// File: Source/Helluna/Public/UI/DayNight/DayNightHUDWidget.h
 #pragma once
 
 #include "CoreMinimal.h"
@@ -7,63 +6,134 @@
 #include "GameMode/HellunaDefenseGameState.h"
 #include "DayNightHUDWidget.generated.h"
 
+class USizeBox;
 class UImage;
 class UTextBlock;
+class UProgressBar;
+class UOverlay;
+class UCanvasPanel;
+class UCanvasPanelSlot;
+class UMaterialInstanceDynamic;
+class UMaterialInterface;
 
-/**
- * 낮/밤 상태 HUD 위젯
- *
- * [낮 표시]
- *  - DayNightIconImage  : 낮 아이콘
- *  - DayCountText       : "3일차" (낮/밤 항상 표시)
- *  - StatusText         : "밤까지 42초"
- *
- * [밤 표시]
- *  - DayNightIconImage  : 밤 아이콘 (낮 아이콘과 같은 위치, 텍스처만 교체)
- *  - DayCountText       : "3일차" (낮/밤 항상 표시)
- *  - StatusText         : "남은 몬스터: 7 / 15"
- */
 UCLASS()
 class HELLUNA_API UDayNightHUDWidget : public UUserWidget
 {
     GENERATED_BODY()
 
-public:
-    /** 낮 아이콘 텍스처 (에디터에서 지정) */
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "DayNight|Icon",
-        meta = (DisplayName = "낮 아이콘 텍스처"))
-    TObjectPtr<UTexture2D> DayIconTexture = nullptr;
-
-    /** 밤 아이콘 텍스처 (에디터에서 지정) */
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "DayNight|Icon",
-        meta = (DisplayName = "밤 아이콘 텍스처"))
-    TObjectPtr<UTexture2D> NightIconTexture = nullptr;
-
 protected:
     virtual void NativeConstruct() override;
+    virtual void NativeDestruct() override;
     virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
-    // ── BP에서 이름으로 바인딩되는 위젯들 ────────────────────────────────
-
-    /** 낮/밤 아이콘 이미지 (하나로 통합 — Phase에 따라 텍스처 교체) */
+    // ── 미니맵 (좌상단) ──
     UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
-    TObjectPtr<UImage> DayNightIconImage = nullptr;
+    TObjectPtr<USizeBox> MinimapSizeBox = nullptr;
 
-    /** 몇 일차 텍스트 (낮/밤 항상 표시) */
-    UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
-    TObjectPtr<UTextBlock> DayCountText = nullptr;
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    TObjectPtr<UOverlay> MinimapOverlay = nullptr;
 
-    /** 낮: "밤까지 N초" / 밤: "남은 몬스터: N / M" (하나로 통합) */
     UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
-    TObjectPtr<UTextBlock> StatusText = nullptr;
+    TObjectPtr<UImage> MinimapImage = nullptr;
+
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    TObjectPtr<UCanvasPanel> MinimapIconCanvas = nullptr;
+
+    // ── 웨이브 정보 (좌상단, 미니맵 아래) ──
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
+    TObjectPtr<UOverlay> WaveInfoPanel = nullptr;
+
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
+    TObjectPtr<UTextBlock> WaveLabelText = nullptr;
+
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
+    TObjectPtr<UTextBlock> WaveCountText = nullptr;
+
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
+    TObjectPtr<UTextBlock> WaveSubText = nullptr;
+
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
+    TObjectPtr<UProgressBar> WaveProgressBar = nullptr;
+
+    // ── 낮 타이머 (상단 중앙, 낮에만 표시) ──
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
+    TObjectPtr<UOverlay> DayTimerPanel = nullptr;
+
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
+    TObjectPtr<UTextBlock> DayLabelText = nullptr;
+
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
+    TObjectPtr<UTextBlock> DayTimeText = nullptr;
+
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
+    TObjectPtr<UTextBlock> DayTimeUnitText = nullptr;
+
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
+    TObjectPtr<UProgressBar> DayTimerBar = nullptr;
+
+    // ── 미니맵 설정 (에디터에서 조정 가능) ──
+
+    /** 미니맵 머티리얼 (M_Minimap) — BP에서 지정 */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Minimap",
+        meta = (DisplayName = "Minimap Material (미니맵 머티리얼)"))
+    TObjectPtr<UMaterialInterface> MinimapMaterial = nullptr;
+
+    /** 미니맵이 표시하는 영역 비율 (0.15 = 전체 맵의 15%) */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Minimap",
+        meta = (DisplayName = "Zoom Scale (줌 스케일)", ClampMin = "0.01", ClampMax = "1.0"))
+    float MinimapZoomScale = 0.15f;
+
+    /** 플레이어 아이콘 크기 (px) */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Minimap",
+        meta = (DisplayName = "Player Icon Size (아이콘 크기)"))
+    float PlayerIconSize = 8.f;
+
+    /** 로컬 플레이어 아이콘 색상 */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Minimap",
+        meta = (DisplayName = "Local Player Color (로컬 색상)"))
+    FLinearColor LocalPlayerColor = FLinearColor(0.f, 1.f, 0.f, 1.f);
+
+    /** 다른 플레이어 아이콘 색상 */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Minimap",
+        meta = (DisplayName = "Team Player Color (팀 색상)"))
+    FLinearColor TeamPlayerColor = FLinearColor(0.2f, 0.6f, 1.f, 1.f);
 
 private:
-    EDefensePhase LastPhase   = EDefensePhase::Day;
-    int32 LastDay             = -1;
-    int32 LastTimeRemaining   = -1;
-    int32 LastAliveMonsters   = -1;
-    int32 LastTotalMonsters   = -1;
+    // ── 낮/밤 캐시 ──
+    EDefensePhase LastPhase = EDefensePhase::Day;
+    int32 LastDay = -1;
+    int32 LastTimeRemaining = -1;
+    int32 LastAliveMonsters = -1;
+    int32 LastTotalMonsters = -1;
+    float CachedTotalDayTime = 0.f;
 
-    /** Phase 전환 시 아이콘 텍스처 교체 */
-    void ApplyPhaseIcon(EDefensePhase NewPhase);
+    void UpdateDayMode(AHellunaDefenseGameState* GS);
+    void UpdateNightMode(AHellunaDefenseGameState* GS);
+
+    // ── 미니맵 ──
+
+    /** 맵 월드 좌표 범위 (SceneCapture 직교 캡처 기준) */
+    static constexpr float MapCenterX = 5679.f;
+    static constexpr float MapCenterY = -4864.f;
+    static constexpr float MapHalfSize = 54035.f;  // OrthoWidth/2
+
+    UPROPERTY()
+    TObjectPtr<UMaterialInstanceDynamic> MinimapMID = nullptr;
+
+    /** 플레이어 아이콘 위젯 풀 (PlayerState → Icon Image) */
+    UPROPERTY()
+    TMap<TObjectPtr<APlayerState>, TObjectPtr<UImage>> PlayerIconMap;
+
+    /** 미니맵 초기화 (Dynamic Material + 아이콘 준비) */
+    void InitializeMinimap();
+
+    /** 미니맵 매 틱 갱신 (UV 오프셋 + 아이콘 위치) */
+    void UpdateMinimap();
+
+    /** 월드 좌표 → 미니맵 UV (0~1) 변환 */
+    FVector2D WorldToMinimapUV(const FVector& WorldLocation) const;
+
+    /** 아이콘 생성/제거/위치 갱신 */
+    UImage* CreatePlayerIcon(const FLinearColor& Color);
+    void CleanupPlayerIcons();
 };
