@@ -617,6 +617,7 @@ void UHellunaGraphicsSettingsWidget::OnQualityPresetChanged(FString SelectedItem
 	if (!Settings) return;
 
 	Settings->SetOverallScalabilityLevel(Level);
+	Settings->ApplyNonResolutionSettings();
 
 	// 개별 ComboBox 동기화
 	bSuppressCallbacks = true;
@@ -636,42 +637,48 @@ void UHellunaGraphicsSettingsWidget::OnQualityPresetChanged(FString SelectedItem
 void UHellunaGraphicsSettingsWidget::OnShadowQualityChanged(FString SelectedItem, ESelectInfo::Type SelectionType)
 {
 	if (bSuppressCallbacks) return;
-	SetCVar(GraphicsCVars::ShadowQuality, QualityNameToLevel(SelectedItem));
+	const int32 Level = QualityNameToLevel(SelectedItem);
+	if (UGameUserSettings* S = UGameUserSettings::GetGameUserSettings()) { S->SetShadowQuality(Level); S->ApplyNonResolutionSettings(); }
 	CheckAndUpdatePresetFromIndividual();
 }
 
 void UHellunaGraphicsSettingsWidget::OnTextureQualityChanged(FString SelectedItem, ESelectInfo::Type SelectionType)
 {
 	if (bSuppressCallbacks) return;
-	SetCVar(GraphicsCVars::TextureQuality, QualityNameToLevel(SelectedItem));
+	const int32 Level = QualityNameToLevel(SelectedItem);
+	if (UGameUserSettings* S = UGameUserSettings::GetGameUserSettings()) { S->SetTextureQuality(Level); S->ApplyNonResolutionSettings(); }
 	CheckAndUpdatePresetFromIndividual();
 }
 
 void UHellunaGraphicsSettingsWidget::OnEffectsQualityChanged(FString SelectedItem, ESelectInfo::Type SelectionType)
 {
 	if (bSuppressCallbacks) return;
-	SetCVar(GraphicsCVars::EffectsQuality, QualityNameToLevel(SelectedItem));
+	const int32 Level = QualityNameToLevel(SelectedItem);
+	if (UGameUserSettings* S = UGameUserSettings::GetGameUserSettings()) { S->SetVisualEffectQuality(Level); S->ApplyNonResolutionSettings(); }
 	CheckAndUpdatePresetFromIndividual();
 }
 
 void UHellunaGraphicsSettingsWidget::OnViewDistanceChanged(FString SelectedItem, ESelectInfo::Type SelectionType)
 {
 	if (bSuppressCallbacks) return;
-	SetCVar(GraphicsCVars::ViewDistanceQuality, QualityNameToLevel(SelectedItem));
+	const int32 Level = QualityNameToLevel(SelectedItem);
+	if (UGameUserSettings* S = UGameUserSettings::GetGameUserSettings()) { S->SetViewDistanceQuality(Level); S->ApplyNonResolutionSettings(); }
 	CheckAndUpdatePresetFromIndividual();
 }
 
 void UHellunaGraphicsSettingsWidget::OnAntiAliasingChanged(FString SelectedItem, ESelectInfo::Type SelectionType)
 {
 	if (bSuppressCallbacks) return;
-	SetCVar(GraphicsCVars::AntiAliasingQuality, QualityNameToLevel(SelectedItem));
+	const int32 Level = QualityNameToLevel(SelectedItem);
+	if (UGameUserSettings* S = UGameUserSettings::GetGameUserSettings()) { S->SetAntiAliasingQuality(Level); S->ApplyNonResolutionSettings(); }
 	CheckAndUpdatePresetFromIndividual();
 }
 
 void UHellunaGraphicsSettingsWidget::OnPostProcessChanged(FString SelectedItem, ESelectInfo::Type SelectionType)
 {
 	if (bSuppressCallbacks) return;
-	SetCVar(GraphicsCVars::PostProcessQuality, QualityNameToLevel(SelectedItem));
+	const int32 Level = QualityNameToLevel(SelectedItem);
+	if (UGameUserSettings* S = UGameUserSettings::GetGameUserSettings()) { S->SetPostProcessingQuality(Level); S->ApplyNonResolutionSettings(); }
 	CheckAndUpdatePresetFromIndividual();
 }
 

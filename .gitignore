@@ -52,9 +52,13 @@ Plugins/UnrealMCP_backup
 *.pch
 *.pdb
 *.exe
-*.dll
-*.lib
 *.app
 *.dylib
 *.so
 nul
+
+# DLL/LIB - Binaries 폴더의 빌드 결과물만 무시 (ThirdParty SDK는 허용)
+Binaries/**/*.dll
+Binaries/**/*.lib
+Plugins/*/Binaries/**/*.dll
+Plugins/*/Binaries/**/*.lib

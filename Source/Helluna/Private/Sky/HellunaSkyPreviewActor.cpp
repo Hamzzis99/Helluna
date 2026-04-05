@@ -3,6 +3,8 @@
 #include "Sky/HellunaSkyPreviewActor.h"
 #include "EngineUtils.h"
 #include "Components/VolumetricCloudComponent.h"
+#include "Kismet/KismetMaterialLibrary.h"
+#include "Materials/MaterialParameterCollection.h"
 
 AHellunaSkyPreviewActor::AHellunaSkyPreviewActor()
 {
@@ -42,43 +44,40 @@ AActor* AHellunaSkyPreviewActor::FindUDWActor() const
 	return nullptr;
 }
 
+void AHellunaSkyPreviewActor::SetUDSFloat(AActor* UDS, const TCHAR* PropName, float Value)
+{
+	if (FProperty* Prop = FindFProperty<FProperty>(UDS->GetClass(), PropName))
+	{
+		if (FFloatProperty* FP = CastField<FFloatProperty>(Prop))
+			FP->SetPropertyValue_InContainer(UDS, Value);
+		else if (FDoubleProperty* DP = CastField<FDoubleProperty>(Prop))
+			DP->SetPropertyValue_InContainer(UDS, static_cast<double>(Value));
+	}
+}
+
+void AHellunaSkyPreviewActor::SetUDSBool(AActor* UDS, const TCHAR* PropName, bool Value)
+{
+	if (FProperty* Prop = FindFProperty<FProperty>(UDS->GetClass(), PropName))
+	{
+		if (FBoolProperty* BP = CastField<FBoolProperty>(Prop))
+			BP->SetPropertyValue_InContainer(UDS, Value);
+	}
+}
+
 void AHellunaSkyPreviewActor::ApplyTimePreview()
 {
 	AActor* UDS = FindUDSActor();
 	if (!UDS) return;
 
-	UClass* UDSClass = UDS->GetClass();
 	const bool bIsNight = (PreviewMode == ESkyPreviewMode::Night);
 	const float TargetTime = bIsNight ? NightPreviewTime : DayPreviewTime;
 
-	// Time of Day
-	if (FProperty* TimeProp = FindFProperty<FProperty>(UDSClass, TEXT("Time of Day")))
-	{
-		if (FFloatProperty* FP = CastField<FFloatProperty>(TimeProp))
-			FP->SetPropertyValue_InContainer(UDS, TargetTime);
-		else if (FDoubleProperty* DP = CastField<FDoubleProperty>(TimeProp))
-			DP->SetPropertyValue_InContainer(UDS, static_cast<double>(TargetTime));
-	}
+	// ── 시간 ──
+	SetUDSFloat(UDS, TEXT("Time of Day"), TargetTime);
+	SetUDSBool(UDS, TEXT("Animate Time of Day"), false);
 
-	// Animate OFF
-	if (FProperty* AnimProp = FindFProperty<FProperty>(UDSClass, TEXT("Animate Time of Day")))
-	{
-		if (FBoolProperty* BP = CastField<FBoolProperty>(AnimProp))
-			BP->SetPropertyValue_InContainer(UDS, false);
-	}
-
-	// VolumetricCloud 토글
-	if (UVolumetricCloudComponent* CloudComp = UDS->FindComponentByClass<UVolumetricCloudComponent>())
-	{
-		CloudComp->SetVisibility(!bIsNight);
-	}
-
-	// Cloud Shadows 토글
-	if (FProperty* ShadowProp = FindFProperty<FProperty>(UDSClass, TEXT("Use Cloud Shadows")))
-	{
-		if (FBoolProperty* BP = CastField<FBoolProperty>(ShadowProp))
-			BP->SetPropertyValue_InContainer(UDS, !bIsNight);
-	}
+	// ── UDS Construction Script 재실행 ──
+	UDS->RerunConstructionScripts();
 }
 
 void AHellunaSkyPreviewActor::ApplyWeatherPreview()
@@ -86,33 +85,50 @@ void AHellunaSkyPreviewActor::ApplyWeatherPreview()
 	AActor* UDW = FindUDWActor();
 	if (!UDW) return;
 
-	// Change Weather 함수 찾기
-	UFunction* Func = UDW->FindFunction(TEXT("Change Weather"));
-	if (!Func)
-		Func = UDW->FindFunction(TEXT("ChangeWeather"));
-	if (!Func) return;
+	// 현재 모드에 맞는 프리셋 선택
+	const ESkyWeatherPreset ActivePreset =
+		(PreviewMode == ESkyPreviewMode::Night) ? NightWeatherPreset : DayWeatherPreset;
 
-	if (WeatherPreset == ESkyWeatherPreset::None)
+	UClass* UDWClass = UDW->GetClass();
+	FProperty* WeatherProp = FindFProperty<FProperty>(UDWClass, TEXT("Weather"));
+	if (!WeatherProp) return;
+
+	FObjectProperty* ObjProp = CastField<FObjectProperty>(WeatherProp);
+	if (!ObjProp) return;
+
+	if (ActivePreset == ESkyWeatherPreset::None)
 	{
-		// None = 날씨 해제
-		struct { UObject* NewWeatherType; float TransitionTime; } Params;
-		Params.NewWeatherType = nullptr;
-		Params.TransitionTime = WeatherTransitionTime;
-		UDW->ProcessEvent(Func, &Params);
-		return;
+		ObjProp->SetObjectPropertyValue_InContainer(UDW, nullptr);
+	}
+	else
+	{
+		const FString AssetPath = GetWeatherPresetPath(ActivePreset);
+		if (AssetPath.IsEmpty()) return;
+
+		UObject* WeatherAsset = StaticLoadObject(UObject::StaticClass(), nullptr, *AssetPath);
+		if (!WeatherAsset) return;
+
+		ObjProp->SetObjectPropertyValue_InContainer(UDW, WeatherAsset);
 	}
 
-	// 프리셋 에셋 로드
-	const FString AssetPath = GetWeatherPresetPath(WeatherPreset);
-	if (AssetPath.IsEmpty()) return;
+	// UDW Construction Script 재실행 → 날씨 즉시 반영
+	UDW->RerunConstructionScripts();
 
-	UObject* WeatherAsset = StaticLoadObject(UObject::StaticClass(), nullptr, *AssetPath);
-	if (!WeatherAsset) return;
+	// UDS도 재실행 — 날씨가 UDS 구름/안개 값을 결정하므로
+	AActor* UDS = FindUDSActor();
+	if (UDS)
+	{
+		UDS->RerunConstructionScripts();
+	}
 
-	struct { UObject* NewWeatherType; float TransitionTime; } Params;
-	Params.NewWeatherType = WeatherAsset;
-	Params.TransitionTime = WeatherTransitionTime;
-	UDW->ProcessEvent(Func, &Params);
+	// MPC 월드 인스턴스에 DLWE 파라미터 push (에디터 뷰포트 즉시 반영)
+	ApplyMaterialWeatherState(ActivePreset);
+}
+
+void AHellunaSkyPreviewActor::ApplyFullPreview()
+{
+	ApplyTimePreview();
+	ApplyWeatherPreview();
 }
 
 FString AHellunaSkyPreviewActor::GetWeatherPresetPath(ESkyWeatherPreset Preset)
@@ -136,6 +152,104 @@ FString AHellunaSkyPreviewActor::GetWeatherPresetPath(ESkyWeatherPreset Preset)
 	}
 }
 
+void AHellunaSkyPreviewActor::ApplyMaterialWeatherState(ESkyWeatherPreset Preset)
+{
+#if WITH_EDITOR
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	static const TCHAR* MPCPath = TEXT("/Game/UltraDynamicSky/Materials/Weather/UltraDynamicWeather_Parameters");
+	UMaterialParameterCollection* MPC = LoadObject<UMaterialParameterCollection>(nullptr, MPCPath);
+	if (!MPC) return;
+
+	// 프리셋별 MPC 파라미터 값
+	float Wet = 0.f;
+	float Raining = 0.f;
+	float DLWEBaseWetness = 0.f;
+	float DLWEPuddleCoverage = 0.f;
+	float Snowing = 0.f;
+	float DLWESnowDustDepth = 0.f;
+	float CloudCoverage = 0.f;
+	float Fog = 0.f;
+
+	switch (Preset)
+	{
+	case ESkyWeatherPreset::None:
+	case ESkyWeatherPreset::ClearSkies:
+		break;
+	case ESkyWeatherPreset::PartlyCloudy:
+		CloudCoverage = 0.3f;
+		break;
+	case ESkyWeatherPreset::Cloudy:
+		CloudCoverage = 0.6f;
+		break;
+	case ESkyWeatherPreset::Overcast:
+		CloudCoverage = 0.9f;
+		Wet = 0.1f;
+		DLWEBaseWetness = 0.1f;
+		break;
+	case ESkyWeatherPreset::Foggy:
+		Fog = 0.6f;
+		CloudCoverage = 0.5f;
+		Wet = 0.15f;
+		DLWEBaseWetness = 0.15f;
+		break;
+	case ESkyWeatherPreset::RainLight:
+		Wet = 0.5f;
+		Raining = 0.5f;
+		DLWEBaseWetness = 0.4f;
+		DLWEPuddleCoverage = 0.2f;
+		CloudCoverage = 0.7f;
+		Fog = 0.1f;
+		break;
+	case ESkyWeatherPreset::Rain:
+		Wet = 0.8f;
+		Raining = 0.8f;
+		DLWEBaseWetness = 0.7f;
+		DLWEPuddleCoverage = 0.5f;
+		CloudCoverage = 0.85f;
+		Fog = 0.2f;
+		break;
+	case ESkyWeatherPreset::Thunderstorm:
+		Wet = 1.f;
+		Raining = 1.f;
+		DLWEBaseWetness = 0.85f;
+		DLWEPuddleCoverage = 0.7f;
+		CloudCoverage = 1.f;
+		Fog = 0.3f;
+		break;
+	case ESkyWeatherPreset::SnowLight:
+		Snowing = 0.5f;
+		DLWESnowDustDepth = 0.3f;
+		CloudCoverage = 0.6f;
+		break;
+	case ESkyWeatherPreset::Snow:
+		Snowing = 0.8f;
+		DLWESnowDustDepth = 0.6f;
+		CloudCoverage = 0.8f;
+		break;
+	case ESkyWeatherPreset::Blizzard:
+		Snowing = 1.f;
+		DLWESnowDustDepth = 1.f;
+		CloudCoverage = 1.f;
+		Fog = 0.4f;
+		break;
+	default:
+		break;
+	}
+
+	UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("Wet"), Wet);
+	UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("Raining"), Raining);
+	UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("DLWE_Base Wetness"), DLWEBaseWetness);
+	UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("DLWE_Puddle Coverage"), DLWEPuddleCoverage);
+	UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("DLWE Puddle Sharpness"), 40.f);
+	UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("Snowing"), Snowing);
+	UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("DLWE_Snow/Dust Depth"), DLWESnowDustDepth);
+	UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("Cloud Coverage"), CloudCoverage);
+	UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("Fog"), Fog);
+#endif
+}
+
 #if WITH_EDITOR
 void AHellunaSkyPreviewActor::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
 {
@@ -145,17 +259,23 @@ void AHellunaSkyPreviewActor::PostEditChangeProperty(FPropertyChangedEvent& Prop
 
 	const FName PropName = PropertyChangedEvent.GetPropertyName();
 
-	// 시간 관련 변경
-	if (PropName == GET_MEMBER_NAME_CHECKED(AHellunaSkyPreviewActor, PreviewMode)
-		|| PropName == GET_MEMBER_NAME_CHECKED(AHellunaSkyPreviewActor, NightPreviewTime)
+	// 밤/낮 모드 전환 → 시간 + 날씨 동시 적용
+	if (PropName == GET_MEMBER_NAME_CHECKED(AHellunaSkyPreviewActor, PreviewMode))
+	{
+		ApplyFullPreview();
+		return;
+	}
+
+	// 시간 값 변경
+	if (PropName == GET_MEMBER_NAME_CHECKED(AHellunaSkyPreviewActor, NightPreviewTime)
 		|| PropName == GET_MEMBER_NAME_CHECKED(AHellunaSkyPreviewActor, DayPreviewTime))
 	{
 		ApplyTimePreview();
 	}
 
-	// 날씨 관련 변경
-	if (PropName == GET_MEMBER_NAME_CHECKED(AHellunaSkyPreviewActor, WeatherPreset)
-		|| PropName == GET_MEMBER_NAME_CHECKED(AHellunaSkyPreviewActor, WeatherTransitionTime))
+	// 날씨 변경 (각 모드별)
+	if (PropName == GET_MEMBER_NAME_CHECKED(AHellunaSkyPreviewActor, DayWeatherPreset)
+		|| PropName == GET_MEMBER_NAME_CHECKED(AHellunaSkyPreviewActor, NightWeatherPreset))
 	{
 		ApplyWeatherPreview();
 	}

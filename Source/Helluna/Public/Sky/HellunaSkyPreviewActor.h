@@ -35,8 +35,9 @@ enum class ESkyWeatherPreset : uint8
  *
  * 사용법:
  *  1. MainMap에 이 액터를 배치 (위치 무관)
- *  2. 디테일 패널에서 "밤/낮 전환" / "날씨 프리셋" 변경
- *  3. 뷰포트가 즉시 전환됨
+ *  2. 디테일 패널에서 "밤/낮 전환" 변경 → 시간 + 날씨가 동시에 전환
+ *  3. 밤 날씨 / 낮 날씨를 각각 개별 설정 가능
+ *  4. 뷰포트가 즉시 전환됨
  *
  * 런타임에는 아무 동작도 하지 않음 (bIsEditorOnlyActor = true)
  */
@@ -69,17 +70,18 @@ public:
 	float DayPreviewTime = 1200.f;
 
 	// ─────────────────────────────────────────────────────────
-	// 날씨 프리셋
+	// 날씨 프리셋 (밤/낮 개별)
 	// ─────────────────────────────────────────────────────────
 
+	/** 낮 날씨 프리셋 — Day 모드에서 적용 */
 	UPROPERTY(EditAnywhere, Category = "하늘 미리보기|날씨",
-		meta = (DisplayName = "날씨 프리셋 (Weather Preset)"))
-	ESkyWeatherPreset WeatherPreset = ESkyWeatherPreset::None;
+		meta = (DisplayName = "낮 날씨 (Day Weather)"))
+	ESkyWeatherPreset DayWeatherPreset = ESkyWeatherPreset::ClearSkies;
 
-	/** 날씨 전환 시간 (초) — 0이면 즉시 전환 */
+	/** 밤 날씨 프리셋 — Night 모드에서 적용 */
 	UPROPERTY(EditAnywhere, Category = "하늘 미리보기|날씨",
-		meta = (DisplayName = "전환 시간 (초)", ClampMin = "0", ClampMax = "30"))
-	float WeatherTransitionTime = 0.f;
+		meta = (DisplayName = "밤 날씨 (Night Weather)"))
+	ESkyWeatherPreset NightWeatherPreset = ESkyWeatherPreset::None;
 
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
@@ -88,9 +90,23 @@ public:
 private:
 	AActor* FindUDSActor() const;
 	AActor* FindUDWActor() const;
+
+	/** 시간 + 구름 토글 적용 */
 	void ApplyTimePreview();
+
+	/** 현재 모드에 맞는 날씨 적용 */
 	void ApplyWeatherPreview();
+
+	/** 전체 미리보기 적용 (시간 + 날씨) */
+	void ApplyFullPreview();
+
+	/** UDS 프로퍼티 리플렉션 헬퍼 */
+	static void SetUDSFloat(AActor* UDS, const TCHAR* PropName, float Value);
+	static void SetUDSBool(AActor* UDS, const TCHAR* PropName, bool Value);
 
 	/** 프리셋 enum → UDW Weather Preset 에셋 경로 매핑 */
 	static FString GetWeatherPresetPath(ESkyWeatherPreset Preset);
+
+	/** 날씨 프리셋에 맞는 MPC 값을 월드 인스턴스에 직접 push (에디터 미리보기용) */
+	void ApplyMaterialWeatherState(ESkyWeatherPreset Preset);
 };
