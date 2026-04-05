@@ -106,4 +106,7 @@ private:
 
 	/** 프리셋 enum → UDW Weather Preset 에셋 경로 매핑 */
 	static FString GetWeatherPresetPath(ESkyWeatherPreset Preset);
+
+	/** 날씨 프리셋에 맞는 MPC 값을 월드 인스턴스에 직접 push (에디터 미리보기용) */
+	void ApplyMaterialWeatherState(ESkyWeatherPreset Preset);
 };

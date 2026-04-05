@@ -3,6 +3,8 @@
 #include "Sky/HellunaSkyPreviewActor.h"
 #include "EngineUtils.h"
 #include "Components/VolumetricCloudComponent.h"
+#include "Kismet/KismetMaterialLibrary.h"
+#include "Materials/MaterialParameterCollection.h"
 
 AHellunaSkyPreviewActor::AHellunaSkyPreviewActor()
 {
@@ -118,6 +120,9 @@ void AHellunaSkyPreviewActor::ApplyWeatherPreview()
 	{
 		UDS->RerunConstructionScripts();
 	}
+
+	// MPC 월드 인스턴스에 DLWE 파라미터 push (에디터 뷰포트 즉시 반영)
+	ApplyMaterialWeatherState(ActivePreset);
 }
 
 void AHellunaSkyPreviewActor::ApplyFullPreview()
@@ -145,6 +150,104 @@ FString AHellunaSkyPreviewActor::GetWeatherPresetPath(ESkyWeatherPreset Preset)
 	case ESkyWeatherPreset::Blizzard:     return FString(BasePath) + TEXT("Snow_Blizzard.Snow_Blizzard");
 	default: return FString();
 	}
+}
+
+void AHellunaSkyPreviewActor::ApplyMaterialWeatherState(ESkyWeatherPreset Preset)
+{
+#if WITH_EDITOR
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	static const TCHAR* MPCPath = TEXT("/Game/UltraDynamicSky/Materials/Weather/UltraDynamicWeather_Parameters");
+	UMaterialParameterCollection* MPC = LoadObject<UMaterialParameterCollection>(nullptr, MPCPath);
+	if (!MPC) return;
+
+	// 프리셋별 MPC 파라미터 값
+	float Wet = 0.f;
+	float Raining = 0.f;
+	float DLWEBaseWetness = 0.f;
+	float DLWEPuddleCoverage = 0.f;
+	float Snowing = 0.f;
+	float DLWESnowDustDepth = 0.f;
+	float CloudCoverage = 0.f;
+	float Fog = 0.f;
+
+	switch (Preset)
+	{
+	case ESkyWeatherPreset::None:
+	case ESkyWeatherPreset::ClearSkies:
+		break;
+	case ESkyWeatherPreset::PartlyCloudy:
+		CloudCoverage = 0.3f;
+		break;
+	case ESkyWeatherPreset::Cloudy:
+		CloudCoverage = 0.6f;
+		break;
+	case ESkyWeatherPreset::Overcast:
+		CloudCoverage = 0.9f;
+		Wet = 0.1f;
+		DLWEBaseWetness = 0.1f;
+		break;
+	case ESkyWeatherPreset::Foggy:
+		Fog = 0.6f;
+		CloudCoverage = 0.5f;
+		Wet = 0.15f;
+		DLWEBaseWetness = 0.15f;
+		break;
+	case ESkyWeatherPreset::RainLight:
+		Wet = 0.5f;
+		Raining = 0.5f;
+		DLWEBaseWetness = 0.4f;
+		DLWEPuddleCoverage = 0.2f;
+		CloudCoverage = 0.7f;
+		Fog = 0.1f;
+		break;
+	case ESkyWeatherPreset::Rain:
+		Wet = 0.8f;
+		Raining = 0.8f;
+		DLWEBaseWetness = 0.7f;
+		DLWEPuddleCoverage = 0.5f;
+		CloudCoverage = 0.85f;
+		Fog = 0.2f;
+		break;
+	case ESkyWeatherPreset::Thunderstorm:
+		Wet = 1.f;
+		Raining = 1.f;
+		DLWEBaseWetness = 0.85f;
+		DLWEPuddleCoverage = 0.7f;
+		CloudCoverage = 1.f;
+		Fog = 0.3f;
+		break;
+	case ESkyWeatherPreset::SnowLight:
+		Snowing = 0.5f;
+		DLWESnowDustDepth = 0.3f;
+		CloudCoverage = 0.6f;
+		break;
+	case ESkyWeatherPreset::Snow:
+		Snowing = 0.8f;
+		DLWESnowDustDepth = 0.6f;
+		CloudCoverage = 0.8f;
+		break;
+	case ESkyWeatherPreset::Blizzard:
+		Snowing = 1.f;
+		DLWESnowDustDepth = 1.f;
+		CloudCoverage = 1.f;
+		Fog = 0.4f;
+		break;
+	default:
+		break;
+	}
+
+	UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("Wet"), Wet);
+	UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("Raining"), Raining);
+	UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("DLWE_Base Wetness"), DLWEBaseWetness);
+	UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("DLWE_Puddle Coverage"), DLWEPuddleCoverage);
+	UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("DLWE Puddle Sharpness"), 40.f);
+	UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("Snowing"), Snowing);
+	UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("DLWE_Snow/Dust Depth"), DLWESnowDustDepth);
+	UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("Cloud Coverage"), CloudCoverage);
+	UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("Fog"), Fog);
+#endif
 }
 
 #if WITH_EDITOR
