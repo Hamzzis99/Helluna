@@ -9,11 +9,7 @@ Reedme/
 Claude.md
 Codexreedme/
 
-# Content Folder
-Content/Maps/
-Content/Materials/
-Content/Texture/
-Content/VFX/
+# Content Folder (Maps/Materials/Texture/VFX는 핵심 에셋이므로 추적 필수)
 
 Content/Collections/
 Content/Developers/
