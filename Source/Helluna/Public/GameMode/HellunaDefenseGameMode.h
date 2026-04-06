@@ -253,12 +253,12 @@ protected:
 
 	/** 광석 기울기 최대 Pitch (도) — ±이 범위 내에서 랜덤 */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|랜덤 배치",
-		meta = (DisplayName = "기울기 최대 Pitch(도)", ClampMin = "0.0", ClampMax = "90.0"))
+		meta = (DisplayName = "X축 기울기 최대 Pitch(도)", ClampMin = "0.0", ClampMax = "90.0"))
 	float OreTiltMaxPitch = 15.f;
 
 	/** 광석 기울기 최대 Roll (도) — ±이 범위 내에서 랜덤 */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|랜덤 배치",
-		meta = (DisplayName = "기울기 최대 Roll(도)", ClampMin = "0.0", ClampMax = "90.0"))
+		meta = (DisplayName = "Y축 기울기 최대 Roll(도)", ClampMin = "0.0", ClampMax = "90.0"))
 	float OreTiltMaxRoll = 15.f;
 
 	/** 광석 최소 스케일 (균일 스케일) */
