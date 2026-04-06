@@ -77,7 +77,9 @@ void AHellunaSkyPreviewActor::ApplyTimePreview()
 	SetUDSBool(UDS, TEXT("Animate Time of Day"), false);
 
 	// ── UDS Construction Script 재실행 ──
+#if WITH_EDITOR
 	UDS->RerunConstructionScripts();
+#endif
 }
 
 void AHellunaSkyPreviewActor::ApplyWeatherPreview()
@@ -112,13 +114,17 @@ void AHellunaSkyPreviewActor::ApplyWeatherPreview()
 	}
 
 	// UDW Construction Script 재실행 → 날씨 즉시 반영
+#if WITH_EDITOR
 	UDW->RerunConstructionScripts();
+#endif
 
 	// UDS도 재실행 — 날씨가 UDS 구름/안개 값을 결정하므로
 	AActor* UDS = FindUDSActor();
 	if (UDS)
 	{
+#if WITH_EDITOR
 		UDS->RerunConstructionScripts();
+#endif
 	}
 
 	// MPC 월드 인스턴스에 DLWE 파라미터 push (에디터 뷰포트 즉시 반영)
