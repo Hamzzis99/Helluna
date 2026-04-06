@@ -133,6 +133,9 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Button_ResetDefault;
 
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> Button_Close;
+
 private:
 	// ════════════════════════════════════════════════════════════
 	//  초기화
@@ -201,6 +204,9 @@ private:
 	void OnCancelClicked();
 	UFUNCTION()
 	void OnResetDefaultClicked();
+
+	UFUNCTION()
+	void OnCloseClicked();
 
 	// ════════════════════════════════════════════════════════════
 	//  UI 상태 갱신

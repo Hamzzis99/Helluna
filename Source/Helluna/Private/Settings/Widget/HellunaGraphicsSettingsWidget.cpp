@@ -4,6 +4,8 @@
 
 #include "Settings/Widget/HellunaGraphicsSettingsWidget.h"
 
+#include "Controller/HellunaHeroController.h"
+
 #include "Components/ComboBoxString.h"
 #include "Components/CheckBox.h"
 #include "Components/Button.h"
@@ -209,6 +211,7 @@ void UHellunaGraphicsSettingsWidget::NativeOnInitialized()
 	if (Button_Apply)        Button_Apply->OnClicked.AddUniqueDynamic(this, &ThisClass::OnApplyClicked);
 	if (Button_Cancel)       Button_Cancel->OnClicked.AddUniqueDynamic(this, &ThisClass::OnCancelClicked);
 	if (Button_ResetDefault) Button_ResetDefault->OnClicked.AddUniqueDynamic(this, &ThisClass::OnResetDefaultClicked);
+	if (Button_Close)        Button_Close->OnClicked.AddUniqueDynamic(this, &ThisClass::OnCloseClicked);
 
 	// ── 현재 설정 로드 ──
 	LoadCurrentSettings();
@@ -829,4 +832,34 @@ void UHellunaGraphicsSettingsWidget::UpdatePerformanceDisplay()
 	{
 		Text_CPUTime->SetText(FText::FromString(FString::Printf(TEXT("CPU: %.1fms"), DeltaSeconds * 1000.f)));
 	}
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+//  닫기 버튼
+// ════════════════════════════════════════════════════════════════════════════════
+void UHellunaGraphicsSettingsWidget::OnCloseClicked()
+{
+	if (APlayerController* PC = GetOwningPlayer())
+	{
+		if (AHellunaHeroController* HC = Cast<AHellunaHeroController>(PC))
+		{
+			HC->ToggleGraphicsSettings();
+			return;
+		}
+		PC->SetShowMouseCursor(false);
+		PC->SetInputMode(FInputModeGameOnly());
+	}
+	else
+	{
+		if (UWorld* World = GetWorld())
+		{
+			if (APlayerController* FirstPC = World->GetFirstPlayerController())
+			{
+				FirstPC->SetShowMouseCursor(false);
+				FirstPC->SetInputMode(FInputModeGameOnly());
+			}
+		}
+	}
+	RemoveFromParent();
 }
