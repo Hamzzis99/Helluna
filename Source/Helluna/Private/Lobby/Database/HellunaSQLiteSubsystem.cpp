@@ -919,6 +919,26 @@ bool UHellunaSQLiteSubsystem::InitializeSchema()
 	}
 	UE_LOG(LogHelluna, Log, TEXT("[SQLite]   PRAGMA busy_timeout=3000 ✓"));
 
+	// [Lag-Fix8] synchronous=NORMAL:
+	//   WAL 모드에서 NORMAL은 데이터 무결성을 유지하면서 fsync 호출 감소
+	//   (FULL→NORMAL: 일반적인 OS 크래시에서도 데이터 안전, 전원 손실 시 마지막 트랜잭션만 유실 가능)
+	if (!Database->Execute(TEXT("PRAGMA synchronous=NORMAL;")))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ PRAGMA synchronous=NORMAL 실패 | 에러: %s"), *Database->GetLastError());
+		return false;
+	}
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite]   PRAGMA synchronous=NORMAL ✓"));
+
+	// [Lag-Fix8] cache_size:
+	//   페이지 캐시를 8MB로 확대 (기본 ~2MB)
+	//   음수 값 = KiB 단위 지정 (-8000 ≈ 8MB)
+	if (!Database->Execute(TEXT("PRAGMA cache_size=-8000;")))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ PRAGMA cache_size 실패 | 에러: %s"), *Database->GetLastError());
+		return false;
+	}
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite]   PRAGMA cache_size=-8000 ✓"));
+
 	// foreign_keys=OFF:
 	//   테이블 간 FK 관계 없으므로 불필요한 검사 비활성화
 	if (!Database->Execute(TEXT("PRAGMA foreign_keys=OFF;")))
@@ -2632,6 +2652,12 @@ bool UHellunaSQLiteSubsystem::DeletePlayerEquipment(const FString& PlayerId)
 // ──────────────────────────────────────────────────────────────
 TArray<bool> UHellunaSQLiteSubsystem::GetActiveGameCharacters()
 {
+	// [Lag-Fix9] 캐시가 유효하면 DB 쿼리 없이 즉시 반환
+	if (!bActiveHeroTypesCacheDirty && CachedActiveHeroTypes.Num() == 3)
+	{
+		return CachedActiveHeroTypes;
+	}
+
 	// 3개 캐릭터: [0]=Lui, [1]=Luna, [2]=Liam, 기본값 false(미사용)
 	TArray<bool> Result;
 	Result.SetNum(3);
@@ -2664,6 +2690,10 @@ TArray<bool> UHellunaSQLiteSubsystem::GetActiveGameCharacters()
 		}
 		return ESQLitePreparedStatementExecuteRowResult::Continue;
 	});
+
+	// [Lag-Fix9] 캐시 갱신
+	CachedActiveHeroTypes = Result;
+	bActiveHeroTypesCacheDirty = false;
 
 	UE_LOG(LogHelluna, Log, TEXT("[SQLite] GetActiveGameCharacters: Lui=%s Luna=%s Liam=%s"),
 		Result[0] ? TEXT("사용중") : TEXT("가능"),
@@ -2729,6 +2759,7 @@ bool UHellunaSQLiteSubsystem::RegisterActiveGameCharacter(int32 HeroType, const 
 	if (InsertStmt.Execute())
 	{
 		Database->Execute(TEXT("COMMIT;"));
+		bActiveHeroTypesCacheDirty = true; // [Lag-Fix9] 캐시 무효화
 		UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ RegisterActiveGameCharacter 성공 | HeroType=%d | PlayerId=%s"), HeroType, *PlayerId);
 		return true;
 	}
@@ -2765,6 +2796,7 @@ bool UHellunaSQLiteSubsystem::UnregisterActiveGameCharacter(const FString& Playe
 
 	if (DeleteStmt.Execute())
 	{
+		bActiveHeroTypesCacheDirty = true; // [Lag-Fix9] 캐시 무효화
 		UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ UnregisterActiveGameCharacter | PlayerId=%s"), *PlayerId);
 		return true;
 	}
@@ -2800,6 +2832,7 @@ bool UHellunaSQLiteSubsystem::UnregisterAllActiveGameCharactersForServer(const F
 
 	if (DeleteStmt.Execute())
 	{
+		bActiveHeroTypesCacheDirty = true; // [Lag-Fix9] 캐시 무효화
 		UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ UnregisterAllForServer | ServerId=%s"), *ServerId);
 		return true;
 	}
@@ -2824,6 +2857,7 @@ bool UHellunaSQLiteSubsystem::ClearAllActiveGameCharacters()
 
 	if (Database->Execute(TEXT("DELETE FROM active_game_characters;")))
 	{
+		bActiveHeroTypesCacheDirty = true; // [Lag-Fix9] 캐시 무효화
 		UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ ClearAllActiveGameCharacters 완료"));
 		return true;
 	}

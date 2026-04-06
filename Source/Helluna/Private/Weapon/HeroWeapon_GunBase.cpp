@@ -88,7 +88,8 @@ void AHeroWeapon_GunBase::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& 
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
-	DOREPLIFETIME(AHeroWeapon_GunBase, CurrentMag);
+	// [Lag-Fix6] 탄약 수는 소유자(발사자)만 필요 — 다른 클라이언트 불필요 전송 제거
+	DOREPLIFETIME_CONDITION(AHeroWeapon_GunBase, CurrentMag, COND_OwnerOnly);
 }
 
 void AHeroWeapon_GunBase::Fire(AController* InstigatorController)

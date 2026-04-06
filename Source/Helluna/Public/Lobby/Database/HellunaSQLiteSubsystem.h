@@ -380,6 +380,12 @@ public:
 	/** 전체 캐릭터 등록 해제 (서버 시작 시 stale 데이터 정리) */
 	bool ClearAllActiveGameCharacters();
 
+private:
+	// [Lag-Fix9] ActiveHeroTypes 인메모리 캐시 — GetActiveGameCharacters 풀테이블스캔 제거
+	TArray<bool> CachedActiveHeroTypes;
+	bool bActiveHeroTypesCacheDirty = true;
+
+public:
 	// ════════════════════════════════════════════════════════════════
 	// IInventoryDatabase — 장착 상태 관리 (player_equipment)
 	// ════════════════════════════════════════════════════════════════

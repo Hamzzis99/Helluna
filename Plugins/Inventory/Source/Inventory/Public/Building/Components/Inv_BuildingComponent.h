@@ -156,6 +156,14 @@ private:
 	// PlayerController 약한 참조
 	TWeakObjectPtr<APlayerController> OwningPC;
 
+	// [Lag-Fix7] 건물 배치 쿨다운 — 연속 스폰으로 인한 리플리케이션 스파이크 방지
+	double LastPlaceServerTime = 0.0;
+
+	/** 건물 배치 최소 간격 (초). 서버 Validate에서 체크. */
+	UPROPERTY(EditDefaultsOnly, Category = "건설|네트워크",
+		meta = (DisplayName = "Min Place Interval (최소 배치 간격)", ClampMin = "0.1"))
+	float MinPlaceInterval = 0.3f;
+
 	// === 빌드 메뉴 위젯 관련 ===
 	
 	// 빌드 메뉴 위젯 클래스 (블루프린트에서 WBP_BuildMenu 설정)
