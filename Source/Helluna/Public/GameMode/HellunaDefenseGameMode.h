@@ -28,6 +28,7 @@ class UHellunaGameResultWidget;
 class UInv_InventoryComponent;
 class UHellunaHealthComponent;
 class UPCGComponent;
+class UPCGManagedActors;
 
 // ════════════════════════════════════════════════════════════════════════════════
 // Phase 7: 게임 종료 사유
@@ -185,6 +186,133 @@ protected:
 	/** ActivateNightPCG 호출 직전 월드에 존재하던 Ore 액터 스냅샷 (신규 판별용) */
 	UPROPERTY()
 	TSet<TWeakObjectPtr<AActor>> PreGenerationOreSnapshot;
+
+	// ────────────────────────────────────────────────────────────────────────────
+	// [PCG 최적화] 프레임 분산 배칭 시스템
+	// ────────────────────────────────────────────────────────────────────────────
+
+	/** 한 배치에 스폰할 최대 액터 수 */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|프레임 분산",
+		meta = (DisplayName = "배치당 스폰 수", ClampMin = "1", ClampMax = "50",
+			ToolTip = "한 프레임에 스폰할 최대 광석 수.\n낮을수록 프레임 드랍이 적지만 전체 시간이 길어집니다."))
+	int32 PCGBatchSpawnCount = 10;
+
+	/** 한 배치에 파괴할 최대 액터 수 */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|프레임 분산",
+		meta = (DisplayName = "배치당 파괴 수", ClampMin = "1", ClampMax = "50"))
+	int32 PCGBatchDestroyCount = 15;
+
+	/** 배치 간 대기 시간(초) */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|프레임 분산",
+		meta = (DisplayName = "배치 간격 (초)", ClampMin = "0.0", ClampMax = "1.0"))
+	float PCGBatchInterval = 0.033f;
+
+	// ────────────────────────────────────────────────────────────────────────────
+	// [PCG 클러스터] 광석 뭉침 배치 설정
+	// ────────────────────────────────────────────────────────────────────────────
+
+	/** 시드(뭉침 중심)로 선정할 비율. 0.3 = 신규 광석의 30%가 뭉침 중심 */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|클러스터",
+		meta = (DisplayName = "시드 비율", ClampMin = "0.05", ClampMax = "1.0",
+			ToolTip = "신규 광석 중 뭉침 중심(시드)으로 선정할 비율.\n0.3 = 30%가 시드"))
+	float ClusterSeedRatio = 0.3f;
+
+	/** 시드 간 최소 간격 (cm). 가까운 시드끼리 겹치지 않도록 */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|클러스터",
+		meta = (DisplayName = "시드 간 최소 간격(cm)", ClampMin = "100.0"))
+	float ClusterRadius = 500.f;
+
+	/** 한 뭉침의 최소 광석 수 (시드 포함) */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|클러스터",
+		meta = (DisplayName = "뭉침 최소 개수", ClampMin = "2", ClampMax = "10"))
+	int32 MinClusterSize = 3;
+
+	/** 한 뭉침의 최대 광석 수 (시드 포함) */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|클러스터",
+		meta = (DisplayName = "뭉침 최대 개수", ClampMin = "2", ClampMax = "20"))
+	int32 MaxClusterSize = 5;
+
+	/** 뭉침 내 광석 배치 최소 거리 (cm) */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|클러스터",
+		meta = (DisplayName = "뭉침 내 최소 거리(cm)", ClampMin = "10.0"))
+	float ClusterPlaceMinDist = 30.f;
+
+	/** 뭉침 내 광석 배치 최대 거리 (cm) */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|클러스터",
+		meta = (DisplayName = "뭉침 내 최대 거리(cm)", ClampMin = "10.0"))
+	float ClusterPlaceMaxDist = 100.f;
+
+	/** 뭉침에 배정되지 않은 단독 광석의 생존 확률 (0~1) */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|클러스터",
+		meta = (DisplayName = "단독 광석 생존 확률", ClampMin = "0.0", ClampMax = "1.0"))
+	float IsolatedOreSurvivalChance = 0.4f;
+
+	// ────────────────────────────────────────────────────────────────────────────
+	// [PCG 랜덤 각도/크기]
+	// ────────────────────────────────────────────────────────────────────────────
+
+	/** 광석 기울기 최대 Pitch (도) — ±이 범위 내에서 랜덤 */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|랜덤 배치",
+		meta = (DisplayName = "기울기 최대 Pitch(도)", ClampMin = "0.0", ClampMax = "90.0"))
+	float OreTiltMaxPitch = 15.f;
+
+	/** 광석 기울기 최대 Roll (도) — ±이 범위 내에서 랜덤 */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|랜덤 배치",
+		meta = (DisplayName = "기울기 최대 Roll(도)", ClampMin = "0.0", ClampMax = "90.0"))
+	float OreTiltMaxRoll = 15.f;
+
+	/** 광석 최소 스케일 (균일 스케일) */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|랜덤 배치",
+		meta = (DisplayName = "최소 크기", ClampMin = "0.1", ClampMax = "10.0"))
+	float OreScaleMin = 0.8f;
+
+	/** 광석 최대 스케일 (균일 스케일) */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|랜덤 배치",
+		meta = (DisplayName = "최대 크기", ClampMin = "0.1", ClampMax = "10.0"))
+	float OreScaleMax = 1.3f;
+
+	// ────────────────────────────────────────────────────────────────────────────
+	// 내부 배칭 멤버
+	// ────────────────────────────────────────────────────────────────────────────
+
+	// PCG 순차 생성
+	int32 PCGStaggerIndex = 0;
+	FTimerHandle PCGStaggerTimer;
+	struct FPreservedOre
+	{
+		UClass* OreClass;
+		FTransform Transform;
+		TArray<FName> Tags;
+	};
+	TArray<FPreservedOre> PendingPreservedOres;
+	int32 PCGStaggerActivatedCount = 0;
+	void ProcessNextPCGComponent();
+
+	// Ore 복원 배칭
+	int32 OreRestoreBatchIndex = 0;
+	FTimerHandle OreRestoreTimer;
+	void ProcessOreRestoreBatch();
+
+	// PostProcess 배칭
+	struct FClusterSpawnRequest
+	{
+		UClass* OreClass;
+		FTransform Transform;
+		TArray<FName> Tags;
+	};
+	TArray<FClusterSpawnRequest> PendingClusterSpawns;
+	TArray<TWeakObjectPtr<AActor>> PendingClusterDestroys;
+	TArray<AActor*> SpawnedClusterOresResult;
+	int32 ClusterDestroyBatchIndex = 0;
+	int32 ClusterSpawnBatchIndex = 0;
+	FTimerHandle ClusterDestroyTimer;
+	FTimerHandle ClusterSpawnTimer;
+	TWeakObjectPtr<UPCGComponent> PostProcessPCGComp;
+	TArray<UPCGManagedActors*> PostProcessManagedActorsList;
+
+	void ProcessClusterDestroyBatch();
+	void ProcessClusterSpawnBatch();
+	void FinalizePostProcess();
 
 	// ════════════════════════════════════════════════════════════════════════════════
 	// 몬스터 스폰 시스템

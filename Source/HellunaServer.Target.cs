@@ -11,5 +11,9 @@ public class HellunaServerTarget : TargetRules
 		DefaultBuildSettings = BuildSettingsVersion.V6;
 		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_7;
 		ExtraModuleNames.Add("Helluna");
+
+		// 서버에서 오디오 에셋 제거 - USoundWave IO Store 직렬화 크래시 방지
+		bCompileAgainstApplicationCore = true;
+		DisablePlugins.Add("AudioCapture");
 	}
 }
