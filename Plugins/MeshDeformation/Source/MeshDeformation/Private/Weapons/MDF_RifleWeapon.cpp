@@ -39,9 +39,11 @@ void AMDF_RifleWeapon::Fire()
 
     if (bHit && HitResult.GetActor())
     {
+#if ENABLE_DRAW_DEBUG
         // [시각화] 총알 궤적
         DrawDebugLine(World, Start, HitResult.Location, FColor::Yellow, false, 0.05f, 0, 1.0f);
         DrawDebugPoint(World, HitResult.Location, 10.0f, FColor::Yellow, false, 0.05f);
+#endif
 
         // ---------------------------------------------------------------------
         // [핵심 변경] 언리얼 표준 데미지 시스템 사용
@@ -66,6 +68,8 @@ void AMDF_RifleWeapon::Fire()
     }
     else
     {
+#if ENABLE_DRAW_DEBUG
         DrawDebugLine(World, Start, End, FColor::Red, false, 0.05f, 0, 1.0f);
+#endif
     }
 }

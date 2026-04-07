@@ -461,7 +461,23 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
     int32 RimAffectedCount = 0;
     double MaxOffsetMagnitude = 0.0;
     int32 ClampedVertexCount = 0;
+    int32 AABBSkippedCount = 0;
 #endif
+
+    // [Lag-Fix10] 전체 히트의 합산 AABB 계산 — 영역 밖 정점은 즉시 스킵
+    // O(V×H) → O(K×H) 최적화 (K = AABB 내 정점, 보통 V의 5~20%)
+    FVector3d HitBoundsMin(DBL_MAX);
+    FVector3d HitBoundsMax(-DBL_MAX);
+    for (int32 i = StartIndex; i < EndIndex; ++i)
+    {
+        const FVector3d HitPos = (FVector3d)HitHistoryArray.Items[i].LocalLocation;
+        HitBoundsMin.X = FMath::Min(HitBoundsMin.X, HitPos.X - SafeRadius);
+        HitBoundsMin.Y = FMath::Min(HitBoundsMin.Y, HitPos.Y - SafeRadius);
+        HitBoundsMin.Z = FMath::Min(HitBoundsMin.Z, HitPos.Z - SafeRadius);
+        HitBoundsMax.X = FMath::Max(HitBoundsMax.X, HitPos.X + SafeRadius);
+        HitBoundsMax.Y = FMath::Max(HitBoundsMax.Y, HitPos.Y + SafeRadius);
+        HitBoundsMax.Z = FMath::Max(HitBoundsMax.Z, HitPos.Z + SafeRadius);
+    }
 
     // [Fix54] GetDynamicMesh() 로컬 캐시 — 유효성 검사와 사용 사이 파괴 방지
     UDynamicMesh* CachedDynamicMesh = DeformMeshComp->GetDynamicMesh();
@@ -479,6 +495,17 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
         {
             TotalVertexCount++;
             FVector3d VertexPos = EditMesh.GetVertex(VertexID);
+
+            // [Lag-Fix10] AABB 사전 필터링 — 합산 히트 영역 밖 정점 즉시 스킵
+            if (VertexPos.X < HitBoundsMin.X || VertexPos.X > HitBoundsMax.X ||
+                VertexPos.Y < HitBoundsMin.Y || VertexPos.Y > HitBoundsMax.Y ||
+                VertexPos.Z < HitBoundsMin.Z || VertexPos.Z > HitBoundsMax.Z)
+            {
+#if MDF_DEBUG_DEFORM
+                AABBSkippedCount++;
+#endif
+                continue;
+            }
             FVector3d TotalOffset(0.0, 0.0, 0.0);
             bool bModified = false;
 
@@ -654,8 +681,10 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
     {
 #if MDF_DEBUG_DEFORM
         UE_LOG(LogMeshDeform, Log, TEXT("[MDF Deform] === Phase 19 변형 결과 ==="));
-        UE_LOG(LogMeshDeform, Log, TEXT("[MDF Deform] 총 버텍스: %d | 변형됨: %d (%.1f%%)"),
-            TotalVertexCount, ModifiedVertexCount,
+        UE_LOG(LogMeshDeform, Log, TEXT("[MDF Deform] 총 버텍스: %d | AABB 스킵: %d (%.1f%%) | 변형됨: %d (%.1f%%)"),
+            TotalVertexCount, AABBSkippedCount,
+            TotalVertexCount > 0 ? (float)AABBSkippedCount / TotalVertexCount * 100.f : 0.f,
+            ModifiedVertexCount,
             TotalVertexCount > 0 ? (float)ModifiedVertexCount / TotalVertexCount * 100.f : 0.f);
         UE_LOG(LogMeshDeform, Log, TEXT("[MDF Deform] 최대 오프셋: %.2f UU | 클램프됨: %d개 (한도: %.1f)"),
             (float)MaxOffsetMagnitude, ClampedVertexCount, MaxDisplacementPerBatch);
@@ -668,11 +697,20 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
 #endif
     }
 
-    // 충돌 업데이트 (서버 + 클라 모두)
-    DeformMeshComp->UpdateCollision();
+    // [Lag-Fix12] 콜리전 + 렌더링 업데이트를 디바운스 — 연타 시 마지막 배치만 리쿡
+    // 연사 무기(0.1초 간격)로 같은 메시를 계속 쏘면 매 배치마다 콜리전 리쿡이 발생하여 히치
+    // 0.2초 디바운스로 연속 히트를 1회 리쿡으로 통합
+    if (UWorld* World = GetWorld())
+    {
+        World->GetTimerManager().ClearTimer(CollisionDebounceTimerHandle);
+        World->GetTimerManager().SetTimer(
+            CollisionDebounceTimerHandle, this,
+            &UMDF_DeformableComponent::DeferredCollisionUpdate,
+            0.2f, false
+        );
+    }
 
-    // 렌더링 업데이트 (클라이언트 전용)
-    // [Fix60] GetDynamicMesh() 재호출 → 캐시 적용 (파괴 방지 + 중복 호출 제거)
+    // 렌더링은 즉시 업데이트 (비주얼 지연 방지, 콜리전만 디바운스)
     if (!IsRunningDedicatedServer())
     {
         if (UDynamicMesh* PostEditMesh = DeformMeshComp->GetDynamicMesh())
@@ -834,6 +872,21 @@ FVector UMDF_DeformableComponent::ConvertWorldDirectionToLocal(FVector WorldDire
 
     if (IsValid(DynMeshComp)) return DynMeshComp->GetComponentTransform().InverseTransformVector(WorldDirection);
     return IsValid(GetOwner()) ? GetOwner()->GetActorTransform().InverseTransformVector(WorldDirection) : WorldDirection;
+}
+
+// -----------------------------------------------------------------------------
+// [Lag-Fix12] 디바운스된 콜리전 업데이트
+// -----------------------------------------------------------------------------
+void UMDF_DeformableComponent::DeferredCollisionUpdate()
+{
+    AActor* Owner = GetOwner();
+    if (!IsValid(Owner)) return;
+
+    UDynamicMeshComponent* DeformMeshComp = Owner->FindComponentByClass<UDynamicMeshComponent>();
+    if (IsValid(DeformMeshComp))
+    {
+        DeformMeshComp->UpdateCollision();
+    }
 }
 
 // -----------------------------------------------------------------------------

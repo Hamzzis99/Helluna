@@ -254,7 +254,7 @@ void UEnemyEntityMovementProcessor::Execute(
 		NewLocations[A] = EA.CurrentLoc
 			+ MoveDir * EA.MoveSpeed * DeltaTime
 			+ SeparationVec.GetSafeNormal() * SepSpeed * DeltaTime;
-				
+
 
 	}
 

@@ -36,7 +36,49 @@ void AHeroWeapon_Shotgun::Fire(AController* InstigatorController)
 	BroadcastAmmoChanged();
 
 	// ✅ 펠릿 처리(데미지 + FX 묶음)
-	DoLineTraceAndDamage_Shotgun(InstigatorController, TraceStart);
+	const FVector AimForward = InstigatorController->GetControlRotation().Vector();
+	DoLineTraceAndDamage_Shotgun(InstigatorController, TraceStart, AimForward);
+}
+
+// ════════════════════════════════════════════════════════════════
+// [AimFix] FireWithAimPoint — 카메라 기준 AimPoint로 샷건 발사
+// ════════════════════════════════════════════════════════════════
+void AHeroWeapon_Shotgun::FireWithAimPoint(AController* InstigatorController, const FVector& ClientAimPoint)
+{
+	if (!HasAuthority())
+		return;
+
+	if (!InstigatorController)
+		return;
+
+	APawn* Pawn = InstigatorController->GetPawn();
+	if (!Pawn)
+		return;
+
+	if (!CanFire())
+		return;
+
+	const FVector ViewLoc = Pawn->GetPawnViewLocation();
+	const FVector TraceStart = ViewLoc;
+
+	// 캐릭터 눈 → AimPoint 방향
+	const FVector ToAimPoint = ClientAimPoint - ViewLoc;
+	const FVector AimForward = ToAimPoint.SizeSquared() > 1.f
+		? ToAimPoint.GetSafeNormal()
+		: InstigatorController->GetControlRotation().Vector();
+
+	// 서버 검증
+	const FVector ViewDir = InstigatorController->GetControlRotation().Vector();
+	if (FVector::DotProduct(ViewDir, AimForward) < 0.f)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[AimFix] Shotgun AimPoint validation failed"));
+		return;
+	}
+
+	CurrentMag = FMath::Max(0, CurrentMag - 1);
+	BroadcastAmmoChanged();
+
+	DoLineTraceAndDamage_Shotgun(InstigatorController, TraceStart, AimForward);
 }
 
 // ------------------------------------------------------------
@@ -46,15 +88,16 @@ void AHeroWeapon_Shotgun::Fire(AController* InstigatorController)
 // ------------------------------------------------------------
 void AHeroWeapon_Shotgun::DoLineTraceAndDamage_Shotgun(
 	AController* InstigatorController,
-	const FVector& TraceStart
+	const FVector& TraceStart,
+	const FVector& AimForward
 )
 {
 	UWorld* World = GetWorld();
 	if (!World || !InstigatorController)
 		return;
 
-	// 서버에서도 정확한 방향을 얻기 위해 GetControlRotation 사용
-	const FVector Forward = InstigatorController->GetControlRotation().Vector();
+	// [AimFix] Forward를 파라미터로 받음 (카메라 기준 AimPoint 방향)
+	const FVector Forward = AimForward;
 	const float HalfAngleRad = FMath::DegreesToRadians(SpreadHalfAngleDeg);
 	const float JitterRad = FMath::DegreesToRadians(JitterDeg);
 

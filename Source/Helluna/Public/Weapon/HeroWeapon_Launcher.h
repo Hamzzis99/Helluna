@@ -19,6 +19,13 @@ class HELLUNA_API AHeroWeapon_Launcher : public AHeroWeapon_GunBase
 public:
 	void CacheAimFromController(AController* InstigatorController);
 
+	// [AimFix] 클라이언트 카메라 기준 AimPoint로 캐싱
+	void CacheAimWithAimPoint(AController* InstigatorController, const FVector& ClientAimPoint);
+
+	// [AimFix] 클라이언트 → 서버 AimPoint 캐싱 RPC
+	UFUNCTION(Server, Reliable)
+	void ServerCacheAimWithPoint(const FVector& ClientAimPoint);
+
 	virtual void Fire(AController* InstigatorController) override;
 
 protected:

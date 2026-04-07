@@ -693,7 +693,24 @@ bool UInv_BuildingComponent::Server_PlaceBuilding_Validate(
 	FGameplayTag MaterialTag3,
 	int32 MaterialAmount3)
 {
-	return BuildingClass != nullptr && MaterialAmount1 >= 0 && MaterialAmount2 >= 0 && MaterialAmount3 >= 0 && !Location.ContainsNaN() && !Rotation.ContainsNaN();
+	if (!BuildingClass || MaterialAmount1 < 0 || MaterialAmount2 < 0 || MaterialAmount3 < 0 || Location.ContainsNaN() || Rotation.ContainsNaN())
+	{
+		return false;
+	}
+
+	// [Lag-Fix7] 연속 배치 쿨다운 — 리플리케이션 스파이크 방지
+	UWorld* World = GetWorld();
+	if (World)
+	{
+		const double Now = World->GetTimeSeconds();
+		if (Now - LastPlaceServerTime < MinPlaceInterval)
+		{
+			return false;
+		}
+		LastPlaceServerTime = Now;
+	}
+
+	return true;
 }
 
 void UInv_BuildingComponent::Server_PlaceBuilding_Implementation(

@@ -364,16 +364,14 @@ void UMDF_MiniGameComponent::ApplyVisualMeshCut(int32 Index)
     );
 
     FGeometryScriptMeshBooleanOptions BoolOptions;
-    BoolOptions.bFillHoles = true;       
-    BoolOptions.bSimplifyOutput = false; 
+    BoolOptions.bFillHoles = true;
+    // [Lag-Fix11] Boolean 연산 후 출력 메시 단순화 활성화 — 정점 수 감소로 후속 연산 가속
+    BoolOptions.bSimplifyOutput = true;
 
     UGeometryScriptLibrary_MeshBooleanFunctions::ApplyMeshBoolean(
-        TargetMesh, FTransform::Identity, ToolMesh, FTransform::Identity, 
+        TargetMesh, FTransform::Identity, ToolMesh, FTransform::Identity,
         EGeometryScriptBooleanOperation::Subtract, BoolOptions
     );
-    
-    // 충돌 업데이트 (서버 + 클라 모두)
-    DynComp->UpdateCollision(true);
 
     // [Phase 18] Boolean 절단 후 새 정점의 Vertex Color 재초기화
     // Boolean 연산으로 생성된 새 정점은 Color Overlay가 없을 수 있으므로
@@ -388,22 +386,40 @@ void UMDF_MiniGameComponent::ApplyVisualMeshCut(int32 Index)
         );
     }
 
-    // 렌더링 업데이트 (클라이언트 전용)
-    if (!IsRunningDedicatedServer())
+    // [Lag-Fix11] 콜리전 + 렌더링 업데이트를 다음 틱으로 지연
+    // Boolean Subtract 자체가 무거우므로 같은 프레임에 콜리전 리쿡 + 노말/탄젠트까지 쌓이면 히치 발생
+    // 1프레임 콜리전 미정합은 파괴 이벤트에서 수용 가능
+    TWeakObjectPtr<UDynamicMeshComponent> WeakDynComp = DynComp;
+    if (UWorld* World = GetWorld())
     {
-        UGeometryScriptLibrary_MeshNormalsFunctions::RecomputeNormals(TargetMesh, FGeometryScriptCalculateNormalsOptions());
+        World->GetTimerManager().SetTimerForNextTick([WeakDynComp]()
+        {
+            if (!WeakDynComp.IsValid()) return;
+            UDynamicMeshComponent* Comp = WeakDynComp.Get();
 
-        FBox MeshBounds = UGeometryScriptLibrary_MeshQueryFunctions::GetMeshBoundingBox(TargetMesh);
-        FTransform BoxTransform = FTransform::Identity;
-        BoxTransform.SetTranslation(MeshBounds.GetCenter());
-        BoxTransform.SetScale3D(MeshBounds.GetSize());
+            // 충돌 업데이트 (서버 + 클라 모두)
+            Comp->UpdateCollision(true);
 
-        UGeometryScriptLibrary_MeshUVFunctions::SetMeshUVsFromBoxProjection(TargetMesh, 0, BoxTransform, FGeometryScriptMeshSelection());
-        UGeometryScriptLibrary_MeshNormalsFunctions::ComputeTangents(TargetMesh, FGeometryScriptTangentsOptions());
+            // 렌더링 업데이트 (클라이언트 전용)
+            if (!IsRunningDedicatedServer())
+            {
+                if (UDynamicMesh* Mesh = Comp->GetDynamicMesh())
+                {
+                    UGeometryScriptLibrary_MeshNormalsFunctions::RecomputeNormals(Mesh, FGeometryScriptCalculateNormalsOptions());
 
-        DynComp->MarkRenderTransformDirty();
-        DynComp->NotifyMeshUpdated();
-        DynComp->MarkRenderStateDirty();
+                    FBox MeshBounds = UGeometryScriptLibrary_MeshQueryFunctions::GetMeshBoundingBox(Mesh);
+                    FTransform BoxTransform = FTransform::Identity;
+                    BoxTransform.SetTranslation(MeshBounds.GetCenter());
+                    BoxTransform.SetScale3D(MeshBounds.GetSize());
+
+                    UGeometryScriptLibrary_MeshUVFunctions::SetMeshUVsFromBoxProjection(Mesh, 0, BoxTransform, FGeometryScriptMeshSelection());
+                    UGeometryScriptLibrary_MeshNormalsFunctions::ComputeTangents(Mesh, FGeometryScriptTangentsOptions());
+                }
+                Comp->MarkRenderTransformDirty();
+                Comp->NotifyMeshUpdated();
+                Comp->MarkRenderStateDirty();
+            }
+        });
     }
 
     // [Fix54] ToolMesh 정리는 ON_SCOPE_EXIT에서 자동 처리

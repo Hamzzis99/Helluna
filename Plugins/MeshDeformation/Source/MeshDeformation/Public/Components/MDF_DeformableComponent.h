@@ -302,4 +302,8 @@ protected:
 
     /** [디버그] 자동 복구 타이머 핸들 */
     FTimerHandle DevMode_RepairTimerHandle;
+
+    // [Lag-Fix12] 콜리전 업데이트 디바운스 — 연타 시 매 배치마다 리쿡 방지
+    FTimerHandle CollisionDebounceTimerHandle;
+    void DeferredCollisionUpdate();
 };

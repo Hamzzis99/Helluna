@@ -71,6 +71,19 @@ protected:
     UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
     TObjectPtr<UProgressBar> DayTimerBar = nullptr;
 
+    // ── 미션 알림 (상단 중앙, 타이머 아래) ──
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    TObjectPtr<UOverlay> NotifyPanel = nullptr;
+
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    TObjectPtr<UTextBlock> NotifyPhaseText = nullptr;
+
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    TObjectPtr<UTextBlock> NotifyTitleText = nullptr;
+
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    TObjectPtr<UTextBlock> NotifyDescText = nullptr;
+
     // ── 미니맵 설정 (에디터에서 조정 가능) ──
 
     /** 미니맵 머티리얼 (M_Minimap) — BP에서 지정 */
@@ -109,6 +122,23 @@ private:
 
     void UpdateDayMode(AHellunaDefenseGameState* GS);
     void UpdateNightMode(AHellunaDefenseGameState* GS);
+
+    // ── 미션 알림 ──
+    FTimerHandle NotifyHideTimer;
+    bool bWarningShown = false;
+
+    // 애니메이션 상태 (0 = 숨김, 1 = 페이드인 중, 2 = 표시 유지, 3 = 페이드아웃 중)
+    uint8 NotifyAnimState = 0;
+    float NotifyAnimTime = 0.f;
+    static constexpr float NotifyFadeInDuration = 0.35f;
+    static constexpr float NotifyFadeOutDuration = 0.45f;
+    static constexpr float NotifySlideOffset = 12.f;
+
+    /** 알림 표시 (3초 후 자동 숨김) */
+    void ShowNotification(const FString& PhaseLabel, const FString& Title, const FString& Desc, const FLinearColor& Color);
+
+    /** 알림 숨기기 */
+    void HideNotification();
 
     // ── 미니맵 ──
 

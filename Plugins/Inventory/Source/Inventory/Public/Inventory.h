@@ -5,9 +5,27 @@
 #include "Modules/ModuleManager.h"
 
 // ============================================
-// 🔧 디버깅 로그 전처리기 플래그
-// 출시 전에 모두 0으로 변경하세요
+// 디버깅 로그 전처리기 플래그
+// Shipping 빌드에서는 자동으로 모두 0 처리됩니다.
+// 개발 중 필요한 항목만 1로 설정하세요.
 // ============================================
+
+#if UE_BUILD_SHIPPING
+
+// Shipping 빌드: 모든 디버그 로그 강제 비활성화
+#define INV_DEBUG_EQUIP        0
+#define INV_DEBUG_INVENTORY    0
+#define INV_DEBUG_WIDGET       0
+#define INV_DEBUG_CRAFT        0
+#define INV_DEBUG_BUILD        0
+#define INV_DEBUG_RESOURCE     0
+#define INV_DEBUG_PLAYER       0
+#define INV_DEBUG_ATTACHMENT   0
+#define INV_DEBUG_SAVE         0
+#define INV_DEBUG_ITEM_POINTER 0
+#define INV_DEBUG_INTERACTION  0
+
+#else // Development / Debug 빌드
 
 // 장착 시스템 (EquipmentComponent, EquipActor, EquippedGridSlot, ItemFragment)
 #define INV_DEBUG_EQUIP 1
@@ -41,6 +59,8 @@
 
 // 상호작용 시스템 (HighlightableStaticMesh, Interaction 관련)
 #define INV_DEBUG_INTERACTION 0
+
+#endif // UE_BUILD_SHIPPING
 
 // ============================================
 

@@ -88,7 +88,8 @@ void AHeroWeapon_GunBase::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& 
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
-	DOREPLIFETIME(AHeroWeapon_GunBase, CurrentMag);
+	// [Lag-Fix6] 탄약 수는 소유자(발사자)만 필요 — 다른 클라이언트 불필요 전송 제거
+	DOREPLIFETIME_CONDITION(AHeroWeapon_GunBase, CurrentMag, COND_OwnerOnly);
 }
 
 void AHeroWeapon_GunBase::Fire(AController* InstigatorController)
@@ -125,6 +126,74 @@ void AHeroWeapon_GunBase::Fire(AController* InstigatorController)
 	BroadcastAmmoChanged();
 
 	DoLineTraceAndDamage(InstigatorController, TraceStart, TraceEnd);
+}
+
+// ════════════════════════════════════════════════════════════════
+// [AimFix] FireWithAimPoint — 클라이언트 카메라 기준 AimPoint로 발사
+// ════════════════════════════════════════════════════════════════
+// 3인칭 카메라의 SocketOffset 때문에 GetPawnViewLocation()과
+// 실제 화면 중앙이 불일치하는 문제를 해결.
+// 클라이언트가 카메라 기준 LineTrace로 계산한 AimPoint를 받아서,
+// 캐릭터 눈 → AimPoint 방향으로 서버 LineTrace 수행.
+// ════════════════════════════════════════════════════════════════
+void AHeroWeapon_GunBase::FireWithAimPoint(AController* InstigatorController, const FVector& ClientAimPoint)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	if (!InstigatorController)
+		return;
+
+	APawn* Pawn = InstigatorController->GetPawn();
+	if (!Pawn)
+		return;
+
+	if (!CanFire())
+		return;
+
+	const FVector ViewLoc = Pawn->GetPawnViewLocation();
+	const FVector ToAimPoint = ClientAimPoint - ViewLoc;
+
+	// AimPoint가 캐릭터 눈과 너무 가까우면 폴백
+	const FVector AimDir = ToAimPoint.SizeSquared() > 1.f
+		? ToAimPoint.GetSafeNormal()
+		: InstigatorController->GetControlRotation().Vector();
+
+	// 서버 검증: ControlRotation과 90도 이상 벗어나면 거부 (에임봇 방지)
+	const FVector ViewDir = InstigatorController->GetControlRotation().Vector();
+	if (FVector::DotProduct(ViewDir, AimDir) < 0.f)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[AimFix] AimPoint validation failed: Dot=%.2f"),
+			FVector::DotProduct(ViewDir, AimDir));
+		return;
+	}
+
+	const FVector TraceStart = ViewLoc;
+	const FVector TraceEnd = TraceStart + AimDir * Range;
+
+	CurrentMag = FMath::Max(0, CurrentMag - 1);
+	BroadcastAmmoChanged();
+
+	DoLineTraceAndDamage(InstigatorController, TraceStart, TraceEnd);
+}
+
+// ════════════════════════════════════════════════════════════════
+// [AimFix] ServerFireWithAimPoint — 클라이언트 → 서버 RPC
+// ════════════════════════════════════════════════════════════════
+void AHeroWeapon_GunBase::ServerFireWithAimPoint_Implementation(const FVector& ClientAimPoint)
+{
+	APawn* OwnerPawn = Cast<APawn>(GetOwner());
+	if (!OwnerPawn)
+		return;
+
+	AController* Controller = OwnerPawn->GetController();
+	if (!Controller)
+		return;
+
+	FireWithAimPoint(Controller, ClientAimPoint);
 }
 
 void AHeroWeapon_GunBase::DoLineTraceAndDamage(AController* InstigatorController, const FVector& TraceStart, const FVector& TraceEnd)

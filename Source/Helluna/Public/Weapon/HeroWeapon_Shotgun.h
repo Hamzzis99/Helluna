@@ -29,10 +29,12 @@ private:
 
 public:
 	virtual void Fire(AController* InstigatorController) override;
-	
+	virtual void FireWithAimPoint(AController* InstigatorController, const FVector& ClientAimPoint) override;
+
 	void DoLineTraceAndDamage_Shotgun(
 		AController* InstigatorController,
-		const FVector& TraceStart
+		const FVector& TraceStart,
+		const FVector& AimForward
 	);
 
 protected:

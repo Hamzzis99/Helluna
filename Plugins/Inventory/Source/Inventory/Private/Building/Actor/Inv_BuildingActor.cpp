@@ -15,7 +15,10 @@ AInv_BuildingActor::AInv_BuildingActor()
 
 	// 리플리케이션 활성화
 	bReplicates = true;
-	bAlwaysRelevant = true; // 모든 클라이언트에게 항상 관련성 있음
+	// [Lag-Fix5] bAlwaysRelevant=true 제거 — 거리 기반 relevancy로 전환
+	// 모든 건물이 모든 클라이언트에 항상 전송되면 O(건물수*플레이어수) 리플리케이션 부하
+	bAlwaysRelevant = false;
+	NetCullDistanceSquared = 150000.f * 150000.f; // 1500m
 
 	// 건물 메시 컴포넌트 생성
 	BuildingMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("BuildingMesh"));
@@ -77,6 +80,10 @@ void AInv_BuildingActor::OnBuildingPlaced_Implementation()
 
 void AInv_BuildingActor::StartPlacementScanVFX()
 {
+	// [Lag-Fix3] 데디서버에서는 스캔 VFX 불필요 (렌더링 없음, DMI 생성/Tick 비용 제거)
+	if (IsRunningDedicatedServer())
+		return;
+
 	// 머티리얼 미설정 시 스킵
 	if (!PlacementScanMaterial)
 	{

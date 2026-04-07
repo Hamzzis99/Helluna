@@ -122,20 +122,23 @@ void AMDF_LaserWeapon::ProcessLaserTrace()
     // [디버깅] 레이저 궤적 그리기
     if (bHit)
     {
-        // 화면 중앙 모드일 때는 총구에서 히트 지점까지 레이저 그리기 (시각적)
+        LastHitLocation = HitResult.Location;
+
+#if ENABLE_DRAW_DEBUG
         FVector LaserStart = MuzzleLocation ? MuzzleLocation->GetComponentLocation() : GetActorLocation();
         DrawDebugLine(World, LaserStart, HitResult.Location, LaserColor, false, -1.0f, 0, 2.0f);
         DrawDebugPoint(World, HitResult.Location, 10.0f, FColor::Blue, false, -1.0f);
-
-        LastHitLocation = HitResult.Location;  // 마지막 히트 위치 저장
+#endif
     }
     else
     {
         FVector LaserStart = MuzzleLocation ? MuzzleLocation->GetComponentLocation() : GetActorLocation();
         FVector LaserEnd = LaserStart + ((End - Start).GetSafeNormal() * FireRange);
-        DrawDebugLine(World, LaserStart, LaserEnd, LaserColor, false, -1.0f, 0, 1.0f);
-
         LastHitLocation = LaserEnd;
+
+#if ENABLE_DRAW_DEBUG
+        DrawDebugLine(World, LaserStart, LaserEnd, LaserColor, false, -1.0f, 0, 1.0f);
+#endif
     }
 
     // -------------------------------------------------------------------------
