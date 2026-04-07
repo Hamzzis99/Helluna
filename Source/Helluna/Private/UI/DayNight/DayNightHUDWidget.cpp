@@ -46,6 +46,17 @@ void UDayNightHUDWidget::NativeConstruct()
         DayTimeUnitText->SetText(FText::FromString(TEXT("밤까지")));
     }
 
+    // 미션 알림 초기 숨김
+    if (NotifyPanel)
+    {
+        NotifyPanel->SetVisibility(ESlateVisibility::Collapsed);
+        NotifyPanel->SetRenderOpacity(0.f);
+        NotifyPanel->SetRenderTranslation(FVector2D::ZeroVector);
+    }
+    bWarningShown = false;
+    NotifyAnimState = 0;
+    NotifyAnimTime = 0.f;
+
     // 미니맵 초기화
     InitializeMinimap();
 }
@@ -55,6 +66,12 @@ void UDayNightHUDWidget::NativeConstruct()
 // ============================================================================
 void UDayNightHUDWidget::NativeDestruct()
 {
+    UWorld* World = GetWorld();
+    if (World)
+    {
+        World->GetTimerManager().ClearTimer(NotifyHideTimer);
+    }
+
     CleanupPlayerIcons();
     Super::NativeDestruct();
 }
@@ -107,6 +124,15 @@ void UDayNightHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
                 WaveSubText->SetText(FText::FromString(TEXT("대기")));
             }
             CachedTotalDayTime = GS->DayTimeRemaining;
+
+            // 미션 알림: 낮 시작
+            ShowNotification(
+                TEXT("DAY PHASE"),
+                TEXT("자원을 수집하십시오"),
+                TEXT("우주선 수리 자원을 탐색하십시오"),
+                FLinearColor(0.96f, 0.62f, 0.04f, 1.f)  // 앰버
+            );
+            bWarningShown = false;
         }
         else // Night
         {
@@ -130,6 +156,14 @@ void UDayNightHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
             {
                 WaveSubText->SetText(FText::FromString(TEXT("/0")));
             }
+
+            // 미션 알림: 밤 시작
+            ShowNotification(
+                TEXT("NIGHT PHASE"),
+                TEXT("적의 공격을 막으십시오"),
+                TEXT("새벽까지 생존하십시오"),
+                FLinearColor(0.39f, 0.40f, 0.94f, 1.f)  // 인디고
+            );
         }
     }
 
@@ -145,6 +179,39 @@ void UDayNightHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 
     // ── 미니맵 갱신 ─────────────────────────────────────────────────────────
     UpdateMinimap();
+
+    // ── 미션 알림 애니메이션 ─────────────────────────────────────────────────
+    if (NotifyAnimState != 0 && NotifyPanel)
+    {
+        NotifyAnimTime += InDeltaTime;
+
+        if (NotifyAnimState == 1)
+        {
+            const float Alpha = FMath::Clamp(NotifyAnimTime / NotifyFadeInDuration, 0.f, 1.f);
+            const float Eased = 1.f - FMath::Pow(1.f - Alpha, 3.f);
+            NotifyPanel->SetRenderOpacity(Eased);
+            NotifyPanel->SetRenderTranslation(FVector2D(0.f, NotifySlideOffset * (1.f - Eased)));
+            if (Alpha >= 1.f)
+            {
+                NotifyAnimState = 2;
+                NotifyAnimTime = 0.f;
+            }
+        }
+        else if (NotifyAnimState == 3)
+        {
+            const float Alpha = FMath::Clamp(NotifyAnimTime / NotifyFadeOutDuration, 0.f, 1.f);
+            const float Eased = FMath::Pow(Alpha, 2.f);
+            NotifyPanel->SetRenderOpacity(1.f - Eased);
+            NotifyPanel->SetRenderTranslation(FVector2D(0.f, -NotifySlideOffset * Eased));
+            if (Alpha >= 1.f)
+            {
+                NotifyAnimState = 0;
+                NotifyPanel->SetVisibility(ESlateVisibility::Collapsed);
+                NotifyPanel->SetRenderOpacity(0.f);
+                NotifyPanel->SetRenderTranslation(FVector2D::ZeroVector);
+            }
+        }
+    }
 }
 
 // ============================================================================
@@ -190,6 +257,18 @@ void UDayNightHUDWidget::UpdateDayMode(AHellunaDefenseGameState* GS)
             if (DayTimeUnitText)
             {
                 DayTimeUnitText->SetText(FText::FromString(TEXT("밤이 온다")));
+            }
+
+            // 밤 임박 알림 (1회만)
+            if (!bWarningShown)
+            {
+                bWarningShown = true;
+                ShowNotification(
+                    TEXT("WARNING"),
+                    TEXT("밤이 다가오고 있습니다"),
+                    TEXT("거점으로 돌아가십시오"),
+                    FLinearColor(0.94f, 0.27f, 0.27f, 1.f)  // 레드
+                );
             }
         }
         else
@@ -256,6 +335,14 @@ void UDayNightHUDWidget::UpdateNightMode(AHellunaDefenseGameState* GS)
                 WaveProgressBar->SetPercent(1.0f);
                 WaveProgressBar->SetFillColorAndOpacity(FLinearColor(0.f, 1.f, 0.f, 1.f));
             }
+
+            // 생존 알림
+            ShowNotification(
+                TEXT("SURVIVED"),
+                TEXT("밤을 생존했습니다"),
+                TEXT("새벽이 밝아옵니다"),
+                FLinearColor(0.29f, 0.87f, 0.50f, 1.f)  // 그린
+            );
         }
         else if (TotalMonsters > 0)
         {
@@ -477,6 +564,61 @@ UImage* UDayNightHUDWidget::CreatePlayerIcon(const FLinearColor& Color)
     }
 
     return Icon;
+}
+
+// ============================================================================
+// 미션 알림 — 표시
+// ============================================================================
+void UDayNightHUDWidget::ShowNotification(const FString& PhaseLabel, const FString& Title, const FString& Desc, const FLinearColor& Color)
+{
+    if (!NotifyPanel)
+    {
+        return;
+    }
+
+    if (NotifyPhaseText)
+    {
+        NotifyPhaseText->SetText(FText::FromString(PhaseLabel));
+        // Alpha 보존하여 RGB만 어둡게
+        NotifyPhaseText->SetColorAndOpacity(FSlateColor(FLinearColor(Color.R * 0.7f, Color.G * 0.7f, Color.B * 0.7f, Color.A)));
+    }
+    if (NotifyTitleText)
+    {
+        NotifyTitleText->SetText(FText::FromString(Title));
+    }
+    if (NotifyDescText)
+    {
+        NotifyDescText->SetText(FText::FromString(Desc));
+        // Alpha 보존하여 RGB만 더 어둡게
+        NotifyDescText->SetColorAndOpacity(FSlateColor(FLinearColor(Color.R * 0.4f, Color.G * 0.4f, Color.B * 0.4f, Color.A)));
+    }
+
+    NotifyPanel->SetVisibility(ESlateVisibility::HitTestInvisible);
+    NotifyPanel->SetRenderOpacity(0.f);
+    NotifyPanel->SetRenderTranslation(FVector2D(0.f, NotifySlideOffset));
+    NotifyAnimState = 1;
+    NotifyAnimTime = 0.f;
+
+    // 3초 후 자동 숨김 (페이드인 시간 포함하여 페이드아웃 시작)
+    UWorld* World = GetWorld();
+    if (World)
+    {
+        World->GetTimerManager().ClearTimer(NotifyHideTimer);
+        World->GetTimerManager().SetTimer(NotifyHideTimer, this,
+            &UDayNightHUDWidget::HideNotification, 3.f, false);
+    }
+}
+
+// ============================================================================
+// 미션 알림 — 숨기기
+// ============================================================================
+void UDayNightHUDWidget::HideNotification()
+{
+    if (NotifyPanel && NotifyAnimState != 0)
+    {
+        NotifyAnimState = 3;
+        NotifyAnimTime = 0.f;
+    }
 }
 
 // ============================================================================
