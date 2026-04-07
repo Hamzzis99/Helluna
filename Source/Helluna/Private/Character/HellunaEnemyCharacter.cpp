@@ -297,9 +297,32 @@ void AHellunaEnemyCharacter::OnMonsterHealthChanged(
 	}
 
 	// 살아있는 상태에서 데미지를 받았을 때만 피격 애니메이션 재생
+	// #11 최적화: 0.2초 쿨다운 — 산탄총 동시 히트 시 RPC 폭발 방지
 	if (Delta > 0.f && NewHealth > 0.f && HitReactMontage)
 	{
-		Multicast_PlayHitReact();
+		static int32 HitReactBlockedCount = 0;
+		static int32 HitReactPassedCount = 0;
+
+		const double Now = GetWorld()->GetTimeSeconds();
+		if (Now - LastHitReactTime >= 0.2)
+		{
+			LastHitReactTime = Now;
+			Multicast_PlayHitReact();
+			HitReactPassedCount++;
+		}
+		else
+		{
+			HitReactBlockedCount++;
+			if (HitReactBlockedCount % 10 == 0)
+			{
+				UE_LOG(LogTemp, Log,
+					TEXT("[fast][#11 HitReact쿨다운] 누적: 차단=%d, 통과=%d (절감율=%.0f%%)"),
+					HitReactBlockedCount, HitReactPassedCount,
+					(HitReactBlockedCount + HitReactPassedCount) > 0
+						? (HitReactBlockedCount * 100.f / (HitReactBlockedCount + HitReactPassedCount))
+						: 0.f);
+			}
+		}
 	}
 }
 

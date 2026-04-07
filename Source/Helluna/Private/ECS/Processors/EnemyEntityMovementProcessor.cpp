@@ -81,56 +81,62 @@ void UEnemyEntityMovementProcessor::Execute(
 		if (World)
 		{
 			// 우주선 Actor와 ShipCombatCollision 박스들을 미리 수집 (모든 Entity 공통)
-			AActor* GoalActor = nullptr;
+			// #2 최적화: TActorIterator 반복 스캔 대신 캐시 사용
 			TArray<FVector> ApproachPoints;
 			TArray<FVector> SlotPoints;
 			TArray<FVector> SlotNormals;
 
-			for (TActorIterator<AActor> It(World); It; ++It)
+			if (!CachedSpaceShip.IsValid())
 			{
-				// GoalActorTag는 모든 Entity가 "SpaceShip"으로 동일하므로 첫 번째만 사용
-				if (It->ActorHasTag(TEXT("SpaceShip")))
+				for (TActorIterator<AActor> It(World); It; ++It)
 				{
-					GoalActor = *It;
-
-					// ShipCombatCollision 태그 컴포넌트 수집
-					TArray<UPrimitiveComponent*> Prims;
-					GoalActor->GetComponents<UPrimitiveComponent>(Prims);
-					for (UPrimitiveComponent* Prim : Prims)
+					if (It->ActorHasTag(TEXT("SpaceShip")))
 					{
-						if (Prim && Prim->ComponentHasTag(TEXT("ShipCombatCollision")))
-							ApproachPoints.Add(Prim->GetComponentLocation());
+						CachedSpaceShip = *It;
+						break;
 					}
+				}
+			}
+			AActor* GoalActor = CachedSpaceShip.Get();
 
-					if (USpaceShipAttackSlotManager* SlotManager =
-						GoalActor->FindComponentByClass<USpaceShipAttackSlotManager>())
+			if (GoalActor)
+			{
+				// ShipCombatCollision 태그 컴포넌트 수집
+				TArray<UPrimitiveComponent*> Prims;
+				GoalActor->GetComponents<UPrimitiveComponent>(Prims);
+				for (UPrimitiveComponent* Prim : Prims)
+				{
+					if (Prim && Prim->ComponentHasTag(TEXT("ShipCombatCollision")))
+						ApproachPoints.Add(Prim->GetComponentLocation());
+				}
+
+				if (USpaceShipAttackSlotManager* SlotManager =
+					GoalActor->FindComponentByClass<USpaceShipAttackSlotManager>())
+				{
+					for (const FAttackSlot& Slot : SlotManager->GetSlots())
 					{
-						for (const FAttackSlot& Slot : SlotManager->GetSlots())
+						if (Slot.IsValid())
 						{
-							if (Slot.IsValid())
-							{
-								const FVector SlotAnchor = Slot.SurfaceLocation.IsZero() ? Slot.WorldLocation : Slot.SurfaceLocation;
-								const FVector SlotNormal =
-									Slot.SurfaceNormal.IsNearlyZero()
-										? (SlotAnchor - GoalActor->GetActorLocation()).GetSafeNormal2D()
-										: Slot.SurfaceNormal.GetSafeNormal2D();
-								SlotPoints.Add(SlotAnchor);
-								SlotNormals.Add(SlotNormal);
-							}
+							const FVector SlotAnchor = Slot.SurfaceLocation.IsZero() ? Slot.WorldLocation : Slot.SurfaceLocation;
+							const FVector SlotNormal =
+								Slot.SurfaceNormal.IsNearlyZero()
+									? (SlotAnchor - GoalActor->GetActorLocation()).GetSafeNormal2D()
+									: Slot.SurfaceNormal.GetSafeNormal2D();
+							SlotPoints.Add(SlotAnchor);
+							SlotNormals.Add(SlotNormal);
 						}
 					}
+				}
 
-					FVector BoundsOrigin = FVector::ZeroVector;
-					FVector BoundsExtent = FVector::ZeroVector;
-					GoalActor->GetActorBounds(true, BoundsOrigin, BoundsExtent);
-					const float RingRadius = FMath::Max(BoundsExtent.Size2D() + 220.f, 260.f);
-					for (int32 RingIndex = 0; RingIndex < 8; ++RingIndex)
-					{
-						const float AngleRad = FMath::DegreesToRadians(360.f * static_cast<float>(RingIndex) / 8.f);
-						const FVector RingDir(FMath::Cos(AngleRad), FMath::Sin(AngleRad), 0.f);
-						ApproachPoints.Add(GoalActor->GetActorLocation() + RingDir * RingRadius);
-					}
-					break;
+				FVector BoundsOrigin = FVector::ZeroVector;
+				FVector BoundsExtent = FVector::ZeroVector;
+				GoalActor->GetActorBounds(true, BoundsOrigin, BoundsExtent);
+				const float RingRadius = FMath::Max(BoundsExtent.Size2D() + 220.f, 260.f);
+				for (int32 RingIndex = 0; RingIndex < 8; ++RingIndex)
+				{
+					const float AngleRad = FMath::DegreesToRadians(360.f * static_cast<float>(RingIndex) / 8.f);
+					const FVector RingDir(FMath::Cos(AngleRad), FMath::Sin(AngleRad), 0.f);
+					ApproachPoints.Add(GoalActor->GetActorLocation() + RingDir * RingRadius);
 				}
 			}
 
@@ -266,11 +272,32 @@ void UEnemyEntityMovementProcessor::Execute(
 	if (TotalEntities == 0)
 		return;
 
+	// 성능 측정 시작
+	const double SepStartTime = FPlatformTime::Seconds();
+
 	// ----------------------------------------------------------------
 	// Step 2: 이동 + 분리 계산 → NewLoc 배열 생성
+	// #1 최적화: O(N²) → 공간 해시 그리드 O(N*K)
 	// ----------------------------------------------------------------
 	TArray<FVector> NewLocations;
 	NewLocations.SetNum(TotalEntities);
+
+	// 공간 해시 그리드 구축 (셀 크기 = MaxSeparationRadius * 2 이상)
+	constexpr float CellSize = 200.f;
+	constexpr float InvCellSize = 1.f / CellSize;
+
+	auto CellKey = [](const FVector& V, float InvCS) -> int64 {
+		const int32 CX = FMath::FloorToInt(V.X * InvCS);
+		const int32 CY = FMath::FloorToInt(V.Y * InvCS);
+		return (static_cast<int64>(CX) << 32) | static_cast<int64>(static_cast<uint32>(CY));
+	};
+
+	TMap<int64, TArray<int32, TInlineAllocator<8>>> Grid;
+	Grid.Reserve(TotalEntities);
+	for (int32 i = 0; i < TotalEntities; ++i)
+	{
+		Grid.FindOrAdd(CellKey(Entities[i].CurrentLoc, InvCellSize)).Add(i);
+	}
 
 	for (int32 A = 0; A < TotalEntities; ++A)
 	{
@@ -281,24 +308,38 @@ void UEnemyEntityMovementProcessor::Execute(
 		if (FVector::DistSquared(EA.CurrentLoc, EA.GoalLoc) > 50.f * 50.f)
 			MoveDir = (EA.GoalLoc - EA.CurrentLoc).GetSafeNormal();
 
-		// 분리 벡터
+		// 분리 벡터 — 인접 9셀만 탐색
 		FVector SeparationVec = FVector::ZeroVector;
-		for (int32 B = 0; B < TotalEntities; ++B)
+		const int32 CX = FMath::FloorToInt(EA.CurrentLoc.X * InvCellSize);
+		const int32 CY = FMath::FloorToInt(EA.CurrentLoc.Y * InvCellSize);
+
+		for (int32 dx = -1; dx <= 1; ++dx)
 		{
-			if (A == B) continue;
-
-			const FEntityData& EB = Entities[B];
-			const float MinDist = EA.SeparationRadius + EB.SeparationRadius;
-
-			FVector Diff = EA.CurrentLoc - EB.CurrentLoc;
-			Diff.Z = 0.f;  // XY 평면에서만 분리
-
-			const float DistSq = Diff.SizeSquared();
-			if (DistSq < MinDist * MinDist && DistSq > KINDA_SMALL_NUMBER)
+			for (int32 dy = -1; dy <= 1; ++dy)
 			{
-				const float Dist    = FMath::Sqrt(DistSq);
-				const float Overlap = (MinDist - Dist) / MinDist;  // 겹친 비율 0~1
-				SeparationVec += (Diff / Dist) * Overlap;
+				const int64 Key = (static_cast<int64>(CX + dx) << 32)
+					| static_cast<int64>(static_cast<uint32>(CY + dy));
+				if (const auto* Cell = Grid.Find(Key))
+				{
+					for (int32 B : *Cell)
+					{
+						if (A == B) continue;
+
+						const FEntityData& EB = Entities[B];
+						const float MinDist = EA.SeparationRadius + EB.SeparationRadius;
+
+						FVector Diff = EA.CurrentLoc - EB.CurrentLoc;
+						Diff.Z = 0.f;  // XY 평면에서만 분리
+
+						const float DistSq = Diff.SizeSquared();
+						if (DistSq < MinDist * MinDist && DistSq > KINDA_SMALL_NUMBER)
+						{
+							const float Dist    = FMath::Sqrt(DistSq);
+							const float Overlap = (MinDist - Dist) / MinDist;
+							SeparationVec += (Diff / Dist) * Overlap;
+						}
+					}
+				}
 			}
 		}
 
@@ -307,8 +348,31 @@ void UEnemyEntityMovementProcessor::Execute(
 		NewLocations[A] = EA.CurrentLoc
 			+ MoveDir * EA.MoveSpeed * DeltaTime
 			+ SeparationVec.GetSafeNormal() * SepSpeed * DeltaTime;
-				
+	}
 
+	// 성능 측정 로그 (300프레임마다)
+	{
+		const double SepEndTime = FPlatformTime::Seconds();
+		const double SepMs = (SepEndTime - SepStartTime) * 1000.0;
+		static double AccumMs = 0.0;
+		static int32 AccumCount = 0;
+		static double PeakMs = 0.0;
+		AccumMs += SepMs;
+		AccumCount++;
+		if (SepMs > PeakMs) PeakMs = SepMs;
+
+		if (GFrameCounter % 300 == 0 && AccumCount > 0)
+		{
+			UE_LOG(LogTemp, Log,
+				TEXT("[fast][Movement] Entities=%d | Separation Avg=%.3fms Peak=%.3fms (GridCells=%d) | 구형O(N²)비교: %d회→%d셀탐색"),
+				TotalEntities, AccumMs / AccumCount, PeakMs,
+				Grid.Num(),
+				TotalEntities * TotalEntities,
+				TotalEntities * 9);
+			AccumMs = 0.0;
+			AccumCount = 0;
+			PeakMs = 0.0;
+		}
 	}
 
 	// ----------------------------------------------------------------

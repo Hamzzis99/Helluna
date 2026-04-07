@@ -6,6 +6,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "Net/UnrealNetwork.h"
 #include "OreMiningEffectComponent.generated.h"
 
 class UNiagaraSystem;
@@ -46,7 +47,7 @@ protected:
 
     /** 카메라 쉐이크 강도 배율 */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "채굴 이펙트|카메라 쉐이크",
-        meta = (DisplayName = "쉐이크 강도", ClampMin = "0.0", ClampMax = "5.0"))
+        meta = (DisplayName = "쉐이크 강도", ClampMin = "0.0", ClampMax = "20.0"))
     float CameraShakeScale = 1.0f;
 
     /** 카메라 쉐이크 적용 범위 (0 = 데미지를 가한 플레이어만) */
@@ -64,7 +65,7 @@ protected:
     USoundBase* MiningHitSound = nullptr;
 
 private:
-    /** OnTakePointDamage 콜백 — 데미지 수신 시 이펙트 재생 */
+    /** OnTakePointDamage 콜백 — 서버에서 데미지 수신 시 멀티캐스트 호출 */
     UFUNCTION()
     void OnOwnerPointDamage(
         AActor* DamagedActor,
@@ -76,6 +77,10 @@ private:
         FVector ShotFromDirection,
         const class UDamageType* DamageType,
         AActor* DamageCauser);
+
+    /** [Unreliable Multicast] 모든 클라이언트에서 이펙트 재생 */
+    UFUNCTION(NetMulticast, Unreliable)
+    void Multicast_PlayMiningEffects(FVector EffectLocation, FVector ShotFromDirection, AController* InstigatedBy);
 
     /** VFX 스폰 */
     void SpawnMiningVFX(const FVector& HitLocation, const FVector& ShotFromDirection);

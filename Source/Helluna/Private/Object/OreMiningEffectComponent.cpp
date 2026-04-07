@@ -11,6 +11,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogOreMiningFX, Log, All);
 UOreMiningEffectComponent::UOreMiningEffectComponent()
 {
     PrimaryComponentTick.bCanEverTick = false;
+    SetIsReplicatedByDefault(true);
 }
 
 void UOreMiningEffectComponent::BeginPlay()
@@ -58,6 +59,19 @@ void UOreMiningEffectComponent::OnOwnerPointDamage(
 
     UE_LOG(LogOreMiningFX, Log, TEXT("[%s] 이펙트 위치 보정: HitLocation=%s → EffectLocation=%s"),
         *GetOwner()->GetName(), *HitLocation.ToString(), *EffectLocation.ToString());
+
+    // 서버에서 멀티캐스트 → 모든 클라이언트에서 이펙트 재생
+    Multicast_PlayMiningEffects(EffectLocation, ShotFromDirection, InstigatedBy);
+}
+
+void UOreMiningEffectComponent::Multicast_PlayMiningEffects_Implementation(
+    FVector EffectLocation, FVector ShotFromDirection, AController* InstigatedBy)
+{
+    // 데디케이티드 서버에서는 이펙트 불필요
+    if (GetOwner() && GetOwner()->GetWorld() && GetOwner()->GetWorld()->IsNetMode(NM_DedicatedServer))
+    {
+        return;
+    }
 
     SpawnMiningVFX(EffectLocation, ShotFromDirection);
     PlayMiningCameraShake(InstigatedBy, EffectLocation);

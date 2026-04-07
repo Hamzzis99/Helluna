@@ -406,6 +406,9 @@ private:
 	/** 히트 이펙트 RPC 쓰로틀링 — 0.1초 내 중복 호출 생략 */
 	double LastEffectRPCTime = 0.0;
 
+	/** 피격 모션 RPC 쓰로틀링 — 0.2초 쿨다운 (#11 최적화) */
+	double LastHitReactTime = 0.0;
+
 	/** 애님 노티파이에서 바로 읽는 현재 근접 공격 데미지 캐시 */
 	float CachedMeleeAttackDamage = 0.f;
 

@@ -54,7 +54,10 @@ public class Helluna : ModuleRules
             "ApplicationCore",
 
             // [PCG] 밤 시작 시 런타임 PCG 생성 (장애물/환경 스폰)
-            "PCG"
+            "PCG",
+
+            // [카메라 쉐이크] PerlinNoiseCameraShakePattern 사용
+            "EngineCameras"
         });
         PrivateDependencyModuleNames.AddRange(new string[] { });
 

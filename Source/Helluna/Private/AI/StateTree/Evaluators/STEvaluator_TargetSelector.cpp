@@ -37,14 +37,34 @@ void FSTEvaluator_TargetSelector::TreeStart(FStateTreeExecutionContext& Context)
 	const UWorld* World = Context.GetWorld();
 	if (!World) return;
 
-	for (TActorIterator<AActor> It(World); It; ++It)
+	// #3 최적화: 50마리 동시 스폰 시 TActorIterator 반복 방지 — 정적 캐시 사용
+	static TWeakObjectPtr<AActor> CachedSpaceShip;
+	static int32 CacheHitCount = 0;
+	static int32 CacheMissCount = 0;
+
+	if (!CachedSpaceShip.IsValid())
 	{
-		if (It->ActorHasTag(FName("SpaceShip")))
+		CacheMissCount++;
+		for (TActorIterator<AActor> It(World); It; ++It)
 		{
-			TargetData.TargetActor = *It;
-			TargetData.TargetType  = EHellunaTargetType::SpaceShip; // 명시적 설정
-			break;
+			if (It->ActorHasTag(FName("SpaceShip")))
+			{
+				CachedSpaceShip = *It;
+				break;
+			}
 		}
+		UE_LOG(LogTemp, Log, TEXT("[fast][TargetSelector] 캐시 MISS — TActorIterator 실행 (누적: Hit=%d Miss=%d)"),
+			CacheHitCount, CacheMissCount);
+	}
+	else
+	{
+		CacheHitCount++;
+	}
+
+	if (CachedSpaceShip.IsValid())
+	{
+		TargetData.TargetActor = CachedSpaceShip.Get();
+		TargetData.TargetType  = EHellunaTargetType::SpaceShip;
 	}
 }
 
@@ -156,16 +176,32 @@ void FSTEvaluator_TargetSelector::Tick(FStateTreeExecutionContext& Context, cons
 		}
 
 		// 우주선 거리 갱신 (표면 거리로 계산)
+		// #9 관련 최적화: GetComponents 매 틱 호출 대신 정적 캐시 사용
 		if (TargetData.TargetActor.IsValid())
 		{
-			TArray<UPrimitiveComponent*> Prims;
-			TargetData.TargetActor->GetComponents<UPrimitiveComponent>(Prims);
+			static TWeakObjectPtr<AActor> CachedShipForDist;
+			static TArray<TWeakObjectPtr<UPrimitiveComponent>> CachedCollisionPrims;
+
+			// 우주선이 바뀌었거나 캐시가 비어있으면 재수집
+			if (CachedShipForDist.Get() != TargetData.TargetActor.Get() || CachedCollisionPrims.IsEmpty())
+			{
+				CachedShipForDist = TargetData.TargetActor;
+				CachedCollisionPrims.Reset();
+				TArray<UPrimitiveComponent*> Prims;
+				TargetData.TargetActor->GetComponents<UPrimitiveComponent>(Prims);
+				for (UPrimitiveComponent* Prim : Prims)
+				{
+					if (Prim && Prim->ComponentHasTag(TEXT("ShipCombatCollision")))
+						CachedCollisionPrims.Add(Prim);
+				}
+			}
 
 			float MinDist = MAX_FLT;
 			bool bFound = false;
-			for (UPrimitiveComponent* Prim : Prims)
+			for (const TWeakObjectPtr<UPrimitiveComponent>& WeakPrim : CachedCollisionPrims)
 			{
-				if (!Prim || !Prim->ComponentHasTag(TEXT("ShipCombatCollision"))) continue;
+				UPrimitiveComponent* Prim = WeakPrim.Get();
+				if (!Prim) continue;
 				const float D = FVector::Dist(PawnLocation, Prim->GetComponentLocation());
 				if (D < MinDist) { MinDist = D; bFound = true; }
 			}

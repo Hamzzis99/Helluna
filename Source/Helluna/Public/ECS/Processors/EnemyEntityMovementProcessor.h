@@ -44,4 +44,7 @@ protected:
 private:
 	FMassEntityQuery EntityQuery;       // 이동 처리용
 	FMassEntityQuery GoalCacheQuery;    // GoalLocation 캐싱용 (별도 쿼리)
+
+	/** 우주선 캐시 — TActorIterator 반복 스캔 방지 (#2 최적화) */
+	TWeakObjectPtr<AActor> CachedSpaceShip;
 };
