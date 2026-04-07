@@ -33,6 +33,12 @@ protected:
     TObjectPtr<UCanvasPanel> RootCanvas = nullptr;
 
     UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    TObjectPtr<UCanvasPanel> MapClipPanel = nullptr;
+
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    TObjectPtr<UCanvasPanel> ZoomContent = nullptr;
+
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
     TObjectPtr<UImage> MapImage = nullptr;
 
     UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
@@ -63,6 +69,9 @@ public:
     UFUNCTION(BlueprintPure, Category = "WorldMap (월드맵)")
     bool IsMapOpen() const { return bIsOpen; }
 
+    /** 마우스 휠 줌 */
+    virtual FReply NativeOnMouseWheel(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+
 private:
     // ── 좌표 변환 (DayNightHUDWidget과 동일한 값 사용) ──
     static constexpr float MapCenterX = 5679.f;
@@ -92,4 +101,10 @@ private:
     /** 맵 영역 사이즈 (Designer에서 설정한 MapImage 크기) */
     FVector2D MapWidgetSize = FVector2D(900.f, 900.f);
     FVector2D MapWidgetTopLeft = FVector2D(510.f, 90.f);
+
+    // ── 줌 ──
+    float MapZoom = 1.f;
+    static constexpr float MinZoom = 1.f;
+    static constexpr float MaxZoom = 4.f;
+    static constexpr float ZoomStep = 0.25f;
 };

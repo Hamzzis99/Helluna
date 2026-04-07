@@ -49,6 +49,12 @@ void UHellunaWorldMapWidget::OpenMap()
     AnimState = 1;
     AnimTime = 0.f;
     bIsOpen = true;
+
+    MapZoom = 1.f;
+    if (ZoomContent)
+    {
+        ZoomContent->SetRenderScale(FVector2D(1.f, 1.f));
+    }
     UE_LOG(LogTemp, Warning, TEXT("[WorldMap] Visibility=Visible, AnimState=1, bIsOpen=true"));
 
     APlayerController* PC = GetOwningPlayer();
@@ -137,6 +143,22 @@ void UHellunaWorldMapWidget::NativeTick(const FGeometry& MyGeometry, float InDel
 // ============================================================================
 // NativeOnMouseButtonDown — 클릭 시 핑 생성/삭제
 // ============================================================================
+FReply UHellunaWorldMapWidget::NativeOnMouseWheel(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+    if (!bIsOpen) return FReply::Unhandled();
+
+    const float Delta = InMouseEvent.GetWheelDelta();
+    MapZoom = FMath::Clamp(MapZoom + Delta * ZoomStep, MinZoom, MaxZoom);
+
+    if (ZoomContent)
+    {
+        ZoomContent->SetRenderScale(FVector2D(MapZoom, MapZoom));
+    }
+
+    UE_LOG(LogTemp, Verbose, TEXT("[WorldMap] Zoom=%.2f"), MapZoom);
+    return FReply::Handled();
+}
+
 FReply UHellunaWorldMapWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
     if (!bIsOpen)
@@ -144,11 +166,17 @@ FReply UHellunaWorldMapWidget::NativeOnMouseButtonDown(const FGeometry& InGeomet
         return FReply::Unhandled();
     }
 
-    const FVector2D LocalPos = InGeometry.AbsoluteToLocal(InMouseEvent.GetScreenSpacePosition());
+    if (!MapClipPanel)
+    {
+        return FReply::Unhandled();
+    }
 
-    // 맵 영역 안인지 체크
-    if (LocalPos.X < MapWidgetTopLeft.X || LocalPos.X > MapWidgetTopLeft.X + MapWidgetSize.X ||
-        LocalPos.Y < MapWidgetTopLeft.Y || LocalPos.Y > MapWidgetTopLeft.Y + MapWidgetSize.Y)
+    const FGeometry& ClipGeo = MapClipPanel->GetCachedGeometry();
+    const FVector2D ScreenPos = InMouseEvent.GetScreenSpacePosition();
+    const FVector2D ClipLocal = ClipGeo.AbsoluteToLocal(ScreenPos);
+    const FVector2D ClipSize = ClipGeo.GetLocalSize();
+
+    if (ClipLocal.X < 0.f || ClipLocal.X > ClipSize.X || ClipLocal.Y < 0.f || ClipLocal.Y > ClipSize.Y)
     {
         return FReply::Unhandled();
     }
@@ -159,17 +187,29 @@ FReply UHellunaWorldMapWidget::NativeOnMouseButtonDown(const FGeometry& InGeomet
         return FReply::Unhandled();
     }
 
-    // 우클릭 -> 핑 삭제
     if (InMouseEvent.GetEffectingButton() == EKeys::RightMouseButton)
     {
         HeroPC->ClearLocalPing();
         return FReply::Handled();
     }
 
-    // 좌클릭 -> 핑 생성/이동
     if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
     {
-        const FVector WorldLoc = MapPixelToWorld(LocalPos);
+        const FVector2D Center = ClipSize * 0.5f;
+        const FVector2D ZoomLocal = (ClipLocal - Center) / FMath::Max(MapZoom, 0.0001f) + Center;
+
+        const float U = ZoomLocal.X / ClipSize.X;
+        const float V = ZoomLocal.Y / ClipSize.Y;
+
+        const FVector WorldLoc(
+            MapCenterX + (U - 0.5f) * MapHalfSize * 2.f,
+            MapCenterY + (V - 0.5f) * MapHalfSize * 2.f,
+            0.f
+        );
+
+        UE_LOG(LogTemp, Warning, TEXT("[WorldMap] Click ClipLocal=(%.0f,%.0f) UV=(%.2f,%.2f) World=(%.0f,%.0f) Zoom=%.2f"),
+            ClipLocal.X, ClipLocal.Y, U, V, WorldLoc.X, WorldLoc.Y, MapZoom);
+
         HeroPC->SetLocalPing(WorldLoc);
         return FReply::Handled();
     }
@@ -184,19 +224,29 @@ FVector2D UHellunaWorldMapWidget::WorldToMapPixel(const FVector& WorldLocation) 
 {
     const float U = (WorldLocation.X - (MapCenterX - MapHalfSize)) / (MapHalfSize * 2.f);
     const float V = (WorldLocation.Y - (MapCenterY - MapHalfSize)) / (MapHalfSize * 2.f);
-    return FVector2D(
-        MapWidgetTopLeft.X + U * MapWidgetSize.X,
-        MapWidgetTopLeft.Y + V * MapWidgetSize.Y
-    );
+
+    FVector2D Size = MapWidgetSize;
+    if (MapClipPanel)
+    {
+        const FVector2D Cached = MapClipPanel->GetCachedGeometry().GetLocalSize();
+        if (Cached.X > 0.f && Cached.Y > 0.f) Size = Cached;
+    }
+    return FVector2D(U * Size.X, V * Size.Y);
 }
 
 // ============================================================================
-// MapPixelToWorld — 풀맵 위젯 픽셀 -> 월드 좌표
+// MapPixelToWorld — ZoomContent 로컬 픽셀 -> 월드 좌표
 // ============================================================================
 FVector UHellunaWorldMapWidget::MapPixelToWorld(const FVector2D& MapPixel) const
 {
-    const float U = (MapPixel.X - MapWidgetTopLeft.X) / MapWidgetSize.X;
-    const float V = (MapPixel.Y - MapWidgetTopLeft.Y) / MapWidgetSize.Y;
+    FVector2D Size = MapWidgetSize;
+    if (MapClipPanel)
+    {
+        const FVector2D Cached = MapClipPanel->GetCachedGeometry().GetLocalSize();
+        if (Cached.X > 0.f && Cached.Y > 0.f) Size = Cached;
+    }
+    const float U = MapPixel.X / Size.X;
+    const float V = MapPixel.Y / Size.Y;
     return FVector(
         (MapCenterX - MapHalfSize) + U * MapHalfSize * 2.f,
         (MapCenterY - MapHalfSize) + V * MapHalfSize * 2.f,
