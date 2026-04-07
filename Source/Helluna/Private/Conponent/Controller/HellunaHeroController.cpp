@@ -40,6 +40,9 @@
 // [DebugHUD] 디버그 HUD 시스템
 #include "UI/HUD/HellunaDebugHUDWidget.h"
 
+// [WorldMap] 풀스크린 월드맵 + 핑 시스템
+#include "UI/WorldMap/HellunaWorldMapWidget.h"
+
 // [PauseMenu] 위젯 애니메이션 재생
 // WidgetBlueprintGeneratedClass는 PauseMenuWidget 내부로 이동
 
@@ -203,6 +206,25 @@ void AHellunaHeroController::BeginPlay()
 		}
 	}
 
+	// ── [WorldMap] M키 월드맵 토글 바인딩 (로컬 플레이어만) ──
+	if (IsLocalController() && ToggleMapAction && WorldMapMappingContext)
+	{
+		if (ULocalPlayer* MapLP = GetLocalPlayer())
+		{
+			if (UEnhancedInputLocalPlayerSubsystem* MapSub = MapLP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
+			{
+				MapSub->AddMappingContext(WorldMapMappingContext, 10);
+				UE_LOG(LogTemp, Log, TEXT("[WorldMap] WorldMapMappingContext 추가 완료 (priority=10)"));
+			}
+		}
+
+		if (UEnhancedInputComponent* MapEIC = Cast<UEnhancedInputComponent>(InputComponent))
+		{
+			MapEIC->BindAction(ToggleMapAction, ETriggerEvent::Started, this, &AHellunaHeroController::OnToggleWorldMapInput);
+			UE_LOG(LogTemp, Log, TEXT("[WorldMap] ToggleMapAction 바인딩 완료 (M키)"));
+		}
+	}
+
 	// ── [DebugHUD] 디버그 HUD 생성 + F5 입력 바인딩 (로컬 플레이어만) ──
 #if !UE_BUILD_SHIPPING
 	if (IsLocalController())
@@ -250,6 +272,13 @@ void AHellunaHeroController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		ActivePuzzleWidget = nullptr;
 	}
 	bInPuzzleMode = false;
+
+	// [WorldMap] 월드맵 위젯 정리
+	if (IsValid(WorldMapWidgetInstance))
+	{
+		WorldMapWidgetInstance->RemoveFromParent();
+		WorldMapWidgetInstance = nullptr;
+	}
 
 	// [HackMode] Saturation 즉시 복원
 	CurrentSaturation = 1.f;
@@ -1459,4 +1488,71 @@ void AHellunaHeroController::ToggleGraphicsSettings()
 
 		UE_LOG(LogTemp, Log, TEXT("[GraphicsSettings] 위젯 열기"));
 	}
+}
+
+// ============================================================================
+// [WorldMap] M키 월드맵 토글
+// ============================================================================
+
+void AHellunaHeroController::OnToggleWorldMapInput(const FInputActionValue& Value)
+{
+	UE_LOG(LogTemp, Warning, TEXT("[WorldMap] OnToggleWorldMapInput 호출됨 IsLocal=%d"), IsLocalController() ? 1 : 0);
+
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	if (!WorldMapWidgetInstance && WorldMapWidgetClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[WorldMap] 최초 위젯 생성: %s"), *WorldMapWidgetClass->GetName());
+		WorldMapWidgetInstance = CreateWidget<UHellunaWorldMapWidget>(this, WorldMapWidgetClass);
+		if (WorldMapWidgetInstance)
+		{
+			WorldMapWidgetInstance->AddToViewport(100);
+			UE_LOG(LogTemp, Warning, TEXT("[WorldMap] 위젯 생성+AddToViewport 완료"));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("[WorldMap] CreateWidget 실패!"));
+		}
+	}
+	else if (!WorldMapWidgetClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[WorldMap] WorldMapWidgetClass가 NULL — BP_HellunaHeroController에 할당 필요"));
+	}
+
+	if (!WorldMapWidgetInstance)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[WorldMap] WorldMapWidgetInstance NULL — return"));
+		return;
+	}
+
+	if (WorldMapWidgetInstance->IsMapOpen())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[WorldMap] CloseMap 호출"));
+		WorldMapWidgetInstance->CloseMap();
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[WorldMap] OpenMap 호출"));
+		WorldMapWidgetInstance->OpenMap();
+	}
+}
+
+// ============================================================================
+// [WorldMap] 핑 설정/해제 (클라이언트 사이드 전용)
+// ============================================================================
+
+void AHellunaHeroController::SetLocalPing(const FVector& WorldLocation)
+{
+	LocalPingLocation = WorldLocation;
+	bHasLocalPing = true;
+	// DayNightHUDWidget이 매 틱 HasLocalPing()을 폴링하므로 자동 갱신됨
+}
+
+void AHellunaHeroController::ClearLocalPing()
+{
+	bHasLocalPing = false;
+	LocalPingLocation = FVector::ZeroVector;
 }

@@ -22,6 +22,7 @@ class UPostProcessComponent;
 class UHellunaDebugHUDWidget;
 class UHellunaGraphicsSettingsWidget;
 class UHellunaPauseMenuWidget;
+class UHellunaWorldMapWidget;
 
 /**
  * @brief   Helluna 영웅 전용 PlayerController
@@ -516,4 +517,56 @@ private:
 	/** 그래픽 설정 위젯 인스턴스 */
 	UPROPERTY()
 	TObjectPtr<UHellunaGraphicsSettingsWidget> GraphicsSettingsInstance;
+
+	// =========================================================================================
+	// [WorldMap] 풀스크린 월드맵 + 핑 시스템 (클라이언트 사이드 전용)
+	// =========================================================================================
+public:
+	/** 로컬 핑 위치 설정 (월드맵 좌클릭 → 핑 생성/이동) */
+	UFUNCTION(BlueprintCallable, Category = "WorldMap (월드맵)")
+	void SetLocalPing(const FVector& WorldLocation);
+
+	/** 로컬 핑 제거 (월드맵 우클릭) */
+	UFUNCTION(BlueprintCallable, Category = "WorldMap (월드맵)")
+	void ClearLocalPing();
+
+	/** 핑 존재 여부 */
+	UFUNCTION(BlueprintPure, Category = "WorldMap (월드맵)")
+	bool HasLocalPing() const { return bHasLocalPing; }
+
+	/** 핑 월드 좌표 */
+	UFUNCTION(BlueprintPure, Category = "WorldMap (월드맵)")
+	FVector GetLocalPingLocation() const { return LocalPingLocation; }
+
+protected:
+	/** 월드맵 위젯 클래스 (BP에서 WBP_HellunaWorldMap 지정) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "WorldMap|UI (월드맵|UI)",
+		meta = (DisplayName = "World Map Widget Class (월드맵 위젯 클래스)"))
+	TSubclassOf<UHellunaWorldMapWidget> WorldMapWidgetClass;
+
+	/** M키 토글 입력 액션 (IA_ToggleMap 에셋) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "WorldMap|Input (월드맵|입력)",
+		meta = (DisplayName = "Toggle Map Action (맵 토글 액션)"))
+	TObjectPtr<UInputAction> ToggleMapAction = nullptr;
+
+	/** 월드맵 입력 매핑 컨텍스트 (M키 → ToggleMapAction) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "WorldMap|Input (월드맵|입력)",
+		meta = (DisplayName = "World Map Mapping Context (월드맵 입력 매핑)"))
+	TObjectPtr<UInputMappingContext> WorldMapMappingContext = nullptr;
+
+private:
+	/** 월드맵 위젯 인스턴스 */
+	UPROPERTY()
+	TObjectPtr<UHellunaWorldMapWidget> WorldMapWidgetInstance = nullptr;
+
+	/** 핑 월드 좌표 */
+	UPROPERTY()
+	FVector LocalPingLocation = FVector::ZeroVector;
+
+	/** 핑 존재 여부 */
+	UPROPERTY()
+	bool bHasLocalPing = false;
+
+	/** M키 입력 핸들러 (Enhanced Input) */
+	void OnToggleWorldMapInput(const struct FInputActionValue& Value);
 };

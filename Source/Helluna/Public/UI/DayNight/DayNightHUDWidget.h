@@ -39,6 +39,10 @@ protected:
     UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
     TObjectPtr<UCanvasPanel> MinimapIconCanvas = nullptr;
 
+    /** 미니맵 핑 마커 이미지 (노란 다이아몬드, WBP에서 추가) */
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    TObjectPtr<UImage> MinimapPingMarker = nullptr;
+
     // ── 웨이브 정보 (좌상단, 미니맵 아래) ──
     UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
     TObjectPtr<UOverlay> WaveInfoPanel = nullptr;

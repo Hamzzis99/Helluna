@@ -9,6 +9,7 @@
 #include "Components/ProgressBar.h"
 #include "Components/SizeBox.h"
 #include "Components/TextBlock.h"
+#include "Controller/HellunaHeroController.h"
 #include "GameFramework/PlayerState.h"
 #include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -514,6 +515,42 @@ void UDayNightHUDWidget::UpdateMinimap()
         if (IconSlot)
         {
             IconSlot->SetPosition(FVector2D(PosX, PosY));
+        }
+    }
+
+    // ── 핑 마커 갱신 (PC에서 폴링) ──
+    if (MinimapPingMarker)
+    {
+        AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(UGameplayStatics::GetPlayerController(this, 0));
+        if (HeroPC && HeroPC->HasLocalPing())
+        {
+            const FVector2D PingUV = WorldToMinimapUV(HeroPC->GetLocalPingLocation());
+
+            // UV를 현재 보이는 미니맵 영역 내 로컬 좌표(0~1)로 변환
+            const float PingLocalX = (PingUV.X - OffsetU) / MinimapZoomScale;
+            const float PingLocalY = (PingUV.Y - OffsetV) / MinimapZoomScale;
+
+            // 미니맵 범위(0~1) 안일 때만 표시
+            if (PingLocalX >= 0.f && PingLocalX <= 1.f && PingLocalY >= 0.f && PingLocalY <= 1.f)
+            {
+                const float PingPosX = PingLocalX * MinimapWidgetSize - 6.f; // 핑 아이콘 크기 절반
+                const float PingPosY = PingLocalY * MinimapWidgetSize - 6.f;
+
+                UCanvasPanelSlot* PingSlot = Cast<UCanvasPanelSlot>(MinimapPingMarker->Slot);
+                if (PingSlot)
+                {
+                    PingSlot->SetPosition(FVector2D(PingPosX, PingPosY));
+                }
+                MinimapPingMarker->SetVisibility(ESlateVisibility::HitTestInvisible);
+            }
+            else
+            {
+                MinimapPingMarker->SetVisibility(ESlateVisibility::Collapsed);
+            }
+        }
+        else
+        {
+            MinimapPingMarker->SetVisibility(ESlateVisibility::Collapsed);
         }
     }
 }
