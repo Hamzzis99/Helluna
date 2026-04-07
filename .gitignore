@@ -29,8 +29,11 @@ FileOpenOrder/
 Binaries/*
 Plugins/*/Binaries/*
 Plugins/*/Intermediate/
+Plugins/Marketplace/**/Binaries/
 Plugins/UnrealMCP
 Plugins/UnrealMCP_backup
+Plugins/*/Binaries/*
+
 
 # User-specific files
 *.sln
