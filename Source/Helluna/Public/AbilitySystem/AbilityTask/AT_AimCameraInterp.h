@@ -49,4 +49,8 @@ private:
 
 	/** 보간 완료 판정 허용 오차 */
 	static constexpr float Tolerance = 0.5f;
+
+	/** 보간 최대 지속 시간 (초) — 초과 시 강제 스냅 후 완료 */
+	static constexpr float MaxDuration = 3.0f;
+	float ElapsedTime = 0.f;
 };

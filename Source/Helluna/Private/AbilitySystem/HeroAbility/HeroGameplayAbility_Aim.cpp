@@ -175,8 +175,9 @@ void UHeroGameplayAbility_Aim::EndAbility(
 				CachedUseControllerDesiredRotation ? TEXT("true") : TEXT("false"));
 		}
 
-		// ── 카메라 즉시 복원: 취소 시 줌아웃 미완료 상태면 스냅 (로컬만) ──
-		if (bWasCancelled && CurrentPhase < 3 && Hero->IsLocallyControlled())
+		// ── 카메라 즉시 복원: 취소 시 보간 미완료 상태면 스냅 (로컬만) ──
+		// Phase 1~3 모두 취소 가능 — Phase 3(줌아웃 중) 취소 시에도 FOV 복원 필수
+		if (bWasCancelled && Hero->IsLocallyControlled())
 		{
 			if (UCameraComponent* Cam = Hero->GetFollowCamera())
 			{
@@ -187,8 +188,11 @@ void UHeroGameplayAbility_Aim::EndAbility(
 				Boom->TargetArmLength = CachedDefaultArmLength;
 				Boom->SocketOffset = CachedDefaultSocketOffset;
 			}
-			UE_LOG(LogTemp, Warning, TEXT("[Aim GA] 취소됨 — 카메라 즉시 복원"));
+			UE_LOG(LogTemp, Warning, TEXT("[Aim GA] Phase %d 취소됨 — 카메라 즉시 복원 (FOV=%.1f)"),
+				CurrentPhase, CachedDefaultFOV);
 		}
+
+		ZoomOutTask = nullptr;
 	}
 
 	CurrentPhase = 0;

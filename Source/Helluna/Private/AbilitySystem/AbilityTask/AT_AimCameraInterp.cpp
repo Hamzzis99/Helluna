@@ -38,12 +38,34 @@ void UAT_AimCameraInterp::TickTask(float DeltaTime)
 	AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(Ability->GetAvatarActorFromActorInfo());
 	if (!Hero || !Hero->IsLocallyControlled())
 	{
+		// 로컬 제어 상실 시 태스크 종료 (무한 틱 방지)
+		UE_LOG(LogTemp, Warning, TEXT("[AT_AimCameraInterp] Lost local control — ending task"));
+		EndTask();
 		return;
 	}
 
 	USpringArmComponent* Boom = Hero->GetCameraBoom();
 	UCameraComponent* Cam = Hero->GetFollowCamera();
 	if (!Boom || !Cam) return;
+
+	// ── 타임아웃 체크 — 보간이 완료되지 않아도 강제 스냅 ──
+	ElapsedTime += DeltaTime;
+	if (ElapsedTime > MaxDuration)
+	{
+		Cam->SetFieldOfView(GoalFOV);
+		Boom->TargetArmLength = GoalArmLength;
+		Boom->SocketOffset = GoalSocketOffset;
+
+		UE_LOG(LogTemp, Warning, TEXT("[AT_AimCameraInterp] TIMEOUT (%.1fs) — 강제 스냅 FOV=%.1f, Arm=%.1f"),
+			MaxDuration, GoalFOV, GoalArmLength);
+
+		if (ShouldBroadcastAbilityTaskDelegates())
+		{
+			OnCompleted.Broadcast();
+		}
+		EndTask();
+		return;
+	}
 
 	// ── 보간 ──
 	Boom->TargetArmLength = FMath::FInterpTo(Boom->TargetArmLength, GoalArmLength, DeltaTime, Speed);
