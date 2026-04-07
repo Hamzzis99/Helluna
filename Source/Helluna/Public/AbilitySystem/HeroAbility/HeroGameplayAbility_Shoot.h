@@ -23,6 +23,9 @@ protected:
 
 	void Shoot();
 
+	// [AimFix] 클라이언트 카메라 기준 조준점(AimPoint) 계산
+	static FVector ComputeAimPointFromCamera(const AHellunaHeroCharacter* Hero);
+
 private:
 
 	FTimerHandle AutoFireTimerHandle;

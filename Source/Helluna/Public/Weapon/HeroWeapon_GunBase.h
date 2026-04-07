@@ -59,6 +59,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Weapon|Fire")
 	virtual void Fire(AController* InstigatorController);
 
+	// [AimFix] 클라이언트 카메라 기준 AimPoint를 받아 화면 중앙에 정확히 맞는 Fire
+	virtual void FireWithAimPoint(AController* InstigatorController, const FVector& ClientAimPoint);
+
+	// [AimFix] 클라이언트 → 서버 AimPoint 전달 RPC
+	UFUNCTION(Server, Reliable)
+	void ServerFireWithAimPoint(const FVector& ClientAimPoint);
+
 	// ===== [ADD] 탄창 최대치
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Stats", meta = (DisplayName = "탄창"))
 	int32 MaxMag = 30;
