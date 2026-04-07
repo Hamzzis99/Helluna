@@ -24,6 +24,7 @@
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
 #include "Settings/Widget/HellunaGraphicsSettingsWidget.h"
 #include "UI/PauseMenu/HellunaPauseMenuWidget.h"
+#include "UI/HUD/HellunaDebugHUDWidget.h"
 
 // [Puzzle] 퍼즐 시스템
 #include "Puzzle/PuzzleCubeActor.h"

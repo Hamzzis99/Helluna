@@ -9,52 +9,36 @@
 #include "Player/HellunaPlayerState.h"
 #include "HellunaTypes.h"
 
-// ═══════════════ 콘솔 변수 ═══════════════
 static TAutoConsoleVariable<int32> CVarShowDebugHUD(
 	TEXT("Helluna.Debug.ShowHUD"),
-	0,
+	1,
 	TEXT("디버그 HUD 표시 (1=표시, 0=숨김). Shipping 빌드에서는 무시됨."),
 	ECVF_Default
 );
 
 DEFINE_LOG_CATEGORY_STATIC(LogHellunaDebugHUD, Log, All);
 
-// ════════════════════════════════════════════════════════════════════════════════
-// NativeConstruct
-// ════════════════════════════════════════════════════════════════════════════════
-
 void UHellunaDebugHUDWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
-
-	// 초기 상태: 콘솔 변수에 따라 표시/숨김
 	const bool bShouldShow = (CVarShowDebugHUD.GetValueOnGameThread() != 0);
 	SetVisibility(bShouldShow ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
-
-	// 초기 정보 갱신
 	UpdatePlayerInfo();
-
-	UE_LOG(LogHellunaDebugHUD, Log, TEXT("DebugHUD NativeConstruct — 초기 Visibility=%s"),
+	UE_LOG(LogHellunaDebugHUD, Log, TEXT("DebugHUD NativeConstruct — Visibility=%s"),
 		bShouldShow ? TEXT("Visible") : TEXT("Collapsed"));
 }
-
-// ════════════════════════════════════════════════════════════════════════════════
-// NativeTick
-// ════════════════════════════════════════════════════════════════════════════════
 
 void UHellunaDebugHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
 
 #if UE_BUILD_SHIPPING
-	// Shipping 빌드에서는 항상 숨김 (이중 안전)
 	if (GetVisibility() != ESlateVisibility::Collapsed)
 	{
 		SetVisibility(ESlateVisibility::Collapsed);
 	}
 	return;
 #else
-	// 콘솔 변수 동기화
 	const bool bShouldShow = (CVarShowDebugHUD.GetValueOnGameThread() != 0);
 	const ESlateVisibility DesiredVis = bShouldShow ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed;
 	if (GetVisibility() != DesiredVis)
@@ -67,14 +51,9 @@ void UHellunaDebugHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDel
 		return;
 	}
 
-	// FPS 갱신 (갱신 주기 내에서 플레이어 정보도 함께 갱신)
 	UpdateFPS(InDeltaTime);
 #endif
 }
-
-// ════════════════════════════════════════════════════════════════════════════════
-// FPS 계산
-// ════════════════════════════════════════════════════════════════════════════════
 
 void UHellunaDebugHUDWidget::UpdateFPS(float DeltaTime)
 {
@@ -86,41 +65,33 @@ void UHellunaDebugHUDWidget::UpdateFPS(float DeltaTime)
 		return;
 	}
 
-	// FPS 계산
 	LastDisplayedFPS = (FPSAccumulator > 0.f) ? (static_cast<float>(FrameCount) / FPSAccumulator) : 0.f;
 	FPSAccumulator = 0.f;
 	FrameCount = 0;
 
-	// FPS 텍스트 갱신
 	if (IsValid(Text_FPS))
 	{
 		const FString FPSStr = FString::Printf(TEXT("FPS: %.1f"), LastDisplayedFPS);
 		Text_FPS->SetText(FText::FromString(FPSStr));
 
-		// FPS에 따라 색상 변경 (60+: 초록, 30~59: 노랑, <30: 빨강)
 		FSlateColor Color;
 		if (LastDisplayedFPS >= 60.f)
 		{
-			Color = FSlateColor(FLinearColor::Green);
+			Color = FSlateColor(FLinearColor(0.29f, 0.87f, 0.50f, 1.0f));
 		}
 		else if (LastDisplayedFPS >= 30.f)
 		{
-			Color = FSlateColor(FLinearColor::Yellow);
+			Color = FSlateColor(FLinearColor(0.98f, 0.75f, 0.14f, 1.0f));
 		}
 		else
 		{
-			Color = FSlateColor(FLinearColor::Red);
+			Color = FSlateColor(FLinearColor(0.97f, 0.44f, 0.44f, 1.0f));
 		}
 		Text_FPS->SetColorAndOpacity(Color);
 	}
 
-	// 같은 주기에 플레이어 정보도 갱신
 	UpdatePlayerInfo();
 }
-
-// ════════════════════════════════════════════════════════════════════════════════
-// 플레이어 정보 갱신
-// ════════════════════════════════════════════════════════════════════════════════
 
 void UHellunaDebugHUDWidget::UpdatePlayerInfo()
 {
@@ -132,7 +103,6 @@ void UHellunaDebugHUDWidget::UpdatePlayerInfo()
 
 	AHellunaPlayerState* PS = PC->GetPlayerState<AHellunaPlayerState>();
 
-	// ── Player ID ──
 	if (IsValid(Text_PlayerId))
 	{
 		if (IsValid(PS))
@@ -140,6 +110,7 @@ void UHellunaDebugHUDWidget::UpdatePlayerInfo()
 			const FString& PlayerId = PS->GetPlayerUniqueId();
 			const FString DisplayId = PlayerId.IsEmpty() ? TEXT("(미로그인)") : PlayerId;
 			Text_PlayerId->SetText(FText::FromString(FString::Printf(TEXT("ID: %s"), *DisplayId)));
+			Text_PlayerId->SetColorAndOpacity(FSlateColor(FLinearColor(0.38f, 0.65f, 0.98f, 1.0f)));
 		}
 		else
 		{
@@ -147,7 +118,6 @@ void UHellunaDebugHUDWidget::UpdatePlayerInfo()
 		}
 	}
 
-	// ── Hero Class ──
 	if (IsValid(Text_HeroClass))
 	{
 		if (IsValid(PS))
@@ -155,6 +125,7 @@ void UHellunaDebugHUDWidget::UpdatePlayerInfo()
 			const EHellunaHeroType HeroType = PS->GetSelectedHeroType();
 			const FString HeroStr = HeroTypeToDisplayString(HeroType);
 			Text_HeroClass->SetText(FText::FromString(FString::Printf(TEXT("Hero: %s"), *HeroStr)));
+			Text_HeroClass->SetColorAndOpacity(FSlateColor(FLinearColor(0.75f, 0.52f, 0.99f, 1.0f)));
 		}
 		else
 		{
@@ -162,30 +133,25 @@ void UHellunaDebugHUDWidget::UpdatePlayerInfo()
 		}
 	}
 
-	// ── Ping ──
 	if (IsValid(Text_Ping))
 	{
 		float PingMs = 0.f;
 		if (IsValid(PS))
 		{
-			// UE5: APlayerState::GetPingInMilliseconds() 사용
 			PingMs = PS->GetPingInMilliseconds();
 		}
 		Text_Ping->SetText(FText::FromString(FString::Printf(TEXT("Ping: %.0fms"), PingMs)));
+		Text_Ping->SetColorAndOpacity(FSlateColor(FLinearColor(0.98f, 0.75f, 0.14f, 1.0f)));
 	}
 
-	// ── Net Role ──
 	if (IsValid(Text_NetRole))
 	{
 		const bool bIsServer = PC->HasAuthority();
-		const FString RoleStr = bIsServer ? TEXT("Server (Listen)") : TEXT("Client");
-		Text_NetRole->SetText(FText::FromString(FString::Printf(TEXT("Role: %s"), *RoleStr)));
+		const FString RoleStr = bIsServer ? TEXT("Role: Server (Listen)") : TEXT("Role: Client");
+		Text_NetRole->SetText(FText::FromString(RoleStr));
+		Text_NetRole->SetColorAndOpacity(FSlateColor(FLinearColor(0.9f, 0.9f, 0.9f, 0.85f)));
 	}
 }
-
-// ════════════════════════════════════════════════════════════════════════════════
-// 외부 호출
-// ════════════════════════════════════════════════════════════════════════════════
 
 void UHellunaDebugHUDWidget::ForceRefreshInfo()
 {
@@ -197,7 +163,6 @@ void UHellunaDebugHUDWidget::ToggleVisibility()
 	const int32 Current = CVarShowDebugHUD.GetValueOnGameThread();
 	const int32 NewVal = (Current == 0) ? 1 : 0;
 	CVarShowDebugHUD->Set(NewVal, ECVF_SetByConsole);
-
 	UE_LOG(LogHellunaDebugHUD, Log, TEXT("DebugHUD 토글 — Helluna.Debug.ShowHUD = %d"), NewVal);
 }
 
@@ -205,10 +170,6 @@ bool UHellunaDebugHUDWidget::IsDebugVisible() const
 {
 	return (CVarShowDebugHUD.GetValueOnGameThread() != 0);
 }
-
-// ════════════════════════════════════════════════════════════════════════════════
-// HeroType → 문자열 변환
-// ════════════════════════════════════════════════════════════════════════════════
 
 FString UHellunaDebugHUDWidget::HeroTypeToDisplayString(EHellunaHeroType HeroType)
 {
