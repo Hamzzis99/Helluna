@@ -135,9 +135,6 @@ protected:
 	/** 태그 기반 PCG 컴포넌트 캐싱 */
 	void CacheNightPCGComponents();
 
-	/** 첫 게임 시작 시 맵에 남아있는 초기 Night PCG 산출물을 정리 */
-	void CleanupInitialNightPCGArtifacts();
-
 	/** 밤 시작: PCG 그래프 실행 */
 	void ActivateNightPCG();
 
@@ -172,28 +169,29 @@ protected:
 	/** 광석 밀도 팩터: 주변 광석이 많을수록 낮은 값 반환 (MinKeepRatio ~ 1.0) */
 	float CalculateOreDensityFactor(const FVector& Location, const TArray<AActor*>& ExistingOres) const;
 
-	/**
-	 * 방향 편향 팩터: 우주선 기준 특정 방향일수록 높은 값 반환.
-	 * BiasDirection 방향이면 1.0, 반대면 MinBiasScore.
-	 */
-	float CalculateDirectionBiasFactor(const FVector& Location) const;
+	/** 거리 팩터: 우주선에서 멀수록 높은 값 반환 (MinDistanceScore ~ 1.0) */
+	float CalculateDistanceFactor(const FVector& Location) const;
 
-	/** 편향 방향 (우주선 기준, 정규화). 기본값은 -Y (왼쪽) */
+	/** 이 거리 이상이면 최대 점수(1.0). 가까울수록 MinDistanceScore에 수렴. */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)",
-		meta = (DisplayName = "광석 편향 방향"))
-	FVector BiasDirection = FVector(0.f, -1.f, 0.f);
+		meta = (DisplayName = "최대 점수 거리(cm)", ClampMin = "100.0"))
+	float MaxScoreDistance = 5000.f;
 
-	/** 편향 반대쪽의 최소 생존 점수 (0이면 반대쪽은 전부 제거) */
+	/** 우주선 바로 옆의 최소 생존 점수 (0이면 우주선 주변엔 전혀 배치 안 됨) */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)",
-		meta = (DisplayName = "편향 반대쪽 최소 점수", ClampMin = "0.0", ClampMax = "1.0"))
-	float MinBiasScore = 0.1f;
+		meta = (DisplayName = "최소 거리 점수", ClampMin = "0.0", ClampMax = "1.0"))
+	float MinDistanceScore = 0.1f;
 
-	/** PCG 생성 직후 밀도 기반으로 광석을 제거하는 후처리 */
-	void PostProcessNightPCGDensity(UPCGComponent* InComponent);
+	/** PCG에서 추출한 광석 데이터 구조체 */
+	struct FPreservedOre
+	{
+		UClass* OreClass;
+		FTransform Transform;
+		TArray<FName> Tags;
+	};
 
-	/** ActivateNightPCG 호출 직전 월드에 존재하던 Ore 액터 스냅샷 (신규 판별용) */
-	UPROPERTY()
-	TSet<TWeakObjectPtr<AActor>> PreGenerationOreSnapshot;
+	/** PCG에서 추출한 광석 데이터로 밀도 기반 클러스터 후처리 + 독립 액터 스폰 */
+	void PostProcessNightPCGDensity(const TArray<FPreservedOre>& NewOreData);
 
 	// ────────────────────────────────────────────────────────────────────────────
 	// [PCG 최적화] 프레임 분산 배칭 시스템
@@ -286,22 +284,10 @@ protected:
 	// PCG 순차 생성
 	int32 PCGStaggerIndex = 0;
 	FTimerHandle PCGStaggerTimer;
-	struct FPreservedOre
-	{
-		UClass* OreClass;
-		FTransform Transform;
-		TArray<FName> Tags;
-	};
-	TArray<FPreservedOre> PendingPreservedOres;
 	int32 PCGStaggerActivatedCount = 0;
 	void ProcessNextPCGComponent();
 
-	// Ore 복원 배칭
-	int32 OreRestoreBatchIndex = 0;
-	FTimerHandle OreRestoreTimer;
-	void ProcessOreRestoreBatch();
-
-	// PostProcess 배칭
+	// PostProcess 스폰 배칭
 	struct FClusterSpawnRequest
 	{
 		UClass* OreClass;
@@ -309,16 +295,10 @@ protected:
 		TArray<FName> Tags;
 	};
 	TArray<FClusterSpawnRequest> PendingClusterSpawns;
-	TArray<TWeakObjectPtr<AActor>> PendingClusterDestroys;
 	TArray<AActor*> SpawnedClusterOresResult;
-	int32 ClusterDestroyBatchIndex = 0;
 	int32 ClusterSpawnBatchIndex = 0;
-	FTimerHandle ClusterDestroyTimer;
 	FTimerHandle ClusterSpawnTimer;
-	TWeakObjectPtr<UPCGComponent> PostProcessPCGComp;
-	TArray<UPCGManagedActors*> PostProcessManagedActorsList;
 
-	void ProcessClusterDestroyBatch();
 	void ProcessClusterSpawnBatch();
 	void FinalizePostProcess();
 
