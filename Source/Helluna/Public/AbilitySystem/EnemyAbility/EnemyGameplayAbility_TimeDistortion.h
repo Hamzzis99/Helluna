@@ -116,6 +116,13 @@ public:
 			ClampMin = "0.0", ClampMax = "500.0"))
 	float OrbHeightOffset = 150.f;
 
+	/** Orb 스폰 간격 (초) — Orb가 하나씩 순서대로 나타남 */
+	UPROPERTY(EditDefaultsOnly, Category = "시간 왜곡|Orb",
+		meta = (DisplayName = "Orb 스폰 간격 (초)",
+			ToolTip = "각 Orb가 스폰되는 시간 간격입니다.\n0.3이면 0.3초마다 하나씩 나타납니다.",
+			ClampMin = "0.05", ClampMax = "1.0"))
+	float OrbSpawnInterval = 0.3f;
+
 	/** 데코(일반) Orb VFX — 검은색 이펙트 */
 	UPROPERTY(EditDefaultsOnly, Category = "시간 왜곡|Orb",
 		meta = (DisplayName = "데코 Orb VFX",
@@ -288,8 +295,11 @@ private:
 	// Orb 관련
 	// =========================================================
 
-	/** 보스 주변에 Orb들을 원형으로 스폰한다 */
-	void SpawnOrbs();
+	/** Orb 순차 스폰 시작 (타이머 기반) */
+	void StartOrbSpawnSequence();
+
+	/** 타이머 콜백: 다음 Orb 하나를 스폰 */
+	void SpawnNextOrb();
 
 	/** 모든 Orb를 제거한다 */
 	void DestroyAllOrbs();
@@ -309,17 +319,40 @@ private:
 	bool bPatternBroken = false;
 
 	// =========================================================
+	// Orb 순차 스폰 상태
+	// =========================================================
+
+	/** 현재 스폰할 Orb 인덱스 */
+	int32 OrbSpawnCurrentIndex = 0;
+
+	/** 총 Orb 수 (데코 + 키 1개) */
+	int32 OrbSpawnTotalCount = 0;
+
+	/** 키 Orb가 배치될 인덱스 (랜덤) */
+	int32 OrbSpawnKeyIndex = 0;
+
+	/** Orb 순차 스폰 타이머 */
+	FTimerHandle OrbSpawnTimerHandle;
+
+	// =========================================================
 	// 타이머 핸들
 	// =========================================================
 	FTimerHandle SlowStartTimerHandle;
 	FTimerHandle DetonationTimerHandle;
 
 	// =========================================================
-	// 슬로우 중인 플레이어 + 원래 TimeDilation 저장
+	// 슬로우 중인 플레이어 + 원래 상태 저장
 	// =========================================================
 
-	/** 슬로우가 적용된 플레이어와 원래 CustomTimeDilation 값 */
-	TMap<TWeakObjectPtr<AHellunaHeroCharacter>, float> SlowedPlayers;
+	/** 슬로우 적용 전 플레이어 원본 상태 */
+	struct FPlayerSlowState
+	{
+		float OriginalTimeDilation = 1.f;
+		float OriginalAnimPlayRate = 1.f;
+	};
+
+	/** 슬로우가 적용된 플레이어와 원래 상태 */
+	TMap<TWeakObjectPtr<AHellunaHeroCharacter>, FPlayerSlowState> SlowedPlayers;
 
 	// =========================================================
 	// 활성 VFX 캐싱 (종료 시 비활성화)

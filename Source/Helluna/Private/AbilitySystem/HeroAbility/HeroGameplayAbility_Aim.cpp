@@ -43,7 +43,7 @@ void UHeroGameplayAbility_Aim::ActivateAbility(
 	{
 		CachedDefaultMaxWalkSpeed = MoveComp->MaxWalkSpeed;
 		// LocalPredicted: 서버/클라 양쪽에서 동일하게 변경해야 예측 불일치 방지
-		MoveComp->MaxWalkSpeed = AimMaxWalkSpeed;
+		MoveComp->MaxWalkSpeed = AimMaxWalkSpeed * Hero->GetMoveSpeedMultiplier();
 
 		// ── [Aim Rotation] 조준 시 캐릭터가 카메라 방향을 따라 회전 (RE4 스타일) ──
 		CachedOrientRotationToMovement = MoveComp->bOrientRotationToMovement;

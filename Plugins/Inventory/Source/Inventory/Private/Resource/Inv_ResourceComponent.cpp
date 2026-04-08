@@ -200,6 +200,15 @@ void UInv_ResourceComponent::OnOwnerTakeDamage(AActor* DamagedActor, float Damag
 			}
 		}
 
+		// 파괴 이펙트 델리게이트 브로드캐스트 (메시 숨기기 전에 위치 전달)
+		{
+			FVector DestroyLocation = Owner->GetActorLocation();
+			FVector Origin, BoxExtent;
+			Owner->GetActorBounds(false, Origin, BoxExtent);
+			DestroyLocation = Origin;
+			OnResourceDestroyed.Broadcast(DestroyLocation);
+		}
+
 		// 즉시 파괴 (더 이상 데미지를 받지 않도록)
 		DestroyOwnerActor();
 	}

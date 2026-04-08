@@ -11,6 +11,7 @@
 #include "NiagaraSystem.h"
 #include "Net/UnrealNetwork.h"
 #include "Character/HellunaHeroCharacter.h"
+#include "Camera/PlayerCameraManager.h"
 
 #include "DebugHelper.h"
 
@@ -277,6 +278,18 @@ void AHeroWeapon_GunBase::ApplyRecoil(AHellunaHeroCharacter* TargetCharacter)
 
 	// Tick에서 계속 쓰기 위해 타겟 저장
 	RecoilTarget = TargetCharacter;
+
+	// 발사 카메라 쉐이크 재생
+	if (FireCameraShake)
+	{
+		if (APlayerController* PC = Cast<APlayerController>(TargetCharacter->GetController()))
+		{
+			if (PC->PlayerCameraManager)
+			{
+				PC->PlayerCameraManager->StartCameraShake(FireCameraShake, FireCameraShakeScale);
+			}
+		}
+	}
 
 	// 무기 데이터(디자이너 값)에서 반동 크기 가져오기
 	const float PitchKick = ReboundUp;

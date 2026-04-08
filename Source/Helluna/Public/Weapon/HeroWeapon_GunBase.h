@@ -72,6 +72,18 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Recoil", meta = (DisplayName = "반동 틱 간격"))
 	float RecoilTickInterval = 0.01f;
 
+	/** 발사 시 재생할 카메라 쉐이크 클래스. None이면 쉐이크 없음. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Recoil",
+		meta = (DisplayName = "발사 카메라 쉐이크",
+			ToolTip = "발사 시 재생할 카메라 쉐이크 클래스. 무기별로 다른 쉐이크 설정 가능. None이면 쉐이크 없음."))
+	TSubclassOf<UCameraShakeBase> FireCameraShake = nullptr;
+
+	/** 발사 카메라 쉐이크 강도 배율 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Recoil",
+		meta = (DisplayName = "발사 쉐이크 강도", ClampMin = "0.0", ClampMax = "5.0",
+			ToolTip = "발사 카메라 쉐이크 강도 배율. 1.0=기본, 2.0=두 배 강하게."))
+	float FireCameraShakeScale = 1.0f;
+
 	// ===== [ADD] 탄창 현재치 (복제)
 	UPROPERTY(ReplicatedUsing = OnRep_CurrentAmmoInMag, BlueprintReadOnly, Category = "Weapon|Stats")
 	int32 CurrentMag = 30;

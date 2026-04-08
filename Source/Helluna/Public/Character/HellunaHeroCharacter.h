@@ -723,4 +723,22 @@ private:
 
 	/** 피격 방향 계산 (서버) — 0~7 반환 */
 	uint8 CalcHitDirection(AActor* InstigatorActor) const;
+
+	// =========================================================
+	// 시간 왜곡 슬로우 배율
+	// =========================================================
+public:
+	/**
+	 * 이동속도 슬로우 배율. 1.0 = 정상, 0.3 = 30% 속도.
+	 * GA_Run 등 이동속도를 설정하는 모든 곳에서 이 배율을 곱해야 한다.
+	 * 서버에서 설정 → 클라이언트에 자동 복제.
+	 */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "TimeDistortion")
+	float MoveSpeedMultiplier = 1.f;
+
+	/** 슬로우 배율 설정 (서버에서 호출) */
+	void SetMoveSpeedMultiplier(float NewMultiplier);
+
+	/** 현재 슬로우 배율 반환 */
+	float GetMoveSpeedMultiplier() const { return MoveSpeedMultiplier; }
 };

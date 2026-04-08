@@ -1,5 +1,5 @@
 /**
- * OreMiningCameraShake.h
+ * CS_OreMining.h
  *
  * 광석 채굴 시 재생할 카메라 쉐이크.
  * OreMiningEffectComponent의 MiningCameraShake에 이 클래스를 설정하면 된다.
@@ -12,13 +12,13 @@
 
 #include "CoreMinimal.h"
 #include "Camera/CameraShakeBase.h"
-#include "OreMiningCameraShake.generated.h"
+#include "CS_OreMining.generated.h"
 
 UCLASS()
-class HELLUNA_API UOreMiningCameraShake : public UCameraShakeBase
+class HELLUNA_API UCS_OreMining : public UCameraShakeBase
 {
 	GENERATED_BODY()
 
 public:
-	UOreMiningCameraShake(const FObjectInitializer& ObjectInitializer);
+	UCS_OreMining(const FObjectInitializer& ObjectInitializer);
 };

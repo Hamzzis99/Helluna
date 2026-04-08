@@ -396,6 +396,29 @@ public:
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayAttackMontage(UAnimMontage* Montage, float PlayRate, FRotator FacingRotation);
 
+	// =========================================================
+	// 시간 왜곡 — 지속형 VFX 멀티캐스트
+	// =========================================================
+
+	/**
+	 * 지속형 VFX를 보스에 부착 스폰 (모든 클라이언트).
+	 * @param SlotIndex  0=ChargingVFX, 1=SlowAreaVFX
+	 */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_SpawnPersistentVFX(uint8 SlotIndex, UNiagaraSystem* Effect, float EffectScale);
+
+	/** 지속형 VFX 중지 */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_StopPersistentVFX(uint8 SlotIndex);
+
+	/** 사운드를 모든 클라이언트에서 재생 */
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_PlaySoundAtLocation(USoundBase* Sound, FVector Location);
+
+	/** 지속형 VFX 슬롯 (0=Charging, 1=SlowArea) */
+	UPROPERTY(Transient)
+	TObjectPtr<UNiagaraComponent> PersistentVFXSlots[2];
+
 private:
 	float SavedMaxWalkSpeed = 300.f;
 	bool bMovementLocked = false;

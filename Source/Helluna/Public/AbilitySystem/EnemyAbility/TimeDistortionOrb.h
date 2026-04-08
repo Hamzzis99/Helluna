@@ -19,6 +19,11 @@ class USphereComponent;
  *
  * - SphereComponent(ECC_Pawn) → 플레이어 근접/원거리 공격 트레이스에 감지
  * - TakeDamage() → 피격 시 파괴 + VFX + 델리게이트 발동
+ *
+ * [네트워크]
+ * - bReplicates = true → 클라이언트에 액터 자동 복제
+ * - OrbVFXSystem/OrbVFXScale → ReplicatedUsing=OnRep → 클라이언트에서 VFX 스폰
+ * - DestroyVFX → Multicast RPC로 모든 클라이언트에서 파괴 이펙트 재생
  */
 UCLASS()
 class HELLUNA_API ATimeDistortionOrb : public AActor
@@ -43,10 +48,10 @@ public:
 	// =========================================================
 
 	/** 이 Orb가 파훼 키(색이 다른 특수 Orb)인지 여부 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "TimeDistortion|Orb")
+	UPROPERTY(Replicated, VisibleAnywhere, BlueprintReadOnly, Category = "TimeDistortion|Orb")
 	bool bIsKeyOrb = false;
 
-	/** Orb 기본 VFX (검은색 일반 Orb / 색 다른 키 Orb) */
+	/** Orb 기본 VFX 컴포넌트 */
 	UPROPERTY(Transient)
 	TObjectPtr<UNiagaraComponent> OrbVFXComp = nullptr;
 
@@ -56,6 +61,7 @@ public:
 
 	/**
 	 * 어빌리티에서 스폰 후 호출하여 VFX 및 키 여부를 설정한다.
+	 * 서버에서 호출 → Replicated 프로퍼티가 클라이언트에 복제되어 OnRep에서 VFX 스폰.
 	 * @param InVFX         - Orb에 표시할 나이아가라 시스템
 	 * @param InVFXScale    - VFX 크기 배율
 	 * @param bInIsKeyOrb   - true이면 파훼 키 Orb
@@ -76,7 +82,31 @@ public:
 	virtual float TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent,
 		AController* EventInstigator, AActor* DamageCauser) override;
 
+protected:
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
 private:
 	UPROPERTY(VisibleAnywhere, Category = "TimeDistortion|Orb")
 	TObjectPtr<USphereComponent> CollisionSphere = nullptr;
+
+	// =========================================================
+	// VFX 복제용 프로퍼티
+	// =========================================================
+
+	/** 서버에서 설정 → 클라이언트에 복제 → OnRep에서 VFX 스폰 */
+	UPROPERTY(ReplicatedUsing = OnRep_OrbVFXData)
+	TObjectPtr<UNiagaraSystem> RepOrbVFXSystem = nullptr;
+
+	UPROPERTY(Replicated)
+	float RepOrbVFXScale = 1.f;
+
+	UFUNCTION()
+	void OnRep_OrbVFXData();
+
+	/** VFX 스폰 공통 로직 (서버/클라이언트 양쪽) */
+	void SpawnOrbVFX();
+
+	/** 파괴 VFX 멀티캐스트 */
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_PlayDestroyVFX(UNiagaraSystem* Effect, float Scale, FVector Location);
 };

@@ -3,8 +3,11 @@
 #include "AbilitySystem/EnemyAbility/TimeDistortionOrb.h"
 
 #include "Components/SphereComponent.h"
+#include "Net/UnrealNetwork.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraComponent.h"
+
+#define ORB_LOG(Fmt, ...) UE_LOG(LogTemp, Warning, TEXT("[TimeDistortionOrb] " Fmt), ##__VA_ARGS__)
 
 ATimeDistortionOrb::ATimeDistortionOrb()
 {
@@ -27,27 +30,71 @@ ATimeDistortionOrb::ATimeDistortionOrb()
 }
 
 // ─────────────────────────────────────────────────────────────
-// InitOrb
+// 리플리케이션
+// ─────────────────────────────────────────────────────────────
+void ATimeDistortionOrb::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(ATimeDistortionOrb, bIsKeyOrb);
+	DOREPLIFETIME(ATimeDistortionOrb, RepOrbVFXSystem);
+	DOREPLIFETIME(ATimeDistortionOrb, RepOrbVFXScale);
+}
+
+// ─────────────────────────────────────────────────────────────
+// InitOrb (서버에서 호출)
 // ─────────────────────────────────────────────────────────────
 void ATimeDistortionOrb::InitOrb(UNiagaraSystem* InVFX, float InVFXScale, bool bInIsKeyOrb)
 {
 	bIsKeyOrb = bInIsKeyOrb;
+	RepOrbVFXSystem = InVFX;
+	RepOrbVFXScale = InVFXScale;
 
-	if (InVFX)
-	{
-		OrbVFXComp = UNiagaraFunctionLibrary::SpawnSystemAttached(
-			InVFX,
-			GetRootComponent(),
-			NAME_None,
-			FVector::ZeroVector,
-			FRotator::ZeroRotator,
-			FVector(InVFXScale),
-			EAttachLocation::KeepRelativeOffset,
-			true,
-			ENCPoolMethod::None,
-			true
-		);
-	}
+	ORB_LOG("InitOrb: bIsKey=%s, VFX=%s, Scale=%.2f",
+		bIsKeyOrb ? TEXT("TRUE") : TEXT("FALSE"),
+		InVFX ? *InVFX->GetName() : TEXT("NULL"),
+		InVFXScale);
+
+	// 서버에서도 VFX 스폰 (리슨 서버용)
+	SpawnOrbVFX();
+}
+
+// ─────────────────────────────────────────────────────────────
+// OnRep_OrbVFXData — 클라이언트에서 VFX 스폰
+// ─────────────────────────────────────────────────────────────
+void ATimeDistortionOrb::OnRep_OrbVFXData()
+{
+	ORB_LOG("OnRep_OrbVFXData: VFX=%s, Scale=%.2f",
+		RepOrbVFXSystem ? *RepOrbVFXSystem->GetName() : TEXT("NULL"),
+		RepOrbVFXScale);
+
+	SpawnOrbVFX();
+}
+
+// ─────────────────────────────────────────────────────────────
+// SpawnOrbVFX — VFX 스폰 공통 로직
+// ─────────────────────────────────────────────────────────────
+void ATimeDistortionOrb::SpawnOrbVFX()
+{
+	if (!RepOrbVFXSystem) return;
+
+	// 이미 스폰된 VFX가 있으면 스킵
+	if (OrbVFXComp && OrbVFXComp->IsActive()) return;
+
+	OrbVFXComp = UNiagaraFunctionLibrary::SpawnSystemAttached(
+		RepOrbVFXSystem,
+		GetRootComponent(),
+		NAME_None,
+		FVector::ZeroVector,
+		FRotator::ZeroRotator,
+		FVector(RepOrbVFXScale),
+		EAttachLocation::KeepRelativeOffset,
+		true,
+		ENCPoolMethod::None,
+		true
+	);
+
+	ORB_LOG("SpawnOrbVFX: Component=%s", OrbVFXComp ? TEXT("OK") : TEXT("FAILED"));
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -58,17 +105,15 @@ float ATimeDistortionOrb::TakeDamage(float DamageAmount, const FDamageEvent& Dam
 {
 	const float ActualDamage = Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
 
-	// 파괴 VFX 재생
+	ORB_LOG("TakeDamage: %.1f from %s, bIsKey=%s",
+		ActualDamage,
+		DamageCauser ? *DamageCauser->GetName() : TEXT("NULL"),
+		bIsKeyOrb ? TEXT("TRUE") : TEXT("FALSE"));
+
+	// 파괴 VFX 멀티캐스트 (모든 클라이언트에서 재생)
 	if (DestroyVFX)
 	{
-		UNiagaraFunctionLibrary::SpawnSystemAtLocation(
-			GetWorld(),
-			DestroyVFX,
-			GetActorLocation(),
-			FRotator::ZeroRotator,
-			FVector(DestroyVFXScale),
-			true
-		);
+		Multicast_PlayDestroyVFX(DestroyVFX, DestroyVFXScale, GetActorLocation());
 	}
 
 	// VFX 끄기
@@ -84,3 +129,25 @@ float ATimeDistortionOrb::TakeDamage(float DamageAmount, const FDamageEvent& Dam
 
 	return ActualDamage;
 }
+
+// ─────────────────────────────────────────────────────────────
+// Multicast_PlayDestroyVFX
+// ─────────────────────────────────────────────────────────────
+void ATimeDistortionOrb::Multicast_PlayDestroyVFX_Implementation(
+	UNiagaraSystem* Effect, float Scale, FVector Location)
+{
+	if (!Effect) return;
+
+	UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+		GetWorld(),
+		Effect,
+		Location,
+		FRotator::ZeroRotator,
+		FVector(Scale),
+		true
+	);
+
+	ORB_LOG("DestroyVFX played at %s", *Location.ToString());
+}
+
+#undef ORB_LOG

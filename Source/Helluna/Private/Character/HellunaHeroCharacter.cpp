@@ -1088,9 +1088,15 @@ void AHellunaHeroCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 	DOREPLIFETIME(AHellunaHeroCharacter, CurrentWeaponTag);
 	DOREPLIFETIME(AHellunaHeroCharacter, PlayFullBody);   // 전신 몽타주 플래그 — CLIENT B ABP 동기화
 	DOREPLIFETIME(AHellunaHeroCharacter, ReviveProgress);  // [Downed/Revive] 부활 진행률
+	DOREPLIFETIME(AHellunaHeroCharacter, MoveSpeedMultiplier);  // [TimeDistortion] 슬로우 배율
 }
 
 
+
+void AHellunaHeroCharacter::SetMoveSpeedMultiplier(float NewMultiplier)
+{
+	MoveSpeedMultiplier = FMath::Clamp(NewMultiplier, 0.05f, 1.f);
+}
 
 void AHellunaHeroCharacter::LockMoveInput()
 {

@@ -965,6 +965,55 @@ void AHellunaEnemyCharacter::Multicast_PlayAttackMontage_Implementation(
 }
 
 // ============================================================
+// Persistent VFX Multicast (시간 왜곡 등 지속형 VFX)
+// ============================================================
+void AHellunaEnemyCharacter::Multicast_SpawnPersistentVFX_Implementation(
+	uint8 SlotIndex, UNiagaraSystem* Effect, float EffectScale)
+{
+	if (SlotIndex >= 2 || !Effect) return;
+
+	// 기존 슬롯 정리
+	if (PersistentVFXSlots[SlotIndex])
+	{
+		PersistentVFXSlots[SlotIndex]->DeactivateImmediate();
+		PersistentVFXSlots[SlotIndex] = nullptr;
+	}
+
+	PersistentVFXSlots[SlotIndex] = UNiagaraFunctionLibrary::SpawnSystemAttached(
+		Effect,
+		GetRootComponent(),
+		NAME_None,
+		GetActorLocation(),
+		FRotator::ZeroRotator,
+		FVector(EffectScale),
+		EAttachLocation::KeepWorldPosition,
+		true,
+		ENCPoolMethod::None,
+		true
+	);
+}
+
+void AHellunaEnemyCharacter::Multicast_StopPersistentVFX_Implementation(uint8 SlotIndex)
+{
+	if (SlotIndex >= 2) return;
+
+	if (PersistentVFXSlots[SlotIndex])
+	{
+		PersistentVFXSlots[SlotIndex]->DeactivateImmediate();
+		PersistentVFXSlots[SlotIndex] = nullptr;
+	}
+}
+
+void AHellunaEnemyCharacter::Multicast_PlaySoundAtLocation_Implementation(
+	USoundBase* Sound, FVector Location)
+{
+	if (Sound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(GetWorld(), Sound, Location);
+	}
+}
+
+// ============================================================
 // SetServerAttackPoseTickEnabled
 // 공격 중 소켓 위치 정확도를 위해 강제로 AlwaysTickPoseAndRefreshBones 로 전환
 // ============================================================
