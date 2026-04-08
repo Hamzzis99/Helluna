@@ -16,6 +16,7 @@
 #include "Save/MDF_SaveActor.h"                    // 저장용 액터 클래스 (SaveGame)
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h" // 이사 확인증 확인용
 #include "Chat/HellunaChatTypes.h"
+#include "Components/VolumetricCloudComponent.h"
 
 // =========================================================================================
 // 생성자 (김기현)
@@ -82,6 +83,7 @@ void AHellunaDefenseGameState::OnRep_Phase()
 #endif
         CleanupInitialNightPCGClientArtifacts();
         OnDayStarted();
+        if (bHasUDS) SetVolumetricCloudVisible(true);   // 낮: 구름 ON
         if (bHasUDW) ApplyRandomWeather(true);
         break;
     case EDefensePhase::Night:
@@ -90,7 +92,8 @@ void AHellunaDefenseGameState::OnRep_Phase()
 #endif
         OnNightStarted();
         bHasBeenNight = true;  // ★ 밤 경험 기록
-        if (bHasUDW) ApplyRandomWeather(false);
+        if (bHasUDS) SetVolumetricCloudVisible(false);  // 밤: 구름 OFF (오로라 가시성)
+        if (bHasUDW) ForceClearWeather();               // 밤: 맑은 날씨 강제
         // ★ Animate OFF — 현재 시간에서 멈춤
         if (bHasUDS)
         {
@@ -138,8 +141,8 @@ void AHellunaDefenseGameState::NetMulticast_OnDawnPassed_Implementation(float Ro
     else if (FDoubleProperty* DProp = CastField<FDoubleProperty>(CachedProp_TimeOfDay))
         CurrentTime = (float)DProp->GetPropertyValue_InContainer(UDS);
 
-    // DawnTransitionDuration이 0 이하이거나, 첫 시작(밤 미경험)이면 즉시 전환
-    if (DawnTransitionDuration <= 0.f || !bHasBeenNight)
+    // DawnTransitionDuration이 0 이하이면 즉시 전환
+    if (DawnTransitionDuration <= 0.f)
     {
         SetUDSTimeOfDay(DayStartTime);
 
@@ -759,6 +762,58 @@ void AHellunaDefenseGameState::ApplyRandomWeather(bool bIsDay)
             bIsDay ? TEXT("낮") : TEXT("밤"),
             *SelectedWeather->GetName(),
             RandomIdx, WeatherArray.Num());
+#endif
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ☁️ 볼류메트릭 클라우드 토글 (밤: OFF, 낮: ON)
+// ═══════════════════════════════════════════════════════════════════════════════
+void AHellunaDefenseGameState::SetVolumetricCloudVisible(bool bVisible)
+{
+    AActor* UDS = GetUDSActor();
+    if (!UDS) return;
+
+    UVolumetricCloudComponent* CloudComp = UDS->FindComponentByClass<UVolumetricCloudComponent>();
+    if (CloudComp)
+    {
+        CloudComp->SetVisibility(bVisible);
+    }
+
+    // Cloud Shadows도 연동 토글
+    FProperty* ShadowProp = FindFProperty<FProperty>(UDS->GetClass(), TEXT("Use Cloud Shadows"));
+    if (FBoolProperty* BoolProp = CastField<FBoolProperty>(ShadowProp))
+    {
+        BoolProp->SetPropertyValue_InContainer(UDS, bVisible);
+    }
+
+#if HELLUNA_DEBUG_DEFENSE
+    UE_LOG(LogTemp, Log, TEXT("[DayNight] VolumetricCloud %s"), bVisible ? TEXT("ON (낮)") : TEXT("OFF (밤)"));
+#endif
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🌙 밤 맑은 날씨 강제 (오로라 가시성 확보)
+// ═══════════════════════════════════════════════════════════════════════════════
+void AHellunaDefenseGameState::ForceClearWeather()
+{
+    AActor* UDW = GetUDWActor();
+    if (!UDW) return;
+
+    UFunction* Func = UDW->FindFunction(TEXT("Change Weather"));
+    if (!Func)
+        Func = UDW->FindFunction(TEXT("ChangeWeather"));
+
+    if (Func)
+    {
+        // nullptr = "None" → 모든 날씨 효과 해제 (구름/비/눈 제거)
+        struct { UObject* NewWeatherType; float TransitionTime; } Params;
+        Params.NewWeatherType = nullptr;
+        Params.TransitionTime = WeatherTransitionTime;
+        UDW->ProcessEvent(Func, &Params);
+
+#if HELLUNA_DEBUG_DEFENSE
+        UE_LOG(LogTemp, Log, TEXT("[Weather] 밤 → 맑은 날씨 강제 (전환 %.0f초)"), WeatherTransitionTime);
 #endif
     }
 }

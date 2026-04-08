@@ -69,6 +69,46 @@ void AHeroWeapon_Launcher::CacheAimFromController(AController* InstigatorControl
 	BuildCachedAimData(InstigatorController);
 }
 
+// ════════════════════════════════════════════════════════════════
+// [AimFix] CacheAimWithAimPoint — 카메라 기준 AimPoint로 캐싱
+// ════════════════════════════════════════════════════════════════
+void AHeroWeapon_Launcher::CacheAimWithAimPoint(AController* InstigatorController, const FVector& ClientAimPoint)
+{
+	if (!InstigatorController)
+	{
+		bHasCachedAim = false;
+		return;
+	}
+
+	APawn* Pawn = InstigatorController->GetPawn();
+	if (!Pawn)
+	{
+		bHasCachedAim = false;
+		return;
+	}
+
+	CachedAimStart = Pawn->GetPawnViewLocation();
+	CachedAimPoint = ClientAimPoint;
+	CachedAimDirection = (ClientAimPoint - CachedAimStart).GetSafeNormal();
+	bHasCachedAim = true;
+}
+
+// ════════════════════════════════════════════════════════════════
+// [AimFix] ServerCacheAimWithPoint — 클라이언트 → 서버 AimPoint 캐싱 RPC
+// ════════════════════════════════════════════════════════════════
+void AHeroWeapon_Launcher::ServerCacheAimWithPoint_Implementation(const FVector& ClientAimPoint)
+{
+	APawn* OwnerPawn = Cast<APawn>(GetOwner());
+	if (!OwnerPawn)
+		return;
+
+	AController* Controller = OwnerPawn->GetController();
+	if (!Controller)
+		return;
+
+	CacheAimWithAimPoint(Controller, ClientAimPoint);
+}
+
 void AHeroWeapon_Launcher::Fire(AController* InstigatorController)
 {
 	if (!HasAuthority())

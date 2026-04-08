@@ -408,6 +408,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void SetupInputComponent() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
@@ -698,4 +699,16 @@ private:
 	 * @return 전송 성공 여부
 	 */
 	bool ExecuteTransfer(UInv_InventoryComponent* SourceComp, UInv_InventoryComponent* TargetComp, int32 ItemEntryIndex, int32 TargetGridIndex = INDEX_NONE);
+
+	// ════════════════════════════════════════════════════════════════
+	// [PauseMenu] 일시정지 메뉴 (ESC / U 키 토글)
+	// ════════════════════════════════════════════════════════════════
+
+	void TogglePauseMenu();
+
+	UPROPERTY(EditDefaultsOnly, Category = "PauseMenu")
+	TSubclassOf<UUserWidget> PauseMenuWidgetClass;
+
+	UPROPERTY()
+	TObjectPtr<UUserWidget> PauseMenuInstance;
 };

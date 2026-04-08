@@ -1,7 +1,6 @@
 #include "GameMode/HellunaDefenseGameMode.h"
 #include "GameMode/HellunaDefenseGameState.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
-#include "AI/SpaceShipAttackSlotManager.h"
 #include "ECS/Spawner/HellunaEnemyMassSpawner.h"
 #include "Character/HellunaEnemyCharacter.h"
 #include "Engine/TargetPoint.h"
@@ -381,110 +380,123 @@ void AHellunaDefenseGameMode::ProcessNextPCGComponent()
         return;
     }
 
+        // ★ World Partition + PIE: PCG 비동기 CleanupTask의 ActorFolder 삭제 크래시 방지
+        //   WP(OFPA)에서 UActorFolder는 레벨 패키지와 별도의 외부 패키지를 가짐.
+        //   PCG가 폴더 삭제 시 check(InActorFolder->GetPackage()->IsDirty()) 를 통과하려면
+        //   UActorFolder 자체의 패키지를 Dirty로 마킹해야 함 (레벨 패키지만으로는 불충분).
 #if WITH_EDITOR
     {
-        int32 DirtiedCount = 0;
-        auto ForceMarkDirty = [](UPackage* Pkg)
-        {
-            if (Pkg && !Pkg->IsDirty())
+            int32 DirtiedFolderCount = 0;
+            for (TObjectIterator<UActorFolder> It; It; ++It)
             {
-                Pkg->SetDirtyFlag(true);
-                return true;
-            }
-            return false;
-        };
+                UActorFolder* Folder = *It;
+                if (!Folder) continue;
 
-        if (UWorld* W = GetWorld())
-        {
-            for (ULevel* Level : W->GetLevels())
-            {
-                if (!Level) continue;
-                if (ForceMarkDirty(Level->GetPackage())) DirtiedCount++;
-                Level->ForEachActorFolder([&](UActorFolder* Folder)
+                UPackage* Pkg = Folder->GetPackage();
+                if (Pkg && !Pkg->IsDirty())
                 {
-                    if (Folder)
-                    {
-                        if (UPackage* ExtPkg = Folder->GetExternalPackage())
-                        {
-                            if (ForceMarkDirty(ExtPkg)) DirtiedCount++;
-                        }
-                        if (ForceMarkDirty(Folder->GetPackage())) DirtiedCount++;
-                    }
-                    return true;
-                });
-            }
-        }
-
-        TArray<UObject*> ManagedObjs;
-        GetObjectsWithOuter(PCGComp, ManagedObjs, false);
-        for (UObject* Obj : ManagedObjs)
-        {
-            if (UPackage* Pkg = Obj->GetExternalPackage())
-            {
-                if (ForceMarkDirty(Pkg)) DirtiedCount++;
-            }
-        }
-
-        if (PCGActor)
-        {
-            if (ULevel* PCGLevel = PCGActor->GetLevel())
-            {
-                ForceMarkDirty(PCGLevel->GetPackage());
-            }
-        }
-    }
-#endif
-
-    PCGComp->CleanupLocal(/*bRemoveComponents=*/true);
-
-    PCGComp->OnPCGGraphGeneratedDelegate.RemoveAll(this);
-    PCGComp->OnPCGGraphGeneratedDelegate.AddUObject(this, &AHellunaDefenseGameMode::OnNightPCGGraphGenerated);
-
-    if (!PCGComp->IsActive())
-    {
-        PCGComp->Activate(/*bReset=*/true);
-    }
-
-    PCGComp->bIsComponentPartitioned = false;
-    PCGComp->Seed = CurrentDay;
-
-    PCGComp->GenerateLocal(/*bForce=*/true);
-    UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [순차 %d/%d] ✅ GenerateLocal 완료 (Seed=%d)"),
-        i + 1, CachedNightPCGComponents.Num(), PCGComp->Seed);
-
-#if WITH_EDITOR
-    {
-        TWeakObjectPtr<UPCGComponent> WeakPCGForDirty = PCGComp;
-        GetWorldTimerManager().ClearTimer(PCGActorFolderDirtyGuardTimer);
-        GetWorldTimerManager().SetTimer(PCGActorFolderDirtyGuardTimer, [this, WeakPCGForDirty]()
-        {
-            if (!WeakPCGForDirty.IsValid() || !WeakPCGForDirty->IsGenerating())
-            {
-                GetWorldTimerManager().ClearTimer(PCGActorFolderDirtyGuardTimer);
-                return;
-            }
-            if (UWorld* W = GetWorld())
-            {
-                for (ULevel* Level : W->GetLevels())
-                {
-                    if (!Level) continue;
-                    Level->ForEachActorFolder([](UActorFolder* Folder)
-                    {
-                        if (Folder)
-                        {
-                            if (UPackage* ExtPkg = Folder->GetExternalPackage())
-                            {
-                                if (!ExtPkg->IsDirty()) ExtPkg->SetDirtyFlag(true);
-                            }
-                            UPackage* Pkg = Folder->GetPackage();
-                            if (Pkg && !Pkg->IsDirty()) Pkg->SetDirtyFlag(true);
-                        }
-                        return true;
-                    });
+                    Pkg->MarkPackageDirty();
+                    DirtiedFolderCount++;
                 }
             }
-        }, 0.01f, true);
-    }
+
+            // 레벨 패키지도 함께 마킹 (폴더 외 다른 cleanup 작업 대비)
+            if (UWorld* W = GetWorld())
+            {
+                if (W->PersistentLevel)
+                {
+                    W->PersistentLevel->GetPackage()->MarkPackageDirty();
+                }
+            }
+            if (PCGActor)
+            {
+                if (ULevel* PCGLevel = PCGActor->GetLevel())
+                {
+                    PCGLevel->GetPackage()->MarkPackageDirty();
+                }
+            }
+
+            UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [WP 크래시 방지] ActorFolder %d개 + 레벨 패키지 Dirty 마킹 완료"), DirtiedFolderCount);
+        }
+#endif
+
+        // PCG 내부 관리 리소스 전부 정리 (기존 광석은 데이터로 저장 완료 → PCG가 자유롭게 파괴)
+        PCGComp->CleanupLocal(/*bRemoveComponents=*/true);
+        UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [2/3] [%d] CleanupLocal(true) 완료"), i);
+
+        PCGComp->OnPCGGraphGeneratedDelegate.RemoveAll(this);
+        PCGComp->OnPCGGraphGeneratedDelegate.AddUObject(this, &AHellunaDefenseGameMode::OnNightPCGGraphGenerated);
+
+        if (!PCGComp->IsActive())
+        {
+            PCGComp->Activate(/*bReset=*/true);
+            UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [2/3] [%d] PCGComponent 재활성화"), i);
+        }
+
+        PCGComp->bIsComponentPartitioned = false;
+
+        // ★ 밤마다 다른 패턴으로 생성되도록 시드 변경
+        PCGComp->Seed = CurrentDay;
+        UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [2/3] [%d] 시드 설정: %d (Day 기반)"), i, PCGComp->Seed);
+
+        UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [2/3] [%d] GenerateLocal 직전 | IsRegistered=%d | IsActive=%d | GenerationTrigger=%d"),
+            i, PCGComp->IsRegistered(), PCGComp->IsActive(), (int32)PCGComp->GenerationTrigger);
+
+        PCGComp->GenerateLocal(/*bForce=*/true);
+        UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [2/3] [%d] ✅ GenerateLocal 호출 완료"), i);
+
+        // 진단 타이머
+        FTimerHandle DiagTimer;
+        TWeakObjectPtr<UPCGComponent> WeakPCG = PCGComp;
+        const int32 DiagDay = CurrentDay;
+        const int32 DiagIdx = i;
+        GetWorldTimerManager().SetTimer(DiagTimer, [this, WeakPCG, DiagDay, DiagIdx, SnapshotOreCount]()
+        {
+            UPCGComponent* Comp = WeakPCG.Get();
+            if (!IsValid(Comp))
+            {
+                UE_LOG(LogTemp, Error, TEXT("[PCG 진단] Day=%d [%d] 2초 후 — PCGComponent 유효하지 않음"), DiagDay, DiagIdx);
+                return;
+            }
+
+            AActor* Owner = Comp->GetOwner();
+            TArray<UObject*> ManagedObjects;
+            GetObjectsWithOuter(Comp, ManagedObjects, false);
+
+            int32 TotalOreCount = 0;
+            int32 NewOreCount = 0;
+            if (UWorld* World = GetWorld())
+            {
+                TArray<AActor*> AllOres;
+                UGameplayStatics::GetAllActorsWithTag(World, FName(TEXT("Ore")), AllOres);
+                TotalOreCount = AllOres.Num();
+                for (AActor* Ore : AllOres)
+                {
+                    if (IsValid(Ore) && !PreGenerationOreSnapshot.Contains(Ore))
+                    {
+                        NewOreCount++;
+                    }
+                }
+            }
+
+            UE_LOG(LogTemp, Warning, TEXT("[PCG 진단] Day=%d [%d] 2초 후 | Owner=%s | ManagedObj=%d | IsGenerating=%d | 기존Ore=%d | 전체Ore=%d | 신규Ore=%d"),
+                DiagDay, DiagIdx,
+                Owner ? *Owner->GetName() : TEXT("nullptr"),
+                ManagedObjects.Num(), Comp->IsGenerating(),
+                SnapshotOreCount, TotalOreCount, NewOreCount);
+        }, 2.0f, false);
+
+        ActivatedCount++;
+
+#if ENABLE_DRAW_DEBUG
+        if (PCGActor)
+        {
+            const FVector Loc = PCGActor->GetActorLocation();
+            DrawDebugSphere(GetWorld(), Loc, 200.f, 12, FColor::Purple, false, 8.f, 0, 3.f);
+            DrawDebugString(GetWorld(), Loc + FVector(0, 0, 250.f),
+                FString::Printf(TEXT("PCG Generate Day%d [%s]"), CurrentDay, *PCGActor->GetName()),
+                nullptr, FColor::Purple, 8.f, true);
+        }
 #endif
 
     PCGStaggerActivatedCount++;
@@ -531,45 +543,6 @@ void AHellunaDefenseGameMode::ProcessOreRestoreBatch()
             CurrentDay, Total), FColor::Yellow);
         PendingPreservedOres.Empty();
     }
-}
-
-void AHellunaDefenseGameMode::CleanupInitialNightPCGArtifacts()
-{
-    if (!HasAuthority())
-    {
-        return;
-    }
-
-    UWorld* World = GetWorld();
-    if (!IsValid(World))
-    {
-        return;
-    }
-
-    for (const TWeakObjectPtr<UPCGComponent>& WeakPCGComp : CachedNightPCGComponents)
-    {
-        UPCGComponent* PCGComp = WeakPCGComp.Get();
-        if (!IsValid(PCGComp))
-        {
-            continue;
-        }
-
-        PCGComp->GenerationTrigger = EPCGComponentGenerationTrigger::GenerateOnDemand;
-        PCGComp->CleanupLocal(true);
-        PCGComp->Deactivate();
-    }
-
-    TArray<AActor*> ExistingOres;
-    UGameplayStatics::GetAllActorsWithTag(World, FName(TEXT("Ore")), ExistingOres);
-    for (AActor* OreActor : ExistingOres)
-    {
-        if (IsValid(OreActor))
-        {
-            OreActor->Destroy();
-        }
-    }
-
-    PreGenerationOreSnapshot.Empty();
 }
 
 void AHellunaDefenseGameMode::OnNightPCGGraphGenerated(UPCGComponent* InComponent)
@@ -1080,6 +1053,13 @@ const FNightSpawnConfig* AHellunaDefenseGameMode::GetCurrentNightConfig() const
 // ============================================================
 // 낮/밤 시스템
 // ============================================================
+float AHellunaDefenseGameMode::GetEffectiveDayDuration() const
+{
+    // Day 1(첫째 날): TestDayDuration (BP 기본 5초 — 빠른 첫 밤 진입)
+    // Day 2+: NormalDayDuration (BP 기본 300초 = 5분)
+    return (CurrentDay <= 1) ? TestDayDuration : NormalDayDuration;
+}
+
 void AHellunaDefenseGameMode::EnterDay()
 {
     if (!bGameInitialized) return;
@@ -1087,12 +1067,10 @@ void AHellunaDefenseGameMode::EnterDay()
     // 낮 카운터 증가 (게임 시작 첫 낮은 Day 1)
     CurrentDay++;
 
-    if (CurrentDay == 1)
-    {
-        CleanupInitialNightPCGArtifacts();
-    }
+    // Day에 따라 적절한 낮 지속 시간 결정
+    const float EffectiveDayDuration = GetEffectiveDayDuration();
 
-    Debug::Print(FString::Printf(TEXT("[EnterDay] %d일차 낮 시작"), CurrentDay), FColor::Yellow);
+    Debug::Print(FString::Printf(TEXT("[EnterDay] %d일차 낮 시작 (지속시간: %.0f초)"), CurrentDay, EffectiveDayDuration), FColor::Yellow);
 
     RemainingMonstersThisNight = 0;
 
@@ -1109,7 +1087,7 @@ void AHellunaDefenseGameMode::EnterDay()
         GS->SetPhase(EDefensePhase::Day);
         GS->SetAliveMonsterCount(0);
         GS->SetCurrentDayForUI(CurrentDay);
-        GS->SetDayTimeRemaining(TestDayDuration);
+        GS->SetDayTimeRemaining(EffectiveDayDuration);
         GS->SetTotalMonstersThisNight(0);
         GS->SetIsBossNight(false);
         GS->MulticastPrintDay();
@@ -1117,13 +1095,11 @@ void AHellunaDefenseGameMode::EnterDay()
         // Phase 10: 채팅 시스템 메시지
         GS->BroadcastChatMessage(TEXT(""), TEXT("낮이 시작됩니다"), EChatMessageType::System);
 
-        GS->NetMulticast_OnDawnPassed(TestDayDuration);
+        GS->NetMulticast_OnDawnPassed(EffectiveDayDuration);
     }
 
-    GetWorldTimerManager().SetTimerForNextTick(this, &ThisClass::ActivateNightPCG);
-
     GetWorldTimerManager().ClearTimer(TimerHandle_ToNight);
-    GetWorldTimerManager().SetTimer(TimerHandle_ToNight, this, &ThisClass::EnterNight, TestDayDuration, false);
+    GetWorldTimerManager().SetTimer(TimerHandle_ToNight, this, &ThisClass::EnterNight, EffectiveDayDuration, false);
 
     // 1초마다 남은 낮 시간 감소
     GetWorldTimerManager().ClearTimer(TimerHandle_DayCountdown);
@@ -1155,6 +1131,9 @@ void AHellunaDefenseGameMode::EnterNight()
 
     // 낮 카운트다운 타이머 정지
     GetWorldTimerManager().ClearTimer(TimerHandle_DayCountdown);
+
+    // PCG 밤 스폰 실행
+    ActivateNightPCG();
 
     // ── 보스 소환 일 체크 ──────────────────────────────────────────────
     // BossSchedule 배열에서 CurrentDay와 일치하는 항목을 찾는다.
@@ -1711,19 +1690,6 @@ void AHellunaDefenseGameMode::PostLogin(APlayerController* NewPlayer)
 
     // [Phase 19] 커맨드 폴링 중지 (플레이어 접속)
     StopCommandPollTimer();
-
-    // 플레이어 접속 → 우주선 SlotManager 슬롯 재시도 트리거
-    // World Partition에서 플레이어 접속 후 NavMesh가 로드되므로 이 시점에 재시도
-    if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
-    {
-        if (AResourceUsingObject_SpaceShip* Ship = GS->GetSpaceShip())
-        {
-            if (USpaceShipAttackSlotManager* SlotMgr = Ship->FindComponentByClass<USpaceShipAttackSlotManager>())
-            {
-                SlotMgr->TriggerBuildSlotsIfEmpty();
-            }
-        }
-    }
 
     // Phase 10: 접속 메시지
     if (bGameInitialized && IsValid(NewPlayer))

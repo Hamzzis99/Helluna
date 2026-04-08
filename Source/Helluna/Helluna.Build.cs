@@ -57,7 +57,16 @@ public class Helluna : ModuleRules
             "PCG",
 
             // [카메라 쉐이크] PerlinNoiseCameraShakePattern 사용
-            "EngineCameras"
+            "EngineCameras",
+
+            // [그래픽 설정] RHI (GPU 벤더 감지 + GGPUFrameTime)
+            "RHI",
+
+            // [그래픽 설정] DLSS/Streamline/FSR Blueprint API
+            "DLSSBlueprint",
+            "StreamlineBlueprint",
+            "StreamlineDLSSGBlueprint",
+            "StreamlineReflexBlueprint"
         });
         PrivateDependencyModuleNames.AddRange(new string[] { });
 

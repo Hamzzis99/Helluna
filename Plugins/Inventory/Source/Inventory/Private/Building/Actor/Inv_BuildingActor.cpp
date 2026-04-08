@@ -15,7 +15,10 @@ AInv_BuildingActor::AInv_BuildingActor()
 
 	// 리플리케이션 활성화
 	bReplicates = true;
-	bAlwaysRelevant = true; // 모든 클라이언트에게 항상 관련성 있음
+	// [Lag-Fix5] bAlwaysRelevant=true 제거 — 거리 기반 relevancy로 전환
+	// 모든 건물이 모든 클라이언트에 항상 전송되면 O(건물수*플레이어수) 리플리케이션 부하
+	bAlwaysRelevant = false;
+	NetCullDistanceSquared = 150000.f * 150000.f; // 1500m
 
 	// 건물 메시 컴포넌트 생성
 	BuildingMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("BuildingMesh"));
@@ -44,6 +47,9 @@ void AInv_BuildingActor::BeginPlay()
 	// 모든 머신에서 즉시 스캔 VFX 시작 (Multicast 리플리케이션 대기 불필요)
 	// PlacementScanMaterial은 블루프린트 CDO에서 로드되므로 서버/클라이언트 모두 유효
 	// bScanActive 가드로 Multicast 도착 시 이중 적용 방지
+	UE_LOG(LogTemp, Warning, TEXT("[ScanVFX-Diag] AInv_BuildingActor::BeginPlay → %s, HasAuth=%d, Material=%s"),
+		*GetName(), HasAuthority(),
+		PlacementScanMaterial ? *PlacementScanMaterial->GetName() : TEXT("NULL"));
 	StartPlacementScanVFX();
 }
 
@@ -74,6 +80,10 @@ void AInv_BuildingActor::OnBuildingPlaced_Implementation()
 
 void AInv_BuildingActor::StartPlacementScanVFX()
 {
+	// [Lag-Fix3] 데디서버에서는 스캔 VFX 불필요 (렌더링 없음, DMI 생성/Tick 비용 제거)
+	if (IsRunningDedicatedServer())
+		return;
+
 	// 머티리얼 미설정 시 스킵
 	if (!PlacementScanMaterial)
 	{
@@ -86,6 +96,7 @@ void AInv_BuildingActor::StartPlacementScanVFX()
 	// 이미 스캔 중이면 무시
 	if (bScanActive)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[ScanVFX-Diag] %s: SKIP — bScanActive already true"), *GetName());
 		return;
 	}
 
@@ -95,23 +106,32 @@ void AInv_BuildingActor::StartPlacementScanVFX()
 
 	if (AllMeshes.Num() == 0)
 	{
-#if INV_DEBUG_BUILD
-		UE_LOG(LogTemp, Warning, TEXT("[BuildingScanVFX] No MeshComponent found on %s — skipping"), *GetName());
-#endif
+		UE_LOG(LogTemp, Warning, TEXT("[ScanVFX-Diag] %s: SKIP — no MeshComponent found"), *GetName());
 		return;
 	}
 
 	// MeshComponent만의 바운딩 박스 합산 (DetectionSphere 등 비렌더링 컴포넌트 제외)
 	FBox MeshBounds(ForceInit);
+	int32 ValidMeshCount = 0;
 	for (UMeshComponent* MeshComp : AllMeshes)
 	{
 		if (MeshComp && MeshComp->IsVisible() && MeshComp->GetNumMaterials() > 0)
 		{
 			MeshBounds += MeshComp->Bounds.GetBox();
+			++ValidMeshCount;
+		}
+		else if (MeshComp)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[ScanVFX-Diag] %s: mesh '%s' skipped (Visible=%d, NumMats=%d)"),
+				*GetName(), *MeshComp->GetName(), MeshComp->IsVisible(), MeshComp->GetNumMaterials());
 		}
 	}
+	UE_LOG(LogTemp, Warning, TEXT("[ScanVFX-Diag] %s: total meshes=%d, valid (visible+hasMats)=%d"),
+		*GetName(), AllMeshes.Num(), ValidMeshCount);
+
 	if (!MeshBounds.IsValid)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[ScanVFX-Diag] %s: SKIP — MeshBounds invalid (no visible mesh with materials)"), *GetName());
 		return;
 	}
 	ScanBottomZ = MeshBounds.Min.Z;
@@ -119,8 +139,11 @@ void AInv_BuildingActor::StartPlacementScanVFX()
 
 	// 높이가 너무 작으면 스킵
 	const float MeshHeight = ScanTopZ - ScanBottomZ;
+	UE_LOG(LogTemp, Warning, TEXT("[ScanVFX-Diag] %s: bounds Bottom=%.1f Top=%.1f Height=%.1f"),
+		*GetName(), ScanBottomZ, ScanTopZ, MeshHeight);
 	if (MeshHeight < 1.f)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[ScanVFX-Diag] %s: SKIP — MeshHeight %.1f < 1.0"), *GetName(), MeshHeight);
 		return;
 	}
 
@@ -149,11 +172,15 @@ void AInv_BuildingActor::StartPlacementScanVFX()
 		ScanSwappedMeshes.Add(MeshComp);
 		ScanSwappedSlotCounts.Add(NumMats);
 		ScanDMIs.Add(DMI);
+
+		UE_LOG(LogTemp, Warning, TEXT("[ScanVFX-Diag] %s: SWAPPED mesh '%s' (Class=%s, NumMats=%d)"),
+			*GetName(), *MeshComp->GetName(), *MeshComp->GetClass()->GetName(), NumMats);
 	}
 
 	// 아무것도 적용되지 않았으면 스킵
 	if (ScanSwappedMeshes.Num() == 0)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[ScanVFX-Diag] %s: SKIP — no meshes were swapped (all DMI creation failed?)"), *GetName());
 		return;
 	}
 
@@ -162,10 +189,8 @@ void AInv_BuildingActor::StartPlacementScanVFX()
 	bScanActive = true;
 	SetActorTickEnabled(true);
 
-#if INV_DEBUG_BUILD
-	UE_LOG(LogTemp, Warning, TEXT("[BuildingScanVFX] Scan started: %s (%d meshes, Bottom=%.0f, Top=%.0f, Duration=%.1fs)"),
+	UE_LOG(LogTemp, Warning, TEXT("[ScanVFX-Diag] %s: SCAN STARTED (%d meshes, Bottom=%.0f, Top=%.0f, Duration=%.1fs)"),
 		*GetName(), ScanSwappedMeshes.Num(), ScanBottomZ, ScanTopZ, ScanDuration);
-#endif
 }
 
 void AInv_BuildingActor::TickPlacementScan(float DeltaTime)
@@ -211,6 +236,13 @@ void AInv_BuildingActor::TickPlacementScan(float DeltaTime)
 	const float CurrentScanZ = FMath::Lerp(ScanBottomZ, ScanTopZ, ScanProgress);
 	const float MeshHeight = ScanTopZ - ScanBottomZ;
 	const float BandWidth = FMath::Max(MeshHeight * ScanBandRatio, 10.f);
+
+	// 첫 프레임 + 중간 + 마지막 진단 로그
+	if (ScanProgress < 0.02f || (ScanProgress > 0.49f && ScanProgress < 0.52f) || ScanProgress > 0.98f)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[ScanVFX-Diag] %s TICK: Progress=%.2f, ScanHeight=%.1f, DMIs=%d"),
+			*GetName(), ScanProgress, CurrentScanZ, ScanDMIs.Num());
+	}
 
 	for (UMaterialInstanceDynamic* DMI : ScanDMIs)
 	{

@@ -1,6 +1,7 @@
 ﻿// Fill out your copyright notice in the Description page of Project Settings.
 
 #include "Character/HellunaEnemyCharacter.h"
+#include "Helluna.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Conponent/EnemyCombatComponent.h"
@@ -280,6 +281,7 @@ void AHellunaEnemyCharacter::OnMonsterHealthChanged(
 	if (!HasAuthority()) return;
 
 	const float Delta = OldHealth - NewHealth;
+#if HELLUNA_DEBUG_ENEMY
 	UE_LOG(LogTemp, Warning,
 		TEXT("[DeathDiag][HealthChanged] Enemy=%s Old=%.1f New=%.1f Delta=%.1f Instigator=%s"),
 		*GetNameSafe(this),
@@ -295,6 +297,7 @@ void AHellunaEnemyCharacter::OnMonsterHealthChanged(
 			*GetNameSafe(this),
 			*GetNameSafe(GetController()));
 	}
+#endif
 
 	// 살아있는 상태에서 데미지를 받았을 때만 피격 애니메이션 재생
 	// #11 최적화: 0.2초 쿨다운 — 산탄총 동시 히트 시 RPC 폭발 방지
@@ -582,12 +585,14 @@ void AHellunaEnemyCharacter::OnMonsterDeath(AActor* DeadActor, AActor* KillerAct
 		MoveComp->StopMovementImmediately();
 		MoveComp->DisableMovement();
 	}
+#if HELLUNA_DEBUG_ENEMY
 	UE_LOG(LogTemp, Warning,
 		TEXT("[DeathDiag][OnMonsterDeathSendEvent] Enemy=%s AIController=%s StateTree=%s Tag=%s"),
 		*GetNameSafe(this),
 		*GetNameSafe(AIC),
 		*GetNameSafe(STComp),
 		*DeathTag.ToString());
+#endif
 	STComp->SendStateTreeEvent(DeathTag);
 }
 

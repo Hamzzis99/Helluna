@@ -73,8 +73,10 @@ void UHellunaHealthComponent::ApplyDirectDamage(float Damage, AActor* Instigator
 
 	if (bDead)
 	{
+#if HELLUNA_DEBUG_ENEMY
 		UE_LOG(LogTemp, Warning, TEXT("[DeathDiag][DirectDamageIgnored] Owner=%s Damage=%.1f Reason=AlreadyDead"),
 			*GetNameSafe(Owner), Damage);
+#endif
 		return;
 	}
 
@@ -84,8 +86,10 @@ void UHellunaHealthComponent::ApplyDirectDamage(float Damage, AActor* Instigator
 	// [GunParry] 무적 상태면 데미지 무시
 	if (UHeroGameplayAbility_GunParry::ShouldBlockDamage(Owner))
 	{
+#if HELLUNA_DEBUG_ENEMY
 		UE_LOG(LogTemp, Warning, TEXT("[ParryDiag][DirectDamageBlocked] Owner=%s Damage=%.1f Reason=ShouldBlockDamage"),
 			*GetNameSafe(Owner), Damage);
+#endif
 		return;
 	}
 
@@ -113,17 +117,21 @@ void UHellunaHealthComponent::HandleOwnerAnyDamage(
 
 	if (bDead)
 	{
+#if HELLUNA_DEBUG_ENEMY
 		UE_LOG(LogTemp, Warning,
 			TEXT("[DeathDiag][TakeAnyDamageIgnored] Owner=%s Damage=%.1f DamageCauser=%s Reason=AlreadyDead"),
 			*GetNameSafe(Owner), Damage, *GetNameSafe(DamageCauser));
+#endif
 		return;
 	}
 
 	if (Damage <= 0.f)
 	{
+#if HELLUNA_DEBUG_ENEMY
 		UE_LOG(LogTemp, Warning,
 			TEXT("[DamageDiag][TakeAnyDamageIgnored] Owner=%s Damage=%.1f DamageCauser=%s Reason=NonPositive"),
 			*GetNameSafe(Owner), Damage, *GetNameSafe(DamageCauser));
+#endif
 		return;
 	}
 
@@ -136,9 +144,11 @@ void UHellunaHealthComponent::HandleOwnerAnyDamage(
 	// [Downed] 다운 상태면 출혈 가속
 	if (bDowned)
 	{
+#if HELLUNA_DEBUG_ENEMY
 		UE_LOG(LogTemp, Warning,
 			TEXT("[DeathDiag][TakeAnyDamageBleedout] Owner=%s Damage=%.1f DamageCauser=%s BleedoutRemaining=%.1f"),
 			*GetNameSafe(Owner), Damage, *GetNameSafe(InstigatorActor), BleedoutTimeRemaining);
+#endif
 		ApplyBleedoutDamage(Damage);
 		return;
 	}
@@ -152,6 +162,7 @@ void UHellunaHealthComponent::Internal_SetHealth(float NewHealth, AActor* Instig
 
 	Health = FMath::Clamp(NewHealth, 0.f, MaxHealth);
 
+#if HELLUNA_DEBUG_ENEMY
 	UE_LOG(LogTemp, Warning,
 		TEXT("[DeathDiag][HealthSet] Owner=%s Old=%.1f Requested=%.1f New=%.1f Instigator=%s Dead=%s Downed=%s"),
 		*GetNameSafe(GetOwner()),
@@ -161,6 +172,7 @@ void UHellunaHealthComponent::Internal_SetHealth(float NewHealth, AActor* Instig
 		*GetNameSafe(InstigatorActor),
 		bDead ? TEXT("Y") : TEXT("N"),
 		bDowned ? TEXT("Y") : TEXT("N"));
+#endif
 
 	if (!FMath::IsNearlyEqual(OldHealth, Health))
 	{
@@ -172,11 +184,13 @@ void UHellunaHealthComponent::Internal_SetHealth(float NewHealth, AActor* Instig
 	if (!bDead && Health <= 0.f)
 	{
 		AActor* Owner = GetOwner();
+#if HELLUNA_DEBUG_ENEMY
 		UE_LOG(LogTemp, Warning,
 			TEXT("[DeathDiag][HealthZero] Owner=%s Instigator=%s IsHero=%s"),
 			*GetNameSafe(Owner),
 			*GetNameSafe(InstigatorActor),
 			(Owner && Owner->IsA(AHellunaHeroCharacter::StaticClass())) ? TEXT("Y") : TEXT("N"));
+#endif
 
 		// [Downed] HeroCharacter + 아직 다운 아님 → 다운 진입
 		if (!bDowned && Owner && Owner->IsA(AHellunaHeroCharacter::StaticClass()))
@@ -212,6 +226,7 @@ void UHellunaHealthComponent::HandleDeath(AActor* KillerActor)
 	if (!Owner || !Owner->HasAuthority())
 		return;
 
+#if HELLUNA_DEBUG_ENEMY
 	UE_LOG(LogTemp, Warning,
 		TEXT("[DeathDiag][HandleDeath] Owner=%s Killer=%s Dead=%s Downed=%s AutoDestroy=%s"),
 		*GetNameSafe(Owner),
@@ -219,24 +234,29 @@ void UHellunaHealthComponent::HandleDeath(AActor* KillerActor)
 		bDead ? TEXT("Y") : TEXT("N"),
 		bDowned ? TEXT("Y") : TEXT("N"),
 		bAutoDestroyOwnerOnDeath ? TEXT("Y") : TEXT("N"));
+#endif
 
 	// [GunParry] 처형 중이면 사망 보류 (OnDeath도 안 함)
 	if (UHeroGameplayAbility_GunParry::ShouldDeferDeath(Owner))
 	{
 		if (AHellunaEnemyCharacter* EnemyChar = Cast<AHellunaEnemyCharacter>(Owner))
 			EnemyChar->bParryDeferredDeath = true;
+#if HELLUNA_DEBUG_ENEMY
 		UE_LOG(LogTemp, Warning,
 			TEXT("[ParryDiag][DeathDeferred] Owner=%s Killer=%s Reason=AnimLocked"),
 			*GetNameSafe(Owner),
 			*GetNameSafe(KillerActor));
+#endif
 		return;
 	}
 
 	// OnDeath 브로드캐스트 → EnemyCharacter::OnMonsterDeath → StateTree Signal
+#if HELLUNA_DEBUG_ENEMY
 	UE_LOG(LogTemp, Warning,
 		TEXT("[DeathDiag][BroadcastOnDeath] Owner=%s Killer=%s"),
 		*GetNameSafe(Owner),
 		*GetNameSafe(KillerActor));
+#endif
 	OnDeath.Broadcast(Owner, KillerActor);
 
 	if (bAutoDestroyOwnerOnDeath)

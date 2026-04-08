@@ -394,6 +394,32 @@ public:
 	UPROPERTY()
 	TObjectPtr<UUserWidget> DownedOverlayWidget;
 
+
+	// =========================================================
+	// [SpawnVFX] 입장 시 SciFi Shield 화면 번쩍 효과
+	// =========================================================
+
+	UPROPERTY()
+	TObjectPtr<UPostProcessComponent> SpawnVFXPostProcess;
+
+	UPROPERTY(EditDefaultsOnly, Category = "SpawnVFX",
+		meta = (DisplayName = "입장 화면 효과 머티리얼"))
+	TObjectPtr<UMaterialInterface> SpawnVFXMaterial;
+
+	UPROPERTY(EditDefaultsOnly, Category = "SpawnVFX",
+		meta = (DisplayName = "지속시간(초)", ClampMin = "0.1", ClampMax = "5.0"))
+	float SpawnVFXDuration = 0.8f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "SpawnVFX",
+		meta = (DisplayName = "최대 강도", ClampMin = "0.0", ClampMax = "1.0"))
+	float SpawnVFXMaxIntensity = 0.75f;
+
+	bool bSpawnVFXActive = false;
+	float SpawnVFXElapsed = 0.f;
+
+	void InitSpawnVFX();
+	void TickSpawnVFX(float DeltaTime);
+
 	/** 다운 전용 PostProcessComponent (HackMode PP와 별개) */
 	UPROPERTY()
 	TObjectPtr<UPostProcessComponent> DownedPostProcess;

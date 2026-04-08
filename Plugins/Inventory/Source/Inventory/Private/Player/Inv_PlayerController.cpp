@@ -34,6 +34,10 @@ AInv_PlayerController::AInv_PlayerController()
 void AInv_PlayerController::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+
+	// [Lag-Fix4] 데디서버에서는 인터랙션 트레이스 불필요 (viewport 없음)
+	if (!IsLocalController()) return;
+
 	if (InventoryComponent.IsValid() && InventoryComponent->IsMenuOpen()) return;
 	if (bIsViewingContainer) return;
 	TraceForInteractables();
