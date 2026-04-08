@@ -380,123 +380,110 @@ void AHellunaDefenseGameMode::ProcessNextPCGComponent()
         return;
     }
 
-        // ★ World Partition + PIE: PCG 비동기 CleanupTask의 ActorFolder 삭제 크래시 방지
-        //   WP(OFPA)에서 UActorFolder는 레벨 패키지와 별도의 외부 패키지를 가짐.
-        //   PCG가 폴더 삭제 시 check(InActorFolder->GetPackage()->IsDirty()) 를 통과하려면
-        //   UActorFolder 자체의 패키지를 Dirty로 마킹해야 함 (레벨 패키지만으로는 불충분).
 #if WITH_EDITOR
     {
-            int32 DirtiedFolderCount = 0;
-            for (TObjectIterator<UActorFolder> It; It; ++It)
-            {
-                UActorFolder* Folder = *It;
-                if (!Folder) continue;
-
-                UPackage* Pkg = Folder->GetPackage();
-                if (Pkg && !Pkg->IsDirty())
-                {
-                    Pkg->MarkPackageDirty();
-                    DirtiedFolderCount++;
-                }
-            }
-
-            // 레벨 패키지도 함께 마킹 (폴더 외 다른 cleanup 작업 대비)
-            if (UWorld* W = GetWorld())
-            {
-                if (W->PersistentLevel)
-                {
-                    W->PersistentLevel->GetPackage()->MarkPackageDirty();
-                }
-            }
-            if (PCGActor)
-            {
-                if (ULevel* PCGLevel = PCGActor->GetLevel())
-                {
-                    PCGLevel->GetPackage()->MarkPackageDirty();
-                }
-            }
-
-            UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [WP 크래시 방지] ActorFolder %d개 + 레벨 패키지 Dirty 마킹 완료"), DirtiedFolderCount);
-        }
-#endif
-
-        // PCG 내부 관리 리소스 전부 정리 (기존 광석은 데이터로 저장 완료 → PCG가 자유롭게 파괴)
-        PCGComp->CleanupLocal(/*bRemoveComponents=*/true);
-        UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [2/3] [%d] CleanupLocal(true) 완료"), i);
-
-        PCGComp->OnPCGGraphGeneratedDelegate.RemoveAll(this);
-        PCGComp->OnPCGGraphGeneratedDelegate.AddUObject(this, &AHellunaDefenseGameMode::OnNightPCGGraphGenerated);
-
-        if (!PCGComp->IsActive())
+        int32 DirtiedCount = 0;
+        auto ForceMarkDirty = [](UPackage* Pkg)
         {
-            PCGComp->Activate(/*bReset=*/true);
-            UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [2/3] [%d] PCGComponent 재활성화"), i);
-        }
-
-        PCGComp->bIsComponentPartitioned = false;
-
-        // ★ 밤마다 다른 패턴으로 생성되도록 시드 변경
-        PCGComp->Seed = CurrentDay;
-        UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [2/3] [%d] 시드 설정: %d (Day 기반)"), i, PCGComp->Seed);
-
-        UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [2/3] [%d] GenerateLocal 직전 | IsRegistered=%d | IsActive=%d | GenerationTrigger=%d"),
-            i, PCGComp->IsRegistered(), PCGComp->IsActive(), (int32)PCGComp->GenerationTrigger);
-
-        PCGComp->GenerateLocal(/*bForce=*/true);
-        UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [2/3] [%d] ✅ GenerateLocal 호출 완료"), i);
-
-        // 진단 타이머
-        FTimerHandle DiagTimer;
-        TWeakObjectPtr<UPCGComponent> WeakPCG = PCGComp;
-        const int32 DiagDay = CurrentDay;
-        const int32 DiagIdx = i;
-        GetWorldTimerManager().SetTimer(DiagTimer, [this, WeakPCG, DiagDay, DiagIdx, SnapshotOreCount]()
-        {
-            UPCGComponent* Comp = WeakPCG.Get();
-            if (!IsValid(Comp))
+            if (Pkg && !Pkg->IsDirty())
             {
-                UE_LOG(LogTemp, Error, TEXT("[PCG 진단] Day=%d [%d] 2초 후 — PCGComponent 유효하지 않음"), DiagDay, DiagIdx);
-                return;
+                Pkg->SetDirtyFlag(true);
+                return true;
             }
+            return false;
+        };
 
-            AActor* Owner = Comp->GetOwner();
-            TArray<UObject*> ManagedObjects;
-            GetObjectsWithOuter(Comp, ManagedObjects, false);
-
-            int32 TotalOreCount = 0;
-            int32 NewOreCount = 0;
-            if (UWorld* World = GetWorld())
+        if (UWorld* W = GetWorld())
+        {
+            for (ULevel* Level : W->GetLevels())
             {
-                TArray<AActor*> AllOres;
-                UGameplayStatics::GetAllActorsWithTag(World, FName(TEXT("Ore")), AllOres);
-                TotalOreCount = AllOres.Num();
-                for (AActor* Ore : AllOres)
+                if (!Level) continue;
+                if (ForceMarkDirty(Level->GetPackage())) DirtiedCount++;
+                Level->ForEachActorFolder([&](UActorFolder* Folder)
                 {
-                    if (IsValid(Ore) && !PreGenerationOreSnapshot.Contains(Ore))
+                    if (Folder)
                     {
-                        NewOreCount++;
+                        if (UPackage* ExtPkg = Folder->GetExternalPackage())
+                        {
+                            if (ForceMarkDirty(ExtPkg)) DirtiedCount++;
+                        }
+                        if (ForceMarkDirty(Folder->GetPackage())) DirtiedCount++;
                     }
-                }
+                    return true;
+                });
             }
+        }
 
-            UE_LOG(LogTemp, Warning, TEXT("[PCG 진단] Day=%d [%d] 2초 후 | Owner=%s | ManagedObj=%d | IsGenerating=%d | 기존Ore=%d | 전체Ore=%d | 신규Ore=%d"),
-                DiagDay, DiagIdx,
-                Owner ? *Owner->GetName() : TEXT("nullptr"),
-                ManagedObjects.Num(), Comp->IsGenerating(),
-                SnapshotOreCount, TotalOreCount, NewOreCount);
-        }, 2.0f, false);
+        TArray<UObject*> ManagedObjs;
+        GetObjectsWithOuter(PCGComp, ManagedObjs, false);
+        for (UObject* Obj : ManagedObjs)
+        {
+            if (UPackage* Pkg = Obj->GetExternalPackage())
+            {
+                if (ForceMarkDirty(Pkg)) DirtiedCount++;
+            }
+        }
 
-        ActivatedCount++;
-
-#if ENABLE_DRAW_DEBUG
         if (PCGActor)
         {
-            const FVector Loc = PCGActor->GetActorLocation();
-            DrawDebugSphere(GetWorld(), Loc, 200.f, 12, FColor::Purple, false, 8.f, 0, 3.f);
-            DrawDebugString(GetWorld(), Loc + FVector(0, 0, 250.f),
-                FString::Printf(TEXT("PCG Generate Day%d [%s]"), CurrentDay, *PCGActor->GetName()),
-                nullptr, FColor::Purple, 8.f, true);
+            if (ULevel* PCGLevel = PCGActor->GetLevel())
+            {
+                ForceMarkDirty(PCGLevel->GetPackage());
+            }
         }
+    }
+#endif
+
+    PCGComp->CleanupLocal(/*bRemoveComponents=*/true);
+
+    PCGComp->OnPCGGraphGeneratedDelegate.RemoveAll(this);
+    PCGComp->OnPCGGraphGeneratedDelegate.AddUObject(this, &AHellunaDefenseGameMode::OnNightPCGGraphGenerated);
+
+    if (!PCGComp->IsActive())
+    {
+        PCGComp->Activate(/*bReset=*/true);
+    }
+
+    PCGComp->bIsComponentPartitioned = false;
+    PCGComp->Seed = CurrentDay;
+
+    PCGComp->GenerateLocal(/*bForce=*/true);
+    UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [순차 %d/%d] ✅ GenerateLocal 완료 (Seed=%d)"),
+        i + 1, CachedNightPCGComponents.Num(), PCGComp->Seed);
+
+#if WITH_EDITOR
+    {
+        TWeakObjectPtr<UPCGComponent> WeakPCGForDirty = PCGComp;
+        GetWorldTimerManager().ClearTimer(PCGActorFolderDirtyGuardTimer);
+        GetWorldTimerManager().SetTimer(PCGActorFolderDirtyGuardTimer, [this, WeakPCGForDirty]()
+        {
+            if (!WeakPCGForDirty.IsValid() || !WeakPCGForDirty->IsGenerating())
+            {
+                GetWorldTimerManager().ClearTimer(PCGActorFolderDirtyGuardTimer);
+                return;
+            }
+            if (UWorld* W = GetWorld())
+            {
+                for (ULevel* Level : W->GetLevels())
+                {
+                    if (!Level) continue;
+                    Level->ForEachActorFolder([](UActorFolder* Folder)
+                    {
+                        if (Folder)
+                        {
+                            if (UPackage* ExtPkg = Folder->GetExternalPackage())
+                            {
+                                if (!ExtPkg->IsDirty()) ExtPkg->SetDirtyFlag(true);
+                            }
+                            UPackage* Pkg = Folder->GetPackage();
+                            if (Pkg && !Pkg->IsDirty()) Pkg->SetDirtyFlag(true);
+                        }
+                        return true;
+                    });
+                }
+            }
+        }, 0.01f, true);
+    }
 #endif
 
     PCGStaggerActivatedCount++;
