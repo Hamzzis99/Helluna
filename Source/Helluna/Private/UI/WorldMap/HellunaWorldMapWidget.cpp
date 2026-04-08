@@ -8,7 +8,13 @@
 #include "Components/TextBlock.h"
 #include "Controller/HellunaHeroController.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/PlayerState.h"
 #include "GameFramework/Pawn.h"
+#include "GameMode/HellunaDefenseGameState.h"
+#include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
+#include "Character/HellunaHeroCharacter.h"
+#include "Player/HellunaPlayerState.h"
+#include "Kismet/GameplayStatics.h"
 
 // ============================================================================
 // NativeConstruct
@@ -51,9 +57,13 @@ void UHellunaWorldMapWidget::OpenMap()
     bIsOpen = true;
 
     MapZoom = 1.f;
+    PanOffset = FVector2D::ZeroVector;
+    bIsPanning = false;
     if (ZoomContent)
     {
         ZoomContent->SetRenderScale(FVector2D(1.f, 1.f));
+        ZoomContent->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+        ZoomContent->SetRenderTranslation(FVector2D::ZeroVector);
     }
     UE_LOG(LogTemp, Warning, TEXT("[WorldMap] Visibility=Visible, AnimState=1, bIsOpen=true"));
 
@@ -143,19 +153,52 @@ void UHellunaWorldMapWidget::NativeTick(const FGeometry& MyGeometry, float InDel
 // ============================================================================
 // NativeOnMouseButtonDown — 클릭 시 핑 생성/삭제
 // ============================================================================
+FReply UHellunaWorldMapWidget::NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+    if (InMouseEvent.GetEffectingButton() == EKeys::MiddleMouseButton && bIsPanning)
+    {
+        bIsPanning = false;
+        return FReply::Handled().ReleaseMouseCapture();
+    }
+    return FReply::Unhandled();
+}
+
+FReply UHellunaWorldMapWidget::NativeOnMouseMove(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+    if (!bIsPanning || !ZoomContent) return FReply::Unhandled();
+
+    const FVector2D CurMouse = InMouseEvent.GetScreenSpacePosition();
+    const FVector2D Delta = CurMouse - PanLastMouse;
+    PanLastMouse = CurMouse;
+
+    PanOffset += Delta;
+    ZoomContent->SetRenderTranslation(PanOffset);
+
+    return FReply::Handled();
+}
+
 FReply UHellunaWorldMapWidget::NativeOnMouseWheel(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
-    if (!bIsOpen) return FReply::Unhandled();
+    if (!bIsOpen || !ZoomContent || !MapClipPanel) return FReply::Unhandled();
+
+    const FGeometry& ClipGeo = MapClipPanel->GetCachedGeometry();
+    const FVector2D ClipSize = ClipGeo.GetLocalSize();
+    if (ClipSize.X <= 0.f || ClipSize.Y <= 0.f) return FReply::Unhandled();
+
+    const FVector2D MouseLocal = ClipGeo.AbsoluteToLocal(InMouseEvent.GetScreenSpacePosition());
+    if (MouseLocal.X < 0.f || MouseLocal.X > ClipSize.X || MouseLocal.Y < 0.f || MouseLocal.Y > ClipSize.Y)
+    {
+        return FReply::Unhandled();
+    }
+
+    const FVector2D Pivot(MouseLocal.X / ClipSize.X, MouseLocal.Y / ClipSize.Y);
+    ZoomContent->SetRenderTransformPivot(Pivot);
 
     const float Delta = InMouseEvent.GetWheelDelta();
     MapZoom = FMath::Clamp(MapZoom + Delta * ZoomStep, MinZoom, MaxZoom);
+    ZoomContent->SetRenderScale(FVector2D(MapZoom, MapZoom));
 
-    if (ZoomContent)
-    {
-        ZoomContent->SetRenderScale(FVector2D(MapZoom, MapZoom));
-    }
-
-    UE_LOG(LogTemp, Verbose, TEXT("[WorldMap] Zoom=%.2f"), MapZoom);
+    UE_LOG(LogTemp, Verbose, TEXT("[WorldMap] Zoom=%.2f Pivot=(%.2f,%.2f)"), MapZoom, Pivot.X, Pivot.Y);
     return FReply::Handled();
 }
 
@@ -193,10 +236,23 @@ FReply UHellunaWorldMapWidget::NativeOnMouseButtonDown(const FGeometry& InGeomet
         return FReply::Handled();
     }
 
+    if (InMouseEvent.GetEffectingButton() == EKeys::MiddleMouseButton)
+    {
+        bIsPanning = true;
+        PanLastMouse = InMouseEvent.GetScreenSpacePosition();
+        return FReply::Handled().CaptureMouse(TakeWidget());
+    }
+
     if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
     {
-        const FVector2D Center = ClipSize * 0.5f;
-        const FVector2D ZoomLocal = (ClipLocal - Center) / FMath::Max(MapZoom, 0.0001f) + Center;
+        FVector2D Pivot(0.5f, 0.5f);
+        if (ZoomContent)
+        {
+            Pivot = ZoomContent->GetRenderTransformPivot();
+        }
+        const FVector2D PivotPx(Pivot.X * ClipSize.X, Pivot.Y * ClipSize.Y);
+        const FVector2D AdjustedLocal = ClipLocal - PanOffset;
+        const FVector2D ZoomLocal = (AdjustedLocal - PivotPx) / FMath::Max(MapZoom, 0.0001f) + PivotPx;
 
         const float U = ZoomLocal.X / ClipSize.X;
         const float V = ZoomLocal.Y / ClipSize.Y;
@@ -260,19 +316,118 @@ FVector UHellunaWorldMapWidget::MapPixelToWorld(const FVector2D& MapPixel) const
 void UHellunaWorldMapWidget::UpdatePlayerMarkers()
 {
     APawn* MyPawn = GetOwningPlayerPawn();
-    if (!MyPawn || !LocalPlayerMarker)
+
+    // ── 본인 마커 ──
+    if (MyPawn && LocalPlayerMarker)
     {
-        return;
+        const FVector2D Px = WorldToMapPixel(MyPawn->GetActorLocation());
+        if (UCanvasPanelSlot* S = Cast<UCanvasPanelSlot>(LocalPlayerMarker->Slot))
+        {
+            const FVector2D Sz = S->GetSize();
+            S->SetPosition(Px - Sz * 0.5f);
+        }
+        LocalPlayerMarker->SetRenderTransformAngle(MyPawn->GetActorRotation().Yaw + 90.f);
     }
 
-    const FVector2D Pixel = WorldToMapPixel(MyPawn->GetActorLocation());
-    UCanvasPanelSlot* PlayerSlot = Cast<UCanvasPanelSlot>(LocalPlayerMarker->Slot);
-    if (PlayerSlot)
+    UWorld* World = GetWorld();
+    if (!World) return;
+
+    // ── [Phase 1] 우주선 (BASE) 마커 ──
+    if (AHellunaDefenseGameState* DefGS = World->GetGameState<AHellunaDefenseGameState>())
     {
-        PlayerSlot->SetPosition(Pixel - FVector2D(8.f, 8.f)); // 아이콘 크기 절반 오프셋
+        if (AActor* Ship = DefGS->GetSpaceShip())
+        {
+            const FVector2D ShipPx = WorldToMapPixel(Ship->GetActorLocation());
+
+            if (BaseMarker)
+            {
+                if (UCanvasPanelSlot* S = Cast<UCanvasPanelSlot>(BaseMarker->Slot))
+                {
+                    const FVector2D Sz = S->GetSize();
+                    S->SetPosition(ShipPx - Sz * 0.5f);
+                }
+                BaseMarker->SetVisibility(ESlateVisibility::HitTestInvisible);
+            }
+
+            if (BaseLabel)
+            {
+                if (UCanvasPanelSlot* S = Cast<UCanvasPanelSlot>(BaseLabel->Slot))
+                {
+                    S->SetPosition(ShipPx + FVector2D(-30.f, 18.f));
+                }
+                BaseLabel->SetVisibility(ESlateVisibility::HitTestInvisible);
+            }
+        }
+        else
+        {
+            if (BaseMarker) BaseMarker->SetVisibility(ESlateVisibility::Collapsed);
+            if (BaseLabel) BaseLabel->SetVisibility(ESlateVisibility::Collapsed);
+        }
     }
 
-    // TODO: 팀원 마커 갱신 (TeamMarkerCanvas 사용)
+    // ── [Phase 2] 다른 플레이어 마커 ──
+    UImage* TeamMarkers[2] = { TeamMarker1, TeamMarker2 };
+    int32 TeamIdx = 0;
+
+    if (AGameStateBase* GSBase = World->GetGameState())
+    {
+        for (APlayerState* PS : GSBase->PlayerArray)
+        {
+            if (!PS) continue;
+            APawn* Pawn = PS->GetPawn();
+
+            // As-A-Client fallback: GetPawn()이 nullptr이면 HeroCharacter 직접 검색
+            if (!Pawn)
+            {
+                TArray<AActor*> Heroes;
+                UGameplayStatics::GetAllActorsOfClass(World, AHellunaHeroCharacter::StaticClass(), Heroes);
+                for (AActor* H : Heroes)
+                {
+                    APawn* HeroPawn = Cast<APawn>(H);
+                    if (HeroPawn && HeroPawn->GetPlayerState() == PS)
+                    {
+                        Pawn = HeroPawn;
+                        break;
+                    }
+                }
+            }
+
+            if (!Pawn || Pawn == MyPawn) continue;
+            if (TeamIdx >= 2) break;
+
+            UImage* Marker = TeamMarkers[TeamIdx++];
+            if (!Marker) continue;
+
+            const FVector2D Px = WorldToMapPixel(Pawn->GetActorLocation());
+            if (UCanvasPanelSlot* S = Cast<UCanvasPanelSlot>(Marker->Slot))
+            {
+                const FVector2D Sz = S->GetSize();
+                S->SetPosition(Px - Sz * 0.5f);
+            }
+            Marker->SetRenderTransformAngle(Pawn->GetActorRotation().Yaw + 90.f);
+            Marker->SetVisibility(ESlateVisibility::HitTestInvisible);
+
+            // [Phase 4] 캐릭터 타입별 색상
+            FLinearColor MarkerColor = FLinearColor::White;
+            if (AHellunaPlayerState* HPS = Cast<AHellunaPlayerState>(PS))
+            {
+                switch (HPS->GetSelectedHeroType())
+                {
+                case EHellunaHeroType::Liam: MarkerColor = FLinearColor(0.38f, 0.65f, 0.98f); break;
+                case EHellunaHeroType::Luna: MarkerColor = FLinearColor(0.96f, 0.45f, 0.71f); break;
+                case EHellunaHeroType::Lui:  MarkerColor = FLinearColor(0.31f, 1.0f, 0.56f);  break;
+                default: break;
+                }
+            }
+            Marker->SetColorAndOpacity(MarkerColor);
+        }
+    }
+
+    // 안 채워진 팀 마커 숨김
+    for (int32 i = TeamIdx; i < 2; ++i)
+    {
+        if (TeamMarkers[i]) TeamMarkers[i]->SetVisibility(ESlateVisibility::Collapsed);
+    }
 }
 
 // ============================================================================
@@ -292,11 +447,11 @@ void UHellunaWorldMapWidget::UpdatePingMarker()
         UCanvasPanelSlot* PingSlot = Cast<UCanvasPanelSlot>(PingMarker->Slot);
         if (PingSlot)
         {
-            PingSlot->SetPosition(Pixel - FVector2D(12.f, 12.f)); // 핑 아이콘 크기 절반
+            const FVector2D PingSize = PingSlot->GetSize();
+            PingSlot->SetPosition(Pixel - PingSize * 0.5f);
         }
         PingMarker->SetVisibility(ESlateVisibility::HitTestInvisible);
 
-        // 핑까지 거리 표시
         if (PingDistanceText)
         {
             APawn* MyPawn = GetOwningPlayerPawn();
@@ -306,6 +461,11 @@ void UHellunaWorldMapWidget::UpdatePingMarker()
                 const int32 DistM = FMath::RoundToInt(DistCM / 100.f);
                 PingDistanceText->SetText(FText::FromString(FString::Printf(TEXT("%dm"), DistM)));
                 PingDistanceText->SetVisibility(ESlateVisibility::HitTestInvisible);
+
+                if (UCanvasPanelSlot* TextSlot = Cast<UCanvasPanelSlot>(PingDistanceText->Slot))
+                {
+                    TextSlot->SetPosition(Pixel + FVector2D(20.f, -10.f));
+                }
             }
         }
     }

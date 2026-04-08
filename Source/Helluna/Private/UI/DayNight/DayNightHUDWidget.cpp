@@ -10,9 +10,12 @@
 #include "Components/SizeBox.h"
 #include "Components/TextBlock.h"
 #include "Controller/HellunaHeroController.h"
+#include "Character/HellunaHeroCharacter.h"
 #include "GameFramework/PlayerState.h"
 #include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
+#include "Player/HellunaPlayerState.h"
 
 // ============================================================================
 // NativeConstruct
@@ -412,7 +415,6 @@ void UDayNightHUDWidget::UpdateMinimap()
     float MinimapWidgetSize = 76.f;
     if (MinimapSizeBox)
     {
-        // SizeBox의 WidthOverride 사용 (정사각형 가정)
         const float OverrideW = MinimapSizeBox->GetWidthOverride();
         if (OverrideW > 0.f)
         {
@@ -420,102 +422,110 @@ void UDayNightHUDWidget::UpdateMinimap()
         }
     }
 
-    // ── 플레이어 아이콘 갱신 ──
     UWorld* World = GetWorld();
     if (!World)
     {
         return;
     }
 
-    AGameStateBase* GSBase = World->GetGameState();
-    if (!GSBase)
+    auto UpdateMarker = [&](UImage* Marker, const FVector& WorldLoc, float YawDeg, bool bUseRotation) -> bool
     {
-        return;
-    }
-
-    // 현재 유효한 PlayerState 목록 수집
-    TSet<APlayerState*> ActivePlayers;
-    for (APlayerState* PS : GSBase->PlayerArray)
-    {
-        if (IsValid(PS) && !PS->IsSpectator())
-        {
-            ActivePlayers.Add(PS);
-        }
-    }
-
-    // 떠난 플레이어 아이콘 제거
-    TArray<TObjectPtr<APlayerState>> ToRemove;
-    for (auto& Pair : PlayerIconMap)
-    {
-        if (!ActivePlayers.Contains(Pair.Key))
-        {
-            if (Pair.Value)
-            {
-                Pair.Value->RemoveFromParent();
-            }
-            ToRemove.Add(Pair.Key);
-        }
-    }
-    for (auto& Key : ToRemove)
-    {
-        PlayerIconMap.Remove(Key);
-    }
-
-    // 각 플레이어 아이콘 생성/위치 갱신
-    const APlayerController* LocalPC = UGameplayStatics::GetPlayerController(this, 0);
-    const APlayerState* LocalPS = LocalPC ? LocalPC->PlayerState : nullptr;
-
-    for (APlayerState* PS : ActivePlayers)
-    {
-        // 아이콘 없으면 생성
-        if (!PlayerIconMap.Contains(PS))
-        {
-            const bool bIsLocal = (PS == LocalPS);
-            UImage* Icon = CreatePlayerIcon(bIsLocal ? LocalPlayerColor : TeamPlayerColor);
-            if (Icon)
-            {
-                PlayerIconMap.Add(PS, Icon);
-            }
-        }
-
-        // 아이콘 위치 갱신
-        UImage* Icon = PlayerIconMap.FindRef(PS);
-        if (!Icon)
-        {
-            continue;
-        }
-
-        APawn* Pawn = PS->GetPawn();
-        if (!Pawn)
-        {
-            Icon->SetVisibility(ESlateVisibility::Collapsed);
-            continue;
-        }
-
-        Icon->SetVisibility(ESlateVisibility::HitTestInvisible);
-
-        const FVector2D PawnUV = WorldToMinimapUV(Pawn->GetActorLocation());
-
-        // UV를 현재 보이는 미니맵 영역 내 로컬 좌표(0~1)로 변환
-        const float LocalX = (PawnUV.X - OffsetU) / MinimapZoomScale;
-        const float LocalY = (PawnUV.Y - OffsetV) / MinimapZoomScale;
-
-        // 미니맵 범위(0~1) 밖이면 숨김
+        if (!Marker) return false;
+        const FVector2D UV = WorldToMinimapUV(WorldLoc);
+        const float LocalX = (UV.X - OffsetU) / MinimapZoomScale;
+        const float LocalY = (UV.Y - OffsetV) / MinimapZoomScale;
         if (LocalX < 0.f || LocalX > 1.f || LocalY < 0.f || LocalY > 1.f)
         {
-            Icon->SetVisibility(ESlateVisibility::Collapsed);
-            continue;
+            Marker->SetVisibility(ESlateVisibility::Collapsed);
+            return false;
         }
-
-        // 위젯 좌표로 변환 (아이콘 크기의 절반만큼 오프셋)
-        const float PosX = LocalX * MinimapWidgetSize - PlayerIconSize * 0.5f;
-        const float PosY = LocalY * MinimapWidgetSize - PlayerIconSize * 0.5f;
-
-        UCanvasPanelSlot* IconSlot = Cast<UCanvasPanelSlot>(Icon->Slot);
-        if (IconSlot)
+        if (UCanvasPanelSlot* S = Cast<UCanvasPanelSlot>(Marker->Slot))
         {
-            IconSlot->SetPosition(FVector2D(PosX, PosY));
+            const FVector2D Sz = S->GetSize();
+            const float PosX = LocalX * MinimapWidgetSize - Sz.X * 0.5f;
+            const float PosY = LocalY * MinimapWidgetSize - Sz.Y * 0.5f;
+            S->SetPosition(FVector2D(PosX, PosY));
         }
+        if (bUseRotation)
+        {
+            Marker->SetRenderTransformAngle(YawDeg + 90.f);
+        }
+        Marker->SetVisibility(ESlateVisibility::HitTestInvisible);
+        return true;
+    };
+
+    // ── 본인 마커 (회전 적용) ──
+    UpdateMarker(MinimapLocalPlayerMarker, LocalPawn->GetActorLocation(), LocalPawn->GetActorRotation().Yaw, true);
+
+    // ── 다른 플레이어 (PlayerArray 순회) ──
+    UImage* TeamMarkers[2] = { MinimapTeamMarker1, MinimapTeamMarker2 };
+    int32 TeamIdx = 0;
+
+    if (AGameStateBase* GSBase = World->GetGameState())
+    {
+        const APlayerController* LocalPCRef = UGameplayStatics::GetPlayerController(this, 0);
+        const APlayerState* LocalPS = LocalPCRef ? LocalPCRef->PlayerState : nullptr;
+
+        for (APlayerState* PS : GSBase->PlayerArray)
+        {
+            if (!PS || PS == LocalPS) continue;
+            if (PS->IsSpectator()) continue;
+
+            APawn* Pawn = PS->GetPawn();
+            if (!Pawn)
+            {
+                TArray<AActor*> Heroes;
+                UGameplayStatics::GetAllActorsOfClass(World, AHellunaHeroCharacter::StaticClass(), Heroes);
+                for (AActor* H : Heroes)
+                {
+                    APawn* HeroPawn = Cast<APawn>(H);
+                    if (HeroPawn && HeroPawn->GetPlayerState() == PS)
+                    {
+                        Pawn = HeroPawn;
+                        break;
+                    }
+                }
+            }
+            if (!Pawn) continue;
+            if (TeamIdx >= 2) break;
+
+            UImage* Marker = TeamMarkers[TeamIdx++];
+            if (!Marker) continue;
+
+            UpdateMarker(Marker, Pawn->GetActorLocation(), Pawn->GetActorRotation().Yaw, true);
+
+            FLinearColor MarkerColor = FLinearColor::White;
+            if (AHellunaPlayerState* HPS = Cast<AHellunaPlayerState>(PS))
+            {
+                switch (HPS->GetSelectedHeroType())
+                {
+                case EHellunaHeroType::Liam: MarkerColor = FLinearColor(0.38f, 0.65f, 0.98f); break;
+                case EHellunaHeroType::Luna: MarkerColor = FLinearColor(0.96f, 0.45f, 0.71f); break;
+                case EHellunaHeroType::Lui:  MarkerColor = FLinearColor(0.31f, 1.0f, 0.56f);  break;
+                default: break;
+                }
+            }
+            Marker->SetColorAndOpacity(MarkerColor);
+        }
+    }
+
+    for (int32 i = TeamIdx; i < 2; ++i)
+    {
+        if (TeamMarkers[i]) TeamMarkers[i]->SetVisibility(ESlateVisibility::Collapsed);
+    }
+
+    // ── [Phase 1] 우주선 (BASE) 마커 ──
+    bool bBaseVisible = false;
+    if (AHellunaDefenseGameState* DefGS = World->GetGameState<AHellunaDefenseGameState>())
+    {
+        if (AActor* Ship = DefGS->GetSpaceShip())
+        {
+            bBaseVisible = UpdateMarker(MinimapBaseMarker, Ship->GetActorLocation(), 0.f, false);
+        }
+    }
+    if (!bBaseVisible && MinimapBaseMarker)
+    {
+        MinimapBaseMarker->SetVisibility(ESlateVisibility::Collapsed);
     }
 
     // ── 핑 마커 갱신 (PC에서 폴링) ──
@@ -524,29 +534,7 @@ void UDayNightHUDWidget::UpdateMinimap()
         AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(UGameplayStatics::GetPlayerController(this, 0));
         if (HeroPC && HeroPC->HasLocalPing())
         {
-            const FVector2D PingUV = WorldToMinimapUV(HeroPC->GetLocalPingLocation());
-
-            // UV를 현재 보이는 미니맵 영역 내 로컬 좌표(0~1)로 변환
-            const float PingLocalX = (PingUV.X - OffsetU) / MinimapZoomScale;
-            const float PingLocalY = (PingUV.Y - OffsetV) / MinimapZoomScale;
-
-            // 미니맵 범위(0~1) 안일 때만 표시
-            if (PingLocalX >= 0.f && PingLocalX <= 1.f && PingLocalY >= 0.f && PingLocalY <= 1.f)
-            {
-                const float PingPosX = PingLocalX * MinimapWidgetSize - 6.f; // 핑 아이콘 크기 절반
-                const float PingPosY = PingLocalY * MinimapWidgetSize - 6.f;
-
-                UCanvasPanelSlot* PingSlot = Cast<UCanvasPanelSlot>(MinimapPingMarker->Slot);
-                if (PingSlot)
-                {
-                    PingSlot->SetPosition(FVector2D(PingPosX, PingPosY));
-                }
-                MinimapPingMarker->SetVisibility(ESlateVisibility::HitTestInvisible);
-            }
-            else
-            {
-                MinimapPingMarker->SetVisibility(ESlateVisibility::Collapsed);
-            }
+            UpdateMarker(MinimapPingMarker, HeroPC->GetLocalPingLocation(), 0.f, false);
         }
         else
         {

@@ -9,6 +9,7 @@ class UCanvasPanel;
 class UCanvasPanelSlot;
 class UImage;
 class UTextBlock;
+class AHellunaDefenseGameState;
 
 /**
  * @brief   풀스크린 전술 맵 위젯
@@ -45,10 +46,19 @@ protected:
     TObjectPtr<UImage> BaseMarker = nullptr;
 
     UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    TObjectPtr<UTextBlock> BaseLabel = nullptr;
+
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
     TObjectPtr<UImage> LocalPlayerMarker = nullptr;
 
     UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
     TObjectPtr<UCanvasPanel> TeamMarkerCanvas = nullptr;
+
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    TObjectPtr<UImage> TeamMarker1 = nullptr;
+
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    TObjectPtr<UImage> TeamMarker2 = nullptr;
 
     UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
     TObjectPtr<UImage> PingMarker = nullptr;
@@ -71,6 +81,9 @@ public:
 
     /** 마우스 휠 줌 */
     virtual FReply NativeOnMouseWheel(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+
+    virtual FReply NativeOnMouseMove(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+    virtual FReply NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 
 private:
     // ── 좌표 변환 (DayNightHUDWidget과 동일한 값 사용) ──
@@ -107,4 +120,9 @@ private:
     static constexpr float MinZoom = 1.f;
     static constexpr float MaxZoom = 4.f;
     static constexpr float ZoomStep = 0.25f;
+
+    // ── 팬 (휠 클릭 드래그) ──
+    bool bIsPanning = false;
+    FVector2D PanLastMouse = FVector2D::ZeroVector;
+    FVector2D PanOffset = FVector2D::ZeroVector;
 };

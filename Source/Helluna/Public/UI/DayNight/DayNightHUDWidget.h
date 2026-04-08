@@ -39,9 +39,25 @@ protected:
     UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
     TObjectPtr<UCanvasPanel> MinimapIconCanvas = nullptr;
 
+    /** 미니맵 우주선(BASE) 마커 이미지 (시안 점, WBP에서 추가) */
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    TObjectPtr<UImage> MinimapBaseMarker = nullptr;
+
     /** 미니맵 핑 마커 이미지 (노란 다이아몬드, WBP에서 추가) */
     UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
     TObjectPtr<UImage> MinimapPingMarker = nullptr;
+
+    /** 미니맵 본인 마커 (녹색 화살표) */
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    TObjectPtr<UImage> MinimapLocalPlayerMarker = nullptr;
+
+    /** 미니맵 다른 플레이어 마커 1 */
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    TObjectPtr<UImage> MinimapTeamMarker1 = nullptr;
+
+    /** 미니맵 다른 플레이어 마커 2 */
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    TObjectPtr<UImage> MinimapTeamMarker2 = nullptr;
 
     // ── 웨이브 정보 (좌상단, 미니맵 아래) ──
     UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
