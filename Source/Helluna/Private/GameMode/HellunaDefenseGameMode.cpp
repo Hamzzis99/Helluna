@@ -10,8 +10,9 @@
 #include "AIController.h"
 #include "Components/StateTreeComponent.h"
 #include "PCGComponent.h"
+#include "PCG/PCGScoreComponent.h"
 #include "PCGGraph.h"
-#include "PCGManagedResource.h"
+#include "Data/PCGBasePointData.h"
 #include "PCGWorldActor.h"
 #include "Grid/PCGLandscapeCache.h"
 #include "Components/InstancedStaticMeshComponent.h"
@@ -485,24 +486,49 @@ void AHellunaDefenseGameMode::OnNightPCGGraphGenerated(UPCGComponent* InComponen
     UE_LOG(LogTemp, Warning, TEXT("[PCG 생성 콜백] ▶ 시작 | Day=%d | Owner=%s"),
         CurrentDay, PCGOwner ? *PCGOwner->GetName() : TEXT("nullptr"));
 
-    // ── PCG가 생성한 광석 데이터 추출 ──
+    // ── PCG 액터의 PCGScoreComponent에서 설정 읽기 ──
+    float PCGScoreWeight = 1.f;
+    UClass* SpawnClassOverride = nullptr;
+    if (IsValid(PCGOwner))
+    {
+        if (const UPCGScoreComponent* ScoreComp = PCGOwner->FindComponentByClass<UPCGScoreComponent>())
+        {
+            PCGScoreWeight = FMath::Max(ScoreComp->ScoreWeight, 0.01f);
+            if (ScoreComp->SpawnActorClassOverride)
+            {
+                SpawnClassOverride = ScoreComp->SpawnActorClassOverride;
+            }
+        }
+    }
+
+    // ── PCG 출력 포인트 데이터에서 위치 직접 추출 (Spawn Actor 노드 불필요) ──
     TArray<FPreservedOre> ExtractedOres;
     {
-        TArray<UObject*> PCGManagedObjects;
-        GetObjectsWithOuter(InComponent, PCGManagedObjects, /*bIncludeNestedOuters=*/false);
-
-        for (UObject* Obj : PCGManagedObjects)
+        if (!SpawnClassOverride)
         {
-            if (UPCGManagedActors* ManagedActors = Cast<UPCGManagedActors>(Obj))
+            UE_LOG(LogTemp, Error, TEXT("[PCG 생성 콜백] ❌ SpawnActorClassOverride가 설정되지 않음! PCGScoreComponent에서 스폰할 클래스를 지정하세요."));
+            Debug::Print(TEXT("[PCG] SpawnActorClassOverride 미설정 — PCGScoreComponent 확인 필요"), FColor::Red);
+            return;
+        }
+
+        const FPCGDataCollection& Output = InComponent->GetGeneratedGraphOutput();
+        TArray<FPCGTaggedData> SpatialData = Output.GetAllSpatialInputs();
+
+        for (const FPCGTaggedData& Tagged : SpatialData)
+        {
+            const UPCGBasePointData* BasePointData = Cast<UPCGBasePointData>(Tagged.Data);
+            if (!BasePointData)
             {
-                for (const TSoftObjectPtr<AActor>& Soft : ManagedActors->GetConstGeneratedActors())
-                {
-                    AActor* A = Soft.Get();
-                    if (IsValid(A) && A->Tags.Contains(FName(TEXT("Ore"))))
-                    {
-                        ExtractedOres.Add({ A->GetClass(), A->GetActorTransform(), A->Tags });
-                    }
-                }
+                UE_LOG(LogTemp, Warning, TEXT("[PCG 디버그]   Spatial → BasePointData CAST FAIL"));
+                continue;
+            }
+
+            const TArray<FTransform> Transforms = BasePointData->GetTransformsCopy();
+            UE_LOG(LogTemp, Warning, TEXT("[PCG 디버그]   포인트: %d개"), Transforms.Num());
+
+            for (const FTransform& T : Transforms)
+            {
+                ExtractedOres.Add({ SpawnClassOverride, T, { FName(TEXT("Ore")) }, PCGScoreWeight });
             }
         }
     }
@@ -512,7 +538,6 @@ void AHellunaDefenseGameMode::OnNightPCGGraphGenerated(UPCGComponent* InComponen
     // ── PCG 즉시 클린업 → PCG 관리 액터 제거, 기존 독립 광석은 영향 없음 ──
     InComponent->CleanupLocal(/*bRemoveComponents=*/true);
     InComponent->Deactivate();
-    UE_LOG(LogTemp, Warning, TEXT("[PCG 생성 콜백] PCG 클린업 완료 — 독립 액터 스폰으로 전환"));
 
     if (ExtractedOres.Num() == 0)
     {
@@ -521,11 +546,47 @@ void AHellunaDefenseGameMode::OnNightPCGGraphGenerated(UPCGComponent* InComponen
         return;
     }
 
-    Debug::Print(
-        FString::Printf(TEXT("[PCG 생성 완료] Day%d | 추출 광석: %d개 → 클러스터 후처리 시작"),
-            CurrentDay, ExtractedOres.Num()),
-        FColor::Green
-    );
+    // ── 종합 점수 로그 ──
+    {
+        float AvgDistScore = 0.f;
+        float AvgDensityScore = 0.f;
+        TArray<AActor*> CurrentOres;
+        UGameplayStatics::GetAllActorsWithTag(GetWorld(), FName(TEXT("Ore")), CurrentOres);
+
+        for (const FPreservedOre& Ore : ExtractedOres)
+        {
+            const FVector Loc = Ore.Transform.GetLocation();
+            AvgDistScore += CalculateDistanceFactor(Loc);
+            AvgDensityScore += CalculateOreDensityFactor(Loc, CurrentOres);
+        }
+        AvgDistScore /= ExtractedOres.Num();
+        AvgDensityScore /= ExtractedOres.Num();
+        const float AvgTotalScore = AvgDistScore * AvgDensityScore * PCGScoreWeight;
+
+        // 예상 스폰 수 계산 (실제 로직 시뮬레이션)
+        const int32 N = ExtractedOres.Num();
+        // 시드 수: N을 초과할 수 없음
+        const int32 EstSeedCount = FMath::Clamp(FMath::RoundToInt(N * ClusterSeedRatio * PCGScoreWeight), 1, N);
+        // 시드당 멤버 수 (평균): 시드를 제외한 나머지를 시드끼리 나눔
+        const int32 AvgMembers = (EstSeedCount < N) ? FMath::Min((N - EstSeedCount) / FMath::Max(EstSeedCount, 1), (MaxClusterSize - 1)) : 0;
+        // 실제 클러스터 크기 = (멤버+1) × 가중치
+        const int32 ScaledPerSeed = FMath::Max(1, FMath::RoundToInt((AvgMembers + 1) * PCGScoreWeight));
+        const int32 EstClusterOres = EstSeedCount * ScaledPerSeed;
+        // 단독 광석: 시드에도 멤버에도 배정되지 않은 수
+        const int32 Assigned = FMath::Min(EstSeedCount + EstSeedCount * AvgMembers, N);
+        const int32 Unassigned = N - Assigned;
+        const float WeightedSurvival = FMath::Clamp(IsolatedOreSurvivalChance * PCGScoreWeight, 0.f, 1.f);
+        const int32 EstIsolated = FMath::RoundToInt(Unassigned * WeightedSurvival);
+        const int32 EstTotal = EstClusterOres + EstIsolated;
+
+        UPCGGraph* Graph = InComponent->GetGraph();
+        const FString GraphName = Graph ? Graph->GetName() : TEXT("Unknown");
+
+        UE_LOG(LogTemp, Warning, TEXT("[PCG 점수] 그래프=%s | 가중치=%.1f | 평균거리점수=%.2f | 평균밀도점수=%.2f | 총점=%.2f | 예상 스폰: ~%d개 (시드%d + 단독%d)"),
+            *GraphName, PCGScoreWeight, AvgDistScore, AvgDensityScore, AvgTotalScore, EstTotal, EstClusterOres, EstIsolated);
+        Debug::Print(FString::Printf(TEXT("[PCG 점수] %s | 가중치=%.1f | 거리=%.2f | 밀도=%.2f | 총점=%.2f → 예상 ~%d개"),
+            *GraphName, PCGScoreWeight, AvgDistScore, AvgDensityScore, AvgTotalScore, EstTotal), FColor::Cyan);
+    }
 
     // 밀도 기반 클러스터 후처리 (추출한 데이터 기반, PCG 무관)
     PostProcessNightPCGDensity(ExtractedOres);
@@ -565,11 +626,13 @@ void AHellunaDefenseGameMode::PostProcessNightPCGDensity(const TArray<AHellunaDe
     for (int32 i = 0; i < TotalNew; ++i)
     {
         const FVector Loc = NewOreData[i].Transform.GetLocation();
-        Candidates.Add({ i, CalculateSpawnScore(Loc, ExistingOres) });
+        Candidates.Add({ i, CalculateSpawnScore(Loc, ExistingOres) * NewOreData[i].ScoreWeight });
     }
     Candidates.Sort([](const FSeedCandidate& A, const FSeedCandidate& B) { return A.Score > B.Score; });
 
-    const int32 SeedCount = FMath::Max(1, FMath::RoundToInt(TotalNew * ClusterSeedRatio));
+    // 가중치가 높을수록 시드(=클러스터 중심)를 더 많이 선정 → 광석이 더 많이 배치됨
+    const float AvgWeight = (TotalNew > 0 && NewOreData.Num() > 0) ? NewOreData[0].ScoreWeight : 1.f;
+    const int32 SeedCount = FMath::Max(1, FMath::RoundToInt(TotalNew * ClusterSeedRatio * AvgWeight));
     const float MinSeedDistSq = ClusterRadius * ClusterRadius;
     TArray<int32> SelectedSeedIndices;
     SelectedSeedIndices.Reserve(SeedCount);
@@ -632,40 +695,112 @@ void AHellunaDefenseGameMode::PostProcessNightPCGDensity(const TArray<AHellunaDe
         return FVector(S, S, S);
     };
 
-    PendingClusterSpawns.Empty();
-    SpawnedClusterOresResult.Empty();
+    // 이전 그래프의 스폰 요청이 남아 있으면 이어붙임 (덮어쓰지 않음)
 
-    // (A) 뭉침 광석 스폰 요청
+    // 겹침 방지용 — 기존 월드 광석 위치 + 이번 배치 예약 위치 + 이전 그래프 예약 위치
+    TArray<FVector> ReservedLocations;
+    ReservedLocations.Reserve(ExistingOres.Num() + PendingClusterSpawns.Num() + TotalNew * 2);
+    for (AActor* Ore : ExistingOres)
+    {
+        if (IsValid(Ore))
+        {
+            ReservedLocations.Add(Ore->GetActorLocation());
+        }
+    }
+    // 이전 그래프에서 이미 예약된 스폰 위치도 겹침 방지에 포함
+    for (const FClusterSpawnRequest& Prev : PendingClusterSpawns)
+    {
+        ReservedLocations.Add(Prev.Transform.GetLocation());
+    }
+    // 기울기 보정: 광석이 최대 각도로 기울어졌을 때 메시가 차지하는 추가 반경을 반영
+    // 광석 높이를 대략 스케일 * 50cm로 가정, sin(15°) ≈ 0.26 → 양쪽 다 기울면 x2
+    const float MaxTiltRad = FMath::DegreesToRadians(FMath::Max(OreTiltMaxPitch, OreTiltMaxRoll));
+    const float TiltBuffer = OreScaleMax * 50.f * FMath::Sin(MaxTiltRad) * 2.f;
+    const float EffectiveMinSpacing = ClusterPlaceMinDist + TiltBuffer;
+    const float MinSpacingSq = EffectiveMinSpacing * EffectiveMinSpacing;
+    const int32 MaxRetries = 5;
+
+    auto IsLocationValid = [&ReservedLocations, MinSpacingSq](const FVector& Loc) -> bool
+    {
+        for (const FVector& Existing : ReservedLocations)
+        {
+            if (FVector::DistSquared(Loc, Existing) < MinSpacingSq)
+            {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    // (A) 뭉침 광석 스폰 요청 — 가중치로 클러스터 크기 스케일, 크기에 비례해 반경 확장
     for (int32 SeedIdx : SelectedSeedIndices)
     {
         const FVector SeedLoc = NewOreData[SeedIdx].Transform.GetLocation();
         const float SeedZ = SeedLoc.Z;
-        const TArray<int32>& Members = SeedToMembers[SeedIdx];
-        const int32 TotalInCluster = Members.Num() + 1;
+        const float Weight = NewOreData[SeedIdx].ScoreWeight;
+        // 가중치 기반 뭉침 크기: W1→2~3, W2→3~4, W3→4~6, W5→7~10
+        const int32 ClusterMin = FMath::Max(1, FMath::RoundToInt(1.5f + (Weight - 1.f) * 1.25f));
+        const int32 ClusterMax = FMath::Max(ClusterMin, FMath::RoundToInt(ClusterMin + Weight * 0.6f));
+        const int32 TotalInCluster = FMath::RandRange(ClusterMin, ClusterMax);
         const float AngleStep = 360.f / TotalInCluster;
         UClass* OreClass = NewOreData[SeedIdx].OreClass;
         TArray<FName> OreTags = NewOreData[SeedIdx].Tags;
 
+        // 클러스터 크기에 비례해 배치 반경 확장 (기본 크기 대비)
+        const int32 BaseMax = (MinClusterSize + MaxClusterSize) / 2;
+        const float RadiusScale = (BaseMax > 0) ? FMath::Sqrt(static_cast<float>(TotalInCluster) / BaseMax) : 1.f;
+        const float ScaledMinDist = ClusterPlaceMinDist * RadiusScale;
+        const float ScaledMaxDist = ClusterPlaceMaxDist * RadiusScale;
+
         for (int32 j = 0; j < TotalInCluster; ++j)
         {
-            const float BaseAngle = AngleStep * j + FMath::FRandRange(-20.f, 20.f);
-            const float Dist = (j == 0) ? 0.f : FMath::FRandRange(ClusterPlaceMinDist, ClusterPlaceMaxDist);
-            const FVector Dir = FVector::ForwardVector.RotateAngleAxis(BaseAngle, FVector::UpVector);
-            FVector SpawnLoc = SeedLoc + Dir * Dist;
-            SpawnLoc.Z = SeedZ;
+            FVector SpawnLoc;
+            bool bValid = false;
 
-            PendingClusterSpawns.Add({ OreClass, FTransform(MakeRandomTiltRotation(), SpawnLoc, MakeRandomScale()), OreTags });
+            for (int32 Retry = 0; Retry <= MaxRetries; ++Retry)
+            {
+                const float BaseAngle = AngleStep * j + FMath::FRandRange(-20.f, 20.f) + (Retry * 72.f);
+                const float Dist = (j == 0 && Retry == 0) ? 0.f : FMath::FRandRange(ScaledMinDist, ScaledMaxDist);
+                const FVector Dir = FVector::ForwardVector.RotateAngleAxis(BaseAngle, FVector::UpVector);
+                SpawnLoc = SeedLoc + Dir * Dist;
+                SpawnLoc.Z = SeedZ;
+
+                if (IsLocationValid(SpawnLoc))
+                {
+                    bValid = true;
+                    break;
+                }
+            }
+
+            if (bValid)
+            {
+                // 지면 높이 보정 — 라인트레이스로 실제 땅 위치를 찾아 Z를 맞춤
+                FHitResult GroundHit;
+                const FVector TraceStart = FVector(SpawnLoc.X, SpawnLoc.Y, SpawnLoc.Z + 500.f);
+                const FVector TraceEnd   = FVector(SpawnLoc.X, SpawnLoc.Y, SpawnLoc.Z - 1000.f);
+                if (GetWorld()->LineTraceSingleByChannel(GroundHit, TraceStart, TraceEnd, ECC_Visibility))
+                {
+                    SpawnLoc.Z = GroundHit.ImpactPoint.Z;
+                }
+
+                ReservedLocations.Add(SpawnLoc);
+                PendingClusterSpawns.Add({ OreClass, FTransform(MakeRandomTiltRotation(), SpawnLoc, MakeRandomScale()), OreTags });
+            }
         }
     }
 
-    // (B) 단독 광석 스폰 요청 (클러스터에 배정되지 않은 광석)
+    // (B) 단독 광석 스폰 요청 (클러스터에 배정되지 않은 광석 — 가중치로 생존 확률 조절)
     for (int32 i = 0; i < TotalNew; ++i)
     {
         if (AssignedIndices.Contains(i)) continue;
-        if (FMath::FRand() < IsolatedOreSurvivalChance)
+        const float WeightedSurvival = FMath::Clamp(IsolatedOreSurvivalChance * NewOreData[i].ScoreWeight, 0.f, 1.f);
+        if (FMath::FRand() < WeightedSurvival)
         {
+            const FVector IsoLoc = NewOreData[i].Transform.GetLocation();
+            if (!IsLocationValid(IsoLoc)) continue;
+            ReservedLocations.Add(IsoLoc);
             PendingClusterSpawns.Add({ NewOreData[i].OreClass,
-                FTransform(MakeRandomTiltRotation(), NewOreData[i].Transform.GetLocation(), MakeRandomScale()),
+                FTransform(MakeRandomTiltRotation(), IsoLoc, MakeRandomScale()),
                 NewOreData[i].Tags });
         }
     }
@@ -677,12 +812,15 @@ void AHellunaDefenseGameMode::PostProcessNightPCGDensity(const TArray<AHellunaDe
         CalcTime, PendingClusterSpawns.Num()), FColor::Orange);
 
     // ★ 스폰 배칭 시작 (파괴 단계 없음 — PCG 클린업 시 이미 제거됨)
-    ClusterSpawnBatchIndex = 0;
-
     if (PendingClusterSpawns.Num() > 0)
     {
-        GetWorldTimerManager().SetTimer(ClusterSpawnTimer, this,
-            &AHellunaDefenseGameMode::ProcessClusterSpawnBatch, PCGBatchInterval, true);
+        // 타이머가 이미 돌고 있으면 (이전 그래프 배칭 중) 중복 시작하지 않음 — 배열에 추가만 되면 됨
+        if (!GetWorldTimerManager().IsTimerActive(ClusterSpawnTimer))
+        {
+            ClusterSpawnBatchIndex = 0;
+            GetWorldTimerManager().SetTimer(ClusterSpawnTimer, this,
+                &AHellunaDefenseGameMode::ProcessClusterSpawnBatch, PCGBatchInterval, true);
+        }
     }
     else
     {

@@ -178,6 +178,18 @@ void UEnemyGameplayAbility_TimeDistortion::ApplyTimeSlow()
 		TD_LOG("Player [%s] AnimRateMultiplier set to %.2f (original GlobalAnimRateScale=%.2f)",
 			*Player->GetName(), TimeDilationScale, State.OriginalAnimPlayRate);
 
+		// ── 점프 슬로우 (중력 + 점프속도를 같은 비율로 줄여 높이 유지, 체공 시간 증가) ──
+		if (UCharacterMovementComponent* CMC = Player->GetCharacterMovement())
+		{
+			State.OriginalGravityScale = CMC->GravityScale;
+			State.OriginalJumpZVelocity = CMC->JumpZVelocity;
+			CMC->GravityScale = State.OriginalGravityScale * TimeDilationScale;
+			CMC->JumpZVelocity = State.OriginalJumpZVelocity * FMath::Sqrt(TimeDilationScale);
+			TD_LOG("Player [%s] GravityScale: %.2f -> %.2f, JumpZVelocity: %.0f -> %.0f",
+				*Player->GetName(), State.OriginalGravityScale, CMC->GravityScale,
+				State.OriginalJumpZVelocity, CMC->JumpZVelocity);
+		}
+
 		// ── CustomTimeDilation은 건드리지 않음 ──
 		// MoveSpeedMultiplier가 이동속도, AnimRateMultiplier가 애니메이션을 처리.
 		// CustomTimeDilation까지 바꾸면 이중 적용되어 속도가 극단적으로 느려진다.
@@ -633,6 +645,16 @@ void UEnemyGameplayAbility_TimeDistortion::RestoreAllTimeDilation()
 		TD_LOG("Restoring [%s] AnimRate done: GlobalAnimRateScale=%.2f",
 			*Player->GetName(),
 			Player->GetMesh() ? Player->GetMesh()->GlobalAnimRateScale : -1.f);
+
+		// ── 점프 복원 (중력 + 점프속도) ──
+		if (UCharacterMovementComponent* CMC = Player->GetCharacterMovement())
+		{
+			TD_LOG("Restoring [%s] GravityScale: %.2f -> %.2f, JumpZVelocity: %.0f -> %.0f",
+				*Player->GetName(), CMC->GravityScale, State.OriginalGravityScale,
+				CMC->JumpZVelocity, State.OriginalJumpZVelocity);
+			CMC->GravityScale = State.OriginalGravityScale;
+			CMC->JumpZVelocity = State.OriginalJumpZVelocity;
+		}
 
 		TD_LOG("Restoring [%s] complete (MoveMultiplier=1.0, AnimMultiplier=1.0)", *Player->GetName());
 	}

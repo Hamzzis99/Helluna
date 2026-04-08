@@ -188,6 +188,8 @@ protected:
 		UClass* OreClass;
 		FTransform Transform;
 		TArray<FName> Tags;
+		/** PCG 액터 태그에서 파싱한 점수 가중치 (기본 1.0) */
+		float ScoreWeight = 1.f;
 	};
 
 	/** PCG에서 추출한 광석 데이터로 밀도 기반 클러스터 후처리 + 독립 액터 스폰 */
@@ -201,7 +203,7 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|프레임 분산",
 		meta = (DisplayName = "배치당 스폰 수", ClampMin = "1", ClampMax = "50",
 			ToolTip = "한 프레임에 스폰할 최대 광석 수.\n낮을수록 프레임 드랍이 적지만 전체 시간이 길어집니다."))
-	int32 PCGBatchSpawnCount = 10;
+	int32 PCGBatchSpawnCount = 5;
 
 	/** 한 배치에 파괴할 최대 액터 수 */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|프레임 분산",
@@ -252,6 +254,7 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|클러스터",
 		meta = (DisplayName = "단독 광석 생존 확률", ClampMin = "0.0", ClampMax = "1.0"))
 	float IsolatedOreSurvivalChance = 0.4f;
+
 
 	// ────────────────────────────────────────────────────────────────────────────
 	// [PCG 랜덤 각도/크기]

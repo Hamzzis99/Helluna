@@ -349,6 +349,8 @@ private:
 	{
 		float OriginalTimeDilation = 1.f;
 		float OriginalAnimPlayRate = 1.f;
+		float OriginalGravityScale = 1.f;
+		float OriginalJumpZVelocity = 0.f;
 	};
 
 	/** 슬로우가 적용된 플레이어와 원래 상태 */
