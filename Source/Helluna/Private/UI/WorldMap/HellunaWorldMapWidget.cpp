@@ -93,6 +93,16 @@ void UHellunaWorldMapWidget::CloseMap()
     AnimTime = 0.f;
     bIsOpen = false;
 
+    MapZoom = 1.f;
+    PanOffset = FVector2D::ZeroVector;
+    bIsPanning = false;
+    if (ZoomContent)
+    {
+        ZoomContent->SetRenderScale(FVector2D(1.f, 1.f));
+        ZoomContent->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+        ZoomContent->SetRenderTranslation(FVector2D::ZeroVector);
+    }
+
     APlayerController* PC = GetOwningPlayer();
     if (PC)
     {
@@ -195,8 +205,22 @@ FReply UHellunaWorldMapWidget::NativeOnMouseWheel(const FGeometry& InGeometry, c
     ZoomContent->SetRenderTransformPivot(Pivot);
 
     const float Delta = InMouseEvent.GetWheelDelta();
+    const float OldZoom = MapZoom;
     MapZoom = FMath::Clamp(MapZoom + Delta * ZoomStep, MinZoom, MaxZoom);
-    ZoomContent->SetRenderScale(FVector2D(MapZoom, MapZoom));
+
+    if (MapZoom <= 1.0001f)
+    {
+        MapZoom = 1.f;
+        PanOffset = FVector2D::ZeroVector;
+        bIsPanning = false;
+        ZoomContent->SetRenderScale(FVector2D(1.f, 1.f));
+        ZoomContent->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+        ZoomContent->SetRenderTranslation(FVector2D::ZeroVector);
+    }
+    else
+    {
+        ZoomContent->SetRenderScale(FVector2D(MapZoom, MapZoom));
+    }
 
     UE_LOG(LogTemp, Verbose, TEXT("[WorldMap] Zoom=%.2f Pivot=(%.2f,%.2f)"), MapZoom, Pivot.X, Pivot.Y);
     return FReply::Handled();
@@ -238,6 +262,7 @@ FReply UHellunaWorldMapWidget::NativeOnMouseButtonDown(const FGeometry& InGeomet
 
     if (InMouseEvent.GetEffectingButton() == EKeys::MiddleMouseButton)
     {
+        if (MapZoom <= 1.0001f) return FReply::Handled();
         bIsPanning = true;
         PanLastMouse = InMouseEvent.GetScreenSpacePosition();
         return FReply::Handled().CaptureMouse(TakeWidget());

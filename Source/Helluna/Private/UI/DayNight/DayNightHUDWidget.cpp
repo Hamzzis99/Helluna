@@ -574,13 +574,16 @@ UImage* UDayNightHUDWidget::CreatePlayerIcon(const FLinearColor& Color)
         return nullptr;
     }
 
-    // 단색 사각 아이콘
+    UTexture2D* ArrowTex = LoadObject<UTexture2D>(nullptr, TEXT("/Game/Gihyeon/UI/HUD/Textures/T_MapMarker_Player.T_MapMarker_Player"));
+    if (ArrowTex)
+    {
+        Icon->SetBrushFromTexture(ArrowTex, true);
+    }
     Icon->SetColorAndOpacity(Color);
     Icon->SetVisibility(ESlateVisibility::HitTestInvisible);
 
     MinimapIconCanvas->AddChild(Icon);
 
-    // CanvasPanelSlot 크기 설정
     UCanvasPanelSlot* IconSlot = Cast<UCanvasPanelSlot>(Icon->Slot);
     if (IconSlot)
     {
