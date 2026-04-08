@@ -532,6 +532,45 @@ void AHellunaDefenseGameMode::ProcessOreRestoreBatch()
     }
 }
 
+void AHellunaDefenseGameMode::CleanupInitialNightPCGArtifacts()
+{
+    if (!HasAuthority())
+    {
+        return;
+    }
+
+    UWorld* World = GetWorld();
+    if (!IsValid(World))
+    {
+        return;
+    }
+
+    for (const TWeakObjectPtr<UPCGComponent>& WeakPCGComp : CachedNightPCGComponents)
+    {
+        UPCGComponent* PCGComp = WeakPCGComp.Get();
+        if (!IsValid(PCGComp))
+        {
+            continue;
+        }
+
+        PCGComp->GenerationTrigger = EPCGComponentGenerationTrigger::GenerateOnDemand;
+        PCGComp->CleanupLocal(true);
+        PCGComp->Deactivate();
+    }
+
+    TArray<AActor*> ExistingOres;
+    UGameplayStatics::GetAllActorsWithTag(World, FName(TEXT("Ore")), ExistingOres);
+    for (AActor* OreActor : ExistingOres)
+    {
+        if (IsValid(OreActor))
+        {
+            OreActor->Destroy();
+        }
+    }
+
+    PreGenerationOreSnapshot.Empty();
+}
+
 void AHellunaDefenseGameMode::OnNightPCGGraphGenerated(UPCGComponent* InComponent)
 {
     if (!IsValid(InComponent))
@@ -1054,6 +1093,11 @@ void AHellunaDefenseGameMode::EnterDay()
     // 낮 카운터 증가 (게임 시작 첫 낮은 Day 1)
     CurrentDay++;
 
+    if (CurrentDay == 1)
+    {
+        CleanupInitialNightPCGArtifacts();
+    }
+
     // Day에 따라 적절한 낮 지속 시간 결정
     const float EffectiveDayDuration = GetEffectiveDayDuration();
 
@@ -1084,6 +1128,8 @@ void AHellunaDefenseGameMode::EnterDay()
 
         GS->NetMulticast_OnDawnPassed(EffectiveDayDuration);
     }
+
+    GetWorldTimerManager().SetTimerForNextTick(this, &ThisClass::ActivateNightPCG);
 
     GetWorldTimerManager().ClearTimer(TimerHandle_ToNight);
     GetWorldTimerManager().SetTimer(TimerHandle_ToNight, this, &ThisClass::EnterNight, EffectiveDayDuration, false);
@@ -1118,9 +1164,6 @@ void AHellunaDefenseGameMode::EnterNight()
 
     // 낮 카운트다운 타이머 정지
     GetWorldTimerManager().ClearTimer(TimerHandle_DayCountdown);
-
-    // PCG 밤 스폰 실행
-    ActivateNightPCG();
 
     // ── 보스 소환 일 체크 ──────────────────────────────────────────────
     // BossSchedule 배열에서 CurrentDay와 일치하는 항목을 찾는다.
