@@ -159,33 +159,30 @@ void UEnemyGameplayAbility_TimeDistortion::ApplyTimeSlow()
 		FPlayerSlowState State;
 		State.OriginalTimeDilation = Player->CustomTimeDilation;
 
-		// ── 이동속도: MoveSpeedMultiplier 배율 설정 ──
-		// GA_Run/GA_Aim 등이 MaxWalkSpeed 설정 시 이 배율을 곱해서 적용한다.
-		// 현재 MaxWalkSpeed에도 즉시 반영한다.
+		// ── 이동속도: MoveSpeedMultiplier 배율 설정 (Replicated + OnRep → 클라이언트 즉시 반영) ──
+		// SetMoveSpeedMultiplier 내부에서 MaxWalkSpeed도 자동 갱신됨
+		// OnRep_MoveSpeedMultiplier가 클라이언트에서 MaxWalkSpeed를 갱신함
+		TD_LOG("Player [%s] Before slow: MaxWalkSpeed=%.0f, MoveMultiplier=%.2f",
+			*Player->GetName(),
+			Player->GetCharacterMovement() ? Player->GetCharacterMovement()->MaxWalkSpeed : -1.f,
+			Player->GetMoveSpeedMultiplier());
 		Player->SetMoveSpeedMultiplier(TimeDilationScale);
-		if (UCharacterMovementComponent* CMC = Player->GetCharacterMovement())
-		{
-			const float Before = CMC->MaxWalkSpeed;
-			CMC->MaxWalkSpeed *= TimeDilationScale;
-			TD_LOG("Player [%s] WalkSpeed: %.0f * %.2f = %.0f (Multiplier set)",
-				*Player->GetName(), Before, TimeDilationScale, CMC->MaxWalkSpeed);
-		}
+		TD_LOG("Player [%s] After slow: MaxWalkSpeed=%.0f, MoveMultiplier=%.2f",
+			*Player->GetName(),
+			Player->GetCharacterMovement() ? Player->GetCharacterMovement()->MaxWalkSpeed : -1.f,
+			Player->GetMoveSpeedMultiplier());
 
-		// ── 애니메이션 속도 ──
-		USkeletalMeshComponent* Mesh = Player->GetMesh();
-		if (Mesh)
-		{
-			State.OriginalAnimPlayRate = Mesh->GlobalAnimRateScale;
-			Mesh->GlobalAnimRateScale *= TimeDilationScale;
-			TD_LOG("Player [%s] AnimRate: %.2f * %.2f = %.2f",
-				*Player->GetName(), State.OriginalAnimPlayRate, TimeDilationScale, Mesh->GlobalAnimRateScale);
-		}
+		// ── 애니메이션 속도 (Replicated + OnRep → 클라이언트 GlobalAnimRateScale 즉시 반영) ──
+		State.OriginalAnimPlayRate = Player->GetMesh() ? Player->GetMesh()->GlobalAnimRateScale : 1.f;
+		Player->SetAnimRateMultiplier(TimeDilationScale);
+		TD_LOG("Player [%s] AnimRateMultiplier set to %.2f (original GlobalAnimRateScale=%.2f)",
+			*Player->GetName(), TimeDilationScale, State.OriginalAnimPlayRate);
 
 		// ── CustomTimeDilation은 건드리지 않음 ──
-		// MoveSpeedMultiplier가 이동속도, GlobalAnimRateScale이 애니메이션을 처리.
+		// MoveSpeedMultiplier가 이동속도, AnimRateMultiplier가 애니메이션을 처리.
 		// CustomTimeDilation까지 바꾸면 이중 적용되어 속도가 극단적으로 느려진다.
-		TD_LOG("Player [%s] slowed: MoveMultiplier=%.2f, AnimRate=%.2f (CustomTimeDilation unchanged=%.2f)",
-			*Player->GetName(), TimeDilationScale, TimeDilationScale, Player->CustomTimeDilation);
+		TD_LOG("Player [%s] slowed complete: MoveMultiplier=%.2f, AnimMultiplier=%.2f (CustomTimeDilation unchanged=%.2f)",
+			*Player->GetName(), Player->GetMoveSpeedMultiplier(), Player->GetAnimRateMultiplier(), Player->CustomTimeDilation);
 
 		SlowedPlayers.Add(Player, State);
 	}
@@ -620,28 +617,24 @@ void UEnemyGameplayAbility_TimeDistortion::RestoreAllTimeDilation()
 
 		const FPlayerSlowState& State = Pair.Value;
 
-		// ── 이동속도: 배율 리셋 + 현재 MaxWalkSpeed 역산 ──
+		// ── 이동속도: 배율 리셋 (OnRep으로 클라이언트 MaxWalkSpeed 자동 복원) ──
+		TD_LOG("Restoring [%s] MoveSpeed: current Multiplier=%.2f -> 1.0, MaxWalkSpeed=%.0f",
+			*Player->GetName(), Player->GetMoveSpeedMultiplier(),
+			Player->GetCharacterMovement() ? Player->GetCharacterMovement()->MaxWalkSpeed : -1.f);
 		Player->SetMoveSpeedMultiplier(1.f);
-		if (UCharacterMovementComponent* CMC = Player->GetCharacterMovement())
-		{
-			const float Before = CMC->MaxWalkSpeed;
-			if (TimeDilationScale > KINDA_SMALL_NUMBER)
-			{
-				CMC->MaxWalkSpeed /= TimeDilationScale;
-			}
-			TD_LOG("Restoring [%s] WalkSpeed: %.0f / %.2f = %.0f (Multiplier reset to 1.0)",
-				*Player->GetName(), Before, TimeDilationScale, CMC->MaxWalkSpeed);
-		}
+		TD_LOG("Restoring [%s] MoveSpeed done: MaxWalkSpeed=%.0f",
+			*Player->GetName(),
+			Player->GetCharacterMovement() ? Player->GetCharacterMovement()->MaxWalkSpeed : -1.f);
 
-		// ── 애니메이션 속도 복원 ──
-		if (USkeletalMeshComponent* Mesh = Player->GetMesh())
-		{
-			TD_LOG("Restoring [%s] AnimRate: %.2f -> %.2f",
-				*Player->GetName(), Mesh->GlobalAnimRateScale, State.OriginalAnimPlayRate);
-			Mesh->GlobalAnimRateScale = State.OriginalAnimPlayRate;
-		}
+		// ── 애니메이션 속도 복원 (OnRep으로 클라이언트 GlobalAnimRateScale 자동 복원) ──
+		TD_LOG("Restoring [%s] AnimRate: current Multiplier=%.2f -> 1.0",
+			*Player->GetName(), Player->GetAnimRateMultiplier());
+		Player->SetAnimRateMultiplier(1.f);
+		TD_LOG("Restoring [%s] AnimRate done: GlobalAnimRateScale=%.2f",
+			*Player->GetName(),
+			Player->GetMesh() ? Player->GetMesh()->GlobalAnimRateScale : -1.f);
 
-		TD_LOG("Restoring [%s] complete (MoveMultiplier=1.0)", *Player->GetName());
+		TD_LOG("Restoring [%s] complete (MoveMultiplier=1.0, AnimMultiplier=1.0)", *Player->GetName());
 	}
 	SlowedPlayers.Reset();
 }

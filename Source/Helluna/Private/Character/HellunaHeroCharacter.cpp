@@ -1102,14 +1102,92 @@ void AHellunaHeroCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 	DOREPLIFETIME(AHellunaHeroCharacter, CurrentWeaponTag);
 	DOREPLIFETIME(AHellunaHeroCharacter, PlayFullBody);   // 전신 몽타주 플래그 — CLIENT B ABP 동기화
 	DOREPLIFETIME(AHellunaHeroCharacter, ReviveProgress);  // [Downed/Revive] 부활 진행률
-	DOREPLIFETIME(AHellunaHeroCharacter, MoveSpeedMultiplier);  // [TimeDistortion] 슬로우 배율
+	DOREPLIFETIME(AHellunaHeroCharacter, MoveSpeedMultiplier);  // [TimeDistortion] 이동속도 슬로우 배율
+	DOREPLIFETIME(AHellunaHeroCharacter, AnimRateMultiplier);   // [TimeDistortion] 애니메이션 속도 슬로우 배율
 }
 
 
 
 void AHellunaHeroCharacter::SetMoveSpeedMultiplier(float NewMultiplier)
 {
+	PrevMoveSpeedMultiplier = MoveSpeedMultiplier;
 	MoveSpeedMultiplier = FMath::Clamp(NewMultiplier, 0.05f, 1.f);
+
+	UE_LOG(LogTemp, Warning, TEXT("[TimeDistortion] SetMoveSpeedMultiplier: %.2f -> %.2f (Server)"),
+		PrevMoveSpeedMultiplier, MoveSpeedMultiplier);
+
+	// 서버(리슨 서버)에서도 즉시 MaxWalkSpeed 갱신
+	if (UCharacterMovementComponent* CMC = GetCharacterMovement())
+	{
+		if (PrevMoveSpeedMultiplier > KINDA_SMALL_NUMBER)
+		{
+			// 기존 배율을 제거하고 새 배율 적용
+			CMC->MaxWalkSpeed = (CMC->MaxWalkSpeed / PrevMoveSpeedMultiplier) * MoveSpeedMultiplier;
+		}
+		UE_LOG(LogTemp, Warning, TEXT("[TimeDistortion] Server MaxWalkSpeed updated to %.0f"), CMC->MaxWalkSpeed);
+	}
+}
+
+void AHellunaHeroCharacter::OnRep_MoveSpeedMultiplier()
+{
+	UE_LOG(LogTemp, Warning, TEXT("[TimeDistortion] OnRep_MoveSpeedMultiplier: prev=%.2f, new=%.2f (Client)"),
+		PrevMoveSpeedMultiplier, MoveSpeedMultiplier);
+
+	if (UCharacterMovementComponent* CMC = GetCharacterMovement())
+	{
+		if (PrevMoveSpeedMultiplier > KINDA_SMALL_NUMBER)
+		{
+			// 기존 배율을 제거하고 새 배율 적용
+			CMC->MaxWalkSpeed = (CMC->MaxWalkSpeed / PrevMoveSpeedMultiplier) * MoveSpeedMultiplier;
+		}
+		UE_LOG(LogTemp, Warning, TEXT("[TimeDistortion] Client MaxWalkSpeed updated to %.0f"), CMC->MaxWalkSpeed);
+	}
+	PrevMoveSpeedMultiplier = MoveSpeedMultiplier;
+}
+
+void AHellunaHeroCharacter::SetAnimRateMultiplier(float NewMultiplier)
+{
+	AnimRateMultiplier = FMath::Clamp(NewMultiplier, 0.05f, 1.f);
+
+	UE_LOG(LogTemp, Warning, TEXT("[TimeDistortion] SetAnimRateMultiplier: %.2f (Server)"), AnimRateMultiplier);
+
+	// 서버(리슨 서버)에서도 즉시 GlobalAnimRateScale 갱신
+	if (USkeletalMeshComponent* SkelMesh = GetMesh())
+	{
+		if (AnimRateMultiplier < 1.f - KINDA_SMALL_NUMBER)
+		{
+			// 슬로우 적용: 원본 저장 후 배율 적용
+			OriginalGlobalAnimRateScale = SkelMesh->GlobalAnimRateScale;
+			SkelMesh->GlobalAnimRateScale = OriginalGlobalAnimRateScale * AnimRateMultiplier;
+		}
+		else
+		{
+			// 복원
+			SkelMesh->GlobalAnimRateScale = OriginalGlobalAnimRateScale;
+		}
+		UE_LOG(LogTemp, Warning, TEXT("[TimeDistortion] Server GlobalAnimRateScale = %.2f"), SkelMesh->GlobalAnimRateScale);
+	}
+}
+
+void AHellunaHeroCharacter::OnRep_AnimRateMultiplier()
+{
+	UE_LOG(LogTemp, Warning, TEXT("[TimeDistortion] OnRep_AnimRateMultiplier: %.2f (Client)"), AnimRateMultiplier);
+
+	if (USkeletalMeshComponent* SkelMesh = GetMesh())
+	{
+		if (AnimRateMultiplier < 1.f - KINDA_SMALL_NUMBER)
+		{
+			// 슬로우 적용: 원본 저장 후 배율 적용
+			OriginalGlobalAnimRateScale = SkelMesh->GlobalAnimRateScale;
+			SkelMesh->GlobalAnimRateScale = OriginalGlobalAnimRateScale * AnimRateMultiplier;
+		}
+		else
+		{
+			// 복원
+			SkelMesh->GlobalAnimRateScale = OriginalGlobalAnimRateScale;
+		}
+		UE_LOG(LogTemp, Warning, TEXT("[TimeDistortion] Client GlobalAnimRateScale = %.2f"), SkelMesh->GlobalAnimRateScale);
+	}
 }
 
 void AHellunaHeroCharacter::LockMoveInput()
