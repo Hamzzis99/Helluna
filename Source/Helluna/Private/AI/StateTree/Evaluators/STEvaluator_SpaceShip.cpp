@@ -28,25 +28,54 @@ void FSTEvaluator_SpaceShip::TreeStart(FStateTreeExecutionContext& Context) cons
 	const UWorld* World = Context.GetWorld();
 	if (!World) return;
 
-	// 우주선은 게임 내 고정 오브젝트이므로 TreeStart에서 한 번만 탐색
-	int32 SearchCount = 0;
-	for (TActorIterator<AActor> It(World); It; ++It)
+	// #4 최적화: 50마리 동시 스폰 시 TActorIterator 반복 방지 — 정적 캐시 사용
+	static TWeakObjectPtr<AActor> CachedSpaceShip;
+	static int32 CacheHitCount = 0;
+	static int32 CacheMissCount = 0;
+
+	if (!CachedSpaceShip.IsValid())
 	{
-		SearchCount++;
-		if (It->ActorHasTag(SpaceShipTag))
+		CacheMissCount++;
+		for (TActorIterator<AActor> It(World); It; ++It)
 		{
-			SpaceShipData.TargetActor = *It;
-			SpaceShipData.TargetType  = EHellunaTargetType::SpaceShip;
-			UE_LOG(LogTemp, Verbose, TEXT("[SpaceShipEval] 우주선 발견: Actor=%s (태그=%s, 탐색수=%d)"),
-				*GetNameSafe(*It), *SpaceShipTag.ToString(), SearchCount);
-			break;
+			if (It->ActorHasTag(SpaceShipTag))
+			{
+				CachedSpaceShip = *It;
+				break;
+			}
 		}
+		UE_LOG(LogTemp, Log, TEXT("[fast][SpaceShipEval] TreeStart 캐시 MISS (누적: Hit=%d Miss=%d)"),
+			CacheHitCount, CacheMissCount);
+	}
+	else
+	{
+		CacheHitCount++;
+		UE_LOG(LogTemp, Verbose, TEXT("[fast][SpaceShipEval] TreeStart 캐시 HIT (누적: Hit=%d Miss=%d)"),
+			CacheHitCount, CacheMissCount);
 	}
 
-	if (!SpaceShipData.TargetActor.IsValid())
+	if (CachedSpaceShip.IsValid())
 	{
-		UE_LOG(LogTemp, Verbose, TEXT("[SpaceShipEval] 우주선 미발견: 태그='%s', Actor 총 %d개 (보스 테스트맵에서는 정상)"),
-			*SpaceShipTag.ToString(), SearchCount);
+		SpaceShipData.TargetActor = CachedSpaceShip.Get();
+		SpaceShipData.TargetType  = EHellunaTargetType::SpaceShip;
+		UE_LOG(LogTemp, Verbose, TEXT("[SpaceShipEval] 우주선 발견 (캐시): Actor=%s"),
+			*GetNameSafe(CachedSpaceShip.Get()));
+
+		// #9 최적화: ShipCombatCollision 컴포넌트 TreeStart에서 캐싱
+		InstanceData.CachedShipCollisionPrims.Reset();
+		TArray<UPrimitiveComponent*> Prims;
+		CachedSpaceShip->GetComponents<UPrimitiveComponent>(Prims);
+		for (UPrimitiveComponent* Prim : Prims)
+		{
+			if (Prim && Prim->ComponentHasTag(TEXT("ShipCombatCollision")))
+				InstanceData.CachedShipCollisionPrims.Add(Prim);
+		}
+		InstanceData.bShipCollisionPrimsCached = true;
+	}
+	else
+	{
+		UE_LOG(LogTemp, Verbose, TEXT("[SpaceShipEval] 우주선 미발견: 태그='%s' (보스 테스트맵에서는 정상)"),
+			*SpaceShipTag.ToString());
 	}
 }
 
@@ -59,6 +88,7 @@ void FSTEvaluator_SpaceShip::Tick(FStateTreeExecutionContext& Context, const flo
 	FHellunaAITargetData& SpaceShipData = InstanceData.SpaceShipData;
 
 	// 우주선이 소멸됐으면 재탐색 시도 (매 프레임이 아닌 2초 간격)
+	// #4 최적화: 정적 캐시 사용 — 50마리 동시 소실 시에도 프레임당 1회만 탐색
 	if (!SpaceShipData.TargetActor.IsValid())
 	{
 		InstanceData.RespawnSearchTimer += DeltaTime;
@@ -67,17 +97,44 @@ void FSTEvaluator_SpaceShip::Tick(FStateTreeExecutionContext& Context, const flo
 
 		InstanceData.RespawnSearchTimer = 0.f;
 
-		const UWorld* World = Context.GetWorld();
-		if (!World) return;
+		static TWeakObjectPtr<AActor> CachedSpaceShip;
+		static uint64 LastSearchFrame = 0;
 
-		for (TActorIterator<AActor> It(World); It; ++It)
+		if (CachedSpaceShip.IsValid())
 		{
-			if (It->ActorHasTag(SpaceShipTag))
+			SpaceShipData.TargetActor = CachedSpaceShip.Get();
+			SpaceShipData.TargetType  = EHellunaTargetType::SpaceShip;
+		}
+		else if (GFrameCounter != LastSearchFrame)
+		{
+			LastSearchFrame = GFrameCounter;
+			const UWorld* World = Context.GetWorld();
+			if (!World) return;
+
+			for (TActorIterator<AActor> It(World); It; ++It)
 			{
-				SpaceShipData.TargetActor = *It;
-				SpaceShipData.TargetType  = EHellunaTargetType::SpaceShip;
-				break;
+				if (It->ActorHasTag(SpaceShipTag))
+				{
+					CachedSpaceShip = *It;
+					SpaceShipData.TargetActor = *It;
+					SpaceShipData.TargetType  = EHellunaTargetType::SpaceShip;
+					break;
+				}
 			}
+		}
+
+		// 재탐색 성공 시 ShipCombatCollision 캐시 갱신
+		if (SpaceShipData.TargetActor.IsValid())
+		{
+			InstanceData.CachedShipCollisionPrims.Reset();
+			TArray<UPrimitiveComponent*> Prims;
+			SpaceShipData.TargetActor->GetComponents<UPrimitiveComponent>(Prims);
+			for (UPrimitiveComponent* Prim : Prims)
+			{
+				if (Prim && Prim->ComponentHasTag(TEXT("ShipCombatCollision")))
+					InstanceData.CachedShipCollisionPrims.Add(Prim);
+			}
+			InstanceData.bShipCollisionPrimsCached = true;
 		}
 		return;
 	}
@@ -106,18 +163,27 @@ void FSTEvaluator_SpaceShip::Tick(FStateTreeExecutionContext& Context, const flo
 	}
 
 	// 2순위: ShipCombatCollision 태그 컴포넌트 (레거시 호환)
-	if (ComputedDist < 0.f)
+	// #9 최적화: TreeStart에서 캐싱한 컴포넌트 배열 사용
+	if (ComputedDist < 0.f && InstanceData.bShipCollisionPrimsCached)
 	{
-		TArray<UPrimitiveComponent*> Prims;
-		ShipActor->GetComponents<UPrimitiveComponent>(Prims);
+		static uint64 LastLogFrame_9 = 0;
+		static int32 CacheUsedCount_9 = 0;
+		CacheUsedCount_9++;
+		if (GFrameCounter - LastLogFrame_9 >= 300)
+		{
+			LastLogFrame_9 = GFrameCounter;
+			UE_LOG(LogTemp, Log,
+				TEXT("[fast][#9 GetComponents캐싱] 캐시 사용 중 — CachedPrims=%d개, 캐시히트 누적=%d회 (매 틱 GetComponents 호출 제거됨)"),
+				InstanceData.CachedShipCollisionPrims.Num(), CacheUsedCount_9);
+		}
 
 		float MinDist = MAX_FLT;
 		bool bFound = false;
 
-		for (UPrimitiveComponent* Prim : Prims)
+		for (const TWeakObjectPtr<UPrimitiveComponent>& WeakPrim : InstanceData.CachedShipCollisionPrims)
 		{
-			if (!Prim || !Prim->ComponentHasTag(TEXT("ShipCombatCollision")))
-				continue;
+			UPrimitiveComponent* Prim = WeakPrim.Get();
+			if (!Prim) continue;
 
 			FVector Closest;
 			const float D = Prim->GetClosestPointOnCollision(PawnLocation, Closest);

@@ -300,9 +300,32 @@ void AHellunaEnemyCharacter::OnMonsterHealthChanged(
 #endif
 
 	// 살아있는 상태에서 데미지를 받았을 때만 피격 애니메이션 재생
+	// #11 최적화: 0.2초 쿨다운 — 산탄총 동시 히트 시 RPC 폭발 방지
 	if (Delta > 0.f && NewHealth > 0.f && HitReactMontage)
 	{
-		Multicast_PlayHitReact();
+		static int32 HitReactBlockedCount = 0;
+		static int32 HitReactPassedCount = 0;
+
+		const double Now = GetWorld()->GetTimeSeconds();
+		if (Now - LastHitReactTime >= 0.2)
+		{
+			LastHitReactTime = Now;
+			Multicast_PlayHitReact();
+			HitReactPassedCount++;
+		}
+		else
+		{
+			HitReactBlockedCount++;
+			if (HitReactBlockedCount % 10 == 0)
+			{
+				UE_LOG(LogTemp, Log,
+					TEXT("[fast][#11 HitReact쿨다운] 누적: 차단=%d, 통과=%d (절감율=%.0f%%)"),
+					HitReactBlockedCount, HitReactPassedCount,
+					(HitReactBlockedCount + HitReactPassedCount) > 0
+						? (HitReactBlockedCount * 100.f / (HitReactBlockedCount + HitReactPassedCount))
+						: 0.f);
+			}
+		}
 	}
 }
 
@@ -652,6 +675,7 @@ void AHellunaEnemyCharacter::StartAttackTrace(FName SocketName, float Radius, fl
 {
 	// 이전 트레이스가 살아있으면 먼저 중단
 	StopAttackTrace();
+	SetServerAttackPoseTickEnabled(true);
 
 	CurrentTraceSocketName = SocketName;
 	CurrentTraceRadius     = Radius;
@@ -673,12 +697,15 @@ void AHellunaEnemyCharacter::StartAttackTrace(FName SocketName, float Radius, fl
 
 void AHellunaEnemyCharacter::StopAttackTrace()
 {
+	SetServerAttackPoseTickEnabled(false);
+
 	if (AttackTraceTimerHandle.IsValid())
 	{
 		GetWorldTimerManager().ClearTimer(AttackTraceTimerHandle);
 		AttackTraceTimerHandle.Invalidate();
-		HitActorsThisAttack.Empty();
 	}
+
+	HitActorsThisAttack.Empty();
 }
 
 void AHellunaEnemyCharacter::PerformAttackTrace()
@@ -855,8 +882,6 @@ void AHellunaEnemyCharacter::LockMovementAndFaceTarget(AActor* TargetActor)
 		}
 	}
 
-	ForceNetUpdate();
-
 	// 클라이언트에도 즉시 동기화 (회전 모드 + 속도)
 	Multicast_SetMovementLocked(true, 0.f);
 }
@@ -874,8 +899,6 @@ void AHellunaEnemyCharacter::UnlockMovement()
 	// 서버 회전 모드 복원: 이동 방향 회전 ON
 	MoveComp->bOrientRotationToMovement    = true;
 	MoveComp->bUseControllerDesiredRotation = false;
-
-	ForceNetUpdate();
 
 	// 클라이언트에도 복원 동기화 (회전 모드 + 속도)
 	Multicast_SetMovementLocked(false, SavedMaxWalkSpeed);
@@ -944,6 +967,55 @@ void AHellunaEnemyCharacter::Multicast_PlayAttackMontage_Implementation(
 		AnimInst->Montage_Stop(0.1f, Montage);
 	}
 	AnimInst->Montage_Play(Montage, PlayRate);
+}
+
+// ============================================================
+// Persistent VFX Multicast (시간 왜곡 등 지속형 VFX)
+// ============================================================
+void AHellunaEnemyCharacter::Multicast_SpawnPersistentVFX_Implementation(
+	uint8 SlotIndex, UNiagaraSystem* Effect, float EffectScale)
+{
+	if (SlotIndex >= 2 || !Effect) return;
+
+	// 기존 슬롯 정리
+	if (PersistentVFXSlots[SlotIndex])
+	{
+		PersistentVFXSlots[SlotIndex]->DeactivateImmediate();
+		PersistentVFXSlots[SlotIndex] = nullptr;
+	}
+
+	PersistentVFXSlots[SlotIndex] = UNiagaraFunctionLibrary::SpawnSystemAttached(
+		Effect,
+		GetRootComponent(),
+		NAME_None,
+		GetActorLocation(),
+		FRotator::ZeroRotator,
+		FVector(EffectScale),
+		EAttachLocation::KeepWorldPosition,
+		true,
+		ENCPoolMethod::None,
+		true
+	);
+}
+
+void AHellunaEnemyCharacter::Multicast_StopPersistentVFX_Implementation(uint8 SlotIndex)
+{
+	if (SlotIndex >= 2) return;
+
+	if (PersistentVFXSlots[SlotIndex])
+	{
+		PersistentVFXSlots[SlotIndex]->DeactivateImmediate();
+		PersistentVFXSlots[SlotIndex] = nullptr;
+	}
+}
+
+void AHellunaEnemyCharacter::Multicast_PlaySoundAtLocation_Implementation(
+	USoundBase* Sound, FVector Location)
+{
+	if (Sound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(GetWorld(), Sound, Location);
+	}
 }
 
 // ============================================================

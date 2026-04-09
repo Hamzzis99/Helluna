@@ -11,6 +11,9 @@
 #include "GameMode/HellunaDefenseGameMode.h"
 #include "GameMode/HellunaDefenseGameState.h"
 #include "NavigationInvokerComponent.h"
+#include "NavModifierComponent.h"
+#include "NavAreas/NavArea_Null.h"
+#include "Components/DynamicMeshComponent.h"
 
 #include "debughelper.h"
 
@@ -149,8 +152,46 @@ AResourceUsingObject_SpaceShip::AResourceUsingObject_SpaceShip()
 	// TileGenerationRadius: SlotManager의 MaxRadius(600) + 여유분
 	// TileRemovalRadius: 생성 반경보다 넓게 설정 (hysteresis)
 	NavigationInvoker = CreateDefaultSubobject<UNavigationInvokerComponent>(TEXT("NavigationInvoker"));
-	NavigationInvoker->SetGenerationRadii(1500.f, 2000.f);
+	NavigationInvoker->SetGenerationRadii(3000.f, 4000.f);
+
+	// NavModifier: 에디터에서 bUseNavModifier로 on/off 가능
+	NavModifierComp = CreateDefaultSubobject<UNavModifierComponent>(TEXT("NavModifierComp"));
+	NavModifierComp->SetAreaClass(UNavArea_Null::StaticClass());
+	NavModifierComp->FailsafeExtent = NavModifierExtent;
+	NavModifierComp->SetComponentTickEnabled(false);
+	// 기본값: 비활성 (에디터에서 bUseNavModifier를 켜면 활성화)
+	NavModifierComp->SetActive(false);
+	NavModifierComp->SetCanEverAffectNavigation(false);
 }
+
+#if WITH_EDITOR
+void AResourceUsingObject_SpaceShip::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+
+	const FName PropName = PropertyChangedEvent.GetPropertyName();
+
+	if (PropName == GET_MEMBER_NAME_CHECKED(AResourceUsingObject_SpaceShip, bUseNavModifier)
+		|| PropName == GET_MEMBER_NAME_CHECKED(AResourceUsingObject_SpaceShip, NavModifierAreaClass)
+		|| PropName == GET_MEMBER_NAME_CHECKED(AResourceUsingObject_SpaceShip, NavModifierExtent))
+	{
+		if (NavModifierComp)
+		{
+			NavModifierComp->SetActive(bUseNavModifier);
+			NavModifierComp->SetCanEverAffectNavigation(bUseNavModifier);
+
+			if (bUseNavModifier)
+			{
+				if (NavModifierAreaClass)
+				{
+					NavModifierComp->SetAreaClass(NavModifierAreaClass);
+				}
+				NavModifierComp->FailsafeExtent = NavModifierExtent;
+			}
+		}
+	}
+}
+#endif
 
 // 게임 시작시 게임 상태에 우주선 등록
 void AResourceUsingObject_SpaceShip::BeginPlay()
@@ -164,6 +205,30 @@ void AResourceUsingObject_SpaceShip::BeginPlay()
 		{
 			GS->RegisterSpaceShip(this);
 		}
+	}
+
+	// ★ NavModifier: 에디터에서 설정한 bUseNavModifier에 따라 런타임 활성화
+	if (NavModifierComp)
+	{
+		NavModifierComp->SetActive(bUseNavModifier);
+		NavModifierComp->SetCanEverAffectNavigation(bUseNavModifier);
+		if (bUseNavModifier)
+		{
+			if (NavModifierAreaClass)
+			{
+				NavModifierComp->SetAreaClass(NavModifierAreaClass);
+			}
+			NavModifierComp->FailsafeExtent = NavModifierExtent;
+		}
+	}
+
+	// ★ [NavMesh 수정] 우주선 DynamicMesh가 NavMesh 계산에서 제외되도록 설정
+	// ComplexAsSimple + BlockAll 콜리전이 NavMesh에 거대한 구멍을 만들었음.
+	// Nav 영향을 끄면 우주선 아래/주변에도 NavMesh가 정상 생성됨.
+	// 몬스터가 우주선을 뚫고 지나가는 건 물리 콜리전(BlockAll)이 막아줌.
+	if (DynamicMeshComponent)
+	{
+		DynamicMeshComponent->SetCanEverAffectNavigation(false);
 	}
 
 	// [Phase18] 3D 상호작용 위젯 생성 (클라이언트만)

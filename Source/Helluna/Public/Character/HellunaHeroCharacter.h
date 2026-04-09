@@ -749,4 +749,51 @@ private:
 
 	/** 피격 방향 계산 (서버) — 0~7 반환 */
 	uint8 CalcHitDirection(AActor* InstigatorActor) const;
+
+	// =========================================================
+	// 시간 왜곡 슬로우 배율
+	// =========================================================
+public:
+	/**
+	 * 이동속도 슬로우 배율. 1.0 = 정상, 0.3 = 30% 속도.
+	 * GA_Run 등 이동속도를 설정하는 모든 곳에서 이 배율을 곱해야 한다.
+	 * 서버에서 설정 → OnRep으로 클라이언트 MaxWalkSpeed 즉시 갱신.
+	 */
+	UPROPERTY(ReplicatedUsing = OnRep_MoveSpeedMultiplier, BlueprintReadOnly, Category = "TimeDistortion")
+	float MoveSpeedMultiplier = 1.f;
+
+	/** 이전 배율 — OnRep에서 비율 계산에 사용 */
+	float PrevMoveSpeedMultiplier = 1.f;
+
+	/** 슬로우 배율 설정 (서버에서 호출) */
+	void SetMoveSpeedMultiplier(float NewMultiplier);
+
+	/** 현재 슬로우 배율 반환 */
+	float GetMoveSpeedMultiplier() const { return MoveSpeedMultiplier; }
+
+	UFUNCTION()
+	void OnRep_MoveSpeedMultiplier();
+
+	// =========================================================
+	// 애니메이션 속도 슬로우 배율
+	// =========================================================
+
+	/**
+	 * 애니메이션 재생 속도 배율. 1.0 = 정상, 0.3 = 30% 속도.
+	 * 서버에서 설정 → OnRep으로 클라이언트 GlobalAnimRateScale 즉시 갱신.
+	 */
+	UPROPERTY(ReplicatedUsing = OnRep_AnimRateMultiplier, BlueprintReadOnly, Category = "TimeDistortion")
+	float AnimRateMultiplier = 1.f;
+
+	/** 슬로우 전 원본 AnimRateScale 저장 (복원용) */
+	float OriginalGlobalAnimRateScale = 1.f;
+
+	/** 애니메이션 속도 배율 설정 (서버에서 호출) */
+	void SetAnimRateMultiplier(float NewMultiplier);
+
+	/** 현재 애니메이션 속도 배율 반환 */
+	float GetAnimRateMultiplier() const { return AnimRateMultiplier; }
+
+	UFUNCTION()
+	void OnRep_AnimRateMultiplier();
 };

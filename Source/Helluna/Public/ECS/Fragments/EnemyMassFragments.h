@@ -156,6 +156,10 @@ struct HELLUNA_API FEnemyDataFragment : public FMassFragment
 	/** XY 이동 무시하고 XY 평면에서만 이동 */
 	UPROPERTY()
 	bool bMove2DOnly = true;
+
+	// === Actor Tick Rate 밴드 캐싱 (#8 최적화) ===
+	/** 이전 거리 밴드 (0=근거리, 1=중거리, 2=원거리, -1=미설정). 밴드 변경 시에만 UpdateActorTickRate 호출 */
+	int32 CachedDistanceBand = -1;
 };
 
 // ============================================================================

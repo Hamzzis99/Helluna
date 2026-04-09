@@ -1,14 +1,25 @@
-﻿/**
+/**
  * STTask_ChaseTarget.h
  *
- * StateTree Task: 타겟 추적 (이동)
+ * StateTree Task: 2-Phase Chase (RUSH + SPREAD)
  *
- * [방안 C 적용]
- * 우주선: 고정 오브젝트이므로 EnterState / 타겟 변경 시에만 MoveTo 한 번 발행.
- *         이후 Tick에서 재발행하지 않고 RVO(CrowdFollowingComponent)에 회피 위임.
- * 플레이어: 움직이는 대상이므로 RepathInterval 재발행 유지.
+ * [Phase 1: RUSH]
+ *   Each monster gets a unique angle (0, 60, 120...).
+ *   Rush goal = point at assigned angle, SpreadPhaseRadius away from ship.
+ *   Forces each monster to take a different NavMesh path.
  *
- * @author 김민우
+ * [Phase 2: SPREAD]
+ *   Move to assigned angle position at StandoffRadius from ship.
+ *   On arrival, face ship and hold (Running, attack state handles transition).
+ *
+ * [Stuck -> Direct Move]
+ *   After N consecutive stucks, disable pathfinding and walk directly
+ *   toward the spread goal. CMC Walking mode still handles ground/collision.
+ *
+ * [Player]
+ *   MoveToActor with RepathInterval. Optional EQS.
+ *
+ * @author
  */
 
 #pragma once
@@ -21,6 +32,13 @@
 
 class AAIController;
 class UEnvQuery;
+
+UENUM()
+enum class EChasePhase : uint8
+{
+	Rush,
+	Spread,
+};
 
 USTRUCT()
 struct FSTTask_ChaseTargetInstanceData
@@ -39,42 +57,46 @@ struct FSTTask_ChaseTargetInstanceData
 	UPROPERTY()
 	float TimeSinceRepath = 0.f;
 
-	// EQS 결과로 받은 목적지 (-1이면 아직 결과 없음)
-	UPROPERTY()
-	FVector EQSDestination = FVector(FLT_MAX);
-
-	// EQS 재실행까지 남은 시간
 	UPROPERTY()
 	float TimeUntilNextEQS = 0.f;
 
-	// 현재 이동 목표 박스 인덱스 (-1 = 미설정)
-	UPROPERTY()
-	int32 CurrentBoxIndex = -1;
-
-	// Stuck 누적 시간 (이 시간이 임계값을 넘으면 다른 박스로 전환)
-	UPROPERTY()
-	float StuckAccumTime = 0.f;
-
-	// ─── 슬롯 관련 ────────────────────────────────────────────
-
-	/** 현재 배정된 슬롯 인덱스 (-1 = 미배정) */
-	UPROPERTY()
-	int32 AssignedSlotIndex = -1;
-
-	/** 배정된 슬롯 월드 위치 */
-	UPROPERTY()
-	FVector AssignedSlotLocation = FVector::ZeroVector;
-
-	/** 슬롯 재배정 시도까지 남은 쿨다운 */
-	UPROPERTY()
-	float SlotRetryTimer = 0.f;
-
-	/** 슬롯 위치에 도착했는지 */
-	UPROPERTY()
-	bool bSlotArrived = false;
+	// --- Ship chase ---
 
 	UPROPERTY()
-	float MovementDiagTimer = 0.f;
+	EChasePhase Phase = EChasePhase::Rush;
+
+	UPROPERTY()
+	float AssignedAngleDeg = 0.f;
+
+	UPROPERTY()
+	FVector LastCheckedLocation = FVector::ZeroVector;
+
+	UPROPERTY()
+	float StuckCheckTimer = 0.f;
+
+	UPROPERTY()
+	int32 ConsecutiveStuckCount = 0;
+
+	UPROPERTY()
+	bool bSpreadArrived = false;
+
+	/** pathfinding OFF direct movement mode */
+	UPROPERTY()
+	bool bDirectMoveMode = false;
+
+	UPROPERTY()
+	float DiagTimer = 0.f;
+
+	// --- Player chase ---
+
+	UPROPERTY()
+	int32 PlayerStuckCount = 0;
+
+	UPROPERTY()
+	float PlayerStuckTimer = 0.f;
+
+	UPROPERTY()
+	FVector PlayerLastCheckedLocation = FVector::ZeroVector;
 };
 
 USTRUCT(meta = (DisplayName = "Helluna: Chase Target", Category = "Helluna|AI"))
@@ -95,53 +117,110 @@ protected:
 	virtual void ExitState(FStateTreeExecutionContext& Context,
 		const FStateTreeTransitionResult& Transition) const override;
 
+	EStateTreeRunStatus TickShipChase(FStateTreeExecutionContext& Context,
+		FInstanceDataType& Data, AAIController* AIC, APawn* Pawn,
+		AActor* Ship, float DeltaTime) const;
+
+	EStateTreeRunStatus TickPlayerChase(FInstanceDataType& Data,
+		AAIController* AIC, APawn* Pawn, AActor* Target, float DeltaTime) const;
+
 public:
-	UPROPERTY(EditAnywhere, Category = "설정",
-		meta = (DisplayName = "재경로 탐색 간격 (초)",
-			ToolTip = "플레이어 타겟을 다시 추적하는 간격입니다.",
+
+	// ==========================================================
+
+	UPROPERTY(EditAnywhere, Category = "공통",
+		meta = (DisplayName = "경로 재탐색 주기",
+			ToolTip = "MoveTo 경로 재탐색 주기 (초).\n플레이어: 재추적 주기.\n우주선: 웨이포인트 갱신 주기.",
 			ClampMin = "0.1"))
 	float RepathInterval = 0.5f;
 
-	UPROPERTY(EditAnywhere, Category = "설정",
-		meta = (DisplayName = "도착 허용 반경 (cm)",
-			ToolTip = "이 거리 안에 들어오면 도착으로 판단합니다.",
+	UPROPERTY(EditAnywhere, Category = "공통",
+		meta = (DisplayName = "도착 판정 반경",
+			ToolTip = "MoveTo 도착 판정 반경 (cm).",
 			ClampMin = "10.0"))
 	float AcceptanceRadius = 50.f;
 
-	/**
-	 * 플레이어 타겟 추적 시 사용할 EQS 에셋.
-	 * 설정하면 타겟 직접 추적 대신 EQS로 최적 공격 위치를 찾아 이동.
-	 * 비워두면 기존 MoveToActor 방식으로 동작.
-	 */
-	UPROPERTY(EditAnywhere, Category = "설정",
+	// ==========================================================
+
+	UPROPERTY(EditAnywhere, Category = "우주선",
+		meta = (DisplayName = "산개 전환 거리",
+			ToolTip = "돌진 -> 산개 페이즈 전환 거리 (cm).\n대기 반경보다 커야 합니다.",
+			ClampMin = "100.0"))
+	float SpreadPhaseRadius = 1200.f;
+
+	UPROPERTY(EditAnywhere, Category = "우주선",
+		meta = (DisplayName = "대기 반경",
+			ToolTip = "우주선 중심에서 몬스터가 멈춰서 공격하는 거리 (cm).",
+			ClampMin = "50.0"))
+	float StandoffRadius = 350.f;
+
+	UPROPERTY(EditAnywhere, Category = "우주선",
+		meta = (DisplayName = "돌진 웨이포인트 간격",
+			ToolTip = "돌진 페이즈에서 한 웨이포인트당 최대 이동 거리 (cm).",
+			ClampMin = "100.0"))
+	float RushWaypointStep = 800.f;
+
+	UPROPERTY(EditAnywhere, Category = "우주선",
+		meta = (DisplayName = "재추격 여유 거리",
+			ToolTip = "도착 후 우주선이 대기 반경 + 이 값 이상 멀어지면 다시 추격 (cm).",
+			ClampMin = "50.0"))
+	float SpreadReEngageMargin = 300.f;
+
+	// ==========================================================
+
+	UPROPERTY(EditAnywhere, Category = "끼임 감지",
+		meta = (DisplayName = "끼임 감지 주기",
+			ToolTip = "몬스터 끼임 감지 주기 (초).",
+			ClampMin = "0.1"))
+	float StuckCheckInterval = 0.4f;
+
+	UPROPERTY(EditAnywhere, Category = "끼임 감지",
+		meta = (DisplayName = "끼임 판정 거리",
+			ToolTip = "감지 주기 동안 이 거리 미만으로 이동하면 끼임 판정 (cm).",
+			ClampMin = "1.0"))
+	float StuckDistThreshold = 50.f;
+
+	UPROPERTY(EditAnywhere, Category = "끼임 감지",
+		meta = (DisplayName = "끼임 시 각도 회전량",
+			ToolTip = "끼임 감지 시 할당 각도를 이만큼 회전 (도).",
+			ClampMin = "10.0"))
+	float AngleRotationOnStuck = 90.f;
+
+	UPROPERTY(EditAnywhere, Category = "끼임 감지",
+		meta = (DisplayName = "직선이동 전환 횟수",
+			ToolTip = "이 횟수만큼 연속 끼이면 길찾기를 끄고 직선 이동으로 전환.\nNavMesh 경계 끼임 해결용.",
+			ClampMin = "1"))
+	int32 DirectMoveStuckThreshold = 2;
+
+	UPROPERTY(EditAnywhere, Category = "끼임 감지",
+		meta = (DisplayName = "강제 도착 전환 횟수",
+			ToolTip = "직선이동 모드에서 이 횟수만큼 끼이면 강제 도착 처리.\n우주선 근처 충돌체에 막혔을 때 사용.",
+			ClampMin = "3"))
+	int32 DirectModeForceArriveThreshold = 8;
+
+	UPROPERTY(EditAnywhere, Category = "끼임 감지",
+		meta = (DisplayName = "경로실패 시 즉시 직선이동",
+			ToolTip = "ON: MoveTo 경로 실패 시 즉시 직선이동 전환.\nOFF: 끼임 감지만으로 전환."))
+	bool bInstantDirectModeOnPathFail = false;
+
+	// ==========================================================
+
+	UPROPERTY(EditAnywhere, Category = "플레이어",
+		meta = (DisplayName = "플레이어 추격 직선이동 횟수",
+			ToolTip = "플레이어 추격 중 이 횟수만큼 연속 끼이면 직선이동으로 전환.",
+			ClampMin = "2"))
+	int32 PlayerDirectMoveThreshold = 4;
+
+	// ==========================================================
+
+	UPROPERTY(EditAnywhere, Category = "EQS",
 		meta = (DisplayName = "공격 위치 EQS",
-			ToolTip = "EQ_HellunaAttackPosition 에셋을 연결하세요.\n비워두면 타겟에게 직접 달려갑니다."))
+			ToolTip = "플레이어 공격 위치용 EQS 에셋. 비우면 직접 MoveToActor 사용."))
 	TObjectPtr<UEnvQuery> AttackPositionQuery = nullptr;
 
-	/**
-	 * EQS를 다시 실행하는 간격 (초).
-	 * 타겟이 움직이면 최적 위치도 바뀌므로 주기적으로 재실행.
-	 */
-	UPROPERTY(EditAnywhere, Category = "설정",
-		meta = (DisplayName = "EQS 재실행 간격 (초)",
-			ToolTip = "공격 위치 EQS를 다시 실행하는 간격입니다.\n값이 작을수록 더 자주 위치를 갱신합니다.",
+	UPROPERTY(EditAnywhere, Category = "EQS",
+		meta = (DisplayName = "EQS 실행 주기",
+			ToolTip = "EQS 반복 실행 주기 (초).",
 			ClampMin = "0.1"))
 	float EQSInterval = 1.0f;
-
-	UPROPERTY(EditAnywhere, Category = "설정",
-		meta = (DisplayName = "우주선 접근 분산 반경 (cm)",
-			ToolTip = "우주선 주변 박스 위치에서 몬스터가 흩어지는 랜덤 반경입니다.\n값이 클수록 더 넓게 분산됩니다.",
-			ClampMin = "0.0"))
-	float ShipSpreadRadius = 200.f;
-
-	UPROPERTY(EditAnywhere, Category = "설정",
-		meta = (DisplayName = "우주선 공격 슬롯 시스템 사용",
-			ToolTip = "체크: 우주선 주변 슬롯을 예약해서 이동합니다. (근거리 몬스터 권장)\n해제: 슬롯 없이 우주선 주변 랜덤 위치로 자유롭게 이동합니다. (원거리 몬스터 권장)"))
-	bool bUseSlotSystem = true;
-
-	UPROPERTY(EditAnywhere, Category = "설정",
-		meta = (DisplayName = "슬롯 진입 반경 (cm)",
-			ToolTip = "우주선으로부터 이 거리 안에 들어오면 슬롯 배정을 시도합니다.\n밖에서는 우주선을 향해 직접 이동합니다.\nSlotManager의 MaxRadius보다 크게 설정하세요.",
-			ClampMin = "100.0"))
-	float SlotEngageRadius = 500.f;
 };

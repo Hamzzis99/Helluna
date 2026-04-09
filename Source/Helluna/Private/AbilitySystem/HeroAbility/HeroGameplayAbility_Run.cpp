@@ -11,8 +11,9 @@
 
 void UHeroGameplayAbility_Run::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData)
 {
-	GetHeroCharacterFromActorInfo()->GetCharacterMovement()->MaxWalkSpeed = RunSpeed;
-	
+	AHellunaHeroCharacter* RunHero = GetHeroCharacterFromActorInfo();
+	RunHero->GetCharacterMovement()->MaxWalkSpeed = RunSpeed * RunHero->GetMoveSpeedMultiplier();
+
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
 	
 }
@@ -34,6 +35,7 @@ void UHeroGameplayAbility_Run::CleanUp()
 {
 	if (CachedDefaultMaxWalkSpeed > 0.f)
 	{
-		GetHeroCharacterFromActorInfo()->GetCharacterMovement()->MaxWalkSpeed = 400.f;
+		AHellunaHeroCharacter* RunHero = GetHeroCharacterFromActorInfo();
+		RunHero->GetCharacterMovement()->MaxWalkSpeed = 400.f * RunHero->GetMoveSpeedMultiplier();
 	}
 }

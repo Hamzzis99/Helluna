@@ -418,6 +418,8 @@ void UEnemyActorSpawnProcessor::Execute(
 					// Step 2: 엔티티 순회 준비
 					// ------------------------------------------------------------------
 					int32 ActiveActorCount = 0;
+					int32 TickRateUpdatedCount = 0;  // #8 성능 로그용
+					int32 TickRateSkippedCount = 0;  // #8 성능 로그용
 					// 한 프레임에 스폰할 수 있는 최대 수 (대량 스폰 시 pathfinding 스파이크 방지)
 					int32 SpawnsThisFrame = 0;
 					static constexpr int32 MaxSpawnsPerFrame = 5;
@@ -499,7 +501,26 @@ void UEnemyActorSpawnProcessor::Execute(
 									}
 
 									const float ActualDist = FMath::Sqrt(MinDistSq);
-									UpdateActorTickRate(Actor, ActualDist, Data);
+
+									// #8 최적화: 거리 밴드 변경 시에만 UpdateActorTickRate 호출
+									int32 NewBand;
+									if (ActualDist < Data.NearDistance)
+										NewBand = 0;
+									else if (ActualDist < Data.MidDistance)
+										NewBand = 1;
+									else
+										NewBand = 2;
+
+									if (NewBand != Data.CachedDistanceBand)
+									{
+										Data.CachedDistanceBand = NewBand;
+										UpdateActorTickRate(Actor, ActualDist, Data);
+										TickRateUpdatedCount++;
+									}
+									else
+									{
+										TickRateSkippedCount++;
+									}
 
 									ActiveActorCount++;
 									if (!bNearGoal)
@@ -584,9 +605,13 @@ void UEnemyActorSpawnProcessor::Execute(
 					{
 						LastDebugFrame = CurrentFrame;
 						UE_LOG(LogECSEnemy, Log,
-							TEXT("[ServerStatus] Active=%d/%d | Players=%d | Pool(A=%d I=%d)"),
+							TEXT("[fast][ServerStatus] Active=%d/%d | Players=%d | Pool(A=%d I=%d) | TickRate(Updated=%d Skipped=%d, 절감율=%.0f%%)"),
 							ActiveActorCount, MaxConcurrentActorsValue, PlayerLocations.Num(),
-							Pool->GetTotalActiveCount(), Pool->GetTotalInactiveCount());
+							Pool->GetTotalActiveCount(), Pool->GetTotalInactiveCount(),
+							TickRateUpdatedCount, TickRateSkippedCount,
+							(TickRateUpdatedCount + TickRateSkippedCount) > 0
+								? (TickRateSkippedCount * 100.f / (TickRateUpdatedCount + TickRateSkippedCount))
+								: 0.f);
 					}
 				}
 			}
@@ -595,7 +620,11 @@ void UEnemyActorSpawnProcessor::Execute(
 
 	// =========================================================
 	// ✅ 서버/클라이언트 공통: Entity 시각화 갱신
+	// #7/#10 최적화: 데디서버에서는 시각화 불필요 — ISMC 업데이트 생략
 	// =========================================================
+	if (World && World->GetNetMode() == NM_DedicatedServer)
+		return;  // 데디서버에서는 시각화 연산 완전 생략
+
 	EntityQuery.ForEachEntityChunk(EntityManager, Context,
 		[&](FMassExecutionContext& ChunkContext)
 		{
