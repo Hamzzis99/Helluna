@@ -130,6 +130,16 @@ void AHeroWeapon_Launcher::Fire(AController* InstigatorController)
 		return;
 	}
 
+	// GunBase 캐시 → 런처 자체 캐시로 변환
+	if (!bHasCachedAim && bHasCachedClientAim)
+	{
+		CachedAimStart = Pawn->GetPawnViewLocation();
+		CachedAimPoint = CachedClientAimPoint;
+		CachedAimDirection = (CachedClientAimPoint - CachedAimStart).GetSafeNormal();
+		bHasCachedAim = true;
+		bHasCachedClientAim = false;
+	}
+
 	if (!bHasCachedAim && !BuildCachedAimData(InstigatorController))
 		return;
 

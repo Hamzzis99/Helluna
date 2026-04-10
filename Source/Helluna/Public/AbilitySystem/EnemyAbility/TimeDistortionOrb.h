@@ -14,18 +14,17 @@ class USphereComponent;
  * ATimeDistortionOrb
  *
  * 시간 왜곡 패턴 중 스폰되는 파괴 가능한 구체 액터.
- * 플레이어가 공격하면 파괴되며, 특수 Orb(색이 다른 1개)를 파괴하면
- * 시간 왜곡 패턴이 파훼된다.
+ * 플레이어가 공격하면 파괴되며, 키 Orb를 파괴하면 시간 왜곡 패턴이 파훼된다.
  *
- * - SphereComponent(ECC_Pawn) → 플레이어 근접/원거리 공격 트레이스에 감지
- * - TakeDamage() → 피격 시 파괴 + VFX + 델리게이트 발동
+ * BP에서 상속하여 VFX 에셋과 충돌 반경을 직접 설정한다.
+ * 에디터 뷰포트에서 콜리전 구체와 VFX를 함께 확인 가능.
  *
  * [네트워크]
- * - bReplicates = true → 클라이언트에 액터 자동 복제
- * - OrbVFXSystem/OrbVFXScale → ReplicatedUsing=OnRep → 클라이언트에서 VFX 스폰
- * - DestroyVFX → Multicast RPC로 모든 클라이언트에서 파괴 이펙트 재생
+ * - bReplicates = true
+ * - bIsKeyOrb → Replicated
+ * - DestroyVFX → Multicast RPC로 모든 클라이언트에서 재생
  */
-UCLASS()
+UCLASS(Blueprintable)
 class HELLUNA_API ATimeDistortionOrb : public AActor
 {
 	GENERATED_BODY()
@@ -39,41 +38,46 @@ public:
 
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnOrbDestroyed, ATimeDistortionOrb*, DestroyedOrb);
 
-	/** Orb가 플레이어 공격으로 파괴될 때 브로드캐스트 */
 	UPROPERTY(BlueprintAssignable)
 	FOnOrbDestroyed OnOrbDestroyed;
 
 	// =========================================================
-	// 설정
+	// 설정 (BP 에디터에서 세팅)
 	// =========================================================
 
-	/** 이 Orb가 파훼 키(색이 다른 특수 Orb)인지 여부 */
-	UPROPERTY(Replicated, VisibleAnywhere, BlueprintReadOnly, Category = "TimeDistortion|Orb")
+	/** 이 Orb가 파훼 키(특수 Orb)인지 여부 — Zone에서 스폰 시 설정 */
+	UPROPERTY(Replicated, VisibleAnywhere, BlueprintReadOnly, Category = "Orb")
 	bool bIsKeyOrb = false;
 
-	/** Orb 기본 VFX 컴포넌트 */
-	UPROPERTY(Transient)
-	TObjectPtr<UNiagaraComponent> OrbVFXComp = nullptr;
+	/** 충돌 감지 반경 (cm) — 에디터에서 구체 크기로 표시됨 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Orb|충돌",
+		meta = (DisplayName = "충돌 반경 (cm)", ClampMin = "10.0", ClampMax = "300.0"))
+	float OrbCollisionRadius = 80.f;
+
+	/** Orb 기본 VFX (비행 중 지속 표시) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Orb|VFX",
+		meta = (DisplayName = "Orb VFX"))
+	TObjectPtr<UNiagaraSystem> OrbVFX = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Orb|VFX",
+		meta = (DisplayName = "Orb VFX 크기", ClampMin = "0.01", ClampMax = "10.0"))
+	float OrbVFXScale = 1.f;
+
+	/** Orb 파괴 시 VFX */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Orb|VFX",
+		meta = (DisplayName = "파괴 VFX"))
+	TObjectPtr<UNiagaraSystem> DestroyVFX = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Orb|VFX",
+		meta = (DisplayName = "파괴 VFX 크기", ClampMin = "0.01", ClampMax = "10.0"))
+	float DestroyVFXScale = 1.f;
 
 	// =========================================================
 	// 초기화
 	// =========================================================
 
-	/**
-	 * 어빌리티에서 스폰 후 호출하여 VFX 및 키 여부를 설정한다.
-	 * 서버에서 호출 → Replicated 프로퍼티가 클라이언트에 복제되어 OnRep에서 VFX 스폰.
-	 * @param InVFX         - Orb에 표시할 나이아가라 시스템
-	 * @param InVFXScale    - VFX 크기 배율
-	 * @param bInIsKeyOrb   - true이면 파훼 키 Orb
-	 */
-	void InitOrb(UNiagaraSystem* InVFX, float InVFXScale, bool bInIsKeyOrb);
-
-	/** Orb 파괴 시 재생할 VFX (외부에서 세팅) */
-	UPROPERTY(Transient)
-	TObjectPtr<UNiagaraSystem> DestroyVFX = nullptr;
-
-	/** 파괴 VFX 크기 배율 */
-	float DestroyVFXScale = 1.f;
+	/** Zone에서 스폰 후 호출 — 키 여부만 설정 */
+	void InitOrb(bool bInIsKeyOrb);
 
 	// =========================================================
 	// 데미지 수신
@@ -83,27 +87,17 @@ public:
 		AController* EventInstigator, AActor* DamageCauser) override;
 
 protected:
+	virtual void BeginPlay() override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 private:
-	UPROPERTY(VisibleAnywhere, Category = "TimeDistortion|Orb")
+	UPROPERTY(VisibleAnywhere, Category = "Orb")
 	TObjectPtr<USphereComponent> CollisionSphere = nullptr;
 
-	// =========================================================
-	// VFX 복제용 프로퍼티
-	// =========================================================
+	UPROPERTY(Transient)
+	TObjectPtr<UNiagaraComponent> OrbVFXComp = nullptr;
 
-	/** 서버에서 설정 → 클라이언트에 복제 → OnRep에서 VFX 스폰 */
-	UPROPERTY(ReplicatedUsing = OnRep_OrbVFXData)
-	TObjectPtr<UNiagaraSystem> RepOrbVFXSystem = nullptr;
-
-	UPROPERTY(Replicated)
-	float RepOrbVFXScale = 1.f;
-
-	UFUNCTION()
-	void OnRep_OrbVFXData();
-
-	/** VFX 스폰 공통 로직 (서버/클라이언트 양쪽) */
+	/** VFX 스폰 공통 로직 */
 	void SpawnOrbVFX();
 
 	/** 파괴 VFX 멀티캐스트 */

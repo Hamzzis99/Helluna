@@ -548,7 +548,6 @@ void AHellunaDefenseGameMode::OnNightPCGGraphGenerated(UPCGComponent* InComponen
 
     // ── 종합 점수 로그 ──
     {
-        float AvgDistScore = 0.f;
         float AvgDensityScore = 0.f;
         TArray<AActor*> CurrentOres;
         UGameplayStatics::GetAllActorsWithTag(GetWorld(), FName(TEXT("Ore")), CurrentOres);
@@ -556,17 +555,15 @@ void AHellunaDefenseGameMode::OnNightPCGGraphGenerated(UPCGComponent* InComponen
         for (const FPreservedOre& Ore : ExtractedOres)
         {
             const FVector Loc = Ore.Transform.GetLocation();
-            AvgDistScore += CalculateDistanceFactor(Loc);
             AvgDensityScore += CalculateOreDensityFactor(Loc, CurrentOres);
         }
-        AvgDistScore /= ExtractedOres.Num();
         AvgDensityScore /= ExtractedOres.Num();
-        const float AvgTotalScore = AvgDistScore * AvgDensityScore * PCGScoreWeight;
+        const float AvgTotalScore = AvgDensityScore * PCGScoreWeight;
 
         // 예상 스폰 수 계산 (실제 로직 시뮬레이션)
         const int32 N = ExtractedOres.Num();
         // 시드 수: N을 초과할 수 없음
-        const int32 EstSeedCount = FMath::Clamp(FMath::RoundToInt(N * ClusterSeedRatio * PCGScoreWeight), 1, N);
+        const int32 EstSeedCount = FMath::Clamp(FMath::RoundToInt(N * ClusterSeedRatio * FMath::Sqrt(PCGScoreWeight)), 1, N);
         // 시드당 멤버 수 (평균): 시드를 제외한 나머지를 시드끼리 나눔
         const int32 AvgMembers = (EstSeedCount < N) ? FMath::Min((N - EstSeedCount) / FMath::Max(EstSeedCount, 1), (MaxClusterSize - 1)) : 0;
         // 실제 클러스터 크기 = (멤버+1) × 가중치
@@ -575,17 +572,17 @@ void AHellunaDefenseGameMode::OnNightPCGGraphGenerated(UPCGComponent* InComponen
         // 단독 광석: 시드에도 멤버에도 배정되지 않은 수
         const int32 Assigned = FMath::Min(EstSeedCount + EstSeedCount * AvgMembers, N);
         const int32 Unassigned = N - Assigned;
-        const float WeightedSurvival = FMath::Clamp(IsolatedOreSurvivalChance * PCGScoreWeight, 0.f, 1.f);
+        const float WeightedSurvival = FMath::Clamp(IsolatedOreSurvivalChance * FMath::Sqrt(PCGScoreWeight), 0.f, 1.f);
         const int32 EstIsolated = FMath::RoundToInt(Unassigned * WeightedSurvival);
         const int32 EstTotal = EstClusterOres + EstIsolated;
 
         UPCGGraph* Graph = InComponent->GetGraph();
         const FString GraphName = Graph ? Graph->GetName() : TEXT("Unknown");
 
-        UE_LOG(LogTemp, Warning, TEXT("[PCG 점수] 그래프=%s | 가중치=%.1f | 평균거리점수=%.2f | 평균밀도점수=%.2f | 총점=%.2f | 예상 스폰: ~%d개 (시드%d + 단독%d)"),
-            *GraphName, PCGScoreWeight, AvgDistScore, AvgDensityScore, AvgTotalScore, EstTotal, EstClusterOres, EstIsolated);
-        Debug::Print(FString::Printf(TEXT("[PCG 점수] %s | 가중치=%.1f | 거리=%.2f | 밀도=%.2f | 총점=%.2f → 예상 ~%d개"),
-            *GraphName, PCGScoreWeight, AvgDistScore, AvgDensityScore, AvgTotalScore, EstTotal), FColor::Cyan);
+        UE_LOG(LogTemp, Warning, TEXT("[PCG 점수] 그래프=%s | 가중치=%.1f | 평균밀도점수=%.2f | 총점=%.2f | 예상 스폰: ~%d개 (시드%d + 단독%d)"),
+            *GraphName, PCGScoreWeight, AvgDensityScore, AvgTotalScore, EstTotal, EstClusterOres, EstIsolated);
+        Debug::Print(FString::Printf(TEXT("[PCG 점수] %s | 가중치=%.1f | 밀도=%.2f | 총점=%.2f → 예상 ~%d개"),
+            *GraphName, PCGScoreWeight, AvgDensityScore, AvgTotalScore, EstTotal), FColor::Cyan);
     }
 
     // 밀도 기반 클러스터 후처리 (추출한 데이터 기반, PCG 무관)
@@ -632,7 +629,7 @@ void AHellunaDefenseGameMode::PostProcessNightPCGDensity(const TArray<AHellunaDe
 
     // 가중치가 높을수록 시드(=클러스터 중심)를 더 많이 선정 → 광석이 더 많이 배치됨
     const float AvgWeight = (TotalNew > 0 && NewOreData.Num() > 0) ? NewOreData[0].ScoreWeight : 1.f;
-    const int32 SeedCount = FMath::Max(1, FMath::RoundToInt(TotalNew * ClusterSeedRatio * AvgWeight));
+    const int32 SeedCount = FMath::Max(1, FMath::RoundToInt(TotalNew * ClusterSeedRatio * FMath::Sqrt(AvgWeight)));
     const float MinSeedDistSq = ClusterRadius * ClusterRadius;
     TArray<int32> SelectedSeedIndices;
     SelectedSeedIndices.Reserve(SeedCount);
@@ -793,7 +790,7 @@ void AHellunaDefenseGameMode::PostProcessNightPCGDensity(const TArray<AHellunaDe
     for (int32 i = 0; i < TotalNew; ++i)
     {
         if (AssignedIndices.Contains(i)) continue;
-        const float WeightedSurvival = FMath::Clamp(IsolatedOreSurvivalChance * NewOreData[i].ScoreWeight, 0.f, 1.f);
+        const float WeightedSurvival = FMath::Clamp(IsolatedOreSurvivalChance * FMath::Sqrt(NewOreData[i].ScoreWeight), 0.f, 1.f);
         if (FMath::FRand() < WeightedSurvival)
         {
             const FVector IsoLoc = NewOreData[i].Transform.GetLocation();
@@ -871,15 +868,7 @@ void AHellunaDefenseGameMode::FinalizePostProcess()
 
 float AHellunaDefenseGameMode::CalculateSpawnScore(const FVector& Location, const TArray<AActor*>& ExistingOres) const
 {
-    float Score = 1.0f;
-
-    // Factor 1: 광석 밀도
-    Score *= CalculateOreDensityFactor(Location, ExistingOres);
-
-    // Factor 2: 우주선과의 거리 (멀수록 높은 점수)
-    Score *= CalculateDistanceFactor(Location);
-
-    return FMath::Clamp(Score, 0.f, 1.f);
+    return FMath::Clamp(CalculateOreDensityFactor(Location, ExistingOres), 0.f, 1.f);
 }
 
 float AHellunaDefenseGameMode::CalculateOreDensityFactor(const FVector& Location, const TArray<AActor*>& ExistingOres) const
@@ -901,23 +890,6 @@ float AHellunaDefenseGameMode::CalculateOreDensityFactor(const FVector& Location
     return FMath::Clamp(1.0f - Ratio, MinKeepRatio, 1.0f);
 }
 
-float AHellunaDefenseGameMode::CalculateDistanceFactor(const FVector& Location) const
-{
-    FVector Origin = FVector::ZeroVector;
-
-    if (const AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
-    {
-        if (AResourceUsingObject_SpaceShip* Ship = GS->GetSpaceShip())
-        {
-            Origin = Ship->GetActorLocation();
-        }
-    }
-
-    const float Dist = FVector::Dist2D(Location, Origin);
-    const float T = FMath::Clamp(Dist / FMath::Max(MaxScoreDistance, 1.f), 0.f, 1.f);
-
-    return FMath::Lerp(MinDistanceScore, 1.0f, T);
-}
 
 // DeactivateNightPCG 삭제됨 — 광석은 낮이 되어도 영구 유지
 // 다음 밤 ActivateNightPCG()에서 기존 광석 밀도를 기반으로 새 광석 컬링

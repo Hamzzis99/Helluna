@@ -5,7 +5,6 @@
 #include "AbilitySystemComponent.h"
 #include "Character/HellunaHeroCharacter.h"
 #include "Weapon/HeroWeapon_GunBase.h"
-#include "Weapon/HeroWeapon_Launcher.h"
 #include "Weapon/HellunaWeaponBase.h"
 #include "AbilitySystem/HeroAbility/HeroGameplayAbility_GunParry.h"
 #include "AbilitySystem/HellunaAbilitySystemComponent.h"
@@ -123,81 +122,30 @@ void UHeroGameplayAbility_Shoot::Shoot()
 		return;
 	}
 
-	const bool bIsLauncher = Weapon->IsA<AHeroWeapon_Launcher>();
-
 	// ═══════════════════════════════════════════════════════════
-	// [AimFix] 런처: 로컬 플레이어가 카메라 기준 AimPoint로 캐싱
+	// [SlowMo] 모든 무기 공용: 로컬 플레이어가 카메라 기준 AimPoint 캐싱
+	// 실제 발사(Fire)와 반동(Recoil)은 AnimNotify_LauncherFire에서 처리
 	// ═══════════════════════════════════════════════════════════
-	if (bIsLauncher)
+	if (Hero->IsLocallyControlled())
 	{
-		if (AHeroWeapon_Launcher* Launcher = Cast<AHeroWeapon_Launcher>(Weapon))
+		const FVector AimPoint = ComputeAimPointFromCamera(Hero);
+		if (Hero->HasAuthority())
 		{
-			if (AController* Controller = Hero->GetController())
-			{
-				if (Hero->IsLocallyControlled())
-				{
-					// 클라이언트: 카메라 기준 AimPoint → 서버에 캐싱
-					const FVector AimPoint = ComputeAimPointFromCamera(Hero);
-					if (Hero->HasAuthority())
-					{
-						Launcher->CacheAimWithAimPoint(Controller, AimPoint);
-					}
-					else
-					{
-						Launcher->ServerCacheAimWithPoint(AimPoint);
-					}
-				}
-				else
-				{
-					// 서버 비로컬: 폴백 (클라이언트 RPC가 더 정확하지만 안전장치)
-					Launcher->CacheAimFromController(Controller);
-				}
-			}
+			Weapon->CacheClientAimPoint(AimPoint);
+		}
+		else
+		{
+			Weapon->ServerCacheClientAimPoint(AimPoint);
 		}
 	}
 
-	// 몽타주 재생
+	// 몽타주 재생 → AnimNotify에서 Fire + ApplyRecoil 호출
 	if (UAnimMontage* AttackMontage = Weapon->AnimSet.Attack)
 	{
 		if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
 		{
 			ASC->PlayMontage(this, GetCurrentActivationInfo(), AttackMontage, 1.f);
 		}
-	}
-
-	// 로컬 코스메틱 (반동)
-	if (Hero->IsLocallyControlled())
-	{
-		Weapon->ApplyRecoil(Hero);
-	}
-
-	// ═══════════════════════════════════════════════════════════
-	// [AimFix] Fire: 로컬 플레이어가 카메라 기준 AimPoint 계산 → 서버에 전달
-	// 런처는 AnimNotify_LauncherFire에서 Fire하므로 여기서 스킵
-	// ═══════════════════════════════════════════════════════════
-	if (!bIsLauncher)
-	{
-		if (Hero->IsLocallyControlled())
-		{
-			const FVector AimPoint = ComputeAimPointFromCamera(Hero);
-
-			if (Hero->HasAuthority())
-			{
-				// 리슨서버 호스트: 직접 실행
-				if (AController* Controller = Hero->GetController())
-				{
-					Weapon->FireWithAimPoint(Controller, AimPoint);
-				}
-			}
-			else
-			{
-				// 데디서버 클라이언트: Server RPC
-				Weapon->ServerFireWithAimPoint(AimPoint);
-			}
-		}
-		// 서버 비로컬: 아무것도 안 함
-		// 클라이언트의 Reliable RPC(ServerFireWithAimPoint)가 보장하므로 폴백 불필요
-		// (폴백 Fire를 호출하면 RPC와 이중 발사 버그 발생)
 	}
 }
 

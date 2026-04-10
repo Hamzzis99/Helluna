@@ -2,7 +2,7 @@
 
 #include "AnimInstance/AnimNotify_LauncherFire.h"
 #include "Character/HellunaHeroCharacter.h"
-#include "Weapon/HeroWeapon_Launcher.h"
+#include "Weapon/HeroWeapon_GunBase.h"
 
 void UAnimNotify_LauncherFire::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,
 	const FAnimNotifyEventReference& EventReference)
@@ -14,14 +14,22 @@ void UAnimNotify_LauncherFire::Notify(USkeletalMeshComponent* MeshComp, UAnimSeq
 	AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(MeshComp->GetOwner());
 	if (!Hero) return;
 
-	// 서버에서만 실제 발사
-	if (!Hero->HasAuthority()) return;
+	AHeroWeapon_GunBase* Weapon = Cast<AHeroWeapon_GunBase>(Hero->GetCurrentWeapon());
+	if (!Weapon) return;
 
-	AHeroWeapon_Launcher* Launcher = Cast<AHeroWeapon_Launcher>(Hero->GetCurrentWeapon());
-	if (!Launcher) return;
+	// 서버: 발사 (GunBase→라인트레이스 / Launcher→프로젝타일)
+	if (Hero->HasAuthority())
+	{
+		AController* Controller = Hero->GetController();
+		if (Controller)
+		{
+			Weapon->Fire(Controller);
+		}
+	}
 
-	AController* Controller = Hero->GetController();
-	if (!Controller) return;
-
-	Launcher->Fire(Controller);
+	// 로컬: 반동 적용 (발사 타이밍에 맞춰서)
+	if (Hero->IsLocallyControlled())
+	{
+		Weapon->ApplyRecoil(Hero);
+	}
 }
