@@ -535,6 +535,36 @@ void AHellunaDefenseGameMode::OnNightPCGGraphGenerated(UPCGComponent* InComponen
 
     UE_LOG(LogTemp, Warning, TEXT("[PCG 생성 콜백] 추출된 광석 데이터: %d개"), ExtractedOres.Num());
 
+    // ── PCG 포인트 분포 디버그: 중심 대비 좌우 편향 확인 ──
+    if (ExtractedOres.Num() > 0)
+    {
+        FVector CenterSum = FVector::ZeroVector;
+        for (const FPreservedOre& Ore : ExtractedOres)
+        {
+            CenterSum += Ore.Transform.GetLocation();
+        }
+        const FVector Center = CenterSum / ExtractedOres.Num();
+
+        // PCG 액터 위치 기준으로 오프셋 확인
+        AActor* PCGOwnerDbg = InComponent->GetOwner();
+        const FVector PCGOrigin = PCGOwnerDbg ? PCGOwnerDbg->GetActorLocation() : FVector::ZeroVector;
+        const FVector Offset = Center - PCGOrigin;
+
+        FVector MinPt(TNumericLimits<float>::Max());
+        FVector MaxPt(TNumericLimits<float>::Lowest());
+        for (const FPreservedOre& Ore : ExtractedOres)
+        {
+            const FVector Loc = Ore.Transform.GetLocation();
+            MinPt.X = FMath::Min(MinPt.X, Loc.X); MinPt.Y = FMath::Min(MinPt.Y, Loc.Y);
+            MaxPt.X = FMath::Max(MaxPt.X, Loc.X); MaxPt.Y = FMath::Max(MaxPt.Y, Loc.Y);
+        }
+
+        UE_LOG(LogTemp, Warning, TEXT("[PCG 편향 디버그] PCG원점=(%.0f, %.0f) | 포인트 평균=(%.0f, %.0f) | 오프셋=(%.0f, %.0f) | X범위=[%.0f ~ %.0f] | Y범위=[%.0f ~ %.0f]"),
+            PCGOrigin.X, PCGOrigin.Y, Center.X, Center.Y, Offset.X, Offset.Y,
+            MinPt.X, MaxPt.X, MinPt.Y, MaxPt.Y);
+        Debug::Print(FString::Printf(TEXT("[PCG 편향] 오프셋=(%.0f, %.0f) | %d개"), Offset.X, Offset.Y, ExtractedOres.Num()), FColor::Yellow);
+    }
+
     // ── PCG 즉시 클린업 → PCG 관리 액터 제거, 기존 독립 광석은 영향 없음 ──
     InComponent->CleanupLocal(/*bRemoveComponents=*/true);
     InComponent->Deactivate();
@@ -692,6 +722,48 @@ void AHellunaDefenseGameMode::PostProcessNightPCGDensity(const TArray<AHellunaDe
         return FVector(S, S, S);
     };
 
+    // Foliage(ISM) 액터를 한 번만 수집 — 라인트레이스에서 무시할 목록
+    TArray<AActor*> FoliageActorsToIgnore;
+    for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+    {
+        TArray<UInstancedStaticMeshComponent*> ISMs;
+        (*It)->GetComponents<UInstancedStaticMeshComponent>(ISMs);
+        if (ISMs.Num() > 0)
+        {
+            FoliageActorsToIgnore.Add(*It);
+        }
+    }
+
+    // 지면 보정 라인트레이스 — Landscape/WorldStatic만 히트, Foliage ISM 무시
+    auto SnapToGround = [this, &FoliageActorsToIgnore](FVector& InOutLoc)
+    {
+        FHitResult GroundHit;
+        const FVector TraceStart = FVector(InOutLoc.X, InOutLoc.Y, InOutLoc.Z + 500.f);
+        const FVector TraceEnd   = FVector(InOutLoc.X, InOutLoc.Y, InOutLoc.Z - 1000.f);
+
+        FCollisionQueryParams TraceParams(SCENE_QUERY_STAT(OreGroundSnap), true);
+        for (AActor* FoliageActor : FoliageActorsToIgnore)
+        {
+            TraceParams.AddIgnoredActor(FoliageActor);
+        }
+
+        if (GetWorld()->LineTraceSingleByChannel(GroundHit, TraceStart, TraceEnd, ECC_Visibility, TraceParams))
+        {
+            InOutLoc.Z = GroundHit.ImpactPoint.Z;
+        }
+    };
+
+    // 기울기에 따른 Z 오프셋 계산 — 기울어진 만큼 광석을 땅 속으로 내림
+    auto CalcTiltZOffset = [this](const FRotator& Rot, const FVector& Scale) -> float
+    {
+        const float PitchRad = FMath::DegreesToRadians(FMath::Abs(Rot.Pitch));
+        const float RollRad  = FMath::DegreesToRadians(FMath::Abs(Rot.Roll));
+        const float MaxTiltRad = FMath::Max(PitchRad, RollRad);
+        // 기울어진 면의 가장자리가 원래 높이보다 올라가는 양 = HalfHeight * (1 - cos(tilt))
+        // 그만큼 Z를 내려서 가장 낮은 점이 지면에 닿도록 보정
+        return OreHalfHeight * Scale.Z * (1.f - FMath::Cos(MaxTiltRad));
+    };
+
     // 이전 그래프의 스폰 요청이 남아 있으면 이어붙임 (덮어쓰지 않음)
 
     // 겹침 방지용 — 기존 월드 광석 위치 + 이번 배치 예약 위치 + 이전 그래프 예약 위치
@@ -771,17 +843,15 @@ void AHellunaDefenseGameMode::PostProcessNightPCGDensity(const TArray<AHellunaDe
 
             if (bValid)
             {
-                // 지면 높이 보정 — 라인트레이스로 실제 땅 위치를 찾아 Z를 맞춤
-                FHitResult GroundHit;
-                const FVector TraceStart = FVector(SpawnLoc.X, SpawnLoc.Y, SpawnLoc.Z + 500.f);
-                const FVector TraceEnd   = FVector(SpawnLoc.X, SpawnLoc.Y, SpawnLoc.Z - 1000.f);
-                if (GetWorld()->LineTraceSingleByChannel(GroundHit, TraceStart, TraceEnd, ECC_Visibility))
-                {
-                    SpawnLoc.Z = GroundHit.ImpactPoint.Z;
-                }
+                // 지면 높이 보정 — Foliage 무시 라인트레이스로 Landscape 위치를 찾아 Z를 맞춤
+                SnapToGround(SpawnLoc);
+
+                const FRotator TiltRot = MakeRandomTiltRotation();
+                const FVector  Scale   = MakeRandomScale();
+                SpawnLoc.Z -= CalcTiltZOffset(TiltRot, Scale);
 
                 ReservedLocations.Add(SpawnLoc);
-                PendingClusterSpawns.Add({ OreClass, FTransform(MakeRandomTiltRotation(), SpawnLoc, MakeRandomScale()), OreTags });
+                PendingClusterSpawns.Add({ OreClass, FTransform(TiltRot, SpawnLoc, Scale), OreTags });
             }
         }
     }
@@ -793,11 +863,19 @@ void AHellunaDefenseGameMode::PostProcessNightPCGDensity(const TArray<AHellunaDe
         const float WeightedSurvival = FMath::Clamp(IsolatedOreSurvivalChance * FMath::Sqrt(NewOreData[i].ScoreWeight), 0.f, 1.f);
         if (FMath::FRand() < WeightedSurvival)
         {
-            const FVector IsoLoc = NewOreData[i].Transform.GetLocation();
+            FVector IsoLoc = NewOreData[i].Transform.GetLocation();
             if (!IsLocationValid(IsoLoc)) continue;
+
+            // 지면 높이 보정 — Foliage 무시 라인트레이스
+            SnapToGround(IsoLoc);
+
+            const FRotator TiltRot = MakeRandomTiltRotation();
+            const FVector  Scale   = MakeRandomScale();
+            IsoLoc.Z -= CalcTiltZOffset(TiltRot, Scale);
+
             ReservedLocations.Add(IsoLoc);
             PendingClusterSpawns.Add({ NewOreData[i].OreClass,
-                FTransform(MakeRandomTiltRotation(), IsoLoc, MakeRandomScale()),
+                FTransform(TiltRot, IsoLoc, Scale),
                 NewOreData[i].Tags });
         }
     }

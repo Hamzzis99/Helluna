@@ -268,6 +268,11 @@ protected:
 		meta = (DisplayName = "최대 크기", ClampMin = "0.1", ClampMax = "10.0"))
 	float OreScaleMax = 1.3f;
 
+	/** 광석 메시의 대략적인 절반 높이(cm) — 기울기 Z 보정에 사용 */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|랜덤 배치",
+		meta = (DisplayName = "광석 절반 높이(cm)", ClampMin = "1.0", ClampMax = "500.0"))
+	float OreHalfHeight = 50.f;
+
 	// ────────────────────────────────────────────────────────────────────────────
 	// 내부 배칭 멤버
 	// ────────────────────────────────────────────────────────────────────────────
