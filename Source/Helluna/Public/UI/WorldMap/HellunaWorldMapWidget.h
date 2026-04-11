@@ -87,9 +87,9 @@ public:
 
 private:
     // ── 좌표 변환 (DayNightHUDWidget과 동일한 값 사용) ──
-    static constexpr float MapCenterX = 5679.f;
-    static constexpr float MapCenterY = -4864.f;
-    static constexpr float MapHalfSize = 54035.f;
+    static constexpr float MapCenterX = 0.f;
+    static constexpr float MapCenterY = 0.f;
+    static constexpr float MapHalfSize = 201600.f;
 
     /** 월드 좌표 -> 맵 위젯 픽셀 좌표 */
     FVector2D WorldToMapPixel(const FVector& WorldLocation) const;

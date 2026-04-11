@@ -402,14 +402,9 @@ void UDayNightHUDWidget::UpdateMinimap()
         return;
     }
 
-    const FVector2D LocalUV = WorldToMinimapUV(LocalPawn->GetActorLocation());
-
-    // UV 오프셋 = 플레이어 UV - ZoomScale의 절반 (플레이어가 중앙에 오도록)
-    const float OffsetU = LocalUV.X - MinimapZoomScale * 0.5f;
-    const float OffsetV = LocalUV.Y - MinimapZoomScale * 0.5f;
-
-    MinimapMID->SetScalarParameterValue(FName("OffsetU"), OffsetU);
-    MinimapMID->SetScalarParameterValue(FName("OffsetV"), OffsetV);
+    const float OffsetU = 0.f;
+    const float OffsetV = 0.f;
+    MinimapZoomScale = 1.f;
 
     // ── 미니맵 위젯 크기 (SizeBox 기준) ──
     float MinimapWidgetSize = 76.f;

@@ -163,9 +163,9 @@ private:
     // ── 미니맵 ──
 
     /** 맵 월드 좌표 범위 (SceneCapture 직교 캡처 기준) */
-    static constexpr float MapCenterX = 5679.f;
-    static constexpr float MapCenterY = -4864.f;
-    static constexpr float MapHalfSize = 54035.f;  // OrthoWidth/2
+    static constexpr float MapCenterX = 0.f;
+    static constexpr float MapCenterY = 0.f;
+    static constexpr float MapHalfSize = 201600.f;  // OrthoWidth/2
 
     UPROPERTY()
     TObjectPtr<UMaterialInstanceDynamic> MinimapMID = nullptr;
