@@ -10,8 +10,9 @@
 #include "AIController.h"
 #include "Components/StateTreeComponent.h"
 #include "PCGComponent.h"
+#include "PCG/PCGScoreComponent.h"
 #include "PCGGraph.h"
-#include "PCGManagedResource.h"
+#include "Data/PCGBasePointData.h"
 #include "PCGWorldActor.h"
 #include "Grid/PCGLandscapeCache.h"
 #include "Components/InstancedStaticMeshComponent.h"
@@ -294,7 +295,7 @@ void AHellunaDefenseGameMode::ActivateNightPCG()
     if (!HasAuthority()) return;
 
     UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════════════"));
-    UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] ▶ 시작 | Day=%d | 캐싱된 PCG: %d개"), CurrentDay, CachedNightPCGComponents.Num());
+    UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] ▶ 시작 (프레임분산) | Day=%d | 캐싱된 PCG: %d개"), CurrentDay, CachedNightPCGComponents.Num());
     UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════════════"));
 
     if (CachedNightPCGComponents.Num() == 0)
@@ -304,200 +305,170 @@ void AHellunaDefenseGameMode::ActivateNightPCG()
         return;
     }
 
-    // 생성 전 월드의 기존 Ore 액터 데이터 저장 (PCG가 파괴해도 복원 가능하도록)
-    struct FPreservedOre
+    // ★ PCG 컴포넌트를 타이머로 한 개씩 순차 실행하여 프레임 히치 방지
+    PCGStaggerIndex = 0;
+    PCGStaggerActivatedCount = 0;
+
+    UE_LOG(LogTemp, Warning, TEXT("[PCG 최적화] 순차 생성 시작 | 총 %d개 | 배치간격=%.3f초"),
+        CachedNightPCGComponents.Num(), PCGBatchInterval);
+    Debug::Print(FString::Printf(TEXT("[PCG 최적화] Day%d | %d개 PCG 순차 생성 시작"),
+        CurrentDay, CachedNightPCGComponents.Num()), FColor::Cyan);
+
+    ProcessNextPCGComponent();
+}
+
+void AHellunaDefenseGameMode::ProcessNextPCGComponent()
+{
+    if (PCGStaggerIndex >= CachedNightPCGComponents.Num())
     {
-        UClass* OreClass;
-        FTransform Transform;
-        TArray<FName> Tags;
-    };
-    TArray<FPreservedOre> PreservedOres;
-    {
-        TArray<AActor*> ExistingOres;
-        UGameplayStatics::GetAllActorsWithTag(GetWorld(), FName(TEXT("Ore")), ExistingOres);
-        for (AActor* Ore : ExistingOres)
-        {
-            if (IsValid(Ore))
-            {
-                // 스케일은 저장하지 않음 — 액터 생성자의 기본 스케일 사용 (중복 적용 방지)
-                FTransform SaveTransform(Ore->GetActorRotation(), Ore->GetActorLocation(), FVector::OneVector);
-                PreservedOres.Add({ Ore->GetClass(), SaveTransform, Ore->Tags });
-            }
-        }
-        UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [1/4] 기존 Ore 데이터 저장: %d개 (클래스+위치+태그)"), PreservedOres.Num());
+        UE_LOG(LogTemp, Warning, TEXT("[PCG 최적화] 순차 생성 완료 | 활성화: %d개"), PCGStaggerActivatedCount);
+        return;
     }
-    const int32 SnapshotOreCount = PreservedOres.Num();
 
-    int32 ActivatedCount = 0;
-    int32 InvalidCount = 0;
+    const int32 i = PCGStaggerIndex++;
 
-    for (int32 i = 0; i < CachedNightPCGComponents.Num(); ++i)
+    UPCGComponent* PCGComp = CachedNightPCGComponents[i].Get();
+    if (!IsValid(PCGComp))
     {
-        UPCGComponent* PCGComp = CachedNightPCGComponents[i].Get();
-        if (!IsValid(PCGComp))
-        {
-            InvalidCount++;
-            UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [2/3] [%d] ❌ PCGComponent 유효하지 않음 (GC됨?)"), i);
-            continue;
-        }
+        UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [순차 %d/%d] ❌ PCGComponent 유효하지 않음"),
+            i + 1, CachedNightPCGComponents.Num());
+        GetWorldTimerManager().SetTimerForNextTick(this, &AHellunaDefenseGameMode::ProcessNextPCGComponent);
+        return;
+    }
 
-        AActor* PCGActor = PCGComp->GetOwner();
-        UPCGGraph* Graph = PCGComp->GetGraph();
+    AActor* PCGActor = PCGComp->GetOwner();
+    UPCGGraph* Graph = PCGComp->GetGraph();
 
-        UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [2/3] [%d] Owner=%s | Graph=%s | 위치=%s"),
-            i,
-            PCGActor ? *PCGActor->GetName() : TEXT("nullptr"),
-            Graph ? *Graph->GetName() : TEXT("nullptr"),
-            PCGActor ? *PCGActor->GetActorLocation().ToString() : TEXT("N/A"));
+    UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [순차 %d/%d] Owner=%s | Graph=%s"),
+        i + 1, CachedNightPCGComponents.Num(),
+        PCGActor ? *PCGActor->GetName() : TEXT("nullptr"),
+        Graph ? *Graph->GetName() : TEXT("nullptr"));
 
-        if (!Graph)
-        {
-            UE_LOG(LogTemp, Error, TEXT("[ActivateNightPCG] [2/3] [%d] ❌ Graph가 nullptr — Generate 스킵"), i);
-            Debug::Print(TEXT("[ActivateNightPCG] Graph가 nullptr — Generate 스킵"), FColor::Red);
-            continue;
-        }
+    if (!Graph)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[ActivateNightPCG] [순차 %d/%d] ❌ Graph가 nullptr — 스킵"), i + 1, CachedNightPCGComponents.Num());
+        GetWorldTimerManager().SetTimerForNextTick(this, &AHellunaDefenseGameMode::ProcessNextPCGComponent);
+        return;
+    }
 
-        // ★ World Partition + PIE: PCG 비동기 CleanupTask의 ActorFolder 삭제 크래시 방지
-        //   WP(OFPA)에서 UActorFolder는 레벨 패키지와 별도의 외부 패키지를 가짐.
-        //   PCG가 폴더 삭제 시 check(InActorFolder->GetPackage()->IsDirty()) 를 통과하려면
-        //   UActorFolder 자체의 패키지를 Dirty로 마킹해야 함 (레벨 패키지만으로는 불충분).
 #if WITH_EDITOR
+    {
+        int32 DirtiedCount = 0;
+        auto ForceMarkDirty = [](UPackage* Pkg)
         {
-            int32 DirtiedFolderCount = 0;
-            for (TObjectIterator<UActorFolder> It; It; ++It)
+            if (Pkg && !Pkg->IsDirty())
             {
-                UActorFolder* Folder = *It;
-                if (!Folder) continue;
-
-                UPackage* Pkg = Folder->GetPackage();
-                if (Pkg && !Pkg->IsDirty())
-                {
-                    Pkg->MarkPackageDirty();
-                    DirtiedFolderCount++;
-                }
+                Pkg->SetDirtyFlag(true);
+                return true;
             }
+            return false;
+        };
 
-            // 레벨 패키지도 함께 마킹 (폴더 외 다른 cleanup 작업 대비)
-            if (UWorld* W = GetWorld())
-            {
-                if (W->PersistentLevel)
-                {
-                    W->PersistentLevel->GetPackage()->MarkPackageDirty();
-                }
-            }
-            if (PCGActor)
-            {
-                if (ULevel* PCGLevel = PCGActor->GetLevel())
-                {
-                    PCGLevel->GetPackage()->MarkPackageDirty();
-                }
-            }
-
-            UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [WP 크래시 방지] ActorFolder %d개 + 레벨 패키지 Dirty 마킹 완료"), DirtiedFolderCount);
-        }
-#endif
-
-        // PCG 내부 관리 리소스 전부 정리 (기존 광석은 데이터로 저장 완료 → PCG가 자유롭게 파괴)
-        PCGComp->CleanupLocal(/*bRemoveComponents=*/true);
-        UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [2/3] [%d] CleanupLocal(true) 완료"), i);
-
-        PCGComp->OnPCGGraphGeneratedDelegate.RemoveAll(this);
-        PCGComp->OnPCGGraphGeneratedDelegate.AddUObject(this, &AHellunaDefenseGameMode::OnNightPCGGraphGenerated);
-
-        if (!PCGComp->IsActive())
+        if (UWorld* W = GetWorld())
         {
-            PCGComp->Activate(/*bReset=*/true);
-            UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [2/3] [%d] PCGComponent 재활성화"), i);
-        }
-
-        PCGComp->bIsComponentPartitioned = false;
-
-        // ★ 밤마다 다른 패턴으로 생성되도록 시드 변경
-        PCGComp->Seed = CurrentDay;
-        UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [2/3] [%d] 시드 설정: %d (Day 기반)"), i, PCGComp->Seed);
-
-        UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [2/3] [%d] GenerateLocal 직전 | IsRegistered=%d | IsActive=%d | GenerationTrigger=%d"),
-            i, PCGComp->IsRegistered(), PCGComp->IsActive(), (int32)PCGComp->GenerationTrigger);
-
-        PCGComp->GenerateLocal(/*bForce=*/true);
-        UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [2/3] [%d] ✅ GenerateLocal 호출 완료"), i);
-
-        // 진단 타이머
-        FTimerHandle DiagTimer;
-        TWeakObjectPtr<UPCGComponent> WeakPCG = PCGComp;
-        const int32 DiagDay = CurrentDay;
-        const int32 DiagIdx = i;
-        GetWorldTimerManager().SetTimer(DiagTimer, [this, WeakPCG, DiagDay, DiagIdx, SnapshotOreCount]()
-        {
-            UPCGComponent* Comp = WeakPCG.Get();
-            if (!IsValid(Comp))
+            for (ULevel* Level : W->GetLevels())
             {
-                UE_LOG(LogTemp, Error, TEXT("[PCG 진단] Day=%d [%d] 2초 후 — PCGComponent 유효하지 않음"), DiagDay, DiagIdx);
-                return;
-            }
-
-            AActor* Owner = Comp->GetOwner();
-            TArray<UObject*> ManagedObjects;
-            GetObjectsWithOuter(Comp, ManagedObjects, false);
-
-            int32 TotalOreCount = 0;
-            int32 NewOreCount = 0;
-            if (UWorld* World = GetWorld())
-            {
-                TArray<AActor*> AllOres;
-                UGameplayStatics::GetAllActorsWithTag(World, FName(TEXT("Ore")), AllOres);
-                TotalOreCount = AllOres.Num();
-                for (AActor* Ore : AllOres)
+                if (!Level) continue;
+                if (ForceMarkDirty(Level->GetPackage())) DirtiedCount++;
+                Level->ForEachActorFolder([&](UActorFolder* Folder)
                 {
-                    if (IsValid(Ore) && !PreGenerationOreSnapshot.Contains(Ore))
+                    if (Folder)
                     {
-                        NewOreCount++;
+                        if (UPackage* ExtPkg = Folder->GetExternalPackage())
+                        {
+                            if (ForceMarkDirty(ExtPkg)) DirtiedCount++;
+                        }
+                        if (ForceMarkDirty(Folder->GetPackage())) DirtiedCount++;
                     }
-                }
+                    return true;
+                });
             }
+        }
 
-            UE_LOG(LogTemp, Warning, TEXT("[PCG 진단] Day=%d [%d] 2초 후 | Owner=%s | ManagedObj=%d | IsGenerating=%d | 기존Ore=%d | 전체Ore=%d | 신규Ore=%d"),
-                DiagDay, DiagIdx,
-                Owner ? *Owner->GetName() : TEXT("nullptr"),
-                ManagedObjects.Num(), Comp->IsGenerating(),
-                SnapshotOreCount, TotalOreCount, NewOreCount);
-        }, 2.0f, false);
+        TArray<UObject*> ManagedObjs;
+        GetObjectsWithOuter(PCGComp, ManagedObjs, false);
+        for (UObject* Obj : ManagedObjs)
+        {
+            if (UPackage* Pkg = Obj->GetExternalPackage())
+            {
+                if (ForceMarkDirty(Pkg)) DirtiedCount++;
+            }
+        }
 
-        ActivatedCount++;
-
-#if ENABLE_DRAW_DEBUG
         if (PCGActor)
         {
-            const FVector Loc = PCGActor->GetActorLocation();
-            DrawDebugSphere(GetWorld(), Loc, 200.f, 12, FColor::Purple, false, 8.f, 0, 3.f);
-            DrawDebugString(GetWorld(), Loc + FVector(0, 0, 250.f),
-                FString::Printf(TEXT("PCG Generate Day%d [%s]"), CurrentDay, *PCGActor->GetName()),
-                nullptr, FColor::Purple, 8.f, true);
+            if (ULevel* PCGLevel = PCGActor->GetLevel())
+            {
+                ForceMarkDirty(PCGLevel->GetPackage());
+            }
+        }
+    }
+#endif
+
+    PCGComp->CleanupLocal(/*bRemoveComponents=*/true);
+
+    PCGComp->OnPCGGraphGeneratedDelegate.RemoveAll(this);
+    PCGComp->OnPCGGraphGeneratedDelegate.AddUObject(this, &AHellunaDefenseGameMode::OnNightPCGGraphGenerated);
+
+    if (!PCGComp->IsActive())
+    {
+        PCGComp->Activate(/*bReset=*/true);
+    }
+
+    PCGComp->bIsComponentPartitioned = false;
+    PCGComp->Seed = FMath::Rand();
+
+    PCGComp->GenerateLocal(/*bForce=*/true);
+    UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [순차 %d/%d] ✅ GenerateLocal 완료 (Seed=%d)"),
+        i + 1, CachedNightPCGComponents.Num(), PCGComp->Seed);
+
+#if WITH_EDITOR
+    {
+        TWeakObjectPtr<UPCGComponent> WeakPCGForDirty = PCGComp;
+        GetWorldTimerManager().ClearTimer(PCGActorFolderDirtyGuardTimer);
+        GetWorldTimerManager().SetTimer(PCGActorFolderDirtyGuardTimer, [this, WeakPCGForDirty]()
+        {
+            if (!WeakPCGForDirty.IsValid() || !WeakPCGForDirty->IsGenerating())
+            {
+                GetWorldTimerManager().ClearTimer(PCGActorFolderDirtyGuardTimer);
+                return;
+            }
+            if (UWorld* W = GetWorld())
+            {
+                for (ULevel* Level : W->GetLevels())
+                {
+                    if (!Level) continue;
+                    Level->ForEachActorFolder([](UActorFolder* Folder)
+                    {
+                        if (Folder)
+                        {
+                            if (UPackage* ExtPkg = Folder->GetExternalPackage())
+                            {
+                                if (!ExtPkg->IsDirty()) ExtPkg->SetDirtyFlag(true);
+                            }
+                            UPackage* Pkg = Folder->GetPackage();
+                            if (Pkg && !Pkg->IsDirty()) Pkg->SetDirtyFlag(true);
+                        }
+                        return true;
+                    });
+                }
+            }
+        }, 0.01f, true);
         }
 #endif
-    }
 
-    // ★ 기존 Ore 복원 — PCG 관리 외부의 독립 액터로 재생성
-    PreGenerationOreSnapshot.Empty();
-    int32 RestoredCount = 0;
-    for (const FPreservedOre& Data : PreservedOres)
+    PCGStaggerActivatedCount++;
+
+    // 다음 PCG 컴포넌트를 타이머로 지연 처리
+    if (PCGStaggerIndex < CachedNightPCGComponents.Num())
     {
-        FActorSpawnParameters Params;
-        Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-        if (AActor* Respawned = GetWorld()->SpawnActor(Data.OreClass, &Data.Transform, Params))
-        {
-            Respawned->Tags = Data.Tags;
-            PreGenerationOreSnapshot.Add(Respawned);
-            RestoredCount++;
-        }
+        GetWorldTimerManager().SetTimer(PCGStaggerTimer, this,
+            &AHellunaDefenseGameMode::ProcessNextPCGComponent, PCGBatchInterval, false);
     }
-    UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [3/4] 기존 Ore 복원: %d / %d개"), RestoredCount, PreservedOres.Num());
-    Debug::Print(FString::Printf(TEXT("[ActivateNightPCG] Day%d | 기존Ore 복원: %d개"), CurrentDay, RestoredCount), FColor::Yellow);
-
-    UE_LOG(LogTemp, Warning, TEXT("[ActivateNightPCG] [4/4] ◀ 완료 | Day=%d | 활성화: %d개 / 무효: %d개 | 복원Ore: %d개"),
-        CurrentDay, ActivatedCount, InvalidCount, RestoredCount);
-    Debug::Print(FString::Printf(TEXT("[ActivateNightPCG] Day%d — %d개 PCG 실행 (복원Ore: %d개)"),
-        CurrentDay, ActivatedCount, RestoredCount), FColor::Purple);
+    else
+    {
+        GetWorldTimerManager().SetTimerForNextTick(this, &AHellunaDefenseGameMode::ProcessNextPCGComponent);
+    }
 }
 
 void AHellunaDefenseGameMode::OnNightPCGGraphGenerated(UPCGComponent* InComponent)
@@ -515,231 +486,467 @@ void AHellunaDefenseGameMode::OnNightPCGGraphGenerated(UPCGComponent* InComponen
     UE_LOG(LogTemp, Warning, TEXT("[PCG 생성 콜백] ▶ 시작 | Day=%d | Owner=%s"),
         CurrentDay, PCGOwner ? *PCGOwner->GetName() : TEXT("nullptr"));
 
-    // ── 방법 1: GetObjectsWithOuter ──
-    int32 ManagedActorCount = 0;
-    int32 ManagedISMCount = 0;
+    // ── PCG 액터의 PCGScoreComponent에서 설정 읽기 ──
+    float PCGScoreWeight = 1.f;
+    UClass* SpawnClassOverride = nullptr;
+    if (IsValid(PCGOwner))
     {
-        TArray<UObject*> PCGManagedObjects;
-        GetObjectsWithOuter(InComponent, PCGManagedObjects, /*bIncludeNestedOuters=*/false);
-        UE_LOG(LogTemp, Warning, TEXT("[PCG 생성 콜백] [1/3] GetObjectsWithOuter: %d개"), PCGManagedObjects.Num());
-
-        for (int32 ObjIdx = 0; ObjIdx < PCGManagedObjects.Num(); ++ObjIdx)
+        if (const UPCGScoreComponent* ScoreComp = PCGOwner->FindComponentByClass<UPCGScoreComponent>())
         {
-            UObject* Obj = PCGManagedObjects[ObjIdx];
-            UE_LOG(LogTemp, Warning, TEXT("[PCG 생성 콜백] [1/3]   [%d] 클래스=%s | 이름=%s"),
-                ObjIdx, Obj ? *Obj->GetClass()->GetName() : TEXT("null"), Obj ? *Obj->GetName() : TEXT("null"));
-
-            if (UPCGManagedActors* ManagedActors = Cast<UPCGManagedActors>(Obj))
+            PCGScoreWeight = FMath::Max(ScoreComp->ScoreWeight, 0.01f);
+            if (ScoreComp->SpawnActorClassOverride)
             {
-                const int32 SetCount = ManagedActors->GeneratedActors.Num();
-                ManagedActorCount += SetCount;
-                UE_LOG(LogTemp, Warning, TEXT("[PCG 생성 콜백] [1/3]   ManagedActors: %d개"), SetCount);
-                int32 LogIdx = 0;
-                for (const TSoftObjectPtr<AActor>& Soft : ManagedActors->GeneratedActors)
-                {
-                    if (LogIdx >= 3) break;
-                    AActor* A = Soft.Get();
-                    UE_LOG(LogTemp, Warning, TEXT("[PCG 생성 콜백] [1/3]     [%d] %s | 클래스=%s"),
-                        LogIdx, A ? *A->GetName() : TEXT("null"), A ? *A->GetClass()->GetName() : TEXT("N/A"));
-                    LogIdx++;
-                }
-            }
-            else if (UPCGManagedISMComponent* ManagedISM = Cast<UPCGManagedISMComponent>(Obj))
-            {
-                if (UInstancedStaticMeshComponent* ISMComp = ManagedISM->GetComponent())
-                {
-                    ManagedISMCount += ISMComp->GetInstanceCount();
-                }
+                SpawnClassOverride = ScoreComp->SpawnActorClassOverride;
             }
         }
     }
 
-    // ── 방법 2: 월드 쿼리 (스냅샷 비교) ──
-    int32 NewOreCount = 0;
+    // ── PCG 출력 포인트 데이터에서 위치 직접 추출 (Spawn Actor 노드 불필요) ──
+    TArray<FPreservedOre> ExtractedOres;
     {
-        TArray<AActor*> AllOres;
-        UGameplayStatics::GetAllActorsWithTag(GetWorld(), FName(TEXT("Ore")), AllOres);
-        for (AActor* Ore : AllOres)
+        if (!SpawnClassOverride)
         {
-            if (IsValid(Ore) && !PreGenerationOreSnapshot.Contains(Ore))
+            UE_LOG(LogTemp, Error, TEXT("[PCG 생성 콜백] ❌ SpawnActorClassOverride가 설정되지 않음! PCGScoreComponent에서 스폰할 클래스를 지정하세요."));
+            Debug::Print(TEXT("[PCG] SpawnActorClassOverride 미설정 — PCGScoreComponent 확인 필요"), FColor::Red);
+            return;
+        }
+
+        const FPCGDataCollection& Output = InComponent->GetGeneratedGraphOutput();
+        TArray<FPCGTaggedData> SpatialData = Output.GetAllSpatialInputs();
+
+        for (const FPCGTaggedData& Tagged : SpatialData)
+        {
+            const UPCGBasePointData* BasePointData = Cast<UPCGBasePointData>(Tagged.Data);
+            if (!BasePointData)
             {
-                NewOreCount++;
-                if (NewOreCount <= 5)
-                {
-                    FString TagStr;
-                    for (const FName& Tag : Ore->Tags)
-                    {
-                        TagStr += Tag.ToString() + TEXT(" ");
-                    }
-                    UE_LOG(LogTemp, Warning, TEXT("[PCG 생성 콜백] [2/3] 신규 Ore #%d: %s | 클래스=%s | 위치=%s | 태그=[%s]"),
-                        NewOreCount,
-                        *Ore->GetName(),
-                        *Ore->GetClass()->GetName(),
-                        *Ore->GetActorLocation().ToString(),
-                        TagStr.IsEmpty() ? TEXT("없음") : *TagStr.TrimEnd());
-                }
+                UE_LOG(LogTemp, Warning, TEXT("[PCG 디버그]   Spatial → BasePointData CAST FAIL"));
+                continue;
+            }
+
+            const TArray<FTransform> Transforms = BasePointData->GetTransformsCopy();
+            UE_LOG(LogTemp, Warning, TEXT("[PCG 디버그]   포인트: %d개"), Transforms.Num());
+
+            for (const FTransform& T : Transforms)
+            {
+                ExtractedOres.Add({ SpawnClassOverride, T, { FName(TEXT("Ore")) }, PCGScoreWeight });
             }
         }
-        UE_LOG(LogTemp, Warning, TEXT("[PCG 생성 콜백] [2/3] 기존Ore=%d | 전체Ore=%d | 신규Ore=%d"),
-            PreGenerationOreSnapshot.Num(), AllOres.Num(), NewOreCount);
     }
 
-    UE_LOG(LogTemp, Warning, TEXT("[PCG 생성 콜백] [2/3] Managed(Actor:%d ISM:%d) | 월드쿼리 신규Ore: %d개"),
-        ManagedActorCount, ManagedISMCount, NewOreCount);
+    UE_LOG(LogTemp, Warning, TEXT("[PCG 생성 콜백] 추출된 광석 데이터: %d개"), ExtractedOres.Num());
 
-    const int32 Total = FMath::Max(ManagedActorCount + ManagedISMCount, NewOreCount);
-
-    if (Total == 0)
+    // ── PCG 포인트 분포 디버그: 중심 대비 좌우 편향 확인 ──
+    if (ExtractedOres.Num() > 0)
     {
-        UE_LOG(LogTemp, Error, TEXT("[PCG 생성 콜백] ❌ 생성된 오브젝트가 0개! PCG 그래프 설정을 확인하세요."));
+        FVector CenterSum = FVector::ZeroVector;
+        for (const FPreservedOre& Ore : ExtractedOres)
+        {
+            CenterSum += Ore.Transform.GetLocation();
+        }
+        const FVector Center = CenterSum / ExtractedOres.Num();
+
+        // PCG 액터 위치 기준으로 오프셋 확인
+        AActor* PCGOwnerDbg = InComponent->GetOwner();
+        const FVector PCGOrigin = PCGOwnerDbg ? PCGOwnerDbg->GetActorLocation() : FVector::ZeroVector;
+        const FVector Offset = Center - PCGOrigin;
+
+        FVector MinPt(TNumericLimits<float>::Max());
+        FVector MaxPt(TNumericLimits<float>::Lowest());
+        for (const FPreservedOre& Ore : ExtractedOres)
+        {
+            const FVector Loc = Ore.Transform.GetLocation();
+            MinPt.X = FMath::Min(MinPt.X, Loc.X); MinPt.Y = FMath::Min(MinPt.Y, Loc.Y);
+            MaxPt.X = FMath::Max(MaxPt.X, Loc.X); MaxPt.Y = FMath::Max(MaxPt.Y, Loc.Y);
+        }
+
+        UE_LOG(LogTemp, Warning, TEXT("[PCG 편향 디버그] PCG원점=(%.0f, %.0f) | 포인트 평균=(%.0f, %.0f) | 오프셋=(%.0f, %.0f) | X범위=[%.0f ~ %.0f] | Y범위=[%.0f ~ %.0f]"),
+            PCGOrigin.X, PCGOrigin.Y, Center.X, Center.Y, Offset.X, Offset.Y,
+            MinPt.X, MaxPt.X, MinPt.Y, MaxPt.Y);
+        Debug::Print(FString::Printf(TEXT("[PCG 편향] 오프셋=(%.0f, %.0f) | %d개"), Offset.X, Offset.Y, ExtractedOres.Num()), FColor::Yellow);
     }
 
-    Debug::Print(
-        FString::Printf(TEXT("[PCG 생성 완료] Day%d | Managed: %d개 / 신규Ore: %d개 / 기존Ore: %d개"),
-            CurrentDay, ManagedActorCount + ManagedISMCount, NewOreCount, PreGenerationOreSnapshot.Num()),
-        Total > 0 ? FColor::Green : FColor::Red
-    );
+    // ── PCG 즉시 클린업 → PCG 관리 액터 제거, 기존 독립 광석은 영향 없음 ──
+    InComponent->CleanupLocal(/*bRemoveComponents=*/true);
+    InComponent->Deactivate();
 
-    // [3/3] 밀도 기반 후처리 컬링
-    PostProcessNightPCGDensity(InComponent);
+    if (ExtractedOres.Num() == 0)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[PCG 생성 콜백] ❌ 추출된 광석 0개! PCG 그래프 설정을 확인하세요."));
+        Debug::Print(TEXT("[PCG 생성 콜백] 추출된 광석 0개 — PCG 그래프 확인 필요"), FColor::Red);
+        return;
+    }
+
+    // ── 종합 점수 로그 ──
+    {
+        float AvgDensityScore = 0.f;
+        TArray<AActor*> CurrentOres;
+        UGameplayStatics::GetAllActorsWithTag(GetWorld(), FName(TEXT("Ore")), CurrentOres);
+
+        for (const FPreservedOre& Ore : ExtractedOres)
+        {
+            const FVector Loc = Ore.Transform.GetLocation();
+            AvgDensityScore += CalculateOreDensityFactor(Loc, CurrentOres);
+        }
+        AvgDensityScore /= ExtractedOres.Num();
+        const float AvgTotalScore = AvgDensityScore * PCGScoreWeight;
+
+        // 예상 스폰 수 계산 (실제 로직 시뮬레이션)
+        const int32 N = ExtractedOres.Num();
+        // 시드 수: N을 초과할 수 없음
+        const int32 EstSeedCount = FMath::Clamp(FMath::RoundToInt(N * ClusterSeedRatio * FMath::Sqrt(PCGScoreWeight)), 1, N);
+        // 시드당 멤버 수 (평균): 시드를 제외한 나머지를 시드끼리 나눔
+        const int32 AvgMembers = (EstSeedCount < N) ? FMath::Min((N - EstSeedCount) / FMath::Max(EstSeedCount, 1), (MaxClusterSize - 1)) : 0;
+        // 실제 클러스터 크기 = (멤버+1) × 가중치
+        const int32 ScaledPerSeed = FMath::Max(1, FMath::RoundToInt((AvgMembers + 1) * PCGScoreWeight));
+        const int32 EstClusterOres = EstSeedCount * ScaledPerSeed;
+        // 단독 광석: 시드에도 멤버에도 배정되지 않은 수
+        const int32 Assigned = FMath::Min(EstSeedCount + EstSeedCount * AvgMembers, N);
+        const int32 Unassigned = N - Assigned;
+        const float WeightedSurvival = FMath::Clamp(IsolatedOreSurvivalChance * FMath::Sqrt(PCGScoreWeight), 0.f, 1.f);
+        const int32 EstIsolated = FMath::RoundToInt(Unassigned * WeightedSurvival);
+        const int32 EstTotal = EstClusterOres + EstIsolated;
+
+        UPCGGraph* Graph = InComponent->GetGraph();
+        const FString GraphName = Graph ? Graph->GetName() : TEXT("Unknown");
+
+        UE_LOG(LogTemp, Warning, TEXT("[PCG 점수] 그래프=%s | 가중치=%.1f | 평균밀도점수=%.2f | 총점=%.2f | 예상 스폰: ~%d개 (시드%d + 단독%d)"),
+            *GraphName, PCGScoreWeight, AvgDensityScore, AvgTotalScore, EstTotal, EstClusterOres, EstIsolated);
+        Debug::Print(FString::Printf(TEXT("[PCG 점수] %s | 가중치=%.1f | 밀도=%.2f | 총점=%.2f → 예상 ~%d개"),
+            *GraphName, PCGScoreWeight, AvgDensityScore, AvgTotalScore, EstTotal), FColor::Cyan);
+    }
+
+    // 밀도 기반 클러스터 후처리 (추출한 데이터 기반, PCG 무관)
+    PostProcessNightPCGDensity(ExtractedOres);
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
-// PCG 밀도 기반 후처리 컬링
+// PCG 밀도 기반 후처리 — 추출 데이터 기반 독립 액터 스폰
 // ════════════════════════════════════════════════════════════════════════════════
 
-void AHellunaDefenseGameMode::PostProcessNightPCGDensity(UPCGComponent* InComponent)
+void AHellunaDefenseGameMode::PostProcessNightPCGDensity(const TArray<AHellunaDefenseGameMode::FPreservedOre>& NewOreData)
 {
     UWorld* World = GetWorld();
     if (!World) return;
 
-    UE_LOG(LogTemp, Warning, TEXT("[밀도 컬링] ▶ 시작 | Day=%d"), CurrentDay);
+    const double PostProcessStartTime = FPlatformTime::Seconds();
+    UE_LOG(LogTemp, Warning, TEXT("[밀도 컬링] ▶ 시작 (클러스터+프레임분산) | Day=%d"), CurrentDay);
 
-    // 1) 월드 쿼리로 신규 광석 판별 (스냅샷 비교)
-    TArray<AActor*> NewlySpawnedOres;
-    TArray<AActor*> ExistingOres;  // 기존 + 신규 전체
-    UGameplayStatics::GetAllActorsWithTag(World, FName(TEXT("Ore")), ExistingOres);
-
-    for (AActor* Ore : ExistingOres)
-    {
-        if (IsValid(Ore) && !PreGenerationOreSnapshot.Contains(Ore))
-        {
-            NewlySpawnedOres.Add(Ore);
-        }
-    }
-
-    const int32 PreExistingCount = ExistingOres.Num() - NewlySpawnedOres.Num();
-    UE_LOG(LogTemp, Warning, TEXT("[밀도 컬링] [1/3] 월드 Ore: %d개 (기존: %d + 신규: %d) | 설정: 반경=%.0fcm, 최대이웃=%d, 최소유지=%.0f%%"),
-        ExistingOres.Num(), PreExistingCount, NewlySpawnedOres.Num(),
-        DensityCheckRadius, MaxNeighborOreCount, MinKeepRatio * 100.f);
-
-    if (NewlySpawnedOres.Num() == 0)
+    const int32 TotalNew = NewOreData.Num();
+    if (TotalNew == 0)
     {
         UE_LOG(LogTemp, Warning, TEXT("[밀도 컬링] ❌ 신규 Ore 0개 — 컬링 스킵"));
         Debug::Print(TEXT("[밀도 컬링] 신규 Ore 0개 — PCG 그래프 확인 필요"), FColor::Red);
         return;
     }
 
-    // 2) PCG ManagedActors 목록에서 컬링 대상을 안전하게 제거하기 위해 수집
-    TArray<UPCGManagedActors*> ManagedActorsList;
-    if (IsValid(InComponent))
+    // 1) 기존 광석 수집 (밀도 계산용 — 이전 밤에 스폰된 독립 액터들)
+    TArray<AActor*> ExistingOres;
+    UGameplayStatics::GetAllActorsWithTag(World, FName(TEXT("Ore")), ExistingOres);
+
+    UE_LOG(LogTemp, Warning, TEXT("[밀도 컬링] [1/4] 기존 Ore: %d개 | 신규 데이터: %d개"),
+        ExistingOres.Num(), TotalNew);
+
+    // 2) 시드 선정: 밀도/편향 점수가 높은 위치를 우선
+    struct FSeedCandidate { int32 Index; float Score; };
+    TArray<FSeedCandidate> Candidates;
+    Candidates.Reserve(TotalNew);
+    for (int32 i = 0; i < TotalNew; ++i)
     {
-        TArray<UObject*> PCGManagedObjects;
-        GetObjectsWithOuter(InComponent, PCGManagedObjects, false);
-        for (UObject* Obj : PCGManagedObjects)
+        const FVector Loc = NewOreData[i].Transform.GetLocation();
+        Candidates.Add({ i, CalculateSpawnScore(Loc, ExistingOres) * NewOreData[i].ScoreWeight });
+    }
+    Candidates.Sort([](const FSeedCandidate& A, const FSeedCandidate& B) { return A.Score > B.Score; });
+
+    // 가중치가 높을수록 시드(=클러스터 중심)를 더 많이 선정 → 광석이 더 많이 배치됨
+    const float AvgWeight = (TotalNew > 0 && NewOreData.Num() > 0) ? NewOreData[0].ScoreWeight : 1.f;
+    const int32 SeedCount = FMath::Max(1, FMath::RoundToInt(TotalNew * ClusterSeedRatio * FMath::Sqrt(AvgWeight)));
+    const float MinSeedDistSq = ClusterRadius * ClusterRadius;
+    TArray<int32> SelectedSeedIndices;
+    SelectedSeedIndices.Reserve(SeedCount);
+    for (const FSeedCandidate& C : Candidates)
+    {
+        if (SelectedSeedIndices.Num() >= SeedCount) break;
+        const FVector Loc = NewOreData[C.Index].Transform.GetLocation();
+        bool bTooClose = false;
+        for (int32 ExistIdx : SelectedSeedIndices)
         {
-            if (UPCGManagedActors* MA = Cast<UPCGManagedActors>(Obj))
+            if (FVector::DistSquared(Loc, NewOreData[ExistIdx].Transform.GetLocation()) < MinSeedDistSq)
+            { bTooClose = true; break; }
+        }
+        if (!bTooClose) SelectedSeedIndices.Add(C.Index);
+    }
+
+    // 3) 각 시드에 가까운 광석 배정
+    TSet<int32> AssignedIndices;
+    for (int32 SeedIdx : SelectedSeedIndices) AssignedIndices.Add(SeedIdx);
+
+    TMap<int32, TArray<int32>> SeedToMembers;
+    for (int32 SeedIdx : SelectedSeedIndices) SeedToMembers.Add(SeedIdx, TArray<int32>());
+
+    for (int32 SeedIdx : SelectedSeedIndices)
+    {
+        const FVector SeedLoc = NewOreData[SeedIdx].Transform.GetLocation();
+        const int32 WantMembers = FMath::RandRange(MinClusterSize - 1, MaxClusterSize - 1);
+
+        struct FDistEntry { int32 Index; double DistSq; };
+        TArray<FDistEntry> NearOres;
+        for (int32 i = 0; i < TotalNew; ++i)
+        {
+            if (AssignedIndices.Contains(i)) continue;
+            NearOres.Add({ i, FVector::DistSquared(NewOreData[i].Transform.GetLocation(), SeedLoc) });
+        }
+        NearOres.Sort([](const FDistEntry& A, const FDistEntry& B) { return A.DistSq < B.DistSq; });
+
+        TArray<int32>& Members = SeedToMembers[SeedIdx];
+        for (int32 j = 0; j < NearOres.Num() && Members.Num() < WantMembers; ++j)
+        {
+            Members.Add(NearOres[j].Index);
+            AssignedIndices.Add(NearOres[j].Index);
+        }
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("[클러스터] 시드: %d개 | 신규 Ore: %d개"), SelectedSeedIndices.Num(), TotalNew);
+
+    // ── 스폰 요청 리스트 준비 (PCG는 이미 클린업됨 — 파괴 단계 불필요) ──
+    auto MakeRandomTiltRotation = [this]() -> FRotator
+    {
+        return FRotator(
+            FMath::FRandRange(-OreTiltMaxPitch, OreTiltMaxPitch),
+            FMath::FRandRange(0.f, 360.f),
+            FMath::FRandRange(-OreTiltMaxRoll, OreTiltMaxRoll));
+    };
+
+    auto MakeRandomScale = [this]() -> FVector
+    {
+        const float S = FMath::FRandRange(OreScaleMin, OreScaleMax);
+        return FVector(S, S, S);
+    };
+
+    // Foliage(ISM) 액터를 한 번만 수집 — 라인트레이스에서 무시할 목록
+    TArray<AActor*> FoliageActorsToIgnore;
+    for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+    {
+        TArray<UInstancedStaticMeshComponent*> ISMs;
+        (*It)->GetComponents<UInstancedStaticMeshComponent>(ISMs);
+        if (ISMs.Num() > 0)
+        {
+            FoliageActorsToIgnore.Add(*It);
+        }
+    }
+
+    // 지면 보정 라인트레이스 — Landscape/WorldStatic만 히트, Foliage ISM 무시
+    auto SnapToGround = [this, &FoliageActorsToIgnore](FVector& InOutLoc)
+    {
+        FHitResult GroundHit;
+        const FVector TraceStart = FVector(InOutLoc.X, InOutLoc.Y, InOutLoc.Z + 500.f);
+        const FVector TraceEnd   = FVector(InOutLoc.X, InOutLoc.Y, InOutLoc.Z - 1000.f);
+
+        FCollisionQueryParams TraceParams(SCENE_QUERY_STAT(OreGroundSnap), true);
+        for (AActor* FoliageActor : FoliageActorsToIgnore)
+        {
+            TraceParams.AddIgnoredActor(FoliageActor);
+        }
+
+        if (GetWorld()->LineTraceSingleByChannel(GroundHit, TraceStart, TraceEnd, ECC_Visibility, TraceParams))
+        {
+            InOutLoc.Z = GroundHit.ImpactPoint.Z;
+        }
+    };
+
+    // 기울기에 따른 Z 오프셋 계산 — 기울어진 만큼 광석을 땅 속으로 내림
+    auto CalcTiltZOffset = [this](const FRotator& Rot, const FVector& Scale) -> float
+    {
+        const float PitchRad = FMath::DegreesToRadians(FMath::Abs(Rot.Pitch));
+        const float RollRad  = FMath::DegreesToRadians(FMath::Abs(Rot.Roll));
+        const float MaxTiltRad = FMath::Max(PitchRad, RollRad);
+        // 기울어진 면의 가장자리가 원래 높이보다 올라가는 양 = HalfHeight * (1 - cos(tilt))
+        // 그만큼 Z를 내려서 가장 낮은 점이 지면에 닿도록 보정
+        return OreHalfHeight * Scale.Z * (1.f - FMath::Cos(MaxTiltRad));
+    };
+
+    // 이전 그래프의 스폰 요청이 남아 있으면 이어붙임 (덮어쓰지 않음)
+
+    // 겹침 방지용 — 기존 월드 광석 위치 + 이번 배치 예약 위치 + 이전 그래프 예약 위치
+    TArray<FVector> ReservedLocations;
+    ReservedLocations.Reserve(ExistingOres.Num() + PendingClusterSpawns.Num() + TotalNew * 2);
+    for (AActor* Ore : ExistingOres)
+    {
+        if (IsValid(Ore))
+        {
+            ReservedLocations.Add(Ore->GetActorLocation());
+        }
+    }
+    // 이전 그래프에서 이미 예약된 스폰 위치도 겹침 방지에 포함
+    for (const FClusterSpawnRequest& Prev : PendingClusterSpawns)
+    {
+        ReservedLocations.Add(Prev.Transform.GetLocation());
+    }
+    // 기울기 보정: 광석이 최대 각도로 기울어졌을 때 메시가 차지하는 추가 반경을 반영
+    // 광석 높이를 대략 스케일 * 50cm로 가정, sin(15°) ≈ 0.26 → 양쪽 다 기울면 x2
+    const float MaxTiltRad = FMath::DegreesToRadians(FMath::Max(OreTiltMaxPitch, OreTiltMaxRoll));
+    const float TiltBuffer = OreScaleMax * 50.f * FMath::Sin(MaxTiltRad) * 2.f;
+    const float EffectiveMinSpacing = ClusterPlaceMinDist + TiltBuffer;
+    const float MinSpacingSq = EffectiveMinSpacing * EffectiveMinSpacing;
+    const int32 MaxRetries = 5;
+
+    auto IsLocationValid = [&ReservedLocations, MinSpacingSq](const FVector& Loc) -> bool
+    {
+        for (const FVector& Existing : ReservedLocations)
+        {
+            if (FVector::DistSquared(Loc, Existing) < MinSpacingSq)
             {
-                ManagedActorsList.Add(MA);
+                return false;
+            }
+        }
+        return true;
+    };
+
+    // (A) 뭉침 광석 스폰 요청 — 가중치로 클러스터 크기 스케일, 크기에 비례해 반경 확장
+    for (int32 SeedIdx : SelectedSeedIndices)
+    {
+        const FVector SeedLoc = NewOreData[SeedIdx].Transform.GetLocation();
+        const float SeedZ = SeedLoc.Z;
+        const float Weight = NewOreData[SeedIdx].ScoreWeight;
+        // 가중치 기반 뭉침 크기: W1→2~3, W2→3~4, W3→4~6, W5→7~10
+        const int32 ClusterMin = FMath::Max(1, FMath::RoundToInt(1.5f + (Weight - 1.f) * 1.25f));
+        const int32 ClusterMax = FMath::Max(ClusterMin, FMath::RoundToInt(ClusterMin + Weight * 0.6f));
+        const int32 TotalInCluster = FMath::RandRange(ClusterMin, ClusterMax);
+        const float AngleStep = 360.f / TotalInCluster;
+        UClass* OreClass = NewOreData[SeedIdx].OreClass;
+        TArray<FName> OreTags = NewOreData[SeedIdx].Tags;
+
+        // 클러스터 크기에 비례해 배치 반경 확장 (기본 크기 대비)
+        const int32 BaseMax = (MinClusterSize + MaxClusterSize) / 2;
+        const float RadiusScale = (BaseMax > 0) ? FMath::Sqrt(static_cast<float>(TotalInCluster) / BaseMax) : 1.f;
+        const float ScaledMinDist = ClusterPlaceMinDist * RadiusScale;
+        const float ScaledMaxDist = ClusterPlaceMaxDist * RadiusScale;
+
+        for (int32 j = 0; j < TotalInCluster; ++j)
+        {
+            FVector SpawnLoc;
+            bool bValid = false;
+
+            for (int32 Retry = 0; Retry <= MaxRetries; ++Retry)
+            {
+                const float BaseAngle = AngleStep * j + FMath::FRandRange(-20.f, 20.f) + (Retry * 72.f);
+                const float Dist = (j == 0 && Retry == 0) ? 0.f : FMath::FRandRange(ScaledMinDist, ScaledMaxDist);
+                const FVector Dir = FVector::ForwardVector.RotateAngleAxis(BaseAngle, FVector::UpVector);
+                SpawnLoc = SeedLoc + Dir * Dist;
+                SpawnLoc.Z = SeedZ;
+
+                if (IsLocationValid(SpawnLoc))
+                {
+                    bValid = true;
+                    break;
+                }
+            }
+
+            if (bValid)
+            {
+                // 지면 높이 보정 — Foliage 무시 라인트레이스로 Landscape 위치를 찾아 Z를 맞춤
+                SnapToGround(SpawnLoc);
+
+                const FRotator TiltRot = MakeRandomTiltRotation();
+                const FVector  Scale   = MakeRandomScale();
+                SpawnLoc.Z -= CalcTiltZOffset(TiltRot, Scale);
+
+                ReservedLocations.Add(SpawnLoc);
+                PendingClusterSpawns.Add({ OreClass, FTransform(TiltRot, SpawnLoc, Scale), OreTags });
             }
         }
     }
-    UE_LOG(LogTemp, Warning, TEXT("[밀도 컬링] [2/3] PCG ManagedActors 그룹: %d개"), ManagedActorsList.Num());
 
-    // 3) 좌/우 판별을 위한 기준점(우주선) 및 편향 방향
-    FVector Origin = FVector::ZeroVector;
-    if (const AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
+    // (B) 단독 광석 스폰 요청 (클러스터에 배정되지 않은 광석 — 가중치로 생존 확률 조절)
+    for (int32 i = 0; i < TotalNew; ++i)
     {
-        if (AResourceUsingObject_SpaceShip* Ship = GS->GetSpaceShip())
+        if (AssignedIndices.Contains(i)) continue;
+        const float WeightedSurvival = FMath::Clamp(IsolatedOreSurvivalChance * FMath::Sqrt(NewOreData[i].ScoreWeight), 0.f, 1.f);
+        if (FMath::FRand() < WeightedSurvival)
         {
-            Origin = Ship->GetActorLocation();
-        }
-    }
-    const FVector Bias2D = FVector(BiasDirection.X, BiasDirection.Y, 0.f).GetSafeNormal();
+            FVector IsoLoc = NewOreData[i].Transform.GetLocation();
+            if (!IsLocationValid(IsoLoc)) continue;
 
-    // 4) 각 신규 광석에 대해 스폰 점수 계산 → 확률 컬링 (좌/우 통계 추적)
-    const int32 BeforeCount = NewlySpawnedOres.Num();
-    int32 CulledCount = 0;
+            // 지면 높이 보정 — Foliage 무시 라인트레이스
+            SnapToGround(IsoLoc);
 
-    int32 LeftTotal = 0, LeftCulled = 0;
-    int32 RightTotal = 0, RightCulled = 0;
+            const FRotator TiltRot = MakeRandomTiltRotation();
+            const FVector  Scale   = MakeRandomScale();
+            IsoLoc.Z -= CalcTiltZOffset(TiltRot, Scale);
 
-    for (AActor* OreActor : NewlySpawnedOres)
-    {
-        if (!IsValid(OreActor)) continue;
-
-        const FVector Loc = OreActor->GetActorLocation();
-        const FVector Dir2D = FVector(Loc.X - Origin.X, Loc.Y - Origin.Y, 0.f).GetSafeNormal();
-        const bool bIsLeft = FVector::DotProduct(Dir2D, Bias2D) >= 0.f;
-
-        if (bIsLeft) LeftTotal++;
-        else         RightTotal++;
-
-        const float Score = CalculateSpawnScore(Loc, ExistingOres);
-        const float Roll = FMath::FRand();
-
-        if (Roll > Score)
-        {
-            UE_LOG(LogTemp, Log, TEXT("[밀도 컬링]   제거: %s | 위치=%s | 점수=%.2f < 주사위=%.2f | %s"),
-                *OreActor->GetName(), *Loc.ToString(), Score, Roll, bIsLeft ? TEXT("왼쪽") : TEXT("오른쪽"));
-
-            // ★ PCG ManagedActors에서 먼저 제거 — 댕글링 포인터 방지
-            for (UPCGManagedActors* MA : ManagedActorsList)
-            {
-                TSoftObjectPtr<AActor> SoftOre(OreActor);
-                MA->GeneratedActors.Remove(SoftOre);
-            }
-
-            ExistingOres.Remove(OreActor);
-            OreActor->Destroy();
-            CulledCount++;
-
-            if (bIsLeft) LeftCulled++;
-            else         RightCulled++;
+            ReservedLocations.Add(IsoLoc);
+            PendingClusterSpawns.Add({ NewOreData[i].OreClass,
+                FTransform(TiltRot, IsoLoc, Scale),
+                NewOreData[i].Tags });
         }
     }
 
-    const int32 LeftPlaced = LeftTotal - LeftCulled;
-    const int32 RightPlaced = RightTotal - RightCulled;
+    const double CalcTime = (FPlatformTime::Seconds() - PostProcessStartTime) * 1000.0;
+    UE_LOG(LogTemp, Warning, TEXT("[PCG 최적화] 클러스터 계산 완료 (%.1fms) | 스폰예정: %d개 → 배칭 시작"),
+        CalcTime, PendingClusterSpawns.Num());
+    Debug::Print(FString::Printf(TEXT("[PCG 최적화] 클러스터 계산 %.1fms | 스폰 %d (배칭 중)"),
+        CalcTime, PendingClusterSpawns.Num()), FColor::Orange);
 
-    UE_LOG(LogTemp, Warning, TEXT("[밀도 컬링] [3/3] ◀ 결과: 전 %d개 → 컬링 %d개 → 후 %d개 (기존Ore 유지: %d개)"),
-        BeforeCount, CulledCount, BeforeCount - CulledCount, PreExistingCount);
-    UE_LOG(LogTemp, Warning, TEXT("[밀도 컬링] [3/3] 왼쪽: 총 %d → 컬링 %d → 배치 %d | 오른쪽: 총 %d → 컬링 %d → 배치 %d"),
-        LeftTotal, LeftCulled, LeftPlaced, RightTotal, RightCulled, RightPlaced);
+    // ★ 스폰 배칭 시작 (파괴 단계 없음 — PCG 클린업 시 이미 제거됨)
+    if (PendingClusterSpawns.Num() > 0)
+    {
+        // 타이머가 이미 돌고 있으면 (이전 그래프 배칭 중) 중복 시작하지 않음 — 배열에 추가만 되면 됨
+        if (!GetWorldTimerManager().IsTimerActive(ClusterSpawnTimer))
+        {
+            ClusterSpawnBatchIndex = 0;
+            GetWorldTimerManager().SetTimer(ClusterSpawnTimer, this,
+                &AHellunaDefenseGameMode::ProcessClusterSpawnBatch, PCGBatchInterval, true);
+        }
+    }
+    else
+    {
+        FinalizePostProcess();
+    }
+}
 
-    Debug::Print(
-        FString::Printf(TEXT("[밀도 컬링] Day%d | 전: %d → 컬링: %d → 후: %d (기존유지: %d)"),
-            CurrentDay, BeforeCount, CulledCount, BeforeCount - CulledCount, PreExistingCount),
-        CulledCount > 0 ? FColor::Orange : FColor::Green
-    );
-    Debug::Print(
-        FString::Printf(TEXT("[밀도 컬링] Day%d | 왼쪽: %d/%d 배치 (컬링 %d) | 오른쪽: %d/%d 배치 (컬링 %d)"),
-            CurrentDay, LeftPlaced, LeftTotal, LeftCulled, RightPlaced, RightTotal, RightCulled),
-        FColor::Cyan
-    );
+void AHellunaDefenseGameMode::ProcessClusterSpawnBatch()
+{
+    const int32 Total = PendingClusterSpawns.Num();
+    int32 SpawnedThisBatch = 0;
+
+    while (ClusterSpawnBatchIndex < Total && SpawnedThisBatch < PCGBatchSpawnCount)
+    {
+        const FClusterSpawnRequest& Req = PendingClusterSpawns[ClusterSpawnBatchIndex++];
+        FActorSpawnParameters Params;
+        Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+        if (AActor* Spawned = GetWorld()->SpawnActor(Req.OreClass, &Req.Transform, Params))
+        {
+            Spawned->Tags = Req.Tags;
+            Spawned->SetActorScale3D(Req.Transform.GetScale3D());
+            SpawnedClusterOresResult.Add(Spawned);
+        }
+        SpawnedThisBatch++;
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("[PCG 최적화] 스폰 배치 | %d/%d (이번: %d개)"),
+        ClusterSpawnBatchIndex, Total, SpawnedThisBatch);
+
+    if (ClusterSpawnBatchIndex >= Total)
+    {
+        GetWorldTimerManager().ClearTimer(ClusterSpawnTimer);
+        FinalizePostProcess();
+    }
+}
+
+void AHellunaDefenseGameMode::FinalizePostProcess()
+{
+    UE_LOG(LogTemp, Warning, TEXT("[PCG 최적화] ◀ PostProcess 완료 | Day=%d | 스폰: %d개"),
+        CurrentDay, SpawnedClusterOresResult.Num());
+    Debug::Print(FString::Printf(TEXT("[PCG 최적화] Day%d | PostProcess 완료 — 스폰 %d개"),
+        CurrentDay, SpawnedClusterOresResult.Num()),
+        FColor::Green);
+
+    PendingClusterSpawns.Empty();
+    SpawnedClusterOresResult.Empty();
 }
 
 float AHellunaDefenseGameMode::CalculateSpawnScore(const FVector& Location, const TArray<AActor*>& ExistingOres) const
 {
-    float Score = 1.0f;
-
-    // Factor 1: 광석 밀도
-    Score *= CalculateOreDensityFactor(Location, ExistingOres);
-
-    // Factor 2: 방향 편향 (우주선 기준)
-    Score *= CalculateDirectionBiasFactor(Location);
-
-    return FMath::Clamp(Score, 0.f, 1.f);
+    return FMath::Clamp(CalculateOreDensityFactor(Location, ExistingOres), 0.f, 1.f);
 }
 
 float AHellunaDefenseGameMode::CalculateOreDensityFactor(const FVector& Location, const TArray<AActor*>& ExistingOres) const
@@ -761,33 +968,6 @@ float AHellunaDefenseGameMode::CalculateOreDensityFactor(const FVector& Location
     return FMath::Clamp(1.0f - Ratio, MinKeepRatio, 1.0f);
 }
 
-float AHellunaDefenseGameMode::CalculateDirectionBiasFactor(const FVector& Location) const
-{
-    // 우주선 위치를 기준점으로 사용
-    FVector Origin = FVector::ZeroVector;
-
-    if (const AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
-    {
-        if (AResourceUsingObject_SpaceShip* Ship = GS->GetSpaceShip())
-        {
-            Origin = Ship->GetActorLocation();
-        }
-    }
-
-    const FVector Dir2D = FVector(Location.X - Origin.X, Location.Y - Origin.Y, 0.f).GetSafeNormal();
-    const FVector Bias2D = FVector(BiasDirection.X, BiasDirection.Y, 0.f).GetSafeNormal();
-
-    if (Dir2D.IsNearlyZero() || Bias2D.IsNearlyZero())
-    {
-        return 1.0f;
-    }
-
-    // Dot: +1(같은 방향) ~ -1(반대 방향) → 0~1 범위로 변환
-    const float Dot = FVector::DotProduct(Dir2D, Bias2D);
-    const float T = (Dot + 1.f) * 0.5f; // 0(반대) ~ 1(같은 방향)
-
-    return FMath::Lerp(MinBiasScore, 1.0f, T);
-}
 
 // DeactivateNightPCG 삭제됨 — 광석은 낮이 되어도 영구 유지
 // 다음 밤 ActivateNightPCG()에서 기존 광석 밀도를 기반으로 새 광석 컬링
@@ -856,6 +1036,8 @@ void AHellunaDefenseGameMode::EnterDay()
         GS->NetMulticast_OnDawnPassed(EffectiveDayDuration);
     }
 
+    GetWorldTimerManager().SetTimerForNextTick(this, &ThisClass::ActivateNightPCG);
+
     GetWorldTimerManager().ClearTimer(TimerHandle_ToNight);
     GetWorldTimerManager().SetTimer(TimerHandle_ToNight, this, &ThisClass::EnterNight, EffectiveDayDuration, false);
 
@@ -889,9 +1071,6 @@ void AHellunaDefenseGameMode::EnterNight()
 
     // 낮 카운트다운 타이머 정지
     GetWorldTimerManager().ClearTimer(TimerHandle_DayCountdown);
-
-    // PCG 밤 스폰 실행
-    ActivateNightPCG();
 
     // ── 보스 소환 일 체크 ──────────────────────────────────────────────
     // BossSchedule 배열에서 CurrentDay와 일치하는 항목을 찾는다.
@@ -1034,14 +1213,17 @@ void AHellunaDefenseGameMode::TriggerMassSpawning()
     }
 
     // ── 매 밤: RequestSpawn 호출 + 카운터 확정 ───────────────────────
+    float SpawnSequenceDelay = 0.f;
+
     for (AHellunaEnemyMassSpawner* Spawner : CachedMeleeSpawners)
     {
         if (!IsValid(Spawner)) continue;
-        Spawner->RequestSpawn(MeleeCount);
+        Spawner->RequestSpawn(MeleeCount, SpawnSequenceDelay);
         RemainingMonstersThisNight += Spawner->GetRequestedSpawnCount();
         Debug::Print(FString::Printf(
-            TEXT("[TriggerMassSpawning] 근거리 RequestSpawn(%d): %s | 누적: %d"),
-            MeleeCount, *Spawner->GetName(), RemainingMonstersThisNight), FColor::Green);
+            TEXT("[TriggerMassSpawning] 근거리 RequestSpawn(%d, Delay=%.2f): %s | 누적: %d"),
+            MeleeCount, SpawnSequenceDelay, *Spawner->GetName(), RemainingMonstersThisNight), FColor::Green);
+        SpawnSequenceDelay += Spawner->GetEstimatedSpawnSequenceSpacing(MeleeCount);
     }
 
     for (AHellunaEnemyMassSpawner* Spawner : CachedRangeSpawners)
@@ -1052,11 +1234,12 @@ void AHellunaDefenseGameMode::TriggerMassSpawning()
             Debug::Print(FString::Printf(TEXT("[TriggerMassSpawning] 원거리 0마리 — %s 스킵"), *Spawner->GetName()), FColor::Yellow);
             continue;
         }
-        Spawner->RequestSpawn(RangeCount);
+        Spawner->RequestSpawn(RangeCount, SpawnSequenceDelay);
         RemainingMonstersThisNight += Spawner->GetRequestedSpawnCount();
         Debug::Print(FString::Printf(
-            TEXT("[TriggerMassSpawning] 원거리 RequestSpawn(%d): %s | 누적: %d"),
-            RangeCount, *Spawner->GetName(), RemainingMonstersThisNight), FColor::Green);
+            TEXT("[TriggerMassSpawning] 원거리 RequestSpawn(%d, Delay=%.2f): %s | 누적: %d"),
+            RangeCount, SpawnSequenceDelay, *Spawner->GetName(), RemainingMonstersThisNight), FColor::Green);
+        SpawnSequenceDelay += Spawner->GetEstimatedSpawnSequenceSpacing(RangeCount);
     }
 
     // 총 소환 수 확정 후 GameState에 반영 — Total과 Alive를 동시에 설정

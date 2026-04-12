@@ -6,6 +6,9 @@
 #include "Components/ActorComponent.h"
 #include "Inv_ResourceComponent.generated.h"
 
+/** 자원 파괴 시 브로드캐스트 (파괴 이펙트용) */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnResourceDestroyed, FVector, DestroyLocation);
+
 // 자원 채집 컴포넌트 - Static Mesh Actor에 붙여서 사용
 // 오픈월드/PCG 최적화된 컴포넌트 기반 시스템
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent), Blueprintable)
@@ -17,6 +20,10 @@ public:
 	UInv_ResourceComponent();
 
 	virtual void BeginPlay() override;
+
+	/** 자원 파괴 시 호출되는 델리게이트 (OreMiningEffectComponent 등에서 바인딩) */
+	UPROPERTY(BlueprintAssignable, Category = "자원")
+	FOnResourceDestroyed OnResourceDestroyed;
 	
 	// 리플리케이션 속성 등록 (UE 5.7.1)
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;

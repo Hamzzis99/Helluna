@@ -9,6 +9,8 @@
 class UWidgetComponent;
 class USpaceShipAttackSlotManager;
 class UNavigationInvokerComponent;
+class UNavModifierComponent;
+class UNavArea;
 
 /**
  * 
@@ -91,6 +93,33 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Navigation",
 		meta = (DisplayName = "Navigation Invoker (NavMesh 스트리밍)"))
 	TObjectPtr<UNavigationInvokerComponent> NavigationInvoker;
+
+	// =========================================================
+	// ★ NavModifier (우주선 주변 Nav 영역 설정)
+	// =========================================================
+	/** 에디터에서 NavModifier 사용 여부 토글 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Navigation",
+		meta = (DisplayName = "Nav Modifier 사용"))
+	bool bUseNavModifier = false;
+
+	/** 우주선 주변 Nav 영역을 수정하는 컴포넌트 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Navigation",
+		meta = (DisplayName = "Nav Modifier Component", EditCondition = "bUseNavModifier"))
+	TObjectPtr<UNavModifierComponent> NavModifierComp;
+
+	/** NavModifier에 적용할 NavArea 클래스 (예: NavArea_Obstacle, NavArea_Null 등) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Navigation",
+		meta = (DisplayName = "Nav Area Class", EditCondition = "bUseNavModifier"))
+	TSubclassOf<UNavArea> NavModifierAreaClass;
+
+	/** NavModifier 박스 크기 (Half Extent) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Navigation",
+		meta = (DisplayName = "Nav Modifier Extent", EditCondition = "bUseNavModifier"))
+	FVector NavModifierExtent = FVector(300.f, 300.f, 200.f);
+
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
 
 	// =========================================================
 	// ★ [Phase18] 3D 상호작용 프롬프트 위젯

@@ -6,17 +6,49 @@
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "GameplayTagContainer.h"
 
+#include "BossEvent/BossPatternZoneBase.h"
 #include "Character/HellunaEnemyCharacter.h"
-#include "Character/HellunaHeroCharacter.h"
-#include "GameFramework/CharacterMovementComponent.h"
-#include "Kismet/GameplayStatics.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraComponent.h"
+
+#define TD_LOG(Fmt, ...) UE_LOG(LogTemp, Warning, TEXT("[TimeDistortion] " Fmt), ##__VA_ARGS__)
 
 UEnemyGameplayAbility_TimeDistortion::UEnemyGameplayAbility_TimeDistortion()
 {
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::ServerOnly;
+}
+
+// ─────────────────────────────────────────────────────────────
+// CanActivateAbility — 쿨타임 체크
+// ─────────────────────────────────────────────────────────────
+bool UEnemyGameplayAbility_TimeDistortion::CanActivateAbility(
+	const FGameplayAbilitySpecHandle Handle,
+	const FGameplayAbilityActorInfo* ActorInfo,
+	const FGameplayTagContainer* SourceTags,
+	const FGameplayTagContainer* TargetTags,
+	FGameplayTagContainer* OptionalRelevantTags) const
+{
+	if (!Super::CanActivateAbility(Handle, ActorInfo, SourceTags, TargetTags, OptionalRelevantTags))
+	{
+		return false;
+	}
+
+	if (CooldownDuration > 0.f && ActorInfo && ActorInfo->AvatarActor.IsValid())
+	{
+		const UWorld* World = ActorInfo->AvatarActor->GetWorld();
+		if (World)
+		{
+			const double Elapsed = World->GetTimeSeconds() - LastAbilityEndTime;
+			if (Elapsed < CooldownDuration)
+			{
+				TD_LOG("Cooldown active: %.1f / %.1f", Elapsed, CooldownDuration);
+				return false;
+			}
+		}
+	}
+
+	return true;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -28,16 +60,21 @@ void UEnemyGameplayAbility_TimeDistortion::ActivateAbility(
 	const FGameplayAbilityActivationInfo ActivationInfo,
 	const FGameplayEventData* TriggerEventData)
 {
+	TD_LOG("=== ActivateAbility START ===");
+
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
+
+	bPatternFinished = false;
 
 	AHellunaEnemyCharacter* Enemy = GetEnemyCharacterFromActorInfo();
 	if (!Enemy)
 	{
+		TD_LOG("FAIL: Enemy is null");
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
 
-	// 공격 중 상태 태그 추가 (StateTree 전환 방지)
+	// 공격 중 상태 태그
 	if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
 	{
 		FGameplayTagContainer AttackingTag;
@@ -48,21 +85,10 @@ void UEnemyGameplayAbility_TimeDistortion::ActivateAbility(
 	// 이동 잠금
 	Enemy->LockMovementAndFaceTarget(nullptr);
 
-	// 시전 준비 VFX 스폰 (보스에 부착)
+	// 시전 준비 VFX
 	if (ChargingVFX)
 	{
-		ActiveChargingVFXComp = UNiagaraFunctionLibrary::SpawnSystemAttached(
-			ChargingVFX,
-			Enemy->GetRootComponent(),
-			NAME_None,
-			Enemy->GetActorLocation(),
-			FRotator::ZeroRotator,
-			FVector(ChargingVFXScale),
-			EAttachLocation::KeepWorldPosition,
-			true,
-			ENCPoolMethod::None,
-			true
-		);
+		Enemy->Multicast_SpawnPersistentVFX(0, ChargingVFX, ChargingVFXScale);
 	}
 
 	// 몽타주 재생
@@ -82,222 +108,81 @@ void UEnemyGameplayAbility_TimeDistortion::ActivateAbility(
 		}
 	}
 
-	// SlowStartDelay 후 슬로우 적용 타이머
-	UWorld* World = Enemy->GetWorld();
-	if (!World)
+	// Zone 스폰 (비활성 상태로)
+	if (PatternZoneClass)
 	{
-		HandleFinished(true);
-		return;
-	}
-
-	World->GetTimerManager().SetTimer(
-		SlowStartTimerHandle,
-		this,
-		&UEnemyGameplayAbility_TimeDistortion::ApplyTimeSlow,
-		SlowStartDelay,
-		false
-	);
-}
-
-// ─────────────────────────────────────────────────────────────
-// ApplyTimeSlow — 슬로우 시작
-// ─────────────────────────────────────────────────────────────
-void UEnemyGameplayAbility_TimeDistortion::ApplyTimeSlow()
-{
-	AHellunaEnemyCharacter* Enemy = GetEnemyCharacterFromActorInfo();
-	if (!Enemy)
-	{
-		HandleFinished(true);
-		return;
-	}
-
-	// 시전 준비 VFX 끄기
-	if (ActiveChargingVFXComp)
-	{
-		ActiveChargingVFXComp->DeactivateImmediate();
-		ActiveChargingVFXComp = nullptr;
-	}
-
-	// 범위 내 플레이어 수집
-	TArray<AHellunaHeroCharacter*> PlayersInRange;
-	GatherPlayersInRadius(PlayersInRange);
-
-	// 각 플레이어의 CustomTimeDilation 저장 후 감속 적용
-	SlowedPlayers.Reset();
-	for (AHellunaHeroCharacter* Player : PlayersInRange)
-	{
-		if (!IsValid(Player))
+		UWorld* World = Enemy->GetWorld();
+		if (World)
 		{
-			continue;
+			FActorSpawnParameters SpawnParams;
+			SpawnParams.Owner = Enemy;
+			SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+			SpawnedZone = World->SpawnActor<ABossPatternZoneBase>(
+				PatternZoneClass,
+				Enemy->GetActorLocation(),
+				FRotator::ZeroRotator,
+				SpawnParams
+			);
+
+			if (SpawnedZone)
+			{
+				SpawnedZone->SetOwnerEnemy(Enemy);
+				SpawnedZone->SetPatternDuration(PatternDuration);
+				SpawnedZone->OnPatternFinished.AddDynamic(this, &UEnemyGameplayAbility_TimeDistortion::OnPatternFinished);
+				TD_LOG("Zone spawned: %s, Duration=%.2f", *SpawnedZone->GetName(), PatternDuration);
+			}
 		}
-
-		SlowedPlayers.Add(Player, Player->CustomTimeDilation);
-		Player->CustomTimeDilation = TimeDilationScale;
 	}
-
-	// 슬로우 영역 VFX 스폰 (보스에 부착, 지속형)
-	if (SlowAreaVFX)
+	else
 	{
-		ActiveSlowAreaVFXComp = UNiagaraFunctionLibrary::SpawnSystemAttached(
-			SlowAreaVFX,
-			Enemy->GetRootComponent(),
-			NAME_None,
-			Enemy->GetActorLocation(),
-			FRotator::ZeroRotator,
-			FVector(SlowAreaVFXScale),
-			EAttachLocation::KeepWorldPosition,
-			true,
-			ENCPoolMethod::None,
-			true
-		);
+		TD_LOG("WARNING: PatternZoneClass is null");
 	}
 
-	// 슬로우 시작 사운드
-	if (SlowStartSound)
-	{
-		UGameplayStatics::PlaySoundAtLocation(
-			Enemy->GetWorld(), SlowStartSound, Enemy->GetActorLocation()
-		);
-	}
-
-	// SlowDuration 후 폭발 + 시간 복원
+	// 딜레이 후 Zone 활성화
 	UWorld* World = Enemy->GetWorld();
 	if (World)
 	{
 		World->GetTimerManager().SetTimer(
-			DetonationTimerHandle,
+			ZoneActivateTimerHandle,
 			this,
-			&UEnemyGameplayAbility_TimeDistortion::DetonateAndRestore,
-			SlowDuration,
+			&UEnemyGameplayAbility_TimeDistortion::ActivateZone,
+			ZoneActivateDelay,
 			false
 		);
 	}
+
+	TD_LOG("=== ActivateAbility END ===");
 }
 
 // ─────────────────────────────────────────────────────────────
-// DetonateAndRestore — 시간 복원 + 데미지
+// ActivateZone — 딜레이 후 Zone 활성화
 // ─────────────────────────────────────────────────────────────
-void UEnemyGameplayAbility_TimeDistortion::DetonateAndRestore()
+void UEnemyGameplayAbility_TimeDistortion::ActivateZone()
 {
+	TD_LOG("ActivateZone called");
+
+	// 시전 준비 VFX 끄기
 	AHellunaEnemyCharacter* Enemy = GetEnemyCharacterFromActorInfo();
-
-	// 1) 시간 복원 (먼저 복원해야 플레이어가 정상 속도로 데미지 리액션 수행)
-	RestoreAllTimeDilation();
-
-	// 2) 슬로우 영역 VFX 끄기
-	if (ActiveSlowAreaVFXComp)
+	if (Enemy)
 	{
-		ActiveSlowAreaVFXComp->DeactivateImmediate();
-		ActiveSlowAreaVFXComp = nullptr;
+		Enemy->Multicast_StopPersistentVFX(0);
 	}
 
-	if (!Enemy)
+	if (SpawnedZone)
 	{
-		return;
-	}
-
-	// 3) 폭발 VFX 재생 (MulticastPlayEffect 활용)
-	if (DetonationVFX)
-	{
-		Enemy->MulticastPlayEffect(
-			Enemy->GetActorLocation(),
-			DetonationVFX,
-			DetonationVFXScale,
-			false
-		);
-	}
-
-	// 폭발 사운드
-	if (DetonationSound)
-	{
-		UGameplayStatics::PlaySoundAtLocation(
-			Enemy->GetWorld(), DetonationSound, Enemy->GetActorLocation()
-		);
-	}
-
-	// 4) 범위 내 플레이어에게 데미지 적용
-	if (DetonationDamage > 0.f)
-	{
-		TArray<AHellunaHeroCharacter*> PlayersInRange;
-		GatherPlayersInRadius(PlayersInRange);
-
-		for (AHellunaHeroCharacter* Player : PlayersInRange)
-		{
-			if (!IsValid(Player))
-			{
-				continue;
-			}
-
-			UGameplayStatics::ApplyDamage(
-				Player,
-				DetonationDamage,
-				Enemy->GetController(),
-				Enemy,
-				UDamageType::StaticClass()
-			);
-		}
+		SpawnedZone->ActivateZone();
 	}
 }
 
 // ─────────────────────────────────────────────────────────────
-// GatherPlayersInRadius
+// OnPatternFinished — Zone에서 패턴 종료 알림
 // ─────────────────────────────────────────────────────────────
-void UEnemyGameplayAbility_TimeDistortion::GatherPlayersInRadius(
-	TArray<AHellunaHeroCharacter*>& OutPlayers) const
+void UEnemyGameplayAbility_TimeDistortion::OnPatternFinished(bool bWasBroken)
 {
-	AHellunaEnemyCharacter* Enemy = const_cast<UEnemyGameplayAbility_TimeDistortion*>(this)
-		->GetEnemyCharacterFromActorInfo();
-	if (!Enemy)
-	{
-		return;
-	}
-
-	const FVector BossLocation = Enemy->GetActorLocation();
-	const float RadiusSq = DistortionRadius * DistortionRadius;
-
-	UWorld* World = Enemy->GetWorld();
-	if (!World)
-	{
-		return;
-	}
-
-	// 모든 플레이어 캐릭터를 순회하여 범위 내 수집
-	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
-	{
-		APlayerController* PC = It->Get();
-		if (!PC)
-		{
-			continue;
-		}
-
-		AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(PC->GetPawn());
-		if (!Hero)
-		{
-			continue;
-		}
-
-		const float DistSq = FVector::DistSquared(BossLocation, Hero->GetActorLocation());
-		if (DistSq <= RadiusSq)
-		{
-			OutPlayers.Add(Hero);
-		}
-	}
-}
-
-// ─────────────────────────────────────────────────────────────
-// RestoreAllTimeDilation
-// ─────────────────────────────────────────────────────────────
-void UEnemyGameplayAbility_TimeDistortion::RestoreAllTimeDilation()
-{
-	for (auto& Pair : SlowedPlayers)
-	{
-		AHellunaHeroCharacter* Player = Pair.Key.Get();
-		if (IsValid(Player))
-		{
-			Player->CustomTimeDilation = Pair.Value;
-		}
-	}
-	SlowedPlayers.Reset();
+	TD_LOG("OnPatternFinished: bWasBroken=%s", bWasBroken ? TEXT("TRUE") : TEXT("FALSE"));
+	bPatternFinished = true;
+	HandleFinished(false);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -305,36 +190,42 @@ void UEnemyGameplayAbility_TimeDistortion::RestoreAllTimeDilation()
 // ─────────────────────────────────────────────────────────────
 void UEnemyGameplayAbility_TimeDistortion::OnMontageCompleted()
 {
-	// 몽타주가 끝나도 슬로우/폭발 타이머가 아직 동작 중이면 대기
-	// 타이머가 이미 완료되었으면 바로 종료
-	AHellunaEnemyCharacter* Enemy = GetEnemyCharacterFromActorInfo();
-	if (Enemy)
-	{
-		UWorld* World = Enemy->GetWorld();
-		if (World && World->GetTimerManager().IsTimerActive(DetonationTimerHandle))
-		{
-			// 폭발이 아직 안 터짐 → 폭발 타이머가 끝나면 HandleFinished 호출하도록 대기
-			// (타이머 콜백에서 직접 HandleFinished를 호출하지 않으므로
-			//  여기서 별도 타이머로 종료를 예약한다)
-			return;
-		}
-	}
+	TD_LOG("OnMontageCompleted: bPatternFinished=%s", bPatternFinished ? TEXT("TRUE") : TEXT("FALSE"));
 
-	HandleFinished(false);
+	// 몽타주가 끝나도 패턴이 진행 중이면 무조건 대기
+	if (bPatternFinished)
+	{
+		HandleFinished(false);
+	}
+	// else: 패턴 종료 콜백(OnPatternFinished)이 올 때까지 GA 유지
 }
 
 void UEnemyGameplayAbility_TimeDistortion::OnMontageCancelled()
 {
-	HandleFinished(true);
+	TD_LOG("OnMontageCancelled: bPatternFinished=%s", bPatternFinished ? TEXT("TRUE") : TEXT("FALSE"));
+
+	// 몽타주가 취소되어도 패턴이 진행 중이면 무조건 대기
+	if (bPatternFinished)
+	{
+		HandleFinished(false);
+	}
+	// else: 패턴 종료 콜백이 올 때까지 GA 유지 — 보스는 이동 잠금 상태 유지
 }
 
 // ─────────────────────────────────────────────────────────────
-// HandleFinished — 공통 종료 처리
+// HandleFinished
 // ─────────────────────────────────────────────────────────────
 void UEnemyGameplayAbility_TimeDistortion::HandleFinished(bool bWasCancelled)
 {
-	// 안전하게 시간 복원 (중복 호출해도 안전)
-	RestoreAllTimeDilation();
+	TD_LOG("=== HandleFinished (bCancelled=%s) ===", bWasCancelled ? TEXT("TRUE") : TEXT("FALSE"));
+
+	// Zone 정리
+	if (SpawnedZone)
+	{
+		SpawnedZone->DeactivateZone();
+		SpawnedZone->Destroy();
+		SpawnedZone = nullptr;
+	}
 
 	const FGameplayAbilitySpecHandle Handle = GetCurrentAbilitySpecHandle();
 	const FGameplayAbilityActorInfo* ActorInfo = GetCurrentActorInfo();
@@ -352,8 +243,15 @@ void UEnemyGameplayAbility_TimeDistortion::EndAbility(
 	bool bReplicateEndAbility,
 	bool bWasCancelled)
 {
-	// 시간 복원 보장
-	RestoreAllTimeDilation();
+	TD_LOG("=== EndAbility (bCancelled=%s) ===", bWasCancelled ? TEXT("TRUE") : TEXT("FALSE"));
+
+	// Zone 정리 보장
+	if (SpawnedZone)
+	{
+		SpawnedZone->DeactivateZone();
+		SpawnedZone->Destroy();
+		SpawnedZone = nullptr;
+	}
 
 	AHellunaEnemyCharacter* Enemy = GetEnemyCharacterFromActorInfo();
 	if (Enemy)
@@ -362,21 +260,11 @@ void UEnemyGameplayAbility_TimeDistortion::EndAbility(
 
 		if (UWorld* World = Enemy->GetWorld())
 		{
-			World->GetTimerManager().ClearTimer(SlowStartTimerHandle);
-			World->GetTimerManager().ClearTimer(DetonationTimerHandle);
+			World->GetTimerManager().ClearTimer(ZoneActivateTimerHandle);
 		}
-	}
 
-	// VFX 정리
-	if (ActiveSlowAreaVFXComp)
-	{
-		ActiveSlowAreaVFXComp->DeactivateImmediate();
-		ActiveSlowAreaVFXComp = nullptr;
-	}
-	if (ActiveChargingVFXComp)
-	{
-		ActiveChargingVFXComp->DeactivateImmediate();
-		ActiveChargingVFXComp = nullptr;
+		// 시전 준비 VFX 정리
+		Enemy->Multicast_StopPersistentVFX(0);
 	}
 
 	// State.Enemy.Attacking 태그 제거
@@ -387,5 +275,19 @@ void UEnemyGameplayAbility_TimeDistortion::EndAbility(
 		ASC->RemoveLooseGameplayTags(AttackingTag);
 	}
 
+	bPatternFinished = false;
+
+	// 쿨타임 시작 시점 기록
+	if (ActorInfo && ActorInfo->AvatarActor.IsValid())
+	{
+		if (const UWorld* World = ActorInfo->AvatarActor->GetWorld())
+		{
+			LastAbilityEndTime = World->GetTimeSeconds();
+		}
+	}
+
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
+	TD_LOG("=== EndAbility COMPLETE (Cooldown=%.1fs) ===", CooldownDuration);
 }
+
+#undef TD_LOG

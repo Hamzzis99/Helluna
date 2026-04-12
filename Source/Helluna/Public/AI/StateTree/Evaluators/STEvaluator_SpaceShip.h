@@ -26,6 +26,10 @@ struct FSTEvaluator_SpaceShipInstanceData
 
 	/** 우주선 소멸 시 재탐색 쿨다운 타이머 (매 프레임 순회 방지) */
 	float RespawnSearchTimer = 0.f;
+
+	/** ShipCombatCollision 컴포넌트 캐시 (#9 최적화: 매 틱 GetComponents 방지) */
+	TArray<TWeakObjectPtr<UPrimitiveComponent>> CachedShipCollisionPrims;
+	bool bShipCollisionPrimsCached = false;
 };
 
 USTRUCT(meta = (DisplayName = "Helluna: SpaceShip Target", Category = "Helluna|AI"))

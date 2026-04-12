@@ -56,11 +56,13 @@ public class Helluna : ModuleRules
             // [PCG] 밤 시작 시 런타임 PCG 생성 (장애물/환경 스폰)
             "PCG",
 
+            // [카메라 쉐이크] PerlinNoiseCameraShakePattern 사용
+            "EngineCameras",
+
             // [그래픽 설정] RHI (GPU 벤더 감지 + GGPUFrameTime)
             "RHI",
 
             // [그래픽 설정] DLSS/Streamline/FSR Blueprint API
-            // 빌드 시 모듈 못 찾으면 주석 처리 후 CVar 직접 실행 방식으로 대체
             "DLSSBlueprint",
             "StreamlineBlueprint",
             "StreamlineDLSSGBlueprint",

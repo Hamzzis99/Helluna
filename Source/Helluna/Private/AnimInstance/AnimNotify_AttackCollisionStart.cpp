@@ -3,9 +3,6 @@
 #include "AnimInstance/AnimNotify_AttackCollisionStart.h"
 #include "Character/HellunaEnemyCharacter.h"
 #include "Helluna.h"
-#include "AbilitySystemComponent.h"
-#include "AbilitySystem/EnemyAbility/EnemyGameplayAbility_Attack.h"
-
 void UAnimNotify_AttackCollisionStart::Notify(
 	USkeletalMeshComponent* MeshComp,
 	UAnimSequenceBase* Animation,
@@ -32,23 +29,11 @@ void UAnimNotify_AttackCollisionStart::Notify(
 		return;
 	}
 
-	// GA의 AttackDamage 값을 우선 사용, AnimNotify에 설정된 값은 GA가 없을 때 폴백
+	// GA 시작 시 EnemyCharacter에 캐시한 값을 우선 사용, 없으면 AnimNotify 설정값 폴백
 	float FinalDamage = Damage;
-
-	// 현재 활성화된 GA_Attack에서 AttackDamage 읽기
-	if (UAbilitySystemComponent* ASC = EnemyCharacter->GetAbilitySystemComponent())
+	if (EnemyCharacter->GetCachedMeleeAttackDamage() > 0.f)
 	{
-		for (const FGameplayAbilitySpec& Spec : ASC->GetActivatableAbilities())
-		{
-			if (UEnemyGameplayAbility_Attack* AttackGA = Cast<UEnemyGameplayAbility_Attack>(Spec.Ability))
-			{
-				if (Spec.IsActive())
-				{
-					FinalDamage = AttackGA->AttackDamage;
-					break;
-				}
-			}
-		}
+		FinalDamage = EnemyCharacter->GetCachedMeleeAttackDamage();
 	}
 
 	EnemyCharacter->StartAttackTrace(SocketName, TraceRadius, TraceInterval, FinalDamage, bDrawDebug);

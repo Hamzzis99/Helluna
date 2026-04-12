@@ -43,7 +43,7 @@ void UHeroGameplayAbility_Aim::ActivateAbility(
 	{
 		CachedDefaultMaxWalkSpeed = MoveComp->MaxWalkSpeed;
 		// LocalPredicted: 서버/클라 양쪽에서 동일하게 변경해야 예측 불일치 방지
-		MoveComp->MaxWalkSpeed = AimMaxWalkSpeed;
+		MoveComp->MaxWalkSpeed = AimMaxWalkSpeed * Hero->GetMoveSpeedMultiplier();
 
 		// ── [Aim Rotation] 조준 시 캐릭터가 카메라 방향을 따라 회전 (RE4 스타일) ──
 		CachedOrientRotationToMovement = MoveComp->bOrientRotationToMovement;
@@ -175,8 +175,9 @@ void UHeroGameplayAbility_Aim::EndAbility(
 				CachedUseControllerDesiredRotation ? TEXT("true") : TEXT("false"));
 		}
 
-		// ── 카메라 즉시 복원: 취소 시 줌아웃 미완료 상태면 스냅 (로컬만) ──
-		if (bWasCancelled && CurrentPhase < 3 && Hero->IsLocallyControlled())
+		// ── 카메라 즉시 복원: 취소 시 보간 미완료 상태면 스냅 (로컬만) ──
+		// Phase 1~3 모두 취소 가능 — Phase 3(줌아웃 중) 취소 시에도 FOV 복원 필수
+		if (bWasCancelled && Hero->IsLocallyControlled())
 		{
 			if (UCameraComponent* Cam = Hero->GetFollowCamera())
 			{
@@ -187,8 +188,11 @@ void UHeroGameplayAbility_Aim::EndAbility(
 				Boom->TargetArmLength = CachedDefaultArmLength;
 				Boom->SocketOffset = CachedDefaultSocketOffset;
 			}
-			UE_LOG(LogTemp, Warning, TEXT("[Aim GA] 취소됨 — 카메라 즉시 복원"));
+			UE_LOG(LogTemp, Warning, TEXT("[Aim GA] Phase %d 취소됨 — 카메라 즉시 복원 (FOV=%.1f)"),
+				CurrentPhase, CachedDefaultFOV);
 		}
+
+		ZoomOutTask = nullptr;
 	}
 
 	CurrentPhase = 0;

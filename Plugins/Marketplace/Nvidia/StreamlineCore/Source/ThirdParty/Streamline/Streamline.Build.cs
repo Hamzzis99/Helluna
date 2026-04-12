@@ -98,16 +98,19 @@ public class Streamline : ModuleRules
 
 			foreach (string StreamlineDll in StreamlineDlls)
 			{
-				RuntimeDependencies.Add(SLProductionBinariesPath + StreamlineDll, StagedFileType.NonUFS);
+				if (File.Exists(SLProductionBinariesPath + StreamlineDll))
+				{
+					RuntimeDependencies.Add(SLProductionBinariesPath + StreamlineDll, StagedFileType.NonUFS);
+				}
 
 				if (Target.Configuration != UnrealTargetConfiguration.Shipping)
 				{
-					if (bHasDevelopmentBinaries)
+					if (bHasDevelopmentBinaries && File.Exists(SLDevelopmentBinariesPath + StreamlineDll))
 					{
 						RuntimeDependencies.Add(SLDevelopmentBinariesPath + StreamlineDll, StagedFileType.NonUFS);
 					}
 
-					if (bHasDebugBinaries)
+					if (bHasDebugBinaries && File.Exists(SLDebugBinariesPath + StreamlineDll))
 					{
 						RuntimeDependencies.Add(SLDebugBinariesPath + StreamlineDll, StagedFileType.NonUFS);
 					}
@@ -119,14 +122,17 @@ public class Streamline : ModuleRules
 				// include symbols in non-shipping builds
 				foreach (string StreamlinePdb in StreamlinePdbs)
 				{
-					RuntimeDependencies.Add(SLProductionBinariesPath + StreamlinePdb, StagedFileType.DebugNonUFS);
+					if (File.Exists(SLProductionBinariesPath + StreamlinePdb))
+					{
+						RuntimeDependencies.Add(SLProductionBinariesPath + StreamlinePdb, StagedFileType.DebugNonUFS);
+					}
 
-					if (bHasDevelopmentBinaries)
+					if (bHasDevelopmentBinaries && File.Exists(SLDevelopmentBinariesPath + StreamlinePdb))
 					{
 						RuntimeDependencies.Add(SLDevelopmentBinariesPath + StreamlinePdb, StagedFileType.DebugNonUFS);
 					}
 
-					if (bHasDebugBinaries)
+					if (bHasDebugBinaries && File.Exists(SLDebugBinariesPath + StreamlinePdb))
 					{
 						RuntimeDependencies.Add(SLDebugBinariesPath + StreamlinePdb, StagedFileType.DebugNonUFS);
 					}

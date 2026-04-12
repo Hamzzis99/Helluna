@@ -55,6 +55,10 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Stats")
 	float Range = 20000.f;
+
+	/** 슬로우 중 총알 이동시간 연출용 가상 속도. 높을수록 빠르게 도달 (딜레이 짧음). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Stats", meta = (DisplayName = "가상 총알 속도 (슬로우 연출용)"))
+	float VirtualBulletSpeed = 50000.f;
 	
 	UFUNCTION(BlueprintCallable, Category = "Weapon|Fire")
 	virtual void Fire(AController* InstigatorController);
@@ -65,6 +69,15 @@ public:
 	// [AimFix] 클라이언트 → 서버 AimPoint 전달 RPC
 	UFUNCTION(Server, Reliable)
 	void ServerFireWithAimPoint(const FVector& ClientAimPoint);
+
+	// [SlowMo] 클라이언트 AimPoint 캐싱 (AnimNotify에서 발사에 사용)
+	void CacheClientAimPoint(const FVector& AimPoint);
+	FVector GetCachedClientAimPoint() const { return CachedClientAimPoint; }
+	bool HasCachedClientAim() const { return bHasCachedClientAim; }
+	void ClearCachedClientAim() { bHasCachedClientAim = false; }
+
+	UFUNCTION(Server, Reliable)
+	void ServerCacheClientAimPoint(const FVector& AimPoint);
 
 	// ===== [ADD] 탄창 최대치
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Stats", meta = (DisplayName = "탄창"))
@@ -78,6 +91,18 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Recoil", meta = (DisplayName = "반동 틱 간격"))
 	float RecoilTickInterval = 0.01f;
+
+	/** 발사 시 재생할 카메라 쉐이크 클래스. None이면 쉐이크 없음. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Recoil",
+		meta = (DisplayName = "발사 카메라 쉐이크",
+			ToolTip = "발사 시 재생할 카메라 쉐이크 클래스. 무기별로 다른 쉐이크 설정 가능. None이면 쉐이크 없음."))
+	TSubclassOf<UCameraShakeBase> FireCameraShake = nullptr;
+
+	/** 발사 카메라 쉐이크 강도 배율 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Recoil",
+		meta = (DisplayName = "발사 쉐이크 강도", ClampMin = "0.0", ClampMax = "5.0",
+			ToolTip = "발사 카메라 쉐이크 강도 배율. 1.0=기본, 2.0=두 배 강하게."))
+	float FireCameraShakeScale = 1.0f;
 
 	// ===== [ADD] 탄창 현재치 (복제)
 	UPROPERTY(ReplicatedUsing = OnRep_CurrentAmmoInMag, BlueprintReadOnly, Category = "Weapon|Stats")
@@ -568,6 +593,14 @@ protected:
 	UFUNCTION(NetMulticast, Unreliable)
 	void MulticastFireFX(FVector_NetQuantize TraceStart, FVector_NetQuantize TraceEnd, bool bHit, FVector_NetQuantize HitLocation);
 
+	// [SlowMo] 머즐 사운드만 즉시 재생 (슬로우 중 분리 호출)
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_MuzzleFX();
+
+	// [SlowMo] 임팩트 FX만 딜레이 후 재생
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_DelayedImpactFX(FVector_NetQuantize HitLocation);
+
 	// ════════════════════════════════════════════════════════════════
 	// [Phase 7.5] 발사 사운드/FX 헬퍼 (자식 클래스에서도 사용)
 	// ════════════════════════════════════════════════════════════════
@@ -653,4 +686,9 @@ private:
 	
 
 	void TickRecoil();
+
+protected:
+	// [SlowMo] 캐싱된 클라이언트 AimPoint (AnimNotify에서 사용)
+	FVector CachedClientAimPoint = FVector::ZeroVector;
+	bool bHasCachedClientAim = false;
 };

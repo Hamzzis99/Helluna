@@ -39,6 +39,26 @@ protected:
     UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
     TObjectPtr<UCanvasPanel> MinimapIconCanvas = nullptr;
 
+    /** 미니맵 우주선(BASE) 마커 이미지 (시안 점, WBP에서 추가) */
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    TObjectPtr<UImage> MinimapBaseMarker = nullptr;
+
+    /** 미니맵 핑 마커 이미지 (노란 다이아몬드, WBP에서 추가) */
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    TObjectPtr<UImage> MinimapPingMarker = nullptr;
+
+    /** 미니맵 본인 마커 (녹색 화살표) */
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    TObjectPtr<UImage> MinimapLocalPlayerMarker = nullptr;
+
+    /** 미니맵 다른 플레이어 마커 1 */
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    TObjectPtr<UImage> MinimapTeamMarker1 = nullptr;
+
+    /** 미니맵 다른 플레이어 마커 2 */
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    TObjectPtr<UImage> MinimapTeamMarker2 = nullptr;
+
     // ── 웨이브 정보 (좌상단, 미니맵 아래) ──
     UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
     TObjectPtr<UOverlay> WaveInfoPanel = nullptr;
@@ -143,9 +163,9 @@ private:
     // ── 미니맵 ──
 
     /** 맵 월드 좌표 범위 (SceneCapture 직교 캡처 기준) */
-    static constexpr float MapCenterX = 5679.f;
-    static constexpr float MapCenterY = -4864.f;
-    static constexpr float MapHalfSize = 54035.f;  // OrthoWidth/2
+    static constexpr float MapCenterX = 0.f;
+    static constexpr float MapCenterY = 0.f;
+    static constexpr float MapHalfSize = 201600.f;  // OrthoWidth/2
 
     UPROPERTY()
     TObjectPtr<UMaterialInstanceDynamic> MinimapMID = nullptr;

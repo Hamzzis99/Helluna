@@ -224,7 +224,7 @@ void FSTTask_AttackTarget::ExitState(
 					{
 						if (APawn* Pawn = AIC->GetPawn())
 						{
-							SlotManager->ReleaseSlot(Pawn);
+							SlotManager->ReleaseEngagementReservation(Pawn);
 						}
 					}
 				}

@@ -377,6 +377,9 @@ public:
 	UFUNCTION(BlueprintCallable)
 	void SetServerAttackPoseTickEnabled(bool bEnable);
 
+	void SetCachedMeleeAttackDamage(float InDamage) { CachedMeleeAttackDamage = FMath::Max(0.f, InDamage); }
+	float GetCachedMeleeAttackDamage() const { return CachedMeleeAttackDamage; }
+
 	void LockMovementAndFaceTarget(AActor* TargetActor);
 
 	/** 이동 잠금 해제 (EndAbility에서 호출) */
@@ -393,6 +396,29 @@ public:
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayAttackMontage(UAnimMontage* Montage, float PlayRate, FRotator FacingRotation);
 
+	// =========================================================
+	// 시간 왜곡 — 지속형 VFX 멀티캐스트
+	// =========================================================
+
+	/**
+	 * 지속형 VFX를 보스에 부착 스폰 (모든 클라이언트).
+	 * @param SlotIndex  0=ChargingVFX, 1=SlowAreaVFX
+	 */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_SpawnPersistentVFX(uint8 SlotIndex, UNiagaraSystem* Effect, float EffectScale);
+
+	/** 지속형 VFX 중지 */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_StopPersistentVFX(uint8 SlotIndex);
+
+	/** 사운드를 모든 클라이언트에서 재생 */
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_PlaySoundAtLocation(USoundBase* Sound, FVector Location);
+
+	/** 지속형 VFX 슬롯 (0=Charging, 1=SlowArea) */
+	UPROPERTY(Transient)
+	TObjectPtr<UNiagaraComponent> PersistentVFXSlots[2];
+
 private:
 	float SavedMaxWalkSpeed = 300.f;
 	bool bMovementLocked = false;
@@ -402,6 +428,12 @@ private:
 
 	/** 히트 이펙트 RPC 쓰로틀링 — 0.1초 내 중복 호출 생략 */
 	double LastEffectRPCTime = 0.0;
+
+	/** 피격 모션 RPC 쓰로틀링 — 0.2초 쿨다운 (#11 최적화) */
+	double LastHitReactTime = 0.0;
+
+	/** 애님 노티파이에서 바로 읽는 현재 근접 공격 데미지 캐시 */
+	float CachedMeleeAttackDamage = 0.f;
 
 	EVisibilityBasedAnimTickOption SavedAnimTickOption = EVisibilityBasedAnimTickOption::OnlyTickPoseWhenRendered;
 

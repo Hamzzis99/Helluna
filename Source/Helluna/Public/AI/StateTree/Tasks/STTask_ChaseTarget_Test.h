@@ -88,15 +88,34 @@ struct FSTTask_ChaseTarget_TestInstanceData
 	UPROPERTY()
 	int32 DetourDirectionSign = 0;
 
+	// ─── 진척도 기반 Stuck 감지 (우주선 방향 진행 체크) ─────
+	/** 마지막 진척도 체크 시점의 SurfaceDist */
+	UPROPERTY()
+	float LastProgressSurfaceDist = MAX_FLT;
+
+	/** 진척도 체크 타이머 */
+	UPROPERTY()
+	float ProgressCheckTimer = 0.f;
+
+	/** 연속 무진척 횟수 (ForceDirectMove 트리거) */
+	UPROPERTY()
+	int32 ConsecutiveNoProgressCount = 0;
+
 	// ─── 슬롯 시스템 (우주선 근거리) ────────────────────────
 
 	/** 현재 배정된 슬롯 인덱스 (-1 = 미배정) */
 	UPROPERTY()
 	int32 AssignedSlotIndex = -1;
 
+	UPROPERTY()
+	int32 AssignedSectorIndex = -1;
+
 	/** 배정된 슬롯 월드 위치 */
 	UPROPERTY()
 	FVector AssignedSlotLocation = FVector::ZeroVector;
+
+	UPROPERTY()
+	FVector AssignedSectorLocation = FVector::ZeroVector;
 
 	/** 슬롯 재배정 시도까지 남은 쿨다운 */
 	UPROPERTY()
@@ -105,6 +124,9 @@ struct FSTTask_ChaseTarget_TestInstanceData
 	/** 슬롯 위치에 도착했는지 */
 	UPROPERTY()
 	bool bSlotArrived = false;
+
+	UPROPERTY()
+	bool bSectorArrived = false;
 
 	/** 슬롯 대기 중 이동 목표 (한 번 정하면 도착까지 유지) */
 	UPROPERTY()
@@ -117,6 +139,10 @@ struct FSTTask_ChaseTarget_TestInstanceData
 	/** 연속 슬롯 배정 실패 횟수 (Idle 재배정 누적) */
 	UPROPERTY()
 	int32 ConsecutiveSlotFailures = 0;
+
+	/** 이미 배정된 슬롯으로 다시 MoveTo를 건 재시도 횟수 */
+	UPROPERTY()
+	int32 AssignedSlotMoveRetryCount = 0;
 
 	UPROPERTY()
 	FVector SimpleMoveDetourGoal = FVector::ZeroVector;
@@ -176,11 +202,16 @@ public:
 	bool bUseSlotSystem = true;
 
 	UPROPERTY(EditAnywhere, Category = "★ 기능 토글",
+		meta = (DisplayName = "[2-1] 섹터 분산 (우주선 전용)",
+			ToolTip = "ON: 슬롯이 없거나 슬롯 배정이 실패해도 우주선 둘레 섹터로 분산 이동합니다.\nOFF: 기존 우주선 방향 자유 접근만 사용합니다."))
+	bool bUseSectorDistribution = true;
+
+	UPROPERTY(EditAnywhere, Category = "★ 기능 토글",
 		meta = (DisplayName = "[3] Stuck 자동 우회",
 			ToolTip = "ON: 위치 변화 없으면 좌/우 자동 우회. 연속 시 강도 증가 (최대 3배).\nOFF: Stuck 감지 비활성화.\n슬롯 모드에서는 Stuck 시 슬롯 재배정."))
 	bool bUseStuckDetour = true;
 
-	UPROPERTY(EditAnywhere, Category = "??湲곕뒫 ?좉?",
+	UPROPERTY(EditAnywhere, Category = "★ 기능 토글",
 		meta = (DisplayName = "[4] Simple MoveToActor Test",
 			ToolTip = "ON: Ignore slot and EQS logic for spaceship targets. Use MoveToActor directly, and if stuck, sidestep before resuming MoveToActor."))
 	bool bUseSimpleMoveToActorTest = false;
@@ -207,13 +238,13 @@ public:
 			ClampMin = "50.0", EditCondition = "bUseStuckDetour"))
 	float DetourOffset = 300.f;
 
-	UPROPERTY(EditAnywhere, Category = "Stuck 媛먯?",
+	UPROPERTY(EditAnywhere, Category = "Stuck 감지",
 		meta = (DisplayName = "Simple Test Detour Distance (cm)",
 			ToolTip = "Fixed sidestep distance used by the Simple MoveToActor test mode after a stuck detection.",
 			ClampMin = "50.0", EditCondition = "bUseSimpleMoveToActorTest && bUseStuckDetour"))
 	float SimpleMoveToActorDetourDistance = 350.f;
 
-	UPROPERTY(EditAnywhere, Category = "Stuck 媛먯?",
+	UPROPERTY(EditAnywhere, Category = "Stuck 감지",
 		meta = (DisplayName = "Stuck Detour Direction Lock",
 			ToolTip = "ON: Reuse the first random left/right detour direction while the actor remains consecutively stuck.\nOFF: Pick a new random left/right direction on each stuck detour.",
 			EditCondition = "bUseStuckDetour"))
