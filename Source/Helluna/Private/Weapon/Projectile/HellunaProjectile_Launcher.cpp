@@ -11,9 +11,11 @@
 #include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
 
+#include "BossEvent/BossPatternZoneBase.h"
 #include "DebugHelper.h"
 #include "DrawDebugHelpers.h"
 #include "Character/HellunaEnemyCharacter.h"
+#include "Character/HellunaHeroCharacter.h"
 
 AHellunaProjectile_Launcher::AHellunaProjectile_Launcher()
 {
@@ -25,12 +27,10 @@ AHellunaProjectile_Launcher::AHellunaProjectile_Launcher()
 	CollisionBox = CreateDefaultSubobject<UBoxComponent>(TEXT("CollisionBox"));
 	RootComponent = CollisionBox;
 
-	// ✅ QueryOnly + Overlap
 	CollisionBox->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	CollisionBox->SetGenerateOverlapEvents(false);
 	CollisionBox->SetCollisionObjectType(ECC_WorldDynamic);
 
-	// 기본: 필요한 채널만 오버랩(프로젝트에서 필요 시 조정)
 	CollisionBox->SetCollisionResponseToAllChannels(ECR_Ignore);
 	CollisionBox->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Overlap);
 	CollisionBox->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Overlap);
@@ -153,7 +153,6 @@ void AHellunaProjectile_Launcher::OnBeginOverlap(
 	const FHitResult& SweepResult
 )
 {
-	// ✅ 서버에서만 판정/데미지/파괴
 	if (!HasAuthority())
 		return;
 
@@ -166,22 +165,24 @@ void AHellunaProjectile_Launcher::OnBeginOverlap(
 	if (!OtherActor || OtherActor == this || OtherActor == GetOwner() || OtherActor == GetInstigator())
 		return;
 
+	// SlowZone(BossPatternZoneBase) 계열은 폭발하지 않고 통과
+	if (OtherActor->IsA<ABossPatternZoneBase>())
+		return;
+
 	FVector HitLoc = GetActorLocation();
 	if (bFromSweep)
 	{
 		HitLoc = SweepResult.ImpactPoint;
 	}
+	HitLoc += SweepResult.ImpactNormal * 10.f;
+
 	UE_LOG(LogTemp, Warning,
-		TEXT("[DamageDiag][LauncherOverlap] Projectile=%s Other=%s Comp=%s FromSweep=%s HitLoc=%s Velocity=%s Forward=%s"),
+		TEXT("[ORBHIT] LauncherOverlap: Projectile=%s Other=%s OtherClass=%s Comp=%s HitLoc=%s"),
 		*GetNameSafe(this),
 		*GetNameSafe(OtherActor),
+		*OtherActor->GetClass()->GetName(),
 		*GetNameSafe(OtherComp),
-		bFromSweep ? TEXT("Y") : TEXT("N"),
-		*HitLoc.ToString(),
-		MoveComp ? *MoveComp->Velocity.ToCompactString() : TEXT("None"),
-		*GetActorForwardVector().ToCompactString());
-	// - 폭발 지점을 표면 법선 방향으로 살짝 띄워 ApplyRadialDamage를 바닥이 가리는 문제 완화했음
-	HitLoc += SweepResult.ImpactNormal * 10.f;
+		*HitLoc.ToString());
 
 	Explode(HitLoc);
 }
@@ -199,6 +200,7 @@ void AHellunaProjectile_Launcher::LifeSpanExpired()
 
 	Super::LifeSpanExpired();
 }
+
 
 void AHellunaProjectile_Launcher::Explode(const FVector& ExplosionLocation)
 {
@@ -244,9 +246,17 @@ void AHellunaProjectile_Launcher::Explode(const FVector& ExplosionLocation)
 			QueryParams
 		);
 		UE_LOG(LogTemp, Warning,
-			TEXT("[DamageDiag][LauncherOverlapResult] Projectile=%s Count=%d"),
+			TEXT("[ORBHIT] ExplosionOverlap: Projectile=%s Count=%d Radius=%.1f"),
 			*GetNameSafe(this),
-			Overlaps.Num());
+			Overlaps.Num(),
+			Radius);
+		for (const FOverlapResult& OL : Overlaps)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[ORBHIT]   Found: %s (Class=%s)"),
+				*GetNameSafe(OL.GetActor()),
+				OL.GetActor() ? *OL.GetActor()->GetClass()->GetName() : TEXT("NULL"));
+		}
 
 		TSet<AActor*> DamagedActors;
 		for (const FOverlapResult& Overlap : Overlaps)
@@ -272,11 +282,11 @@ void AHellunaProjectile_Launcher::Explode(const FVector& ExplosionLocation)
 				continue;
 			}
 
-			// 적(HellunaEnemyCharacter)인지 확인 — 적에게만 데미지 적용
-			if (!Cast<AHellunaEnemyCharacter>(Victim))
+			// 아군(플레이어)은 데미지 제외 — 적, Orb 등 나머지 대상에게만 적용
+			if (Cast<AHellunaHeroCharacter>(Victim))
 			{
 				UE_LOG(LogTemp, Warning,
-					TEXT("[DamageDiag][LauncherSkip] Victim=%s Reason=NotEnemyCharacter"),
+					TEXT("[DamageDiag][LauncherSkip] Victim=%s Reason=FriendlyPlayer"),
 					*GetNameSafe(Victim));
 				continue;
 			}

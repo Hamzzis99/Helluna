@@ -108,21 +108,27 @@ void AHeroWeapon_GunBase::Fire(AController* InstigatorController)
 	if (!Pawn)
 		return;
 
-	// (선택) 탄약 체크를 여기서도 한번 방어
 	if (!CanFire())
 		return;
 
-	// 서버에서도 정확한 방향/위치를 얻기 위해 GetControlRotation + GetPawnViewLocation 사용
-	// (GetPlayerViewPoint는 데디케이티드 서버에서 PlayerCameraManager가 없어 Pawn 발 위치를 반환)
-	const FRotator ViewRot = InstigatorController->GetControlRotation();
 	const FVector ViewLoc = Pawn->GetPawnViewLocation();
+	FVector TraceEnd;
+
+	// 캐싱된 AimPoint가 있으면 사용 (AnimNotify 경유 시)
+	if (bHasCachedClientAim)
+	{
+		const FVector AimDir = (CachedClientAimPoint - ViewLoc).GetSafeNormal();
+		TraceEnd = ViewLoc + AimDir * Range;
+		bHasCachedClientAim = false;
+	}
+	else
+	{
+		const FRotator ViewRot = InstigatorController->GetControlRotation();
+		TraceEnd = ViewLoc + (ViewRot.Vector() * Range);
+	}
 
 	const FVector TraceStart = ViewLoc;
-	const FVector TraceEnd = TraceStart + (ViewRot.Vector() * Range);
 
-	// =========================
-	// [MOD] 서버에서만 탄 소비 + 데미지
-	// =========================
 	CurrentMag = FMath::Max(0, CurrentMag - 1);
 	BroadcastAmmoChanged();
 
@@ -197,6 +203,18 @@ void AHeroWeapon_GunBase::ServerFireWithAimPoint_Implementation(const FVector& C
 	FireWithAimPoint(Controller, ClientAimPoint);
 }
 
+void AHeroWeapon_GunBase::CacheClientAimPoint(const FVector& AimPoint)
+{
+	CachedClientAimPoint = AimPoint;
+	bHasCachedClientAim = true;
+}
+
+void AHeroWeapon_GunBase::ServerCacheClientAimPoint_Implementation(const FVector& AimPoint)
+{
+	CachedClientAimPoint = AimPoint;
+	bHasCachedClientAim = true;
+}
+
 void AHeroWeapon_GunBase::DoLineTraceAndDamage(AController* InstigatorController, const FVector& TraceStart, const FVector& TraceEnd)
 {
 	// “실제 히트판정 + 데미지 적용” 핵심 함수
@@ -211,7 +229,7 @@ void AHeroWeapon_GunBase::DoLineTraceAndDamage(AController* InstigatorController
 	APawn* Pawn = InstigatorController->GetPawn();
 	if (Pawn)
 	{
-		Params.AddIgnoredActor(Pawn); // 자기 자신(발사자) 맞는 것 방지
+		Params.AddIgnoredActor(Pawn);
 	}
 
 	FHitResult Hit;
@@ -223,46 +241,95 @@ void AHeroWeapon_GunBase::DoLineTraceAndDamage(AController* InstigatorController
 		Params
 	);
 
-	// 맞았으면 히트 위치, 아니면 끝점
 	const FVector HitLocation = bHit ? Hit.ImpactPoint : TraceEnd;
-	const FVector PredictedDirection = (HitLocation - TraceStart).GetSafeNormal();
+	const FVector ShotDirection = (TraceEnd - TraceStart).GetSafeNormal();
 
-	UE_LOG(LogTemp, Warning,
-		TEXT("[GunPredicted] Start=%s Target=%s Dir=%s Hit=%s"),
-		*TraceStart.ToCompactString(),
-		*HitLocation.ToCompactString(),
-		*PredictedDirection.ToCompactString(),
-		bHit ? TEXT("Y") : TEXT("N"));
+	// ═══════════════════════════════════════════════════════════
+	// [SlowMo] 슬로우 상태 체크 — 총알 이동시간 연출
+	// ═══════════════════════════════════════════════════════════
+	const float TimeDilation = Pawn ? Pawn->CustomTimeDilation : 1.f;
+	const bool bInSlowMo = TimeDilation < (1.f - KINDA_SMALL_NUMBER);
 
-	if (bHit)
+	if (bInSlowMo)
 	{
-		AActor* HitActor = Hit.GetActor();
-		if (HitActor)
-		{
-			UE_LOG(LogTemp, Warning,
-				TEXT("[DamageDiag][GunHit] Weapon=%s Instigator=%s Target=%s Damage=%.1f Bone=%s Loc=%s"),
-				*GetNameSafe(this),
-				*GetNameSafe(InstigatorController ? InstigatorController->GetPawn() : nullptr),
-				*GetNameSafe(HitActor),
-				Damage,
-				*Hit.BoneName.ToString(),
-				*Hit.ImpactPoint.ToString());
+		// 슬로우: 머즐 사운드만 즉시 재생
+		Multicast_MuzzleFX();
 
-			UGameplayStatics::ApplyPointDamage(
-				HitActor,
-				Damage,
-				(TraceEnd - TraceStart).GetSafeNormal(),
-				Hit,
-				InstigatorController,
-				this,
-				UDamageType::StaticClass()
-			);
+		if (bHit)
+		{
+			AActor* HitActor = Hit.GetActor();
+			if (HitActor)
+			{
+				// 거리 기반 가상 총알 이동시간 계산
+				const float Distance = FVector::Dist(TraceStart, HitLocation);
+				const float Delay = Distance / FMath::Max(VirtualBulletSpeed, 1.f);
+
+				FTimerHandle DelayHandle;
+				FTimerDelegate TimerDel;
+
+				TWeakObjectPtr<AActor> WeakHitActor = HitActor;
+				TWeakObjectPtr<AHeroWeapon_GunBase> WeakThis = this;
+				TWeakObjectPtr<AController> WeakController = InstigatorController;
+				FHitResult CapturedHit = Hit;
+				float CapturedDamage = Damage;
+				FVector CapturedHitLocation = HitLocation;
+
+				TimerDel.BindLambda([WeakThis, WeakHitActor, WeakController, CapturedHit, ShotDirection, CapturedDamage, CapturedHitLocation]()
+				{
+					if (!WeakThis.IsValid()) return;
+
+					if (WeakHitActor.IsValid() && WeakController.IsValid())
+					{
+						UGameplayStatics::ApplyPointDamage(
+							WeakHitActor.Get(),
+							CapturedDamage,
+							ShotDirection,
+							CapturedHit,
+							WeakController.Get(),
+							WeakThis.Get(),
+							UDamageType::StaticClass()
+						);
+					}
+
+					WeakThis->Multicast_DelayedImpactFX(CapturedHitLocation);
+				});
+
+				World->GetTimerManager().SetTimer(DelayHandle, TimerDel, FMath::Max(Delay, 0.01f), false);
+			}
 		}
 	}
+	else
+	{
+		// 일반: 즉시 데미지 + FX (기존 동작)
+		if (bHit)
+		{
+			AActor* HitActor = Hit.GetActor();
+			if (HitActor)
+			{
+				UGameplayStatics::ApplyPointDamage(
+					HitActor,
+					Damage,
+					ShotDirection,
+					Hit,
+					InstigatorController,
+					this,
+					UDamageType::StaticClass()
+				);
+			}
+		}
 
-	// 서버에서 FX 동기화 호출 (Unreliable: 총알 FX는 손실돼도 큰 문제 없음)
-	MulticastFireFX(TraceStart, TraceEnd, bHit, HitLocation);
+		MulticastFireFX(TraceStart, TraceEnd, bHit, HitLocation);
+	}
+}
 
+void AHeroWeapon_GunBase::Multicast_MuzzleFX_Implementation()
+{
+	PlayEquipActorFireSound();
+}
+
+void AHeroWeapon_GunBase::Multicast_DelayedImpactFX_Implementation(FVector_NetQuantize HitLocation)
+{
+	SpawnImpactFX((FVector)HitLocation);
 }
 
 void AHeroWeapon_GunBase::MulticastFireFX_Implementation(FVector_NetQuantize TraceStart, FVector_NetQuantize TraceEnd, bool bHit, FVector_NetQuantize HitLocation)

@@ -14,80 +14,79 @@ ATimeDistortionOrb::ATimeDistortionOrb()
 	PrimaryActorTick.bCanEverTick = false;
 	bReplicates = true;
 
-	// 콜리전: ECC_Pawn으로 설정 → 플레이어 MeleeTraceComponent의
-	// SweepSingleByObjectType(ECC_Pawn) 에 감지됨
 	CollisionSphere = CreateDefaultSubobject<USphereComponent>(TEXT("CollisionSphere"));
-	CollisionSphere->InitSphereRadius(80.f);
+	CollisionSphere->InitSphereRadius(OrbCollisionRadius);
 	CollisionSphere->SetCollisionObjectType(ECC_Pawn);
 	CollisionSphere->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 	CollisionSphere->SetCollisionResponseToAllChannels(ECR_Ignore);
 	CollisionSphere->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
-	// 무기/트레이스 채널에도 응답하도록
-	CollisionSphere->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+	CollisionSphere->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Overlap);  // 투사체 감지
+	CollisionSphere->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);       // 히트스캔 감지
 	CollisionSphere->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
-	CollisionSphere->SetGenerateOverlapEvents(false);
+	CollisionSphere->SetGenerateOverlapEvents(true);
+	CollisionSphere->SetHiddenInGame(true);
+	CollisionSphere->ShapeColor = FColor::Magenta;
 	SetRootComponent(CollisionSphere);
 }
 
-// ─────────────────────────────────────────────────────────────
+void ATimeDistortionOrb::BeginPlay()
+{
+	Super::BeginPlay();
+
+	// BP에서 설정한 반경 적용
+	CollisionSphere->SetSphereRadius(OrbCollisionRadius);
+
+	// VFX 스폰
+	SpawnOrbVFX();
+
+	ORB_LOG("[COLLISION] %s: ObjectType=%d, Enabled=%d, OverlapEvents=%d, "
+		"Pawn=%d, WorldDynamic=%d, WorldStatic=%d, Visibility=%d, Radius=%.1f",
+		*GetName(),
+		(int32)CollisionSphere->GetCollisionObjectType(),
+		(int32)CollisionSphere->GetCollisionEnabled(),
+		CollisionSphere->GetGenerateOverlapEvents() ? 1 : 0,
+		(int32)CollisionSphere->GetCollisionResponseToChannel(ECC_Pawn),
+		(int32)CollisionSphere->GetCollisionResponseToChannel(ECC_WorldDynamic),
+		(int32)CollisionSphere->GetCollisionResponseToChannel(ECC_WorldStatic),
+		(int32)CollisionSphere->GetCollisionResponseToChannel(ECC_Visibility),
+		CollisionSphere->GetScaledSphereRadius());
+}
+
+// -----------------------------------------------------------------
 // 리플리케이션
-// ─────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------
 void ATimeDistortionOrb::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
 	DOREPLIFETIME(ATimeDistortionOrb, bIsKeyOrb);
-	DOREPLIFETIME(ATimeDistortionOrb, RepOrbVFXSystem);
-	DOREPLIFETIME(ATimeDistortionOrb, RepOrbVFXScale);
 }
 
-// ─────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------
 // InitOrb (서버에서 호출)
-// ─────────────────────────────────────────────────────────────
-void ATimeDistortionOrb::InitOrb(UNiagaraSystem* InVFX, float InVFXScale, bool bInIsKeyOrb)
+// -----------------------------------------------------------------
+void ATimeDistortionOrb::InitOrb(bool bInIsKeyOrb)
 {
 	bIsKeyOrb = bInIsKeyOrb;
-	RepOrbVFXSystem = InVFX;
-	RepOrbVFXScale = InVFXScale;
 
-	ORB_LOG("InitOrb: bIsKey=%s, VFX=%s, Scale=%.2f",
-		bIsKeyOrb ? TEXT("TRUE") : TEXT("FALSE"),
-		InVFX ? *InVFX->GetName() : TEXT("NULL"),
-		InVFXScale);
-
-	// 서버에서도 VFX 스폰 (리슨 서버용)
-	SpawnOrbVFX();
+	ORB_LOG("InitOrb: bIsKey=%s", bIsKeyOrb ? TEXT("TRUE") : TEXT("FALSE"));
 }
 
-// ─────────────────────────────────────────────────────────────
-// OnRep_OrbVFXData — 클라이언트에서 VFX 스폰
-// ─────────────────────────────────────────────────────────────
-void ATimeDistortionOrb::OnRep_OrbVFXData()
-{
-	ORB_LOG("OnRep_OrbVFXData: VFX=%s, Scale=%.2f",
-		RepOrbVFXSystem ? *RepOrbVFXSystem->GetName() : TEXT("NULL"),
-		RepOrbVFXScale);
-
-	SpawnOrbVFX();
-}
-
-// ─────────────────────────────────────────────────────────────
-// SpawnOrbVFX — VFX 스폰 공통 로직
-// ─────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------
+// SpawnOrbVFX
+// -----------------------------------------------------------------
 void ATimeDistortionOrb::SpawnOrbVFX()
 {
-	if (!RepOrbVFXSystem) return;
-
-	// 이미 스폰된 VFX가 있으면 스킵
+	if (!OrbVFX) return;
 	if (OrbVFXComp && OrbVFXComp->IsActive()) return;
 
 	OrbVFXComp = UNiagaraFunctionLibrary::SpawnSystemAttached(
-		RepOrbVFXSystem,
+		OrbVFX,
 		GetRootComponent(),
 		NAME_None,
 		FVector::ZeroVector,
 		FRotator::ZeroRotator,
-		FVector(RepOrbVFXScale),
+		FVector(OrbVFXScale),
 		EAttachLocation::KeepRelativeOffset,
 		true,
 		ENCPoolMethod::None,
@@ -97,9 +96,9 @@ void ATimeDistortionOrb::SpawnOrbVFX()
 	ORB_LOG("SpawnOrbVFX: Component=%s", OrbVFXComp ? TEXT("OK") : TEXT("FAILED"));
 }
 
-// ─────────────────────────────────────────────────────────────
-// TakeDamage — 플레이어 공격 피격 시
-// ─────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------
+// TakeDamage
+// -----------------------------------------------------------------
 float ATimeDistortionOrb::TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent,
 	AController* EventInstigator, AActor* DamageCauser)
 {
@@ -110,7 +109,7 @@ float ATimeDistortionOrb::TakeDamage(float DamageAmount, const FDamageEvent& Dam
 		DamageCauser ? *DamageCauser->GetName() : TEXT("NULL"),
 		bIsKeyOrb ? TEXT("TRUE") : TEXT("FALSE"));
 
-	// 파괴 VFX 멀티캐스트 (모든 클라이언트에서 재생)
+	// 파괴 VFX 멀티캐스트
 	if (DestroyVFX)
 	{
 		Multicast_PlayDestroyVFX(DestroyVFX, DestroyVFXScale, GetActorLocation());
@@ -123,16 +122,15 @@ float ATimeDistortionOrb::TakeDamage(float DamageAmount, const FDamageEvent& Dam
 		OrbVFXComp = nullptr;
 	}
 
-	// 델리게이트 발동 후 제거
 	OnOrbDestroyed.Broadcast(this);
 	Destroy();
 
 	return ActualDamage;
 }
 
-// ─────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------
 // Multicast_PlayDestroyVFX
-// ─────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------
 void ATimeDistortionOrb::Multicast_PlayDestroyVFX_Implementation(
 	UNiagaraSystem* Effect, float Scale, FVector Location)
 {
@@ -146,8 +144,6 @@ void ATimeDistortionOrb::Multicast_PlayDestroyVFX_Implementation(
 		FVector(Scale),
 		true
 	);
-
-	ORB_LOG("DestroyVFX played at %s", *Location.ToString());
 }
 
 #undef ORB_LOG

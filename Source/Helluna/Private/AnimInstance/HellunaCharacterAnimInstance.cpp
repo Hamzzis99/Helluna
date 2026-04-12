@@ -67,7 +67,19 @@ void UHellunaCharacterAnimInstance::NativeThreadSafeUpdateAnimation(float DeltaS
 
 	// ★ 이동 잠금 상태 감지
 	const bool bMovementLocked = (OwningMovementComponent->MaxWalkSpeed <= 0.f);
-	GroundSpeed = bMovementLocked ? 0.f : OwningCharacter->GetVelocity().Size2D();
+	float RawSpeed = bMovementLocked ? 0.f : OwningCharacter->GetVelocity().Size2D();
+
+	// 슬로우 보정: MoveSpeedMultiplier가 적용되면 실제 속도가 줄어드는데,
+	// 블렌드 스페이스에는 "의도한 속도"를 넘겨야 달리기 애니메이션이 (느리게) 재생됨
+	if (const AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(OwningCharacter))
+	{
+		const float SpeedMul = Hero->GetMoveSpeedMultiplier();
+		if (SpeedMul > 0.f && SpeedMul < 1.f)
+		{
+			RawSpeed /= SpeedMul;
+		}
+	}
+	GroundSpeed = RawSpeed;
 	bHasAcceleration = bMovementLocked ? false : OwningMovementComponent->GetCurrentAcceleration().SizeSquared2D() > 0.f;
 
 	// ★ PlayFullBody 판단:

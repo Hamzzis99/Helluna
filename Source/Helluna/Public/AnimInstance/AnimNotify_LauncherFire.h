@@ -7,8 +7,10 @@
 #include "AnimNotify_LauncherFire.generated.h"
 
 /**
- * 런처 발사 몽타주의 투사체 생성 프레임.
- * 서버 권한이 있는 경우에만 Weapon->Fire()를 호출한다.
+ * 발사 몽타주의 실제 발사 프레임.
+ * 서버: GunBase의 FireWithAimPoint(라인트레이스) 호출.
+ * 로컬: 반동(Recoil) 적용.
+ * 모든 GunBase 계열 무기에서 공용으로 사용 가능.
  */
 UCLASS()
 class HELLUNA_API UAnimNotify_LauncherFire : public UAnimNotify

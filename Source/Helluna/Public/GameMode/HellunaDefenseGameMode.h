@@ -169,18 +169,6 @@ protected:
 	/** 광석 밀도 팩터: 주변 광석이 많을수록 낮은 값 반환 (MinKeepRatio ~ 1.0) */
 	float CalculateOreDensityFactor(const FVector& Location, const TArray<AActor*>& ExistingOres) const;
 
-	/** 거리 팩터: 우주선에서 멀수록 높은 값 반환 (MinDistanceScore ~ 1.0) */
-	float CalculateDistanceFactor(const FVector& Location) const;
-
-	/** 이 거리 이상이면 최대 점수(1.0). 가까울수록 MinDistanceScore에 수렴. */
-	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)",
-		meta = (DisplayName = "최대 점수 거리(cm)", ClampMin = "100.0"))
-	float MaxScoreDistance = 5000.f;
-
-	/** 우주선 바로 옆의 최소 생존 점수 (0이면 우주선 주변엔 전혀 배치 안 됨) */
-	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)",
-		meta = (DisplayName = "최소 거리 점수", ClampMin = "0.0", ClampMax = "1.0"))
-	float MinDistanceScore = 0.1f;
 
 	/** PCG에서 추출한 광석 데이터 구조체 */
 	struct FPreservedOre
@@ -279,6 +267,11 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|랜덤 배치",
 		meta = (DisplayName = "최대 크기", ClampMin = "0.1", ClampMax = "10.0"))
 	float OreScaleMax = 1.3f;
+
+	/** 광석 메시의 대략적인 절반 높이(cm) — 기울기 Z 보정에 사용 */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|랜덤 배치",
+		meta = (DisplayName = "광석 절반 높이(cm)", ClampMin = "1.0", ClampMax = "500.0"))
+	float OreHalfHeight = 50.f;
 
 	// ────────────────────────────────────────────────────────────────────────────
 	// 내부 배칭 멤버
