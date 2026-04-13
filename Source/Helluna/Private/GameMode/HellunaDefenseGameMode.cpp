@@ -15,6 +15,9 @@
 #include "Data/PCGBasePointData.h"
 #include "PCGWorldActor.h"
 #include "Grid/PCGLandscapeCache.h"
+#include "LandscapeProxy.h"
+#include "LandscapeInfo.h"
+#include "LandscapeComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "DrawDebugHelpers.h"
 #include "ActorFolder.h"
@@ -194,6 +197,11 @@ void AHellunaDefenseGameMode::CacheNightPCGComponents()
         return;
     }
 
+    // [패키징debug] PCGLandscapeCache 핸들 (per-volume 검증에서 사용 — Shipping 외)
+#if !UE_BUILD_SHIPPING
+    UPCGLandscapeCache* PCGLandscapeCacheRef = nullptr;
+#endif
+
     // PCG Landscape Cache 자동 설정
     {
         TArray<AActor*> FoundWorldActors;
@@ -206,6 +214,9 @@ void AHellunaDefenseGameMode::CacheNightPCGComponents()
             if (IsValid(PCGWorldActor) && IsValid(PCGWorldActor->LandscapeCacheObject))
             {
                 UPCGLandscapeCache* LandscapeCache = PCGWorldActor->LandscapeCacheObject;
+#if !UE_BUILD_SHIPPING
+                PCGLandscapeCacheRef = LandscapeCache;
+#endif
                 UE_LOG(LogTemp, Warning, TEXT("[CacheNightPCG] [1/4] LandscapeCache SerializationMode=%d (0=Never, 1=Always)"),
                     (int32)LandscapeCache->SerializationMode);
                 if (LandscapeCache->SerializationMode == EPCGLandscapeCacheSerializationMode::NeverSerialize)
@@ -259,6 +270,134 @@ void AHellunaDefenseGameMode::CacheNightPCGComponents()
 
             UE_LOG(LogTemp, Warning, TEXT("[CacheNightPCG] [3/4]   ✅ 캐싱 성공 | Graph=%s"),
                 Graph ? *Graph->GetName() : TEXT("nullptr"));
+
+            // ── [패키징debug] PCGVolume 영역 진단: Bounds + 겹치는 LandscapeProxy 조사 ──
+            // 원인 미상으로 재발 가능성이 있어 Shipping 외 빌드에서 보존
+#if !UE_BUILD_SHIPPING
+            {
+                const FBox VolumeBounds = Actor->GetComponentsBoundingBox(/*bNonColliding=*/true);
+                const FVector BoundsCenter = VolumeBounds.GetCenter();
+                const FVector BoundsExtent = VolumeBounds.GetExtent();
+                UE_LOG(LogTemp, Warning,
+                    TEXT("[패키징debug] Volume Bounds | Actor=%s | Center=(%.0f,%.0f,%.0f) | Extent=(%.0f,%.0f,%.0f) | Valid=%d"),
+                    *Actor->GetName(),
+                    BoundsCenter.X, BoundsCenter.Y, BoundsCenter.Z,
+                    BoundsExtent.X, BoundsExtent.Y, BoundsExtent.Z,
+                    VolumeBounds.IsValid ? 1 : 0);
+
+                // ALandscapeProxy 클래스를 동적 조회 (모듈 의존성 회피)
+                UClass* LandscapeProxyClass = FindObject<UClass>(nullptr, TEXT("/Script/Landscape.LandscapeProxy"));
+                if (!LandscapeProxyClass)
+                {
+                    LandscapeProxyClass = FindObject<UClass>(nullptr, TEXT("/Script/Landscape.LandscapeStreamingProxy"));
+                }
+                if (LandscapeProxyClass)
+                {
+                    int32 TotalProxies = 0;
+                    int32 OverlappingProxies = 0;
+                    FString OverlappingNames;
+                    for (TActorIterator<AActor> It(World, LandscapeProxyClass); It; ++It)
+                    {
+                        AActor* LP = *It;
+                        if (!IsValid(LP)) continue;
+                        TotalProxies++;
+                        const FBox LPBounds = LP->GetComponentsBoundingBox(true);
+                        // XY 평면에서 교차 확인 (Z 무시 — PCG Surface Sampler는 XY 영역 기준)
+                        const bool bOverlapXY =
+                            VolumeBounds.Min.X <= LPBounds.Max.X && VolumeBounds.Max.X >= LPBounds.Min.X &&
+                            VolumeBounds.Min.Y <= LPBounds.Max.Y && VolumeBounds.Max.Y >= LPBounds.Min.Y;
+                        if (bOverlapXY)
+                        {
+                            OverlappingProxies++;
+                            if (OverlappingProxies <= 5)
+                            {
+                                OverlappingNames += FString::Printf(TEXT("%s "), *LP->GetName());
+                            }
+                            UE_LOG(LogTemp, Warning,
+                                TEXT("[패키징debug]   겹침 LandscapeProxy=%s | Class=%s | LP X=[%.0f~%.0f] Y=[%.0f~%.0f]"),
+                                *LP->GetName(), *LP->GetClass()->GetName(),
+                                LPBounds.Min.X, LPBounds.Max.X, LPBounds.Min.Y, LPBounds.Max.Y);
+                        }
+                    }
+                    UE_LOG(LogTemp, Warning,
+                        TEXT("[패키징debug] Volume=%s | 전체 LandscapeProxy=%d | 겹침=%d | 이름=[%s]"),
+                        *Actor->GetName(), TotalProxies, OverlappingProxies, *OverlappingNames);
+
+                    if (OverlappingProxies == 0)
+                    {
+                        UE_LOG(LogTemp, Error,
+                            TEXT("[패키징debug] ❌ Volume=%s 위에 LandscapeProxy 0개! Surface Sampler 입력이 비어있을 가능성 매우 높음"),
+                            *Actor->GetName());
+                    }
+                }
+                else
+                {
+                    UE_LOG(LogTemp, Warning,
+                        TEXT("[패키징debug] LandscapeProxy 클래스 동적 조회 실패 — Landscape 모듈 미로드"));
+                }
+
+                // ── [패키징debug] LandscapeProxy 컴포넌트 상세 (런타임에서 PCG cache API export 안 됨) ──
+                // PCGLandscapeCache::GetCacheEntry는 PCG_API 미export → 직접 호출 불가
+                // 대신 각 프록시의 컴포넌트 수/섹션 키 범위/LandscapeInfo 유효성을 로깅하여
+                // 빌드 시점에 PCG가 캐시를 만들 만한 정상 상태였는지 간접 판단
+                {
+                    int32 TotalProxiesChecked = 0;
+                    int32 ProxiesNoLandscapeInfo = 0;
+                    int32 ProxiesNoComponents = 0;
+                    int32 GrandComponentsCount = 0;
+
+                    for (TActorIterator<ALandscapeProxy> It(World); It; ++It)
+                    {
+                        ALandscapeProxy* LP = *It;
+                        if (!IsValid(LP)) continue;
+                        const FBox LPBounds = LP->GetComponentsBoundingBox(true);
+                        const bool bOverlapXY =
+                            VolumeBounds.Min.X <= LPBounds.Max.X && VolumeBounds.Max.X >= LPBounds.Min.X &&
+                            VolumeBounds.Min.Y <= LPBounds.Max.Y && VolumeBounds.Max.Y >= LPBounds.Min.Y;
+                        if (!bOverlapXY) continue;
+
+                        TotalProxiesChecked++;
+                        ULandscapeInfo* LandscapeInfo = LP->GetLandscapeInfo();
+                        const bool bHasInfo = (LandscapeInfo != nullptr);
+                        if (!bHasInfo) ProxiesNoLandscapeInfo++;
+
+                        const int32 NumComps = LP->LandscapeComponents.Num();
+                        GrandComponentsCount += NumComps;
+                        if (NumComps == 0) ProxiesNoComponents++;
+
+                        FIntPoint MinKey(MAX_int32, MAX_int32);
+                        FIntPoint MaxKey(MIN_int32, MIN_int32);
+                        int32 ValidComps = 0;
+                        int32 NullHeightmap = 0;
+                        for (ULandscapeComponent* Comp : LP->LandscapeComponents)
+                        {
+                            if (!Comp) continue;
+                            ValidComps++;
+                            const FIntPoint Key = (Comp->ComponentSizeQuads > 0)
+                                ? (Comp->GetSectionBase() / Comp->ComponentSizeQuads)
+                                : FIntPoint::ZeroValue;
+                            MinKey.X = FMath::Min(MinKey.X, Key.X);
+                            MinKey.Y = FMath::Min(MinKey.Y, Key.Y);
+                            MaxKey.X = FMath::Max(MaxKey.X, Key.X);
+                            MaxKey.Y = FMath::Max(MaxKey.Y, Key.Y);
+                            if (!Comp->GetHeightmap()) NullHeightmap++;
+                        }
+
+                        UE_LOG(LogTemp, Warning,
+                            TEXT("[패키징debug]   Proxy=%s | LandscapeInfo=%d | Comps=%d/유효=%d | NullHeightmap=%d | 키=[(%d,%d)~(%d,%d)] | LP X=[%.0f~%.0f] Y=[%.0f~%.0f]"),
+                            *LP->GetName(), bHasInfo ? 1 : 0, NumComps, ValidComps, NullHeightmap,
+                            (ValidComps > 0 ? MinKey.X : 0), (ValidComps > 0 ? MinKey.Y : 0),
+                            (ValidComps > 0 ? MaxKey.X : 0), (ValidComps > 0 ? MaxKey.Y : 0),
+                            LPBounds.Min.X, LPBounds.Max.X, LPBounds.Min.Y, LPBounds.Max.Y);
+                    }
+
+                    UE_LOG(LogTemp, Warning,
+                        TEXT("[패키징debug] LandscapeProxy 요약 | Volume=%s | 검사=%d | LandscapeInfo없음=%d | 컴포넌트0개=%d | 총컴포넌트=%d"),
+                        *Actor->GetName(), TotalProxiesChecked, ProxiesNoLandscapeInfo, ProxiesNoComponents, GrandComponentsCount);
+                }
+                (void)PCGLandscapeCacheRef; // 향후 PCG_API export되면 사용
+            }
+#endif // !UE_BUILD_SHIPPING
 
 #if ENABLE_DRAW_DEBUG
             const FVector Loc = Actor->GetActorLocation();
@@ -514,12 +653,43 @@ void AHellunaDefenseGameMode::OnNightPCGGraphGenerated(UPCGComponent* InComponen
         const FPCGDataCollection& Output = InComponent->GetGeneratedGraphOutput();
         TArray<FPCGTaggedData> SpatialData = Output.GetAllSpatialInputs();
 
+        // ── [패키징debug] PCG 출력 전체 진단 (Shipping 외 빌드에서만) ──
+#if !UE_BUILD_SHIPPING
+        UE_LOG(LogTemp, Warning,
+            TEXT("[패키징debug] PCG Output | Owner=%s | TaggedDataAll=%d | SpatialInputs=%d"),
+            PCGOwner ? *PCGOwner->GetName() : TEXT("nullptr"),
+            Output.TaggedData.Num(), SpatialData.Num());
+
+        for (int32 SIdx = 0; SIdx < Output.TaggedData.Num(); ++SIdx)
+        {
+            const FPCGTaggedData& Td = Output.TaggedData[SIdx];
+            UE_LOG(LogTemp, Warning,
+                TEXT("[패키징debug]   [%d] Pin=%s | DataClass=%s | Tags=%d"),
+                SIdx, *Td.Pin.ToString(),
+                Td.Data ? *Td.Data->GetClass()->GetName() : TEXT("nullptr"),
+                Td.Tags.Num());
+        }
+
+        if (PCGOwner)
+        {
+            const FBox VolBounds = PCGOwner->GetComponentsBoundingBox(true);
+            UE_LOG(LogTemp, Warning,
+                TEXT("[패키징debug] PCG Owner Bounds | Center=(%.0f,%.0f,%.0f) | Extent=(%.0f,%.0f,%.0f)"),
+                VolBounds.GetCenter().X, VolBounds.GetCenter().Y, VolBounds.GetCenter().Z,
+                VolBounds.GetExtent().X, VolBounds.GetExtent().Y, VolBounds.GetExtent().Z);
+        }
+#endif // !UE_BUILD_SHIPPING
+
         for (const FPCGTaggedData& Tagged : SpatialData)
         {
             const UPCGBasePointData* BasePointData = Cast<UPCGBasePointData>(Tagged.Data);
             if (!BasePointData)
             {
-                UE_LOG(LogTemp, Warning, TEXT("[PCG 디버그]   Spatial → BasePointData CAST FAIL"));
+#if !UE_BUILD_SHIPPING
+                UE_LOG(LogTemp, Warning,
+                    TEXT("[패키징debug]   Spatial → BasePointData CAST FAIL | DataClass=%s"),
+                    Tagged.Data ? *Tagged.Data->GetClass()->GetName() : TEXT("nullptr"));
+#endif
                 continue;
             }
 
@@ -655,7 +825,14 @@ void AHellunaDefenseGameMode::PostProcessNightPCGDensity(const TArray<AHellunaDe
         const FVector Loc = NewOreData[i].Transform.GetLocation();
         Candidates.Add({ i, CalculateSpawnScore(Loc, ExistingOres) * NewOreData[i].ScoreWeight });
     }
-    Candidates.Sort([](const FSeedCandidate& A, const FSeedCandidate& B) { return A.Score > B.Score; });
+    // 동률 점수(=기존 광석 없는 첫날)에서 PCG 스캔 순서 편향을 끊기 위해 먼저 셔플
+    // 그 뒤 stable sort → 높은 점수끼리는 랜덤 순서, 점수 순위는 유지
+    for (int32 i = Candidates.Num() - 1; i > 0; --i)
+    {
+        const int32 j = FMath::RandRange(0, i);
+        Candidates.Swap(i, j);
+    }
+    Candidates.StableSort([](const FSeedCandidate& A, const FSeedCandidate& B) { return A.Score > B.Score; });
 
     // 가중치가 높을수록 시드(=클러스터 중심)를 더 많이 선정 → 광석이 더 많이 배치됨
     const float AvgWeight = (TotalNew > 0 && NewOreData.Num() > 0) ? NewOreData[0].ScoreWeight : 1.f;
@@ -708,12 +885,54 @@ void AHellunaDefenseGameMode::PostProcessNightPCGDensity(const TArray<AHellunaDe
     UE_LOG(LogTemp, Warning, TEXT("[클러스터] 시드: %d개 | 신규 Ore: %d개"), SelectedSeedIndices.Num(), TotalNew);
 
     // ── 스폰 요청 리스트 준비 (PCG는 이미 클린업됨 — 파괴 단계 불필요) ──
-    auto MakeRandomTiltRotation = [this]() -> FRotator
+    // [경사 보정] 지면 노멀에 부분 정렬된 기준 회전 + 기존 랜덤 Pitch/Roll을 합성
+    // Yaw는 항상 0~360 랜덤, Pitch/Roll은 ±OreTiltMax 범위 내 랜덤 (기존 거동 유지)
+    // 이후 TargetUp = Lerp(WorldUp, GroundNormal, TerrainAlignAlpha)에 정렬시켜 지형에 기대게 만듦
+    auto MakeRandomTiltRotation = [this](const FVector& GroundNormal) -> FRotator
     {
-        return FRotator(
-            FMath::FRandRange(-OreTiltMaxPitch, OreTiltMaxPitch),
-            FMath::FRandRange(0.f, 360.f),
-            FMath::FRandRange(-OreTiltMaxRoll, OreTiltMaxRoll));
+        const float RandPitch = FMath::FRandRange(-OreTiltMaxPitch, OreTiltMaxPitch);
+        const float RandYaw   = FMath::FRandRange(0.f, 360.f);
+        const float RandRoll  = FMath::FRandRange(-OreTiltMaxRoll, OreTiltMaxRoll);
+
+        // 지면 노멀이 비정상(제로 벡터)이거나 Alpha가 0이면 기존 랜덤 회전만 반환
+        const FVector SafeNormal = GroundNormal.IsNearlyZero() ? FVector::UpVector : GroundNormal.GetSafeNormal();
+        if (TerrainAlignAlpha <= KINDA_SMALL_NUMBER)
+        {
+            return FRotator(RandPitch, RandYaw, RandRoll);
+        }
+        // [평지 dead zone] 거의 평평한 지형(울퉁불퉁한 평지 포함)은 정렬을 건너뜀
+        // 그러지 않으면 Normal.Z가 0.97~0.99인 모든 포인트에 미세한 기울기가 누적됨
+        if (SafeNormal.Z >= FlatGroundNormalZ)
+        {
+            return FRotator(RandPitch, RandYaw, RandRoll);
+        }
+
+        // TargetUp: World Up과 지면 노멀을 Alpha로 블렌드
+        FVector TargetUp = FMath::Lerp(FVector::UpVector, SafeNormal, TerrainAlignAlpha);
+        if (!TargetUp.Normalize())
+        {
+            TargetUp = FVector::UpVector;
+        }
+
+        // Yaw 기준 Forward 벡터를 TargetUp 평면에 투영 → Yaw 보존
+        const FVector YawForward = FRotator(0.f, RandYaw, 0.f).Vector();
+        FVector ProjForward = YawForward - FVector::DotProduct(YawForward, TargetUp) * TargetUp;
+        if (!ProjForward.Normalize())
+        {
+            // YawForward가 TargetUp과 평행한 극단 케이스
+            FVector Fallback = FVector::RightVector - FVector::DotProduct(FVector::RightVector, TargetUp) * TargetUp;
+            Fallback.Normalize();
+            ProjForward = Fallback;
+        }
+        const FVector Right = FVector::CrossProduct(TargetUp, ProjForward).GetSafeNormal();
+
+        // 지형 정렬된 기준 회전
+        const FMatrix AlignedMat(ProjForward, Right, TargetUp, FVector::ZeroVector);
+        const FQuat AlignedQuat(AlignedMat);
+
+        // 기존 랜덤 Pitch/Roll 노이즈를 로컬 공간에서 얹음 (Yaw는 이미 AlignedQuat에 포함)
+        const FQuat NoiseQuat = FQuat(FRotator(RandPitch, 0.f, RandRoll));
+        return (AlignedQuat * NoiseQuat).Rotator();
     };
 
     auto MakeRandomScale = [this]() -> FVector
@@ -734,12 +953,15 @@ void AHellunaDefenseGameMode::PostProcessNightPCGDensity(const TArray<AHellunaDe
         }
     }
 
-    // 지면 보정 라인트레이스 — Landscape/WorldStatic만 히트, Foliage ISM 무시
-    auto SnapToGround = [this, &FoliageActorsToIgnore](FVector& InOutLoc)
+    // 지면 보정 라인트레이스 — 랜드스케이프에만 스냅 (스태틱 메쉬/바위/건물 위에 깔리는 것 방지)
+    // MultiTrace 후 LandscapeProxy 소유 컴포넌트 히트만 채택
+    // [경사 보정] OutNormal로 지면 노멀을 반환, Normal.Z가 MinGroundNormalZ 미만이면 가파른 곳이므로 false 반환
+    auto SnapToGround = [this, &FoliageActorsToIgnore](FVector& InOutLoc, FVector& OutNormal) -> bool
     {
-        FHitResult GroundHit;
-        const FVector TraceStart = FVector(InOutLoc.X, InOutLoc.Y, InOutLoc.Z + 500.f);
-        const FVector TraceEnd   = FVector(InOutLoc.X, InOutLoc.Y, InOutLoc.Z - 1000.f);
+        // 볼륨 Extent.Z 최대 20000 대응 — 넉넉히 ±50000 범위 트레이스
+        const float TraceHalfRange = 50000.f;
+        const FVector TraceStart = FVector(InOutLoc.X, InOutLoc.Y, InOutLoc.Z + TraceHalfRange);
+        const FVector TraceEnd   = FVector(InOutLoc.X, InOutLoc.Y, InOutLoc.Z - TraceHalfRange);
 
         FCollisionQueryParams TraceParams(SCENE_QUERY_STAT(OreGroundSnap), true);
         for (AActor* FoliageActor : FoliageActorsToIgnore)
@@ -747,11 +969,38 @@ void AHellunaDefenseGameMode::PostProcessNightPCGDensity(const TArray<AHellunaDe
             TraceParams.AddIgnoredActor(FoliageActor);
         }
 
-        if (GetWorld()->LineTraceSingleByChannel(GroundHit, TraceStart, TraceEnd, ECC_Visibility, TraceParams))
+        TArray<FHitResult> Hits;
+        if (GetWorld()->LineTraceMultiByChannel(Hits, TraceStart, TraceEnd, ECC_Visibility, TraceParams))
         {
-            InOutLoc.Z = GroundHit.ImpactPoint.Z;
+            // 위에서 아래로 순차 히트. 랜드스케이프 소유 히트만 채택해 스태틱 메쉬/건물 위 스냅을 방지
+            for (const FHitResult& Hit : Hits)
+            {
+                const AActor* HitActor = Hit.GetActor();
+                if (!HitActor || !HitActor->IsA(ALandscapeProxy::StaticClass()))
+                {
+                    continue;
+                }
+
+                OutNormal = Hit.ImpactNormal;
+                // [A 경사 필터] 가파른 지형이면 실패 처리 → 호출부에서 스킵
+                if (OutNormal.Z < MinGroundNormalZ)
+                {
+                    return false;
+                }
+                InOutLoc.Z = Hit.ImpactPoint.Z;
+                return true;
+            }
         }
+        OutNormal = FVector::UpVector;
+        return false;
     };
+
+    // [패키징debug] 스폰 시도/실패/성공 카운터 + 실제 스폰 위치 범위 집계
+    int32 DbgSnapAttempt = 0;
+    int32 DbgSnapFail = 0;
+    int32 DbgSpawned = 0;
+    FVector DbgMinSpawn(TNumericLimits<float>::Max());
+    FVector DbgMaxSpawn(TNumericLimits<float>::Lowest());
 
     // 기울기에 따른 Z 오프셋 계산 — 기울어진 만큼 광석을 땅 속으로 내림
     auto CalcTiltZOffset = [this](const FRotator& Rot, const FVector& Scale) -> float
@@ -843,15 +1092,28 @@ void AHellunaDefenseGameMode::PostProcessNightPCGDensity(const TArray<AHellunaDe
 
             if (bValid)
             {
-                // 지면 높이 보정 — Foliage 무시 라인트레이스로 Landscape 위치를 찾아 Z를 맞춤
-                SnapToGround(SpawnLoc);
+                ++DbgSnapAttempt;
+                FVector GroundNormal;
+                if (!SnapToGround(SpawnLoc, GroundNormal))
+                {
+                    ++DbgSnapFail;
+                    continue; // Landscape 없거나 경사가 너무 가파른 위치 — 스폰 포기
+                }
 
-                const FRotator TiltRot = MakeRandomTiltRotation();
+                const FRotator TiltRot = MakeRandomTiltRotation(GroundNormal);
                 const FVector  Scale   = MakeRandomScale();
                 SpawnLoc.Z -= CalcTiltZOffset(TiltRot, Scale);
+                // [D] 경사도에 비례해 추가로 땅에 박아넣기 (평지 dead zone 이내면 0)
+                if (GroundNormal.Z < FlatGroundNormalZ)
+                {
+                    SpawnLoc.Z -= (FlatGroundNormalZ - GroundNormal.Z) * GroundSlopeSinkAmount;
+                }
 
                 ReservedLocations.Add(SpawnLoc);
                 PendingClusterSpawns.Add({ OreClass, FTransform(TiltRot, SpawnLoc, Scale), OreTags });
+                ++DbgSpawned;
+                DbgMinSpawn.X = FMath::Min(DbgMinSpawn.X, SpawnLoc.X); DbgMinSpawn.Y = FMath::Min(DbgMinSpawn.Y, SpawnLoc.Y);
+                DbgMaxSpawn.X = FMath::Max(DbgMaxSpawn.X, SpawnLoc.X); DbgMaxSpawn.Y = FMath::Max(DbgMaxSpawn.Y, SpawnLoc.Y);
             }
         }
     }
@@ -866,21 +1128,51 @@ void AHellunaDefenseGameMode::PostProcessNightPCGDensity(const TArray<AHellunaDe
             FVector IsoLoc = NewOreData[i].Transform.GetLocation();
             if (!IsLocationValid(IsoLoc)) continue;
 
-            // 지면 높이 보정 — Foliage 무시 라인트레이스
-            SnapToGround(IsoLoc);
+            ++DbgSnapAttempt;
+            FVector GroundNormal;
+            if (!SnapToGround(IsoLoc, GroundNormal))
+            {
+                ++DbgSnapFail;
+                continue; // Landscape 없거나 경사가 너무 가파른 위치 — 스폰 포기
+            }
 
-            const FRotator TiltRot = MakeRandomTiltRotation();
+            const FRotator TiltRot = MakeRandomTiltRotation(GroundNormal);
             const FVector  Scale   = MakeRandomScale();
             IsoLoc.Z -= CalcTiltZOffset(TiltRot, Scale);
+            // [D] 경사도에 비례해 추가로 땅에 박아넣기 (평지 dead zone 이내면 0)
+            if (GroundNormal.Z < FlatGroundNormalZ)
+            {
+                IsoLoc.Z -= (FlatGroundNormalZ - GroundNormal.Z) * GroundSlopeSinkAmount;
+            }
 
             ReservedLocations.Add(IsoLoc);
             PendingClusterSpawns.Add({ NewOreData[i].OreClass,
                 FTransform(TiltRot, IsoLoc, Scale),
                 NewOreData[i].Tags });
+            ++DbgSpawned;
+            DbgMinSpawn.X = FMath::Min(DbgMinSpawn.X, IsoLoc.X); DbgMinSpawn.Y = FMath::Min(DbgMinSpawn.Y, IsoLoc.Y);
+            DbgMaxSpawn.X = FMath::Max(DbgMaxSpawn.X, IsoLoc.X); DbgMaxSpawn.Y = FMath::Max(DbgMaxSpawn.Y, IsoLoc.Y);
         }
     }
 
     const double CalcTime = (FPlatformTime::Seconds() - PostProcessStartTime) * 1000.0;
+#if !UE_BUILD_SHIPPING
+    if (DbgSpawned > 0)
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("[스폰 편향 디버그] 시도=%d | SnapFail=%d (%.1f%%) | 실제스폰=%d | X범위=[%.0f ~ %.0f] | Y범위=[%.0f ~ %.0f]"),
+            DbgSnapAttempt, DbgSnapFail,
+            DbgSnapAttempt > 0 ? (100.f * DbgSnapFail / DbgSnapAttempt) : 0.f,
+            DbgSpawned,
+            DbgMinSpawn.X, DbgMaxSpawn.X, DbgMinSpawn.Y, DbgMaxSpawn.Y);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("[스폰 편향 디버그] 시도=%d | SnapFail=%d | 실제스폰=0"),
+            DbgSnapAttempt, DbgSnapFail);
+    }
+#endif
     UE_LOG(LogTemp, Warning, TEXT("[PCG 최적화] 클러스터 계산 완료 (%.1fms) | 스폰예정: %d개 → 배칭 시작"),
         CalcTime, PendingClusterSpawns.Num());
     Debug::Print(FString::Printf(TEXT("[PCG 최적화] 클러스터 계산 %.1fms | 스폰 %d (배칭 중)"),

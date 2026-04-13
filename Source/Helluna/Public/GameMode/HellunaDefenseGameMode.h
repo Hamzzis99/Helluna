@@ -251,12 +251,12 @@ protected:
 	/** 광석 기울기 최대 Pitch (도) — ±이 범위 내에서 랜덤 */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|랜덤 배치",
 		meta = (DisplayName = "X축 기울기 최대 Pitch(도)", ClampMin = "0.0", ClampMax = "90.0"))
-	float OreTiltMaxPitch = 15.f;
+	float OreTiltMaxPitch = 8.f;
 
 	/** 광석 기울기 최대 Roll (도) — ±이 범위 내에서 랜덤 */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|랜덤 배치",
 		meta = (DisplayName = "Y축 기울기 최대 Roll(도)", ClampMin = "0.0", ClampMax = "90.0"))
-	float OreTiltMaxRoll = 15.f;
+	float OreTiltMaxRoll = 8.f;
 
 	/** 광석 최소 스케일 (균일 스케일) */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|랜덤 배치",
@@ -272,6 +272,30 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|랜덤 배치",
 		meta = (DisplayName = "광석 절반 높이(cm)", ClampMin = "1.0", ClampMax = "500.0"))
 	float OreHalfHeight = 50.f;
+
+	// ────────────────────────────────────────────────────────────────────────────
+	// [경사 보정] 가파른 지형에서 광석이 어색해지는 문제 해결용
+	// ────────────────────────────────────────────────────────────────────────────
+
+	/** [A 경사 필터] 이 값보다 지면 Normal.Z가 작으면 광석 스폰 포기 (1.0=평지만, 0.0=모두 통과, 0.75≈41도) */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|경사 보정",
+		meta = (DisplayName = "최소 지면 Normal.Z (가파른 곳 컬링)", ClampMin = "0.0", ClampMax = "1.0"))
+	float MinGroundNormalZ = 0.75f;
+
+	/** [C 지형 정렬] 월드 Up과 지면 Normal의 블렌드 비율 (0=수직 유지, 1=완전히 지면을 따라 눕힘, 권장 0.3~0.5) */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|경사 보정",
+		meta = (DisplayName = "지형 정렬 강도(Alpha)", ClampMin = "0.0", ClampMax = "1.0"))
+	float TerrainAlignAlpha = 0.4f;
+
+	/** [C 평지 임계값] 이 값보다 Normal.Z가 크면 평지로 취급, 지형 정렬 스킵 (울퉁불퉁한 평지에서 모두 기울어지는 현상 방지). 0.98≈11도 */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|경사 보정",
+		meta = (DisplayName = "평지 임계 Normal.Z", ClampMin = "0.0", ClampMax = "1.0"))
+	float FlatGroundNormalZ = 0.98f;
+
+	/** [D 박아넣기] 경사도(1 - Normal.Z)에 곱해 아래로 추가 하강시키는 거리(cm). 0=오프셋 없음, 권장 10~30 */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|경사 보정",
+		meta = (DisplayName = "경사 Z 박아넣기(cm)", ClampMin = "0.0", ClampMax = "200.0"))
+	float GroundSlopeSinkAmount = 20.f;
 
 	// ────────────────────────────────────────────────────────────────────────────
 	// 내부 배칭 멤버
