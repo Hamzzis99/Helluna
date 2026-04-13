@@ -8,6 +8,7 @@ Content/UltraDynamicSky/
 Reedme/
 Claude.md
 Codexreedme/
+claude_code.bat
 
 # Content Folder (Maps/Materials/Texture/VFX는 핵심 에셋이므로 추적 필수)
 
@@ -61,3 +62,22 @@ Binaries/**/*.dll
 Binaries/**/*.lib
 Plugins/*/Binaries/**/*.dll
 Plugins/*/Binaries/**/*.lib
+claude_code.bat
+engine-mcp/engine-mcp/add_bindwidgetanim.md
+engine-mcp/engine-mcp/add_play_animation_calls.md
+engine-mcp/engine-mcp/engine-patch-2026-03-17.md
+engine-mcp/engine-mcp/engine-patch-prompt-guidelines.md
+engine-mcp/engine-mcp/engine-python-binding-prompt.md
+engine-mcp/engine-mcp/Engine_Edit_Code.md
+engine-mcp/engine-mcp/Engine_Edit_Reservation.md
+engine-mcp/engine-mcp/engine_patch_log.txt
+engine-mcp/engine-mcp/engine_rebuild_for_widget_animation.md
+engine-mcp/engine-mcp/Engine_Upgrade_Guide.md
+engine-mcp/engine-mcp/fix_mcp_callfunction.md
+engine-mcp/engine-mcp/fix_mcp_set_pin_value.md
+engine-mcp/engine-mcp/mcp-accessibility-test-2026-03-23.md
+engine-mcp/engine-mcp/mcp-material-safety-guide.md
+engine-mcp/engine-mcp/MCPWidgetGuide.md
+engine-mcp/engine-mcp/pattern_b_patch_log.md
+engine-mcp/engine-mcp/UMG_Animation_Guide.md
+engine-mcp/engine-mcp/widget-animation-pipeline.md
