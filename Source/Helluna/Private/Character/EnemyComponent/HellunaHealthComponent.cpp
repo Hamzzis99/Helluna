@@ -103,6 +103,26 @@ void UHellunaHealthComponent::ApplyDirectDamage(float Damage, AActor* Instigator
 	Internal_SetHealth(Health - Damage, InstigatorActor);
 }
 
+void UHellunaHealthComponent::Cheat_ForceKill(AActor* InstigatorActor)
+{
+	AActor* Owner = GetOwner();
+	if (!Owner || !Owner->HasAuthority())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[cheatdebug] HC::Cheat_ForceKill no-auth Owner=%s"), *GetNameSafe(Owner));
+		return;
+	}
+
+	// bDead/bDowned/Shield/Parry 상태 무시 — 무조건 0으로 보내고 OnDeath 호출
+	UE_LOG(LogTemp, Warning,
+		TEXT("[cheatdebug] HC::Cheat_ForceKill Owner=%s H=%.1f bDead=%d bDowned=%d"),
+		*GetNameSafe(Owner), Health, (int32)bDead, (int32)bDowned);
+
+	bDowned = false;       // 다운 해제 후
+	bDead = false;         // 사망 플래그 리셋 → Internal_SetHealth가 OnDeath 경로를 타도록
+	Health = FMath::Max(1.f, Health);
+	Internal_SetHealth(0.f, InstigatorActor);
+}
+
 void UHellunaHealthComponent::HandleOwnerAnyDamage(
 	AActor* DamagedActor,
 	float Damage,

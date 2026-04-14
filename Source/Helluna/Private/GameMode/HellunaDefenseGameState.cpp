@@ -716,13 +716,114 @@ void AHellunaDefenseGameState::SetUDSTimeOfDay(float Time)
 {
     AActor* UDS = GetUDSActor();
     if (!UDS) return;
-    
+
     // [Step3 O-02] 캐싱된 프로퍼티 포인터 사용 (매 호출마다 FindFProperty 제거)
     if (!CachedProp_TimeOfDay) return;
     if (FFloatProperty* FP = CastField<FFloatProperty>(CachedProp_TimeOfDay))
         FP->SetPropertyValue_InContainer(UDS, Time);
     else if (FDoubleProperty* DP = CastField<FDoubleProperty>(CachedProp_TimeOfDay))
         DP->SetPropertyValue_InContainer(UDS, (double)Time);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🧪 치트 — 시간 정지 토글
+// ═══════════════════════════════════════════════════════════════════════════════
+void AHellunaDefenseGameState::Cheat_ToggleTimeFrozen()
+{
+    UE_LOG(LogTemp, Warning, TEXT("[cheatdebug] GS::Cheat_ToggleTimeFrozen ENTER HasAuthority=%d Current=%d"),
+        (int32)HasAuthority(), (int32)bCheatTimeFrozen);
+    if (!HasAuthority())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[cheatdebug] GS::Cheat_ToggleTimeFrozen ABORT: no authority"));
+        return;
+    }
+    bCheatTimeFrozen = !bCheatTimeFrozen;
+    NetMulticast_ApplyCheatTimeFreeze(bCheatTimeFrozen);
+
+    // 낮/밤 전환 타이머(ToNight/ToDay/DayCountdown) pause/unpause — UI 카운트다운 및 밤 전환 차단
+    if (UWorld* W = GetWorld())
+    {
+        if (AHellunaDefenseGameMode* GM = W->GetAuthGameMode<AHellunaDefenseGameMode>())
+        {
+            GM->Cheat_SetPhaseTimersPaused(bCheatTimeFrozen);
+        }
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("[cheatdebug] GS::Cheat_ToggleTimeFrozen DONE -> %s"),
+        bCheatTimeFrozen ? TEXT("FROZEN") : TEXT("RUNNING"));
+}
+
+void AHellunaDefenseGameState::NetMulticast_ApplyCheatTimeFreeze_Implementation(bool bFreeze)
+{
+    bCheatTimeFrozen = bFreeze;
+    UWorld* W = GetWorld();
+    const ENetMode NM = W ? W->GetNetMode() : NM_Standalone;
+    UE_LOG(LogTemp, Warning,
+        TEXT("[cheatdebug] GS::NetMulticast_ApplyCheatTimeFreeze bFreeze=%d NetMode=%d HasAuth=%d bHasUDS=%d"),
+        (int32)bFreeze, (int32)NM, (int32)HasAuthority(), (int32)bHasUDS);
+
+    AActor* UDS = GetUDSActor();
+    UE_LOG(LogTemp, Warning, TEXT("[cheatdebug] GS::TimeFreeze UDS=%s CachedProp_Animate=%s"),
+        *GetNameSafe(UDS), CachedProp_Animate ? *CachedProp_Animate->GetName() : TEXT("<null>"));
+    if (!UDS)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[cheatdebug] GS::TimeFreeze ABORT: UDS actor not found"));
+        return;
+    }
+
+    // 1) Animate Time of Day UPROPERTY OFF
+    if (FBoolProperty* AnimProp = CastField<FBoolProperty>(CachedProp_Animate))
+    {
+        AnimProp->SetPropertyValue_InContainer(UDS, !bFreeze);
+    }
+
+    // 2) 정지 시 낮 시간으로 고정
+    if (bFreeze)
+    {
+        SetUDSTimeOfDay(DayStartTime);
+    }
+
+    // 3) UDS 액터/컴포넌트 Tick 비활성
+    UDS->SetActorTickEnabled(!bFreeze);
+    TArray<UActorComponent*> Components;
+    UDS->GetComponents(Components);
+    for (UActorComponent* Comp : Components)
+    {
+        if (Comp) Comp->SetComponentTickEnabled(!bFreeze);
+    }
+
+    // 4) CustomTimeDilation 해머 — BP Tick이든 Timer든 이 액터에서 발생하는 모든 시간 진행을 0으로 만듦
+    UDS->CustomTimeDilation = bFreeze ? 0.f : 1.f;
+
+    UE_LOG(LogTemp, Warning,
+        TEXT("[cheatdebug] GS::TimeFreeze APPLIED TickEnabled=%d TimeDilation=%.2f"),
+        (int32)UDS->IsActorTickEnabled(), UDS->CustomTimeDilation);
+
+    // 5) 정지 상태 유지 타이머 — Phase 전환 등 외부 로직이 Animate/Tick을 다시 켜더라도 0.2s마다 되돌림
+    if (bFreeze)
+    {
+        GetWorldTimerManager().SetTimer(TimerHandle_CheatTimeFreezeHold, this,
+            &AHellunaDefenseGameState::CheatTimeFreeze_HoldTick, 0.2f, true);
+    }
+    else
+    {
+        GetWorldTimerManager().ClearTimer(TimerHandle_CheatTimeFreezeHold);
+    }
+}
+
+void AHellunaDefenseGameState::CheatTimeFreeze_HoldTick()
+{
+    if (!bCheatTimeFrozen) return;
+    AActor* UDS = GetUDSActor();
+    if (!UDS) return;
+
+    if (FBoolProperty* AnimProp = CastField<FBoolProperty>(CachedProp_Animate))
+    {
+        AnimProp->SetPropertyValue_InContainer(UDS, false);
+    }
+    SetUDSTimeOfDay(DayStartTime);
+    UDS->SetActorTickEnabled(false);
+    UDS->CustomTimeDilation = 0.f;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

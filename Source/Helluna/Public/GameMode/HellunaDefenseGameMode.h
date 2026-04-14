@@ -427,6 +427,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Defense(게임)|Monster(몬스터)")
 	int32 GetRemainingMonsterCount() const { return RemainingMonstersThisNight; }
 
+	/** [cheatdebug] F2 시간정지 치트용 — 낮/밤 전환 타이머 일괄 pause/unpause */
+	void Cheat_SetPhaseTimersPaused(bool bPaused);
+
 	// RegisterAliveMonster는 더 이상 카운터 역할을 하지 않지만
 	// 기존 BP/코드 호환성을 위해 빈 함수로 유지
 	UFUNCTION(BlueprintCallable, Category = "Defense(게임)|Monster(몬스터)")

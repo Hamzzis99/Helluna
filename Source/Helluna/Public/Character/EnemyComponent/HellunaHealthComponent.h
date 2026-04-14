@@ -64,6 +64,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Health")
 	void ApplyDirectDamage(float Damage, AActor* InstigatorActor = nullptr);
 
+	/** [Cheat] 무조건 즉사 — Shield/Parry/Downed 모든 필터 우회. 서버에서만 호출. */
+	UFUNCTION(BlueprintCallable, Category = "Health|Cheat")
+	void Cheat_ForceKill(AActor* InstigatorActor = nullptr);
+
 
 	// ===== Downed System (다운/부활) =====
 	UFUNCTION(BlueprintPure, Category = "Health|Downed")

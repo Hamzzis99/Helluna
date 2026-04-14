@@ -2632,3 +2632,23 @@ void AHellunaDefenseGameMode::StopCommandPollTimer()
         W->GetTimerManager().ClearTimer(CommandPollTimer);
     }
 }
+
+// [cheatdebug] F2 — 낮/밤 전환 타이머 pause/unpause
+void AHellunaDefenseGameMode::Cheat_SetPhaseTimersPaused(bool bPaused)
+{
+    FTimerManager& TM = GetWorldTimerManager();
+
+    auto PausePrint = [&](FTimerHandle& H, const TCHAR* Name)
+    {
+        if (!TM.IsTimerActive(H) && !TM.IsTimerPaused(H)) { return; }
+        if (bPaused) TM.PauseTimer(H); else TM.UnPauseTimer(H);
+        UE_LOG(LogTemp, Warning, TEXT("[cheatdebug] PhaseTimer %s -> %s (Active=%d Paused=%d Remaining=%.2f)"),
+            Name, bPaused ? TEXT("PAUSED") : TEXT("RESUMED"),
+            (int32)TM.IsTimerActive(H), (int32)TM.IsTimerPaused(H),
+            TM.GetTimerRemaining(H));
+    };
+
+    PausePrint(TimerHandle_ToNight, TEXT("ToNight"));
+    PausePrint(TimerHandle_ToDay, TEXT("ToDay"));
+    PausePrint(TimerHandle_DayCountdown, TEXT("DayCountdown"));
+}

@@ -117,6 +117,12 @@ public:
 		meta = (DisplayName = "Nav Modifier Extent", EditCondition = "bUseNavModifier"))
 	FVector NavModifierExtent = FVector(300.f, 300.f, 200.f);
 
+private:
+	/** [cheatdebug/nav] NavModifier를 강제 적용 (NavArea_Null로 덮어쓰고 dirty area 요청). NavSystem 미준비 시 재시도 */
+	void ApplyNavModifierRuntime(int32 RetryCount);
+	FTimerHandle NavModifierRetryHandle;
+
+protected:
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif

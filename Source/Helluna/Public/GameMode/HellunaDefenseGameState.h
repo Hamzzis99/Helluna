@@ -232,6 +232,24 @@ public:
     // [MDF Interface] 데이터 로드 (메모리 조회)
     virtual bool LoadMDFData(const FGuid& ID, TArray<FMDFHitData>& OutData) override;
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 🧪 치트 (F2 시간 정지)
+    // ═══════════════════════════════════════════════════════════════════════════
+    /** 시간 정지 토글 — 서버에서 호출. 모든 인스턴스에 전파된다. */
+    void Cheat_ToggleTimeFrozen();
+
+    /** 현재 시간 정지 상태 */
+    UFUNCTION(BlueprintPure, Category = "Cheat")
+    bool IsTimeFrozenByCheat() const { return bCheatTimeFrozen; }
+
+    /** [NetMulticast] 모든 클라이언트에 시간 정지 상태 전파 */
+    UFUNCTION(NetMulticast, Reliable)
+    void NetMulticast_ApplyCheatTimeFreeze(bool bFreeze);
+
+    /** 정지 상태 유지용 반복 타이머 핸들러 (Phase 전환 등이 덮어쓰는 것 방지) */
+    void CheatTimeFreeze_HoldTick();
+    FTimerHandle TimerHandle_CheatTimeFreezeHold;
+
 protected:
     /** MDF 데이터 디스크 저장 (맵 이동 전) */
     virtual void OnPreMapTransition() override;
@@ -355,6 +373,9 @@ protected:
     FProperty* CachedProp_TimeOfDay = nullptr;    // "Time of Day" (Float or Double)
     FProperty* CachedProp_Animate = nullptr;      // "Animate Time of Day" (Bool)
     FProperty* CachedProp_DayLength = nullptr;    // "Day Length" (Float or Double)
+
+    // 🧪 치트용 시간 정지 플래그
+    bool bCheatTimeFrozen = false;
 
     /** BeginPlay에서 UDS 프로퍼티를 캐싱하는 헬퍼 */
     void CacheUDSProperties();

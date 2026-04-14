@@ -12,6 +12,8 @@
 #include "GameMode/HellunaDefenseGameState.h"
 #include "NavigationInvokerComponent.h"
 #include "NavModifierComponent.h"
+#include "NavigationSystem.h"
+#include "NavMesh/RecastNavMesh.h"
 #include "NavAreas/NavArea_Null.h"
 #include "Components/DynamicMeshComponent.h"
 
@@ -155,13 +157,14 @@ AResourceUsingObject_SpaceShip::AResourceUsingObject_SpaceShip()
 	NavigationInvoker->SetGenerationRadii(3000.f, 4000.f);
 
 	// NavModifier: 에디터에서 bUseNavModifier로 on/off 가능
+	// ⚠ CanEverAffectNavigation은 construction 시점에 true여야 octree에 등록되고, 이후 runtime 토글이 즉시 반영된다.
+	//    false로 시작하면 BeginPlay에서 true로 바꿔도 nav octree가 refresh되지 않아 에디터에서 액터를 움직이기 전까지 적용되지 않음.
 	NavModifierComp = CreateDefaultSubobject<UNavModifierComponent>(TEXT("NavModifierComp"));
 	NavModifierComp->SetAreaClass(UNavArea_Null::StaticClass());
 	NavModifierComp->FailsafeExtent = NavModifierExtent;
 	NavModifierComp->SetComponentTickEnabled(false);
-	// 기본값: 비활성 (에디터에서 bUseNavModifier를 켜면 활성화)
+	NavModifierComp->SetCanEverAffectNavigation(true);
 	NavModifierComp->SetActive(false);
-	NavModifierComp->SetCanEverAffectNavigation(false);
 }
 
 #if WITH_EDITOR
@@ -207,19 +210,10 @@ void AResourceUsingObject_SpaceShip::BeginPlay()
 		}
 	}
 
-	// ★ NavModifier: 에디터에서 설정한 bUseNavModifier에 따라 런타임 활성화
+	// ★ NavModifier 런타임 적용 (NavSystem 미준비 시 재시도)
 	if (NavModifierComp)
 	{
-		NavModifierComp->SetActive(bUseNavModifier);
-		NavModifierComp->SetCanEverAffectNavigation(bUseNavModifier);
-		if (bUseNavModifier)
-		{
-			if (NavModifierAreaClass)
-			{
-				NavModifierComp->SetAreaClass(NavModifierAreaClass);
-			}
-			NavModifierComp->FailsafeExtent = NavModifierExtent;
-		}
+		ApplyNavModifierRuntime(0);
 	}
 
 	// ★ [NavMesh 수정] 우주선 DynamicMesh가 NavMesh 계산에서 제외되도록 설정
@@ -280,4 +274,79 @@ void AResourceUsingObject_SpaceShip::OnRepairCompleted_Implementation()
 	}
 
 	UE_LOG(LogTemp, Warning, TEXT("=== [OnRepairCompleted] 완료 ==="));
+}
+
+// =========================================================
+// [cheatdebug/nav] NavModifier 강제 적용 헬퍼
+//  - BP 설정을 무시하고 항상 NavArea_Null을 적용 (NavArea_Default는 path를 안 막음)
+//  - NavSystem 미준비(null)면 다음 틱에 재시도 (최대 10회)
+// =========================================================
+void AResourceUsingObject_SpaceShip::ApplyNavModifierRuntime(int32 RetryCount)
+{
+	if (!NavModifierComp) return;
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[cheatdebug/nav] ApplyNavModifierRuntime SpaceShip=%s bUseNavModifier=%d BP_AreaClass=%s Extent=(%s) Retry=%d"),
+		*GetName(), (int32)bUseNavModifier,
+		NavModifierAreaClass ? *NavModifierAreaClass->GetName() : TEXT("<null>"),
+		*NavModifierExtent.ToString(), RetryCount);
+
+	if (bUseNavModifier)
+	{
+		// BP가 NavArea_Default로 설정되어 있으면 path를 안 막으므로 항상 Null로 강제 덮어씀.
+		TSubclassOf<UNavArea> AreaToSet = TSubclassOf<UNavArea>(UNavArea_Null::StaticClass());
+		NavModifierComp->SetAreaClass(AreaToSet);
+		NavModifierComp->FailsafeExtent = NavModifierExtent;
+		NavModifierComp->SetActive(true);
+		UE_LOG(LogTemp, Warning, TEXT("[cheatdebug/nav] AreaClass FORCED to NavArea_Null"));
+	}
+	else
+	{
+		NavModifierComp->SetActive(false);
+	}
+	NavModifierComp->RefreshNavigationModifiers();
+
+	UNavigationSystemV1* NavSys = FNavigationSystem::GetCurrent<UNavigationSystemV1>(GetWorld());
+	if (!NavSys)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[cheatdebug/nav] SpaceShip=%s NavSystem=null (retry %d/10)"),
+			*GetName(), RetryCount);
+		if (RetryCount < 10 && GetWorld())
+		{
+			GetWorld()->GetTimerManager().SetTimer(NavModifierRetryHandle,
+				FTimerDelegate::CreateUObject(this, &AResourceUsingObject_SpaceShip::ApplyNavModifierRuntime, RetryCount + 1),
+				0.5f, false);
+		}
+		return;
+	}
+
+	for (ANavigationData* NavData : NavSys->NavDataSet)
+	{
+		ARecastNavMesh* Recast = Cast<ARecastNavMesh>(NavData);
+		if (!Recast) continue;
+		UE_LOG(LogTemp, Warning,
+			TEXT("[cheatdebug/nav] RecastNavMesh=%s RuntimeGeneration=%d (0=Static,1=DynModifiersOnly,2=Dynamic) bRebuildAtRuntime=%d"),
+			*Recast->GetName(), (int32)Recast->GetRuntimeGenerationMode(),
+			(int32)Recast->SupportsRuntimeGeneration());
+
+		if (Recast->GetRuntimeGenerationMode() == ERuntimeGenerationType::Static)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[cheatdebug/nav] WARN: RecastNavMesh가 Static. 레벨 인스턴스 설정이 DefaultEngine.ini를 덮어씀."));
+		}
+	}
+
+	NavSys->UpdateComponentInNavOctree(*NavModifierComp);
+
+	FBox ActorBox = GetComponentsBoundingBox(true, true);
+	if (!ActorBox.IsValid || ActorBox.GetExtent().IsNearlyZero())
+	{
+		ActorBox = FBox::BuildAABB(GetActorLocation(), NavModifierExtent);
+	}
+	const int32 DirtyFlags = (int32)ENavigationDirtyFlag::All;
+	NavSys->AddDirtyArea(ActorBox, DirtyFlags, nullptr, FName(TEXT("SpaceShipNavModifier")));
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[cheatdebug/nav] SpaceShip=%s dirty area %s 적용 완료 (Retry=%d)"),
+		*GetName(), *ActorBox.ToString(), RetryCount);
 }
