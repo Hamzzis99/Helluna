@@ -23,6 +23,7 @@ class UHellunaHealthComponent;
 class UNiagaraSystem;
 class UNiagaraComponent;
 class UMeleeTraceComponent;
+class UHellunaCheatComponent;
 
 class UWeaponHUDWidget;
 class UHellunaHealthHUDWidget;
@@ -102,7 +103,9 @@ private:
 	UPROPERTY(ReplicatedUsing = OnRep_CurrentWeapon, VisibleInstanceOnly, Category = "Weapon")
 	TObjectPtr<AHellunaHeroWeapon> CurrentWeapon;
 
-
+	// [cheatdebug] F1~F6 치트 컴포넌트 (BP 수정 없이 C++에서 부착)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Cheat", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UHellunaCheatComponent> CheatComponent;
 
 #pragma endregion
 
@@ -118,6 +121,14 @@ private:
 
 	void Input_AbilityInputPressed(FGameplayTag InInputTag);
 	void Input_AbilityInputReleased(FGameplayTag InInputTag);
+
+	// [cheatdebug] F1~F6 키 핸들러 (CheatComponent로 포워딩)
+	void OnCheat_F1();
+	void OnCheat_F2();
+	void OnCheat_F3();
+	void OnCheat_F4();
+	void OnCheat_F5();
+	void OnCheat_F6();
 
 
 #pragma endregion

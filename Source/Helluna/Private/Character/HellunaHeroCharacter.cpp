@@ -43,6 +43,7 @@
 #include "VFX/GhostTrailActor.h"
 #include "Animation/AnimInstance.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
+#include "Cheat/HellunaCheatComponent.h"
 
 #include "UI/Weapon/WeaponHUDWidget.h"
 #include "UI/HUD/HellunaHealthHUDWidget.h"
@@ -113,6 +114,9 @@ AHellunaHeroCharacter::AHellunaHeroCharacter()
 	// ⭐ [WeaponBridge] Inventory 연동 컴포넌트 생성
 	// ============================================
 	WeaponBridgeComponent = CreateDefaultSubobject<UWeaponBridgeComponent>(TEXT("WeaponBridgeComponent"));
+
+	// [cheatdebug] F1~F6 치트 컴포넌트 자동 부착 (BP 수정 없이 C++에서)
+	CheatComponent = CreateDefaultSubobject<UHellunaCheatComponent>(TEXT("CheatComponent"));
 
 	// ★ 추가: 플레이어 체력 컴포넌트
 	HeroHealthComponent = CreateDefaultSubobject<UHellunaHealthComponent>(TEXT("HeroHealthComponent"));
@@ -637,7 +641,23 @@ void AHellunaHeroCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInp
 	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Interaction, ETriggerEvent::Completed, this, &ThisClass::Input_InteractionCompleted);
 
 	HellunaInputComponent->BindAbilityInputAction(InputConfigDataAsset, this, &ThisClass::Input_AbilityInputPressed, &ThisClass::Input_AbilityInputReleased);
+
+	// [cheatdebug] F1~F6 치트 키 바인딩 (BP 수정 없이 C++에서 직접 바인딩)
+	PlayerInputComponent->BindKey(EKeys::F1, IE_Pressed, this, &ThisClass::OnCheat_F1);
+	PlayerInputComponent->BindKey(EKeys::F2, IE_Pressed, this, &ThisClass::OnCheat_F2);
+	PlayerInputComponent->BindKey(EKeys::F3, IE_Pressed, this, &ThisClass::OnCheat_F3);
+	PlayerInputComponent->BindKey(EKeys::F4, IE_Pressed, this, &ThisClass::OnCheat_F4);
+	PlayerInputComponent->BindKey(EKeys::F5, IE_Pressed, this, &ThisClass::OnCheat_F5);
+	PlayerInputComponent->BindKey(EKeys::F6, IE_Pressed, this, &ThisClass::OnCheat_F6);
+	UE_LOG(LogTemp, Warning, TEXT("[cheatdebug] F1~F6 치트 키 바인딩 완료 (C++)"));
 }
+
+void AHellunaHeroCharacter::OnCheat_F1() { if (CheatComponent) CheatComponent->HandleKey_KillAll(); }
+void AHellunaHeroCharacter::OnCheat_F2() { if (CheatComponent) CheatComponent->HandleKey_TimeFreeze(); }
+void AHellunaHeroCharacter::OnCheat_F3() { if (CheatComponent) CheatComponent->HandleKey_Noclip(); }
+void AHellunaHeroCharacter::OnCheat_F4() { if (CheatComponent) CheatComponent->HandleKey_GrantMaterials(); }
+void AHellunaHeroCharacter::OnCheat_F5() { if (CheatComponent) CheatComponent->HandleKey_SpeedUp(); }
+void AHellunaHeroCharacter::OnCheat_F6() { if (CheatComponent) CheatComponent->HandleKey_SpeedDown(); }
 
 void AHellunaHeroCharacter::PossessedBy(AController* NewController)
 {
