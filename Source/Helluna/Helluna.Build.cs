@@ -56,6 +56,9 @@ public class Helluna : ModuleRules
             // [PCG] 밤 시작 시 런타임 PCG 생성 (장애물/환경 스폰)
             "PCG",
 
+            // [패키징debug] PCGLandscapeCache 검증 (ALandscapeProxy / ULandscapeInfo / ULandscapeComponent)
+            "Landscape",
+
             // [카메라 쉐이크] PerlinNoiseCameraShakePattern 사용
             "EngineCameras",
 
@@ -68,7 +71,13 @@ public class Helluna : ModuleRules
             "StreamlineDLSSGBlueprint",
             "StreamlineReflexBlueprint"
         });
-        PrivateDependencyModuleNames.AddRange(new string[] { });
+        PrivateDependencyModuleNames.AddRange(new string[] { "AssetRegistry" });
+
+        // [TimeDistortion] 콘솔 커맨드로 PP 머티리얼 자동 생성 (에디터 전용)
+        if (Target.bBuildEditor)
+        {
+            PrivateDependencyModuleNames.AddRange(new string[] { "UnrealEd", "MaterialEditor" });
+        }
 
         // Uncomment if you are using Slate UI
         // PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });

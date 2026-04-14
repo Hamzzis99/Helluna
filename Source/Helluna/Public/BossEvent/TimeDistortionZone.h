@@ -8,6 +8,9 @@
 
 class UNiagaraSystem;
 class USphereComponent;
+class UPostProcessComponent;
+class UMaterialInstanceDynamic;
+class UMaterialInterface;
 class AHellunaHeroCharacter;
 class ATimeDistortionOrb;
 
@@ -85,6 +88,31 @@ public:
 		meta = (DisplayName = "Orb 스폰 간격 (초)", ClampMin = "0.05", ClampMax = "1.0"))
 	float OrbSpawnInterval = 0.3f;
 
+	/** 기본 원형 슬롯에서 좌/우로 흔들 각도 (±deg). 완전 랜덤이 아니라 슬롯 근처만 살짝 흔든다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "시간 왜곡|Orb",
+		meta = (DisplayName = "Orb 각도 지터 (±도)", ClampMin = "0.0", ClampMax = "45.0"))
+	float OrbAngleJitterDeg = 12.f;
+
+	/** 스폰 반경 지터 비율 (0.15 = ±15%) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "시간 왜곡|Orb",
+		meta = (DisplayName = "Orb 반경 지터 비율", ClampMin = "0.0", ClampMax = "0.5"))
+	float OrbRadiusJitterRatio = 0.12f;
+
+	/** 스폰 높이 지터 (±cm) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "시간 왜곡|Orb",
+		meta = (DisplayName = "Orb 높이 지터 (±cm)", ClampMin = "0.0", ClampMax = "300.0"))
+	float OrbHeightJitter = 40.f;
+
+	/** 스폰 위치가 지오메트리에 끼는지 검사할 때 사용할 구 반경 (cm) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "시간 왜곡|Orb",
+		meta = (DisplayName = "Orb 충돌 검사 반경 (cm)", ClampMin = "10.0", ClampMax = "500.0"))
+	float OrbCollisionProbeRadius = 90.f;
+
+	/** 충돌 회피를 위한 최대 지터 샘플링 시도 횟수 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "시간 왜곡|Orb",
+		meta = (DisplayName = "Orb 스폰 최대 시도 횟수", ClampMin = "1", ClampMax = "16"))
+	int32 OrbSpawnMaxAttempts = 8;
+
 	/** 파훼 성공 시 재생할 사운드 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "시간 왜곡|Orb",
 		meta = (DisplayName = "파훼 성공 사운드"))
@@ -146,6 +174,25 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "시간 왜곡|사운드",
 		meta = (DisplayName = "폭발 사운드"))
 	TObjectPtr<USoundBase> DetonationSound = nullptr;
+
+	// =========================================================
+	// 포스트프로세스 (채도 제거)
+	// =========================================================
+
+	/** 채도 제거 포스트프로세스 머티리얼 (PP_Desaturation 등) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "시간 왜곡|포스트프로세스",
+		meta = (DisplayName = "채도 제거 PP 머티리얼"))
+	TObjectPtr<UMaterialInterface> DesaturationPPMaterial = nullptr;
+
+	/** 채도 제거 강도 (0=원본 색상, 1=완전 회색) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "시간 왜곡|포스트프로세스",
+		meta = (DisplayName = "채도 제거 강도", ClampMin = "0.0", ClampMax = "1.0"))
+	float DesaturationStrength = 1.0f;
+
+	/** 구 경계 부드러움 (cm). 0이면 칼같은 경계, 크면 부드러운 페이드 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "시간 왜곡|포스트프로세스",
+		meta = (DisplayName = "경계 부드러움 (cm)", ClampMin = "0.0", ClampMax = "2000.0"))
+	float EdgeSoftness = 150.f;
 
 protected:
 	virtual void BeginPlay() override;
@@ -223,4 +270,27 @@ private:
 	int32 OrbSpawnKeyIndex = 0;
 	FTimerHandle OrbSpawnTimerHandle;
 
+	// =========================================================
+	// 포스트프로세스 런타임
+	// =========================================================
+
+	UPROPERTY(VisibleAnywhere, Category = "시간 왜곡")
+	TObjectPtr<UPostProcessComponent> PostProcessComp = nullptr;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> DesaturationMID = nullptr;
+
+	/** 모든 클라이언트에서 PP 활성화 + Custom Depth 설정 */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_ActivateDesaturation(FVector Center, float Radius, AActor* BossActor);
+
+	/** 모든 클라이언트에서 PP 비활성화 + Custom Depth 해제 */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_DeactivateDesaturation();
+
+	/** 액터의 모든 메시에 Custom Depth/Stencil 설정 (PP 제외용) */
+	void SetActorCustomDepth(AActor* Actor, bool bEnable);
+
+	/** Custom Depth가 설정된 액터 추적 (정리용) */
+	TArray<TWeakObjectPtr<AActor>> CustomDepthActors;
 };
