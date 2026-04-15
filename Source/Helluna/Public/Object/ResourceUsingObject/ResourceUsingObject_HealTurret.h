@@ -28,6 +28,9 @@ protected:
 	virtual void Tick(float DeltaTime) override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
+	/** 매 프레임 회전이 필요하므로 스캔 종료 후에도 Tick 유지. */
+	virtual bool ShouldKeepTickingAfterPlacementScan() const override { return true; }
+
 	// =========================================================
 	// 힐 범위
 	// =========================================================

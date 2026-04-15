@@ -108,6 +108,9 @@ void AResourceUsingObject_HealTurret::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// 회전 Tick 보장 — 스캔 VFX가 비활성(Material NULL 등)이어도 회전은 항상 동작해야 함.
+	SetActorTickEnabled(true);
+
 	// 서버에서만 힐 타이머 시작
 	if (HasAuthority())
 	{

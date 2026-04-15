@@ -60,6 +60,9 @@ protected:
 
     void EnsureRuntimeResourceInitialization();
 
+    /** 스캔 VFX 종료 후에도 Tick을 유지할지 여부. 회전/주기 로직이 있는 자식 클래스는 true 반환. */
+    virtual bool ShouldKeepTickingAfterPlacementScan() const { return false; }
+
 protected:
     // ==================================================================================
     // [김기현 - MDF 시스템 영역] 

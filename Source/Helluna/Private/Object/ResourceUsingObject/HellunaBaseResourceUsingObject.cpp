@@ -290,7 +290,10 @@ void AHellunaBaseResourceUsingObject::TickPlacementScan(float DeltaTime)
         ScanSwappedSlotCounts.Empty();
         ScanDMIs.Empty();
         bScanActive = false;
-        SetActorTickEnabled(false);
+        if (!ShouldKeepTickingAfterPlacementScan())
+        {
+            SetActorTickEnabled(false);
+        }
         return;
     }
 

@@ -122,25 +122,15 @@ void UHellunaSQLiteSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	UE_LOG(LogHelluna, Log, TEXT("[SQLite]   디렉토리 생성: %s (결과=%s)"), *DatabaseDir, bDirCreated ? TEXT("성공/이미존재") : TEXT("실패"));
 
 	// 3. DB 열기 + 스키마 초기화
-	//    데디서버(HellunaServer.exe)에서 게임서버(L_Lobby가 아닌 맵)는 DB를 열지 않음
+	//    게임서버 프로세스는 -NoDatabaseOpen 플래그로 명시적 선언 (ServerManager가 스폰 시 부여)
 	//    → 게임서버는 파일 전송(Export/Import) 함수만 사용하므로 DB 불필요
 	//    → DB 잠금을 피해 로비서버만 DB를 독점 사용
+	//    맵 이름(L_Lobby) 문자열 추론은 기본 맵 케이스에서 실패하므로 사용하지 않음
 	bool bSkipDatabaseOpen = false;
-	if (IsRunningDedicatedServer())
-	{
-		const FString CmdLine = FCommandLine::Get();
-		if (!CmdLine.Contains(TEXT("L_Lobby")))
-		{
-			bSkipDatabaseOpen = true;
-			UE_LOG(LogHelluna, Log, TEXT("[SQLite] 게임서버 감지 (L_Lobby 없음) → DB 열기 생략, 파일 전송 전용 모드"));
-		}
-	}
-
-	// 명시적 커맨드라인 플래그로도 DB 열기 생략 가능
 	if (FParse::Param(FCommandLine::Get(), TEXT("NoDatabaseOpen")))
 	{
 		bSkipDatabaseOpen = true;
-		UE_LOG(LogHelluna, Log, TEXT("[SQLite] -NoDatabaseOpen 플래그 감지 → DB 열기 생략"));
+		UE_LOG(LogHelluna, Log, TEXT("[SQLite] -NoDatabaseOpen 플래그 감지 → DB 열기 생략 (파일 전송 전용 모드)"));
 	}
 
 	if (bSkipDatabaseOpen)

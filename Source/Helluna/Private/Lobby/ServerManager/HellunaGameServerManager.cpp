@@ -96,11 +96,11 @@ int32 UHellunaGameServerManager::SpawnGameServer(const FString& MapPath)
 #if WITH_EDITOR
 	// 에디터 모드: UE 에디터가 -server 모드로 재실행
 	const FString ProjectPath = FPaths::ConvertRelativePathToFull(FPaths::GetProjectFilePath());
-	Args = FString::Printf(TEXT("\"%s\" %s -server -port=%d -log"),
+	Args = FString::Printf(TEXT("\"%s\" %s -server -port=%d -log -NoDatabaseOpen"),
 		*ProjectPath, *MapPath, Port);
 #else
-	// 패키징 모드
-	Args = FString::Printf(TEXT("%s -server -port=%d -log"),
+	// 패키징 모드 — 게임서버는 -NoDatabaseOpen으로 SQLite 서브시스템이 DB를 열지 않도록 명시
+	Args = FString::Printf(TEXT("%s -server -port=%d -log -NoDatabaseOpen"),
 		*MapPath, Port);
 #endif
 
@@ -163,10 +163,11 @@ int32 UHellunaGameServerManager::SpawnGameServerOnPort(int32 Port, const FString
 	FString Args;
 #if WITH_EDITOR
 	const FString ProjectPath = FPaths::ConvertRelativePathToFull(FPaths::GetProjectFilePath());
-	Args = FString::Printf(TEXT("\"%s\" %s -server -port=%d -log"),
+	Args = FString::Printf(TEXT("\"%s\" %s -server -port=%d -log -NoDatabaseOpen"),
 		*ProjectPath, *MapPath, Port);
 #else
-	Args = FString::Printf(TEXT("%s -server -port=%d -log"),
+	// 게임서버는 -NoDatabaseOpen으로 SQLite 서브시스템이 DB를 열지 않도록 명시
+	Args = FString::Printf(TEXT("%s -server -port=%d -log -NoDatabaseOpen"),
 		*MapPath, Port);
 #endif
 
