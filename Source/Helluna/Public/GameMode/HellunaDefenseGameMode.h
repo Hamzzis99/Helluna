@@ -182,8 +182,10 @@ protected:
 		UClass* OreClass;
 		FTransform Transform;
 		TArray<FName> Tags;
-		/** PCG 액터 태그에서 파싱한 점수 가중치 (기본 1.0) */
-		float ScoreWeight = 1.f;
+		/** PCGScoreComponent.ClusterAmount — 뭉침 크기 배수 */
+		float ClusterAmount = 1.f;
+		/** PCGScoreComponent.PlacementDensity — 전체 배치 밀도 배수 */
+		float PlacementDensity = 1.f;
 	};
 
 	/** PCG에서 추출한 광석 데이터로 밀도 기반 클러스터 후처리 + 독립 액터 스폰 */
