@@ -39,6 +39,9 @@ public:
 	/** 이번 RequestSpawn에서 실제로 소환할 수 (GameMode가 읽어서 TotalSpawned에 누적) */
 	int32 GetRequestedSpawnCount() const { return RequestedSpawnCount; }
 
+	/** 아직 배출되지 않은 잔여 스폰 수 (NightWatchdog 보정용) */
+	int32 GetPendingSpawnCount() const { return PendingSpawnCount; }
+
 	/** 디버그용: EntityTypes 수 반환 */
 	int32 GetEntityTypesNum() const { return EntityTypes.Num(); }
 

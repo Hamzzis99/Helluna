@@ -17,6 +17,8 @@
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h" // 이사 확인증 확인용
 #include "Chat/HellunaChatTypes.h"
 #include "Components/VolumetricCloudComponent.h"
+#include "Kismet/KismetMaterialLibrary.h"
+#include "Materials/MaterialParameterCollection.h"
 
 // =========================================================================================
 // 생성자 (김기현)
@@ -92,8 +94,10 @@ void AHellunaDefenseGameState::OnRep_Phase()
 #endif
         OnNightStarted();
         bHasBeenNight = true;  // ★ 밤 경험 기록
-        if (bHasUDS) SetVolumetricCloudVisible(false);  // 밤: 구름 OFF (오로라 가시성)
-        if (bHasUDW) ForceClearWeather();               // 밤: 맑은 날씨 강제
+        // 밤: NightWeatherTypes에서 랜덤 선택 (비가 오도록 배열에 Rain 프리셋 배치)
+        // 구름 토글은 UDW Change Weather 이후에 적용해야 UDW가 켠 구름이 다시 꺼짐.
+        if (bHasUDW) ApplyRandomWeather(false);
+        if (bHasUDS) SetVolumetricCloudVisible(false);  // 밤: 구름 OFF (오로라/분위기 가시성)
         // ★ Animate OFF — 현재 시간에서 멈춤
         if (bHasUDS)
         {
@@ -386,6 +390,21 @@ void AHellunaDefenseGameState::BeginPlay()
     }
 #endif
 
+    // ── 웅덩이 점진 축적 타이머 (렌더링 가능한 곳에서만) ─────────────────
+    if (GetNetMode() != NM_DedicatedServer)
+    {
+        CurrentPuddleCoverage = 0.f;
+        const float Interval = FMath::Max(0.05f, PuddleTickInterval);
+        GetWorldTimerManager().SetTimer(
+            TimerHandle_PuddleAccumulation,
+            this,
+            &ThisClass::TickPuddleAccumulation,
+            Interval,
+            true,
+            Interval
+        );
+    }
+
 #if !UE_BUILD_SHIPPING && HELLUNA_DEBUG_UDS
     // 디버그 빌드에서만 UDS 로깅 (1초 간격)
     if (bHasUDS)
@@ -528,7 +547,8 @@ void AHellunaDefenseGameState::EndPlay(const EEndPlayReason::Type EndPlayReason)
     GetWorldTimerManager().ClearTimer(TimerHandle_NightDebug);
 #endif
     GetWorldTimerManager().ClearTimer(TimerHandle_DawnTransition);
-    
+    GetWorldTimerManager().ClearTimer(TimerHandle_PuddleAccumulation);
+
     if (HasAuthority())
     {
         WriteDataToDisk();
@@ -831,12 +851,24 @@ void AHellunaDefenseGameState::CheatTimeFreeze_HoldTick()
 // ═══════════════════════════════════════════════════════════════════════════════
 void AHellunaDefenseGameState::ApplyRandomWeather(bool bIsDay)
 {
-    const TArray<UObject*>& WeatherArray = bIsDay ? DayWeatherTypes : NightWeatherTypes;
-    
-    if (WeatherArray.Num() == 0) return;
-    
-    int32 RandomIdx = FMath::RandRange(0, WeatherArray.Num() - 1);
-    UObject* SelectedWeather = WeatherArray[RandomIdx];
+    // 밤은 고정 날씨(비)가 지정되어 있으면 랜덤 선택을 건너뛴다.
+    UObject* SelectedWeather = nullptr;
+    int32 RandomIdx = -1;
+    int32 ArrayNum = 0;
+
+    if (!bIsDay && NightForcedWeather)
+    {
+        SelectedWeather = NightForcedWeather;
+    }
+    else
+    {
+        const TArray<UObject*>& WeatherArray = bIsDay ? DayWeatherTypes : NightWeatherTypes;
+        if (WeatherArray.Num() == 0) return;
+
+        RandomIdx = FMath::RandRange(0, WeatherArray.Num() - 1);
+        SelectedWeather = WeatherArray[RandomIdx];
+        ArrayNum = WeatherArray.Num();
+    }
     if (!SelectedWeather) return;
     
     if (bIsDay)
@@ -859,10 +891,11 @@ void AHellunaDefenseGameState::ApplyRandomWeather(bool bIsDay)
         UDW->ProcessEvent(Func, &Params);
         
 #if HELLUNA_DEBUG_DEFENSE
-        UE_LOG(LogTemp, Log, TEXT("[Weather] %s → %s (%d/%d)"),
+        UE_LOG(LogTemp, Log, TEXT("[Weather] %s → %s (%d/%d)%s"),
             bIsDay ? TEXT("낮") : TEXT("밤"),
             *SelectedWeather->GetName(),
-            RandomIdx, WeatherArray.Num());
+            RandomIdx, ArrayNum,
+            (!bIsDay && NightForcedWeather) ? TEXT(" [Forced]") : TEXT(""));
 #endif
     }
 }
@@ -917,6 +950,54 @@ void AHellunaDefenseGameState::ForceClearWeather()
         UE_LOG(LogTemp, Log, TEXT("[Weather] 밤 → 맑은 날씨 강제 (전환 %.0f초)"), WeatherTransitionTime);
 #endif
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 💧 웅덩이 점진 축적
+//   UDW가 MPC `Raining`을 시간에 따라 상승/하강시키므로, 본 Tick은 그 값을 읽어
+//   `DLWE_Puddle Coverage`를 서서히 램프업/램프다운한다.
+// ═══════════════════════════════════════════════════════════════════════════════
+void AHellunaDefenseGameState::TickPuddleAccumulation()
+{
+    UWorld* World = GetWorld();
+    if (!World)
+        return;
+
+    static const TCHAR* MPCPath = TEXT("/Game/UltraDynamicSky/Materials/Weather/UltraDynamicWeather_Parameters");
+    UMaterialParameterCollection* MPC = LoadObject<UMaterialParameterCollection>(nullptr, MPCPath);
+    if (!MPC)
+        return;
+
+    // 현재 비 강도 (UDW가 시간에 따라 채워 넣음)
+    const float RainingValue = UKismetMaterialLibrary::GetScalarParameterValue(World, MPC, TEXT("Raining"));
+
+    const float DeltaSec = FMath::Max(0.05f, PuddleTickInterval);
+    const float SafeMax = FMath::Clamp(MaxPuddleCoverage, 0.f, 1.f);
+    const float SafeFill = FMath::Max(1.f, PuddleFillSeconds);
+    const float SafeStep = FMath::Max(0.5f, PuddleStepSeconds);
+    const float SafeDry = FMath::Max(1.f, PuddleDrySeconds);
+
+    // 비 누적/감소
+    if (RainingValue >= RainThresholdForPuddle)
+    {
+        // 비 강도에 비례해 누적 속도 가속
+        AccumulatedRainSeconds += DeltaSec * FMath::Clamp(RainingValue, 0.f, 1.f);
+    }
+    else
+    {
+        // 마름: PuddleDrySeconds 동안 PuddleFillSeconds만큼 빠지도록 감속
+        const float DryRate = SafeFill / SafeDry;
+        AccumulatedRainSeconds -= DeltaSec * DryRate;
+    }
+    AccumulatedRainSeconds = FMath::Clamp(AccumulatedRainSeconds, 0.f, SafeFill);
+
+    // 단계(Step)로 양자화 → 10초마다 한 칸씩 차오르는 체감
+    const int32 NumSteps = FMath::Max(1, FMath::RoundToInt(SafeFill / SafeStep));
+    const int32 CurrentStep = FMath::Clamp(FMath::FloorToInt(AccumulatedRainSeconds / SafeStep), 0, NumSteps);
+    const float StepCoverage = SafeMax / static_cast<float>(NumSteps);
+    CurrentPuddleCoverage = FMath::Clamp(CurrentStep * StepCoverage, 0.f, SafeMax);
+
+    UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("DLWE_Puddle Coverage"), CurrentPuddleCoverage);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

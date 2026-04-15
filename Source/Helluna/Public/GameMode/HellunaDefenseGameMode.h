@@ -77,8 +77,14 @@ protected:
 	FTimerHandle TimerHandle_ToNight;
 	FTimerHandle TimerHandle_ToDay;
 	FTimerHandle TimerHandle_DayCountdown; // 낮 남은 시간 1초마다 갱신
+	FTimerHandle TimerHandle_NightWatchdog; // 밤: 카운터-실제 적 수 불일치 보정
 
 	void TickDayCountdown(); // 1초마다 DayTimeRemaining 감소
+
+	/** 밤 중 1초마다 실행 — RemainingMonstersThisNight > 0 이지만 월드에 실제 살아있는 적이 없고
+	 *  모든 스포너 pending = 0 이면 카운터 동기화 + 낮 전환을 트리거한다.
+	 *  보스 나이트 / AliveBoss 유효 시에는 동작하지 않는다. */
+	void TickNightWatchdog();
 
 	/**
 	 * 현재 진행 일(Day) 수. EnterDay() 호출마다 1 증가.

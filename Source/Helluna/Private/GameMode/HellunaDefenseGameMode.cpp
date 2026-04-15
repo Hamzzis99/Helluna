@@ -1294,6 +1294,9 @@ void AHellunaDefenseGameMode::EnterDay()
 {
     if (!bGameInitialized) return;
 
+    // 밤 워치독 해제 (밤 종료)
+    GetWorldTimerManager().ClearTimer(TimerHandle_NightWatchdog);
+
     // 낮 카운터 증가 (게임 시작 첫 낮은 Day 1)
     CurrentDay++;
 
@@ -1363,6 +1366,12 @@ void AHellunaDefenseGameMode::EnterNight()
 
     // 낮 카운트다운 타이머 정지
     GetWorldTimerManager().ClearTimer(TimerHandle_DayCountdown);
+
+    // 밤 워치독 시작 — 카운터와 실제 적 수 불일치 시 낮 전환 강제.
+    // Why: NotifyMonsterDied가 호출되지 않는 사망 경로(맵 밖 낙사, ECS 디스폰 오류 등)가 있으면
+    //      RemainingMonstersThisNight가 0이 되지 않아 낮으로 복귀 못 하는 회귀가 발생함.
+    GetWorldTimerManager().ClearTimer(TimerHandle_NightWatchdog);
+    GetWorldTimerManager().SetTimer(TimerHandle_NightWatchdog, this, &ThisClass::TickNightWatchdog, 1.0f, true);
 
     // ── 보스 소환 일 체크 ──────────────────────────────────────────────
     // BossSchedule 배열에서 CurrentDay와 일치하는 항목을 찾는다.
@@ -1594,6 +1603,81 @@ void AHellunaDefenseGameMode::NotifyMonsterDied(AActor* DeadMonster)
     if (RemainingMonstersThisNight <= 0)
     {
         GetWorldTimerManager().ClearTimer(TimerHandle_ToDay);
+        GetWorldTimerManager().SetTimer(TimerHandle_ToDay, this, &ThisClass::EnterDay, TestNightFailToDayDelay, false);
+    }
+}
+
+// ============================================================
+// TickNightWatchdog — 카운터 불일치 보정
+//
+// RemainingMonstersThisNight는 NotifyMonsterDied 경로로만 감소한다.
+// 맵 밖 낙사, ECS 디스폰 실패, GA_Death 미부여 등으로 카운터가 틀어지면
+// "적을 다 죽여도 낮으로 돌아오지 않는" 증상이 발생.
+//
+// 조건:
+//   - 현재 Night phase 이고 bGameEnded=false
+//   - 보스 나이트가 아닐 것 (보스 살아있으면 별도 경로)
+//   - 모든 스포너의 PendingSpawnCount == 0 (아직 배출할 적 없음)
+//   - 월드에 살아있는 일반 AHellunaEnemyCharacter == 0
+// → RemainingMonstersThisNight = 0 동기화 + TimerHandle_ToDay가 비어 있으면 EnterDay 예약
+// ============================================================
+void AHellunaDefenseGameMode::TickNightWatchdog()
+{
+    if (!HasAuthority() || !bGameInitialized || bGameEnded) return;
+
+    AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>();
+    if (!GS || GS->GetPhase() != EDefensePhase::Night) return;
+
+    // 보스 나이트에서 보스가 살아있으면 NotifyBossDied에 맡기고 종료 분기 패스
+    if (GS->bIsBossNight && AliveBoss.IsValid())
+    {
+        return;
+    }
+
+    // 스포너 pending 잔여 체크 — 아직 배출될 적이 있다면 대기
+    int32 TotalPending = 0;
+    for (AHellunaEnemyMassSpawner* Spawner : CachedMeleeSpawners)
+    {
+        if (IsValid(Spawner)) TotalPending += Spawner->GetPendingSpawnCount();
+    }
+    for (AHellunaEnemyMassSpawner* Spawner : CachedRangeSpawners)
+    {
+        if (IsValid(Spawner)) TotalPending += Spawner->GetPendingSpawnCount();
+    }
+    if (TotalPending > 0) return;
+
+    // 월드의 살아있는 일반 적 스캔 (Normal grade, IsDead=false)
+    UWorld* World = GetWorld();
+    if (!World) return;
+
+    int32 AliveCount = 0;
+    for (TActorIterator<AHellunaEnemyCharacter> It(World); It; ++It)
+    {
+        AHellunaEnemyCharacter* Enemy = *It;
+        if (!IsValid(Enemy) || Enemy->IsActorBeingDestroyed()) continue;
+        if (Enemy->EnemyGrade != EEnemyGrade::Normal) continue; // 보스는 별도 경로
+
+        UHellunaHealthComponent* Health = Enemy->FindComponentByClass<UHellunaHealthComponent>();
+        if (Health && Health->IsDead()) continue;
+
+        ++AliveCount;
+    }
+
+    if (AliveCount > 0) return; // 아직 살아있는 적 존재
+
+    // 카운터와 실제 상태 불일치 → 보정 + 낮 전환
+    if (RemainingMonstersThisNight > 0)
+    {
+        UE_LOG(LogHelluna, Warning,
+            TEXT("[NightWatchdog] 카운터 불일치 보정 — RemainingMonstersThisNight=%d → 0 (실제 살아있는 적 0)"),
+            RemainingMonstersThisNight);
+        RemainingMonstersThisNight = 0;
+        GS->SetAliveMonsterCount(0);
+    }
+
+    if (!GetWorldTimerManager().IsTimerActive(TimerHandle_ToDay))
+    {
+        UE_LOG(LogHelluna, Warning, TEXT("[NightWatchdog] 낮 전환 타이머 시작 (%0.1f초)"), TestNightFailToDayDelay);
         GetWorldTimerManager().SetTimer(TimerHandle_ToDay, this, &ThisClass::EnterDay, TestNightFailToDayDelay, false);
     }
 }
@@ -2000,6 +2084,7 @@ void AHellunaDefenseGameMode::EndGame(EHellunaGameEndReason Reason)
     // 낮/밤 타이머 정지
     GetWorldTimerManager().ClearTimer(TimerHandle_ToNight);
     GetWorldTimerManager().ClearTimer(TimerHandle_ToDay);
+    GetWorldTimerManager().ClearTimer(TimerHandle_NightWatchdog);
 
     FString ReasonString;
     switch (Reason)
