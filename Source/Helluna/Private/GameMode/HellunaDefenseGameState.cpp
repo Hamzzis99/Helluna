@@ -19,6 +19,7 @@
 #include "Components/VolumetricCloudComponent.h"
 #include "Kismet/KismetMaterialLibrary.h"
 #include "Materials/MaterialParameterCollection.h"
+#include "Sky/HellunaWeatherConfig.h"
 
 // =========================================================================================
 // 생성자 (김기현)
@@ -84,7 +85,6 @@ void AHellunaDefenseGameState::OnRep_Phase()
         UE_LOG(LogTemp, Warning, TEXT("[GameState] OnDayStarted 호출 시도"));
 #endif
         CleanupInitialNightPCGClientArtifacts();
-        bIsCurrentlyRaining = false;    // 낮 → 비 종료
         OnDayStarted();
         if (bHasUDS) SetVolumetricCloudVisible(true);   // 낮: 구름 ON
         if (bHasUDW) ApplyRandomWeather(true);
@@ -93,21 +93,18 @@ void AHellunaDefenseGameState::OnRep_Phase()
 #if HELLUNA_DEBUG_DEFENSE
         UE_LOG(LogTemp, Warning, TEXT("[GameState] OnNightStarted 호출 시도"));
 #endif
+        // 진단(무조건 활성): 밤 진입 시 weather 전환 경로가 실제 도는지 확인
+        UE_LOG(LogTemp, Warning, TEXT("[RainDiag-Phase] Night 진입 | HasAuthority=%d bHasUDW=%d bHasUDS=%d NetMode=%d NightForcedWeather=%s NightWeatherTypes.Num=%d"),
+            (int32)HasAuthority(), (int32)bHasUDW, (int32)bHasUDS,
+            (int32)(GetWorld() ? GetWorld()->GetNetMode() : NM_Standalone),
+            NightForcedWeather ? *NightForcedWeather->GetName() : TEXT("null"),
+            NightWeatherTypes.Num());
         OnNightStarted();
         bHasBeenNight = true;  // ★ 밤 경험 기록
-        // [Patch 1] UDW 레플리케이션 타이밍과 무관하게 밤 고정 날씨 기준으로 비 상태 즉시 확정
-        //   bHasUDW가 false(클라이언트 BeginPlay 시점에 UDW 액터 미로드)여도
-        //   NightForcedWeather 이름으로 bIsCurrentlyRaining을 먼저 설정하여 MPC 축적 타이머가 동작하도록 보장.
-        if (NightForcedWeather)
-        {
-            const FString ForcedName = NightForcedWeather->GetName();
-            bIsCurrentlyRaining = ForcedName.Contains(TEXT("Rain"), ESearchCase::IgnoreCase);
-        }
         // 밤: NightWeatherTypes에서 랜덤 선택 (비가 오도록 배열에 Rain 프리셋 배치)
         // 구름 토글은 UDW Change Weather 이후에 적용해야 UDW가 켠 구름이 다시 꺼짐.
         if (bHasUDW) ApplyRandomWeather(false);
         if (bHasUDS) SetVolumetricCloudVisible(false);  // 밤: 구름 OFF (오로라/분위기 가시성)
-        // bIsCurrentlyRaining 추가 보정은 ApplyRandomWeather 내부 (에셋 이름 기반)에서 수행
         // ★ Animate OFF — 현재 시간에서 멈춤
         if (bHasUDS)
         {
@@ -400,16 +397,16 @@ void AHellunaDefenseGameState::BeginPlay()
     }
 #endif
 
-    // ── 비 MPC 점진 Push 타이머 (렌더링 가능한 곳에서만) ──────────────────
+    // ── 웅덩이 점진 축적 타이머 (렌더링 가능한 곳에서만) ─────────────────
     if (GetNetMode() != NM_DedicatedServer)
     {
+        CurrentPuddleCoverage = 0.f;
         AccumulatedRainSeconds = 0.f;
-        bIsCurrentlyRaining = false;
         const float Interval = FMath::Max(0.05f, PuddleTickInterval);
         GetWorldTimerManager().SetTimer(
             TimerHandle_PuddleAccumulation,
             this,
-            &ThisClass::TickRainMPC,
+            &ThisClass::TickPuddleAccumulation,
             Interval,
             true,
             Interval
@@ -862,63 +859,101 @@ void AHellunaDefenseGameState::CheatTimeFreeze_HoldTick()
 // ═══════════════════════════════════════════════════════════════════════════════
 void AHellunaDefenseGameState::ApplyRandomWeather(bool bIsDay)
 {
-    // 밤은 고정 날씨(비)가 지정되어 있으면 랜덤 선택을 건너뛴다.
     UObject* SelectedWeather = nullptr;
     int32 RandomIdx = -1;
     int32 ArrayNum = 0;
+    float EffectiveTransitionTime = WeatherTransitionTime;
+    const TCHAR* SourceTag = TEXT("Legacy");
 
-    if (!bIsDay && NightForcedWeather)
+    // ─── 우선순위 1: WeatherConfig DataAsset ────────────────────────────────────
+    if (UHellunaWeatherConfig* Cfg = WeatherConfig.LoadSynchronous())
     {
-        SelectedWeather = NightForcedWeather;
+        SourceTag = TEXT("Config");
+        if (Cfg->TransitionTime > 0.f)
+            EffectiveTransitionTime = Cfg->TransitionTime;
+
+        // Forced 먼저 확인
+        const TSoftObjectPtr<UObject>& ForcedRef = bIsDay ? Cfg->DayForced : Cfg->NightForced;
+        if (!ForcedRef.IsNull())
+        {
+            SelectedWeather = ForcedRef.LoadSynchronous();
+        }
+
+        // Forced 없으면 Pool 랜덤
+        if (!SelectedWeather)
+        {
+            const TArray<TSoftObjectPtr<UObject>>& Pool = bIsDay ? Cfg->DayPool : Cfg->NightPool;
+            if (Pool.Num() > 0)
+            {
+                RandomIdx = FMath::RandRange(0, Pool.Num() - 1);
+                SelectedWeather = Pool[RandomIdx].LoadSynchronous();
+                ArrayNum = Pool.Num();
+            }
+        }
     }
+    // ─── 우선순위 2: 레거시 GameState 필드 (WeatherConfig 미설정 시 폴백) ───────
     else
     {
-        const TArray<UObject*>& WeatherArray = bIsDay ? DayWeatherTypes : NightWeatherTypes;
-        if (WeatherArray.Num() == 0) return;
+        if (!bIsDay && NightForcedWeather)
+        {
+            SelectedWeather = NightForcedWeather;
+        }
+        else
+        {
+            const TArray<UObject*>& WeatherArray = bIsDay ? DayWeatherTypes : NightWeatherTypes;
+            if (WeatherArray.Num() == 0)
+            {
+                UE_LOG(LogTemp, Warning, TEXT("[RainDiag-Weather] early-return | Legacy %s WeatherTypes 배열 비어있음 + WeatherConfig 미설정"),
+                    bIsDay ? TEXT("Day") : TEXT("Night"));
+                return;
+            }
 
-        RandomIdx = FMath::RandRange(0, WeatherArray.Num() - 1);
-        SelectedWeather = WeatherArray[RandomIdx];
-        ArrayNum = WeatherArray.Num();
+            RandomIdx = FMath::RandRange(0, WeatherArray.Num() - 1);
+            SelectedWeather = WeatherArray[RandomIdx];
+            ArrayNum = WeatherArray.Num();
+        }
     }
-    if (!SelectedWeather) return;
 
-    // 비 판별: 에셋 이름에 "Rain" 포함 시 비로 간주 (Rain, Rain_Light, Rain_Thunderstorm 등)
-    const FString WeatherName = SelectedWeather->GetName();
-    const bool bIsRainWeather = WeatherName.Contains(TEXT("Rain"), ESearchCase::IgnoreCase);
+    if (!SelectedWeather)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[RainDiag-Weather] early-return | SelectedWeather=null (Source=%s bIsDay=%d)"),
+            SourceTag, (int32)bIsDay);
+        return;
+    }
 
     if (bIsDay)
-    {
         CurrentDayWeather = SelectedWeather;
-        // 낮 비 날씨도 지원 (낮에 비가 오면 웅덩이 차오름)
-        bIsCurrentlyRaining = bIsRainWeather;
-    }
     else
-    {
         CurrentNightWeather = SelectedWeather;
-        bIsCurrentlyRaining = bIsRainWeather;
-    }
-    
+
     AActor* UDW = GetUDWActor();  // 캐시 사용
-    if (!UDW) return;
-    
+    if (!UDW)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[RainDiag-Weather] early-return | UDW 액터 없음 (GetUDWActor=null)"));
+        return;
+    }
+
     UFunction* Func = UDW->FindFunction(TEXT("Change Weather"));
     if (!Func)
         Func = UDW->FindFunction(TEXT("ChangeWeather"));
-    
+
     if (Func)
     {
         struct { UObject* NewWeatherType; float TransitionTime; } Params;
         Params.NewWeatherType = SelectedWeather;
-        Params.TransitionTime = WeatherTransitionTime;
+        Params.TransitionTime = EffectiveTransitionTime;
         UDW->ProcessEvent(Func, &Params);
-        
-#if HELLUNA_DEBUG_DEFENSE
-        UE_LOG(LogTemp, Log, TEXT("[Weather] %s → %s (%d/%d)%s"),
-            bIsDay ? TEXT("낮") : TEXT("밤"),
+
+        // 진단(무조건 활성): 실제 ProcessEvent 실행 여부 + 인자 + 소스 확인
+        UE_LOG(LogTemp, Warning, TEXT("[RainDiag-Weather] ProcessEvent(Change Weather) | Source=%s %s → %s | TransitionTime=%.1f"),
+            SourceTag,
+            bIsDay ? TEXT("Day") : TEXT("Night"),
             *SelectedWeather->GetName(),
-            RandomIdx, ArrayNum,
-            (!bIsDay && NightForcedWeather) ? TEXT(" [Forced]") : TEXT(""));
-#endif
+            EffectiveTransitionTime);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[RainDiag-Weather] FindFunction(Change Weather) 실패 — UDW BP에 함수 없음"));
     }
 }
 
@@ -975,12 +1010,13 @@ void AHellunaDefenseGameState::ForceClearWeather()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 💧 비 MPC 점진 Push
-//   UDW Material State Sim이 MPC를 push하지 않을 수 있으므로,
-//   Phase==Night(비 강제)일 때 SkyPreviewActor와 동일한 MPC 파라미터를
-//   시간에 따라 단계적으로 올리고, 낮이면 내린다.
+// 💧 웅덩이 점진 축적
+//   UDW가 MPC `Raining`을 시간에 따라 상승/하강시키므로, 본 Tick은 그 값을 읽어
+//   `DLWE_Puddle Coverage`를 서서히 램프업/램프다운한다.
+//   반짝임 완화용 Water Roughness / Tiling Ripples Framerate / Puddle Sharpness 도
+//   매 틱 같은 MPC로 push 하여 UDW 프리셋의 기본값(0.05/30/40)을 상쇄한다.
 // ═══════════════════════════════════════════════════════════════════════════════
-void AHellunaDefenseGameState::TickRainMPC()
+void AHellunaDefenseGameState::TickPuddleAccumulation()
 {
     UWorld* World = GetWorld();
     if (!World)
@@ -991,40 +1027,107 @@ void AHellunaDefenseGameState::TickRainMPC()
     if (!MPC)
         return;
 
+    // UDW가 Weather 프리셋 전환에 맞춰 자체적으로 램프업/다운하는 액터 프로퍼티를
+    //   신호원으로 사용(맵의 MPC `Raining`이 0으로 유지되는 프로젝트가 있어 이게 더 견고).
+    //   SkyPreview가 사용하는 것과 동일한 값.
+    float RainingValue = 0.f;
+    if (AActor* UDW = GetUDWActor())
+    {
+        if (FFloatProperty* FProp = FindFProperty<FFloatProperty>(UDW->GetClass(), TEXT("Puddle Coverage")))
+        {
+            RainingValue = FProp->GetPropertyValue_InContainer(UDW);
+        }
+        else if (FDoubleProperty* DProp = FindFProperty<FDoubleProperty>(UDW->GetClass(), TEXT("Puddle Coverage")))
+        {
+            RainingValue = (float)DProp->GetPropertyValue_InContainer(UDW);
+        }
+    }
+
     const float DeltaSec = FMath::Max(0.05f, PuddleTickInterval);
+    const float SafeMax = FMath::Clamp(MaxPuddleCoverage, 0.f, 1.f);
     const float SafeFill = FMath::Max(1.f, PuddleFillSeconds);
+    const float SafeStep = FMath::Max(0.5f, PuddleStepSeconds);
     const float SafeDry = FMath::Max(1.f, PuddleDrySeconds);
 
-    // ── 누적 시간 갱신 ─────────────────────────────────────────────
-    if (bIsCurrentlyRaining)
+    // 비 누적/감소
+    if (RainingValue >= RainThresholdForPuddle)
     {
-        AccumulatedRainSeconds += DeltaSec;
+        // 비 강도에 비례해 누적 속도 가속
+        AccumulatedRainSeconds += DeltaSec * FMath::Clamp(RainingValue, 0.f, 1.f);
     }
     else
     {
+        // 마름: PuddleDrySeconds 동안 PuddleFillSeconds만큼 빠지도록 감속
         const float DryRate = SafeFill / SafeDry;
         AccumulatedRainSeconds -= DeltaSec * DryRate;
     }
     AccumulatedRainSeconds = FMath::Clamp(AccumulatedRainSeconds, 0.f, SafeFill);
 
-    // [Patch 3] 단계 양자화 제거 — 선형 Alpha로 매 0.25초 부드럽게 상승/하강.
-    //   기존 10초 Step 양자화는 경계에서 값이 갑자기 튀어 시각적 pop을 유발.
-    const float Alpha = FMath::Clamp(AccumulatedRainSeconds / SafeFill, 0.f, 1.f);
+    // 단계(Step)로 양자화 → 10초마다 한 칸씩 차오르는 체감
+    const int32 NumSteps = FMath::Max(1, FMath::RoundToInt(SafeFill / SafeStep));
+    const int32 CurrentStep = FMath::Clamp(FMath::FloorToInt(AccumulatedRainSeconds / SafeStep), 0, NumSteps);
+    const float StepCoverage = SafeMax / static_cast<float>(NumSteps);
+    CurrentPuddleCoverage = FMath::Clamp(CurrentStep * StepCoverage, 0.f, SafeMax);
 
-    // [Patch 2] UDW가 자체 푸시하는 파라미터(Wet, Raining, Fog)는 push 제외.
-    //   UDW의 Material State Sim이 Rain 프리셋 값(Material Wetness=1, Rain=7, Fog 등)으로
-    //   해당 MPC를 매 프레임 write할 수 있어, 우리 0.25초 push와 경합해 틱 단위 깜빡임 발생.
-    //   DLWE 전용 3종 파라미터만 push하여 경합 제거.
-    UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("DLWE_Base Wetness"),      Alpha * RainTargetBaseWetness);
-    UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("DLWE_Puddle Coverage"),   Alpha * RainTargetPuddleCoverage);
-    UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("DLWE Puddle Sharpness"),  PuddleSharpness);
+    // 진단(HELLUNA_DEBUG_DEFENSE가 0이어도 출력되도록 무조건 활성화 — 원인 파악 후 가드로 복구).
+    //   2초마다 상태 출력 (0.25s 틱 × 8 = 2s).
+    {
+        static int32 DiagCounter = 0;
+        if ((DiagCounter++ % 8) == 0)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[RainDiag] TickPuddle: Phase=%d, UDWPuddle=%.3f, Accum=%.2f/%.1f, Step=%d/%d, Coverage=%.3f"),
+                (int32)Phase, RainingValue, AccumulatedRainSeconds, SafeFill,
+                CurrentStep, NumSteps, CurrentPuddleCoverage);
+        }
+    }
 
-    // [Patch 4] 웅덩이 반짝임(서브픽셀 specular aliasing) 억제.
-    //   기본 Water Roughness=0.05는 거울 같은 반사로 TAA가 픽셀보다 작은 하이라이트에 수렴 실패 → 프레임마다 다른 픽셀이 튐.
-    //   Raining>0 구간에서는 Tiling Ripples Framerate까지 높아 노멀이 매 프레임 변함 → 반짝임 가중.
-    //   두 파라미터 모두 GameState가 권위적으로 push하여 UDW 프리셋이 덮어쓰는 것을 상쇄.
-    UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("Water Roughness"),            PuddleWaterRoughness);
-    UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("Tiling Ripples Framerate"),   RippleFramerate);
+    // ─── 싸움 감지: 쓰기 전에 현재 MPC 값을 읽어 직전 틱에 우리가 쓴 값과 비교 ───
+    //   값이 drift 했으면 UDW(또는 다른 라이터)가 두 틱 사이에 덮어쓴 것.
+    //   Cov는 우리 누적값이라 UDW가 그대로 둘 가능성 높고, 깜빡임이 난다면
+    //   Sharp/Rough/Ripple 중 하나에서 drift가 보일 것.
+    const float BeforeCov    = UKismetMaterialLibrary::GetScalarParameterValue(World, MPC, TEXT("DLWE_Puddle Coverage"));
+    const float BeforeSharp  = UKismetMaterialLibrary::GetScalarParameterValue(World, MPC, TEXT("DLWE Puddle Sharpness"));
+    const float BeforeRough  = UKismetMaterialLibrary::GetScalarParameterValue(World, MPC, TEXT("Water Roughness"));
+    const float BeforeRipple = UKismetMaterialLibrary::GetScalarParameterValue(World, MPC, TEXT("Tiling Ripples Framerate"));
+
+    static float LastPushedCov    = -1.f;
+    static float LastPushedSharp  = -1.f;
+    static float LastPushedRough  = -1.f;
+    static float LastPushedRipple = -1.f;
+
+    UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("DLWE_Puddle Coverage"),   CurrentPuddleCoverage);
+
+    // 반짝임 완화(서브픽셀 specular aliasing 억제).
+    //   MPC 기본값 Water Roughness=0.05(거울), Tiling Ripples Framerate=30(빠른 노멀), Puddle Sharpness=40(날카로움).
+    //   매 틱 권위적으로 push하여 UDW 프리셋이 올리는 값을 상쇄.
+    UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("DLWE Puddle Sharpness"),     PuddleSharpness);
+    UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("Water Roughness"),           PuddleWaterRoughness);
+    UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("Tiling Ripples Framerate"),  RippleFramerate);
+
+    // 싸움 감지 로그 (2초 간격).
+    {
+        static int32 FightCounter = 0;
+        if ((FightCounter++ % 8) == 0 && LastPushedCov >= 0.f)
+        {
+            const bool CovDrift    = !FMath::IsNearlyEqual(BeforeCov,    LastPushedCov,    0.001f);
+            const bool SharpDrift  = !FMath::IsNearlyEqual(BeforeSharp,  LastPushedSharp,  0.1f);
+            const bool RoughDrift  = !FMath::IsNearlyEqual(BeforeRough,  LastPushedRough,  0.01f);
+            const bool RippleDrift = !FMath::IsNearlyEqual(BeforeRipple, LastPushedRipple, 0.1f);
+            if (CovDrift || SharpDrift || RoughDrift || RippleDrift)
+            {
+                UE_LOG(LogTemp, Warning, TEXT("[RainDiag-Fight] Overwritten since last tick: Cov %.3f→%.3f | Sharp %.1f→%.1f | Rough %.2f→%.2f | Ripple %.1f→%.1f"),
+                    LastPushedCov,    BeforeCov,
+                    LastPushedSharp,  BeforeSharp,
+                    LastPushedRough,  BeforeRough,
+                    LastPushedRipple, BeforeRipple);
+            }
+        }
+    }
+
+    LastPushedCov    = CurrentPuddleCoverage;
+    LastPushedSharp  = PuddleSharpness;
+    LastPushedRough  = PuddleWaterRoughness;
+    LastPushedRipple = RippleFramerate;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
