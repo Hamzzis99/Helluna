@@ -1372,7 +1372,7 @@ void AHellunaDefenseGameMode::ProcessClusterSpawnBatch()
     {
         const FClusterSpawnRequest& Req = PendingClusterSpawns[ClusterSpawnBatchIndex++];
         FActorSpawnParameters Params;
-        Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+        Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
         if (AActor* Spawned = GetWorld()->SpawnActor(Req.OreClass, &Req.Transform, Params))
         {
             Spawned->Tags = Req.Tags;

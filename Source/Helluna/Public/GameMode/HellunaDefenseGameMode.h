@@ -197,19 +197,20 @@ protected:
 
 	/** 한 배치에 스폰할 최대 액터 수 */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|프레임 분산",
-		meta = (DisplayName = "배치당 스폰 수", ClampMin = "1", ClampMax = "50",
-			ToolTip = "한 프레임에 스폰할 최대 광석 수.\n낮을수록 프레임 드랍이 적지만 전체 시간이 길어집니다."))
-	int32 PCGBatchSpawnCount = 5;
+		meta = (DisplayName = "배치당 스폰 수", ClampMin = "1", ClampMax = "200",
+			ToolTip = "한 프레임(배치)에 스폰할 최대 광석 수.\n낮을수록 프레임 드랍이 적지만 전체 시간이 길어집니다.\n권장: 50~100 (배치 간격과 함께 튜닝)"))
+	int32 PCGBatchSpawnCount = 60;
 
 	/** 한 배치에 파괴할 최대 액터 수 */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|프레임 분산",
-		meta = (DisplayName = "배치당 파괴 수", ClampMin = "1", ClampMax = "50"))
-	int32 PCGBatchDestroyCount = 15;
+		meta = (DisplayName = "배치당 파괴 수", ClampMin = "1", ClampMax = "200"))
+	int32 PCGBatchDestroyCount = 60;
 
 	/** 배치 간 대기 시간(초) */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|프레임 분산",
-		meta = (DisplayName = "배치 간격 (초)", ClampMin = "0.0", ClampMax = "1.0"))
-	float PCGBatchInterval = 0.033f;
+		meta = (DisplayName = "배치 간격 (초)", ClampMin = "0.0", ClampMax = "1.0",
+			ToolTip = "배치 사이 대기 시간. 0.016=매 프레임(60fps), 0.033=격프레임.\n낮출수록 처리량↑ 스파이크 위험↑"))
+	float PCGBatchInterval = 0.016f;
 
 	// ────────────────────────────────────────────────────────────────────────────
 	// [PCG 클러스터] 광석 뭉침 배치 설정
