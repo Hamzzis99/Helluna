@@ -43,6 +43,7 @@
 #include "GameMode/HellunaDefenseGameState.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 #include "AI/SpaceShipAttackSlotManager.h"
+#include "Helluna.h"  // HELLUNA_DEBUG_ENEMY
 
 DEFINE_LOG_CATEGORY_STATIC(LogChaseTarget, Log, All);
 
@@ -115,6 +116,7 @@ void LogMoveToActorCall(
 	}
 	LastSignatureByPawn.Add(PawnId, Signature);
 
+#if HELLUNA_DEBUG_ENEMY
 	UE_LOG(LogTemp, Warning,
 		TEXT("[enemybugreport][MoveToActorCall] Pawn=%s Phase=%s Slot=%d Result=%s PFC=%s SurfDist=%.1f CenterDist=%.1f Pos=%s Target=%s"),
 		*Pawn->GetName(),
@@ -126,6 +128,7 @@ void LogMoveToActorCall(
 		CenterDist,
 		*Pawn->GetActorLocation().ToString(),
 		IsValid(TargetActor) ? *TargetActor->GetName() : TEXT("null"));
+#endif
 }
 
 void LogMoveToActorStopReason(
@@ -170,6 +173,7 @@ void LogMoveToActorStopReason(
 	}
 	LastSignatureByPawn.Add(PawnId, Signature);
 
+#if HELLUNA_DEBUG_ENEMY
 	UE_LOG(LogTemp, Warning,
 		TEXT("[enemybugreport][MoveToActorStopReason] Pawn=%s Reason=%s Slot=%d PFC=%s Idle=%d Stuck=%d AttackLocked=%d SurfDist=%.1f CenterDist=%.1f Pos=%s Target=%s"),
 		*Pawn->GetName(),
@@ -183,6 +187,7 @@ void LogMoveToActorStopReason(
 		CenterDist,
 		*Pawn->GetActorLocation().ToString(),
 		IsValid(TargetActor) ? *TargetActor->GetName() : TEXT("null"));
+#endif
 }
 
 void IssueDirectMoveTowardLocation(AAIController* AIC, APawn* Pawn, const FVector& Goal, float AcceptanceRadius, bool bNeedForceMove, float DeltaTime)
@@ -1895,12 +1900,14 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 		}
 		const bool bNeedForceMove = (D.ConsecutiveNoProgressCount >= 3);
 
+#if HELLUNA_DEBUG_ENEMY
 		if (bNoProgress)
 		{
 			UE_LOG(LogTemp, Warning,
 				TEXT("[enemybugreport][NoProgress] Pawn=%s NoProgressCount=%d SurfaceDist=%.1f NeedForce=%d"),
 				*Pawn->GetName(), D.ConsecutiveNoProgressCount, SurfaceDist, (int32)bNeedForceMove);
 		}
+#endif
 
 		// (MOVE_None 불필요 — 우회는 정상 pathfinding 사용)
 
@@ -2001,9 +2008,11 @@ EStateTreeRunStatus FSTTask_ChaseTarget_Test::Tick(
 
 			CTH::IssueMoveToLocation(AIC, DetourGoal, AcceptanceRadius);
 
+#if HELLUNA_DEBUG_ENEMY
 			UE_LOG(LogTemp, Warning,
 				TEXT("[enemybugreport][ForceDetour] Pawn=%s Detour=%s Dist=%.0f Dir=%d SurfDist=%.1f"),
 				*Pawn->GetName(), *DetourGoal.ToString(), DetourDist, DetourDir, SurfaceDist);
+#endif
 
 			// 카운터 리셋 → 우회에 시간 줌 (다음 3초간 정상 pathfinding)
 			D.ConsecutiveNoProgressCount = 0;

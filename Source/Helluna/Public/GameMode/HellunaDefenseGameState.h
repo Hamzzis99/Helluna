@@ -429,6 +429,10 @@ protected:
 
     FTimerHandle TimerHandle_PuddleAccumulation;
 
+    /** UDW MPC 캐시 — BeginPlay에서 1회 LoadObject, TickPuddleAccumulation에서 재사용 */
+    UPROPERTY(Transient)
+    TObjectPtr<class UMaterialParameterCollection> CachedPuddleMPC;
+
     /** MPC 월드 인스턴스에 `DLWE_Puddle Coverage` 및 반짝임 완화 파라미터를 push */
     void TickPuddleAccumulation();
 

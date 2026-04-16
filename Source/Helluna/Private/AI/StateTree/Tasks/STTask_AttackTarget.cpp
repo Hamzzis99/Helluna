@@ -55,9 +55,8 @@ static void FaceCurrentTarget(AAIController* AIController, APawn* Pawn, AActor* 
 
 	// AttackTask가 폰 회전을 직접 덮어쓰면 Chase/Movement와 충돌하므로
 	// 여기서는 Controller/Focus만 갱신하고 폰 회전은 CharacterMovement에 맡긴다.
-	const float YawDelta = FMath::Abs(FMath::FindDeltaAngleDegrees(CurrentRot.Yaw, TargetRot.Yaw));
-	if (YawDelta > 2.f)
-		Pawn->ForceNetUpdate();
+	// 회전은 CharMovement의 RepMovement 정기 복제로 충분 — 매 틱 ForceNetUpdate는
+	// 적 수만큼 복제 우선순위를 치솟게 해 As-A-Client에서 프레임을 갉아먹는다.
 }
 }
 

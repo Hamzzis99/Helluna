@@ -88,10 +88,15 @@ void AHellunaDefenseGameState::OnRep_Phase()
 #endif
         CleanupInitialNightPCGClientArtifacts();
         OnDayStarted();
-        if (bHasUDS) SetVolumetricCloudVisible(true);   // 낮: 구름 ON
-        // bHasUDW 가드 제거: 데디서버에 UDW가 없어도 서버는 날씨 선택(강도 복제)을 해야 함.
-        // UDW 부재 시 ApplyRandomWeather 내부에서 ProcessEvent 호출은 스킵됨.
-        ApplyRandomWeather(true);
+        // 🌅 시각적 전환(구름 토글, UDW 날씨 Lerp)은 새벽 해 이동이 끝난 뒤에 시작한다.
+        //   Phase 플립 시점에 바로 켜면 해가 아직 밤 위치에 있는데 구름/날씨만
+        //   확 바뀌어 부자연스럽다 — TickDawnTransition 완료 시 ApplyDayVisuals()를 호출.
+        //   서버 권위(ReplicatedRainIntensity)는 ApplyRandomWeather에서 처리되므로,
+        //   UDS가 없는 데디서버는 즉시 호출해서 강도 복제가 지연되지 않도록 한다.
+        if (!bHasUDS)
+        {
+            ApplyRandomWeather(true);
+        }
         break;
     case EDefensePhase::Night:
 #if HELLUNA_DEBUG_DEFENSE
@@ -175,6 +180,13 @@ void AHellunaDefenseGameState::NetMulticast_OnDawnPassed_Implementation(float Ro
         // [Step3 O-02] 캐싱된 프로퍼티 포인터 사용 — Animate ON
         if (FBoolProperty* AnimProp2 = CastField<FBoolProperty>(CachedProp_Animate))
             AnimProp2->SetPropertyValue_InContainer(UDS, true);
+
+        // 즉시 전환이라도 새벽이 "완료"된 시점이므로 Day 시각 효과 적용.
+        if (bHasUDS)
+        {
+            SetVolumetricCloudVisible(true);
+            ApplyRandomWeather(true);
+        }
 
 #if HELLUNA_DEBUG_DEFENSE
         UE_LOG(LogTemp, Warning, TEXT("[GameState] %s: 즉시 전환 DayLength=%.3f"),
@@ -260,6 +272,15 @@ void AHellunaDefenseGameState::TickDawnTransition()
             UE_LOG(LogTemp, Warning, TEXT("[GameState] %s: 새벽 전환 완료! DayLength=%.3f, TimeRange=%.0f"),
                 HasAuthority() ? TEXT("SERVER") : TEXT("CLIENT"), DayLength, TimeRange);
 #endif
+        }
+
+        // 🌅 해가 DayStartTime에 도달한 뒤에야 구름/날씨를 전환 — 시각적 불일치 제거.
+        //   OnRep_Phase(Day)에서는 데디서버만 ApplyRandomWeather를 즉시 호출하고,
+        //   UDS를 가진 인스턴스(리슨서버/클라)는 여기서 처리한다.
+        if (bHasUDS)
+        {
+            SetVolumetricCloudVisible(true);
+            ApplyRandomWeather(true);
         }
     }
 }
@@ -407,6 +428,11 @@ void AHellunaDefenseGameState::BeginPlay()
     {
         CurrentPuddleCoverage = 0.f;
         AccumulatedRainSeconds = 0.f;
+
+        // MPC 1회 로드 캐시 — 매 틱 LoadObject 비용 제거
+        static const TCHAR* MPCPath = TEXT("/Game/UltraDynamicSky/Materials/Weather/UltraDynamicWeather_Parameters");
+        CachedPuddleMPC = LoadObject<UMaterialParameterCollection>(nullptr, MPCPath);
+
         const float Interval = FMath::Max(0.05f, PuddleTickInterval);
         GetWorldTimerManager().SetTimer(
             TimerHandle_PuddleAccumulation,
@@ -1066,8 +1092,8 @@ void AHellunaDefenseGameState::TickPuddleAccumulation()
     if (!World)
         return;
 
-    static const TCHAR* MPCPath = TEXT("/Game/UltraDynamicSky/Materials/Weather/UltraDynamicWeather_Parameters");
-    UMaterialParameterCollection* MPC = LoadObject<UMaterialParameterCollection>(nullptr, MPCPath);
+    // BeginPlay에서 캐싱된 MPC 사용 (매 틱 LoadObject 비용 제거)
+    UMaterialParameterCollection* MPC = CachedPuddleMPC;
     if (!MPC)
         return;
 
@@ -1103,22 +1129,23 @@ void AHellunaDefenseGameState::TickPuddleAccumulation()
     const float StepCoverage = SafeMax / static_cast<float>(NumSteps);
     CurrentPuddleCoverage = FMath::Clamp(CurrentStep * StepCoverage, 0.f, SafeMax);
 
-    // 진단(HELLUNA_DEBUG_DEFENSE가 0이어도 출력되도록 무조건 활성화 — 원인 파악 후 가드로 복구).
-    //   2초마다 상태 출력 (0.25s 틱 × 8 = 2s).
+#if !UE_BUILD_SHIPPING && HELLUNA_DEBUG_DEFENSE
+    // 진단 — 2초 간격 (0.25s 틱 × 8). Shipping/비디버그에선 컴파일 타임 제거.
     {
         static int32 DiagCounter = 0;
         if ((DiagCounter++ % 8) == 0)
         {
-            UE_LOG(LogTemp, Warning, TEXT("[RainDiag] TickPuddle: Phase=%d, RepRainIntensity=%.3f, Accum=%.2f/%.1f, Step=%d/%d, Coverage=%.3f"),
+            UE_LOG(LogTemp, Verbose, TEXT("[RainDiag] TickPuddle: Phase=%d, RepRainIntensity=%.3f, Accum=%.2f/%.1f, Step=%d/%d, Coverage=%.3f"),
                 (int32)Phase, RainingValue, AccumulatedRainSeconds, SafeFill,
                 CurrentStep, NumSteps, CurrentPuddleCoverage);
         }
     }
+#endif
 
-    // ─── 싸움 감지: 쓰기 전에 현재 MPC 값을 읽어 직전 틱에 우리가 쓴 값과 비교 ───
-    //   값이 drift 했으면 UDW(또는 다른 라이터)가 두 틱 사이에 덮어쓴 것.
-    //   Cov는 우리 누적값이라 UDW가 그대로 둘 가능성 높고, 깜빡임이 난다면
-    //   Sharp/Rough/Ripple 중 하나에서 drift가 보일 것.
+#if !UE_BUILD_SHIPPING && HELLUNA_DEBUG_DEFENSE
+    // 싸움 감지: 쓰기 전에 현재 MPC 값을 읽어 직전 틱에 우리가 쓴 값과 비교.
+    //   drift 했으면 UDW(또는 다른 라이터)가 덮어쓴 것.
+    //   Shipping에선 Get 호출 4회도 함께 제거.
     const float BeforeCov    = UKismetMaterialLibrary::GetScalarParameterValue(World, MPC, TEXT("DLWE_Puddle Coverage"));
     const float BeforeSharp  = UKismetMaterialLibrary::GetScalarParameterValue(World, MPC, TEXT("DLWE Puddle Sharpness"));
     const float BeforeRough  = UKismetMaterialLibrary::GetScalarParameterValue(World, MPC, TEXT("Water Roughness"));
@@ -1128,6 +1155,7 @@ void AHellunaDefenseGameState::TickPuddleAccumulation()
     static float LastPushedSharp  = -1.f;
     static float LastPushedRough  = -1.f;
     static float LastPushedRipple = -1.f;
+#endif
 
     UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("DLWE_Puddle Coverage"),   CurrentPuddleCoverage);
 
@@ -1138,6 +1166,7 @@ void AHellunaDefenseGameState::TickPuddleAccumulation()
     UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("Water Roughness"),           PuddleWaterRoughness);
     UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("Tiling Ripples Framerate"),  RippleFramerate);
 
+#if !UE_BUILD_SHIPPING && HELLUNA_DEBUG_DEFENSE
     // 싸움 감지 로그 (2초 간격).
     {
         static int32 FightCounter = 0;
@@ -1149,7 +1178,7 @@ void AHellunaDefenseGameState::TickPuddleAccumulation()
             const bool RippleDrift = !FMath::IsNearlyEqual(BeforeRipple, LastPushedRipple, 0.1f);
             if (CovDrift || SharpDrift || RoughDrift || RippleDrift)
             {
-                UE_LOG(LogTemp, Warning, TEXT("[RainDiag-Fight] Overwritten since last tick: Cov %.3f→%.3f | Sharp %.1f→%.1f | Rough %.2f→%.2f | Ripple %.1f→%.1f"),
+                UE_LOG(LogTemp, Verbose, TEXT("[RainDiag-Fight] Overwritten since last tick: Cov %.3f→%.3f | Sharp %.1f→%.1f | Rough %.2f→%.2f | Ripple %.1f→%.1f"),
                     LastPushedCov,    BeforeCov,
                     LastPushedSharp,  BeforeSharp,
                     LastPushedRough,  BeforeRough,
@@ -1162,6 +1191,7 @@ void AHellunaDefenseGameState::TickPuddleAccumulation()
     LastPushedSharp  = PuddleSharpness;
     LastPushedRough  = PuddleWaterRoughness;
     LastPushedRipple = RippleFramerate;
+#endif
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
