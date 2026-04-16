@@ -154,17 +154,17 @@ protected:
 	/** 밀도 체크 반경 (cm). 이 범위 내 기존 광석 수를 센다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)",
 		meta = (DisplayName = "밀도 체크 반경(cm)", ClampMin = "100.0"))
-	float DensityCheckRadius = 1500.f;
+	float DensityCheckRadius = 5000.f;  // ★테스트용 (원래 1500)
 
 	/** 이 수 이상 이웃 광석이 있으면 최소 유지 확률로 떨어진다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)",
 		meta = (DisplayName = "최대 이웃 광석 수", ClampMin = "1"))
-	int32 MaxNeighborOreCount = 5;
+	int32 MaxNeighborOreCount = 1;  // ★테스트용 (원래 5)
 
 	/** 아무리 밀집해도 이 비율만큼은 유지한다 (0~1). */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)",
 		meta = (DisplayName = "최소 유지 비율", ClampMin = "0.0", ClampMax = "1.0"))
-	float MinKeepRatio = 0.2f;
+	float MinKeepRatio = 0.05f;  // ★테스트용 (원래 0.2)
 
 	/**
 	 * 스폰 점수 계산.
@@ -250,7 +250,7 @@ protected:
 	/** 뭉침에 배정되지 않은 단독 광석의 생존 확률 (0~1) */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|클러스터",
 		meta = (DisplayName = "단독 광석 생존 확률", ClampMin = "0.0", ClampMax = "1.0"))
-	float IsolatedOreSurvivalChance = 0.4f;
+	float IsolatedOreSurvivalChance = 0.1f;  // ★테스트용 (원래 0.4)
 
 
 	// ────────────────────────────────────────────────────────────────────────────
