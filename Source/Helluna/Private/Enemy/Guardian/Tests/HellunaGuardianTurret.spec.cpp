@@ -28,7 +28,7 @@
 
 BEGIN_DEFINE_SPEC(FHellunaGuardianTurret_StateMachineTest,
 	"Helluna.Enemy.Guardian.StateMachine",
-	EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::ProductFilter)
+	EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
 
 	UWorld* TestWorld = nullptr;
 	AHellunaGuardianTurret* Guardian = nullptr;

@@ -14,6 +14,7 @@ class UHellunaHealthComponent;
 class AHellunaHeroCharacter;
 class AHellunaDefenseGameState;
 class UNiagaraSystem;
+class UNiagaraComponent;
 class USoundBase;
 
 enum class EDefensePhase : uint8;
@@ -186,14 +187,29 @@ protected:
 	// VFX / 사운드
 	// =========================================================
 
-	/** 발사 빔 이펙트 — BP 에서 NS_Laser_Cosmic 할당 */
+	/** 조준 예고 빔 이펙트 — Lock/FireDelay 동안 머즐에 어태치로 표시 (BotW 레드라인) */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|FX",
-		meta = (DisplayName = "발사 빔 이펙트"))
+		meta = (DisplayName = "조준 빔 이펙트 (Lock/FireDelay)"))
+	TObjectPtr<UNiagaraSystem> AimBeamFX = nullptr;
+
+	/** 조준 빔 엔드포인트 Vector User Parameter 이름. 사용 NS 에셋에 맞춰 지정. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Guardian|FX",
+		meta = (DisplayName = "조준 빔 엔드 파라미터명"))
+	FName AimBeamEndParamName = FName(TEXT("Beam End"));
+
+	/** 조준 빔 크기 배율 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|FX",
+		meta = (DisplayName = "조준 빔 크기 배율"))
+	FVector AimBeamScale = FVector(1.f);
+
+	/** 발사 VFX (실제 발사 순간 1회 Burst) — BP 에서 NS_ThunderBolt 등 할당 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|FX",
+		meta = (DisplayName = "발사 VFX (Fire)"))
 	TObjectPtr<UNiagaraSystem> FireBeamFX = nullptr;
 
-	/** 발사 빔 크기 배율 */
+	/** 발사 VFX 크기 배율 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|FX",
-		meta = (DisplayName = "발사 빔 크기 배율"))
+		meta = (DisplayName = "발사 VFX 크기 배율"))
 	FVector FireBeamScale = FVector(1.f);
 
 	/** 피격 이펙트 */
@@ -235,8 +251,12 @@ private:
 	// =========================================================
 
 	/** 현재 상태 (서버 권한, 모든 클라에 복제) */
-	UPROPERTY(Replicated)
+	UPROPERTY(ReplicatedUsing = OnRep_CurrentState)
 	EGuardianState CurrentState = EGuardianState::Idle;
+
+	/** 런타임 활성 조준 빔 컴포넌트 (캐시, 비복제 — OnRep/SetState 로 로컬 생성) */
+	UPROPERTY(Transient)
+	TObjectPtr<UNiagaraComponent> ActiveAimBeam = nullptr;
 
 	/** 현재 상태 진입 이후 경과 시간 (초, 서버 전용) */
 	float StateTimer = 0.f;
@@ -327,6 +347,25 @@ private:
 
 	UFUNCTION()
 	void OnRep_CurrentTarget();
+
+	UFUNCTION()
+	void OnRep_CurrentState();
+
+	// =========================================================
+	// 조준 빔 제어 (서버·클라 공통, 로컬 시각화)
+	// =========================================================
+
+	/** Lock/FireDelay 진입 시 호출: 머즐에 어태치해 조준 빔 스폰 */
+	void StartAimBeam();
+
+	/** Lock/FireDelay 이탈 시 호출: 조준 빔 제거 */
+	void StopAimBeam();
+
+	/** 매 Tick 조준 빔 엔드포인트 갱신 (User Parameter 기반) */
+	void UpdateAimBeamEndpoint(const FVector& Endpoint);
+
+	/** 상태에 따라 조준 빔 시작/중지 결정 (SetState/OnRep 공용) */
+	void ApplyAimBeamForState(EGuardianState State);
 
 	// =========================================================
 	// 멀티캐스트 RPC (서버 → 모든 클라 FX·사운드)

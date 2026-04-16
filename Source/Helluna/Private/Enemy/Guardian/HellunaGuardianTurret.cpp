@@ -14,6 +14,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
+#include "NiagaraComponent.h"
 #include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
 
@@ -132,6 +133,8 @@ void AHellunaGuardianTurret::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		HealthComponent->OnDeath.RemoveDynamic(this, &ThisClass::OnGuardianDeath);
 	}
 
+	StopAimBeam();
+
 	PlayersInRange.Empty();
 	CurrentTarget = nullptr;
 
@@ -169,6 +172,13 @@ void AHellunaGuardianTurret::Tick(float DeltaTime)
 				? LockedFireTarget
 				: GetAimPointFor(Target);
 			UpdateHeadRotation(DeltaTime, AimPoint);
+
+			// 공통: 조준 빔 엔드포인트 갱신 (Lock=추적 / FireDelay=고정)
+			if (ActiveAimBeam && (CurrentState == EGuardianState::Lock ||
+				CurrentState == EGuardianState::FireDelay))
+			{
+				UpdateAimBeamEndpoint(AimPoint);
+			}
 		}
 	}
 
@@ -344,6 +354,9 @@ void AHellunaGuardianTurret::SetState(EGuardianState NewState)
 	{
 		LockedFireTarget = FVector::ZeroVector;
 	}
+
+	// 서버 로컬 조준 빔 적용 (클라는 OnRep_CurrentState 에서 동일 처리)
+	ApplyAimBeamForState(NewState);
 
 	Multicast_OnStateChanged(NewState);
 }
@@ -636,6 +649,72 @@ void AHellunaGuardianTurret::PerformFire()
 void AHellunaGuardianTurret::OnRep_CurrentTarget()
 {
 	// 클라이언트에서 타겟 바뀌면 헤드 회전은 Tick 이 자연스럽게 처리
+}
+
+void AHellunaGuardianTurret::OnRep_CurrentState()
+{
+	// 클라에서 조준 빔 동기화
+	ApplyAimBeamForState(CurrentState);
+}
+
+// =========================================================
+// 조준 빔 제어
+// =========================================================
+
+void AHellunaGuardianTurret::StartAimBeam()
+{
+	if (ActiveAimBeam || !AimBeamFX || !MuzzlePoint)
+	{
+		return;
+	}
+
+	ActiveAimBeam = UNiagaraFunctionLibrary::SpawnSystemAttached(
+		AimBeamFX,
+		MuzzlePoint,
+		NAME_None,
+		FVector::ZeroVector,
+		FRotator::ZeroRotator,
+		EAttachLocation::KeepRelativeOffset,
+		/*bAutoDestroy=*/false);
+
+	if (ActiveAimBeam)
+	{
+		ActiveAimBeam->SetRelativeScale3D(AimBeamScale);
+	}
+}
+
+void AHellunaGuardianTurret::StopAimBeam()
+{
+	if (!ActiveAimBeam)
+	{
+		return;
+	}
+
+	ActiveAimBeam->Deactivate();
+	ActiveAimBeam->DestroyComponent();
+	ActiveAimBeam = nullptr;
+}
+
+void AHellunaGuardianTurret::UpdateAimBeamEndpoint(const FVector& Endpoint)
+{
+	if (!ActiveAimBeam || AimBeamEndParamName.IsNone())
+	{
+		return;
+	}
+	ActiveAimBeam->SetVectorParameter(AimBeamEndParamName, Endpoint);
+}
+
+void AHellunaGuardianTurret::ApplyAimBeamForState(EGuardianState State)
+{
+	const bool bShouldShow = (State == EGuardianState::Lock || State == EGuardianState::FireDelay);
+	if (bShouldShow)
+	{
+		StartAimBeam();
+	}
+	else
+	{
+		StopAimBeam();
+	}
 }
 
 // =========================================================
