@@ -894,6 +894,15 @@ void AHellunaDefenseGameState::ApplyRandomWeather(bool bIsDay)
                 ArrayNum = Pool.Num();
             }
         }
+
+        // 에디터 환경에선 BP 에셋 경로 로드 시 UBlueprint가 반환되므로 GeneratedClass로 변환.
+        //   UDW의 Change Weather는 UDS_Weather_Settings_C UClass를 기대 — UBlueprint를 넘기면
+        //   내부 참조(아이콘 텍스처 등) 순회 시 "Get State Sources" 호출에서 크래시.
+        //   쿠킹 빌드에선 UBlueprint가 스트립되어 이미 UClass가 반환되므로 이 변환은 no-op.
+        if (UBlueprint* AsBP = Cast<UBlueprint>(SelectedWeather))
+        {
+            SelectedWeather = AsBP->GeneratedClass;
+        }
     }
     // ─── 우선순위 2: 레거시 GameState 필드 (WeatherConfig 미설정 시 폴백) ───────
     else
