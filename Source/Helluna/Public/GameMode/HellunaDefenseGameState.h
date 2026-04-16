@@ -335,7 +335,15 @@ protected:
     /** 밤 고정 날씨(비). 설정되면 랜덤 선택을 무시하고 항상 이 에셋으로 ChangeWeather 호출. */
     UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|날씨", meta = (DisplayName = "밤 고정 날씨 (비 전용)"))
     UObject* NightForcedWeather = nullptr;
-    
+
+    /**
+     * 날씨 구성 DataAsset. 설정되면 위의 레거시 필드(DayWeatherTypes/NightWeatherTypes/NightForcedWeather)를
+     * 전부 무시하고 이 DataAsset의 Pool/Forced를 사용. 비어있으면 레거시 경로로 폴백.
+     */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|날씨",
+        meta = (DisplayName = "Weather Config (DataAsset, 설정 시 우선)"))
+    TSoftObjectPtr<class UHellunaWeatherConfig> WeatherConfig;
+
     /** 날씨 전환 시간 (초) */
     UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|날씨", meta = (DisplayName = "날씨 전환 시간(초)"))
     float WeatherTransitionTime = 10.f;
@@ -347,7 +355,16 @@ protected:
     /** 현재 선택된 밤 날씨 (디버그/읽기용) */
     UPROPERTY(BlueprintReadOnly, Category = "디펜스|날씨", meta = (DisplayName = "현재 밤 날씨"))
     UObject* CurrentNightWeather = nullptr;
-    
+
+    /**
+     * 서버 권위 비 강도(0~1).
+     * TickPuddleAccumulation이 UDW의 Puddle Coverage 대신 이 값을 신호원으로 사용한다.
+     * 데디서버(UDW 없음)/As-A-Client(UDW Change Weather RPC 드롭) 경로 모두에서 일관되게 누적되도록 함.
+     */
+    UPROPERTY(Replicated, BlueprintReadOnly, Category = "디펜스|날씨",
+        meta = (DisplayName = "Replicated Rain Intensity (서버 권위)"))
+    float ReplicatedRainIntensity = 0.f;
+
     /** 배열에서 랜덤 날씨 선택 후 Change Weather 호출 */
     void ApplyRandomWeather(bool bIsDay);
 
@@ -361,6 +378,8 @@ protected:
     // 💧 물웅덩이(Puddle Coverage) 점진 축적
     //   UDW가 MPC `Raining` 값을 시간에 따라 올리면, 본 타이머가 그 값을
     //   참조해 `DLWE_Puddle Coverage`를 Max 까지 서서히 램프업(비가 그치면 램프다운)한다.
+    //   반짝임 완화용 Water Roughness / Tiling Ripples Framerate / Puddle Sharpness 도
+    //   매 틱 동일 MPC로 권위적으로 push 하여 UDW 프리셋 값에 덮이는 것을 상쇄한다.
     //   로컬 클라이언트 전용(데디서버는 렌더링/MPC가 없으므로 실행하지 않음).
     // ═══════════════════════════════════════════════════════════════════════════
 
@@ -388,6 +407,20 @@ protected:
     UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|웅덩이", meta = (DisplayName = "웅덩이 틱 주기(초)", ClampMin = "0.05"))
     float PuddleTickInterval = 0.25f;
 
+    /** DLWE Puddle Sharpness — 낮출수록 가장자리 부드럽고 반짝임 완화. 10~20 권장. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|웅덩이", meta = (DisplayName = "Puddle Sharpness (낮을수록 부드러움)", ClampMin = "1.0", ClampMax = "100.0"))
+    float PuddleSharpness = 10.f;
+
+    /** 웅덩이 표면 거칠기(MPC "Water Roughness"). 기본 0.05는 거울 같은 반사 → 서브픽셀 스펙큘러 aliasing 주원인.
+     *  0.2~0.4 권장. 낮을수록 반짝임 심해짐, 높을수록 무광 고인 물. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|웅덩이", meta = (DisplayName = "Puddle Water Roughness (높일수록 무광)", ClampMin = "0.0", ClampMax = "1.0"))
+    float PuddleWaterRoughness = 0.3f;
+
+    /** 빗방울 파문 노멀 애니 프레임레이트(MPC "Tiling Ripples Framerate"). 기본 30은 매 프레임 노멀 변경 → TAA 수렴 실패.
+     *  낮출수록 파문 느림 → 반짝임 완화. 0이면 정지. 8~15 권장. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|웅덩이", meta = (DisplayName = "Ripple Framerate (낮출수록 파문 느림)", ClampMin = "0.0", ClampMax = "60.0"))
+    float RippleFramerate = 10.f;
+
     /** 현재 적용 중인 웅덩이 커버리지 (내부 상태) */
     float CurrentPuddleCoverage = 0.f;
 
@@ -396,7 +429,11 @@ protected:
 
     FTimerHandle TimerHandle_PuddleAccumulation;
 
-    /** MPC 월드 인스턴스에 `DLWE_Puddle Coverage`를 램프업/다운하여 push */
+    /** UDW MPC 캐시 — BeginPlay에서 1회 LoadObject, TickPuddleAccumulation에서 재사용 */
+    UPROPERTY(Transient)
+    TObjectPtr<class UMaterialParameterCollection> CachedPuddleMPC;
+
+    /** MPC 월드 인스턴스에 `DLWE_Puddle Coverage` 및 반짝임 완화 파라미터를 push */
     void TickPuddleAccumulation();
 
     // ═══════════════════════════════════════════════════════════════════════════

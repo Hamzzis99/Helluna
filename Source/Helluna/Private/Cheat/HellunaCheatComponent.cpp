@@ -35,8 +35,22 @@ UHellunaCheatComponent::UHellunaCheatComponent()
 void UHellunaCheatComponent::BeginPlay()
 {
     Super::BeginPlay();
-    UE_LOG(LogTemp, Warning, TEXT("[cheatdebug] Cheat BeginPlay: NoclipSpeedMultiplier=%.1f (BP/C++ default)"),
+
+    // 데디서버는 이 컴포넌트의 Tick 자체가 불필요 (입력 폴링 전용)
+    //   As-A-Client에선 서버 프로세스도 이 액터를 들고 Tick하므로 명시적으로 끈다.
+    if (UWorld* W = GetWorld())
+    {
+        if (W->GetNetMode() == NM_DedicatedServer)
+        {
+            SetComponentTickEnabled(false);
+            PrimaryComponentTick.bStartWithTickEnabled = false;
+        }
+    }
+
+#if !UE_BUILD_SHIPPING
+    UE_LOG(LogTemp, Verbose, TEXT("[cheatdebug] Cheat BeginPlay: NoclipSpeedMultiplier=%.1f (BP/C++ default)"),
         NoclipSpeedMultiplier);
+#endif
 }
 
 void UHellunaCheatComponent::TickComponent(float DeltaTime, ELevelTick TickType,

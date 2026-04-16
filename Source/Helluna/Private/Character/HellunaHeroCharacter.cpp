@@ -2041,8 +2041,10 @@ void AHellunaHeroCharacter::TickRevive()
 	const float ProgressPerTick = (ReviveDuration > 0.f) ? (0.1f / ReviveDuration) : 1.f;
 	ReviveTarget->ReviveProgress = FMath::Clamp(ReviveTarget->ReviveProgress + ProgressPerTick, 0.f, 1.f);
 
-	UE_LOG(LogHelluna, Log, TEXT("[Phase21-Debug] TickRevive: %s → %s | Progress=%.1f%% | Duration=%.1f"),
+#if !UE_BUILD_SHIPPING
+	UE_LOG(LogHelluna, VeryVerbose, TEXT("[Phase21-Debug] TickRevive: %s → %s | Progress=%.1f%% | Duration=%.1f"),
 		*GetName(), *ReviveTarget->GetName(), ReviveTarget->ReviveProgress * 100.f, ReviveDuration);
+#endif
 
 	// 완료
 	if (ReviveTarget->ReviveProgress >= 1.f)

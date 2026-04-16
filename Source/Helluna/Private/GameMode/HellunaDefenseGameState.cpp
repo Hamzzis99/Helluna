@@ -19,6 +19,8 @@
 #include "Components/VolumetricCloudComponent.h"
 #include "Kismet/KismetMaterialLibrary.h"
 #include "Materials/MaterialParameterCollection.h"
+#include "Sky/HellunaWeatherConfig.h"
+#include "Sky/HellunaSkyPreviewActor.h"
 
 // =========================================================================================
 // 생성자 (김기현)
@@ -53,6 +55,7 @@ void AHellunaDefenseGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProper
     DOREPLIFETIME(AHellunaDefenseGameState, TotalMonstersThisNight);
     DOREPLIFETIME(AHellunaDefenseGameState, CurrentDayForUI);
     DOREPLIFETIME(AHellunaDefenseGameState, bIsBossNight);
+    DOREPLIFETIME(AHellunaDefenseGameState, ReplicatedRainIntensity);
 }
 
 void AHellunaDefenseGameState::SetPhase(EDefensePhase NewPhase)
@@ -85,18 +88,32 @@ void AHellunaDefenseGameState::OnRep_Phase()
 #endif
         CleanupInitialNightPCGClientArtifacts();
         OnDayStarted();
-        if (bHasUDS) SetVolumetricCloudVisible(true);   // 낮: 구름 ON
-        if (bHasUDW) ApplyRandomWeather(true);
+        // 🌅 시각적 전환(구름 토글, UDW 날씨 Lerp)은 새벽 해 이동이 끝난 뒤에 시작한다.
+        //   Phase 플립 시점에 바로 켜면 해가 아직 밤 위치에 있는데 구름/날씨만
+        //   확 바뀌어 부자연스럽다 — TickDawnTransition 완료 시 ApplyDayVisuals()를 호출.
+        //   서버 권위(ReplicatedRainIntensity)는 ApplyRandomWeather에서 처리되므로,
+        //   UDS가 없는 데디서버는 즉시 호출해서 강도 복제가 지연되지 않도록 한다.
+        if (!bHasUDS)
+        {
+            ApplyRandomWeather(true);
+        }
         break;
     case EDefensePhase::Night:
 #if HELLUNA_DEBUG_DEFENSE
         UE_LOG(LogTemp, Warning, TEXT("[GameState] OnNightStarted 호출 시도"));
 #endif
+        // 진단(무조건 활성): 밤 진입 시 weather 전환 경로가 실제 도는지 확인
+        UE_LOG(LogTemp, Warning, TEXT("[RainDiag-Phase] Night 진입 | HasAuthority=%d bHasUDW=%d bHasUDS=%d NetMode=%d NightForcedWeather=%s NightWeatherTypes.Num=%d"),
+            (int32)HasAuthority(), (int32)bHasUDW, (int32)bHasUDS,
+            (int32)(GetWorld() ? GetWorld()->GetNetMode() : NM_Standalone),
+            NightForcedWeather ? *NightForcedWeather->GetName() : TEXT("null"),
+            NightWeatherTypes.Num());
         OnNightStarted();
         bHasBeenNight = true;  // ★ 밤 경험 기록
         // 밤: NightWeatherTypes에서 랜덤 선택 (비가 오도록 배열에 Rain 프리셋 배치)
         // 구름 토글은 UDW Change Weather 이후에 적용해야 UDW가 켠 구름이 다시 꺼짐.
-        if (bHasUDW) ApplyRandomWeather(false);
+        // bHasUDW 가드 제거: 데디서버에 UDW가 없어도 서버는 날씨 선택(강도 복제)을 해야 함.
+        ApplyRandomWeather(false);
         if (bHasUDS) SetVolumetricCloudVisible(false);  // 밤: 구름 OFF (오로라/분위기 가시성)
         // ★ Animate OFF — 현재 시간에서 멈춤
         if (bHasUDS)
@@ -163,6 +180,13 @@ void AHellunaDefenseGameState::NetMulticast_OnDawnPassed_Implementation(float Ro
         // [Step3 O-02] 캐싱된 프로퍼티 포인터 사용 — Animate ON
         if (FBoolProperty* AnimProp2 = CastField<FBoolProperty>(CachedProp_Animate))
             AnimProp2->SetPropertyValue_InContainer(UDS, true);
+
+        // 즉시 전환이라도 새벽이 "완료"된 시점이므로 Day 시각 효과 적용.
+        if (bHasUDS)
+        {
+            SetVolumetricCloudVisible(true);
+            ApplyRandomWeather(true);
+        }
 
 #if HELLUNA_DEBUG_DEFENSE
         UE_LOG(LogTemp, Warning, TEXT("[GameState] %s: 즉시 전환 DayLength=%.3f"),
@@ -248,6 +272,15 @@ void AHellunaDefenseGameState::TickDawnTransition()
             UE_LOG(LogTemp, Warning, TEXT("[GameState] %s: 새벽 전환 완료! DayLength=%.3f, TimeRange=%.0f"),
                 HasAuthority() ? TEXT("SERVER") : TEXT("CLIENT"), DayLength, TimeRange);
 #endif
+        }
+
+        // 🌅 해가 DayStartTime에 도달한 뒤에야 구름/날씨를 전환 — 시각적 불일치 제거.
+        //   OnRep_Phase(Day)에서는 데디서버만 ApplyRandomWeather를 즉시 호출하고,
+        //   UDS를 가진 인스턴스(리슨서버/클라)는 여기서 처리한다.
+        if (bHasUDS)
+        {
+            SetVolumetricCloudVisible(true);
+            ApplyRandomWeather(true);
         }
     }
 }
@@ -394,6 +427,12 @@ void AHellunaDefenseGameState::BeginPlay()
     if (GetNetMode() != NM_DedicatedServer)
     {
         CurrentPuddleCoverage = 0.f;
+        AccumulatedRainSeconds = 0.f;
+
+        // MPC 1회 로드 캐시 — 매 틱 LoadObject 비용 제거
+        static const TCHAR* MPCPath = TEXT("/Game/UltraDynamicSky/Materials/Weather/UltraDynamicWeather_Parameters");
+        CachedPuddleMPC = LoadObject<UMaterialParameterCollection>(nullptr, MPCPath);
+
         const float Interval = FMath::Max(0.05f, PuddleTickInterval);
         GetWorldTimerManager().SetTimer(
             TimerHandle_PuddleAccumulation,
@@ -851,52 +890,140 @@ void AHellunaDefenseGameState::CheatTimeFreeze_HoldTick()
 // ═══════════════════════════════════════════════════════════════════════════════
 void AHellunaDefenseGameState::ApplyRandomWeather(bool bIsDay)
 {
-    // 밤은 고정 날씨(비)가 지정되어 있으면 랜덤 선택을 건너뛴다.
     UObject* SelectedWeather = nullptr;
     int32 RandomIdx = -1;
     int32 ArrayNum = 0;
+    float EffectiveTransitionTime = WeatherTransitionTime;
+    const TCHAR* SourceTag = TEXT("Legacy");
 
-    if (!bIsDay && NightForcedWeather)
+    // ─── 우선순위 1: WeatherConfig DataAsset ────────────────────────────────────
+    if (UHellunaWeatherConfig* Cfg = WeatherConfig.LoadSynchronous())
     {
-        SelectedWeather = NightForcedWeather;
+        SourceTag = TEXT("Config");
+        if (Cfg->TransitionTime > 0.f)
+            EffectiveTransitionTime = Cfg->TransitionTime;
+
+        // Forced 먼저 확인 (enum, None이면 Pool로 폴백)
+        ESkyWeatherPreset ActivePreset = bIsDay ? Cfg->DayForced : Cfg->NightForced;
+
+        if (ActivePreset == ESkyWeatherPreset::None)
+        {
+            const TArray<ESkyWeatherPreset>& Pool = bIsDay ? Cfg->DayPool : Cfg->NightPool;
+            // Pool에서 None은 걸러 랜덤 선택 (혹시 실수 포함 시 방어).
+            TArray<ESkyWeatherPreset> ValidPool;
+            ValidPool.Reserve(Pool.Num());
+            for (ESkyWeatherPreset P : Pool)
+            {
+                if (P != ESkyWeatherPreset::None) ValidPool.Add(P);
+            }
+            if (ValidPool.Num() > 0)
+            {
+                RandomIdx = FMath::RandRange(0, ValidPool.Num() - 1);
+                ActivePreset = ValidPool[RandomIdx];
+                ArrayNum = ValidPool.Num();
+            }
+        }
+
+        // enum → 에셋 경로 → UBlueprint 로드 → GeneratedClass 추출 (SkyPreview와 동일 매핑 공유).
+        if (ActivePreset != ESkyWeatherPreset::None)
+        {
+            const FString AssetPath = AHellunaSkyPreviewActor::GetWeatherPresetPath(ActivePreset);
+            if (!AssetPath.IsEmpty())
+            {
+                UObject* Loaded = StaticLoadObject(UObject::StaticClass(), nullptr, *AssetPath);
+                if (UBlueprint* AsBP = Cast<UBlueprint>(Loaded))
+                {
+                    SelectedWeather = AsBP->GeneratedClass;  // 에디터: UBlueprint → GeneratedClass
+                }
+                else
+                {
+                    SelectedWeather = Loaded;  // 쿠킹: 이미 UClass 반환
+                }
+            }
+        }
     }
+    // ─── 우선순위 2: 레거시 GameState 필드 (WeatherConfig 미설정 시 폴백) ───────
     else
     {
-        const TArray<UObject*>& WeatherArray = bIsDay ? DayWeatherTypes : NightWeatherTypes;
-        if (WeatherArray.Num() == 0) return;
+        if (!bIsDay && NightForcedWeather)
+        {
+            SelectedWeather = NightForcedWeather;
+        }
+        else
+        {
+            const TArray<UObject*>& WeatherArray = bIsDay ? DayWeatherTypes : NightWeatherTypes;
+            if (WeatherArray.Num() == 0)
+            {
+                UE_LOG(LogTemp, Warning, TEXT("[RainDiag-Weather] early-return | Legacy %s WeatherTypes 배열 비어있음 + WeatherConfig 미설정"),
+                    bIsDay ? TEXT("Day") : TEXT("Night"));
+                return;
+            }
 
-        RandomIdx = FMath::RandRange(0, WeatherArray.Num() - 1);
-        SelectedWeather = WeatherArray[RandomIdx];
-        ArrayNum = WeatherArray.Num();
+            RandomIdx = FMath::RandRange(0, WeatherArray.Num() - 1);
+            SelectedWeather = WeatherArray[RandomIdx];
+            ArrayNum = WeatherArray.Num();
+        }
     }
-    if (!SelectedWeather) return;
-    
+
+    if (!SelectedWeather)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[RainDiag-Weather] early-return | SelectedWeather=null (Source=%s bIsDay=%d)"),
+            SourceTag, (int32)bIsDay);
+        return;
+    }
+
     if (bIsDay)
         CurrentDayWeather = SelectedWeather;
     else
         CurrentNightWeather = SelectedWeather;
-    
+
+    // ─── 서버 권위 비 강도 설정 (As-A-Client 웅덩이 형성용 복제 신호) ───
+    // UDW의 Puddle Coverage / Change Weather RPC에 의존하지 않도록 이름 기반으로 강도를 결정.
+    // Rain_Thunderstorm=1.0, Rain=0.8, Rain_Light=0.5, 그 외=0.0.
+    if (HasAuthority())
+    {
+        float Intensity = 0.f;
+        const FString WeatherName = SelectedWeather->GetName();
+        if (WeatherName.Contains(TEXT("Thunderstorm")))    Intensity = 1.0f;
+        else if (WeatherName.Contains(TEXT("Rain_Light"))) Intensity = 0.5f;
+        else if (WeatherName.Contains(TEXT("RainLight")))  Intensity = 0.5f;
+        else if (WeatherName.Contains(TEXT("Rain_Only")))  Intensity = 0.7f;
+        else if (WeatherName.Contains(TEXT("Rain")))       Intensity = 0.8f;
+        ReplicatedRainIntensity = Intensity;
+        UE_LOG(LogTemp, Warning, TEXT("[RainDiag-Weather] SERVER 권위 강도 세팅 | Weather=%s → Intensity=%.2f"),
+            *WeatherName, Intensity);
+    }
+
     AActor* UDW = GetUDWActor();  // 캐시 사용
-    if (!UDW) return;
-    
+    if (!UDW)
+    {
+        // 데디서버/에디터 시나리오: UDW 없음은 정상. 강도는 이미 위에서 복제 완료.
+        UE_LOG(LogTemp, Warning, TEXT("[RainDiag-Weather] UDW 액터 없음 — ProcessEvent 스킵 (HasAuthority=%d)"),
+            (int32)HasAuthority());
+        return;
+    }
+
     UFunction* Func = UDW->FindFunction(TEXT("Change Weather"));
     if (!Func)
         Func = UDW->FindFunction(TEXT("ChangeWeather"));
-    
+
     if (Func)
     {
         struct { UObject* NewWeatherType; float TransitionTime; } Params;
         Params.NewWeatherType = SelectedWeather;
-        Params.TransitionTime = WeatherTransitionTime;
+        Params.TransitionTime = EffectiveTransitionTime;
         UDW->ProcessEvent(Func, &Params);
-        
-#if HELLUNA_DEBUG_DEFENSE
-        UE_LOG(LogTemp, Log, TEXT("[Weather] %s → %s (%d/%d)%s"),
-            bIsDay ? TEXT("낮") : TEXT("밤"),
+
+        // 진단(무조건 활성): 실제 ProcessEvent 실행 여부 + 인자 + 소스 확인
+        UE_LOG(LogTemp, Warning, TEXT("[RainDiag-Weather] ProcessEvent(Change Weather) | Source=%s %s → %s | TransitionTime=%.1f"),
+            SourceTag,
+            bIsDay ? TEXT("Day") : TEXT("Night"),
             *SelectedWeather->GetName(),
-            RandomIdx, ArrayNum,
-            (!bIsDay && NightForcedWeather) ? TEXT(" [Forced]") : TEXT(""));
-#endif
+            EffectiveTransitionTime);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[RainDiag-Weather] FindFunction(Change Weather) 실패 — UDW BP에 함수 없음"));
     }
 }
 
@@ -956,6 +1083,8 @@ void AHellunaDefenseGameState::ForceClearWeather()
 // 💧 웅덩이 점진 축적
 //   UDW가 MPC `Raining`을 시간에 따라 상승/하강시키므로, 본 Tick은 그 값을 읽어
 //   `DLWE_Puddle Coverage`를 서서히 램프업/램프다운한다.
+//   반짝임 완화용 Water Roughness / Tiling Ripples Framerate / Puddle Sharpness 도
+//   매 틱 같은 MPC로 push 하여 UDW 프리셋의 기본값(0.05/30/40)을 상쇄한다.
 // ═══════════════════════════════════════════════════════════════════════════════
 void AHellunaDefenseGameState::TickPuddleAccumulation()
 {
@@ -963,13 +1092,16 @@ void AHellunaDefenseGameState::TickPuddleAccumulation()
     if (!World)
         return;
 
-    static const TCHAR* MPCPath = TEXT("/Game/UltraDynamicSky/Materials/Weather/UltraDynamicWeather_Parameters");
-    UMaterialParameterCollection* MPC = LoadObject<UMaterialParameterCollection>(nullptr, MPCPath);
+    // BeginPlay에서 캐싱된 MPC 사용 (매 틱 LoadObject 비용 제거)
+    UMaterialParameterCollection* MPC = CachedPuddleMPC;
     if (!MPC)
         return;
 
-    // 현재 비 강도 (UDW가 시간에 따라 채워 넣음)
-    const float RainingValue = UKismetMaterialLibrary::GetScalarParameterValue(World, MPC, TEXT("Raining"));
+    // 서버 권위 비 강도를 신호원으로 사용.
+    //   이전에는 UDW 액터의 `Puddle Coverage` UProperty를 읽었으나, 데디서버에는 UDW가 없고
+    //   As-A-Client 클라이언트에서도 Change Weather RPC가 드롭되면 0에 머물러 웅덩이가 생기지 않았다.
+    //   ReplicatedRainIntensity는 서버가 날씨 선택 시점에 이름 기반으로 결정하여 복제한다.
+    const float RainingValue = ReplicatedRainIntensity;
 
     const float DeltaSec = FMath::Max(0.05f, PuddleTickInterval);
     const float SafeMax = FMath::Clamp(MaxPuddleCoverage, 0.f, 1.f);
@@ -997,7 +1129,69 @@ void AHellunaDefenseGameState::TickPuddleAccumulation()
     const float StepCoverage = SafeMax / static_cast<float>(NumSteps);
     CurrentPuddleCoverage = FMath::Clamp(CurrentStep * StepCoverage, 0.f, SafeMax);
 
-    UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("DLWE_Puddle Coverage"), CurrentPuddleCoverage);
+#if !UE_BUILD_SHIPPING && HELLUNA_DEBUG_DEFENSE
+    // 진단 — 2초 간격 (0.25s 틱 × 8). Shipping/비디버그에선 컴파일 타임 제거.
+    {
+        static int32 DiagCounter = 0;
+        if ((DiagCounter++ % 8) == 0)
+        {
+            UE_LOG(LogTemp, Verbose, TEXT("[RainDiag] TickPuddle: Phase=%d, RepRainIntensity=%.3f, Accum=%.2f/%.1f, Step=%d/%d, Coverage=%.3f"),
+                (int32)Phase, RainingValue, AccumulatedRainSeconds, SafeFill,
+                CurrentStep, NumSteps, CurrentPuddleCoverage);
+        }
+    }
+#endif
+
+#if !UE_BUILD_SHIPPING && HELLUNA_DEBUG_DEFENSE
+    // 싸움 감지: 쓰기 전에 현재 MPC 값을 읽어 직전 틱에 우리가 쓴 값과 비교.
+    //   drift 했으면 UDW(또는 다른 라이터)가 덮어쓴 것.
+    //   Shipping에선 Get 호출 4회도 함께 제거.
+    const float BeforeCov    = UKismetMaterialLibrary::GetScalarParameterValue(World, MPC, TEXT("DLWE_Puddle Coverage"));
+    const float BeforeSharp  = UKismetMaterialLibrary::GetScalarParameterValue(World, MPC, TEXT("DLWE Puddle Sharpness"));
+    const float BeforeRough  = UKismetMaterialLibrary::GetScalarParameterValue(World, MPC, TEXT("Water Roughness"));
+    const float BeforeRipple = UKismetMaterialLibrary::GetScalarParameterValue(World, MPC, TEXT("Tiling Ripples Framerate"));
+
+    static float LastPushedCov    = -1.f;
+    static float LastPushedSharp  = -1.f;
+    static float LastPushedRough  = -1.f;
+    static float LastPushedRipple = -1.f;
+#endif
+
+    UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("DLWE_Puddle Coverage"),   CurrentPuddleCoverage);
+
+    // 반짝임 완화(서브픽셀 specular aliasing 억제).
+    //   MPC 기본값 Water Roughness=0.05(거울), Tiling Ripples Framerate=30(빠른 노멀), Puddle Sharpness=40(날카로움).
+    //   매 틱 권위적으로 push하여 UDW 프리셋이 올리는 값을 상쇄.
+    UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("DLWE Puddle Sharpness"),     PuddleSharpness);
+    UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("Water Roughness"),           PuddleWaterRoughness);
+    UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("Tiling Ripples Framerate"),  RippleFramerate);
+
+#if !UE_BUILD_SHIPPING && HELLUNA_DEBUG_DEFENSE
+    // 싸움 감지 로그 (2초 간격).
+    {
+        static int32 FightCounter = 0;
+        if ((FightCounter++ % 8) == 0 && LastPushedCov >= 0.f)
+        {
+            const bool CovDrift    = !FMath::IsNearlyEqual(BeforeCov,    LastPushedCov,    0.001f);
+            const bool SharpDrift  = !FMath::IsNearlyEqual(BeforeSharp,  LastPushedSharp,  0.1f);
+            const bool RoughDrift  = !FMath::IsNearlyEqual(BeforeRough,  LastPushedRough,  0.01f);
+            const bool RippleDrift = !FMath::IsNearlyEqual(BeforeRipple, LastPushedRipple, 0.1f);
+            if (CovDrift || SharpDrift || RoughDrift || RippleDrift)
+            {
+                UE_LOG(LogTemp, Verbose, TEXT("[RainDiag-Fight] Overwritten since last tick: Cov %.3f→%.3f | Sharp %.1f→%.1f | Rough %.2f→%.2f | Ripple %.1f→%.1f"),
+                    LastPushedCov,    BeforeCov,
+                    LastPushedSharp,  BeforeSharp,
+                    LastPushedRough,  BeforeRough,
+                    LastPushedRipple, BeforeRipple);
+            }
+        }
+    }
+
+    LastPushedCov    = CurrentPuddleCoverage;
+    LastPushedSharp  = PuddleSharpness;
+    LastPushedRough  = PuddleWaterRoughness;
+    LastPushedRipple = RippleFramerate;
+#endif
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

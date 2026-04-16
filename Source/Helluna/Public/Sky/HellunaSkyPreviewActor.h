@@ -24,6 +24,7 @@ enum class ESkyWeatherPreset : uint8
 	Foggy         UMETA(DisplayName = "안개 (Foggy)"),
 	RainLight     UMETA(DisplayName = "이슬비 (Rain Light)"),
 	Rain          UMETA(DisplayName = "비 (Rain)"),
+	RainOnly      UMETA(DisplayName = "비만 (Rain Only — 구름 변화 없음)"),
 	Thunderstorm  UMETA(DisplayName = "뇌우 (Thunderstorm)"),
 	SnowLight     UMETA(DisplayName = "눈 조금 (Snow Light)"),
 	Snow          UMETA(DisplayName = "눈 (Snow)"),
@@ -87,6 +88,9 @@ public:
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif
 
+	/** 프리셋 enum → UDW Weather Preset 에셋 경로 매핑 (WeatherConfig DataAsset 런타임에서도 공유). */
+	static FString GetWeatherPresetPath(ESkyWeatherPreset Preset);
+
 private:
 	AActor* FindUDSActor() const;
 	AActor* FindUDWActor() const;
@@ -103,9 +107,6 @@ private:
 	/** UDS 프로퍼티 리플렉션 헬퍼 */
 	static void SetUDSFloat(AActor* UDS, const TCHAR* PropName, float Value);
 	static void SetUDSBool(AActor* UDS, const TCHAR* PropName, bool Value);
-
-	/** 프리셋 enum → UDW Weather Preset 에셋 경로 매핑 */
-	static FString GetWeatherPresetPath(ESkyWeatherPreset Preset);
 
 	/** 날씨 프리셋에 맞는 MPC 값을 월드 인스턴스에 직접 push (에디터 미리보기용) */
 	void ApplyMaterialWeatherState(ESkyWeatherPreset Preset);
