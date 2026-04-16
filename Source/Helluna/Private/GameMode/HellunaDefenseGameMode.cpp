@@ -657,7 +657,7 @@ void AHellunaDefenseGameMode::ProcessNextPCGComponent()
         {
             DbgHasScoreComp = true;
             const float RawDensity = FMath::Max(ScoreComp->PlacementDensity, 0.01f);
-            constexpr float BasePointsPerSquaredMeter = 0.001f; // SurfaceSampler 기본값과 동일
+            constexpr float BasePointsPerSquaredMeter = 0.0005f; // 기본 스폰량 절반으로 하향 (과부하 완화)
             const float EffectivePPSM = BasePointsPerSquaredMeter * FMath::Pow(RawDensity, 1.5f);
             DbgRawDensity = RawDensity;
             DbgPushedPPSM = EffectivePPSM;

@@ -35,7 +35,7 @@ public:
 	 * (그래프에 해당 파라미터가 노출되어 있어야 하며, 없으면 로그에 전달 실패가 찍힌다)
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PCG",
-		meta = (DisplayName = "촘촘함", ClampMin = "0.1", ClampMax = "5.0"))
+		meta = (DisplayName = "촘촘함", ClampMin = "0.1", ClampMax = "10.0"))
 	float PlacementDensity = 1.f;
 
 	/**
