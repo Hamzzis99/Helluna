@@ -150,6 +150,7 @@ FString AHellunaSkyPreviewActor::GetWeatherPresetPath(ESkyWeatherPreset Preset)
 	case ESkyWeatherPreset::Foggy:        return FString(BasePath) + TEXT("Foggy.Foggy");
 	case ESkyWeatherPreset::RainLight:    return FString(BasePath) + TEXT("Rain_Light.Rain_Light");
 	case ESkyWeatherPreset::Rain:         return FString(BasePath) + TEXT("Rain.Rain");
+	case ESkyWeatherPreset::RainOnly:     return FString(BasePath) + TEXT("Rain_Only.Rain_Only");
 	case ESkyWeatherPreset::Thunderstorm: return FString(BasePath) + TEXT("Rain_Thunderstorm.Rain_Thunderstorm");
 	case ESkyWeatherPreset::SnowLight:    return FString(BasePath) + TEXT("Snow_Light.Snow_Light");
 	case ESkyWeatherPreset::Snow:         return FString(BasePath) + TEXT("Snow.Snow");
@@ -215,6 +216,15 @@ void AHellunaSkyPreviewActor::ApplyMaterialWeatherState(ESkyWeatherPreset Preset
 		DLWEPuddleCoverage = 0.5f;
 		CloudCoverage = 0.85f;
 		Fog = 0.2f;
+		break;
+	case ESkyWeatherPreset::RainOnly:
+		// 구름/안개 변화 없이 비만. 웅덩이 누적은 Rain과 동일 레벨.
+		Wet = 0.7f;
+		Raining = 0.7f;
+		DLWEBaseWetness = 0.6f;
+		DLWEPuddleCoverage = 0.45f;
+		CloudCoverage = 0.f;
+		Fog = 0.f;
 		break;
 	case ESkyWeatherPreset::Thunderstorm:
 		Wet = 1.f;

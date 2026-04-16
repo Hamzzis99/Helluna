@@ -20,6 +20,7 @@
 #include "Kismet/KismetMaterialLibrary.h"
 #include "Materials/MaterialParameterCollection.h"
 #include "Sky/HellunaWeatherConfig.h"
+#include "Sky/HellunaSkyPreviewActor.h"
 
 // =========================================================================================
 // 생성자 (김기현)
@@ -876,32 +877,43 @@ void AHellunaDefenseGameState::ApplyRandomWeather(bool bIsDay)
         if (Cfg->TransitionTime > 0.f)
             EffectiveTransitionTime = Cfg->TransitionTime;
 
-        // Forced 먼저 확인
-        const TSoftObjectPtr<UObject>& ForcedRef = bIsDay ? Cfg->DayForced : Cfg->NightForced;
-        if (!ForcedRef.IsNull())
-        {
-            SelectedWeather = ForcedRef.LoadSynchronous();
-        }
+        // Forced 먼저 확인 (enum, None이면 Pool로 폴백)
+        ESkyWeatherPreset ActivePreset = bIsDay ? Cfg->DayForced : Cfg->NightForced;
 
-        // Forced 없으면 Pool 랜덤
-        if (!SelectedWeather)
+        if (ActivePreset == ESkyWeatherPreset::None)
         {
-            const TArray<TSoftObjectPtr<UObject>>& Pool = bIsDay ? Cfg->DayPool : Cfg->NightPool;
-            if (Pool.Num() > 0)
+            const TArray<ESkyWeatherPreset>& Pool = bIsDay ? Cfg->DayPool : Cfg->NightPool;
+            // Pool에서 None은 걸러 랜덤 선택 (혹시 실수 포함 시 방어).
+            TArray<ESkyWeatherPreset> ValidPool;
+            ValidPool.Reserve(Pool.Num());
+            for (ESkyWeatherPreset P : Pool)
             {
-                RandomIdx = FMath::RandRange(0, Pool.Num() - 1);
-                SelectedWeather = Pool[RandomIdx].LoadSynchronous();
-                ArrayNum = Pool.Num();
+                if (P != ESkyWeatherPreset::None) ValidPool.Add(P);
+            }
+            if (ValidPool.Num() > 0)
+            {
+                RandomIdx = FMath::RandRange(0, ValidPool.Num() - 1);
+                ActivePreset = ValidPool[RandomIdx];
+                ArrayNum = ValidPool.Num();
             }
         }
 
-        // 에디터 환경에선 BP 에셋 경로 로드 시 UBlueprint가 반환되므로 GeneratedClass로 변환.
-        //   UDW의 Change Weather는 UDS_Weather_Settings_C UClass를 기대 — UBlueprint를 넘기면
-        //   내부 참조(아이콘 텍스처 등) 순회 시 "Get State Sources" 호출에서 크래시.
-        //   쿠킹 빌드에선 UBlueprint가 스트립되어 이미 UClass가 반환되므로 이 변환은 no-op.
-        if (UBlueprint* AsBP = Cast<UBlueprint>(SelectedWeather))
+        // enum → 에셋 경로 → UBlueprint 로드 → GeneratedClass 추출 (SkyPreview와 동일 매핑 공유).
+        if (ActivePreset != ESkyWeatherPreset::None)
         {
-            SelectedWeather = AsBP->GeneratedClass;
+            const FString AssetPath = AHellunaSkyPreviewActor::GetWeatherPresetPath(ActivePreset);
+            if (!AssetPath.IsEmpty())
+            {
+                UObject* Loaded = StaticLoadObject(UObject::StaticClass(), nullptr, *AssetPath);
+                if (UBlueprint* AsBP = Cast<UBlueprint>(Loaded))
+                {
+                    SelectedWeather = AsBP->GeneratedClass;  // 에디터: UBlueprint → GeneratedClass
+                }
+                else
+                {
+                    SelectedWeather = Loaded;  // 쿠킹: 이미 UClass 반환
+                }
+            }
         }
     }
     // ─── 우선순위 2: 레거시 GameState 필드 (WeatherConfig 미설정 시 폴백) ───────
@@ -949,6 +961,7 @@ void AHellunaDefenseGameState::ApplyRandomWeather(bool bIsDay)
         if (WeatherName.Contains(TEXT("Thunderstorm")))    Intensity = 1.0f;
         else if (WeatherName.Contains(TEXT("Rain_Light"))) Intensity = 0.5f;
         else if (WeatherName.Contains(TEXT("RainLight")))  Intensity = 0.5f;
+        else if (WeatherName.Contains(TEXT("Rain_Only")))  Intensity = 0.7f;
         else if (WeatherName.Contains(TEXT("Rain")))       Intensity = 0.8f;
         ReplicatedRainIntensity = Intensity;
         UE_LOG(LogTemp, Warning, TEXT("[RainDiag-Weather] SERVER 권위 강도 세팅 | Weather=%s → Intensity=%.2f"),
