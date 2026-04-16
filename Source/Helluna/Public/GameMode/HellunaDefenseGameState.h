@@ -355,7 +355,16 @@ protected:
     /** 현재 선택된 밤 날씨 (디버그/읽기용) */
     UPROPERTY(BlueprintReadOnly, Category = "디펜스|날씨", meta = (DisplayName = "현재 밤 날씨"))
     UObject* CurrentNightWeather = nullptr;
-    
+
+    /**
+     * 서버 권위 비 강도(0~1).
+     * TickPuddleAccumulation이 UDW의 Puddle Coverage 대신 이 값을 신호원으로 사용한다.
+     * 데디서버(UDW 없음)/As-A-Client(UDW Change Weather RPC 드롭) 경로 모두에서 일관되게 누적되도록 함.
+     */
+    UPROPERTY(Replicated, BlueprintReadOnly, Category = "디펜스|날씨",
+        meta = (DisplayName = "Replicated Rain Intensity (서버 권위)"))
+    float ReplicatedRainIntensity = 0.f;
+
     /** 배열에서 랜덤 날씨 선택 후 Change Weather 호출 */
     void ApplyRandomWeather(bool bIsDay);
 

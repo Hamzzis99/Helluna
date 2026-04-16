@@ -54,6 +54,7 @@ void AHellunaDefenseGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProper
     DOREPLIFETIME(AHellunaDefenseGameState, TotalMonstersThisNight);
     DOREPLIFETIME(AHellunaDefenseGameState, CurrentDayForUI);
     DOREPLIFETIME(AHellunaDefenseGameState, bIsBossNight);
+    DOREPLIFETIME(AHellunaDefenseGameState, ReplicatedRainIntensity);
 }
 
 void AHellunaDefenseGameState::SetPhase(EDefensePhase NewPhase)
@@ -87,7 +88,9 @@ void AHellunaDefenseGameState::OnRep_Phase()
         CleanupInitialNightPCGClientArtifacts();
         OnDayStarted();
         if (bHasUDS) SetVolumetricCloudVisible(true);   // 낮: 구름 ON
-        if (bHasUDW) ApplyRandomWeather(true);
+        // bHasUDW 가드 제거: 데디서버에 UDW가 없어도 서버는 날씨 선택(강도 복제)을 해야 함.
+        // UDW 부재 시 ApplyRandomWeather 내부에서 ProcessEvent 호출은 스킵됨.
+        ApplyRandomWeather(true);
         break;
     case EDefensePhase::Night:
 #if HELLUNA_DEBUG_DEFENSE
@@ -103,7 +106,8 @@ void AHellunaDefenseGameState::OnRep_Phase()
         bHasBeenNight = true;  // ★ 밤 경험 기록
         // 밤: NightWeatherTypes에서 랜덤 선택 (비가 오도록 배열에 Rain 프리셋 배치)
         // 구름 토글은 UDW Change Weather 이후에 적용해야 UDW가 켠 구름이 다시 꺼짐.
-        if (bHasUDW) ApplyRandomWeather(false);
+        // bHasUDW 가드 제거: 데디서버에 UDW가 없어도 서버는 날씨 선택(강도 복제)을 해야 함.
+        ApplyRandomWeather(false);
         if (bHasUDS) SetVolumetricCloudVisible(false);  // 밤: 구름 OFF (오로라/분위기 가시성)
         // ★ Animate OFF — 현재 시간에서 멈춤
         if (bHasUDS)
@@ -926,10 +930,28 @@ void AHellunaDefenseGameState::ApplyRandomWeather(bool bIsDay)
     else
         CurrentNightWeather = SelectedWeather;
 
+    // ─── 서버 권위 비 강도 설정 (As-A-Client 웅덩이 형성용 복제 신호) ───
+    // UDW의 Puddle Coverage / Change Weather RPC에 의존하지 않도록 이름 기반으로 강도를 결정.
+    // Rain_Thunderstorm=1.0, Rain=0.8, Rain_Light=0.5, 그 외=0.0.
+    if (HasAuthority())
+    {
+        float Intensity = 0.f;
+        const FString WeatherName = SelectedWeather->GetName();
+        if (WeatherName.Contains(TEXT("Thunderstorm")))    Intensity = 1.0f;
+        else if (WeatherName.Contains(TEXT("Rain_Light"))) Intensity = 0.5f;
+        else if (WeatherName.Contains(TEXT("RainLight")))  Intensity = 0.5f;
+        else if (WeatherName.Contains(TEXT("Rain")))       Intensity = 0.8f;
+        ReplicatedRainIntensity = Intensity;
+        UE_LOG(LogTemp, Warning, TEXT("[RainDiag-Weather] SERVER 권위 강도 세팅 | Weather=%s → Intensity=%.2f"),
+            *WeatherName, Intensity);
+    }
+
     AActor* UDW = GetUDWActor();  // 캐시 사용
     if (!UDW)
     {
-        UE_LOG(LogTemp, Warning, TEXT("[RainDiag-Weather] early-return | UDW 액터 없음 (GetUDWActor=null)"));
+        // 데디서버/에디터 시나리오: UDW 없음은 정상. 강도는 이미 위에서 복제 완료.
+        UE_LOG(LogTemp, Warning, TEXT("[RainDiag-Weather] UDW 액터 없음 — ProcessEvent 스킵 (HasAuthority=%d)"),
+            (int32)HasAuthority());
         return;
     }
 
@@ -1027,21 +1049,11 @@ void AHellunaDefenseGameState::TickPuddleAccumulation()
     if (!MPC)
         return;
 
-    // UDW가 Weather 프리셋 전환에 맞춰 자체적으로 램프업/다운하는 액터 프로퍼티를
-    //   신호원으로 사용(맵의 MPC `Raining`이 0으로 유지되는 프로젝트가 있어 이게 더 견고).
-    //   SkyPreview가 사용하는 것과 동일한 값.
-    float RainingValue = 0.f;
-    if (AActor* UDW = GetUDWActor())
-    {
-        if (FFloatProperty* FProp = FindFProperty<FFloatProperty>(UDW->GetClass(), TEXT("Puddle Coverage")))
-        {
-            RainingValue = FProp->GetPropertyValue_InContainer(UDW);
-        }
-        else if (FDoubleProperty* DProp = FindFProperty<FDoubleProperty>(UDW->GetClass(), TEXT("Puddle Coverage")))
-        {
-            RainingValue = (float)DProp->GetPropertyValue_InContainer(UDW);
-        }
-    }
+    // 서버 권위 비 강도를 신호원으로 사용.
+    //   이전에는 UDW 액터의 `Puddle Coverage` UProperty를 읽었으나, 데디서버에는 UDW가 없고
+    //   As-A-Client 클라이언트에서도 Change Weather RPC가 드롭되면 0에 머물러 웅덩이가 생기지 않았다.
+    //   ReplicatedRainIntensity는 서버가 날씨 선택 시점에 이름 기반으로 결정하여 복제한다.
+    const float RainingValue = ReplicatedRainIntensity;
 
     const float DeltaSec = FMath::Max(0.05f, PuddleTickInterval);
     const float SafeMax = FMath::Clamp(MaxPuddleCoverage, 0.f, 1.f);
@@ -1075,7 +1087,7 @@ void AHellunaDefenseGameState::TickPuddleAccumulation()
         static int32 DiagCounter = 0;
         if ((DiagCounter++ % 8) == 0)
         {
-            UE_LOG(LogTemp, Warning, TEXT("[RainDiag] TickPuddle: Phase=%d, UDWPuddle=%.3f, Accum=%.2f/%.1f, Step=%d/%d, Coverage=%.3f"),
+            UE_LOG(LogTemp, Warning, TEXT("[RainDiag] TickPuddle: Phase=%d, RepRainIntensity=%.3f, Accum=%.2f/%.1f, Step=%d/%d, Coverage=%.3f"),
                 (int32)Phase, RainingValue, AccumulatedRainSeconds, SafeFill,
                 CurrentStep, NumSteps, CurrentPuddleCoverage);
         }
