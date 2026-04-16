@@ -91,3 +91,6 @@
 // ════════════════════════════════════════════════════════════════════════════════
 
 DECLARE_LOG_CATEGORY_EXTERN(LogHelluna, Log, All);
+
+// Guardian Turret 전용 로그 카테고리 (망가진 가디언 포탑)
+DECLARE_LOG_CATEGORY_EXTERN(LogHellunaGuardian, Log, All);
