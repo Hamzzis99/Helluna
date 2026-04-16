@@ -358,46 +358,65 @@ protected:
     void ForceClearWeather();
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // 💧 물웅덩이(Puddle Coverage) 점진 축적
-    //   UDW가 MPC `Raining` 값을 시간에 따라 올리면, 본 타이머가 그 값을
-    //   참조해 `DLWE_Puddle Coverage`를 Max 까지 서서히 램프업(비가 그치면 램프다운)한다.
+    // 💧 비 MPC 점진 Push (Wet / Raining / DLWE Wetness / Puddle / Sharpness)
+    //   UDW의 Material State Sim이 MPC를 push하지 않을 수 있으므로,
+    //   Phase==Night(비 강제)일 때 직접 모든 비 관련 MPC 파라미터를 시간에 따라
+    //   단계적으로 올리고, 낮이면 내린다. SkyPreviewActor와 동일 경로.
     //   로컬 클라이언트 전용(데디서버는 렌더링/MPC가 없으므로 실행하지 않음).
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /** 최대 웅덩이 커버리지 (비 최고조일 때 도달) */
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|웅덩이", meta = (DisplayName = "최대 웅덩이 커버리지", ClampMin = "0.0", ClampMax = "1.0"))
-    float MaxPuddleCoverage = 0.7f;
+    /** 비 MPC Max 목표값 (Rain 프리셋 기준) */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|비MPC", meta = (DisplayName = "Max Wet", ClampMin = "0.0", ClampMax = "1.0"))
+    float RainTargetWet = 0.8f;
 
-    /** 0→Max 까지 차오르는 데 걸리는 총 비 누적 시간(초). 테스트 기본 60초. */
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|웅덩이", meta = (DisplayName = "웅덩이 차오름 시간(초)", ClampMin = "1.0"))
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|비MPC", meta = (DisplayName = "Max Raining", ClampMin = "0.0", ClampMax = "1.0"))
+    float RainTargetRaining = 0.8f;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|비MPC", meta = (DisplayName = "Max DLWE Base Wetness", ClampMin = "0.0", ClampMax = "1.0"))
+    float RainTargetBaseWetness = 0.7f;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|비MPC", meta = (DisplayName = "Max DLWE Puddle Coverage", ClampMin = "0.0", ClampMax = "1.0"))
+    float RainTargetPuddleCoverage = 0.5f;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|비MPC", meta = (DisplayName = "Max Fog", ClampMin = "0.0", ClampMax = "1.0"))
+    float RainTargetFog = 0.2f;
+
+    /** DLWE Puddle Sharpness — 웅덩이 경계 날카로움. 값이 높으면 가장자리가 또렷하고 파문이 강조되어 빤짝임 심해짐. 부드럽게 하려면 10~20 권장. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|비MPC", meta = (DisplayName = "Puddle Sharpness (낮을수록 부드러움)", ClampMin = "1.0", ClampMax = "100.0"))
+    float PuddleSharpness = 10.f;
+
+    /** 웅덩이 표면 거칠기(MPC "Water Roughness"). 기본 0.05는 거울 같은 반사 → 서브픽셀 스펙큘러 aliasing의 주원인.
+     *  0.2~0.4 권장. 낮아질수록 거울처럼 반짝거림이 심해지고, 높일수록 무광 고인 물처럼 됨. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|비MPC", meta = (DisplayName = "Puddle Water Roughness (높일수록 무광)", ClampMin = "0.0", ClampMax = "1.0"))
+    float PuddleWaterRoughness = 0.3f;
+
+    /** 빗방울 파문 노멀맵 애니 프레임레이트(MPC "Tiling Ripples Framerate"). 기본 30은 매 프레임 노멀이 변해 TAA 수렴 실패 유발.
+     *  낮추면 파문 애니가 느려져 반짝임 완화. 0이면 정지. 8~15 권장. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|비MPC", meta = (DisplayName = "Ripple Framerate (낮출수록 파문 느림)", ClampMin = "0.0", ClampMax = "60.0"))
+    float RippleFramerate = 10.f;
+
+    /** 0→Max 까지 차오르는 데 걸리는 총 비 누적 시간(초). */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|비MPC", meta = (DisplayName = "비 MPC 램프업 시간(초)", ClampMin = "1.0"))
     float PuddleFillSeconds = 60.f;
 
-    /** 한 단계 차오르는 데 걸리는 초. Fill/Step = 단계 수 (예: 60/10=6단계). */
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|웅덩이", meta = (DisplayName = "단계 간격(초)", ClampMin = "0.5"))
-    float PuddleStepSeconds = 10.f;
-
     /** Max→0 으로 마르는 데 걸리는 시간(초). */
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|웅덩이", meta = (DisplayName = "웅덩이 마름 시간(초)", ClampMin = "1.0"))
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|비MPC", meta = (DisplayName = "비 MPC 마름 시간(초)", ClampMin = "1.0"))
     float PuddleDrySeconds = 180.f;
 
-    /** 비로 간주할 MPC `Raining` 하한 임계값 */
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|웅덩이", meta = (DisplayName = "비 판정 임계값", ClampMin = "0.0", ClampMax = "1.0"))
-    float RainThresholdForPuddle = 0.05f;
-
-    /** 웅덩이 Tick 주기(초) */
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|웅덩이", meta = (DisplayName = "웅덩이 틱 주기(초)", ClampMin = "0.05"))
+    /** 비 MPC Tick 주기(초) */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|비MPC", meta = (DisplayName = "Tick 주기(초)", ClampMin = "0.05"))
     float PuddleTickInterval = 0.25f;
 
-    /** 현재 적용 중인 웅덩이 커버리지 (내부 상태) */
-    float CurrentPuddleCoverage = 0.f;
-
-    /** 누적된 비 노출 시간(초). 비가 오면 증가, 그치면 감소. 0 ≤ value ≤ PuddleFillSeconds. */
+    /** 누적된 비 노출 시간(초). 비가 오면 증가, 그치면 감소. */
     float AccumulatedRainSeconds = 0.f;
+
+    /** 현재 비가 오는 중인지 (Phase==Night && 비 날씨) */
+    bool bIsCurrentlyRaining = false;
 
     FTimerHandle TimerHandle_PuddleAccumulation;
 
-    /** MPC 월드 인스턴스에 `DLWE_Puddle Coverage`를 램프업/다운하여 push */
-    void TickPuddleAccumulation();
+    /** 매 Tick MPC 전체 비 파라미터를 단계별로 push */
+    void TickRainMPC();
 
     // ═══════════════════════════════════════════════════════════════════════════
     // 캐싱 (UDS/UDW 액터 + 리플렉션 프로퍼티)

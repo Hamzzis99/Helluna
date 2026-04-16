@@ -84,6 +84,7 @@ void AHellunaDefenseGameState::OnRep_Phase()
         UE_LOG(LogTemp, Warning, TEXT("[GameState] OnDayStarted 호출 시도"));
 #endif
         CleanupInitialNightPCGClientArtifacts();
+        bIsCurrentlyRaining = false;    // 낮 → 비 종료
         OnDayStarted();
         if (bHasUDS) SetVolumetricCloudVisible(true);   // 낮: 구름 ON
         if (bHasUDW) ApplyRandomWeather(true);
@@ -94,10 +95,19 @@ void AHellunaDefenseGameState::OnRep_Phase()
 #endif
         OnNightStarted();
         bHasBeenNight = true;  // ★ 밤 경험 기록
+        // [Patch 1] UDW 레플리케이션 타이밍과 무관하게 밤 고정 날씨 기준으로 비 상태 즉시 확정
+        //   bHasUDW가 false(클라이언트 BeginPlay 시점에 UDW 액터 미로드)여도
+        //   NightForcedWeather 이름으로 bIsCurrentlyRaining을 먼저 설정하여 MPC 축적 타이머가 동작하도록 보장.
+        if (NightForcedWeather)
+        {
+            const FString ForcedName = NightForcedWeather->GetName();
+            bIsCurrentlyRaining = ForcedName.Contains(TEXT("Rain"), ESearchCase::IgnoreCase);
+        }
         // 밤: NightWeatherTypes에서 랜덤 선택 (비가 오도록 배열에 Rain 프리셋 배치)
         // 구름 토글은 UDW Change Weather 이후에 적용해야 UDW가 켠 구름이 다시 꺼짐.
         if (bHasUDW) ApplyRandomWeather(false);
         if (bHasUDS) SetVolumetricCloudVisible(false);  // 밤: 구름 OFF (오로라/분위기 가시성)
+        // bIsCurrentlyRaining 추가 보정은 ApplyRandomWeather 내부 (에셋 이름 기반)에서 수행
         // ★ Animate OFF — 현재 시간에서 멈춤
         if (bHasUDS)
         {
@@ -390,15 +400,16 @@ void AHellunaDefenseGameState::BeginPlay()
     }
 #endif
 
-    // ── 웅덩이 점진 축적 타이머 (렌더링 가능한 곳에서만) ─────────────────
+    // ── 비 MPC 점진 Push 타이머 (렌더링 가능한 곳에서만) ──────────────────
     if (GetNetMode() != NM_DedicatedServer)
     {
-        CurrentPuddleCoverage = 0.f;
+        AccumulatedRainSeconds = 0.f;
+        bIsCurrentlyRaining = false;
         const float Interval = FMath::Max(0.05f, PuddleTickInterval);
         GetWorldTimerManager().SetTimer(
             TimerHandle_PuddleAccumulation,
             this,
-            &ThisClass::TickPuddleAccumulation,
+            &ThisClass::TickRainMPC,
             Interval,
             true,
             Interval
@@ -870,11 +881,22 @@ void AHellunaDefenseGameState::ApplyRandomWeather(bool bIsDay)
         ArrayNum = WeatherArray.Num();
     }
     if (!SelectedWeather) return;
-    
+
+    // 비 판별: 에셋 이름에 "Rain" 포함 시 비로 간주 (Rain, Rain_Light, Rain_Thunderstorm 등)
+    const FString WeatherName = SelectedWeather->GetName();
+    const bool bIsRainWeather = WeatherName.Contains(TEXT("Rain"), ESearchCase::IgnoreCase);
+
     if (bIsDay)
+    {
         CurrentDayWeather = SelectedWeather;
+        // 낮 비 날씨도 지원 (낮에 비가 오면 웅덩이 차오름)
+        bIsCurrentlyRaining = bIsRainWeather;
+    }
     else
+    {
         CurrentNightWeather = SelectedWeather;
+        bIsCurrentlyRaining = bIsRainWeather;
+    }
     
     AActor* UDW = GetUDWActor();  // 캐시 사용
     if (!UDW) return;
@@ -953,11 +975,12 @@ void AHellunaDefenseGameState::ForceClearWeather()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 💧 웅덩이 점진 축적
-//   UDW가 MPC `Raining`을 시간에 따라 상승/하강시키므로, 본 Tick은 그 값을 읽어
-//   `DLWE_Puddle Coverage`를 서서히 램프업/램프다운한다.
+// 💧 비 MPC 점진 Push
+//   UDW Material State Sim이 MPC를 push하지 않을 수 있으므로,
+//   Phase==Night(비 강제)일 때 SkyPreviewActor와 동일한 MPC 파라미터를
+//   시간에 따라 단계적으로 올리고, 낮이면 내린다.
 // ═══════════════════════════════════════════════════════════════════════════════
-void AHellunaDefenseGameState::TickPuddleAccumulation()
+void AHellunaDefenseGameState::TickRainMPC()
 {
     UWorld* World = GetWorld();
     if (!World)
@@ -968,36 +991,40 @@ void AHellunaDefenseGameState::TickPuddleAccumulation()
     if (!MPC)
         return;
 
-    // 현재 비 강도 (UDW가 시간에 따라 채워 넣음)
-    const float RainingValue = UKismetMaterialLibrary::GetScalarParameterValue(World, MPC, TEXT("Raining"));
-
     const float DeltaSec = FMath::Max(0.05f, PuddleTickInterval);
-    const float SafeMax = FMath::Clamp(MaxPuddleCoverage, 0.f, 1.f);
     const float SafeFill = FMath::Max(1.f, PuddleFillSeconds);
-    const float SafeStep = FMath::Max(0.5f, PuddleStepSeconds);
     const float SafeDry = FMath::Max(1.f, PuddleDrySeconds);
 
-    // 비 누적/감소
-    if (RainingValue >= RainThresholdForPuddle)
+    // ── 누적 시간 갱신 ─────────────────────────────────────────────
+    if (bIsCurrentlyRaining)
     {
-        // 비 강도에 비례해 누적 속도 가속
-        AccumulatedRainSeconds += DeltaSec * FMath::Clamp(RainingValue, 0.f, 1.f);
+        AccumulatedRainSeconds += DeltaSec;
     }
     else
     {
-        // 마름: PuddleDrySeconds 동안 PuddleFillSeconds만큼 빠지도록 감속
         const float DryRate = SafeFill / SafeDry;
         AccumulatedRainSeconds -= DeltaSec * DryRate;
     }
     AccumulatedRainSeconds = FMath::Clamp(AccumulatedRainSeconds, 0.f, SafeFill);
 
-    // 단계(Step)로 양자화 → 10초마다 한 칸씩 차오르는 체감
-    const int32 NumSteps = FMath::Max(1, FMath::RoundToInt(SafeFill / SafeStep));
-    const int32 CurrentStep = FMath::Clamp(FMath::FloorToInt(AccumulatedRainSeconds / SafeStep), 0, NumSteps);
-    const float StepCoverage = SafeMax / static_cast<float>(NumSteps);
-    CurrentPuddleCoverage = FMath::Clamp(CurrentStep * StepCoverage, 0.f, SafeMax);
+    // [Patch 3] 단계 양자화 제거 — 선형 Alpha로 매 0.25초 부드럽게 상승/하강.
+    //   기존 10초 Step 양자화는 경계에서 값이 갑자기 튀어 시각적 pop을 유발.
+    const float Alpha = FMath::Clamp(AccumulatedRainSeconds / SafeFill, 0.f, 1.f);
 
-    UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("DLWE_Puddle Coverage"), CurrentPuddleCoverage);
+    // [Patch 2] UDW가 자체 푸시하는 파라미터(Wet, Raining, Fog)는 push 제외.
+    //   UDW의 Material State Sim이 Rain 프리셋 값(Material Wetness=1, Rain=7, Fog 등)으로
+    //   해당 MPC를 매 프레임 write할 수 있어, 우리 0.25초 push와 경합해 틱 단위 깜빡임 발생.
+    //   DLWE 전용 3종 파라미터만 push하여 경합 제거.
+    UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("DLWE_Base Wetness"),      Alpha * RainTargetBaseWetness);
+    UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("DLWE_Puddle Coverage"),   Alpha * RainTargetPuddleCoverage);
+    UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("DLWE Puddle Sharpness"),  PuddleSharpness);
+
+    // [Patch 4] 웅덩이 반짝임(서브픽셀 specular aliasing) 억제.
+    //   기본 Water Roughness=0.05는 거울 같은 반사로 TAA가 픽셀보다 작은 하이라이트에 수렴 실패 → 프레임마다 다른 픽셀이 튐.
+    //   Raining>0 구간에서는 Tiling Ripples Framerate까지 높아 노멀이 매 프레임 변함 → 반짝임 가중.
+    //   두 파라미터 모두 GameState가 권위적으로 push하여 UDW 프리셋이 덮어쓰는 것을 상쇄.
+    UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("Water Roughness"),            PuddleWaterRoughness);
+    UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, TEXT("Tiling Ripples Framerate"),   RippleFramerate);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
