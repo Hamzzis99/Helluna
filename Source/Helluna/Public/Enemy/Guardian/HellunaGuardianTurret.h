@@ -105,10 +105,10 @@ protected:
 	// 감지·조준 설정
 	// =========================================================
 
-	/** 감지 반경 (UU). 설계 기본값 2600. */
+	/** 감지 반경 (UU). 설계 기본값 2600, 메시 스케일 10 대응 기본 26000. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Detection",
-		meta = (DisplayName = "감지 반경 (UU)", ClampMin = "500.0", ClampMax = "10000.0"))
-	float DetectionRadius = 2600.f;
+		meta = (DisplayName = "감지 반경 (UU)", ClampMin = "500.0", ClampMax = "50000.0"))
+	float DetectionRadius = 26000.f;
 
 	/** 헤드 회전 속도 (도/초). Yaw/Pitch 동시 적용. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Detection",
