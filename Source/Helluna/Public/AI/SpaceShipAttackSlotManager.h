@@ -148,6 +148,26 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "AI|Slot")
 	void ReleaseEngagementReservation(AActor* Monster);
 
+	// ─── [ShipTopV1] 우주선 상단 점프 슬롯 예약 ───────────────
+	// 목적: 모든 몬스터가 점프하면 선체 위가 꽉 차므로 고정 수량만 허용.
+	// 슬롯 위치는 계산하지 않음(ShipJump GA가 bounds로 계산) → 예약 카운터만 관리.
+
+	/** 우주선 상단 슬롯 예약 시도. 빈 슬롯이 있으면 true 반환. */
+	UFUNCTION(BlueprintCallable, Category = "AI|ShipTop")
+	bool TryReserveTopSlot(AActor* Monster);
+
+	/** 예약한 상단 슬롯을 반납한다. */
+	UFUNCTION(BlueprintCallable, Category = "AI|ShipTop")
+	void ReleaseTopSlot(AActor* Monster);
+
+	/** 특정 몬스터가 상단 슬롯을 예약했는지 조회. */
+	UFUNCTION(BlueprintCallable, Category = "AI|ShipTop")
+	bool HasTopSlot(const AActor* Monster) const;
+
+	/** 현재 예약된 상단 슬롯 수. */
+	UFUNCTION(BlueprintCallable, Category = "AI|ShipTop")
+	int32 GetTopSlotUsage() const { return ReservedTopSlotMonsters.Num(); }
+
 	/** 현재 슬롯 배열 읽기 전용 접근 */
 	const TArray<FAttackSlot>& GetSlots() const { return Slots; }
 
@@ -267,6 +287,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "AI|Slot")
 	void RebuildSlots();
 
+	/** [ShipTopV1] 동시에 우주선 위에 점프해 있을 수 있는 최대 몬스터 수. */
+	UPROPERTY(EditAnywhere, Category = "상단 점프",
+		meta=(DisplayName="상단 점프 최대 슬롯 수", ClampMin="1", ClampMax="20"))
+	int32 MaxTopSlots = 5;
+
 	/**
 	 * 플레이어 접속 시 호출 — 슬롯이 아직 0개면 즉시 BuildSlots 재시도.
 	 * World Partition에서 플레이어 접속 후 NavMesh가 로드되므로 이 시점에 재시도하면 성공 확률이 높다.
@@ -325,6 +350,12 @@ private:
 
 	/** 몬스터별 예약된 섹터 인덱스 */
 	TMap<TWeakObjectPtr<AActor>, int32> ReservedSectorIndices;
+
+	/** [ShipTopV1] 상단 슬롯을 예약한 몬스터 집합. */
+	TSet<TWeakObjectPtr<AActor>> ReservedTopSlotMonsters;
+
+	/** [ShipTopV1] 무효화된 항목을 정리. */
+	void CleanupTopSlotReservations();
 
 	/** 디버그 누적 시간 */
 	float DebugAccum = 0.f;

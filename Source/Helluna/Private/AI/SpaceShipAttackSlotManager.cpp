@@ -1312,6 +1312,80 @@ void USpaceShipAttackSlotManager::ReleaseEngagementReservation(AActor* Monster)
 
 	ReleaseSlot(Monster);
 	ReleaseSectorReservation(Monster);
+	ReleaseTopSlot(Monster);
+}
+
+// ─── [ShipTopV1] 상단 점프 슬롯 ──────────────────────────────
+
+void USpaceShipAttackSlotManager::CleanupTopSlotReservations()
+{
+	for (auto It = ReservedTopSlotMonsters.CreateIterator(); It; ++It)
+	{
+		if (!It->IsValid())
+		{
+			It.RemoveCurrent();
+		}
+	}
+}
+
+bool USpaceShipAttackSlotManager::TryReserveTopSlot(AActor* Monster)
+{
+	if (!Monster)
+	{
+		return false;
+	}
+
+	CleanupTopSlotReservations();
+
+	const TWeakObjectPtr<AActor> Key = Monster;
+
+	// 이미 예약된 몬스터면 true 유지(멱등).
+	if (ReservedTopSlotMonsters.Contains(Key))
+	{
+		return true;
+	}
+
+	if (ReservedTopSlotMonsters.Num() >= MaxTopSlots)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[ShipTopV1] TryReserveTopSlot DENIED (full) Monster=%s Usage=%d/%d"),
+			*Monster->GetName(), ReservedTopSlotMonsters.Num(), MaxTopSlots);
+		return false;
+	}
+
+	ReservedTopSlotMonsters.Add(Key);
+	UE_LOG(LogTemp, Warning,
+		TEXT("[ShipTopV1] TryReserveTopSlot GRANTED Monster=%s Usage=%d/%d"),
+		*Monster->GetName(), ReservedTopSlotMonsters.Num(), MaxTopSlots);
+	return true;
+}
+
+void USpaceShipAttackSlotManager::ReleaseTopSlot(AActor* Monster)
+{
+	if (!Monster)
+	{
+		return;
+	}
+
+	const TWeakObjectPtr<AActor> Key = Monster;
+	const int32 Removed = ReservedTopSlotMonsters.Remove(Key);
+	if (Removed > 0)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[ShipTopV1] ReleaseTopSlot Monster=%s Usage=%d/%d"),
+			*Monster->GetName(), ReservedTopSlotMonsters.Num(), MaxTopSlots);
+	}
+}
+
+bool USpaceShipAttackSlotManager::HasTopSlot(const AActor* Monster) const
+{
+	if (!Monster)
+	{
+		return false;
+	}
+	// TSet<TWeakObjectPtr>는 const ptr로 조회 불가 → 캐스팅 후 조회.
+	const TWeakObjectPtr<AActor> Key = const_cast<AActor*>(Monster);
+	return ReservedTopSlotMonsters.Contains(Key);
 }
 
 bool USpaceShipAttackSlotManager::GetMonsterSlotInfo(const AActor* Monster, int32& OutSlotIndex, ESlotState& OutState) const

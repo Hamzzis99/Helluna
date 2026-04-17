@@ -27,6 +27,7 @@
 #include "AbilitySystem/HellunaEnemyGameplayAbility.h"
 #include "AbilitySystem/EnemyAbility/EnemyGameplayAbility_Attack.h"
 #include "AbilitySystem/EnemyAbility/EnemyGameplayAbility_RangedAttack.h"
+#include "AbilitySystem/EnemyAbility/EnemyGameplayAbility_ShipJump.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 
 namespace HellunaAttackTarget
@@ -34,6 +35,28 @@ namespace HellunaAttackTarget
 static USpaceShipAttackSlotManager* GetShipSlotManager(AActor* TargetActor)
 {
 	return TargetActor ? TargetActor->FindComponentByClass<USpaceShipAttackSlotManager>() : nullptr;
+}
+
+// [ShipFaceV1] 우주선 공격 직전 스냅 — RInterpTo 대신 즉시 Yaw 정렬.
+// 쿨다운 중 부드러운 회전은 유지, GA 발동 순간만 스냅 적용해 "옆 보고 공격" 방지.
+static void SnapFaceTarget(AAIController* AIController, APawn* Pawn, AActor* TargetActor)
+{
+	if (!AIController || !Pawn || !TargetActor)
+	{
+		return;
+	}
+	const FVector ToTarget = (TargetActor->GetActorLocation() - Pawn->GetActorLocation()).GetSafeNormal2D();
+	if (ToTarget.IsNearlyZero())
+	{
+		return;
+	}
+	const FRotator SnapRot(0.f, ToTarget.Rotation().Yaw, 0.f);
+	AIController->SetControlRotation(SnapRot);
+	Pawn->SetActorRotation(SnapRot);
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[ShipFaceV1] Snap-face ship Yaw=%.1f Enemy=%s"),
+		SnapRot.Yaw, *Pawn->GetName());
 }
 
 static void FaceCurrentTarget(AAIController* AIController, APawn* Pawn, AActor* TargetActor, float DeltaTime, float Speed)
@@ -146,7 +169,16 @@ EStateTreeRunStatus FSTTask_AttackTarget::EnterState(
 			return EStateTreeRunStatus::Failed;
 		}
 
-		HellunaAttackTarget::FaceCurrentTarget(InstanceData.AIController, Pawn, TargetActor, 1.f / 60.f, RotationSpeed);
+		// [ShipFaceV1] 우주선 타겟 진입 시에는 즉시 스냅(옆 보고 공격 방지).
+		// 그 외 타겟은 기존 방식대로 보간으로 진입.
+		if (bIsSpaceShip)
+		{
+			HellunaAttackTarget::SnapFaceTarget(InstanceData.AIController, Pawn, TargetActor);
+		}
+		else
+		{
+			HellunaAttackTarget::FaceCurrentTarget(InstanceData.AIController, Pawn, TargetActor, 1.f / 60.f, RotationSpeed);
+		}
 	}
 
 	InstanceData.CooldownRemaining = InitialAttackDelay;
@@ -283,6 +315,8 @@ EStateTreeRunStatus FSTTask_AttackTarget::Tick(
 			CdoAttack->CurrentTarget = ChosenTarget;
 		else if (UEnemyGameplayAbility_RangedAttack* CdoRanged = Cast<UEnemyGameplayAbility_RangedAttack>(Spec.Ability))
 			CdoRanged->CurrentTarget = ChosenTarget;
+		else if (UEnemyGameplayAbility_ShipJump* CdoShipJump = Cast<UEnemyGameplayAbility_ShipJump>(Spec.Ability))
+			CdoShipJump->CurrentTarget = ChosenTarget;
 
 		// Instance 설정 — 실제 ActivateAbility가 호출되는 객체
 		if (UGameplayAbility* Instance = Spec.GetPrimaryInstance())
@@ -291,9 +325,18 @@ EStateTreeRunStatus FSTTask_AttackTarget::Tick(
 				InstAttack->CurrentTarget = ChosenTarget;
 			else if (UEnemyGameplayAbility_RangedAttack* InstRanged = Cast<UEnemyGameplayAbility_RangedAttack>(Instance))
 				InstRanged->CurrentTarget = ChosenTarget;
+			else if (UEnemyGameplayAbility_ShipJump* InstShipJump = Cast<UEnemyGameplayAbility_ShipJump>(Instance))
+				InstShipJump->CurrentTarget = ChosenTarget;
 		}
 
 		break;
+	}
+
+	// [ShipFaceV1] 우주선 공격 GA 발동 직전 스냅 — 옆 보고 공격하는 케이스 원천 차단.
+	// 쿨다운 중 RInterpTo가 완료되지 않은 프레임에서도 공격 순간 반드시 우주선 정면을 향하게 함.
+	if (Cast<AResourceUsingObject_SpaceShip>(ChosenTarget) != nullptr)
+	{
+		HellunaAttackTarget::SnapFaceTarget(AIController, Pawn, ChosenTarget);
 	}
 
 	const bool bActivated = ASC->TryActivateAbilityByClass(GAClass);
