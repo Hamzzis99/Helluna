@@ -1,11 +1,12 @@
-﻿/**
+/**
  * STTask_Enrage.cpp
+ *
+ * 광폭화 진입 Task.
+ * 광폭화 GA 활성화 후 타겟을 우주선으로 고정한다.
+ * 이후 EnrageLoop State에서 우주선을 향해 빠르게 돌진+공격.
  *
  * @author 김민우
  */
-
-// File: Source/Helluna/Private/AI/StateTree/Tasks/STTask_Enrage.cpp
-// Build Target: Helluna (Server + Client)
 
 #include "AI/StateTree/Tasks/STTask_Enrage.h"
 #include "StateTreeExecutionContext.h"
@@ -16,7 +17,7 @@
 #include "Helluna.h"
 
 // ============================================================================
-// EnterState
+// EnterState — 광폭화 진입: GA 활성화 + 우주선으로 타겟 전환
 // ============================================================================
 EStateTreeRunStatus FSTTask_Enrage::EnterState(
 	FStateTreeExecutionContext& Context,
@@ -56,28 +57,45 @@ EStateTreeRunStatus FSTTask_Enrage::EnterState(
 
 	FHellunaAITargetData& TargetData = InstanceData.TargetData;
 
-	// 현재 타겟(플레이어)이 없으면 광폭화 의미 없음 → Failed
-	if (!TargetData.TargetActor.IsValid() ||
-		TargetData.TargetType != EHellunaTargetType::Player)
+	// 광폭화 플래그 설정 — Evaluator가 더 이상 타겟을 변경하지 않음
+	TargetData.bEnraged      = true;
+	TargetData.bPlayerLocked = true;
+
+	// 타겟을 우주선으로 전환 (기존 플레이어/터렛 → 우주선)
+	TargetData.bTargetingPlayer    = false;
+	TargetData.PlayerTargetingTime = 0.f;
+	TargetData.TargetType          = EHellunaTargetType::SpaceShip;
+
+	// 우주선 Actor 찾기
+	const UWorld* World = Context.GetWorld();
+	if (World)
 	{
-#if HELLUNA_DEBUG_ENEMY
-		UE_LOG(LogTemp, Warning,
-			TEXT("[STTask_Enrage] 플레이어 타겟 없음 - 광폭화 진입 불가 (%s)"), *Enemy->GetName());
-#endif
-		return EStateTreeRunStatus::Failed;
+		static TWeakObjectPtr<AActor> CachedSpaceShip;
+		if (!CachedSpaceShip.IsValid())
+		{
+			for (TActorIterator<AActor> It(World); It; ++It)
+			{
+				if (It->ActorHasTag(FName("SpaceShip")))
+				{
+					CachedSpaceShip = *It;
+					break;
+				}
+			}
+		}
+		if (CachedSpaceShip.IsValid())
+		{
+			TargetData.TargetActor = CachedSpaceShip.Get();
+		}
 	}
 
-	// 플레이어 락온: Evaluator가 타겟을 바꾸지 않도록 잠금
-	TargetData.bPlayerLocked = true;
-	TargetData.bEnraged      = true;
+	// 포커스 해제 (우주선 방향으로 전환)
+	AIController->ClearFocus(EAIFocusPriority::Gameplay);
 
-	// 광폭화 적용 (HasAuthority 내부 검사 → 서버에서만 실제 적용)
+	// 광폭화 적용 (서버에서만 실제 적용: 이동속도 증가 + 몽타주 + VFX)
 	Enemy->EnterEnraged();
 	InstanceData.bEnrageApplied = true;
 
 	// 몽타주 완료 시 bMontageFinished 세팅 → Tick에서 Succeeded 반환
-	// 람다는 InstanceData 참조를 직접 캡처할 수 없으므로 포인터를 우회
-	// StateTree InstanceData는 Task 생존 기간 동안 안전하게 유지됨
 	FInstanceDataType* InstanceDataPtr = &InstanceData;
 	Enemy->OnEnrageMontageFinished.BindLambda([InstanceDataPtr]()
 	{
@@ -85,7 +103,7 @@ EStateTreeRunStatus FSTTask_Enrage::EnterState(
 	});
 
 #if HELLUNA_DEBUG_ENEMY
-	UE_LOG(LogTemp, Log, TEXT("[STTask_Enrage] %s 광폭화 시작"), *Enemy->GetName());
+	UE_LOG(LogTemp, Log, TEXT("[STTask_Enrage] %s 광폭화 시작 → 우주선으로 타겟 전환"), *Enemy->GetName());
 #endif
 
 	return EStateTreeRunStatus::Running;
@@ -99,16 +117,6 @@ EStateTreeRunStatus FSTTask_Enrage::Tick(
 	float DeltaTime) const
 {
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
-	const FHellunaAITargetData& TargetData = InstanceData.TargetData;
-
-	// 락온 대상 소멸 → 즉시 종료
-	if (!TargetData.TargetActor.IsValid())
-	{
-#if HELLUNA_DEBUG_ENEMY
-		UE_LOG(LogTemp, Log, TEXT("[STTask_Enrage] 락온 대상 소멸 → 종료"));
-#endif
-		return EStateTreeRunStatus::Succeeded;
-	}
 
 	// 광폭화 몽타주 완료 → EnrageLoop State로 전환
 	if (InstanceData.bMontageFinished)
@@ -123,7 +131,7 @@ EStateTreeRunStatus FSTTask_Enrage::Tick(
 }
 
 // ============================================================================
-// ExitState — 플래그 정리 + 델리게이트 언바인딩
+// ExitState — 델리게이트 정리 (광폭화 플래그는 유지 — 영구 광폭화)
 // ============================================================================
 void FSTTask_Enrage::ExitState(
 	FStateTreeExecutionContext& Context,
@@ -146,12 +154,8 @@ void FSTTask_Enrage::ExitState(
 		}
 	}
 
-	FHellunaAITargetData& TargetData = InstanceData.TargetData;
-
-	// 락온/광폭화 플래그 해제 (광폭화 스탯은 영구 유지)
-	TargetData.bPlayerLocked       = false;
-	TargetData.bEnraged            = false;
-	TargetData.bTargetingPlayer    = false;
-	TargetData.TargetActor         = nullptr;
-	TargetData.PlayerTargetingTime = 0.f;
+	// 광폭화 플래그는 해제하지 않음 — 영구 광폭화
+	// bEnraged = true, bPlayerLocked = true 유지
+	// EnrageLoop State에서 SpaceShip Evaluator의 데이터를 바인딩하므로
+	// 우주선을 향한 돌진+공격이 자동으로 이어진다.
 }

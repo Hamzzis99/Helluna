@@ -1,11 +1,11 @@
 #include "AI/StateTree/Conditions/STCondition_InAttackZone.h"
 
 #include "AIController.h"
-#include "CollisionQueryParams.h"
+#include "AI/HellunaAIAttackZone.h"
 #include "Components/PrimitiveComponent.h"
 #include "DrawDebugHelpers.h"
-#include "Engine/OverlapResult.h"
 #include "GameFramework/Pawn.h"
+#include "HAL/IConsoleManager.h"
 #include "StateTreeExecutionContext.h"
 
 bool FSTCondition_InAttackZone::TestCondition(FStateTreeExecutionContext& Context) const
@@ -47,76 +47,33 @@ bool FSTCondition_InAttackZone::TestCondition(FStateTreeExecutionContext& Contex
 	const FVector Forward = PawnRot.GetForwardVector();
 	const FVector BoxCenter = PawnLoc + Forward * ForwardOffset;
 
-	const FCollisionShape BoxShape = FCollisionShape::MakeBox(AttackZoneHalfExtent);
+	// [ZoneCheckV1][LCv12] 공용 헬퍼로 통일 — Chase/Evaluator와 동일 로직 공유.
+	const bool bOverlapping = HellunaAI::IsTargetInAttackZone(Pawn, TargetActor, AttackZoneHalfExtent, ForwardOffset);
 
-	FCollisionQueryParams QueryParams;
-	QueryParams.AddIgnoredActor(Pawn);
-
-	TArray<FOverlapResult> Overlaps;
-	World->OverlapMultiByObjectType(
-		Overlaps,
-		BoxCenter,
-		PawnRot,
-		FCollisionObjectQueryParams::AllObjects,
-		BoxShape,
-		QueryParams);
-
-	bool bOverlapping = false;
-	bool bFoundTargetButWrongChannel = false;
-	for (const FOverlapResult& Result : Overlaps)
-	{
-		if (Result.GetActor() != TargetActor)
-		{
-			continue;
-		}
-
-		const UPrimitiveComponent* Component = Result.GetComponent();
-		if (!Component)
-		{
-			continue;
-		}
-
-		const bool bBlocksPawn = (Component->GetCollisionResponseToChannel(ECC_Pawn) == ECR_Block);
-		const bool bBlocksStatic = (Component->GetCollisionResponseToChannel(ECC_WorldStatic) == ECR_Block);
-		const bool bBlocksDynamic = (Component->GetCollisionResponseToChannel(ECC_WorldDynamic) == ECR_Block);
-		if (bBlocksPawn && bBlocksStatic && bBlocksDynamic)
-		{
-			bOverlapping = true;
-			break;
-		}
-		else
-		{
-			bFoundTargetButWrongChannel = true;
-		}
-	}
-
-	// 주기적 디버그 로그 (1초마다, 대표 몬스터 1마리만)
+	// 주기적 디버그 로그 (1초마다)
 	{
 		static double LastLogTime = 0.0;
 		const double Now = FPlatformTime::Seconds();
 		if (Now - LastLogTime >= 1.0)
 		{
 			LastLogTime = Now;
-			const float DistToTarget = FVector::Dist(PawnLoc, TargetActor->GetActorLocation());
 			const float DistToTarget2D = FVector::Dist2D(PawnLoc, TargetActor->GetActorLocation());
 			UE_LOG(LogTemp, Warning,
-				TEXT("[enemybugreport][AttackZoneCheck] Monster=%s Target=%s Overlap=%d WrongChannel=%d TotalOverlaps=%d BoxCenter=%s HalfExt=%s FwdOffset=%.1f Dist=%.1f Dist2D=%.1f FwdDir=%s"),
+				TEXT("[ZoneCheckV1][LCv12][Condition] Monster=%s Target=%s Overlap=%d Dist2D=%.1f BoxCenter=%s HalfExt=%s FwdOffset=%.1f"),
 				*Pawn->GetName(), *TargetActor->GetName(),
-				(int32)bOverlapping, (int32)bFoundTargetButWrongChannel,
-				Overlaps.Num(), *BoxCenter.ToString(),
-				*AttackZoneHalfExtent.ToString(), ForwardOffset,
-				DistToTarget, DistToTarget2D,
-				*Forward.ToString());
+				(int32)bOverlapping, DistToTarget2D,
+				*BoxCenter.ToString(), *AttackZoneHalfExtent.ToString(), ForwardOffset);
 		}
 	}
 
 #if ENABLE_DRAW_DEBUG
 	{
-		static IConsoleVariable* CVarDebug = IConsoleManager::Get().RegisterConsoleVariable(
-			TEXT("ai.debug.attackzone"),
-			0,
-			TEXT("1 = Draw AttackZone debug boxes"),
-			ECVF_Cheat);
+		// CVar는 UHellunaAIDebugSettings(Project Settings > Helluna > AI Debug)에서 등록·관리.
+		static IConsoleVariable* CVarDebug = IConsoleManager::Get().FindConsoleVariable(TEXT("ai.debug.attackzone"));
+		if (!CVarDebug)
+		{
+			CVarDebug = IConsoleManager::Get().FindConsoleVariable(TEXT("ai.debug.attackzone"));
+		}
 		if (CVarDebug && CVarDebug->GetInt() > 0)
 		{
 			const FColor ZoneColor = bOverlapping ? FColor::Green : FColor::Red;
@@ -131,6 +88,14 @@ bool FSTCondition_InAttackZone::TestCondition(FStateTreeExecutionContext& Contex
 				0.f,
 				0,
 				1.5f);
+
+			// 타겟 주위에도 박스 표시 — 어떤 컴포넌트가 차단/비차단인지 시각화
+			if (const UPrimitiveComponent* TargetRoot = Cast<UPrimitiveComponent>(TargetActor->GetRootComponent()))
+			{
+				const FBox TargetBounds = TargetRoot->Bounds.GetBox();
+				DrawDebugBox(World, TargetBounds.GetCenter(), TargetBounds.GetExtent(),
+					FColor::Cyan, false, 0.f, 0, 1.f);
+			}
 		}
 	}
 #endif

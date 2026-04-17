@@ -1,20 +1,20 @@
 /**
  * STTask_ChaseTarget.h
  *
- * StateTree Task: 2-Phase Chase (RUSH + SPREAD)
+ * StateTree Task: Ship Chase (RUSH + DIRECT) / Player / Turret
  *
  * [Phase 1: RUSH]
- *   Each monster gets a unique angle (0, 60, 120...).
- *   Rush goal = point at assigned angle, SpreadPhaseRadius away from ship.
- *   Forces each monster to take a different NavMesh path.
+ *   각 몬스터가 서로 다른 각도(0, 60, 120...)를 할당받아 링 포인트로 이동.
+ *   여러 몬스터가 다른 NavMesh 경로를 타게 만들어 경로 혼잡 방지.
  *
- * [Phase 2: SPREAD]
- *   Move to assigned angle position at StandoffRadius from ship.
- *   On arrival, face ship and hold (Running, attack state handles transition).
+ * [Phase 2: DIRECT APPROACH]
+ *   SpreadPhaseRadius 이내로 들어오면 MoveToActor(Ship) 직선 추격.
+ *   도착 판정은 하지 않음 — Chase→Attack transition의
+ *   InAttackZone Condition이 공격 돌입을 담당.
  *
  * [Stuck -> Direct Move]
- *   After N consecutive stucks, disable pathfinding and walk directly
- *   toward the spread goal. CMC Walking mode still handles ground/collision.
+ *   N회 연속 끼이면 길찾기를 끄고 우주선 방향으로 AddMovementInput.
+ *   CMC Walking 모드가 지면/충돌 처리.
  *
  * [Player]
  *   MoveToActor with RepathInterval. Optional EQS.
@@ -77,15 +77,21 @@ struct FSTTask_ChaseTargetInstanceData
 	UPROPERTY()
 	int32 ConsecutiveStuckCount = 0;
 
-	UPROPERTY()
-	bool bSpreadArrived = false;
-
 	/** pathfinding OFF direct movement mode */
 	UPROPERTY()
 	bool bDirectMoveMode = false;
 
 	UPROPERTY()
 	float DiagTimer = 0.f;
+
+	// [ChaseSimpV1][LCv14] 링 반경 도달 후 정지 + 주시 상태 플래그.
+	UPROPERTY()
+	bool bSpreadArrived = false;
+
+	// [ChaseSimpV1][LCv14] DirectMode 사이드스텝 고정 방향.
+	// 0=미정, +1=오른쪽(시계), -1=왼쪽(반시계). 한 번 정해지면 Spread 도착 전까지 유지.
+	UPROPERTY()
+	int8 SidestepSign = 0;
 
 	// --- Player chase ---
 
@@ -124,6 +130,9 @@ protected:
 	EStateTreeRunStatus TickPlayerChase(FInstanceDataType& Data,
 		AAIController* AIC, APawn* Pawn, AActor* Target, float DeltaTime) const;
 
+	EStateTreeRunStatus TickTurretChase(FInstanceDataType& Data,
+		AAIController* AIC, APawn* Pawn, AActor* Turret, float DeltaTime) const;
+
 public:
 
 	// ==========================================================
@@ -143,28 +152,38 @@ public:
 	// ==========================================================
 
 	UPROPERTY(EditAnywhere, Category = "우주선",
-		meta = (DisplayName = "산개 전환 거리",
-			ToolTip = "돌진 -> 산개 페이즈 전환 거리 (cm).\n대기 반경보다 커야 합니다.",
+		meta = (DisplayName = "돌진→산개 전환 거리",
+			ToolTip = "돌진(먼 링) -> 산개(가까운 링) 페이즈 전환 거리 (cm).\n돌진 페이즈는 먼 거리에서 각도별로 경로를 분산시키는 역할.",
 			ClampMin = "100.0"))
 	float SpreadPhaseRadius = 1200.f;
 
 	UPROPERTY(EditAnywhere, Category = "우주선",
-		meta = (DisplayName = "대기 반경",
-			ToolTip = "우주선 중심에서 몬스터가 멈춰서 공격하는 거리 (cm).",
+		meta = (DisplayName = "산개 접근 반경 (링 반경)",
+			ToolTip = "몬스터가 각도별로 에워싸는 링의 반경 (cm).\n이 반경에 도달하면 정지 + 우주선 주시 → 자연스러운 에워싸기.\n값이 작을수록 더 가까이 붙음.",
 			ClampMin = "50.0"))
-	float StandoffRadius = 350.f;
+	float SpreadApproachRadius = 350.f;
 
 	UPROPERTY(EditAnywhere, Category = "우주선",
 		meta = (DisplayName = "돌진 웨이포인트 간격",
-			ToolTip = "돌진 페이즈에서 한 웨이포인트당 최대 이동 거리 (cm).",
+			ToolTip = "돌진 페이즈에서 한 웨이포인트당 최대 이동 거리 (cm).\n각 몬스터가 서로 다른 각도의 링 포인트로 향하게 해 경로 분산.",
 			ClampMin = "100.0"))
 	float RushWaypointStep = 800.f;
 
+	// [ChaseSimpV1][LCv14] 미사용 — 자산 직렬화 호환성 유지용 (실제 링 반경은 SpreadApproachRadius).
+	UPROPERTY()
+	float StandoffRadius = 350.f;
+
 	UPROPERTY(EditAnywhere, Category = "우주선",
-		meta = (DisplayName = "재추격 여유 거리",
-			ToolTip = "도착 후 우주선이 대기 반경 + 이 값 이상 멀어지면 다시 추격 (cm).",
-			ClampMin = "50.0"))
+		meta = (DisplayName = "재추격 마진",
+			ToolTip = "에워싸기 도착 후 우주선이 이만큼 움직이면 다시 추격 시작 (cm).\n우주선 드리프트에 대응해 링을 유지.",
+			ClampMin = "10.0"))
 	float SpreadReEngageMargin = 300.f;
+
+	UPROPERTY(EditAnywhere, Category = "우주선",
+		meta = (DisplayName = "직선이동 도착 강제 거리",
+			ToolTip = "직선이동 모드에서 링 반경에 이 거리 이내로 접근하면 도착 처리 (cm).\n경로찾기 실패 상태에서도 에워싸기가 성립하게 함.",
+			ClampMin = "10.0"))
+	float DirectModeForceArriveThreshold = 150.f;
 
 	// ==========================================================
 
@@ -193,12 +212,6 @@ public:
 	int32 DirectMoveStuckThreshold = 2;
 
 	UPROPERTY(EditAnywhere, Category = "끼임 감지",
-		meta = (DisplayName = "강제 도착 전환 횟수",
-			ToolTip = "직선이동 모드에서 이 횟수만큼 끼이면 강제 도착 처리.\n우주선 근처 충돌체에 막혔을 때 사용.",
-			ClampMin = "3"))
-	int32 DirectModeForceArriveThreshold = 8;
-
-	UPROPERTY(EditAnywhere, Category = "끼임 감지",
 		meta = (DisplayName = "경로실패 시 즉시 직선이동",
 			ToolTip = "ON: MoveTo 경로 실패 시 즉시 직선이동 전환.\nOFF: 끼임 감지만으로 전환."))
 	bool bInstantDirectModeOnPathFail = false;
@@ -210,6 +223,14 @@ public:
 			ToolTip = "플레이어 추격 중 이 횟수만큼 연속 끼이면 직선이동으로 전환.",
 			ClampMin = "2"))
 	int32 PlayerDirectMoveThreshold = 4;
+
+	// ==========================================================
+
+	UPROPERTY(EditAnywhere, Category = "터렛",
+		meta = (DisplayName = "터렛 대기 반경",
+			ToolTip = "터렛 중심에서 몬스터가 산개하여 멈추는 거리 (cm).\n터렛을 에워싸는 반경입니다.",
+			ClampMin = "50.0"))
+	float TurretStandoffRadius = 150.f;
 
 	// ==========================================================
 

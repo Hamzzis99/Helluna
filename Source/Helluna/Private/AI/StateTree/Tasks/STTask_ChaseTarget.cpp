@@ -1,12 +1,14 @@
 /**
  * STTask_ChaseTarget.cpp
  *
- * 2-Phase Ship Chase + Player Chase
+ * [ChaseSimpV1][LCv14] Natural Surround + Detour
  *
  * Rush:   Aim for ring point at assigned angle -> different NavMesh paths
- * Spread: Move to standoff position at assigned angle near ship
+ * Spread: Move to standoff ring at assigned angle. On arrival -> Stop + Face ship.
+ *         새 몬스터가 오면 다른 각도 → 자연스러운 에워싸기.
+ *         우주선이 SpreadReEngageMargin 이상 움직이면 재추격.
  * Stuck:  Rotate angle. After N consecutive stucks, disable pathfinding
- *         and walk directly (CMC Walking handles ground/collision).
+ *         and use AddMovementInput with perpendicular sidestep (우회).
  *
  * @author
  */
@@ -25,6 +27,9 @@
 #include "GameFramework/Pawn.h"
 
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
+#include "Object/ResourceUsingObject/ResourceUsingObject_AttackTurret.h"
+#include "Object/ResourceUsingObject/HellunaTurretBase.h"
+#include "AI/TurretAggroTracker.h"
 
 static int32 GAngleCounter = 0;
 
@@ -97,13 +102,19 @@ FVector ComputeRushGoal(
 	return ProjectToNav(World, Goal, FVector(400.f, 400.f, 800.f));
 }
 
+/**
+ * Spread goal: angle position at ApproachRadius from ship.
+ * 각 몬스터가 서로 다른 각도로 접근해 한 점에 몰리지 않게 함.
+ * 도착 판정은 하지 않음 — 목표점이 콜리전 안이어도 OK.
+ * AttackZone Condition이 공격 돌입을 담당.
+ */
 FVector ComputeSpreadGoal(
 	const FVector& ShipLoc,
 	float AssignedAngleDeg,
-	float StandoffRadius,
+	float ApproachRadius,
 	UWorld* World)
 {
-	const FVector RawGoal = AngleToWorldPos(ShipLoc, AssignedAngleDeg, StandoffRadius);
+	const FVector RawGoal = AngleToWorldPos(ShipLoc, AssignedAngleDeg, ApproachRadius);
 	return ProjectToNav(World, RawGoal, FVector(500.f, 500.f, 1000.f));
 }
 
@@ -201,14 +212,17 @@ EStateTreeRunStatus FSTTask_ChaseTarget::EnterState(
 
 	AActor* Target = TD.TargetActor.Get();
 	const bool bIsShip = (Cast<AResourceUsingObject_SpaceShip>(Target) != nullptr);
+	// 공격/회복 포탑 모두 동일한 터렛 추격 분기로 — 공통 부모 AHellunaTurretBase 기준.
+	const bool bIsTurret = (Cast<AHellunaTurretBase>(Target) != nullptr);
 
 	// Reset
 	Data.TimeSinceRepath = 0.f;
 	Data.TimeUntilNextEQS = 0.f;
 	Data.StuckCheckTimer = 0.f;
 	Data.ConsecutiveStuckCount = 0;
-	Data.bSpreadArrived = false;
 	Data.bDirectMoveMode = false;
+	Data.bSpreadArrived = false;
+	Data.SidestepSign = 0;
 	Data.DiagTimer = 0.f;
 	Data.LastCheckedLocation = Pawn->GetActorLocation();
 	Data.PlayerStuckCount = 0;
@@ -233,18 +247,30 @@ EStateTreeRunStatus FSTTask_ChaseTarget::EnterState(
 		}
 		else
 		{
+			// [ChaseSimpV1][LCv14] Spread: 각도별 링 포인트로 접근 → 도착 시 정지 + 타겟 주시
 			Data.Phase = EChasePhase::Spread;
 			const FVector Goal = ChaseHelpers::ComputeSpreadGoal(
-				Target->GetActorLocation(), Data.AssignedAngleDeg, StandoffRadius,
+				Target->GetActorLocation(), Data.AssignedAngleDeg, SpreadApproachRadius,
 				Pawn->GetWorld());
 			ChaseHelpers::IssueMoveToLocation(AIC, Goal, AcceptanceRadius);
 		}
 
 		UE_LOG(LogTemp, Warning,
-			TEXT("[enemybugreport][Chase] Enter: Enemy=%s Angle=%.0f Phase=%s Dist2D=%.1f"),
+			TEXT("[ChaseSimpV1][LCv14] Enter: Enemy=%s Angle=%.0f Phase=%s Dist2D=%.1f"),
 			*GetNameSafe(Pawn), Data.AssignedAngleDeg,
 			Data.Phase == EChasePhase::Rush ? TEXT("Rush") : TEXT("Spread"),
 			DistToShip2D);
+	}
+	else if (bIsTurret)
+	{
+		// 터렛 산개: TurretAggroTracker에서 할당된 각도로 접근
+		const float Angle = FTurretAggroTracker::GetAssignedAngle(Target, Pawn);
+		Data.AssignedAngleDeg = (Angle >= 0.f) ? Angle : FMath::FRandRange(0.f, 360.f);
+
+		const FVector TurretLoc = Target->GetActorLocation();
+		const FVector SpreadGoal = ChaseHelpers::AngleToWorldPos(TurretLoc, Data.AssignedAngleDeg, TurretStandoffRadius);
+		const FVector NavGoal = ChaseHelpers::ProjectToNav(Pawn->GetWorld(), SpreadGoal);
+		ChaseHelpers::IssueMoveToLocation(AIC, NavGoal, AcceptanceRadius);
 	}
 	else
 	{
@@ -294,9 +320,13 @@ EStateTreeRunStatus FSTTask_ChaseTarget::Tick(
 	Data.TimeUntilNextEQS -= DeltaTime;
 
 	const bool bIsShip = (Cast<AResourceUsingObject_SpaceShip>(Target) != nullptr);
+	// 공격/회복 포탑 모두 동일한 터렛 추격 분기로 — 공통 부모 AHellunaTurretBase 기준.
+	const bool bIsTurret = (Cast<AHellunaTurretBase>(Target) != nullptr);
 
 	if (bIsShip)
 		return TickShipChase(Context, Data, AIC, Pawn, Target, DeltaTime);
+	else if (bIsTurret)
+		return TickTurretChase(Data, AIC, Pawn, Target, DeltaTime);
 	else
 		return TickPlayerChase(Data, AIC, Pawn, Target, DeltaTime);
 }
@@ -332,7 +362,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickShipChase(
 		}
 
 		UE_LOG(LogTemp, Warning,
-			TEXT("[enemybugreport][Chase] Tick: Enemy=%s Phase=%s Angle=%.0f Dist2D=%.1f Vel=%.1f StuckCnt=%d Direct=%d Arrived=%d PFC=%s"),
+			TEXT("[ChaseSimpV1][LCv14] Tick: Enemy=%s Phase=%s Angle=%.0f Dist2D=%.1f Vel=%.1f StuckCnt=%d Direct=%d Arrived=%d PFC=%s"),
 			*GetNameSafe(Pawn),
 			Data.Phase == EChasePhase::Rush ? TEXT("Rush") : TEXT("Spread"),
 			Data.AssignedAngleDeg, DistToShip2D,
@@ -343,32 +373,6 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickShipChase(
 			*PFCStatus);
 	}
 
-	// --- Already arrived ---
-	if (Data.bSpreadArrived)
-	{
-		// Ship이 멀어지면 다시 추격
-		if (DistToShip2D > StandoffRadius + SpreadReEngageMargin)
-		{
-			Data.bSpreadArrived = false;
-			Data.bDirectMoveMode = false;
-			Data.ConsecutiveStuckCount = 0;
-			Data.StuckCheckTimer = 0.f;
-			Data.LastCheckedLocation = PawnLoc;
-			Data.Phase = EChasePhase::Spread;
-
-			const FVector Goal = ChaseHelpers::ComputeSpreadGoal(ShipLoc, Data.AssignedAngleDeg, StandoffRadius, Pawn->GetWorld());
-			ChaseHelpers::IssueMoveToLocation(AIC, Goal, AcceptanceRadius);
-
-			UE_LOG(LogTemp, Warning,
-				TEXT("[enemybugreport][Chase] ReEngage: Enemy=%s DistShip=%.1f > %.1f"),
-				*GetNameSafe(Pawn), DistToShip2D, StandoffRadius + SpreadReEngageMargin);
-			return EStateTreeRunStatus::Running;
-		}
-
-		ChaseHelpers::FaceTarget(Pawn, Ship, DeltaTime, 15.f);
-		return EStateTreeRunStatus::Running;
-	}
-
 	// --- Phase transition: Rush -> Spread ---
 	if (Data.Phase == EChasePhase::Rush && DistToShip2D <= SpreadPhaseRadius)
 	{
@@ -376,18 +380,63 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickShipChase(
 		Data.ConsecutiveStuckCount = 0;
 		Data.StuckCheckTimer = 0.f;
 		Data.LastCheckedLocation = PawnLoc;
-		// Keep bDirectMoveMode if already set
+		Data.bSpreadArrived = false;
 
 		if (!Data.bDirectMoveMode)
 		{
-			const FVector Goal = ChaseHelpers::ComputeSpreadGoal(ShipLoc, Data.AssignedAngleDeg, StandoffRadius, Pawn->GetWorld());
+			const FVector Goal = ChaseHelpers::ComputeSpreadGoal(ShipLoc, Data.AssignedAngleDeg, SpreadApproachRadius, Pawn->GetWorld());
 			ChaseHelpers::IssueMoveToLocation(AIC, Goal, AcceptanceRadius);
 		}
-		// DirectMode: AddMovementInput handles movement in tick, no MoveTo needed
 
 		UE_LOG(LogTemp, Warning,
-			TEXT("[enemybugreport][Chase] Rush->Spread: Enemy=%s Angle=%.0f Direct=%d Dist2D=%.1f"),
+			TEXT("[ChaseSimpV1][LCv14] Rush->Spread: Enemy=%s Angle=%.0f Direct=%d Dist2D=%.1f"),
 			*GetNameSafe(Pawn), Data.AssignedAngleDeg, (int)Data.bDirectMoveMode, DistToShip2D);
+		return EStateTreeRunStatus::Running;
+	}
+
+	// --- Spread 도착 판정: 링 포인트에 도달하면 정지 + 타겟 주시 (자연스러운 에워싸기) ---
+	if (Data.Phase == EChasePhase::Spread && !Data.bSpreadArrived)
+	{
+		const bool bAtStandoff = (DistToShip2D <= SpreadApproachRadius + AcceptanceRadius);
+		if (bAtStandoff)
+		{
+			Data.bSpreadArrived = true;
+			Data.bDirectMoveMode = false;
+			Data.ConsecutiveStuckCount = 0;
+			Data.SidestepSign = 0;
+			ChaseHelpers::HandleArrival(AIC, Pawn, Ship);
+
+			UE_LOG(LogTemp, Warning,
+				TEXT("[ChaseSimpV1][LCv14] SpreadArrive: Enemy=%s Angle=%.0f Dist2D=%.1f"),
+				*GetNameSafe(Pawn), Data.AssignedAngleDeg, DistToShip2D);
+			return EStateTreeRunStatus::Running;
+		}
+	}
+
+	// --- Spread 도착 상태 유지: 우주선 드리프트 시 재추격 ---
+	if (Data.Phase == EChasePhase::Spread && Data.bSpreadArrived)
+	{
+		const bool bShipDrifted = (DistToShip2D > SpreadApproachRadius + SpreadReEngageMargin);
+		if (bShipDrifted)
+		{
+			Data.bSpreadArrived = false;
+			Data.SidestepSign = 0;
+			if (AIC->GetFocusActor()) AIC->ClearFocus(EAIFocusPriority::Gameplay);
+			Data.StuckCheckTimer = 0.f;
+			Data.ConsecutiveStuckCount = 0;
+			Data.LastCheckedLocation = PawnLoc;
+
+			const FVector Goal = ChaseHelpers::ComputeSpreadGoal(ShipLoc, Data.AssignedAngleDeg, SpreadApproachRadius, Pawn->GetWorld());
+			ChaseHelpers::IssueMoveToLocation(AIC, Goal, AcceptanceRadius);
+
+			UE_LOG(LogTemp, Warning,
+				TEXT("[ChaseSimpV1][LCv14] ReEngage: Enemy=%s Dist2D=%.1f Margin=%.1f"),
+				*GetNameSafe(Pawn), DistToShip2D, SpreadReEngageMargin);
+			return EStateTreeRunStatus::Running;
+		}
+
+		// 도착 상태: 우주선 주시만. StopMovement는 HandleArrival에서 이미 수행.
+		ChaseHelpers::FaceTarget(Pawn, Ship, DeltaTime, 10.f);
 		return EStateTreeRunStatus::Running;
 	}
 
@@ -407,27 +456,15 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickShipChase(
 			{
 				Data.bDirectMoveMode = true;
 				UE_LOG(LogTemp, Warning,
-					TEXT("[enemybugreport][Chase] DirectMode ON: Enemy=%s StuckCnt=%d Dist2D=%.1f"),
+					TEXT("[ChaseSimpV1][LCv14] DirectMode ON: Enemy=%s StuckCnt=%d Dist2D=%.1f"),
 					*GetNameSafe(Pawn), Data.ConsecutiveStuckCount, DistToShip2D);
 			}
 
-			// DirectMode force arrive: collision barrier blocks all directions
-			if (Data.bDirectMoveMode && Data.ConsecutiveStuckCount >= DirectModeForceArriveThreshold)
-			{
-				Data.bSpreadArrived = true;
-				ChaseHelpers::HandleArrival(AIC, Pawn, Ship);
-
-				UE_LOG(LogTemp, Warning,
-					TEXT("[enemybugreport][Chase] ForceArrive (DirectMode stuck): Enemy=%s StuckCnt=%d Dist2D=%.1f"),
-					*GetNameSafe(Pawn), Data.ConsecutiveStuckCount, DistToShip2D);
-				return EStateTreeRunStatus::Running;
-			}
-
-			// Rotate angle
+			// 각도 회전으로 다른 NavMesh 경로 유도
 			Data.AssignedAngleDeg = FMath::Fmod(Data.AssignedAngleDeg + AngleRotationOnStuck, 360.f);
 
 			UE_LOG(LogTemp, Warning,
-				TEXT("[enemybugreport][Chase] STUCK: Enemy=%s Moved=%.1f NewAngle=%.0f StuckCnt=%d Direct=%d Phase=%s Dist2D=%.1f"),
+				TEXT("[ChaseSimpV1][LCv14] STUCK: Enemy=%s Moved=%.1f NewAngle=%.0f StuckCnt=%d Direct=%d Phase=%s Dist2D=%.1f"),
 				*GetNameSafe(Pawn), Moved, Data.AssignedAngleDeg,
 				Data.ConsecutiveStuckCount, (int)Data.bDirectMoveMode,
 				Data.Phase == EChasePhase::Rush ? TEXT("Rush") : TEXT("Spread"),
@@ -436,7 +473,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickShipChase(
 			// Reissue movement (DirectMode uses AddMovementInput in tick, no MoveTo needed)
 			if (Data.bDirectMoveMode)
 			{
-				// Direction changes automatically via angle rotation; AddMovementInput handles it next tick
+				// Direction handled by AddMovementInput toward ShipLoc next tick
 			}
 			else if (Data.Phase == EChasePhase::Rush)
 			{
@@ -446,7 +483,7 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickShipChase(
 			}
 			else
 			{
-				const FVector Goal = ChaseHelpers::ComputeSpreadGoal(ShipLoc, Data.AssignedAngleDeg, StandoffRadius, Pawn->GetWorld());
+				const FVector Goal = ChaseHelpers::ComputeSpreadGoal(ShipLoc, Data.AssignedAngleDeg, SpreadApproachRadius, Pawn->GetWorld());
 				ChaseHelpers::IssueMoveToLocation(AIC, Goal, AcceptanceRadius);
 			}
 		}
@@ -462,6 +499,8 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickShipChase(
 	}
 
 	// --- Direct move mode: AddMovementInput every tick (bypasses PathFollowing) ---
+	// [ChaseSimpV1][LCv14] 각도 기반 링 포인트로 밀어붙이되, 끼이면 수직 사이드스텝으로 우회.
+	// 충분히 가까우면 직접 도착 처리 → 자연스러운 에워싸기.
 	if (Data.bDirectMoveMode)
 	{
 		// Stop pathfollowing once on first DirectMode tick
@@ -471,41 +510,48 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickShipChase(
 				AIC->StopMovement();
 		}
 
-		// Target = standoff position at assigned angle
-		const FVector SpreadTarget = ChaseHelpers::AngleToWorldPos(ShipLoc, Data.AssignedAngleDeg, StandoffRadius);
-		const float DistToTarget2D = FVector::Dist2D(PawnLoc, SpreadTarget);
-
-		// Arrival check (generous: AcceptanceRadius + 100)
-		if (DistToTarget2D <= AcceptanceRadius + 100.f)
+		// DirectMode에서도 링 반경 근처 도달 시 강제 도착 → 길찾기 끊긴 채로도 에워싸기 성립
+		if (DistToShip2D <= SpreadApproachRadius + DirectModeForceArriveThreshold)
 		{
 			Data.bSpreadArrived = true;
+			Data.bDirectMoveMode = false;
+			Data.ConsecutiveStuckCount = 0;
+			Data.SidestepSign = 0;
 			ChaseHelpers::HandleArrival(AIC, Pawn, Ship);
 
 			UE_LOG(LogTemp, Warning,
-				TEXT("[enemybugreport][Chase] DirectArrive: Enemy=%s Angle=%.0f DistTarget=%.1f DistShip=%.1f"),
-				*GetNameSafe(Pawn), Data.AssignedAngleDeg, DistToTarget2D, DistToShip2D);
+				TEXT("[ChaseSimpV1][LCv14] DirectArrive: Enemy=%s Angle=%.0f Dist2D=%.1f"),
+				*GetNameSafe(Pawn), Data.AssignedAngleDeg, DistToShip2D);
 			return EStateTreeRunStatus::Running;
 		}
 
-		// Walk directly toward spread target via AddMovementInput
-		const FVector ToTarget2D = (SpreadTarget - PawnLoc).GetSafeNormal2D();
-		if (!ToTarget2D.IsNearlyZero())
+		// Target = angle-based approach point (각도 분산 유지)
+		const FVector ApproachPoint = ChaseHelpers::AngleToWorldPos(ShipLoc, Data.AssignedAngleDeg, SpreadApproachRadius);
+		const FVector ToApproach2D = (ApproachPoint - PawnLoc).GetSafeNormal2D();
+		if (!ToApproach2D.IsNearlyZero())
 		{
-			FVector MoveDir = ToTarget2D;
+			FVector MoveDir = ToApproach2D;
 
-			// When stuck in DirectMode, add perpendicular sidestep to escape collision
+			// 끼임이 계속되면 수직 방향 혼합 → 한 방향 고정 우회 (한 번 정해지면 유지)
 			if (Data.ConsecutiveStuckCount >= DirectMoveStuckThreshold + 1)
 			{
-				const float SideSign = (Data.ConsecutiveStuckCount % 2 == 0) ? 1.f : -1.f;
-				const FVector Side(-ToTarget2D.Y * SideSign, ToTarget2D.X * SideSign, 0.f);
-				MoveDir = (ToTarget2D * 0.6f + Side * 0.4f).GetSafeNormal2D();
+				if (Data.SidestepSign == 0)
+				{
+					Data.SidestepSign = FMath::RandBool() ? 1 : -1;
+					UE_LOG(LogTemp, Warning,
+						TEXT("[ChaseSimpV1][LCv14] Sidestep COMMIT: Enemy=%s Sign=%d"),
+						*GetNameSafe(Pawn), (int)Data.SidestepSign);
+				}
+				const float SideSign = (float)Data.SidestepSign;
+				const FVector Side(-ToApproach2D.Y * SideSign, ToApproach2D.X * SideSign, 0.f);
+				MoveDir = (ToApproach2D * 0.6f + Side * 0.4f).GetSafeNormal2D();
 			}
 
 			Pawn->AddMovementInput(MoveDir, 1.0f);
 
 			// Face movement direction while walking
 			const FRotator CurrentRot = Pawn->GetActorRotation();
-			const FRotator MoveRot(0.f, ToTarget2D.Rotation().Yaw, 0.f);
+			const FRotator MoveRot(0.f, ToApproach2D.Rotation().Yaw, 0.f);
 			const FRotator NewRot = FMath::RInterpTo(CurrentRot, MoveRot, DeltaTime, 8.f);
 			Pawn->SetActorRotation(NewRot);
 			if (AController* C = Pawn->GetController())
@@ -551,21 +597,9 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickShipChase(
 				C->SetControlRotation(NewRot);
 		}
 	}
-	else // Spread (with pathfinding)
+	else // Spread: 각도 기반 접근, 도착 판정은 InAttackZone Condition이 담당
 	{
-		const FVector SpreadGoal = ChaseHelpers::ComputeSpreadGoal(ShipLoc, Data.AssignedAngleDeg, StandoffRadius, Pawn->GetWorld());
-		const float DistToGoal2D = FVector::Dist2D(PawnLoc, SpreadGoal);
-
-		if (DistToGoal2D <= AcceptanceRadius + 50.f)
-		{
-			Data.bSpreadArrived = true;
-			ChaseHelpers::HandleArrival(AIC, Pawn, Ship);
-
-			UE_LOG(LogTemp, Warning,
-				TEXT("[enemybugreport][Chase] SpreadArrive: Enemy=%s Angle=%.0f DistGoal=%.1f DistShip=%.1f"),
-				*GetNameSafe(Pawn), Data.AssignedAngleDeg, DistToGoal2D, DistToShip2D);
-			return EStateTreeRunStatus::Running;
-		}
+		const FVector SpreadGoal = ChaseHelpers::ComputeSpreadGoal(ShipLoc, Data.AssignedAngleDeg, SpreadApproachRadius, Pawn->GetWorld());
 
 		const bool bRepathDue = Data.TimeSinceRepath >= RepathInterval;
 		bool bIdle = false;
@@ -581,13 +615,13 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickShipChase(
 			{
 				Data.bDirectMoveMode = true;
 				UE_LOG(LogTemp, Warning,
-					TEXT("[enemybugreport][Chase] DirectMode ON (PathFail): Enemy=%s Phase=Spread Dist2D=%.1f"),
+					TEXT("[ChaseSimpV1][LCv14] DirectMode ON (PathFail): Enemy=%s Phase=Spread Dist2D=%.1f"),
 					*GetNameSafe(Pawn), DistToShip2D);
 			}
 			Data.TimeSinceRepath = 0.f;
 		}
 
-		// Spread: 이동 중에는 이동 방향을 바라봄 (도착 후에만 Ship을 바라봄)
+		// 이동 방향 주시 (멈춰있을 때는 우주선 주시 — AttackZone 정면 박스 정확도↑)
 		const FVector Vel2D = Pawn->GetVelocity().GetSafeNormal2D();
 		if (!Vel2D.IsNearlyZero())
 		{
@@ -597,6 +631,10 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickShipChase(
 			Pawn->SetActorRotation(NewRot);
 			if (AController* C = Pawn->GetController())
 				C->SetControlRotation(NewRot);
+		}
+		else
+		{
+			ChaseHelpers::FaceTarget(Pawn, Ship, DeltaTime, 10.f);
 		}
 	}
 
@@ -692,6 +730,164 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickPlayerChase(
 	else
 	{
 		ChaseHelpers::FaceTarget(Pawn, Target, DeltaTime, 5.f);
+	}
+
+	return EStateTreeRunStatus::Running;
+}
+
+// ============================================================================
+// TickTurretChase — 터렛을 에워싸며 접근 (Ship과 동일한 ring arrival 패턴)
+// ============================================================================
+EStateTreeRunStatus FSTTask_ChaseTarget::TickTurretChase(
+	FInstanceDataType& Data, AAIController* AIC, APawn* Pawn,
+	AActor* Turret, float DeltaTime) const
+{
+	const FVector PawnLoc = Pawn->GetActorLocation();
+	const FVector TurretLoc = Turret->GetActorLocation();
+	const float DistToTurret2D = FVector::Dist2D(PawnLoc, TurretLoc);
+
+	// 각 몬스터의 고유 각도 링 포인트
+	const FVector RingGoal = ChaseHelpers::AngleToWorldPos(TurretLoc, Data.AssignedAngleDeg, TurretStandoffRadius);
+	const float DistToRing2D = FVector::Dist2D(PawnLoc, RingGoal);
+
+	// --- 도착 상태 유지: 터렛 이동 감지 시 재추격 ---
+	if (Data.bSpreadArrived)
+	{
+		const bool bTurretDrifted = (DistToTurret2D > TurretStandoffRadius + SpreadReEngageMargin);
+		if (bTurretDrifted)
+		{
+			Data.bSpreadArrived = false;
+			Data.SidestepSign = 0;
+			if (AIC->GetFocusActor()) AIC->ClearFocus(EAIFocusPriority::Gameplay);
+			Data.ConsecutiveStuckCount = 0;
+			Data.LastCheckedLocation = PawnLoc;
+			const FVector NavGoal = ChaseHelpers::ProjectToNav(Pawn->GetWorld(), RingGoal);
+			ChaseHelpers::IssueMoveToLocation(AIC, NavGoal, AcceptanceRadius);
+			return EStateTreeRunStatus::Running;
+		}
+		ChaseHelpers::FaceTarget(Pawn, Turret, DeltaTime, 10.f);
+		return EStateTreeRunStatus::Running;
+	}
+
+	// --- Ring 도착 판정: 반드시 자기 각도 위치까지 가야 도착 → 자연스러운 에워싸기 ---
+	if (DistToRing2D <= AcceptanceRadius + 50.f)
+	{
+		Data.bSpreadArrived = true;
+		Data.bDirectMoveMode = false;
+		Data.ConsecutiveStuckCount = 0;
+		Data.SidestepSign = 0;
+		ChaseHelpers::HandleArrival(AIC, Pawn, Turret);
+
+		UE_LOG(LogTemp, Warning,
+			TEXT("[ChaseSimpV1][LCv14] Turret Arrive: Enemy=%s Angle=%.0f Dist=%.1f"),
+			*GetNameSafe(Pawn), Data.AssignedAngleDeg, DistToRing2D);
+		return EStateTreeRunStatus::Running;
+	}
+
+	// --- 끼임 감지 ---
+	Data.StuckCheckTimer += DeltaTime;
+	if (Data.StuckCheckTimer >= StuckCheckInterval)
+	{
+		Data.StuckCheckTimer = 0.f;
+		const float Moved = FVector::Dist2D(PawnLoc, Data.LastCheckedLocation);
+		if (Moved < StuckDistThreshold)
+		{
+			Data.ConsecutiveStuckCount++;
+			if (!Data.bDirectMoveMode && Data.ConsecutiveStuckCount >= DirectMoveStuckThreshold)
+			{
+				Data.bDirectMoveMode = true;
+				UE_LOG(LogTemp, Warning,
+					TEXT("[ChaseSimpV1][LCv14] Turret DirectMode ON: Enemy=%s StuckCnt=%d"),
+					*GetNameSafe(Pawn), Data.ConsecutiveStuckCount);
+			}
+			Data.AssignedAngleDeg = FMath::Fmod(Data.AssignedAngleDeg + AngleRotationOnStuck, 360.f);
+		}
+		Data.LastCheckedLocation = PawnLoc;
+	}
+
+	// --- DirectMode: 각도 링 포인트로 직접 밀어붙이되 수직 사이드스텝으로 우회 ---
+	if (Data.bDirectMoveMode)
+	{
+		if (UPathFollowingComponent* PFC = AIC->GetPathFollowingComponent())
+		{
+			if (PFC->GetStatus() != EPathFollowingStatus::Idle)
+				AIC->StopMovement();
+		}
+
+		// DirectMode 강제 도착 — 경로 끊긴 상태라도 링 근처 오면 ring 포착
+		if (DistToRing2D <= AcceptanceRadius + DirectModeForceArriveThreshold)
+		{
+			Data.bSpreadArrived = true;
+			Data.bDirectMoveMode = false;
+			Data.ConsecutiveStuckCount = 0;
+			Data.SidestepSign = 0;
+			ChaseHelpers::HandleArrival(AIC, Pawn, Turret);
+			UE_LOG(LogTemp, Warning,
+				TEXT("[ChaseSimpV1][LCv14] Turret DirectArrive: Enemy=%s Angle=%.0f"),
+				*GetNameSafe(Pawn), Data.AssignedAngleDeg);
+			return EStateTreeRunStatus::Running;
+		}
+
+		const FVector ToRing2D = (RingGoal - PawnLoc).GetSafeNormal2D();
+		if (!ToRing2D.IsNearlyZero())
+		{
+			FVector MoveDir = ToRing2D;
+			if (Data.ConsecutiveStuckCount >= DirectMoveStuckThreshold + 1)
+			{
+				if (Data.SidestepSign == 0)
+				{
+					Data.SidestepSign = FMath::RandBool() ? 1 : -1;
+					UE_LOG(LogTemp, Warning,
+						TEXT("[ChaseSimpV1][LCv14] Turret Sidestep COMMIT: Enemy=%s Sign=%d"),
+						*GetNameSafe(Pawn), (int)Data.SidestepSign);
+				}
+				const float SideSign = (float)Data.SidestepSign;
+				const FVector Side(-ToRing2D.Y * SideSign, ToRing2D.X * SideSign, 0.f);
+				MoveDir = (ToRing2D * 0.6f + Side * 0.4f).GetSafeNormal2D();
+			}
+			Pawn->AddMovementInput(MoveDir, 1.0f);
+
+			const FRotator CurrentRot = Pawn->GetActorRotation();
+			const FRotator MoveRot(0.f, ToRing2D.Rotation().Yaw, 0.f);
+			const FRotator NewRot = FMath::RInterpTo(CurrentRot, MoveRot, DeltaTime, 8.f);
+			Pawn->SetActorRotation(NewRot);
+			if (AController* C = Pawn->GetController())
+				C->SetControlRotation(NewRot);
+		}
+		return EStateTreeRunStatus::Running;
+	}
+
+	// --- Normal pathfinding to ring point ---
+	const bool bRepathDue = Data.TimeSinceRepath >= RepathInterval;
+	bool bIdle = false;
+	if (UPathFollowingComponent* PFC = AIC->GetPathFollowingComponent())
+		bIdle = (PFC->GetStatus() == EPathFollowingStatus::Idle);
+
+	if (bRepathDue || bIdle)
+	{
+		const FVector NavGoal = ChaseHelpers::ProjectToNav(Pawn->GetWorld(), RingGoal);
+		const bool bPathOk = ChaseHelpers::IssueMoveToLocation(AIC, NavGoal, AcceptanceRadius);
+		if (bInstantDirectModeOnPathFail && !bPathOk && !Data.bDirectMoveMode)
+		{
+			Data.bDirectMoveMode = true;
+		}
+		Data.TimeSinceRepath = 0.f;
+	}
+
+	// Face movement direction
+	const FVector Vel2D = Pawn->GetVelocity().GetSafeNormal2D();
+	if (!Vel2D.IsNearlyZero())
+	{
+		const FRotator CurrentRot = Pawn->GetActorRotation();
+		const FRotator MoveRot(0.f, Vel2D.Rotation().Yaw, 0.f);
+		const FRotator NewRot = FMath::RInterpTo(CurrentRot, MoveRot, DeltaTime, 8.f);
+		Pawn->SetActorRotation(NewRot);
+		if (AController* C = Pawn->GetController())
+			C->SetControlRotation(NewRot);
+	}
+	else
+	{
+		ChaseHelpers::FaceTarget(Pawn, Turret, DeltaTime, 5.f);
 	}
 
 	return EStateTreeRunStatus::Running;

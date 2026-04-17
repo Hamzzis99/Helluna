@@ -106,7 +106,7 @@ public:
 
 	UPROPERTY(EditAnywhere, Category = "설정",
 		meta = (DisplayName = "대기 중 회전 속도",
-			ToolTip = "공격 쿨다운 대기 중에 타겟을 바라보는 회전 속도입니다.",
+			ToolTip = "공격 쿨다운 대기 중에 타겟을 바라보는 RInterpTo 속도입니다. 30 이상 권장.",
 			ClampMin = "0.0"))
-	float RotationSpeed = 10.f;
-};	
+	float RotationSpeed = 30.f;
+};
