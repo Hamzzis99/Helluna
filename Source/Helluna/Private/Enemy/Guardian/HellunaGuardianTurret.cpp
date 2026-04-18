@@ -725,6 +725,12 @@ void AHellunaGuardianTurret::OnRep_CurrentState()
 
 void AHellunaGuardianTurret::StartAimBeam()
 {
+	// 데디서버는 VFX 불필요 (클라마다 OnRep_CurrentState 에서 로컬 스폰)
+	if (IsRunningDedicatedServer())
+	{
+		return;
+	}
+
 	if (ActiveAimBeam || !AimBeamFX || !MuzzlePoint)
 	{
 		return;
@@ -788,6 +794,12 @@ void AHellunaGuardianTurret::ApplyAimBeamForState(EGuardianState State)
 void AHellunaGuardianTurret::Multicast_PlayFireFX_Implementation(
 	FVector_NetQuantize Muzzle, bool bHit, FVector_NetQuantize HitLocation, FVector_NetQuantizeNormal HitNormal)
 {
+	// 데디서버는 VFX / 사운드 재생 불필요
+	if (IsRunningDedicatedServer())
+	{
+		return;
+	}
+
 	UWorld* World = GetWorld();
 	if (!World)
 	{
@@ -883,7 +895,92 @@ void AHellunaGuardianTurret::OnGuardianDeath(AActor* /*DeadActor*/, AActor* /*Ki
 		World->GetTimerManager().ClearTimer(PhasePollTimerHandle);
 	}
 
+	// 메시 분리 + 물리 시뮬 (서버 + 모든 클라 동기)
+	if (bEnableDeathPhysicsBreak)
+	{
+		Multicast_OnDeathBreak();
+	}
+
+	// 일정 시간 후 액터 자동 정리 (서버 권한)
+	if (DeathActorLifetimeSeconds > 0.f)
+	{
+		SetLifeSpan(DeathActorLifetimeSeconds);
+	}
+
 	// TODO(dropTable): 드랍 테이블 결정 시 이곳에서 스폰
+}
+
+void AHellunaGuardianTurret::Multicast_OnDeathBreak_Implementation()
+{
+	// ── 서버·클라 공통: 오버랩 차단 (데디서버에서도 필수) ──
+	if (DetectionSphere)
+	{
+		DetectionSphere->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		DetectionSphere->SetGenerateOverlapEvents(false);
+	}
+
+	// 조준 빔 정리 (StartAimBeam 이 데디서버는 스킵하므로 서버에선 null)
+	if (ActiveAimBeam)
+	{
+		ActiveAimBeam->Deactivate();
+		ActiveAimBeam->DestroyComponent();
+		ActiveAimBeam = nullptr;
+	}
+
+	// 데디서버는 렌더러·물리 시각화 불필요 → VFX / 메시 물리 시뮬 스킵
+	if (IsRunningDedicatedServer())
+	{
+		return;
+	}
+
+	// 사망 폭발 VFX — 헤드 회전 피벗 위치에서 스폰 (분리되면서 펑 하는 연출)
+	if (DeathExplosionFX)
+	{
+		const FVector FXLocation = TurretHead
+			? TurretHead->GetComponentLocation()
+			: GetActorLocation();
+		UNiagaraComponent* DeathFX = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+			this,
+			DeathExplosionFX,
+			FXLocation,
+			FRotator::ZeroRotator,
+			DeathExplosionFXScale,
+			true, true, ENCPoolMethod::AutoRelease);
+		if (DeathFX)
+		{
+			DeathFX->Activate(true);
+		}
+	}
+
+	const FVector ImpulseOrigin = GetActorLocation();
+
+	auto EnablePhysicsOnMesh = [&](UStaticMeshComponent* Mesh)
+	{
+		if (!Mesh)
+		{
+			return;
+		}
+
+		// 회전 피벗에서 머리 분리 → 독립적으로 낙하
+		Mesh->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
+		Mesh->SetMobility(EComponentMobility::Movable);
+		Mesh->SetCollisionProfileName(TEXT("PhysicsActor"));
+		Mesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+		Mesh->SetSimulatePhysics(true);
+
+		if (DeathBreakImpulseStrength > 0.f)
+		{
+			Mesh->AddRadialImpulse(
+				ImpulseOrigin,
+				DeathBreakImpulseRadius,
+				DeathBreakImpulseStrength,
+				ERadialImpulseFalloff::RIF_Constant,
+				/*bVelChange=*/true);
+		}
+	};
+
+	EnablePhysicsOnMesh(MeshHead);
+	EnablePhysicsOnMesh(MeshBody);
 }
 
 // =========================================================

@@ -206,6 +206,12 @@ void AHellunaGuardianProjectile::Explode(const FVector& ExplosionLocation, const
 void AHellunaGuardianProjectile::Multicast_SpawnExplosionFX_Implementation(
 	FVector_NetQuantize ExplosionLocation, FVector_NetQuantizeNormal SurfaceNormal)
 {
+	// 데디서버는 렌더러가 없어 VFX 불필요 (Niagara 컴포넌트 오버헤드 방지)
+	if (IsRunningDedicatedServer())
+	{
+		return;
+	}
+
 	if (TrailFX)
 	{
 		TrailFX->Deactivate();

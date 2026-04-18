@@ -57,8 +57,8 @@ protected:
 	/** 서버 전용: 폭발 처리 (데미지 + 멀티캐스트 VFX) */
 	void Explode(const FVector& ExplosionLocation, const FVector& SurfaceNormal);
 
-	/** 모든 클라에 폭발 VFX 재생 (서버 → 클라) */
-	UFUNCTION(NetMulticast, Unreliable)
+	/** 모든 클라에 폭발 VFX 재생 (서버 → 클라). 1회 이벤트라 Reliable — 패킷 유실 시에도 폭발 VFX 보장. */
+	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_SpawnExplosionFX(FVector_NetQuantize ExplosionLocation, FVector_NetQuantizeNormal SurfaceNormal);
 
 	void SetProjectileCollisionEnabled(bool bEnabled);

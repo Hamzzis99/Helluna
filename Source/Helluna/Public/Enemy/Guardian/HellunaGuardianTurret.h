@@ -214,6 +214,40 @@ protected:
 	float ProjectileLifeSeconds = 5.f;
 
 	// =========================================================
+	// 사망 연출 (메시 분리 + 물리)
+	// =========================================================
+
+	/** 사망 시 머리/몸체를 떼어내고 물리 시뮬 활성화. Static Mesh 에 Simple Collision 이 있어야 함. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Guardian|Death",
+		meta = (DisplayName = "사망 시 물리 분리"))
+	bool bEnableDeathPhysicsBreak = true;
+
+	/** 사망 시 추가되는 방사형 임펄스 크기. 0 이면 떨어지기만 함. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Guardian|Death",
+		meta = (DisplayName = "사망 임펄스 크기", ClampMin = "0.0"))
+	float DeathBreakImpulseStrength = 60000.f;
+
+	/** 사망 임펄스 반경 (UU). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Guardian|Death",
+		meta = (DisplayName = "사망 임펄스 반경", ClampMin = "1.0"))
+	float DeathBreakImpulseRadius = 500.f;
+
+	/** 사망 후 액터 자동 정리까지의 시간 (초). 0 이면 영구 유지. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Guardian|Death",
+		meta = (DisplayName = "사망 후 액터 유지 시간 (초)", ClampMin = "0.0"))
+	float DeathActorLifetimeSeconds = 20.f;
+
+	/** 사망 순간 스폰되는 폭발 Niagara. null 이면 VFX 없이 물리 분리만. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|Death",
+		meta = (DisplayName = "사망 폭발 FX"))
+	TObjectPtr<UNiagaraSystem> DeathExplosionFX = nullptr;
+
+	/** 사망 폭발 FX 스케일. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|Death",
+		meta = (DisplayName = "사망 폭발 FX 스케일"))
+	FVector DeathExplosionFXScale = FVector(5.f, 5.f, 5.f);
+
+	// =========================================================
 	// VFX / 사운드
 	// =========================================================
 
@@ -418,6 +452,10 @@ private:
 	/** 상태 변화 이벤트. BGM / 추적선 색 전환 트리거. */
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_OnStateChanged(EGuardianState NewState);
+
+	/** 사망 시 머리/몸체 분리 + 물리 시뮬 + 임펄스. 서버·클라 동기. Reliable (한번만 발생). */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_OnDeathBreak();
 
 	// =========================================================
 	// 체력·파괴
