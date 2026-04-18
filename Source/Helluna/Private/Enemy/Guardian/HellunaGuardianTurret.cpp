@@ -1,6 +1,7 @@
 // File: Source/Helluna/Private/Enemy/Guardian/HellunaGuardianTurret.cpp
 
 #include "Enemy/Guardian/HellunaGuardianTurret.h"
+#include "Enemy/Guardian/HellunaGuardianProjectile.h"
 
 #include "Helluna.h"
 #include "Character/HellunaHeroCharacter.h"
@@ -173,17 +174,15 @@ void AHellunaGuardianTurret::Tick(float DeltaTime)
 	Super::Tick(DeltaTime);
 
 	// 공통: 헤드 회전 보간 (타겟 있을 때만)
+	// Lock/FireDelay 모두 live 추적 — 발사 순간 PerformFire 에서 LockedFireTarget 확정
 	if (AActor* Target = CurrentTarget.Get())
 	{
 		if (IsValid(Target) && !Target->IsActorBeingDestroyed())
 		{
-			const FVector AimPoint = (CurrentState == EGuardianState::FireDelay ||
-				CurrentState == EGuardianState::Fire)
-				? LockedFireTarget
-				: GetAimPointFor(Target);
+			const FVector AimPoint = GetAimPointFor(Target);
 			UpdateHeadRotation(DeltaTime, AimPoint);
 
-			// 공통: 조준 빔 엔드포인트 갱신 (Lock=추적 / FireDelay=고정)
+			// 공통: 조준 빔 엔드포인트 갱신 (Lock/FireDelay 모두 live)
 			if (ActiveAimBeam && (CurrentState == EGuardianState::Lock ||
 				CurrentState == EGuardianState::FireDelay))
 			{
@@ -213,7 +212,7 @@ void AHellunaGuardianTurret::Tick(float DeltaTime)
 		if (MuzzlePoint && CurrentTarget.Get())
 		{
 			const FVector Start = MuzzlePoint->GetComponentLocation();
-			const FVector End = (CurrentState == EGuardianState::FireDelay || CurrentState == EGuardianState::Fire)
+			const FVector End = (CurrentState == EGuardianState::Fire)
 				? FVector(LockedFireTarget)
 				: GetAimPointFor(CurrentTarget.Get());
 			const FColor LineColor = (CurrentState == EGuardianState::Lock ||
@@ -287,7 +286,6 @@ void AHellunaGuardianTurret::Tick(float DeltaTime)
 		}
 		if (StateTimer >= LockDuration)
 		{
-			LockedFireTarget = GetAimPointFor(Target);
 			SetState(EGuardianState::FireDelay);
 		}
 		break;
@@ -302,6 +300,8 @@ void AHellunaGuardianTurret::Tick(float DeltaTime)
 		}
 		if (StateTimer >= FireDelayDuration)
 		{
+			// 발사 순간 타겟 위치 캡처 → 레이저·투사체 방향 일치
+			LockedFireTarget = GetAimPointFor(Target);
 			SetState(EGuardianState::Fire);
 			PerformFire();
 		}
@@ -608,6 +608,37 @@ void AHellunaGuardianTurret::PerformFire()
 	const FVector TraceStart = MuzzlePoint->GetComponentLocation();
 	const FVector TraceEnd = LockedFireTarget;
 
+	// ── 투사체 모드 (ProjectileClass 지정 시) ───────────────
+	// 물리 투사체를 머즐에서 타겟 방향으로 발사.
+	// 충돌·폭발·VFX 는 투사체 액터가 담당. 레거시 즉시 트레이스 경로 스킵.
+	if (ProjectileClass)
+	{
+		const FVector AimDelta = TraceEnd - TraceStart;
+		const FVector AimDir = AimDelta.GetSafeNormal();
+		const FRotator SpawnRot = AimDir.Rotation();
+
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		SpawnParams.Owner = this;
+
+		AHellunaGuardianProjectile* Proj = World->SpawnActor<AHellunaGuardianProjectile>(
+			ProjectileClass, TraceStart, SpawnRot, SpawnParams);
+		if (Proj)
+		{
+			Proj->InitProjectile(
+				Damage,
+				ExplosionRadius,
+				bExplosionFalloff,
+				AimDir * ProjectileSpeed,
+				ProjectileLifeSeconds);
+		}
+
+		// 발사 사운드는 머즐에서 멀티캐스트 (폭발 VFX 는 투사체 측에서 처리)
+		Multicast_PlayFireFX(TraceStart, false, FVector::ZeroVector, FVector::ZeroVector);
+		return;
+	}
+
+	// ── 레거시 모드 (ProjectileClass 미지정) — 즉시 라인트레이스 ─
 	FHitResult HitResult;
 	FCollisionQueryParams QueryParams;
 	QueryParams.AddIgnoredActor(this);
@@ -616,13 +647,11 @@ void AHellunaGuardianTurret::PerformFire()
 		HitResult, TraceStart, TraceEnd, TraceChannel, QueryParams);
 
 	const FVector ImpactLocation = bHit ? HitResult.ImpactPoint : TraceEnd;
-	// 벽 표면에 맞으면 표면 수직 Normal, 공중에서 터지면 Muzzle→Impact 역방향을 Normal 로 사용
 	const FVector ImpactNormal = bHit
 		? HitResult.ImpactNormal
 		: (TraceStart - ImpactLocation).GetSafeNormal();
 	Multicast_PlayFireFX(TraceStart, bHit, ImpactLocation, ImpactNormal);
 
-	// AoE 모드: ExplosionRadius > 0 이면 직격 대신 반경 데미지 적용
 	if (ExplosionRadius > 0.f)
 	{
 		TArray<AActor*> IgnoreActors;
@@ -768,6 +797,17 @@ void AHellunaGuardianTurret::Multicast_PlayFireFX_Implementation(
 	const FVector MuzzleVec = FVector(Muzzle);
 	const FVector ImpactVec = FVector(HitLocation);
 	const FVector NormalVec = FVector(HitNormal);
+
+	// 투사체 모드: 머즐 빔/폭발 VFX 는 투사체가 담당 → 발사 사운드만 재생
+	const bool bProjectileMode = (ProjectileClass != nullptr);
+	if (bProjectileMode)
+	{
+		if (FireSound)
+		{
+			UGameplayStatics::PlaySoundAtLocation(this, FireSound, MuzzleVec);
+		}
+		return;
+	}
 
 	if (FireBeamFX)
 	{

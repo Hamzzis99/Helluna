@@ -16,6 +16,7 @@ class AHellunaDefenseGameState;
 class UNiagaraSystem;
 class UNiagaraComponent;
 class USoundBase;
+class AHellunaGuardianProjectile;
 
 enum class EDefensePhase : uint8;
 
@@ -192,6 +193,25 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Combat",
 		meta = (DisplayName = "폭발 감쇠 적용"))
 	bool bExplosionFalloff = true;
+
+	// =========================================================
+	// 투사체 (BP_HeroWeapon_Launcher 패턴)
+	// =========================================================
+
+	/** 발사할 투사체 클래스. null 이면 레거시 즉시-트레이스 모드로 폴백. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|Projectile",
+		meta = (DisplayName = "투사체 클래스"))
+	TSubclassOf<AHellunaGuardianProjectile> ProjectileClass;
+
+	/** 투사체 발사 속도 (UU/s). BP 에서 자유롭게 조정. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Projectile",
+		meta = (DisplayName = "투사체 속도 (UU/s)", ClampMin = "100.0", ClampMax = "50000.0"))
+	float ProjectileSpeed = 6000.f;
+
+	/** 투사체 수명 (초). 만료 시 현재 위치에서 공중 폭발. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Projectile",
+		meta = (DisplayName = "투사체 수명 (초)", ClampMin = "0.1", ClampMax = "20.0"))
+	float ProjectileLifeSeconds = 5.f;
 
 	// =========================================================
 	// VFX / 사운드
