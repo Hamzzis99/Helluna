@@ -29,6 +29,7 @@ protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Tick(float DeltaTime) override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+	virtual bool ShouldKeepTickingAfterPlacementScan() const override { return true; }
 
 	// =========================================================
 	// 컴포넌트

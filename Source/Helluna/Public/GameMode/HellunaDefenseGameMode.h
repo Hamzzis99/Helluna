@@ -154,17 +154,17 @@ protected:
 	/** 밀도 체크 반경 (cm). 이 범위 내 기존 광석 수를 센다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)",
 		meta = (DisplayName = "밀도 체크 반경(cm)", ClampMin = "100.0"))
-	float DensityCheckRadius = 1500.f;
+	float DensityCheckRadius = 5000.f;  // ★테스트용 (원래 1500)
 
 	/** 이 수 이상 이웃 광석이 있으면 최소 유지 확률로 떨어진다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)",
 		meta = (DisplayName = "최대 이웃 광석 수", ClampMin = "1"))
-	int32 MaxNeighborOreCount = 5;
+	int32 MaxNeighborOreCount = 1;  // ★테스트용 (원래 5)
 
 	/** 아무리 밀집해도 이 비율만큼은 유지한다 (0~1). */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)",
 		meta = (DisplayName = "최소 유지 비율", ClampMin = "0.0", ClampMax = "1.0"))
-	float MinKeepRatio = 0.2f;
+	float MinKeepRatio = 0.05f;  // ★테스트용 (원래 0.2)
 
 	/**
 	 * 스폰 점수 계산.
@@ -182,8 +182,10 @@ protected:
 		UClass* OreClass;
 		FTransform Transform;
 		TArray<FName> Tags;
-		/** PCG 액터 태그에서 파싱한 점수 가중치 (기본 1.0) */
-		float ScoreWeight = 1.f;
+		/** PCGScoreComponent.ClusterAmount — 뭉침 크기 배수 */
+		float ClusterAmount = 1.f;
+		/** PCGScoreComponent.PlacementDensity — 전체 배치 밀도 배수 */
+		float PlacementDensity = 1.f;
 	};
 
 	/** PCG에서 추출한 광석 데이터로 밀도 기반 클러스터 후처리 + 독립 액터 스폰 */
@@ -195,19 +197,20 @@ protected:
 
 	/** 한 배치에 스폰할 최대 액터 수 */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|프레임 분산",
-		meta = (DisplayName = "배치당 스폰 수", ClampMin = "1", ClampMax = "50",
-			ToolTip = "한 프레임에 스폰할 최대 광석 수.\n낮을수록 프레임 드랍이 적지만 전체 시간이 길어집니다."))
-	int32 PCGBatchSpawnCount = 5;
+		meta = (DisplayName = "배치당 스폰 수", ClampMin = "1", ClampMax = "200",
+			ToolTip = "한 프레임(배치)에 스폰할 최대 광석 수.\n낮을수록 프레임 드랍이 적지만 전체 시간이 길어집니다.\n권장: 50~100 (배치 간격과 함께 튜닝)"))
+	int32 PCGBatchSpawnCount = 60;
 
 	/** 한 배치에 파괴할 최대 액터 수 */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|프레임 분산",
-		meta = (DisplayName = "배치당 파괴 수", ClampMin = "1", ClampMax = "50"))
-	int32 PCGBatchDestroyCount = 15;
+		meta = (DisplayName = "배치당 파괴 수", ClampMin = "1", ClampMax = "200"))
+	int32 PCGBatchDestroyCount = 60;
 
 	/** 배치 간 대기 시간(초) */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|프레임 분산",
-		meta = (DisplayName = "배치 간격 (초)", ClampMin = "0.0", ClampMax = "1.0"))
-	float PCGBatchInterval = 0.033f;
+		meta = (DisplayName = "배치 간격 (초)", ClampMin = "0.0", ClampMax = "1.0",
+			ToolTip = "배치 사이 대기 시간. 0.016=매 프레임(60fps), 0.033=격프레임.\n낮출수록 처리량↑ 스파이크 위험↑"))
+	float PCGBatchInterval = 0.016f;
 
 	// ────────────────────────────────────────────────────────────────────────────
 	// [PCG 클러스터] 광석 뭉침 배치 설정
@@ -247,7 +250,7 @@ protected:
 	/** 뭉침에 배정되지 않은 단독 광석의 생존 확률 (0~1) */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|클러스터",
 		meta = (DisplayName = "단독 광석 생존 확률", ClampMin = "0.0", ClampMax = "1.0"))
-	float IsolatedOreSurvivalChance = 0.4f;
+	float IsolatedOreSurvivalChance = 0.1f;  // ★테스트용 (원래 0.4)
 
 
 	// ────────────────────────────────────────────────────────────────────────────
