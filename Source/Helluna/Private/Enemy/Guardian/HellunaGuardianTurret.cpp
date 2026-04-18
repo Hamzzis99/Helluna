@@ -47,7 +47,8 @@ AHellunaGuardianTurret::AHellunaGuardianTurret()
 	// ── 감지 구체 (고정) ─────────────────────────────────────
 	DetectionSphere = CreateDefaultSubobject<USphereComponent>(TEXT("DetectionSphere"));
 	DetectionSphere->SetupAttachment(TurretRoot);
-	DetectionSphere->SetSphereRadius(DetectionRadius);
+	// 주의: SetSphereRadius 는 BP SCS 의 사용자 지정 반경/스케일을 덮어쓰므로 여기서 호출하지 않는다.
+	// BP 인스턴스에서 Unscaled Radius / Scale3D 로 직접 조정.
 	DetectionSphere->SetCollisionProfileName(TEXT("Trigger"));
 	DetectionSphere->SetGenerateOverlapEvents(true);
 	DetectionSphere->SetCollisionResponseToAllChannels(ECR_Ignore);
@@ -81,12 +82,6 @@ void AHellunaGuardianTurret::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// 감지 반경 런타임 동기화 (BP 편집 반영)
-	if (DetectionSphere)
-	{
-		DetectionSphere->SetSphereRadius(DetectionRadius);
-	}
-
 	// MaxHealth 초기 동기화 (HealthComponent 내부 값이 BP 기본값과 다를 경우 대비)
 	if (HealthComponent)
 	{
@@ -96,6 +91,21 @@ void AHellunaGuardianTurret::BeginPlay()
 	// 서버 전용 초기화
 	if (HasAuthority())
 	{
+		// BeginPlay 이전에 이미 DetectionSphere 안에 들어와 있던 Hero 는
+		// OnComponentBeginOverlap 이벤트를 못 받음 → 수동으로 초기 오버랩 수집
+		if (DetectionSphere)
+		{
+			TArray<AActor*> InitialOverlaps;
+			DetectionSphere->GetOverlappingActors(InitialOverlaps, AHellunaHeroCharacter::StaticClass());
+			for (AActor* A : InitialOverlaps)
+			{
+				if (AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(A))
+				{
+					PlayersInRange.AddUnique(TWeakObjectPtr<AHellunaHeroCharacter>(Hero));
+				}
+			}
+		}
+
 		if (UWorld* World = GetWorld())
 		{
 			if (AGameStateBase* GS = World->GetGameState())
@@ -703,6 +713,8 @@ void AHellunaGuardianTurret::StartAimBeam()
 	if (ActiveAimBeam)
 	{
 		ActiveAimBeam->SetRelativeScale3D(AimBeamScale);
+		// 일부 Niagara 시스템은 bAutoActivate 기본값에도 자동 활성화 되지 않음 → 명시적 활성화 필수
+		ActiveAimBeam->Activate(true);
 	}
 }
 
@@ -761,9 +773,13 @@ void AHellunaGuardianTurret::Multicast_PlayFireFX_Implementation(
 	{
 		const FVector Delta = ImpactVec - MuzzleVec;
 		const FRotator BeamRot = Delta.Rotation();
-		UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+		UNiagaraComponent* SpawnedFire = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
 			this, FireBeamFX, MuzzleVec, BeamRot, FireBeamScale,
 			true, true, ENCPoolMethod::AutoRelease);
+		if (SpawnedFire)
+		{
+			SpawnedFire->Activate(true);
+		}
 	}
 
 	if (FireSound)
@@ -785,9 +801,13 @@ void AHellunaGuardianTurret::Multicast_PlayFireFX_Implementation(
 		UNiagaraComponent* SpawnedImpact = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
 			this, ImpactFX, ImpactVec, ImpactRot, ImpactFXScale,
 			true, true, ENCPoolMethod::AutoRelease);
-		if (SpawnedImpact && !ImpactFXRadiusParamName.IsNone() && ExplosionRadius > 0.f)
+		if (SpawnedImpact)
 		{
-			SpawnedImpact->SetFloatParameter(ImpactFXRadiusParamName, ExplosionRadius);
+			SpawnedImpact->Activate(true);
+			if (!ImpactFXRadiusParamName.IsNone() && ExplosionRadius > 0.f)
+			{
+				SpawnedImpact->SetFloatParameter(ImpactFXRadiusParamName, ExplosionRadius);
+			}
 		}
 	}
 	if (ImpactSound)
