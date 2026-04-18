@@ -200,9 +200,9 @@ void AHellunaGuardianTurret::Tick(float DeltaTime)
 				DetectionSphere->GetScaledSphereRadius(), 24, RangeColor, false, -1.f, 0, 2.f);
 		}
 
-		if (TurretHead && CurrentTarget.Get())
+		if (MuzzlePoint && CurrentTarget.Get())
 		{
-			const FVector Start = TurretHead->GetComponentLocation();
+			const FVector Start = MuzzlePoint->GetComponentLocation();
 			const FVector End = (CurrentState == EGuardianState::FireDelay || CurrentState == EGuardianState::Fire)
 				? FVector(LockedFireTarget)
 				: GetAimPointFor(CurrentTarget.Get());
@@ -606,9 +606,32 @@ void AHellunaGuardianTurret::PerformFire()
 		HitResult, TraceStart, TraceEnd, TraceChannel, QueryParams);
 
 	const FVector ImpactLocation = bHit ? HitResult.ImpactPoint : TraceEnd;
-	Multicast_PlayFireFX(TraceStart, bHit, ImpactLocation);
+	// 벽 표면에 맞으면 표면 수직 Normal, 공중에서 터지면 Muzzle→Impact 역방향을 Normal 로 사용
+	const FVector ImpactNormal = bHit
+		? HitResult.ImpactNormal
+		: (TraceStart - ImpactLocation).GetSafeNormal();
+	Multicast_PlayFireFX(TraceStart, bHit, ImpactLocation, ImpactNormal);
 
-	// 트레이스가 벽에 막히지 않고 LockedFireTarget 근방에 도달했고, 플레이어가 그 근처에 있으면 데미지
+	// AoE 모드: ExplosionRadius > 0 이면 직격 대신 반경 데미지 적용
+	if (ExplosionRadius > 0.f)
+	{
+		TArray<AActor*> IgnoreActors;
+		IgnoreActors.Add(this);
+		UGameplayStatics::ApplyRadialDamage(
+			this,
+			Damage,
+			ImpactLocation,
+			ExplosionRadius,
+			UDamageType::StaticClass(),
+			IgnoreActors,
+			this,
+			nullptr,
+			/*bDoFullDamage=*/!bExplosionFalloff,
+			TraceChannel);
+		return;
+	}
+
+	// 직격 모드 (기존 로직): 트레이스 막힘 시 직접 맞은 Hero 만, 아니면 고정 지점 근방 Hero
 	if (bHit)
 	{
 		// 벽 등 월드 지오메트리에 막힘 → 플레이어가 피한 것으로 간주
@@ -722,7 +745,7 @@ void AHellunaGuardianTurret::ApplyAimBeamForState(EGuardianState State)
 // =========================================================
 
 void AHellunaGuardianTurret::Multicast_PlayFireFX_Implementation(
-	FVector_NetQuantize Muzzle, bool bHit, FVector_NetQuantize HitLocation)
+	FVector_NetQuantize Muzzle, bool bHit, FVector_NetQuantize HitLocation, FVector_NetQuantizeNormal HitNormal)
 {
 	UWorld* World = GetWorld();
 	if (!World)
@@ -732,6 +755,7 @@ void AHellunaGuardianTurret::Multicast_PlayFireFX_Implementation(
 
 	const FVector MuzzleVec = FVector(Muzzle);
 	const FVector ImpactVec = FVector(HitLocation);
+	const FVector NormalVec = FVector(HitNormal);
 
 	if (FireBeamFX)
 	{
@@ -754,9 +778,17 @@ void AHellunaGuardianTurret::Multicast_PlayFireFX_Implementation(
 
 	if (ImpactFX)
 	{
-		UNiagaraFunctionLibrary::SpawnSystemAtLocation(
-			this, ImpactFX, ImpactVec, FRotator::ZeroRotator, FVector(1.f),
+		// Normal 벡터를 X축(Niagara 기본 정면)으로 삼는 회전 — 벽면에 수직으로 튀어나오는 폭발
+		const FRotator ImpactRot = NormalVec.IsNearlyZero()
+			? FRotator::ZeroRotator
+			: NormalVec.Rotation();
+		UNiagaraComponent* SpawnedImpact = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+			this, ImpactFX, ImpactVec, ImpactRot, ImpactFXScale,
 			true, true, ENCPoolMethod::AutoRelease);
+		if (SpawnedImpact && !ImpactFXRadiusParamName.IsNone() && ExplosionRadius > 0.f)
+		{
+			SpawnedImpact->SetFloatParameter(ImpactFXRadiusParamName, ExplosionRadius);
+		}
 	}
 	if (ImpactSound)
 	{

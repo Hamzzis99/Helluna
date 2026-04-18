@@ -183,6 +183,16 @@ protected:
 		meta = (DisplayName = "최대 체력", ClampMin = "1.0", ClampMax = "10000.0"))
 	float MaxHealth = 200.f;
 
+	/** 폭발 AoE 반경 (UU). 0 이면 AoE 없음 — 단일 라인트레이스 직격만. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Combat",
+		meta = (DisplayName = "폭발 반경 (UU)", ClampMin = "0.0", ClampMax = "5000.0"))
+	float ExplosionRadius = 0.f;
+
+	/** 폭발 감쇠 여부 (true=중심→반경끝 선형감쇠, false=반경 내 균일 데미지) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Combat",
+		meta = (DisplayName = "폭발 감쇠 적용"))
+	bool bExplosionFalloff = true;
+
 	// =========================================================
 	// VFX / 사운드
 	// =========================================================
@@ -202,20 +212,30 @@ protected:
 		meta = (DisplayName = "조준 빔 크기 배율"))
 	FVector AimBeamScale = FVector(1.f);
 
-	/** 발사 VFX (실제 발사 순간 1회 Burst) — BP 에서 NS_ThunderBolt 등 할당 */
+	/** 발사 투사체/미사일 VFX — Fire 순간 머즐에서 명중 지점으로 발사 (BP 에서 NS_ThunderBolt 등 할당) */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|FX",
-		meta = (DisplayName = "발사 VFX (Fire)"))
+		meta = (DisplayName = "발사 투사체 VFX (Fire)"))
 	TObjectPtr<UNiagaraSystem> FireBeamFX = nullptr;
 
-	/** 발사 VFX 크기 배율 */
+	/** 발사 투사체 VFX 크기 배율 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|FX",
-		meta = (DisplayName = "발사 VFX 크기 배율"))
+		meta = (DisplayName = "발사 투사체 크기 배율"))
 	FVector FireBeamScale = FVector(1.f);
 
-	/** 피격 이펙트 */
+	/** 피격 이펙트 (폭발/충돌 VFX — BP 에서 NS_Hit_Explosion 등 할당) */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|FX",
-		meta = (DisplayName = "피격 이펙트"))
+		meta = (DisplayName = "피격/폭발 이펙트"))
 	TObjectPtr<UNiagaraSystem> ImpactFX = nullptr;
+
+	/** 피격/폭발 이펙트 크기 배율 (시각 크기, 데미지 반경과는 독립) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|FX",
+		meta = (DisplayName = "폭발 이펙트 크기 배율"))
+	FVector ImpactFXScale = FVector(1.f);
+
+	/** 폭발 이펙트 반경 Float User Parameter 이름 (NS 에셋에 정의되어 있을 때만 사용. 없으면 NAME_None). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Guardian|FX",
+		meta = (DisplayName = "폭발 반경 파라미터명 (Float, 선택)"))
+	FName ImpactFXRadiusParamName = NAME_None;
 
 	/** 발사 사운드 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|FX",
@@ -371,9 +391,9 @@ private:
 	// 멀티캐스트 RPC (서버 → 모든 클라 FX·사운드)
 	// =========================================================
 
-	/** 발사 FX/사운드 재생. 서버·클라 모두 실행. */
+	/** 발사 FX/사운드 재생. 서버·클라 모두 실행. HitNormal 은 폭발 VFX 방향 결정 (벽면 수직). */
 	UFUNCTION(NetMulticast, Unreliable)
-	void Multicast_PlayFireFX(FVector_NetQuantize Muzzle, bool bHit, FVector_NetQuantize HitLocation);
+	void Multicast_PlayFireFX(FVector_NetQuantize Muzzle, bool bHit, FVector_NetQuantize HitLocation, FVector_NetQuantizeNormal HitNormal);
 
 	/** 상태 변화 이벤트. BGM / 추적선 색 전환 트리거. */
 	UFUNCTION(NetMulticast, Unreliable)
