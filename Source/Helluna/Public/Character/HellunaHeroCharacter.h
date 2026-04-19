@@ -835,6 +835,11 @@ private:
 	/** 래그돌 중 카메라가 따라가도록 캡슐을 Pelvis 본 위치로 추적 (Zelda BotW 스타일) */
 	void TickPhysicsStunCameraFollow();
 
+	/** 스턴 진입 후 5초간 매 틱 위치/속도 로깅 — 래그돌이 멀리 날아가는 원인 진단용 */
+	float StunDebugTimeRemaining = 0.f;
+	int32 StunDebugTickIndex = 0;
+	FVector StunDebugStartLocation = FVector::ZeroVector;
+
 	// =========================================================
 	// 시간 왜곡 슬로우 배율
 	// =========================================================

@@ -307,6 +307,27 @@ void AHellunaHeroCharacter::Tick(float DeltaTime)
 	{
 		TickPhysicsStunCameraFollow();
 	}
+
+	// [Stun-Debug] 스턴 진입 후 5초간 위치/속도 로그
+	if (StunDebugTimeRemaining > 0.f)
+	{
+		StunDebugTimeRemaining -= DeltaTime;
+		++StunDebugTickIndex;
+
+		USkeletalMeshComponent* SkelMesh = GetMesh();
+		const FVector ActorLoc = GetActorLocation();
+		const FVector PelvisLoc = SkelMesh ? SkelMesh->GetBoneLocation(TEXT("pelvis")) : FVector::ZeroVector;
+		const FVector MeshVel = SkelMesh ? SkelMesh->GetPhysicsLinearVelocity() : FVector::ZeroVector;
+		const float DistFromStart = FVector::Dist(ActorLoc, StunDebugStartLocation);
+		const TCHAR* RoleStr = HasAuthority() ? TEXT("SRV") : TEXT("CLI");
+
+		UE_LOG(LogHelluna, Warning,
+			TEXT("[Stun-Debug %s #%03d] dt=%.3f Actor=(%.0f,%.0f,%.0f) Pelvis=(%.0f,%.0f,%.0f) VelMag=%.1f DistFromStart=%.1f"),
+			RoleStr, StunDebugTickIndex, DeltaTime,
+			ActorLoc.X, ActorLoc.Y, ActorLoc.Z,
+			PelvisLoc.X, PelvisLoc.Y, PelvisLoc.Z,
+			MeshVel.Size(), DistFromStart);
+	}
 }
 
 // ============================================================================
@@ -1214,6 +1235,21 @@ void AHellunaHeroCharacter::Multicast_EnterPhysicsStun_Implementation(FVector_Ne
 
 	// 카메라 팔로우 플래그 — Tick 에서 캡슐을 Pelvis 로 추적
 	bLocalPhysicsStunned = true;
+
+	// [Stun-Debug] 5초 매틱 로깅 시작
+	StunDebugTimeRemaining = 5.f;
+	StunDebugTickIndex = 0;
+	StunDebugStartLocation = GetActorLocation();
+
+	const TCHAR* RoleStr = HasAuthority() ? TEXT("SRV") : TEXT("CLI");
+	const float MeshMass = SkelMesh->GetMass();
+	UE_LOG(LogHelluna, Warning,
+		TEXT("[Stun-Debug %s ENTER] Impulse=(%.1f,%.1f,%.1f) |I|=%.1f HitLoc=(%.0f,%.0f,%.0f) MeshMass=%.2f StartLoc=(%.0f,%.0f,%.0f)"),
+		RoleStr,
+		Impulse.X, Impulse.Y, Impulse.Z, FVector(Impulse).Size(),
+		HitLocation.X, HitLocation.Y, HitLocation.Z,
+		MeshMass,
+		StunDebugStartLocation.X, StunDebugStartLocation.Y, StunDebugStartLocation.Z);
 }
 
 void AHellunaHeroCharacter::Multicast_AddStunImpulse_Implementation(FVector_NetQuantize Impulse, FVector_NetQuantize HitLocation)
@@ -1223,6 +1259,12 @@ void AHellunaHeroCharacter::Multicast_AddStunImpulse_Implementation(FVector_NetQ
 	if (!SkelMesh->IsSimulatingPhysics()) return;
 
 	SkelMesh->AddImpulseAtLocation(FVector(Impulse), FVector(HitLocation));
+
+	// [Stun-Debug] 누적 임펄스 로그
+	const TCHAR* RoleStr = HasAuthority() ? TEXT("SRV") : TEXT("CLI");
+	UE_LOG(LogHelluna, Warning,
+		TEXT("[Stun-Debug %s ADD] AddImpulse=(%.1f,%.1f,%.1f) |I|=%.1f"),
+		RoleStr, Impulse.X, Impulse.Y, Impulse.Z, FVector(Impulse).Size());
 }
 
 void AHellunaHeroCharacter::TickPhysicsStunPoll()
