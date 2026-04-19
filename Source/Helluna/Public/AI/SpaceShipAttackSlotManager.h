@@ -152,9 +152,16 @@ public:
 	// 목적: 모든 몬스터가 점프하면 선체 위가 꽉 차므로 고정 수량만 허용.
 	// 슬롯 위치는 계산하지 않음(ShipJump GA가 bounds로 계산) → 예약 카운터만 관리.
 
-	/** 우주선 상단 슬롯 예약 시도. 빈 슬롯이 있으면 true 반환. */
+	/** 우주선 상단 슬롯 예약 시도. 빈 슬롯이 있으면 true 반환. (인덱스 무시 폴백) */
 	UFUNCTION(BlueprintCallable, Category = "AI|ShipTop")
 	bool TryReserveTopSlot(AActor* Monster);
+
+	/**
+	 * [ShipJumpSpreadV1] 인덱스 반환 버전.
+	 * 0..MaxTopSlots-1 중 가장 작은 빈 인덱스를 부여. ShipJump GA 가 이 인덱스 기반으로 궤적을 분산.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "AI|ShipTop")
+	bool TryReserveTopSlotIndexed(AActor* Monster, int32& OutSlotIndex);
 
 	/** 예약한 상단 슬롯을 반납한다. */
 	UFUNCTION(BlueprintCallable, Category = "AI|ShipTop")
@@ -166,7 +173,7 @@ public:
 
 	/** 현재 예약된 상단 슬롯 수. */
 	UFUNCTION(BlueprintCallable, Category = "AI|ShipTop")
-	int32 GetTopSlotUsage() const { return ReservedTopSlotMonsters.Num(); }
+	int32 GetTopSlotUsage() const { return TopSlotAssignments.Num(); }
 
 	/** 현재 슬롯 배열 읽기 전용 접근 */
 	const TArray<FAttackSlot>& GetSlots() const { return Slots; }
@@ -351,8 +358,11 @@ private:
 	/** 몬스터별 예약된 섹터 인덱스 */
 	TMap<TWeakObjectPtr<AActor>, int32> ReservedSectorIndices;
 
-	/** [ShipTopV1] 상단 슬롯을 예약한 몬스터 집합. */
-	TSet<TWeakObjectPtr<AActor>> ReservedTopSlotMonsters;
+	/**
+	 * [ShipJumpSpreadV1] 상단 슬롯 인덱스 → 예약 몬스터.
+	 * 0..MaxTopSlots-1 의 슬롯 슬롯에 몬스터를 매핑. 인덱스가 ShipJump GA 의 궤적 분산에 사용됨.
+	 */
+	TMap<int32, TWeakObjectPtr<AActor>> TopSlotAssignments;
 
 	/** [ShipTopV1] 무효화된 항목을 정리. */
 	void CleanupTopSlotReservations();

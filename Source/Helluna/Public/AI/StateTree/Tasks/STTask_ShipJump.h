@@ -42,6 +42,10 @@ struct FSTTask_ShipJumpInstanceData
 	UPROPERTY()
 	bool bActivatedGA = false;
 
+	/** [ShipJumpSpreadV1] 슬롯 매니저로부터 받은 인덱스 — GA 의 부채꼴 분산에 사용. */
+	UPROPERTY()
+	int32 AssignedTopSlotIndex = INDEX_NONE;
+
 	UPROPERTY()
 	float PostLandingTimer = 0.f;
 

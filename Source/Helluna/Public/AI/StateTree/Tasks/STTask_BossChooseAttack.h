@@ -210,4 +210,20 @@ public:
 	UPROPERTY(EditAnywhere, Category = "걷기 슬롯",
 		meta = (DisplayName = "걷기 후 재공격 대기 (초)", ClampMin = "0.0"))
 	float WalkReentryDelay = 2.0f;
+
+	/**
+	 * [BossWalkPriorityV1] GA 후보가 있으면 GA 우선, Walk 는 폴백.
+	 *
+	 *  true  (기본): 현재 거리에서 GA 슬롯 후보가 1개 이상이면 그 중에서만 선택.
+	 *                Walk 슬롯(GA=null) 은 GA 후보가 0 개일 때만 폴백으로 사용.
+	 *                → 사용자 의도 "GA 거리 안 닿을 때만 걷기" 정확히 구현.
+	 *  false : GA 와 Walk 슬롯을 같은 풀에서 가중치/랜덤으로 섞어 선택 (이전 동작).
+	 *
+	 *  AttackPool 의 슬롯들이 거리 범위가 겹치게 셋업된 경우(예: GA 0~500, Walk 400~2000)
+	 *  false 로 두면 400~500 구간에서 Walk 가 무작위 선택되어 핑퐁 발생.
+	 */
+	UPROPERTY(EditAnywhere, Category = "걷기 슬롯",
+		meta = (DisplayName = "GA 후보 우선 (Walk 는 폴백)",
+			ToolTip = "true: GA 후보 있으면 GA 만 선택, Walk 는 GA 0개일 때 폴백."))
+	bool bPreferAbilityOverWalk = true;
 };
