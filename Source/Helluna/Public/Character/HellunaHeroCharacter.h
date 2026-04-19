@@ -762,6 +762,74 @@ private:
 	uint8 CalcHitDirection(AActor* InstigatorActor) const;
 
 	// =========================================================
+	// ★ 물리 스턴/래그돌 시스템 (가디언 전용)
+	// HP > 0 피격: 래그돌 전환 후 속도 임계값 이하로 떨어지면 GetUp.
+	// HP = 0 피격: 스턴 생략 → 기존 Downed 흐름 유지.
+	// =========================================================
+public:
+	/** 서버: 가디언 피격에 의해 물리 스턴 진입/누적. HealthComponent 에서 호출. */
+	void EnterPhysicsStunFromDamage(float Damage, const FVector& HitDirection, const FVector& HitLocation);
+
+protected:
+	/** 회복 시 재생할 GetUp 몽타주 (없으면 스킵) */
+	UPROPERTY(EditDefaultsOnly, Category = "Stun|Physics",
+		meta = (DisplayName = "GetUp 몽타주 (스턴 회복)"))
+	TObjectPtr<UAnimMontage> GetUpMontage = nullptr;
+
+	/** 데미지 1당 임펄스 크기 배율 (Impulse = Damage * Scale * Direction) */
+	UPROPERTY(EditDefaultsOnly, Category = "Stun|Physics",
+		meta = (DisplayName = "임펄스 배율 (데미지당)", ClampMin = "0.0", ClampMax = "100000.0"))
+	float KnockbackDamageScale = 3000.f;
+
+	/** 스턴 회복 속도 임계값 (UU/s). 래그돌 속도가 이 이하로 떨어지면 회복 시작. */
+	UPROPERTY(EditDefaultsOnly, Category = "Stun|Physics",
+		meta = (DisplayName = "회복 속도 임계값 (UU/s)", ClampMin = "1.0", ClampMax = "1000.0"))
+	float RecoveryVelocityThreshold = 60.f;
+
+	/** 래그돌 속도 폴링 간격 (초, 서버 전용) */
+	UPROPERTY(EditDefaultsOnly, Category = "Stun|Physics",
+		meta = (DisplayName = "스턴 폴링 간격 (초)", ClampMin = "0.05", ClampMax = "1.0"))
+	float StunPollInterval = 0.2f;
+
+	/** 스턴 최소 유지 시간 (초). 이 시간 이전엔 속도 임계값을 만족해도 회복하지 않음. */
+	UPROPERTY(EditDefaultsOnly, Category = "Stun|Physics",
+		meta = (DisplayName = "스턴 최소 유지 시간 (초)", ClampMin = "0.0", ClampMax = "10.0"))
+	float StunMinDuration = 0.8f;
+
+	/** Multicast: 래그돌 활성 + 초기 임펄스 */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_EnterPhysicsStun(FVector_NetQuantize Impulse, FVector_NetQuantize HitLocation);
+
+	/** Multicast: 스턴 중 추가 임펄스 (누적) */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_AddStunImpulse(FVector_NetQuantize Impulse, FVector_NetQuantize HitLocation);
+
+	/** Multicast: 래그돌 해제 + 캡슐 복원 + GetUp */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_RecoverFromStun(FVector_NetQuantize RecoveryLocation);
+
+private:
+	/** 서버 스턴 활성 여부 */
+	bool bServerPhysicsStunned = false;
+
+	/** 스턴 진입 시각 (World 시간) */
+	float ServerStunStartTime = 0.f;
+
+	/** 서버 폴링 타이머 핸들 */
+	FTimerHandle PhysicsStunPollHandle;
+
+	/** Mesh 기본 relative transform 캐시 (회복 복원용) */
+	FVector MeshDefaultRelativeLocation = FVector::ZeroVector;
+	FRotator MeshDefaultRelativeRotation = FRotator::ZeroRotator;
+	bool bMeshDefaultsCached = false;
+
+	/** 서버 폴링: 속도 임계값 검사 후 회복 트리거 */
+	void TickPhysicsStunPoll();
+
+	/** 서버: 회복 수행 */
+	void ServerRecoverFromStun();
+
+	// =========================================================
 	// 시간 왜곡 슬로우 배율
 	// =========================================================
 public:

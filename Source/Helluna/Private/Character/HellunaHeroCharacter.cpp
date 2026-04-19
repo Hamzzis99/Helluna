@@ -1114,6 +1114,222 @@ void AHellunaHeroCharacter::Server_RequestDestroyWeapon_Implementation()
 
 }
 
+// =========================================================
+// 물리 스턴/래그돌 (가디언 전용) — HP>0 피격에서만 트리거
+// =========================================================
+
+void AHellunaHeroCharacter::EnterPhysicsStunFromDamage(float Damage, const FVector& HitDirection, const FVector& HitLocation)
+{
+	if (!HasAuthority()) return;
+	if (IsActorBeingDestroyed()) return;
+	if (HeroHealthComponent && (HeroHealthComponent->IsDead() || HeroHealthComponent->IsDowned()))
+	{
+		return;
+	}
+
+	const FVector SafeDir = HitDirection.IsNearlyZero()
+		? FVector(0.f, 0.f, 1.f)
+		: HitDirection.GetSafeNormal();
+	const FVector Impulse = SafeDir * FMath::Max(1.f, Damage * KnockbackDamageScale);
+
+	if (bServerPhysicsStunned)
+	{
+		// 누적 임펄스 (스턴 중 재피격)
+		Multicast_AddStunImpulse(FVector_NetQuantize(Impulse), FVector_NetQuantize(HitLocation));
+		return;
+	}
+
+	bServerPhysicsStunned = true;
+	if (UWorld* World = GetWorld())
+	{
+		ServerStunStartTime = World->GetTimeSeconds();
+	}
+
+	Multicast_EnterPhysicsStun(FVector_NetQuantize(Impulse), FVector_NetQuantize(HitLocation));
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().SetTimer(
+			PhysicsStunPollHandle, this, &ThisClass::TickPhysicsStunPoll, StunPollInterval, true);
+	}
+
+	UE_LOG(LogHelluna, Log, TEXT("[Stun] %s → 물리 스턴 진입 (Impulse=%.0f)"),
+		*GetName(), Impulse.Size());
+}
+
+void AHellunaHeroCharacter::Multicast_EnterPhysicsStun_Implementation(FVector_NetQuantize Impulse, FVector_NetQuantize HitLocation)
+{
+	USkeletalMeshComponent* SkelMesh = GetMesh();
+	if (!SkelMesh) return;
+
+	// 데디케이티드 서버: 물리 시뮬만 적용 (렌더 없음)
+	if (!bMeshDefaultsCached)
+	{
+		MeshDefaultRelativeLocation = SkelMesh->GetRelativeLocation();
+		MeshDefaultRelativeRotation = SkelMesh->GetRelativeRotation();
+		bMeshDefaultsCached = true;
+	}
+
+	// 진행 중 몽타주 중단
+	if (UAnimInstance* AnimInst = SkelMesh->GetAnimInstance())
+	{
+		AnimInst->Montage_Stop(0.f);
+	}
+
+	// 래그돌 활성화 (Death/Downed 동일 패턴)
+	SkelMesh->SetCollisionProfileName(TEXT("Ragdoll"));
+	SkelMesh->SetAllBodiesSimulatePhysics(true);
+	SkelMesh->SetSimulatePhysics(true);
+	SkelMesh->WakeAllRigidBodies();
+	SkelMesh->bBlendPhysics = true;
+
+	// 캡슐 콜리전 끔
+	if (UCapsuleComponent* Capsule = GetCapsuleComponent())
+	{
+		Capsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
+
+	// 이동 정지
+	if (UCharacterMovementComponent* CMC = GetCharacterMovement())
+	{
+		CMC->StopMovementImmediately();
+		CMC->DisableMovement();
+	}
+
+	// 로컬 입력 잠금
+	if (IsLocallyControlled())
+	{
+		LockMoveInput();
+		LockLookInput();
+	}
+
+	// 임펄스 (래그돌이 이미 물리 활성 상태 → AddImpulseAtLocation 유효)
+	SkelMesh->AddImpulseAtLocation(FVector(Impulse), FVector(HitLocation));
+}
+
+void AHellunaHeroCharacter::Multicast_AddStunImpulse_Implementation(FVector_NetQuantize Impulse, FVector_NetQuantize HitLocation)
+{
+	USkeletalMeshComponent* SkelMesh = GetMesh();
+	if (!SkelMesh) return;
+	if (!SkelMesh->IsSimulatingPhysics()) return;
+
+	SkelMesh->AddImpulseAtLocation(FVector(Impulse), FVector(HitLocation));
+}
+
+void AHellunaHeroCharacter::TickPhysicsStunPoll()
+{
+	if (!HasAuthority() || !bServerPhysicsStunned) return;
+
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	// Downed/Dead 로 전환됐으면 스턴 흐름 종료 (별도 경로가 래그돌 유지)
+	if (HeroHealthComponent && (HeroHealthComponent->IsDead() || HeroHealthComponent->IsDowned()))
+	{
+		World->GetTimerManager().ClearTimer(PhysicsStunPollHandle);
+		bServerPhysicsStunned = false;
+		return;
+	}
+
+	const float Elapsed = World->GetTimeSeconds() - ServerStunStartTime;
+	if (Elapsed < StunMinDuration) return;
+
+	USkeletalMeshComponent* SkelMesh = GetMesh();
+	if (!SkelMesh) return;
+
+	const float Speed = SkelMesh->GetPhysicsLinearVelocity().Size();
+	if (Speed <= RecoveryVelocityThreshold)
+	{
+		ServerRecoverFromStun();
+	}
+}
+
+void AHellunaHeroCharacter::ServerRecoverFromStun()
+{
+	if (!HasAuthority() || !bServerPhysicsStunned) return;
+
+	bServerPhysicsStunned = false;
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(PhysicsStunPollHandle);
+	}
+
+	FVector RecoveryLoc = GetActorLocation();
+	if (USkeletalMeshComponent* SkelMesh = GetMesh())
+	{
+		const FVector BoneLoc = SkelMesh->GetBoneLocation(TEXT("pelvis"));
+		if (!BoneLoc.IsNearlyZero())
+		{
+			RecoveryLoc = BoneLoc;
+		}
+		if (UCapsuleComponent* Capsule = GetCapsuleComponent())
+		{
+			// 지면 기준 캡슐 높이 보정 (Pelvis 는 캡슐 중앙 근처)
+			RecoveryLoc.Z -= (Capsule->GetScaledCapsuleHalfHeight() * 0.3f);
+		}
+	}
+
+	SetActorLocation(RecoveryLoc, /*bSweep=*/false, nullptr, ETeleportType::TeleportPhysics);
+
+	Multicast_RecoverFromStun(FVector_NetQuantize(RecoveryLoc));
+
+	UE_LOG(LogHelluna, Log, TEXT("[Stun] %s → 스턴 회복"), *GetName());
+}
+
+void AHellunaHeroCharacter::Multicast_RecoverFromStun_Implementation(FVector_NetQuantize RecoveryLocation)
+{
+	USkeletalMeshComponent* SkelMesh = GetMesh();
+
+	// 래그돌 해제
+	if (SkelMesh)
+	{
+		SkelMesh->SetAllBodiesSimulatePhysics(false);
+		SkelMesh->SetSimulatePhysics(false);
+		SkelMesh->bBlendPhysics = false;
+		SkelMesh->SetCollisionProfileName(TEXT("CharacterMesh"));
+
+		if (bMeshDefaultsCached)
+		{
+			SkelMesh->AttachToComponent(GetCapsuleComponent(),
+				FAttachmentTransformRules::KeepRelativeTransform);
+			SkelMesh->SetRelativeLocationAndRotation(
+				MeshDefaultRelativeLocation, MeshDefaultRelativeRotation);
+		}
+	}
+
+	// 캡슐 콜리전 복원
+	if (UCapsuleComponent* Capsule = GetCapsuleComponent())
+	{
+		Capsule->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	}
+
+	// 이동 복원
+	if (UCharacterMovementComponent* CMC = GetCharacterMovement())
+	{
+		CMC->SetMovementMode(MOVE_Walking);
+	}
+
+	// 로컬 입력 잠금 해제
+	if (IsLocallyControlled())
+	{
+		UnlockMoveInput();
+		UnlockLookInput();
+	}
+
+	// GetUp 몽타주 (슬롯이 비어있으면 스킵)
+	if (GetUpMontage)
+	{
+		if (SkelMesh)
+		{
+			if (UAnimInstance* AnimInst = SkelMesh->GetAnimInstance())
+			{
+				AnimInst->Montage_Play(GetUpMontage);
+			}
+		}
+	}
+}
+
 void AHellunaHeroCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const //서버에서 클라로 복제
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);

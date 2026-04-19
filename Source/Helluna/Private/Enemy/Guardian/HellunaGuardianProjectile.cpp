@@ -1,5 +1,6 @@
 // File: Source/Helluna/Private/Enemy/Guardian/HellunaGuardianProjectile.cpp
 #include "Enemy/Guardian/HellunaGuardianProjectile.h"
+#include "Enemy/Guardian/HellunaDamageType_PhysicsImpact.h"
 
 #include "Components/BoxComponent.h"
 #include "GameFramework/ProjectileMovementComponent.h"
@@ -176,7 +177,7 @@ void AHellunaGuardianProjectile::Explode(const FVector& ExplosionLocation, const
 			Damage,
 			ExplosionLocation,
 			Radius,
-			UDamageType::StaticClass(),
+			UHellunaDamageType_PhysicsImpact::StaticClass(),
 			Ignore,
 			GetOwner(), /*DamageCauser=*/
 			nullptr,   /*InstigatorController=*/

@@ -2,6 +2,7 @@
 
 #include "Enemy/Guardian/HellunaGuardianTurret.h"
 #include "Enemy/Guardian/HellunaGuardianProjectile.h"
+#include "Enemy/Guardian/HellunaDamageType_PhysicsImpact.h"
 
 #include "Helluna.h"
 #include "Character/HellunaHeroCharacter.h"
@@ -11,6 +12,8 @@
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/SphereComponent.h"
+#include "Components/CapsuleComponent.h"
+#include "GameFramework/Character.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 #include "NiagaraFunctionLibrary.h"
@@ -504,7 +507,22 @@ FVector AHellunaGuardianTurret::GetAimPointFor(const AActor* Target) const
 	{
 		return FVector::ZeroVector;
 	}
-	return Target->GetActorLocation() + FVector(0.f, 0.f, TargetAimOffsetZ);
+	const FVector Center = Target->GetActorLocation() + FVector(0.f, 0.f, TargetAimOffsetZ);
+
+	if (const ACharacter* Char = Cast<ACharacter>(Target))
+	{
+		if (const UCapsuleComponent* Cap = Char->GetCapsuleComponent())
+		{
+			const FVector Origin = MuzzlePoint ? MuzzlePoint->GetComponentLocation() : GetActorLocation();
+			const FVector Dir = (Center - Origin).GetSafeNormal();
+			if (!Dir.IsNearlyZero())
+			{
+				const float Pullback = Cap->GetScaledCapsuleRadius() + BeamSurfaceOffset;
+				return Center - Dir * Pullback;
+			}
+		}
+	}
+	return Center;
 }
 
 // =========================================================
@@ -626,7 +644,7 @@ void AHellunaGuardianTurret::PerformFire()
 			Damage,
 			ImpactLocation,
 			ExplosionRadius,
-			UDamageType::StaticClass(),
+			UHellunaDamageType_PhysicsImpact::StaticClass(),
 			IgnoreActors,
 			this,
 			nullptr,
@@ -643,7 +661,7 @@ void AHellunaGuardianTurret::PerformFire()
 		if (HitHero)
 		{
 			UGameplayStatics::ApplyDamage(
-				HitHero, Damage, nullptr, this, UDamageType::StaticClass());
+				HitHero, Damage, nullptr, this, UHellunaDamageType_PhysicsImpact::StaticClass());
 		}
 		return;
 	}
@@ -664,7 +682,7 @@ void AHellunaGuardianTurret::PerformFire()
 		if (FVector::Dist(HeroAim, LockedFireTarget) <= HitTolerance)
 		{
 			UGameplayStatics::ApplyDamage(
-				Hero, Damage, nullptr, this, UDamageType::StaticClass());
+				Hero, Damage, nullptr, this, UHellunaDamageType_PhysicsImpact::StaticClass());
 		}
 	}
 }

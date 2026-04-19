@@ -136,6 +136,11 @@ protected:
 		meta = (DisplayName = "조준 오프셋 Z (UU)", ClampMin = "0.0", ClampMax = "200.0"))
 	float TargetAimOffsetZ = 50.f;
 
+	/** 빔 끝점 표면 오프셋 (UU). 양수=몸에서 더 떨어짐 / 음수=몸 안쪽으로 더 들어감. 0=캡슐 표면 정확히. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Guardian|Detection",
+		meta = (DisplayName = "빔 표면 오프셋 (UU)", ClampMin = "-100.0", ClampMax = "100.0"))
+	float BeamSurfaceOffset = 0.f;
+
 	/** 라인트레이스 채널 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Detection",
 		meta = (DisplayName = "트레이스 채널"))
