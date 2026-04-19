@@ -29,6 +29,7 @@ class UInv_InventoryComponent;
 class UHellunaHealthComponent;
 class UPCGComponent;
 class UPCGManagedActors;
+class UOreHISMPoolComponent;
 
 // ════════════════════════════════════════════════════════════════════════════════
 // Phase 7: 게임 종료 사유
@@ -143,6 +144,9 @@ protected:
 
 	/** 밤 시작: PCG 그래프 실행 */
 	void ActivateNightPCG();
+
+	/** [Day1Preload] InitializeGame에서 Day1 광석을 미리 생성했는지 여부 — EnterDay의 중복 스케줄 방지 */
+	bool bDay1OresPrepared = false;
 
 	/** PCG 생성 완료 콜백 — 스폰된 광석 수 디버그 출력 + 밀도 컬링 */
 	void OnNightPCGGraphGenerated(UPCGComponent* InComponent);
@@ -305,6 +309,19 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|경사 보정",
 		meta = (DisplayName = "경사 Z 박아넣기(cm)", ClampMin = "0.0", ClampMax = "200.0"))
 	float GroundSlopeSinkAmount = 20.f;
+
+	// ────────────────────────────────────────────────────────────────────────────
+	// [PCG HISM 풀] 광석을 AActor 대신 HISM으로 관리하여 성능 극대화
+	// ────────────────────────────────────────────────────────────────────────────
+
+	/** HISM 풀 사용 여부. true이면 광석을 HISM 인스턴스로 등록, 플레이어 접근 시에만 AActor 스폰 */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|HISM 풀",
+		meta = (DisplayName = "HISM 풀 사용"))
+	bool bUseOreHISMPool = true;
+
+	/** HISM 풀 매니저 컴포넌트 (bUseOreHISMPool이 true일 때 BeginPlay에서 자동 생성) */
+	UPROPERTY()
+	TObjectPtr<UOreHISMPoolComponent> OreHISMPool;
 
 	// ────────────────────────────────────────────────────────────────────────────
 	// 내부 배칭 멤버
