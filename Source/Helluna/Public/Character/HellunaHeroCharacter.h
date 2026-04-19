@@ -762,6 +762,118 @@ private:
 	uint8 CalcHitDirection(AActor* InstigatorActor) const;
 
 	// =========================================================
+	// ★ 물리 스턴/래그돌 시스템 (가디언 전용)
+	// HP > 0 피격: 래그돌 전환 후 속도 임계값 이하로 떨어지면 GetUp.
+	// HP = 0 피격: 스턴 생략 → 기존 Downed 흐름 유지.
+	// =========================================================
+public:
+	/** 서버: 가디언 피격에 의해 물리 스턴 진입/누적. HealthComponent 에서 호출. */
+	void EnterPhysicsStunFromDamage(float Damage, const FVector& HitDirection, const FVector& HitLocation);
+
+protected:
+	/** 회복 시 재생할 GetUp 몽타주 (없으면 스킵) */
+	UPROPERTY(EditDefaultsOnly, Category = "Stun|Physics",
+		meta = (DisplayName = "GetUp 몽타주 (스턴 회복)"))
+	TObjectPtr<UAnimMontage> GetUpMontage = nullptr;
+
+	/** 데미지 1당 임펄스 크기 배율 (Impulse = Damage * Scale * Direction) */
+	UPROPERTY(EditDefaultsOnly, Category = "Stun|Physics",
+		meta = (DisplayName = "임펄스 배율 (데미지당)", ClampMin = "0.0", ClampMax = "100000.0"))
+	float KnockbackDamageScale = 3000.f;
+
+	/** 런치 방향 수직 상향 boost (0=수평, 1=히트방향과 동일, 1.5~2.0=BOTW 가디언식 붕 뜸) */
+	UPROPERTY(EditDefaultsOnly, Category = "Stun|Physics",
+		meta = (DisplayName = "런치 수직 Boost", ClampMin = "0.0", ClampMax = "5.0"))
+	float StunLaunchVerticalBoost = 1.5f;
+
+	/** 스턴 회복 속도 임계값 (UU/s). 래그돌 속도가 이 이하로 떨어지면 회복 시작. */
+	UPROPERTY(EditDefaultsOnly, Category = "Stun|Physics",
+		meta = (DisplayName = "회복 속도 임계값 (UU/s)", ClampMin = "1.0", ClampMax = "1000.0"))
+	float RecoveryVelocityThreshold = 60.f;
+
+	/** 래그돌 속도 폴링 간격 (초, 서버 전용) */
+	UPROPERTY(EditDefaultsOnly, Category = "Stun|Physics",
+		meta = (DisplayName = "스턴 폴링 간격 (초)", ClampMin = "0.05", ClampMax = "1.0"))
+	float StunPollInterval = 0.2f;
+
+	/** 스턴 최소 유지 시간 (초). 이 시간 이전엔 속도 임계값을 만족해도 회복하지 않음. */
+	UPROPERTY(EditDefaultsOnly, Category = "Stun|Physics",
+		meta = (DisplayName = "스턴 최소 유지 시간 (초)", ClampMin = "0.0", ClampMax = "10.0"))
+	float StunMinDuration = 0.8f;
+
+	/** 회복 조건 충족 후 실제 Recover 까지 지연 (초). 래그돌이 정지한 모습을 카메라가 보여주는 시간. */
+	UPROPERTY(EditDefaultsOnly, Category = "Stun|Physics",
+		meta = (DisplayName = "회복 Linger 시간 (초)", ClampMin = "0.0", ClampMax = "3.0"))
+	float RecoveryLingerSeconds = 0.6f;
+
+	/** Recover 시 CameraBoom 복원 블렌드 시간 (초). 0 이면 즉시 복원. */
+	UPROPERTY(EditDefaultsOnly, Category = "Stun|Physics",
+		meta = (DisplayName = "카메라 복원 블렌드 (초)", ClampMin = "0.0", ClampMax = "2.0"))
+	float CameraRecoverBlendDuration = 0.5f;
+
+	/** Multicast: 래그돌 활성 + 초기 임펄스 */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_EnterPhysicsStun(FVector_NetQuantize Impulse, FVector_NetQuantize HitLocation);
+
+	/** Multicast: 스턴 중 추가 임펄스 (누적) */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_AddStunImpulse(FVector_NetQuantize Impulse, FVector_NetQuantize HitLocation);
+
+	/** Multicast: 래그돌 해제 + 캡슐 복원 + GetUp */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_RecoverFromStun(FVector_NetQuantize RecoveryLocation);
+
+private:
+	/** 서버 스턴 활성 여부 */
+	bool bServerPhysicsStunned = false;
+
+	/** 모든 머신(서버/클라) 공통: 로컬 래그돌 활성 여부 — 카메라 팔로우용 */
+	bool bLocalPhysicsStunned = false;
+
+	/** 스턴 진입 시각 (World 시간) */
+	float ServerStunStartTime = 0.f;
+
+	/** 서버 폴링 타이머 핸들 */
+	FTimerHandle PhysicsStunPollHandle;
+
+	/** Mesh 기본 relative transform 캐시 (회복 복원용) */
+	FVector MeshDefaultRelativeLocation = FVector::ZeroVector;
+	FRotator MeshDefaultRelativeRotation = FRotator::ZeroRotator;
+	bool bMeshDefaultsCached = false;
+
+	/** 서버 폴링: 속도 임계값 검사 후 회복 트리거 */
+	void TickPhysicsStunPoll();
+
+	/** 서버: 회복 수행 */
+	void ServerRecoverFromStun();
+
+	/** 래그돌 중 카메라가 따라가도록 CameraBoom 을 Pelvis 본 위치로 추적 (Zelda BotW 스타일) */
+	void TickPhysicsStunCameraFollow(float DeltaTime);
+
+	/** CameraBoom 기본 relative location 캐시 (회복 시 복원용) */
+	FVector CameraBoomDefaultRelativeLocation = FVector::ZeroVector;
+	bool bCameraBoomDefaultsCached = false;
+
+	/** 카메라 복원 Lerp 상태 */
+	float CameraRecoverBlendRemaining = 0.f;
+	FVector CameraRecoverStartOffset = FVector::ZeroVector;
+
+	/** 회복 Linger 타이머 */
+	FTimerHandle RecoveryLingerHandle;
+	bool bPendingRecovery = false;
+
+	/** SpringArm Lag/Collision 캐시 (스턴 중 즉각 추적을 위해 비활성화, 회복 시 복원) */
+	bool bSpringArmLagCached = false;
+	bool bCachedEnableCameraLag = false;
+	bool bCachedEnableCameraRotationLag = false;
+	bool bCachedDoCollisionTest = true;
+
+	/** 스턴 진입 후 5초간 매 틱 위치/속도 로깅 — 래그돌이 멀리 날아가는 원인 진단용 */
+	float StunDebugTimeRemaining = 0.f;
+	int32 StunDebugTickIndex = 0;
+	FVector StunDebugStartLocation = FVector::ZeroVector;
+
+	// =========================================================
 	// 시간 왜곡 슬로우 배율
 	// =========================================================
 public:
