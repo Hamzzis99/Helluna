@@ -224,6 +224,16 @@ public:
 			ClampMin = "2"))
 	int32 PlayerDirectMoveThreshold = 4;
 
+	/**
+	 * 플레이어 추격 중 회전 방향:
+	 *  true  = 항상 타겟(플레이어)을 바라봄 (보스다움 ↑, 옆걸음/뒷걸음 시각 어색 가능)
+	 *  false = 속도 방향으로 회전 (자연스러운 러닝 모션이나 RepathInterval 마다
+	 *         속도가 잠깐 0이 되는 프레임에 FaceTarget로 스냅되어 방향 떨림 발생)
+	 */
+	UPROPERTY(EditAnywhere, Category = "플레이어",
+		meta = (DisplayName = "항상 플레이어를 바라봄"))
+	bool bAlwaysFaceTargetDuringChase = true;
+
 	// ==========================================================
 
 	UPROPERTY(EditAnywhere, Category = "터렛",

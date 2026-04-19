@@ -716,20 +716,31 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickPlayerChase(
 		Data.TimeSinceRepath = 0.f;
 	}
 
-	// 이동 중에는 이동 방향, 멈춰있으면 타겟 방향
-	const FVector Vel2D = Pawn->GetVelocity().GetSafeNormal2D();
-	if (!Vel2D.IsNearlyZero())
+	// 회전 방향 결정 — bAlwaysFaceTargetDuringChase 옵션에 따라 분기
+	if (bAlwaysFaceTargetDuringChase)
 	{
-		const FRotator CurrentRot = Pawn->GetActorRotation();
-		const FRotator MoveRot(0.f, Vel2D.Rotation().Yaw, 0.f);
-		const FRotator NewRot = FMath::RInterpTo(CurrentRot, MoveRot, DeltaTime, 5.f);
-		Pawn->SetActorRotation(NewRot);
-		if (AController* C = Pawn->GetController())
-			C->SetControlRotation(NewRot);
+		// 항상 타겟 방향 — RepathInterval 마다 속도가 잠깐 0이 되는 프레임에
+		// FaceTarget 으로 스냅되어 "잠깐 플레이어 바라보다 다시 경로 방향"으로 튀는
+		// 현상 제거. 경로가 타겟까지 휘어져도 상체는 계속 타겟을 응시.
+		ChaseHelpers::FaceTarget(Pawn, Target, DeltaTime, 5.f);
 	}
 	else
 	{
-		ChaseHelpers::FaceTarget(Pawn, Target, DeltaTime, 5.f);
+		// 기존 동작: 이동 중에는 속도 방향, 멈춰있으면 타겟 방향
+		const FVector Vel2D = Pawn->GetVelocity().GetSafeNormal2D();
+		if (!Vel2D.IsNearlyZero())
+		{
+			const FRotator CurrentRot = Pawn->GetActorRotation();
+			const FRotator MoveRot(0.f, Vel2D.Rotation().Yaw, 0.f);
+			const FRotator NewRot = FMath::RInterpTo(CurrentRot, MoveRot, DeltaTime, 5.f);
+			Pawn->SetActorRotation(NewRot);
+			if (AController* C = Pawn->GetController())
+				C->SetControlRotation(NewRot);
+		}
+		else
+		{
+			ChaseHelpers::FaceTarget(Pawn, Target, DeltaTime, 5.f);
+		}
 	}
 
 	return EStateTreeRunStatus::Running;
