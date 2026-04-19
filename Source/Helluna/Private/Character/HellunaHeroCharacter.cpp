@@ -19,6 +19,7 @@
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 #include "Component/RepairComponent.h"
 #include "Weapon/HellunaHeroWeapon.h"
+#include "Weapon/HellunaFarmingWeapon.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
 #include "InventoryManagement/Utils/Inv_InventoryStatics.h"
 #include "Character/HeroComponent/Helluna_FindResourceComponent.h"
@@ -42,6 +43,7 @@
 #include "AbilitySystem/HeroAbility/HeroGameplayAbility_GunParry.h"
 #include "VFX/GhostTrailActor.h"
 #include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
 #include "Cheat/HellunaCheatComponent.h"
 
@@ -190,6 +192,26 @@ void AHellunaHeroCharacter::BeginPlay()
 			GetNetMode() == NM_DedicatedServer ? TEXT("Y") : TEXT("N"),
 			ReviveWidgetComp ? TEXT("Y") : TEXT("N"),
 			ReviveWidgetClass ? TEXT("Y") : TEXT("N"));
+	}
+
+	// [PickaxePreloadV3] 첫 G 입력 시 끊김 방지 — Standalone/리슨서버/데디 모두 적용.
+	// V1/V2에서 부족했던 점:
+	//   - BeginPlay 시점에 Mesh/AnimInstance가 완전 초기화 전이라 warmup이 무의미할 수 있음
+	//   - Attack 몽타주만 워밍업하고 Equip 몽타주/스왑 플로우는 놓침
+	//   - 메시 머티리얼 PSO 컴파일 시간이 포함되지 않았음
+	// V3:
+	//   1) 0.3초 딜레이 후 워밍업 실행 (모든 컴포넌트/애니 초기화 완료 보장)
+	//   2) PickaxeClass 액터를 캐릭터 위치에 스폰, 스케일 0.001로 줄여서 화면에 안 보이게 함
+	//      → 머티리얼/셰이더 PSO 컴파일 유도
+	//   3) Attack + Equip 몽타주 모두 rate=1000으로 잠깐 재생 → 즉시 Stop
+	//   4) Destroy
+	if (PickaxeClass && !GetWorld()->GetTimerManager().IsTimerActive(PickaxeWarmupTimer))
+	{
+		GetWorld()->GetTimerManager().SetTimer(
+			PickaxeWarmupTimer,
+			FTimerDelegate::CreateUObject(this, &AHellunaHeroCharacter::DoPickaxeWarmup),
+			0.3f,
+			false);
 	}
 
 	// ── OTS 카메라 기본값 캐싱 ──
@@ -387,6 +409,8 @@ void AHellunaHeroCharacter::InitWeaponHUD()
 			if (HeroHealthComponent)
 			{
 				HealthHUDWidget->UpdateHealth(HeroHealthComponent->GetHealthNormalized());
+				// [임시 추가 — 주석처리] 힐터렛 테스트용 HP 수치 텍스트 표시
+				// HealthHUDWidget->UpdateHealthText(HeroHealthComponent->GetHealth(), HeroHealthComponent->GetMaxHealth());
 			}
 			// 현재 무기 반영
 			if (CurrentWeapon)
@@ -1298,6 +1322,175 @@ void AHellunaHeroCharacter::Server_RequestPlayMontageExceptOwner_Implementation(
 {
 	Multicast_PlayEquipMontageExceptOwner(Montage);
 }
+
+// =========================================================
+// ★ 곡괭이 임시 교체 (G키 채집 전용)
+// - 새 GA(UHeroGameplayAbility_OreMine)에서 호출.
+// - 클라가 RPC를 쏘면 서버가 PrePickaxeWeaponClass 백업 후
+//   기존 Server_RequestSpawnWeapon 흐름을 그대로 사용해 곡괭이를 손에 쥔다.
+// - 채집 종료 시 RestorePrePickaxeWeapon이 원래 무기를 다시 스폰한다
+//   (탄약은 ApplySavedCurrentMagByClass가 자동 복원).
+// =========================================================
+
+bool AHellunaHeroCharacter::IsHoldingPickaxe() const
+{
+	return Cast<AHellunaFarmingWeapon>(CurrentWeapon) != nullptr;
+}
+
+void AHellunaHeroCharacter::Server_SwapToPickaxeTemp_Implementation(UAnimMontage* EquipMontage)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	if (!PickaxeClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Pickaxe] PickaxeClass 미지정 — BP_HellunaHeroCharacter Defaults에서 곡괭이 무기 클래스를 지정하세요."));
+		return;
+	}
+
+	// 이미 곡괭이를 들고 있으면 중복 교체 방지
+	if (IsHoldingPickaxe())
+	{
+		return;
+	}
+
+	// 원래 무기 클래스 백업 (없으면 nullptr → 복원 시 빈손)
+	PrePickaxeWeaponClass = IsValid(CurrentWeapon) ? CurrentWeapon->GetClass() : nullptr;
+
+	// 부착 소켓은 곡괭이 CDO에서 가져옴 (없으면 기본 WeaponSocket fallback)
+	FName SocketToAttach = NAME_None;
+	if (const AHellunaHeroWeapon* PickaxeCDO = PickaxeClass->GetDefaultObject<AHellunaHeroWeapon>())
+	{
+		SocketToAttach = PickaxeCDO->GetEquipSocketName();
+	}
+	if (SocketToAttach.IsNone())
+	{
+		SocketToAttach = TEXT("WeaponSocket");
+	}
+
+	// 기존 스폰 RPC 재사용 — 내부에서 OldWeapon Destroy + NewWeapon Spawn + 탄약 보존 처리
+	Server_RequestSpawnWeapon_Implementation(PickaxeClass, SocketToAttach, EquipMontage);
+}
+
+void AHellunaHeroCharacter::Server_RestorePrePickaxeWeapon_Implementation(UAnimMontage* EquipMontage)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	// 백업 클래스 없음 → 곡괭이만 제거하고 빈손 유지
+	if (!PrePickaxeWeaponClass)
+	{
+		if (IsHoldingPickaxe())
+		{
+			Server_RequestDestroyWeapon_Implementation();
+		}
+		return;
+	}
+
+	// 손에 곡괭이가 있어야만 복원 의미가 있음 (이미 다른 무기 들었으면 스킵)
+	if (!IsHoldingPickaxe())
+	{
+		PrePickaxeWeaponClass = nullptr;
+		return;
+	}
+
+	// 부착 소켓은 원본 무기 CDO에서 가져옴
+	FName SocketToAttach = NAME_None;
+	if (const AHellunaHeroWeapon* OrigCDO = PrePickaxeWeaponClass->GetDefaultObject<AHellunaHeroWeapon>())
+	{
+		SocketToAttach = OrigCDO->GetEquipSocketName();
+	}
+	if (SocketToAttach.IsNone())
+	{
+		SocketToAttach = TEXT("WeaponSocket");
+	}
+
+	const TSubclassOf<AHellunaHeroWeapon> RestoreClass = PrePickaxeWeaponClass;
+	PrePickaxeWeaponClass = nullptr; // 복원 시도 후 즉시 비움
+
+	Server_RequestSpawnWeapon_Implementation(RestoreClass, SocketToAttach, EquipMontage);
+}
+
+// =========================================================
+// [PickaxePreloadV3] 곡괭이 첫 사용 시 히치 방지 워밍업
+// - BeginPlay 후 0.3초 딜레이 타이머로 호출
+// - 로컬 컨트롤러에서만 실행 (렌더/애니 에셋 로드 대상)
+// - Pickaxe 액터를 스폰해 메시/머티리얼 로드 유도
+// - 곡괭이의 Attack/Equip 몽타주를 rate=1000으로 재생 → 즉시 Stop해서
+//   풀바디 슬롯 + 노티파이 프로세서 컴파일을 미리 수행
+// - 스탠드얼론에서도 첫 입력 히치가 발생한다는 피드백에 따라 V3에서 추가
+// =========================================================
+void AHellunaHeroCharacter::DoPickaxeWarmup()
+{
+	if (!PickaxeClass || !GetWorld() || !GetMesh())
+	{
+		return;
+	}
+
+	// 로컬 렌더링 대상만 워밍업 (데디 서버/리모트 프록시 대상은 의미 없음)
+	if (!IsLocallyControlled())
+	{
+		return;
+	}
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = this;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	SpawnParams.ObjectFlags |= RF_Transient;
+
+	// 히어로 발 아래로 스폰 → 스케일 극소 → 화면에 안 보이지만 머티리얼/PSO는 컴파일됨
+	const FVector WarmupLoc = GetActorLocation() - FVector(0.f, 0.f, 500.f);
+	AHellunaHeroWeapon* WarmupPickaxe = GetWorld()->SpawnActor<AHellunaHeroWeapon>(
+		PickaxeClass, WarmupLoc, FRotator::ZeroRotator, SpawnParams);
+	if (!WarmupPickaxe)
+	{
+		return;
+	}
+
+	WarmupPickaxe->SetActorScale3D(FVector(0.001f));
+	WarmupPickaxe->SetActorEnableCollision(false);
+
+	// Attack + Equip 몽타주 모두 워밍업
+	if (UAnimInstance* AnimInst = GetMesh()->GetAnimInstance())
+	{
+		auto WarmupMontage = [AnimInst](UAnimMontage* M, const TCHAR* Label)
+		{
+			if (!M) return;
+			const float Dur = AnimInst->Montage_Play(M, /*Rate*/ 1000.f,
+				EMontagePlayReturnType::Duration, 0.f, /*bStopAll*/ false);
+			if (Dur > 0.f)
+			{
+				AnimInst->Montage_Stop(0.f, M);
+			}
+			UE_LOG(LogTemp, Verbose, TEXT("[PickaxePreloadV3] Montage '%s' warmup dur=%.2f"), Label, Dur);
+		};
+
+		const FWeaponAnimationSet& AnimSet = WarmupPickaxe->GetAnimSet();
+		WarmupMontage(AnimSet.Attack, TEXT("Attack"));
+		WarmupMontage(AnimSet.Equip, TEXT("Equip"));
+	}
+
+	// 다음 틱에 Destroy (렌더가 최소 1프레임 돌게) — 매크로 FTimerDelegate로 간단히
+	FTimerHandle DestroyHandle;
+	TWeakObjectPtr<AHellunaHeroWeapon> WarmupWeak = WarmupPickaxe;
+	GetWorld()->GetTimerManager().SetTimer(
+		DestroyHandle,
+		FTimerDelegate::CreateLambda([WarmupWeak]()
+		{
+			if (WarmupWeak.IsValid())
+			{
+				WarmupWeak->Destroy();
+			}
+		}),
+		0.05f, false);
+
+	UE_LOG(LogTemp, Verbose, TEXT("[PickaxePreloadV3] Warmup 스폰/애니 완료 (%s)"), *PickaxeClass->GetName());
+}
+
 void AHellunaHeroCharacter::SaveCurrentMagByClass(AHellunaHeroWeapon* Weapon)
 {
 	// 서버에서만 저장 (탄약은 서버가 권위를 가짐)
@@ -1353,6 +1546,24 @@ void AHellunaHeroCharacter::OnHeroHealthChanged(
 	if (IsLocallyControlled() && HealthHUDWidget && HeroHealthComponent)
 	{
 		HealthHUDWidget->UpdateHealth(HeroHealthComponent->GetHealthNormalized());
+		// [임시 추가 — 주석처리] 힐터렛 테스트용 HP 수치 텍스트 표시
+		// HealthHUDWidget->UpdateHealthText(HeroHealthComponent->GetHealth(), HeroHealthComponent->GetMaxHealth());
+	}
+
+	// [CameraShake] 피격 시 카메라 쉐이크 (로컬 클라이언트 전용)
+	if (IsLocallyControlled() && OldHealth > NewHealth && DamageCameraShakeClass)
+	{
+		if (APlayerController* PC = Cast<APlayerController>(GetController()))
+		{
+			const float DamageDelta = OldHealth - NewHealth;
+			const float MaxHP = HeroHealthComponent ? HeroHealthComponent->GetMaxHealth() : 100.f;
+			// 데미지 비율(0~1): HeavyDamageRatio만큼의 데미지에서 1.0, 그 이상은 1.0으로 포화
+			const float DamageRatio = FMath::Clamp(DamageDelta / (MaxHP * HeavyDamageRatio), 0.f, 1.f);
+			// 최소 스케일 ~ 1.0 범위로 보간. MinDamageShakeScale을 낮추면 약한 피격이 더 약해짐.
+			const float CurveScale = FMath::Lerp(MinDamageShakeScale, 1.0f, DamageRatio);
+			const float FinalScale = DamageCameraShakeScale * CurveScale;
+			PC->ClientStartCameraShake(DamageCameraShakeClass, FinalScale);
+		}
 	}
 
 	if (!HasAuthority()) return;
