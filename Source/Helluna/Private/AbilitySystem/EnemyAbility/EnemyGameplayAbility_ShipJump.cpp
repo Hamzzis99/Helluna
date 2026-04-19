@@ -163,10 +163,12 @@ FVector UEnemyGameplayAbility_ShipJump::ComputeLaunchVelocityToShipTop(const AHe
 		}
 	}
 	const float RequiredClimb = FMath::Max(ShipTopZ - EnemyZ, 0.f);
-	const float ApexClearance = 300.f; // 상단을 확실히 넘기기 위한 여유 고도 (cm)
+	// [ShipJumpV8.Apex] ApexClearance 를 UPROPERTY 로 노출 (과거 V7 하드 300 → 기본 500 으로 상향).
+	// 상향 이유: 측면/날개 걸림 사고 감소. BP 에서 미세 튜닝 가능.
+	const float EffectiveApexClearance = FMath::Max(ApexClearance, 50.f);
 	// [ShipJumpV5.NoFloor] OvershootHeight 를 최저 보장치로 쓰지 않음 → per-side 트레이스 결과가 실제 Apex 에 반영됨.
 	// 단 극단적으로 얕은 경우만 20cm 로 바닥 보호.
-	const float ApexHeight = FMath::Max(RequiredClimb + ApexClearance, 20.f);
+	const float ApexHeight = FMath::Max(RequiredClimb + EffectiveApexClearance, 20.f);
 	const float LaunchVelocityZ = FMath::Sqrt(2.f * GravityZ * ApexHeight);
 	const float TimeToApex = LaunchVelocityZ / GravityZ;
 
@@ -337,6 +339,24 @@ void UEnemyGameplayAbility_ShipJump::OnLanded()
 				FGameplayTagContainer OnShipContainer;
 				OnShipContainer.AddTag(OnShipTag);
 				ASC->AddLooseGameplayTags(OnShipContainer);
+			}
+		}
+	}
+	else
+	{
+		// [ShipJumpFailV1] 상단 착지 실패 → State.Enemy.ShipJumpFailed 태그 영구 부여.
+		// StateTree 의 spaceshipJump EnterCondition 이 이 태그 보유 시 진입 차단 → 재시도 영구 중지.
+		if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
+		{
+			const FGameplayTag FailTag = FGameplayTag::RequestGameplayTag(FName("State.Enemy.ShipJumpFailed"), false);
+			if (FailTag.IsValid() && !ASC->HasMatchingGameplayTag(FailTag))
+			{
+				FGameplayTagContainer FailContainer;
+				FailContainer.AddTag(FailTag);
+				ASC->AddLooseGameplayTags(FailContainer);
+				UE_LOG(LogTemp, Warning,
+					TEXT("[ShipJumpFailV1] Enemy=%s — ShipJumpFailed 태그 부여 (재시도 차단)"),
+					Enemy ? *Enemy->GetName() : TEXT("none"));
 			}
 		}
 	}

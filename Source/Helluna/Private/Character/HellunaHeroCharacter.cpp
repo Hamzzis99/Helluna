@@ -1148,6 +1148,7 @@ void AHellunaHeroCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 	DOREPLIFETIME(AHellunaHeroCharacter, ReviveProgress);  // [Downed/Revive] 부활 진행률
 	DOREPLIFETIME(AHellunaHeroCharacter, MoveSpeedMultiplier);  // [TimeDistortion] 이동속도 슬로우 배율
 	DOREPLIFETIME(AHellunaHeroCharacter, AnimRateMultiplier);   // [TimeDistortion] 애니메이션 속도 슬로우 배율
+	DOREPLIFETIME(AHellunaHeroCharacter, JumpGravityMultiplier); // [TDJumpV1] 점프/중력 슬로우 배율
 }
 
 
@@ -1232,6 +1233,62 @@ void AHellunaHeroCharacter::OnRep_AnimRateMultiplier()
 		}
 		UE_LOG(LogTemp, Warning, TEXT("[TimeDistortion] Client GlobalAnimRateScale = %.2f"), SkelMesh->GlobalAnimRateScale);
 	}
+}
+
+// =========================================================
+// [TDJumpV1] 점프/중력 슬로우 — 체공 시간 늘려 진짜 슬로우 모션
+// =========================================================
+void AHellunaHeroCharacter::SetJumpGravityMultiplier(float NewMultiplier)
+{
+	JumpGravityMultiplier = FMath::Clamp(NewMultiplier, 0.05f, 1.f);
+
+	UE_LOG(LogTemp, Warning, TEXT("[TDJumpV1] SetJumpGravityMultiplier: %.2f (Server)"), JumpGravityMultiplier);
+
+	ApplyJumpGravityMultiplierToCMC();
+}
+
+void AHellunaHeroCharacter::OnRep_JumpGravityMultiplier()
+{
+	UE_LOG(LogTemp, Warning, TEXT("[TDJumpV1] OnRep_JumpGravityMultiplier: %.2f (Client)"), JumpGravityMultiplier);
+
+	ApplyJumpGravityMultiplierToCMC();
+}
+
+void AHellunaHeroCharacter::ApplyJumpGravityMultiplierToCMC()
+{
+	UCharacterMovementComponent* CMC = GetCharacterMovement();
+	if (!CMC) return;
+
+	const bool bSlowing = (JumpGravityMultiplier < 1.f - KINDA_SMALL_NUMBER);
+
+	if (bSlowing)
+	{
+		// 원본값은 이미 슬로우가 적용된 상태면 덮어쓰지 말 것
+		if (FMath::IsNearlyEqual(OriginalJumpZVelocity, 0.f))
+		{
+			OriginalJumpZVelocity = CMC->JumpZVelocity;
+			OriginalGravityScale  = CMC->GravityScale;
+		}
+
+		// 높이 유지, 시간 1/M 배 늘어남:
+		// Height = v² / (2g) → JumpZ × M, G × M² 이면 Height 유지.
+		CMC->JumpZVelocity = OriginalJumpZVelocity * JumpGravityMultiplier;
+		CMC->GravityScale  = OriginalGravityScale  * JumpGravityMultiplier * JumpGravityMultiplier;
+	}
+	else
+	{
+		// 복원 — 원본값이 저장돼 있을 때만
+		if (!FMath::IsNearlyEqual(OriginalJumpZVelocity, 0.f))
+		{
+			CMC->JumpZVelocity = OriginalJumpZVelocity;
+			CMC->GravityScale  = OriginalGravityScale;
+			OriginalJumpZVelocity = 0.f;
+		}
+	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[TDJumpV1] Applied — JumpZVelocity=%.1f, GravityScale=%.2f (M=%.2f)"),
+		CMC->JumpZVelocity, CMC->GravityScale, JumpGravityMultiplier);
 }
 
 void AHellunaHeroCharacter::LockMoveInput()

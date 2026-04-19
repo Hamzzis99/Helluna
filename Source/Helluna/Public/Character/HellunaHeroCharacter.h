@@ -882,4 +882,31 @@ public:
 
 	UFUNCTION()
 	void OnRep_AnimRateMultiplier();
+
+	// =========================================================
+	// [TDJumpV1] 점프/중력 슬로우 배율
+	//   JumpZVelocity × Multiplier, GravityScale × Multiplier²
+	//   → 최대 점프 높이 유지, 체공 시간 1/Multiplier 배로 늘어남
+	//   (진짜 슬로우 모션 효과)
+	// =========================================================
+
+	/** 점프/중력 슬로우 배율. 1.0 = 정상, 0.3 = 30% (체공시간 3.3배). */
+	UPROPERTY(ReplicatedUsing = OnRep_JumpGravityMultiplier, BlueprintReadOnly, Category = "TimeDistortion")
+	float JumpGravityMultiplier = 1.f;
+
+	/** 슬로우 적용 전 원본 JumpZVelocity / GravityScale 저장 */
+	float OriginalJumpZVelocity = 0.f;
+	float OriginalGravityScale  = 1.f;
+
+	/** 점프/중력 배율 설정 (서버에서 호출) */
+	void SetJumpGravityMultiplier(float NewMultiplier);
+
+	float GetJumpGravityMultiplier() const { return JumpGravityMultiplier; }
+
+	UFUNCTION()
+	void OnRep_JumpGravityMultiplier();
+
+private:
+	/** JumpGravityMultiplier 값을 CMC에 적용 (서버/클라 공통 로직) */
+	void ApplyJumpGravityMultiplierToCMC();
 };

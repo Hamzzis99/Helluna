@@ -29,6 +29,8 @@
 #include "Object/ResourceUsingObject/ResourceUsingObject_AttackTurret.h"
 #include "Object/ResourceUsingObject/HellunaTurretBase.h"
 #include "AI/TurretAggroTracker.h"
+#include "AbilitySystemComponent.h"
+#include "AbilitySystemInterface.h"
 
 // ============================================================================
 // 헬퍼: 우주선 캐시 가져오기
@@ -217,7 +219,29 @@ void FSTEvaluator_TargetSelector::Tick(FStateTreeExecutionContext& Context, cons
 	if (TargetData.TargetActor.IsValid() && TargetData.DistanceToTarget <= SpaceShipAttackRange)
 	{
 		TargetData.bAttackingSpaceShip = true;
-		return;
+
+		// [OnShipEnrageV1] 우주선 위(OnShip 태그 보유)에 올라가 있으면 근거리에도 플레이어 어그로 스캔을
+		// 막지 않음. 그래야 우주선 위에 있는 동안 다가오는 플레이어를 타겟으로 삼고 Enrage 타이머가
+		// 누적되어 Enrage 이벤트가 발송됨.
+		// Why: Attackplayer_JumpStrike 처럼 OnShip 조건으로만 진입하는 상태에서 사용자가
+		//      가까이 다가가도 광폭화가 안 되는 문제를 해결.
+		bool bOnShip = false;
+		if (const IAbilitySystemInterface* ASI = Cast<IAbilitySystemInterface>(ControlledPawn))
+		{
+			if (UAbilitySystemComponent* ASC = ASI->GetAbilitySystemComponent())
+			{
+				const FGameplayTag OnShipTag = FGameplayTag::RequestGameplayTag(FName("State.Enemy.OnShip"), false);
+				if (OnShipTag.IsValid() && ASC->HasMatchingGameplayTag(OnShipTag))
+				{
+					bOnShip = true;
+				}
+			}
+		}
+		if (!bOnShip)
+		{
+			return;  // 지상 + 우주선 공격 근거리 → 기존 동작대로 어그로 전환 차단
+		}
+		// OnShip 이면 아래 플레이어 스캔 로직 계속 → 플레이어 타겟 전환 → PlayerTargetingTime 누적 → Enrage
 	}
 	else
 	{

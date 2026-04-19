@@ -57,6 +57,8 @@ namespace HellunaGameplayTags
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(State_Enemy_Attacking);
 	// [ShipJumpV3] 점프 착지 후 부여 — StateTree 재점프 게이트용.
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(State_Enemy_OnShip);
+	// [ShipJumpFailV1] 우주선 점프 실패(상단 착지 X) 후 부여 — 재시도 영구 차단용.
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(State_Enemy_ShipJumpFailed);
 
 	/** Enemy Event tags **/
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Enemy_Event_Enrage);

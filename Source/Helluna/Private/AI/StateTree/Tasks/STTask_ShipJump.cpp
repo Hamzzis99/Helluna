@@ -55,6 +55,19 @@ EStateTreeRunStatus FSTTask_ShipJump::EnterState(
 		return EStateTreeRunStatus::Failed;
 	}
 
+	// [ShipJumpFailV1] 이전 점프에서 상단 착지 실패한 몬스터는 재점프 차단.
+	if (AHellunaEnemyCharacter* Enemy0 = Cast<AHellunaEnemyCharacter>(Pawn))
+	{
+		if (UAbilitySystemComponent* ASC0 = Enemy0->GetAbilitySystemComponent())
+		{
+			const FGameplayTag FailTag = FGameplayTag::RequestGameplayTag(FName("State.Enemy.ShipJumpFailed"), false);
+			if (FailTag.IsValid() && ASC0->HasMatchingGameplayTag(FailTag))
+			{
+				return EStateTreeRunStatus::Failed;
+			}
+		}
+	}
+
 	// [ShipJumpV3.OnShipGate] 이미 우주선에 올라탄 몬스터는 재점프 금지.
 	// Why: 기울어진 우주선 탓에 착지 후에도 어택존과 겹쳐 StateTree 가 재점프 요청.
 	//      OnLanded 에서 부여한 "State.Enemy.OnShip" 태그를 보고 우회 → StateTree 는
@@ -249,9 +262,6 @@ EStateTreeRunStatus FSTTask_ShipJump::Tick(
 	if (Data.PostLandingTimer >= PostLandingHoldTime)
 	{
 		// [ShipJumpV6.OnShipGate] 실제 우주선에 착지해야만 Succeeded → Attackspaceship_jump_Rage.
-		// Why: ShipJump GA 가 지면에 떨어진 적에게도 예전에는 OnShip 태그를 붙였지만 V6 에서
-		//      바닥이 Ship 인 경우만 태그를 붙이도록 수정됨. 본 Task 도 동일한 태그를 Succeed
-		//      조건으로 가드해서 착지 실패(지상) 시 OnStateFailed 분기(→ Attack_Rage 할퀴기)로 흐르게.
 		const FGameplayTag OnShipTag = FGameplayTag::RequestGameplayTag(FName("State.Enemy.OnShip"), false);
 		const bool bLandedOnShip = OnShipTag.IsValid() && ASC->HasMatchingGameplayTag(OnShipTag);
 		UE_LOG(LogTemp, Warning,

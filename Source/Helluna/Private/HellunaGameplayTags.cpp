@@ -58,6 +58,8 @@ namespace HellunaGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(State_Enemy_Attacking, "State.Enemy.Attacking");
 	// [ShipJumpV3] 점프 착지 후 부여 — StateTree 재점프 게이트용.
 	UE_DEFINE_GAMEPLAY_TAG(State_Enemy_OnShip, "State.Enemy.OnShip");
+	// [ShipJumpFailV1] 점프 실패 후 재시도 차단용.
+	UE_DEFINE_GAMEPLAY_TAG(State_Enemy_ShipJumpFailed, "State.Enemy.ShipJumpFailed");
 
 	/** Enemy Event tags **/
 	UE_DEFINE_GAMEPLAY_TAG(Enemy_Event_Enrage, "Enemy.Event.Enrage");
