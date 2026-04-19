@@ -16,6 +16,7 @@
 #include "AbilitySystem/HellunaEnemyGameplayAbility.h"
 #include "AbilitySystem/EnemyAbility/EnemyGameplayAbility_ShipJump.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
+#include "GameplayTagContainer.h"
 
 namespace ShipJumpLocal
 {
@@ -54,6 +55,38 @@ EStateTreeRunStatus FSTTask_ShipJump::EnterState(
 		return EStateTreeRunStatus::Failed;
 	}
 
+	// [ShipJumpV3.OnShipGate] 이미 우주선에 올라탄 몬스터는 재점프 금지.
+	// Why: 기울어진 우주선 탓에 착지 후에도 어택존과 겹쳐 StateTree 가 재점프 요청.
+	//      OnLanded 에서 부여한 "State.Enemy.OnShip" 태그를 보고 우회 → StateTree 는
+	//      Failed 받아 다음 분기(근접 공격)로 흘러감.
+	if (AHellunaEnemyCharacter* EnemyChar = Cast<AHellunaEnemyCharacter>(Pawn))
+	{
+		if (UAbilitySystemComponent* ASC = EnemyChar->GetAbilitySystemComponent())
+		{
+			const FGameplayTag OnShipTag = FGameplayTag::RequestGameplayTag(FName("State.Enemy.OnShip"), false);
+			if (OnShipTag.IsValid() && ASC->HasMatchingGameplayTag(OnShipTag))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[ShipJumpV3.Gate] %s 이미 OnShip — 재점프 차단"),
+					*Pawn->GetName());
+				return EStateTreeRunStatus::Failed;
+			}
+		}
+	}
+
+	// [ShipJumpV8.InAttackRangeGate] 이미 우주선 공격 범위 안이면 점프 없이 그 자리에서 공격.
+	// Why: 지상에서 우주선을 타격 중이던 몬스터가 광폭화하면 StateTree 가 재평가되며 ShipJump
+	//      으로 흘러와 불필요한 점프가 발생.
+	// Signal: Evaluator 가 SpaceShipAttackRange 기반으로 매 틱 갱신하는 bAttackingSpaceShip.
+	//      enraged 분기에서는 이 플래그를 덮어쓰지 않으므로 광폭화 직전 값이 그대로 유지 →
+	//      "enrage 직전에 이미 공격 중이었다" 를 정확히 반영.
+	if (Data.TargetData.bAttackingSpaceShip)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[ShipJumpV8.InAttackRangeGate] %s bAttackingSpaceShip=true — 점프 스킵 (지상 공격 유지)"),
+			*Pawn->GetName());
+		return EStateTreeRunStatus::Failed;
+	}
+
 	USpaceShipAttackSlotManager* SlotMgr = ShipJumpLocal::GetSlotManager(ShipActor);
 	if (!SlotMgr)
 	{
@@ -69,6 +102,12 @@ EStateTreeRunStatus FSTTask_ShipJump::EnterState(
 	Data.bReservedTopSlot = true;
 	Data.bActivatedGA = false;
 	Data.PostLandingTimer = 0.f;
+	Data.StaggerElapsed = 0.f;
+
+	// [ShipJumpStaggerV1] 몬스터별 무작위 지연 → 동시 LaunchCharacter 복제 분산.
+	const float LoBound = FMath::Max(0.f, StaggerMin);
+	const float HiBound = FMath::Max(LoBound, StaggerMax);
+	Data.StaggerDelay = (HiBound > 0.f) ? FMath::FRandRange(LoBound, HiBound) : 0.f;
 
 	// 이동 정지 + 우주선 스냅.
 	AIC->StopMovement();
@@ -80,8 +119,9 @@ EStateTreeRunStatus FSTTask_ShipJump::EnterState(
 	}
 	ShipJumpLocal::SnapFaceShip(AIC, Pawn, ShipActor);
 
-	UE_LOG(LogTemp, Warning, TEXT("[ShipTopV1] Enter — Monster=%s reserved slot, preparing jump"),
-		*Pawn->GetName());
+	UE_LOG(LogTemp, Warning,
+		TEXT("[ShipTopV1][StaggerV1] Enter — Monster=%s reserved slot, StaggerDelay=%.2f s"),
+		*Pawn->GetName(), Data.StaggerDelay);
 
 	return EStateTreeRunStatus::Running;
 }
@@ -116,6 +156,16 @@ EStateTreeRunStatus FSTTask_ShipJump::Tick(
 		return EStateTreeRunStatus::Succeeded;
 	}
 
+	// [ShipJumpStaggerV1] 스태거 지연 소비 — 동시 활성화 분산.
+	if (!Data.bActivatedGA && Data.StaggerDelay > 0.f)
+	{
+		Data.StaggerElapsed += DeltaTime;
+		if (Data.StaggerElapsed < Data.StaggerDelay)
+		{
+			return EStateTreeRunStatus::Running;
+		}
+	}
+
 	// ① 첫 Tick에서 GA 1회 발동.
 	if (!Data.bActivatedGA)
 	{
@@ -137,19 +187,32 @@ EStateTreeRunStatus FSTTask_ShipJump::Tick(
 			ASC->GiveAbility(Spec);
 		}
 
-		// CurrentTarget 주입(CDO + Instance 양쪽).
+		// CurrentTarget + 점프 튜닝 값 주입 (CDO + Instance 양쪽).
+		auto ApplyTuning = [this](UEnemyGameplayAbility_ShipJump* JumpGA, AActor* Target)
+		{
+			if (!JumpGA) return;
+			JumpGA->CurrentTarget           = Target;
+			JumpGA->OvershootHeight         = OvershootHeight;
+			JumpGA->AttackRecoveryDelay     = AttackRecoveryDelay;
+			JumpGA->MaxAirborneTime         = MaxAirborneTime;
+			JumpGA->FallbackHorizontalSpeed = FallbackHorizontalSpeed;
+			JumpGA->FallbackVerticalSpeed   = FallbackVerticalSpeed;
+		};
+
 		for (FGameplayAbilitySpec& Spec : ASC->GetActivatableAbilities())
 		{
 			if (!Spec.Ability || Spec.Ability->GetClass() != GAClass) continue;
-			if (UEnemyGameplayAbility_ShipJump* Cdo = Cast<UEnemyGameplayAbility_ShipJump>(Spec.Ability))
-				Cdo->CurrentTarget = ShipActor;
+			ApplyTuning(Cast<UEnemyGameplayAbility_ShipJump>(Spec.Ability), ShipActor);
 			if (UGameplayAbility* Inst = Spec.GetPrimaryInstance())
 			{
-				if (UEnemyGameplayAbility_ShipJump* InstJump = Cast<UEnemyGameplayAbility_ShipJump>(Inst))
-					InstJump->CurrentTarget = ShipActor;
+				ApplyTuning(Cast<UEnemyGameplayAbility_ShipJump>(Inst), ShipActor);
 			}
 			break;
 		}
+
+		UE_LOG(LogTemp, Warning,
+			TEXT("[ShipTopV1.Tune] Inject Monster=%s Overshoot=%.0f RecoveryDelay=%.2f MaxAir=%.1f"),
+			*Pawn->GetName(), OvershootHeight, AttackRecoveryDelay, MaxAirborneTime);
 
 		ShipJumpLocal::SnapFaceShip(AIC, Pawn, ShipActor);
 
@@ -181,13 +244,22 @@ EStateTreeRunStatus FSTTask_ShipJump::Tick(
 		return EStateTreeRunStatus::Running;
 	}
 
-	// ③ GA 종료 → 착지 후 유지 시간 카운트 후 Succeeded.
+	// ③ GA 종료 → 착지 후 유지 시간 카운트 후 OnShip 태그 유무로 Succeeded/Failed 분기.
 	Data.PostLandingTimer += DeltaTime;
 	if (Data.PostLandingTimer >= PostLandingHoldTime)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[ShipTopV1] Jump complete Monster=%s → Succeeded"),
-			*Pawn->GetName());
-		return EStateTreeRunStatus::Succeeded;
+		// [ShipJumpV6.OnShipGate] 실제 우주선에 착지해야만 Succeeded → Attackspaceship_jump_Rage.
+		// Why: ShipJump GA 가 지면에 떨어진 적에게도 예전에는 OnShip 태그를 붙였지만 V6 에서
+		//      바닥이 Ship 인 경우만 태그를 붙이도록 수정됨. 본 Task 도 동일한 태그를 Succeed
+		//      조건으로 가드해서 착지 실패(지상) 시 OnStateFailed 분기(→ Attack_Rage 할퀴기)로 흐르게.
+		const FGameplayTag OnShipTag = FGameplayTag::RequestGameplayTag(FName("State.Enemy.OnShip"), false);
+		const bool bLandedOnShip = OnShipTag.IsValid() && ASC->HasMatchingGameplayTag(OnShipTag);
+		UE_LOG(LogTemp, Warning,
+			TEXT("[ShipJumpV6.TaskEnd] Monster=%s OnShip=%s → %s"),
+			*Pawn->GetName(),
+			bLandedOnShip ? TEXT("TRUE") : TEXT("FALSE"),
+			bLandedOnShip ? TEXT("Succeeded") : TEXT("Failed"));
+		return bLandedOnShip ? EStateTreeRunStatus::Succeeded : EStateTreeRunStatus::Failed;
 	}
 
 	return EStateTreeRunStatus::Running;

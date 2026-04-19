@@ -290,7 +290,7 @@ public:
 	/** [ShipTopV1] 동시에 우주선 위에 점프해 있을 수 있는 최대 몬스터 수. */
 	UPROPERTY(EditAnywhere, Category = "상단 점프",
 		meta=(DisplayName="상단 점프 최대 슬롯 수", ClampMin="1", ClampMax="20"))
-	int32 MaxTopSlots = 5;
+	int32 MaxTopSlots = 10;
 
 	/**
 	 * 플레이어 접속 시 호출 — 슬롯이 아직 0개면 즉시 BuildSlots 재시도.

@@ -35,14 +35,23 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "점프",
 		meta = (DisplayName = "오버슛 높이 (cm)",
 			ToolTip = "우주선 최상단 위로 추가로 올라가는 정점 높이. 값이 클수록 높게 점프.",
-			ClampMin = "50.0", ClampMax = "2000.0"))
-	float OvershootHeight = 300.f;
+			ClampMin = "20.0", ClampMax = "2000.0"))
+	float OvershootHeight = 400.f;
 
 	/** 타겟 없을 때 사용할 기본 수평 속도 (cm/s). */
 	UPROPERTY(EditDefaultsOnly, Category = "점프",
 		meta = (DisplayName = "폴백 수평 속도 (cm/s)",
 			ClampMin = "100.0", ClampMax = "3000.0"))
 	float FallbackHorizontalSpeed = 800.f;
+
+	/**
+	 * 우주선 중심 조준 시 수평 속도 상한 (cm/s).
+	 * Vxy = Distance / TimeToApex 가 이 값을 초과하면 clamp — 너무 멀 때 초고속 비행 방지.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "점프",
+		meta = (DisplayName = "최대 수평 속도 (cm/s)",
+			ClampMin = "200.0", ClampMax = "5000.0"))
+	float MaxHorizontalSpeed = 1500.f;
 
 	/** 타겟 없을 때 사용할 기본 수직 속도 (cm/s). */
 	UPROPERTY(EditDefaultsOnly, Category = "점프",
