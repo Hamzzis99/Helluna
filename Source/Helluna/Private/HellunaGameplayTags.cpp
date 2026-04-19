@@ -54,6 +54,10 @@ namespace HellunaGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Enemy_Ability_Ranged, "Enemy.Ability.Ranged");
 	UE_DEFINE_GAMEPLAY_TAG(Enemy_State_Death, "Enemy.State.Death");
 	UE_DEFINE_GAMEPLAY_TAG(Enemy_State_Attacking, "Enemy.State.Attacking");
+	// [JumpLagFix] GA들이 "State.Enemy.Attacking" 로 조회 중 — 네이티브 등록으로 첫 호출 시 ensure/log 비용 제거.
+	UE_DEFINE_GAMEPLAY_TAG(State_Enemy_Attacking, "State.Enemy.Attacking");
+	// [ShipJumpV3] 점프 착지 후 부여 — StateTree 재점프 게이트용.
+	UE_DEFINE_GAMEPLAY_TAG(State_Enemy_OnShip, "State.Enemy.OnShip");
 
 	/** Enemy Event tags **/
 	UE_DEFINE_GAMEPLAY_TAG(Enemy_Event_Enrage, "Enemy.Event.Enrage");

@@ -29,6 +29,7 @@
 #include "AbilitySystem/EnemyAbility/EnemyGameplayAbility_RangedAttack.h"
 #include "AbilitySystem/EnemyAbility/EnemyGameplayAbility_ShipJump.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
+#include "Object/ResourceUsingObject/HellunaBaseResourceUsingObject.h"
 
 namespace HellunaAttackTarget
 {
@@ -37,26 +38,42 @@ static USpaceShipAttackSlotManager* GetShipSlotManager(AActor* TargetActor)
 	return TargetActor ? TargetActor->FindComponentByClass<USpaceShipAttackSlotManager>() : nullptr;
 }
 
-// [ShipFaceV1] 우주선 공격 직전 스냅 — RInterpTo 대신 즉시 Yaw 정렬.
+// [ShipFaceV1][LCv2] 우주선/타워 공격 직전 스냅 — RInterpTo 대신 즉시 Yaw 정렬.
 // 쿨다운 중 부드러운 회전은 유지, GA 발동 순간만 스냅 적용해 "옆 보고 공격" 방지.
-static void SnapFaceTarget(AAIController* AIController, APawn* Pawn, AActor* TargetActor)
+static void SnapFaceTarget(AAIController* AIController, APawn* Pawn, AActor* TargetActor, const TCHAR* Phase)
 {
 	if (!AIController || !Pawn || !TargetActor)
 	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[ShipFaceV1][LCv2][%s][SnapSkip] AIC=%d Pawn=%d Target=%d"),
+			Phase, AIController?1:0, Pawn?1:0, TargetActor?1:0);
 		return;
 	}
 	const FVector ToTarget = (TargetActor->GetActorLocation() - Pawn->GetActorLocation()).GetSafeNormal2D();
 	if (ToTarget.IsNearlyZero())
 	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[ShipFaceV1][LCv2][%s][SnapSkip] ToTarget nearly zero (overlapping) Enemy=%s"),
+			Phase, *Pawn->GetName());
 		return;
 	}
 	const FRotator SnapRot(0.f, ToTarget.Rotation().Yaw, 0.f);
+	const float PreActorYaw = Pawn->GetActorRotation().Yaw;
+	const float PreCtrlYaw  = AIController->GetControlRotation().Yaw;
+
 	AIController->SetControlRotation(SnapRot);
 	Pawn->SetActorRotation(SnapRot);
 
+	// 적용 직후 실제 값 검증 — 다른 컴포넌트(Focus/CMC)가 덮어쓰는지 확인
+	const float PostActorYaw = Pawn->GetActorRotation().Yaw;
+	const float PostCtrlYaw  = AIController->GetControlRotation().Yaw;
+
 	UE_LOG(LogTemp, Warning,
-		TEXT("[ShipFaceV1] Snap-face ship Yaw=%.1f Enemy=%s"),
-		SnapRot.Yaw, *Pawn->GetName());
+		TEXT("[ShipFaceV1][LCv2][%s] Snap Enemy=%s Tgt=%s(%s) WantYaw=%.1f | PreCtrl=%.1f→PostCtrl=%.1f | PreAct=%.1f→PostAct=%.1f"),
+		Phase, *Pawn->GetName(),
+		*TargetActor->GetName(),
+		*TargetActor->GetClass()->GetName(),
+		SnapRot.Yaw, PreCtrlYaw, PostCtrlYaw, PreActorYaw, PostActorYaw);
 }
 
 static void FaceCurrentTarget(AAIController* AIController, APawn* Pawn, AActor* TargetActor, float DeltaTime, float Speed)
@@ -169,11 +186,24 @@ EStateTreeRunStatus FSTTask_AttackTarget::EnterState(
 			return EStateTreeRunStatus::Failed;
 		}
 
-		// [ShipFaceV1] 우주선 타겟 진입 시에는 즉시 스냅(옆 보고 공격 방지).
-		// 그 외 타겟은 기존 방식대로 보간으로 진입.
-		if (bIsSpaceShip)
+		// [ShipFaceV1] 우주선/타워 등 ResourceUsingObject 타겟 진입 시에는 즉시 스냅(옆 보고 공격 방지).
+		// 그 외 타겟(플레이어 등)은 기존 방식대로 보간으로 진입.
+		const bool bIsResourceObject = (Cast<AHellunaBaseResourceUsingObject>(TargetActor) != nullptr);
+
+		// [ShipFaceV1][LCv2] 진단: 타겟 타입/클래스/Cast 결과를 매 Enter마다 출력.
+		const TCHAR* TargetTypeStr =
+			TargetData.TargetType == EHellunaTargetType::SpaceShip ? TEXT("SpaceShip") :
+			TargetData.TargetType == EHellunaTargetType::Turret    ? TEXT("Turret") :
+			TargetData.TargetType == EHellunaTargetType::Player    ? TEXT("Player") : TEXT("Other");
+		UE_LOG(LogTemp, Warning,
+			TEXT("[ShipFaceV1][LCv2][Enter] Enemy=%s | TargetType=%s | TargetActor=%s | Class=%s | CastToResource=%d"),
+			*Pawn->GetName(), TargetTypeStr,
+			*TargetActor->GetName(), *TargetActor->GetClass()->GetName(),
+			bIsResourceObject ? 1 : 0);
+
+		if (bIsResourceObject)
 		{
-			HellunaAttackTarget::SnapFaceTarget(InstanceData.AIController, Pawn, TargetActor);
+			HellunaAttackTarget::SnapFaceTarget(InstanceData.AIController, Pawn, TargetActor, TEXT("Enter"));
 		}
 		else
 		{
@@ -182,6 +212,9 @@ EStateTreeRunStatus FSTTask_AttackTarget::EnterState(
 	}
 
 	InstanceData.CooldownRemaining = InitialAttackDelay;
+
+	// [StaticTargetNoReRotV1] 매 진입마다 회전 잠금 초기화 — 첫 발동 후 잠김.
+	InstanceData.bLockedRotationForStaticTarget = false;
 
 	return EStateTreeRunStatus::Running;
 }
@@ -263,7 +296,8 @@ EStateTreeRunStatus FSTTask_AttackTarget::Tick(
 	{
 		InstanceData.CooldownRemaining -= DeltaTime;
 
-		if (TargetData.HasValidTarget())
+		// [StaticTargetNoReRotV1] 움직이지 않는 타겟에 첫 발동 완료 후엔 회전 불필요.
+		if (!InstanceData.bLockedRotationForStaticTarget && TargetData.HasValidTarget())
 		{
 			HellunaAttackTarget::FaceCurrentTarget(AIController, Pawn, TargetData.TargetActor.Get(), DeltaTime, RotationSpeed);
 		}
@@ -271,7 +305,7 @@ EStateTreeRunStatus FSTTask_AttackTarget::Tick(
 		return EStateTreeRunStatus::Running;
 	}
 
-	if (TargetData.HasValidTarget())
+	if (!InstanceData.bLockedRotationForStaticTarget && TargetData.HasValidTarget())
 	{
 		HellunaAttackTarget::FaceCurrentTarget(AIController, Pawn, TargetData.TargetActor.Get(), DeltaTime, RotationSpeed);
 	}
@@ -332,11 +366,23 @@ EStateTreeRunStatus FSTTask_AttackTarget::Tick(
 		break;
 	}
 
-	// [ShipFaceV1] 우주선 공격 GA 발동 직전 스냅 — 옆 보고 공격하는 케이스 원천 차단.
-	// 쿨다운 중 RInterpTo가 완료되지 않은 프레임에서도 공격 순간 반드시 우주선 정면을 향하게 함.
-	if (Cast<AResourceUsingObject_SpaceShip>(ChosenTarget) != nullptr)
+	// [ShipFaceV1] 우주선/타워 등 ResourceUsingObject 공격 GA 발동 직전 스냅 —
+	// 쿨다운 중 RInterpTo가 완료되지 않은 프레임에서도 공격 순간 반드시 타겟 정면을 향하게 함.
+	const bool bTargetIsResource = (Cast<AHellunaBaseResourceUsingObject>(ChosenTarget) != nullptr);
+
+	// [ShipFaceV1][LCv2] 진단: GA 발동 직전에 선택 타겟 + Cast 결과 출력.
+	UE_LOG(LogTemp, Warning,
+		TEXT("[ShipFaceV1][LCv2][PreActivate] Enemy=%s | ChosenTarget=%s | Class=%s | CastToResource=%d | GAClass=%s"),
+		*Pawn->GetName(),
+		ChosenTarget ? *ChosenTarget->GetName() : TEXT("null"),
+		ChosenTarget ? *ChosenTarget->GetClass()->GetName() : TEXT("null"),
+		bTargetIsResource ? 1 : 0,
+		GAClass ? *GAClass->GetName() : TEXT("null"));
+
+	// [StaticTargetNoReRotV1] 정적 타겟이면 첫 발동 때만 PreActivate 스냅, 이후엔 스킵.
+	if (bTargetIsResource && !InstanceData.bLockedRotationForStaticTarget)
 	{
-		HellunaAttackTarget::SnapFaceTarget(AIController, Pawn, ChosenTarget);
+		HellunaAttackTarget::SnapFaceTarget(AIController, Pawn, ChosenTarget, TEXT("PreActivate"));
 	}
 
 	const bool bActivated = ASC->TryActivateAbilityByClass(GAClass);
@@ -344,6 +390,12 @@ EStateTreeRunStatus FSTTask_AttackTarget::Tick(
 	{
 		const float CooldownMultiplier = Enemy->bEnraged ? Enemy->EnrageCooldownMultiplier : 1.f;
 		InstanceData.CooldownRemaining = AttackCooldown * CooldownMultiplier;
+
+		// [StaticTargetNoReRotV1] 정적 타겟에 첫 발동 성공 → 이후 회전 잠금.
+		if (bTargetIsResource)
+		{
+			InstanceData.bLockedRotationForStaticTarget = true;
+		}
 	}
 
 	return EStateTreeRunStatus::Running;

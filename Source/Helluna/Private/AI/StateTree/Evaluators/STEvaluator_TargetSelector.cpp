@@ -125,6 +125,27 @@ void FSTEvaluator_TargetSelector::Tick(FStateTreeExecutionContext& Context, cons
 	// ════════════════════════════════════════════════════════════
 	if (TargetData.bEnraged)
 	{
+		// [EnrageTargetLockV1] 광폭화 진입 순간의 TargetActor 는 플레이어(광폭 트리거 조건 자체가 "플레이어 장시간 추적").
+		// Why: 이 지점에서 우주선으로 스냅하지 않으면 Run_Rage / chase 계열 태스크가 플레이어를 계속 쫓음.
+		// How to apply: 광폭 진입 후 첫 틱에 한 번만 우주선으로 전환, 이후 틱은 if 분기 skip.
+		if (TargetData.TargetType != EHellunaTargetType::SpaceShip)
+		{
+			if (AActor* Ship = GetCachedSpaceShip(World))
+			{
+				FTurretAggroTracker::UnregisterMonster(const_cast<APawn*>(ControlledPawn));
+				const_cast<AAIController*>(AIController)->ClearFocus(EAIFocusPriority::Gameplay);
+
+				TargetData.TargetActor      = Ship;
+				TargetData.TargetType       = EHellunaTargetType::SpaceShip;
+				TargetData.bTargetingPlayer = false;
+				TargetData.bPlayerLocked    = false;
+
+				UE_LOG(LogTemp, Warning,
+					TEXT("[EnrageTargetLockV1] %s 광폭화 — 타겟을 우주선(%s)으로 스냅"),
+					*ControlledPawn->GetName(), *Ship->GetName());
+			}
+		}
+
 		if (TargetData.TargetActor.IsValid())
 		{
 			TargetData.DistanceToTarget = FVector::Dist(PawnLocation, TargetData.TargetActor->GetActorLocation());

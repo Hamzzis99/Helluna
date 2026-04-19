@@ -2,7 +2,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Object/ResourceUsingObject/HellunaBaseResourceUsingObject.h"
+#include "Object/ResourceUsingObject/HellunaTurretBase.h"
 #include "ResourceUsingObject_HealTurret.generated.h"
 
 class USphereComponent;
@@ -16,7 +16,7 @@ class AHellunaHeroCharacter;
  * 서버 권위 기반으로 힐을 적용하며, 힐 시 Niagara VFX를 멀티캐스트로 재생한다.
  */
 UCLASS()
-class HELLUNA_API AResourceUsingObject_HealTurret : public AHellunaBaseResourceUsingObject
+class HELLUNA_API AResourceUsingObject_HealTurret : public AHellunaTurretBase
 {
 	GENERATED_BODY()
 

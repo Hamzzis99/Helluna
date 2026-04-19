@@ -52,6 +52,12 @@ struct FSTTask_AttackTargetInstanceData
 	UPROPERTY()
 	float CooldownRemaining = 0.f;
 
+	/**
+	 * [StaticTargetNoReRotV1] 움직이지 않는 타겟(ResourceUsingObject)에 첫 공격을 한 뒤엔
+	 * true. 이후엔 쿨다운 중 RInterpTo 회전 + GA 발동 직전 SnapFaceTarget 을 스킵.
+	 */
+	UPROPERTY()
+	bool bLockedRotationForStaticTarget = false;
 };
 
 USTRUCT(meta = (DisplayName = "Helluna: Attack Target", Category = "Helluna|AI"))

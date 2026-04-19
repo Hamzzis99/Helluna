@@ -11,6 +11,7 @@
 
 // 에너미의 HitNiagaraEffect / MulticastPlayEffect 호출용
 #include "Character/HellunaEnemyCharacter.h"
+#include "Character/HellunaHeroCharacter.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 #include "GameFramework/Pawn.h"
 
@@ -108,10 +109,13 @@ void AHellunaProjectile_Enemy::OnBeginOverlap(
 	UE_LOG(LogTemp, Warning, TEXT("[EnemyProjectile] Overlap: %s | Comp: %s"),
 		*OtherActor->GetName(), *GetNameSafe(OtherComp));
 
-	// 플레이어(Pawn) 또는 우주선 DynamicMesh에만 데미지 적용, 나머지 무시
+	// [FriendlyFireV1] 플레이어(HeroCharacter) 또는 우주선만 데미지 적용.
+	// Why: 기존엔 `APawn` 으로 필터링 → 같은 에너미(Pawn 상속)도 타깃이 되어 몬스터끼리
+	//      맞으면 데미지 + 피격 VFX 가 발생하는 프렌들리 파이어 버그가 있었음.
+	// How: 에너미/가디언 등 비플레이어 Pawn 은 명시적으로 제외. HeroCharacter 와 우주선만 허용.
 	const bool bIsSpaceShip = (Cast<AResourceUsingObject_SpaceShip>(OtherActor) != nullptr);
-	const bool bIsPawn      = (Cast<APawn>(OtherActor) != nullptr);
-	if (!bIsSpaceShip && !bIsPawn) return;
+	const bool bIsHero      = (Cast<AHellunaHeroCharacter>(OtherActor) != nullptr);
+	if (!bIsSpaceShip && !bIsHero) return;
 
 	const FVector HitLocation = bFromSweep ? FVector(SweepResult.ImpactPoint) : GetActorLocation();
 	HitTarget(OtherActor, HitLocation);
@@ -197,7 +201,10 @@ void AHellunaProjectile_Enemy::Multicast_SpawnHitFX_Implementation(FVector_NetQu
 			(FVector)HitLocation,
 			OwnerEnemy->HitNiagaraEffect,
 			OwnerEnemy->HitEffectScale,
-			true // 사운드도 함께 재생
+			false
 		);
+
+		// [HitSoundV1] 사운드는 발사한 공격 GA 가 캐싱한 HitSound 사용.
+		OwnerEnemy->TryPlayCachedHitSound((FVector)HitLocation);
 	}
 }
