@@ -801,6 +801,16 @@ protected:
 		meta = (DisplayName = "스턴 최소 유지 시간 (초)", ClampMin = "0.0", ClampMax = "10.0"))
 	float StunMinDuration = 0.8f;
 
+	/** 회복 조건 충족 후 실제 Recover 까지 지연 (초). 래그돌이 정지한 모습을 카메라가 보여주는 시간. */
+	UPROPERTY(EditDefaultsOnly, Category = "Stun|Physics",
+		meta = (DisplayName = "회복 Linger 시간 (초)", ClampMin = "0.0", ClampMax = "3.0"))
+	float RecoveryLingerSeconds = 0.6f;
+
+	/** Recover 시 CameraBoom 복원 블렌드 시간 (초). 0 이면 즉시 복원. */
+	UPROPERTY(EditDefaultsOnly, Category = "Stun|Physics",
+		meta = (DisplayName = "카메라 복원 블렌드 (초)", ClampMin = "0.0", ClampMax = "2.0"))
+	float CameraRecoverBlendDuration = 0.5f;
+
 	/** Multicast: 래그돌 활성 + 초기 임펄스 */
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_EnterPhysicsStun(FVector_NetQuantize Impulse, FVector_NetQuantize HitLocation);
@@ -838,11 +848,25 @@ private:
 	void ServerRecoverFromStun();
 
 	/** 래그돌 중 카메라가 따라가도록 CameraBoom 을 Pelvis 본 위치로 추적 (Zelda BotW 스타일) */
-	void TickPhysicsStunCameraFollow();
+	void TickPhysicsStunCameraFollow(float DeltaTime);
 
 	/** CameraBoom 기본 relative location 캐시 (회복 시 복원용) */
 	FVector CameraBoomDefaultRelativeLocation = FVector::ZeroVector;
 	bool bCameraBoomDefaultsCached = false;
+
+	/** 카메라 복원 Lerp 상태 */
+	float CameraRecoverBlendRemaining = 0.f;
+	FVector CameraRecoverStartOffset = FVector::ZeroVector;
+
+	/** 회복 Linger 타이머 */
+	FTimerHandle RecoveryLingerHandle;
+	bool bPendingRecovery = false;
+
+	/** SpringArm Lag/Collision 캐시 (스턴 중 즉각 추적을 위해 비활성화, 회복 시 복원) */
+	bool bSpringArmLagCached = false;
+	bool bCachedEnableCameraLag = false;
+	bool bCachedEnableCameraRotationLag = false;
+	bool bCachedDoCollisionTest = true;
 
 	/** 스턴 진입 후 5초간 매 틱 위치/속도 로깅 — 래그돌이 멀리 날아가는 원인 진단용 */
 	float StunDebugTimeRemaining = 0.f;

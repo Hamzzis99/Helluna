@@ -305,7 +305,24 @@ void AHellunaHeroCharacter::Tick(float DeltaTime)
 	// [Stun] 래그돌 중 카메라 팔로우 (BotW 스타일)
 	if (bLocalPhysicsStunned)
 	{
-		TickPhysicsStunCameraFollow();
+		TickPhysicsStunCameraFollow(DeltaTime);
+	}
+	else if (CameraRecoverBlendRemaining > 0.f && CameraBoom && bCameraBoomDefaultsCached)
+	{
+		CameraRecoverBlendRemaining = FMath::Max(0.f, CameraRecoverBlendRemaining - DeltaTime);
+		const float DurSafe = FMath::Max(CameraRecoverBlendDuration, KINDA_SMALL_NUMBER);
+		const float Alpha = 1.f - FMath::Clamp(CameraRecoverBlendRemaining / DurSafe, 0.f, 1.f);
+		const FVector NewRel = FMath::Lerp(CameraRecoverStartOffset, CameraBoomDefaultRelativeLocation, Alpha);
+		CameraBoom->SetRelativeLocation(NewRel);
+
+		// 블렌드 완료 시 SpringArm Lag/Collision 원복
+		if (CameraRecoverBlendRemaining <= 0.f && bSpringArmLagCached)
+		{
+			CameraBoom->bEnableCameraLag = bCachedEnableCameraLag;
+			CameraBoom->bEnableCameraRotationLag = bCachedEnableCameraRotationLag;
+			CameraBoom->bDoCollisionTest = bCachedDoCollisionTest;
+			bSpringArmLagCached = false;
+		}
 	}
 
 	// [Stun-Debug] 스턴 진입 후 5초간 위치/속도 로그
@@ -318,15 +335,33 @@ void AHellunaHeroCharacter::Tick(float DeltaTime)
 		const FVector ActorLoc = GetActorLocation();
 		const FVector PelvisLoc = SkelMesh ? SkelMesh->GetBoneLocation(TEXT("pelvis")) : FVector::ZeroVector;
 		const FVector MeshVel = SkelMesh ? SkelMesh->GetPhysicsLinearVelocity() : FVector::ZeroVector;
+		const FVector PelvisVel = SkelMesh ? SkelMesh->GetPhysicsLinearVelocity(TEXT("pelvis")) : FVector::ZeroVector;
 		const float DistFromStart = FVector::Dist(ActorLoc, StunDebugStartLocation);
+		const float ActorToPelvis = FVector::Dist(ActorLoc, PelvisLoc);
 		const TCHAR* RoleStr = HasAuthority() ? TEXT("SRV") : TEXT("CLI");
 
+		// 물리 시뮬 활성 상태 — 데디서버에서 false 로 나오면 bEnablePhysicsOnDedicatedServer 문제 확정
+		const bool bIsSim = SkelMesh ? SkelMesh->IsSimulatingPhysics() : false;
+		const bool bIsAnyBodySim = SkelMesh ? SkelMesh->IsAnyRigidBodyAwake() : false;
+		const bool bEnablePhysDS = SkelMesh ? SkelMesh->bEnablePhysicsOnDedicatedServer : false;
+
+		const FVector BoomRel = CameraBoom ? CameraBoom->GetRelativeLocation() : FVector::ZeroVector;
+		const FVector BoomWorld = CameraBoom ? CameraBoom->GetComponentLocation() : FVector::ZeroVector;
+		const FVector CamWorld = FollowCamera ? FollowCamera->GetComponentLocation() : FVector::ZeroVector;
+		const float CamToPelvis = FollowCamera ? FVector::Dist(CamWorld, PelvisLoc) : 0.f;
+		const float BoomToPelvis = CameraBoom ? FVector::Dist(BoomWorld, PelvisLoc) : 0.f;
+
 		UE_LOG(LogHelluna, Warning,
-			TEXT("[Stun-Debug %s #%03d] dt=%.3f Actor=(%.0f,%.0f,%.0f) Pelvis=(%.0f,%.0f,%.0f) VelMag=%.1f DistFromStart=%.1f"),
+			TEXT("[Stun-Debug %s #%03d] dt=%.3f Actor=(%.0f,%.0f,%.0f) Pelvis=(%.0f,%.0f,%.0f) A2P=%.1f DistFromStart=%.1f | Sim=%d AnyAwake=%d PhysOnDS=%d PelvisVel=%.1f MeshVel=%.1f | BoomRel=(%.0f,%.0f,%.0f) BoomW=(%.0f,%.0f,%.0f) B2P=%.1f CamW=(%.0f,%.0f,%.0f) C2P=%.1f"),
 			RoleStr, StunDebugTickIndex, DeltaTime,
 			ActorLoc.X, ActorLoc.Y, ActorLoc.Z,
 			PelvisLoc.X, PelvisLoc.Y, PelvisLoc.Z,
-			MeshVel.Size(), DistFromStart);
+			ActorToPelvis, DistFromStart,
+			bIsSim ? 1 : 0, bIsAnyBodySim ? 1 : 0, bEnablePhysDS ? 1 : 0,
+			PelvisVel.Size(), MeshVel.Size(),
+			BoomRel.X, BoomRel.Y, BoomRel.Z,
+			BoomWorld.X, BoomWorld.Y, BoomWorld.Z, BoomToPelvis,
+			CamWorld.X, CamWorld.Y, CamWorld.Z, CamToPelvis);
 	}
 }
 
@@ -1248,6 +1283,20 @@ void AHellunaHeroCharacter::Multicast_EnterPhysicsStun_Implementation(FVector_Ne
 		bCameraBoomDefaultsCached = true;
 	}
 
+	// SpringArm Lag/Collision 캐시 + 즉시 비활성화
+	// 이유: Lag/CollisionTest 가 RelativeLocation 변경을 지연/차단 → Pelvis 추적 불가 (로그로 확인됨)
+	if (CameraBoom && !bSpringArmLagCached)
+	{
+		bCachedEnableCameraLag = CameraBoom->bEnableCameraLag;
+		bCachedEnableCameraRotationLag = CameraBoom->bEnableCameraRotationLag;
+		bCachedDoCollisionTest = CameraBoom->bDoCollisionTest;
+		bSpringArmLagCached = true;
+
+		CameraBoom->bEnableCameraLag = false;
+		CameraBoom->bEnableCameraRotationLag = false;
+		CameraBoom->bDoCollisionTest = false;
+	}
+
 	// 카메라 팔로우 플래그 — Tick 에서 CameraBoom 을 Pelvis 로 추적
 	bLocalPhysicsStunned = true;
 
@@ -1304,13 +1353,26 @@ void AHellunaHeroCharacter::TickPhysicsStunPoll()
 	if (!SkelMesh) return;
 
 	const float Speed = SkelMesh->GetPhysicsLinearVelocity().Size();
-	if (Speed <= RecoveryVelocityThreshold)
+	if (Speed <= RecoveryVelocityThreshold && !bPendingRecovery)
 	{
-		ServerRecoverFromStun();
+		// Linger: 래그돌이 정지한 자세를 카메라가 보여주는 시간 확보 후 실제 Recover 실행
+		bPendingRecovery = true;
+		World->GetTimerManager().ClearTimer(PhysicsStunPollHandle);
+
+		if (RecoveryLingerSeconds <= 0.f)
+		{
+			ServerRecoverFromStun();
+		}
+		else
+		{
+			World->GetTimerManager().SetTimer(
+				RecoveryLingerHandle, this, &ThisClass::ServerRecoverFromStun,
+				RecoveryLingerSeconds, false);
+		}
 	}
 }
 
-void AHellunaHeroCharacter::TickPhysicsStunCameraFollow()
+void AHellunaHeroCharacter::TickPhysicsStunCameraFollow(float DeltaTime)
 {
 	// 래그돌 중 Capsule 은 제자리에 두고 CameraBoom 만 Pelvis 본으로 이동시켜
 	// 카메라가 래그돌을 따라가게 한다. 캡슐/메시에 물리 피드백이 없어 안전.
@@ -1321,8 +1383,13 @@ void AHellunaHeroCharacter::TickPhysicsStunCameraFollow()
 	const FVector PelvisWorld = SkelMesh->GetBoneLocation(TEXT("pelvis"));
 	if (PelvisWorld.IsNearlyZero()) return;
 
+	// Character Tick(PrePhysics) 은 물리 시뮬 이전에 실행됨 → Pelvis 는 이전 프레임 위치.
+	// 선형 속도로 1프레임 선행 오프셋을 더해 시각적 지연을 상쇄.
+	const FVector PelvisVel = SkelMesh->GetPhysicsLinearVelocity(TEXT("pelvis"));
+	const FVector PredictedPelvis = PelvisWorld + PelvisVel * DeltaTime;
+
 	const FVector CapsuleWorld = GetActorLocation();
-	const FVector DesiredRel = CameraBoomDefaultRelativeLocation + (PelvisWorld - CapsuleWorld);
+	const FVector DesiredRel = CameraBoomDefaultRelativeLocation + (PredictedPelvis - CapsuleWorld);
 	CameraBoom->SetRelativeLocation(DesiredRel);
 }
 
@@ -1331,10 +1398,12 @@ void AHellunaHeroCharacter::ServerRecoverFromStun()
 	if (!HasAuthority() || !bServerPhysicsStunned) return;
 
 	bServerPhysicsStunned = false;
+	bPendingRecovery = false;
 
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(PhysicsStunPollHandle);
+		World->GetTimerManager().ClearTimer(RecoveryLingerHandle);
 	}
 
 	FVector RecoveryLoc = GetActorLocation();
@@ -1356,6 +1425,15 @@ void AHellunaHeroCharacter::ServerRecoverFromStun()
 
 	Multicast_RecoverFromStun(FVector_NetQuantize(RecoveryLoc));
 
+	// [Stun-Debug] 회복 좌표가 실제 래그돌 최종 위치인지 검증용
+	const FVector HitStart = StunDebugStartLocation;
+	const float StartToRecovery = FVector::Dist(HitStart, RecoveryLoc);
+	UE_LOG(LogHelluna, Warning,
+		TEXT("[Stun-Debug SRV RECOVER] HitStart=(%.0f,%.0f,%.0f) RecoveryLoc=(%.0f,%.0f,%.0f) Dist=%.1f"),
+		HitStart.X, HitStart.Y, HitStart.Z,
+		RecoveryLoc.X, RecoveryLoc.Y, RecoveryLoc.Z,
+		StartToRecovery);
+
 	UE_LOG(LogHelluna, Log, TEXT("[Stun] %s → 스턴 회복"), *GetName());
 }
 
@@ -1364,13 +1442,41 @@ void AHellunaHeroCharacter::Multicast_RecoverFromStun_Implementation(FVector_Net
 	// 카메라 팔로우 종료 — Tick 추적 중지
 	bLocalPhysicsStunned = false;
 
-	// CameraBoom 복원
+	// CameraBoom 복원: 현재 오프셋에서 Default 로 Lerp (한 프레임 점프 방지)
 	if (CameraBoom && bCameraBoomDefaultsCached)
 	{
-		CameraBoom->SetRelativeLocation(CameraBoomDefaultRelativeLocation);
+		if (CameraRecoverBlendDuration > 0.f)
+		{
+			CameraRecoverStartOffset = CameraBoom->GetRelativeLocation();
+			CameraRecoverBlendRemaining = CameraRecoverBlendDuration;
+			// Lag/Collision 은 블렌드 완료 시점에 Tick 에서 복원
+		}
+		else
+		{
+			CameraBoom->SetRelativeLocation(CameraBoomDefaultRelativeLocation);
+			CameraRecoverBlendRemaining = 0.f;
+
+			// 블렌드 없으면 즉시 Lag/Collision 원복
+			if (bSpringArmLagCached)
+			{
+				CameraBoom->bEnableCameraLag = bCachedEnableCameraLag;
+				CameraBoom->bEnableCameraRotationLag = bCachedEnableCameraRotationLag;
+				CameraBoom->bDoCollisionTest = bCachedDoCollisionTest;
+				bSpringArmLagCached = false;
+			}
+		}
 	}
 
 	USkeletalMeshComponent* SkelMesh = GetMesh();
+
+	// 캡슐을 래그돌 최종 위치(Pelvis 기준)로 이동 — 메시 재부착 전에 수행해야
+	// 클라에서 Replication 지연으로 캡슐이 피격 위치에 남아있는 동안 메시가
+	// 구 위치로 스냅되는 현상을 방지.
+	const FVector RecoveryWorld(RecoveryLocation);
+	if (!RecoveryWorld.IsNearlyZero())
+	{
+		SetActorLocation(RecoveryWorld, /*bSweep=*/false, nullptr, ETeleportType::TeleportPhysics);
+	}
 
 	// 래그돌 해제
 	if (SkelMesh)
@@ -1418,6 +1524,21 @@ void AHellunaHeroCharacter::Multicast_RecoverFromStun_Implementation(FVector_Net
 				AnimInst->Montage_Play(GetUpMontage);
 			}
 		}
+	}
+
+	// [Stun-Debug] 회복 완료 시점 Actor 위치 vs 피격 시작 위치 비교
+	{
+		const FVector HitStart = StunDebugStartLocation;
+		const FVector ActorAfter = GetActorLocation();
+		const float Dist = FVector::Dist(HitStart, ActorAfter);
+		const TCHAR* RoleStr = HasAuthority() ? TEXT("SRV") : TEXT("CLI");
+		UE_LOG(LogHelluna, Warning,
+			TEXT("[Stun-Debug %s STAND-UP] HitStart=(%.0f,%.0f,%.0f) ActorAfter=(%.0f,%.0f,%.0f) Dist=%.1f RecoveryPayload=(%.0f,%.0f,%.0f)"),
+			RoleStr,
+			HitStart.X, HitStart.Y, HitStart.Z,
+			ActorAfter.X, ActorAfter.Y, ActorAfter.Z,
+			Dist,
+			(float)RecoveryLocation.X, (float)RecoveryLocation.Y, (float)RecoveryLocation.Z);
 	}
 }
 
