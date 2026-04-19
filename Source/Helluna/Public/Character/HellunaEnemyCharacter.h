@@ -13,7 +13,11 @@
 
 class UEnemyCombatComponent;
 class UHellunaHealthComponent;
-class UMassAgentComponent;	
+class UMassAgentComponent;
+class UNiagaraSystem;
+class USoundBase;
+class UHellunaEnemyGameplayAbility;
+class UCameraShakeBase;
 /**
  * 
  */
@@ -151,6 +155,20 @@ public:
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Combat|Enrage")
 	bool bEnraged = false;
 
+	// =========================================================
+	// [PrewarmV1] GA 사전 인스턴스화 — 첫 발동 렉 완화
+	// =========================================================
+
+	/**
+	 * BeginPlay(서버) 시점에 미리 GiveAbility + Primary Instance 생성할 GA 클래스.
+	 * 각 몬스터 BP 기본값에서 점프/특수 공격 등 지연이 민감한 GA를 넣으세요.
+	 * 일반 근접 공격처럼 이미 자주 발동되는 GA는 넣을 필요 없음.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Prewarm",
+		meta = (DisplayName = "사전 워밍업 GA 목록",
+			ToolTip = "BeginPlay에서 미리 인스턴스를 만들어 첫 발동 시 렉을 제거.\n보스/점프/특수 공격 GA 권장."))
+	TArray<TSubclassOf<UHellunaEnemyGameplayAbility>> AbilitiesToPrewarm;
+
 	/**
 	 * 광폭화 진입.
 	 * STTask_Enrage의 EnterState에서 서버 측으로만 호출한다.
@@ -270,14 +288,18 @@ public:
 	UPROPERTY(Transient)
 	TObjectPtr<UNiagaraComponent> ActiveEnrageVFXComp = nullptr;
 
-	/** 히트 시 재생할 사운드 */
-	UPROPERTY(EditDefaultsOnly, Category = "Combat|Effect",
-		meta = (DisplayName = "히트 사운드",
-			ToolTip = "이 몬스터가 플레이어 또는 우주선을 타격했을 때 재생할 사운드입니다.\n비워두면 사운드가 재생되지 않습니다."))
+	// [HitSoundV1] HitSound 는 공격 GA(UHellunaEnemyGameplayAbility) 로 이관됨.
+	//   Why: 같은 몬스터가 여러 공격을 가질 때 공격마다 다른 사운드를 쓰기 위함.
+	//   Run-time 저장소는 아래 CachedHitSound/CachedHitSoundVolume/CachedHitSoundAttenuation.
+	//
+	// [HitSoundV1-Compat] 아래 두 필드는 **BP 에셋 역호환성**을 위해서만 유지.
+	//   기존 몬스터 BP CDO 가 직렬화한 HitSound/HitSoundAttenuation 포인터를
+	//   C++ 필드에서 제거하면 GC 가 dangling UObject* 를 읽다가 크래시나는 현상 방지.
+	//   에디터 노출 없음(UPROPERTY() 만) — 런타임은 GA 의 HitSound 를 사용.
+	UPROPERTY()
 	TObjectPtr<USoundBase> HitSound = nullptr;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Combat|Effect",
-		meta = (DisplayName = "히트 사운드 감쇠 설정"))
+	UPROPERTY()
 	TObjectPtr<USoundAttenuation> HitSoundAttenuation = nullptr;
 
 	// =========================================================
@@ -357,14 +379,18 @@ private:
 	void ServerApplyDamage(AActor* Target, float DamageAmount, const FVector& HitLocation);
 	
 	/**
-	 * Multicast RPC: 이펙트 재생 (히트/광폭화 공용)
+	 * Multicast RPC: 나이아가라 이펙트 재생 (히트/광폭화/보스 패턴 공용)
 	 * 모든 클라이언트에서 나이아가라 이펙트를 재생한다.
-	 * 사운드는 서버에서만 재생 (HitSound 프로퍼티 참조).
+	 *
+	 * [HitSoundV1] 사운드 재생은 이 RPC 에서 분리됨.
+	 *   타격 사운드는 GA(UHellunaEnemyGameplayAbility::HitSound) → CachedHitSound →
+	 *   Multicast_PlayHitSound 경로로 재생.
+	 *   bPlaySound 파라미터는 레거시 호출자(BossEvent 존 등)를 위해 시그니처만 유지.
 	 *
 	 * @param SpawnLocation - 이펙트 재생 위치
 	 * @param Effect        - 재생할 나이아가라 에셋 (nullptr이면 이펙트 생략)
 	 * @param EffectScale   - 이펙트 크기 배율
-	 * @param bPlaySound    - true이면 HitSound 재생 (히트에서만 true)
+	 * @param bPlaySound    - [DEPRECATED] 무시됨. 하위 호환용 잔여 파라미터.
 	 */
 
 public:
@@ -396,6 +422,84 @@ public:
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayAttackMontage(UAnimMontage* Montage, float PlayRate, FRotator FacingRotation);
 
+	/** [AttackAssetsV1] GA 소유 공격 시작 사운드 멀티캐스트. */
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_PlayAttackSound(USoundBase* Sound, float VolumeMultiplier);
+
+	/** [HitVFXV1] 타격 지점에 VFX 멀티캐스트 스폰. */
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_SpawnHitVFX(UNiagaraSystem* VFX, FVector HitLocation, float Scale);
+
+	/**
+	 * 일반 VFX를 지정 위치에 모든 클라이언트에 스폰 (attach 없음).
+	 * HitVFX와 달리 타격 컨텍스트 없이 쓰는 범용 헬퍼 — 예: DashAttack 마무리 폭발.
+	 */
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_SpawnLocationVFX(UNiagaraSystem* VFX, FVector Location, FRotator Rotation, float Scale);
+
+	/**
+	 * 캐릭터 루트에 attach 되는 VFX를 모든 클라이언트에 스폰 (bAutoDestroy=true).
+	 * DashTrail 같은 짧은 연출용. 수명은 Niagara System 자체 설정으로 처리.
+	 */
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_SpawnAttachedVFX(UNiagaraSystem* VFX);
+
+	/**
+	 * PlayWorldCameraShake를 모든 클라이언트에서 실행.
+	 * 서버 전용 GA에서 직접 호출하면 리스너/클라이언트 컨트롤러가 없어 흔들림이 안 전파됨.
+	 */
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_PlayWorldCameraShake(
+		TSubclassOf<UCameraShakeBase> ShakeClass,
+		FVector Origin,
+		float InnerRadius,
+		float OuterRadius,
+		float Falloff);
+
+	/**
+	 * 현재 활성화된 RangedAttack GA를 찾아 투사체를 발사.
+	 * AnimNotify_EnemyFireProjectile에서 호출됨.
+	 * 서버 권한에서만 실제 스폰 발생 (GA ServerOnly).
+	 */
+	void FireActiveRangedProjectile();
+
+	/**
+	 * 공격 몬타지 중간(예: 발사 Notify 시점)에 클라이언트 Yaw 를 서버 값으로 재스냅.
+	 * Multicast_PlayAttackMontage 는 몬타지 시작에만 스냅 → 몬타지 0.5~2초간 클라가
+	 * Linear smoothing 으로 따라가는데 플레이어 빠른 이동 시 뒤처짐 + wrap 구간에서
+	 * 반대 방향으로 돌아갈 수 있음. 발사 시점에 한 번 더 강제 스냅해 연출 밀림 제거.
+	 */
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_SyncAttackRotation(FRotator NewRotation);
+
+	/** 현재 진행 중인 공격의 HitVFX를 캐싱 (GA가 Activate에서 호출). */
+	void SetCachedHitVFX(UNiagaraSystem* InVFX, float InScale)
+	{
+		CachedHitVFX = InVFX;
+		CachedHitVFXScale = InScale;
+	}
+
+	/** [HitSoundV1] 타격 지점에 사운드 멀티캐스트 스폰. */
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_PlayHitSound(USoundBase* Sound, FVector HitLocation, float VolumeMultiplier, USoundAttenuation* Attenuation);
+
+	/** 현재 진행 중인 공격의 HitSound 를 캐싱 (GA Activate 경로에서 자동 호출). */
+	void SetCachedHitSound(USoundBase* InSound, float InVolume, USoundAttenuation* InAttenuation)
+	{
+		CachedHitSound = InSound;
+		CachedHitSoundVolume = InVolume;
+		CachedHitSoundAttenuation = InAttenuation;
+	}
+
+	/** 캐싱된 HitSound 가 있으면 지정 위치에 Multicast 로 재생 (없으면 무시). */
+	void TryPlayCachedHitSound(const FVector& HitLocation)
+	{
+		if (CachedHitSound)
+		{
+			Multicast_PlayHitSound(CachedHitSound, HitLocation, CachedHitSoundVolume, CachedHitSoundAttenuation);
+		}
+	}
+
 	// =========================================================
 	// 시간 왜곡 — 지속형 VFX 멀티캐스트
 	// =========================================================
@@ -423,8 +527,23 @@ private:
 	float SavedMaxWalkSpeed = 300.f;
 	bool bMovementLocked = false;
 
+	/**
+	 * 공격 중 AIController Focus 백업 (서버).
+	 * 공격 진입 시 ClearFocus → AIController가 자동 UpdateControlRotation을
+	 * 멈춰 Aim Offset/상체 회전이 고정됨. UnlockMovement에서 복원.
+	 */
+	UPROPERTY()
+	TWeakObjectPtr<AActor> SavedFocusActor;
+
+	UPROPERTY()
+	bool bFocusSaved = false;
+
 	/** 공격 전 CMC 네트워크 스무딩 모드 백업 (클라이언트) */
 	ENetworkSmoothingMode SavedSmoothingMode = ENetworkSmoothingMode::Exponential;
+
+	/** 공격 락 진입 전 NetUpdateFrequency 백업 (서버). 클라 회전 끊김 완화용 */
+	float SavedNetUpdateFrequency = 10.f;
+	bool bNetFreqBoosted = false;
 
 	/** 히트 이펙트 RPC 쓰로틀링 — 0.1초 내 중복 호출 생략 */
 	double LastEffectRPCTime = 0.0;
@@ -434,6 +553,18 @@ private:
 
 	/** 애님 노티파이에서 바로 읽는 현재 근접 공격 데미지 캐시 */
 	float CachedMeleeAttackDamage = 0.f;
+
+	/** [HitVFXV1] 현재 공격의 HitVFX / 스케일 캐시 (PerformAttackTrace 에서 사용). */
+	UPROPERTY()
+	TObjectPtr<UNiagaraSystem> CachedHitVFX = nullptr;
+	float CachedHitVFXScale = 1.f;
+
+	/** [HitSoundV1] 현재 공격의 HitSound / 볼륨 / 감쇠 캐시. */
+	UPROPERTY()
+	TObjectPtr<USoundBase> CachedHitSound = nullptr;
+	float CachedHitSoundVolume = 1.f;
+	UPROPERTY()
+	TObjectPtr<USoundAttenuation> CachedHitSoundAttenuation = nullptr;
 
 	EVisibilityBasedAnimTickOption SavedAnimTickOption = EVisibilityBasedAnimTickOption::OnlyTickPoseWhenRendered;
 

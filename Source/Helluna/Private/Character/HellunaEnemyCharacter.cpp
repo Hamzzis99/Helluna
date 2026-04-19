@@ -9,6 +9,9 @@
 #include "DataAsset/DataAsset_EnemyStartUpData.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "Camera/CameraShakeBase.h"
+#include "AbilitySystemComponent.h"
+#include "AbilitySystem/EnemyAbility/EnemyGameplayAbility_RangedAttack.h"
 #include "GameMode/HellunaDefenseGameMode.h"
 #include "Animation/AnimInstance.h"
 #include "Components/StateTreeComponent.h"
@@ -27,6 +30,7 @@
 #include "MassEntitySubsystem.h"
 #include "MassEntityManager.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
+#include "Object/ResourceUsingObject/HellunaTurretBase.h"
 
 // 나이아가라
 #include "NiagaraFunctionLibrary.h"
@@ -42,6 +46,14 @@
 
 // 퍼즐 보호막
 #include "Puzzle/PuzzleShieldComponent.h"
+
+// [PrewarmV1] GA 사전 인스턴스화
+#include "AbilitySystemComponent.h"
+#include "AbilitySystem/HellunaEnemyGameplayAbility.h"
+
+// [MontagePrewarmV1] Montage 예열용
+#include "Animation/AnimMontage.h"
+#include "Components/SkeletalMeshComponent.h"
 
 // ============================================================
 // 생성자
@@ -264,6 +276,69 @@ void AHellunaEnemyCharacter::BeginPlay()
 		if (AHellunaDefenseGameMode* GM = Cast<AHellunaDefenseGameMode>(UGameplayStatics::GetGameMode(this)))
 		{
 			GM->RegisterAliveMonster(this);
+		}
+	}
+
+	// =========================================================
+	// [PrewarmV1] 서버 전용: 지정 GA 목록을 BeginPlay에서 미리 GiveAbility.
+	// 첫 발동 시 클래스 로딩/스펙 할당 비용을 이 시점으로 당겨 렉 완화.
+	// =========================================================
+	if (UAbilitySystemComponent* ASC = GetAbilitySystemComponent())
+	{
+		int32 GrantedCount = 0;
+		for (const TSubclassOf<UHellunaEnemyGameplayAbility>& AbilityClass : AbilitiesToPrewarm)
+		{
+			if (!*AbilityClass) continue;
+
+			FGameplayAbilitySpec Spec(AbilityClass, 1, INDEX_NONE, this);
+			const FGameplayAbilitySpecHandle Handle = ASC->GiveAbility(Spec);
+
+			FGameplayAbilitySpec* FoundSpec = ASC->FindAbilitySpecFromHandle(Handle);
+			UGameplayAbility* PrimaryInst = FoundSpec ? FoundSpec->GetPrimaryInstance() : nullptr;
+
+			UE_LOG(LogTemp, Warning,
+				TEXT("[Prewarm] Monster=%s Class=%s Handle=%s PrimaryInst=%s"),
+				*GetNameSafe(this),
+				*AbilityClass->GetName(),
+				Handle.IsValid() ? TEXT("OK") : TEXT("INVALID"),
+				PrimaryInst ? *PrimaryInst->GetName() : TEXT("null(lazy)"));
+
+			++GrantedCount;
+		}
+
+		if (GrantedCount > 0)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[Prewarm] Monster=%s completed — %d ability classes pre-granted."),
+				*GetNameSafe(this), GrantedCount);
+		}
+	}
+
+	// =========================================================
+	// [MontagePrewarmV1] 첫 공격/점프 발동 시 Montage 슬롯/커브/트랙 세팅 비용을
+	// 스폰 시점으로 이관. 패키지 환경 첫 몬타주 재생 때 수백 ms 렉이 자주 잡히는 원인.
+	//   - Montage_Play → 즉시 Montage_Stop 으로 실제 재생은 0프레임.
+	//   - 서버/클라 양쪽 BeginPlay 에서 호출되므로 두 쪽 모두 데미징 없이 예열.
+	// =========================================================
+	if (USkeletalMeshComponent* SkelMesh = GetMesh())
+	{
+		if (UAnimInstance* AnimInst = SkelMesh->GetAnimInstance())
+		{
+			auto PrewarmMontage = [AnimInst](UAnimMontage* M, const TCHAR* Label)
+			{
+				if (!M) return;
+				const float Played = AnimInst->Montage_Play(M, 1.f, EMontagePlayReturnType::Duration, 0.f, false);
+				AnimInst->Montage_Stop(0.f, M);
+				UE_LOG(LogTemp, Warning,
+					TEXT("[MontagePrewarm] %s Montage=%s Played=%.3f"),
+					Label, *M->GetName(), Played);
+			};
+
+			PrewarmMontage(AttackMontage,      TEXT("Attack"));
+			PrewarmMontage(HitReactMontage,    TEXT("HitReact"));
+			PrewarmMontage(DeathMontage,       TEXT("Death"));
+			PrewarmMontage(EnrageMontage,      TEXT("Enrage"));
+			PrewarmMontage(ParryVictimMontage, TEXT("ParryVictim"));
 		}
 	}
 }
@@ -769,10 +844,11 @@ void AHellunaEnemyCharacter::PerformAttackTrace()
 		AActor* HitActor = Hit.GetActor();
 		if (!IsValid(HitActor) || HitActor == this) continue;
 
-		// 플레이어 또는 우주선만 피해 대상
-		const bool bIsPlayer   = Cast<AHellunaHeroCharacter>(HitActor) != nullptr;
-		const bool bIsShip     = Cast<AResourceUsingObject_SpaceShip>(HitActor) != nullptr;
-		if (!bIsPlayer && !bIsShip) continue;
+		// 플레이어 / 우주선 / 타워 계열 모두 피해 대상
+		const bool bIsPlayer = Cast<AHellunaHeroCharacter>(HitActor) != nullptr;
+		const bool bIsShip   = Cast<AResourceUsingObject_SpaceShip>(HitActor) != nullptr;
+		const bool bIsTurret = Cast<AHellunaTurretBase>(HitActor) != nullptr;
+		if (!bIsPlayer && !bIsShip && !bIsTurret) continue;
 
 		// 이번 공격에서 이미 맞은 액터는 스킵 (중복 피해 방지)
 		if (HitActorsThisAttack.Contains(HitActor)) continue;
@@ -784,6 +860,23 @@ void AHellunaEnemyCharacter::PerformAttackTrace()
 			: CurrentDamageAmount;
 
 		ServerApplyDamage(HitActor, FinalDamage, Hit.Location);
+
+		// [HitVFXV1] GA 가 캐싱한 HitVFX 를 Hit.Location 에 멀티캐스트 스폰
+		// [HitVFX.Diag] 트레이스 히트 / VFX 캐시 / 멀티캐스트 전송 로그
+		const TCHAR* TargetTypeStr = bIsPlayer ? TEXT("Player")
+			: bIsShip ? TEXT("Ship")
+			: bIsTurret ? TEXT("Turret")
+			: TEXT("?");
+		UE_LOG(LogTemp, Warning,
+			TEXT("[HitVFX.Diag][Trace.Hit] Monster=%s TargetType=%s CachedHitVFX=%s HitLoc=%s"),
+			*GetName(), TargetTypeStr,
+			CachedHitVFX ? *CachedHitVFX->GetName() : TEXT("NULL(GA 에 HitVFX 미할당)"),
+			*Hit.Location.ToString());
+
+		if (CachedHitVFX)
+		{
+			Multicast_SpawnHitVFX(CachedHitVFX, Hit.Location, CachedHitVFXScale);
+		}
 	}
 }
 
@@ -814,15 +907,21 @@ void AHellunaEnemyCharacter::ServerApplyDamage(AActor* Target, float DamageAmoun
 	if (Now - LastEffectRPCTime >= 0.1)
 	{
 		LastEffectRPCTime = Now;
-		MulticastPlayEffect(HitLocation, HitNiagaraEffect, HitEffectScale, true);
+		MulticastPlayEffect(HitLocation, HitNiagaraEffect, HitEffectScale, false);
+
+		// [HitSoundV1] 사운드는 GA 가 CachedHitSound 에 넣어둔 값을 사용해 별도 멀티캐스트.
+		TryPlayCachedHitSound(HitLocation);
 	}
 }
 
 // ============================================================
-// MulticastPlayEffect — 나이아가라 FX + 사운드 전파 (모든 클라이언트)
+// MulticastPlayEffect — 나이아가라 FX 전파 (모든 클라이언트)
+// [HitSoundV1] 사운드 재생은 이 RPC 에서 제거되었음.
+//   GA(UHellunaEnemyGameplayAbility)의 HitSound 를 Multicast_PlayHitSound 로 별도 전송.
+//   bPlaySound 파라미터는 레거시 호출자를 위해 시그니처만 유지 (내부 무시).
 // ============================================================
 void AHellunaEnemyCharacter::MulticastPlayEffect_Implementation(
-	const FVector& SpawnLocation, UNiagaraSystem* Effect, float EffectScale, bool bPlaySound)
+	const FVector& SpawnLocation, UNiagaraSystem* Effect, float EffectScale, bool /*bPlaySound*/)
 {
 	if (Effect)
 	{
@@ -832,17 +931,20 @@ void AHellunaEnemyCharacter::MulticastPlayEffect_Implementation(
 			true, true, ENCPoolMethod::None, true
 		);
 	}
+}
 
-	if (bPlaySound && HitSound)
-	{
-		if (UAudioComponent* AudioComp = UGameplayStatics::SpawnSoundAtLocation(this, HitSound, SpawnLocation))
-		{
-			if (HitSoundAttenuation)
-			{
-				AudioComp->AttenuationSettings = HitSoundAttenuation;
-			}
-		}
-	}
+// ============================================================
+// [HitSoundV1] GA 에 설정된 타격 사운드를 지정 위치에서 재생
+// ============================================================
+void AHellunaEnemyCharacter::Multicast_PlayHitSound_Implementation(
+	USoundBase* Sound, FVector HitLocation, float VolumeMultiplier, USoundAttenuation* Attenuation)
+{
+	if (GetNetMode() == NM_DedicatedServer || !Sound) return;
+
+	UGameplayStatics::PlaySoundAtLocation(
+		this, Sound, HitLocation,
+		VolumeMultiplier, 1.f, 0.f, Attenuation
+	);
 }
 
 // ============================================================
@@ -873,7 +975,7 @@ void AHellunaEnemyCharacter::LockMovementAndFaceTarget(AActor* TargetActor)
 		if (!ToTarget.IsNearlyZero())
 		{
 			const FRotator TargetRot(0.f, ToTarget.Rotation().Yaw, 0.f);
-			SetActorRotation(TargetRot);
+			SetActorRotation(TargetRot, ETeleportType::TeleportPhysics);
 
 			if (AController* OwnerController = GetController())
 			{
@@ -881,6 +983,30 @@ void AHellunaEnemyCharacter::LockMovementAndFaceTarget(AActor* TargetActor)
 			}
 		}
 	}
+
+	// 공격 중 AIController Focus 차단 — UpdateControlRotation 자동 추적 방지.
+	// Aim Offset이 ControlRotation 델타를 읽어 상체/머리를 틀던 문제 제거.
+	// per-tick 컨트롤러 회전 계산도 사라지므로 100마리 규모에서 CPU 이득.
+	if (AAIController* AIC = Cast<AAIController>(GetController()))
+	{
+		if (!bFocusSaved)
+		{
+			SavedFocusActor = AIC->GetFocusActor();
+			bFocusSaved     = true;
+		}
+		AIC->ClearFocus(EAIFocusPriority::Gameplay);
+	}
+
+	// 클라 회전 끊김(20-30fps 느낌) 완화 — 공격 락 동안 NetUpdateFrequency를
+	// 30Hz로 일시 부스트. StateTree Task가 매 틱 SetActorRotation으로 Yaw를
+	// 갱신하지만, 기본 10Hz로는 클라가 초당 10회만 보간 입력을 받아 끊겨 보임.
+	// 공격 한 사이클(2~3초)만 부스트하므로 100마리 규모에서도 부담 적음.
+	if (!bNetFreqBoosted)
+	{
+		SavedNetUpdateFrequency = GetNetUpdateFrequency();
+		bNetFreqBoosted = true;
+	}
+	SetNetUpdateFrequency(30.f);
 
 	// 클라이언트에도 즉시 동기화 (회전 모드 + 속도)
 	Multicast_SetMovementLocked(true, 0.f);
@@ -900,6 +1026,20 @@ void AHellunaEnemyCharacter::UnlockMovement()
 	MoveComp->bOrientRotationToMovement    = true;
 	MoveComp->bUseControllerDesiredRotation = false;
 
+	// Focus는 복원하지 않음 — 쿨다운 중 Task의 수동 SetControlRotation(RInterpTo)이
+	// 부드럽게 타겟을 따라가도록. AIC->UpdateControlRotation의 Focus 스냅이 들어오면
+	// 보간이 매 틱 덮어써져 상체/머리 끊김 발생.
+	// Chase/Evaluator 전이 시 ExitState 또는 해당 Task가 필요하면 다시 SetFocus함.
+	SavedFocusActor.Reset();
+	bFocusSaved = false;
+
+	// NetUpdateFrequency 원복 (10Hz)
+	if (bNetFreqBoosted)
+	{
+		SetNetUpdateFrequency(SavedNetUpdateFrequency);
+		bNetFreqBoosted = false;
+	}
+
 	// 클라이언트에도 복원 동기화 (회전 모드 + 속도)
 	Multicast_SetMovementLocked(false, SavedMaxWalkSpeed);
 }
@@ -914,14 +1054,19 @@ void AHellunaEnemyCharacter::Multicast_SetMovementLocked_Implementation(bool bLo
 
 	MoveComp->MaxWalkSpeed = WalkSpeed;
 
-	// 클라이언트 회전 모드 동기화
-	MoveComp->bOrientRotationToMovement    = !bLock;
-	MoveComp->bUseControllerDesiredRotation = bLock;
+	// [RotFixV2] 클라이언트 회전 모드 — as-client 에서 공격 중 보스 방향 어긋남 수정:
+	//  - bOrientRotationToMovement  : 속도 기반 회전 방지 (항상 false)
+	//  - bUseControllerDesiredRotation : AI 폰의 ControlRotation 은 클라에 복제되지 않음.
+	//    true 로 하면 클라 CMC 가 stale 값으로 pawn 을 돌리려 해 FRepMovement 와 충돌.
+	//    false 로 고정 → FRepMovement(서버 actor 회전) 만이 회전 유일 소스.
+	MoveComp->bOrientRotationToMovement    = false;
+	MoveComp->bUseControllerDesiredRotation = false;
 
 	if (bLock)
 	{
-		// 공격 시작: CMC 네트워크 스무딩 비활성화 → 회전 snap 즉시 적용
-		// 스무딩이 켜져 있으면 180도 회전을 보간해서 뒤돌아보이는 현상 발생
+		// [RotFixV2] 공격 락 동안 스무딩 OFF — Linear 는 시간 함수라 SyncAttackRotation 스냅
+		// 직전까지 중간 상태가 시각으로 노출됨 (프로젝타일 발사와 타이밍 겹쳐서 "뒤보고 쏨").
+		// NetUpdateFrequency=30Hz 부스트가 걸려 있어 Disabled 로 두어도 30Hz 즉시 반영 → 끊김 미미.
 		SavedSmoothingMode = MoveComp->NetworkSmoothingMode;
 		MoveComp->NetworkSmoothingMode = ENetworkSmoothingMode::Disabled;
 	}
@@ -930,7 +1075,6 @@ void AHellunaEnemyCharacter::Multicast_SetMovementLocked_Implementation(bool bLo
 		// 공격 종료: 스무딩 복원
 		MoveComp->NetworkSmoothingMode = SavedSmoothingMode;
 	}
-
 }
 
 void AHellunaEnemyCharacter::Multicast_PlayAttackMontage_Implementation(
@@ -943,9 +1087,23 @@ void AHellunaEnemyCharacter::Multicast_PlayAttackMontage_Implementation(
 		return;
 	}
 
+	// ═══ [MPAim] 클라이언트 회전 진단 로그 (재빌드 후 수집용) ═══
+	const FRotator PrevClientRot = GetActorRotation();
+
 	// 즉시 회전 적용 — CMC 스무딩이 비활성화된 상태에서 snap
 	const FRotator AttackRot(0.f, FacingRotation.Yaw, 0.f);
-	SetActorRotation(AttackRot);
+	SetActorRotation(AttackRot, ETeleportType::TeleportPhysics);
+
+	const FRotator PostClientRot = GetActorRotation();
+	float MeshWorldYaw = 0.f;
+	if (USkeletalMeshComponent* MeshDiag = GetMesh())
+	{
+		MeshWorldYaw = MeshDiag->GetComponentRotation().Yaw;
+	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[MPAim][Client] Montage=%s ServerYaw=%.1f PrevCliYaw=%.1f PostCliYaw=%.1f MeshYaw=%.1f"),
+		*Montage->GetName(), FacingRotation.Yaw, PrevClientRot.Yaw, PostClientRot.Yaw, MeshWorldYaw);
 
 	// 클라이언트 측 이동 즉시 정지
 	UCharacterMovementComponent* MoveComp = GetCharacterMovement();
@@ -967,6 +1125,153 @@ void AHellunaEnemyCharacter::Multicast_PlayAttackMontage_Implementation(
 		AnimInst->Montage_Stop(0.1f, Montage);
 	}
 	AnimInst->Montage_Play(Montage, PlayRate);
+}
+
+// ============================================================
+// [AttackAssetsV1] GA 소유 공격 시작 사운드 멀티캐스트
+// ============================================================
+void AHellunaEnemyCharacter::Multicast_PlayAttackSound_Implementation(
+	USoundBase* Sound, float VolumeMultiplier)
+{
+	if (GetNetMode() == NM_DedicatedServer || !Sound) return;
+	UGameplayStatics::PlaySoundAtLocation(
+		this, Sound, GetActorLocation(), VolumeMultiplier, 1.f);
+}
+
+// ============================================================
+// [HitVFXV1] 타격 지점 VFX 멀티캐스트 스폰
+// ============================================================
+void AHellunaEnemyCharacter::Multicast_SpawnHitVFX_Implementation(
+	UNiagaraSystem* VFX, FVector HitLocation, float Scale)
+{
+	// [HitVFX.Diag] 멀티캐스트 수신 로그 (NetMode 별 분기 파악)
+	const TCHAR* NetModeStr = TEXT("?");
+	switch (GetNetMode())
+	{
+	case NM_DedicatedServer: NetModeStr = TEXT("DediServer"); break;
+	case NM_ListenServer:    NetModeStr = TEXT("ListenSrv"); break;
+	case NM_Client:          NetModeStr = TEXT("Client"); break;
+	case NM_Standalone:      NetModeStr = TEXT("Standalone"); break;
+	default: break;
+	}
+	UE_LOG(LogTemp, Warning,
+		TEXT("[HitVFX.Diag][Multicast.Recv] Monster=%s NetMode=%s VFX=%s Loc=%s"),
+		*GetName(), NetModeStr,
+		VFX ? *VFX->GetName() : TEXT("NULL"),
+		*HitLocation.ToString());
+
+	if (GetNetMode() == NM_DedicatedServer || !VFX) return;
+
+	UNiagaraComponent* NC = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+		GetWorld(), VFX, HitLocation, FRotator::ZeroRotator);
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[HitVFX.Diag][Multicast.Spawn] Monster=%s NC=%s"),
+		*GetName(), NC ? TEXT("OK") : TEXT("FAIL"));
+
+	if (NC)
+	{
+		NC->SetWorldScale3D(FVector(Scale));
+	}
+}
+
+// ============================================================
+// [LocVFX] 일반 위치 VFX 멀티캐스트 스폰 (attach 없음, DashAttack 마무리 등)
+// ============================================================
+void AHellunaEnemyCharacter::Multicast_SpawnLocationVFX_Implementation(
+	UNiagaraSystem* VFX, FVector Location, FRotator Rotation, float Scale)
+{
+	// 데디케이티드 서버는 렌더 없음 → 스킵 (네트워크 트래픽만 발생)
+	if (GetNetMode() == NM_DedicatedServer || !VFX) return;
+
+	UNiagaraComponent* NC = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+		GetWorld(), VFX, Location, Rotation);
+	if (NC)
+	{
+		NC->SetWorldScale3D(FVector(FMath::Max(0.01f, Scale)));
+	}
+}
+
+// ============================================================
+// [AttachVFX] 캐릭터 루트 부착 VFX 멀티캐스트 스폰 (DashTrail 등)
+// ============================================================
+void AHellunaEnemyCharacter::Multicast_SpawnAttachedVFX_Implementation(
+	UNiagaraSystem* VFX)
+{
+	if (GetNetMode() == NM_DedicatedServer || !VFX || !GetRootComponent()) return;
+
+	UNiagaraFunctionLibrary::SpawnSystemAttached(
+		VFX,
+		GetRootComponent(),
+		NAME_None,
+		FVector::ZeroVector,
+		FRotator::ZeroRotator,
+		EAttachLocation::KeepRelativeOffset,
+		true /*bAutoDestroy*/
+	);
+}
+
+// ============================================================
+// [CamShake] 월드 카메라 쉐이크 멀티캐스트
+// ============================================================
+void AHellunaEnemyCharacter::Multicast_PlayWorldCameraShake_Implementation(
+	TSubclassOf<UCameraShakeBase> ShakeClass,
+	FVector Origin,
+	float InnerRadius,
+	float OuterRadius,
+	float Falloff)
+{
+	if (!ShakeClass || !GetWorld()) return;
+
+	// 데디케이티드 서버에는 로컬 플레이어 컨트롤러가 없어서 어차피 아무 일 없음 — 조기 리턴.
+	if (GetNetMode() == NM_DedicatedServer) return;
+
+	UGameplayStatics::PlayWorldCameraShake(
+		GetWorld(), ShakeClass, Origin, InnerRadius, OuterRadius, Falloff);
+}
+
+// ============================================================
+// [RangedSync] 발사 시점 클라 Yaw 강제 스냅
+// 몬타지 시작 스냅 후 2.5초 사이 클라가 스무딩으로 서버를 따라가는데,
+// 플레이어가 빠르게 움직이면 스무딩 지연으로 Notify 발화 시 클라 각도가 서버와 불일치.
+// 이 RPC 로 Notify 직전에 한 번 더 강제 스냅해 연출 밀림 차단.
+// ============================================================
+void AHellunaEnemyCharacter::Multicast_SyncAttackRotation_Implementation(FRotator NewRotation)
+{
+	if (HasAuthority() || GetNetMode() == NM_DedicatedServer) return;
+
+	const FRotator SnapRot(0.f, NewRotation.Yaw, 0.f);
+	SetActorRotation(SnapRot, ETeleportType::TeleportPhysics);
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[MPAim][SyncFire] Client snapped Yaw=%.1f"), NewRotation.Yaw);
+}
+
+// ============================================================
+// [RangedNotify] 활성화된 RangedAttack GA 찾아 투사체 발사
+// ============================================================
+void AHellunaEnemyCharacter::FireActiveRangedProjectile()
+{
+	// ServerOnly GA — 서버에서만 실제 스폰 수행. 클라 노티 콜은 무시.
+	if (!HasAuthority()) return;
+
+	UAbilitySystemComponent* ASC = GetAbilitySystemComponent();
+	if (!ASC) return;
+
+	for (FGameplayAbilitySpec& Spec : ASC->GetActivatableAbilities())
+	{
+		if (!Spec.IsActive()) continue;
+
+		// InstancedPerActor → PrimaryInstance만 확인하면 충분
+		if (UGameplayAbility* Instance = Spec.GetPrimaryInstance())
+		{
+			if (auto* Ranged = Cast<UEnemyGameplayAbility_RangedAttack>(Instance))
+			{
+				Ranged->FireProjectileFromNotify();
+				return;
+			}
+		}
+	}
 }
 
 // ============================================================

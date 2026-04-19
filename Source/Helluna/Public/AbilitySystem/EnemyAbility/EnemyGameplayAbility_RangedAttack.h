@@ -39,6 +39,8 @@ public:
 	UPROPERTY(BlueprintReadWrite, Category = "Attack")
 	TWeakObjectPtr<AActor> CurrentTarget = nullptr;
 
+	virtual void SetCurrentTarget(AActor* InTarget) override { CurrentTarget = InTarget; }
+
 	// =========================================================
 	// 에디터 설정값
 	// =========================================================
@@ -124,6 +126,25 @@ public:
 			ToolTip = "몽타주가 끝난 후 잠시 멈추는 시간입니다.\n이 시간이 지나야 다음 이동/공격이 가능합니다.\n전체 공격 주기 = 몽타주 길이 + 이 값 + StateTree 쿨다운",
 			ClampMin = "0.0", ClampMax = "2.0"))
 	float AttackRecoveryDelay = 0.3f;
+
+	/**
+	 * true : AnimNotify(AnimNotify_EnemyFireProjectile)가 호출할 때까지 기다림.
+	 *        LaunchDelayRatio / LaunchTimerHandle 기반 자동 발사는 비활성.
+	 *        몽타주 중 정확한 프레임에 발사하려면 이 방식 권장.
+	 * false: 기존 LaunchDelayRatio × 몽타주 길이로 타이머 자동 발사.
+	 *
+	 * Notify가 몽타주에 설정되지 않았어도, 몽타주 완료/중단 시점에 안전 발사됨.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "공격 설정",
+		meta = (DisplayName = "AnimNotify로 발사",
+			ToolTip = "true면 몬타지에 부착된 AnimNotify_EnemyFireProjectile 노티가 투사체를 발사합니다."))
+	bool bFireViaAnimNotify = false;
+
+	/**
+	 * AnimNotify 에서 외부 호출 가능한 발사 진입점.
+	 * 중복 발사 방지 플래그 포함. HasAuthority 체크는 호출측에서 처리.
+	 */
+	void FireProjectileFromNotify();
 
 protected:
 	virtual void ActivateAbility(
