@@ -301,15 +301,6 @@ protected:
 		meta = (DisplayName = "피격 사운드"))
 	TObjectPtr<USoundBase> ImpactSound = nullptr;
 
-	// =========================================================
-	// 디버그
-	// =========================================================
-
-	/** 감지 반경·추적선 디버그 드로잉 (Shipping 자동 컴파일 아웃) */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Debug",
-		meta = (DisplayName = "디버그 시각화"))
-	bool bShowDebug = true;
-
 public:
 	/** 현재 상태 (Replicated) — BP 에서 읽기 전용 */
 	UFUNCTION(BlueprintPure, Category = "Guardian|State")

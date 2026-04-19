@@ -367,7 +367,7 @@ FVector ComputeNavGoalTowardShip(
 			}
 
 			const FVector StepDir = Dir.RotateAngleAxis(AngleOffset, FVector::UpVector).GetSafeNormal2D();
-			ConsiderGoal(PawnLoc + StepDir * StepDist);
+			ConsiderGoal(PawnqqqqqqqqqqqqLoc + StepDir * StepDist);
 		}
 
 		const FVector RawGoal = PawnLoc + Dir * StepDist;

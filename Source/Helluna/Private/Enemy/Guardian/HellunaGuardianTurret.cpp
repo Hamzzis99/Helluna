@@ -19,9 +19,6 @@
 #include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
 
-#if !UE_BUILD_SHIPPING
-#include "DrawDebugHelpers.h"
-#endif
 
 
 // =========================================================
@@ -190,38 +187,6 @@ void AHellunaGuardianTurret::Tick(float DeltaTime)
 			}
 		}
 	}
-
-#if !UE_BUILD_SHIPPING
-	if (bShowDebug)
-	{
-		const UWorld* World = GetWorld();
-		if (World && DetectionSphere)
-		{
-			const FColor RangeColor =
-				(CurrentState == EGuardianState::Idle)     ? FColor::Green :
-				(CurrentState == EGuardianState::Detect)   ? FColor::Yellow :
-				(CurrentState == EGuardianState::Lock)     ? FColor::Orange :
-				(CurrentState == EGuardianState::FireDelay)? FColor::Red :
-				(CurrentState == EGuardianState::Fire)     ? FColor::Magenta :
-				(CurrentState == EGuardianState::Cooldown) ? FColor::Cyan :
-				                                             FColor::Black;
-			DrawDebugSphere(World, DetectionSphere->GetComponentLocation(),
-				DetectionSphere->GetScaledSphereRadius(), 24, RangeColor, false, -1.f, 0, 2.f);
-		}
-
-		if (MuzzlePoint && CurrentTarget.Get())
-		{
-			const FVector Start = MuzzlePoint->GetComponentLocation();
-			const FVector End = (CurrentState == EGuardianState::Fire)
-				? FVector(LockedFireTarget)
-				: GetAimPointFor(CurrentTarget.Get());
-			const FColor LineColor = (CurrentState == EGuardianState::Lock ||
-				CurrentState == EGuardianState::FireDelay ||
-				CurrentState == EGuardianState::Fire) ? FColor::Red : FColor::Yellow;
-			DrawDebugLine(GetWorld(), Start, End, LineColor, false, -1.f, 0, 1.5f);
-		}
-	}
-#endif
 
 	// 서버 전용: 상태 전이
 	if (!HasAuthority())
