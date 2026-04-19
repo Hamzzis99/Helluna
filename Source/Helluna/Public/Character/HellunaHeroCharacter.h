@@ -781,6 +781,11 @@ protected:
 		meta = (DisplayName = "임펄스 배율 (데미지당)", ClampMin = "0.0", ClampMax = "100000.0"))
 	float KnockbackDamageScale = 3000.f;
 
+	/** 런치 방향 수직 상향 boost (0=수평, 1=히트방향과 동일, 1.5~2.0=BOTW 가디언식 붕 뜸) */
+	UPROPERTY(EditDefaultsOnly, Category = "Stun|Physics",
+		meta = (DisplayName = "런치 수직 Boost", ClampMin = "0.0", ClampMax = "5.0"))
+	float StunLaunchVerticalBoost = 1.5f;
+
 	/** 스턴 회복 속도 임계값 (UU/s). 래그돌 속도가 이 이하로 떨어지면 회복 시작. */
 	UPROPERTY(EditDefaultsOnly, Category = "Stun|Physics",
 		meta = (DisplayName = "회복 속도 임계값 (UU/s)", ClampMin = "1.0", ClampMax = "1000.0"))
@@ -832,8 +837,12 @@ private:
 	/** 서버: 회복 수행 */
 	void ServerRecoverFromStun();
 
-	/** 래그돌 중 카메라가 따라가도록 캡슐을 Pelvis 본 위치로 추적 (Zelda BotW 스타일) */
+	/** 래그돌 중 카메라가 따라가도록 CameraBoom 을 Pelvis 본 위치로 추적 (Zelda BotW 스타일) */
 	void TickPhysicsStunCameraFollow();
+
+	/** CameraBoom 기본 relative location 캐시 (회복 시 복원용) */
+	FVector CameraBoomDefaultRelativeLocation = FVector::ZeroVector;
+	bool bCameraBoomDefaultsCached = false;
 
 	/** 스턴 진입 후 5초간 매 틱 위치/속도 로깅 — 래그돌이 멀리 날아가는 원인 진단용 */
 	float StunDebugTimeRemaining = 0.f;

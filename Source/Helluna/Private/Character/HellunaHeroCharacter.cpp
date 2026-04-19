@@ -1154,9 +1154,17 @@ void AHellunaHeroCharacter::EnterPhysicsStunFromDamage(float Damage, const FVect
 		return;
 	}
 
-	const FVector SafeDir = HitDirection.IsNearlyZero()
-		? FVector(0.f, 0.f, 1.f)
-		: HitDirection.GetSafeNormal();
+	// BOTW 가디언식 런치: 히트 방향의 수평 성분 + 수직 상향 boost 를 블렌딩해 공중에 뜨는 느낌 부여
+	FVector HorizDir(HitDirection.X, HitDirection.Y, 0.f);
+	if (HorizDir.IsNearlyZero())
+	{
+		HorizDir = -GetActorForwardVector();
+		HorizDir.Z = 0.f;
+	}
+	HorizDir = HorizDir.GetSafeNormal();
+
+	const FVector LaunchDir = (HorizDir + FVector(0.f, 0.f, StunLaunchVerticalBoost)).GetSafeNormal();
+	const FVector SafeDir = LaunchDir.IsNearlyZero() ? FVector(0.f, 0.f, 1.f) : LaunchDir;
 	const FVector Impulse = SafeDir * FMath::Max(1.f, Damage * KnockbackDamageScale);
 
 	if (bServerPhysicsStunned)
@@ -1233,7 +1241,14 @@ void AHellunaHeroCharacter::Multicast_EnterPhysicsStun_Implementation(FVector_Ne
 	// 임펄스 (래그돌이 이미 물리 활성 상태 → AddImpulseAtLocation 유효)
 	SkelMesh->AddImpulseAtLocation(FVector(Impulse), FVector(HitLocation));
 
-	// 카메라 팔로우 플래그 — Tick 에서 캡슐을 Pelvis 로 추적
+	// CameraBoom 기본값 캐시 (회복 시 복원)
+	if (CameraBoom && !bCameraBoomDefaultsCached)
+	{
+		CameraBoomDefaultRelativeLocation = CameraBoom->GetRelativeLocation();
+		bCameraBoomDefaultsCached = true;
+	}
+
+	// 카메라 팔로우 플래그 — Tick 에서 CameraBoom 을 Pelvis 로 추적
 	bLocalPhysicsStunned = true;
 
 	// [Stun-Debug] 5초 매틱 로깅 시작
@@ -1297,22 +1312,18 @@ void AHellunaHeroCharacter::TickPhysicsStunPoll()
 
 void AHellunaHeroCharacter::TickPhysicsStunCameraFollow()
 {
-	// 래그돌 중 Capsule 은 제자리에 남고 Mesh 만 날아감 → Camera 정체 방지.
-	// 매 프레임 Capsule 을 Pelvis 본 위치로 SetActorLocation(TeleportPhysics) 이동시켜
-	// 카메라가 캐릭터를 끝까지 추적하도록 한다. 캡슐 콜리전은 NoCollision 이므로 안전.
+	// 래그돌 중 Capsule 은 제자리에 두고 CameraBoom 만 Pelvis 본으로 이동시켜
+	// 카메라가 래그돌을 따라가게 한다. 캡슐/메시에 물리 피드백이 없어 안전.
+	if (!CameraBoom) return;
 	USkeletalMeshComponent* SkelMesh = GetMesh();
 	if (!SkelMesh || !SkelMesh->IsSimulatingPhysics()) return;
 
-	const FVector PelvisLoc = SkelMesh->GetBoneLocation(TEXT("pelvis"));
-	if (PelvisLoc.IsNearlyZero()) return;
+	const FVector PelvisWorld = SkelMesh->GetBoneLocation(TEXT("pelvis"));
+	if (PelvisWorld.IsNearlyZero()) return;
 
-	FVector NewLoc = PelvisLoc;
-	if (UCapsuleComponent* Capsule = GetCapsuleComponent())
-	{
-		NewLoc.Z -= (Capsule->GetScaledCapsuleHalfHeight() * 0.3f);
-	}
-
-	SetActorLocation(NewLoc, /*bSweep=*/false, nullptr, ETeleportType::TeleportPhysics);
+	const FVector CapsuleWorld = GetActorLocation();
+	const FVector DesiredRel = CameraBoomDefaultRelativeLocation + (PelvisWorld - CapsuleWorld);
+	CameraBoom->SetRelativeLocation(DesiredRel);
 }
 
 void AHellunaHeroCharacter::ServerRecoverFromStun()
@@ -1352,6 +1363,12 @@ void AHellunaHeroCharacter::Multicast_RecoverFromStun_Implementation(FVector_Net
 {
 	// 카메라 팔로우 종료 — Tick 추적 중지
 	bLocalPhysicsStunned = false;
+
+	// CameraBoom 복원
+	if (CameraBoom && bCameraBoomDefaultsCached)
+	{
+		CameraBoom->SetRelativeLocation(CameraBoomDefaultRelativeLocation);
+	}
 
 	USkeletalMeshComponent* SkelMesh = GetMesh();
 
