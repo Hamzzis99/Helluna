@@ -14,6 +14,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/SceneComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/SkeletalMesh.h"
 
@@ -198,11 +199,33 @@ FVector UEnemyGameplayAbility_ShipJump::ComputeLaunchVelocityToShipTop(const AHe
 		Vxy = FMath::Clamp(HorizDistance / (2.f * TimeToApex), 100.f, MaxHorizontalSpeed);
 	}
 
+	// [ShipJumpSpreadV2] 슬롯 인덱스 → 좌우 부채꼴 yaw 오프셋 + Vxy cos 보정.
+	// Why V2: V1 은 Vxy 그대로 두고 yaw 회전만 → forward 도달거리 = D*cos(yaw) 로 짧아짐.
+	//         반대로 측면 거리 = D*sin(yaw) 로 우주선 옆을 빗나가는 사례 발생 (광폭화 등 D 가 클 때 특히 심각).
+	// How V2: yaw 만 회전한 뒤 Vxy 를 1/cos(yaw) 로 보정 → forward 거리는 항상 D 로 보존,
+	//         측면 거리만 D*tan(yaw) 만큼 분산 → 우주선 중심 위 호에 안정 착지.
+	//         보정 후 다시 MaxHorizontalSpeed 로 clamp 해 광폭화에도 폭주 방지.
+	float YawOffsetDeg = 0.f;
+	if (AssignedSlotIndex >= 0 && SpreadSlotCount > 1 && SpreadFanHalfAngleDeg > 0.f)
+	{
+		const int32 ClampedIdx = FMath::Clamp(AssignedSlotIndex, 0, SpreadSlotCount - 1);
+		const float Step = (2.f * SpreadFanHalfAngleDeg) / static_cast<float>(SpreadSlotCount - 1);
+		YawOffsetDeg = -SpreadFanHalfAngleDeg + Step * static_cast<float>(ClampedIdx);
+		HorizDir = FRotator(0.f, YawOffsetDeg, 0.f).RotateVector(HorizDir);
+
+		const float YawCos = FMath::Cos(FMath::DegreesToRadians(YawOffsetDeg));
+		if (YawCos > KINDA_SMALL_NUMBER)
+		{
+			Vxy = FMath::Clamp(Vxy / YawCos, 100.f, MaxHorizontalSpeed);
+		}
+	}
+
 	const FVector Launch = HorizDir * Vxy + FVector(0.f, 0.f, LaunchVelocityZ);
 
 	UE_LOG(LogTemp, Warning,
-		TEXT("[ShipJumpV5.Land] Enemy=%s Ship=%s D=%.0f ShipTopZ=%.0f BoundsTop=%.0f Climb=%.0f Apex=%.0f Vz=%.0f T=%.2f Vxy=%.0f Dir=(%.2f,%.2f)"),
+		TEXT("[ShipJumpSpreadV2] Enemy=%s Ship=%s SlotIdx=%d YawOff=%.1f D=%.0f ShipTopZ=%.0f BoundsTop=%.0f Climb=%.0f Apex=%.0f Vz=%.0f T=%.2f Vxy=%.0f Dir=(%.2f,%.2f)"),
 		*Enemy->GetName(), Ship ? *Ship->GetName() : TEXT("null"),
+		AssignedSlotIndex, YawOffsetDeg,
 		HorizDistance, ShipTopZ, BoundsTopZ, RequiredClimb, ApexHeight, LaunchVelocityZ, TimeToApex, Vxy, HorizDir.X, HorizDir.Y);
 
 	return Launch;
@@ -220,6 +243,9 @@ void UEnemyGameplayAbility_ShipJump::PerformJump()
 	{
 		MoveComp->SetMovementMode(MOVE_Falling);
 	}
+
+	// [ShipJumpAirCollisionV1] 공중 진입 직전 Pawn↔Pawn 캡슐 충돌 해제.
+	EnableAirCollisionPassthrough();
 
 	const double t1 = FPlatformTime::Seconds();
 
@@ -277,6 +303,9 @@ void UEnemyGameplayAbility_ShipJump::OnLanded()
 {
 	if (bHasLanded) return;
 	bHasLanded = true;
+
+	// [ShipJumpAirCollisionV1] 착지 즉시 캡슐 Pawn 응답 복구.
+	RestorePawnCollision();
 
 	AHellunaEnemyCharacter* Enemy = GetEnemyCharacterFromActorInfo();
 	UWorld* World = Enemy ? Enemy->GetWorld() : nullptr;
@@ -404,6 +433,9 @@ void UEnemyGameplayAbility_ShipJump::EndAbility(
 	bool bReplicateEndAbility,
 	bool bWasCancelled)
 {
+	// [ShipJumpAirCollisionV1] OnLanded 미경유 종료 경로 (Cancel/페일세이프) 안전 복구.
+	RestorePawnCollision();
+
 	if (AHellunaEnemyCharacter* Enemy = GetEnemyCharacterFromActorInfo())
 	{
 		Enemy->UnlockMovement();
@@ -429,6 +461,48 @@ void UEnemyGameplayAbility_ShipJump::EndAbility(
 
 	CurrentTarget = nullptr;
 	bHasLanded = false;
+	AssignedSlotIndex = INDEX_NONE;
 
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
+}
+
+// ============================================================
+// [ShipJumpAirCollisionV1] 공중 동안 Pawn 충돌 해제 / 복구
+// ============================================================
+void UEnemyGameplayAbility_ShipJump::EnableAirCollisionPassthrough()
+{
+	if (!bIgnorePawnCollisionInAir || bPawnCollisionOverridden) return;
+
+	AHellunaEnemyCharacter* Enemy = GetEnemyCharacterFromActorInfo();
+	if (!Enemy) return;
+
+	UCapsuleComponent* Capsule = Enemy->GetCapsuleComponent();
+	if (!Capsule) return;
+
+	SavedPawnResponse = Capsule->GetCollisionResponseToChannel(ECC_Pawn);
+	Capsule->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+	bPawnCollisionOverridden = true;
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[ShipJumpAirCollisionV1] Enemy=%s Pawn 충돌 해제 (Saved=%d)"),
+		*Enemy->GetName(), static_cast<int32>(SavedPawnResponse.GetValue()));
+}
+
+void UEnemyGameplayAbility_ShipJump::RestorePawnCollision()
+{
+	if (!bPawnCollisionOverridden) return;
+
+	AHellunaEnemyCharacter* Enemy = GetEnemyCharacterFromActorInfo();
+	if (Enemy)
+	{
+		if (UCapsuleComponent* Capsule = Enemy->GetCapsuleComponent())
+		{
+			Capsule->SetCollisionResponseToChannel(ECC_Pawn, SavedPawnResponse.GetValue());
+			UE_LOG(LogTemp, Warning,
+				TEXT("[ShipJumpAirCollisionV1] Enemy=%s Pawn 충돌 복구 (Restored=%d)"),
+				*Enemy->GetName(), static_cast<int32>(SavedPawnResponse.GetValue()));
+		}
+	}
+
+	bPawnCollisionOverridden = false;
 }

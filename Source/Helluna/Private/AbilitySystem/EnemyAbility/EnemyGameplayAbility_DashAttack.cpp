@@ -359,13 +359,24 @@ void UEnemyGameplayAbility_DashAttack::FinishDash()
 		Enemy->LaunchCharacter(FVector::ZeroVector, true, false);
 	}
 
-	StartFinalStrike();
+	// [DashFollowupV2] 후속 GA 가 지정돼 있으면 그쪽으로 분기, 아니면 즉시 종료.
+	// Why: 마무리 근접 공격은 별도 GA(예: 내려찍기)가 전담. 본 GA 는 대쉬 + 체이닝만 책임.
+	//      StateTree 가 다른 패턴으로 못 빠지도록 후속 GA 가 끝날 때까지 살아있음.
+	if (FollowupAbilityClass)
+	{
+		StartFollowupAbility();
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[DashFollowupV2] FollowupAbilityClass 미지정 → 후속 없이 종료"));
+	HandleAttackFinished();
 }
 
 // ============================================================
-// Final Strike
+// [DashFollowupV1] 후속 GA 체이닝
 // ============================================================
-void UEnemyGameplayAbility_DashAttack::StartFinalStrike()
+void UEnemyGameplayAbility_DashAttack::StartFollowupAbility()
 {
 	AHellunaEnemyCharacter* Enemy = GetEnemyCharacterFromActorInfo();
 	if (!Enemy)
@@ -374,172 +385,130 @@ void UEnemyGameplayAbility_DashAttack::StartFinalStrike()
 		return;
 	}
 
-	// 매 발동마다 데미지 플래그 리셋
-	bFinalStrikeDamageApplied = false;
-
-	UAnimMontage* FinalMontage = GetEffectiveAttackMontage();
-	if (!FinalMontage)
+	UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo();
+	if (!ASC || !FollowupAbilityClass)
 	{
-		// 몬타지 없으면 즉시 데미지 판정 + 종료
-		ApplyFinalStrikeDamage();
 		HandleAttackFinished();
 		return;
 	}
 
-	const float PlayRate = Enemy->bEnraged
-		? FinalStrikePlayRate * Enemy->EnrageAttackMontagePlayRate
-		: FinalStrikePlayRate;
+	// 어빌리티가 없으면 GiveAbility (ShipJump 패턴 따라).
+	bool bAlreadyHas = false;
+	for (const FGameplayAbilitySpec& Spec : ASC->GetActivatableAbilities())
+	{
+		if (Spec.Ability && Spec.Ability->GetClass() == FollowupAbilityClass)
+		{
+			bAlreadyHas = true;
+			break;
+		}
+	}
+	if (!bAlreadyHas)
+	{
+		FGameplayAbilitySpec Spec(FollowupAbilityClass);
+		Spec.SourceObject = Enemy;
+		Spec.Level = 1;
+		ASC->GiveAbility(Spec);
+	}
 
-	const FRotator FacingRotation(0.f, DashDirection.Rotation().Yaw, 0.f);
-	Enemy->Multicast_PlayAttackMontage(FinalMontage, PlayRate, FacingRotation);
+	// 후속 GA 에 CurrentTarget 주입 (CDO + Instance 양쪽).
+	AActor* TargetForFollowup = CurrentTarget.Get();
+	for (FGameplayAbilitySpec& Spec : ASC->GetActivatableAbilities())
+	{
+		if (!Spec.Ability || Spec.Ability->GetClass() != FollowupAbilityClass) continue;
+		if (UHellunaEnemyGameplayAbility* CDO = Cast<UHellunaEnemyGameplayAbility>(Spec.Ability))
+		{
+			CDO->SetCurrentTarget(TargetForFollowup);
+		}
+		if (UGameplayAbility* Inst = Spec.GetPrimaryInstance())
+		{
+			if (UHellunaEnemyGameplayAbility* InstTyped = Cast<UHellunaEnemyGameplayAbility>(Inst))
+			{
+				InstTyped->SetCurrentTarget(TargetForFollowup);
+			}
+		}
+		break;
+	}
 
-	// [임시 방식] 몬타지 "시작" 시점 기준 지연 타이머로 데미지 적용.
-	// 나중에 AnimNotify 기반으로 교체 예정. 재생 속도에 맞춰 지연도 스케일링.
+	// OnAbilityEnded 바인드 — 후속 GA 가 끝나는 순간 콜백.
+	FollowupOnAbilityEndedHandle = ASC->OnAbilityEnded.AddUObject(
+		this, &UEnemyGameplayAbility_DashAttack::OnFollowupAbilityEnded);
+
+	const bool bActivated = ASC->TryActivateAbilityByClass(FollowupAbilityClass);
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[DashFollowupV1] Enemy=%s Followup=%s Activated=%d Target=%s"),
+		*Enemy->GetName(),
+		*FollowupAbilityClass->GetName(),
+		bActivated ? 1 : 0,
+		TargetForFollowup ? *TargetForFollowup->GetName() : TEXT("null"));
+
+	if (!bActivated)
+	{
+		// 활성화 실패 → 콜백 해제 후 즉시 종료.
+		CleanupFollowupBindings();
+		HandleAttackFinished();
+		return;
+	}
+
+	bWaitingForFollowupGA = true;
+
+	// 페일세이프 — 후속 GA 가 EndAbility 신호를 안 보내도 일정 시간 후 강제 종료.
 	if (UWorld* World = Enemy->GetWorld())
 	{
-		const float ScaledDelay = FinalStrikeDamageDelay / FMath::Max(0.1f, PlayRate);
 		World->GetTimerManager().SetTimer(
-			FinalStrikeDamageTimerHandle,
-			[this]()
-			{
-				if (!bFinalStrikeDamageApplied)
-				{
-					ApplyFinalStrikeDamage();
-					bFinalStrikeDamageApplied = true;
-				}
-			},
-			FMath::Max(0.01f, ScaledDelay),
-			false
-		);
+			FollowupFailsafeHandle,
+			[this]() { OnFollowupFailsafeTimeout(); },
+			FMath::Max(1.f, FollowupFailsafeTime),
+			false);
 	}
-
-	UAbilityTask_PlayMontageAndWait* MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
-		this, NAME_None, FinalMontage, PlayRate, NAME_None, false
-	);
-
-	if (!MontageTask)
-	{
-		// 몬타지 태스크 생성 실패 — 데미지는 이미 타이머로 예약됨, 안전 종료
-		HandleAttackFinished();
-		return;
-	}
-
-	MontageTask->OnCompleted.AddDynamic  (this, &UEnemyGameplayAbility_DashAttack::OnFinalStrikeCompleted);
-	MontageTask->OnCancelled.AddDynamic  (this, &UEnemyGameplayAbility_DashAttack::OnFinalStrikeCancelled);
-	MontageTask->OnInterrupted.AddDynamic(this, &UEnemyGameplayAbility_DashAttack::OnFinalStrikeCancelled);
-	MontageTask->ReadyForActivation();
 }
 
-void UEnemyGameplayAbility_DashAttack::OnFinalStrikeCompleted()
+void UEnemyGameplayAbility_DashAttack::OnFollowupAbilityEnded(const FAbilityEndedData& EndData)
 {
-	// 타이머가 먼저 발화해 이미 데미지 적용됐으면 스킵 (이중 타격 방지).
-	// 타이머가 발화하지 못한 채 몬타지가 끝난 경우(예: 매우 짧은 몬타지)에만 여기서 적용.
-	if (!bFinalStrikeDamageApplied)
-	{
-		ApplyFinalStrikeDamage();
-		bFinalStrikeDamageApplied = true;
-	}
+	if (!bWaitingForFollowupGA) return;
+	if (!FollowupAbilityClass) return;
+	UGameplayAbility* EndedAbility = EndData.AbilityThatEnded;
+	if (!EndedAbility) return;
+	if (EndedAbility->GetClass() != FollowupAbilityClass) return;
 
-	AHellunaEnemyCharacter* Enemy = GetEnemyCharacterFromActorInfo();
-	if (!Enemy || !Enemy->GetWorld())
-	{
-		HandleAttackFinished();
-		return;
-	}
+	UE_LOG(LogTemp, Warning,
+		TEXT("[DashFollowupV1] Followup ENDED (Cancelled=%d) → DashAttack 종료"),
+		EndData.bWasCancelled ? 1 : 0);
 
-	Enemy->GetWorld()->GetTimerManager().SetTimer(
-		DelayedReleaseTimerHandle,
-		[this]()
+	bWaitingForFollowupGA = false;
+	CleanupFollowupBindings();
+	HandleAttackFinished();
+}
+
+void UEnemyGameplayAbility_DashAttack::OnFollowupFailsafeTimeout()
+{
+	if (!bWaitingForFollowupGA) return;
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[DashFollowupV1] Followup FAILSAFE 발화 — 강제 종료"));
+
+	bWaitingForFollowupGA = false;
+	CleanupFollowupBindings();
+	HandleAttackFinished();
+}
+
+void UEnemyGameplayAbility_DashAttack::CleanupFollowupBindings()
+{
+	if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
+	{
+		if (FollowupOnAbilityEndedHandle.IsValid())
 		{
-			if (AHellunaEnemyCharacter* E = GetEnemyCharacterFromActorInfo())
-			{
-				E->UnlockMovement();
-			}
-			HandleAttackFinished();
-		},
-		AttackRecoveryDelay,
-		false
-	);
-}
-
-void UEnemyGameplayAbility_DashAttack::OnFinalStrikeCancelled()
-{
-	const FGameplayAbilitySpecHandle H = GetCurrentAbilitySpecHandle();
-	const FGameplayAbilityActorInfo* AI = GetCurrentActorInfo();
-	const FGameplayAbilityActivationInfo AV = GetCurrentActivationInfo();
-	EndAbility(H, AI, AV, true, true);
-}
-
-void UEnemyGameplayAbility_DashAttack::ApplyFinalStrikeDamage()
-{
-	AHellunaEnemyCharacter* Enemy = GetEnemyCharacterFromActorInfo();
-	if (!Enemy) return;
-
-	UWorld* World = Enemy->GetWorld();
-	if (!World) return;
-
-	const FVector Center = Enemy->GetActorLocation();
-	const FVector Forward = Enemy->GetActorForwardVector();
-	const float CosHalfAngle = FMath::Cos(FMath::DegreesToRadians(FinalStrikeHalfAngle));
-
-	const float FinalDamage = Enemy->bEnraged
-		? FinalStrikeDamage * Enemy->EnrageDamageMultiplier
-		: FinalStrikeDamage;
-
-	TArray<FOverlapResult> Overlaps;
-	FCollisionQueryParams QueryParams;
-	QueryParams.AddIgnoredActor(Enemy);
-
-	World->OverlapMultiByObjectType(
-		Overlaps,
-		Center,
-		FQuat::Identity,
-		FCollisionObjectQueryParams(ECollisionChannel::ECC_Pawn),
-		FCollisionShape::MakeSphere(FinalStrikeRadius),
-		QueryParams
-	);
-
-	bool bAnyHit = false;
-	for (const FOverlapResult& Overlap : Overlaps)
-	{
-		AActor* HitActor = Overlap.GetActor();
-		if (!HitActor || HitActor == Enemy) continue;
-		if (HitActor->IsA<AHellunaEnemyCharacter>()) continue;
-
-		const FVector ToHit = (HitActor->GetActorLocation() - Center).GetSafeNormal2D();
-		if (FVector::DotProduct(Forward, ToHit) < CosHalfAngle) continue;
-
-		UGameplayStatics::ApplyDamage(
-			HitActor, FinalDamage, Enemy->GetInstigatorController(), Enemy, nullptr);
-
-		if (ACharacter* HitChar = Cast<ACharacter>(HitActor))
-		{
-			FVector KnockDir = ToHit;
-			KnockDir.Z = 0.3f;
-			KnockDir.Normalize();
-			HitChar->LaunchCharacter(KnockDir * 700.f, true, true);
+			ASC->OnAbilityEnded.Remove(FollowupOnAbilityEndedHandle);
 		}
-
-		// Hit VFX는 마지막 타겟 위치에만 스폰 (중복 연출 방지)
-		if (FinalStrikeVFX && !bAnyHit)
-		{
-			// Multicast로 모든 클라이언트에서 스폰 (MP 대응)
-			Enemy->Multicast_SpawnLocationVFX(
-				FinalStrikeVFX, HitActor->GetActorLocation(), FRotator::ZeroRotator, 1.f);
-		}
-		bAnyHit = true;
 	}
+	FollowupOnAbilityEndedHandle.Reset();
 
-	// 카메라 쉐이크 — Multicast로 모든 클라이언트에서 재생
-	if (FinalStrikeCameraShake)
+	if (AHellunaEnemyCharacter* Enemy = GetEnemyCharacterFromActorInfo())
 	{
-		Enemy->Multicast_PlayWorldCameraShake(
-			FinalStrikeCameraShake,
-			Center,
-			FinalStrikeRadius,
-			FinalStrikeRadius * 2.f,
-			1.0f
-		);
+		if (UWorld* World = Enemy->GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(FollowupFailsafeHandle);
+		}
 	}
 }
 
@@ -569,11 +538,13 @@ void UEnemyGameplayAbility_DashAttack::EndAbility(
 		{
 			World->GetTimerManager().ClearTimer(DashTickTimerHandle);
 			World->GetTimerManager().ClearTimer(DashEndTimerHandle);
-			World->GetTimerManager().ClearTimer(DelayedReleaseTimerHandle);
-			World->GetTimerManager().ClearTimer(FinalStrikeDamageTimerHandle);
+			World->GetTimerManager().ClearTimer(FollowupFailsafeHandle);
 		}
 	}
-	bFinalStrikeDamageApplied = false;
+
+	// [DashFollowupV1] OnAbilityEnded 콜백 안전 해제 (재진입 방지).
+	CleanupFollowupBindings();
+	bWaitingForFollowupGA = false;
 
 	if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
 	{

@@ -242,8 +242,11 @@ EStateTreeRunStatus FSTTask_BossChooseAttack::Tick(
 
 	// ── 후보 필터링 ───────────────────────────────────────────────────
 	// 거리 범위 + per-entry 쿨다운 + 연속 상한 기준으로 사용 가능한 엔트리만 수집.
-	TArray<int32> Candidates;
-	Candidates.Reserve(AttackPool.Num());
+	// [BossWalkPriorityV1] GA 후보와 Walk 후보를 분리해 우선순위를 적용한다.
+	TArray<int32> AbilityCandidates;
+	TArray<int32> WalkCandidates;
+	AbilityCandidates.Reserve(AttackPool.Num());
+	WalkCandidates.Reserve(AttackPool.Num());
 	for (int32 i = 0; i < AttackPool.Num(); ++i)
 	{
 		const FBossAttackEntry& E = AttackPool[i];
@@ -260,8 +263,42 @@ EStateTreeRunStatus FSTTask_BossChooseAttack::Tick(
 		{
 			continue;
 		}
-		Candidates.Add(i);
+
+		if (E.AttackAbility.Get())
+		{
+			AbilityCandidates.Add(i);
+		}
+		else
+		{
+			WalkCandidates.Add(i);
+		}
 	}
+
+	// [BossWalkPriorityV1] GA 후보 있으면 GA 만, 없으면 Walk 폴백.
+	// false 면 기존 동작 (둘을 합쳐 가중치/랜덤 선택).
+	TArray<int32> Candidates;
+	if (bPreferAbilityOverWalk)
+	{
+		if (AbilityCandidates.Num() > 0)
+		{
+			Candidates = MoveTemp(AbilityCandidates);
+		}
+		else
+		{
+			Candidates = MoveTemp(WalkCandidates);
+		}
+	}
+	else
+	{
+		Candidates.Append(AbilityCandidates);
+		Candidates.Append(WalkCandidates);
+	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[BossWalkPriorityV1] Boss=%s Dist=%.0f AbilityCands=%d WalkCands=%d FinalCands=%d Prefer=%d"),
+		*Pawn->GetName(), Dist,
+		AbilityCandidates.Num(), WalkCandidates.Num(), Candidates.Num(),
+		bPreferAbilityOverWalk ? 1 : 0);
 
 	if (Candidates.Num() == 0)
 	{

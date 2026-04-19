@@ -107,7 +107,8 @@ EStateTreeRunStatus FSTTask_ShipJump::EnterState(
 		return EStateTreeRunStatus::Failed;
 	}
 
-	if (!SlotMgr->TryReserveTopSlot(Pawn))
+	int32 AssignedIndex = INDEX_NONE;
+	if (!SlotMgr->TryReserveTopSlotIndexed(Pawn, AssignedIndex))
 	{
 		// 슬롯이 가득 찼음 → 이 Task는 실패시켜 State Tree의 OnFailed 분기(일반 공격)로 보냄.
 		return EStateTreeRunStatus::Failed;
@@ -116,6 +117,7 @@ EStateTreeRunStatus FSTTask_ShipJump::EnterState(
 	Data.bActivatedGA = false;
 	Data.PostLandingTimer = 0.f;
 	Data.StaggerElapsed = 0.f;
+	Data.AssignedTopSlotIndex = AssignedIndex;
 
 	// [ShipJumpStaggerV1] 몬스터별 무작위 지연 → 동시 LaunchCharacter 복제 분산.
 	const float LoBound = FMath::Max(0.f, StaggerMin);
@@ -201,7 +203,8 @@ EStateTreeRunStatus FSTTask_ShipJump::Tick(
 		}
 
 		// CurrentTarget + 점프 튜닝 값 주입 (CDO + Instance 양쪽).
-		auto ApplyTuning = [this](UEnemyGameplayAbility_ShipJump* JumpGA, AActor* Target)
+		const int32 SlotIdxToInject = Data.AssignedTopSlotIndex;
+		auto ApplyTuning = [this, SlotIdxToInject](UEnemyGameplayAbility_ShipJump* JumpGA, AActor* Target)
 		{
 			if (!JumpGA) return;
 			JumpGA->CurrentTarget           = Target;
@@ -210,6 +213,8 @@ EStateTreeRunStatus FSTTask_ShipJump::Tick(
 			JumpGA->MaxAirborneTime         = MaxAirborneTime;
 			JumpGA->FallbackHorizontalSpeed = FallbackHorizontalSpeed;
 			JumpGA->FallbackVerticalSpeed   = FallbackVerticalSpeed;
+			// [ShipJumpSpreadV1] 슬롯 인덱스 주입 → GA 의 부채꼴 yaw 오프셋에 사용.
+			JumpGA->AssignedSlotIndex       = SlotIdxToInject;
 		};
 
 		for (FGameplayAbilitySpec& Spec : ASC->GetActivatableAbilities())
@@ -224,8 +229,8 @@ EStateTreeRunStatus FSTTask_ShipJump::Tick(
 		}
 
 		UE_LOG(LogTemp, Warning,
-			TEXT("[ShipTopV1.Tune] Inject Monster=%s Overshoot=%.0f RecoveryDelay=%.2f MaxAir=%.1f"),
-			*Pawn->GetName(), OvershootHeight, AttackRecoveryDelay, MaxAirborneTime);
+			TEXT("[ShipTopV1.Tune][ShipJumpSpreadV1] Inject Monster=%s SlotIdx=%d Overshoot=%.0f RecoveryDelay=%.2f MaxAir=%.1f"),
+			*Pawn->GetName(), Data.AssignedTopSlotIndex, OvershootHeight, AttackRecoveryDelay, MaxAirborneTime);
 
 		ShipJumpLocal::SnapFaceShip(AIC, Pawn, ShipActor);
 

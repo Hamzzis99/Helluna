@@ -1315,13 +1315,13 @@ void USpaceShipAttackSlotManager::ReleaseEngagementReservation(AActor* Monster)
 	ReleaseTopSlot(Monster);
 }
 
-// ─── [ShipTopV1] 상단 점프 슬롯 ──────────────────────────────
+// ─── [ShipTopV1 / ShipJumpSpreadV1] 상단 점프 슬롯 ──────────────────────────────
 
 void USpaceShipAttackSlotManager::CleanupTopSlotReservations()
 {
-	for (auto It = ReservedTopSlotMonsters.CreateIterator(); It; ++It)
+	for (auto It = TopSlotAssignments.CreateIterator(); It; ++It)
 	{
-		if (!It->IsValid())
+		if (!It.Value().IsValid())
 		{
 			It.RemoveCurrent();
 		}
@@ -1330,6 +1330,14 @@ void USpaceShipAttackSlotManager::CleanupTopSlotReservations()
 
 bool USpaceShipAttackSlotManager::TryReserveTopSlot(AActor* Monster)
 {
+	int32 UnusedIndex = INDEX_NONE;
+	return TryReserveTopSlotIndexed(Monster, UnusedIndex);
+}
+
+bool USpaceShipAttackSlotManager::TryReserveTopSlotIndexed(AActor* Monster, int32& OutSlotIndex)
+{
+	OutSlotIndex = INDEX_NONE;
+
 	if (!Monster)
 	{
 		return false;
@@ -1339,25 +1347,40 @@ bool USpaceShipAttackSlotManager::TryReserveTopSlot(AActor* Monster)
 
 	const TWeakObjectPtr<AActor> Key = Monster;
 
-	// 이미 예약된 몬스터면 true 유지(멱등).
-	if (ReservedTopSlotMonsters.Contains(Key))
+	// 이미 예약된 몬스터면 기존 인덱스 반환 (멱등).
+	for (const TPair<int32, TWeakObjectPtr<AActor>>& Pair : TopSlotAssignments)
 	{
-		return true;
+		if (Pair.Value == Key)
+		{
+			OutSlotIndex = Pair.Key;
+			return true;
+		}
 	}
 
-	if (ReservedTopSlotMonsters.Num() >= MaxTopSlots)
+	if (TopSlotAssignments.Num() >= MaxTopSlots)
 	{
 		UE_LOG(LogTemp, Warning,
-			TEXT("[ShipTopV1] TryReserveTopSlot DENIED (full) Monster=%s Usage=%d/%d"),
-			*Monster->GetName(), ReservedTopSlotMonsters.Num(), MaxTopSlots);
+			TEXT("[ShipJumpSpreadV1] TryReserveTopSlot DENIED (full) Monster=%s Usage=%d/%d"),
+			*Monster->GetName(), TopSlotAssignments.Num(), MaxTopSlots);
 		return false;
 	}
 
-	ReservedTopSlotMonsters.Add(Key);
-	UE_LOG(LogTemp, Warning,
-		TEXT("[ShipTopV1] TryReserveTopSlot GRANTED Monster=%s Usage=%d/%d"),
-		*Monster->GetName(), ReservedTopSlotMonsters.Num(), MaxTopSlots);
-	return true;
+	// [ShipJumpSpreadV1] 0..MaxTopSlots-1 중 가장 작은 빈 인덱스 부여.
+	for (int32 Candidate = 0; Candidate < MaxTopSlots; ++Candidate)
+	{
+		if (!TopSlotAssignments.Contains(Candidate))
+		{
+			TopSlotAssignments.Add(Candidate, Key);
+			OutSlotIndex = Candidate;
+			UE_LOG(LogTemp, Warning,
+				TEXT("[ShipJumpSpreadV1] TryReserveTopSlot GRANTED Monster=%s SlotIndex=%d Usage=%d/%d"),
+				*Monster->GetName(), Candidate, TopSlotAssignments.Num(), MaxTopSlots);
+			return true;
+		}
+	}
+
+	// 도달 불가 (위에서 풀 검사 완료) — 안전 폴백.
+	return false;
 }
 
 void USpaceShipAttackSlotManager::ReleaseTopSlot(AActor* Monster)
@@ -1368,12 +1391,22 @@ void USpaceShipAttackSlotManager::ReleaseTopSlot(AActor* Monster)
 	}
 
 	const TWeakObjectPtr<AActor> Key = Monster;
-	const int32 Removed = ReservedTopSlotMonsters.Remove(Key);
-	if (Removed > 0)
+	int32 RemovedIndex = INDEX_NONE;
+	for (auto It = TopSlotAssignments.CreateIterator(); It; ++It)
+	{
+		if (It.Value() == Key)
+		{
+			RemovedIndex = It.Key();
+			It.RemoveCurrent();
+			break;
+		}
+	}
+
+	if (RemovedIndex != INDEX_NONE)
 	{
 		UE_LOG(LogTemp, Warning,
-			TEXT("[ShipTopV1] ReleaseTopSlot Monster=%s Usage=%d/%d"),
-			*Monster->GetName(), ReservedTopSlotMonsters.Num(), MaxTopSlots);
+			TEXT("[ShipJumpSpreadV1] ReleaseTopSlot Monster=%s SlotIndex=%d Usage=%d/%d"),
+			*Monster->GetName(), RemovedIndex, TopSlotAssignments.Num(), MaxTopSlots);
 	}
 }
 
@@ -1383,9 +1416,15 @@ bool USpaceShipAttackSlotManager::HasTopSlot(const AActor* Monster) const
 	{
 		return false;
 	}
-	// TSet<TWeakObjectPtr>는 const ptr로 조회 불가 → 캐스팅 후 조회.
 	const TWeakObjectPtr<AActor> Key = const_cast<AActor*>(Monster);
-	return ReservedTopSlotMonsters.Contains(Key);
+	for (const TPair<int32, TWeakObjectPtr<AActor>>& Pair : TopSlotAssignments)
+	{
+		if (Pair.Value == Key)
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 bool USpaceShipAttackSlotManager::GetMonsterSlotInfo(const AActor* Monster, int32& OutSlotIndex, ESlotState& OutState) const

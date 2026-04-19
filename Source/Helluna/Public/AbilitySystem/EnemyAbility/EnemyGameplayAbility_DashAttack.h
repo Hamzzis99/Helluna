@@ -193,66 +193,32 @@ public:
 	float HomingInterpSpeed = 8.f;
 
 	// =========================================================
-	// 마무리 근접 공격 (Final Strike)
+	// [DashFollowupV1] 돌진 직후 후속 GA 체이닝
 	// =========================================================
 
 	/**
-	 * 돌진 종료 후 적용할 근접 데미지.
-	 * 돌진 데미지와는 별개(돌진은 스쳐 지나가며 맞은 적, 마무리는 최종 위치 전방 적).
-	 */
-	UPROPERTY(EditDefaultsOnly, Category = "돌진 공격|마무리",
-		meta = (DisplayName = "마무리 근접 데미지",
-			ClampMin = "0.0"))
-	float FinalStrikeDamage = 30.f;
-
-	/** 마무리 타격 반경 (cm). */
-	UPROPERTY(EditDefaultsOnly, Category = "돌진 공격|마무리",
-		meta = (DisplayName = "마무리 타격 반경 (cm)",
-			ClampMin = "50.0", ClampMax = "800.0"))
-	float FinalStrikeRadius = 250.f;
-
-	/** 마무리 타격 전방 원뿔 반각 (도). */
-	UPROPERTY(EditDefaultsOnly, Category = "돌진 공격|마무리",
-		meta = (DisplayName = "마무리 전방 원뿔 반각 (도)",
-			ClampMin = "15.0", ClampMax = "180.0"))
-	float FinalStrikeHalfAngle = 60.f;
-
-	/** 마무리 타격 시점에 스폰할 Hit VFX (선택). */
-	UPROPERTY(EditDefaultsOnly, Category = "돌진 공격|마무리",
-		meta = (DisplayName = "마무리 타격 VFX"))
-	TObjectPtr<UNiagaraSystem> FinalStrikeVFX = nullptr;
-
-	/** 마무리 타격 시 카메라 쉐이크 (선택). */
-	UPROPERTY(EditDefaultsOnly, Category = "돌진 공격|마무리",
-		meta = (DisplayName = "마무리 카메라 쉐이크"))
-	TSubclassOf<UCameraShakeBase> FinalStrikeCameraShake;
-
-	/** 마무리 몬타지 재생 속도 배율. */
-	UPROPERTY(EditDefaultsOnly, Category = "돌진 공격|마무리",
-		meta = (DisplayName = "마무리 몬타지 재생 속도",
-			ClampMin = "0.1", ClampMax = "3.0"))
-	float FinalStrikePlayRate = 1.f;
-
-	/** 마무리 몬타지 종료 후 어빌리티 유지 시간 (초). */
-	UPROPERTY(EditDefaultsOnly, Category = "돌진 공격|마무리",
-		meta = (DisplayName = "공격 후 딜레이 (초)",
-			ClampMin = "0.0", ClampMax = "3.0"))
-	float AttackRecoveryDelay = 0.6f;
-
-	/**
-	 * 마무리 몬타지 "시작" 시점으로부터 데미지 적용까지의 지연 시간 (초).
+	 * 돌진 종료 후 발동할 후속 GA. 마무리 근접 공격은 이 후속 GA 가 전담.
+	 * 비워두면 후속 동작 없이 즉시 종료 (대쉬만 수행).
 	 *
-	 * 현재 임시 방식: 몬타지 완료 대신 시작 후 N초에 데미지 적용.
-	 * 나중에 AnimNotify 기반으로 전환하면 이 필드는 제거 예정.
+	 * StateTree 관점:
+	 *  - DashAttack Task 는 후속 GA 가 끝날 때까지 살아있음 → StateTree 가 다른 패턴으로
+	 *    빠지는 것을 방지. 후속 GA 종료 시 DashAttack 도 EndAbility.
 	 *
-	 * 예: 몬타지 길이 1.0s, 이 값 0.25 → 몬타지 시작 후 0.25초에 데미지 판정.
-	 *     몬타지가 중단되어도 타이머가 먼저 발화했다면 데미지 적용됨.
+	 * 태그 처리:
+	 *  - State.Enemy.Attacking 은 reference-counted → DashAttack + 후속 GA 가 둘 다
+	 *    Add/Remove 해도 StateTree EnterCondition 이 한순간도 끊기지 않음.
 	 */
-	UPROPERTY(EditDefaultsOnly, Category = "돌진 공격|마무리",
-		meta = (DisplayName = "마무리 데미지 적용 지연 (초, 몬타지 시작 기준)",
-			ToolTip = "몬타지 시작 후 이 시간이 지나면 데미지 적용.\n몬타지 재생 속도와 시각적 타격 프레임에 맞춰 조정하세요.",
-			ClampMin = "0.0", ClampMax = "3.0"))
-	float FinalStrikeDamageDelay = 0.2f;
+	UPROPERTY(EditDefaultsOnly, Category = "돌진 공격|후속 체이닝",
+		meta = (DisplayName = "후속 어빌리티 클래스",
+			ToolTip = "돌진 종료 직후 자동 활성화될 GA. 예: 내려찍기 GA. 비워두면 후속 동작 없이 종료."))
+	TSubclassOf<UHellunaEnemyGameplayAbility> FollowupAbilityClass;
+
+	/** 후속 GA 가 이 시간 안에 EndAbility 신호를 안 보내면 강제 종료. */
+	UPROPERTY(EditDefaultsOnly, Category = "돌진 공격|후속 체이닝",
+		meta = (DisplayName = "후속 GA 페일세이프 (초)",
+			ToolTip = "후속 GA 가 비정상 행동(무한 루프/응답 없음)일 때 강제 종료까지 대기.",
+			ClampMin = "1.0", ClampMax = "30.0"))
+	float FollowupFailsafeTime = 8.f;
 
 protected:
 	virtual void ActivateAbility(
@@ -274,9 +240,13 @@ private:
 	void StartDash();
 	void TickDash();
 	void FinishDash();
-	void StartFinalStrike();
-	void ApplyFinalStrikeDamage();
 	void HandleAttackFinished();
+
+	// [DashFollowupV1] 후속 GA 체이닝
+	void StartFollowupAbility();
+	void OnFollowupAbilityEnded(const struct FAbilityEndedData& EndData);
+	void OnFollowupFailsafeTimeout();
+	void CleanupFollowupBindings();
 
 	UFUNCTION()
 	void OnWindupCompleted();
@@ -284,20 +254,14 @@ private:
 	UFUNCTION()
 	void OnWindupCancelled();
 
-	UFUNCTION()
-	void OnFinalStrikeCompleted();
-
-	UFUNCTION()
-	void OnFinalStrikeCancelled();
-
 	// 런타임 상태
 	FTimerHandle DashTickTimerHandle;
 	FTimerHandle DashEndTimerHandle;
-	FTimerHandle DelayedReleaseTimerHandle;
-	FTimerHandle FinalStrikeDamageTimerHandle;
 
-	/** 마무리 데미지 이중 적용 방지 플래그 */
-	bool bFinalStrikeDamageApplied = false;
+	// [DashFollowupV1] 후속 GA 체이닝 런타임 상태
+	FTimerHandle FollowupFailsafeHandle;
+	FDelegateHandle FollowupOnAbilityEndedHandle;
+	bool bWaitingForFollowupGA = false;
 
 	/** 돌진 단일 발동 중 이미 타격한 액터 (중복 데미지 방지). */
 	UPROPERTY()
