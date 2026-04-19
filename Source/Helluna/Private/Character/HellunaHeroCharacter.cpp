@@ -301,6 +301,12 @@ void AHellunaHeroCharacter::Tick(float DeltaTime)
 	{
 		TickSpawnVFX(DeltaTime);
 	}
+
+	// [Stun] 래그돌 중 카메라 팔로우 (BotW 스타일)
+	if (bLocalPhysicsStunned)
+	{
+		TickPhysicsStunCameraFollow();
+	}
 }
 
 // ============================================================================
@@ -1205,6 +1211,9 @@ void AHellunaHeroCharacter::Multicast_EnterPhysicsStun_Implementation(FVector_Ne
 
 	// 임펄스 (래그돌이 이미 물리 활성 상태 → AddImpulseAtLocation 유효)
 	SkelMesh->AddImpulseAtLocation(FVector(Impulse), FVector(HitLocation));
+
+	// 카메라 팔로우 플래그 — Tick 에서 캡슐을 Pelvis 로 추적
+	bLocalPhysicsStunned = true;
 }
 
 void AHellunaHeroCharacter::Multicast_AddStunImpulse_Implementation(FVector_NetQuantize Impulse, FVector_NetQuantize HitLocation)
@@ -1244,6 +1253,26 @@ void AHellunaHeroCharacter::TickPhysicsStunPoll()
 	}
 }
 
+void AHellunaHeroCharacter::TickPhysicsStunCameraFollow()
+{
+	// 래그돌 중 Capsule 은 제자리에 남고 Mesh 만 날아감 → Camera 정체 방지.
+	// 매 프레임 Capsule 을 Pelvis 본 위치로 SetActorLocation(TeleportPhysics) 이동시켜
+	// 카메라가 캐릭터를 끝까지 추적하도록 한다. 캡슐 콜리전은 NoCollision 이므로 안전.
+	USkeletalMeshComponent* SkelMesh = GetMesh();
+	if (!SkelMesh || !SkelMesh->IsSimulatingPhysics()) return;
+
+	const FVector PelvisLoc = SkelMesh->GetBoneLocation(TEXT("pelvis"));
+	if (PelvisLoc.IsNearlyZero()) return;
+
+	FVector NewLoc = PelvisLoc;
+	if (UCapsuleComponent* Capsule = GetCapsuleComponent())
+	{
+		NewLoc.Z -= (Capsule->GetScaledCapsuleHalfHeight() * 0.3f);
+	}
+
+	SetActorLocation(NewLoc, /*bSweep=*/false, nullptr, ETeleportType::TeleportPhysics);
+}
+
 void AHellunaHeroCharacter::ServerRecoverFromStun()
 {
 	if (!HasAuthority() || !bServerPhysicsStunned) return;
@@ -1279,6 +1308,9 @@ void AHellunaHeroCharacter::ServerRecoverFromStun()
 
 void AHellunaHeroCharacter::Multicast_RecoverFromStun_Implementation(FVector_NetQuantize RecoveryLocation)
 {
+	// 카메라 팔로우 종료 — Tick 추적 중지
+	bLocalPhysicsStunned = false;
+
 	USkeletalMeshComponent* SkelMesh = GetMesh();
 
 	// 래그돌 해제

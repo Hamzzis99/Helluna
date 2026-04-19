@@ -812,6 +812,9 @@ private:
 	/** 서버 스턴 활성 여부 */
 	bool bServerPhysicsStunned = false;
 
+	/** 모든 머신(서버/클라) 공통: 로컬 래그돌 활성 여부 — 카메라 팔로우용 */
+	bool bLocalPhysicsStunned = false;
+
 	/** 스턴 진입 시각 (World 시간) */
 	float ServerStunStartTime = 0.f;
 
@@ -828,6 +831,9 @@ private:
 
 	/** 서버: 회복 수행 */
 	void ServerRecoverFromStun();
+
+	/** 래그돌 중 카메라가 따라가도록 캡슐을 Pelvis 본 위치로 추적 (Zelda BotW 스타일) */
+	void TickPhysicsStunCameraFollow();
 
 	// =========================================================
 	// 시간 왜곡 슬로우 배율
