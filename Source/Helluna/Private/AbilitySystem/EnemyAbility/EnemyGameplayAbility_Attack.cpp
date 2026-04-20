@@ -111,6 +111,12 @@ void UEnemyGameplayAbility_Attack::ActivateAbility(
 	// LockMovement과 Multicast 사이에 틱/물리가 끼어들어 회전이 밀릴 가능성 차단.
 	Enemy->SetActorRotation(FacingRotation, ETeleportType::TeleportPhysics);
 
+	// [ServerAnimTick] 서버는 기본적으로 SkelMesh Pose Tick 이 꺼져있어 Montage Notify
+	// (AttackCollisionStart/End) 가 서버에서 발동되지 않음 → 서버가 박스 활성화 못 함 → Overlap 판정 0.
+	// Montage 재생 직전 서버 Pose Tick 을 켜서 공격 구간 동안만 Notify 가 서버에 도달하도록.
+	// OnMontageCompleted/Cancelled 에서 다시 끈다 (최적화 — 공격 안 할 때 서버 Pose Tick 비용 0).
+	Enemy->SetServerAttackPoseTickEnabled(true);
+
 	Enemy->Multicast_PlayAttackMontage(EffectiveMontage, PlayRate, FacingRotation);
 	PlayAttackSound();
 
@@ -229,6 +235,11 @@ void UEnemyGameplayAbility_Attack::EndAbility(
 	{
 		Enemy->UnlockMovement();
 		Enemy->SetCachedMeleeAttackDamage(0.f);
+
+		// [ServerAnimTick] 안전망 — GA 종료 시점에 항상 서버 Pose Tick 복원.
+		// Notify End 가 누락되거나 Montage 취소로 SetAttackBoxActive(false) 가 안 불렸을 때도
+		// 서버 Pose Tick 이 계속 켜져있는 일이 없도록.
+		Enemy->SetServerAttackPoseTickEnabled(false);
 
 		if (bWasCancelled)
 		{

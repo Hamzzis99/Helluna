@@ -93,6 +93,18 @@ struct FSTTask_ChaseTargetInstanceData
 	UPROPERTY()
 	int8 SidestepSign = 0;
 
+	// [ChaseNoArrivalV1] Spread Phase 에서 RepathInterval 마다 MoveTo 재발급 누적기.
+	UPROPERTY()
+	float RepathTimer = 0.f;
+
+	// [ChaseBlockDetourV1] AttackZone 기반 경로 차단 감지 누적기.
+	UPROPERTY()
+	float BlockCheckTimer = 0.f;
+
+	// [ChaseBlockDetourV2] 우회 직후 재우회 금지 타이머 (초). 양수이면 Block 감지 스킵.
+	UPROPERTY()
+	float BlockDetourCooldown = 0.f;
+
 	// --- Player chase ---
 
 	UPROPERTY()
@@ -241,6 +253,42 @@ public:
 			ToolTip = "터렛 중심에서 몬스터가 산개하여 멈추는 거리 (cm).\n터렛을 에워싸는 반경입니다.",
 			ClampMin = "50.0"))
 	float TurretStandoffRadius = 150.f;
+
+	// ==========================================================
+
+	UPROPERTY(EditAnywhere, Category = "도착 판정 (AttackZone)",
+		meta = (DisplayName = "AttackZone HalfExtent",
+			ToolTip = "우주선/터렛 도착 판정에 사용할 Pawn 전방 박스의 반크기 (cm). IsTargetInAttackZone 공용 헬퍼가 이 값을 폰 회전 기준으로 검사."))
+	FVector AttackZoneHalfExtent = FVector(120.f, 80.f, 120.f);
+
+	UPROPERTY(EditAnywhere, Category = "도착 판정 (AttackZone)",
+		meta = (DisplayName = "AttackZone Forward Offset",
+			ToolTip = "Pawn 전방으로 박스를 밀 거리 (cm). 너무 크면 가까운 데서도 감지 실패, 너무 작으면 뒤에서도 감지.",
+			ClampMin = "0.0"))
+	float AttackZoneForwardOffset = 100.f;
+
+	// [ChaseBlockDetourV1] 경로 차단 감지 주기 및 회피 파라미터
+	UPROPERTY(EditAnywhere, Category = "경로 차단 감지 (우회)",
+		meta = (DisplayName = "Block 감지 주기 (초)",
+			ToolTip = "AttackZone 박스 내에 다른 적이 있는지 검사하는 주기. 작을수록 반응 빠름.",
+			ClampMin = "0.05", ClampMax = "2.0"))
+	float BlockCheckInterval = 0.15f;
+
+	UPROPERTY(EditAnywhere, Category = "경로 차단 감지 (우회)",
+		meta = (DisplayName = "Block 시 각도 회전 최소 (도)",
+			ClampMin = "10.0", ClampMax = "180.0"))
+	float BlockDetourAngleMin = 30.f;
+
+	UPROPERTY(EditAnywhere, Category = "경로 차단 감지 (우회)",
+		meta = (DisplayName = "Block 시 각도 회전 최대 (도)",
+			ClampMin = "10.0", ClampMax = "180.0"))
+	float BlockDetourAngleMax = 60.f;
+
+	UPROPERTY(EditAnywhere, Category = "경로 차단 감지 (우회)",
+		meta = (DisplayName = "우회 쿨다운 (초)",
+			ToolTip = "우회 실행 후 이 시간 동안 재우회 감지를 막아 연속 회전에 의한 순간이동 느낌 방지.",
+			ClampMin = "0.0", ClampMax = "5.0"))
+	float BlockDetourCooldownDuration = 1.0f;
 
 	// ==========================================================
 

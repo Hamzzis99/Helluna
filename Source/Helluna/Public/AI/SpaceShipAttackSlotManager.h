@@ -300,6 +300,15 @@ public:
 	int32 MaxTopSlots = 10;
 
 	/**
+	 * [ShipTopSlotRetainV3] 예약 직후 이 시간 동안은 OnShip 태그가 없어도 슬롯을 유지한다.
+	 * 점프 비행 중(0.5~2.5초)엔 아직 착지 전이라 OnShip 태그가 없기 때문에,
+	 * Grace 없이 OnShip 유무만 보면 예약 직후 바로 해제되어 제한이 무의미해진다.
+	 */
+	UPROPERTY(EditAnywhere, Category = "상단 점프",
+		meta=(DisplayName="점프 착지 유예 (초)", ClampMin="1.0", ClampMax="30.0"))
+	float TopSlotReserveGraceSeconds = 8.0f;
+
+	/**
 	 * 플레이어 접속 시 호출 — 슬롯이 아직 0개면 즉시 BuildSlots 재시도.
 	 * World Partition에서 플레이어 접속 후 NavMesh가 로드되므로 이 시점에 재시도하면 성공 확률이 높다.
 	 */
@@ -364,11 +373,26 @@ private:
 	 */
 	TMap<int32, TWeakObjectPtr<AActor>> TopSlotAssignments;
 
+	/**
+	 * [ShipTopSlotRetainV3] 슬롯 인덱스 → 예약한 시각 (GetWorld().GetTimeSeconds()).
+	 * 착지 유예(TopSlotReserveGraceSeconds) 판정에 사용.
+	 */
+	TMap<int32, double> TopSlotReserveTimeBySlot;
+
+	/**
+	 * [ShipTopSlotRetainV3] 슬롯 인덱스 → 한 번이라도 착지(OnShip)가 확인된 적 있는지.
+	 * 착지 확인 이후에는 Grace 무시하고 OnShip 유무 기준으로만 해제.
+	 */
+	TMap<int32, bool> TopSlotLandedBySlot;
+
 	/** [ShipTopV1] 무효화된 항목을 정리. */
 	void CleanupTopSlotReservations();
 
 	/** 디버그 누적 시간 */
 	float DebugAccum = 0.f;
+
+	/** [ShipTopAuditV1] Slot 카운트 vs 실제 OnShip 몬스터 수 주기 덤프 누적기. */
+	float TopSlotAuditAccum = 0.f;
 
 	// ─── BuildSlots 재시도 (World Partition NavMesh 스트리밍 대응) ──
 	/** BuildSlots 재시도 타이머 핸들 */

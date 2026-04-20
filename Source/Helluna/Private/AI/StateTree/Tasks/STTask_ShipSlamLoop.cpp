@@ -57,23 +57,43 @@ static void SnapFaceTarget(AAIController* AIC, APawn* Pawn, AActor* Target)
 	Pawn->SetActorRotation(SnapRot);
 }
 
-static bool DetectFellOffShip(ACharacter* Character, int32& FallStreak)
+static bool DetectFellOffShip(ACharacter* Character, AActor* Ship, int32& FallStreak)
 {
 	if (!Character) return true;
 	UCharacterMovementComponent* CMC = Character->GetCharacterMovement();
 	if (!CMC) return false;
 
+	// 공중(Falling) 2연속 → 확정적으로 떨어짐
 	if (CMC->MovementMode == MOVE_Falling)
 	{
 		++FallStreak;
-		if (FallStreak >= 2)
-		{
-			return true;
-		}
+		if (FallStreak >= 2) return true;
 		return false;
 	}
-
 	FallStreak = 0;
+
+	// [ShipSlamFallFixV1] Walking 상태여도 서있는 Floor 가 Ship 이 아니면 떨어진 것.
+	// 기존엔 Falling 만 체크해서 미끄러져 지면에 착지한 몬스터도 OnShip 유지 → 내려찍기 지속.
+	// 현재 Floor 검사:
+	//  1) CurrentFloor.HitResult.GetActor() 로 1차 판정
+	//  2) GetMovementBase()->GetOwner() 로 2차 확인 (일부 표면 감지 실패 케이스 커버)
+	if (Ship)
+	{
+		AActor* FloorActor = CMC->CurrentFloor.HitResult.GetActor();
+		if (FloorActor != Ship)
+		{
+			if (UPrimitiveComponent* Base = CMC->GetMovementBase())
+			{
+				if (Base->GetOwner() == Ship)
+				{
+					return false; // 여전히 Ship 위
+				}
+			}
+			// Ship 이 아닌 바닥 위에 서있음 → 미끄러져 내려온 상태
+			return true;
+		}
+	}
+
 	return false;
 }
 
@@ -146,9 +166,13 @@ EStateTreeRunStatus FSTTask_ShipSlamLoop::Tick(
 	if (Now >= Data.NextShipCheckTime)
 	{
 		Data.NextShipCheckTime = Now + ShipCheckInterval;
-		if (ShipSlamLocal::DetectFellOffShip(Enemy, Data.FallDetectStreak))
+		AActor* ShipActor = Data.TargetData.TargetActor.Get();
+		if (ShipSlamLocal::DetectFellOffShip(Enemy, ShipActor, Data.FallDetectStreak))
 		{
 			ShipSlamLocal::RemoveOnShipTag(ASC);
+			UE_LOG(LogTemp, Warning,
+				TEXT("[ShipSlamFallFixV1] Enemy=%s — ShipOff 감지 → OnShip 태그 제거 + Task Failed"),
+				*Enemy->GetName());
 			return EStateTreeRunStatus::Failed;
 		}
 	}

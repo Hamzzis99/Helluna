@@ -15,6 +15,7 @@
 #include "AbilitySystem/HellunaAbilitySystemComponent.h"
 #include "AbilitySystem/HellunaEnemyGameplayAbility.h"
 #include "AbilitySystem/EnemyAbility/EnemyGameplayAbility_ShipJump.h"
+#include "AbilitySystemBlueprintLibrary.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 #include "GameplayTagContainer.h"
 
@@ -80,6 +81,27 @@ EStateTreeRunStatus FSTTask_ShipJump::EnterState(
 			if (OnShipTag.IsValid() && ASC->HasMatchingGameplayTag(OnShipTag))
 			{
 				UE_LOG(LogTemp, Warning, TEXT("[ShipJumpV3.Gate] %s 이미 OnShip — 재점프 차단"),
+					*Pawn->GetName());
+				return EStateTreeRunStatus::Failed;
+			}
+		}
+	}
+
+	// [ShipJumpQuotaV1.Gate] 소환 시점에 점프 자격(State.Enemy.CanShipJump)이 부여된 몬스터만 점프.
+	//   Why: SlotManager 실시간 추적은 OnShip 타이밍 경합으로 상한 뚫림이 반복됨.
+	//        Pool ActivateActor 에서 GameMode 쿼터를 Consume 하여 N마리에만 태그 부여 →
+	//        여기서 차단하면 "점프 가능 몬스터 수"가 소환 시점에 결정되어 예측 가능.
+	//   How to apply: 태그 없으면 Failed — StateTree OnFailed 분기(일반 공격)로 흘러감.
+	if (AHellunaEnemyCharacter* EligibilityChar = Cast<AHellunaEnemyCharacter>(Pawn))
+	{
+		if (UAbilitySystemComponent* EligibilityASC = EligibilityChar->GetAbilitySystemComponent())
+		{
+			const FGameplayTag CanJumpTag =
+				FGameplayTag::RequestGameplayTag(FName("State.Enemy.CanShipJump"), false);
+			if (CanJumpTag.IsValid() && !EligibilityASC->HasMatchingGameplayTag(CanJumpTag))
+			{
+				UE_LOG(LogTemp, Verbose,
+					TEXT("[ShipJumpQuotaV1.Gate] %s CanShipJump 태그 없음 — 점프 스킵 (쿼터 미보유)"),
 					*Pawn->GetName());
 				return EStateTreeRunStatus::Failed;
 			}
@@ -286,19 +308,39 @@ void FSTTask_ShipJump::ExitState(
 {
 	FInstanceDataType& Data = Context.GetInstanceData(*this);
 
+	// [ShipTopSlotRetainV2] 몬스터가 "실제로 우주선 위에 있는 동안" 슬롯을 유지해야
+	// 10마리 제한이 "동시 점프 수" 가 아니라 "동시 탑재 수" 로 의미를 가진다.
+	// 기존: Task 종료 즉시 Release → 몬스터는 아직 위에 있는데 슬롯 반납 → 11, 12, 13... 탑재 가능.
+	// 변경: OnShip 태그 보유 중이면 Release 보류. 내려간(태그 lost) 경우만 즉시 Release.
+	//       Cleanup 주기 Tick 이 나중에 OnShip 태그 없는 슬롯 자동 회수.
 	if (bReleaseSlotOnExit && Data.bReservedTopSlot)
 	{
 		if (AAIController* AIC = Data.AIController)
 		{
 			if (APawn* Pawn = AIC->GetPawn())
 			{
-				AActor* ShipActor = Data.TargetData.TargetActor.Get();
-				if (USpaceShipAttackSlotManager* SlotMgr = ShipJumpLocal::GetSlotManager(ShipActor))
+				bool bStillOnShip = false;
+				if (UAbilitySystemComponent* ASC =
+					UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(Pawn))
 				{
-					SlotMgr->ReleaseTopSlot(Pawn);
+					const FGameplayTag OnShipTag =
+						FGameplayTag::RequestGameplayTag(FName("State.Enemy.OnShip"), false);
+					bStillOnShip = OnShipTag.IsValid() &&
+						ASC->HasMatchingGameplayTag(OnShipTag);
 				}
+
+				if (!bStillOnShip)
+				{
+					// 점프 실패/중단 등 태그가 없는 경우 → 즉시 반납
+					AActor* ShipActor = Data.TargetData.TargetActor.Get();
+					if (USpaceShipAttackSlotManager* SlotMgr = ShipJumpLocal::GetSlotManager(ShipActor))
+					{
+						SlotMgr->ReleaseTopSlot(Pawn);
+					}
+					Data.bReservedTopSlot = false;
+				}
+				// OnShip 이면 슬롯 유지 → SlotManager::CleanupTopSlotReservations 가 회수
 			}
 		}
-		Data.bReservedTopSlot = false;
 	}
 }

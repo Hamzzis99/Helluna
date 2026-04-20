@@ -301,9 +301,8 @@ void FSTEvaluator_TargetSelector::Tick(FStateTreeExecutionContext& Context, cons
 		}
 	}
 
-	// 진단 로그 — 포탑이 보이는데도 어그로 안 잡히는 원인 추적용.
-	// 마커 [TurretAggroV1]가 로그에 안 나오면 라이브 코딩 미적용.
-	UE_LOG(LogTemp, Warning,
+	// Verbose — 매 Evaluator Tick 출력이라 렉 유발. 필요 시 LogTemp Verbose 로 활성.
+	UE_LOG(LogTemp, Verbose,
 		TEXT("[TurretAggroV2] Pawn=%s | TurretSeen=%d InRange=%d BlockedByCap=%d | Picked=%s | bAttackingShip=%d"),
 		*ControlledPawn->GetName(), TurretSeen, TurretInRange, TurretBlockedByCap,
 		NearestAggroTarget ? *NearestAggroTarget->GetName() : TEXT("none"),

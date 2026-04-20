@@ -201,10 +201,13 @@ bool UEnemyActorSpawnProcessor::TrySpawnActor(
 		}
 	}
 
+	// [SpawnScaleV1] Trait 에서 지정한 Actor Scale 반영.
+	SpawnTransform.SetScale3D(Data.ActorSpawnScale);
+
 	// [수정 포인트] ActivateActor(Transform, HP, MaxHP) → ActivateActor(EnemyClass, Transform, HP, MaxHP)
 	// 멀티 Pool 구조에서 어떤 Pool에서 꺼낼지 클래스를 명시해야 올바른 Actor를 반환받음
 	AHellunaEnemyCharacter* SpawnedActor = Pool->ActivateActor(
-		Data.EnemyClass, SpawnTransform, Data.CurrentHP, Data.MaxHP);
+		Data.EnemyClass, SpawnTransform, Data.CurrentHP, Data.MaxHP, Data.MeshSpawnScale);
 
 	if (!SpawnedActor)
 	{
@@ -421,8 +424,10 @@ void UEnemyActorSpawnProcessor::Execute(
 					int32 TickRateUpdatedCount = 0;  // #8 성능 로그용
 					int32 TickRateSkippedCount = 0;  // #8 성능 로그용
 					// 한 프레임에 스폰할 수 있는 최대 수 (대량 스폰 시 pathfinding 스파이크 방지)
+					// [SpawnThroughputV1] 5 → 10 — MaxCap 40 도달까지 더 빠르게 수렴.
+					// 프레임당 10 스폰도 pathfinding 큰 부담 없음 (큰 spike 는 50+ 에서).
 					int32 SpawnsThisFrame = 0;
-					static constexpr int32 MaxSpawnsPerFrame = 5;
+					static constexpr int32 MaxSpawnsPerFrame = 10;
 					// [주의] MaxConcurrentActorsValue는 엔티티 순회 중 마지막 Data값으로 덮어써짐.
 					// 클래스별로 MaxConcurrentActors가 다르면 순회 순서에 따라 Cap이 달라지는 버그가 있음.
 					int32 MaxConcurrentActorsValue = 50;
@@ -599,15 +604,22 @@ void UEnemyActorSpawnProcessor::Execute(
 							ActiveActorCount, ActiveActorCount - Removed, Removed);
 					}
 
-					// 디버그(300프레임마다)
+					// [SpawnDiagV1] 주기 1초 (60 프레임) + Warning 레벨 — 필터 안 걸려서 즉시 확인
+					//  - ActiveTotal: 모든 Class 합산 활성 Actor
+					//  - MaxCap: 현재 Config 의 MaxConcurrentActors (둘 합쳐 이 값 초과 불가 — 기존 버그)
+					//  - Players: 플레이어 수
+					//  - PoolTotal: Pool 의 전체 Active/Inactive (합 = 미리 생성된 Actor 수 = PoolSize × Class수)
+					//  - SpawnsThisFrame: 이번 프레임에 새로 활성된 Actor
 					static uint64 LastDebugFrame = 0;
-					if (CurrentFrame - LastDebugFrame >= 300)
+					if (CurrentFrame - LastDebugFrame >= 60)
 					{
 						LastDebugFrame = CurrentFrame;
-						UE_LOG(LogECSEnemy, Log,
-							TEXT("[fast][ServerStatus] Active=%d/%d | Players=%d | Pool(A=%d I=%d) | TickRate(Updated=%d Skipped=%d, 절감율=%.0f%%)"),
+						UE_LOG(LogECSEnemy, Warning,
+							TEXT("[SpawnDiagV1] ActiveTotal=%d / MaxCap=%d | Players=%d | "
+							     "Pool(A=%d I=%d) | SpawnsThisFrame=%d | TickRate(U=%d S=%d %.0f%%)"),
 							ActiveActorCount, MaxConcurrentActorsValue, PlayerLocations.Num(),
 							Pool->GetTotalActiveCount(), Pool->GetTotalInactiveCount(),
+							SpawnsThisFrame,
 							TickRateUpdatedCount, TickRateSkippedCount,
 							(TickRateUpdatedCount + TickRateSkippedCount) > 0
 								? (TickRateSkippedCount * 100.f / (TickRateUpdatedCount + TickRateSkippedCount))

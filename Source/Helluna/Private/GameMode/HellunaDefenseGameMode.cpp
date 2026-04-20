@@ -142,6 +142,9 @@ void AHellunaDefenseGameMode::BeginPlay()
     Super::BeginPlay();
     if (!HasAuthority()) return;
 
+    // [ShipJumpQuotaV1] 쿼터 초기화 — 매 세션 시작 시 Max 로 리셋.
+    ResetShipJumpQuota();
+
     // 커맨드라인 LobbyURL 오버라이드
     FString CmdLobbyURL;
     if (FParse::Value(FCommandLine::Get(), TEXT("-LobbyURL="), CmdLobbyURL))
@@ -1385,8 +1388,19 @@ void AHellunaDefenseGameMode::ProcessClusterSpawnBatch()
     const int32 Total = PendingClusterSpawns.Num();
     int32 SpawnedThisBatch = 0;
 
+    // [OreHISMDiagV1] 진단용 — Helluna.OreHISM.ForceFallback 1 이면 HISM 우회.
+    static IConsoleVariable* CVarForceFallback =
+        IConsoleManager::Get().FindConsoleVariable(TEXT("Helluna.OreHISM.ForceFallback"));
+    const bool bForceFallback = CVarForceFallback && (CVarForceFallback->GetInt() != 0);
+
     // HISM 풀 모드: AActor 대신 HISM 인스턴스로 등록 (플레이어 접근 시에만 AActor 스폰)
-    const bool bHISMMode = bUseOreHISMPool && OreHISMPool;
+    const bool bHISMMode = bUseOreHISMPool && OreHISMPool && !bForceFallback;
+
+    if (bForceFallback)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[OreHISMDiagV1] ForceFallback=1 — HISM 우회, 모든 광석 직접 AActor 스폰 (총 %d개)"),
+            Total);
+    }
 
     while (ClusterSpawnBatchIndex < Total && SpawnedThisBatch < PCGBatchSpawnCount)
     {
@@ -2203,7 +2217,52 @@ void AHellunaDefenseGameMode::RestartGame()
 {
     if (!HasAuthority()) return;
     bGameInitialized = false;
+    ResetShipJumpQuota();
     GetWorld()->ServerTravel(TEXT("/Game/Minwoo/MinwooTestMap?listen"));
+}
+
+// ============================================================
+// [ShipJumpQuotaV1] 점프 쿼터 관리
+// ============================================================
+bool AHellunaDefenseGameMode::TryConsumeShipJumpQuota()
+{
+    if (!HasAuthority()) return false;
+    if (ShipJumpQuotaRemaining <= 0)
+    {
+        UE_LOG(LogTemp, Verbose,
+            TEXT("[ShipJumpQuotaV1] TryConsume DENIED — Remaining=0/Max=%d"),
+            MaxShipJumpers);
+        return false;
+    }
+    --ShipJumpQuotaRemaining;
+    UE_LOG(LogTemp, Warning,
+        TEXT("[ShipJumpQuotaV1] Consume Remaining=%d/%d"),
+        ShipJumpQuotaRemaining, MaxShipJumpers);
+    return true;
+}
+
+void AHellunaDefenseGameMode::RefundShipJumpQuota()
+{
+    if (!HasAuthority()) return;
+    if (ShipJumpQuotaRemaining >= MaxShipJumpers)
+    {
+        // 이미 가득 — 오버플로우 방지.
+        UE_LOG(LogTemp, Verbose,
+            TEXT("[ShipJumpQuotaV1] Refund SKIP — already at Max=%d"), MaxShipJumpers);
+        return;
+    }
+    ++ShipJumpQuotaRemaining;
+    UE_LOG(LogTemp, Warning,
+        TEXT("[ShipJumpQuotaV1] Refund Remaining=%d/%d"),
+        ShipJumpQuotaRemaining, MaxShipJumpers);
+}
+
+void AHellunaDefenseGameMode::ResetShipJumpQuota()
+{
+    ShipJumpQuotaRemaining = MaxShipJumpers;
+    UE_LOG(LogTemp, Warning,
+        TEXT("[ShipJumpQuotaV1] Reset Remaining=%d/%d"),
+        ShipJumpQuotaRemaining, MaxShipJumpers);
 }
 
 

@@ -99,4 +99,10 @@ protected:
 private:
 	/** GameplayTag → EWeaponAnimType 변환 (GameThread에서만 호출) */
 	EWeaponAnimType ResolveWeaponAnimType() const;
+
+	// [AnimDiagV2] 마리당 throttle. static 전역은 30마리 공유라 실질 로그 못 얻음 → 인스턴스 멤버.
+	double LastAnimDiagLogTime = 0.0;
+
+	// [AnimDiagV3] 위치 jump 감지용. 마지막 샘플 ActorLocation 보관.
+	FVector LastAnimDiagLoc = FVector::ZeroVector;
 };

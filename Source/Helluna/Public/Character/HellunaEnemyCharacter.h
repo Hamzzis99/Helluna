@@ -303,70 +303,61 @@ public:
 	TObjectPtr<USoundAttenuation> HitSoundAttenuation = nullptr;
 
 	// =========================================================
-	// 공격 트레이스 시스템 (타이머 기반 - 성능 최적화)
+	// 공격 히트박스 시스템 (Overlap 기반 — Box 컴포넌트 Collision On/Off)
 	// =========================================================
+	//
+	// ■ 최적화 포인트
+	//   - 기본 상태: NoCollision → 물리 broad-phase 트리에 미등록 → 비용 0
+	//   - AnimNotify Start 시점에만 Collision QueryOnly 활성화
+	//   - End 시점에 다시 NoCollision. Tick 없음.
+	//   - BeginOverlap Delegate 는 BeginPlay 에서 1회 바인딩 후 재사용.
+	//   - 서버만 판정 (HasAuthority 체크로 클라 이벤트 무시).
 
 	/**
-	 * 공격 트레이스 시작
-	 * AnimNotify_AttackCollisionStart에서 호출합니다.
-	 * 
-	 * 타이머 기반 SphereTrace를 이용하여 매 트레이스 물리 충돌 체크 없이
-	 * 지정된 간격(기본 50ms)으로만 감지합니다.
-	 * 
-	 * 성능 비교 (10마리 동시 공격 시):
-	 * - 물리 충돌: 5.0ms CPU, 16.8KB/s 네트워크
-	 * - Trace 방식: 0.4ms CPU, 0.3KB/s 네트워크 (약 12배 가벼움)
-	 * 
-	 * @param SocketName - 트레이스 시작 소켓 이름 (예: Hand_R)
-	 * @param Radius - 트레이스 구체 반경 (cm)
-	 * @param Interval - 트레이스 실행 주기 (초)
-	 * @param DamageAmount - 적중 시 데미지량
-	 * @param bDebugDraw - 디버그 드로우 활성화 여부
-	 * 
-	 * @author 김민우
+	 * 이름으로 찾은 공격 박스 컴포넌트의 Collision 을 켜고, 이번 공격의 데미지/디버그 설정을 캐시.
+	 * bEnable=false 면 Collision 끄고 중복 방지용 히트 목록 클리어.
+	 *
+	 * @param BoxComponentName - BP_Enemy_Melee 에 추가된 UBoxComponent 이름 (예: "Hitbox_MeleeAttack")
+	 * @param bEnable          - true=QueryOnly, false=NoCollision
+	 * @param Damage           - 이번 공격의 데미지 (GA 캐시가 있으면 그걸 우선)
+	 * @param bDebugDraw       - 활성 구간 동안 박스 와이어프레임 Draw
 	 */
-	void StartAttackTrace(FName SocketName, float Radius, float Interval, 
-		float DamageAmount, bool bDebugDraw = false);
-	
-	/**
-	 * 공격 트레이스 중단
-	 * AnimNotify_AttackCollisionEnd에서 호출하거나
-	 * 첫 히트 성공 시 자동으로 호출합니다.
-	 */
-	void StopAttackTrace();
+	void SetAttackBoxActive(FName BoxComponentName, bool bEnable, float Damage, bool bDebugDraw);
 
 private:
-	// === 공격 트레이스 관련 변수 ===
-	
-	/** 타이머 핸들 */
-	FTimerHandle AttackTraceTimerHandle;
-	
-	/** 현재 트레이스 소켓 이름 */
-	FName CurrentTraceSocketName;
-	
-	/** 현재 트레이스 반경 */
-	float CurrentTraceRadius;
-	
-	/** 현재 데미지량 */
-	float CurrentDamageAmount;
-	
-	/** 디버그 드로우 활성화 여부 */
-	bool bDrawDebugTrace;
-	
 	/**
-	 * 이번 공격에서 이미 맞춘 액터 목록 (중복 히트 방지)
-	 * StartAttackTrace()에서 초기화
-	 * PerformAttackTrace()에서 체크 및 추가
-	 * 첫 히트 성공 후 즉시 트레이스 종료
+	 * 현재 활성 공격의 데미지 (서버에서만 유효). GA 의 CachedMeleeAttackDamage 가 있으면 그 값.
+	 * 여러 박스를 동시에 켜지 않는 전제. 동시 공격 지원 필요하면 per-box map으로 확장.
 	 */
+	float CurrentAttackDamage = 0.f;
+
+	/** 현재 공격 활성 구간 동안 박스 디버그 Draw 여부 */
+	bool bCurrentAttackDrawDebug = false;
+
+	/** 이번 공격에서 이미 맞춘 액터 (중복 히트 방지). SetAttackBoxActive(true) 시 초기화. */
 	UPROPERTY()
 	TSet<TObjectPtr<AActor>> HitActorsThisAttack;
-	
+
 	/**
-	 * 타이머 콜백: 매 Interval마다 SphereTrace 실행
-	 * (AHellunaHeroCharacter) 감지 시 서버에게 데미지 요청
+	 * BeginPlay 에서 "Hitbox_" 이름으로 시작하는 UBoxComponent 들을 찾아
+	 * OnAttackBoxBeginOverlap 델리게이트에 1회 바인딩.
 	 */
-	void PerformAttackTrace();
+	void BindAttackHitboxes();
+
+	/** 공격 박스 BeginOverlap 공통 핸들러 (서버 전용 로직) */
+	UFUNCTION()
+	void OnAttackBoxBeginOverlap(UPrimitiveComponent* OverlappedComp, AActor* OtherActor,
+		UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep,
+		const FHitResult& SweepResult);
+
+	/**
+	 * [Block 상대 감지용] BeginOverlap 은 Block 관계에서 발동 안 함.
+	 * 우주선/타워의 DynamicMesh(WorldStatic, BlockAll) 는 Overlap 이벤트 불가 → 주기적 Sweep.
+	 * Pawn 계열 (Player/Pawn Turret) 은 BeginOverlap 으로 즉시 감지되므로 여기서는 WorldStatic 만.
+	 */
+	void SweepAttackBoxForBlockers();
+
+	FTimerHandle AttackBlockSweepTimer;
 	
 	/**
 	 * 서버 전용 데미지 적용 (일반 함수).
@@ -429,6 +420,13 @@ public:
 	/** [HitVFXV1] 타격 지점에 VFX 멀티캐스트 스폰. */
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_SpawnHitVFX(UNiagaraSystem* VFX, FVector HitLocation, float Scale);
+
+	/**
+	 * [HitVFXLocalV1] 현재 머신(서버 or 클라)에서 로컬로만 HitVFX 스폰.
+	 * 서버가 Sweep 판정 직후 자기 화면에 지연 없이 VFX 를 띄우기 위해 사용.
+	 * Multicast_SpawnHitVFX 는 이미 서버가 로컬 스폰한 경우를 감지해 스킵한다.
+	 */
+	void SpawnHitVFXLocal(UNiagaraSystem* VFX, const FVector& HitLocation, float Scale);
 
 	/**
 	 * 일반 VFX를 지정 위치에 모든 클라이언트에 스폰 (attach 없음).

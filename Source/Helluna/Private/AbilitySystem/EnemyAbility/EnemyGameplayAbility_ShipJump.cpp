@@ -166,7 +166,11 @@ FVector UEnemyGameplayAbility_ShipJump::ComputeLaunchVelocityToShipTop(const AHe
 	const float RequiredClimb = FMath::Max(ShipTopZ - EnemyZ, 0.f);
 	// [ShipJumpV8.Apex] ApexClearance 를 UPROPERTY 로 노출 (과거 V7 하드 300 → 기본 500 으로 상향).
 	// 상향 이유: 측면/날개 걸림 사고 감소. BP 에서 미세 튜닝 가능.
-	const float EffectiveApexClearance = FMath::Max(ApexClearance, 50.f);
+	// [ShipJumpRandomApexV1] 몬스터별 랜덤 보정 — 체공시간 다양화로 착지 겹침 완화.
+	const float RandomApexOffset = ApexClearanceRandomRange > 0.f
+		? FMath::FRandRange(-ApexClearanceRandomRange, ApexClearanceRandomRange)
+		: 0.f;
+	const float EffectiveApexClearance = FMath::Max(ApexClearance + RandomApexOffset, 50.f);
 	// [ShipJumpV5.NoFloor] OvershootHeight 를 최저 보장치로 쓰지 않음 → per-side 트레이스 결과가 실제 Apex 에 반영됨.
 	// 단 극단적으로 얕은 경우만 20cm 로 바닥 보호.
 	const float ApexHeight = FMath::Max(RequiredClimb + EffectiveApexClearance, 20.f);
@@ -196,7 +200,28 @@ FVector UEnemyGameplayAbility_ShipJump::ComputeLaunchVelocityToShipTop(const AHe
 	float Vxy = FallbackHorizontalSpeed;
 	if (HorizDistance > KINDA_SMALL_NUMBER && TimeToApex > KINDA_SMALL_NUMBER)
 	{
-		Vxy = FMath::Clamp(HorizDistance / (2.f * TimeToApex), 100.f, MaxHorizontalSpeed);
+		// [ShipJumpOvershootV1] LandingDistanceFactor 로 실제 착지 거리를 축소 →
+		// 기울어진 우주선이나 높이차로 인한 오버슛(우주선 넘어가기) 방지.
+		// [ShipJumpLandingJitterV1] 각 몬스터에 소폭 랜덤 offset 적용 → 착지 겹침 완화.
+		const float Jitter = LandingDistanceJitter > 0.f
+			? FMath::FRandRange(-LandingDistanceJitter, LandingDistanceJitter)
+			: 0.f;
+
+		// [ShipJumpSlotDepthV1] 슬롯 인덱스 기반 depth 분산 — ship 중심 몰림 방지.
+		// 슬롯을 3단계(가까이/중간/멀리)로 분할해 앞뒤 거리 차등.
+		float SlotDepthOffset = 0.f;
+		if (AssignedSlotIndex >= 0 && SlotDepthStep > 0.f)
+		{
+			const int32 DepthIdx = AssignedSlotIndex % 3; // 0,1,2 순환
+			// DepthIdx 0=가까이(-step), 1=기본(0), 2=멀리(+step)
+			SlotDepthOffset = (static_cast<float>(DepthIdx) - 1.f) * SlotDepthStep;
+		}
+
+		const float EffectiveFactor = FMath::Clamp(
+			LandingDistanceFactor + Jitter + SlotDepthOffset,
+			0.5f, 1.2f);
+		const float EffectiveLandDist = HorizDistance * EffectiveFactor;
+		Vxy = FMath::Clamp(EffectiveLandDist / (2.f * TimeToApex), 100.f, MaxHorizontalSpeed);
 	}
 
 	// [ShipJumpSpreadV2] 슬롯 인덱스 → 좌우 부채꼴 yaw 오프셋 + Vxy cos 보정.
@@ -253,6 +278,21 @@ void UEnemyGameplayAbility_ShipJump::PerformJump()
 	const FVector LaunchVelocity = ComputeLaunchVelocityToShipTop(Enemy, Ship);
 
 	const double t2 = FPlatformTime::Seconds();
+
+	// [ShipJumpFacingV1] 점프 방향과 바라보는 방향 일치.
+	// yaw offset(Spread) 적용 후 HorizDir 이 Pawn Forward 와 어긋나 이상해 보이는 문제 수정.
+	// Launch 직전 Launch 의 XY 성분으로 Actor Rotation 을 스냅 → 이동 방향과 Mesh 향함 일치.
+	FVector LaunchXY = LaunchVelocity;
+	LaunchXY.Z = 0.f;
+	if (!LaunchXY.IsNearlyZero())
+	{
+		const FRotator FaceRot(0.f, LaunchXY.Rotation().Yaw, 0.f);
+		Enemy->SetActorRotation(FaceRot, ETeleportType::TeleportPhysics);
+		if (AController* Ctrl = Enemy->GetController())
+		{
+			Ctrl->SetControlRotation(FaceRot);
+		}
+	}
 
 	// bXYOverride=true, bZOverride=true 로 기존 속도 덮어써서 포물선 정확도 확보.
 	Enemy->LaunchCharacter(LaunchVelocity, true, true);

@@ -53,6 +53,55 @@ public:
 			ClampMin = "200.0", ClampMax = "5000.0"))
 	float MaxHorizontalSpeed = 1500.f;
 
+	/**
+	 * [ShipJumpOvershootV1] 착지 예상 거리 배율.
+	 * Vxy = (Distance * LandingDistanceFactor) / (2 * TimeToApex)
+	 *  - 1.0 : 평지 기준 정확히 우주선 중심 착지 (기본, 하지만 기울어진 ship 이나 높이 차로 오버슛 가능)
+	 *  - 0.8~0.9 : 약간 덜 가서 우주선 위에 안정 착지 (넘어가는 사고 방지)
+	 * 우주선을 넘어가는 현상이 있으면 값을 낮춰라.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "점프",
+		meta = (DisplayName = "착지 거리 배율 (오버슛 방지)",
+			ClampMin = "0.5", ClampMax = "1.2"))
+	float LandingDistanceFactor = 0.85f;
+
+	/**
+	 * [ShipJumpRandomApexV1] 몬스터별 점프 높이 랜덤 보정 범위 (cm).
+	 * 실제 ApexClearance = BaseApexClearance + FRandRange(-range, +range)
+	 * 체공 시간도 달라져 같은 시점에 착지한 몬스터끼리 겹치는 현상 완화에도 도움.
+	 *  - 0 : 비활성 (모두 동일 높이)
+	 *  - 120~200 : 자연스러운 변주 추천
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "점프",
+		meta = (DisplayName = "점프력 랜덤 범위 (cm)",
+			ClampMin = "0.0", ClampMax = "500.0"))
+	float ApexClearanceRandomRange = 150.f;
+
+	/**
+	 * [ShipJumpLandingJitterV1] 착지 예상 지점을 몬스터별로 소폭 흔들어 몹 겹침 완화.
+	 * LandingDistanceFactor 에 FRandRange(-range, +range) 더해서 각자 조금씩 다르게.
+	 *  - 0 : 비활성
+	 *  - 0.05~0.1 : 추천 (위 공식의 5~10% 변주)
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "점프",
+		meta = (DisplayName = "착지 거리 랜덤 지터",
+			ClampMin = "0.0", ClampMax = "0.3"))
+	float LandingDistanceJitter = 0.15f;
+
+	/**
+	 * [ShipJumpSlotDepthV1] 슬롯 인덱스 기반 착지 깊이(depth) 분산.
+	 * yaw 분산(부채꼴)만으로는 우주선 중심 상공에 몰리므로, 슬롯 인덱스별로 앞/뒤 거리도 차이를 둔다.
+	 * EffectiveFactor 에 slot-depth-offset 추가:
+	 *   LandingDistanceFactor + Jitter + (slotIdx_depth_mod * SlotDepthStep)
+	 *
+	 *  - 0 : 비활성 (yaw 분산만)
+	 *  - 0.10~0.15 : 근/중/원 3단계 분산 추천
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "점프",
+		meta = (DisplayName = "슬롯별 착지 깊이 분산",
+			ClampMin = "0.0", ClampMax = "0.3"))
+	float SlotDepthStep = 0.25f;
+
 	/** 타겟 없을 때 사용할 기본 수직 속도 (cm/s). */
 	UPROPERTY(EditDefaultsOnly, Category = "점프",
 		meta = (DisplayName = "폴백 수직 속도 (cm/s)",
@@ -107,9 +156,9 @@ public:
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "점프|분산",
 		meta = (DisplayName = "좌우 부채꼴 각도 (도)",
-			ToolTip = "0 = 분산 없음. 15~25 = 안전 부채꼴. cos 보정으로 forward 거리는 보존.",
+			ToolTip = "0 = 분산 없음. 15~25 = 안전 부채꼴. cos 보정으로 forward 거리는 보존. 35+ 는 우주선 십자 구조 빈공간 착지 위험.",
 			ClampMin = "0.0", ClampMax = "60.0"))
-	float SpreadFanHalfAngleDeg = 20.f;
+	float SpreadFanHalfAngleDeg = 22.f;
 
 	// =========================================================
 	// [ShipJumpAirCollisionV1] 공중 충돌 해제

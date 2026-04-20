@@ -55,6 +55,10 @@
 #include "Animation/AnimMontage.h"
 #include "Components/SkeletalMeshComponent.h"
 
+// [AttackHitbox] Overlap 기반 공격 판정용 — 전용 Box 타입
+#include "Combat/HellunaAttackRangeComponent.h"
+#include "Engine/OverlapResult.h"
+
 // ============================================================
 // 생성자
 // ============================================================
@@ -71,6 +75,10 @@ AHellunaEnemyCharacter::AHellunaEnemyCharacter()
 	GetCharacterMovement()->RotationRate                  = FRotator(0.f, 180.f, 0.f);
 	GetCharacterMovement()->MaxWalkSpeed                  = 300.f;
 	GetCharacterMovement()->BrakingDecelerationWalking    = 1000.f;
+	// [ChasePathSpeedV1] Path 따라갈 때 목표 근접 감속 제거 — Ring 도달 직전 속도 급감 현상 방지.
+	//   bRequestedMoveUseAcceleration=false : AI Path 이동에 가속/감속 적용 안 함 (즉시 Velocity 변경).
+	//   도착 즉시 정지는 HandleArrival 의 StopMovementImmediately 가 보장.
+	GetCharacterMovement()->bRequestedMoveUseAcceleration = false;
 
 	// === 네트워크 레플리케이션 빈도 제한 ===
 	// 50마리 × 100Hz = 초당 5000패킷 → 서버 포화 방지
@@ -257,6 +265,9 @@ void AHellunaEnemyCharacter::BeginPlay()
 	Super::BeginPlay();
 
 	if (!HasAuthority()) return;
+
+	// [공격 히트박스] BP 에 배치된 "Hitbox_*" 박스들의 BeginOverlap 바인딩. 서버만.
+	BindAttackHitboxes();
 
 	// HealthComponent 바인딩 — 컨트롤러 유무와 무관하게 항상 수행
 	// (보스처럼 SpawnActor로 소환되는 경우 BeginPlay 시점엔 컨트롤러가 없을 수 있으므로
@@ -742,140 +753,269 @@ void AHellunaEnemyCharacter::DespawnMassEntityOnServer(const TCHAR* Where)
 }
 
 // ============================================================
-// 공격 트레이스 시스템 (타이머 기반)
+// 공격 히트박스 (Overlap 기반)
+//
+// 최적화:
+//   - 기본 NoCollision → broad-phase 트리에 미등록 → 비용 0
+//   - 공격 중에만 QueryOnly 활성. Tick 없음.
+//   - BeginOverlap delegate 는 BeginPlay 에서 1회 바인딩.
+//   - 서버만 OnAttackBoxBeginOverlap 응답.
 // ============================================================
 
-void AHellunaEnemyCharacter::StartAttackTrace(FName SocketName, float Radius, float Interval,
-	float DamageAmount, bool bDebugDraw)
+void AHellunaEnemyCharacter::BindAttackHitboxes()
 {
-	// 이전 트레이스가 살아있으면 먼저 중단
-	StopAttackTrace();
-	SetServerAttackPoseTickEnabled(true);
+	// 이 Actor 에 붙은 모든 "헬루나 공격 범위 컴포넌트" 에 BeginOverlap 바인딩.
+	// BeginPlay 1회만 호출. 전용 타입 기반이라 일반 UBoxComponent 는 자동으로 제외됨.
+	TArray<UHellunaAttackRangeComponent*> Ranges;
+	GetComponents<UHellunaAttackRangeComponent>(Ranges);
+	for (UHellunaAttackRangeComponent* Range : Ranges)
+	{
+		if (!Range) continue;
 
-	CurrentTraceSocketName = SocketName;
-	CurrentTraceRadius     = Radius;
-	CurrentDamageAmount    = DamageAmount;
-	bDrawDebugTrace        = bDebugDraw;
+		// 바인딩 중복 방지
+		Range->OnComponentBeginOverlap.RemoveDynamic(this, &AHellunaEnemyCharacter::OnAttackBoxBeginOverlap);
+		Range->OnComponentBeginOverlap.AddDynamic(this, &AHellunaEnemyCharacter::OnAttackBoxBeginOverlap);
 
-	// 이번 공격의 히트 목록 초기화 (중복 피해 방지)
-	HitActorsThisAttack.Empty();
-
-	// 지정 간격마다 PerformAttackTrace 호출
-	GetWorldTimerManager().SetTimer(
-		AttackTraceTimerHandle,
-		this,
-		&AHellunaEnemyCharacter::PerformAttackTrace,
-		Interval,
-		true // 반복 실행
-	);
+		// 초기 상태 강제: NoCollision (BP 기본값도 그래야 함)
+		Range->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
 }
 
-void AHellunaEnemyCharacter::StopAttackTrace()
+void AHellunaEnemyCharacter::SetAttackBoxActive(FName BoxComponentName, bool bEnable,
+	float Damage, bool bDebugDraw)
 {
-	SetServerAttackPoseTickEnabled(false);
+	// 이 Actor 의 모든 공격 범위 컴포넌트 수집
+	TArray<UHellunaAttackRangeComponent*> Ranges;
+	GetComponents<UHellunaAttackRangeComponent>(Ranges);
 
-	if (AttackTraceTimerHandle.IsValid())
+	// 대상 선정: 이름이 None 이면 전체, 지정되면 매칭되는 것만
+	TArray<UHellunaAttackRangeComponent*> Targets;
+	const bool bApplyAll = BoxComponentName.IsNone();
+	if (bApplyAll)
 	{
-		GetWorldTimerManager().ClearTimer(AttackTraceTimerHandle);
-		AttackTraceTimerHandle.Invalidate();
+		Targets = Ranges;
+	}
+	else
+	{
+		for (UHellunaAttackRangeComponent* Range : Ranges)
+		{
+			if (Range && Range->GetFName() == BoxComponentName)
+			{
+				Targets.Add(Range);
+				break;
+			}
+		}
+		if (Targets.Num() == 0)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[AttackRange] %s: '%s' 매칭 컴포넌트 없음"),
+				*GetName(), *BoxComponentName.ToString());
+			return;
+		}
 	}
 
-	HitActorsThisAttack.Empty();
+	if (Targets.Num() == 0)
+	{
+		// 컴포넌트 자체가 없음 — 조용히 반환 (spam 방지)
+		return;
+	}
+
+	if (bEnable)
+	{
+		// [서버 애니 갱신] 서버는 기본적으로 Pose Tick 이 꺼져있어 Montage Notify 가 트리거되지 않음.
+		// 공격 시작 순간부터 서버에서도 Pose Tick 켜서 AttackCollisionStart/End Notify 가 서버에 도달하게 함.
+		// (서버에서 Notify 가 발동해야 박스 활성화 → Overlap 판정 가능)
+		SetServerAttackPoseTickEnabled(true);
+
+		// GA 캐시가 있으면 그 값 우선
+		CurrentAttackDamage = (GetCachedMeleeAttackDamage() > 0.f)
+			? GetCachedMeleeAttackDamage() : Damage;
+		bCurrentAttackDrawDebug = bDebugDraw;
+		HitActorsThisAttack.Empty();
+
+		for (UHellunaAttackRangeComponent* T : Targets)
+		{
+			T->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+		}
+
+		// [Block 상대 감지] 우주선 DynamicMesh(WorldStatic, BlockAll) 는 BeginOverlap
+		// 이벤트가 발동되지 않음 → 주기적 OverlapMulti 로 감지.
+		// 주기 0.05s (20Hz) — Anim Active 구간 내 최소 6회 이상 Sweep 확보.
+		if (HasAuthority())
+		{
+			SweepAttackBoxForBlockers();
+			GetWorldTimerManager().SetTimer(AttackBlockSweepTimer, this,
+				&AHellunaEnemyCharacter::SweepAttackBoxForBlockers,
+				0.05f, /*bLoop=*/true);
+		}
+	}
+	else
+	{
+		for (UHellunaAttackRangeComponent* T : Targets)
+		{
+			T->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		}
+		HitActorsThisAttack.Empty();
+		CurrentAttackDamage = 0.f;
+		bCurrentAttackDrawDebug = false;
+
+		// Block 상대용 Sweep 타이머 해제
+		if (AttackBlockSweepTimer.IsValid())
+		{
+			GetWorldTimerManager().ClearTimer(AttackBlockSweepTimer);
+		}
+
+		// 서버 Pose Tick 해제 — 공격 구간 끝나면 불필요 (최적화)
+		SetServerAttackPoseTickEnabled(false);
+	}
+
+	// 디버그: 활성 시점 1회 마커
+	if (bEnable && bDebugDraw)
+	{
+		if (UWorld* W = GetWorld())
+		{
+			for (UHellunaAttackRangeComponent* T : Targets)
+			{
+				DrawDebugBox(W, T->GetComponentLocation(), T->GetUnscaledBoxExtent(),
+					T->GetComponentQuat(), FColor::Yellow, false, 0.5f, 0, 2.f);
+			}
+		}
+	}
 }
 
-void AHellunaEnemyCharacter::PerformAttackTrace()
+void AHellunaEnemyCharacter::SweepAttackBoxForBlockers()
 {
-	// 트레이스는 서버에서만 판정
 	if (!HasAuthority()) return;
 
-	if (!GetMesh())
-	{
-		UE_LOG(LogTemp, Error, TEXT("[AttackTrace] %s: Mesh is null"), *GetName());
-		StopAttackTrace();
-		return;
-	}
-
 	UWorld* World = GetWorld();
-	if (!World)
+	if (!World) return;
+
+	TArray<UHellunaAttackRangeComponent*> Ranges;
+	GetComponents<UHellunaAttackRangeComponent>(Ranges);
+
+	FCollisionQueryParams Params;
+	Params.AddIgnoredActor(this);
+	Params.bTraceComplex = false;
+
+	FCollisionObjectQueryParams ObjParams(ECC_WorldStatic);
+
+	int32 ActiveRanges = 0;
+	int32 TotalOverlaps = 0;
+
+	TArray<FOverlapResult> Overlaps;
+	for (UHellunaAttackRangeComponent* R : Ranges)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[AttackTrace] %s: World is null"), *GetName());
-		StopAttackTrace();
-		return;
-	}
+		if (!R) continue;
+		if (R->GetCollisionEnabled() == ECollisionEnabled::NoCollision) continue;
+		ActiveRanges++;
 
-	// 지정 소켓 위치에서 구체 트레이스 실행
-	const FVector SocketLocation = GetMesh()->GetSocketLocation(CurrentTraceSocketName);
-	if (SocketLocation.IsNearlyZero())
-	{
-		UE_LOG(LogTemp, Verbose, TEXT("[AttackTrace] %s: Socket '%s' not found"),
-			*GetName(), *CurrentTraceSocketName.ToString());
-		return;
-	}
+		Overlaps.Reset();
+		const FVector BoxLoc = R->GetComponentLocation();
+		World->OverlapMultiByObjectType(
+			Overlaps,
+			BoxLoc,
+			R->GetComponentQuat(),
+			ObjParams,
+			FCollisionShape::MakeBox(R->GetScaledBoxExtent()),
+			Params);
+		TotalOverlaps += Overlaps.Num();
 
-	TArray<FHitResult> HitResults;
-	FCollisionShape SphereShape = FCollisionShape::MakeSphere(CurrentTraceRadius);
-
-	FCollisionQueryParams QueryParams;
-	QueryParams.AddIgnoredActor(this);
-	QueryParams.bTraceComplex          = false;
-	QueryParams.bReturnPhysicalMaterial = false;
-	QueryParams.bReturnFaceIndex        = false;
-
-	const bool bHit = World->SweepMultiByChannel(
-		HitResults,
-		SocketLocation,
-		SocketLocation, // 시작 = 끝 (정적 구체)
-		FQuat::Identity,
-		ECC_Pawn,
-		SphereShape,
-		QueryParams
-	);
-
-	if (bDrawDebugTrace)
-	{
-		DrawDebugSphere(World, SocketLocation, CurrentTraceRadius, 12,
-			bHit ? FColor::Red : FColor::Green, false, 0.1f, 0, 2.f);
-	}
-
-	if (!bHit) return;
-
-	for (const FHitResult& Hit : HitResults)
-	{
-		AActor* HitActor = Hit.GetActor();
-		if (!IsValid(HitActor) || HitActor == this) continue;
-
-		// 플레이어 / 우주선 / 타워 계열 모두 피해 대상
-		const bool bIsPlayer = Cast<AHellunaHeroCharacter>(HitActor) != nullptr;
-		const bool bIsShip   = Cast<AResourceUsingObject_SpaceShip>(HitActor) != nullptr;
-		const bool bIsTurret = Cast<AHellunaTurretBase>(HitActor) != nullptr;
-		if (!bIsPlayer && !bIsShip && !bIsTurret) continue;
-
-		// 이번 공격에서 이미 맞은 액터는 스킵 (중복 피해 방지)
-		if (HitActorsThisAttack.Contains(HitActor)) continue;
-		HitActorsThisAttack.Add(HitActor);
-
-		// 광폭화 시 데미지 배율 적용
-		const float FinalDamage = bEnraged
-			? CurrentDamageAmount * EnrageDamageMultiplier
-			: CurrentDamageAmount;
-
-		ServerApplyDamage(HitActor, FinalDamage, Hit.Location);
-
-		// [HitVFXV1] GA 가 캐싱한 HitVFX 를 Hit.Location 에 멀티캐스트 스폰
-		// [HitVFX.Diag] 트레이스 히트 / VFX 캐시 / 멀티캐스트 전송 로그
-		const TCHAR* TargetTypeStr = bIsPlayer ? TEXT("Player")
-			: bIsShip ? TEXT("Ship")
-			: bIsTurret ? TEXT("Turret")
-			: TEXT("?");
-		UE_LOG(LogTemp, Warning,
-			TEXT("[HitVFX.Diag][Trace.Hit] Monster=%s TargetType=%s CachedHitVFX=%s HitLoc=%s"),
-			*GetName(), TargetTypeStr,
-			CachedHitVFX ? *CachedHitVFX->GetName() : TEXT("NULL(GA 에 HitVFX 미할당)"),
-			*Hit.Location.ToString());
-
-		if (CachedHitVFX)
+		for (const FOverlapResult& Ov : Overlaps)
 		{
-			Multicast_SpawnHitVFX(CachedHitVFX, Hit.Location, CachedHitVFXScale);
+			AActor* A = Ov.GetActor();
+			if (!IsValid(A) || A == this) continue;
+
+			const bool bIsShip   = Cast<AResourceUsingObject_SpaceShip>(A) != nullptr;
+			const bool bIsTurret = Cast<AHellunaTurretBase>(A) != nullptr;
+			if (!bIsShip && !bIsTurret) continue;
+
+			if (HitActorsThisAttack.Contains(A)) continue;
+			HitActorsThisAttack.Add(A);
+
+			// [Fix] HitLoc 을 Sweep 에 사용한 Box 위치로 사용.
+			// 과거엔 HitComp->GetComponentLocation() 을 썼는데, 우주선처럼 큰 오브젝트의
+			// Mesh Center 가 몬스터로부터 600cm 초과 → ServerApplyDamage 의 거리 검증에서
+			// 튕겨 나가 데미지 적용 실패.
+			const FVector HitLoc = BoxLoc;
+
+			const float FinalDamage = bEnraged
+				? CurrentAttackDamage * EnrageDamageMultiplier
+				: CurrentAttackDamage;
+
+			UE_LOG(LogTemp, Verbose,
+				TEXT("[AttackSweep] %s: %s %s detected, BoxLoc=%s, Dmg=%.1f"),
+				*GetName(),
+				bIsShip ? TEXT("Ship") : TEXT("Turret"),
+				*A->GetName(),
+				*BoxLoc.ToCompactString(),
+				FinalDamage);
+
+			ServerApplyDamage(A, FinalDamage, HitLoc);
+
+			if (CachedHitVFX)
+			{
+				// [HitVFX.Timing] Sweep 감지 시점 타임스탬프. SpawnHitVFXLocal / Multicast 와
+				// 비교해 어느 구간에서 지연이 발생하는지 좁힘. 한 공격당 1회 이하로만 찍힘.
+				if (UWorld* W = GetWorld())
+				{
+					UE_LOG(LogTemp, Warning,
+						TEXT("[HitVFX.Timing.Sweep] %s T=%.4f Hit=%s Loc=%s"),
+						*GetName(), W->GetTimeSeconds(),
+						*A->GetName(), *HitLoc.ToCompactString());
+				}
+				// [HitVFXLocalV1] 서버 본인 화면에는 지연 없이 즉시 스폰.
+				SpawnHitVFXLocal(CachedHitVFX, HitLoc, CachedHitVFXScale);
+				// 원격 클라에게 전파 (구현부에서 HasAuthority 인 서버는 스킵).
+				Multicast_SpawnHitVFX(CachedHitVFX, HitLoc, CachedHitVFXScale);
+			}
+		}
+	}
+
+	// Verbose 레벨로 강등 — 필요 시 로그 콘솔에서 `LogTemp Verbose` 로 활성
+	UE_LOG(LogTemp, Verbose,
+		TEXT("[AttackSweep.Tick] %s: ActiveRanges=%d TotalOverlaps=%d"),
+		*GetName(), ActiveRanges, TotalOverlaps);
+}
+
+void AHellunaEnemyCharacter::OnAttackBoxBeginOverlap(UPrimitiveComponent* OverlappedComp,
+	AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex,
+	bool bFromSweep, const FHitResult& SweepResult)
+{
+	// 서버만 판정 (클라 이벤트 무시)
+	if (!HasAuthority()) return;
+	if (!IsValid(OtherActor) || OtherActor == this) return;
+
+	const bool bIsPlayer = Cast<AHellunaHeroCharacter>(OtherActor) != nullptr;
+	const bool bIsShip   = Cast<AResourceUsingObject_SpaceShip>(OtherActor) != nullptr;
+	const bool bIsTurret = Cast<AHellunaTurretBase>(OtherActor) != nullptr;
+	if (!bIsPlayer && !bIsShip && !bIsTurret) return;
+
+	// 이번 공격에서 중복 히트 방지
+	if (HitActorsThisAttack.Contains(OtherActor)) return;
+	HitActorsThisAttack.Add(OtherActor);
+
+	const FVector HitLocation = bFromSweep
+		? FVector(SweepResult.Location)
+		: OtherActor->GetActorLocation();
+
+	const float FinalDamage = bEnraged
+		? CurrentAttackDamage * EnrageDamageMultiplier
+		: CurrentAttackDamage;
+
+	ServerApplyDamage(OtherActor, FinalDamage, HitLocation);
+
+	if (CachedHitVFX)
+	{
+		// [HitVFXLocalV1] 서버 로컬 즉시 스폰 + 원격 클라에 Multicast.
+		SpawnHitVFXLocal(CachedHitVFX, HitLocation, CachedHitVFXScale);
+		Multicast_SpawnHitVFX(CachedHitVFX, HitLocation, CachedHitVFXScale);
+	}
+
+	if (bCurrentAttackDrawDebug)
+	{
+		if (UWorld* W = GetWorld())
+		{
+			DrawDebugSphere(W, HitLocation, 20.f, 8, FColor::Red, false, 0.5f);
 		}
 	}
 }
@@ -1101,7 +1241,7 @@ void AHellunaEnemyCharacter::Multicast_PlayAttackMontage_Implementation(
 		MeshWorldYaw = MeshDiag->GetComponentRotation().Yaw;
 	}
 
-	UE_LOG(LogTemp, Warning,
+	UE_LOG(LogTemp, Verbose,
 		TEXT("[MPAim][Client] Montage=%s ServerYaw=%.1f PrevCliYaw=%.1f PostCliYaw=%.1f MeshYaw=%.1f"),
 		*Montage->GetName(), FacingRotation.Yaw, PrevClientRot.Yaw, PostClientRot.Yaw, MeshWorldYaw);
 
@@ -1139,36 +1279,52 @@ void AHellunaEnemyCharacter::Multicast_PlayAttackSound_Implementation(
 }
 
 // ============================================================
-// [HitVFXV1] 타격 지점 VFX 멀티캐스트 스폰
+// [HitVFXLocalV1] 로컬 스폰 헬퍼 — 서버가 Sweep 판정 즉시 자기 화면에 스폰
+// ============================================================
+void AHellunaEnemyCharacter::SpawnHitVFXLocal(UNiagaraSystem* VFX,
+	const FVector& HitLocation, float Scale)
+{
+	if (!VFX) return;
+	if (GetNetMode() == NM_DedicatedServer) return; // 렌더 없음 → 스킵
+
+	UNiagaraComponent* NC = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+		GetWorld(), VFX, HitLocation, FRotator::ZeroRotator);
+	if (NC)
+	{
+		NC->SetWorldScale3D(FVector(Scale));
+	}
+	if (UWorld* W = GetWorld())
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[HitVFX.Timing.LocalSpawn] %s T=%.4f NC=%s"),
+			*GetName(), W->GetTimeSeconds(), NC ? TEXT("OK") : TEXT("FAIL"));
+	}
+}
+
+// ============================================================
+// [HitVFXV1] 타격 지점 VFX 멀티캐스트 스폰 (원격 클라 전용)
+//
+// [HitVFXLocalV1] 서버(Authority)는 이미 SweepAttack... 에서 SpawnHitVFXLocal 로
+// 직접 스폰했으므로 Multicast 경로에서는 스킵한다. 원격 클라만 여기서 스폰.
 // ============================================================
 void AHellunaEnemyCharacter::Multicast_SpawnHitVFX_Implementation(
 	UNiagaraSystem* VFX, FVector HitLocation, float Scale)
 {
-	// [HitVFX.Diag] 멀티캐스트 수신 로그 (NetMode 별 분기 파악)
-	const TCHAR* NetModeStr = TEXT("?");
-	switch (GetNetMode())
+	if (UWorld* W = GetWorld())
 	{
-	case NM_DedicatedServer: NetModeStr = TEXT("DediServer"); break;
-	case NM_ListenServer:    NetModeStr = TEXT("ListenSrv"); break;
-	case NM_Client:          NetModeStr = TEXT("Client"); break;
-	case NM_Standalone:      NetModeStr = TEXT("Standalone"); break;
-	default: break;
+		UE_LOG(LogTemp, Warning,
+			TEXT("[HitVFX.Timing.MulticastRecv] %s T=%.4f HasAuth=%d NetMode=%d"),
+			*GetName(), W->GetTimeSeconds(),
+			HasAuthority() ? 1 : 0, (int32)GetNetMode());
 	}
-	UE_LOG(LogTemp, Warning,
-		TEXT("[HitVFX.Diag][Multicast.Recv] Monster=%s NetMode=%s VFX=%s Loc=%s"),
-		*GetName(), NetModeStr,
-		VFX ? *VFX->GetName() : TEXT("NULL"),
-		*HitLocation.ToString());
+	if (!VFX) return;
+	if (GetNetMode() == NM_DedicatedServer) return;
 
-	if (GetNetMode() == NM_DedicatedServer || !VFX) return;
+	// Authority(서버/리슨호스트)는 로컬 스폰을 이미 수행 → 중복 방지.
+	if (HasAuthority()) return;
 
 	UNiagaraComponent* NC = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
 		GetWorld(), VFX, HitLocation, FRotator::ZeroRotator);
-
-	UE_LOG(LogTemp, Warning,
-		TEXT("[HitVFX.Diag][Multicast.Spawn] Monster=%s NC=%s"),
-		*GetName(), NC ? TEXT("OK") : TEXT("FAIL"));
-
 	if (NC)
 	{
 		NC->SetWorldScale3D(FVector(Scale));
@@ -1243,7 +1399,7 @@ void AHellunaEnemyCharacter::Multicast_SyncAttackRotation_Implementation(FRotato
 	const FRotator SnapRot(0.f, NewRotation.Yaw, 0.f);
 	SetActorRotation(SnapRot, ETeleportType::TeleportPhysics);
 
-	UE_LOG(LogTemp, Warning,
+	UE_LOG(LogTemp, Verbose,
 		TEXT("[MPAim][SyncFire] Client snapped Yaw=%.1f"), NewRotation.Yaw);
 }
 
@@ -1375,8 +1531,21 @@ void AHellunaEnemyCharacter::EnterEnraged()
 
 	bEnraged = true;
 
-	// 진행 중인 공격 즉시 중단 (광폭화 몽타주 재생 전 정리)
-	StopAttackTrace();
+	// 진행 중인 공격 히트박스 즉시 비활성 (광폭화 몽타주 재생 전 정리)
+	// 어느 컴포넌트가 켜져 있었는지 모르므로 전수 끄기. 전용 타입만 대상.
+	{
+		TArray<UHellunaAttackRangeComponent*> Ranges;
+		GetComponents<UHellunaAttackRangeComponent>(Ranges);
+		for (UHellunaAttackRangeComponent* Range : Ranges)
+		{
+			if (Range)
+			{
+				Range->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			}
+		}
+		HitActorsThisAttack.Empty();
+		CurrentAttackDamage = 0.f;
+	}
 	if (USkeletalMeshComponent* SkelMesh = GetMesh())
 	{
 		if (UAnimInstance* AnimInst = SkelMesh->GetAnimInstance())

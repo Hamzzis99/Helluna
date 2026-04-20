@@ -157,6 +157,23 @@ struct HELLUNA_API FEnemyDataFragment : public FMassFragment
 	UPROPERTY()
 	bool bMove2DOnly = true;
 
+	// === [SpawnScaleV1] Mass 소환 시 Actor 스케일 ===
+
+	/**
+	 * Actor 전체 Scale (Capsule/Mesh 모두 비례).
+	 *   - 주의: Capsule Scaled Radius = CapsuleRadius * X 가 NavMesh AgentRadius 를 넘으면 경로 탐색 실패.
+	 *   - BP 기본 Capsule 63/82 기준, AgentRadius 90 이면 최대 Scale ~1.1 까지 안전.
+	 */
+	UPROPERTY()
+	FVector ActorSpawnScale = FVector(1.f, 1.f, 1.f);
+
+	/**
+	 * Mesh Component 전용 추가 Scale (시각 전용, Capsule 영향 없음).
+	 * ActorSpawnScale 과 곱연산되어 최종 메시 크기 결정: 최종 = ActorSpawnScale * MeshSpawnScale * BP Mesh RelativeScale.
+	 */
+	UPROPERTY()
+	FVector MeshSpawnScale = FVector(1.f, 1.f, 1.f);
+
 	// === Actor Tick Rate 밴드 캐싱 (#8 최적화) ===
 	/** 이전 거리 밴드 (0=근거리, 1=중거리, 2=원거리, -1=미설정). 밴드 변경 시에만 UpdateActorTickRate 호출 */
 	int32 CachedDistanceBand = -1;

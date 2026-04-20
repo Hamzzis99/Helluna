@@ -35,8 +35,8 @@ bool FSTCondition_HasGameplayTag::TestCondition(FStateTreeExecutionContext& Cont
 
 	const bool bHas = ASC->HasMatchingGameplayTag(Tag);
 
-	// [RageBranchV1] 라이브 코딩 적용 검증 + 런타임 분기 진단 로그.
-	UE_LOG(LogTemp, Warning,
+	// Verbose 레벨 — 매 Tick Condition 평가마다 찍혀서 렉 유발. 필요 시 LogTemp Verbose 로 활성.
+	UE_LOG(LogTemp, Verbose,
 		TEXT("[RageBranchV1] %s HasTag(%s)=%s  MustHave=%s  → Result=%s"),
 		*Pawn->GetName(),
 		*Tag.ToString(),

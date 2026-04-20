@@ -11,6 +11,19 @@
 #include "Engine/World.h"
 #include "Engine/OverlapResult.h"
 #include "GameFramework/Actor.h"
+#include "AbilitySystemBlueprintLibrary.h"
+#include "AbilitySystemComponent.h"
+#include "EngineUtils.h"
+#include "GameplayTagContainer.h"
+#include "HAL/IConsoleManager.h"
+
+// [DistributionDebugV1] 슬롯/섹터 디버그 드로잉을 콘솔에서도 토글.
+//   `Helluna.DrawShipSectors 1` → on, `0` → off. 에디터 bDebugDraw 와 OR 조건.
+static TAutoConsoleVariable<int32> CVarDrawShipSectors(
+	TEXT("Helluna.DrawShipSectors"),
+	0,
+	TEXT("우주선 공격 슬롯/섹터 디버그 드로잉 토글.\n 0 = off, 1 = on"),
+	ECVF_Cheat);
 
 namespace SpaceShipSlotHelpers
 {
@@ -1319,10 +1332,16 @@ void USpaceShipAttackSlotManager::ReleaseEngagementReservation(AActor* Monster)
 
 void USpaceShipAttackSlotManager::CleanupTopSlotReservations()
 {
+	// [ShipJumpQuotaV1] 쿼터는 GameMode가 관리하므로 SlotManager는 인덱스 분산 전용.
+	//   Cleanup은 죽거나 풀로 돌아간 몬스터(weak ref null)만 정리.
 	for (auto It = TopSlotAssignments.CreateIterator(); It; ++It)
 	{
-		if (!It.Value().IsValid())
+		const int32 SlotIdx = It.Key();
+		AActor* Actor = It.Value().Get();
+		if (!Actor)
 		{
+			TopSlotReserveTimeBySlot.Remove(SlotIdx);
+			TopSlotLandedBySlot.Remove(SlotIdx);
 			It.RemoveCurrent();
 		}
 	}
@@ -1357,15 +1376,8 @@ bool USpaceShipAttackSlotManager::TryReserveTopSlotIndexed(AActor* Monster, int3
 		}
 	}
 
-	if (TopSlotAssignments.Num() >= MaxTopSlots)
-	{
-		UE_LOG(LogTemp, Warning,
-			TEXT("[ShipJumpSpreadV1] TryReserveTopSlot DENIED (full) Monster=%s Usage=%d/%d"),
-			*Monster->GetName(), TopSlotAssignments.Num(), MaxTopSlots);
-		return false;
-	}
-
-	// [ShipJumpSpreadV1] 0..MaxTopSlots-1 중 가장 작은 빈 인덱스 부여.
+	// [ShipJumpQuotaV1] 쿼터 검사는 STTask_ShipJump 의 CanShipJump 태그 게이트가 담당.
+	//   여기서는 궤적 분산용 Index 부여만 수행. DENIED 반환 없음.
 	for (int32 Candidate = 0; Candidate < MaxTopSlots; ++Candidate)
 	{
 		if (!TopSlotAssignments.Contains(Candidate))
@@ -1379,8 +1391,14 @@ bool USpaceShipAttackSlotManager::TryReserveTopSlotIndexed(AActor* Monster, int3
 		}
 	}
 
-	// 도달 불가 (위에서 풀 검사 완료) — 안전 폴백.
-	return false;
+	// 안전 폴백 — 쿼터가 MaxTopSlots 보다 크게 설정된 비정상 상황. 인덱스를 Num() 으로 부여.
+	const int32 OverflowIdx = TopSlotAssignments.Num();
+	TopSlotAssignments.Add(OverflowIdx, Key);
+	OutSlotIndex = OverflowIdx;
+	UE_LOG(LogTemp, Warning,
+		TEXT("[ShipJumpSpreadV1] TryReserveTopSlot FALLBACK Monster=%s SlotIndex=%d Usage=%d (Max=%d 초과)"),
+		*Monster->GetName(), OverflowIdx, TopSlotAssignments.Num(), MaxTopSlots);
+	return true;
 }
 
 void USpaceShipAttackSlotManager::ReleaseTopSlot(AActor* Monster)
@@ -1404,6 +1422,8 @@ void USpaceShipAttackSlotManager::ReleaseTopSlot(AActor* Monster)
 
 	if (RemovedIndex != INDEX_NONE)
 	{
+		TopSlotReserveTimeBySlot.Remove(RemovedIndex);
+		TopSlotLandedBySlot.Remove(RemovedIndex);
 		UE_LOG(LogTemp, Warning,
 			TEXT("[ShipJumpSpreadV1] ReleaseTopSlot Monster=%s SlotIndex=%d Usage=%d/%d"),
 			*Monster->GetName(), RemovedIndex, TopSlotAssignments.Num(), MaxTopSlots);
@@ -1605,6 +1625,8 @@ void USpaceShipAttackSlotManager::TickComponent(float DeltaTime, ELevelTick Tick
 
 	CleanupPreferredSectorAngles();
 	CleanupSectorReservations();
+	// [ShipJumpQuotaV1] 죽은 몬스터 weak ref 정리 (쿼터는 GameMode가 관리).
+	CleanupTopSlotReservations();
 
 	// 죽은 몬스터가 점유한 슬롯 자동 반납
 	for (int32 i = 0; i < Slots.Num(); ++i)
@@ -1627,7 +1649,8 @@ void USpaceShipAttackSlotManager::TickComponent(float DeltaTime, ELevelTick Tick
 		}
 	}
 
-	if (!bDebugDraw) return;
+	const bool bCVarDraw = CVarDrawShipSectors.GetValueOnAnyThread() > 0;
+	if (!bDebugDraw && !bCVarDraw) return;
 
 	UWorld* World = GetWorld();
 	if (!World) return;

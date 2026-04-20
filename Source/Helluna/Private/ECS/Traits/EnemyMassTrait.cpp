@@ -56,6 +56,10 @@ void UEnemyMassTrait::BuildTemplate(
 	Data.EntityMoveSpeed = EntityMoveSpeed;
 	Data.EntitySeparationRadius = EntitySeparationRadius;
 	Data.bMove2DOnly = bMove2DOnly;
+
+	// [SpawnScaleV1] 소환 크기
+	Data.ActorSpawnScale = ActorSpawnScale;
+	Data.MeshSpawnScale = MeshSpawnScale;
 	
 #if HELLUNA_DEBUG_ENEMY
 	UE_LOG(LogTemp, Log,
