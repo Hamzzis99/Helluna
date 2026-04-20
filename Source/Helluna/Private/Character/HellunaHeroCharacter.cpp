@@ -1411,18 +1411,53 @@ void AHellunaHeroCharacter::ServerRecoverFromStun()
 		World->GetTimerManager().ClearTimer(RecoveryLingerHandle);
 	}
 
+	// 래그돌 최종 위치 기준으로 스탠딩 캡슐의 Z 를 재구성.
+	// Pelvis 는 엎드린 자세에서 지면 근처(+약 20cm) 에 위치하므로
+	// 그 좌표에서 지면을 라인트레이스로 찾고, 캡슐 발바닥이 지면에 닿도록
+	// ActorZ = GroundZ + HalfHeight + Skin 으로 재설정한다.
 	FVector RecoveryLoc = GetActorLocation();
-	if (USkeletalMeshComponent* SkelMesh = GetMesh())
+	USkeletalMeshComponent* SkelMesh = GetMesh();
+	UCapsuleComponent* Capsule = GetCapsuleComponent();
+	UWorld* World = GetWorld();
+
+	if (SkelMesh && Capsule && World)
 	{
-		const FVector BoneLoc = SkelMesh->GetBoneLocation(TEXT("pelvis"));
-		if (!BoneLoc.IsNearlyZero())
+		const FVector PelvisLoc = SkelMesh->GetBoneLocation(TEXT("pelvis"));
+		if (!PelvisLoc.IsNearlyZero())
 		{
-			RecoveryLoc = BoneLoc;
-		}
-		if (UCapsuleComponent* Capsule = GetCapsuleComponent())
-		{
-			// 지면 기준 캡슐 높이 보정 (Pelvis 는 캡슐 중앙 근처)
-			RecoveryLoc.Z -= (Capsule->GetScaledCapsuleHalfHeight() * 0.3f);
+			const float HalfHeight = Capsule->GetScaledCapsuleHalfHeight();
+			const float SkinOffset = 2.f;
+
+			FHitResult GroundHit;
+			FCollisionQueryParams Params(SCENE_QUERY_STAT(HellunaStunRecovery), /*bTraceComplex=*/false, this);
+			Params.AddIgnoredComponent(SkelMesh);
+
+			const FVector TraceStart = PelvisLoc + FVector(0.f, 0.f, 200.f);
+			const FVector TraceEnd   = PelvisLoc - FVector(0.f, 0.f, 500.f);
+
+			const bool bHit = World->LineTraceSingleByChannel(
+				GroundHit, TraceStart, TraceEnd, ECC_WorldStatic, Params);
+
+			if (bHit)
+			{
+				RecoveryLoc = FVector(
+					PelvisLoc.X,
+					PelvisLoc.Y,
+					GroundHit.ImpactPoint.Z + HalfHeight + SkinOffset);
+			}
+			else
+			{
+				// 지면 못 찾으면 Pelvis 위치를 XY 로만 반영하고 Z 는 원래 캡슐 높이 유지
+				RecoveryLoc = FVector(PelvisLoc.X, PelvisLoc.Y, RecoveryLoc.Z);
+			}
+
+			UE_LOG(LogHelluna, Warning,
+				TEXT("[Stun-Debug SRV RECOVER-TRACE] Pelvis=(%.0f,%.0f,%.0f) Hit=%d GroundZ=%.1f HalfHeight=%.1f → RecoveryLoc=(%.0f,%.0f,%.0f)"),
+				PelvisLoc.X, PelvisLoc.Y, PelvisLoc.Z,
+				bHit ? 1 : 0,
+				bHit ? GroundHit.ImpactPoint.Z : 0.f,
+				HalfHeight,
+				RecoveryLoc.X, RecoveryLoc.Y, RecoveryLoc.Z);
 		}
 	}
 
@@ -1447,12 +1482,38 @@ void AHellunaHeroCharacter::Multicast_RecoverFromStun_Implementation(FVector_Net
 	// 카메라 팔로우 종료 — Tick 추적 중지
 	bLocalPhysicsStunned = false;
 
-	// CameraBoom 복원: 현재 오프셋에서 Default 로 Lerp (한 프레임 점프 방지)
+	// [중요] 순서:
+	//   1) CameraBoom 월드 위치 스냅샷 (구 캡슐 기준) — 순간이동 시점에도 카메라 월드 좌표를 유지하기 위함
+	//   2) SetActorLocation(RecoveryWorld) — 캡슐 teleport
+	//   3) 스냅샷된 월드 좌표를 새 캡슐 로컬 공간으로 변환 → CameraBoom Relative 재설정
+	//   4) 그 Relative 를 StartOffset 으로 저장 → Tick 에서 Default 로 Lerp
+	// 이렇게 하지 않으면 구 캡슐 기준 Relative 를 새 캡슐 프레임에 그대로 쓰게 되어
+	// 카메라 월드 위치가 teleport 거리만큼 튄 뒤 Default 로 복귀 → X/Y 순간이동 느낌.
+
+	const FVector CameraBoomWorldBefore =
+		(CameraBoom ? CameraBoom->GetComponentLocation() : FVector::ZeroVector);
+
+	USkeletalMeshComponent* SkelMesh = GetMesh();
+
+	// 캡슐을 래그돌 최종 위치(Pelvis 기준)로 이동 — 메시 재부착 전에 수행해야
+	// 클라에서 Replication 지연으로 캡슐이 피격 위치에 남아있는 동안 메시가
+	// 구 위치로 스냅되는 현상을 방지.
+	const FVector RecoveryWorld(RecoveryLocation);
+	if (!RecoveryWorld.IsNearlyZero())
+	{
+		SetActorLocation(RecoveryWorld, /*bSweep=*/false, nullptr, ETeleportType::TeleportPhysics);
+	}
+
+	// CameraBoom 복원: 월드 위치 연속성 유지 후 Default 로 Lerp (한 프레임 점프 방지)
 	if (CameraBoom && bCameraBoomDefaultsCached)
 	{
 		if (CameraRecoverBlendDuration > 0.f)
 		{
-			CameraRecoverStartOffset = CameraBoom->GetRelativeLocation();
+			// 구 월드 위치를 새 캡슐 로컬 공간으로 변환
+			const FVector NewRelFromWorld =
+				GetActorTransform().InverseTransformPosition(CameraBoomWorldBefore);
+			CameraBoom->SetRelativeLocation(NewRelFromWorld);
+			CameraRecoverStartOffset = NewRelFromWorld;
 			CameraRecoverBlendRemaining = CameraRecoverBlendDuration;
 			// Lag/Collision 은 블렌드 완료 시점에 Tick 에서 복원
 		}
@@ -1470,17 +1531,6 @@ void AHellunaHeroCharacter::Multicast_RecoverFromStun_Implementation(FVector_Net
 				bSpringArmLagCached = false;
 			}
 		}
-	}
-
-	USkeletalMeshComponent* SkelMesh = GetMesh();
-
-	// 캡슐을 래그돌 최종 위치(Pelvis 기준)로 이동 — 메시 재부착 전에 수행해야
-	// 클라에서 Replication 지연으로 캡슐이 피격 위치에 남아있는 동안 메시가
-	// 구 위치로 스냅되는 현상을 방지.
-	const FVector RecoveryWorld(RecoveryLocation);
-	if (!RecoveryWorld.IsNearlyZero())
-	{
-		SetActorLocation(RecoveryWorld, /*bSweep=*/false, nullptr, ETeleportType::TeleportPhysics);
 	}
 
 	// 래그돌 해제
