@@ -325,6 +325,9 @@ void AHellunaHeroCharacter::Tick(float DeltaTime)
 		}
 	}
 
+	// [Stun] 회복은 이제 Inertialization 기반 — Tick 처리 불필요
+	// (PhysicsBlendOut 상태 변수는 InertialBlend 길이 파라미터로만 사용됨)
+
 	// [Stun-Debug] 스턴 진입 후 5초간 위치/속도 로그
 	if (StunDebugTimeRemaining > 0.f)
 	{
@@ -1495,6 +1498,26 @@ void AHellunaHeroCharacter::Multicast_RecoverFromStun_Implementation(FVector_Net
 
 	USkeletalMeshComponent* SkelMesh = GetMesh();
 
+	// [Stun] 래그돌 최종 방향으로 캡슐 yaw 정렬.
+	// GetUp 몽타주는 정자세(supine) 기준으로 제작되었으므로, 캐릭터 머리가 가리키는
+	// 방향으로 캡슐이 향해야 일어난 직후 카메라/이동 방향이 자연스럽다.
+	// Pelvis→Head 벡터를 지면 평면에 투영해서 Yaw 를 산출.
+	float DesiredYaw = GetActorRotation().Yaw;
+	bool bYawAligned = false;
+	if (SkelMesh)
+	{
+		const FVector PelvisW = SkelMesh->GetBoneLocation(TEXT("pelvis"));
+		const FVector HeadW   = SkelMesh->GetBoneLocation(TEXT("head"));
+		FVector Forward = HeadW - PelvisW;
+		Forward.Z = 0.f;
+		if (Forward.SizeSquared() > 4.f) // 최소 2cm
+		{
+			Forward.Normalize();
+			DesiredYaw = Forward.Rotation().Yaw;
+			bYawAligned = true;
+		}
+	}
+
 	// 캡슐을 래그돌 최종 위치(Pelvis 기준)로 이동 — 메시 재부착 전에 수행해야
 	// 클라에서 Replication 지연으로 캡슐이 피격 위치에 남아있는 동안 메시가
 	// 구 위치로 스냅되는 현상을 방지.
@@ -1502,6 +1525,11 @@ void AHellunaHeroCharacter::Multicast_RecoverFromStun_Implementation(FVector_Net
 	if (!RecoveryWorld.IsNearlyZero())
 	{
 		SetActorLocation(RecoveryWorld, /*bSweep=*/false, nullptr, ETeleportType::TeleportPhysics);
+	}
+	if (bYawAligned)
+	{
+		const FRotator Cur = GetActorRotation();
+		SetActorRotation(FRotator(Cur.Pitch, DesiredYaw, Cur.Roll), ETeleportType::TeleportPhysics);
 	}
 
 	// CameraBoom 복원: 월드 위치 연속성 유지 후 Default 로 Lerp (한 프레임 점프 방지)
@@ -1533,9 +1561,23 @@ void AHellunaHeroCharacter::Multicast_RecoverFromStun_Implementation(FVector_Net
 		}
 	}
 
-	// 래그돌 해제
+	// 래그돌 → 애니 전환 (Pose Snapshot + Inertialization 방식):
+	//   1) 물리 sim 완전히 끄고 메시를 기본 위치/회전으로 재부착.
+	//      이 순간 뼈는 "래그돌 최종 포즈"에서 "애니 포즈" 로 스냅될 것.
+	//   2) SavePoseSnapshot 으로 스냅 직전 포즈 캡처 (ABP 에서 참조 가능).
+	//   3) RequestInertialization(블렌드 시간) 호출 → Inertialization 노드가 이전
+	//      프레임 출력 포즈를 기억하고 다음 프레임부터 N초에 걸쳐 inertial 보간.
+	//   4) GetUp 몽타주 재생 → 정자세에서 일어나는 모션.
+	// 결과: 래그돌 어떤 자세든 → 부드럽게 애니 첫 프레임(정자세) 로 녹아들고 일어남.
 	if (SkelMesh)
 	{
+		// (a) 스냅샷 저장 (ABP 에서 'StunRecovery' 이름으로 참조 가능, 현재는 fallback)
+		if (UAnimInstance* AnimInst = SkelMesh->GetAnimInstance())
+		{
+			AnimInst->SavePoseSnapshot(FName(TEXT("StunRecovery")));
+		}
+
+		// (b) 물리 sim 종료 + 메시 기본 위치로 재부착
 		SkelMesh->SetAllBodiesSimulatePhysics(false);
 		SkelMesh->SetSimulatePhysics(false);
 		SkelMesh->bBlendPhysics = false;
@@ -1547,6 +1589,22 @@ void AHellunaHeroCharacter::Multicast_RecoverFromStun_Implementation(FVector_Net
 				FAttachmentTransformRules::KeepRelativeTransform);
 			SkelMesh->SetRelativeLocationAndRotation(
 				MeshDefaultRelativeLocation, MeshDefaultRelativeRotation);
+		}
+
+		// (c) Inertialization 요청 — ABP 에 Inertialization 노드가 있어야 적용됨.
+		//     DefaultGroup = DefaultSlot 이 속한 슬롯 그룹. ABP 에 해당 슬롯 노드 존재 필수.
+		//     없으면 무해하게 무시됨.
+		if (UAnimInstance* AnimInst = SkelMesh->GetAnimInstance())
+		{
+			const float InertialBlend = FMath::Max(PhysicsBlendOutDuration, 0.1f);
+			AnimInst->RequestSlotGroupInertialization(
+				FName(TEXT("DefaultGroup")), InertialBlend, /*BlendProfile=*/nullptr);
+
+			// (d) GetUp 몽타주 재생 — 정자세에서 일어나는 모션.
+			if (GetUpMontage)
+			{
+				AnimInst->Montage_Play(GetUpMontage, 1.f);
+			}
 		}
 	}
 
@@ -1569,17 +1627,8 @@ void AHellunaHeroCharacter::Multicast_RecoverFromStun_Implementation(FVector_Net
 		UnlockLookInput();
 	}
 
-	// GetUp 몽타주 (슬롯이 비어있으면 스킵)
-	if (GetUpMontage)
-	{
-		if (SkelMesh)
-		{
-			if (UAnimInstance* AnimInst = SkelMesh->GetAnimInstance())
-			{
-				AnimInst->Montage_Play(GetUpMontage);
-			}
-		}
-	}
+	// GetUp 몽타주는 상단에서 rate=0 으로 Play 되어 프레임 0 에 고정 대기 중.
+	// Tick 의 물리 블렌드 아웃 완료 시점에 rate=1 로 Resume.
 
 	// [Stun-Debug] 회복 완료 시점 Actor 위치 vs 피격 시작 위치 비교
 	{
