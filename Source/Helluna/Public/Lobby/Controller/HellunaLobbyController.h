@@ -244,9 +244,9 @@ public:
 	UFUNCTION(Client, Reliable)
 	void Client_ReceivePartyChatMessage(const FHellunaPartyChatMessage& Msg);
 
-	/** 파티 Deploy — 포트만 전달 (IP는 클라이언트 GameInstance에서) */
+	/** [Loading Barrier] 파티 Deploy — 포트 + ExpectedIds(CSV) + PartyId (솔로 매칭=PartyId 0) */
 	UFUNCTION(Client, Reliable)
-	void Client_ExecutePartyDeploy(int32 GameServerPort);
+	void Client_ExecutePartyDeploy(int32 GameServerPort, const FString& ExpectedIdsJoined, int32 PartyId);
 
 	/** ClientTravel 준비 실패를 서버에 알려 deploy 상태를 롤백 */
 	UFUNCTION(Server, Reliable, WithValidation)

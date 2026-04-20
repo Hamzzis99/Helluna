@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Player/Inv_PlayerController.h"
 #include "GenericTeamAgentInterface.h"
+#include "Loading/HellunaLoadingTypes.h"
 #include "HellunaHeroController.generated.h"
 
 class UNiagaraSystem;
@@ -23,6 +24,8 @@ class UHellunaDebugHUDWidget;
 class UHellunaGraphicsSettingsWidget;
 class UHellunaPauseMenuWidget;
 class UHellunaWorldMapWidget;
+class UHellunaLoadingHUDWidget;
+class ACameraActor;
 
 /**
  * @brief   Helluna 영웅 전용 PlayerController
@@ -569,4 +572,93 @@ private:
 
 	/** M키 입력 핸들러 (Enhanced Input) */
 	void OnToggleWorldMapInput(const struct FInputActionValue& Value);
+
+	// =========================================================================================
+	// [Loading Barrier] 로딩 씬 진입 / Ready 조건 폴링 / 페이드 전환 (Reedme/loading/*)
+	// =========================================================================================
+public:
+	/** 서버 → 클라: 로딩 씬 진입 (ViewTarget 전환 + HUD 추가). PostLogin 직후 호출. */
+	UFUNCTION(Client, Reliable)
+	void Client_EnterLoadingScene(const TArray<FString>& ExpectedIds, int32 PartyId);
+
+	/** 서버 → 클라: 내 Ready 송신 직후 파티 현황 스냅샷 1회 전달. */
+	UFUNCTION(Client, Reliable)
+	void Client_DeliverPartyStatus(const TArray<FHellunaReadyInfo>& Snapshot);
+
+	/** 서버 → 클라: 구독자에게 파티원 Ready 변경 개별 알림. */
+	UFUNCTION(Client, Reliable)
+	void Client_UpdateReadyStatus(const FString& PlayerId, bool bReady);
+
+	/** 서버 → 클라: 배리어 해제 — 페이드 아웃 + Pawn ViewTarget 전환. */
+	UFUNCTION(Client, Reliable)
+	void Client_FadeToGame();
+
+	/** 클라 → 서버: Ready 조건 충족 보고. */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_ReportClientReady();
+
+	/** BP 노출용 — 현재 로딩 HUD 인스턴스. */
+	UFUNCTION(BlueprintPure, Category = "Loading Barrier")
+	UHellunaLoadingHUDWidget* GetLoadingHUDWidget() const { return LoadingHUDWidgetInstance; }
+
+protected:
+	/** BP에서 설정할 로딩 HUD 위젯 클래스. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Loading Barrier|UI",
+		meta = (DisplayName = "Loading HUD Widget Class (로딩 HUD 위젯)"))
+	TSubclassOf<UHellunaLoadingHUDWidget> LoadingHUDWidgetClass;
+
+	/** BP에서 설정: 관람 카메라로 사용할 태그. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Loading Barrier|Scene",
+		meta = (DisplayName = "Loading Camera Tag (관람 카메라 태그)"))
+	FName LoadingCameraTag = TEXT("LoadingCamera");
+
+	/** BP에서 설정: 페이드 시 감쇠시킬 LoadingShipActor 태그. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Loading Barrier|Scene",
+		meta = (DisplayName = "Loading Ship Tag (로딩 우주선 태그)"))
+	FName LoadingShipTag = TEXT("LoadingShip");
+
+	/** Ready 조건 폴링 주기(초). */
+	UPROPERTY(EditDefaultsOnly, Category = "Loading Barrier|Ready",
+		meta = (DisplayName = "Ready Poll Interval (초)", ClampMin = "0.05"))
+	float ReadyPollInterval = 0.25f;
+
+private:
+	/** 로딩 HUD 위젯 인스턴스. */
+	UPROPERTY()
+	TObjectPtr<UHellunaLoadingHUDWidget> LoadingHUDWidgetInstance = nullptr;
+
+	/** 관람 카메라 캐시. */
+	UPROPERTY()
+	TWeakObjectPtr<ACameraActor> LoadingCameraActor;
+
+	/** 내 Ready 송신 여부 — 이중 안전장치. */
+	UPROPERTY()
+	bool bMyReadyReported = false;
+
+	/** 로딩 씬 진입 여부 — HUD 복원/정리 안전장치. */
+	UPROPERTY()
+	bool bInLoadingScene = false;
+
+	/** Ready 조건 폴링 타이머. */
+	FTimerHandle ReadyPollTimerHandle;
+
+	/** 배리어 상대 파티 ID. */
+	UPROPERTY()
+	int32 CachedBarrierPartyId = 0;
+
+	/** 이번 배리어 기대 PlayerIds. */
+	UPROPERTY()
+	TArray<FString> CachedExpectedIds;
+
+	/** 클라 Ready 조건 7개 체크 (Reedme/loading/04 §Ready의 정의). */
+	bool IsClientReadyForBarrier() const;
+
+	/** 폴링 콜백. */
+	void PollReadyConditions();
+
+	/** 로딩 씬 정리 (페이드 시점). */
+	void LeaveLoadingScene();
+
+	/** 관람 카메라 ViewTarget 전환. 성공 시 true. */
+	bool TryActivateLoadingCamera();
 };

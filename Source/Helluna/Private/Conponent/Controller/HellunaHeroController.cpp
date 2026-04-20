@@ -12,6 +12,15 @@
 #include "Blueprint/UserWidget.h"
 #include "TimerManager.h"
 
+// [Loading Barrier]
+#include "Loading/HellunaLoadingHUDWidget.h"
+#include "Loading/HellunaLoadingShipActor.h"
+#include "Camera/CameraActor.h"
+#include "Camera/PlayerCameraManager.h"
+#include "Kismet/GameplayStatics.h"
+#include "WorldPartition/WorldPartitionSubsystem.h"
+#include "Engine/AssetManager.h"
+
 // [Phase 10] 채팅 시스템
 #include "Chat/HellunaChatTypes.h"
 #include "Chat/HellunaChatWidget.h"
@@ -1555,4 +1564,299 @@ void AHellunaHeroController::ClearLocalPing()
 {
 	bHasLocalPing = false;
 	LocalPingLocation = FVector::ZeroVector;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Loading Barrier] 클라이언트 RPC + Ready 조건 폴링 (Reedme/loading/04, 08)
+// ════════════════════════════════════════════════════════════════════════════════
+
+bool AHellunaHeroController::TryActivateLoadingCamera()
+{
+	if (!IsLocalController())
+	{
+		return false;
+	}
+
+	ACameraActor* Cam = LoadingCameraActor.Get();
+	if (!Cam)
+	{
+		UWorld* World = GetWorld();
+		if (!World) { return false; }
+
+		TArray<AActor*> Found;
+		UGameplayStatics::GetAllActorsOfClassWithTag(World, ACameraActor::StaticClass(), LoadingCameraTag, Found);
+		for (AActor* A : Found)
+		{
+			if (ACameraActor* C = Cast<ACameraActor>(A))
+			{
+				Cam = C;
+				break;
+			}
+		}
+		LoadingCameraActor = Cam;
+	}
+
+	if (!Cam)
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[Barrier] 관람 카메라를 찾지 못함 (Tag=%s)"), *LoadingCameraTag.ToString());
+		return false;
+	}
+
+	SetViewTargetWithBlend(Cam, 0.f);
+	return true;
+}
+
+void AHellunaHeroController::Client_EnterLoadingScene_Implementation(const TArray<FString>& ExpectedIds, int32 PartyId)
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	bInLoadingScene = true;
+	bMyReadyReported = false;
+	CachedExpectedIds = ExpectedIds;
+	CachedBarrierPartyId = PartyId;
+
+	TryActivateLoadingCamera();
+
+	SetIgnoreMoveInput(true);
+	SetIgnoreLookInput(true);
+
+	if (LoadingHUDWidgetClass && !LoadingHUDWidgetInstance)
+	{
+		LoadingHUDWidgetInstance = CreateWidget<UHellunaLoadingHUDWidget>(this, LoadingHUDWidgetClass);
+		if (LoadingHUDWidgetInstance)
+		{
+			LoadingHUDWidgetInstance->AddToViewport(100);
+		}
+	}
+
+	FString LocalPlayerId;
+	if (AHellunaPlayerState* HPS = GetPlayerState<AHellunaPlayerState>())
+	{
+		LocalPlayerId = HPS->GetPlayerUniqueId();
+	}
+	if (LoadingHUDWidgetInstance)
+	{
+		LoadingHUDWidgetInstance->InitializeHUD(ExpectedIds, LocalPlayerId, PartyId);
+	}
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().SetTimer(ReadyPollTimerHandle, this,
+			&AHellunaHeroController::PollReadyConditions,
+			FMath::Max(ReadyPollInterval, 0.05f), true);
+	}
+
+	UE_LOG(LogHelluna, Log, TEXT("[Barrier] Client_EnterLoadingScene | Expected=%d PartyId=%d"),
+		ExpectedIds.Num(), PartyId);
+}
+
+bool AHellunaHeroController::IsClientReadyForBarrier() const
+{
+	UWorld* World = GetWorld();
+	if (!World) { return false; }
+
+	// (1) WorldPartition 스트리밍 — 해당 서브시스템이 없으면 스킵(검증 완화)
+	if (UWorldPartitionSubsystem* WPSub = World->GetSubsystem<UWorldPartitionSubsystem>())
+	{
+		if (!WPSub->IsStreamingCompleted())
+		{
+			return false;
+		}
+	}
+
+	// (2) 로컬 PlayerState Replicate 완료
+	AHellunaPlayerState* HPS = GetPlayerState<AHellunaPlayerState>();
+	if (!HPS || HPS->GetPlayerUniqueId().IsEmpty())
+	{
+		return false;
+	}
+
+	// (3) Level Loading 여유 — pending 스트리밍 레벨 0
+	const TArray<ULevelStreaming*>& StreamingLevels = World->GetStreamingLevels();
+	for (ULevelStreaming* LS : StreamingLevels)
+	{
+		if (LS && LS->IsStreamingStatePending())
+		{
+			return false;
+		}
+	}
+
+	// (4) HUD 표시 확인
+	if (!LoadingHUDWidgetInstance)
+	{
+		return false;
+	}
+
+	// (5) ViewTarget 이 관람 카메라인지
+	if (APlayerCameraManager* CamMgr = PlayerCameraManager)
+	{
+		if (LoadingCameraActor.IsValid() && CamMgr->GetViewTarget() != LoadingCameraActor.Get())
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+void AHellunaHeroController::PollReadyConditions()
+{
+	if (!bInLoadingScene || bMyReadyReported)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(ReadyPollTimerHandle);
+		}
+		return;
+	}
+
+	if (!IsClientReadyForBarrier())
+	{
+		return;
+	}
+
+	bMyReadyReported = true;
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ReadyPollTimerHandle);
+	}
+
+	if (LoadingHUDWidgetInstance)
+	{
+		LoadingHUDWidgetInstance->UpdateMyProgress(1.f);
+		LoadingHUDWidgetInstance->TransitionToPhase2();
+	}
+
+	UE_LOG(LogHelluna, Log, TEXT("[Barrier] Client Ready 조건 충족 → Server_ReportClientReady"));
+	Server_ReportClientReady();
+}
+
+bool AHellunaHeroController::Server_ReportClientReady_Validate()
+{
+	return true;
+}
+
+void AHellunaHeroController::Server_ReportClientReady_Implementation()
+{
+	AHellunaPlayerState* PS = GetPlayerState<AHellunaPlayerState>();
+	if (!PS) { return; }
+
+	const FString PlayerId = PS->GetPlayerUniqueId();
+	if (PlayerId.IsEmpty()) { return; }
+
+	AHellunaDefenseGameMode* GM = GetWorld() ? GetWorld()->GetAuthGameMode<AHellunaDefenseGameMode>() : nullptr;
+	if (!GM) { return; }
+
+	GM->OnClientReportedReady(this, PlayerId);
+}
+
+void AHellunaHeroController::Client_DeliverPartyStatus_Implementation(const TArray<FHellunaReadyInfo>& Snapshot)
+{
+	if (!IsLocalController() || !bMyReadyReported)
+	{
+		return;
+	}
+	if (!LoadingHUDWidgetInstance)
+	{
+		return;
+	}
+	for (const FHellunaReadyInfo& Info : Snapshot)
+	{
+		LoadingHUDWidgetInstance->UpdateSlot(Info.PlayerId, Info.bReady);
+	}
+}
+
+void AHellunaHeroController::Client_UpdateReadyStatus_Implementation(const FString& PlayerId, bool bReady)
+{
+	if (!IsLocalController() || !bMyReadyReported)
+	{
+		return;
+	}
+	if (LoadingHUDWidgetInstance)
+	{
+		LoadingHUDWidgetInstance->UpdateSlot(PlayerId, bReady);
+	}
+}
+
+void AHellunaHeroController::Client_FadeToGame_Implementation()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	// (0) 로딩 씬 우주선 감쇠 시작 — 탑승감에서 해방되는 모션 (이즈아웃 큐빅)
+	if (UWorld* W = GetWorld())
+	{
+		TArray<AActor*> FoundShips;
+		UGameplayStatics::GetAllActorsOfClassWithTag(W, AHellunaLoadingShipActor::StaticClass(),
+			LoadingShipTag, FoundShips);
+		for (AActor* A : FoundShips)
+		{
+			if (AHellunaLoadingShipActor* Ship = Cast<AHellunaLoadingShipActor>(A))
+			{
+				Ship->BeginDampenForRelease();
+			}
+		}
+	}
+
+	// (1) UMG 페이드 아웃 (BP WidgetAnimation — HUD가 자체 연출)
+	if (LoadingHUDWidgetInstance)
+	{
+		LoadingHUDWidgetInstance->PlayFadeOutAnimation();
+	}
+
+	// (2) PlayerCameraManager 검정 페이드 (0.6초 페이드 인 → 검정 홀드 → 페이드 아웃 0.9초)
+	if (APlayerCameraManager* CamMgr = PlayerCameraManager)
+	{
+		CamMgr->StartCameraFade(0.f, 1.f, 0.6f, FLinearColor::Black, /*bShouldFadeAudio=*/false, /*bHoldWhenFinished=*/true);
+	}
+
+	// (3) 1.2초 후 Pawn 으로 ViewTarget 블렌드 + 2.1초 후 페이드 아웃
+	UWorld* World = GetWorld();
+	if (!World) { return; }
+
+	FTimerHandle ViewTargetHandle;
+	World->GetTimerManager().SetTimer(ViewTargetHandle, FTimerDelegate::CreateWeakLambda(this, [this]()
+	{
+		if (APawn* MyPawn = GetPawn())
+		{
+			SetViewTargetWithBlend(MyPawn, 0.5f, VTBlend_Cubic);
+		}
+	}), 1.2f, false);
+
+	FTimerHandle FadeOutHandle;
+	World->GetTimerManager().SetTimer(FadeOutHandle, FTimerDelegate::CreateWeakLambda(this, [this]()
+	{
+		if (APlayerCameraManager* CamMgr = PlayerCameraManager)
+		{
+			CamMgr->StartCameraFade(1.f, 0.f, 0.9f, FLinearColor::Black, false, false);
+		}
+	}), 2.1f, false);
+
+	FTimerHandle CleanupHandle;
+	World->GetTimerManager().SetTimer(CleanupHandle, FTimerDelegate::CreateWeakLambda(this, [this]()
+	{
+		LeaveLoadingScene();
+		SetIgnoreMoveInput(false);
+		SetIgnoreLookInput(false);
+	}), 3.0f, false);
+}
+
+void AHellunaHeroController::LeaveLoadingScene()
+{
+	bInLoadingScene = false;
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ReadyPollTimerHandle);
+	}
+	if (LoadingHUDWidgetInstance)
+	{
+		LoadingHUDWidgetInstance->RemoveFromParent();
+		LoadingHUDWidgetInstance = nullptr;
+	}
+	LoadingCameraActor.Reset();
 }
