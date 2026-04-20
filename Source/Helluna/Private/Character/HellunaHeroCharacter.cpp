@@ -1388,8 +1388,13 @@ void AHellunaHeroCharacter::TickPhysicsStunCameraFollow(float DeltaTime)
 	const FVector PelvisVel = SkelMesh->GetPhysicsLinearVelocity(TEXT("pelvis"));
 	const FVector PredictedPelvis = PelvisWorld + PelvisVel * DeltaTime;
 
+	// SetRelativeLocation 은 Actor 로컬 공간을 기대하므로
+	// Capsule(Actor) yaw 회전을 InverseTransformVector 로 벗겨낸 뒤 적용한다.
+	// 월드 델타를 그대로 쓰면 Actor 가 회전한 만큼 Boom 이 반대 방향으로 간다.
 	const FVector CapsuleWorld = GetActorLocation();
-	const FVector DesiredRel = CameraBoomDefaultRelativeLocation + (PredictedPelvis - CapsuleWorld);
+	const FVector WorldDelta = PredictedPelvis - CapsuleWorld;
+	const FVector LocalDelta = GetActorTransform().InverseTransformVector(WorldDelta);
+	const FVector DesiredRel = CameraBoomDefaultRelativeLocation + LocalDelta;
 	CameraBoom->SetRelativeLocation(DesiredRel);
 }
 
