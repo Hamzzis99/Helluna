@@ -858,6 +858,17 @@ private:
 	float CameraRecoverBlendRemaining = 0.f;
 	FVector CameraRecoverStartOffset = FVector::ZeroVector;
 
+	/** 래그돌 → 애니 블렌드 아웃 지속시간 (초). 길수록 래그돌 포즈가 오래 보임. */
+	UPROPERTY(EditDefaultsOnly, Category = "Stun|Physics",
+		meta = (DisplayName = "물리→애니 블렌드 아웃 (초)", ClampMin = "0.0", ClampMax = "2.0"))
+	float PhysicsBlendOutDuration = 0.3f;
+
+	/** 블렌드 아웃 남은 시간. >0 동안 Tick 에서 PhysicsBlendWeight 을 1→0 으로 Lerp. */
+	float PhysicsBlendOutRemaining = 0.f;
+
+	/** 블렌드 완료 시 메시 재부착/sim off 가 필요한지 플래그 */
+	bool bPendingMeshReattach = false;
+
 	/** 회복 Linger 타이머 */
 	FTimerHandle RecoveryLingerHandle;
 	bool bPendingRecovery = false;
