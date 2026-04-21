@@ -41,9 +41,11 @@ void UHeroGameplayAbility_Aim::ActivateAbility(
 	// ── 기본값 캐싱 ──
 	if (UCharacterMovementComponent* MoveComp = Hero->GetCharacterMovement())
 	{
-		CachedDefaultMaxWalkSpeed = MoveComp->MaxWalkSpeed;
-		// LocalPredicted: 서버/클라 양쪽에서 동일하게 변경해야 예측 불일치 방지
-		MoveComp->MaxWalkSpeed = AimMaxWalkSpeed * Hero->GetMoveSpeedMultiplier();
+		// [MoveSpeedBaseV1] 이제 MaxWalkSpeed 를 직접 조작하지 않고 Hero 의 ActiveBaseWalkSpeed 를 통해 간접 설정.
+		//   Hero::RefreshMaxWalkSpeed 가 ActiveBase * MoveSpeedMultiplier 로 즉시 계산.
+		//   Aim 중에 슬로우가 걸렸다/풀렸다 해도 Hero 쪽에서 자동으로 반영됨.
+		CachedDefaultMaxWalkSpeed = Hero->GetBaseWalkSpeed(); // 복원 시 돌려놓을 "기본 걷기 속도"
+		Hero->SetActiveBaseWalkSpeed(AimMaxWalkSpeed);
 
 		// ── [Aim Rotation] 조준 시 캐릭터가 카메라 방향을 따라 회전 (RE4 스타일) ──
 		CachedOrientRotationToMovement = MoveComp->bOrientRotationToMovement;
@@ -160,10 +162,9 @@ void UHeroGameplayAbility_Aim::EndAbility(
 		// ── 이동속도 + 회전 복원: 서버/클라 양쪽에서 동일하게 (LocalPredicted) ──
 		if (UCharacterMovementComponent* MoveComp = Hero->GetCharacterMovement())
 		{
-			if (CachedDefaultMaxWalkSpeed > 0.f)
-			{
-				MoveComp->MaxWalkSpeed = CachedDefaultMaxWalkSpeed;
-			}
+			// [MoveSpeedBaseV1] Aim 종료 시 ActiveBaseWalkSpeed 를 기본(BaseWalkSpeed)로 돌려놓음.
+			//   Hero 가 MaxWalkSpeed 를 ActiveBase * MoveSpeedMultiplier 로 재계산 → 슬로우가 남아 있어도 정확.
+			Hero->SetActiveBaseWalkSpeed(Hero->GetBaseWalkSpeed());
 
 			// ── [Aim Rotation] 회전 방식 복원 ──
 			MoveComp->bOrientRotationToMovement = CachedOrientRotationToMovement;

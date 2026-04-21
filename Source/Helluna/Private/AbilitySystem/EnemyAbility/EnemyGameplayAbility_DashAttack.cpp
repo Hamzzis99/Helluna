@@ -266,6 +266,16 @@ void UEnemyGameplayAbility_DashAttack::TickDash()
 		UGameplayStatics::ApplyDamage(
 			HitActor, FinalDashDamage, Enemy->GetInstigatorController(), Enemy, nullptr);
 
+		// [DashHitVFXV1] 피격 대상 위치에 VFX 멀티캐스트. 서버에서만 호출, 모든 머신에서 Niagara 재생.
+		if (DashHitVFX)
+		{
+			const FVector HitVFXLoc = HitActor->GetActorLocation() + FVector(0.f, 0.f, DashHitVFXZOffset);
+			Enemy->MulticastPlayEffect(HitVFXLoc, DashHitVFX, DashHitVFXScale, false);
+			UE_LOG(LogTemp, Warning,
+				TEXT("[DashHitVFXV1] Hit VFX spawned on %s at (%.0f,%.0f,%.0f) scale=%.2f"),
+				*HitActor->GetName(), HitVFXLoc.X, HitVFXLoc.Y, HitVFXLoc.Z, DashHitVFXScale);
+		}
+
 		if (DashKnockbackForce > 0.f)
 		{
 			if (ACharacter* HitChar = Cast<ACharacter>(HitActor))

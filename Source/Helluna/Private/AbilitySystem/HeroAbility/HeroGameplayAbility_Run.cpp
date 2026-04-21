@@ -12,10 +12,11 @@
 void UHeroGameplayAbility_Run::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData)
 {
 	AHellunaHeroCharacter* RunHero = GetHeroCharacterFromActorInfo();
-	RunHero->GetCharacterMovement()->MaxWalkSpeed = RunSpeed * RunHero->GetMoveSpeedMultiplier();
+	// [MoveSpeedBaseV1] ActiveBaseWalkSpeed 를 RunSpeed 로 세팅 → Hero 가 ActiveBase * MoveSpeedMultiplier 로 재계산.
+	RunHero->SetActiveBaseWalkSpeed(RunSpeed);
 
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
-	
+
 }
 
 void UHeroGameplayAbility_Run::EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled)
@@ -33,9 +34,10 @@ bool UHeroGameplayAbility_Run::IsRun()
 
 void UHeroGameplayAbility_Run::CleanUp()
 {
-	if (CachedDefaultMaxWalkSpeed > 0.f)
+	// [MoveSpeedBaseV1] Run 종료 시 ActiveBaseWalkSpeed 를 기본(BaseWalkSpeed) 로 돌려놓음.
+	//   Hero 가 MaxWalkSpeed 를 재계산 → 슬로우가 남아 있어도 정확.
+	if (AHellunaHeroCharacter* RunHero = GetHeroCharacterFromActorInfo())
 	{
-		AHellunaHeroCharacter* RunHero = GetHeroCharacterFromActorInfo();
-		RunHero->GetCharacterMovement()->MaxWalkSpeed = 400.f * RunHero->GetMoveSpeedMultiplier();
+		RunHero->SetActiveBaseWalkSpeed(RunHero->GetBaseWalkSpeed());
 	}
 }
