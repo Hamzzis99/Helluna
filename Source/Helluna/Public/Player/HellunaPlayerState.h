@@ -104,9 +104,35 @@ public:
 	 * 
 	 * SeamlessTravel 시에도 유지됨 (맵 이동 후 같은 캐릭터로 스폰)
 	 */
-	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Character Select (캐릭터 선택)", 
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Character Select (캐릭터 선택)",
 		meta = (DisplayName = "선택한 캐릭터 타입"))
 	EHellunaHeroType SelectedHeroType;
+
+	// ============================================
+	// 📌 월드맵/미니맵 핑 (서버 권위, 전원 복제)
+	// ============================================
+
+	/** 월드맵 핑 위치 (bHasPing=false면 의미 없음) */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "World Map Ping (월드맵 핑)",
+		meta = (DisplayName = "Ping Location (핑 월드 좌표)"))
+	FVector_NetQuantize PingLocation;
+
+	/** 핑 존재 여부 */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "World Map Ping (월드맵 핑)",
+		meta = (DisplayName = "Has Ping (핑 존재 여부)"))
+	bool bHasPing;
+
+	/** 핑 설정 (서버 권위, HeroController RPC에서 호출) */
+	void Server_AuthoritativeSetPing(const FVector& WorldLocation);
+
+	/** 핑 제거 (서버 권위) */
+	void Server_AuthoritativeClearPing();
+
+	UFUNCTION(BlueprintPure, Category = "World Map Ping (월드맵 핑)")
+	bool HasPing() const { return bHasPing; }
+
+	UFUNCTION(BlueprintPure, Category = "World Map Ping (월드맵 핑)")
+	FVector GetPingLocation() const { return PingLocation; }
 
 	// ============================================
 	// 📌 유틸리티 함수

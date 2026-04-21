@@ -1550,20 +1550,40 @@ void AHellunaHeroController::OnToggleWorldMapInput(const FInputActionValue& Valu
 }
 
 // ============================================================================
-// [WorldMap] 핑 설정/해제 (클라이언트 사이드 전용)
+// [WorldMap] 핑 설정/해제 (서버 권위 복제, 팀 공유, 0.1초 쿨다운)
 // ============================================================================
 
-void AHellunaHeroController::SetLocalPing(const FVector& WorldLocation)
+void AHellunaHeroController::Server_SetWorldPing_Implementation(const FVector& WorldLocation)
 {
-	LocalPingLocation = WorldLocation;
-	bHasLocalPing = true;
-	// DayNightHUDWidget이 매 틱 HasLocalPing()을 폴링하므로 자동 갱신됨
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	const double Now = World->GetTimeSeconds();
+	if (Now - LastPingServerTime < PingCooldownSeconds)
+	{
+		return; // 0.1초 쿨다운 — 드롭
+	}
+	LastPingServerTime = Now;
+
+	AHellunaPlayerState* HPS = GetPlayerState<AHellunaPlayerState>();
+	if (!HPS)
+	{
+		return;
+	}
+	HPS->Server_AuthoritativeSetPing(WorldLocation);
 }
 
-void AHellunaHeroController::ClearLocalPing()
+void AHellunaHeroController::Server_ClearWorldPing_Implementation()
 {
-	bHasLocalPing = false;
-	LocalPingLocation = FVector::ZeroVector;
+	AHellunaPlayerState* HPS = GetPlayerState<AHellunaPlayerState>();
+	if (!HPS)
+	{
+		return;
+	}
+	HPS->Server_AuthoritativeClearPing();
 }
 
 // ════════════════════════════════════════════════════════════════════════════════

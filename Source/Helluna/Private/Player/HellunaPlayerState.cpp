@@ -56,6 +56,8 @@ AHellunaPlayerState::AHellunaPlayerState()
 	PlayerUniqueId = TEXT("");
 	bIsLoggedIn = false;
 	SelectedHeroType = EHellunaHeroType::None;  // None = 미선택
+	PingLocation = FVector_NetQuantize(0, 0, 0);
+	bHasPing = false;
 }
 
 void AHellunaPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -69,6 +71,34 @@ void AHellunaPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& 
 	DOREPLIFETIME(AHellunaPlayerState, PlayerUniqueId);
 	DOREPLIFETIME(AHellunaPlayerState, bIsLoggedIn);
 	DOREPLIFETIME(AHellunaPlayerState, SelectedHeroType);
+	DOREPLIFETIME(AHellunaPlayerState, PingLocation);
+	DOREPLIFETIME(AHellunaPlayerState, bHasPing);
+}
+
+// ============================================
+// 🎯 Server_AuthoritativeSetPing — 핑 위치 설정 (서버 권위)
+// ============================================
+void AHellunaPlayerState::Server_AuthoritativeSetPing(const FVector& WorldLocation)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	PingLocation = FVector_NetQuantize(WorldLocation);
+	bHasPing = true;
+}
+
+// ============================================
+// 🎯 Server_AuthoritativeClearPing — 핑 제거 (서버 권위)
+// ============================================
+void AHellunaPlayerState::Server_AuthoritativeClearPing()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	bHasPing = false;
+	PingLocation = FVector_NetQuantize(0, 0, 0);
 }
 
 // ============================================

@@ -522,24 +522,16 @@ private:
 	TObjectPtr<UHellunaGraphicsSettingsWidget> GraphicsSettingsInstance;
 
 	// =========================================================================================
-	// [WorldMap] 풀스크린 월드맵 + 핑 시스템 (클라이언트 사이드 전용)
+	// [WorldMap] 풀스크린 월드맵 + 핑 시스템 (서버 권위 복제, 팀 공유)
 	// =========================================================================================
 public:
-	/** 로컬 핑 위치 설정 (월드맵 좌클릭 → 핑 생성/이동) */
-	UFUNCTION(BlueprintCallable, Category = "WorldMap (월드맵)")
-	void SetLocalPing(const FVector& WorldLocation);
+	/** 월드맵 좌클릭 → 서버에 핑 설정 요청. 0.1초 쿨다운 적용. PlayerState의 PingLocation/bHasPing 갱신 */
+	UFUNCTION(Server, Reliable, BlueprintCallable, Category = "WorldMap (월드맵)")
+	void Server_SetWorldPing(const FVector& WorldLocation);
 
-	/** 로컬 핑 제거 (월드맵 우클릭) */
-	UFUNCTION(BlueprintCallable, Category = "WorldMap (월드맵)")
-	void ClearLocalPing();
-
-	/** 핑 존재 여부 */
-	UFUNCTION(BlueprintPure, Category = "WorldMap (월드맵)")
-	bool HasLocalPing() const { return bHasLocalPing; }
-
-	/** 핑 월드 좌표 */
-	UFUNCTION(BlueprintPure, Category = "WorldMap (월드맵)")
-	FVector GetLocalPingLocation() const { return LocalPingLocation; }
+	/** 월드맵 우클릭 → 서버에 핑 제거 요청. 쿨다운 없음 */
+	UFUNCTION(Server, Reliable, BlueprintCallable, Category = "WorldMap (월드맵)")
+	void Server_ClearWorldPing();
 
 protected:
 	/** 월드맵 위젯 클래스 (BP에서 WBP_HellunaWorldMap 지정) */
@@ -562,13 +554,9 @@ private:
 	UPROPERTY()
 	TObjectPtr<UHellunaWorldMapWidget> WorldMapWidgetInstance = nullptr;
 
-	/** 핑 월드 좌표 */
-	UPROPERTY()
-	FVector LocalPingLocation = FVector::ZeroVector;
-
-	/** 핑 존재 여부 */
-	UPROPERTY()
-	bool bHasLocalPing = false;
+	/** 서버 측 마지막 핑 설정 시점 (0.1초 쿨다운용, 서버에서만 사용) */
+	double LastPingServerTime = 0.0;
+	static constexpr double PingCooldownSeconds = 0.1;
 
 	/** M키 입력 핸들러 (Enhanced Input) */
 	void OnToggleWorldMapInput(const struct FInputActionValue& Value);
