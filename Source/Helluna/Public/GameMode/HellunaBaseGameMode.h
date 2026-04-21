@@ -46,6 +46,14 @@ struct FLobbyDeployInfo
 
 	UPROPERTY()
 	EHellunaHeroType HeroType = EHellunaHeroType::None;
+
+	// [Loading Barrier] URL에서 전달된 파티 전원 PlayerId 목록 (매칭 완료 시 전체 ID)
+	UPROPERTY()
+	TArray<FString> ExpectedIds;
+
+	// [Loading Barrier] 파티 ID (솔로 매칭 시 0)
+	UPROPERTY()
+	int32 PartyId = 0;
 };
 
 UCLASS()
@@ -80,6 +88,11 @@ protected:
 	void CheckAndRecoverFromCrash(const FString& PlayerId);
 	bool ShouldEnforceLobbyDeployAdmission() const;
 	bool ParseLobbyDeployOptions(const FString& Options, FString& OutPlayerId, int32& OutHeroTypeIndex) const;
+
+	// [Loading Barrier] 확장 파싱: ExpectedIds(CSV) + PartyId 까지 포함. 기본 옵션만 필요하면 기존 함수 사용.
+	bool ParseLobbyDeployOptionsEx(const FString& Options, FString& OutPlayerId, int32& OutHeroTypeIndex,
+		TArray<FString>& OutExpectedIds, int32& OutPartyId) const;
+
 	bool ValidateLobbyDeployAdmission(const FString& PlayerId, int32 HeroTypeIndex, FString& OutErrorMessage) const;
 
 public:
@@ -103,6 +116,9 @@ public:
 	/** 게임 초기화 완료 여부 */
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Game")
 	bool IsGameInitialized() const { return bGameInitialized; }
+
+	// [Loading Barrier] 자식이 override하여 SpawnHeroCharacter 지연 여부 결정. 기본 false.
+	virtual bool ShouldDeferSpawn(APlayerController* PC) const { return false; }
 
 	// ════════════════════════════════════════════════════════════════════════════════
 	// 🔧 디버그 설정

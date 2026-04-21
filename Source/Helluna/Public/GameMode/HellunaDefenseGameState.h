@@ -320,6 +320,40 @@ protected:
     UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤", meta = (DisplayName = "낮 종료 시간"))
     float DayEndTime = 1800.f;
 
+    // ─── 일몰(Dusk) 전환 — Dawn과 대칭 구조 ───────────────────────────────────
+    // EnterNight 순간 UDS Animate를 OFF 하는 대신, 현재 Time of Day(≈1800)에서
+    // NightSettleTime까지 DuskTransitionDuration 동안 Lerp. 동시에 UDW `Change Weather`
+    // 호출에 같은 TransitionTime을 전달해 오로라/별/구름/강수가 한 호흡에 짙어진다.
+    // 0으로 두면 기존 즉시 전환 유지.
+
+    /** 낮→밤 일몰 전환 시간(초). 0이면 즉시 전환. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤", meta = (DisplayName = "일몰 전환 시간(초)"))
+    float DuskTransitionDuration = 8.f;
+
+    /** 일몰 Lerp 목표 UDS 시간 (2200 ≈ 오로라/별 피크 구간). */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤", meta = (DisplayName = "밤 정착 시간"))
+    float NightSettleTime = 2200.f;
+
+    FTimerHandle TimerHandle_DuskTransition;
+    float DuskLerpStart = 0.f;
+    float DuskLerpElapsed = 0.f;
+    float DuskTotalDistance = 0.f;
+    void TickDuskTransition();
+
+    /** Dusk Lerp를 EnterNight 이전에 선제 실행하기 위한 스케줄러 */
+    FTimerHandle TimerHandle_DuskScheduler;
+
+    /** 현재 라운드에서 Dusk가 이미 시작됐는지 (EnterNight 재트리거 가드) */
+    bool bDuskStarted = false;
+
+    /**
+     * Dusk 전환 시작.
+     * Dawn 완료 시점에 (RoundDuration - DuskTransitionDuration)초 뒤로 예약되어 호출.
+     * 모든 인스턴스에서 호출되며, 서버 권위는 ReplicatedRainIntensity 복제, UDS 보유 인스턴스는
+     * UDS Time of Day Lerp + UDW Change Weather(TransitionTime=DuskTransitionDuration) 블렌드.
+     */
+    void StartDuskTransition();
+
     // ═══════════════════════════════════════════════════════════════════════════
     // 🌤️ 랜덤 날씨 시스템
     // ═══════════════════════════════════════════════════════════════════════════
@@ -365,8 +399,12 @@ protected:
         meta = (DisplayName = "Replicated Rain Intensity (서버 권위)"))
     float ReplicatedRainIntensity = 0.f;
 
-    /** 배열에서 랜덤 날씨 선택 후 Change Weather 호출 */
-    void ApplyRandomWeather(bool bIsDay);
+    /**
+     * 배열에서 랜덤 날씨 선택 후 Change Weather 호출.
+     * @param TransitionTimeOverride  >0 이면 WeatherConfig/기본값을 무시하고 이 값을 UDW 블렌드 시간으로 사용.
+     *                                Dusk Lerp가 UDS 시간과 날씨를 같은 호흡으로 맞추기 위해 넘긴다.
+     */
+    void ApplyRandomWeather(bool bIsDay, float TransitionTimeOverride = 0.f);
 
     /** 밤/낮 전환 시 볼류메트릭 클라우드 표시/숨김 토글 */
     void SetVolumetricCloudVisible(bool bVisible);

@@ -720,7 +720,8 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 				LobbyGM->MarkChannelAsPendingDeploy(EmptyChannel.Port);
 				DB->SetPlayerDeployedWithPort(PlayerId, true, EmptyChannel.Port, HeroTypeToIndex(SelectedHeroType));
 				UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Deploy [4]: 채널 배정 | Port=%d | Map=%s"), EmptyChannel.Port, *DeployMapKey);
-				Client_ExecutePartyDeploy(EmptyChannel.Port);
+				// [Loading Barrier] 솔로 Deploy → ExpectedIds = 본인만, PartyId = 0
+				Client_ExecutePartyDeploy(EmptyChannel.Port, PlayerId, /*PartyId=*/0);
 			}
 			else if (LobbyGM->GameServerManager)
 			{
@@ -1877,12 +1878,13 @@ void AHellunaLobbyController::Client_ReceivePartyChatMessage_Implementation(cons
 	UE_LOG(LogHellunaLobby, Verbose, TEXT("[LobbyPC] Client_ReceivePartyChatMessage | Sender=%s | Msg=%s"), *Msg.SenderName, *Msg.Message);
 }
 
-void AHellunaLobbyController::Client_ExecutePartyDeploy_Implementation(int32 GameServerPort)
+void AHellunaLobbyController::Client_ExecutePartyDeploy_Implementation(int32 GameServerPort, const FString& ExpectedIdsJoined, int32 PartyId)
 {
 	// [Fix44-C1] Deploy 성공 → 플래그 리셋 (ClientTravel 실패 시 영구 차단 방지)
 	bDeployInProgress = false;
 
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Client_ExecutePartyDeploy | Port=%d"), GameServerPort);
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Client_ExecutePartyDeploy | Port=%d | PartyId=%d | ExpectedIds=%s"),
+		GameServerPort, PartyId, *ExpectedIdsJoined);
 
 	if (GameServerPort <= 0)
 	{
@@ -1902,8 +1904,18 @@ void AHellunaLobbyController::Client_ExecutePartyDeploy_Implementation(int32 Gam
 	const int32 HeroIndex = HeroTypeToIndex(SelectedHeroType);
 	const FString PlayerId = ReplicatedPlayerId.IsEmpty() ? TEXT("Unknown") : ReplicatedPlayerId;
 
-	const FString TravelURL = FString::Printf(TEXT("%s:%d?HeroType=%d?PlayerId=%s"),
+	FString TravelURL = FString::Printf(TEXT("%s:%d?HeroType=%d?PlayerId=%s"),
 		*GI->ConnectedServerIP, GameServerPort, HeroIndex, *PlayerId);
+
+	// [Loading Barrier] ExpectedIds(CSV) + PartyId 옵션 append
+	if (!ExpectedIdsJoined.IsEmpty())
+	{
+		TravelURL += FString::Printf(TEXT("?ExpectedIds=%s"), *ExpectedIdsJoined);
+	}
+	if (PartyId > 0)
+	{
+		TravelURL += FString::Printf(TEXT("?PartyId=%d"), PartyId);
+	}
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ClientTravel: %s"), *TravelURL);
 	ClientTravel(TravelURL, TRAVEL_Absolute);

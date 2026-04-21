@@ -256,7 +256,7 @@ FReply UHellunaWorldMapWidget::NativeOnMouseButtonDown(const FGeometry& InGeomet
 
     if (InMouseEvent.GetEffectingButton() == EKeys::RightMouseButton)
     {
-        HeroPC->ClearLocalPing();
+        HeroPC->Server_ClearWorldPing();
         return FReply::Handled();
     }
 
@@ -291,7 +291,7 @@ FReply UHellunaWorldMapWidget::NativeOnMouseButtonDown(const FGeometry& InGeomet
         UE_LOG(LogTemp, Warning, TEXT("[WorldMap] Click ClipLocal=(%.0f,%.0f) UV=(%.2f,%.2f) World=(%.0f,%.0f) Zoom=%.2f"),
             ClipLocal.X, ClipLocal.Y, U, V, WorldLoc.X, WorldLoc.Y, MapZoom);
 
-        HeroPC->SetLocalPing(WorldLoc);
+        HeroPC->Server_SetWorldPing(WorldLoc);
         return FReply::Handled();
     }
 
@@ -456,51 +456,93 @@ void UHellunaWorldMapWidget::UpdatePlayerMarkers()
 }
 
 // ============================================================================
-// UpdatePingMarker
+// UpdatePingMarker — 본인 + 팀원 (최대 3명) 서버 복제 핑 렌더
 // ============================================================================
 void UHellunaWorldMapWidget::UpdatePingMarker()
 {
-    AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(GetOwningPlayer());
-    if (!HeroPC || !PingMarker)
-    {
-        return;
-    }
+    APlayerController* PC = GetOwningPlayer();
+    AHellunaPlayerState* LocalPS = PC ? PC->GetPlayerState<AHellunaPlayerState>() : nullptr;
 
-    if (HeroPC->HasLocalPing())
+    // ── 본인 핑 (기존 비주얼: PingMarker + 거리 라벨) ──
+    if (PingMarker)
     {
-        const FVector2D Pixel = WorldToMapPixel(HeroPC->GetLocalPingLocation());
-        UCanvasPanelSlot* PingSlot = Cast<UCanvasPanelSlot>(PingMarker->Slot);
-        if (PingSlot)
+        if (LocalPS && LocalPS->HasPing())
         {
-            const FVector2D PingSize = PingSlot->GetSize();
-            PingSlot->SetPosition(Pixel - PingSize * 0.5f);
-        }
-        PingMarker->SetVisibility(ESlateVisibility::HitTestInvisible);
-
-        if (PingDistanceText)
-        {
-            APawn* MyPawn = GetOwningPlayerPawn();
-            if (MyPawn)
+            const FVector2D Pixel = WorldToMapPixel(LocalPS->GetPingLocation());
+            if (UCanvasPanelSlot* PingSlot = Cast<UCanvasPanelSlot>(PingMarker->Slot))
             {
-                const float DistCM = FVector::Dist2D(MyPawn->GetActorLocation(), HeroPC->GetLocalPingLocation());
-                const int32 DistM = FMath::RoundToInt(DistCM / 100.f);
-                PingDistanceText->SetText(FText::FromString(FString::Printf(TEXT("%dm"), DistM)));
-                PingDistanceText->SetVisibility(ESlateVisibility::HitTestInvisible);
+                const FVector2D PingSize = PingSlot->GetSize();
+                PingSlot->SetPosition(Pixel - PingSize * 0.5f);
+            }
+            PingMarker->SetVisibility(ESlateVisibility::HitTestInvisible);
 
-                if (UCanvasPanelSlot* TextSlot = Cast<UCanvasPanelSlot>(PingDistanceText->Slot))
+            if (PingDistanceText)
+            {
+                if (APawn* MyPawn = GetOwningPlayerPawn())
                 {
-                    TextSlot->SetPosition(Pixel + FVector2D(20.f, -10.f));
+                    const float DistCM = FVector::Dist2D(MyPawn->GetActorLocation(), LocalPS->GetPingLocation());
+                    const int32 DistM = FMath::RoundToInt(DistCM / 100.f);
+                    PingDistanceText->SetText(FText::FromString(FString::Printf(TEXT("%dm"), DistM)));
+                    PingDistanceText->SetVisibility(ESlateVisibility::HitTestInvisible);
+
+                    if (UCanvasPanelSlot* TextSlot = Cast<UCanvasPanelSlot>(PingDistanceText->Slot))
+                    {
+                        TextSlot->SetPosition(Pixel + FVector2D(20.f, -10.f));
+                    }
                 }
             }
         }
-    }
-    else
-    {
-        PingMarker->SetVisibility(ESlateVisibility::Collapsed);
-        if (PingDistanceText)
+        else
         {
-            PingDistanceText->SetText(FText::GetEmpty());
-            PingDistanceText->SetVisibility(ESlateVisibility::Collapsed);
+            PingMarker->SetVisibility(ESlateVisibility::Collapsed);
+            if (PingDistanceText)
+            {
+                PingDistanceText->SetText(FText::GetEmpty());
+                PingDistanceText->SetVisibility(ESlateVisibility::Collapsed);
+            }
         }
+    }
+
+    // ── 팀원 핑 (PlayerArray 순회, 거리 라벨 없음, HeroType 색상) ──
+    UImage* TeamPings[2] = { TeamPing1, TeamPing2 };
+    int32 TeamIdx = 0;
+
+    UWorld* World = GetWorld();
+    AGameStateBase* GSBase = World ? World->GetGameState() : nullptr;
+    if (GSBase)
+    {
+        for (APlayerState* PS : GSBase->PlayerArray)
+        {
+            if (!PS || PS == LocalPS) continue;
+            AHellunaPlayerState* HPS = Cast<AHellunaPlayerState>(PS);
+            if (!HPS || !HPS->HasPing()) continue;
+            if (TeamIdx >= 2) break;
+
+            UImage* Marker = TeamPings[TeamIdx++];
+            if (!Marker) continue;
+
+            const FVector2D Px = WorldToMapPixel(HPS->GetPingLocation());
+            if (UCanvasPanelSlot* S = Cast<UCanvasPanelSlot>(Marker->Slot))
+            {
+                const FVector2D Sz = S->GetSize();
+                S->SetPosition(Px - Sz * 0.5f);
+            }
+
+            FLinearColor C = FLinearColor::White;
+            switch (HPS->GetSelectedHeroType())
+            {
+            case EHellunaHeroType::Liam: C = FLinearColor(0.38f, 0.65f, 0.98f); break;
+            case EHellunaHeroType::Luna: C = FLinearColor(0.96f, 0.45f, 0.71f); break;
+            case EHellunaHeroType::Lui:  C = FLinearColor(0.31f, 1.0f, 0.56f);  break;
+            default: break;
+            }
+            Marker->SetColorAndOpacity(C);
+            Marker->SetVisibility(ESlateVisibility::HitTestInvisible);
+        }
+    }
+
+    for (int32 i = TeamIdx; i < 2; ++i)
+    {
+        if (TeamPings[i]) TeamPings[i]->SetVisibility(ESlateVisibility::Collapsed);
     }
 }

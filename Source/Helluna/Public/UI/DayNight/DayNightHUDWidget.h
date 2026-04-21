@@ -43,9 +43,16 @@ protected:
     UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
     TObjectPtr<UImage> MinimapBaseMarker = nullptr;
 
-    /** 미니맵 핑 마커 이미지 (노란 다이아몬드, WBP에서 추가) */
+    /** 미니맵 핑 마커 이미지 (노란 다이아몬드, WBP에서 추가) — 본인 핑 */
     UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
     TObjectPtr<UImage> MinimapPingMarker = nullptr;
+
+    /** 미니맵 팀원 핑 마커 (최대 2명) — HeroType 색상 적용 */
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    TObjectPtr<UImage> MinimapTeamPing1 = nullptr;
+
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    TObjectPtr<UImage> MinimapTeamPing2 = nullptr;
 
     /** 미니맵 본인 마커 (녹색 화살표) */
     UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))

@@ -523,18 +523,55 @@ void UDayNightHUDWidget::UpdateMinimap()
         MinimapBaseMarker->SetVisibility(ESlateVisibility::Collapsed);
     }
 
-    // ── 핑 마커 갱신 (PC에서 폴링) ──
+    // ── 본인 + 팀원 핑 (서버 복제 기반, PlayerArray 순회) ──
+    APlayerController* LocalPCRef2 = UGameplayStatics::GetPlayerController(this, 0);
+    AHellunaPlayerState* LocalPSForPing = LocalPCRef2 ? LocalPCRef2->GetPlayerState<AHellunaPlayerState>() : nullptr;
+
+    // 본인 핑
     if (MinimapPingMarker)
     {
-        AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(UGameplayStatics::GetPlayerController(this, 0));
-        if (HeroPC && HeroPC->HasLocalPing())
+        if (LocalPSForPing && LocalPSForPing->HasPing())
         {
-            UpdateMarker(MinimapPingMarker, HeroPC->GetLocalPingLocation(), 0.f, false);
+            UpdateMarker(MinimapPingMarker, LocalPSForPing->GetPingLocation(), 0.f, false);
         }
         else
         {
             MinimapPingMarker->SetVisibility(ESlateVisibility::Collapsed);
         }
+    }
+
+    // 팀원 핑 (최대 2명)
+    UImage* TeamPingSlots[2] = { MinimapTeamPing1, MinimapTeamPing2 };
+    int32 PingIdx = 0;
+
+    if (AGameStateBase* GSForPing = World->GetGameState())
+    {
+        for (APlayerState* PS : GSForPing->PlayerArray)
+        {
+            if (!PS || PS == LocalPSForPing) continue;
+            AHellunaPlayerState* HPS = Cast<AHellunaPlayerState>(PS);
+            if (!HPS || !HPS->HasPing()) continue;
+            if (PingIdx >= 2) break;
+
+            UImage* Marker = TeamPingSlots[PingIdx++];
+            if (!Marker) continue;
+
+            UpdateMarker(Marker, HPS->GetPingLocation(), 0.f, false);
+
+            FLinearColor C = FLinearColor::White;
+            switch (HPS->GetSelectedHeroType())
+            {
+            case EHellunaHeroType::Liam: C = FLinearColor(0.38f, 0.65f, 0.98f); break;
+            case EHellunaHeroType::Luna: C = FLinearColor(0.96f, 0.45f, 0.71f); break;
+            case EHellunaHeroType::Lui:  C = FLinearColor(0.31f, 1.0f, 0.56f);  break;
+            default: break;
+            }
+            Marker->SetColorAndOpacity(C);
+        }
+    }
+    for (int32 i = PingIdx; i < 2; ++i)
+    {
+        if (TeamPingSlots[i]) TeamPingSlots[i]->SetVisibility(ESlateVisibility::Collapsed);
     }
 }
 

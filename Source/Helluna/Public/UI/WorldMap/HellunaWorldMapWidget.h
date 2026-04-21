@@ -66,6 +66,13 @@ protected:
     UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
     TObjectPtr<UTextBlock> PingDistanceText = nullptr;
 
+    /** 팀원 핑 마커 (최대 2명) — HeroType 색상 적용, 거리 라벨 없음 */
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    TObjectPtr<UImage> TeamPing1 = nullptr;
+
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    TObjectPtr<UImage> TeamPing2 = nullptr;
+
 public:
     /** 풀맵 열기 (페이드인 + 슬라이드) */
     UFUNCTION(BlueprintCallable, Category = "WorldMap (월드맵)")

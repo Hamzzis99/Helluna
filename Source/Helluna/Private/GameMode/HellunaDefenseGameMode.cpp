@@ -3028,3 +3028,356 @@ void AHellunaDefenseGameMode::Cheat_SetPhaseTimersPaused(bool bPaused)
     PausePrint(TimerHandle_ToDay, TEXT("ToDay"));
     PausePrint(TimerHandle_DayCountdown, TEXT("DayCountdown"));
 }
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [Loading Barrier] 전원 Ready 대기 배리어 구현 (Reedme/loading/04-barrier-protocol.md)
+// ════════════════════════════════════════════════════════════════════════════════
+
+void AHellunaDefenseGameMode::CacheBarrierDeployContext(const FString& PlayerId,
+                                                        const TArray<FString>& InExpectedIds,
+                                                        int32 InPartyId)
+{
+    if (PlayerId.IsEmpty())
+    {
+        return;
+    }
+    FBarrierDeployContext Ctx;
+    Ctx.ExpectedIds = InExpectedIds;
+    Ctx.PartyId = InPartyId;
+    BarrierDeployContexts.Add(PlayerId, MoveTemp(Ctx));
+
+    UE_LOG(LogHelluna, Log, TEXT("[Barrier] CacheDeployContext | PlayerId=%s | Expected=%d | PartyId=%d"),
+        *PlayerId, InExpectedIds.Num(), InPartyId);
+}
+
+bool AHellunaDefenseGameMode::ConsumeBarrierDeployContext(const FString& PlayerId,
+                                                          TArray<FString>& OutExpectedIds,
+                                                          int32& OutPartyId)
+{
+    FBarrierDeployContext Ctx;
+    if (!BarrierDeployContexts.RemoveAndCopyValue(PlayerId, Ctx))
+    {
+        return false;
+    }
+    OutExpectedIds = MoveTemp(Ctx.ExpectedIds);
+    OutPartyId = Ctx.PartyId;
+    return true;
+}
+
+bool AHellunaDefenseGameMode::ShouldDeferSpawn(APlayerController* PC) const
+{
+    if (!IsValid(PC))
+    {
+        return false;
+    }
+    if (BarrierState == ELoadingBarrierState::Idle ||
+        BarrierState == ELoadingBarrierState::Released ||
+        BarrierState == ELoadingBarrierState::Spawned)
+    {
+        return false;
+    }
+    for (const TWeakObjectPtr<APlayerController>& WeakPC : PendingSpawnControllers)
+    {
+        if (WeakPC.Get() == PC)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool AHellunaDefenseGameMode::IsPlayerIdExpected(const FString& PlayerId) const
+{
+    return ExpectedPlayerIds.Contains(PlayerId);
+}
+
+bool AHellunaDefenseGameMode::AreAllExpectedReady() const
+{
+    if (ExpectedPlayerIds.Num() == 0)
+    {
+        return false;
+    }
+    for (const FString& Id : ExpectedPlayerIds)
+    {
+        const bool* bReady = ActualReadyStatus.Find(Id);
+        if (!bReady || !(*bReady))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+TArray<FHellunaReadyInfo> AHellunaDefenseGameMode::BuildPartyStatusSnapshot() const
+{
+    TArray<FHellunaReadyInfo> Out;
+    Out.Reserve(ExpectedPlayerIds.Num());
+    for (const FString& Id : ExpectedPlayerIds)
+    {
+        FHellunaReadyInfo Info;
+        Info.PlayerId = Id;
+        const bool* b = ActualReadyStatus.Find(Id);
+        Info.bReady = (b && *b);
+        Out.Add(Info);
+    }
+    return Out;
+}
+
+void AHellunaDefenseGameMode::RegisterControllerInBarrier(APlayerController* NewPC,
+                                                         const FString& PlayerId,
+                                                         const TArray<FString>& InExpectedIds,
+                                                         int32 InPartyId)
+{
+    if (!IsValid(NewPC))
+    {
+        UE_LOG(LogHelluna, Warning, TEXT("[Barrier] RegisterControllerInBarrier — NewPC null, skip"));
+        return;
+    }
+
+    // 1. Idle → WaitingForArrivals 진입 시 ExpectedIds 캐시 + Hard Timer 시작
+    if (BarrierState == ELoadingBarrierState::Idle)
+    {
+        ExpectedPlayerIds = InExpectedIds;
+        BarrierPartyId = InPartyId;
+        // 솔로 매칭 혹은 ExpectedIds 누락 시 → 해당 플레이어만 기대
+        if (ExpectedPlayerIds.Num() == 0 && !PlayerId.IsEmpty())
+        {
+            ExpectedPlayerIds.Add(PlayerId);
+        }
+
+        BarrierState = ELoadingBarrierState::WaitingForArrivals;
+
+        if (UWorld* W = GetWorld())
+        {
+            W->GetTimerManager().SetTimer(BarrierHardTimeoutTimer, this,
+                &AHellunaDefenseGameMode::OnBarrierHardTimeout,
+                BarrierHardTimeoutSeconds, false);
+        }
+
+        UE_LOG(LogHelluna, Log, TEXT("[Barrier] WaitingForArrivals 시작 | PartyId=%d | Expected=%d | HardTimeout=%.1fs"),
+            BarrierPartyId, ExpectedPlayerIds.Num(), BarrierHardTimeoutSeconds);
+    }
+    else if (BarrierState == ELoadingBarrierState::Released ||
+             BarrierState == ELoadingBarrierState::Spawned)
+    {
+        // 배리어 이미 해제 후 늦게 도착 — 즉시 스폰 (Rejoin 경로와 유사)
+        UE_LOG(LogHelluna, Warning, TEXT("[Barrier] 해제 후 도착 | PlayerId=%s → 즉시 스폰"), *PlayerId);
+        SpawnHeroCharacter(NewPC);
+        return;
+    }
+
+    // 2. ArrivedPlayerIds 갱신 + PendingSpawnControllers 추가
+    if (!PlayerId.IsEmpty())
+    {
+        ArrivedPlayerIds.Add(PlayerId);
+        if (!ActualReadyStatus.Contains(PlayerId))
+        {
+            ActualReadyStatus.Add(PlayerId, false);
+        }
+    }
+
+    const bool bAlreadyPending = PendingSpawnControllers.ContainsByPredicate(
+        [NewPC](const TWeakObjectPtr<APlayerController>& W) { return W.Get() == NewPC; });
+    if (!bAlreadyPending)
+    {
+        PendingSpawnControllers.Add(NewPC);
+    }
+
+    // 3. 전원 도착 시 WaitingForReady 전이
+    if (BarrierState == ELoadingBarrierState::WaitingForArrivals &&
+        ArrivedPlayerIds.Num() >= ExpectedPlayerIds.Num())
+    {
+        BarrierState = ELoadingBarrierState::WaitingForReady;
+        UE_LOG(LogHelluna, Log, TEXT("[Barrier] WaitingForReady 전이 | Arrived=%d/%d"),
+            ArrivedPlayerIds.Num(), ExpectedPlayerIds.Num());
+    }
+
+    UE_LOG(LogHelluna, Log, TEXT("[Barrier] 도착 등록 | PlayerId=%s | Arrived=%d/%d | Pending=%d"),
+        *PlayerId, ArrivedPlayerIds.Num(), ExpectedPlayerIds.Num(), PendingSpawnControllers.Num());
+
+    // 4. 클라에 로딩 씬 진입 RPC — HeroController에 정의된 Client_EnterLoadingScene 호출
+    //    (Stage E 구현체. 해당 RPC는 최소한 ViewTarget 전환 + HUD 추가를 수행)
+    if (AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(NewPC))
+    {
+        HeroPC->Client_EnterLoadingScene(ExpectedPlayerIds, BarrierPartyId);
+    }
+}
+
+void AHellunaDefenseGameMode::OnClientReportedReady(APlayerController* ReportingPC, const FString& PlayerId)
+{
+    if (BarrierState != ELoadingBarrierState::WaitingForArrivals &&
+        BarrierState != ELoadingBarrierState::WaitingForReady)
+    {
+        UE_LOG(LogHelluna, Verbose, TEXT("[Barrier] 무시된 Ready (상태=%d) | PlayerId=%s"),
+            static_cast<int32>(BarrierState), *PlayerId);
+        return;
+    }
+
+    if (PlayerId.IsEmpty() || !IsPlayerIdExpected(PlayerId))
+    {
+        UE_LOG(LogHelluna, Warning, TEXT("[Barrier] 예상 밖 Ready | PlayerId=%s"), *PlayerId);
+        return;
+    }
+
+    bool& bRef = ActualReadyStatus.FindOrAdd(PlayerId);
+    if (bRef)
+    {
+        return; // 멱등 — 이미 Ready
+    }
+    bRef = true;
+
+    UE_LOG(LogHelluna, Log, TEXT("[Barrier] Ready 수신 | PlayerId=%s | Ready=%d/%d"),
+        *PlayerId, ActualReadyStatus.Num(), ExpectedPlayerIds.Num());
+
+    // 1. 보고한 컨트롤러를 구독자로 추가 + 현재 스냅샷 전송
+    if (IsValid(ReportingPC))
+    {
+        const bool bAlreadySubscribed = SubscribedListeners.ContainsByPredicate(
+            [ReportingPC](const TWeakObjectPtr<APlayerController>& W) { return W.Get() == ReportingPC; });
+        if (!bAlreadySubscribed)
+        {
+            SubscribedListeners.Add(ReportingPC);
+        }
+
+        if (AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(ReportingPC))
+        {
+            HeroPC->Client_DeliverPartyStatus(BuildPartyStatusSnapshot());
+        }
+    }
+
+    // 2. 구독자 전원에게 방송
+    BroadcastReadyStatusUpdate(PlayerId, true);
+
+    // 3. 첫 Ready 수신 시 Min Timer 시작
+    int32 ReadyCount = 0;
+    for (const auto& Pair : ActualReadyStatus)
+    {
+        if (Pair.Value) { ++ReadyCount; }
+    }
+    if (ReadyCount == 1)
+    {
+        if (UWorld* W = GetWorld())
+        {
+            W->GetTimerManager().SetTimer(BarrierMinTimeoutTimer, this,
+                &AHellunaDefenseGameMode::OnBarrierMinTimeout,
+                BarrierMinTimeoutSeconds, false);
+        }
+        UE_LOG(LogHelluna, Log, TEXT("[Barrier] MinTimeout 타이머 시작 (%.1fs)"), BarrierMinTimeoutSeconds);
+    }
+
+    // 4. 전원 Ready 감지 → 해제
+    if (BarrierState == ELoadingBarrierState::WaitingForReady && AreAllExpectedReady())
+    {
+        ReleaseBarrier(TEXT("AllReady"));
+    }
+}
+
+void AHellunaDefenseGameMode::BroadcastReadyStatusUpdate(const FString& ChangedPlayerId, bool bReady)
+{
+    for (int32 i = SubscribedListeners.Num() - 1; i >= 0; --i)
+    {
+        TWeakObjectPtr<APlayerController> Weak = SubscribedListeners[i];
+        if (!Weak.IsValid())
+        {
+            SubscribedListeners.RemoveAt(i);
+            continue;
+        }
+
+        if (AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(Weak.Get()))
+        {
+            HeroPC->Client_UpdateReadyStatus(ChangedPlayerId, bReady);
+        }
+    }
+}
+
+void AHellunaDefenseGameMode::OnBarrierHardTimeout()
+{
+    if (BarrierState == ELoadingBarrierState::Released ||
+        BarrierState == ELoadingBarrierState::Spawned)
+    {
+        return;
+    }
+    if (ArrivedPlayerIds.Num() == 0)
+    {
+        UE_LOG(LogHelluna, Warning, TEXT("[Barrier] HardTimeout — Arrived=0, 재대기"));
+        return;
+    }
+
+    UE_LOG(LogHelluna, Warning, TEXT("[Barrier] HardTimeout | Arrived=%d/%d | Ready=%d"),
+        ArrivedPlayerIds.Num(), ExpectedPlayerIds.Num(), ActualReadyStatus.Num());
+    ReleaseBarrier(TEXT("HardTimeout"));
+}
+
+void AHellunaDefenseGameMode::OnBarrierMinTimeout()
+{
+    if (BarrierState == ELoadingBarrierState::Released ||
+        BarrierState == ELoadingBarrierState::Spawned)
+    {
+        return;
+    }
+    int32 ReadyCount = 0;
+    for (const auto& Pair : ActualReadyStatus)
+    {
+        if (Pair.Value) { ++ReadyCount; }
+    }
+    if (ReadyCount == 0)
+    {
+        return;
+    }
+
+    UE_LOG(LogHelluna, Warning, TEXT("[Barrier] MinTimeout | Ready=%d/%d → 진행"),
+        ReadyCount, ExpectedPlayerIds.Num());
+    ReleaseBarrier(TEXT("MinTimeout"));
+}
+
+void AHellunaDefenseGameMode::ReleaseBarrier(const FString& Reason)
+{
+    if (BarrierState == ELoadingBarrierState::Released ||
+        BarrierState == ELoadingBarrierState::Spawned)
+    {
+        return;
+    }
+    BarrierState = ELoadingBarrierState::Released;
+
+    if (UWorld* W = GetWorld())
+    {
+        W->GetTimerManager().ClearTimer(BarrierHardTimeoutTimer);
+        W->GetTimerManager().ClearTimer(BarrierMinTimeoutTimer);
+    }
+
+    int32 ReadyCount = 0;
+    for (const auto& Pair : ActualReadyStatus)
+    {
+        if (Pair.Value) { ++ReadyCount; }
+    }
+    UE_LOG(LogHelluna, Log, TEXT("[Barrier] 해제 | 사유=%s | Arrived=%d Ready=%d Expected=%d | PendingSpawn=%d"),
+        *Reason, ArrivedPlayerIds.Num(), ReadyCount, ExpectedPlayerIds.Num(), PendingSpawnControllers.Num());
+
+    // Pending 컨트롤러 스냅샷 — 스폰 중 배열 변경 방지
+    TArray<TWeakObjectPtr<APlayerController>> Snapshot = PendingSpawnControllers;
+    PendingSpawnControllers.Reset();
+
+    for (const TWeakObjectPtr<APlayerController>& Weak : Snapshot)
+    {
+        APlayerController* PC = Weak.Get();
+        if (!IsValid(PC))
+        {
+            continue;
+        }
+        SpawnHeroCharacter(PC);
+
+        if (AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(PC))
+        {
+            HeroPC->Client_FadeToGame();
+        }
+    }
+
+    // 전원 스폰 후 한 번만 게임 초기화
+    if (!bGameInitialized)
+    {
+        InitializeGame();
+    }
+
+    BarrierState = ELoadingBarrierState::Spawned;
+    UE_LOG(LogHelluna, Log, TEXT("[Barrier] Spawned 상태 진입 — 배리어 완료"));
+}

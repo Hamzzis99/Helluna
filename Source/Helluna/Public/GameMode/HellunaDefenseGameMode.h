@@ -20,6 +20,7 @@
 #include "GameMode/HellunaBaseGameMode.h"
 #include "HellunaTypes.h"
 #include "Persistence/Inv_SaveTypes.h"
+#include "Loading/HellunaLoadingTypes.h"
 #include "HellunaDefenseGameMode.generated.h"
 
 class ATargetPoint;
@@ -694,6 +695,94 @@ protected:
 	TMap<FString, FDisconnectedPlayerData> DisconnectedPlayers;
 
 	void OnGracePeriodExpired(FString PlayerId);
+
+	// ════════════════════════════════════════════════════════════════════════════════
+	// [Loading Barrier] 전원 Ready 대기 배리어 (Reedme/loading/04-barrier-protocol.md)
+	// ════════════════════════════════════════════════════════════════════════════════
+public:
+	/** Phase 6 PostLogin에서 호출 — 컨트롤러를 배리어 풀에 등록하고 로딩 씬에 진입시킨다. */
+	void RegisterControllerInBarrier(APlayerController* NewPC,
+	                                 const FString& PlayerId,
+	                                 const TArray<FString>& InExpectedIds,
+	                                 int32 InPartyId);
+
+	/** 클라이언트 Ready 수신 — HeroController::Server_ReportClientReady에서 호출. */
+	void OnClientReportedReady(APlayerController* ReportingPC, const FString& PlayerId);
+
+	/** BaseGameMode::SpawnHeroCharacter의 지연 판정 훅. PC가 배리어 대기 큐에 있으면 true. */
+	virtual bool ShouldDeferSpawn(APlayerController* PC) const override;
+
+	/** 현재 배리어 상태 조회 */
+	ELoadingBarrierState GetBarrierState() const { return BarrierState; }
+
+	/** PostLogin Phase 6에서 호출 — SwapToGameController/SpawnHero 타이머 체인이 끝난 뒤에도
+	 *  새 컨트롤러가 배리어 ExpectedIds/PartyId 에 접근할 수 있도록 캐시해둔다.
+	 *  SpawnHeroCharacter 첫 호출 시 소비되어 제거된다. */
+	void CacheBarrierDeployContext(const FString& PlayerId,
+	                               const TArray<FString>& InExpectedIds,
+	                               int32 InPartyId);
+
+	/** 캐시된 컨텍스트를 꺼내서 제거(소비). 없으면 false. */
+	bool ConsumeBarrierDeployContext(const FString& PlayerId,
+	                                 TArray<FString>& OutExpectedIds,
+	                                 int32& OutPartyId);
+
+protected:
+	UPROPERTY()
+	ELoadingBarrierState BarrierState = ELoadingBarrierState::Idle;
+
+	UPROPERTY()
+	int32 BarrierPartyId = 0;
+
+	UPROPERTY()
+	TArray<FString> ExpectedPlayerIds;
+
+	UPROPERTY()
+	TSet<FString> ArrivedPlayerIds;
+
+	/** PlayerId → 실제 Ready 여부 (서버 권위). */
+	UPROPERTY()
+	TMap<FString, bool> ActualReadyStatus;
+
+	/** 배리어 해제 시 Pawn 을 스폰할 컨트롤러들. */
+	TArray<TWeakObjectPtr<APlayerController>> PendingSpawnControllers;
+
+	/** 파티 현황 RPC 구독자 목록 (내 Ready 송신 이후에만 이 셋에 추가됨). */
+	TArray<TWeakObjectPtr<APlayerController>> SubscribedListeners;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|LoadingBarrier",
+		meta = (DisplayName = "Hard Timeout (seconds)", ClampMin = "5.0"))
+	float BarrierHardTimeoutSeconds = 60.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|LoadingBarrier",
+		meta = (DisplayName = "Min Timeout (seconds, after first Ready)", ClampMin = "1.0"))
+	float BarrierMinTimeoutSeconds = 30.0f;
+
+	FTimerHandle BarrierHardTimeoutTimer;
+	FTimerHandle BarrierMinTimeoutTimer;
+
+	void OnBarrierHardTimeout();
+	void OnBarrierMinTimeout();
+
+	/** 배리어 해제 — 전원 SpawnHero + InitializeGame + Client_FadeToGame. */
+	void ReleaseBarrier(const FString& Reason);
+
+	/** 구독자 전원에게 특정 플레이어의 Ready 상태 변경 방송. */
+	void BroadcastReadyStatusUpdate(const FString& ChangedPlayerId, bool bReady);
+
+	/** 파티 현황 스냅샷 빌드. */
+	TArray<FHellunaReadyInfo> BuildPartyStatusSnapshot() const;
+
+	bool IsPlayerIdExpected(const FString& PlayerId) const;
+	bool AreAllExpectedReady() const;
+
+	/** PlayerId → (ExpectedIds, PartyId) — SwapToGameController 타이머 체인을 넘겨받기 위한 per-player 캐시. */
+	struct FBarrierDeployContext
+	{
+		TArray<FString> ExpectedIds;
+		int32 PartyId = 0;
+	};
+	TMap<FString, FBarrierDeployContext> BarrierDeployContexts;
 
 private:
 	void ProcessPlayerGameResult(APlayerController* PC, bool bSurvived);
