@@ -680,6 +680,29 @@ void AHellunaEnemyCharacter::OnMonsterDeath(AActor* DeadActor, AActor* KillerAct
 		*DeathTag.ToString());
 #endif
 	STComp->SendStateTreeEvent(DeathTag);
+
+	// [DeathWatchdogV1] StateTree 가 NavMesh 막힌 위치 등에서 Chase 재진입 사이클에 갇히면
+	//   Run/Attack → Death 이벤트 전이가 씹혀 GA_Death 가 활성화되지 않고 phantom 이 남음
+	//   (capsule NoCollision + AI 계속 돎). 5초 내 bDespawnStarted 미진입 시 강제 Despawn.
+	//   정상 경로에서는 bDespawnStarted 이미 true 여서 no-op.
+	//   (3초는 긴 사망 몽타주를 끊을 수 있어 5초로 여유)
+	if (UWorld* World = GetWorld())
+	{
+		FTimerHandle WatchdogHandle;
+		TWeakObjectPtr<AHellunaEnemyCharacter> WeakThis(this);
+		World->GetTimerManager().SetTimer(WatchdogHandle,
+			[WeakThis]()
+			{
+				AHellunaEnemyCharacter* Self = WeakThis.Get();
+				if (!Self || Self->IsActorBeingDestroyed()) return;
+				if (Self->bDespawnStarted) return;
+				UE_LOG(LogTemp, Warning,
+					TEXT("[DeathWatchdogV1] Enemy=%s — StateTree Death 전이 타임아웃, 강제 Despawn"),
+					*GetNameSafe(Self));
+				Self->DespawnMassEntityOnServer(TEXT("DeathWatchdog"));
+			},
+			5.0f, false);
+	}
 }
 
 // ============================================================
@@ -1003,6 +1026,22 @@ void AHellunaEnemyCharacter::OnAttackBoxBeginOverlap(UPrimitiveComponent* Overla
 		: CurrentAttackDamage;
 
 	ServerApplyDamage(OtherActor, FinalDamage, HitLocation);
+
+	// [KnockbackV1] 넉백 옵션 (기본 OFF). ACharacter 계열만 LaunchCharacter 적용.
+	if (bCachedKnockbackEnabled && CachedKnockbackForce > 0.f)
+	{
+		if (ACharacter* HitChar = Cast<ACharacter>(OtherActor))
+		{
+			FVector KnockDir = (OtherActor->GetActorLocation() - GetActorLocation()).GetSafeNormal2D();
+			if (KnockDir.IsNearlyZero())
+			{
+				KnockDir = GetActorForwardVector();
+			}
+			KnockDir.Z = 0.2f;
+			KnockDir.Normalize();
+			HitChar->LaunchCharacter(KnockDir * CachedKnockbackForce, true, true);
+		}
+	}
 
 	if (CachedHitVFX)
 	{
@@ -1392,6 +1431,25 @@ void AHellunaEnemyCharacter::Multicast_PlayWorldCameraShake_Implementation(
 // 플레이어가 빠르게 움직이면 스무딩 지연으로 Notify 발화 시 클라 각도가 서버와 불일치.
 // 이 RPC 로 Notify 직전에 한 번 더 강제 스냅해 연출 밀림 차단.
 // ============================================================
+void AHellunaEnemyCharacter::Multicast_StopMontage_Implementation(UAnimMontage* Montage, float BlendOutTime)
+{
+	if (!Montage) return;
+	if (USkeletalMeshComponent* SkelMesh = GetMesh())
+	{
+		if (UAnimInstance* AnimInst = SkelMesh->GetAnimInstance())
+		{
+			// 해당 몬타지가 재생 중일 때만 중단 (다른 몬타지가 이미 덮었으면 무시)
+			if (AnimInst->Montage_IsPlaying(Montage))
+			{
+				AnimInst->Montage_Stop(FMath::Max(0.f, BlendOutTime), Montage);
+				UE_LOG(LogTemp, Warning,
+					TEXT("[Enemy][StopMontage] %s stopped montage=%s blend=%.2f"),
+					*GetName(), *Montage->GetName(), BlendOutTime);
+			}
+		}
+	}
+}
+
 void AHellunaEnemyCharacter::Multicast_SyncAttackRotation_Implementation(FRotator NewRotation)
 {
 	if (HasAuthority() || GetNetMode() == NM_DedicatedServer) return;

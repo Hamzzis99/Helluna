@@ -72,6 +72,24 @@ struct HELLUNA_API FBossAttackEntry
 		meta = (DisplayName = "개별 쿨타임 (초, 0=글로벌만)", ClampMin = "0.0"))
 	float Cooldown = 0.f;
 
+	/**
+	 * [HpRatioFilterV1] 이 엔트리를 후보로 삼는 보스 HP 비율 하한 (0.0=0%, 1.0=100%).
+	 *   현재 HP 비율이 [HpRatioMin, HpRatioMax] 안에 있어야 후보에 포함.
+	 *   기본 0.0 → HP 무관.
+	 *   예) GA_Boss_Time 를 "HP 50% 이하 전용" 으로 만들고 싶으면 Min=0, Max=0.5.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HP 조건",
+		meta = (DisplayName = "HP 비율 하한 (0~1)", ClampMin = "0.0", ClampMax = "1.0"))
+	float HpRatioMin = 0.f;
+
+	/**
+	 * [HpRatioFilterV1] 이 엔트리를 후보로 삼는 보스 HP 비율 상한 (0.0=0%, 1.0=100%).
+	 *   기본 1.0 → HP 무관.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HP 조건",
+		meta = (DisplayName = "HP 비율 상한 (0~1)", ClampMin = "0.0", ClampMax = "1.0"))
+	float HpRatioMax = 1.f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "디버그",
 		meta = (DisplayName = "디버그 태그"))
 	FName DebugTag = NAME_None;

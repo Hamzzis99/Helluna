@@ -14,9 +14,11 @@
 #include "Animation/AnimInstance.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Character/HellunaEnemyCharacter.h"
+#include "Character/EnemyComponent/HellunaHealthComponent.h"
 #include "AbilitySystem/HellunaAbilitySystemComponent.h"
 #include "AbilitySystem/HellunaEnemyGameplayAbility.h"
 #include "AbilitySystem/EnemyAbility/EnemyGameplayAbility_Attack.h"
+#include "AbilitySystem/EnemyAbility/EnemyGameplayAbility_DashAttack.h"
 
 namespace BossChooseAttackHelpers
 {
@@ -69,8 +71,10 @@ EStateTreeRunStatus FSTTask_BossChooseAttack::EnterState(
 		CMC->bUseControllerDesiredRotation = true;
 	}
 
-	// InitialDelay는 최초 진입에만 강제. 이후 재진입(Walk 후 복귀 등)에서는
-	// 이미 WalkReentryDelay 등으로 CooldownRemaining이 세팅되어 있을 수 있어 보존.
+	// [BossAttackCooldownPersistV1] Per-entry 쿨다운은 Enemy 캐릭터의 BossAttackCooldowns 맵에 저장되어
+	//   Attack 상태 Exit/Re-enter 에도 살아남는다. 여기서는 리셋하지 않음.
+	//   - Data.PerEntryCooldowns (legacy) 는 ActiveInstanceData 특성상 매 enter 마다 초기화되어 버그 원인이었음.
+	// InitialDelay 는 글로벌 쿨에만 영향 (최초 진입에만 강제).
 	if (Data.bFirstEnter)
 	{
 		Data.CooldownRemaining   = InitialDelay;
@@ -86,7 +90,7 @@ EStateTreeRunStatus FSTTask_BossChooseAttack::EnterState(
 		Data.CooldownRemaining = FMath::Max(Data.CooldownRemaining, InitialDelay);
 	}
 
-	// Per-entry 쿨다운 배열 크기 동기화 (풀이 수정됐을 수 있음)
+	// Per-entry 쿨다운 배열 크기 동기화 (legacy — 아래에서 Enemy 맵을 우선 사용)
 	if (Data.PerEntryCooldowns.Num() != AttackPool.Num())
 	{
 		Data.PerEntryCooldowns.SetNumZeroed(AttackPool.Num());
@@ -152,12 +156,33 @@ EStateTreeRunStatus FSTTask_BossChooseAttack::Tick(
 		}
 	}
 
-	// 타겟 있으면 무조건 회전 (몬타지 재생 중이어도) — 사용자 요구: "공격 몬타지 중에도 나를 바라봐"
+	// [DashDirLockV2] 대쉬 GA 활성 중이면 회전 스킵 — 준비/돌진 동안 방향 고정 (사용자 요구).
+	// DashAttack 가 EndAbility 호출 직전 자체적으로 플레이어 face 함 ([DashEndV1] 로그).
+	bool bDashActive = false;
+	for (const FGameplayAbilitySpec& Spec : ASC->GetActivatableAbilities())
+	{
+		if (Spec.IsActive() && Spec.Ability && Spec.Ability->IsA<UEnemyGameplayAbility_DashAttack>())
+		{
+			bDashActive = true;
+			break;
+		}
+	}
+
+	// 타겟 있으면 무조건 회전 (몬타지 재생 중이어도) — 단 대쉬 중엔 스킵
 	bool bFaceCalled = false;
-	if (TD.HasValidTarget())
+	if (TD.HasValidTarget() && !bDashActive)
 	{
 		BossChooseAttackHelpers::FaceTarget(AIC, Pawn, TD.TargetActor.Get(), DeltaTime, RotationSpeed);
 		bFaceCalled = true;
+	}
+	else if (bDashActive)
+	{
+		static int32 s_DashSkipLogCount = 0;
+		if ((++s_DashSkipLogCount % 30) == 1)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[DashDirLockV2] BossChooseAttack — DashAttack GA active, rotation skipped"));
+		}
 	}
 
 	// ═══ [AttackAim] 회전 이슈 분석용 진단 로그 ═══
@@ -216,6 +241,24 @@ EStateTreeRunStatus FSTTask_BossChooseAttack::Tick(
 	{
 		Data.CooldownRemaining -= DeltaTime;
 	}
+	// [BossAttackCooldownPersistV1] Enemy 캐릭터의 맵을 기준으로 decrement.
+	// 0 이하가 되면 맵에서 제거 (빈 맵일 때는 아무 비용 없음).
+	{
+		TArray<TSubclassOf<UHellunaEnemyGameplayAbility>, TInlineAllocator<8>> KeysToRemove;
+		for (TPair<TSubclassOf<UHellunaEnemyGameplayAbility>, float>& Pair : Enemy->BossAttackCooldowns)
+		{
+			Pair.Value -= DeltaTime;
+			if (Pair.Value <= 0.f)
+			{
+				KeysToRemove.Add(Pair.Key);
+			}
+		}
+		for (const TSubclassOf<UHellunaEnemyGameplayAbility>& K : KeysToRemove)
+		{
+			Enemy->BossAttackCooldowns.Remove(K);
+		}
+	}
+	// legacy 배열도 동기화 (BP / 디버그 뷰 용도 — 필터링엔 쓰지 않음)
 	for (int32 i = 0; i < Data.PerEntryCooldowns.Num(); ++i)
 	{
 		if (Data.PerEntryCooldowns[i] > 0.f)
@@ -241,8 +284,16 @@ EStateTreeRunStatus FSTTask_BossChooseAttack::Tick(
 	}
 
 	// ── 후보 필터링 ───────────────────────────────────────────────────
-	// 거리 범위 + per-entry 쿨다운 + 연속 상한 기준으로 사용 가능한 엔트리만 수집.
+	// 거리 범위 + per-entry 쿨다운 + 연속 상한 + HP 비율 기준으로 사용 가능한 엔트리만 수집.
 	// [BossWalkPriorityV1] GA 후보와 Walk 후보를 분리해 우선순위를 적용한다.
+
+	// [HpRatioFilterV1] 보스 현재 HP 비율 (0.0~1.0). HealthComponent 없으면 1.0 으로 간주.
+	float BossHpRatio = 1.f;
+	if (UHellunaHealthComponent* HPComp = Enemy->FindComponentByClass<UHellunaHealthComponent>())
+	{
+		BossHpRatio = HPComp->GetHealthNormalized();
+	}
+
 	TArray<int32> AbilityCandidates;
 	TArray<int32> WalkCandidates;
 	AbilityCandidates.Reserve(AttackPool.Num());
@@ -252,9 +303,32 @@ EStateTreeRunStatus FSTTask_BossChooseAttack::Tick(
 		const FBossAttackEntry& E = AttackPool[i];
 		if (Dist < E.MinRange || Dist > E.MaxRange) continue;
 
-		// 개별 쿨다운 남아있으면 제외
-		if (Data.PerEntryCooldowns.IsValidIndex(i) && Data.PerEntryCooldowns[i] > 0.f)
+		// [HpRatioFilterV1] HP 비율 조건 체크 — 엔트리 범위 밖이면 제외.
+		// 기본값 Min=0, Max=1 이면 항상 통과 (HP 무관). GA_Boss_Time 처럼 특정 HP 구간 전용은
+		// Max=0.5 등으로 설정하면 HP 50% 이하에서만 후보가 됨.
+		if (BossHpRatio < E.HpRatioMin || BossHpRatio > E.HpRatioMax)
+		{
+			UE_LOG(LogTemp, Verbose,
+				TEXT("[HpRatioFilterV1] entry #%d (%s) skipped — hp=%.2f not in [%.2f..%.2f]"),
+				i, *E.DebugTag.ToString(), BossHpRatio, E.HpRatioMin, E.HpRatioMax);
 			continue;
+		}
+
+		// [BossAttackCooldownPersistV1] 개별 쿨다운 남아있으면 제외 — Enemy 캐릭터의 맵 조회.
+		// Walk 슬롯(AttackAbility=null) 은 class key 가 없어 자동 통과.
+		if (E.AttackAbility.Get())
+		{
+			if (const float* RemainCd = Enemy->BossAttackCooldowns.Find(E.AttackAbility))
+			{
+				if (*RemainCd > 0.f)
+				{
+					UE_LOG(LogTemp, Verbose,
+						TEXT("[BossAttackCooldownPersistV1] entry #%d (%s) skipped — cd=%.2fs remaining"),
+						i, *E.DebugTag.ToString(), *RemainCd);
+					continue;
+				}
+			}
+		}
 
 		// 연속 상한 초과 시 제외 (Sequential 모드는 예외)
 		if (SelectionMode != EBossChooseAttackMode::Sequential
@@ -435,6 +509,16 @@ EStateTreeRunStatus FSTTask_BossChooseAttack::Tick(
 	if (bActivated)
 	{
 		Data.CooldownRemaining = AttackCooldown;
+
+		// [BossAttackCooldownPersistV1] Attack 상태 재진입에도 살아남도록 Enemy 맵에 쿨 저장.
+		if (Chosen.Cooldown > 0.f)
+		{
+			Enemy->BossAttackCooldowns.Add(GAClass, Chosen.Cooldown);
+			UE_LOG(LogTemp, Warning,
+				TEXT("[BossAttackCooldownPersistV1] entry '%s' activated — cd=%.2fs set on Enemy map"),
+				*Chosen.DebugTag.ToString(), Chosen.Cooldown);
+		}
+		// legacy 배열도 동기화 (디버그 뷰 용)
 		if (Data.PerEntryCooldowns.IsValidIndex(ChosenIndex))
 		{
 			Data.PerEntryCooldowns[ChosenIndex] = Chosen.Cooldown > 0.f ? Chosen.Cooldown : 0.f;

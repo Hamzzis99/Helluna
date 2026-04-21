@@ -50,15 +50,23 @@ protected:
 
 
 
-private:
-
+protected:
 	// ✅ 로컬이면 FocusedActor, 서버면 ServerFarmingTarget을 가져온다
 	AActor* GetFarmingTarget(const FGameplayAbilityActorInfo* ActorInfo) const;
 	AActor* ResolveFarmingTarget(const FGameplayAbilityActorInfo* ActorInfo);
 	bool IsTargetWithinFarmingRange(const FGameplayAbilityActorInfo* ActorInfo, AActor* Target) const;
 
 	// ✅ 로컬 체감: 즉시 Yaw만 회전 (Pawn + Controller)
+	// [PreFaceV1] 자식 GA(OreMine)에서 곡괭이 스왑 대기 전에 미리 호출 가능하도록 protected 로 승격.
 	void FaceToTarget_InstantLocalOnly(const FGameplayAbilityActorInfo* ActorInfo, const FVector& TargetLocation) const;
+
+	// [PreFaceV1] CMC 회전 락 + 타겟 캐시 + 스냅 + 회전 을 한 번에 수행.
+	// 자식 GA(OreMine)가 0.15s 스왑 대기 전에 선제 호출 → 1번째 스윙 회전 누락 방지.
+	// 이미 Prime 된 상태(bRotationModeSaved=true)면 CMC 백업은 건너뛰고 회전만 재적용.
+	// @return 타겟 해석 성공 여부.
+	bool PrimeFarmingPoseBeforeSwing(const FGameplayAbilityActorInfo* ActorInfo);
+
+private:
 
 	/**
 	 * [레거시] 몽타주 재생 시작 후 데미지가 적용되는 시점 (0.0 ~ 1.0).
@@ -109,5 +117,13 @@ private:
 	UPROPERTY()
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> FarmingTask = nullptr;
 
+protected:
+	// [PreFaceV1] 자식 GA(OreMine)가 스왑 대기 전에 타겟 캐시/회전 백업을 공유하도록 protected.
 	TWeakObjectPtr<AActor> CachedFarmingTarget;
+
+	// [FaceFixV2] CMC 회전 모드 백업/복원용 — Activate 에서 ControllerDesiredRotation 끄고
+	// EndAbility 에서 원래 값으로 되돌려 카메라 추종 다시 활성화.
+	bool bSavedUseControllerDesiredRotation = false;
+	bool bSavedOrientRotationToMovement = false;
+	bool bRotationModeSaved = false;
 };

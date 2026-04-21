@@ -228,6 +228,17 @@ private:
 	void RemoveSlowFromActor(AActor* Actor);
 	void RestoreAllSlowedActors();
 
+	/**
+	 * [TDSlowReleaseFixV1] 안전망 — 패턴 종료 경로에서 맵 기반 복원으로 놓친 플레이어를
+	 * Zone 반경 근처 월드 스캔으로 찾아 강제로 1.0 배율 복원한다.
+	 *
+	 * 증상: 파훼 성공 시 슬로우가 안 풀리는 경우가 있음.
+	 * 원인: OnPatternBroken 타이밍에 SetGenerateOverlapEvents(false) 직후 엣지 케이스로
+	 *       SlowedActors 맵에 플레이어가 없거나, EndOverlap 이 Apply 없이 먼저 발생한 경우.
+	 * 대책: 맵과 무관하게 월드 scan 으로 복원 — 이미 맵 기반 경로가 성공했으면 이중 호출은 무해.
+	 */
+	void ForceRestoreNearbyPlayers();
+
 	/** 슬로우 적용 전 원본 CustomTimeDilation 저장 */
 	TMap<TWeakObjectPtr<AActor>, float> SlowedActors;
 

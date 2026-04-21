@@ -1903,6 +1903,13 @@ void AHellunaDefenseGameMode::TickNightWatchdog()
         if (!IsValid(Enemy) || Enemy->IsActorBeingDestroyed()) continue;
         if (Enemy->EnemyGrade != EEnemyGrade::Normal) continue; // 보스는 별도 경로
 
+        // [NightWatchdogV2] Pool inactive Actor(사전 생성/재사용 대기)는 실제 살아있는 적이 아님.
+        //   Pool 반환 상태: SetActorHiddenInGame(true) + SetActorEnableCollision(false).
+        //   GA_Death 에서도 사망 직전 Collision 을 끄므로 죽어가는 액터도 여기서 제외됨(의도됨).
+        //   이 필터 없으면 풀 사이즈(근거리 90 + 원거리 60 등)가 AliveCount 에 더해져
+        //   "실제 활성 적 0" 상태에서도 EnterDay 보정이 막혔음.
+        if (Enemy->IsHidden() || !Enemy->GetActorEnableCollision()) continue;
+
         UHellunaHealthComponent* Health = Enemy->FindComponentByClass<UHellunaHealthComponent>();
         if (Health && Health->IsDead()) continue;
 
