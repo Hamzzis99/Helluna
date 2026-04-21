@@ -357,6 +357,34 @@ void UEnemyGameplayAbility_DashAttack::FinishDash()
 		}
 		// 잔여 속도 감쇠 — 0 방향으로 Launch
 		Enemy->LaunchCharacter(FVector::ZeroVector, true, false);
+
+		// [DashEndV1] 대쉬 중 몬타지 중단 — 안 하면 대쉬 포즈가 유지돼 idle 복귀가 안 됨
+		if (DashLoopMontage)
+		{
+			Enemy->Multicast_StopMontage(DashLoopMontage, 0.25f);
+		}
+
+		// [DashEndV1] 대쉬 종료 시점에 플레이어 방향으로 회전
+		// 준비/돌진 동안은 Locked 방향 유지, 끝나고 나서 비로소 플레이어 쪽으로 face.
+		if (AActor* Target = CurrentTarget.Get())
+		{
+			const FVector ToTarget = (Target->GetActorLocation() - Enemy->GetActorLocation()).GetSafeNormal2D();
+			if (!ToTarget.IsNearlyZero())
+			{
+				const FRotator FaceRot(0.f, ToTarget.Rotation().Yaw, 0.f);
+				Enemy->SetActorRotation(FaceRot, ETeleportType::TeleportPhysics);
+				if (AController* C = Enemy->GetController())
+				{
+					C->SetControlRotation(FaceRot);
+				}
+				// 클라 스냅 동기화
+				Enemy->Multicast_SyncAttackRotation(FaceRot);
+
+				UE_LOG(LogTemp, Warning,
+					TEXT("[DashEndV1] FinishDash faced target yaw=%.1f target=%s"),
+					FaceRot.Yaw, *Target->GetName());
+			}
+		}
 	}
 
 	// [DashFollowupV2] 후속 GA 가 지정돼 있으면 그쪽으로 분기, 아니면 즉시 종료.

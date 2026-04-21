@@ -8,6 +8,7 @@
 
 #include "Character/HellunaEnemyCharacter.h"
 #include "BossEvent/BossPatternZoneBase.h"
+#include "BossEvent/BossSlamWaveActor.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
 
@@ -131,26 +132,44 @@ void UEnemyGameplayAbility_SpawnAttack::HandleSpawnTimer()
 		return;
 	}
 
-	FActorSpawnParameters Params;
-	Params.Owner = Enemy;
-	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	// [SpawnOffsetV1] 보스 Yaw 만 반영한 로컬 오프셋 적용.
+	//   경사 지형에서 파동 Plane 이 기울어지지 않도록 Pitch/Roll 은 버린다.
+	const FRotator SpawnRot(0.f, Enemy->GetActorRotation().Yaw, 0.f);
+	const FVector  SpawnLoc = Enemy->GetActorLocation() + SpawnRot.RotateVector(SpawnOffset);
+	const FTransform SpawnTM(SpawnRot, SpawnLoc);
 
-	SpawnedActor = World->SpawnActor<AActor>(
+	// [SpawnAttackV1.Deferred] SpawnActorDeferred → 파라미터 주입 → FinishSpawning 순서.
+	//   BeginPlay 가 주입된 값으로 동작할 수 있게 Deferred 사용.
+	SpawnedActor = World->SpawnActorDeferred<AActor>(
 		SpawnedActorClass,
-		Enemy->GetActorLocation(),
-		Enemy->GetActorRotation(),
-		Params);
-
-	SA_GA_LOG("Spawned Actor=%s Class=%s",
-		SpawnedActor ? *SpawnedActor->GetName() : TEXT("null"),
-		*SpawnedActorClass->GetName());
+		SpawnTM,
+		Enemy,                                         // Owner
+		Enemy,                                         // Instigator (Pawn)
+		ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
 
 	if (!SpawnedActor)
 	{
-		// 스폰 실패 → 즉시 종료.
+		SA_GA_LOG("SpawnActorDeferred null → 즉시 종료 (Class=%s)", *SpawnedActorClass->GetName());
 		HandleAbilityFinished(false);
 		return;
 	}
+
+	// [SpawnAttackV1.SlamWave] 스폰 타입별 파라미터 주입 (FinishSpawning 전)
+	bool bIsSlamWave = false;
+	if (ABossSlamWaveActor* SlamWave = Cast<ABossSlamWaveActor>(SpawnedActor))
+	{
+		// 데미지 귀속 (보스가 Instigator). 파동 자체가 BeginPlay + Tick 에서 자기 데미지 처리.
+		SlamWave->DamageInstigator = Enemy;
+		bIsSlamWave = true;
+		SA_GA_LOG("Spawned actor is BossSlamWave — DamageInstigator=%s", *Enemy->GetName());
+	}
+
+	SpawnedActor->FinishSpawning(SpawnTM);
+
+	SA_GA_LOG("Spawned Actor=%s Class=%s at (%.0f,%.0f,%.0f) yaw=%.0f",
+		SpawnedActor ? *SpawnedActor->GetName() : TEXT("null"),
+		*SpawnedActorClass->GetName(),
+		SpawnLoc.X, SpawnLoc.Y, SpawnLoc.Z, SpawnRot.Yaw);
 
 	// [SpawnAttackV1.PatternZone] 스폰된 액터가 BossPatternZoneBase 파생이면
 	// Zone 인터페이스로 SetOwnerEnemy + SetPatternDuration + ActivateZone +
@@ -166,6 +185,9 @@ void UEnemyGameplayAbility_SpawnAttack::HandleSpawnTimer()
 		return;
 	}
 
+	// [SpawnAttackV1.SlamWave] 파동은 BP 의 LifeTime 이 자체 파괴 담당.
+	//   GA 는 LifeTime 과 같거나 약간 긴 타이머로 종료만 챙기면 됨.
+	//   별도 SpawnedActorLifetime 을 여전히 존중 (디자이너가 SlamWave 수명보다 길게 GA 를 잡고 싶을 수 있음).
 	// 일반 AActor — Lifetime 후 자동 정리.
 	if (SpawnedActorLifetime > 0.f)
 	{

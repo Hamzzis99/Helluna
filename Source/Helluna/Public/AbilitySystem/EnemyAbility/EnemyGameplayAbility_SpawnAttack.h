@@ -35,6 +35,17 @@ public:
 		meta = (DisplayName = "소환할 BP 클래스"))
 	TSubclassOf<AActor> SpawnedActorClass;
 
+	/**
+	 * [SpawnOffsetV1] 보스 로컬 좌표 기준 스폰 오프셋 (cm).
+	 *   X = 전방(보스 정면), Y = 우측, Z = 수직.
+	 *   예: (200, 0, -90)  → 보스 전방 2m + 발밑 90cm 지점에 스폰.
+	 *   예: (0, 0, 0)      → 보스 루트 위치 그대로.
+	 *   보스 Yaw 만 반영 (Pitch/Roll 은 경사 지형에서 파동이 기울어지지 않도록 무시).
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "소환 공격",
+		meta = (DisplayName = "스폰 오프셋 (로컬 cm)"))
+	FVector SpawnOffset = FVector::ZeroVector;
+
 	/** 시전 시 재생할 보스 몬타주. 비우면 모션 없이 진행. */
 	UPROPERTY(EditDefaultsOnly, Category = "소환 공격",
 		meta = (DisplayName = "시전 몽타주"))
