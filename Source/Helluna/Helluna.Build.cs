@@ -69,7 +69,10 @@ public class Helluna : ModuleRules
             "DLSSBlueprint",
             "StreamlineBlueprint",
             "StreamlineDLSSGBlueprint",
-            "StreamlineReflexBlueprint"
+            "StreamlineReflexBlueprint",
+
+            // [§13 v2.1] Loading Barrier B구간 — 스크린샷 → MoviePlayer 배경
+            "MoviePlayer"
         });
         PrivateDependencyModuleNames.AddRange(new string[] { "AssetRegistry" });
 

@@ -47,9 +47,20 @@
 
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
 #include "Login/Widget/HellunaLoadingWidget.h"
+#include "Loading/SLoadingSnapshotWidget.h"
 #include "Blueprint/UserWidget.h"
 #include "Engine/LocalPlayer.h"
+#include "Engine/Texture2D.h"
+#include "Engine/GameViewportClient.h"
+#include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
+#include "TimerManager.h"
+#include "MoviePlayer.h"
+#include "UnrealClient.h"
+#include "PixelFormat.h"
+#include "RenderingThread.h"
+#include "TextureResource.h"
+#include "RHI.h"
 
 // ============================================
 // 🔐 RegisterLogin - 로그인 등록
@@ -165,4 +176,211 @@ void UMDF_GameInstance::HideLoadingScreen()
 	LoadingWidget = nullptr;
 
 	UE_LOG(LogTemp, Log, TEXT("[GameInstance] 로딩 화면 숨김"));
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// §13 v2.1 — Loading Barrier A/B/C 연속 로딩
+// ════════════════════════════════════════════════════════════════════════════════
+
+void UMDF_GameInstance::Init()
+{
+	Super::Init();
+
+	if (!IsRunningDedicatedServer())
+	{
+		FCoreUObjectDelegates::PreLoadMap.AddUObject(this, &UMDF_GameInstance::OnPreLoadMap);
+		FCoreUObjectDelegates::PostLoadMapWithWorld.AddUObject(this, &UMDF_GameInstance::OnPostLoadMapWithWorld);
+	}
+}
+
+void UMDF_GameInstance::Shutdown()
+{
+	if (!IsRunningDedicatedServer())
+	{
+		FCoreUObjectDelegates::PreLoadMap.RemoveAll(this);
+		FCoreUObjectDelegates::PostLoadMapWithWorld.RemoveAll(this);
+
+		if (UGameViewportClient* VC = GetGameViewportClient())
+		{
+			if (CachedScreenshotHandle.IsValid())
+			{
+				VC->OnScreenshotCaptured().Remove(CachedScreenshotHandle);
+				CachedScreenshotHandle.Reset();
+			}
+		}
+	}
+
+	Super::Shutdown();
+}
+
+void UMDF_GameInstance::CaptureLoadingSnapshot(FSimpleDelegate OnComplete)
+{
+	if (IsRunningDedicatedServer())
+	{
+		OnComplete.ExecuteIfBound();
+		return;
+	}
+
+	if (bCaptureInProgress)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[LoadingDbg][GI] CaptureLoadingSnapshot 중복 호출 무시"));
+		OnComplete.ExecuteIfBound();
+		return;
+	}
+
+	UGameViewportClient* VC = GetGameViewportClient();
+	if (!VC)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[LoadingDbg][GI] CaptureLoadingSnapshot — GameViewportClient null"));
+		OnComplete.ExecuteIfBound();
+		return;
+	}
+
+	bCaptureInProgress = true;
+	PendingCaptureCallback = OnComplete;
+
+	if (CachedScreenshotHandle.IsValid())
+	{
+		VC->OnScreenshotCaptured().Remove(CachedScreenshotHandle);
+		CachedScreenshotHandle.Reset();
+	}
+	CachedScreenshotHandle = VC->OnScreenshotCaptured().AddUObject(this, &UMDF_GameInstance::OnScreenshotCaptured);
+
+	FScreenshotRequest::RequestScreenshot(false);
+	UE_LOG(LogTemp, Log, TEXT("[LoadingDbg][GI] CaptureLoadingSnapshot 요청 — RequestScreenshot 호출"));
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().SetTimer(CaptureTimeoutHandle, this,
+			&UMDF_GameInstance::OnSnapshotCaptureTimeout, 0.5f, false);
+	}
+}
+
+void UMDF_GameInstance::OnScreenshotCaptured(int32 W, int32 H, const TArray<FColor>& Bitmap)
+{
+	if (UGameViewportClient* VC = GetGameViewportClient())
+	{
+		if (CachedScreenshotHandle.IsValid())
+		{
+			VC->OnScreenshotCaptured().Remove(CachedScreenshotHandle);
+			CachedScreenshotHandle.Reset();
+		}
+	}
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(CaptureTimeoutHandle);
+	}
+
+	bCaptureInProgress = false;
+
+	if (W <= 0 || H <= 0 || Bitmap.Num() <= 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[LoadingDbg][GI] OnScreenshotCaptured — 빈 비트맵 (%dx%d, Pixels=%d)"), W, H, Bitmap.Num());
+		LoadingSnapshotTexture = nullptr;
+		FSimpleDelegate Cb = PendingCaptureCallback;
+		PendingCaptureCallback.Unbind();
+		Cb.ExecuteIfBound();
+		return;
+	}
+
+	LoadingSnapshotTexture = UTexture2D::CreateTransient(W, H, PF_B8G8R8A8);
+	if (!LoadingSnapshotTexture)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[LoadingDbg][GI] CreateTransient 실패"));
+		FSimpleDelegate Cb = PendingCaptureCallback;
+		PendingCaptureCallback.Unbind();
+		Cb.ExecuteIfBound();
+		return;
+	}
+
+	LoadingSnapshotTexture->SRGB = true;
+	if (FTexturePlatformData* PD = LoadingSnapshotTexture->GetPlatformData())
+	{
+		FTexture2DMipMap& Mip = PD->Mips[0];
+		void* Data = Mip.BulkData.Lock(LOCK_READ_WRITE);
+		FMemory::Memcpy(Data, Bitmap.GetData(), Bitmap.Num() * sizeof(FColor));
+		Mip.BulkData.Unlock();
+	}
+	LoadingSnapshotTexture->UpdateResource();
+
+	UE_LOG(LogTemp, Log, TEXT("[LoadingDbg][GI] OnScreenshotCaptured OK — %dx%d (%d pixels)"), W, H, Bitmap.Num());
+
+	FSimpleDelegate Cb = PendingCaptureCallback;
+	PendingCaptureCallback.Unbind();
+	Cb.ExecuteIfBound();
+}
+
+void UMDF_GameInstance::OnSnapshotCaptureTimeout()
+{
+	if (!bCaptureInProgress)
+	{
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[LoadingDbg][GI] OnSnapshotCaptureTimeout — 0.5s 내 캡처 실패, 폴백 진행"));
+
+	if (UGameViewportClient* VC = GetGameViewportClient())
+	{
+		if (CachedScreenshotHandle.IsValid())
+		{
+			VC->OnScreenshotCaptured().Remove(CachedScreenshotHandle);
+			CachedScreenshotHandle.Reset();
+		}
+	}
+
+	bCaptureInProgress = false;
+	LoadingSnapshotTexture = nullptr;
+
+	FSimpleDelegate Cb = PendingCaptureCallback;
+	PendingCaptureCallback.Unbind();
+	Cb.ExecuteIfBound();
+}
+
+void UMDF_GameInstance::SetupSnapshotLoadingScreen()
+{
+	if (IsRunningDedicatedServer())
+	{
+		return;
+	}
+	if (!LoadingSnapshotTexture)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[LoadingDbg][GI] SetupSnapshotLoadingScreen — Snapshot null, 스킵 (엔진 기본 검정)"));
+		return;
+	}
+	if (!GetMoviePlayer())
+	{
+		return;
+	}
+
+	TSharedRef<SLoadingSnapshotWidget> SnapshotWidget =
+		SNew(SLoadingSnapshotWidget).SnapshotTexture(LoadingSnapshotTexture);
+
+	FLoadingScreenAttributes Attrs;
+	Attrs.bWaitForManualStop = true;
+	Attrs.bAutoCompleteWhenLoadingCompletes = false;
+	Attrs.MinimumLoadingScreenDisplayTime = 0.5f;
+	Attrs.WidgetLoadingScreen = SnapshotWidget;
+
+	GetMoviePlayer()->SetupLoadingScreen(Attrs);
+	UE_LOG(LogTemp, Log, TEXT("[LoadingDbg][GI] SetupSnapshotLoadingScreen — MoviePlayer 등록 완료 (bWaitForManualStop=true)"));
+}
+
+void UMDF_GameInstance::ClearLoadingHandoffState()
+{
+	SavedShipTimeAccum = 0.f;
+	SavedShipAmpScale = 0.f;
+	SavedFakeProgress = 0.f;
+	bHasSavedShipPose = false;
+}
+
+void UMDF_GameInstance::OnPreLoadMap(const FString& MapName)
+{
+	// (Q14) Snapshot 없으면 아무 것도 안 함 — 엔진 기본 검정 화면
+	// LobbyController가 이미 SetupSnapshotLoadingScreen을 호출했다면 큐에 등록되어 있음
+}
+
+void UMDF_GameInstance::OnPostLoadMapWithWorld(UWorld* LoadedWorld)
+{
+	// MoviePlayer는 C구간 ShowLoadingHUDWithCrossfade에서 수동 StopMovie() 호출
+	// (bWaitForManualStop=true이므로 자동 종료되지 않음)
 }

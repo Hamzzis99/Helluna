@@ -610,6 +610,11 @@ protected:
 		meta = (DisplayName = "Ready Poll Interval (초)", ClampMin = "0.05"))
 	float ReadyPollInterval = 0.25f;
 
+	/** 클라 SoftTimeout — Ready 조건이 N초 안에 안 차면 강제 자가 보고 (WP hang 등 안전망). */
+	UPROPERTY(EditDefaultsOnly, Category = "Loading Barrier|Ready",
+		meta = (DisplayName = "Client Soft Timeout (seconds)", ClampMin = "1.0"))
+	float ClientSoftTimeoutSeconds = 6.0f;
+
 private:
 	/** 로딩 HUD 위젯 인스턴스. */
 	UPROPERTY()
@@ -630,6 +635,12 @@ private:
 	/** Ready 조건 폴링 타이머. */
 	FTimerHandle ReadyPollTimerHandle;
 
+	/** Ready SoftTimeout 타이머 — 만료 시 자가 보고. */
+	FTimerHandle SoftTimeoutTimerHandle;
+
+	/** Poll 진입 로그 throttle 카운터 (매 틱 로그 폭발 방지). */
+	int32 PollLogTickCounter = 0;
+
 	/** 배리어 상대 파티 ID. */
 	UPROPERTY()
 	int32 CachedBarrierPartyId = 0;
@@ -647,6 +658,13 @@ private:
 	/** 로딩 씬 정리 (페이드 시점). */
 	void LeaveLoadingScene();
 
+	/** [§13 v2.1+ X-3] L_LoadingShipScene 언로드 완료 콜백. LatentAction에서 리플렉션 호출하므로 UFUNCTION 필수. */
+	UFUNCTION()
+	void OnLoadingShipSceneUnloaded();
+
 	/** 관람 카메라 ViewTarget 전환. 성공 시 true. */
 	bool TryActivateLoadingCamera();
+
+	/** SoftTimeout 만료 콜백 — 자가 Ready 보고 강제. */
+	void OnSoftTimeoutFired();
 };

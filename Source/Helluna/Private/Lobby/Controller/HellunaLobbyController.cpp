@@ -52,6 +52,14 @@
 #include "Net/UnrealNetwork.h"
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
 
+// [§13 v2.1] Loading Barrier A구간
+#include "Loading/HellunaLoadingHUDWidget.h"
+#include "Loading/HellunaLoadingShipActor.h"
+#include "EngineUtils.h"
+#include "Engine/World.h"
+#include "TimerManager.h"
+#include "GameFramework/Actor.h"
+
 // 로그 카테고리 (공유 헤더 — DEFINE은 HellunaLobbyGameMode.cpp)
 #include "Lobby/HellunaLobbyLog.h"
 
@@ -821,12 +829,9 @@ void AHellunaLobbyController::Client_ExecuteDeploy_Implementation(const FString&
 	// [Fix44-C1] Deploy 성공 → 플래그 리셋 (ClientTravel 실패 시 영구 차단 방지)
 	bDeployInProgress = false;
 
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ══════════════════════════════════════"));
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Client_ExecuteDeploy: ClientTravel 시작"));
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC]   TravelURL=%s"), *TravelURL);
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC]   → 로비 서버 연결 해제 → 게임 맵으로 이동"));
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ══════════════════════════════════════"));
-	ClientTravel(TravelURL, TRAVEL_Absolute);
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Client_ExecuteDeploy → ExecuteDeploySequence (Solo) | URL=%s"), *TravelURL);
+	// §13 §3.1.3 (Q9) — Solo 경로도 공통 헬퍼 경유. ExpectedIds=본인만, PartyId=0.
+	ExecuteDeploySequence(TravelURL, ReplicatedPlayerId, 0);
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -1917,8 +1922,9 @@ void AHellunaLobbyController::Client_ExecutePartyDeploy_Implementation(int32 Gam
 		TravelURL += FString::Printf(TEXT("?PartyId=%d"), PartyId);
 	}
 
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] ClientTravel: %s"), *TravelURL);
-	ClientTravel(TravelURL, TRAVEL_Absolute);
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Client_ExecutePartyDeploy → ExecuteDeploySequence | URL=%s"), *TravelURL);
+	// §13 §3.1.3 (Q9) — Party 경로는 ExpectedIds + PartyId 그대로 전달.
+	ExecuteDeploySequence(TravelURL, ExpectedIdsJoined, PartyId);
 }
 
 bool AHellunaLobbyController::Server_ReportPartyDeployFailure_Validate(int32 GameServerPort, const FString& Reason)
@@ -1946,6 +1952,279 @@ void AHellunaLobbyController::Server_ReportPartyDeployFailure_Implementation(int
 	}
 
 	Client_DeployFailed(Reason);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// §13 v2.1 — A구간 로딩 시퀀스 구현
+// ════════════════════════════════════════════════════════════════════════════════
+
+namespace
+{
+	template <typename T>
+	T* FindActorByTagInWorld(UWorld* World, FName Tag)
+	{
+		if (!World) return nullptr;
+		for (TActorIterator<T> It(World); It; ++It)
+		{
+			AActor* A = *It;
+			if (A && A->Tags.Contains(Tag))
+			{
+				return *It;
+			}
+		}
+		return nullptr;
+	}
+
+	AActor* FindAnyActorByTag(UWorld* World, FName Tag)
+	{
+		if (!World) return nullptr;
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			AActor* A = *It;
+			if (A && A->Tags.Contains(Tag))
+			{
+				return A;
+			}
+		}
+		return nullptr;
+	}
+
+	TArray<FString> ParseExpectedIdsCSV(const FString& CSV)
+	{
+		TArray<FString> Out;
+		if (CSV.IsEmpty()) return Out;
+		CSV.ParseIntoArray(Out, TEXT(","), true);
+		for (FString& S : Out)
+		{
+			S.TrimStartAndEndInline();
+		}
+		return Out;
+	}
+}
+
+void AHellunaLobbyController::ExecuteDeploySequence(const FString& TravelURL, const FString& ExpectedIdsJoined, int32 PartyId)
+{
+	UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A] ExecuteDeploySequence ENTER | URL=%s | PartyId=%d"), *TravelURL, PartyId);
+
+	UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance());
+	if (!GI)
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A] GI null → fallback ClientTravel 즉시"));
+		ClientTravel(TravelURL, TRAVEL_Absolute);
+		return;
+	}
+
+	// 시퀀스 상태 초기화
+	PendingTravelURL = TravelURL;
+	PendingExpectedIds = ExpectedIdsJoined;
+	PendingPartyId = PartyId;
+	bCaptureAndTravelFired = false;
+
+	// (Q22) 입력 전면 차단
+	DisableInput(this);
+	SetInputMode(FInputModeUIOnly{});
+
+	// (Q21) V2 프리뷰 비활성화
+	if (IsValid(SpawnedPreviewSceneV2))
+	{
+		SpawnedPreviewSceneV2->SetActorTickEnabled(false);
+		SpawnedPreviewSceneV2->SetActorHiddenInGame(true);
+	}
+
+	// (Q8) Fade-to-black 위젯 (BP가 0.2s opacity 0→1 애니 재생)
+	if (FadeToBlackWidgetClass)
+	{
+		ActiveFadeWidget = CreateWidget<UUserWidget>(this, FadeToBlackWidgetClass);
+		if (ActiveFadeWidget)
+		{
+			ActiveFadeWidget->SetRenderOpacity(0.f);
+			ActiveFadeWidget->AddToViewport(9999);
+		}
+	}
+	else
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A] FadeToBlackWidgetClass 미설정 — Fade 스킵"));
+	}
+
+	// 0.2s 후 서브레벨 스트리밍
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(FadeStartTimer);
+		World->GetTimerManager().SetTimer(FadeStartTimer, this,
+			&AHellunaLobbyController::StartLoadingSceneStream, 0.2f, false);
+	}
+	else
+	{
+		StartLoadingSceneStream();
+	}
+}
+
+void AHellunaLobbyController::StartLoadingSceneStream()
+{
+	UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A] StartLoadingSceneStream | Level=%s"),
+		*LoadingSceneLevelName.ToString());
+
+	if (LoadingSceneLevelName.IsNone())
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A] LoadingSceneLevelName None → 시퀀스 스킵, 즉시 캡처"));
+		CaptureAndTravel();
+		return;
+	}
+
+	FLatentActionInfo LatentInfo;
+	LatentInfo.CallbackTarget = this;
+	LatentInfo.ExecutionFunction = FName(TEXT("OnLoadingSceneStreamed"));
+	LatentInfo.Linkage = 0;
+	LatentInfo.UUID = GetUniqueID();
+
+	UGameplayStatics::LoadStreamLevel(this,
+		LoadingSceneLevelName,
+		/*bMakeVisibleAfterLoad=*/true,
+		/*bShouldBlockOnLoad=*/false,
+		LatentInfo);
+}
+
+void AHellunaLobbyController::OnLoadingSceneStreamed()
+{
+	UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A] OnLoadingSceneStreamed — 서브레벨 로드 완료"));
+
+	UWorld* World = GetWorld();
+
+	// 카메라 즉시 전환
+	if (AActor* LoadingCam = FindAnyActorByTag(World, FName(TEXT("LoadingCamera"))))
+	{
+		SetViewTargetWithBlend(LoadingCam, /*BlendTime=*/0.0f);
+	}
+	else
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A] LoadingCamera 태그 액터 없음 — ViewTarget 유지"));
+	}
+
+	// HUD 생성 (로비 모드 + 가짜 progress)
+	if (LobbyLoadingHUDClass)
+	{
+		ActiveLobbyHUD = CreateWidget<UHellunaLoadingHUDWidget>(this, LobbyLoadingHUDClass);
+		if (ActiveLobbyHUD)
+		{
+			ActiveLobbyHUD->SetIsLobbyStage(true);
+			ActiveLobbyHUD->InitializeHUD(
+				ParseExpectedIdsCSV(PendingExpectedIds),
+				ReplicatedPlayerId,
+				PendingPartyId);
+			ActiveLobbyHUD->AddToViewport(100);
+			// (Q4) 가짜 진행률 0→90% 1.5s
+			ActiveLobbyHUD->StartFakeProgress(1.5f, 0.9f);
+		}
+	}
+	else
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A] LobbyLoadingHUDClass 미설정 — HUD 스킵"));
+	}
+
+	// Fade out (검정 → 투명) — BP 애니메이션 트리거 대신 RenderOpacity 직접 1로 (BP에서 PlayAnimation 호출 가능)
+	if (ActiveFadeWidget)
+	{
+		ActiveFadeWidget->SetRenderOpacity(1.f);
+	}
+
+	// 흔들림 메인 구간 1.0s 보장
+	if (World)
+	{
+		World->GetTimerManager().ClearTimer(HandoffTimer);
+		World->GetTimerManager().SetTimer(HandoffTimer, this,
+			&AHellunaLobbyController::BeginLoadingHandoff, 1.0f, false);
+	}
+	else
+	{
+		BeginLoadingHandoff();
+	}
+}
+
+void AHellunaLobbyController::BeginLoadingHandoff()
+{
+	UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A] BeginLoadingHandoff — Settle 시작"));
+
+	UWorld* World = GetWorld();
+	AHellunaLoadingShipActor* Ship = FindActorByTagInWorld<AHellunaLoadingShipActor>(World, FName(TEXT("LoadingShip")));
+	if (!Ship)
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A] LoadingShip 태그 액터 없음 → CaptureAndTravel 즉시"));
+		CaptureAndTravel();
+		return;
+	}
+
+	Ship->OnSettleComplete.AddDynamic(this, &AHellunaLobbyController::CaptureAndTravel);
+	Ship->BeginSettleForTravel();
+
+	// (Q13) 가드 타이머 — 0.5s + 0.3s margin
+	if (World)
+	{
+		World->GetTimerManager().ClearTimer(SettleGuardTimer);
+		World->GetTimerManager().SetTimer(SettleGuardTimer, this,
+			&AHellunaLobbyController::CaptureAndTravel, 0.8f, false);
+	}
+}
+
+void AHellunaLobbyController::CaptureAndTravel()
+{
+	if (bCaptureAndTravelFired)
+	{
+		return;
+	}
+	bCaptureAndTravelFired = true;
+
+	UWorld* World = GetWorld();
+	if (World)
+	{
+		World->GetTimerManager().ClearTimer(SettleGuardTimer);
+	}
+
+	UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A] CaptureAndTravel ENTER"));
+
+	AHellunaLoadingShipActor* Ship = FindActorByTagInWorld<AHellunaLoadingShipActor>(World, FName(TEXT("LoadingShip")));
+	if (Ship)
+	{
+		Ship->OnSettleComplete.RemoveAll(this);
+	}
+
+	UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance());
+	if (GI && Ship)
+	{
+		GI->SavedShipTimeAccum = Ship->GetCurrentTimeAccum();
+		GI->SavedShipAmpScale = Ship->GetCurrentAmpScale();
+		GI->SavedFakeProgress = ActiveLobbyHUD ? ActiveLobbyHUD->GetCurrentFakeProgress() : 0.9f;
+		GI->bHasSavedShipPose = true;
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A] GI 저장 — TimeAccum=%.3f AmpScale=%.3f Progress=%.3f"),
+			GI->SavedShipTimeAccum, GI->SavedShipAmpScale, GI->SavedFakeProgress);
+	}
+
+	if (GI)
+	{
+		FSimpleDelegate Cb;
+		Cb.BindUObject(this, &AHellunaLobbyController::OnSnapshotReadyTravel);
+		GI->CaptureLoadingSnapshot(Cb);
+	}
+	else
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A] GI null fallback → 즉시 ClientTravel"));
+		ClientTravel(PendingTravelURL, TRAVEL_Absolute);
+	}
+}
+
+void AHellunaLobbyController::OnSnapshotReadyTravel()
+{
+	UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A] OnSnapshotReadyTravel — MoviePlayer setup + ClientTravel"));
+
+	if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance()))
+	{
+		// (Q14) Snapshot 없으면 SetupSnapshotLoadingScreen이 내부에서 스킵
+		if (GI->LoadingSnapshotTexture)
+		{
+			GI->SetupSnapshotLoadingScreen();
+		}
+	}
+
+	ClientTravel(PendingTravelURL, TRAVEL_Absolute);
 }
 
 void AHellunaLobbyController::TogglePartyWidget()

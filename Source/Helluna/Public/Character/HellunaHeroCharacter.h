@@ -131,6 +131,10 @@ private:
 	void OnCheat_F5();
 	void OnCheat_F6();
 
+	// [cheatdebug] 콘솔 명령 — F1 키가 막혔을 때 ` 콘솔에서 직접 호출
+	UFUNCTION(Exec)
+	void Cheat_KillAll();
+
 
 #pragma endregion
 
