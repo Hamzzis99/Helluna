@@ -2131,5 +2131,27 @@ void AHellunaHeroController::LeaveLoadingScene()
 	}
 	LoadingCameraActor.Reset();
 
+	// [§13 v2.1+ X-3] L_LoadingShipScene 서브레벨 언로드 — 메모리 회수
+	// v1엔 서브레벨이 없어 호출 없었으나, v2.1에서 공용 서브레벨 도입으로 명시적 언로드 필요.
+	// Client_FadeToGame 3.0s 뒤 LeaveLoadingScene 호출 → 페이드 검정 중 병렬 언로드.
+	if (World)
+	{
+		FLatentActionInfo UnloadLatent;
+		UnloadLatent.CallbackTarget = this;
+		UnloadLatent.ExecutionFunction = FName(TEXT("OnLoadingShipSceneUnloaded"));
+		UnloadLatent.Linkage = 0;
+		UnloadLatent.UUID = GetUniqueID() + 100;  // Lobby 쪽 Background UUID와 충돌 방지
+		UGameplayStatics::UnloadStreamLevel(this, FName(TEXT("L_LoadingShipScene")), UnloadLatent, false);
+		UE_LOG(LogHelluna, Warning,
+			TEXT("[LoadingDbg][Leave] UnloadStreamLevel(L_LoadingShipScene) 요청 | UUID=%d"),
+			UnloadLatent.UUID);
+	}
+
 	UE_LOG(LogHelluna, Warning, TEXT("[LoadingDbg][Leave] EXIT"));
+}
+
+// [§13 v2.1+ X-3] L_LoadingShipScene 언로드 완료 콜백
+void AHellunaHeroController::OnLoadingShipSceneUnloaded()
+{
+	UE_LOG(LogHelluna, Warning, TEXT("[LoadingDbg][Leave] L_LoadingShipScene 언로드 완료"));
 }

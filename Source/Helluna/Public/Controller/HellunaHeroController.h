@@ -658,6 +658,10 @@ private:
 	/** 로딩 씬 정리 (페이드 시점). */
 	void LeaveLoadingScene();
 
+	/** [§13 v2.1+ X-3] L_LoadingShipScene 언로드 완료 콜백. LatentAction에서 리플렉션 호출하므로 UFUNCTION 필수. */
+	UFUNCTION()
+	void OnLoadingShipSceneUnloaded();
+
 	/** 관람 카메라 ViewTarget 전환. 성공 시 true. */
 	bool TryActivateLoadingCamera();
 
