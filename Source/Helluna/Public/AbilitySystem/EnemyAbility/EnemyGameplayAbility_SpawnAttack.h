@@ -76,6 +76,43 @@ public:
 			ClampMin = "0.01", ClampMax = "20.0"))
 	float CastVFXScale = 1.f;
 
+	/**
+	 * [ParallelPatternV1] 소환 중 보스를 제자리에 잠글지 여부.
+	 *   true (기본) = LockMovementAndFaceTarget 호출 → 보스는 SpawnedActor 가 끝날 때까지 고정.
+	 *   false        = LockMovement 생략 → 보스는 소환 후에도 계속 이동/공격 가능.
+	 *                  "백그라운드 패턴" 에 적합. StateTree 쪽에서도 해당 엔트리의
+	 *                  bParallelToOtherAttacks=true 를 같이 세팅해야 다른 공격이 계속 실행됨.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "소환 공격",
+		meta = (DisplayName = "소환 중 이동 잠금"))
+	bool bLockMovement = true;
+
+	/**
+	 * [HoldPoseV1] 시전 몽타주를 GA 가 끝날 때까지 반복 재생해서 보스가 "채널링 자세"를 계속 유지하게 함.
+	 *   true  = 몽타주 완료 시 같은 몽타주를 다시 재생 (무한 루프) — GA EndAbility 까지 유지.
+	 *   false (기본) = 몽타주 1회 재생 후 idle 로 돌아감.
+	 * 자세 유지가 필요한 긴 소환 패턴 (예: 시간 왜곡) 에서 사용.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "소환 공격",
+		meta = (DisplayName = "시전 몽타주 루프 (자세 유지)"))
+	bool bLoopCastMontage = false;
+
+	/**
+	 * [HoldPoseV1] 이 GA 가 active 인 동안 보스의 HitReact 몽타주 재생을 차단.
+	 *   true  = 플레이어가 보스를 때려도 피격 애니메이션이 재생되지 않아 채널링 자세가 안 깨짐.
+	 *   false (기본) = 일반 HitReact 동작.
+	 * bLoopCastMontage 와 함께 쓰면 피격에도 안 흔들리는 고정 자세 유지 가능.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "소환 공격",
+		meta = (DisplayName = "활성 중 HitReact 차단"))
+	bool bSuppressHitReactWhileActive = false;
+
+	/**
+	 * [HoldPoseV1] 지정 보스에게 활성 상태에서 HitReact 를 차단하는 SpawnAttack 이 있는지 반환.
+	 * AHellunaEnemyCharacter::Multicast_PlayHitReact_Implementation 에서 early-return 용도로 사용.
+	 */
+	static bool ShouldBlockHitReact(const class AHellunaEnemyCharacter* Enemy);
+
 protected:
 	virtual void ActivateAbility(
 		const FGameplayAbilitySpecHandle Handle,
@@ -94,6 +131,9 @@ private:
 	void HandleSpawnTimer();
 	void HandleLifetimeExpired();
 	void HandleAbilityFinished(bool bWasCancelled);
+
+	/** [HoldPoseV1] CastMontage 1회 재생. bLoopCastMontage=true 면 OnCompleted 에서 다시 호출 → 무한 루프. */
+	void StartCastMontageOnce();
 
 	UFUNCTION()
 	void OnCastMontageCompleted();

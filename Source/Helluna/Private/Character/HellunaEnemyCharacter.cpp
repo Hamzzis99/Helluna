@@ -19,6 +19,7 @@
 #include "AIController.h"
 #include "DebugHelper.h"
 #include "AbilitySystem/HeroAbility/HeroGameplayAbility_GunParry.h"
+#include "AbilitySystem/EnemyAbility/EnemyGameplayAbility_SpawnAttack.h"
 
 // 타이머 기반 Trace 시스템용 헤더
 #include "DrawDebugHelpers.h"
@@ -422,6 +423,9 @@ void AHellunaEnemyCharacter::Multicast_PlayHitReact_Implementation()
 {
 	// [GunParry] 처형 중 피격 모션 차단
 	if (UHeroGameplayAbility_GunParry::ShouldBlockHitReact(this)) return;
+
+	// [HoldPoseV1] SpawnAttack 중 bSuppressHitReactWhileActive=true 면 피격 모션 차단 → 채널링 자세 유지
+	if (UEnemyGameplayAbility_SpawnAttack::ShouldBlockHitReact(this)) return;
 
 	if (!HitReactMontage) return;
 

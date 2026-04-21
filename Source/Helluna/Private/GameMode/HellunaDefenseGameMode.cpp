@@ -177,6 +177,13 @@ void AHellunaDefenseGameMode::BeginPlay()
     CacheRangeSpawnPoints();
     CacheNightPCGComponents();
 
+    // [RepairBossSpawnV1] 우주선 수리 완료 델리게이트 바인딩. 우주선 BeginPlay 가 GameMode 보다
+    // 나중에 돌 수 있으므로 0.5초 간격 재시도로 보장.
+    if (bSpawnBossOnRepairComplete)
+    {
+        TryBindSpaceShipRepairDelegate();
+    }
+
     // [HISM 풀] 광석 HISM 풀 매니저 생성
     if (bUseOreHISMPool && !OreHISMPool)
     {
@@ -1933,6 +1940,83 @@ void AHellunaDefenseGameMode::TickNightWatchdog()
         UE_LOG(LogHelluna, Warning, TEXT("[NightWatchdog] 낮 전환 타이머 시작 (%0.1f초)"), TestNightFailToDayDelay);
         GetWorldTimerManager().SetTimer(TimerHandle_ToDay, this, &ThisClass::EnterDay, TestNightFailToDayDelay, false);
     }
+}
+
+// ============================================================
+// [RepairBossSpawnV1] 우주선 수리 완료 → 보스 강제 소환 경로
+// ============================================================
+void AHellunaDefenseGameMode::TryBindSpaceShipRepairDelegate()
+{
+    if (bSpaceShipRepairBound) return;
+    if (!HasAuthority()) return;
+
+    AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>();
+    AResourceUsingObject_SpaceShip* Ship = GS ? GS->GetSpaceShip() : nullptr;
+
+    if (Ship)
+    {
+        Ship->OnRepairCompleted_Delegate.AddDynamic(
+            this, &AHellunaDefenseGameMode::OnSpaceShipRepairCompleted);
+        bSpaceShipRepairBound = true;
+
+        if (UWorld* W = GetWorld())
+        {
+            W->GetTimerManager().ClearTimer(SpaceShipRepairBindTimer);
+        }
+
+        UE_LOG(LogHelluna, Warning,
+            TEXT("[RepairBossSpawnV1] SpaceShip repair delegate bound — will spawn boss on 100%% repair"));
+        return;
+    }
+
+    // 아직 우주선이 GameState 에 등록 안 됨 → 재시도 타이머
+    if (UWorld* W = GetWorld())
+    {
+        W->GetTimerManager().SetTimer(
+            SpaceShipRepairBindTimer, this,
+            &AHellunaDefenseGameMode::TryBindSpaceShipRepairDelegate,
+            0.5f, false);
+    }
+}
+
+void AHellunaDefenseGameMode::OnSpaceShipRepairCompleted()
+{
+    if (!HasAuthority()) return;
+
+    if (!bSpawnBossOnRepairComplete)
+    {
+        UE_LOG(LogHelluna, Warning,
+            TEXT("[RepairBossSpawnV1] repair complete but bSpawnBossOnRepairComplete=false → skip"));
+        return;
+    }
+
+    if (bGameEnded)
+    {
+        UE_LOG(LogHelluna, Warning,
+            TEXT("[RepairBossSpawnV1] repair complete but game already ended → skip"));
+        return;
+    }
+
+    if (AliveBoss.IsValid())
+    {
+        UE_LOG(LogHelluna, Warning,
+            TEXT("[RepairBossSpawnV1] repair complete but another boss already alive (%s) → skip"),
+            *GetNameSafe(AliveBoss.Get()));
+        return;
+    }
+
+    if (!RepairCompleteBossEntry.BossClass)
+    {
+        UE_LOG(LogHelluna, Warning,
+            TEXT("[RepairBossSpawnV1] repair complete but RepairCompleteBossEntry.BossClass is null → skip. "
+                 "Set it in GameMode BP defaults."));
+        return;
+    }
+
+
+
+    SetBossReady(true);
+    TrySummonBoss(RepairCompleteBossEntry);
 }
 
 // 보스몬스터 사망 로직 — NotifyMonsterDied에서 EnemyGrade != Normal 시 호출

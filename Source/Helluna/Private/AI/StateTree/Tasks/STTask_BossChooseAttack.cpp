@@ -218,10 +218,13 @@ EStateTreeRunStatus FSTTask_BossChooseAttack::Tick(
 	}
 
 	// 활성 GA가 있으면 대기 (AttackRecoveryDelay 포함)
+	// [ParallelPatternV1] bParallelToOtherAttacks=true 엔트리는 active 여도 block 하지 않음
+	// → 오래 지속되는 소환 패턴(예: 시간 왜곡 존)이 돌아가는 동안에도 근접/원거리 공격 계속 가능.
 	bool bAnyGAActive = false;
 	for (const FBossAttackEntry& Entry : AttackPool)
 	{
 		if (!Entry.AttackAbility.Get()) continue;
+		if (Entry.bParallelToOtherAttacks) continue; // 병행 허용 → 블록 대상 아님
 		for (const FGameplayAbilitySpec& Spec : ASC->GetActivatableAbilities())
 		{
 			if (Spec.Ability && Spec.Ability->GetClass() == Entry.AttackAbility && Spec.IsActive())
