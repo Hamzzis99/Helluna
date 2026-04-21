@@ -2439,6 +2439,15 @@ void AHellunaLobbyGameMode::ExecutePartyDeploy(int32 PartyId)
 			PreparedPlayerIds.Add(Member.PlayerId);
 		}
 
+		// [Loading Barrier] 파티 전원 PlayerId CSV
+		TArray<FString> SafeExpectedIds;
+		SafeExpectedIds.Reserve(SafeInfo.Members.Num());
+		for (const FHellunaPartyMemberInfo& Member : SafeInfo.Members)
+		{
+			SafeExpectedIds.Add(Member.PlayerId);
+		}
+		const FString SafeExpectedIdsJoined = FString::Join(SafeExpectedIds, TEXT(","));
+
 		for (const FHellunaPartyMemberInfo& Member : SafeInfo.Members)
 		{
 			const TWeakObjectPtr<AHellunaLobbyController>* PCPtr = PlayerIdToControllerMap.Find(Member.PlayerId);
@@ -2450,7 +2459,7 @@ void AHellunaLobbyGameMode::ExecutePartyDeploy(int32 PartyId)
 			AHellunaLobbyController* MemberPC = PCPtr->Get();
 			if (!MemberPC) continue; // [Fix54] Get() 후 nullptr 안전 검사
 			MemberPC->SetDeployInProgress(true);
-			MemberPC->Client_ExecutePartyDeploy(SafeEmptyChannel.Port);
+			MemberPC->Client_ExecutePartyDeploy(SafeEmptyChannel.Port, SafeExpectedIdsJoined, PartyId);
 		}
 
 		return;
@@ -2536,6 +2545,15 @@ void AHellunaLobbyGameMode::ExecutePartyDeploy(int32 PartyId)
 		}
 	}
 
+	// [Loading Barrier] 파티 전원 PlayerId CSV
+	TArray<FString> MemberIds;
+	MemberIds.Reserve(Info.Members.Num());
+	for (const FHellunaPartyMemberInfo& Member : Info.Members)
+	{
+		MemberIds.Add(Member.PlayerId);
+	}
+	const FString MemberIdsJoined = FString::Join(MemberIds, TEXT(","));
+
 	// Step 3: 전원 Deploy
 	for (const FHellunaPartyMemberInfo& Member : Info.Members)
 	{
@@ -2548,10 +2566,10 @@ void AHellunaLobbyGameMode::ExecutePartyDeploy(int32 PartyId)
 		AHellunaLobbyController* MemberPC = PCPtr->Get();
 		if (!MemberPC) continue; // [Fix54] Get() 후 nullptr 안전 검사
 		MemberPC->SetDeployInProgress(true);
-		MemberPC->Client_ExecutePartyDeploy(EmptyChannel.Port);
+		MemberPC->Client_ExecutePartyDeploy(EmptyChannel.Port, MemberIdsJoined, PartyId);
 
-		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ExecutePartyDeploy: Client_ExecutePartyDeploy 전송 | PlayerId=%s | Port=%d"),
-			*Member.PlayerId, EmptyChannel.Port);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ExecutePartyDeploy: Client_ExecutePartyDeploy 전송 | PlayerId=%s | Port=%d | PartyId=%d"),
+			*Member.PlayerId, EmptyChannel.Port, PartyId);
 	}
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ✓ ExecutePartyDeploy 완료 | PartyId=%d | Port=%d | Members=%d"),
@@ -2655,7 +2673,8 @@ void AHellunaLobbyGameMode::HandleRejoinAccepted(AHellunaLobbyController* LobbyP
 
 	LobbyPC->PendingRejoinPort = 0;
 	LobbyPC->SetDeployInProgress(true);
-	LobbyPC->Client_ExecutePartyDeploy(Port);
+	// [Loading Barrier] Rejoin은 Barrier를 우회 (PostLogin 재접속 분기) → ExpectedIds/PartyId 불필요
+	LobbyPC->Client_ExecutePartyDeploy(Port, /*ExpectedIdsJoined=*/TEXT(""), /*PartyId=*/0);
 	return;
 	}
 
@@ -2679,7 +2698,8 @@ void AHellunaLobbyGameMode::HandleRejoinAccepted(AHellunaLobbyController* LobbyP
 
 	// deploy_state는 true 유지 → 게임서버가 재접속을 감지
 	LobbyPC->SetDeployInProgress(true);
-	LobbyPC->Client_ExecutePartyDeploy(Port);
+	// [Loading Barrier] Rejoin 경로 동일 — ExpectedIds/PartyId 불필요
+	LobbyPC->Client_ExecutePartyDeploy(Port, /*ExpectedIdsJoined=*/TEXT(""), /*PartyId=*/0);
 }
 
 void AHellunaLobbyGameMode::HandleRejoinDeclined(AHellunaLobbyController* LobbyPC)
@@ -3666,6 +3686,14 @@ void AHellunaLobbyGameMode::ExecuteMatchedDeploy(const TArray<FMatchmakingQueueE
 			}
 		}
 
+		// [Loading Barrier] 매칭된 전원 PlayerId CSV
+		TArray<FString> AllMatchedIds;
+		for (const FMatchmakingQueueEntry& Entry : Matched)
+		{
+			AllMatchedIds.Append(Entry.PlayerIds);
+		}
+		const FString AllMatchedIdsJoined = FString::Join(AllMatchedIds, TEXT(","));
+
 		for (const FMatchmakingQueueEntry& Entry : Matched)
 		{
 			for (const FString& PlayerId : Entry.PlayerIds)
@@ -3678,7 +3706,7 @@ void AHellunaLobbyGameMode::ExecuteMatchedDeploy(const TArray<FMatchmakingQueueE
 
 				AHellunaLobbyController* MemberPC = PCPtr->Get();
 				MemberPC->SetDeployInProgress(true);
-				MemberPC->Client_ExecutePartyDeploy(EmptyChannel.Port);
+				MemberPC->Client_ExecutePartyDeploy(EmptyChannel.Port, AllMatchedIdsJoined, Entry.PartyId);
 			}
 		}
 
@@ -3848,6 +3876,14 @@ void AHellunaLobbyGameMode::ExecuteMatchedDeploy(const TArray<FMatchmakingQueueE
 		}
 	}
 
+	// [Loading Barrier] 매칭된 전원 PlayerId CSV
+	TArray<FString> Phase15AllIds;
+	for (const FMatchmakingQueueEntry& Entry : Matched)
+	{
+		Phase15AllIds.Append(Entry.PlayerIds);
+	}
+	const FString Phase15AllIdsJoined = FString::Join(Phase15AllIds, TEXT(","));
+
 	// Step 3: 전원 Client Deploy RPC
 	for (const FMatchmakingQueueEntry& Entry : Matched)
 	{
@@ -3861,10 +3897,10 @@ void AHellunaLobbyGameMode::ExecuteMatchedDeploy(const TArray<FMatchmakingQueueE
 
 			AHellunaLobbyController* MemberPC = PCPtr->Get();
 			MemberPC->SetDeployInProgress(true);
-			MemberPC->Client_ExecutePartyDeploy(EmptyChannel.Port);
+			MemberPC->Client_ExecutePartyDeploy(EmptyChannel.Port, Phase15AllIdsJoined, Entry.PartyId);
 
-			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Phase15] Client_ExecutePartyDeploy 전송 | PlayerId=%s | Port=%d"),
-				*PId, EmptyChannel.Port);
+			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Phase15] Client_ExecutePartyDeploy 전송 | PlayerId=%s | Port=%d | PartyId=%d"),
+				*PId, EmptyChannel.Port, Entry.PartyId);
 		}
 	}
 
@@ -4085,6 +4121,14 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 							}
 						}
 
+						// [LoadingBarrier-StageA] DeployMatched 전체 ExpectedIds CSV
+						TArray<FString> AllMatchedIds;
+						for (const FMatchmakingQueueEntry& Entry : DeployMatched)
+						{
+							AllMatchedIds.Append(Entry.PlayerIds);
+						}
+						const FString AllMatchedIdsJoined = FString::Join(AllMatchedIds, TEXT(","));
+
 						for (const FMatchmakingQueueEntry& Entry : DeployMatched)
 						{
 							for (const FString& PlayerId : Entry.PlayerIds)
@@ -4097,7 +4141,7 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 
 								AHellunaLobbyController* MemberPC = PCPtr->Get();
 								MemberPC->SetDeployInProgress(true);
-								MemberPC->Client_ExecutePartyDeploy(DeployPort);
+								MemberPC->Client_ExecutePartyDeploy(DeployPort, AllMatchedIdsJoined, Entry.PartyId);
 							}
 						}
 					});
@@ -4263,6 +4307,14 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 								}
 							}
 
+							// [LoadingBarrier-StageA] DeployMatched 전체 ExpectedIds CSV
+							TArray<FString> AllMatchedIdsSafe;
+							for (const FMatchmakingQueueEntry& Entry : DeployMatched)
+							{
+								AllMatchedIdsSafe.Append(Entry.PlayerIds);
+							}
+							const FString AllMatchedIdsSafeJoined = FString::Join(AllMatchedIdsSafe, TEXT(","));
+
 							for (const FMatchmakingQueueEntry& Entry : DeployMatched)
 							{
 								for (const FString& PlayerId : Entry.PlayerIds)
@@ -4275,7 +4327,7 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 
 									AHellunaLobbyController* MemberPC = PCPtr->Get();
 									MemberPC->SetDeployInProgress(true);
-									MemberPC->Client_ExecutePartyDeploy(DeployPort);
+									MemberPC->Client_ExecutePartyDeploy(DeployPort, AllMatchedIdsSafeJoined, Entry.PartyId);
 								}
 							}
 						});
@@ -4428,6 +4480,14 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 						}
 					}
 
+					// [LoadingBarrier-StageA] DeployMatched 전체 ExpectedIds CSV 생성
+					TArray<FString> Phase16AllIds;
+					for (const FMatchmakingQueueEntry& Entry : DeployMatched)
+					{
+						Phase16AllIds.Append(Entry.PlayerIds);
+					}
+					const FString Phase16AllIdsJoined = FString::Join(Phase16AllIds, TEXT(","));
+
 					// 전원 Client Deploy RPC
 					for (const FMatchmakingQueueEntry& Entry : DeployMatched)
 					{
@@ -4441,10 +4501,10 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 
 							AHellunaLobbyController* MemberPC = PCPtr->Get();
 							MemberPC->SetDeployInProgress(true);
-							MemberPC->Client_ExecutePartyDeploy(DeployPort);
+							MemberPC->Client_ExecutePartyDeploy(DeployPort, Phase16AllIdsJoined, Entry.PartyId);
 
-							UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Phase16] Client_ExecutePartyDeploy 전송 | PlayerId=%s | Port=%d"),
-								*PId, DeployPort);
+							UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Phase16] Client_ExecutePartyDeploy 전송 | PlayerId=%s | Port=%d | ExpectedCount=%d | PartyId=%d"),
+								*PId, DeployPort, Phase16AllIds.Num(), Entry.PartyId);
 						}
 					}
 				});

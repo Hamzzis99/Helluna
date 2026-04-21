@@ -56,6 +56,12 @@ AHellunaPlayerState::AHellunaPlayerState()
 	PlayerUniqueId = TEXT("");
 	bIsLoggedIn = false;
 	SelectedHeroType = EHellunaHeroType::None;  // None = 미선택
+	PingLocation = FVector_NetQuantize(0, 0, 0);
+	bHasPing = false;
+
+	// 핑 등 실시간 상태를 PS에 두기 위해 업데이트 빈도 상향 (UE 기본 PS는 1Hz)
+	SetNetUpdateFrequency(30.f);
+	SetMinNetUpdateFrequency(10.f);
 }
 
 void AHellunaPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -69,6 +75,36 @@ void AHellunaPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& 
 	DOREPLIFETIME(AHellunaPlayerState, PlayerUniqueId);
 	DOREPLIFETIME(AHellunaPlayerState, bIsLoggedIn);
 	DOREPLIFETIME(AHellunaPlayerState, SelectedHeroType);
+	DOREPLIFETIME(AHellunaPlayerState, PingLocation);
+	DOREPLIFETIME(AHellunaPlayerState, bHasPing);
+}
+
+// ============================================
+// 🎯 Server_AuthoritativeSetPing — 핑 위치 설정 (서버 권위)
+// ============================================
+void AHellunaPlayerState::Server_AuthoritativeSetPing(const FVector& WorldLocation)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	PingLocation = FVector_NetQuantize(WorldLocation);
+	bHasPing = true;
+	ForceNetUpdate();
+}
+
+// ============================================
+// 🎯 Server_AuthoritativeClearPing — 핑 제거 (서버 권위)
+// ============================================
+void AHellunaPlayerState::Server_AuthoritativeClearPing()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	bHasPing = false;
+	PingLocation = FVector_NetQuantize(0, 0, 0);
+	ForceNetUpdate();
 }
 
 // ============================================

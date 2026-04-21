@@ -328,6 +328,47 @@ bool AHellunaBaseGameMode::ParseLobbyDeployOptions(const FString& Options, FStri
 	return AHellunaBaseGameMode::IndexToHeroType(OutHeroTypeIndex) != EHellunaHeroType::None;
 }
 
+// [Loading Barrier] 확장 파싱 — 기본 옵션 + ExpectedIds(CSV) + PartyId
+bool AHellunaBaseGameMode::ParseLobbyDeployOptionsEx(const FString& Options, FString& OutPlayerId, int32& OutHeroTypeIndex,
+	TArray<FString>& OutExpectedIds, int32& OutPartyId) const
+{
+	OutExpectedIds.Reset();
+	OutPartyId = 0;
+
+	if (!ParseLobbyDeployOptions(Options, OutPlayerId, OutHeroTypeIndex))
+	{
+		return false;
+	}
+
+	// ExpectedIds: CSV (쉼표 구분). 빈 값 허용 (솔로/레거시 URL).
+	const FString OptionExpectedIds = UGameplayStatics::ParseOption(Options, TEXT("ExpectedIds"));
+	if (!OptionExpectedIds.IsEmpty())
+	{
+		OptionExpectedIds.ParseIntoArray(OutExpectedIds, TEXT(","), /*CullEmpty=*/ true);
+		// 각 ID 길이 검증 (64자 상한, SQLite PlayerId와 동일 기준)
+		for (int32 Idx = OutExpectedIds.Num() - 1; Idx >= 0; --Idx)
+		{
+			if (OutExpectedIds[Idx].IsEmpty() || OutExpectedIds[Idx].Len() > 64)
+			{
+				OutExpectedIds.RemoveAt(Idx);
+			}
+		}
+	}
+
+	// PartyId: 정수 (없으면 0)
+	const FString OptionPartyId = UGameplayStatics::ParseOption(Options, TEXT("PartyId"));
+	if (!OptionPartyId.IsEmpty() && OptionPartyId.IsNumeric())
+	{
+		OutPartyId = FCString::Atoi(*OptionPartyId);
+		if (OutPartyId < 0)
+		{
+			OutPartyId = 0;
+		}
+	}
+
+	return true;
+}
+
 bool AHellunaBaseGameMode::ValidateLobbyDeployAdmission(const FString& PlayerId, int32 HeroTypeIndex, FString& OutErrorMessage) const
 {
 	OutErrorMessage.Reset();
@@ -398,7 +439,9 @@ FString AHellunaBaseGameMode::InitNewPlayer(APlayerController* NewPlayerControll
 
 	FString OptionPlayerId;
 	int32 OptionHeroTypeIndex = INDEX_NONE;
-	const bool bHasValidDeployOptions = ParseLobbyDeployOptions(Options, OptionPlayerId, OptionHeroTypeIndex);
+	TArray<FString> OptionExpectedIds;
+	int32 OptionPartyId = 0;
+	const bool bHasValidDeployOptions = ParseLobbyDeployOptionsEx(Options, OptionPlayerId, OptionHeroTypeIndex, OptionExpectedIds, OptionPartyId);
 
 	if (ShouldEnforceLobbyDeployAdmission())
 	{
@@ -426,13 +469,22 @@ FString AHellunaBaseGameMode::InitNewPlayer(APlayerController* NewPlayerControll
 		FLobbyDeployInfo DeployInfo;
 		DeployInfo.PlayerId = OptionPlayerId;
 		DeployInfo.HeroType = IndexToHeroType(OptionHeroTypeIndex);
+		DeployInfo.ExpectedIds = OptionExpectedIds;
+		DeployInfo.PartyId = OptionPartyId;
+
+		// ExpectedIds가 비어있으면 솔로 매칭으로 간주 → 본인만 Expected에 포함
+		if (DeployInfo.ExpectedIds.Num() == 0)
+		{
+			DeployInfo.ExpectedIds.Add(OptionPlayerId);
+		}
 
 		PendingLobbyDeployMap.Add(NewPlayerController, DeployInfo);
 
 		const int32 CurrentServerPort = GetWorld() ? GetWorld()->URL.Port : 0;
 		UE_LOG(LogHelluna, Log,
-			TEXT("[DeployGate] InitNewPlayer accepted | PlayerId=%s | HeroType=%d | ServerPort=%d"),
-			*OptionPlayerId, OptionHeroTypeIndex, CurrentServerPort);
+			TEXT("[DeployGate] InitNewPlayer accepted | PlayerId=%s | HeroType=%d | ServerPort=%d | PartyId=%d | ExpectedIds=%s"),
+			*OptionPlayerId, OptionHeroTypeIndex, CurrentServerPort, OptionPartyId,
+			*FString::Join(DeployInfo.ExpectedIds, TEXT(",")));
 	}
 
 	return ErrorMessage;
@@ -509,6 +561,15 @@ void AHellunaBaseGameMode::PostLogin(APlayerController* NewPlayer)
 
 		const FString DeployPlayerId = DeployInfo->PlayerId;
 		const EHellunaHeroType DeployHeroType = DeployInfo->HeroType;
+
+		// [Loading Barrier] DefenseGameMode에 ExpectedIds/PartyId 캐시 —
+		// SwapToGameController → SpawnHeroCharacter 타이머 체인이 끝난 뒤에도
+		// 새 GameController가 배리어에 등록될 수 있도록.
+		if (AHellunaDefenseGameMode* DefenseGM = Cast<AHellunaDefenseGameMode>(this))
+		{
+			DefenseGM->CacheBarrierDeployContext(DeployPlayerId, DeployInfo->ExpectedIds, DeployInfo->PartyId);
+		}
+
 		PendingLobbyDeployMap.Remove(NewPlayer);
 
 		// 1. PlayerState 설정
@@ -1215,6 +1276,46 @@ void AHellunaBaseGameMode::SpawnHeroCharacter(APlayerController* PlayerControlle
 		UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 #endif
 		return;
+	}
+
+	// ────────────────────────────────────────────────────────────────────────────
+	// 📌 [Loading Barrier] 배리어 등록 → 지연 스폰 분기
+	// ────────────────────────────────────────────────────────────────────────────
+	// DefenseGameMode 에서 PostLogin 시 캐시해둔 ExpectedIds/PartyId 컨텍스트가 있으면,
+	// 실제 스폰을 하기 전에 배리어에 등록하고 Client_EnterLoadingScene 을 송신한다.
+	// 이후 ReleaseBarrier 가 다시 SpawnHeroCharacter 를 호출할 때는 컨텍스트가 소비되어
+	// 없으므로 정상 스폰으로 진행된다.
+	// ────────────────────────────────────────────────────────────────────────────
+	if (AHellunaDefenseGameMode* DefenseGM = Cast<AHellunaDefenseGameMode>(this))
+	{
+		FString BarrierPlayerId;
+		if (AHellunaPlayerState* BarrierPS = PlayerController->GetPlayerState<AHellunaPlayerState>())
+		{
+			BarrierPlayerId = BarrierPS->GetPlayerUniqueId();
+		}
+
+		if (!BarrierPlayerId.IsEmpty())
+		{
+			TArray<FString> BarrierExpectedIds;
+			int32 BarrierPartyId = 0;
+			if (DefenseGM->ConsumeBarrierDeployContext(BarrierPlayerId, BarrierExpectedIds, BarrierPartyId))
+			{
+				UE_LOG(LogHelluna, Log, TEXT("[Barrier] SpawnHero → Register 경로 | PlayerId=%s | Expected=%d | PartyId=%d"),
+					*BarrierPlayerId, BarrierExpectedIds.Num(), BarrierPartyId);
+
+				DefenseGM->RegisterControllerInBarrier(PlayerController, BarrierPlayerId,
+					BarrierExpectedIds, BarrierPartyId);
+
+				if (DefenseGM->ShouldDeferSpawn(PlayerController))
+				{
+#if HELLUNA_DEBUG_GAMEMODE
+					UE_LOG(LogHelluna, Warning, TEXT("║ Barrier 활성 — 실제 스폰 지연"));
+					UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
+#endif
+					return;
+				}
+			}
+		}
 	}
 
 	// ────────────────────────────────────────────────────────────────────────────

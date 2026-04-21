@@ -86,6 +86,10 @@ void AHellunaDefenseGameState::OnRep_Phase()
 #if HELLUNA_DEBUG_DEFENSE
         UE_LOG(LogTemp, Warning, TEXT("[GameState] OnDayStarted 호출 시도"));
 #endif
+        // 이전 라운드 Dusk 상태 클린업 (재사이클 시 스케줄러/가드 리셋)
+        GetWorldTimerManager().ClearTimer(TimerHandle_DuskScheduler);
+        GetWorldTimerManager().ClearTimer(TimerHandle_DuskTransition);
+        bDuskStarted = false;
         CleanupInitialNightPCGClientArtifacts();
         OnDayStarted();
         // 🌅 시각적 전환(구름 토글, UDW 날씨 Lerp)은 새벽 해 이동이 끝난 뒤에 시작한다.
@@ -110,20 +114,44 @@ void AHellunaDefenseGameState::OnRep_Phase()
             NightWeatherTypes.Num());
         OnNightStarted();
         bHasBeenNight = true;  // ★ 밤 경험 기록
-        // 밤: NightWeatherTypes에서 랜덤 선택 (비가 오도록 배열에 Rain 프리셋 배치)
-        // 구름 토글은 UDW Change Weather 이후에 적용해야 UDW가 켠 구름이 다시 꺼짐.
-        // bHasUDW 가드 제거: 데디서버에 UDW가 없어도 서버는 날씨 선택(강도 복제)을 해야 함.
-        ApplyRandomWeather(false);
-        if (bHasUDS) SetVolumetricCloudVisible(false);  // 밤: 구름 OFF (오로라/분위기 가시성)
-        // ★ Animate OFF — 현재 시간에서 멈춤
-        if (bHasUDS)
+
+        // Dusk는 이제 EnterNight 이전에 NetMulticast_OnDawnPassed → TimerHandle_DuskScheduler
+        // 경유로 선제 실행됨. EnterNight 시점에는 이미 Dusk Lerp가 진행/완료된 상태.
+        //  - bDuskStarted=true: 이미 StartDuskTransition 호출됨 → 아무것도 안 함 (Tick이 마무리)
+        //  - bDuskStarted=false: 스케줄러가 아직 안 붙었거나 DuskTransitionDuration<=0
+        //                       → 즉시 전환 폴백 or StartDuskTransition 직접 호출.
+        if (bDuskStarted)
         {
-            AActor* UDS = GetUDSActor();
-            if (UDS)
+#if HELLUNA_DEBUG_DEFENSE
+            UE_LOG(LogTemp, Warning, TEXT("[GameState] %s: Night 진입 — Dusk 선행 실행됨, Phase 전환만 처리"),
+                HasAuthority() ? TEXT("SERVER") : TEXT("CLIENT"));
+#endif
+        }
+        else
+        {
+            // 스케줄러 잔여 취소 (Night 진입 이후 뒤늦게 Dusk 발화 방지)
+            GetWorldTimerManager().ClearTimer(TimerHandle_DuskScheduler);
+
+            if (DuskTransitionDuration <= 0.f)
             {
-                // [Step3 O-02] 캐싱된 프로퍼티 포인터 사용
-                if (FBoolProperty* AnimProp = CastField<FBoolProperty>(CachedProp_Animate))
-                    AnimProp->SetPropertyValue_InContainer(UDS, false);
+                // Dusk 비활성: 기존 스냅 전환
+                ApplyRandomWeather(false);
+                if (bHasUDS)
+                {
+                    SetVolumetricCloudVisible(false);
+                    AActor* UDS = GetUDSActor();
+                    if (UDS)
+                    {
+                        if (FBoolProperty* AnimProp = CastField<FBoolProperty>(CachedProp_Animate))
+                            AnimProp->SetPropertyValue_InContainer(UDS, false);
+                    }
+                }
+            }
+            else
+            {
+                // RoundDuration이 Dusk보다 짧아 스케줄러가 늦게 도착한 경우 등
+                // 지금이라도 Dusk 실행 (Phase는 이미 Night지만 TickDuskTransition의 가드는 Night 통과).
+                StartDuskTransition();
             }
         }
         break;
@@ -144,6 +172,28 @@ void AHellunaDefenseGameState::NetMulticast_OnDawnPassed_Implementation(float Ro
 
     // BP 이벤트 호출
     OnDawnPassed(RoundDuration);
+
+    // Dusk 스케줄러 — EnterNight 이전에 선제 실행.
+    //  모든 NetMode에서 예약(데디서버에서도 ReplicatedRainIntensity 조기 복제를 위해).
+    //  데디서버는 StartDuskTransition 내부에서 UDS 없음 → ApplyRandomWeather(false)만 호출.
+    bDuskStarted = false;
+    GetWorldTimerManager().ClearTimer(TimerHandle_DuskScheduler);
+    const float DuskDelay = FMath::Max(0.f, RoundDuration - DuskTransitionDuration);
+    if (DuskTransitionDuration > 0.f)
+    {
+        GetWorldTimerManager().SetTimer(
+            TimerHandle_DuskScheduler,
+            this,
+            &ThisClass::StartDuskTransition,
+            FMath::Max(0.01f, DuskDelay),  // 0초는 SetTimer 거절 — 1프레임 딜레이
+            false
+        );
+#if HELLUNA_DEBUG_DEFENSE
+        UE_LOG(LogTemp, Warning, TEXT("[GameState] %s: Dusk 예약 | RoundDuration=%.1f, DuskDuration=%.1f, Delay=%.1f"),
+            HasAuthority() ? TEXT("SERVER") : TEXT("CLIENT"),
+            RoundDuration, DuskTransitionDuration, DuskDelay);
+#endif
+    }
 
     // ★ UDS가 없으면 스킵 (데디서버)
     if (!bHasUDS) return;
@@ -282,6 +332,113 @@ void AHellunaDefenseGameState::TickDawnTransition()
             SetVolumetricCloudVisible(true);
             ApplyRandomWeather(true);
         }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 일몰(Dusk) 전환 시작 — EnterNight 이전에 TimerHandle_DuskScheduler에서 호출
+//   RoundDuration - DuskTransitionDuration 시점에 발화해 Phase가 아직 Day인 동안
+//   UDS Time of Day를 NightSettleTime까지 밀고 UDW 날씨를 같은 시간 창에서 블렌드.
+//   EnterNight가 도달하는 순간에는 이미 Lerp가 완료되거나 마무리 단계에 있음.
+// ═══════════════════════════════════════════════════════════════════════════════
+void AHellunaDefenseGameState::StartDuskTransition()
+{
+    if (bDuskStarted) return;
+    bDuskStarted = true;
+
+    // 서버 권위 강도 복제는 항상 수행 (데디서버 포함)
+    // ApplyRandomWeather 내부가 HasAuthority 가드로 ReplicatedRainIntensity 세팅
+    const float BlendTime = DuskTransitionDuration > 0.f ? DuskTransitionDuration : WeatherTransitionTime;
+
+    if (!bHasUDS)
+    {
+        // 데디서버: 렌더 없음 → UDW ProcessEvent 스킵되지만 ReplicatedRainIntensity는 복제됨
+        ApplyRandomWeather(false, BlendTime);
+        return;
+    }
+
+    AActor* UDS = GetUDSActor();
+    if (!UDS)
+    {
+        ApplyRandomWeather(false, BlendTime);
+        return;
+    }
+
+    float CurrentTime = 0.f;
+    if (FFloatProperty* FP = CastField<FFloatProperty>(CachedProp_TimeOfDay))
+        CurrentTime = FP->GetPropertyValue_InContainer(UDS);
+    else if (FDoubleProperty* DP = CastField<FDoubleProperty>(CachedProp_TimeOfDay))
+        CurrentTime = (float)DP->GetPropertyValue_InContainer(UDS);
+
+    // Animate OFF — Dusk Lerp가 Time of Day를 수동 제어
+    if (FBoolProperty* AnimProp = CastField<FBoolProperty>(CachedProp_Animate))
+        AnimProp->SetPropertyValue_InContainer(UDS, false);
+
+    DuskLerpStart = CurrentTime;
+    DuskLerpElapsed = 0.f;
+    float Distance = NightSettleTime - CurrentTime;
+    if (Distance < 0.f) Distance += 2400.f;  // 순환 랩어라운드
+    DuskTotalDistance = Distance;
+
+    // UDW 날씨 블렌드를 Dusk와 같은 시간 창으로 시작
+    ApplyRandomWeather(false, BlendTime);
+
+#if HELLUNA_DEBUG_DEFENSE
+    UE_LOG(LogTemp, Warning, TEXT("[GameState] %s: Dusk 시작! 현재=%.0f → 목표=%.0f (이동량=%.0f, %.1f초) Phase=%d"),
+        HasAuthority() ? TEXT("SERVER") : TEXT("CLIENT"),
+        CurrentTime, NightSettleTime, DuskTotalDistance, BlendTime, (int32)Phase);
+#endif
+
+    GetWorldTimerManager().ClearTimer(TimerHandle_DuskTransition);
+    GetWorldTimerManager().SetTimer(
+        TimerHandle_DuskTransition,
+        this,
+        &ThisClass::TickDuskTransition,
+        0.016f,
+        true
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 일몰(Dusk) 전환 Tick — UDS Time of Day 보간 (Dawn 대칭)
+//   완료 시 구름 OFF (오로라 가시성). Dawn의 SetVolumetricCloudVisible(true)와 대칭.
+//   Phase가 Day/Night 어느 쪽이든 진행 — EnterNight가 Lerp 도중 와도 자연스럽게 이어짐.
+// ═══════════════════════════════════════════════════════════════════════════════
+void AHellunaDefenseGameState::TickDuskTransition()
+{
+    // bDuskStarted가 false면 Day 재진입 시 OnRep_Phase(Day)에서 리셋된 것 — 중단.
+    //  (Phase 자체는 Day→Night 전환 도중이므로 Phase 값으로는 판정 불가)
+    if (!bDuskStarted)
+    {
+        GetWorldTimerManager().ClearTimer(TimerHandle_DuskTransition);
+        return;
+    }
+
+    UWorld* World = GetWorld();
+    const float DeltaTime = World ? World->GetDeltaSeconds() : 0.016f;
+    DuskLerpElapsed += DeltaTime;
+    const float SafeDuration = FMath::Max(DuskTransitionDuration, 0.001f);
+    float Alpha = FMath::Clamp(DuskLerpElapsed / SafeDuration, 0.f, 1.f);
+
+    float NewTime = DuskLerpStart + (DuskTotalDistance * Alpha);
+    if (NewTime >= 2400.f) NewTime -= 2400.f;
+
+    SetUDSTimeOfDay(NewTime);
+
+    if (Alpha >= 1.0f)
+    {
+        GetWorldTimerManager().ClearTimer(TimerHandle_DuskTransition);
+
+        // 정확히 NightSettleTime에 맞추기
+        SetUDSTimeOfDay(NightSettleTime);
+
+        // 구름 OFF — 오로라/분위기 가시성 (Dawn 완료 시 구름 ON과 대칭)
+        SetVolumetricCloudVisible(false);
+
+#if HELLUNA_DEBUG_DEFENSE
+        UE_LOG(LogTemp, Warning, TEXT("[GameState] %s: Dusk 전환 완료! SettleTime=%.0f"),
+            HasAuthority() ? TEXT("SERVER") : TEXT("CLIENT"), NightSettleTime);
+#endif
     }
 }
 
@@ -586,6 +743,8 @@ void AHellunaDefenseGameState::EndPlay(const EEndPlayReason::Type EndPlayReason)
     GetWorldTimerManager().ClearTimer(TimerHandle_NightDebug);
 #endif
     GetWorldTimerManager().ClearTimer(TimerHandle_DawnTransition);
+    GetWorldTimerManager().ClearTimer(TimerHandle_DuskTransition);
+    GetWorldTimerManager().ClearTimer(TimerHandle_DuskScheduler);
     GetWorldTimerManager().ClearTimer(TimerHandle_PuddleAccumulation);
 
     if (HasAuthority())
@@ -888,7 +1047,7 @@ void AHellunaDefenseGameState::CheatTimeFreeze_HoldTick()
 // ═══════════════════════════════════════════════════════════════════════════════
 // 🌤️ 랜덤 날씨 시스템
 // ═══════════════════════════════════════════════════════════════════════════════
-void AHellunaDefenseGameState::ApplyRandomWeather(bool bIsDay)
+void AHellunaDefenseGameState::ApplyRandomWeather(bool bIsDay, float TransitionTimeOverride)
 {
     UObject* SelectedWeather = nullptr;
     int32 RandomIdx = -1;
@@ -964,6 +1123,10 @@ void AHellunaDefenseGameState::ApplyRandomWeather(bool bIsDay)
             ArrayNum = WeatherArray.Num();
         }
     }
+
+    // Dusk/Dawn 호출자가 명시적으로 전환 시간을 지정한 경우 최종 우선.
+    if (TransitionTimeOverride > 0.f)
+        EffectiveTransitionTime = TransitionTimeOverride;
 
     if (!SelectedWeather)
     {
