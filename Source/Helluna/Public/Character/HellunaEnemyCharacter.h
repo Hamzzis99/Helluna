@@ -413,6 +413,10 @@ public:
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayAttackMontage(UAnimMontage* Montage, float PlayRate, FRotator FacingRotation);
 
+	/** 특정 몬타지를 모든 머신에서 블렌드 아웃으로 중단 (DashLoopMontage 종료 등). */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_StopMontage(UAnimMontage* Montage, float BlendOutTime);
+
 	/** [AttackAssetsV1] GA 소유 공격 시작 사운드 멀티캐스트. */
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_PlayAttackSound(USoundBase* Sound, float VolumeMultiplier);
@@ -475,6 +479,17 @@ public:
 	{
 		CachedHitVFX = InVFX;
 		CachedHitVFXScale = InScale;
+	}
+
+	/** [KnockbackV1] 현재 공격의 넉백 활성 여부 / 힘 (GA 가 ActivateAbility 에서 주입). */
+	bool bCachedKnockbackEnabled = false;
+	float CachedKnockbackForce = 0.f;
+
+	/** [KnockbackV1] 현재 공격의 넉백 설정 캐싱 (기본 OFF). */
+	void SetCachedKnockback(bool bEnable, float Force)
+	{
+		bCachedKnockbackEnabled = bEnable;
+		CachedKnockbackForce = FMath::Max(0.f, Force);
 	}
 
 	/** [HitSoundV1] 타격 지점에 사운드 멀티캐스트 스폰. */
@@ -597,5 +612,17 @@ protected:
 
 	// DespawnMassEntityOnServer 중복 호출 방지 플래그
 	bool bDespawnStarted = false;
+
+public:
+	/**
+	 * [BossAttackCooldownPersistV1] 보스 공격(GA)별 남은 쿨다운(초).
+	 *   STTask_BossChooseAttack 의 FBossAttackEntry.Cooldown 이 Attack 상태 재진입에도 살아남도록
+	 *   보스 캐릭터 자체에 저장한다 (기존엔 ActiveInstanceData 에 있어서 상태 Exit 시 리셋되는 버그).
+	 *
+	 *   Tick 마다 Task 가 Decrement 하고, 엔트리 발동 시 Entry.Cooldown 로 재설정.
+	 *   멀티플레이어: 서버 AI 만 돌므로 복제 불필요 (Transient).
+	 */
+	UPROPERTY(Transient)
+	TMap<TSubclassOf<UHellunaEnemyGameplayAbility>, float> BossAttackCooldowns;
 };
 	

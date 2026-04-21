@@ -49,6 +49,7 @@ void ATimeDistortionZone::BeginPlay()
 void ATimeDistortionZone::Destroyed()
 {
 	RestoreAllSlowedActors();
+	ForceRestoreNearbyPlayers(); // [TDSlowReleaseFixV1] 안전망 — Zone 파괴 시도 경로
 	DestroyAllOrbs();
 
 	if (UWorld* World = GetWorld())
@@ -127,6 +128,7 @@ void ATimeDistortionZone::DeactivateZone()
 	SlowSphere->SetGenerateOverlapEvents(false);
 
 	RestoreAllSlowedActors();
+	ForceRestoreNearbyPlayers(); // [TDSlowReleaseFixV1] 안전망
 	DestroyAllOrbs();
 	Multicast_DeactivateDesaturation();
 
@@ -262,6 +264,50 @@ void ATimeDistortionZone::RestoreAllSlowedActors()
 }
 
 // -----------------------------------------------------------------
+// [TDSlowReleaseFixV1] 안전망: Zone 반경 1.5배 내 모든 HeroCharacter 강제 1.0 배율 복원.
+//   맵 기반 복원(RestoreAllSlowedActors) 이후 이중 호출로 누락 케이스 보증.
+// -----------------------------------------------------------------
+void ATimeDistortionZone::ForceRestoreNearbyPlayers()
+{
+	UWorld* World = GetWorld();
+	if (!World || !SlowSphere) return;
+
+	const float ScanRadius = SlowSphere->GetScaledSphereRadius() * 1.5f;
+
+	TArray<FOverlapResult> Overlaps;
+	FCollisionQueryParams Q;
+	Q.AddIgnoredActor(this);
+	if (OwnerEnemy) Q.AddIgnoredActor(OwnerEnemy);
+
+	World->OverlapMultiByObjectType(
+		Overlaps,
+		GetActorLocation(),
+		FQuat::Identity,
+		FCollisionObjectQueryParams(ECC_Pawn),
+		FCollisionShape::MakeSphere(ScanRadius),
+		Q);
+
+	int32 RestoredCount = 0;
+	for (const FOverlapResult& O : Overlaps)
+	{
+		if (AHellunaHeroCharacter* Player = Cast<AHellunaHeroCharacter>(O.GetActor()))
+		{
+			Player->SetMoveSpeedMultiplier(1.f);
+			Player->SetAnimRateMultiplier(1.f);
+			Player->SetJumpGravityMultiplier(1.f);
+			++RestoredCount;
+
+			// 맵에서도 정리 (이중 호출 안전)
+			SlowedActors.Remove(Player);
+		}
+	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[TDSlowReleaseFixV1] ForceRestoreNearbyPlayers — scanR=%.0f restored=%d"),
+		ScanRadius, RestoredCount);
+}
+
+// -----------------------------------------------------------------
 // BeginDetonation — 패턴 종료 VFX 재생 후 딜레이
 // -----------------------------------------------------------------
 void ATimeDistortionZone::BeginDetonation()
@@ -316,6 +362,7 @@ void ATimeDistortionZone::FinishDetonation()
 
 	// 슬로우 해제 + PP 해제
 	RestoreAllSlowedActors();
+	ForceRestoreNearbyPlayers(); // [TDSlowReleaseFixV1] 안전망
 	Multicast_DeactivateDesaturation();
 
 	// 폭발 VFX
@@ -622,6 +669,7 @@ void ATimeDistortionZone::FinishPatternBroken()
 
 	// 슬로우 해제 + PP 해제
 	RestoreAllSlowedActors();
+	ForceRestoreNearbyPlayers(); // [TDSlowReleaseFixV1] 안전망
 	Multicast_DeactivateDesaturation();
 
 	// 파훼 성공 VFX

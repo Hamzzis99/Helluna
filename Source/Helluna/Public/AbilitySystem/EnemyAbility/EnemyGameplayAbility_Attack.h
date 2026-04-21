@@ -93,6 +93,22 @@ public:
 			ClampMin = "0.1", ClampMax = "10.0"))
 	float HitVFXScale = 1.f;
 
+	// ═══════════════════════════════════════════════════════════
+	// [KnockbackV1] 근접 타격 넉백 (옵션)
+	// ═══════════════════════════════════════════════════════════
+
+	/** 근접 히트 시 타겟을 밀어낼지 여부. 기본 OFF. */
+	UPROPERTY(EditDefaultsOnly, Category = "공격 설정|넉백",
+		meta = (DisplayName = "넉백 사용"))
+	bool bEnableKnockback = false;
+
+	/** 넉백 힘 (LaunchCharacter 속도). bEnableKnockback 이 켜졌을 때만 사용. */
+	UPROPERTY(EditDefaultsOnly, Category = "공격 설정|넉백",
+		meta = (DisplayName = "넉백 힘",
+			EditCondition = "bEnableKnockback", EditConditionHides,
+			ClampMin = "0.0", ClampMax = "3000.0"))
+	float KnockbackForce = 800.f;
+
 protected:
 	//~ Begin UGameplayAbility Interface
 	virtual void ActivateAbility(

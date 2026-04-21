@@ -16,6 +16,7 @@ Content/Collections/
 Content/Developers/
 Content/EasyFog
 Content/EasyAtmos
+Content/InsaneGunner
 Plugins/Developer/
 Content/Assets/
 Plugins/Inventory/Content/InventoryAssets/
@@ -36,7 +37,6 @@ Plugins/Marketplace/**/Binaries/
 Plugins/UnrealMCP
 Plugins/UnrealMCP_backup
 Plugins/*/Binaries/*
-
 
 # User-specific files
 *.sln
@@ -83,3 +83,4 @@ engine-mcp/engine-mcp/MCPWidgetGuide.md
 engine-mcp/engine-mcp/pattern_b_patch_log.md
 engine-mcp/engine-mcp/UMG_Animation_Guide.md
 engine-mcp/engine-mcp/widget-animation-pipeline.md
+Content/Fab/ParagonMinions/

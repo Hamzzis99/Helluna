@@ -31,14 +31,14 @@ AHellunaBaseResourceUsingObject::AHellunaBaseResourceUsingObject()
         // 캐릭터 이동과 총알 피격을 모두 막습니다.
         DynamicMeshComponent->SetCollisionProfileName(TEXT("BlockAll"));
         DynamicMeshComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-        
+
         // 3. [김기현 핵심] 복잡한 메쉬(Poly) 그대로 충돌체로 사용 (ComplexAsSimple)
         // 이 설정이 있어야 메쉬가 찌그러졌을 때 충돌 범위도 같이 찌그러집니다.
         DynamicMeshComponent->SetComplexAsSimpleCollisionEnabled(true, true);
-        
+
         // 4. [김기현] 물리 시뮬레이션 끄기 (고정된 사물이므로)
         DynamicMeshComponent->SetSimulatePhysics(false);
-        
+
         // 5. [김기현 최적화] 비동기 쿠킹 활성화 (AsyncCooking)
         // 메쉬가 변형될 때 렉(Frame Drop)이 발생하지 않도록 백그라운드 스레드에서 연산합니다.
         DynamicMeshComponent->bUseAsyncCooking = true;

@@ -15,6 +15,7 @@
 // [Loading Barrier]
 #include "Loading/HellunaLoadingHUDWidget.h"
 #include "Loading/HellunaLoadingShipActor.h"
+#include "MoviePlayer.h"
 #include "Camera/CameraActor.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Kismet/GameplayStatics.h"
@@ -1661,6 +1662,35 @@ void AHellunaHeroController::Client_EnterLoadingScene_Implementation(const TArra
 
 	TryActivateLoadingCamera();
 
+	// §13 v2.1 §3.3.4 Phase 2c — A→C 핸드오프: Ship 위상/Amp 복원
+	UMDF_GameInstance* GI = GetGameInstance() ? Cast<UMDF_GameInstance>(GetGameInstance()) : nullptr;
+	const bool bHasHandoff = (GI && GI->bHasSavedShipPose);
+	if (bHasHandoff && World)
+	{
+		TArray<AActor*> FoundShips;
+		UGameplayStatics::GetAllActorsOfClassWithTag(World, AHellunaLoadingShipActor::StaticClass(),
+			LoadingShipTag, FoundShips);
+		for (AActor* A : FoundShips)
+		{
+			if (AHellunaLoadingShipActor* Ship = Cast<AHellunaLoadingShipActor>(A))
+			{
+				Ship->ApplyPoseSnapshot(GI->SavedShipTimeAccum, GI->SavedShipAmpScale);
+				UE_LOG(LogHelluna, Warning,
+					TEXT("[LoadingDbg][HeroPC][C] Ship ApplyPoseSnapshot | TimeAccum=%.3f | AmpScale=%.3f"),
+					GI->SavedShipTimeAccum, GI->SavedShipAmpScale);
+				break;
+			}
+		}
+		UE_LOG(LogHelluna, Warning,
+			TEXT("[LoadingDbg][HeroPC][C] Ship 핸드오프 적용 시도 | Found=%d"), FoundShips.Num());
+	}
+	else
+	{
+		UE_LOG(LogHelluna, Warning,
+			TEXT("[LoadingDbg][HeroPC][C] Ship 핸드오프 없음 (콜드 부트 또는 GI null) | GI=%p | bHasSavedShipPose=%d"),
+			GI, GI ? (GI->bHasSavedShipPose ? 1 : 0) : 0);
+	}
+
 	SetIgnoreMoveInput(true);
 	SetIgnoreLookInput(true);
 
@@ -1694,6 +1724,16 @@ void AHellunaHeroController::Client_EnterLoadingScene_Implementation(const TArra
 	if (LoadingHUDWidgetInstance)
 	{
 		LoadingHUDWidgetInstance->InitializeHUD(ExpectedIds, LocalPlayerId, PartyId);
+
+		// §13 v2.1 §3.3.4 Phase 2c — HUD 초기 상태: 게임 단계 + (핸드오프 시) Saved Progress 이어받기
+		LoadingHUDWidgetInstance->SetIsLobbyStage(false);
+		if (bHasHandoff)
+		{
+			LoadingHUDWidgetInstance->SetInitialFakeProgress(GI->SavedFakeProgress);
+			UE_LOG(LogHelluna, Warning,
+				TEXT("[LoadingDbg][HeroPC][C] HUD 핸드오프 | SetInitialFakeProgress=%.3f"),
+				GI->SavedFakeProgress);
+		}
 	}
 
 	if (World)
@@ -1711,11 +1751,46 @@ void AHellunaHeroController::Client_EnterLoadingScene_Implementation(const TArra
 		UE_LOG(LogHelluna, Warning,
 			TEXT("[LoadingDbg][EnterScene] 타이머 시작 | PollInterval=%.2fs | SoftTimeout=%.2fs"),
 			FMath::Max(ReadyPollInterval, 0.05f), SoftTimeout);
+
+		// §13 v2.1 §3.3.4 Phase 2f — 0.02s 후 MoviePlayer StopMovie (Slate Snapshot ↔ UMG HUD 크로스페이드)
+		if (bHasHandoff)
+		{
+			FTimerHandle StopMovieHandle;
+			World->GetTimerManager().SetTimer(StopMovieHandle,
+				FTimerDelegate::CreateLambda([]()
+				{
+					if (GetMoviePlayer() && GetMoviePlayer()->IsMovieCurrentlyPlaying())
+					{
+						GetMoviePlayer()->StopMovie();
+						UE_LOG(LogHelluna, Warning, TEXT("[LoadingDbg][HeroPC][C] MoviePlayer StopMovie 호출 (크로스페이드)"));
+					}
+					else
+					{
+						UE_LOG(LogHelluna, Warning, TEXT("[LoadingDbg][HeroPC][C] StopMovie 스킵 — MoviePlayer 미재생"));
+					}
+				}),
+				0.02f, false);
+
+			// §13 v2.1 §3.3.4 Phase 2g — 0.17s 후 Saved* 정리 (스냅샷 텍스처 GC)
+			TWeakObjectPtr<UMDF_GameInstance> WeakGI = GI;
+			FTimerHandle ClearHandoffHandle;
+			World->GetTimerManager().SetTimer(ClearHandoffHandle,
+				FTimerDelegate::CreateLambda([WeakGI]()
+				{
+					if (UMDF_GameInstance* PinnedGI = WeakGI.Get())
+					{
+						PinnedGI->LoadingSnapshotTexture = nullptr;
+						PinnedGI->ClearLoadingHandoffState();
+						UE_LOG(LogHelluna, Warning, TEXT("[LoadingDbg][HeroPC][C] Snapshot/Handoff 상태 해제"));
+					}
+				}),
+				0.17f, false);
+		}
 	}
 
 	UE_LOG(LogHelluna, Warning,
-		TEXT("[LoadingDbg][EnterScene] EXIT | LoadingHUDInst(post)=%p | LocalId=%s"),
-		LoadingHUDWidgetInstance.Get(), *LocalPlayerId);
+		TEXT("[LoadingDbg][EnterScene] EXIT | LoadingHUDInst(post)=%p | LocalId=%s | bHasHandoff=%d"),
+		LoadingHUDWidgetInstance.Get(), *LocalPlayerId, bHasHandoff ? 1 : 0);
 }
 
 bool AHellunaHeroController::IsClientReadyForBarrier() const
@@ -2056,5 +2131,27 @@ void AHellunaHeroController::LeaveLoadingScene()
 	}
 	LoadingCameraActor.Reset();
 
+	// [§13 v2.1+ X-3] L_LoadingShipScene 서브레벨 언로드 — 메모리 회수
+	// v1엔 서브레벨이 없어 호출 없었으나, v2.1에서 공용 서브레벨 도입으로 명시적 언로드 필요.
+	// Client_FadeToGame 3.0s 뒤 LeaveLoadingScene 호출 → 페이드 검정 중 병렬 언로드.
+	if (World)
+	{
+		FLatentActionInfo UnloadLatent;
+		UnloadLatent.CallbackTarget = this;
+		UnloadLatent.ExecutionFunction = FName(TEXT("OnLoadingShipSceneUnloaded"));
+		UnloadLatent.Linkage = 0;
+		UnloadLatent.UUID = GetUniqueID() + 100;  // Lobby 쪽 Background UUID와 충돌 방지
+		UGameplayStatics::UnloadStreamLevel(this, FName(TEXT("L_LoadingShipScene")), UnloadLatent, false);
+		UE_LOG(LogHelluna, Warning,
+			TEXT("[LoadingDbg][Leave] UnloadStreamLevel(L_LoadingShipScene) 요청 | UUID=%d"),
+			UnloadLatent.UUID);
+	}
+
 	UE_LOG(LogHelluna, Warning, TEXT("[LoadingDbg][Leave] EXIT"));
+}
+
+// [§13 v2.1+ X-3] L_LoadingShipScene 언로드 완료 콜백
+void AHellunaHeroController::OnLoadingShipSceneUnloaded()
+{
+	UE_LOG(LogHelluna, Warning, TEXT("[LoadingDbg][Leave] L_LoadingShipScene 언로드 완료"));
 }

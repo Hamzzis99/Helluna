@@ -138,19 +138,31 @@ EStateTreeRunStatus FSTTask_BossAttack::Tick(
 
 	// ① 몽타주가 실제 재생 중일 때만 회전 스킵.
 	// AttackRecoveryDelay 단계까지 스킵하면 액터가 수 초간 정지→점프 반복으로 끊겨 보임.
+	// [DashDirLockV1] 기존엔 Enemy->AttackMontage 만 체크 → DashLoopMontage/WindupMontage 는
+	// 감지 못해 매 틱 FaceTarget 이 돌아 대쉬 방향이 플레이어 쪽으로 덮어써짐. IsAnyMontagePlaying
+	// 으로 변경해 준비/돌진 몬타지도 잡아낸다. 몬타지 종료 후(Recovery/쿨다운)엔 기존처럼 회전 재개.
 	bool bMontagePlaying = false;
 	if (USkeletalMeshComponent* Mesh = Enemy->GetMesh())
 	{
 		if (UAnimInstance* AnimInst = Mesh->GetAnimInstance())
 		{
-			if (Enemy->AttackMontage && AnimInst->Montage_IsPlaying(Enemy->AttackMontage))
+			if (AnimInst->IsAnyMontagePlaying())
 			{
 				bMontagePlaying = true;
 			}
 		}
 	}
 	if (bMontagePlaying)
+	{
+		// 첫 회만 로그 (스팸 방지용 카운터)
+		static int32 s_DashSkipLogCount = 0;
+		if ((++s_DashSkipLogCount % 20) == 1)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[DashDirLockV1] BossAttack Tick — montage playing, rotation skipped"));
+		}
 		return EStateTreeRunStatus::Running;
+	}
 
 	// 몽타주 외 상태(쿨다운 / Recovery Delay 포함)에서는 타겟 방향 회전 실행.
 	if (TD.HasValidTarget())

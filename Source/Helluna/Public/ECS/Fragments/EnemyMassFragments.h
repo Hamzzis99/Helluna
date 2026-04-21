@@ -41,6 +41,14 @@ struct HELLUNA_API FEnemySpawnStateFragment : public FMassFragment
 	/** 스폰된 Actor에 대한 약한 참조. 역전환/파괴 추적 시 사용 */
 	UPROPERTY()
 	TWeakObjectPtr<AActor> SpawnedActor;
+
+	/**
+	 * [PhantomSweepV1] bHasSpawnedActor=false && bDead=false 상태로 유지된 누적 프레임 수.
+	 * Actor 로 전환되는 순간(또는 bDead 전환) 0 으로 리셋된다.
+	 * 일정 임계(기본 30초=1800 프레임) 초과 시 Processor 가 phantom 으로 간주해 Entity 정리.
+	 */
+	UPROPERTY()
+	int32 EntityOnlyFrames = 0;
 };
 
 // ============================================================================

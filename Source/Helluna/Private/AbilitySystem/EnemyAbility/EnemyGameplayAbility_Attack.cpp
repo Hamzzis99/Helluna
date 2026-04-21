@@ -64,6 +64,8 @@ void UEnemyGameplayAbility_Attack::ActivateAbility(
 	Enemy->SetCachedMeleeAttackDamage(AttackDamage);
 	// [HitVFXV1] 타격 판정 시 스폰할 VFX를 캐릭터에 캐싱
 	Enemy->SetCachedHitVFX(HitVFX, HitVFXScale);
+	// [KnockbackV1] 넉백 설정 캐싱 (OFF 면 힘은 무시됨)
+	Enemy->SetCachedKnockback(bEnableKnockback, KnockbackForce);
 
 	// [HitVFX.Diag] GA 발동 시점에 HitVFX 가 실제로 설정되어 있는지 확인
 	UE_LOG(LogTemp, Warning,
@@ -235,6 +237,7 @@ void UEnemyGameplayAbility_Attack::EndAbility(
 	{
 		Enemy->UnlockMovement();
 		Enemy->SetCachedMeleeAttackDamage(0.f);
+		Enemy->SetCachedKnockback(false, 0.f);
 
 		// [ServerAnimTick] 안전망 — GA 종료 시점에 항상 서버 Pose Tick 복원.
 		// Notify End 가 누락되거나 Montage 취소로 SetAttackBoxActive(false) 가 안 불렸을 때도

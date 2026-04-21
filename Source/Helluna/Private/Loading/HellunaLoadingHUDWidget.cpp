@@ -7,6 +7,8 @@
 #include "Components/TextBlock.h"
 #include "Components/ProgressBar.h"
 #include "Components/PanelWidget.h"
+#include "Engine/World.h"
+#include "TimerManager.h"
 #include "Helluna.h"
 
 void UHellunaLoadingHUDWidget::InitializeHUD(const TArray<FString>& InExpectedIds,
@@ -85,6 +87,65 @@ void UHellunaLoadingHUDWidget::UpdateSlot(const FString& PlayerId, bool bReady)
 		if (UHellunaPartySlotWidget* PartySlot = SlotPtr->Get())
 		{
 			PartySlot->SetReady(bReady);
+		}
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// §13 v2.1 — A구간 HUD 모드 + 가짜 진행률
+// ════════════════════════════════════════════════════════════════════════════════
+
+void UHellunaLoadingHUDWidget::SetIsLobbyStage(bool bInLobby)
+{
+	bIsLobbyStage = bInLobby;
+}
+
+void UHellunaLoadingHUDWidget::StartFakeProgress(float Duration, float TargetValue)
+{
+	FakeProgressStart = MyProgress;
+	FakeProgressTarget = FMath::Clamp(TargetValue, 0.f, 1.f);
+	FakeProgressDuration = FMath::Max(Duration, 0.01f);
+	FakeProgressElapsed = 0.f;
+	bFakeProgressActive = true;
+
+	UpdateMyProgress(FakeProgressStart);
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(FakeProgressTickHandle);
+		World->GetTimerManager().SetTimer(FakeProgressTickHandle, this,
+			&UHellunaLoadingHUDWidget::TickFakeProgress, 0.05f, true);
+	}
+}
+
+void UHellunaLoadingHUDWidget::SetInitialFakeProgress(float InitialValue)
+{
+	const float Clamped = FMath::Clamp(InitialValue, 0.f, 1.f);
+	UpdateMyProgress(Clamped);
+}
+
+void UHellunaLoadingHUDWidget::TickFakeProgress()
+{
+	if (!bFakeProgressActive)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(FakeProgressTickHandle);
+		}
+		return;
+	}
+
+	FakeProgressElapsed += 0.05f;
+	const float Alpha = FMath::Clamp(FakeProgressElapsed / FakeProgressDuration, 0.f, 1.f);
+	const float NewValue = FMath::Lerp(FakeProgressStart, FakeProgressTarget, Alpha);
+	UpdateMyProgress(NewValue);
+
+	if (Alpha >= 1.f)
+	{
+		bFakeProgressActive = false;
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(FakeProgressTickHandle);
 		}
 	}
 }

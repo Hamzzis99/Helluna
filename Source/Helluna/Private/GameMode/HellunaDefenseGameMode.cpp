@@ -1903,6 +1903,13 @@ void AHellunaDefenseGameMode::TickNightWatchdog()
         if (!IsValid(Enemy) || Enemy->IsActorBeingDestroyed()) continue;
         if (Enemy->EnemyGrade != EEnemyGrade::Normal) continue; // 보스는 별도 경로
 
+        // [NightWatchdogV2] Pool inactive Actor(사전 생성/재사용 대기)는 실제 살아있는 적이 아님.
+        //   Pool 반환 상태: SetActorHiddenInGame(true) + SetActorEnableCollision(false).
+        //   GA_Death 에서도 사망 직전 Collision 을 끄므로 죽어가는 액터도 여기서 제외됨(의도됨).
+        //   이 필터 없으면 풀 사이즈(근거리 90 + 원거리 60 등)가 AliveCount 에 더해져
+        //   "실제 활성 적 0" 상태에서도 EnterDay 보정이 막혔음.
+        if (Enemy->IsHidden() || !Enemy->GetActorEnableCollision()) continue;
+
         UHellunaHealthComponent* Health = Enemy->FindComponentByClass<UHellunaHealthComponent>();
         if (Health && Health->IsDead()) continue;
 
@@ -3027,6 +3034,44 @@ void AHellunaDefenseGameMode::Cheat_SetPhaseTimersPaused(bool bPaused)
     PausePrint(TimerHandle_ToNight, TEXT("ToNight"));
     PausePrint(TimerHandle_ToDay, TEXT("ToDay"));
     PausePrint(TimerHandle_DayCountdown, TEXT("DayCountdown"));
+}
+
+// [cheatdebug] F7 — 현재 낮 단계 남은 시간을 CheatFastForwardDayDuration으로 단축
+void AHellunaDefenseGameMode::Cheat_FastForwardDayToNight()
+{
+    if (!HasAuthority() || !bGameInitialized)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[cheatdebug] Cheat_FastForwardDayToNight ABORT: Authority=%d bGameInitialized=%d"),
+            (int32)HasAuthority(), (int32)bGameInitialized);
+        return;
+    }
+
+    AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>();
+    if (!GS)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[cheatdebug] Cheat_FastForwardDayToNight ABORT: GameState null"));
+        return;
+    }
+
+    if (GS->GetPhase() != EDefensePhase::Day)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[cheatdebug] Cheat_FastForwardDayToNight SKIP: 현재 낮 단계가 아님 (Phase=%d)"),
+            (int32)GS->GetPhase());
+        return;
+    }
+
+    const float NewSeconds = FMath::Max(0.1f, CheatFastForwardDayDuration);
+
+    FTimerManager& TM = GetWorldTimerManager();
+    // Pause 상태여도 Clear 후 재설정하면 깨끗하게 재시작된다
+    TM.ClearTimer(TimerHandle_ToNight);
+    TM.SetTimer(TimerHandle_ToNight, this, &ThisClass::EnterNight, NewSeconds, false);
+
+    // UI 카운트다운도 새 값으로 맞춤 (TickDayCountdown이 1초마다 차감)
+    GS->SetDayTimeRemaining(NewSeconds);
+
+    UE_LOG(LogTemp, Warning, TEXT("[cheatdebug] Cheat_FastForwardDayToNight -> %.2fs 후 밤 진입 (Day=%d)"),
+        NewSeconds, CurrentDay);
 }
 
 // ════════════════════════════════════════════════════════════════════════════════

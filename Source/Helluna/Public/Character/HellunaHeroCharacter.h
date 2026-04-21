@@ -131,6 +131,10 @@ private:
 	void OnCheat_F5();
 	void OnCheat_F6();
 
+	// [cheatdebug] 콘솔 명령 — F1 키가 막혔을 때 ` 콘솔에서 직접 호출
+	UFUNCTION(Exec)
+	void Cheat_KillAll();
+
 
 #pragma endregion
 
@@ -960,7 +964,9 @@ private:
 	FVector StunDebugStartLocation = FVector::ZeroVector;
 
 	// =========================================================
-	// 시간 왜곡 슬로우 배율
+	// 시간 왜곡 슬로우 배율 + 이동속도 베이스
+	// [MoveSpeedBaseV1] 정산식: MaxWalkSpeed = ActiveBaseWalkSpeed * MoveSpeedMultiplier
+	// — 이전 `(CurrentMax / Prev) * New` 공식은 줌/런이 중간에 MaxSpeed 를 바꾸면 깨졌음.
 	// =========================================================
 public:
 	/**
@@ -971,14 +977,42 @@ public:
 	UPROPERTY(ReplicatedUsing = OnRep_MoveSpeedMultiplier, BlueprintReadOnly, Category = "TimeDistortion")
 	float MoveSpeedMultiplier = 1.f;
 
-	/** 이전 배율 — OnRep에서 비율 계산에 사용 */
+	/** [MoveSpeedBaseV1] 기본 걷기 속도 — 아무 상태도 활성 안 됐을 때의 속도. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement",
+		meta = (DisplayName = "기본 걷기 속도"))
+	float BaseWalkSpeed = 400.f;
+
+	/**
+	 * [MoveSpeedBaseV1] 현재 활성화된 이동 모드의 베이스 속도.
+	 * 기본 = BaseWalkSpeed, Aim GA 활성 시 AimMaxWalkSpeed, Run GA 활성 시 RunSpeed 등.
+	 * Aim/Run 이 SetActiveBaseWalkSpeed() 로 설정, 해제 시 BaseWalkSpeed 로 복원.
+	 */
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "Movement")
+	float ActiveBaseWalkSpeed = 400.f;
+
+	/** [LEGACY] 이전 공식에 쓰이던 필드 — 직렬화 호환용으로 남겨둠. 사용 안 함. */
 	float PrevMoveSpeedMultiplier = 1.f;
 
-	/** 슬로우 배율 설정 (서버에서 호출) */
+	/** 슬로우 배율 설정 — 서버에서 호출. 내부적으로 RefreshMaxWalkSpeed 호출. */
 	void SetMoveSpeedMultiplier(float NewMultiplier);
 
 	/** 현재 슬로우 배율 반환 */
 	float GetMoveSpeedMultiplier() const { return MoveSpeedMultiplier; }
+
+	/** 기본 걷기 속도 getter (Aim/Run 종료 시 복원용) */
+	float GetBaseWalkSpeed() const { return BaseWalkSpeed; }
+
+	/**
+	 * [MoveSpeedBaseV1] Aim/Run 등 이동 모드 활성 시 호출. ActiveBaseWalkSpeed 세팅 + 즉시 재계산.
+	 * 예: Aim activate 시 SetActiveBaseWalkSpeed(AimMaxWalkSpeed),
+	 *     Aim end 시 SetActiveBaseWalkSpeed(BaseWalkSpeed).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Movement")
+	void SetActiveBaseWalkSpeed(float NewActiveBase);
+
+	/** MaxWalkSpeed = ActiveBaseWalkSpeed * MoveSpeedMultiplier 로 즉시 재계산 */
+	UFUNCTION(BlueprintCallable, Category = "Movement")
+	void RefreshMaxWalkSpeed();
 
 	UFUNCTION()
 	void OnRep_MoveSpeedMultiplier();

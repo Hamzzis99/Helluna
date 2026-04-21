@@ -117,6 +117,25 @@ public:
 	TObjectPtr<UNiagaraSystem> DashTrailVFX = nullptr;
 
 	/**
+	 * [DashHitVFXV1] 돌진이 대상에 부딪혔을 때 대상 위치에 스폰할 Niagara VFX (선택).
+	 * 비워두면 VFX 없음. 서버 멀티캐스트로 모든 클라에 전파.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "돌진 공격|돌진",
+		meta = (DisplayName = "피격 VFX (대상 위치)"))
+	TObjectPtr<UNiagaraSystem> DashHitVFX = nullptr;
+
+	/** 피격 VFX 크기 배율. */
+	UPROPERTY(EditDefaultsOnly, Category = "돌진 공격|돌진",
+		meta = (DisplayName = "피격 VFX 크기",
+			ClampMin = "0.01", ClampMax = "20.0"))
+	float DashHitVFXScale = 1.f;
+
+	/** 피격 VFX Z 오프셋 (cm) — 대상 중심에서 위로 올려 발밑이 아닌 가슴/허리 쪽에서 나오게. */
+	UPROPERTY(EditDefaultsOnly, Category = "돌진 공격|돌진",
+		meta = (DisplayName = "피격 VFX Z 오프셋 (cm)"))
+	float DashHitVFXZOffset = 50.f;
+
+	/**
 	 * 돌진 중에 재생할 몬타지 (선택).
 	 * 비워두면 AnimBP의 locomotion(보통 idle)이 노출되어 "멈춘 채 미끄러지는" 느낌.
 	 * 짧은 루프 또는 DashDuration에 맞춘 길이의 돌진 포즈/달리기 애니메이션 권장.

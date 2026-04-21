@@ -14,6 +14,7 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "GameFramework/CharacterMovementComponent.h"
 
 #include "Character/HellunaHeroCharacter.h"
 #include "Character/HeroComponent/Helluna_FindResourceComponent.h"
@@ -57,6 +58,20 @@ void UHeroGameplayAbility_Farming::ActivateAbility(
 	{
 		Hero->LockMoveInput();
 		Hero->LockLookInput();
+	}
+
+	// [FaceFixV2] CMC 회전 모드 백업 + ControllerDesired 끄기 → SetActorRotation 결과가
+	// 다음 틱에 카메라 방향으로 되돌려지지 않음. EndAbility 에서 원래 값 복원.
+	if (UCharacterMovementComponent* CMC = Hero->GetCharacterMovement())
+	{
+		if (!bRotationModeSaved)
+		{
+			bSavedUseControllerDesiredRotation = CMC->bUseControllerDesiredRotation;
+			bSavedOrientRotationToMovement = CMC->bOrientRotationToMovement;
+			bRotationModeSaved = true;
+		}
+		CMC->bUseControllerDesiredRotation = false;
+		CMC->bOrientRotationToMovement = false;
 	}
 
 	Hero->PlayFullBody = true;
@@ -214,6 +229,58 @@ bool UHeroGameplayAbility_Farming::IsTargetWithinFarmingRange(
 	return FVector::DistSquared2D(Avatar->GetActorLocation(), Target->GetActorLocation()) <= FMath::Square(MaxDistance);
 }
 
+bool UHeroGameplayAbility_Farming::PrimeFarmingPoseBeforeSwing(const FGameplayAbilityActorInfo* ActorInfo)
+{
+	// [PreFaceV1] OreMine 등 자식 GA가 스왑 대기(0.15s) 전에 선제 회전 세팅을 하도록 제공.
+	// 1) CMC 회전 플래그가 true 인 상태로 0.15s 대기하면 카메라 회전에 맞춰 몸이 돌아감 → 스윙 직전 회전 덮어쓰기 발생.
+	// 2) 서버/클라 시간차 때문에 FaceToTarget 을 Farming::ActivateAbility 시점에만 하면
+	//    첫 스윙에서 클라 회전이 서버 복제에 의해 원복되어 타겟을 바라보지 않음.
+	// → 본 함수로 대기 진입 직전에 CMC 락 + Face 를 수행.
+	if (!ActorInfo || !ActorInfo->AvatarActor.IsValid())
+	{
+		return false;
+	}
+
+	AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(ActorInfo->AvatarActor.Get());
+	if (!Hero)
+	{
+		return false;
+	}
+
+	// CMC 회전 모드 백업 + 끄기 (한 번만 백업하도록 bRotationModeSaved 가드 공유)
+	if (UCharacterMovementComponent* CMC = Hero->GetCharacterMovement())
+	{
+		if (!bRotationModeSaved)
+		{
+			bSavedUseControllerDesiredRotation = CMC->bUseControllerDesiredRotation;
+			bSavedOrientRotationToMovement = CMC->bOrientRotationToMovement;
+			bRotationModeSaved = true;
+		}
+		CMC->bUseControllerDesiredRotation = false;
+		CMC->bOrientRotationToMovement = false;
+	}
+
+	// 타겟 해석 + 캐시 — PlayFarmingMontage 에서 재사용
+	AActor* Target = ResolveFarmingTarget(ActorInfo);
+	if (!Target)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PreFaceV1] PrimeFarmingPose: target null — skip snap/face"));
+		return false;
+	}
+
+	// 스냅 + 회전 (서버/클라 양쪽 적용: FaceToTarget_InstantLocalOnly 는 [FaceFixV1] 이후 양쪽 동작).
+	SnapHeroToFarmingDistance(ActorInfo);
+	FaceToTarget_InstantLocalOnly(ActorInfo, Target->GetActorLocation());
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[PreFaceV1] PrimeFarmingPose applied — HasAuth=%d LocalCtrl=%d Target=%s"),
+		Hero->HasAuthority() ? 1 : 0,
+		ActorInfo->IsLocallyControlled() ? 1 : 0,
+		*Target->GetName());
+
+	return true;
+}
+
 void UHeroGameplayAbility_Farming::FaceToTarget_InstantLocalOnly(
 	const FGameplayAbilityActorInfo* ActorInfo,
 	const FVector& TargetLocation) const
@@ -222,9 +289,12 @@ void UHeroGameplayAbility_Farming::FaceToTarget_InstantLocalOnly(
 		return;
 
 	APawn* Pawn = Cast<APawn>(ActorInfo->AvatarActor.Get());
-	if (!Pawn || !Pawn->IsLocallyControlled())
+	if (!Pawn)
 		return;
 
+	// [FaceFixV1] 서버/클라 양쪽에서 Actor 회전 적용 (기존엔 IsLocallyControlled 에서 early return
+	// → 서버가 회전 안 해 이전 회전이 클라에 복제되어 덮어씀, "가끔 광석 안 바라봄" 원인).
+	// Controller/Camera 는 기존처럼 건드리지 않음 — 몸만 타겟 쪽으로.
 	const FVector PawnLoc = Pawn->GetActorLocation();
 	const FRotator LookAt = UKismetMathLibrary::FindLookAtRotation(PawnLoc, TargetLocation);
 
@@ -232,9 +302,11 @@ void UHeroGameplayAbility_Farming::FaceToTarget_InstantLocalOnly(
 	NewRot.Yaw = LookAt.Yaw;
 	Pawn->SetActorRotation(NewRot);
 
-	// [BodyOnlyV1][LCv11] Controller(=Camera) Yaw는 건드리지 않는다.
-	// 캐릭터 몸만 타겟 쪽으로 돌리고, 카메라는 사용자가 보던 방향을 유지.
-	UE_LOG(LogTemp, Warning, TEXT("[BodyOnlyV1][LCv11] FaceToTarget: pawn-only yaw=%.1f (camera untouched)"), LookAt.Yaw);
+	UE_LOG(LogTemp, Warning,
+		TEXT("[FaceFixV1] FaceToTarget yaw=%.1f (HasAuth=%d LocalCtrl=%d)"),
+		LookAt.Yaw,
+		Pawn->HasAuthority() ? 1 : 0,
+		Pawn->IsLocallyControlled() ? 1 : 0);
 }
 
 void UHeroGameplayAbility_Farming::ApplyFarmingDamage()
@@ -374,6 +446,17 @@ void UHeroGameplayAbility_Farming::EndAbility(
 		{
 			Hero->UnlockMoveInput();
 			Hero->UnlockLookInput();
+		}
+
+		// [FaceFixV2] CMC 회전 모드 복원 — 카메라 추종/이동 방향 회전 다시 활성화.
+		if (bRotationModeSaved)
+		{
+			if (UCharacterMovementComponent* CMC = Hero->GetCharacterMovement())
+			{
+				CMC->bUseControllerDesiredRotation = bSavedUseControllerDesiredRotation;
+				CMC->bOrientRotationToMovement = bSavedOrientRotationToMovement;
+			}
+			bRotationModeSaved = false;
 		}
 
 		Hero->PlayFullBody = false;

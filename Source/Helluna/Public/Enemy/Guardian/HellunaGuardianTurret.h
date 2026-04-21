@@ -146,6 +146,30 @@ protected:
 		meta = (DisplayName = "트레이스 채널"))
 	TEnumAsByte<ECollisionChannel> TraceChannel = ECC_Visibility;
 
+	/** LoS 라인트레이스 시작점 Z 오프셋 (UU). TurretHead 가 WP 랜드스케이프에 파묻히는 케이스 보정용. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Guardian|Detection",
+		meta = (DisplayName = "LoS 시작 Z 오프셋 (UU)", ClampMin = "0.0", ClampMax = "500.0"))
+	float LoSStartZOffset = 250.f;
+
+	// =========================================================
+	// 디버그 진단 (원격 테스터용)
+	// =========================================================
+
+	/** 진단 로그 활성화. 상태/LoS/Facing/InRange 를 주기적으로 UE_LOG 에 출력. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Guardian|Debug",
+		meta = (DisplayName = "진단 로그 활성화"))
+	bool bDebugLogEnabled = false;
+
+	/** LoS 라인트레이스 시각화 (DrawDebugLine). bDebugLogEnabled 와 별도로 토글. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Guardian|Debug",
+		meta = (DisplayName = "LoS 라인 시각화"))
+	bool bDebugDrawLoS = false;
+
+	/** 진단 로그 출력 주기 (초) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Guardian|Debug",
+		meta = (DisplayName = "진단 로그 주기 (초)", ClampMin = "0.1", ClampMax = "5.0"))
+	float DebugLogInterval = 1.0f;
+
 	// =========================================================
 	// 상태머신 타이밍
 	// =========================================================
@@ -403,6 +427,12 @@ private:
 
 	/** 헤드 Forward 가 AimPoint 방향과 FireAngleThreshold 이내인지 */
 	bool IsFacingTarget(const FVector& AimPoint) const;
+
+	/** 진단 로그 출력 (서버 전용, DebugLogInterval 주기). */
+	void TickDebugDiagnostics(float DeltaTime);
+
+	/** 진단 로그 누적 타이머 */
+	float DebugLogAccumulator = 0.f;
 
 	// =========================================================
 	// 발사 (서버 전용)

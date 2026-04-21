@@ -2,9 +2,13 @@
 
 #include "CoreMinimal.h"
 #include "Engine/GameInstance.h"
+#include "Delegates/Delegate.h"
+#include "Engine/TimerHandle.h"
 #include "MDF_GameInstance.generated.h"
 
 class UHellunaLoadingWidget;
+class UTexture2D;
+class UWorld;
 
 /**
  * ============================================
@@ -66,6 +70,9 @@ class HELLUNA_API UMDF_GameInstance : public UGameInstance
 	GENERATED_BODY()
 
 public:
+	virtual void Init() override;
+	virtual void Shutdown() override;
+
 	// ============================================
 	// 📌 맵 이동 관련
 	// ============================================
@@ -188,4 +195,50 @@ protected:
 	/** 현재 활성화된 로딩 위젯 인스턴스 */
 	UPROPERTY()
 	TObjectPtr<UHellunaLoadingWidget> LoadingWidget;
+
+	// ============================================
+	// §13 v2.1 — Loading Barrier A/B/C 연속 로딩
+	// ============================================
+public:
+	/** §13 §3.2.2 — B구간 배경 Snapshot. C구간 크로스페이드 직후 nullptr로 해제 (GC). */
+	UPROPERTY(Transient)
+	TObjectPtr<UTexture2D> LoadingSnapshotTexture;
+
+	/** §13 §4.1 (Q6) — A구간 마지막 Ship Tick TimeAccum. C에서 ApplyPoseSnapshot으로 위상 복원. */
+	UPROPERTY(Transient)
+	float SavedShipTimeAccum = 0.f;
+
+	/** §13 §4.1 (Q6) — A구간 마지막 Ship AmpScale (≈0). C 재가속 시작점. */
+	UPROPERTY(Transient)
+	float SavedShipAmpScale = 0.f;
+
+	/** §13 §4.1 (Q4) — A구간 마지막 가짜 Progress (≈0.9). C가 SetInitialFakeProgress로 이어받음. */
+	UPROPERTY(Transient)
+	float SavedFakeProgress = 0.f;
+
+	/** true면 C구간 진입 시 Saved* 값 복원. */
+	UPROPERTY(Transient)
+	bool bHasSavedShipPose = false;
+
+	/** §13 §3.1.3 — 비동기 스크린샷 캡처. 완료 시 OnComplete 호출 (성공/실패 모두). */
+	void CaptureLoadingSnapshot(FSimpleDelegate OnComplete);
+
+	/** §13 §3.2.3 (Q11) — LobbyController가 직접 호출. MoviePlayer에 SnapshotWidget 등록. */
+	UFUNCTION(BlueprintCallable, Category = "Loading Barrier")
+	void SetupSnapshotLoadingScreen();
+
+	/** §13 §3.3.4 Phase 2g — Saved* 해제 (C구간 마지막에 호출). */
+	UFUNCTION(BlueprintCallable, Category = "Loading Barrier")
+	void ClearLoadingHandoffState();
+
+private:
+	void OnScreenshotCaptured(int32 W, int32 H, const TArray<FColor>& Bitmap);
+	void OnSnapshotCaptureTimeout();
+	void OnPreLoadMap(const FString& MapName);
+	void OnPostLoadMapWithWorld(UWorld* LoadedWorld);
+
+	FDelegateHandle CachedScreenshotHandle;
+	FSimpleDelegate PendingCaptureCallback;
+	FTimerHandle CaptureTimeoutHandle;
+	bool bCaptureInProgress = false;
 };

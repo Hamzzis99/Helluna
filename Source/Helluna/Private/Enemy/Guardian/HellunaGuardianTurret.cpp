@@ -21,6 +21,7 @@
 #include "NiagaraComponent.h"
 #include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
+#include "DrawDebugHelpers.h"
 
 
 
@@ -308,6 +309,120 @@ void AHellunaGuardianTurret::Tick(float DeltaTime)
 	default:
 		break;
 	}
+
+	TickDebugDiagnostics(DeltaTime);
+}
+
+// =========================================================
+// 진단 로그 (원격 테스터용)
+// =========================================================
+
+void AHellunaGuardianTurret::TickDebugDiagnostics(float DeltaTime)
+{
+	if (!bDebugLogEnabled && !bDebugDrawLoS)
+	{
+		return;
+	}
+
+	DebugLogAccumulator += DeltaTime;
+	if (DebugLogAccumulator < FMath::Max(DebugLogInterval, 0.1f))
+	{
+		return;
+	}
+	DebugLogAccumulator = 0.f;
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	const UEnum* StateEnum = StaticEnum<EGuardianState>();
+	const FString StateName = StateEnum
+		? StateEnum->GetNameStringByValue(static_cast<int64>(CurrentState))
+		: FString::FromInt(static_cast<int32>(CurrentState));
+
+	AActor* Target = CurrentTarget.Get();
+	const FString TargetName = Target ? Target->GetName() : TEXT("None");
+	const int32 NumPlayers = PlayersInRange.Num();
+
+	const FVector HeadLoc = TurretHead ? TurretHead->GetComponentLocation() : FVector::ZeroVector;
+	const FVector HeadFwd = TurretHead ? TurretHead->GetForwardVector() : FVector::ForwardVector;
+	// LoS 시작점은 HasLineOfSightTo 와 동일하게 Z 오프셋 적용
+	const FVector LoSStart = HeadLoc + FVector(0.f, 0.f, LoSStartZOffset);
+
+	bool bInRange = false;
+	bool bLoSOK = false;
+	bool bFacing = false;
+	float FacingAngleDeg = -1.f;
+	FVector AimPoint = FVector::ZeroVector;
+	FString LoSBlockingActor = TEXT("None");
+	FString LoSBlockingComp = TEXT("None");
+	FVector LoSImpact = FVector::ZeroVector;
+	float TargetDist = -1.f;
+
+	if (Target && TurretHead)
+	{
+		AimPoint = GetAimPointFor(Target);
+		bInRange = IsTargetInRange(Target);
+		TargetDist = FVector::Dist(GetActorLocation(), Target->GetActorLocation());
+
+		FHitResult Hit;
+		FCollisionQueryParams QP;
+		QP.AddIgnoredActor(this);
+		QP.AddIgnoredActor(Target);
+		const bool bHit = World->LineTraceSingleByChannel(Hit, LoSStart, AimPoint, TraceChannel, QP);
+		bLoSOK = !bHit;
+		if (bHit)
+		{
+			if (AActor* HitActor = Hit.GetActor())
+			{
+				LoSBlockingActor = HitActor->GetName();
+			}
+			if (UPrimitiveComponent* HitComp = Hit.GetComponent())
+			{
+				LoSBlockingComp = HitComp->GetName();
+			}
+			LoSImpact = Hit.ImpactPoint;
+		}
+
+		const FVector Direction = (AimPoint - HeadLoc).GetSafeNormal();
+		if (!Direction.IsNearlyZero())
+		{
+			const float DotP = FVector::DotProduct(HeadFwd, Direction);
+			FacingAngleDeg = FMath::RadiansToDegrees(
+				FMath::Acos(FMath::Clamp(DotP, -1.f, 1.f)));
+			bFacing = FacingAngleDeg <= FireAngleThreshold;
+		}
+
+		if (bDebugDrawLoS)
+		{
+			const float LifeTime = FMath::Max(DebugLogInterval, 0.1f);
+			DrawDebugLine(World, LoSStart, AimPoint,
+				bLoSOK ? FColor::Green : FColor::Red, false, LifeTime, 0, 2.f);
+			if (!bLoSOK)
+			{
+				DrawDebugSphere(World, LoSImpact, 25.f, 12, FColor::Yellow, false, LifeTime);
+			}
+		}
+	}
+
+	const float SphereRadius = DetectionSphere
+		? DetectionSphere->GetScaledSphereRadius()
+		: -1.f;
+
+	if (bDebugLogEnabled)
+	{
+		UE_LOG(LogHellunaGuardian, Warning,
+			TEXT("[%s Diag] State=%s Day=%d Players=%d Tgt=%s Dist=%.0f InRange=%d LoS=%d Face=%d Ang=%.1f SphereR=%.0f DetR=%.0f Head=%s Blk=%s / %s @ %s"),
+			*GetName(), *StateName, bIsDay ? 1 : 0, NumPlayers,
+			*TargetName, TargetDist, bInRange ? 1 : 0, bLoSOK ? 1 : 0,
+			bFacing ? 1 : 0, FacingAngleDeg,
+			SphereRadius, DetectionRadius,
+			*HeadLoc.ToCompactString(),
+			*LoSBlockingActor, *LoSBlockingComp,
+			*LoSImpact.ToCompactString());
+	}
 }
 
 // =========================================================
@@ -321,8 +436,19 @@ void AHellunaGuardianTurret::SetState(EGuardianState NewState)
 		return;
 	}
 
-	UE_LOG(LogHellunaGuardian, Verbose, TEXT("[%s] State %d -> %d"),
-		*GetName(), static_cast<int32>(CurrentState), static_cast<int32>(NewState));
+	if (bDebugLogEnabled)
+	{
+		const UEnum* StateEnum = StaticEnum<EGuardianState>();
+		const FString OldName = StateEnum ? StateEnum->GetNameStringByValue(static_cast<int64>(CurrentState)) : FString::FromInt(static_cast<int32>(CurrentState));
+		const FString NewName = StateEnum ? StateEnum->GetNameStringByValue(static_cast<int64>(NewState)) : FString::FromInt(static_cast<int32>(NewState));
+		UE_LOG(LogHellunaGuardian, Warning, TEXT("[%s Diag] %s -> %s (t=%.2f)"),
+			*GetName(), *OldName, *NewName, StateTimer);
+	}
+	else
+	{
+		UE_LOG(LogHellunaGuardian, Verbose, TEXT("[%s] State %d -> %d"),
+			*GetName(), static_cast<int32>(CurrentState), static_cast<int32>(NewState));
+	}
 
 	CurrentState = NewState;
 	StateTimer = 0.f;
@@ -484,7 +610,8 @@ bool AHellunaGuardianTurret::HasLineOfSightTo(const FVector& AimPoint) const
 		return false;
 	}
 
-	const FVector Start = TurretHead->GetComponentLocation();
+	// TurretHead 가 WP 랜드스케이프 콜리전과 겹쳐 시작점이 파묻히는 경우를 보정 (MainMap 회귀).
+	const FVector Start = TurretHead->GetComponentLocation() + FVector(0.f, 0.f, LoSStartZOffset);
 
 	FHitResult HitResult;
 	FCollisionQueryParams QueryParams;
