@@ -748,6 +748,20 @@ void AHellunaHeroCharacter::OnCheat_F4() { if (CheatComponent) CheatComponent->H
 void AHellunaHeroCharacter::OnCheat_F5() { if (CheatComponent) CheatComponent->HandleKey_SpeedUp(); }
 void AHellunaHeroCharacter::OnCheat_F6() { if (CheatComponent) CheatComponent->HandleKey_SpeedDown(); }
 
+// [cheatdebug] 콘솔 명령 — F1 키가 막혔을 때 ` 콘솔에서 직접 호출
+void AHellunaHeroCharacter::Cheat_KillAll()
+{
+	UE_LOG(LogTemp, Warning, TEXT("[cheatdebug] Cheat_KillAll 콘솔 명령 실행"));
+	if (CheatComponent)
+	{
+		CheatComponent->HandleKey_KillAll();
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("[cheatdebug] CheatComponent가 nullptr이라 KillAll 실패"));
+	}
+}
+
 void AHellunaHeroCharacter::PossessedBy(AController* NewController)
 {
 	Super::PossessedBy(NewController);
