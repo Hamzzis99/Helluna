@@ -1928,20 +1928,28 @@ bool AHellunaHeroCharacter::IsHoldingPickaxe() const
 
 void AHellunaHeroCharacter::Server_SwapToPickaxeTemp_Implementation(UAnimMontage* EquipMontage)
 {
+	UE_LOG(LogTemp, Warning,
+		TEXT("[Pickaxe][TraceV1] Server_SwapToPickaxeTemp enter — HasAuth=%d PickaxeClass=%s CurrentWeapon=%s"),
+		HasAuthority() ? 1 : 0,
+		PickaxeClass ? *PickaxeClass->GetName() : TEXT("NULL"),
+		IsValid(CurrentWeapon) ? *CurrentWeapon->GetName() : TEXT("NULL"));
+
 	if (!HasAuthority())
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[Pickaxe][TraceV1] SKIP: no authority"));
 		return;
 	}
 
 	if (!PickaxeClass)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[Pickaxe] PickaxeClass 미지정 — BP_HellunaHeroCharacter Defaults에서 곡괭이 무기 클래스를 지정하세요."));
+		UE_LOG(LogTemp, Warning, TEXT("[Pickaxe][TraceV1] FAIL: PickaxeClass 미지정 — BP_HellunaHeroCharacter Defaults에서 곡괭이 무기 클래스를 지정하세요."));
 		return;
 	}
 
 	// 이미 곡괭이를 들고 있으면 중복 교체 방지
 	if (IsHoldingPickaxe())
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[Pickaxe][TraceV1] SKIP: already holding pickaxe"));
 		return;
 	}
 
@@ -1960,7 +1968,14 @@ void AHellunaHeroCharacter::Server_SwapToPickaxeTemp_Implementation(UAnimMontage
 	}
 
 	// 기존 스폰 RPC 재사용 — 내부에서 OldWeapon Destroy + NewWeapon Spawn + 탄약 보존 처리
+	UE_LOG(LogTemp, Warning,
+		TEXT("[Pickaxe][TraceV1] → Server_RequestSpawnWeapon_Implementation(%s, socket=%s)"),
+		*PickaxeClass->GetName(), *SocketToAttach.ToString());
 	Server_RequestSpawnWeapon_Implementation(PickaxeClass, SocketToAttach, EquipMontage);
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[Pickaxe][TraceV1] After spawn — CurrentWeapon=%s"),
+		IsValid(CurrentWeapon) ? *CurrentWeapon->GetName() : TEXT("NULL"));
 }
 
 void AHellunaHeroCharacter::Server_RestorePrePickaxeWeapon_Implementation(UAnimMontage* EquipMontage)

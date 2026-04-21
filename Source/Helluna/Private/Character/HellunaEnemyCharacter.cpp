@@ -1004,6 +1004,22 @@ void AHellunaEnemyCharacter::OnAttackBoxBeginOverlap(UPrimitiveComponent* Overla
 
 	ServerApplyDamage(OtherActor, FinalDamage, HitLocation);
 
+	// [KnockbackV1] 넉백 옵션 (기본 OFF). ACharacter 계열만 LaunchCharacter 적용.
+	if (bCachedKnockbackEnabled && CachedKnockbackForce > 0.f)
+	{
+		if (ACharacter* HitChar = Cast<ACharacter>(OtherActor))
+		{
+			FVector KnockDir = (OtherActor->GetActorLocation() - GetActorLocation()).GetSafeNormal2D();
+			if (KnockDir.IsNearlyZero())
+			{
+				KnockDir = GetActorForwardVector();
+			}
+			KnockDir.Z = 0.2f;
+			KnockDir.Normalize();
+			HitChar->LaunchCharacter(KnockDir * CachedKnockbackForce, true, true);
+		}
+	}
+
 	if (CachedHitVFX)
 	{
 		// [HitVFXLocalV1] 서버 로컬 즉시 스폰 + 원격 클라에 Multicast.
@@ -1392,6 +1408,25 @@ void AHellunaEnemyCharacter::Multicast_PlayWorldCameraShake_Implementation(
 // 플레이어가 빠르게 움직이면 스무딩 지연으로 Notify 발화 시 클라 각도가 서버와 불일치.
 // 이 RPC 로 Notify 직전에 한 번 더 강제 스냅해 연출 밀림 차단.
 // ============================================================
+void AHellunaEnemyCharacter::Multicast_StopMontage_Implementation(UAnimMontage* Montage, float BlendOutTime)
+{
+	if (!Montage) return;
+	if (USkeletalMeshComponent* SkelMesh = GetMesh())
+	{
+		if (UAnimInstance* AnimInst = SkelMesh->GetAnimInstance())
+		{
+			// 해당 몬타지가 재생 중일 때만 중단 (다른 몬타지가 이미 덮었으면 무시)
+			if (AnimInst->Montage_IsPlaying(Montage))
+			{
+				AnimInst->Montage_Stop(FMath::Max(0.f, BlendOutTime), Montage);
+				UE_LOG(LogTemp, Warning,
+					TEXT("[Enemy][StopMontage] %s stopped montage=%s blend=%.2f"),
+					*GetName(), *Montage->GetName(), BlendOutTime);
+			}
+		}
+	}
+}
+
 void AHellunaEnemyCharacter::Multicast_SyncAttackRotation_Implementation(FRotator NewRotation)
 {
 	if (HasAuthority() || GetNetMode() == NM_DedicatedServer) return;

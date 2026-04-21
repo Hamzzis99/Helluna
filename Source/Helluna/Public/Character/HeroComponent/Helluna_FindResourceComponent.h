@@ -27,6 +27,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Mine|Focus")
 	AActor* GetServerFarmingTarget() const { return ServerFarmingTarget; }
 
+	/**
+	 * UI prompt("파밍 가능" 표시) 와 동일한 범위 안에 있는지.
+	 * OreMine GA 가 이 값으로 곡괭이 교체를 gate — UI 가 뜬 상태에서만 G 로 발동.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Farming|Range")
+	bool IsWithinFarmingRange() const { return bFarmingApplied; }
+
 
 private:
 	// ✅ 카메라 정면으로 "1개"만 잡는 단순 탐지
