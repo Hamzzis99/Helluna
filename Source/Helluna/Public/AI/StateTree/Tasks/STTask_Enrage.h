@@ -60,6 +60,14 @@ struct FSTTask_EnrageInstanceData
 	 */
 	UPROPERTY()
 	bool bMontageFinished = false;
+
+	/**
+	 * [EnrageRecoveryV1] 경과 시간 누적.
+	 * 피격/몽타주 interrupt로 OnMontageEnded 콜백이 유실돼도
+	 * 일정 시간 후 강제 전환하기 위한 안전장치.
+	 */
+	UPROPERTY()
+	float ElapsedTime = 0.f;
 };
 
 USTRUCT(meta = (DisplayName = "Helluna: Enrage", Category = "Helluna|AI"))

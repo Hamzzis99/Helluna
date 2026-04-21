@@ -142,20 +142,37 @@ void UHellunaCheatComponent::Server_KillAllEnemies_Implementation()
     AHellunaDefenseGameMode* DefenseGM = World->GetAuthGameMode<AHellunaDefenseGameMode>();
     UE_LOG(LogTemp, Warning, TEXT("[cheatdebug] KillAll DefenseGM=%s"), *GetNameSafe(DefenseGM));
 
-    int32 Seen = 0, Killed = 0, SkippedPoolInactive = 0, SkippedAlreadyDead = 0, SkippedNoHC = 0, NotifiedGM = 0;
+    int32 Seen = 0, Killed = 0, SkippedHidden = 0, SkippedAlreadyDead = 0, SkippedNoHC = 0, NotifiedGM = 0, PhantomRevived = 0;
     for (TActorIterator<AHellunaEnemyCharacter> It(World); It; ++It)
     {
         ++Seen;
         AHellunaEnemyCharacter* Enemy = *It;
         if (!IsValid(Enemy) || Enemy->IsActorBeingDestroyed()) continue;
 
-        // 1) 풀에 반납되어 숨겨진 개체는 스킵 (hidden + collision off)
         const bool bHidden = Enemy->IsHidden();
         const bool bColl = Enemy->GetActorEnableCollision();
-        if (bHidden || !bColl)
+
+        // [PhantomDiagV1] 반복되는 원거리 +1 유령 몬스터 추적용. 모든 이터레이션 로그.
+        UE_LOG(LogTemp, Warning,
+            TEXT("[cheatdebug][PhantomIter] Enemy=%s Class=%s Hidden=%d Coll=%d Loc=%s"),
+            *GetNameSafe(Enemy), *Enemy->GetClass()->GetName(),
+            (int32)bHidden, (int32)bColl,
+            *Enemy->GetActorLocation().ToString());
+
+        // 1) 숨김 상태(풀 대기)만 스킵. 콜리전 off 는 유령 상태로 간주하고 강제 복구 후 킬.
+        if (bHidden)
         {
-            ++SkippedPoolInactive;
+            ++SkippedHidden;
             continue;
+        }
+
+        if (!bColl)
+        {
+            UE_LOG(LogTemp, Warning,
+                TEXT("[cheatdebug][PhantomFix] Enemy=%s Class=%s — Hidden=false 인데 Coll=false(유령 상태). 강제 enable 후 킬 진행"),
+                *GetNameSafe(Enemy), *Enemy->GetClass()->GetName());
+            Enemy->SetActorEnableCollision(true);
+            ++PhantomRevived;
         }
 
         UHellunaHealthComponent* HC = Enemy->FindComponentByClass<UHellunaHealthComponent>();
@@ -188,8 +205,8 @@ void UHellunaCheatComponent::Server_KillAllEnemies_Implementation()
         }
     }
     UE_LOG(LogTemp, Warning,
-        TEXT("[cheatdebug] KillAll DONE Seen=%d Killed=%d NotifiedGM=%d SkippedPoolInactive=%d SkippedAlreadyDead=%d SkippedNoHC=%d"),
-        Seen, Killed, NotifiedGM, SkippedPoolInactive, SkippedAlreadyDead, SkippedNoHC);
+        TEXT("[cheatdebug] KillAll DONE Seen=%d Killed=%d (PhantomRevived=%d) NotifiedGM=%d SkippedHidden=%d SkippedAlreadyDead=%d SkippedNoHC=%d"),
+        Seen, Killed, PhantomRevived, NotifiedGM, SkippedHidden, SkippedAlreadyDead, SkippedNoHC);
 
     if (AHellunaDefenseGameState* GS = World->GetGameState<AHellunaDefenseGameState>())
     {

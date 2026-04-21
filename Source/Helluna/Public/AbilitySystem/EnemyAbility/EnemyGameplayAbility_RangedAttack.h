@@ -87,13 +87,13 @@ public:
 	float LaunchForwardOffset = 100.f;
 
 	/**
-	 * 캐릭터 높이에서 위로 띄울 발사 오프셋 (cm).
-	 * 총구/손 높이에 맞게 조정한다.
+	 * 캐릭터 위치 기준 발사 높이 오프셋 (cm).
+	 * 양수는 위로, 음수는 아래로 띄운다. 총구/손 높이에 맞게 조정한다.
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "공격 설정",
 		meta = (DisplayName = "발사 높이 오프셋 (cm)",
-			ToolTip = "캐릭터 위치에서 위로 띄울 높이입니다.\n몬스터의 총구나 손 높이에 맞게 조정하세요.",
-			ClampMin = "0.0", ClampMax = "300.0"))
+			ToolTip = "캐릭터 위치 기준 수직 오프셋입니다.\n양수는 위로, 음수는 아래로 띄웁니다.\n몬스터의 총구나 손 높이에 맞게 조정하세요.",
+			ClampMin = "-300.0", ClampMax = "300.0", UIMin = "-300.0", UIMax = "300.0"))
 	float LaunchHeightOffset = 80.f;
 
 	/**
@@ -126,6 +126,7 @@ public:
 			ToolTip = "몽타주가 끝난 후 잠시 멈추는 시간입니다.\n이 시간이 지나야 다음 이동/공격이 가능합니다.\n전체 공격 주기 = 몽타주 길이 + 이 값 + StateTree 쿨다운",
 			ClampMin = "0.0", ClampMax = "2.0"))
 	float AttackRecoveryDelay = 0.3f;
+
 
 	/**
 	 * true : AnimNotify(AnimNotify_EnemyFireProjectile)가 호출할 때까지 기다림.

@@ -6,6 +6,7 @@
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "GameplayTagContainer.h"
 #include "Character/HellunaEnemyCharacter.h"
+#include "Object/ResourceUsingObject/HellunaTurretBase.h"
 #include "Weapon/Projectile/HellunaProjectile_Enemy.h"
 #include "Engine/World.h"
 
@@ -244,11 +245,27 @@ void UEnemyGameplayAbility_RangedAttack::SpawnAndLaunchProjectile()
 		+ FVector(0.f, 0.f, LaunchHeightOffset);
 	const FRotator SpawnRotation = Enemy->GetActorRotation();
 
-	// 발사 방향: 타겟 있으면 타겟 중심, 없으면 정면(수평 폴백)
+	// 발사 방향: 타겟 Bounds 중심으로 조준.
+	// [AimBoundsCenterV1] ActorLocation 은 타워/우주선 의 경우 피벗이 바닥에 있어서
+	//   정확히 바닥을 쏘게 되는 버그 있었음. Bounds 는 콜리전/비주얼 전체를 감싸는
+	//   AABB 라 Origin=중심점(몸통 중앙 높이) 이 자동 계산됨.
+	// [TurretHorizontalFireV1] 타워 타겟 한정 Z 성분 제거 → 수평 정면 발사.
+	//   투사체 스폰 높이(LaunchHeightOffset) 를 맞춰두면 타워 본체에 정확히 적중.
 	FVector LaunchDirection;
 	if (CurrentTarget.IsValid())
 	{
-		LaunchDirection = (CurrentTarget->GetActorLocation() - SpawnLocation).GetSafeNormal();
+		FVector TargetOrigin, TargetExtent;
+		CurrentTarget->GetActorBounds(/*bOnlyCollidingComponents=*/false, TargetOrigin, TargetExtent, /*bIncludeFromChildActors=*/true);
+		FVector ToTarget = TargetOrigin - SpawnLocation;
+		if (Cast<AHellunaTurretBase>(CurrentTarget.Get()))
+		{
+			ToTarget.Z = 0.f;
+		}
+		LaunchDirection = ToTarget.GetSafeNormal();
+		if (LaunchDirection.IsNearlyZero())
+		{
+			LaunchDirection = Enemy->GetActorForwardVector();
+		}
 	}
 	else
 	{

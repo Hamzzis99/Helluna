@@ -82,50 +82,6 @@ void UHellunaCharacterAnimInstance::NativeThreadSafeUpdateAnimation(float DeltaS
 	GroundSpeed = RawSpeed;
 	bHasAcceleration = bMovementLocked ? false : OwningMovementComponent->GetCurrentAcceleration().SizeSquared2D() > 0.f;
 
-	// [AnimDiagV3] 루트모션/위치 jump 감지용 확장. MaxWS=0 인데 Vel>0 이면 이상 상태.
-	//   - LocDelta: 마지막 샘플 이후 위치 변화 (큰 값 = 순간이동 의심).
-	//   - RootMotion: 현재 몬타지가 root motion 을 켜고 있는지.
-	//   - HasMontage: 현재 재생 중 몬타지 이름.
-	{
-		const double Now = FPlatformTime::Seconds();
-		if (Now - LastAnimDiagLogTime >= 0.5)
-		{
-			const FVector CurLoc = OwningCharacter->GetActorLocation();
-			const double Dt = LastAnimDiagLogTime > 0.0 ? (Now - LastAnimDiagLogTime) : 0.5;
-			const float LocDelta = (float)FVector::Dist2D(CurLoc, LastAnimDiagLoc);
-			const float EffectiveSpeed = Dt > 0.0 ? LocDelta / (float)Dt : 0.f;
-
-			LastAnimDiagLogTime = Now;
-			LastAnimDiagLoc = CurLoc;
-
-			const FVector PawnVel = OwningCharacter->GetVelocity();
-			const FVector CmcVel = OwningMovementComponent ? OwningMovementComponent->Velocity : FVector::ZeroVector;
-			const FVector Acc = OwningMovementComponent ? OwningMovementComponent->GetCurrentAcceleration() : FVector::ZeroVector;
-
-			FName MontageName = NAME_None;
-			bool bHasRootMotion = false;
-			if (UAnimMontage* Mont = GetCurrentActiveMontage())
-			{
-				MontageName = Mont->GetFName();
-				bHasRootMotion = Mont->HasRootMotion();
-			}
-
-			UE_LOG(LogTemp, Warning,
-				TEXT("[AnimDiagV3] %s | MaxWS=%.1f Locked=%d | PawnVel2D=%.1f CMCVel2D=%.1f Acc2D=%.1f | Loc=%s LocDelta=%.1f EffSpd=%.1f | MoveMode=%d | Montage=%s RootMo=%d"),
-				*OwningCharacter->GetName(),
-				OwningMovementComponent ? OwningMovementComponent->MaxWalkSpeed : -1.f,
-				bMovementLocked ? 1 : 0,
-				PawnVel.Size2D(),
-				CmcVel.Size2D(),
-				Acc.Size2D(),
-				*CurLoc.ToCompactString(),
-				LocDelta, EffectiveSpeed,
-				OwningMovementComponent ? (int32)OwningMovementComponent->MovementMode.GetValue() : -1,
-				*MontageName.ToString(),
-				bHasRootMotion ? 1 : 0);
-		}
-	}
-
 	// ★ PlayFullBody 판단:
 	// - 히어로: HeroCharacter->PlayFullBody 직접 참조 (GA_Farming 등에서 직접 설정)
 	// - 적: [FullBodyLockV1] 공격 락(MaxWS≤0) 중에는 true → Locomotion Idle 하체가

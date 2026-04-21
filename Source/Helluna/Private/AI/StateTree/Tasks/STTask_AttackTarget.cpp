@@ -117,28 +117,6 @@ static void FaceCurrentTarget(AAIController* AIController, APawn* Pawn, AActor* 
 	// SetFocus는 호출하지 않음. AAIController::UpdateControlRotation이 Focus 기반으로
 	// ControlRotation을 매 틱 스냅으로 덮어쓰기 때문 → 방금 한 RInterpTo가 무효화되어
 	// 상체/머리가 끊겨 보이게 됨. Focus 없이 수동 SetControlRotation만 쓰면 부드러움 유지.
-
-	// 진단 V3 — ControlRotation 보간 결과 + ActorRotation + Velocity + CMC 설정값을 모두 출력.
-	// 끊김의 진짜 원인이 어느 단계인지 좁히기 위함:
-	//   - CtrlYaw가 점프하면: SetControlRotation 직후 누군가 덮어쓰기 (Focus, Evaluator, etc.)
-	//   - CtrlYaw 부드러운데 ActorYaw 점프: CMC RotationRate가 너무 빨라 "딱딱" (혹은 너무 느려 lag)
-    //   - ActorYaw 부드러운데 시각적으로 끊김: AnimBP Aim Offset 보간 문제
-    //   - Velocity가 매 틱 0/200/0/200 패턴: PathFollowing이 멈췄다 재개 반복
-	float RotRateY = -1.f;
-	uint8 bDesired = 0, bOrient = 0;
-	if (UCharacterMovementComponent* CMC = Cast<UCharacterMovementComponent>(Pawn->GetMovementComponent()))
-	{
-		RotRateY = CMC->RotationRate.Yaw;
-		bDesired = CMC->bUseControllerDesiredRotation ? 1 : 0;
-		bOrient  = CMC->bOrientRotationToMovement ? 1 : 0;
-	}
-	UE_LOG(LogTemp, Warning,
-		TEXT("[RotV7][Melee] CtrlYaw %.1f→%.1f | ActorYaw=%.1f | Δ=%.2f | Vel=%.0f | RotRateY=%.0f | Desired=%d Orient=%d | DT=%.4f"),
-		CurrentRot.Yaw, NewRot.Yaw,
-		Pawn->GetActorRotation().Yaw,
-		YawDeltaDeg,
-		Pawn->GetVelocity().Size2D(),
-		RotRateY, bDesired, bOrient, DeltaTime);
 }
 }
 

@@ -13,6 +13,7 @@
 #include "Character/HellunaEnemyCharacter.h"
 #include "Character/HellunaHeroCharacter.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
+#include "Object/ResourceUsingObject/HellunaTurretBase.h"
 #include "GameFramework/Pawn.h"
 
 AHellunaProjectile_Enemy::AHellunaProjectile_Enemy()
@@ -109,13 +110,15 @@ void AHellunaProjectile_Enemy::OnBeginOverlap(
 	UE_LOG(LogTemp, Warning, TEXT("[EnemyProjectile] Overlap: %s | Comp: %s"),
 		*OtherActor->GetName(), *GetNameSafe(OtherComp));
 
-	// [FriendlyFireV1] 플레이어(HeroCharacter) 또는 우주선만 데미지 적용.
-	// Why: 기존엔 `APawn` 으로 필터링 → 같은 에너미(Pawn 상속)도 타깃이 되어 몬스터끼리
-	//      맞으면 데미지 + 피격 VFX 가 발생하는 프렌들리 파이어 버그가 있었음.
-	// How: 에너미/가디언 등 비플레이어 Pawn 은 명시적으로 제외. HeroCharacter 와 우주선만 허용.
+	// [FriendlyFireV2] 플레이어(HeroCharacter) / 우주선 / 터렛(공격·회복 모두) 에만 데미지 적용.
+	// Why: V1 은 SpaceShip/Hero 만 허용 → 터렛은 필터에서 탈락해 원거리 투사체가
+	//      터렛에 안 맞는 버그 있었음 (2026-04-21 확인). AHellunaTurretBase 는
+	//      HealTurret/AttackTurret 공용 부모라 하나로 커버.
+	// How: 에너미/가디언 등 비허용 Pawn 은 여전히 제외.
 	const bool bIsSpaceShip = (Cast<AResourceUsingObject_SpaceShip>(OtherActor) != nullptr);
 	const bool bIsHero      = (Cast<AHellunaHeroCharacter>(OtherActor) != nullptr);
-	if (!bIsSpaceShip && !bIsHero) return;
+	const bool bIsTurret    = (Cast<AHellunaTurretBase>(OtherActor) != nullptr);
+	if (!bIsSpaceShip && !bIsHero && !bIsTurret) return;
 
 	const FVector HitLocation = bFromSweep ? FVector(SweepResult.ImpactPoint) : GetActorLocation();
 	HitTarget(OtherActor, HitLocation);
