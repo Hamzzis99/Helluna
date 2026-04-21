@@ -15,6 +15,13 @@
 #include "HellunaLoadingHUDWidget.generated.h"
 
 class UHellunaPartySlotWidget;
+class UTextBlock;
+class UProgressBar;
+class UPanelWidget;
+class UTextBlock;
+class UProgressBar;
+class UPanelWidget;
+class UWidgetAnimation;
 
 UCLASS(Abstract)
 class HELLUNA_API UHellunaLoadingHUDWidget : public UUserWidget
@@ -46,9 +53,10 @@ public:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Loading Barrier|HUD")
 	void PlayTransitionAnimation();
 
-	/** 슬롯 생성 — BP 구현 (VerticalBox에 자식 추가). 실패 시 nullptr 반환. */
-	UFUNCTION(BlueprintImplementableEvent, BlueprintCallable, Category = "Loading Barrier|HUD")
+	/** 슬롯 생성 — BP에서 override 가능, 미구현 시 cpp가 PartySlotWidgetClass로 자동 생성. */
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Loading Barrier|HUD")
 	UHellunaPartySlotWidget* SpawnPartySlot(const FString& PlayerId, bool bIsMe);
+	virtual UHellunaPartySlotWidget* SpawnPartySlot_Implementation(const FString& PlayerId, bool bIsMe);
 
 protected:
 	UPROPERTY(BlueprintReadOnly, Category = "Loading Barrier|HUD")
@@ -68,4 +76,26 @@ protected:
 
 	UPROPERTY(BlueprintReadOnly, Category = "Loading Barrier|HUD")
 	TMap<FString, TObjectPtr<UHellunaPartySlotWidget>> PlayerIdToSlot;
+
+	// ─────────────────────────────────────────────────────────────────────
+	// BindWidget — WBP에서 동일 이름의 위젯이 있으면 자동 바인딩됨.
+	// 없어도 에디터/런타임 에러 없음 (Optional).
+	// ─────────────────────────────────────────────────────────────────────
+
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
+	TObjectPtr<UProgressBar> ProgressBar_MyProgress;
+
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Text_MyProgressText;
+
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Text_Subtitle;
+
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
+	TObjectPtr<UPanelWidget> VBox_PartyList;
+
+	/** WBP에서 지정할 PartySlot 위젯 클래스. SpawnPartySlot의 cpp 폴백 구현이 사용. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Loading Barrier|HUD",
+		meta = (DisplayName = "Party Slot Widget Class"))
+	TSubclassOf<UHellunaPartySlotWidget> PartySlotWidgetClass;
 };
