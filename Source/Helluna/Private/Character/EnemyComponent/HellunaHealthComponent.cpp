@@ -12,6 +12,7 @@
 #include "AbilitySystem/HeroAbility/HeroGameplayAbility_GunParry.h"
 #include "Character/HellunaEnemyCharacter.h"
 #include "Character/HellunaHeroCharacter.h"
+#include "Enemy/Guardian/HellunaDamageType_PhysicsImpact.h"
 
 UHellunaHealthComponent::UHellunaHealthComponent()
 {
@@ -173,7 +174,29 @@ void UHellunaHealthComponent::HandleOwnerAnyDamage(
 		return;
 	}
 
+	// [Guardian] 물리 스턴 감지 — 데미지 적용 전에 판정 (적용 후 bDowned 될 수 있음)
+	const bool bIsPhysicsImpact =
+		DamageType && DamageType->IsA(UHellunaDamageType_PhysicsImpact::StaticClass());
+
 	Internal_SetHealth(Health - Damage, InstigatorActor);
+
+	// 데미지 적용 후 여전히 살아있고 다운 아님 → 히어로에게 물리 스턴 유발
+	if (bIsPhysicsImpact && !bDead && !bDowned)
+	{
+		if (AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(Owner))
+		{
+			FVector HitDir = FVector::ZeroVector;
+			FVector HitLoc = Hero->GetActorLocation();
+			if (InstigatorActor)
+			{
+				HitDir = (Hero->GetActorLocation() - InstigatorActor->GetActorLocation()).GetSafeNormal();
+			}
+			// 반폭발에서 위쪽으로 약간 기울여 공중으로 띄움 (BotW/야쿠자 6 느낌)
+			HitDir.Z = FMath::Max(HitDir.Z, 0.4f);
+			HitDir = HitDir.GetSafeNormal();
+			Hero->EnterPhysicsStunFromDamage(Damage, HitDir, HitLoc);
+		}
+	}
 }
 
 void UHellunaHealthComponent::Internal_SetHealth(float NewHealth, AActor* InstigatorActor)

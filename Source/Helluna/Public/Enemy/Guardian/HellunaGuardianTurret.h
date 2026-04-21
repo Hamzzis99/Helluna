@@ -14,7 +14,9 @@ class UHellunaHealthComponent;
 class AHellunaHeroCharacter;
 class AHellunaDefenseGameState;
 class UNiagaraSystem;
+class UNiagaraComponent;
 class USoundBase;
+class AHellunaGuardianProjectile;
 
 enum class EDefensePhase : uint8;
 
@@ -104,10 +106,10 @@ protected:
 	// 감지·조준 설정
 	// =========================================================
 
-	/** 감지 반경 (UU). 설계 기본값 2600. */
+	/** 감지 반경 (UU). 설계 기본값 2600, 메시 스케일 10 대응 기본 26000. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Detection",
-		meta = (DisplayName = "감지 반경 (UU)", ClampMin = "500.0", ClampMax = "10000.0"))
-	float DetectionRadius = 2600.f;
+		meta = (DisplayName = "감지 반경 (UU)", ClampMin = "500.0", ClampMax = "50000.0"))
+	float DetectionRadius = 26000.f;
 
 	/** 헤드 회전 속도 (도/초). Yaw/Pitch 동시 적용. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Detection",
@@ -133,6 +135,11 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Detection",
 		meta = (DisplayName = "조준 오프셋 Z (UU)", ClampMin = "0.0", ClampMax = "200.0"))
 	float TargetAimOffsetZ = 50.f;
+
+	/** 빔 끝점 표면 오프셋 (UU). 양수=몸에서 더 떨어짐 / 음수=몸 안쪽으로 더 들어감. 0=캡슐 표면 정확히. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Guardian|Detection",
+		meta = (DisplayName = "빔 표면 오프셋 (UU)", ClampMin = "-100.0", ClampMax = "100.0"))
+	float BeamSurfaceOffset = 0.f;
 
 	/** 라인트레이스 채널 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Detection",
@@ -182,24 +189,112 @@ protected:
 		meta = (DisplayName = "최대 체력", ClampMin = "1.0", ClampMax = "10000.0"))
 	float MaxHealth = 200.f;
 
+	/** 폭발 AoE 반경 (UU). 0 이면 AoE 없음 — 단일 라인트레이스 직격만. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Combat",
+		meta = (DisplayName = "폭발 반경 (UU)", ClampMin = "0.0", ClampMax = "5000.0"))
+	float ExplosionRadius = 0.f;
+
+	/** 폭발 감쇠 여부 (true=중심→반경끝 선형감쇠, false=반경 내 균일 데미지) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Combat",
+		meta = (DisplayName = "폭발 감쇠 적용"))
+	bool bExplosionFalloff = true;
+
+	// =========================================================
+	// 투사체 (BP_HeroWeapon_Launcher 패턴)
+	// =========================================================
+
+	/** 발사할 투사체 클래스. null 이면 레거시 즉시-트레이스 모드로 폴백. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|Projectile",
+		meta = (DisplayName = "투사체 클래스"))
+	TSubclassOf<AHellunaGuardianProjectile> ProjectileClass;
+
+	/** 투사체 발사 속도 (UU/s). BP 에서 자유롭게 조정. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Projectile",
+		meta = (DisplayName = "투사체 속도 (UU/s)", ClampMin = "100.0", ClampMax = "50000.0"))
+	float ProjectileSpeed = 6000.f;
+
+	/** 투사체 수명 (초). 만료 시 현재 위치에서 공중 폭발. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Projectile",
+		meta = (DisplayName = "투사체 수명 (초)", ClampMin = "0.1", ClampMax = "20.0"))
+	float ProjectileLifeSeconds = 5.f;
+
+	// =========================================================
+	// 사망 연출 (메시 분리 + 물리)
+	// =========================================================
+
+	/** 사망 시 머리/몸체를 떼어내고 물리 시뮬 활성화. Static Mesh 에 Simple Collision 이 있어야 함. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Guardian|Death",
+		meta = (DisplayName = "사망 시 물리 분리"))
+	bool bEnableDeathPhysicsBreak = true;
+
+	/** 사망 시 추가되는 방사형 임펄스 크기. 0 이면 떨어지기만 함. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Guardian|Death",
+		meta = (DisplayName = "사망 임펄스 크기", ClampMin = "0.0"))
+	float DeathBreakImpulseStrength = 60000.f;
+
+	/** 사망 임펄스 반경 (UU). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Guardian|Death",
+		meta = (DisplayName = "사망 임펄스 반경", ClampMin = "1.0"))
+	float DeathBreakImpulseRadius = 500.f;
+
+	/** 사망 후 액터 자동 정리까지의 시간 (초). 0 이면 영구 유지. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Guardian|Death",
+		meta = (DisplayName = "사망 후 액터 유지 시간 (초)", ClampMin = "0.0"))
+	float DeathActorLifetimeSeconds = 20.f;
+
+	/** 사망 순간 스폰되는 폭발 Niagara. null 이면 VFX 없이 물리 분리만. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|Death",
+		meta = (DisplayName = "사망 폭발 FX"))
+	TObjectPtr<UNiagaraSystem> DeathExplosionFX = nullptr;
+
+	/** 사망 폭발 FX 스케일. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|Death",
+		meta = (DisplayName = "사망 폭발 FX 스케일"))
+	FVector DeathExplosionFXScale = FVector(5.f, 5.f, 5.f);
+
 	// =========================================================
 	// VFX / 사운드
 	// =========================================================
 
-	/** 발사 빔 이펙트 — BP 에서 NS_Laser_Cosmic 할당 */
+	/** 조준 예고 빔 이펙트 — Lock/FireDelay 동안 머즐에 어태치로 표시 (BotW 레드라인) */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|FX",
-		meta = (DisplayName = "발사 빔 이펙트"))
+		meta = (DisplayName = "조준 빔 이펙트 (Lock/FireDelay)"))
+	TObjectPtr<UNiagaraSystem> AimBeamFX = nullptr;
+
+	/** 조준 빔 엔드포인트 Vector User Parameter 이름. 사용 NS 에셋에 맞춰 지정. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Guardian|FX",
+		meta = (DisplayName = "조준 빔 엔드 파라미터명"))
+	FName AimBeamEndParamName = FName(TEXT("Beam End"));
+
+	/** 조준 빔 크기 배율 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|FX",
+		meta = (DisplayName = "조준 빔 크기 배율"))
+	FVector AimBeamScale = FVector(1.f);
+
+	/** 발사 투사체/미사일 VFX — Fire 순간 머즐에서 명중 지점으로 발사 (BP 에서 NS_ThunderBolt 등 할당) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|FX",
+		meta = (DisplayName = "발사 투사체 VFX (Fire)"))
 	TObjectPtr<UNiagaraSystem> FireBeamFX = nullptr;
 
-	/** 발사 빔 크기 배율 */
+	/** 발사 투사체 VFX 크기 배율 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|FX",
-		meta = (DisplayName = "발사 빔 크기 배율"))
+		meta = (DisplayName = "발사 투사체 크기 배율"))
 	FVector FireBeamScale = FVector(1.f);
 
-	/** 피격 이펙트 */
+	/** 피격 이펙트 (폭발/충돌 VFX — BP 에서 NS_Hit_Explosion 등 할당) */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|FX",
-		meta = (DisplayName = "피격 이펙트"))
+		meta = (DisplayName = "피격/폭발 이펙트"))
 	TObjectPtr<UNiagaraSystem> ImpactFX = nullptr;
+
+	/** 피격/폭발 이펙트 크기 배율 (시각 크기, 데미지 반경과는 독립) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|FX",
+		meta = (DisplayName = "폭발 이펙트 크기 배율"))
+	FVector ImpactFXScale = FVector(1.f);
+
+	/** 폭발 이펙트 반경 Float User Parameter 이름 (NS 에셋에 정의되어 있을 때만 사용. 없으면 NAME_None). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Guardian|FX",
+		meta = (DisplayName = "폭발 반경 파라미터명 (Float, 선택)"))
+	FName ImpactFXRadiusParamName = NAME_None;
 
 	/** 발사 사운드 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|FX",
@@ -210,15 +305,6 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|FX",
 		meta = (DisplayName = "피격 사운드"))
 	TObjectPtr<USoundBase> ImpactSound = nullptr;
-
-	// =========================================================
-	// 디버그
-	// =========================================================
-
-	/** 감지 반경·추적선 디버그 드로잉 (Shipping 자동 컴파일 아웃) */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Debug",
-		meta = (DisplayName = "디버그 시각화"))
-	bool bShowDebug = true;
 
 public:
 	/** 현재 상태 (Replicated) — BP 에서 읽기 전용 */
@@ -235,8 +321,12 @@ private:
 	// =========================================================
 
 	/** 현재 상태 (서버 권한, 모든 클라에 복제) */
-	UPROPERTY(Replicated)
+	UPROPERTY(ReplicatedUsing = OnRep_CurrentState)
 	EGuardianState CurrentState = EGuardianState::Idle;
+
+	/** 런타임 활성 조준 빔 컴포넌트 (캐시, 비복제 — OnRep/SetState 로 로컬 생성) */
+	UPROPERTY(Transient)
+	TObjectPtr<UNiagaraComponent> ActiveAimBeam = nullptr;
 
 	/** 현재 상태 진입 이후 경과 시간 (초, 서버 전용) */
 	float StateTimer = 0.f;
@@ -328,17 +418,40 @@ private:
 	UFUNCTION()
 	void OnRep_CurrentTarget();
 
+	UFUNCTION()
+	void OnRep_CurrentState();
+
+	// =========================================================
+	// 조준 빔 제어 (서버·클라 공통, 로컬 시각화)
+	// =========================================================
+
+	/** Lock/FireDelay 진입 시 호출: 머즐에 어태치해 조준 빔 스폰 */
+	void StartAimBeam();
+
+	/** Lock/FireDelay 이탈 시 호출: 조준 빔 제거 */
+	void StopAimBeam();
+
+	/** 매 Tick 조준 빔 엔드포인트 갱신 (User Parameter 기반) */
+	void UpdateAimBeamEndpoint(const FVector& Endpoint);
+
+	/** 상태에 따라 조준 빔 시작/중지 결정 (SetState/OnRep 공용) */
+	void ApplyAimBeamForState(EGuardianState State);
+
 	// =========================================================
 	// 멀티캐스트 RPC (서버 → 모든 클라 FX·사운드)
 	// =========================================================
 
-	/** 발사 FX/사운드 재생. 서버·클라 모두 실행. */
+	/** 발사 FX/사운드 재생. 서버·클라 모두 실행. HitNormal 은 폭발 VFX 방향 결정 (벽면 수직). */
 	UFUNCTION(NetMulticast, Unreliable)
-	void Multicast_PlayFireFX(FVector_NetQuantize Muzzle, bool bHit, FVector_NetQuantize HitLocation);
+	void Multicast_PlayFireFX(FVector_NetQuantize Muzzle, bool bHit, FVector_NetQuantize HitLocation, FVector_NetQuantizeNormal HitNormal);
 
 	/** 상태 변화 이벤트. BGM / 추적선 색 전환 트리거. */
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_OnStateChanged(EGuardianState NewState);
+
+	/** 사망 시 머리/몸체 분리 + 물리 시뮬 + 임펄스. 서버·클라 동기. Reliable (한번만 발생). */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_OnDeathBreak();
 
 	// =========================================================
 	// 체력·파괴

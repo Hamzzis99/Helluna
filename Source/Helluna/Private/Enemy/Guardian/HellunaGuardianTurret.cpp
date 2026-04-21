@@ -1,6 +1,8 @@
 // File: Source/Helluna/Private/Enemy/Guardian/HellunaGuardianTurret.cpp
 
 #include "Enemy/Guardian/HellunaGuardianTurret.h"
+#include "Enemy/Guardian/HellunaGuardianProjectile.h"
+#include "Enemy/Guardian/HellunaDamageType_PhysicsImpact.h"
 
 #include "Helluna.h"
 #include "Character/HellunaHeroCharacter.h"
@@ -10,16 +12,16 @@
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/SphereComponent.h"
+#include "Components/CapsuleComponent.h"
+#include "GameFramework/Character.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
+#include "NiagaraComponent.h"
 #include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
 
-#if !UE_BUILD_SHIPPING
-#include "DrawDebugHelpers.h"
-#endif
 
 
 // =========================================================
@@ -46,7 +48,8 @@ AHellunaGuardianTurret::AHellunaGuardianTurret()
 	// ── 감지 구체 (고정) ─────────────────────────────────────
 	DetectionSphere = CreateDefaultSubobject<USphereComponent>(TEXT("DetectionSphere"));
 	DetectionSphere->SetupAttachment(TurretRoot);
-	DetectionSphere->SetSphereRadius(DetectionRadius);
+	// 주의: SetSphereRadius 는 BP SCS 의 사용자 지정 반경/스케일을 덮어쓰므로 여기서 호출하지 않는다.
+	// BP 인스턴스에서 Unscaled Radius / Scale3D 로 직접 조정.
 	DetectionSphere->SetCollisionProfileName(TEXT("Trigger"));
 	DetectionSphere->SetGenerateOverlapEvents(true);
 	DetectionSphere->SetCollisionResponseToAllChannels(ECR_Ignore);
@@ -80,12 +83,6 @@ void AHellunaGuardianTurret::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// 감지 반경 런타임 동기화 (BP 편집 반영)
-	if (DetectionSphere)
-	{
-		DetectionSphere->SetSphereRadius(DetectionRadius);
-	}
-
 	// MaxHealth 초기 동기화 (HealthComponent 내부 값이 BP 기본값과 다를 경우 대비)
 	if (HealthComponent)
 	{
@@ -95,6 +92,21 @@ void AHellunaGuardianTurret::BeginPlay()
 	// 서버 전용 초기화
 	if (HasAuthority())
 	{
+		// BeginPlay 이전에 이미 DetectionSphere 안에 들어와 있던 Hero 는
+		// OnComponentBeginOverlap 이벤트를 못 받음 → 수동으로 초기 오버랩 수집
+		if (DetectionSphere)
+		{
+			TArray<AActor*> InitialOverlaps;
+			DetectionSphere->GetOverlappingActors(InitialOverlaps, AHellunaHeroCharacter::StaticClass());
+			for (AActor* A : InitialOverlaps)
+			{
+				if (AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(A))
+				{
+					PlayersInRange.AddUnique(TWeakObjectPtr<AHellunaHeroCharacter>(Hero));
+				}
+			}
+		}
+
 		if (UWorld* World = GetWorld())
 		{
 			if (AGameStateBase* GS = World->GetGameState())
@@ -132,6 +144,8 @@ void AHellunaGuardianTurret::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		HealthComponent->OnDeath.RemoveDynamic(this, &ThisClass::OnGuardianDeath);
 	}
 
+	StopAimBeam();
+
 	PlayersInRange.Empty();
 	CurrentTarget = nullptr;
 
@@ -160,49 +174,22 @@ void AHellunaGuardianTurret::Tick(float DeltaTime)
 	Super::Tick(DeltaTime);
 
 	// 공통: 헤드 회전 보간 (타겟 있을 때만)
+	// Lock/FireDelay 모두 live 추적 — 발사 순간 PerformFire 에서 LockedFireTarget 확정
 	if (AActor* Target = CurrentTarget.Get())
 	{
 		if (IsValid(Target) && !Target->IsActorBeingDestroyed())
 		{
-			const FVector AimPoint = (CurrentState == EGuardianState::FireDelay ||
-				CurrentState == EGuardianState::Fire)
-				? LockedFireTarget
-				: GetAimPointFor(Target);
+			const FVector AimPoint = GetAimPointFor(Target);
 			UpdateHeadRotation(DeltaTime, AimPoint);
+
+			// 공통: 조준 빔 엔드포인트 갱신 (Lock/FireDelay 모두 live)
+			if (ActiveAimBeam && (CurrentState == EGuardianState::Lock ||
+				CurrentState == EGuardianState::FireDelay))
+			{
+				UpdateAimBeamEndpoint(AimPoint);
+			}
 		}
 	}
-
-#if !UE_BUILD_SHIPPING
-	if (bShowDebug)
-	{
-		const UWorld* World = GetWorld();
-		if (World && DetectionSphere)
-		{
-			const FColor RangeColor =
-				(CurrentState == EGuardianState::Idle)     ? FColor::Green :
-				(CurrentState == EGuardianState::Detect)   ? FColor::Yellow :
-				(CurrentState == EGuardianState::Lock)     ? FColor::Orange :
-				(CurrentState == EGuardianState::FireDelay)? FColor::Red :
-				(CurrentState == EGuardianState::Fire)     ? FColor::Magenta :
-				(CurrentState == EGuardianState::Cooldown) ? FColor::Cyan :
-				                                             FColor::Black;
-			DrawDebugSphere(World, DetectionSphere->GetComponentLocation(),
-				DetectionSphere->GetScaledSphereRadius(), 24, RangeColor, false, -1.f, 0, 2.f);
-		}
-
-		if (TurretHead && CurrentTarget.Get())
-		{
-			const FVector Start = TurretHead->GetComponentLocation();
-			const FVector End = (CurrentState == EGuardianState::FireDelay || CurrentState == EGuardianState::Fire)
-				? FVector(LockedFireTarget)
-				: GetAimPointFor(CurrentTarget.Get());
-			const FColor LineColor = (CurrentState == EGuardianState::Lock ||
-				CurrentState == EGuardianState::FireDelay ||
-				CurrentState == EGuardianState::Fire) ? FColor::Red : FColor::Yellow;
-			DrawDebugLine(GetWorld(), Start, End, LineColor, false, -1.f, 0, 1.5f);
-		}
-	}
-#endif
 
 	// 서버 전용: 상태 전이
 	if (!HasAuthority())
@@ -267,7 +254,6 @@ void AHellunaGuardianTurret::Tick(float DeltaTime)
 		}
 		if (StateTimer >= LockDuration)
 		{
-			LockedFireTarget = GetAimPointFor(Target);
 			SetState(EGuardianState::FireDelay);
 		}
 		break;
@@ -282,6 +268,8 @@ void AHellunaGuardianTurret::Tick(float DeltaTime)
 		}
 		if (StateTimer >= FireDelayDuration)
 		{
+			// 발사 순간 타겟 위치 캡처 → 레이저·투사체 방향 일치
+			LockedFireTarget = GetAimPointFor(Target);
 			SetState(EGuardianState::Fire);
 			PerformFire();
 		}
@@ -344,6 +332,9 @@ void AHellunaGuardianTurret::SetState(EGuardianState NewState)
 	{
 		LockedFireTarget = FVector::ZeroVector;
 	}
+
+	// 서버 로컬 조준 빔 적용 (클라는 OnRep_CurrentState 에서 동일 처리)
+	ApplyAimBeamForState(NewState);
 
 	Multicast_OnStateChanged(NewState);
 }
@@ -516,7 +507,22 @@ FVector AHellunaGuardianTurret::GetAimPointFor(const AActor* Target) const
 	{
 		return FVector::ZeroVector;
 	}
-	return Target->GetActorLocation() + FVector(0.f, 0.f, TargetAimOffsetZ);
+	const FVector Center = Target->GetActorLocation() + FVector(0.f, 0.f, TargetAimOffsetZ);
+
+	if (const ACharacter* Char = Cast<ACharacter>(Target))
+	{
+		if (const UCapsuleComponent* Cap = Char->GetCapsuleComponent())
+		{
+			const FVector Origin = MuzzlePoint ? MuzzlePoint->GetComponentLocation() : GetActorLocation();
+			const FVector Dir = (Center - Origin).GetSafeNormal();
+			if (!Dir.IsNearlyZero())
+			{
+				const float Pullback = Cap->GetScaledCapsuleRadius() + BeamSurfaceOffset;
+				return Center - Dir * Pullback;
+			}
+		}
+	}
+	return Center;
 }
 
 // =========================================================
@@ -585,6 +591,37 @@ void AHellunaGuardianTurret::PerformFire()
 	const FVector TraceStart = MuzzlePoint->GetComponentLocation();
 	const FVector TraceEnd = LockedFireTarget;
 
+	// ── 투사체 모드 (ProjectileClass 지정 시) ───────────────
+	// 물리 투사체를 머즐에서 타겟 방향으로 발사.
+	// 충돌·폭발·VFX 는 투사체 액터가 담당. 레거시 즉시 트레이스 경로 스킵.
+	if (ProjectileClass)
+	{
+		const FVector AimDelta = TraceEnd - TraceStart;
+		const FVector AimDir = AimDelta.GetSafeNormal();
+		const FRotator SpawnRot = AimDir.Rotation();
+
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		SpawnParams.Owner = this;
+
+		AHellunaGuardianProjectile* Proj = World->SpawnActor<AHellunaGuardianProjectile>(
+			ProjectileClass, TraceStart, SpawnRot, SpawnParams);
+		if (Proj)
+		{
+			Proj->InitProjectile(
+				Damage,
+				ExplosionRadius,
+				bExplosionFalloff,
+				AimDir * ProjectileSpeed,
+				ProjectileLifeSeconds);
+		}
+
+		// 발사 사운드는 머즐에서 멀티캐스트 (폭발 VFX 는 투사체 측에서 처리)
+		Multicast_PlayFireFX(TraceStart, false, FVector::ZeroVector, FVector::ZeroVector);
+		return;
+	}
+
+	// ── 레거시 모드 (ProjectileClass 미지정) — 즉시 라인트레이스 ─
 	FHitResult HitResult;
 	FCollisionQueryParams QueryParams;
 	QueryParams.AddIgnoredActor(this);
@@ -593,9 +630,30 @@ void AHellunaGuardianTurret::PerformFire()
 		HitResult, TraceStart, TraceEnd, TraceChannel, QueryParams);
 
 	const FVector ImpactLocation = bHit ? HitResult.ImpactPoint : TraceEnd;
-	Multicast_PlayFireFX(TraceStart, bHit, ImpactLocation);
+	const FVector ImpactNormal = bHit
+		? HitResult.ImpactNormal
+		: (TraceStart - ImpactLocation).GetSafeNormal();
+	Multicast_PlayFireFX(TraceStart, bHit, ImpactLocation, ImpactNormal);
 
-	// 트레이스가 벽에 막히지 않고 LockedFireTarget 근방에 도달했고, 플레이어가 그 근처에 있으면 데미지
+	if (ExplosionRadius > 0.f)
+	{
+		TArray<AActor*> IgnoreActors;
+		IgnoreActors.Add(this);
+		UGameplayStatics::ApplyRadialDamage(
+			this,
+			Damage,
+			ImpactLocation,
+			ExplosionRadius,
+			UHellunaDamageType_PhysicsImpact::StaticClass(),
+			IgnoreActors,
+			this,
+			nullptr,
+			/*bDoFullDamage=*/!bExplosionFalloff,
+			TraceChannel);
+		return;
+	}
+
+	// 직격 모드 (기존 로직): 트레이스 막힘 시 직접 맞은 Hero 만, 아니면 고정 지점 근방 Hero
 	if (bHit)
 	{
 		// 벽 등 월드 지오메트리에 막힘 → 플레이어가 피한 것으로 간주
@@ -603,7 +661,7 @@ void AHellunaGuardianTurret::PerformFire()
 		if (HitHero)
 		{
 			UGameplayStatics::ApplyDamage(
-				HitHero, Damage, nullptr, this, UDamageType::StaticClass());
+				HitHero, Damage, nullptr, this, UHellunaDamageType_PhysicsImpact::StaticClass());
 		}
 		return;
 	}
@@ -624,7 +682,7 @@ void AHellunaGuardianTurret::PerformFire()
 		if (FVector::Dist(HeroAim, LockedFireTarget) <= HitTolerance)
 		{
 			UGameplayStatics::ApplyDamage(
-				Hero, Damage, nullptr, this, UDamageType::StaticClass());
+				Hero, Damage, nullptr, this, UHellunaDamageType_PhysicsImpact::StaticClass());
 		}
 	}
 }
@@ -638,13 +696,93 @@ void AHellunaGuardianTurret::OnRep_CurrentTarget()
 	// 클라이언트에서 타겟 바뀌면 헤드 회전은 Tick 이 자연스럽게 처리
 }
 
+void AHellunaGuardianTurret::OnRep_CurrentState()
+{
+	// 클라에서 조준 빔 동기화
+	ApplyAimBeamForState(CurrentState);
+}
+
+// =========================================================
+// 조준 빔 제어
+// =========================================================
+
+void AHellunaGuardianTurret::StartAimBeam()
+{
+	// 데디서버는 VFX 불필요 (클라마다 OnRep_CurrentState 에서 로컬 스폰)
+	if (IsRunningDedicatedServer())
+	{
+		return;
+	}
+
+	if (ActiveAimBeam || !AimBeamFX || !MuzzlePoint)
+	{
+		return;
+	}
+
+	ActiveAimBeam = UNiagaraFunctionLibrary::SpawnSystemAttached(
+		AimBeamFX,
+		MuzzlePoint,
+		NAME_None,
+		FVector::ZeroVector,
+		FRotator::ZeroRotator,
+		EAttachLocation::KeepRelativeOffset,
+		/*bAutoDestroy=*/false);
+
+	if (ActiveAimBeam)
+	{
+		ActiveAimBeam->SetRelativeScale3D(AimBeamScale);
+		// 일부 Niagara 시스템은 bAutoActivate 기본값에도 자동 활성화 되지 않음 → 명시적 활성화 필수
+		ActiveAimBeam->Activate(true);
+	}
+}
+
+void AHellunaGuardianTurret::StopAimBeam()
+{
+	if (!ActiveAimBeam)
+	{
+		return;
+	}
+
+	ActiveAimBeam->Deactivate();
+	ActiveAimBeam->DestroyComponent();
+	ActiveAimBeam = nullptr;
+}
+
+void AHellunaGuardianTurret::UpdateAimBeamEndpoint(const FVector& Endpoint)
+{
+	if (!ActiveAimBeam || AimBeamEndParamName.IsNone())
+	{
+		return;
+	}
+	ActiveAimBeam->SetVectorParameter(AimBeamEndParamName, Endpoint);
+}
+
+void AHellunaGuardianTurret::ApplyAimBeamForState(EGuardianState State)
+{
+	const bool bShouldShow = (State == EGuardianState::Lock || State == EGuardianState::FireDelay);
+	if (bShouldShow)
+	{
+		StartAimBeam();
+	}
+	else
+	{
+		StopAimBeam();
+	}
+}
+
 // =========================================================
 // 멀티캐스트 RPC
 // =========================================================
 
 void AHellunaGuardianTurret::Multicast_PlayFireFX_Implementation(
-	FVector_NetQuantize Muzzle, bool bHit, FVector_NetQuantize HitLocation)
+	FVector_NetQuantize Muzzle, bool bHit, FVector_NetQuantize HitLocation, FVector_NetQuantizeNormal HitNormal)
 {
+	// 데디서버는 VFX / 사운드 재생 불필요
+	if (IsRunningDedicatedServer())
+	{
+		return;
+	}
+
 	UWorld* World = GetWorld();
 	if (!World)
 	{
@@ -653,14 +791,30 @@ void AHellunaGuardianTurret::Multicast_PlayFireFX_Implementation(
 
 	const FVector MuzzleVec = FVector(Muzzle);
 	const FVector ImpactVec = FVector(HitLocation);
+	const FVector NormalVec = FVector(HitNormal);
+
+	// 투사체 모드: 머즐 빔/폭발 VFX 는 투사체가 담당 → 발사 사운드만 재생
+	const bool bProjectileMode = (ProjectileClass != nullptr);
+	if (bProjectileMode)
+	{
+		if (FireSound)
+		{
+			UGameplayStatics::PlaySoundAtLocation(this, FireSound, MuzzleVec);
+		}
+		return;
+	}
 
 	if (FireBeamFX)
 	{
 		const FVector Delta = ImpactVec - MuzzleVec;
 		const FRotator BeamRot = Delta.Rotation();
-		UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+		UNiagaraComponent* SpawnedFire = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
 			this, FireBeamFX, MuzzleVec, BeamRot, FireBeamScale,
 			true, true, ENCPoolMethod::AutoRelease);
+		if (SpawnedFire)
+		{
+			SpawnedFire->Activate(true);
+		}
 	}
 
 	if (FireSound)
@@ -675,9 +829,21 @@ void AHellunaGuardianTurret::Multicast_PlayFireFX_Implementation(
 
 	if (ImpactFX)
 	{
-		UNiagaraFunctionLibrary::SpawnSystemAtLocation(
-			this, ImpactFX, ImpactVec, FRotator::ZeroRotator, FVector(1.f),
+		// Normal 벡터를 X축(Niagara 기본 정면)으로 삼는 회전 — 벽면에 수직으로 튀어나오는 폭발
+		const FRotator ImpactRot = NormalVec.IsNearlyZero()
+			? FRotator::ZeroRotator
+			: NormalVec.Rotation();
+		UNiagaraComponent* SpawnedImpact = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+			this, ImpactFX, ImpactVec, ImpactRot, ImpactFXScale,
 			true, true, ENCPoolMethod::AutoRelease);
+		if (SpawnedImpact)
+		{
+			SpawnedImpact->Activate(true);
+			if (!ImpactFXRadiusParamName.IsNone() && ExplosionRadius > 0.f)
+			{
+				SpawnedImpact->SetFloatParameter(ImpactFXRadiusParamName, ExplosionRadius);
+			}
+		}
 	}
 	if (ImpactSound)
 	{
@@ -712,7 +878,92 @@ void AHellunaGuardianTurret::OnGuardianDeath(AActor* /*DeadActor*/, AActor* /*Ki
 		World->GetTimerManager().ClearTimer(PhasePollTimerHandle);
 	}
 
+	// 메시 분리 + 물리 시뮬 (서버 + 모든 클라 동기)
+	if (bEnableDeathPhysicsBreak)
+	{
+		Multicast_OnDeathBreak();
+	}
+
+	// 일정 시간 후 액터 자동 정리 (서버 권한)
+	if (DeathActorLifetimeSeconds > 0.f)
+	{
+		SetLifeSpan(DeathActorLifetimeSeconds);
+	}
+
 	// TODO(dropTable): 드랍 테이블 결정 시 이곳에서 스폰
+}
+
+void AHellunaGuardianTurret::Multicast_OnDeathBreak_Implementation()
+{
+	// ── 서버·클라 공통: 오버랩 차단 (데디서버에서도 필수) ──
+	if (DetectionSphere)
+	{
+		DetectionSphere->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		DetectionSphere->SetGenerateOverlapEvents(false);
+	}
+
+	// 조준 빔 정리 (StartAimBeam 이 데디서버는 스킵하므로 서버에선 null)
+	if (ActiveAimBeam)
+	{
+		ActiveAimBeam->Deactivate();
+		ActiveAimBeam->DestroyComponent();
+		ActiveAimBeam = nullptr;
+	}
+
+	// 데디서버는 렌더러·물리 시각화 불필요 → VFX / 메시 물리 시뮬 스킵
+	if (IsRunningDedicatedServer())
+	{
+		return;
+	}
+
+	// 사망 폭발 VFX — 헤드 회전 피벗 위치에서 스폰 (분리되면서 펑 하는 연출)
+	if (DeathExplosionFX)
+	{
+		const FVector FXLocation = TurretHead
+			? TurretHead->GetComponentLocation()
+			: GetActorLocation();
+		UNiagaraComponent* DeathFX = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+			this,
+			DeathExplosionFX,
+			FXLocation,
+			FRotator::ZeroRotator,
+			DeathExplosionFXScale,
+			true, true, ENCPoolMethod::AutoRelease);
+		if (DeathFX)
+		{
+			DeathFX->Activate(true);
+		}
+	}
+
+	const FVector ImpulseOrigin = GetActorLocation();
+
+	auto EnablePhysicsOnMesh = [&](UStaticMeshComponent* Mesh)
+	{
+		if (!Mesh)
+		{
+			return;
+		}
+
+		// 회전 피벗에서 머리 분리 → 독립적으로 낙하
+		Mesh->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
+		Mesh->SetMobility(EComponentMobility::Movable);
+		Mesh->SetCollisionProfileName(TEXT("PhysicsActor"));
+		Mesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+		Mesh->SetSimulatePhysics(true);
+
+		if (DeathBreakImpulseStrength > 0.f)
+		{
+			Mesh->AddRadialImpulse(
+				ImpulseOrigin,
+				DeathBreakImpulseRadius,
+				DeathBreakImpulseStrength,
+				ERadialImpulseFalloff::RIF_Constant,
+				/*bVelChange=*/true);
+		}
+	};
+
+	EnablePhysicsOnMesh(MeshHead);
+	EnablePhysicsOnMesh(MeshBody);
 }
 
 // =========================================================
