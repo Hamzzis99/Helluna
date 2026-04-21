@@ -3029,6 +3029,44 @@ void AHellunaDefenseGameMode::Cheat_SetPhaseTimersPaused(bool bPaused)
     PausePrint(TimerHandle_DayCountdown, TEXT("DayCountdown"));
 }
 
+// [cheatdebug] F7 — 현재 낮 단계 남은 시간을 CheatFastForwardDayDuration으로 단축
+void AHellunaDefenseGameMode::Cheat_FastForwardDayToNight()
+{
+    if (!HasAuthority() || !bGameInitialized)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[cheatdebug] Cheat_FastForwardDayToNight ABORT: Authority=%d bGameInitialized=%d"),
+            (int32)HasAuthority(), (int32)bGameInitialized);
+        return;
+    }
+
+    AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>();
+    if (!GS)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[cheatdebug] Cheat_FastForwardDayToNight ABORT: GameState null"));
+        return;
+    }
+
+    if (GS->GetPhase() != EDefensePhase::Day)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[cheatdebug] Cheat_FastForwardDayToNight SKIP: 현재 낮 단계가 아님 (Phase=%d)"),
+            (int32)GS->GetPhase());
+        return;
+    }
+
+    const float NewSeconds = FMath::Max(0.1f, CheatFastForwardDayDuration);
+
+    FTimerManager& TM = GetWorldTimerManager();
+    // Pause 상태여도 Clear 후 재설정하면 깨끗하게 재시작된다
+    TM.ClearTimer(TimerHandle_ToNight);
+    TM.SetTimer(TimerHandle_ToNight, this, &ThisClass::EnterNight, NewSeconds, false);
+
+    // UI 카운트다운도 새 값으로 맞춤 (TickDayCountdown이 1초마다 차감)
+    GS->SetDayTimeRemaining(NewSeconds);
+
+    UE_LOG(LogTemp, Warning, TEXT("[cheatdebug] Cheat_FastForwardDayToNight -> %.2fs 후 밤 진입 (Day=%d)"),
+        NewSeconds, CurrentDay);
+}
+
 // ════════════════════════════════════════════════════════════════════════════════
 // [Loading Barrier] 전원 Ready 대기 배리어 구현 (Reedme/loading/04-barrier-protocol.md)
 // ════════════════════════════════════════════════════════════════════════════════

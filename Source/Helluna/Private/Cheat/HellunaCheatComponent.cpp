@@ -124,6 +124,11 @@ void UHellunaCheatComponent::HandleKey_SpeedDown()
     UE_LOG(LogTemp, Warning, TEXT("[cheatdebug] HandleKey_SpeedDown pressed | %s"), *CheatOwnerTag(this));
     Server_AdjustNoclipSpeed(0.5f);
 }
+void UHellunaCheatComponent::HandleKey_FastForwardDay()
+{
+    UE_LOG(LogTemp, Warning, TEXT("[cheatdebug] HandleKey_FastForwardDay pressed | %s"), *CheatOwnerTag(this));
+    Server_FastForwardDay();
+}
 
 
 // ─────────────────────────────────────────────────────────────────
@@ -236,6 +241,25 @@ void UHellunaCheatComponent::Server_ToggleTimeFreeze_Implementation()
         return;
     }
     GS->Cheat_ToggleTimeFrozen();
+}
+
+// ─────────────────────────────────────────────────────────────────
+// F7 — 낮→밤 전환 시간 단축 (서버 → DefenseGameMode)
+// ─────────────────────────────────────────────────────────────────
+void UHellunaCheatComponent::Server_FastForwardDay_Implementation()
+{
+    UWorld* World = GetWorld();
+    UE_LOG(LogTemp, Warning, TEXT("[cheatdebug] Server_FastForwardDay ENTER | World=%s Authority=%d"),
+        *GetNameSafe(World), GetOwner() ? (int32)GetOwner()->HasAuthority() : -1);
+    if (!World) { UE_LOG(LogTemp, Warning, TEXT("[cheatdebug] FastForwardDay ABORT: World null")); return; }
+
+    AHellunaDefenseGameMode* DefenseGM = World->GetAuthGameMode<AHellunaDefenseGameMode>();
+    if (!DefenseGM)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[cheatdebug] FastForwardDay ABORT: DefenseGameMode null"));
+        return;
+    }
+    DefenseGM->Cheat_FastForwardDayToNight();
 }
 
 // ─────────────────────────────────────────────────────────────────

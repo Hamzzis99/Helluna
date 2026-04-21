@@ -35,6 +35,8 @@ public:
     void HandleKey_GrantMaterials();
     void HandleKey_SpeedUp();
     void HandleKey_SpeedDown();
+    /** F7 — 낮→밤 전환 시간을 GameMode의 CheatFastForwardDayDuration(기본 5초)으로 단축 */
+    void HandleKey_FastForwardDay();
 
     virtual void BeginPlay() override;
 
@@ -65,6 +67,10 @@ public:
     /** 노클립 속도 배율을 Scale배 한다 (2.0 = 2배, 0.5 = 1/2배) */
     UFUNCTION(Server, Reliable)
     void Server_AdjustNoclipSpeed(float Scale);
+
+    /** F7 — 서버 DefenseGameMode에서 낮→밤 전환 시간 단축 */
+    UFUNCTION(Server, Reliable)
+    void Server_FastForwardDay();
 
     /** 재료 지급에 사용할 ItemType → Actor 매핑 DataTable (BP 기본값에서 DT_ItemTypeMapping 할당) */
     UPROPERTY(EditDefaultsOnly, Category="Cheat|Inventory")

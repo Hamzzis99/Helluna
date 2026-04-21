@@ -490,6 +490,16 @@ public:
 	/** [cheatdebug] F2 시간정지 치트용 — 낮/밤 전환 타이머 일괄 pause/unpause */
 	void Cheat_SetPhaseTimersPaused(bool bPaused);
 
+	/** [cheatdebug] F7 치트용 — 현재 낮 단계에서 밤 전환까지 남은 시간을
+	 *  CheatFastForwardDayDuration(기본 5초)로 단축하고 UI 카운트다운도 맞춰 갱신. */
+	UFUNCTION(BlueprintCallable, Category = "Defense(게임)|DayNight(낮밤)")
+	void Cheat_FastForwardDayToNight();
+
+	/** [cheatdebug] F7 단축 시 사용할 낮→밤 전환 남은 시간(초). BP 기본 5초. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Defense(게임)|DayNight(낮밤)",
+		meta = (DisplayName = "F7 낮→밤 단축 시간(초)", ClampMin = "0.1", ClampMax = "600.0"))
+	float CheatFastForwardDayDuration = 5.f;
+
 	// RegisterAliveMonster는 더 이상 카운터 역할을 하지 않지만
 	// 기존 BP/코드 호환성을 위해 빈 함수로 유지
 	UFUNCTION(BlueprintCallable, Category = "Defense(게임)|Monster(몬스터)")
