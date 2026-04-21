@@ -680,6 +680,29 @@ void AHellunaEnemyCharacter::OnMonsterDeath(AActor* DeadActor, AActor* KillerAct
 		*DeathTag.ToString());
 #endif
 	STComp->SendStateTreeEvent(DeathTag);
+
+	// [DeathWatchdogV1] StateTree 가 NavMesh 막힌 위치 등에서 Chase 재진입 사이클에 갇히면
+	//   Run/Attack → Death 이벤트 전이가 씹혀 GA_Death 가 활성화되지 않고 phantom 이 남음
+	//   (capsule NoCollision + AI 계속 돎). 5초 내 bDespawnStarted 미진입 시 강제 Despawn.
+	//   정상 경로에서는 bDespawnStarted 이미 true 여서 no-op.
+	//   (3초는 긴 사망 몽타주를 끊을 수 있어 5초로 여유)
+	if (UWorld* World = GetWorld())
+	{
+		FTimerHandle WatchdogHandle;
+		TWeakObjectPtr<AHellunaEnemyCharacter> WeakThis(this);
+		World->GetTimerManager().SetTimer(WatchdogHandle,
+			[WeakThis]()
+			{
+				AHellunaEnemyCharacter* Self = WeakThis.Get();
+				if (!Self || Self->IsActorBeingDestroyed()) return;
+				if (Self->bDespawnStarted) return;
+				UE_LOG(LogTemp, Warning,
+					TEXT("[DeathWatchdogV1] Enemy=%s — StateTree Death 전이 타임아웃, 강제 Despawn"),
+					*GetNameSafe(Self));
+				Self->DespawnMassEntityOnServer(TEXT("DeathWatchdog"));
+			},
+			5.0f, false);
+	}
 }
 
 // ============================================================
