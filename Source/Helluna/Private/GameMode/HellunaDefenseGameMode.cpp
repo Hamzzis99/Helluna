@@ -3128,9 +3128,14 @@ void AHellunaDefenseGameMode::RegisterControllerInBarrier(APlayerController* New
                                                          const TArray<FString>& InExpectedIds,
                                                          int32 InPartyId)
 {
+    UE_LOG(LogHelluna, Warning,
+        TEXT("[LoadingDbg][Server][Register] ENTER | PC=%p | PlayerId=%s | InExpected=%d | InPartyId=%d | CurState=%d | CurArrived=%d/%d"),
+        NewPC, *PlayerId, InExpectedIds.Num(), InPartyId,
+        static_cast<int32>(BarrierState), ArrivedPlayerIds.Num(), ExpectedPlayerIds.Num());
+
     if (!IsValid(NewPC))
     {
-        UE_LOG(LogHelluna, Warning, TEXT("[Barrier] RegisterControllerInBarrier — NewPC null, skip"));
+        UE_LOG(LogHelluna, Warning, TEXT("[LoadingDbg][Server][Register] NewPC null, skip"));
         return;
     }
 
@@ -3154,14 +3159,17 @@ void AHellunaDefenseGameMode::RegisterControllerInBarrier(APlayerController* New
                 BarrierHardTimeoutSeconds, false);
         }
 
-        UE_LOG(LogHelluna, Log, TEXT("[Barrier] WaitingForArrivals 시작 | PartyId=%d | Expected=%d | HardTimeout=%.1fs"),
+        UE_LOG(LogHelluna, Warning,
+            TEXT("[LoadingDbg][Server][Register] Idle→WaitingForArrivals | PartyId=%d | Expected=%d | HardTimeout=%.1fs"),
             BarrierPartyId, ExpectedPlayerIds.Num(), BarrierHardTimeoutSeconds);
     }
     else if (BarrierState == ELoadingBarrierState::Released ||
              BarrierState == ELoadingBarrierState::Spawned)
     {
         // 배리어 이미 해제 후 늦게 도착 — 즉시 스폰 (Rejoin 경로와 유사)
-        UE_LOG(LogHelluna, Warning, TEXT("[Barrier] 해제 후 도착 | PlayerId=%s → 즉시 스폰"), *PlayerId);
+        UE_LOG(LogHelluna, Warning,
+            TEXT("[LoadingDbg][Server][Register] LATE-JOINER (state=%d) | PlayerId=%s → SpawnHero immediate"),
+            static_cast<int32>(BarrierState), *PlayerId);
         SpawnHeroCharacter(NewPC);
         return;
     }
@@ -3188,45 +3196,68 @@ void AHellunaDefenseGameMode::RegisterControllerInBarrier(APlayerController* New
         ArrivedPlayerIds.Num() >= ExpectedPlayerIds.Num())
     {
         BarrierState = ELoadingBarrierState::WaitingForReady;
-        UE_LOG(LogHelluna, Log, TEXT("[Barrier] WaitingForReady 전이 | Arrived=%d/%d"),
+        UE_LOG(LogHelluna, Warning,
+            TEXT("[LoadingDbg][Server][Register] WaitingForArrivals→WaitingForReady | Arrived=%d/%d"),
             ArrivedPlayerIds.Num(), ExpectedPlayerIds.Num());
     }
 
-    UE_LOG(LogHelluna, Log, TEXT("[Barrier] 도착 등록 | PlayerId=%s | Arrived=%d/%d | Pending=%d"),
-        *PlayerId, ArrivedPlayerIds.Num(), ExpectedPlayerIds.Num(), PendingSpawnControllers.Num());
+    UE_LOG(LogHelluna, Warning,
+        TEXT("[LoadingDbg][Server][Register] Arrived registered | PlayerId=%s | Arrived=%d/%d | Pending=%d | bAlreadyPending=%d"),
+        *PlayerId, ArrivedPlayerIds.Num(), ExpectedPlayerIds.Num(), PendingSpawnControllers.Num(), bAlreadyPending ? 1 : 0);
 
     // 4. 클라에 로딩 씬 진입 RPC — HeroController에 정의된 Client_EnterLoadingScene 호출
     //    (Stage E 구현체. 해당 RPC는 최소한 ViewTarget 전환 + HUD 추가를 수행)
     if (AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(NewPC))
     {
+        UE_LOG(LogHelluna, Warning,
+            TEXT("[LoadingDbg][Server][Register] → SEND Client_EnterLoadingScene | HeroPC=%p | PlayerId=%s | Expected=%d | PartyId=%d"),
+            HeroPC, *PlayerId, ExpectedPlayerIds.Num(), BarrierPartyId);
         HeroPC->Client_EnterLoadingScene(ExpectedPlayerIds, BarrierPartyId);
+    }
+    else
+    {
+        UE_LOG(LogHelluna, Warning,
+            TEXT("[LoadingDbg][Server][Register] CAST FAILED — NewPC is not AHellunaHeroController | NewPC=%p"),
+            NewPC);
     }
 }
 
 void AHellunaDefenseGameMode::OnClientReportedReady(APlayerController* ReportingPC, const FString& PlayerId)
 {
+    UE_LOG(LogHelluna, Warning,
+        TEXT("[LoadingDbg][Server][Ready] ENTER | ReportingPC=%p | PlayerId=%s | State=%d | Arrived=%d/%d"),
+        ReportingPC, *PlayerId, static_cast<int32>(BarrierState),
+        ArrivedPlayerIds.Num(), ExpectedPlayerIds.Num());
+
     if (BarrierState != ELoadingBarrierState::WaitingForArrivals &&
         BarrierState != ELoadingBarrierState::WaitingForReady)
     {
-        UE_LOG(LogHelluna, Verbose, TEXT("[Barrier] 무시된 Ready (상태=%d) | PlayerId=%s"),
+        UE_LOG(LogHelluna, Warning,
+            TEXT("[LoadingDbg][Server][Ready] IGNORED — state=%d (not Waiting*) | PlayerId=%s"),
             static_cast<int32>(BarrierState), *PlayerId);
         return;
     }
 
     if (PlayerId.IsEmpty() || !IsPlayerIdExpected(PlayerId))
     {
-        UE_LOG(LogHelluna, Warning, TEXT("[Barrier] 예상 밖 Ready | PlayerId=%s"), *PlayerId);
+        UE_LOG(LogHelluna, Warning,
+            TEXT("[LoadingDbg][Server][Ready] UNEXPECTED — PlayerId=%s not in ExpectedPlayerIds (count=%d)"),
+            *PlayerId, ExpectedPlayerIds.Num());
         return;
     }
 
     bool& bRef = ActualReadyStatus.FindOrAdd(PlayerId);
     if (bRef)
     {
+        UE_LOG(LogHelluna, Warning,
+            TEXT("[LoadingDbg][Server][Ready] IDEMPOTENT — PlayerId=%s already Ready"),
+            *PlayerId);
         return; // 멱등 — 이미 Ready
     }
     bRef = true;
 
-    UE_LOG(LogHelluna, Log, TEXT("[Barrier] Ready 수신 | PlayerId=%s | Ready=%d/%d"),
+    UE_LOG(LogHelluna, Warning,
+        TEXT("[LoadingDbg][Server][Ready] ACCEPTED | PlayerId=%s | ReadyMapCount=%d/%d"),
         *PlayerId, ActualReadyStatus.Num(), ExpectedPlayerIds.Num());
 
     // 1. 보고한 컨트롤러를 구독자로 추가 + 현재 스냅샷 전송
@@ -3266,8 +3297,15 @@ void AHellunaDefenseGameMode::OnClientReportedReady(APlayerController* Reporting
     }
 
     // 4. 전원 Ready 감지 → 해제
-    if (BarrierState == ELoadingBarrierState::WaitingForReady && AreAllExpectedReady())
+    const bool bAllReady = AreAllExpectedReady();
+    UE_LOG(LogHelluna, Warning,
+        TEXT("[LoadingDbg][Server][Ready] AllReady check | State=%d | bAllReady=%d | ReadyCount=%d/%d"),
+        static_cast<int32>(BarrierState), bAllReady ? 1 : 0, ReadyCount, ExpectedPlayerIds.Num());
+
+    if (BarrierState == ELoadingBarrierState::WaitingForReady && bAllReady)
     {
+        UE_LOG(LogHelluna, Warning,
+            TEXT("[LoadingDbg][Server][Ready] → CALL ReleaseBarrier(AllReady)"));
         ReleaseBarrier(TEXT("AllReady"));
     }
 }
@@ -3292,49 +3330,68 @@ void AHellunaDefenseGameMode::BroadcastReadyStatusUpdate(const FString& ChangedP
 
 void AHellunaDefenseGameMode::OnBarrierHardTimeout()
 {
+    int32 ReadyCount = 0;
+    for (const auto& Pair : ActualReadyStatus) { if (Pair.Value) { ++ReadyCount; } }
+
+    UE_LOG(LogHelluna, Warning,
+        TEXT("[LoadingDbg][Server][HardTimeout] FIRED | State=%d | Arrived=%d/%d | Ready=%d | Pending=%d"),
+        static_cast<int32>(BarrierState), ArrivedPlayerIds.Num(), ExpectedPlayerIds.Num(),
+        ReadyCount, PendingSpawnControllers.Num());
+
     if (BarrierState == ELoadingBarrierState::Released ||
         BarrierState == ELoadingBarrierState::Spawned)
     {
+        UE_LOG(LogHelluna, Warning, TEXT("[LoadingDbg][Server][HardTimeout] SKIP — already Released/Spawned"));
         return;
     }
     if (ArrivedPlayerIds.Num() == 0)
     {
-        UE_LOG(LogHelluna, Warning, TEXT("[Barrier] HardTimeout — Arrived=0, 재대기"));
+        UE_LOG(LogHelluna, Warning, TEXT("[LoadingDbg][Server][HardTimeout] SKIP — Arrived=0, 재대기"));
         return;
     }
 
-    UE_LOG(LogHelluna, Warning, TEXT("[Barrier] HardTimeout | Arrived=%d/%d | Ready=%d"),
-        ArrivedPlayerIds.Num(), ExpectedPlayerIds.Num(), ActualReadyStatus.Num());
+    UE_LOG(LogHelluna, Warning,
+        TEXT("[LoadingDbg][Server][HardTimeout] → CALL ReleaseBarrier(HardTimeout)"));
     ReleaseBarrier(TEXT("HardTimeout"));
 }
 
 void AHellunaDefenseGameMode::OnBarrierMinTimeout()
 {
+    int32 ReadyCount = 0;
+    for (const auto& Pair : ActualReadyStatus) { if (Pair.Value) { ++ReadyCount; } }
+
+    UE_LOG(LogHelluna, Warning,
+        TEXT("[LoadingDbg][Server][MinTimeout] FIRED | State=%d | Arrived=%d/%d | Ready=%d"),
+        static_cast<int32>(BarrierState), ArrivedPlayerIds.Num(), ExpectedPlayerIds.Num(), ReadyCount);
+
     if (BarrierState == ELoadingBarrierState::Released ||
         BarrierState == ELoadingBarrierState::Spawned)
     {
+        UE_LOG(LogHelluna, Warning, TEXT("[LoadingDbg][Server][MinTimeout] SKIP — already Released/Spawned"));
         return;
-    }
-    int32 ReadyCount = 0;
-    for (const auto& Pair : ActualReadyStatus)
-    {
-        if (Pair.Value) { ++ReadyCount; }
     }
     if (ReadyCount == 0)
     {
+        UE_LOG(LogHelluna, Warning, TEXT("[LoadingDbg][Server][MinTimeout] SKIP — Ready=0"));
         return;
     }
 
-    UE_LOG(LogHelluna, Warning, TEXT("[Barrier] MinTimeout | Ready=%d/%d → 진행"),
-        ReadyCount, ExpectedPlayerIds.Num());
+    UE_LOG(LogHelluna, Warning,
+        TEXT("[LoadingDbg][Server][MinTimeout] → CALL ReleaseBarrier(MinTimeout)"));
     ReleaseBarrier(TEXT("MinTimeout"));
 }
 
 void AHellunaDefenseGameMode::ReleaseBarrier(const FString& Reason)
 {
+    UE_LOG(LogHelluna, Warning,
+        TEXT("[LoadingDbg][Server][Release] ENTER | Reason=%s | State=%d | Pending=%d"),
+        *Reason, static_cast<int32>(BarrierState), PendingSpawnControllers.Num());
+
     if (BarrierState == ELoadingBarrierState::Released ||
         BarrierState == ELoadingBarrierState::Spawned)
     {
+        UE_LOG(LogHelluna, Warning,
+            TEXT("[LoadingDbg][Server][Release] SKIP — already Released/Spawned"));
         return;
     }
     BarrierState = ELoadingBarrierState::Released;
@@ -3350,34 +3407,58 @@ void AHellunaDefenseGameMode::ReleaseBarrier(const FString& Reason)
     {
         if (Pair.Value) { ++ReadyCount; }
     }
-    UE_LOG(LogHelluna, Log, TEXT("[Barrier] 해제 | 사유=%s | Arrived=%d Ready=%d Expected=%d | PendingSpawn=%d"),
+    UE_LOG(LogHelluna, Warning,
+        TEXT("[LoadingDbg][Server][Release] BarrierState→Released | Reason=%s | Arrived=%d Ready=%d Expected=%d | PendingSpawn=%d"),
         *Reason, ArrivedPlayerIds.Num(), ReadyCount, ExpectedPlayerIds.Num(), PendingSpawnControllers.Num());
 
     // Pending 컨트롤러 스냅샷 — 스폰 중 배열 변경 방지
     TArray<TWeakObjectPtr<APlayerController>> Snapshot = PendingSpawnControllers;
     PendingSpawnControllers.Reset();
 
+    int32 SpawnIndex = 0;
+    const int32 SnapshotCount = Snapshot.Num();
     for (const TWeakObjectPtr<APlayerController>& Weak : Snapshot)
     {
         APlayerController* PC = Weak.Get();
         if (!IsValid(PC))
         {
+            UE_LOG(LogHelluna, Warning,
+                TEXT("[LoadingDbg][Server][Release] [%d/%d] SKIP — PC invalid"),
+                SpawnIndex + 1, SnapshotCount);
+            ++SpawnIndex;
             continue;
         }
+
+        UE_LOG(LogHelluna, Warning,
+            TEXT("[LoadingDbg][Server][Release] [%d/%d] → SpawnHeroCharacter | PC=%p"),
+            SpawnIndex + 1, SnapshotCount, PC);
         SpawnHeroCharacter(PC);
 
         if (AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(PC))
         {
+            UE_LOG(LogHelluna, Warning,
+                TEXT("[LoadingDbg][Server][Release] [%d/%d] → SEND Client_FadeToGame | HeroPC=%p"),
+                SpawnIndex + 1, SnapshotCount, HeroPC);
             HeroPC->Client_FadeToGame();
         }
+        else
+        {
+            UE_LOG(LogHelluna, Warning,
+                TEXT("[LoadingDbg][Server][Release] [%d/%d] CAST FAILED — PC is not AHellunaHeroController | PC=%p"),
+                SpawnIndex + 1, SnapshotCount, PC);
+        }
+        ++SpawnIndex;
     }
 
     // 전원 스폰 후 한 번만 게임 초기화
     if (!bGameInitialized)
     {
+        UE_LOG(LogHelluna, Warning, TEXT("[LoadingDbg][Server][Release] → InitializeGame (first time)"));
         InitializeGame();
     }
 
     BarrierState = ELoadingBarrierState::Spawned;
-    UE_LOG(LogHelluna, Log, TEXT("[Barrier] Spawned 상태 진입 — 배리어 완료"));
+    UE_LOG(LogHelluna, Warning,
+        TEXT("[LoadingDbg][Server][Release] EXIT | BarrierState→Spawned | SpawnedCount=%d"),
+        SnapshotCount);
 }
