@@ -58,6 +58,10 @@ AHellunaPlayerState::AHellunaPlayerState()
 	SelectedHeroType = EHellunaHeroType::None;  // None = 미선택
 	PingLocation = FVector_NetQuantize(0, 0, 0);
 	bHasPing = false;
+
+	// 핑 등 실시간 상태를 PS에 두기 위해 업데이트 빈도 상향 (UE 기본 PS는 1Hz)
+	SetNetUpdateFrequency(30.f);
+	SetMinNetUpdateFrequency(10.f);
 }
 
 void AHellunaPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -86,6 +90,7 @@ void AHellunaPlayerState::Server_AuthoritativeSetPing(const FVector& WorldLocati
 	}
 	PingLocation = FVector_NetQuantize(WorldLocation);
 	bHasPing = true;
+	ForceNetUpdate();
 }
 
 // ============================================
@@ -99,6 +104,7 @@ void AHellunaPlayerState::Server_AuthoritativeClearPing()
 	}
 	bHasPing = false;
 	PingLocation = FVector_NetQuantize(0, 0, 0);
+	ForceNetUpdate();
 }
 
 // ============================================
