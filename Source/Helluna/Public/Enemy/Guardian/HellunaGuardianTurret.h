@@ -146,6 +146,11 @@ protected:
 		meta = (DisplayName = "트레이스 채널"))
 	TEnumAsByte<ECollisionChannel> TraceChannel = ECC_Visibility;
 
+	/** LoS 라인트레이스 시작점 Z 오프셋 (UU). TurretHead 가 WP 랜드스케이프에 파묻히는 케이스 보정용. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Guardian|Detection",
+		meta = (DisplayName = "LoS 시작 Z 오프셋 (UU)", ClampMin = "0.0", ClampMax = "500.0"))
+	float LoSStartZOffset = 250.f;
+
 	// =========================================================
 	// 디버그 진단 (원격 테스터용)
 	// =========================================================

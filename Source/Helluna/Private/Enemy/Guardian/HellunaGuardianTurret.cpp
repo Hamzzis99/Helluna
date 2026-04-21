@@ -348,6 +348,8 @@ void AHellunaGuardianTurret::TickDebugDiagnostics(float DeltaTime)
 
 	const FVector HeadLoc = TurretHead ? TurretHead->GetComponentLocation() : FVector::ZeroVector;
 	const FVector HeadFwd = TurretHead ? TurretHead->GetForwardVector() : FVector::ForwardVector;
+	// LoS 시작점은 HasLineOfSightTo 와 동일하게 Z 오프셋 적용
+	const FVector LoSStart = HeadLoc + FVector(0.f, 0.f, LoSStartZOffset);
 
 	bool bInRange = false;
 	bool bLoSOK = false;
@@ -369,7 +371,7 @@ void AHellunaGuardianTurret::TickDebugDiagnostics(float DeltaTime)
 		FCollisionQueryParams QP;
 		QP.AddIgnoredActor(this);
 		QP.AddIgnoredActor(Target);
-		const bool bHit = World->LineTraceSingleByChannel(Hit, HeadLoc, AimPoint, TraceChannel, QP);
+		const bool bHit = World->LineTraceSingleByChannel(Hit, LoSStart, AimPoint, TraceChannel, QP);
 		bLoSOK = !bHit;
 		if (bHit)
 		{
@@ -396,7 +398,7 @@ void AHellunaGuardianTurret::TickDebugDiagnostics(float DeltaTime)
 		if (bDebugDrawLoS)
 		{
 			const float LifeTime = FMath::Max(DebugLogInterval, 0.1f);
-			DrawDebugLine(World, HeadLoc, AimPoint,
+			DrawDebugLine(World, LoSStart, AimPoint,
 				bLoSOK ? FColor::Green : FColor::Red, false, LifeTime, 0, 2.f);
 			if (!bLoSOK)
 			{
@@ -608,7 +610,8 @@ bool AHellunaGuardianTurret::HasLineOfSightTo(const FVector& AimPoint) const
 		return false;
 	}
 
-	const FVector Start = TurretHead->GetComponentLocation();
+	// TurretHead 가 WP 랜드스케이프 콜리전과 겹쳐 시작점이 파묻히는 경우를 보정 (MainMap 회귀).
+	const FVector Start = TurretHead->GetComponentLocation() + FVector(0.f, 0.f, LoSStartZOffset);
 
 	FHitResult HitResult;
 	FCollisionQueryParams QueryParams;
