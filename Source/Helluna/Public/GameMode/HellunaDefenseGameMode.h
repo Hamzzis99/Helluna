@@ -30,6 +30,7 @@ class UInv_InventoryComponent;
 class UHellunaHealthComponent;
 class UPCGComponent;
 class UPCGManagedActors;
+class UOreHISMPoolComponent;
 
 // ════════════════════════════════════════════════════════════════════════════════
 // Phase 7: 게임 종료 사유
@@ -144,6 +145,9 @@ protected:
 
 	/** 밤 시작: PCG 그래프 실행 */
 	void ActivateNightPCG();
+
+	/** [Day1Preload] InitializeGame에서 Day1 광석을 미리 생성했는지 여부 — EnterDay의 중복 스케줄 방지 */
+	bool bDay1OresPrepared = false;
 
 	/** PCG 생성 완료 콜백 — 스폰된 광석 수 디버그 출력 + 밀도 컬링 */
 	void OnNightPCGGraphGenerated(UPCGComponent* InComponent);
@@ -308,6 +312,20 @@ protected:
 	float GroundSlopeSinkAmount = 20.f;
 
 	// ────────────────────────────────────────────────────────────────────────────
+	// [PCG HISM 풀] 광석을 AActor 대신 HISM으로 관리하여 성능 극대화
+	// ────────────────────────────────────────────────────────────────────────────
+
+	/** HISM 풀 사용 여부. true이면 광석을 HISM 인스턴스로 등록, 플레이어 접근 시에만 AActor 스폰
+	 *  [TEMP-OFF 2026-04-20] 사용자 지시로 임시 비활성 — 추후 재조정 예정 */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|HISM 풀",
+		meta = (DisplayName = "HISM 풀 사용"))
+	bool bUseOreHISMPool = false;
+
+	/** HISM 풀 매니저 컴포넌트 (bUseOreHISMPool이 true일 때 BeginPlay에서 자동 생성) */
+	UPROPERTY()
+	TObjectPtr<UOreHISMPoolComponent> OreHISMPool;
+
+	// ────────────────────────────────────────────────────────────────────────────
 	// 내부 배칭 멤버
 	// ────────────────────────────────────────────────────────────────────────────
 
@@ -436,6 +454,38 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Defense(게임)|Monster(몬스터)")
 	int32 GetRemainingMonsterCount() const { return RemainingMonstersThisNight; }
+
+	// ════════════════════════════════════════════════════════════════
+	// [ShipJumpQuotaV1] 우주선 점프 몬스터 수 제한 (소환 시점 고정)
+	//
+	// 설계: SlotManager 기반 실시간 OnShip 태그 추적은 복잡도/오작동이 커서
+	//       "소환 시점에 N마리한테만 점프 자격을 부여"하는 방식으로 단순화.
+	//   - 풀에서 Actor 꺼낼 때 TryConsumeShipJumpQuota → State.Enemy.CanShipJump 태그 부여
+	//   - 풀로 돌려보낼 때(사망/반환) RefundShipJumpQuota → 태그 제거
+	//   - STTask_ShipJump 첫 줄에서 태그 체크, 없으면 Failed (일반 공격 분기)
+	// ════════════════════════════════════════════════════════════════
+
+	/** 동시 점프 가능 몬스터 최대 수. InitializeGame/BeginPlay에서 Remaining 초기화. */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|Monster(몬스터)",
+		meta = (DisplayName = "우주선 점프 가능 몬스터 수", ClampMin = "0", ClampMax = "64"))
+	int32 MaxShipJumpers = 10;
+
+	/** 현재 남은 쿼터. 내부 관리. */
+	UPROPERTY(BlueprintReadOnly, Category = "Defense(게임)|Monster(몬스터)",
+		meta = (DisplayName = "남은 점프 쿼터"))
+	int32 ShipJumpQuotaRemaining = 0;
+
+	/** 쿼터 소진되지 않았으면 1 감소 후 true 반환. Pool의 Activate 훅에서 호출. */
+	UFUNCTION(BlueprintCallable, Category = "Defense(게임)|Monster(몬스터)")
+	bool TryConsumeShipJumpQuota();
+
+	/** 쿼터 1 회복. Pool의 Release 훅에서 호출 (단, CanShipJump 태그 보유 몬스터에 대해서만). */
+	UFUNCTION(BlueprintCallable, Category = "Defense(게임)|Monster(몬스터)")
+	void RefundShipJumpQuota();
+
+	/** 쿼터를 MaxShipJumpers 로 리셋. BeginPlay/InitializeGame/RestartGame 시 호출. */
+	UFUNCTION(BlueprintCallable, Category = "Defense(게임)|Monster(몬스터)")
+	void ResetShipJumpQuota();
 
 	/** [cheatdebug] F2 시간정지 치트용 — 낮/밤 전환 타이머 일괄 pause/unpause */
 	void Cheat_SetPhaseTimersPaused(bool bPaused);

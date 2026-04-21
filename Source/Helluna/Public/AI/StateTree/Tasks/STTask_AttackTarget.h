@@ -52,6 +52,12 @@ struct FSTTask_AttackTargetInstanceData
 	UPROPERTY()
 	float CooldownRemaining = 0.f;
 
+	/**
+	 * [StaticTargetNoReRotV1] 움직이지 않는 타겟(ResourceUsingObject)에 첫 공격을 한 뒤엔
+	 * true. 이후엔 쿨다운 중 RInterpTo 회전 + GA 발동 직전 SnapFaceTarget 을 스킵.
+	 */
+	UPROPERTY()
+	bool bLockedRotationForStaticTarget = false;
 };
 
 USTRUCT(meta = (DisplayName = "Helluna: Attack Target", Category = "Helluna|AI"))
@@ -106,7 +112,7 @@ public:
 
 	UPROPERTY(EditAnywhere, Category = "설정",
 		meta = (DisplayName = "대기 중 회전 속도",
-			ToolTip = "공격 쿨다운 대기 중에 타겟을 바라보는 회전 속도입니다.",
+			ToolTip = "공격 쿨다운 대기 중에 타겟을 바라보는 RInterpTo 속도입니다. 30 이상 권장.",
 			ClampMin = "0.0"))
-	float RotationSpeed = 10.f;
-};	
+	float RotationSpeed = 30.f;
+};

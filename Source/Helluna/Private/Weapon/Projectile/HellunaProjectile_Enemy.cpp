@@ -11,7 +11,9 @@
 
 // 에너미의 HitNiagaraEffect / MulticastPlayEffect 호출용
 #include "Character/HellunaEnemyCharacter.h"
+#include "Character/HellunaHeroCharacter.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
+#include "Object/ResourceUsingObject/HellunaTurretBase.h"
 #include "GameFramework/Pawn.h"
 
 AHellunaProjectile_Enemy::AHellunaProjectile_Enemy()
@@ -108,10 +110,15 @@ void AHellunaProjectile_Enemy::OnBeginOverlap(
 	UE_LOG(LogTemp, Warning, TEXT("[EnemyProjectile] Overlap: %s | Comp: %s"),
 		*OtherActor->GetName(), *GetNameSafe(OtherComp));
 
-	// 플레이어(Pawn) 또는 우주선 DynamicMesh에만 데미지 적용, 나머지 무시
+	// [FriendlyFireV2] 플레이어(HeroCharacter) / 우주선 / 터렛(공격·회복 모두) 에만 데미지 적용.
+	// Why: V1 은 SpaceShip/Hero 만 허용 → 터렛은 필터에서 탈락해 원거리 투사체가
+	//      터렛에 안 맞는 버그 있었음 (2026-04-21 확인). AHellunaTurretBase 는
+	//      HealTurret/AttackTurret 공용 부모라 하나로 커버.
+	// How: 에너미/가디언 등 비허용 Pawn 은 여전히 제외.
 	const bool bIsSpaceShip = (Cast<AResourceUsingObject_SpaceShip>(OtherActor) != nullptr);
-	const bool bIsPawn      = (Cast<APawn>(OtherActor) != nullptr);
-	if (!bIsSpaceShip && !bIsPawn) return;
+	const bool bIsHero      = (Cast<AHellunaHeroCharacter>(OtherActor) != nullptr);
+	const bool bIsTurret    = (Cast<AHellunaTurretBase>(OtherActor) != nullptr);
+	if (!bIsSpaceShip && !bIsHero && !bIsTurret) return;
 
 	const FVector HitLocation = bFromSweep ? FVector(SweepResult.ImpactPoint) : GetActorLocation();
 	HitTarget(OtherActor, HitLocation);
@@ -197,7 +204,10 @@ void AHellunaProjectile_Enemy::Multicast_SpawnHitFX_Implementation(FVector_NetQu
 			(FVector)HitLocation,
 			OwnerEnemy->HitNiagaraEffect,
 			OwnerEnemy->HitEffectScale,
-			true // 사운드도 함께 재생
+			false
 		);
+
+		// [HitSoundV1] 사운드는 발사한 공격 GA 가 캐싱한 HitSound 사용.
+		OwnerEnemy->TryPlayCachedHitSound((FVector)HitLocation);
 	}
 }

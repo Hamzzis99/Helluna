@@ -39,6 +39,7 @@ class UMaterialInterface;
 class UInv_InteractPromptWidget;
 class AHellunaEnemyCharacter;
 class UImage;
+class UCameraShakeBase;
 
 
 /**
@@ -260,8 +261,50 @@ private:
 
 	void SaveCurrentMagByClass(AHellunaHeroWeapon* Weapon);
 	void ApplySavedCurrentMagByClass(AHellunaHeroWeapon* Weapon);
-	
-	
+
+	// =========================================================
+	// ★ 곡괭이 임시 교체 (G키 채집 전용)
+	// - 광석 앞에서 G 누르면 손 무기를 잠시 곡괭이로 바꿔 채집,
+	//   채집 종료 시 원래 무기로 복원한다 (탄약은 SavedMagByWeaponClass로 자동 보존).
+	// - PickaxeClass / PrePickaxeWeaponClass 두 필드와 두 RPC 헬퍼로 구성된다.
+	// =========================================================
+public:
+	/** 채집용 곡괭이 무기 BP 클래스 (BP_Weapon_Pickaxe 등을 지정) */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Pickaxe",
+		meta = (DisplayName = "곡괭이 무기 클래스"))
+	TSubclassOf<AHellunaHeroWeapon> PickaxeClass;
+
+	/** 곡괭이 임시 교체 진행 중 원래 손 무기 클래스 백업 */
+	UPROPERTY()
+	TSubclassOf<AHellunaHeroWeapon> PrePickaxeWeaponClass;
+
+	/**
+	 * [서버 RPC] 현재 손 무기를 곡괭이로 임시 교체.
+	 * 원래 무기 클래스를 PrePickaxeWeaponClass에 백업한 뒤
+	 * Server_RequestSpawnWeapon로 곡괭이를 스폰한다.
+	 * @param EquipMontage 곡괭이 장착 애니. nullptr이면 멀티캐스트 애니 생략.
+	 */
+	UFUNCTION(Server, Reliable, BlueprintCallable, Category = "Weapon|Pickaxe")
+	void Server_SwapToPickaxeTemp(UAnimMontage* EquipMontage);
+
+	/**
+	 * [서버 RPC] 곡괭이 임시 교체 해제 → PrePickaxeWeaponClass로 복원.
+	 * 백업된 클래스가 없으면 곡괭이만 제거하고 빈손 유지.
+	 */
+	UFUNCTION(Server, Reliable, BlueprintCallable, Category = "Weapon|Pickaxe")
+	void Server_RestorePrePickaxeWeapon(UAnimMontage* EquipMontage);
+
+	/** 현재 손 무기가 곡괭이(AHellunaFarmingWeapon) 계열인지 */
+	UFUNCTION(BlueprintPure, Category = "Weapon|Pickaxe")
+	bool IsHoldingPickaxe() const;
+
+	/** [PickaxePreloadV3] 첫 G 입력 히치 방지를 위한 워밍업 — BeginPlay 후 0.3초 뒤 실행 */
+	void DoPickaxeWarmup();
+
+	/** [PickaxePreloadV3] Warmup 딜레이 타이머 핸들 */
+	FTimerHandle PickaxeWarmupTimer;
+
+
 	// 애니메이션을 전체 재생할 것인가
 public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Replicated, Category="Animation")
@@ -270,6 +313,38 @@ public:
 	/** 패링 카메라 복귀 진행 중 — 다른 GA 차단용 */
 	UPROPERTY(BlueprintReadOnly, Category = "GunParry")
 	bool bParryCameraReturning = false;
+
+	// =========================================================
+	// ★ 카메라 쉐이크 (피격 시)
+	// =========================================================
+
+	/** 피격 시 재생할 카메라 쉐이크 클래스 (BP에서 할당) */
+	UPROPERTY(EditDefaultsOnly, Category = "Camera|DamageShake",
+		meta = (DisplayName = "피격 카메라 쉐이크",
+			ToolTip = "피격 시 재생할 CameraShake BP를 지정하세요.\n미설정 시 카메라 쉐이크가 재생되지 않습니다."))
+	TSubclassOf<UCameraShakeBase> DamageCameraShakeClass;
+
+	/** 카메라 쉐이크 기본 강도 (0~1). 데미지 비율에 비례하여 스케일됩니다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Camera|DamageShake",
+		meta = (DisplayName = "쉐이크 기본 강도", ClampMin = "0.1", ClampMax = "3.0"))
+	float DamageCameraShakeScale = 1.0f;
+
+	/**
+	 * 가장 약한 피격 시의 최소 쉐이크 스케일 (0~1).
+	 * 최종 스케일 = DamageCameraShakeScale × Lerp(MinDamageShakeScale, 1.0, DamageRatio)
+	 * 값을 낮추면 약한 피격이 더 약하게 느껴짐 (다이나믹 레인지 증가).
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Camera|DamageShake",
+		meta = (DisplayName = "최소 쉐이크 스케일",
+			ClampMin = "0.0", ClampMax = "1.0",
+			ToolTip = "데미지 비율이 0에 가까울 때의 쉐이크 최소값입니다.\n0에 가까울수록 약한 피격은 쉐이크가 거의 없고, 1에 가까울수록 항상 강하게 흔들립니다."))
+	float MinDamageShakeScale = 0.2f;
+
+	/** 최대 HP 대비 이 비율 이상 한 번에 피격 시 강한 쉐이크 적용 */
+	UPROPERTY(EditDefaultsOnly, Category = "Camera|DamageShake",
+		meta = (DisplayName = "강한 쉐이크 데미지 비율", ClampMin = "0.05", ClampMax = "1.0",
+			ToolTip = "MaxHP 대비 이 비율 이상 한 번에 데미지를 받으면 쉐이크 강도가 최대가 됩니다."))
+	float HeavyDamageRatio = 0.3f;
 
 	// =========================================================
 	// ★ 추가: 피격 / 사망 애니메이션
@@ -930,4 +1005,31 @@ public:
 
 	UFUNCTION()
 	void OnRep_AnimRateMultiplier();
+
+	// =========================================================
+	// [TDJumpV1] 점프/중력 슬로우 배율
+	//   JumpZVelocity × Multiplier, GravityScale × Multiplier²
+	//   → 최대 점프 높이 유지, 체공 시간 1/Multiplier 배로 늘어남
+	//   (진짜 슬로우 모션 효과)
+	// =========================================================
+
+	/** 점프/중력 슬로우 배율. 1.0 = 정상, 0.3 = 30% (체공시간 3.3배). */
+	UPROPERTY(ReplicatedUsing = OnRep_JumpGravityMultiplier, BlueprintReadOnly, Category = "TimeDistortion")
+	float JumpGravityMultiplier = 1.f;
+
+	/** 슬로우 적용 전 원본 JumpZVelocity / GravityScale 저장 */
+	float OriginalJumpZVelocity = 0.f;
+	float OriginalGravityScale  = 1.f;
+
+	/** 점프/중력 배율 설정 (서버에서 호출) */
+	void SetJumpGravityMultiplier(float NewMultiplier);
+
+	float GetJumpGravityMultiplier() const { return JumpGravityMultiplier; }
+
+	UFUNCTION()
+	void OnRep_JumpGravityMultiplier();
+
+private:
+	/** JumpGravityMultiplier 값을 CMC에 적용 (서버/클라 공통 로직) */
+	void ApplyJumpGravityMultiplierToCMC();
 };

@@ -2,7 +2,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Object/ResourceUsingObject/HellunaBaseResourceUsingObject.h"
+#include "Object/ResourceUsingObject/HellunaTurretBase.h"
 #include "ResourceUsingObject_AttackTurret.generated.h"
 
 class AHellunaEnemyCharacter;
@@ -17,7 +17,7 @@ class USoundBase;
  * 공격 주기마다 가장 가까운 적에게 데미지를 적용한다.
  */
 UCLASS()
-class HELLUNA_API AResourceUsingObject_AttackTurret : public AHellunaBaseResourceUsingObject
+class HELLUNA_API AResourceUsingObject_AttackTurret : public AHellunaTurretBase
 {
 	GENERATED_BODY()
 

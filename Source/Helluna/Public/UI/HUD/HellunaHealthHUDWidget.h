@@ -1,4 +1,4 @@
-﻿// Capstone Project Helluna
+// Capstone Project Helluna
 
 #pragma once
 
@@ -68,6 +68,17 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "HealthHUD")
 	void UpdateSubBar(float Percent);
 
+	// ─────────────────────────────────────────────────────────────
+	// [임시 추가 코드 — 주석처리로 비활성화]
+	// 2026-04-17: 사용자 요청으로 HEAD 커밋 동작으로 되돌림.
+	// 힐터렛 테스트용으로 추가했던 HP 수치 텍스트 표시 기능을 주석처리.
+	// 필요 시 아래 주석 해제하여 재활성화 가능.
+	//
+	// /** HP 수치 텍스트 갱신 (현재/최대) — 힐터렛 테스트용 */
+	// UFUNCTION(BlueprintCallable, Category = "HealthHUD")
+	// void UpdateHealthText(float Current, float Max);
+	// ─────────────────────────────────────────────────────────────
+
 protected:
 	virtual void NativeConstruct() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
@@ -107,6 +118,13 @@ protected:
 	UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
 	TObjectPtr<UProgressBar> SubBar = nullptr;
 
+	// ─────────────────────────────────────────────────────────────
+	// [임시 추가 UPROPERTY — 주석처리로 비활성화]
+	// /** HP 수치 텍스트 (예: "75 / 100") */
+	// UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+	// TObjectPtr<UTextBlock> HealthText = nullptr;
+	// ─────────────────────────────────────────────────────────────
+
 	// ===== 머티리얼 경로 (에디터 오버라이드 가능) =====
 
 	UPROPERTY(EditDefaultsOnly, Category = "HealthHUD|Materials")
@@ -130,6 +148,13 @@ private:
 
 	/** HP 퍼센트에 따른 색상 반환 (>60%: 초록, 25~60: 노랑, <25: 빨강) */
 	FLinearColor GetHealthColor(float Percent) const;
+
+	// ─────────────────────────────────────────────────────────────
+	// [임시 추가 멤버 — 주석처리로 비활성화]
+	// ===== 힐 펄스 이펙트 =====
+	// float HealPulseAlpha = 0.f;
+	// bool bHealPulseActive = false;
+	// ─────────────────────────────────────────────────────────────
 
 	// ===== 탄약 폴링 (WeaponHUDWidget 패턴) =====
 	UPROPERTY()

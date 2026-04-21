@@ -53,6 +53,12 @@ namespace HellunaGameplayTags
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Enemy_Ability_Ranged);
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Enemy_State_Death);
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Enemy_State_Attacking);
+	// GA 전반에서 FName("State.Enemy.Attacking") 으로 조회 중. 미등록이면 RequestGameplayTag 가 ensure+Log 비용을 발생시켜 첫 공격 렉의 원인이 됨 → 네이티브 등록으로 해소.
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(State_Enemy_Attacking);
+	// [ShipJumpV3] 점프 착지 후 부여 — StateTree 재점프 게이트용.
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(State_Enemy_OnShip);
+	// [ShipJumpFailV1] 우주선 점프 실패(상단 착지 X) 후 부여 — 재시도 영구 차단용.
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(State_Enemy_ShipJumpFailed);
 
 	/** Enemy Event tags **/
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Enemy_Event_Enrage);

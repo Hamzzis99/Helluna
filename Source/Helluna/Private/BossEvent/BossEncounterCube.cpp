@@ -573,8 +573,11 @@ void ABossEncounterCube::TickColorWave(float DeltaTime)
 	if (DiagTimer >= 1.f)
 	{
 		DiagTimer = 0.f;
+		const float DiagPct = (ColorWaveMaxRadius > KINDA_SMALL_NUMBER)
+			? (ColorWaveRadius / ColorWaveMaxRadius) * 100.f
+			: 0.f;
 		UE_LOG(LogTemp, Warning, TEXT("[BossEncounter_DIAG] TickColorWave — Radius=%.0f / Max=%.0f (%.0f%%)"),
-			ColorWaveRadius, ColorWaveMaxRadius, (ColorWaveRadius / ColorWaveMaxRadius) * 100.f);
+			ColorWaveRadius, ColorWaveMaxRadius, DiagPct);
 	}
 
 	UKismetMaterialLibrary::SetScalarParameterValue(

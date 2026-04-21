@@ -41,6 +41,7 @@ enum class EHellunaTargetType : uint8
 {
 	SpaceShip  UMETA(DisplayName = "우주선"),
 	Player     UMETA(DisplayName = "플레이어"),
+	Turret     UMETA(DisplayName = "터렛"),
 };
 
 /**
@@ -89,20 +90,29 @@ struct HELLUNA_API FHellunaAITargetData
 
 	/**
 	 * 현재 광폭화 상태인지.
-	 * STTask_Enrage EnterState에서 true, ExitState에서 false.
-	 * Evaluator가 광폭화 이벤트 중복 발송을 방지하는 데 사용.
+	 * STTask_Enrage EnterState에서 true 설정.
+	 * 광폭화 시 타겟을 우주선으로 고정하고 영구적으로 유지한다.
 	 */
 	UPROPERTY()
 	bool bEnraged = false;
 
 	/**
 	 * 플레이어를 타겟으로 삼기 시작한 후 경과 시간 (초).
-	 * Evaluator가 bTargetingPlayer == true 인 동안 매 틱 누적.
+	 * Evaluator가 플레이어 타겟 중일 때만 매 틱 누적.
+	 * 터렛 타겟 중에는 누적하지 않음 (터렛은 고정물이라 카이팅 불가).
 	 * EnrageDelay 이상이 되면 광폭화 이벤트를 발송한다.
 	 * 우주선으로 타겟이 바뀌면 0으로 리셋.
 	 */
 	UPROPERTY()
 	float PlayerTargetingTime = 0.f;
+
+	/**
+	 * 우주선 공격 중 어그로 전환 차단 여부.
+	 * 우주선 공격 범위에 도달하면 true로 설정.
+	 * true인 동안 플레이어/터렛이 어그로 범위에 들어와도 타겟을 바꾸지 않는다.
+	 */
+	UPROPERTY()
+	bool bAttackingSpaceShip = false;
 
 	/** 타겟 Actor가 유효한지 */
 	bool HasValidTarget() const { return TargetActor.IsValid(); }

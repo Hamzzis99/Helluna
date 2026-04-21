@@ -1,14 +1,19 @@
 // Capstone Project Helluna
-
+// [RevertInstantV1][LCv10] 즉시 회전 복귀 — 회전은 1프레임 스냅, 곧바로 몽타주 재생
 
 #include "AbilitySystem/HeroAbility/HeroGameplayAbility_Farming.h"
 
 #include "AbilitySystemComponent.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/Controller.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "DrawDebugHelpers.h"
 #include "Weapon/HellunaFarmingWeapon.h"
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
+#include "Abilities/Tasks/AbilityTask_WaitDelay.h"
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
+#include "Components/SkeletalMeshComponent.h"
 
 #include "Character/HellunaHeroCharacter.h"
 #include "Character/HeroComponent/Helluna_FindResourceComponent.h"
@@ -35,8 +40,6 @@ void UHeroGameplayAbility_Farming::ActivateAbility(
 {
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
 
-	// 기본 유효성 검사
-
 	if (!ActorInfo || !ActorInfo->AvatarActor.IsValid())
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -49,7 +52,6 @@ void UHeroGameplayAbility_Farming::ActivateAbility(
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
-
 
 	if (ActorInfo->IsLocallyControlled())
 	{
@@ -85,6 +87,13 @@ void UHeroGameplayAbility_Farming::PlayFarmingMontage()
 		return;
 	}
 
+	// ✅ 스냅 + 즉시 회전 (원래 동작)
+	SnapHeroToFarmingDistance(CurrentActorInfo);
+	FaceToTarget_InstantLocalOnly(CurrentActorInfo, Target->GetActorLocation());
+
+	// [RevertInstantV1][LCv10] 라이브 코딩 적용 검증용 로그
+	UE_LOG(LogTemp, Warning, TEXT("[RevertInstantV1][LCv10] PlayFarmingMontage: instant face → montage"));
+
 	// ✅ 몽타주 가져오기
 	UAnimMontage* FarmingMontage = nullptr;
 	if (AHellunaHeroWeapon* CurrentWeapon = Cast<AHellunaHeroWeapon>(Hero->GetCurrentWeapon()))
@@ -99,10 +108,6 @@ void UHeroGameplayAbility_Farming::PlayFarmingMontage()
 		return;
 	}
 
-	// ✅ 스냅 + 회전
-	SnapHeroToFarmingDistance(CurrentActorInfo);
-	FaceToTarget_InstantLocalOnly(CurrentActorInfo, Target->GetActorLocation());
-
 	// ✅ 몽타주 재생 (AbilityTask)
 	FarmingTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, FarmingMontage, 1.f);
 	if (!FarmingTask)
@@ -111,26 +116,50 @@ void UHeroGameplayAbility_Farming::PlayFarmingMontage()
 		return;
 	}
 
+	// [DmgSyncV1] OnBlendOut 중복 바인딩 제거 — 한 몽타주당 OnFarmingFinished가 두 번 호출되어
+	// 타이밍이 밀리고 스윙 주기가 불규칙해지던 버그 수정. OnCompleted만 사용.
 	FarmingTask->OnCompleted.AddDynamic(this, &UHeroGameplayAbility_Farming::OnFarmingFinished);
-	FarmingTask->OnBlendOut.AddDynamic(this, &UHeroGameplayAbility_Farming::OnFarmingFinished);
 	FarmingTask->OnInterrupted.AddDynamic(this, &UHeroGameplayAbility_Farming::OnFarmingInterrupted);
 	FarmingTask->OnCancelled.AddDynamic(this, &UHeroGameplayAbility_Farming::OnFarmingInterrupted);
 
 	FarmingTask->ReadyForActivation();
 
-	// ✅ 몽타주 길이의 DamageTimingRatio 비율 시점에 데미지 적용 (서버만)
-	if (Hero->HasAuthority() && FarmingMontage)
+	// [DmgSyncV2] 스윙 시작마다 데미지 적용 플래그 리셋
+	bDamageFiredThisSwing = false;
+
+	// [DmgSyncV2] 타격 AnimNotify 바인딩 — HitNotifyName이 비어있지 않으면 프레임 정확한 타격 적용
+	if (!HitNotifyName.IsNone())
+	{
+		if (USkeletalMeshComponent* Mesh = Hero->GetMesh())
+		{
+			if (UAnimInstance* Anim = Mesh->GetAnimInstance())
+			{
+				Anim->OnPlayMontageNotifyBegin.RemoveDynamic(this, &UHeroGameplayAbility_Farming::OnMontageNotifyBegin);
+				Anim->OnPlayMontageNotifyBegin.AddDynamic(this, &UHeroGameplayAbility_Farming::OnMontageNotifyBegin);
+			}
+		}
+	}
+
+	// [DmgSyncV2] 데미지 지연 결정 — 절대 시간(DamageImpactTime) 우선, 0이면 비율 폴백
 	{
 		const float MontageLength = FarmingMontage->GetPlayLength();
-		const float DamageDelay = MontageLength * DamageTimingRatio;
+		float DamageDelay = (DamageImpactTime > 0.f)
+			? DamageImpactTime
+			: FMath::Max(0.01f, MontageLength * DamageTimingRatio);
+		DamageDelay = FMath::Max(0.01f, FMath::Min(DamageDelay, MontageLength - 0.01f));
 
-		Hero->GetWorldTimerManager().ClearTimer(DamageTimerHandle);
-		Hero->GetWorldTimerManager().SetTimer(
-			DamageTimerHandle,
-			this,
-			&UHeroGameplayAbility_Farming::ApplyFarmingDamage,
-			DamageDelay,
-			false);
+		if (DamageDelayTask)
+		{
+			DamageDelayTask->EndTask();
+			DamageDelayTask = nullptr;
+		}
+
+		DamageDelayTask = UAbilityTask_WaitDelay::WaitDelay(this, DamageDelay);
+		if (DamageDelayTask)
+		{
+			DamageDelayTask->OnFinish.AddDynamic(this, &UHeroGameplayAbility_Farming::ApplyFarmingDamage);
+			DamageDelayTask->ReadyForActivation();
+		}
 	}
 }
 
@@ -143,7 +172,6 @@ AActor* UHeroGameplayAbility_Farming::GetFarmingTarget(const FGameplayAbilityAct
 	UHelluna_FindResourceComponent* FindComp = Hero->FindComponentByClass<UHelluna_FindResourceComponent>();
 	if (!FindComp) return nullptr;
 
-	// ✅ 핵심 분기:
 	// - 로컬(클라): 포커스(하이라이트) 대상
 	// - 서버: ApplyFarming에서 ServerSetCanFarming(true, Target)로 캐시된 "파밍 대상"
 	if (ActorInfo && ActorInfo->IsLocallyControlled())
@@ -197,17 +225,23 @@ void UHeroGameplayAbility_Farming::FaceToTarget_InstantLocalOnly(
 	if (!Pawn || !Pawn->IsLocallyControlled())
 		return;
 
-	// ✅ 캐릭터의 Yaw만 광석을 향하도록 회전 (카메라는 그대로)
 	const FVector PawnLoc = Pawn->GetActorLocation();
 	const FRotator LookAt = UKismetMathLibrary::FindLookAtRotation(PawnLoc, TargetLocation);
 
 	FRotator NewRot = Pawn->GetActorRotation();
 	NewRot.Yaw = LookAt.Yaw;
 	Pawn->SetActorRotation(NewRot);
+
+	// [BodyOnlyV1][LCv11] Controller(=Camera) Yaw는 건드리지 않는다.
+	// 캐릭터 몸만 타겟 쪽으로 돌리고, 카메라는 사용자가 보던 방향을 유지.
+	UE_LOG(LogTemp, Warning, TEXT("[BodyOnlyV1][LCv11] FaceToTarget: pawn-only yaw=%.1f (camera untouched)"), LookAt.Yaw);
 }
 
 void UHeroGameplayAbility_Farming::ApplyFarmingDamage()
 {
+	// [DmgSyncV2] Notify/Timer 둘 중 먼저 도달한 쪽만 적용 (이중 데미지 방지)
+	if (bDamageFiredThisSwing) return;
+
 	AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(GetAvatarActorFromActorInfo());
 	if (!Hero || !Hero->HasAuthority()) return;
 
@@ -218,7 +252,15 @@ void UHeroGameplayAbility_Farming::ApplyFarmingDamage()
 	if (Pickaxe)
 	{
 		Pickaxe->Farm(Hero->GetController(), Target);
+		bDamageFiredThisSwing = true;
 	}
+}
+
+void UHeroGameplayAbility_Farming::OnMontageNotifyBegin(FName NotifyName, const FBranchingPointNotifyPayload& /*Payload*/)
+{
+	// [DmgSyncV2] 몽타주 Notify가 설정된 이름이면 즉시 데미지 — 프레임 정확
+	if (HitNotifyName.IsNone() || NotifyName != HitNotifyName) return;
+	ApplyFarmingDamage();
 }
 
 void UHeroGameplayAbility_Farming::OnFarmingFinished()
@@ -235,7 +277,6 @@ void UHeroGameplayAbility_Farming::OnFarmingFinished()
 
 void UHeroGameplayAbility_Farming::OnFarmingInterrupted()
 {
-
 	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
 }
 
@@ -260,7 +301,6 @@ bool UHeroGameplayAbility_Farming::SnapHeroToFarmingDistance(
 	FVector Dir = (HeroLoc - TargetLoc);
 	Dir.Z = 0.f;
 
-	// 완전 겹쳤으면 뒤로 빠지게 (현재 바라보는 반대 방향)
 	if (Dir.IsNearlyZero())
 	{
 		Dir = -Hero->GetActorForwardVector();
@@ -273,13 +313,9 @@ bool UHeroGameplayAbility_Farming::SnapHeroToFarmingDistance(
 		return false;
 	}
 
-	// ✅ 목표 위치: 타겟에서 DesiredDistance만큼 떨어진 지점
 	FVector DesiredLoc = TargetLoc + Dir * DesiredDistance;
-
-	// Z는 현재 유지 (바닥 스냅은 나중에 필요하면 추가)
 	DesiredLoc.Z = HeroLoc.Z;
 
-	// ✅ 서버 권위 + 로컬 체감 둘 다에서만 실행
 	if (!(Hero->HasAuthority() || ActorInfo->IsLocallyControlled()))
 	{
 		return false;
@@ -288,7 +324,7 @@ bool UHeroGameplayAbility_Farming::SnapHeroToFarmingDistance(
 	FHitResult Hit;
 	return Hero->SetActorLocation(
 		DesiredLoc,
-		true,  // bSweep: 캡슐 충돌만 사용
+		true,
 		&Hit,
 		ETeleportType::TeleportPhysics
 	);
@@ -301,13 +337,32 @@ void UHeroGameplayAbility_Farming::EndAbility(
 	bool bReplicateEndAbility,
 	bool bWasCancelled)
 {
-	// ✅ 데미지 타이머 정리
+	// 데미지 타이머 정리
 	if (AHellunaHeroCharacter* TimerOwner = Cast<AHellunaHeroCharacter>(GetAvatarActorFromActorInfo()))
 	{
 		TimerOwner->GetWorldTimerManager().ClearTimer(DamageTimerHandle);
 	}
 
-	// ✅ 홀딩 해제 시 몽타주 즉시 중지
+	// [DmgSyncV1] WaitDelay Task 정리
+	if (DamageDelayTask)
+	{
+		DamageDelayTask->EndTask();
+		DamageDelayTask = nullptr;
+	}
+
+	// [DmgSyncV2] AnimNotify 바인딩 해제
+	if (AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(GetAvatarActorFromActorInfo()))
+	{
+		if (USkeletalMeshComponent* Mesh = Hero->GetMesh())
+		{
+			if (UAnimInstance* Anim = Mesh->GetAnimInstance())
+			{
+				Anim->OnPlayMontageNotifyBegin.RemoveDynamic(this, &UHeroGameplayAbility_Farming::OnMontageNotifyBegin);
+			}
+		}
+	}
+
+	// 홀딩 해제 시 몽타주 즉시 중지
 	if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
 	{
 		ASC->CurrentMontageStop();

@@ -62,6 +62,15 @@ void UEnemyGameplayAbility_Attack::ActivateAbility(
 	}
 
 	Enemy->SetCachedMeleeAttackDamage(AttackDamage);
+	// [HitVFXV1] 타격 판정 시 스폰할 VFX를 캐릭터에 캐싱
+	Enemy->SetCachedHitVFX(HitVFX, HitVFXScale);
+
+	// [HitVFX.Diag] GA 발동 시점에 HitVFX 가 실제로 설정되어 있는지 확인
+	UE_LOG(LogTemp, Warning,
+		TEXT("[HitVFX.Diag][GA.Activate] Monster=%s HitVFX=%s Scale=%.2f"),
+		*Enemy->GetName(),
+		HitVFX ? *HitVFX->GetName() : TEXT("NULL(assign in BP!)"),
+		HitVFXScale);
 
 	// 건패링 윈도우 열기 (bOpensParryWindow + bCanBeParried 체크는 내부에서 처리)
 	TryOpenParryWindow();
@@ -71,17 +80,24 @@ void UEnemyGameplayAbility_Attack::ActivateAbility(
 	// 게임 옵션에서 On/Off 토글 가능하게
 	// Enemy->Multicast_PlayParryHintVFX() 같은 함수로 처리 예정
 
-	UAnimMontage* AttackMontage = Enemy->AttackMontage;
-	if (!AttackMontage)
+	UAnimMontage* EffectiveMontage = GetEffectiveAttackMontage();
+	if (!EffectiveMontage)
 	{
 		HandleAttackFinished();
 		return;
 	}
 	AActor* AttackTarget = HellunaEnemyAttackUtils::ResolveAttackTarget(Enemy, CurrentTarget.Get());
-	Enemy->LockMovementAndFaceTarget(AttackTarget);
-	
+
 	// 광폭화 상태이면 Enemy에 설정된 EnrageAttackMontagePlayRate 배율로 공격 애니메이션을 빠르게 재생
 	const float PlayRate = Enemy->bEnraged ? Enemy->EnrageAttackMontagePlayRate : 1.f;
+	// [EnrageDiag] 광폭화 반영 검증용 — BP의 PlayRate override/flag 전달 여부 확인.
+	UE_LOG(LogTemp, Warning,
+		TEXT("[EnrageDiag][Attack.GA] Monster=%s bEnraged=%d EnragedRate=%.2f → FinalPlayRate=%.2f Montage=%s"),
+		*Enemy->GetName(),
+		Enemy->bEnraged ? 1 : 0,
+		Enemy->EnrageAttackMontagePlayRate,
+		PlayRate,
+		EffectiveMontage ? *EffectiveMontage->GetName() : TEXT("NULL"));
 	const FVector ToTarget = AttackTarget
 		? (AttackTarget->GetActorLocation() - Enemy->GetActorLocation()).GetSafeNormal2D()
 		: FVector::ForwardVector;
@@ -89,10 +105,23 @@ void UEnemyGameplayAbility_Attack::ActivateAbility(
 		? Enemy->GetActorRotation()
 		: FRotator(0.f, ToTarget.Rotation().Yaw, 0.f);
 
-	Enemy->Multicast_PlayAttackMontage(AttackMontage, PlayRate, FacingRotation);
+	Enemy->LockMovementAndFaceTarget(AttackTarget);
+
+	// 파라노이드 스냅: Multicast 직전에 서버 회전을 FacingRotation으로 강제 재설정.
+	// LockMovement과 Multicast 사이에 틱/물리가 끼어들어 회전이 밀릴 가능성 차단.
+	Enemy->SetActorRotation(FacingRotation, ETeleportType::TeleportPhysics);
+
+	// [ServerAnimTick] 서버는 기본적으로 SkelMesh Pose Tick 이 꺼져있어 Montage Notify
+	// (AttackCollisionStart/End) 가 서버에서 발동되지 않음 → 서버가 박스 활성화 못 함 → Overlap 판정 0.
+	// Montage 재생 직전 서버 Pose Tick 을 켜서 공격 구간 동안만 Notify 가 서버에 도달하도록.
+	// OnMontageCompleted/Cancelled 에서 다시 끈다 (최적화 — 공격 안 할 때 서버 Pose Tick 비용 0).
+	Enemy->SetServerAttackPoseTickEnabled(true);
+
+	Enemy->Multicast_PlayAttackMontage(EffectiveMontage, PlayRate, FacingRotation);
+	PlayAttackSound();
 
 	UAbilityTask_PlayMontageAndWait* MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
-		this, NAME_None, AttackMontage, PlayRate, NAME_None, false
+		this, NAME_None, EffectiveMontage, PlayRate, NAME_None, false
 	);
 
 	if (!MontageTask)
@@ -206,6 +235,11 @@ void UEnemyGameplayAbility_Attack::EndAbility(
 	{
 		Enemy->UnlockMovement();
 		Enemy->SetCachedMeleeAttackDamage(0.f);
+
+		// [ServerAnimTick] 안전망 — GA 종료 시점에 항상 서버 Pose Tick 복원.
+		// Notify End 가 누락되거나 Montage 취소로 SetAttackBoxActive(false) 가 안 불렸을 때도
+		// 서버 Pose Tick 이 계속 켜져있는 일이 없도록.
+		Enemy->SetServerAttackPoseTickEnabled(false);
 
 		if (bWasCancelled)
 		{

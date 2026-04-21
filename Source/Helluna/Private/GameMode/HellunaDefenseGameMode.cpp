@@ -125,6 +125,8 @@ namespace HellunaPCGInternal
     };
 }
 #include "Dom/JsonObject.h"
+#include "PCG/OreHISMPoolComponent.h"
+#include "Engine/StaticMeshActor.h"
 
 AHellunaDefenseGameMode::AHellunaDefenseGameMode()
 {
@@ -139,6 +141,9 @@ void AHellunaDefenseGameMode::BeginPlay()
 {
     Super::BeginPlay();
     if (!HasAuthority()) return;
+
+    // [ShipJumpQuotaV1] 쿼터 초기화 — 매 세션 시작 시 Max 로 리셋.
+    ResetShipJumpQuota();
 
     // 커맨드라인 LobbyURL 오버라이드
     FString CmdLobbyURL;
@@ -172,12 +177,20 @@ void AHellunaDefenseGameMode::BeginPlay()
     CacheRangeSpawnPoints();
     CacheNightPCGComponents();
 
+    // [HISM 풀] 광석 HISM 풀 매니저 생성
+    if (bUseOreHISMPool && !OreHISMPool)
+    {
+        OreHISMPool = NewObject<UOreHISMPoolComponent>(this, TEXT("OreHISMPool"));
+        OreHISMPool->RegisterComponent();
+        UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] HISM 풀 매니저 생성 완료"));
+    }
+
     // [Phase 16] 유휴 자동 종료 타이머 (접속자 0이면 IdleShutdownSeconds 후 자동 종료)
     if (IdleShutdownSeconds > 0.f)
     {
         if (UWorld* W = GetWorld())
         {
-            W->GetTimerManager().SetTimer(IdleShutdownTimer, this,
+            W->GetTimerManager().SetTimer(IdleShutdownTimer, this,      
                 &AHellunaDefenseGameMode::CheckIdleShutdown, IdleShutdownSeconds, false);
             UE_LOG(LogHelluna, Log, TEXT("[DefenseGameMode] [Phase16] 유휴 종료 타이머 시작 (%.0f초)"), IdleShutdownSeconds);
         }
@@ -195,7 +208,7 @@ void AHellunaDefenseGameMode::BeginPlay()
 // ============================================================
 // InitializeGame
 // ============================================================
-void AHellunaDefenseGameMode::InitializeGame()
+    void AHellunaDefenseGameMode::InitializeGame()
 {
     if (bGameInitialized)
     {
@@ -210,6 +223,13 @@ void AHellunaDefenseGameMode::InitializeGame()
     UE_LOG(LogTemp, Warning, TEXT("[DefenseGameMode] 게임 시작!"));
 #endif
     Debug::Print(TEXT("[DefenseGameMode] InitializeGame - 게임 시작!"), FColor::Green);
+
+    // [Day1Preload] Day1 광석을 낮 전환보다 먼저 선행 생성.
+    // BeginPlay에서 이미 CacheNightPCGComponents()가 완료된 상태이므로 즉시 PCG 생성 가능.
+    // EnterDay에서의 중복 스케줄은 bDay1OresPrepared 가드로 방지.
+    UE_LOG(LogTemp, Warning, TEXT("[Day1Preload] InitializeGame에서 Day1 광석 선행 생성 시작 (CachedPCG=%d)"), CachedNightPCGComponents.Num());
+    ActivateNightPCG();
+    bDay1OresPrepared = true;
 
     EnterDay();
     StartAutoSave();
@@ -1368,9 +1388,55 @@ void AHellunaDefenseGameMode::ProcessClusterSpawnBatch()
     const int32 Total = PendingClusterSpawns.Num();
     int32 SpawnedThisBatch = 0;
 
+    // [OreHISMDiagV1] 진단용 — Helluna.OreHISM.ForceFallback 1 이면 HISM 우회.
+    static IConsoleVariable* CVarForceFallback =
+        IConsoleManager::Get().FindConsoleVariable(TEXT("Helluna.OreHISM.ForceFallback"));
+    const bool bForceFallback = CVarForceFallback && (CVarForceFallback->GetInt() != 0);
+
+    // HISM 풀 모드: AActor 대신 HISM 인스턴스로 등록 (플레이어 접근 시에만 AActor 스폰)
+    const bool bHISMMode = bUseOreHISMPool && OreHISMPool && !bForceFallback;
+
+    if (bForceFallback)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[OreHISMDiagV1] ForceFallback=1 — HISM 우회, 모든 광석 직접 AActor 스폰 (총 %d개)"),
+            Total);
+    }
+
     while (ClusterSpawnBatchIndex < Total && SpawnedThisBatch < PCGBatchSpawnCount)
     {
         const FClusterSpawnRequest& Req = PendingClusterSpawns[ClusterSpawnBatchIndex++];
+
+        if (bHISMMode)
+        {
+            // CDO에서 StaticMesh 추출 (AStaticMeshActor 계열)
+            UStaticMesh* OreMesh = nullptr;
+            if (Req.OreClass)
+            {
+                if (const AStaticMeshActor* CDO = Cast<AStaticMeshActor>(Req.OreClass->GetDefaultObject()))
+                {
+                    if (UStaticMeshComponent* MeshComp = CDO->GetStaticMeshComponent())
+                    {
+                        OreMesh = MeshComp->GetStaticMesh();
+                    }
+                }
+            }
+
+            if (OreMesh)
+            {
+                const int32 InstanceID = OreHISMPool->RegisterOreInstance(OreMesh, Req.OreClass, Req.Transform, Req.Tags);
+                if (InstanceID != INDEX_NONE)
+                {
+                    ++SpawnedThisBatch;
+                    continue;
+                }
+            }
+
+            // StaticMesh를 가져올 수 없으면 기존 방식으로 폴백
+            UE_LOG(LogTemp, Warning, TEXT("[HISM 폴백] %s — StaticMesh 없음, AActor로 스폰"),
+                Req.OreClass ? *Req.OreClass->GetName() : TEXT("null"));
+        }
+
+        // 기존 방식: AActor 직접 스폰
         FActorSpawnParameters Params;
         Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
         if (AActor* Spawned = GetWorld()->SpawnActor(Req.OreClass, &Req.Transform, Params))
@@ -1382,8 +1448,9 @@ void AHellunaDefenseGameMode::ProcessClusterSpawnBatch()
         SpawnedThisBatch++;
     }
 
-    UE_LOG(LogTemp, Warning, TEXT("[PCG 최적화] 스폰 배치 | %d/%d (이번: %d개)"),
-        ClusterSpawnBatchIndex, Total, SpawnedThisBatch);
+    UE_LOG(LogTemp, Warning, TEXT("[PCG 최적화] 스폰 배치 | %d/%d (이번: %d개%s)"),
+        ClusterSpawnBatchIndex, Total, SpawnedThisBatch,
+        bHISMMode ? TEXT(" HISM") : TEXT(""));
 
     if (ClusterSpawnBatchIndex >= Total)
     {
@@ -1394,10 +1461,13 @@ void AHellunaDefenseGameMode::ProcessClusterSpawnBatch()
 
 void AHellunaDefenseGameMode::FinalizePostProcess()
 {
-    UE_LOG(LogTemp, Warning, TEXT("[PCG 최적화] ◀ PostProcess 완료 | Day=%d | 스폰: %d개"),
-        CurrentDay, SpawnedClusterOresResult.Num());
-    Debug::Print(FString::Printf(TEXT("[PCG 최적화] Day%d | PostProcess 완료 — 스폰 %d개"),
-        CurrentDay, SpawnedClusterOresResult.Num()),
+    const int32 HISMCount = (bUseOreHISMPool && OreHISMPool) ? OreHISMPool->GetTotalRegistered() : 0;
+    const int32 ActorCount = SpawnedClusterOresResult.Num();
+
+    UE_LOG(LogTemp, Warning, TEXT("[PCG 최적화] ◀ PostProcess 완료 | Day=%d | HISM: %d개 | AActor: %d개"),
+        CurrentDay, HISMCount, ActorCount);
+    Debug::Print(FString::Printf(TEXT("[PCG 최적화] Day%d | 완료 — HISM %d + AActor %d"),
+        CurrentDay, HISMCount, ActorCount),
         FColor::Green);
 
     PendingClusterSpawns.Empty();
@@ -1499,7 +1569,15 @@ void AHellunaDefenseGameMode::EnterDay()
         GS->NetMulticast_OnDawnPassed(EffectiveDayDuration);
     }
 
-    GetWorldTimerManager().SetTimerForNextTick(this, &ThisClass::ActivateNightPCG);
+    // [Day1Preload] Day1은 InitializeGame에서 이미 ActivateNightPCG를 호출했으므로 중복 스케줄 방지.
+    if (CurrentDay == 1 && bDay1OresPrepared)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[Day1Preload] EnterDay Day=%d — ActivateNightPCG 이미 선행 실행됨, 중복 스케줄 스킵"), CurrentDay);
+    }
+    else
+    {
+        GetWorldTimerManager().SetTimerForNextTick(this, &ThisClass::ActivateNightPCG);
+    }
 
     GetWorldTimerManager().ClearTimer(TimerHandle_ToNight);
     GetWorldTimerManager().SetTimer(TimerHandle_ToNight, this, &ThisClass::EnterNight, EffectiveDayDuration, false);
@@ -2139,7 +2217,52 @@ void AHellunaDefenseGameMode::RestartGame()
 {
     if (!HasAuthority()) return;
     bGameInitialized = false;
+    ResetShipJumpQuota();
     GetWorld()->ServerTravel(TEXT("/Game/Minwoo/MinwooTestMap?listen"));
+}
+
+// ============================================================
+// [ShipJumpQuotaV1] 점프 쿼터 관리
+// ============================================================
+bool AHellunaDefenseGameMode::TryConsumeShipJumpQuota()
+{
+    if (!HasAuthority()) return false;
+    if (ShipJumpQuotaRemaining <= 0)
+    {
+        UE_LOG(LogTemp, Verbose,
+            TEXT("[ShipJumpQuotaV1] TryConsume DENIED — Remaining=0/Max=%d"),
+            MaxShipJumpers);
+        return false;
+    }
+    --ShipJumpQuotaRemaining;
+    UE_LOG(LogTemp, Warning,
+        TEXT("[ShipJumpQuotaV1] Consume Remaining=%d/%d"),
+        ShipJumpQuotaRemaining, MaxShipJumpers);
+    return true;
+}
+
+void AHellunaDefenseGameMode::RefundShipJumpQuota()
+{
+    if (!HasAuthority()) return;
+    if (ShipJumpQuotaRemaining >= MaxShipJumpers)
+    {
+        // 이미 가득 — 오버플로우 방지.
+        UE_LOG(LogTemp, Verbose,
+            TEXT("[ShipJumpQuotaV1] Refund SKIP — already at Max=%d"), MaxShipJumpers);
+        return;
+    }
+    ++ShipJumpQuotaRemaining;
+    UE_LOG(LogTemp, Warning,
+        TEXT("[ShipJumpQuotaV1] Refund Remaining=%d/%d"),
+        ShipJumpQuotaRemaining, MaxShipJumpers);
+}
+
+void AHellunaDefenseGameMode::ResetShipJumpQuota()
+{
+    ShipJumpQuotaRemaining = MaxShipJumpers;
+    UE_LOG(LogTemp, Warning,
+        TEXT("[ShipJumpQuotaV1] Reset Remaining=%d/%d"),
+        ShipJumpQuotaRemaining, MaxShipJumpers);
 }
 
 

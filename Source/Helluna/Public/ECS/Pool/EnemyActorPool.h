@@ -152,7 +152,8 @@ public:
 		TSubclassOf<AHellunaEnemyCharacter> EnemyClass,
 		const FTransform& SpawnTransform,
 		float CurrentHP,
-		float MaxHP);
+		float MaxHP,
+		const FVector& MeshExtraScale = FVector(1.f, 1.f, 1.f));
 
 	/**
 	 * Actor를 비활성화하고 해당 클래스의 Pool에 반납한다.

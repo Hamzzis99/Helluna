@@ -1,8 +1,7 @@
-﻿// Capstone Project Helluna
+// Capstone Project Helluna
 
 #include "AnimInstance/AnimNotify_AttackCollisionEnd.h"
 #include "Character/HellunaEnemyCharacter.h"
-#include "Helluna.h"
 
 void UAnimNotify_AttackCollisionEnd::Notify(
 	USkeletalMeshComponent* MeshComp,
@@ -11,21 +10,22 @@ void UAnimNotify_AttackCollisionEnd::Notify(
 {
 	Super::Notify(MeshComp, Animation, EventReference);
 
-	// Null 체크
-	if (!MeshComp || !MeshComp->GetOwner())
-	{
-		return;
-	}
+	if (!MeshComp || !MeshComp->GetOwner()) return;
 
-	// EnemyCharacter 캐스팅
-	AHellunaEnemyCharacter* EnemyCharacter = Cast<AHellunaEnemyCharacter>(MeshComp->GetOwner());
-	if (EnemyCharacter)
-	{
-		EnemyCharacter->StopAttackTrace();
+	AHellunaEnemyCharacter* Enemy = Cast<AHellunaEnemyCharacter>(MeshComp->GetOwner());
+	if (!Enemy) return;
 
-#if HELLUNA_DEBUG_ENEMY
-		UE_LOG(LogTemp, Log, TEXT("AnimNotify_AttackCollisionEnd: %s stopped attack trace"),
-			*EnemyCharacter->GetName());
-#endif
-	}
+	// BoxComponentName None 이면 EnemyCharacter 가 전체 박스 비활성 처리
+	Enemy->SetAttackBoxActive(BoxComponentName, /*bEnable=*/false, 0.f, false);
 }
+
+#if WITH_EDITOR
+FString UAnimNotify_AttackCollisionEnd::GetNotifyName_Implementation() const
+{
+	if (BoxComponentName.IsNone())
+	{
+		return TEXT("AttackEnd (?)");
+	}
+	return FString::Printf(TEXT("AttackEnd [%s]"), *BoxComponentName.ToString());
+}
+#endif

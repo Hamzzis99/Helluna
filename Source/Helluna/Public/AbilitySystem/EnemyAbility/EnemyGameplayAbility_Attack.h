@@ -6,6 +6,8 @@
 #include "AbilitySystem/HellunaEnemyGameplayAbility.h"
 #include "EnemyGameplayAbility_Attack.generated.h"
 
+class UNiagaraSystem;
+
 /**
  * 적 공격 GA
  *
@@ -36,6 +38,8 @@ public:
 	/** StateTree AttackTask에서 설정하는 타겟 액터 */
 	UPROPERTY(BlueprintReadWrite, Category = "Attack")
 	TWeakObjectPtr<AActor> CurrentTarget = nullptr;
+
+	virtual void SetCurrentTarget(AActor* InTarget) override { CurrentTarget = InTarget; }
 
 	/**
 	 * 근거리 공격 직격 데미지.
@@ -72,6 +76,22 @@ public:
 			ToolTip = "공격 후 딜레이 시간 동안 타겟 방향으로 회전하는 속도입니다.\n0으로 설정하면 기본 이동 회전 속도를 그대로 사용합니다.\n권장값: 360 ~ 720",
 			ClampMin = "0.0", ClampMax = "3600.0"))
 	float PostAttackRotationRate = 720.f;
+
+	// ═══════════════════════════════════════════════════════════
+	// [HitVFXV1] 타격 시점에 Hit.Location 에 스폰할 Niagara VFX
+	// ═══════════════════════════════════════════════════════════
+
+	/** 타격 판정 성공 시 Hit.Location 에 스폰할 VFX. */
+	UPROPERTY(EditDefaultsOnly, Category = "Combat|Assets",
+		meta = (DisplayName = "타격 VFX",
+			ToolTip = "AttackTrace가 유효 타겟과 충돌한 지점(Hit.Location)에 스폰됩니다."))
+	TObjectPtr<UNiagaraSystem> HitVFX = nullptr;
+
+	/** 타격 VFX 스케일 배율. */
+	UPROPERTY(EditDefaultsOnly, Category = "Combat|Assets",
+		meta = (DisplayName = "타격 VFX 스케일",
+			ClampMin = "0.1", ClampMax = "10.0"))
+	float HitVFXScale = 1.f;
 
 protected:
 	//~ Begin UGameplayAbility Interface

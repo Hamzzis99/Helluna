@@ -99,4 +99,5 @@ protected:
 private:
 	/** GameplayTag → EWeaponAnimType 변환 (GameThread에서만 호출) */
 	EWeaponAnimType ResolveWeaponAnimType() const;
+
 };

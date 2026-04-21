@@ -165,4 +165,28 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Enemy Spawn Config|이동",
 		meta=(DisplayName="Move 2D Only"))
 	bool bMove2DOnly = true;
+
+	// =================================================================
+	// [SpawnScaleV1] 소환 시 Actor 크기
+	// =================================================================
+
+	/**
+	 * Actor 전체 Scale. Capsule + Mesh 모두 비례 확대/축소.
+	 * Capsule Scaled Radius 가 NavMesh AgentRadius 를 넘으면 경로 탐색 실패하므로 주의.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Enemy Spawn Config|크기",
+		meta = (DisplayName = "Actor Spawn Scale (Actor 전체 스케일)",
+			ToolTip = "Mass가 Actor로 전환할 때 적용할 Actor Scale. Capsule+Mesh 비례. Capsule Scaled Radius가 NavMesh AgentRadius 초과 시 경로 실패 (현재 AgentRadius=90).",
+			ClampMin = "0.1", UIMin = "0.5", UIMax = "3.0"))
+	FVector ActorSpawnScale = FVector(1.f, 1.f, 1.f);
+
+	/**
+	 * Mesh Component 전용 추가 Scale. ActorSpawnScale 과 곱연산 되어 시각만 확대/축소.
+	 * Capsule/NavMesh 영향 없음. 시각과 판정을 분리하고 싶을 때 사용.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Enemy Spawn Config|크기",
+		meta = (DisplayName = "Mesh Spawn Scale (시각 전용 추가 스케일)",
+			ToolTip = "Mesh Component 에만 적용되는 추가 Scale. Capsule/NavMesh 영향 없음. 최종 메시 = ActorSpawnScale * MeshSpawnScale * BP Mesh RelativeScale.",
+			ClampMin = "0.1", UIMin = "0.5", UIMax = "3.0"))
+	FVector MeshSpawnScale = FVector(1.f, 1.f, 1.f);
 };

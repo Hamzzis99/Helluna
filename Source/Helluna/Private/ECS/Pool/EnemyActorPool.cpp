@@ -25,15 +25,83 @@
 #include "ECS/Pool/EnemyActorPool.h"
 
 #include "AI/SpaceShipAttackSlotManager.h"
+#include "AbilitySystemBlueprintLibrary.h"
+#include "AbilitySystemComponent.h"
 #include "Character/HellunaEnemyCharacter.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
 #include "Components/StateTreeComponent.h"
+#include "GameMode/HellunaDefenseGameMode.h"
 #include "GameMode/HellunaDefenseGameState.h"
+#include "GameplayTagContainer.h"
 
 #include "GameFramework/Controller.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/GameModeBase.h"
 #include "Engine/World.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
+
+namespace ShipJumpQuotaHelpers
+{
+	// [ShipJumpQuotaV1] 소환 시점 쿼터 소진으로 점프 자격 부여.
+	//  - 태그 이름은 STTask_ShipJump / SpaceShipAttackSlotManager 에서도 동일 문자열 참조.
+	static FGameplayTag GetCanShipJumpTag()
+	{
+		return FGameplayTag::RequestGameplayTag(FName("State.Enemy.CanShipJump"),
+			/*ErrorIfNotFound=*/false);
+	}
+
+	static AHellunaDefenseGameMode* GetDefenseGM(UWorld* World)
+	{
+		return World ? Cast<AHellunaDefenseGameMode>(World->GetAuthGameMode()) : nullptr;
+	}
+
+	static void TryGrantJumpEligibility(AHellunaEnemyCharacter* Actor)
+	{
+		if (!Actor) return;
+		UAbilitySystemComponent* ASC =
+			UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(Actor);
+		if (!ASC) return;
+
+		const FGameplayTag CanJumpTag = GetCanShipJumpTag();
+		if (!CanJumpTag.IsValid()) return;
+
+		// 이미 보유(풀 재사용 중 이전 세션 태그가 남은 경우) → 쿼터 Consume 이중 방지.
+		if (ASC->HasMatchingGameplayTag(CanJumpTag))
+		{
+			return;
+		}
+
+		AHellunaDefenseGameMode* GM = GetDefenseGM(Actor->GetWorld());
+		if (!GM) return;
+
+		if (GM->TryConsumeShipJumpQuota())
+		{
+			ASC->AddLooseGameplayTag(CanJumpTag);
+		}
+	}
+
+	static void RevokeJumpEligibility(AHellunaEnemyCharacter* Actor)
+	{
+		if (!Actor) return;
+		UAbilitySystemComponent* ASC =
+			UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(Actor);
+		if (!ASC) return;
+
+		const FGameplayTag CanJumpTag = GetCanShipJumpTag();
+		if (!CanJumpTag.IsValid()) return;
+
+		if (!ASC->HasMatchingGameplayTag(CanJumpTag))
+		{
+			return;
+		}
+		ASC->RemoveLooseGameplayTag(CanJumpTag);
+
+		if (AHellunaDefenseGameMode* GM = GetDefenseGM(Actor->GetWorld()))
+		{
+			GM->RefundShipJumpQuota();
+		}
+	}
+}
 
 DEFINE_LOG_CATEGORY_STATIC(LogECSPool, Log, All);
 
@@ -184,7 +252,8 @@ AHellunaEnemyCharacter* UEnemyActorPool::ActivateActor(
 	TSubclassOf<AHellunaEnemyCharacter> EnemyClass,
 	const FTransform& SpawnTransform,
 	float CurrentHP,
-	float MaxHP)
+	float MaxHP,
+	const FVector& MeshExtraScale)
 {
 	if (!EnemyClass)
 	{
@@ -220,8 +289,26 @@ AHellunaEnemyCharacter* UEnemyActorPool::ActivateActor(
 
 	PoolData->ActiveActors.Add(Actor);
 
-	// 1. 위치 설정
+	// 1. 위치 + Scale 설정 (SpawnTransform.Scale 은 Processor 가 Data.ActorSpawnScale 로 세팅).
 	Actor->SetActorTransform(SpawnTransform);
+
+	// [SpawnScaleV1] Mesh Component 추가 Scale (시각 전용).
+	//   최종 Mesh Scale = BP Default Mesh RelativeScale * MeshExtraScale.
+	//   매 Activate 마다 BP Default 기준으로 덮어쓰므로 이전 스폰의 Scale 이 누적되지 않는다.
+	if (!MeshExtraScale.Equals(FVector::OneVector))
+	{
+		if (USkeletalMeshComponent* Mesh = Actor->GetMesh())
+		{
+			const AHellunaEnemyCharacter* CDO =
+				Actor->GetClass()->GetDefaultObject<AHellunaEnemyCharacter>();
+			FVector BPMeshScale = FVector::OneVector;
+			if (CDO && CDO->GetMesh())
+			{
+				BPMeshScale = CDO->GetMesh()->GetRelativeScale3D();
+			}
+			Mesh->SetRelativeScale3D(BPMeshScale * MeshExtraScale);
+		}
+	}
 
 	// 2. 보이기 + 활성화
 	Actor->SetActorHiddenInGame(false);
@@ -312,6 +399,9 @@ AHellunaEnemyCharacter* UEnemyActorPool::ActivateActor(
 		PoolData->ActiveActors.Num(),
 		PoolData->InactiveActors.Num());
 
+	// [ShipJumpQuotaV1] 소환 시점 점프 자격 결정. 쿼터가 남아있으면 태그 부여.
+	ShipJumpQuotaHelpers::TryGrantJumpEligibility(Actor);
+
 	return Actor;
 }
 
@@ -337,6 +427,9 @@ void UEnemyActorPool::DeactivateActor(AHellunaEnemyCharacter* Actor)
 	{
 		return;
 	}
+
+	// [ShipJumpQuotaV1] 풀로 돌아가기 전 점프 자격 반납.
+	ShipJumpQuotaHelpers::RevokeJumpEligibility(Actor);
 
 	Actor->UnlockMovement();
 

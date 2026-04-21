@@ -183,13 +183,14 @@ void ATimeDistortionZone::ApplySlowToActor(AActor* Actor)
 	if (AHellunaHeroCharacter* Player = Cast<AHellunaHeroCharacter>(Actor))
 	{
 		// 플레이어: 리플리케이션 기반 슬로우 (클라이언트 예측과 호환)
-		// CustomTimeDilation은 사용하지 않음 → 점프 높이 정상 유지
+		// [TDJumpV1] 점프/중력도 함께 배율 적용 — 점프 높이 유지, 체공시간 1/M 배 늘어남
 		Player->SetMoveSpeedMultiplier(TimeDilationScale);
 		Player->SetAnimRateMultiplier(TimeDilationScale);
+		Player->SetJumpGravityMultiplier(TimeDilationScale);
 		SlowedActors.Add(Actor, 1.f);
 
-		TDZ_LOG("[PLAYER] Slow applied to [%s]: MoveSpeed x%.2f, AnimRate x%.2f",
-			*Actor->GetName(), TimeDilationScale, TimeDilationScale);
+		TDZ_LOG("[PLAYER] Slow applied to [%s]: MoveSpeed x%.2f, AnimRate x%.2f, JumpGravity x%.2f",
+			*Actor->GetName(), TimeDilationScale, TimeDilationScale, TimeDilationScale);
 	}
 	else
 	{
@@ -223,7 +224,8 @@ void ATimeDistortionZone::RemoveSlowFromActor(AActor* Actor)
 	{
 		Player->SetMoveSpeedMultiplier(1.f);
 		Player->SetAnimRateMultiplier(1.f);
-		TDZ_LOG("[PLAYER] Slow removed from [%s]", *Actor->GetName());
+		Player->SetJumpGravityMultiplier(1.f);
+		TDZ_LOG("[PLAYER] Slow removed from [%s] (+Jump/Gravity 복원)", *Actor->GetName());
 	}
 	else
 	{

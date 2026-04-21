@@ -1,8 +1,9 @@
-﻿// Capstone Project Helluna
+// Capstone Project Helluna
 
 #include "AnimInstance/AnimNotify_AttackCollisionStart.h"
 #include "Character/HellunaEnemyCharacter.h"
 #include "Helluna.h"
+
 void UAnimNotify_AttackCollisionStart::Notify(
 	USkeletalMeshComponent* MeshComp,
 	UAnimSequenceBase* Animation,
@@ -10,36 +11,29 @@ void UAnimNotify_AttackCollisionStart::Notify(
 {
 	Super::Notify(MeshComp, Animation, EventReference);
 
-	// Null 체크
-	if (!MeshComp || !MeshComp->GetOwner())
-	{
-#if HELLUNA_DEBUG_ENEMY
-		UE_LOG(LogTemp, Error, TEXT("AnimNotify_AttackCollisionStart: Invalid MeshComp or Owner"));
-#endif
-		return;
-	}
+	if (!MeshComp || !MeshComp->GetOwner()) return;
 
-	// EnemyCharacter 캐스팅
-	AHellunaEnemyCharacter* EnemyCharacter = Cast<AHellunaEnemyCharacter>(MeshComp->GetOwner());
-	if (!EnemyCharacter)
-	{
-#if HELLUNA_DEBUG_ENEMY
-		UE_LOG(LogTemp, Error, TEXT("AnimNotify_AttackCollisionStart: Owner is not AHellunaEnemyCharacter"));
-#endif
-		return;
-	}
+	AHellunaEnemyCharacter* Enemy = Cast<AHellunaEnemyCharacter>(MeshComp->GetOwner());
+	if (!Enemy) return;
 
-	// GA 시작 시 EnemyCharacter에 캐시한 값을 우선 사용, 없으면 AnimNotify 설정값 폴백
-	float FinalDamage = Damage;
-	if (EnemyCharacter->GetCachedMeleeAttackDamage() > 0.f)
-	{
-		FinalDamage = EnemyCharacter->GetCachedMeleeAttackDamage();
-	}
-
-	EnemyCharacter->StartAttackTrace(SocketName, TraceRadius, TraceInterval, FinalDamage, bDrawDebug);
+	// BoxComponentName 이 None 이면 EnemyCharacter 쪽에서 "모든 박스 활성" 으로 처리됨.
+	// 매칭 실패 시 경고는 SetAttackBoxActive 내부에서만.
+	Enemy->SetAttackBoxActive(BoxComponentName, /*bEnable=*/true, Damage, bDrawDebug);
 
 #if HELLUNA_DEBUG_ENEMY
-	UE_LOG(LogTemp, Log, TEXT("AnimNotify_AttackCollisionStart: %s started attack trace (Socket: %s, Radius: %.1f, Interval: %.3f, Damage: %.1f)"),
-		*EnemyCharacter->GetName(), *SocketName.ToString(), TraceRadius, TraceInterval, Damage);
+	UE_LOG(LogTemp, Log,
+		TEXT("AnimNotify_AttackCollisionStart: %s → Box=%s Dmg=%.1f"),
+		*Enemy->GetName(), *BoxComponentName.ToString(), Damage);
 #endif
 }
+
+#if WITH_EDITOR
+FString UAnimNotify_AttackCollisionStart::GetNotifyName_Implementation() const
+{
+	if (BoxComponentName.IsNone())
+	{
+		return TEXT("AttackStart (?)");
+	}
+	return FString::Printf(TEXT("AttackStart [%s]"), *BoxComponentName.ToString());
+}
+#endif

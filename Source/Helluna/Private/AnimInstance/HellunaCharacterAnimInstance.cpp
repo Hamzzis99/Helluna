@@ -84,14 +84,16 @@ void UHellunaCharacterAnimInstance::NativeThreadSafeUpdateAnimation(float DeltaS
 
 	// ★ PlayFullBody 판단:
 	// - 히어로: HeroCharacter->PlayFullBody 직접 참조 (GA_Farming 등에서 직접 설정)
-	// - 적: DefaultSlot 몽타주가 전신을 덮어쓰므로 항상 false
+	// - 적: [FullBodyLockV1] 공격 락(MaxWS≤0) 중에는 true → Locomotion Idle 하체가
+	//        상체 공격 몬타지와 블렌드되어 "Idle 서서 치기"처럼 보이는 증상 제거.
+	//        언락 상태는 false 유지 — 이동 애니가 정상적으로 하체에서 재생됨.
 	if (const AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(OwningCharacter))
 	{
 		PlayFullBody = Hero->PlayFullBody;
 	}
 	else
 	{
-		PlayFullBody = false;
+		PlayFullBody = bMovementLocked;
 	}
 
 	LocomotionDirection = UKismetAnimationLibrary::CalculateDirection(OwningCharacter->GetVelocity(), OwningCharacter->GetActorRotation());

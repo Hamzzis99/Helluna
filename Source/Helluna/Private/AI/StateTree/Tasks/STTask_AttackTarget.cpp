@@ -19,13 +19,17 @@
 #include "AI/SpaceShipAttackSlotManager.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Animation/AnimInstance.h"
+#include "Components/SkeletalMeshComponent.h"
 
 #include "Character/HellunaEnemyCharacter.h"
 #include "AbilitySystem/HellunaAbilitySystemComponent.h"
 #include "AbilitySystem/HellunaEnemyGameplayAbility.h"
 #include "AbilitySystem/EnemyAbility/EnemyGameplayAbility_Attack.h"
 #include "AbilitySystem/EnemyAbility/EnemyGameplayAbility_RangedAttack.h"
+#include "AbilitySystem/EnemyAbility/EnemyGameplayAbility_ShipJump.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
+#include "Object/ResourceUsingObject/HellunaBaseResourceUsingObject.h"
 
 namespace HellunaAttackTarget
 {
@@ -34,7 +38,45 @@ static USpaceShipAttackSlotManager* GetShipSlotManager(AActor* TargetActor)
 	return TargetActor ? TargetActor->FindComponentByClass<USpaceShipAttackSlotManager>() : nullptr;
 }
 
-static void FaceCurrentTarget(AAIController* AIController, APawn* Pawn, AActor* TargetActor, float DeltaTime)
+// [ShipFaceV1][LCv2] 우주선/타워 공격 직전 스냅 — RInterpTo 대신 즉시 Yaw 정렬.
+// 쿨다운 중 부드러운 회전은 유지, GA 발동 순간만 스냅 적용해 "옆 보고 공격" 방지.
+static void SnapFaceTarget(AAIController* AIController, APawn* Pawn, AActor* TargetActor, const TCHAR* Phase)
+{
+	if (!AIController || !Pawn || !TargetActor)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[ShipFaceV1][LCv2][%s][SnapSkip] AIC=%d Pawn=%d Target=%d"),
+			Phase, AIController?1:0, Pawn?1:0, TargetActor?1:0);
+		return;
+	}
+	const FVector ToTarget = (TargetActor->GetActorLocation() - Pawn->GetActorLocation()).GetSafeNormal2D();
+	if (ToTarget.IsNearlyZero())
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[ShipFaceV1][LCv2][%s][SnapSkip] ToTarget nearly zero (overlapping) Enemy=%s"),
+			Phase, *Pawn->GetName());
+		return;
+	}
+	const FRotator SnapRot(0.f, ToTarget.Rotation().Yaw, 0.f);
+	const float PreActorYaw = Pawn->GetActorRotation().Yaw;
+	const float PreCtrlYaw  = AIController->GetControlRotation().Yaw;
+
+	AIController->SetControlRotation(SnapRot);
+	Pawn->SetActorRotation(SnapRot);
+
+	// 적용 직후 실제 값 검증 — 다른 컴포넌트(Focus/CMC)가 덮어쓰는지 확인
+	const float PostActorYaw = Pawn->GetActorRotation().Yaw;
+	const float PostCtrlYaw  = AIController->GetControlRotation().Yaw;
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[ShipFaceV1][LCv2][%s] Snap Enemy=%s Tgt=%s(%s) WantYaw=%.1f | PreCtrl=%.1f→PostCtrl=%.1f | PreAct=%.1f→PostAct=%.1f"),
+		Phase, *Pawn->GetName(),
+		*TargetActor->GetName(),
+		*TargetActor->GetClass()->GetName(),
+		SnapRot.Yaw, PreCtrlYaw, PostCtrlYaw, PreActorYaw, PostActorYaw);
+}
+
+static void FaceCurrentTarget(AAIController* AIController, APawn* Pawn, AActor* TargetActor, float DeltaTime, float Speed)
 {
 	if (!AIController || !Pawn || !TargetActor)
 	{
@@ -47,16 +89,34 @@ static void FaceCurrentTarget(AAIController* AIController, APawn* Pawn, AActor* 
 		return;
 	}
 
-	const FRotator CurrentRot = Pawn->GetActorRotation();
+	// ControlRotation 기준으로 보간. 이전 틱의 보간 결과를 이어받아 부드럽게 누적.
+	const FRotator CurrentRot = AIController->GetControlRotation();
 	const FRotator TargetRot(0.f, ToTarget.Rotation().Yaw, 0.f);
-	const FRotator NewRot = FMath::RInterpTo(CurrentRot, TargetRot, DeltaTime, 12.f);
-	AIController->SetControlRotation(NewRot);
-	AIController->SetFocus(TargetActor);
 
-	// AttackTask가 폰 회전을 직접 덮어쓰면 Chase/Movement와 충돌하므로
-	// 여기서는 Controller/Focus만 갱신하고 폰 회전은 CharacterMovement에 맡긴다.
-	// 회전은 CharMovement의 RepMovement 정기 복제로 충분 — 매 틱 ForceNetUpdate는
-	// 적 수만큼 복제 우선순위를 치솟게 해 As-A-Client에서 프레임을 갉아먹는다.
+	// [RotV7][Aim] 부드러움 향상:
+	//  - RInterp 속도 20 → 30 (점근 곡선 초반 기울기↑ → 추격이 더 빠르고 "따라가는 느낌"이 선명)
+	//  - 스냅 임계 2.5° → 1.0° (스냅 순간 시각 위화감 제거, 사람 눈에 자연스러운 수렴)
+	//  - 수학 cost는 per-tick O(1) 몇 개 곱셈이라 적 수와 무관하게 프레임 영향 거의 없음.
+	const float YawDeltaDeg = FMath::Abs(FRotator::NormalizeAxis(TargetRot.Yaw - CurrentRot.Yaw));
+	FRotator NewRot;
+	if (YawDeltaDeg < 1.0f)
+	{
+		NewRot = TargetRot;
+	}
+	else
+	{
+		NewRot = FMath::RInterpTo(CurrentRot, TargetRot, DeltaTime, Speed);
+	}
+	AIController->SetControlRotation(NewRot);
+
+	// 액터 회전도 동시에 수동 보간. MaxWalkSpeed=0으로 잠긴 Pawn은 CMC PhysicsRotation의
+	// DesiredRotation 추적이 사실상 정지(속도 0 → 스킵) → CtrlYaw만 돌고 ActorYaw 고정되는
+	// 끊김 현상 발생. 수동 SetActorRotation으로 CMC 의존성 제거.
+	Pawn->SetActorRotation(NewRot);
+
+	// SetFocus는 호출하지 않음. AAIController::UpdateControlRotation이 Focus 기반으로
+	// ControlRotation을 매 틱 스냅으로 덮어쓰기 때문 → 방금 한 RInterpTo가 무효화되어
+	// 상체/머리가 끊겨 보이게 됨. Focus 없이 수동 SetControlRotation만 쓰면 부드러움 유지.
 }
 }
 
@@ -72,12 +132,22 @@ EStateTreeRunStatus FSTTask_AttackTarget::EnterState(
 	// Attack State 진입: 이동 정지 + 타겟 방향 회전 모드 전환
 	InstanceData.AIController->StopMovement();
 
+	// Chase/Evaluator가 남겨둔 Focus를 즉시 해제 — 타겟이 바뀌었을 때 이전 Focus의
+	// UpdateControlRotation 스냅이 한 틱 끼어들어 상체가 엉뚱한 방향을 바라보는 현상 제거.
+	AActor* PrevFocus = InstanceData.AIController->GetFocusActor();
+	InstanceData.AIController->ClearFocus(EAIFocusPriority::Gameplay);
+
 	APawn* Pawn = InstanceData.AIController->GetPawn();
 	if (UCharacterMovementComponent* MoveComp = Pawn ? Cast<UCharacterMovementComponent>(Pawn->GetMovementComponent()) : nullptr)
 	{
 		MoveComp->bOrientRotationToMovement     = false;
 		MoveComp->bUseControllerDesiredRotation = true;
 	}
+
+	// 검증용 로그
+	UE_LOG(LogTemp, Warning,
+		TEXT("[RotV2][Melee] Enter ClearedFocus=%s"),
+		PrevFocus ? *PrevFocus->GetName() : TEXT("none"));
 
 	const FHellunaAITargetData& TargetData = Context.GetInstanceData(*this).TargetData;
 
@@ -94,10 +164,35 @@ EStateTreeRunStatus FSTTask_AttackTarget::EnterState(
 			return EStateTreeRunStatus::Failed;
 		}
 
-		HellunaAttackTarget::FaceCurrentTarget(InstanceData.AIController, Pawn, TargetActor, 1.f / 60.f);
+		// [ShipFaceV1] 우주선/타워 등 ResourceUsingObject 타겟 진입 시에는 즉시 스냅(옆 보고 공격 방지).
+		// 그 외 타겟(플레이어 등)은 기존 방식대로 보간으로 진입.
+		const bool bIsResourceObject = (Cast<AHellunaBaseResourceUsingObject>(TargetActor) != nullptr);
+
+		// [ShipFaceV1][LCv2] 진단: 타겟 타입/클래스/Cast 결과를 매 Enter마다 출력.
+		const TCHAR* TargetTypeStr =
+			TargetData.TargetType == EHellunaTargetType::SpaceShip ? TEXT("SpaceShip") :
+			TargetData.TargetType == EHellunaTargetType::Turret    ? TEXT("Turret") :
+			TargetData.TargetType == EHellunaTargetType::Player    ? TEXT("Player") : TEXT("Other");
+		UE_LOG(LogTemp, Warning,
+			TEXT("[ShipFaceV1][LCv2][Enter] Enemy=%s | TargetType=%s | TargetActor=%s | Class=%s | CastToResource=%d"),
+			*Pawn->GetName(), TargetTypeStr,
+			*TargetActor->GetName(), *TargetActor->GetClass()->GetName(),
+			bIsResourceObject ? 1 : 0);
+
+		if (bIsResourceObject)
+		{
+			HellunaAttackTarget::SnapFaceTarget(InstanceData.AIController, Pawn, TargetActor, TEXT("Enter"));
+		}
+		else
+		{
+			HellunaAttackTarget::FaceCurrentTarget(InstanceData.AIController, Pawn, TargetActor, 1.f / 60.f, RotationSpeed);
+		}
 	}
 
 	InstanceData.CooldownRemaining = InitialAttackDelay;
+
+	// [StaticTargetNoReRotV1] 매 진입마다 회전 잠금 초기화 — 첫 발동 후 잠김.
+	InstanceData.bLockedRotationForStaticTarget = false;
 
 	return EStateTreeRunStatus::Running;
 }
@@ -121,25 +216,55 @@ EStateTreeRunStatus FSTTask_AttackTarget::Tick(
 		Enemy->GetAbilitySystemComponent());
 	if (!ASC) return EStateTreeRunStatus::Failed;
 
+	// 매 틱 Focus 강제 해제. STEvaluator_TargetSelector가 어그로 타겟 발견 시 매 틱
+	// SetFocus를 다시 걸어 AIC::UpdateControlRotation이 ControlRotation을 스냅 덮어씀
+	// → 직전 틱 RInterpTo 결과가 무효화되어 머리/상체가 끊겨 보임. EnterState 1회 ClearFocus
+	// 만으론 부족해서 Tick에서도 매 틱 차단.
+	AIController->ClearFocus(EAIFocusPriority::Gameplay);
+
+	// 매 틱 CMC 회전 플래그 재강제. UEnemyGameplayAbility_Attack::OnMontageCompleted의
+	// AttackRecoveryDelay 타이머가 UnlockMovement()를 호출하면 Desired=0,Orient=1로
+	// Chase 모드 복구됨 → 쿨다운 중 SetControlRotation이 액터에 반영되지 않아
+	// 다음 공격 LockMovementAndFaceTarget이 큰 각도를 한번에 스냅 → 끊김 발생.
+	// AttackTask 실행 중엔 항상 Desired=1,Orient=0 유지해 RInterpTo가 액터에 적용되게 함.
+	if (UCharacterMovementComponent* CMC = Cast<UCharacterMovementComponent>(Pawn->GetMovementComponent()))
+	{
+		CMC->bOrientRotationToMovement     = false;
+		CMC->bUseControllerDesiredRotation = true;
+	}
+
 	// 사용할 GA 클래스: 에디터에서 선택한 클래스, 없으면 기본 클래스 사용
 	TSubclassOf<UHellunaEnemyGameplayAbility> GAClass = AttackAbilityClass.Get()
 		? AttackAbilityClass
 		: TSubclassOf<UHellunaEnemyGameplayAbility>(UHellunaEnemyGameplayAbility::StaticClass());
 
 	const FHellunaAITargetData& TargetData = InstanceData.TargetData;
-	// ① GA 활성 중(몽타주 재생 + AttackRecoveryDelay)이면 아무것도 하지 않음
+	// ① 몽타주가 실제로 재생 중일 때만 회전 스킵 — 이전엔 Spec.IsActive()로
+	// AttackRecoveryDelay까지 묶어서 스킵했으나 그 시간 동안 액터가 정지 상태로
+	// 누적돼 다음 공격 SetActorRotation 스냅으로 큰 각도 점프 → 20~30fps처럼 끊김.
+	// Recovery 중엔 회전 허용해 부드럽게 다음 공격 각도를 추적.
+	bool bMontagePlaying = false;
+	if (USkeletalMeshComponent* Mesh = Enemy->GetMesh())
+	{
+		if (UAnimInstance* AnimInst = Mesh->GetAnimInstance())
+		{
+			if (Enemy->AttackMontage && AnimInst->Montage_IsPlaying(Enemy->AttackMontage))
+			{
+				bMontagePlaying = true;
+			}
+		}
+	}
+	if (bMontagePlaying)
+	{
+		return EStateTreeRunStatus::Running;
+	}
+	// GA가 active지만 몽타주 끝난 상태(AttackRecoveryDelay) → 아래로 계속 진행해 회전.
+	bool bGAActive = false;
 	for (const FGameplayAbilitySpec& Spec : ASC->GetActivatableAbilities())
 	{
 		if (Spec.Ability && Spec.Ability->GetClass() == GAClass)
 		{
-			if (Spec.IsActive())
-			{
-				if (TargetData.HasValidTarget())
-				{
-					HellunaAttackTarget::FaceCurrentTarget(AIController, Pawn, TargetData.TargetActor.Get(), DeltaTime);
-				}
-				return EStateTreeRunStatus::Running;
-			}
+			bGAActive = Spec.IsActive();
 			break;
 		}
 	}
@@ -149,17 +274,25 @@ EStateTreeRunStatus FSTTask_AttackTarget::Tick(
 	{
 		InstanceData.CooldownRemaining -= DeltaTime;
 
-		if (TargetData.HasValidTarget())
+		// [StaticTargetNoReRotV1] 움직이지 않는 타겟에 첫 발동 완료 후엔 회전 불필요.
+		if (!InstanceData.bLockedRotationForStaticTarget && TargetData.HasValidTarget())
 		{
-			HellunaAttackTarget::FaceCurrentTarget(AIController, Pawn, TargetData.TargetActor.Get(), DeltaTime);
+			HellunaAttackTarget::FaceCurrentTarget(AIController, Pawn, TargetData.TargetActor.Get(), DeltaTime, RotationSpeed);
 		}
 
 		return EStateTreeRunStatus::Running;
 	}
 
-	if (TargetData.HasValidTarget())
+	if (!InstanceData.bLockedRotationForStaticTarget && TargetData.HasValidTarget())
 	{
-		HellunaAttackTarget::FaceCurrentTarget(AIController, Pawn, TargetData.TargetActor.Get(), DeltaTime);
+		HellunaAttackTarget::FaceCurrentTarget(AIController, Pawn, TargetData.TargetActor.Get(), DeltaTime, RotationSpeed);
+	}
+
+	// GA가 Recovery Delay 단계로 아직 active면 다음 GA 발동 금지 (중복 활성화 방지).
+	// 회전은 위에서 이미 수행됨.
+	if (bGAActive)
+	{
+		return EStateTreeRunStatus::Running;
 	}
 
 	// ③ 쿨다운 완료 → GA 발동
@@ -180,17 +313,54 @@ EStateTreeRunStatus FSTTask_AttackTarget::Tick(
 		ASC->GiveAbility(Spec);
 	}
 
-	// TryActivate 이전에 CurrentTarget 설정 (GA ActivateAbility 내부에서 즉시 참조)
+	// TryActivate 이전에 CurrentTarget 설정 (GA ActivateAbility 내부에서 즉시 참조).
+	// InstancedPerActor GA는 CDO(Spec.Ability)와 별개로 Instance가 존재하므로
+	// Instance에도 반드시 설정해야 함. CDO만 설정하면 두 번째 활성화부터 stale 값(null)을
+	// 읽어 ResolveAttackTarget 폴백이 Spaceship을 반환하는 버그 발생.
+	AActor* ChosenTarget = TargetData.TargetActor.Get();
 	for (FGameplayAbilitySpec& Spec : ASC->GetActivatableAbilities())
 	{
 		if (!Spec.Ability || Spec.Ability->GetClass() != GAClass) continue;
 
-		if (UEnemyGameplayAbility_Attack* AttackGA = Cast<UEnemyGameplayAbility_Attack>(Spec.Ability))
-			AttackGA->CurrentTarget = TargetData.TargetActor.Get();
-		else if (UEnemyGameplayAbility_RangedAttack* RangedGA = Cast<UEnemyGameplayAbility_RangedAttack>(Spec.Ability))
-			RangedGA->CurrentTarget = TargetData.TargetActor.Get();
+		// CDO 설정 — 이후 새 Instance가 생성될 때의 기본값
+		if (UEnemyGameplayAbility_Attack* CdoAttack = Cast<UEnemyGameplayAbility_Attack>(Spec.Ability))
+			CdoAttack->CurrentTarget = ChosenTarget;
+		else if (UEnemyGameplayAbility_RangedAttack* CdoRanged = Cast<UEnemyGameplayAbility_RangedAttack>(Spec.Ability))
+			CdoRanged->CurrentTarget = ChosenTarget;
+		else if (UEnemyGameplayAbility_ShipJump* CdoShipJump = Cast<UEnemyGameplayAbility_ShipJump>(Spec.Ability))
+			CdoShipJump->CurrentTarget = ChosenTarget;
+
+		// Instance 설정 — 실제 ActivateAbility가 호출되는 객체
+		if (UGameplayAbility* Instance = Spec.GetPrimaryInstance())
+		{
+			if (UEnemyGameplayAbility_Attack* InstAttack = Cast<UEnemyGameplayAbility_Attack>(Instance))
+				InstAttack->CurrentTarget = ChosenTarget;
+			else if (UEnemyGameplayAbility_RangedAttack* InstRanged = Cast<UEnemyGameplayAbility_RangedAttack>(Instance))
+				InstRanged->CurrentTarget = ChosenTarget;
+			else if (UEnemyGameplayAbility_ShipJump* InstShipJump = Cast<UEnemyGameplayAbility_ShipJump>(Instance))
+				InstShipJump->CurrentTarget = ChosenTarget;
+		}
 
 		break;
+	}
+
+	// [ShipFaceV1] 우주선/타워 등 ResourceUsingObject 공격 GA 발동 직전 스냅 —
+	// 쿨다운 중 RInterpTo가 완료되지 않은 프레임에서도 공격 순간 반드시 타겟 정면을 향하게 함.
+	const bool bTargetIsResource = (Cast<AHellunaBaseResourceUsingObject>(ChosenTarget) != nullptr);
+
+	// [ShipFaceV1][LCv2] 진단: GA 발동 직전에 선택 타겟 + Cast 결과 출력.
+	UE_LOG(LogTemp, Warning,
+		TEXT("[ShipFaceV1][LCv2][PreActivate] Enemy=%s | ChosenTarget=%s | Class=%s | CastToResource=%d | GAClass=%s"),
+		*Pawn->GetName(),
+		ChosenTarget ? *ChosenTarget->GetName() : TEXT("null"),
+		ChosenTarget ? *ChosenTarget->GetClass()->GetName() : TEXT("null"),
+		bTargetIsResource ? 1 : 0,
+		GAClass ? *GAClass->GetName() : TEXT("null"));
+
+	// [StaticTargetNoReRotV1] 정적 타겟이면 첫 발동 때만 PreActivate 스냅, 이후엔 스킵.
+	if (bTargetIsResource && !InstanceData.bLockedRotationForStaticTarget)
+	{
+		HellunaAttackTarget::SnapFaceTarget(AIController, Pawn, ChosenTarget, TEXT("PreActivate"));
 	}
 
 	const bool bActivated = ASC->TryActivateAbilityByClass(GAClass);
@@ -198,6 +368,12 @@ EStateTreeRunStatus FSTTask_AttackTarget::Tick(
 	{
 		const float CooldownMultiplier = Enemy->bEnraged ? Enemy->EnrageCooldownMultiplier : 1.f;
 		InstanceData.CooldownRemaining = AttackCooldown * CooldownMultiplier;
+
+		// [StaticTargetNoReRotV1] 정적 타겟에 첫 발동 성공 → 이후 회전 잠금.
+		if (bTargetIsResource)
+		{
+			InstanceData.bLockedRotationForStaticTarget = true;
+		}
 	}
 
 	return EStateTreeRunStatus::Running;

@@ -1,4 +1,4 @@
-﻿// Capstone Project Helluna
+// Capstone Project Helluna
 
 #include "UI/HUD/HellunaHealthHUDWidget.h"
 
@@ -70,6 +70,22 @@ void UHellunaHealthHUDWidget::NativeConstruct()
 	}
 
 	// StaminaBar, SubBar 제거됨 (RE4R 스타일 전환)
+
+	// ─────────────────────────────────────────────────────────────
+	// [임시 추가 코드 — 주석처리로 비활성화]
+	// HP 수치 텍스트 (아크 중앙 하단) — 힐터렛 테스트용으로 추가했었음.
+	// if (!HealthText)
+	// {
+	// 	HealthText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("HealthText"));
+	// 	UCanvasPanelSlot* HPTextSlot = RootCanvas->AddChildToCanvas(HealthText);
+	// 	if (HPTextSlot)
+	// 	{
+	// 		HPTextSlot->SetAnchors(FAnchors(1.f, 1.f, 1.f, 1.f));
+	// 		HPTextSlot->SetOffsets(FMargin(OffX + 60.f, OffY + RingSize + 4.f, 140.f, 28.f));
+	// 		HPTextSlot->SetAutoSize(false);
+	// 	}
+	// }
+	// ─────────────────────────────────────────────────────────────
 
 	// ── 체력 게이지 머티리얼 ──
 	if (HealthArcImage)
@@ -147,6 +163,20 @@ void UHellunaHealthHUDWidget::NativeConstruct()
 		AmmoText->SetJustification(ETextJustify::Center);
 	}
 
+	// ─────────────────────────────────────────────────────────────
+	// [임시 추가 코드 — 주석처리로 비활성화]
+	// HealthText 폰트/색상 초기화 블록.
+	// if (HealthText)
+	// {
+	// 	FSlateFontInfo HPFont = HealthText->GetFont();
+	// 	HPFont.Size = 14;
+	// 	HealthText->SetFont(HPFont);
+	// 	HealthText->SetColorAndOpacity(FSlateColor(FLinearColor(0.f, 0.85f, 1.f, 0.85f)));
+	// 	HealthText->SetJustification(ETextJustify::Center);
+	// 	HealthText->SetText(FText::FromString(TEXT("100 / 100")));
+	// }
+	// ─────────────────────────────────────────────────────────────
+
 	if (PrimaryWeaponIcon)
 	{
 		PrimaryWeaponIcon->SetColorAndOpacity(FLinearColor(0.85f, 0.85f, 0.9f, 0.85f));
@@ -182,6 +212,28 @@ void UHellunaHealthHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDe
 		}
 	}
 
+	// ─────────────────────────────────────────────────────────────
+	// [임시 추가 코드 — 주석처리로 비활성화]
+	// 힐 펄스 이펙트 (GlowIntensity 파라미터로 빛남 연출).
+	// if (bHealPulseActive)
+	// {
+	// 	HealPulseAlpha = FMath::FInterpTo(HealPulseAlpha, 0.f, InDeltaTime, 3.f);
+	// 	if (HealthArcMID)
+	// 	{
+	// 		HealthArcMID->SetScalarParameterValue(TEXT("GlowIntensity"), 1.f + HealPulseAlpha * 4.f);
+	// 	}
+	// 	if (HealPulseAlpha < 0.01f)
+	// 	{
+	// 		bHealPulseActive = false;
+	// 		HealPulseAlpha = 0.f;
+	// 		if (HealthArcMID)
+	// 		{
+	// 			HealthArcMID->SetScalarParameterValue(TEXT("GlowIntensity"), 1.f);
+	// 		}
+	// 	}
+	// }
+	// ─────────────────────────────────────────────────────────────
+
 	// ── 탄약 폴링 (WeaponHUDWidget 패턴) ──
 	if (TrackedPrimaryWeapon.IsValid())
 	{
@@ -211,6 +263,18 @@ void UHellunaHealthHUDWidget::NativeDestruct()
 void UHellunaHealthHUDWidget::UpdateHealth(float NormalizedHealth)
 {
 	CurrentHealthPercent = FMath::Clamp(NormalizedHealth, 0.f, 1.f);
+
+	// ─────────────────────────────────────────────────────────────
+	// [임시 추가 코드 — 주석처리로 비활성화]
+	// 체력 증가 감지 → 힐 펄스 트리거.
+	// const float NewPercent = FMath::Clamp(NormalizedHealth, 0.f, 1.f);
+	// if (NewPercent > CurrentHealthPercent + 0.01f)
+	// {
+	// 	bHealPulseActive = true;
+	// 	HealPulseAlpha = 1.f;
+	// }
+	// CurrentHealthPercent = NewPercent;
+	// ─────────────────────────────────────────────────────────────
 }
 
 // ============================================================================
@@ -317,6 +381,24 @@ void UHellunaHealthHUDWidget::UpdateSubBar(float Percent)
 	if (SubBar)
 		SubBar->SetPercent(FMath::Clamp(Percent, 0.f, 1.f));
 }
+
+// ─────────────────────────────────────────────────────────────
+// [임시 추가 함수 — 주석처리로 비활성화]
+// UpdateHealthText — HP 수치 표시 (힐터렛 테스트용)
+// void UHellunaHealthHUDWidget::UpdateHealthText(float Current, float Max)
+// {
+// 	if (HealthText)
+// 	{
+// 		HealthText->SetText(FText::FromString(
+// 			FString::Printf(TEXT("%.0f / %.0f"), FMath::CeilToFloat(Current), FMath::CeilToFloat(Max))));
+//
+// 		// 색상도 HP 비율에 맞춤
+// 		const float Pct = (Max > 0.f) ? (Current / Max) : 0.f;
+// 		const FLinearColor Color = GetHealthColor(Pct);
+// 		HealthText->SetColorAndOpacity(FSlateColor(FLinearColor(Color.R, Color.G, Color.B, 0.85f)));
+// 	}
+// }
+// ─────────────────────────────────────────────────────────────
 
 // ============================================================================
 // GetHealthColor — HP 퍼센트에 따른 색상 전환
