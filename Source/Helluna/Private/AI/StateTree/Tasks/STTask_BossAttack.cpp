@@ -51,23 +51,6 @@ static void FaceTarget(AAIController* AIC, APawn* Pawn, AActor* Target, float De
 	// 액터 회전도 수동 보간. MaxWalkSpeed=0 잠금 상태의 CMC PhysicsRotation은 ActorYaw를
 	// 업데이트하지 않음 → 수동 SetActorRotation으로 CMC 의존 제거.
 	Pawn->SetActorRotation(NewRot);
-
-	// 진단 V3 — Melee와 동일 포맷으로 끊김 원인 단계 추적.
-	float RotRateY = -1.f;
-	uint8 bDesired = 0, bOrient = 0;
-	if (UCharacterMovementComponent* CMC = Cast<UCharacterMovementComponent>(Pawn->GetMovementComponent()))
-	{
-		RotRateY = CMC->RotationRate.Yaw;
-		bDesired = CMC->bUseControllerDesiredRotation ? 1 : 0;
-		bOrient  = CMC->bOrientRotationToMovement ? 1 : 0;
-	}
-	UE_LOG(LogTemp, Warning,
-		TEXT("[RotV7][Boss] CtrlYaw %.1f→%.1f | ActorYaw=%.1f | Δ=%.2f | Vel=%.0f | RotRateY=%.0f | Desired=%d Orient=%d | DT=%.4f"),
-		CurrentRot.Yaw, NewRot.Yaw,
-		Pawn->GetActorRotation().Yaw,
-		YawDeltaDeg,
-		Pawn->GetVelocity().Size2D(),
-		RotRateY, bDesired, bOrient, DeltaTime);
 }
 }
 
