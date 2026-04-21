@@ -58,6 +58,26 @@ public:
 	UHellunaPartySlotWidget* SpawnPartySlot(const FString& PlayerId, bool bIsMe);
 	virtual UHellunaPartySlotWidget* SpawnPartySlot_Implementation(const FString& PlayerId, bool bIsMe);
 
+	// ─────────────────────────────────────────────────────────────────────
+	// §13 v2.1 — A구간(L_Lobby) HUD 모드 + 가짜 진행률
+	// ─────────────────────────────────────────────────────────────────────
+
+	/** §13 §3.1.4 — true=A구간(로비, 가짜 progress) / false=C구간(MainMap, 실제 polling). */
+	UFUNCTION(BlueprintCallable, Category = "Loading Barrier|HUD")
+	void SetIsLobbyStage(bool bInLobby);
+
+	/** §13 §3.1.3 (Q4) — 가짜 진행률 0→TargetValue 선형 증가 시작 (A구간). */
+	UFUNCTION(BlueprintCallable, Category = "Loading Barrier|HUD")
+	void StartFakeProgress(float Duration, float TargetValue);
+
+	/** §13 §3.1.3 (Q4) — 캡처 시점 가짜 진행률 값 반환 (CaptureAndTravel에서 GI에 저장). */
+	UFUNCTION(BlueprintCallable, Category = "Loading Barrier|HUD")
+	float GetCurrentFakeProgress() const { return MyProgress; }
+
+	/** §13 §3.3.4 (Q4 / X-2) — C구간 진입 시 A의 마지막 값 이어받기 (≈0.9). */
+	UFUNCTION(BlueprintCallable, Category = "Loading Barrier|HUD")
+	void SetInitialFakeProgress(float InitialValue);
+
 protected:
 	UPROPERTY(BlueprintReadOnly, Category = "Loading Barrier|HUD")
 	TArray<FString> ExpectedPlayerIds;
@@ -73,6 +93,21 @@ protected:
 
 	UPROPERTY(BlueprintReadOnly, Category = "Loading Barrier|HUD")
 	float MyProgress = 0.f;
+
+	/** §13 v2.1 — true면 가짜 진행률 모드 (Tick 갱신, polling 무시). */
+	UPROPERTY(BlueprintReadOnly, Category = "Loading Barrier|HUD")
+	bool bIsLobbyStage = false;
+
+	// 가짜 진행률 타이머 상태
+	float FakeProgressStart = 0.f;
+	float FakeProgressTarget = 0.f;
+	float FakeProgressDuration = 0.f;
+	float FakeProgressElapsed = 0.f;
+	bool bFakeProgressActive = false;
+	FTimerHandle FakeProgressTickHandle;
+
+	/** Tick 콜백 — 0.05s 간격으로 호출 (StartFakeProgress가 SetTimer로 구동). */
+	void TickFakeProgress();
 
 	UPROPERTY(BlueprintReadOnly, Category = "Loading Barrier|HUD")
 	TMap<FString, TObjectPtr<UHellunaPartySlotWidget>> PlayerIdToSlot;

@@ -44,6 +44,10 @@ class ACameraActor;
 class USkeletalMesh;
 class UHellunaLobbyCharSelectWidget;
 class AHellunaLobbyCameraAnchor;
+// [§13 v2.1] Loading Barrier A구간
+class UHellunaLoadingHUDWidget;
+class AHellunaLoadingShipActor;
+class UUserWidget;
 
 // [Fix46-M3] Validate 상한 공통 상수
 namespace LobbyValidation
@@ -206,6 +210,66 @@ public:
 	UFUNCTION(Client, Reliable)
 	void Client_DeployFailed(const FString& Reason);
 
+	// ════════════════════════════════════════════════════════════════
+	// §13 v2.1 — A구간 로딩 시퀀스 (Fade + 서브레벨 + Settle + Snapshot + Travel)
+	// ════════════════════════════════════════════════════════════════
+
+	/** §13 §3.1.3 — Solo/Party 공통 헬퍼. Client_ExecuteDeploy/PartyDeploy가 위임. */
+	void ExecuteDeploySequence(const FString& TravelURL, const FString& ExpectedIdsJoined, int32 PartyId);
+
+	/** §13 §3.1.3 — Phase 1: Fade 0.2s 후 LoadStreamLevel(L_LoadingShipScene) */
+	UFUNCTION()
+	void StartLoadingSceneStream();
+
+	/** §13 §3.1.3 — Phase 2: 서브레벨 스트리밍 완료 콜백 (LatentInfo) */
+	UFUNCTION()
+	void OnLoadingSceneStreamed();
+
+	/** §13 §3.1.3 — Phase 3: 흔들림 1.0s 보장 후 Settle 시작 */
+	UFUNCTION()
+	void BeginLoadingHandoff();
+
+	/** §13 §3.1.3 — Phase 4: Settle 완료 시 GI에 TimeAccum/AmpScale 저장 + 스크린샷 캡처 요청 */
+	UFUNCTION()
+	void CaptureAndTravel();
+
+	/** §13 §3.1.3 — Phase 5: 캡처 완료 콜백 — MoviePlayer setup + ClientTravel */
+	void OnSnapshotReadyTravel();
+
+protected:
+	/** §13 §3.1.3 — A구간 검정 Fade 위젯 (BP에서 WBP_FadeToBlack 지정). */
+	UPROPERTY(EditDefaultsOnly, Category = "Loading Barrier|A구간",
+		meta = (DisplayName = "Fade To Black Widget Class"))
+	TSubclassOf<UUserWidget> FadeToBlackWidgetClass;
+
+	/** §13 §3.1.3 — 로비 HUD (BP에서 WBP_SelfLoadingHUD 지정). C구간 HUD와 같은 BP 재사용. */
+	UPROPERTY(EditDefaultsOnly, Category = "Loading Barrier|A구간",
+		meta = (DisplayName = "Lobby Loading HUD Class"))
+	TSubclassOf<UHellunaLoadingHUDWidget> LobbyLoadingHUDClass;
+
+	/** §13 §3.1.3 — 서브레벨 이름 (BP 오버라이드 가능, 기본 L_LoadingShipScene). */
+	UPROPERTY(EditDefaultsOnly, Category = "Loading Barrier|A구간",
+		meta = (DisplayName = "Loading Sub-Level Name"))
+	FName LoadingSceneLevelName = FName(TEXT("L_LoadingShipScene"));
+
+private:
+	// §13 v2.1 — 시퀀스 콜백 체인용 상태 (이 블록 내부에서만 private)
+	FString PendingTravelURL;
+	FString PendingExpectedIds;
+	int32 PendingPartyId = 0;
+	bool bCaptureAndTravelFired = false;
+
+	UPROPERTY()
+	TObjectPtr<UUserWidget> ActiveFadeWidget;
+
+	UPROPERTY()
+	TObjectPtr<UHellunaLoadingHUDWidget> ActiveLobbyHUD;
+
+	FTimerHandle FadeStartTimer;
+	FTimerHandle HandoffTimer;
+	FTimerHandle SettleGuardTimer;
+
+public:
 	// ════════════════════════════════════════════════════════════════
 	// [Phase 12d] 파티 시스템 RPC
 	// ════════════════════════════════════════════════════════════════
