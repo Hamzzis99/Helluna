@@ -93,6 +93,18 @@ struct HELLUNA_API FBossAttackEntry
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "디버그",
 		meta = (DisplayName = "디버그 태그"))
 	FName DebugTag = NAME_None;
+
+	/**
+	 * [ParallelPatternV1] 이 엔트리의 GA 가 실행 중일 때 보스가 다른 공격을 계속 선택/실행할 수 있는지.
+	 *   false (기본) = 이 GA 가 active 이면 다른 공격 불가 (기존 동작).
+	 *   true          = 이 GA 가 active 이어도 BossChooseAttack 은 다른 엔트리를 계속 선택 가능.
+	 *                   "백그라운드 패턴" — 시간 왜곡 존 같이 오래 지속되는 소환 공격에 적합.
+	 *                   병행 실행 시에도 엔트리별 cooldown 은 여전히 적용 → 같은 패턴 중복 스폰 방지.
+	 *                   주의: 이 플래그를 켜면 해당 GA 는 이동 잠금(LockMovement) 을 하지 않아야 의도대로 동작.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "병행 실행",
+		meta = (DisplayName = "병행 실행 허용 (다른 공격 블록하지 않음)"))
+	bool bParallelToOtherAttacks = false;
 };
 
 USTRUCT()

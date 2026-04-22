@@ -47,7 +47,11 @@ void UEnemyGameplayAbility_SpawnAttack::ActivateAbility(
 		ASC->AddLooseGameplayTags(Tag);
 	}
 
-	Enemy->LockMovementAndFaceTarget(nullptr);
+	// [ParallelPatternV1] 백그라운드 패턴(Time 등) 은 이동 잠금 없이 실행 — 보스가 계속 이동/공격 가능.
+	if (bLockMovement)
+	{
+		Enemy->LockMovementAndFaceTarget(nullptr);
+	}
 
 	if (CastVFX)
 	{
@@ -55,28 +59,7 @@ void UEnemyGameplayAbility_SpawnAttack::ActivateAbility(
 	}
 
 	// 시전 몬타지 (있을 때만).
-	if (CastMontage)
-	{
-		UAbilityTask_PlayMontageAndWait* MontageTask =
-			UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
-				this, NAME_None, CastMontage, 1.f, NAME_None, false);
-
-		if (MontageTask)
-		{
-			MontageTask->OnCompleted.AddDynamic(this, &UEnemyGameplayAbility_SpawnAttack::OnCastMontageCompleted);
-			MontageTask->OnCancelled.AddDynamic(this, &UEnemyGameplayAbility_SpawnAttack::OnCastMontageCancelled);
-			MontageTask->OnInterrupted.AddDynamic(this, &UEnemyGameplayAbility_SpawnAttack::OnCastMontageCancelled);
-			MontageTask->ReadyForActivation();
-		}
-		else
-		{
-			bMontageFinished = true;
-		}
-	}
-	else
-	{
-		bMontageFinished = true;
-	}
+	StartCastMontageOnce();
 
 	// SpawnDelay 후 BP 스폰.
 	if (UWorld* World = Enemy->GetWorld())
@@ -212,14 +195,91 @@ void UEnemyGameplayAbility_SpawnAttack::HandleLifetimeExpired()
 	HandleAbilityFinished(false);
 }
 
+void UEnemyGameplayAbility_SpawnAttack::StartCastMontageOnce()
+{
+	if (!CastMontage)
+	{
+		bMontageFinished = true;
+		return;
+	}
+
+	UAbilityTask_PlayMontageAndWait* MontageTask =
+		UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
+			this, NAME_None, CastMontage, 1.f, NAME_None, false);
+
+	if (!MontageTask)
+	{
+		bMontageFinished = true;
+		return;
+	}
+
+	MontageTask->OnCompleted.AddDynamic(this, &UEnemyGameplayAbility_SpawnAttack::OnCastMontageCompleted);
+	MontageTask->OnCancelled.AddDynamic(this, &UEnemyGameplayAbility_SpawnAttack::OnCastMontageCancelled);
+	MontageTask->OnInterrupted.AddDynamic(this, &UEnemyGameplayAbility_SpawnAttack::OnCastMontageCancelled);
+	MontageTask->ReadyForActivation();
+}
+
 void UEnemyGameplayAbility_SpawnAttack::OnCastMontageCompleted()
 {
 	bMontageFinished = true;
+
+	// [HoldPoseV1] 자세 유지가 필요하면 GA 가 끝날 때까지 반복 재생.
+	//   bLifetimeExpired / 이미 종료된 경우는 재생 생략.
+	if (bLoopCastMontage && !bLifetimeExpired && IsActive())
+	{
+		SA_GA_LOG("[HoldPoseV1] Loop cast montage — replaying");
+		bMontageFinished = false;
+		StartCastMontageOnce();
+	}
 }
 
 void UEnemyGameplayAbility_SpawnAttack::OnCastMontageCancelled()
 {
 	bMontageFinished = true;
+
+	// [HoldPoseV1] Cancelled 는 HitReact 등 외부 인터럽트 — 자세 유지 모드면 즉시 재생.
+	if (bLoopCastMontage && !bLifetimeExpired && IsActive())
+	{
+		SA_GA_LOG("[HoldPoseV1] Cast montage cancelled — restart for pose hold");
+		bMontageFinished = false;
+		StartCastMontageOnce();
+	}
+}
+
+// -----------------------------------------------------------------
+// [HoldPoseV1] ShouldBlockHitReact — 지정 Enemy 에 활성 SpawnAttack 중 HitReact 차단 플래그가 있으면 true.
+// AHellunaEnemyCharacter::Multicast_PlayHitReact_Implementation 에서 early-return 용도로 사용.
+// -----------------------------------------------------------------
+bool UEnemyGameplayAbility_SpawnAttack::ShouldBlockHitReact(const AHellunaEnemyCharacter* Enemy)
+{
+	if (!Enemy) return false;
+
+	const UAbilitySystemComponent* ASC = Enemy->FindComponentByClass<UAbilitySystemComponent>();
+	if (!ASC) return false;
+
+	for (const FGameplayAbilitySpec& Spec : ASC->GetActivatableAbilities())
+	{
+		if (!Spec.IsActive() || !Spec.Ability) continue;
+
+		const UEnemyGameplayAbility_SpawnAttack* SA =
+			Cast<UEnemyGameplayAbility_SpawnAttack>(Spec.Ability);
+		if (SA && SA->bSuppressHitReactWhileActive)
+		{
+			return true;
+		}
+
+		// 인스턴스 생성된 경우 Primary Instance 도 확인 (InstancedPerActor)
+		if (const UGameplayAbility* PrimaryInst = Spec.GetPrimaryInstance())
+		{
+			const UEnemyGameplayAbility_SpawnAttack* SAInst =
+				Cast<UEnemyGameplayAbility_SpawnAttack>(PrimaryInst);
+			if (SAInst && SAInst->bSuppressHitReactWhileActive)
+			{
+				return true;
+			}
+		}
+	}
+	return false;
 }
 
 void UEnemyGameplayAbility_SpawnAttack::HandleAbilityFinished(bool bWasCancelled)

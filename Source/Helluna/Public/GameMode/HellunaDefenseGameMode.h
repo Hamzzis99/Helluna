@@ -581,6 +581,40 @@ protected:
 	void TrySummonBoss(const FBossSpawnEntry& Entry);
 
 	// ════════════════════════════════════════════════════════════════════════════════
+	// [RepairBossSpawnV1] 우주선 수리 100% 완료 시 강제 보스 소환
+	// ════════════════════════════════════════════════════════════════════════════════
+public:
+	/**
+	 * true = 우주선 수리가 100% 되면 RepairCompleteBossEntry 의 보스를 강제 소환.
+	 * false = 스폰 안 함 (기존 동작).
+	 * 소환된 보스를 처치하면 NotifyBossDied 경로로 EndGame(Escaped) → 게임 클리어.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|Boss(보스)",
+		meta = (DisplayName = "수리 완료 시 보스 소환 (on/off)"))
+	bool bSpawnBossOnRepairComplete = true;
+
+	/**
+	 * 수리 완료 시 소환할 보스. 소환된 보스가 EndGame 을 트리거하려면
+	 * 해당 Pawn 의 EnemyGrade == Boss 여야 함 (NotifyBossDied 기준).
+	 * SpawnDay 필드는 이 경로에서는 무시된다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|Boss(보스)",
+		meta = (DisplayName = "수리 완료 소환 보스",
+			EditCondition = "bSpawnBossOnRepairComplete"))
+	FBossSpawnEntry RepairCompleteBossEntry;
+
+protected:
+	/** 수리 완료 델리게이트 콜백 — 서버 전용. TrySummonBoss 호출. */
+	UFUNCTION()
+	void OnSpaceShipRepairCompleted();
+
+	/** 우주선 스폰 이후 OnRepairCompleted_Delegate 바인딩 시도. 우주선 없으면 다음 틱에 재시도. */
+	void TryBindSpaceShipRepairDelegate();
+
+	FTimerHandle SpaceShipRepairBindTimer;
+	bool bSpaceShipRepairBound = false;
+
+	// ════════════════════════════════════════════════════════════════════════════════
 	// Phase 7: 게임 종료 + 결과 반영 + 로비 복귀
 	// ════════════════════════════════════════════════════════════════════════════════
 public:
