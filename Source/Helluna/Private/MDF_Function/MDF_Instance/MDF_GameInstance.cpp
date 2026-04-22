@@ -355,14 +355,17 @@ void UMDF_GameInstance::SetupSnapshotLoadingScreen()
 	TSharedRef<SLoadingSnapshotWidget> SnapshotWidget =
 		SNew(SLoadingSnapshotWidget).SnapshotTexture(LoadingSnapshotTexture);
 
+	// [Fix] bWaitForManualStop=true + StopMovie() 미호출 조합이 ClientTravel 이후 클라 게임스레드 Tick을
+	// 사실상 정지시켜 NMT_Join 송신을 막고, 그 결과 서버 PostLogin이 영원히 트리거되지 않는 데드락이 발생.
+	// → 엔진이 맵 로드 완료 시 LoadingScreen을 자동 해제하도록 변경. 연출 시간은 MinimumLoadingScreenDisplayTime 으로 보장.
 	FLoadingScreenAttributes Attrs;
-	Attrs.bWaitForManualStop = true;
-	Attrs.bAutoCompleteWhenLoadingCompletes = false;
+	Attrs.bWaitForManualStop = false;
+	Attrs.bAutoCompleteWhenLoadingCompletes = true;
 	Attrs.MinimumLoadingScreenDisplayTime = 0.5f;
 	Attrs.WidgetLoadingScreen = SnapshotWidget;
 
 	GetMoviePlayer()->SetupLoadingScreen(Attrs);
-	UE_LOG(LogTemp, Log, TEXT("[LoadingDbg][GI] SetupSnapshotLoadingScreen — MoviePlayer 등록 완료 (bWaitForManualStop=true)"));
+	UE_LOG(LogTemp, Log, TEXT("[LoadingDbg][GI] SetupSnapshotLoadingScreen — MoviePlayer 등록 완료 (자동 종료 모드: bAutoCompleteWhenLoadingCompletes=true)"));
 }
 
 void UMDF_GameInstance::ClearLoadingHandoffState()
@@ -381,6 +384,6 @@ void UMDF_GameInstance::OnPreLoadMap(const FString& MapName)
 
 void UMDF_GameInstance::OnPostLoadMapWithWorld(UWorld* LoadedWorld)
 {
-	// MoviePlayer는 C구간 ShowLoadingHUDWithCrossfade에서 수동 StopMovie() 호출
-	// (bWaitForManualStop=true이므로 자동 종료되지 않음)
+	// [Fix] MoviePlayer는 OnPostLoadMapWithWorld 시점에 엔진이 자동 해제.
+	// bAutoCompleteWhenLoadingCompletes=true + bWaitForManualStop=false 조합이므로 별도 StopMovie() 호출 불필요.
 }

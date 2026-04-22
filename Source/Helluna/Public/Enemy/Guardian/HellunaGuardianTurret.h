@@ -160,11 +160,6 @@ protected:
 		meta = (DisplayName = "진단 로그 활성화"))
 	bool bDebugLogEnabled = false;
 
-	/** LoS 라인트레이스 시각화 (DrawDebugLine). bDebugLogEnabled 와 별도로 토글. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Guardian|Debug",
-		meta = (DisplayName = "LoS 라인 시각화"))
-	bool bDebugDrawLoS = false;
-
 	/** 진단 로그 출력 주기 (초) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Guardian|Debug",
 		meta = (DisplayName = "진단 로그 주기 (초)", ClampMin = "0.1", ClampMax = "5.0"))
