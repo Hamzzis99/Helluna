@@ -21,7 +21,6 @@
 #include "NiagaraComponent.h"
 #include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
-#include "DrawDebugHelpers.h"
 
 
 
@@ -319,7 +318,7 @@ void AHellunaGuardianTurret::Tick(float DeltaTime)
 
 void AHellunaGuardianTurret::TickDebugDiagnostics(float DeltaTime)
 {
-	if (!bDebugLogEnabled && !bDebugDrawLoS)
+	if (!bDebugLogEnabled)
 	{
 		return;
 	}
@@ -395,16 +394,6 @@ void AHellunaGuardianTurret::TickDebugDiagnostics(float DeltaTime)
 			bFacing = FacingAngleDeg <= FireAngleThreshold;
 		}
 
-		if (bDebugDrawLoS)
-		{
-			const float LifeTime = FMath::Max(DebugLogInterval, 0.1f);
-			DrawDebugLine(World, LoSStart, AimPoint,
-				bLoSOK ? FColor::Green : FColor::Red, false, LifeTime, 0, 2.f);
-			if (!bLoSOK)
-			{
-				DrawDebugSphere(World, LoSImpact, 25.f, 12, FColor::Yellow, false, LifeTime);
-			}
-		}
 	}
 
 	const float SphereRadius = DetectionSphere
