@@ -79,6 +79,7 @@ void UHellunaCheatComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty
 {
     Super::GetLifetimeReplicatedProps(OutLifetimeProps);
     DOREPLIFETIME(UHellunaCheatComponent, bNoclipOn);
+    DOREPLIFETIME(UHellunaCheatComponent, bGodModeOn);
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -260,6 +261,22 @@ void UHellunaCheatComponent::Server_FastForwardDay_Implementation()
         return;
     }
     DefenseGM->Cheat_FastForwardDayToNight();
+}
+
+// ─────────────────────────────────────────────────────────────────
+// [GodModeCheat-V1] F7 — 무적 토글
+// ─────────────────────────────────────────────────────────────────
+void UHellunaCheatComponent::HandleKey_GodMode()
+{
+    UE_LOG(LogTemp, Warning, TEXT("[cheatdebug][GodMode] HandleKey_GodMode pressed | %s"), *CheatOwnerTag(this));
+    Server_ToggleGodMode();
+}
+
+void UHellunaCheatComponent::Server_ToggleGodMode_Implementation()
+{
+    bGodModeOn = !bGodModeOn;
+    UE_LOG(LogTemp, Warning, TEXT("[cheatdebug][GodMode] Server_ToggleGodMode -> %s"),
+        bGodModeOn ? TEXT("ON (무적 활성)") : TEXT("OFF (무적 해제)"));
 }
 
 // ─────────────────────────────────────────────────────────────────

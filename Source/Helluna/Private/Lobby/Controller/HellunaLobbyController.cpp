@@ -2061,6 +2061,14 @@ void AHellunaLobbyController::ExecuteDeploySequence(const FString& TravelURL, co
 
 void AHellunaLobbyController::StartLoadingSceneStream()
 {
+	// [LoadingSublevelDisabled-Package] Sublevel 로딩 버그 우회 — 이 블록 지우면 복원.
+	// 팀장 지시: Loading Sublevel 비활성화 + 기존 가짜로딩(스냅샷 MoviePlayer) 방식 유지.
+	// StartLoadingSceneStream 진입 시 즉시 CaptureAndTravel 로 분기 → Sublevel 스트리밍 스킵.
+	UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingSublevelDisabled-Package] Sublevel 로드 스킵 → 가짜로딩 경로 직행"));
+	CaptureAndTravel();
+	return;
+
+#if 0 // [LoadingSublevelDisabled-Package] 아래 코드는 복원 시 #if 1 로 바꾸면 재활성
 	UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A] StartLoadingSceneStream | Level=%s"),
 		*LoadingSceneLevelName.ToString());
 
@@ -2082,6 +2090,7 @@ void AHellunaLobbyController::StartLoadingSceneStream()
 		/*bMakeVisibleAfterLoad=*/true,
 		/*bShouldBlockOnLoad=*/false,
 		LatentInfo);
+#endif // [LoadingSublevelDisabled-Package]
 }
 
 void AHellunaLobbyController::OnLoadingSceneStreamed()
