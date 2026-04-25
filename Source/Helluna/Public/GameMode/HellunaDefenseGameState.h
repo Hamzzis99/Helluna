@@ -412,6 +412,24 @@ protected:
     /** 밤 전환 시 맑은 날씨 강제 적용 (오로라 가시성 확보) */
     void ForceClearWeather();
 
+    // ─── 시각 전환 헬퍼 (Dawn/Dusk 공용) ────────────────────────────────────
+    // 이전: OnRep_Phase Day / TickDawnTransition 완료 / StartDuskTransition 각각에서
+    //       SetVolumetricCloudVisible + ApplyRandomWeather 를 따로 호출해 분기가 분산됐다.
+    //       분기마다 BlendTime 전달값도 달라 Day-Night 전환 속도가 비대칭이었다.
+    //       아래 3개 헬퍼로 한 곳에 모아 호출 순서와 BlendTime 일관성을 보장.
+
+    /** 낮 전환 시작: 구름 ON + ApplyRandomWeather(true, DawnTransitionDuration). */
+    void PlayDayTransition();
+
+    /** 밤 전환 시작: ApplyRandomWeather(false, DuskTransitionDuration). 구름 OFF는 Lerp 완료 시 FinalizeNightTransition에서. */
+    void PlayNightTransition();
+
+    /** 밤 전환 완료: 구름 OFF (Dusk Lerp 끝에서 호출). */
+    void FinalizeNightTransition();
+
+    /** Dawn Lerp 시작 시 날씨 블렌드가 이미 예약됐는지 (중복 호출 방지 가드) */
+    bool bDawnWeatherBlendStarted = false;
+
     // ═══════════════════════════════════════════════════════════════════════════
     // 💧 물웅덩이(Puddle Coverage) 점진 축적
     //   UDW가 MPC `Raining` 값을 시간에 따라 올리면, 본 타이머가 그 값을
