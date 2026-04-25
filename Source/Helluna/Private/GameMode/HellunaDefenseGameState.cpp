@@ -90,16 +90,16 @@ void AHellunaDefenseGameState::OnRep_Phase()
         GetWorldTimerManager().ClearTimer(TimerHandle_DuskScheduler);
         GetWorldTimerManager().ClearTimer(TimerHandle_DuskTransition);
         bDuskStarted = false;
+        bDawnWeatherBlendStarted = false;  // Dawn 가드 리셋 (NetMulticast_OnDawnPassed에서 true로)
         CleanupInitialNightPCGClientArtifacts();
         OnDayStarted();
-        // 🌅 시각적 전환(구름 토글, UDW 날씨 Lerp)은 새벽 해 이동이 끝난 뒤에 시작한다.
-        //   Phase 플립 시점에 바로 켜면 해가 아직 밤 위치에 있는데 구름/날씨만
-        //   확 바뀌어 부자연스럽다 — TickDawnTransition 완료 시 ApplyDayVisuals()를 호출.
-        //   서버 권위(ReplicatedRainIntensity)는 ApplyRandomWeather에서 처리되므로,
-        //   UDS가 없는 데디서버는 즉시 호출해서 강도 복제가 지연되지 않도록 한다.
+        // 🌅 시각 전환은 NetMulticast_OnDawnPassed 시점에 PlayDayTransition()으로 시작한다.
+        //   이전에는 TickDawnTransition 완료 후(해가 다 뜬 다음)에 날씨를 바꿔 Dusk와 비대칭이었다.
+        //   UDS가 없는 데디서버는 Dawn Lerp가 없으므로 여기서 즉시 호출 — ReplicatedRainIntensity 조기 복제.
         if (!bHasUDS)
         {
-            ApplyRandomWeather(true);
+            PlayDayTransition();
+            bDawnWeatherBlendStarted = true;  // NetMulticast_OnDawnPassed에서 중복 호출 방지
         }
         break;
     case EDefensePhase::Night:
@@ -134,11 +134,11 @@ void AHellunaDefenseGameState::OnRep_Phase()
 
             if (DuskTransitionDuration <= 0.f)
             {
-                // Dusk 비활성: 기존 스냅 전환
-                ApplyRandomWeather(false);
+                // Dusk 비활성: 즉시 전환 (날씨 블렌드는 WeatherTransitionTime 기본값으로 수행됨)
+                PlayNightTransition();
                 if (bHasUDS)
                 {
-                    SetVolumetricCloudVisible(false);
+                    FinalizeNightTransition();
                     AActor* UDS = GetUDSActor();
                     if (UDS)
                     {
@@ -232,10 +232,10 @@ void AHellunaDefenseGameState::NetMulticast_OnDawnPassed_Implementation(float Ro
             AnimProp2->SetPropertyValue_InContainer(UDS, true);
 
         // 즉시 전환이라도 새벽이 "완료"된 시점이므로 Day 시각 효과 적용.
-        if (bHasUDS)
+        if (!bDawnWeatherBlendStarted)
         {
-            SetVolumetricCloudVisible(true);
-            ApplyRandomWeather(true);
+            PlayDayTransition();
+            bDawnWeatherBlendStarted = true;
         }
 
 #if HELLUNA_DEBUG_DEFENSE
@@ -250,6 +250,16 @@ void AHellunaDefenseGameState::NetMulticast_OnDawnPassed_Implementation(float Ro
     DawnLerpElapsed = 0.f;
     DawnTotalDistance = (2400.f - CurrentTime) + DayStartTime;
     PendingRoundDuration = RoundDuration;
+
+    // 🌅 Dawn 비대칭 수정: Dusk와 대칭으로, 해 이동과 동시에 날씨/구름 블렌드를 시작한다.
+    //   이전에는 TickDawnTransition 완료(Alpha>=1.0)에 호출 → 해가 다 뜬 다음 날씨 스냅 전환.
+    //   지금은 Lerp 시작과 동시에 DawnTransitionDuration을 BlendTime으로 넘겨 UDW Change Weather
+    //   블렌드 완료 시점이 UDS Time of Day Lerp 완료와 일치.
+    if (!bDawnWeatherBlendStarted)
+    {
+        PlayDayTransition();
+        bDawnWeatherBlendStarted = true;
+    }
 
 #if HELLUNA_DEBUG_DEFENSE
     UE_LOG(LogTemp, Warning, TEXT("[GameState] %s: 새벽 전환 시작! 현재=%.0f → 목표=%.0f (이동량=%.0f, %.1f초)"),
@@ -324,14 +334,9 @@ void AHellunaDefenseGameState::TickDawnTransition()
 #endif
         }
 
-        // 🌅 해가 DayStartTime에 도달한 뒤에야 구름/날씨를 전환 — 시각적 불일치 제거.
-        //   OnRep_Phase(Day)에서는 데디서버만 ApplyRandomWeather를 즉시 호출하고,
-        //   UDS를 가진 인스턴스(리슨서버/클라)는 여기서 처리한다.
-        if (bHasUDS)
-        {
-            SetVolumetricCloudVisible(true);
-            ApplyRandomWeather(true);
-        }
+        // 🌅 날씨/구름 블렌드는 NetMulticast_OnDawnPassed에서 이미 PlayDayTransition()으로 시작됐다.
+        //   DawnTransitionDuration을 BlendTime으로 넘겼으므로 UDW Change Weather 블렌드와
+        //   UDS Time of Day Lerp가 같은 시점에 완료된다 — 여기서는 중복 호출 금지.
     }
 }
 
@@ -353,14 +358,14 @@ void AHellunaDefenseGameState::StartDuskTransition()
     if (!bHasUDS)
     {
         // 데디서버: 렌더 없음 → UDW ProcessEvent 스킵되지만 ReplicatedRainIntensity는 복제됨
-        ApplyRandomWeather(false, BlendTime);
+        PlayNightTransition();
         return;
     }
 
     AActor* UDS = GetUDSActor();
     if (!UDS)
     {
-        ApplyRandomWeather(false, BlendTime);
+        PlayNightTransition();
         return;
     }
 
@@ -380,8 +385,8 @@ void AHellunaDefenseGameState::StartDuskTransition()
     if (Distance < 0.f) Distance += 2400.f;  // 순환 랩어라운드
     DuskTotalDistance = Distance;
 
-    // UDW 날씨 블렌드를 Dusk와 같은 시간 창으로 시작
-    ApplyRandomWeather(false, BlendTime);
+    // UDW 날씨 블렌드를 Dusk와 같은 시간 창으로 시작 (BlendTime=DuskTransitionDuration)
+    PlayNightTransition();
 
 #if HELLUNA_DEBUG_DEFENSE
     UE_LOG(LogTemp, Warning, TEXT("[GameState] %s: Dusk 시작! 현재=%.0f → 목표=%.0f (이동량=%.0f, %.1f초) Phase=%d"),
@@ -432,8 +437,11 @@ void AHellunaDefenseGameState::TickDuskTransition()
         // 정확히 NightSettleTime에 맞추기
         SetUDSTimeOfDay(NightSettleTime);
 
-        // 구름 OFF — 오로라/분위기 가시성 (Dawn 완료 시 구름 ON과 대칭)
-        SetVolumetricCloudVisible(false);
+        // 구름 OFF — 오로라/분위기 가시성 (Dawn 시작 시 구름 ON과 대칭)
+        //   이 시점에는 PlayNightTransition에서 시작한 UDW Change Weather 블렌드가 끝나
+        //   UDS `Cloud Coverage`가 0(또는 Night 프리셋 값)까지 내려왔으므로 visibility 스냅 OFF가
+        //   시각적으로 거의 느껴지지 않는다 — 이것이 현실적인 "페이드 아웃".
+        FinalizeNightTransition();
 
 #if HELLUNA_DEBUG_DEFENSE
         UE_LOG(LogTemp, Warning, TEXT("[GameState] %s: Dusk 전환 완료! SettleTime=%.0f"),
@@ -1214,6 +1222,35 @@ void AHellunaDefenseGameState::SetVolumetricCloudVisible(bool bVisible)
 #if HELLUNA_DEBUG_DEFENSE
     UE_LOG(LogTemp, Log, TEXT("[DayNight] VolumetricCloud %s"), bVisible ? TEXT("ON (낮)") : TEXT("OFF (밤)"));
 #endif
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🌤️ 시각 전환 헬퍼 — Dawn/Dusk 공용
+//   분산돼 있던 SetVolumetricCloudVisible + ApplyRandomWeather 호출을 한 곳으로 모음.
+//   BlendTime은 각 전환 지속시간을 명시 전달해 Dawn/Dusk 간 비대칭 제거.
+// ═══════════════════════════════════════════════════════════════════════════════
+void AHellunaDefenseGameState::PlayDayTransition()
+{
+    const float BlendTime = DawnTransitionDuration > 0.f ? DawnTransitionDuration : WeatherTransitionTime;
+    if (bHasUDS)
+    {
+        SetVolumetricCloudVisible(true);
+    }
+    ApplyRandomWeather(true, BlendTime);
+}
+
+void AHellunaDefenseGameState::PlayNightTransition()
+{
+    const float BlendTime = DuskTransitionDuration > 0.f ? DuskTransitionDuration : WeatherTransitionTime;
+    ApplyRandomWeather(false, BlendTime);
+}
+
+void AHellunaDefenseGameState::FinalizeNightTransition()
+{
+    if (bHasUDS)
+    {
+        SetVolumetricCloudVisible(false);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
