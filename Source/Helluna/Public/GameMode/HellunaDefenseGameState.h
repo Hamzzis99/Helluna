@@ -363,12 +363,25 @@ protected:
     bool bDuskStarted = false;
 
     /**
+     * 현재 낮 라운드의 DawnPassed 신호를 이미 받았는지.
+     * Reliable RPC와 Phase RepNotify가 클라이언트에서 서로 다른 순서로 도착할 수 있으므로,
+     * NetMulticast_OnDawnPassed()가 예약한 Dusk 타이머를 뒤늦은 Day OnRep가 지우지 않게 보호한다.
+     */
+    bool bDawnPassedReceivedForCurrentDay = false;
+
+    /**
      * Dusk 전환 시작.
      * Dawn 완료 시점에 (RoundDuration - DuskTransitionDuration)초 뒤로 예약되어 호출.
      * 모든 인스턴스에서 호출되며, 서버 권위는 ReplicatedRainIntensity 복제, UDS 보유 인스턴스는
      * UDS Time of Day Lerp + UDW Change Weather(TransitionTime=DuskTransitionDuration) 블렌드.
      */
     void StartDuskTransition();
+
+    /**
+     * Night Phase 도착 시 Dusk를 다시 재생하지 않고 최종 밤 상태만 보정한다.
+     * 정상 경로의 해 지는 연출은 StartDuskTransition()이 소유한다.
+     */
+    void ApplyNightPhaseArrivalCorrection(const TCHAR* Reason);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // 🌤️ 랜덤 날씨 시스템
