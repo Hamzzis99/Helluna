@@ -44,6 +44,12 @@ enum class EHellunaGameEndReason : uint8
 	ServerShutdown UMETA(DisplayName = "서버 셧다운"),
 };
 
+enum class EHellunaNightStartMode : uint8
+{
+	Normal,
+	InitialBootstrap,
+};
+
 UCLASS()
 class HELLUNA_API AHellunaDefenseGameMode : public AHellunaBaseGameMode
 {
@@ -88,6 +94,12 @@ protected:
 	 *  보스 나이트 / AliveBoss 유효 시에는 동작하지 않는다. */
 	void TickNightWatchdog();
 
+	/** 맵 시작 직후 Day 1 낮을 생략하고 Day 1 밤으로 바로 진입한다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Defense(게임)|DayNight(낮밤)",
+		meta = (DisplayName = "첫 시작을 밤으로 시작",
+			ToolTip = "켜면 InitializeGame에서 EnterDay를 거치지 않고 Day 1 Night로 바로 시작합니다. 첫 밤 클리어 후 다음 낮은 Day 2입니다."))
+	bool bStartFirstNightImmediately = true;
+
 	/**
 	 * 현재 진행 일(Day) 수. EnterDay() 호출마다 1 증가.
 	 * 0 → 게임 시작 전, 1 → 첫 번째 낮.
@@ -120,6 +132,15 @@ protected:
 
 	/** 밤 시작 */
 	void EnterNight();
+
+	/** 첫 시작 전용: 날짜 증가 없이 Day 1 밤으로 바로 진입 */
+	void StartInitialNightBootstrap();
+
+	/** 일반 밤/첫날 밤이 공유하는 실제 밤 진입 로직 */
+	void EnterNightCore(EHellunaNightStartMode StartMode);
+
+	/** 밤 클리어 후 낮 전환 예약. 딜레이 0 이하에서도 다음 틱에 안전하게 EnterDay를 호출한다. */
+	void ScheduleDayTransitionAfterNightClear(const TCHAR* Reason);
 
 	/** 우주선 수리 완료 여부 체크 */
 	bool IsSpaceShipFullyRepaired(int32& OutCurrent, int32& OutNeed) const;

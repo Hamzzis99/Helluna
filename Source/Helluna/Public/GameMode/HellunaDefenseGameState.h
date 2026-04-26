@@ -81,6 +81,12 @@ public:
 
     void SetPhase(EDefensePhase NewPhase);
 
+    /** 첫 시작 밤 부트스트랩 상태. 서버가 Phase Night보다 먼저 세팅한다. */
+    void SetInitialNightBootstrapActive(bool bActive);
+
+    UFUNCTION(BlueprintPure, Category = "Defense|DayNight")
+    bool IsInitialNightBootstrapActive() const { return bInitialNightBootstrapActive; }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // 낮/밤 전환 이벤트 (BP에서 구현)
     // ═══════════════════════════════════════════════════════════════════════════
@@ -169,6 +175,10 @@ public:
      */
     UFUNCTION(NetMulticast, Reliable)
     void NetMulticast_OnDawnPassed(float RoundDuration);
+
+    /** 첫날 밤 시작 시 현재 접속 클라이언트의 UDS/UDW를 즉시 밤 상태로 보정한다. */
+    UFUNCTION(NetMulticast, Reliable)
+    void NetMulticast_ApplyInitialNightVisualState();
 
     /**
      * 새벽 완료 시 호출 (BP에서 UDS 비례 구동 구현)
@@ -277,6 +287,12 @@ protected:
 
     UPROPERTY(ReplicatedUsing = OnRep_Phase)
     EDefensePhase Phase = EDefensePhase::Day;
+
+    UPROPERTY(ReplicatedUsing = OnRep_InitialNightBootstrapActive, BlueprintReadOnly, Category = "Defense|DayNight")
+    bool bInitialNightBootstrapActive = false;
+
+    UFUNCTION()
+    void OnRep_InitialNightBootstrapActive();
 
     virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
@@ -426,6 +442,9 @@ protected:
 
     /** 밤 전환 완료: 구름 OFF (Dusk Lerp 끝에서 호출). */
     void FinalizeNightTransition();
+
+    /** 첫날 밤 시작 전용: Dusk Lerp 없이 즉시 밤 시각/날씨로 정착. */
+    void ApplyInitialNightVisualState();
 
     /** Dawn Lerp 시작 시 날씨 블렌드가 이미 예약됐는지 (중복 호출 방지 가드) */
     bool bDawnWeatherBlendStarted = false;
