@@ -22,6 +22,96 @@
 #include "Sky/HellunaWeatherConfig.h"
 #include "Sky/HellunaSkyPreviewActor.h"
 
+namespace
+{
+constexpr float VisualPhaseTickInterval = 0.016f;
+
+const TCHAR* LexToString(EDayNightVisualPhase Phase)
+{
+    switch (Phase)
+    {
+    case EDayNightVisualPhase::Dawn: return TEXT("Dawn");
+    case EDayNightVisualPhase::Day: return TEXT("Day");
+    case EDayNightVisualPhase::Dusk: return TEXT("Dusk");
+    case EDayNightVisualPhase::Night: return TEXT("Night");
+    default: return TEXT("Unknown");
+    }
+}
+
+float WrapUDSTime(float Time)
+{
+    while (Time >= 2400.f)
+    {
+        Time -= 2400.f;
+    }
+    while (Time < 0.f)
+    {
+        Time += 2400.f;
+    }
+    return Time;
+}
+
+bool ReadFloatPropertyValue(const AActor* Actor, const FProperty* Prop, float& OutValue)
+{
+    if (!IsValid(Actor) || !Prop)
+    {
+        return false;
+    }
+
+    if (const FFloatProperty* FloatProp = CastField<FFloatProperty>(Prop))
+    {
+        OutValue = FloatProp->GetPropertyValue_InContainer(Actor);
+        return true;
+    }
+
+    if (const FDoubleProperty* DoubleProp = CastField<FDoubleProperty>(Prop))
+    {
+        OutValue = static_cast<float>(DoubleProp->GetPropertyValue_InContainer(Actor));
+        return true;
+    }
+
+    return false;
+}
+
+bool WriteFloatPropertyValue(AActor* Actor, FProperty* Prop, float Value)
+{
+    if (!IsValid(Actor) || !Prop)
+    {
+        return false;
+    }
+
+    if (FFloatProperty* FloatProp = CastField<FFloatProperty>(Prop))
+    {
+        FloatProp->SetPropertyValue_InContainer(Actor, Value);
+        return true;
+    }
+
+    if (FDoubleProperty* DoubleProp = CastField<FDoubleProperty>(Prop))
+    {
+        DoubleProp->SetPropertyValue_InContainer(Actor, static_cast<double>(Value));
+        return true;
+    }
+
+    return false;
+}
+
+bool WriteBoolPropertyValue(AActor* Actor, FProperty* Prop, bool bValue)
+{
+    if (!IsValid(Actor) || !Prop)
+    {
+        return false;
+    }
+
+    if (FBoolProperty* BoolProp = CastField<FBoolProperty>(Prop))
+    {
+        BoolProp->SetPropertyValue_InContainer(Actor, bValue);
+        return true;
+    }
+
+    return false;
+}
+}
+
 // =========================================================================================
 // 생성자 (김기현)
 // =========================================================================================
@@ -50,6 +140,7 @@ void AHellunaDefenseGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProper
     // UsedCharacters는 Base(AHellunaBaseGameState)에서 복제됨
     DOREPLIFETIME(AHellunaDefenseGameState, SpaceShip);
     DOREPLIFETIME_CONDITION_NOTIFY(AHellunaDefenseGameState, Phase, COND_None, REPNOTIFY_Always);
+    DOREPLIFETIME_CONDITION_NOTIFY(AHellunaDefenseGameState, VisualPhaseState, COND_None, REPNOTIFY_Always);
     DOREPLIFETIME_CONDITION_NOTIFY(AHellunaDefenseGameState, AliveMonsterCount, COND_None, REPNOTIFY_Always);
     DOREPLIFETIME(AHellunaDefenseGameState, DayTimeRemaining);
     DOREPLIFETIME(AHellunaDefenseGameState, TotalMonstersThisNight);
@@ -70,6 +161,110 @@ void AHellunaDefenseGameState::SetPhase(EDefensePhase NewPhase)
     OnRep_Phase();
 }
 
+void AHellunaDefenseGameState::SetVisualPhase(EDayNightVisualPhase NewVisualPhase, float Duration, float RoundDuration)
+{
+    if (!HasAuthority())
+    {
+        return;
+    }
+
+    float StartTimeOfDay = DayStartTime;
+    float TargetTimeOfDay = DayStartTime;
+    switch (NewVisualPhase)
+    {
+    case EDayNightVisualPhase::Dawn:
+        StartTimeOfDay = NightSettleTime;
+        TargetTimeOfDay = DayStartTime;
+        break;
+
+    case EDayNightVisualPhase::Day:
+        StartTimeOfDay = DayStartTime;
+        TargetTimeOfDay = DayStartTime;
+        break;
+
+    case EDayNightVisualPhase::Dusk:
+    {
+        float DayRange = DayEndTime - DayStartTime;
+        if (DayRange < 0.f)
+        {
+            DayRange += 2400.f;
+        }
+        const float StartAlpha = ActiveDayRoundDuration > KINDA_SMALL_NUMBER
+            ? FMath::Clamp(ActiveDuskDelay / ActiveDayRoundDuration, 0.f, 1.f)
+            : 1.f;
+        StartTimeOfDay = WrapUDSTime(DayStartTime + DayRange * StartAlpha);
+        TargetTimeOfDay = NightSettleTime;
+        break;
+    }
+
+    case EDayNightVisualPhase::Night:
+        StartTimeOfDay = NightSettleTime;
+        TargetTimeOfDay = NightSettleTime;
+        break;
+
+    default:
+        break;
+    }
+
+    VisualPhaseState.Phase = NewVisualPhase;
+    VisualPhaseState.StartedServerTime = static_cast<float>(GetServerWorldTimeSeconds());
+    VisualPhaseState.Duration = FMath::Max(0.f, Duration);
+    VisualPhaseState.RoundDuration = FMath::Max(0.f, RoundDuration);
+    VisualPhaseState.StartTimeOfDay = StartTimeOfDay;
+    VisualPhaseState.TargetTimeOfDay = TargetTimeOfDay;
+
+    StartVisualPhaseLocal();
+    ForceNetUpdate();
+}
+
+void AHellunaDefenseGameState::StartDayVisualTransition(float RoundDuration)
+{
+    if (!HasAuthority())
+    {
+        return;
+    }
+
+    UWorld* World = GetWorld();
+    if (!World)
+    {
+        return;
+    }
+
+    bDawnPassedReceivedForCurrentDay = true;
+    bDawnWeatherBlendStarted = false;
+    bDuskStarted = false;
+
+    World->GetTimerManager().ClearTimer(TimerHandle_DawnTransition);
+    World->GetTimerManager().ClearTimer(TimerHandle_DuskTransition);
+    World->GetTimerManager().ClearTimer(TimerHandle_DuskScheduler);
+
+    SetVisualPhase(EDayNightVisualPhase::Dawn, DawnTransitionDuration, RoundDuration);
+
+    const float PreferredDuskDelay = RoundDuration - DuskTransitionDuration;
+    const float EarliestDuskDelay = FMath::Max(0.f, DawnTransitionDuration);
+    const float DuskDelay = FMath::Max(EarliestDuskDelay, PreferredDuskDelay);
+    ActiveDayRoundDuration = RoundDuration;
+    ActiveDuskDelay = DuskDelay;
+    if (DuskTransitionDuration > 0.f && DuskDelay < RoundDuration)
+    {
+        World->GetTimerManager().SetTimer(
+            TimerHandle_DuskScheduler,
+            this,
+            &ThisClass::ServerStartDuskVisualPhase,
+            FMath::Max(0.01f, DuskDelay),
+            false);
+    }
+
+#if HELLUNA_DEBUG_DEFENSE
+    UE_LOG(LogTemp, Warning, TEXT("[VisualPhase] StartDayVisualTransition | Round=%.1f Dawn=%.1f Dusk=%.1f DuskDelay=%.1f Scheduled=%d"),
+        RoundDuration,
+        DawnTransitionDuration,
+        DuskTransitionDuration,
+        DuskDelay,
+        (int32)(DuskTransitionDuration > 0.f && DuskDelay < RoundDuration));
+#endif
+}
+
 void AHellunaDefenseGameState::SetInitialNightBootstrapActive(bool bActive)
 {
     if (!HasAuthority())
@@ -81,10 +276,8 @@ void AHellunaDefenseGameState::SetInitialNightBootstrapActive(bool bActive)
 
 void AHellunaDefenseGameState::OnRep_InitialNightBootstrapActive()
 {
-    if (bInitialNightBootstrapActive && Phase == EDefensePhase::Night)
-    {
-        ApplyInitialNightVisualState();
-    }
+    // Initial night visuals are now driven by VisualPhaseState.
+    // This flag remains replicated for gameplay/UI fallback checks only.
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -94,111 +287,33 @@ void AHellunaDefenseGameState::OnRep_InitialNightBootstrapActive()
 void AHellunaDefenseGameState::OnRep_Phase()
 {
 #if HELLUNA_DEBUG_DEFENSE
-    UE_LOG(LogTemp, Warning, TEXT("[GameState] OnRep_Phase 호출됨! Phase=%d, HasAuthority=%d"),
-        (int32)Phase, HasAuthority());
+    UE_LOG(LogTemp, Warning, TEXT("[GameState] OnRep_Phase | GameplayPhase=%d VisualPhase=%s Authority=%d"),
+        (int32)Phase, LexToString(VisualPhaseState.Phase), HasAuthority());
 #endif
 
     switch (Phase)
     {
     case EDefensePhase::Day:
     {
-#if HELLUNA_DEBUG_DEFENSE
-        UE_LOG(LogTemp, Warning, TEXT("[GameState] OnDayStarted 호출 시도"));
-#endif
-        // 이전 라운드 Dusk 상태 클린업 (재사이클 시 스케줄러/가드 리셋)
-        // NetMulticast_OnDawnPassed가 Phase Day OnRep보다 먼저 도착한 클라이언트에서는
-        // 이미 새 낮 라운드의 Dusk 타이머가 예약돼 있을 수 있다. 이 경우 여기서 지우면
-        // Night 도착 시점에 Dusk가 뒤늦게 재시작되므로, 예약된 전환을 보존한다.
-        const bool bPreserveCurrentDayDuskSchedule = bDawnPassedReceivedForCurrentDay;
-        if (!bPreserveCurrentDayDuskSchedule)
-        {
-            GetWorldTimerManager().ClearTimer(TimerHandle_DuskScheduler);
-            GetWorldTimerManager().ClearTimer(TimerHandle_DuskTransition);
-            bDuskStarted = false;
-            bDawnWeatherBlendStarted = false;  // Dawn 가드 리셋 (NetMulticast_OnDawnPassed에서 true로)
-        }
-#if HELLUNA_DEBUG_DEFENSE
-        else
-        {
-            UE_LOG(LogTemp, Warning, TEXT("[GameState] %s: Day OnRep가 DawnPassed 이후 도착 — 예약된 Dusk 전환 보존"),
-                HasAuthority() ? TEXT("SERVER") : TEXT("CLIENT"));
-        }
-#endif
+        // Gameplay Day only. Sky/weather/UI events are driven by VisualPhaseState.
+        GetWorldTimerManager().ClearTimer(TimerHandle_DawnTransition);
+        GetWorldTimerManager().ClearTimer(TimerHandle_DuskTransition);
+        bDuskStarted = false;
+        bDawnWeatherBlendStarted = false;
         CleanupInitialNightPCGClientArtifacts();
-        OnDayStarted();
-        // 🌅 시각 전환은 NetMulticast_OnDawnPassed 시점에 PlayDayTransition()으로 시작한다.
-        //   이전에는 TickDawnTransition 완료 후(해가 다 뜬 다음)에 날씨를 바꿔 Dusk와 비대칭이었다.
-        //   UDS가 없는 데디서버는 Dawn Lerp가 없으므로 여기서 즉시 호출 — ReplicatedRainIntensity 조기 복제.
-        if (!bHasUDS)
-        {
-            PlayDayTransition();
-            bDawnWeatherBlendStarted = true;  // NetMulticast_OnDawnPassed에서 중복 호출 방지
-        }
         break;
     }
     case EDefensePhase::Night:
     {
-#if HELLUNA_DEBUG_DEFENSE
-        UE_LOG(LogTemp, Warning, TEXT("[GameState] OnNightStarted 호출 시도"));
-#endif
-        // 진단(무조건 활성): 밤 진입 시 weather 전환 경로가 실제 도는지 확인
         UE_LOG(LogTemp, Warning, TEXT("[RainDiag-Phase] Night 진입 | HasAuthority=%d bHasUDW=%d bHasUDS=%d NetMode=%d NightForcedWeather=%s NightWeatherTypes.Num=%d"),
             (int32)HasAuthority(), (int32)bHasUDW, (int32)bHasUDS,
             (int32)(GetWorld() ? GetWorld()->GetNetMode() : NM_Standalone),
             NightForcedWeather ? *NightForcedWeather->GetName() : TEXT("null"),
             NightWeatherTypes.Num());
-        OnNightStarted();
+
         bHasBeenNight = true;  // ★ 밤 경험 기록
         bDawnPassedReceivedForCurrentDay = false;
-
-        if (bInitialNightBootstrapActive)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("[InitialNight] Night Phase 수신 — Dusk 보간 생략 후 즉시 밤 시각 적용 (Authority=%d)"),
-                (int32)HasAuthority());
-            ApplyInitialNightVisualState();
-            break;
-        }
-
-        // Dusk는 이제 EnterNight 이전에 NetMulticast_OnDawnPassed → TimerHandle_DuskScheduler
-        // 경유로 선제 실행됨. EnterNight 시점에는 이미 Dusk Lerp가 진행/완료된 상태.
-        //  - bDuskStarted=true: 이미 StartDuskTransition 호출됨 → 아무것도 안 함 (Tick이 마무리)
-        //  - bDuskStarted=false: 스케줄러가 아직 안 붙었거나 DuskTransitionDuration<=0
-        //                       → 즉시 전환 폴백 or StartDuskTransition 직접 호출.
-        if (bDuskStarted)
-        {
-#if HELLUNA_DEBUG_DEFENSE
-            UE_LOG(LogTemp, Warning, TEXT("[GameState] %s: Night 진입 — Dusk 선행 실행됨, Phase 전환만 처리"),
-                HasAuthority() ? TEXT("SERVER") : TEXT("CLIENT"));
-#endif
-        }
-        else
-        {
-            // 스케줄러 잔여 취소 (Night 진입 이후 뒤늦게 Dusk 발화 방지)
-            GetWorldTimerManager().ClearTimer(TimerHandle_DuskScheduler);
-
-            if (DuskTransitionDuration <= 0.f)
-            {
-                // Dusk 비활성: 즉시 전환 (날씨 블렌드는 WeatherTransitionTime 기본값으로 수행됨)
-                PlayNightTransition();
-                if (bHasUDS)
-                {
-                    FinalizeNightTransition();
-                    AActor* UDS = GetUDSActor();
-                    if (UDS)
-                    {
-                        if (FBoolProperty* AnimProp = CastField<FBoolProperty>(CachedProp_Animate))
-                            AnimProp->SetPropertyValue_InContainer(UDS, false);
-                    }
-                }
-            }
-            else
-            {
-                // Night Phase 도착 시점에는 해 지는 연출을 다시 시작하지 않는다.
-                // 정상 경로의 DynamicSky Dusk 연출은 NetMulticast_OnDawnPassed가 예약한
-                // StartDuskTransition()에서만 담당하고, 여기서는 누락 클라이언트의 최종 상태만 보정한다.
-                ApplyNightPhaseArrivalCorrection(TEXT("NightPhaseWithoutPriorDusk"));
-            }
-        }
+        GetWorldTimerManager().ClearTimer(TimerHandle_DuskScheduler);
         break;
     }
     default:
@@ -211,8 +326,310 @@ void AHellunaDefenseGameState::NetMulticast_ApplyInitialNightVisualState_Impleme
     ApplyInitialNightVisualState();
 }
 
+void AHellunaDefenseGameState::OnRep_VisualPhaseState()
+{
+    StartVisualPhaseLocal();
+}
+
+void AHellunaDefenseGameState::ServerStartDuskVisualPhase()
+{
+    if (!HasAuthority())
+    {
+        return;
+    }
+
+    if (Phase != EDefensePhase::Day)
+    {
+        return;
+    }
+
+    bDuskStarted = true;
+    SetVisualPhase(EDayNightVisualPhase::Dusk, DuskTransitionDuration, 0.f);
+}
+
+float AHellunaDefenseGameState::GetVisualPhaseAlpha() const
+{
+    if (VisualPhaseState.Duration <= KINDA_SMALL_NUMBER)
+    {
+        return 1.f;
+    }
+
+    const double Elapsed = GetServerWorldTimeSeconds() - VisualPhaseState.StartedServerTime;
+    return FMath::Clamp(static_cast<float>(Elapsed / VisualPhaseState.Duration), 0.f, 1.f);
+}
+
+void AHellunaDefenseGameState::SetUDSAnimate(bool bAnimate)
+{
+    AActor* UDS = GetUDSActor();
+    if (!UDS)
+    {
+        return;
+    }
+
+    WriteBoolPropertyValue(UDS, CachedProp_Animate, bAnimate);
+}
+
+void AHellunaDefenseGameState::SetUDSDayLengthForRound(float RoundDuration)
+{
+    if (RoundDuration <= KINDA_SMALL_NUMBER)
+    {
+        return;
+    }
+
+    AActor* UDS = GetUDSActor();
+    if (!UDS)
+    {
+        return;
+    }
+
+    float TimeRange = DayEndTime - DayStartTime;
+    if (TimeRange <= KINDA_SMALL_NUMBER)
+    {
+        TimeRange = 1000.f;
+    }
+
+    const float DayLength = 20.f * RoundDuration / TimeRange;
+    WriteFloatPropertyValue(UDS, CachedProp_DayLength, DayLength);
+}
+
+void AHellunaDefenseGameState::ApplyDaySettledState(float RoundDuration)
+{
+    ApplyVisualPhaseAlpha(EDayNightVisualPhase::Day, 1.f);
+    SetUDSTimeOfDay(DayStartTime);
+    SetUDSDayLengthForRound(RoundDuration);
+    SetUDSAnimate(true);
+
+    if (bHasUDS)
+    {
+        SetVolumetricCloudVisible(true);
+    }
+}
+
+void AHellunaDefenseGameState::ApplyVisualPhaseWeatherBlend(EDayNightVisualPhase InVisualPhase, float Alpha)
+{
+    const float SafeAlpha = FMath::Clamp(Alpha, 0.f, 1.f);
+    float RemainingDuration = VisualPhaseState.Duration > KINDA_SMALL_NUMBER
+        ? VisualPhaseState.Duration * (1.f - SafeAlpha)
+        : 0.01f;
+    RemainingDuration = FMath::Max(0.01f, RemainingDuration);
+
+    switch (InVisualPhase)
+    {
+    case EDayNightVisualPhase::Dawn:
+        if (bHasUDS)
+        {
+            SetVolumetricCloudVisible(true);
+        }
+        ApplyRandomWeather(true, RemainingDuration);
+        bDawnWeatherBlendStarted = true;
+        break;
+
+    case EDayNightVisualPhase::Day:
+        if (bHasUDS)
+        {
+            SetVolumetricCloudVisible(true);
+        }
+        if (LastVisualPhase != EDayNightVisualPhase::Dawn)
+        {
+            ApplyRandomWeather(true, 0.01f);
+        }
+        break;
+
+    case EDayNightVisualPhase::Dusk:
+        bDuskStarted = true;
+        ApplyRandomWeather(false, RemainingDuration);
+        break;
+
+    case EDayNightVisualPhase::Night:
+        if (LastVisualPhase != EDayNightVisualPhase::Dusk)
+        {
+            ApplyRandomWeather(false, 0.01f);
+        }
+        break;
+
+    default:
+        break;
+    }
+}
+
+void AHellunaDefenseGameState::ApplyVisualPhaseAlpha(EDayNightVisualPhase InVisualPhase, float Alpha)
+{
+    const float ClampedAlpha = FMath::Clamp(Alpha, 0.f, 1.f);
+    AActor* UDS = GetUDSActor();
+    if (!UDS)
+    {
+        return;
+    }
+
+    if (!CachedProp_TimeOfDay)
+    {
+        CacheUDSProperties();
+    }
+
+    const float StartTimeOfDay = WrapUDSTime(VisualPhaseState.StartTimeOfDay);
+    const float TargetTimeOfDay = WrapUDSTime(VisualPhaseState.TargetTimeOfDay);
+    float PhaseDistance = TargetTimeOfDay - StartTimeOfDay;
+    if (PhaseDistance < 0.f)
+    {
+        PhaseDistance += 2400.f;
+    }
+
+    float NightVisualAlpha = 0.f;
+    switch (InVisualPhase)
+    {
+    case EDayNightVisualPhase::Dawn:
+        SetUDSAnimate(false);
+        SetUDSTimeOfDay(WrapUDSTime(StartTimeOfDay + PhaseDistance * ClampedAlpha));
+        NightVisualAlpha = 1.f - ClampedAlpha;
+        break;
+
+    case EDayNightVisualPhase::Day:
+        SetUDSTimeOfDay(DayStartTime);
+        NightVisualAlpha = 0.f;
+        break;
+
+    case EDayNightVisualPhase::Dusk:
+        SetUDSAnimate(false);
+        SetUDSTimeOfDay(WrapUDSTime(StartTimeOfDay + PhaseDistance * ClampedAlpha));
+        NightVisualAlpha = ClampedAlpha;
+        break;
+
+    case EDayNightVisualPhase::Night:
+        SetUDSAnimate(false);
+        SetUDSTimeOfDay(NightSettleTime);
+        NightVisualAlpha = 1.f;
+        break;
+
+    default:
+        break;
+    }
+
+    WriteFloatPropertyValue(UDS, CachedProp_AuroraIntensity, DefaultNightAuroraIntensity * NightVisualAlpha);
+    WriteFloatPropertyValue(UDS, CachedProp_DaytimeAuroraIntensity, DefaultDaytimeAuroraIntensity * NightVisualAlpha);
+    WriteFloatPropertyValue(UDS, CachedProp_MoonLightIntensity, DefaultMoonLightIntensity * NightVisualAlpha);
+    WriteFloatPropertyValue(UDS, CachedProp_MoonTextureIntensityNight, DefaultMoonTextureIntensityNight * NightVisualAlpha);
+    WriteFloatPropertyValue(UDS, CachedProp_MoonGlowIntensity, DefaultMoonGlowIntensity * NightVisualAlpha);
+}
+
+void AHellunaDefenseGameState::StartVisualPhaseLocal()
+{
+    UWorld* World = GetWorld();
+    if (!World)
+    {
+        return;
+    }
+
+    World->GetTimerManager().ClearTimer(TimerHandle_DawnTransition);
+    World->GetTimerManager().ClearTimer(TimerHandle_DuskTransition);
+    World->GetTimerManager().ClearTimer(TimerHandle_VisualPhaseTransition);
+
+    if (bHasUDS && !CachedProp_TimeOfDay)
+    {
+        CacheUDSProperties();
+    }
+
+    const float Alpha = GetVisualPhaseAlpha();
+    ApplyVisualPhaseWeatherBlend(VisualPhaseState.Phase, Alpha);
+    ApplyVisualPhaseAlpha(VisualPhaseState.Phase, Alpha);
+    LastVisualPhase = VisualPhaseState.Phase;
+
+#if HELLUNA_DEBUG_DEFENSE
+    UE_LOG(LogTemp, Warning, TEXT("[VisualPhase] StartLocal | Phase=%s Alpha=%.2f Duration=%.2f Round=%.2f TOD=%.0f->%.0f Authority=%d"),
+        LexToString(VisualPhaseState.Phase),
+        Alpha,
+        VisualPhaseState.Duration,
+        VisualPhaseState.RoundDuration,
+        VisualPhaseState.StartTimeOfDay,
+        VisualPhaseState.TargetTimeOfDay,
+        (int32)HasAuthority());
+#endif
+
+    if (VisualPhaseState.Duration <= KINDA_SMALL_NUMBER || Alpha >= 1.f)
+    {
+        FinishVisualPhaseTransition();
+        return;
+    }
+
+    World->GetTimerManager().SetTimer(
+        TimerHandle_VisualPhaseTransition,
+        this,
+        &ThisClass::TickVisualPhaseTransition,
+        VisualPhaseTickInterval,
+        true);
+}
+
+void AHellunaDefenseGameState::TickVisualPhaseTransition()
+{
+    const float Alpha = GetVisualPhaseAlpha();
+    ApplyVisualPhaseAlpha(VisualPhaseState.Phase, Alpha);
+
+    if (Alpha >= 1.f)
+    {
+        FinishVisualPhaseTransition();
+    }
+}
+
+void AHellunaDefenseGameState::FinishVisualPhaseTransition()
+{
+    if (bVisualPhaseCompletionInProgress)
+    {
+        return;
+    }
+
+    bVisualPhaseCompletionInProgress = true;
+
+    if (UWorld* World = GetWorld())
+    {
+        World->GetTimerManager().ClearTimer(TimerHandle_VisualPhaseTransition);
+    }
+
+    const EDayNightVisualPhase CompletedPhase = VisualPhaseState.Phase;
+    ApplyVisualPhaseAlpha(CompletedPhase, 1.f);
+
+    switch (CompletedPhase)
+    {
+    case EDayNightVisualPhase::Dawn:
+        ApplyDaySettledState(VisualPhaseState.RoundDuration);
+        OnDayStarted();
+        OnDawnPassed(VisualPhaseState.RoundDuration);
+        if (HasAuthority())
+        {
+            SetVisualPhase(EDayNightVisualPhase::Day, 0.f, VisualPhaseState.RoundDuration);
+        }
+        break;
+
+    case EDayNightVisualPhase::Dusk:
+        SetUDSTimeOfDay(NightSettleTime);
+        SetUDSAnimate(false);
+        FinalizeNightTransition();
+        break;
+
+    case EDayNightVisualPhase::Night:
+        SetUDSTimeOfDay(NightSettleTime);
+        SetUDSAnimate(false);
+        FinalizeNightTransition();
+        OnNightStarted();
+        break;
+
+    case EDayNightVisualPhase::Day:
+        ApplyDaySettledState(VisualPhaseState.RoundDuration);
+        break;
+
+    default:
+        break;
+    }
+
+#if HELLUNA_DEBUG_DEFENSE
+    UE_LOG(LogTemp, Warning, TEXT("[VisualPhase] Finish | Phase=%s Authority=%d"),
+        LexToString(CompletedPhase),
+        (int32)HasAuthority());
+#endif
+
+    bVisualPhaseCompletionInProgress = false;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
-// 새벽 완료 Multicast RPC — 모든 클라이언트에서 OnDawnPassed(BP) 호출
+// 새벽 전환 Multicast RPC — 모든 인스턴스에서 C++ Dawn 보간 시작
 // ═══════════════════════════════════════════════════════════════════════════════
 void AHellunaDefenseGameState::NetMulticast_OnDawnPassed_Implementation(float RoundDuration)
 {
@@ -221,114 +638,10 @@ void AHellunaDefenseGameState::NetMulticast_OnDawnPassed_Implementation(float Ro
         RoundDuration, HasAuthority());
 #endif
 
-    bDawnPassedReceivedForCurrentDay = true;
-
-    // BP 이벤트 호출
-    OnDawnPassed(RoundDuration);
-
-    // Dusk 스케줄러 — EnterNight 이전에 선제 실행.
-    //  모든 NetMode에서 예약(데디서버에서도 ReplicatedRainIntensity 조기 복제를 위해).
-    //  데디서버는 StartDuskTransition 내부에서 UDS 없음 → ApplyRandomWeather(false)만 호출.
-    bDuskStarted = false;
-    GetWorldTimerManager().ClearTimer(TimerHandle_DuskScheduler);
-    const float DuskDelay = FMath::Max(0.f, RoundDuration - DuskTransitionDuration);
-    if (DuskTransitionDuration > 0.f)
+    if (HasAuthority())
     {
-        GetWorldTimerManager().SetTimer(
-            TimerHandle_DuskScheduler,
-            this,
-            &ThisClass::StartDuskTransition,
-            FMath::Max(0.01f, DuskDelay),  // 0초는 SetTimer 거절 — 1프레임 딜레이
-            false
-        );
-#if HELLUNA_DEBUG_DEFENSE
-        UE_LOG(LogTemp, Warning, TEXT("[GameState] %s: Dusk 예약 | RoundDuration=%.1f, DuskDuration=%.1f, Delay=%.1f"),
-            HasAuthority() ? TEXT("SERVER") : TEXT("CLIENT"),
-            RoundDuration, DuskTransitionDuration, DuskDelay);
-#endif
+        StartDayVisualTransition(RoundDuration);
     }
-
-    // ★ UDS가 없으면 스킵 (데디서버)
-    if (!bHasUDS) return;
-
-    AActor* UDS = GetUDSActor();
-    if (!UDS) return;
-
-    // [Step3 O-02] 캐싱된 프로퍼티 포인터 사용 — Animate OFF (전환 중 자체 애니메이션 방지)
-    if (FBoolProperty* AnimProp = CastField<FBoolProperty>(CachedProp_Animate))
-        AnimProp->SetPropertyValue_InContainer(UDS, false);
-
-    // [Step3 O-02] 캐싱된 프로퍼티로 현재 UDS Time of Day 읽기
-    float CurrentTime = 0.f;
-    if (FFloatProperty* Prop = CastField<FFloatProperty>(CachedProp_TimeOfDay))
-        CurrentTime = Prop->GetPropertyValue_InContainer(UDS);
-    else if (FDoubleProperty* DProp = CastField<FDoubleProperty>(CachedProp_TimeOfDay))
-        CurrentTime = (float)DProp->GetPropertyValue_InContainer(UDS);
-
-    // DawnTransitionDuration이 0 이하이면 즉시 전환
-    if (DawnTransitionDuration <= 0.f)
-    {
-        SetUDSTimeOfDay(DayStartTime);
-
-        float TimeRange = DayEndTime - DayStartTime;
-        if (TimeRange <= 0.f) TimeRange = 1000.f;
-        float DayLength = 20.f * RoundDuration / TimeRange;
-
-        // [Step3 O-02] 캐싱된 프로퍼티 포인터 사용 — Day Length 설정
-        if (FFloatProperty* DLProp = CastField<FFloatProperty>(CachedProp_DayLength))
-            DLProp->SetPropertyValue_InContainer(UDS, DayLength);
-        else if (FDoubleProperty* DLDProp = CastField<FDoubleProperty>(CachedProp_DayLength))
-            DLDProp->SetPropertyValue_InContainer(UDS, (double)DayLength);
-
-        // [Step3 O-02] 캐싱된 프로퍼티 포인터 사용 — Animate ON
-        if (FBoolProperty* AnimProp2 = CastField<FBoolProperty>(CachedProp_Animate))
-            AnimProp2->SetPropertyValue_InContainer(UDS, true);
-
-        // 즉시 전환이라도 새벽이 "완료"된 시점이므로 Day 시각 효과 적용.
-        if (!bDawnWeatherBlendStarted)
-        {
-            PlayDayTransition();
-            bDawnWeatherBlendStarted = true;
-        }
-
-#if HELLUNA_DEBUG_DEFENSE
-        UE_LOG(LogTemp, Warning, TEXT("[GameState] %s: 즉시 전환 DayLength=%.3f"),
-            HasAuthority() ? TEXT("SERVER") : TEXT("CLIENT"), DayLength);
-#endif
-        return;
-    }
-
-    // 새벽 Lerp 시작 준비
-    DawnLerpStart = CurrentTime;
-    DawnLerpElapsed = 0.f;
-    DawnTotalDistance = (2400.f - CurrentTime) + DayStartTime;
-    PendingRoundDuration = RoundDuration;
-
-    // 🌅 Dawn 비대칭 수정: Dusk와 대칭으로, 해 이동과 동시에 날씨/구름 블렌드를 시작한다.
-    //   이전에는 TickDawnTransition 완료(Alpha>=1.0)에 호출 → 해가 다 뜬 다음 날씨 스냅 전환.
-    //   지금은 Lerp 시작과 동시에 DawnTransitionDuration을 BlendTime으로 넘겨 UDW Change Weather
-    //   블렌드 완료 시점이 UDS Time of Day Lerp 완료와 일치.
-    if (!bDawnWeatherBlendStarted)
-    {
-        PlayDayTransition();
-        bDawnWeatherBlendStarted = true;
-    }
-
-#if HELLUNA_DEBUG_DEFENSE
-    UE_LOG(LogTemp, Warning, TEXT("[GameState] %s: 새벽 전환 시작! 현재=%.0f → 목표=%.0f (이동량=%.0f, %.1f초)"),
-        HasAuthority() ? TEXT("SERVER") : TEXT("CLIENT"),
-        CurrentTime, DayStartTime, DawnTotalDistance, DawnTransitionDuration);
-#endif
-
-    // ~60fps 루핑 타이머 시작
-    GetWorldTimerManager().ClearTimer(TimerHandle_DawnTransition);
-    GetWorldTimerManager().SetTimer(
-        TimerHandle_DawnTransition,
-        this,
-        &ThisClass::TickDawnTransition,
-        0.016f,
-        true
-    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -386,6 +699,10 @@ void AHellunaDefenseGameState::TickDawnTransition()
                 HasAuthority() ? TEXT("SERVER") : TEXT("CLIENT"), DayLength, TimeRange);
 #endif
         }
+
+        // C++ Dawn 보간이 끝난 뒤에 BP 알림을 보낸다.
+        // BP가 UDS TimeOfDay/Animate를 수정하더라도 이미 DayStartTime 정착 후라 시각 스냅을 만들지 않는다.
+        OnDawnPassed(PendingRoundDuration);
 
         // 🌅 날씨/구름 블렌드는 NetMulticast_OnDawnPassed에서 이미 PlayDayTransition()으로 시작됐다.
         //   DawnTransitionDuration을 BlendTime으로 넘겼으므로 UDW Change Weather 블렌드와
@@ -987,6 +1304,21 @@ void AHellunaDefenseGameState::CacheUDSProperties()
     CachedProp_TimeOfDay = FindFProperty<FProperty>(UDSClass, TEXT("Time of Day"));
     CachedProp_Animate = FindFProperty<FProperty>(UDSClass, TEXT("Animate Time of Day"));
     CachedProp_DayLength = FindFProperty<FProperty>(UDSClass, TEXT("Day Length"));
+    CachedProp_AuroraIntensity = FindFProperty<FProperty>(UDSClass, TEXT("Aurora Intensity"));
+    CachedProp_DaytimeAuroraIntensity = FindFProperty<FProperty>(UDSClass, TEXT("Daytime Aurora Intensity"));
+    CachedProp_MoonLightIntensity = FindFProperty<FProperty>(UDSClass, TEXT("Moon Light Intensity"));
+    CachedProp_MoonTextureIntensityNight = FindFProperty<FProperty>(UDSClass, TEXT("Moon Texture Intensity (Night)"));
+    CachedProp_MoonGlowIntensity = FindFProperty<FProperty>(UDSClass, TEXT("Moon Glow Intensity"));
+
+    if (!bSkyVisualDefaultsCached)
+    {
+        ReadFloatPropertyValue(UDS, CachedProp_AuroraIntensity, DefaultNightAuroraIntensity);
+        ReadFloatPropertyValue(UDS, CachedProp_DaytimeAuroraIntensity, DefaultDaytimeAuroraIntensity);
+        ReadFloatPropertyValue(UDS, CachedProp_MoonLightIntensity, DefaultMoonLightIntensity);
+        ReadFloatPropertyValue(UDS, CachedProp_MoonTextureIntensityNight, DefaultMoonTextureIntensityNight);
+        ReadFloatPropertyValue(UDS, CachedProp_MoonGlowIntensity, DefaultMoonGlowIntensity);
+        bSkyVisualDefaultsCached = true;
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1356,6 +1688,7 @@ void AHellunaDefenseGameState::ApplyInitialNightVisualState()
     World->GetTimerManager().ClearTimer(TimerHandle_DawnTransition);
     World->GetTimerManager().ClearTimer(TimerHandle_DuskScheduler);
     World->GetTimerManager().ClearTimer(TimerHandle_DuskTransition);
+    World->GetTimerManager().ClearTimer(TimerHandle_VisualPhaseTransition);
 
     bDuskStarted = true;
     DuskLerpStart = NightSettleTime;
@@ -1366,13 +1699,10 @@ void AHellunaDefenseGameState::ApplyInitialNightVisualState()
     {
         if (AActor* UDS = GetUDSActor())
         {
-            if (FBoolProperty* AnimProp = CastField<FBoolProperty>(CachedProp_Animate))
-            {
-                AnimProp->SetPropertyValue_InContainer(UDS, false);
-            }
+            WriteBoolPropertyValue(UDS, CachedProp_Animate, false);
         }
 
-        SetUDSTimeOfDay(NightSettleTime);
+        ApplyVisualPhaseAlpha(EDayNightVisualPhase::Night, 1.f);
     }
 
     // 첫 시작 밤은 일몰 연출이 아니라 이미 밤인 상태여야 하므로 날씨 전환도 거의 즉시 보정한다.

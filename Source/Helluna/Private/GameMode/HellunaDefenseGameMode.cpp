@@ -1582,7 +1582,7 @@ void AHellunaDefenseGameMode::EnterDay()
         // Phase 10: 채팅 시스템 메시지
         GS->BroadcastChatMessage(TEXT(""), TEXT("낮이 시작됩니다"), EChatMessageType::System);
 
-        GS->NetMulticast_OnDawnPassed(EffectiveDayDuration);
+        GS->StartDayVisualTransition(EffectiveDayDuration);
     }
 
     // [Day1Preload] Day1은 InitializeGame에서 이미 ActivateNightPCG를 호출했으므로 중복 스케줄 방지.
@@ -1663,11 +1663,7 @@ void AHellunaDefenseGameMode::EnterNightCore(EHellunaNightStartMode StartMode)
         GS->SetTotalMonstersThisNight(0);
         GS->SetIsBossNight(false);
         GS->SetPhase(EDefensePhase::Night);
-
-        if (bInitialNight)
-        {
-            GS->NetMulticast_ApplyInitialNightVisualState();
-        }
+        GS->SetVisualPhase(EDayNightVisualPhase::Night, 0.f, 0.f);
 
         // Phase 10: 채팅 시스템 메시지
         GS->BroadcastChatMessage(TEXT(""), TEXT("밤이 시작됩니다"), EChatMessageType::System);
