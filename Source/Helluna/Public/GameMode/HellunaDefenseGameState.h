@@ -81,6 +81,12 @@ public:
 
     void SetPhase(EDefensePhase NewPhase);
 
+    /** 첫 시작 밤 부트스트랩 상태. 서버가 Phase Night보다 먼저 세팅한다. */
+    void SetInitialNightBootstrapActive(bool bActive);
+
+    UFUNCTION(BlueprintPure, Category = "Defense|DayNight")
+    bool IsInitialNightBootstrapActive() const { return bInitialNightBootstrapActive; }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // 낮/밤 전환 이벤트 (BP에서 구현)
     // ═══════════════════════════════════════════════════════════════════════════
@@ -169,6 +175,10 @@ public:
      */
     UFUNCTION(NetMulticast, Reliable)
     void NetMulticast_OnDawnPassed(float RoundDuration);
+
+    /** 첫날 밤 시작 시 현재 접속 클라이언트의 UDS/UDW를 즉시 밤 상태로 보정한다. */
+    UFUNCTION(NetMulticast, Reliable)
+    void NetMulticast_ApplyInitialNightVisualState();
 
     /**
      * 새벽 완료 시 호출 (BP에서 UDS 비례 구동 구현)
@@ -278,6 +288,12 @@ protected:
     UPROPERTY(ReplicatedUsing = OnRep_Phase)
     EDefensePhase Phase = EDefensePhase::Day;
 
+    UPROPERTY(ReplicatedUsing = OnRep_InitialNightBootstrapActive, BlueprintReadOnly, Category = "Defense|DayNight")
+    bool bInitialNightBootstrapActive = false;
+
+    UFUNCTION()
+    void OnRep_InitialNightBootstrapActive();
+
     virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	//몬스터 생존 개수 관리, GameMode는 서버에만 있으니, UI/디버그를 위해 GameState에서 복제(Replicate)로 공유
@@ -347,12 +363,25 @@ protected:
     bool bDuskStarted = false;
 
     /**
+     * 현재 낮 라운드의 DawnPassed 신호를 이미 받았는지.
+     * Reliable RPC와 Phase RepNotify가 클라이언트에서 서로 다른 순서로 도착할 수 있으므로,
+     * NetMulticast_OnDawnPassed()가 예약한 Dusk 타이머를 뒤늦은 Day OnRep가 지우지 않게 보호한다.
+     */
+    bool bDawnPassedReceivedForCurrentDay = false;
+
+    /**
      * Dusk 전환 시작.
      * Dawn 완료 시점에 (RoundDuration - DuskTransitionDuration)초 뒤로 예약되어 호출.
      * 모든 인스턴스에서 호출되며, 서버 권위는 ReplicatedRainIntensity 복제, UDS 보유 인스턴스는
      * UDS Time of Day Lerp + UDW Change Weather(TransitionTime=DuskTransitionDuration) 블렌드.
      */
     void StartDuskTransition();
+
+    /**
+     * Night Phase 도착 시 Dusk를 다시 재생하지 않고 최종 밤 상태만 보정한다.
+     * 정상 경로의 해 지는 연출은 StartDuskTransition()이 소유한다.
+     */
+    void ApplyNightPhaseArrivalCorrection(const TCHAR* Reason);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // 🌤️ 랜덤 날씨 시스템
@@ -426,6 +455,9 @@ protected:
 
     /** 밤 전환 완료: 구름 OFF (Dusk Lerp 끝에서 호출). */
     void FinalizeNightTransition();
+
+    /** 첫날 밤 시작 전용: Dusk Lerp 없이 즉시 밤 시각/날씨로 정착. */
+    void ApplyInitialNightVisualState();
 
     /** Dawn Lerp 시작 시 날씨 블렌드가 이미 예약됐는지 (중복 호출 방지 가드) */
     bool bDawnWeatherBlendStarted = false;
