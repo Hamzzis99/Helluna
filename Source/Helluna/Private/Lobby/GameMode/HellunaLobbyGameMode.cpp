@@ -1506,6 +1506,14 @@ bool AHellunaLobbyGameMode::FindEmptyChannel(FGameChannelInfo& OutChannel)
 	{
 		if (Ch.Status == EChannelStatus::Empty && !PendingDeployChannels.Contains(Ch.Port))
 		{
+			if (!GameServerManager || !GameServerManager->IsTrackedServerRunning(Ch.Port))
+			{
+				UE_LOG(LogHellunaLobby, Warning,
+					TEXT("[LobbyGM] FindEmptyChannel: skip stale/untracked registry channel | Channel=%s | Port=%d"),
+					*Ch.ChannelId, Ch.Port);
+				continue;
+			}
+
 			OutChannel = Ch;
 			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] FindEmptyChannel: %s (Port=%d)"), *Ch.ChannelId, Ch.Port);
 			return true;
@@ -1543,6 +1551,14 @@ bool AHellunaLobbyGameMode::FindEmptyChannelForMap(const FString& MapKey, FGameC
 			{
 				if (DoesLobbyRegistryMapMatch(Ch.MapName, RequestedMapIdentifier))
 				{
+					if (!GameServerManager || !GameServerManager->IsTrackedServerRunning(Ch.Port))
+					{
+						UE_LOG(LogHellunaLobby, Warning,
+							TEXT("[LobbyGM] FindEmptyChannelForMap: skip stale/untracked registry channel | Channel=%s | Port=%d | RegistryMap=%s | RequestedMap=%s"),
+							*Ch.ChannelId, Ch.Port, *Ch.MapName, *RequestedMapIdentifier);
+						continue;
+					}
+
 					OutChannel = Ch;
 					UE_LOG(LogHellunaLobby, Log,
 						TEXT("[LobbyGM] FindEmptyChannelForMap: %s (Port=%d, RegistryMap=%s, RequestedMap=%s)"),
@@ -1567,6 +1583,14 @@ bool AHellunaLobbyGameMode::FindEmptyChannelForMap(const FString& MapKey, FGameC
 			// MapName 필드에 MapKey가 포함되어 있는지 확인
 			if (Ch.MapName.Contains(MapKey))
 			{
+				if (!GameServerManager || !GameServerManager->IsTrackedServerRunning(Ch.Port))
+				{
+					UE_LOG(LogHellunaLobby, Warning,
+						TEXT("[LobbyGM] FindEmptyChannelForMap: skip stale/untracked registry channel | Channel=%s | Port=%d | Map=%s"),
+						*Ch.ChannelId, Ch.Port, *Ch.MapName);
+					continue;
+				}
+
 				OutChannel = Ch;
 				UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] FindEmptyChannelForMap: %s (Port=%d, Map=%s)"),
 					*Ch.ChannelId, Ch.Port, *Ch.MapName);
