@@ -179,23 +179,13 @@ void AHellunaDefenseGameState::SetVisualPhase(EDayNightVisualPhase NewVisualPhas
 
     case EDayNightVisualPhase::Day:
         StartTimeOfDay = DayStartTime;
-        TargetTimeOfDay = DayStartTime;
+        TargetTimeOfDay = DayEndTime;
         break;
 
     case EDayNightVisualPhase::Dusk:
-    {
-        float DayRange = DayEndTime - DayStartTime;
-        if (DayRange < 0.f)
-        {
-            DayRange += 2400.f;
-        }
-        const float StartAlpha = ActiveDayRoundDuration > KINDA_SMALL_NUMBER
-            ? FMath::Clamp(ActiveDuskDelay / ActiveDayRoundDuration, 0.f, 1.f)
-            : 1.f;
-        StartTimeOfDay = WrapUDSTime(DayStartTime + DayRange * StartAlpha);
+        StartTimeOfDay = DayEndTime;
         TargetTimeOfDay = NightSettleTime;
         break;
-    }
 
     case EDayNightVisualPhase::Night:
         StartTimeOfDay = NightSettleTime;
@@ -238,30 +228,25 @@ void AHellunaDefenseGameState::StartDayVisualTransition(float RoundDuration)
     World->GetTimerManager().ClearTimer(TimerHandle_DuskTransition);
     World->GetTimerManager().ClearTimer(TimerHandle_DuskScheduler);
 
-    SetVisualPhase(EDayNightVisualPhase::Dawn, DawnTransitionDuration, RoundDuration);
+    const float SafeRoundDuration = FMath::Max(0.f, RoundDuration);
+    ActiveDawnDuration = FMath::Clamp(DawnTransitionDuration, 0.f, SafeRoundDuration);
+    const float RemainingAfterDawn = FMath::Max(0.f, SafeRoundDuration - ActiveDawnDuration);
+    ActiveDuskDuration = DuskTransitionDuration > 0.f
+        ? FMath::Min(DuskTransitionDuration, RemainingAfterDawn)
+        : 0.f;
+    ActiveDuskDelay = SafeRoundDuration - ActiveDuskDuration;
+    ActiveDayVisualDuration = FMath::Max(0.f, ActiveDuskDelay - ActiveDawnDuration);
+    ActiveDayRoundDuration = SafeRoundDuration;
 
-    const float PreferredDuskDelay = RoundDuration - DuskTransitionDuration;
-    const float EarliestDuskDelay = FMath::Max(0.f, DawnTransitionDuration);
-    const float DuskDelay = FMath::Max(EarliestDuskDelay, PreferredDuskDelay);
-    ActiveDayRoundDuration = RoundDuration;
-    ActiveDuskDelay = DuskDelay;
-    if (DuskTransitionDuration > 0.f && DuskDelay < RoundDuration)
-    {
-        World->GetTimerManager().SetTimer(
-            TimerHandle_DuskScheduler,
-            this,
-            &ThisClass::ServerStartDuskVisualPhase,
-            FMath::Max(0.01f, DuskDelay),
-            false);
-    }
+    SetVisualPhase(EDayNightVisualPhase::Dawn, ActiveDawnDuration, SafeRoundDuration);
 
 #if HELLUNA_DEBUG_DEFENSE
-    UE_LOG(LogTemp, Warning, TEXT("[VisualPhase] StartDayVisualTransition | Round=%.1f Dawn=%.1f Dusk=%.1f DuskDelay=%.1f Scheduled=%d"),
-        RoundDuration,
-        DawnTransitionDuration,
-        DuskTransitionDuration,
-        DuskDelay,
-        (int32)(DuskTransitionDuration > 0.f && DuskDelay < RoundDuration));
+    UE_LOG(LogTemp, Warning, TEXT("[VisualPhase] StartDayVisualTransition | Round=%.1f Dawn=%.1f Day=%.1f Dusk=%.1f DuskDelay=%.1f"),
+        SafeRoundDuration,
+        ActiveDawnDuration,
+        ActiveDayVisualDuration,
+        ActiveDuskDuration,
+        ActiveDuskDelay);
 #endif
 }
 
@@ -344,7 +329,7 @@ void AHellunaDefenseGameState::ServerStartDuskVisualPhase()
     }
 
     bDuskStarted = true;
-    SetVisualPhase(EDayNightVisualPhase::Dusk, DuskTransitionDuration, 0.f);
+    SetVisualPhase(EDayNightVisualPhase::Dusk, ActiveDuskDuration, 0.f);
 }
 
 float AHellunaDefenseGameState::GetVisualPhaseAlpha() const
@@ -395,9 +380,7 @@ void AHellunaDefenseGameState::SetUDSDayLengthForRound(float RoundDuration)
 void AHellunaDefenseGameState::ApplyDaySettledState(float RoundDuration)
 {
     ApplyVisualPhaseAlpha(EDayNightVisualPhase::Day, 1.f);
-    SetUDSTimeOfDay(DayStartTime);
-    SetUDSDayLengthForRound(RoundDuration);
-    SetUDSAnimate(true);
+    SetUDSAnimate(false);
 
     if (bHasUDS)
     {
@@ -484,7 +467,8 @@ void AHellunaDefenseGameState::ApplyVisualPhaseAlpha(EDayNightVisualPhase InVisu
         break;
 
     case EDayNightVisualPhase::Day:
-        SetUDSTimeOfDay(DayStartTime);
+        SetUDSAnimate(false);
+        SetUDSTimeOfDay(WrapUDSTime(StartTimeOfDay + PhaseDistance * ClampedAlpha));
         NightVisualAlpha = 0.f;
         break;
 
@@ -584,17 +568,24 @@ void AHellunaDefenseGameState::FinishVisualPhaseTransition()
     }
 
     const EDayNightVisualPhase CompletedPhase = VisualPhaseState.Phase;
+    bool bStartNextPhase = false;
+    EDayNightVisualPhase NextPhase = EDayNightVisualPhase::Day;
+    float NextDuration = 0.f;
+    float NextRoundDuration = 0.f;
+
     ApplyVisualPhaseAlpha(CompletedPhase, 1.f);
 
     switch (CompletedPhase)
     {
     case EDayNightVisualPhase::Dawn:
-        ApplyDaySettledState(VisualPhaseState.RoundDuration);
         OnDayStarted();
         OnDawnPassed(VisualPhaseState.RoundDuration);
         if (HasAuthority())
         {
-            SetVisualPhase(EDayNightVisualPhase::Day, 0.f, VisualPhaseState.RoundDuration);
+            bStartNextPhase = true;
+            NextPhase = EDayNightVisualPhase::Day;
+            NextDuration = ActiveDayVisualDuration;
+            NextRoundDuration = VisualPhaseState.RoundDuration;
         }
         break;
 
@@ -613,6 +604,13 @@ void AHellunaDefenseGameState::FinishVisualPhaseTransition()
 
     case EDayNightVisualPhase::Day:
         ApplyDaySettledState(VisualPhaseState.RoundDuration);
+        if (HasAuthority() && Phase == EDefensePhase::Day && ActiveDuskDuration > KINDA_SMALL_NUMBER)
+        {
+            bStartNextPhase = true;
+            NextPhase = EDayNightVisualPhase::Dusk;
+            NextDuration = ActiveDuskDuration;
+            NextRoundDuration = 0.f;
+        }
         break;
 
     default:
@@ -626,6 +624,11 @@ void AHellunaDefenseGameState::FinishVisualPhaseTransition()
 #endif
 
     bVisualPhaseCompletionInProgress = false;
+
+    if (bStartNextPhase)
+    {
+        SetVisualPhase(NextPhase, NextDuration, NextRoundDuration);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

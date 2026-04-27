@@ -337,6 +337,9 @@ protected:
     bool bVisualPhaseCompletionInProgress = false;
     float ActiveDayRoundDuration = 0.f;
     float ActiveDuskDelay = 0.f;
+    float ActiveDawnDuration = 0.f;
+    float ActiveDayVisualDuration = 0.f;
+    float ActiveDuskDuration = 0.f;
     void ServerStartDuskVisualPhase();
     void StartVisualPhaseLocal();
     void TickVisualPhaseTransition();
