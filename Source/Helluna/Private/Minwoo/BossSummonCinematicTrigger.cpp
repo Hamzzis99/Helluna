@@ -7,6 +7,7 @@
 #include "BrainComponent.h"
 #include "Camera/CameraActor.h"
 #include "Character/HellunaEnemyCharacter.h"
+#include "Character/HellunaEnemyCharacter_Boss.h"
 #include "Controller/HellunaHeroController.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -30,12 +31,71 @@
 #include "Blueprint/UserWidget.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Animation/AnimInstance.h"
+#include "Character/EnemyComponent/HellunaHealthComponent.h"
+#include "UObject/UnrealType.h"
 
 ABossSummonCinematicTrigger::ABossSummonCinematicTrigger()
 {
-	PrimaryActorTick.bCanEverTick = false;
+	// [CinematicWalkV1] Tick 가 필요. 평소엔 비활성, TryActivate 에서 켜고 종료 시 끔.
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bStartWithTickEnabled = false;
 	bReplicates = true;
 	SetReplicateMovement(false);
+}
+
+// [CinematicWalkV1] 시네마틱 동안 보스를 매 Tick 전진시킨다.
+//   AM_Boss_Walk 가 in-place 라 root motion 으로 못 움직이는 문제 우회 — 직접 입력으로 걷기 시각화.
+//   서버에서만 동작 (HasAuthority). 클라는 FRepMovement 로 위치 sync.
+void ABossSummonCinematicTrigger::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+
+	if (!HasAuthority() || !bCinematicActive) return;
+	if (CinematicBossWalkSpeed <= 0.f) return;
+
+	APawn* Boss = ActiveBoss.Get();
+	if (!Boss) return;
+
+	FVector Direction;
+	if (bCinematicWalkUseBossForward)
+	{
+		Direction = Boss->GetActorForwardVector();
+	}
+	else
+	{
+		// 가장 가까운 PlayerPawn 방향 (없으면 정면 fallback).
+		AActor* TargetActor = nullptr;
+		float ClosestDistSq = TNumericLimits<float>::Max();
+		const FVector BossLoc = Boss->GetActorLocation();
+		if (UWorld* World = GetWorld())
+		{
+			for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+			{
+				if (APlayerController* PC = It->Get())
+				{
+					if (APawn* PlayerPawn = PC->GetPawn())
+					{
+						const float DistSq = FVector::DistSquared(BossLoc, PlayerPawn->GetActorLocation());
+						if (DistSq < ClosestDistSq)
+						{
+							ClosestDistSq = DistSq;
+							TargetActor = PlayerPawn;
+						}
+					}
+				}
+			}
+		}
+		Direction = TargetActor
+			? (TargetActor->GetActorLocation() - BossLoc).GetSafeNormal2D()
+			: Boss->GetActorForwardVector();
+
+		// [CinematicWalkV1.NoShake] 보스 회전은 CMC 의 bOrientRotationToMovement 가 자동으로 처리하게 둠.
+		//   여기서 SetActorRotation 으로 매 Tick 덮어쓰면 CMC 의 회전 보간과 경쟁해 yaw 진동 →
+		//   보스에 부착된 시네마틱 카메라가 같이 흔들림. 회전 직접 제어 제거.
+	}
+
+	if (Direction.IsNearlyZero()) return;
+	Boss->AddMovementInput(Direction, 1.0f);
 }
 
 void ABossSummonCinematicTrigger::BeginPlay()
@@ -243,7 +303,7 @@ bool ABossSummonCinematicTrigger::TryActivate(APawn* InTargetBoss)
 	Boss->SetCanBeDamaged(false);
 
 	// 2) 보스 AI 정지 (HellunaEnemyCharacter일 경우 자동 재시작도 억제)
-	if (AHellunaEnemyCharacter* BossEnemy = Cast<AHellunaEnemyCharacter>(Boss))
+	if (AHellunaEnemyCharacter_Boss* BossEnemy = Cast<AHellunaEnemyCharacter_Boss>(Boss))
 	{
 		BossEnemy->bSuppressAutoBrainRestart = true;
 	}
@@ -260,13 +320,21 @@ bool ABossSummonCinematicTrigger::TryActivate(APawn* InTargetBoss)
 	// 3) 이동 잠금 — 루트모션 없는 몽타주 대비.
 	//    MOVE_None은 중력까지 끊어 공중 스폰 시 보스가 떠있게 됨.
 	//    MOVE_Walking + 속도 0으로 두면 중력은 살아있어 자연스럽게 땅에 안착.
-	//    AI 자체는 StopLogic으로 이미 멈춰 있으므로 보스가 자발적으로 움직이지 않음.
 	if (ACharacter* BossChar = Cast<ACharacter>(Boss))
 	{
 		if (UCharacterMovementComponent* Move = BossChar->GetCharacterMovement())
 		{
 			Move->StopMovementImmediately();
 			Move->SetMovementMode(MOVE_Walking);
+
+			// [CinematicWalkV1] 시네마틱 중 Tick AddMovementInput 으로 전진할 수 있도록
+			//   MaxWalkSpeed 를 CinematicBossWalkSpeed 로 잠시 덮어쓰고, 종료 시 복원.
+			if (CinematicBossWalkSpeed > 0.f)
+			{
+				SavedBossMaxWalkSpeed = Move->MaxWalkSpeed;
+				Move->MaxWalkSpeed = CinematicBossWalkSpeed;
+				SetActorTickEnabled(true);
+			}
 		}
 	}
 
@@ -284,7 +352,7 @@ bool ABossSummonCinematicTrigger::TryActivate(APawn* InTargetBoss)
 		&ABossSummonCinematicTrigger::HandleCinematicCompletedServer, Failsafe, false);
 
 	// 7) 소환 몽타주 재생 + 종료 콜백 바인딩 (마지막에 — 즉시 콜백이 와도 플래그 처리)
-	if (AHellunaEnemyCharacter* BossEnemy = Cast<AHellunaEnemyCharacter>(Boss))
+	if (AHellunaEnemyCharacter_Boss* BossEnemy = Cast<AHellunaEnemyCharacter_Boss>(Boss))
 	{
 		BossEnemy->OnSummonMontageFinished.Unbind();
 		BossEnemy->OnSummonMontageFinished.BindUObject(this,
@@ -364,7 +432,7 @@ void ABossSummonCinematicTrigger::HandleCinematicCompletedServer()
 	if (APawn* Boss = ActiveBoss.Get())
 	{
 		// 1) 델리게이트 해제 + 자동 재시작 억제 해제 + 소환 몽타주 즉시 종료
-		if (AHellunaEnemyCharacter* BossEnemy = Cast<AHellunaEnemyCharacter>(Boss))
+		if (AHellunaEnemyCharacter_Boss* BossEnemy = Cast<AHellunaEnemyCharacter_Boss>(Boss))
 		{
 			BossEnemy->OnSummonMontageFinished.Unbind();
 			BossEnemy->bSuppressAutoBrainRestart = false;
@@ -382,6 +450,11 @@ void ABossSummonCinematicTrigger::HandleCinematicCompletedServer()
 							TEXT("[BossSummonCinematic_LiveCodeCheck] SummonMontage stopped (blend=%.2fs) on cinematic end"),
 							BlendOutTime);
 					}
+
+					// [RootMotionRestoreV1] 서버 사이드 안전장치 — OnSummonMontageEnded 콜백이 누락되거나
+					// 0.2s blend out 동안 보스가 멈춰있는 시간을 없애기 위해 시네마틱 종료 즉시 복원.
+					// 클라 사이드는 OnSummonMontageEnded (Multicast 컨텍스트에서 서버+클라 양쪽 바인딩) 가 처리.
+					AnimInst->SetRootMotionMode(ERootMotionMode::RootMotionFromMontagesOnly);
 				}
 			}
 		}
@@ -395,6 +468,14 @@ void ABossSummonCinematicTrigger::HandleCinematicCompletedServer()
 			if (UCharacterMovementComponent* Move = BossChar->GetCharacterMovement())
 			{
 				Move->SetMovementMode(MOVE_Walking);
+
+				// [CinematicWalkV1] TryActivate 에서 덮어쓴 MaxWalkSpeed 복원 + Tick 종료.
+				if (SavedBossMaxWalkSpeed >= 0.f)
+				{
+					Move->MaxWalkSpeed = SavedBossMaxWalkSpeed;
+					SavedBossMaxWalkSpeed = -1.f;
+				}
+				SetActorTickEnabled(false);
 			}
 		}
 
@@ -434,6 +515,9 @@ void ABossSummonCinematicTrigger::Multicast_StartCinematic_Implementation(APawn*
 	{
 		return;
 	}
+
+	// BP OnCinematicEndedClient에서 쓸 수 있게 보스 참조 캐시
+	LocalCinematicBoss = Boss;
 
 	// ── 모드 1: LevelSequence 사용 (Possessable 카메라를 보스에 부착) ──
 	if (CameraSequence)
@@ -535,7 +619,7 @@ void ABossSummonCinematicTrigger::Multicast_StartCinematic_Implementation(APawn*
 			TEXT("[BossSummonCinematic_LiveCodeCheck] Sequence player or camera creation failed — falling back"));
 	}
 
-	// ── 모드 2 (폴백): 보스 로컬 좌표 기준으로 카메라 초기 배치 (정면이 항상 잡히도록) ──
+	// ── 모드 2 (폴백): 보스 로컬 좌표 기준으로 카메라 초기 배치 ──
 	const FVector BossLoc = Boss->GetActorLocation();
 	const FVector Forward = Boss->GetActorForwardVector();
 	const FVector Right   = Boss->GetActorRightVector();
@@ -547,7 +631,6 @@ void ABossSummonCinematicTrigger::Multicast_StartCinematic_Implementation(APawn*
 		+ Right   * CameraOffset.Y
 		+ Up      * CameraOffset.Z;
 
-	// 카메라 시선 타겟: 보스 중심부 (전신 프레이밍용 — 가슴(Z+80)보다 약간 낮은 골반/허리)
 	const FVector LookTarget = BossLoc + FVector(0.f, 0.f, 50.f);
 	const FRotator LookAt = (LookTarget - CameraLoc).Rotation();
 
@@ -561,13 +644,12 @@ void ABossSummonCinematicTrigger::Multicast_StartCinematic_Implementation(APawn*
 	{
 		LocalCameraActor = CamActor;
 
-		// 보스에 부착 → 보스가 움직이거나 회전하면 카메라도 함께 이동/회전
-		// KeepWorld: 현재 월드 위치/회전 유지하면서 부착 (계산해 둔 시점/위치가 보존됨)
+		// 보스에 부착 — KeepWorld
 		FAttachmentTransformRules AttachRules(
-			EAttachmentRule::KeepWorld,   // Location
-			EAttachmentRule::KeepWorld,   // Rotation
-			EAttachmentRule::KeepWorld,   // Scale
-			false);                       // bWeldSimulatedBodies
+			EAttachmentRule::KeepWorld,
+			EAttachmentRule::KeepWorld,
+			EAttachmentRule::KeepWorld,
+			false);
 		CamActor->AttachToActor(Boss, AttachRules);
 
 		ViewTarget = CamActor;
@@ -599,6 +681,18 @@ void ABossSummonCinematicTrigger::Multicast_StartCinematic_Implementation(APawn*
 			}
 			break;
 		}
+	}
+}
+
+void ABossSummonCinematicTrigger::OnBossDiedClient(AActor* DeadActor, AActor* KillerActor)
+{
+	UE_LOG(LogTemp, Warning,
+		TEXT("[BossHealthBarV1] Boss died — removing HP bar"));
+
+	if (LocalBossHealthBar)
+	{
+		LocalBossHealthBar->RemoveFromParent();
+		LocalBossHealthBar = nullptr;
 	}
 }
 
@@ -650,6 +744,56 @@ void ABossSummonCinematicTrigger::Multicast_EndCinematic_Implementation()
 		LocalSequenceActor->Destroy();
 		LocalSequenceActor = nullptr;
 	}
+
+	// 보스 HP 바 스폰 — 로컬 머신에서만 발화
+	if (APawn* BossPtr = LocalCinematicBoss.Get())
+	{
+		if (BossHealthBarWidgetClass)
+		{
+			APlayerController* LocalPC = nullptr;
+			for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+			{
+				if (APlayerController* PC = It->Get())
+				{
+					if (PC->IsLocalPlayerController())
+					{
+						LocalPC = PC;
+						break;
+					}
+				}
+			}
+
+			if (LocalPC)
+			{
+				LocalBossHealthBar = CreateWidget<UUserWidget>(LocalPC, BossHealthBarWidgetClass);
+				if (LocalBossHealthBar)
+				{
+					// 위젯의 BossActor 변수를 리플렉션으로 주입 (BP의 Actor Reference Exposed on Spawn 변수)
+					if (FObjectProperty* BossProp = FindFProperty<FObjectProperty>(
+						LocalBossHealthBar->GetClass(), TEXT("BossActor")))
+					{
+						BossProp->SetObjectPropertyValue_InContainer(LocalBossHealthBar, BossPtr);
+					}
+
+					LocalBossHealthBar->AddToViewport(BossHealthBarZOrder);
+
+					// 보스 사망 시 HP 바 자동 제거
+					if (UHellunaHealthComponent* HC = BossPtr->FindComponentByClass<UHellunaHealthComponent>())
+					{
+						HC->OnDeath.AddUniqueDynamic(this, &ABossSummonCinematicTrigger::OnBossDiedClient);
+					}
+
+					UE_LOG(LogTemp, Warning,
+						TEXT("[BossHealthBarV1] Spawned HP bar for %s (class=%s)"),
+						*BossPtr->GetName(), *BossHealthBarWidgetClass->GetName());
+				}
+			}
+		}
+
+		// BP 추가 연출 훅
+		OnCinematicEndedClient(BossPtr);
+	}
+	LocalCinematicBoss.Reset();
 
 	// 블렌드 아웃이 끝난 뒤 카메라 액터 파괴 (블렌드 중 사라지면 화면 튐)
 	if (LocalCameraActor.IsValid())

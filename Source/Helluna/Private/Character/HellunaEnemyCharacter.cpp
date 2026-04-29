@@ -158,8 +158,16 @@ void AHellunaEnemyCharacter::PossessedBy(AController* NewController)
 				if (IsValid(STCompPtr) && IsValid(SelfPtr))
 				{
 					STCompPtr->StopLogic(TEXT("Restart after possess"));
-					STCompPtr->StartLogic();
-					UE_LOG(LogTemp, Verbose, TEXT("[PossessedBy] NextTick StateTree Stop→Start — %s"), *SelfPtr->GetName());
+					// 보스 소환 시네마틱 동안 StartLogic 억제 — 보스 서브클래스에서 override (일반: 항상 false).
+					if (SelfPtr->ShouldSuppressBrainRestartAfterPossess())
+					{
+						UE_LOG(LogTemp, Warning, TEXT("[PossessedBy] NextTick skipped StartLogic — boss summon active"));
+					}
+					else
+					{
+						STCompPtr->StartLogic();
+						UE_LOG(LogTemp, Verbose, TEXT("[PossessedBy] NextTick StateTree Stop→Start — %s"), *SelfPtr->GetName());
+					}
 				}
 			});
 		}

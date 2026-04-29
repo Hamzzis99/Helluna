@@ -62,6 +62,21 @@ private:
 public:
 	FORCEINLINE UEnemyCombatComponent* GetEnemyCombatComponent() const { return EnemyCombatComponent; }
 
+	// =========================================================
+	// 보스 전용 hooks — 일반 몬스터에서는 no-op, AHellunaEnemyCharacter_Boss 가 override.
+	//   OnMonsterHealthChanged 가 EnemyGrade==Boss/SemiBoss 분기에서 호출.
+	//   가상 호출이지만 일반 몹은 default body 가 즉시 false/return → 비용 거의 0.
+	// =========================================================
+
+	/** HP 0 도달 시 페이즈2 가로채기. 가로채면 true 반환해 사망 처리 스킵. 일반 몬스터: 항상 false. */
+	virtual bool TryInterceptDeathForPhase2(float OldHealth, float NewHealth) { return false; }
+
+	/** 피격 시 보스 전용 히트 스톱 (시간 일시 정지). 일반 몬스터: no-op. */
+	virtual void TriggerHitStop() {}
+
+	/** PossessedBy 후 NextTick StartLogic 을 건너뛸지. 보스 소환 시네마틱 동안 true. 일반: false. */
+	virtual bool ShouldSuppressBrainRestartAfterPossess() const { return false; }
+
 	/**
 	 * 이 캐릭터의 등급.
 	 * 사망 시 GameMode::NotifyMonsterDied 에서 등급에 따라 처리 경로가 분기된다.
@@ -612,17 +627,5 @@ protected:
 
 	// DespawnMassEntityOnServer 중복 호출 방지 플래그
 	bool bDespawnStarted = false;
-
-public:
-	/**
-	 * [BossAttackCooldownPersistV1] 보스 공격(GA)별 남은 쿨다운(초).
-	 *   STTask_BossChooseAttack 의 FBossAttackEntry.Cooldown 이 Attack 상태 재진입에도 살아남도록
-	 *   보스 캐릭터 자체에 저장한다 (기존엔 ActiveInstanceData 에 있어서 상태 Exit 시 리셋되는 버그).
-	 *
-	 *   Tick 마다 Task 가 Decrement 하고, 엔트리 발동 시 Entry.Cooldown 로 재설정.
-	 *   멀티플레이어: 서버 AI 만 돌므로 복제 불필요 (Transient).
-	 */
-	UPROPERTY(Transient)
-	TMap<TSubclassOf<UHellunaEnemyGameplayAbility>, float> BossAttackCooldowns;
 };
 	
