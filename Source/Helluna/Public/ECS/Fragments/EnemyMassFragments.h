@@ -185,6 +185,19 @@ struct HELLUNA_API FEnemyDataFragment : public FMassFragment
 	// === Actor Tick Rate 밴드 캐싱 (#8 최적화) ===
 	/** 이전 거리 밴드 (0=근거리, 1=중거리, 2=원거리, -1=미설정). 밴드 변경 시에만 UpdateActorTickRate 호출 */
 	int32 CachedDistanceBand = -1;
+
+	// === 팀 컬러 RGB ===
+	/**
+	 * Entity 가 보유하는 팀 컬러 RGB. 첫 Spawn 시 CDO->TeamColorOptions 에서 랜덤 픽 →
+	 * 풀 재사용/재활성화에도 같은 색 유지. Pool->ActivateActor 가 이 값을 받아
+	 * Actor 의 DMI "TeamColor" 파라미터에 set + replicate.
+	 */
+	UPROPERTY()
+	FLinearColor TeamColor = FLinearColor::Transparent;
+
+	/** TeamColor 가 첫 결정됐는지. false = 다음 ActivateActor 가 새로 픽. */
+	UPROPERTY()
+	bool bTeamColorAssigned = false;
 };
 
 // ============================================================================
