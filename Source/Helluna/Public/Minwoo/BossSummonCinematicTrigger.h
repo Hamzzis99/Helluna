@@ -54,7 +54,6 @@ public:
 	 *   Y > 0 → 보스 오른쪽(Right)으로 N cm
 	 *   Z > 0 → 보스 위쪽(Up)으로 N cm
 	 * 기본값(450, 150, 100): 정면-우측 약간-위 → 3/4 정면 시점.
-	 * 보스가 어느 방향을 보든 항상 보스의 얼굴이 잡힌다.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Camera",
 		meta = (DisplayName = "Camera Offset (보스 로컬 좌표)"))
@@ -115,6 +114,32 @@ public:
 	FText BossDialogueLine;
 
 	// =========================================================================================
+	// 보스 HP 바 / 후속 HUD 연출 — 시네마틱 종료 시 BP가 스폰
+	// =========================================================================================
+
+	/**
+	 * 시네마틱 종료 시점(Multicast_End 클라 경로)에 호출되는 BP 이벤트.
+	 * C++ 기본 동작(HP 바 스폰) 후 추가 연출을 BP에서 얹고 싶을 때 사용.
+	 * 서버 호출 없이 로컬 플레이어 머신에서만 발화되므로 AddToViewport 안전.
+	 */
+	UFUNCTION(BlueprintImplementableEvent, Category = "BossSummon|HUD",
+		meta = (DisplayName = "시네마틱 종료 후 HUD 후처리"))
+	void OnCinematicEndedClient(APawn* Boss);
+
+	/**
+	 * 보스 HP 바 위젯 클래스. WBP_BossHealthBar 할당.
+	 * 위젯 BP에 Actor Reference 변수 'BossActor' (Expose on Spawn)가 있어야 자동 연결됨.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|HUD",
+		meta = (DisplayName = "보스 HP 바 위젯 클래스"))
+	TSubclassOf<UUserWidget> BossHealthBarWidgetClass;
+
+	/** ZOrder (HUD 위에 표시되려면 기본 HUD ZOrder보다 높게). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|HUD",
+		meta = (DisplayName = "HP 바 ZOrder", ClampMin = "0", ClampMax = "1000"))
+	int32 BossHealthBarZOrder = 5;
+
+	// =========================================================================================
 	// 보스 지정 (3가지 방법 중 택1, 우선순위: 인자 > Tag > Actor 참조)
 	// =========================================================================================
 
@@ -162,6 +187,30 @@ public:
 	float PostSpawnDelay = 0.3f;
 
 	// =========================================================================================
+	// [CinematicWalkV1] 시네마틱 중 보스 자체 전진
+	//   AM_Boss_Walk 가 in-place 애니라 root motion 으로 못 움직임 → Tick 에서 AddMovementInput 으로 직접 전진.
+	// =========================================================================================
+
+	/**
+	 * 시네마틱 동안 보스가 매 Tick AddMovementInput 으로 전진하는 속도 (cm/s).
+	 *  0  : 전진 안 함 (기존 동작 유지)
+	 *  >0 : 시네마틱 시작 시 보스 MaxWalkSpeed 를 이 값으로 잠시 덮고 매 Tick 전방으로 입력.
+	 *       시네마틱 종료 시 원래 MaxWalkSpeed 로 복원.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Movement",
+		meta = (DisplayName = "시네마틱 중 보스 전진 속도 (cm/s)", ClampMin = "0.0", ClampMax = "1000.0"))
+	float CinematicBossWalkSpeed = 200.f;
+
+	/**
+	 * 전진 방향:
+	 *  true  : 보스의 ActorForwardVector 방향 (소환 몽타주가 향한 방향).
+	 *  false : 플레이어/타깃 방향 (현재 가장 가까운 PlayerPawn).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Movement",
+		meta = (DisplayName = "전진 방향: 보스 정면 (false=플레이어 방향)"))
+	bool bCinematicWalkUseBossForward = false;
+
+	// =========================================================================================
 	// 공개 API
 	// =========================================================================================
 
@@ -189,9 +238,16 @@ public:
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_EndCinematic();
 
+	/**
+	 * 모든 클라에서 보스 SkelMesh의 bPauseAnims 토글.
+	 * true: SummonMontage 끝난 후 보스가 Locomotion walk 애니로 복귀해 "러닝머신" 되는 걸 방지 — 마지막 포즈에 고정.
+	 * false: 시네마틱 종료 시 해제.
+	 */
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	virtual void Tick(float DeltaTime) override;
 
 private:
 	// =========================================================================================
@@ -251,6 +307,18 @@ private:
 	UPROPERTY()
 	TObjectPtr<UBossDialogueWidget> LocalDialogueWidget;
 
+	/** Multicast_Start에서 받은 보스 참조 — Multicast_End에서 BP 이벤트로 전달하기 위해 캐시. */
+	UPROPERTY()
+	TWeakObjectPtr<APawn> LocalCinematicBoss;
+
+	/** 로컬 HP 바 위젯 (보스 전투 종료까지 유지). */
+	UPROPERTY()
+	TObjectPtr<UUserWidget> LocalBossHealthBar;
+
+	/** 보스 OnDeath 바인딩용 — HP 바 제거. */
+	UFUNCTION()
+	void OnBossDiedClient(AActor* DeadActor, AActor* KillerActor);
+
 	/** 자동 발동 타이머 핸들 */
 	FTimerHandle AutoActivateTimer;
 
@@ -268,4 +336,7 @@ private:
 
 	/** 최소 유지 시간 경과 플래그 */
 	bool bMinHoldElapsedFlag = false;
+
+	/** [CinematicWalkV1] 시네마틱 시작 직전 보스 MaxWalkSpeed 백업 — 종료 시 복원용. -1 = 미백업. */
+	float SavedBossMaxWalkSpeed = -1.f;
 };

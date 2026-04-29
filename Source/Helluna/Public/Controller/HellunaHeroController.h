@@ -6,6 +6,7 @@
 #include "Player/Inv_PlayerController.h"
 #include "GenericTeamAgentInterface.h"
 #include "Loading/HellunaLoadingTypes.h"
+#include "Components/SlateWrapperTypes.h"
 #include "HellunaHeroController.generated.h"
 
 class UNiagaraSystem;
@@ -26,6 +27,7 @@ class UHellunaPauseMenuWidget;
 class UHellunaWorldMapWidget;
 class UHellunaLoadingHUDWidget;
 class ACameraActor;
+class UUserWidget;
 
 /**
  * @brief   Helluna 영웅 전용 PlayerController
@@ -461,6 +463,48 @@ public:
 	 */
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_BossEncounterActivate();
+
+	// =========================================================================================
+	// [Summon Cinematic] 보스 소환 시네마틱 — 카메라 전환 + 입력 전면 잠금
+	// =========================================================================================
+
+	/**
+	 * 보스 소환 시네마틱 진입.
+	 * - ViewTarget을 입력받은 대상으로 블렌드
+	 * - 이동/시점 입력 차단 (SetIgnoreMoveInput + SetIgnoreLookInput)
+	 * - 기본 InputComponent DisableInput
+	 * - 메뉴/UI 토글 차단 (bInBossCinematic 플래그)
+	 * BossEncounterCube가 Multicast로 호출.
+	 */
+	void EnterBossCinematic(AActor* ViewTarget, float BlendInTime);
+
+	/** 보스 소환 시네마틱 종료 — ViewTarget 복귀 + 입력 복원 */
+	void ExitBossCinematic(float BlendOutTime);
+
+	/** 현재 보스 시네마틱 중인지 — 메뉴/입력 가드에 사용 */
+	UFUNCTION(BlueprintPure, Category = "BossEvent|Cinematic")
+	bool IsInBossCinematic() const { return bInBossCinematic; }
+
+private:
+	/** 보스 소환 시네마틱 진행 중 (로컬 플래그) */
+	bool bInBossCinematic = false;
+
+	/** 시네마틱 진입 전 ViewTarget 백업 (블렌드 기준 복원용) */
+	UPROPERTY()
+	TWeakObjectPtr<AActor> SavedPreCinematicViewTarget;
+
+	/** 시네마틱 중 숨긴 HUD 위젯 기록 (복원용) */
+	struct FBossCinematicHiddenWidget
+	{
+		TWeakObjectPtr<UUserWidget> Widget;
+		ESlateVisibility OriginalVisibility = ESlateVisibility::Visible;
+	};
+	TArray<FBossCinematicHiddenWidget> BossCinematicHiddenWidgets;
+
+	/** 시네마틱 진입/종료 시 viewport에 올라간 모든 HUD를 일괄 숨기거나 복원. 보스 대사 위젯은 이후 스폰되므로 영향 없음. */
+	void ApplyBossCinematicHUDLockdown(bool bShouldHide);
+
+public:
 
 	// =========================================================================================
 	// [일시정지 메뉴] 위젯 토글

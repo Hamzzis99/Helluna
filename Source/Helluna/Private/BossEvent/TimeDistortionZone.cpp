@@ -5,6 +5,7 @@
 #include "AbilitySystem/EnemyAbility/TimeDistortionOrb.h"
 #include "Character/HellunaEnemyCharacter.h"
 #include "Character/HellunaHeroCharacter.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "Components/PostProcessComponent.h"
 #include "Components/SphereComponent.h"
 #include "Engine/OverlapResult.h"
@@ -186,6 +187,22 @@ void ATimeDistortionZone::ApplySlowToActor(AActor* Actor)
 	{
 		// 플레이어: 리플리케이션 기반 슬로우 (클라이언트 예측과 호환)
 		// [TDJumpV1] 점프/중력도 함께 배율 적용 — 점프 높이 유지, 체공시간 1/M 배 늘어남
+		// [TDJumpFixV1] 점프 시작 직후 존 진입하면 상승 Z velocity는 그대로인데 중력만 줄어 점프 높이가
+		//   h = v²/(2g) 관계에 따라 1/Scale 배로 튀어오르는 버그.
+		//   공중이면 현재 Z velocity도 TimeDilationScale로 스케일해 물리적 일관성 유지.
+		if (UCharacterMovementComponent* CMC = Player->GetCharacterMovement())
+		{
+			if (CMC->IsFalling())
+			{
+				FVector Vel = CMC->Velocity;
+				const float OrigZ = Vel.Z;
+				Vel.Z *= TimeDilationScale;
+				CMC->Velocity = Vel;
+				TDZ_LOG("[PLAYER][JumpFix] Airborne entry — Z vel %.1f -> %.1f (scale=%.2f)",
+					OrigZ, Vel.Z, TimeDilationScale);
+			}
+		}
+
 		Player->SetMoveSpeedMultiplier(TimeDilationScale);
 		Player->SetAnimRateMultiplier(TimeDilationScale);
 		Player->SetJumpGravityMultiplier(TimeDilationScale);
@@ -224,6 +241,21 @@ void ATimeDistortionZone::RemoveSlowFromActor(AActor* Actor)
 
 	if (AHellunaHeroCharacter* Player = Cast<AHellunaHeroCharacter>(Actor))
 	{
+		// [TDJumpFixV1] Apply에서 스케일 다운한 Z velocity 복원 — 공중이면 역스케일.
+		if (UCharacterMovementComponent* CMC = Player->GetCharacterMovement())
+		{
+			if (CMC->IsFalling())
+			{
+				FVector Vel = CMC->Velocity;
+				const float OrigZ = Vel.Z;
+				const float SafeScale = FMath::Max(TimeDilationScale, 0.01f);
+				Vel.Z /= SafeScale;
+				CMC->Velocity = Vel;
+				TDZ_LOG("[PLAYER][JumpFix] Airborne exit — Z vel %.1f -> %.1f (÷%.2f)",
+					OrigZ, Vel.Z, SafeScale);
+			}
+		}
+
 		Player->SetMoveSpeedMultiplier(1.f);
 		Player->SetAnimRateMultiplier(1.f);
 		Player->SetJumpGravityMultiplier(1.f);

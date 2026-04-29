@@ -2091,7 +2091,7 @@ void AHellunaDefenseGameMode::NotifyPlayerDied(APlayerController* DeadPC)
         if (HealthComp && HealthComp->IsAliveAndNotDowned())
         {
             // 생존자 있음 (다운 상태 제외) → 게임 계속
-            UE_LOG(LogHelluna, Log, TEXT("[NotifyPlayerDied] 생존자 있음: %s"), *GetNameSafe(PC));
+            UE_LOG(LogHelluna, Log, TEXT("[NotifyPlayerDied] 생존자 있음: %s")   , *GetNameSafe(PC));
             return;
         }
     }
