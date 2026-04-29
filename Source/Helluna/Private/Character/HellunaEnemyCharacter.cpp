@@ -475,6 +475,21 @@ void AHellunaEnemyCharacter::OnMonsterHealthChanged(
 	// #11 최적화: 0.2초 쿨다운 — 산탄총 동시 히트 시 RPC 폭발 방지
 	if (Delta > 0.f && NewHealth > 0.f && HitReactMontage)
 	{
+		// [HitReactDuringAttack] 공격 중(State.Enemy.Attacking 태그 보유) 이면 hit react 스킵.
+		//   Why: 보스 공격 와인드업/스윙 중에 hit react 가 들어가면 공격 몬타주가 끊기며
+		//   비주얼이 망가짐. 서버에서 GA Activate/End 가 태그를 add/remove 하므로
+		//   여기 서버 컨텍스트에서 체크해 Multicast 발화 자체를 차단 → 클라까지 RPC 미전송.
+		if (UAbilitySystemComponent* ASC = GetAbilitySystemComponent())
+		{
+			static const FGameplayTag AttackingTag = FGameplayTag::RequestGameplayTag(FName("State.Enemy.Attacking"), false);
+			if (AttackingTag.IsValid() && ASC->HasMatchingGameplayTag(AttackingTag))
+			{
+				UE_LOG(LogTemp, Verbose,
+					TEXT("[HitReactDuringAttack] Skip — %s currently attacking"), *GetNameSafe(this));
+				return;
+			}
+		}
+
 		static int32 HitReactBlockedCount = 0;
 		static int32 HitReactPassedCount = 0;
 

@@ -43,9 +43,12 @@ ABossSummonCinematicTrigger::ABossSummonCinematicTrigger()
 	SetReplicateMovement(false);
 }
 
-// [CinematicWalkV1] 시네마틱 동안 보스를 매 Tick 전진시킨다.
-//   AM_Boss_Walk 가 in-place 라 root motion 으로 못 움직이는 문제 우회 — 직접 입력으로 걷기 시각화.
-//   서버에서만 동작 (HasAuthority). 클라는 FRepMovement 로 위치 sync.
+// [CinematicWalkInputV2] 시네마틱 동안 보스를 AddMovementInput 으로 슬로우 전진.
+//   설계 근거: AM_Boss_Walk root motion 직접 사용은 (a) 시네마틱 카메라 KeepRelative attach 로
+//   화면 정지 → 종료 시 텔레포트 (b) 클라 sim proxy 가 root motion 안 따라가는 동기화 문제로
+//   불안정. 그래서 root motion 은 IgnoreRootMotion 모드로 끄고 (Boss::Multicast_PlaySummonMontage),
+//   대신 일반 CMC input 흐름으로 정해진 속도(CinematicBossWalkSpeed) 만큼만 전진. 애니메이션은
+//   0.5x 슬로우라 다리 cadence 가 평소보다 느림 → 전진 속도도 평소 walk 보다 낮게 (BP 에서 튜닝).
 void ABossSummonCinematicTrigger::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
@@ -88,10 +91,6 @@ void ABossSummonCinematicTrigger::Tick(float DeltaTime)
 		Direction = TargetActor
 			? (TargetActor->GetActorLocation() - BossLoc).GetSafeNormal2D()
 			: Boss->GetActorForwardVector();
-
-		// [CinematicWalkV1.NoShake] 보스 회전은 CMC 의 bOrientRotationToMovement 가 자동으로 처리하게 둠.
-		//   여기서 SetActorRotation 으로 매 Tick 덮어쓰면 CMC 의 회전 보간과 경쟁해 yaw 진동 →
-		//   보스에 부착된 시네마틱 카메라가 같이 흔들림. 회전 직접 제어 제거.
 	}
 
 	if (Direction.IsNearlyZero()) return;
@@ -338,6 +337,10 @@ bool ABossSummonCinematicTrigger::TryActivate(APawn* InTargetBoss)
 		}
 	}
 
+	// [CinematicNetSyncV1] 시네마틱 동안 보스 NetUpdateFrequency 일시 부스트 (클라 잔진동 완화).
+	Boss->SetNetUpdateFrequency(60.f);
+	Boss->SetMinNetUpdateFrequency(30.f);
+
 	// 4) 카메라 전환 + 입력 잠금 (모든 클라) — 몽타주 재생 전에 먼저 시작해야 카메라가 우선 자리 잡음
 	Multicast_StartCinematic(Boss);
 
@@ -461,6 +464,11 @@ void ABossSummonCinematicTrigger::HandleCinematicCompletedServer()
 
 		// 2) 무적 해제
 		Boss->SetCanBeDamaged(true);
+
+		// [CinematicNetSyncV1] 시네마틱 시작 시 부스트한 NetUpdateFrequency 를 기본값으로 복원.
+		//   HellunaEnemyCharacter 생성자의 기본값과 일치 (10Hz / Min 2Hz).
+		Boss->SetNetUpdateFrequency(10.f);
+		Boss->SetMinNetUpdateFrequency(2.f);
 
 		// 3) 이동 복원
 		if (ACharacter* BossChar = Cast<ACharacter>(Boss))

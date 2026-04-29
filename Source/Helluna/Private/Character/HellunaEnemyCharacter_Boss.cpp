@@ -29,6 +29,13 @@ AHellunaEnemyCharacter_Boss::AHellunaEnemyCharacter_Boss()
 {
 	// 보스 등급 기본값 (BP CDO 에서 SemiBoss/Boss 로 추가 조정 가능)
 	EnemyGrade = EEnemyGrade::Boss;
+
+	// [BossPhase2_DefaultV1] 보스 서브클래스의 기본값을 true 로 강제.
+	//   C++ 부모 필드 초기값 false + BP CDO 에 한 번씩 직접 켜야 하는 구조로는
+	//   리페어런팅/리팩터링 후 silently false 로 빠지는 사고가 반복됨 (실제 발생).
+	//   이 클래스를 상속받은 BP 는 기본적으로 2페이즈 활성, 비활성이 필요한 보스만
+	//   BP CDO 에서 명시적으로 false 로 끄도록 정책 변경.
+	bHasPhase2 = true;
 }
 
 void AHellunaEnemyCharacter_Boss::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -42,6 +49,16 @@ void AHellunaEnemyCharacter_Boss::GetLifetimeReplicatedProps(TArray<FLifetimePro
 // ============================================================
 bool AHellunaEnemyCharacter_Boss::TryInterceptDeathForPhase2(float OldHealth, float NewHealth)
 {
+	// [BossPhase2_Diag] LiveCoding 검증용 진입 로그 — 어떤 조건에서 막히는지 추적
+	UE_LOG(LogTemp, Warning,
+		TEXT("[BossPhase2_Diag] TryIntercept ENTER Boss=%s HasAuth=%d bHasPhase2=%d bInPhase2=%d Old=%.1f New=%.1f HC=%d"),
+		*GetNameSafe(this),
+		HasAuthority() ? 1 : 0,
+		bHasPhase2 ? 1 : 0,
+		bInPhase2 ? 1 : 0,
+		OldHealth, NewHealth,
+		HealthComponent ? 1 : 0);
+
 	if (!HasAuthority()) return false;
 	if (!bHasPhase2) return false;
 	if (bInPhase2) return false;              // 이미 2페이즈면 진짜 사망
@@ -360,9 +377,15 @@ void AHellunaEnemyCharacter_Boss::Multicast_PlaySummonMontage_Implementation()
 	AnimInst->OnMontageEnded.RemoveDynamic(this, &AHellunaEnemyCharacter_Boss::OnSummonMontageEnded);
 	AnimInst->OnMontageEnded.AddDynamic(this, &AHellunaEnemyCharacter_Boss::OnSummonMontageEnded);
 
-	// [SummonMontageRootMotionV1] Multicast 컨텍스트에서 양쪽 머신 모두 RootMotionMode 통일.
-	//   서버만 root motion 추출 시 클라가 이동을 못 보다가 시네마틱 종료 후 텔레포트하는 동기화 버그 방지.
-	AnimInst->SetRootMotionMode(ERootMotionMode::RootMotionFromEverything);
+	// [CinematicLocationLockV1] AM_Boss_Walk 의 시퀀스 Anim_FuturisticWarrior_walk_Real 가
+	//   enable_root_motion=true 라 server 측 root motion 으로 보스가 월드 좌표를 타고 전진함.
+	//   하지만 시네마틱 카메라(CineCam)가 KeepRelative 로 보스에 attach 돼 있어 화면상 보스는 제자리,
+	//   종료 후 ViewTarget 이 player camera 로 돌아갈 때 새 위치가 드러나 "텔레포트" 처럼 보였음.
+	//   해결: IgnoreRootMotion 모드 — 애니메이션의 root bone 키프레임은 그대로 추출되어 mesh 가
+	//   actor pivot 에 anchor 되고 다리 모션은 정상 재생되지만, 그 delta 가 CMC velocity 로 적용되지 않아
+	//   actor 는 월드에서 한 걸음도 못 움직임 → 시작/종료 위치 동일 → 텔레포트 없음 + 진동 없음.
+	//   복원: OnSummonMontageEnded 에서 RootMotionFromMontagesOnly (기본값) 로 되돌림.
+	AnimInst->SetRootMotionMode(ERootMotionMode::IgnoreRootMotion);
 
 	AnimInst->Montage_Play(SummonMontage, 1.0f);
 }
