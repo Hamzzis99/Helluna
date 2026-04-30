@@ -7,6 +7,7 @@
 #include "Helluna.h"
 #include "Character/HellunaHeroCharacter.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
+#include "Controller/HellunaHeroController.h"
 #include "GameMode/HellunaDefenseGameState.h"
 
 #include "Components/SceneComponent.h"
@@ -134,6 +135,11 @@ void AHellunaGuardianTurret::BeginPlay()
 
 void AHellunaGuardianTurret::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (HasAuthority())
+	{
+		StopTargetedBgmSession();
+	}
+
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(PhasePollTimerHandle);
@@ -498,6 +504,108 @@ bool AHellunaGuardianTurret::IsWarningBeepCritical() const
 }
 
 // =========================================================
+// 타겟 전용 로컬 2D BGM (서버 지시 → 타겟 PlayerController 로컬 재생)
+// =========================================================
+
+void AHellunaGuardianTurret::UpdateTargetedBgmSession()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	AHellunaHeroCharacter* TargetHero = nullptr;
+	float ThreatVolumeScale = 0.f;
+	if (TargetedBgmSound && CurrentState != EGuardianState::Idle && CurrentState != EGuardianState::Dead)
+	{
+		TargetHero = Cast<AHellunaHeroCharacter>(CurrentTarget.Get());
+		if (TargetHero && (!IsValid(TargetHero) || TargetHero->IsActorBeingDestroyed() || !IsTargetInRange(TargetHero)))
+		{
+			TargetHero = nullptr;
+		}
+
+		if (TargetHero)
+		{
+			const bool bCanStartBgm = CurrentState == EGuardianState::Lock || CurrentState == EGuardianState::FireDelay;
+			const bool bCanMaintainBgm = ActiveTargetedBgmHero.Get() == TargetHero;
+			if (!bCanStartBgm && !bCanMaintainBgm)
+			{
+				TargetHero = nullptr;
+			}
+			else
+			{
+				ThreatVolumeScale = (CurrentState == EGuardianState::FireDelay)
+					? TargetedBgmFireDelayVolumeScale
+					: TargetedBgmLockVolumeScale;
+			}
+		}
+	}
+
+	if (!TargetHero)
+	{
+		StopTargetedBgmSession();
+		return;
+	}
+
+	if (AHellunaHeroCharacter* PreviousHero = ActiveTargetedBgmHero.Get())
+	{
+		if (PreviousHero != TargetHero)
+		{
+			StopTargetedBgmSession();
+		}
+	}
+
+	ActiveTargetedBgmHero = TargetHero;
+	SendTargetedBgmStartOrUpdate(TargetHero, ThreatVolumeScale);
+}
+
+void AHellunaGuardianTurret::StopTargetedBgmSession()
+{
+	AHellunaHeroCharacter* PreviousHero = ActiveTargetedBgmHero.Get();
+	ActiveTargetedBgmHero = nullptr;
+	if (!PreviousHero)
+	{
+		return;
+	}
+
+	AHellunaHeroController* HeroController = Cast<AHellunaHeroController>(PreviousHero->GetController());
+	if (!HeroController)
+	{
+		return;
+	}
+
+	HeroController->Client_StopGuardianTargetedBgm(this, TargetedBgmFadeOutDuration);
+}
+
+void AHellunaGuardianTurret::SendTargetedBgmStartOrUpdate(
+	AHellunaHeroCharacter* TargetHero,
+	float ThreatVolumeScale)
+{
+	if (!TargetHero || !TargetedBgmSound)
+	{
+		return;
+	}
+
+	AHellunaHeroController* HeroController = Cast<AHellunaHeroController>(TargetHero->GetController());
+	if (!HeroController)
+	{
+		return;
+	}
+
+	const float FadeEndRadius = FMath::Max(DetectionRadius, 1.f);
+	const float FullVolumeRadius = FadeEndRadius * FMath::Clamp(TargetedBgmFullVolumeRadiusRatio, 0.f, 1.f);
+	HeroController->Client_StartGuardianTargetedBgm(
+		TargetedBgmSound,
+		this,
+		FullVolumeRadius,
+		FadeEndRadius,
+		TargetedBgmFadeInDuration,
+		TargetedBgmFadeOutDuration,
+		TargetedBgmVolume,
+		ThreatVolumeScale);
+}
+
+// =========================================================
 // 상태 전이 헬퍼
 // =========================================================
 
@@ -542,6 +650,11 @@ void AHellunaGuardianTurret::SetState(EGuardianState NewState)
 
 	// 서버 로컬 조준 빔 적용 (클라는 OnRep_CurrentState 에서 동일 처리)
 	ApplyAimBeamForState(NewState);
+
+	if (HasAuthority())
+	{
+		UpdateTargetedBgmSession();
+	}
 
 	Multicast_OnStateChanged(NewState);
 }
@@ -595,6 +708,7 @@ void AHellunaGuardianTurret::OnDetectionEndOverlap(
 	if (CurrentTarget.Get() == Hero)
 	{
 		CurrentTarget = nullptr;
+		UpdateTargetedBgmSession();
 	}
 }
 

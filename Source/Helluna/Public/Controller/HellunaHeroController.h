@@ -20,12 +20,24 @@ class APuzzleCubeActor;
 class ABossEncounterCube;
 class UPuzzleGridWidget;
 class UPostProcessComponent;
+class UAudioComponent;
+class USoundBase;
 class UHellunaDebugHUDWidget;
 class UHellunaGraphicsSettingsWidget;
 class UHellunaPauseMenuWidget;
 class UHellunaWorldMapWidget;
 class UHellunaLoadingHUDWidget;
+class AActor;
 class ACameraActor;
+
+struct FGuardianTargetedBgmClientSource
+{
+	TWeakObjectPtr<AActor> SourceGuardian;
+	float FullVolumeRadius = 0.f;
+	float FadeEndRadius = 0.f;
+	float BaseVolume = 1.f;
+	float ThreatVolumeScale = 1.f;
+};
 
 /**
  * @brief   Helluna 영웅 전용 PlayerController
@@ -200,6 +212,23 @@ public:
 	void Client_ShowGameResult(const TArray<FInv_SavedItemData>& ResultItems, bool bSurvived,
 		const FString& Reason, const FString& LobbyURL);
 
+	// =========================================================================================
+	// [Guardian] 조준당한 플레이어 전용 로컬 2D BGM
+	// =========================================================================================
+	UFUNCTION(Client, Reliable)
+	void Client_StartGuardianTargetedBgm(
+		USoundBase* BgmSound,
+		AActor* SourceGuardian,
+		float FullVolumeRadius,
+		float FadeEndRadius,
+		float FadeInDuration,
+		float FadeOutDuration,
+		float BaseVolume,
+		float ThreatVolumeScale);
+
+	UFUNCTION(Client, Reliable)
+	void Client_StopGuardianTargetedBgm(AActor* SourceGuardian, float FadeOutDuration);
+
 protected:
 	/** 결과 위젯 클래스 (BP에서 설정) */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GameResult|UI",
@@ -210,6 +239,23 @@ private:
 	/** 생성된 결과 위젯 인스턴스 */
 	UPROPERTY()
 	TObjectPtr<UHellunaGameResultWidget> GameResultWidgetInstance;
+
+	/** Guardian Targeted BGM: 로컬 플레이어에게만 들리는 2D 압박감 BGM 컴포넌트. */
+	UPROPERTY(Transient)
+	TObjectPtr<UAudioComponent> GuardianTargetedBgmComponent = nullptr;
+
+	/** 현재 재생 중인 Guardian Targeted BGM 사운드. */
+	UPROPERTY(Transient)
+	TObjectPtr<USoundBase> GuardianTargetedBgmSound = nullptr;
+
+	TArray<FGuardianTargetedBgmClientSource> GuardianTargetedBgmSources;
+
+	float GuardianTargetedBgmCurrentVolume = 0.f;
+	float GuardianTargetedBgmFadeInDuration = 0.5f;
+	float GuardianTargetedBgmFadeOutDuration = 1.5f;
+
+	void TickGuardianTargetedBgm(float DeltaTime);
+	void StopGuardianTargetedBgmLocal(float FadeOutDuration);
 
 	// =========================================================================================
 	// [Puzzle] 퍼즐 시스템

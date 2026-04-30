@@ -392,6 +392,41 @@ protected:
 		meta = (DisplayName = "가디언 사운드 동시재생"))
 	TObjectPtr<USoundConcurrency> GuardianSoundConcurrency = nullptr;
 
+	/** 조준당한 플레이어 본인에게만 재생되는 2D 긴박 BGM. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|Sound|TargetedBGM",
+		meta = (DisplayName = "타겟 전용 2D BGM"))
+	TObjectPtr<USoundBase> TargetedBgmSound = nullptr;
+
+	/** 타겟 전용 BGM 기본 볼륨. 거리/위협도 알파가 곱해진다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Sound|TargetedBGM",
+		meta = (DisplayName = "타겟 BGM 기본 볼륨", ClampMin = "0.0", ClampMax = "5.0"))
+	float TargetedBgmVolume = 1.0f;
+
+	/** Lock 상태에서의 BGM 위협도 볼륨 배율. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Sound|TargetedBGM",
+		meta = (DisplayName = "Lock BGM 볼륨 배율", ClampMin = "0.0", ClampMax = "5.0"))
+	float TargetedBgmLockVolumeScale = 0.75f;
+
+	/** FireDelay 상태에서의 BGM 위협도 볼륨 배율. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Sound|TargetedBGM",
+		meta = (DisplayName = "FireDelay BGM 볼륨 배율", ClampMin = "0.0", ClampMax = "5.0"))
+	float TargetedBgmFireDelayVolumeScale = 1.0f;
+
+	/** 감지 반경 중 이 비율 안쪽은 BGM 풀 볼륨, 바깥쪽은 반경 끝까지 부드럽게 감소. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Sound|TargetedBGM",
+		meta = (DisplayName = "BGM 풀 볼륨 반경 비율", ClampMin = "0.0", ClampMax = "1.0"))
+	float TargetedBgmFullVolumeRadiusRatio = 0.75f;
+
+	/** 타겟 전용 BGM 페이드 인 시간. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Sound|TargetedBGM",
+		meta = (DisplayName = "타겟 BGM 페이드 인", ClampMin = "0.0", ClampMax = "10.0"))
+	float TargetedBgmFadeInDuration = 0.5f;
+
+	/** 타겟 해제 시 BGM 페이드 아웃 시간. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Sound|TargetedBGM",
+		meta = (DisplayName = "타겟 BGM 페이드 아웃", ClampMin = "0.0", ClampMax = "10.0"))
+	float TargetedBgmFadeOutDuration = 1.8f;
+
 public:
 	/** 현재 상태 (Replicated) — BP 에서 읽기 전용 */
 	UFUNCTION(BlueprintPure, Category = "Guardian|State")
@@ -504,6 +539,12 @@ private:
 	float GetWarningBeepInterval() const;
 	float GetWarningBeepPitch() const;
 	bool IsWarningBeepCritical() const;
+
+	/** 서버 전용: 조준당한 플레이어의 로컬 2D BGM 세션 시작/갱신/종료. */
+	TWeakObjectPtr<AHellunaHeroCharacter> ActiveTargetedBgmHero;
+	void UpdateTargetedBgmSession();
+	void StopTargetedBgmSession();
+	void SendTargetedBgmStartOrUpdate(AHellunaHeroCharacter* TargetHero, float ThreatVolumeScale);
 
 	// =========================================================
 	// 발사 (서버 전용)
