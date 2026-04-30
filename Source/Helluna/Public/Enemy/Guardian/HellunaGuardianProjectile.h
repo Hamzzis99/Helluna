@@ -10,6 +10,9 @@ class UBoxComponent;
 class UNiagaraComponent;
 class UNiagaraSystem;
 class UProjectileMovementComponent;
+class USoundBase;
+class USoundAttenuation;
+class USoundConcurrency;
 
 /**
  * 가디언이 발사하는 투사체.
@@ -122,6 +125,35 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Projectile|FX",
 		meta = (DisplayName = "폭발 FX 를 충돌면에 정렬"))
 	bool bAlignExplosionToSurface = false;
+
+	// =========================================================
+	// 사운드 (BP 에서 할당)
+	// =========================================================
+
+	/** 폭발 시 폭발 위치에서 재생되는 3D 사운드 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Projectile|Sound",
+		meta = (DisplayName = "폭발 사운드"))
+	TObjectPtr<USoundBase> ExplosionSound = nullptr;
+
+	/** 폭발 사운드 볼륨 배율 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Projectile|Sound",
+		meta = (DisplayName = "폭발 사운드 볼륨", ClampMin = "0.0", ClampMax = "5.0"))
+	float ExplosionSoundVolume = 1.0f;
+
+	/** 폭발 사운드 피치 배율 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Projectile|Sound",
+		meta = (DisplayName = "폭발 사운드 피치", ClampMin = "0.1", ClampMax = "4.0"))
+	float ExplosionSoundPitch = 1.0f;
+
+	/** 폭발 사운드 감쇠 설정. null 이면 사운드 에셋 기본값 사용. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Projectile|Sound",
+		meta = (DisplayName = "폭발 사운드 감쇠"))
+	TObjectPtr<USoundAttenuation> ExplosionSoundAttenuation = nullptr;
+
+	/** 폭발 사운드 동시재생 제한. null 이면 사운드 에셋 기본값 사용. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Projectile|Sound",
+		meta = (DisplayName = "폭발 사운드 동시재생"))
+	TObjectPtr<USoundConcurrency> ExplosionSoundConcurrency = nullptr;
 
 	// =========================================================
 	// 디버그

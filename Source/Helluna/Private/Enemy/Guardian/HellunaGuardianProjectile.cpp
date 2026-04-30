@@ -218,6 +218,15 @@ void AHellunaGuardianProjectile::Multicast_SpawnExplosionFX_Implementation(
 		TrailFX->Deactivate();
 	}
 
+	const FVector SpawnLocation = FVector(ExplosionLocation);
+	if (ExplosionSound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(
+			this, ExplosionSound, SpawnLocation,
+			ExplosionSoundVolume, ExplosionSoundPitch, 0.f,
+			ExplosionSoundAttenuation, ExplosionSoundConcurrency);
+	}
+
 	if (!ExplosionFX)
 	{
 		return;
@@ -233,7 +242,7 @@ void AHellunaGuardianProjectile::Multicast_SpawnExplosionFX_Implementation(
 	UNiagaraComponent* Spawned = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
 		this,
 		ExplosionFX,
-		FVector(ExplosionLocation),
+		SpawnLocation,
 		SpawnRot,
 		ExplosionFXScale,
 		true, true, ENCPoolMethod::AutoRelease);
