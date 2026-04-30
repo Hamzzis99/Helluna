@@ -2004,58 +2004,59 @@ namespace
 
 void AHellunaLobbyController::ExecuteDeploySequence(const FString& TravelURL, const FString& ExpectedIdsJoined, int32 PartyId)
 {
-	UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A] ExecuteDeploySequence ENTER | URL=%s | PartyId=%d"), *TravelURL, PartyId);
+	// [HOTFIX-Simple] 발표용 긴급 단순화.
+	// L_LoadingShipScene 서브레벨, LoadingShip Settle, Screenshot 캡처, MoviePlayer 오버레이를 전부 스킵.
+	// MoviePlayer(bWaitForManualStop) 로 인해 NMT_Join 이 막혀 서버 PostLogin 이 트리거되지 않던 데드락을 회피하기 위해,
+	// 기존 가짜 진행률(HellunaLoadingHUDWidget::StartFakeProgress) 연출만 유지하고 1.5s 뒤 바로 ClientTravel 로 진입한다.
+	UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A-Simple] ExecuteDeploySequence ENTER | URL=%s | PartyId=%d"), *TravelURL, PartyId);
 
-	UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance());
-	if (!GI)
-	{
-		UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A] GI null → fallback ClientTravel 즉시"));
-		ClientTravel(TravelURL, TRAVEL_Absolute);
-		return;
-	}
-
-	// 시퀀스 상태 초기화
 	PendingTravelURL = TravelURL;
 	PendingExpectedIds = ExpectedIdsJoined;
 	PendingPartyId = PartyId;
 	bCaptureAndTravelFired = false;
 
-	// (Q22) 입력 전면 차단
 	DisableInput(this);
 	SetInputMode(FInputModeUIOnly{});
 
-	// (Q21) V2 프리뷰 비활성화
 	if (IsValid(SpawnedPreviewSceneV2))
 	{
 		SpawnedPreviewSceneV2->SetActorTickEnabled(false);
 		SpawnedPreviewSceneV2->SetActorHiddenInGame(true);
 	}
 
-	// (Q8) Fade-to-black 위젯 (BP가 0.2s opacity 0→1 애니 재생)
-	if (FadeToBlackWidgetClass)
+	// 간단 HUD — 서브레벨 없이 위젯만 띄우고 가짜 진행률 시작
+	if (LobbyLoadingHUDClass)
 	{
-		ActiveFadeWidget = CreateWidget<UUserWidget>(this, FadeToBlackWidgetClass);
-		if (ActiveFadeWidget)
+		ActiveLobbyHUD = CreateWidget<UHellunaLoadingHUDWidget>(this, LobbyLoadingHUDClass);
+		if (ActiveLobbyHUD)
 		{
-			ActiveFadeWidget->SetRenderOpacity(0.f);
-			ActiveFadeWidget->AddToViewport(9999);
+			ActiveLobbyHUD->SetIsLobbyStage(true);
+			ActiveLobbyHUD->InitializeHUD(
+				ParseExpectedIdsCSV(PendingExpectedIds),
+				ReplicatedPlayerId,
+				PendingPartyId);
+			ActiveLobbyHUD->AddToViewport(100);
+			ActiveLobbyHUD->StartFakeProgress(1.5f, 0.9f);
 		}
 	}
 	else
 	{
-		UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A] FadeToBlackWidgetClass 미설정 — Fade 스킵"));
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A-Simple] LobbyLoadingHUDClass 미설정 — HUD 스킵"));
 	}
 
-	// 0.2s 후 서브레벨 스트리밍
+	// 1.5s 후 ClientTravel. OnSnapshotReadyTravel 은 GI->LoadingSnapshotTexture 가 null 이면
+	// SetupSnapshotLoadingScreen 을 호출하지 않고 바로 ClientTravel 만 수행하므로 MoviePlayer 데드락 없음.
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(FadeStartTimer);
+		World->GetTimerManager().ClearTimer(HandoffTimer);
+		World->GetTimerManager().ClearTimer(SettleGuardTimer);
 		World->GetTimerManager().SetTimer(FadeStartTimer, this,
-			&AHellunaLobbyController::StartLoadingSceneStream, 0.2f, false);
+			&AHellunaLobbyController::OnSnapshotReadyTravel, 1.5f, false);
 	}
 	else
 	{
-		StartLoadingSceneStream();
+		OnSnapshotReadyTravel();
 	}
 }
 

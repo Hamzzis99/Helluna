@@ -141,6 +141,7 @@ protected:
 private:
     // ── 낮/밤 캐시 ──
     EDefensePhase LastPhase = EDefensePhase::Day;
+    bool bHasAppliedInitialPhase = false;
     int32 LastDay = -1;
     int32 LastTimeRemaining = -1;
     int32 LastAliveMonsters = -1;

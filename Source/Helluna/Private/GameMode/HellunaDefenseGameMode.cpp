@@ -237,14 +237,22 @@ void AHellunaDefenseGameMode::BeginPlay()
 #endif
     Debug::Print(TEXT("[DefenseGameMode] InitializeGame - 게임 시작!"), FColor::Green);
 
-    // [Day1Preload] Day1 광석을 낮 전환보다 먼저 선행 생성.
-    // BeginPlay에서 이미 CacheNightPCGComponents()가 완료된 상태이므로 즉시 PCG 생성 가능.
-    // EnterDay에서의 중복 스케줄은 bDay1OresPrepared 가드로 방지.
-    UE_LOG(LogTemp, Warning, TEXT("[Day1Preload] InitializeGame에서 Day1 광석 선행 생성 시작 (CachedPCG=%d)"), CachedNightPCGComponents.Num());
-    ActivateNightPCG();
-    bDay1OresPrepared = true;
+    if (bStartFirstNightImmediately)
+    {
+        StartInitialNightBootstrap();
+    }
+    else
+    {
+        // [Day1Preload] Day1 광석을 낮 전환보다 먼저 선행 생성.
+        // BeginPlay에서 이미 CacheNightPCGComponents()가 완료된 상태이므로 즉시 PCG 생성 가능.
+        // EnterDay에서의 중복 스케줄은 bDay1OresPrepared 가드로 방지.
+        UE_LOG(LogTemp, Warning, TEXT("[Day1Preload] InitializeGame에서 Day1 광석 선행 생성 시작 (CachedPCG=%d)"), CachedNightPCGComponents.Num());
+        ActivateNightPCG();
+        bDay1OresPrepared = true;
 
-    EnterDay();
+        EnterDay();
+    }
+
     StartAutoSave();
 }
 
@@ -1617,6 +1625,7 @@ void AHellunaDefenseGameMode::EnterDay()
 
     if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
     {
+        GS->SetInitialNightBootstrapActive(false);
         GS->SetPhase(EDefensePhase::Day);
         GS->SetAliveMonsterCount(0);
         GS->SetCurrentDayForUI(CurrentDay);
@@ -1628,7 +1637,7 @@ void AHellunaDefenseGameMode::EnterDay()
         // Phase 10: 채팅 시스템 메시지
         GS->BroadcastChatMessage(TEXT(""), TEXT("낮이 시작됩니다"), EChatMessageType::System);
 
-        GS->NetMulticast_OnDawnPassed(EffectiveDayDuration);
+        GS->StartDayVisualTransition(EffectiveDayDuration);
     }
 
     // [Day1Preload] Day1은 InitializeGame에서 이미 ActivateNightPCG를 호출했으므로 중복 스케줄 방지.
@@ -1651,21 +1660,65 @@ void AHellunaDefenseGameMode::EnterDay()
 
 void AHellunaDefenseGameMode::EnterNight()
 {
+    EnterNightCore(EHellunaNightStartMode::Normal);
+}
+
+void AHellunaDefenseGameMode::StartInitialNightBootstrap()
+{
+    if (!HasAuthority() || !bGameInitialized) return;
+
+    UWorld* World = GetWorld();
+    if (!World)
+    {
+        UE_LOG(LogHelluna, Error, TEXT("[InitialNight] World 없음 — 첫날 밤 시작 실패"));
+        return;
+    }
+
+    GetWorldTimerManager().ClearTimer(TimerHandle_ToNight);
+    GetWorldTimerManager().ClearTimer(TimerHandle_ToDay);
+    GetWorldTimerManager().ClearTimer(TimerHandle_DayCountdown);
+    GetWorldTimerManager().ClearTimer(TimerHandle_NightWatchdog);
+
+    if (CurrentDay > 1)
+    {
+        UE_LOG(LogHelluna, Warning, TEXT("[InitialNight] CurrentDay=%d 상태에서 호출됨 — Day 1로 되돌리지 않고 현재 값을 유지"), CurrentDay);
+    }
+    else
+    {
+        CurrentDay = 1;
+    }
+
+    RemainingMonstersThisNight = 0;
+    AliveBoss.Reset();
+    SetBossReady(false);
+
+    UE_LOG(LogHelluna, Warning, TEXT("[InitialNight] Day %d 밤으로 직접 시작"), CurrentDay);
+    EnterNightCore(EHellunaNightStartMode::InitialBootstrap);
+}
+
+void AHellunaDefenseGameMode::EnterNightCore(EHellunaNightStartMode StartMode)
+{
     if (!HasAuthority() || !bGameInitialized) return;
 
     Debug::Print(FString::Printf(TEXT("[EnterNight] %d일차 밤 시작"), CurrentDay), FColor::Purple);
-    UE_LOG(LogTemp, Warning, TEXT("[EnterNight] Day=%d | CachedPCG=%d"), CurrentDay, CachedNightPCGComponents.Num());
+    UE_LOG(LogTemp, Warning, TEXT("[EnterNight] Day=%d | CachedPCG=%d | Mode=%s"),
+        CurrentDay,
+        CachedNightPCGComponents.Num(),
+        StartMode == EHellunaNightStartMode::InitialBootstrap ? TEXT("InitialBootstrap") : TEXT("Normal"));
 
     RemainingMonstersThisNight = 0;
 
     if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
     {
-        GS->SetPhase(EDefensePhase::Night);
-
+        const bool bInitialNight = (StartMode == EHellunaNightStartMode::InitialBootstrap);
+        GS->SetInitialNightBootstrapActive(bInitialNight);
+        GS->SetCurrentDayForUI(CurrentDay);
         GS->SetDayTimeRemaining(0.f);   // 밤엔 낮 타이머 0
-        // AliveMonsterCount는 TriggerMassSpawning/보스 소환 확정 후 설정
-
         GS->SetAliveMonsterCount(0);
+        GS->SetTotalMonstersThisNight(0);
+        GS->SetIsBossNight(false);
+        GS->SetPhase(EDefensePhase::Night);
+        GS->SetVisualPhase(EDayNightVisualPhase::Night, 0.f, 0.f);
 
         // Phase 10: 채팅 시스템 메시지
         GS->BroadcastChatMessage(TEXT(""), TEXT("밤이 시작됩니다"), EChatMessageType::System);
@@ -1731,6 +1784,25 @@ void AHellunaDefenseGameMode::EnterNight()
     }
 
     TriggerMassSpawning();
+}
+
+void AHellunaDefenseGameMode::ScheduleDayTransitionAfterNightClear(const TCHAR* Reason)
+{
+    if (!HasAuthority() || !bGameInitialized) return;
+
+    FTimerManager& TimerManager = GetWorldTimerManager();
+    TimerManager.ClearTimer(TimerHandle_ToDay);
+
+    const float Delay = TestNightFailToDayDelay;
+    if (Delay <= 0.f)
+    {
+        UE_LOG(LogHelluna, Warning, TEXT("[%s] 낮 전환 딜레이 %.2f초 — 다음 틱에 EnterDay 호출"), Reason, Delay);
+        TimerHandle_ToDay = TimerManager.SetTimerForNextTick(this, &ThisClass::EnterDay);
+        return;
+    }
+
+    UE_LOG(LogHelluna, Log, TEXT("[%s] 낮 전환 타이머 시작 (%.2f초)"), Reason, Delay);
+    TimerManager.SetTimer(TimerHandle_ToDay, this, &ThisClass::EnterDay, Delay, false);
 }
 
 // ============================================================
@@ -1910,8 +1982,7 @@ void AHellunaDefenseGameMode::NotifyMonsterDied(AActor* DeadMonster)
 
     if (RemainingMonstersThisNight <= 0)
     {
-        GetWorldTimerManager().ClearTimer(TimerHandle_ToDay);
-        GetWorldTimerManager().SetTimer(TimerHandle_ToDay, this, &ThisClass::EnterDay, TestNightFailToDayDelay, false);
+        ScheduleDayTransitionAfterNightClear(TEXT("NotifyMonsterDied"));
     }
 }
 
@@ -1992,8 +2063,7 @@ void AHellunaDefenseGameMode::TickNightWatchdog()
 
     if (!GetWorldTimerManager().IsTimerActive(TimerHandle_ToDay))
     {
-        UE_LOG(LogHelluna, Warning, TEXT("[NightWatchdog] 낮 전환 타이머 시작 (%0.1f초)"), TestNightFailToDayDelay);
-        GetWorldTimerManager().SetTimer(TimerHandle_ToDay, this, &ThisClass::EnterDay, TestNightFailToDayDelay, false);
+        ScheduleDayTransitionAfterNightClear(TEXT("NightWatchdog"));
     }
 }
 
@@ -2124,9 +2194,7 @@ void AHellunaDefenseGameMode::NotifyBossDied(AActor* DeadBoss)
     else
     {
         // 세미보스 처치 → 낮 전환
-        UE_LOG(LogHelluna, Log, TEXT("[NotifyBossDied] 세미보스 처치 — 낮 전환 타이머 시작"));
-        GetWorldTimerManager().ClearTimer(TimerHandle_ToDay);
-        GetWorldTimerManager().SetTimer(TimerHandle_ToDay, this, &ThisClass::EnterDay, TestNightFailToDayDelay, false);
+        ScheduleDayTransitionAfterNightClear(TEXT("NotifyBossDied"));
     }
 }
 

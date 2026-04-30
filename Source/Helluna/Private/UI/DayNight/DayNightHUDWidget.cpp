@@ -24,30 +24,31 @@ void UDayNightHUDWidget::NativeConstruct()
 {
     Super::NativeConstruct();
 
-    // 초기 상태: 낮 타이머 표시, 웨이브 정보 흐리게
+    // GameState 초기 Phase를 받기 전까지는 낮/밤 패널을 숨긴다.
     if (DayTimerPanel)
     {
-        DayTimerPanel->SetVisibility(ESlateVisibility::HitTestInvisible);
+        DayTimerPanel->SetVisibility(ESlateVisibility::Collapsed);
     }
     if (WaveInfoPanel)
     {
-        WaveInfoPanel->SetRenderOpacity(0.35f);
+        WaveInfoPanel->SetVisibility(ESlateVisibility::Collapsed);
+        WaveInfoPanel->SetRenderOpacity(0.f);
     }
     if (WaveLabelText)
     {
-        WaveLabelText->SetText(FText::FromString(TEXT("STANDBY")));
+        WaveLabelText->SetText(FText::GetEmpty());
     }
     if (WaveCountText)
     {
-        WaveCountText->SetText(FText::FromString(TEXT("--")));
+        WaveCountText->SetText(FText::GetEmpty());
     }
     if (WaveSubText)
     {
-        WaveSubText->SetText(FText::FromString(TEXT("대기")));
+        WaveSubText->SetText(FText::GetEmpty());
     }
     if (DayTimeUnitText)
     {
-        DayTimeUnitText->SetText(FText::FromString(TEXT("밤까지")));
+        DayTimeUnitText->SetText(FText::GetEmpty());
     }
 
     // 미션 알림 초기 숨김
@@ -58,6 +59,7 @@ void UDayNightHUDWidget::NativeConstruct()
         NotifyPanel->SetRenderTranslation(FVector2D::ZeroVector);
     }
     bWarningShown = false;
+    bHasAppliedInitialPhase = false;
     NotifyAnimState = 0;
     NotifyAnimTime = 0.f;
 
@@ -95,10 +97,18 @@ void UDayNightHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
     }
 
     const EDefensePhase CurrentPhase = GS->GetPhase();
+    if (!bHasAppliedInitialPhase
+        && CurrentPhase == EDefensePhase::Day
+        && GS->CurrentDayForUI <= 0
+        && GS->DayTimeRemaining <= 0.f)
+    {
+        return;
+    }
 
     // ── Phase 전환 감지 ─────────────────────────────────────────────────────
-    if (CurrentPhase != LastPhase)
+    if (!bHasAppliedInitialPhase || CurrentPhase != LastPhase)
     {
+        bHasAppliedInitialPhase = true;
         LastPhase = CurrentPhase;
         LastDay = -1;
         LastTimeRemaining = -1;
@@ -113,6 +123,7 @@ void UDayNightHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
             }
             if (WaveInfoPanel)
             {
+                WaveInfoPanel->SetVisibility(ESlateVisibility::HitTestInvisible);
                 WaveInfoPanel->SetRenderOpacity(0.35f);
             }
             if (WaveLabelText)
@@ -146,6 +157,7 @@ void UDayNightHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
             }
             if (WaveInfoPanel)
             {
+                WaveInfoPanel->SetVisibility(ESlateVisibility::HitTestInvisible);
                 WaveInfoPanel->SetRenderOpacity(1.0f);
             }
             if (WaveLabelText)
