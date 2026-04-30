@@ -387,7 +387,15 @@ void AHellunaEnemyCharacter_Boss::Multicast_PlaySummonMontage_Implementation()
 	//   복원: OnSummonMontageEnded 에서 RootMotionFromMontagesOnly (기본값) 로 되돌림.
 	AnimInst->SetRootMotionMode(ERootMotionMode::IgnoreRootMotion);
 
-	AnimInst->Montage_Play(SummonMontage, 1.0f);
+	// [BossSlowSummonV2] Montage layer 자체는 BS 위에 작동 중이지만 AM_Boss_Walk 가 BS 와 같은 walk
+	//   시퀀스를 쓰는 탓에 RateScale 0.5x 만으로는 cadence 차이가 약함. InPlayRate 0.5 추가로 곱해
+	//   effective 0.25x (RateScale 0.5 × InPlayRate 0.5) — 위엄 있는 슬로우 워크 톤 보장.
+	constexpr float BossSummonExtraPlayRate = 0.5f;
+	const float PlayedRate = AnimInst->Montage_Play(SummonMontage, BossSummonExtraPlayRate);
+	UE_LOG(LogTemp, Warning,
+		TEXT("[BossSummon_LiveCodeCheck] Montage_Play returned=%.3f — InPlayRate=%.2f, Asset.RateScale=%.3f, Comp.GlobalAnimRateScale=%.3f, Effective=%.3f"),
+		PlayedRate, BossSummonExtraPlayRate, SummonMontage->RateScale, SkelMesh->GlobalAnimRateScale,
+		BossSummonExtraPlayRate * SummonMontage->RateScale * SkelMesh->GlobalAnimRateScale);
 }
 
 // ============================================================

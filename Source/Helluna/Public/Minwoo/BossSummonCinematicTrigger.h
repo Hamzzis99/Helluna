@@ -319,6 +319,19 @@ private:
 	UFUNCTION()
 	void OnBossDiedClient(AActor* DeadActor, AActor* KillerActor);
 
+	/**
+	 * [ClientBossResolveV1] 멀티플레이에서 클라가 Multicast_Start 를 보스 리플리케이션 직전에 받으면
+	 * Boss=NULL 로 도착해 시네마틱이 무음으로 끊기는 문제 → 태그 검색 폴백 + 짧은 폴링.
+	 * 첫 시도가 NULL 이면 0.1s 간격으로 최대 RemainingRetries 회 재시도.
+	 */
+	void StartLocalCinematicWithRetry(APawn* Boss, int32 RemainingRetries);
+
+	/** 시네마틱 본체 (CineCam 스폰 + ViewTarget + 자막). 보스 확보된 후 호출. */
+	void StartLocalCinematicBody(APawn* Boss);
+
+	/** [ClientBossResolveV1] 클라 폴링용 타이머 핸들 */
+	FTimerHandle ClientCinematicRetryTimer;
+
 	/** 자동 발동 타이머 핸들 */
 	FTimerHandle AutoActivateTimer;
 

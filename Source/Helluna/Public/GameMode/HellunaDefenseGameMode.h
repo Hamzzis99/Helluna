@@ -28,6 +28,7 @@ class AHellunaEnemyMassSpawner;
 class UHellunaGameResultWidget;
 class UInv_InventoryComponent;
 class UHellunaHealthComponent;
+class ABossSummonCinematicTrigger;
 class UPCGComponent;
 class UPCGManagedActors;
 class UOreHISMPoolComponent;
@@ -572,6 +573,27 @@ protected:
 	TArray<ATargetPoint*> BossSpawnPoints;
 
 	void CacheBossSpawnPoints();
+
+	// ════════════════════════════════════════════════════════════════════════════════
+	// [BossSummonTriggerAutoSpawnV1] 레벨에 BossSummonCinematicTrigger placement 안 돼있어도
+	//   GameMode 가 BeginPlay 에서 자동 spawn 하여 시네마틱 + HP 바 작동 보장.
+	//   MainMap 처럼 trigger 가 빠진 맵에서도 동작하도록.
+	// ════════════════════════════════════════════════════════════════════════════════
+public:
+	/** 레벨 시작 시 BossSummonCinematicTrigger 가 월드에 없으면 자동 스폰 (서버 권한). */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|Boss(보스)",
+		meta = (DisplayName = "Trigger 자동 spawn (없으면)"))
+	bool bAutoSpawnBossSummonTrigger = true;
+
+	/** 자동 스폰할 BossSummonCinematicTrigger 의 BP 클래스 (BP_BossSummonCinematicTrigger). */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|Boss(보스)",
+		meta = (DisplayName = "Trigger BP 클래스 (자동 spawn)",
+			EditCondition = "bAutoSpawnBossSummonTrigger"))
+	TSubclassOf<ABossSummonCinematicTrigger> BossSummonTriggerClass;
+
+protected:
+	/** BeginPlay 에서 호출 — 월드에 trigger 없고 옵션 켜져 있으면 SpawnActor. */
+	void EnsureBossSummonTriggerSpawned();
 
 	/**
 	 * 보스 소환 진입점.

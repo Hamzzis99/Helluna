@@ -22,6 +22,9 @@
 #include "DrawDebugHelpers.h"
 #include "ActorFolder.h"
 
+// [BossSummonTriggerAutoSpawnV1] 시네마틱 trigger 자동 spawn
+#include "Minwoo/BossSummonCinematicTrigger.h"
+
 // Phase 7 게임 종료 + 결과 반영
 #include "Lobby/Database/HellunaSQLiteSubsystem.h"
 #include "Player/HellunaPlayerState.h"
@@ -177,6 +180,9 @@ void AHellunaDefenseGameMode::BeginPlay()
     CacheRangeSpawnPoints();
     CacheNightPCGComponents();
 
+    // [BossSummonTriggerAutoSpawnV1] 레벨에 BossSummonCinematicTrigger placement 가 없으면 자동 스폰.
+    EnsureBossSummonTriggerSpawned();
+
     // [RepairBossSpawnV1] 우주선 수리 완료 델리게이트 바인딩. 우주선 BeginPlay 가 GameMode 보다
     // 나중에 돌 수 있으므로 0.5초 간격 재시도로 보장.
     if (bSpawnBossOnRepairComplete)
@@ -259,6 +265,55 @@ void AHellunaDefenseGameMode::CacheBossSpawnPoints()
     UE_LOG(LogTemp, Warning, TEXT("[CacheBossSpawnPoints] BossSpawnPoints: %d개 (태그: %s)"),
         BossSpawnPoints.Num(), *BossSpawnPointTag.ToString());
 #endif
+}
+
+// ============================================================
+// [BossSummonTriggerAutoSpawnV1] BossSummonCinematicTrigger 자동 spawn
+//   레벨 placement 누락된 맵(MainMap 등)에서도 시네마틱 + HP 바 작동 보장.
+// ============================================================
+void AHellunaDefenseGameMode::EnsureBossSummonTriggerSpawned()
+{
+    if (!HasAuthority()) return;
+    if (!bAutoSpawnBossSummonTrigger) return;
+    UWorld* World = GetWorld();
+    if (!World) return;
+
+    // 이미 trigger 인스턴스가 있으면 스킵
+    for (TActorIterator<ABossSummonCinematicTrigger> It(World); It; ++It)
+    {
+        if (IsValid(*It))
+        {
+            UE_LOG(LogTemp, Warning,
+                TEXT("[BossSummonTriggerAutoSpawnV1] 기존 BossSummonCinematicTrigger 발견: %s — 자동 스폰 스킵"),
+                *(*It)->GetName());
+            return;
+        }
+    }
+
+    if (!BossSummonTriggerClass)
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("[BossSummonTriggerAutoSpawnV1] BossSummonTriggerClass 미설정 — GameMode CDO 에 BP_BossSummonCinematicTrigger 할당 필요. 자동 스폰 스킵."));
+        return;
+    }
+
+    FActorSpawnParameters Params;
+    Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+    Params.Name = TEXT("BossSummonCinematicTrigger_AutoSpawn");
+    ABossSummonCinematicTrigger* Spawned = World->SpawnActor<ABossSummonCinematicTrigger>(
+        BossSummonTriggerClass, FVector::ZeroVector, FRotator::ZeroRotator, Params);
+    if (Spawned)
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("[BossSummonTriggerAutoSpawnV1] 자동 스폰 성공: %s (class=%s)"),
+            *Spawned->GetName(), *BossSummonTriggerClass->GetName());
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("[BossSummonTriggerAutoSpawnV1] SpawnActor 실패 — class=%s"),
+            *BossSummonTriggerClass->GetName());
+    }
 }
 
 void AHellunaDefenseGameMode::CacheMeleeSpawnPoints()
@@ -2026,6 +2081,12 @@ void AHellunaDefenseGameMode::NotifyBossDied(AActor* DeadBoss)
 
     AliveBoss.Reset();
 
+    // [BossFightTimeFreezeV1] 보스 사망 시 시간 진행 재개
+    if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
+    {
+        GS->SetBossFightTimeFrozen(false);
+    }
+
     // 캐릭터 자체의 EnemyGrade로 등급 판별 (스케줄 조회 불필요)
     EEnemyGrade Grade = EEnemyGrade::Boss;
     if (const AHellunaEnemyCharacter* EnemyChar = Cast<AHellunaEnemyCharacter>(DeadBoss))
@@ -2259,6 +2320,12 @@ void AHellunaDefenseGameMode::TrySummonBoss(const FBossSpawnEntry& Entry)
 
     AliveBoss = SpawnedBoss;
     bBossReady = false;
+
+    // [BossFightTimeFreezeV1] 보스 소환 시 시간 정지 (해/달만, 날씨 유지)
+    if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
+    {
+        GS->SetBossFightTimeFrozen(true);
+    }
 
     // 소환된 액터의 EnemyGrade로 등급 표시
     FString BossTypeLabel = TEXT("보스 계열");

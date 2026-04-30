@@ -301,6 +301,52 @@ bool ABossSummonCinematicTrigger::TryActivate(APawn* InTargetBoss)
 	// 1) 보스 무적 + 피격 차단
 	Boss->SetCanBeDamaged(false);
 
+	// [CinematicFaceTargetV1] 시네마틱 시작 즉시 보스를 가장 가까운 플레이어 방향으로 회전.
+	//   목적: 카메라 오프셋이 보스 로컬 정면(+X) 기준이라 보스가 어떤 방향이든 카메라가 항상
+	//   보스의 정면(=플레이어를 등진 자세)을 비추도록 보장. AI 가 곧 정지되니 회전이 풀리지 않음.
+	{
+		AActor* ClosestPlayer = nullptr;
+		float ClosestDistSq = TNumericLimits<float>::Max();
+		const FVector BossLoc = Boss->GetActorLocation();
+		if (UWorld* W = GetWorld())
+		{
+			for (FConstPlayerControllerIterator It = W->GetPlayerControllerIterator(); It; ++It)
+			{
+				if (APlayerController* PC = It->Get())
+				{
+					if (APawn* PlayerPawn = PC->GetPawn())
+					{
+						const float D = FVector::DistSquared(BossLoc, PlayerPawn->GetActorLocation());
+						if (D < ClosestDistSq)
+						{
+							ClosestDistSq = D;
+							ClosestPlayer = PlayerPawn;
+						}
+					}
+				}
+			}
+		}
+		if (ClosestPlayer)
+		{
+			FVector ToPlayer = (ClosestPlayer->GetActorLocation() - BossLoc).GetSafeNormal2D();
+			if (!ToPlayer.IsNearlyZero())
+			{
+				const FRotator FaceRot(0.f, ToPlayer.Rotation().Yaw, 0.f);
+				Boss->SetActorRotation(FaceRot);
+				if (ACharacter* BossCh = Cast<ACharacter>(Boss))
+				{
+					if (UCharacterMovementComponent* M = BossCh->GetCharacterMovement())
+					{
+						M->bOrientRotationToMovement = false;
+					}
+				}
+				UE_LOG(LogTemp, Warning,
+					TEXT("[BossSummonCinematic_LiveCodeCheck] FaceTarget yaw=%.1f → boss now faces %s"),
+					FaceRot.Yaw, *ClosestPlayer->GetName());
+			}
+		}
+	}
+
 	// 2) 보스 AI 정지 (HellunaEnemyCharacter일 경우 자동 재시작도 억제)
 	if (AHellunaEnemyCharacter_Boss* BossEnemy = Cast<AHellunaEnemyCharacter_Boss>(Boss))
 	{
@@ -333,6 +379,9 @@ bool ABossSummonCinematicTrigger::TryActivate(APawn* InTargetBoss)
 				SavedBossMaxWalkSpeed = Move->MaxWalkSpeed;
 				Move->MaxWalkSpeed = CinematicBossWalkSpeed;
 				SetActorTickEnabled(true);
+				UE_LOG(LogTemp, Warning,
+					TEXT("[BossSummonCinematic_LiveCodeCheck] WalkSpeed override — saved=%.0f, applied=%.0f"),
+					SavedBossMaxWalkSpeed, Move->MaxWalkSpeed);
 			}
 		}
 	}
@@ -518,6 +567,53 @@ void ABossSummonCinematicTrigger::Multicast_StartCinematic_Implementation(APawn*
 		return;
 	}
 
+	// [ClientBossResolveV1] PIE 멀티플레이 / 라이브 서버에서 클라 Boss=NULL 로 도착하는 케이스 핸들링.
+	// 폴링 최대 30회 × 0.1s = 3s. 그동안 보스 액터가 클라 월드에 도착하면 즉시 시네마틱 시작.
+	StartLocalCinematicWithRetry(Boss, 30);
+}
+
+void ABossSummonCinematicTrigger::StartLocalCinematicWithRetry(APawn* Boss, int32 RemainingRetries)
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	if (!IsValid(Boss))
+	{
+		Boss = ResolveTargetBoss();
+	}
+
+	if (!IsValid(Boss))
+	{
+		if (RemainingRetries <= 0)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[BossSummonCinematic_LiveCodeCheck] Client: Boss never resolved after retries — aborting local cinematic"));
+			return;
+		}
+
+		TWeakObjectPtr<ABossSummonCinematicTrigger> Weak(this);
+		const int32 NextRetries = RemainingRetries - 1;
+		World->GetTimerManager().SetTimer(
+			ClientCinematicRetryTimer,
+			FTimerDelegate::CreateLambda([Weak, NextRetries]()
+			{
+				if (Weak.IsValid())
+				{
+					Weak->StartLocalCinematicWithRetry(nullptr, NextRetries);
+				}
+			}),
+			0.1f, false);
+		return;
+	}
+
+	StartLocalCinematicBody(Boss);
+}
+
+void ABossSummonCinematicTrigger::StartLocalCinematicBody(APawn* Boss)
+{
 	UWorld* World = GetWorld();
 	if (!World || !IsValid(Boss))
 	{
@@ -717,6 +813,22 @@ void ABossSummonCinematicTrigger::Multicast_EndCinematic_Implementation()
 	if (!World)
 	{
 		return;
+	}
+
+	// [ClientBossResolveV1] Start 폴링이 아직 돌고 있으면 취소 (End 도착했으니 더 기다릴 의미 없음).
+	World->GetTimerManager().ClearTimer(ClientCinematicRetryTimer);
+
+	// [ClientBossResolveV1] Start 가 보스 못 받아 LocalCinematicBoss 가 NULL 인 경우 — HP 바 스폰 위해
+	// 클라 월드에서 직접 보스 검색.
+	if (!LocalCinematicBoss.IsValid())
+	{
+		if (APawn* Resolved = ResolveTargetBoss())
+		{
+			LocalCinematicBoss = Resolved;
+			UE_LOG(LogTemp, Warning,
+				TEXT("[BossSummonCinematic_LiveCodeCheck] Client: LocalCinematicBoss was null at End — resolved by tag (%s)"),
+				*Resolved->GetName());
+		}
 	}
 
 	// 로컬 PlayerController 카메라 복귀 + 입력 복원
