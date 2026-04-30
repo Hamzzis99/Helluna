@@ -445,7 +445,17 @@ void AHellunaGuardianTurret::TickWarningBeep(float DeltaTime)
 	}
 
 	WarningBeepAccumulator = FMath::Max(WarningBeepAccumulator - Interval, 0.f);
-	Multicast_PlayWarningBeep(IsWarningBeepCritical(), GetWarningBeepPitch());
+
+	FVector SoundLocation = GetActorLocation();
+	if (AActor* Target = CurrentTarget.Get())
+	{
+		if (IsValid(Target) && !Target->IsActorBeingDestroyed())
+		{
+			SoundLocation = GetAimPointFor(Target);
+		}
+	}
+
+	Multicast_PlayWarningBeep(SoundLocation, IsWarningBeepCritical(), GetWarningBeepPitch());
 }
 
 float AHellunaGuardianTurret::GetWarningBeepProgress() const
@@ -814,8 +824,8 @@ void AHellunaGuardianTurret::PerformFire()
 				ProjectileLifeSeconds);
 		}
 
-		// 발사 사운드는 머즐에서 멀티캐스트 (폭발 VFX 는 투사체 측에서 처리)
-		Multicast_PlayFireFX(TraceStart, false, FVector::ZeroVector, FVector::ZeroVector);
+		// 발사 사운드는 타겟 조준점 기준, 투사체/VFX 는 머즐 기준으로 분리한다.
+		Multicast_PlayFireFX(TraceStart, false, FVector::ZeroVector, FVector::ZeroVector, TraceEnd);
 		return;
 	}
 
@@ -831,7 +841,7 @@ void AHellunaGuardianTurret::PerformFire()
 	const FVector ImpactNormal = bHit
 		? HitResult.ImpactNormal
 		: (TraceStart - ImpactLocation).GetSafeNormal();
-	Multicast_PlayFireFX(TraceStart, bHit, ImpactLocation, ImpactNormal);
+	Multicast_PlayFireFX(TraceStart, bHit, ImpactLocation, ImpactNormal, TraceEnd);
 
 	if (ExplosionRadius > 0.f)
 	{
@@ -973,7 +983,11 @@ void AHellunaGuardianTurret::ApplyAimBeamForState(EGuardianState State)
 // =========================================================
 
 void AHellunaGuardianTurret::Multicast_PlayFireFX_Implementation(
-	FVector_NetQuantize Muzzle, bool bHit, FVector_NetQuantize HitLocation, FVector_NetQuantizeNormal HitNormal)
+	FVector_NetQuantize Muzzle,
+	bool bHit,
+	FVector_NetQuantize HitLocation,
+	FVector_NetQuantizeNormal HitNormal,
+	FVector_NetQuantize SoundLocation)
 {
 	// 데디서버는 VFX / 사운드 재생 불필요
 	if (IsRunningDedicatedServer())
@@ -990,6 +1004,9 @@ void AHellunaGuardianTurret::Multicast_PlayFireFX_Implementation(
 	const FVector MuzzleVec = FVector(Muzzle);
 	const FVector ImpactVec = FVector(HitLocation);
 	const FVector NormalVec = FVector(HitNormal);
+	const FVector FireSoundVec = FVector(SoundLocation).IsNearlyZero()
+		? MuzzleVec
+		: FVector(SoundLocation);
 
 	// 투사체 모드: 머즐 빔/폭발 VFX 는 투사체가 담당 → 발사 사운드만 재생
 	const bool bProjectileMode = (ProjectileClass != nullptr);
@@ -998,7 +1015,7 @@ void AHellunaGuardianTurret::Multicast_PlayFireFX_Implementation(
 		if (FireSound)
 		{
 			UGameplayStatics::PlaySoundAtLocation(
-				this, FireSound, MuzzleVec,
+				this, FireSound, FireSoundVec,
 				FireSoundVolume, FireSoundPitch, 0.f,
 				GuardianSoundAttenuation, GuardianSoundConcurrency);
 		}
@@ -1021,7 +1038,7 @@ void AHellunaGuardianTurret::Multicast_PlayFireFX_Implementation(
 	if (FireSound)
 	{
 		UGameplayStatics::PlaySoundAtLocation(
-			this, FireSound, MuzzleVec,
+			this, FireSound, FireSoundVec,
 			FireSoundVolume, FireSoundPitch, 0.f,
 			GuardianSoundAttenuation, GuardianSoundConcurrency);
 	}
@@ -1065,7 +1082,10 @@ void AHellunaGuardianTurret::Multicast_OnStateChanged_Implementation(EGuardianSt
 		*GetName(), static_cast<int32>(NewState));
 }
 
-void AHellunaGuardianTurret::Multicast_PlayWarningBeep_Implementation(bool bCritical, float PitchMultiplier)
+void AHellunaGuardianTurret::Multicast_PlayWarningBeep_Implementation(
+	FVector_NetQuantize SoundLocation,
+	bool bCritical,
+	float PitchMultiplier)
 {
 	if (IsRunningDedicatedServer())
 	{
@@ -1084,20 +1104,13 @@ void AHellunaGuardianTurret::Multicast_PlayWarningBeep_Implementation(bool bCrit
 		return;
 	}
 
-	const USceneComponent* SoundSource = MuzzlePoint.Get();
-	if (!SoundSource)
-	{
-		SoundSource = TurretHead.Get();
-	}
-	if (!SoundSource)
-	{
-		SoundSource = RootComponent;
-	}
-	const FVector SoundLocation = SoundSource ? SoundSource->GetComponentLocation() : GetActorLocation();
+	const FVector SoundVec = FVector(SoundLocation).IsNearlyZero()
+		? GetActorLocation()
+		: FVector(SoundLocation);
 	const float SafePitch = FMath::Max(PitchMultiplier, 0.01f);
 
 	UGameplayStatics::PlaySoundAtLocation(
-		this, SoundToPlay, SoundLocation,
+		this, SoundToPlay, SoundVec,
 		WarningBeepVolume, SafePitch, 0.f,
 		GuardianSoundAttenuation, GuardianSoundConcurrency);
 }

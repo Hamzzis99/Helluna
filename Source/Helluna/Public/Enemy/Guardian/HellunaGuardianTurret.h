@@ -542,9 +542,14 @@ private:
 	// 멀티캐스트 RPC (서버 → 모든 클라 FX·사운드)
 	// =========================================================
 
-	/** 발사 FX/사운드 재생. 서버·클라 모두 실행. HitNormal 은 폭발 VFX 방향 결정 (벽면 수직). */
+	/** 발사 FX/사운드 재생. SoundLocation 은 팀원이 타겟된 플레이어 주변에서 위험을 듣도록 타겟 조준점 기준으로 전달. */
 	UFUNCTION(NetMulticast, Unreliable)
-	void Multicast_PlayFireFX(FVector_NetQuantize Muzzle, bool bHit, FVector_NetQuantize HitLocation, FVector_NetQuantizeNormal HitNormal);
+	void Multicast_PlayFireFX(
+		FVector_NetQuantize Muzzle,
+		bool bHit,
+		FVector_NetQuantize HitLocation,
+		FVector_NetQuantizeNormal HitNormal,
+		FVector_NetQuantize SoundLocation);
 
 	/** 상태 변화 이벤트. BGM / 추적선 색 전환 트리거. */
 	UFUNCTION(NetMulticast, Unreliable)
@@ -552,7 +557,7 @@ private:
 
 	/** Lock/FireDelay 경고 beep 재생. 서버가 박자만 결정하고 각 클라가 3D 월드 사운드로 재생한다. */
 	UFUNCTION(NetMulticast, Unreliable)
-	void Multicast_PlayWarningBeep(bool bCritical, float PitchMultiplier);
+	void Multicast_PlayWarningBeep(FVector_NetQuantize SoundLocation, bool bCritical, float PitchMultiplier);
 
 	/** 사망 시 머리/몸체 분리 + 물리 시뮬 + 임펄스. 서버·클라 동기. Reliable (한번만 발생). */
 	UFUNCTION(NetMulticast, Reliable)
