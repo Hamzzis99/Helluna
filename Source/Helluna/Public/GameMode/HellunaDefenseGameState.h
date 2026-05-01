@@ -254,6 +254,33 @@ public:
     void CheatTimeFreeze_HoldTick();
     FTimerHandle TimerHandle_CheatTimeFreezeHold;
 
+    // ════════════════════════════════════════════════════════════════════════════════
+    // [BossFightTimeFreezeV1] 보스 전투 시간 정지 — 치트와 다르게 surgical:
+    //   * UDS 의 "Animate Time of Day" 만 false 로 (해/달 위치 고정)
+    //   * UDS 의 tick / CustomTimeDilation 은 건드리지 않음 (구름/하늘 애니메이션 유지)
+    //   * UDW (Ultra_Dynamic_Weather) 는 별도 액터 → 자동으로 영향 없음 (비/날씨 계속 진행)
+    //   * GameMode phase timers 일시정지 (Day/Night 자동 전환 차단)
+    // 보스 소환 시 ON, 보스 사망 시 OFF.
+    // ════════════════════════════════════════════════════════════════════════════════
+public:
+    /** 보스 전투용 시간 정지 토글 — 서버에서 호출. */
+    UFUNCTION(BlueprintCallable, Category = "BossFight")
+    void SetBossFightTimeFrozen(bool bFreeze);
+
+    /** 보스 전투 시간 정지 상태 */
+    UFUNCTION(BlueprintPure, Category = "BossFight")
+    bool IsBossFightTimeFrozen() const { return bBossFightTimeFrozen; }
+
+    UFUNCTION(NetMulticast, Reliable)
+    void NetMulticast_ApplyBossFightTimeFreeze(bool bFreeze);
+
+    void BossFightTimeFreeze_HoldTick();
+
+private:
+    /** 현재 보스 전투 시간 정지 상태 (Replicated 는 안 하고 멀티캐스트로 클라 동기화). */
+    bool bBossFightTimeFrozen = false;
+    FTimerHandle TimerHandle_BossFightFreezeHold;
+
 protected:
     /** MDF 데이터 디스크 저장 (맵 이동 전) */
     virtual void OnPreMapTransition() override;

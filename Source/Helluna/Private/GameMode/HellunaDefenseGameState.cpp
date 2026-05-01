@@ -1480,6 +1480,69 @@ void AHellunaDefenseGameState::CheatTimeFreeze_HoldTick()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// [BossFightTimeFreezeV1] 보스 전투 시간 정지 (치트와 분리, surgical)
+// ═══════════════════════════════════════════════════════════════════════════════
+void AHellunaDefenseGameState::SetBossFightTimeFrozen(bool bFreeze)
+{
+    if (!HasAuthority()) return;
+    if (bBossFightTimeFrozen == bFreeze) return;
+    bBossFightTimeFrozen = bFreeze;
+
+    UE_LOG(LogTemp, Warning,
+        TEXT("[BossFightTimeFreezeV1] SetBossFightTimeFrozen=%d"), (int32)bFreeze);
+
+    NetMulticast_ApplyBossFightTimeFreeze(bFreeze);
+
+    // GameMode phase 타이머 (Day/Night 자동 전환) 일시정지
+    if (UWorld* W = GetWorld())
+    {
+        if (AHellunaDefenseGameMode* GM = W->GetAuthGameMode<AHellunaDefenseGameMode>())
+        {
+            GM->Cheat_SetPhaseTimersPaused(bFreeze);
+        }
+    }
+}
+
+void AHellunaDefenseGameState::NetMulticast_ApplyBossFightTimeFreeze_Implementation(bool bFreeze)
+{
+    bBossFightTimeFrozen = bFreeze;
+    AActor* UDS = GetUDSActor();
+    if (!UDS) return;
+
+    // 해/달 위치 고정만 — 구름/하늘 외 애니메이션 + UDW(Weather) 는 영향 없음.
+    if (FBoolProperty* AnimProp = CastField<FBoolProperty>(CachedProp_Animate))
+    {
+        AnimProp->SetPropertyValue_InContainer(UDS, !bFreeze);
+    }
+
+    if (bFreeze)
+    {
+        GetWorldTimerManager().SetTimer(TimerHandle_BossFightFreezeHold, this,
+            &AHellunaDefenseGameState::BossFightTimeFreeze_HoldTick, 0.5f, true);
+    }
+    else
+    {
+        GetWorldTimerManager().ClearTimer(TimerHandle_BossFightFreezeHold);
+    }
+
+    UE_LOG(LogTemp, Warning,
+        TEXT("[BossFightTimeFreezeV1] Multicast applied bFreeze=%d (UDS Animate=%d)"),
+        (int32)bFreeze, !bFreeze ? 1 : 0);
+}
+
+void AHellunaDefenseGameState::BossFightTimeFreeze_HoldTick()
+{
+    if (!bBossFightTimeFrozen) return;
+    AActor* UDS = GetUDSActor();
+    if (!UDS) return;
+    if (FBoolProperty* AnimProp = CastField<FBoolProperty>(CachedProp_Animate))
+    {
+        AnimProp->SetPropertyValue_InContainer(UDS, false);
+    }
+    // SetUDSTimeOfDay / SetActorTickEnabled / CustomTimeDilation 건드리지 않음 — 날씨/구름 유지.
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // 🌤️ 랜덤 날씨 시스템
 // ═══════════════════════════════════════════════════════════════════════════════
 void AHellunaDefenseGameState::ApplyRandomWeather(bool bIsDay, float TransitionTimeOverride)

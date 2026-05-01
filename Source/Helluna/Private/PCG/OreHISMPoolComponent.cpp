@@ -5,10 +5,29 @@
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/Pawn.h"
+#include "Engine/Engine.h"
 #include "TimerManager.h"
+#include "HAL/IConsoleManager.h"
 #include "Object/OreProximityComponent.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogOreHISMPool, Log, All);
+
+// [OreHISMDiagV1] 진단용 CVar — 패키징/PIE 모두에서 콘솔로 토글 가능.
+//   Helluna.OreHISM.ForceFallback 1  → GameMode 가 HISM 우회하고 모든 광석을 직접 AActor 로 스폰.
+//                                      "HISM 시스템 문제 vs 생성 자체 문제" 구분에 사용.
+//   Helluna.OreHISM.ShowStats     1  → OreHISMPool 의 통계를 매 AutoManageTick 마다 화면 출력.
+static TAutoConsoleVariable<int32> CVarOreHISMForceFallback(
+    TEXT("Helluna.OreHISM.ForceFallback"),
+    0,
+    TEXT("1 = GameMode 의 HISM 풀 사용을 우회하고 광석을 직접 AActor 로 스폰. ")
+    TEXT("HISM 최적화 시스템 문제와 생성 자체 문제를 구분하기 위한 진단 토글."),
+    ECVF_Default);
+
+static TAutoConsoleVariable<int32> CVarOreHISMShowStats(
+    TEXT("Helluna.OreHISM.ShowStats"),
+    0,
+    TEXT("1 = OreHISMPool 통계 (등록/활성/풀/승격 수) 를 매 AutoManageTick 화면에 출력."),
+    ECVF_Default);
 
 UOreHISMPoolComponent::UOreHISMPoolComponent()
 {
@@ -342,6 +361,32 @@ void UOreHISMPoolComponent::AutoManageTick()
 
     AutoDemoteFarFromPlayers(AutoDemoteRadius);
     AutoPromoteNearPlayers(AutoPromoteRadius);
+
+    // [OreHISMDiagV1] 진단용 화면 출력 — Helluna.OreHISM.ShowStats 1.
+    if (CVarOreHISMShowStats.GetValueOnGameThread() != 0 && GEngine)
+    {
+        int32 PromotedCount = 0;
+        int32 DestroyedCount = 0;
+        for (const FOreInstanceData& Data : AllInstances)
+        {
+            if (Data.bDestroyed) ++DestroyedCount;
+            else if (Data.bPromotedToActor) ++PromotedCount;
+        }
+        const int32 ActiveHISM = AllInstances.Num() - DestroyedCount - PromotedCount;
+
+        const FString Msg = FString::Printf(
+            TEXT("[OreHISM] 등록=%d 활성HISM=%d 승격액터=%d 파괴=%d 풀=%d 플레이어=%d"),
+            AllInstances.Num(), ActiveHISM, PromotedCount, DestroyedCount,
+            Pools.Num(), CachedPlayerLocations.Num());
+
+        // 키 = 컴포넌트 포인터 → 같은 메시지 덮어쓰기
+        const uint64 Key = reinterpret_cast<uint64>(this);
+        GEngine->AddOnScreenDebugMessage(
+            static_cast<int32>(Key & 0x7FFFFFFF), AutoCheckInterval + 0.5f,
+            FColor::Yellow, Msg);
+
+        UE_LOG(LogOreHISMPool, Warning, TEXT("%s"), *Msg);
+    }
 }
 
 // ============================================================================
@@ -378,7 +423,25 @@ int32 UOreHISMPoolComponent::FindOrCreatePool(UStaticMesh* Mesh)
     HISM->NumCustomDataFloats = 0;
 
     HISM->RegisterComponent();
-    HISM->AttachToComponent(Owner->GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
+
+    // [OreHISMHostFixV1] Owner(GameMode 등) 에 RootComponent 가 없으면 attach 가 실패해
+    // HISM 의 ComponentToWorld 가 unset → bounds 0 → frustum culling 으로 안 보일 수 있음.
+    // 해결: RootComponent 가 있으면 attach, 없으면 명시적으로 World 0 에 위치 설정.
+    USceneComponent* OwnerRoot = Owner->GetRootComponent();
+    if (OwnerRoot)
+    {
+        HISM->AttachToComponent(OwnerRoot, FAttachmentTransformRules::KeepWorldTransform);
+        UE_LOG(LogOreHISMPool, Log, TEXT("[OreHISMHostFixV1] HISM attach OK to RootComponent=%s"),
+            *OwnerRoot->GetName());
+    }
+    else
+    {
+        HISM->SetWorldLocationAndRotation(FVector::ZeroVector, FRotator::ZeroRotator);
+        HISM->SetWorldScale3D(FVector::OneVector);
+        UE_LOG(LogOreHISMPool, Warning,
+            TEXT("[OreHISMHostFixV1] Owner=%s 에 RootComponent 없음 → HISM 을 World (0,0,0) 에 명시 위치"),
+            *Owner->GetName());
+    }
 
     NewPool.HISMComp = HISM;
 

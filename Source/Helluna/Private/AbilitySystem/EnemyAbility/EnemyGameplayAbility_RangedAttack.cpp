@@ -251,11 +251,15 @@ void UEnemyGameplayAbility_RangedAttack::SpawnAndLaunchProjectile()
 	//   AABB 라 Origin=중심점(몸통 중앙 높이) 이 자동 계산됨.
 	// [TurretHorizontalFireV1] 타워 타겟 한정 Z 성분 제거 → 수평 정면 발사.
 	//   투사체 스폰 높이(LaunchHeightOffset) 를 맞춰두면 타워 본체에 정확히 적중.
+	// [PlayerAimFix] bOnlyCollidingComponents=true — 플레이어의 SpringArm/FollowCamera/
+	//   ReviveWidgetComp(Z=200) 등 비충돌 컴포넌트가 Bounds Origin 을 카메라 뒤·위로
+	//   끌어올려 발사체가 플레이어 머리 위 뒤를 지나가는 버그 수정. 콜리전 컴포넌트만
+	//   포함하면 Capsule(중심=ActorLocation, 흉부 높이) 기준으로 정확히 조준됨.
 	FVector LaunchDirection;
 	if (CurrentTarget.IsValid())
 	{
 		FVector TargetOrigin, TargetExtent;
-		CurrentTarget->GetActorBounds(/*bOnlyCollidingComponents=*/false, TargetOrigin, TargetExtent, /*bIncludeFromChildActors=*/true);
+		CurrentTarget->GetActorBounds(/*bOnlyCollidingComponents=*/true, TargetOrigin, TargetExtent, /*bIncludeFromChildActors=*/true);
 		FVector ToTarget = TargetOrigin - SpawnLocation;
 		if (Cast<AHellunaTurretBase>(CurrentTarget.Get()))
 		{
@@ -266,6 +270,15 @@ void UEnemyGameplayAbility_RangedAttack::SpawnAndLaunchProjectile()
 		{
 			LaunchDirection = Enemy->GetActorForwardVector();
 		}
+
+		// [PlayerAimFix_LCCheck] 라이브 코딩 검증용 로그 — bounds Origin Z 가 플레이어 흉부
+		// 높이(액터 위치 근방)이면 패치 적용 OK. 200+ 면 옛 동작(Widget/Camera 포함).
+		UE_LOG(LogTemp, Warning,
+			TEXT("[PlayerAimFix_LCCheck] Target=%s BoundsOrigin=(%.0f,%.0f,%.0f) TargetActorZ=%.0f Dir=(%.2f,%.2f,%.2f)"),
+			*CurrentTarget->GetName(),
+			TargetOrigin.X, TargetOrigin.Y, TargetOrigin.Z,
+			CurrentTarget->GetActorLocation().Z,
+			LaunchDirection.X, LaunchDirection.Y, LaunchDirection.Z);
 	}
 	else
 	{

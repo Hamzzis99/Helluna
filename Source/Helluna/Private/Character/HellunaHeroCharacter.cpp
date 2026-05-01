@@ -739,14 +739,16 @@ void AHellunaHeroCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInp
 	PlayerInputComponent->BindKey(EKeys::SpaceBar, IE_Pressed, this, &ThisClass::Input_BlockPressed);
 	PlayerInputComponent->BindKey(EKeys::SpaceBar, IE_Released, this, &ThisClass::Input_BlockReleased);
 
-	// [cheatdebug] F1~F6 치트 키 바인딩 (BP 수정 없이 C++에서 직접 바인딩)
+	// [cheatdebug] F1~F7 치트 키 바인딩 (BP 수정 없이 C++에서 직접 바인딩)
 	PlayerInputComponent->BindKey(EKeys::F1, IE_Pressed, this, &ThisClass::OnCheat_F1);
 	PlayerInputComponent->BindKey(EKeys::F2, IE_Pressed, this, &ThisClass::OnCheat_F2);
 	PlayerInputComponent->BindKey(EKeys::F3, IE_Pressed, this, &ThisClass::OnCheat_F3);
 	PlayerInputComponent->BindKey(EKeys::F4, IE_Pressed, this, &ThisClass::OnCheat_F4);
 	PlayerInputComponent->BindKey(EKeys::F5, IE_Pressed, this, &ThisClass::OnCheat_F5);
 	PlayerInputComponent->BindKey(EKeys::F6, IE_Pressed, this, &ThisClass::OnCheat_F6);
-	UE_LOG(LogTemp, Warning, TEXT("[cheatdebug] F1~F6 치트 키 바인딩 완료 (C++)"));
+	// [GodModeCheat-V1] F7 — 무적 토글
+	PlayerInputComponent->BindKey(EKeys::F7, IE_Pressed, this, &ThisClass::OnCheat_F7);
+	UE_LOG(LogTemp, Warning, TEXT("[cheatdebug] F1~F7 치트 키 바인딩 완료 (C++)"));
 }
 
 void AHellunaHeroCharacter::OnCheat_F1() { if (CheatComponent) CheatComponent->HandleKey_KillAll(); }
@@ -755,6 +757,22 @@ void AHellunaHeroCharacter::OnCheat_F3() { if (CheatComponent) CheatComponent->H
 void AHellunaHeroCharacter::OnCheat_F4() { if (CheatComponent) CheatComponent->HandleKey_GrantMaterials(); }
 void AHellunaHeroCharacter::OnCheat_F5() { if (CheatComponent) CheatComponent->HandleKey_SpeedUp(); }
 void AHellunaHeroCharacter::OnCheat_F6() { if (CheatComponent) CheatComponent->HandleKey_SpeedDown(); }
+void AHellunaHeroCharacter::OnCheat_F7() { if (CheatComponent) CheatComponent->HandleKey_GodMode(); }
+
+// [GodModeCheat-V1] 무적 치트 활성 시 들어온 데미지 전부 0 처리.
+// 서버/클라 양쪽에서 호출되는 경로라 CheatComponent->bGodModeOn 은 복제됨.
+float AHellunaHeroCharacter::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent,
+	AController* EventInstigator, AActor* DamageCauser)
+{
+	if (CheatComponent && CheatComponent->IsGodModeOn())
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[GodModeCheat-V1] Damage blocked: %.1f → 0 (from %s)"),
+			DamageAmount, *GetNameSafe(DamageCauser));
+		return 0.f;
+	}
+	return Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
+}
 
 // [cheatdebug] 콘솔 명령 — F1 키가 막혔을 때 ` 콘솔에서 직접 호출
 void AHellunaHeroCharacter::Cheat_KillAll()

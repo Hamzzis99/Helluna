@@ -256,4 +256,24 @@ public:
 		meta = (DisplayName = "GA 후보 우선 (Walk 는 폴백)",
 			ToolTip = "true: GA 후보 있으면 GA 만 선택, Walk 는 GA 0개일 때 폴백."))
 	bool bPreferAbilityOverWalk = true;
+
+	/**
+	 * [ChaseFallbackV1] 발동 가능한 GA 도 없고 Walk 슬롯도 없을 때 (또는 글로벌 쿨다운 대기 중)
+	 *  타겟 방향으로 매 Tick AddMovementInput 으로 걷기.
+	 *  StateTree 에 별도 Chase 상태가 없거나 Walk 슬롯이 미설정인 보스가 freeze 되는 걸 방지.
+	 *
+	 *  true  (권장): 쿨다운/후보 없음 구간에서 보스가 플레이어 쪽으로 자연스럽게 접근.
+	 *  false: 기존 동작 (제자리 대기).
+	 */
+	UPROPERTY(EditAnywhere, Category = "Chase Fallback",
+		meta = (DisplayName = "쿨다운/후보 없음 시 플레이어로 걷기"))
+	bool bChaseFallbackWhenIdle = true;
+
+	/**
+	 * Chase Fallback 정지 거리 (cm). 타겟과 이 거리 이내면 더 가까이 접근하지 않음 — 보스 캡슐이 플레이어에 박히는 것 방지.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Chase Fallback",
+		meta = (DisplayName = "Chase Fallback 정지 거리 (cm)", ClampMin = "0.0",
+			EditCondition = "bChaseFallbackWhenIdle"))
+	float ChaseFallbackStopRange = 250.f;
 };

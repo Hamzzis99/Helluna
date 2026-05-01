@@ -38,6 +38,9 @@ public:
     /** F7 — 낮→밤 전환 시간을 GameMode의 CheatFastForwardDayDuration(기본 5초)으로 단축 */
     void HandleKey_FastForwardDay();
 
+    /** [GodModeCheat-V1] F7 — 무적 토글. 활성 시 TakeDamage 가 0 을 반환해 데미지를 무시. */
+    void HandleKey_GodMode();
+
     virtual void BeginPlay() override;
 
     virtual void TickComponent(float DeltaTime, ELevelTick TickType,
@@ -72,6 +75,14 @@ public:
     UFUNCTION(Server, Reliable)
     void Server_FastForwardDay();
 
+    /** [GodModeCheat-V1] 서버에서 bGodModeOn 토글 후 모든 클라에 복제 */
+    UFUNCTION(Server, Reliable)
+    void Server_ToggleGodMode();
+
+    /** [GodModeCheat-V1] 현재 무적 상태. HeroCharacter::TakeDamage 에서 읽어 데미지 차단. */
+    UFUNCTION(BlueprintPure, Category = "Cheat|GodMode")
+    bool IsGodModeOn() const { return bGodModeOn; }
+
     /** 재료 지급에 사용할 ItemType → Actor 매핑 DataTable (BP 기본값에서 DT_ItemTypeMapping 할당) */
     UPROPERTY(EditDefaultsOnly, Category="Cheat|Inventory")
     TObjectPtr<UDataTable> ItemTypeMappingDataTable;
@@ -95,6 +106,10 @@ public:
 private:
     UPROPERTY(Replicated)
     bool bNoclipOn = false;
+
+    /** [GodModeCheat-V1] 무적 상태 (서버 권한, 클라로 복제). TakeDamage 에서 읽음. */
+    UPROPERTY(Replicated)
+    bool bGodModeOn = false;
 
     float CachedWalkSpeed = 0.f;
     float CachedFlySpeed = 0.f;

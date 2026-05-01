@@ -253,7 +253,9 @@ AHellunaEnemyCharacter* UEnemyActorPool::ActivateActor(
 	const FTransform& SpawnTransform,
 	float CurrentHP,
 	float MaxHP,
-	const FVector& MeshExtraScale)
+	const FVector& MeshExtraScale,
+	const FLinearColor& TeamColor,
+	bool bHasTeamColor)
 {
 	if (!EnemyClass)
 	{
@@ -388,6 +390,17 @@ AHellunaEnemyCharacter* UEnemyActorPool::ActivateActor(
 			SkelMesh->bPauseAnims = false;
 			SkelMesh->bNoSkeletonUpdate = false;
 		}
+	}
+
+	// Entity 가 결정한 RGB 가 있으면 그대로 적용 → 풀 재사용 시 동일 색 유지.
+	// 미결정(스폰 경로 외)이면 액터 자체 풀에서 랜덤 픽 (레벨 배치 액터 fallback 과 동일).
+	if (bHasTeamColor)
+	{
+		Actor->ApplyTeamColor(TeamColor);
+	}
+	else
+	{
+		Actor->ApplyRandomTeamColor();
 	}
 
 	UE_LOG(LogECSPool, Verbose,

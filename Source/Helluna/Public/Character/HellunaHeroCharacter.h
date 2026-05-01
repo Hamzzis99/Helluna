@@ -132,6 +132,11 @@ private:
 	void OnCheat_F4();
 	void OnCheat_F5();
 	void OnCheat_F6();
+	void OnCheat_F7();
+
+	/** [GodModeCheat-V1] 무적 치트 활성 시 데미지를 0 으로 처리. CheatComponent 의 bGodModeOn 조회. */
+	virtual float TakeDamage(float DamageAmount, struct FDamageEvent const& DamageEvent,
+		class AController* EventInstigator, AActor* DamageCauser) override;
 
 	// [cheatdebug] 콘솔 명령 — F1 키가 막혔을 때 ` 콘솔에서 직접 호출
 	UFUNCTION(Exec)

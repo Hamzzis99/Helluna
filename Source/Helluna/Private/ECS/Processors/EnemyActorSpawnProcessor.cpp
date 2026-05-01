@@ -204,10 +204,27 @@ bool UEnemyActorSpawnProcessor::TrySpawnActor(
 	// [SpawnScaleV1] Trait 에서 지정한 Actor Scale 반영.
 	SpawnTransform.SetScale3D(Data.ActorSpawnScale);
 
+	// 팀 컬러 RGB — 첫 스폰 시 CDO->TeamColorOptions 에서 랜덤 픽해 fragment 에 보존.
+	// 풀 재사용/재활성화에도 같은 RGB 가 유지돼 같은 엔티티는 항상 같은 색.
+	if (!Data.bTeamColorAssigned)
+	{
+		if (const AHellunaEnemyCharacter* CDO =
+			Data.EnemyClass ? Data.EnemyClass->GetDefaultObject<AHellunaEnemyCharacter>() : nullptr)
+		{
+			const TArray<FLinearColor>& Options = CDO->TeamColorOptions;
+			if (Options.Num() > 0)
+			{
+				Data.TeamColor = Options[FMath::RandRange(0, Options.Num() - 1)];
+				Data.bTeamColorAssigned = true;
+			}
+		}
+	}
+
 	// [수정 포인트] ActivateActor(Transform, HP, MaxHP) → ActivateActor(EnemyClass, Transform, HP, MaxHP)
 	// 멀티 Pool 구조에서 어떤 Pool에서 꺼낼지 클래스를 명시해야 올바른 Actor를 반환받음
 	AHellunaEnemyCharacter* SpawnedActor = Pool->ActivateActor(
-		Data.EnemyClass, SpawnTransform, Data.CurrentHP, Data.MaxHP, Data.MeshSpawnScale);
+		Data.EnemyClass, SpawnTransform, Data.CurrentHP, Data.MaxHP, Data.MeshSpawnScale,
+		Data.TeamColor, Data.bTeamColorAssigned);
 
 	if (!SpawnedActor)
 	{

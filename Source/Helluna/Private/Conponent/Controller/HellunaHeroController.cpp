@@ -10,6 +10,7 @@
 #include "GameMode/Widget/HellunaGameResultWidget.h"
 #include "GameMode/HellunaDefenseGameMode.h"  // EHellunaGameEndReason, EndGame()
 #include "Blueprint/UserWidget.h"
+#include "Blueprint/WidgetBlueprintLibrary.h"
 #include "TimerManager.h"
 #include "Components/AudioComponent.h"
 #include "Sound/SoundBase.h"
@@ -51,6 +52,9 @@
 
 // [DebugHUD] 디버그 HUD 시스템
 #include "UI/HUD/HellunaDebugHUDWidget.h"
+
+// [BossCinematic_HUD] 시네마틱 동안 숨기지 말아야 할 위젯 — 보스 HP 바
+#include "UI/BossHealthBarWidget.h"
 
 // [WorldMap] 풀스크린 월드맵 + 핑 시스템
 #include "UI/WorldMap/HellunaWorldMapWidget.h"
@@ -818,6 +822,12 @@ void AHellunaHeroController::InitializeChatWidget()
 
 void AHellunaHeroController::OnChatToggleInput(const FInputActionValue& Value)
 {
+	// 보스 소환 시네마틱 중에는 모든 입력 차단
+	if (bInBossCinematic)
+	{
+		return;
+	}
+
 	// 퍼즐 모드 중에는 채팅 차단
 	if (bInPuzzleMode)
 	{
@@ -913,6 +923,12 @@ void AHellunaHeroController::TryEnterPuzzleFromCube(APuzzleCubeActor* Cube)
 
 void AHellunaHeroController::OnPuzzleInteractInput(const FInputActionValue& Value)
 {
+	// 보스 소환 시네마틱 중에는 차단 (F 홀드로 다른 상호작용 시작 방지)
+	if (bInBossCinematic)
+	{
+		return;
+	}
+
 	// [Fix] Started가 놓쳐도 Triggered 매 틱에서 홀드 상태 보장
 	bHoldingPuzzleInteract = true;
 
@@ -1539,6 +1555,176 @@ void AHellunaHeroController::Server_BossEncounterActivate_Implementation()
 }
 
 // =========================================================================================
+// [Summon Cinematic] 보스 소환 시네마틱 — 로컬 PC 진입/종료
+// =========================================================================================
+
+void AHellunaHeroController::EnterBossCinematic(AActor* ViewTarget, float BlendInTime)
+{
+	// 로컬 컨트롤러만 UI/입력 처리
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	if (bInBossCinematic)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[BossCinematic] Enter 중복 호출 무시"));
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[BossSummon_LiveCodeCheck] EnterBossCinematic — ViewTarget=%s, BlendIn=%.2f"),
+		ViewTarget ? *ViewTarget->GetName() : TEXT("NULL"), BlendInTime);
+
+	bInBossCinematic = true;
+
+	// 진입 전 ViewTarget 백업 (복귀 시 Pawn이 null이어도 돌아갈 대상)
+	if (APlayerCameraManager* CamMgr = PlayerCameraManager)
+	{
+		SavedPreCinematicViewTarget = CamMgr->GetViewTarget();
+	}
+
+	// 1. 이동/시점 입력 차단 (AddIgnore 카운트 기반이라 중복 호출 주의)
+	SetIgnoreMoveInput(true);
+	SetIgnoreLookInput(true);
+
+	// 2. 기본 InputComponent DisableInput — 일반 BP 입력 바인딩 차단
+	DisableInput(this);
+
+	// 3. FlushPressedKeys 제거 — 시네마틱 중 유저가 WASD를 계속 누르고 있을 경우
+	//    Enhanced Input의 pressed 상태가 사라져 Exit 후 재입력 전까지 Input_Move가 안 발화됨.
+	//    이동/시점은 SetIgnoreMoveInput/LookInput으로 충분히 차단되므로 Flush 없이도 안전.
+
+	// 4. 카메라 블렌드 — EaseInOut로 부드럽게 보스로 이동
+	if (ViewTarget)
+	{
+		SetViewTargetWithBlend(ViewTarget, FMath::Max(BlendInTime, 0.1f),
+			EViewTargetBlendFunction::VTBlend_EaseInOut, 2.f, false);
+	}
+
+	// 5. 게임플레이 HUD 일괄 숨김 — 시네마틱 몰입감 강화. 보스 대사 위젯은 이 호출 이후 AddToViewport 되므로 영향 없음.
+	ApplyBossCinematicHUDLockdown(true);
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[BossSummon_LiveCodeCheck] EnterBossCinematic input locks applied (no Flush) — ViewTarget=%s"),
+		ViewTarget ? *ViewTarget->GetName() : TEXT("NULL"));
+}
+
+void AHellunaHeroController::ExitBossCinematic(float BlendOutTime)
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	if (!bInBossCinematic)
+	{
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[BossSummon_LiveCodeCheck] ExitBossCinematic — BlendOut=%.2f"), BlendOutTime);
+
+	bInBossCinematic = false;
+
+	// 1. 입력 복원
+	SetIgnoreMoveInput(false);
+	SetIgnoreLookInput(false);
+	EnableInput(this);
+
+	// 2. 카메라 복귀 대상 결정: 현재 Pawn 우선, 없으면 진입 전 ViewTarget
+	AActor* ReturnTarget = GetPawn();
+	if (!ReturnTarget)
+	{
+		ReturnTarget = SavedPreCinematicViewTarget.Get();
+	}
+
+	if (ReturnTarget)
+	{
+		// BlendOutTime<=0 이면 즉시 스냅 — 블렌드 구간 동안 카메라가 입력에 반응하지 않는 감각 제거
+		UE_LOG(LogTemp, Warning,
+			TEXT("[BossSummon_LiveCodeCheck] ExitBossCinematic viewtarget swap — BlendOut=%.3f (instant=%s)"),
+			BlendOutTime, BlendOutTime <= KINDA_SMALL_NUMBER ? TEXT("true") : TEXT("false"));
+
+		if (BlendOutTime <= KINDA_SMALL_NUMBER)
+		{
+			SetViewTarget(ReturnTarget);
+		}
+		else
+		{
+			SetViewTargetWithBlend(ReturnTarget, BlendOutTime,
+				EViewTargetBlendFunction::VTBlend_EaseOut, 2.f, false);
+		}
+	}
+
+	SavedPreCinematicViewTarget.Reset();
+
+	// 숨겨둔 HUD 복원
+	ApplyBossCinematicHUDLockdown(false);
+}
+
+void AHellunaHeroController::ApplyBossCinematicHUDLockdown(bool bShouldHide)
+{
+	if (bShouldHide)
+	{
+		BossCinematicHiddenWidgets.Reset();
+
+		TArray<UUserWidget*> FoundWidgets;
+		UWidgetBlueprintLibrary::GetAllWidgetsOfClass(this, FoundWidgets, UUserWidget::StaticClass(), false);
+
+		for (UUserWidget* W : FoundWidgets)
+		{
+			if (!IsValid(W) || !W->IsInViewport())
+			{
+				continue;
+			}
+
+			// 이미 보이지 않는 위젯은 건너뜀 — 복원 시 엉뚱하게 띄우지 않기 위해
+			const ESlateVisibility Current = W->GetVisibility();
+			if (Current == ESlateVisibility::Collapsed || Current == ESlateVisibility::Hidden)
+			{
+				continue;
+			}
+
+			// [BossCinematic_HUD_KeepHPBarV1] 보스 HP 바는 시네마틱 도중에도 계속 보여야 함
+			// (2페이즈 진입 연출에서 0→풀 fill 애니가 화면에 보여야 의미가 있음).
+			if (W->IsA<UBossHealthBarWidget>())
+			{
+				continue;
+			}
+
+			FBossCinematicHiddenWidget Entry;
+			Entry.Widget = W;
+			Entry.OriginalVisibility = Current;
+			BossCinematicHiddenWidgets.Add(Entry);
+
+			W->SetVisibility(ESlateVisibility::Collapsed);
+		}
+
+		UE_LOG(LogTemp, Warning,
+			TEXT("[BossCinematic_HUD] Hidden %d viewport widgets"),
+			BossCinematicHiddenWidgets.Num());
+		return;
+	}
+
+	// 복원
+	int32 Restored = 0;
+	for (const FBossCinematicHiddenWidget& Entry : BossCinematicHiddenWidgets)
+	{
+		if (UUserWidget* W = Entry.Widget.Get())
+		{
+			if (IsValid(W))
+			{
+				W->SetVisibility(Entry.OriginalVisibility);
+				++Restored;
+			}
+		}
+	}
+	BossCinematicHiddenWidgets.Reset();
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[BossCinematic_HUD] Restored %d widgets"), Restored);
+}
+
+// =========================================================================================
 // [DebugHUD] 디버그 HUD 생성 및 F5 토글
 // =========================================================================================
 
@@ -1573,6 +1759,11 @@ void AHellunaHeroController::CreateDebugHUD()
 
 void AHellunaHeroController::OnDebugHUDToggle(const FInputActionValue& Value)
 {
+	if (bInBossCinematic)
+	{
+		return;
+	}
+
 	if (IsValid(DebugHUDInstance))
 	{
 		DebugHUDInstance->ToggleVisibility();
@@ -1585,6 +1776,10 @@ void AHellunaHeroController::OnDebugHUDToggle(const FInputActionValue& Value)
 
 void AHellunaHeroController::OnPauseMenuToggleInput(const FInputActionValue& Value)
 {
+	if (bInBossCinematic)
+	{
+		return;
+	}
 	TogglePauseMenu();
 }
 
@@ -1596,6 +1791,9 @@ void AHellunaHeroController::TogglePauseMenu()
 {
 	// 서버 측 PlayerController에서는 위젯 생성 불가 — 로컬만 허용
 	if (!IsLocalController()) return;
+
+	// 보스 소환 시네마틱 중에는 차단
+	if (bInBossCinematic) return;
 
 	// 이미 열려 있으면 즉시 닫기
 	if (IsValid(PauseMenuInstance))
@@ -1657,6 +1855,9 @@ void AHellunaHeroController::ClearPauseMenuInstanceOnly()
 
 void AHellunaHeroController::ToggleGraphicsSettings()
 {
+	// 보스 소환 시네마틱 중에는 차단
+	if (bInBossCinematic) return;
+
 	// 이미 열려 있으면 닫기
 	if (IsValid(GraphicsSettingsInstance))
 	{
@@ -1708,6 +1909,12 @@ void AHellunaHeroController::OnToggleWorldMapInput(const FInputActionValue& Valu
 	UE_LOG(LogTemp, Warning, TEXT("[WorldMap] OnToggleWorldMapInput 호출됨 IsLocal=%d"), IsLocalController() ? 1 : 0);
 
 	if (!IsLocalController())
+	{
+		return;
+	}
+
+	// 보스 소환 시네마틱 중에는 차단
+	if (bInBossCinematic)
 	{
 		return;
 	}

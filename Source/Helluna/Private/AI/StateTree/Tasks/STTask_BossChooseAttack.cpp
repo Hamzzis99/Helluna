@@ -14,6 +14,7 @@
 #include "Animation/AnimInstance.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Character/HellunaEnemyCharacter.h"
+#include "Character/HellunaEnemyCharacter_Boss.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
 #include "AbilitySystem/HellunaAbilitySystemComponent.h"
 #include "AbilitySystem/HellunaEnemyGameplayAbility.h"
@@ -126,7 +127,7 @@ EStateTreeRunStatus FSTTask_BossChooseAttack::Tick(
 		CMC->bUseControllerDesiredRotation = true;
 	}
 
-	AHellunaEnemyCharacter* Enemy = Cast<AHellunaEnemyCharacter>(Pawn);
+	AHellunaEnemyCharacter_Boss* Enemy = Cast<AHellunaEnemyCharacter_Boss>(Pawn);
 	if (!Enemy) return EStateTreeRunStatus::Failed;
 
 	UHellunaAbilitySystemComponent* ASC = Cast<UHellunaAbilitySystemComponent>(
@@ -144,18 +145,6 @@ EStateTreeRunStatus FSTTask_BossChooseAttack::Tick(
 	if (AttackPool.Num() == 0)
 		return EStateTreeRunStatus::Running;
 
-	// 몽타주 재생 여부 감지 (진단용 — 이전 버그: 재생 중이면 회전 스킵 → 공격 중 엉뚱한 방향)
-	// 수정: 몬타지 중에도 회전 계속 수행. 어떤 몬타지든 (Enemy->AttackMontage 뿐 아니라
-	// GA별 오버라이드 AM_Boss_Ranged 등) 모두 감지하려면 GetActiveMontageInstance 사용.
-	bool bMontagePlaying = false;
-	if (USkeletalMeshComponent* Mesh = Enemy->GetMesh())
-	{
-		if (UAnimInstance* AnimInst = Mesh->GetAnimInstance())
-		{
-			bMontagePlaying = (AnimInst->GetActiveMontageInstance() != nullptr);
-		}
-	}
-
 	// [DashDirLockV2] 대쉬 GA 활성 중이면 회전 스킵 — 준비/돌진 동안 방향 고정 (사용자 요구).
 	// DashAttack 가 EndAbility 호출 직전 자체적으로 플레이어 face 함 ([DashEndV1] 로그).
 	bool bDashActive = false;
@@ -169,11 +158,9 @@ EStateTreeRunStatus FSTTask_BossChooseAttack::Tick(
 	}
 
 	// 타겟 있으면 무조건 회전 (몬타지 재생 중이어도) — 단 대쉬 중엔 스킵
-	bool bFaceCalled = false;
 	if (TD.HasValidTarget() && !bDashActive)
 	{
 		BossChooseAttackHelpers::FaceTarget(AIC, Pawn, TD.TargetActor.Get(), DeltaTime, RotationSpeed);
-		bFaceCalled = true;
 	}
 	else if (bDashActive)
 	{
@@ -183,38 +170,6 @@ EStateTreeRunStatus FSTTask_BossChooseAttack::Tick(
 			UE_LOG(LogTemp, Warning,
 				TEXT("[DashDirLockV2] BossChooseAttack — DashAttack GA active, rotation skipped"));
 		}
-	}
-
-	// ═══ [AttackAim] 회전 이슈 분석용 진단 로그 ═══
-	// Phase=Montage → 공격 몬타지 재생 중 (멜리 스트라이크 등)
-	// Phase=Idle    → 쿨다운/선택 대기 상태
-	// Yaw          → 현재 보스 액터 Yaw
-	// Tgt          → 플레이어 방향 Yaw (목표)
-	// D            → 둘의 각도 차 (양수, 절댓값)
-	// Face=1       → 이번 틱에 FaceTarget 호출됨
-	// Face=0       → 타겟 없거나 조건 미충족으로 회전 스킵
-	{
-		const float CurYaw = Pawn->GetActorRotation().Yaw;
-		float TgtYaw = 0.f;
-		float Delta  = 0.f;
-		if (TD.HasValidTarget())
-		{
-			if (AActor* T = TD.TargetActor.Get())
-			{
-				const FVector ToT = (T->GetActorLocation() - Pawn->GetActorLocation()).GetSafeNormal2D();
-				if (!ToT.IsNearlyZero())
-				{
-					TgtYaw = ToT.Rotation().Yaw;
-					Delta = FMath::Abs(FRotator::NormalizeAxis(TgtYaw - CurYaw));
-				}
-			}
-		}
-		UE_LOG(LogTemp, Warning,
-			TEXT("[AttackAim] Phase=%s Yaw=%.1f Tgt=%.1f D=%.1f Face=%d Tgt=%s"),
-			bMontagePlaying ? TEXT("Montage") : TEXT("Idle"),
-			CurYaw, TgtYaw, Delta, bFaceCalled ? 1 : 0,
-			TD.HasValidTarget() && TD.TargetActor.Get()
-				? *TD.TargetActor->GetName() : TEXT("null"));
 	}
 
 	// 활성 GA가 있으면 대기 (AttackRecoveryDelay 포함)
@@ -271,6 +226,19 @@ EStateTreeRunStatus FSTTask_BossChooseAttack::Tick(
 	}
 	if (bGlobalCooldown)
 	{
+		// [ChaseFallbackV1] 글로벌 쿨다운 대기 중에도 플레이어로 접근.
+		if (bChaseFallbackWhenIdle && TD.HasValidTarget())
+		{
+			AActor* TargetActor = TD.TargetActor.Get();
+			if (TargetActor && TD.DistanceToTarget > ChaseFallbackStopRange)
+			{
+				const FVector Dir = (TargetActor->GetActorLocation() - Pawn->GetActorLocation()).GetSafeNormal2D();
+				if (!Dir.IsNearlyZero())
+				{
+					Pawn->AddMovementInput(Dir, 1.0f);
+				}
+			}
+		}
 		return EStateTreeRunStatus::Running;
 	}
 
@@ -381,6 +349,20 @@ EStateTreeRunStatus FSTTask_BossChooseAttack::Tick(
 	{
 		if (bEndTaskIfNoValidCandidate)
 			return EStateTreeRunStatus::Failed;
+
+		// [ChaseFallbackV1] 후보 자체가 없으면 (모든 GA 가 거리/쿨/HP 조건으로 탈락 + Walk 슬롯 없음)
+		// 보스를 그냥 플레이어 쪽으로 걷게 한다 — freeze 방지.
+		if (bChaseFallbackWhenIdle && Dist > ChaseFallbackStopRange)
+		{
+			if (AActor* TargetActor = TD.TargetActor.Get())
+			{
+				const FVector Dir = (TargetActor->GetActorLocation() - Pawn->GetActorLocation()).GetSafeNormal2D();
+				if (!Dir.IsNearlyZero())
+				{
+					Pawn->AddMovementInput(Dir, 1.0f);
+				}
+			}
+		}
 
 		// 후보가 없으면 짧게만 대기 후 재시도 — 쿨다운 중복으로 멈춤 상태가 길어지지 않도록.
 		Data.CooldownRemaining = FMath::Min(AttackCooldown, 0.25f);

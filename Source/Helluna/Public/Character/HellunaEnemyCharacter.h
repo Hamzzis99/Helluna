@@ -18,8 +18,10 @@ class UNiagaraSystem;
 class USoundBase;
 class UHellunaEnemyGameplayAbility;
 class UCameraShakeBase;
+class UMaterialInstanceDynamic;
+
 /**
- * 
+ *
  */
 UCLASS()
 class HELLUNA_API AHellunaEnemyCharacter : public AHellunaBaseCharacter
@@ -61,6 +63,19 @@ private:
 
 public:
 	FORCEINLINE UEnemyCombatComponent* GetEnemyCombatComponent() const { return EnemyCombatComponent; }
+
+	/**
+	 * 메시 슬롯 0 DMI 의 "TeamColor" 벡터 파라미터를 지정 색으로 설정.
+	 * 서버 호출이면 ReplicatedTeamColor 가 세팅되어 OnRep 으로 모든 클라가 같은 색을 적용.
+	 * 클라 호출(OnRep 경로)이면 로컬 DMI 만 갱신.
+	 */
+	void ApplyTeamColor(const FLinearColor& Color);
+
+	/**
+	 * TeamColorOptions 에서 랜덤 픽해 ApplyTeamColor 호출. Mass 미경유 (레벨 배치) 액터용.
+	 * Pool 경로는 Mass entity 가 색을 결정해 ActivateActor 로 전달하므로 이 함수를 안 거친다.
+	 */
+	void ApplyRandomTeamColor();
 
 	/**
 	 * 이 캐릭터의 등급.
@@ -123,6 +138,54 @@ public:
 	TObjectPtr<UAnimMontage> EnrageMontage = nullptr;
 
 	// =========================================================
+	// 팀 컬러 RGB 기반 색감 다양화
+	//   각 Mass entity 가 FLinearColor 를 보유 → 액터에 replicate → 각 클라가 자신의
+	//   DMI 의 "TeamColor" 벡터 파라미터에 set. DMI 자체는 머신 로컬, 색만 동기화.
+	//
+	//   TeamColorOptions 는 Mass 첫 스폰 시 CDO 에서 읽어 랜덤 픽하는 풀.
+	//   임시로 /Game/Enemy/MaterialVariants/Super 4개 색을 BP 기본값으로 사용.
+	// =========================================================
+
+	/**
+	 * Mass 첫 스폰 시 랜덤 픽되는 RGB 풀. 비어 있으면 색 미적용 (기본 메시 머티리얼 유지).
+	 * BP CDO 에서 등록 — 같은 클래스 모든 인스턴스가 동일한 풀을 공유.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Visual|TeamColor",
+		meta = (DisplayName = "팀 컬러 RGB 풀",
+			ToolTip = "Mass entity 첫 스폰 시 이 배열에서 랜덤 픽한 색을 자기 RGB 로 보존.\n임시 기본값은 /Game/Enemy/MaterialVariants/Super 4종 색."))
+	TArray<FLinearColor> TeamColorOptions;
+
+	/**
+	 * 마스터 머티리얼에서 "팀 컬러" 를 받는 벡터 파라미터 이름. 기본 "TeamColor".
+	 * 변경 필요 시 BP CDO 에서 오버라이드.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Visual|TeamColor",
+		meta = (DisplayName = "팀 컬러 파라미터 이름"))
+	FName TeamColorParameterName = FName(TEXT("TeamColor"));
+
+	/**
+	 * 서버에서 결정한 RGB. 클라엔 OnRep 으로 DMI 파라미터 set.
+	 * 풀 재활성화로 값이 바뀌면 OnRep 재발화 → 모든 클라가 같은 색.
+	 * 초기값 Transparent (A=0) = "아직 결정 안 됨".
+	 *
+	 * Why: DMI/OverrideMaterials 는 replicate 안 됨. RGB 만 복제해 클라가
+	 * 자기 머신의 DMI 에 SetVectorParameterValue 하도록 한다.
+	 */
+	UPROPERTY(ReplicatedUsing = OnRep_TeamColor, Transient)
+	FLinearColor ReplicatedTeamColor = FLinearColor::Transparent;
+
+	/** 클라 측에서 ReplicatedTeamColor 변경 시 DMI 파라미터 적용. */
+	UFUNCTION()
+	void OnRep_TeamColor();
+
+private:
+	/** 슬롯 0 DMI 캐시. 첫 ApplyTeamColor 시 생성, 이후 재사용. */
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> TeamColorMID;
+
+public:
+
+	// =========================================================
 	// 광폭화 스탯 배율 (에디터에서 설정, 서버에서만 적용)
 	// =========================================================
 
@@ -154,6 +217,21 @@ public:
 	/** 현재 광폭화 상태인지 (서버 → 클라 복제) */
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Combat|Enrage")
 	bool bEnraged = false;
+
+	// =========================================================
+	// 보스 전용 hooks — 일반 몬스터에서는 no-op, AHellunaEnemyCharacter_Boss 가 override.
+	//   OnMonsterHealthChanged 가 EnemyGrade==Boss/SemiBoss 분기에서 호출.
+	//   가상 호출이지만 일반 몹은 default body 가 즉시 false/return → 비용 거의 0.
+	// =========================================================
+
+	/** HP 0 도달 시 페이즈2 가로채기. 가로채면 true 반환해 사망 처리 스킵. 일반 몬스터: 항상 false. */
+	virtual bool TryInterceptDeathForPhase2(float OldHealth, float NewHealth) { return false; }
+
+	/** 피격 시 보스 전용 히트 스톱 (시간 일시 정지). 일반 몬스터: no-op. */
+	virtual void TriggerHitStop() {}
+
+	/** PossessedBy 후 NextTick StartLogic 을 건너뛸지. 보스 소환 시네마틱 동안 true. 일반: false. */
+	virtual bool ShouldSuppressBrainRestartAfterPossess() const { return false; }
 
 	// =========================================================
 	// [PrewarmV1] GA 사전 인스턴스화 — 첫 발동 렉 완화
@@ -624,17 +702,5 @@ protected:
 
 	// DespawnMassEntityOnServer 중복 호출 방지 플래그
 	bool bDespawnStarted = false;
-
-public:
-	/**
-	 * [BossAttackCooldownPersistV1] 보스 공격(GA)별 남은 쿨다운(초).
-	 *   STTask_BossChooseAttack 의 FBossAttackEntry.Cooldown 이 Attack 상태 재진입에도 살아남도록
-	 *   보스 캐릭터 자체에 저장한다 (기존엔 ActiveInstanceData 에 있어서 상태 Exit 시 리셋되는 버그).
-	 *
-	 *   Tick 마다 Task 가 Decrement 하고, 엔트리 발동 시 Entry.Cooldown 로 재설정.
-	 *   멀티플레이어: 서버 AI 만 돌므로 복제 불필요 (Transient).
-	 */
-	UPROPERTY(Transient)
-	TMap<TSubclassOf<UHellunaEnemyGameplayAbility>, float> BossAttackCooldowns;
 };
 	

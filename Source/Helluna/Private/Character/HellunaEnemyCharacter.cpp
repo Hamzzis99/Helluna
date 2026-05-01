@@ -17,6 +17,12 @@
 #include "Components/StateTreeComponent.h"
 #include "GameplayTagContainer.h"
 #include "AIController.h"
+#include "BrainComponent.h"
+#include "Controller/HellunaHeroController.h"
+#include "Camera/CameraActor.h"
+#include "Camera/CameraComponent.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Components/MeshComponent.h"
 #include "DebugHelper.h"
 #include "AbilitySystem/HeroAbility/HeroGameplayAbility_GunParry.h"
 #include "AbilitySystem/HeroAbility/HeroGameplayAbility_Block.h"
@@ -94,6 +100,15 @@ AHellunaEnemyCharacter::AHellunaEnemyCharacter()
 	EnemyCombatComponent = CreateDefaultSubobject<UEnemyCombatComponent>("EnemyCombatComponent");
 	HealthComponent      = CreateDefaultSubobject<UHellunaHealthComponent>(TEXT("HealthComponent"));
 
+	// 팀 컬러 RGB 임시 기본값 — /Game/Enemy/MaterialVariants/Super 4종에 대응 (Blue/Red/Green/Yellow).
+	// BP CDO 에서 색 추가/수정/제거 가능. 비어있으면 색 미적용.
+	TeamColorOptions = {
+		FLinearColor(0.10f, 0.30f, 1.00f, 1.0f), // Blue
+		FLinearColor(1.00f, 0.15f, 0.15f, 1.0f), // Red
+		FLinearColor(0.10f, 0.85f, 0.20f, 1.0f), // Green
+		FLinearColor(1.00f, 0.85f, 0.10f, 1.0f), // Yellow
+	};
+
 	// === Animation URO (Update Rate Optimization) ===
 	// 애니메이션이 Game Thread 의 ~40% 를 차지하므로 URO 를 활성화해서
 	// 거리/가시성에 따라 업데이트 빈도를 자동으로 줄인다.
@@ -158,9 +173,18 @@ void AHellunaEnemyCharacter::PossessedBy(AController* NewController)
 			{
 				if (IsValid(STCompPtr) && IsValid(SelfPtr))
 				{
+					// [Summon Cinematic] 소환 중이면 StopLogic만 하고 StartLogic은 건너뜀
+					// — 소환 몽타주 동안 AI가 공격을 시도하지 않도록 억제
 					STCompPtr->StopLogic(TEXT("Restart after possess"));
-					STCompPtr->StartLogic();
-					UE_LOG(LogTemp, Verbose, TEXT("[PossessedBy] NextTick StateTree Stop→Start — %s"), *SelfPtr->GetName());
+					if (SelfPtr->ShouldSuppressBrainRestartAfterPossess())
+					{
+						UE_LOG(LogTemp, Warning, TEXT("[BossSummon_LiveCodeCheck] NextTick skipped StartLogic — summon cinematic active"));
+					}
+					else
+					{
+						STCompPtr->StartLogic();
+						UE_LOG(LogTemp, Verbose, TEXT("[PossessedBy] NextTick StateTree Stop→Start — %s"), *SelfPtr->GetName());
+					}
 				}
 			});
 		}
@@ -354,6 +378,50 @@ void AHellunaEnemyCharacter::BeginPlay()
 			PrewarmMontage(ParryVictimMontage, TEXT("ParryVictim"));
 		}
 	}
+
+	// 레벨 배치(비풀) 액터용 — Pool 경로는 SpawnProcessor 에서 색을 결정해 ActivateActor 가 ApplyTeamColor 호출.
+	ApplyRandomTeamColor();
+}
+
+void AHellunaEnemyCharacter::ApplyRandomTeamColor()
+{
+	if (!HasAuthority()) return;
+	if (TeamColorOptions.Num() == 0) return;
+
+	const int32 PickIdx = FMath::RandRange(0, TeamColorOptions.Num() - 1);
+	ApplyTeamColor(TeamColorOptions[PickIdx]);
+}
+
+void AHellunaEnemyCharacter::ApplyTeamColor(const FLinearColor& Color)
+{
+	USkeletalMeshComponent* SkelMesh = GetMesh();
+	if (!SkelMesh) return;
+
+	// 슬롯 0 DMI — 첫 적용 시 생성, 이후 같은 인스턴스 재사용 (Pool 재활성화 포함).
+	if (!TeamColorMID || TeamColorMID->GetOuter() != SkelMesh)
+	{
+		TeamColorMID = SkelMesh->CreateAndSetMaterialInstanceDynamic(0);
+	}
+	if (!TeamColorMID) return;
+
+	TeamColorMID->SetVectorParameterValue(TeamColorParameterName, Color);
+
+	if (HasAuthority())
+	{
+		// Alpha=1 강제 — A=0 은 "미결정" sentinel 로 OnRep 측에서 사용.
+		FLinearColor Stored = Color;
+		Stored.A = 1.0f;
+		ReplicatedTeamColor = Stored;
+	}
+}
+
+// 클라 측 OnRep — 서버는 ApplyTeamColor 내부에서 로컬 DMI 까지 끝낸 상태이므로 이 함수는 클라 전용.
+void AHellunaEnemyCharacter::OnRep_TeamColor()
+{
+	// A=0 = 미결정 sentinel (Transparent). 서버가 아직 색 안 정한 상태.
+	if (ReplicatedTeamColor.A <= 0.f) return;
+
+	ApplyTeamColor(ReplicatedTeamColor);
 }
 
 // ============================================================
@@ -387,10 +455,42 @@ void AHellunaEnemyCharacter::OnMonsterHealthChanged(
 	}
 #endif
 
+	// [BossPhase2V1] 보스급: HP 0 도달 시 2페이즈 가로채기 먼저 시도
+	if (Delta > 0.f && (EnemyGrade == EEnemyGrade::Boss || EnemyGrade == EEnemyGrade::SemiBoss))
+	{
+		// HP 0 도달 + 2페이즈 가능 + 아직 2페이즈 아님 → 전환 (사망 대신)
+		const bool bIntercepted = TryInterceptDeathForPhase2(OldHealth, NewHealth);
+		if (bIntercepted)
+		{
+			return; // 2페이즈 진입 처리됨 — hit react/death 로직 스킵
+		}
+
+		// [HitStopV1] 피격 임팩트감 — 보스급에서만 적용 (일반 몹은 수십 마리라 남용 방지)
+		if (NewHealth > 0.f)
+		{
+			TriggerHitStop();
+		}
+	}
+
 	// 살아있는 상태에서 데미지를 받았을 때만 피격 애니메이션 재생
 	// #11 최적화: 0.2초 쿨다운 — 산탄총 동시 히트 시 RPC 폭발 방지
 	if (Delta > 0.f && NewHealth > 0.f && HitReactMontage)
 	{
+		// [HitReactDuringAttack] 공격 중(State.Enemy.Attacking 태그 보유) 이면 hit react 스킵.
+		//   Why: 보스 공격 와인드업/스윙 중에 hit react 가 들어가면 공격 몬타주가 끊기며
+		//   비주얼이 망가짐. 서버에서 GA Activate/End 가 태그를 add/remove 하므로
+		//   여기 서버 컨텍스트에서 체크해 Multicast 발화 자체를 차단 → 클라까지 RPC 미전송.
+		if (UAbilitySystemComponent* ASC = GetAbilitySystemComponent())
+		{
+			static const FGameplayTag AttackingTag = FGameplayTag::RequestGameplayTag(FName("State.Enemy.Attacking"), false);
+			if (AttackingTag.IsValid() && ASC->HasMatchingGameplayTag(AttackingTag))
+			{
+				UE_LOG(LogTemp, Verbose,
+					TEXT("[HitReactDuringAttack] Skip — %s currently attacking"), *GetNameSafe(this));
+				return;
+			}
+		}
+
 		static int32 HitReactBlockedCount = 0;
 		static int32 HitReactPassedCount = 0;
 
@@ -1594,6 +1694,8 @@ void AHellunaEnemyCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(AHellunaEnemyCharacter, bEnraged);
+	// 팀 컬러 RGB 복제 — OnRep 으로 클라 측 DMI 파라미터 동기화.
+	DOREPLIFETIME(AHellunaEnemyCharacter, ReplicatedTeamColor);
 }
 
 // ============================================================
