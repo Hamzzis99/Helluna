@@ -33,4 +33,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Helluna|FunctionLibrary", meta = (DisplayName = "Does Actor Have Tag", ExpandEnumAsExecs = "OutConfirmType"))
 	static void BP_DoesActorHaveTag(AActor* InActor, FGameplayTag TagToCheck, EHellunaConfirmType& OutConfirmType);
 
+	UFUNCTION(BlueprintPure, Category = "Helluna|Combat")
+	static bool IsValidBlock(AActor* InAttacker, AActor* InDefender);
+
 };

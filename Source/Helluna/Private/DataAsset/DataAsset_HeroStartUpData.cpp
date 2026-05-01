@@ -4,6 +4,8 @@
 #include "DataAsset/DataAsset_HeroStartUpData.h"
 #include "AbilitySystem/HellunaGameplayAbility.h"
 #include "AbilitySystem/HellunaAbilitySystemComponent.h"
+#include "AbilitySystem/HeroAbility/HeroGameplayAbility_Block.h"
+#include "HellunaGameplayTags.h"
 
 bool FHellunaHeroAbilitySet::IsValid() const
 {
@@ -24,5 +26,26 @@ void UDataAsset_HeroStartUpData::GiveToAbilitySystemComponent(UHellunaAbilitySys
         AbilitySpec.DynamicAbilityTags.AddTag(AbilitySet.InputTag);
 
         InASCToGive->GiveAbility(AbilitySpec);
+    }
+
+    bool bHasBlockAbility = false;
+    for (const FGameplayAbilitySpec& AbilitySpec : InASCToGive->GetActivatableAbilities())
+    {
+        if (AbilitySpec.DynamicAbilityTags.HasTagExact(HellunaGameplayTags::InputTag_Block)
+            || (AbilitySpec.Ability && AbilitySpec.Ability->IsA<UHeroGameplayAbility_Block>()))
+        {
+            bHasBlockAbility = true;
+            break;
+        }
+    }
+
+    if (!bHasBlockAbility)
+    {
+        FGameplayAbilitySpec BlockSpec(UHeroGameplayAbility_Block::StaticClass());
+        BlockSpec.SourceObject = InASCToGive->GetAvatarActor();
+        BlockSpec.Level = ApplyLevel;
+        BlockSpec.DynamicAbilityTags.AddTag(HellunaGameplayTags::InputTag_Block);
+
+        InASCToGive->GiveAbility(BlockSpec);
     }
 }

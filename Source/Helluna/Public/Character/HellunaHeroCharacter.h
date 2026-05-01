@@ -122,6 +122,8 @@ private:
 
 	void Input_AbilityInputPressed(FGameplayTag InInputTag);
 	void Input_AbilityInputReleased(FGameplayTag InInputTag);
+	void Input_BlockPressed();
+	void Input_BlockReleased();
 
 	// [cheatdebug] F1~F6 키 핸들러 (CheatComponent로 포워딩)
 	void OnCheat_F1();

@@ -19,6 +19,7 @@
 #include "AIController.h"
 #include "DebugHelper.h"
 #include "AbilitySystem/HeroAbility/HeroGameplayAbility_GunParry.h"
+#include "AbilitySystem/HeroAbility/HeroGameplayAbility_Block.h"
 #include "AbilitySystem/EnemyAbility/EnemyGameplayAbility_SpawnAttack.h"
 
 // 타이머 기반 Trace 시스템용 헤더
@@ -1082,8 +1083,19 @@ void AHellunaEnemyCharacter::ServerApplyDamage(AActor* Target, float DamageAmoun
 		return;
 	}
 
-	UGameplayStatics::ApplyDamage(Target, DamageAmount, GetController(), this, UDamageType::StaticClass());
-	UE_LOG(LogTemp, Log, TEXT("[Damage] %.1f -> %s"), DamageAmount, *GetNameSafe(Target));
+	float FinalDamageAmount = DamageAmount;
+	if (bMeleeDamageCanBeBlocked && IsValid(Target) && Target->IsA<AHellunaHeroCharacter>())
+	{
+		bool bPerfectBlock = false;
+		if (UHeroGameplayAbility_Block::EvaluateBlock(Target, this, bPerfectBlock))
+		{
+			FinalDamageAmount = FMath::Max(0.f, DamageAmount * BlockedMeleeDamageMultiplier);
+			UHeroGameplayAbility_Block::ExecuteBlockCue(Target, this, false);
+		}
+	}
+
+	UGameplayStatics::ApplyDamage(Target, FinalDamageAmount, GetController(), this, UDamageType::StaticClass());
+	UE_LOG(LogTemp, Log, TEXT("[Damage] %.1f -> %s"), FinalDamageAmount, *GetNameSafe(Target));
 
 	// 이펙트 RPC 쓰로틀링: 같은 몬스터에서 0.1초 내 중복 Multicast 생략
 	const double Now = FPlatformTime::Seconds();

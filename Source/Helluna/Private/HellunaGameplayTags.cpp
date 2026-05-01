@@ -20,6 +20,7 @@ namespace HellunaGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(InputTag_Reload, "InputTag.Reload");
 	UE_DEFINE_GAMEPLAY_TAG(InputTag_Kick, "InputTag.Kick");
 	UE_DEFINE_GAMEPLAY_TAG(InputTag_Interaction, "InputTag.Interaction");
+	UE_DEFINE_GAMEPLAY_TAG(InputTag_Block, "InputTag.Block");
 
 	/** Player Ability tags **/
 
@@ -32,7 +33,8 @@ namespace HellunaGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Player_Ability_InRepair, "Player.Ability.InRepair");
 	UE_DEFINE_GAMEPLAY_TAG(Player_Ability_Repair, "Player.Ability.Repair");
 	UE_DEFINE_GAMEPLAY_TAG(Player_Ability_Farming, "Player.Ability.Farming");
-	UE_DEFINE_GAMEPLAY_TAG(Player_Ability_Reload, "Player.Ability.Reload")
+	UE_DEFINE_GAMEPLAY_TAG(Player_Ability_Reload, "Player.Ability.Reload");
+	UE_DEFINE_GAMEPLAY_TAG(Player_Ability_Block, "Player.Ability.Block");
 
 	/** Player Status tags **/
 
@@ -41,6 +43,13 @@ namespace HellunaGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Player_status_Run, "Player.status.Run");
 	UE_DEFINE_GAMEPLAY_TAG(Player_status_Can_Repair, "Player.status.Can.Repair");
 	UE_DEFINE_GAMEPLAY_TAG(Player_status_Can_Farming, "Player.status.Can.Farming");
+	UE_DEFINE_GAMEPLAY_TAG(Player_Status_Blocking, "Player.Status.Blocking");
+	UE_DEFINE_GAMEPLAY_TAG(Player_Status_PerfectBlocking, "Player.Status.PerfectBlocking");
+
+	/** GameplayCue tags **/
+	UE_DEFINE_GAMEPLAY_TAG(GameplayCue_FX_MagicShield, "GameplayCue.FX.MagicShield");
+	UE_DEFINE_GAMEPLAY_TAG(GameplayCue_FX_MagicShield_SuceessfulBlock, "GameplayCue.FX.MagicShield.SuceessfulBlock");
+	UE_DEFINE_GAMEPLAY_TAG(GameplayCue_FX_MagicShield_SuceessfulBlock_PerfectBlock, "GameplayCue.FX.MagicShield.SuceessfulBlock.PerfectBlock");
 
 	/** Player Weapon tags **/
 	UE_DEFINE_GAMEPLAY_TAG(Player_Weapon_Gun, "Player.Weapon.Gun");

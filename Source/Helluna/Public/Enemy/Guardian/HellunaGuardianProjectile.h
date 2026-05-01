@@ -59,6 +59,7 @@ protected:
 
 	/** 서버 전용: 폭발 처리 (데미지 + 멀티캐스트 VFX) */
 	void Explode(const FVector& ExplosionLocation, const FVector& SurfaceNormal);
+	bool TryReflectFromPerfectBlock(AActor* BlockingActor);
 
 	/** 모든 클라에 폭발 VFX 재생 (서버 → 클라). 1회 이벤트라 Reliable — 패킷 유실 시에도 폭발 VFX 보장. */
 	UFUNCTION(NetMulticast, Reliable)
@@ -163,6 +164,18 @@ protected:
 		meta = (DisplayName = "디버그: 폭발 구 표시"))
 	bool bDebugDrawRadialDamage = false;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Projectile|Block",
+		meta = (DisplayName = "퍼펙트 Block 반사 허용"))
+	bool bCanBePerfectBlocked = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Projectile|Block",
+		meta = (DisplayName = "반사 속도 배율", ClampMin = "0.1", ClampMax = "5.0"))
+	float ReflectedSpeedMultiplier = 1.1f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Projectile|Block",
+		meta = (DisplayName = "반사 후 수명", ClampMin = "0.1", ClampMax = "30.0"))
+	float ReflectedLifeSeconds = 5.0f;
+
 private:
 	// 서버 전용 (복제 X)
 	float Damage = 0.f;
@@ -171,4 +184,7 @@ private:
 
 	bool bExploded = false;
 	bool bInitialized = false;
+	bool bReflected = false;
+
+	TWeakObjectPtr<AActor> OriginalOwnerActor;
 };

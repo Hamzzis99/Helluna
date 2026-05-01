@@ -219,6 +219,18 @@ public:
 			ToolTip = "건패링 처형을 당할 때 이 몬스터가 재생할 애니메이션입니다."))
 	TObjectPtr<UAnimMontage> ParryVictimMontage = nullptr;
 
+	// =========================================================
+	// Block 관련 (GunParry와 분리)
+	// =========================================================
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Block",
+		meta = (DisplayName = "일반 Block 데미지 감쇠 적용"))
+	bool bMeleeDamageCanBeBlocked = false;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Block",
+		meta = (DisplayName = "Block 성공 시 데미지 배율", ClampMin = "0.0", ClampMax = "1.0"))
+	float BlockedMeleeDamageMultiplier = 0.35f;
+
 	/** 처형 중 HP가 0이 돼서 사망이 보류된 상태 (지연 사망) */
 	bool bParryDeferredDeath = false;
 

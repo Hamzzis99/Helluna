@@ -1,5 +1,7 @@
 // File: Source/Helluna/Private/Enemy/Guardian/HellunaGuardianProjectile.cpp
 #include "Enemy/Guardian/HellunaGuardianProjectile.h"
+#include "AbilitySystem/HeroAbility/HeroGameplayAbility_Block.h"
+#include "Character/HellunaHeroCharacter.h"
 #include "Enemy/Guardian/HellunaDamageType_PhysicsImpact.h"
 
 #include "Components/BoxComponent.h"
@@ -62,6 +64,7 @@ void AHellunaGuardianProjectile::BeginPlay()
 
 		if (AActor* OwnerActor = GetOwner())
 		{
+			OriginalOwnerActor = OwnerActor;
 			CollisionBox->IgnoreActorWhenMoving(OwnerActor, true);
 		}
 	}
@@ -100,6 +103,10 @@ void AHellunaGuardianProjectile::InitProjectile(
 		CollisionBox->SetBoxExtent(OverlapBoxExtent);
 		if (AActor* OwnerActor = GetOwner())
 		{
+			if (!OriginalOwnerActor.IsValid())
+			{
+				OriginalOwnerActor = OwnerActor;
+			}
 			CollisionBox->IgnoreActorWhenMoving(OwnerActor, true);
 		}
 	}
@@ -125,6 +132,19 @@ void AHellunaGuardianProjectile::OnBeginOverlap(
 		return;
 	}
 
+	if (bCanBePerfectBlocked && !bReflected && OtherActor->IsA<AHellunaHeroCharacter>())
+	{
+		bool bPerfectBlock = false;
+		if (UHeroGameplayAbility_Block::EvaluateBlock(OtherActor, this, bPerfectBlock) && bPerfectBlock)
+		{
+			UHeroGameplayAbility_Block::ExecuteBlockCue(OtherActor, this, true);
+			if (TryReflectFromPerfectBlock(OtherActor))
+			{
+				return;
+			}
+		}
+	}
+
 	FVector HitLoc = GetActorLocation();
 	FVector HitNormal = -GetActorForwardVector();
 	if (bFromSweep)
@@ -134,6 +154,62 @@ void AHellunaGuardianProjectile::OnBeginOverlap(
 	}
 
 	Explode(HitLoc, HitNormal);
+}
+
+bool AHellunaGuardianProjectile::TryReflectFromPerfectBlock(AActor* BlockingActor)
+{
+	if (!HasAuthority() || !IsValid(BlockingActor) || !MoveComp || bExploded)
+	{
+		return false;
+	}
+
+	AActor* PreviousOwner = GetOwner();
+	const FVector CurrentVelocity = MoveComp->Velocity;
+	const float BaseSpeed = FMath::Max(CurrentVelocity.Size(), MoveComp->MaxSpeed);
+	const float ReflectedSpeed = FMath::Max(BaseSpeed * ReflectedSpeedMultiplier, 100.f);
+
+	FVector ReflectedDirection = FVector::ZeroVector;
+	if (OriginalOwnerActor.IsValid())
+	{
+		ReflectedDirection = (OriginalOwnerActor->GetActorLocation() - GetActorLocation()).GetSafeNormal();
+	}
+	if (ReflectedDirection.IsNearlyZero())
+	{
+		ReflectedDirection = -CurrentVelocity.GetSafeNormal();
+	}
+	if (ReflectedDirection.IsNearlyZero())
+	{
+		ReflectedDirection = -GetActorForwardVector();
+	}
+
+	if (CollisionBox)
+	{
+		if (PreviousOwner)
+		{
+			CollisionBox->IgnoreActorWhenMoving(PreviousOwner, false);
+		}
+		CollisionBox->IgnoreActorWhenMoving(BlockingActor, true);
+	}
+
+	SetOwner(BlockingActor);
+	if (APawn* BlockingPawn = Cast<APawn>(BlockingActor))
+	{
+		SetInstigator(BlockingPawn);
+	}
+
+	const FVector SafeOffset = ReflectedDirection * FMath::Max(OverlapBoxExtent.GetMax() * 2.f, 32.f);
+	SetActorLocation(GetActorLocation() + SafeOffset, false, nullptr, ETeleportType::TeleportPhysics);
+	SetActorRotation(ReflectedDirection.Rotation());
+
+	MoveComp->Velocity = ReflectedDirection * ReflectedSpeed;
+	MoveComp->InitialSpeed = ReflectedSpeed;
+	MoveComp->MaxSpeed = ReflectedSpeed;
+	MoveComp->UpdateComponentVelocity();
+
+	bReflected = true;
+	SetLifeSpan(FMath::Max(ReflectedLifeSeconds, 0.1f));
+
+	return true;
 }
 
 void AHellunaGuardianProjectile::LifeSpanExpired()
