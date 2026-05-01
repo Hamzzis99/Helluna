@@ -249,10 +249,6 @@ void UHeroGameplayAbility_Block::ActivateAbility(
 		return;
 	}
 
-	bSavedHeroPlayFullBody = Hero->PlayFullBody;
-	bHasSavedHeroPlayFullBody = true;
-	Hero->PlayFullBody = true;
-
 	ASC->AddStateTag(HellunaGameplayTags::Player_Status_PerfectBlocking);
 	StartBlockShieldVFX(Hero);
 
@@ -308,13 +304,8 @@ void UHeroGameplayAbility_Block::EndAbility(
 			}
 		}
 
-		if (bHasSavedHeroPlayFullBody)
-		{
-			Hero->PlayFullBody = bSavedHeroPlayFullBody;
-		}
 	}
 
-	bHasSavedHeroPlayFullBody = false;
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }
 

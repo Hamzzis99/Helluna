@@ -62,7 +62,7 @@ private:
 	TSoftObjectPtr<UNiagaraSystem> BlockShieldVFX;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Block|VFX")
-	FName BlockShieldAttachSocket = TEXT("spine_03");
+	FName BlockShieldAttachSocket = TEXT("MagicShieldSocket");
 
 	UPROPERTY(EditDefaultsOnly, Category = "Block|VFX")
 	FVector BlockShieldRelativeLocation = FVector::ZeroVector;
@@ -78,9 +78,6 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UNiagaraComponent> ActiveBlockShieldVFX = nullptr;
-
-	bool bSavedHeroPlayFullBody = false;
-	bool bHasSavedHeroPlayFullBody = false;
 
 	FTimerHandle PerfectBlockTimerHandle;
 };
