@@ -378,6 +378,65 @@ public:
 	UPROPERTY(Transient)
 	TObjectPtr<UNiagaraComponent> ActiveEnrageVFXComp = nullptr;
 
+	// =========================================================
+	// 사망 디졸브 / 먼지화
+	// =========================================================
+
+	/**
+	 * 사망 몽타주/GA 완료 후 액터를 즉시 Destroy하지 않고, 메시 머티리얼을 서서히 디졸브한다.
+	 * 서버는 충돌/Mass entity를 즉시 제거하고, 클라이언트 시각 효과 완료까지 액터 Destroy만 지연한다.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Effect|DeathDissolve",
+		meta = (DisplayName = "사망 디졸브 사용"))
+	bool bEnableDeathDissolve = true;
+
+	/**
+	 * Warrior의 DissolveAmount와 Helluna Paragon Minion의 FadeOut/Ash를 함께 지원한다.
+	 * 현재 머티리얼에 존재하지 않는 파라미터는 SetScalarParameterValue 호출 시 무시된다.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Effect|DeathDissolve",
+		meta = (DisplayName = "디졸브 진행 스칼라 파라미터"))
+	TArray<FName> DeathDissolveScalarParameterNames;
+
+	/** Warrior의 DissolveEdgeColor와 Helluna Paragon Minion의 BurnColor를 함께 지원한다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Effect|DeathDissolve",
+		meta = (DisplayName = "디졸브 컬러 벡터 파라미터"))
+	TArray<FName> DeathDissolveVectorParameterNames;
+
+	/** 디졸브 가장자리/먼지 컬러. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Effect|DeathDissolve",
+		meta = (DisplayName = "디졸브 컬러"))
+	FLinearColor DeathDissolveEdgeColor = FLinearColor(2.5f, 1.05f, 0.25f, 1.0f);
+
+	/** Warrior BP_Gruntling_Guardian과 동일한 6초 기본값. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Effect|DeathDissolve",
+		meta = (DisplayName = "디졸브 시간", ClampMin = "0.1", ClampMax = "30.0", Units = "s"))
+	float DeathDissolveDuration = 6.0f;
+
+	/** 머티리얼 진행값 갱신 주기. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Effect|DeathDissolve",
+		meta = (DisplayName = "디졸브 Tick 간격", ClampMin = "0.016", ClampMax = "0.25", Units = "s"))
+	float DeathDissolveTickInterval = 0.033f;
+
+	/**
+	 * 사망 디졸브 중 메시 기준으로 붙일 Niagara.
+	 * 기본값은 Helluna의 기존 Dissolve VFX이며, BP_Helluna_Enemy_1 기본값에서 교체 가능하다.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Effect|DeathDissolve",
+		meta = (DisplayName = "사망 디졸브 나이아가라"))
+	TSoftObjectPtr<UNiagaraSystem> DeathDissolveNiagaraEffect;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Effect|DeathDissolve",
+		meta = (DisplayName = "사망 디졸브 이펙트 크기", ClampMin = "0.01", ClampMax = "10.0"))
+	float DeathDissolveEffectScale = 1.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Effect|DeathDissolve",
+		meta = (DisplayName = "나이아가라 컬러 변수"))
+	FName DeathDissolveNiagaraColorVariableName = FName(TEXT("User.DissolveEdgeColor"));
+
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_StartDeathDissolve();
+
 	// [HitSoundV1] HitSound 는 공격 GA(UHellunaEnemyGameplayAbility) 로 이관됨.
 	//   Why: 같은 몬스터가 여러 공격을 가질 때 공격마다 다른 사운드를 쓰기 위함.
 	//   Run-time 저장소는 아래 CachedHitSound/CachedHitSoundVolume/CachedHitSoundAttenuation.
@@ -415,6 +474,10 @@ public:
 	void SetAttackBoxActive(FName BoxComponentName, bool bEnable, float Damage, bool bDebugDraw);
 
 private:
+	void StartDeathDissolveVisuals();
+	void TickDeathDissolveVisuals();
+	void ApplyDeathDissolveAmount(float Amount);
+
 	/**
 	 * 현재 활성 공격의 데미지 (서버에서만 유효). GA 의 CachedMeleeAttackDamage 가 있으면 그 값.
 	 * 여러 박스를 동시에 켜지 않는 전제. 동시 공격 지원 필요하면 per-box map으로 확장.
@@ -661,6 +724,16 @@ private:
 	UPROPERTY()
 	TObjectPtr<UNiagaraSystem> CachedHitVFX = nullptr;
 	float CachedHitVFXScale = 1.f;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UMaterialInstanceDynamic>> DeathDissolveMIDs;
+
+	FTimerHandle DeathDissolveTimerHandle;
+	FTimerHandle DeathDissolveDestroyTimerHandle;
+	double DeathDissolveStartTime = 0.0;
+
+	UPROPERTY(Transient)
+	bool bDeathDissolveVisualsStarted = false;
 
 	/** [HitSoundV1] 현재 공격의 HitSound / 볼륨 / 감쇠 캐시. */
 	UPROPERTY()

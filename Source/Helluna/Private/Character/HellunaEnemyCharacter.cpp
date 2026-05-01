@@ -62,10 +62,13 @@
 // [MontagePrewarmV1] Montage 예열용
 #include "Animation/AnimMontage.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "TimerManager.h"
 
 // [AttackHitbox] Overlap 기반 공격 판정용 — 전용 Box 타입
 #include "Combat/HellunaAttackRangeComponent.h"
 #include "Engine/OverlapResult.h"
+
+DEFINE_LOG_CATEGORY_STATIC(LogHellunaEnemyDissolve, Log, All);
 
 // ============================================================
 // 생성자
@@ -108,6 +111,18 @@ AHellunaEnemyCharacter::AHellunaEnemyCharacter()
 		FLinearColor(0.10f, 0.85f, 0.20f, 1.0f), // Green
 		FLinearColor(1.00f, 0.85f, 0.10f, 1.0f), // Yellow
 	};
+
+	DeathDissolveScalarParameterNames = {
+		FName(TEXT("DissolveAmount")),
+		FName(TEXT("FadeOut")),
+		FName(TEXT("Ash")),
+	};
+	DeathDissolveVectorParameterNames = {
+		FName(TEXT("DissolveEdgeColor")),
+		FName(TEXT("BurnColor")),
+	};
+	DeathDissolveNiagaraEffect = TSoftObjectPtr<UNiagaraSystem>(
+		FSoftObjectPath(TEXT("/Game/Dissolve/VFX/A/NS_Particles_A_04.NS_Particles_A_04")));
 
 	// === Animation URO (Update Rate Optimization) ===
 	// 애니메이션이 Game Thread 의 ~40% 를 차지하므로 URO 를 활성화해서
@@ -666,6 +681,173 @@ void AHellunaEnemyCharacter::OnDeathMontageEnded(UAnimMontage* Montage, bool bIn
 }
 
 // ============================================================
+// Death dissolve — Warrior식 사망 후 먼지화/디졸브 시각 효과
+// ============================================================
+void AHellunaEnemyCharacter::Multicast_StartDeathDissolve_Implementation()
+{
+	StartDeathDissolveVisuals();
+}
+
+void AHellunaEnemyCharacter::StartDeathDissolveVisuals()
+{
+	if (!bEnableDeathDissolve || bDeathDissolveVisualsStarted)
+	{
+		return;
+	}
+
+	if (GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+
+	USkeletalMeshComponent* SkelMesh = GetMesh();
+	if (!IsValid(SkelMesh))
+	{
+		UE_LOG(LogHellunaEnemyDissolve, Warning,
+			TEXT("[DeathDissolve] Enemy=%s Reason=MissingMesh"),
+			*GetNameSafe(this));
+		return;
+	}
+
+	const int32 MaterialCount = SkelMesh->GetNumMaterials();
+	if (MaterialCount <= 0)
+	{
+		UE_LOG(LogHellunaEnemyDissolve, Warning,
+			TEXT("[DeathDissolve] Enemy=%s Reason=NoMaterials"),
+			*GetNameSafe(this));
+		return;
+	}
+
+	bDeathDissolveVisualsStarted = true;
+	DeathDissolveMIDs.Reset(MaterialCount);
+
+	for (int32 MaterialIndex = 0; MaterialIndex < MaterialCount; ++MaterialIndex)
+	{
+		UMaterialInstanceDynamic* MID = SkelMesh->CreateAndSetMaterialInstanceDynamic(MaterialIndex);
+		if (!IsValid(MID))
+		{
+			UE_LOG(LogHellunaEnemyDissolve, Warning,
+				TEXT("[DeathDissolve] Enemy=%s Slot=%d Reason=FailedToCreateMID"),
+				*GetNameSafe(this), MaterialIndex);
+			continue;
+		}
+
+		for (const FName& VectorParamName : DeathDissolveVectorParameterNames)
+		{
+			if (!VectorParamName.IsNone())
+			{
+				MID->SetVectorParameterValue(VectorParamName, DeathDissolveEdgeColor);
+			}
+		}
+
+		DeathDissolveMIDs.Add(MID);
+	}
+
+	if (DeathDissolveMIDs.Num() == 0)
+	{
+		UE_LOG(LogHellunaEnemyDissolve, Warning,
+			TEXT("[DeathDissolve] Enemy=%s Reason=NoDynamicMaterials"),
+			*GetNameSafe(this));
+		return;
+	}
+
+	ApplyDeathDissolveAmount(0.0f);
+
+	UNiagaraSystem* DissolveSystem = DeathDissolveNiagaraEffect.Get();
+	if (!DissolveSystem && !DeathDissolveNiagaraEffect.IsNull())
+	{
+		DissolveSystem = DeathDissolveNiagaraEffect.LoadSynchronous();
+	}
+
+	if (IsValid(DissolveSystem))
+	{
+		UNiagaraComponent* DissolveVFX = UNiagaraFunctionLibrary::SpawnSystemAttached(
+			DissolveSystem,
+			SkelMesh,
+			NAME_None,
+			FVector::ZeroVector,
+			FRotator::ZeroRotator,
+			EAttachLocation::SnapToTarget,
+			true);
+
+		if (IsValid(DissolveVFX))
+		{
+			DissolveVFX->SetRelativeScale3D(FVector(FMath::Max(0.01f, DeathDissolveEffectScale)));
+			if (!DeathDissolveNiagaraColorVariableName.IsNone())
+			{
+				DissolveVFX->SetVariableLinearColor(
+					DeathDissolveNiagaraColorVariableName,
+					DeathDissolveEdgeColor);
+			}
+		}
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		ApplyDeathDissolveAmount(1.0f);
+		SkelMesh->SetVisibility(false, true);
+		return;
+	}
+
+	DeathDissolveStartTime = World->GetTimeSeconds();
+	const float SafeTickInterval = FMath::Clamp(DeathDissolveTickInterval, 0.016f, 0.25f);
+	World->GetTimerManager().SetTimer(
+		DeathDissolveTimerHandle,
+		this,
+		&ThisClass::TickDeathDissolveVisuals,
+		SafeTickInterval,
+		true);
+}
+
+void AHellunaEnemyCharacter::TickDeathDissolveVisuals()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	const float SafeDuration = FMath::Max(0.1f, DeathDissolveDuration);
+	const float Elapsed = static_cast<float>(World->GetTimeSeconds() - DeathDissolveStartTime);
+	const float Alpha = FMath::Clamp(Elapsed / SafeDuration, 0.0f, 1.0f);
+
+	ApplyDeathDissolveAmount(Alpha);
+
+	if (Alpha >= 1.0f)
+	{
+		World->GetTimerManager().ClearTimer(DeathDissolveTimerHandle);
+
+		if (USkeletalMeshComponent* SkelMesh = GetMesh())
+		{
+			SkelMesh->SetVisibility(false, true);
+		}
+	}
+}
+
+void AHellunaEnemyCharacter::ApplyDeathDissolveAmount(float Amount)
+{
+	const float ClampedAmount = FMath::Clamp(Amount, 0.0f, 1.0f);
+
+	for (const TObjectPtr<UMaterialInstanceDynamic>& MID : DeathDissolveMIDs)
+	{
+		UMaterialInstanceDynamic* MIDPtr = MID.Get();
+		if (!IsValid(MIDPtr))
+		{
+			continue;
+		}
+
+		for (const FName& ScalarParamName : DeathDissolveScalarParameterNames)
+		{
+			if (!ScalarParamName.IsNone())
+			{
+				MIDPtr->SetScalarParameterValue(ScalarParamName, ClampedAmount);
+			}
+		}
+	}
+}
+
+// ============================================================
 // UpdateAnimationLOD — 거리 기반 그림자/스켈레톤 품질 조절
 // @author 김기현
 // ============================================================
@@ -860,19 +1042,44 @@ void AHellunaEnemyCharacter::DespawnMassEntityOnServer(const TCHAR* Where)
 		MassAgentComp = nullptr;
 	}
 
-	// 3. Destroy()를 다음 틱으로 지연 — 같은 프레임 내 DestroyComponent()의
-	//    OnUnregister 콜백이 오버랩 플러시를 유발하여 형제 컴포넌트를
-	//    재진입(re-entrant) Unregister하는 것을 방지한다.
+	// 3. Warrior식 사망 디졸브가 켜져 있으면 클라이언트가 시각 효과를 끝낼 때까지
+	//    액터 Destroy만 지연한다. Mass entity/Collision은 위에서 이미 제거되어 서버 판정에는 남지 않는다.
+	const bool bUseDeathDissolveDelay = bEnableDeathDissolve && DeathDissolveDuration > 0.0f;
+	if (bUseDeathDissolveDelay)
+	{
+		Multicast_StartDeathDissolve();
+	}
+
+	// 4. Destroy() 지연 — 같은 프레임 내 DestroyComponent()의 OnUnregister 콜백이
+	//    오버랩 플러시를 유발하여 형제 컴포넌트를 재진입 Unregister하는 것을 방지한다.
 	UWorld* W = GetWorld();
 	if (W)
 	{
-		W->GetTimerManager().SetTimerForNextTick([WeakThis = TWeakObjectPtr<AHellunaEnemyCharacter>(this)]()
+		TWeakObjectPtr<AHellunaEnemyCharacter> WeakThis(this);
+		if (bUseDeathDissolveDelay)
 		{
-			if (WeakThis.IsValid())
+			const float DestroyDelay = FMath::Max(0.1f, DeathDissolveDuration) + 0.1f;
+			W->GetTimerManager().SetTimer(DeathDissolveDestroyTimerHandle,
+				[WeakThis]()
+				{
+					if (WeakThis.IsValid())
+					{
+						WeakThis->Destroy();
+					}
+				},
+				DestroyDelay,
+				false);
+		}
+		else
+		{
+			W->GetTimerManager().SetTimerForNextTick([WeakThis]()
 			{
-				WeakThis->Destroy();
-			}
-		});
+				if (WeakThis.IsValid())
+				{
+					WeakThis->Destroy();
+				}
+			});
+		}
 	}
 	else
 	{
