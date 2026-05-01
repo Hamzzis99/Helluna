@@ -54,5 +54,19 @@ void UHellunaFunctionLibrary::BP_DoesActorHaveTag(AActor* InActor, FGameplayTag 
     OutConfirmType = NativeDoesActorHaveTag(InActor, TagToCheck) ? EHellunaConfirmType::Yes : EHellunaConfirmType::No;
 }
 
+bool UHellunaFunctionLibrary::IsValidBlock(AActor* InAttacker, AActor* InDefender)
+{
+    if (!IsValid(InAttacker) || !IsValid(InDefender))
+    {
+        return false;
+    }
+
+    const FVector AttackerForward = InAttacker->GetActorForwardVector();
+    const FVector DefenderForward = InDefender->GetActorForwardVector();
+    const float DotResult = FVector::DotProduct(AttackerForward, DefenderForward);
+
+    return DotResult < -0.1f;
+}
+
 
 

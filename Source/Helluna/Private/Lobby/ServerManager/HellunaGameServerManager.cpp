@@ -231,23 +231,72 @@ int32 UHellunaGameServerManager::RespawnGameServer(int32 Port, const FString& Ne
 	}
 
 	// 2. 레지스트리 파일 삭제 (새 서버가 깨끗하게 시작하도록)
-	const FString RegistryFile = FPaths::Combine(RegistryDir, FString::Printf(TEXT("channel_%d.json"), Port));
-	if (IFileManager::Get().FileExists(*RegistryFile))
-	{
-		IFileManager::Get().Delete(*RegistryFile);
-		UE_LOG(LogHellunaLobby, Log, TEXT("[ServerManager] 레지스트리 파일 삭제 | %s"), *RegistryFile);
-	}
+	RemoveRegistryFileForPort(Port);
 
 	// 3. 같은 포트에 새 맵으로 스폰
 	return SpawnGameServerOnPort(Port, NewMapPath);
+}
+
+void UHellunaGameServerManager::RemoveRegistryFileForPort(int32 Port)
+{
+	if (Port <= 0 || RegistryDir.IsEmpty())
+	{
+		return;
+	}
+
+	const FString RegistryFile = FPaths::Combine(RegistryDir, FString::Printf(TEXT("channel_%d.json"), Port));
+	if (!IFileManager::Get().FileExists(*RegistryFile))
+	{
+		return;
+	}
+
+	if (IFileManager::Get().Delete(*RegistryFile))
+	{
+		UE_LOG(LogHellunaLobby, Log, TEXT("[ServerManager] Removed channel registry | Port=%d | Path=%s"), Port, *RegistryFile);
+	}
+	else
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[ServerManager] Failed to remove channel registry | Port=%d | Path=%s"), Port, *RegistryFile);
+	}
+}
+
+bool UHellunaGameServerManager::IsTrackedServerRunning(int32 Port)
+{
+	for (int32 i = ActiveServers.Num() - 1; i >= 0; --i)
+	{
+		FActiveServerInfo& Info = ActiveServers[i];
+		if (Info.Port != Port)
+		{
+			continue;
+		}
+
+		if (FPlatformProcess::IsProcRunning(Info.ProcessHandle))
+		{
+			return true;
+		}
+
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[ServerManager] Tracked server process is dead | Port=%d"), Port);
+		FPlatformProcess::CloseProc(Info.ProcessHandle);
+		ActiveServers.RemoveAt(i);
+		RemoveRegistryFileForPort(Port);
+		return false;
+	}
+
+	return false;
 }
 
 // ============================================================================
 // IsServerReady
 // ============================================================================
 
-bool UHellunaGameServerManager::IsServerReady(int32 Port) const
+bool UHellunaGameServerManager::IsServerReady(int32 Port)
 {
+	if (!IsTrackedServerRunning(Port))
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[ServerManager] IsServerReady rejected untracked/dead server | Port=%d"), Port);
+		return false;
+	}
+
 	const FString FilePath = FPaths::Combine(RegistryDir, FString::Printf(TEXT("channel_%d.json"), Port));
 
 	FString JsonString;
@@ -288,8 +337,14 @@ bool UHellunaGameServerManager::IsServerReady(int32 Port) const
 // [Phase 19] IsServerReadyForMap
 // ============================================================================
 
-bool UHellunaGameServerManager::IsServerReadyForMap(int32 Port, const FString& MapKey) const
+bool UHellunaGameServerManager::IsServerReadyForMap(int32 Port, const FString& MapKey)
 {
+	if (!IsTrackedServerRunning(Port))
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[ServerManager] IsServerReadyForMap rejected untracked/dead server | Port=%d | MapKey=%s"), Port, *MapKey);
+		return false;
+	}
+
 	const FString FilePath = FPaths::Combine(RegistryDir, FString::Printf(TEXT("channel_%d.json"), Port));
 
 	FString JsonString;
@@ -337,8 +392,10 @@ bool UHellunaGameServerManager::IsServerReadyForMap(int32 Port, const FString& M
 // AllocatePort
 // ============================================================================
 
-int32 UHellunaGameServerManager::AllocatePort() const
+int32 UHellunaGameServerManager::AllocatePort()
 {
+	CleanupTerminatedProcesses();
+
 	for (int32 Port = MinPort; Port <= MaxPort; ++Port)
 	{
 		// ActiveServers에 있는지 확인
@@ -377,8 +434,19 @@ int32 UHellunaGameServerManager::AllocatePort() const
 						const FTimespan Age = FDateTime::UtcNow() - LastUpdate;
 						if (Age.GetTotalSeconds() <= 60.0)
 						{
-							// 아직 살아있는 서버 → 사용 불가
-							continue;
+							if (IsTrackedServerRunning(Port))
+							{
+								// Fresh registry with a live child process is in use.
+								continue;
+							}
+
+							if (IFileManager::Get().FileExists(*FilePath))
+							{
+								UE_LOG(LogHellunaLobby, Warning,
+									TEXT("[ServerManager] Skipping fresh registry without live tracked process during port allocation | Port=%d | Age=%.1f"),
+									Port, Age.GetTotalSeconds());
+								continue;
+							}
 						}
 					}
 					// 60초 초과 = Offline → 사용 가능
@@ -408,12 +476,14 @@ void UHellunaGameServerManager::ShutdownAll()
 
 	for (FActiveServerInfo& Info : ActiveServers)
 	{
+		const int32 Port = Info.Port;
 		if (FPlatformProcess::IsProcRunning(Info.ProcessHandle))
 		{
 			FPlatformProcess::TerminateProc(Info.ProcessHandle, true);
-			UE_LOG(LogHellunaLobby, Log, TEXT("[ServerManager] 프로세스 종료 | Port=%d"), Info.Port);
+			UE_LOG(LogHellunaLobby, Log, TEXT("[ServerManager] 프로세스 종료 | Port=%d"), Port);
 		}
 		FPlatformProcess::CloseProc(Info.ProcessHandle);
+		RemoveRegistryFileForPort(Port);
 	}
 	ActiveServers.Empty();
 }
@@ -428,9 +498,11 @@ void UHellunaGameServerManager::CleanupTerminatedProcesses()
 	{
 		if (!FPlatformProcess::IsProcRunning(ActiveServers[i].ProcessHandle))
 		{
-			UE_LOG(LogHellunaLobby, Log, TEXT("[ServerManager] 종료된 프로세스 정리 | Port=%d"), ActiveServers[i].Port);
+			const int32 DeadPort = ActiveServers[i].Port;
+			UE_LOG(LogHellunaLobby, Log, TEXT("[ServerManager] 종료된 프로세스 정리 | Port=%d"), DeadPort);
 			FPlatformProcess::CloseProc(ActiveServers[i].ProcessHandle);
 			ActiveServers.RemoveAt(i);
+			RemoveRegistryFileForPort(DeadPort);
 		}
 	}
 }

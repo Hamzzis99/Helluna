@@ -16,6 +16,8 @@ class AHellunaDefenseGameState;
 class UNiagaraSystem;
 class UNiagaraComponent;
 class USoundBase;
+class USoundAttenuation;
+class USoundConcurrency;
 class AHellunaGuardianProjectile;
 
 enum class EDefensePhase : uint8;
@@ -316,14 +318,114 @@ protected:
 	FName ImpactFXRadiusParamName = NAME_None;
 
 	/** 발사 사운드 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|FX",
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|Sound",
 		meta = (DisplayName = "발사 사운드"))
 	TObjectPtr<USoundBase> FireSound = nullptr;
 
+	/** 발사 사운드 볼륨 배율 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Sound",
+		meta = (DisplayName = "발사 사운드 볼륨", ClampMin = "0.0", ClampMax = "5.0"))
+	float FireSoundVolume = 1.0f;
+
+	/** 발사 사운드 피치 배율 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Sound",
+		meta = (DisplayName = "발사 사운드 피치", ClampMin = "0.1", ClampMax = "4.0"))
+	float FireSoundPitch = 1.0f;
+
 	/** 피격 사운드 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|FX",
-		meta = (DisplayName = "피격 사운드"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|Sound",
+		meta = (DisplayName = "피격 사운드 (레거시 즉시 트레이스)"))
 	TObjectPtr<USoundBase> ImpactSound = nullptr;
+
+	/** 피격 사운드 볼륨 배율 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Sound",
+		meta = (DisplayName = "피격 사운드 볼륨", ClampMin = "0.0", ClampMax = "5.0"))
+	float ImpactSoundVolume = 1.0f;
+
+	/** 피격 사운드 피치 배율 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Sound",
+		meta = (DisplayName = "피격 사운드 피치", ClampMin = "0.1", ClampMax = "4.0"))
+	float ImpactSoundPitch = 1.0f;
+
+	/** Lock/FireDelay 동안 반복 재생할 기본 경고 beep. 짧은 one-shot 권장. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|Sound|Warning",
+		meta = (DisplayName = "경고 Beep 사운드"))
+	TObjectPtr<USoundBase> WarningBeepSound = nullptr;
+
+	/** 마지막 FireDelay 구간에서 쓸 급박 경고 beep. 비워두면 WarningBeepSound 를 피치만 올려 사용. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|Sound|Warning",
+		meta = (DisplayName = "급박 경고 Beep 사운드"))
+	TObjectPtr<USoundBase> CriticalWarningBeepSound = nullptr;
+
+	/** 경고 beep 볼륨 배율 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Sound|Warning",
+		meta = (DisplayName = "경고 Beep 볼륨", ClampMin = "0.0", ClampMax = "5.0"))
+	float WarningBeepVolume = 1.0f;
+
+	/** Lock 시작부의 가장 느린 beep 간격 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Sound|Warning",
+		meta = (DisplayName = "경고 Beep 느린 간격", ClampMin = "0.05", ClampMax = "3.0"))
+	float WarningBeepSlowInterval = 0.85f;
+
+	/** FireDelay 끝부분의 가장 빠른 beep 간격 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Sound|Warning",
+		meta = (DisplayName = "경고 Beep 빠른 간격", ClampMin = "0.05", ClampMax = "1.0"))
+	float WarningBeepFastInterval = 0.12f;
+
+	/** Lock 시작부의 경고 beep 피치 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Sound|Warning",
+		meta = (DisplayName = "경고 Beep 최소 피치", ClampMin = "0.1", ClampMax = "4.0"))
+	float WarningBeepMinPitch = 0.95f;
+
+	/** FireDelay 끝부분의 경고 beep 피치 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Sound|Warning",
+		meta = (DisplayName = "경고 Beep 최대 피치", ClampMin = "0.1", ClampMax = "4.0"))
+	float WarningBeepMaxPitch = 1.45f;
+
+	/** 가디언 3D 사운드 공통 감쇠 설정. null 이면 사운드 에셋 기본값 사용. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|Sound",
+		meta = (DisplayName = "가디언 사운드 감쇠"))
+	TObjectPtr<USoundAttenuation> GuardianSoundAttenuation = nullptr;
+
+	/** 가디언 3D 사운드 공통 동시재생 제한. null 이면 사운드 에셋 기본값 사용. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|Sound",
+		meta = (DisplayName = "가디언 사운드 동시재생"))
+	TObjectPtr<USoundConcurrency> GuardianSoundConcurrency = nullptr;
+
+	/** 조준당한 플레이어 본인에게만 재생되는 2D 긴박 BGM. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|Sound|TargetedBGM",
+		meta = (DisplayName = "타겟 전용 2D BGM"))
+	TObjectPtr<USoundBase> TargetedBgmSound = nullptr;
+
+	/** 타겟 전용 BGM 기본 볼륨. 거리/위협도 알파가 곱해진다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Sound|TargetedBGM",
+		meta = (DisplayName = "타겟 BGM 기본 볼륨", ClampMin = "0.0", ClampMax = "5.0"))
+	float TargetedBgmVolume = 1.0f;
+
+	/** Lock 상태에서의 BGM 위협도 볼륨 배율. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Sound|TargetedBGM",
+		meta = (DisplayName = "Lock BGM 볼륨 배율", ClampMin = "0.0", ClampMax = "5.0"))
+	float TargetedBgmLockVolumeScale = 0.75f;
+
+	/** FireDelay 상태에서의 BGM 위협도 볼륨 배율. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Sound|TargetedBGM",
+		meta = (DisplayName = "FireDelay BGM 볼륨 배율", ClampMin = "0.0", ClampMax = "5.0"))
+	float TargetedBgmFireDelayVolumeScale = 1.0f;
+
+	/** 감지 반경 중 이 비율 안쪽은 BGM 풀 볼륨, 바깥쪽은 반경 끝까지 부드럽게 감소. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Sound|TargetedBGM",
+		meta = (DisplayName = "BGM 풀 볼륨 반경 비율", ClampMin = "0.0", ClampMax = "1.0"))
+	float TargetedBgmFullVolumeRadiusRatio = 0.75f;
+
+	/** 타겟 전용 BGM 페이드 인 시간. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Sound|TargetedBGM",
+		meta = (DisplayName = "타겟 BGM 페이드 인", ClampMin = "0.0", ClampMax = "10.0"))
+	float TargetedBgmFadeInDuration = 0.5f;
+
+	/** 타겟 해제 시 BGM 페이드 아웃 시간. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Sound|TargetedBGM",
+		meta = (DisplayName = "타겟 BGM 페이드 아웃", ClampMin = "0.0", ClampMax = "10.0"))
+	float TargetedBgmFadeOutDuration = 1.8f;
 
 public:
 	/** 현재 상태 (Replicated) — BP 에서 읽기 전용 */
@@ -429,6 +531,21 @@ private:
 	/** 진단 로그 누적 타이머 */
 	float DebugLogAccumulator = 0.f;
 
+	/** 서버 전용: 다음 경고 beep 까지 누적된 시간 */
+	float WarningBeepAccumulator = 0.f;
+
+	void TickWarningBeep(float DeltaTime);
+	float GetWarningBeepProgress() const;
+	float GetWarningBeepInterval() const;
+	float GetWarningBeepPitch() const;
+	bool IsWarningBeepCritical() const;
+
+	/** 서버 전용: 조준당한 플레이어의 로컬 2D BGM 세션 시작/갱신/종료. */
+	TWeakObjectPtr<AHellunaHeroCharacter> ActiveTargetedBgmHero;
+	void UpdateTargetedBgmSession();
+	void StopTargetedBgmSession();
+	void SendTargetedBgmStartOrUpdate(AHellunaHeroCharacter* TargetHero, float ThreatVolumeScale);
+
 	// =========================================================
 	// 발사 (서버 전용)
 	// =========================================================
@@ -466,13 +583,22 @@ private:
 	// 멀티캐스트 RPC (서버 → 모든 클라 FX·사운드)
 	// =========================================================
 
-	/** 발사 FX/사운드 재생. 서버·클라 모두 실행. HitNormal 은 폭발 VFX 방향 결정 (벽면 수직). */
+	/** 발사 FX/사운드 재생. SoundLocation 은 팀원이 타겟된 플레이어 주변에서 위험을 듣도록 타겟 조준점 기준으로 전달. */
 	UFUNCTION(NetMulticast, Unreliable)
-	void Multicast_PlayFireFX(FVector_NetQuantize Muzzle, bool bHit, FVector_NetQuantize HitLocation, FVector_NetQuantizeNormal HitNormal);
+	void Multicast_PlayFireFX(
+		FVector_NetQuantize Muzzle,
+		bool bHit,
+		FVector_NetQuantize HitLocation,
+		FVector_NetQuantizeNormal HitNormal,
+		FVector_NetQuantize SoundLocation);
 
 	/** 상태 변화 이벤트. BGM / 추적선 색 전환 트리거. */
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_OnStateChanged(EGuardianState NewState);
+
+	/** Lock/FireDelay 경고 beep 재생. 서버가 박자만 결정하고 각 클라가 3D 월드 사운드로 재생한다. */
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_PlayWarningBeep(FVector_NetQuantize SoundLocation, bool bCritical, float PitchMultiplier);
 
 	/** 사망 시 머리/몸체 분리 + 물리 시뮬 + 임펄스. 서버·클라 동기. Reliable (한번만 발생). */
 	UFUNCTION(NetMulticast, Reliable)

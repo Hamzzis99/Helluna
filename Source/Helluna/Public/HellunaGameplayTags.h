@@ -20,6 +20,7 @@ namespace HellunaGameplayTags
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Reload);
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Kick);
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Interaction);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Block);
 
 	/** Player Ability tags **/
 
@@ -33,6 +34,7 @@ namespace HellunaGameplayTags
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_Ability_Repair);
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_Ability_Farming);
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_Ability_Reload);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_Ability_Block);
 
 	/** Player Status tags **/
 
@@ -41,6 +43,13 @@ namespace HellunaGameplayTags
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_status_Shoot);
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_status_Can_Repair);
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_status_Can_Farming);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_Status_Blocking);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_Status_PerfectBlocking);
+
+	/** GameplayCue tags **/
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(GameplayCue_FX_MagicShield);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(GameplayCue_FX_MagicShield_SuceessfulBlock);
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(GameplayCue_FX_MagicShield_SuceessfulBlock_PerfectBlock);
 
 	/** Player Weapon tags **/
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_Weapon_Gun);

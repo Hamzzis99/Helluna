@@ -81,6 +81,12 @@ void UHellunaAbilitySystemComponent::OnAbilityInputPressed(const FGameplayTag& I
 		return;
 	}
 
+	if (InInputTag == HellunaGameplayTags::InputTag_Jump
+		&& HasMatchingGameplayTag(HellunaGameplayTags::Player_status_Aim))
+	{
+		return;
+	}
+
 	// ============================================
 	// ⭐ [멀티플레이 버그 수정] 로컬 제어 캐릭터만 입력 처리
 	// ============================================

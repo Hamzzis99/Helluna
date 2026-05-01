@@ -7,6 +7,7 @@
 #include "Helluna.h"
 #include "Character/HellunaHeroCharacter.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
+#include "Controller/HellunaHeroController.h"
 #include "GameMode/HellunaDefenseGameState.h"
 
 #include "Components/SceneComponent.h"
@@ -134,6 +135,11 @@ void AHellunaGuardianTurret::BeginPlay()
 
 void AHellunaGuardianTurret::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (HasAuthority())
+	{
+		StopTargetedBgmSession();
+	}
+
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(PhasePollTimerHandle);
@@ -198,6 +204,7 @@ void AHellunaGuardianTurret::Tick(float DeltaTime)
 	}
 
 	StateTimer += DeltaTime;
+	TickWarningBeep(DeltaTime);
 
 	switch (CurrentState)
 	{
@@ -415,6 +422,190 @@ void AHellunaGuardianTurret::TickDebugDiagnostics(float DeltaTime)
 }
 
 // =========================================================
+// 경고 beep 사운드 (서버 박자 결정 → 클라 3D 재생)
+// =========================================================
+
+void AHellunaGuardianTurret::TickWarningBeep(float DeltaTime)
+{
+	if (CurrentState != EGuardianState::Lock && CurrentState != EGuardianState::FireDelay)
+	{
+		WarningBeepAccumulator = 0.f;
+		return;
+	}
+
+	if (!WarningBeepSound && !CriticalWarningBeepSound)
+	{
+		return;
+	}
+
+	const float Interval = GetWarningBeepInterval();
+	if (Interval <= 0.f)
+	{
+		return;
+	}
+
+	WarningBeepAccumulator += DeltaTime;
+	if (WarningBeepAccumulator < Interval)
+	{
+		return;
+	}
+
+	WarningBeepAccumulator = FMath::Max(WarningBeepAccumulator - Interval, 0.f);
+
+	FVector SoundLocation = GetActorLocation();
+	if (AActor* Target = CurrentTarget.Get())
+	{
+		if (IsValid(Target) && !Target->IsActorBeingDestroyed())
+		{
+			SoundLocation = GetAimPointFor(Target);
+		}
+	}
+
+	Multicast_PlayWarningBeep(SoundLocation, IsWarningBeepCritical(), GetWarningBeepPitch());
+}
+
+float AHellunaGuardianTurret::GetWarningBeepProgress() const
+{
+	const float SafeLockDuration = FMath::Max(LockDuration, KINDA_SMALL_NUMBER);
+	const float SafeFireDelayDuration = FMath::Max(FireDelayDuration, KINDA_SMALL_NUMBER);
+	const float TotalDuration = SafeLockDuration + SafeFireDelayDuration;
+
+	float Remaining = TotalDuration;
+	if (CurrentState == EGuardianState::Lock)
+	{
+		Remaining = FMath::Max(SafeLockDuration - StateTimer, 0.f) + SafeFireDelayDuration;
+	}
+	else if (CurrentState == EGuardianState::FireDelay)
+	{
+		Remaining = FMath::Max(SafeFireDelayDuration - StateTimer, 0.f);
+	}
+
+	return 1.f - FMath::Clamp(Remaining / TotalDuration, 0.f, 1.f);
+}
+
+float AHellunaGuardianTurret::GetWarningBeepInterval() const
+{
+	const float SlowInterval = FMath::Max(WarningBeepSlowInterval, 0.01f);
+	const float FastInterval = FMath::Max(WarningBeepFastInterval, 0.01f);
+	const float Alpha = FMath::InterpEaseIn(0.f, 1.f, GetWarningBeepProgress(), 1.5f);
+	return FMath::Lerp(SlowInterval, FastInterval, Alpha);
+}
+
+float AHellunaGuardianTurret::GetWarningBeepPitch() const
+{
+	const float MinPitch = FMath::Max(WarningBeepMinPitch, 0.01f);
+	const float MaxPitch = FMath::Max(WarningBeepMaxPitch, 0.01f);
+	return FMath::Lerp(MinPitch, MaxPitch, GetWarningBeepProgress());
+}
+
+bool AHellunaGuardianTurret::IsWarningBeepCritical() const
+{
+	return CurrentState == EGuardianState::FireDelay;
+}
+
+// =========================================================
+// 타겟 전용 로컬 2D BGM (서버 지시 → 타겟 PlayerController 로컬 재생)
+// =========================================================
+
+void AHellunaGuardianTurret::UpdateTargetedBgmSession()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	AHellunaHeroCharacter* TargetHero = nullptr;
+	float ThreatVolumeScale = 0.f;
+	if (TargetedBgmSound && CurrentState != EGuardianState::Idle && CurrentState != EGuardianState::Dead)
+	{
+		TargetHero = Cast<AHellunaHeroCharacter>(CurrentTarget.Get());
+		if (TargetHero && (!IsValid(TargetHero) || TargetHero->IsActorBeingDestroyed() || !IsTargetInRange(TargetHero)))
+		{
+			TargetHero = nullptr;
+		}
+
+		if (TargetHero)
+		{
+			const bool bCanStartBgm = CurrentState == EGuardianState::Lock || CurrentState == EGuardianState::FireDelay;
+			const bool bCanMaintainBgm = ActiveTargetedBgmHero.Get() == TargetHero;
+			if (!bCanStartBgm && !bCanMaintainBgm)
+			{
+				TargetHero = nullptr;
+			}
+			else
+			{
+				ThreatVolumeScale = (CurrentState == EGuardianState::FireDelay)
+					? TargetedBgmFireDelayVolumeScale
+					: TargetedBgmLockVolumeScale;
+			}
+		}
+	}
+
+	if (!TargetHero)
+	{
+		StopTargetedBgmSession();
+		return;
+	}
+
+	if (AHellunaHeroCharacter* PreviousHero = ActiveTargetedBgmHero.Get())
+	{
+		if (PreviousHero != TargetHero)
+		{
+			StopTargetedBgmSession();
+		}
+	}
+
+	ActiveTargetedBgmHero = TargetHero;
+	SendTargetedBgmStartOrUpdate(TargetHero, ThreatVolumeScale);
+}
+
+void AHellunaGuardianTurret::StopTargetedBgmSession()
+{
+	AHellunaHeroCharacter* PreviousHero = ActiveTargetedBgmHero.Get();
+	ActiveTargetedBgmHero = nullptr;
+	if (!PreviousHero)
+	{
+		return;
+	}
+
+	AHellunaHeroController* HeroController = Cast<AHellunaHeroController>(PreviousHero->GetController());
+	if (!HeroController)
+	{
+		return;
+	}
+
+	HeroController->Client_StopGuardianTargetedBgm(this, TargetedBgmFadeOutDuration);
+}
+
+void AHellunaGuardianTurret::SendTargetedBgmStartOrUpdate(
+	AHellunaHeroCharacter* TargetHero,
+	float ThreatVolumeScale)
+{
+	if (!TargetHero || !TargetedBgmSound)
+	{
+		return;
+	}
+
+	AHellunaHeroController* HeroController = Cast<AHellunaHeroController>(TargetHero->GetController());
+	if (!HeroController)
+	{
+		return;
+	}
+
+	const float FadeEndRadius = FMath::Max(DetectionRadius, 1.f);
+	const float FullVolumeRadius = FadeEndRadius * FMath::Clamp(TargetedBgmFullVolumeRadiusRatio, 0.f, 1.f);
+	HeroController->Client_StartGuardianTargetedBgm(
+		TargetedBgmSound,
+		this,
+		FullVolumeRadius,
+		FadeEndRadius,
+		TargetedBgmFadeInDuration,
+		TargetedBgmFadeOutDuration,
+		TargetedBgmVolume,
+		ThreatVolumeScale);
+}
+
+// =========================================================
 // 상태 전이 헬퍼
 // =========================================================
 
@@ -442,6 +633,15 @@ void AHellunaGuardianTurret::SetState(EGuardianState NewState)
 	CurrentState = NewState;
 	StateTimer = 0.f;
 
+	if (NewState == EGuardianState::Lock || NewState == EGuardianState::FireDelay)
+	{
+		WarningBeepAccumulator = GetWarningBeepInterval();
+	}
+	else
+	{
+		WarningBeepAccumulator = 0.f;
+	}
+
 	// Idle 진입 시 LockedFireTarget 초기화
 	if (NewState == EGuardianState::Idle || NewState == EGuardianState::Dead)
 	{
@@ -450,6 +650,11 @@ void AHellunaGuardianTurret::SetState(EGuardianState NewState)
 
 	// 서버 로컬 조준 빔 적용 (클라는 OnRep_CurrentState 에서 동일 처리)
 	ApplyAimBeamForState(NewState);
+
+	if (HasAuthority())
+	{
+		UpdateTargetedBgmSession();
+	}
 
 	Multicast_OnStateChanged(NewState);
 }
@@ -503,6 +708,7 @@ void AHellunaGuardianTurret::OnDetectionEndOverlap(
 	if (CurrentTarget.Get() == Hero)
 	{
 		CurrentTarget = nullptr;
+		UpdateTargetedBgmSession();
 	}
 }
 
@@ -732,8 +938,8 @@ void AHellunaGuardianTurret::PerformFire()
 				ProjectileLifeSeconds);
 		}
 
-		// 발사 사운드는 머즐에서 멀티캐스트 (폭발 VFX 는 투사체 측에서 처리)
-		Multicast_PlayFireFX(TraceStart, false, FVector::ZeroVector, FVector::ZeroVector);
+		// 발사 사운드는 타겟 조준점 기준, 투사체/VFX 는 머즐 기준으로 분리한다.
+		Multicast_PlayFireFX(TraceStart, false, FVector::ZeroVector, FVector::ZeroVector, TraceEnd);
 		return;
 	}
 
@@ -749,7 +955,7 @@ void AHellunaGuardianTurret::PerformFire()
 	const FVector ImpactNormal = bHit
 		? HitResult.ImpactNormal
 		: (TraceStart - ImpactLocation).GetSafeNormal();
-	Multicast_PlayFireFX(TraceStart, bHit, ImpactLocation, ImpactNormal);
+	Multicast_PlayFireFX(TraceStart, bHit, ImpactLocation, ImpactNormal, TraceEnd);
 
 	if (ExplosionRadius > 0.f)
 	{
@@ -891,7 +1097,11 @@ void AHellunaGuardianTurret::ApplyAimBeamForState(EGuardianState State)
 // =========================================================
 
 void AHellunaGuardianTurret::Multicast_PlayFireFX_Implementation(
-	FVector_NetQuantize Muzzle, bool bHit, FVector_NetQuantize HitLocation, FVector_NetQuantizeNormal HitNormal)
+	FVector_NetQuantize Muzzle,
+	bool bHit,
+	FVector_NetQuantize HitLocation,
+	FVector_NetQuantizeNormal HitNormal,
+	FVector_NetQuantize SoundLocation)
 {
 	// 데디서버는 VFX / 사운드 재생 불필요
 	if (IsRunningDedicatedServer())
@@ -908,6 +1118,9 @@ void AHellunaGuardianTurret::Multicast_PlayFireFX_Implementation(
 	const FVector MuzzleVec = FVector(Muzzle);
 	const FVector ImpactVec = FVector(HitLocation);
 	const FVector NormalVec = FVector(HitNormal);
+	const FVector FireSoundVec = FVector(SoundLocation).IsNearlyZero()
+		? MuzzleVec
+		: FVector(SoundLocation);
 
 	// 투사체 모드: 머즐 빔/폭발 VFX 는 투사체가 담당 → 발사 사운드만 재생
 	const bool bProjectileMode = (ProjectileClass != nullptr);
@@ -915,7 +1128,10 @@ void AHellunaGuardianTurret::Multicast_PlayFireFX_Implementation(
 	{
 		if (FireSound)
 		{
-			UGameplayStatics::PlaySoundAtLocation(this, FireSound, MuzzleVec);
+			UGameplayStatics::PlaySoundAtLocation(
+				this, FireSound, FireSoundVec,
+				FireSoundVolume, FireSoundPitch, 0.f,
+				GuardianSoundAttenuation, GuardianSoundConcurrency);
 		}
 		return;
 	}
@@ -935,7 +1151,10 @@ void AHellunaGuardianTurret::Multicast_PlayFireFX_Implementation(
 
 	if (FireSound)
 	{
-		UGameplayStatics::PlaySoundAtLocation(this, FireSound, MuzzleVec);
+		UGameplayStatics::PlaySoundAtLocation(
+			this, FireSound, FireSoundVec,
+			FireSoundVolume, FireSoundPitch, 0.f,
+			GuardianSoundAttenuation, GuardianSoundConcurrency);
 	}
 
 	if (!bHit)
@@ -963,7 +1182,10 @@ void AHellunaGuardianTurret::Multicast_PlayFireFX_Implementation(
 	}
 	if (ImpactSound)
 	{
-		UGameplayStatics::PlaySoundAtLocation(this, ImpactSound, ImpactVec);
+		UGameplayStatics::PlaySoundAtLocation(
+			this, ImpactSound, ImpactVec,
+			ImpactSoundVolume, ImpactSoundPitch, 0.f,
+			GuardianSoundAttenuation, GuardianSoundConcurrency);
 	}
 }
 
@@ -972,6 +1194,39 @@ void AHellunaGuardianTurret::Multicast_OnStateChanged_Implementation(EGuardianSt
 	// BP 오버라이드/BGM 큐 바인딩 지점. C++ 기본 구현은 로그만.
 	UE_LOG(LogHellunaGuardian, Verbose, TEXT("[%s] Multicast state changed to %d"),
 		*GetName(), static_cast<int32>(NewState));
+}
+
+void AHellunaGuardianTurret::Multicast_PlayWarningBeep_Implementation(
+	FVector_NetQuantize SoundLocation,
+	bool bCritical,
+	float PitchMultiplier)
+{
+	if (IsRunningDedicatedServer())
+	{
+		return;
+	}
+
+	USoundBase* SoundToPlay = (bCritical && CriticalWarningBeepSound)
+		? CriticalWarningBeepSound
+		: WarningBeepSound;
+	if (!SoundToPlay && CriticalWarningBeepSound)
+	{
+		SoundToPlay = CriticalWarningBeepSound;
+	}
+	if (!SoundToPlay)
+	{
+		return;
+	}
+
+	const FVector SoundVec = FVector(SoundLocation).IsNearlyZero()
+		? GetActorLocation()
+		: FVector(SoundLocation);
+	const float SafePitch = FMath::Max(PitchMultiplier, 0.01f);
+
+	UGameplayStatics::PlaySoundAtLocation(
+		this, SoundToPlay, SoundVec,
+		WarningBeepVolume, SafePitch, 0.f,
+		GuardianSoundAttenuation, GuardianSoundConcurrency);
 }
 
 // =========================================================

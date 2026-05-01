@@ -12,6 +12,8 @@
 #include "Blueprint/UserWidget.h"
 #include "Blueprint/WidgetBlueprintLibrary.h"
 #include "TimerManager.h"
+#include "Components/AudioComponent.h"
+#include "Sound/SoundBase.h"
 
 // [Loading Barrier]
 #include "Loading/HellunaLoadingHUDWidget.h"
@@ -267,6 +269,7 @@ void AHellunaHeroController::Tick(float DeltaTime)
 	Super::Tick(DeltaTime);
 	TickDesaturation(DeltaTime);
 	TickColorReveal(DeltaTime);
+	TickGuardianTargetedBgm(DeltaTime);
 }
 
 // ============================================================================
@@ -275,6 +278,8 @@ void AHellunaHeroController::Tick(float DeltaTime)
 
 void AHellunaHeroController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	StopGuardianTargetedBgmLocal(0.f);
+
 	// C5: 타이머 핸들 정리 (파괴 후 콜백 방지)
 	GetWorldTimerManager().ClearTimer(VoteWidgetInitTimerHandle);
 	GetWorldTimerManager().ClearTimer(ChatWidgetInitTimerHandle);
@@ -313,6 +318,200 @@ void AHellunaHeroController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	}
 
 	Super::EndPlay(EndPlayReason);
+}
+
+// ============================================================================
+// [Guardian] 조준당한 플레이어 전용 로컬 2D BGM
+// ============================================================================
+
+void AHellunaHeroController::Client_StartGuardianTargetedBgm_Implementation(
+	USoundBase* BgmSound,
+	AActor* SourceGuardian,
+	float FullVolumeRadius,
+	float FadeEndRadius,
+	float FadeInDuration,
+	float FadeOutDuration,
+	float BaseVolume,
+	float ThreatVolumeScale)
+{
+	if (!IsLocalController() || IsRunningDedicatedServer())
+	{
+		return;
+	}
+	if (!BgmSound || !IsValid(SourceGuardian))
+	{
+		return;
+	}
+
+	FadeEndRadius = FMath::Max(FadeEndRadius, 1.f);
+	FullVolumeRadius = FMath::Clamp(FullVolumeRadius, 0.f, FadeEndRadius);
+
+	FGuardianTargetedBgmClientSource* SourceState = GuardianTargetedBgmSources.FindByPredicate(
+		[SourceGuardian](const FGuardianTargetedBgmClientSource& ExistingSource)
+		{
+			return ExistingSource.SourceGuardian.Get() == SourceGuardian;
+		});
+	if (!SourceState)
+	{
+		SourceState = &GuardianTargetedBgmSources.AddDefaulted_GetRef();
+	}
+	SourceState->SourceGuardian = SourceGuardian;
+	SourceState->FullVolumeRadius = FullVolumeRadius;
+	SourceState->FadeEndRadius = FadeEndRadius;
+	SourceState->BaseVolume = FMath::Max(BaseVolume, 0.f);
+	SourceState->ThreatVolumeScale = FMath::Max(ThreatVolumeScale, 0.f);
+
+	GuardianTargetedBgmFadeInDuration = FMath::Max(FadeInDuration, 0.f);
+	GuardianTargetedBgmFadeOutDuration = FMath::Max(FadeOutDuration, 0.f);
+
+	const bool bNeedsNewComponent =
+		!IsValid(GuardianTargetedBgmComponent) || GuardianTargetedBgmSound != BgmSound;
+	if (bNeedsNewComponent)
+	{
+		if (IsValid(GuardianTargetedBgmComponent))
+		{
+			GuardianTargetedBgmComponent->FadeOut(GuardianTargetedBgmFadeOutDuration, 0.f);
+		}
+
+		GuardianTargetedBgmCurrentVolume = 0.f;
+		GuardianTargetedBgmSound = BgmSound;
+		GuardianTargetedBgmComponent = UGameplayStatics::SpawnSound2D(
+			this,
+			BgmSound,
+			0.f,
+			1.f,
+			0.f,
+			nullptr,
+			false,
+			true);
+		if (IsValid(GuardianTargetedBgmComponent))
+		{
+			GuardianTargetedBgmComponent->SetVolumeMultiplier(0.f);
+		}
+	}
+}
+
+void AHellunaHeroController::Client_StopGuardianTargetedBgm_Implementation(
+	AActor* SourceGuardian,
+	float FadeOutDuration)
+{
+	if (!IsLocalController() || IsRunningDedicatedServer())
+	{
+		return;
+	}
+	if (SourceGuardian)
+	{
+		GuardianTargetedBgmSources.RemoveAll(
+			[SourceGuardian](const FGuardianTargetedBgmClientSource& ExistingSource)
+			{
+				return ExistingSource.SourceGuardian.Get() == SourceGuardian;
+			});
+	}
+	else
+	{
+		GuardianTargetedBgmSources.Empty();
+	}
+
+	if (GuardianTargetedBgmSources.IsEmpty())
+	{
+		StopGuardianTargetedBgmLocal(FadeOutDuration);
+	}
+}
+
+void AHellunaHeroController::TickGuardianTargetedBgm(float DeltaTime)
+{
+	if (!IsLocalController() || IsRunningDedicatedServer())
+	{
+		return;
+	}
+
+	APawn* ControlledPawn = GetPawn();
+	if (!IsValid(ControlledPawn))
+	{
+		StopGuardianTargetedBgmLocal(GuardianTargetedBgmFadeOutDuration);
+		return;
+	}
+
+	float DesiredVolume = 0.f;
+	const FVector ListenerLocation = ControlledPawn->GetActorLocation();
+	for (int32 SourceIndex = GuardianTargetedBgmSources.Num() - 1; SourceIndex >= 0; --SourceIndex)
+	{
+		FGuardianTargetedBgmClientSource& SourceState = GuardianTargetedBgmSources[SourceIndex];
+		AActor* SourceGuardian = SourceState.SourceGuardian.Get();
+		if (!IsValid(SourceGuardian))
+		{
+			GuardianTargetedBgmSources.RemoveAtSwap(SourceIndex);
+			continue;
+		}
+
+		const float FadeEndRadius = FMath::Max(SourceState.FadeEndRadius, 1.f);
+		const float FullVolumeRadius = FMath::Clamp(SourceState.FullVolumeRadius, 0.f, FadeEndRadius);
+		const float Distance = FVector::Dist(ListenerLocation, SourceGuardian->GetActorLocation());
+
+		float DistanceAlpha = 0.f;
+		if (Distance <= FullVolumeRadius)
+		{
+			DistanceAlpha = 1.f;
+		}
+		else if (Distance < FadeEndRadius)
+		{
+			const float RawAlpha = (Distance - FullVolumeRadius) / FMath::Max(FadeEndRadius - FullVolumeRadius, 1.f);
+			const float SmoothAlpha = RawAlpha * RawAlpha * (3.f - 2.f * RawAlpha);
+			DistanceAlpha = 1.f - SmoothAlpha;
+		}
+
+		const float SourceVolume = SourceState.BaseVolume * SourceState.ThreatVolumeScale * DistanceAlpha;
+		DesiredVolume = FMath::Max(DesiredVolume, SourceVolume);
+	}
+
+	if (GuardianTargetedBgmSources.IsEmpty() && DesiredVolume <= KINDA_SMALL_NUMBER)
+	{
+		StopGuardianTargetedBgmLocal(GuardianTargetedBgmFadeOutDuration);
+		return;
+	}
+
+	if (!IsValid(GuardianTargetedBgmComponent))
+	{
+		GuardianTargetedBgmCurrentVolume = 0.f;
+		return;
+	}
+
+	const float FadeDuration = DesiredVolume > GuardianTargetedBgmCurrentVolume
+		? GuardianTargetedBgmFadeInDuration
+		: GuardianTargetedBgmFadeOutDuration;
+	const float VolumeSpan = FMath::Max(FMath::Max(DesiredVolume, GuardianTargetedBgmCurrentVolume), 1.f);
+	const float InterpSpeed = FadeDuration <= KINDA_SMALL_NUMBER
+		? BIG_NUMBER
+		: VolumeSpan / FadeDuration;
+
+	GuardianTargetedBgmCurrentVolume = FMath::FInterpConstantTo(
+		GuardianTargetedBgmCurrentVolume,
+		DesiredVolume,
+		DeltaTime,
+		InterpSpeed);
+	GuardianTargetedBgmComponent->SetVolumeMultiplier(GuardianTargetedBgmCurrentVolume);
+}
+
+void AHellunaHeroController::StopGuardianTargetedBgmLocal(float FadeOutDuration)
+{
+	GuardianTargetedBgmSources.Empty();
+
+	if (IsValid(GuardianTargetedBgmComponent))
+	{
+		const float SafeFadeOutDuration = FMath::Max(FadeOutDuration, 0.f);
+		if (SafeFadeOutDuration <= KINDA_SMALL_NUMBER)
+		{
+			GuardianTargetedBgmComponent->Stop();
+		}
+		else
+		{
+			GuardianTargetedBgmComponent->FadeOut(SafeFadeOutDuration, 0.f);
+		}
+	}
+
+	GuardianTargetedBgmComponent = nullptr;
+	GuardianTargetedBgmSound = nullptr;
+	GuardianTargetedBgmCurrentVolume = 0.f;
 }
 
 // ============================================================================

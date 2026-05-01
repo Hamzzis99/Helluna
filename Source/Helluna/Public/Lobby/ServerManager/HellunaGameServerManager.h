@@ -34,16 +34,22 @@ public:
 	int32 SpawnGameServer(const FString& MapPath);
 
 	/** 해당 포트의 서버가 ready(registry에 empty 상태 + 60초 이내) 인지 확인 */
-	bool IsServerReady(int32 Port) const;
+	bool IsServerReady(int32 Port);
 
 	/** [Phase 19] 빈 서버 종료 후 같은 포트에 새 맵으로 재스폰. 실패 시 -1 반환 */
 	int32 RespawnGameServer(int32 Port, const FString& NewMapPath);
 
 	/** [Phase 19] 해당 포트의 서버가 ready + 지정 맵인지 확인 */
-	bool IsServerReadyForMap(int32 Port, const FString& MapKey) const;
+	bool IsServerReadyForMap(int32 Port, const FString& MapKey);
 
 	/** 포트 할당: 레지스트리 + ActiveServers 스캔 -> [7778, 7798] 범위에서 미사용 포트 */
-	int32 AllocatePort() const;
+	int32 AllocatePort();
+
+	/** True only when this lobby still tracks a live game server process for the port. */
+	bool IsTrackedServerRunning(int32 Port);
+
+	/** Remove stale channel registry for the port. */
+	void RemoveRegistryFileForPort(int32 Port);
 
 	/** 프로세스 정리 (EndPlay 시 전체 종료) */
 	void ShutdownAll();

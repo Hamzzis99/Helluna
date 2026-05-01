@@ -8,6 +8,7 @@
 #include "Camera/CameraComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "InputCoreTypes.h"
 #include "DataAsset/DataAsset_InputConfig.h"
 #include "Conponent/HellunaInputComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -735,6 +736,8 @@ void AHellunaHeroCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInp
 	HellunaInputComponent->BindNativeInputAction(InputConfigDataAsset, HellunaGameplayTags::InputTag_Interaction, ETriggerEvent::Completed, this, &ThisClass::Input_InteractionCompleted);
 
 	HellunaInputComponent->BindAbilityInputAction(InputConfigDataAsset, this, &ThisClass::Input_AbilityInputPressed, &ThisClass::Input_AbilityInputReleased);
+	PlayerInputComponent->BindKey(EKeys::SpaceBar, IE_Pressed, this, &ThisClass::Input_BlockPressed);
+	PlayerInputComponent->BindKey(EKeys::SpaceBar, IE_Released, this, &ThisClass::Input_BlockReleased);
 
 	// [cheatdebug] F1~F7 치트 키 바인딩 (BP 수정 없이 C++에서 직접 바인딩)
 	PlayerInputComponent->BindKey(EKeys::F1, IE_Pressed, this, &ThisClass::OnCheat_F1);
@@ -836,6 +839,16 @@ void AHellunaHeroCharacter::Input_AbilityInputReleased(FGameplayTag InInputTag)
 		HellunaAbilitySystemComponent->OnAbilityInputReleased(InInputTag);
 	}
 
+}
+
+void AHellunaHeroCharacter::Input_BlockPressed()
+{
+	Input_AbilityInputPressed(HellunaGameplayTags::InputTag_Block);
+}
+
+void AHellunaHeroCharacter::Input_BlockReleased()
+{
+	Input_AbilityInputReleased(HellunaGameplayTags::InputTag_Block);
 }
 
 // ⭐ SpaceShip 수리 Server RPC (재료 개별 전달)
