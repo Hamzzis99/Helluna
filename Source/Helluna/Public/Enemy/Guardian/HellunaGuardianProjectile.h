@@ -13,6 +13,9 @@ class UProjectileMovementComponent;
 class USoundBase;
 class USoundAttenuation;
 class USoundConcurrency;
+class UDamageType;
+class UPrimitiveComponent;
+class AHellunaHeroCharacter;
 
 /**
  * 가디언이 발사하는 투사체.
@@ -60,6 +63,24 @@ protected:
 	/** 서버 전용: 폭발 처리 (데미지 + 멀티캐스트 VFX) */
 	void Explode(const FVector& ExplosionLocation, const FVector& SurfaceNormal);
 	bool TryReflectFromPerfectBlock(AActor* BlockingActor);
+	void ApplyShieldAwareExplosionDamage(const FVector& ExplosionLocation);
+	void BuildExplosionDamageHitMap(const FVector& ExplosionLocation, TMap<AActor*, TArray<FHitResult>>& OutHitMap) const;
+	bool IsExplosionDamageableFrom(UPrimitiveComponent* VictimComp, const FVector& ExplosionLocation, FHitResult& OutHitResult) const;
+	bool IsBlockingExplosion(const AHellunaHeroCharacter* Hero, const FVector& ExplosionLocation) const;
+	AHellunaHeroCharacter* FindShieldCoveringHeroFor(
+		const AActor* Victim,
+		const TArray<AHellunaHeroCharacter*>& BlockingHeroes,
+		const FVector& ExplosionLocation) const;
+	bool IsActorCoveredByShield(
+		const AActor* Victim,
+		const AHellunaHeroCharacter* BlockingHero,
+		const FVector& ExplosionLocation) const;
+	void ApplyRadialDamageEventToActor(
+		AActor* Victim,
+		float BaseDamage,
+		const FVector& ExplosionLocation,
+		const TArray<FHitResult>& ComponentHits,
+		TSubclassOf<UDamageType> DamageTypeClass);
 
 	/** 모든 클라에 폭발 VFX 재생 (서버 → 클라). 1회 이벤트라 Reliable — 패킷 유실 시에도 폭발 VFX 보장. */
 	UFUNCTION(NetMulticast, Reliable)
@@ -165,8 +186,40 @@ protected:
 	bool bDebugDrawRadialDamage = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Projectile|Block",
-		meta = (DisplayName = "퍼펙트 Block 반사 허용"))
+		meta = (DisplayName = "Block 폭발 방어 허용"))
+	bool bCanBeBlocked = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Projectile|Block",
+		meta = (DisplayName = "Block 폭발 데미지 배율", ClampMin = "0.0", ClampMax = "1.0"))
+	float BlockedExplosionDamageMultiplier = 0.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Projectile|Block",
+		meta = (DisplayName = "Block 전방 판정 Dot", ClampMin = "-1.0", ClampMax = "1.0"))
+	float BlockFrontDotThreshold = 0.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Projectile|Block",
+		meta = (DisplayName = "방패 뒤 차폐 Cone Dot", ClampMin = "0.0", ClampMax = "1.0"))
+	float ShieldCoverDotThreshold = 0.75f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Projectile|Block",
+		meta = (DisplayName = "방패 뒤 차폐 폭", ClampMin = "0.0"))
+	float ShieldCoverHalfWidth = 220.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Projectile|Block",
+		meta = (DisplayName = "방패 뒤 차폐 거리", ClampMin = "0.0"))
+	float ShieldCoverLength = 700.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Projectile|Block",
+		meta = (DisplayName = "디버그: Block 차폐 표시"))
+	bool bDebugDrawShieldBlock = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Projectile|Block",
+		meta = (DisplayName = "퍼펙트 Block 판정 사용"))
 	bool bCanBePerfectBlocked = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Projectile|Block",
+		meta = (DisplayName = "퍼펙트 Block 반사 활성화"))
+	bool bReflectOnPerfectBlock = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Projectile|Block",
 		meta = (DisplayName = "반사 속도 배율", ClampMin = "0.1", ClampMax = "5.0"))

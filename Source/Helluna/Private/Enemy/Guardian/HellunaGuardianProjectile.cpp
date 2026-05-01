@@ -5,7 +5,11 @@
 #include "Enemy/Guardian/HellunaDamageType_PhysicsImpact.h"
 
 #include "Components/BoxComponent.h"
+#include "Components/PrimitiveComponent.h"
+#include "Engine/DamageEvents.h"
+#include "Engine/OverlapResult.h"
 #include "GameFramework/ProjectileMovementComponent.h"
+#include "GameFramework/DamageType.h"
 #include "Kismet/GameplayStatics.h"
 #include "Engine/World.h"
 #include "DrawDebugHelpers.h"
@@ -132,7 +136,7 @@ void AHellunaGuardianProjectile::OnBeginOverlap(
 		return;
 	}
 
-	if (bCanBePerfectBlocked && !bReflected && OtherActor->IsA<AHellunaHeroCharacter>())
+	if (bCanBePerfectBlocked && bReflectOnPerfectBlock && !bReflected && OtherActor->IsA<AHellunaHeroCharacter>())
 	{
 		bool bPerfectBlock = false;
 		if (UHeroGameplayAbility_Block::EvaluateBlock(OtherActor, this, bPerfectBlock) && bPerfectBlock)
@@ -234,31 +238,12 @@ void AHellunaGuardianProjectile::Explode(const FVector& ExplosionLocation, const
 
 	bExploded = true;
 	SetProjectileCollisionEnabled(false);
+	SetActorLocation(ExplosionLocation, false, nullptr, ETeleportType::TeleportPhysics);
 
 	UWorld* World = GetWorld();
 	if (World && Radius > 0.f)
 	{
-		TArray<AActor*> Ignore;
-		Ignore.Add(this);
-		if (AActor* OwnerActor = GetOwner())
-		{
-			Ignore.Add(OwnerActor);
-		}
-
-		// ApplyRadialDamage: Hero / Enemy 구분 없이 모두 데미지.
-		// DamagePreventionChannel 로 벽 차폐 (bIgnoreWorldStatic=false 시).
-		const ECollisionChannel PreventionChannel = bIgnoreWorldStatic ? ECC_MAX : BlockTraceChannel.GetValue();
-		UGameplayStatics::ApplyRadialDamage(
-			this,
-			Damage,
-			ExplosionLocation,
-			Radius,
-			UHellunaDamageType_PhysicsImpact::StaticClass(),
-			Ignore,
-			GetOwner(), /*DamageCauser=*/
-			nullptr,   /*InstigatorController=*/
-			/*bDoFullDamage=*/!bFalloff,
-			PreventionChannel);
+		ApplyShieldAwareExplosionDamage(ExplosionLocation);
 
 		if (bDebugDrawRadialDamage)
 		{
@@ -278,6 +263,335 @@ void AHellunaGuardianProjectile::Explode(const FVector& ExplosionLocation, const
 	}
 	SetActorHiddenInGame(true);
 	SetLifeSpan(0.2f);
+}
+
+void AHellunaGuardianProjectile::ApplyShieldAwareExplosionDamage(const FVector& ExplosionLocation)
+{
+	UWorld* World = GetWorld();
+	if (!HasAuthority() || !World || Radius <= 0.f || Damage <= 0.f)
+	{
+		return;
+	}
+
+	TMap<AActor*, TArray<FHitResult>> HitMap;
+	BuildExplosionDamageHitMap(ExplosionLocation, HitMap);
+	if (HitMap.IsEmpty())
+	{
+		return;
+	}
+
+	TArray<AHellunaHeroCharacter*> BlockingHeroes;
+	if (bCanBeBlocked)
+	{
+		for (const TPair<AActor*, TArray<FHitResult>>& Pair : HitMap)
+		{
+			AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(Pair.Key);
+			if (IsBlockingExplosion(Hero, ExplosionLocation))
+			{
+				BlockingHeroes.Add(Hero);
+			}
+		}
+	}
+
+	for (const TPair<AActor*, TArray<FHitResult>>& Pair : HitMap)
+	{
+		AActor* Victim = Pair.Key;
+		if (!IsValid(Victim) || Victim == this || Victim == GetOwner() || !Victim->CanBeDamaged())
+		{
+			continue;
+		}
+
+		const TArray<FHitResult>& ComponentHits = Pair.Value;
+		if (ComponentHits.IsEmpty())
+		{
+			continue;
+		}
+
+		AHellunaHeroCharacter* VictimHero = Cast<AHellunaHeroCharacter>(Victim);
+		const bool bSelfBlocked = VictimHero && BlockingHeroes.Contains(VictimHero);
+		if (!bSelfBlocked)
+		{
+			if (AHellunaHeroCharacter* CoveringHero = FindShieldCoveringHeroFor(Victim, BlockingHeroes, ExplosionLocation))
+			{
+				if (bDebugDrawShieldBlock)
+				{
+					DrawDebugLine(World, ExplosionLocation, Victim->GetActorLocation(), FColor::Cyan, false, 1.0f, 0, 2.0f);
+					DrawDebugLine(World, ExplosionLocation, CoveringHero->GetActorLocation(), FColor::Blue, false, 1.0f, 0, 2.0f);
+				}
+				continue;
+			}
+		}
+
+		const float DamageMultiplier = bSelfBlocked
+			? FMath::Clamp(BlockedExplosionDamageMultiplier, 0.f, 1.f)
+			: 1.f;
+		const float FinalBaseDamage = Damage * DamageMultiplier;
+		if (FinalBaseDamage <= 0.f)
+		{
+			continue;
+		}
+
+		TSubclassOf<UDamageType> DamageTypeClass = bSelfBlocked
+			? UDamageType::StaticClass()
+			: UHellunaDamageType_PhysicsImpact::StaticClass();
+
+		ApplyRadialDamageEventToActor(
+			Victim,
+			FinalBaseDamage,
+			ExplosionLocation,
+			ComponentHits,
+			DamageTypeClass);
+
+		if (bSelfBlocked)
+		{
+			UHeroGameplayAbility_Block::ExecuteBlockCue(VictimHero, this, false);
+			if (bDebugDrawShieldBlock)
+			{
+				DrawDebugLine(World, ExplosionLocation, Victim->GetActorLocation(), FColor::Yellow, false, 1.0f, 0, 2.0f);
+			}
+		}
+	}
+}
+
+void AHellunaGuardianProjectile::BuildExplosionDamageHitMap(
+	const FVector& ExplosionLocation,
+	TMap<AActor*, TArray<FHitResult>>& OutHitMap) const
+{
+	OutHitMap.Reset();
+
+	UWorld* World = GetWorld();
+	if (!World || Radius <= 0.f)
+	{
+		return;
+	}
+
+	FCollisionQueryParams SphereParams(SCENE_QUERY_STAT(GuardianProjectileExplosionOverlap), false, this);
+	SphereParams.AddIgnoredActor(this);
+	if (AActor* OwnerActor = GetOwner())
+	{
+		SphereParams.AddIgnoredActor(OwnerActor);
+	}
+
+	TArray<FOverlapResult> Overlaps;
+	World->OverlapMultiByObjectType(
+		Overlaps,
+		ExplosionLocation,
+		FQuat::Identity,
+		FCollisionObjectQueryParams(FCollisionObjectQueryParams::InitType::AllDynamicObjects),
+		FCollisionShape::MakeSphere(Radius),
+		SphereParams);
+
+	for (const FOverlapResult& Overlap : Overlaps)
+	{
+		AActor* Victim = Overlap.GetActor();
+		UPrimitiveComponent* VictimComp = Overlap.GetComponent();
+		if (!IsValid(Victim) || !IsValid(VictimComp) || Victim == this || Victim == GetOwner() || !Victim->CanBeDamaged())
+		{
+			continue;
+		}
+
+		FHitResult Hit;
+		if (IsExplosionDamageableFrom(VictimComp, ExplosionLocation, Hit))
+		{
+			OutHitMap.FindOrAdd(Victim).Add(Hit);
+		}
+	}
+}
+
+bool AHellunaGuardianProjectile::IsExplosionDamageableFrom(
+	UPrimitiveComponent* VictimComp,
+	const FVector& ExplosionLocation,
+	FHitResult& OutHitResult) const
+{
+	if (!IsValid(VictimComp))
+	{
+		return false;
+	}
+
+	UWorld* World = VictimComp->GetWorld();
+	if (!World)
+	{
+		return false;
+	}
+
+	const FVector TraceEnd = VictimComp->Bounds.Origin;
+	FVector TraceStart = ExplosionLocation;
+	if (TraceStart.Equals(TraceEnd))
+	{
+		TraceStart.Z += 0.01f;
+	}
+
+	const ECollisionChannel TraceChannel = bIgnoreWorldStatic ? ECC_MAX : BlockTraceChannel.GetValue();
+	if (TraceChannel != ECC_MAX)
+	{
+		FCollisionQueryParams LineParams(SCENE_QUERY_STAT(GuardianProjectileExplosionVisibility), true, this);
+		LineParams.AddIgnoredActor(this);
+		if (AActor* OwnerActor = GetOwner())
+		{
+			LineParams.AddIgnoredActor(OwnerActor);
+		}
+
+		if (World->LineTraceSingleByChannel(OutHitResult, TraceStart, TraceEnd, TraceChannel, LineParams))
+		{
+			return OutHitResult.Component.Get() == VictimComp;
+		}
+	}
+
+	const FVector FakeHitLoc = VictimComp->GetComponentLocation();
+	const FVector FakeHitNorm = (ExplosionLocation - FakeHitLoc).GetSafeNormal();
+	OutHitResult = FHitResult(VictimComp->GetOwner(), VictimComp, FakeHitLoc, FakeHitNorm);
+	return true;
+}
+
+bool AHellunaGuardianProjectile::IsBlockingExplosion(
+	const AHellunaHeroCharacter* Hero,
+	const FVector& ExplosionLocation) const
+{
+	if (!bCanBeBlocked || !IsValid(Hero) || !UHeroGameplayAbility_Block::IsBlocking(Hero))
+	{
+		return false;
+	}
+
+	FVector HeroForward = Hero->GetActorForwardVector();
+	HeroForward.Z = 0.f;
+	if (!HeroForward.Normalize())
+	{
+		return false;
+	}
+
+	FVector ToExplosion = ExplosionLocation - Hero->GetActorLocation();
+	ToExplosion.Z = 0.f;
+	if (!ToExplosion.Normalize())
+	{
+		ToExplosion = -GetActorForwardVector();
+		ToExplosion.Z = 0.f;
+		if (!ToExplosion.Normalize())
+		{
+			return false;
+		}
+	}
+
+	return FVector::DotProduct(HeroForward, ToExplosion) >= BlockFrontDotThreshold;
+}
+
+AHellunaHeroCharacter* AHellunaGuardianProjectile::FindShieldCoveringHeroFor(
+	const AActor* Victim,
+	const TArray<AHellunaHeroCharacter*>& BlockingHeroes,
+	const FVector& ExplosionLocation) const
+{
+	if (!IsValid(Victim))
+	{
+		return nullptr;
+	}
+
+	for (AHellunaHeroCharacter* BlockingHero : BlockingHeroes)
+	{
+		if (IsActorCoveredByShield(Victim, BlockingHero, ExplosionLocation))
+		{
+			return BlockingHero;
+		}
+	}
+
+	return nullptr;
+}
+
+bool AHellunaGuardianProjectile::IsActorCoveredByShield(
+	const AActor* Victim,
+	const AHellunaHeroCharacter* BlockingHero,
+	const FVector& ExplosionLocation) const
+{
+	if (!IsValid(Victim) || !IsValid(BlockingHero) || Victim == BlockingHero)
+	{
+		return false;
+	}
+
+	if (!IsBlockingExplosion(BlockingHero, ExplosionLocation))
+	{
+		return false;
+	}
+
+	const FVector BlockerLocation = BlockingHero->GetActorLocation();
+	const FVector VictimLocation = Victim->GetActorLocation();
+	const float ExplosionToBlockerDistance = FVector::Dist2D(ExplosionLocation, BlockerLocation);
+	const float ExplosionToVictimDistance = FVector::Dist2D(ExplosionLocation, VictimLocation);
+	if (ExplosionToVictimDistance <= ExplosionToBlockerDistance + 1.f)
+	{
+		return false;
+	}
+
+	FVector ExplosionToBlocker = BlockerLocation - ExplosionLocation;
+	ExplosionToBlocker.Z = 0.f;
+	FVector ExplosionToVictim = VictimLocation - ExplosionLocation;
+	ExplosionToVictim.Z = 0.f;
+	if (!ExplosionToBlocker.Normalize() || !ExplosionToVictim.Normalize())
+	{
+		return false;
+	}
+
+	if (FVector::DotProduct(ExplosionToBlocker, ExplosionToVictim) < ShieldCoverDotThreshold)
+	{
+		return false;
+	}
+
+	FVector BlockerToVictim = VictimLocation - BlockerLocation;
+	BlockerToVictim.Z = 0.f;
+	const float BackDistance = BlockerToVictim.Size();
+	if (BackDistance > ShieldCoverLength)
+	{
+		return false;
+	}
+
+	FVector BlockerForward = BlockingHero->GetActorForwardVector();
+	BlockerForward.Z = 0.f;
+	if (!BlockerForward.Normalize())
+	{
+		return false;
+	}
+
+	const FVector BlockerToVictimDir = BlockerToVictim.GetSafeNormal();
+	if (FVector::DotProduct(BlockerForward, BlockerToVictimDir) >= 0.f)
+	{
+		return false;
+	}
+
+	FVector BlockerRight = BlockingHero->GetActorRightVector();
+	BlockerRight.Z = 0.f;
+	if (!BlockerRight.Normalize())
+	{
+		return false;
+	}
+
+	return FMath::Abs(FVector::DotProduct(BlockerToVictim, BlockerRight)) <= ShieldCoverHalfWidth;
+}
+
+void AHellunaGuardianProjectile::ApplyRadialDamageEventToActor(
+	AActor* Victim,
+	float BaseDamage,
+	const FVector& ExplosionLocation,
+	const TArray<FHitResult>& ComponentHits,
+	TSubclassOf<UDamageType> DamageTypeClass)
+{
+	if (!HasAuthority() || !IsValid(Victim) || BaseDamage <= 0.f || ComponentHits.IsEmpty())
+	{
+		return;
+	}
+
+	FRadialDamageEvent DamageEvent;
+	DamageEvent.DamageTypeClass = DamageTypeClass;
+	if (!DamageEvent.DamageTypeClass)
+	{
+		DamageEvent.DamageTypeClass = UDamageType::StaticClass();
+	}
+	DamageEvent.Origin = ExplosionLocation;
+	DamageEvent.Params = FRadialDamageParams(
+		BaseDamage,
+		0.f,
+		0.f,
+		Radius,
+		bFalloff ? 1.f : 0.f);
+	DamageEvent.ComponentHits = ComponentHits;
+
+	Victim->TakeDamage(BaseDamage, DamageEvent, GetInstigatorController(), this);
 }
 
 void AHellunaGuardianProjectile::Multicast_SpawnExplosionFX_Implementation(
