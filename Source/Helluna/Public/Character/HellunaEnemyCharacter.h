@@ -307,7 +307,7 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Block",
 		meta = (DisplayName = "Block 성공 시 데미지 배율", ClampMin = "0.0", ClampMax = "1.0"))
-	float BlockedMeleeDamageMultiplier = 0.35f;
+	float BlockedMeleeDamageMultiplier = 0.3f;
 
 	/** 처형 중 HP가 0이 돼서 사망이 보류된 상태 (지연 사망) */
 	bool bParryDeferredDeath = false;
@@ -516,16 +516,20 @@ private:
 	void SweepAttackBoxForBlockers();
 
 	FTimerHandle AttackBlockSweepTimer;
-	
+
+public:
 	/**
 	 * 서버 전용 데미지 적용 (일반 함수).
 	 * AI는 서버에서만 실행되므로 Server RPC가 불필요 — 직접 호출로 오버헤드 제거.
+	 * Block 검사/Cue 호출이 이 진입점에 묶여 있어 외부 GA(DashAttack 등)에서도 호출 가능하게 public 노출.
 	 *
 	 * @param Target - 데미지를 받을 플레이어
 	 * @param DamageAmount - 데미지량
 	 * @param HitLocation - 충돌 위치 (이펙트 재생)
 	 */
 	void ServerApplyDamage(AActor* Target, float DamageAmount, const FVector& HitLocation);
+
+private:
 	
 	/**
 	 * Multicast RPC: 나이아가라 이펙트 재생 (히트/광폭화/보스 패턴 공용)
