@@ -263,8 +263,8 @@ void UEnemyGameplayAbility_DashAttack::TickDash()
 			bHitTargetThisTick = true;
 		}
 
-		UGameplayStatics::ApplyDamage(
-			HitActor, FinalDashDamage, Enemy->GetInstigatorController(), Enemy, nullptr);
+		// [Block] ServerApplyDamage 경유 — Hero Block 시 데미지 감쇠/Cue/거리 검증 통과
+		Enemy->ServerApplyDamage(HitActor, FinalDashDamage, HitActor->GetActorLocation());
 
 		// [DashHitVFXV1] 피격 대상 위치에 VFX 멀티캐스트. 서버에서만 호출, 모든 머신에서 Niagara 재생.
 		if (DashHitVFX)

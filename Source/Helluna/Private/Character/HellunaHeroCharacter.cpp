@@ -42,6 +42,7 @@
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraComponent.h"
 #include "AbilitySystem/HeroAbility/HeroGameplayAbility_GunParry.h"
+#include "AbilitySystem/HeroAbility/HeroGameplayAbility_Block.h"
 #include "VFX/GhostTrailActor.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
@@ -2338,6 +2339,9 @@ void AHellunaHeroCharacter::Multicast_PlayHeroHitReact_Implementation()
 {
 	// [GunParry] 무적 상태 피격 모션 차단
 	if (UHeroGameplayAbility_GunParry::ShouldBlockDamage(this)) return;
+
+	// [Block] 방패로 막아내는 느낌 — Block 중에는 피격 모션 재생 안 함
+	if (UHeroGameplayAbility_Block::IsBlocking(this)) return;
 
 	if (!HitReactMontage) return;
 

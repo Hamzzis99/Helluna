@@ -832,10 +832,11 @@ void UHeroGameplayAbility_GunParry::BeginExecutionMontage()
 
 	if (ExecutionMontageTask)
 	{
-		ExecutionMontageTask->OnCompleted.AddDynamic(this, &ThisClass::OnExecutionMontageCompleted);
-		ExecutionMontageTask->OnBlendOut.AddDynamic(this, &ThisClass::OnExecutionMontageCompleted);
-		ExecutionMontageTask->OnInterrupted.AddDynamic(this, &ThisClass::OnExecutionMontageInterrupted);
-		ExecutionMontageTask->OnCancelled.AddDynamic(this, &ThisClass::OnExecutionMontageInterrupted);
+		// [Fix:dup-callback] OnCompleted+OnBlendOut 둘 다 같은 함수 바인딩 시 한 프레임 내 이중 호출.
+		// OnCompleted만 사용 (정상 종료) + OnBlendOut 제거. AddUniqueDynamic으로 중복 바인딩 차단.
+		ExecutionMontageTask->OnCompleted.AddUniqueDynamic(this, &ThisClass::OnExecutionMontageCompleted);
+		ExecutionMontageTask->OnInterrupted.AddUniqueDynamic(this, &ThisClass::OnExecutionMontageInterrupted);
+		ExecutionMontageTask->OnCancelled.AddUniqueDynamic(this, &ThisClass::OnExecutionMontageInterrupted);
 		ExecutionMontageTask->ReadyForActivation();
 		UE_LOG(LogGunParry, Warning, TEXT("[BeginExecutionMontage] MontageTask ReadyForActivation — Frame=%llu"), GFrameCounter);
 
@@ -1221,6 +1222,14 @@ void UHeroGameplayAbility_GunParry::PlayParryExecutionCameraShake(AHellunaHeroCh
 
 void UHeroGameplayAbility_GunParry::HandleExecutionFinished(bool bWasCancelled)
 {
+	// [Fix:reentry-guard] OnCompleted+OnBlendOut 이중 콜백 또는 EndAbility 폴백 경로로
+	// 이중 호출되면 EndAbility가 두 번 호출되어 freed UObject 접근(0xff..ff) 발생.
+	// 빌드 전용 크래시 (Test 빌드 GC + PSO 스톨로 race 노출) 차단.
+	if (bHandleExecutionFinishedCalled)
+	{
+		UE_LOG(LogGunParry, Warning, TEXT("[HandleExecutionFinished] 재진입 차단 — bWasCancelled=%d"), bWasCancelled);
+		return;
+	}
 	bHandleExecutionFinishedCalled = true;
 
 	AHellunaHeroCharacter* Hero = GetHeroCharacterFromActorInfo();
