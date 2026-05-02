@@ -757,4 +757,60 @@ private:
 
 	/** SoftTimeout 만료 콜백 — 자가 Ready 보고 강제. */
 	void OnSoftTimeoutFired();
+
+	// =========================================================================================
+	// [Phase 22] Death Spectate System — 표준 NAME_Spectating + 자유비행/팀원시점 토글
+	// =========================================================================================
+public:
+	/** 서버 → 클라: 관전 진입 통지 (IMC 추가 + 첫 ViewTarget 결정). */
+	UFUNCTION(Client, Reliable)
+	void Client_OnEnteredSpectatorMode();
+
+	/** 서버 → 클라: 부활 통지 (IMC 제거 + 로컬 상태 정리). */
+	UFUNCTION(Client, Reliable)
+	void Client_OnRespawned();
+
+protected:
+	/** 관전 모드 토글 IA (Tab) — 자유비행 ↔ 팀원시점 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Spectate|Input (관전|입력)",
+		meta = (DisplayName = "Spectate Toggle Action (관전 토글 액션)"))
+	TObjectPtr<UInputAction> SpectateToggleAction;
+
+	/** 관전 다음 팀원 IA (좌클릭/→) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Spectate|Input (관전|입력)",
+		meta = (DisplayName = "Spectate Next Action (다음 팀원)"))
+	TObjectPtr<UInputAction> SpectateNextAction;
+
+	/** 관전 이전 팀원 IA (우클릭/←) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Spectate|Input (관전|입력)",
+		meta = (DisplayName = "Spectate Prev Action (이전 팀원)"))
+	TObjectPtr<UInputAction> SpectatePrevAction;
+
+	/** 관전 모드 IMC (관전 진입 시 추가, 부활 시 제거) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Spectate|Input (관전|입력)",
+		meta = (DisplayName = "Spectate Mapping Context (관전 IMC)"))
+	TObjectPtr<UInputMappingContext> SpectateMappingContext;
+
+private:
+	/** 로컬 — 현재 관전 중 여부 */
+	bool bIsSpectating = false;
+
+	/** 로컬 — 팀원시점(true) vs 자유비행(false) */
+	bool bSpectatorFollowMode = true;
+
+	/** 로컬 — 살아있는 팀원 순환 인덱스 */
+	int32 CurrentSpectateIndex = 0;
+
+	/** 살아있는 팀원의 Pawn 목록 수집 (PlayerState->bIsSpectator==false 기준 — 자기 자신 제외). */
+	void CollectAliveTeammates(TArray<APawn*>& OutPawns) const;
+
+	/** 현재 모드/인덱스 기준 ViewTarget 적용. */
+	void ApplyCurrentSpectateView();
+
+	void OnSpectateToggleInput(const struct FInputActionValue& Value);
+	void OnSpectateNextInput(const struct FInputActionValue& Value);
+	void OnSpectatePrevInput(const struct FInputActionValue& Value);
+
+	void AddSpectateIMC();
+	void RemoveSpectateIMC();
 };

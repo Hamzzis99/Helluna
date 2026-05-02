@@ -474,8 +474,28 @@ public:
 	/** 다운 전원 강제 사망 */
 	void ForceKillAllDownedPlayers();
 
+	// ════════════════════════════════════════════════════════════════
+	// [Phase 22] Death Spectate / Day-Respawn System
+	//   - 진짜 사망 시 PC를 표준 Spectator 상태로 전환 (UE NAME_Spectating)
+	//   - 다음 EnterDay 시작 시 PlayerStart 위치에 풀 HP로 재스폰
+	//   - 사체 컨테이너는 그대로 잔류 — 부활자가 직접 회수
+	// ════════════════════════════════════════════════════════════════
+
+	/** 사망 PC를 관전 모드로 전환. 사체 Pawn 은 월드에 잔류(래그돌 + LootContainer). */
+	void EnterSpectatorMode(APlayerController* DeadPC);
+
+	/** 관전 중인 모든 PC 를 다음 낮 PlayerStart 위치에 부활시킨다. EnterDay 시작 시 호출. */
+	void RespawnAllDeadPlayers();
+
+	/** 단일 PC 부활 — 자체 스폰(SpawnHeroCharacter 미사용)으로 LoadAndSendInventoryToClient 우회. */
+	void RespawnDeadPlayer(APlayerController* PC);
+
 	UFUNCTION(BlueprintPure, Category = "Defense(게임)|Monster(몬스터)")
 	int32 GetRemainingMonsterCount() const { return RemainingMonstersThisNight; }
+
+	/** [Phase22] 외부 클래스(HeroCharacter 등)에서 현재 Day 조회용 */
+	UFUNCTION(BlueprintPure, Category = "Defense(게임)|DayNight(낮밤)")
+	int32 GetCurrentDay() const { return CurrentDay; }
 
 	// ════════════════════════════════════════════════════════════════
 	// [ShipJumpQuotaV1] 우주선 점프 몬스터 수 제한 (소환 시점 고정)

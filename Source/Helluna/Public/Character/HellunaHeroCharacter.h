@@ -663,6 +663,11 @@ protected:
 		meta = (DisplayName = "루트 컨테이너 컴포넌트"))
 	TObjectPtr<UInv_LootContainerComponent> LootContainerComponent = nullptr;
 
+	/** [Phase 22] 이 사체가 만들어진 Day(EnterDay 카운터). 0 = 아직 사망 전. 사체 정리 정책 결정 시 사용. */
+	UPROPERTY(BlueprintReadOnly, Category = "Component",
+		meta = (DisplayName = "사망 시점 Day"))
+	int32 DeathDay = 0;
+
 	UFUNCTION()
 	void OnHeroHealthChanged(UActorComponent* HealthComp, float OldHealth, float NewHealth, AActor* InstigatorActor);
 

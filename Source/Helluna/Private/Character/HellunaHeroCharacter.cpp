@@ -2334,8 +2334,13 @@ void AHellunaHeroCharacter::OnHeroDeath(AActor* DeadActor, AActor* KillerActor)
 	// 전원 사망 체크 → GameMode에 사망 알림
 	if (AHellunaDefenseGameMode* DefenseGM = Cast<AHellunaDefenseGameMode>(UGameplayStatics::GetGameMode(GetWorld())))
 	{
+		// [Phase22] 사망 시점 Day 기록 — 사체 정리 정책 결정 시 사용
+		DeathDay = DefenseGM->GetCurrentDay();
+
 		APlayerController* PC = Cast<APlayerController>(GetController());
 		DefenseGM->NotifyPlayerDied(PC);
+		// NotifyPlayerDied 내부에서 살아있는 팀원 ≥1 → EnterSpectatorMode(PC) 호출.
+		// 솔로/전원 사망 → EndGame(AllDead) 경유.
 	}
 }
 

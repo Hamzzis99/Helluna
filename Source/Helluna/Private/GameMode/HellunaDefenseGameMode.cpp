@@ -32,7 +32,10 @@
 #include "Character/HellunaHeroCharacter.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
+#include "InventoryManagement/FastArray/Inv_FastArray.h"  // [Phase22] ClearAllEntries
 #include "Player/Inv_PlayerController.h"
+#include "GameFramework/PlayerStart.h"  // [Phase22] FindPlayerStart 반환 타입
+#include "GameFramework/SpectatorPawn.h"  // [Phase22] 관전 Pawn
 #include "HAL/IConsoleManager.h"
 #include "Chat/HellunaChatTypes.h"
 #include "Login/Controller/HellunaLoginController.h"  // [Fix50]
@@ -1608,6 +1611,14 @@ void AHellunaDefenseGameMode::EnterDay()
     // 낮 카운터 증가 (게임 시작 첫 낮은 Day 1)
     CurrentDay++;
 
+    // [Phase22] 새 낮 시작 — 관전 중인(사망한) 플레이어 전원을 PlayerStart 에 부활시킨다.
+    //   - 사체 Pawn 은 그대로 잔류(직접 회수)
+    //   - 첫 낮(Day 1)에는 관전자 없으므로 자연스럽게 패스된다.
+    if (!bGameEnded)
+    {
+        RespawnAllDeadPlayers();
+    }
+
     // Day에 따라 적절한 낮 지속 시간 결정
     const float EffectiveDayDuration = GetEffectiveDayDuration();
 
@@ -2208,6 +2219,7 @@ void AHellunaDefenseGameMode::NotifyPlayerDied(APlayerController* DeadPC)
     UE_LOG(LogHelluna, Log, TEXT("[NotifyPlayerDied] %s 사망"), *GetNameSafe(DeadPC));
 
     // 생존자가 한 명이라도 있는지 확인
+    bool bAnyAlive = false;
     for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
     {
         APlayerController* PC = It->Get();
@@ -2219,13 +2231,20 @@ void AHellunaDefenseGameMode::NotifyPlayerDied(APlayerController* DeadPC)
         UHellunaHealthComponent* HealthComp = Pawn->FindComponentByClass<UHellunaHealthComponent>();
         if (HealthComp && HealthComp->IsAliveAndNotDowned())
         {
-            // 생존자 있음 (다운 상태 제외) → 게임 계속
-            UE_LOG(LogHelluna, Log, TEXT("[NotifyPlayerDied] 생존자 있음: %s")   , *GetNameSafe(PC));
-            return;
+            UE_LOG(LogHelluna, Log, TEXT("[NotifyPlayerDied] 생존자 있음: %s"), *GetNameSafe(PC));
+            bAnyAlive = true;
+            break;
         }
     }
 
-    // 전원 사망 → 패배
+    if (bAnyAlive)
+    {
+        // [Phase22] 멀티 케이스 — 사망 PC 만 관전 모드로 (사체 Pawn 은 잔류)
+        EnterSpectatorMode(DeadPC);
+        return;
+    }
+
+    // 전원 사망 → 패배 (솔로 즉사 포함)
     UE_LOG(LogHelluna, Warning, TEXT("[Defeat] 전원 사망! EndGame(AllDead) 호출"));
     EndGame(EHellunaGameEndReason::AllDead);
 }
@@ -2314,6 +2333,161 @@ void AHellunaDefenseGameMode::ForceKillAllDownedPlayers()
             HealthComp->ForceKillFromDowned();
         }
     }
+}
+
+// ============================================================
+// [Phase22] Death Spectate / Day-Respawn
+// ============================================================
+
+void AHellunaDefenseGameMode::EnterSpectatorMode(APlayerController* DeadPC)
+{
+    if (!HasAuthority() || !IsValid(DeadPC)) return;
+
+    UE_LOG(LogHelluna, Log, TEXT("[Phase22] EnterSpectatorMode | PC=%s"), *GetNameSafe(DeadPC));
+
+    // 사체 Pawn 은 월드에 잔류(래그돌 + LootContainer). UnPossess 만 수행.
+    APawn* CorpsePawn = DeadPC->GetPawn();
+    if (IsValid(CorpsePawn))
+    {
+        DeadPC->UnPossess();
+    }
+
+    // UE 표준 관전 상태 — SpectatorPawn 자동 스폰, PlayerState->bIsSpectator=true 자동 설정
+    DeadPC->ChangeState(NAME_Spectating);
+    if (AHellunaPlayerState* PS = DeadPC->GetPlayerState<AHellunaPlayerState>())
+    {
+        PS->SetIsSpectator(true);
+    }
+
+    // 첫 ViewTarget — 사체 위치를 잠시 비추고, 클라가 관전 입력으로 팀원 시점/자유비행 토글
+    if (IsValid(CorpsePawn))
+    {
+        DeadPC->SetViewTargetWithBlend(CorpsePawn, 0.5f, EViewTargetBlendFunction::VTBlend_Cubic);
+    }
+
+    // 클라 측 IMC/상태 초기화 통지
+    if (AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(DeadPC))
+    {
+        HeroPC->Client_OnEnteredSpectatorMode();
+    }
+}
+
+void AHellunaDefenseGameMode::RespawnAllDeadPlayers()
+{
+    if (!HasAuthority() || !bGameInitialized || bGameEnded) return;
+
+    UWorld* World = GetWorld();
+    if (!World) return;
+
+    int32 RespawnedCount = 0;
+    for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+    {
+        APlayerController* PC = It->Get();
+        if (!IsValid(PC)) continue;
+
+        AHellunaPlayerState* PS = PC->GetPlayerState<AHellunaPlayerState>();
+        if (!PS || !PS->IsSpectator()) continue;
+
+        RespawnDeadPlayer(PC);
+        ++RespawnedCount;
+    }
+
+    if (RespawnedCount > 0)
+    {
+        UE_LOG(LogHelluna, Log, TEXT("[Phase22] RespawnAllDeadPlayers — Day=%d, Count=%d"), CurrentDay, RespawnedCount);
+        if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
+        {
+            GS->BroadcastChatMessage(TEXT(""),
+                FString::Printf(TEXT("새벽이 밝았습니다. 사망자 %d명이 부활했습니다"), RespawnedCount),
+                EChatMessageType::System);
+        }
+    }
+}
+
+void AHellunaDefenseGameMode::RespawnDeadPlayer(APlayerController* PC)
+{
+    if (!HasAuthority() || !IsValid(PC)) return;
+
+    UWorld* World = GetWorld();
+    if (!World) return;
+
+    // 1) 캐릭터 클래스 결정 — SpawnHeroCharacter 와 동일 규칙(HeroCharacterMap → fallback)
+    TSubclassOf<APawn> SpawnClass = nullptr;
+    if (AHellunaPlayerState* PS = PC->GetPlayerState<AHellunaPlayerState>())
+    {
+        const int32 CharacterIndex = PS->GetSelectedCharacterIndex();
+        if (CharacterIndex >= 0)
+        {
+            const EHellunaHeroType HeroType = IndexToHeroType(CharacterIndex);
+            if (HeroCharacterMap.Contains(HeroType))
+            {
+                SpawnClass = HeroCharacterMap[HeroType];
+            }
+        }
+    }
+    if (!SpawnClass)
+    {
+        SpawnClass = HeroCharacterClass;
+    }
+    if (!SpawnClass)
+    {
+        UE_LOG(LogHelluna, Error, TEXT("[Phase22] RespawnDeadPlayer: SpawnClass nullptr | PC=%s"), *GetNameSafe(PC));
+        return;
+    }
+
+    // 2) PlayerStart 위치 결정
+    FVector SpawnLocation(0.f, 0.f, 200.f);
+    FRotator SpawnRotation = FRotator::ZeroRotator;
+    if (AActor* PlayerStart = FindPlayerStart(PC))
+    {
+        SpawnLocation = PlayerStart->GetActorLocation();
+        SpawnRotation = PlayerStart->GetActorRotation();
+    }
+
+    // 3) 관전 상태 해제 — Pawn Possess 시점에 UE 가 NAME_Playing 으로 자동 전환하지만 명시적으로 보장
+    PC->ChangeState(NAME_Playing);
+    if (AHellunaPlayerState* PS = PC->GetPlayerState<AHellunaPlayerState>())
+    {
+        PS->SetIsSpectator(false);
+    }
+
+    // 4) PC 의 InventoryComponent 클리어 — 사체에 사본이 남았으므로 회수 동선 보장
+    if (UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>())
+    {
+        InvComp->GetInventoryList().ClearAllEntries();
+    }
+
+    // 5) 새 Pawn 스폰 + Possess (SpawnHeroCharacter 미사용 — LoadAndSendInventoryToClient 자동 호출 회피)
+    FActorSpawnParameters SpawnParams;
+    SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+    SpawnParams.Owner = PC;
+
+    APawn* NewPawn = World->SpawnActor<APawn>(SpawnClass, SpawnLocation, SpawnRotation, SpawnParams);
+    if (!IsValid(NewPawn))
+    {
+        UE_LOG(LogHelluna, Error, TEXT("[Phase22] RespawnDeadPlayer: SpawnActor 실패 | PC=%s"), *GetNameSafe(PC));
+        return;
+    }
+
+    PC->Possess(NewPawn);
+
+    // 6) HP 풀체력 복원
+    if (UHellunaHealthComponent* HC = NewPawn->FindComponentByClass<UHellunaHealthComponent>())
+    {
+        HC->SetHealth(HC->GetMaxHealth());
+    }
+
+    // 7) 카메라 — 새 Pawn 으로 즉시 ViewTarget 복귀
+    PC->SetViewTargetWithBlend(NewPawn, 0.3f, EViewTargetBlendFunction::VTBlend_Cubic);
+
+    // 8) 클라 측 IMC/상태 정리 통지
+    if (AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(PC))
+    {
+        HeroPC->Client_OnRespawned();
+    }
+
+    UE_LOG(LogHelluna, Log, TEXT("[Phase22] RespawnDeadPlayer 완료 | PC=%s | Loc=%s"),
+        *GetNameSafe(PC), *SpawnLocation.ToString());
 }
 
 // ============================================================

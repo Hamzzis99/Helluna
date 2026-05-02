@@ -59,6 +59,9 @@
 // [WorldMap] 풀스크린 월드맵 + 핑 시스템
 #include "UI/WorldMap/HellunaWorldMapWidget.h"
 
+// [Phase 22] 관전 시스템
+#include "GameFramework/SpectatorPawn.h"
+
 // [PauseMenu] 위젯 애니메이션 재생
 // WidgetBlueprintGeneratedClass는 PauseMenuWidget 내부로 이동
 
@@ -258,6 +261,23 @@ void AHellunaHeroController::BeginPlay()
 		}
 	}
 #endif
+
+	// ── [Phase 22] 관전 모드 입력 바인딩 (IMC 자체는 관전 진입 시 동적 추가) ──
+	if (UEnhancedInputComponent* SpecEIC = Cast<UEnhancedInputComponent>(InputComponent))
+	{
+		if (SpectateToggleAction)
+		{
+			SpecEIC->BindAction(SpectateToggleAction, ETriggerEvent::Started, this, &AHellunaHeroController::OnSpectateToggleInput);
+		}
+		if (SpectateNextAction)
+		{
+			SpecEIC->BindAction(SpectateNextAction, ETriggerEvent::Started, this, &AHellunaHeroController::OnSpectateNextInput);
+		}
+		if (SpectatePrevAction)
+		{
+			SpecEIC->BindAction(SpectatePrevAction, ETriggerEvent::Started, this, &AHellunaHeroController::OnSpectatePrevInput);
+		}
+	}
 }
 
 // ============================================================================
@@ -2567,4 +2587,135 @@ void AHellunaHeroController::LeaveLoadingScene()
 void AHellunaHeroController::OnLoadingShipSceneUnloaded()
 {
 	UE_LOG(LogHelluna, Warning, TEXT("[LoadingDbg][Leave] L_LoadingShipScene 언로드 완료"));
+}
+
+// ============================================================================
+// [Phase 22] Death Spectate System
+// ============================================================================
+
+void AHellunaHeroController::Client_OnEnteredSpectatorMode_Implementation()
+{
+	if (!IsLocalController()) return;
+
+	bIsSpectating = true;
+	bSpectatorFollowMode = true;
+	CurrentSpectateIndex = 0;
+
+	AddSpectateIMC();
+	ApplyCurrentSpectateView();
+
+	UE_LOG(LogHelluna, Log, TEXT("[Phase22] Client_OnEnteredSpectatorMode"));
+}
+
+void AHellunaHeroController::Client_OnRespawned_Implementation()
+{
+	if (!IsLocalController()) return;
+
+	bIsSpectating = false;
+	bSpectatorFollowMode = true;
+	CurrentSpectateIndex = 0;
+
+	RemoveSpectateIMC();
+
+	UE_LOG(LogHelluna, Log, TEXT("[Phase22] Client_OnRespawned"));
+}
+
+void AHellunaHeroController::AddSpectateIMC()
+{
+	if (!SpectateMappingContext) return;
+	ULocalPlayer* LP = GetLocalPlayer();
+	if (!LP) return;
+	UEnhancedInputLocalPlayerSubsystem* Sub = LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>();
+	if (!Sub) return;
+	Sub->AddMappingContext(SpectateMappingContext, 50);
+}
+
+void AHellunaHeroController::RemoveSpectateIMC()
+{
+	if (!SpectateMappingContext) return;
+	ULocalPlayer* LP = GetLocalPlayer();
+	if (!LP) return;
+	UEnhancedInputLocalPlayerSubsystem* Sub = LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>();
+	if (!Sub) return;
+	Sub->RemoveMappingContext(SpectateMappingContext);
+}
+
+void AHellunaHeroController::CollectAliveTeammates(TArray<APawn*>& OutPawns) const
+{
+	OutPawns.Reset();
+	UWorld* W = GetWorld();
+	if (!W) return;
+	for (FConstPlayerControllerIterator It = W->GetPlayerControllerIterator(); It; ++It)
+	{
+		APlayerController* PC = It->Get();
+		if (!IsValid(PC) || PC == this) continue;
+
+		// 살아있는 팀원 = bIsSpectator==false 이면서 Pawn 보유
+		APlayerState* PS = PC->PlayerState;
+		if (!PS || PS->IsSpectator()) continue;
+
+		APawn* TargetPawn = PC->GetPawn();
+		if (!IsValid(TargetPawn)) continue;
+
+		OutPawns.Add(TargetPawn);
+	}
+}
+
+void AHellunaHeroController::ApplyCurrentSpectateView()
+{
+	if (!IsLocalController() || !bIsSpectating) return;
+
+	// 자유비행 모드 — SpectatorPawn 으로 ViewTarget 복귀
+	if (!bSpectatorFollowMode)
+	{
+		if (ASpectatorPawn* MySpec = GetSpectatorPawn())
+		{
+			SetViewTargetWithBlend(MySpec, 0.3f, EViewTargetBlendFunction::VTBlend_Cubic);
+		}
+		return;
+	}
+
+	// 팀원 시점 모드 — 살아있는 팀원의 Pawn ViewTarget
+	TArray<APawn*> Alive;
+	CollectAliveTeammates(Alive);
+	if (Alive.Num() == 0)
+	{
+		// 팀원 없음 → 자유비행 강제
+		bSpectatorFollowMode = false;
+		if (ASpectatorPawn* MySpec = GetSpectatorPawn())
+		{
+			SetViewTargetWithBlend(MySpec, 0.3f, EViewTargetBlendFunction::VTBlend_Cubic);
+		}
+		return;
+	}
+
+	// 음수 인덱스 안전 모듈로
+	const int32 Count = Alive.Num();
+	CurrentSpectateIndex = ((CurrentSpectateIndex % Count) + Count) % Count;
+	APawn* Target = Alive[CurrentSpectateIndex];
+	if (IsValid(Target))
+	{
+		SetViewTargetWithBlend(Target, 0.3f, EViewTargetBlendFunction::VTBlend_Cubic);
+	}
+}
+
+void AHellunaHeroController::OnSpectateToggleInput(const FInputActionValue& /*Value*/)
+{
+	if (!bIsSpectating) return;
+	bSpectatorFollowMode = !bSpectatorFollowMode;
+	ApplyCurrentSpectateView();
+}
+
+void AHellunaHeroController::OnSpectateNextInput(const FInputActionValue& /*Value*/)
+{
+	if (!bIsSpectating || !bSpectatorFollowMode) return;
+	++CurrentSpectateIndex;
+	ApplyCurrentSpectateView();
+}
+
+void AHellunaHeroController::OnSpectatePrevInput(const FInputActionValue& /*Value*/)
+{
+	if (!bIsSpectating || !bSpectatorFollowMode) return;
+	--CurrentSpectateIndex;
+	ApplyCurrentSpectateView();
 }
