@@ -2785,6 +2785,55 @@ void AHellunaDefenseGameMode::Logout(AController* Exiting)
         }
     }
 
+    // [Loading Barrier H-1] Barrier 활성 중 disconnect 시 Barrier 측 PlayerId 정리
+    // Why: Logout 함수가 Barrier 변수를 정리 안 하면 ArrivedPlayerIds/ActualReadyStatus/
+    //      ExpectedPlayerIds에 PlayerId가 남아 AreAllExpectedReady() 영원히 false →
+    //      다른 플레이어가 60s HardTimeout까지 hang.
+    // 출처: Reedme/loading/16_code_audit_2026-05-02.md §H-1
+    if (!bGameInitialized && BarrierState != ELoadingBarrierState::Idle &&
+        BarrierState != ELoadingBarrierState::Spawned)
+    {
+        APlayerController* ExitPC = Cast<APlayerController>(Exiting);
+        if (IsValid(ExitPC))
+        {
+            FString ExitPlayerId;
+            if (AHellunaPlayerState* PS = ExitPC->GetPlayerState<AHellunaPlayerState>())
+            {
+                ExitPlayerId = PS->GetPlayerUniqueId();
+            }
+            if (!ExitPlayerId.IsEmpty())
+            {
+                const int32 RemovedArrived = ArrivedPlayerIds.Remove(ExitPlayerId);
+                ActualReadyStatus.Remove(ExitPlayerId);
+                const int32 RemovedExpected = ExpectedPlayerIds.Remove(ExitPlayerId);
+
+                UE_LOG(LogHelluna, Warning,
+                    TEXT("[LoadingDbg][Server][Logout-Barrier] PlayerId=%s | RemovedArrived=%d | RemovedExpected=%d | Remaining=%d | State=%d"),
+                    *ExitPlayerId, RemovedArrived, RemovedExpected, ExpectedPlayerIds.Num(), static_cast<int32>(BarrierState));
+
+                // 정리 후 AllReady 재평가 — 남은 인원 모두 Ready면 즉시 해제
+                if (BarrierState == ELoadingBarrierState::WaitingForReady && AreAllExpectedReady())
+                {
+                    UE_LOG(LogHelluna, Warning,
+                        TEXT("[LoadingDbg][Server][Logout-Barrier] 남은 인원 AllReady → ReleaseBarrier(LogoutTriggeredAllReady)"));
+                    ReleaseBarrier(TEXT("LogoutTriggeredAllReady"));
+                }
+                // 모두 disconnect 시 Barrier 취소 — 타이머 정리 + Idle 복귀
+                else if (ExpectedPlayerIds.Num() == 0)
+                {
+                    if (UWorld* W = GetWorld())
+                    {
+                        W->GetTimerManager().ClearTimer(BarrierHardTimeoutTimer);
+                        W->GetTimerManager().ClearTimer(BarrierMinTimeoutTimer);
+                    }
+                    BarrierState = ELoadingBarrierState::Idle;
+                    UE_LOG(LogHelluna, Warning,
+                        TEXT("[LoadingDbg][Server][Logout-Barrier] 모든 ExpectedIds 이탈 → Barrier 취소 → Idle"));
+                }
+            }
+        }
+    }
+
     // Phase 10: 퇴장 메시지
     if (bGameInitialized)
     {
