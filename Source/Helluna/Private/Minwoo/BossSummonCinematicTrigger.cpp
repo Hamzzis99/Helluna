@@ -143,6 +143,8 @@ void ABossSummonCinematicTrigger::Tick(float DeltaTime)
 	}
 
 	if (!HasAuthority() || !bCinematicActive) return;
+	// [PortalRevealV1] 포탈만 보여주는 phase 동안 보스 walk 입력 억제.
+	if (!bCinematicWalkActive) return;
 	if (CinematicBossWalkSpeed <= 0.f) return;
 
 	APawn* Boss = ActiveBoss.Get();
@@ -293,6 +295,8 @@ void ABossSummonCinematicTrigger::EndPlay(const EEndPlayReason::Type EndPlayReas
 		World->GetTimerManager().ClearTimer(AutoActivateTimer);
 		World->GetTimerManager().ClearTimer(MinHoldTimer);
 		World->GetTimerManager().ClearTimer(FailsafeTimer);
+		World->GetTimerManager().ClearTimer(PortalRevealTimerServer);
+		World->GetTimerManager().ClearTimer(PortalRevealTimerLocal);
 	}
 
 	UnregisterActorSpawnHandler();
@@ -451,39 +455,26 @@ bool ABossSummonCinematicTrigger::TryActivate(APawn* InTargetBoss)
 		}
 	}
 
-	// 3) 이동 잠금 — 루트모션 없는 몽타주 대비.
-	//    MOVE_None은 중력까지 끊어 공중 스폰 시 보스가 떠있게 됨.
-	//    MOVE_Walking + 속도 0으로 두면 중력은 살아있어 자연스럽게 땅에 안착.
+	// 3) 이동 잠금 — 보스가 portal phase 동안 그 자리에 멈춰 있도록 walk 입력 게이트.
+	//    MaxWalkSpeed 는 reveal 후 OnPortalRevealElapsedServer 에서 override.
 	if (ACharacter* BossChar = Cast<ACharacter>(Boss))
 	{
 		if (UCharacterMovementComponent* Move = BossChar->GetCharacterMovement())
 		{
 			Move->StopMovementImmediately();
 			Move->SetMovementMode(MOVE_Walking);
-
-			// [CinematicWalkV1] 시네마틱 중 Tick AddMovementInput 으로 전진할 수 있도록
-			//   MaxWalkSpeed 를 CinematicBossWalkSpeed 로 잠시 덮어쓰고, 종료 시 복원.
-			if (CinematicBossWalkSpeed > 0.f)
-			{
-				SavedBossMaxWalkSpeed = Move->MaxWalkSpeed;
-				Move->MaxWalkSpeed = CinematicBossWalkSpeed;
-				SetActorTickEnabled(true);
-				UE_LOG(LogTemp, Warning,
-					TEXT("[BossSummonCinematic_LiveCodeCheck] WalkSpeed override — saved=%.0f, applied=%.0f"),
-					SavedBossMaxWalkSpeed, Move->MaxWalkSpeed);
-			}
 		}
 	}
+	bCinematicWalkActive = false;
 
 	// [CinematicNetSyncV1] 시네마틱 동안 보스 NetUpdateFrequency 일시 부스트 (클라 잔진동 완화).
 	Boss->SetNetUpdateFrequency(60.f);
 	Boss->SetMinNetUpdateFrequency(30.f);
 
-	// 4) 카메라 전환 + 입력 잠금 (모든 클라) — 몽타주 재생 전에 먼저 시작해야 카메라가 우선 자리 잡음
+	// 4) 카메라 전환 RPC — 클라이언트들은 portal 만 스폰하고 reveal delay 까지 카메라는 player 유지.
 	Multicast_StartCinematic(Boss);
 
-	// 5) 최소 유지 타이머 — 몽타주가 즉시 끝나도 카메라가 보스를 비추는 시간 확보.
-	//    [PortalCutsV1] 컷 시퀀스 합계가 MinCinematicHoldDuration 보다 길면 자동 확장 (컷 잘림 방지).
+	// 5) MinHold + Failsafe 계산. 컷 합계 + reveal delay 까지 포함해야 컷이 다 보임.
 	float MinHold = FMath::Max(MinCinematicHoldDuration, 0.5f);
 	if (!CameraSequence && CameraCuts.Num() > 0)
 	{
@@ -494,37 +485,75 @@ bool ABossSummonCinematicTrigger::TryActivate(APawn* InTargetBoss)
 		}
 		if (CutsTotal > MinHold)
 		{
-			UE_LOG(LogTemp, Warning,
-				TEXT("[BossSummonCinematic_LiveCodeCheck] MinHold extended for cuts: %.2f → %.2f"),
-				MinHold, CutsTotal);
 			MinHold = CutsTotal;
 		}
 	}
+	const float RevealDelay = FMath::Max(PortalRevealDelay, 0.f);
+	MinHold += RevealDelay;
+	UE_LOG(LogTemp, Warning,
+		TEXT("[BossSummonCinematic_LiveCodeCheck] MinHold=%.2f (reveal=%.2f + cuts/min)"),
+		MinHold, RevealDelay);
 	GetWorldTimerManager().SetTimer(MinHoldTimer, this,
 		&ABossSummonCinematicTrigger::OnMinHoldElapsedServer, MinHold, false);
 
-	// 6) Failsafe 타이머 — 몽타주가 너무 길거나 콜백 누락 시 절대 상한
 	const float Failsafe = FMath::Max(MaxDuration, MinHold + 0.5f);
 	GetWorldTimerManager().SetTimer(FailsafeTimer, this,
 		&ABossSummonCinematicTrigger::HandleCinematicCompletedServer, Failsafe, false);
 
-	// 7) 소환 몽타주 재생 + 종료 콜백 바인딩 (마지막에 — 즉시 콜백이 와도 플래그 처리)
+	// 6) Reveal 타이머 — RevealDelay 후 보스 walk 시작 + 몽타주 재생.
+	//    HellunaEnemyCharacter 아닌 경우엔 몽타주가 없으니 즉시 플래그만 세팅 (기존 동작 유지).
+	if (Cast<AHellunaEnemyCharacter_Boss>(Boss))
+	{
+		if (RevealDelay > KINDA_SMALL_NUMBER)
+		{
+			GetWorldTimerManager().SetTimer(PortalRevealTimerServer, this,
+				&ABossSummonCinematicTrigger::OnPortalRevealElapsedServer, RevealDelay, false);
+		}
+		else
+		{
+			OnPortalRevealElapsedServer();
+		}
+	}
+	else
+	{
+		bMontageFinishedFlag = true;
+	}
+
+	return true;
+}
+
+void ABossSummonCinematicTrigger::OnPortalRevealElapsedServer()
+{
+	if (!HasAuthority() || !bCinematicActive) return;
+	APawn* Boss = ActiveBoss.Get();
+	if (!Boss) return;
+
+	// MaxWalkSpeed override + Tick walk 활성화.
+	if (ACharacter* BossChar = Cast<ACharacter>(Boss))
+	{
+		if (UCharacterMovementComponent* Move = BossChar->GetCharacterMovement())
+		{
+			if (CinematicBossWalkSpeed > 0.f)
+			{
+				SavedBossMaxWalkSpeed = Move->MaxWalkSpeed;
+				Move->MaxWalkSpeed = CinematicBossWalkSpeed;
+				SetActorTickEnabled(true);
+				bCinematicWalkActive = true;
+				UE_LOG(LogTemp, Warning,
+					TEXT("[BossSummonCinematic_LiveCodeCheck] Reveal elapsed — WalkSpeed override + walk enabled"));
+			}
+		}
+	}
+
+	// 소환 몽타주 재생 + 루프 + 종료 콜백 바인딩.
 	if (AHellunaEnemyCharacter_Boss* BossEnemy = Cast<AHellunaEnemyCharacter_Boss>(Boss))
 	{
 		BossEnemy->OnSummonMontageFinished.Unbind();
 		BossEnemy->OnSummonMontageFinished.BindUObject(this,
 			&ABossSummonCinematicTrigger::OnSummonMontageFinishedServer);
-		// [SummonMontageLoopV1] 시네마틱 동안 walk 가 자연스럽게 끊기지 않게 루프.
 		BossEnemy->bShouldLoopSummonMontage = true;
 		BossEnemy->Multicast_PlaySummonMontage();
 	}
-	else
-	{
-		// HellunaEnemyCharacter 아님 → 몽타주 자체가 없으니 바로 플래그만 세팅
-		bMontageFinishedFlag = true;
-	}
-
-	return true;
 }
 
 void ABossSummonCinematicTrigger::OnSummonMontageFinishedServer()
@@ -582,8 +611,10 @@ void ABossSummonCinematicTrigger::HandleCinematicCompletedServer()
 	}
 
 	bCinematicActive = false;
+	bCinematicWalkActive = false;
 	GetWorldTimerManager().ClearTimer(FailsafeTimer);
 	GetWorldTimerManager().ClearTimer(MinHoldTimer);
+	GetWorldTimerManager().ClearTimer(PortalRevealTimerServer);
 
 	UE_LOG(LogTemp, Warning,
 		TEXT("[BossSummonCinematic_LiveCodeCheck] Server cinematic completed — restoring boss"));
@@ -772,10 +803,12 @@ void ABossSummonCinematicTrigger::StartLocalCinematicBody(APawn* Boss)
 		AActor* SpawnedPortal = World->SpawnActor<AActor>(PortalClass, PortalLoc, PortalRot, PortalParams);
 		if (SpawnedPortal)
 		{
+			// [PortalRevealV1] BP_Portal 기본 크기 ×N 배율 — 거대 포탈 연출용.
+			SpawnedPortal->SetActorScale3D(PortalSpawnScale);
 			LocalPortalActor = SpawnedPortal;
 			UE_LOG(LogTemp, Warning,
-				TEXT("[BossSummonCinematic_LiveCodeCheck] Portal spawned: %s @ %s"),
-				*SpawnedPortal->GetName(), *PortalLoc.ToString());
+				TEXT("[BossSummonCinematic_LiveCodeCheck] Portal spawned: %s @ %s scale=%s"),
+				*SpawnedPortal->GetName(), *PortalLoc.ToString(), *PortalSpawnScale.ToString());
 		}
 	}
 
@@ -796,6 +829,60 @@ void ABossSummonCinematicTrigger::StartLocalCinematicBody(APawn* Boss)
 					}
 				}),
 				CinematicShakeInterval, /*bLoop=*/true);
+		}
+	}
+
+	// [PortalRevealV1] reveal 동안 보스 메시 visibility off (각 클라 로컬, replicate 안 함).
+	//   카메라는 player 그대로 → 사용자는 portal 만 보임. 경과 후 메시 다시 표시 + 카메라 컷 시작.
+	if (ACharacter* BossChar = Cast<ACharacter>(Boss))
+	{
+		if (USkeletalMeshComponent* BossMesh = BossChar->GetMesh())
+		{
+			BossMesh->SetVisibility(false, /*bPropagateToChildren=*/true);
+		}
+	}
+
+	const float RevealDelay = FMath::Max(PortalRevealDelay, 0.f);
+	if (RevealDelay > KINDA_SMALL_NUMBER)
+	{
+		TWeakObjectPtr<ABossSummonCinematicTrigger> Weak(this);
+		World->GetTimerManager().SetTimer(PortalRevealTimerLocal,
+			FTimerDelegate::CreateLambda([Weak]()
+			{
+				if (Weak.IsValid())
+				{
+					Weak->StartCinematicCameraAfterReveal();
+				}
+			}),
+			RevealDelay, false);
+		UE_LOG(LogTemp, Warning,
+			TEXT("[BossSummonCinematic_LiveCodeCheck] Portal-only phase %.2fs scheduled, camera/boss reveal pending"),
+			RevealDelay);
+		return;
+	}
+
+	StartCinematicCameraAfterReveal();
+}
+
+void ABossSummonCinematicTrigger::StartCinematicCameraAfterReveal()
+{
+	UWorld* World = GetWorld();
+	APawn* Boss = LocalCinematicBoss.Get();
+	if (!World || !IsValid(Boss))
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[BossSummonCinematic_LiveCodeCheck] StartCinematicCameraAfterReveal — invalid world or boss, abort"));
+		return;
+	}
+
+	// [PortalRevealV1] 보스 메시 visibility 복원.
+	if (ACharacter* BossChar = Cast<ACharacter>(Boss))
+	{
+		if (USkeletalMeshComponent* BossMesh = BossChar->GetMesh())
+		{
+			BossMesh->SetVisibility(true, /*bPropagateToChildren=*/true);
+			UE_LOG(LogTemp, Warning,
+				TEXT("[BossSummonCinematic_LiveCodeCheck] Boss mesh visibility restored — starting camera cuts"));
 		}
 	}
 
@@ -1072,6 +1159,19 @@ void ABossSummonCinematicTrigger::Multicast_EndCinematic_Implementation()
 
 	// [CinematicShakeV1] 반복 카메라 쉐이크 타이머 정리.
 	World->GetTimerManager().ClearTimer(CinematicShakeTimer);
+
+	// [PortalRevealV1] reveal 대기 타이머 정리 + 보스 메시 visibility 복원 (Failsafe 가 reveal 전 발화한 경우 대비).
+	World->GetTimerManager().ClearTimer(PortalRevealTimerLocal);
+	if (APawn* BossLocal = LocalCinematicBoss.Get())
+	{
+		if (ACharacter* BossCh = Cast<ACharacter>(BossLocal))
+		{
+			if (USkeletalMeshComponent* Mesh = BossCh->GetMesh())
+			{
+				Mesh->SetVisibility(true, true);
+			}
+		}
+	}
 
 	// [ClientBossResolveV1] Start 가 보스 못 받아 LocalCinematicBoss 가 NULL 인 경우 — HP 바 스폰 위해
 	// 클라 월드에서 직접 보스 검색.

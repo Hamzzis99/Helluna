@@ -189,6 +189,21 @@ public:
 		meta = (DisplayName = "Destroy Delay (종료 후 파괴 지연)", ClampMin = "0.0", ClampMax = "5.0"))
 	float PortalDestroyDelay = 1.0f;
 
+	/** [PortalRevealV1] 포탈 액터 스폰 스케일 (BP_Portal 기본 크기 대비 배율). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Portal",
+		meta = (DisplayName = "Spawn Scale (포탈 크기 배율)"))
+	FVector PortalSpawnScale = FVector(2.f, 2.f, 2.f);
+
+	/**
+	 * [PortalRevealV1] 포탈만 보이고 보스는 숨긴 상태로 유지하는 시간 (초).
+	 *   이 시간 동안 카메라는 플레이어를 비추고 포탈 VFX 만 화면에 등장.
+	 *   경과 후 보스 메시 visibility 복원 + 시네마틱 카메라(컷) + walk 시작.
+	 *   0 으로 두면 즉시 보스 + 카메라 시작 (기존 동작).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Portal",
+		meta = (DisplayName = "Reveal Delay (포탈만 보이는 시간)", ClampMin = "0.0", ClampMax = "10.0"))
+	float PortalRevealDelay = 1.5f;
+
 	/**
 	 * [GracePeriodV1] 시네마틱 끝나고 보스 AI 재개 + 무적 해제까지 유예 (초).
 	 *   카메라가 player 로 블렌드되는 동안 보스가 즉시 공격하면 플레이어가 반응 못 함.
@@ -488,4 +503,23 @@ private:
 
 	/** [GracePeriodV1] grace 타이머 핸들. */
 	FTimerHandle GraceTimer;
+
+	// =========================================================================================
+	// [PortalRevealV1] 포탈만 먼저 보이고 잠시 후 보스 + 카메라 컷 시작
+	// =========================================================================================
+
+	/** 서버: PortalRevealDelay 경과 후 walk + 몽타주 시작. */
+	void OnPortalRevealElapsedServer();
+
+	/** 클라: PortalRevealDelay 경과 후 보스 메시 표시 + 카메라 스폰 + 컷 시작. */
+	void StartCinematicCameraAfterReveal();
+
+	/** 서버 reveal 타이머 핸들. */
+	FTimerHandle PortalRevealTimerServer;
+
+	/** 클라 reveal 타이머 핸들. */
+	FTimerHandle PortalRevealTimerLocal;
+
+	/** 서버: 포탈 reveal 후에만 walk Tick 실행. */
+	bool bCinematicWalkActive = false;
 };
