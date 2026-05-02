@@ -209,6 +209,14 @@ void UHellunaTeamOutlineComponent::TryRegisterPostProcessOnLocalCamera()
 		return;
 	}
 
+	// 추가 가드: 진짜 로컬 플레이어가 controlling 하는 Pawn 만 — 캐릭터 셀렉트/프리뷰 등
+	// IsLocallyControlled 가 true 인 다중 Hero 가 있을 수 있으므로 LocalPC->Pawn 일치 검사
+	APawn* RealLocalPawn = GetLocalPlayerPawn();
+	if (RealLocalPawn != OwnerPawn)
+	{
+		return;
+	}
+
 	APlayerController* PC = Cast<APlayerController>(OwnerPawn->GetController());
 	if (!PC)
 	{
