@@ -12,6 +12,35 @@ class ULevelSequence;
 class ULevelSequencePlayer;
 class ALevelSequenceActor;
 class UBossDialogueWidget;
+class UCameraShakeBase;
+
+/**
+ * [PortalCutsV1] 시네마틱 카메라 컷 1단위.
+ *   보스 메시의 특정 소켓을 앵커로 잡고, 보스 액터 로컬 좌표계(Forward/Right/Up)
+ *   기준으로 카메라 위치/시선을 결정. 매 Tick 클라가 직접 SetActorLocationAndRotation 으로
+ *   갱신하므로 LevelSequence 없이도 보스가 움직이는 동안 컷이 따라간다.
+ */
+USTRUCT(BlueprintType)
+struct FBossCinematicCut
+{
+	GENERATED_BODY()
+
+	/** 부착 기준 소켓/본 이름 (Manny 예: foot_r, hand_r, head). None 이면 보스 액터 루트. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cut")
+	FName Socket = NAME_None;
+
+	/** 컷 지속시간 (초). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cut", meta = (ClampMin = "0.1"))
+	float Duration = 3.f;
+
+	/** 보스 로컬축 기준 카메라 오프셋 — X 정면, Y 우측, Z 위. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cut")
+	FVector CameraOffset = FVector(120.f, 60.f, 30.f);
+
+	/** 보스 로컬축 기준 시선 보정. 0 이면 소켓 자체를 응시. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cut")
+	FVector LookAtOffset = FVector::ZeroVector;
+};
 
 /**
  * 보스 소환 시네마틱 트리거 (Minwoo 브랜치 전용 — BossEncounterCube와 무관한 독립 액터)
@@ -75,21 +104,99 @@ public:
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Camera",
 		meta = (DisplayName = "Min Hold Duration (최소 유지 시간)", ClampMin = "0.5", ClampMax = "15.0"))
-	float MinCinematicHoldDuration = 2.5f;
+	float MinCinematicHoldDuration = 4.5f;
 
 	/** 시네마틱 최대 지속시간 (Failsafe) — 몽타주가 너무 길거나 콜백 누락 시 강제 종료 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Camera",
 		meta = (DisplayName = "Max Duration (최대 지속시간)", ClampMin = "1.0", ClampMax = "30.0"))
-	float MaxDuration = 8.0f;
+	float MaxDuration = 12.0f;
+
+	// =========================================================================================
+	// [CinematicShakeV1] 시네마틱 동안 World Camera Shake 반복
+	//   포탈/소환 임팩트 대용으로 시네마틱 시작 직후부터 주기적으로 PlayWorldCameraShake 호출.
+	//   각 클라 로컬에서만 발화 (각자 자기 PC 카메라 기준), 데디 서버는 스킵.
+	// =========================================================================================
+
+	/** 시네마틱 동안 반복 재생할 카메라 쉐이크. None 이면 쉐이크 비활성. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Shake",
+		meta = (DisplayName = "시네마틱 카메라 쉐이크"))
+	TSubclassOf<UCameraShakeBase> CinematicShakeClass;
+
+	/** 쉐이크 반복 간격 (초). 0 또는 음수면 시작 시 1회만. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Shake",
+		meta = (DisplayName = "반복 간격 (초)", ClampMin = "0.0", ClampMax = "5.0"))
+	float CinematicShakeInterval = 0.4f;
+
+	/** 풀 강도 거리 (cm). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Shake",
+		meta = (DisplayName = "Inner Radius (cm)", ClampMin = "0.0"))
+	float CinematicShakeInnerRadius = 0.f;
+
+	/** 감쇠 종료 거리 (cm). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Shake",
+		meta = (DisplayName = "Outer Radius (cm)", ClampMin = "0.0"))
+	float CinematicShakeOuterRadius = 6000.f;
+
+	/** 거리별 감쇠 지수. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Shake",
+		meta = (DisplayName = "Falloff", ClampMin = "0.1", ClampMax = "10.0"))
+	float CinematicShakeFalloff = 1.f;
 
 	/**
 	 * 카메라 연출 LevelSequence (선택사항).
 	 * 설정 시: 이 시퀀스가 카메라 위치/회전을 제어 (Camera Cuts 트랙으로 ViewTarget 자동 전환).
-	 * 미설정 시: 기존 방식대로 보스에 카메라 부착 + CameraOffset 적용.
+	 * 미설정 + CameraCuts 비어있음: 기존 방식대로 보스에 카메라 부착 + CameraOffset 적용.
+	 * 미설정 + CameraCuts 있음: 코드 기반 컷 시퀀스가 카메라를 매 Tick 갱신 (소켓별 클로즈업).
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Sequence",
 		meta = (DisplayName = "Camera Level Sequence (시네마틱 시퀀스)"))
 	TObjectPtr<ULevelSequence> CameraSequence;
+
+	// =========================================================================================
+	// [PortalCutsV1] 코드 기반 카메라 컷 시퀀스 — 보스 소켓 앵커 + 로컬축 오프셋 매 Tick 갱신
+	//   LevelSequence 와 상호배타: CameraSequence 가 설정되어 있으면 이 배열은 무시됨.
+	//   기본값: foot_r → hand_r → head, 각 3초 (총 9초).
+	//   MinCinematicHoldDuration 은 컷 합계로 자동 확장된다.
+	// =========================================================================================
+
+	/** 컷 시퀀스. 비어있으면 단일 카메라 폴백 모드. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Cuts",
+		meta = (DisplayName = "Camera Cuts (코드 기반 컷 시퀀스)"))
+	TArray<FBossCinematicCut> CameraCuts;
+
+	// =========================================================================================
+	// [PortalCutsV1] 보스 등장 포탈 — 시네마틱 시작 시 클라마다 로컬 스폰, 종료 시 지연 후 파괴
+	//   각 클라가 자기 머신에서만 스폰하므로 네트워크 트래픽 없음. 데디 서버는 자동 스킵.
+	// =========================================================================================
+
+	/** 시네마틱 시작 시 보스 뒤에 스폰할 포탈 액터 BP. None 이면 포탈 비활성. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Portal",
+		meta = (DisplayName = "Portal Class (포탈 BP)"))
+	TSubclassOf<AActor> PortalClass;
+
+	/** 보스 로컬축 기준 포탈 스폰 오프셋 (X 정면, Y 우측, Z 위). 기본 -150 → 보스 뒤 1.5m. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Portal",
+		meta = (DisplayName = "Spawn Offset (보스 로컬)"))
+	FVector PortalSpawnOffset = FVector(-150.f, 0.f, 0.f);
+
+	/** 포탈 회전 보정. 기본 Yaw=180 → 포탈 정면이 보스를 바라봄(보스가 걸어나오는 방향). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Portal",
+		meta = (DisplayName = "Spawn Rotation (보스 기준 추가 회전)"))
+	FRotator PortalSpawnRotation = FRotator(0.f, 180.f, 0.f);
+
+	/** 시네마틱 종료 후 포탈 파괴 지연 (초). 보스가 빠져나오는 끝 잔상용. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Portal",
+		meta = (DisplayName = "Destroy Delay (종료 후 파괴 지연)", ClampMin = "0.0", ClampMax = "5.0"))
+	float PortalDestroyDelay = 1.0f;
+
+	/**
+	 * [GracePeriodV1] 시네마틱 끝나고 보스 AI 재개 + 무적 해제까지 유예 (초).
+	 *   카메라가 player 로 블렌드되는 동안 보스가 즉시 공격하면 플레이어가 반응 못 함.
+	 *   기본 1초 — 카메라 블렌드 0.5s + 0.5s 여유.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Pacing",
+		meta = (DisplayName = "Post Cinematic Grace (종료 후 보스 행동 지연)", ClampMin = "0.0", ClampMax = "5.0"))
+	float PostCinematicGracePeriod = 1.0f;
 
 	// =========================================================================================
 	// 보스 대사 자막 (선택사항) — 시네마틱 동안 화면 하단에 표시
@@ -344,6 +451,12 @@ private:
 	/** Failsafe 타이머 핸들 (절대 상한) */
 	FTimerHandle FailsafeTimer;
 
+	/** [CinematicShakeV1] 시네마틱 동안 카메라 쉐이크 반복 타이머 (클라 로컬). */
+	FTimerHandle CinematicShakeTimer;
+
+	/** [CinematicShakeV1] 클라 로컬에서 1회 World Camera Shake 발화. */
+	void TriggerLocalCinematicShake();
+
 	/** 몽타주 종료됨 (또는 몽타주 없음) 플래그 */
 	bool bMontageFinishedFlag = false;
 
@@ -352,4 +465,27 @@ private:
 
 	/** [CinematicWalkV1] 시네마틱 시작 직전 보스 MaxWalkSpeed 백업 — 종료 시 복원용. -1 = 미백업. */
 	float SavedBossMaxWalkSpeed = -1.f;
+
+	// =========================================================================================
+	// [PortalCutsV1] 코드 기반 카메라 컷 + 포탈 스폰 (클라 로컬 상태)
+	// =========================================================================================
+
+	/** 클라 로컬 스폰된 포탈 액터. Multicast_End 에서 PortalDestroyDelay 후 파괴. */
+	UPROPERTY()
+	TWeakObjectPtr<AActor> LocalPortalActor;
+
+	/** 현재 활성 컷 인덱스 (-1 = 미초기화). Multicast_End 시 -1 로 리셋. */
+	int32 CurrentCutIndex = -1;
+
+	/** 컷 시퀀스 시작 후 누적 시간 (초). */
+	float CutsElapsedTime = 0.f;
+
+	/** 클라 로컬 카메라 위치/회전을 현재 컷에 맞춰 갱신 (매 Tick). */
+	void UpdateCameraForCurrentCut();
+
+	/** [GracePeriodV1] PostCinematicGracePeriod 경과 후 보스 무적 해제 + AI 재개. */
+	void OnGracePeriodElapsed();
+
+	/** [GracePeriodV1] grace 타이머 핸들. */
+	FTimerHandle GraceTimer;
 };

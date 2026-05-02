@@ -172,6 +172,26 @@ void AHellunaEnemyCharacter_Boss::Multicast_PlayBossPhase2Transition_Implementat
 		UGameplayStatics::PlayWorldCameraShake(
 			World, Phase2TransitionShakeClass, GetActorLocation(),
 			0.f, 4500.f, 1.f, false);
+
+		// [Phase2ShakeRepeatV1] 시네마틱 동안 반복 — 포탈/지속 진동 느낌.
+		// 무적 시간(시네마틱 길이) 만큼 유지하고 카메라 종료 시점에 해제.
+		if (Phase2ShakeRepeatInterval > 0.f)
+		{
+			TWeakObjectPtr<AHellunaEnemyCharacter_Boss> Weak(this);
+			GetWorldTimerManager().ClearTimer(Phase2ShakeRepeatTimer);
+			GetWorldTimerManager().SetTimer(Phase2ShakeRepeatTimer,
+				FTimerDelegate::CreateLambda([Weak]()
+				{
+					AHellunaEnemyCharacter_Boss* Self = Weak.Get();
+					if (!Self || !Self->Phase2TransitionShakeClass) return;
+					UWorld* W = Self->GetWorld();
+					if (!W) return;
+					UGameplayStatics::PlayWorldCameraShake(
+						W, Self->Phase2TransitionShakeClass, Self->GetActorLocation(),
+						0.f, 4500.f, 1.f, false);
+				}),
+				Phase2ShakeRepeatInterval, /*bLoop=*/true);
+		}
 	}
 
 	// 보스 발밑 충격파 VFX
@@ -272,10 +292,16 @@ void AHellunaEnemyCharacter_Boss::Multicast_PlayBossPhase2Transition_Implementat
 		const float ExitDelay = FMath::Max(Phase2InvulnerabilityDuration, 0.5f);
 		const float BlendOut = Phase2CameraBlendOut;
 
+		TWeakObjectPtr<AHellunaEnemyCharacter_Boss> WeakSelf(this);
 		FTimerHandle LocalCamTimer;
 		World->GetTimerManager().SetTimer(LocalCamTimer,
-			FTimerDelegate::CreateWeakLambda(HeroPC, [WeakPC, WeakCam, BlendOut]()
+			FTimerDelegate::CreateWeakLambda(HeroPC, [WeakPC, WeakCam, WeakSelf, BlendOut]()
 			{
+				// [Phase2ShakeRepeatV1] 카메라 복귀 시점에 반복 쉐이크 해제.
+				if (AHellunaEnemyCharacter_Boss* Self = WeakSelf.Get())
+				{
+					Self->GetWorldTimerManager().ClearTimer(Self->Phase2ShakeRepeatTimer);
+				}
 				if (AHellunaHeroController* PCLocal = WeakPC.Get())
 				{
 					PCLocal->ExitBossCinematic(BlendOut);
@@ -405,8 +431,26 @@ void AHellunaEnemyCharacter_Boss::OnSummonMontageEnded(UAnimMontage* Montage, bo
 {
 	if (Montage != SummonMontage) return;
 
-	UE_LOG(LogTemp, Warning, TEXT("[BossSummon_LiveCodeCheck] OnSummonMontageEnded — %s, Interrupted=%d"),
-		*GetName(), bInterrupted ? 1 : 0);
+	UE_LOG(LogTemp, Warning, TEXT("[BossSummon_LiveCodeCheck] OnSummonMontageEnded — %s, Interrupted=%d, ShouldLoop=%d"),
+		*GetName(), bInterrupted ? 1 : 0, bShouldLoopSummonMontage ? 1 : 0);
+
+	// [SummonMontageLoopV1] 시네마틱 동안 walk 가 끝나지 않게 다시 재생.
+	//   Interrupted (=true) 면 외부에서 명시적으로 정지한 거라 (HandleCinematicCompletedServer)
+	//   루프하지 말고 cleanup 진행.
+	if (bShouldLoopSummonMontage && !bInterrupted)
+	{
+		if (USkeletalMeshComponent* SkelMesh = GetMesh())
+		{
+			if (UAnimInstance* AnimInst = SkelMesh->GetAnimInstance())
+			{
+				constexpr float BossSummonExtraPlayRate = 0.5f;
+				AnimInst->Montage_Play(SummonMontage, BossSummonExtraPlayRate);
+				UE_LOG(LogTemp, Warning,
+					TEXT("[BossSummon_LiveCodeCheck] SummonMontage looped (cinematic still active)"));
+				return;
+			}
+		}
+	}
 
 	// [RootMotionRestoreV1] Multicast_PlaySummonMontage 에서 켰던 RootMotionFromEverything 를
 	// 양 머신(서버+클라) 모두에서 기본값으로 복원. 이걸 안 하면 시네마틱 후 AnimGraph 의 idle/

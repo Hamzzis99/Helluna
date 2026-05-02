@@ -59,8 +59,8 @@ public:
 
 	/** 2페이즈 진입 시네마틱 동안 무적 유지 시간 (초). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Phase2",
-		meta = (DisplayName = "2페이즈 시네마틱 무적 (초)", ClampMin = "0.5", ClampMax = "6.0"))
-	float Phase2InvulnerabilityDuration = 2.5f;
+		meta = (DisplayName = "2페이즈 시네마틱 무적 (초)", ClampMin = "0.5", ClampMax = "10.0"))
+	float Phase2InvulnerabilityDuration = 5.5f;
 
 	/** 2페이즈 공격력 배율 (기본 1.5). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Phase2",
@@ -132,6 +132,15 @@ public:
 		meta = (DisplayName = "시네마틱 LookAt 높이 (cm)", ClampMin = "0.0", ClampMax = "300.0"))
 	float Phase2CameraLookHeight = 90.f;
 
+	/**
+	 * [Phase2ShakeRepeatV1] 2페이즈 시네마틱 동안 Phase2TransitionShakeClass 를 반복 재생할 간격 (초).
+	 *  0 또는 음수: 시네마틱 시작 시 1회만 (기존 동작).
+	 *  >0:        시네마틱 동안 이 간격으로 반복 → 포탈 빨려들어가는 듯한 지속 진동 연출.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Phase2",
+		meta = (DisplayName = "쉐이크 반복 간격 (초)", ClampMin = "0.0", ClampMax = "5.0"))
+	float Phase2ShakeRepeatInterval = 0.4f;
+
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnBossEnterPhase2);
 
 	/** 2페이즈 진입 알림 — 모든 클라. HP 바/UI/AI 등에서 바인딩해 반응. */
@@ -190,6 +199,14 @@ public:
 	UPROPERTY(Transient)
 	bool bSuppressAutoBrainRestart = false;
 
+	/**
+	 * [SummonMontageLoopV1] true 면 OnSummonMontageEnded 에서 cleanup 대신 다시 Montage_Play.
+	 *   시네마틱 동안 짧은 AM_Boss_Walk 가 한 번 재생 후 idle 로 빠지지 않게 유지.
+	 *   BossSummonCinematicTrigger 가 TryActivate 에서 true, 종료 시 false 로 토글.
+	 */
+	UPROPERTY(Transient)
+	bool bShouldLoopSummonMontage = false;
+
 	/** 소환 몽타주 멀티캐스트 재생 (서버 → 전체 클라) */
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlaySummonMontage();
@@ -216,6 +233,9 @@ public:
 private:
 	/** 2페이즈 시네마틱 무적 복원용 타이머 */
 	FTimerHandle Phase2InvulnerabilityTimer;
+
+	/** [Phase2ShakeRepeatV1] 2페이즈 시네마틱 동안 카메라 쉐이크 반복용 타이머 (각 머신 로컬). */
+	FTimerHandle Phase2ShakeRepeatTimer;
 
 	/** 2페이즈 진입 때 Brain을 우리가 멈췄는지 (타이머 종료 시 재시작용). */
 	bool bAIStoppedForPhase2 = false;

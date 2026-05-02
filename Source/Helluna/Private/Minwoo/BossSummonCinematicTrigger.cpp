@@ -3,6 +3,8 @@
 
 #include "Minwoo/BossSummonCinematicTrigger.h"
 
+#include "Camera/CameraShakeBase.h"
+#include "Kismet/GameplayStatics.h"
 #include "AIController.h"
 #include "BrainComponent.h"
 #include "Camera/CameraActor.h"
@@ -33,6 +35,8 @@
 #include "Animation/AnimInstance.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
 #include "UObject/UnrealType.h"
+#include "DrawDebugHelpers.h"
+#include "Camera/PlayerCameraManager.h"
 
 ABossSummonCinematicTrigger::ABossSummonCinematicTrigger()
 {
@@ -41,6 +45,31 @@ ABossSummonCinematicTrigger::ABossSummonCinematicTrigger()
 	PrimaryActorTick.bStartWithTickEnabled = false;
 	bReplicates = true;
 	SetReplicateMovement(false);
+
+	// [PortalCutsV1] 디폴트 컷 시퀀스 — Manny 기본 스켈레톤 기준 발 → 무기 손 → 얼굴.
+	//   사용자가 BP 인스턴스에서 자유롭게 튜닝/추가/삭제. 비우면 단일 카메라 폴백.
+	{
+		FBossCinematicCut FootCut;
+		FootCut.Socket       = TEXT("foot_r");
+		FootCut.Duration     = 3.f;
+		FootCut.CameraOffset = FVector(80.f, -60.f, 30.f);
+		FootCut.LookAtOffset = FVector::ZeroVector;
+		CameraCuts.Add(FootCut);
+
+		FBossCinematicCut WeaponCut;
+		WeaponCut.Socket       = TEXT("hand_r");
+		WeaponCut.Duration     = 3.f;
+		WeaponCut.CameraOffset = FVector(60.f, 60.f, 0.f);
+		WeaponCut.LookAtOffset = FVector::ZeroVector;
+		CameraCuts.Add(WeaponCut);
+
+		FBossCinematicCut FaceCut;
+		FaceCut.Socket       = TEXT("head");
+		FaceCut.Duration     = 3.f;
+		FaceCut.CameraOffset = FVector(120.f, 0.f, 0.f);
+		FaceCut.LookAtOffset = FVector::ZeroVector;
+		CameraCuts.Add(FaceCut);
+	}
 }
 
 // [CinematicWalkInputV2] 시네마틱 동안 보스를 AddMovementInput 으로 슬로우 전진.
@@ -52,6 +81,66 @@ ABossSummonCinematicTrigger::ABossSummonCinematicTrigger()
 void ABossSummonCinematicTrigger::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+
+	// [PortalCutsV1] 클라 사이드: 카메라 컷 진행. CameraSequence 사용 시 시퀀스가 카메라를
+	//   몰기 때문에 컷 코드는 비활성. CameraCuts 비어있으면 단일 카메라 폴백 모드라 갱신 불필요.
+	if (LocalCameraActor.IsValid() && !CameraSequence && CameraCuts.Num() > 0)
+	{
+		CutsElapsedTime += DeltaTime;
+
+		// 누적 시간이 어느 컷 버킷에 들어가는지 결정.
+		float Acc = 0.f;
+		int32 NewIndex = CameraCuts.Num() - 1; // 마지막 컷에 머무름 (Min/Max Duration 클램핑 후 잔여)
+		for (int32 i = 0; i < CameraCuts.Num(); ++i)
+		{
+			Acc += FMath::Max(CameraCuts[i].Duration, 0.1f);
+			if (CutsElapsedTime < Acc)
+			{
+				NewIndex = i;
+				break;
+			}
+		}
+
+		if (NewIndex != CurrentCutIndex)
+		{
+			CurrentCutIndex = NewIndex;
+			UE_LOG(LogTemp, Warning,
+				TEXT("[BossSummonCinematic_LiveCodeCheck] Cut switch → %d (Socket=%s)"),
+				NewIndex,
+				CameraCuts.IsValidIndex(NewIndex) ? *CameraCuts[NewIndex].Socket.ToString() : TEXT("?"));
+		}
+
+		UpdateCameraForCurrentCut();
+
+		// [ClientCinematicV2] ViewTarget 강제 재적용 — 외부에서 재설정해도 cinematic 카메라 유지.
+		//   추가로 PCM 의 현재 ViewTarget 과 LocalCameraActor 가 다르면 디버그 로그.
+		if (UWorld* W = GetWorld())
+		{
+			if (APlayerController* PC = UGameplayStatics::GetPlayerController(W, 0))
+			{
+				if (APlayerCameraManager* PCM = PC->PlayerCameraManager)
+				{
+					AActor* CurrentVT = PCM->GetViewTarget();
+					if (CurrentVT != LocalCameraActor.Get())
+					{
+						// 1초마다 한 번만 로그 (스팸 방지)
+						static double LastLogTime = 0.0;
+						const double Now = FPlatformTime::Seconds();
+						if (Now - LastLogTime > 1.0)
+						{
+							LastLogTime = Now;
+							UE_LOG(LogTemp, Warning,
+								TEXT("[BossSummonCinematic_LiveCodeCheck] ViewTarget MISMATCH — VT=%s, want=%s — re-applying"),
+								*GetNameSafe(CurrentVT),
+								*GetNameSafe(LocalCameraActor.Get()));
+						}
+						PC->SetViewTarget(LocalCameraActor.Get());
+					}
+				}
+			}
+		}
+
+	}
 
 	if (!HasAuthority() || !bCinematicActive) return;
 	if (CinematicBossWalkSpeed <= 0.f) return;
@@ -393,8 +482,24 @@ bool ABossSummonCinematicTrigger::TryActivate(APawn* InTargetBoss)
 	// 4) 카메라 전환 + 입력 잠금 (모든 클라) — 몽타주 재생 전에 먼저 시작해야 카메라가 우선 자리 잡음
 	Multicast_StartCinematic(Boss);
 
-	// 5) 최소 유지 타이머 — 몽타주가 즉시 끝나도 카메라가 보스를 비추는 시간 확보
-	const float MinHold = FMath::Max(MinCinematicHoldDuration, 0.5f);
+	// 5) 최소 유지 타이머 — 몽타주가 즉시 끝나도 카메라가 보스를 비추는 시간 확보.
+	//    [PortalCutsV1] 컷 시퀀스 합계가 MinCinematicHoldDuration 보다 길면 자동 확장 (컷 잘림 방지).
+	float MinHold = FMath::Max(MinCinematicHoldDuration, 0.5f);
+	if (!CameraSequence && CameraCuts.Num() > 0)
+	{
+		float CutsTotal = 0.f;
+		for (const FBossCinematicCut& Cut : CameraCuts)
+		{
+			CutsTotal += FMath::Max(Cut.Duration, 0.1f);
+		}
+		if (CutsTotal > MinHold)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[BossSummonCinematic_LiveCodeCheck] MinHold extended for cuts: %.2f → %.2f"),
+				MinHold, CutsTotal);
+			MinHold = CutsTotal;
+		}
+	}
 	GetWorldTimerManager().SetTimer(MinHoldTimer, this,
 		&ABossSummonCinematicTrigger::OnMinHoldElapsedServer, MinHold, false);
 
@@ -409,6 +514,8 @@ bool ABossSummonCinematicTrigger::TryActivate(APawn* InTargetBoss)
 		BossEnemy->OnSummonMontageFinished.Unbind();
 		BossEnemy->OnSummonMontageFinished.BindUObject(this,
 			&ABossSummonCinematicTrigger::OnSummonMontageFinishedServer);
+		// [SummonMontageLoopV1] 시네마틱 동안 walk 가 자연스럽게 끊기지 않게 루프.
+		BossEnemy->bShouldLoopSummonMontage = true;
 		BossEnemy->Multicast_PlaySummonMontage();
 	}
 	else
@@ -487,7 +594,8 @@ void ABossSummonCinematicTrigger::HandleCinematicCompletedServer()
 		if (AHellunaEnemyCharacter_Boss* BossEnemy = Cast<AHellunaEnemyCharacter_Boss>(Boss))
 		{
 			BossEnemy->OnSummonMontageFinished.Unbind();
-			BossEnemy->bSuppressAutoBrainRestart = false;
+			// [SummonMontageLoopV1] 루프 해제 (이걸 풀어야 Montage_Stop 의 OnEnded 가 cleanup 진행).
+			BossEnemy->bShouldLoopSummonMontage = false;
 
 			// 시네마틱 종료 순간에 소환 몽타주도 블렌드 아웃으로 정리
 			if (USkeletalMeshComponent* BossMesh = BossEnemy->GetMesh())
@@ -503,30 +611,22 @@ void ABossSummonCinematicTrigger::HandleCinematicCompletedServer()
 							BlendOutTime);
 					}
 
-					// [RootMotionRestoreV1] 서버 사이드 안전장치 — OnSummonMontageEnded 콜백이 누락되거나
-					// 0.2s blend out 동안 보스가 멈춰있는 시간을 없애기 위해 시네마틱 종료 즉시 복원.
-					// 클라 사이드는 OnSummonMontageEnded (Multicast 컨텍스트에서 서버+클라 양쪽 바인딩) 가 처리.
+					// [RootMotionRestoreV1] 서버 사이드 안전장치.
 					AnimInst->SetRootMotionMode(ERootMotionMode::RootMotionFromMontagesOnly);
 				}
 			}
 		}
 
-		// 2) 무적 해제
-		Boss->SetCanBeDamaged(true);
-
-		// [CinematicNetSyncV1] 시네마틱 시작 시 부스트한 NetUpdateFrequency 를 기본값으로 복원.
-		//   HellunaEnemyCharacter 생성자의 기본값과 일치 (10Hz / Min 2Hz).
+		// [CinematicNetSyncV1] NetUpdateFrequency 복원 (즉시).
 		Boss->SetNetUpdateFrequency(10.f);
 		Boss->SetMinNetUpdateFrequency(2.f);
 
-		// 3) 이동 복원
+		// [CinematicWalkV1] 이동 시스템 복원 (즉시 — 보스가 그 자리에서 idle).
 		if (ACharacter* BossChar = Cast<ACharacter>(Boss))
 		{
 			if (UCharacterMovementComponent* Move = BossChar->GetCharacterMovement())
 			{
 				Move->SetMovementMode(MOVE_Walking);
-
-				// [CinematicWalkV1] TryActivate 에서 덮어쓴 MaxWalkSpeed 복원 + Tick 종료.
 				if (SavedBossMaxWalkSpeed >= 0.f)
 				{
 					Move->MaxWalkSpeed = SavedBossMaxWalkSpeed;
@@ -536,7 +636,39 @@ void ABossSummonCinematicTrigger::HandleCinematicCompletedServer()
 			}
 		}
 
-		// 4) AI 재개 (우리가 멈춘 경우만)
+		// [GracePeriodV1] 무적 해제 + AI 재개는 PostCinematicGracePeriod 후로 지연.
+		//   카메라가 player 로 블렌드 되는 동안 보스가 즉시 공격 못 하게 함.
+		const float Grace = FMath::Max(PostCinematicGracePeriod, 0.f);
+		if (Grace > KINDA_SMALL_NUMBER)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[BossSummonCinematic_LiveCodeCheck] Grace period %.2fs scheduled before AI resume"),
+				Grace);
+			GetWorldTimerManager().SetTimer(GraceTimer, this,
+				&ABossSummonCinematicTrigger::OnGracePeriodElapsed, Grace, false);
+		}
+		else
+		{
+			OnGracePeriodElapsed();
+		}
+	}
+
+	// 5) 카메라 복귀 + 입력 복원 (모든 클라) — grace 와 무관하게 즉시 카메라 반환.
+	Multicast_EndCinematic();
+}
+
+void ABossSummonCinematicTrigger::OnGracePeriodElapsed()
+{
+	APawn* Boss = ActiveBoss.Get();
+	if (Boss)
+	{
+		Boss->SetCanBeDamaged(true);
+
+		if (AHellunaEnemyCharacter_Boss* BossEnemy = Cast<AHellunaEnemyCharacter_Boss>(Boss))
+		{
+			BossEnemy->bSuppressAutoBrainRestart = false;
+		}
+
 		if (bAIStopped)
 		{
 			if (AAIController* AIC = Cast<AAIController>(Boss->GetController()))
@@ -544,6 +676,8 @@ void ABossSummonCinematicTrigger::HandleCinematicCompletedServer()
 				if (UBrainComponent* Brain = AIC->GetBrainComponent())
 				{
 					Brain->StartLogic();
+					UE_LOG(LogTemp, Warning,
+						TEXT("[BossSummonCinematic_LiveCodeCheck] Grace elapsed — AI brain resumed, boss vulnerable"));
 				}
 			}
 			bAIStopped = false;
@@ -551,9 +685,6 @@ void ABossSummonCinematicTrigger::HandleCinematicCompletedServer()
 	}
 
 	ActiveBoss.Reset();
-
-	// 5) 카메라 복귀 + 입력 복원 (모든 클라)
-	Multicast_EndCinematic();
 }
 
 void ABossSummonCinematicTrigger::Multicast_StartCinematic_Implementation(APawn* Boss)
@@ -622,6 +753,51 @@ void ABossSummonCinematicTrigger::StartLocalCinematicBody(APawn* Boss)
 
 	// BP OnCinematicEndedClient에서 쓸 수 있게 보스 참조 캐시
 	LocalCinematicBoss = Boss;
+
+	// [PortalCutsV1] 보스 등장 포탈 — 클라 로컬 스폰. 데디 서버는 위에서 이미 return.
+	if (PortalClass)
+	{
+		const FVector BossLoc  = Boss->GetActorLocation();
+		const FVector Forward  = Boss->GetActorForwardVector();
+		const FVector Right    = Boss->GetActorRightVector();
+		const FVector Up       = Boss->GetActorUpVector();
+		const FVector PortalLoc = BossLoc
+			+ Forward * PortalSpawnOffset.X
+			+ Right   * PortalSpawnOffset.Y
+			+ Up      * PortalSpawnOffset.Z;
+		const FRotator PortalRot = Boss->GetActorRotation() + PortalSpawnRotation;
+
+		FActorSpawnParameters PortalParams;
+		PortalParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		AActor* SpawnedPortal = World->SpawnActor<AActor>(PortalClass, PortalLoc, PortalRot, PortalParams);
+		if (SpawnedPortal)
+		{
+			LocalPortalActor = SpawnedPortal;
+			UE_LOG(LogTemp, Warning,
+				TEXT("[BossSummonCinematic_LiveCodeCheck] Portal spawned: %s @ %s"),
+				*SpawnedPortal->GetName(), *PortalLoc.ToString());
+		}
+	}
+
+	// [CinematicShakeV1] 시네마틱 동안 World Camera Shake 반복.
+	// 데디 서버는 렌더 카메라가 없으므로 호출 자체는 무해 — TriggerLocalCinematicShake 내부에서 스킵.
+	if (CinematicShakeClass)
+	{
+		TriggerLocalCinematicShake();
+		if (CinematicShakeInterval > 0.f)
+		{
+			TWeakObjectPtr<ABossSummonCinematicTrigger> Weak(this);
+			World->GetTimerManager().SetTimer(CinematicShakeTimer,
+				FTimerDelegate::CreateLambda([Weak]()
+				{
+					if (Weak.IsValid())
+					{
+						Weak->TriggerLocalCinematicShake();
+					}
+				}),
+				CinematicShakeInterval, /*bLoop=*/true);
+		}
+	}
 
 	// ── 모드 1: LevelSequence 사용 (Possessable 카메라를 보스에 부착) ──
 	if (CameraSequence)
@@ -724,42 +900,75 @@ void ABossSummonCinematicTrigger::StartLocalCinematicBody(APawn* Boss)
 	}
 
 	// ── 모드 2 (폴백): 보스 로컬 좌표 기준으로 카메라 초기 배치 ──
-	const FVector BossLoc = Boss->GetActorLocation();
-	const FVector Forward = Boss->GetActorForwardVector();
-	const FVector Right   = Boss->GetActorRightVector();
-	const FVector Up      = Boss->GetActorUpVector();
-
-	const FVector CameraLoc =
-		BossLoc
-		+ Forward * CameraOffset.X
-		+ Right   * CameraOffset.Y
-		+ Up      * CameraOffset.Z;
-
-	const FVector LookTarget = BossLoc + FVector(0.f, 0.f, 50.f);
-	const FRotator LookAt = (LookTarget - CameraLoc).Rotation();
+	//   [PortalCutsV1] CameraCuts 가 있으면 컷 모드 — 카메라를 보스에 attach 하지 않고
+	//   매 Tick UpdateCameraForCurrentCut() 가 world transform 을 직접 갱신.
+	//   비어있으면 기존 단일 카메라 폴백 유지.
+	const bool bUseCutsMode = (CameraCuts.Num() > 0);
 
 	FActorSpawnParameters SpawnParam;
 	SpawnParam.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	ACameraActor* CamActor = World->SpawnActor<ACameraActor>(
-		ACameraActor::StaticClass(), CameraLoc, LookAt, SpawnParam);
 
+	ACameraActor* CamActor = nullptr;
 	AActor* ViewTarget = Boss;
-	if (CamActor)
+
+	if (bUseCutsMode)
 	{
-		LocalCameraActor = CamActor;
+		// 컷 모드 — 첫 컷 위치에 카메라 스폰 (Tick 이 즉시 갱신).
+		CurrentCutIndex  = -1;
+		CutsElapsedTime  = 0.f;
 
-		// 보스에 부착 — KeepWorld
-		FAttachmentTransformRules AttachRules(
-			EAttachmentRule::KeepWorld,
-			EAttachmentRule::KeepWorld,
-			EAttachmentRule::KeepWorld,
-			false);
-		CamActor->AttachToActor(Boss, AttachRules);
+		CamActor = World->SpawnActor<ACameraActor>(
+			ACameraActor::StaticClass(), Boss->GetActorLocation(), FRotator::ZeroRotator, SpawnParam);
+		if (CamActor)
+		{
+			LocalCameraActor = CamActor;
+			ViewTarget = CamActor;
+			// 첫 프레임이 화면에 나가기 전에 컷 0 으로 위치 잡아둠 (블렌드 출발점이 보스 발 부근이 됨).
+			CurrentCutIndex = 0;
+			UpdateCameraForCurrentCut();
+			SetActorTickEnabled(true);
+		}
+	}
+	else
+	{
+		const FVector BossLoc = Boss->GetActorLocation();
+		const FVector Forward = Boss->GetActorForwardVector();
+		const FVector Right   = Boss->GetActorRightVector();
+		const FVector Up      = Boss->GetActorUpVector();
 
-		ViewTarget = CamActor;
+		const FVector CameraLoc =
+			BossLoc
+			+ Forward * CameraOffset.X
+			+ Right   * CameraOffset.Y
+			+ Up      * CameraOffset.Z;
+
+		const FVector LookTarget = BossLoc + FVector(0.f, 0.f, 50.f);
+		const FRotator LookAt = (LookTarget - CameraLoc).Rotation();
+
+		CamActor = World->SpawnActor<ACameraActor>(
+			ACameraActor::StaticClass(), CameraLoc, LookAt, SpawnParam);
+		if (CamActor)
+		{
+			LocalCameraActor = CamActor;
+
+			// 보스에 부착 — KeepWorld
+			FAttachmentTransformRules AttachRules(
+				EAttachmentRule::KeepWorld,
+				EAttachmentRule::KeepWorld,
+				EAttachmentRule::KeepWorld,
+				false);
+			CamActor->AttachToActor(Boss, AttachRules);
+
+			ViewTarget = CamActor;
+		}
 	}
 
-	// 로컬 PlayerController에 ViewTarget 블렌드 + 입력 잠금
+	// [ClientCinematicV2] 로컬 PlayerController 에 ViewTarget 블렌드 + 입력 잠금.
+	//   기존: 첫 매칭 PC 만 처리 (break) → 멀티플레이 클라 인스턴스에서 PC 못 찾으면 시네마틱 안 보임.
+	//   수정: ALL local PCs 순회 + 매칭 0건이면 GetFirstPlayerController 폴백 + Cast 실패해도
+	//         최소한 SetViewTargetWithBlend 로 카메라는 잡아줌.
+	int32 LocalPCCount = 0;
+	int32 HeroPCMatched = 0;
 	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
 	{
 		APlayerController* PC = It->Get();
@@ -767,11 +976,17 @@ void ABossSummonCinematicTrigger::StartLocalCinematicBody(APawn* Boss)
 		{
 			continue;
 		}
-		if (AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(PC))
+		++LocalPCCount;
+		AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(PC);
+		UE_LOG(LogTemp, Warning,
+			TEXT("[BossSummonCinematic_LiveCodeCheck] LocalPC found: %s (HeroPC=%s)"),
+			*PC->GetName(), HeroPC ? TEXT("yes") : TEXT("no"));
+
+		if (HeroPC)
 		{
+			++HeroPCMatched;
 			HeroPC->EnterBossCinematic(ViewTarget, CameraBlendIn);
 
-			// [BossDialogueV1] 폴백 모드에서도 동일하게 자막 재생
 			if (DialogueWidgetClass && !BossDialogueLine.IsEmpty())
 			{
 				LocalDialogueWidget = CreateWidget<UBossDialogueWidget>(HeroPC, DialogueWidgetClass);
@@ -783,7 +998,44 @@ void ABossSummonCinematicTrigger::StartLocalCinematicBody(APawn* Boss)
 						TEXT("[BossDialogueV1] (fallback) Widget spawned + PlayDialogue"));
 				}
 			}
-			break;
+		}
+		else
+		{
+			// HellunaHeroController 가 아니어도 최소 카메라는 전환.
+			PC->SetViewTargetWithBlend(ViewTarget, FMath::Max(CameraBlendIn, 0.1f),
+				EViewTargetBlendFunction::VTBlend_EaseInOut, 2.f, false);
+			UE_LOG(LogTemp, Warning,
+				TEXT("[BossSummonCinematic_LiveCodeCheck] Non-Hero PC — direct SetViewTarget on %s"),
+				*PC->GetName());
+		}
+	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[BossSummonCinematic_LiveCodeCheck] PC iteration done — LocalPCCount=%d HeroPCMatched=%d"),
+		LocalPCCount, HeroPCMatched);
+
+	// 폴백: 위에서 못 찾았으면 GetFirstPlayerController 로 한 번 더 시도.
+	if (LocalPCCount == 0)
+	{
+		if (APlayerController* FirstPC = UGameplayStatics::GetPlayerController(World, 0))
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[BossSummonCinematic_LiveCodeCheck] Fallback GetFirstPlayerController = %s — applying ViewTarget"),
+				*FirstPC->GetName());
+			if (AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(FirstPC))
+			{
+				HeroPC->EnterBossCinematic(ViewTarget, CameraBlendIn);
+			}
+			else
+			{
+				FirstPC->SetViewTargetWithBlend(ViewTarget, FMath::Max(CameraBlendIn, 0.1f),
+					EViewTargetBlendFunction::VTBlend_EaseInOut, 2.f, false);
+			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error,
+				TEXT("[BossSummonCinematic_LiveCodeCheck] No local PC found at all — cinematic camera will not switch"));
 		}
 	}
 }
@@ -818,6 +1070,9 @@ void ABossSummonCinematicTrigger::Multicast_EndCinematic_Implementation()
 	// [ClientBossResolveV1] Start 폴링이 아직 돌고 있으면 취소 (End 도착했으니 더 기다릴 의미 없음).
 	World->GetTimerManager().ClearTimer(ClientCinematicRetryTimer);
 
+	// [CinematicShakeV1] 반복 카메라 쉐이크 타이머 정리.
+	World->GetTimerManager().ClearTimer(CinematicShakeTimer);
+
 	// [ClientBossResolveV1] Start 가 보스 못 받아 LocalCinematicBoss 가 NULL 인 경우 — HP 바 스폰 위해
 	// 클라 월드에서 직접 보스 검색.
 	if (!LocalCinematicBoss.IsValid())
@@ -831,7 +1086,9 @@ void ABossSummonCinematicTrigger::Multicast_EndCinematic_Implementation()
 		}
 	}
 
-	// 로컬 PlayerController 카메라 복귀 + 입력 복원
+	// [ClientCinematicV2] 로컬 PlayerController 카메라 복귀 + 입력 복원.
+	//   Start 와 동일하게 ALL local PCs 순회 + 폴백.
+	int32 EndLocalPCCount = 0;
 	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
 	{
 		APlayerController* PC = It->Get();
@@ -839,10 +1096,30 @@ void ABossSummonCinematicTrigger::Multicast_EndCinematic_Implementation()
 		{
 			continue;
 		}
+		++EndLocalPCCount;
 		if (AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(PC))
 		{
 			HeroPC->ExitBossCinematic(CameraBlendOut);
-			break;
+		}
+		else if (APawn* PCPawn = PC->GetPawn())
+		{
+			PC->SetViewTargetWithBlend(PCPawn, FMath::Max(CameraBlendOut, 0.1f),
+				EViewTargetBlendFunction::VTBlend_EaseOut, 2.f, false);
+		}
+	}
+	if (EndLocalPCCount == 0)
+	{
+		if (APlayerController* FirstPC = UGameplayStatics::GetPlayerController(World, 0))
+		{
+			if (AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(FirstPC))
+			{
+				HeroPC->ExitBossCinematic(CameraBlendOut);
+			}
+			else if (APawn* PCPawn = FirstPC->GetPawn())
+			{
+				FirstPC->SetViewTargetWithBlend(PCPawn, FMath::Max(CameraBlendOut, 0.1f),
+					EViewTargetBlendFunction::VTBlend_EaseOut, 2.f, false);
+			}
 		}
 	}
 
@@ -934,4 +1211,102 @@ void ABossSummonCinematicTrigger::Multicast_EndCinematic_Implementation()
 
 		LocalCameraActor.Reset();
 	}
+
+	// [PortalCutsV1] 클라 컷 진행 Tick 종료 + 상태 리셋.
+	//   서버 walk 분기는 HandleCinematicCompletedServer 에서 자체 SetActorTickEnabled(false) 호출.
+	//   리슨 서버에서도 두 호출이 모두 실행되지만 idempotent 라 안전.
+	SetActorTickEnabled(false);
+	CurrentCutIndex = -1;
+	CutsElapsedTime = 0.f;
+
+	// [PortalCutsV1] 포탈 파괴 — 보스가 빠져나오는 잔상용 지연 후 destroy.
+	if (LocalPortalActor.IsValid())
+	{
+		AActor* PortalPtr = LocalPortalActor.Get();
+		const float Delay = FMath::Max(PortalDestroyDelay, 0.05f);
+		FTimerHandle PortalDestroyTimer;
+		World->GetTimerManager().SetTimer(PortalDestroyTimer,
+			[PortalPtr]()
+			{
+				if (IsValid(PortalPtr))
+				{
+					PortalPtr->Destroy();
+				}
+			},
+			Delay, false);
+		LocalPortalActor.Reset();
+	}
+}
+
+// [PortalCutsV1] 클라 매 Tick 호출 — 현재 컷의 소켓을 앵커로 보스 로컬축 기준 카메라 갱신.
+//   카메라는 attach 되지 않고 world transform 을 직접 set 하므로 보스가 walk 하는 동안에도
+//   카메라가 따라오면서 흔들림 없이 소켓을 추적.
+void ABossSummonCinematicTrigger::UpdateCameraForCurrentCut()
+{
+	if (!LocalCameraActor.IsValid() || !LocalCinematicBoss.IsValid()) return;
+	if (!CameraCuts.IsValidIndex(CurrentCutIndex)) return;
+
+	APawn* Boss = LocalCinematicBoss.Get();
+	ACameraActor* Cam = LocalCameraActor.Get();
+	const FBossCinematicCut& Cut = CameraCuts[CurrentCutIndex];
+
+	// 앵커: 보스 메시의 소켓(있으면) 또는 액터 루트.
+	FVector AnchorWorld = Boss->GetActorLocation();
+	if (ACharacter* BossChar = Cast<ACharacter>(Boss))
+	{
+		if (USkeletalMeshComponent* Mesh = BossChar->GetMesh())
+		{
+			if (!Cut.Socket.IsNone() && Mesh->DoesSocketExist(Cut.Socket))
+			{
+				AnchorWorld = Mesh->GetSocketLocation(Cut.Socket);
+			}
+		}
+	}
+
+	// 보스 로컬축으로 오프셋 적용 (소켓의 본 회전이 아니라 액터 회전 기준 — 의도와 일치).
+	const FVector Forward = Boss->GetActorForwardVector();
+	const FVector Right   = Boss->GetActorRightVector();
+	const FVector Up      = Boss->GetActorUpVector();
+
+	const FVector CameraWorld = AnchorWorld
+		+ Forward * Cut.CameraOffset.X
+		+ Right   * Cut.CameraOffset.Y
+		+ Up      * Cut.CameraOffset.Z;
+
+	const FVector LookAtWorld = AnchorWorld
+		+ Forward * Cut.LookAtOffset.X
+		+ Right   * Cut.LookAtOffset.Y
+		+ Up      * Cut.LookAtOffset.Z;
+
+	const FVector LookDir = LookAtWorld - CameraWorld;
+	const FRotator NewRot = LookDir.IsNearlyZero()
+		? Boss->GetActorRotation()
+		: LookDir.Rotation();
+
+	Cam->SetActorLocationAndRotation(CameraWorld, NewRot);
+}
+
+// [CinematicShakeV1] 클라 로컬 1회 쉐이크 발화. 데디 서버는 즉시 스킵.
+void ABossSummonCinematicTrigger::TriggerLocalCinematicShake()
+{
+	if (!CinematicShakeClass) return;
+
+	UWorld* World = GetWorld();
+	if (!World) return;
+	if (World->GetNetMode() == NM_DedicatedServer) return;
+
+	// Origin: 보스 위치(있으면) 또는 트리거 본체. 거리 기반 falloff 의 기준점.
+	FVector Origin = GetActorLocation();
+	if (APawn* Boss = LocalCinematicBoss.Get())
+	{
+		Origin = Boss->GetActorLocation();
+	}
+
+	UGameplayStatics::PlayWorldCameraShake(
+		World,
+		CinematicShakeClass,
+		Origin,
+		CinematicShakeInnerRadius,
+		CinematicShakeOuterRadius,
+		CinematicShakeFalloff);
 }
