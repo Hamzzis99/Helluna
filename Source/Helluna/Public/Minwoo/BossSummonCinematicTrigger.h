@@ -40,6 +40,14 @@ struct FBossCinematicCut
 	/** 보스 로컬축 기준 시선 보정. 0 이면 소켓 자체를 응시. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cut")
 	FVector LookAtOffset = FVector::ZeroVector;
+
+	/**
+	 * [PortalAnchorV1] true 면 anchor 가 보스 대신 LocalPortalActor (포탈) 의 위치/회전 사용.
+	 *   포탈은 시네마틱 동안 고정이라 카메라가 이동하지 않음 (정적 와이드샷에 유리).
+	 *   CameraOffset/LookAtOffset 은 포탈 로컬축 기준으로 해석됨.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cut")
+	bool bAnchorToPortal = false;
 };
 
 /**
@@ -203,6 +211,17 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Portal",
 		meta = (DisplayName = "Reveal Delay (포탈만 보이는 시간)", ClampMin = "0.0", ClampMax = "10.0"))
 	float PortalRevealDelay = 1.5f;
+
+	/**
+	 * [BossEmergeV1] 시네마틱 카메라가 시작된 후 보스가 포탈에서 나타나기까지 시간 (초).
+	 *   이 시간 동안 시네마틱 카메라는 이미 켜져 있지만 보스 메시는 숨김 + 정지.
+	 *   경과 후 보스 visible + walk + 몽타주 시작 → 카메라가 emergence 포착.
+	 *   PortalRevealDelay 와 합쳐서 총 보스 등장까지 = PortalRevealDelay + BossEmergeDelay.
+	 *   0 이면 카메라 시작 즉시 보스 등장 (이전 동작).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Portal",
+		meta = (DisplayName = "Boss Emerge Delay (카메라 시작 후 보스 등장까지)", ClampMin = "0.0", ClampMax = "10.0"))
+	float BossEmergeDelay = 1.0f;
 
 	/**
 	 * [GracePeriodV1] 시네마틱 끝나고 보스 AI 재개 + 무적 해제까지 유예 (초).
@@ -522,4 +541,20 @@ private:
 
 	/** 서버: 포탈 reveal 후에만 walk Tick 실행. */
 	bool bCinematicWalkActive = false;
+
+	// =========================================================================================
+	// [BossEmergeV1] 시네마틱 카메라 시작 후 BossEmergeDelay 만큼 보스 hidden + 정지
+	// =========================================================================================
+
+	/** 서버: emerge 후 walk + 몽타주 활성화. */
+	void OnBossEmergeElapsedServer();
+
+	/** 클라: emerge 후 보스 mesh visibility 복원. */
+	void OnBossEmergeElapsedLocal();
+
+	/** 서버 emerge 타이머. */
+	FTimerHandle BossEmergeTimerServer;
+
+	/** 클라 emerge 타이머. */
+	FTimerHandle BossEmergeTimerLocal;
 };

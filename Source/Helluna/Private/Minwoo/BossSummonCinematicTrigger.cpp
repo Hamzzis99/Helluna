@@ -297,6 +297,8 @@ void ABossSummonCinematicTrigger::EndPlay(const EEndPlayReason::Type EndPlayReas
 		World->GetTimerManager().ClearTimer(FailsafeTimer);
 		World->GetTimerManager().ClearTimer(PortalRevealTimerServer);
 		World->GetTimerManager().ClearTimer(PortalRevealTimerLocal);
+		World->GetTimerManager().ClearTimer(BossEmergeTimerServer);
+		World->GetTimerManager().ClearTimer(BossEmergeTimerLocal);
 	}
 
 	UnregisterActorSpawnHandler();
@@ -524,11 +526,13 @@ bool ABossSummonCinematicTrigger::TryActivate(APawn* InTargetBoss)
 
 void ABossSummonCinematicTrigger::OnPortalRevealElapsedServer()
 {
+	// [BossEmergeV2] PortalRevealDelay 경과 — 시네마틱 카메라 시작.
+	//   *Walk + 몽타주 즉시 시작* (boss 는 hidden 상태로 walk → BossEmergeDelay 후 visible).
+	//   이래야 보스가 포탈을 walk-through 하다가 visible 되어 "포탈에서 나오는" 느낌이 남.
 	if (!HasAuthority() || !bCinematicActive) return;
 	APawn* Boss = ActiveBoss.Get();
 	if (!Boss) return;
 
-	// MaxWalkSpeed override + Tick walk 활성화.
 	if (ACharacter* BossChar = Cast<ACharacter>(Boss))
 	{
 		if (UCharacterMovementComponent* Move = BossChar->GetCharacterMovement())
@@ -540,12 +544,11 @@ void ABossSummonCinematicTrigger::OnPortalRevealElapsedServer()
 				SetActorTickEnabled(true);
 				bCinematicWalkActive = true;
 				UE_LOG(LogTemp, Warning,
-					TEXT("[BossSummonCinematic_LiveCodeCheck] Reveal elapsed — WalkSpeed override + walk enabled"));
+					TEXT("[BossSummonCinematic_LiveCodeCheck] Camera start — walk enabled (boss still hidden)"));
 			}
 		}
 	}
 
-	// 소환 몽타주 재생 + 루프 + 종료 콜백 바인딩.
 	if (AHellunaEnemyCharacter_Boss* BossEnemy = Cast<AHellunaEnemyCharacter_Boss>(Boss))
 	{
 		BossEnemy->OnSummonMontageFinished.Unbind();
@@ -554,6 +557,20 @@ void ABossSummonCinematicTrigger::OnPortalRevealElapsedServer()
 		BossEnemy->bShouldLoopSummonMontage = true;
 		BossEnemy->Multicast_PlaySummonMontage();
 	}
+
+	// 서버 사이드 emerge 는 visibility 와 무관 (visibility 는 클라 로컬). 노티만 남김.
+	const float Emerge = FMath::Max(BossEmergeDelay, 0.f);
+	if (Emerge > KINDA_SMALL_NUMBER)
+	{
+		GetWorldTimerManager().SetTimer(BossEmergeTimerServer, this,
+			&ABossSummonCinematicTrigger::OnBossEmergeElapsedServer, Emerge, false);
+	}
+}
+
+void ABossSummonCinematicTrigger::OnBossEmergeElapsedServer()
+{
+	UE_LOG(LogTemp, Warning,
+		TEXT("[BossSummonCinematic_LiveCodeCheck] Server emerge tick (visibility was client-side)"));
 }
 
 void ABossSummonCinematicTrigger::OnSummonMontageFinishedServer()
@@ -615,6 +632,7 @@ void ABossSummonCinematicTrigger::HandleCinematicCompletedServer()
 	GetWorldTimerManager().ClearTimer(FailsafeTimer);
 	GetWorldTimerManager().ClearTimer(MinHoldTimer);
 	GetWorldTimerManager().ClearTimer(PortalRevealTimerServer);
+	GetWorldTimerManager().ClearTimer(BossEmergeTimerServer);
 
 	UE_LOG(LogTemp, Warning,
 		TEXT("[BossSummonCinematic_LiveCodeCheck] Server cinematic completed — restoring boss"));
@@ -875,15 +893,28 @@ void ABossSummonCinematicTrigger::StartCinematicCameraAfterReveal()
 		return;
 	}
 
-	// [PortalRevealV1] 보스 메시 visibility 복원.
-	if (ACharacter* BossChar = Cast<ACharacter>(Boss))
+	// [BossEmergeV1] 보스 메시는 아직 숨김 유지 — BossEmergeDelay 후 OnBossEmergeElapsedLocal 에서 복원.
+	//   카메라는 즉시 시네마틱으로 전환 → 카메라가 빈 포탈을 잠시 잡고 → 보스가 등장.
+	const float Emerge = FMath::Max(BossEmergeDelay, 0.f);
+	if (Emerge > KINDA_SMALL_NUMBER)
 	{
-		if (USkeletalMeshComponent* BossMesh = BossChar->GetMesh())
-		{
-			BossMesh->SetVisibility(true, /*bPropagateToChildren=*/true);
-			UE_LOG(LogTemp, Warning,
-				TEXT("[BossSummonCinematic_LiveCodeCheck] Boss mesh visibility restored — starting camera cuts"));
-		}
+		TWeakObjectPtr<ABossSummonCinematicTrigger> Weak(this);
+		World->GetTimerManager().SetTimer(BossEmergeTimerLocal,
+			FTimerDelegate::CreateLambda([Weak]()
+			{
+				if (Weak.IsValid())
+				{
+					Weak->OnBossEmergeElapsedLocal();
+				}
+			}),
+			Emerge, false);
+		UE_LOG(LogTemp, Warning,
+			TEXT("[BossSummonCinematic_LiveCodeCheck] Camera switching — boss emerges in %.2fs"), Emerge);
+	}
+	else
+	{
+		// 즉시 등장 (이전 동작)
+		OnBossEmergeElapsedLocal();
 	}
 
 	// ── 모드 1: LevelSequence 사용 (Possessable 카메라를 보스에 부착) ──
@@ -1160,8 +1191,9 @@ void ABossSummonCinematicTrigger::Multicast_EndCinematic_Implementation()
 	// [CinematicShakeV1] 반복 카메라 쉐이크 타이머 정리.
 	World->GetTimerManager().ClearTimer(CinematicShakeTimer);
 
-	// [PortalRevealV1] reveal 대기 타이머 정리 + 보스 메시 visibility 복원 (Failsafe 가 reveal 전 발화한 경우 대비).
+	// [PortalRevealV1] reveal/emerge 대기 타이머 정리 + 보스 메시 visibility 복원 (Failsafe 가 emerge 전 발화한 경우 대비).
 	World->GetTimerManager().ClearTimer(PortalRevealTimerLocal);
+	World->GetTimerManager().ClearTimer(BossEmergeTimerLocal);
 	if (APawn* BossLocal = LocalCinematicBoss.Get())
 	{
 		if (ACharacter* BossCh = Cast<ACharacter>(BossLocal))
@@ -1338,6 +1370,22 @@ void ABossSummonCinematicTrigger::Multicast_EndCinematic_Implementation()
 	}
 }
 
+void ABossSummonCinematicTrigger::OnBossEmergeElapsedLocal()
+{
+	APawn* Boss = LocalCinematicBoss.Get();
+	if (!Boss) return;
+
+	if (ACharacter* BossChar = Cast<ACharacter>(Boss))
+	{
+		if (USkeletalMeshComponent* BossMesh = BossChar->GetMesh())
+		{
+			BossMesh->SetVisibility(true, /*bPropagateToChildren=*/true);
+			UE_LOG(LogTemp, Warning,
+				TEXT("[BossSummonCinematic_LiveCodeCheck] Boss emerged — mesh visibility restored"));
+		}
+	}
+}
+
 // [PortalCutsV1] 클라 매 Tick 호출 — 현재 컷의 소켓을 앵커로 보스 로컬축 기준 카메라 갱신.
 //   카메라는 attach 되지 않고 world transform 을 직접 set 하므로 보스가 walk 하는 동안에도
 //   카메라가 따라오면서 흔들림 없이 소켓을 추적.
@@ -1350,23 +1398,36 @@ void ABossSummonCinematicTrigger::UpdateCameraForCurrentCut()
 	ACameraActor* Cam = LocalCameraActor.Get();
 	const FBossCinematicCut& Cut = CameraCuts[CurrentCutIndex];
 
-	// 앵커: 보스 메시의 소켓(있으면) 또는 액터 루트.
-	FVector AnchorWorld = Boss->GetActorLocation();
-	if (ACharacter* BossChar = Cast<ACharacter>(Boss))
+	// [PortalAnchorV1] anchor 결정 — 포탈 anchor 면 정적, 보스 anchor 면 보스 추적.
+	FVector AnchorWorld;
+	FVector Forward, Right, Up;
+
+	if (Cut.bAnchorToPortal && LocalPortalActor.IsValid())
 	{
-		if (USkeletalMeshComponent* Mesh = BossChar->GetMesh())
+		AActor* Portal = LocalPortalActor.Get();
+		AnchorWorld = Portal->GetActorLocation();
+		Forward = Portal->GetActorForwardVector();
+		Right   = Portal->GetActorRightVector();
+		Up      = Portal->GetActorUpVector();
+	}
+	else
+	{
+		// 보스 anchor (기본): socket 있으면 socket world, 없으면 actor root.
+		AnchorWorld = Boss->GetActorLocation();
+		if (ACharacter* BossChar = Cast<ACharacter>(Boss))
 		{
-			if (!Cut.Socket.IsNone() && Mesh->DoesSocketExist(Cut.Socket))
+			if (USkeletalMeshComponent* Mesh = BossChar->GetMesh())
 			{
-				AnchorWorld = Mesh->GetSocketLocation(Cut.Socket);
+				if (!Cut.Socket.IsNone() && Mesh->DoesSocketExist(Cut.Socket))
+				{
+					AnchorWorld = Mesh->GetSocketLocation(Cut.Socket);
+				}
 			}
 		}
+		Forward = Boss->GetActorForwardVector();
+		Right   = Boss->GetActorRightVector();
+		Up      = Boss->GetActorUpVector();
 	}
-
-	// 보스 로컬축으로 오프셋 적용 (소켓의 본 회전이 아니라 액터 회전 기준 — 의도와 일치).
-	const FVector Forward = Boss->GetActorForwardVector();
-	const FVector Right   = Boss->GetActorRightVector();
-	const FVector Up      = Boss->GetActorUpVector();
 
 	const FVector CameraWorld = AnchorWorld
 		+ Forward * Cut.CameraOffset.X
