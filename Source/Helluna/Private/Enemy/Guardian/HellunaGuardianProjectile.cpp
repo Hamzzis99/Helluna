@@ -172,17 +172,17 @@ bool AHellunaGuardianProjectile::TryReflectFromPerfectBlock(AActor* BlockingActo
 	const float BaseSpeed = FMath::Max(CurrentVelocity.Size(), MoveComp->MaxSpeed);
 	const float ReflectedSpeed = FMath::Max(BaseSpeed * ReflectedSpeedMultiplier, 100.f);
 
-	FVector ReflectedDirection = FVector::ZeroVector;
-	if (OriginalOwnerActor.IsValid())
+	// [BOTW식 반사] 들어온 속도 벡터의 정확한 반대 — 투사체를 그대로 돌려보낸다.
+	// Guardian 위치 추적이 아니라 입사 방향 정반대로 반사.
+	FVector ReflectedDirection = -CurrentVelocity.GetSafeNormal();
+	if (ReflectedDirection.IsNearlyZero() && OriginalOwnerActor.IsValid())
 	{
+		// fallback 1: 속도가 거의 0이면 발사자 방향 (정지 상태 투사체 보호)
 		ReflectedDirection = (OriginalOwnerActor->GetActorLocation() - GetActorLocation()).GetSafeNormal();
 	}
 	if (ReflectedDirection.IsNearlyZero())
 	{
-		ReflectedDirection = -CurrentVelocity.GetSafeNormal();
-	}
-	if (ReflectedDirection.IsNearlyZero())
-	{
+		// fallback 2: 그래도 0이면 액터 forward 반대
 		ReflectedDirection = -GetActorForwardVector();
 	}
 
@@ -211,6 +211,9 @@ bool AHellunaGuardianProjectile::TryReflectFromPerfectBlock(AActor* BlockingActo
 	MoveComp->UpdateComponentVelocity();
 
 	bReflected = true;
+	// [Perfect Reflect] 반사 후엔 가디언/터렛 즉사 목적의 직격 데미지로 갱신.
+	// 폭발 falloff 적용을 받지만 가디언이 폭발 중심이면 풀 데미지가 들어가 즉사.
+	Damage = PerfectBlockReflectedDamage;
 	SetLifeSpan(FMath::Max(ReflectedLifeSeconds, 0.1f));
 
 	Multicast_OnPerfectBlockReflected(

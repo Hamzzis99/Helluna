@@ -2540,7 +2540,9 @@ void AHellunaHeroController::LeaveLoadingScene()
 	// [§13 v2.1+ X-3] L_LoadingShipScene 서브레벨 언로드 — 메모리 회수
 	// v1엔 서브레벨이 없어 호출 없었으나, v2.1에서 공용 서브레벨 도입으로 명시적 언로드 필요.
 	// Client_FadeToGame 3.0s 뒤 LeaveLoadingScene 호출 → 페이드 검정 중 병렬 언로드.
-	if (World)
+	// [§16 L-2] MainMap에는 L_LoadingShipScene이 서브레벨로 등록 안 됨 → 미등록 시 호출 가드
+	//          (callback은 즉시 발화하므로 hang 아니지만 노이즈 로그 제거)
+	if (World && UGameplayStatics::GetStreamingLevel(this, FName(TEXT("L_LoadingShipScene"))))
 	{
 		FLatentActionInfo UnloadLatent;
 		UnloadLatent.CallbackTarget = this;
@@ -2551,6 +2553,11 @@ void AHellunaHeroController::LeaveLoadingScene()
 		UE_LOG(LogHelluna, Warning,
 			TEXT("[LoadingDbg][Leave] UnloadStreamLevel(L_LoadingShipScene) 요청 | UUID=%d"),
 			UnloadLatent.UUID);
+	}
+	else if (World)
+	{
+		UE_LOG(LogHelluna, Verbose,
+			TEXT("[LoadingDbg][Leave] L_LoadingShipScene 미등록 — UnloadStreamLevel 스킵 (MainMap 경로)"));
 	}
 
 	UE_LOG(LogHelluna, Warning, TEXT("[LoadingDbg][Leave] EXIT"));

@@ -238,6 +238,11 @@ protected:
 		meta = (DisplayName = "반사 후 수명", ClampMin = "0.1", ClampMax = "30.0"))
 	float ReflectedLifeSeconds = 5.0f;
 
+	/** 퍼펙트 반사 후 적용되는 데미지 (가디언/터렛 즉사 목적). 9999 기본값. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Projectile|Block",
+		meta = (DisplayName = "퍼펙트 반사 직격 데미지", ClampMin = "0.0"))
+	float PerfectBlockReflectedDamage = 9999.f;
+
 private:
 	// 서버 전용 (복제 X)
 	float Damage = 0.f;

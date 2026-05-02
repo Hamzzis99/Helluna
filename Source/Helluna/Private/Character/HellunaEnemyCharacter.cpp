@@ -1011,6 +1011,18 @@ void AHellunaEnemyCharacter::OnMonsterDeath(AActor* DeadActor, AActor* KillerAct
 	{
 		EnemyMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	}
+	// 진행 중 모든 GA(공격/스킬 등)와 montage(HitReact 등) 즉시 취소 — 사망 후 잔여 행동 차단
+	if (UAbilitySystemComponent* ASC = GetAbilitySystemComponent())
+	{
+		ASC->CancelAbilities(nullptr, nullptr, nullptr);
+	}
+	if (USkeletalMeshComponent* EnemyMesh = GetMesh())
+	{
+		if (UAnimInstance* AnimInst = EnemyMesh->GetAnimInstance())
+		{
+			AnimInst->StopAllMontages(0.f);
+		}
+	}
 	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
 	{
 		MoveComp->StopMovementImmediately();
