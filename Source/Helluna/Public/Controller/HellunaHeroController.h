@@ -796,6 +796,9 @@ protected:
 		meta = (DisplayName = "Spectate IMC Priority (관전 IMC 우선순위)", ClampMin = "0", ClampMax = "1000"))
 	int32 SpectateIMCPriority = 50;
 
+	// 자유비행 자체는 ASpectatorPawn 내장 로직(legacy axis: MoveForward/MoveRight/MoveUp/Turn/LookUp)이 처리.
+	// DefaultInput.ini 의 +AxisMappings 매핑을 추가하면 자동 동작 — Enhanced Input IA 불필요.
+
 	/** 클라 측 ViewTarget 전환 블렌드 시간(초). 자유비행/팀원 순환 모두 동일하게 적용. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Spectate|View (관전|시점)",
 		meta = (DisplayName = "Spectate View Blend (관전 시점 블렌드 초)", ClampMin = "0.0", ClampMax = "5.0"))

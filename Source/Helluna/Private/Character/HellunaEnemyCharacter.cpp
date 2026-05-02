@@ -783,17 +783,51 @@ void AHellunaEnemyCharacter::StartDeathDissolveVisuals()
 	for (int32 MaterialIndex = 0; MaterialIndex < MaterialCount; ++MaterialIndex)
 	{
 		UMaterialInterface* SourceMat = OverrideMat ? OverrideMat : SkelMesh->GetMaterial(MaterialIndex);
-		UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(SourceMat, this);
-		if (IsValid(MID))
-		{
-			SkelMesh->SetMaterial(MaterialIndex, MID);
-		}
+		// Substrate 환경 MID 부모 상속 버그 우회: 컴포넌트 API로 MID 생성
+		// (CreateAndSetMaterialInstanceDynamicFromMaterial이 내부적으로 더 안전한 instantiation path 사용)
+		UMaterialInstanceDynamic* MID = SkelMesh->CreateAndSetMaterialInstanceDynamicFromMaterial(MaterialIndex, SourceMat);
+
 		if (!IsValid(MID))
 		{
 			UE_LOG(LogHellunaEnemyDissolve, Warning,
 				TEXT("[DeathDissolve] Enemy=%s Slot=%d Reason=FailedToCreateMID"),
 				*GetNameSafe(this), MaterialIndex);
 			continue;
+		}
+
+		// 명시적 파라미터 복사 — Substrate에서 MID가 부모 MIC override를 lazy 평가 안 하는 케이스 보호
+		if (UMaterialInstance* SourceMI = Cast<UMaterialInstance>(SourceMat))
+		{
+			TArray<FMaterialParameterInfo> TexInfos; TArray<FGuid> TexGuids;
+			SourceMI->GetAllTextureParameterInfo(TexInfos, TexGuids);
+			for (const FMaterialParameterInfo& Info : TexInfos)
+			{
+				UTexture* TexValue = nullptr;
+				if (SourceMI->GetTextureParameterValue(Info, TexValue) && TexValue)
+				{
+					MID->SetTextureParameterValueByInfo(Info, TexValue);
+				}
+			}
+			TArray<FMaterialParameterInfo> ScalarInfos; TArray<FGuid> ScalarGuids;
+			SourceMI->GetAllScalarParameterInfo(ScalarInfos, ScalarGuids);
+			for (const FMaterialParameterInfo& Info : ScalarInfos)
+			{
+				float ScalarValue = 0.f;
+				if (SourceMI->GetScalarParameterValue(Info, ScalarValue))
+				{
+					MID->SetScalarParameterValueByInfo(Info, ScalarValue);
+				}
+			}
+			TArray<FMaterialParameterInfo> VectorInfos; TArray<FGuid> VectorGuids;
+			SourceMI->GetAllVectorParameterInfo(VectorInfos, VectorGuids);
+			for (const FMaterialParameterInfo& Info : VectorInfos)
+			{
+				FLinearColor VecValue;
+				if (SourceMI->GetVectorParameterValue(Info, VecValue))
+				{
+					MID->SetVectorParameterValueByInfo(Info, VecValue);
+				}
+			}
 		}
 
 		for (const FName& VectorParamName : DeathDissolveVectorParameterNames)

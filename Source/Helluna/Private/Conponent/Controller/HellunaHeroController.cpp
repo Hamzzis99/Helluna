@@ -281,6 +281,12 @@ void AHellunaHeroController::BeginPlay()
 	// ── [Phase 22] 관전 모드 입력 바인딩 (IMC 자체는 관전 진입 시 동적 추가) ──
 	if (UEnhancedInputComponent* SpecEIC = Cast<UEnhancedInputComponent>(InputComponent))
 	{
+		UE_LOG(LogHelluna, Log, TEXT("[Phase22-Diag] BP 슬롯 상태: Toggle=%s, Next=%s, Prev=%s, IMC=%s"),
+			SpectateToggleAction ? *SpectateToggleAction->GetName() : TEXT("NULL"),
+			SpectateNextAction ? *SpectateNextAction->GetName() : TEXT("NULL"),
+			SpectatePrevAction ? *SpectatePrevAction->GetName() : TEXT("NULL"),
+			SpectateMappingContext ? *SpectateMappingContext->GetName() : TEXT("NULL"));
+
 		if (SpectateToggleAction)
 		{
 			SpecEIC->BindAction(SpectateToggleAction, ETriggerEvent::Started, this, &AHellunaHeroController::OnSpectateToggleInput);
@@ -293,6 +299,7 @@ void AHellunaHeroController::BeginPlay()
 		{
 			SpecEIC->BindAction(SpectatePrevAction, ETriggerEvent::Started, this, &AHellunaHeroController::OnSpectatePrevInput);
 		}
+		// 자유비행(이동/회전/상하)은 ASpectatorPawn 내장 legacy axis 로 처리 — DefaultInput.ini 참고
 	}
 }
 
@@ -2664,12 +2671,26 @@ void AHellunaHeroController::Client_OnRespawned_Implementation()
 
 void AHellunaHeroController::AddSpectateIMC()
 {
-	if (!SpectateMappingContext) return;
+	if (!SpectateMappingContext)
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[Phase22-Diag] AddSpectateIMC: SpectateMappingContext=NULL — BP 슬롯 미할당"));
+		return;
+	}
 	ULocalPlayer* LP = GetLocalPlayer();
-	if (!LP) return;
+	if (!LP)
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[Phase22-Diag] AddSpectateIMC: LocalPlayer=NULL"));
+		return;
+	}
 	UEnhancedInputLocalPlayerSubsystem* Sub = LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>();
-	if (!Sub) return;
+	if (!Sub)
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[Phase22-Diag] AddSpectateIMC: EnhancedInputSubsystem=NULL"));
+		return;
+	}
 	Sub->AddMappingContext(SpectateMappingContext, SpectateIMCPriority);
+	UE_LOG(LogHelluna, Log, TEXT("[Phase22-Diag] AddSpectateIMC: %s 추가 완료(priority=%d)"),
+		*SpectateMappingContext->GetName(), SpectateIMCPriority);
 }
 
 void AHellunaHeroController::RemoveSpectateIMC()
@@ -2754,6 +2775,8 @@ void AHellunaHeroController::ApplyCurrentSpectateView()
 
 void AHellunaHeroController::OnSpectateToggleInput(const FInputActionValue& /*Value*/)
 {
+	UE_LOG(LogHelluna, Log, TEXT("[Phase22-Diag] OnSpectateToggleInput 호출됨 (bIsSpectating=%s)"),
+		bIsSpectating ? TEXT("true") : TEXT("false"));
 	if (!bIsSpectating) return;
 	bSpectatorFollowMode = !bSpectatorFollowMode;
 	ApplyCurrentSpectateView();
@@ -2761,6 +2784,9 @@ void AHellunaHeroController::OnSpectateToggleInput(const FInputActionValue& /*Va
 
 void AHellunaHeroController::OnSpectateNextInput(const FInputActionValue& /*Value*/)
 {
+	UE_LOG(LogHelluna, Log, TEXT("[Phase22-Diag] OnSpectateNextInput 호출됨 (bIsSpectating=%s, FollowMode=%s)"),
+		bIsSpectating ? TEXT("true") : TEXT("false"),
+		bSpectatorFollowMode ? TEXT("true") : TEXT("false"));
 	if (!bIsSpectating || !bSpectatorFollowMode) return;
 	++CurrentSpectateIndex;
 	ApplyCurrentSpectateView();
@@ -2768,7 +2794,11 @@ void AHellunaHeroController::OnSpectateNextInput(const FInputActionValue& /*Valu
 
 void AHellunaHeroController::OnSpectatePrevInput(const FInputActionValue& /*Value*/)
 {
+	UE_LOG(LogHelluna, Log, TEXT("[Phase22-Diag] OnSpectatePrevInput 호출됨 (bIsSpectating=%s, FollowMode=%s)"),
+		bIsSpectating ? TEXT("true") : TEXT("false"),
+		bSpectatorFollowMode ? TEXT("true") : TEXT("false"));
 	if (!bIsSpectating || !bSpectatorFollowMode) return;
 	--CurrentSpectateIndex;
 	ApplyCurrentSpectateView();
 }
+
