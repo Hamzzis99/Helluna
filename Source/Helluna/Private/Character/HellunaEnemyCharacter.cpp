@@ -265,14 +265,19 @@ void AHellunaEnemyCharacter::InitEnemyStartUpData()
 {
 	if (CharacterStartUpData.IsNull()) return;
 
+	// [Fix:weak-capture 2026-05-02] raw [this] 캡처 시 비동기 로드 중 적 destroy → use-after-free.
+	// TWeakObjectPtr 캡처로 안전화. 콜백 fire 시점에 actor invalid면 즉시 return.
+	TWeakObjectPtr<AHellunaEnemyCharacter> WeakThis(this);
 	UAssetManager::GetStreamableManager().RequestAsyncLoad(
 		CharacterStartUpData.ToSoftObjectPath(),
 		FStreamableDelegate::CreateLambda(
-			[this]()
+			[WeakThis]()
 			{
-				if (UDataAsset_BaseStartUpData* LoadedData = CharacterStartUpData.Get())
+				AHellunaEnemyCharacter* StrongThis = WeakThis.Get();
+				if (!StrongThis) return;
+				if (UDataAsset_BaseStartUpData* LoadedData = StrongThis->CharacterStartUpData.Get())
 				{
-					LoadedData->GiveToAbilitySystemComponent(HellunaAbilitySystemComponent);
+					LoadedData->GiveToAbilitySystemComponent(StrongThis->HellunaAbilitySystemComponent);
 				}
 			}
 		)

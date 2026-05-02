@@ -42,6 +42,6 @@ private:
 	UPROPERTY()
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> EquipTask = nullptr;
 
-
-		
+	// [Fix:reentry-guard 2026-05-02] 몽타주 콜백 이중 호출 차단 (GunParry 동일 패턴)
+	bool bEquipEndCalled = false;
 };
