@@ -89,6 +89,22 @@ void AHellunaHeroController::SetupInputComponent()
 
 void AHellunaHeroController::BeginPlay()
 {
+	// [LevelPlacedGuard] 레벨에 배치된 더미 PlayerController 감지/제거.
+	//   bNetStartup=true 는 디스크에서 로드된 액터 — PlayerController 는 GameMode 가
+	//   런타임에 SpawnActor 로 생성하는 게 정상이라 bNetStartup=false 여야 한다.
+	//   (이전 GihyeonMap 에서 BP_HellunaHeroController_C_0 가 레벨 액터로 배치되어
+	//    "CreateWidget cannot be used on Player Controller with no attached player"
+	//    경고 4건 + "플레이어 한 명 더 생기는" 현상 발생했음.)
+	if (bNetStartup || HasAnyFlags(RF_WasLoaded))
+	{
+		UE_LOG(LogHelluna, Error,
+			TEXT("[HeroController] 레벨에 잘못 배치된 PlayerController 감지 — 즉시 삭제. Level=%s | Actor=%s"),
+			*GetNameSafe(GetWorld()),
+			*GetName());
+		Destroy();
+		return;
+	}
+
 	Super::BeginPlay();
 
 	UE_LOG(LogHellunaVote, Log, TEXT("[HellunaHeroController] BeginPlay - %s"),
@@ -2472,6 +2488,32 @@ void AHellunaHeroController::Client_FadeToGame_Implementation()
 		{
 			SetViewTargetWithBlend(MyPawn, 0.5f, VTBlend_Cubic);
 		}
+		else
+		{
+			// [§16 M-1] Pawn replicate 미도착 — 0.3초 후 재시도 (cubic blend 보장).
+			// OnRep_Pawn AutoManageActiveCameraTarget(GetPawn())로 자동 회복은 가능하나
+			// 그건 BlendTime=0 즉시 cut. 명시 호출이 더 부드러운 시각.
+			UE_LOG(LogHelluna, Warning, TEXT("[LoadingDbg][Fade] T+1.2s Pawn=null — 0.3s 후 재시도"));
+			if (UWorld* RetryWorld = GetWorld())
+			{
+				FTimerHandle PawnRetryHandle;
+				RetryWorld->GetTimerManager().SetTimer(PawnRetryHandle, FTimerDelegate::CreateWeakLambda(this, [this]()
+				{
+					if (APawn* RetryPawn = GetPawn())
+					{
+						SetViewTargetWithBlend(RetryPawn, 0.5f, VTBlend_Cubic);
+						UE_LOG(LogHelluna, Warning,
+							TEXT("[LoadingDbg][Fade] M-1 재시도 성공 → Pawn=%s"),
+							*GetNameSafe(RetryPawn));
+					}
+					else
+					{
+						UE_LOG(LogHelluna, Warning,
+							TEXT("[LoadingDbg][Fade] M-1 재시도도 Pawn=null — OnRep_Pawn 자동 회복 의존"));
+					}
+				}), 0.3f, false);
+			}
+		}
 	}), 1.2f, false);
 
 	FTimerHandle FadeOutHandle;
@@ -2645,16 +2687,21 @@ void AHellunaHeroController::CollectAliveTeammates(TArray<APawn*>& OutPawns) con
 	OutPawns.Reset();
 	UWorld* W = GetWorld();
 	if (!W) return;
-	for (FConstPlayerControllerIterator It = W->GetPlayerControllerIterator(); It; ++It)
+
+	// [Phase22-Fix] As-A-Client(데디서버) 환경의 클라이언트에는 다른 PC 가 복제되지 않는다.
+	// GameState->PlayerArray (서버/클라 모두 복제) + PlayerState->GetPawn() 으로 순회한다.
+	AGameStateBase* GS = W->GetGameState();
+	if (!GS) return;
+
+	APlayerState* MyPS = PlayerState;
+	for (APlayerState* PS : GS->PlayerArray)
 	{
-		APlayerController* PC = It->Get();
-		if (!IsValid(PC) || PC == this) continue;
+		if (!IsValid(PS)) continue;
+		if (PS == MyPS) continue;
+		if (PS->IsSpectator()) continue;
+		if (PS->IsOnlyASpectator()) continue;
 
-		// 살아있는 팀원 = bIsSpectator==false 이면서 Pawn 보유
-		APlayerState* PS = PC->PlayerState;
-		if (!PS || PS->IsSpectator()) continue;
-
-		APawn* TargetPawn = PC->GetPawn();
+		APawn* TargetPawn = PS->GetPawn();
 		if (!IsValid(TargetPawn)) continue;
 
 		OutPawns.Add(TargetPawn);
@@ -2668,7 +2715,10 @@ void AHellunaHeroController::ApplyCurrentSpectateView()
 	// 자유비행 모드 — SpectatorPawn 으로 ViewTarget 복귀
 	if (!bSpectatorFollowMode)
 	{
-		if (ASpectatorPawn* MySpec = GetSpectatorPawn())
+		ASpectatorPawn* MySpec = GetSpectatorPawn();
+		UE_LOG(LogHelluna, Log, TEXT("[Phase22] FreeFlight 시도 — SpectatorPawn=%s"),
+			MySpec ? *MySpec->GetName() : TEXT("null"));
+		if (MySpec)
 		{
 			SetViewTargetWithBlend(MySpec, 0.3f, EViewTargetBlendFunction::VTBlend_Cubic);
 		}
@@ -2678,6 +2728,8 @@ void AHellunaHeroController::ApplyCurrentSpectateView()
 	// 팀원 시점 모드 — 살아있는 팀원의 Pawn ViewTarget
 	TArray<APawn*> Alive;
 	CollectAliveTeammates(Alive);
+	UE_LOG(LogHelluna, Log, TEXT("[Phase22] FollowMode — AliveTeammates=%d, Index=%d"),
+		Alive.Num(), CurrentSpectateIndex);
 	if (Alive.Num() == 0)
 	{
 		// 팀원 없음 → 자유비행 강제
@@ -2695,6 +2747,7 @@ void AHellunaHeroController::ApplyCurrentSpectateView()
 	APawn* Target = Alive[CurrentSpectateIndex];
 	if (IsValid(Target))
 	{
+		UE_LOG(LogHelluna, Log, TEXT("[Phase22] FollowMode → ViewTarget=%s"), *Target->GetName());
 		SetViewTargetWithBlend(Target, 0.3f, EViewTargetBlendFunction::VTBlend_Cubic);
 	}
 }

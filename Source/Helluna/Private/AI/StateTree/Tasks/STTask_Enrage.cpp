@@ -66,6 +66,13 @@ EStateTreeRunStatus FSTTask_Enrage::EnterState(
 		return EStateTreeRunStatus::Failed;
 	}
 
+	// 광폭화 비활성: HP 0 = 즉시 사망 처리. BP에서 bAllowEnrage 켜면 활성.
+	if (!Enemy->bAllowEnrage)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[STTask_Enrage] %s bAllowEnrage=false → skip"), *Enemy->GetName());
+		return EStateTreeRunStatus::Failed;
+	}
+
 	FHellunaAITargetData& TargetData = InstanceData.TargetData;
 
 	// 광폭화 플래그 설정 — Evaluator가 더 이상 타겟을 변경하지 않음

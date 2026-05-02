@@ -255,6 +255,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Combat|Enrage")
 	void EnterEnraged();
 
+	/** false면 STTask_Enrage가 즉시 Failed 반환 → 광폭화 진입 차단. HP 0 = 즉시 사망. BP에서 적별 enable 가능. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enrage",
+		meta = (DisplayName = "광폭화 사용"))
+	bool bAllowEnrage = false;
+
 	/** 광폭화 몽타주 멀티캐스트 재생 */
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayEnrage();
