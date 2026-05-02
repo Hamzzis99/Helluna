@@ -4,11 +4,14 @@
 #include "Conponent/Outline/HellunaTeamOutlineComponent.h"
 
 #include "Character/HellunaHeroCharacter.h"
+#include "Components/PostProcessComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/Engine.h"
+#include "Engine/Scene.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
 #include "Helluna.h"
+#include "Materials/MaterialInterface.h"
 
 UHellunaTeamOutlineComponent::UHellunaTeamOutlineComponent()
 {
@@ -42,6 +45,16 @@ void UHellunaTeamOutlineComponent::BeginPlay()
 		SetComponentTickEnabled(false);
 		return;
 	}
+
+	// 미할당 시 기본 경로에서 머티리얼 로드 시도
+	if (!OutlineMaterial)
+	{
+		OutlineMaterial = LoadObject<UMaterialInterface>(nullptr,
+			TEXT("/Game/Gihyeon/Outline/M_TeamOutline_PP.M_TeamOutline_PP"));
+	}
+
+	// 로컬 카메라에 PP 등록 (LocallyControlled 일 때만)
+	TryRegisterPostProcessOnLocalCamera();
 }
 
 void UHellunaTeamOutlineComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -73,6 +86,12 @@ void UHellunaTeamOutlineComponent::TickComponent(float DeltaTime, ELevelTick Tic
 	const float Now = World->GetTimeSeconds();
 	if (Now - LastEvaluationTime < EvaluationInterval) return;
 	LastEvaluationTime = Now;
+
+	// PossessedBy 가 BeginPlay 보다 늦을 수 있음 — 등록 안 됐으면 매 평가마다 재시도
+	if (!bPostProcessRegistered)
+	{
+		TryRegisterPostProcessOnLocalCamera();
+	}
 
 	EvaluateAndApply();
 }
@@ -170,4 +189,55 @@ APawn* UHellunaTeamOutlineComponent::GetLocalPlayerPawn() const
 
 	APlayerController* LocalPC = GEngine ? GEngine->GetFirstLocalPlayerController(World) : nullptr;
 	return LocalPC ? LocalPC->GetPawn() : nullptr;
+}
+
+void UHellunaTeamOutlineComponent::TryRegisterPostProcessOnLocalCamera()
+{
+	if (bPostProcessRegistered) return;
+	if (!OutlineMaterial)
+	{
+		UE_LOG(LogHelluna, Warning,
+			TEXT("[TeamOutline] OutlineMaterial null — PP not registered. Owner=%s"),
+			*GetNameSafe(GetOwner()));
+		return;
+	}
+
+	APawn* OwnerPawn = Cast<APawn>(GetOwner());
+	if (!OwnerPawn || !OwnerPawn->IsLocallyControlled())
+	{
+		// 원격 클라/서버 권위 인스턴스에서는 PP 등록 안 함 — 메시 토글만 수행
+		return;
+	}
+
+	APlayerController* PC = Cast<APlayerController>(OwnerPawn->GetController());
+	if (!PC)
+	{
+		// PossessedBy 미완료 — Tick 에서 재시도
+		return;
+	}
+
+	// 동적 PostProcessComponent 부착 (Owner = OwnerPawn, Unbound)
+	UPostProcessComponent* PP = NewObject<UPostProcessComponent>(OwnerPawn,
+		UPostProcessComponent::StaticClass(), TEXT("TeamOutlinePP_Dynamic"));
+	if (!PP)
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[TeamOutline] NewObject<UPostProcessComponent> failed."));
+		return;
+	}
+
+	PP->SetupAttachment(OwnerPawn->GetRootComponent());
+	PP->bUnbound = true;
+	PP->BlendWeight = 1.0f;
+
+	FWeightedBlendable WB(OutlineWeight, OutlineMaterial);
+	PP->Settings.WeightedBlendables.Array.Add(WB);
+
+	PP->RegisterComponent();
+
+	SpawnedOutlinePP = PP;
+	bPostProcessRegistered = true;
+
+	UE_LOG(LogHelluna, Log,
+		TEXT("[TeamOutline] Spawned PostProcessComponent (Unbound) on local Hero. Material=%s, Weight=%.2f"),
+		*GetNameSafe(OutlineMaterial), OutlineWeight);
 }

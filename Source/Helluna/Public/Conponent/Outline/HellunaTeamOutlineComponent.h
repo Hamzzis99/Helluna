@@ -9,6 +9,8 @@
 #include "HellunaTeamOutlineComponent.generated.h"
 
 class USkeletalMeshComponent;
+class UMaterialInterface;
+class UPostProcessComponent;
 
 UENUM(BlueprintType)
 enum class EHellunaOutlineState : uint8
@@ -81,6 +83,19 @@ public:
 	UPROPERTY(BlueprintReadWrite, Category = "Outline|Debug")
 	bool bDisabled = false;
 
+	/**
+	 * PostProcess 머티리얼 (M_TeamOutline_PP).
+	 * BP에서 할당. 미할당 시 BeginPlay에서 기본 경로 LoadObject 시도.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Outline|Material",
+		meta = (DisplayName = "외곽선 PP 머티리얼"))
+	TObjectPtr<UMaterialInterface> OutlineMaterial;
+
+	/** PP Blendable 가중치 (1.0 = 풀 적용) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Outline|Material",
+		meta = (DisplayName = "PP 가중치", ClampMin = "0.0", ClampMax = "1.0"))
+	float OutlineWeight = 1.0f;
+
 	/** 외부에서 다운 상태 알리기 (HealthComponent 의 OnDowned 등에서 호출 가능) */
 	UFUNCTION(BlueprintCallable, Category = "Outline")
 	void SetDownedHint(bool bInDowned);
@@ -95,4 +110,11 @@ private:
 	void EvaluateAndApply();
 	void ApplyOutlineState(EHellunaOutlineState NewState);
 	APawn* GetLocalPlayerPawn() const;
+
+	/** 로컬 컨트롤 Hero일 때 동적 PostProcessComponent 부착 (Unbound=true) */
+	void TryRegisterPostProcessOnLocalCamera();
+	bool bPostProcessRegistered = false;
+
+	UPROPERTY()
+	TObjectPtr<UPostProcessComponent> SpawnedOutlinePP = nullptr;
 };
