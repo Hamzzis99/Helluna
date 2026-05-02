@@ -390,6 +390,11 @@ public:
 		meta = (DisplayName = "사망 디졸브 사용"))
 	bool bEnableDeathDissolve = true;
 
+	/** Warrior식: M_EnemyDissolveMaster 부모 MI를 지정하면 사망 시 모든 슬롯이 이 머티리얼로 swap된다. null이면 기존 슬롯 머티리얼을 MID로 변환. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Effect|DeathDissolve",
+		meta = (DisplayName = "사망 디졸브 오버라이드 머티리얼"))
+	TSoftObjectPtr<UMaterialInterface> DeathDissolveOverrideMaterial;
+
 	/**
 	 * Warrior의 DissolveAmount와 Helluna Paragon Minion의 FadeOut/Ash를 함께 지원한다.
 	 * 현재 머티리얼에 존재하지 않는 파라미터는 SetScalarParameterValue 호출 시 무시된다.

@@ -773,9 +773,21 @@ void AHellunaEnemyCharacter::StartDeathDissolveVisuals()
 	bDeathDissolveVisualsStarted = true;
 	DeathDissolveMIDs.Reset(MaterialCount);
 
+	// Warrior 패턴: OverrideMaterial이 지정되면 모든 슬롯을 그 머티리얼로 swap (M_EnemyDissolveMaster 부모 MI 등)
+	UMaterialInterface* OverrideMat = nullptr;
+	if (!DeathDissolveOverrideMaterial.IsNull())
+	{
+		OverrideMat = DeathDissolveOverrideMaterial.LoadSynchronous();
+	}
+
 	for (int32 MaterialIndex = 0; MaterialIndex < MaterialCount; ++MaterialIndex)
 	{
-		UMaterialInstanceDynamic* MID = SkelMesh->CreateAndSetMaterialInstanceDynamic(MaterialIndex);
+		UMaterialInterface* SourceMat = OverrideMat ? OverrideMat : SkelMesh->GetMaterial(MaterialIndex);
+		UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(SourceMat, this);
+		if (IsValid(MID))
+		{
+			SkelMesh->SetMaterial(MaterialIndex, MID);
+		}
 		if (!IsValid(MID))
 		{
 			UE_LOG(LogHellunaEnemyDissolve, Warning,
