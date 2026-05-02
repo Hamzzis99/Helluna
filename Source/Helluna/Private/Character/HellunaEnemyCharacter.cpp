@@ -70,6 +70,47 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogHellunaEnemyDissolve, Log, All);
 
+namespace
+{
+	float HellunaDeathDissolveSmoothStep(float Edge0, float Edge1, float Value)
+	{
+		if (FMath::IsNearlyEqual(Edge0, Edge1))
+		{
+			return Value >= Edge1 ? 1.0f : 0.0f;
+		}
+
+		const float T = FMath::Clamp((Value - Edge0) / (Edge1 - Edge0), 0.0f, 1.0f);
+		return T * T * (3.0f - 2.0f * T);
+	}
+
+	float ResolveDeathDissolveScalarAmount(FName ParameterName, float Alpha)
+	{
+		const float ClampedAlpha = FMath::Clamp(Alpha, 0.0f, 1.0f);
+
+		if (ParameterName == FName(TEXT("DissolveAmount")))
+		{
+			return FMath::Clamp(FMath::Pow(ClampedAlpha, 0.72f), 0.0f, 1.0f);
+		}
+
+		if (ParameterName == FName(TEXT("FadeOut")))
+		{
+			return FMath::Clamp(FMath::Pow(ClampedAlpha, 0.58f), 0.0f, 1.0f);
+		}
+
+		if (ParameterName == FName(TEXT("Ash")))
+		{
+			return FMath::Clamp(HellunaDeathDissolveSmoothStep(0.14f, 0.82f, ClampedAlpha) * 1.35f, 0.0f, 1.35f);
+		}
+
+		if (ParameterName == FName(TEXT("Erode")))
+		{
+			return FMath::Lerp(0.10f, 0.95f, HellunaDeathDissolveSmoothStep(0.05f, 1.0f, ClampedAlpha));
+		}
+
+		return ClampedAlpha;
+	}
+}
+
 // ============================================================
 // 생성자
 // ============================================================
@@ -116,6 +157,7 @@ AHellunaEnemyCharacter::AHellunaEnemyCharacter()
 		FName(TEXT("DissolveAmount")),
 		FName(TEXT("FadeOut")),
 		FName(TEXT("Ash")),
+		FName(TEXT("Erode")),
 	};
 	DeathDissolveVectorParameterNames = {
 		FName(TEXT("DissolveEdgeColor")),
@@ -736,7 +778,11 @@ void AHellunaEnemyCharacter::StartDeathDissolveVisuals()
 		{
 			if (!VectorParamName.IsNone())
 			{
-				MID->SetVectorParameterValue(VectorParamName, DeathDissolveEdgeColor);
+				const FLinearColor VectorValue =
+					VectorParamName == FName(TEXT("BurnColor"))
+						? DeathDissolveBurnColor
+						: DeathDissolveEdgeColor;
+				MID->SetVectorParameterValue(VectorParamName, VectorValue);
 			}
 		}
 
@@ -841,7 +887,9 @@ void AHellunaEnemyCharacter::ApplyDeathDissolveAmount(float Amount)
 		{
 			if (!ScalarParamName.IsNone())
 			{
-				MIDPtr->SetScalarParameterValue(ScalarParamName, ClampedAmount);
+				MIDPtr->SetScalarParameterValue(
+					ScalarParamName,
+					ResolveDeathDissolveScalarAmount(ScalarParamName, ClampedAmount));
 			}
 		}
 	}

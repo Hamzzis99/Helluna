@@ -12,16 +12,70 @@
 
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/MeshComponent.h"
 #include "Components/SphereComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/Character.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
+#include "Materials/MaterialInterface.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
 #include "NiagaraComponent.h"
 #include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
+
+namespace
+{
+	float GuardianDeathDissolveSmoothStep(float Edge0, float Edge1, float Value)
+	{
+		if (FMath::IsNearlyEqual(Edge0, Edge1))
+		{
+			return Value >= Edge1 ? 1.0f : 0.0f;
+		}
+
+		const float T = FMath::Clamp((Value - Edge0) / (Edge1 - Edge0), 0.0f, 1.0f);
+		return T * T * (3.0f - 2.0f * T);
+	}
+
+	float ResolveGuardianDeathDissolveScalarAmount(FName ParameterName, float Alpha)
+	{
+		const float ClampedAlpha = FMath::Clamp(Alpha, 0.0f, 1.0f);
+
+		if (ParameterName == FName(TEXT("Animation")))
+		{
+			return FMath::Clamp(FMath::Pow(ClampedAlpha, 0.68f), 0.0f, 1.0f);
+		}
+
+		if (ParameterName == FName(TEXT("DissolveAmount")))
+		{
+			return FMath::Clamp(FMath::Pow(ClampedAlpha, 0.72f), 0.0f, 1.0f);
+		}
+
+		if (ParameterName == FName(TEXT("FadeOut")))
+		{
+			return FMath::Clamp(FMath::Pow(ClampedAlpha, 0.58f), 0.0f, 1.0f);
+		}
+
+		if (ParameterName == FName(TEXT("Ash")))
+		{
+			return FMath::Clamp(GuardianDeathDissolveSmoothStep(0.12f, 0.82f, ClampedAlpha) * 1.35f, 0.0f, 1.35f);
+		}
+
+		if (ParameterName == FName(TEXT("Erode")))
+		{
+			return FMath::Lerp(0.10f, 0.95f, GuardianDeathDissolveSmoothStep(0.05f, 1.0f, ClampedAlpha));
+		}
+
+		if (ParameterName == FName(TEXT("Opacity")))
+		{
+			return 1.0f - GuardianDeathDissolveSmoothStep(0.05f, 1.0f, ClampedAlpha);
+		}
+
+		return ClampedAlpha;
+	}
+}
 
 
 
@@ -74,6 +128,23 @@ AHellunaGuardianTurret::AHellunaGuardianTurret()
 
 	// ── 체력 컴포넌트 ───────────────────────────────────────
 	HealthComponent = CreateDefaultSubobject<UHellunaHealthComponent>(TEXT("HealthComponent"));
+
+	DeathDissolveOverrideMaterial = TSoftObjectPtr<UMaterialInterface>(
+		FSoftObjectPath(TEXT("/Game/Dissolve/Materials/M_Dissolve/M_Dissolve_01.M_Dissolve_01")));
+	DeathDissolveScalarParameterNames = {
+		FName(TEXT("Animation")),
+		FName(TEXT("DissolveAmount")),
+		FName(TEXT("FadeOut")),
+		FName(TEXT("Ash")),
+		FName(TEXT("Erode")),
+		FName(TEXT("Opacity")),
+	};
+	DeathDissolveVectorParameterNames = {
+		FName(TEXT("Edge Color")),
+		FName(TEXT("DissolveEdgeColor")),
+		FName(TEXT("BurnColor")),
+		FName(TEXT("EmissiveColor")),
+	};
 }
 
 // =========================================================
@@ -143,6 +214,7 @@ void AHellunaGuardianTurret::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(PhasePollTimerHandle);
+		World->GetTimerManager().ClearTimer(DeathDissolveTimerHandle);
 	}
 
 	if (HealthComponent && HealthComponent->IsRegistered())
@@ -154,6 +226,8 @@ void AHellunaGuardianTurret::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 	PlayersInRange.Empty();
 	CurrentTarget = nullptr;
+	DeathDissolveMeshComponents.Empty();
+	DeathDissolveMIDs.Empty();
 
 	Super::EndPlay(EndPlayReason);
 }
@@ -1093,7 +1167,179 @@ void AHellunaGuardianTurret::ApplyAimBeamForState(EGuardianState State)
 }
 
 // =========================================================
-// 멀티캐스트 RPC
+// 사망 디졸브 제어
+// =========================================================
+
+// 클라이언트 로컬 사망 디졸브 시각화.
+void AHellunaGuardianTurret::StartDeathDissolveVisuals()
+{
+	if (IsRunningDedicatedServer())
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	World->GetTimerManager().ClearTimer(DeathDissolveTimerHandle);
+	DeathDissolveMeshComponents.Reset();
+	DeathDissolveMIDs.Reset();
+
+	UMaterialInterface* OverrideMaterial = nullptr;
+	if (!DeathDissolveOverrideMaterial.IsNull())
+	{
+		OverrideMaterial = DeathDissolveOverrideMaterial.LoadSynchronous();
+		if (!OverrideMaterial)
+		{
+			UE_LOG(LogHellunaGuardian, Warning,
+				TEXT("[GuardianDeathDissolve] Override material load failed. Guardian=%s Path=%s"),
+				*GetNameSafe(this),
+				*DeathDissolveOverrideMaterial.ToSoftObjectPath().ToString());
+		}
+	}
+
+	TArray<UMeshComponent*> MeshComponents;
+	GetComponents<UMeshComponent>(MeshComponents);
+
+	for (UMeshComponent* MeshComponent : MeshComponents)
+	{
+		if (!IsValid(MeshComponent) || MeshComponent->GetNumMaterials() <= 0)
+		{
+			continue;
+		}
+
+		bool bAddedMesh = false;
+		const int32 MaterialCount = MeshComponent->GetNumMaterials();
+		for (int32 MaterialIndex = 0; MaterialIndex < MaterialCount; ++MaterialIndex)
+		{
+			UMaterialInterface* SourceMaterial = OverrideMaterial ? OverrideMaterial : MeshComponent->GetMaterial(MaterialIndex);
+			if (!SourceMaterial)
+			{
+				continue;
+			}
+
+			UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(SourceMaterial, this);
+			if (!MID)
+			{
+				continue;
+			}
+
+			MeshComponent->SetMaterial(MaterialIndex, MID);
+			DeathDissolveMIDs.Add(MID);
+
+			for (const FName& VectorParamName : DeathDissolveVectorParameterNames)
+			{
+				if (!VectorParamName.IsNone())
+				{
+					MID->SetVectorParameterValue(VectorParamName, DeathDissolveEdgeColor);
+				}
+			}
+
+			MID->SetScalarParameterValue(FName(TEXT("Edge")), 0.16f);
+			MID->SetScalarParameterValue(FName(TEXT("EdgeOffset")), 0.045f);
+			MID->SetScalarParameterValue(FName(TEXT("Boost")), 4.0f);
+			MID->SetScalarParameterValue(FName(TEXT("Power")), 1.6f);
+
+			bAddedMesh = true;
+		}
+
+		if (bAddedMesh)
+		{
+			DeathDissolveMeshComponents.Add(MeshComponent);
+		}
+	}
+
+	if (DeathDissolveMIDs.IsEmpty())
+	{
+		UE_LOG(LogHellunaGuardian, Warning,
+			TEXT("[GuardianDeathDissolve] No dynamic materials were created. Guardian=%s MeshComponents=%d"),
+			*GetNameSafe(this),
+			MeshComponents.Num());
+		return;
+	}
+
+	DeathDissolveStartWorldSeconds = World->GetTimeSeconds();
+	ApplyDeathDissolveAmount(0.0f);
+
+	const float SafeTickInterval = FMath::Clamp(DeathDissolveTickInterval, 0.016f, 0.25f);
+	World->GetTimerManager().SetTimer(
+		DeathDissolveTimerHandle,
+		FTimerDelegate::CreateWeakLambda(this, [this]()
+		{
+			UWorld* LocalWorld = GetWorld();
+			if (!LocalWorld)
+			{
+				return;
+			}
+
+			const float SafeDuration = FMath::Max(0.1f, DeathDissolveDuration);
+			const float Elapsed = LocalWorld->GetTimeSeconds() - DeathDissolveStartWorldSeconds;
+			const float Alpha = FMath::Clamp(Elapsed / SafeDuration, 0.0f, 1.0f);
+			ApplyDeathDissolveAmount(Alpha);
+
+			if (Alpha >= 1.0f)
+			{
+				FinishDeathDissolveVisuals();
+			}
+		}),
+		SafeTickInterval,
+		true);
+}
+
+void AHellunaGuardianTurret::ApplyDeathDissolveAmount(float Amount)
+{
+	const float ClampedAmount = FMath::Clamp(Amount, 0.0f, 1.0f);
+
+	for (UMaterialInstanceDynamic* MID : DeathDissolveMIDs)
+	{
+		if (!IsValid(MID))
+		{
+			continue;
+		}
+
+		for (const FName& ScalarParamName : DeathDissolveScalarParameterNames)
+		{
+			if (!ScalarParamName.IsNone())
+			{
+				MID->SetScalarParameterValue(
+					ScalarParamName,
+					ResolveGuardianDeathDissolveScalarAmount(ScalarParamName, ClampedAmount));
+			}
+		}
+	}
+}
+
+void AHellunaGuardianTurret::FinishDeathDissolveVisuals()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(DeathDissolveTimerHandle);
+	}
+
+	ApplyDeathDissolveAmount(1.0f);
+
+	for (UMeshComponent* MeshComponent : DeathDissolveMeshComponents)
+	{
+		if (!IsValid(MeshComponent))
+		{
+			continue;
+		}
+
+		MeshComponent->SetVisibility(false, true);
+		MeshComponent->SetHiddenInGame(true, true);
+		MeshComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		MeshComponent->SetSimulatePhysics(false);
+	}
+
+	DeathDissolveMeshComponents.Empty();
+	DeathDissolveMIDs.Empty();
+}
+
+// =========================================================
+// Multicast RPC
 // =========================================================
 
 void AHellunaGuardianTurret::Multicast_PlayFireFX_Implementation(
@@ -1250,10 +1496,7 @@ void AHellunaGuardianTurret::OnGuardianDeath(AActor* /*DeadActor*/, AActor* /*Ki
 	}
 
 	// 메시 분리 + 물리 시뮬 (서버 + 모든 클라 동기)
-	if (bEnableDeathPhysicsBreak)
-	{
-		Multicast_OnDeathBreak();
-	}
+	Multicast_OnDeathBreak();
 
 	// 일정 시간 후 액터 자동 정리 (서버 권한)
 	if (DeathActorLifetimeSeconds > 0.f)
@@ -1333,8 +1576,16 @@ void AHellunaGuardianTurret::Multicast_OnDeathBreak_Implementation()
 		}
 	};
 
-	EnablePhysicsOnMesh(MeshHead);
-	EnablePhysicsOnMesh(MeshBody);
+	if (bEnableDeathPhysicsBreak)
+	{
+		EnablePhysicsOnMesh(MeshHead);
+		EnablePhysicsOnMesh(MeshBody);
+	}
+
+	if (bEnableDeathDissolve)
+	{
+		StartDeathDissolveVisuals();
+	}
 }
 
 // =========================================================

@@ -10,6 +10,8 @@ Claude.md
 Codexreedme/
 claude_code.bat
 /**/*.md
+/**/*.py
+
 
 # Content Folder (Maps/Materials/Texture/VFX는 핵심 에셋이므로 추적 필수)
 

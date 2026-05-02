@@ -403,15 +403,20 @@ public:
 		meta = (DisplayName = "디졸브 컬러 벡터 파라미터"))
 	TArray<FName> DeathDissolveVectorParameterNames;
 
-	/** 디졸브 가장자리/먼지 컬러. */
+	/** Warrior식 디졸브 가장자리/Niagara 컬러. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Effect|DeathDissolve",
-		meta = (DisplayName = "디졸브 컬러"))
+		meta = (DisplayName = "Warrior 디졸브 엣지 컬러"))
 	FLinearColor DeathDissolveEdgeColor = FLinearColor(2.5f, 1.05f, 0.25f, 1.0f);
 
-	/** Warrior BP_Gruntling_Guardian과 동일한 6초 기본값. */
+	/** Helluna Paragon Minion BurnColor용 과장 컬러. 기본 BurnColor 계열보다 강하게 태운다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Effect|DeathDissolve",
+		meta = (DisplayName = "Helluna 먼지화 Burn 컬러"))
+	FLinearColor DeathDissolveBurnColor = FLinearColor(65.0f, 23.0f, 1.6f, 1.0f);
+
+	/** Warrior보다 짧고 강한 기본값. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Effect|DeathDissolve",
 		meta = (DisplayName = "디졸브 시간", ClampMin = "0.1", ClampMax = "30.0", Units = "s"))
-	float DeathDissolveDuration = 6.0f;
+	float DeathDissolveDuration = 4.5f;
 
 	/** 머티리얼 진행값 갱신 주기. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Effect|DeathDissolve",
@@ -428,7 +433,7 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Effect|DeathDissolve",
 		meta = (DisplayName = "사망 디졸브 이펙트 크기", ClampMin = "0.01", ClampMax = "10.0"))
-	float DeathDissolveEffectScale = 1.0f;
+	float DeathDissolveEffectScale = 1.65f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Effect|DeathDissolve",
 		meta = (DisplayName = "나이아가라 컬러 변수"))

@@ -46,7 +46,8 @@ private:
 
 	void ClearPerfectBlockWindow();
 
-	UPROPERTY(EditDefaultsOnly, Category = "Block", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Block|PerfectTiming",
+		meta = (DisplayName = "퍼펙트 Block 시간", ClampMin = "0.0", ClampMax = "2.0", AllowPrivateAccess = "true"))
 	float PerfectBlockWindowSeconds = 0.25f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Block")

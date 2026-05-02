@@ -30,9 +30,14 @@ class HELLUNA_API UDataAsset_HeroStartUpData : public UDataAsset_BaseStartUpData
 	GENERATED_BODY()
 
 public:
+	UDataAsset_HeroStartUpData();
+
 	virtual void GiveToAbilitySystemComponent(UHellunaAbilitySystemComponent* InASCToGive, int32 ApplyLevel = 1) override;
 
 private:
 	UPROPERTY(EditDefaultsOnly, Category = "StartUpData", meta = (TitleProperty = "InputTag"))
 	TArray<FHellunaHeroAbilitySet> HeroStartUpAbilitySets;
+
+	UPROPERTY(EditDefaultsOnly, Category = "StartUpData|Block")
+	TSoftClassPtr<UHellunaGameplayAbility> BlockAbilityToGrant;
 };
