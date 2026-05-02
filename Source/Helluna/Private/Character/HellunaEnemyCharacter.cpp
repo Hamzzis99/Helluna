@@ -842,6 +842,38 @@ void AHellunaEnemyCharacter::StartDeathDissolveVisuals()
 			}
 		}
 
+		// TeamColor 보존 — 평소 mesh가 Paragon 머티리얼이고 OverrideMaterial로 swap 시
+		// 우리 MIC의 default TeamColor=white가 적용되어 색이 사라짐. ReplicatedTeamColor 또는
+		// 평소 mesh material에서 TeamColor 추출해 swap된 MID에 명시 적용.
+		if (OverrideMat && !TeamColorParameterName.IsNone())
+		{
+			FLinearColor PreservedTeamColor = FLinearColor::White;
+			bool bGotTeamColor = false;
+
+			if (ReplicatedTeamColor.A > 0.f)
+			{
+				PreservedTeamColor = ReplicatedTeamColor;
+				PreservedTeamColor.A = 1.f;
+				bGotTeamColor = true;
+			}
+
+			if (!bGotTeamColor && IsValid(TeamColorMID))
+			{
+				FLinearColor PrevColor;
+				if (TeamColorMID->GetVectorParameterValue(TeamColorParameterName, PrevColor))
+				{
+					PreservedTeamColor = PrevColor;
+					PreservedTeamColor.A = 1.f;
+					bGotTeamColor = true;
+				}
+			}
+
+			if (bGotTeamColor)
+			{
+				MID->SetVectorParameterValue(TeamColorParameterName, PreservedTeamColor);
+			}
+		}
+
 		DeathDissolveMIDs.Add(MID);
 	}
 

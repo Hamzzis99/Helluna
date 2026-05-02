@@ -66,6 +66,13 @@ protected:
     UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
     TObjectPtr<UImage> MinimapTeamMarker2 = nullptr;
 
+    /** 미니맵 팀원 닉네임 라벨 (마커 아래 표시, HeroType 색상 적용) */
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    TObjectPtr<UTextBlock> MinimapTeamLabel1 = nullptr;
+
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    TObjectPtr<UTextBlock> MinimapTeamLabel2 = nullptr;
+
     // ── 웨이브 정보 (좌상단, 미니맵 아래) ──
     UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
     TObjectPtr<UOverlay> WaveInfoPanel = nullptr;

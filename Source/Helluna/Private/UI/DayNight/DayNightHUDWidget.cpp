@@ -466,6 +466,7 @@ void UDayNightHUDWidget::UpdateMinimap()
 
     // ── 다른 플레이어 (PlayerArray 순회) ──
     UImage* TeamMarkers[2] = { MinimapTeamMarker1, MinimapTeamMarker2 };
+    UTextBlock* TeamLabels[2] = { MinimapTeamLabel1, MinimapTeamLabel2 };
     int32 TeamIdx = 0;
 
     if (AGameStateBase* GSBase = World->GetGameState())
@@ -496,13 +497,16 @@ void UDayNightHUDWidget::UpdateMinimap()
             if (!Pawn) continue;
             if (TeamIdx >= 2) break;
 
-            UImage* Marker = TeamMarkers[TeamIdx++];
+            const int32 SlotIdx = TeamIdx++;
+            UImage* Marker = TeamMarkers[SlotIdx];
+            UTextBlock* Label = TeamLabels[SlotIdx];
             if (!Marker) continue;
 
             UpdateMarker(Marker, Pawn->GetActorLocation(), Pawn->GetActorRotation().Yaw, true);
 
             FLinearColor MarkerColor = FLinearColor::White;
-            if (AHellunaPlayerState* HPS = Cast<AHellunaPlayerState>(PS))
+            AHellunaPlayerState* HPS = Cast<AHellunaPlayerState>(PS);
+            if (HPS)
             {
                 switch (HPS->GetSelectedHeroType())
                 {
@@ -513,12 +517,41 @@ void UDayNightHUDWidget::UpdateMinimap()
                 }
             }
             Marker->SetColorAndOpacity(MarkerColor);
+
+            // 닉네임 라벨 (마커 바로 아래. 라벨 슬롯 Alignment=(0.5, 0.0) 권장)
+            if (Label)
+            {
+                if (HPS && !HPS->PlayerUniqueId.IsEmpty() &&
+                    Marker->GetVisibility() != ESlateVisibility::Collapsed)
+                {
+                    Label->SetText(FText::FromString(HPS->PlayerUniqueId));
+                    Label->SetColorAndOpacity(FSlateColor(MarkerColor));
+
+                    if (UCanvasPanelSlot* MarkerSlot = Cast<UCanvasPanelSlot>(Marker->Slot))
+                    {
+                        if (UCanvasPanelSlot* LabelSlot = Cast<UCanvasPanelSlot>(Label->Slot))
+                        {
+                            const FVector2D MPos = MarkerSlot->GetPosition();
+                            const FVector2D MSize = MarkerSlot->GetSize();
+                            LabelSlot->SetPosition(FVector2D(
+                                MPos.X + MSize.X * 0.5f,
+                                MPos.Y + MSize.Y));
+                        }
+                    }
+                    Label->SetVisibility(ESlateVisibility::HitTestInvisible);
+                }
+                else
+                {
+                    Label->SetVisibility(ESlateVisibility::Collapsed);
+                }
+            }
         }
     }
 
     for (int32 i = TeamIdx; i < 2; ++i)
     {
         if (TeamMarkers[i]) TeamMarkers[i]->SetVisibility(ESlateVisibility::Collapsed);
+        if (TeamLabels[i]) TeamLabels[i]->SetVisibility(ESlateVisibility::Collapsed);
     }
 
     // ── [Phase 1] 우주선 (BASE) 마커 ──

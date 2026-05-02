@@ -2825,28 +2825,37 @@ void AHellunaHeroController::OnSpectatePrevInput(const FInputActionValue& /*Valu
 
 void AHellunaHeroController::OnSpectateMoveForwardInput(const FInputActionValue& Value)
 {
+	const float V = Value.Get<float>();
+	if (!FMath::IsNearlyZero(V))
+	{
+		UE_LOG(LogHelluna, Log, TEXT("[Phase22-Diag] OnSpectateMoveForwardInput V=%.2f (bIsSpec=%s, Follow=%s, Pawn=%s)"),
+			V,
+			bIsSpectating ? TEXT("true") : TEXT("false"),
+			bSpectatorFollowMode ? TEXT("true") : TEXT("false"),
+			GetPawn() ? *GetPawn()->GetName() : TEXT("null"));
+	}
 	if (!bIsSpectating || bSpectatorFollowMode) return;
 	APawn* Spec = GetPawn();
 	if (!IsValid(Spec)) return;
-
-	const float V = Value.Get<float>();
 	if (FMath::IsNearlyZero(V)) return;
 
-	// ControlRotation Forward (피치 포함) — 자유비행이므로 위/아래도 자연스럽게
 	const FVector Fwd = GetControlRotation().Vector();
 	Spec->AddMovementInput(Fwd, V * SpectateMoveScale);
 }
 
 void AHellunaHeroController::OnSpectateMoveRightInput(const FInputActionValue& Value)
 {
+	const float V = Value.Get<float>();
+	if (!FMath::IsNearlyZero(V))
+	{
+		UE_LOG(LogHelluna, Log, TEXT("[Phase22-Diag] OnSpectateMoveRightInput V=%.2f (bIsSpec=%s, Follow=%s)"),
+			V, bIsSpectating ? TEXT("Y") : TEXT("N"), bSpectatorFollowMode ? TEXT("Y") : TEXT("N"));
+	}
 	if (!bIsSpectating || bSpectatorFollowMode) return;
 	APawn* Spec = GetPawn();
 	if (!IsValid(Spec)) return;
-
-	const float V = Value.Get<float>();
 	if (FMath::IsNearlyZero(V)) return;
 
-	// Yaw 만 적용한 Right 벡터 (수평 이동)
 	const FRotator YawOnly(0.f, GetControlRotation().Yaw, 0.f);
 	const FVector Right = FRotationMatrix(YawOnly).GetUnitAxis(EAxis::Y);
 	Spec->AddMovementInput(Right, V * SpectateMoveScale);
@@ -2854,20 +2863,29 @@ void AHellunaHeroController::OnSpectateMoveRightInput(const FInputActionValue& V
 
 void AHellunaHeroController::OnSpectateLookInput(const FInputActionValue& Value)
 {
+	const FVector2D Axis = Value.Get<FVector2D>();
+	// 마우스 큰 움직임만 로그 (스팸 방지)
+	if (FMath::Abs(Axis.X) > 0.5f || FMath::Abs(Axis.Y) > 0.5f)
+	{
+		UE_LOG(LogHelluna, Log, TEXT("[Phase22-Diag] OnSpectateLookInput X=%.2f Y=%.2f (bIsSpec=%s, Follow=%s)"),
+			Axis.X, Axis.Y, bIsSpectating ? TEXT("Y") : TEXT("N"), bSpectatorFollowMode ? TEXT("Y") : TEXT("N"));
+	}
 	if (!bIsSpectating || bSpectatorFollowMode) return;
 
-	const FVector2D Axis = Value.Get<FVector2D>();
 	AddYawInput(Axis.X * SpectateLookSensitivity);
 	AddPitchInput(Axis.Y * SpectateLookSensitivity);
 }
 
 void AHellunaHeroController::OnSpectateAscendInput(const FInputActionValue& Value)
 {
+	const float V = Value.Get<float>();
+	if (!FMath::IsNearlyZero(V))
+	{
+		UE_LOG(LogHelluna, Log, TEXT("[Phase22-Diag] OnSpectateAscendInput V=%.2f"), V);
+	}
 	if (!bIsSpectating || bSpectatorFollowMode) return;
 	APawn* Spec = GetPawn();
 	if (!IsValid(Spec)) return;
-
-	const float V = Value.Get<float>();
 	if (FMath::IsNearlyZero(V)) return;
 
 	Spec->AddMovementInput(FVector::UpVector, V * SpectateMoveScale);
