@@ -299,7 +299,24 @@ void AHellunaHeroController::BeginPlay()
 		{
 			SpecEIC->BindAction(SpectatePrevAction, ETriggerEvent::Started, this, &AHellunaHeroController::OnSpectatePrevInput);
 		}
-		// 자유비행(이동/회전/상하)은 ASpectatorPawn 내장 legacy axis 로 처리 — DefaultInput.ini 참고
+
+		// 자유비행 — Triggered 이벤트(매 틱 발화)
+		if (SpectateMoveForwardAction)
+		{
+			SpecEIC->BindAction(SpectateMoveForwardAction, ETriggerEvent::Triggered, this, &AHellunaHeroController::OnSpectateMoveForwardInput);
+		}
+		if (SpectateMoveRightAction)
+		{
+			SpecEIC->BindAction(SpectateMoveRightAction, ETriggerEvent::Triggered, this, &AHellunaHeroController::OnSpectateMoveRightInput);
+		}
+		if (SpectateLookAction)
+		{
+			SpecEIC->BindAction(SpectateLookAction, ETriggerEvent::Triggered, this, &AHellunaHeroController::OnSpectateLookInput);
+		}
+		if (SpectateAscendAction)
+		{
+			SpecEIC->BindAction(SpectateAscendAction, ETriggerEvent::Triggered, this, &AHellunaHeroController::OnSpectateAscendInput);
+		}
 	}
 }
 
@@ -2800,5 +2817,59 @@ void AHellunaHeroController::OnSpectatePrevInput(const FInputActionValue& /*Valu
 	if (!bIsSpectating || !bSpectatorFollowMode) return;
 	--CurrentSpectateIndex;
 	ApplyCurrentSpectateView();
+}
+
+// ─── 자유비행 입력 핸들러 ──────────────────────────────────────────────
+// 가드: 관전 중이고 + 자유비행 모드일 때만 동작.
+// SpectatorPawn 의 USpectatorPawnMovement 가 ControlRotation/AddMovementInput 을 그대로 따름.
+
+void AHellunaHeroController::OnSpectateMoveForwardInput(const FInputActionValue& Value)
+{
+	if (!bIsSpectating || bSpectatorFollowMode) return;
+	APawn* Spec = GetPawn();
+	if (!IsValid(Spec)) return;
+
+	const float V = Value.Get<float>();
+	if (FMath::IsNearlyZero(V)) return;
+
+	// ControlRotation Forward (피치 포함) — 자유비행이므로 위/아래도 자연스럽게
+	const FVector Fwd = GetControlRotation().Vector();
+	Spec->AddMovementInput(Fwd, V * SpectateMoveScale);
+}
+
+void AHellunaHeroController::OnSpectateMoveRightInput(const FInputActionValue& Value)
+{
+	if (!bIsSpectating || bSpectatorFollowMode) return;
+	APawn* Spec = GetPawn();
+	if (!IsValid(Spec)) return;
+
+	const float V = Value.Get<float>();
+	if (FMath::IsNearlyZero(V)) return;
+
+	// Yaw 만 적용한 Right 벡터 (수평 이동)
+	const FRotator YawOnly(0.f, GetControlRotation().Yaw, 0.f);
+	const FVector Right = FRotationMatrix(YawOnly).GetUnitAxis(EAxis::Y);
+	Spec->AddMovementInput(Right, V * SpectateMoveScale);
+}
+
+void AHellunaHeroController::OnSpectateLookInput(const FInputActionValue& Value)
+{
+	if (!bIsSpectating || bSpectatorFollowMode) return;
+
+	const FVector2D Axis = Value.Get<FVector2D>();
+	AddYawInput(Axis.X * SpectateLookSensitivity);
+	AddPitchInput(Axis.Y * SpectateLookSensitivity);
+}
+
+void AHellunaHeroController::OnSpectateAscendInput(const FInputActionValue& Value)
+{
+	if (!bIsSpectating || bSpectatorFollowMode) return;
+	APawn* Spec = GetPawn();
+	if (!IsValid(Spec)) return;
+
+	const float V = Value.Get<float>();
+	if (FMath::IsNearlyZero(V)) return;
+
+	Spec->AddMovementInput(FVector::UpVector, V * SpectateMoveScale);
 }
 
