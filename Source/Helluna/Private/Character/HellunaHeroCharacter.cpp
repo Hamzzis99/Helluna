@@ -48,6 +48,7 @@
 #include "Animation/AnimMontage.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
 #include "Cheat/HellunaCheatComponent.h"
+#include "Conponent/Outline/HellunaTeamOutlineComponent.h"
 
 #include "UI/Weapon/WeaponHUDWidget.h"
 #include "UI/HUD/HellunaHealthHUDWidget.h"
@@ -121,6 +122,9 @@ AHellunaHeroCharacter::AHellunaHeroCharacter()
 
 	// [cheatdebug] F1~F6 치트 컴포넌트 자동 부착 (BP 수정 없이 C++에서)
 	CheatComponent = CreateDefaultSubobject<UHellunaCheatComponent>(TEXT("CheatComponent"));
+
+	// [TeamOutline] L4D식 아군 외곽선 — 클라이언트 시각 효과 (CustomDepth/Stencil)
+	TeamOutlineComponent = CreateDefaultSubobject<UHellunaTeamOutlineComponent>(TEXT("TeamOutlineComponent"));
 
 	// ★ 추가: 플레이어 체력 컴포넌트
 	HeroHealthComponent = CreateDefaultSubobject<UHellunaHealthComponent>(TEXT("HeroHealthComponent"));

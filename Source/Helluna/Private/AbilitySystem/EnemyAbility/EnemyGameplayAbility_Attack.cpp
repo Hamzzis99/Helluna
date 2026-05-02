@@ -132,9 +132,9 @@ void UEnemyGameplayAbility_Attack::ActivateAbility(
 		return;
 	}
 
-	MontageTask->OnCompleted.AddDynamic(this, &UEnemyGameplayAbility_Attack::OnMontageCompleted);
-	MontageTask->OnCancelled.AddDynamic(this, &UEnemyGameplayAbility_Attack::OnMontageCancelled);
-	MontageTask->OnInterrupted.AddDynamic(this, &UEnemyGameplayAbility_Attack::OnMontageCancelled);
+	MontageTask->OnCompleted.AddUniqueDynamic(this, &UEnemyGameplayAbility_Attack::OnMontageCompleted);
+	MontageTask->OnCancelled.AddUniqueDynamic(this, &UEnemyGameplayAbility_Attack::OnMontageCancelled);
+	MontageTask->OnInterrupted.AddUniqueDynamic(this, &UEnemyGameplayAbility_Attack::OnMontageCancelled);
 
 	MontageTask->ReadyForActivation();
 }

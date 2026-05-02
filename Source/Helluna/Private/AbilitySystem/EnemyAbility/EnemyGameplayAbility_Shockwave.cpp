@@ -101,9 +101,9 @@ void UEnemyGameplayAbility_Shockwave::ActivateAbility(
 
 		if (MontageTask)
 		{
-			MontageTask->OnCompleted.AddDynamic(this, &UEnemyGameplayAbility_Shockwave::OnMontageCompleted);
-			MontageTask->OnCancelled.AddDynamic(this, &UEnemyGameplayAbility_Shockwave::OnMontageCancelled);
-			MontageTask->OnInterrupted.AddDynamic(this, &UEnemyGameplayAbility_Shockwave::OnMontageCancelled);
+			MontageTask->OnCompleted.AddUniqueDynamic(this, &UEnemyGameplayAbility_Shockwave::OnMontageCompleted);
+			MontageTask->OnCancelled.AddUniqueDynamic(this, &UEnemyGameplayAbility_Shockwave::OnMontageCancelled);
+			MontageTask->OnInterrupted.AddUniqueDynamic(this, &UEnemyGameplayAbility_Shockwave::OnMontageCancelled);
 			MontageTask->ReadyForActivation();
 		}
 	}

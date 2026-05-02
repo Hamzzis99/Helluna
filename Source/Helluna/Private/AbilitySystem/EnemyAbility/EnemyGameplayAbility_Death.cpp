@@ -93,26 +93,14 @@ void UEnemyGameplayAbility_Death::ActivateAbility(
 		return;
 	}
 
-	MontageTask->OnCompleted.AddDynamic(this, &UEnemyGameplayAbility_Death::OnMontageCompleted);
-	MontageTask->OnCancelled.AddDynamic(this, &UEnemyGameplayAbility_Death::OnMontageCancelled);
-	MontageTask->OnInterrupted.AddDynamic(this, &UEnemyGameplayAbility_Death::OnMontageCancelled);
-
-	// 몽타주 70% 지점에서 조기 후처리
-	const float EarlyFinishTime = DeathMontage->GetPlayLength() * 0.7f;
-	UWorld* World = Enemy->GetWorld();
-	if (World)
-	{
-		FTimerHandle EarlyFinishTimer;
-		World->GetTimerManager().SetTimer(EarlyFinishTimer,
-			[this]() { HandleDeathFinished(); },
-			EarlyFinishTime, false);
-	}
+	MontageTask->OnCompleted.AddUniqueDynamic(this, &UEnemyGameplayAbility_Death::OnMontageCompleted);
+	MontageTask->OnCancelled.AddUniqueDynamic(this, &UEnemyGameplayAbility_Death::OnMontageCancelled);
+	MontageTask->OnInterrupted.AddUniqueDynamic(this, &UEnemyGameplayAbility_Death::OnMontageCancelled);
 
 	UE_LOG(LogTemp, Warning,
-		TEXT("[DeathDiag][DeathGAMontageStart] Enemy=%s Length=%.2f EarlyFinish=%.2f"),
+		TEXT("[DeathDiag][DeathGAMontageStart] Enemy=%s Length=%.2f"),
 		*GetNameSafe(Enemy),
-		DeathMontage->GetPlayLength(),
-		EarlyFinishTime);
+		DeathMontage->GetPlayLength());
 
 	MontageTask->ReadyForActivation();
 }

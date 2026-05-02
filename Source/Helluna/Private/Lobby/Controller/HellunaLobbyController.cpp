@@ -2163,7 +2163,8 @@ void AHellunaLobbyController::BeginLoadingHandoff()
 		return;
 	}
 
-	Ship->OnSettleComplete.AddDynamic(this, &AHellunaLobbyController::CaptureAndTravel);
+	// [§16 L-1] BeginLoadingHandoff 재호출 시 중복 등록 방지 — bCaptureAndTravelFired 가드와 이중 안전망
+	Ship->OnSettleComplete.AddUniqueDynamic(this, &AHellunaLobbyController::CaptureAndTravel);
 	Ship->BeginSettleForTravel();
 
 	// (Q13) 가드 타이머 — 0.5s + 0.3s margin

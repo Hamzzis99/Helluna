@@ -732,6 +732,11 @@ void AHellunaEnemyCharacter::OnDeathMontageEnded(UAnimMontage* Montage, bool bIn
 // ============================================================
 void AHellunaEnemyCharacter::Multicast_StartDeathDissolve_Implementation()
 {
+	// Death montage 마지막 프레임 자세에서 AnimInstance 정지 — idle base pose로의 자동 BlendOut 차단
+	if (USkeletalMeshComponent* SkelMesh = GetMesh())
+	{
+		SkelMesh->bPauseAnims = true;
+	}
 	StartDeathDissolveVisuals();
 }
 
