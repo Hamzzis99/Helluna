@@ -791,6 +791,16 @@ protected:
 		meta = (DisplayName = "Spectate Mapping Context (관전 IMC)"))
 	TObjectPtr<UInputMappingContext> SpectateMappingContext;
 
+	/** 관전 IMC priority. 다른 IMC 와 충돌 시 조정. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Spectate|Input (관전|입력)",
+		meta = (DisplayName = "Spectate IMC Priority (관전 IMC 우선순위)", ClampMin = "0", ClampMax = "1000"))
+	int32 SpectateIMCPriority = 50;
+
+	/** 클라 측 ViewTarget 전환 블렌드 시간(초). 자유비행/팀원 순환 모두 동일하게 적용. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Spectate|View (관전|시점)",
+		meta = (DisplayName = "Spectate View Blend (관전 시점 블렌드 초)", ClampMin = "0.0", ClampMax = "5.0"))
+	float SpectateViewBlendTime = 0.3f;
+
 private:
 	/** 로컬 — 현재 관전 중 여부 */
 	bool bIsSpectating = false;

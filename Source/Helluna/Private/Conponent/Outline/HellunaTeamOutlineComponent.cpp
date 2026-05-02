@@ -4,6 +4,7 @@
 #include "Conponent/Outline/HellunaTeamOutlineComponent.h"
 
 #include "Character/HellunaHeroCharacter.h"
+#include "Camera/CameraComponent.h"
 #include "Components/PostProcessComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/Engine.h"
@@ -141,8 +142,10 @@ void UHellunaTeamOutlineComponent::EvaluateAndApply()
 
 	const float DistanceSq = FVector::DistSquared(LocalPawn->GetActorLocation(),
 		Owner->GetActorLocation());
+	const float MinSq = MinShowDistance * MinShowDistance;
 	const float MaxSq = MaxOutlineDistance * MaxOutlineDistance;
-	if (DistanceSq > MaxSq)
+	// 가까우면(MinShowDistance 이내) 또는 멀면(MaxOutlineDistance 초과) 외곽선 끔
+	if (DistanceSq < MinSq || DistanceSq > MaxSq)
 	{
 		ApplyOutlineState(EHellunaOutlineState::None);
 		return;
@@ -236,15 +239,11 @@ void UHellunaTeamOutlineComponent::TryRegisterPostProcessOnLocalCamera()
 	PP->SetupAttachment(OwnerPawn->GetRootComponent());
 	PP->bUnbound = true;
 	PP->BlendWeight = 1.0f;
-
-	FWeightedBlendable WB(OutlineWeight, OutlineMaterial);
-	PP->Settings.WeightedBlendables.Array.Add(WB);
-
+	PP->Settings.WeightedBlendables.Array.Add(FWeightedBlendable(OutlineWeight, OutlineMaterial));
 	PP->RegisterComponent();
 
 	SpawnedOutlinePP = PP;
 	bPostProcessRegistered = true;
-
 	UE_LOG(LogHelluna, Log,
 		TEXT("[TeamOutline] Spawned PostProcessComponent (Unbound) on local Hero. Material=%s, Weight=%.2f"),
 		*GetNameSafe(OutlineMaterial), OutlineWeight);

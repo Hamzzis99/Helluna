@@ -1584,7 +1584,27 @@ void AHellunaGuardianTurret::Multicast_OnDeathBreak_Implementation()
 
 	if (bEnableDeathDissolve)
 	{
-		StartDeathDissolveVisuals();
+		if (DeathDissolveStartDelay > 0.f)
+		{
+			if (UWorld* World = GetWorld())
+			{
+				FTimerHandle DelayHandle;
+				TWeakObjectPtr<AHellunaGuardianTurret> WeakThis(this);
+				World->GetTimerManager().SetTimer(DelayHandle,
+					FTimerDelegate::CreateWeakLambda(this, [WeakThis]()
+					{
+						if (WeakThis.IsValid())
+						{
+							WeakThis->StartDeathDissolveVisuals();
+						}
+					}),
+					DeathDissolveStartDelay, false);
+			}
+		}
+		else
+		{
+			StartDeathDissolveVisuals();
+		}
 	}
 }
 

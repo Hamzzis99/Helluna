@@ -52,6 +52,15 @@ public:
 	float MaxOutlineDistance = 12000.f;
 
 	/**
+	 * 외곽선 활성 최소 거리 (cm). 이 거리 안에 있으면 외곽선 표시 안 함.
+	 * 가까이 있으면 굳이 외곽선 필요 없음 — 직접 보임.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Outline|Distance",
+		meta = (DisplayName = "Min Show Distance (외곽선 표시 시작 거리, cm)",
+			ClampMin = "0.0"))
+	float MinShowDistance = 500.f;
+
+	/**
 	 * 페이드 시작 거리 (cm). 이 거리부터 머티리얼 알파가 점차 감소하여
 	 * MaxOutlineDistance 에서 완전히 사라진다.
 	 * (실제 페이드 곡선은 PostProcess Material 에서 적용)

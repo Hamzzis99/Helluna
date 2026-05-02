@@ -2345,15 +2345,47 @@ void AHellunaDefenseGameMode::EnterSpectatorMode(APlayerController* DeadPC)
 
     UE_LOG(LogHelluna, Log, TEXT("[Phase22] EnterSpectatorMode | PC=%s"), *GetNameSafe(DeadPC));
 
-    // 사체 Pawn 은 월드에 잔류(래그돌 + LootContainer). UnPossess 만 수행.
+    UWorld* World = GetWorld();
+    if (!World) return;
+
+    // 사체 Pawn 은 월드에 잔류(래그돌 + LootContainer). UnPossess 로 PC와 분리.
     APawn* CorpsePawn = DeadPC->GetPawn();
     if (IsValid(CorpsePawn))
     {
         DeadPC->UnPossess();
     }
 
-    // UE 표준 관전 상태 — SpectatorPawn 자동 스폰, PlayerState->bIsSpectator=true 자동 설정
-    DeadPC->ChangeState(NAME_Spectating);
+    // [Phase22-Fix] SpectatorPawn 직접 스폰 + Possess
+    //   - ChangeState(NAME_Spectating) 만으로는 Pawn 이 자동 스폰되지 않음
+    //   - GameMode 의 SpectatorClass 사용 (None 이면 폴백: ASpectatorPawn::StaticClass())
+    TSubclassOf<ASpectatorPawn> SpecClass = SpectatorClass;
+    if (!SpecClass)
+    {
+        SpecClass = ASpectatorPawn::StaticClass();
+    }
+    FActorSpawnParameters SpawnParams;
+    SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+    SpawnParams.Owner = DeadPC;
+
+    // 사체 위치 위쪽으로 스폰 (자유비행 시작점)
+    const FVector SpawnLoc = IsValid(CorpsePawn)
+        ? (CorpsePawn->GetActorLocation() + FVector(0.f, 0.f, 200.f))
+        : FVector(0.f, 0.f, 500.f);
+    const FRotator SpawnRot = IsValid(CorpsePawn) ? CorpsePawn->GetActorRotation() : FRotator::ZeroRotator;
+
+    ASpectatorPawn* SpecPawn = World->SpawnActor<ASpectatorPawn>(SpecClass, SpawnLoc, SpawnRot, SpawnParams);
+    if (IsValid(SpecPawn))
+    {
+        DeadPC->Possess(SpecPawn);
+        UE_LOG(LogHelluna, Log, TEXT("[Phase22] SpectatorPawn 스폰 + Possess 성공: %s"), *SpecPawn->GetName());
+    }
+    else
+    {
+        UE_LOG(LogHelluna, Error, TEXT("[Phase22] SpectatorPawn 스폰 실패! SpecClass=%s"),
+            SpecClass ? *SpecClass->GetName() : TEXT("null"));
+    }
+
+    // PlayerState 관전 플래그 (자기 시점 카메라 ViewTarget 후 클라 PlayerArray 검사용)
     if (AHellunaPlayerState* PS = DeadPC->GetPlayerState<AHellunaPlayerState>())
     {
         PS->SetIsSpectator(true);
@@ -2362,7 +2394,7 @@ void AHellunaDefenseGameMode::EnterSpectatorMode(APlayerController* DeadPC)
     // 첫 ViewTarget — 사체 위치를 잠시 비추고, 클라가 관전 입력으로 팀원 시점/자유비행 토글
     if (IsValid(CorpsePawn))
     {
-        DeadPC->SetViewTargetWithBlend(CorpsePawn, 0.5f, EViewTargetBlendFunction::VTBlend_Cubic);
+        DeadPC->SetViewTargetWithBlend(CorpsePawn, SpectatorEnterBlendTime, EViewTargetBlendFunction::VTBlend_Cubic);
     }
 
     // 클라 측 IMC/상태 초기화 통지
@@ -2444,20 +2476,31 @@ void AHellunaDefenseGameMode::RespawnDeadPlayer(APlayerController* PC)
         SpawnRotation = PlayerStart->GetActorRotation();
     }
 
-    // 3) 관전 상태 해제 — Pawn Possess 시점에 UE 가 NAME_Playing 으로 자동 전환하지만 명시적으로 보장
+    // 3) 기존 SpectatorPawn 정리 — UnPossess + Destroy
+    if (APawn* CurPawn = PC->GetPawn())
+    {
+        if (CurPawn->IsA(ASpectatorPawn::StaticClass()))
+        {
+            PC->UnPossess();
+            CurPawn->Destroy();
+            UE_LOG(LogHelluna, Log, TEXT("[Phase22] 기존 SpectatorPawn 정리 완료"));
+        }
+    }
+
+    // 4) 관전 상태 해제
     PC->ChangeState(NAME_Playing);
     if (AHellunaPlayerState* PS = PC->GetPlayerState<AHellunaPlayerState>())
     {
         PS->SetIsSpectator(false);
     }
 
-    // 4) PC 의 InventoryComponent 클리어 — 사체에 사본이 남았으므로 회수 동선 보장
+    // 5) PC 의 InventoryComponent 클리어 — 사체에 사본이 남았으므로 회수 동선 보장
     if (UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>())
     {
         InvComp->GetInventoryList().ClearAllEntries();
     }
 
-    // 5) 새 Pawn 스폰 + Possess (SpawnHeroCharacter 미사용 — LoadAndSendInventoryToClient 자동 호출 회피)
+    // 6) 새 Pawn 스폰 + Possess (SpawnHeroCharacter 미사용 — LoadAndSendInventoryToClient 자동 호출 회피)
     FActorSpawnParameters SpawnParams;
     SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
     SpawnParams.Owner = PC;
@@ -2471,16 +2514,17 @@ void AHellunaDefenseGameMode::RespawnDeadPlayer(APlayerController* PC)
 
     PC->Possess(NewPawn);
 
-    // 6) HP 풀체력 복원
+    // 7) HP 복원 (RespawnHealthPercent 비율)
     if (UHellunaHealthComponent* HC = NewPawn->FindComponentByClass<UHellunaHealthComponent>())
     {
-        HC->SetHealth(HC->GetMaxHealth());
+        const float TargetHealth = HC->GetMaxHealth() * FMath::Clamp(RespawnHealthPercent, 0.01f, 1.0f);
+        HC->SetHealth(TargetHealth);
     }
 
-    // 7) 카메라 — 새 Pawn 으로 즉시 ViewTarget 복귀
-    PC->SetViewTargetWithBlend(NewPawn, 0.3f, EViewTargetBlendFunction::VTBlend_Cubic);
+    // 8) 카메라 — 새 Pawn 으로 ViewTarget 복귀
+    PC->SetViewTargetWithBlend(NewPawn, RespawnBlendTime, EViewTargetBlendFunction::VTBlend_Cubic);
 
-    // 8) 클라 측 IMC/상태 정리 통지
+    // 9) 클라 측 IMC/상태 정리 통지
     if (AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(PC))
     {
         HeroPC->Client_OnRespawned();

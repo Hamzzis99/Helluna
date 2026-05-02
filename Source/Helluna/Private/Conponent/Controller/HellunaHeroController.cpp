@@ -2669,7 +2669,7 @@ void AHellunaHeroController::AddSpectateIMC()
 	if (!LP) return;
 	UEnhancedInputLocalPlayerSubsystem* Sub = LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>();
 	if (!Sub) return;
-	Sub->AddMappingContext(SpectateMappingContext, 50);
+	Sub->AddMappingContext(SpectateMappingContext, SpectateIMCPriority);
 }
 
 void AHellunaHeroController::RemoveSpectateIMC()
@@ -2720,7 +2720,7 @@ void AHellunaHeroController::ApplyCurrentSpectateView()
 			MySpec ? *MySpec->GetName() : TEXT("null"));
 		if (MySpec)
 		{
-			SetViewTargetWithBlend(MySpec, 0.3f, EViewTargetBlendFunction::VTBlend_Cubic);
+			SetViewTargetWithBlend(MySpec, SpectateViewBlendTime, EViewTargetBlendFunction::VTBlend_Cubic);
 		}
 		return;
 	}
@@ -2736,7 +2736,7 @@ void AHellunaHeroController::ApplyCurrentSpectateView()
 		bSpectatorFollowMode = false;
 		if (ASpectatorPawn* MySpec = GetSpectatorPawn())
 		{
-			SetViewTargetWithBlend(MySpec, 0.3f, EViewTargetBlendFunction::VTBlend_Cubic);
+			SetViewTargetWithBlend(MySpec, SpectateViewBlendTime, EViewTargetBlendFunction::VTBlend_Cubic);
 		}
 		return;
 	}
@@ -2748,7 +2748,7 @@ void AHellunaHeroController::ApplyCurrentSpectateView()
 	if (IsValid(Target))
 	{
 		UE_LOG(LogHelluna, Log, TEXT("[Phase22] FollowMode → ViewTarget=%s"), *Target->GetName());
-		SetViewTargetWithBlend(Target, 0.3f, EViewTargetBlendFunction::VTBlend_Cubic);
+		SetViewTargetWithBlend(Target, SpectateViewBlendTime, EViewTargetBlendFunction::VTBlend_Cubic);
 	}
 }
 

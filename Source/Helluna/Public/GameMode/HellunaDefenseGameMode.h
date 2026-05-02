@@ -481,6 +481,21 @@ public:
 	//   - 사체 컨테이너는 그대로 잔류 — 부활자가 직접 회수
 	// ════════════════════════════════════════════════════════════════
 
+	/** 부활 시 회복할 HP 비율 (0~1). 1.0 = 풀체력. Phase21 ReviveHealthPercent(다운→부활)와 별도. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Defense(게임)|Phase22(사망/부활)",
+		meta = (DisplayName = "부활 HP 비율 (0~1)", ClampMin = "0.01", ClampMax = "1.0"))
+	float RespawnHealthPercent = 1.0f;
+
+	/** 사망 → 관전 진입 시 사체로 카메라 블렌드 시간(초). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Defense(게임)|Phase22(사망/부활)",
+		meta = (DisplayName = "관전 진입 카메라 블렌드(초)", ClampMin = "0.0", ClampMax = "5.0"))
+	float SpectatorEnterBlendTime = 0.5f;
+
+	/** 부활 시 새 Pawn 으로 카메라 블렌드 시간(초). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Defense(게임)|Phase22(사망/부활)",
+		meta = (DisplayName = "부활 카메라 블렌드(초)", ClampMin = "0.0", ClampMax = "5.0"))
+	float RespawnBlendTime = 0.3f;
+
 	/** 사망 PC를 관전 모드로 전환. 사체 Pawn 은 월드에 잔류(래그돌 + LootContainer). */
 	void EnterSpectatorMode(APlayerController* DeadPC);
 

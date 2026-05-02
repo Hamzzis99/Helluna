@@ -97,10 +97,27 @@ void UEnemyGameplayAbility_Death::ActivateAbility(
 	MontageTask->OnCancelled.AddUniqueDynamic(this, &UEnemyGameplayAbility_Death::OnMontageCancelled);
 	MontageTask->OnInterrupted.AddUniqueDynamic(this, &UEnemyGameplayAbility_Death::OnMontageCancelled);
 
+	// Montage 끝 0.1s 전에 HandleDeathFinished 트리거 — BlendOut으로 idle pose 돌아가기 전에 bPauseAnims로 누운 자세 freeze 보장
+	const float EarlyFinishTime = FMath::Max(0.05f, DeathMontage->GetPlayLength() - 0.1f);
+	if (UWorld* World = Enemy->GetWorld())
+	{
+		TWeakObjectPtr<UEnemyGameplayAbility_Death> WeakThis(this);
+		World->GetTimerManager().SetTimer(EarlyFinishTimer,
+			[WeakThis]()
+			{
+				if (WeakThis.IsValid())
+				{
+					WeakThis->HandleDeathFinished();
+				}
+			},
+			EarlyFinishTime, false);
+	}
+
 	UE_LOG(LogTemp, Warning,
-		TEXT("[DeathDiag][DeathGAMontageStart] Enemy=%s Length=%.2f"),
+		TEXT("[DeathDiag][DeathGAMontageStart] Enemy=%s Length=%.2f EarlyFinish=%.2f"),
 		*GetNameSafe(Enemy),
-		DeathMontage->GetPlayLength());
+		DeathMontage->GetPlayLength(),
+		EarlyFinishTime);
 
 	MontageTask->ReadyForActivation();
 }

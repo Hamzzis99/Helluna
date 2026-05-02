@@ -1504,6 +1504,17 @@ void AHellunaLobbyController::OnBackgroundLevelLoaded()
 {
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] OnBackgroundLevelLoaded: '%s' 로드 완료"), *CurrentLoadedLevel.ToString());
 
+	// [§16+] L_LoadingShipScene 로드 → v2.1 Loading Barrier 흐름으로 분기
+	//   LoadingCamera 전환 + LoadingHUD 표시 + StartFakeProgress + 1.0s 후 Settle
+	//   기존 Play/Character 탭 LobbyCamera 처리는 건너뜀
+	if (CurrentLoadedLevel == LoadingSceneLevelName)
+	{
+		UE_LOG(LogHellunaLobby, Warning,
+			TEXT("[LoadingDbg][LobbyPC][A] OnBackgroundLevelLoaded → v2.1 OnLoadingSceneStreamed 분기"));
+		OnLoadingSceneStreamed();
+		return;
+	}
+
 	if (!LobbyCamera)
 	{
 		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] OnBackgroundLevelLoaded: LobbyCamera 없음 → 카메라 설정 스킵"));
@@ -2069,10 +2080,12 @@ void AHellunaLobbyController::ExecuteDeploySequence(const FString& TravelURL, co
 
 void AHellunaLobbyController::StartLoadingSceneStream()
 {
-	// [§16 Step 4] Sublevel 활성화 — L_LoadingShipScene을 L_Lobby의 streaming sublevel로 동적 로드
-	// L_Lobby에 등록 확인됨 (MCP 점검: should_be_loaded=false, should_be_visible=false → LoadStreamLevel로 활성화)
-	UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A] StartLoadingSceneStream | Level=%s"),
-		*LoadingSceneLevelName.ToString());
+	// [§16+] L_Lobby에서 sublevel 전환:
+	//   기존 Play/Character sublevel(CurrentLoadedLevel)을 자동 unload + L_LoadingShipScene 로드
+	//   → 로비 배경 사라지고 우주선 씬만 보임 (사용자 의도: MainMap WP 스트리밍 동안 어색한 전경 가림)
+	//   LoadBackgroundLevel callback = OnBackgroundLevelLoaded → LoadingSceneLevelName 분기에서 OnLoadingSceneStreamed 호출
+	UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A] StartLoadingSceneStream | Level=%s | CurrentLoaded=%s"),
+		*LoadingSceneLevelName.ToString(), *CurrentLoadedLevel.ToString());
 
 	if (LoadingSceneLevelName.IsNone())
 	{
@@ -2081,17 +2094,8 @@ void AHellunaLobbyController::StartLoadingSceneStream()
 		return;
 	}
 
-	FLatentActionInfo LatentInfo;
-	LatentInfo.CallbackTarget = this;
-	LatentInfo.ExecutionFunction = FName(TEXT("OnLoadingSceneStreamed"));
-	LatentInfo.Linkage = 0;
-	LatentInfo.UUID = GetUniqueID();
-
-	UGameplayStatics::LoadStreamLevel(this,
-		LoadingSceneLevelName,
-		/*bMakeVisibleAfterLoad=*/true,
-		/*bShouldBlockOnLoad=*/false,
-		LatentInfo);
+	// LoadBackgroundLevel 사용으로 기존 sublevel 자동 unload + 우주선 sublevel 로드
+	LoadBackgroundLevel(LoadingSceneLevelName);
 }
 
 void AHellunaLobbyController::OnLoadingSceneStreamed()
