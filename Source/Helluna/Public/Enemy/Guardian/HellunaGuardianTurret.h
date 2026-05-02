@@ -15,6 +15,9 @@ class AHellunaHeroCharacter;
 class AHellunaDefenseGameState;
 class UNiagaraSystem;
 class UNiagaraComponent;
+class UMaterialInterface;
+class UMaterialInstanceDynamic;
+class UMeshComponent;
 class USoundBase;
 class USoundAttenuation;
 class USoundConcurrency;
@@ -273,6 +276,41 @@ protected:
 		meta = (DisplayName = "사망 폭발 FX 스케일"))
 	FVector DeathExplosionFXScale = FVector(5.f, 5.f, 5.f);
 
+	/** 사망 시 분리된 모든 메시 컴포넌트를 디졸브 머티리얼로 사라지게 한다. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Guardian|Death|Dissolve",
+		meta = (DisplayName = "사망 디졸브 활성화"))
+	bool bEnableDeathDissolve = true;
+
+	/** 사망 디졸브에 사용할 대체 머티리얼. null 이면 현재 머티리얼의 파라미터만 시도한다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|Death|Dissolve",
+		meta = (DisplayName = "사망 디졸브 머티리얼"))
+	TSoftObjectPtr<UMaterialInterface> DeathDissolveOverrideMaterial;
+
+	/** 디졸브 진행 scalar 파라미터. M_Dissolve 계열의 Animation 과 기존 적 디졸브 파라미터를 함께 지원한다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|Death|Dissolve",
+		meta = (DisplayName = "디졸브 Scalar 파라미터"))
+	TArray<FName> DeathDissolveScalarParameterNames;
+
+	/** 디졸브 컬러 vector 파라미터. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|Death|Dissolve",
+		meta = (DisplayName = "디졸브 Vector 파라미터"))
+	TArray<FName> DeathDissolveVectorParameterNames;
+
+	/** 디졸브 엣지/발광 컬러. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guardian|Death|Dissolve",
+		meta = (DisplayName = "디졸브 엣지 컬러"))
+	FLinearColor DeathDissolveEdgeColor = FLinearColor(4.5f, 1.35f, 0.25f, 1.0f);
+
+	/** 가디언 사망 디졸브 지속 시간. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Death|Dissolve",
+		meta = (DisplayName = "디졸브 시간", ClampMin = "0.1", ClampMax = "30.0", Units = "s"))
+	float DeathDissolveDuration = 3.8f;
+
+	/** 디졸브 머티리얼 갱신 주기. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Death|Dissolve",
+		meta = (DisplayName = "디졸브 Tick 주기", ClampMin = "0.016", ClampMax = "0.25", Units = "s"))
+	float DeathDissolveTickInterval = 0.033f;
+
 	// =========================================================
 	// VFX / 사운드
 	// =========================================================
@@ -449,6 +487,14 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UNiagaraComponent> ActiveAimBeam = nullptr;
 
+	/** 런타임 사망 디졸브 대상 메시 컴포넌트. */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UMeshComponent>> DeathDissolveMeshComponents;
+
+	/** 런타임 사망 디졸브 MID. */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UMaterialInstanceDynamic>> DeathDissolveMIDs;
+
 	/** 현재 상태 진입 이후 경과 시간 (초, 서버 전용) */
 	float StateTimer = 0.f;
 
@@ -474,6 +520,12 @@ private:
 
 	/** Phase 폴링 타이머 핸들 */
 	FTimerHandle PhasePollTimerHandle;
+
+	/** 클라이언트 로컬 디졸브 타이머. */
+	FTimerHandle DeathDissolveTimerHandle;
+
+	/** 디졸브 시작 월드 시간. */
+	float DeathDissolveStartWorldSeconds = 0.f;
 
 	// =========================================================
 	// 상태 전이 헬퍼
@@ -578,6 +630,14 @@ private:
 
 	/** 상태에 따라 조준 빔 시작/중지 결정 (SetState/OnRep 공용) */
 	void ApplyAimBeamForState(EGuardianState State);
+
+	// =========================================================
+	// 사망 디졸브 제어 (클라이언트 로컬 시각화)
+	// =========================================================
+
+	void StartDeathDissolveVisuals();
+	void ApplyDeathDissolveAmount(float Amount);
+	void FinishDeathDissolveVisuals();
 
 	// =========================================================
 	// 멀티캐스트 RPC (서버 → 모든 클라 FX·사운드)

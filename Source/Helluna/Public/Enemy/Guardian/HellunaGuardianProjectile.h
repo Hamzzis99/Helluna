@@ -81,10 +81,15 @@ protected:
 		const FVector& ExplosionLocation,
 		const TArray<FHitResult>& ComponentHits,
 		TSubclassOf<UDamageType> DamageTypeClass);
+	void RestartTrailFXAfterReflection();
 
 	/** 모든 클라에 폭발 VFX 재생 (서버 → 클라). 1회 이벤트라 Reliable — 패킷 유실 시에도 폭발 VFX 보장. */
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_SpawnExplosionFX(FVector_NetQuantize ExplosionLocation, FVector_NetQuantizeNormal SurfaceNormal);
+
+	/** 퍼펙트 Block 반사 순간: 폭발 FX 없이 기존 투사체 TrailFX만 새 방향으로 리셋한다. */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_OnPerfectBlockReflected(FVector_NetQuantize ReflectionLocation, FVector_NetQuantizeNormal ReflectedDirection);
 
 	void SetProjectileCollisionEnabled(bool bEnabled);
 
@@ -219,7 +224,11 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Projectile|Block",
 		meta = (DisplayName = "퍼펙트 Block 반사 활성화"))
-	bool bReflectOnPerfectBlock = false;
+	bool bReflectOnPerfectBlock = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Projectile|Block",
+		meta = (DisplayName = "반사 시 Trail 리셋"))
+	bool bResetTrailOnPerfectBlockReflect = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Projectile|Block",
 		meta = (DisplayName = "반사 속도 배율", ClampMin = "0.1", ClampMax = "5.0"))

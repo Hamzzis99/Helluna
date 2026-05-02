@@ -261,7 +261,11 @@ void UHeroGameplayAbility_Block::ActivateAbility(
 		}
 	}
 
-	if (UWorld* World = GetWorld())
+	if (PerfectBlockWindowSeconds <= 0.f)
+	{
+		ClearPerfectBlockWindow();
+	}
+	else if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().SetTimer(
 			PerfectBlockTimerHandle,

@@ -213,6 +213,10 @@ bool AHellunaGuardianProjectile::TryReflectFromPerfectBlock(AActor* BlockingActo
 	bReflected = true;
 	SetLifeSpan(FMath::Max(ReflectedLifeSeconds, 0.1f));
 
+	Multicast_OnPerfectBlockReflected(
+		FVector_NetQuantize(GetActorLocation()),
+		FVector_NetQuantizeNormal(ReflectedDirection));
+
 	return true;
 }
 
@@ -592,6 +596,37 @@ void AHellunaGuardianProjectile::ApplyRadialDamageEventToActor(
 	DamageEvent.ComponentHits = ComponentHits;
 
 	Victim->TakeDamage(BaseDamage, DamageEvent, GetInstigatorController(), this);
+}
+
+void AHellunaGuardianProjectile::RestartTrailFXAfterReflection()
+{
+	if (!bResetTrailOnPerfectBlockReflect || !TrailFX)
+	{
+		return;
+	}
+
+	TrailFX->DeactivateImmediate();
+	TrailFX->Activate(true);
+}
+
+void AHellunaGuardianProjectile::Multicast_OnPerfectBlockReflected_Implementation(
+	FVector_NetQuantize ReflectionLocation,
+	FVector_NetQuantizeNormal ReflectedDirection)
+{
+	const FVector Direction = FVector(ReflectedDirection).GetSafeNormal();
+	if (!Direction.IsNearlyZero())
+	{
+		SetActorRotation(Direction.Rotation());
+	}
+
+	SetActorLocation(FVector(ReflectionLocation), false, nullptr, ETeleportType::TeleportPhysics);
+
+	if (IsRunningDedicatedServer())
+	{
+		return;
+	}
+
+	RestartTrailFXAfterReflection();
 }
 
 void AHellunaGuardianProjectile::Multicast_SpawnExplosionFX_Implementation(
