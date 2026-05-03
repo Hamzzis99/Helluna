@@ -17,8 +17,10 @@
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h" // 이사 확인증 확인용
 #include "Chat/HellunaChatTypes.h"
 #include "Components/VolumetricCloudComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Kismet/KismetMaterialLibrary.h"
 #include "Materials/MaterialParameterCollection.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "Sky/HellunaWeatherConfig.h"
 #include "Sky/HellunaSkyPreviewActor.h"
 
@@ -384,7 +386,9 @@ void AHellunaDefenseGameState::ApplyDaySettledState(float RoundDuration)
 
     if (bHasUDS)
     {
-        SetVolumetricCloudVisible(true);
+        // [COSMIC] Cloud Coverage > 0일 때만 구름 표시
+        const float CloudCoverage = GetUDSCloudCoverage();
+        SetVolumetricCloudVisible(CloudCoverage > 0.01f);
     }
 }
 
@@ -401,7 +405,9 @@ void AHellunaDefenseGameState::ApplyVisualPhaseWeatherBlend(EDayNightVisualPhase
     case EDayNightVisualPhase::Dawn:
         if (bHasUDS)
         {
-            SetVolumetricCloudVisible(true);
+            // [COSMIC] Cloud Coverage > 0일 때만 구름 표시
+            const float CloudCoverage = GetUDSCloudCoverage();
+            SetVolumetricCloudVisible(CloudCoverage > 0.01f);
         }
         ApplyRandomWeather(true, RemainingDuration);
         bDawnWeatherBlendStarted = true;
@@ -410,7 +416,9 @@ void AHellunaDefenseGameState::ApplyVisualPhaseWeatherBlend(EDayNightVisualPhase
     case EDayNightVisualPhase::Day:
         if (bHasUDS)
         {
-            SetVolumetricCloudVisible(true);
+            // [COSMIC] Cloud Coverage > 0일 때만 구름 표시
+            const float CloudCoverage = GetUDSCloudCoverage();
+            SetVolumetricCloudVisible(CloudCoverage > 0.01f);
         }
         if (LastVisualPhase != EDayNightVisualPhase::Dawn)
         {
@@ -437,62 +445,151 @@ void AHellunaDefenseGameState::ApplyVisualPhaseWeatherBlend(EDayNightVisualPhase
 
 void AHellunaDefenseGameState::ApplyVisualPhaseAlpha(EDayNightVisualPhase InVisualPhase, float Alpha)
 {
-    const float ClampedAlpha = FMath::Clamp(Alpha, 0.f, 1.f);
     AActor* UDS = GetUDSActor();
-    if (!UDS)
-    {
-        return;
-    }
+    if (!UDS) return;
 
     if (!CachedProp_TimeOfDay)
     {
         CacheUDSProperties();
     }
 
-    const float StartTimeOfDay = WrapUDSTime(VisualPhaseState.StartTimeOfDay);
-    const float TargetTimeOfDay = WrapUDSTime(VisualPhaseState.TargetTimeOfDay);
-    float PhaseDistance = TargetTimeOfDay - StartTimeOfDay;
-    if (PhaseDistance < 0.f)
-    {
-        PhaseDistance += 2400.f;
-    }
+    // ── 1. NightVisualAlpha 계산 (SmoothStep 보간) ──────────────────────────
+    const float ClampedAlpha = FMath::Clamp(Alpha, 0.f, 1.f);
+    const float SmoothAlpha = FMath::SmoothStep(0.f, 1.f, ClampedAlpha);  // t² (3 - 2t)
 
     float NightVisualAlpha = 0.f;
     switch (InVisualPhase)
     {
     case EDayNightVisualPhase::Dawn:
-        SetUDSAnimate(false);
-        SetUDSTimeOfDay(WrapUDSTime(StartTimeOfDay + PhaseDistance * ClampedAlpha));
-        NightVisualAlpha = 1.f - ClampedAlpha;
+        NightVisualAlpha = 1.f - SmoothAlpha;  // Night → Day: 1.0 → 0.0
         break;
-
     case EDayNightVisualPhase::Day:
-        SetUDSAnimate(false);
-        SetUDSTimeOfDay(WrapUDSTime(StartTimeOfDay + PhaseDistance * ClampedAlpha));
         NightVisualAlpha = 0.f;
         break;
-
     case EDayNightVisualPhase::Dusk:
-        SetUDSAnimate(false);
-        SetUDSTimeOfDay(WrapUDSTime(StartTimeOfDay + PhaseDistance * ClampedAlpha));
-        NightVisualAlpha = ClampedAlpha;
+        NightVisualAlpha = SmoothAlpha;  // Day → Night: 0.0 → 1.0
         break;
-
     case EDayNightVisualPhase::Night:
-        SetUDSAnimate(false);
-        SetUDSTimeOfDay(NightSettleTime);
         NightVisualAlpha = 1.f;
         break;
-
     default:
         break;
     }
 
-    WriteFloatPropertyValue(UDS, CachedProp_AuroraIntensity, DefaultNightAuroraIntensity * NightVisualAlpha);
-    WriteFloatPropertyValue(UDS, CachedProp_DaytimeAuroraIntensity, DefaultDaytimeAuroraIntensity * NightVisualAlpha);
-    WriteFloatPropertyValue(UDS, CachedProp_MoonLightIntensity, DefaultMoonLightIntensity * NightVisualAlpha);
-    WriteFloatPropertyValue(UDS, CachedProp_MoonTextureIntensityNight, DefaultMoonTextureIntensityNight * NightVisualAlpha);
-    WriteFloatPropertyValue(UDS, CachedProp_MoonGlowIntensity, DefaultMoonGlowIntensity * NightVisualAlpha);
+    // ── 2. UDS Time of Day 고정 (해 없는 우주 맵) ───────────────────────────
+    SetUDSAnimate(false);
+    SetUDSTimeOfDay(NightSettleTime);  // 항상 2200
+
+    // ── 3. UDS BP 인텐시티 (기존 곱하기 모델 유지) ──────────────────────────
+    WriteFloatPropertyValue(UDS, CachedProp_AuroraIntensity,
+        DefaultNightAuroraIntensity * NightVisualAlpha);
+    WriteFloatPropertyValue(UDS, CachedProp_DaytimeAuroraIntensity,
+        DefaultDaytimeAuroraIntensity * NightVisualAlpha);
+    WriteFloatPropertyValue(UDS, CachedProp_MoonTextureIntensityNight,
+        DefaultMoonTextureIntensityNight * NightVisualAlpha);
+    WriteFloatPropertyValue(UDS, CachedProp_MoonGlowIntensity,
+        DefaultMoonGlowIntensity * NightVisualAlpha);
+
+    // ── 4. UDS BP 인텐시티 (Day/Night Lerp 모델, 신규) ──────────────────────
+    const float MoonLightIntensity = FMath::Lerp(DayMoonLightIntensity,
+        DefaultMoonLightIntensity, NightVisualAlpha);
+    WriteFloatPropertyValue(UDS, CachedProp_MoonLightIntensity, MoonLightIntensity);
+
+    const float StarsIntensity = FMath::Lerp(DayStarsIntensity,
+        NightStarsIntensity, NightVisualAlpha);
+    WriteFloatPropertyValue(UDS, CachedProp_StarsIntensity, StarsIntensity);
+
+    // ── 5. UDS BP Moon Light Color (HSV Lerp 신규) ─────────────────────────
+    const FLinearColor LerpedMoonLightColor = FLinearColor::LerpUsingHSV(
+        DayMoonLightColor, NightMoonLightColor, NightVisualAlpha);
+    WriteLinearColorPropertyValue(UDS, CachedProp_MoonLightColor, LerpedMoonLightColor);
+
+    // ── 6. Sky_Sphere MID 파라미터 (매 틱 권위 push) ───────────────────────
+    ApplySkySphereMIDOverrides(UDS, NightVisualAlpha);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// [Cosmic] Sky_Sphere MID 파라미터 매 틱 권위 push
+//   UDS Construction Script가 MID를 reset할 수 있어, GameState가 매 틱 다시 써서
+//   권위 보장. Day/Night 색상은 HSV Lerp.
+// ═══════════════════════════════════════════════════════════════════════════════
+void AHellunaDefenseGameState::ApplySkySphereMIDOverrides(AActor* UDS, float NightVisualAlpha)
+{
+    if (!UDS) return;
+
+    UStaticMeshComponent* SkySphere = nullptr;
+    TArray<UStaticMeshComponent*> Comps;
+    UDS->GetComponents<UStaticMeshComponent>(Comps);
+    for (UStaticMeshComponent* C : Comps)
+    {
+        if (C && C->GetName() == TEXT("Sky_Sphere"))
+        {
+            SkySphere = C;
+            break;
+        }
+    }
+    if (!SkySphere) return;
+
+    // MID 가져오기 (이미 동적 인스턴스가 있으면 재사용, 없으면 생성)
+    UMaterialInstanceDynamic* MID = Cast<UMaterialInstanceDynamic>(SkySphere->GetMaterial(0));
+    if (!MID)
+    {
+        MID = SkySphere->CreateAndSetMaterialInstanceDynamic(0);
+    }
+    if (!MID) return;
+
+    // ── 색상 보간 (HSV Lerp) ──
+    const FLinearColor MoonDisc = FLinearColor::LerpUsingHSV(
+        DayMoonDiscColor, NightMoonDiscColor, NightVisualAlpha);
+    MID->SetVectorParameterValue(TEXT("Moon Color"), MoonDisc);
+
+    static const FLinearColor BlackColor(0.f, 0.f, 0.f, 1.f);
+    MID->SetVectorParameterValue(TEXT("Aurora_Color_1"),
+        FLinearColor::LerpUsingHSV(BlackColor, NightAuroraColor1, NightVisualAlpha));
+    MID->SetVectorParameterValue(TEXT("Aurora_Color_2"),
+        FLinearColor::LerpUsingHSV(BlackColor, NightAuroraColor2, NightVisualAlpha));
+    MID->SetVectorParameterValue(TEXT("Aurora_Color_3"),
+        FLinearColor::LerpUsingHSV(BlackColor, NightAuroraColor3, NightVisualAlpha));
+
+    // ── 스칼라 보간 ──
+    const float Twinkle = FMath::Lerp(DayTwinkleStrength, NightTwinkleStrength, NightVisualAlpha);
+    MID->SetScalarParameterValue(TEXT("Twinkle Strength"), Twinkle);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// [Cosmic] UDS BP의 LinearColor 프로퍼티에 값 쓰기 (리플렉션)
+// ═══════════════════════════════════════════════════════════════════════════════
+void AHellunaDefenseGameState::WriteLinearColorPropertyValue(
+    UObject* Obj, FProperty* Prop, const FLinearColor& Value)
+{
+    if (!Obj || !Prop) return;
+    if (FStructProperty* SP = CastField<FStructProperty>(Prop))
+    {
+        if (SP->Struct == TBaseStructure<FLinearColor>::Get())
+        {
+            FLinearColor* Ptr = SP->ContainerPtrToValuePtr<FLinearColor>(Obj);
+            if (Ptr) *Ptr = Value;
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// [Cosmic] UDS의 Cloud Coverage 값 읽기 (구름 토글 조건 판단용)
+// ═══════════════════════════════════════════════════════════════════════════════
+float AHellunaDefenseGameState::GetUDSCloudCoverage()
+{
+    AActor* UDS = GetUDSActor();
+    if (!UDS) return 0.f;
+
+    FProperty* Prop = FindFProperty<FProperty>(UDS->GetClass(), TEXT("Cloud Coverage"));
+    if (!Prop) return 0.f;
+
+    if (FFloatProperty* FP = CastField<FFloatProperty>(Prop))
+        return FP->GetPropertyValue_InContainer(UDS);
+    if (FDoubleProperty* DP = CastField<FDoubleProperty>(Prop))
+        return static_cast<float>(DP->GetPropertyValue_InContainer(UDS));
+
+    return 0.f;
 }
 
 void AHellunaDefenseGameState::StartVisualPhaseLocal()
@@ -1312,6 +1409,8 @@ void AHellunaDefenseGameState::CacheUDSProperties()
     CachedProp_MoonLightIntensity = FindFProperty<FProperty>(UDSClass, TEXT("Moon Light Intensity"));
     CachedProp_MoonTextureIntensityNight = FindFProperty<FProperty>(UDSClass, TEXT("Moon Texture Intensity (Night)"));
     CachedProp_MoonGlowIntensity = FindFProperty<FProperty>(UDSClass, TEXT("Moon Glow Intensity"));
+    CachedProp_MoonLightColor   = FindFProperty<FProperty>(UDSClass, TEXT("Moon Light Color"));
+    CachedProp_StarsIntensity   = FindFProperty<FProperty>(UDSClass, TEXT("Stars Intensity"));
 
     if (!bSkyVisualDefaultsCached)
     {
@@ -1724,7 +1823,10 @@ void AHellunaDefenseGameState::PlayDayTransition()
     const float BlendTime = DawnTransitionDuration > 0.f ? DawnTransitionDuration : WeatherTransitionTime;
     if (bHasUDS)
     {
-        SetVolumetricCloudVisible(true);
+        // [COSMIC] Cloud Coverage가 0보다 클 때만 구름 표시.
+        // 우주 맵 기본 룩은 구름 없음. 비/눈 날씨일 때만 구름 활성.
+        const float CloudCoverage = GetUDSCloudCoverage();
+        SetVolumetricCloudVisible(CloudCoverage > 0.01f);
     }
     ApplyRandomWeather(true, BlendTime);
 }

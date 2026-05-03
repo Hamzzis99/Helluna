@@ -42,7 +42,47 @@ bool AMoveMapActor::ExecuteInteract_Implementation(APlayerController* Controller
 // ⭐ [추가] Server RPC 구현
 void AMoveMapActor::Server_RequestInteract_Implementation(APlayerController* RequestingController)
 {
-    UE_LOG(LogHellunaVote, Log, TEXT("[MoveMapActor] Server RPC 수신 → Interact() 호출"));
+    // [C5-VOT-1] RPC 호출자 위조 차단:
+    // 클라가 임의의 PlayerController 포인터를 인자로 보낼 수 있으므로, 받은 Controller가
+    // 실제 PlayerControllerIterator에 등록된 PC인지 검증. cheat 클라가 다른 플레이어의
+    // PC 포인터를 추측해 보내는 시도 차단.
+    if (!HasAuthority()) return;
+    if (!IsValid(RequestingController))
+    {
+        UE_LOG(LogHellunaVote, Warning, TEXT("[MoveMapActor] RPC: RequestingController invalid - 무시"));
+        return;
+    }
+
+    bool bIsRegisteredPC = false;
+    if (UWorld* W = GetWorld())
+    {
+        for (FConstPlayerControllerIterator It = W->GetPlayerControllerIterator(); It; ++It)
+        {
+            if (It->Get() == RequestingController)
+            {
+                bIsRegisteredPC = true;
+                break;
+            }
+        }
+    }
+
+    if (!bIsRegisteredPC)
+    {
+        UE_LOG(LogHellunaVote, Warning,
+            TEXT("[MoveMapActor] RPC 위조 시도 차단: RequestingController(%s)가 PlayerControllerIterator에 없음"),
+            *GetNameSafe(RequestingController));
+        return;
+    }
+
+    // 추가 검증: NetConnection이 있어야 클라이언트 PC (서버 측 호출자가 아닌 진짜 클라)
+    if (!RequestingController->GetNetConnection() && !RequestingController->IsLocalController())
+    {
+        UE_LOG(LogHellunaVote, Warning,
+            TEXT("[MoveMapActor] RPC 위조: NetConnection 없고 LocalController 아님 - 무시"));
+        return;
+    }
+
+    UE_LOG(LogHellunaVote, Log, TEXT("[MoveMapActor] Server RPC 수신 (검증 통과) → Interact() 호출"));
     Interact(RequestingController);
 }
 

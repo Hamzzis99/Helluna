@@ -591,11 +591,76 @@ protected:
     float DefaultMoonTextureIntensityNight = 0.5f;
     float DefaultMoonGlowIntensity = 0.03f;
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 🌙 낮/밤 무드 (Cosmic Map — 해 없이 수치만 보간)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤|무드",
+        meta = (DisplayName = "낮 달빛 색상 (UDS BP)"))
+    FLinearColor DayMoonLightColor = FLinearColor(0.92f, 0.96f, 1.0f, 1.0f);
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤|무드",
+        meta = (DisplayName = "밤 달빛 색상 (UDS BP)"))
+    FLinearColor NightMoonLightColor = FLinearColor(0.35f, 0.12f, 0.14f, 1.0f);
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤|무드",
+        meta = (DisplayName = "낮 달 디스크 색 (Sky_Sphere MID)"))
+    FLinearColor DayMoonDiscColor = FLinearColor(0.95f, 0.97f, 1.0f, 1.0f);
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤|무드",
+        meta = (DisplayName = "밤 달 디스크 색 (Sky_Sphere MID)"))
+    FLinearColor NightMoonDiscColor = FLinearColor(0.9f, 0.18f, 0.12f, 1.0f);
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤|무드",
+        meta = (DisplayName = "낮 달빛 인텐시티", ClampMin = "0.0"))
+    float DayMoonLightIntensity = 1.2f;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤|무드",
+        meta = (DisplayName = "낮 별 강도", ClampMin = "0.0"))
+    float DayStarsIntensity = 5.5f;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤|무드",
+        meta = (DisplayName = "밤 별 강도", ClampMin = "0.0"))
+    float NightStarsIntensity = 1.5f;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤|무드",
+        meta = (DisplayName = "Aurora_Color_1 (밤)"))
+    FLinearColor NightAuroraColor1 = FLinearColor(0.7f, 0.06f, 0.2f, 1.0f);
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤|무드",
+        meta = (DisplayName = "Aurora_Color_2 (밤)"))
+    FLinearColor NightAuroraColor2 = FLinearColor(0.02f, 0.55f, 0.65f, 1.0f);
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤|무드",
+        meta = (DisplayName = "Aurora_Color_3 (밤)"))
+    FLinearColor NightAuroraColor3 = FLinearColor(0.15f, 0.06f, 0.4f, 1.0f);
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤|무드",
+        meta = (DisplayName = "낮 별 반짝임 강도", ClampMin = "0.0"))
+    float DayTwinkleStrength = 3.0f;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤|무드",
+        meta = (DisplayName = "밤 별 반짝임 강도", ClampMin = "0.0"))
+    float NightTwinkleStrength = 1.5f;
+
+    // ─── 신규 캐싱 프로퍼티 ───
+    FProperty* CachedProp_MoonLightColor = nullptr;
+    FProperty* CachedProp_StarsIntensity = nullptr;
+
     // 🧪 치트용 시간 정지 플래그
     bool bCheatTimeFrozen = false;
 
     /** BeginPlay에서 UDS 프로퍼티를 캐싱하는 헬퍼 */
     void CacheUDSProperties();
+
+    /** UDS BP의 LinearColor 프로퍼티에 값 쓰기 */
+    static void WriteLinearColorPropertyValue(UObject* Obj, FProperty* Prop, const FLinearColor& Value);
+
+    /** Sky_Sphere MID 파라미터 매 틱 권위 push (Day/Night 무드 색 보간) */
+    void ApplySkySphereMIDOverrides(AActor* UDS, float NightVisualAlpha);
+
+    /** UDS의 Cloud Coverage 값 읽기 (구름 토글 조건 판단용) */
+    float GetUDSCloudCoverage();
 
     /** 클라이언트 시작 시 맵에 남아있는 초기 Night PCG 산출물을 정리 */
     void CleanupInitialNightPCGClientArtifacts();

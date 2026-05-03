@@ -3697,11 +3697,25 @@ void AHellunaDefenseGameMode::RegisterControllerInBarrier(APlayerController* New
     else if (BarrierState == ELoadingBarrierState::Released ||
              BarrierState == ELoadingBarrierState::Spawned)
     {
-        // 배리어 이미 해제 후 늦게 도착 — 즉시 스폰 (Rejoin 경로와 유사)
-        UE_LOG(LogHelluna, Warning,
-            TEXT("[LoadingDbg][Server][Register] LATE-JOINER (state=%d) | PlayerId=%s → SpawnHero immediate"),
-            static_cast<int32>(BarrierState), *PlayerId);
-        SpawnHeroCharacter(NewPC);
+        // 배리어 이미 해제 후 늦게 도착 — Phase에 따라 분기
+        // [C5-DGM-1] Night Phase에 즉시 SpawnHero 시 적 폭주 한복판에서 즉사 가능 → Spectator 진입 후 다음 Day에 부활
+        AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>();
+        const bool bNightActive = (GS && GS->GetPhase() == EDefensePhase::Night);
+
+        if (bNightActive)
+        {
+            UE_LOG(LogHelluna, Warning,
+                TEXT("[LoadingDbg][Server][Register] LATE-JOINER (state=%d, Phase=Night) | PlayerId=%s → EnterSpectatorMode (Day에 부활 대기)"),
+                static_cast<int32>(BarrierState), *PlayerId);
+            EnterSpectatorMode(NewPC);
+        }
+        else
+        {
+            UE_LOG(LogHelluna, Warning,
+                TEXT("[LoadingDbg][Server][Register] LATE-JOINER (state=%d, Phase=Day) | PlayerId=%s → SpawnHero immediate"),
+                static_cast<int32>(BarrierState), *PlayerId);
+            SpawnHeroCharacter(NewPC);
+        }
         return;
     }
 
