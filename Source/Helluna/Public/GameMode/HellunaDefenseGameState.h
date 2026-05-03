@@ -388,9 +388,19 @@ protected:
     // 호출에 같은 TransitionTime을 전달해 오로라/별/구름/강수가 한 호흡에 짙어진다.
     // 0으로 두면 기존 즉시 전환 유지.
 
-    /** 낮→밤 일몰 전환 시간(초). 0이면 즉시 전환. */
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤", meta = (DisplayName = "일몰 전환 시간(초)"))
+    /** 낮→밤 일몰 전환 시간(초). 0이면 즉시 전환. DuskRatio가 0보다 크면 무시되고 라운드 비율 계산이 우선. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤", meta = (DisplayName = "일몰 전환 시간(초) — 폴백"))
     float DuskTransitionDuration = 8.f;
+
+    /**
+     * 일몰 전환 비율 — 라운드 시간의 몇 %를 Dusk 로 사용할지.
+     * 0.5 = 라운드 후반 50%를 Dusk 로 사용 (예: 60초 라운드 → 30초 Dusk, 30초 시점부터 점진 어두워짐).
+     * 0.0 으로 두면 DuskTransitionDuration 고정값 사용 (레거시).
+     * 사용자 의도: 라운드 후반에 점점 긴장감 빌드업.
+     */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤",
+        meta = (DisplayName = "일몰 비율 (라운드 대비 0.0~1.0)", ClampMin = "0.0", ClampMax = "1.0"))
+    float DuskRatio = 0.5f;
 
     /** 일몰 Lerp 목표 UDS 시간 (2200 ≈ 오로라/별 피크 구간). */
     UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤", meta = (DisplayName = "밤 정착 시간"))
@@ -592,60 +602,28 @@ protected:
     float DefaultMoonGlowIntensity = 0.03f;
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // 🌙 낮/밤 무드 (Cosmic Map — 해 없이 수치만 보간)
+    // 🌙 SkyMoodSettings 액터 참조 (per-map DayMood/NightMood)
+    //
+    // 무드 값들은 AHellunaSkyMoodSettings 액터의 DayMood/NightMood 에서 읽는다.
+    // 액터는 BeginPlay 에서 캐싱되며 ApplyVisualPhaseAlpha 가 매 틱 참조.
+    // 디자이너는 액터 디테일 패널에서 per-map 으로 무드 조정.
     // ═══════════════════════════════════════════════════════════════════════════
 
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤|무드",
-        meta = (DisplayName = "낮 달빛 색상 (UDS BP)"))
-    FLinearColor DayMoonLightColor = FLinearColor(0.92f, 0.96f, 1.0f, 1.0f);
+    UPROPERTY(Transient)
+    TWeakObjectPtr<class AHellunaSkyMoodSettings> CachedSkyMoodSettings;
 
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤|무드",
-        meta = (DisplayName = "밤 달빛 색상 (UDS BP)"))
-    FLinearColor NightMoonLightColor = FLinearColor(0.35f, 0.12f, 0.14f, 1.0f);
+    /** BeginPlay 에서 호출 — 레벨에 배치된 SkyMoodSettings 찾아 캐싱 */
+    void CacheSkyMoodSettings();
 
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤|무드",
-        meta = (DisplayName = "낮 달 디스크 색 (Sky_Sphere MID)"))
-    FLinearColor DayMoonDiscColor = FLinearColor(0.95f, 0.97f, 1.0f, 1.0f);
-
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤|무드",
-        meta = (DisplayName = "밤 달 디스크 색 (Sky_Sphere MID)"))
-    FLinearColor NightMoonDiscColor = FLinearColor(0.9f, 0.18f, 0.12f, 1.0f);
-
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤|무드",
-        meta = (DisplayName = "낮 달빛 인텐시티", ClampMin = "0.0"))
-    float DayMoonLightIntensity = 1.2f;
-
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤|무드",
-        meta = (DisplayName = "낮 별 강도", ClampMin = "0.0"))
-    float DayStarsIntensity = 5.5f;
-
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤|무드",
-        meta = (DisplayName = "밤 별 강도", ClampMin = "0.0"))
-    float NightStarsIntensity = 1.5f;
-
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤|무드",
-        meta = (DisplayName = "Aurora_Color_1 (밤)"))
-    FLinearColor NightAuroraColor1 = FLinearColor(0.7f, 0.06f, 0.2f, 1.0f);
-
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤|무드",
-        meta = (DisplayName = "Aurora_Color_2 (밤)"))
-    FLinearColor NightAuroraColor2 = FLinearColor(0.02f, 0.55f, 0.65f, 1.0f);
-
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤|무드",
-        meta = (DisplayName = "Aurora_Color_3 (밤)"))
-    FLinearColor NightAuroraColor3 = FLinearColor(0.15f, 0.06f, 0.4f, 1.0f);
-
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤|무드",
-        meta = (DisplayName = "낮 별 반짝임 강도", ClampMin = "0.0"))
-    float DayTwinkleStrength = 3.0f;
-
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤|무드",
-        meta = (DisplayName = "밤 별 반짝임 강도", ClampMin = "0.0"))
-    float NightTwinkleStrength = 1.5f;
-
-    // ─── 신규 캐싱 프로퍼티 ───
+    // ─── SkyMood 시스템에서 사용되는 신규 캐싱 프로퍼티 ───
     FProperty* CachedProp_MoonLightColor = nullptr;
     FProperty* CachedProp_StarsIntensity = nullptr;
+    FProperty* CachedProp_SkyLightIntensity = nullptr;
+    FProperty* CachedProp_NightBrightness = nullptr;
+    FProperty* CachedProp_SunLightIntensity = nullptr;
+    FProperty* CachedProp_SunDiskIntensity = nullptr;
+    FProperty* CachedProp_MoonPhase = nullptr;
+    FProperty* CachedProp_RenderNebula = nullptr;
 
     // 🧪 치트용 시간 정지 플래그
     bool bCheatTimeFrozen = false;

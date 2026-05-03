@@ -22,7 +22,8 @@
 #include "Materials/MaterialParameterCollection.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Sky/HellunaWeatherConfig.h"
-#include "Sky/HellunaSkyPreviewActor.h"
+#include "Sky/HellunaSkyPreviewActor.h"  // GetWeatherPresetPath static 호출 때문 유지
+#include "Sky/HellunaSkyMoodSettings.h"
 
 namespace
 {
@@ -233,9 +234,22 @@ void AHellunaDefenseGameState::StartDayVisualTransition(float RoundDuration)
     const float SafeRoundDuration = FMath::Max(0.f, RoundDuration);
     ActiveDawnDuration = FMath::Clamp(DawnTransitionDuration, 0.f, SafeRoundDuration);
     const float RemainingAfterDawn = FMath::Max(0.f, SafeRoundDuration - ActiveDawnDuration);
-    ActiveDuskDuration = DuskTransitionDuration > 0.f
-        ? FMath::Min(DuskTransitionDuration, RemainingAfterDawn)
-        : 0.f;
+
+    // [COSMIC v2] Dusk 시간 계산:
+    //   DuskRatio > 0 이면 라운드 비율 우선 (예: 0.5 = 라운드 후반 50%).
+    //   DuskRatio == 0 이면 레거시 DuskTransitionDuration 고정값 사용.
+    //   둘 다 RemainingAfterDawn 으로 클램프 (Dawn 보다 길지 못하게).
+    float DesiredDuskDuration = 0.f;
+    if (DuskRatio > KINDA_SMALL_NUMBER)
+    {
+        DesiredDuskDuration = SafeRoundDuration * DuskRatio;
+    }
+    else if (DuskTransitionDuration > 0.f)
+    {
+        DesiredDuskDuration = DuskTransitionDuration;
+    }
+    ActiveDuskDuration = FMath::Min(DesiredDuskDuration, RemainingAfterDawn);
+
     ActiveDuskDelay = SafeRoundDuration - ActiveDuskDuration;
     ActiveDayVisualDuration = FMath::Max(0.f, ActiveDuskDelay - ActiveDawnDuration);
     ActiveDayRoundDuration = SafeRoundDuration;
@@ -453,6 +467,21 @@ void AHellunaDefenseGameState::ApplyVisualPhaseAlpha(EDayNightVisualPhase InVisu
         CacheUDSProperties();
     }
 
+    // [SkyMood v3] SkyMoodSettings 캐시에서 DayMood/NightMood 읽음
+    AHellunaSkyMoodSettings* MoodSettings = CachedSkyMoodSettings.Get();
+    if (!MoodSettings)
+    {
+        // 폴백: MoodSettings 없으면 무드 보간 스킵 (UDS 값 그대로 유지)
+        SetUDSAnimate(false);
+        SetUDSTimeOfDay(NightSettleTime);
+        WriteFloatPropertyValue(UDS, CachedProp_SunLightIntensity, 0.f);
+        WriteFloatPropertyValue(UDS, CachedProp_SunDiskIntensity, 0.f);
+        return;
+    }
+
+    const FHellunaSkyMoodPreset& Day = MoodSettings->DayMood;
+    const FHellunaSkyMoodPreset& Night = MoodSettings->NightMood;
+
     // ── 1. NightVisualAlpha 계산 (SmoothStep 보간) ──────────────────────────
     const float ClampedAlpha = FMath::Clamp(Alpha, 0.f, 1.f);
     const float SmoothAlpha = FMath::SmoothStep(0.f, 1.f, ClampedAlpha);  // t² (3 - 2t)
@@ -476,35 +505,54 @@ void AHellunaDefenseGameState::ApplyVisualPhaseAlpha(EDayNightVisualPhase InVisu
         break;
     }
 
-    // ── 2. UDS Time of Day 고정 (해 없는 우주 맵) ───────────────────────────
+    // ── 2. UDS Time of Day & Moon Phase (Lerp via mood) ────────────────────
     SetUDSAnimate(false);
-    SetUDSTimeOfDay(NightSettleTime);  // 항상 2200
+    const float TOD = FMath::Lerp(Day.TimeOfDay, Night.TimeOfDay, NightVisualAlpha);
+    SetUDSTimeOfDay(TOD);
 
-    // ── 3. UDS BP 인텐시티 (기존 곱하기 모델 유지) ──────────────────────────
+    const float MoonPhase = FMath::Lerp(Day.MoonPhase, Night.MoonPhase, NightVisualAlpha);
+    WriteFloatPropertyValue(UDS, CachedProp_MoonPhase, MoonPhase);
+
+    // ── 3. UDS BP 인텐시티 (Day/Night Lerp) ────────────────────────────────
+    WriteFloatPropertyValue(UDS, CachedProp_MoonLightIntensity,
+        FMath::Lerp(Day.MoonLightIntensity, Night.MoonLightIntensity, NightVisualAlpha));
+    WriteFloatPropertyValue(UDS, CachedProp_StarsIntensity,
+        FMath::Lerp(Day.StarsIntensity, Night.StarsIntensity, NightVisualAlpha));
     WriteFloatPropertyValue(UDS, CachedProp_AuroraIntensity,
-        DefaultNightAuroraIntensity * NightVisualAlpha);
+        FMath::Lerp(Day.AuroraIntensity, Night.AuroraIntensity, NightVisualAlpha));
     WriteFloatPropertyValue(UDS, CachedProp_DaytimeAuroraIntensity,
-        DefaultDaytimeAuroraIntensity * NightVisualAlpha);
+        FMath::Lerp(Day.DaytimeAuroraIntensity, Night.DaytimeAuroraIntensity, NightVisualAlpha));
     WriteFloatPropertyValue(UDS, CachedProp_MoonTextureIntensityNight,
-        DefaultMoonTextureIntensityNight * NightVisualAlpha);
+        FMath::Lerp(Day.MoonTextureIntensityNight, Night.MoonTextureIntensityNight, NightVisualAlpha));
     WriteFloatPropertyValue(UDS, CachedProp_MoonGlowIntensity,
-        DefaultMoonGlowIntensity * NightVisualAlpha);
+        FMath::Lerp(Day.MoonGlowIntensity, Night.MoonGlowIntensity, NightVisualAlpha));
 
-    // ── 4. UDS BP 인텐시티 (Day/Night Lerp 모델, 신규) ──────────────────────
-    const float MoonLightIntensity = FMath::Lerp(DayMoonLightIntensity,
-        DefaultMoonLightIntensity, NightVisualAlpha);
-    WriteFloatPropertyValue(UDS, CachedProp_MoonLightIntensity, MoonLightIntensity);
+    // ── 4. 밝기 ────────────────────────────────────────────────────────────
+    WriteFloatPropertyValue(UDS, CachedProp_SkyLightIntensity,
+        FMath::Lerp(Day.SkyLightIntensity, Night.SkyLightIntensity, NightVisualAlpha));
+    WriteFloatPropertyValue(UDS, CachedProp_NightBrightness,
+        FMath::Lerp(Day.NightBrightness, Night.NightBrightness, NightVisualAlpha));
 
-    const float StarsIntensity = FMath::Lerp(DayStarsIntensity,
-        NightStarsIntensity, NightVisualAlpha);
-    WriteFloatPropertyValue(UDS, CachedProp_StarsIntensity, StarsIntensity);
-
-    // ── 5. UDS BP Moon Light Color (HSV Lerp 신규) ─────────────────────────
+    // ── 5. UDS BP Moon Light Color (HSV Lerp) ──────────────────────────────
     const FLinearColor LerpedMoonLightColor = FLinearColor::LerpUsingHSV(
-        DayMoonLightColor, NightMoonLightColor, NightVisualAlpha);
+        Day.MoonLightColor, Night.MoonLightColor, NightVisualAlpha);
     WriteLinearColorPropertyValue(UDS, CachedProp_MoonLightColor, LerpedMoonLightColor);
 
-    // ── 6. Sky_Sphere MID 파라미터 (매 틱 권위 push) ───────────────────────
+    // ── 6. Render Nebula (NightAlpha 0.5 임계점) ──────────────────────────
+    if (CachedProp_RenderNebula)
+    {
+        const bool bRenderNebula = (NightVisualAlpha < 0.5f) ? Day.bRenderNebula : Night.bRenderNebula;
+        if (FBoolProperty* BP = CastField<FBoolProperty>(CachedProp_RenderNebula))
+        {
+            BP->SetPropertyValue_InContainer(UDS, bRenderNebula);
+        }
+    }
+
+    // ── 7. 우주 맵 — 해 항상 0 ─────────────────────────────────────────────
+    WriteFloatPropertyValue(UDS, CachedProp_SunLightIntensity, 0.f);
+    WriteFloatPropertyValue(UDS, CachedProp_SunDiskIntensity, 0.f);
+
+    // ── 8. Sky_Sphere MID 파라미터 (매 틱 권위 push) ───────────────────────
     ApplySkySphereMIDOverrides(UDS, NightVisualAlpha);
 }
 
@@ -516,6 +564,11 @@ void AHellunaDefenseGameState::ApplyVisualPhaseAlpha(EDayNightVisualPhase InVisu
 void AHellunaDefenseGameState::ApplySkySphereMIDOverrides(AActor* UDS, float NightVisualAlpha)
 {
     if (!UDS) return;
+
+    AHellunaSkyMoodSettings* MoodSettings = CachedSkyMoodSettings.Get();
+    if (!MoodSettings) return;  // MoodSettings 없으면 MID 보간 스킵
+    const FHellunaSkyMoodPreset& Day = MoodSettings->DayMood;
+    const FHellunaSkyMoodPreset& Night = MoodSettings->NightMood;
 
     UStaticMeshComponent* SkySphere = nullptr;
     TArray<UStaticMeshComponent*> Comps;
@@ -530,7 +583,6 @@ void AHellunaDefenseGameState::ApplySkySphereMIDOverrides(AActor* UDS, float Nig
     }
     if (!SkySphere) return;
 
-    // MID 가져오기 (이미 동적 인스턴스가 있으면 재사용, 없으면 생성)
     UMaterialInstanceDynamic* MID = Cast<UMaterialInstanceDynamic>(SkySphere->GetMaterial(0));
     if (!MID)
     {
@@ -539,21 +591,20 @@ void AHellunaDefenseGameState::ApplySkySphereMIDOverrides(AActor* UDS, float Nig
     if (!MID) return;
 
     // ── 색상 보간 (HSV Lerp) ──
-    const FLinearColor MoonDisc = FLinearColor::LerpUsingHSV(
-        DayMoonDiscColor, NightMoonDiscColor, NightVisualAlpha);
-    MID->SetVectorParameterValue(TEXT("Moon Color"), MoonDisc);
-
-    static const FLinearColor BlackColor(0.f, 0.f, 0.f, 1.f);
+    MID->SetVectorParameterValue(TEXT("Moon Color"),
+        FLinearColor::LerpUsingHSV(Day.MoonDiscColor, Night.MoonDiscColor, NightVisualAlpha));
     MID->SetVectorParameterValue(TEXT("Aurora_Color_1"),
-        FLinearColor::LerpUsingHSV(BlackColor, NightAuroraColor1, NightVisualAlpha));
+        FLinearColor::LerpUsingHSV(Day.AuroraColor1, Night.AuroraColor1, NightVisualAlpha));
     MID->SetVectorParameterValue(TEXT("Aurora_Color_2"),
-        FLinearColor::LerpUsingHSV(BlackColor, NightAuroraColor2, NightVisualAlpha));
+        FLinearColor::LerpUsingHSV(Day.AuroraColor2, Night.AuroraColor2, NightVisualAlpha));
     MID->SetVectorParameterValue(TEXT("Aurora_Color_3"),
-        FLinearColor::LerpUsingHSV(BlackColor, NightAuroraColor3, NightVisualAlpha));
+        FLinearColor::LerpUsingHSV(Day.AuroraColor3, Night.AuroraColor3, NightVisualAlpha));
 
     // ── 스칼라 보간 ──
-    const float Twinkle = FMath::Lerp(DayTwinkleStrength, NightTwinkleStrength, NightVisualAlpha);
-    MID->SetScalarParameterValue(TEXT("Twinkle Strength"), Twinkle);
+    MID->SetScalarParameterValue(TEXT("Twinkle Strength"),
+        FMath::Lerp(Day.TwinkleStrength, Night.TwinkleStrength, NightVisualAlpha));
+    MID->SetScalarParameterValue(TEXT("Twinkle Floor"),
+        FMath::Lerp(Day.TwinkleFloor, Night.TwinkleFloor, NightVisualAlpha));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1086,6 +1137,9 @@ void AHellunaDefenseGameState::BeginPlay()
         CacheUDSProperties();
     }
 
+    // [SkyMood v3] SkyMoodSettings 액터 찾아 DayMood/NightMood 참조 캐싱
+    CacheSkyMoodSettings();
+
 #if HELLUNA_DEBUG_DEFENSE
     if (!bHasUDS)
     {
@@ -1394,6 +1448,31 @@ void AHellunaDefenseGameState::NetMulticast_ReceiveChatMessage_Implementation(co
 // [Step3 O-02] UDS 프로퍼티 캐싱 - BeginPlay에서 1회 호출
 // FindFProperty는 리플렉션 기반이라 매 프레임 호출하면 성능 저하
 // 캐싱 후에는 포인터만 사용하여 O(1) 접근
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// [SkyMood v3] SkyMoodSettings 액터 캐싱
+//   레벨에 배치된 AHellunaSkyMoodSettings 를 찾아 weak ptr 로 보관.
+//   ApplyVisualPhaseAlpha 가 매 틱 DayMood/NightMood 를 읽기 위해 사용.
+//   액터가 없는 맵(테스트맵 등)에서는 캐시가 nullptr → 기존 UDS 값 유지.
+// ═══════════════════════════════════════════════════════════════════════════════
+void AHellunaDefenseGameState::CacheSkyMoodSettings()
+{
+    UWorld* World = GetWorld();
+    if (!World) return;
+
+    for (TActorIterator<AHellunaSkyMoodSettings> It(World); It; ++It)
+    {
+        CachedSkyMoodSettings = *It;
+        UE_LOG(LogTemp, Log, TEXT("[SkyMood] SkyMoodSettings 캐싱 성공: %s"),
+            *(*It)->GetName());
+        return;
+    }
+
+#if HELLUNA_DEBUG_DEFENSE
+    UE_LOG(LogTemp, Warning, TEXT("[SkyMood] SkyMoodSettings 액터 없음 — 무드 보간 비활성"));
+#endif
+}
+
 // ===============================================================
 void AHellunaDefenseGameState::CacheUDSProperties()
 {
@@ -1411,6 +1490,12 @@ void AHellunaDefenseGameState::CacheUDSProperties()
     CachedProp_MoonGlowIntensity = FindFProperty<FProperty>(UDSClass, TEXT("Moon Glow Intensity"));
     CachedProp_MoonLightColor   = FindFProperty<FProperty>(UDSClass, TEXT("Moon Light Color"));
     CachedProp_StarsIntensity   = FindFProperty<FProperty>(UDSClass, TEXT("Stars Intensity"));
+    CachedProp_SkyLightIntensity = FindFProperty<FProperty>(UDSClass, TEXT("Sky Light Intensity"));
+    CachedProp_NightBrightness  = FindFProperty<FProperty>(UDSClass, TEXT("Night Brightness"));
+    CachedProp_SunLightIntensity = FindFProperty<FProperty>(UDSClass, TEXT("Sun Light Intensity"));
+    CachedProp_SunDiskIntensity = FindFProperty<FProperty>(UDSClass, TEXT("Sun Disk Intensity"));
+    CachedProp_MoonPhase        = FindFProperty<FProperty>(UDSClass, TEXT("Moon Phase"));
+    CachedProp_RenderNebula     = FindFProperty<FProperty>(UDSClass, TEXT("Render Nebula"));
 
     if (!bSkyVisualDefaultsCached)
     {
