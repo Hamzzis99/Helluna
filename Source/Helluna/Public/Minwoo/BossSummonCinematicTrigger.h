@@ -151,6 +151,16 @@ public:
 	float CinematicShakeFalloff = 1.f;
 
 	/**
+	 * [CloseUpShakeV1] Cut 0 와이드 컷 끝난 후 (발/팔/얼굴 클로즈업 동안) 사용할 약한 쉐이크.
+	 *   None 이면 클로즈업 동안 쉐이크 없음.
+	 *   CinematicShakeClass 가 단발 (interval=0) 이고 OscillationDuration 이 Cut 0 길이만큼이면,
+	 *   이 쉐이크가 그 직후 자동 발화되어 클로즈업 동안 계속 진동.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Shake",
+		meta = (DisplayName = "Close-Up Shake (클로즈업 동안 약한 쉐이크)"))
+	TSubclassOf<UCameraShakeBase> CloseUpShakeClass;
+
+	/**
 	 * 카메라 연출 LevelSequence (선택사항).
 	 * 설정 시: 이 시퀀스가 카메라 위치/회전을 제어 (Camera Cuts 트랙으로 ViewTarget 자동 전환).
 	 * 미설정 + CameraCuts 비어있음: 기존 방식대로 보스에 카메라 부착 + CameraOffset 적용.
@@ -222,6 +232,23 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Portal",
 		meta = (DisplayName = "Boss Emerge Delay (카메라 시작 후 보스 등장까지)", ClampMin = "0.0", ClampMax = "10.0"))
 	float BossEmergeDelay = 1.0f;
+
+	/**
+	 * [WideCutSlowMoV1] 시네마틱 시작 직후 일정 시간 동안 글로벌 타임 디레이션 적용.
+	 *   "보스가 위엄있게 등장하는" 슬로우 모션 효과. 1.0 = 정상, 0.5 = 절반 속도.
+	 *   각 클라 로컬에서 SetGlobalTimeDilation 호출 (멀티플레이 자동 동기화 안 함, 머신별 시각 효과).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Pacing",
+		meta = (DisplayName = "Wide Cut TimeDilation (슬로우 강도)", ClampMin = "0.05", ClampMax = "1.0"))
+	float WideCutTimeDilation = 0.5f;
+
+	/**
+	 * [WideCutSlowMoV1] 슬로우 모션 지속 시간 (게임 시간 초). 0 이면 비활성.
+	 *   기본 2.5s = Cut 0 와이드 컷 길이와 동일.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Pacing",
+		meta = (DisplayName = "Wide Cut SlowMo Duration (지속 시간)", ClampMin = "0.0", ClampMax = "10.0"))
+	float WideCutSlowMoDuration = 2.5f;
 
 	/**
 	 * [GracePeriodV1] 시네마틱 끝나고 보스 AI 재개 + 무적 해제까지 유예 (초).
@@ -491,6 +518,12 @@ private:
 	/** [CinematicShakeV1] 클라 로컬에서 1회 World Camera Shake 발화. */
 	void TriggerLocalCinematicShake();
 
+	/** [CloseUpShakeV1] 클라 로컬에서 약한 close-up 쉐이크 발화. */
+	void TriggerLocalCloseUpShake();
+
+	/** [CloseUpShakeV1] Cut 0 끝난 시점에 close-up 쉐이크 시작 타이머. */
+	FTimerHandle CloseUpShakeTimer;
+
 	/** 몽타주 종료됨 (또는 몽타주 없음) 플래그 */
 	bool bMontageFinishedFlag = false;
 
@@ -557,4 +590,16 @@ private:
 
 	/** 클라 emerge 타이머. */
 	FTimerHandle BossEmergeTimerLocal;
+
+	/** [WideCutSlowMoV1] 클라 slow-mo 종료 타이머. */
+	FTimerHandle SlowMoRestoreTimerLocal;
+
+	/** [WideCutSlowMoV1] slow-mo 종료 — 글로벌 타임 디레이션 1.0 으로 복원. */
+	void OnSlowMoElapsedLocal();
+
+	/** [WalkStopV1] Cut 0 와이드 컷 끝나면 보스 walk 정지 — 클로즈업이 정적이 되도록. */
+	FTimerHandle WalkStopTimerServer;
+
+	/** [WalkStopV1] walk 정지 콜백 — bCinematicWalkActive=false + StopMovementImmediately. */
+	void OnWalkStopElapsedServer();
 };

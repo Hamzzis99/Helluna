@@ -299,6 +299,10 @@ void ABossSummonCinematicTrigger::EndPlay(const EEndPlayReason::Type EndPlayReas
 		World->GetTimerManager().ClearTimer(PortalRevealTimerLocal);
 		World->GetTimerManager().ClearTimer(BossEmergeTimerServer);
 		World->GetTimerManager().ClearTimer(BossEmergeTimerLocal);
+		World->GetTimerManager().ClearTimer(SlowMoRestoreTimerLocal);
+		World->GetTimerManager().ClearTimer(WalkStopTimerServer);
+		// 안전 복원 (혹시 dilated 상태로 남으면 게임 영원히 슬로우)
+		UGameplayStatics::SetGlobalTimeDilation(World, 1.0f);
 	}
 
 	UnregisterActorSpawnHandler();
@@ -558,6 +562,9 @@ void ABossSummonCinematicTrigger::OnPortalRevealElapsedServer()
 		BossEnemy->Multicast_PlaySummonMontage();
 	}
 
+	// [WalkStopV1] DISABLED — 사용자가 boss walk 가 시네마틱 내내 유지되길 원함.
+	//   함수 정의는 남기되 타이머 활성화 안 함.
+
 	// 서버 사이드 emerge 는 visibility 와 무관 (visibility 는 클라 로컬). 노티만 남김.
 	const float Emerge = FMath::Max(BossEmergeDelay, 0.f);
 	if (Emerge > KINDA_SMALL_NUMBER)
@@ -571,6 +578,25 @@ void ABossSummonCinematicTrigger::OnBossEmergeElapsedServer()
 {
 	UE_LOG(LogTemp, Warning,
 		TEXT("[BossSummonCinematic_LiveCodeCheck] Server emerge tick (visibility was client-side)"));
+}
+
+void ABossSummonCinematicTrigger::OnWalkStopElapsedServer()
+{
+	if (!HasAuthority()) return;
+	bCinematicWalkActive = false;
+
+	if (APawn* Boss = ActiveBoss.Get())
+	{
+		if (ACharacter* BossCh = Cast<ACharacter>(Boss))
+		{
+			if (UCharacterMovementComponent* Move = BossCh->GetCharacterMovement())
+			{
+				Move->StopMovementImmediately();
+			}
+		}
+	}
+	UE_LOG(LogTemp, Warning,
+		TEXT("[WalkStopV1] Cut 0 ended — boss walk stopped (close-ups will be static)"));
 }
 
 void ABossSummonCinematicTrigger::OnSummonMontageFinishedServer()
@@ -633,6 +659,7 @@ void ABossSummonCinematicTrigger::HandleCinematicCompletedServer()
 	GetWorldTimerManager().ClearTimer(MinHoldTimer);
 	GetWorldTimerManager().ClearTimer(PortalRevealTimerServer);
 	GetWorldTimerManager().ClearTimer(BossEmergeTimerServer);
+	GetWorldTimerManager().ClearTimer(WalkStopTimerServer);
 
 	UE_LOG(LogTemp, Warning,
 		TEXT("[BossSummonCinematic_LiveCodeCheck] Server cinematic completed — restoring boss"));
@@ -850,6 +877,22 @@ void ABossSummonCinematicTrigger::StartLocalCinematicBody(APawn* Boss)
 		}
 	}
 
+	// [CloseUpShakeV1] Cut 0 끝난 시점에 close-up 쉐이크 시작.
+	if (CloseUpShakeClass && CameraCuts.Num() > 0)
+	{
+		const float Cut0Dur = FMath::Max(CameraCuts[0].Duration, 0.5f);
+		TWeakObjectPtr<ABossSummonCinematicTrigger> Weak(this);
+		World->GetTimerManager().SetTimer(CloseUpShakeTimer,
+			FTimerDelegate::CreateLambda([Weak]()
+			{
+				if (Weak.IsValid())
+				{
+					Weak->TriggerLocalCloseUpShake();
+				}
+			}),
+			Cut0Dur, false);
+	}
+
 	// [PortalClipV1] dissolve 대신 portal-plane clip — 보스 픽셀 중 평면 뒤쪽만 invisible.
 	//   평면은 portal 위치 + portal forward 방향. 보스가 walk 로 평면 통과하면 통과한 부위만 visible.
 	//   완료 (BossEmergeDelay 후) 에 ClipPlane 비활성화.
@@ -906,6 +949,17 @@ void ABossSummonCinematicTrigger::StartCinematicCameraAfterReveal()
 		UE_LOG(LogTemp, Warning,
 			TEXT("[BossSummonCinematic_LiveCodeCheck] StartCinematicCameraAfterReveal — invalid world or boss, abort"));
 		return;
+	}
+
+	// [WideCutSlowMoV1] 시네마틱 시작 슬로우 모션 — 보스 위엄있게 등장 연출.
+	if (WideCutTimeDilation > 0.05f && WideCutTimeDilation < 1.f && WideCutSlowMoDuration > 0.f)
+	{
+		UGameplayStatics::SetGlobalTimeDilation(World, WideCutTimeDilation);
+		UE_LOG(LogTemp, Warning,
+			TEXT("[WideCutSlowMoV1] Time dilation %.2f for %.2fs"),
+			WideCutTimeDilation, WideCutSlowMoDuration);
+		World->GetTimerManager().SetTimer(SlowMoRestoreTimerLocal, this,
+			&ABossSummonCinematicTrigger::OnSlowMoElapsedLocal, WideCutSlowMoDuration, false);
 	}
 
 	// [BossEmergeV1] 보스 메시는 아직 숨김 유지 — BossEmergeDelay 후 OnBossEmergeElapsedLocal 에서 복원.
@@ -1205,10 +1259,15 @@ void ABossSummonCinematicTrigger::Multicast_EndCinematic_Implementation()
 
 	// [CinematicShakeV1] 반복 카메라 쉐이크 타이머 정리.
 	World->GetTimerManager().ClearTimer(CinematicShakeTimer);
+	World->GetTimerManager().ClearTimer(CloseUpShakeTimer);
 
 	// [PortalRevealV1] reveal/emerge 대기 타이머 정리 + 보스 visibility/clip 정리 (Failsafe 가 emerge 전 발화한 경우 대비).
 	World->GetTimerManager().ClearTimer(PortalRevealTimerLocal);
 	World->GetTimerManager().ClearTimer(BossEmergeTimerLocal);
+
+	// [WideCutSlowMoV1] 슬로우 모션 복원 — 시네마틱이 끝났는데 슬로우가 아직 활성이면 즉시 정상 복귀.
+	World->GetTimerManager().ClearTimer(SlowMoRestoreTimerLocal);
+	UGameplayStatics::SetGlobalTimeDilation(World, 1.0f);
 	if (APawn* BossLocal = LocalCinematicBoss.Get())
 	{
 		if (AHellunaEnemyCharacter* EnemyBoss = Cast<AHellunaEnemyCharacter>(BossLocal))
@@ -1389,6 +1448,15 @@ void ABossSummonCinematicTrigger::Multicast_EndCinematic_Implementation()
 	}
 }
 
+void ABossSummonCinematicTrigger::OnSlowMoElapsedLocal()
+{
+	if (UWorld* World = GetWorld())
+	{
+		UGameplayStatics::SetGlobalTimeDilation(World, 1.0f);
+		UE_LOG(LogTemp, Warning, TEXT("[WideCutSlowMoV1] Time dilation restored to 1.0"));
+	}
+}
+
 void ABossSummonCinematicTrigger::OnBossEmergeElapsedLocal()
 {
 	APawn* Boss = LocalCinematicBoss.Get();
@@ -1470,6 +1538,33 @@ void ABossSummonCinematicTrigger::UpdateCameraForCurrentCut()
 		: LookDir.Rotation();
 
 	Cam->SetActorLocationAndRotation(CameraWorld, NewRot);
+}
+
+// [CloseUpShakeV1] Cut 0 후 close-up 쉐이크 발화 (각 클라 로컬).
+void ABossSummonCinematicTrigger::TriggerLocalCloseUpShake()
+{
+	if (!CloseUpShakeClass) return;
+
+	UWorld* World = GetWorld();
+	if (!World) return;
+	if (World->GetNetMode() == NM_DedicatedServer) return;
+
+	FVector Origin = GetActorLocation();
+	if (APawn* Boss = LocalCinematicBoss.Get())
+	{
+		Origin = Boss->GetActorLocation();
+	}
+
+	UGameplayStatics::PlayWorldCameraShake(
+		World,
+		CloseUpShakeClass,
+		Origin,
+		CinematicShakeInnerRadius,
+		CinematicShakeOuterRadius,
+		CinematicShakeFalloff);
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[CloseUpShakeV1] Close-up shake triggered (cuts 1+)"));
 }
 
 // [CinematicShakeV1] 클라 로컬 1회 쉐이크 발화. 데디 서버는 즉시 스킵.
