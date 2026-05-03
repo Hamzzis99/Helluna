@@ -11,7 +11,13 @@
 
 bool UHellunaAbilitySystemComponent::TryActivateAbilityByTag(FGameplayTag AbilityTagToActivate)
 {
-	check(AbilityTagToActivate.IsValid());
+	// [Fix:check-removal 2026-05-02] check()는 Test/Shipping 빌드에서도 프로세스 종료.
+	// 사용자 입력/RPC 경로에서 invalid 태그 들어오면 서버 강제 종료 → safe return으로 변경.
+	if (!AbilityTagToActivate.IsValid())
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[ASC] TryActivateAbilityByTag: invalid tag → skip"));
+		return false;
+	}
 
 	TArray<FGameplayAbilitySpec*> FoundAbilitySpecs;
 	GetActivatableGameplayAbilitySpecsByAllMatchingTags(AbilityTagToActivate.GetSingleTagContainer(), FoundAbilitySpecs);
@@ -233,9 +239,14 @@ void UHellunaAbilitySystemComponent::OnAbilityInputReleased(const FGameplayTag& 
 	}
 }
 
-bool UHellunaAbilitySystemComponent::CancelAbilityByTag(const FGameplayTag AbilityTagToCancel)  //어빌리티 취소 
+bool UHellunaAbilitySystemComponent::CancelAbilityByTag(const FGameplayTag AbilityTagToCancel)  //어빌리티 취소
 {
-	check(AbilityTagToCancel.IsValid());
+	// [Fix:check-removal 2026-05-02] check() 다운그레이드 — 사용자 경로에서 프로세스 종료 차단.
+	if (!AbilityTagToCancel.IsValid())
+	{
+		UE_LOG(LogHelluna, Warning, TEXT("[ASC] CancelAbilityByTag: invalid tag → skip"));
+		return false;
+	}
 
 	TArray<FGameplayAbilitySpec*> FoundAbilitySpecs;
 	GetActivatableGameplayAbilitySpecsByAllMatchingTags(

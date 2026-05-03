@@ -27,6 +27,8 @@ void UHeroGameplayAbility_Reload::ActivateAbility(
 {
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
 
+	bReloadEndCalled = false;
+
 	AHellunaHeroCharacter* Hero = GetHeroCharacterFromActorInfo();
 	if (!Hero)
 	{
@@ -81,16 +83,20 @@ void UHeroGameplayAbility_Reload::ActivateAbility(
 		return;
 	}
 
-	ReloadTask->OnCompleted.AddDynamic(this, &ThisClass::OnReloadFinished);
-	ReloadTask->OnBlendOut.AddDynamic(this, &ThisClass::OnReloadFinished);
-	ReloadTask->OnInterrupted.AddDynamic(this, &ThisClass::OnReloadInterrupted);
-	ReloadTask->OnCancelled.AddDynamic(this, &ThisClass::OnReloadInterrupted);
+	// [Fix:dup-callback 2026-05-02] OnCompleted+OnBlendOut 동일 함수 바인딩 시 Reload() 이중 호출.
+	// OnBlendOut 제거 + AddUniqueDynamic으로 중복 차단.
+	ReloadTask->OnCompleted.AddUniqueDynamic(this, &ThisClass::OnReloadFinished);
+	ReloadTask->OnInterrupted.AddUniqueDynamic(this, &ThisClass::OnReloadInterrupted);
+	ReloadTask->OnCancelled.AddUniqueDynamic(this, &ThisClass::OnReloadInterrupted);
 
 	ReloadTask->ReadyForActivation();
 }
 
 void UHeroGameplayAbility_Reload::OnReloadFinished()
 {
+	if (bReloadEndCalled) return;
+	bReloadEndCalled = true;
+
 	// 서버에서 최종 반영되도록 Gun->Reload() 내부가 Authority/RPC 처리
 	if (Weapon)
 	{
@@ -102,6 +108,9 @@ void UHeroGameplayAbility_Reload::OnReloadFinished()
 
 void UHeroGameplayAbility_Reload::OnReloadInterrupted()
 {
+	if (bReloadEndCalled) return;
+	bReloadEndCalled = true;
+
 	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
 }
 

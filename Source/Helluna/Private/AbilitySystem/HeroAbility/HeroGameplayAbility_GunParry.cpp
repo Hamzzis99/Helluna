@@ -1009,7 +1009,8 @@ void UHeroGameplayAbility_GunParry::OnParryExecutionFireEvent(FGameplayEventData
 		}
 
 		// 임팩트 VFX: 적 위치에서 스폰
-		if (Weapon && Weapon->ParryImpactEffect && Enemy)
+		// [Fix:isvalid 2026-05-02] PendingKill 통과 차단 — Enemy가 Destroy 후 GC pass 전 dangling 상태일 수 있음
+		if (Weapon && Weapon->ParryImpactEffect && IsValid(Enemy))
 		{
 			const FVector ImpactLoc = Enemy->GetMesh() ? Enemy->GetMesh()->GetComponentLocation() : Enemy->GetActorLocation();
 			const FRotator ImpactRot = (Hero->GetActorLocation() - ImpactLoc).Rotation();
@@ -1035,7 +1036,8 @@ void UHeroGameplayAbility_GunParry::OnParryExecutionFireEvent(FGameplayEventData
 		ProcessExecutionKill(false);
 
 		// [스태거 시스템] 총 발사 순간 즉시 주변 적 넉백 + Staggered 부여
-		if (Enemy && ParryStaggerRadius > 0.f)
+		// [Fix:isvalid 2026-05-02] ProcessExecutionKill에서 Enemy가 destroy 시작됐을 수 있음
+		if (IsValid(Enemy) && ParryStaggerRadius > 0.f)
 		{
 			TArray<FOverlapResult> StaggerOverlaps;
 			FCollisionQueryParams StaggerParams;
@@ -1114,7 +1116,8 @@ void UHeroGameplayAbility_GunParry::ProcessExecutionKill(bool bIsFallback)
 	AHellunaHeroCharacter* Hero = GetHeroCharacterFromActorInfo();
 	AHellunaEnemyCharacter* Enemy = ParryTarget;
 
-	if (!Hero || !Hero->HasAuthority() || bKillProcessed || !Enemy)
+	// [Fix:isvalid 2026-05-02] Enemy PendingKill 통과 차단
+	if (!Hero || !Hero->HasAuthority() || bKillProcessed || !IsValid(Enemy))
 	{
 		return;
 	}
@@ -1150,7 +1153,8 @@ void UHeroGameplayAbility_GunParry::ProcessExecutionKill(bool bIsFallback)
 	bKillProcessed = true;
 
 	// [래그돌 즉시 발동] 킬 시점에 적 정리 (서버에서만)
-	if (Enemy && Hero->HasAuthority())
+	// [Fix:isvalid 2026-05-02] PendingKill 통과 차단
+	if (IsValid(Enemy) && Hero->HasAuthority())
 	{
 		if (bCachedParryRagdollDeath)
 		{
@@ -1243,7 +1247,8 @@ void UHeroGameplayAbility_GunParry::HandleExecutionFinished(bool bWasCancelled)
 		Enemy ? *Enemy->GetName() : TEXT("nullptr"));
 
 	// 진입 시 상태 스냅샷
-	if (Enemy)
+	// [Fix:isvalid 2026-05-02] PendingKill 통과 차단
+	if (IsValid(Enemy))
 	{
 		float EnemyHP = -1.f;
 		if (UHellunaHealthComponent* HC = Enemy->FindComponentByClass<UHellunaHealthComponent>())
@@ -1291,7 +1296,8 @@ void UHeroGameplayAbility_GunParry::HandleExecutionFinished(bool bWasCancelled)
 		}
 
 		// 적 정리 — ProcessExecutionKill에서 이미 처리했으면 스킵
-		if (Enemy && !bEnemyCleanedUp)
+		// [Fix:isvalid 2026-05-02] PendingKill 통과 차단
+		if (IsValid(Enemy) && !bEnemyCleanedUp)
 		{
 			UE_LOG(LogGunParry, Warning, TEXT("[HandleExecutionFinished] SERVER: bEnemyCleanedUp=false → 적 정리 폴백 실행"));
 			if (bKillProcessed)
@@ -1347,7 +1353,8 @@ void UHeroGameplayAbility_GunParry::HandleExecutionFinished(bool bWasCancelled)
 		}
 
 		// 넉백 — 슬라이딩 방식 (AddMovementInput 타이머)
-		if (!bWasCancelled && Enemy && bKillProcessed && PostParryKnockbackStrength > 0.f)
+		// [Fix:isvalid 2026-05-02] PendingKill 통과 차단
+		if (!bWasCancelled && IsValid(Enemy) && bKillProcessed && PostParryKnockbackStrength > 0.f)
 		{
 			bKnockbackStarted = true;
 
@@ -1745,7 +1752,8 @@ AHellunaEnemyCharacter* UHeroGameplayAbility_GunParry::FindParryableEnemy(const 
 	for (const FOverlapResult& Overlap : Overlaps)
 	{
 		AHellunaEnemyCharacter* Enemy = Cast<AHellunaEnemyCharacter>(Overlap.GetActor());
-		if (!Enemy) continue;
+		// [Fix:isvalid 2026-05-02] PendingKill 통과 차단 (Stagger AOE 후 destroying 중인 적 제외)
+		if (!IsValid(Enemy)) continue;
 
 		// 사망한 적 스킵
 		if (UHellunaHealthComponent* HC = Enemy->FindComponentByClass<UHellunaHealthComponent>())
@@ -1854,7 +1862,8 @@ AHellunaEnemyCharacter* UHeroGameplayAbility_GunParry::FindParryableEnemyStatic(
 	for (const FOverlapResult& Overlap : Overlaps)
 	{
 		AHellunaEnemyCharacter* Enemy = Cast<AHellunaEnemyCharacter>(Overlap.GetActor());
-		if (!Enemy) continue;
+		// [Fix:isvalid 2026-05-02] PendingKill 통과 차단
+		if (!IsValid(Enemy)) continue;
 
 		// 사망한 적 스킵
 		if (UHellunaHealthComponent* HC = Enemy->FindComponentByClass<UHellunaHealthComponent>())

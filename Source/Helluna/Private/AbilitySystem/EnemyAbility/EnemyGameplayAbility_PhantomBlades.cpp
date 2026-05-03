@@ -74,9 +74,9 @@ void UEnemyGameplayAbility_PhantomBlades::ActivateAbility(
 				this, NAME_None, CastMontage, 1.f, NAME_None, false);
 		if (Task)
 		{
-			Task->OnCompleted.AddDynamic(this, &UEnemyGameplayAbility_PhantomBlades::OnMontageCompleted);
-			Task->OnCancelled.AddDynamic(this, &UEnemyGameplayAbility_PhantomBlades::OnMontageCancelled);
-			Task->OnInterrupted.AddDynamic(this, &UEnemyGameplayAbility_PhantomBlades::OnMontageCancelled);
+			Task->OnCompleted.AddUniqueDynamic(this, &UEnemyGameplayAbility_PhantomBlades::OnMontageCompleted);
+			Task->OnCancelled.AddUniqueDynamic(this, &UEnemyGameplayAbility_PhantomBlades::OnMontageCancelled);
+			Task->OnInterrupted.AddUniqueDynamic(this, &UEnemyGameplayAbility_PhantomBlades::OnMontageCancelled);
 			Task->ReadyForActivation();
 		}
 	}

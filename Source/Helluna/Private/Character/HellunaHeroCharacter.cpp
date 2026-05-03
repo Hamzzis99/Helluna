@@ -48,6 +48,7 @@
 #include "Animation/AnimMontage.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
 #include "Cheat/HellunaCheatComponent.h"
+#include "Conponent/Outline/HellunaTeamOutlineComponent.h"
 
 #include "UI/Weapon/WeaponHUDWidget.h"
 #include "UI/HUD/HellunaHealthHUDWidget.h"
@@ -79,6 +80,10 @@ AHellunaHeroCharacter::AHellunaHeroCharacter()
 	PrimaryActorTick.bStartWithTickEnabled = true;
 
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.f);
+
+	// 미니맵/풀맵에서 거리 무관하게 팀원 마커가 보이도록 항상 relevant 처리.
+	// 영웅은 최대 3명이라 대역폭 영향 미미. SpaceShip/Turret과 동일 패턴.
+	bAlwaysRelevant = true;
 
 	// ⭐ 모든 캐릭터 BP가 UHellunaInputComponent를 사용하도록 보장
 	// BP에서 개별 설정 누락 시 기본 UInputComponent → Cast 실패 → 입력 바인딩 스킵 버그 방지
@@ -121,6 +126,9 @@ AHellunaHeroCharacter::AHellunaHeroCharacter()
 
 	// [cheatdebug] F1~F6 치트 컴포넌트 자동 부착 (BP 수정 없이 C++에서)
 	CheatComponent = CreateDefaultSubobject<UHellunaCheatComponent>(TEXT("CheatComponent"));
+
+	// [TeamOutline] L4D식 아군 외곽선 — 클라이언트 시각 효과 (CustomDepth/Stencil)
+	TeamOutlineComponent = CreateDefaultSubobject<UHellunaTeamOutlineComponent>(TEXT("TeamOutlineComponent"));
 
 	// ★ 추가: 플레이어 체력 컴포넌트
 	HeroHealthComponent = CreateDefaultSubobject<UHellunaHealthComponent>(TEXT("HeroHealthComponent"));
@@ -2330,8 +2338,13 @@ void AHellunaHeroCharacter::OnHeroDeath(AActor* DeadActor, AActor* KillerActor)
 	// 전원 사망 체크 → GameMode에 사망 알림
 	if (AHellunaDefenseGameMode* DefenseGM = Cast<AHellunaDefenseGameMode>(UGameplayStatics::GetGameMode(GetWorld())))
 	{
+		// [Phase22] 사망 시점 Day 기록 — 사체 정리 정책 결정 시 사용
+		DeathDay = DefenseGM->GetCurrentDay();
+
 		APlayerController* PC = Cast<APlayerController>(GetController());
 		DefenseGM->NotifyPlayerDied(PC);
+		// NotifyPlayerDied 내부에서 살아있는 팀원 ≥1 → EnterSpectatorMode(PC) 호출.
+		// 솔로/전원 사망 → EndGame(AllDead) 경유.
 	}
 }
 

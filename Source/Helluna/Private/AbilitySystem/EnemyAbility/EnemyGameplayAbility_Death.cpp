@@ -93,18 +93,23 @@ void UEnemyGameplayAbility_Death::ActivateAbility(
 		return;
 	}
 
-	MontageTask->OnCompleted.AddDynamic(this, &UEnemyGameplayAbility_Death::OnMontageCompleted);
-	MontageTask->OnCancelled.AddDynamic(this, &UEnemyGameplayAbility_Death::OnMontageCancelled);
-	MontageTask->OnInterrupted.AddDynamic(this, &UEnemyGameplayAbility_Death::OnMontageCancelled);
+	MontageTask->OnCompleted.AddUniqueDynamic(this, &UEnemyGameplayAbility_Death::OnMontageCompleted);
+	MontageTask->OnCancelled.AddUniqueDynamic(this, &UEnemyGameplayAbility_Death::OnMontageCancelled);
+	MontageTask->OnInterrupted.AddUniqueDynamic(this, &UEnemyGameplayAbility_Death::OnMontageCancelled);
 
-	// 몽타주 70% 지점에서 조기 후처리
-	const float EarlyFinishTime = DeathMontage->GetPlayLength() * 0.7f;
-	UWorld* World = Enemy->GetWorld();
-	if (World)
+	// Montage 끝 0.1s 전에 HandleDeathFinished 트리거 — BlendOut으로 idle pose 돌아가기 전에 bPauseAnims로 누운 자세 freeze 보장
+	const float EarlyFinishTime = FMath::Max(0.05f, DeathMontage->GetPlayLength() - 0.1f);
+	if (UWorld* World = Enemy->GetWorld())
 	{
-		FTimerHandle EarlyFinishTimer;
+		TWeakObjectPtr<UEnemyGameplayAbility_Death> WeakThis(this);
 		World->GetTimerManager().SetTimer(EarlyFinishTimer,
-			[this]() { HandleDeathFinished(); },
+			[WeakThis]()
+			{
+				if (WeakThis.IsValid())
+				{
+					WeakThis->HandleDeathFinished();
+				}
+			},
 			EarlyFinishTime, false);
 	}
 

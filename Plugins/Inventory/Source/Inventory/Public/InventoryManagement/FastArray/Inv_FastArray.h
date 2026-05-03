@@ -97,7 +97,7 @@ struct FInv_InventoryFastArray : public FFastArraySerializer
 	UInv_InventoryItem* AddEntry(UInv_ItemComponent* ItemComponent); // 인벤토리 항목 추가
 	UInv_InventoryItem* AddEntry(UInv_InventoryItem* Item);
 	void RemoveEntry(UInv_InventoryItem* Item); // 인벤토리 항목 제거
-	void ClearAllEntries(); // 모든 항목 제거 (로드 시 중복 방지)
+	INVENTORY_API void ClearAllEntries(); // [Phase22] 외부 모듈에서 부활 시 인벤 클리어 호출
 	UInv_InventoryItem* FindFirstItemByType(const FGameplayTag& ItemType);
 
 	// ⭐ [최적화 #4] 아이템 타입별 개수 조회 (O(1) 해시 조회)

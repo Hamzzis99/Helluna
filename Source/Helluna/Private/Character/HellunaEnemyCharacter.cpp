@@ -265,14 +265,19 @@ void AHellunaEnemyCharacter::InitEnemyStartUpData()
 {
 	if (CharacterStartUpData.IsNull()) return;
 
+	// [Fix:weak-capture 2026-05-02] raw [this] 캡처 시 비동기 로드 중 적 destroy → use-after-free.
+	// TWeakObjectPtr 캡처로 안전화. 콜백 fire 시점에 actor invalid면 즉시 return.
+	TWeakObjectPtr<AHellunaEnemyCharacter> WeakThis(this);
 	UAssetManager::GetStreamableManager().RequestAsyncLoad(
 		CharacterStartUpData.ToSoftObjectPath(),
 		FStreamableDelegate::CreateLambda(
-			[this]()
+			[WeakThis]()
 			{
-				if (UDataAsset_BaseStartUpData* LoadedData = CharacterStartUpData.Get())
+				AHellunaEnemyCharacter* StrongThis = WeakThis.Get();
+				if (!StrongThis) return;
+				if (UDataAsset_BaseStartUpData* LoadedData = StrongThis->CharacterStartUpData.Get())
 				{
-					LoadedData->GiveToAbilitySystemComponent(HellunaAbilitySystemComponent);
+					LoadedData->GiveToAbilitySystemComponent(StrongThis->HellunaAbilitySystemComponent);
 				}
 			}
 		)
@@ -727,6 +732,11 @@ void AHellunaEnemyCharacter::OnDeathMontageEnded(UAnimMontage* Montage, bool bIn
 // ============================================================
 void AHellunaEnemyCharacter::Multicast_StartDeathDissolve_Implementation()
 {
+	// Death montage 마지막 프레임 자세에서 AnimInstance 정지 — idle base pose로의 자동 BlendOut 차단
+	if (USkeletalMeshComponent* SkelMesh = GetMesh())
+	{
+		SkelMesh->bPauseAnims = true;
+	}
 	StartDeathDissolveVisuals();
 }
 
@@ -763,15 +773,61 @@ void AHellunaEnemyCharacter::StartDeathDissolveVisuals()
 	bDeathDissolveVisualsStarted = true;
 	DeathDissolveMIDs.Reset(MaterialCount);
 
+	// Warrior 패턴: OverrideMaterial이 지정되면 모든 슬롯을 그 머티리얼로 swap (M_EnemyDissolveMaster 부모 MI 등)
+	UMaterialInterface* OverrideMat = nullptr;
+	if (!DeathDissolveOverrideMaterial.IsNull())
+	{
+		OverrideMat = DeathDissolveOverrideMaterial.LoadSynchronous();
+	}
+
 	for (int32 MaterialIndex = 0; MaterialIndex < MaterialCount; ++MaterialIndex)
 	{
-		UMaterialInstanceDynamic* MID = SkelMesh->CreateAndSetMaterialInstanceDynamic(MaterialIndex);
+		UMaterialInterface* SourceMat = OverrideMat ? OverrideMat : SkelMesh->GetMaterial(MaterialIndex);
+		// Substrate 환경 MID 부모 상속 버그 우회: 컴포넌트 API로 MID 생성
+		// (CreateAndSetMaterialInstanceDynamicFromMaterial이 내부적으로 더 안전한 instantiation path 사용)
+		UMaterialInstanceDynamic* MID = SkelMesh->CreateAndSetMaterialInstanceDynamicFromMaterial(MaterialIndex, SourceMat);
+
 		if (!IsValid(MID))
 		{
 			UE_LOG(LogHellunaEnemyDissolve, Warning,
 				TEXT("[DeathDissolve] Enemy=%s Slot=%d Reason=FailedToCreateMID"),
 				*GetNameSafe(this), MaterialIndex);
 			continue;
+		}
+
+		// 명시적 파라미터 복사 — Substrate에서 MID가 부모 MIC override를 lazy 평가 안 하는 케이스 보호
+		if (UMaterialInstance* SourceMI = Cast<UMaterialInstance>(SourceMat))
+		{
+			TArray<FMaterialParameterInfo> TexInfos; TArray<FGuid> TexGuids;
+			SourceMI->GetAllTextureParameterInfo(TexInfos, TexGuids);
+			for (const FMaterialParameterInfo& Info : TexInfos)
+			{
+				UTexture* TexValue = nullptr;
+				if (SourceMI->GetTextureParameterValue(Info, TexValue) && TexValue)
+				{
+					MID->SetTextureParameterValueByInfo(Info, TexValue);
+				}
+			}
+			TArray<FMaterialParameterInfo> ScalarInfos; TArray<FGuid> ScalarGuids;
+			SourceMI->GetAllScalarParameterInfo(ScalarInfos, ScalarGuids);
+			for (const FMaterialParameterInfo& Info : ScalarInfos)
+			{
+				float ScalarValue = 0.f;
+				if (SourceMI->GetScalarParameterValue(Info, ScalarValue))
+				{
+					MID->SetScalarParameterValueByInfo(Info, ScalarValue);
+				}
+			}
+			TArray<FMaterialParameterInfo> VectorInfos; TArray<FGuid> VectorGuids;
+			SourceMI->GetAllVectorParameterInfo(VectorInfos, VectorGuids);
+			for (const FMaterialParameterInfo& Info : VectorInfos)
+			{
+				FLinearColor VecValue;
+				if (SourceMI->GetVectorParameterValue(Info, VecValue))
+				{
+					MID->SetVectorParameterValueByInfo(Info, VecValue);
+				}
+			}
 		}
 
 		for (const FName& VectorParamName : DeathDissolveVectorParameterNames)
@@ -783,6 +839,38 @@ void AHellunaEnemyCharacter::StartDeathDissolveVisuals()
 						? DeathDissolveBurnColor
 						: DeathDissolveEdgeColor;
 				MID->SetVectorParameterValue(VectorParamName, VectorValue);
+			}
+		}
+
+		// TeamColor 보존 — 평소 mesh가 Paragon 머티리얼이고 OverrideMaterial로 swap 시
+		// 우리 MIC의 default TeamColor=white가 적용되어 색이 사라짐. ReplicatedTeamColor 또는
+		// 평소 mesh material에서 TeamColor 추출해 swap된 MID에 명시 적용.
+		if (OverrideMat && !TeamColorParameterName.IsNone())
+		{
+			FLinearColor PreservedTeamColor = FLinearColor::White;
+			bool bGotTeamColor = false;
+
+			if (ReplicatedTeamColor.A > 0.f)
+			{
+				PreservedTeamColor = ReplicatedTeamColor;
+				PreservedTeamColor.A = 1.f;
+				bGotTeamColor = true;
+			}
+
+			if (!bGotTeamColor && IsValid(TeamColorMID))
+			{
+				FLinearColor PrevColor;
+				if (TeamColorMID->GetVectorParameterValue(TeamColorParameterName, PrevColor))
+				{
+					PreservedTeamColor = PrevColor;
+					PreservedTeamColor.A = 1.f;
+					bGotTeamColor = true;
+				}
+			}
+
+			if (bGotTeamColor)
+			{
+				MID->SetVectorParameterValue(TeamColorParameterName, PreservedTeamColor);
 			}
 		}
 
@@ -1000,6 +1088,18 @@ void AHellunaEnemyCharacter::OnMonsterDeath(AActor* DeadActor, AActor* KillerAct
 	if (USkeletalMeshComponent* EnemyMesh = GetMesh())
 	{
 		EnemyMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
+	// 진행 중 모든 GA(공격/스킬 등)와 montage(HitReact 등) 즉시 취소 — 사망 후 잔여 행동 차단
+	if (UAbilitySystemComponent* ASC = GetAbilitySystemComponent())
+	{
+		ASC->CancelAbilities(nullptr, nullptr, nullptr);
+	}
+	if (USkeletalMeshComponent* EnemyMesh = GetMesh())
+	{
+		if (UAnimInstance* AnimInst = EnemyMesh->GetAnimInstance())
+		{
+			AnimInst->StopAllMontages(0.f);
+		}
 	}
 	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
 	{

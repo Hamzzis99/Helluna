@@ -58,4 +58,7 @@ private:
 
 	/** 후처리가 이미 실행됐는지 체크 (중복 방지) */
 	bool bDeathHandled = false;
+
+	/** Montage 끝 0.1s 전 트리거 — BlendOut으로 idle pose 돌아가기 전에 freeze 보장 */
+	FTimerHandle EarlyFinishTimer;
 };

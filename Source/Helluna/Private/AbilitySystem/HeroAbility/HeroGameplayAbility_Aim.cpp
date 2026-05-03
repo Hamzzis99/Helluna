@@ -91,7 +91,7 @@ void UHeroGameplayAbility_Aim::ActivateAbility(
 	// ── Phase 1: 줌인 AbilityTask 시작 ──
 	UAT_AimCameraInterp* ZoomInTask = UAT_AimCameraInterp::CreateTask(
 		this, TargetFOV, TargetArmLength, TargetSocketOffset, InterpSpeed);
-	ZoomInTask->OnCompleted.AddDynamic(this, &UHeroGameplayAbility_Aim::OnZoomInCompleted);
+	ZoomInTask->OnCompleted.AddUniqueDynamic(this, &UHeroGameplayAbility_Aim::OnZoomInCompleted);
 	ZoomInTask->ReadyForActivation();
 
 	UE_LOG(LogTemp, Warning, TEXT("[Aim GA] Phase 1 시작 — 줌인 (FOV %.1f→%.1f, Arm %.1f→%.1f)"),
@@ -138,7 +138,7 @@ void UHeroGameplayAbility_Aim::StartZoomOut()
 	// ── Phase 3: 줌아웃 AbilityTask ──
 	ZoomOutTask = UAT_AimCameraInterp::CreateTask(
 		this, CachedDefaultFOV, CachedDefaultArmLength, CachedDefaultSocketOffset, 12.f);
-	ZoomOutTask->OnCompleted.AddDynamic(this, &UHeroGameplayAbility_Aim::OnZoomOutCompleted);
+	ZoomOutTask->OnCompleted.AddUniqueDynamic(this, &UHeroGameplayAbility_Aim::OnZoomOutCompleted);
 	ZoomOutTask->ReadyForActivation();
 
 	UE_LOG(LogTemp, Warning, TEXT("[Aim GA] Phase 3 시작 — 줌아웃 (FOV→%.1f, Arm→%.1f)"),

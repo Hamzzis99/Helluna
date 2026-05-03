@@ -411,7 +411,11 @@ void UWeaponBridgeComponent::DestroyHandWeapon()
 // ============================================
 bool UWeaponBridgeComponent::Server_RequestAttachmentTransfer_Validate(AInv_EquipActor* EquipActor)
 {
-	return IsOwnedEquipActorForBridge(this, EquipActor);
+	// [Fix:withvalidation 2026-05-02] UObject 포인터 인자에 대한 false 반환은 클라이언트 강제 킥을 유발.
+	// 리플리케이션 타이밍으로 EquipActor가 nullptr/destroyed 도달은 정상 race condition이지 cheat가 아님.
+	// 모든 경우 통과시키고 _Implementation의 IsOwnedEquipActorForBridge에서 silent ignore 처리.
+	// MEMORY.md 규칙: WithValidation에서 UObject 포인터 검증 금지 → 강제 킥 위험.
+	return true;
 }
 
 void UWeaponBridgeComponent::Server_RequestAttachmentTransfer_Implementation(AInv_EquipActor* EquipActor)

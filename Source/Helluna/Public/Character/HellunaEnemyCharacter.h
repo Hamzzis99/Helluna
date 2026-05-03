@@ -255,6 +255,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Combat|Enrage")
 	void EnterEnraged();
 
+	/** false면 STTask_Enrage가 즉시 Failed 반환 → 광폭화 진입 차단. HP 0 = 즉시 사망. BP에서 적별 enable 가능. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enrage",
+		meta = (DisplayName = "광폭화 사용"))
+	bool bAllowEnrage = false;
+
 	/** 광폭화 몽타주 멀티캐스트 재생 */
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayEnrage();
@@ -389,6 +394,11 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Effect|DeathDissolve",
 		meta = (DisplayName = "사망 디졸브 사용"))
 	bool bEnableDeathDissolve = true;
+
+	/** Warrior식: M_EnemyDissolveMaster 부모 MI를 지정하면 사망 시 모든 슬롯이 이 머티리얼로 swap된다. null이면 기존 슬롯 머티리얼을 MID로 변환. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Effect|DeathDissolve",
+		meta = (DisplayName = "사망 디졸브 오버라이드 머티리얼"))
+	TSoftObjectPtr<UMaterialInterface> DeathDissolveOverrideMaterial;
 
 	/**
 	 * Warrior의 DissolveAmount와 Helluna Paragon Minion의 FadeOut/Ash를 함께 지원한다.

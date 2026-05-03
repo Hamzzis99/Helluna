@@ -24,6 +24,7 @@ class UNiagaraSystem;
 class UNiagaraComponent;
 class UMeleeTraceComponent;
 class UHellunaCheatComponent;
+class UHellunaTeamOutlineComponent;
 
 class UWeaponHUDWidget;
 class UHellunaHealthHUDWidget;
@@ -107,6 +108,11 @@ private:
 	// [cheatdebug] F1~F6 치트 컴포넌트 (BP 수정 없이 C++에서 부착)
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Cheat", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UHellunaCheatComponent> CheatComponent;
+
+	// [TeamOutline] L4D식 아군 외곽선 — 클라이언트 시각 효과 (CustomDepth/Stencil 토글)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Outline", meta = (AllowPrivateAccess = "true",
+		DisplayName = "팀 외곽선 컴포넌트"))
+	TObjectPtr<UHellunaTeamOutlineComponent> TeamOutlineComponent;
 
 #pragma endregion
 
@@ -656,6 +662,11 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Component",
 		meta = (DisplayName = "루트 컨테이너 컴포넌트"))
 	TObjectPtr<UInv_LootContainerComponent> LootContainerComponent = nullptr;
+
+	/** [Phase 22] 이 사체가 만들어진 Day(EnterDay 카운터). 0 = 아직 사망 전. 사체 정리 정책 결정 시 사용. */
+	UPROPERTY(BlueprintReadOnly, Category = "Component",
+		meta = (DisplayName = "사망 시점 Day"))
+	int32 DeathDay = 0;
 
 	UFUNCTION()
 	void OnHeroHealthChanged(UActorComponent* HealthComp, float OldHealth, float NewHealth, AActor* InstigatorActor);

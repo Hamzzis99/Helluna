@@ -101,9 +101,9 @@ void UEnemyGameplayAbility_TimeDistortion::ActivateAbility(
 
 		if (MontageTask)
 		{
-			MontageTask->OnCompleted.AddDynamic(this, &UEnemyGameplayAbility_TimeDistortion::OnMontageCompleted);
-			MontageTask->OnCancelled.AddDynamic(this, &UEnemyGameplayAbility_TimeDistortion::OnMontageCancelled);
-			MontageTask->OnInterrupted.AddDynamic(this, &UEnemyGameplayAbility_TimeDistortion::OnMontageCancelled);
+			MontageTask->OnCompleted.AddUniqueDynamic(this, &UEnemyGameplayAbility_TimeDistortion::OnMontageCompleted);
+			MontageTask->OnCancelled.AddUniqueDynamic(this, &UEnemyGameplayAbility_TimeDistortion::OnMontageCancelled);
+			MontageTask->OnInterrupted.AddUniqueDynamic(this, &UEnemyGameplayAbility_TimeDistortion::OnMontageCancelled);
 			MontageTask->ReadyForActivation();
 		}
 	}

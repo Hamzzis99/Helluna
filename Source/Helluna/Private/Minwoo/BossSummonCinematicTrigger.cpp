@@ -170,8 +170,9 @@ void ABossSummonCinematicTrigger::OnActorSpawnedInWorld(AActor* SpawnedActor)
 	// 보스 BeginPlay/AI 초기화 마무리될 시간 확보 후 발동
 	const float Grace = FMath::Max(PostSpawnDelay, 0.05f);
 	TWeakObjectPtr<APawn> WeakBoss = SpawnedPawn;
+	// [Fix:weak-capture 2026-05-02] raw [this] 캡처 → CreateWeakLambda로 trigger 액터도 weak 추적.
 	GetWorldTimerManager().SetTimer(AutoActivateTimer,
-		FTimerDelegate::CreateLambda([this, WeakBoss]()
+		FTimerDelegate::CreateWeakLambda(this, [this, WeakBoss]()
 		{
 			if (!HasAuthority()) return;
 			APawn* B = WeakBoss.Get();
