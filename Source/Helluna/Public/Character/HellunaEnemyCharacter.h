@@ -442,6 +442,16 @@ public:
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_StartDeathDissolve();
 
+	/**
+	 * [SpawnDissolveV1] Reverse dissolve — 몬스터가 디졸브 머티리얼로 점점 등장 (보스 포탈 emerge 용).
+	 *   Death dissolve 와 같은 머티리얼/파라미터를 공유하지만 알파를 1→0 으로 역방향 재생.
+	 *   완료 시 메시 visibility 변경하지 않음 (보스가 솔리드 상태로 유지).
+	 *   @param Duration 페이드 인 지속시간 (초). 0 이하면 즉시 솔리드.
+	 *   @param StartAmount 시작 dissolve 양 (0=솔리드, 1=완전히 사라짐). 보통 1.0.
+	 */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_StartSpawnDissolve(float Duration, float StartAmount);
+
 	// [HitSoundV1] HitSound 는 공격 GA(UHellunaEnemyGameplayAbility) 로 이관됨.
 	//   Why: 같은 몬스터가 여러 공격을 가질 때 공격마다 다른 사운드를 쓰기 위함.
 	//   Run-time 저장소는 아래 CachedHitSound/CachedHitSoundVolume/CachedHitSoundAttenuation.
@@ -743,6 +753,34 @@ private:
 
 	UPROPERTY(Transient)
 	bool bDeathDissolveVisualsStarted = false;
+
+	// [SpawnDissolveV1] reverse dissolve (1→0) 상태 관리
+	FTimerHandle SpawnDissolveTimerHandle;
+	double SpawnDissolveStartTime = 0.0;
+	float  SpawnDissolveDurationCached = 1.f;
+	float  SpawnDissolveStartAmount = 1.f;
+	UPROPERTY(Transient)
+	bool bSpawnDissolveActive = false;
+
+	void TickSpawnDissolveVisuals();
+
+public:
+	/** [SpawnDissolveV1] 외부에서 직접 호출 가능 — Multicast 거치지 않고 바로 페이드 인. */
+	void StartSpawnDissolveVisuals(float Duration, float StartAmount);
+
+	/**
+	 * [PortalClipV1] 보스 등장 시네마틱 — MF_PortalClipPlane 머티리얼 함수의 파라미터 set.
+	 *   평면 뒤쪽 픽셀이 PixelDepthOffset 으로 화면 밖 깊이로 밀려서 invisible.
+	 *   각 클라가 로컬에서 호출 (각 머신의 MID 에 적용).
+	 *   @param PlanePosWS 평면 위 한 점 (월드)
+	 *   @param PlaneNormalWS 평면 노멀 — 이 방향이 visible 쪽
+	 */
+	void StartPortalClipPlaneVisuals(const FVector& PlanePosWS, const FVector& PlaneNormalWS);
+
+	/** [PortalClipV1] EnableClipPlane=0 으로 모든 픽셀 visible. */
+	void StopPortalClipPlaneVisuals();
+
+private:
 
 	/** [HitSoundV1] 현재 공격의 HitSound / 볼륨 / 감쇠 캐시. */
 	UPROPERTY()

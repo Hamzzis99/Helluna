@@ -118,6 +118,10 @@ AHellunaEnemyCharacter::AHellunaEnemyCharacter()
 {
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
 
+	// Why: 디포메이션 메시(메시 디포머) 및 외부 시스템이 적 액터를 식별하는 표준 태그.
+	// 서버/클라 양쪽 CDO 에 직렬화돼 모든 인스턴스에 자동 부여 — 별도 replicate 불필요.
+	Tags.AddUnique(FName(TEXT("Enemy")));
+
 	bUseControllerRotationPitch = false;
 	bUseControllerRotationRoll  = false;
 	bUseControllerRotationYaw   = false;
@@ -728,6 +732,181 @@ void AHellunaEnemyCharacter::OnDeathMontageEnded(UAnimMontage* Montage, bool bIn
 void AHellunaEnemyCharacter::Multicast_StartDeathDissolve_Implementation()
 {
 	StartDeathDissolveVisuals();
+}
+
+// [SpawnDissolveV1] Multicast 진입점 — 각 클라가 자기 머신에서 dissolve fade-in 시작.
+void AHellunaEnemyCharacter::Multicast_StartSpawnDissolve_Implementation(float Duration, float StartAmount)
+{
+	StartSpawnDissolveVisuals(Duration, StartAmount);
+}
+
+void AHellunaEnemyCharacter::StartSpawnDissolveVisuals(float Duration, float StartAmount)
+{
+	if (GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+	if (!bEnableDeathDissolve)
+	{
+		// 디졸브 머티리얼 시스템 비활성 — 그냥 메시 보이게 두고 종료.
+		return;
+	}
+
+	USkeletalMeshComponent* SkelMesh = GetMesh();
+	if (!IsValid(SkelMesh))
+	{
+		return;
+	}
+
+	const int32 MaterialCount = SkelMesh->GetNumMaterials();
+	if (MaterialCount <= 0)
+	{
+		return;
+	}
+
+	// MID 가 아직 생성되지 않았으면 death dissolve 와 동일 방식으로 생성 (양 시스템이 공유).
+	if (!bDeathDissolveVisualsStarted)
+	{
+		bDeathDissolveVisualsStarted = true;
+		DeathDissolveMIDs.Reset(MaterialCount);
+
+		for (int32 MaterialIndex = 0; MaterialIndex < MaterialCount; ++MaterialIndex)
+		{
+			UMaterialInstanceDynamic* MID = SkelMesh->CreateAndSetMaterialInstanceDynamic(MaterialIndex);
+			if (!IsValid(MID))
+			{
+				continue;
+			}
+			for (const FName& VectorParamName : DeathDissolveVectorParameterNames)
+			{
+				if (!VectorParamName.IsNone())
+				{
+					const FLinearColor VectorValue =
+						VectorParamName == FName(TEXT("BurnColor"))
+							? DeathDissolveBurnColor
+							: DeathDissolveEdgeColor;
+					MID->SetVectorParameterValue(VectorParamName, VectorValue);
+				}
+			}
+			DeathDissolveMIDs.Add(MID);
+		}
+	}
+
+	if (DeathDissolveMIDs.Num() == 0)
+	{
+		return;
+	}
+
+	const float ClampedStart = FMath::Clamp(StartAmount, 0.f, 1.f);
+	SpawnDissolveStartAmount = ClampedStart;
+	SpawnDissolveDurationCached = FMath::Max(0.05f, Duration);
+	bSpawnDissolveActive = true;
+
+	// 시작 알파 적용 (1 = 완전 사라짐 / 0 = 솔리드).
+	ApplyDeathDissolveAmount(ClampedStart);
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[SpawnDissolveV1] Started — Start=%.2f Duration=%.2f"),
+		ClampedStart, SpawnDissolveDurationCached);
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		ApplyDeathDissolveAmount(0.f);
+		bSpawnDissolveActive = false;
+		return;
+	}
+
+	SpawnDissolveStartTime = World->GetTimeSeconds();
+	const float SafeTickInterval = FMath::Clamp(DeathDissolveTickInterval, 0.016f, 0.1f);
+	World->GetTimerManager().SetTimer(
+		SpawnDissolveTimerHandle, this,
+		&AHellunaEnemyCharacter::TickSpawnDissolveVisuals,
+		SafeTickInterval, true);
+}
+
+void AHellunaEnemyCharacter::TickSpawnDissolveVisuals()
+{
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	const float Elapsed = static_cast<float>(World->GetTimeSeconds() - SpawnDissolveStartTime);
+	const float Alpha   = FMath::Clamp(Elapsed / SpawnDissolveDurationCached, 0.f, 1.f);
+
+	// Reverse: alpha 0→1 진행에 따라 dissolve amount 는 StartAmount → 0 으로.
+	const float CurrentAmount = FMath::Lerp(SpawnDissolveStartAmount, 0.f, Alpha);
+	ApplyDeathDissolveAmount(CurrentAmount);
+
+	if (Alpha >= 1.f)
+	{
+		World->GetTimerManager().ClearTimer(SpawnDissolveTimerHandle);
+		bSpawnDissolveActive = false;
+		ApplyDeathDissolveAmount(0.f);
+		UE_LOG(LogTemp, Warning, TEXT("[SpawnDissolveV1] Completed — boss fully solid"));
+	}
+}
+
+// ============================================================
+// [PortalClipV1] MF_PortalClipPlane 파라미터 적용 — 보스 메시의 모든 머티리얼 슬롯 MID 생성 후 set
+// ============================================================
+void AHellunaEnemyCharacter::StartPortalClipPlaneVisuals(const FVector& PlanePosWS, const FVector& PlaneNormalWS)
+{
+	if (GetNetMode() == NM_DedicatedServer) return;
+
+	USkeletalMeshComponent* SkelMesh = GetMesh();
+	if (!IsValid(SkelMesh)) return;
+
+	const int32 MaterialCount = SkelMesh->GetNumMaterials();
+	if (MaterialCount <= 0) return;
+
+	// MID 가 아직 없으면 모든 슬롯에 대해 생성 (death dissolve 와 공유 가능).
+	if (!bDeathDissolveVisualsStarted)
+	{
+		bDeathDissolveVisualsStarted = true;
+		DeathDissolveMIDs.Reset(MaterialCount);
+		for (int32 i = 0; i < MaterialCount; ++i)
+		{
+			UMaterialInstanceDynamic* MID = SkelMesh->CreateAndSetMaterialInstanceDynamic(i);
+			if (IsValid(MID))
+			{
+				DeathDissolveMIDs.Add(MID);
+			}
+		}
+	}
+
+	// 모든 MID 에 ClipPlane 파라미터 적용.
+	const FLinearColor PlanePos(PlanePosWS.X, PlanePosWS.Y, PlanePosWS.Z, 0.f);
+	const FVector NormalUnit = PlaneNormalWS.GetSafeNormal();
+	const FLinearColor PlaneNormal(NormalUnit.X, NormalUnit.Y, NormalUnit.Z, 0.f);
+
+	for (const TObjectPtr<UMaterialInstanceDynamic>& MID : DeathDissolveMIDs)
+	{
+		if (UMaterialInstanceDynamic* M = MID.Get())
+		{
+			M->SetScalarParameterValue(TEXT("EnableClipPlane"), 1.f);
+			M->SetVectorParameterValue(TEXT("ClipPlanePosWS"), PlanePos);
+			M->SetVectorParameterValue(TEXT("ClipPlaneNormalWS"), PlaneNormal);
+		}
+	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[PortalClipV1] Started — Plane=%s Normal=%s MIDs=%d"),
+		*PlanePosWS.ToString(), *NormalUnit.ToString(), DeathDissolveMIDs.Num());
+}
+
+void AHellunaEnemyCharacter::StopPortalClipPlaneVisuals()
+{
+	if (GetNetMode() == NM_DedicatedServer) return;
+
+	for (const TObjectPtr<UMaterialInstanceDynamic>& MID : DeathDissolveMIDs)
+	{
+		if (UMaterialInstanceDynamic* M = MID.Get())
+		{
+			M->SetScalarParameterValue(TEXT("EnableClipPlane"), 0.f);
+		}
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[PortalClipV1] Stopped — clip plane disabled"));
 }
 
 void AHellunaEnemyCharacter::StartDeathDissolveVisuals()
@@ -1449,7 +1628,15 @@ void AHellunaEnemyCharacter::ServerApplyDamage(AActor* Target, float DamageAmoun
 		}
 	}
 
-	UGameplayStatics::ApplyDamage(Target, FinalDamageAmount, GetController(), this, UDamageType::StaticClass());
+	const FVector HitFromDir = (Target->GetActorLocation() - GetActorLocation()).GetSafeNormal();
+	UGameplayStatics::ApplyPointDamage(
+		Target,
+		FinalDamageAmount,
+		HitFromDir,
+		FHitResult(),
+		GetController(),
+		this,
+		UDamageType::StaticClass());
 	UE_LOG(LogTemp, Log, TEXT("[Damage] %.1f -> %s"), FinalDamageAmount, *GetNameSafe(Target));
 
 	// 이펙트 RPC 쓰로틀링: 같은 몬스터에서 0.1초 내 중복 Multicast 생략

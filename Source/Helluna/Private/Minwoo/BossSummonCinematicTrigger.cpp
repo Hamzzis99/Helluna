@@ -850,13 +850,28 @@ void ABossSummonCinematicTrigger::StartLocalCinematicBody(APawn* Boss)
 		}
 	}
 
-	// [PortalRevealV1] reveal 동안 보스 메시 visibility off (각 클라 로컬, replicate 안 함).
-	//   카메라는 player 그대로 → 사용자는 portal 만 보임. 경과 후 메시 다시 표시 + 카메라 컷 시작.
-	if (ACharacter* BossChar = Cast<ACharacter>(Boss))
+	// [PortalClipV1] dissolve 대신 portal-plane clip — 보스 픽셀 중 평면 뒤쪽만 invisible.
+	//   평면은 portal 위치 + portal forward 방향. 보스가 walk 로 평면 통과하면 통과한 부위만 visible.
+	//   완료 (BossEmergeDelay 후) 에 ClipPlane 비활성화.
+	if (AHellunaEnemyCharacter* EnemyBoss = Cast<AHellunaEnemyCharacter>(Boss))
 	{
+		AActor* PortalActor = LocalPortalActor.Get();
+		if (PortalActor)
+		{
+			const FVector PortalLoc = PortalActor->GetActorLocation();
+			// [PortalClipV2] 평면 노멀 = 보스 forward (= player 방향).
+			//   visible side = +forward (player 쪽). 평면 반대(보스 뒤쪽 = 포탈의 안쪽) 에 있는 픽셀은 invisible.
+			//   Portal forward 가 모델에 따라 어느 면을 향하는지 불확실해서 보스 forward 사용.
+			const FVector VisibleNormal = Boss->GetActorForwardVector();
+			EnemyBoss->StartPortalClipPlaneVisuals(PortalLoc, VisibleNormal);
+		}
+	}
+	else if (ACharacter* BossChar = Cast<ACharacter>(Boss))
+	{
+		// HellunaEnemyCharacter 가 아니면 폴백 (단순 hide).
 		if (USkeletalMeshComponent* BossMesh = BossChar->GetMesh())
 		{
-			BossMesh->SetVisibility(false, /*bPropagateToChildren=*/true);
+			BossMesh->SetVisibility(false, true);
 		}
 	}
 
@@ -1191,11 +1206,15 @@ void ABossSummonCinematicTrigger::Multicast_EndCinematic_Implementation()
 	// [CinematicShakeV1] 반복 카메라 쉐이크 타이머 정리.
 	World->GetTimerManager().ClearTimer(CinematicShakeTimer);
 
-	// [PortalRevealV1] reveal/emerge 대기 타이머 정리 + 보스 메시 visibility 복원 (Failsafe 가 emerge 전 발화한 경우 대비).
+	// [PortalRevealV1] reveal/emerge 대기 타이머 정리 + 보스 visibility/clip 정리 (Failsafe 가 emerge 전 발화한 경우 대비).
 	World->GetTimerManager().ClearTimer(PortalRevealTimerLocal);
 	World->GetTimerManager().ClearTimer(BossEmergeTimerLocal);
 	if (APawn* BossLocal = LocalCinematicBoss.Get())
 	{
+		if (AHellunaEnemyCharacter* EnemyBoss = Cast<AHellunaEnemyCharacter>(BossLocal))
+		{
+			EnemyBoss->StopPortalClipPlaneVisuals();
+		}
 		if (ACharacter* BossCh = Cast<ACharacter>(BossLocal))
 		{
 			if (USkeletalMeshComponent* Mesh = BossCh->GetMesh())
@@ -1375,13 +1394,19 @@ void ABossSummonCinematicTrigger::OnBossEmergeElapsedLocal()
 	APawn* Boss = LocalCinematicBoss.Get();
 	if (!Boss) return;
 
-	if (ACharacter* BossChar = Cast<ACharacter>(Boss))
+	// [PortalClipV1] BossEmergeDelay 경과 — clip plane 끔. 이제 보스 전체 픽셀 visible.
+	if (AHellunaEnemyCharacter* EnemyBoss = Cast<AHellunaEnemyCharacter>(Boss))
 	{
+		EnemyBoss->StopPortalClipPlaneVisuals();
+		UE_LOG(LogTemp, Warning,
+			TEXT("[BossSummonCinematic_LiveCodeCheck] Boss emerged — clip plane stopped"));
+	}
+	else if (ACharacter* BossChar = Cast<ACharacter>(Boss))
+	{
+		// 폴백: 메시 visibility 복원
 		if (USkeletalMeshComponent* BossMesh = BossChar->GetMesh())
 		{
-			BossMesh->SetVisibility(true, /*bPropagateToChildren=*/true);
-			UE_LOG(LogTemp, Warning,
-				TEXT("[BossSummonCinematic_LiveCodeCheck] Boss emerged — mesh visibility restored"));
+			BossMesh->SetVisibility(true, true);
 		}
 	}
 }
