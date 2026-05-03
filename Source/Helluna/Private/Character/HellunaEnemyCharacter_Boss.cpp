@@ -218,6 +218,9 @@ void AHellunaEnemyCharacter_Boss::Multicast_PlayBossPhase2Transition_Implementat
 		}
 	}
 
+	// [BerserkGlowV1] 보스 머티리얼에 광폭화 발광 적용 (각 클라 로컬).
+	StartBerserkVisuals(BerserkGlowColor, BerserkGlowBoost);
+
 	// 보스 상시 오라 VFX attach (이미 있으면 스킵)
 	if (Phase2AuraVFX && !ActivePhase2AuraComp)
 	{

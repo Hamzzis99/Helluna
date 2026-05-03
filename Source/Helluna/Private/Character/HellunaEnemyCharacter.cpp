@@ -909,6 +909,64 @@ void AHellunaEnemyCharacter::StopPortalClipPlaneVisuals()
 	UE_LOG(LogTemp, Warning, TEXT("[PortalClipV1] Stopped — clip plane disabled"));
 }
 
+// ============================================================
+// [BerserkGlowV1] MF_BerserkGlow 파라미터 적용 — 모든 머티리얼 슬롯 MID 에 set
+// ============================================================
+void AHellunaEnemyCharacter::StartBerserkVisuals(const FLinearColor& Color, float Boost)
+{
+	if (GetNetMode() == NM_DedicatedServer) return;
+
+	USkeletalMeshComponent* SkelMesh = GetMesh();
+	if (!IsValid(SkelMesh)) return;
+
+	const int32 MaterialCount = SkelMesh->GetNumMaterials();
+	if (MaterialCount <= 0) return;
+
+	// MID 가 아직 없으면 생성 (death dissolve / portal clip 과 공유).
+	if (!bDeathDissolveVisualsStarted)
+	{
+		bDeathDissolveVisualsStarted = true;
+		DeathDissolveMIDs.Reset(MaterialCount);
+		for (int32 i = 0; i < MaterialCount; ++i)
+		{
+			UMaterialInstanceDynamic* MID = SkelMesh->CreateAndSetMaterialInstanceDynamic(i);
+			if (IsValid(MID))
+			{
+				DeathDissolveMIDs.Add(MID);
+			}
+		}
+	}
+
+	for (const TObjectPtr<UMaterialInstanceDynamic>& MID : DeathDissolveMIDs)
+	{
+		if (UMaterialInstanceDynamic* M = MID.Get())
+		{
+			M->SetScalarParameterValue(TEXT("EnableBerserk"), 1.f);
+			M->SetVectorParameterValue(TEXT("BerserkColor"), Color);
+			M->SetScalarParameterValue(TEXT("BerserkBoost"), FMath::Max(Boost, 0.f));
+		}
+	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[BerserkGlowV1] Started — Color=%s Boost=%.2f MIDs=%d"),
+		*Color.ToString(), Boost, DeathDissolveMIDs.Num());
+}
+
+void AHellunaEnemyCharacter::StopBerserkVisuals()
+{
+	if (GetNetMode() == NM_DedicatedServer) return;
+
+	for (const TObjectPtr<UMaterialInstanceDynamic>& MID : DeathDissolveMIDs)
+	{
+		if (UMaterialInstanceDynamic* M = MID.Get())
+		{
+			M->SetScalarParameterValue(TEXT("EnableBerserk"), 0.f);
+		}
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[BerserkGlowV1] Stopped — emissive restored"));
+}
+
 void AHellunaEnemyCharacter::StartDeathDissolveVisuals()
 {
 	if (!bEnableDeathDissolve || bDeathDissolveVisualsStarted)

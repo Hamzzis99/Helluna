@@ -263,7 +263,7 @@ void UEnemyGameplayAbility_DashAttack::TickDash()
 			bHitTargetThisTick = true;
 		}
 
-		// [Block] ServerApplyDamage 경유 — Hero Block 시 데미지 감쇠/Cue/거리 검증 통과
+		// [Block] ServerApplyDamage 경유 — Hero Block + ApplyPointDamage + 거리 검증 통과
 		Enemy->ServerApplyDamage(HitActor, FinalDashDamage, HitActor->GetActorLocation());
 
 		// [DashHitVFXV1] 피격 대상 위치에 VFX 멀티캐스트. 서버에서만 호출, 모든 머신에서 Niagara 재생.
@@ -571,6 +571,14 @@ void UEnemyGameplayAbility_DashAttack::EndAbility(
 	if (AHellunaEnemyCharacter* Enemy = GetEnemyCharacterFromActorInfo())
 	{
 		Enemy->UnlockMovement();
+
+		// [DashCancelMontageStopV1] Cancel(or normal end) 시 DashLoopMontage 강제 정지.
+		//   기존엔 정상 종료 path(372L) 에서만 stop 호출 → CancelAllAbilities (Phase 2 진입 등) 시
+		//   loop montage 가 계속 재생되어 dash 애니가 영원히 도는 버그.
+		if (DashLoopMontage)
+		{
+			Enemy->Multicast_StopMontage(DashLoopMontage, 0.25f);
+		}
 
 		if (UWorld* World = Enemy->GetWorld())
 		{

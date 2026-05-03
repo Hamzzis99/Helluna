@@ -780,6 +780,17 @@ public:
 	/** [PortalClipV1] EnableClipPlane=0 으로 모든 픽셀 visible. */
 	void StopPortalClipPlaneVisuals();
 
+	/**
+	 * [BerserkGlowV1] MF_BerserkGlow 머티리얼 함수의 파라미터 set — 보스 광폭화 emissive 발광.
+	 *   각 클라가 로컬에서 호출 (각 머신의 MID 에 적용).
+	 *   @param Color 베르세르크 발광 색 (R/G/B 1.0 기준, HDR 가능)
+	 *   @param Boost 발광 강도 multiplier
+	 */
+	void StartBerserkVisuals(const FLinearColor& Color, float Boost);
+
+	/** [BerserkGlowV1] EnableBerserk=0 으로 정상 emissive 복원. */
+	void StopBerserkVisuals();
+
 private:
 
 	/** [HitSoundV1] 현재 공격의 HitSound / 볼륨 / 감쇠 캐시. */

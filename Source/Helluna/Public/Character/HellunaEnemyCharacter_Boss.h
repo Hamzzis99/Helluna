@@ -141,6 +141,19 @@ public:
 		meta = (DisplayName = "쉐이크 반복 간격 (초)", ClampMin = "0.0", ClampMax = "5.0"))
 	float Phase2ShakeRepeatInterval = 0.4f;
 
+	/**
+	 * [BerserkGlowV1] Phase 2 진입 시 보스 머티리얼에 적용할 베르세르크 발광 색.
+	 *   HDR 가능 (R/G/B > 1.0). 황금색: (4, 3, 0.5). 붉은색: (5, 0.3, 0.1).
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Phase2",
+		meta = (DisplayName = "광폭화 발광 색", HideAlphaChannel))
+	FLinearColor BerserkGlowColor = FLinearColor(4.0f, 3.0f, 0.5f, 1.0f);
+
+	/** [BerserkGlowV1] 발광 강도 multiplier (1=기본, 5=강한 발광). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Phase2",
+		meta = (DisplayName = "광폭화 발광 강도", ClampMin = "0.0", ClampMax = "20.0"))
+	float BerserkGlowBoost = 5.0f;
+
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnBossEnterPhase2);
 
 	/** 2페이즈 진입 알림 — 모든 클라. HP 바/UI/AI 등에서 바인딩해 반응. */
