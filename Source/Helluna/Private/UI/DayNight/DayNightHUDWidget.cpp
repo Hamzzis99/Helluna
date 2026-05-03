@@ -521,10 +521,21 @@ void UDayNightHUDWidget::UpdateMinimap()
             // 닉네임 라벨 (마커 바로 아래. 라벨 슬롯 Alignment=(0.5, 0.0) 권장)
             if (Label)
             {
-                if (HPS && !HPS->PlayerUniqueId.IsEmpty() &&
+                FString DisplayName;
+                if (HPS && !HPS->PlayerUniqueId.IsEmpty())
+                {
+                    DisplayName = HPS->PlayerUniqueId;
+                }
+                else if (PS)
+                {
+                    // 로그인 시스템 미경유(PIE 디버그 스킵 등)에서 빈 PlayerUniqueId fallback
+                    DisplayName = PS->GetPlayerName();
+                }
+
+                if (!DisplayName.IsEmpty() &&
                     Marker->GetVisibility() != ESlateVisibility::Collapsed)
                 {
-                    Label->SetText(FText::FromString(HPS->PlayerUniqueId));
+                    Label->SetText(FText::FromString(DisplayName));
                     Label->SetColorAndOpacity(FSlateColor(MarkerColor));
 
                     if (UCanvasPanelSlot* MarkerSlot = Cast<UCanvasPanelSlot>(Marker->Slot))

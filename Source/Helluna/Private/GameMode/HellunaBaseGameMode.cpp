@@ -811,6 +811,31 @@ void AHellunaBaseGameMode::PostLogin(APlayerController* NewPlayer)
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
+// [§16+] HandleStartingNewPlayer override — UE 기본 RestartPlayer 차단
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// AGameModeBase::HandleStartingNewPlayer_Implementation 기본 동작:
+//   → RestartPlayer(NewPlayer)
+//     → SpawnDefaultPawnFor(NewPlayer, StartSpot)
+//       → DefaultPawnClass(BP_HellunaHeroCharacter)를 PlayerStart 위치에 자동 spawn
+//       → 자동 Possess + ViewTarget이 Pawn으로 전환
+//
+// 우리 v2.1 Loading Barrier는 SpawnHeroCharacter를 명시 호출(Barrier 해제 후)로 제어.
+// 자동 RestartPlayer가 별도로 작동하면 LoadingCamera/우주선 씬을 덮어쓰고
+// MainMap PlayerStart 주변(빈 셀, 떠있는 랜드스케이프)이 잠깐 보이는 문제 발생.
+//
+// 해결: Super 호출 안 해 자동 RestartPlayer 차단. 우리 명시 SpawnHeroCharacter만 동작.
+// (Phase 14 Rejoin은 RestoreReconnectedPlayer 명시 호출이라 영향 없음)
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaBaseGameMode::HandleStartingNewPlayer_Implementation(APlayerController* NewPlayer)
+{
+	UE_LOG(LogHelluna, Log,
+		TEXT("[Barrier] HandleStartingNewPlayer 차단 — 자동 RestartPlayer 비활성 | PC=%s"),
+		*GetNameSafe(NewPlayer));
+	// Super 호출 안 함 (Super::HandleStartingNewPlayer_Implementation → RestartPlayer 차단)
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
 // 📌 ProcessLogin - 로그인 처리 (아이디/비밀번호 검증)
 // ════════════════════════════════════════════════════════════════════════════════
 //

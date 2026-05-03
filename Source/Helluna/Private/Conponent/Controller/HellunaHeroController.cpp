@@ -2753,8 +2753,10 @@ void AHellunaHeroController::ApplyCurrentSpectateView()
 	// 자유비행 모드 — SpectatorPawn 으로 ViewTarget 복귀
 	if (!bSpectatorFollowMode)
 	{
-		ASpectatorPawn* MySpec = GetSpectatorPawn();
-		UE_LOG(LogHelluna, Log, TEXT("[Phase22] FreeFlight 시도 — SpectatorPawn=%s"),
+		// [Phase22-Fix] GetSpectatorPawn() 은 표준 BeginSpectatingState 흐름에서만 set됨.
+		// 우리는 직접 SpawnActor+Possess 했으므로 GetPawn() (현재 Possess된 SpectatorPawn) 사용.
+		APawn* MySpec = GetPawn();
+		UE_LOG(LogHelluna, Log, TEXT("[Phase22] FreeFlight 시도 — Pawn(SpectatorPawn)=%s"),
 			MySpec ? *MySpec->GetName() : TEXT("null"));
 		if (MySpec)
 		{
