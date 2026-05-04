@@ -3229,10 +3229,15 @@ void AHellunaHeroCharacter::StartDownedScreenEffect()
 			DownedOverlayWidget ? *DownedOverlayWidget->GetName() : TEXT("NULL"));
 	}
 
-	UE_LOG(LogHelluna, Warning, TEXT("[Phase21-C] StartDownedEffect: %s | PP=%s | Widget=%s | IR=%.2f | Op=%.2f"),
+	const int32 StartArrayNum = DownedPostProcess ? DownedPostProcess->Settings.WeightedBlendables.Array.Num() : -1;
+	UE_LOG(LogHelluna, Warning,
+		TEXT("[Phase21-C][Diag] StartDownedEffect: %s | PP=%s | Widget=%s | MID=%s | ArrayNum=%d | Material=%s | IR=%.2f | Op=%.2f"),
 		*GetName(),
 		DownedPostProcess ? TEXT("Valid") : TEXT("NULL"),
 		DownedOverlayWidget ? TEXT("Valid") : TEXT("NULL"),
+		DownedPPMID ? TEXT("Valid") : TEXT("NULL"),
+		StartArrayNum,
+		DownedPPMaterial ? *DownedPPMaterial->GetName() : TEXT("NULL"),
 		DownedIR, DownedOpacity);
 }
 
@@ -3385,6 +3390,8 @@ void AHellunaHeroCharacter::TickDownedScreenEffect(float DeltaTime)
 	}
 
 	// ── MID Weight ──
+	float DiagPPWeight = -1.f;
+	const int32 DiagArrayNum = DownedPostProcess ? DownedPostProcess->Settings.WeightedBlendables.Array.Num() : -1;
 	if (DownedPPMID && DownedPostProcess)
 	{
 		if (DownedPostProcess->Settings.WeightedBlendables.Array.Num() > 0)
@@ -3393,6 +3400,7 @@ void AHellunaHeroCharacter::TickDownedScreenEffect(float DeltaTime)
 			// 혈흔 비네트를 부드럽게 보여주려면 0.0~0.35 범위로 제한
 			const float PPWeight = FinalOpacity * PP_WEIGHT_MAX;
 			DownedPostProcess->Settings.WeightedBlendables.Array[0].Weight = PPWeight;
+			DiagPPWeight = PPWeight;
 		}
 	}
 
@@ -3413,8 +3421,12 @@ void AHellunaHeroCharacter::TickDownedScreenEffect(float DeltaTime)
 	{
 		DownedEffectLogTimer = 0.f;
 		UE_LOG(LogHelluna, Warning,
-			TEXT("[Phase21-C] Tick: Bleed=%.0f%% | IR=%.2f | Op=%.2f | Bright=%.2f | Blackout=%.2f | Pulse=%.1fs"),
-			BleedoutRatio * 100.f, FinalIR, FinalOpacity, DownedBrightness, DownedBlackout, PulsePeriod);
+			TEXT("[Phase21-C][Diag] Tick: Bleed=%.0f%% | IR=%.2f | Op=%.2f | Bright=%.2f | Blackout=%.2f | Pulse=%.1fs | PPWeight=%.3f | MID=%s | ArrayNum=%d | PPEnabled=%s"),
+			BleedoutRatio * 100.f, FinalIR, FinalOpacity, DownedBrightness, DownedBlackout, PulsePeriod,
+			DiagPPWeight,
+			DownedPPMID ? TEXT("Y") : TEXT("N"),
+			DiagArrayNum,
+			(DownedPostProcess && DownedPostProcess->bEnabled) ? TEXT("Y") : TEXT("N"));
 	}
 }
 

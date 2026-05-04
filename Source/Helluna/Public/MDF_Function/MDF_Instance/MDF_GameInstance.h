@@ -231,6 +231,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Loading Barrier")
 	void ClearLoadingHandoffState();
 
+	/**
+	 * [§17++] PostLoad 풀스크린 오버레이 위젯 제거.
+	 * Client_EnterLoadingScene가 LoadingHUD 추가한 후 호출 — 그때까지는 위젯이 MainMap 전경 가림.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Loading Barrier")
+	void ClearPostLoadOverlay();
+
 private:
 	void OnScreenshotCaptured(int32 W, int32 H, const TArray<FColor>& Bitmap);
 	void OnSnapshotCaptureTimeout();
@@ -241,4 +248,7 @@ private:
 	FSimpleDelegate PendingCaptureCallback;
 	FTimerHandle CaptureTimeoutHandle;
 	bool bCaptureInProgress = false;
+
+	// [§17++] PostLoad 풀스크린 오버레이 (BeginPlay 직전 빈 시간 가림)
+	TSharedPtr<class SLoadingSnapshotWidget> PostLoadOverlayWidget;
 };

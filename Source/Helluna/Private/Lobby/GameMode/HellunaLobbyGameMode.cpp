@@ -897,11 +897,24 @@ void AHellunaLobbyGameMode::LoadStashToComponent(AHellunaLobbyController* LobbyP
 {
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] LoadStashToComponent 시작 | PlayerId=%s"), *PlayerId);
 
-	if (!LobbyPC || !SQLiteSubsystem || !SQLiteSubsystem->IsDatabaseReady())
+	if (!LobbyPC || !SQLiteSubsystem)
 	{
 		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] LoadStash: 조건 미충족 | LobbyPC=%s, DB=%s"),
 			LobbyPC ? TEXT("O") : TEXT("X"),
-			(SQLiteSubsystem && SQLiteSubsystem->IsDatabaseReady()) ? TEXT("Ready") : TEXT("Not Ready"));
+			SQLiteSubsystem ? TEXT("O") : TEXT("X"));
+		return;
+	}
+
+	// [H5-LOB-1] Save/Deploy와 동일 패턴: DB 일시 락(Windows exclusive lock 등) 발생 시 재오픈 시도 후 거부.
+	// 이전엔 IsDatabaseReady=false면 silent return → Stash 영구 미복원 위험.
+	if (!SQLiteSubsystem->IsDatabaseReady())
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] LoadStash: DB 미준비 → TryReopenDatabase 시도 | PlayerId=%s"), *PlayerId);
+		SQLiteSubsystem->TryReopenDatabase();
+	}
+	if (!SQLiteSubsystem->IsDatabaseReady())
+	{
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] LoadStash: DB 재오픈 실패 → Stash 로드 거부 (다음 PostLogin에서 재시도) | PlayerId=%s"), *PlayerId);
 		return;
 	}
 
@@ -1029,11 +1042,24 @@ void AHellunaLobbyGameMode::LoadLoadoutToComponent(AHellunaLobbyController* Lobb
 {
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix23] LoadLoadoutToComponent 시작 | PlayerId=%s"), *PlayerId);
 
-	if (!LobbyPC || !SQLiteSubsystem || !SQLiteSubsystem->IsDatabaseReady())
+	if (!LobbyPC || !SQLiteSubsystem)
 	{
 		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [Fix23] LoadLoadout: 조건 미충족 | LobbyPC=%s, DB=%s"),
 			LobbyPC ? TEXT("O") : TEXT("X"),
-			(SQLiteSubsystem && SQLiteSubsystem->IsDatabaseReady()) ? TEXT("Ready") : TEXT("Not Ready"));
+			SQLiteSubsystem ? TEXT("O") : TEXT("X"));
+		return;
+	}
+
+	// [H5-LOB-1] Save/Deploy와 동일 패턴: DB 일시 락 발생 시 재오픈 시도 후 거부.
+	// 이전엔 IsDatabaseReady=false면 silent return → 크래시 복구된 Loadout 영구 미복원 위험.
+	if (!SQLiteSubsystem->IsDatabaseReady())
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] [Fix23] LoadLoadout: DB 미준비 → TryReopenDatabase 시도 | PlayerId=%s"), *PlayerId);
+		SQLiteSubsystem->TryReopenDatabase();
+	}
+	if (!SQLiteSubsystem->IsDatabaseReady())
+	{
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyGM] [Fix23] LoadLoadout: DB 재오픈 실패 → Loadout 로드 거부 | PlayerId=%s"), *PlayerId);
 		return;
 	}
 
@@ -3639,6 +3665,18 @@ void AHellunaLobbyGameMode::ExecuteMatchedDeploy(const TArray<FMatchmakingQueueE
 			return;
 		}
 
+		// [§17+] 모든 매칭 클라에 PreloadShipScene RPC 송신 — 서버 spawn/대기 동안 우주선 화면 표시
+		for (const FString& PId : MatchedPlayerIds)
+		{
+			auto* PCPtr = PlayerIdToControllerMap.Find(PId);
+			if (PCPtr && PCPtr->IsValid())
+			{
+				(*PCPtr)->Client_PreloadShipScene();
+				UE_LOG(LogHellunaLobby, Log,
+					TEXT("[LobbyGM] [§17+] Client_PreloadShipScene 전송 | PlayerId=%s"), *PId);
+			}
+		}
+
 		FGameChannelInfo EmptyChannel;
 		if (!FindEmptyChannelForMap(MapKey, EmptyChannel))
 		{
@@ -3743,6 +3781,21 @@ void AHellunaLobbyGameMode::ExecuteMatchedDeploy(const TArray<FMatchmakingQueueE
 	}
 
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Phase15] ExecuteMatchedDeploy | Entries=%d"), Matched.Num());
+
+	// [§17+] 모든 매칭 클라에 PreloadShipScene RPC 송신 — 서버 spawn/대기 동안 우주선 화면 표시
+	for (const FMatchmakingQueueEntry& Entry : Matched)
+	{
+		for (const FString& PId : Entry.PlayerIds)
+		{
+			auto* PCPtr = PlayerIdToControllerMap.Find(PId);
+			if (PCPtr && PCPtr->IsValid())
+			{
+				(*PCPtr)->Client_PreloadShipScene();
+				UE_LOG(LogHellunaLobby, Log,
+					TEXT("[LobbyGM] [§17+] [Phase15] Client_PreloadShipScene 전송 | PlayerId=%s"), *PId);
+			}
+		}
+	}
 
 	// [Phase 16] 맵 키 추출 (첫 엔트리 기준)
 	const FString MapKey = Matched.Num() > 0 ? Matched[0].SelectedMapKey : DefaultMapKey;

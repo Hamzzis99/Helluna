@@ -386,4 +386,57 @@ void UMDF_GameInstance::OnPostLoadMapWithWorld(UWorld* LoadedWorld)
 {
 	// [Fix] MoviePlayer는 OnPostLoadMapWithWorld 시점에 엔진이 자동 해제.
 	// bAutoCompleteWhenLoadingCompletes=true + bWaitForManualStop=false 조합이므로 별도 StopMovie() 호출 불필요.
+
+	// [§17++] MoviePlayer 자동 종료 후 ~ HeroController BeginPlay 발화 사이의 빈 시간(수 백 ms ~ 1~2초)에
+	// MainMap WP cell 전경이 보이는 문제 해결.
+	// SLoadingSnapshotWidget(이미 캡처된 우주선 이미지)를 GameViewport 풀스크린에 직접 추가.
+	// Client_EnterLoadingScene 도착 시 ClearPostLoadOverlay() 호출로 제거.
+	if (IsRunningDedicatedServer())
+	{
+		return;
+	}
+
+	if (!LoadingSnapshotTexture)
+	{
+		UE_LOG(LogTemp, Verbose, TEXT("[LoadingDbg][GI] OnPostLoadMapWithWorld — Snapshot null, 오버레이 스킵"));
+		return;
+	}
+
+	UGameViewportClient* VC = GetGameViewportClient();
+	if (!VC)
+	{
+		return;
+	}
+
+	// 기존 오버레이가 있으면 먼저 제거 (재진입 안전)
+	if (PostLoadOverlayWidget.IsValid())
+	{
+		VC->RemoveViewportWidgetContent(PostLoadOverlayWidget.ToSharedRef());
+		PostLoadOverlayWidget.Reset();
+	}
+
+	PostLoadOverlayWidget = SNew(SLoadingSnapshotWidget).SnapshotTexture(LoadingSnapshotTexture);
+	VC->AddViewportWidgetContent(PostLoadOverlayWidget.ToSharedRef(), 9999);
+	UE_LOG(LogTemp, Warning, TEXT("[LoadingDbg][GI] OnPostLoadMapWithWorld — 풀스크린 Snapshot 오버레이 추가 (BeginPlay 빈 시간 가림)"));
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [§17++] ClearPostLoadOverlay
+// ════════════════════════════════════════════════════════════════════════════════
+//   Client_EnterLoadingScene이 LoadingHUD를 추가한 직후 호출.
+//   MainMap C구간 우주선 + LoadingHUD가 화면을 가리고 있으니 풀스크린 오버레이 제거 안전.
+// ════════════════════════════════════════════════════════════════════════════════
+void UMDF_GameInstance::ClearPostLoadOverlay()
+{
+	if (!PostLoadOverlayWidget.IsValid())
+	{
+		return;
+	}
+
+	if (UGameViewportClient* VC = GetGameViewportClient())
+	{
+		VC->RemoveViewportWidgetContent(PostLoadOverlayWidget.ToSharedRef());
+		UE_LOG(LogTemp, Warning, TEXT("[LoadingDbg][GI] ClearPostLoadOverlay — 풀스크린 오버레이 제거"));
+	}
+	PostLoadOverlayWidget.Reset();
 }
