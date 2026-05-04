@@ -497,7 +497,17 @@ TArray<FInv_SavedItemData> UHellunaSQLiteSubsystem::ImportLoadoutFromFile(const 
 	}
 
 	// 헤더 필드
-	OutHeroType = static_cast<int32>(RootObj->GetNumberField(TEXT("hero_type")));
+	// [N1] hero_type 누락 시 silent 0 (HeroType=None) 처리 차단.
+	// GetNumberField는 필드 부재 시 0 반환 → 출격 시 캐릭터 미선택 상태 위험.
+	// 누락은 손상된 파일로 처리: 파일 삭제 + 빈 Result 반환 → 호출자가 Loadout 미복원으로 안전 처리.
+	double HeroTypeDouble = 0.0;
+	if (!RootObj->TryGetNumberField(TEXT("hero_type"), HeroTypeDouble))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ImportLoadoutFromFile: 필수 필드 'hero_type' 누락 → 손상 파일 삭제, 크래시 복구로 전환"));
+		IFileManager::Get().Delete(*FilePath);
+		return Result;  // 빈 Result + OutHeroType=0 (호출자가 미복원으로 인식)
+	}
+	OutHeroType = static_cast<int32>(HeroTypeDouble);
 
 	// 아이템 배열 파싱
 	const TArray<TSharedPtr<FJsonValue>>* ItemsArray = nullptr;
