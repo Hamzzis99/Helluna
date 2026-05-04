@@ -100,7 +100,8 @@ void ABossPhase2CinematicTrigger::Multicast_StartCinematic_Implementation(APawn*
 		}
 		HeroPC->EnterBossCinematic(ViewTarget, FMath::Max(CameraBlendIn, 0.05f));
 
-		// 대사
+		// 대사 — 첫 대사는 hide timer 없음. 두 번째 대사 (Stage1b) 또는 EndCinematic 이 hide.
+		//   timer 두면 race condition (DialogueLine2 표시 직전에 widget nullptr 로 set 위험).
 		if (DialogueWidgetClass && !DialogueLine.IsEmpty() && GetNetMode() != NM_DedicatedServer)
 		{
 			if (LocalDialogueWidget)
@@ -113,18 +114,6 @@ void ABossPhase2CinematicTrigger::Multicast_StartCinematic_Implementation(APawn*
 			{
 				LocalDialogueWidget->AddToViewport(50);
 				LocalDialogueWidget->PlayDialogue(SpeakerName, DialogueLine);
-
-				TWeakObjectPtr<ABossPhase2CinematicTrigger> WeakSelfDlg(this);
-				World->GetTimerManager().ClearTimer(DialogueHideTimer);
-				World->GetTimerManager().SetTimer(DialogueHideTimer,
-					FTimerDelegate::CreateLambda([WeakSelfDlg]()
-					{
-						ABossPhase2CinematicTrigger* Self = WeakSelfDlg.Get();
-						if (!Self || !Self->LocalDialogueWidget) return;
-						Self->LocalDialogueWidget->HideDialogue();
-						Self->LocalDialogueWidget = nullptr;
-					}),
-					FMath::Max(0.5f, DialogueDuration), false);
 			}
 		}
 		break;
