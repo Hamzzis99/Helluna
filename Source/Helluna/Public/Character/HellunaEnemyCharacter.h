@@ -190,17 +190,17 @@ public:
 	// =========================================================
 
 	/** 광폭화 시 이동속도 배율 (기본 1.5배) */
-	UPROPERTY(EditDefaultsOnly, Category = "Combat|Enrage",
+	UPROPERTY(EditDefaultsOnly, Category = "Combat|광폭화",
 		meta = (DisplayName = "광폭화 이동속도 배율", ClampMin = "1.0", ClampMax = "5.0"))
 	float EnrageMoveSpeedMultiplier = 1.5f;
 
 	/** 광폭화 시 공격력 배율 → EnemyGameplayAbility_Attack 참조 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enrage",
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|광폭화",
 		meta = (DisplayName = "광폭화 공격력 배율", ClampMin = "1.0", ClampMax = "10.0"))
 	float EnrageDamageMultiplier = 2.0f;
 
 	/** 광폭화 시 공격쿨다운 배율 (0.5 = 2배 빠름) → STTask_AttackTarget 참조 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enrage",
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|광폭화",
 		meta = (DisplayName = "광폭화 쿨다운 배율", ClampMin = "0.1", ClampMax = "1.0"))
 	float EnrageCooldownMultiplier = 0.5f;
 
@@ -210,12 +210,12 @@ public:
 	 * EnemyGameplayAbility_Attack에서 bEnraged == true이면 이 배율로 공격 몽타주를 재생한다.
 	 * EnrageCooldownMultiplier와 함께 조정하면 전체 DPS를 제어할 수 있다.
 	 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enrage",
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|광폭화",
 		meta = (DisplayName = "광폭화 공격 모션 재생 속도", ClampMin = "0.5", ClampMax = "5.0"))
 	float EnrageAttackMontagePlayRate = 1.5f;
 
 	/** 현재 광폭화 상태인지 (서버 → 클라 복제) */
-	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Combat|Enrage")
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Combat|광폭화")
 	bool bEnraged = false;
 
 	// =========================================================
@@ -252,7 +252,7 @@ public:
 	 * STTask_Enrage의 EnterState에서 서버 측으로만 호출한다.
 	 * 서버에서 이동속도 증가 + 몽타주 + VFX 멀티캐스트 실행.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Combat|Enrage")
+	UFUNCTION(BlueprintCallable, Category = "Combat|광폭화")
 	void EnterEnraged();
 
 	/** 광폭화 몽타주 멀티캐스트 재생 */

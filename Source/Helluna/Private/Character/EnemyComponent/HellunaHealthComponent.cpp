@@ -51,6 +51,25 @@ void UHellunaHealthComponent::SetHealth(float NewHealth)
 	Internal_SetHealth(NewHealth, nullptr);
 }
 
+void UHellunaHealthComponent::SetMaxHealth(float NewMaxHealth, bool bRefillHealth)
+{
+	AActor* Owner = GetOwner();
+	if (!Owner || !Owner->HasAuthority()) return;
+	if (bDead) return;
+
+	const float Old = MaxHealth;
+	MaxHealth = FMath::Max(1.f, NewMaxHealth);
+
+	// OnRep_MaxHealth 는 클라에서만 자동 호출 — 서버에서도 콜백/HP 바 갱신용으로 직접 호출.
+	OnRep_MaxHealth(Old);
+
+	if (bRefillHealth)
+	{
+		// Internal_SetHealth 가 OnHealthChanged 브로드캐스트 + Health replicate 처리.
+		Internal_SetHealth(MaxHealth, nullptr);
+	}
+}
+
 void UHellunaHealthComponent::Heal(float Amount, AActor* InstigatorActor)
 {
 	AActor* Owner = GetOwner();

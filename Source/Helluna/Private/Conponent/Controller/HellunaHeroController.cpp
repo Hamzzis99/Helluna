@@ -53,8 +53,9 @@
 // [DebugHUD] 디버그 HUD 시스템
 #include "UI/HUD/HellunaDebugHUDWidget.h"
 
-// [BossCinematic_HUD] 시네마틱 동안 숨기지 말아야 할 위젯 — 보스 HP 바
+// [BossCinematic_HUD] 시네마틱 동안 숨기지 말아야 할 위젯 — 보스 HP 바, 보스 대사
 #include "UI/BossHealthBarWidget.h"
+#include "UI/BossDialogueWidget.h"
 
 // [WorldMap] 풀스크린 월드맵 + 핑 시스템
 #include "UI/WorldMap/HellunaWorldMapWidget.h"
@@ -1686,7 +1687,8 @@ void AHellunaHeroController::ApplyBossCinematicHUDLockdown(bool bShouldHide)
 
 			// [BossCinematic_HUD_KeepHPBarV1] 보스 HP 바는 시네마틱 도중에도 계속 보여야 함
 			// (2페이즈 진입 연출에서 0→풀 fill 애니가 화면에 보여야 의미가 있음).
-			if (W->IsA<UBossHealthBarWidget>())
+			// [BossCinematic_HUD_KeepDialogueV1] 보스 대사 자막도 동일 — 광폭화 모션과 동시에 보여야 함.
+			if (W->IsA<UBossHealthBarWidget>() || W->IsA<UBossDialogueWidget>())
 			{
 				continue;
 			}

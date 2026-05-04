@@ -56,6 +56,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Health")
 	void SetHealth(float NewHealth);
 
+	/**
+	 * [BossPhase2_MaxHpV1] 최대 체력 강제 변경 — 광폭화/페이즈2 등에서 MaxHP 자체 확장.
+	 *   bRefillHealth=true 면 NewMaxHealth 로 풀 회복 (HP 바 시각적으로 max 까지 채워짐).
+	 *   서버 권한 전용 — 클라에서 호출하면 무시.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Health")
+	void SetMaxHealth(float NewMaxHealth, bool bRefillHealth = false);
+
 	//체력 회복
 	UFUNCTION(BlueprintCallable, Category = "Health")
 	void Heal(float Amount, AActor* InstigatorActor = nullptr);

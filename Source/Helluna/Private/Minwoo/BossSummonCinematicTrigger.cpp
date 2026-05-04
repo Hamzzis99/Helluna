@@ -1070,6 +1070,23 @@ void ABossSummonCinematicTrigger::StartCinematicCameraAfterReveal()
 							UE_LOG(LogTemp, Warning,
 								TEXT("[BossDialogueV1] Widget spawned + PlayDialogue — Class=%s"),
 								*DialogueWidgetClass->GetName());
+
+							// [DialogueLine2V1] 두 번째 대사 예약 — 위젯이 살아있는 동안 PlayDialogue 재호출.
+							if (!BossDialogueLine2.IsEmpty() && BossDialogueLine2Delay > KINDA_SMALL_NUMBER)
+							{
+								TWeakObjectPtr<ABossSummonCinematicTrigger> WeakSelf(this);
+								World->GetTimerManager().ClearTimer(SecondDialogueTimer);
+								World->GetTimerManager().SetTimer(SecondDialogueTimer,
+									FTimerDelegate::CreateLambda([WeakSelf]()
+									{
+										ABossSummonCinematicTrigger* Self = WeakSelf.Get();
+										if (!Self || !Self->LocalDialogueWidget) return;
+										Self->LocalDialogueWidget->PlayDialogue(Self->BossSpeakerName, Self->BossDialogueLine2);
+										UE_LOG(LogTemp, Warning,
+											TEXT("[DialogueLine2V1] Switched to second dialogue line"));
+									}),
+									BossDialogueLine2Delay, false);
+							}
 						}
 					}
 					break;
@@ -1183,6 +1200,23 @@ void ABossSummonCinematicTrigger::StartCinematicCameraAfterReveal()
 					LocalDialogueWidget->PlayDialogue(BossSpeakerName, BossDialogueLine);
 					UE_LOG(LogTemp, Warning,
 						TEXT("[BossDialogueV1] (fallback) Widget spawned + PlayDialogue"));
+
+					// [DialogueLine2V1] 두 번째 대사 예약 (폴백 모드)
+					if (!BossDialogueLine2.IsEmpty() && BossDialogueLine2Delay > KINDA_SMALL_NUMBER)
+					{
+						TWeakObjectPtr<ABossSummonCinematicTrigger> WeakSelf(this);
+						World->GetTimerManager().ClearTimer(SecondDialogueTimer);
+						World->GetTimerManager().SetTimer(SecondDialogueTimer,
+							FTimerDelegate::CreateLambda([WeakSelf]()
+							{
+								ABossSummonCinematicTrigger* Self = WeakSelf.Get();
+								if (!Self || !Self->LocalDialogueWidget) return;
+								Self->LocalDialogueWidget->PlayDialogue(Self->BossSpeakerName, Self->BossDialogueLine2);
+								UE_LOG(LogTemp, Warning,
+									TEXT("[DialogueLine2V1] (fallback) Switched to second dialogue line"));
+							}),
+							BossDialogueLine2Delay, false);
+					}
 				}
 			}
 		}
@@ -1338,6 +1372,12 @@ void ABossSummonCinematicTrigger::Multicast_EndCinematic_Implementation()
 	{
 		LocalDialogueWidget->HideDialogue();
 		LocalDialogueWidget = nullptr; // 위젯은 자체 Tick에서 페이드 후 Remove 처리
+	}
+
+	// [DialogueLine2V1] 두 번째 대사 예약 타이머 해제 — 시네마틱이 빨리 끝나는 경우 대비.
+	if (UWorld* TimerWorld = GetWorld())
+	{
+		TimerWorld->GetTimerManager().ClearTimer(SecondDialogueTimer);
 	}
 
 	// 시퀀스 플레이어 정리 (있다면)

@@ -281,6 +281,20 @@ public:
 		meta = (DisplayName = "대사 본문", MultiLine = true))
 	FText BossDialogueLine;
 
+	/**
+	 * [DialogueLine2V1] 두 번째 대사 (선택). 비어있지 않고 SecondLineDelay > 0 이면
+	 * 시네마틱 시작 후 SecondLineDelay 초 시점에 PlayDialogue 재호출 → 두 번째 줄로 교체.
+	 * UBossDialogueWidget::PlayDialogue 는 매번 페이드인+타이핑 새로 시작하므로 원위젯 재사용 가능.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Dialogue",
+		meta = (DisplayName = "두 번째 대사 (선택)", MultiLine = true))
+	FText BossDialogueLine2;
+
+	/** 두 번째 대사 등장 시점 (시네마틱 시작 후 초). 0 이면 두 번째 대사 비활성. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Dialogue",
+		meta = (DisplayName = "두 번째 대사 시점(초)", ClampMin = "0.0", ClampMax = "30.0"))
+	float BossDialogueLine2Delay = 0.f;
+
 	// =========================================================================================
 	// 보스 HP 바 / 후속 HUD 연출 — 시네마틱 종료 시 BP가 스폰
 	// =========================================================================================
@@ -523,6 +537,9 @@ private:
 
 	/** [CloseUpShakeV1] Cut 0 끝난 시점에 close-up 쉐이크 시작 타이머. */
 	FTimerHandle CloseUpShakeTimer;
+
+	/** [DialogueLine2V1] 두 번째 대사 전환 타이머 핸들 (클라 로컬). */
+	FTimerHandle SecondDialogueTimer;
 
 	/** 몽타주 종료됨 (또는 몽타주 없음) 플래그 */
 	bool bMontageFinishedFlag = false;

@@ -25,8 +25,25 @@
 #include "Engine/World.h"
 #include "Net/UnrealNetwork.h"
 
+// [BossArmorBreakV1]
+#include "Animation/SkeletalMeshActor.h"
+#include "Engine/SkeletalMesh.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "GameFramework/ProjectileMovementComponent.h"
+#include "GameFramework/RotatingMovementComponent.h"
+
+// [Phase2DescentChildV1]
+#include "Components/ChildActorComponent.h"
+
+// [Phase2RefactorV1]
+#include "BossEvent/BossPhase2CinematicTrigger.h"
+
 AHellunaEnemyCharacter_Boss::AHellunaEnemyCharacter_Boss()
 {
+	// [Phase2CamInterpV1] Tick 활성화 — 광폭화 시네마틱 동안 카메라 위→아래 lerp 처리에 필요.
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bStartWithTickEnabled = true;
+
 	// 보스 등급 기본값 (BP CDO 에서 SemiBoss/Boss 로 추가 조정 가능)
 	EnemyGrade = EEnemyGrade::Boss;
 
@@ -80,12 +97,16 @@ void AHellunaEnemyCharacter_Boss::EnterBossPhase2()
 
 	bInPhase2 = true;
 
-	// 1) HP 회복 — OnHealthChanged 콜백 시점엔 아직 Internal_SetHealth의 OnDeath 브로드캐스트 전이라 bDead=false.
+	// 1) [BossPhase2_MaxHpV1] MaxHP 자체 확장 + 풀 회복 — HP 바가 시각적으로 max 까지 채워지는 효과.
+	//    OnHealthChanged 콜백 시점엔 아직 Internal_SetHealth의 OnDeath 브로드캐스트 전이라 bDead=false.
 	if (HealthComponent)
 	{
-		const float MaxHP = HealthComponent->GetMaxHealth();
-		const float RestoreTo = FMath::Clamp(Phase2HealthRestoreRatio, 0.1f, 1.f) * MaxHP;
-		HealthComponent->SetHealth(RestoreTo);
+		const float OldMax = HealthComponent->GetMaxHealth();
+		const float NewMax = OldMax * FMath::Max(1.f, Phase2MaxHealthMultiplier);
+		HealthComponent->SetMaxHealth(NewMax, /*bRefillHealth=*/true);
+		UE_LOG(LogTemp, Warning,
+			TEXT("[BossPhase2_MaxHpV1] MaxHP %.0f → %.0f (×%.2f), refilled to full"),
+			OldMax, NewMax, Phase2MaxHealthMultiplier);
 	}
 
 	// 2) 진행 중이던 모든 패턴(GA) 즉시 취소 — 공격/스킬/존 스폰 전부 중단
@@ -142,18 +163,39 @@ void AHellunaEnemyCharacter_Boss::EnterBossPhase2()
 				bAIStoppedForPhase2 = false;
 			}
 
+			// [Phase2RefactorV1] 시네마틱 종료 정리 — 트리거가 카메라/대사 처리. 보스가 NC + Montage 정리.
+			bPhase2DescentScaling = false;
+			TArray<UNiagaraComponent*> AllNCs;
+			GetComponents<UNiagaraComponent>(AllNCs);
+			for (UNiagaraComponent* NC : AllNCs)
+			{
+				if (NC && NC->ComponentTags.Contains(FName(TEXT("Phase2Descent"))) && NC->IsActive())
+				{
+					NC->Deactivate();
+				}
+			}
+			if (EnrageMontage)
+			{
+				if (USkeletalMeshComponent* SkelMesh = GetMesh())
+				{
+					if (UAnimInstance* AnimInst = SkelMesh->GetAnimInstance())
+					{
+						if (AnimInst->Montage_IsPlaying(EnrageMontage))
+						{
+							AnimInst->Montage_Stop(0.3f, EnrageMontage);
+						}
+					}
+				}
+			}
+
 			UE_LOG(LogTemp, Warning, TEXT("[BossPhase2V1] Invulnerability ended — Phase 2 combat active"));
 		}),
 		FMath::Max(Phase2InvulnerabilityDuration, 0.1f), false);
 
-	// 7) Enrage 스탯 재활용 — bEnraged로 공격력/쿨다운 배율 적용
-	bEnraged = true;
-	EnrageDamageMultiplier = FMath::Max(Phase2AttackMultiplier, EnrageDamageMultiplier);
-	EnrageCooldownMultiplier = FMath::Min(Phase2CooldownMultiplier, EnrageCooldownMultiplier);
-
+	// 7) [Phase2RefactorV1] EnterEnraged 호출은 Multicast 의 Stage3 timer (Phase2StunDuration 후) 에서.
 	UE_LOG(LogTemp, Warning,
-		TEXT("[BossPhase2V1] Entered Phase 2 — HP restored=%.0f%%, AtkMul=%.2f, CoolMul=%.2f — patterns cancelled, brain paused"),
-		Phase2HealthRestoreRatio * 100.f, Phase2AttackMultiplier, Phase2CooldownMultiplier);
+		TEXT("[BossPhase2_EnrageDiag] Phase 2 entry on %s — Stun=%.1fs, Total=%.1fs"),
+		*GetNameSafe(this), Phase2StunDuration, Phase2InvulnerabilityDuration);
 
 	// 8) Multicast 연출 (VFX/쉐이크/오라/HP바 델리게이트)
 	Multicast_PlayBossPhase2Transition();
@@ -161,174 +203,345 @@ void AHellunaEnemyCharacter_Boss::EnterBossPhase2()
 
 void AHellunaEnemyCharacter_Boss::Multicast_PlayBossPhase2Transition_Implementation()
 {
-	UE_LOG(LogTemp, Warning, TEXT("[BossPhase2V1] Multicast Phase2 transition — %s"), *GetNameSafe(this));
+	UE_LOG(LogTemp, Warning,
+		TEXT("[Phase2RefactorV1] Multicast Phase2 transition start — %s (Stun=%.1f)"),
+		*GetNameSafe(this), Phase2StunDuration);
 
 	UWorld* World = GetWorld();
 	if (!World) return;
 
-	// 카메라 쉐이크 — 보스 위치 중심 월드 쉐이크
-	if (Phase2TransitionShakeClass)
+	// =========================================================
+	// [Phase2RefactorV1] 카메라/대사/단계 시퀀스 — 트리거(ABossPhase2CinematicTrigger)에 위임.
+	//   서버에서만 Spawn + TryActivate. 트리거가 Multicast 로 자기 카메라/대사 처리.
+	// =========================================================
+	if (HasAuthority() && Phase2CinematicTriggerClass)
 	{
-		UGameplayStatics::PlayWorldCameraShake(
-			World, Phase2TransitionShakeClass, GetActorLocation(),
-			0.f, 4500.f, 1.f, false);
-
-		// [Phase2ShakeRepeatV1] 시네마틱 동안 반복 — 포탈/지속 진동 느낌.
-		// 무적 시간(시네마틱 길이) 만큼 유지하고 카메라 종료 시점에 해제.
-		if (Phase2ShakeRepeatInterval > 0.f)
+		FActorSpawnParameters TriggerParams;
+		TriggerParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		TriggerParams.Owner = this;
+		ABossPhase2CinematicTrigger* Trigger = World->SpawnActor<ABossPhase2CinematicTrigger>(
+			Phase2CinematicTriggerClass, GetActorLocation(), GetActorRotation(), TriggerParams);
+		if (Trigger)
 		{
-			TWeakObjectPtr<AHellunaEnemyCharacter_Boss> Weak(this);
-			GetWorldTimerManager().ClearTimer(Phase2ShakeRepeatTimer);
-			GetWorldTimerManager().SetTimer(Phase2ShakeRepeatTimer,
-				FTimerDelegate::CreateLambda([Weak]()
+			Trigger->TryActivate(this);
+			UE_LOG(LogTemp, Warning, TEXT("[Phase2RefactorV1] Spawned cinematic trigger: %s"), *Trigger->GetName());
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[Phase2RefactorV1] Failed to spawn cinematic trigger — class=%s"),
+				*GetNameSafe(Phase2CinematicTriggerClass));
+		}
+	}
+
+	// =========================================================
+	// 기절 몽타주 — 모든 머신
+	// =========================================================
+	if (Phase2StunMontage)
+	{
+		if (USkeletalMeshComponent* SkelMesh = GetMesh())
+		{
+			if (UAnimInstance* AnimInst = SkelMesh->GetAnimInstance())
+			{
+				AnimInst->Montage_Play(Phase2StunMontage, 1.0f);
+			}
+		}
+	}
+
+	// =========================================================
+	// Stage 3 timer — 광폭화/갑옷/본체 swap/VFX (Phase2StunDuration 후)
+	// =========================================================
+	{
+		TWeakObjectPtr<AHellunaEnemyCharacter_Boss> WeakSelfStage3(this);
+		FTimerHandle Stage3Timer;
+		World->GetTimerManager().SetTimer(Stage3Timer,
+			FTimerDelegate::CreateLambda([WeakSelfStage3]()
+			{
+				AHellunaEnemyCharacter_Boss* Self = WeakSelfStage3.Get();
+				if (!Self) return;
+				if (Self->HasAuthority())
 				{
-					AHellunaEnemyCharacter_Boss* Self = Weak.Get();
-					if (!Self || !Self->Phase2TransitionShakeClass) return;
-					UWorld* W = Self->GetWorld();
-					if (!W) return;
-					UGameplayStatics::PlayWorldCameraShake(
-						W, Self->Phase2TransitionShakeClass, Self->GetActorLocation(),
-						0.f, 4500.f, 1.f, false);
-				}),
-				Phase2ShakeRepeatInterval, /*bLoop=*/true);
-		}
+					Self->EnterEnraged();
+				}
+				Self->Phase2_PlayStage3Visuals();
+			}),
+			FMath::Max(0.2f, Phase2StunDuration), false);
 	}
 
-	// 보스 발밑 충격파 VFX
-	if (Phase2TransitionVFX)
-	{
-		UNiagaraFunctionLibrary::SpawnSystemAtLocation(World, Phase2TransitionVFX,
-			GetActorLocation(), GetActorRotation());
-	}
-
-	// 하늘에서 낙하 VFX — 여러 포인트
-	if (Phase2SkyMeteorVFX && Phase2SkyMeteorCount > 0)
-	{
-		const FVector BossLoc = GetActorLocation();
-		for (int32 i = 0; i < Phase2SkyMeteorCount; ++i)
-		{
-			const float Angle = FMath::FRandRange(0.f, 2.f * PI);
-			const float Radius = FMath::FRandRange(0.f, Phase2SkyMeteorRadius);
-			const FVector Offset(FMath::Cos(Angle) * Radius,
-				FMath::Sin(Angle) * Radius,
-				Phase2SkyMeteorHeight + FMath::FRandRange(-200.f, 200.f));
-			const FVector Loc = BossLoc + Offset;
-			UNiagaraFunctionLibrary::SpawnSystemAtLocation(World, Phase2SkyMeteorVFX,
-				Loc, FRotator(-90.f, 0.f, 0.f)); // 아래 방향 기본
-		}
-	}
-
-	// [BerserkGlowV1] 보스 머티리얼에 광폭화 발광 적용 (각 클라 로컬).
-	StartBerserkVisuals(BerserkGlowColor, BerserkGlowBoost);
-
-	// 보스 상시 오라 VFX attach (이미 있으면 스킵)
-	if (Phase2AuraVFX && !ActivePhase2AuraComp)
-	{
-		USkeletalMeshComponent* BossMesh = GetMesh();
-		UNiagaraComponent* NC = UNiagaraFunctionLibrary::SpawnSystemAttached(
-			Phase2AuraVFX, BossMesh ? (USceneComponent*)BossMesh : (USceneComponent*)GetRootComponent(),
-			NAME_None, FVector::ZeroVector, FRotator::ZeroRotator,
-			EAttachLocation::SnapToTarget, false);
-		ActivePhase2AuraComp = NC;
-	}
-
-	// BP/위젯/AI 알림
 	OnBossEnterPhase2.Broadcast();
+	return;
 
-	// [BossPhase2CamV1] 로컬 PC 시네마틱 — 보스 주변에 CameraActor 스폰해서 전신을 프레이밍.
-	//   EnterBossCinematic는 입력/HUD까지 자동 숨김 처리 (이미 BossSummonCinematic 경로에서 검증된 로직).
+	// 아래 ↓↓↓ 기존 코드 — 트리거로 이동, dead code (return 위에서 끝남)
+	// 컴파일러 dead code warning 방지 위해 if(false) 안에 유지하지 않음. 그대로 return 위에서 종료.
+	(void)World;
+}
 
-	// 보스 로컬 좌표 기준으로 카메라 위치 계산 (보스가 어디 보든 3/4 정면 각도 유지)
+// [Phase2RefactorV1] 기존 카메라 spawn / 단계 1b/2/4 timer / 대사 / 시네마틱 종료 lambda 모두 제거됨.
+//   트리거 (ABossPhase2CinematicTrigger) 가 처리.
+#if 0
+void AHellunaEnemyCharacter_Boss::Multicast_PlayBossPhase2Transition_Implementation_OLD()
+{
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	// =========================================================
+	// 단계 1 (즉시): 정면 카메라 spawn + EnterBossCinematic + 기절 몽타주 + 대사
+	// =========================================================
 	const FVector BossLoc = GetActorLocation();
 	const FVector Forward = GetActorForwardVector();
 	const FVector Right = GetActorRightVector();
 	const FVector Up = GetActorUpVector();
 
-	const FVector CameraLoc =
-		BossLoc
-		+ Forward * Phase2CameraOffset.X
-		+ Right * Phase2CameraOffset.Y
-		+ Up * Phase2CameraOffset.Z;
-
-	const FVector LookTarget = BossLoc + FVector(0.f, 0.f, Phase2CameraLookHeight);
-	const FRotator LookAt = (LookTarget - CameraLoc).Rotation();
+	// [Phase2FaceCamV1] 시네마틱 시작 = 단계1a 얼굴 클로즈업.
+	const FVector StartCamLoc = BossLoc
+		+ Forward * Phase2CameraFaceOffset.X
+		+ Right * Phase2CameraFaceOffset.Y
+		+ Up * Phase2CameraFaceOffset.Z;
+	const FVector StartLookTarget = BossLoc + FVector(0.f, 0.f, Phase2CameraFaceLookHeight);
+	const FRotator StartLookAt = (StartLookTarget - StartCamLoc).Rotation();
 
 	FActorSpawnParameters CamSpawnParams;
 	CamSpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 	ACameraActor* CamActor = World->SpawnActor<ACameraActor>(
-		ACameraActor::StaticClass(), CameraLoc, LookAt, CamSpawnParams);
-
+		ACameraActor::StaticClass(), StartCamLoc, StartLookAt, CamSpawnParams);
 	if (CamActor)
 	{
-		// [Phase2CamFullScreenV1] 화면 양 사이드 검정 바(letterbox) 제거.
-		//  ACameraActor 기본 CameraComponent 의 bConstrainAspectRatio 가 true 면 뷰포트가
-		//  카메라의 AspectRatio 비율로 강제 매트되어 좌우 검정 바가 생김. false 로 두면 풀스크린.
 		if (UCameraComponent* CamComp = CamActor->GetCameraComponent())
 		{
 			CamComp->SetConstraintAspectRatio(false);
 		}
-
-		// 보스에 부착 — 보스가 회전/이동해도 3/4 앵글 유지 (시네마틱 동안엔 보스가 StopMovement라 고정)
-		FAttachmentTransformRules AttachRules(
-			EAttachmentRule::KeepWorld,
-			EAttachmentRule::KeepWorld,
-			EAttachmentRule::KeepWorld,
-			false);
-		CamActor->AttachToActor(this, AttachRules);
+		Phase2CamActor = CamActor;
+		Phase2CamInterpElapsed = 0.f;
+		bPhase2CameraInterpolating = false; // 단계 1a 동안 lerp 정지 (Tick 가 To 위치 추적).
+		// 정지 카메라 위치 = Face — Tick 의 hold 분기가 이 값 사용 → 보스 추적.
+		Phase2CamLerpFromOffset = Phase2CameraFaceOffset;
+		Phase2CamLerpToOffset = Phase2CameraFaceOffset;
+		Phase2CamLerpFromLookH = Phase2CameraFaceLookHeight;
+		Phase2CamLerpToLookH = Phase2CameraFaceLookHeight;
+		Phase2CamLerpDuration = 1.f;
 	}
-
 	AActor* ViewTarget = CamActor ? (AActor*)CamActor : (AActor*)this;
 
+	// 로컬 PC 시네마틱 진입 + 단계1 대사 + 시네마틱 종료 timer
 	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
 	{
 		APlayerController* PC = It->Get();
 		if (!PC || !PC->IsLocalPlayerController()) continue;
-
 		AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(PC);
 		if (!HeroPC) continue;
 
 		HeroPC->EnterBossCinematic(ViewTarget, FMath::Max(Phase2CameraBlendIn, 0.05f));
 
-		// 무적 지속 시간 후 카메라 복귀 + CamActor 파괴
+		// 단계1 대사
+		if (Phase2DialogueWidgetClass && !Phase2DialogueLine.IsEmpty()
+			&& GetNetMode() != NM_DedicatedServer)
+		{
+			if (ActivePhase2DialogueWidget)
+			{
+				ActivePhase2DialogueWidget->HideDialogue();
+				ActivePhase2DialogueWidget = nullptr;
+			}
+			ActivePhase2DialogueWidget = CreateWidget<UBossDialogueWidget>(PC, Phase2DialogueWidgetClass);
+			if (ActivePhase2DialogueWidget)
+			{
+				ActivePhase2DialogueWidget->AddToViewport(50);
+				ActivePhase2DialogueWidget->PlayDialogue(Phase2SpeakerName, Phase2DialogueLine);
+				TWeakObjectPtr<AHellunaEnemyCharacter_Boss> WeakSelfDlg(this);
+				GetWorldTimerManager().ClearTimer(Phase2DialogueHideTimer);
+				GetWorldTimerManager().SetTimer(Phase2DialogueHideTimer,
+					FTimerDelegate::CreateLambda([WeakSelfDlg]()
+					{
+						AHellunaEnemyCharacter_Boss* Self = WeakSelfDlg.Get();
+						if (!Self || !Self->ActivePhase2DialogueWidget) return;
+						Self->ActivePhase2DialogueWidget->HideDialogue();
+						Self->ActivePhase2DialogueWidget = nullptr;
+					}),
+					FMath::Max(0.5f, Phase2DialogueDuration), false);
+			}
+		}
+
+		// 시네마틱 종료 timer (Phase2InvulnerabilityDuration 후) — 카메라 복귀 + VFX/몽타주 정리
 		TWeakObjectPtr<AHellunaHeroController> WeakPC = HeroPC;
 		TWeakObjectPtr<ACameraActor> WeakCam = CamActor;
 		const float ExitDelay = FMath::Max(Phase2InvulnerabilityDuration, 0.5f);
 		const float BlendOut = Phase2CameraBlendOut;
-
 		TWeakObjectPtr<AHellunaEnemyCharacter_Boss> WeakSelf(this);
 		FTimerHandle LocalCamTimer;
 		World->GetTimerManager().SetTimer(LocalCamTimer,
 			FTimerDelegate::CreateWeakLambda(HeroPC, [WeakPC, WeakCam, WeakSelf, BlendOut]()
 			{
-				// [Phase2ShakeRepeatV1] 카메라 복귀 시점에 반복 쉐이크 해제.
 				if (AHellunaEnemyCharacter_Boss* Self = WeakSelf.Get())
 				{
 					Self->GetWorldTimerManager().ClearTimer(Self->Phase2ShakeRepeatTimer);
+					Self->bPhase2CameraInterpolating = false;
+					Self->Phase2CamActor.Reset();
+					Self->bPhase2DescentScaling = false;
+
+					TArray<UNiagaraComponent*> AllNCs;
+					Self->GetComponents<UNiagaraComponent>(AllNCs);
+					int32 DeactivatedNCs = 0;
+					for (UNiagaraComponent* NC : AllNCs)
+					{
+						if (NC && NC->ComponentTags.Contains(FName(TEXT("Phase2Descent"))) && NC->IsActive())
+						{
+							NC->Deactivate();
+							++DeactivatedNCs;
+						}
+					}
+
+					bool bMontageStopped = false;
+					if (Self->EnrageMontage)
+					{
+						if (USkeletalMeshComponent* SkelMesh = Self->GetMesh())
+						{
+							if (UAnimInstance* AnimInst = SkelMesh->GetAnimInstance())
+							{
+								if (AnimInst->Montage_IsPlaying(Self->EnrageMontage))
+								{
+									AnimInst->Montage_Stop(0.3f, Self->EnrageMontage);
+									bMontageStopped = true;
+								}
+							}
+						}
+					}
+					UE_LOG(LogTemp, Warning,
+						TEXT("[Phase2CinematicEndCleanupV1] DeactivatedNCs=%d MontageStopped=%d"),
+						DeactivatedNCs, bMontageStopped ? 1 : 0);
 				}
 				if (AHellunaHeroController* PCLocal = WeakPC.Get())
 				{
 					PCLocal->ExitBossCinematic(BlendOut);
 				}
-				// 블렌드 아웃 중엔 카메라가 보여야 하므로 약간 늦게 파괴
 				if (ACameraActor* Cam = WeakCam.Get())
 				{
 					FTimerHandle DestroyTimer;
 					Cam->GetWorld()->GetTimerManager().SetTimer(DestroyTimer,
 						FTimerDelegate::CreateWeakLambda(Cam, [WeakCam]()
 						{
-							if (ACameraActor* C = WeakCam.Get())
-							{
-								C->Destroy();
-							}
+							if (ACameraActor* C = WeakCam.Get()) C->Destroy();
 						}),
 						FMath::Max(BlendOut + 0.1f, 0.2f), false);
 				}
 			}),
 			ExitDelay, false);
-
 		break;
 	}
+
+	// 기절 몽타주 — 모든 머신
+	if (Phase2StunMontage)
+	{
+		if (USkeletalMeshComponent* SkelMesh = GetMesh())
+		{
+			if (UAnimInstance* AnimInst = SkelMesh->GetAnimInstance())
+			{
+				AnimInst->Montage_Play(Phase2StunMontage, 1.0f);
+			}
+		}
+	}
+
+	// [Phase2HitSlowV2] 슬로우 모션은 AnimNotifyState_ActorTimeDilation 으로 anim 안에서 처리.
+	//   Stun_Start 의 anim_hit 부분에 그 notify state drag → 자동 begin/end 시 보스 CustomTimeDilation set/restore.
+
+	// =========================================================
+	// 단계 1b timer (Phase2CameraFaceDuration 후): face → front lerp 시작
+	// =========================================================
+	{
+		TWeakObjectPtr<AHellunaEnemyCharacter_Boss> WeakSelfStage1b(this);
+		FTimerHandle Stage1bTimer;
+		World->GetTimerManager().SetTimer(Stage1bTimer,
+			FTimerDelegate::CreateLambda([WeakSelfStage1b]()
+			{
+				AHellunaEnemyCharacter_Boss* Self = WeakSelfStage1b.Get();
+				if (!Self) return;
+				// face → front 전신 lerp
+				Self->Phase2CamLerpFromOffset = Self->Phase2CameraFaceOffset;
+				Self->Phase2CamLerpToOffset = Self->Phase2CameraStartOffset;
+				Self->Phase2CamLerpFromLookH = Self->Phase2CameraFaceLookHeight;
+				Self->Phase2CamLerpToLookH = Self->Phase2CameraStartLookHeight;
+				Self->Phase2CamLerpDuration = FMath::Max(0.3f, Self->Phase2StunDuration - Self->Phase2CameraFaceDuration);
+				Self->Phase2CamInterpElapsed = 0.f;
+				Self->bPhase2CameraInterpolating = true;
+				UE_LOG(LogTemp, Warning, TEXT("[Phase2StageV2] Stage 1b — face→front lerp start (%.1fs)"), Self->Phase2CamLerpDuration);
+			}),
+			FMath::Max(0.1f, Phase2CameraFaceDuration), false);
+	}
+
+	// =========================================================
+	// 단계 2 timer (Phase2StunDuration 후): front → top lerp 시작
+	// =========================================================
+	{
+		TWeakObjectPtr<AHellunaEnemyCharacter_Boss> WeakSelfStage2(this);
+		FTimerHandle Stage2Timer;
+		World->GetTimerManager().SetTimer(Stage2Timer,
+			FTimerDelegate::CreateLambda([WeakSelfStage2]()
+			{
+				AHellunaEnemyCharacter_Boss* Self = WeakSelfStage2.Get();
+				if (!Self) return;
+				Self->Phase2CamLerpFromOffset = Self->Phase2CameraStartOffset;
+				Self->Phase2CamLerpToOffset = Self->Phase2CameraOffset;
+				Self->Phase2CamLerpFromLookH = Self->Phase2CameraStartLookHeight;
+				Self->Phase2CamLerpToLookH = Self->Phase2CameraLookHeight;
+				Self->Phase2CamLerpDuration = FMath::Max(0.3f, Self->Phase2CameraRiseDuration);
+				Self->Phase2CamInterpElapsed = 0.f;
+				Self->bPhase2CameraInterpolating = true;
+				UE_LOG(LogTemp, Warning, TEXT("[Phase2StageV2] Stage 2 — front→top lerp start"));
+			}),
+			FMath::Max(0.1f, Phase2StunDuration), false);
+	}
+
+	// =========================================================
+	// 단계 3 timer (Phase2StunDuration + Phase2CameraRiseDuration 후): 광폭화 + VFX + 갑옷
+	// =========================================================
+	{
+		TWeakObjectPtr<AHellunaEnemyCharacter_Boss> WeakSelfStage3(this);
+		// [Phase2StageV3] VFX 빨리 — 단계2 시작과 동시에 호출 (이전: 단계3 시작 = Stun+Rise).
+		const float Stage3Delay = FMath::Max(0.2f, Phase2StunDuration);
+		FTimerHandle Stage3Timer;
+		World->GetTimerManager().SetTimer(Stage3Timer,
+			FTimerDelegate::CreateLambda([WeakSelfStage3]()
+			{
+				AHellunaEnemyCharacter_Boss* Self = WeakSelfStage3.Get();
+				if (!Self) return;
+				if (Self->HasAuthority())
+				{
+					Self->EnterEnraged();
+				}
+				Self->Phase2_PlayStage3Visuals();
+			}),
+			Stage3Delay, false);
+	}
+
+	// =========================================================
+	// 단계 4 timer (시네마틱 종료 - DescentDuration): 카메라 위→정면 reverse lerp
+	// =========================================================
+	{
+		TWeakObjectPtr<AHellunaEnemyCharacter_Boss> WeakSelfStage4(this);
+		// [Phase2CamEndHoldV1] 단계4 후 2초 hold — 보스 전신 보이는 시간 확보.
+		//   Stage4Delay = Invuln - Descent - Hold → Stage4 끝 = Stage4Delay + Descent → Hold = Invuln - Stage4 끝.
+		const float Phase2CameraEndHoldHardcoded = 2.f;
+		const float Stage4Delay = FMath::Max(0.2f, Phase2InvulnerabilityDuration - Phase2CameraDescentDuration - Phase2CameraEndHoldHardcoded);
+		FTimerHandle Stage4Timer;
+		World->GetTimerManager().SetTimer(Stage4Timer,
+			FTimerDelegate::CreateLambda([WeakSelfStage4]()
+			{
+				AHellunaEnemyCharacter_Boss* Self = WeakSelfStage4.Get();
+				if (!Self) return;
+				// top → front 전신 lerp
+				Self->Phase2CamLerpFromOffset = Self->Phase2CameraOffset;
+				Self->Phase2CamLerpToOffset = Self->Phase2CameraStartOffset;
+				Self->Phase2CamLerpFromLookH = Self->Phase2CameraLookHeight;
+				Self->Phase2CamLerpToLookH = Self->Phase2CameraStartLookHeight;
+				Self->Phase2CamLerpDuration = FMath::Max(0.3f, Self->Phase2CameraDescentDuration);
+				Self->Phase2CamInterpElapsed = 0.f;
+				Self->bPhase2CameraInterpolating = true;
+				UE_LOG(LogTemp, Warning, TEXT("[Phase2StageV2] Stage 4 — top→front lerp start (위→정면)"));
+			}),
+			Stage4Delay, false);
+	}
+
+	// BP/위젯/AI 알림
+	OnBossEnterPhase2.Broadcast();
 }
+#endif // 0 — Phase2RefactorV1 기존 코드 비활성화 끝
 
 // ============================================================
 // [HitStopV1] 히트 스톱
@@ -471,5 +684,473 @@ void AHellunaEnemyCharacter_Boss::OnSummonMontageEnded(UAnimMontage* Montage, bo
 	if (HasAuthority())
 	{
 		OnSummonMontageFinished.ExecuteIfBound();
+	}
+}
+
+// ============================================================
+// [BossArmorBreakV1] 페이즈2 — 본체 메쉬 swap + 갑옷 폭발 분리
+// ============================================================
+void AHellunaEnemyCharacter_Boss::Phase2_BreakArmor()
+{
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	// [BossArmorBreak_Diag] 진입 시점 데이터 진단 — CDO 가 정상 반영됐는지 확인용.
+	UE_LOG(LogTemp, Warning,
+		TEXT("[BossArmorBreak_Diag] ENTER %s NetMode=%d ArmorMeshes.Num=%d BodyNull=%d KeepArmors=%d"),
+		*GetNameSafe(this),
+		(int32)GetNetMode(),
+		Phase2ArmorMeshes.Num(),
+		Phase2BodyMesh.IsNull() ? 1 : 0,
+		Phase2KeepArmorMeshes.Num());
+
+	// Dedicated 서버는 비주얼 의미 없음 — 완전 skip (스폰 비용 0).
+	if (GetNetMode() == NM_DedicatedServer) return;
+
+	USkeletalMeshComponent* BossMesh = GetMesh();
+
+	// 1) 본체 메쉬를 갑옷 벗겨진 SK 로 swap. 같은 스켈레톤이라 진행 중 애니/몽타주 그대로 유지됨.
+	if (BossMesh && !Phase2BodyMesh.IsNull())
+	{
+		USkeletalMesh* Body = Phase2BodyMesh.LoadSynchronous();
+		if (Body)
+		{
+			BossMesh->SetSkeletalMeshAsset(Body);
+			UE_LOG(LogTemp, Warning,
+				TEXT("[BossArmorBreakV1] Body mesh swapped to %s on %s (NetMode=%d)"),
+				*GetNameSafe(Body), *GetNameSafe(this), (int32)GetNetMode());
+
+			// [BossBerserkSkinV2] 피부 머터리얼은 Phase2BerserkSkinDelay 초 후 적용.
+			//   VFX 생성 후 약간 뒤에 피부 변화 → 시각적 임팩트.
+			if (!Phase2BerserkSkinMaterial.IsNull())
+			{
+				TWeakObjectPtr<AHellunaEnemyCharacter_Boss> WeakSelf(this);
+				FTimerHandle SkinTimer;
+				GetWorldTimerManager().SetTimer(SkinTimer,
+					FTimerDelegate::CreateLambda([WeakSelf]()
+					{
+						AHellunaEnemyCharacter_Boss* Self = WeakSelf.Get();
+						if (!Self) return;
+						USkeletalMeshComponent* SK = Self->GetMesh();
+						if (!SK) return;
+						UMaterialInterface* SkinMat = Self->Phase2BerserkSkinMaterial.LoadSynchronous();
+						if (SkinMat)
+						{
+							SK->SetMaterialByName(FName("body2"), SkinMat);
+							UE_LOG(LogTemp, Warning,
+								TEXT("[BossBerserkSkinV2] body2 slot → %s (delayed)"), *SkinMat->GetName());
+						}
+					}),
+					FMath::Max(0.f, Phase2BerserkSkinDelay), false);
+			}
+		}
+	}
+
+	// 1.5) [BossArmorBreakV2] 본체 swap 후 keep 갑옷들을 LeaderPose 로 attach
+	//      → 같은 스켈레톤이라 보스 자세 그대로 따라감 (다리/허리 갑옷 보존, 시각적 자연스러움 유지).
+	if (BossMesh && Phase2KeepArmorMeshes.Num() > 0)
+	{
+		// 기존 attached 정리 (재진입 안전)
+		for (USkeletalMeshComponent* Old : Phase2AttachedArmorComps)
+		{
+			if (Old) Old->DestroyComponent();
+		}
+		Phase2AttachedArmorComps.Reset();
+
+		int32 KeepSpawned = 0;
+		for (const TSoftObjectPtr<USkeletalMesh>& Soft : Phase2KeepArmorMeshes)
+		{
+			USkeletalMesh* KeepMesh = Soft.LoadSynchronous();
+			if (!KeepMesh) continue;
+
+			USkeletalMeshComponent* AttachComp = NewObject<USkeletalMeshComponent>(this);
+			if (!AttachComp) continue;
+			AttachComp->SetSkeletalMeshAsset(KeepMesh);
+			AttachComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			AttachComp->bReceivesDecals = false;
+			AttachComp->SetCanEverAffectNavigation(false);
+			AttachComp->bDisableClothSimulation = true;
+			AttachComp->SetupAttachment(BossMesh);
+			AttachComp->RegisterComponent();
+			AttachComp->AttachToComponent(BossMesh, FAttachmentTransformRules::KeepRelativeTransform);
+			AttachComp->SetLeaderPoseComponent(BossMesh, /*bForceUpdate*/ true);
+			Phase2AttachedArmorComps.Add(AttachComp);
+			++KeepSpawned;
+		}
+		UE_LOG(LogTemp, Warning,
+			TEXT("[BossArmorBreakV2] Attached %d keep-armor pieces to boss mesh"), KeepSpawned);
+	}
+
+	// [BossArmorBreakV3] 갑옷 분리는 피부색 timer 와 같은 시점 (Phase2BerserkSkinDelay 후) 에 호출.
+	{
+		TWeakObjectPtr<AHellunaEnemyCharacter_Boss> WeakSelfArmor(this);
+		FTimerHandle ArmorSpawnTimer;
+		GetWorldTimerManager().SetTimer(ArmorSpawnTimer,
+			FTimerDelegate::CreateLambda([WeakSelfArmor]()
+			{
+				AHellunaEnemyCharacter_Boss* Self = WeakSelfArmor.Get();
+				if (!Self) return;
+				Self->Phase2_SpawnArmorPieces();
+			}),
+			FMath::Max(0.f, Phase2BerserkSkinDelay), false);
+	}
+}
+
+// ============================================================
+// [BossArmorBreakV3] 갑옷 spawn (Phase2BerserkSkinDelay 후 호출)
+// ============================================================
+void AHellunaEnemyCharacter_Boss::Phase2_SpawnArmorPieces()
+{
+	UWorld* World = GetWorld();
+	if (!World) return;
+	if (GetNetMode() == NM_DedicatedServer) return;
+
+	const int32 N = Phase2ArmorMeshes.Num();
+	if (N <= 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[BossArmorBreakV3] No armor meshes configured — skipping spawn"));
+		return;
+	}
+
+	const FVector BossLoc = GetActorLocation() + FVector(0.f, 0.f, Phase2ArmorSpawnZOffset);
+	const FRotator BossRot = GetActorRotation();
+	int32 Spawned = 0;
+
+	for (int32 i = 0; i < N; ++i)
+	{
+		USkeletalMesh* ArmorMesh = Phase2ArmorMeshes[i].LoadSynchronous();
+		if (!ArmorMesh) continue;
+
+		// 갑옷 별 분산 임펄스 — 균등 분포 + 약간 랜덤 + 위쪽
+		const float BaseAngle = (2.f * PI / FMath::Max(1, N)) * static_cast<float>(i);
+		const float Angle = BaseAngle + FMath::FRandRange(-0.4f, 0.4f);
+		const FVector LateralDir(FMath::Cos(Angle), FMath::Sin(Angle), 0.f);
+		const FVector Velocity =
+			LateralDir * (Phase2ArmorBlastSpeed * FMath::FRandRange(0.7f, 1.3f))
+			+ FVector(0.f, 0.f, Phase2ArmorUpwardSpeed * FMath::FRandRange(0.6f, 1.4f));
+
+		FActorSpawnParameters Params;
+		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		Params.Owner = this;
+		Params.ObjectFlags = RF_Transient;
+
+		ASkeletalMeshActor* Piece = World->SpawnActor<ASkeletalMeshActor>(
+			ASkeletalMeshActor::StaticClass(), BossLoc, BossRot, Params);
+		if (!Piece) continue;
+
+		// SkeletalMeshActor 기본 mobility 가 Stationary 라 ProjectileMovement 작동 위해 Movable 강제.
+		USkeletalMeshComponent* PieceMesh = Piece->GetSkeletalMeshComponent();
+		if (PieceMesh)
+		{
+			PieceMesh->SetMobility(EComponentMobility::Movable);
+			PieceMesh->SetSkeletalMeshAsset(ArmorMesh);
+			PieceMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision); // 가벼움 + 플레이어와 충돌 안 함
+			PieceMesh->bReceivesDecals = false;
+			PieceMesh->SetCanEverAffectNavigation(false);
+			PieceMesh->bDisableClothSimulation = true;
+		}
+		Piece->SetActorEnableCollision(false);
+		Piece->SetReplicates(false); // Multicast 안에서 모든 머신이 로컬 spawn → replicate 불필요.
+
+		// 중력+초기속도 단순 물리 (PhysicsAsset 없이도 동작).
+		UProjectileMovementComponent* PMC = NewObject<UProjectileMovementComponent>(Piece);
+		if (PMC)
+		{
+			PMC->bRotationFollowsVelocity = false;
+			PMC->ProjectileGravityScale = Phase2ArmorGravityScale;
+			PMC->bShouldBounce = false;
+			PMC->Friction = 0.f;
+			PMC->InitialSpeed = Velocity.Size();
+			PMC->MaxSpeed = 0.f; // 0 = 무제한
+			PMC->Velocity = Velocity;
+			PMC->SetUpdatedComponent(Piece->GetRootComponent());
+			PMC->RegisterComponent();
+			PMC->Velocity = Velocity; // RegisterComponent 후에도 한 번 더 (UpdatedComponent 변경 시 reset 방지)
+			PMC->Activate(true);
+		}
+
+		// 자전 (각 축 ± 랜덤)
+		URotatingMovementComponent* RMC = NewObject<URotatingMovementComponent>(Piece);
+		if (RMC)
+		{
+			const float DegPerSec = Phase2ArmorMaxSpinRPS * 360.f;
+			const FRotator Spin(
+				FMath::FRandRange(-DegPerSec, DegPerSec),
+				FMath::FRandRange(-DegPerSec, DegPerSec),
+				FMath::FRandRange(-DegPerSec, DegPerSec));
+			RMC->RotationRate = Spin;
+			RMC->bRotationInLocalSpace = false;
+			RMC->RegisterComponent();
+		}
+
+		// [BossArmorPersistV1] Phase2ArmorLifetime > 0: 시간 후 자동 destroy (기존 동작).
+		//                     Phase2ArmorLifetime = 0: 영구 유지 — Phase2ArmorFallDuration 후 PMC/RMC 정지 + ground snap.
+		if (Phase2ArmorLifetime > KINDA_SMALL_NUMBER)
+		{
+			Piece->SetLifeSpan(FMath::Max(0.3f, Phase2ArmorLifetime));
+		}
+		else
+		{
+			TWeakObjectPtr<ASkeletalMeshActor> WeakPiece(Piece);
+			FTimerHandle StopTimer;
+			World->GetTimerManager().SetTimer(StopTimer,
+				FTimerDelegate::CreateLambda([WeakPiece]()
+				{
+					ASkeletalMeshActor* P = WeakPiece.Get();
+					if (!IsValid(P)) return;
+
+					// PMC/RMC 정지 — 자전/낙하 freeze.
+					if (UProjectileMovementComponent* PMC = P->FindComponentByClass<UProjectileMovementComponent>())
+					{
+						PMC->SetActive(false);
+					}
+					if (URotatingMovementComponent* RMC = P->FindComponentByClass<URotatingMovementComponent>())
+					{
+						RMC->SetActive(false);
+					}
+
+					// Ground LineTrace — 갑옷 위치 아래로 5000cm 까지 검색해서 World static 에 충돌하면 snap.
+					UWorld* W = P->GetWorld();
+					if (!W) return;
+					FHitResult Hit;
+					const FVector Start = P->GetActorLocation();
+					const FVector End = Start - FVector(0.f, 0.f, 5000.f);
+					FCollisionQueryParams Qp(SCENE_QUERY_STAT(BossArmorGroundSnap), false, P);
+					if (W->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility, Qp))
+					{
+						FVector NewLoc = Hit.Location;
+						NewLoc.Z += 3.f; // 살짝 띄워 z-fight 방지
+						P->SetActorLocation(NewLoc);
+					}
+
+					// [BossArmorPersistV1] 정지된 SK 의 anim tick / skinning 갱신 비활성 — 오픈월드 부담 최소화.
+					if (USkeletalMeshComponent* SK = P->GetSkeletalMeshComponent())
+					{
+						SK->SetComponentTickEnabled(false);
+						SK->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::OnlyTickPoseWhenRendered;
+					}
+					// 영구 유지 — SetLifeSpan 호출 안 함.
+				}),
+				FMath::Max(0.3f, Phase2ArmorFallDuration), false);
+		}
+		++Spawned;
+	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[BossArmorBreakV1] Phase2_BreakArmor — spawned %d/%d armor pieces (NetMode=%d)"),
+		Spawned, N, (int32)GetNetMode());
+}
+
+// ============================================================
+// [Phase2CamInterpV1] 광폭화 시네마틱 — 카메라 위→아래 lerp
+// ============================================================
+void AHellunaEnemyCharacter_Boss::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+
+	// [InertiaTickV1] Montage section 변화 감지 시 ABP 의 Inertialization 노드에 RequestInertialization.
+	//   anim_hit ↔ stun_start ↔ stun_loop 같은 sequence 전환 시 자동 inertia blend.
+	//   Section 분리 권장 — 같은 section 안 segment 전환은 position 연속이라 못 잡음.
+	if (USkeletalMeshComponent* SkelMesh_Inertia = GetMesh())
+	{
+		if (UAnimInstance* AnimInst = SkelMesh_Inertia->GetAnimInstance())
+		{
+			UAnimMontage* CurMontage = AnimInst->GetCurrentActiveMontage();
+			FName CurSection = NAME_None;
+			if (CurMontage)
+			{
+				if (FAnimMontageInstance* Inst = AnimInst->GetActiveInstanceForMontage(CurMontage))
+				{
+					CurSection = Inst->GetCurrentSection();
+				}
+			}
+			const bool bMontageChanged = (CurMontage != LastTrackedMontage.Get());
+			const bool bSectionChanged = (CurSection != LastTrackedMontageSection);
+			if ((bMontageChanged || bSectionChanged) && CurMontage && CurSection != NAME_None)
+			{
+				AnimInst->RequestSlotGroupInertialization(FName(TEXT("DefaultGroup")), 0.4f);
+				UE_LOG(LogTemp, Verbose,
+					TEXT("[InertiaTickV1] Inertia request — Montage=%s Section=%s (prev=%s)"),
+					*CurMontage->GetName(), *CurSection.ToString(),
+					*LastTrackedMontageSection.ToString());
+			}
+			LastTrackedMontage = CurMontage;
+			LastTrackedMontageSection = CurSection;
+		}
+	}
+
+	// [Phase2DescentNCV1] 페이즈2 전엔 'Phase2Descent' Tag 가진 NiagaraComponent 비활성.
+	//   보스 BP 컴포넌트 이름이 한글이라 GetName 매칭 회피 — ComponentTag 로 안전 식별.
+	//   BP viewport 에서 transform 직접 조정 + auto_activate=false 로 시작 시 꺼짐.
+	if (!bInPhase2)
+	{
+		TArray<UNiagaraComponent*> NCs;
+		GetComponents<UNiagaraComponent>(NCs);
+		for (UNiagaraComponent* NC : NCs)
+		{
+			if (!NC) continue;
+			if (!NC->ComponentTags.Contains(FName(TEXT("Phase2Descent")))) continue;
+			if (NC->IsActive())
+			{
+				NC->Deactivate();
+			}
+		}
+	}
+
+	// [Phase2DescentScaleV1] 광폭화 강하 VFX scale lerp — 시간 경과로 점점 커짐.
+	if (bPhase2DescentScaling)
+	{
+		Phase2DescentScaleElapsed += DeltaTime;
+		const float Duration = FMath::Max(static_cast<float>(KINDA_SMALL_NUMBER), Phase2DescentScaleDuration);
+		const float t = FMath::Clamp(Phase2DescentScaleElapsed / Duration, 0.f, 1.f);
+		const float Mult = FMath::Lerp(Phase2DescentScaleStartMult, Phase2DescentScaleEndMult, t);
+		const int32 N = FMath::Min(Phase2DescentScalingNCs.Num(), Phase2DescentBaseScales.Num());
+		for (int32 i = 0; i < N; ++i)
+		{
+			UNiagaraComponent* NC = Phase2DescentScalingNCs[i].Get();
+			if (!NC) continue;
+			// [Phase2DescentScaleV2] Z 는 base 그대로 — Z 가 커지면 emit origin 이 아래로 이동(VFX 자체 구조).
+			//                       X/Y 만 lerp → 평면상 점점 커지는 효과.
+			const FVector& Base = Phase2DescentBaseScales[i];
+			NC->SetRelativeScale3D(FVector(Base.X * Mult, Base.Y * Mult, Base.Z));
+		}
+		if (t >= 1.f)
+		{
+			bPhase2DescentScaling = false;
+		}
+	}
+
+	// [Phase2RefactorV1] 카메라 lerp 모두 트리거(BossPhase2CinematicTrigger)가 처리.
+}
+
+// ============================================================
+// [Phase2StageV1] 단계 3 비주얼 묶음 — 카메라 위 도달 후 호출
+// ============================================================
+void AHellunaEnemyCharacter_Boss::Phase2_PlayStage3Visuals()
+{
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	UE_LOG(LogTemp, Warning, TEXT("[Phase2StageV1] Stage 3 — visuals + enrage on %s (NetMode=%d)"),
+		*GetNameSafe(this), (int32)GetNetMode());
+
+	// 카메라 쉐이크
+	if (Phase2TransitionShakeClass)
+	{
+		UGameplayStatics::PlayWorldCameraShake(
+			World, Phase2TransitionShakeClass, GetActorLocation(),
+			0.f, 4500.f, 1.f, false);
+		if (Phase2ShakeRepeatInterval > 0.f)
+		{
+			TWeakObjectPtr<AHellunaEnemyCharacter_Boss> Weak(this);
+			GetWorldTimerManager().ClearTimer(Phase2ShakeRepeatTimer);
+			GetWorldTimerManager().SetTimer(Phase2ShakeRepeatTimer,
+				FTimerDelegate::CreateLambda([Weak]()
+				{
+					AHellunaEnemyCharacter_Boss* Self = Weak.Get();
+					if (!Self || !Self->Phase2TransitionShakeClass) return;
+					UWorld* W = Self->GetWorld();
+					if (!W) return;
+					UGameplayStatics::PlayWorldCameraShake(
+						W, Self->Phase2TransitionShakeClass, Self->GetActorLocation(),
+						0.f, 4500.f, 1.f, false);
+				}),
+				Phase2ShakeRepeatInterval, true);
+		}
+	}
+
+	// 발밑 충격파 VFX
+	if (Phase2TransitionVFX)
+	{
+		UNiagaraFunctionLibrary::SpawnSystemAtLocation(World, Phase2TransitionVFX,
+			GetActorLocation(), GetActorRotation());
+	}
+
+	// 메테오 VFX
+	if (Phase2SkyMeteorVFX && Phase2SkyMeteorCount > 0)
+	{
+		const FVector BossLoc = GetActorLocation();
+		for (int32 i = 0; i < Phase2SkyMeteorCount; ++i)
+		{
+			const float Angle = FMath::FRandRange(0.f, 2.f * PI);
+			const float Radius = FMath::FRandRange(0.f, Phase2SkyMeteorRadius);
+			const FVector Offset(FMath::Cos(Angle) * Radius,
+				FMath::Sin(Angle) * Radius,
+				Phase2SkyMeteorHeight + FMath::FRandRange(-200.f, 200.f));
+			const FVector Loc = BossLoc + Offset;
+			UNiagaraFunctionLibrary::SpawnSystemAtLocation(World, Phase2SkyMeteorVFX,
+				Loc, FRotator(-90.f, 0.f, 0.f));
+		}
+	}
+
+	// BerserkGlow
+	StartBerserkVisuals(BerserkGlowColor, BerserkGlowBoost);
+
+	// 본체 swap + 갑옷 분리
+	Phase2_BreakArmor();
+
+	// 보스 상시 오라 VFX
+	if (Phase2AuraVFX && !ActivePhase2AuraComp)
+	{
+		USkeletalMeshComponent* BossMesh = GetMesh();
+		UNiagaraComponent* NC = UNiagaraFunctionLibrary::SpawnSystemAttached(
+			Phase2AuraVFX, BossMesh ? (USceneComponent*)BossMesh : (USceneComponent*)GetRootComponent(),
+			NAME_None, FVector::ZeroVector, FRotator::ZeroRotator,
+			EAttachLocation::SnapToTarget, false);
+		ActivePhase2AuraComp = NC;
+	}
+
+	// Phase2Descent tag NC 활성화 + scale lerp 시작 + lifetime timer
+	{
+		TArray<UNiagaraComponent*> NCs;
+		GetComponents<UNiagaraComponent>(NCs);
+		Phase2DescentScalingNCs.Reset();
+		Phase2DescentBaseScales.Reset();
+		int32 ActivatedCount = 0;
+		for (UNiagaraComponent* NC : NCs)
+		{
+			if (!NC) continue;
+			if (!NC->ComponentTags.Contains(FName(TEXT("Phase2Descent")))) continue;
+			NC->Activate(true);
+			++ActivatedCount;
+			if (NC->ComponentTags.Contains(FName(TEXT("NoScale"))))
+			{
+				continue;
+			}
+			Phase2DescentScalingNCs.Add(NC);
+			Phase2DescentBaseScales.Add(NC->GetRelativeScale3D());
+			NC->SetRelativeScale3D(NC->GetRelativeScale3D() * Phase2DescentScaleStartMult);
+		}
+		Phase2DescentScaleElapsed = 0.f;
+		bPhase2DescentScaling = (ActivatedCount > 0 && Phase2DescentScaleDuration > KINDA_SMALL_NUMBER);
+		UE_LOG(LogTemp, Warning,
+			TEXT("[Phase2DescentNCV1] Activated %d, scaling %.2f→%.2f over %.1fs"),
+			ActivatedCount, Phase2DescentScaleStartMult, Phase2DescentScaleEndMult, Phase2DescentScaleDuration);
+
+		if (ActivatedCount > 0 && Phase2DescentVFXLifetime > KINDA_SMALL_NUMBER)
+		{
+			TWeakObjectPtr<AHellunaEnemyCharacter_Boss> WeakSelf(this);
+			FTimerHandle DeactivateTimer;
+			World->GetTimerManager().SetTimer(DeactivateTimer,
+				FTimerDelegate::CreateLambda([WeakSelf]()
+				{
+					AHellunaEnemyCharacter_Boss* Self = WeakSelf.Get();
+					if (!Self) return;
+					Self->bPhase2DescentScaling = false;
+					int32 DeactivatedCount = 0;
+					for (const TWeakObjectPtr<UNiagaraComponent>& WeakNC : Self->Phase2DescentScalingNCs)
+					{
+						UNiagaraComponent* NC = WeakNC.Get();
+						if (NC && NC->IsActive())
+						{
+							NC->Deactivate();
+							++DeactivatedCount;
+						}
+					}
+					UE_LOG(LogTemp, Warning,
+						TEXT("[Phase2DescentLifetimeV1] Deactivated %d Phase2Descent NCs after lifetime"), DeactivatedCount);
+				}),
+				Phase2DescentVFXLifetime, false);
+		}
 	}
 }
