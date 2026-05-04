@@ -2212,7 +2212,8 @@ void AHellunaHeroController::Client_EnterLoadingScene_Implementation(const TArra
 				TEXT("[LoadingDbg][EnterScene] AddToViewport(100) | IsInViewport=%d"),
 				LoadingHUDWidgetInstance->IsInViewport() ? 1 : 0);
 
-			// [§17++] LoadingHUD가 viewport에 들어간 직후 GameInstance의 PostLoad 풀스크린 오버레이 제거.
+			// [§17++ Phase 2] LoadingHUD가 viewport에 들어간 직후 AsyncLoadingScreen plugin StopMovie.
+			// (ClearPostLoadOverlay 내부가 plugin StopLoadingScreen + ExternalWidget 해제로 변경됨)
 			// 그 전에 제거하면 BeginPlay~EnterScene 사이의 빈 시간이 다시 노출됨.
 			if (UMDF_GameInstance* GIClear = Cast<UMDF_GameInstance>(GetGameInstance()))
 			{

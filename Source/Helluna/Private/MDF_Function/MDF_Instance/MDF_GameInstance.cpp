@@ -62,6 +62,12 @@
 #include "TextureResource.h"
 #include "RHI.h"
 
+// [§17++ Phase 2] AsyncLoadingScreen plugin 통합 (TargetType=Server는 dependency 제외됨, 가드)
+#if !UE_SERVER
+#include "AsyncLoadingScreen.h"
+#include "AsyncLoadingScreenLibrary.h"
+#endif
+
 // ============================================
 // 🔐 RegisterLogin - 로그인 등록
 // ============================================
@@ -338,34 +344,33 @@ void UMDF_GameInstance::OnSnapshotCaptureTimeout()
 
 void UMDF_GameInstance::SetupSnapshotLoadingScreen()
 {
+#if !UE_SERVER
 	if (IsRunningDedicatedServer())
 	{
 		return;
 	}
 	if (!LoadingSnapshotTexture)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[LoadingDbg][GI] SetupSnapshotLoadingScreen — Snapshot null, 스킵 (엔진 기본 검정)"));
-		return;
-	}
-	if (!GetMoviePlayer())
-	{
+		UE_LOG(LogTemp, Warning, TEXT("[LoadingDbg][GI] SetupSnapshotLoadingScreen — Snapshot null, 스킵"));
 		return;
 	}
 
+	// [§17++ Phase 2] AsyncLoadingScreen plugin에 우리 SLoadingSnapshotWidget을 ExternalLoadingWidget으로 등록.
+	// plugin이 PreLoadMap에서 자동으로 OnPrepareLoadingScreen → SetupLoadingScreen 호출하면서
+	// ExternalWidget을 WidgetLoadingScreen으로 사용 → 우주선 화면 풀스크린 표시.
+	//
+	// DefaultGame.ini 설정:
+	//   bWaitForManualStop=true   → BeginPlay에서 StopLoadingScreen() 호출까지 화면 유지
+	//   bAllowEngineTick=true     → GameThread block 회피 → PendingNetGame Tick 정상 → NMT_Join 송신 → deadlock 회피
+	//   MinimumLoadingScreenDisplayTime=-1
 	TSharedRef<SLoadingSnapshotWidget> SnapshotWidget =
 		SNew(SLoadingSnapshotWidget).SnapshotTexture(LoadingSnapshotTexture);
 
-	// [Fix] bWaitForManualStop=true + StopMovie() 미호출 조합이 ClientTravel 이후 클라 게임스레드 Tick을
-	// 사실상 정지시켜 NMT_Join 송신을 막고, 그 결과 서버 PostLogin이 영원히 트리거되지 않는 데드락이 발생.
-	// → 엔진이 맵 로드 완료 시 LoadingScreen을 자동 해제하도록 변경. 연출 시간은 MinimumLoadingScreenDisplayTime 으로 보장.
-	FLoadingScreenAttributes Attrs;
-	Attrs.bWaitForManualStop = false;
-	Attrs.bAutoCompleteWhenLoadingCompletes = true;
-	Attrs.MinimumLoadingScreenDisplayTime = 0.5f;
-	Attrs.WidgetLoadingScreen = SnapshotWidget;
+	FAsyncLoadingScreenModule::SetExternalLoadingWidget(SnapshotWidget);
+	UAsyncLoadingScreenLibrary::SetEnableLoadingScreen(true);
 
-	GetMoviePlayer()->SetupLoadingScreen(Attrs);
-	UE_LOG(LogTemp, Log, TEXT("[LoadingDbg][GI] SetupSnapshotLoadingScreen — MoviePlayer 등록 완료 (자동 종료 모드: bAutoCompleteWhenLoadingCompletes=true)"));
+	UE_LOG(LogTemp, Warning, TEXT("[LoadingDbg][GI] SetupSnapshotLoadingScreen — AsyncLoadingScreen plugin에 우주선 widget 등록 완료"));
+#endif
 }
 
 void UMDF_GameInstance::ClearLoadingHandoffState()
@@ -378,19 +383,9 @@ void UMDF_GameInstance::ClearLoadingHandoffState()
 
 void UMDF_GameInstance::OnPreLoadMap(const FString& MapName)
 {
-	// (Q14) Snapshot 없으면 아무 것도 안 함 — 엔진 기본 검정 화면
-	// LobbyController가 이미 SetupSnapshotLoadingScreen을 호출했다면 큐에 등록되어 있음
-}
-
-void UMDF_GameInstance::OnPostLoadMapWithWorld(UWorld* LoadedWorld)
-{
-	// [Fix] MoviePlayer는 OnPostLoadMapWithWorld 시점에 엔진이 자동 해제.
-	// bAutoCompleteWhenLoadingCompletes=true + bWaitForManualStop=false 조합이므로 별도 StopMovie() 호출 불필요.
-
-	// [§17++] MoviePlayer 자동 종료 후 ~ HeroController BeginPlay 발화 사이의 빈 시간(수 백 ms ~ 1~2초)에
-	// MainMap WP cell 전경이 보이는 문제 해결.
-	// SLoadingSnapshotWidget(이미 캡처된 우주선 이미지)를 GameViewport 풀스크린에 직접 추가.
-	// Client_EnterLoadingScene 도착 시 ClearPostLoadOverlay() 호출로 제거.
+	// [§17++ Phase 2 안전 모드] plugin은 LoadMap 동안만 우주선 표시 후 PostLoadMap에서 자동 종료.
+	// 그 후 ~ HeroController BeginPlay 사이의 2.6초 갭(서버 PostLogin + Loading Barrier 대기 + Pawn 복제)은
+	// GameViewport overlay가 가린다. PreLoadMap 시점에 미리 깔아 LoadMap 중 frame freeze 영역도 같이 처리.
 	if (IsRunningDedicatedServer())
 	{
 		return;
@@ -398,7 +393,11 @@ void UMDF_GameInstance::OnPostLoadMapWithWorld(UWorld* LoadedWorld)
 
 	if (!LoadingSnapshotTexture)
 	{
-		UE_LOG(LogTemp, Verbose, TEXT("[LoadingDbg][GI] OnPostLoadMapWithWorld — Snapshot null, 오버레이 스킵"));
+		return;
+	}
+
+	if (PostLoadOverlayWidget.IsValid())
+	{
 		return;
 	}
 
@@ -408,16 +407,41 @@ void UMDF_GameInstance::OnPostLoadMapWithWorld(UWorld* LoadedWorld)
 		return;
 	}
 
-	// 기존 오버레이가 있으면 먼저 제거 (재진입 안전)
+	PostLoadOverlayWidget = SNew(SLoadingSnapshotWidget).SnapshotTexture(LoadingSnapshotTexture);
+	VC->AddViewportWidgetContent(PostLoadOverlayWidget.ToSharedRef(), 9999);
+	UE_LOG(LogTemp, Warning, TEXT("[LoadingDbg][GI] OnPreLoadMap — GameViewport 풀스크린 overlay 선행 추가 (Map=%s)"), *MapName);
+}
+
+void UMDF_GameInstance::OnPostLoadMapWithWorld(UWorld* LoadedWorld)
+{
+	// [§17++ Phase 2 안전 모드] plugin은 PostLoadMap에서 자동 종료. 이 시점부터 BeginPlay까지의 2.6초 갭을
+	// GameViewport overlay가 가려야 한다. PreLoadMap에서 추가했으면 reuse, 아니면 신규 추가.
+	if (IsRunningDedicatedServer())
+	{
+		return;
+	}
+
+	if (!LoadingSnapshotTexture)
+	{
+		UE_LOG(LogTemp, Verbose, TEXT("[LoadingDbg][GI] OnPostLoadMapWithWorld — Snapshot null, overlay 스킵"));
+		return;
+	}
+
+	UGameViewportClient* VC = GetGameViewportClient();
+	if (!VC)
+	{
+		return;
+	}
+
 	if (PostLoadOverlayWidget.IsValid())
 	{
-		VC->RemoveViewportWidgetContent(PostLoadOverlayWidget.ToSharedRef());
-		PostLoadOverlayWidget.Reset();
+		UE_LOG(LogTemp, Warning, TEXT("[LoadingDbg][GI] OnPostLoadMapWithWorld — 기존 overlay reuse"));
+		return;
 	}
 
 	PostLoadOverlayWidget = SNew(SLoadingSnapshotWidget).SnapshotTexture(LoadingSnapshotTexture);
 	VC->AddViewportWidgetContent(PostLoadOverlayWidget.ToSharedRef(), 9999);
-	UE_LOG(LogTemp, Warning, TEXT("[LoadingDbg][GI] OnPostLoadMapWithWorld — 풀스크린 Snapshot 오버레이 추가 (BeginPlay 빈 시간 가림)"));
+	UE_LOG(LogTemp, Warning, TEXT("[LoadingDbg][GI] OnPostLoadMapWithWorld — GameViewport 풀스크린 overlay 신규 추가"));
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -428,15 +452,21 @@ void UMDF_GameInstance::OnPostLoadMapWithWorld(UWorld* LoadedWorld)
 // ════════════════════════════════════════════════════════════════════════════════
 void UMDF_GameInstance::ClearPostLoadOverlay()
 {
-	if (!PostLoadOverlayWidget.IsValid())
-	{
-		return;
-	}
+#if !UE_SERVER
+	// [§17++ Phase 2] plugin StopLoadingScreen 호출로 변경.
+	// bWaitForManualStop=true + bAllowEngineTick=true 조합에서 MoviePlayer를 명시 종료해야 화면 사라짐.
+	UAsyncLoadingScreenLibrary::StopLoadingScreen();
+	FAsyncLoadingScreenModule::ClearExternalLoadingWidget();
+	UE_LOG(LogTemp, Warning, TEXT("[LoadingDbg][GI] ClearPostLoadOverlay — plugin StopLoadingScreen + ExternalWidget 해제"));
+#endif
 
-	if (UGameViewportClient* VC = GetGameViewportClient())
+	// 레거시 GameViewport overlay 잔재 정리 (안전망)
+	if (PostLoadOverlayWidget.IsValid())
 	{
-		VC->RemoveViewportWidgetContent(PostLoadOverlayWidget.ToSharedRef());
-		UE_LOG(LogTemp, Warning, TEXT("[LoadingDbg][GI] ClearPostLoadOverlay — 풀스크린 오버레이 제거"));
+		if (UGameViewportClient* VC = GetGameViewportClient())
+		{
+			VC->RemoveViewportWidgetContent(PostLoadOverlayWidget.ToSharedRef());
+		}
+		PostLoadOverlayWidget.Reset();
 	}
-	PostLoadOverlayWidget.Reset();
 }

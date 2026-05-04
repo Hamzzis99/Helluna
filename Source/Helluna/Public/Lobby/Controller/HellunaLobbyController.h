@@ -141,6 +141,10 @@ public:
 	/** 대기 중인 재참가 포트 (Client RPC에서 설정) */
 	int32 PendingRejoinPort = 0;
 
+	/** [Phase14-Modal] 이 세션에서 이미 Abandon 처리된 경우 true.
+	 *  Client_ShowRejoinPrompt 재진입 차단용. Replicated 아님 — 본인 컨트롤러에서만 의미 있음. */
+	bool bRejoinDeclined = false;
+
 	// ════════════════════════════════════════════════════════════════
 	// 컴포넌트 Getter
 	// ════════════════════════════════════════════════════════════════

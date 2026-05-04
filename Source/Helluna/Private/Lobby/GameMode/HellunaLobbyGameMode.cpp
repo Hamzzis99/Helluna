@@ -541,19 +541,23 @@ void AHellunaLobbyGameMode::InitializeLobbyForPlayer(AHellunaLobbyController* Lo
 		}
 	}
 
-	// ── 0.5) [Phase 14d] 재참가 감지 ──
+	// ── 0.5) [Phase 14d → Phase14-Modal] 재참가 감지 ──
+	// 변경: Client_ShowRejoinPrompt 호출 + early return 제거.
+	//       PendingRejoinPort만 캐싱하고 Step 1~5 정상 진행 → 마지막 ShowLobbyUI 직후
+	//       Client_ShowRejoinPrompt가 모달 오버레이로 표시됨.
+	bool bRejoinPending = false;
 	if (!bGameResultProcessed && SQLiteSubsystem->IsPlayerDeployed(PlayerId))
 	{
 		const int32 DeployedPort = SQLiteSubsystem->GetPlayerDeployedPort(PlayerId);
 		if (DeployedPort > 0 && IsGameServerRunning(DeployedPort))
 		{
-			UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] [Phase14] 재참가 후보 감지! | PlayerId=%s | Port=%d"),
+			UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyGM] [Phase14-Modal] 재참가 후보 감지 — Port 캐싱, 초기화 계속 | PlayerId=%s | Port=%d"),
 				*PlayerId, DeployedPort);
 			LobbyPC->SetReplicatedPlayerId(PlayerId);
 			LobbyPC->PendingRejoinPort = DeployedPort;
-			LobbyPC->Client_ShowRejoinPrompt(DeployedPort);
-			// 초기화 중단 — 플레이어 결정 대기 (HandleRejoinAccepted / HandleRejoinDeclined)
-			return;
+			LobbyPC->bRejoinDeclined = false;
+			bRejoinPending = true;
+			// fall-through — Step 1의 deploy 해제는 스킵됨(아래 가드)
 		}
 		else
 		{
@@ -564,7 +568,9 @@ void AHellunaLobbyGameMode::InitializeLobbyForPlayer(AHellunaLobbyController* Lo
 	}
 
 	// ── 1) [Fix36] 크래시 복구 ──
-	if (!bGameResultProcessed)
+	// 단, Rejoin 후보(bRejoinPending=true)인 경우 deploy_state를 끄지 않음 —
+	// 사용자가 Rejoin 모달에서 결정할 때까지 보존해야 HandleRejoinAccepted가 동작함.
+	if (!bGameResultProcessed && !bRejoinPending)
 	{
 		if (SQLiteSubsystem->IsPlayerDeployed(PlayerId))
 		{
@@ -576,6 +582,10 @@ void AHellunaLobbyGameMode::InitializeLobbyForPlayer(AHellunaLobbyController* Lo
 		{
 			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Fix36] [1/4] 크래시 아님 (미출격 상태) | PlayerId=%s"), *PlayerId);
 		}
+	}
+	else if (bRejoinPending)
+	{
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Phase14-Modal] [1/4] 크래시 복구 스킵 (Rejoin 보류 중) | PlayerId=%s"), *PlayerId);
 	}
 	else
 	{
@@ -654,6 +664,9 @@ void AHellunaLobbyGameMode::InitializeLobbyForPlayer(AHellunaLobbyController* Lo
 	}
 
 	// ── 로비 UI 표시 (0.5초 딜레이 — 리플리케이션 대기) ──
+	// [Phase14-Modal] ShowLobbyUI 직후, PendingRejoinPort가 살아있으면
+	// Client_ShowRejoinPrompt를 이어서 호출. RPC는 reliable+ordered라 클라가
+	// ShowLobbyUI → ShowRejoinPrompt 순으로 처리하여 StashWidget 위에 모달이 뜸.
 	FTimerHandle UITimer;
 	UWorld* World = GetWorld();
 	if (World)
@@ -661,9 +674,17 @@ void AHellunaLobbyGameMode::InitializeLobbyForPlayer(AHellunaLobbyController* Lo
 		TWeakObjectPtr<AHellunaLobbyController> WeakPC = LobbyPC;
 		World->GetTimerManager().SetTimer(UITimer, [WeakPC]()
 		{
-			if (WeakPC.IsValid())
+			if (!WeakPC.IsValid())
 			{
-				WeakPC->Client_ShowLobbyUI();
+				return;
+			}
+			WeakPC->Client_ShowLobbyUI();
+
+			if (WeakPC->PendingRejoinPort > 0 && !WeakPC->bRejoinDeclined)
+			{
+				UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Phase14-Modal] ShowLobbyUI 이후 RejoinPrompt 호출 | Port=%d"),
+					WeakPC->PendingRejoinPort);
+				WeakPC->Client_ShowRejoinPrompt(WeakPC->PendingRejoinPort);
 			}
 		}, 0.5f, false);
 	}
@@ -2698,7 +2719,12 @@ void AHellunaLobbyGameMode::HandleRejoinAccepted(AHellunaLobbyController* LobbyP
 
 		RollbackDeployStateForPlayer(PlayerId, Port);
 		LobbyPC->Client_DeployFailed(TEXT("재참가 가능한 세션이 없습니다."));
-		ContinueLobbyInitAfterRejoinDecision(LobbyPC, PlayerId);
+		// [Phase14-Modal] InitializeLobbyForPlayer가 이미 끝까지 진행되어 StashWidget이
+		// 표시된 상태이므로 ContinueLobbyInitAfterRejoinDecision은 호출하지 않음(이중 init 방지).
+		// 컨트롤러 상태만 정리하고 StashWidget은 그대로 유지.
+		LobbyPC->PendingRejoinPort = 0;
+		LobbyPC->bRejoinDeclined = true;
+		LobbyPC->SetDeployInProgress(false);
 		return;
 	}
 
@@ -2711,7 +2737,10 @@ void AHellunaLobbyGameMode::HandleRejoinAccepted(AHellunaLobbyController* LobbyP
 		RollbackDeployStateForPlayer(PlayerId, Port);
 		CheckAndRecoverFromCrash(PlayerId);
 		LobbyPC->Client_DeployFailed(TEXT("재참가 가능한 게임 서버가 더 이상 없습니다."));
-		ContinueLobbyInitAfterRejoinDecision(LobbyPC, PlayerId);
+		// [Phase14-Modal] StashWidget은 이미 표시된 상태 — ContinueLobbyInitAfterRejoinDecision 호출 금지.
+		LobbyPC->PendingRejoinPort = 0;
+		LobbyPC->bRejoinDeclined = true;
+		LobbyPC->SetDeployInProgress(false);
 		return;
 	}
 
@@ -2754,9 +2783,15 @@ void AHellunaLobbyGameMode::HandleRejoinAccepted(AHellunaLobbyController* LobbyP
 
 void AHellunaLobbyGameMode::HandleRejoinDeclined(AHellunaLobbyController* LobbyPC)
 {
-	const bool bUseSafeRejoinDeclineFlow = FPlatformTime::Cycles64() >= 0;
-	if (bUseSafeRejoinDeclineFlow)
-	{
+	// [Phase14-Modal] 재작성: 새 흐름에서는 InitializeLobbyForPlayer가 이미 끝까지
+	// 진행되어 StashWidget이 표시된 상태이므로, ContinueLobbyInitAfterRejoinDecision
+	// 호출은 제거(이중 로드/이중 ShowLobbyUI 방지). 본 함수는 다음만 처리:
+	//   1) DB deploy 컬럼 0/false로 클리어 (재로그인 시 Step 0.5 감지 차단)
+	//   2) DB Loadout/Equipment 삭제 (아이템 포기 정책)
+	//   3) 서버측 LoadoutComp 비우기 (클라 그리드 즉시 갱신)
+	//   4) 컨트롤러 상태 정리 (PendingRejoinPort=0, bRejoinDeclined=true,
+	//      LoadedLoadoutItemCount=0 — Logout 저장 차단 가드 해제)
+
 	if (!LobbyPC || !SQLiteSubsystem)
 	{
 		return;
@@ -2769,49 +2804,35 @@ void AHellunaLobbyGameMode::HandleRejoinDeclined(AHellunaLobbyController* LobbyP
 		return;
 	}
 
-	const int32 Port = SQLiteSubsystem->GetPlayerDeployedPort(PlayerId);
-	const bool bValidPendingRejoin =
-		SQLiteSubsystem->IsPlayerDeployed(PlayerId) &&
-		Port > 0 &&
-		LobbyPC->PendingRejoinPort > 0 &&
-		LobbyPC->PendingRejoinPort == Port;
+	const int32 StoredPort = SQLiteSubsystem->GetPlayerDeployedPort(PlayerId);
+	UE_LOG(LogHellunaLobby, Log,
+		TEXT("[LobbyGM] [Phase14-Modal] HandleRejoinDeclined | PlayerId=%s | PendingPort=%d | StoredPort=%d"),
+		*PlayerId, LobbyPC->PendingRejoinPort, StoredPort);
 
-	if (!bValidPendingRejoin)
+	// 1) deploy 컬럼 일괄 초기화 (deploy_state=false, deployed_port=0, deployed_hero_type=3=None)
+	if (!SQLiteSubsystem->SetPlayerDeployedWithPort(PlayerId, false, 0, /*HeroNone=*/3))
 	{
-		UE_LOG(LogHellunaLobby, Warning,
-			TEXT("[LobbyGM] HandleRejoinDeclined ignored | PlayerId=%s | PendingPort=%d | StoredPort=%d"),
-			*PlayerId, LobbyPC->PendingRejoinPort, Port);
-
-		ContinueLobbyInitAfterRejoinDecision(LobbyPC, PlayerId);
-		return;
+		// 폴백 — 부분 초기화라도 시도
+		SQLiteSubsystem->SetPlayerDeployed(PlayerId, false);
 	}
 
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] HandleRejoinDeclined | PlayerId=%s"), *PlayerId);
-
-	SQLiteSubsystem->SetPlayerDeployed(PlayerId, false);
+	// 2) Loadout/Equipment 영구 삭제 (아이템 포기)
 	SQLiteSubsystem->DeletePlayerLoadout(PlayerId);
 	SQLiteSubsystem->DeletePlayerEquipment(PlayerId);
 
-	ContinueLobbyInitAfterRejoinDecision(LobbyPC, PlayerId);
-	return;
+	// 3) 서버측 LoadoutComp 비우기 → Replication으로 클라 그리드 즉시 클리어
+	if (UInv_InventoryComponent* LoadoutComp = LobbyPC->GetLoadoutComponent())
+	{
+		LoadoutComp->GetInventoryList().ClearAllEntries();
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Phase14-Modal] LoadoutComp ClearAllEntries 완료 | PlayerId=%s"), *PlayerId);
 	}
 
-	if (!LobbyPC || !SQLiteSubsystem) return;
-
-	const FString PlayerId = GetLobbyPlayerId(LobbyPC);
-	if (PlayerId.IsEmpty()) return;
-
-	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [Phase14] HandleRejoinDeclined | PlayerId=%s"), *PlayerId);
-
-	// 출격 상태 해제
-	SQLiteSubsystem->SetPlayerDeployed(PlayerId, false);
-
-	// Loadout 삭제 (아이템 포기)
-	SQLiteSubsystem->DeletePlayerLoadout(PlayerId);
-	SQLiteSubsystem->DeletePlayerEquipment(PlayerId);
-
-	// 정상 로비 초기화 이어서 진행
-	ContinueLobbyInitAfterRejoinDecision(LobbyPC, PlayerId);
+	// 4) 컨트롤러 상태 정리
+	LobbyPC->PendingRejoinPort = 0;
+	LobbyPC->bRejoinDeclined = true;
+	LobbyPC->SetDeployInProgress(false);
+	// 빈 Loadout이 정상으로 인식되도록 LoadedLoadoutItemCount=0 (Logout 시 저장 차단 가드 해제)
+	LobbyPC->SetLoadedLoadoutItemCount(0);
 }
 
 void AHellunaLobbyGameMode::ContinueLobbyInitAfterRejoinDecision(AHellunaLobbyController* LobbyPC, const FString& PlayerId)

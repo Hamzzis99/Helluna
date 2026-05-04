@@ -2348,7 +2348,10 @@ void AHellunaLobbyController::OnSnapshotReadyTravel()
 
 	if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance()))
 	{
-		// (Q14) Snapshot 없으면 SetupSnapshotLoadingScreen이 내부에서 스킵
+		// [§17++ Phase 2] SetupSnapshotLoadingScreen 내부에서 AsyncLoadingScreen plugin에
+		// 우리 SLoadingSnapshotWidget을 ExternalLoadingWidget으로 등록 + SetEnableLoadingScreen(true).
+		// plugin이 PreLoadMap에서 자동으로 SetupLoadingScreen 호출하면서 우리 widget을 화면에 띄움.
+		// bWaitForManualStop=true + bAllowEngineTick=true로 BeginPlay까지 화면 유지.
 		if (GI->LoadingSnapshotTexture)
 		{
 			GI->SetupSnapshotLoadingScreen();
@@ -2396,6 +2399,19 @@ void AHellunaLobbyController::TogglePartyWidget()
 void AHellunaLobbyController::Client_ShowRejoinPrompt_Implementation(int32 GameServerPort)
 {
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Client_ShowRejoinPrompt 수신 | Port=%d"), GameServerPort);
+
+	// [Phase14-Modal] 재진입 가드 — 이미 거절했거나 위젯이 떠 있으면 무시
+	if (bRejoinDeclined)
+	{
+		UE_LOG(LogHellunaLobby, Verbose, TEXT("[LobbyPC] ShowRejoinPrompt 무시 (이미 Abandon됨)"));
+		return;
+	}
+	if (RejoinWidgetInstance)
+	{
+		UE_LOG(LogHellunaLobby, Verbose, TEXT("[LobbyPC] ShowRejoinPrompt 무시 (위젯 이미 표시중)"));
+		return;
+	}
+
 	PendingRejoinPort = GameServerPort;
 
 	if (!RejoinWidgetClass)
@@ -2446,6 +2462,11 @@ bool AHellunaLobbyController::Server_AbandonGame_Validate()
 void AHellunaLobbyController::Server_AbandonGame_Implementation()
 {
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_AbandonGame 수신"));
+
+	// [Phase14-Modal] 서버측 컨트롤러에 거절 플래그 세팅 — 같은 세션에서
+	// Client_ShowRejoinPrompt가 다시 호출되어도 클라가 무시하도록 동기화.
+	// (HandleRejoinDeclined가 호출되기 전에 세팅 — 안에서 어떤 경로로든 재호출되더라도 차단)
+	bRejoinDeclined = true;
 
 	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode();
 	if (!LobbyGM)
