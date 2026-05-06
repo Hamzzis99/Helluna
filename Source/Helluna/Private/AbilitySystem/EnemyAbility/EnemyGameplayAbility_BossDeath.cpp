@@ -8,8 +8,13 @@
 #include "Kismet/GameplayStatics.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Animation/AnimInstance.h"
+#include "NiagaraComponent.h"
+#include "Engine/World.h"
+#include "TimerManager.h"
 
 #include "Character/HellunaEnemyCharacter.h"
+#include "Character/HellunaEnemyCharacter_Boss.h"
+#include "Character/EnemyComponent/BossDissolveComponent.h"
 #include "GameMode/HellunaDefenseGameMode.h"
 
 UEnemyGameplayAbility_BossDeath::UEnemyGameplayAbility_BossDeath()
@@ -110,11 +115,25 @@ void UEnemyGameplayAbility_BossDeath::ActivateAbility(
 				const float Len = M->GetPlayLength();
 				if (Len > KINDA_SMALL_NUMBER && (Pos / Len) >= 0.85f)
 				{
-					E->SetActorHiddenInGame(true);
+					// [BossDissolveComponentV1] 85% 시점 = 사망 몽타주 끝부분 (넘어진 후).
+					//   보스의 BossDissolveComponent 가 dissolve 효과 모두 캡슐화 처리 (mesh swap +
+					//   Niagara + slowmo + timer + destroy). GA 는 한 줄 trigger 만.
+					AHellunaEnemyCharacter_Boss* BossB = Cast<AHellunaEnemyCharacter_Boss>(E);
+					if (BossB && BossB->DissolveComponent)
+					{
+						BossB->DissolveComponent->TriggerDissolve();
+						UE_LOG(LogTemp, Warning,
+							TEXT("[BossDissolveComponentV1] TriggerDissolve at %.0f%% montage progress (Pos=%.2f Len=%.2f)"),
+							(Pos / Len) * 100.f, Pos, Len);
+					}
+					else
+					{
+						UE_LOG(LogTemp, Warning,
+							TEXT("[BossDissolveComponentV1] DissolveComponent missing on %s — fallback hide"),
+							*GetNameSafe(E));
+						E->SetActorHiddenInGame(true);
+					}
 					W->GetTimerManager().ClearTimer(*SharedTimer);
-					UE_LOG(LogTemp, Warning,
-						TEXT("[BossEarlyHideV1] Boss hidden at %.0f%% montage progress (Pos=%.2f Len=%.2f)"),
-						(Pos / Len) * 100.f, Pos, Len);
 				}
 			}),
 			0.1f, true);
@@ -145,31 +164,21 @@ void UEnemyGameplayAbility_BossDeath::HandleBossDeathFinished()
 	if (!World) return;
 
 	UE_LOG(LogTemp, Warning,
-		TEXT("[BossDeathV1] HandleFinished — Enemy=%s WorldTime=%.3f"),
+		TEXT("[BossDeathV1] HandleFinished — Enemy=%s WorldTime=%.3f (boss visual/destroy is BossDissolveComponent's job)"),
 		*GetNameSafe(Enemy), World->GetTimeSeconds());
 
-	// [BossFadeFallbackV1] 사망 몽타주 끝 시점 = 보스 visual 종료 시점.
-	//   SetActorHiddenInGame 은 AActor::bHidden 이 replicated 이므로 server 에서 호출하면
-	//   client 에도 자동 동기화 → 멀티플레이 안전. SkelMesh->SetVisibility 는 replicate 안 됨.
-	//   timing: server-side PlayMontageAndWait OnCompleted 시점. UE montage replicate 가
-	//   server/client 거의 동기화하므로 client-side 도 같은 시점에 사라짐 (몇 frame 차이).
-	Enemy->SetActorHiddenInGame(true);
-	UE_LOG(LogTemp, Warning, TEXT("[BossFadeFallbackV1] SetActorHiddenInGame(true) on %s — replicates to clients"),
-		*GetNameSafe(Enemy));
+	// [BossDissolveComponentV1] 보스 visual 종료 / Mass entity 정리 / actor destroy 는
+	//   BossDissolveComponent 가 책임 (85% 시점에 이미 TriggerDissolve 호출됨).
+	//   여기서는 GameMode 통보 + GA EndAbility 만 처리.
 
-	// GameMode 통보 — NotifyMonsterDied → NotifyBossDied 트리거. EndGame 4초 timer 는 이전 세션에서 이미 제거됨.
 	if (AHellunaDefenseGameMode* GM = Cast<AHellunaDefenseGameMode>(
 		UGameplayStatics::GetGameMode(World)))
 	{
 		GM->NotifyMonsterDied(Enemy);
 	}
 
-	// EndAbility 먼저 — Despawn 후엔 ActorInfo 무효화 가능
 	const FGameplayAbilitySpecHandle H = GetCurrentAbilitySpecHandle();
 	const FGameplayAbilityActorInfo* AI = GetCurrentActorInfo();
 	const FGameplayAbilityActivationInfo AV = GetCurrentActivationInfo();
 	EndAbility(H, AI, AV, true, false);
-
-	// Despawn — Mass entity 정리 + Destroy timer. EndGame 은 GameMode 5초 timer 가 처리.
-	Enemy->DespawnMassEntityOnServer(TEXT("GA_BossDeath"));
 }

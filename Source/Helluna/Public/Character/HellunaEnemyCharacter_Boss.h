@@ -14,6 +14,7 @@ class UHellunaEnemyGameplayAbility;
 class UMaterialInterface;
 class ABossPhase2CinematicTrigger;
 class ABossDeathCinematicTrigger;
+class UBossDissolveComponent;
 
 /**
  * 보스 전용 몬스터 베이스 클래스.
@@ -47,6 +48,13 @@ public:
 
 	/** [BossDeathCinematicV1] HP 0 도달(페이즈2 후 진짜 사망) 시점에 죽음 시네마틱 트리거 spawn. */
 	virtual void OnMonsterDeath(AActor* DeadActor, AActor* KillerActor) override;
+
+	/** [BossDissolveComponentV1] 사망 시 dissolve 효과 (mesh material swap + Niagara + slowmo) 캡슐화 컴포넌트.
+	 *   GA_BossDeath 가 사망 몽타주 85% 시점에 TriggerDissolve() 호출.
+	 *   디자이너가 BP CDO 에서 dissolve 머티리얼/VFX/timing 직접 set.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="BossDissolve")
+	TObjectPtr<UBossDissolveComponent> DissolveComponent;
 
 	/**
 	 * [BossDeathCinematicV1] 죽음 시네마틱 동안 destroy 보류 — GA_Death 70% 시점에
@@ -381,6 +389,13 @@ public:
 	/** 소환 몽타주 멀티캐스트 재생 (서버 → 전체 클라) */
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlaySummonMontage();
+
+	/** [BossDissolveSpawnV1] DissolveActor 의 VFX_A08 NiagaraComponent 활성화 — 모든 머신.
+	 *   서버 timer 가 호출하면 각 머신이 자기 NiagaraComponent 의 Activate() 호출.
+	 *   NiagaraComponent active state 는 자동 replicate 안 되므로 명시적 Multicast 필요.
+	 */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_ActivateDissolveStageTwo(AActor* DissolveActor);
 
 	/** 소환 몽타주 완료 델리게이트 — BossEncounterCube가 바인딩 */
 	DECLARE_DELEGATE(FOnSummonMontageFinished)

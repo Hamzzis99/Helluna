@@ -49,6 +49,9 @@
 #include "AbilitySystemComponent.h"
 #include "Components/CapsuleComponent.h"
 
+// [BossDissolveComponentV1]
+#include "Character/EnemyComponent/BossDissolveComponent.h"
+
 AHellunaEnemyCharacter_Boss::AHellunaEnemyCharacter_Boss()
 {
 	// [Phase2CamInterpV1] Tick 활성화 — 광폭화 시네마틱 동안 카메라 위→아래 lerp 처리에 필요.
@@ -64,6 +67,11 @@ AHellunaEnemyCharacter_Boss::AHellunaEnemyCharacter_Boss()
 	//   이 클래스를 상속받은 BP 는 기본적으로 2페이즈 활성, 비활성이 필요한 보스만
 	//   BP CDO 에서 명시적으로 false 로 끄도록 정책 변경.
 	bHasPhase2 = true;
+
+	// [BossDissolveComponentV1] dissolve 효과 컴포넌트.
+	//   생성자에서 default subobject 로 보스 actor 에 attach.
+	//   디자이너가 BP CDO 에서 dissolve 머티리얼/VFX/timing 직접 set.
+	DissolveComponent = CreateDefaultSubobject<UBossDissolveComponent>(TEXT("DissolveComponent"));
 }
 
 void AHellunaEnemyCharacter_Boss::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -745,6 +753,29 @@ void AHellunaEnemyCharacter_Boss::RestoreTimeDilationAfterHitStop()
 		return;
 	}
 	CustomTimeDilation = 1.f;
+}
+
+// ============================================================
+// [BossDissolveSpawnV1] Multicast_ActivateDissolveStageTwo
+//   DissolveActor 의 VFX_A08 NiagaraComponent 활성화 — 모든 머신.
+//   NiagaraComponent active state 는 자동 replicate 안 되므로 RPC 필요.
+// ============================================================
+void AHellunaEnemyCharacter_Boss::Multicast_ActivateDissolveStageTwo_Implementation(AActor* DissolveActor)
+{
+	if (!DissolveActor) return;
+	TArray<UNiagaraComponent*> Comps;
+	DissolveActor->GetComponents<UNiagaraComponent>(Comps);
+	for (UNiagaraComponent* C : Comps)
+	{
+		if (C && C->GetName().Contains(TEXT("VFX_A08")))
+		{
+			C->Activate();
+			UE_LOG(LogTemp, Warning,
+				TEXT("[BossDissolveSpawnV1] VFX_A08 activated (multicast, Auth=%d)"),
+				HasAuthority() ? 1 : 0);
+			break;
+		}
+	}
 }
 
 // ============================================================
