@@ -2188,10 +2188,12 @@ void AHellunaDefenseGameMode::NotifyBossDied(AActor* DeadBoss)
     // 최종 보스 처치 → 승리
     if (Grade == EEnemyGrade::Boss)
     {
-        // [BossDeathCinematicV1] 사망 모션 + AnimNotify_TimeDilation 슬로우 + 클로즈업 시간 확보 — 4초 후 EndGame.
-        const float BossDeathCinematicDelay = 4.0f;
+        // [BossDeathV1] dissolve 끝나고 보스 actor destroy 된 후 EndGame 트리거.
+        //   GA_BossDeath HandleFinished → DespawnMassEntity → Multicast_StartDeathDissolve(4.5s) →
+        //   Destroy timer(4.6s). 5초 후 EndGame 이면 destroy 후에 자연스럽게 승리 처리.
+        const float BossDeathCinematicDelay = 5.0f;
         UE_LOG(LogHelluna, Warning,
-            TEXT("[Victory] 최종 보스 처치! EndGame(Escaped) %.1f초 후 호출 (사망 시네마틱 시간 확보)"),
+            TEXT("[Victory] 최종 보스 처치! EndGame(Escaped) %.1fs 후 호출 (dissolve 끝 + 여유)"),
             BossDeathCinematicDelay);
         FTimerHandle EndGameDelayTimer;
         GetWorldTimerManager().SetTimer(EndGameDelayTimer,

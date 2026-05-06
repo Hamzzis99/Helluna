@@ -13,6 +13,7 @@ class UCameraShakeBase;
 class UHellunaEnemyGameplayAbility;
 class UMaterialInterface;
 class ABossPhase2CinematicTrigger;
+class ABossDeathCinematicTrigger;
 
 /**
  * 보스 전용 몬스터 베이스 클래스.
@@ -43,6 +44,46 @@ public:
 	virtual bool TryInterceptDeathForPhase2(float OldHealth, float NewHealth) override;
 	virtual void TriggerHitStop() override;
 	virtual bool ShouldSuppressBrainRestartAfterPossess() const override { return bSuppressAutoBrainRestart; }
+
+	/** [BossDeathCinematicV1] HP 0 도달(페이즈2 후 진짜 사망) 시점에 죽음 시네마틱 트리거 spawn. */
+	virtual void OnMonsterDeath(AActor* DeadActor, AActor* KillerActor) override;
+
+	/**
+	 * [BossDeathCinematicV1] 죽음 시네마틱 동안 destroy 보류 — GA_Death 70% 시점에
+	 *   DespawnMassEntityOnServer 가 호출돼도 hold 만료까지 reschedule.
+	 *   덕분에 카메라가 사망 몽타주 끝까지 head 본 추적 가능.
+	 */
+	virtual void DespawnMassEntityOnServer(const TCHAR* Where) override;
+
+	/** 보스 사망 시 spawn 할 시네마틱 트리거 클래스. None 이면 스킵. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|사망 시네마틱",
+		meta = (DisplayName = "사망 시네마틱 트리거 클래스"))
+	TSubclassOf<ABossDeathCinematicTrigger> DeathCinematicTriggerClass;
+
+	/**
+	 * 죽음 시네마틱 destroy 보류 failsafe 시간 (초).
+	 *   기본 destroy 신호는 사망 몽타주 OnMontageEnded — 이 시간은 몽타주 신호가 누락될 경우의
+	 *   안전망 (사망 몽타주 길이보다 충분히 길게).
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|사망 시네마틱",
+		meta = (DisplayName = "Destroy 보류 Failsafe (초)", ClampMin = "0.5", ClampMax = "60.0"))
+	float DeathCinematicHoldDuration = 15.f;
+
+private:
+	/** Destroy hold 활성 플래그 (true 인 동안 DespawnMassEntityOnServer 보류). */
+	bool bDeathCinematicHoldActive = false;
+
+	/** Hold failsafe timer. */
+	FTimerHandle DeathCinematicHoldTimer;
+
+	/** [BossDeathCinematicV1] 사망 몽타주 종료 신호 (서버 AnimInstance OnMontageEnded). */
+	UFUNCTION()
+	void OnBossDeathMontageEnded_ServerSignal(UAnimMontage* Montage, bool bInterrupted);
+
+	/** [BossDeathCinematicV1] Hold 해제 + 진짜 destroy 진행. */
+	void ReleaseDeathCinematicHold(const TCHAR* Reason);
+
+public:
 
 	// =========================================================
 	// [BossPhase2V1] 보스 2페이즈 = 광폭화 시스템

@@ -237,12 +237,28 @@ void UEnemyGameplayAbility_SpawnAttack::OnCastMontageCancelled()
 {
 	bMontageFinished = true;
 
-	// [HoldPoseV1] Cancelled 는 HitReact 등 외부 인터럽트 — 자세 유지 모드면 즉시 재생.
+	// [HoldPoseV1] Cancelled 는 HitReact 등 외부 인터럽트 — 자세 유지 모드면 재생.
+	// [InfiniteRecursionGuardV1] 즉시 StartCastMontageOnce 호출 시 cancel 콜백 stack 안에서
+	//   새 montage 가 또 cancel 되어 무한 재귀 → stack overflow 크래시.
+	//   (예: 보스 사망 시 ASC->CancelAbilities() 가 SpawnAttack 까지 cancel 한 직후 ability 가
+	//    아직 IsActive=true 인 짧은 윈도우에 restart 시도 → 즉시 또 cancel → 무한 루프).
+	//   다음 tick 으로 deferring 하고 WeakPtr 로 ability 유효성 재검사.
 	if (bLoopCastMontage && !bLifetimeExpired && IsActive())
 	{
-		SA_GA_LOG("[HoldPoseV1] Cast montage cancelled — restart for pose hold");
+		SA_GA_LOG("[HoldPoseV1] Cast montage cancelled — schedule restart for pose hold (next tick)");
 		bMontageFinished = false;
-		StartCastMontageOnce();
+		if (UWorld* World = GetWorld())
+		{
+			TWeakObjectPtr<UEnemyGameplayAbility_SpawnAttack> WeakSelf(this);
+			World->GetTimerManager().SetTimerForNextTick(
+				FTimerDelegate::CreateLambda([WeakSelf]()
+				{
+					UEnemyGameplayAbility_SpawnAttack* Self = WeakSelf.Get();
+					if (!Self) return;
+					if (!Self->IsActive() || Self->bLifetimeExpired) return;
+					Self->StartCastMontageOnce();
+				}));
+		}
 	}
 }
 

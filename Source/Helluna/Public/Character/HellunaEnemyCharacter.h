@@ -56,7 +56,7 @@ protected:
 	void OnMonsterHealthChanged(UActorComponent* MonsterHealthComponent, float OldHealth, float NewHealth, AActor* InstigatorActor);
 
 	UFUNCTION()
-	void OnMonsterDeath(AActor* DeadActor, AActor* KillerActor);
+	virtual void OnMonsterDeath(AActor* DeadActor, AActor* KillerActor);
 
 private:
 	void InitEnemyStartUpData();
@@ -811,7 +811,7 @@ private:
 // ECS 관련 함수
 public:
 	// 사망 시 서버에서 호출: Mass 엔티티 자체를 제거해서 재생성을 방지
-	void DespawnMassEntityOnServer(const TCHAR* Where);
+	virtual void DespawnMassEntityOnServer(const TCHAR* Where);
 
 public:
 	/**

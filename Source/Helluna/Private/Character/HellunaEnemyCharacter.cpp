@@ -11,6 +11,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Camera/CameraShakeBase.h"
 #include "AbilitySystemComponent.h"
+#include "AbilitySystem/HellunaAbilitySystemComponent.h"
 #include "AbilitySystem/EnemyAbility/EnemyGameplayAbility_RangedAttack.h"
 #include "GameMode/HellunaDefenseGameMode.h"
 #include "Animation/AnimInstance.h"
@@ -269,14 +270,21 @@ void AHellunaEnemyCharacter::InitEnemyStartUpData()
 {
 	if (CharacterStartUpData.IsNull()) return;
 
+	// [StreamableSafetyV1] WeakPtr 캡처 — PIE 종료/actor destroy 후 4초 정도 늦게
+	//   callback 이 fire 되는 케이스에서 dangling this 접근으로 access violation.
+	//   Self 와 ASC 모두 IsValid 검증 후에만 GiveAbility 진행.
+	TWeakObjectPtr<AHellunaEnemyCharacter> WeakSelf(this);
 	UAssetManager::GetStreamableManager().RequestAsyncLoad(
 		CharacterStartUpData.ToSoftObjectPath(),
 		FStreamableDelegate::CreateLambda(
-			[this]()
+			[WeakSelf]()
 			{
-				if (UDataAsset_BaseStartUpData* LoadedData = CharacterStartUpData.Get())
+				AHellunaEnemyCharacter* Self = WeakSelf.Get();
+				if (!Self) return;
+				if (!IsValid(Self->HellunaAbilitySystemComponent)) return;
+				if (UDataAsset_BaseStartUpData* LoadedData = Self->CharacterStartUpData.Get())
 				{
-					LoadedData->GiveToAbilitySystemComponent(HellunaAbilitySystemComponent);
+					LoadedData->GiveToAbilitySystemComponent(Self->HellunaAbilitySystemComponent);
 				}
 			}
 		)
@@ -731,6 +739,12 @@ void AHellunaEnemyCharacter::OnDeathMontageEnded(UAnimMontage* Montage, bool bIn
 // ============================================================
 void AHellunaEnemyCharacter::Multicast_StartDeathDissolve_Implementation()
 {
+	UE_LOG(LogTemp, Warning,
+		TEXT("[DeathTimingV1][DissolveStart] %s WorldTime=%.3f Duration=%.2f Auth=%d"),
+		*GetNameSafe(this),
+		GetWorld() ? GetWorld()->GetTimeSeconds() : -1.f,
+		DeathDissolveDuration,
+		HasAuthority() ? 1 : 0);
 	StartDeathDissolveVisuals();
 }
 
@@ -1105,6 +1119,10 @@ void AHellunaEnemyCharacter::TickDeathDissolveVisuals()
 		{
 			SkelMesh->SetVisibility(false, true);
 		}
+
+		UE_LOG(LogTemp, Warning,
+			TEXT("[DeathTimingV1][DissolveComplete] %s WorldTime=%.3f Elapsed=%.3f"),
+			*GetNameSafe(this), World->GetTimeSeconds(), Elapsed);
 	}
 }
 
@@ -1228,6 +1246,19 @@ void AHellunaEnemyCharacter::OnMonsterDeath(AActor* DeadActor, AActor* KillerAct
 		return;
 	}
 
+	// [BossDeathDashStopV1] 사망 즉시 모든 GA cancel — DashAttack/공격 GA 등 진행 중인 어빌리티 정지.
+	//   Why: DashAttack tick 타이머가 매 인터벌 LaunchCharacter + DashLoopMontage 재공급 →
+	//        사망 처리 후에도 보스가 dash 자세로 미끄러지듯 보이는 버그.
+	//        EndAbility 가 ClearTimer + Multicast_StopMontage(DashLoopMontage) 정리해줌.
+	//   부모 클래스에서 일괄 처리 — 모든 적 액터에 동일 적용 (GA cancel 누락 방지).
+	if (UAbilitySystemComponent* ASC = GetAbilitySystemComponent())
+	{
+		ASC->CancelAbilities();
+		UE_LOG(LogTemp, Warning,
+			TEXT("[BossDeathDashStopV1] CancelAbilities on %s — dash/attack GA terminated"),
+			*GetNameSafe(this));
+	}
+
 	// 사망 즉시 캡슐 충돌 비활성화 — 사망 애니메이션 중 Overlap 판정 방지
 	if (UCapsuleComponent* Capsule = GetCapsuleComponent())
 	{
@@ -1287,6 +1318,12 @@ void AHellunaEnemyCharacter::DespawnMassEntityOnServer(const TCHAR* Where)
 	// 중복 호출 방지
 	if (bDespawnStarted) return;
 	bDespawnStarted = true;
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[DeathTimingV1][Despawn] %s Reason=%s WorldTime=%.3f"),
+		*GetNameSafe(this),
+		Where ? Where : TEXT("?"),
+		GetWorld() ? GetWorld()->GetTimeSeconds() : -1.f);
 
 	// 1. 모든 콜리전 즉시 비활성화 — 디퍼드 오버랩 이벤트 방지
 	SetActorEnableCollision(false);

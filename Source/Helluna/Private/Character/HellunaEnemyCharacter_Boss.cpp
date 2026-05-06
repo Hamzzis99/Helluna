@@ -38,6 +38,17 @@
 // [Phase2RefactorV1]
 #include "BossEvent/BossPhase2CinematicTrigger.h"
 
+// [BossDeathCinematicV1]
+#include "BossEvent/BossDeathCinematicTrigger.h"
+
+// [DeathTimingV1] 보스 사망 몽타주 끝 → EndGame 직접 트리거.
+#include "GameMode/HellunaDefenseGameMode.h"
+
+// [BossDeathV1] 보스 전용 사망 GA — StateTree 우회로 직접 활성화.
+#include "AbilitySystem/EnemyAbility/EnemyGameplayAbility_BossDeath.h"
+#include "AbilitySystemComponent.h"
+#include "Components/CapsuleComponent.h"
+
 AHellunaEnemyCharacter_Boss::AHellunaEnemyCharacter_Boss()
 {
 	// [Phase2CamInterpV1] Tick 활성화 — 광폭화 시네마틱 동안 카메라 위→아래 lerp 처리에 필요.
@@ -82,12 +93,20 @@ bool AHellunaEnemyCharacter_Boss::TryInterceptDeathForPhase2(float OldHealth, fl
 	if (NewHealth > KINDA_SMALL_NUMBER) return false; // HP 0 도달이 아니면 스킵
 	if (!HealthComponent) return false;
 
+	// [BossDeathCinematicV1_TempDisablePhase2] 사망 시네마틱 디버깅용 — 광폭화 전체 임시 비활성.
+	//   인터셉트하지 않고 false 반환 → 첫 HP=0 에 바로 사망 → OnMonsterDeath → 죽음 시네마틱.
+	UE_LOG(LogTemp, Warning,
+		TEXT("[BossDeathCinematicV1_TempDisablePhase2] %s HP depleted — Phase 2 disabled, allowing real death"),
+		*GetNameSafe(this));
+	return false;
+#if 0
 	UE_LOG(LogTemp, Warning,
 		TEXT("[BossPhase2V1] %s HP depleted — intercepting death, entering Phase 2"),
 		*GetNameSafe(this));
 
 	EnterBossPhase2();
 	return true;
+#endif
 }
 
 void AHellunaEnemyCharacter_Boss::EnterBossPhase2()
@@ -213,7 +232,10 @@ void AHellunaEnemyCharacter_Boss::Multicast_PlayBossPhase2Transition_Implementat
 	// =========================================================
 	// [Phase2RefactorV1] 카메라/대사/단계 시퀀스 — 트리거(ABossPhase2CinematicTrigger)에 위임.
 	//   서버에서만 Spawn + TryActivate. 트리거가 Multicast 로 자기 카메라/대사 처리.
+	// [BossDeathCinematicV1_TempDisable] 사망 시네마틱 작업 동안 페이즈2 시네마틱 임시 비활성.
+	//   비주얼/오라/광폭화 등 나머지는 그대로 유지 — 카메라/대사만 스킵.
 	// =========================================================
+#if 0
 	if (HasAuthority() && Phase2CinematicTriggerClass)
 	{
 		FActorSpawnParameters TriggerParams;
@@ -232,6 +254,8 @@ void AHellunaEnemyCharacter_Boss::Multicast_PlayBossPhase2Transition_Implementat
 				*GetNameSafe(Phase2CinematicTriggerClass));
 		}
 	}
+#endif
+	UE_LOG(LogTemp, Warning, TEXT("[BossDeathCinematicV1_TempDisable] Phase2 cinematic trigger spawn skipped (temporarily disabled for death cinematic dev)"));
 
 	// =========================================================
 	// 기절 몽타주 — 모든 머신
@@ -544,6 +568,146 @@ void AHellunaEnemyCharacter_Boss::Multicast_PlayBossPhase2Transition_Implementat
 #endif // 0 — Phase2RefactorV1 기존 코드 비활성화 끝
 
 // ============================================================
+// [BossDeathCinematicV1] 보스 사망 시점에 사망 시네마틱 트리거 spawn.
+//   - HP 가 진짜 0 으로 떨어진 시점 (페이즈2 가 인터셉트 안 한 사망) 에 호출됨.
+//   - 서버에서만 spawn — 트리거가 자체 Multicast 로 모든 머신 카메라 처리.
+//   - Super::OnMonsterDeath 보다 먼저 트리거 spawn 해서 카메라가 사망 몽타주 시작과
+//     같이 켜지도록 (StateTree → GA_Death → DeathMontage 가 곧 활성).
+// ============================================================
+void AHellunaEnemyCharacter_Boss::OnMonsterDeath(AActor* DeadActor, AActor* KillerActor)
+{
+	UE_LOG(LogTemp, Warning,
+		TEXT("[BossDeathV1][OnMonsterDeath] %s WorldTime=%.3f Auth=%d"),
+		*GetNameSafe(this),
+		GetWorld() ? GetWorld()->GetTimeSeconds() : -1.f,
+		HasAuthority() ? 1 : 0);
+
+	if (!HasAuthority())
+	{
+		// 클라는 부모 흐름 그대로 (필요 시 client-side cleanup).
+		Super::OnMonsterDeath(DeadActor, KillerActor);
+		return;
+	}
+
+	// =========================================================================
+	// [BossDeathV1] StateTree 우회 흐름 — Super::OnMonsterDeath 호출 안 함.
+	//   Super 가 SendStateTreeEvent(Death) 호출 → STTask_Death → GA_Death → 70% EarlyFinish →
+	//   STTask Succeed → ChooseAttack → 새 SpawnAttack 활성화 (사망 도중 TimeDistortionZone 발동) 버그.
+	//   대신 부모 cleanup 만 직접 처리하고 BrainStop + GA_BossDeath 직접 활성화.
+	// =========================================================================
+
+	// 1) 부모 cleanup (SendStateTreeEvent 만 빼고 동일).
+	if (UAbilitySystemComponent* ASC = GetAbilitySystemComponent())
+	{
+		ASC->CancelAbilities();
+	}
+	if (UCapsuleComponent* Capsule = GetCapsuleComponent())
+	{
+		Capsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
+	if (USkeletalMeshComponent* EnemyMesh = GetMesh())
+	{
+		EnemyMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
+	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
+	{
+		MoveComp->StopMovementImmediately();
+		MoveComp->DisableMovement();
+	}
+
+	// 2) BrainStop — StateTree 정지 (이미 활성된 어떤 STTask 도 멈춤, 새 transition 차단).
+	if (AAIController* AIC = Cast<AAIController>(GetController()))
+	{
+		if (UBrainComponent* Brain = AIC->GetBrainComponent())
+		{
+			Brain->StopLogic(TEXT("BossDeathV1"));
+			UE_LOG(LogTemp, Warning, TEXT("[BossDeathV1] BrainStopLogic on %s"),
+				*GetNameSafe(this));
+		}
+	}
+
+	// 3) 시네마틱 트리거 spawn.
+	UWorld* World = GetWorld();
+	if (World && DeathCinematicTriggerClass)
+	{
+		FActorSpawnParameters Params;
+		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		Params.Owner = this;
+		ABossDeathCinematicTrigger* Trigger = World->SpawnActor<ABossDeathCinematicTrigger>(
+			DeathCinematicTriggerClass, GetActorLocation(), GetActorRotation(), Params);
+		if (Trigger)
+		{
+			Trigger->TryActivate(this);
+			UE_LOG(LogTemp, Warning,
+				TEXT("[BossDeathV1] Spawned death cinematic trigger: %s"),
+				*Trigger->GetName());
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[BossDeathV1] Failed to spawn death cinematic — class=%s"),
+				*GetNameSafe(DeathCinematicTriggerClass));
+		}
+	}
+
+	// 4) GA_BossDeath 직접 활성화 (StateTree 우회). GA 가 자체 lifecycle 관리:
+	//    몽타주 자연 종료 시 → DespawnMassEntity + EndGame trigger.
+	if (UAbilitySystemComponent* ASC = GetAbilitySystemComponent())
+	{
+		bool bAlreadyHas = false;
+		for (const FGameplayAbilitySpec& Spec : ASC->GetActivatableAbilities())
+		{
+			if (Spec.Ability && Spec.Ability->GetClass() == UEnemyGameplayAbility_BossDeath::StaticClass())
+			{
+				bAlreadyHas = true;
+				break;
+			}
+		}
+		if (!bAlreadyHas)
+		{
+			FGameplayAbilitySpec Spec(UEnemyGameplayAbility_BossDeath::StaticClass());
+			Spec.SourceObject = this;
+			Spec.Level = 1;
+			ASC->GiveAbility(Spec);
+		}
+
+		const bool bActivated = ASC->TryActivateAbilityByClass(UEnemyGameplayAbility_BossDeath::StaticClass());
+		UE_LOG(LogTemp, Warning,
+			TEXT("[BossDeathV1] GA_BossDeath TryActivate=%d"), bActivated ? 1 : 0);
+
+		if (!bActivated)
+		{
+			// Failsafe — GA 활성 실패 시 직접 destroy 처리.
+			UE_LOG(LogTemp, Warning, TEXT("[BossDeathV1] Failsafe — direct DespawnMassEntityOnServer"));
+			DespawnMassEntityOnServer(TEXT("BossDeath_GAFailsafe"));
+		}
+	}
+}
+
+// ============================================================
+// [BossDeathV1] hold 시스템 제거 — GA_BossDeath 가 자체 lifecycle 관리.
+//   override 자체는 멤버 함수 시그니처 보존을 위해 남기되 단순 pass-through.
+// ============================================================
+void AHellunaEnemyCharacter_Boss::DespawnMassEntityOnServer(const TCHAR* Where)
+{
+	Super::DespawnMassEntityOnServer(Where);
+}
+
+// ============================================================
+// [BossDeathV1] 아래 두 함수는 GA_BossDeath 도입으로 더 이상 사용 안 함.
+//   헤더 시그니처 보존 위해 빈 본문으로만 유지 (LiveCoding 대비). 호출 자체가 안 됨.
+// ============================================================
+void AHellunaEnemyCharacter_Boss::OnBossDeathMontageEnded_ServerSignal(UAnimMontage* /*Montage*/, bool /*bInterrupted*/)
+{
+	// no-op — GA_BossDeath 가 자체 OnMontageCompleted/Cancelled 콜백으로 책임.
+}
+
+void AHellunaEnemyCharacter_Boss::ReleaseDeathCinematicHold(const TCHAR* /*Reason*/)
+{
+	// no-op — hold 시스템 제거됨. GA_BossDeath::HandleBossDeathFinished 가 처리.
+}
+
+// ============================================================
 // [HitStopV1] 히트 스톱
 // ============================================================
 void AHellunaEnemyCharacter_Boss::TriggerHitStop()
@@ -570,6 +734,16 @@ void AHellunaEnemyCharacter_Boss::Multicast_TriggerHitStop_Implementation(float 
 
 void AHellunaEnemyCharacter_Boss::RestoreTimeDilationAfterHitStop()
 {
+	// [HitStopDeadGuardV1] 사망 상태에서는 reset skip — ActorTimeDilation 노티 (사망 몽타주 슬로우)
+	//   가 set 한 CustomTimeDilation 을 1.0 으로 덮어써 슬로우가 0.08s 만에 끊기는 conflict 방지.
+	//   NotifyBegin/End multiply chain 이 정상 복원하므로 dead 상태에서는 손대지 않는 게 안전.
+	if (HealthComponent && HealthComponent->IsDead())
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[HitStopDeadGuardV1] %s is dead — skipping CustomTimeDilation reset"),
+			*GetNameSafe(this));
+		return;
+	}
 	CustomTimeDilation = 1.f;
 }
 

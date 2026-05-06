@@ -7,6 +7,10 @@
 
 void UDataAsset_EnemyStartUpData::GiveToAbilitySystemComponent(UHellunaAbilitySystemComponent* InASCToGive, int32 ApplyLevel)
 {
+	// [StreamableSafetyV1] PIE 종료 후 streamable callback 이 destroyed ASC 에 호출되어
+	//   GiveAbility 시 access violation 사고. 진입 시 ASC valid 가드.
+	if (!IsValid(InASCToGive)) return;
+
 	Super::GiveToAbilitySystemComponent(InASCToGive, ApplyLevel);
 
 	if (!EnemyCombatAbilities.IsEmpty())
