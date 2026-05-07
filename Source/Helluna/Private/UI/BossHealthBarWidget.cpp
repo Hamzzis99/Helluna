@@ -24,6 +24,9 @@ void UBossHealthBarWidget::NativeConstruct()
 	if (AHellunaEnemyCharacter_Boss* Boss = Cast<AHellunaEnemyCharacter_Boss>(BossActor))
 	{
 		Boss->OnBossEnterPhase2.AddUniqueDynamic(this, &UBossHealthBarWidget::HandleBossEnterPhase2);
+		// [Phase2HealthFillV3] break-through 시점에 회색 바 확장 — Boss Tick 의 Stage 2 진입 시 broadcast.
+		Boss->OnBossPhase2BreakThroughStart.AddUniqueDynamic(this,
+			&UBossHealthBarWidget::HandleBossPhase2BreakThroughStart);
 
 		// 이미 페이즈2 인 상태로 위젯 생성되는 경우 (late join 등) 즉시 페이즈2 시각 상태로
 		if (IsBossInPhase2())
@@ -69,44 +72,35 @@ void UBossHealthBarWidget::NativeTick(const FGeometry& MyGeometry, float InDelta
 	const float Target = GetBossHealthNormalized();
 	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
 
-	// ----- HP 표시값 갱신 -----
-	if (bPhase2FillAnimationActive)
+	// [Phase2HealthFillV3] 회색 바 width 확장 — Boss 의 replicated Phase2HealthFillStage 폴링.
+	//   server Tick 의 stage 변경이 client 에 push 됨 (DOREPLIFETIME). widget 이 stage>=3 감지 시 expand.
+	if (!bPhase2WidthExpanding && Phase2WidthAlpha < 1.f)
 	{
-		// 페이즈2 진입 — 두 단계 시퀀스
-		const float Elapsed = static_cast<float>(Now - Phase2FillStartTime);
-		const float FillDur = FMath::Max(Phase2FillDuration, 0.05f);
-		const float ExpandDur = FMath::Max(Phase2WidthExpandDuration, 0.f);
-
-		// 1단계: HP fill 0→Target (선형)
-		const float FillRaw = FMath::Clamp(Elapsed / FillDur, 0.f, 1.f);
-		DisplayMainPercent = FMath::Lerp(0.f, Target, FillRaw);
-		DisplayDelayedPercent = DisplayMainPercent;
-
-		// 2단계: 가로 확장 0→1 (fill 끝나야 시작, 선형)
-		float ExpandRaw = 0.f;
-		if (ExpandDur > KINDA_SMALL_NUMBER)
+		if (AHellunaEnemyCharacter_Boss* Boss = Cast<AHellunaEnemyCharacter_Boss>(BossActor))
 		{
-			ExpandRaw = FMath::Clamp((Elapsed - FillDur) / ExpandDur, 0.f, 1.f);
-		}
-		else
-		{
-			ExpandRaw = (FillRaw >= 1.f) ? 1.f : 0.f;
-		}
-		Phase2WidthAlpha = ExpandRaw;
-
-		// 시퀀스 진행 동안 정상 흐름의 감소/hold 트리거 차단
-		PreviousTargetPercent = Target;
-		LastDamageTime = Now;
-
-		if (FillRaw >= 1.f && ExpandRaw >= 1.f)
-		{
-			bPhase2FillAnimationActive = false;
-			Phase2WidthAlpha = 1.f;
+			if (Boss->Phase2HealthFillStage >= 3)  // Stage 2 break-through 진입
+			{
+				bPhase2WidthExpanding = true;
+				Phase2WidthExpandStartTime = Now;
+			}
 		}
 	}
-	else
+
+	if (bPhase2WidthExpanding)
 	{
-		// 정상 흐름 — 피격 시 잔상 hold + 색 플래시 트리거
+		const float ExpandDur = FMath::Max(Phase2WidthExpandDuration, 0.05f);
+		const float Elapsed = static_cast<float>(Now - Phase2WidthExpandStartTime);
+		Phase2WidthAlpha = FMath::Clamp(Elapsed / ExpandDur, 0.f, 1.f);
+		if (Phase2WidthAlpha >= 1.f)
+		{
+			bPhase2WidthExpanding = false;
+		}
+	}
+
+	// ----- HP 표시값 갱신 — 항상 정상 흐름 (Boss 코드의 SetHealth/SetMaxHealth 가 percent driving) -----
+	bPhase2FillAnimationActive = false;  // V3 에서 더 이상 사용 안 함, 안전 reset
+	{
+		// 피격 시 잔상 hold + 색 플래시 트리거
 		if (Target < PreviousTargetPercent - KINDA_SMALL_NUMBER)
 		{
 			LastDamageTime = Now;
@@ -124,8 +118,8 @@ void UBossHealthBarWidget::NativeTick(const FGeometry& MyGeometry, float InDelta
 		}
 		DisplayDelayedPercent = FMath::Max(DisplayDelayedPercent, DisplayMainPercent);
 
-		// 페이즈2 도달 후 fill 시퀀스 종료 시 확장 상태 유지
-		if (DisplayedPhase == 2)
+		// width expand 끝났을 때 확장 상태 유지
+		if (DisplayedPhase == 2 && !bPhase2WidthExpanding && Phase2WidthAlpha >= 1.f)
 		{
 			Phase2WidthAlpha = 1.f;
 		}
@@ -190,22 +184,30 @@ void UBossHealthBarWidget::NativeTick(const FGeometry& MyGeometry, float InDelta
 
 void UBossHealthBarWidget::HandleBossEnterPhase2()
 {
+	// [Phase2HealthFillV3] Phase2 진입 시점엔 색 전환 + flash 만 트리거.
+	//   HP fill 자체는 Boss Tick 의 Phase2HealthFillV3 가 SetHealth/SetMaxHealth lerp 로 driving.
+	//   회색 바 width 확장은 OnBossPhase2BreakThroughStart 받을 때 시작 (HandleBossPhase2BreakThroughStart).
 	DisplayedPhase = 2;
-
-	// HP 즉시 풀 회복되지만 화면엔 0 부터 천천히 차오르도록 강제
-	DisplayMainPercent = 0.f;
-	DisplayDelayedPercent = 0.f;
-	PreviousTargetPercent = 0.f;
-	bPhase2FillAnimationActive = true;
-	Phase2FillStartTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
 	Phase2WidthAlpha = 0.f;
+	bPhase2WidthExpanding = false;
 
 	// 진입 순간 강한 색 플래시 한 번
 	FlashTimeRemaining = DamageFlashDuration * 2.f;
 
 	UE_LOG(LogTemp, Warning,
-		TEXT("[BossHealthBar] Phase2 triggered — fill=%.2fs → expand=%.2fs (+%.0fpx)"),
-		Phase2FillDuration, Phase2WidthExpandDuration, Phase2BarWidthAddDesignPx);
+		TEXT("[BossHealthBar V3] Phase2 entered — color blend + flash (HP fill driven by Boss code, width expand awaits break-through)"));
+}
+
+void UBossHealthBarWidget::HandleBossPhase2BreakThroughStart()
+{
+	// [Phase2HealthFillV3] Boss Tick 의 Stage 2 시작 broadcast — 회색 바 width 확장 시작.
+	bPhase2WidthExpanding = true;
+	Phase2WidthExpandStartTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
+	Phase2WidthAlpha = 0.f;
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[BossHealthBar V3] Break-through started — width expand %.2fs (+%.0fpx)"),
+		Phase2WidthExpandDuration, Phase2BarWidthAddDesignPx);
 }
 
 float UBossHealthBarWidget::GetBossHealthNormalized() const

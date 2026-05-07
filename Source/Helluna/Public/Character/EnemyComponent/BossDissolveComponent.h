@@ -50,6 +50,44 @@ public:
 		meta=(DisplayName="Edge Color (보라톤)"))
 	FLinearColor DissolveEdgeColor = FLinearColor(11.45f, 0.f, 50.f, 1.f);
 
+	/** Phase 2 (광폭화) 일 때 dissolve MID 의 Tint — Phase 1 텍스처 위에 어둡게 깔아 cosmic 외관과 매칭. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="BossDissolve|Materials",
+		meta=(DisplayName="Phase 2 Tint (광폭화 시 BaseColor 보정)"))
+	FLinearColor Phase2DissolveTint = FLinearColor(0.1f, 0.05f, 0.2f, 1.f);
+
+	/**
+	 * [Phase2RetainSkinV2] Phase 2 광폭화 피부 슬롯 (갤럭시 머터리얼) 의 dissolve 처리 방식.
+	 *   true  : 갤럭시 유지 + 갤럭시 머터리얼 자체의 Dissolve_Edge 파라미터를 0→1 driving.
+	 *           M_ScreenUV_Galaxy 가 이미 Masked 블렌드 + Dissolve_Edge/Color_D_EdgeEmissive 파라미터를
+	 *           내장하고 있어, 외부 dissolve material swap 없이 갤럭시 + 구멍 dissolve 동시 연출 가능.
+	 *   false : dissolve MID 적용 + Phase2DissolveTint — 부식 효과 살아있음. 갤럭시 외관은 어두운 dissolve 로 대체.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="BossDissolve|Materials",
+		meta=(DisplayName="Phase 2 피부 슬롯 dissolve 처리 (true=갤럭시 자체 dissolve, false=swap)"))
+	bool bRetainPhase2SkinDuringDissolve = true;
+
+	/**
+	 * [Phase2RetainSkinV2] 갤럭시 머터리얼 자체에 노출된 dissolve 진행 scalar 파라미터 이름.
+	 *   M_ScreenUV_Galaxy 의 "Dissolve_Edge" — 0(완전히 보임) → 1(완전히 사라짐).
+	 *   PIE 에서 0/1 양극단 확인 후 방향 반대면 코드에서 1-Alpha 로 invert 만 하면 됨.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="BossDissolve|Materials",
+		meta=(DisplayName="Phase 2 갤럭시 Dissolve scalar 이름"))
+	FName Phase2GalaxyDissolveParamName = FName(TEXT("Dissolve_Edge"));
+
+	/** Phase 2 갤럭시 머터리얼의 edge color (HDR) — 보스 보라톤 매칭용. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="BossDissolve|Materials",
+		meta=(DisplayName="Phase 2 갤럭시 Edge Color"))
+	FName Phase2GalaxyEdgeColorParamName = FName(TEXT("Color_D_EdgeEmissive"));
+
+	/**
+	 * [Phase2RetainSkinV2] true=Dissolve_Edge 0→1 (정방향), false=1→0 (역방향).
+	 *   M_ScreenUV_Galaxy 의 Dissolve_Edge 가 어느 방향에 fully visible 인지 확인 후 토글.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="BossDissolve|Materials",
+		meta=(DisplayName="Phase 2 Dissolve_Edge 정방향 (true=0→1, false=1→0)"))
+	bool bPhase2GalaxyDissolveForward = true;
+
 	/** Stage 1 VFX (가루) — TriggerDissolve 시점에 즉시 attach. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="BossDissolve|VFX",
 		meta=(DisplayName="Stage 1 VFX (가루)"))
@@ -122,6 +160,10 @@ private:
 
 	UPROPERTY()
 	TArray<UMaterialInstanceDynamic*> DissolveMIDs;
+
+	/** [Phase2RetainSkinV2] 갤럭시 자체 dissolve driving용 MID array (별도 paramName 사용). */
+	UPROPERTY()
+	TArray<UMaterialInstanceDynamic*> Phase2GalaxyMIDs;
 
 	UPROPERTY()
 	TObjectPtr<UNiagaraComponent> SpawnedVFX_Stage1 = nullptr;

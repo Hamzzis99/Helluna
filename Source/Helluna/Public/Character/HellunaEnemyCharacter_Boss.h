@@ -213,6 +213,17 @@ public:
 		meta = (DisplayName = "광폭화 강하 VFX 잔존 시간(초, 0=영구)", ClampMin = "0.0", ClampMax = "60.0"))
 	float Phase2DescentVFXLifetime = 12.0f;
 
+	/**
+	 * [Phase2DescentSpeedV1] 광폭화 강하 VFX 시간 배율 — particle 시뮬레이션 속도.
+	 *   1.0 = 원본 (Niagara 디자인 그대로)
+	 *   2.0 = 2배 빠르게 떨어짐
+	 *   0.5 = 반속
+	 *   NiagaraComponent.SetCustomTimeDilation 으로 적용 — particle velocity, lifetime, spawn rate 모두 동시에 스케일.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|광폭화",
+		meta = (DisplayName = "광폭화 강하 VFX 속도 배율 (1=원본, 2=2배 빠름)", ClampMin = "0.1", ClampMax = "10.0"))
+	float Phase2DescentTimeDilation = 1.0f;
+
 	// [Phase2RefactorV1] 카메라 위치/시간 UPROPERTY 모두 트리거(ABossPhase2CinematicTrigger)로 이동.
 	//   BP_BossPhase2CinematicTrigger BP CDO 에서 직접 조정 — 시네마틱 디자인 분리.
 
@@ -224,6 +235,42 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|광폭화",
 		meta = (DisplayName = "광폭화 쉐이크 반복 간격 (초)", ClampMin = "0.0", ClampMax = "5.0"))
 	float Phase2ShakeRepeatInterval = 0.4f;
+
+	// =========================================================
+	// [Phase2HealthFillV2] HP 회복 타이밍 — 2-stage fill (페이즈1 max 까지 → pause → 페이즈2 max 까지 뚫기)
+	// =========================================================
+
+	/**
+	 * 강하 VFX 시작 (Stage3) 후 HP Stage1 fill 시작까지 delay (초).
+	 *   레이저가 떨어지기 시작한 후 잠시 뒤부터 HP 가 차오르기 시작 → 시각 임팩트.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|광폭화|HP",
+		meta = (DisplayName = "HP fill 시작 delay (강하 VFX 후 초)", ClampMin = "0.0", ClampMax = "10.0"))
+	float Phase2HealthFillDelay = 1.5f;
+
+	/**
+	 * Stage 1: HP 1 → 페이즈1 OldMax (예: 100) 까지 lerp 시간 (초).
+	 *   "뭐야 2페이즈인가?" 라고 인식하는 단계.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|광폭화|HP",
+		meta = (DisplayName = "Stage1 (1→OldMax) 시간(초)", ClampMin = "0.1", ClampMax = "10.0"))
+	float Phase2HealthFillStage1Duration = 1.5f;
+
+	/**
+	 * Stage 1 후 break-through 전 pause (초).
+	 *   "Old max 도달했네" → "어? 더 차오르네?" 사이의 일시 정지. 권장 0.5~1.0초.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|광폭화|HP",
+		meta = (DisplayName = "Break-through pause (초)", ClampMin = "0.0", ClampMax = "5.0"))
+	float Phase2HealthFillBreakthroughPause = 0.7f;
+
+	/**
+	 * Stage 2: OldMax → NewMax (페이즈2 max) 까지 lerp 시간 (초).
+	 *   "체력 왜이래?" — 기존 max 칸을 뚫고 차오름.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|광폭화|HP",
+		meta = (DisplayName = "Stage2 (OldMax→NewMax) 시간(초)", ClampMin = "0.1", ClampMax = "10.0"))
+	float Phase2HealthFillStage2Duration = 1.0f;
 
 	/**
 	 * [BerserkGlowV1] 광폭화 진입 시 보스 머티리얼에 적용할 베르세르크 발광 색.
@@ -325,6 +372,15 @@ public:
 	/** 2페이즈 진입 알림 — 모든 클라. HP 바/UI/AI 등에서 바인딩해 반응. */
 	UPROPERTY(BlueprintAssignable, Category = "Combat|Phase2")
 	FOnBossEnterPhase2 OnBossEnterPhase2;
+
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnBossPhase2BreakThroughStart);
+
+	/**
+	 * [Phase2HealthFillV3] Stage 2 break-through 시작 알림 — HP fill state machine 이 OldMax 도달 후
+	 *   pause 끝나고 Stage 2 진입할 때 broadcast. HP 바 widget 의 회색 바 width 확장 트리거.
+	 */
+	UPROPERTY(BlueprintAssignable, Category = "Combat|Phase2")
+	FOnBossPhase2BreakThroughStart OnBossPhase2BreakThroughStart;
 
 	/** 2페이즈 진입 시 서버에서 호출 — HP 회복 + Enrage 스탯 적용 + Multicast 연출. */
 	void EnterBossPhase2();
@@ -444,6 +500,16 @@ private:
 	TArray<FVector> Phase2DescentBaseScales;
 	float Phase2DescentScaleElapsed = 0.f;
 	bool bPhase2DescentScaling = false;
+
+public:
+	/** [Phase2HealthFillV3] HP fill state machine — 0=idle, 1=Stage1 fill, 2=pause, 3=Stage2 fill, 4=done.
+	 *  Replicated — client widget polling 용 (server 만 Tick 안에서 update, client 는 OnRep 받음). */
+	UPROPERTY(Replicated)
+	int8 Phase2HealthFillStage = 0;
+	float Phase2HealthFillElapsed = 0.f;
+	float Phase2HealthFillOldMax = 0.f;
+	float Phase2HealthFillNewMax = 0.f;
+private:
 
 	/** [InertiaTickV1] 가장 최근 추적한 montage section — 변화 시 ABP 의 Inertialization 노드에 request. */
 	FName LastTrackedMontageSection = NAME_None;

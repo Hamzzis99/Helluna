@@ -58,6 +58,20 @@ public:
 		meta = (DisplayName = "단계1b LookAt 높이 (cm)", ClampMin = "0.0", ClampMax = "300.0"))
 	float FrontLookHeight = 90.f;
 
+	/**
+	 * [Phase2Stage4ReturnV1] 단계4 (Top→Front 하강) 종료 위치 + EndHold 위치 — Stage 1b 의 FrontOffset 과 분리.
+	 *   레이저 강하 후 너무 가까이서 비춰 눈이 아픈 케이스 — 더 멀리 거리 둠 (X 더 크게).
+	 *   기본 (550, 0, 100): 정면, Y=0 (좌우 중앙), Z=100.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Phase2|Camera",
+		meta = (DisplayName = "단계4 복귀 카메라 (멀리, 강하 후)"))
+	FVector Stage4ReturnOffset = FVector(550.f, 0.f, 100.f);
+
+	/** 단계4 복귀 LookAt 높이. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Phase2|Camera",
+		meta = (DisplayName = "단계4 복귀 LookAt 높이 (cm)", ClampMin = "0.0", ClampMax = "300.0"))
+	float Stage4ReturnLookHeight = 90.f;
+
 	/** 단계2 끝 카메라 — 위쪽 (하늘 비춤). */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Phase2|Camera",
 		meta = (DisplayName = "단계2 카메라 (위)"))
@@ -97,6 +111,15 @@ public:
 		meta = (DisplayName = "단계2 카메라 상승 시간(초)", ClampMin = "0.5", ClampMax = "10.0"))
 	float CameraRiseDuration = 5.f;
 
+	/**
+	 * [Phase2TopHoldV1] 단계 2 → 4 사이 Top 위치 정지 시간 (초).
+	 *   카메라가 위에 도달한 후 정지하면서 강하 VFX 가 펼쳐지는 시간을 보장.
+	 *   이 값이 클수록 위에서 보는 hold 가 길어지고 그만큼 Stage 4 시작이 늦어짐.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Phase2|Timing",
+		meta = (DisplayName = "단계3 Top 정지 시간(초)", ClampMin = "0.0", ClampMax = "20.0"))
+	float TopHoldDuration = 2.f;
+
 	/** 단계4 Descent (Top → Front) 시간. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Phase2|Timing",
 		meta = (DisplayName = "단계4 카메라 하강 시간(초)", ClampMin = "0.5", ClampMax = "10.0"))
@@ -111,6 +134,27 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Phase2|Timing",
 		meta = (DisplayName = "시네마틱 총 길이 (초)", ClampMin = "1.0", ClampMax = "30.0"))
 	float TotalCinematicDuration = 19.f;
+
+	/**
+	 * [Phase2DescentVFXKillModeV1] 강하 VFX 종료 방식 (cinematic_end + 0.5s).
+	 *   true  : DeactivateImmediate — spawn + 기존 particles 즉시 kill (한순간에 사라짐).
+	 *   false : Deactivate — spawn 만 정지, 기존 particles 가 lifetime 따라 점진 fade.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Phase2|VFX",
+		meta = (DisplayName = "강하 VFX 즉시 kill (true=즉시, false=점진 fade)"))
+	bool bDescentVFXKillImmediate = true;
+
+	/**
+	 * [Phase2DescentFadeSpeedV1] 점진 fade 모드 (bDescentVFXKillImmediate=false) 일 때만 적용.
+	 *   Deactivate 직전 NC 의 CustomTimeDilation 을 이 값으로 set → 기존 particles 가
+	 *   N배 빠르게 lifetime 진행 → fade 완료 시간 1/N 로 단축. 자연스러운 fade 유지하면서 빠르게.
+	 *   1.0 = 원본 (느린 자연 fade)
+	 *   3.0 = 3배 빠름 (default)
+	 *   5.0+ = 매우 빠름
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Phase2|VFX",
+		meta = (DisplayName = "강하 VFX fade 속도 배율 (점진 fade 모드 only)", ClampMin = "0.5", ClampMax = "20.0"))
+	float DescentVFXFadeSpeed = 3.0f;
 
 	// =========================================================================================
 	// 대사

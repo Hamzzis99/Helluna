@@ -394,8 +394,17 @@ bool ABossSummonCinematicTrigger::TryActivate(APawn* InTargetBoss)
 	bMinHoldElapsedFlag = false;
 
 	UE_LOG(LogTemp, Warning,
-		TEXT("[BossSummonCinematic_LiveCodeCheck] TryActivate START — Boss=%s, Loc=%s"),
-		*Boss->GetName(), *Boss->GetActorLocation().ToString());
+		TEXT("[BossSummonCinematic_LiveCodeCheck] TryActivate START — Boss=%s, Loc=%s, OnlyHealthBar=%d"),
+		*Boss->GetName(), *Boss->GetActorLocation().ToString(),
+		bDisableCinematic_OnlyHealthBar ? 1 : 0);
+
+	// [DisableCinematic_OnlyHealthBarV1] 시네마틱 setup 모두 skip — Multicast_StartCinematic 만 호출.
+	//   Multicast 안의 분기가 LocalCinematicBoss set + EndCinematic 호출 → HP 바만 spawn.
+	if (bDisableCinematic_OnlyHealthBar)
+	{
+		Multicast_StartCinematic(Boss);
+		return true;
+	}
 
 	// 1) 보스 무적 + 피격 차단
 	Boss->SetCanBeDamaged(false);
@@ -766,11 +775,20 @@ void ABossSummonCinematicTrigger::OnGracePeriodElapsed()
 void ABossSummonCinematicTrigger::Multicast_StartCinematic_Implementation(APawn* Boss)
 {
 	UE_LOG(LogTemp, Warning,
-		TEXT("[BossSummonCinematic_LiveCodeCheck] Multicast_Start — Boss=%s"),
-		Boss ? *Boss->GetName() : TEXT("NULL"));
+		TEXT("[BossSummonCinematic_LiveCodeCheck] Multicast_Start — Boss=%s, DisableCinematic_OnlyHealthBar=%d"),
+		Boss ? *Boss->GetName() : TEXT("NULL"), bDisableCinematic_OnlyHealthBar ? 1 : 0);
 
 	if (IsRunningDedicatedServer())
 	{
+		return;
+	}
+
+	// [DisableCinematic_OnlyHealthBarV1] 디버그 토글 — 시네마틱 모두 skip + HP 바만 spawn.
+	//   LocalCinematicBoss 만 set 한 뒤 EndCinematic 호출 → EndCinematic 의 HP 바 spawn 코드가 작동.
+	if (bDisableCinematic_OnlyHealthBar)
+	{
+		LocalCinematicBoss = IsValid(Boss) ? Boss : ResolveTargetBoss();
+		Multicast_EndCinematic_Implementation();
 		return;
 	}
 
@@ -1125,6 +1143,11 @@ void ABossSummonCinematicTrigger::StartCinematicCameraAfterReveal()
 			ACameraActor::StaticClass(), Boss->GetActorLocation(), FRotator::ZeroRotator, SpawnParam);
 		if (CamActor)
 		{
+			// [LetterboxFixV1] Cuts 모드 카메라 — viewport 비율 강제 해제 (좌/우 검정 바 방지).
+			if (UCameraComponent* CC = CamActor->GetCameraComponent())
+			{
+				CC->SetConstraintAspectRatio(false);
+			}
 			LocalCameraActor = CamActor;
 			ViewTarget = CamActor;
 			// 첫 프레임이 화면에 나가기 전에 컷 0 으로 위치 잡아둠 (블렌드 출발점이 보스 발 부근이 됨).
@@ -1153,6 +1176,11 @@ void ABossSummonCinematicTrigger::StartCinematicCameraAfterReveal()
 			ACameraActor::StaticClass(), CameraLoc, LookAt, SpawnParam);
 		if (CamActor)
 		{
+			// [LetterboxFixV1] Fallback 모드 카메라도 동일 처리.
+			if (UCameraComponent* CC = CamActor->GetCameraComponent())
+			{
+				CC->SetConstraintAspectRatio(false);
+			}
 			LocalCameraActor = CamActor;
 
 			// 보스에 부착 — KeepWorld

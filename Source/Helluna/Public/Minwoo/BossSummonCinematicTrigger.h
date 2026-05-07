@@ -368,6 +368,15 @@ public:
 		EditCondition = "bAutoActivateOnBeginPlay && bWaitForTaggedBossSpawn"))
 	float PostSpawnDelay = 0.3f;
 
+	/**
+	 * [DisableCinematic_OnlyHealthBarV1] 시네마틱 logic 모두 skip + HP 바만 spawn — 디버그/테스트용.
+	 *   true 시: 카메라 전환·대사·포탈·몽타주 모두 안 발동, HP 바만 즉시 spawn.
+	 *   false (default): 정상 시네마틱 + HP 바.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Test",
+		meta = (DisplayName = "Disable Cinematic — HP Bar Only (디버그용)"))
+	bool bDisableCinematic_OnlyHealthBar = false;
+
 	// =========================================================================================
 	// [CinematicWalkV1] 시네마틱 중 보스 자체 전진
 	//   AM_Boss_Walk 가 in-place 애니라 root motion 으로 못 움직임 → Tick 에서 AddMovementInput 으로 직접 전진.

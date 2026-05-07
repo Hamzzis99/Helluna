@@ -78,6 +78,8 @@ void AHellunaEnemyCharacter_Boss::GetLifetimeReplicatedProps(TArray<FLifetimePro
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(AHellunaEnemyCharacter_Boss, bInPhase2);
+	// [Phase2HealthFillV3] widget polling 용 — server stage 변화를 client 에 push.
+	DOREPLIFETIME(AHellunaEnemyCharacter_Boss, Phase2HealthFillStage);
 }
 
 // ============================================================
@@ -101,20 +103,12 @@ bool AHellunaEnemyCharacter_Boss::TryInterceptDeathForPhase2(float OldHealth, fl
 	if (NewHealth > KINDA_SMALL_NUMBER) return false; // HP 0 도달이 아니면 스킵
 	if (!HealthComponent) return false;
 
-	// [BossDeathCinematicV1_TempDisablePhase2] 사망 시네마틱 디버깅용 — 광폭화 전체 임시 비활성.
-	//   인터셉트하지 않고 false 반환 → 첫 HP=0 에 바로 사망 → OnMonsterDeath → 죽음 시네마틱.
-	UE_LOG(LogTemp, Warning,
-		TEXT("[BossDeathCinematicV1_TempDisablePhase2] %s HP depleted — Phase 2 disabled, allowing real death"),
-		*GetNameSafe(this));
-	return false;
-#if 0
 	UE_LOG(LogTemp, Warning,
 		TEXT("[BossPhase2V1] %s HP depleted — intercepting death, entering Phase 2"),
 		*GetNameSafe(this));
 
 	EnterBossPhase2();
 	return true;
-#endif
 }
 
 void AHellunaEnemyCharacter_Boss::EnterBossPhase2()
@@ -124,15 +118,18 @@ void AHellunaEnemyCharacter_Boss::EnterBossPhase2()
 
 	bInPhase2 = true;
 
-	// 1) [BossPhase2_MaxHpV1] MaxHP 자체 확장 + 풀 회복 — HP 바가 시각적으로 max 까지 채워지는 효과.
-	//    OnHealthChanged 콜백 시점엔 아직 Internal_SetHealth의 OnDeath 브로드캐스트 전이라 bDead=false.
+	// 1) [Phase2HealthFillV3] MaxHealth 확장도 Stage2 break-through 시점부터 점진 lerp.
+	//    여기서는 MaxHealth 변경하지 않음 — OldMax 그대로 유지 + HP=1.
+	//    회색 바(=MaxHealth widget width)가 즉시 커지지 않고, Stage2 동안 HP 와 같은 속도로 함께 확장.
 	if (HealthComponent)
 	{
 		const float OldMax = HealthComponent->GetMaxHealth();
 		const float NewMax = OldMax * FMath::Max(1.f, Phase2MaxHealthMultiplier);
-		HealthComponent->SetMaxHealth(NewMax, /*bRefillHealth=*/true);
+		HealthComponent->SetHealth(1.f);  // 살아있음 유지 (cinematic 동안 HP 바 거의 비어 보이게)
+		Phase2HealthFillOldMax = OldMax;
+		Phase2HealthFillNewMax = NewMax;
 		UE_LOG(LogTemp, Warning,
-			TEXT("[BossPhase2_MaxHpV1] MaxHP %.0f → %.0f (×%.2f), refilled to full"),
+			TEXT("[Phase2HealthFillV3] OldMax=%.0f kept, NewMax=%.0f (×%.2f) deferred to Stage2 break-through, HP=1"),
 			OldMax, NewMax, Phase2MaxHealthMultiplier);
 	}
 
@@ -176,46 +173,9 @@ void AHellunaEnemyCharacter_Boss::EnterBossPhase2()
 		FTimerDelegate::CreateWeakLambda(this, [this]()
 		{
 			SetCanBeDamaged(true);
-
-			// 2페이즈 전투 재개 — Brain 재가동 시 StateTree가 새 패턴 선택
-			if (bAIStoppedForPhase2)
-			{
-				if (AAIController* AIC = Cast<AAIController>(GetController()))
-				{
-					if (UBrainComponent* Brain = AIC->GetBrainComponent())
-					{
-						Brain->StartLogic();
-					}
-				}
-				bAIStoppedForPhase2 = false;
-			}
-
-			// [Phase2RefactorV1] 시네마틱 종료 정리 — 트리거가 카메라/대사 처리. 보스가 NC + Montage 정리.
-			bPhase2DescentScaling = false;
-			TArray<UNiagaraComponent*> AllNCs;
-			GetComponents<UNiagaraComponent>(AllNCs);
-			for (UNiagaraComponent* NC : AllNCs)
-			{
-				if (NC && NC->ComponentTags.Contains(FName(TEXT("Phase2Descent"))) && NC->IsActive())
-				{
-					NC->Deactivate();
-				}
-			}
-			if (EnrageMontage)
-			{
-				if (USkeletalMeshComponent* SkelMesh = GetMesh())
-				{
-					if (UAnimInstance* AnimInst = SkelMesh->GetAnimInstance())
-					{
-						if (AnimInst->Montage_IsPlaying(EnrageMontage))
-						{
-							AnimInst->Montage_Stop(0.3f, EnrageMontage);
-						}
-					}
-				}
-			}
-
-			UE_LOG(LogTemp, Warning, TEXT("[BossPhase2V1] Invulnerability ended — Phase 2 combat active"));
+			// [Phase2BrainResumeV1] Brain 재가동 + Phase2Descent NC + Montage 정리는 시네마틱 트리거의
+			//   Multicast_EndCinematic + 0.5s 가 단독 책임. 여기서는 데미지 면역만 풀음.
+			UE_LOG(LogTemp, Warning, TEXT("[BossPhase2V1] Invulnerability ended — damage enabled (brain/VFX cleanup deferred to cinematic end)"));
 		}),
 		FMath::Max(Phase2InvulnerabilityDuration, 0.1f), false);
 
@@ -240,10 +200,7 @@ void AHellunaEnemyCharacter_Boss::Multicast_PlayBossPhase2Transition_Implementat
 	// =========================================================
 	// [Phase2RefactorV1] 카메라/대사/단계 시퀀스 — 트리거(ABossPhase2CinematicTrigger)에 위임.
 	//   서버에서만 Spawn + TryActivate. 트리거가 Multicast 로 자기 카메라/대사 처리.
-	// [BossDeathCinematicV1_TempDisable] 사망 시네마틱 작업 동안 페이즈2 시네마틱 임시 비활성.
-	//   비주얼/오라/광폭화 등 나머지는 그대로 유지 — 카메라/대사만 스킵.
 	// =========================================================
-#if 0
 	if (HasAuthority() && Phase2CinematicTriggerClass)
 	{
 		FActorSpawnParameters TriggerParams;
@@ -262,8 +219,6 @@ void AHellunaEnemyCharacter_Boss::Multicast_PlayBossPhase2Transition_Implementat
 				*GetNameSafe(Phase2CinematicTriggerClass));
 		}
 	}
-#endif
-	UE_LOG(LogTemp, Warning, TEXT("[BossDeathCinematicV1_TempDisable] Phase2 cinematic trigger spawn skipped (temporarily disabled for death cinematic dev)"));
 
 	// =========================================================
 	// 기절 몽타주 — 모든 머신
@@ -1202,6 +1157,57 @@ void AHellunaEnemyCharacter_Boss::Tick(float DeltaTime)
 		}
 	}
 
+	// [Phase2HealthFillV2] HP fill state machine — 서버 권한만, SetHealth 가 자동 복제.
+	//   Stage 1 (1→OldMax) → pause → Stage 3 (OldMax→NewMax) → done.
+	if (HasAuthority() && Phase2HealthFillStage > 0 && Phase2HealthFillStage < 4 && HealthComponent)
+	{
+		Phase2HealthFillElapsed += DeltaTime;
+		if (Phase2HealthFillStage == 1)
+		{
+			const float Dur = FMath::Max(0.1f, Phase2HealthFillStage1Duration);
+			const float Alpha = FMath::Clamp(Phase2HealthFillElapsed / Dur, 0.f, 1.f);
+			const float NewHP = FMath::Lerp(1.f, Phase2HealthFillOldMax, Alpha);
+			HealthComponent->SetHealth(NewHP);
+			if (Alpha >= 1.f)
+			{
+				Phase2HealthFillStage = 2;  // pause
+				Phase2HealthFillElapsed = 0.f;
+				UE_LOG(LogTemp, Warning,
+					TEXT("[Phase2HealthFillV2] Stage1 done at %.0f → pause %.1fs"),
+					Phase2HealthFillOldMax, Phase2HealthFillBreakthroughPause);
+			}
+		}
+		else if (Phase2HealthFillStage == 2)
+		{
+			if (Phase2HealthFillElapsed >= Phase2HealthFillBreakthroughPause)
+			{
+				Phase2HealthFillStage = 3;  // Stage 2 — break-through
+				Phase2HealthFillElapsed = 0.f;
+				UE_LOG(LogTemp, Warning,
+					TEXT("[Phase2HealthFillV2] Stage2 begin: %.0f → %.0f over %.1fs (break-through)"),
+					Phase2HealthFillOldMax, Phase2HealthFillNewMax, Phase2HealthFillStage2Duration);
+				// [Phase2HealthFillV3] HP 바 widget 의 회색 바 width 확장 시작 트리거.
+				OnBossPhase2BreakThroughStart.Broadcast();
+			}
+		}
+		else if (Phase2HealthFillStage == 3)
+		{
+			// [Phase2HealthFillV3] Stage 2 break-through — MaxHealth + Health 동시 lerp.
+			//   SetMaxHealth(refill=true) 가 Internal_SetHealth(MaxHealth) 호출 → HP=MaxHealth 자동.
+			//   OnRep_MaxHealth 가 회색 바 widget width 갱신 → 회색 바도 같이 커지는 효과.
+			const float Dur = FMath::Max(0.1f, Phase2HealthFillStage2Duration);
+			const float Alpha = FMath::Clamp(Phase2HealthFillElapsed / Dur, 0.f, 1.f);
+			const float NewMaxNow = FMath::Lerp(Phase2HealthFillOldMax, Phase2HealthFillNewMax, Alpha);
+			HealthComponent->SetMaxHealth(NewMaxNow, /*bRefillHealth=*/true);
+			if (Alpha >= 1.f)
+			{
+				Phase2HealthFillStage = 4;  // done
+				UE_LOG(LogTemp, Warning,
+					TEXT("[Phase2HealthFillV3] Stage2 done — MaxHealth+HP filled to %.0f"), Phase2HealthFillNewMax);
+			}
+		}
+	}
+
 	// [Phase2DescentScaleV1] 광폭화 강하 VFX scale lerp — 시간 경과로 점점 커짐.
 	if (bPhase2DescentScaling)
 	{
@@ -1317,6 +1323,8 @@ void AHellunaEnemyCharacter_Boss::Phase2_PlayStage3Visuals()
 			if (!NC) continue;
 			if (!NC->ComponentTags.Contains(FName(TEXT("Phase2Descent")))) continue;
 			NC->Activate(true);
+			// [Phase2DescentSpeedV1] particle 시뮬 속도 배율 — fall speed 조정.
+			NC->SetCustomTimeDilation(FMath::Clamp(Phase2DescentTimeDilation, 0.1f, 10.f));
 			++ActivatedCount;
 			if (NC->ComponentTags.Contains(FName(TEXT("NoScale"))))
 			{
@@ -1357,5 +1365,26 @@ void AHellunaEnemyCharacter_Boss::Phase2_PlayStage3Visuals()
 				}),
 				Phase2DescentVFXLifetime, false);
 		}
+	}
+
+	// [Phase2HealthFillV2] 강하 VFX 시작 후 Phase2HealthFillDelay 후 → 2-stage HP fill 시작.
+	//   서버 권한만 — Tick 의 fill state machine 이 SetHealth 진행. SetHealth 가 자동 replicate.
+	if (HasAuthority() && HealthComponent && Phase2HealthFillNewMax > 0.f && Phase2HealthFillStage == 0)
+	{
+		TWeakObjectPtr<AHellunaEnemyCharacter_Boss> WeakSelfFill(this);
+		FTimerHandle FillStartTimer;
+		World->GetTimerManager().SetTimer(FillStartTimer,
+			FTimerDelegate::CreateLambda([WeakSelfFill]()
+			{
+				AHellunaEnemyCharacter_Boss* Self = WeakSelfFill.Get();
+				if (!Self || !Self->HealthComponent) return;
+				Self->Phase2HealthFillStage = 1;  // Stage 1 시작 — 1 → OldMax
+				Self->Phase2HealthFillElapsed = 0.f;
+				UE_LOG(LogTemp, Warning,
+					TEXT("[Phase2HealthFillV2] Stage1 begin: %.0f → %.0f over %.1fs"),
+					Self->HealthComponent->GetHealth(), Self->Phase2HealthFillOldMax,
+					Self->Phase2HealthFillStage1Duration);
+			}),
+			FMath::Max(0.0f, Phase2HealthFillDelay), false);
 	}
 }

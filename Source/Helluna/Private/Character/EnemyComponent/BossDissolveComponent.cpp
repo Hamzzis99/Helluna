@@ -18,6 +18,7 @@
 #include "Engine/Engine.h"
 
 #include "Character/HellunaEnemyCharacter.h"
+#include "Character/HellunaEnemyCharacter_Boss.h"
 
 UBossDissolveComponent::UBossDissolveComponent()
 {
@@ -83,6 +84,15 @@ void UBossDissolveComponent::Multicast_ActivateStage2_Implementation()
 			VFX_Stage2Asset, Mesh, NAME_None,
 			FVector::ZeroVector, FRotator::ZeroRotator,
 			EAttachLocation::SnapToTarget, true);
+
+		if (SpawnedVFX_Stage2)
+		{
+			// [BossDissolveComponentV1_A08] A_08 도 A_01 과 동일하게 User.Animation 으로 부식 진행 driving.
+			//   Edge Color 도 보스 보라톤으로 통일.
+			SpawnedVFX_Stage2->SetVariableLinearColor(FName(TEXT("User.Edge Color")), DissolveEdgeColor);
+			SpawnedVFX_Stage2->SetVariableFloat(FName(TEXT("User.Animation")), 0.f);
+		}
+
 		UE_LOG(LogTemp, Warning,
 			TEXT("[BossDissolveComp] Stage2 VFX spawned (Auth=%d) on %s"),
 			Owner->HasAuthority() ? 1 : 0, *GetNameSafe(Owner));
@@ -115,11 +125,56 @@ void UBossDissolveComponent::StartDissolveLocal()
 		return;
 	}
 
+	// [BossDissolveComponentV1_Phase2] Phase 2 감지 — 보스가 광폭화 상태일 때 dissolve 머티리얼이
+	//   Phase 1 텍스처를 사용하므로 (M_Mannequin_01 + 원본 BaseColor) 색감이 광폭화 cosmic 외관과
+	//   안 맞음. Tint 파라미터로 어둡게 깔아서 광폭화 mood 와 시각 연속성 유지.
+	//   추가로 body2 슬롯은 Phase 2 시 광폭화 갤럭시 머터리얼이 적용되어 있으므로 dissolve swap 자체
+	//   skip — 광폭화 피부 그대로 유지하면서 다른 슬롯만 사라지게 → "광폭화 피부에서 죽는" 자연스러운 시퀀스.
+	bool bIsPhase2 = false;
+	UMaterialInterface* Phase2SkinMat = nullptr;
+	if (AHellunaEnemyCharacter_Boss* BossOwner = Cast<AHellunaEnemyCharacter_Boss>(Owner))
+	{
+		bIsPhase2 = BossOwner->bInPhase2;
+		if (bIsPhase2)
+		{
+			Phase2SkinMat = BossOwner->Phase2BerserkSkinMaterial.LoadSynchronous();
+		}
+	}
+
 	// 머티리얼 swap (각 슬롯에 dissolve MID 적용)
 	DissolveMIDs.Reset();
+	Phase2GalaxyMIDs.Reset();
 	const int32 SlotCount = Mesh->GetNumMaterials();
 	for (int32 i = 0; i < SlotCount; ++i)
 	{
+		// [Phase2RetainSkinV2] Phase 2 광폭화 갤럭시 슬롯 우선 처리.
+		//   bRetainPhase2SkinDuringDissolve=true 면 갤럭시 머터리얼 자체 Dissolve_Edge 파라미터를
+		//   driving (M_ScreenUV_Galaxy 가 이미 Masked 블렌드 + Dissolve_Edge/Color_D_EdgeEmissive 보유).
+		//   외부 dissolve material override 와 무관하게 처리 — DissolveMaterialOverrides 가 없어도 작동.
+		if (bIsPhase2 && Phase2SkinMat && bRetainPhase2SkinDuringDissolve)
+		{
+			UMaterialInterface* CurrentSlotMat = Mesh->GetMaterial(i);
+			if (CurrentSlotMat == Phase2SkinMat)
+			{
+				UMaterialInstanceDynamic* GalaxyMID = UMaterialInstanceDynamic::Create(Phase2SkinMat, Owner);
+				if (GalaxyMID)
+				{
+					Mesh->SetMaterial(i, GalaxyMID);
+					Phase2GalaxyMIDs.Add(GalaxyMID);
+
+					// 시작값 — 정방향이면 0, 역방향이면 1 (fully visible).
+					const float StartVal = bPhase2GalaxyDissolveForward ? 0.f : 1.f;
+					GalaxyMID->SetScalarParameterValue(Phase2GalaxyDissolveParamName, StartVal);
+					GalaxyMID->SetVectorParameterValue(Phase2GalaxyEdgeColorParamName, DissolveEdgeColor);
+
+					UE_LOG(LogTemp, Warning,
+						TEXT("[BossDissolveComp] Slot %d — Phase2 Galaxy self-dissolve MID (start=%.2f, forward=%d)"),
+						i, StartVal, bPhase2GalaxyDissolveForward ? 1 : 0);
+				}
+				continue;
+			}
+		}
+
 		UMaterialInterface* SrcMat = (DissolveMaterialOverrides.IsValidIndex(i))
 			? DissolveMaterialOverrides[i] : nullptr;
 		if (!SrcMat) continue;
@@ -132,7 +187,17 @@ void UBossDissolveComponent::StartDissolveLocal()
 
 		MID->SetVectorParameterValue(TEXT("Edge Color"), DissolveEdgeColor);
 		MID->SetScalarParameterValue(DissolveAnimationParamName, 0.f);
+
+		if (bIsPhase2)
+		{
+			// 광폭화 상태일 때 Tint 어둡게 → cosmic/광폭화 외관과 시각 매칭.
+			MID->SetVectorParameterValue(TEXT("Tint"), Phase2DissolveTint);
+		}
 	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[BossDissolveComp] MID setup — Phase2=%d, slots=%d, DissolveMIDs=%d, GalaxyMIDs=%d"),
+		bIsPhase2 ? 1 : 0, SlotCount, DissolveMIDs.Num(), Phase2GalaxyMIDs.Num());
 
 	// [BossDissolveComponentV1] Stage1 (가루 particles) + Top-down 카메라 — Stage2DelaySeconds 후 deferred.
 	//   Stage2 (구멍/녹는) + 머티리얼 보라화는 즉시 시작 (이미 위에서 처리). Stage1 niagara 와
@@ -287,6 +352,16 @@ void UBossDissolveComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 		}
 	}
 
+	// [Phase2RetainSkinV2] 갤럭시 자체 dissolve driving — 정방향이면 Alpha 그대로, 역방향이면 1-Alpha.
+	const float GalaxyVal = bPhase2GalaxyDissolveForward ? Alpha : (1.f - Alpha);
+	for (UMaterialInstanceDynamic* GMID : Phase2GalaxyMIDs)
+	{
+		if (GMID)
+		{
+			GMID->SetScalarParameterValue(Phase2GalaxyDissolveParamName, GalaxyVal);
+		}
+	}
+
 	// [BossDissolveComponentV1] NS_BossDissolve_A01_Custom 의 Animation user param 도 동일 driving.
 	//   이렇게 하면 dissolve 진행 내내 Niagara 가 Animation 0→1 따라 emit 지속 (보스 사라질
 	//   때까지 자연스럽게 partikel 이 계속 발생). Tick 이 멈춰도 niagara 는 attached 라 component
@@ -294,6 +369,11 @@ void UBossDissolveComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 	if (UNiagaraComponent* NS1 = SpawnedVFX_Stage1.Get())
 	{
 		NS1->SetVariableFloat(FName(TEXT("User.Animation")), Alpha);
+	}
+	// [BossDissolveComponentV1_A08] Stage2 (구멍/부식) 도 User.Animation 동기 driving.
+	if (UNiagaraComponent* NS2 = SpawnedVFX_Stage2.Get())
+	{
+		NS2->SetVariableFloat(FName(TEXT("User.Animation")), Alpha);
 	}
 
 	// Alpha 가 1 도달해도 Tick 을 끄지 않음 — 보스 destroy 까지 niagara animation 1 로 유지하면

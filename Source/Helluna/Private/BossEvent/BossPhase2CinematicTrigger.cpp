@@ -10,6 +10,8 @@
 #include "NiagaraComponent.h"
 #include "Animation/AnimInstance.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "AIController.h"
+#include "BrainComponent.h"
 
 #include "GameFramework/Pawn.h"
 #include "Engine/World.h"
@@ -178,29 +180,36 @@ void ABossPhase2CinematicTrigger::Multicast_StartCinematic_Implementation(APawn*
 			Self->CamLerpDuration = FMath::Max(0.3f, Self->CameraRiseDuration);
 			Self->CamInterpElapsed = 0.f;
 			Self->bCameraInterpolating = true;
-			UE_LOG(LogTemp, Warning, TEXT("[Phase2CinematicTrigger] Stage 2 — front→top"));
+			UE_LOG(LogTemp, Warning,
+				TEXT("[Phase2CinematicTrigger] Stage 2 — front→top, RiseDuration=%.2f (CDO=%.2f), TotalCinematic=%.2f"),
+				Self->CamLerpDuration, Self->CameraRiseDuration, Self->TotalCinematicDuration);
 		}),
 		FMath::Max(0.1f, StunDuration), false);
 
 	// Stage 4 — Top → Front lerp
-	const float Stage4Delay = FMath::Max(0.2f, TotalCinematicDuration - CameraDescentDuration - EndHoldDuration);
+	//   [Phase2TopHoldV1] Stage 4 시작 = Stun + Rise + TopHold (명시적 계산)
+	//   TotalCinematicDuration 은 마지막 EndHold 까지 포함한 전체 길이여야 함.
+	const float Stage4Delay = FMath::Max(0.2f, StunDuration + CameraRiseDuration + TopHoldDuration);
 	World->GetTimerManager().SetTimer(Stage4Timer,
 		FTimerDelegate::CreateLambda([WeakSelf]()
 		{
 			ABossPhase2CinematicTrigger* Self = WeakSelf.Get();
 			if (!Self) return;
 			Self->CamLerpFromOffset = Self->TopOffset;
-			Self->CamLerpToOffset = Self->FrontOffset;
+			Self->CamLerpToOffset = Self->Stage4ReturnOffset; // Stage 1b 의 FrontOffset 과 분리 — 더 멀리.
 			Self->CamLerpFromLookH = Self->TopLookHeight;
-			Self->CamLerpToLookH = Self->FrontLookHeight;
+			Self->CamLerpToLookH = Self->Stage4ReturnLookHeight;
 			Self->CamLerpDuration = FMath::Max(0.3f, Self->CameraDescentDuration);
 			Self->CamInterpElapsed = 0.f;
 			Self->bCameraInterpolating = true;
-			UE_LOG(LogTemp, Warning, TEXT("[Phase2CinematicTrigger] Stage 4 — top→front"));
+			UE_LOG(LogTemp, Warning, TEXT("[Phase2CinematicTrigger] Stage 4 — top→Stage4Return"));
 		}),
 		Stage4Delay, false);
 
-	// 시네마틱 종료
+	// [Phase2EndDerivedV1] 시네마틱 종료 = Stage4Delay + CameraDescentDuration + EndHoldDuration (도출).
+	//   기존엔 TotalCinematicDuration UPROPERTY 를 그대로 사용 → CameraRiseDuration 늘려도 EndHold 자동 흡수.
+	//   이제 EndHoldDuration 이 정확히 그 시간만큼만 hold + RiseDuration 늘려도 시퀀스 자연 확장.
+	const float ComputedTotalDuration = Stage4Delay + CameraDescentDuration + EndHoldDuration;
 	World->GetTimerManager().SetTimer(EndCinematicTimer,
 		FTimerDelegate::CreateLambda([WeakSelf]()
 		{
@@ -208,7 +217,11 @@ void ABossPhase2CinematicTrigger::Multicast_StartCinematic_Implementation(APawn*
 			if (!Self) return;
 			Self->Multicast_EndCinematic();
 		}),
-		FMath::Max(0.5f, TotalCinematicDuration), false);
+		FMath::Max(0.5f, ComputedTotalDuration), false);
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[Phase2EndDerivedV1] Stage4Delay=%.2f, ComputedTotal=%.2f (TotalCinematicDuration UPROPERTY=%.2f, ignored)"),
+		Stage4Delay, ComputedTotalDuration, TotalCinematicDuration);
 }
 
 void ABossPhase2CinematicTrigger::Multicast_EndCinematic_Implementation()
@@ -219,38 +232,8 @@ void ABossPhase2CinematicTrigger::Multicast_EndCinematic_Implementation()
 	bCameraInterpolating = false;
 	bCameraHoldStaticDuringFace = false;
 
-	// [Phase2RefactorV2] 보스 NC + Montage 정리 — 모든 머신 (Multicast 라 각 머신 호출).
-	if (APawn* Boss = ActiveBoss.Get())
-	{
-		TArray<UNiagaraComponent*> NCs;
-		Boss->GetComponents<UNiagaraComponent>(NCs);
-		int32 DeactivatedNCs = 0;
-		for (UNiagaraComponent* NC : NCs)
-		{
-			if (NC && NC->ComponentTags.Contains(FName(TEXT("Phase2Descent"))) && NC->IsActive())
-			{
-				NC->Deactivate();
-				++DeactivatedNCs;
-			}
-		}
-
-		if (AHellunaEnemyCharacter_Boss* BossCh = Cast<AHellunaEnemyCharacter_Boss>(Boss))
-		{
-			if (USkeletalMeshComponent* SkelMesh = BossCh->GetMesh())
-			{
-				if (UAnimInstance* AnimInst = SkelMesh->GetAnimInstance())
-				{
-					if (BossCh->EnrageMontage && AnimInst->Montage_IsPlaying(BossCh->EnrageMontage))
-					{
-						AnimInst->Montage_Stop(0.3f, BossCh->EnrageMontage);
-					}
-				}
-			}
-		}
-		UE_LOG(LogTemp, Warning,
-			TEXT("[Phase2RefactorV2] EndCinematic boss cleanup — DeactivatedNCs=%d"),
-			DeactivatedNCs);
-	}
+	// [Phase2RefactorV2] 보스 NC + Montage 정리는 cinematic_end + 0.5s (Brain 재가동과 같은 시점)
+	//   에 통합 — 보스가 움직일 수 있는 시점에 강하 VFX 도 같이 사라짐.
 
 	// 로컬 PC ExitBossCinematic
 	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
@@ -283,10 +266,84 @@ void ABossPhase2CinematicTrigger::Multicast_EndCinematic_Implementation()
 		LocalDialogueWidget = nullptr;
 	}
 
+	// [Phase2BrainResumeV1] 시네마틱 종료 0.5초 후 정리 + AI 재개 — 모든 머신 (각자 local timer).
+	//   - 모든 머신: Phase2Descent NC 비활성화 + EnrageMontage 정지 (visual cleanup)
+	//   - 서버만: Brain 재가동 (StateTree/AI 재개)
+	//   동일 시점 통합 — 보스가 움직일 수 있는 시점에 강하 VFX 도 함께 사라짐.
+	{
+		TWeakObjectPtr<APawn> WeakBoss = ActiveBoss;
+		TWeakObjectPtr<ABossPhase2CinematicTrigger> WeakTrig(this);
+		FTimerHandle BrainResumeTimer;
+		World->GetTimerManager().SetTimer(BrainResumeTimer,
+			FTimerDelegate::CreateLambda([WeakBoss, WeakTrig]()
+			{
+				APawn* B = WeakBoss.Get();
+				if (!B) return;
+				ABossPhase2CinematicTrigger* Trig = WeakTrig.Get();
+				const bool bImmediate = Trig ? Trig->bDescentVFXKillImmediate : true;
+				const float FadeSpeed = Trig ? FMath::Max(0.5f, Trig->DescentVFXFadeSpeed) : 3.f;
+
+				// 모든 머신: Phase2Descent NC 비활성화. 모드는 BP CDO 가 결정.
+				TArray<UNiagaraComponent*> NCs;
+				B->GetComponents<UNiagaraComponent>(NCs);
+				int32 DeactivatedNCs = 0;
+				for (UNiagaraComponent* NC : NCs)
+				{
+					if (NC && NC->ComponentTags.Contains(FName(TEXT("Phase2Descent"))) && NC->IsActive())
+					{
+						if (bImmediate)
+						{
+							NC->DeactivateImmediate();
+						}
+						else
+						{
+							// 점진 fade — 기존 particles 가 N배 빠르게 lifetime 끝까지 진행 → 빠른 자연 fade.
+							NC->SetCustomTimeDilation(FadeSpeed);
+							NC->Deactivate();
+						}
+						++DeactivatedNCs;
+					}
+				}
+
+				// 모든 머신: EnrageMontage 정지 (anim instance 가 각 머신에 있음)
+				if (AHellunaEnemyCharacter_Boss* BossCh = Cast<AHellunaEnemyCharacter_Boss>(B))
+				{
+					if (USkeletalMeshComponent* SK = BossCh->GetMesh())
+					{
+						if (UAnimInstance* AI = SK->GetAnimInstance())
+						{
+							if (BossCh->EnrageMontage && AI->Montage_IsPlaying(BossCh->EnrageMontage))
+							{
+								AI->Montage_Stop(0.3f, BossCh->EnrageMontage);
+							}
+						}
+					}
+				}
+
+				// 서버만: Brain 재가동
+				if (B->HasAuthority())
+				{
+					if (AAIController* AIC = Cast<AAIController>(B->GetController()))
+					{
+						if (UBrainComponent* Brain = AIC->GetBrainComponent())
+						{
+							Brain->StartLogic();
+						}
+					}
+				}
+
+				UE_LOG(LogTemp, Warning,
+					TEXT("[Phase2BrainResumeV1] +0.5s cleanup on %s — DeactivatedNCs=%d, BrainResume=%d"),
+					*GetNameSafe(B), DeactivatedNCs, B->HasAuthority() ? 1 : 0);
+			}),
+			0.5f, false);
+	}
+
 	// 트리거 자체 — 서버에서 destroy (일회용)
 	if (HasAuthority())
 	{
-		SetLifeSpan(FMath::Max(BlendOut + 0.5f, 1.f));
+		// BrainResumeTimer 가 0.5s 후 fire 해야 하므로 lifespan 충분히 길게.
+		SetLifeSpan(FMath::Max(BlendOut + 1.0f, 1.5f));
 	}
 
 	UE_LOG(LogTemp, Warning, TEXT("[Phase2CinematicTrigger] EndCinematic"));
@@ -322,9 +379,20 @@ void ABossPhase2CinematicTrigger::Tick(float DeltaTime)
 		const FRotator NewRot = (NewLook - NewCamLoc).Rotation();
 		LocalCameraActor->SetActorLocationAndRotation(NewCamLoc, NewRot);
 
+		// [Phase2LerpDiag] 매 1초 단위로 Alpha 진행 로그 (lerp 가 정말 Duration 동안 진행되는지 검증).
+		if (FMath::FloorToInt(CamInterpElapsed) > FMath::FloorToInt(CamInterpElapsed - DeltaTime))
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[Phase2LerpDiag] elapsed=%.2f / duration=%.2f, alpha=%.3f, dt=%.4f, camZ=%.0f"),
+				CamInterpElapsed, Duration, Alpha, DeltaTime, NewCamLoc.Z);
+		}
+
 		if (Alpha >= 1.f)
 		{
 			bCameraInterpolating = false;
+			UE_LOG(LogTemp, Warning,
+				TEXT("[Phase2LerpDiag] Lerp DONE — total elapsed=%.2f (target duration=%.2f)"),
+				CamInterpElapsed, Duration);
 		}
 	}
 	else

@@ -165,6 +165,14 @@ private:
 	UFUNCTION()
 	void HandleBossEnterPhase2();
 
+	/** [Phase2HealthFillV3] Stage 2 break-through 시 호출 — 회색 바 width 확장 trigger. */
+	UFUNCTION()
+	void HandleBossPhase2BreakThroughStart();
+
+	/** [Phase2HealthFillV3] width expand 진행 중 여부 + 시작 시각. */
+	bool bPhase2WidthExpanding = false;
+	double Phase2WidthExpandStartTime = 0.0;
+
 	float GetBossHealthNormalized() const;
 	bool IsBossInPhase2() const;
 };
