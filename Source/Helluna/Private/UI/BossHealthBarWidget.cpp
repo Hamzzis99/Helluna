@@ -28,6 +28,10 @@ void UBossHealthBarWidget::NativeConstruct()
 		Boss->OnBossPhase2BreakThroughStart.AddUniqueDynamic(this,
 			&UBossHealthBarWidget::HandleBossPhase2BreakThroughStart);
 
+		UE_LOG(LogTemp, Warning,
+			TEXT("[BossHealthBar_ColorDiag] NativeConstruct — Boss=%s, AlreadyPhase2=%d, OnPhase2 binding OK"),
+			*GetNameSafe(Boss), IsBossInPhase2() ? 1 : 0);
+
 		// 이미 페이즈2 인 상태로 위젯 생성되는 경우 (late join 등) 즉시 페이즈2 시각 상태로
 		if (IsBossInPhase2())
 		{
@@ -35,6 +39,13 @@ void UBossHealthBarWidget::NativeConstruct()
 			PhaseColorBlendAlpha = 1.f;
 			Phase2WidthAlpha = 1.f;
 		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[BossHealthBar_ColorDiag] NativeConstruct — BossActor cast FAILED. BossActor=%s (class=%s)"),
+			*GetNameSafe(BossActor),
+			BossActor ? *BossActor->GetClass()->GetName() : TEXT("NULL"));
 	}
 
 	// Border padding 원본 캐시 — 확장 단계에서 Right 를 음수로 lerp 할 때 시작값
@@ -126,10 +137,46 @@ void UBossHealthBarWidget::NativeTick(const FGeometry& MyGeometry, float InDelta
 	}
 
 	// ----- 페이즈 색 블렌드 -----
-	const float TargetBlendAlpha = (DisplayedPhase == 2) ? 1.f : 0.f;
-	const float BlendSpeed = 1.f / FMath::Max(PhaseColorBlendDuration, 0.05f);
-	PhaseColorBlendAlpha = FMath::FInterpTo(PhaseColorBlendAlpha, TargetBlendAlpha,
-		InDeltaTime, BlendSpeed);
+	//   [Phase2ColorFillSyncV2] 페이즈2 진입 + Phase2HealthFillStage>=1 (fill 시작) 부터만 단조 증가.
+	//     - 페이즈1: alpha = 0 (빨강)
+	//     - 페이즈2 진입 직후 fill 시작 전: alpha = 0 강제 유지 (빨강) — Phase2HealthFillDelay 동안.
+	//     - fill 시작 후: alpha = max(이전, DisplayMainPercent) — fill 진행 percent 따라 보라.
+	//   ↳ HandleBossEnterPhase2 에서 alpha + percent 를 0 으로 reset 했으니 fill 시작 시점부터 깨끗하게 lerp.
+	const float PrevAlpha = PhaseColorBlendAlpha;
+	bool bFillStarted = false;
+	if (const AHellunaEnemyCharacter_Boss* BossCb = Cast<AHellunaEnemyCharacter_Boss>(BossActor))
+	{
+		bFillStarted = (BossCb->Phase2HealthFillStage >= 1);
+	}
+
+	if (DisplayedPhase == 2 && bFillStarted)
+	{
+		PhaseColorBlendAlpha = FMath::Max(PhaseColorBlendAlpha, DisplayMainPercent);
+	}
+	else if (DisplayedPhase != 2)
+	{
+		PhaseColorBlendAlpha = 0.f;
+	}
+	// (DisplayedPhase==2 && !bFillStarted) — alpha 변경 안 함 (HandleBossEnterPhase2 에서 0 reset 됨).
+
+	// [BossHealthBar_ColorDiag] 1초마다 + alpha 변화 ≥0.05 시 로그 (스팸 방지).
+	{
+		const double NowS = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
+		const bool bAlphaJump = FMath::Abs(PhaseColorBlendAlpha - PrevAlpha) > 0.05f;
+		if (bAlphaJump || NowS - LastColorDiagLogTime >= 1.0)
+		{
+			LastColorDiagLogTime = NowS;
+			int32 FillStage = -1;
+			if (const AHellunaEnemyCharacter_Boss* BossCb2 = Cast<AHellunaEnemyCharacter_Boss>(BossActor))
+			{
+				FillStage = BossCb2->Phase2HealthFillStage;
+			}
+			UE_LOG(LogTemp, Warning,
+				TEXT("[BossHealthBar_ColorDiag] DisplayedPhase=%d, BlendAlpha=%.3f, MainPct=%.3f, Target=%.3f, FillStage=%d, IsPhase2=%d"),
+				DisplayedPhase, PhaseColorBlendAlpha, DisplayMainPercent, Target,
+				FillStage, IsBossInPhase2() ? 1 : 0);
+		}
+	}
 
 	const FLinearColor MainColor = FMath::Lerp(Phase1MainColor, Phase2MainColor, PhaseColorBlendAlpha);
 	const FLinearColor DelayedColor = FMath::Lerp(Phase1DelayedColor, Phase2DelayedColor, PhaseColorBlendAlpha);
@@ -191,11 +238,18 @@ void UBossHealthBarWidget::HandleBossEnterPhase2()
 	Phase2WidthAlpha = 0.f;
 	bPhase2WidthExpanding = false;
 
+	// [Phase2ColorFillSyncV2] 진입 시점에 색 alpha 강제 reset.
+	//   페이즈1 끝에 HP=full → DisplayMainPercent=1.0 → 단조 증가 alpha 가 잘못된 값 (0.7~0.8) 으로 stuck 되는 버그 fix.
+	PhaseColorBlendAlpha = 0.f;
+	// 진입 직후 한 frame 의 lerp 잔존 percent 를 alpha 가 캐치하지 않도록 percent 도 reset.
+	DisplayMainPercent = 0.f;
+
 	// 진입 순간 강한 색 플래시 한 번
 	FlashTimeRemaining = DamageFlashDuration * 2.f;
 
 	UE_LOG(LogTemp, Warning,
-		TEXT("[BossHealthBar V3] Phase2 entered — color blend + flash (HP fill driven by Boss code, width expand awaits break-through)"));
+		TEXT("[BossHealthBar_ColorDiag] HandleBossEnterPhase2 FIRED — DisplayedPhase=2 set, BlendAlpha+MainPercent reset to 0, BossActor=%s"),
+		*GetNameSafe(BossActor));
 }
 
 void UBossHealthBarWidget::HandleBossPhase2BreakThroughStart()

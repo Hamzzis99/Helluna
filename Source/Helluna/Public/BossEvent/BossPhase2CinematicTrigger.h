@@ -48,6 +48,32 @@ public:
 		meta = (DisplayName = "단계1a LookAt 높이 (cm)", ClampMin = "0.0", ClampMax = "300.0"))
 	float FaceLookHeight = 90.f;
 
+	/**
+	 * [Phase2FaceMatchDeathV1] 단계1a 동안 카메라 anchor 를 head 본 위치로 사용 (사망 시네마틱과 동일 구도).
+	 *   true  : Anchor = head bone world location → 사망 close-up 과 같은 시점.
+	 *           카메라가 매 Tick 머리 추적 (StunMontage 흔들림 따라 같이 흔들림).
+	 *   false : 기존 동작 — Anchor = boss actor center (발), 정적.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Phase2|Camera",
+		meta = (DisplayName = "단계1a head 본 anchor 사용 (사망 시네마틱과 동일)"))
+	bool bFaceUseHeadBone = true;
+
+	/** [Phase2FaceMatchDeathV1] head 본 이름 (UE5 Manny: "head"). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Phase2|Camera",
+		meta = (DisplayName = "단계1a head 본 이름", EditCondition = "bFaceUseHeadBone"))
+	FName FaceHeadBoneName = FName(TEXT("head"));
+
+	/**
+	 * [Phase2FaceMatchDeathV1] head 본 추적 강도 (0~1).
+	 *  1.0 : head 본 위치를 100% 추적.
+	 *  0.5 : head 와 actor center+90 의 중간.
+	 *  0.0 : 추적 안 함.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Phase2|Camera",
+		meta = (DisplayName = "단계1a head 추적 강도", ClampMin = "0.0", ClampMax = "1.0",
+		EditCondition = "bFaceUseHeadBone"))
+	float FaceHeadFollowAlpha = 1.f;
+
 	/** 단계1b 카메라 — 전신 정면. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Phase2|Camera",
 		meta = (DisplayName = "단계1b 카메라 (전신 정면)"))
@@ -201,9 +227,20 @@ public:
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_EndCinematic();
 
+	/**
+	 * [BPDefaultSyncV1] BeginPlay 시 BP CDO 의 Edit-가능 property 를 instance 에 강제 sync.
+	 *   placement instance override 가 BP CDO 변경을 가리는 문제 fix.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Phase2|Sync",
+		meta = (DisplayName = "BP CDO 자동 동기화"))
+	bool bSyncFromBPDefault = true;
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
+
+	/** [BPDefaultSyncV1] BP CDO 값을 instance 에 복사. */
+	void SyncFromBPDefault();
 
 private:
 	/** 클라 로컬 카메라 액터. */
@@ -233,6 +270,16 @@ private:
 	float CamLerpFromLookH = 0.f;
 	float CamLerpToLookH = 0.f;
 	float CamLerpDuration = 1.f;
+
+	/**
+	 * [Phase2FaceMatchDeathV1] 단계1a anchor 계산 — head 본 옵션 적용.
+	 *   bFaceUseHeadBone=true: head 본 추적 (사망 시네마틱과 동일).
+	 *   false: 보스 ActorLocation (기존 동작).
+	 */
+	FVector ComputeFaceAnchor(const APawn* Boss) const;
+
+	/** [Phase2FaceCam_Diag] 진단 로그 throttle 누적 시간. */
+	float FaceCamDiagAccum = 0.f;
 
 	/** 단계 timer 핸들. */
 	FTimerHandle Stage1bTimer;

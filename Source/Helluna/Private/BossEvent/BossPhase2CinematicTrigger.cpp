@@ -2,6 +2,7 @@
 
 #include "BossEvent/BossPhase2CinematicTrigger.h"
 
+#include "BossEvent/BossCinematicCameraUtils.h"
 #include "Camera/CameraActor.h"
 #include "Camera/CameraComponent.h"
 #include "Controller/HellunaHeroController.h"
@@ -13,10 +14,33 @@
 #include "AIController.h"
 #include "BrainComponent.h"
 
+#include "GameFramework/Character.h"
 #include "GameFramework/Pawn.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
 #include "Blueprint/UserWidget.h"
+
+// [Phase2FaceMatchDeathV1] 단계1a 만 head 본 anchor 사용 — 사망 시네마틱과 동일 close-up 구도.
+FVector ABossPhase2CinematicTrigger::ComputeFaceAnchor(const APawn* Boss) const
+{
+	if (!Boss) return FVector::ZeroVector;
+	const FVector BossLoc = Boss->GetActorLocation();
+	if (!bFaceUseHeadBone) return BossLoc;
+
+	if (const ACharacter* BossChar = Cast<ACharacter>(Boss))
+	{
+		if (USkeletalMeshComponent* SK = BossChar->GetMesh())
+		{
+			if (FaceHeadBoneName != NAME_None && SK->DoesSocketExist(FaceHeadBoneName))
+			{
+				const FVector HeadLoc = SK->GetSocketLocation(FaceHeadBoneName);
+				const FVector FallbackLoc = BossLoc + FVector(0.f, 0.f, 90.f);
+				return FMath::Lerp(FallbackLoc, HeadLoc, FMath::Clamp(FaceHeadFollowAlpha, 0.f, 1.f));
+			}
+		}
+	}
+	return BossLoc + FVector(0.f, 0.f, 90.f);
+}
 
 ABossPhase2CinematicTrigger::ABossPhase2CinematicTrigger()
 {
@@ -28,6 +52,44 @@ ABossPhase2CinematicTrigger::ABossPhase2CinematicTrigger()
 void ABossPhase2CinematicTrigger::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// [BPDefaultSyncV1] placement instance override 무시.
+	SyncFromBPDefault();
+}
+
+// [BPDefaultSyncV1] BP CDO 의 Edit-가능 property 를 instance 에 강제 복사.
+//   AActor 부모 property 는 skip — placement 위치 reset 방지.
+void ABossPhase2CinematicTrigger::SyncFromBPDefault()
+{
+	if (!bSyncFromBPDefault) return;
+
+	UClass* MyClass = GetClass();
+	if (!MyClass) return;
+	UObject* CDO = MyClass->GetDefaultObject(false);
+	if (!CDO || CDO == this) return;
+
+	UClass* SyncBoundary = ABossPhase2CinematicTrigger::StaticClass();
+
+	static const TSet<FName> SkipProps = {
+		TEXT("bSyncFromBPDefault"),
+	};
+
+	int32 Synced = 0;
+	for (TFieldIterator<FProperty> It(MyClass); It; ++It)
+	{
+		FProperty* Prop = *It;
+		if (!Prop) continue;
+		if (!Prop->HasAnyPropertyFlags(CPF_Edit)) continue;
+		if (SkipProps.Contains(Prop->GetFName())) continue;
+		UClass* OwnerClass = Prop->GetOwnerClass();
+		if (!OwnerClass || !OwnerClass->IsChildOf(SyncBoundary)) continue;
+		Prop->CopyCompleteValue_InContainer(this, CDO);
+		++Synced;
+	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[BPDefaultSyncV1] %s synced %d properties from BP CDO"),
+		*GetName(), Synced);
 }
 
 bool ABossPhase2CinematicTrigger::TryActivate(APawn* InTargetBoss)
@@ -49,14 +111,16 @@ void ABossPhase2CinematicTrigger::Multicast_StartCinematic_Implementation(APawn*
 
 	// =========================================================
 	// 카메라 액터 spawn — 단계1a Face 위치
+	//   [Phase2FaceMatchDeathV1] bFaceUseHeadBone 이면 anchor = head 본 위치 (사망 시네마틱과 동일).
+	//   FaceLookHeight 도 anchor 기준 — head 본 위치에서 추가 Z offset.
 	// =========================================================
-	const FVector BossLoc = Boss->GetActorLocation();
 	const FVector Forward = Boss->GetActorForwardVector();
 	const FVector Right = Boss->GetActorRightVector();
 	const FVector Up = Boss->GetActorUpVector();
+	const FVector FaceAnchor = ComputeFaceAnchor(Boss);
 
-	const FVector StartCamLoc = BossLoc + Forward * FaceOffset.X + Right * FaceOffset.Y + Up * FaceOffset.Z;
-	const FVector StartLookTarget = BossLoc + FVector(0.f, 0.f, FaceLookHeight);
+	const FVector StartCamLoc = FaceAnchor + Forward * FaceOffset.X + Right * FaceOffset.Y + Up * FaceOffset.Z;
+	const FVector StartLookTarget = FaceAnchor + FVector(0.f, 0.f, FaceLookHeight);
 	const FRotator StartLookAt = (StartLookTarget - StartCamLoc).Rotation();
 
 	FActorSpawnParameters CamParams;
@@ -232,6 +296,16 @@ void ABossPhase2CinematicTrigger::Multicast_EndCinematic_Implementation()
 	bCameraInterpolating = false;
 	bCameraHoldStaticDuringFace = false;
 
+	// [Phase2ShakeCleanupV2] 시네마틱 종료 즉시 보스 카메라 쉐이크 정리 (모든 머신).
+	//   각 머신의 자기 보스 instance 의 RepeatTimer + 진행 중 instance fade out.
+	if (APawn* Boss = ActiveBoss.Get())
+	{
+		if (AHellunaEnemyCharacter_Boss* BossEnemy = Cast<AHellunaEnemyCharacter_Boss>(Boss))
+		{
+			BossEnemy->StopPhase2Shakes();
+		}
+	}
+
 	// [Phase2RefactorV2] 보스 NC + Montage 정리는 cinematic_end + 0.5s (Brain 재가동과 같은 시점)
 	//   에 통합 — 보스가 움직일 수 있는 시점에 강하 VFX 도 같이 사라짐.
 
@@ -370,11 +444,20 @@ void ABossPhase2CinematicTrigger::Tick(float DeltaTime)
 
 		const FVector StartCamLoc = BossLoc + Forward * CamLerpFromOffset.X + Right * CamLerpFromOffset.Y + Up * CamLerpFromOffset.Z;
 		const FVector EndCamLoc = BossLoc + Forward * CamLerpToOffset.X + Right * CamLerpToOffset.Y + Up * CamLerpToOffset.Z;
-		const FVector NewCamLoc = FMath::Lerp(StartCamLoc, EndCamLoc, Alpha);
+		const FVector RawCamLoc = FMath::Lerp(StartCamLoc, EndCamLoc, Alpha);
 
 		const FVector StartLook = BossLoc + FVector(0.f, 0.f, CamLerpFromLookH);
 		const FVector EndLook = BossLoc + FVector(0.f, 0.f, CamLerpToLookH);
 		const FVector NewLook = FMath::Lerp(StartLook, EndLook, Alpha);
+
+		// [CinematicCameraOcclusionV1] A — 액터 occluder push-back. NewLook 을 target 으로.
+		TArray<AActor*> IgnoreActors;
+		IgnoreActors.Reserve(3);
+		IgnoreActors.Add(Boss);
+		IgnoreActors.Add(LocalCameraActor.Get());
+		IgnoreActors.Add(this);
+		const FVector NewCamLoc = BossCinematicCameraUtils::PushCameraOutOfActorOccluders(
+			this, RawCamLoc, NewLook, IgnoreActors, /*Margin=*/30.f);
 
 		const FRotator NewRot = (NewLook - NewCamLoc).Rotation();
 		LocalCameraActor->SetActorLocationAndRotation(NewCamLoc, NewRot);
@@ -397,12 +480,110 @@ void ABossPhase2CinematicTrigger::Tick(float DeltaTime)
 	}
 	else
 	{
-		// 단계1a — 카메라 spawn 시 위치 그대로 (보스 추적 X). 사용자 의도: 카메라 가만히.
-		if (bCameraHoldStaticDuringFace) return;
+		// 단계1a — head bone anchor 추적 (사망 시네마틱과 동일 close-up).
+		//   [Phase2FaceMatchDeathV1] bFaceUseHeadBone=true 면 매 Tick head 위치 따라감.
+		//   false 면 spawn 위치 그대로 (기존 정적 동작).
+		if (bCameraHoldStaticDuringFace)
+		{
+			if (!bFaceUseHeadBone) return;
+
+			// [Phase2CamLocalOnlyV1] 로컬 PC viewport 가 있는 머신에서만 카메라 update.
+			//   PIE listen-server 에서 server world + client world 두 인스턴스가 동시 Tick 하며
+			//   각자 카메라 set → 한 viewport 에서 두 위치가 oscillate, head 추적이 부분적으로만 됨.
+			//   해결: 자기 world 에 local player 가 있을 때만 카메라 update (해당 viewport 의 카메라만 갱신).
+			//   data flow: server-only world (dedicated server) 는 어차피 viewport X.
+			//              listen-server 머신 = local player 있음 = 카메라 update O.
+			//              client 머신 = local player 있음 = 카메라 update O.
+			if (UWorld* W = GetWorld())
+			{
+				bool bHasLocal = false;
+				for (FConstPlayerControllerIterator It = W->GetPlayerControllerIterator(); It; ++It)
+				{
+					if (APlayerController* PC = It->Get())
+					{
+						if (PC->IsLocalController())
+						{
+							bHasLocal = true;
+							break;
+						}
+					}
+				}
+				if (!bHasLocal) return;
+			}
+
+			const FVector FaceAnchor = ComputeFaceAnchor(Boss);
+			const FVector RawFaceCamLoc = FaceAnchor + Forward * FaceOffset.X + Right * FaceOffset.Y + Up * FaceOffset.Z;
+			const FVector FaceLook = FaceAnchor + FVector(0.f, 0.f, FaceLookHeight);
+
+			// [CinematicCameraOcclusionV1] A — 액터 occluder push-back.
+			TArray<AActor*> FaceIgnore;
+			FaceIgnore.Reserve(3);
+			FaceIgnore.Add(Boss);
+			FaceIgnore.Add(LocalCameraActor.Get());
+			FaceIgnore.Add(this);
+			const FVector FaceCamLoc = BossCinematicCameraUtils::PushCameraOutOfActorOccluders(
+				this, RawFaceCamLoc, FaceLook, FaceIgnore, /*Margin=*/30.f);
+
+			const FRotator FaceRot = (FaceLook - FaceCamLoc).Rotation();
+			LocalCameraActor->SetActorLocationAndRotation(FaceCamLoc, FaceRot);
+
+			// [Phase2FaceCam_Diag] 0.2s 마다 head bone, anchor, 카메라 set 위치, 실제 카메라 위치 비교.
+			//   set 직후 GetActorLocation 이 set 한 값과 같은지 — 다르면 다른 곳에서 카메라 위치 덮어쓰기.
+			//   head bone 의 vs Boss ActorLocation Z 차이 — head 가 보스 머리 높이만큼 (~150) 위에 있어야 정상.
+			{
+				FaceCamDiagAccum += DeltaTime;
+				if (FaceCamDiagAccum >= 0.2f)
+				{
+					FaceCamDiagAccum = 0.f;
+					FVector HeadSocketLoc = FVector::ZeroVector;
+					bool bHasHeadSocket = false;
+					if (const ACharacter* BossChar = Cast<ACharacter>(Boss))
+					{
+						if (USkeletalMeshComponent* SK = BossChar->GetMesh())
+						{
+							if (FaceHeadBoneName != NAME_None && SK->DoesSocketExist(FaceHeadBoneName))
+							{
+								HeadSocketLoc = SK->GetSocketLocation(FaceHeadBoneName);
+								bHasHeadSocket = true;
+							}
+						}
+					}
+					const FVector ActualCam = LocalCameraActor->GetActorLocation();
+					const ENetMode NM = GetWorld() ? GetWorld()->GetNetMode() : NM_MAX;
+					const TCHAR* NMStr = (NM == NM_Standalone) ? TEXT("Stand")
+						: (NM == NM_Client) ? TEXT("Client")
+						: (NM == NM_DedicatedServer) ? TEXT("DedSrv")
+						: (NM == NM_ListenServer) ? TEXT("Listen") : TEXT("?");
+					UE_LOG(LogTemp, Warning,
+						TEXT("[Phase2FaceCam_Diag] NM=%s BossLoc=(%.0f,%.0f,%.0f) HeadOK=%d HeadLoc=(%.0f,%.0f,%.0f) FaceAnchor=(%.0f,%.0f,%.0f) SetCam=(%.0f,%.0f,%.0f) ActualCam=(%.0f,%.0f,%.0f) Δ=(%.1f,%.1f,%.1f) UseHead=%d Alpha=%.2f"),
+						NMStr,
+						BossLoc.X, BossLoc.Y, BossLoc.Z,
+						bHasHeadSocket ? 1 : 0,
+						HeadSocketLoc.X, HeadSocketLoc.Y, HeadSocketLoc.Z,
+						FaceAnchor.X, FaceAnchor.Y, FaceAnchor.Z,
+						FaceCamLoc.X, FaceCamLoc.Y, FaceCamLoc.Z,
+						ActualCam.X, ActualCam.Y, ActualCam.Z,
+						(ActualCam.X - FaceCamLoc.X), (ActualCam.Y - FaceCamLoc.Y), (ActualCam.Z - FaceCamLoc.Z),
+						bFaceUseHeadBone ? 1 : 0,
+						FaceHeadFollowAlpha);
+				}
+			}
+			return;
+		}
 
 		// 단계3 (Top hold) + EndHold — ToOffset 위치 유지 + 보스 추적.
-		const FVector StaticCamLoc = BossLoc + Forward * CamLerpToOffset.X + Right * CamLerpToOffset.Y + Up * CamLerpToOffset.Z;
+		const FVector RawStaticCamLoc = BossLoc + Forward * CamLerpToOffset.X + Right * CamLerpToOffset.Y + Up * CamLerpToOffset.Z;
 		const FVector StaticLook = BossLoc + FVector(0.f, 0.f, CamLerpToLookH);
+
+		// [CinematicCameraOcclusionV1] A — 액터 occluder push-back.
+		TArray<AActor*> IgnoreActors;
+		IgnoreActors.Reserve(3);
+		IgnoreActors.Add(Boss);
+		IgnoreActors.Add(LocalCameraActor.Get());
+		IgnoreActors.Add(this);
+		const FVector StaticCamLoc = BossCinematicCameraUtils::PushCameraOutOfActorOccluders(
+			this, RawStaticCamLoc, StaticLook, IgnoreActors, /*Margin=*/30.f);
+
 		const FRotator StaticRot = (StaticLook - StaticCamLoc).Rotation();
 		LocalCameraActor->SetActorLocationAndRotation(StaticCamLoc, StaticRot);
 	}

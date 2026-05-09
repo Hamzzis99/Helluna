@@ -173,6 +173,9 @@ private:
 	bool bPhase2WidthExpanding = false;
 	double Phase2WidthExpandStartTime = 0.0;
 
+	/** [BossHealthBar_ColorDiag] 진단 로그 throttle. */
+	double LastColorDiagLogTime = 0.0;
+
 	float GetBossHealthNormalized() const;
 	bool IsBossInPhase2() const;
 };

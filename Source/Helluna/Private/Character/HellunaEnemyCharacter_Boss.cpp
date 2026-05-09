@@ -175,7 +175,10 @@ void AHellunaEnemyCharacter_Boss::EnterBossPhase2()
 			SetCanBeDamaged(true);
 			// [Phase2BrainResumeV1] Brain 재가동 + Phase2Descent NC + Montage 정리는 시네마틱 트리거의
 			//   Multicast_EndCinematic + 0.5s 가 단독 책임. 여기서는 데미지 면역만 풀음.
-			UE_LOG(LogTemp, Warning, TEXT("[BossPhase2V1] Invulnerability ended — damage enabled (brain/VFX cleanup deferred to cinematic end)"));
+			// [Phase2ShakeCleanupV2] 서버 측 fallback — 카메라 쉐이크 정리 (server only).
+			//   Multicast_EndCinematic 에서 모든 머신 정리하지만 server 도 안전망.
+			StopPhase2Shakes();
+			UE_LOG(LogTemp, Warning, TEXT("[BossPhase2V1] Invulnerability ended — damage enabled, shake cleaned (server)"));
 		}),
 		FMath::Max(Phase2InvulnerabilityDuration, 0.1f), false);
 
@@ -201,7 +204,14 @@ void AHellunaEnemyCharacter_Boss::Multicast_PlayBossPhase2Transition_Implementat
 	// [Phase2RefactorV1] 카메라/대사/단계 시퀀스 — 트리거(ABossPhase2CinematicTrigger)에 위임.
 	//   서버에서만 Spawn + TryActivate. 트리거가 Multicast 로 자기 카메라/대사 처리.
 	// =========================================================
-	if (HasAuthority() && Phase2CinematicTriggerClass)
+	// [BossDebugSkipV1] GameMode 통합 토글 OR 로컬 토글.
+	bool bSkipPhase2Cinematic = bDebugSkipPhase2Cinematic;
+	if (AHellunaDefenseGameMode* GM = World->GetAuthGameMode<AHellunaDefenseGameMode>())
+	{
+		bSkipPhase2Cinematic = bSkipPhase2Cinematic || GM->bDebugSkipBossPhase2Cinematic;
+	}
+
+	if (HasAuthority() && Phase2CinematicTriggerClass && !bSkipPhase2Cinematic)
 	{
 		FActorSpawnParameters TriggerParams;
 		TriggerParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
@@ -218,6 +228,11 @@ void AHellunaEnemyCharacter_Boss::Multicast_PlayBossPhase2Transition_Implementat
 			UE_LOG(LogTemp, Warning, TEXT("[Phase2RefactorV1] Failed to spawn cinematic trigger — class=%s"),
 				*GetNameSafe(Phase2CinematicTriggerClass));
 		}
+	}
+	else if (bSkipPhase2Cinematic)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[Phase2DebugSkipV1] Skipping Phase 2 cinematic trigger — Stage3 visuals + HP fill 만 진행"));
 	}
 
 	// =========================================================
@@ -1245,12 +1260,13 @@ void AHellunaEnemyCharacter_Boss::Phase2_PlayStage3Visuals()
 	UE_LOG(LogTemp, Warning, TEXT("[Phase2StageV1] Stage 3 — visuals + enrage on %s (NetMode=%d)"),
 		*GetNameSafe(this), (int32)GetNetMode());
 
-	// 카메라 쉐이크
+	// [Phase2ShakeRampV1] 카메라 쉐이크 — epicenter 가 하늘 (Boss + StartZ) 에서 보스 (EndZ) 로 lerp.
+	//   거리 falloff 로 자동 강도 ramp up: 멀리서 약하게 시작 → 가까워지며 강해짐.
 	if (Phase2TransitionShakeClass)
 	{
-		UGameplayStatics::PlayWorldCameraShake(
-			World, Phase2TransitionShakeClass, GetActorLocation(),
-			0.f, 4500.f, 1.f, false);
+		Phase2ShakeStartTimeSeconds = (float)World->GetTimeSeconds();
+		PlayPhase2RampingShake();
+
 		if (Phase2ShakeRepeatInterval > 0.f)
 		{
 			TWeakObjectPtr<AHellunaEnemyCharacter_Boss> Weak(this);
@@ -1258,13 +1274,10 @@ void AHellunaEnemyCharacter_Boss::Phase2_PlayStage3Visuals()
 			GetWorldTimerManager().SetTimer(Phase2ShakeRepeatTimer,
 				FTimerDelegate::CreateLambda([Weak]()
 				{
-					AHellunaEnemyCharacter_Boss* Self = Weak.Get();
-					if (!Self || !Self->Phase2TransitionShakeClass) return;
-					UWorld* W = Self->GetWorld();
-					if (!W) return;
-					UGameplayStatics::PlayWorldCameraShake(
-						W, Self->Phase2TransitionShakeClass, Self->GetActorLocation(),
-						0.f, 4500.f, 1.f, false);
+					if (AHellunaEnemyCharacter_Boss* Self = Weak.Get())
+					{
+						Self->PlayPhase2RampingShake();
+					}
 				}),
 				Phase2ShakeRepeatInterval, true);
 		}
@@ -1362,6 +1375,29 @@ void AHellunaEnemyCharacter_Boss::Phase2_PlayStage3Visuals()
 					}
 					UE_LOG(LogTemp, Warning,
 						TEXT("[Phase2DescentLifetimeV1] Deactivated %d Phase2Descent NCs after lifetime"), DeactivatedCount);
+
+					// [Phase2ShakeCleanupV1] VFX 종료 시점에 카메라 쉐이크도 같이 정리.
+					//   ShakeRepeatTimer 클리어 + 진행 중 instance fade out.
+					if (UWorld* W2 = Self->GetWorld())
+					{
+						W2->GetTimerManager().ClearTimer(Self->Phase2ShakeRepeatTimer);
+						if (Self->Phase2TransitionShakeClass)
+						{
+							for (FConstPlayerControllerIterator It = W2->GetPlayerControllerIterator(); It; ++It)
+							{
+								if (APlayerController* PC = It->Get())
+								{
+									if (APlayerCameraManager* PCM = PC->PlayerCameraManager)
+									{
+										PCM->StopAllInstancesOfCameraShake(
+											Self->Phase2TransitionShakeClass, /*bImmediately=*/false);
+									}
+								}
+							}
+							UE_LOG(LogTemp, Warning,
+								TEXT("[Phase2ShakeCleanupV1] Shake repeat timer cleared + instances stopped"));
+						}
+					}
 				}),
 				Phase2DescentVFXLifetime, false);
 		}
@@ -1386,5 +1422,77 @@ void AHellunaEnemyCharacter_Boss::Phase2_PlayStage3Visuals()
 					Self->Phase2HealthFillStage1Duration);
 			}),
 			FMath::Max(0.0f, Phase2HealthFillDelay), false);
+	}
+}
+
+// [Phase2ShakeCleanupV2] 페이즈2 쉐이크 정리 — RepeatTimer + 진행 중 instance fade out.
+void AHellunaEnemyCharacter_Boss::StopPhase2Shakes()
+{
+	UWorld* W = GetWorld();
+	if (!W) return;
+
+	W->GetTimerManager().ClearTimer(Phase2ShakeRepeatTimer);
+
+	if (Phase2TransitionShakeClass)
+	{
+		int32 Stopped = 0;
+		for (FConstPlayerControllerIterator It = W->GetPlayerControllerIterator(); It; ++It)
+		{
+			if (APlayerController* PC = It->Get())
+			{
+				if (APlayerCameraManager* PCM = PC->PlayerCameraManager)
+				{
+					PCM->StopAllInstancesOfCameraShake(Phase2TransitionShakeClass, /*bImmediately=*/false);
+					++Stopped;
+				}
+			}
+		}
+		UE_LOG(LogTemp, Warning,
+			TEXT("[Phase2ShakeCleanupV2] StopPhase2Shakes — RepeatTimer cleared, instances fade-out on %d PC"),
+			Stopped);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[Phase2ShakeCleanupV2] StopPhase2Shakes — RepeatTimer cleared (no shake class)"));
+	}
+}
+
+// [Phase2ShakeRampV1] 1회 쉐이크 발화 — epicenter 시간 lerp + 멀리서 시작 falloff.
+//   [Phase2ShakeSuctionV1] bOrientShakeTowardsEpicenter=true — 흔들림 축이 epicenter 향함.
+//   LocX 는 epicenter 방향 forward/back 흔들림 → 빨려들어가는 임팩트.
+void AHellunaEnemyCharacter_Boss::PlayPhase2RampingShake()
+{
+	UWorld* W = GetWorld();
+	if (!W || !Phase2TransitionShakeClass) return;
+
+	const float Now = (float)W->GetTimeSeconds();
+	const float Elapsed = Now - Phase2ShakeStartTimeSeconds;
+	const float Alpha = FMath::Clamp(Elapsed / FMath::Max(Phase2ShakeDescentDuration, 0.1f), 0.f, 1.f);
+	const float CurrentZ = FMath::Lerp(Phase2ShakeStartZ, Phase2ShakeEndZ, Alpha);
+	const FVector Epicenter = GetActorLocation() + FVector(0.f, 0.f, CurrentZ);
+
+	UGameplayStatics::PlayWorldCameraShake(
+		W, Phase2TransitionShakeClass, Epicenter,
+		Phase2ShakeInnerRadius, Phase2ShakeOuterRadius, Phase2ShakeFalloff,
+		/*bOrientShakeTowardsEpicenter=*/true);
+
+	// [Phase2ShakeRamp_Diag] 0.5s 마다 진단 로그 — spawn 시 CDO 값 + epicenter 추적.
+	//   사용자 BP CDO 변경 적용 여부 검증용.
+	{
+		static float LastDiagLogTime = -1000.f;
+		if (Now - LastDiagLogTime >= 0.5f)
+		{
+			LastDiagLogTime = Now;
+			UCameraShakeBase* ShakeCDO = Phase2TransitionShakeClass
+				? Phase2TransitionShakeClass->GetDefaultObject<UCameraShakeBase>() : nullptr;
+			UE_LOG(LogTemp, Warning,
+				TEXT("[Phase2ShakeRamp_Diag] T=%.2f Class=%s CDOScale=%.2f Alpha=%.2f Epicenter=%s OrientToEp=true"),
+				Elapsed,
+				*GetNameSafe(Phase2TransitionShakeClass),
+				ShakeCDO ? ShakeCDO->ShakeScale : -1.f,
+				Alpha,
+				*Epicenter.ToString());
+		}
 	}
 }

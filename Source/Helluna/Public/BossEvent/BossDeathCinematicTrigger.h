@@ -95,9 +95,20 @@ public:
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_EndCinematic();
 
+	/**
+	 * [BPDefaultSyncV1] BeginPlay 시 BP CDO 의 Edit-가능 property 를 instance 에 강제 sync.
+	 *   placement instance override 가 BP CDO 변경을 가리는 문제 fix.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossDeath|Sync",
+		meta = (DisplayName = "BP CDO 자동 동기화"))
+	bool bSyncFromBPDefault = true;
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
+
+	/** [BPDefaultSyncV1] BP CDO 값을 instance 에 복사. */
+	void SyncFromBPDefault();
 
 private:
 	/** 클라 로컬 카메라 액터. */

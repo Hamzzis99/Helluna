@@ -2,6 +2,7 @@
 
 #include "BossEvent/BossDeathCinematicTrigger.h"
 
+#include "BossEvent/BossCinematicCameraUtils.h"
 #include "Camera/CameraActor.h"
 #include "Camera/CameraComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -21,6 +22,44 @@ ABossDeathCinematicTrigger::ABossDeathCinematicTrigger()
 void ABossDeathCinematicTrigger::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// [BPDefaultSyncV1] placement instance override 무시.
+	SyncFromBPDefault();
+}
+
+// [BPDefaultSyncV1] BP CDO 의 Edit-가능 property 를 instance 에 강제 복사.
+//   AActor 부모 property 는 skip — placement 위치 reset 방지.
+void ABossDeathCinematicTrigger::SyncFromBPDefault()
+{
+	if (!bSyncFromBPDefault) return;
+
+	UClass* MyClass = GetClass();
+	if (!MyClass) return;
+	UObject* CDO = MyClass->GetDefaultObject(false);
+	if (!CDO || CDO == this) return;
+
+	UClass* SyncBoundary = ABossDeathCinematicTrigger::StaticClass();
+
+	static const TSet<FName> SkipProps = {
+		TEXT("bSyncFromBPDefault"),
+	};
+
+	int32 Synced = 0;
+	for (TFieldIterator<FProperty> It(MyClass); It; ++It)
+	{
+		FProperty* Prop = *It;
+		if (!Prop) continue;
+		if (!Prop->HasAnyPropertyFlags(CPF_Edit)) continue;
+		if (SkipProps.Contains(Prop->GetFName())) continue;
+		UClass* OwnerClass = Prop->GetOwnerClass();
+		if (!OwnerClass || !OwnerClass->IsChildOf(SyncBoundary)) continue;
+		Prop->CopyCompleteValue_InContainer(this, CDO);
+		++Synced;
+	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[BPDefaultSyncV1] %s synced %d properties from BP CDO"),
+		*GetName(), Synced);
 }
 
 bool ABossDeathCinematicTrigger::TryActivate(APawn* InTargetBoss)
@@ -182,8 +221,20 @@ void ABossDeathCinematicTrigger::Tick(float DeltaTime)
 		}
 	}
 
-	const FVector CamLoc = Anchor + Forward * FaceOffset.X + Right * FaceOffset.Y + Up * FaceOffset.Z;
+	const FVector RawCamLoc = Anchor + Forward * FaceOffset.X + Right * FaceOffset.Y + Up * FaceOffset.Z;
 	const FVector LookTarget = Anchor + FVector(0.f, 0.f, LookAtZOffset);
+
+	// [CinematicCameraOcclusionV1] G — Ground Z floor.
+	//   사망 시네마틱이 head 본을 따라가다 보스가 쓰러지면 카메라가 land 와 같은 높이로 내려가
+	//   지형을 뚫는 케이스 → BossLoc 에서 down trace 후 ground+margin Z 로 clamp.
+	//   actor occluder 는 의도된 close-up 망가뜨릴 수 있어 G 만 적용 (A 미적용).
+	TArray<AActor*> IgnoreActors;
+	IgnoreActors.Reserve(2);
+	IgnoreActors.Add(Boss);
+	IgnoreActors.Add(LocalCameraActor.Get());
+	const FVector CamLoc = BossCinematicCameraUtils::ClampCameraAboveGround(
+		this, RawCamLoc, BossLoc, IgnoreActors, /*MarginZ=*/100.f);
+
 	const FRotator NewRot = (LookTarget - CamLoc).Rotation();
 	LocalCameraActor->SetActorLocationAndRotation(CamLoc, NewRot);
 }

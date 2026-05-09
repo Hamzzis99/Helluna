@@ -3,6 +3,7 @@
 
 #include "Minwoo/BossSummonCinematicTrigger.h"
 
+#include "BossEvent/BossCinematicCameraUtils.h"
 #include "Camera/CameraShakeBase.h"
 #include "Kismet/GameplayStatics.h"
 #include "AIController.h"
@@ -13,6 +14,7 @@
 #include "Controller/HellunaHeroController.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "Components/CapsuleComponent.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
@@ -34,6 +36,7 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Animation/AnimInstance.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
+#include "GameMode/HellunaDefenseGameMode.h"
 #include "UObject/UnrealType.h"
 #include "DrawDebugHelpers.h"
 #include "Camera/PlayerCameraManager.h"
@@ -188,9 +191,58 @@ void ABossSummonCinematicTrigger::Tick(float DeltaTime)
 	Boss->AddMovementInput(Direction, 1.0f);
 }
 
+// [BPDefaultSyncV1] BP CDO 의 Edit-가능 property 를 instance 에 강제 복사.
+//   placement actor 가 detail panel 에서 override 한 값을 무시하고 BP default 값 사용.
+//   AActor 자체 property (transform, replication 등) 는 sync 안 함 — placement 위치가 (0,0,0) 으로
+//   reset 되는 사고 방지. 본 트리거 native class 가 정의한 property 만 sync.
+void ABossSummonCinematicTrigger::SyncFromBPDefault()
+{
+	if (!bSyncFromBPDefault) return;
+
+	UClass* MyClass = GetClass();
+	if (!MyClass) return;
+	UObject* CDO = MyClass->GetDefaultObject(false);
+	if (!CDO || CDO == this) return;
+
+	UClass* SyncBoundary = ABossSummonCinematicTrigger::StaticClass();
+
+	static const TSet<FName> SkipProps = {
+		TEXT("ExistingBossActorTag"),
+		TEXT("TargetBossActor"),
+		TEXT("bAutoActivateOnBeginPlay"),
+		TEXT("AutoActivateDelay"),
+		TEXT("bWaitForTaggedBossSpawn"),
+		TEXT("PostSpawnDelay"),
+		TEXT("bDisableCinematic_OnlyHealthBar"),
+		TEXT("bSyncFromBPDefault"),
+	};
+
+	int32 Synced = 0;
+	for (TFieldIterator<FProperty> It(MyClass); It; ++It)
+	{
+		FProperty* Prop = *It;
+		if (!Prop) continue;
+		if (!Prop->HasAnyPropertyFlags(CPF_Edit)) continue;
+		if (SkipProps.Contains(Prop->GetFName())) continue;
+		// 본 트리거 native class (또는 그 자식 BP) 가 정의한 property 만 sync.
+		// 부모 AActor / UObject 의 property 는 skip.
+		UClass* OwnerClass = Prop->GetOwnerClass();
+		if (!OwnerClass || !OwnerClass->IsChildOf(SyncBoundary)) continue;
+		Prop->CopyCompleteValue_InContainer(this, CDO);
+		++Synced;
+	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[BPDefaultSyncV1] %s synced %d properties from BP CDO (boundary=%s)"),
+		*GetName(), Synced, *SyncBoundary->GetName());
+}
+
 void ABossSummonCinematicTrigger::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// [BPDefaultSyncV1] placement instance override 무시, BP CDO 값으로 강제 동기화.
+	SyncFromBPDefault();
 
 	if (HasAuthority() && bAutoActivateOnBeginPlay)
 	{
@@ -393,16 +445,27 @@ bool ABossSummonCinematicTrigger::TryActivate(APawn* InTargetBoss)
 	bMontageFinishedFlag = false;
 	bMinHoldElapsedFlag = false;
 
+	// [BossDebugSkipV1] GameMode 의 통합 토글 OR 로컬 토글.
+	bool bSkipCinematic = bDisableCinematic_OnlyHealthBar;
+	if (UWorld* W = GetWorld())
+	{
+		if (AHellunaDefenseGameMode* GM = W->GetAuthGameMode<AHellunaDefenseGameMode>())
+		{
+			bSkipCinematic = bSkipCinematic || GM->bDebugSkipBossSummonCinematic;
+		}
+	}
+
 	UE_LOG(LogTemp, Warning,
-		TEXT("[BossSummonCinematic_LiveCodeCheck] TryActivate START — Boss=%s, Loc=%s, OnlyHealthBar=%d"),
+		TEXT("[BossSummonCinematic_LiveCodeCheck] TryActivate START — Boss=%s, Loc=%s, SkipCinematic=%d"),
 		*Boss->GetName(), *Boss->GetActorLocation().ToString(),
-		bDisableCinematic_OnlyHealthBar ? 1 : 0);
+		bSkipCinematic ? 1 : 0);
 
 	// [DisableCinematic_OnlyHealthBarV1] 시네마틱 setup 모두 skip — Multicast_StartCinematic 만 호출.
 	//   Multicast 안의 분기가 LocalCinematicBoss set + EndCinematic 호출 → HP 바만 spawn.
-	if (bDisableCinematic_OnlyHealthBar)
+	//   [BossSkipRPCFixV1] 클라가 GM 토글을 알 수 있도록 RPC 인자로 명시 전달.
+	if (bSkipCinematic)
 	{
-		Multicast_StartCinematic(Boss);
+		Multicast_StartCinematic(Boss, /*bSkipVisuals=*/true);
 		return true;
 	}
 
@@ -455,6 +518,46 @@ bool ABossSummonCinematicTrigger::TryActivate(APawn* InTargetBoss)
 		}
 	}
 
+	// [BossGroundAlignV1] 보스 Z 를 ground 에 안착시켜 공중에서 떨어지는 모션 제거.
+	//   보스가 spawn point 의 Z 가 ground 보다 높으면 reveal 시점에 떨어지는 모션이 보임.
+	//   해결: line trace 로 ground 측정 후 capsule half height 만큼 위로 set.
+	{
+		if (ACharacter* BossCh = Cast<ACharacter>(Boss))
+		{
+			if (UCapsuleComponent* Capsule = BossCh->GetCapsuleComponent())
+			{
+				const float HalfHeight = Capsule->GetScaledCapsuleHalfHeight();
+				const FVector CurrentLoc = Boss->GetActorLocation();
+				const FVector TraceStart = CurrentLoc + FVector(0.f, 0.f, 200.f);
+				const FVector TraceEnd = CurrentLoc - FVector(0.f, 0.f, 5000.f);
+
+				FCollisionQueryParams Params(SCENE_QUERY_STAT(BossGroundAlignTrace), false);
+				Params.bTraceComplex = false;
+				Params.AddIgnoredActor(Boss);
+				Params.AddIgnoredActor(this);
+
+				FHitResult Hit;
+				if (UWorld* W = GetWorld())
+				{
+					if (W->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_Visibility, Params))
+					{
+						const float NewZ = Hit.ImpactPoint.Z + HalfHeight;
+						const FVector AlignedLoc(CurrentLoc.X, CurrentLoc.Y, NewZ);
+						Boss->SetActorLocation(AlignedLoc, /*bSweep=*/false, nullptr, ETeleportType::TeleportPhysics);
+						UE_LOG(LogTemp, Warning,
+							TEXT("[BossGroundAlignV1] Z aligned: %.1f → %.1f (ground=%.1f, halfH=%.1f)"),
+							CurrentLoc.Z, NewZ, Hit.ImpactPoint.Z, HalfHeight);
+					}
+					else
+					{
+						UE_LOG(LogTemp, Warning,
+							TEXT("[BossGroundAlignV1] No ground hit — Boss Z unchanged (%.1f)"), CurrentLoc.Z);
+					}
+				}
+			}
+		}
+	}
+
 	// 2) 보스 AI 정지 (HellunaEnemyCharacter일 경우 자동 재시작도 억제)
 	if (AHellunaEnemyCharacter_Boss* BossEnemy = Cast<AHellunaEnemyCharacter_Boss>(Boss))
 	{
@@ -487,7 +590,7 @@ bool ABossSummonCinematicTrigger::TryActivate(APawn* InTargetBoss)
 	Boss->SetMinNetUpdateFrequency(30.f);
 
 	// 4) 카메라 전환 RPC — 클라이언트들은 portal 만 스폰하고 reveal delay 까지 카메라는 player 유지.
-	Multicast_StartCinematic(Boss);
+	Multicast_StartCinematic(Boss, /*bSkipVisuals=*/false);
 
 	// 5) MinHold + Failsafe 계산. 컷 합계 + reveal delay 까지 포함해야 컷이 다 보임.
 	float MinHold = FMath::Max(MinCinematicHoldDuration, 0.5f);
@@ -772,11 +875,18 @@ void ABossSummonCinematicTrigger::OnGracePeriodElapsed()
 	ActiveBoss.Reset();
 }
 
-void ABossSummonCinematicTrigger::Multicast_StartCinematic_Implementation(APawn* Boss)
+void ABossSummonCinematicTrigger::Multicast_StartCinematic_Implementation(APawn* Boss, bool bSkipVisuals)
 {
+	// [BossSkipRPCFixV1] 클라는 자기 BP default `bDisableCinematic_OnlyHealthBar` 가 아니라
+	//   서버가 RPC 로 명시 전달한 bSkipVisuals 를 사용해야 GM 토글이 클라까지 적용됨.
+	const bool bSkip = bSkipVisuals || bDisableCinematic_OnlyHealthBar;
+
 	UE_LOG(LogTemp, Warning,
-		TEXT("[BossSummonCinematic_LiveCodeCheck] Multicast_Start — Boss=%s, DisableCinematic_OnlyHealthBar=%d"),
-		Boss ? *Boss->GetName() : TEXT("NULL"), bDisableCinematic_OnlyHealthBar ? 1 : 0);
+		TEXT("[BossSummonCinematic_LiveCodeCheck] Multicast_Start — Boss=%s, RPC_Skip=%d, BPDefault=%d, FinalSkip=%d"),
+		Boss ? *Boss->GetName() : TEXT("NULL"),
+		bSkipVisuals ? 1 : 0,
+		bDisableCinematic_OnlyHealthBar ? 1 : 0,
+		bSkip ? 1 : 0);
 
 	if (IsRunningDedicatedServer())
 	{
@@ -785,7 +895,7 @@ void ABossSummonCinematicTrigger::Multicast_StartCinematic_Implementation(APawn*
 
 	// [DisableCinematic_OnlyHealthBarV1] 디버그 토글 — 시네마틱 모두 skip + HP 바만 spawn.
 	//   LocalCinematicBoss 만 set 한 뒤 EndCinematic 호출 → EndCinematic 의 HP 바 spawn 코드가 작동.
-	if (bDisableCinematic_OnlyHealthBar)
+	if (bSkip)
 	{
 		LocalCinematicBoss = IsValid(Boss) ? Boss : ResolveTargetBoss();
 		Multicast_EndCinematic_Implementation();
@@ -1590,7 +1700,7 @@ void ABossSummonCinematicTrigger::UpdateCameraForCurrentCut()
 		Up      = Boss->GetActorUpVector();
 	}
 
-	const FVector CameraWorld = AnchorWorld
+	const FVector RawCameraWorld = AnchorWorld
 		+ Forward * Cut.CameraOffset.X
 		+ Right   * Cut.CameraOffset.Y
 		+ Up      * Cut.CameraOffset.Z;
@@ -1599,6 +1709,17 @@ void ABossSummonCinematicTrigger::UpdateCameraForCurrentCut()
 		+ Forward * Cut.LookAtOffset.X
 		+ Right   * Cut.LookAtOffset.Y
 		+ Up      * Cut.LookAtOffset.Z;
+
+	// [CinematicCameraOcclusionV1] A — Actor occluder push-back.
+	//   카메라 ↔ 보스 사이에 플레이어/우주선/갑옷 등 액터가 가리면 카메라를 occluder 앞으로 당김.
+	//   trace 채널 ECC_Camera. 보스 자체 + 카메라 + 트리거 ignore.
+	TArray<AActor*> IgnoreActors;
+	IgnoreActors.Reserve(3);
+	IgnoreActors.Add(Boss);
+	IgnoreActors.Add(Cam);
+	IgnoreActors.Add(this);
+	const FVector CameraWorld = BossCinematicCameraUtils::PushCameraOutOfActorOccluders(
+		this, RawCameraWorld, AnchorWorld, IgnoreActors, /*Margin=*/30.f);
 
 	const FVector LookDir = LookAtWorld - CameraWorld;
 	const FRotator NewRot = LookDir.IsNearlyZero()

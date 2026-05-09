@@ -377,6 +377,16 @@ public:
 		meta = (DisplayName = "Disable Cinematic — HP Bar Only (디버그용)"))
 	bool bDisableCinematic_OnlyHealthBar = false;
 
+	/**
+	 * [BPDefaultSyncV1] BeginPlay 시 BP CDO 의 Edit-가능 property 를 instance 에 강제 sync.
+	 *   true (default): placement instance 의 override 무시, BP CDO 변경이 모든 곳에 자동 적용.
+	 *   false: instance 값 그대로 유지 (디자이너가 인스턴스별 다른 값 원할 시).
+	 *   Sync 제외 항목: 보스 참조 (Tag/TargetBossActor), 자동 발동 토글, 디버그 토글.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Sync",
+		meta = (DisplayName = "BP CDO 자동 동기화 (insance override 무시)"))
+	bool bSyncFromBPDefault = true;
+
 	// =========================================================================================
 	// [CinematicWalkV1] 시네마틱 중 보스 자체 전진
 	//   AM_Boss_Walk 가 in-place 애니라 root motion 으로 못 움직임 → Tick 에서 AddMovementInput 으로 직접 전진.
@@ -421,9 +431,13 @@ public:
 	// Multicast RPC — 서버 → 모든 클라이언트
 	// =========================================================================================
 
-	/** 시네마틱 시작 (클라: ViewTarget 전환) */
+	/**
+	 * 시네마틱 시작 (클라: ViewTarget 전환).
+	 * @param bSkipVisuals  서버에서 결정된 skip 여부 — 클라는 BP default 가 아닌 이 값으로 판정해야
+	 *                       GM 토글 (서버 only) 도 클라에 전파됨.
+	 */
 	UFUNCTION(NetMulticast, Reliable)
-	void Multicast_StartCinematic(APawn* Boss);
+	void Multicast_StartCinematic(APawn* Boss, bool bSkipVisuals);
 
 	/** 시네마틱 종료 (클라: ViewTarget 복귀) */
 	UFUNCTION(NetMulticast, Reliable)
@@ -444,6 +458,13 @@ private:
 	// =========================================================================================
 	// 내부 헬퍼
 	// =========================================================================================
+
+	/**
+	 * [BPDefaultSyncV1] BP CDO 의 Edit-가능 property 를 instance 에 강제 복사.
+	 *   instance override 가 BP CDO 변경을 가리는 문제 fix.
+	 *   Skip 리스트: 보스 참조, 자동 발동 토글, 디버그 토글, 본 sync 토글.
+	 */
+	void SyncFromBPDefault();
 
 	/** 자동 발동 타이머 콜백 */
 	void HandleAutoActivate();

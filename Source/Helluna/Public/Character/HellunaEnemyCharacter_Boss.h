@@ -141,6 +141,16 @@ public:
 	TSubclassOf<ABossPhase2CinematicTrigger> Phase2CinematicTriggerClass;
 
 	/**
+	 * [Phase2DebugSkipV1] 페이즈2 시네마틱 트리거 spawn 자체를 skip — 디버그/테스트용.
+	 *   true 시: camera/dialogue/포탈/etc 모두 skip. Stage 3 visuals (강하 VFX, 본체 swap, 갑옷 분리)
+	 *   + HP fill V3 는 Stage3 timer (Phase2StunDuration 후) 로 정상 진행.
+	 *   빠른 페이즈2 진입 테스트용 — Phase2StunDuration 도 짧게 두면 즉시 페이즈2 진입.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|광폭화|Debug",
+		meta = (DisplayName = "Skip Phase 2 Cinematic (디버그용)"))
+	bool bDebugSkipPhase2Cinematic = false;
+
+	/**
 	 * 단계1 길이 (초) — Stage3 비주얼 (광폭화/갑옷/본체 swap/VFX) 시작 timer.
 	 *   트리거의 StunDuration 과 같은 값으로 set 권장 (시간 동기화).
 	 */
@@ -235,6 +245,49 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|광폭화",
 		meta = (DisplayName = "광폭화 쉐이크 반복 간격 (초)", ClampMin = "0.0", ClampMax = "5.0"))
 	float Phase2ShakeRepeatInterval = 0.4f;
+
+	/**
+	 * [Phase2ShakeRampV1] 광폭화 쉐이크 epicenter 시작 Z offset (보스 위, cm).
+	 *   하늘에서 회오리가 발생하는 거리 — 쉐이크가 멀리서 시작.
+	 *   포탈(보스 약 1.5m 거리)보다 10배 이상 멀리 = 5000cm (50m) 권장.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|광폭화|Shake",
+		meta = (DisplayName = "쉐이크 시작 Z (보스 위 cm)", ClampMin = "0.0", ClampMax = "20000.0"))
+	float Phase2ShakeStartZ = 5000.f;
+
+	/**
+	 * [Phase2ShakeRampV1] 광폭화 쉐이크 epicenter 끝 Z offset (보스 위, cm).
+	 *   레이저 임팩트 시점 — 카메라 가까이.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|광폭화|Shake",
+		meta = (DisplayName = "쉐이크 끝 Z (보스 위 cm)", ClampMin = "0.0", ClampMax = "5000.0"))
+	float Phase2ShakeEndZ = 200.f;
+
+	/**
+	 * [Phase2ShakeRampV1] epicenter 가 시작 Z 에서 끝 Z 로 lerp 되는 시간 (초).
+	 *   회오리가 하늘에서 보스로 내려오는 시간. 강도 ramp up 도 이 시간동안.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|광폭화|Shake",
+		meta = (DisplayName = "쉐이크 ramp up 시간 (초)", ClampMin = "0.5", ClampMax = "30.0"))
+	float Phase2ShakeDescentDuration = 6.0f;
+
+	/**
+	 * [Phase2ShakeRampV1] OuterRadius (cm) — 이 거리 이상에서 쉐이크 falloff 0.
+	 *   epicenter 가 멀 때 strength 작게 → 가까워지면 strength 큼. (Outer 5500 + 시작거리 5000 = 약 10% 강도)
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|광폭화|Shake",
+		meta = (DisplayName = "쉐이크 OuterRadius (cm)", ClampMin = "100.0", ClampMax = "20000.0"))
+	float Phase2ShakeOuterRadius = 5500.f;
+
+	/** [Phase2ShakeRampV1] InnerRadius (cm) — 이 거리 이내는 항상 풀 강도. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|광폭화|Shake",
+		meta = (DisplayName = "쉐이크 InnerRadius (cm)", ClampMin = "0.0"))
+	float Phase2ShakeInnerRadius = 0.f;
+
+	/** [Phase2ShakeRampV1] 거리별 falloff 지수. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|광폭화|Shake",
+		meta = (DisplayName = "쉐이크 Falloff", ClampMin = "0.1", ClampMax = "10.0"))
+	float Phase2ShakeFalloff = 1.f;
 
 	// =========================================================
 	// [Phase2HealthFillV2] HP 회복 타이밍 — 2-stage fill (페이즈1 max 까지 → pause → 페이즈2 max 까지 뚫기)
@@ -478,6 +531,25 @@ private:
 
 	/** [Phase2ShakeRepeatV1] 2페이즈 시네마틱 동안 카메라 쉐이크 반복용 타이머 (각 머신 로컬). */
 	FTimerHandle Phase2ShakeRepeatTimer;
+
+	/** [Phase2ShakeRampV1] 쉐이크 ramp up 시작 시각 (월드 시간 초). */
+	float Phase2ShakeStartTimeSeconds = 0.f;
+
+	/**
+	 * [Phase2ShakeRampV1] 쉐이크 1회 발화 — epicenter 를 시간 따라 시작 Z → 끝 Z 로 lerp.
+	 *   거리 falloff 로 자동으로 강도 ramp up 효과 (멀리서 시작 → 가까워지며 강해짐).
+	 */
+	void PlayPhase2RampingShake();
+
+public:
+	/**
+	 * [Phase2ShakeCleanupV2] 페이즈2 쉐이크 정리 — RepeatTimer 클리어 + 진행 중 instance fade out.
+	 *   Phase2InvulnerabilityTimer 콜백 + Multicast_EndCinematic 에서 호출되어 다중 보장.
+	 *   public — ABossPhase2CinematicTrigger 에서 호출 가능.
+	 */
+	void StopPhase2Shakes();
+
+private:
 
 	/** 2페이즈 진입 때 Brain을 우리가 멈췄는지 (타이머 종료 시 재시작용). */
 	bool bAIStoppedForPhase2 = false;
