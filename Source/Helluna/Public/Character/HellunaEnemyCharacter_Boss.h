@@ -479,6 +479,17 @@ public:
 	TObjectPtr<UAnimMontage> SummonMontage = nullptr;
 
 	/**
+	 * [SummonMontageMeshSinkV1] SummonMontage 재생 동안 보스 SkelMesh 의 RelativeLocation.Z 에 더할 오프셋 (cm).
+	 *   AM_Boss_Walk 가 살짝 공중에 떠 있는 느낌을 보정하는 시각 전용 값 — 콜리전 캡슐/CMC 는 영향 없음.
+	 *   Multicast_PlaySummonMontage 에서 한 번 적용, OnSummonMontageEnded cleanup (loop 종료) 에서 복원.
+	 *   음수 = 아래로 내림. 0 이면 비활성.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Animation|Combat",
+		meta = (DisplayName = "소환 몽타주 SkelMesh Z 오프셋 (cm, 음수=내림)",
+			ClampMin = "-50.0", ClampMax = "50.0"))
+	float SummonMontageMeshZOffset = -5.f;
+
+	/**
 	 * 소환 시네마틱 진입 플래그 (서버 전용).
 	 * true면 PossessedBy의 NextTick StartLogic을 건너뛴다 — 소환 몽타주 중 AI가 공격을 시도하지 않도록 함.
 	 * BossEncounterCube::TryActivate에서 스폰 직후 true로 설정하고,
@@ -528,6 +539,15 @@ public:
 private:
 	/** 2페이즈 시네마틱 무적 복원용 타이머 */
 	FTimerHandle Phase2InvulnerabilityTimer;
+
+	/** [SummonMontageMeshSinkV1] SummonMontage 적용 직전 SkelMesh.RelativeLocation.Z 백업 (복원용). */
+	float SavedMeshRelativeZ = 0.f;
+
+	/** [SummonMontageMeshSinkV1] Z 오프셋 적용됐는지 — 중복 적용/복원 방지 (loop 시 한 번만). */
+	bool bSummonMontageMeshOffsetApplied = false;
+
+	/** [SummonMontageMeshSinkV1+TickGuard] Tick guard 첫 deviation 로그 1회 한정 플래그. */
+	bool bSinkTickGuardLoggedDeviation = false;
 
 	/** [Phase2ShakeRepeatV1] 2페이즈 시네마틱 동안 카메라 쉐이크 반복용 타이머 (각 머신 로컬). */
 	FTimerHandle Phase2ShakeRepeatTimer;

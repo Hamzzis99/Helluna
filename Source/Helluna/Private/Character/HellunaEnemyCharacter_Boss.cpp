@@ -804,6 +804,78 @@ void AHellunaEnemyCharacter_Boss::Multicast_PlaySummonMontage_Implementation()
 	//   복원: OnSummonMontageEnded 에서 RootMotionFromMontagesOnly (기본값) 로 되돌림.
 	AnimInst->SetRootMotionMode(ERootMotionMode::IgnoreRootMotion);
 
+	// [SummonMontageMeshSinkV1] AM_Boss_Walk 의 발 높이가 캡슐 바닥과 정확히 맞지 않아 살짝 떠 보이는
+	//   현상 보정 — SkelMesh 의 RelativeLocation.Z 를 SummonMontageMeshZOffset (cm) 만큼 임시로 내림.
+	//   콜리전 캡슐/CMC 는 변경 없음 (mesh 만 시각적으로 sink). 복원은 OnSummonMontageEnded 의 cleanup 분기.
+	//   bSummonMontageMeshOffsetApplied 가드 — Multicast 가 한 번만 호출돼도 안전하게 idempotent.
+	if (!bSummonMontageMeshOffsetApplied && !FMath::IsNearlyZero(SummonMontageMeshZOffset))
+	{
+		// [DebugV2] 적용 전 — relative + world + 캡슐 바닥 대비 mesh world Z gap 까지 모두 로깅
+		const FVector PreRel = SkelMesh->GetRelativeLocation();
+		const FVector PreWorld = SkelMesh->GetComponentLocation();
+		float CapBottomZ = 0.f;
+		float CapHalf = 0.f;
+		float CapCenterZ = 0.f;
+		if (UCapsuleComponent* Cap = GetCapsuleComponent())
+		{
+			CapHalf = Cap->GetScaledCapsuleHalfHeight();
+			CapCenterZ = Cap->GetComponentLocation().Z;
+			CapBottomZ = CapCenterZ - CapHalf;
+		}
+		UE_LOG(LogTemp, Warning,
+			TEXT("[BossSummon_LiveCodeCheck][SinkPre] Auth=%d | Rel=(%.2f, %.2f, %.2f) | World.Z=%.2f | CapCenterZ=%.2f Half=%.2f Bottom=%.2f | MeshWorldZ-CapBottom=%.2f"),
+			HasAuthority() ? 1 : 0,
+			PreRel.X, PreRel.Y, PreRel.Z, PreWorld.Z, CapCenterZ, CapHalf, CapBottomZ, PreWorld.Z - CapBottomZ);
+
+		SavedMeshRelativeZ = PreRel.Z;
+		SkelMesh->SetRelativeLocation(FVector(PreRel.X, PreRel.Y, PreRel.Z + SummonMontageMeshZOffset));
+		bSummonMontageMeshOffsetApplied = true;
+		bSinkTickGuardLoggedDeviation = false; // 새 시네마틱마다 첫 deviation 다시 로그
+
+		// [DebugV2] 적용 직후 readback — Set 이 실제로 반영됐는지 확인
+		const FVector PostRel = SkelMesh->GetRelativeLocation();
+		const FVector PostWorld = SkelMesh->GetComponentLocation();
+		const float ExpectedRelZ = PreRel.Z + SummonMontageMeshZOffset;
+		const float ActualDelta = PostRel.Z - PreRel.Z;
+		UE_LOG(LogTemp, Warning,
+			TEXT("[BossSummon_LiveCodeCheck][SinkPost] Auth=%d | RelZ %.2f -> %.2f (expected=%.2f, actualDelta=%.2f) | WorldZ %.2f -> %.2f | MeshWorldZ-CapBottom=%.2f | OffsetCfg=%.2f"),
+			HasAuthority() ? 1 : 0,
+			PreRel.Z, PostRel.Z, ExpectedRelZ, ActualDelta,
+			PreWorld.Z, PostWorld.Z, PostWorld.Z - CapBottomZ, SummonMontageMeshZOffset);
+
+		if (!FMath::IsNearlyEqual(PostRel.Z, ExpectedRelZ, 0.05f))
+		{
+			UE_LOG(LogTemp, Error,
+				TEXT("[BossSummon_LiveCodeCheck][SinkMismatch] SetRelativeLocation didn't stick! got=%.4f expected=%.4f — 다른 코드/물리가 즉시 덮어씀"),
+				PostRel.Z, ExpectedRelZ);
+		}
+
+		// [DebugV2] 0.5초 후 한 번 더 readback — 시네마틱 진행 중에 다른 코드가 mesh Z 를 되돌리지 않는지 검증
+		FTimerHandle DebugVerifyHandle;
+		TWeakObjectPtr<AHellunaEnemyCharacter_Boss> WeakSelf(this);
+		const float ExpectedZSnap = ExpectedRelZ;
+		GetWorldTimerManager().SetTimer(DebugVerifyHandle, [WeakSelf, ExpectedZSnap]()
+		{
+			AHellunaEnemyCharacter_Boss* Self = WeakSelf.Get();
+			if (!Self) return;
+			USkeletalMeshComponent* M = Self->GetMesh();
+			if (!M) return;
+			const FVector NowRel = M->GetRelativeLocation();
+			const FVector NowWorld = M->GetComponentLocation();
+			float CapBot = 0.f;
+			if (UCapsuleComponent* Cap2 = Self->GetCapsuleComponent())
+			{
+				CapBot = Cap2->GetComponentLocation().Z - Cap2->GetScaledCapsuleHalfHeight();
+			}
+			const bool bStillApplied = FMath::IsNearlyEqual(NowRel.Z, ExpectedZSnap, 0.05f);
+			UE_LOG(LogTemp, Warning,
+				TEXT("[BossSummon_LiveCodeCheck][SinkVerify+0.5s] Auth=%d | RelZ=%.2f (expected=%.2f, stillApplied=%d) | WorldZ=%.2f | MeshWorldZ-CapBottom=%.2f"),
+				Self->HasAuthority() ? 1 : 0,
+				NowRel.Z, ExpectedZSnap, bStillApplied ? 1 : 0,
+				NowWorld.Z, NowWorld.Z - CapBot);
+		}, 0.5f, false);
+	}
+
 	// [BossSlowSummonV2] Montage layer 자체는 BS 위에 작동 중이지만 AM_Boss_Walk 가 BS 와 같은 walk
 	//   시퀀스를 쓰는 탓에 RateScale 0.5x 만으로는 cadence 차이가 약함. InPlayRate 0.5 추가로 곱해
 	//   effective 0.25x (RateScale 0.5 × InPlayRate 0.5) — 위엄 있는 슬로우 워크 톤 보장.
@@ -853,6 +925,20 @@ void AHellunaEnemyCharacter_Boss::OnSummonMontageEnded(UAnimMontage* Montage, bo
 		{
 			AnimInst->OnMontageEnded.RemoveDynamic(this, &AHellunaEnemyCharacter_Boss::OnSummonMontageEnded);
 			AnimInst->SetRootMotionMode(ERootMotionMode::RootMotionFromMontagesOnly);
+		}
+
+		// [SummonMontageMeshSinkV1] 적용했던 Z 오프셋 복원 — 캐릭터 BP 기본값으로 되돌림.
+		if (bSummonMontageMeshOffsetApplied)
+		{
+			const FVector PreRel = SkelMesh->GetRelativeLocation();
+			SkelMesh->SetRelativeLocation(FVector(PreRel.X, PreRel.Y, SavedMeshRelativeZ));
+			const FVector PostRel = SkelMesh->GetRelativeLocation();
+			bSummonMontageMeshOffsetApplied = false;
+			UE_LOG(LogTemp, Warning,
+				TEXT("[BossSummon_LiveCodeCheck][SinkRestore] Auth=%d | RelZ %.2f -> %.2f (target=%.2f) | match=%d"),
+				HasAuthority() ? 1 : 0,
+				PreRel.Z, PostRel.Z, SavedMeshRelativeZ,
+				FMath::IsNearlyEqual(PostRel.Z, SavedMeshRelativeZ, 0.05f) ? 1 : 0);
 		}
 	}
 
@@ -1122,6 +1208,30 @@ void AHellunaEnemyCharacter_Boss::Phase2_SpawnArmorPieces()
 void AHellunaEnemyCharacter_Boss::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+
+	// [SummonMontageMeshSinkV1+TickGuard] SummonMontage 동안 mesh.RelZ 가 우리가 set 한 값과 다르면
+	//   매 tick 강제 재적용 + "처음 어긋난 시점" 한 번 로그.
+	//   클라에서 누군가 0.5초 내 reset 한다는 verify 로그를 잡기 위해.
+	if (bSummonMontageMeshOffsetApplied)
+	{
+		if (USkeletalMeshComponent* SkelMesh_Guard = GetMesh())
+		{
+			const FVector CurRel = SkelMesh_Guard->GetRelativeLocation();
+			const float ExpectedZ = SavedMeshRelativeZ + SummonMontageMeshZOffset;
+			if (!FMath::IsNearlyEqual(CurRel.Z, ExpectedZ, 0.05f))
+			{
+				if (!bSinkTickGuardLoggedDeviation)
+				{
+					UE_LOG(LogTemp, Warning,
+						TEXT("[BossSummon_LiveCodeCheck][SinkTickGuard] Auth=%d | DEVIATION at WorldTime=%.2f | RelZ=%.4f expected=%.4f delta=%.4f — 누군가 외부에서 reset 함, 강제 재적용"),
+						HasAuthority() ? 1 : 0, GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f,
+						CurRel.Z, ExpectedZ, CurRel.Z - ExpectedZ);
+					bSinkTickGuardLoggedDeviation = true;
+				}
+				SkelMesh_Guard->SetRelativeLocation(FVector(CurRel.X, CurRel.Y, ExpectedZ));
+			}
+		}
+	}
 
 	// [InertiaTickV1] Montage section 변화 감지 시 ABP 의 Inertialization 노드에 RequestInertialization.
 	//   anim_hit ↔ stun_start ↔ stun_loop 같은 sequence 전환 시 자동 inertia blend.
