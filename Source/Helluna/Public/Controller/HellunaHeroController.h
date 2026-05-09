@@ -511,6 +511,33 @@ public:
 	void Server_BossEncounterActivate();
 
 	// =========================================================================================
+	// [BossRealityFractureCheat] 디버그 콘솔 — Reality Fracture 패턴 즉시 발동
+	//   사용: PIE 콘솔에서 "BossRealityFracture" 입력.
+	//   동작: 월드의 첫 보스(AHellunaEnemyCharacter_Boss) 찾기 → ASC 에 GA_RealityFracture grant
+	//        후 즉시 TryActivate. 이미 grant 돼있으면 grant 생략.
+	//   Shipping 빌드에서는 body 자체가 #if !UE_BUILD_SHIPPING 가드라 no-op (UHT 룰 때문에 헤더에선 가드 X).
+	// =========================================================================================
+
+	UFUNCTION(Exec)
+	void BossRealityFracture();
+
+	UFUNCTION(Server, Reliable)
+	void Server_BossRealityFracture();
+
+	// =========================================================================================
+	// [BossTimeDistortionCheat] 디버그 콘솔 — TimeDistortion (시간 슬로우) 패턴 즉시 발동
+	//   사용: PIE 콘솔에서 "BossTimeDistortion" 입력.
+	//   동작: 월드 첫 보스 → ASC 에 GA_Boss_Time grant + TryActivate.
+	//   비교용 — RealityFracture zone 시각과 나란히 검증.
+	// =========================================================================================
+
+	UFUNCTION(Exec)
+	void BossTimeDistortion();
+
+	UFUNCTION(Server, Reliable)
+	void Server_BossTimeDistortion();
+
+	// =========================================================================================
 	// [Summon Cinematic] 보스 소환 시네마틱 — 카메라 전환 + 입력 전면 잠금
 	// =========================================================================================
 

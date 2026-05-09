@@ -50,6 +50,11 @@
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
 
+// [BossRealityFractureCheat]
+#include "Character/HellunaEnemyCharacter_Boss.h"
+#include "AbilitySystemComponent.h"
+#include "Abilities/GameplayAbility.h"
+
 // [DebugHUD] 디버그 HUD 시스템
 #include "UI/HUD/HellunaDebugHUDWidget.h"
 
@@ -1553,6 +1558,131 @@ void AHellunaHeroController::Server_BossEncounterActivate_Implementation()
 		UE_LOG(LogTemp, Warning, TEXT("[BossEvent] BossEncounterCube activated by %s"), *GetName());
 		// TODO: Step 3+ — 보스 스폰 매니저 호출, 이벤트 시작
 	}
+}
+
+// =========================================================================================
+// [BossRealityFractureCheat] 콘솔 발동 — 월드 첫 보스에 GA_RealityFracture grant + activate
+//   Shipping 빌드에서는 콘솔 exec 자체가 비활성이라 호출 불가 — 별도 #if 가드 불필요.
+// =========================================================================================
+
+void AHellunaHeroController::BossRealityFracture()
+{
+	// 클라이언트 콘솔에서 호출되면 server RPC 로 forward.
+	// listen server 의 host 콘솔에서 호출되면 RPC 가 즉시 실행됨 (서버 권한).
+	UE_LOG(LogTemp, Warning, TEXT("[RealityFractureCheat] Console exec — forwarding to server"));
+	Server_BossRealityFracture();
+}
+
+void AHellunaHeroController::Server_BossRealityFracture_Implementation()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[RealityFractureCheat] No world"));
+		return;
+	}
+
+	// 보스 lookup — 월드에서 첫 번째 AHellunaEnemyCharacter_Boss
+	AHellunaEnemyCharacter_Boss* Boss = nullptr;
+	for (TActorIterator<AHellunaEnemyCharacter_Boss> It(World); It; ++It)
+	{
+		Boss = *It;
+		if (IsValid(Boss)) break;
+	}
+	if (!Boss)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[RealityFractureCheat] Boss not found in world"));
+		return;
+	}
+
+	// GA BP 클래스 로드
+	const FString GAPath = TEXT("/Game/Enemy/BOSS/Patterns/RealityFracture/GA_RealityFracture.GA_RealityFracture_C");
+	UClass* GAClass = StaticLoadClass(UGameplayAbility::StaticClass(), nullptr, *GAPath);
+	if (!GAClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[RealityFractureCheat] Failed to load %s"), *GAPath);
+		return;
+	}
+
+	UAbilitySystemComponent* ASC = Boss->GetAbilitySystemComponent();
+	if (!ASC)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[RealityFractureCheat] Boss has no ASC"));
+		return;
+	}
+
+	// 이미 grant 됐는지 확인 — 없으면 grant
+	FGameplayAbilitySpec* ExistingSpec = ASC->FindAbilitySpecFromClass(GAClass);
+	if (!ExistingSpec)
+	{
+		FGameplayAbilitySpec NewSpec(GAClass, 1, INDEX_NONE, this);
+		ASC->GiveAbility(NewSpec);
+		UE_LOG(LogTemp, Warning, TEXT("[RealityFractureCheat] GA granted to %s"), *Boss->GetName());
+	}
+
+	// 즉시 발동
+	const bool bActivated = ASC->TryActivateAbilityByClass(GAClass, true);
+	UE_LOG(LogTemp, Warning, TEXT("[RealityFractureCheat] TryActivate result=%d, Boss=%s"),
+		bActivated ? 1 : 0, *Boss->GetName());
+}
+
+// =========================================================================================
+// [BossTimeDistortionCheat] 콘솔 발동 — 월드 첫 보스에 GA_Boss_Time grant + activate
+// =========================================================================================
+
+void AHellunaHeroController::BossTimeDistortion()
+{
+	UE_LOG(LogTemp, Warning, TEXT("[TimeDistortionCheat] Console exec — forwarding to server"));
+	Server_BossTimeDistortion();
+}
+
+void AHellunaHeroController::Server_BossTimeDistortion_Implementation()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[TimeDistortionCheat] No world"));
+		return;
+	}
+
+	AHellunaEnemyCharacter_Boss* Boss = nullptr;
+	for (TActorIterator<AHellunaEnemyCharacter_Boss> It(World); It; ++It)
+	{
+		Boss = *It;
+		if (IsValid(Boss)) break;
+	}
+	if (!Boss)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[TimeDistortionCheat] Boss not found in world"));
+		return;
+	}
+
+	const FString GAPath = TEXT("/Game/Enemy/BOSS/GA_Boss_Time.GA_Boss_Time_C");
+	UClass* GAClass = StaticLoadClass(UGameplayAbility::StaticClass(), nullptr, *GAPath);
+	if (!GAClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[TimeDistortionCheat] Failed to load %s"), *GAPath);
+		return;
+	}
+
+	UAbilitySystemComponent* ASC = Boss->GetAbilitySystemComponent();
+	if (!ASC)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[TimeDistortionCheat] Boss has no ASC"));
+		return;
+	}
+
+	FGameplayAbilitySpec* ExistingSpec = ASC->FindAbilitySpecFromClass(GAClass);
+	if (!ExistingSpec)
+	{
+		FGameplayAbilitySpec NewSpec(GAClass, 1, INDEX_NONE, this);
+		ASC->GiveAbility(NewSpec);
+		UE_LOG(LogTemp, Warning, TEXT("[TimeDistortionCheat] GA granted to %s"), *Boss->GetName());
+	}
+
+	const bool bActivated = ASC->TryActivateAbilityByClass(GAClass, true);
+	UE_LOG(LogTemp, Warning, TEXT("[TimeDistortionCheat] TryActivate result=%d, Boss=%s"),
+		bActivated ? 1 : 0, *Boss->GetName());
 }
 
 // =========================================================================================

@@ -437,9 +437,12 @@ void ATimeDistortionZone::FinishDetonation()
 				if (DamagedActors.Contains(Player)) continue;
 				DamagedActors.Add(Player);
 
-				UGameplayStatics::ApplyDamage(
+				const FVector HitFromDir = (Player->GetActorLocation() - GetActorLocation()).GetSafeNormal();
+				UGameplayStatics::ApplyPointDamage(
 					Player,
 					DetonationDamage,
+					HitFromDir,
+					FHitResult(),
 					OwnerEnemy->GetController(),
 					OwnerEnemy,
 					UDamageType::StaticClass()
@@ -540,6 +543,25 @@ void ATimeDistortionZone::SpawnNextOrb()
 	FVector SpawnLocation = FVector::ZeroVector;
 	bool bFoundClearLocation = false;
 
+	// LOS 체크용 — 가장 가까운 player 위치 찾기. 플레이어 → orb 까지 가시선이 막히면 총알도 막힘.
+	//   이 트레이스로 우주선 안/절벽 뒤 같은 위치를 거른다.
+	APawn* RefPlayer = nullptr;
+	{
+		float BestDistSq = TNumericLimits<float>::Max();
+		for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+		{
+			APlayerController* PC = It->Get();
+			if (!PC) continue;
+			APawn* P = PC->GetPawn();
+			if (!P) continue;
+			const float D = FVector::DistSquared(P->GetActorLocation(), CenterLocation);
+			if (D < BestDistSq) { BestDistSq = D; RefPlayer = P; }
+		}
+	}
+	const FVector PlayerEye = RefPlayer
+		? RefPlayer->GetActorLocation() + FVector(0, 0, 80.f)  // 대략 카메라 높이
+		: CenterLocation;
+
 	for (int32 Attempt = 0; Attempt < MaxAttempts; ++Attempt)
 	{
 		// 랜덤은 오직 거리/각도/높이 세 값에만 적용
@@ -557,13 +579,28 @@ void ATimeDistortionZone::SpawnNextOrb()
 
 		const bool bBlocked = World->OverlapAnyTestByObjectType(
 			Candidate, FQuat::Identity, ObjParams, ProbeShape, ProbeParams);
+		if (bBlocked) continue;
 
-		if (!bBlocked)
+		// LOS — player 시점에서 orb 까지 visibility line trace. 차단되면 총알도 막힘 → 슬롯 거부.
+		if (RefPlayer)
 		{
-			SpawnLocation = Candidate;
-			bFoundClearLocation = true;
-			break;
+			FHitResult LosHit;
+			FCollisionQueryParams LosParams(SCENE_QUERY_STAT(TDZ_OrbLOS), false);
+			LosParams.AddIgnoredActor(this);
+			if (OwnerEnemy) LosParams.AddIgnoredActor(OwnerEnemy);
+			LosParams.AddIgnoredActor(RefPlayer);
+			for (ATimeDistortionOrb* Existing : SpawnedOrbs)
+			{
+				if (IsValid(Existing)) LosParams.AddIgnoredActor(Existing);
+			}
+			const bool bLosBlocked = World->LineTraceSingleByChannel(
+				LosHit, PlayerEye, Candidate, ECC_Visibility, LosParams);
+			if (bLosBlocked) continue;  // 가시선 막힘 — 다음 시도
 		}
+
+		SpawnLocation = Candidate;
+		bFoundClearLocation = true;
+		break;
 	}
 
 	if (!bFoundClearLocation)
