@@ -686,6 +686,28 @@ void AHellunaEnemyCharacter_Boss::ReleaseDeathCinematicHold(const TCHAR* /*Reaso
 }
 
 // ============================================================
+// [BossDeathMeshLiftV1] 사망 몽타주 동안 SkelMesh Z lift — 누운 자세가 바닥 뚫는 문제 보정.
+//   Anim_FuturisticWarrior_death3 의 final pose 가 hand_l Z≈−10, foot_l Z≈−2 까지 내려가서
+//   mesh root(=floor) 기준 음수 영역에 본들이 위치 → 시각적으로 바닥 관통.
+//   여기서는 캡슐/콜리전 건드리지 않고 SkelMesh.RelativeLocation.Z 만 lerp 으로 +오프셋 적용.
+// ============================================================
+void AHellunaEnemyCharacter_Boss::Multicast_StartDeathMeshLift_Implementation()
+{
+	if (bDeathMeshLiftActive) return; // 중복 호출 방지
+
+	USkeletalMeshComponent* SkelMesh = GetMesh();
+	if (!SkelMesh) return;
+
+	SavedDeathMeshRelZ = SkelMesh->GetRelativeLocation().Z;
+	DeathMeshLiftElapsed = 0.f;
+	bDeathMeshLiftActive = true;
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[BossDeathMeshLiftV1] Start mesh Z lift — Auth=%d StartRelZ=%.2f Target=+%.2f over %.2fs"),
+		HasAuthority() ? 1 : 0, SavedDeathMeshRelZ, DeathMontageMeshZOffset, DeathMontageMeshLiftDuration);
+}
+
+// ============================================================
 // [HitStopV1] 히트 스톱
 // ============================================================
 void AHellunaEnemyCharacter_Boss::TriggerHitStop()
@@ -1230,6 +1252,23 @@ void AHellunaEnemyCharacter_Boss::Tick(float DeltaTime)
 				}
 				SkelMesh_Guard->SetRelativeLocation(FVector(CurRel.X, CurRel.Y, ExpectedZ));
 			}
+		}
+	}
+
+	// [BossDeathMeshLiftV1] 사망 몽타주 동안 SkelMesh.RelativeLocation.Z 를 0 → 오프셋으로 lerp.
+	//   Multicast_StartDeathMeshLift 가 set 하면 lerp duration 까지 lerp, 그 후 hold (보스는 dissolve 됨).
+	if (bDeathMeshLiftActive)
+	{
+		if (USkeletalMeshComponent* SkelMesh_Lift = GetMesh())
+		{
+			DeathMeshLiftElapsed += DeltaTime;
+			const float Dur = FMath::Max(KINDA_SMALL_NUMBER, DeathMontageMeshLiftDuration);
+			const float Alpha = FMath::Clamp(DeathMeshLiftElapsed / Dur, 0.f, 1.f);
+			const float CurOffset = FMath::Lerp(0.f, DeathMontageMeshZOffset, Alpha);
+			FVector NewRel = SkelMesh_Lift->GetRelativeLocation();
+			NewRel.Z = SavedDeathMeshRelZ + CurOffset;
+			SkelMesh_Lift->SetRelativeLocation(NewRel);
+			// Alpha 1 도달 후에도 매 tick 같은 값으로 hold — 외부 reset 방지 (SummonSinkTickGuard 와 동일 컨셉).
 		}
 	}
 

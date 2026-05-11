@@ -77,12 +77,41 @@ public:
 		meta = (DisplayName = "Destroy 보류 Failsafe (초)", ClampMin = "0.5", ClampMax = "60.0"))
 	float DeathCinematicHoldDuration = 15.f;
 
+	/**
+	 * [BossDeathMeshLiftV1] 사망 몽타주 재생 동안 SkelMesh.RelativeLocation.Z 에 더할 최종 오프셋 (cm).
+	 *   AM_Boss_Death (Anim_FuturisticWarrior_death3) 의 누운 자세에서 spine/hand 본이 mesh root(=바닥)
+	 *   기준 약 −10cm 까지 내려가는 authored data 보정 — 콜리전 캡슐 영향 없는 시각 전용 값.
+	 *   GA_BossDeath::ActivateAbility 가 Multicast_StartDeathMeshLift 를 호출하면
+	 *   Tick 에서 LiftDuration 동안 0 → 이 값으로 lerp 후 유지 (보스는 dissolve 되므로 revert 없음).
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|사망 시네마틱",
+		meta = (DisplayName = "사망 몽타주 SkelMesh Z 리프트 (cm)", ClampMin = "0.0", ClampMax = "50.0"))
+	float DeathMontageMeshZOffset = 15.f;
+
+	/**
+	 * [BossDeathMeshLiftV1] 0 → DeathMontageMeshZOffset 으로 lerp 하는 시간 (초).
+	 *   기본값 1.17 = AM_Boss_Death 의 임팩트(누운 자세 진입) 시점 (frame 28 @ 24fps).
+	 *   캐릭터가 서있다 쓰러지는 동안 천천히 mesh 가 올라가서 누운 자세에서 정확히 +오프셋 도달.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|사망 시네마틱",
+		meta = (DisplayName = "사망 Z 리프트 보간 시간 (초)", ClampMin = "0.0", ClampMax = "5.0"))
+	float DeathMontageMeshLiftDuration = 1.17f;
+
+	/** [BossDeathMeshLiftV1] 모든 머신에서 mesh Z lift lerp 시작 — GA_BossDeath 가 server 측에서 호출. */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_StartDeathMeshLift();
+
 private:
 	/** Destroy hold 활성 플래그 (true 인 동안 DespawnMassEntityOnServer 보류). */
 	bool bDeathCinematicHoldActive = false;
 
 	/** Hold failsafe timer. */
 	FTimerHandle DeathCinematicHoldTimer;
+
+	/** [BossDeathMeshLiftV1] lerp 진행 플래그 / 누적 시간 / 시작 시점 SkelMesh.RelZ 백업. */
+	bool bDeathMeshLiftActive = false;
+	float DeathMeshLiftElapsed = 0.f;
+	float SavedDeathMeshRelZ = 0.f;
 
 	/** [BossDeathCinematicV1] 사망 몽타주 종료 신호 (서버 AnimInstance OnMontageEnded). */
 	UFUNCTION()

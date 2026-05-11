@@ -70,6 +70,14 @@ void UEnemyGameplayAbility_BossDeath::ActivateAbility(
 		TEXT("[BossDeathV1] Montage task started — Length=%.2f"),
 		DeathMontage->GetPlayLength());
 
+	// [BossDeathMeshLiftV1] 사망 몽타주 누운 자세에서 spine/hand 본이 mesh root(=floor) 아래로
+	//   내려가는 authored data 보정 — SkelMesh.RelativeLocation.Z 를 lerp 으로 lift. Multicast 라
+	//   모든 머신(서버/리슨/리모트)에서 동일하게 적용.
+	if (AHellunaEnemyCharacter_Boss* BossLift = Cast<AHellunaEnemyCharacter_Boss>(Enemy))
+	{
+		BossLift->Multicast_StartDeathMeshLift();
+	}
+
 	// [BossEarlyHideV1] 사망 몽타주의 85% 시점에 mesh hide — 마지막 frame (idle locomotion 으로
 	//   transition 직전) 도달 전에 사라짐. position/length fraction 사용 → actor TimeDilation
 	//   슬로우 영향 안 받음 (anim time 기준).
