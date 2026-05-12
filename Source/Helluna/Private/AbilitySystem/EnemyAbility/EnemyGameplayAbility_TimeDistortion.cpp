@@ -64,7 +64,9 @@ void UEnemyGameplayAbility_TimeDistortion::ActivateAbility(
 
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
 
+	// [TDEndSyncV1] 몽타주 종료 / 패턴 종료 둘 다 충족돼야 GA 종료.
 	bPatternFinished = false;
+	bMontageFinished = false;
 
 	AHellunaEnemyCharacter* Enemy = GetEnemyCharacterFromActorInfo();
 	if (!Enemy)
@@ -106,6 +108,16 @@ void UEnemyGameplayAbility_TimeDistortion::ActivateAbility(
 			MontageTask->OnInterrupted.AddDynamic(this, &UEnemyGameplayAbility_TimeDistortion::OnMontageCancelled);
 			MontageTask->ReadyForActivation();
 		}
+		else
+		{
+			// 태스크 생성 실패 — 몽타주 조건은 즉시 충족 처리 (GA 가 영원히 안 끝나는 것 방지)
+			bMontageFinished = true;
+		}
+	}
+	else
+	{
+		// [TDEndSyncV1] CastMontage 가 비어있으면 몽타주 종료 조건을 즉시 충족으로 본다.
+		bMontageFinished = true;
 	}
 
 	// Zone 스폰 (비활성 상태로)
@@ -180,9 +192,10 @@ void UEnemyGameplayAbility_TimeDistortion::ActivateZone()
 // ─────────────────────────────────────────────────────────────
 void UEnemyGameplayAbility_TimeDistortion::OnPatternFinished(bool bWasBroken)
 {
-	TD_LOG("OnPatternFinished: bWasBroken=%s", bWasBroken ? TEXT("TRUE") : TEXT("FALSE"));
+	TD_LOG("OnPatternFinished: bWasBroken=%s, bMontageFinished=%s",
+		bWasBroken ? TEXT("TRUE") : TEXT("FALSE"), bMontageFinished ? TEXT("TRUE") : TEXT("FALSE"));
 	bPatternFinished = true;
-	HandleFinished(false);
+	TryFinishIfReady();
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -191,25 +204,33 @@ void UEnemyGameplayAbility_TimeDistortion::OnPatternFinished(bool bWasBroken)
 void UEnemyGameplayAbility_TimeDistortion::OnMontageCompleted()
 {
 	TD_LOG("OnMontageCompleted: bPatternFinished=%s", bPatternFinished ? TEXT("TRUE") : TEXT("FALSE"));
-
-	// 몽타주가 끝나도 패턴이 진행 중이면 무조건 대기
-	if (bPatternFinished)
-	{
-		HandleFinished(false);
-	}
-	// else: 패턴 종료 콜백(OnPatternFinished)이 올 때까지 GA 유지
+	bMontageFinished = true;
+	TryFinishIfReady();
 }
 
 void UEnemyGameplayAbility_TimeDistortion::OnMontageCancelled()
 {
 	TD_LOG("OnMontageCancelled: bPatternFinished=%s", bPatternFinished ? TEXT("TRUE") : TEXT("FALSE"));
+	bMontageFinished = true;
+	TryFinishIfReady();
+}
 
-	// 몽타주가 취소되어도 패턴이 진행 중이면 무조건 대기
-	if (bPatternFinished)
+// ─────────────────────────────────────────────────────────────
+// [TDEndSyncV1] TryFinishIfReady — 몽타주 종료 + 패턴 종료 가 모두 충족됐을 때만 GA 종료
+//   둘 중 먼저 끝난 쪽은 나머지가 끝날 때까지 대기 (보스 이동 잠금 유지).
+// ─────────────────────────────────────────────────────────────
+void UEnemyGameplayAbility_TimeDistortion::TryFinishIfReady()
+{
+	if (bPatternFinished && bMontageFinished)
 	{
+		TD_LOG("TryFinishIfReady: 몽타주 + 패턴 모두 종료 → GA 종료");
 		HandleFinished(false);
 	}
-	// else: 패턴 종료 콜백이 올 때까지 GA 유지 — 보스는 이동 잠금 상태 유지
+	else
+	{
+		TD_LOG("TryFinishIfReady: 대기 중 — Pattern=%s, Montage=%s",
+			bPatternFinished ? TEXT("DONE") : TEXT("..."), bMontageFinished ? TEXT("DONE") : TEXT("..."));
+	}
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -276,6 +297,7 @@ void UEnemyGameplayAbility_TimeDistortion::EndAbility(
 	}
 
 	bPatternFinished = false;
+	bMontageFinished = false;
 
 	// 쿨타임 시작 시점 기록
 	if (ActorInfo && ActorInfo->AvatarActor.IsValid())

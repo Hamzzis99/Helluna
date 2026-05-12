@@ -105,6 +105,9 @@ private:
 	UFUNCTION()
 	void OnMontageCancelled();
 
+	/** [TDEndSyncV1] 몽타주 종료 + 패턴(Zone) 종료 가 모두 충족되면 GA 종료 */
+	void TryFinishIfReady();
+
 	void HandleFinished(bool bWasCancelled);
 
 	// =========================================================
@@ -115,7 +118,12 @@ private:
 	TObjectPtr<ABossPatternZoneBase> SpawnedZone = nullptr;
 
 	FTimerHandle ZoneActivateTimerHandle;
+
+	/** Zone 패턴이 끝났는가 (OnPatternFinished) */
 	bool bPatternFinished = false;
+
+	/** [TDEndSyncV1] 시전 몽타주가 끝났는가 (완료/취소/인터럽트, 또는 CastMontage 가 null) */
+	bool bMontageFinished = false;
 
 	/** 마지막 GA 종료 시점 (월드 시간) — 쿨타임 계산용 */
 	double LastAbilityEndTime = -9999.0;
