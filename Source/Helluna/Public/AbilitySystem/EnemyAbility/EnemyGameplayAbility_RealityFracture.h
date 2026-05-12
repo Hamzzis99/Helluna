@@ -7,6 +7,7 @@
 #include "EnemyGameplayAbility_RealityFracture.generated.h"
 
 class ABossPatternZoneBase;
+class AStasisSalvoOrb;
 class UNiagaraSystem;
 
 /**
@@ -45,11 +46,30 @@ public:
 	TObjectPtr<UAnimMontage> CastMontage = nullptr;
 
 	/**
-	 * 몽타주 시작 후 Zone 활성화까지 딜레이 (초). 몽타주 None 이면 무시되고 0 으로 처리.
+	 * [StasisSalvoV2] 몽타주 시작 → 구체(StasisSalvoOrb) 발사까지 딜레이 (초). 몽타주 None 이면 0.
+	 *   (OrbClass 가 None 이면 구체 없이 이 딜레이 후 곧장 Zone 활성화 = 구버전 동작)
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "현실 균열",
-		meta = (DisplayName = "Zone 활성화 딜레이 (초)", ClampMin = "0.0", ClampMax = "5.0"))
+		meta = (DisplayName = "구체 발사 딜레이 (초)", ClampMin = "0.0", ClampMax = "5.0"))
 	float ZoneActivateDelay = 0.4f;
+
+	/**
+	 * [StasisSalvoV2] fire 타이밍에 보스가 발사하는 구체 클래스 (BP_StasisSalvoOrb 등).
+	 *   구체가 충돌/최대거리 도달 시 시간정지 존을 발동. None 이면 구체 없이 곧장 존 활성화.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "현실 균열",
+		meta = (DisplayName = "발사 구체 클래스"))
+	TSubclassOf<AStasisSalvoOrb> OrbClass;
+
+	/** 구체 발사 위치 — 보스 ActorLocation 기준 Forward 오프셋 (cm) */
+	UPROPERTY(EditDefaultsOnly, Category = "현실 균열",
+		meta = (DisplayName = "구체 발사 Forward 오프셋 (cm)", ClampMin = "-200.0", ClampMax = "500.0"))
+	float OrbLaunchForwardOffset = 60.f;
+
+	/** 구체 발사 위치 — 보스 ActorLocation 기준 Height 오프셋 (cm) */
+	UPROPERTY(EditDefaultsOnly, Category = "현실 균열",
+		meta = (DisplayName = "구체 발사 Height 오프셋 (cm)", ClampMin = "-100.0", ClampMax = "300.0"))
+	float OrbLaunchHeightOffset = 60.f;
 
 	/** 패턴 지속 시간 (초). Zone 의 시퀀스가 이 시간 이상이면 timer 가 자동 강제 종료. */
 	UPROPERTY(EditDefaultsOnly, Category = "현실 균열",
@@ -83,8 +103,8 @@ protected:
 		bool bWasCancelled) override;
 
 private:
-	/** Zone 활성화 — 딜레이 후 호출 */
-	void ActivateZone();
+	/** [StasisSalvoV2] 딜레이 후 호출 — OrbClass 가 있으면 구체 발사, 없으면 곧장 Zone 활성화. */
+	void LaunchOrbOrActivateZone();
 
 	/** Zone 패턴 종료 콜백 */
 	UFUNCTION()
@@ -106,7 +126,12 @@ private:
 	TObjectPtr<ABossPatternZoneBase> SpawnedZone = nullptr;
 
 	FTimerHandle ZoneActivateTimerHandle;
+
+	/** Zone 패턴이 끝났는가 (OnPatternFinished) */
 	bool bPatternFinished = false;
+
+	/** [TDEndSyncV1] 시전 몽타주가 끝났는가 (완료/취소/인터럽트, 또는 CastMontage 가 null) */
+	bool bMontageFinished = false;
 
 	/** 마지막 GA 종료 시점 (월드 시간) — 쿨타임 계산용 */
 	double LastAbilityEndTime = -9999.0;

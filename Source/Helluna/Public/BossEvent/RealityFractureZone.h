@@ -53,19 +53,36 @@ public:
 	virtual void ActivateZone() override;
 	virtual void DeactivateZone() override;
 
+	/**
+	 * [StasisSalvoV2] 다음 ActivateZone 의 stasis 중심을 강제 지정 (StasisSalvoOrb 가 burst 위치로 호출).
+	 *   미설정 시 종전대로 가장 가까운 플레이어 위치 사용. 1회용 — ActivateZone/DeactivateZone 에서 소비/리셋.
+	 *   주: 분신 aim target 도 이 위치를 씀 — 보통 orb 가 플레이어 근처에서 burst 하므로 ≈플레이어.
+	 */
+	void SetStasisCenterOverride(const FVector& WorldLoc) { bHasStasisCenterOverride = true; StasisCenterOverride = WorldLoc; }
+
 	// =========================================================
 	// Phase A — 시전 / 시퀀스 길이
 	// =========================================================
 
 	/** 분신 수 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Stasis|시퀀스",
-		meta = (DisplayName = "분신 수", ClampMin = "1", ClampMax = "10"))
+		meta = (DisplayName = "분신 수", ClampMin = "1", ClampMax = "16"))
 	int32 DecoyCount = 5;
 
-	/** 분신 spawn 간격 (시간 정지 동안의 게임 시간 기준 — TD 0.05 시 wall-clock 으로 보면 매우 짧음) */
+	/** 첫 분신 spawn 간격 (이후 점점 빨라짐 — DecoySpawnIntervalAccel 참고). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Stasis|시퀀스",
-		meta = (DisplayName = "분신 spawn 간격 (초)", ClampMin = "0.05", ClampMax = "2.0"))
+		meta = (DisplayName = "분신 spawn 첫 간격 (초)", ClampMin = "0.05", ClampMax = "2.0"))
 	float DecoySpawnInterval = 0.4f;
+
+	/** 분신 spawn 간격이 한 명 나올 때마다 곱해지는 배율 (<1 이면 점점 빨라짐). 0.78 ≈ 매번 22% 짧아짐. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Stasis|시퀀스",
+		meta = (DisplayName = "분신 spawn 가속 배율 (<1=점점 빨라짐)", ClampMin = "0.3", ClampMax = "1.0"))
+	float DecoySpawnIntervalAccel = 0.78f;
+
+	/** 가속 후 spawn 간격 하한 (초) — 너무 빨라져서 한꺼번에 나오는 것 방지. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Stasis|시퀀스",
+		meta = (DisplayName = "분신 spawn 간격 하한 (초)", ClampMin = "0.02", ClampMax = "1.0"))
+	float DecoySpawnIntervalMin = 0.06f;
 
 	/** 시전 외침 → 시간 정지 시작까지 대기 (초, 정상 시간) */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Stasis|시퀀스",
@@ -76,10 +93,11 @@ public:
 	 * [ZoneExpandPhaseV1] 시간 정지 시작 → 존 visual 완전 확장까지 (real-second).
 	 *   이 phase 동안: dome+PP 가 0→max 로 커짐. **카메라 풀백 / 분신 spawn 은 일어나지 않음.**
 	 *   확장 끝나야 카메라 풀백 + 분신 spawn 시작 — "존이 다 커진 후 분신 등장" 시퀀스.
+	 *   [StasisSalvoV2] 짧게(빠르게) — dome 반경이 2배(ZoneVisualRadiusMul≈2.3)이므로 확장 속도도 그만큼 빨라야 자연스러움.
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Stasis|시퀀스",
 		meta = (DisplayName = "존 확장 길이 (real sec)", ClampMin = "0.1", ClampMax = "5.0"))
-	float ZoneExpandDuration = 1.5f;
+	float ZoneExpandDuration = 0.7f;
 
 	/** 마지막 분신 spawn 후 → 시간 정지 해제까지 추가 idle (초) */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Stasis|시퀀스",
@@ -468,6 +486,13 @@ private:
 
 	/** zone expand 시작 시각 (wall-clock real seconds). */
 	float ZoneExpandStartRealTime = 0.f;
+
+	/** [StasisSalvoV2 fix] dome ramp 완료 로그 1회용 (zone actor 당). */
+	bool bLoggedDomeRamp = false;
+
+	/** [StasisSalvoV2] StasisSalvoOrb 가 지정한 stasis 중심 (burst 위치). bHasStasisCenterOverride 시 사용. */
+	bool bHasStasisCenterOverride = false;
+	FVector StasisCenterOverride = FVector::ZeroVector;
 
 	// =========================================================
 	// [AimLineChargeV1] Charge ramp 추적 — 각 머신 로컬

@@ -7,7 +7,11 @@
 #include "GameplayTagContainer.h"
 
 #include "BossEvent/BossPatternZoneBase.h"
+#include "BossEvent/StasisSalvoOrb.h"
 #include "Character/HellunaEnemyCharacter.h"
+#include "Engine/World.h"
+#include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerController.h"
 
 #define RF_LOG(Fmt, ...) UE_LOG(LogTemp, Warning, TEXT("[RealityFracture] " Fmt), ##__VA_ARGS__)
 
@@ -56,7 +60,9 @@ void UEnemyGameplayAbility_RealityFracture::ActivateAbility(
 
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
 
+	// [TDEndSyncV1] 몽타주 종료 + 패턴 종료 둘 다 충족돼야 GA 종료.
 	bPatternFinished = false;
+	bMontageFinished = false;
 
 	AHellunaEnemyCharacter* Enemy = GetEnemyCharacterFromActorInfo();
 	if (!Enemy)
@@ -88,6 +94,14 @@ void UEnemyGameplayAbility_RealityFracture::ActivateAbility(
 			MontageTask->OnInterrupted.AddDynamic(this, &UEnemyGameplayAbility_RealityFracture::OnMontageCancelled);
 			MontageTask->ReadyForActivation();
 		}
+		else
+		{
+			bMontageFinished = true; // 태스크 생성 실패 — 몽타주 조건 즉시 충족
+		}
+	}
+	else
+	{
+		bMontageFinished = true; // 몽타주 없음 → 즉시 충족
 	}
 
 	if (PatternZoneClass)
@@ -129,32 +143,96 @@ void UEnemyGameplayAbility_RealityFracture::ActivateAbility(
 			World->GetTimerManager().SetTimer(
 				ZoneActivateTimerHandle,
 				this,
-				&UEnemyGameplayAbility_RealityFracture::ActivateZone,
+				&UEnemyGameplayAbility_RealityFracture::LaunchOrbOrActivateZone,
 				DelayTime,
 				false
 			);
 		}
 		else
 		{
-			ActivateZone();
+			LaunchOrbOrActivateZone();
 		}
 	}
 
 	RF_LOG("=== ActivateAbility END ===");
 }
 
-void UEnemyGameplayAbility_RealityFracture::ActivateZone()
+// ─────────────────────────────────────────────────────────────
+// [StasisSalvoV2] 구체 발사 (또는 OrbClass 없으면 곧장 Zone 활성화)
+// ─────────────────────────────────────────────────────────────
+void UEnemyGameplayAbility_RealityFracture::LaunchOrbOrActivateZone()
 {
-	RF_LOG("ActivateZone called");
-	if (SpawnedZone)
+	RF_LOG("LaunchOrbOrActivateZone — SpawnedZone=%s, OrbClass=%s",
+		*GetNameSafe(SpawnedZone), *GetNameSafe(OrbClass));
+
+	if (!SpawnedZone)
 	{
+		RF_LOG("LaunchOrb — SpawnedZone null, abort");
+		return;
+	}
+
+	AHellunaEnemyCharacter* Enemy = GetEnemyCharacterFromActorInfo();
+	UWorld* World = Enemy ? Enemy->GetWorld() : nullptr;
+
+	if (!OrbClass || !Enemy || !World)
+	{
+		// 구버전 동작 — 구체 없이 곧장 존 활성화.
+		RF_LOG("LaunchOrb — OrbClass/Enemy/World 없음 → 곧장 ActivateZone (OrbClass=%s)", *GetNameSafe(OrbClass));
+		SpawnedZone->ActivateZone();
+		return;
+	}
+
+	const FVector LaunchLoc = Enemy->GetActorLocation()
+		+ Enemy->GetActorForwardVector() * OrbLaunchForwardOffset
+		+ FVector(0.f, 0.f, OrbLaunchHeightOffset);
+
+	// 방향 = 가장 가까운 플레이어 폰 향해. 없으면 보스 forward.
+	FVector Dir = Enemy->GetActorForwardVector();
+	{
+		APawn* Best = nullptr;
+		float BestSq = TNumericLimits<float>::Max();
+		for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+		{
+			APlayerController* PC = It->Get();
+			if (!PC) continue;
+			APawn* P = PC->GetPawn();
+			if (!P) continue;
+			const float D = FVector::DistSquared(P->GetActorLocation(), LaunchLoc);
+			if (D < BestSq) { BestSq = D; Best = P; }
+		}
+		if (Best)
+		{
+			const FVector ToTarget = Best->GetActorLocation() - LaunchLoc;
+			if (!ToTarget.IsNearlyZero()) { Dir = ToTarget.GetSafeNormal(); }
+		}
+	}
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = Enemy;
+	SpawnParams.Instigator = Enemy;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	AStasisSalvoOrb* Orb = World->SpawnActor<AStasisSalvoOrb>(OrbClass, LaunchLoc, Dir.Rotation(), SpawnParams);
+	if (Orb)
+	{
+		Orb->Init(Enemy, SpawnedZone, Dir);
+		RF_LOG("LaunchOrb — %s launched from %s, dir=%s", *Orb->GetName(), *LaunchLoc.ToString(), *Dir.ToString());
+	}
+	else
+	{
+		RF_LOG("LaunchOrb — orb spawn 실패 → 곧장 ActivateZone");
 		SpawnedZone->ActivateZone();
 	}
 }
 
+// [StasisSalvoV2] GA 종료조건 = "패턴(Zone) 종료" 하나. 보스는 ActivateAbility 의 LockMovementAndFaceTarget
+//   부터 EndAbility 의 UnlockMovement 까지 줄곧 이동 락 상태 — 즉 발사 애니가 끝나든 말든(시간정지로
+//   anim rate 0 되어 안 끝날 수도 있음) 패턴이 끝날 때까지 보스는 다른 행동을 못 함. 요구사항 충족.
+//   (montage 종료를 GA 종료조건에 넣으면 시간정지로 montage 가 frozen 돼서 GA 가 ~수 초 idle 됨 → 안 넣음)
 void UEnemyGameplayAbility_RealityFracture::OnPatternFinished(bool bWasBroken)
 {
-	RF_LOG("OnPatternFinished: bWasBroken=%s", bWasBroken ? TEXT("TRUE") : TEXT("FALSE"));
+	RF_LOG("OnPatternFinished: bWasBroken=%s, bMontageFinished=%s",
+		bWasBroken ? TEXT("TRUE") : TEXT("FALSE"), bMontageFinished ? TEXT("TRUE") : TEXT("FALSE"));
 	bPatternFinished = true;
 	HandleFinished(false);
 }
@@ -162,6 +240,8 @@ void UEnemyGameplayAbility_RealityFracture::OnPatternFinished(bool bWasBroken)
 void UEnemyGameplayAbility_RealityFracture::OnMontageCompleted()
 {
 	RF_LOG("OnMontageCompleted: bPatternFinished=%s", bPatternFinished ? TEXT("TRUE") : TEXT("FALSE"));
+	bMontageFinished = true;
+	// 패턴이 이미 끝났는데도 montage 가 늦게 끝난 경우(거의 없음)에만 여기서 종료. 보통은 OnPatternFinished 가 먼저.
 	if (bPatternFinished)
 	{
 		HandleFinished(false);
@@ -171,6 +251,7 @@ void UEnemyGameplayAbility_RealityFracture::OnMontageCompleted()
 void UEnemyGameplayAbility_RealityFracture::OnMontageCancelled()
 {
 	RF_LOG("OnMontageCancelled: bPatternFinished=%s", bPatternFinished ? TEXT("TRUE") : TEXT("FALSE"));
+	bMontageFinished = true;
 	if (bPatternFinished)
 	{
 		HandleFinished(false);
@@ -228,6 +309,7 @@ void UEnemyGameplayAbility_RealityFracture::EndAbility(
 	}
 
 	bPatternFinished = false;
+	bMontageFinished = false;
 
 	if (ActorInfo && ActorInfo->AvatarActor.IsValid())
 	{

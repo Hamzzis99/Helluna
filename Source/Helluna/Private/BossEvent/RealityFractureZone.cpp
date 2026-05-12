@@ -157,10 +157,21 @@ void ARealityFractureZone::ActivateZone()
 		}
 	}
 
-	// player 시작 위치 record (시간 정지 동안 player 안 움직임)
+	// stasis 중심 — StasisSalvoOrb 가 burst 위치를 지정했으면 그걸 쓰고(= "총알이 부딪힌 자리에서 존이 피어남"),
+	//   아니면 종전대로 가장 가까운 플레이어 위치. (orb 는 보통 플레이어 근처에서 burst 하므로 ≈플레이어)
 	APawn* Player = FindClosestPlayerPawn();
-	const FVector PlayerLoc = Player ? Player->GetActorLocation() : GetActorLocation();
-	RFZ_LOG("[Phase A] Stasis center (player loc) = %s", *PlayerLoc.ToString());
+	FVector PlayerLoc;
+	if (bHasStasisCenterOverride)
+	{
+		PlayerLoc = StasisCenterOverride;
+		bHasStasisCenterOverride = false; // 1회용
+		RFZ_LOG("[Phase A] Stasis center (orb burst override) = %s", *PlayerLoc.ToString());
+	}
+	else
+	{
+		PlayerLoc = Player ? Player->GetActorLocation() : GetActorLocation();
+		RFZ_LOG("[Phase A] Stasis center (player loc) = %s", *PlayerLoc.ToString());
+	}
 
 	// 모든 머신: 시간 정지 시작 (존 visual 확장만 시작, 카메라/분신은 아직 X)
 	Multicast_StartStasis(PlayerLoc);
@@ -190,6 +201,7 @@ void ARealityFractureZone::DeactivateZone()
 	bStasisActive = false;
 	bZoneExpanding = false;
 	bAimLineRampActive = false;
+	bHasStasisCenterOverride = false;
 
 	if (UWorld* W = GetWorld())
 	{
@@ -376,15 +388,19 @@ void ARealityFractureZone::ServerSpawnNextDecoy()
 	{
 		if (CurrentDecoyIndex < DecoyCount)
 		{
-			// 다음 spawn 까지 간격 — 0.4× ~ 1.6× 랜덤 variance. 같은 interval 로 균일하게 spawn 안 되고
-			//   텔레포트처럼 들쭉날쭉 unpredictable 하게 등장. (LC touch)
-			const float IntervalVariance = FMath::FRandRange(0.4f, 1.6f);
-			const float ActualInterval = DecoySpawnInterval * IntervalVariance;
+			// [StasisSalvoV2] 다음 spawn 간격 — 한 명 나올 때마다 점점 빨라짐 (DecoySpawnInterval × accel^(N-1)),
+			//   하한 DecoySpawnIntervalMin. 거기에 ±25% 랜덤만 살짝 얹어 약간 들쭉날쭉.
+			const int32 Exp = FMath::Max(0, CurrentDecoyIndex - 1);
+			const float AccelMul = FMath::Pow(FMath::Clamp(DecoySpawnIntervalAccel, 0.1f, 1.f), static_cast<float>(Exp));
+			float BaseInterval = FMath::Max(DecoySpawnInterval * AccelMul, DecoySpawnIntervalMin);
+			const float ActualInterval = BaseInterval * FMath::FRandRange(0.75f, 1.25f);
 			W->GetTimerManager().SetTimer(
 				DecoySpawnTimer, this,
 				&ARealityFractureZone::ServerSpawnNextDecoy,
 				StasisAdjustedDelay(ActualInterval), false
 			);
+			RFZ_LOG("[Decoy] next #%d in %.2fs (base=%.2f, accel^%d=%.2f)",
+				CurrentDecoyIndex + 1, ActualInterval, BaseInterval, Exp, AccelMul);
 		}
 		else
 		{
@@ -986,14 +1002,14 @@ void ARealityFractureZone::LocalActivatePostProcess()
 	StasisPPMID = UMaterialInstanceDynamic::Create(StasisPostProcessMaterial, this);
 	if (!StasisPPMID) return;
 
-	// M_PP_TimeDistortion 은 zone-aware desaturation — ZoneCenter/Radius/Strength/EdgeSoftness 필수.
-	// LastStasisCenter 는 Multicast_StartStasis 에서 record (player 중심)
+	// [PPScreenRadialV2] M_PP_StasisSalvo = screen-space radial desat/tint (Charge 0..1 로 화면 중앙→외곽 채움).
+	//   유저가 좋아한 "전의 색". world-space ZoneCenter/Radius 도 backward-compat 으로 set 하지만 화면 효과는
+	//   Charge 가 지배. Charge 는 Tick 에서 dome ramp(0→1) 와 동일 alpha 로 갱신 → 펴지는 느낌 유지.
 	const FVector Center = LastStasisCenter;
 	const float Radius = DecoyRingRadius * ZoneVisualRadiusMul;
 	StasisPPMID->SetVectorParameterValue(FName("ZoneCenter"), FLinearColor(Center.X, Center.Y, Center.Z));
-	// [PPZoneExpandV1] ZoneRadius 시작 0 — Tick 에서 시간 따라 0 → max ramp (퍼져나가는 효과).
-	//   target max = DecoyRingRadius × ZoneVisualRadiusMul (zone 외곽 살짝 넘게).
 	StasisPPMID->SetScalarParameterValue(FName("ZoneRadius"), 0.f);
+	StasisPPMID->SetScalarParameterValue(FName("Charge"), 0.f);
 	StasisPPMID->SetScalarParameterValue(FName("Strength"), 0.9f);
 	StasisPPMID->SetScalarParameterValue(FName("EdgeSoftness"), 150.f);
 
@@ -1003,7 +1019,7 @@ void ARealityFractureZone::LocalActivatePostProcess()
 	PostProcessComp->BlendWeight = 1.f;
 	PostProcessComp->bEnabled = true;
 
-	RFZ_LOG("[PP] Desaturation activated — Center=%s, Radius=%.0f", *Center.ToString(), Radius);
+	RFZ_LOG("[PP] StasisSalvo screen-radial activated — Center=%s, Radius=%.0f", *Center.ToString(), Radius);
 }
 
 void ARealityFractureZone::LocalDeactivatePostProcess()
@@ -1143,13 +1159,10 @@ void ARealityFractureZone::LocalSpawnGhostMesh(FVector WorldLoc, FRotator WorldR
 				LineComp->SetMobility(EComponentMobility::Movable);
 				LineComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 				LineComp->SetCastShadow(false);
-				// [AimLineStencilV1] 첫 frame 회색 방지 — RegisterComponent 전에 stencil 미리 set + render state dirty.
-				//   stencil 1 = M_PP_TimeDistortion 의 desat 면제 영역. 등록 후 즉시 stencil buffer 반영.
-				LineComp->SetRenderCustomDepth(true);
-				LineComp->SetCustomDepthStencilValue(1);
+				// [PPScreenRadialV2] PP 가 M_PP_StasisSalvo (screen-space radial) 로 복귀 — world-space stencil 면제
+				//   불필요. CustomDepth 켜면 main 의 M_TeamOutline_PP 가 분신/에임라인에 외곽선을 그려서 끔.
 				LineComp->RegisterComponent();
 				LineComp->AttachToComponent(GhostComp, FAttachmentTransformRules::KeepRelativeTransform);
-				LineComp->MarkRenderStateDirty();
 
 				if (AimLineMaterial)
 				{
@@ -1207,18 +1220,8 @@ void ARealityFractureZone::LocalSpawnGhostMesh(FVector WorldLoc, FRotator WorldR
 		UNiagaraFunctionLibrary::SpawnSystemAtLocation(W, DecoySpawnVFX, WorldLoc, WorldRot);
 	}
 
-	// PP zone-aware desaturation 면제 — TimeDistortionZone 패턴: stencil value 1.
-	//   M_PP_TimeDistortion 가 stencil 비교로 zone 안 actor 중 stencil=1 면 색 유지.
-	{
-		TArray<UPrimitiveComponent*> Prims;
-		Ghost->GetComponents<UPrimitiveComponent>(Prims);
-		for (UPrimitiveComponent* Prim : Prims)
-		{
-			if (!Prim) continue;
-			Prim->SetRenderCustomDepth(true);
-			Prim->SetCustomDepthStencilValue(1);
-		}
-	}
+	// [PPScreenRadialV2] PP 가 screen-space radial 로 복귀 — 분신에 CustomDepth 안 켬.
+	//   (켜면 main 의 팀 외곽선 PP 가 분신을 아군처럼 외곽선 처리해서 "테두리" 생김.)
 
 	Ghost->SetLifeSpan(GhostLifetime);
 	LocalGhostActors.Add(Ghost);
@@ -1264,8 +1267,11 @@ void ARealityFractureZone::Tick(float DeltaTime)
 		ZoneAlpha = FMath::Clamp(ZElapsed / ZDur, 0.f, 1.f);
 	}
 
-	// stasis active 동안에는 dome / PP 시각 유지가 필요. bStasisActive 가 false 가 되면 stop.
-	if (bStasisActive)
+	// [StasisSalvoV2 fix] dome / PP 시각 ramp 는 dome mesh 나 PP MID 가 살아있는 동안 유지.
+	//   (기존엔 bStasisActive 로 게이트했는데 그건 서버에서만 true → 클라/listen-server 클라뷰에선
+	//    dome 이 KINDA_SMALL_NUMBER scale 그대로 = 안 보이고, PP Charge ramp 도 안 돌아 색 변화 안 됨.
+	//    ZoneVisualMeshComp / StasisPPMID 는 Multicast_StartStasis 에서 모든 머신이 만들고 Cleanup 에서 파괴.)
+	if (ZoneVisualMeshComp.Get() != nullptr || StasisPPMID != nullptr)
 	{
 		const float ZoneRadiusMax = DecoyRingRadius * FMath::Max(0.1f, ZoneVisualRadiusMul);
 
@@ -1285,6 +1291,13 @@ void ARealityFractureZone::Tick(float DeltaTime)
 			const float TargetWorldRadius = FMath::Max(KINDA_SMALL_NUMBER, ZoneRadiusMax * ZoneAlpha);
 			const float DomeScale = TargetWorldRadius / UnitRadius;
 			ZoneVisualMeshComp->SetWorldScale3D(FVector(DomeScale));
+
+			if (!bLoggedDomeRamp && ZoneAlpha >= 0.99f)
+			{
+				bLoggedDomeRamp = true;
+				UE_LOG(LogTemp, Warning, TEXT("[StasisSalvo] [DomeRamp] full — Auth=%d, DomeScale=%.3f, WorldRadius=%.0f, UnitRadius=%.1f"),
+					HasAuthority() ? 1 : 0, DomeScale, TargetWorldRadius, UnitRadius);
+			}
 		}
 	}
 
