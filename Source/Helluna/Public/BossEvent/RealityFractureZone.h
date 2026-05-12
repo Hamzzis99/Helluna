@@ -72,6 +72,15 @@ public:
 		meta = (DisplayName = "시전 → 시간 정지까지 (초)", ClampMin = "0.0", ClampMax = "3.0"))
 	float StasisStartDelay = 0.5f;
 
+	/**
+	 * [ZoneExpandPhaseV1] 시간 정지 시작 → 존 visual 완전 확장까지 (real-second).
+	 *   이 phase 동안: dome+PP 가 0→max 로 커짐. **카메라 풀백 / 분신 spawn 은 일어나지 않음.**
+	 *   확장 끝나야 카메라 풀백 + 분신 spawn 시작 — "존이 다 커진 후 분신 등장" 시퀀스.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Stasis|시퀀스",
+		meta = (DisplayName = "존 확장 길이 (real sec)", ClampMin = "0.1", ClampMax = "5.0"))
+	float ZoneExpandDuration = 1.5f;
+
 	/** 마지막 분신 spawn 후 → 시간 정지 해제까지 추가 idle (초) */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Stasis|시퀀스",
 		meta = (DisplayName = "분신 spawn 끝 → 정지 해제 (초)", ClampMin = "0.0", ClampMax = "3.0"))
@@ -240,6 +249,20 @@ public:
 		meta = (DisplayName = "Aim Line 두께 (cm)", ClampMin = "1.0", ClampMax = "100.0"))
 	float AimLineThickness = 18.f;
 
+	/**
+	 * [AimLineMuzzleV2] AimLine 시작 위치 — 분신 ActorLocation 기준 offset.
+	 *   원거리 공격 GA (UEnemyGameplayAbility_RangedAttack) 의 LaunchForwardOffset/LaunchHeightOffset
+	 *   과 동일한 시스템. GA_Boss_RangedAttack default (Forward=0, Height=30) 와 일치 시킴.
+	 *   분신의 projectile spawn 위치와 시각 일관성 확보 (= 사용자가 "fire 자세에서 실제 투사체 생성 위치").
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Stasis|VFX",
+		meta = (DisplayName = "AimLine 시작 Forward 오프셋 (cm)", ClampMin = "-200.0", ClampMax = "500.0"))
+	float AimLineStartForwardOffset = 0.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Stasis|VFX",
+		meta = (DisplayName = "AimLine 시작 Height 오프셋 (cm)", ClampMin = "-100.0", ClampMax = "300.0"))
+	float AimLineStartHeightOffset = 30.f;
+
 	/** 분신 spawn 순간 한 방 발화 VFX (선택) */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Stasis|VFX",
 		meta = (DisplayName = "분신 Spawn VFX (선택)"))
@@ -270,9 +293,37 @@ public:
 		meta = (DisplayName = "Ghost 수명 (초)", ClampMin = "1.0", ClampMax = "20.0"))
 	float GhostLifetime = 8.f;
 
+	// =========================================================
+	// [AimLineChargeV1] 궤적 위협 ramp — stasis 시작 → fire 직전까지 charge 0 → 1
+	//   AimLineMaterial 의 'Charge' 스칼라 파라미터 매 Tick lerp. cool color → hot color + 펄스 가속.
+	//   AimLineMaterial 이 M_AimLine_StasisSalvo (또는 호환 파라미터) 라면 효과 적용, 아니면 무시.
+	// =========================================================
+
+	/** Charge ramp 총 길이 (초, real-time 기준). stasis 길이 + PlanWindow 만큼 잡는 게 자연스러움. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Stasis|VFX",
+		meta = (DisplayName = "AimLine Charge Ramp 길이 (real sec)", ClampMin = "0.5", ClampMax = "10.0"))
+	float AimLineRampDuration = 4.5f;
+
+	/** Charge ramp 의 가속 시작 Alpha (이 값 이후로 sqrt 가속 — fire 직전 빠른 telegraph). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Stasis|VFX",
+		meta = (DisplayName = "AimLine 가속 시작 Alpha", ClampMin = "0.0", ClampMax = "1.0"))
+	float AimLineRampAccelStart = 0.7f;
+
+	/** AimLine width pulse 깊이 (real 두께 × (1 + sin × 이 값)). 0 이면 두께 정적. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Stasis|VFX",
+		meta = (DisplayName = "AimLine 두께 펄스 깊이", ClampMin = "0.0", ClampMax = "1.0"))
+	float AimLineWidthPulseDepth = 0.35f;
+
+	/** Plan window 끝 직전 0.3s 동안 fire-imminent 가시 telegraph 추가 두께 boost (real 두께 × 이 배율). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Stasis|VFX",
+		meta = (DisplayName = "AimLine fire 직전 두께 배율", ClampMin = "1.0", ClampMax = "5.0"))
+	float AimLineFireImminentScale = 1.6f;
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void Destroyed() override;
+	virtual void Tick(float DeltaTime) override;
+	virtual void OnConstruction(const FTransform& Transform) override;
 
 private:
 	// =========================================================
@@ -285,6 +336,9 @@ private:
 		FVector AimTarget = FVector::ZeroVector;
 		TWeakObjectPtr<AActor> GhostActor; // 클라 로컬 spawn 분신 (정리용)
 	};
+
+	/** [ZoneExpandPhaseV1] 서버: 존 visual 완전 확장 후 → 카메라 풀백 + 분신 spawn 시작 */
+	void ServerOnZoneExpanded();
 
 	/** 서버: 다음 분신 spawn timer 콜백 */
 	void ServerSpawnNextDecoy();
@@ -307,6 +361,10 @@ private:
 
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_StartStasis(FVector PlayerStasisCenter);
+
+	/** [ZoneExpandPhaseV1] 모든 머신: 존 visual 완전 확장 후 → 카메라 풀백 + aim line ramp 시작 */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_OnZoneExpanded();
 
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_SpawnDecoy(FVector Origin, FRotator Rot, FVector AimTarget, int32 DecoyIndex);
@@ -352,6 +410,15 @@ private:
 	UPROPERTY(VisibleAnywhere, Category = "Stasis")
 	TObjectPtr<USphereComponent> ZoneSphere = nullptr;
 
+	/** [DomePreviewV1] BP editor viewport 에서 dome material 결과를 실시간으로 보기 위한 editor-only mesh.
+	 *   ZoneVisualMesh + ZoneVisualMaterial 을 OnConstruction 에서 자동으로 set 해서 디자이너가
+	 *   BP_RealityFractureZone 을 열면 viewport 에 dome 이 그대로 보임.
+	 *   bIsEditorOnly=true 라 cooked build 에서 제외, SetHiddenInGame=true 라 PIE 에서도 invisible —
+	 *   런타임 dome 은 Multicast_StartStasis 가 동적으로 별도 ZoneVisualMeshComp 생성.
+	 */
+	UPROPERTY(VisibleAnywhere, Category = "Stasis|Preview")
+	TObjectPtr<UStaticMeshComponent> ZoneVisualPreviewMesh = nullptr;
+
 	/** 클라 로컬 — 시간 정지 영역 PP. PostProcessComponent 동적 생성, MID 캐시. */
 	UPROPERTY(Transient)
 	TObjectPtr<UPostProcessComponent> PostProcessComp = nullptr;
@@ -386,8 +453,36 @@ private:
 	bool bBossWasFrozen = false;
 
 	/** server timer 들 */
+	FTimerHandle ZoneExpandTimer;
 	FTimerHandle DecoySpawnTimer;
 	FTimerHandle StasisEndTimer;
 	FTimerHandle FireTimer;
 	FTimerHandle FinishTimer;
+
+	// =========================================================
+	// [ZoneExpandPhaseV1] 존 확장 phase 추적 — 각 머신 로컬
+	// =========================================================
+
+	/** zone expand 진행 플래그. Multicast_StartStasis 에서 true, Multicast_OnZoneExpanded 에서 false. */
+	bool bZoneExpanding = false;
+
+	/** zone expand 시작 시각 (wall-clock real seconds). */
+	float ZoneExpandStartRealTime = 0.f;
+
+	// =========================================================
+	// [AimLineChargeV1] Charge ramp 추적 — 각 머신 로컬
+	// =========================================================
+
+	/** 각 분신의 LineComp 와 그 MID 캐시 — Tick 에서 일괄 갱신. */
+	UPROPERTY(Transient)
+	TArray<TWeakObjectPtr<UMaterialInstanceDynamic>> AimLineMIDs;
+
+	UPROPERTY(Transient)
+	TArray<TWeakObjectPtr<UStaticMeshComponent>> AimLineComps;
+
+	/** ramp 진행 플래그. Multicast_StartStasis 에서 true, Multicast_Fire 에서 false. */
+	bool bAimLineRampActive = false;
+
+	/** ramp 시작 시각 (wall-clock real seconds) — stasis 동안 game time 거의 정지라 RealTimeSeconds 기준. */
+	float AimLineRampStartRealTime = 0.f;
 };

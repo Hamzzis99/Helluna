@@ -39,7 +39,9 @@
 
 ARealityFractureZone::ARealityFractureZone()
 {
-	PrimaryActorTick.bCanEverTick = false;
+	// [AimLineChargeV1] Tick 켬 — Charge ramp 갱신용. ramp 비활성 시 early-return 으로 비용 0.
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bStartWithTickEnabled = true;
 	bReplicates = true;
 
 	// ZoneSphere — ATimeDistortionZone 구조와 동일. RootComponent. overlap 은 사용 안 함.
@@ -60,6 +62,46 @@ ARealityFractureZone::ARealityFractureZone()
 	PostProcessComp->bUnbound = true;
 	PostProcessComp->BlendWeight = 0.f;
 	PostProcessComp->bEnabled = false;
+
+	// [DomePreviewV1] BP editor viewport 에서 dome material 미리보기용 editor-only mesh.
+	//   ZoneSphere 의 child. OnConstruction 에서 ZoneVisualMesh/Material 자동 set.
+	//   bIsEditorOnly + bHiddenInGame → 런타임 영향 0, 디자이너 편의 100%.
+	ZoneVisualPreviewMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ZoneVisualPreview"));
+	ZoneVisualPreviewMesh->SetupAttachment(ZoneSphere);
+	ZoneVisualPreviewMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	ZoneVisualPreviewMesh->SetCastShadow(false);
+	ZoneVisualPreviewMesh->SetHiddenInGame(true);
+	ZoneVisualPreviewMesh->bIsEditorOnly = true;
+}
+
+// ================================================================
+// OnConstruction — BP editor 에서 ZoneVisualMesh/Material 변경 시 viewport 즉시 반영.
+//   런타임에도 호출되지만 ZoneVisualPreviewMesh 는 hidden in game 이라 시각 영향 없음.
+// ================================================================
+void ARealityFractureZone::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+
+	if (!ZoneVisualPreviewMesh) return;
+
+	if (ZoneVisualMesh)
+	{
+		ZoneVisualPreviewMesh->SetStaticMesh(ZoneVisualMesh);
+	}
+	if (ZoneVisualMaterial)
+	{
+		ZoneVisualPreviewMesh->SetMaterial(0, ZoneVisualMaterial);
+	}
+	// [ZoneDomeExpandV2] dome 반경 = DecoyRingRadius × ZoneVisualRadiusMul. mesh 의 실제 unit bounds
+	//   측정해 어떤 static mesh 도 같은 world radius 보장 (sphere / octagon / cube 무관).
+	const float WorldRadius = DecoyRingRadius * FMath::Max(0.1f, ZoneVisualRadiusMul);
+	float UnitRadius = 50.f;
+	if (ZoneVisualMesh)
+	{
+		UnitRadius = FMath::Max(0.1f, ZoneVisualMesh->GetBounds().SphereRadius);
+	}
+	const float Scale = FMath::Max(0.01f, WorldRadius / UnitRadius);
+	ZoneVisualPreviewMesh->SetRelativeScale3D(FVector(Scale));
 }
 
 void ARealityFractureZone::BeginPlay()
@@ -71,6 +113,7 @@ void ARealityFractureZone::Destroyed()
 {
 	if (UWorld* W = GetWorld())
 	{
+		W->GetTimerManager().ClearTimer(ZoneExpandTimer);
 		W->GetTimerManager().ClearTimer(DecoySpawnTimer);
 		W->GetTimerManager().ClearTimer(StasisEndTimer);
 		W->GetTimerManager().ClearTimer(FireTimer);
@@ -119,21 +162,21 @@ void ARealityFractureZone::ActivateZone()
 	const FVector PlayerLoc = Player ? Player->GetActorLocation() : GetActorLocation();
 	RFZ_LOG("[Phase A] Stasis center (player loc) = %s", *PlayerLoc.ToString());
 
-	// 모든 머신: 시간 정지 시작
+	// 모든 머신: 시간 정지 시작 (존 visual 확장만 시작, 카메라/분신은 아직 X)
 	Multicast_StartStasis(PlayerLoc);
 	bStasisActive = true;
 
-	// StasisStartDelay 후 첫 분신 spawn
-	//   글로벌 TimeDilation StasisTimeDilation 적용 중 → World TimerManager 가 그 영향 받음.
-	//   wall-clock StasisStartDelay 초 만에 fire 시키려면 delay × StasisTD 로 보정.
+	// [ZoneExpandPhaseV1] ZoneExpandDuration 후: 카메라 풀백 + 분신 spawn 시작.
+	//   글로벌 TD 적용 중이라 wall-clock 보정 필요 (StasisAdjustedDelay).
+	//   기존 StasisStartDelay 후 첫 분신 spawn 흐름은 ServerOnZoneExpanded 안에서 처리.
 	if (UWorld* W = GetWorld())
 	{
-		const float AdjustedDelay = StasisAdjustedDelay(StasisStartDelay);
-		RFZ_LOG("[Phase A] Schedule first decoy spawn — wall=%.2fs, scaled=%.4fs",
-			StasisStartDelay, AdjustedDelay);
+		const float AdjustedDelay = StasisAdjustedDelay(ZoneExpandDuration);
+		RFZ_LOG("[Phase A] Schedule zone-expand-done — wall=%.2fs, scaled=%.4fs",
+			ZoneExpandDuration, AdjustedDelay);
 		W->GetTimerManager().SetTimer(
-			DecoySpawnTimer, this,
-			&ARealityFractureZone::ServerSpawnNextDecoy,
+			ZoneExpandTimer, this,
+			&ARealityFractureZone::ServerOnZoneExpanded,
 			AdjustedDelay, false
 		);
 	}
@@ -145,9 +188,12 @@ void ARealityFractureZone::DeactivateZone()
 		HasAuthority() ? 1 : 0, ServerDecoys.Num(), bBossWasFrozen ? 1 : 0);
 	bZoneActive = false;
 	bStasisActive = false;
+	bZoneExpanding = false;
+	bAimLineRampActive = false;
 
 	if (UWorld* W = GetWorld())
 	{
+		W->GetTimerManager().ClearTimer(ZoneExpandTimer);
 		W->GetTimerManager().ClearTimer(DecoySpawnTimer);
 		W->GetTimerManager().ClearTimer(StasisEndTimer);
 		W->GetTimerManager().ClearTimer(FireTimer);
@@ -511,6 +557,20 @@ void ARealityFractureZone::Multicast_StartStasis_Implementation(FVector PlayerSt
 	RFZ_LOG("[Phase B] Multicast_StartStasis — Auth=%d, Center=%s, TD=%.3f",
 		HasAuthority() ? 1 : 0, *PlayerStasisCenter.ToString(), StasisTimeDilation);
 
+	// [ZoneExpandPhaseV1] 존 확장 ramp 시작 — wall-clock 기준. 분신/카메라/aim line ramp 는 아직 시작 X.
+	//   ServerOnZoneExpanded → Multicast_OnZoneExpanded 가 ZoneExpandDuration 후에 켬.
+	//   Zone 의 CustomTimeDilation 보정 → Tick 정상 frequency.
+	if (UWorld* WMid = GetWorld())
+	{
+		ZoneExpandStartRealTime = WMid->GetRealTimeSeconds();
+	}
+	bZoneExpanding = true;
+	bAimLineRampActive = false;
+	if (StasisTimeDilation > KINDA_SMALL_NUMBER)
+	{
+		CustomTimeDilation = 1.f / StasisTimeDilation; // global TD × custom = 1.0 effective
+	}
+
 	LastStasisCenter = PlayerStasisCenter; // PP zone parameter 용
 
 	// Zone actor 를 player 중심으로 이동 + sphere radius 설정 (TimeDistortionZone 구조 일치).
@@ -562,12 +622,12 @@ void ARealityFractureZone::Multicast_StartStasis_Implementation(FVector PlayerSt
 				}
 			}
 
-			// SM_Sphere 빌트인 = 반경 50cm. 원하는 반경 = DecoyRingRadius × Mul
-			const float TargetRadius = DecoyRingRadius * ZoneVisualRadiusMul;
-			const float Scale = TargetRadius / 50.f;
-			ZoneVisualMeshComp->SetWorldScale3D(FVector(Scale));
+			// [ZoneDomeExpandV1] SM_Sphere 빌트인 = 반경 50cm. 시작 scale 0 — Tick 에서 PP ZoneRadius
+			//   ramp 와 동일한 Charge 값으로 0 → max 로 커지면서 퍼지는 느낌. 위치는 player 중심 고정.
+			ZoneVisualMeshComp->SetWorldScale3D(FVector(KINDA_SMALL_NUMBER));
 			ZoneVisualMeshComp->SetWorldLocation(PlayerStasisCenter);
-			RFZ_LOG("[ZoneDome] spawned — TargetRadius=%.0fcm, Scale=%.2f", TargetRadius, Scale);
+			const float TargetRadius = DecoyRingRadius * ZoneVisualRadiusMul;
+			RFZ_LOG("[ZoneDome] spawned — TargetRadius=%.0fcm, Scale=0 (ramp via Tick)", TargetRadius);
 		}
 	}
 	else if (!ZoneVisualMesh)
@@ -624,7 +684,48 @@ void ARealityFractureZone::Multicast_StartStasis_Implementation(FVector PlayerSt
 		RFZ_LOG("[TimeFreeze] frozen Projectiles=%d, SkelMeshActors=%d", FrozenProjectiles, FrozenSkelMeshActors);
 	}
 
+	// [ZoneExpandPhaseV1] 카메라 풀백은 Multicast_OnZoneExpanded 에서 (존 완전 확장 후) 처리.
+	//   Multicast_StartStasis 에서는 더 이상 카메라를 건드리지 않음.
+}
+
+// ================================================================
+// [ZoneExpandPhaseV1] 존 visual 완전 확장 (server timer 콜백)
+//   → Multicast_OnZoneExpanded (카메라 풀백 + aim line ramp 시작)
+//   → 첫 분신 spawn timer 예약 (기존 StasisStartDelay 후 첫 spawn 흐름 재사용)
+// ================================================================
+void ARealityFractureZone::ServerOnZoneExpanded()
+{
+	if (!bZoneActive || !HasAuthority()) return;
+	RFZ_LOG("[Phase B] ServerOnZoneExpanded — 존 확장 완료, 카메라/분신 시작");
+
+	Multicast_OnZoneExpanded();
+
+	if (UWorld* W = GetWorld())
+	{
+		const float AdjustedDelay = StasisAdjustedDelay(StasisStartDelay);
+		W->GetTimerManager().SetTimer(
+			DecoySpawnTimer, this,
+			&ARealityFractureZone::ServerSpawnNextDecoy,
+			AdjustedDelay, false
+		);
+	}
+}
+
+void ARealityFractureZone::Multicast_OnZoneExpanded_Implementation()
+{
+	RFZ_LOG("[Phase B] Multicast_OnZoneExpanded — Auth=%d, 카메라 풀백 + aim line ramp 시작",
+		HasAuthority() ? 1 : 0);
+
+	// 존 확장 phase 종료, aim line ramp 활성화
+	bZoneExpanding = false;
+	if (UWorld* WMid = GetWorld())
+	{
+		AimLineRampStartRealTime = WMid->GetRealTimeSeconds();
+	}
+	bAimLineRampActive = true;
+
 	// [Camera] player spring arm length 조정 — 회피 시야 확보. 백업 후 변경.
+	UWorld* W = GetWorld();
 	if (W && bAdjustCameraDuringPattern)
 	{
 		int32 CamAdjusted = 0;
@@ -660,6 +761,9 @@ void ARealityFractureZone::Multicast_EndStasis_Implementation()
 		HasAuthority() ? 1 : 0, PlanWindowDuration);
 	LocalApplyTimeDilation(1.f);
 	LocalDeactivatePostProcess();
+
+	// [AimLineChargeV1] global TD 복원 후 zone 의 CustomTimeDilation 도 1.0 으로 복원 (effective TD 1.0).
+	CustomTimeDilation = 1.f;
 
 	// player input 복원
 	UWorld* W = GetWorld();
@@ -717,13 +821,8 @@ void ARealityFractureZone::Multicast_EndStasis_Implementation()
 			if (NC) { NC->DestroyComponent(); BeamsKilled++; }
 		}
 
-		// aim line static mesh (cube stretch) 도 destroy
-		TArray<UStaticMeshComponent*> LineMeshes;
-		G->GetComponents<UStaticMeshComponent>(LineMeshes);
-		for (UStaticMeshComponent* SMC : LineMeshes)
-		{
-			if (SMC) SMC->DestroyComponent();
-		}
+		// [AimLineChargeV1] aim line static mesh 는 plan window 동안 유지 — Charge ramp 가 cool→hot 으로
+		//   가속하며 위협 텔레그래핑. Multicast_Fire 에서 line destroy + cache reset.
 
 		// SkelMesh anim — frame 0 부터 재생 (Shoot notify 자세에서 시작 X, 풀 몬타지 한 번 더 재생).
 		//   원거리 공격 몬타지가 처음부터 끝까지 재생되어 진짜 발사 모션 같은 느낌.
@@ -751,6 +850,25 @@ void ARealityFractureZone::Multicast_Fire_Implementation()
 
 	UWorld* W = GetWorld();
 	if (!W) return;
+
+	// [AimLineChargeV1] ramp 종료 + line cleanup. fire 직전 최종 charge=1 보장 한 프레임 → projectile 출현.
+	bAimLineRampActive = false;
+	for (TWeakObjectPtr<UMaterialInstanceDynamic>& WeakMID : AimLineMIDs)
+	{
+		if (UMaterialInstanceDynamic* MID = WeakMID.Get())
+		{
+			MID->SetScalarParameterValue(TEXT("Charge"), 1.f);
+		}
+	}
+	for (TWeakObjectPtr<UStaticMeshComponent>& WeakLine : AimLineComps)
+	{
+		if (UStaticMeshComponent* SMC = WeakLine.Get())
+		{
+			SMC->DestroyComponent();
+		}
+	}
+	AimLineMIDs.Reset();
+	AimLineComps.Reset();
 
 	if (FireSound)
 	{
@@ -873,7 +991,9 @@ void ARealityFractureZone::LocalActivatePostProcess()
 	const FVector Center = LastStasisCenter;
 	const float Radius = DecoyRingRadius * ZoneVisualRadiusMul;
 	StasisPPMID->SetVectorParameterValue(FName("ZoneCenter"), FLinearColor(Center.X, Center.Y, Center.Z));
-	StasisPPMID->SetScalarParameterValue(FName("ZoneRadius"), Radius);
+	// [PPZoneExpandV1] ZoneRadius 시작 0 — Tick 에서 시간 따라 0 → max ramp (퍼져나가는 효과).
+	//   target max = DecoyRingRadius × ZoneVisualRadiusMul (zone 외곽 살짝 넘게).
+	StasisPPMID->SetScalarParameterValue(FName("ZoneRadius"), 0.f);
 	StasisPPMID->SetScalarParameterValue(FName("Strength"), 0.9f);
 	StasisPPMID->SetScalarParameterValue(FName("EdgeSoftness"), 150.f);
 
@@ -1004,10 +1124,16 @@ void ARealityFractureZone::LocalSpawnGhostMesh(FVector WorldLoc, FRotator WorldR
 		}
 	}
 
+	// [AimLineMuzzleV2] 시작점 — 원거리 공격 GA 의 projectile spawn 위치와 동일한 방식:
+	//   ActorLoc + Forward × FwdOffset + (0, 0, HeightOffset). 본 lookup 불필요.
+	const FVector LineStart = Ghost->GetActorLocation()
+		+ Ghost->GetActorForwardVector() * AimLineStartForwardOffset
+		+ FVector(0.f, 0.f, AimLineStartHeightOffset);
+
 	// Aim line — static mesh (cube X-stretch). Niagara beam 이 user param 매칭 안 돼도 line 보임 보장.
 	if (AimLineMesh)
 	{
-		const FVector BeamDir = (AimTarget - WorldLoc).GetSafeNormal();
+		const FVector BeamDir = (AimTarget - LineStart).GetSafeNormal();
 		if (!BeamDir.IsNearlyZero())
 		{
 			UStaticMeshComponent* LineComp = NewObject<UStaticMeshComponent>(Ghost);
@@ -1017,8 +1143,13 @@ void ARealityFractureZone::LocalSpawnGhostMesh(FVector WorldLoc, FRotator WorldR
 				LineComp->SetMobility(EComponentMobility::Movable);
 				LineComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 				LineComp->SetCastShadow(false);
+				// [AimLineStencilV1] 첫 frame 회색 방지 — RegisterComponent 전에 stencil 미리 set + render state dirty.
+				//   stencil 1 = M_PP_TimeDistortion 의 desat 면제 영역. 등록 후 즉시 stencil buffer 반영.
+				LineComp->SetRenderCustomDepth(true);
+				LineComp->SetCustomDepthStencilValue(1);
 				LineComp->RegisterComponent();
 				LineComp->AttachToComponent(GhostComp, FAttachmentTransformRules::KeepRelativeTransform);
+				LineComp->MarkRenderStateDirty();
 
 				if (AimLineMaterial)
 				{
@@ -1027,32 +1158,43 @@ void ARealityFractureZone::LocalSpawnGhostMesh(FVector WorldLoc, FRotator WorldR
 				}
 
 				// SM_Cube = 100cm × 100cm × 100cm. X 축 stretch 으로 line.
-				//   Length = 분신 → player → 존 외곽 (zone 끝까지 닿게)
+				//   Length = 분신 손 → 존 외곽 (zone 끝까지 닿게)
 				const float EffectiveLength = GetEffectiveAimLineLength();
 				const float Half = EffectiveLength * 0.5f;
-				const FVector Center = WorldLoc + BeamDir * Half;
+				const FVector Center = LineStart + BeamDir * Half;
 				LineComp->SetWorldLocationAndRotation(Center, BeamDir.Rotation());
 				const float ScaleX = EffectiveLength / 100.f;
 				const float ScaleYZ = AimLineThickness / 100.f;
 				LineComp->SetWorldScale3D(FVector(ScaleX, ScaleYZ, ScaleYZ));
+
+				// [AimLineChargeV1] MID 생성해 Tick 에서 Charge/색/펄스 갱신.
+				//   AimLineMaterial 이 M_AimLine_StasisSalvo (Charge 파라미터 노출) 라야 효과 보임.
+				//   호환 안 되는 머티리얼이면 SetScalarParameterValue 무시되어 정적 표시 (안전).
+				if (UMaterialInstanceDynamic* LineMID =
+					LineComp->CreateAndSetMaterialInstanceDynamic(0))
+				{
+					LineMID->SetScalarParameterValue(TEXT("Charge"), 0.f);
+					AimLineMIDs.Add(LineMID);
+				}
+				AimLineComps.Add(LineComp);
 			}
 		}
 	}
 
-	// Aim beam Niagara — 분신 origin → aim target 까지 길게 표시
+	// Aim beam Niagara — 분신 손/총구 (LineStart) → aim target 까지 길게 표시
 	if (AimBeamVFX)
 	{
-		const FVector BeamDir = (AimTarget - WorldLoc).GetSafeNormal();
+		const FVector BeamDir = (AimTarget - LineStart).GetSafeNormal();
 		if (!BeamDir.IsNearlyZero())
 		{
-			const FVector BeamEnd = WorldLoc + BeamDir * GetEffectiveAimLineLength();
+			const FVector BeamEnd = LineStart + BeamDir * GetEffectiveAimLineLength();
 			UNiagaraComponent* BeamComp = UNiagaraFunctionLibrary::SpawnSystemAttached(
 				AimBeamVFX, GhostComp, NAME_None,
 				FVector::ZeroVector, FRotator::ZeroRotator,
 				EAttachLocation::KeepRelativeOffset, true);
 			if (BeamComp)
 			{
-				BeamComp->SetVariableVec3(FName("BeamStart"), WorldLoc);
+				BeamComp->SetVariableVec3(FName("BeamStart"), LineStart);
 				BeamComp->SetVariableVec3(FName("BeamEnd"), BeamEnd);
 				BeamComp->SetVariableVec3(FName("EndPosition"), BeamEnd);
 				BeamComp->SetVariableVec3(FName("End"), BeamEnd);
@@ -1092,6 +1234,108 @@ void ARealityFractureZone::LocalCleanupGhosts()
 		}
 	}
 	LocalGhostActors.Reset();
+	// [AimLineChargeV1] line/MID 캐시도 함께 정리.
+	AimLineMIDs.Reset();
+	AimLineComps.Reset();
+	bAimLineRampActive = false;
+}
+
+// ================================================================
+// [AimLineChargeV1] Tick — Charge ramp + 두께 펄스
+//   AimLine MID 의 'Charge' 파라미터를 0 → 1 lerp.
+//   가속 곡선: 0 ~ AccelStart 는 linear, 그 후 sqrt 가속으로 fire 직전 빠른 펄스.
+//   두께 펄스: sin 기반 width modulation. 가속 구간 진입 시 1.6× boost.
+// ================================================================
+void ARealityFractureZone::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+
+	UWorld* W = GetWorld();
+	if (!W) return;
+
+	// =========================================================
+	// [ZoneExpandPhaseV1] 존 visual 확장 phase — bZoneExpanding 동안 0→1, 이후 stasis 끝까지 1 유지.
+	// =========================================================
+	float ZoneAlpha = 1.f;
+	if (bZoneExpanding)
+	{
+		const float ZElapsed = W->GetRealTimeSeconds() - ZoneExpandStartRealTime;
+		const float ZDur = FMath::Max(0.05f, ZoneExpandDuration);
+		ZoneAlpha = FMath::Clamp(ZElapsed / ZDur, 0.f, 1.f);
+	}
+
+	// stasis active 동안에는 dome / PP 시각 유지가 필요. bStasisActive 가 false 가 되면 stop.
+	if (bStasisActive)
+	{
+		const float ZoneRadiusMax = DecoyRingRadius * FMath::Max(0.1f, ZoneVisualRadiusMul);
+
+		if (StasisPPMID)
+		{
+			// [PPScreenRadialV1] M_PP_StasisSalvo 가 screen-space radial alpha 로 전환됨.
+			//   Charge param (0..1) 가 화면 중앙 → 외곽 covered 영역을 결정. ZoneRadius 는 backward compat.
+			StasisPPMID->SetScalarParameterValue(FName("ZoneRadius"), ZoneRadiusMax * ZoneAlpha);
+			StasisPPMID->SetScalarParameterValue(FName("Charge"), ZoneAlpha);
+		}
+
+		// [ZoneDomeExpandV2] mesh agnostic — 어떤 static mesh 든 world radius = ZoneRadiusMax × ZoneAlpha.
+		if (ZoneVisualMeshComp.Get() && ZoneVisualMeshComp->GetStaticMesh())
+		{
+			const float UnitRadius = FMath::Max(0.1f,
+				ZoneVisualMeshComp->GetStaticMesh()->GetBounds().SphereRadius);
+			const float TargetWorldRadius = FMath::Max(KINDA_SMALL_NUMBER, ZoneRadiusMax * ZoneAlpha);
+			const float DomeScale = TargetWorldRadius / UnitRadius;
+			ZoneVisualMeshComp->SetWorldScale3D(FVector(DomeScale));
+		}
+	}
+
+	// =========================================================
+	// [AimLineChargeV1] AimLine charge ramp — 존 완전 확장 + 분신 spawn 후에만 active.
+	// =========================================================
+	if (!bAimLineRampActive) return;
+	if (AimLineMIDs.Num() == 0 && AimLineComps.Num() == 0) return;
+
+	const float Elapsed = W->GetRealTimeSeconds() - AimLineRampStartRealTime;
+	const float Dur = FMath::Max(0.1f, AimLineRampDuration);
+	const float RawAlpha = FMath::Clamp(Elapsed / Dur, 0.f, 1.f);
+
+	// Charge 곡선: AccelStart 까지 linear, 그 후 sqrt 가속 (fire 직전 빠른 ramp).
+	float Charge = RawAlpha;
+	if (RawAlpha > AimLineRampAccelStart && AimLineRampAccelStart < 1.f)
+	{
+		const float t = (RawAlpha - AimLineRampAccelStart) / (1.f - AimLineRampAccelStart);
+		Charge = AimLineRampAccelStart + FMath::Sqrt(FMath::Clamp(t, 0.f, 1.f)) * (1.f - AimLineRampAccelStart);
+	}
+
+	// 두께 펄스 — 가속 구간 진입 시 frequency 와 amplitude 동시에 증가.
+	const float PulseFreq = 6.f * (1.f + Charge * 4.f); // 6 → 30 Hz 정도
+	const float PulseTheta = W->GetRealTimeSeconds() * PulseFreq;
+	const float Pulse01 = FMath::Sin(PulseTheta) * 0.5f + 0.5f; // 0..1
+	const float WidthBase = AimLineThickness / 100.f;
+	float WidthMul = 1.f + Pulse01 * AimLineWidthPulseDepth * (0.5f + Charge);
+	if (RawAlpha >= 1.f) // fire 직전 1 프레임 — 최대 두께 boost
+	{
+		WidthMul *= AimLineFireImminentScale;
+	}
+	const float WidthYZ = WidthBase * WidthMul;
+
+	for (TWeakObjectPtr<UMaterialInstanceDynamic>& WeakMID : AimLineMIDs)
+	{
+		if (UMaterialInstanceDynamic* MID = WeakMID.Get())
+		{
+			MID->SetScalarParameterValue(TEXT("Charge"), Charge);
+		}
+	}
+
+	if (AimLineWidthPulseDepth > KINDA_SMALL_NUMBER)
+	{
+		for (TWeakObjectPtr<UStaticMeshComponent>& WeakLine : AimLineComps)
+		{
+			UStaticMeshComponent* SMC = WeakLine.Get();
+			if (!SMC) continue;
+			const FVector CurScale = SMC->GetRelativeScale3D();
+			SMC->SetRelativeScale3D(FVector(CurScale.X, WidthYZ, WidthYZ));
+		}
+	}
 }
 
 #undef RFZ_LOG
