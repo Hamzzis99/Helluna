@@ -141,9 +141,9 @@ void UEnemyGameplayAbility_RangedAttack::ActivateAbility(
 		return;
 	}
 
-	MontageTask->OnCompleted.AddDynamic  (this, &UEnemyGameplayAbility_RangedAttack::OnMontageCompleted);
-	MontageTask->OnCancelled.AddDynamic  (this, &UEnemyGameplayAbility_RangedAttack::OnMontageCancelled);
-	MontageTask->OnInterrupted.AddDynamic(this, &UEnemyGameplayAbility_RangedAttack::OnMontageCancelled);
+	MontageTask->OnCompleted.AddUniqueDynamic  (this, &UEnemyGameplayAbility_RangedAttack::OnMontageCompleted);
+	MontageTask->OnCancelled.AddUniqueDynamic  (this, &UEnemyGameplayAbility_RangedAttack::OnMontageCancelled);
+	MontageTask->OnInterrupted.AddUniqueDynamic(this, &UEnemyGameplayAbility_RangedAttack::OnMontageCancelled);
 
 	MontageTask->ReadyForActivation();
 }

@@ -65,6 +65,9 @@
 // [WorldMap] 풀스크린 월드맵 + 핑 시스템
 #include "UI/WorldMap/HellunaWorldMapWidget.h"
 
+// [Phase 22] 관전 시스템
+#include "GameFramework/SpectatorPawn.h"
+
 // [PauseMenu] 위젯 애니메이션 재생
 // WidgetBlueprintGeneratedClass는 PauseMenuWidget 내부로 이동
 
@@ -92,6 +95,22 @@ void AHellunaHeroController::SetupInputComponent()
 
 void AHellunaHeroController::BeginPlay()
 {
+	// [LevelPlacedGuard] 레벨에 배치된 더미 PlayerController 감지/제거.
+	//   bNetStartup=true 는 디스크에서 로드된 액터 — PlayerController 는 GameMode 가
+	//   런타임에 SpawnActor 로 생성하는 게 정상이라 bNetStartup=false 여야 한다.
+	//   (이전 GihyeonMap 에서 BP_HellunaHeroController_C_0 가 레벨 액터로 배치되어
+	//    "CreateWidget cannot be used on Player Controller with no attached player"
+	//    경고 4건 + "플레이어 한 명 더 생기는" 현상 발생했음.)
+	if (bNetStartup || HasAnyFlags(RF_WasLoaded))
+	{
+		UE_LOG(LogHelluna, Error,
+			TEXT("[HeroController] 레벨에 잘못 배치된 PlayerController 감지 — 즉시 삭제. Level=%s | Actor=%s"),
+			*GetNameSafe(GetWorld()),
+			*GetName());
+		Destroy();
+		return;
+	}
+
 	Super::BeginPlay();
 
 	UE_LOG(LogHellunaVote, Log, TEXT("[HellunaHeroController] BeginPlay - %s"),
@@ -264,6 +283,47 @@ void AHellunaHeroController::BeginPlay()
 		}
 	}
 #endif
+
+	// ── [Phase 22] 관전 모드 입력 바인딩 (IMC 자체는 관전 진입 시 동적 추가) ──
+	if (UEnhancedInputComponent* SpecEIC = Cast<UEnhancedInputComponent>(InputComponent))
+	{
+		UE_LOG(LogHelluna, Log, TEXT("[Phase22-Diag] BP 슬롯 상태: Toggle=%s, Next=%s, Prev=%s, IMC=%s"),
+			SpectateToggleAction ? *SpectateToggleAction->GetName() : TEXT("NULL"),
+			SpectateNextAction ? *SpectateNextAction->GetName() : TEXT("NULL"),
+			SpectatePrevAction ? *SpectatePrevAction->GetName() : TEXT("NULL"),
+			SpectateMappingContext ? *SpectateMappingContext->GetName() : TEXT("NULL"));
+
+		if (SpectateToggleAction)
+		{
+			SpecEIC->BindAction(SpectateToggleAction, ETriggerEvent::Started, this, &AHellunaHeroController::OnSpectateToggleInput);
+		}
+		if (SpectateNextAction)
+		{
+			SpecEIC->BindAction(SpectateNextAction, ETriggerEvent::Started, this, &AHellunaHeroController::OnSpectateNextInput);
+		}
+		if (SpectatePrevAction)
+		{
+			SpecEIC->BindAction(SpectatePrevAction, ETriggerEvent::Started, this, &AHellunaHeroController::OnSpectatePrevInput);
+		}
+
+		// 자유비행 — Triggered 이벤트(매 틱 발화)
+		if (SpectateMoveForwardAction)
+		{
+			SpecEIC->BindAction(SpectateMoveForwardAction, ETriggerEvent::Triggered, this, &AHellunaHeroController::OnSpectateMoveForwardInput);
+		}
+		if (SpectateMoveRightAction)
+		{
+			SpecEIC->BindAction(SpectateMoveRightAction, ETriggerEvent::Triggered, this, &AHellunaHeroController::OnSpectateMoveRightInput);
+		}
+		if (SpectateLookAction)
+		{
+			SpecEIC->BindAction(SpectateLookAction, ETriggerEvent::Triggered, this, &AHellunaHeroController::OnSpectateLookInput);
+		}
+		if (SpectateAscendAction)
+		{
+			SpecEIC->BindAction(SpectateAscendAction, ETriggerEvent::Triggered, this, &AHellunaHeroController::OnSpectateAscendInput);
+		}
+	}
 }
 
 // ============================================================================
@@ -2584,6 +2644,32 @@ void AHellunaHeroController::Client_FadeToGame_Implementation()
 		{
 			SetViewTargetWithBlend(MyPawn, 0.5f, VTBlend_Cubic);
 		}
+		else
+		{
+			// [§16 M-1] Pawn replicate 미도착 — 0.3초 후 재시도 (cubic blend 보장).
+			// OnRep_Pawn AutoManageActiveCameraTarget(GetPawn())로 자동 회복은 가능하나
+			// 그건 BlendTime=0 즉시 cut. 명시 호출이 더 부드러운 시각.
+			UE_LOG(LogHelluna, Warning, TEXT("[LoadingDbg][Fade] T+1.2s Pawn=null — 0.3s 후 재시도"));
+			if (UWorld* RetryWorld = GetWorld())
+			{
+				FTimerHandle PawnRetryHandle;
+				RetryWorld->GetTimerManager().SetTimer(PawnRetryHandle, FTimerDelegate::CreateWeakLambda(this, [this]()
+				{
+					if (APawn* RetryPawn = GetPawn())
+					{
+						SetViewTargetWithBlend(RetryPawn, 0.5f, VTBlend_Cubic);
+						UE_LOG(LogHelluna, Warning,
+							TEXT("[LoadingDbg][Fade] M-1 재시도 성공 → Pawn=%s"),
+							*GetNameSafe(RetryPawn));
+					}
+					else
+					{
+						UE_LOG(LogHelluna, Warning,
+							TEXT("[LoadingDbg][Fade] M-1 재시도도 Pawn=null — OnRep_Pawn 자동 회복 의존"));
+					}
+				}), 0.3f, false);
+			}
+		}
 	}), 1.2f, false);
 
 	FTimerHandle FadeOutHandle;
@@ -2672,7 +2758,9 @@ void AHellunaHeroController::LeaveLoadingScene()
 	// [§13 v2.1+ X-3] L_LoadingShipScene 서브레벨 언로드 — 메모리 회수
 	// v1엔 서브레벨이 없어 호출 없었으나, v2.1에서 공용 서브레벨 도입으로 명시적 언로드 필요.
 	// Client_FadeToGame 3.0s 뒤 LeaveLoadingScene 호출 → 페이드 검정 중 병렬 언로드.
-	if (World)
+	// [§16 L-2] MainMap에는 L_LoadingShipScene이 서브레벨로 등록 안 됨 → 미등록 시 호출 가드
+	//          (callback은 즉시 발화하므로 hang 아니지만 노이즈 로그 제거)
+	if (World && UGameplayStatics::GetStreamingLevel(this, FName(TEXT("L_LoadingShipScene"))))
 	{
 		FLatentActionInfo UnloadLatent;
 		UnloadLatent.CallbackTarget = this;
@@ -2684,6 +2772,11 @@ void AHellunaHeroController::LeaveLoadingScene()
 			TEXT("[LoadingDbg][Leave] UnloadStreamLevel(L_LoadingShipScene) 요청 | UUID=%d"),
 			UnloadLatent.UUID);
 	}
+	else if (World)
+	{
+		UE_LOG(LogHelluna, Verbose,
+			TEXT("[LoadingDbg][Leave] L_LoadingShipScene 미등록 — UnloadStreamLevel 스킵 (MainMap 경로)"));
+	}
 
 	UE_LOG(LogHelluna, Warning, TEXT("[LoadingDbg][Leave] EXIT"));
 }
@@ -2693,3 +2786,242 @@ void AHellunaHeroController::OnLoadingShipSceneUnloaded()
 {
 	UE_LOG(LogHelluna, Warning, TEXT("[LoadingDbg][Leave] L_LoadingShipScene 언로드 완료"));
 }
+
+// ============================================================================
+// [Phase 22] Death Spectate System
+// ============================================================================
+
+void AHellunaHeroController::Client_OnEnteredSpectatorMode_Implementation()
+{
+	if (!IsLocalController()) return;
+
+	bIsSpectating = true;
+	bSpectatorFollowMode = true;
+	CurrentSpectateIndex = 0;
+
+	AddSpectateIMC();
+	ApplyCurrentSpectateView();
+
+	UE_LOG(LogHelluna, Log, TEXT("[Phase22] Client_OnEnteredSpectatorMode"));
+}
+
+void AHellunaHeroController::Client_OnRespawned_Implementation()
+{
+	if (!IsLocalController()) return;
+
+	bIsSpectating = false;
+	bSpectatorFollowMode = true;
+	CurrentSpectateIndex = 0;
+
+	RemoveSpectateIMC();
+
+	UE_LOG(LogHelluna, Log, TEXT("[Phase22] Client_OnRespawned"));
+}
+
+void AHellunaHeroController::AddSpectateIMC()
+{
+	if (!SpectateMappingContext)
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[Phase22-Diag] AddSpectateIMC: SpectateMappingContext=NULL — BP 슬롯 미할당"));
+		return;
+	}
+	ULocalPlayer* LP = GetLocalPlayer();
+	if (!LP)
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[Phase22-Diag] AddSpectateIMC: LocalPlayer=NULL"));
+		return;
+	}
+	UEnhancedInputLocalPlayerSubsystem* Sub = LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>();
+	if (!Sub)
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[Phase22-Diag] AddSpectateIMC: EnhancedInputSubsystem=NULL"));
+		return;
+	}
+	Sub->AddMappingContext(SpectateMappingContext, SpectateIMCPriority);
+	UE_LOG(LogHelluna, Log, TEXT("[Phase22-Diag] AddSpectateIMC: %s 추가 완료(priority=%d)"),
+		*SpectateMappingContext->GetName(), SpectateIMCPriority);
+}
+
+void AHellunaHeroController::RemoveSpectateIMC()
+{
+	if (!SpectateMappingContext) return;
+	ULocalPlayer* LP = GetLocalPlayer();
+	if (!LP) return;
+	UEnhancedInputLocalPlayerSubsystem* Sub = LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>();
+	if (!Sub) return;
+	Sub->RemoveMappingContext(SpectateMappingContext);
+}
+
+void AHellunaHeroController::CollectAliveTeammates(TArray<APawn*>& OutPawns) const
+{
+	OutPawns.Reset();
+	UWorld* W = GetWorld();
+	if (!W) return;
+
+	// [Phase22-Fix] As-A-Client(데디서버) 환경의 클라이언트에는 다른 PC 가 복제되지 않는다.
+	// GameState->PlayerArray (서버/클라 모두 복제) + PlayerState->GetPawn() 으로 순회한다.
+	AGameStateBase* GS = W->GetGameState();
+	if (!GS) return;
+
+	APlayerState* MyPS = PlayerState;
+	for (APlayerState* PS : GS->PlayerArray)
+	{
+		if (!IsValid(PS)) continue;
+		if (PS == MyPS) continue;
+		if (PS->IsSpectator()) continue;
+		if (PS->IsOnlyASpectator()) continue;
+
+		APawn* TargetPawn = PS->GetPawn();
+		if (!IsValid(TargetPawn)) continue;
+
+		OutPawns.Add(TargetPawn);
+	}
+}
+
+void AHellunaHeroController::ApplyCurrentSpectateView()
+{
+	if (!IsLocalController() || !bIsSpectating) return;
+
+	// 자유비행 모드 — SpectatorPawn 으로 ViewTarget 복귀
+	if (!bSpectatorFollowMode)
+	{
+		// [Phase22-Fix] GetSpectatorPawn() 은 표준 BeginSpectatingState 흐름에서만 set됨.
+		// 우리는 직접 SpawnActor+Possess 했으므로 GetPawn() (현재 Possess된 SpectatorPawn) 사용.
+		APawn* MySpec = GetPawn();
+		UE_LOG(LogHelluna, Log, TEXT("[Phase22] FreeFlight 시도 — Pawn(SpectatorPawn)=%s"),
+			MySpec ? *MySpec->GetName() : TEXT("null"));
+		if (MySpec)
+		{
+			SetViewTargetWithBlend(MySpec, SpectateViewBlendTime, EViewTargetBlendFunction::VTBlend_Cubic);
+		}
+		return;
+	}
+
+	// 팀원 시점 모드 — 살아있는 팀원의 Pawn ViewTarget
+	TArray<APawn*> Alive;
+	CollectAliveTeammates(Alive);
+	UE_LOG(LogHelluna, Log, TEXT("[Phase22] FollowMode — AliveTeammates=%d, Index=%d"),
+		Alive.Num(), CurrentSpectateIndex);
+	if (Alive.Num() == 0)
+	{
+		// 팀원 없음 → 자유비행 강제
+		bSpectatorFollowMode = false;
+		if (ASpectatorPawn* MySpec = GetSpectatorPawn())
+		{
+			SetViewTargetWithBlend(MySpec, SpectateViewBlendTime, EViewTargetBlendFunction::VTBlend_Cubic);
+		}
+		return;
+	}
+
+	// 음수 인덱스 안전 모듈로
+	const int32 Count = Alive.Num();
+	CurrentSpectateIndex = ((CurrentSpectateIndex % Count) + Count) % Count;
+	APawn* Target = Alive[CurrentSpectateIndex];
+	if (IsValid(Target))
+	{
+		UE_LOG(LogHelluna, Log, TEXT("[Phase22] FollowMode → ViewTarget=%s"), *Target->GetName());
+		SetViewTargetWithBlend(Target, SpectateViewBlendTime, EViewTargetBlendFunction::VTBlend_Cubic);
+	}
+}
+
+void AHellunaHeroController::OnSpectateToggleInput(const FInputActionValue& /*Value*/)
+{
+	UE_LOG(LogHelluna, Log, TEXT("[Phase22-Diag] OnSpectateToggleInput 호출됨 (bIsSpectating=%s)"),
+		bIsSpectating ? TEXT("true") : TEXT("false"));
+	if (!bIsSpectating) return;
+	bSpectatorFollowMode = !bSpectatorFollowMode;
+	ApplyCurrentSpectateView();
+}
+
+void AHellunaHeroController::OnSpectateNextInput(const FInputActionValue& /*Value*/)
+{
+	UE_LOG(LogHelluna, Log, TEXT("[Phase22-Diag] OnSpectateNextInput 호출됨 (bIsSpectating=%s, FollowMode=%s)"),
+		bIsSpectating ? TEXT("true") : TEXT("false"),
+		bSpectatorFollowMode ? TEXT("true") : TEXT("false"));
+	if (!bIsSpectating || !bSpectatorFollowMode) return;
+	++CurrentSpectateIndex;
+	ApplyCurrentSpectateView();
+}
+
+void AHellunaHeroController::OnSpectatePrevInput(const FInputActionValue& /*Value*/)
+{
+	UE_LOG(LogHelluna, Log, TEXT("[Phase22-Diag] OnSpectatePrevInput 호출됨 (bIsSpectating=%s, FollowMode=%s)"),
+		bIsSpectating ? TEXT("true") : TEXT("false"),
+		bSpectatorFollowMode ? TEXT("true") : TEXT("false"));
+	if (!bIsSpectating || !bSpectatorFollowMode) return;
+	--CurrentSpectateIndex;
+	ApplyCurrentSpectateView();
+}
+
+// ─── 자유비행 입력 핸들러 ──────────────────────────────────────────────
+// 가드: 관전 중이고 + 자유비행 모드일 때만 동작.
+// SpectatorPawn 의 USpectatorPawnMovement 가 ControlRotation/AddMovementInput 을 그대로 따름.
+
+void AHellunaHeroController::OnSpectateMoveForwardInput(const FInputActionValue& Value)
+{
+	const float V = Value.Get<float>();
+	if (!FMath::IsNearlyZero(V))
+	{
+		UE_LOG(LogHelluna, Log, TEXT("[Phase22-Diag] OnSpectateMoveForwardInput V=%.2f (bIsSpec=%s, Follow=%s, Pawn=%s)"),
+			V,
+			bIsSpectating ? TEXT("true") : TEXT("false"),
+			bSpectatorFollowMode ? TEXT("true") : TEXT("false"),
+			GetPawn() ? *GetPawn()->GetName() : TEXT("null"));
+	}
+	if (!bIsSpectating || bSpectatorFollowMode) return;
+	APawn* Spec = GetPawn();
+	if (!IsValid(Spec)) return;
+	if (FMath::IsNearlyZero(V)) return;
+
+	const FVector Fwd = GetControlRotation().Vector();
+	Spec->AddMovementInput(Fwd, V * SpectateMoveScale);
+}
+
+void AHellunaHeroController::OnSpectateMoveRightInput(const FInputActionValue& Value)
+{
+	const float V = Value.Get<float>();
+	if (!FMath::IsNearlyZero(V))
+	{
+		UE_LOG(LogHelluna, Log, TEXT("[Phase22-Diag] OnSpectateMoveRightInput V=%.2f (bIsSpec=%s, Follow=%s)"),
+			V, bIsSpectating ? TEXT("Y") : TEXT("N"), bSpectatorFollowMode ? TEXT("Y") : TEXT("N"));
+	}
+	if (!bIsSpectating || bSpectatorFollowMode) return;
+	APawn* Spec = GetPawn();
+	if (!IsValid(Spec)) return;
+	if (FMath::IsNearlyZero(V)) return;
+
+	const FRotator YawOnly(0.f, GetControlRotation().Yaw, 0.f);
+	const FVector Right = FRotationMatrix(YawOnly).GetUnitAxis(EAxis::Y);
+	Spec->AddMovementInput(Right, V * SpectateMoveScale);
+}
+
+void AHellunaHeroController::OnSpectateLookInput(const FInputActionValue& Value)
+{
+	const FVector2D Axis = Value.Get<FVector2D>();
+	// 마우스 큰 움직임만 로그 (스팸 방지)
+	if (FMath::Abs(Axis.X) > 0.5f || FMath::Abs(Axis.Y) > 0.5f)
+	{
+		UE_LOG(LogHelluna, Log, TEXT("[Phase22-Diag] OnSpectateLookInput X=%.2f Y=%.2f (bIsSpec=%s, Follow=%s)"),
+			Axis.X, Axis.Y, bIsSpectating ? TEXT("Y") : TEXT("N"), bSpectatorFollowMode ? TEXT("Y") : TEXT("N"));
+	}
+	if (!bIsSpectating || bSpectatorFollowMode) return;
+
+	AddYawInput(Axis.X * SpectateLookSensitivity);
+	AddPitchInput(Axis.Y * SpectateLookSensitivity);
+}
+
+void AHellunaHeroController::OnSpectateAscendInput(const FInputActionValue& Value)
+{
+	const float V = Value.Get<float>();
+	if (!FMath::IsNearlyZero(V))
+	{
+		UE_LOG(LogHelluna, Log, TEXT("[Phase22-Diag] OnSpectateAscendInput V=%.2f"), V);
+	}
+	if (!bIsSpectating || bSpectatorFollowMode) return;
+	APawn* Spec = GetPawn();
+	if (!IsValid(Spec)) return;
+	if (FMath::IsNearlyZero(V)) return;
+
+	Spec->AddMovementInput(FVector::UpVector, V * SpectateMoveScale);
+}
+

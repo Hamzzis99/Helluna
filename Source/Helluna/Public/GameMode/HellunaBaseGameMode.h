@@ -106,6 +106,13 @@ public:
 	virtual void Logout(AController* Exiting) override;
 	virtual void HandleSeamlessTravelPlayer(AController*& C) override;
 
+	// [§16+] UE 기본 RestartPlayer 차단 — Barrier(SpawnHeroCharacter)가 spawn 시점 제어
+	// AGameModeBase::HandleStartingNewPlayer_Implementation은 RestartPlayer 호출 →
+	// SpawnDefaultPawnFor(DefaultPawnClass=BP_HellunaHeroCharacter) 자동 spawn → ViewTarget 자동 전환
+	// 이 자동 흐름이 v2.1 Loading Barrier의 LoadingCamera/우주선 씬을 덮어쓰는 문제 발생.
+	// → Super 호출 안 해 자동 RestartPlayer 차단.
+	virtual void HandleStartingNewPlayer_Implementation(APlayerController* NewPlayer) override;
+
 	// ════════════════════════════════════════════════════════════════════════════════
 	// 게임 초기화 (자식 클래스에서 override)
 	// ════════════════════════════════════════════════════════════════════════════════

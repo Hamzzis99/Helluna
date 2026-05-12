@@ -1504,6 +1504,17 @@ void AHellunaLobbyController::OnBackgroundLevelLoaded()
 {
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] OnBackgroundLevelLoaded: '%s' 로드 완료"), *CurrentLoadedLevel.ToString());
 
+	// [§16+] L_LoadingShipScene 로드 → v2.1 Loading Barrier 흐름으로 분기
+	//   LoadingCamera 전환 + LoadingHUD 표시 + StartFakeProgress + 1.0s 후 Settle
+	//   기존 Play/Character 탭 LobbyCamera 처리는 건너뜀
+	if (CurrentLoadedLevel == LoadingSceneLevelName)
+	{
+		UE_LOG(LogHellunaLobby, Warning,
+			TEXT("[LoadingDbg][LobbyPC][A] OnBackgroundLevelLoaded → v2.1 OnLoadingSceneStreamed 분기"));
+		OnLoadingSceneStreamed();
+		return;
+	}
+
 	if (!LobbyCamera)
 	{
 		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] OnBackgroundLevelLoaded: LobbyCamera 없음 → 카메라 설정 스킵"));
@@ -2004,74 +2015,77 @@ namespace
 
 void AHellunaLobbyController::ExecuteDeploySequence(const FString& TravelURL, const FString& ExpectedIdsJoined, int32 PartyId)
 {
-	// [HOTFIX-Simple] 발표용 긴급 단순화.
-	// L_LoadingShipScene 서브레벨, LoadingShip Settle, Screenshot 캡처, MoviePlayer 오버레이를 전부 스킵.
-	// MoviePlayer(bWaitForManualStop) 로 인해 NMT_Join 이 막혀 서버 PostLogin 이 트리거되지 않던 데드락을 회피하기 위해,
-	// 기존 가짜 진행률(HellunaLoadingHUDWidget::StartFakeProgress) 연출만 유지하고 1.5s 뒤 바로 ClientTravel 로 진입한다.
-	UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A-Simple] ExecuteDeploySequence ENTER | URL=%s | PartyId=%d"), *TravelURL, PartyId);
+	// [§16 Step 3] HOTFIX-Simple 해제 → §13 v2.1 풀체인 복원.
+	// 흐름: Fade(0.2s) → StartLoadingSceneStream → OnLoadingSceneStreamed (1.0s) →
+	//       BeginLoadingHandoff (Settle 0.5s + Guard 0.8s) → CaptureAndTravel →
+	//       Snapshot 캡처 → OnSnapshotReadyTravel (MoviePlayer setup + ClientTravel).
+	// MoviePlayer 데드락은 GameInstance::SetupSnapshotLoadingScreen 의
+	// bWaitForManualStop=false + bAutoCompleteWhenLoadingCompletes=true 로 해소됨 (커밋 4a375c80).
+	UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A] ExecuteDeploySequence ENTER | URL=%s | PartyId=%d"), *TravelURL, PartyId);
 
+	UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance());
+	if (!GI)
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A] GI null → fallback ClientTravel 즉시"));
+		ClientTravel(TravelURL, TRAVEL_Absolute);
+		return;
+	}
+
+	// 시퀀스 상태 초기화
 	PendingTravelURL = TravelURL;
 	PendingExpectedIds = ExpectedIdsJoined;
 	PendingPartyId = PartyId;
 	bCaptureAndTravelFired = false;
 
+	// (Q22) 입력 전면 차단
 	DisableInput(this);
 	SetInputMode(FInputModeUIOnly{});
 
+	// (Q21) V2 프리뷰 비활성화
 	if (IsValid(SpawnedPreviewSceneV2))
 	{
 		SpawnedPreviewSceneV2->SetActorTickEnabled(false);
 		SpawnedPreviewSceneV2->SetActorHiddenInGame(true);
 	}
 
-	// 간단 HUD — 서브레벨 없이 위젯만 띄우고 가짜 진행률 시작
-	if (LobbyLoadingHUDClass)
+	// (Q8) Fade-to-black 위젯 (BP가 0.2s opacity 0→1 애니 재생)
+	if (FadeToBlackWidgetClass)
 	{
-		ActiveLobbyHUD = CreateWidget<UHellunaLoadingHUDWidget>(this, LobbyLoadingHUDClass);
-		if (ActiveLobbyHUD)
+		ActiveFadeWidget = CreateWidget<UUserWidget>(this, FadeToBlackWidgetClass);
+		if (ActiveFadeWidget)
 		{
-			ActiveLobbyHUD->SetIsLobbyStage(true);
-			ActiveLobbyHUD->InitializeHUD(
-				ParseExpectedIdsCSV(PendingExpectedIds),
-				ReplicatedPlayerId,
-				PendingPartyId);
-			ActiveLobbyHUD->AddToViewport(100);
-			ActiveLobbyHUD->StartFakeProgress(1.5f, 0.9f);
+			ActiveFadeWidget->SetRenderOpacity(0.f);
+			ActiveFadeWidget->AddToViewport(9999);
 		}
 	}
 	else
 	{
-		UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A-Simple] LobbyLoadingHUDClass 미설정 — HUD 스킵"));
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A] FadeToBlackWidgetClass 미설정 — Fade 스킵"));
 	}
 
-	// 1.5s 후 ClientTravel. OnSnapshotReadyTravel 은 GI->LoadingSnapshotTexture 가 null 이면
-	// SetupSnapshotLoadingScreen 을 호출하지 않고 바로 ClientTravel 만 수행하므로 MoviePlayer 데드락 없음.
+	// 0.2s 후 서브레벨 스트리밍
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(FadeStartTimer);
 		World->GetTimerManager().ClearTimer(HandoffTimer);
 		World->GetTimerManager().ClearTimer(SettleGuardTimer);
 		World->GetTimerManager().SetTimer(FadeStartTimer, this,
-			&AHellunaLobbyController::OnSnapshotReadyTravel, 1.5f, false);
+			&AHellunaLobbyController::StartLoadingSceneStream, 0.2f, false);
 	}
 	else
 	{
-		OnSnapshotReadyTravel();
+		StartLoadingSceneStream();
 	}
 }
 
 void AHellunaLobbyController::StartLoadingSceneStream()
 {
-	// [LoadingSublevelDisabled-Package] Sublevel 로딩 버그 우회 — 이 블록 지우면 복원.
-	// 팀장 지시: Loading Sublevel 비활성화 + 기존 가짜로딩(스냅샷 MoviePlayer) 방식 유지.
-	// StartLoadingSceneStream 진입 시 즉시 CaptureAndTravel 로 분기 → Sublevel 스트리밍 스킵.
-	UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingSublevelDisabled-Package] Sublevel 로드 스킵 → 가짜로딩 경로 직행"));
-	CaptureAndTravel();
-	return;
-
-#if 0 // [LoadingSublevelDisabled-Package] 아래 코드는 복원 시 #if 1 로 바꾸면 재활성
-	UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A] StartLoadingSceneStream | Level=%s"),
-		*LoadingSceneLevelName.ToString());
+	// [§16+] L_Lobby에서 sublevel 전환:
+	//   기존 Play/Character sublevel(CurrentLoadedLevel)을 자동 unload + L_LoadingShipScene 로드
+	//   → 로비 배경 사라지고 우주선 씬만 보임 (사용자 의도: MainMap WP 스트리밍 동안 어색한 전경 가림)
+	//   LoadBackgroundLevel callback = OnBackgroundLevelLoaded → LoadingSceneLevelName 분기에서 OnLoadingSceneStreamed 호출
+	UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A] StartLoadingSceneStream | Level=%s | CurrentLoaded=%s"),
+		*LoadingSceneLevelName.ToString(), *CurrentLoadedLevel.ToString());
 
 	if (LoadingSceneLevelName.IsNone())
 	{
@@ -2080,18 +2094,8 @@ void AHellunaLobbyController::StartLoadingSceneStream()
 		return;
 	}
 
-	FLatentActionInfo LatentInfo;
-	LatentInfo.CallbackTarget = this;
-	LatentInfo.ExecutionFunction = FName(TEXT("OnLoadingSceneStreamed"));
-	LatentInfo.Linkage = 0;
-	LatentInfo.UUID = GetUniqueID();
-
-	UGameplayStatics::LoadStreamLevel(this,
-		LoadingSceneLevelName,
-		/*bMakeVisibleAfterLoad=*/true,
-		/*bShouldBlockOnLoad=*/false,
-		LatentInfo);
-#endif // [LoadingSublevelDisabled-Package]
+	// LoadBackgroundLevel 사용으로 기존 sublevel 자동 unload + 우주선 sublevel 로드
+	LoadBackgroundLevel(LoadingSceneLevelName);
 }
 
 void AHellunaLobbyController::OnLoadingSceneStreamed()
@@ -2163,7 +2167,8 @@ void AHellunaLobbyController::BeginLoadingHandoff()
 		return;
 	}
 
-	Ship->OnSettleComplete.AddDynamic(this, &AHellunaLobbyController::CaptureAndTravel);
+	// [§16 L-1] BeginLoadingHandoff 재호출 시 중복 등록 방지 — bCaptureAndTravelFired 가드와 이중 안전망
+	Ship->OnSettleComplete.AddUniqueDynamic(this, &AHellunaLobbyController::CaptureAndTravel);
 	Ship->BeginSettleForTravel();
 
 	// (Q13) 가드 타이머 — 0.5s + 0.3s margin

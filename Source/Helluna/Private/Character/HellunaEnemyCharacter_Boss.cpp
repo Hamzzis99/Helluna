@@ -413,15 +413,23 @@ void AHellunaEnemyCharacter_Boss::Multicast_PlayBossPhase2Transition_Implementat
 				{
 					PCLocal->ExitBossCinematic(BlendOut);
 				}
+				// 블렌드 아웃 중엔 카메라가 보여야 하므로 약간 늦게 파괴
+				// [Fix:null-guard 2026-05-02] GetWorld() nullptr 체크 추가
 				if (ACameraActor* Cam = WeakCam.Get())
 				{
-					FTimerHandle DestroyTimer;
-					Cam->GetWorld()->GetTimerManager().SetTimer(DestroyTimer,
-						FTimerDelegate::CreateWeakLambda(Cam, [WeakCam]()
-						{
-							if (ACameraActor* C = WeakCam.Get()) C->Destroy();
-						}),
-						FMath::Max(BlendOut + 0.1f, 0.2f), false);
+					if (UWorld* CamWorld = Cam->GetWorld())
+					{
+						FTimerHandle DestroyTimer;
+						CamWorld->GetTimerManager().SetTimer(DestroyTimer,
+							FTimerDelegate::CreateWeakLambda(Cam, [WeakCam]()
+							{
+								if (ACameraActor* C = WeakCam.Get())
+								{
+									C->Destroy();
+								}
+							}),
+							FMath::Max(BlendOut + 0.1f, 0.2f), false);
+					}
 				}
 			}),
 			ExitDelay, false);
@@ -715,7 +723,11 @@ void AHellunaEnemyCharacter_Boss::TriggerHitStop()
 	if (!HasAuthority()) return;
 	if (HitStopDuration <= KINDA_SMALL_NUMBER) return;
 
-	const double Now = GetWorld()->GetTimeSeconds();
+	// [Fix:null-guard 2026-05-02] 엔진 종료/Actor 파괴 단계 GetWorld() nullptr 가능
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	const double Now = World->GetTimeSeconds();
 	if (Now - LastHitStopTime < HitStopCooldown) return;
 	LastHitStopTime = Now;
 

@@ -157,6 +157,24 @@ void AHellunaGuardianProjectile::OnBeginOverlap(
 		HitNormal = SweepResult.ImpactNormal;
 	}
 
+	// [Perfect Reflect Hit] 반사된 투사체는 광역 데미지/Physics impact 흐름을 타지 않는다.
+	// - 발사자 본인(가디언/터렛)에 닿았을 때만 직격 데미지로 즉사 (멀리 날아가지 않음).
+	// - 폭발 VFX는 그대로 재생되어 가디언이 그 자리에서 분리되는 시각적 재미를 살린다.
+	if (bReflected)
+	{
+		if (OtherActor == OriginalOwnerActor.Get() && OtherActor->CanBeDamaged())
+		{
+			UGameplayStatics::ApplyDamage(
+				OtherActor,
+				PerfectBlockReflectedDamage,
+				GetInstigatorController(),
+				this,
+				UDamageType::StaticClass());
+		}
+	}
+
+	// Explode 내부에서 bReflected==true 인 경우 ApplyShieldAwareExplosionDamage 호출을 스킵한다.
+	// 따라서 반사 흐름에서도 폭발 VFX/사운드는 정상 재생되지만 광역 데미지/launch는 발생하지 않는다.
 	Explode(HitLoc, HitNormal);
 }
 
@@ -172,17 +190,17 @@ bool AHellunaGuardianProjectile::TryReflectFromPerfectBlock(AActor* BlockingActo
 	const float BaseSpeed = FMath::Max(CurrentVelocity.Size(), MoveComp->MaxSpeed);
 	const float ReflectedSpeed = FMath::Max(BaseSpeed * ReflectedSpeedMultiplier, 100.f);
 
-	FVector ReflectedDirection = FVector::ZeroVector;
-	if (OriginalOwnerActor.IsValid())
+	// [BOTW식 반사] 들어온 속도 벡터의 정확한 반대 — 투사체를 그대로 돌려보낸다.
+	// Guardian 위치 추적이 아니라 입사 방향 정반대로 반사.
+	FVector ReflectedDirection = -CurrentVelocity.GetSafeNormal();
+	if (ReflectedDirection.IsNearlyZero() && OriginalOwnerActor.IsValid())
 	{
+		// fallback 1: 속도가 거의 0이면 발사자 방향 (정지 상태 투사체 보호)
 		ReflectedDirection = (OriginalOwnerActor->GetActorLocation() - GetActorLocation()).GetSafeNormal();
 	}
 	if (ReflectedDirection.IsNearlyZero())
 	{
-		ReflectedDirection = -CurrentVelocity.GetSafeNormal();
-	}
-	if (ReflectedDirection.IsNearlyZero())
-	{
+		// fallback 2: 그래도 0이면 액터 forward 반대
 		ReflectedDirection = -GetActorForwardVector();
 	}
 
@@ -211,6 +229,7 @@ bool AHellunaGuardianProjectile::TryReflectFromPerfectBlock(AActor* BlockingActo
 	MoveComp->UpdateComponentVelocity();
 
 	bReflected = true;
+	// [Perfect Reflect] 반사 후 폭발 흐름은 타지 않는다. 발사자 본인 충돌 시점에 직격 데미지로 처리.
 	SetLifeSpan(FMath::Max(ReflectedLifeSeconds, 0.1f));
 
 	Multicast_OnPerfectBlockReflected(
@@ -222,7 +241,8 @@ bool AHellunaGuardianProjectile::TryReflectFromPerfectBlock(AActor* BlockingActo
 
 void AHellunaGuardianProjectile::LifeSpanExpired()
 {
-	// 공중에서 수명 만료 → 현재 위치에서 폭발 (서퍼스 Normal 은 이동 반대방향)
+	// 공중에서 수명 만료 → 현재 위치에서 공중 폭발 (서퍼스 Normal 은 이동 반대방향).
+	// 반사된 투사체도 폭발 VFX는 재생 — 단 Explode 내부가 bReflected==true 이면 광역 데미지를 스킵한다.
 	if (HasAuthority() && bInitialized && !bExploded)
 	{
 		const FVector AirNormal = -GetActorForwardVector();
@@ -245,7 +265,10 @@ void AHellunaGuardianProjectile::Explode(const FVector& ExplosionLocation, const
 	SetActorLocation(ExplosionLocation, false, nullptr, ETeleportType::TeleportPhysics);
 
 	UWorld* World = GetWorld();
-	if (World && Radius > 0.f)
+	// [Perfect Reflect] 반사 흐름에서는 광역 데미지/Physics impact를 적용하지 않는다.
+	// 가디언이 launch로 멀리 날아가 분리 연출이 안 보이는 문제 방지.
+	// 폭발 VFX/사운드 자체는 아래 Multicast_SpawnExplosionFX에서 재생된다.
+	if (World && Radius > 0.f && !bReflected)
 	{
 		ApplyShieldAwareExplosionDamage(ExplosionLocation);
 

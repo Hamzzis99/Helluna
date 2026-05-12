@@ -133,9 +133,9 @@ void UHeroGameplayAbility_Farming::PlayFarmingMontage()
 
 	// [DmgSyncV1] OnBlendOut 중복 바인딩 제거 — 한 몽타주당 OnFarmingFinished가 두 번 호출되어
 	// 타이밍이 밀리고 스윙 주기가 불규칙해지던 버그 수정. OnCompleted만 사용.
-	FarmingTask->OnCompleted.AddDynamic(this, &UHeroGameplayAbility_Farming::OnFarmingFinished);
-	FarmingTask->OnInterrupted.AddDynamic(this, &UHeroGameplayAbility_Farming::OnFarmingInterrupted);
-	FarmingTask->OnCancelled.AddDynamic(this, &UHeroGameplayAbility_Farming::OnFarmingInterrupted);
+	FarmingTask->OnCompleted.AddUniqueDynamic(this, &UHeroGameplayAbility_Farming::OnFarmingFinished);
+	FarmingTask->OnInterrupted.AddUniqueDynamic(this, &UHeroGameplayAbility_Farming::OnFarmingInterrupted);
+	FarmingTask->OnCancelled.AddUniqueDynamic(this, &UHeroGameplayAbility_Farming::OnFarmingInterrupted);
 
 	FarmingTask->ReadyForActivation();
 

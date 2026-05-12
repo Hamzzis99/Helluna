@@ -84,7 +84,13 @@ public:
 	// 🗺️ 맵 이동 공통 로직
 	// =========================================================================================
 
-	/** [서버 전용] 현재 상태를 저장하고, 다음 레벨로 이동합니다. */
+	/**
+	 * [서버 전용] 현재 상태를 저장하고, 다음 레벨로 이동합니다.
+	 *
+	 * ⚠️ [Fix:gamestate-rpc-warning 2026-05-02] DO NOT add Server RPC macro to this function.
+	 * GameState에서 Server RPC는 라우팅 실패 (silent failure). 반드시 PlayerController에 두어야 함.
+	 * 현재는 일반 함수로 HasAuthority 가드 적용 — 클라가 호출해도 early return.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Helluna|System")
 	void Server_SaveAndMoveLevel(FName NextLevelName);
 

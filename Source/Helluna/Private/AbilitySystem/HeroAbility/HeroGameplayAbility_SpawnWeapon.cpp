@@ -34,6 +34,8 @@ void UHeroGameplayAbility_SpawnWeapon::ActivateAbility(
 
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
 
+	bEquipEndCalled = false;
+
 	if (!ActorInfo || !ActorInfo->AvatarActor.IsValid())
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -125,10 +127,11 @@ void UHeroGameplayAbility_SpawnWeapon::ActivateAbility(
 		return;
 	}
 
-	EquipTask->OnCompleted.AddDynamic(this, &UHeroGameplayAbility_SpawnWeapon::OnEquipFinished);
-	EquipTask->OnBlendOut.AddDynamic(this, &UHeroGameplayAbility_SpawnWeapon::OnEquipFinished);
-	EquipTask->OnInterrupted.AddDynamic(this, &UHeroGameplayAbility_SpawnWeapon::OnEquipInterrupted);
-	EquipTask->OnCancelled.AddDynamic(this, &UHeroGameplayAbility_SpawnWeapon::OnEquipInterrupted);
+	// [Fix:dup-callback 2026-05-02] OnCompleted+OnBlendOut 동일 함수 바인딩 시 SetEquipping(false) 이중 호출.
+	// OnBlendOut 제거 + AddUniqueDynamic으로 중복 차단.
+	EquipTask->OnCompleted.AddUniqueDynamic(this, &UHeroGameplayAbility_SpawnWeapon::OnEquipFinished);
+	EquipTask->OnInterrupted.AddUniqueDynamic(this, &UHeroGameplayAbility_SpawnWeapon::OnEquipInterrupted);
+	EquipTask->OnCancelled.AddUniqueDynamic(this, &UHeroGameplayAbility_SpawnWeapon::OnEquipInterrupted);
 
 	EquipTask->ReadyForActivation();
 }
@@ -147,6 +150,9 @@ void UHeroGameplayAbility_SpawnWeapon::EndAbility(
 
 void UHeroGameplayAbility_SpawnWeapon::OnEquipFinished()
 {
+	if (bEquipEndCalled) return;
+	bEquipEndCalled = true;
+
 	// ⭐ 장착 애니메이션 완료 → 무기 전환 허용
 	if (AHellunaHeroCharacter* Hero = GetHeroCharacterFromActorInfo())
 	{
@@ -155,12 +161,15 @@ void UHeroGameplayAbility_SpawnWeapon::OnEquipFinished()
 			WeaponBridge->SetEquipping(false);
 		}
 	}
-	
+
 	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
 }
 
 void UHeroGameplayAbility_SpawnWeapon::OnEquipInterrupted()
 {
+	if (bEquipEndCalled) return;
+	bEquipEndCalled = true;
+
 	// ⭐ 장착 애니메이션 중단 → 무기 전환 허용
 	if (AHellunaHeroCharacter* Hero = GetHeroCharacterFromActorInfo())
 	{
@@ -169,6 +178,6 @@ void UHeroGameplayAbility_SpawnWeapon::OnEquipInterrupted()
 			WeaponBridge->SetEquipping(false);
 		}
 	}
-	
+
 	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
 }

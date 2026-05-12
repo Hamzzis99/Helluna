@@ -143,6 +143,8 @@ void UHeroGameplayAbility_MeleeKick::ActivateAbility(
 	const FGameplayAbilityActivationInfo ActivationInfo,
 	const FGameplayEventData* TriggerEventData)
 {
+	bMontageEndCalled = false;
+
 	AHellunaHeroCharacter* Hero = GetHeroCharacterFromActorInfo();
 	if (!Hero)
 	{
@@ -250,10 +252,11 @@ void UHeroGameplayAbility_MeleeKick::ActivateAbility(
 
 	if (MontageTask)
 	{
-		MontageTask->OnCompleted.AddDynamic(this, &ThisClass::OnKickMontageCompleted);
-		MontageTask->OnBlendOut.AddDynamic(this, &ThisClass::OnKickMontageCompleted);
-		MontageTask->OnInterrupted.AddDynamic(this, &ThisClass::OnKickMontageInterrupted);
-		MontageTask->OnCancelled.AddDynamic(this, &ThisClass::OnKickMontageInterrupted);
+		// [Fix:dup-callback 2026-05-02] OnCompleted+OnBlendOut 동일 함수 바인딩 시 한 프레임 이중 호출 → freed UObject 접근.
+		// OnBlendOut 제거 + AddUniqueDynamic으로 중복 차단 (GunParry 동일 패턴).
+		MontageTask->OnCompleted.AddUniqueDynamic(this, &ThisClass::OnKickMontageCompleted);
+		MontageTask->OnInterrupted.AddUniqueDynamic(this, &ThisClass::OnKickMontageInterrupted);
+		MontageTask->OnCancelled.AddUniqueDynamic(this, &ThisClass::OnKickMontageInterrupted);
 		MontageTask->ReadyForActivation();
 	}
 
@@ -542,12 +545,26 @@ void UHeroGameplayAbility_MeleeKick::OnKickImpactEvent(FGameplayEventData Payloa
 
 void UHeroGameplayAbility_MeleeKick::OnKickMontageCompleted()
 {
+	if (bMontageEndCalled)
+	{
+		UE_LOG(LogMeleeKick, Warning, TEXT("[MeleeKick] OnKickMontageCompleted 재진입 차단"));
+		return;
+	}
+	bMontageEndCalled = true;
+
 	UE_LOG(LogMeleeKick, Warning, TEXT("[MeleeKick] 몽타주 완료"));
 	EndAbility(GetCurrentAbilitySpecHandle(), GetCurrentActorInfo(), GetCurrentActivationInfo(), true, false);
 }
 
 void UHeroGameplayAbility_MeleeKick::OnKickMontageInterrupted()
 {
+	if (bMontageEndCalled)
+	{
+		UE_LOG(LogMeleeKick, Warning, TEXT("[MeleeKick] OnKickMontageInterrupted 재진입 차단"));
+		return;
+	}
+	bMontageEndCalled = true;
+
 	UE_LOG(LogMeleeKick, Warning, TEXT("[MeleeKick] 몽타주 중단"));
 	EndAbility(GetCurrentAbilitySpecHandle(), GetCurrentActorInfo(), GetCurrentActivationInfo(), true, true);
 }

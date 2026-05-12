@@ -108,7 +108,7 @@ void UHellunaHealthHUDWidget::NativeConstruct()
 
 			HealthArcMID->SetScalarParameterValue(TEXT("HealthPercent"), 1.f);
 			HealthArcMID->SetVectorParameterValue(TEXT("HealthColor"),
-				FLinearColor(0.4f, 0.93f, 0.65f, 1.f));
+				FLinearColor(0.2f, 0.6f, 0.85f, 1.f));
 		}
 	}
 
@@ -401,27 +401,27 @@ void UHellunaHealthHUDWidget::UpdateSubBar(float Percent)
 // ─────────────────────────────────────────────────────────────
 
 // ============================================================================
-// GetHealthColor — HP 퍼센트에 따른 색상 전환
-//  >60%: 민트 그린  |  25~60%: 앰버  |  <25%: 빨강
+// GetHealthColor — HP 퍼센트에 따른 색상 전환 (미래풍 사이파이 톤)
+//  >50%: 시안/스카이 블루  |  25~50%: 앰버  |  <25%: 빨강
 // ============================================================================
 FLinearColor UHellunaHealthHUDWidget::GetHealthColor(float Percent) const
 {
-	const FLinearColor Green(0.4f, 0.93f, 0.65f, 1.f);
-	const FLinearColor Amber(0.96f, 0.62f, 0.04f, 1.f);
-	const FLinearColor Red(0.97f, 0.27f, 0.27f, 1.f);
+	const FLinearColor Healthy(0.2f, 0.6f, 0.85f, 1.f);    // 미래시대 시안
+	const FLinearColor Warning(0.96f, 0.62f, 0.04f, 1.f);  // 앰버
+	const FLinearColor Danger(0.97f, 0.27f, 0.27f, 1.f);   // 빨강
 
-	if (Percent > 0.6f)
+	if (Percent > 0.5f)
 	{
-		return Green;
+		return Healthy;
 	}
 	else if (Percent > 0.25f)
 	{
-		const float T = (Percent - 0.25f) / 0.35f;
-		return FMath::Lerp(Amber, Green, T);
+		const float T = (Percent - 0.25f) / 0.25f;
+		return FMath::Lerp(Warning, Healthy, T);
 	}
 	else
 	{
 		const float T = Percent / 0.25f;
-		return FMath::Lerp(Red, Amber, T);
+		return FMath::Lerp(Danger, Warning, T);
 	}
 }

@@ -32,7 +32,10 @@
 #include "Character/HellunaHeroCharacter.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
+#include "InventoryManagement/FastArray/Inv_FastArray.h"  // [Phase22] ClearAllEntries
 #include "Player/Inv_PlayerController.h"
+#include "GameFramework/PlayerStart.h"  // [Phase22] FindPlayerStart 반환 타입
+#include "GameFramework/SpectatorPawn.h"  // [Phase22] 관전 Pawn
 #include "HAL/IConsoleManager.h"
 #include "Chat/HellunaChatTypes.h"
 #include "Login/Controller/HellunaLoginController.h"  // [Fix50]
@@ -1608,6 +1611,14 @@ void AHellunaDefenseGameMode::EnterDay()
     // 낮 카운터 증가 (게임 시작 첫 낮은 Day 1)
     CurrentDay++;
 
+    // [Phase22] 새 낮 시작 — 관전 중인(사망한) 플레이어 전원을 PlayerStart 에 부활시킨다.
+    //   - 사체 Pawn 은 그대로 잔류(직접 회수)
+    //   - 첫 낮(Day 1)에는 관전자 없으므로 자연스럽게 패스된다.
+    if (!bGameEnded)
+    {
+        RespawnAllDeadPlayers();
+    }
+
     // Day에 따라 적절한 낮 지속 시간 결정
     const float EffectiveDayDuration = GetEffectiveDayDuration();
 
@@ -2217,6 +2228,7 @@ void AHellunaDefenseGameMode::NotifyPlayerDied(APlayerController* DeadPC)
     UE_LOG(LogHelluna, Log, TEXT("[NotifyPlayerDied] %s 사망"), *GetNameSafe(DeadPC));
 
     // 생존자가 한 명이라도 있는지 확인
+    bool bAnyAlive = false;
     for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
     {
         APlayerController* PC = It->Get();
@@ -2228,13 +2240,20 @@ void AHellunaDefenseGameMode::NotifyPlayerDied(APlayerController* DeadPC)
         UHellunaHealthComponent* HealthComp = Pawn->FindComponentByClass<UHellunaHealthComponent>();
         if (HealthComp && HealthComp->IsAliveAndNotDowned())
         {
-            // 생존자 있음 (다운 상태 제외) → 게임 계속
-            UE_LOG(LogHelluna, Log, TEXT("[NotifyPlayerDied] 생존자 있음: %s")   , *GetNameSafe(PC));
-            return;
+            UE_LOG(LogHelluna, Log, TEXT("[NotifyPlayerDied] 생존자 있음: %s"), *GetNameSafe(PC));
+            bAnyAlive = true;
+            break;
         }
     }
 
-    // 전원 사망 → 패배
+    if (bAnyAlive)
+    {
+        // [Phase22] 멀티 케이스 — 사망 PC 만 관전 모드로 (사체 Pawn 은 잔류)
+        EnterSpectatorMode(DeadPC);
+        return;
+    }
+
+    // 전원 사망 → 패배 (솔로 즉사 포함)
     UE_LOG(LogHelluna, Warning, TEXT("[Defeat] 전원 사망! EndGame(AllDead) 호출"));
     EndGame(EHellunaGameEndReason::AllDead);
 }
@@ -2323,6 +2342,205 @@ void AHellunaDefenseGameMode::ForceKillAllDownedPlayers()
             HealthComp->ForceKillFromDowned();
         }
     }
+}
+
+// ============================================================
+// [Phase22] Death Spectate / Day-Respawn
+// ============================================================
+
+void AHellunaDefenseGameMode::EnterSpectatorMode(APlayerController* DeadPC)
+{
+    if (!HasAuthority() || !IsValid(DeadPC)) return;
+
+    UE_LOG(LogHelluna, Log, TEXT("[Phase22] EnterSpectatorMode | PC=%s"), *GetNameSafe(DeadPC));
+
+    UWorld* World = GetWorld();
+    if (!World) return;
+
+    // 사체 Pawn 은 월드에 잔류(래그돌 + LootContainer). UnPossess 로 PC와 분리.
+    APawn* CorpsePawn = DeadPC->GetPawn();
+    if (IsValid(CorpsePawn))
+    {
+        DeadPC->UnPossess();
+    }
+
+    // [Phase22-Fix] SpectatorPawn 직접 스폰 + Possess
+    //   - ChangeState(NAME_Spectating) 만으로는 Pawn 이 자동 스폰되지 않음
+    //   - GameMode 의 SpectatorClass 사용 (None 이면 폴백: ASpectatorPawn::StaticClass())
+    TSubclassOf<ASpectatorPawn> SpecClass = SpectatorClass;
+    if (!SpecClass)
+    {
+        SpecClass = ASpectatorPawn::StaticClass();
+    }
+    FActorSpawnParameters SpawnParams;
+    SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+    SpawnParams.Owner = DeadPC;
+
+    // 사체 위치 위쪽으로 스폰 (자유비행 시작점)
+    const FVector SpawnLoc = IsValid(CorpsePawn)
+        ? (CorpsePawn->GetActorLocation() + FVector(0.f, 0.f, 200.f))
+        : FVector(0.f, 0.f, 500.f);
+    const FRotator SpawnRot = IsValid(CorpsePawn) ? CorpsePawn->GetActorRotation() : FRotator::ZeroRotator;
+
+    ASpectatorPawn* SpecPawn = World->SpawnActor<ASpectatorPawn>(SpecClass, SpawnLoc, SpawnRot, SpawnParams);
+    if (IsValid(SpecPawn))
+    {
+        DeadPC->Possess(SpecPawn);
+        UE_LOG(LogHelluna, Log, TEXT("[Phase22] SpectatorPawn 스폰 + Possess 성공: %s"), *SpecPawn->GetName());
+    }
+    else
+    {
+        UE_LOG(LogHelluna, Error, TEXT("[Phase22] SpectatorPawn 스폰 실패! SpecClass=%s"),
+            SpecClass ? *SpecClass->GetName() : TEXT("null"));
+    }
+
+    // PlayerState 관전 플래그 (자기 시점 카메라 ViewTarget 후 클라 PlayerArray 검사용)
+    if (AHellunaPlayerState* PS = DeadPC->GetPlayerState<AHellunaPlayerState>())
+    {
+        PS->SetIsSpectator(true);
+    }
+
+    // 첫 ViewTarget — 사체 위치를 잠시 비추고, 클라가 관전 입력으로 팀원 시점/자유비행 토글
+    if (IsValid(CorpsePawn))
+    {
+        DeadPC->SetViewTargetWithBlend(CorpsePawn, SpectatorEnterBlendTime, EViewTargetBlendFunction::VTBlend_Cubic);
+    }
+
+    // 클라 측 IMC/상태 초기화 통지
+    if (AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(DeadPC))
+    {
+        HeroPC->Client_OnEnteredSpectatorMode();
+    }
+}
+
+void AHellunaDefenseGameMode::RespawnAllDeadPlayers()
+{
+    if (!HasAuthority() || !bGameInitialized || bGameEnded) return;
+
+    UWorld* World = GetWorld();
+    if (!World) return;
+
+    int32 RespawnedCount = 0;
+    for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+    {
+        APlayerController* PC = It->Get();
+        if (!IsValid(PC)) continue;
+
+        AHellunaPlayerState* PS = PC->GetPlayerState<AHellunaPlayerState>();
+        if (!PS || !PS->IsSpectator()) continue;
+
+        RespawnDeadPlayer(PC);
+        ++RespawnedCount;
+    }
+
+    if (RespawnedCount > 0)
+    {
+        UE_LOG(LogHelluna, Log, TEXT("[Phase22] RespawnAllDeadPlayers — Day=%d, Count=%d"), CurrentDay, RespawnedCount);
+        if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
+        {
+            GS->BroadcastChatMessage(TEXT(""),
+                FString::Printf(TEXT("새벽이 밝았습니다. 사망자 %d명이 부활했습니다"), RespawnedCount),
+                EChatMessageType::System);
+        }
+    }
+}
+
+void AHellunaDefenseGameMode::RespawnDeadPlayer(APlayerController* PC)
+{
+    if (!HasAuthority() || !IsValid(PC)) return;
+
+    UWorld* World = GetWorld();
+    if (!World) return;
+
+    // 1) 캐릭터 클래스 결정 — SpawnHeroCharacter 와 동일 규칙(HeroCharacterMap → fallback)
+    TSubclassOf<APawn> SpawnClass = nullptr;
+    if (AHellunaPlayerState* PS = PC->GetPlayerState<AHellunaPlayerState>())
+    {
+        const int32 CharacterIndex = PS->GetSelectedCharacterIndex();
+        if (CharacterIndex >= 0)
+        {
+            const EHellunaHeroType HeroType = IndexToHeroType(CharacterIndex);
+            if (HeroCharacterMap.Contains(HeroType))
+            {
+                SpawnClass = HeroCharacterMap[HeroType];
+            }
+        }
+    }
+    if (!SpawnClass)
+    {
+        SpawnClass = HeroCharacterClass;
+    }
+    if (!SpawnClass)
+    {
+        UE_LOG(LogHelluna, Error, TEXT("[Phase22] RespawnDeadPlayer: SpawnClass nullptr | PC=%s"), *GetNameSafe(PC));
+        return;
+    }
+
+    // 2) PlayerStart 위치 결정
+    FVector SpawnLocation(0.f, 0.f, 200.f);
+    FRotator SpawnRotation = FRotator::ZeroRotator;
+    if (AActor* PlayerStart = FindPlayerStart(PC))
+    {
+        SpawnLocation = PlayerStart->GetActorLocation();
+        SpawnRotation = PlayerStart->GetActorRotation();
+    }
+
+    // 3) 기존 SpectatorPawn 정리 — UnPossess + Destroy
+    if (APawn* CurPawn = PC->GetPawn())
+    {
+        if (CurPawn->IsA(ASpectatorPawn::StaticClass()))
+        {
+            PC->UnPossess();
+            CurPawn->Destroy();
+            UE_LOG(LogHelluna, Log, TEXT("[Phase22] 기존 SpectatorPawn 정리 완료"));
+        }
+    }
+
+    // 4) 관전 상태 해제
+    PC->ChangeState(NAME_Playing);
+    if (AHellunaPlayerState* PS = PC->GetPlayerState<AHellunaPlayerState>())
+    {
+        PS->SetIsSpectator(false);
+    }
+
+    // 5) PC 의 InventoryComponent 클리어 — 사체에 사본이 남았으므로 회수 동선 보장
+    if (UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>())
+    {
+        InvComp->GetInventoryList().ClearAllEntries();
+    }
+
+    // 6) 새 Pawn 스폰 + Possess (SpawnHeroCharacter 미사용 — LoadAndSendInventoryToClient 자동 호출 회피)
+    FActorSpawnParameters SpawnParams;
+    SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+    SpawnParams.Owner = PC;
+
+    APawn* NewPawn = World->SpawnActor<APawn>(SpawnClass, SpawnLocation, SpawnRotation, SpawnParams);
+    if (!IsValid(NewPawn))
+    {
+        UE_LOG(LogHelluna, Error, TEXT("[Phase22] RespawnDeadPlayer: SpawnActor 실패 | PC=%s"), *GetNameSafe(PC));
+        return;
+    }
+
+    PC->Possess(NewPawn);
+
+    // 7) HP 복원 (RespawnHealthPercent 비율)
+    if (UHellunaHealthComponent* HC = NewPawn->FindComponentByClass<UHellunaHealthComponent>())
+    {
+        const float TargetHealth = HC->GetMaxHealth() * FMath::Clamp(RespawnHealthPercent, 0.01f, 1.0f);
+        HC->SetHealth(TargetHealth);
+    }
+
+    // 8) 카메라 — 새 Pawn 으로 ViewTarget 복귀
+    PC->SetViewTargetWithBlend(NewPawn, RespawnBlendTime, EViewTargetBlendFunction::VTBlend_Cubic);
+
+    // 9) 클라 측 IMC/상태 정리 통지
+    if (AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(PC))
+    {
+        HeroPC->Client_OnRespawned();
+    }
+
+    UE_LOG(LogHelluna, Log, TEXT("[Phase22] RespawnDeadPlayer 완료 | PC=%s | Loc=%s"),
+        *GetNameSafe(PC), *SpawnLocation.ToString());
 }
 
 // ============================================================
@@ -2791,6 +3009,55 @@ void AHellunaDefenseGameMode::Logout(AController* Exiting)
                 *GetNameSafe(Exiting));
             Super::Logout(Exiting);
             return;
+        }
+    }
+
+    // [Loading Barrier H-1] Barrier 활성 중 disconnect 시 Barrier 측 PlayerId 정리
+    // Why: Logout 함수가 Barrier 변수를 정리 안 하면 ArrivedPlayerIds/ActualReadyStatus/
+    //      ExpectedPlayerIds에 PlayerId가 남아 AreAllExpectedReady() 영원히 false →
+    //      다른 플레이어가 60s HardTimeout까지 hang.
+    // 출처: Reedme/loading/16_code_audit_2026-05-02.md §H-1
+    if (!bGameInitialized && BarrierState != ELoadingBarrierState::Idle &&
+        BarrierState != ELoadingBarrierState::Spawned)
+    {
+        APlayerController* ExitPC = Cast<APlayerController>(Exiting);
+        if (IsValid(ExitPC))
+        {
+            FString ExitPlayerId;
+            if (AHellunaPlayerState* PS = ExitPC->GetPlayerState<AHellunaPlayerState>())
+            {
+                ExitPlayerId = PS->GetPlayerUniqueId();
+            }
+            if (!ExitPlayerId.IsEmpty())
+            {
+                const int32 RemovedArrived = ArrivedPlayerIds.Remove(ExitPlayerId);
+                ActualReadyStatus.Remove(ExitPlayerId);
+                const int32 RemovedExpected = ExpectedPlayerIds.Remove(ExitPlayerId);
+
+                UE_LOG(LogHelluna, Warning,
+                    TEXT("[LoadingDbg][Server][Logout-Barrier] PlayerId=%s | RemovedArrived=%d | RemovedExpected=%d | Remaining=%d | State=%d"),
+                    *ExitPlayerId, RemovedArrived, RemovedExpected, ExpectedPlayerIds.Num(), static_cast<int32>(BarrierState));
+
+                // 정리 후 AllReady 재평가 — 남은 인원 모두 Ready면 즉시 해제
+                if (BarrierState == ELoadingBarrierState::WaitingForReady && AreAllExpectedReady())
+                {
+                    UE_LOG(LogHelluna, Warning,
+                        TEXT("[LoadingDbg][Server][Logout-Barrier] 남은 인원 AllReady → ReleaseBarrier(LogoutTriggeredAllReady)"));
+                    ReleaseBarrier(TEXT("LogoutTriggeredAllReady"));
+                }
+                // 모두 disconnect 시 Barrier 취소 — 타이머 정리 + Idle 복귀
+                else if (ExpectedPlayerIds.Num() == 0)
+                {
+                    if (UWorld* W = GetWorld())
+                    {
+                        W->GetTimerManager().ClearTimer(BarrierHardTimeoutTimer);
+                        W->GetTimerManager().ClearTimer(BarrierMinTimeoutTimer);
+                    }
+                    BarrierState = ELoadingBarrierState::Idle;
+                    UE_LOG(LogHelluna, Warning,
+                        TEXT("[LoadingDbg][Server][Logout-Barrier] 모든 ExpectedIds 이탈 → Barrier 취소 → Idle"));
+                }
+            }
         }
     }
 

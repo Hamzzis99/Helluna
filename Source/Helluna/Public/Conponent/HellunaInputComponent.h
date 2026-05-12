@@ -26,7 +26,13 @@ public:
 template<class UserObject, typename CallbackFunc>
 inline void UHellunaInputComponent::BindNativeInputAction(const UDataAsset_InputConfig* InInputConfig, const FGameplayTag& InInputTag, ETriggerEvent TriggerEvent, UserObject* ContextObject, CallbackFunc Func)
 {
-	checkf(InInputConfig, TEXT("Input config data asset is null,can not proceed with binding"));
+	// [Fix:checkf-removal 2026-05-02] checkf는 Test/Shipping 빌드에서 프로세스 종료.
+	// DataAsset 미설정은 에디터 작업 누락으로 발생 가능 — 강제 종료 대신 로그 + 안전 반환.
+	if (!InInputConfig)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[HellunaInputComponent] BindNativeInputAction: InputConfig DataAsset is null — binding skipped"));
+		return;
+	}
 
 	if (UInputAction* FoundAction = InInputConfig->FindNativeInputActionByTag(InInputTag))
 	{
@@ -37,7 +43,12 @@ inline void UHellunaInputComponent::BindNativeInputAction(const UDataAsset_Input
 template<class UserObject, typename CallbackFunc>
 inline void UHellunaInputComponent::BindAbilityInputAction(const UDataAsset_InputConfig* InInputConfig, UserObject* ContextObject, CallbackFunc InputPressedFunc, CallbackFunc InputRelasedFunc)
 {
-	checkf(InInputConfig, TEXT("Input config data asset is null,can not proceed with binding"));
+	// [Fix:checkf-removal 2026-05-02] 동일 — checkf 다운그레이드.
+	if (!InInputConfig)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[HellunaInputComponent] BindAbilityInputAction: InputConfig DataAsset is null — binding skipped"));
+		return;
+	}
 
 	for (const FHellunaInputActionConfig& AbilityInputActionConfig : InInputConfig->AbilityInputActions)
 	{

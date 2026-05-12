@@ -101,9 +101,9 @@ void UEnemyGameplayAbility_DashAttack::StartWindup()
 		return;
 	}
 
-	MontageTask->OnCompleted.AddDynamic  (this, &UEnemyGameplayAbility_DashAttack::OnWindupCompleted);
-	MontageTask->OnCancelled.AddDynamic  (this, &UEnemyGameplayAbility_DashAttack::OnWindupCancelled);
-	MontageTask->OnInterrupted.AddDynamic(this, &UEnemyGameplayAbility_DashAttack::OnWindupCancelled);
+	MontageTask->OnCompleted.AddUniqueDynamic  (this, &UEnemyGameplayAbility_DashAttack::OnWindupCompleted);
+	MontageTask->OnCancelled.AddUniqueDynamic  (this, &UEnemyGameplayAbility_DashAttack::OnWindupCancelled);
+	MontageTask->OnInterrupted.AddUniqueDynamic(this, &UEnemyGameplayAbility_DashAttack::OnWindupCancelled);
 	MontageTask->ReadyForActivation();
 }
 

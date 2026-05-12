@@ -24,6 +24,8 @@ UHeroGameplayAbility_Block::UHeroGameplayAbility_Block()
 	ActivationRequiredTags.AddTag(HellunaGameplayTags::Player_status_Aim);
 	ActivationOwnedTags.AddTag(HellunaGameplayTags::Player_Status_Blocking);
 	BlockAbilitiesWithTag.AddTag(HellunaGameplayTags::Player_Ability_Jump);
+	// [Block 중 사격 금지] Aim+Block 동안 Shoot/Shoot_Auto 활성화 차단
+	BlockAbilitiesWithTag.AddTag(HellunaGameplayTags::Player_Ability_Shoot);
 	CancelAbilitiesWithTag.AddTag(HellunaGameplayTags::Player_Ability_Run);
 
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
@@ -258,6 +260,18 @@ void UHeroGameplayAbility_Block::ActivateAbility(
 		if (UAnimInstance* AnimInstance = Hero->GetMesh()->GetAnimInstance())
 		{
 			AnimInstance->Montage_Play(MontageToPlay, BlockMontagePlayRate);
+
+			// [Block 떨림 방지] Block 몽타주는 nextSectionName이 자기 자신을 가리켜 1.4s마다 self-loop
+			// → 시작/끝 키 미스매치로 미세 점프 발생. 런타임에서 다음 섹션을 끊어 마지막 프레임 hold 처리.
+			// Block 한정 동작 — 다른 몽타주/애니메이션 자산은 영향 없음.
+			if (MontageToPlay->CompositeSections.Num() > 0)
+			{
+				const FName FirstSectionName = MontageToPlay->CompositeSections[0].SectionName;
+				if (FirstSectionName != NAME_None)
+				{
+					AnimInstance->Montage_SetNextSection(FirstSectionName, NAME_None, MontageToPlay);
+				}
+			}
 		}
 	}
 

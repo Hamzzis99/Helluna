@@ -784,4 +784,105 @@ private:
 
 	/** SoftTimeout 만료 콜백 — 자가 Ready 보고 강제. */
 	void OnSoftTimeoutFired();
+
+	// =========================================================================================
+	// [Phase 22] Death Spectate System — 표준 NAME_Spectating + 자유비행/팀원시점 토글
+	// =========================================================================================
+public:
+	/** 서버 → 클라: 관전 진입 통지 (IMC 추가 + 첫 ViewTarget 결정). */
+	UFUNCTION(Client, Reliable)
+	void Client_OnEnteredSpectatorMode();
+
+	/** 서버 → 클라: 부활 통지 (IMC 제거 + 로컬 상태 정리). */
+	UFUNCTION(Client, Reliable)
+	void Client_OnRespawned();
+
+protected:
+	/** 관전 모드 토글 IA (Tab) — 자유비행 ↔ 팀원시점 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Spectate|Input (관전|입력)",
+		meta = (DisplayName = "Spectate Toggle Action (관전 토글 액션)"))
+	TObjectPtr<UInputAction> SpectateToggleAction;
+
+	/** 관전 다음 팀원 IA (좌클릭/→) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Spectate|Input (관전|입력)",
+		meta = (DisplayName = "Spectate Next Action (다음 팀원)"))
+	TObjectPtr<UInputAction> SpectateNextAction;
+
+	/** 관전 이전 팀원 IA (우클릭/←) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Spectate|Input (관전|입력)",
+		meta = (DisplayName = "Spectate Prev Action (이전 팀원)"))
+	TObjectPtr<UInputAction> SpectatePrevAction;
+
+	/** 관전 모드 IMC (관전 진입 시 추가, 부활 시 제거) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Spectate|Input (관전|입력)",
+		meta = (DisplayName = "Spectate Mapping Context (관전 IMC)"))
+	TObjectPtr<UInputMappingContext> SpectateMappingContext;
+
+	/** 관전 IMC priority. 다른 IMC 와 충돌 시 조정. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Spectate|Input (관전|입력)",
+		meta = (DisplayName = "Spectate IMC Priority (관전 IMC 우선순위)", ClampMin = "0", ClampMax = "1000"))
+	int32 SpectateIMCPriority = 50;
+
+	/** 자유비행: 전후 이동 IA (Axis1D, W=+1 / S=-1). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Spectate|Input (관전|입력)",
+		meta = (DisplayName = "Spectate Move Forward Action (W/S)"))
+	TObjectPtr<UInputAction> SpectateMoveForwardAction;
+
+	/** 자유비행: 좌우 이동 IA (Axis1D, D=+1 / A=-1). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Spectate|Input (관전|입력)",
+		meta = (DisplayName = "Spectate Move Right Action (A/D)"))
+	TObjectPtr<UInputAction> SpectateMoveRightAction;
+
+	/** 자유비행: 마우스 회전 IA (Axis2D, Mouse XY). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Spectate|Input (관전|입력)",
+		meta = (DisplayName = "Spectate Look Action (Mouse XY)"))
+	TObjectPtr<UInputAction> SpectateLookAction;
+
+	/** 자유비행: 상하 이동 IA (Axis1D, E=+1 / Q=-1). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Spectate|Input (관전|입력)",
+		meta = (DisplayName = "Spectate Ascend Action (E/Q)"))
+	TObjectPtr<UInputAction> SpectateAscendAction;
+
+	/** 자유비행 이동 속도 배율 (AddMovementInput 의 ScaleValue). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Spectate|View (관전|시점)",
+		meta = (DisplayName = "Spectate Move Scale (자유비행 이동 배율)", ClampMin = "0.1", ClampMax = "10.0"))
+	float SpectateMoveScale = 1.0f;
+
+	/** 자유비행 마우스 감도. 1.0 = 일반 캐릭터 동일. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Spectate|View (관전|시점)",
+		meta = (DisplayName = "Spectate Look Sensitivity (자유비행 마우스 감도)", ClampMin = "0.05", ClampMax = "5.0"))
+	float SpectateLookSensitivity = 1.0f;
+
+	/** 클라 측 ViewTarget 전환 블렌드 시간(초). 자유비행/팀원 순환 모두 동일하게 적용. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Spectate|View (관전|시점)",
+		meta = (DisplayName = "Spectate View Blend (관전 시점 블렌드 초)", ClampMin = "0.0", ClampMax = "5.0"))
+	float SpectateViewBlendTime = 0.3f;
+
+private:
+	/** 로컬 — 현재 관전 중 여부 */
+	bool bIsSpectating = false;
+
+	/** 로컬 — 팀원시점(true) vs 자유비행(false) */
+	bool bSpectatorFollowMode = true;
+
+	/** 로컬 — 살아있는 팀원 순환 인덱스 */
+	int32 CurrentSpectateIndex = 0;
+
+	/** 살아있는 팀원의 Pawn 목록 수집 (PlayerState->bIsSpectator==false 기준 — 자기 자신 제외). */
+	void CollectAliveTeammates(TArray<APawn*>& OutPawns) const;
+
+	/** 현재 모드/인덱스 기준 ViewTarget 적용. */
+	void ApplyCurrentSpectateView();
+
+	void OnSpectateToggleInput(const struct FInputActionValue& Value);
+	void OnSpectateNextInput(const struct FInputActionValue& Value);
+	void OnSpectatePrevInput(const struct FInputActionValue& Value);
+
+	void OnSpectateMoveForwardInput(const struct FInputActionValue& Value);
+	void OnSpectateMoveRightInput(const struct FInputActionValue& Value);
+	void OnSpectateLookInput(const struct FInputActionValue& Value);
+	void OnSpectateAscendInput(const struct FInputActionValue& Value);
+
+	void AddSpectateIMC();
+	void RemoveSpectateIMC();
 };

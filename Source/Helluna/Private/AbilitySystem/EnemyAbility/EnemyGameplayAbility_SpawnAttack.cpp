@@ -213,9 +213,9 @@ void UEnemyGameplayAbility_SpawnAttack::StartCastMontageOnce()
 		return;
 	}
 
-	MontageTask->OnCompleted.AddDynamic(this, &UEnemyGameplayAbility_SpawnAttack::OnCastMontageCompleted);
-	MontageTask->OnCancelled.AddDynamic(this, &UEnemyGameplayAbility_SpawnAttack::OnCastMontageCancelled);
-	MontageTask->OnInterrupted.AddDynamic(this, &UEnemyGameplayAbility_SpawnAttack::OnCastMontageCancelled);
+	MontageTask->OnCompleted.AddUniqueDynamic(this, &UEnemyGameplayAbility_SpawnAttack::OnCastMontageCompleted);
+	MontageTask->OnCancelled.AddUniqueDynamic(this, &UEnemyGameplayAbility_SpawnAttack::OnCastMontageCancelled);
+	MontageTask->OnInterrupted.AddUniqueDynamic(this, &UEnemyGameplayAbility_SpawnAttack::OnCastMontageCancelled);
 	MontageTask->ReadyForActivation();
 }
 

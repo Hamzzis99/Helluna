@@ -7,7 +7,9 @@
 
 void UDataAsset_BaseStartUpData::GiveToAbilitySystemComponent(UHellunaAbilitySystemComponent* InASCToGive, int32 ApplyLevel)
 {
-	check(InASCToGive);
+	// [Fix:check-removal 2026-05-02] check() 다운그레이드.
+	// 비동기 로드 콜백/리플 타이밍으로 InASCToGive nullptr 가능 → safe return.
+	if (!InASCToGive) return;
 
 	GrantAbilities(ActivateOnGivenAbilities, InASCToGive, ApplyLevel);
 	GrantAbilities(ReactiveAbilities, InASCToGive, ApplyLevel);

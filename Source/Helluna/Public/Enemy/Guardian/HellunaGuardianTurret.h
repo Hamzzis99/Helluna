@@ -311,6 +311,11 @@ protected:
 		meta = (DisplayName = "디졸브 Tick 주기", ClampMin = "0.016", ClampMax = "0.25", Units = "s"))
 	float DeathDissolveTickInterval = 0.033f;
 
+	/** 사망 순간부터 디졸브 시작까지 대기 시간. 0 = 즉시. (메시 분리/낙하 모션을 보여준 뒤 디졸브) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guardian|Death|Dissolve",
+		meta = (DisplayName = "디졸브 시작 지연 시간", ClampMin = "0.0", ClampMax = "10.0", Units = "s"))
+	float DeathDissolveStartDelay = 0.f;
+
 	// =========================================================
 	// VFX / 사운드
 	// =========================================================

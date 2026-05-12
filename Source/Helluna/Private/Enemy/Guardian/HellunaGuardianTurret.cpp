@@ -288,11 +288,20 @@ void AHellunaGuardianTurret::Tick(float DeltaTime)
 		{
 			break;
 		}
-		if (!IsTargetValid())
+		// 현재 타겟이 죽었거나 / 범위 밖이거나 / 시야가 막혔으면 후보 재선정.
+		// 기존엔 IsTargetValid() 만 봤기 때문에 살아있는 타겟이 엄폐물 뒤로 숨으면
+		// 다른 PlayersInRange 후보를 잡지 못하고 무한 Idle 에 빠지는 버그가 있었음.
+		AActor* Target = CurrentTarget.Get();
+		const bool bNeedReselectIdle =
+			!IsTargetValid()
+			|| !Target
+			|| !IsTargetInRange(Target)
+			|| !HasLineOfSightTo(GetAimPointFor(Target));
+		if (bNeedReselectIdle)
 		{
 			SelectClosestTarget();
+			Target = CurrentTarget.Get();
 		}
-		AActor* Target = CurrentTarget.Get();
 		if (Target && IsTargetInRange(Target) && HasLineOfSightTo(GetAimPointFor(Target)))
 		{
 			SetState(EGuardianState::Detect);
@@ -312,11 +321,24 @@ void AHellunaGuardianTurret::Tick(float DeltaTime)
 			SetState(EGuardianState::Idle);
 			break;
 		}
-		const FVector AimPoint = GetAimPointFor(Target);
+		FVector AimPoint = GetAimPointFor(Target);
 		if (!HasLineOfSightTo(AimPoint))
 		{
-			SetState(EGuardianState::Idle);
-			break;
+			// LoS 상실 시 같은 타겟에 매달리지 않고 LoS 가 트인 다른 후보를 즉시 시도.
+			// 후보가 없으면 Idle 로 떨어진다 (다음 Tick 에서 Idle 분기가 다시 처리).
+			SelectClosestTarget();
+			Target = CurrentTarget.Get();
+			if (!Target || !IsTargetInRange(Target))
+			{
+				SetState(EGuardianState::Idle);
+				break;
+			}
+			AimPoint = GetAimPointFor(Target);
+			if (!HasLineOfSightTo(AimPoint))
+			{
+				SetState(EGuardianState::Idle);
+				break;
+			}
 		}
 		if (IsFacingTarget(AimPoint))
 		{
@@ -370,11 +392,19 @@ void AHellunaGuardianTurret::Tick(float DeltaTime)
 		{
 			break;
 		}
-		if (!IsTargetValid())
+		// Idle 분기와 동일한 강한 가드: 현재 타겟이 살아있어도 범위 밖이거나 시야가
+		// 막혔으면 즉시 다른 후보를 시도. 다음 사이클로 자연스럽게 Detect 진입 가능.
+		AActor* Target = CurrentTarget.Get();
+		const bool bNeedReselectCooldown =
+			!IsTargetValid()
+			|| !Target
+			|| !IsTargetInRange(Target)
+			|| !HasLineOfSightTo(GetAimPointFor(Target));
+		if (bNeedReselectCooldown)
 		{
 			SelectClosestTarget();
+			Target = CurrentTarget.Get();
 		}
-		AActor* Target = CurrentTarget.Get();
 		if (Target && IsTargetInRange(Target) && HasLineOfSightTo(GetAimPointFor(Target)))
 		{
 			SetState(EGuardianState::Detect);
@@ -818,8 +848,14 @@ void AHellunaGuardianTurret::SelectClosestTarget()
 	}
 
 	const FVector GuardianLocation = GetActorLocation();
-	float ClosestDistSq = MAX_FLT;
-	AHellunaHeroCharacter* ClosestHero = nullptr;
+
+	// 1순위: LoS 가 트인 후보 중 가장 가까운 하나.
+	// 2순위 (폴백): LoS 무시하고 가장 가까운 하나 — 한 명만 있을 때나 모두 엄폐 중일 때 기존 동작 유지.
+	float ClosestVisibleDistSq = MAX_FLT;
+	AHellunaHeroCharacter* ClosestVisibleHero = nullptr;
+
+	float ClosestAnyDistSq = MAX_FLT;
+	AHellunaHeroCharacter* ClosestAnyHero = nullptr;
 
 	for (const TWeakObjectPtr<AHellunaHeroCharacter>& Weak : PlayersInRange)
 	{
@@ -827,15 +863,27 @@ void AHellunaGuardianTurret::SelectClosestTarget()
 		{
 			continue;
 		}
-		const float DistSq = FVector::DistSquared(GuardianLocation, Weak->GetActorLocation());
-		if (DistSq < ClosestDistSq)
+		AHellunaHeroCharacter* Hero = Weak.Get();
+		if (!Hero)
 		{
-			ClosestDistSq = DistSq;
-			ClosestHero = Weak.Get();
+			continue;
+		}
+
+		const float DistSq = FVector::DistSquared(GuardianLocation, Hero->GetActorLocation());
+		if (DistSq < ClosestAnyDistSq)
+		{
+			ClosestAnyDistSq = DistSq;
+			ClosestAnyHero = Hero;
+		}
+
+		if (HasLineOfSightTo(GetAimPointFor(Hero)) && DistSq < ClosestVisibleDistSq)
+		{
+			ClosestVisibleDistSq = DistSq;
+			ClosestVisibleHero = Hero;
 		}
 	}
 
-	CurrentTarget = ClosestHero;
+	CurrentTarget = ClosestVisibleHero ? ClosestVisibleHero : ClosestAnyHero;
 }
 
 bool AHellunaGuardianTurret::IsTargetValid() const
@@ -1584,7 +1632,27 @@ void AHellunaGuardianTurret::Multicast_OnDeathBreak_Implementation()
 
 	if (bEnableDeathDissolve)
 	{
-		StartDeathDissolveVisuals();
+		if (DeathDissolveStartDelay > 0.f)
+		{
+			if (UWorld* World = GetWorld())
+			{
+				FTimerHandle DelayHandle;
+				TWeakObjectPtr<AHellunaGuardianTurret> WeakThis(this);
+				World->GetTimerManager().SetTimer(DelayHandle,
+					FTimerDelegate::CreateWeakLambda(this, [WeakThis]()
+					{
+						if (WeakThis.IsValid())
+						{
+							WeakThis->StartDeathDissolveVisuals();
+						}
+					}),
+					DeathDissolveStartDelay, false);
+			}
+		}
+		else
+		{
+			StartDeathDissolveVisuals();
+		}
 	}
 }
 
