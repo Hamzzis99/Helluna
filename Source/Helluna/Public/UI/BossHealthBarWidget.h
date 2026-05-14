@@ -137,6 +137,11 @@ protected:
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
 	TObjectPtr<UBorder> Border_Frame = nullptr;
 
+	/** [Phase2ExtraBarV1] 회색 잔상 없는 별도 추가 HP 바 — 페이즈2 진입 후 우측에 표시.
+	 *  Main 바는 OldMax 까지만 표시되도록 cap. Extra 바는 (Health - OldMax) / (NewMax - OldMax) percent. */
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
+	TObjectPtr<UProgressBar> ProgressBar_Extra = nullptr;
+
 private:
 	// --- HP 표시 상태 ---
 	float DisplayMainPercent = 1.f;
@@ -172,6 +177,12 @@ private:
 	/** [Phase2HealthFillV3] width expand 진행 중 여부 + 시작 시각. */
 	bool bPhase2WidthExpanding = false;
 	double Phase2WidthExpandStartTime = 0.0;
+
+	// =========================================================
+	// [Phase2ExtraBarV1] 별도 추가 HP 바 표시 상태
+	// =========================================================
+	float DisplayExtraPercent = 0.f;
+	float DisplayExtraDelayedPercent = 0.f;
 
 	/** [BossHealthBar_ColorDiag] 진단 로그 throttle. */
 	double LastColorDiagLogTime = 0.0;

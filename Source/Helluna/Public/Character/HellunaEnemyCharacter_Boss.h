@@ -628,7 +628,10 @@ public:
 	UPROPERTY(Replicated)
 	int8 Phase2HealthFillStage = 0;
 	float Phase2HealthFillElapsed = 0.f;
+	/** [Phase2ExtraBarV1] OldMax/NewMax 도 client widget 이 읽도록 복제 — 별도 추가 HP 바 percent 계산용. */
+	UPROPERTY(Replicated)
 	float Phase2HealthFillOldMax = 0.f;
+	UPROPERTY(Replicated)
 	float Phase2HealthFillNewMax = 0.f;
 private:
 

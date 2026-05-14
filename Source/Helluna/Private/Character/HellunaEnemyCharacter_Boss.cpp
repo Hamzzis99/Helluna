@@ -80,6 +80,9 @@ void AHellunaEnemyCharacter_Boss::GetLifetimeReplicatedProps(TArray<FLifetimePro
 	DOREPLIFETIME(AHellunaEnemyCharacter_Boss, bInPhase2);
 	// [Phase2HealthFillV3] widget polling 용 — server stage 변화를 client 에 push.
 	DOREPLIFETIME(AHellunaEnemyCharacter_Boss, Phase2HealthFillStage);
+	// [Phase2ExtraBarV1] client widget 이 별도 추가 바 percent 를 계산할 때 사용.
+	DOREPLIFETIME(AHellunaEnemyCharacter_Boss, Phase2HealthFillOldMax);
+	DOREPLIFETIME(AHellunaEnemyCharacter_Boss, Phase2HealthFillNewMax);
 }
 
 // ============================================================

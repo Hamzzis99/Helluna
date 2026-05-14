@@ -139,6 +139,15 @@ public:
 			EditCondition = "bAdjustCameraDuringPattern"))
 	float StasisCameraDistance = 1000.f;
 
+	/**
+	 * [CameraZoomGradualV1] 카메라 풀백 lerp 시간 (real-sec). 0 이면 즉시 snap.
+	 *   존 완전 확장 이후 시작 — 시작 ArmLength → StasisCameraDistance 로 점진 보간.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Stasis|Camera",
+		meta = (DisplayName = "카메라 풀백 보간 시간 (real sec)", ClampMin = "0.0", ClampMax = "15.0",
+			EditCondition = "bAdjustCameraDuringPattern"))
+	float CameraZoomDuration = 4.0f;
+
 	// =========================================================
 	// 분신 ring 배치 + aim
 	// =========================================================
@@ -147,6 +156,20 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Stasis|배치",
 		meta = (DisplayName = "Ring 반경 (cm)", ClampMin = "200.0", ClampMax = "3000.0"))
 	float DecoyRingRadius = 700.f;
+
+	/**
+	 * [DecoyRadiusRangeV1] 분신 spawn 시 ring 반경에 곱해질 random scale 의 최소값.
+	 *   실제 반경 = DecoyRingRadius × FRandRange(이 값, DecoyMaxRadiusScale).
+	 *   너무 작으면 플레이어 가둠 — 0.37 (≈ 10m @ ring 2700) 권장.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Stasis|배치",
+		meta = (DisplayName = "Ring 반경 최소 배율", ClampMin = "0.1", ClampMax = "1.0"))
+	float DecoyMinRadiusScale = 0.37f;
+
+	/** Ring 반경에 곱해질 random scale 의 최대값. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Stasis|배치",
+		meta = (DisplayName = "Ring 반경 최대 배율", ClampMin = "1.0", ClampMax = "3.0"))
+	float DecoyMaxRadiusScale = 1.3f;
 
 	/** 분신 spawn 시 ring 각도 jitter (0 = 균등 분포, +값은 균등 ± 도) */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Stasis|배치",
@@ -453,6 +476,14 @@ private:
 
 	/** 클라 로컬 — 카메라 거리 백업 (TargetArmLength 변경 전) */
 	TMap<TWeakObjectPtr<APawn>, float> SavedSpringArmLengths;
+
+	// =========================================================
+	// [CameraZoomGradualV1] 점진적 카메라 풀백 — 각 머신 로컬
+	// =========================================================
+	bool bCameraZoomActive = false;
+	float CameraZoomStartRealTime = 0.f;
+	/** zoom 시작 시점의 ArmLength (= SavedSpringArmLengths 와 같은 값). 따로 캐싱 필요 없으나 가독성용. */
+	TMap<TWeakObjectPtr<APawn>, float> CameraZoomStartLengths;
 
 	/** 글로벌 TD scaled timer delay 보정 — stasis 동안에만 사용 */
 	float StasisAdjustedDelay(float WallClockSeconds) const

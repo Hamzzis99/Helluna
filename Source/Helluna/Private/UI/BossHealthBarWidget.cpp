@@ -11,6 +11,36 @@
 #include "GameFramework/Actor.h"
 #include "Engine/World.h"
 
+namespace
+{
+	/** [Phase2ExtraBarV1] Boss 의 OldMax, NewMax, CurrentHP 를 한꺼번에 읽어 main/extra 바 percent 를 계산.
+	 *  - bHasExtra=true 이면 추가 바 활성. main 은 OldMax 까지만 차고, extra 는 OldMax → NewMax 구간.
+	 *  - bHasExtra=false (페이즈2 fill 시작 전) 이면 기존처럼 main 만 사용. */
+	void ComputeBossHpPercents(AActor* BossActor, float& OutMainPercent, float& OutExtraPercent, bool& bHasExtra)
+	{
+		OutMainPercent = 0.f;
+		OutExtraPercent = 0.f;
+		bHasExtra = false;
+
+		if (!IsValid(BossActor)) return;
+		UHellunaHealthComponent* HC = BossActor->FindComponentByClass<UHellunaHealthComponent>();
+		if (!HC) return;
+
+		const float CurHP = HC->GetHealth();
+		const float MaxHP = FMath::Max(HC->GetMaxHealth(), KINDA_SMALL_NUMBER);
+
+		const AHellunaEnemyCharacter_Boss* Boss = Cast<AHellunaEnemyCharacter_Boss>(BossActor);
+		const float OldMax = Boss ? Boss->Phase2HealthFillOldMax : 0.f;
+		const float NewMax = Boss ? Boss->Phase2HealthFillNewMax : 0.f;
+
+		// [Phase2VisualSimplifyV3] 5/15 — 추가 바 안 쓰므로 main 도 OldMax cap 제거.
+		//   이전: bHasExtra 시 OutMainPercent = CurHP/OldMax (cap 1.0) — CurHP > OldMax 동안 fill 안 줄어들어
+		//   OldMax 경계 통과 시 한꺼번에 깎이는 느낌. 단순 CurHP/MaxHP 로 연속 감소.
+		OutMainPercent = FMath::Clamp(CurHP / MaxHP, 0.f, 1.f);
+		(void)OldMax; (void)NewMax;  // 변수 unused 경고 회피
+	}
+}
+
 void UBossHealthBarWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
@@ -80,38 +110,56 @@ void UBossHealthBarWidget::NativeTick(const FGeometry& MyGeometry, float InDelta
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
 
-	const float Target = GetBossHealthNormalized();
 	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
 
-	// [Phase2HealthFillV3] 회색 바 width 확장 — Boss 의 replicated Phase2HealthFillStage 폴링.
-	//   server Tick 의 stage 변경이 client 에 push 됨 (DOREPLIFETIME). widget 이 stage>=3 감지 시 expand.
-	if (!bPhase2WidthExpanding && Phase2WidthAlpha < 1.f)
+	// [Phase2ExtraBarV1] main / extra 두 바의 target percent 동시 계산.
+	float MainTarget = 0.f;
+	float ExtraTarget = 0.f;
+	bool bHasExtra = false;
+	ComputeBossHpPercents(BossActor, MainTarget, ExtraTarget, bHasExtra);
+
+	// 전체 HP 비율 (피격 감지용 — main+extra 합쳐 한 번의 피격으로 인식).
+	const float Target = bHasExtra ? (0.5f * (MainTarget + ExtraTarget)) : MainTarget;
+
+	// [Phase2VisualSimplifyV2] 5/15 사용자 요청 — 추가 바는 끄되 가로 확장(최대치 시각화)은 활성.
+	//   메인 바 폭이 페이즈2 진입 시 우측으로 확장되어 "늘어난 최대 체력" 표현.
+	//   ↳ ProgressBar_Health 의 BG alpha=0 으로 회색 잔여 시각 제거 (Border 어두운 네이비가 트랙 역할).
+	const bool bUseLegacyWidthExpand = true;
+	if (bUseLegacyWidthExpand)
 	{
-		if (AHellunaEnemyCharacter_Boss* Boss = Cast<AHellunaEnemyCharacter_Boss>(BossActor))
+		if (!bPhase2WidthExpanding && Phase2WidthAlpha < 1.f)
 		{
-			if (Boss->Phase2HealthFillStage >= 3)  // Stage 2 break-through 진입
+			if (AHellunaEnemyCharacter_Boss* Boss = Cast<AHellunaEnemyCharacter_Boss>(BossActor))
 			{
-				bPhase2WidthExpanding = true;
-				Phase2WidthExpandStartTime = Now;
+				if (Boss->Phase2HealthFillStage >= 3)
+				{
+					bPhase2WidthExpanding = true;
+					Phase2WidthExpandStartTime = Now;
+				}
+			}
+		}
+		if (bPhase2WidthExpanding)
+		{
+			const float ExpandDur = FMath::Max(Phase2WidthExpandDuration, 0.05f);
+			const float Elapsed = static_cast<float>(Now - Phase2WidthExpandStartTime);
+			Phase2WidthAlpha = FMath::Clamp(Elapsed / ExpandDur, 0.f, 1.f);
+			if (Phase2WidthAlpha >= 1.f)
+			{
+				bPhase2WidthExpanding = false;
 			}
 		}
 	}
-
-	if (bPhase2WidthExpanding)
+	else
 	{
-		const float ExpandDur = FMath::Max(Phase2WidthExpandDuration, 0.05f);
-		const float Elapsed = static_cast<float>(Now - Phase2WidthExpandStartTime);
-		Phase2WidthAlpha = FMath::Clamp(Elapsed / ExpandDur, 0.f, 1.f);
-		if (Phase2WidthAlpha >= 1.f)
-		{
-			bPhase2WidthExpanding = false;
-		}
+		// extra 바가 visible 이면 legacy 가로 확장 강제 0 — 메인 바 폭 그대로 유지.
+		Phase2WidthAlpha = 0.f;
+		bPhase2WidthExpanding = false;
 	}
 
 	// ----- HP 표시값 갱신 — 항상 정상 흐름 (Boss 코드의 SetHealth/SetMaxHealth 가 percent driving) -----
 	bPhase2FillAnimationActive = false;  // V3 에서 더 이상 사용 안 함, 안전 reset
 	{
-		// 피격 시 잔상 hold + 색 플래시 트리거
+		// 피격 시 잔상 hold + 색 플래시 트리거 (main+extra 합산 기준).
 		if (Target < PreviousTargetPercent - KINDA_SMALL_NUMBER)
 		{
 			LastDamageTime = Now;
@@ -119,18 +167,21 @@ void UBossHealthBarWidget::NativeTick(const FGeometry& MyGeometry, float InDelta
 		}
 		PreviousTargetPercent = Target;
 
-		DisplayMainPercent = FMath::FInterpTo(DisplayMainPercent, Target, InDeltaTime, MainInterpSpeed);
+		DisplayMainPercent = FMath::FInterpTo(DisplayMainPercent, MainTarget, InDeltaTime, MainInterpSpeed);
 
 		const bool bHolding = (Now - LastDamageTime) < DelayedHoldDuration;
 		if (!bHolding)
 		{
-			DisplayDelayedPercent = FMath::FInterpTo(DisplayDelayedPercent, Target,
+			DisplayDelayedPercent = FMath::FInterpTo(DisplayDelayedPercent, MainTarget,
 				InDeltaTime, DelayedInterpSpeed);
 		}
 		DisplayDelayedPercent = FMath::Max(DisplayDelayedPercent, DisplayMainPercent);
 
-		// width expand 끝났을 때 확장 상태 유지
-		if (DisplayedPhase == 2 && !bPhase2WidthExpanding && Phase2WidthAlpha >= 1.f)
+		// [Phase2ExtraBarV1] extra 바는 회색 잔상 없이 직접 lerp.
+		DisplayExtraPercent = FMath::FInterpTo(DisplayExtraPercent, ExtraTarget, InDeltaTime, MainInterpSpeed);
+
+		// width expand 끝났을 때 확장 상태 유지 (legacy 폴백)
+		if (bUseLegacyWidthExpand && DisplayedPhase == 2 && !bPhase2WidthExpanding && Phase2WidthAlpha >= 1.f)
 		{
 			Phase2WidthAlpha = 1.f;
 		}
@@ -203,6 +254,12 @@ void UBossHealthBarWidget::NativeTick(const FGeometry& MyGeometry, float InDelta
 	{
 		ProgressBar_Delayed->SetPercent(DisplayDelayedPercent);
 		ProgressBar_Delayed->SetFillColorAndOpacity(DelayedColorFlashed);
+	}
+
+	// [Phase2VisualSimplifyV1] 추가 바 비활성 — 항상 Collapsed.
+	if (ProgressBar_Extra)
+	{
+		ProgressBar_Extra->SetVisibility(ESlateVisibility::Collapsed);
 	}
 
 	// ----- Border padding.Right 음수 lerp = 바만 우측 확장 -----

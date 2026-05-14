@@ -277,9 +277,12 @@ void ARealityFractureZone::ServerSpawnNextDecoy()
 
 	for (int32 Attempt = 0; Attempt < MaxAttempts && !bFoundValid; ++Attempt)
 	{
-		// 진짜 랜덤 — 각도 0~360, 반경 0.5~1.3 × DecoyRingRadius (min 450cm distance from player)
+		// [DecoyRadiusRangeV1] 진짜 랜덤 — 각도 0~360, 반경 DecoyMinRadiusScale~DecoyMaxRadiusScale × DecoyRingRadius.
+		//   default 0.37~1.3 — ring 2700 기준 최소 ≈ 1000cm(10m). 플레이어 가두지 않으면서 더 가까운 spawn 허용.
 		const float TryAngle = FMath::FRandRange(0.f, 360.f);
-		const float RadiusScale = FMath::FRandRange(0.5f, 1.3f);
+		const float MinScale = FMath::Max(0.05f, DecoyMinRadiusScale);
+		const float MaxScale = FMath::Max(MinScale + 0.01f, DecoyMaxRadiusScale);
+		const float RadiusScale = FMath::FRandRange(MinScale, MaxScale);
 		const float ActualRadius = DecoyRingRadius * RadiusScale;
 		const float Rad = FMath::DegreesToRadians(TryAngle);
 		const FVector OffsetXY(FMath::Cos(Rad) * ActualRadius,
@@ -741,10 +744,12 @@ void ARealityFractureZone::Multicast_OnZoneExpanded_Implementation()
 	bAimLineRampActive = true;
 
 	// [Camera] player spring arm length 조정 — 회피 시야 확보. 백업 후 변경.
+	//   [CameraZoomGradualV1] CameraZoomDuration>0 이면 snap 대신 Tick 에서 점진 lerp.
 	UWorld* W = GetWorld();
 	if (W && bAdjustCameraDuringPattern)
 	{
 		int32 CamAdjusted = 0;
+		CameraZoomStartLengths.Empty();
 		for (FConstPlayerControllerIterator It = W->GetPlayerControllerIterator(); It; ++It)
 		{
 			APlayerController* PC = It->Get();
@@ -755,12 +760,29 @@ void ARealityFractureZone::Multicast_OnZoneExpanded_Implementation()
 				if (USpringArmComponent* CB = Hero->GetCameraBoom())
 				{
 					SavedSpringArmLengths.Add(P, CB->TargetArmLength);
-					CB->TargetArmLength = StasisCameraDistance;
+					if (CameraZoomDuration > KINDA_SMALL_NUMBER)
+					{
+						CameraZoomStartLengths.Add(P, CB->TargetArmLength);
+					}
+					else
+					{
+						CB->TargetArmLength = StasisCameraDistance;
+					}
 					CamAdjusted++;
 				}
 			}
 		}
-		RFZ_LOG("[Camera] spring arm adjusted on %d hero(es) → %.0fcm", CamAdjusted, StasisCameraDistance);
+		if (CameraZoomDuration > KINDA_SMALL_NUMBER && CameraZoomStartLengths.Num() > 0)
+		{
+			bCameraZoomActive = true;
+			CameraZoomStartRealTime = W->GetRealTimeSeconds();
+			RFZ_LOG("[Camera] gradual zoom started on %d hero(es) → %.0fcm over %.2fs",
+				CamAdjusted, StasisCameraDistance, CameraZoomDuration);
+		}
+		else
+		{
+			RFZ_LOG("[Camera] spring arm SNAP on %d hero(es) → %.0fcm", CamAdjusted, StasisCameraDistance);
+		}
 	}
 }
 
@@ -951,6 +973,9 @@ void ARealityFractureZone::Multicast_Cleanup_Implementation()
 		}
 	}
 	SavedSpringArmLengths.Empty();
+	// [CameraZoomGradualV1] zoom 상태 reset
+	CameraZoomStartLengths.Empty();
+	bCameraZoomActive = false;
 
 	// 안전망 — input lock 미해제 케이스 복원 + 혹시 frozen 채로 남은 actor 복원
 	UWorld* W = GetWorld();
@@ -1298,6 +1323,37 @@ void ARealityFractureZone::Tick(float DeltaTime)
 				UE_LOG(LogTemp, Warning, TEXT("[StasisSalvo] [DomeRamp] full — Auth=%d, DomeScale=%.3f, WorldRadius=%.0f, UnitRadius=%.1f"),
 					HasAuthority() ? 1 : 0, DomeScale, TargetWorldRadius, UnitRadius);
 			}
+		}
+	}
+
+	// =========================================================
+	// [CameraZoomGradualV1] 점진적 카메라 풀백 — Multicast_OnZoneExpanded 에서 활성화.
+	//   각 hero spring arm 의 ArmLength 를 시작값 → StasisCameraDistance 로 ease-out lerp.
+	// =========================================================
+	if (bCameraZoomActive && CameraZoomStartLengths.Num() > 0 && bAdjustCameraDuringPattern)
+	{
+		const float ZElapsed = W->GetRealTimeSeconds() - CameraZoomStartRealTime;
+		const float ZDur = FMath::Max(0.05f, CameraZoomDuration);
+		const float RawA = FMath::Clamp(ZElapsed / ZDur, 0.f, 1.f);
+		// ease-out — 처음엔 빠르게 멀어졌다가 끝으로 갈수록 느려짐 (드라마틱 풀백 느낌).
+		const float EaseA = 1.f - FMath::Pow(1.f - RawA, 2.f);
+
+		for (auto& Pair : CameraZoomStartLengths)
+		{
+			APawn* P = Pair.Key.Get();
+			if (!P) continue;
+			if (AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(P))
+			{
+				if (USpringArmComponent* CB = Hero->GetCameraBoom())
+				{
+					const float NewLen = FMath::Lerp(Pair.Value, StasisCameraDistance, EaseA);
+					CB->TargetArmLength = NewLen;
+				}
+			}
+		}
+		if (RawA >= 1.f)
+		{
+			bCameraZoomActive = false;
 		}
 	}
 
