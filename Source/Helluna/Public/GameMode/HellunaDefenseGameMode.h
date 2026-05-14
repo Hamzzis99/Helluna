@@ -647,6 +647,21 @@ public:
 			EditCondition = "bAutoSpawnBossSummonTrigger"))
 	TSubclassOf<ABossSummonCinematicTrigger> BossSummonTriggerClass;
 
+	// ════════════════════════════════════════════════════════════════════════════════
+	// [BossDebugSkipV1] 보스 시네마틱 통합 디버그 스킵 — GameMode CDO 한 곳에서 on/off.
+	//   기존 trigger/Boss 의 로컬 토글과 OR 조건 — GameMode 가 켜지면 강제 skip.
+	// ════════════════════════════════════════════════════════════════════════════════
+
+	/** 보스 등장(소환) 시네마틱 skip — true 시 카메라/대사/포탈/몽타주 모두 skip + HP 바만 spawn. */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|Boss(보스)|Debug",
+		meta = (DisplayName = "Skip 등장 시네마틱"))
+	bool bDebugSkipBossSummonCinematic = false;
+
+	/** 보스 페이즈2 시네마틱 skip — true 시 trigger spawn 안 함 (Stage3 visuals + HP fill 은 정상). */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|Boss(보스)|Debug",
+		meta = (DisplayName = "Skip 페이즈2 시네마틱"))
+	bool bDebugSkipBossPhase2Cinematic = false;
+
 protected:
 	/** BeginPlay 에서 호출 — 월드에 trigger 없고 옵션 켜져 있으면 SpawnActor. */
 	void EnsureBossSummonTriggerSpawned();

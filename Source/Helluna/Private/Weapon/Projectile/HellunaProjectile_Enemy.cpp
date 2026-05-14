@@ -132,10 +132,17 @@ void AHellunaProjectile_Enemy::HitTarget(AActor* HitActor, const FVector& HitLoc
 	if (!HasAuthority() || bHit) return;
 	bHit = true;
 
-	// 단일 직격 데미지
-	UGameplayStatics::ApplyDamage(
+	// 단일 직격 데미지 — ApplyPointDamage 로 HitFromDirection(투사체 진행 방향) 전달.
+	FVector HitFromDir = GetVelocity().GetSafeNormal();
+	if (HitFromDir.IsNearlyZero())
+	{
+		HitFromDir = (HitActor->GetActorLocation() - HitLocation).GetSafeNormal();
+	}
+	UGameplayStatics::ApplyPointDamage(
 		HitActor,
 		Damage,
+		HitFromDir,
+		FHitResult(),
 		GetInstigatorController(),
 		this,
 		UDamageType::StaticClass()

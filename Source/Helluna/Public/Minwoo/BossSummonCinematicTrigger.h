@@ -212,6 +212,42 @@ public:
 		meta = (DisplayName = "Spawn Scale (포탈 크기 배율)"))
 	FVector PortalSpawnScale = FVector(2.f, 2.f, 2.f);
 
+	// =========================================================================================
+	// [PortalBackdropV1] 포탈 뒤 배경 메시 — 회의 피드백 "포탈 뒤에 배경 넣으면 예쁠 거 같다"
+	//   포탈과 동시 spawn / 같이 destroy. 클라 로컬 (포탈과 동일 흐름). 메인맵 스카이/우주 톤
+	//   머터리얼을 BP CDO 에서 wiring. None 이면 backdrop 비활성.
+	// =========================================================================================
+
+	/** 포탈 뒤에 배치할 배경 메시. None 이면 backdrop 비활성. 큰 plane (예: /Engine/BasicShapes/Plane) 권장. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Portal|Backdrop",
+		meta = (DisplayName = "Backdrop Mesh (포탈 뒤 배경 메시)"))
+	TObjectPtr<UStaticMesh> BackdropMesh = nullptr;
+
+	/** Backdrop 메시에 덮어쓸 머터리얼. None 이면 메시 default. 메인맵 스카이/우주 톤 권장. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Portal|Backdrop",
+		meta = (DisplayName = "Backdrop Material (배경 머터리얼)"))
+	TObjectPtr<UMaterialInterface> BackdropMaterial = nullptr;
+
+	/** Backdrop 위치 — 포탈 로컬축 기준 오프셋. 기본 -300 = 포탈 뒤 3m. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Portal|Backdrop",
+		meta = (DisplayName = "Backdrop Offset (포탈 로컬)"))
+	FVector BackdropOffset = FVector(-300.f, 0.f, 0.f);
+
+	/** Backdrop 회전 보정 — 포탈 기준 추가 회전. 기본 Yaw=180 → 포탈 정면이 backdrop 정면 (보스 쪽). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Portal|Backdrop",
+		meta = (DisplayName = "Backdrop Rotation (추가 회전)"))
+	FRotator BackdropRotation = FRotator(90.f, 180.f, 0.f);
+
+	/** Backdrop 스케일. 메인맵 톤이 portal 주변을 충분히 채우려면 크게. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Portal|Backdrop",
+		meta = (DisplayName = "Backdrop Scale (메시 크기 배율)"))
+	FVector BackdropScale = FVector(20.f, 20.f, 1.f);
+
+	/** Backdrop collision 비활성 (시각용). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossSummon|Portal|Backdrop",
+		meta = (DisplayName = "Backdrop Collision Off"))
+	bool bBackdropCollisionOff = true;
+
 	/**
 	 * [PortalRevealV1] 포탈만 보이고 보스는 숨긴 상태로 유지하는 시간 (초).
 	 *   이 시간 동안 카메라는 플레이어를 비추고 포탈 VFX 만 화면에 등장.
@@ -435,9 +471,11 @@ public:
 	 * 시네마틱 시작 (클라: ViewTarget 전환).
 	 * @param bSkipVisuals  서버에서 결정된 skip 여부 — 클라는 BP default 가 아닌 이 값으로 판정해야
 	 *                       GM 토글 (서버 only) 도 클라에 전파됨.
+	 * @param WalkDirYaw    [PortalWalkDirRpcV1] 서버가 결정한 보스 walk direction yaw (= ClosestPlayer 방향).
+	 *                       클라는 PC iteration 대신 이 값으로 portal forward 계산 — server/client 일관성 보장.
 	 */
 	UFUNCTION(NetMulticast, Reliable)
-	void Multicast_StartCinematic(APawn* Boss, bool bSkipVisuals);
+	void Multicast_StartCinematic(APawn* Boss, bool bSkipVisuals, float WalkDirYaw);
 
 	/** 시네마틱 종료 (클라: ViewTarget 복귀) */
 	UFUNCTION(NetMulticast, Reliable)
@@ -523,6 +561,14 @@ private:
 	UPROPERTY()
 	TWeakObjectPtr<APawn> LocalCinematicBoss;
 
+	/**
+	 * [CinematicWalkYawV1] 서버 face 결정 시점에 저장한 walk yaw — Tick walk 함수가 이 값으로 통일 사용.
+	 * 기존: Tick 마다 PC iteration 으로 player 검색 → bOrientRotationToMovement=true 와 결합되어
+	 *       face 가 walk dir 로 자동 회전 → portal visual 과 어긋남. 서버가 한 번 결정한 yaw 로 고정.
+	 * Player 검색 실패 케이스도 placement yaw 그대로 유지되어 face=walk=portal 일관성 보장.
+	 */
+	float CinematicWalkYaw = 0.f;
+
 	/** 로컬 HP 바 위젯 (보스 전투 종료까지 유지). */
 	UPROPERTY()
 	TObjectPtr<UUserWidget> LocalBossHealthBar;
@@ -536,10 +582,10 @@ private:
 	 * Boss=NULL 로 도착해 시네마틱이 무음으로 끊기는 문제 → 태그 검색 폴백 + 짧은 폴링.
 	 * 첫 시도가 NULL 이면 0.1s 간격으로 최대 RemainingRetries 회 재시도.
 	 */
-	void StartLocalCinematicWithRetry(APawn* Boss, int32 RemainingRetries);
+	void StartLocalCinematicWithRetry(APawn* Boss, int32 RemainingRetries, float WalkDirYaw);
 
 	/** 시네마틱 본체 (CineCam 스폰 + ViewTarget + 자막). 보스 확보된 후 호출. */
-	void StartLocalCinematicBody(APawn* Boss);
+	void StartLocalCinematicBody(APawn* Boss, float WalkDirYaw);
 
 	/** [ClientBossResolveV1] 클라 폴링용 타이머 핸들 */
 	FTimerHandle ClientCinematicRetryTimer;
@@ -587,6 +633,10 @@ private:
 	/** 클라 로컬 스폰된 포탈 액터. Multicast_End 에서 PortalDestroyDelay 후 파괴. */
 	UPROPERTY()
 	TWeakObjectPtr<AActor> LocalPortalActor;
+
+	/** [PortalBackdropV1] 클라 로컬 스폰된 배경 메시 액터. 포탈과 함께 destroy. */
+	UPROPERTY()
+	TWeakObjectPtr<AActor> LocalBackdropActor;
 
 	/** 현재 활성 컷 인덱스 (-1 = 미초기화). Multicast_End 시 -1 로 리셋. */
 	int32 CurrentCutIndex = -1;

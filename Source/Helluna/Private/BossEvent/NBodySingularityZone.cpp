@@ -209,8 +209,9 @@ void ANBodySingularityZone::HandleMergers()
 						if (!IsValid(Hero)) continue;
 						if (FVector::DistSquared(Hero->GetActorLocation(), MergedPos) <= RSq)
 						{
-							UGameplayStatics::ApplyDamage(
-								Hero, MergerExplosionDamage,
+							const FVector MergerHitDir = (Hero->GetActorLocation() - MergedPos).GetSafeNormal();
+							UGameplayStatics::ApplyPointDamage(
+								Hero, MergerExplosionDamage, MergerHitDir, FHitResult(),
 								OwnerEnemy ? OwnerEnemy->GetController() : nullptr,
 								OwnerEnemy, UDamageType::StaticClass());
 						}
@@ -287,8 +288,9 @@ void ANBodySingularityZone::ProcessContactDamage()
 			if (!S.bAlive) continue;
 			if (FVector::DistSquared(S.Position, HeroPos) <= ContactSq)
 			{
-				UGameplayStatics::ApplyDamage(
-					Hero, ContactDamage,
+				const FVector HitFromDir = (HeroPos - S.Position).GetSafeNormal();
+				UGameplayStatics::ApplyPointDamage(
+					Hero, ContactDamage, HitFromDir, FHitResult(),
 					OwnerEnemy ? OwnerEnemy->GetController() : nullptr,
 					OwnerEnemy, UDamageType::StaticClass());
 				LastTime = Now;

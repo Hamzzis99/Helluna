@@ -206,9 +206,12 @@ void ABossSlamWaveActor::ProcessRingDamage()
 		AlreadyHitActors.Add(Player);
 
 		AController* InstigatorCtrl = DamageInstigator ? DamageInstigator->GetController() : nullptr;
-		UGameplayStatics::ApplyDamage(
+		const FVector HitFromDir = (Player->GetActorLocation() - Center).GetSafeNormal();
+		UGameplayStatics::ApplyPointDamage(
 			Player,
 			Damage,
+			HitFromDir,
+			FHitResult(),
 			InstigatorCtrl,
 			DamageInstigator,
 			UDamageType::StaticClass()

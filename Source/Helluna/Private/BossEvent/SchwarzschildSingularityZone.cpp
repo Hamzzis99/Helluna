@@ -504,8 +504,9 @@ void ASchwarzschildSingularityZone::ApplyPlayerGravity(float DeltaTime)
 		// 사건 지평선 안쪽 → 즉사
 		if (R < Rs)
 		{
-			UGameplayStatics::ApplyDamage(
-				Hero, HorizonKillDamage,
+			const FVector HitFromDir = (HeroPos - Center).GetSafeNormal();
+			UGameplayStatics::ApplyPointDamage(
+				Hero, HorizonKillDamage, HitFromDir, FHitResult(),
 				OwnerEnemy ? OwnerEnemy->GetController() : nullptr,
 				OwnerEnemy, UDamageType::StaticClass());
 			continue;
@@ -527,8 +528,9 @@ void ASchwarzschildSingularityZone::ApplyPlayerGravity(float DeltaTime)
 				// 조석력 ~ 1/r³ — r이 r_s에 가까울수록 급증
 				const double TidalScale = (Rs * Rs * Rs) / (R * R * R);
 				const float Dmg = TidalDamagePerSecond * static_cast<float>(TidalScale);
-				UGameplayStatics::ApplyDamage(
-					Hero, Dmg,
+				const FVector HitFromDir = (HeroPos - Center).GetSafeNormal();
+				UGameplayStatics::ApplyPointDamage(
+					Hero, Dmg, HitFromDir, FHitResult(),
 					OwnerEnemy ? OwnerEnemy->GetController() : nullptr,
 					OwnerEnemy, UDamageType::StaticClass());
 				LastTick = Now;

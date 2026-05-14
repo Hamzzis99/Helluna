@@ -2,7 +2,7 @@
   "mcpServers": {
     "unreal_helluna": {
       "type": "stdio",
-      "command": "unrealmcp",
+      "command": "C:\\Users\\rrr75\\AppData\\Roaming\\Python\\Python310\\Scripts\\unrealmcp.exe",
       "args": [],
       "env": {
         "PYTHONUTF8": "1",

@@ -160,31 +160,10 @@ void ABossSummonCinematicTrigger::Tick(float DeltaTime)
 	}
 	else
 	{
-		// 가장 가까운 PlayerPawn 방향 (없으면 정면 fallback).
-		AActor* TargetActor = nullptr;
-		float ClosestDistSq = TNumericLimits<float>::Max();
-		const FVector BossLoc = Boss->GetActorLocation();
-		if (UWorld* World = GetWorld())
-		{
-			for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
-			{
-				if (APlayerController* PC = It->Get())
-				{
-					if (APawn* PlayerPawn = PC->GetPawn())
-					{
-						const float DistSq = FVector::DistSquared(BossLoc, PlayerPawn->GetActorLocation());
-						if (DistSq < ClosestDistSq)
-						{
-							ClosestDistSq = DistSq;
-							TargetActor = PlayerPawn;
-						}
-					}
-				}
-			}
-		}
-		Direction = TargetActor
-			? (TargetActor->GetActorLocation() - BossLoc).GetSafeNormal2D()
-			: Boss->GetActorForwardVector();
+		// [CinematicWalkYawV1] server face 단계에서 결정한 CinematicWalkYaw 그대로 사용.
+		//   기존 Tick 마다 PC iteration → bOrientRotationToMovement=true 와 결합되어 face 회전
+		//   미스매치. 한 번 정한 yaw 로 walk = face = portal 일관성 보장.
+		Direction = FRotator(0.f, CinematicWalkYaw, 0.f).Vector();
 	}
 
 	if (Direction.IsNearlyZero()) return;
@@ -466,7 +445,7 @@ bool ABossSummonCinematicTrigger::TryActivate(APawn* InTargetBoss)
 	//   [BossSkipRPCFixV1] 클라가 GM 토글을 알 수 있도록 RPC 인자로 명시 전달.
 	if (bSkipCinematic)
 	{
-		Multicast_StartCinematic(Boss, /*bSkipVisuals=*/true);
+		Multicast_StartCinematic(Boss, /*bSkipVisuals=*/true, /*WalkDirYaw=*/0.f);
 		return true;
 	}
 
@@ -476,16 +455,23 @@ bool ABossSummonCinematicTrigger::TryActivate(APawn* InTargetBoss)
 	// [CinematicFaceTargetV1] 시네마틱 시작 즉시 보스를 가장 가까운 플레이어 방향으로 회전.
 	//   목적: 카메라 오프셋이 보스 로컬 정면(+X) 기준이라 보스가 어떤 방향이든 카메라가 항상
 	//   보스의 정면(=플레이어를 등진 자세)을 비추도록 보장. AI 가 곧 정지되니 회전이 풀리지 않음.
+	//   [PortalWalkDirRpcV1] 결정된 yaw 를 ServerWalkYaw 에 저장 → Multicast RPC 로 클라에 전달.
+	//   [FaceAwayFromPlayerV2] 5/15 사용자 명시 — 보스/포탈 모두 우주선 쪽(=player 반대) 향함.
+	//     ClosestPlayer 찾으면 (Boss−Player) 방향, 못 찾으면 placement yaw + 180° fallback.
+	float ServerWalkYaw = FRotator::NormalizeAxis(Boss->GetActorRotation().Yaw + 180.f);
 	{
 		AActor* ClosestPlayer = nullptr;
 		float ClosestDistSq = TNumericLimits<float>::Max();
 		const FVector BossLoc = Boss->GetActorLocation();
 		if (UWorld* W = GetWorld())
 		{
+			int32 IterSeen = 0;
+			int32 IterPawnNull = 0;
 			for (FConstPlayerControllerIterator It = W->GetPlayerControllerIterator(); It; ++It)
 			{
 				if (APlayerController* PC = It->Get())
 				{
+					++IterSeen;
 					if (APawn* PlayerPawn = PC->GetPawn())
 					{
 						const float D = FVector::DistSquared(BossLoc, PlayerPawn->GetActorLocation());
@@ -495,28 +481,58 @@ bool ABossSummonCinematicTrigger::TryActivate(APawn* InTargetBoss)
 							ClosestPlayer = PlayerPawn;
 						}
 					}
+					else
+					{
+						++IterPawnNull;
+					}
+				}
+			}
+			// [PlayerSearchFallbackV1] PC iterator 가 비어있거나 PC.Pawn 이 모두 nullptr 인 timing 이슈.
+			//   → GetPlayerPawn(0) 로 직접 시도. 그래도 없으면 placement yaw + 180° fallback.
+			if (!ClosestPlayer)
+			{
+				if (APawn* Pawn0 = UGameplayStatics::GetPlayerPawn(W, 0))
+				{
+					ClosestPlayer = Pawn0;
+					UE_LOG(LogTemp, Warning,
+						TEXT("[BossSummonCinematic_LiveCodeCheck] FaceAway PC iter empty (Seen=%d PawnNull=%d) → GetPlayerPawn(0)=%s"),
+						IterSeen, IterPawnNull, *Pawn0->GetName());
+				}
+				else
+				{
+					UE_LOG(LogTemp, Warning,
+						TEXT("[BossSummonCinematic_LiveCodeCheck] FaceAway FAILED — PC iter empty (Seen=%d PawnNull=%d) and GetPlayerPawn(0)=NULL → placement+180 yaw=%.1f"),
+						IterSeen, IterPawnNull, ServerWalkYaw);
 				}
 			}
 		}
 		if (ClosestPlayer)
 		{
-			FVector ToPlayer = (ClosestPlayer->GetActorLocation() - BossLoc).GetSafeNormal2D();
-			if (!ToPlayer.IsNearlyZero())
+			FVector AwayFromPlayer = (BossLoc - ClosestPlayer->GetActorLocation()).GetSafeNormal2D();
+			if (!AwayFromPlayer.IsNearlyZero())
 			{
-				const FRotator FaceRot(0.f, ToPlayer.Rotation().Yaw, 0.f);
-				Boss->SetActorRotation(FaceRot);
-				if (ACharacter* BossCh = Cast<ACharacter>(Boss))
-				{
-					if (UCharacterMovementComponent* M = BossCh->GetCharacterMovement())
-					{
-						M->bOrientRotationToMovement = false;
-					}
-				}
+				ServerWalkYaw = AwayFromPlayer.Rotation().Yaw;
 				UE_LOG(LogTemp, Warning,
-					TEXT("[BossSummonCinematic_LiveCodeCheck] FaceTarget yaw=%.1f → boss now faces %s"),
-					FaceRot.Yaw, *ClosestPlayer->GetName());
+					TEXT("[BossSummonCinematic_LiveCodeCheck] FaceAway yaw=%.1f → boss faces AWAY from %s (toward spaceship)"),
+					ServerWalkYaw, *ClosestPlayer->GetName());
 			}
 		}
+		// [CinematicWalkYawV1] face/walk 통일 — ClosestPlayer 못 찾아도 fallback yaw 로 보스 회전 강제.
+		//   bOrientRotationToMovement=false 도 항상 설정 → walk Tick 이 CinematicWalkYaw 로 이동해도
+		//   회전이 풀리지 않게. face + walk + portal 셋 다 같은 yaw 로 정렬.
+		const FRotator FaceRot(0.f, ServerWalkYaw, 0.f);
+		Boss->SetActorRotation(FaceRot);
+		if (ACharacter* BossCh = Cast<ACharacter>(Boss))
+		{
+			if (UCharacterMovementComponent* M = BossCh->GetCharacterMovement())
+			{
+				M->bOrientRotationToMovement = false;
+			}
+		}
+		CinematicWalkYaw = ServerWalkYaw;
+		UE_LOG(LogTemp, Warning,
+			TEXT("[BossSummonCinematic_LiveCodeCheck] Boss face/walk yaw applied=%.1f (player found=%d)"),
+			CinematicWalkYaw, ClosestPlayer ? 1 : 0);
 	}
 
 	// [BossGroundAlignV1] 보스 Z 를 ground 에 안착시켜 공중에서 떨어지는 모션 제거.
@@ -591,7 +607,8 @@ bool ABossSummonCinematicTrigger::TryActivate(APawn* InTargetBoss)
 	Boss->SetMinNetUpdateFrequency(30.f);
 
 	// 4) 카메라 전환 RPC — 클라이언트들은 portal 만 스폰하고 reveal delay 까지 카메라는 player 유지.
-	Multicast_StartCinematic(Boss, /*bSkipVisuals=*/false);
+	//   [PortalWalkDirRpcV1] ServerWalkYaw 전달 → 클라가 동일 yaw 로 portal forward 계산.
+	Multicast_StartCinematic(Boss, /*bSkipVisuals=*/false, ServerWalkYaw);
 
 	// 5) MinHold + Failsafe 계산. 컷 합계 + reveal delay 까지 포함해야 컷이 다 보임.
 	float MinHold = FMath::Max(MinCinematicHoldDuration, 0.5f);
@@ -876,18 +893,19 @@ void ABossSummonCinematicTrigger::OnGracePeriodElapsed()
 	ActiveBoss.Reset();
 }
 
-void ABossSummonCinematicTrigger::Multicast_StartCinematic_Implementation(APawn* Boss, bool bSkipVisuals)
+void ABossSummonCinematicTrigger::Multicast_StartCinematic_Implementation(APawn* Boss, bool bSkipVisuals, float WalkDirYaw)
 {
 	// [BossSkipRPCFixV1] 클라는 자기 BP default `bDisableCinematic_OnlyHealthBar` 가 아니라
 	//   서버가 RPC 로 명시 전달한 bSkipVisuals 를 사용해야 GM 토글이 클라까지 적용됨.
 	const bool bSkip = bSkipVisuals || bDisableCinematic_OnlyHealthBar;
 
 	UE_LOG(LogTemp, Warning,
-		TEXT("[BossSummonCinematic_LiveCodeCheck] Multicast_Start — Boss=%s, RPC_Skip=%d, BPDefault=%d, FinalSkip=%d"),
+		TEXT("[BossSummonCinematic_LiveCodeCheck] Multicast_Start — Boss=%s, RPC_Skip=%d, BPDefault=%d, FinalSkip=%d, WalkYaw=%.1f"),
 		Boss ? *Boss->GetName() : TEXT("NULL"),
 		bSkipVisuals ? 1 : 0,
 		bDisableCinematic_OnlyHealthBar ? 1 : 0,
-		bSkip ? 1 : 0);
+		bSkip ? 1 : 0,
+		WalkDirYaw);
 
 	if (IsRunningDedicatedServer())
 	{
@@ -905,10 +923,10 @@ void ABossSummonCinematicTrigger::Multicast_StartCinematic_Implementation(APawn*
 
 	// [ClientBossResolveV1] PIE 멀티플레이 / 라이브 서버에서 클라 Boss=NULL 로 도착하는 케이스 핸들링.
 	// 폴링 최대 30회 × 0.1s = 3s. 그동안 보스 액터가 클라 월드에 도착하면 즉시 시네마틱 시작.
-	StartLocalCinematicWithRetry(Boss, 30);
+	StartLocalCinematicWithRetry(Boss, 30, WalkDirYaw);
 }
 
-void ABossSummonCinematicTrigger::StartLocalCinematicWithRetry(APawn* Boss, int32 RemainingRetries)
+void ABossSummonCinematicTrigger::StartLocalCinematicWithRetry(APawn* Boss, int32 RemainingRetries, float WalkDirYaw)
 {
 	UWorld* World = GetWorld();
 	if (!World)
@@ -934,21 +952,21 @@ void ABossSummonCinematicTrigger::StartLocalCinematicWithRetry(APawn* Boss, int3
 		const int32 NextRetries = RemainingRetries - 1;
 		World->GetTimerManager().SetTimer(
 			ClientCinematicRetryTimer,
-			FTimerDelegate::CreateLambda([Weak, NextRetries]()
+			FTimerDelegate::CreateLambda([Weak, NextRetries, WalkDirYaw]()
 			{
 				if (Weak.IsValid())
 				{
-					Weak->StartLocalCinematicWithRetry(nullptr, NextRetries);
+					Weak->StartLocalCinematicWithRetry(nullptr, NextRetries, WalkDirYaw);
 				}
 			}),
 			0.1f, false);
 		return;
 	}
 
-	StartLocalCinematicBody(Boss);
+	StartLocalCinematicBody(Boss, WalkDirYaw);
 }
 
-void ABossSummonCinematicTrigger::StartLocalCinematicBody(APawn* Boss)
+void ABossSummonCinematicTrigger::StartLocalCinematicBody(APawn* Boss, float WalkDirYaw)
 {
 	UWorld* World = GetWorld();
 	if (!World || !IsValid(Boss))
@@ -963,14 +981,21 @@ void ABossSummonCinematicTrigger::StartLocalCinematicBody(APawn* Boss)
 	if (PortalClass)
 	{
 		const FVector BossLoc  = Boss->GetActorLocation();
-		const FVector Forward  = Boss->GetActorForwardVector();
-		const FVector Right    = Boss->GetActorRightVector();
-		const FVector Up       = Boss->GetActorUpVector();
+
+		// [PortalWalkDirRpcV1] 5/15 — server 가 RPC 파라미터로 전달한 WalkDirYaw 그대로 사용.
+		//   기존: 클라 측 PC iteration 으로 ClosestPlayer 재계산 → PIE listen server 의 remote
+		//   client world 에서 PC.Pawn 이 아직 nullptr 이면 fallback 으로 보스 placement forward 사용
+		//   → server world 와 forward 가 다른 portal 이 스폰되는 일관성 문제. RPC 인자 사용으로 해결.
+		const FVector WalkDir2D = FRotator(0.f, WalkDirYaw, 0.f).Vector();
+
+		const FVector Forward  = WalkDir2D;
+		const FVector Right    = FVector::CrossProduct(FVector::UpVector, Forward).GetSafeNormal();
+		const FVector Up       = FVector::UpVector;
 		const FVector PortalLoc = BossLoc
 			+ Forward * PortalSpawnOffset.X
 			+ Right   * PortalSpawnOffset.Y
 			+ Up      * PortalSpawnOffset.Z;
-		const FRotator PortalRot = Boss->GetActorRotation() + PortalSpawnRotation;
+		const FRotator PortalRot = Forward.Rotation() + PortalSpawnRotation;
 
 		FActorSpawnParameters PortalParams;
 		PortalParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
@@ -981,8 +1006,11 @@ void ABossSummonCinematicTrigger::StartLocalCinematicBody(APawn* Boss)
 			SpawnedPortal->SetActorScale3D(PortalSpawnScale);
 			LocalPortalActor = SpawnedPortal;
 			UE_LOG(LogTemp, Warning,
-				TEXT("[BossSummonCinematic_LiveCodeCheck] Portal spawned: %s @ %s scale=%s"),
-				*SpawnedPortal->GetName(), *PortalLoc.ToString(), *PortalSpawnScale.ToString());
+				TEXT("[BossSummonCinematic_LiveCodeCheck_Portal] Portal=%s @ %s scale=%s | walkDir=%s portalRot=%s portalFwd=%s portalRight=%s"),
+				*SpawnedPortal->GetName(), *PortalLoc.ToString(), *PortalSpawnScale.ToString(),
+				*Forward.ToString(), *PortalRot.ToString(),
+				*SpawnedPortal->GetActorForwardVector().ToString(),
+				*SpawnedPortal->GetActorRightVector().ToString());
 		}
 	}
 

@@ -1104,8 +1104,10 @@ void AHellunaGuardianTurret::PerformFire()
 		AHellunaHeroCharacter* HitHero = Cast<AHellunaHeroCharacter>(HitResult.GetActor());
 		if (HitHero)
 		{
-			UGameplayStatics::ApplyDamage(
-				HitHero, Damage, nullptr, this, UHellunaDamageType_PhysicsImpact::StaticClass());
+			const FVector HitFromDir = (TraceEnd - TraceStart).GetSafeNormal();
+			UGameplayStatics::ApplyPointDamage(
+				HitHero, Damage, HitFromDir, HitResult, nullptr, this,
+				UHellunaDamageType_PhysicsImpact::StaticClass());
 		}
 		return;
 	}
@@ -1125,8 +1127,10 @@ void AHellunaGuardianTurret::PerformFire()
 		const FVector HeroAim = GetAimPointFor(Hero);
 		if (FVector::Dist(HeroAim, LockedFireTarget) <= HitTolerance)
 		{
-			UGameplayStatics::ApplyDamage(
-				Hero, Damage, nullptr, this, UHellunaDamageType_PhysicsImpact::StaticClass());
+			const FVector HitFromDir = (Hero->GetActorLocation() - TraceStart).GetSafeNormal();
+			UGameplayStatics::ApplyPointDamage(
+				Hero, Damage, HitFromDir, FHitResult(), nullptr, this,
+				UHellunaDamageType_PhysicsImpact::StaticClass());
 		}
 	}
 }

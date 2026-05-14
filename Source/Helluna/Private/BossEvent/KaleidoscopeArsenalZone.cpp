@@ -262,8 +262,10 @@ void AKaleidoscopeArsenalZone::ProcessDamage()
 				const FVector2D B(Seg.End.X, Seg.End.Y);
 				if (PointToSegmentDistSq2D(HeroPos2D, A, B) <= WidthSq)
 				{
-					UGameplayStatics::ApplyDamage(
-						Hero, BeamDamage,
+					// 빔 방향 = Seg.Start → Seg.End
+					const FVector HitFromDir = (Seg.End - Seg.Start).GetSafeNormal();
+					UGameplayStatics::ApplyPointDamage(
+						Hero, BeamDamage, HitFromDir, FHitResult(),
 						OwnerEnemy ? OwnerEnemy->GetController() : nullptr,
 						OwnerEnemy, UDamageType::StaticClass());
 					LastTime = Now;

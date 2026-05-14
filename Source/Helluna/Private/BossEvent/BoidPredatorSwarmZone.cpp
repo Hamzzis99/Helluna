@@ -281,8 +281,9 @@ void ABoidPredatorSwarmZone::ProcessContactDamage()
 		{
 			if (FVector::DistSquared(B.Position, HeroPos) <= ContactSq)
 			{
-				UGameplayStatics::ApplyDamage(
-					Hero, ContactDamage,
+				const FVector HitFromDir = (HeroPos - B.Position).GetSafeNormal();
+				UGameplayStatics::ApplyPointDamage(
+					Hero, ContactDamage, HitFromDir, FHitResult(),
 					OwnerEnemy ? OwnerEnemy->GetController() : nullptr,
 					OwnerEnemy, UDamageType::StaticClass());
 				LastTime = Now;

@@ -278,8 +278,10 @@ void AConstellationZone::ProcessLineDamage(float DeltaTime)
 
 		LineDamageLastTime.FindOrAdd(WeakPlayer) = CurrentTime;
 
-		UGameplayStatics::ApplyDamage(
+		const FVector HitFromDir = (Player->GetActorLocation() - GetActorLocation()).GetSafeNormal();
+		UGameplayStatics::ApplyPointDamage(
 			Player, DamageThisTick * 4.f, // 0.25초 간격이므로 4배
+			HitFromDir, FHitResult(),
 			OwnerEnemy->GetController(), OwnerEnemy,
 			UDamageType::StaticClass()
 		);
@@ -355,8 +357,9 @@ void AConstellationZone::ExecuteFinalExplosion()
 
 			if (IsPointInConvexHull(PlayerXY, Hull))
 			{
-				UGameplayStatics::ApplyDamage(
-					Player, FinalExplosionDamage,
+				const FVector HitFromDir = (Player->GetActorLocation() - GetActorLocation()).GetSafeNormal();
+				UGameplayStatics::ApplyPointDamage(
+					Player, FinalExplosionDamage, HitFromDir, FHitResult(),
 					OwnerEnemy->GetController(), OwnerEnemy,
 					UDamageType::StaticClass()
 				);
@@ -510,8 +513,9 @@ void AConstellationZone::DealAreaDamage(const FVector& Location, float Damage, f
 		if (!IsValid(Player) || AlreadyHit.Contains(Player)) continue;
 		AlreadyHit.Add(Player);
 
-		UGameplayStatics::ApplyDamage(
-			Player, Damage,
+		const FVector HitFromDir = (Player->GetActorLocation() - Location).GetSafeNormal();
+		UGameplayStatics::ApplyPointDamage(
+			Player, Damage, HitFromDir, FHitResult(),
 			OwnerEnemy->GetController(), OwnerEnemy,
 			UDamageType::StaticClass()
 		);
