@@ -21,6 +21,7 @@
 #include "Components/InstancedStaticMeshComponent.h"
 #include "DrawDebugHelpers.h"
 #include "ActorFolder.h"
+#include "NavigationSystem.h"  // [DynamicSpawnPointsV1] NavMesh project for ground-agnostic spawn point Z
 
 // [BossSummonTriggerAutoSpawnV1] 시네마틱 trigger 자동 spawn
 #include "Minwoo/BossSummonCinematicTrigger.h"
@@ -175,6 +176,170 @@ void AHellunaDefenseGameMode::BeginPlay()
                 const FString Status = CurrentPlayerCount > 0 ? TEXT("playing") : TEXT("empty");
                 WriteRegistryFile(Status, CurrentPlayerCount);
             }, 30.0f, true);
+        }
+    }
+
+    // [DynamicSpawnPointsV1] 5/15 — 레벨에 TargetPoint 수동 placement 가 없을 때 우주선 기준
+    //   원형 분산으로 자동 생성. Cache* 함수가 GetAllActorsOfClass<ATargetPoint> 로 자동 검색이라
+    //   여기서 World 에 액터로 스폰만 해두면 별도 등록 필요 없음. 처음 2점, wave 진행 시
+    //   재호출로 확장. cpp file-local helper 라 헤더 변경 불필요(LC 가능).
+    {
+        UWorld* DynWorld = GetWorld();
+        FVector ShipOrigin = FVector::ZeroVector;
+        FVector ShipForward = FVector::ForwardVector;
+        FVector ShipRight = FVector::RightVector;
+        FRotator ShipRot = FRotator::ZeroRotator;
+        AResourceUsingObject_SpaceShip* DynShip = nullptr;
+        const TCHAR* DynShipSource = TEXT("NONE");
+        // 1차: GameState 등록 시도
+        if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
+        {
+            DynShip = GS->GetSpaceShip();
+            if (DynShip) DynShipSource = TEXT("GameState");
+        }
+        // [ShipFallbackV1] 2차: GameState 등록이 BeginPlay 타이밍상 아직 안 됐으면 World 에서 직접 검색.
+        //   우주선 BeginPlay 가 GameMode BeginPlay 보다 늦게 돌 수 있어 GetSpaceShip()==NULL 케이스 존재.
+        if (!DynShip && DynWorld)
+        {
+            TArray<AActor*> Ships;
+            UGameplayStatics::GetAllActorsOfClass(this, AResourceUsingObject_SpaceShip::StaticClass(), Ships);
+            for (AActor* A : Ships)
+            {
+                if (AResourceUsingObject_SpaceShip* S = Cast<AResourceUsingObject_SpaceShip>(A))
+                {
+                    DynShip = S;
+                    DynShipSource = TEXT("GetAllActorsOfClass");
+                    break;
+                }
+            }
+        }
+        if (DynShip)
+        {
+            ShipOrigin = DynShip->GetActorLocation();
+            ShipForward = DynShip->GetActorForwardVector();
+            ShipRight = DynShip->GetActorRightVector();
+            ShipRot = DynShip->GetActorRotation();
+        }
+        UE_LOG(LogTemp, Warning,
+            TEXT("[DynamicSpawnPointsV1] Ship=%s (via %s) | Origin=%s | Rot=(P=%.1f,Y=%.1f,R=%.1f) | Forward=%s | Right=%s"),
+            DynShip ? *DynShip->GetName() : TEXT("NULL"),
+            DynShipSource,
+            *ShipOrigin.ToCompactString(),
+            ShipRot.Pitch, ShipRot.Yaw, ShipRot.Roll,
+            *ShipForward.GetSafeNormal2D().ToCompactString(),
+            *ShipRight.GetSafeNormal2D().ToCompactString());
+        if (DynWorld)
+        {
+            // [DynamicSpawnPointsV1] 5/15 — 우주선 local forward 기준 N 점 각도 분산.
+            //   Day 1 (또는 0): 2점 (앞 + 오른쪽 90°), Day 2+: 3점 (120° 등분).
+            //   거리 8000~12000cm (80~120m) — 우주선과 충분히 떨어져 ECS LOD 효과 + 진군 거리 확보.
+            //   GetActorForwardVector 기반이라 우주선 회전과 일관.
+            const int32 EffectiveDay = FMath::Max(1, CurrentDay);
+            TArray<float> SpawnAngles;
+            if (EffectiveDay <= 1)
+            {
+                SpawnAngles = { 0.f, 90.f }; // 앞 + 오른쪽
+            }
+            else
+            {
+                SpawnAngles = { 0.f, 120.f, 240.f }; // 균등 3등분
+            }
+            const int32 Count = SpawnAngles.Num();
+            const float RadiusMin = 8000.f;
+            const float RadiusMax = 12000.f;
+            const float TraceUp = 20000.f;
+            const float TraceDown = 20000.f;
+            const float DynSpawnZOffset = 200.f;
+            const FVector ShipForward2D = ShipForward.GetSafeNormal2D();
+            UE_LOG(LogTemp, Warning,
+                TEXT("[DynamicSpawnPointsV1] Day=%d (effective=%d) → Count=%d | Radius=%.0f~%.0f"),
+                CurrentDay, EffectiveDay, Count, RadiusMin, RadiusMax);
+            for (int32 i = 0; i < Count; ++i)
+            {
+                // SpawnAngles 배열의 각도 사용 (Day 별 패턴 명시적 정의)
+                const float AngleDeg = SpawnAngles[i];
+                const FVector Dir = ShipForward2D.RotateAngleAxis(AngleDeg, FVector::UpVector);
+                const FString DirLabel = FString::Printf(TEXT("Spawn%d_%.0fdeg"), i, AngleDeg);
+                const float R = FMath::RandRange(RadiusMin, RadiusMax);
+                FVector Cand = ShipOrigin + Dir * R;
+
+                // [GroundResolveV3] 5/15 — 절대 Z 의존 제거. NavMesh project 우선 → LineTrace fallback.
+                //   맵마다 우주선 Z 가 달라도 NavMesh 가 있는 곳이면 자동으로 그 위에 안착.
+                //   1) NavMesh ProjectPointToNavigation (Mass Entity 가 실제 walk 할 surface)
+                //   2) 큰 LineTrace (WorldStatic → Visibility)
+                //   3) ShipOrigin.Z + 500 fallback
+                FName ResolveMode = TEXT("FAIL");
+                float ResolvedZ = ShipOrigin.Z + 500.f;
+                bool bResolved = false;
+
+                // (1) NavMesh project
+                if (UNavigationSystemV1* NavSys = UNavigationSystemV1::GetCurrent(DynWorld))
+                {
+                    FNavLocation NavLoc;
+                    const FVector Extent(1000.f, 1000.f, 10000.f);
+                    if (NavSys->ProjectPointToNavigation(Cand, NavLoc, Extent))
+                    {
+                        ResolvedZ = NavLoc.Location.Z;
+                        ResolveMode = TEXT("NavMesh");
+                        bResolved = true;
+                    }
+                }
+
+                // (2) LineTrace fallback
+                if (!bResolved)
+                {
+                    FHitResult Hit;
+                    FCollisionQueryParams Params(SCENE_QUERY_STAT(DynSpawnPointGround), false);
+                    Params.bTraceComplex = false;
+                    if (DynShip) Params.AddIgnoredActor(DynShip);
+                    const FVector TraceFrom = Cand + FVector(0,0,TraceUp);
+                    const FVector TraceTo = Cand - FVector(0,0,TraceDown);
+                    bool bHit = DynWorld->LineTraceSingleByChannel(Hit, TraceFrom, TraceTo, ECC_WorldStatic, Params);
+                    if (bHit)
+                    {
+                        ResolvedZ = Hit.ImpactPoint.Z + DynSpawnZOffset;
+                        ResolveMode = TEXT("WorldStatic");
+                        bResolved = true;
+                    }
+                    else
+                    {
+                        bHit = DynWorld->LineTraceSingleByChannel(Hit, TraceFrom, TraceTo, ECC_Visibility, Params);
+                        if (bHit)
+                        {
+                            ResolvedZ = Hit.ImpactPoint.Z + DynSpawnZOffset;
+                            ResolveMode = TEXT("Visibility");
+                            bResolved = true;
+                        }
+                    }
+                }
+
+                // (3) 최종 fallback: 그대로 ResolvedZ (ShipOrigin+500)
+
+                Cand.Z = ResolvedZ;
+                UE_LOG(LogTemp, Warning,
+                    TEXT("[DynamicSpawnPointsV1] GroundResolve[%d] mode=%s | finalZ=%.1f"),
+                    i, *ResolveMode.ToString(), Cand.Z);
+
+                FActorSpawnParameters SP;
+                SP.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+                ATargetPoint* TP = DynWorld->SpawnActor<ATargetPoint>(ATargetPoint::StaticClass(), Cand, FRotator::ZeroRotator, SP);
+                if (TP)
+                {
+                    TP->Tags.AddUnique(MeleeSpawnTag);
+                    TP->Tags.AddUnique(RangeSpawnTag);
+#if WITH_EDITOR
+                    TP->SetActorLabel(FString::Printf(TEXT("DynSpawn_%s"), *DirLabel));
+#endif
+                    const FVector Delta = Cand - ShipOrigin;
+                    UE_LOG(LogTemp, Warning,
+                        TEXT("[DynamicSpawnPointsV1] TargetPoint %s | WorldLoc=%s | DeltaFromShip=%s (dist=%.0f) | UnitDir=%s | RadiusUsed=%.0f"),
+                        *DirLabel,
+                        *Cand.ToCompactString(),
+                        *Delta.ToCompactString(), Delta.Size2D(),
+                        *Dir.ToCompactString(),
+                        R);
+                }
+            }
         }
     }
 
@@ -1828,8 +1993,10 @@ void AHellunaDefenseGameMode::ScheduleDayTransitionAfterNightClear(const TCHAR* 
 //   - RangeMassSpawnerClass가 설정되어 있으면 RangeSpawnTag TargetPoint마다 원거리 Spawner 생성
 //   - MeleeMassSpawnerClass가 없고 레거시 MassSpawnerClass가 있으면 MonsterSpawnTag로 폴백
 //
-// [소환 수 = Spawner 수 × 설정 값]
-//   TargetPoint 2개 + MeleeCount=3 → 근거리 6마리 소환
+// [소환 수 = 설정 값 ÷ Spawner 수] (5/15 변경)
+//   MeleeCount=20 + TargetPoint 2개 → 각 Spawner 10마리, 총 20마리.
+//   나머지가 있으면 앞쪽 Spawner 부터 +1 분배 (round-robin).
+//   예: MeleeCount=10 + Spawner 3개 → 4 / 3 / 3 마리.
 // ============================================================
 void AHellunaDefenseGameMode::TriggerMassSpawning()
 {
@@ -1905,33 +2072,64 @@ void AHellunaDefenseGameMode::TriggerMassSpawning()
     }
 
     // ── 매 밤: RequestSpawn 호출 + 카운터 확정 ───────────────────────
+    // [TotalSplitV1] 5/15 — MeleeCount/RangeCount 는 이제 "총 마리수". Spawner 수로 나눠 분배.
+    //   나머지는 앞쪽 Spawner 부터 +1 (round-robin) 으로 분산.
     float SpawnSequenceDelay = 0.f;
 
-    for (AHellunaEnemyMassSpawner* Spawner : CachedMeleeSpawners)
     {
-        if (!IsValid(Spawner)) continue;
-        Spawner->RequestSpawn(MeleeCount, SpawnSequenceDelay);
-        RemainingMonstersThisNight += Spawner->GetRequestedSpawnCount();
-        Debug::Print(FString::Printf(
-            TEXT("[TriggerMassSpawning] 근거리 RequestSpawn(%d, Delay=%.2f): %s | 누적: %d"),
-            MeleeCount, SpawnSequenceDelay, *Spawner->GetName(), RemainingMonstersThisNight), FColor::Green);
-        SpawnSequenceDelay += Spawner->GetEstimatedSpawnSequenceSpacing(MeleeCount);
+        const int32 ValidMeleeCount = CachedMeleeSpawners.Num();
+        const int32 MeleePerSpawner = (ValidMeleeCount > 0) ? (MeleeCount / ValidMeleeCount) : 0;
+        const int32 MeleeRemainder  = (ValidMeleeCount > 0) ? (MeleeCount % ValidMeleeCount) : 0;
+        int32 MeleeIdx = 0;
+        for (AHellunaEnemyMassSpawner* Spawner : CachedMeleeSpawners)
+        {
+            if (!IsValid(Spawner)) { ++MeleeIdx; continue; }
+            const int32 ThisCount = MeleePerSpawner + (MeleeIdx < MeleeRemainder ? 1 : 0);
+            if (ThisCount <= 0)
+            {
+                Debug::Print(FString::Printf(TEXT("[TriggerMassSpawning] 근거리 0마리 분배 — %s 스킵"), *Spawner->GetName()), FColor::Yellow);
+                ++MeleeIdx;
+                continue;
+            }
+            Spawner->RequestSpawn(ThisCount, SpawnSequenceDelay);
+            RemainingMonstersThisNight += Spawner->GetRequestedSpawnCount();
+            Debug::Print(FString::Printf(
+                TEXT("[TriggerMassSpawning] 근거리 RequestSpawn(%d/%d, Delay=%.2f): %s | 누적: %d"),
+                ThisCount, MeleeCount, SpawnSequenceDelay, *Spawner->GetName(), RemainingMonstersThisNight), FColor::Green);
+            SpawnSequenceDelay += Spawner->GetEstimatedSpawnSequenceSpacing(ThisCount);
+            ++MeleeIdx;
+        }
     }
 
-    for (AHellunaEnemyMassSpawner* Spawner : CachedRangeSpawners)
     {
-        if (!IsValid(Spawner)) continue;
-        if (RangeCount <= 0)    
+        const int32 ValidRangeCount = CachedRangeSpawners.Num();
+        const int32 RangePerSpawner = (ValidRangeCount > 0) ? (RangeCount / ValidRangeCount) : 0;
+        const int32 RangeRemainder  = (ValidRangeCount > 0) ? (RangeCount % ValidRangeCount) : 0;
+        int32 RangeIdx = 0;
+        for (AHellunaEnemyMassSpawner* Spawner : CachedRangeSpawners)
         {
-            Debug::Print(FString::Printf(TEXT("[TriggerMassSpawning] 원거리 0마리 — %s 스킵"), *Spawner->GetName()), FColor::Yellow);
-            continue;
+            if (!IsValid(Spawner)) { ++RangeIdx; continue; }
+            if (RangeCount <= 0)
+            {
+                Debug::Print(FString::Printf(TEXT("[TriggerMassSpawning] 원거리 0마리 — %s 스킵"), *Spawner->GetName()), FColor::Yellow);
+                ++RangeIdx;
+                continue;
+            }
+            const int32 ThisCount = RangePerSpawner + (RangeIdx < RangeRemainder ? 1 : 0);
+            if (ThisCount <= 0)
+            {
+                Debug::Print(FString::Printf(TEXT("[TriggerMassSpawning] 원거리 0마리 분배 — %s 스킵"), *Spawner->GetName()), FColor::Yellow);
+                ++RangeIdx;
+                continue;
+            }
+            Spawner->RequestSpawn(ThisCount, SpawnSequenceDelay);
+            RemainingMonstersThisNight += Spawner->GetRequestedSpawnCount();
+            Debug::Print(FString::Printf(
+                TEXT("[TriggerMassSpawning] 원거리 RequestSpawn(%d/%d, Delay=%.2f): %s | 누적: %d"),
+                ThisCount, RangeCount, SpawnSequenceDelay, *Spawner->GetName(), RemainingMonstersThisNight), FColor::Green);
+            SpawnSequenceDelay += Spawner->GetEstimatedSpawnSequenceSpacing(ThisCount);
+            ++RangeIdx;
         }
-        Spawner->RequestSpawn(RangeCount, SpawnSequenceDelay);
-        RemainingMonstersThisNight += Spawner->GetRequestedSpawnCount();
-        Debug::Print(FString::Printf(
-            TEXT("[TriggerMassSpawning] 원거리 RequestSpawn(%d, Delay=%.2f): %s | 누적: %d"),
-            RangeCount, SpawnSequenceDelay, *Spawner->GetName(), RemainingMonstersThisNight), FColor::Green);
-        SpawnSequenceDelay += Spawner->GetEstimatedSpawnSequenceSpacing(RangeCount);
     }
 
     // 총 소환 수 확정 후 GameState에 반영 — Total과 Alive를 동시에 설정

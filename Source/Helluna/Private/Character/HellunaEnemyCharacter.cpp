@@ -1820,15 +1820,25 @@ void AHellunaEnemyCharacter::ServerApplyDamage(AActor* Target, float DamageAmoun
 	}
 
 	const FVector HitFromDir = (Target->GetActorLocation() - GetActorLocation()).GetSafeNormal();
+	// [MDF_HitLocV1] FHitResult 의 ImpactPoint/Location 을 HitLocation 으로 채워 넘김.
+	//   기존: FHitResult() 빈 객체 → OnTakePointDamage HitLocation=(0,0,0) → 디포메이션이
+	//   우주선 mesh 원점에서만 발생해 시각적으로 안 보임. ApplyPointDamage 의 HitInfo.ImpactPoint
+	//   가 broadcast HitLocation 으로 그대로 전파되므로 여기서 채워줘야 mesh 변형이 정확 위치에서 일어남.
+	FHitResult HitInfo;
+	HitInfo.ImpactPoint = HitLocation;
+	HitInfo.Location = HitLocation;
+	HitInfo.ImpactNormal = -HitFromDir;
+	HitInfo.Normal = -HitFromDir;
+	HitInfo.HitObjectHandle = FActorInstanceHandle(Target);
 	UGameplayStatics::ApplyPointDamage(
 		Target,
 		FinalDamageAmount,
 		HitFromDir,
-		FHitResult(),
+		HitInfo,
 		GetController(),
 		this,
 		UDamageType::StaticClass());
-	UE_LOG(LogTemp, Log, TEXT("[Damage] %.1f -> %s"), FinalDamageAmount, *GetNameSafe(Target));
+	UE_LOG(LogTemp, Log, TEXT("[Damage] %.1f -> %s @ %s"), FinalDamageAmount, *GetNameSafe(Target), *HitLocation.ToCompactString());
 
 	// 이펙트 RPC 쓰로틀링: 같은 몬스터에서 0.1초 내 중복 Multicast 생략
 	const double Now = FPlatformTime::Seconds();

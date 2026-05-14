@@ -220,12 +220,29 @@ void UMDF_DeformableComponent::BeginPlay()
 // -----------------------------------------------------------------------------
 void UMDF_DeformableComponent::HandlePointDamage(AActor* DamagedActor, float Damage, AController* InstigatedBy, FVector HitLocation, UPrimitiveComponent* FHitComponent, FName BoneName, FVector ShotFromDirection, const UDamageType* DamageType, AActor* DamageCauser)
 {
+    // [MDF_Diag] 진단 로그 — Owner / Attacker / Damage / 게이트별 reject 추적용.
+    UE_LOG(LogTemp, Warning,
+        TEXT("[MDF_Deform_LiveCodeCheck] HandlePointDamage Owner=%s | Damage=%.2f | Causer=%s | Instigator=%s | FHitComp=%s"),
+        GetOwner() ? *GetOwner()->GetName() : TEXT("NULL"),
+        Damage,
+        DamageCauser ? *DamageCauser->GetName() : TEXT("NULL"),
+        (InstigatedBy && InstigatedBy->GetPawn()) ? *InstigatedBy->GetPawn()->GetName() : TEXT("NULL"),
+        FHitComponent ? *FHitComponent->GetName() : TEXT("NULL"));
+
     // 1. 서버 권한 체크 (서버만 로직 수행)
-    if (!IsValid(GetOwner()) || !GetOwner()->HasAuthority()) return;
+    if (!IsValid(GetOwner()) || !GetOwner()->HasAuthority())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[MDF_Deform_LiveCodeCheck] REJECT: no authority or owner invalid"));
+        return;
+    }
 
     // 2. 기능 활성화 여부 및 유효 데미지 체크
     // [Fix60] NaN/Inf/음수 데미지 거부 — Loge 계산 시 NaN 전파 방지
-    if (!bIsDeformationEnabled || !FMath::IsFinite(Damage) || Damage <= 0.0f) return;
+    if (!bIsDeformationEnabled || !FMath::IsFinite(Damage) || Damage <= 0.0f)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[MDF_Deform_LiveCodeCheck] REJECT: bEnabled=%d Damage=%.2f"), bIsDeformationEnabled?1:0, Damage);
+        return;
+    }
 
     // 3. 공격자 식별
     AActor* Attacker = DamageCauser;
@@ -240,14 +257,32 @@ void UMDF_DeformableComponent::HandlePointDamage(AActor* DamagedActor, float Dam
     if (IsValid(Attacker))
     {
         // (1) 자해 방지: 내가 쏜 총에 내가 찌그러지면 안 됨
-        if (Attacker == GetOwner()) return;
+        if (Attacker == GetOwner())
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[MDF_Deform_LiveCodeCheck] REJECT: self-damage (Attacker==Owner)"));
+            return;
+        }
 
         // (2) 권한 검사: 특정 태그(Enemy, MDF_Test)가 있는 대상만 찌그러뜨릴 수 있음
         bool bIsEnemy = Attacker->ActorHasTag(TEXT("Enemy"));
         bool bIsTester = Attacker->ActorHasTag(TEXT("MDF_Test"));
 
         // 자격이 없으면 무시 (변형 거부)
-        if (!bIsEnemy && !bIsTester) return;
+        if (!bIsEnemy && !bIsTester)
+        {
+            // List all tags on Attacker for diagnosis
+            FString TagList;
+            for (const FName& T : Attacker->Tags) { TagList += T.ToString() + TEXT(","); }
+            UE_LOG(LogTemp, Warning,
+                TEXT("[MDF_Deform_LiveCodeCheck] REJECT: Attacker=%s missing Enemy/MDF_Test tag — tags=[%s]"),
+                *Attacker->GetName(), *TagList);
+            return;
+        }
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[MDF_Deform_LiveCodeCheck] REJECT: Attacker is invalid"));
+        return;
     }
 
     // 4. 컴포넌트 찾기
@@ -255,10 +290,15 @@ void UMDF_DeformableComponent::HandlePointDamage(AActor* DamagedActor, float Dam
     if (!IsValid(HitMeshComp))
     {
         HitMeshComp = GetOwner()->FindComponentByClass<UDynamicMeshComponent>();
+        UE_LOG(LogTemp, Warning, TEXT("[MDF_Deform_LiveCodeCheck] FHitComp not DynamicMesh — fallback FindComponentByClass = %s"),
+            HitMeshComp ? *HitMeshComp->GetName() : TEXT("NULL"));
     }
 
     if (IsValid(HitMeshComp))
     {
+        UE_LOG(LogTemp, Warning,
+            TEXT("[MDF_Deform_LiveCodeCheck] PASS — queue hit on %s | HitLoc=%s | Damage=%.2f"),
+            *HitMeshComp->GetName(), *HitLocation.ToCompactString(), Damage);
         // 5. 좌표 변환 (월드 좌표 -> 메쉬 로컬 좌표)
         FVector LocalPos = ConvertWorldToLocal(HitLocation);
 
@@ -284,6 +324,13 @@ void UMDF_DeformableComponent::HandlePointDamage(AActor* DamagedActor, float Dam
                 TimerWorld->GetTimerManager().SetTimer(BatchTimerHandle, this, &UMDF_DeformableComponent::ProcessDeformationBatch, Delay, false);
             }
         }
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("[MDF_Deform_LiveCodeCheck] REJECT: no DynamicMeshComponent found on Owner=%s (FHitComp=%s)"),
+            GetOwner() ? *GetOwner()->GetName() : TEXT("NULL"),
+            FHitComponent ? *FHitComponent->GetName() : TEXT("NULL"));
     }
 }
 
