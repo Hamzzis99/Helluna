@@ -90,6 +90,20 @@ struct HELLUNA_API FBossAttackEntry
 		meta = (DisplayName = "HP 비율 상한 (0~1)", ClampMin = "0.0", ClampMax = "1.0"))
 	float HpRatioMax = 1.f;
 
+	/**
+	 * [BossPhaseGateV1] 페이즈 게이트.
+	 *  bPhase1Only=true → 보스가 Phase1 일 때만 후보 (Phase2 진입 시 자동 제외).
+	 *  bPhase2Only=true → 보스가 Phase2 일 때만 후보 (Phase1 동안 자동 제외).
+	 *  둘 다 false (기본) → 페이즈 무관.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phase 게이트",
+		meta = (DisplayName = "Phase1 전용"))
+	bool bPhase1Only = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phase 게이트",
+		meta = (DisplayName = "Phase2 전용"))
+	bool bPhase2Only = false;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "디버그",
 		meta = (DisplayName = "디버그 태그"))
 	FName DebugTag = NAME_None;

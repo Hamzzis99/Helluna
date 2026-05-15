@@ -445,7 +445,7 @@ bool ABossSummonCinematicTrigger::TryActivate(APawn* InTargetBoss)
 	//   [BossSkipRPCFixV1] 클라가 GM 토글을 알 수 있도록 RPC 인자로 명시 전달.
 	if (bSkipCinematic)
 	{
-		Multicast_StartCinematic(Boss, /*bSkipVisuals=*/true, /*WalkDirYaw=*/0.f);
+		Multicast_StartCinematic(Boss, /*bSkipVisuals=*/true, /*WalkDirYaw=*/0.f, Boss->GetActorLocation());
 		return true;
 	}
 
@@ -454,11 +454,11 @@ bool ABossSummonCinematicTrigger::TryActivate(APawn* InTargetBoss)
 
 	// [CinematicFaceTargetV1] 시네마틱 시작 즉시 보스를 가장 가까운 플레이어 방향으로 회전.
 	//   목적: 카메라 오프셋이 보스 로컬 정면(+X) 기준이라 보스가 어떤 방향이든 카메라가 항상
-	//   보스의 정면(=플레이어를 등진 자세)을 비추도록 보장. AI 가 곧 정지되니 회전이 풀리지 않음.
+	//   보스의 정면을 비추도록 보장. AI 가 곧 정지되니 회전이 풀리지 않음.
 	//   [PortalWalkDirRpcV1] 결정된 yaw 를 ServerWalkYaw 에 저장 → Multicast RPC 로 클라에 전달.
-	//   [FaceAwayFromPlayerV2] 5/15 사용자 명시 — 보스/포탈 모두 우주선 쪽(=player 반대) 향함.
-	//     ClosestPlayer 찾으면 (Boss−Player) 방향, 못 찾으면 placement yaw + 180° fallback.
-	float ServerWalkYaw = FRotator::NormalizeAxis(Boss->GetActorRotation().Yaw + 180.f);
+	//   [FaceTowardPlayerV3] 사용자 피드백 — 보스가 등(placement+180°)을 보이며 걷는 문제.
+	//     변경: ClosestPlayer 찾으면 (Player−Boss) 방향 = player 쪽 정면. 못 찾으면 placement yaw 그대로 fallback.
+	float ServerWalkYaw = FRotator::NormalizeAxis(Boss->GetActorRotation().Yaw);
 	{
 		AActor* ClosestPlayer = nullptr;
 		float ClosestDistSq = TNumericLimits<float>::Max();
@@ -508,12 +508,13 @@ bool ABossSummonCinematicTrigger::TryActivate(APawn* InTargetBoss)
 		}
 		if (ClosestPlayer)
 		{
-			FVector AwayFromPlayer = (BossLoc - ClosestPlayer->GetActorLocation()).GetSafeNormal2D();
-			if (!AwayFromPlayer.IsNearlyZero())
+			// [FaceTowardPlayerV3] 보스가 ClosestPlayer 를 정면으로 마주보도록 (Player − Boss) 방향 사용.
+			FVector TowardPlayer = (ClosestPlayer->GetActorLocation() - BossLoc).GetSafeNormal2D();
+			if (!TowardPlayer.IsNearlyZero())
 			{
-				ServerWalkYaw = AwayFromPlayer.Rotation().Yaw;
+				ServerWalkYaw = TowardPlayer.Rotation().Yaw;
 				UE_LOG(LogTemp, Warning,
-					TEXT("[BossSummonCinematic_LiveCodeCheck] FaceAway yaw=%.1f → boss faces AWAY from %s (toward spaceship)"),
+					TEXT("[BossSummonCinematic_LiveCodeCheck][FaceTowardPlayerV3] yaw=%.1f → boss faces TOWARD %s"),
 					ServerWalkYaw, *ClosestPlayer->GetName());
 			}
 		}
@@ -608,7 +609,8 @@ bool ABossSummonCinematicTrigger::TryActivate(APawn* InTargetBoss)
 
 	// 4) 카메라 전환 RPC — 클라이언트들은 portal 만 스폰하고 reveal delay 까지 카메라는 player 유지.
 	//   [PortalWalkDirRpcV1] ServerWalkYaw 전달 → 클라가 동일 yaw 로 portal forward 계산.
-	Multicast_StartCinematic(Boss, /*bSkipVisuals=*/false, ServerWalkYaw);
+	//   [PortalEarlySpawnV1] 보스 위치도 전달 → 클라가 보스 actor replication 을 안 기다리고 포탈 즉시 spawn.
+	Multicast_StartCinematic(Boss, /*bSkipVisuals=*/false, ServerWalkYaw, Boss->GetActorLocation());
 
 	// 5) MinHold + Failsafe 계산. 컷 합계 + reveal delay 까지 포함해야 컷이 다 보임.
 	float MinHold = FMath::Max(MinCinematicHoldDuration, 0.5f);
@@ -893,23 +895,33 @@ void ABossSummonCinematicTrigger::OnGracePeriodElapsed()
 	ActiveBoss.Reset();
 }
 
-void ABossSummonCinematicTrigger::Multicast_StartCinematic_Implementation(APawn* Boss, bool bSkipVisuals, float WalkDirYaw)
+void ABossSummonCinematicTrigger::Multicast_StartCinematic_Implementation(APawn* Boss, bool bSkipVisuals, float WalkDirYaw, FVector BossLocation)
 {
 	// [BossSkipRPCFixV1] 클라는 자기 BP default `bDisableCinematic_OnlyHealthBar` 가 아니라
 	//   서버가 RPC 로 명시 전달한 bSkipVisuals 를 사용해야 GM 토글이 클라까지 적용됨.
 	const bool bSkip = bSkipVisuals || bDisableCinematic_OnlyHealthBar;
 
 	UE_LOG(LogTemp, Warning,
-		TEXT("[BossSummonCinematic_LiveCodeCheck] Multicast_Start — Boss=%s, RPC_Skip=%d, BPDefault=%d, FinalSkip=%d, WalkYaw=%.1f"),
+		TEXT("[BossSummonCinematic_LiveCodeCheck] Multicast_Start — Boss=%s, RPC_Skip=%d, BPDefault=%d, FinalSkip=%d, WalkYaw=%.1f, BossLoc=%s"),
 		Boss ? *Boss->GetName() : TEXT("NULL"),
 		bSkipVisuals ? 1 : 0,
 		bDisableCinematic_OnlyHealthBar ? 1 : 0,
 		bSkip ? 1 : 0,
-		WalkDirYaw);
+		WalkDirYaw,
+		*BossLocation.ToCompactString());
 
 	if (IsRunningDedicatedServer())
 	{
 		return;
+	}
+
+	// [PortalEarlySpawnV1] 포탈을 보스 actor replication 과 무관하게 즉시 spawn.
+	//   메인맵처럼 보스가 멀리(우주선에서 6km) 소환되면 보스 actor 가 클라에 늦게 도착해
+	//   StartLocalCinematicWithRetry 가 30회(3초) retry 후 abort → StartLocalCinematicBody
+	//   미호출 → 포탈 spawn 누락 버그가 있었음. 포탈은 위치값만 있으면 spawn 가능하므로 여기서 선처리.
+	if (!bSkip)
+	{
+		SpawnEntrancePortal(BossLocation, WalkDirYaw);
 	}
 
 	// [DisableCinematic_OnlyHealthBarV1] 디버그 토글 — 시네마틱 모두 skip + HP 바만 spawn.
@@ -966,6 +978,50 @@ void ABossSummonCinematicTrigger::StartLocalCinematicWithRetry(APawn* Boss, int3
 	StartLocalCinematicBody(Boss, WalkDirYaw);
 }
 
+void ABossSummonCinematicTrigger::SpawnEntrancePortal(const FVector& BossLoc, float WalkDirYaw)
+{
+	// [PortalEarlySpawnV1] 보스 actor 없이 위치값만으로 포탈 spawn.
+	//   Multicast_StartCinematic 진입 즉시 호출되며, retry 로 보스를 찾은 뒤 StartLocalCinematicBody
+	//   에서 재호출돼도 LocalPortalActor 가드로 중복 spawn 안 됨.
+	if (LocalPortalActor.IsValid())
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World || !PortalClass)
+	{
+		return;
+	}
+
+	// [PortalWalkDirRpcV1] server 가 RPC 로 전달한 WalkDirYaw 로 portal forward 계산 — server/client 일관성.
+	const FVector WalkDir2D = FRotator(0.f, WalkDirYaw, 0.f).Vector();
+	const FVector Forward  = WalkDir2D;
+	const FVector Right    = FVector::CrossProduct(FVector::UpVector, Forward).GetSafeNormal();
+	const FVector Up       = FVector::UpVector;
+	const FVector PortalLoc = BossLoc
+		+ Forward * PortalSpawnOffset.X
+		+ Right   * PortalSpawnOffset.Y
+		+ Up      * PortalSpawnOffset.Z;
+	const FRotator PortalRot = Forward.Rotation() + PortalSpawnRotation;
+
+	FActorSpawnParameters PortalParams;
+	PortalParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	AActor* SpawnedPortal = World->SpawnActor<AActor>(PortalClass, PortalLoc, PortalRot, PortalParams);
+	if (SpawnedPortal)
+	{
+		// [PortalRevealV1] BP_Portal 기본 크기 ×N 배율 — 거대 포탈 연출용.
+		SpawnedPortal->SetActorScale3D(PortalSpawnScale);
+		LocalPortalActor = SpawnedPortal;
+		UE_LOG(LogTemp, Warning,
+			TEXT("[BossSummonCinematic_LiveCodeCheck_Portal] Portal=%s @ %s scale=%s | walkDir=%s portalRot=%s portalFwd=%s portalRight=%s"),
+			*SpawnedPortal->GetName(), *PortalLoc.ToString(), *PortalSpawnScale.ToString(),
+			*Forward.ToString(), *PortalRot.ToString(),
+			*SpawnedPortal->GetActorForwardVector().ToString(),
+			*SpawnedPortal->GetActorRightVector().ToString());
+	}
+}
+
 void ABossSummonCinematicTrigger::StartLocalCinematicBody(APawn* Boss, float WalkDirYaw)
 {
 	UWorld* World = GetWorld();
@@ -977,42 +1033,9 @@ void ABossSummonCinematicTrigger::StartLocalCinematicBody(APawn* Boss, float Wal
 	// BP OnCinematicEndedClient에서 쓸 수 있게 보스 참조 캐시
 	LocalCinematicBoss = Boss;
 
-	// [PortalCutsV1] 보스 등장 포탈 — 클라 로컬 스폰. 데디 서버는 위에서 이미 return.
-	if (PortalClass)
-	{
-		const FVector BossLoc  = Boss->GetActorLocation();
-
-		// [PortalWalkDirRpcV1] 5/15 — server 가 RPC 파라미터로 전달한 WalkDirYaw 그대로 사용.
-		//   기존: 클라 측 PC iteration 으로 ClosestPlayer 재계산 → PIE listen server 의 remote
-		//   client world 에서 PC.Pawn 이 아직 nullptr 이면 fallback 으로 보스 placement forward 사용
-		//   → server world 와 forward 가 다른 portal 이 스폰되는 일관성 문제. RPC 인자 사용으로 해결.
-		const FVector WalkDir2D = FRotator(0.f, WalkDirYaw, 0.f).Vector();
-
-		const FVector Forward  = WalkDir2D;
-		const FVector Right    = FVector::CrossProduct(FVector::UpVector, Forward).GetSafeNormal();
-		const FVector Up       = FVector::UpVector;
-		const FVector PortalLoc = BossLoc
-			+ Forward * PortalSpawnOffset.X
-			+ Right   * PortalSpawnOffset.Y
-			+ Up      * PortalSpawnOffset.Z;
-		const FRotator PortalRot = Forward.Rotation() + PortalSpawnRotation;
-
-		FActorSpawnParameters PortalParams;
-		PortalParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-		AActor* SpawnedPortal = World->SpawnActor<AActor>(PortalClass, PortalLoc, PortalRot, PortalParams);
-		if (SpawnedPortal)
-		{
-			// [PortalRevealV1] BP_Portal 기본 크기 ×N 배율 — 거대 포탈 연출용.
-			SpawnedPortal->SetActorScale3D(PortalSpawnScale);
-			LocalPortalActor = SpawnedPortal;
-			UE_LOG(LogTemp, Warning,
-				TEXT("[BossSummonCinematic_LiveCodeCheck_Portal] Portal=%s @ %s scale=%s | walkDir=%s portalRot=%s portalFwd=%s portalRight=%s"),
-				*SpawnedPortal->GetName(), *PortalLoc.ToString(), *PortalSpawnScale.ToString(),
-				*Forward.ToString(), *PortalRot.ToString(),
-				*SpawnedPortal->GetActorForwardVector().ToString(),
-				*SpawnedPortal->GetActorRightVector().ToString());
-		}
-	}
+	// [PortalEarlySpawnV1] 포탈은 Multicast_StartCinematic 진입 시 이미 spawn 됐을 수 있음.
+	//   여기서는 안전망 — 보스 actor 가 확보된 정확한 위치로 재시도 (LocalPortalActor 가드로 중복 방지).
+	SpawnEntrancePortal(Boss->GetActorLocation(), WalkDirYaw);
 
 	// [CinematicShakeV1] 시네마틱 동안 World Camera Shake 반복.
 	// 데디 서버는 렌더 카메라가 없으므로 호출 자체는 무해 — TriggerLocalCinematicShake 내부에서 스킵.

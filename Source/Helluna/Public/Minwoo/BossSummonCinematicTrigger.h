@@ -473,9 +473,12 @@ public:
 	 *                       GM 토글 (서버 only) 도 클라에 전파됨.
 	 * @param WalkDirYaw    [PortalWalkDirRpcV1] 서버가 결정한 보스 walk direction yaw (= ClosestPlayer 방향).
 	 *                       클라는 PC iteration 대신 이 값으로 portal forward 계산 — server/client 일관성 보장.
+	 * @param BossLocation  [PortalEarlySpawnV1] 서버 측 보스 위치. 메인맵처럼 보스가 멀리 소환되면
+	 *                       클라에 보스 actor replication 이 지연되는데, 포탈 spawn 이 보스 actor 에
+	 *                       의존하면 retry abort 시 포탈이 안 뜸. 이 값으로 보스 actor 없이 즉시 spawn.
 	 */
 	UFUNCTION(NetMulticast, Reliable)
-	void Multicast_StartCinematic(APawn* Boss, bool bSkipVisuals, float WalkDirYaw);
+	void Multicast_StartCinematic(APawn* Boss, bool bSkipVisuals, float WalkDirYaw, FVector BossLocation);
 
 	/** 시네마틱 종료 (클라: ViewTarget 복귀) */
 	UFUNCTION(NetMulticast, Reliable)
@@ -586,6 +589,13 @@ private:
 
 	/** 시네마틱 본체 (CineCam 스폰 + ViewTarget + 자막). 보스 확보된 후 호출. */
 	void StartLocalCinematicBody(APawn* Boss, float WalkDirYaw);
+
+	/**
+	 * [PortalEarlySpawnV1] 보스 등장 포탈을 클라에 로컬 spawn.
+	 *   보스 actor 가 아니라 위치값만 받으므로 replication 지연과 무관하게 즉시 호출 가능.
+	 *   LocalPortalActor 가 이미 유효하면 중복 spawn 방지로 무시.
+	 */
+	void SpawnEntrancePortal(const FVector& BossLoc, float WalkDirYaw);
 
 	/** [ClientBossResolveV1] 클라 폴링용 타이머 핸들 */
 	FTimerHandle ClientCinematicRetryTimer;

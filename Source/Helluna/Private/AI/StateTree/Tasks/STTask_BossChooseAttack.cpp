@@ -285,6 +285,29 @@ EStateTreeRunStatus FSTTask_BossChooseAttack::Tick(
 			continue;
 		}
 
+		// [BossPhaseGateV1] 페이즈 게이트 — Phase1/Phase2 한정 엔트리 필터.
+		//   bPhase1Only=true 면 보스가 Phase2 진입 후 자동 제외.
+		//   bPhase2Only=true 면 Phase1 동안 자동 제외.
+		//   둘 다 false 면 페이즈 무관 (기존 동작).
+		if (E.bPhase1Only || E.bPhase2Only)
+		{
+			const bool bIsPhase2 = Enemy->bInPhase2;
+			if (E.bPhase1Only && bIsPhase2)
+			{
+				UE_LOG(LogTemp, Verbose,
+					TEXT("[BossPhaseGateV1] entry #%d (%s) skipped — Phase1Only but boss in Phase2"),
+					i, *E.DebugTag.ToString());
+				continue;
+			}
+			if (E.bPhase2Only && !bIsPhase2)
+			{
+				UE_LOG(LogTemp, Verbose,
+					TEXT("[BossPhaseGateV1] entry #%d (%s) skipped — Phase2Only but boss in Phase1"),
+					i, *E.DebugTag.ToString());
+				continue;
+			}
+		}
+
 		// [BossAttackCooldownPersistV1] 개별 쿨다운 남아있으면 제외 — Enemy 캐릭터의 맵 조회.
 		// Walk 슬롯(AttackAbility=null) 은 class key 가 없어 자동 통과.
 		if (E.AttackAbility.Get())

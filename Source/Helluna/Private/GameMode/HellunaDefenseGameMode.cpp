@@ -449,6 +449,17 @@ void AHellunaDefenseGameMode::CacheBossSpawnPoints()
 // ============================================================
 void AHellunaDefenseGameMode::EnsureBossSummonTriggerSpawned()
 {
+    // [BossTriggerDiagV1] 메인맵 자동 spawn 진단 — 함수 진입 + 조건값 출력.
+    //   진입 로그가 안 찍히면 BeginPlay 가 이 호출 전에 멈춘 것.
+    {
+        UWorld* DiagWorld = GetWorld();
+        const FString DiagMap = DiagWorld ? DiagWorld->GetMapName() : TEXT("<no-world>");
+        UE_LOG(LogTemp, Warning,
+            TEXT("[BossTriggerDiagV1] EnsureBossSummonTriggerSpawned ENTER — Map=%s HasAuth=%d bAutoSpawn=%d TriggerClass=%s"),
+            *DiagMap, HasAuthority() ? 1 : 0, bAutoSpawnBossSummonTrigger ? 1 : 0,
+            BossSummonTriggerClass ? *BossSummonTriggerClass->GetName() : TEXT("NULL"));
+    }
+
     if (!HasAuthority()) return;
     if (!bAutoSpawnBossSummonTrigger) return;
     UWorld* World = GetWorld();
@@ -2315,6 +2326,11 @@ void AHellunaDefenseGameMode::TryBindSpaceShipRepairDelegate()
 
 void AHellunaDefenseGameMode::OnSpaceShipRepairCompleted()
 {
+    // [BossTriggerDiagV1] 수리 완료 콜백이 실제로 호출됐는지 진단.
+    UE_LOG(LogTemp, Warning,
+        TEXT("[BossTriggerDiagV1] OnSpaceShipRepairCompleted CALLED — HasAuth=%d bSpawnBossOnRepair=%d"),
+        HasAuthority() ? 1 : 0, bSpawnBossOnRepairComplete ? 1 : 0);
+
     if (!HasAuthority()) return;
 
     if (!bSpawnBossOnRepairComplete)
@@ -2351,6 +2367,47 @@ void AHellunaDefenseGameMode::OnSpaceShipRepairCompleted()
 
     SetBossReady(true);
     TrySummonBoss(RepairCompleteBossEntry);
+
+    // [MainMapCinematicFixV1] WP 메인맵 안전망 — OnActorSpawnedHandler 단독 의존 제거.
+    //   LV_Boss_Test 에서는 trigger BeginPlay 시점에 핸들러 등록이 문제없이 작동하지만,
+    //   메인맵(WP) 에서는 streaming/timing 으로 핸들러 등록 자체가 실패하거나 보스 spawn
+    //   직전에 트리거 actor 가 unload 되는 케이스가 보고됨 (수리도 100% 후 시네마틱·포탈
+    //   미발동). 보스 spawn 직후 + 1.5s 그레이스 후에도 시네마틱이 아직 안 시작했으면
+    //   World iterator 로 트리거를 직접 찾아 TryActivate 호출. 트리거 내부 bCinematicActive
+    //   가드로 중복 호출 안전.
+    if (UWorld* World = GetWorld())
+    {
+        FTimerHandle SafeNetHandle;
+        World->GetTimerManager().SetTimer(
+            SafeNetHandle,
+            FTimerDelegate::CreateWeakLambda(this, [this]()
+            {
+                UWorld* W = GetWorld();
+                if (!W) return;
+                APawn* BossPawn = Cast<APawn>(AliveBoss.Get());
+                if (!IsValid(BossPawn))
+                {
+                    UE_LOG(LogTemp, Warning,
+                        TEXT("[MainMapCinematicFixV1] safety net skip — AliveBoss invalid (TrySummonBoss 실패 또는 보스 destroy)"));
+                    return;
+                }
+                for (TActorIterator<ABossSummonCinematicTrigger> It(W); It; ++It)
+                {
+                    if (IsValid(*It))
+                    {
+                        UE_LOG(LogTemp, Warning,
+                            TEXT("[MainMapCinematicFixV1] safety net firing — explicit TryActivate on %s with boss %s"),
+                            *(*It)->GetName(), *BossPawn->GetName());
+                        (*It)->TryActivate(BossPawn);
+                        return;
+                    }
+                }
+                UE_LOG(LogTemp, Error,
+                    TEXT("[MainMapCinematicFixV1] safety net — 트리거 인스턴스를 World 에서 찾지 못함. "
+                         "GameMode CDO 의 BossSummonTriggerClass 와 bAutoSpawnBossSummonTrigger 확인 필요."));
+            }),
+            2.0f, false);
+    }
 }
 
 // 보스몬스터 사망 로직 — NotifyMonsterDied에서 EnemyGrade != Normal 시 호출
@@ -2746,6 +2803,13 @@ void AHellunaDefenseGameMode::RespawnDeadPlayer(APlayerController* PC)
 // ============================================================
 void AHellunaDefenseGameMode::TrySummonBoss(const FBossSpawnEntry& Entry)
 {
+    // [BossTriggerDiagV1] 보스 소환 진입 — 조건값 + spawn point 수 출력.
+    UE_LOG(LogTemp, Warning,
+        TEXT("[BossTriggerDiagV1] TrySummonBoss ENTER — HasAuth=%d bGameInit=%d BossClass=%s BossSpawnPoints=%d"),
+        HasAuthority() ? 1 : 0, bGameInitialized ? 1 : 0,
+        Entry.BossClass ? *Entry.BossClass->GetName() : TEXT("NULL"),
+        BossSpawnPoints.Num());
+
     if (!HasAuthority() || !bGameInitialized) return;
 
     if (!Entry.BossClass)
@@ -2813,6 +2877,11 @@ void AHellunaDefenseGameMode::TrySummonBoss(const FBossSpawnEntry& Entry)
 
     AliveBoss = SpawnedBoss;
     bBossReady = false;
+
+    // [BossTriggerDiagV1] 보스 spawn 성공 — 시네마틱 트리거가 이 보스를 잡아야 함.
+    UE_LOG(LogTemp, Warning,
+        TEXT("[BossTriggerDiagV1] TrySummonBoss SUCCESS — boss=%s at %s"),
+        *SpawnedBoss->GetName(), *SpawnedBoss->GetActorLocation().ToCompactString());
 
     // [BossFightTimeFreezeV1] 보스 소환 시 시간 정지 (해/달만, 날씨 유지)
     if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())

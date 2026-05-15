@@ -90,6 +90,25 @@ struct HELLUNA_API FBossPatternEntry
 
 	/** 누적 타이머 (런타임 — Timer/ProximityTimer 공용) */
 	float AccumulatedTime = 0.f;
+
+	/**
+	 * [BossPhaseGateV1] 페이즈 게이트.
+	 *   bPhase1Only=true → 보스가 Phase1 일 때만 평가 (Phase2 진입 후 자동 skip).
+	 *   bPhase2Only=true → 보스가 Phase2 일 때만 평가 (Phase1 동안 자동 skip).
+	 *   둘 다 false (기본) → 페이즈 무관 항상 평가.
+	 *   둘 다 true 는 의미 없음 (=never) — 데이터 작업자 주의.
+	 *
+	 *  대표 사용:
+	 *   - TimeDistortion 패턴: bPhase1Only=true + HPThreshold=0.5
+	 *   - RealityFracture 패턴: bPhase2Only=true + HPThreshold=0.5
+	 */
+	UPROPERTY(EditAnywhere, Category = "Phase 게이트",
+		meta = (DisplayName = "Phase1 전용"))
+	bool bPhase1Only = false;
+
+	UPROPERTY(EditAnywhere, Category = "Phase 게이트",
+		meta = (DisplayName = "Phase2 전용"))
+	bool bPhase2Only = false;
 };
 
 /**

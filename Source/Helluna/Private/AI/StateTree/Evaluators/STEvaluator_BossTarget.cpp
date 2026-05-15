@@ -25,6 +25,7 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "Character/HellunaEnemyCharacter.h"
+#include "Character/HellunaEnemyCharacter_Boss.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
 
 // ============================================================================
@@ -198,6 +199,27 @@ void FSTEvaluator_BossTarget::Tick(FStateTreeExecutionContext& Context, const fl
 
 		// 1회성이면서 이미 발동했으면 스킵
 		if (Entry.Cooldown <= 0.f && Entry.bTriggered) continue;
+
+		// [BossPhaseGateV1] 페이즈 게이트 — Phase1Only/Phase2Only set 시 보스 현 페이즈 매치 안 하면 skip.
+		if (Entry.bPhase1Only || Entry.bPhase2Only)
+		{
+			if (const AHellunaEnemyCharacter_Boss* BossChar = Cast<AHellunaEnemyCharacter_Boss>(BossPawn))
+			{
+				const bool bIsPhase2 = BossChar->bInPhase2;
+				if (Entry.bPhase1Only && bIsPhase2)
+				{
+					UE_LOG(LogTemp, Verbose,
+						TEXT("[BossPhaseGateV1] pattern #%d skipped — Phase1Only but boss in Phase2"), i);
+					continue;
+				}
+				if (Entry.bPhase2Only && !bIsPhase2)
+				{
+					UE_LOG(LogTemp, Verbose,
+						TEXT("[BossPhaseGateV1] pattern #%d skipped — Phase2Only but boss in Phase1"), i);
+					continue;
+				}
+			}
+		}
 
 		int32 Priority = 999;
 		bool bConditionMet = false;
