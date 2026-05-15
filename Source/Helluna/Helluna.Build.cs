@@ -80,6 +80,13 @@ public class Helluna : ModuleRules
         });
         PrivateDependencyModuleNames.AddRange(new string[] { "AssetRegistry" });
 
+        // [§17++ Phase 2] AsyncLoadingScreen plugin (BeginPlay 갭 가림 + 동적 우주선 widget 주입)
+        // 클라이언트만 사용 (plugin TargetDenyList=Server)
+        if (Target.Type != TargetType.Server)
+        {
+            PrivateDependencyModuleNames.Add("AsyncLoadingScreen");
+        }
+
         // [TimeDistortion] 콘솔 커맨드로 PP 머티리얼 자동 생성 (에디터 전용)
         if (Target.bBuildEditor)
         {

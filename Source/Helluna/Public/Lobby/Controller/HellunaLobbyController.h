@@ -141,6 +141,10 @@ public:
 	/** 대기 중인 재참가 포트 (Client RPC에서 설정) */
 	int32 PendingRejoinPort = 0;
 
+	/** [Phase14-Modal] 이 세션에서 이미 Abandon 처리된 경우 true.
+	 *  Client_ShowRejoinPrompt 재진입 차단용. Replicated 아님 — 본인 컨트롤러에서만 의미 있음. */
+	bool bRejoinDeclined = false;
+
 	// ════════════════════════════════════════════════════════════════
 	// 컴포넌트 Getter
 	// ════════════════════════════════════════════════════════════════
@@ -217,6 +221,15 @@ public:
 	/** §13 §3.1.3 — Solo/Party 공통 헬퍼. Client_ExecuteDeploy/PartyDeploy가 위임. */
 	void ExecuteDeploySequence(const FString& TravelURL, const FString& ExpectedIdsJoined, int32 PartyId);
 
+	/**
+	 * [§17+] 매칭 카운트다운 종료 직후 (서버 spawn 시작 신호)에 호출하는 RPC.
+	 * 우주선 sublevel + LoadingHUD를 미리 표시해서 서버 spawn 대기 동안 클라가
+	 * 로비 화면이 아닌 우주선 화면을 보게 함. ClientTravel은 안 함.
+	 * 실제 ClientTravel은 Client_ExecutePartyDeploy가 도착했을 때만 시작.
+	 */
+	UFUNCTION(Client, Reliable)
+	void Client_PreloadShipScene();
+
 	/** §13 §3.1.3 — Phase 1: Fade 0.2s 후 LoadStreamLevel(L_LoadingShipScene) */
 	UFUNCTION()
 	void StartLoadingSceneStream();
@@ -258,6 +271,13 @@ private:
 	FString PendingExpectedIds;
 	int32 PendingPartyId = 0;
 	bool bCaptureAndTravelFired = false;
+
+	// [§17+] PreloadShipScene 상태 플래그
+	// bShipScenePreloaded=true면 우주선 sublevel + HUD 이미 로드 완료. ExecuteDeploySequence는 BeginLoadingHandoff부터 시작.
+	// bPreloadInProgress=true면 sublevel 로드/HUD 표시 진행 중. ExecuteDeploySequence가 도착하면 PendingExecuteDeployAfterPreload 플래그로 대기.
+	bool bShipScenePreloaded = false;
+	bool bPreloadInProgress = false;
+	bool bPendingExecuteDeployAfterPreload = false;
 
 	UPROPERTY()
 	TObjectPtr<UUserWidget> ActiveFadeWidget;

@@ -80,6 +80,34 @@ void UHellunaPauseMenuWidget::NativeOnInitialized()
 
 void UHellunaPauseMenuWidget::NativeDestruct()
 {
+	// [H5-UI-1] 버튼 델리게이트 명시적 해제 — NativeOnInitialized에서 AddUniqueDynamic한 12개를 RemoveDynamic.
+	// 위젯 재생성 시 이전 인스턴스 dangling pointer로 콜백 호출 시 크래시 차단.
+	// AddUniqueDynamic은 중복 바인딩만 막고 RemoveDynamic은 별도로 호출해야 함.
+	if (IsValid(Button_Resume))
+	{
+		Button_Resume->OnHovered.RemoveDynamic(this, &ThisClass::OnResumeHovered);
+		Button_Resume->OnUnhovered.RemoveDynamic(this, &ThisClass::OnResumeUnhovered);
+		Button_Resume->OnClicked.RemoveDynamic(this, &ThisClass::OnResumeClicked);
+	}
+	if (IsValid(Button_Settings))
+	{
+		Button_Settings->OnHovered.RemoveDynamic(this, &ThisClass::OnSettingsHovered);
+		Button_Settings->OnUnhovered.RemoveDynamic(this, &ThisClass::OnSettingsUnhovered);
+		Button_Settings->OnClicked.RemoveDynamic(this, &ThisClass::OnSettingsClicked);
+	}
+	if (IsValid(Button_ReturnLobby))
+	{
+		Button_ReturnLobby->OnHovered.RemoveDynamic(this, &ThisClass::OnReturnLobbyHovered);
+		Button_ReturnLobby->OnUnhovered.RemoveDynamic(this, &ThisClass::OnReturnLobbyUnhovered);
+		Button_ReturnLobby->OnClicked.RemoveDynamic(this, &ThisClass::OnReturnLobbyClicked);
+	}
+	if (IsValid(Button_QuitGame))
+	{
+		Button_QuitGame->OnHovered.RemoveDynamic(this, &ThisClass::OnQuitGameHovered);
+		Button_QuitGame->OnUnhovered.RemoveDynamic(this, &ThisClass::OnQuitGameUnhovered);
+		Button_QuitGame->OnClicked.RemoveDynamic(this, &ThisClass::OnQuitGameClicked);
+	}
+
 	// 활성 다이얼로그 정리
 	if (IsValid(ActiveDialog))
 	{

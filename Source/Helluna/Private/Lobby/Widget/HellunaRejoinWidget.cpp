@@ -67,6 +67,11 @@ void UHellunaRejoinWidget::OnAbandonClicked()
 	AHellunaLobbyController* LobbyPC = Cast<AHellunaLobbyController>(GetOwningPlayer());
 	if (LobbyPC)
 	{
+		// [Phase14-Modal] 클라측 컨트롤러에 거절 플래그 즉시 세팅 — 서버 RPC 왕복
+		// 사이에 Client_ShowRejoinPrompt가 또 도착해도 가드가 작동하도록.
+		LobbyPC->bRejoinDeclined = true;
+		LobbyPC->PendingRejoinPort = 0;
+
 		LobbyPC->Server_AbandonGame();
 	}
 

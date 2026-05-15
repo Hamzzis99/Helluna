@@ -63,7 +63,7 @@
 #define HELLUNA_DEBUG_INVENTORY_SAVE 0
 
 // 디펜스 GameState (HellunaDefenseGameState - Phase 전환, DayNight, 새벽Lerp, 몬스터 수, 날씨)
-#define HELLUNA_DEBUG_DEFENSE 0
+#define HELLUNA_DEBUG_DEFENSE 1
 
 // 히어로 캐릭터 (HellunaHeroCharacter - EndPlay 저장, 입력 바인딩, 무기 스폰/파괴, 우주선 수리)
 #define HELLUNA_DEBUG_HERO 0

@@ -754,6 +754,10 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 
 				LobbyGM->MarkChannelAsPendingDeploy(SpawnedPort);
 
+				// [§17+] 솔로 동적 서버 spawn 대기 동안 클라에 우주선 화면 미리 표시
+				Client_PreloadShipScene();
+				UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] [§17+] Solo 동적 spawn → Client_PreloadShipScene 전송"));
+
 				// WaitAndDeploy로 비동기 대기
 				FMatchmakingQueueEntry SoloEntry;
 				SoloEntry.EntryId = 0;
@@ -2013,15 +2017,74 @@ namespace
 	}
 }
 
+// ════════════════════════════════════════════════════════════════════════════════
+// [§17+] Client_PreloadShipScene_Implementation
+//   매칭 카운트다운 종료 직후 (서버 spawn 시작 신호) 호출.
+//   우주선 sublevel + LoadingHUD를 미리 표시. ClientTravel은 안 함.
+//   서버 spawn 대기 동안 클라가 로비 화면이 아닌 우주선 화면을 봄.
+//   실제 ClientTravel은 Client_ExecutePartyDeploy 도착 시 ExecuteDeploySequence에서 진행.
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaLobbyController::Client_PreloadShipScene_Implementation()
+{
+	if (bShipScenePreloaded || bPreloadInProgress)
+	{
+		UE_LOG(LogHellunaLobby, Warning,
+			TEXT("[LoadingDbg][LobbyPC][Pre] PreloadShipScene 중복 무시 | Preloaded=%d | InProgress=%d"),
+			bShipScenePreloaded ? 1 : 0, bPreloadInProgress ? 1 : 0);
+		return;
+	}
+
+	UE_LOG(LogHellunaLobby, Warning,
+		TEXT("[LoadingDbg][LobbyPC][Pre] PreloadShipScene ENTER — 서버 spawn 대기 동안 우주선 표시"));
+
+	bPreloadInProgress = true;
+
+	// 입력 차단
+	DisableInput(this);
+	SetInputMode(FInputModeUIOnly{});
+
+	// V2 프리뷰 비활성화
+	if (IsValid(SpawnedPreviewSceneV2))
+	{
+		SpawnedPreviewSceneV2->SetActorTickEnabled(false);
+		SpawnedPreviewSceneV2->SetActorHiddenInGame(true);
+	}
+
+	// Fade 위젯
+	if (FadeToBlackWidgetClass && !ActiveFadeWidget)
+	{
+		ActiveFadeWidget = CreateWidget<UUserWidget>(this, FadeToBlackWidgetClass);
+		if (ActiveFadeWidget)
+		{
+			ActiveFadeWidget->SetRenderOpacity(0.f);
+			ActiveFadeWidget->AddToViewport(9999);
+		}
+	}
+
+	// 0.2s 후 서브레벨 스트리밍 — OnLoadingSceneStreamed가 우주선/HUD 표시 후 bShipScenePreloaded=true 셋
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(FadeStartTimer);
+		World->GetTimerManager().ClearTimer(HandoffTimer);
+		World->GetTimerManager().ClearTimer(SettleGuardTimer);
+		World->GetTimerManager().SetTimer(FadeStartTimer, this,
+			&AHellunaLobbyController::StartLoadingSceneStream, 0.2f, false);
+	}
+	else
+	{
+		StartLoadingSceneStream();
+	}
+}
+
 void AHellunaLobbyController::ExecuteDeploySequence(const FString& TravelURL, const FString& ExpectedIdsJoined, int32 PartyId)
 {
-	// [§16 Step 3] HOTFIX-Simple 해제 → §13 v2.1 풀체인 복원.
-	// 흐름: Fade(0.2s) → StartLoadingSceneStream → OnLoadingSceneStreamed (1.0s) →
-	//       BeginLoadingHandoff (Settle 0.5s + Guard 0.8s) → CaptureAndTravel →
-	//       Snapshot 캡처 → OnSnapshotReadyTravel (MoviePlayer setup + ClientTravel).
-	// MoviePlayer 데드락은 GameInstance::SetupSnapshotLoadingScreen 의
-	// bWaitForManualStop=false + bAutoCompleteWhenLoadingCompletes=true 로 해소됨 (커밋 4a375c80).
-	UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A] ExecuteDeploySequence ENTER | URL=%s | PartyId=%d"), *TravelURL, PartyId);
+	// [§17+] PreloadShipScene 흐름과 통합:
+	//   bShipScenePreloaded=true: 우주선 sublevel 이미 로드됨 → BeginLoadingHandoff부터 진행
+	//   bPreloadInProgress=true: 진행 중 → OnLoadingSceneStreamed 끝나는 시점에 자동 BeginLoadingHandoff 호출 (PendingExecuteDeployAfterPreload 플래그)
+	//   둘 다 false: 기존 §13 v2.1 풀체인 (Fade + sublevel + Settle + Snapshot + Travel)
+	UE_LOG(LogHellunaLobby, Warning,
+		TEXT("[LoadingDbg][LobbyPC][A] ExecuteDeploySequence ENTER | URL=%s | PartyId=%d | Preloaded=%d | InProgress=%d"),
+		*TravelURL, PartyId, bShipScenePreloaded ? 1 : 0, bPreloadInProgress ? 1 : 0);
 
 	UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance());
 	if (!GI)
@@ -2031,12 +2094,31 @@ void AHellunaLobbyController::ExecuteDeploySequence(const FString& TravelURL, co
 		return;
 	}
 
-	// 시퀀스 상태 초기화
+	// Travel 정보는 어떤 분기든 저장
 	PendingTravelURL = TravelURL;
 	PendingExpectedIds = ExpectedIdsJoined;
 	PendingPartyId = PartyId;
 	bCaptureAndTravelFired = false;
 
+	// 분기 1: PreloadShipScene 완료 → BeginLoadingHandoff부터 시작
+	if (bShipScenePreloaded)
+	{
+		UE_LOG(LogHellunaLobby, Warning,
+			TEXT("[LoadingDbg][LobbyPC][A] Preload 완료 상태 → BeginLoadingHandoff 직접 진입 (Settle + Snapshot + Travel)"));
+		BeginLoadingHandoff();
+		return;
+	}
+
+	// 분기 2: PreloadShipScene 진행 중 → OnLoadingSceneStreamed 끝에서 자동 BeginLoadingHandoff
+	if (bPreloadInProgress)
+	{
+		bPendingExecuteDeployAfterPreload = true;
+		UE_LOG(LogHellunaLobby, Warning,
+			TEXT("[LoadingDbg][LobbyPC][A] Preload 진행 중 → 완료 후 자동 BeginLoadingHandoff (Pending 대기)"));
+		return;
+	}
+
+	// 분기 3: 기존 풀체인 (Preload 없이 직접 호출된 경로 — 솔로 빈 채널 등)
 	// (Q22) 입력 전면 차단
 	DisableInput(this);
 	SetInputMode(FInputModeUIOnly{});
@@ -2048,8 +2130,8 @@ void AHellunaLobbyController::ExecuteDeploySequence(const FString& TravelURL, co
 		SpawnedPreviewSceneV2->SetActorHiddenInGame(true);
 	}
 
-	// (Q8) Fade-to-black 위젯 (BP가 0.2s opacity 0→1 애니 재생)
-	if (FadeToBlackWidgetClass)
+	// (Q8) Fade-to-black 위젯
+	if (FadeToBlackWidgetClass && !ActiveFadeWidget)
 	{
 		ActiveFadeWidget = CreateWidget<UUserWidget>(this, FadeToBlackWidgetClass);
 		if (ActiveFadeWidget)
@@ -2058,7 +2140,7 @@ void AHellunaLobbyController::ExecuteDeploySequence(const FString& TravelURL, co
 			ActiveFadeWidget->AddToViewport(9999);
 		}
 	}
-	else
+	else if (!FadeToBlackWidgetClass)
 	{
 		UE_LOG(LogHellunaLobby, Warning, TEXT("[LoadingDbg][LobbyPC][A] FadeToBlackWidgetClass 미설정 — Fade 스킵"));
 	}
@@ -2141,7 +2223,41 @@ void AHellunaLobbyController::OnLoadingSceneStreamed()
 		ActiveFadeWidget->SetRenderOpacity(1.f);
 	}
 
-	// 흔들림 메인 구간 1.0s 보장
+	// [§17+] PreloadShipScene 모드 분기:
+	//   bPreloadInProgress=true: BeginLoadingHandoff timer 등록 안 함 — 우주선 화면 유지하면서 ClientTravel 대기
+	//   bPendingExecuteDeployAfterPreload=true: ExecuteDeploySequence가 이미 도착했음 → 즉시 BeginLoadingHandoff
+	if (bPreloadInProgress)
+	{
+		// [§17++] 페이드 위젯 제거 — 우주선 sublevel 보이게 (검정 가림 풀기).
+		//   기존 v2.1 풀체인은 SetRenderOpacity(1.f)로 검정 유지하지만, PreloadShipScene 모드는
+		//   서버 spawn 대기 동안 우주선을 사용자에게 보여줘야 하므로 페이드 즉시 제거.
+		if (ActiveFadeWidget)
+		{
+			ActiveFadeWidget->RemoveFromParent();
+			ActiveFadeWidget = nullptr;
+			UE_LOG(LogHellunaLobby, Warning,
+				TEXT("[LoadingDbg][LobbyPC][Pre] FadeToBlack 위젯 제거 → 우주선 표시"));
+		}
+
+		bShipScenePreloaded = true;
+		bPreloadInProgress = false;
+
+		if (bPendingExecuteDeployAfterPreload)
+		{
+			bPendingExecuteDeployAfterPreload = false;
+			UE_LOG(LogHellunaLobby, Warning,
+				TEXT("[LoadingDbg][LobbyPC][Pre] Preload 완료 + Pending 있음 → BeginLoadingHandoff 즉시 진입"));
+			BeginLoadingHandoff();
+		}
+		else
+		{
+			UE_LOG(LogHellunaLobby, Warning,
+				TEXT("[LoadingDbg][LobbyPC][Pre] Preload 완료 — 우주선 표시 중. ClientTravel은 Client_ExecutePartyDeploy 도착 시 진행"));
+		}
+		return;
+	}
+
+	// 기존 풀체인 흐름: 1.0s 후 BeginLoadingHandoff
 	if (World)
 	{
 		World->GetTimerManager().ClearTimer(HandoffTimer);
@@ -2232,10 +2348,15 @@ void AHellunaLobbyController::OnSnapshotReadyTravel()
 
 	if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance()))
 	{
-		// (Q14) Snapshot 없으면 SetupSnapshotLoadingScreen이 내부에서 스킵
 		if (GI->LoadingSnapshotTexture)
 		{
+			// [§17 3-Layer] Layer 1 — plugin 등록 (LoadMap 동안 별도 thread 가림)
 			GI->SetupSnapshotLoadingScreen();
+
+			// [§17 3-Layer] Layer 2 — ClientTravel 직전에 GameViewport overlay 미리 추가.
+			// connection 단계의 streaming pause/직전 frame freeze 시점에도 SOverlay에 우리 widget이
+			// 살아있어 화면 가림. Layer 3 (StreamingPause delegate)도 GameInstance::Init에서 등록됨.
+			GI->EnsureGameViewportOverlay();
 		}
 	}
 
@@ -2280,6 +2401,19 @@ void AHellunaLobbyController::TogglePartyWidget()
 void AHellunaLobbyController::Client_ShowRejoinPrompt_Implementation(int32 GameServerPort)
 {
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Client_ShowRejoinPrompt 수신 | Port=%d"), GameServerPort);
+
+	// [Phase14-Modal] 재진입 가드 — 이미 거절했거나 위젯이 떠 있으면 무시
+	if (bRejoinDeclined)
+	{
+		UE_LOG(LogHellunaLobby, Verbose, TEXT("[LobbyPC] ShowRejoinPrompt 무시 (이미 Abandon됨)"));
+		return;
+	}
+	if (RejoinWidgetInstance)
+	{
+		UE_LOG(LogHellunaLobby, Verbose, TEXT("[LobbyPC] ShowRejoinPrompt 무시 (위젯 이미 표시중)"));
+		return;
+	}
+
 	PendingRejoinPort = GameServerPort;
 
 	if (!RejoinWidgetClass)
@@ -2330,6 +2464,11 @@ bool AHellunaLobbyController::Server_AbandonGame_Validate()
 void AHellunaLobbyController::Server_AbandonGame_Implementation()
 {
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] Server_AbandonGame 수신"));
+
+	// [Phase14-Modal] 서버측 컨트롤러에 거절 플래그 세팅 — 같은 세션에서
+	// Client_ShowRejoinPrompt가 다시 호출되어도 클라가 무시하도록 동기화.
+	// (HandleRejoinDeclined가 호출되기 전에 세팅 — 안에서 어떤 경로로든 재호출되더라도 차단)
+	bRejoinDeclined = true;
 
 	AHellunaLobbyGameMode* LobbyGM = GetLobbyGameMode();
 	if (!LobbyGM)

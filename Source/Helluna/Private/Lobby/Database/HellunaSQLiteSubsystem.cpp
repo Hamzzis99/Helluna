@@ -442,15 +442,27 @@ bool UHellunaSQLiteSubsystem::ExportLoadoutToFile(const FString& PlayerId, const
 	FJsonSerializer::Serialize(RootObj, Writer);
 	Writer->Close();
 
-	if (FFileHelper::SaveStringToFile(OutputString, *FilePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+	// [C5-SQL-1] Atomic write: .tmp 파일에 쓴 후 rename으로 원본 교체.
+	// 이유: 게임서버 프로세스 크래시 시 부분 쓰기로 손상된 JSON이 남으면 다음 Import에서 파싱 실패 → 파일 삭제 → 데이터 영구 손실.
+	// .tmp + atomic rename 패턴은 부분 쓰기를 .tmp에 격리하여 원본은 항상 정상 상태 유지.
+	const FString TmpPath = FilePath + TEXT(".tmp");
+	if (!FFileHelper::SaveStringToFile(OutputString, *TmpPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
 	{
-		UE_LOG(LogHelluna, Warning, TEXT("[SQLite] ExportLoadoutToFile: ✓ JSON 파일 저장 성공 | %d자 | %s"),
-			OutputString.Len(), *FilePath);
-		return true;
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ExportLoadoutToFile: ✗ tmp 파일 쓰기 실패 | %s"), *TmpPath);
+		return false;
 	}
 
-	UE_LOG(LogHelluna, Error, TEXT("[SQLite] ExportLoadoutToFile: ✗ 파일 쓰기 실패 | %s"), *FilePath);
-	return false;
+	IFileManager& FM = IFileManager::Get();
+	if (!FM.Move(*FilePath, *TmpPath, /*bReplace=*/true, /*bEvenIfReadOnly=*/true))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ExportLoadoutToFile: ✗ tmp→원본 rename 실패 | tmp=%s"), *TmpPath);
+		FM.Delete(*TmpPath);
+		return false;
+	}
+
+	UE_LOG(LogHelluna, Warning, TEXT("[SQLite] ExportLoadoutToFile: ✓ atomic write 성공 | %d자 | %s"),
+		OutputString.Len(), *FilePath);
+	return true;
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -485,7 +497,17 @@ TArray<FInv_SavedItemData> UHellunaSQLiteSubsystem::ImportLoadoutFromFile(const 
 	}
 
 	// 헤더 필드
-	OutHeroType = static_cast<int32>(RootObj->GetNumberField(TEXT("hero_type")));
+	// [N1] hero_type 누락 시 silent 0 (HeroType=None) 처리 차단.
+	// GetNumberField는 필드 부재 시 0 반환 → 출격 시 캐릭터 미선택 상태 위험.
+	// 누락은 손상된 파일로 처리: 파일 삭제 + 빈 Result 반환 → 호출자가 Loadout 미복원으로 안전 처리.
+	double HeroTypeDouble = 0.0;
+	if (!RootObj->TryGetNumberField(TEXT("hero_type"), HeroTypeDouble))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ImportLoadoutFromFile: 필수 필드 'hero_type' 누락 → 손상 파일 삭제, 크래시 복구로 전환"));
+		IFileManager::Get().Delete(*FilePath);
+		return Result;  // 빈 Result + OutHeroType=0 (호출자가 미복원으로 인식)
+	}
+	OutHeroType = static_cast<int32>(HeroTypeDouble);
 
 	// 아이템 배열 파싱
 	const TArray<TSharedPtr<FJsonValue>>* ItemsArray = nullptr;
@@ -506,20 +528,42 @@ TArray<FInv_SavedItemData> UHellunaSQLiteSubsystem::ImportLoadoutFromFile(const 
 
 		FInv_SavedItemData Item;
 
-		// item_type → FGameplayTag
+		// [C5-SQL-2] 필수 필드 검증 — item_type / stack_count 누락 시 손상 아이템으로 분류 후 스킵.
+		// 이전 GetXxxField는 필드 부재 시 silent 0/false 반환 → Stack=0 아이템 등록, 가짜 미장착 등 데이터 손실.
 		FString ItemTypeStr;
-		if (ItemObj->TryGetStringField(TEXT("item_type"), ItemTypeStr))
+		if (!ItemObj->TryGetStringField(TEXT("item_type"), ItemTypeStr) || ItemTypeStr.IsEmpty())
 		{
-			Item.ItemType = FGameplayTag::RequestGameplayTag(FName(*ItemTypeStr), false);
+			UE_LOG(LogHelluna, Warning, TEXT("[SQLite] Import: 손상 아이템 (item_type 누락) 스킵"));
+			continue;
+		}
+		Item.ItemType = FGameplayTag::RequestGameplayTag(FName(*ItemTypeStr), false);
+		if (!Item.ItemType.IsValid())
+		{
+			UE_LOG(LogHelluna, Warning, TEXT("[SQLite] Import: 알 수 없는 item_type='%s' 스킵"), *ItemTypeStr);
+			continue;
 		}
 
-		Item.StackCount = static_cast<int32>(ItemObj->GetNumberField(TEXT("stack_count")));
-		Item.GridPosition.X = static_cast<int32>(ItemObj->GetNumberField(TEXT("grid_x")));
-		Item.GridPosition.Y = static_cast<int32>(ItemObj->GetNumberField(TEXT("grid_y")));
-		Item.GridCategory = static_cast<uint8>(ItemObj->GetNumberField(TEXT("grid_category")));
-		Item.bEquipped = ItemObj->GetBoolField(TEXT("is_equipped"));
-		Item.WeaponSlotIndex = static_cast<int32>(ItemObj->GetNumberField(TEXT("weapon_slot")));
-		Item.bRotated = ItemObj->GetBoolField(TEXT("is_rotated"));
+		double StackCountDouble = 0.0;
+		if (!ItemObj->TryGetNumberField(TEXT("stack_count"), StackCountDouble) || StackCountDouble <= 0.0)
+		{
+			UE_LOG(LogHelluna, Warning, TEXT("[SQLite] Import: 손상 아이템 (stack_count 누락/0) 스킵 | item_type=%s"),
+				*ItemTypeStr);
+			continue;
+		}
+		Item.StackCount = static_cast<int32>(StackCountDouble);
+
+		// 선택 필드 — 누락 시 기본값 사용 OK
+		double GridX = 0.0, GridY = 0.0, GridCategory = 0.0, WeaponSlot = -1.0;
+		ItemObj->TryGetNumberField(TEXT("grid_x"), GridX);
+		ItemObj->TryGetNumberField(TEXT("grid_y"), GridY);
+		ItemObj->TryGetNumberField(TEXT("grid_category"), GridCategory);
+		ItemObj->TryGetNumberField(TEXT("weapon_slot"), WeaponSlot);
+		Item.GridPosition.X = static_cast<int32>(GridX);
+		Item.GridPosition.Y = static_cast<int32>(GridY);
+		Item.GridCategory = static_cast<uint8>(GridCategory);
+		Item.WeaponSlotIndex = static_cast<int32>(WeaponSlot);
+		ItemObj->TryGetBoolField(TEXT("is_equipped"), Item.bEquipped);
+		ItemObj->TryGetBoolField(TEXT("is_rotated"), Item.bRotated);
 
 		// manifest → Base64 디코딩
 		FString ManifestB64;
@@ -691,15 +735,25 @@ bool UHellunaSQLiteSubsystem::ExportGameResultToFile(const FString& PlayerId, co
 	FJsonSerializer::Serialize(RootObj, Writer);
 	Writer->Close();
 
-	if (FFileHelper::SaveStringToFile(OutputString, *FilePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+	// [C5-SQL-1] Atomic write: .tmp 파일에 쓴 후 rename으로 원본 교체. 부분 쓰기 race 차단.
+	const FString TmpPath = FilePath + TEXT(".tmp");
+	if (!FFileHelper::SaveStringToFile(OutputString, *TmpPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
 	{
-		UE_LOG(LogHelluna, Warning, TEXT("[SQLite] ExportGameResultToFile: ✓ JSON 파일 저장 성공 | %d자 | %s"),
-			OutputString.Len(), *FilePath);
-		return true;
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ExportGameResultToFile: ✗ tmp 파일 쓰기 실패 | %s"), *TmpPath);
+		return false;
 	}
 
-	UE_LOG(LogHelluna, Error, TEXT("[SQLite] ExportGameResultToFile: ✗ 파일 쓰기 실패 | %s"), *FilePath);
-	return false;
+	IFileManager& FM = IFileManager::Get();
+	if (!FM.Move(*FilePath, *TmpPath, /*bReplace=*/true, /*bEvenIfReadOnly=*/true))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ExportGameResultToFile: ✗ tmp→원본 rename 실패 | tmp=%s"), *TmpPath);
+		FM.Delete(*TmpPath);
+		return false;
+	}
+
+	UE_LOG(LogHelluna, Warning, TEXT("[SQLite] ExportGameResultToFile: ✓ atomic write 성공 | %d자 | %s"),
+		OutputString.Len(), *FilePath);
+	return true;
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -735,7 +789,15 @@ TArray<FInv_SavedItemData> UHellunaSQLiteSubsystem::ImportGameResultFromFile(con
 	}
 
 	// 헤더 필드
-	OutSurvived = RootObj->GetBoolField(TEXT("survived"));
+	// [C5-SQL-2] 필수 필드 누락 시 silent 0/false 처리 차단. survived 누락은 데이터 손상으로 간주.
+	bool bSurvivedField = false;
+	if (!RootObj->TryGetBoolField(TEXT("survived"), bSurvivedField))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ImportGameResultFromFile: 필수 필드 'survived' 누락 → 손상 파일 처리, 크래시 복구로 전환"));
+		IFileManager::Get().Delete(*FilePath);
+		return Result;  // bOutSuccess=false 유지 → 호출자가 Loadout 보존 (안전한 fallback)
+	}
+	OutSurvived = bSurvivedField;
 
 	// 장착 슬롯 파싱 (equipment 섹션)
 	if (OutEquipment)
@@ -781,20 +843,42 @@ TArray<FInv_SavedItemData> UHellunaSQLiteSubsystem::ImportGameResultFromFile(con
 
 		FInv_SavedItemData Item;
 
-		// item_type → FGameplayTag
+		// [C5-SQL-2] 필수 필드 검증 — item_type / stack_count 누락 시 손상 아이템으로 분류 후 스킵.
+		// 이전 GetXxxField는 필드 부재 시 silent 0/false 반환 → Stack=0 아이템 등록, 가짜 미장착 등 데이터 손실.
 		FString ItemTypeStr;
-		if (ItemObj->TryGetStringField(TEXT("item_type"), ItemTypeStr))
+		if (!ItemObj->TryGetStringField(TEXT("item_type"), ItemTypeStr) || ItemTypeStr.IsEmpty())
 		{
-			Item.ItemType = FGameplayTag::RequestGameplayTag(FName(*ItemTypeStr), false);
+			UE_LOG(LogHelluna, Warning, TEXT("[SQLite] Import: 손상 아이템 (item_type 누락) 스킵"));
+			continue;
+		}
+		Item.ItemType = FGameplayTag::RequestGameplayTag(FName(*ItemTypeStr), false);
+		if (!Item.ItemType.IsValid())
+		{
+			UE_LOG(LogHelluna, Warning, TEXT("[SQLite] Import: 알 수 없는 item_type='%s' 스킵"), *ItemTypeStr);
+			continue;
 		}
 
-		Item.StackCount = static_cast<int32>(ItemObj->GetNumberField(TEXT("stack_count")));
-		Item.GridPosition.X = static_cast<int32>(ItemObj->GetNumberField(TEXT("grid_x")));
-		Item.GridPosition.Y = static_cast<int32>(ItemObj->GetNumberField(TEXT("grid_y")));
-		Item.GridCategory = static_cast<uint8>(ItemObj->GetNumberField(TEXT("grid_category")));
-		Item.bEquipped = ItemObj->GetBoolField(TEXT("is_equipped"));
-		Item.WeaponSlotIndex = static_cast<int32>(ItemObj->GetNumberField(TEXT("weapon_slot")));
-		Item.bRotated = ItemObj->GetBoolField(TEXT("is_rotated"));
+		double StackCountDouble = 0.0;
+		if (!ItemObj->TryGetNumberField(TEXT("stack_count"), StackCountDouble) || StackCountDouble <= 0.0)
+		{
+			UE_LOG(LogHelluna, Warning, TEXT("[SQLite] Import: 손상 아이템 (stack_count 누락/0) 스킵 | item_type=%s"),
+				*ItemTypeStr);
+			continue;
+		}
+		Item.StackCount = static_cast<int32>(StackCountDouble);
+
+		// 선택 필드 — 누락 시 기본값 사용 OK
+		double GridX = 0.0, GridY = 0.0, GridCategory = 0.0, WeaponSlot = -1.0;
+		ItemObj->TryGetNumberField(TEXT("grid_x"), GridX);
+		ItemObj->TryGetNumberField(TEXT("grid_y"), GridY);
+		ItemObj->TryGetNumberField(TEXT("grid_category"), GridCategory);
+		ItemObj->TryGetNumberField(TEXT("weapon_slot"), WeaponSlot);
+		Item.GridPosition.X = static_cast<int32>(GridX);
+		Item.GridPosition.Y = static_cast<int32>(GridY);
+		Item.GridCategory = static_cast<uint8>(GridCategory);
+		Item.WeaponSlotIndex = static_cast<int32>(WeaponSlot);
+		ItemObj->TryGetBoolField(TEXT("is_equipped"), Item.bEquipped);
+		ItemObj->TryGetBoolField(TEXT("is_rotated"), Item.bRotated);
 
 		// manifest → Base64 디코딩
 		FString ManifestB64;
