@@ -110,6 +110,44 @@ void AHellunaHeroController::BeginPlay()
 	UE_LOG(LogHellunaVote, Log, TEXT("[HellunaHeroController] BeginPlay - %s"),
 		IsLocalController() ? TEXT("로컬") : TEXT("서버"));
 
+	// [§16+] BeginPlay 즉시 LoadingCamera로 ViewTarget 설정.
+	// ClientTravel(MainMap) 후 Client_EnterLoadingScene RPC 도착 전 빈 시간(1~3초)에
+	// 게임 영역(PlayerStart 주변, 빈 WP 셀)이 보이는 문제 해결.
+	// LoadingCamera + LoadingShip은 PersistentLevel에 격리 좌표(200000,200000,5000) +
+	// bIsSpatiallyLoaded=false 로 항상 로드되어 있음 — Apex/Halo 점프쉽 패턴.
+	if (IsLocalController())
+	{
+		if (UWorld* World = GetWorld())
+		{
+			TArray<AActor*> Found;
+			UGameplayStatics::GetAllActorsOfClassWithTag(World, ACameraActor::StaticClass(),
+				LoadingCameraTag, Found);
+			ACameraActor* InitialLoadingCam = nullptr;
+			for (AActor* A : Found)
+			{
+				if (ACameraActor* C = Cast<ACameraActor>(A))
+				{
+					InitialLoadingCam = C;
+					break;
+				}
+			}
+			if (InitialLoadingCam)
+			{
+				SetViewTargetWithBlend(InitialLoadingCam, 0.f);
+				LoadingCameraActor = InitialLoadingCam;
+				UE_LOG(LogHelluna, Warning,
+					TEXT("[LoadingDbg][BeginPlay] LoadingCamera 즉시 ViewTarget 설정 → %s (Client_EnterLoadingScene RPC 대기 동안 게임 화면 가림)"),
+					*GetNameSafe(InitialLoadingCam));
+			}
+			else
+			{
+				UE_LOG(LogHelluna, Warning,
+					TEXT("[LoadingDbg][BeginPlay] LoadingCamera Tag=%s 액터 없음 — RPC 도착까지 기본 ViewTarget"),
+					*LoadingCameraTag.ToString());
+			}
+		}
+	}
+
 	// 로컬 플레이어만 투표 위젯 생성
 	if (IsLocalController() && VoteWidgetClass)
 	{
@@ -2173,6 +2211,14 @@ void AHellunaHeroController::Client_EnterLoadingScene_Implementation(const TArra
 			UE_LOG(LogHelluna, Warning,
 				TEXT("[LoadingDbg][EnterScene] AddToViewport(100) | IsInViewport=%d"),
 				LoadingHUDWidgetInstance->IsInViewport() ? 1 : 0);
+
+			// [§17++ Phase 2] LoadingHUD가 viewport에 들어간 직후 AsyncLoadingScreen plugin StopMovie.
+			// (ClearPostLoadOverlay 내부가 plugin StopLoadingScreen + ExternalWidget 해제로 변경됨)
+			// 그 전에 제거하면 BeginPlay~EnterScene 사이의 빈 시간이 다시 노출됨.
+			if (UMDF_GameInstance* GIClear = Cast<UMDF_GameInstance>(GetGameInstance()))
+			{
+				GIClear->ClearPostLoadOverlay();
+			}
 		}
 	}
 	else

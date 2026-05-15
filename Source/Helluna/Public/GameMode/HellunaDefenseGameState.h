@@ -388,9 +388,19 @@ protected:
     // 호출에 같은 TransitionTime을 전달해 오로라/별/구름/강수가 한 호흡에 짙어진다.
     // 0으로 두면 기존 즉시 전환 유지.
 
-    /** 낮→밤 일몰 전환 시간(초). 0이면 즉시 전환. */
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤", meta = (DisplayName = "일몰 전환 시간(초)"))
+    /** 낮→밤 일몰 전환 시간(초). 0이면 즉시 전환. DuskRatio가 0보다 크면 무시되고 라운드 비율 계산이 우선. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤", meta = (DisplayName = "일몰 전환 시간(초) — 폴백"))
     float DuskTransitionDuration = 8.f;
+
+    /**
+     * 일몰 전환 비율 — 라운드 시간의 몇 %를 Dusk 로 사용할지.
+     * 0.5 = 라운드 후반 50%를 Dusk 로 사용 (예: 60초 라운드 → 30초 Dusk, 30초 시점부터 점진 어두워짐).
+     * 0.0 으로 두면 DuskTransitionDuration 고정값 사용 (레거시).
+     * 사용자 의도: 라운드 후반에 점점 긴장감 빌드업.
+     */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤",
+        meta = (DisplayName = "일몰 비율 (라운드 대비 0.0~1.0)", ClampMin = "0.0", ClampMax = "1.0"))
+    float DuskRatio = 0.5f;
 
     /** 일몰 Lerp 목표 UDS 시간 (2200 ≈ 오로라/별 피크 구간). */
     UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "디펜스|낮밤", meta = (DisplayName = "밤 정착 시간"))
@@ -591,11 +601,44 @@ protected:
     float DefaultMoonTextureIntensityNight = 0.5f;
     float DefaultMoonGlowIntensity = 0.03f;
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 🌙 SkyMoodSettings 액터 참조 (per-map DayMood/NightMood)
+    //
+    // 무드 값들은 AHellunaSkyMoodSettings 액터의 DayMood/NightMood 에서 읽는다.
+    // 액터는 BeginPlay 에서 캐싱되며 ApplyVisualPhaseAlpha 가 매 틱 참조.
+    // 디자이너는 액터 디테일 패널에서 per-map 으로 무드 조정.
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    UPROPERTY(Transient)
+    TWeakObjectPtr<class AHellunaSkyMoodSettings> CachedSkyMoodSettings;
+
+    /** BeginPlay 에서 호출 — 레벨에 배치된 SkyMoodSettings 찾아 캐싱 */
+    void CacheSkyMoodSettings();
+
+    // ─── SkyMood 시스템에서 사용되는 신규 캐싱 프로퍼티 ───
+    FProperty* CachedProp_MoonLightColor = nullptr;
+    FProperty* CachedProp_StarsIntensity = nullptr;
+    FProperty* CachedProp_SkyLightIntensity = nullptr;
+    FProperty* CachedProp_NightBrightness = nullptr;
+    FProperty* CachedProp_SunLightIntensity = nullptr;
+    FProperty* CachedProp_SunDiskIntensity = nullptr;
+    FProperty* CachedProp_MoonPhase = nullptr;
+    FProperty* CachedProp_RenderNebula = nullptr;
+
     // 🧪 치트용 시간 정지 플래그
     bool bCheatTimeFrozen = false;
 
     /** BeginPlay에서 UDS 프로퍼티를 캐싱하는 헬퍼 */
     void CacheUDSProperties();
+
+    /** UDS BP의 LinearColor 프로퍼티에 값 쓰기 */
+    static void WriteLinearColorPropertyValue(UObject* Obj, FProperty* Prop, const FLinearColor& Value);
+
+    /** Sky_Sphere MID 파라미터 매 틱 권위 push (Day/Night 무드 색 보간) */
+    void ApplySkySphereMIDOverrides(AActor* UDS, float NightVisualAlpha);
+
+    /** UDS의 Cloud Coverage 값 읽기 (구름 토글 조건 판단용) */
+    float GetUDSCloudCoverage();
 
     /** 클라이언트 시작 시 맵에 남아있는 초기 Night PCG 산출물을 정리 */
     void CleanupInitialNightPCGClientArtifacts();
@@ -609,6 +652,9 @@ protected:
 
     /** 클라이언트 초기 PCG 정리를 한 번만 수행하기 위한 가드 */
     bool bInitialNightPCGArtifactsCleaned = false;
+
+    /** [SkyMoodDiag] 진단 로그 1초 throttle */
+    double LastSkyMoodDiagTime = 0.0;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // [Phase 10] 채팅 히스토리 (서버 메모리 전용, 리플리케이션 안 함)

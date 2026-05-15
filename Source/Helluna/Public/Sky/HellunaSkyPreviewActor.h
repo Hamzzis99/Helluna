@@ -41,6 +41,9 @@ enum class ESkyWeatherPreset : uint8
  *  4. 뷰포트가 즉시 전환됨
  *
  * 런타임에는 아무 동작도 하지 않음 (bIsEditorOnlyActor = true)
+ *
+ * 무드 데이터(DayMood/NightMood)는 별도 액터 AHellunaSkyMoodSettings에 둠.
+ * 이 액터는 순수 에디터 미리보기 도구.
  */
 UCLASS(meta = (DisplayName = "Sky Preview (하늘 미리보기)"))
 class HELLUNA_API AHellunaSkyPreviewActor : public AActor

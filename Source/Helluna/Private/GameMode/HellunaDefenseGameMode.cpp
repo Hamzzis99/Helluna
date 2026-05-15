@@ -3099,10 +3099,17 @@ void AHellunaDefenseGameMode::Logout(AController* Exiting)
             const FString PlayerId = GetPlayerSaveId(PC);
             APawn* Pawn = PC->GetPawn();
 
-            if (!PlayerId.IsEmpty() && IsValid(Pawn))
+            // [Phase14-Modal] 가드 완화: PlayerId만 있으면 Grace Period 진입 (Pawn 유무 무관).
+            // 이전엔 (PlayerId && Pawn) 둘 다 요구 → Alt+F4 등으로 Pawn이 unpossess된 시점이면
+            // 즉시 ProcessPlayerGameResult(false) 호출 → GameResult 파일이 작성되어
+            // 로비 Step 0이 import → bGameResultProcessed=true → Rejoin 감지 자체가 봉쇄됐음.
+            // 새 흐름: PlayerId만 있으면 Grace 진입 → 로비 Step 0.5에서 Rejoin 모달 트리거 가능.
+            if (!PlayerId.IsEmpty())
             {
-                UE_LOG(LogHelluna, Warning, TEXT("[Phase14] Logout 중 게임 진행 중 — Grace Period 시작 (%0.f초) | Player=%s"),
-                    DisconnectGracePeriodSeconds, *PlayerId);
+                const bool bHasPawn = IsValid(Pawn);
+                UE_LOG(LogHelluna, Warning,
+                    TEXT("[Phase14] Logout 중 게임 진행 중 — Grace Period 시작 (%0.f초) | Player=%s | Pawn=%s"),
+                    DisconnectGracePeriodSeconds, *PlayerId, bHasPawn ? TEXT("O") : TEXT("X"));
 
                 FDisconnectedPlayerData Data;
                 Data.PlayerId = PlayerId;
@@ -3113,28 +3120,35 @@ void AHellunaDefenseGameMode::Logout(AController* Exiting)
                     Data.HeroType = HellunaPS2->GetSelectedHeroType();
                 }
 
-                // 인벤토리 저장
-                if (UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>())
+                // Pawn 있을 때만 상태 보존 (인벤/위치/회전/체력/Pawn 객체)
+                if (bHasPawn)
                 {
-                    Data.SavedInventory = InvComp->CollectInventoryDataForSave();
+                    if (UInv_InventoryComponent* InvComp = PC->FindComponentByClass<UInv_InventoryComponent>())
+                    {
+                        Data.SavedInventory = InvComp->CollectInventoryDataForSave();
+                    }
+
+                    Data.LastLocation = Pawn->GetActorLocation();
+                    Data.LastRotation = Pawn->GetActorRotation();
+
+                    if (UHellunaHealthComponent* HealthComp = Pawn->FindComponentByClass<UHellunaHealthComponent>())
+                    {
+                        Data.Health = HealthComp->GetHealth();
+                        Data.MaxHealth = HealthComp->GetMaxHealth();
+                    }
+
+                    PC->UnPossess();
+                    Pawn->SetActorHiddenInGame(true);
+                    Pawn->SetActorEnableCollision(false);
+                    Data.PreservedPawn = Pawn;
                 }
-
-                // 위치/회전 저장
-                Data.LastLocation = Pawn->GetActorLocation();
-                Data.LastRotation = Pawn->GetActorRotation();
-
-                // 체력 저장
-                if (UHellunaHealthComponent* HealthComp = Pawn->FindComponentByClass<UHellunaHealthComponent>())
+                else
                 {
-                    Data.Health = HealthComp->GetHealth();
-                    Data.MaxHealth = HealthComp->GetMaxHealth();
+                    UE_LOG(LogHelluna, Warning,
+                        TEXT("[Phase14] Logout: Pawn 없음 — 빈 상태로 Grace Period (위치/체력/인벤 미보존, Rejoin 시 PlayerStart 폴백 필요) | PlayerId=%s"),
+                        *PlayerId);
+                    // Data.LastLocation/Rotation은 ZeroVector/ZeroRotator 기본값 유지 → Restore 시 PlayerStart 폴백 권장
                 }
-
-                // Pawn Unpossess + 숨김 (월드에 유지)
-                PC->UnPossess();
-                Pawn->SetActorHiddenInGame(true);
-                Pawn->SetActorEnableCollision(false);
-                Data.PreservedPawn = Pawn;
 
                 // Grace 타이머 시작
                 FTimerDelegate TimerDelegate;
@@ -3143,17 +3157,18 @@ void AHellunaDefenseGameMode::Logout(AController* Exiting)
 
                 DisconnectedPlayers.Add(PlayerId, MoveTemp(Data));
 
-                // 채팅으로 알림
+                // 채팅으로 알림 (Pawn 유무 표시)
                 if (AHellunaDefenseGameState* GS2 = GetGameState<AHellunaDefenseGameState>())
                 {
-                    GS2->BroadcastChatMessage(TEXT(""), FString::Printf(TEXT("%s 님이 연결이 끊겼습니다 (%.0f초 대기)"),
-                        *Data.PlayerId, DisconnectGracePeriodSeconds), EChatMessageType::System);
+                    GS2->BroadcastChatMessage(TEXT(""), FString::Printf(TEXT("%s 님이 연결이 끊겼습니다 (%.0f초 대기%s)"),
+                        *PlayerId, DisconnectGracePeriodSeconds, bHasPawn ? TEXT("") : TEXT(", 상태 미보존")),
+                        EChatMessageType::System);
                 }
             }
             else
             {
-                // PlayerId 없거나 Pawn 없으면 기존 사망 처리
-                UE_LOG(LogHelluna, Warning, TEXT("[Phase14] Logout: PlayerId/Pawn 없음 → 즉시 사망 처리 | Player=%s"),
+                // PlayerId조차 못 얻으면 진짜 폴백 — 즉시 사망 처리
+                UE_LOG(LogHelluna, Warning, TEXT("[Phase14] Logout: PlayerId 없음 → 즉시 사망 처리 | Player=%s"),
                     *GetNameSafe(PC));
                 ProcessPlayerGameResult(PC, false);
             }
@@ -3311,13 +3326,27 @@ void AHellunaDefenseGameMode::RestoreReconnectedPlayer(APlayerController* PC, co
             APawn* Pawn = PC->GetPawn();
             if (!IsValid(Pawn)) return;
 
-            // 위치 복원
-            Pawn->SetActorLocationAndRotation(SpawnLoc, SpawnRot);
+            // [Phase14-Modal] 위치 복원 — SpawnLoc이 ZeroVector면(Pawn 없이 grace 진입한 경우)
+            // SpawnHeroCharacter가 잡은 PlayerStart 위치를 그대로 유지(덮어쓰지 않음).
+            const bool bHasValidLocation = !SpawnLoc.IsNearlyZero();
+            if (bHasValidLocation)
+            {
+                Pawn->SetActorLocationAndRotation(SpawnLoc, SpawnRot);
+            }
+            else
+            {
+                UE_LOG(LogHelluna, Log,
+                    TEXT("[Phase14] RestoreReconnectedPlayer: 저장된 위치 없음 → SpawnHeroCharacter PlayerStart 위치 유지 | PlayerId=%s"),
+                    *PlayerId);
+            }
 
-            // 체력 복원
+            // 체력 복원 — SavedMaxHealth가 0이면(빈 상태로 grace 진입한 경우) MaxHealth 그대로 두고 SetHealth 스킵.
             if (UHellunaHealthComponent* HC = Pawn->FindComponentByClass<UHellunaHealthComponent>())
             {
-                HC->SetHealth(SavedHealth);
+                if (SavedMaxHealth > 0.f)
+                {
+                    HC->SetHealth(SavedHealth);
+                }
             }
 
             // 인벤토리 복원 (PreCachedInventoryMap 활용)
@@ -3697,11 +3726,25 @@ void AHellunaDefenseGameMode::RegisterControllerInBarrier(APlayerController* New
     else if (BarrierState == ELoadingBarrierState::Released ||
              BarrierState == ELoadingBarrierState::Spawned)
     {
-        // 배리어 이미 해제 후 늦게 도착 — 즉시 스폰 (Rejoin 경로와 유사)
-        UE_LOG(LogHelluna, Warning,
-            TEXT("[LoadingDbg][Server][Register] LATE-JOINER (state=%d) | PlayerId=%s → SpawnHero immediate"),
-            static_cast<int32>(BarrierState), *PlayerId);
-        SpawnHeroCharacter(NewPC);
+        // 배리어 이미 해제 후 늦게 도착 — Phase에 따라 분기
+        // [C5-DGM-1] Night Phase에 즉시 SpawnHero 시 적 폭주 한복판에서 즉사 가능 → Spectator 진입 후 다음 Day에 부활
+        AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>();
+        const bool bNightActive = (GS && GS->GetPhase() == EDefensePhase::Night);
+
+        if (bNightActive)
+        {
+            UE_LOG(LogHelluna, Warning,
+                TEXT("[LoadingDbg][Server][Register] LATE-JOINER (state=%d, Phase=Night) | PlayerId=%s → EnterSpectatorMode (Day에 부활 대기)"),
+                static_cast<int32>(BarrierState), *PlayerId);
+            EnterSpectatorMode(NewPC);
+        }
+        else
+        {
+            UE_LOG(LogHelluna, Warning,
+                TEXT("[LoadingDbg][Server][Register] LATE-JOINER (state=%d, Phase=Day) | PlayerId=%s → SpawnHero immediate"),
+                static_cast<int32>(BarrierState), *PlayerId);
+            SpawnHeroCharacter(NewPC);
+        }
         return;
     }
 

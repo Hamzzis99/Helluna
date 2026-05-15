@@ -76,7 +76,9 @@ void UBTTask_RotateToFaceTarget::TickTask(UBehaviorTreeComponent& OwnerComp, uin
 
 	if (!Memory->IsValid())
 	{
+		// [C5-AI-1] return 누락 수정: Failed 알림 후 즉시 종료. 이후 분기에서 Memory->OwningPawn/TargetActor nullptr 역참조 방지.
 		FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
+		return;
 	}
 
 	if (HasReachedAnglePrecision(Memory->OwningPawn.Get(), Memory->TargetActor.Get()))
