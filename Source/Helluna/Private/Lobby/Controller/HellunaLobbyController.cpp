@@ -2348,13 +2348,15 @@ void AHellunaLobbyController::OnSnapshotReadyTravel()
 
 	if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance()))
 	{
-		// [§17++ Phase 2] SetupSnapshotLoadingScreen 내부에서 AsyncLoadingScreen plugin에
-		// 우리 SLoadingSnapshotWidget을 ExternalLoadingWidget으로 등록 + SetEnableLoadingScreen(true).
-		// plugin이 PreLoadMap에서 자동으로 SetupLoadingScreen 호출하면서 우리 widget을 화면에 띄움.
-		// bWaitForManualStop=true + bAllowEngineTick=true로 BeginPlay까지 화면 유지.
 		if (GI->LoadingSnapshotTexture)
 		{
+			// [§17 3-Layer] Layer 1 — plugin 등록 (LoadMap 동안 별도 thread 가림)
 			GI->SetupSnapshotLoadingScreen();
+
+			// [§17 3-Layer] Layer 2 — ClientTravel 직전에 GameViewport overlay 미리 추가.
+			// connection 단계의 streaming pause/직전 frame freeze 시점에도 SOverlay에 우리 widget이
+			// 살아있어 화면 가림. Layer 3 (StreamingPause delegate)도 GameInstance::Init에서 등록됨.
+			GI->EnsureGameViewportOverlay();
 		}
 	}
 

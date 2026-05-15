@@ -238,11 +238,28 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Loading Barrier")
 	void ClearPostLoadOverlay();
 
+	/**
+	 * [§17 3-Layer] ClientTravel 직전에 GameViewport overlay를 미리 추가.
+	 * Lobby 직전 frame이 우주선 캡처와 함께 freeze되도록 하여 ClientTravel ~ LoadMap 사이의
+	 * streaming pause 구간(engine 자동 throbber 발동 시점)에도 화면이 가려지도록 한다.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Loading Barrier")
+	void EnsureGameViewportOverlay();
+
 private:
 	void OnScreenshotCaptured(int32 W, int32 H, const TArray<FColor>& Bitmap);
 	void OnSnapshotCaptureTimeout();
 	void OnPreLoadMap(const FString& MapName);
 	void OnPostLoadMapWithWorld(UWorld* LoadedWorld);
+
+	/**
+	 * [§17 3-Layer] Engine StreamingPause delegate hook.
+	 * UWorld::BlockTillLevelStreamingCompleted에서 발동 — World Partition cell 로드 대기 시점.
+	 * default StreamingPauseRendering 모듈의 delegate를 우리 것으로 교체 → engine throbber 대신
+	 * 우리 SLoadingSnapshotWidget(우주선 캡처)이 화면을 가린다.
+	 */
+	void OnEngineStreamingPauseBegin(class FViewport* Viewport);
+	void OnEngineStreamingPauseEnd();
 
 	FDelegateHandle CachedScreenshotHandle;
 	FSimpleDelegate PendingCaptureCallback;
@@ -251,4 +268,8 @@ private:
 
 	// [§17++] PostLoad 풀스크린 오버레이 (BeginPlay 직전 빈 시간 가림)
 	TSharedPtr<class SLoadingSnapshotWidget> PostLoadOverlayWidget;
+
+	// [§17 3-Layer] StreamingPause delegate (engine 직접 등록 — DECLARE_DELEGATE 매크로 type이라 forward 불가, cpp에서 lifecycle 관리)
+	void* StreamingPauseBeginDelegateRaw = nullptr;
+	void* StreamingPauseEndDelegateRaw = nullptr;
 };

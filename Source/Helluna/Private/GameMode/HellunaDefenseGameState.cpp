@@ -329,6 +329,16 @@ void AHellunaDefenseGameState::NetMulticast_ApplyInitialNightVisualState_Impleme
 
 void AHellunaDefenseGameState::OnRep_VisualPhaseState()
 {
+#if HELLUNA_DEBUG_DEFENSE
+    UE_LOG(LogTemp, Warning,
+        TEXT("[SkyMoodDiag-OnRep] Auth=%d Phase=%s Duration=%.2f Round=%.2f StartTOD=%.0f TargetTOD=%.0f"),
+        (int32)HasAuthority(),
+        LexToString(VisualPhaseState.Phase),
+        VisualPhaseState.Duration,
+        VisualPhaseState.RoundDuration,
+        VisualPhaseState.StartTimeOfDay,
+        VisualPhaseState.TargetTimeOfDay);
+#endif
     StartVisualPhaseLocal();
 }
 
@@ -460,7 +470,43 @@ void AHellunaDefenseGameState::ApplyVisualPhaseWeatherBlend(EDayNightVisualPhase
 void AHellunaDefenseGameState::ApplyVisualPhaseAlpha(EDayNightVisualPhase InVisualPhase, float Alpha)
 {
     AActor* UDS = GetUDSActor();
-    if (!UDS) return;
+
+#if HELLUNA_DEBUG_DEFENSE
+    {
+        // 0.5초 throttle (server/client 별도 카운터)
+        static double LastEnterLog_S = 0.0;
+        static double LastEnterLog_C = 0.0;
+        double& Last = HasAuthority() ? LastEnterLog_S : LastEnterLog_C;
+        const double NowSec = FPlatformTime::Seconds();
+        if (NowSec - Last >= 0.5)
+        {
+            Last = NowSec;
+            UE_LOG(LogTemp, Warning,
+                TEXT("[SkyMoodDiag-Enter] Auth=%d Phase=%s Alpha=%.2f | UDS=%s CachedUDSValid=%d | Mood=%s CachedMoodValid=%d"),
+                (int32)HasAuthority(),
+                LexToString(InVisualPhase),
+                Alpha,
+                UDS ? TEXT("ok") : TEXT("NULL"),
+                (int32)CachedUDS.IsValid(),
+                CachedSkyMoodSettings.IsValid() ? TEXT("ok") : TEXT("NULL"),
+                (int32)CachedSkyMoodSettings.IsValid());
+        }
+    }
+#endif
+
+    if (!UDS)
+    {
+#if HELLUNA_DEBUG_DEFENSE
+        static double LastNullUDSLog = 0.0;
+        const double NowSec = FPlatformTime::Seconds();
+        if (NowSec - LastNullUDSLog >= 1.0)
+        {
+            LastNullUDSLog = NowSec;
+            UE_LOG(LogTemp, Warning, TEXT("[SkyMoodDiag-EarlyReturn-A] Auth=%d UDS=NULL"), (int32)HasAuthority());
+        }
+#endif
+        return;
+    }
 
     if (!CachedProp_TimeOfDay)
     {
@@ -471,6 +517,23 @@ void AHellunaDefenseGameState::ApplyVisualPhaseAlpha(EDayNightVisualPhase InVisu
     AHellunaSkyMoodSettings* MoodSettings = CachedSkyMoodSettings.Get();
     if (!MoodSettings)
     {
+        // [Cosmic v5] weak ptr invalidate 시 재검색 (placed + bReplicates 조합의 race condition 대응)
+        // BeginPlay 시점에 캐싱한 자체 spawn actor가 server replicated actor로 교체되며
+        // weak ptr이 끊기는 회귀가 발견됨. 매 호출마다 fallback으로 재검색.
+        CacheSkyMoodSettings();
+        MoodSettings = CachedSkyMoodSettings.Get();
+    }
+    if (!MoodSettings)
+    {
+#if HELLUNA_DEBUG_DEFENSE
+        static double LastFallbackLog = 0.0;
+        const double NowSec = FPlatformTime::Seconds();
+        if (NowSec - LastFallbackLog >= 1.0)
+        {
+            LastFallbackLog = NowSec;
+            UE_LOG(LogTemp, Warning, TEXT("[SkyMoodDiag-EarlyReturn-B] Auth=%d Mood=NULL → 폴백 분기"), (int32)HasAuthority());
+        }
+#endif
         // 폴백: MoodSettings 없으면 무드 보간 스킵 (UDS 값 그대로 유지)
         SetUDSAnimate(false);
         SetUDSTimeOfDay(NightSettleTime);
@@ -554,6 +617,115 @@ void AHellunaDefenseGameState::ApplyVisualPhaseAlpha(EDayNightVisualPhase InVisu
 
     // ── 8. Sky_Sphere MID 파라미터 (매 틱 권위 push) ───────────────────────
     ApplySkySphereMIDOverrides(UDS, NightVisualAlpha);
+
+    // ─── [SkyMoodDiag] 4가지 가설 검증 (1초마다 throttle) ─────────────────
+    //   가설 D: push 직후 read → reset 즉시 발생 여부
+    //   가설 B: 1프레임 후 read → UDS Tick의 reset 여부
+    //   가설 A/C: UDW의 ManualWeatherState/OldWeatherState/TransitionTimer 존재 + 값
+#if HELLUNA_DEBUG_DEFENSE
+    {
+        const double Now = FPlatformTime::Seconds();
+        if (Now - LastSkyMoodDiagTime >= 0.3)
+        {
+            LastSkyMoodDiagTime = Now;
+
+            // [Push 직후 read]
+            float CurAurora = -1.f, CurMoonInt = -1.f, CurStars = -1.f, CurNightBri = -1.f;
+            ReadFloatPropertyValue(UDS, CachedProp_AuroraIntensity, CurAurora);
+            ReadFloatPropertyValue(UDS, CachedProp_MoonLightIntensity, CurMoonInt);
+            ReadFloatPropertyValue(UDS, CachedProp_StarsIntensity, CurStars);
+            ReadFloatPropertyValue(UDS, CachedProp_NightBrightness, CurNightBri);
+
+            FLinearColor CurMoonColor(0, 0, 0, 1);
+            if (CachedProp_MoonLightColor)
+            {
+                if (FStructProperty* SP = CastField<FStructProperty>(CachedProp_MoonLightColor))
+                {
+                    if (SP->Struct == TBaseStructure<FLinearColor>::Get())
+                    {
+                        FLinearColor* Ptr = SP->ContainerPtrToValuePtr<FLinearColor>(UDS);
+                        if (Ptr) CurMoonColor = *Ptr;
+                    }
+                }
+            }
+
+            // [UDW state read] — 가설 A/C
+            FString UDWInfo = TEXT("UDW=null");
+            if (AActor* UDW_Actor = GetUDWActor())
+            {
+                FProperty* MWS = FindFProperty<FProperty>(UDW_Actor->GetClass(), TEXT("Manual Weather State"));
+                FProperty* OWS = FindFProperty<FProperty>(UDW_Actor->GetClass(), TEXT("Old Weather State Struct"));
+                FProperty* TT  = FindFProperty<FProperty>(UDW_Actor->GetClass(), TEXT("Transition Timer"));
+                float TTVal = -1.f;
+                if (TT)
+                {
+                    if (FFloatProperty* FP = CastField<FFloatProperty>(TT))
+                        TTVal = FP->GetPropertyValue_InContainer(UDW_Actor);
+                    else if (FDoubleProperty* DP = CastField<FDoubleProperty>(TT))
+                        TTVal = static_cast<float>(DP->GetPropertyValue_InContainer(UDW_Actor));
+                }
+                UDWInfo = FString::Printf(TEXT("UDW: ManualWS=%s OldWS=%s TransTimer=%.2f"),
+                    MWS ? TEXT("present") : TEXT("missing"),
+                    OWS ? TEXT("present") : TEXT("missing"),
+                    TTVal);
+            }
+
+            UE_LOG(LogTemp, Warning,
+                TEXT("[SkyMoodDiag-Push] Auth=%d Phase=%s NightAlpha=%.2f | Aurora=%.2f MoonInt=%.2f Stars=%.2f NightBri=%.2f MoonColor=(%.2f,%.2f,%.2f) | %s"),
+                (int32)HasAuthority(),
+                LexToString(InVisualPhase),
+                NightVisualAlpha,
+                CurAurora, CurMoonInt, CurStars, CurNightBri,
+                CurMoonColor.R, CurMoonColor.G, CurMoonColor.B,
+                *UDWInfo);
+
+            // [NextTick read] — 1프레임 후 같은 properties 다시 read해서 reset 검증
+            if (UWorld* W = GetWorld())
+            {
+                const float ExpA = CurAurora, ExpM = CurMoonInt, ExpS = CurStars, ExpN = CurNightBri;
+                const FLinearColor ExpC = CurMoonColor;
+                const int32 AuthVal = (int32)HasAuthority();
+                W->GetTimerManager().SetTimerForNextTick(
+                    FTimerDelegate::CreateWeakLambda(this,
+                        [this, ExpA, ExpM, ExpS, ExpN, ExpC, AuthVal]()
+                        {
+                            AActor* UDS2 = GetUDSActor();
+                            if (!UDS2) return;
+                            float A = -1.f, M = -1.f, S = -1.f, N = -1.f;
+                            ReadFloatPropertyValue(UDS2, CachedProp_AuroraIntensity, A);
+                            ReadFloatPropertyValue(UDS2, CachedProp_MoonLightIntensity, M);
+                            ReadFloatPropertyValue(UDS2, CachedProp_StarsIntensity, S);
+                            ReadFloatPropertyValue(UDS2, CachedProp_NightBrightness, N);
+                            FLinearColor C(0, 0, 0, 1);
+                            if (CachedProp_MoonLightColor)
+                            {
+                                if (FStructProperty* SP = CastField<FStructProperty>(CachedProp_MoonLightColor))
+                                {
+                                    if (SP->Struct == TBaseStructure<FLinearColor>::Get())
+                                    {
+                                        FLinearColor* Ptr = SP->ContainerPtrToValuePtr<FLinearColor>(UDS2);
+                                        if (Ptr) C = *Ptr;
+                                    }
+                                }
+                            }
+                            const bool bAR = !FMath::IsNearlyEqual(A, ExpA, 0.001f);
+                            const bool bMR = !FMath::IsNearlyEqual(M, ExpM, 0.001f);
+                            const bool bSR = !FMath::IsNearlyEqual(S, ExpS, 0.001f);
+                            const bool bNR = !FMath::IsNearlyEqual(N, ExpN, 0.001f);
+                            const bool bCR = !C.Equals(ExpC, 0.001f);
+                            UE_LOG(LogTemp, Warning,
+                                TEXT("[SkyMoodDiag-NextTick] Auth=%d | Aurora=%.2f(reset=%d) MoonInt=%.2f(reset=%d) Stars=%.2f(reset=%d) NightBri=%.2f(reset=%d) MoonColor=(%.2f,%.2f,%.2f)(reset=%d)"),
+                                AuthVal,
+                                A, (int32)bAR,
+                                M, (int32)bMR,
+                                S, (int32)bSR,
+                                N, (int32)bNR,
+                                C.R, C.G, C.B, (int32)bCR);
+                        }));
+            }
+        }
+    }
+#endif
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -645,9 +817,20 @@ float AHellunaDefenseGameState::GetUDSCloudCoverage()
 
 void AHellunaDefenseGameState::StartVisualPhaseLocal()
 {
+#if HELLUNA_DEBUG_DEFENSE
+    UE_LOG(LogTemp, Warning,
+        TEXT("[SkyMoodDiag-StartLocal] Auth=%d Phase=%s Duration=%.2f bHasUDS=%d"),
+        (int32)HasAuthority(),
+        LexToString(VisualPhaseState.Phase),
+        VisualPhaseState.Duration,
+        (int32)bHasUDS);
+#endif
     UWorld* World = GetWorld();
     if (!World)
     {
+#if HELLUNA_DEBUG_DEFENSE
+        UE_LOG(LogTemp, Warning, TEXT("[SkyMoodDiag-StartLocal] EARLY RETURN: World=null"));
+#endif
         return;
     }
 
@@ -678,10 +861,20 @@ void AHellunaDefenseGameState::StartVisualPhaseLocal()
 
     if (VisualPhaseState.Duration <= KINDA_SMALL_NUMBER || Alpha >= 1.f)
     {
+#if HELLUNA_DEBUG_DEFENSE
+        UE_LOG(LogTemp, Warning,
+            TEXT("[SkyMoodDiag-StartLocal] EARLY FINISH: Duration=%.2f Alpha=%.2f → FinishVisualPhaseTransition"),
+            VisualPhaseState.Duration, Alpha);
+#endif
         FinishVisualPhaseTransition();
         return;
     }
 
+#if HELLUNA_DEBUG_DEFENSE
+    UE_LOG(LogTemp, Warning,
+        TEXT("[SkyMoodDiag-StartLocal] TIMER START: TickInterval=%.4f Duration=%.2f"),
+        VisualPhaseTickInterval, VisualPhaseState.Duration);
+#endif
     World->GetTimerManager().SetTimer(
         TimerHandle_VisualPhaseTransition,
         this,
@@ -692,6 +885,19 @@ void AHellunaDefenseGameState::StartVisualPhaseLocal()
 
 void AHellunaDefenseGameState::TickVisualPhaseTransition()
 {
+#if HELLUNA_DEBUG_DEFENSE
+    static int32 SkyTickCounter_Server = 0;
+    static int32 SkyTickCounter_Client = 0;
+    int32& Counter = HasAuthority() ? SkyTickCounter_Server : SkyTickCounter_Client;
+    if ((Counter++ % 30) == 0)  // 0.016 * 30 ≈ 0.5s 마다
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("[SkyMoodDiag-Tick] Auth=%d Counter=%d Phase=%s Alpha=%.3f"),
+            (int32)HasAuthority(), Counter,
+            LexToString(VisualPhaseState.Phase),
+            GetVisualPhaseAlpha());
+    }
+#endif
     const float Alpha = GetVisualPhaseAlpha();
     ApplyVisualPhaseAlpha(VisualPhaseState.Phase, Alpha);
 

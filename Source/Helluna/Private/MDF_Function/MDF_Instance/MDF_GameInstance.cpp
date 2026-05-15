@@ -61,6 +61,7 @@
 #include "RenderingThread.h"
 #include "TextureResource.h"
 #include "RHI.h"
+#include "Engine/Engine.h"  // [§17 3-Layer] StreamingPause delegate
 
 // [§17++ Phase 2] AsyncLoadingScreen plugin 통합 (TargetType=Server는 dependency 제외됨, 가드)
 #if !UE_SERVER
@@ -196,6 +197,31 @@ void UMDF_GameInstance::Init()
 	{
 		FCoreUObjectDelegates::PreLoadMap.AddUObject(this, &UMDF_GameInstance::OnPreLoadMap);
 		FCoreUObjectDelegates::PostLoadMapWithWorld.AddUObject(this, &UMDF_GameInstance::OnPostLoadMapWithWorld);
+
+#if !UE_SERVER
+		// [§17 plugin fix] AsyncLoadingScreen은 default로 모든 LoadMap에 trigger되어 빈 검은 화면을 띄움.
+		// 우주선 핸드오프(SetupSnapshotLoadingScreen) 시점에만 활성화하도록 기본 비활성화.
+		UAsyncLoadingScreenLibrary::SetEnableLoadingScreen(false);
+		UE_LOG(LogTemp, Warning, TEXT("[LoadingDbg][GI] Init — AsyncLoadingScreen plugin 기본 비활성화 (우주선 핸드오프 시에만 활성화)"));
+
+		// [§17 3-Layer] Engine StreamingPause delegate를 우리 것으로 교체.
+		// default StreamingPauseRendering 모듈은 이미 등록됐지만 RegisterBegin/EndStreamingPauseRenderingDelegate는
+		// 단순 assignment라 우리 delegate가 덮어쓴다 → engine throbber 대신 우리 SLoadingSnapshotWidget 표시.
+		if (GEngine)
+		{
+			FBeginStreamingPauseDelegate* BeginDel = new FBeginStreamingPauseDelegate;
+			BeginDel->BindUObject(this, &UMDF_GameInstance::OnEngineStreamingPauseBegin);
+			GEngine->RegisterBeginStreamingPauseRenderingDelegate(BeginDel);
+			StreamingPauseBeginDelegateRaw = BeginDel;
+
+			FEndStreamingPauseDelegate* EndDel = new FEndStreamingPauseDelegate;
+			EndDel->BindUObject(this, &UMDF_GameInstance::OnEngineStreamingPauseEnd);
+			GEngine->RegisterEndStreamingPauseRenderingDelegate(EndDel);
+			StreamingPauseEndDelegateRaw = EndDel;
+
+			UE_LOG(LogTemp, Warning, TEXT("[LoadingDbg][GI] Init — StreamingPause delegate 교체 완료 (engine throbber 비활성화)"));
+		}
+#endif
 	}
 }
 
@@ -205,6 +231,25 @@ void UMDF_GameInstance::Shutdown()
 	{
 		FCoreUObjectDelegates::PreLoadMap.RemoveAll(this);
 		FCoreUObjectDelegates::PostLoadMapWithWorld.RemoveAll(this);
+
+#if !UE_SERVER
+		// [§17 3-Layer] StreamingPause delegate 해제 (UEngine은 단순 pointer 보관이라 nullptr로 reset)
+		if (GEngine)
+		{
+			GEngine->RegisterBeginStreamingPauseRenderingDelegate(nullptr);
+			GEngine->RegisterEndStreamingPauseRenderingDelegate(nullptr);
+		}
+		if (StreamingPauseBeginDelegateRaw)
+		{
+			delete static_cast<FBeginStreamingPauseDelegate*>(StreamingPauseBeginDelegateRaw);
+			StreamingPauseBeginDelegateRaw = nullptr;
+		}
+		if (StreamingPauseEndDelegateRaw)
+		{
+			delete static_cast<FEndStreamingPauseDelegate*>(StreamingPauseEndDelegateRaw);
+			StreamingPauseEndDelegateRaw = nullptr;
+		}
+#endif
 
 		if (UGameViewportClient* VC = GetGameViewportClient())
 		{
@@ -381,22 +426,16 @@ void UMDF_GameInstance::ClearLoadingHandoffState()
 	bHasSavedShipPose = false;
 }
 
-void UMDF_GameInstance::OnPreLoadMap(const FString& MapName)
+void UMDF_GameInstance::EnsureGameViewportOverlay()
 {
-	// [§17++ Phase 2 안전 모드] plugin은 LoadMap 동안만 우주선 표시 후 PostLoadMap에서 자동 종료.
-	// 그 후 ~ HeroController BeginPlay 사이의 2.6초 갭(서버 PostLogin + Loading Barrier 대기 + Pawn 복제)은
-	// GameViewport overlay가 가린다. PreLoadMap 시점에 미리 깔아 LoadMap 중 frame freeze 영역도 같이 처리.
+	// [§17 3-Layer] 우리 SLoadingSnapshotWidget을 GameViewport overlay에 보장.
+	//   - 없으면 신규 추가
+	//   - 있으면 force Re-Add (SOverlay layout/paint 재계산, plugin/streaming pause 종료 시 invalidate 회피)
 	if (IsRunningDedicatedServer())
 	{
 		return;
 	}
-
 	if (!LoadingSnapshotTexture)
-	{
-		return;
-	}
-
-	if (PostLoadOverlayWidget.IsValid())
 	{
 		return;
 	}
@@ -407,41 +446,47 @@ void UMDF_GameInstance::OnPreLoadMap(const FString& MapName)
 		return;
 	}
 
-	PostLoadOverlayWidget = SNew(SLoadingSnapshotWidget).SnapshotTexture(LoadingSnapshotTexture);
-	VC->AddViewportWidgetContent(PostLoadOverlayWidget.ToSharedRef(), 9999);
-	UE_LOG(LogTemp, Warning, TEXT("[LoadingDbg][GI] OnPreLoadMap — GameViewport 풀스크린 overlay 선행 추가 (Map=%s)"), *MapName);
+	if (!PostLoadOverlayWidget.IsValid())
+	{
+		PostLoadOverlayWidget = SNew(SLoadingSnapshotWidget).SnapshotTexture(LoadingSnapshotTexture);
+		VC->AddViewportWidgetContent(PostLoadOverlayWidget.ToSharedRef(), 9999);
+		UE_LOG(LogTemp, Warning, TEXT("[LoadingDbg][GI] EnsureGameViewportOverlay — overlay 신규 추가"));
+	}
+	else
+	{
+		VC->RemoveViewportWidgetContent(PostLoadOverlayWidget.ToSharedRef());
+		VC->AddViewportWidgetContent(PostLoadOverlayWidget.ToSharedRef(), 9999);
+		UE_LOG(LogTemp, Warning, TEXT("[LoadingDbg][GI] EnsureGameViewportOverlay — overlay 강제 Re-Add"));
+	}
+}
+
+void UMDF_GameInstance::OnPreLoadMap(const FString& MapName)
+{
+	// [§17 3-Layer] LoadMap 시작 시점 — Lobby unload되기 전에 overlay 보장.
+	UE_LOG(LogTemp, Warning, TEXT("[LoadingDbg][GI] OnPreLoadMap — Map=%s"), *MapName);
+	EnsureGameViewportOverlay();
 }
 
 void UMDF_GameInstance::OnPostLoadMapWithWorld(UWorld* LoadedWorld)
 {
-	// [§17++ Phase 2 안전 모드] plugin은 PostLoadMap에서 자동 종료. 이 시점부터 BeginPlay까지의 2.6초 갭을
-	// GameViewport overlay가 가려야 한다. PreLoadMap에서 추가했으면 reuse, 아니면 신규 추가.
-	if (IsRunningDedicatedServer())
-	{
-		return;
-	}
+	// [§17 3-Layer] World 생성 직후 — plugin 자동 종료되는 시점, overlay force redraw로 invalidate 회피.
+	UE_LOG(LogTemp, Warning, TEXT("[LoadingDbg][GI] OnPostLoadMapWithWorld"));
+	EnsureGameViewportOverlay();
+}
 
-	if (!LoadingSnapshotTexture)
-	{
-		UE_LOG(LogTemp, Verbose, TEXT("[LoadingDbg][GI] OnPostLoadMapWithWorld — Snapshot null, overlay 스킵"));
-		return;
-	}
+void UMDF_GameInstance::OnEngineStreamingPauseBegin(FViewport* Viewport)
+{
+	// [§17 3-Layer] World Partition cell 로드 대기(BlockTillLevelStreamingCompleted) 시 발동.
+	// engine throbber 대신 우리 SLoadingSnapshotWidget이 화면 가림.
+	// 이 시점 이후 GameThread block이라 Slate frame 안 그려짐 → overlay는 직전 frame에 이미 그려져 있어야 함.
+	UE_LOG(LogTemp, Warning, TEXT("[LoadingDbg][GI] StreamingPauseBegin — overlay 보장"));
+	EnsureGameViewportOverlay();
+}
 
-	UGameViewportClient* VC = GetGameViewportClient();
-	if (!VC)
-	{
-		return;
-	}
-
-	if (PostLoadOverlayWidget.IsValid())
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[LoadingDbg][GI] OnPostLoadMapWithWorld — 기존 overlay reuse"));
-		return;
-	}
-
-	PostLoadOverlayWidget = SNew(SLoadingSnapshotWidget).SnapshotTexture(LoadingSnapshotTexture);
-	VC->AddViewportWidgetContent(PostLoadOverlayWidget.ToSharedRef(), 9999);
-	UE_LOG(LogTemp, Warning, TEXT("[LoadingDbg][GI] OnPostLoadMapWithWorld — GameViewport 풀스크린 overlay 신규 추가"));
+void UMDF_GameInstance::OnEngineStreamingPauseEnd()
+{
+	// [§17 3-Layer] streaming pause 종료. overlay는 ClearPostLoadOverlay에서 정리.
+	UE_LOG(LogTemp, Warning, TEXT("[LoadingDbg][GI] StreamingPauseEnd"));
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
