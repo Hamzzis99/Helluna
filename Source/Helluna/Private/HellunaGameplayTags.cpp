@@ -73,6 +73,10 @@ namespace HellunaGameplayTags
 	/** Enemy Event tags **/
 	UE_DEFINE_GAMEPLAY_TAG(Enemy_Event_Enrage, "Enemy.Event.Enrage");
 
+	/** Boss tags **/
+	// [BossCinematicGateV1] 소환 시네마틱 종료 게이트 — 트리거가 시네마틱 종료 시 보스 ASC 에 부여.
+	UE_DEFINE_GAMEPLAY_TAG(State_Boss_CinematicReady, "State.Boss.CinematicReady");
+
 	// ═══════════════════════════════════════════════════════════
 	// Gun Parry System Tags
 	// ═══════════════════════════════════════════════════════════

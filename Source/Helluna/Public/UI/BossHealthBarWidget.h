@@ -142,6 +142,12 @@ protected:
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
 	TObjectPtr<UProgressBar> ProgressBar_Extra = nullptr;
 
+	/** [Phase1MaxTrackV1] 1페이즈 최대 체력을 나타내는 진회색 트랙 — HealthOverlay 최하단.
+	 *  Percent=0 으로 배경만 렌더. Phase2 가로 확장 시에도 1페이즈 너비에 고정 —
+	 *  NativeTick 에서 확장량(CurrentExtensionPx)만큼 우측 패딩을 줘 늘어나지 않게 함. */
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
+	TObjectPtr<UProgressBar> ProgressBar_PhaseOneTrack = nullptr;
+
 private:
 	// --- HP 표시 상태 ---
 	float DisplayMainPercent = 1.f;

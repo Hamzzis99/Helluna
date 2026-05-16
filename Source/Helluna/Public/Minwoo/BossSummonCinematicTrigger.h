@@ -591,6 +591,16 @@ private:
 	void StartLocalCinematicBody(APawn* Boss, float WalkDirYaw);
 
 	/**
+	 * [BossAIEarlyStopV1] 보스 spawn 직후 AI(StateTree brain)를 즉시 정지.
+	 *   StateTreeAIComponent 가 bStartLogicAutomatically=true 라 possess 즉시 AI 가 도는데,
+	 *   TryActivate 는 PostSpawnDelay(1.5s) 후 호출이라 그 공백 동안 보스가 행동(공격/패턴)한다.
+	 *   그 사이 보스가 건 슬로우(AnimNotify TimeDilation, 시간왜곡 패턴 등)가 시네마틱 종료
+	 *   후에도 안 풀리고 다음 시네마틱이 막히는 버그 원인. spawn 감지 즉시 정지시켜 차단.
+	 *   controller/brain 이 아직 없으면 0.05s 간격으로 RemainingRetries 회 재시도.
+	 */
+	void SuppressBossAIImmediate(APawn* Boss, int32 RemainingRetries);
+
+	/**
 	 * [PortalEarlySpawnV1] 보스 등장 포탈을 클라에 로컬 spawn.
 	 *   보스 actor 가 아니라 위치값만 받으므로 replication 지연과 무관하게 즉시 호출 가능.
 	 *   LocalPortalActor 가 이미 유효하면 중복 spawn 방지로 무시.

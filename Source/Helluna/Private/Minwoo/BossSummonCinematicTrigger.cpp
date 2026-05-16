@@ -289,6 +289,18 @@ void ABossSummonCinematicTrigger::OnActorSpawnedInWorld(AActor* SpawnedActor)
 	// 한 번만 발동 — 핸들러 즉시 해제
 	UnregisterActorSpawnHandler();
 
+	// [BossAIEarlyStopV1] 보스 spawn 즉시 AI 정지 — TryActivate(PostSpawnDelay 후)까지의
+	//   공백 동안 보스가 공격/패턴을 발동해 슬로우가 누수되는 버그 차단.
+	SuppressBossAIImmediate(SpawnedPawn, 10);
+
+	// [BossHideUntilCinematicV1] 스폰 직후 ~ 시네마틱 시작 전까지 보스를 숨김.
+	//   bHidden 은 replicated 라 늦게 replicate 되는 클라도 숨겨진 채 받음.
+	//   TryActivate 진입 시 해제 → 이후 보스 visibility 는 시네마틱의 mesh SetVisibility 가 담당.
+	SpawnedPawn->SetActorHiddenInGame(true);
+	UE_LOG(LogTemp, Warning,
+		TEXT("[BossHideUntilCinematicV1] Boss hidden on spawn until cinematic: %s"),
+		*SpawnedPawn->GetName());
+
 	// 보스 BeginPlay/AI 초기화 마무리될 시간 확보 후 발동
 	const float Grace = FMath::Max(PostSpawnDelay, 0.05f);
 	TWeakObjectPtr<APawn> WeakBoss = SpawnedPawn;
@@ -306,6 +318,51 @@ void ABossSummonCinematicTrigger::OnActorSpawnedInWorld(AActor* SpawnedActor)
 			TryActivate(B);
 		}),
 		Grace, false);
+}
+
+void ABossSummonCinematicTrigger::SuppressBossAIImmediate(APawn* Boss, int32 RemainingRetries)
+{
+	if (!HasAuthority() || !IsValid(Boss))
+	{
+		return;
+	}
+
+	if (AAIController* AIC = Cast<AAIController>(Boss->GetController()))
+	{
+		if (UBrainComponent* Brain = AIC->GetBrainComponent())
+		{
+			Brain->StopLogic(TEXT("BossSummonCinematic_EarlyStop"));
+			bAIStopped = true;
+			UE_LOG(LogTemp, Warning,
+				TEXT("[BossAIEarlyStopV1] Boss AI stopped immediately on spawn: %s"),
+				*Boss->GetName());
+			return;
+		}
+	}
+
+	// controller/brain 이 아직 초기화 안 됨 (possess 직전 타이밍) — 0.05s 후 재시도.
+	if (RemainingRetries > 0)
+	{
+		TWeakObjectPtr<ABossSummonCinematicTrigger> Weak(this);
+		TWeakObjectPtr<APawn> WeakBoss(Boss);
+		const int32 Next = RemainingRetries - 1;
+		FTimerHandle RetryHandle;
+		GetWorldTimerManager().SetTimer(RetryHandle,
+			FTimerDelegate::CreateWeakLambda(this, [Weak, WeakBoss, Next]()
+			{
+				if (Weak.IsValid() && WeakBoss.IsValid())
+				{
+					Weak->SuppressBossAIImmediate(WeakBoss.Get(), Next);
+				}
+			}),
+			0.05f, false);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[BossAIEarlyStopV1] Boss AI 즉시 정지 실패 — controller/brain 미초기화 (재시도 소진): %s"),
+			*GetNameSafe(Boss));
+	}
 }
 
 void ABossSummonCinematicTrigger::UnregisterActorSpawnHandler()
@@ -425,6 +482,11 @@ bool ABossSummonCinematicTrigger::TryActivate(APawn* InTargetBoss)
 	bMontageFinishedFlag = false;
 	bMinHoldElapsedFlag = false;
 
+	// [BossHideUntilCinematicV1] 시네마틱 시작 — 스폰 시 걸어둔 actor 숨김 해제.
+	//   이후 보스 가시성은 Multicast_StartCinematic 의 mesh SetVisibility(hidden-walk) →
+	//   OnBossEmergeElapsed (emerge) 가 담당. skip 경로도 이 라인을 거쳐 정상 표시됨.
+	Boss->SetActorHiddenInGame(false);
+
 	// [BossDebugSkipV1] GameMode 의 통합 토글 OR 로컬 토글.
 	bool bSkipCinematic = bDisableCinematic_OnlyHealthBar;
 	if (UWorld* W = GetWorld())
@@ -445,6 +507,28 @@ bool ABossSummonCinematicTrigger::TryActivate(APawn* InTargetBoss)
 	//   [BossSkipRPCFixV1] 클라가 GM 토글을 알 수 있도록 RPC 인자로 명시 전달.
 	if (bSkipCinematic)
 	{
+		// [BossAIEarlyStopV1] skip 케이스 안전망 — SuppressBossAIImmediate 가 spawn 시 정지시킨
+		//   보스 AI 를 여기서 재개. skip 경로는 OnGracePeriodElapsed 를 거치지 않으므로,
+		//   재개하지 않으면 보스가 영영 정지 상태로 남음.
+		if (bAIStopped)
+		{
+			if (AAIController* AIC = Cast<AAIController>(Boss->GetController()))
+			{
+				if (UBrainComponent* Brain = AIC->GetBrainComponent())
+				{
+					Brain->StartLogic();
+					UE_LOG(LogTemp, Warning,
+						TEXT("[BossAIEarlyStopV1] skip 케이스 — 보스 AI 재개: %s"), *Boss->GetName());
+				}
+			}
+			bAIStopped = false;
+		}
+		// [BossCinematicGateV1] skip 경로 — 시네마틱이 없으니 즉시 행동 게이트 해제.
+		//   안 풀면 보스가 영영 idle (STEvaluator_BossTarget 게이트).
+		if (AHellunaEnemyCharacter_Boss* SkipBossEnemy = Cast<AHellunaEnemyCharacter_Boss>(Boss))
+		{
+			SkipBossEnemy->SetCinematicGateUnlocked(true);
+		}
 		Multicast_StartCinematic(Boss, /*bSkipVisuals=*/true, /*WalkDirYaw=*/0.f, Boss->GetActorLocation());
 		return true;
 	}
@@ -875,6 +959,9 @@ void ABossSummonCinematicTrigger::OnGracePeriodElapsed()
 		if (AHellunaEnemyCharacter_Boss* BossEnemy = Cast<AHellunaEnemyCharacter_Boss>(Boss))
 		{
 			BossEnemy->bSuppressAutoBrainRestart = false;
+			// [BossCinematicGateV1] 시네마틱 종료 — 보스 행동 게이트 해제. 이 시점부터
+			//   STEvaluator_BossTarget 가 타겟/패턴을 잡아 보스가 정상 행동.
+			BossEnemy->SetCinematicGateUnlocked(true);
 		}
 
 		if (bAIStopped)
@@ -1498,6 +1585,29 @@ void ABossSummonCinematicTrigger::Multicast_EndCinematic_Implementation()
 		{
 			EnemyBoss->StopPortalClipPlaneVisuals();
 		}
+
+		// [SummonMontageStopV2] 시네마틱 종료 — 소환 걷기 몬타지를 모든 머신에서 정지.
+		//   서버는 HandleCinematicCompletedServer 가 정지하지만, 클라는 별도 정지 신호가 없어
+		//   AM_Boss_Walk(내부 루프 섹션)가 시네마틱 후에도 계속 재생됨 → 멀티캐스트로 전 머신 정지.
+		//   이게 있어야 종료 후 실제 걷기 블렌드스페이스로 깔끔히 전환됨.
+		if (AHellunaEnemyCharacter_Boss* BossEnemy = Cast<AHellunaEnemyCharacter_Boss>(BossLocal))
+		{
+			BossEnemy->bShouldLoopSummonMontage = false;
+			if (USkeletalMeshComponent* BossMesh = BossEnemy->GetMesh())
+			{
+				if (UAnimInstance* AnimInst = BossMesh->GetAnimInstance())
+				{
+					if (BossEnemy->SummonMontage && AnimInst->Montage_IsPlaying(BossEnemy->SummonMontage))
+					{
+						AnimInst->Montage_Stop(0.2f, BossEnemy->SummonMontage);
+						UE_LOG(LogTemp, Warning,
+							TEXT("[SummonMontageStopV2] SummonMontage stopped on %s (Multicast_End — all machines)"),
+							*BossEnemy->GetName());
+					}
+				}
+			}
+		}
+
 		if (ACharacter* BossCh = Cast<ACharacter>(BossLocal))
 		{
 			if (USkeletalMeshComponent* Mesh = BossCh->GetMesh())

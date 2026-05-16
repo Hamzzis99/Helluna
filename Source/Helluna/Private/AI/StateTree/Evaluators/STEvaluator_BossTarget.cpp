@@ -27,6 +27,8 @@
 #include "Character/HellunaEnemyCharacter.h"
 #include "Character/HellunaEnemyCharacter_Boss.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
+#include "AbilitySystemComponent.h"
+#include "HellunaGameplayTags.h"
 
 // ============================================================================
 // 헬퍼: 가장 가까운 플레이어 탐색
@@ -104,6 +106,16 @@ void FSTEvaluator_BossTarget::TreeStart(FStateTreeExecutionContext& Context) con
 	const APawn* Pawn = AIC->GetPawn();
 	if (!Pawn) return;
 
+	// [BossCinematicGateV1] 시네마틱 종료 게이트 태그가 없으면 초기 타겟도 잡지 않음 — 첫 Tick 게이트와 동일.
+	if (const AHellunaEnemyCharacter* GateEnemy = Cast<AHellunaEnemyCharacter>(Pawn))
+	{
+		const UAbilitySystemComponent* GateASC = GateEnemy->GetAbilitySystemComponent();
+		if (GateASC && !GateASC->HasMatchingGameplayTag(HellunaGameplayTags::State_Boss_CinematicReady))
+		{
+			return;
+		}
+	}
+
 	float DistSq = MAX_FLT;
 	AActor* Nearest = FindNearestPlayer(World, Pawn->GetActorLocation(), DistSq);
 	if (Nearest)
@@ -130,6 +142,33 @@ void FSTEvaluator_BossTarget::Tick(FStateTreeExecutionContext& Context, const fl
 
 	const UWorld* World = Context.GetWorld();
 	if (!World) return;
+
+	// [BossCinematicGateV1] 소환 시네마틱 종료 태그(State.Boss.CinematicReady)가 보스 ASC 에
+	//   아직 없으면 보스는 완전히 idle 유지 — 타겟/패턴을 모두 비우고 즉시 반환.
+	//   이러면 Chase/Attack/Pattern Task 가 전부 HasValidTarget()==false / PendingPatternIndex<0
+	//   조건으로 no-op 이 되어, StateTree 가 spawn 직후부터 돌더라도 시네마틱 도중에는 행동하지 않음.
+	//   StopLogic 타이밍 레이스에 의존하지 않는 확정 게이트. 트리거가 시네마틱 종료 시 태그 부여.
+	if (const AHellunaEnemyCharacter* GateEnemy = Cast<AHellunaEnemyCharacter>(BossPawn))
+	{
+		const UAbilitySystemComponent* GateASC = GateEnemy->GetAbilitySystemComponent();
+		if (GateASC && !GateASC->HasMatchingGameplayTag(HellunaGameplayTags::State_Boss_CinematicReady))
+		{
+			TD.TargetActor         = nullptr;
+			TD.DistanceToTarget    = 0.f;
+			PD.PendingPatternIndex = -1;
+
+			static double LastGateLogTime = 0.0;
+			const double Now = World->GetTimeSeconds();
+			if (Now - LastGateLogTime > 2.0)
+			{
+				LastGateLogTime = Now;
+				UE_LOG(LogTemp, Warning,
+					TEXT("[BossCinematicGateV1] %s idle — State.Boss.CinematicReady 태그 대기 중 (시네마틱 미종료)"),
+					*BossPawn->GetName());
+			}
+			return;
+		}
+	}
 
 	const FVector BossLocation = BossPawn->GetActorLocation();
 

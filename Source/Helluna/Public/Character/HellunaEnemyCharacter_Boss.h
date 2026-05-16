@@ -49,6 +49,12 @@ public:
 	/** [BossDeathCinematicV1] HP 0 도달(페이즈2 후 진짜 사망) 시점에 죽음 시네마틱 트리거 spawn. */
 	virtual void OnMonsterDeath(AActor* DeadActor, AActor* KillerActor) override;
 
+	/** [BossCinematicGateV1] 소환 시네마틱 종료 게이트.
+	 *  true 면 보스 ASC 에 State.Boss.CinematicReady 태그 부여 — STEvaluator_BossTarget 가
+	 *  이 태그가 있어야 타겟/패턴을 잡음. 태그 없으면 보스는 idle 유지.
+	 *  BossSummonCinematicTrigger 가 시네마틱 종료(또는 skip) 시 true 로 호출. */
+	void SetCinematicGateUnlocked(bool bUnlocked);
+
 	/** [BossDissolveComponentV1] 사망 시 dissolve 효과 (mesh material swap + Niagara + slowmo) 캡슐화 컴포넌트.
 	 *   GA_BossDeath 가 사망 몽타주 85% 시점에 TriggerDissolve() 호출.
 	 *   디자이너가 BP CDO 에서 dissolve 머티리얼/VFX/timing 직접 set.

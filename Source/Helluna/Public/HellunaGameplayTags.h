@@ -72,6 +72,12 @@ namespace HellunaGameplayTags
 	/** Enemy Event tags **/
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Enemy_Event_Enrage);
 
+	/** Boss tags **/
+	// [BossCinematicGateV1] 보스 소환 시네마틱이 끝나야 부여되는 게이트 태그.
+	//   이 태그가 보스 ASC 에 없으면 STEvaluator_BossTarget 가 타겟/패턴을 비워 보스를 idle 로 유지.
+	//   StateTree 가 spawn 직후부터 돌더라도 시네마틱 도중에는 아무 행동도 하지 않게 만드는 확정 게이트.
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(State_Boss_CinematicReady);
+
 	// ═══════════════════════════════════════════════════════════
 	// Gun Parry System Tags
 	// ═══════════════════════════════════════════════════════════

@@ -8,6 +8,7 @@
 #include "Components/ProgressBar.h"
 #include "Components/TextBlock.h"
 #include "Components/Border.h"
+#include "Components/OverlaySlot.h"
 #include "GameFramework/Actor.h"
 #include "Engine/World.h"
 
@@ -274,6 +275,17 @@ void UBossHealthBarWidget::NativeTick(const FGeometry& MyGeometry, float InDelta
 		FMargin NewPadding = CachedBorderPadding;
 		NewPadding.Right = CachedBorderPadding.Right - CurrentExtensionPx;
 		Border_Frame->SetPadding(NewPadding);
+	}
+
+	// [Phase1MaxTrackV1] 1페이즈 최대 체력 회색 트랙 — Phase2 로 바가 우측 확장돼도
+	//   트랙은 1페이즈 너비에 고정. HealthOverlay 가 CurrentExtensionPx 만큼 넓어지므로,
+	//   트랙 슬롯의 우측 패딩을 같은 값으로 줘서 확장분을 상쇄 → 확장 영역엔 회색 없음.
+	if (ProgressBar_PhaseOneTrack)
+	{
+		if (UOverlaySlot* TrackSlot = Cast<UOverlaySlot>(ProgressBar_PhaseOneTrack->Slot))
+		{
+			TrackSlot->SetPadding(FMargin(0.f, 0.f, CurrentExtensionPx, 0.f));
+		}
 	}
 
 	// ----- 보스 이름 위치 보정 -----

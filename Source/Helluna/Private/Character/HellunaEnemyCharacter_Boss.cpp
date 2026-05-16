@@ -9,6 +9,7 @@
 #include "AbilitySystemComponent.h"
 #include "AIController.h"
 #include "BrainComponent.h"
+#include "HellunaGameplayTags.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Animation/AnimInstance.h"
 
@@ -60,6 +61,13 @@ AHellunaEnemyCharacter_Boss::AHellunaEnemyCharacter_Boss()
 
 	// 보스 등급 기본값 (BP CDO 에서 SemiBoss/Boss 로 추가 조정 가능)
 	EnemyGrade = EEnemyGrade::Boss;
+
+	// [BossAlwaysRelevantV1] 보스는 항상 모든 클라에 replicate.
+	//   부모 AHellunaEnemyCharacter 는 NetCullDistance 60m (오픈월드 일반몹 최적화)인데,
+	//   보스가 우주선에서 60m 넘게 떨어진 곳에 소환되면 remote client 에 보스 actor 가
+	//   replicate 되지 않아 소환 시네마틱이 Boss=NULL 로 도착 → 시네마틱/포탈이 첫 플레이어
+	//   (호스트)에게만 보이던 버그. 보스는 게임당 1마리라 always-relevant 부담은 무시 가능.
+	bAlwaysRelevant = true;
 
 	// [BossPhase2_DefaultV1] 보스 서브클래스의 기본값을 true 로 강제.
 	//   C++ 부모 필드 초기값 false + BP CDO 에 한 번씩 직접 켜야 하는 구조로는
@@ -983,6 +991,28 @@ void AHellunaEnemyCharacter_Boss::OnSummonMontageEnded(UAnimMontage* Montage, bo
 	{
 		OnSummonMontageFinished.ExecuteIfBound();
 	}
+}
+
+// ============================================================
+// SetCinematicGateUnlocked — [BossCinematicGateV1]
+//   소환 시네마틱 종료 게이트. 태그 부여/제거로 STEvaluator_BossTarget 의 idle 게이트 제어.
+// ============================================================
+void AHellunaEnemyCharacter_Boss::SetCinematicGateUnlocked(bool bUnlocked)
+{
+	UAbilitySystemComponent* ASC = GetAbilitySystemComponent();
+	if (!ASC) return;
+
+	if (bUnlocked)
+	{
+		ASC->AddLooseGameplayTag(HellunaGameplayTags::State_Boss_CinematicReady);
+	}
+	else
+	{
+		ASC->RemoveLooseGameplayTag(HellunaGameplayTags::State_Boss_CinematicReady);
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[BossCinematicGateV1] %s cinematic gate %s"),
+		*GetName(), bUnlocked ? TEXT("UNLOCKED — boss may act") : TEXT("LOCKED — boss idle"));
 }
 
 // ============================================================
