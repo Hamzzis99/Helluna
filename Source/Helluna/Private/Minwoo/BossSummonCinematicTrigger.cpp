@@ -5,6 +5,7 @@
 
 #include "BossEvent/BossCinematicCameraUtils.h"
 #include "Camera/CameraShakeBase.h"
+#include "Camera/PlayerCameraManager.h"
 #include "Kismet/GameplayStatics.h"
 #include "AIController.h"
 #include "BrainComponent.h"
@@ -712,9 +713,14 @@ bool ABossSummonCinematicTrigger::TryActivate(APawn* InTargetBoss)
 	}
 	const float RevealDelay = FMath::Max(PortalRevealDelay, 0.f);
 	MinHold += RevealDelay;
+	// [LastCutHoldV1] 마지막 컷이 등장하자마자 시네마틱이 끝나 "잠깐 나오고 바로 넘어가는" 현상 방지.
+	//   MinHold 가 컷 합계와 거의 같아 마지막 컷이 거의 안 보임 → 추가 hold 로 마지막 컷을 더 보여줌.
+	//   Tick 이 CutsElapsedTime >= 컷합계 동안 카메라를 마지막 컷에 고정 유지하므로 그대로 더 노출됨.
+	const float LastCutTailHold = (!CameraSequence && CameraCuts.Num() > 0) ? 2.0f : 0.f;
+	MinHold += LastCutTailHold;
 	UE_LOG(LogTemp, Warning,
-		TEXT("[BossSummonCinematic_LiveCodeCheck] MinHold=%.2f (reveal=%.2f + cuts/min)"),
-		MinHold, RevealDelay);
+		TEXT("[BossSummonCinematic_LiveCodeCheck] MinHold=%.2f (reveal=%.2f + cuts/min + tail=%.2f)"),
+		MinHold, RevealDelay, LastCutTailHold);
 	GetWorldTimerManager().SetTimer(MinHoldTimer, this,
 		&ABossSummonCinematicTrigger::OnMinHoldElapsedServer, MinHold, false);
 
@@ -1124,41 +1130,9 @@ void ABossSummonCinematicTrigger::StartLocalCinematicBody(APawn* Boss, float Wal
 	//   여기서는 안전망 — 보스 actor 가 확보된 정확한 위치로 재시도 (LocalPortalActor 가드로 중복 방지).
 	SpawnEntrancePortal(Boss->GetActorLocation(), WalkDirYaw);
 
-	// [CinematicShakeV1] 시네마틱 동안 World Camera Shake 반복.
-	// 데디 서버는 렌더 카메라가 없으므로 호출 자체는 무해 — TriggerLocalCinematicShake 내부에서 스킵.
-	if (CinematicShakeClass)
-	{
-		TriggerLocalCinematicShake();
-		if (CinematicShakeInterval > 0.f)
-		{
-			TWeakObjectPtr<ABossSummonCinematicTrigger> Weak(this);
-			World->GetTimerManager().SetTimer(CinematicShakeTimer,
-				FTimerDelegate::CreateLambda([Weak]()
-				{
-					if (Weak.IsValid())
-					{
-						Weak->TriggerLocalCinematicShake();
-					}
-				}),
-				CinematicShakeInterval, /*bLoop=*/true);
-		}
-	}
-
-	// [CloseUpShakeV1] Cut 0 끝난 시점에 close-up 쉐이크 시작.
-	if (CloseUpShakeClass && CameraCuts.Num() > 0)
-	{
-		const float Cut0Dur = FMath::Max(CameraCuts[0].Duration, 0.5f);
-		TWeakObjectPtr<ABossSummonCinematicTrigger> Weak(this);
-		World->GetTimerManager().SetTimer(CloseUpShakeTimer,
-			FTimerDelegate::CreateLambda([Weak]()
-			{
-				if (Weak.IsValid())
-				{
-					Weak->TriggerLocalCloseUpShake();
-				}
-			}),
-			Cut0Dur, false);
-	}
+	// [CinematicShakeAlignV1] 쉐이크 발화는 cut 0 이 실제로 화면에 나오는 시점
+	//   (StartCinematicCameraAfterReveal) 으로 이동. 여기서 발화하면 PortalRevealDelay 만큼
+	//   먼저 터져서 단발 쉐이크(interval=0)가 cut 0 등장 전에 끝나버린다.
 
 	// [PortalClipV1] dissolve 대신 portal-plane clip — 보스 픽셀 중 평면 뒤쪽만 invisible.
 	//   평면은 portal 위치 + portal forward 방향. 보스가 walk 로 평면 통과하면 통과한 부위만 visible.
@@ -1227,6 +1201,43 @@ void ABossSummonCinematicTrigger::StartCinematicCameraAfterReveal()
 			WideCutTimeDilation, WideCutSlowMoDuration);
 		World->GetTimerManager().SetTimer(SlowMoRestoreTimerLocal, this,
 			&ABossSummonCinematicTrigger::OnSlowMoElapsedLocal, WideCutSlowMoDuration, false);
+	}
+
+	// [CinematicShakeAlignV1] 쉐이크는 여기서 발화 — cut 0 이 화면에 나오는 시점.
+	//   기존엔 StartLocalCinematicBody (PortalRevealDelay 전) 에서 발화 → 단발 쉐이크가
+	//   cut 0 등장 전에 끝나버려 "처음 구도에 쉐이크 없음" 버그. reveal 후로 정렬.
+	if (CinematicShakeClass)
+	{
+		TriggerLocalCinematicShake();
+		if (CinematicShakeInterval > 0.f)
+		{
+			TWeakObjectPtr<ABossSummonCinematicTrigger> Weak(this);
+			World->GetTimerManager().SetTimer(CinematicShakeTimer,
+				FTimerDelegate::CreateLambda([Weak]()
+				{
+					if (Weak.IsValid())
+					{
+						Weak->TriggerLocalCinematicShake();
+					}
+				}),
+				CinematicShakeInterval, /*bLoop=*/true);
+		}
+	}
+
+	// [CloseUpShakeV1] Cut 0 끝나는 시점(= cut 0 길이 후)에 close-up 쉐이크로 전환.
+	if (CloseUpShakeClass && CameraCuts.Num() > 0)
+	{
+		const float Cut0Dur = FMath::Max(CameraCuts[0].Duration, 0.5f);
+		TWeakObjectPtr<ABossSummonCinematicTrigger> Weak(this);
+		World->GetTimerManager().SetTimer(CloseUpShakeTimer,
+			FTimerDelegate::CreateLambda([Weak]()
+			{
+				if (Weak.IsValid())
+				{
+					Weak->TriggerLocalCloseUpShake();
+				}
+			}),
+			Cut0Dur, false);
 	}
 
 	// [BossEmergeV1] 보스 메시는 아직 숨김 유지 — BossEmergeDelay 후 OnBossEmergeElapsedLocal 에서 복원.
@@ -1900,19 +1911,16 @@ void ABossSummonCinematicTrigger::TriggerLocalCloseUpShake()
 	if (!World) return;
 	if (World->GetNetMode() == NM_DedicatedServer) return;
 
-	FVector Origin = GetActorLocation();
-	if (APawn* Boss = LocalCinematicBoss.Get())
+	// [CinematicShakeDirectV1] 로컬 PC 카메라 매니저에 직접 full-strength 발화 (거리 감쇠 없음).
+	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
 	{
-		Origin = Boss->GetActorLocation();
+		APlayerController* PC = It->Get();
+		if (!PC || !PC->IsLocalPlayerController()) continue;
+		if (APlayerCameraManager* PCM = PC->PlayerCameraManager)
+		{
+			PCM->StartCameraShake(CloseUpShakeClass, 1.f);
+		}
 	}
-
-	UGameplayStatics::PlayWorldCameraShake(
-		World,
-		CloseUpShakeClass,
-		Origin,
-		CinematicShakeInnerRadius,
-		CinematicShakeOuterRadius,
-		CinematicShakeFalloff);
 
 	UE_LOG(LogTemp, Warning,
 		TEXT("[CloseUpShakeV1] Close-up shake triggered (cuts 1+)"));
@@ -1927,18 +1935,16 @@ void ABossSummonCinematicTrigger::TriggerLocalCinematicShake()
 	if (!World) return;
 	if (World->GetNetMode() == NM_DedicatedServer) return;
 
-	// Origin: 보스 위치(있으면) 또는 트리거 본체. 거리 기반 falloff 의 기준점.
-	FVector Origin = GetActorLocation();
-	if (APawn* Boss = LocalCinematicBoss.Get())
+	// [CinematicShakeDirectV1] PlayWorldCameraShake(epicenter 거리 감쇠) 대신 로컬 PC 카메라
+	//   매니저에 직접 full-strength 발화. 시네마틱 카메라가 epicenter 에서 멀면 감쇠로
+	//   쉐이크가 거의 안 보이던 문제 fix — 시네마틱은 항상 풀 강도가 맞다.
+	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
 	{
-		Origin = Boss->GetActorLocation();
+		APlayerController* PC = It->Get();
+		if (!PC || !PC->IsLocalPlayerController()) continue;
+		if (APlayerCameraManager* PCM = PC->PlayerCameraManager)
+		{
+			PCM->StartCameraShake(CinematicShakeClass, 1.f);
+		}
 	}
-
-	UGameplayStatics::PlayWorldCameraShake(
-		World,
-		CinematicShakeClass,
-		Origin,
-		CinematicShakeInnerRadius,
-		CinematicShakeOuterRadius,
-		CinematicShakeFalloff);
 }

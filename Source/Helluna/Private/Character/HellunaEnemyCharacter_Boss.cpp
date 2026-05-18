@@ -25,6 +25,7 @@
 #include "TimerManager.h"
 #include "Engine/World.h"
 #include "Net/UnrealNetwork.h"
+#include "UObject/SoftObjectPath.h"
 
 // [BossArmorBreakV1]
 #include "Animation/SkeletalMeshActor.h"
@@ -1314,6 +1315,36 @@ void AHellunaEnemyCharacter_Boss::Tick(float DeltaTime)
 			NewRel.Z = SavedDeathMeshRelZ + CurOffset;
 			SkelMesh_Lift->SetRelativeLocation(NewRel);
 			// Alpha 1 도달 후에도 매 tick 같은 값으로 hold — 외부 reset 방지 (SummonSinkTickGuard 와 동일 컨셉).
+
+			// [BossDeathDiagV1] 죽음 몬타지~dissolve 전 구간 0.5초 간격 진단 — 패키지에서만 피부가
+			//   사라지는 #5 버그용. 각 머신(서버/클라). visibility/렌더링여부/슬롯 머티리얼 추적 →
+			//   IsVisible=1 인데 Rendered=0 이면 컬링/클립 문제, 둘 다 1 인데 안 보이면 머티리얼 문제.
+			if (FMath::FloorToInt(DeathMeshLiftElapsed * 2.f) != FMath::FloorToInt((DeathMeshLiftElapsed - DeltaTime) * 2.f))
+			{
+				const TCHAR* NM = TEXT("?");
+				switch (GetNetMode())
+				{
+				case NM_Standalone:      NM = TEXT("Standalone"); break;
+				case NM_Client:          NM = TEXT("Client");     break;
+				case NM_ListenServer:    NM = TEXT("Listen");     break;
+				case NM_DedicatedServer: NM = TEXT("DedSrv");     break;
+				default: break;
+				}
+				FString SlotMats;
+				const int32 NumMat = SkelMesh_Lift->GetNumMaterials();
+				for (int32 mi = 0; mi < NumMat; ++mi)
+				{
+					SlotMats += FString::Printf(TEXT("[%d]%s "), mi, *GetNameSafe(SkelMesh_Lift->GetMaterial(mi)));
+				}
+				UE_LOG(LogTemp, Warning,
+					TEXT("[BossDeathDiag][%s] t=%.2f ActorHidden=%d MeshVisible=%d VisFlag=%d Rendered=%d bInPhase2=%d Slots=%d Mats=%s"),
+					NM, DeathMeshLiftElapsed,
+					IsHidden() ? 1 : 0,
+					SkelMesh_Lift->IsVisible() ? 1 : 0,
+					SkelMesh_Lift->GetVisibleFlag() ? 1 : 0,
+					SkelMesh_Lift->WasRecentlyRendered(0.5f) ? 1 : 0,
+					bInPhase2 ? 1 : 0, NumMat, *SlotMats);
+			}
 		}
 	}
 
@@ -1617,6 +1648,53 @@ void AHellunaEnemyCharacter_Boss::Phase2_PlayStage3Visuals()
 			}),
 			FMath::Max(0.0f, Phase2HealthFillDelay), false);
 	}
+}
+
+// [Phase2DescentAftermathV1] 시네마틱 종료 시 강하 VFX 처리 — deactivate 대신 레이저 제거 변형으로 swap.
+//   NS_Loop_SkyOpen_NoLaser('Empty' 레이저 이미터 비활성 변형) 로 asset 교체 → 회오리는 루프 유지, 레이저만 사라짐.
+//   변형 로드 실패 시 기존 동작(Deactivate)으로 fallback.
+void AHellunaEnemyCharacter_Boss::SwapDescentVFXToAftermath()
+{
+	// 레이저 제거 변형 — 회오리만 남는 NoLaser 시스템.
+	static const FSoftObjectPath AftermathPath(
+		TEXT("/Game/Migration/VFX/SkyOpenVFX/Niagara/NS_Loop_SkyOpen_NoLaser.NS_Loop_SkyOpen_NoLaser"));
+	UNiagaraSystem* AftermathVFX = Cast<UNiagaraSystem>(AftermathPath.TryLoad());
+
+	TArray<UNiagaraComponent*> NCs;
+	GetComponents<UNiagaraComponent>(NCs);
+
+	int32 SwappedCount = 0;
+	int32 DeactivatedCount = 0;
+	for (UNiagaraComponent* NC : NCs)
+	{
+		if (!NC) continue;
+		if (!NC->ComponentTags.Contains(FName(TEXT("Phase2Descent")))) continue;
+
+		if (AftermathVFX)
+		{
+			// 회오리 유지 + 레이저 이미터만 꺼진 변형으로 교체.
+			if (NC->GetAsset() != AftermathVFX)
+			{
+				NC->SetAsset(AftermathVFX);
+			}
+			NC->SetCustomTimeDilation(1.f);
+			NC->Activate(true);
+			++SwappedCount;
+		}
+		else if (NC->IsActive())
+		{
+			// fallback — 변형 로드 실패면 기존처럼 전체 종료.
+			NC->Deactivate();
+			++DeactivatedCount;
+		}
+	}
+
+	// 강하 VFX scale lerp 는 종료 — aftermath 회오리는 변형 시스템 자체 스케일로 유지.
+	bPhase2DescentScaling = false;
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[Phase2DescentAftermathV1] SwapDescentVFXToAftermath — Swapped=%d, Deactivated(fallback)=%d"),
+		SwappedCount, DeactivatedCount);
 }
 
 // [Phase2ShakeCleanupV2] 페이즈2 쉐이크 정리 — RepeatTimer + 진행 중 instance fade out.
