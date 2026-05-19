@@ -84,23 +84,41 @@ void UHeroGameplayAbility_Repair::Repair(const FGameplayAbilityActorInfo* ActorI
 	UE_LOG(LogTemp, Warning, TEXT("[Repair] Opening widget, InputMode -> GameAndUI"));
 
 	AHellunaDefenseGameState* GS = GetWorld()->GetGameState<AHellunaDefenseGameState>();
-	if (!GS) return;
+	if (!GS)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Repair][BuildDiag] STOP@GS-null: GameState cast to AHellunaDefenseGameState failed. WorldGS=%s"),
+			GetWorld()->GetGameState() ? *GetWorld()->GetGameState()->GetClass()->GetName() : TEXT("nullptr"));
+		return;
+	}
 
 	AResourceUsingObject_SpaceShip* Ship = GS->GetSpaceShip();
-	if (!Ship) return;
+	if (!Ship)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Repair][BuildDiag] STOP@Ship-null: GS->GetSpaceShip() returned nullptr. Authority=%d NetMode=%d"),
+			GS->HasAuthority() ? 1 : 0, (int32)GetWorld()->GetNetMode());
+		return;
+	}
 
 	URepairComponent* RepairComp = Ship->FindComponentByClass<URepairComponent>();
 	if (!RepairComp)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[Repair] RepairComponent not found!"));
+		UE_LOG(LogTemp, Error, TEXT("[Repair][BuildDiag] STOP@RepairComp-null: Ship=%s has no URepairComponent"), *Ship->GetName());
 		return;
 	}
 
 	APlayerController* PC = Hero->GetController<APlayerController>();
-	if (!PC) return;
+	if (!PC)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Repair][BuildDiag] STOP@PC-null: Hero->GetController<APlayerController>() returned nullptr. Hero=%s"), *Hero->GetName());
+		return;
+	}
 
 	UInv_InventoryComponent* InvComp = UInv_InventoryStatics::GetInventoryComponent(PC);
-	if (!InvComp) return;
+	if (!InvComp)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Repair][BuildDiag] STOP@InvComp-null: GetInventoryComponent(PC=%s) returned nullptr"), *PC->GetName());
+		return;
+	}
 
 	// 방안 B: 다른 위젯 열려있으면 먼저 닫기
 	if (InvComp->IsMenuOpen())
@@ -132,12 +150,19 @@ void UHeroGameplayAbility_Repair::Repair(const FGameplayAbilityActorInfo* ActorI
 
 	if (!RepairMaterialWidgetClass)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[Repair] RepairMaterialWidgetClass not set!"));
+		UE_LOG(LogTemp, Error, TEXT("[Repair][BuildDiag] STOP@WidgetClass-null: RepairMaterialWidgetClass not set on ability CDO"));
 		return;
 	}
 
+	UE_LOG(LogTemp, Warning, TEXT("[Repair][BuildDiag] PRE-CreateWidget: Class=%s"), *RepairMaterialWidgetClass->GetName());
+
 	CurrentWidget = CreateWidget<UUserWidget>(PC, RepairMaterialWidgetClass);
-	if (!CurrentWidget) return;
+	if (!CurrentWidget)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Repair][BuildDiag] STOP@CreateWidget-null: CreateWidget returned nullptr for class %s"),
+			*RepairMaterialWidgetClass->GetName());
+		return;
+	}
 
 	UE_LOG(LogTemp, Warning, TEXT("[Repair] Widget created: %p (%s)"),
 		CurrentWidget.Get(), *CurrentWidget->GetClass()->GetName());
