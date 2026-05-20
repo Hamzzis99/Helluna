@@ -3,6 +3,7 @@
 #include "BossEvent/RealityFractureZone.h"
 
 #include "Character/HellunaEnemyCharacter.h"
+#include "Character/EnemyComponent/HellunaHealthComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/PostProcessComponent.h"
 #include "Components/SphereComponent.h"
@@ -134,6 +135,23 @@ void ARealityFractureZone::ActivateZone()
 	RFZ_LOG("[Phase A] ActivateZone — Auth=%d, DecoyCount=%d, Interval=%.2fs, StasisTD=%.3f, Ring=%.0fcm, AimLen=%.0fcm",
 		HasAuthority() ? 1 : 0, DecoyCount, DecoySpawnInterval, StasisTimeDilation, DecoyRingRadius, AimLineLength);
 	if (!HasAuthority()) return;
+
+	// [DeadBossGuardV1] 보스가 이미 사망(죽음 시퀀스 진행 중)이면 stasis 존을 활성화하지 않는다.
+	//   사망 순간 비행 중이던 StasisSalvo 오브가 사후에 burst → ActivateZone 하면, 존이 죽어가는
+	//   보스의 GlobalAnimRateScale 을 0 으로 얼려 죽음 몬타주가 멈추고 dissolve·사망처리가 데드락된다.
+	//   죽은 보스는 StasisSalvo 패턴을 쓸 수 없으므로 이 존은 의미 없음 → 통째로 무효화.
+	if (OwnerEnemy)
+	{
+		if (UHellunaHealthComponent* HC = OwnerEnemy->FindComponentByClass<UHellunaHealthComponent>())
+		{
+			if (HC->IsDead())
+			{
+				RFZ_LOG("[DeadBossGuardV1] ActivateZone ABORT — 보스 사망 상태, stasis 존 무효화 (죽음 몬타주 보호)");
+				Destroy();
+				return;
+			}
+		}
+	}
 
 	bZoneActive = true;
 	CurrentDecoyIndex = 0;

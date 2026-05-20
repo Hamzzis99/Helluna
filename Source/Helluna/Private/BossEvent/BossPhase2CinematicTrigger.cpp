@@ -346,42 +346,18 @@ void ABossPhase2CinematicTrigger::Multicast_EndCinematic_Implementation()
 	//   동일 시점 통합 — 보스가 움직일 수 있는 시점에 강하 VFX 도 함께 사라짐.
 	{
 		TWeakObjectPtr<APawn> WeakBoss = ActiveBoss;
-		TWeakObjectPtr<ABossPhase2CinematicTrigger> WeakTrig(this);
 		FTimerHandle BrainResumeTimer;
 		World->GetTimerManager().SetTimer(BrainResumeTimer,
-			FTimerDelegate::CreateLambda([WeakBoss, WeakTrig]()
+			FTimerDelegate::CreateLambda([WeakBoss]()
 			{
 				APawn* B = WeakBoss.Get();
 				if (!B) return;
-				ABossPhase2CinematicTrigger* Trig = WeakTrig.Get();
-				const bool bImmediate = Trig ? Trig->bDescentVFXKillImmediate : true;
-				const float FadeSpeed = Trig ? FMath::Max(0.5f, Trig->DescentVFXFadeSpeed) : 3.f;
 
-				// 모든 머신: Phase2Descent NC 비활성화. 모드는 BP CDO 가 결정.
-				TArray<UNiagaraComponent*> NCs;
-				B->GetComponents<UNiagaraComponent>(NCs);
-				int32 DeactivatedNCs = 0;
-				for (UNiagaraComponent* NC : NCs)
-				{
-					if (NC && NC->ComponentTags.Contains(FName(TEXT("Phase2Descent"))) && NC->IsActive())
-					{
-						if (bImmediate)
-						{
-							NC->DeactivateImmediate();
-						}
-						else
-						{
-							// 점진 fade — 기존 particles 가 N배 빠르게 lifetime 끝까지 진행 → 빠른 자연 fade.
-							NC->SetCustomTimeDilation(FadeSpeed);
-							NC->Deactivate();
-						}
-						++DeactivatedNCs;
-					}
-				}
-
-				// 모든 머신: EnrageMontage 정지 (anim instance 가 각 머신에 있음)
+				// [Phase2DescentAftermathV1] 강하 VFX — deactivate 대신 레이저 제거 변형으로 swap.
+				//   회오리는 페이즈2 동안 루프 유지 (보스 가시성 테스트). 변형 미지정 시 helper 가 Deactivate fallback.
 				if (AHellunaEnemyCharacter_Boss* BossCh = Cast<AHellunaEnemyCharacter_Boss>(B))
 				{
+					BossCh->SwapDescentVFXToAftermath();
 					if (USkeletalMeshComponent* SK = BossCh->GetMesh())
 					{
 						if (UAnimInstance* AI = SK->GetAnimInstance())
@@ -407,8 +383,8 @@ void ABossPhase2CinematicTrigger::Multicast_EndCinematic_Implementation()
 				}
 
 				UE_LOG(LogTemp, Warning,
-					TEXT("[Phase2BrainResumeV1] +0.5s cleanup on %s — DeactivatedNCs=%d, BrainResume=%d"),
-					*GetNameSafe(B), DeactivatedNCs, B->HasAuthority() ? 1 : 0);
+					TEXT("[Phase2BrainResumeV1] +0.5s cleanup on %s — descent VFX→aftermath swap, BrainResume=%d"),
+					*GetNameSafe(B), B->HasAuthority() ? 1 : 0);
 			}),
 			0.5f, false);
 	}

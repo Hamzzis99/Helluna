@@ -604,6 +604,14 @@ public:
 	 */
 	void StopPhase2Shakes();
 
+	/**
+	 * [Phase2DescentAftermathV1] 시네마틱 종료 시 호출 — 'Phase2Descent' Tag NC 를 deactivate 하지 않고
+	 *   레이저 이미터를 끈 변형(NS_Loop_SkyOpen_NoLaser)으로 asset 을 교체해 회오리만 루프 유지.
+	 *   변형 에셋 로드 실패 시 기존 동작(Deactivate)으로 fallback.
+	 *   public — ABossPhase2CinematicTrigger 의 종료 cleanup 에서 호출.
+	 */
+	void SwapDescentVFXToAftermath();
+
 private:
 
 	/** 2페이즈 진입 때 Brain을 우리가 멈췄는지 (타이머 종료 시 재시작용). */

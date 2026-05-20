@@ -67,26 +67,39 @@ public:
 	bool bRetainPhase2SkinDuringDissolve = true;
 
 	/**
-	 * [Phase2RetainSkinV2] 갤럭시 머터리얼 자체에 노출된 dissolve 진행 scalar 파라미터 이름.
-	 *   M_ScreenUV_Galaxy 의 "Dissolve_Edge" — 0(완전히 보임) → 1(완전히 사라짐).
-	 *   PIE 에서 0/1 양극단 확인 후 방향 반대면 코드에서 1-Alpha 로 invert 만 하면 됨.
+	 * [Phase2RetainSkinV2 / ParamFix] 갤럭시(2페이즈) 피부의 dissolve 진행 scalar 파라미터 이름.
+	 *   실제 2페이즈 피부 = MI_BossPhase2_Body_Galaxy → 베이스 M_Mannequin_01.
+	 *   M_Mannequin_01 의 dissolve scalar 는 "Animation" (0=솔리드 → 1=완전히 사라짐) — 다른
+	 *   슬롯(갑옷/총/머리) 의 DissolveAnimationParamName 과 동일. (구버전은 M_ScreenUV_Galaxy 의
+	 *   "Dissolve_Edge" 로 잘못 지정돼 있어 존재하지 않는 파라미터를 driving → 피부가 안 녹았음.)
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="BossDissolve|Materials",
 		meta=(DisplayName="Phase 2 갤럭시 Dissolve scalar 이름"))
-	FName Phase2GalaxyDissolveParamName = FName(TEXT("Dissolve_Edge"));
+	FName Phase2GalaxyDissolveParamName = FName(TEXT("Animation"));
 
-	/** Phase 2 갤럭시 머터리얼의 edge color (HDR) — 보스 보라톤 매칭용. */
+	/** Phase 2 갤럭시 머터리얼의 edge color — M_Mannequin_01 의 벡터 파라미터 "Edge Color". */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="BossDissolve|Materials",
 		meta=(DisplayName="Phase 2 갤럭시 Edge Color"))
-	FName Phase2GalaxyEdgeColorParamName = FName(TEXT("Color_D_EdgeEmissive"));
+	FName Phase2GalaxyEdgeColorParamName = FName(TEXT("Edge Color"));
 
 	/**
-	 * [Phase2RetainSkinV2] true=Dissolve_Edge 0→1 (정방향), false=1→0 (역방향).
-	 *   M_ScreenUV_Galaxy 의 Dissolve_Edge 가 어느 방향에 fully visible 인지 확인 후 토글.
+	 * [Phase2RetainSkinV2] true=Animation 0→1 (정방향: 솔리드→사라짐), false=1→0 (역방향).
+	 *   M_Mannequin_01 의 Animation 은 0=솔리드라 정방향이 맞음.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="BossDissolve|Materials",
-		meta=(DisplayName="Phase 2 Dissolve_Edge 정방향 (true=0→1, false=1→0)"))
+		meta=(DisplayName="Phase 2 Dissolve 정방향 (true=0→1, false=1→0)"))
 	bool bPhase2GalaxyDissolveForward = true;
+
+	/**
+	 * [Phase2GlowFadeV1] 2페이즈 피부 발광(M_Mannequin_01 의 "Phase2SkinGlow" 스칼라) 파라미터 이름.
+	 *   dissolve 진행 중 발광을 0 으로 페이드아웃 → 피부가 녹는 모습이 발광에 묻히지 않게.
+	 *
+	 *   NOTE: 일부러 UPROPERTY 가 아님. UActorComponent 의 reflected 프로퍼티를 추가/제거하면
+	 *   컴포넌트 레이아웃이 바뀌어, 쿡(-nocompileeditor 로 옛 에디터 바이너리가 굽는 경우) 데이터와
+	 *   런타임 exe 가 불일치 → unversioned property 직렬화 크래시(MappedName assert). 고정 이름이라
+	 *   에디터 노출 불필요하므로 비reflected 일반 멤버로 둔다.
+	 */
+	FName Phase2GalaxySkinGlowParamName = FName(TEXT("Phase2SkinGlow"));
 
 	/** Stage 1 VFX (가루) — TriggerDissolve 시점에 즉시 attach. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="BossDissolve|VFX",
@@ -164,6 +177,9 @@ private:
 	/** [Phase2RetainSkinV2] 갤럭시 자체 dissolve driving용 MID array (별도 paramName 사용). */
 	UPROPERTY()
 	TArray<UMaterialInstanceDynamic*> Phase2GalaxyMIDs;
+
+	/** [Phase2GlowFadeV1] dissolve 시작 시점의 피부 발광 값 — tick 에서 (1-Alpha) 로 페이드아웃. */
+	float Phase2GalaxyInitialGlow = 0.f;
 
 	UPROPERTY()
 	TObjectPtr<UNiagaraComponent> SpawnedVFX_Stage1 = nullptr;

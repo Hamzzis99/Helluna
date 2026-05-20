@@ -42,6 +42,20 @@ void UEnemyGameplayAbility_BossDeath::ActivateAbility(
 		return;
 	}
 
+	// [DeathAnimRateGuardV1] 죽음 몬타주가 외부 freeze(StasisSalvo RealityFractureZone 등)에 의해
+	//   GlobalAnimRateScale 0 으로 정지된 채 시작하지 않도록 강제 복원. freeze 된 채면 몬타주가
+	//   진행되지 않아 85% 도달 못 함 → TriggerDissolve·사망처리가 데드락된다.
+	if (USkeletalMeshComponent* DeathMesh = Enemy->GetMesh())
+	{
+		if (DeathMesh->GlobalAnimRateScale < 1.f)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[BossDeathV1] GlobalAnimRateScale=%.3f 였음 → 1.0 강제 복원 (외부 freeze 방어)"),
+				DeathMesh->GlobalAnimRateScale);
+			DeathMesh->GlobalAnimRateScale = 1.f;
+		}
+	}
+
 	UAnimMontage* DeathMontage = Enemy->DeathMontage;
 	if (!DeathMontage)
 	{

@@ -20,6 +20,20 @@
 #include "Character/HellunaEnemyCharacter.h"
 #include "Character/HellunaEnemyCharacter_Boss.h"
 
+// [BossDissolveDiagV1] 패키지 멀티플레이 사망 피부 사라짐 진단 — netmode 문자열.
+static const TCHAR* DissolveDiag_NetModeStr(const UWorld* W)
+{
+	if (!W) return TEXT("NoWorld");
+	switch (W->GetNetMode())
+	{
+		case NM_Standalone:      return TEXT("Standalone");
+		case NM_Client:          return TEXT("Client");
+		case NM_ListenServer:    return TEXT("Listen");
+		case NM_DedicatedServer: return TEXT("DedSrv");
+		default:                 return TEXT("?");
+	}
+}
+
 UBossDissolveComponent::UBossDissolveComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
@@ -65,6 +79,9 @@ void UBossDissolveComponent::TriggerDissolve()
 // ============================================================
 void UBossDissolveComponent::Multicast_StartDissolve_Implementation()
 {
+	UE_LOG(LogTemp, Warning, TEXT("[BossDissolveDiag][%s] Multicast_StartDissolve RECEIVED on %s (t=%.2f)"),
+		DissolveDiag_NetModeStr(GetWorld()), *GetNameSafe(GetOwner()),
+		GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0);
 	StartDissolveLocal();
 }
 
@@ -125,6 +142,23 @@ void UBossDissolveComponent::StartDissolveLocal()
 		return;
 	}
 
+	// [BossDissolveDiagV1] dissolve 시작 시점 상태 스냅샷 — 각 머신. 이미 안 보이면 hide 가 더 이른 시점.
+	{
+		bool bBossInPhase2Diag = false;
+		if (AHellunaEnemyCharacter_Boss* BD = Cast<AHellunaEnemyCharacter_Boss>(Owner))
+		{
+			bBossInPhase2Diag = BD->bInPhase2;
+		}
+		UE_LOG(LogTemp, Warning,
+			TEXT("[BossDissolveDiag][%s] StartDissolveLocal — Owner=%s OwnerHidden=%d MeshVisible=%d bInPhase2=%d Slots=%d t=%.2f"),
+			DissolveDiag_NetModeStr(World), *GetNameSafe(Owner),
+			Owner->IsHidden() ? 1 : 0,
+			Mesh->IsVisible() ? 1 : 0,
+			bBossInPhase2Diag ? 1 : 0,
+			Mesh->GetNumMaterials(),
+			World->GetTimeSeconds());
+	}
+
 	// [BossDissolveComponentV1_Phase2] Phase 2 감지 — 보스가 광폭화 상태일 때 dissolve 머티리얼이
 	//   Phase 1 텍스처를 사용하므로 (M_Mannequin_01 + 원본 BaseColor) 색감이 광폭화 cosmic 외관과
 	//   안 맞음. Tint 파라미터로 어둡게 깔아서 광폭화 mood 와 시각 연속성 유지.
@@ -147,6 +181,9 @@ void UBossDissolveComponent::StartDissolveLocal()
 	const int32 SlotCount = Mesh->GetNumMaterials();
 	for (int32 i = 0; i < SlotCount; ++i)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[BossDissolveDiag][%s]  slot %d — currentMat=%s"),
+			DissolveDiag_NetModeStr(World), i, *GetNameSafe(Mesh->GetMaterial(i)));
+
 		// [Phase2RetainSkinV2] Phase 2 광폭화 갤럭시 슬롯 우선 처리.
 		//   bRetainPhase2SkinDuringDissolve=true 면 갤럭시 머터리얼 자체 Dissolve_Edge 파라미터를
 		//   driving (M_ScreenUV_Galaxy 가 이미 Masked 블렌드 + Dissolve_Edge/Color_D_EdgeEmissive 보유).
@@ -167,6 +204,9 @@ void UBossDissolveComponent::StartDissolveLocal()
 					GalaxyMID->SetScalarParameterValue(Phase2GalaxyDissolveParamName, StartVal);
 					GalaxyMID->SetVectorParameterValue(Phase2GalaxyEdgeColorParamName, DissolveEdgeColor);
 
+					// [Phase2GlowFadeV1] dissolve 시작 시점의 피부 발광 값 캡처 → tick 에서 0 으로 페이드아웃.
+					Phase2GalaxyInitialGlow = GalaxyMID->K2_GetScalarParameterValue(Phase2GalaxySkinGlowParamName);
+
 					UE_LOG(LogTemp, Warning,
 						TEXT("[BossDissolveComp] Slot %d — Phase2 Galaxy self-dissolve MID (start=%.2f, forward=%d)"),
 						i, StartVal, bPhase2GalaxyDissolveForward ? 1 : 0);
@@ -177,13 +217,22 @@ void UBossDissolveComponent::StartDissolveLocal()
 
 		UMaterialInterface* SrcMat = (DissolveMaterialOverrides.IsValidIndex(i))
 			? DissolveMaterialOverrides[i] : nullptr;
-		if (!SrcMat) continue;
+		if (!SrcMat)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[BossDissolveDiag][%s]  slot %d — no DissolveMaterialOverride → slot kept as-is"),
+				DissolveDiag_NetModeStr(World), i);
+			continue;
+		}
 
 		UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(SrcMat, Owner);
 		if (!MID) continue;
 
 		Mesh->SetMaterial(i, MID);
 		DissolveMIDs.Add(MID);
+		UE_LOG(LogTemp, Warning,
+			TEXT("[BossDissolveDiag][%s]  slot %d — swapped to dissolve override MID (src=%s)"),
+			DissolveDiag_NetModeStr(World), i, *GetNameSafe(SrcMat));
 
 		MID->SetVectorParameterValue(TEXT("Edge Color"), DissolveEdgeColor);
 		MID->SetScalarParameterValue(DissolveAnimationParamName, 0.f);
@@ -344,6 +393,24 @@ void UBossDissolveComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 	const float WallElapsed = static_cast<float>(World->GetTimeSeconds() - DissolveStartWallTime);
 	const float Alpha = FMath::Clamp(WallElapsed / FMath::Max(0.1f, DissolveDuration), 0.f, 1.f);
 
+	// [BossDissolveDiagV1] 1초 간격 visibility/dissolve-param 스냅샷 (각 머신).
+	if (FMath::FloorToInt(WallElapsed) != FMath::FloorToInt(WallElapsed - DeltaTime))
+	{
+		AActor* DOwner = GetOwner();
+		USkeletalMeshComponent* DMesh = DOwner ? DOwner->FindComponentByClass<USkeletalMeshComponent>() : nullptr;
+		float GalaxyEdge = -1.f;
+		if (Phase2GalaxyMIDs.Num() > 0 && Phase2GalaxyMIDs[0])
+		{
+			GalaxyEdge = Phase2GalaxyMIDs[0]->K2_GetScalarParameterValue(Phase2GalaxyDissolveParamName);
+		}
+		UE_LOG(LogTemp, Warning,
+			TEXT("[BossDissolveDiag][%s] tick t=%.1f Alpha=%.2f OwnerHidden=%d MeshVisible=%d GalaxyEdge=%.3f DissolveMIDs=%d GalaxyMIDs=%d"),
+			DissolveDiag_NetModeStr(World), WallElapsed, Alpha,
+			(DOwner && DOwner->IsHidden()) ? 1 : 0,
+			(DMesh && DMesh->IsVisible()) ? 1 : 0,
+			GalaxyEdge, DissolveMIDs.Num(), Phase2GalaxyMIDs.Num());
+	}
+
 	for (UMaterialInstanceDynamic* MID : DissolveMIDs)
 	{
 		if (MID)
@@ -359,6 +426,8 @@ void UBossDissolveComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 		if (GMID)
 		{
 			GMID->SetScalarParameterValue(Phase2GalaxyDissolveParamName, GalaxyVal);
+			// [Phase2GlowFadeV1] 피부 발광을 dissolve 진행에 따라 0 으로 페이드 — 녹는 모습이 발광에 묻히지 않게.
+			GMID->SetScalarParameterValue(Phase2GalaxySkinGlowParamName, Phase2GalaxyInitialGlow * (1.f - Alpha));
 		}
 	}
 
