@@ -10,6 +10,9 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/Pawn.h"
 #include "Engine/World.h"
+#include "Engine/HitResult.h"
+#include "CollisionQueryParams.h"
+#include "HAL/IConsoleManager.h"
 #include "TimerManager.h"
 
 ABossDeathCinematicTrigger::ABossDeathCinematicTrigger()
@@ -79,30 +82,41 @@ void ABossDeathCinematicTrigger::Multicast_StartCinematic_Implementation(APawn* 
 	UWorld* World = GetWorld();
 	if (!World) return;
 
+	// [BossDeathCamNearClipV1] 사망 클로즈업 동안 near clip plane 을 2cm 로 낮춤 (기본 10cm).
+	//   거대 보스(스케일 2.2) 의 얼굴/몸에 카메라가 접근할 때 near-plane 이 보스를 잘라내는
+	//   순간 끊김을 방지. EndCinematic 에서 10cm 로 복원. 양면 머티리얼이 못 잡는 케이스 =
+	//   near-plane 클리핑(픽셀 단위 컬링이라 양면 무관).
+	if (IConsoleVariable* NCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.SetNearClipPlane")))
+	{
+		NCVar->Set(2.f);
+	}
+
 	// =========================================================
 	// 카메라 spawn — 첫 Tick 위치 = head 본 기준 face close-up
 	// =========================================================
 	const FVector BossLoc = Boss->GetActorLocation();
-	const FVector Forward = Boss->GetActorForwardVector();
-	const FVector Right = Boss->GetActorRightVector();
-	const FVector Up = Boss->GetActorUpVector();
 
 	// 초기 anchor — head 본이 있으면 head, 없으면 보스 위치 + 기본 90cm.
+	//   [BossDeathCamHeadFrameV1] 카메라 오프셋 basis 를 보스 액터 축이 아니라 head 본의 회전
+	//   기준으로 적용 — 보스가 쓰러져 머리가 기울어도 카메라가 항상 얼굴 정면에 위치 →
+	//   카메라가 쓰러진 몸통 안으로 들어가지 않음. (FaceOffset 은 head 본 로컬 프레임 기준)
 	FVector Anchor = BossLoc + FVector(0.f, 0.f, 90.f);
+	FQuat HeadQuat = Boss->GetActorQuat();
 	if (ACharacter* BossChar = Cast<ACharacter>(Boss))
 	{
 		if (USkeletalMeshComponent* SkelMesh = BossChar->GetMesh())
 		{
 			if (HeadBoneName != NAME_None && SkelMesh->DoesSocketExist(HeadBoneName))
 			{
-				const FVector HeadLoc = SkelMesh->GetSocketLocation(HeadBoneName);
-				Anchor = FMath::Lerp(BossLoc + FVector(0.f, 0.f, 90.f), HeadLoc, FMath::Clamp(HeadFollowAlpha, 0.f, 1.f));
+				const FTransform HeadXform = SkelMesh->GetSocketTransform(HeadBoneName);
+				Anchor = FMath::Lerp(BossLoc + FVector(0.f, 0.f, 90.f), HeadXform.GetLocation(), FMath::Clamp(HeadFollowAlpha, 0.f, 1.f));
+				HeadQuat = HeadXform.GetRotation();
 			}
 		}
 	}
 
-	const FVector StartCamLoc = Anchor + Forward * FaceOffset.X + Right * FaceOffset.Y + Up * FaceOffset.Z;
-	const FVector StartLookTarget = Anchor + FVector(0.f, 0.f, LookAtZOffset);
+	const FVector StartCamLoc = Anchor + HeadQuat.RotateVector(FaceOffset);
+	const FVector StartLookTarget = Anchor + HeadQuat.RotateVector(FVector(0.f, 0.f, LookAtZOffset));
 	const FRotator StartLookAt = (StartLookTarget - StartCamLoc).Rotation();
 
 	FActorSpawnParameters CamParams;
@@ -160,6 +174,12 @@ void ABossDeathCinematicTrigger::Multicast_EndCinematic_Implementation()
 	UWorld* World = GetWorld();
 	if (!World) return;
 
+	// [BossDeathCamNearClipV1] near clip plane 을 기본값(10cm) 으로 복원.
+	if (IConsoleVariable* NCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.SetNearClipPlane")))
+	{
+		NCVar->Set(10.f);
+	}
+
 	// 로컬 PC ExitBossCinematic
 	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
 	{
@@ -202,27 +222,27 @@ void ABossDeathCinematicTrigger::Tick(float DeltaTime)
 	APawn* Boss = ActiveBoss.Get();
 	if (!Boss) return;
 
-	// 매 Tick 카메라를 boss orientation + head bone 위치에 맞춰 갱신.
+	// [BossDeathCamHeadFrameV1] 매 Tick 카메라를 head bone 의 위치+회전에 맞춰 갱신 —
+	//   오프셋 basis 가 head 본 회전이라 보스가 어떻게 쓰러져도 카메라가 얼굴 정면 유지.
 	const FVector BossLoc = Boss->GetActorLocation();
-	const FVector Forward = Boss->GetActorForwardVector();
-	const FVector Right = Boss->GetActorRightVector();
-	const FVector Up = Boss->GetActorUpVector();
 
 	FVector Anchor = BossLoc + FVector(0.f, 0.f, 90.f);
+	FQuat HeadQuat = Boss->GetActorQuat();
 	if (ACharacter* BossChar = Cast<ACharacter>(Boss))
 	{
 		if (USkeletalMeshComponent* SkelMesh = BossChar->GetMesh())
 		{
 			if (HeadBoneName != NAME_None && SkelMesh->DoesSocketExist(HeadBoneName))
 			{
-				const FVector HeadLoc = SkelMesh->GetSocketLocation(HeadBoneName);
-				Anchor = FMath::Lerp(BossLoc + FVector(0.f, 0.f, 90.f), HeadLoc, FMath::Clamp(HeadFollowAlpha, 0.f, 1.f));
+				const FTransform HeadXform = SkelMesh->GetSocketTransform(HeadBoneName);
+				Anchor = FMath::Lerp(BossLoc + FVector(0.f, 0.f, 90.f), HeadXform.GetLocation(), FMath::Clamp(HeadFollowAlpha, 0.f, 1.f));
+				HeadQuat = HeadXform.GetRotation();
 			}
 		}
 	}
 
-	const FVector RawCamLoc = Anchor + Forward * FaceOffset.X + Right * FaceOffset.Y + Up * FaceOffset.Z;
-	const FVector LookTarget = Anchor + FVector(0.f, 0.f, LookAtZOffset);
+	const FVector RawCamLoc = Anchor + HeadQuat.RotateVector(FaceOffset);
+	const FVector LookTarget = Anchor + HeadQuat.RotateVector(FVector(0.f, 0.f, LookAtZOffset));
 
 	// [CinematicCameraOcclusionV1] G — Ground Z floor.
 	//   사망 시네마틱이 head 본을 따라가다 보스가 쓰러지면 카메라가 land 와 같은 높이로 내려가
@@ -232,9 +252,70 @@ void ABossDeathCinematicTrigger::Tick(float DeltaTime)
 	IgnoreActors.Reserve(2);
 	IgnoreActors.Add(Boss);
 	IgnoreActors.Add(LocalCameraActor.Get());
-	const FVector CamLoc = BossCinematicCameraUtils::ClampCameraAboveGround(
-		this, RawCamLoc, BossLoc, IgnoreActors, /*MarginZ=*/100.f);
+	// [BossDeathGroundMarginV1] MarginZ 를 100 → 25 로 축소. 100 은 머리가 바닥 근처(Z~80) 로
+	//   떨어지는 사망 클로즈업에서 카메라를 머리 위 ~1m 까지 강제로 들어올려, 의도한 face
+	//   close-up 대신 멀리서 보는 탑다운이 돼 보스가 작게 보이고 잠깐씩 가림에도 "사라진"
+	//   것처럼 보임 (패키지 로그 확인). 25 면 머리를 따라 내려갈 수 있으면서 지면 침투는 방지.
+	FVector CamLoc = BossCinematicCameraUtils::ClampCameraAboveGround(
+		this, RawCamLoc, BossLoc, IgnoreActors, /*MarginZ=*/25.f);
+
+	// [BossDeathCamOccluderV1] 머리→카메라 라인에 지형/액터가 끼면 카메라를 그 앞쪽으로 당김.
+	//   ClampCameraAboveGround 는 카메라 Z 만 처리 → 카메라가 언덕/벽 뒤로 들어가는 경우는 못 잡음 →
+	//   패키지에서 맵에 따라 보스가 간헐적으로 가려지는 문제 발생. ECC_Visibility 트레이스로
+	//   지형(Landscape)+액터 가림을 잡아 카메라를 가림 직전으로 끌어옴. 너무 보스에 붙지 않게 최소
+	//   거리 보장. (양면 머티리얼이 못 잡는 케이스 = 카메라가 보스 안이 아니라 지형 뒤에 있을 때)
+	if (UWorld* OccWorld = GetWorld())
+	{
+		FCollisionQueryParams OccParams(SCENE_QUERY_STAT(BossDeathCamOccluder), false);
+		OccParams.bTraceComplex = false;
+		OccParams.AddIgnoredActor(Boss);
+		if (AActor* CamAct = LocalCameraActor.Get()) OccParams.AddIgnoredActor(CamAct);
+		FHitResult OccHit;
+		if (OccWorld->LineTraceSingleByChannel(OccHit, LookTarget, CamLoc, ECC_Visibility, OccParams))
+		{
+			constexpr float OccMargin = 15.f;
+			constexpr float MinDistFromTarget = 30.f;
+			const FVector OccDir = (CamLoc - LookTarget).GetSafeNormal();
+			FVector Pushed = OccHit.ImpactPoint - OccDir * OccMargin;
+			if (FVector::Dist(Pushed, LookTarget) < MinDistFromTarget)
+			{
+				Pushed = LookTarget + OccDir * MinDistFromTarget;
+			}
+			CamLoc = Pushed;
+		}
+	}
 
 	const FRotator NewRot = (LookTarget - CamLoc).Rotation();
 	LocalCameraActor->SetActorLocationAndRotation(CamLoc, NewRot);
+
+	// [BossDeathCamDiagV1] 사망 카메라 진단 — 보스 투명화가 카메라 클램프/near-clip 과
+	//   연관 있는지 확인. ClampCameraAboveGround 가 카메라를 보스 메시 박스 안으로 밀어넣으면
+	//   카메라 near-clip 평면이 보스를 잘라내 "완전 투명" 으로 보임.
+	//   CamInMeshBox=1 또는 DistToMeshBox 가 near-clip(~10cm) 이하면 그게 원인.
+	if (UWorld* DiagWorld = GetWorld())
+	{
+		const double Now = DiagWorld->GetTimeSeconds();
+		static double LastDeathCamDiag = -100.0;
+		if (Now - LastDeathCamDiag >= 0.2)
+		{
+			LastDeathCamDiag = Now;
+			const bool bClamped = !FMath::IsNearlyEqual(RawCamLoc.Z, CamLoc.Z, 1.0f);
+			float CamInMeshBox = 0.f;
+			float DistToMeshBox = -1.f;
+			if (ACharacter* DiagChar = Cast<ACharacter>(Boss))
+			{
+				if (USkeletalMeshComponent* DiagSK = DiagChar->GetMesh())
+				{
+					const FBox MeshBox = DiagSK->Bounds.GetBox();
+					CamInMeshBox = MeshBox.IsInside(CamLoc) ? 1.f : 0.f;
+					DistToMeshBox = FMath::Sqrt(MeshBox.ComputeSquaredDistanceToPoint(CamLoc));
+				}
+			}
+			UE_LOG(LogTemp, Warning,
+				TEXT("[BossDeathCamDiag] t=%.2f Clamped=%d Cam->Head=%.1f Cam->Boss=%.1f CamInMeshBox=%.0f DistToMeshBox=%.1f HeadZ=%.1f CamZ=%.1f RawCamZ=%.1f"),
+				Now, bClamped ? 1 : 0,
+				FVector::Dist(CamLoc, Anchor), FVector::Dist(CamLoc, BossLoc),
+				CamInMeshBox, DistToMeshBox, Anchor.Z, CamLoc.Z, RawCamLoc.Z);
+		}
+	}
 }
