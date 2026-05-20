@@ -797,6 +797,20 @@ void AHellunaHeroCharacter::Cheat_KillAll()
 	}
 }
 
+// [GodModeCheat-V1] 콘솔 명령 — F7 키가 막혔을 때 ` 콘솔에서 무적 토글
+void AHellunaHeroCharacter::Cheat_GodMode()
+{
+	UE_LOG(LogTemp, Warning, TEXT("[cheatdebug][GodMode] Cheat_GodMode 콘솔 명령 실행"));
+	if (CheatComponent)
+	{
+		CheatComponent->HandleKey_GodMode();
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("[cheatdebug][GodMode] CheatComponent가 nullptr이라 GodMode 실패"));
+	}
+}
+
 void AHellunaHeroCharacter::PossessedBy(AController* NewController)
 {
 	Super::PossessedBy(NewController);

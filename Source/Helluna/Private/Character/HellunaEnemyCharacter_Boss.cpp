@@ -31,6 +31,7 @@
 #include "Animation/SkeletalMeshActor.h"
 #include "Engine/SkeletalMesh.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "GameFramework/ProjectileMovementComponent.h"
 #include "GameFramework/RotatingMovementComponent.h"
 
@@ -92,6 +93,32 @@ void AHellunaEnemyCharacter_Boss::GetLifetimeReplicatedProps(TArray<FLifetimePro
 	// [Phase2ExtraBarV1] client widget 이 별도 추가 바 percent 를 계산할 때 사용.
 	DOREPLIFETIME(AHellunaEnemyCharacter_Boss, Phase2HealthFillOldMax);
 	DOREPLIFETIME(AHellunaEnemyCharacter_Boss, Phase2HealthFillNewMax);
+}
+
+// ============================================================
+// [BossDebugStartPhase2V1] 디버그 — 스폰 직후 2페이즈 강제 진입
+// ============================================================
+void AHellunaEnemyCharacter_Boss::BeginPlay()
+{
+	Super::BeginPlay();
+
+	// bDebugStartInPhase2 가 켜져 있으면 1페이즈 전투를 건너뛰고 바로 2페이즈 보스/사망을
+	//   테스트할 수 있게 스폰 직후 EnterBossPhase2 호출. AI possess / ASC / HealthComponent
+	//   초기화를 기다리려 1초 지연. 서버 권한에서만.
+	if (bDebugStartInPhase2 && bHasPhase2 && HasAuthority())
+	{
+		FTimerHandle DebugStartP2Timer;
+		GetWorldTimerManager().SetTimer(DebugStartP2Timer,
+			FTimerDelegate::CreateWeakLambda(this, [this]()
+			{
+				if (bInPhase2) return;
+				UE_LOG(LogTemp, Warning,
+					TEXT("[BossDebugStartPhase2V1] %s — bDebugStartInPhase2=true → 스폰 직후 2페이즈 강제 진입"),
+					*GetNameSafe(this));
+				EnterBossPhase2();
+			}),
+			1.0f, false);
+	}
 }
 
 // ============================================================
@@ -179,20 +206,20 @@ void AHellunaEnemyCharacter_Boss::EnterBossPhase2()
 		}
 	}
 
-	// 6) 시네마틱 무적 — 타이머 종료 시 무적 해제 + Brain 재시작
+	// 6) 시네마틱 무적 — 타이머 종료 시 무적 해제.
+	//   [BossDebugStartPhase2V1] 디버그 시작 모드는 무적 지속을 12초로 단축 — 변신 연출(~9초)을
+	//   덮어 변신 중 피격/스태거를 막되 곧 죽일 수 있게. (무적을 아예 끄면 HP=1 상태에서 HP-fill
+	//   도중 피격돼 보스가 비정상 동작하므로 반드시 무적은 유지한다.)
 	SetCanBeDamaged(false);
 	GetWorldTimerManager().SetTimer(Phase2InvulnerabilityTimer,
 		FTimerDelegate::CreateWeakLambda(this, [this]()
 		{
 			SetCanBeDamaged(true);
-			// [Phase2BrainResumeV1] Brain 재가동 + Phase2Descent NC + Montage 정리는 시네마틱 트리거의
-			//   Multicast_EndCinematic + 0.5s 가 단독 책임. 여기서는 데미지 면역만 풀음.
-			// [Phase2ShakeCleanupV2] 서버 측 fallback — 카메라 쉐이크 정리 (server only).
-			//   Multicast_EndCinematic 에서 모든 머신 정리하지만 server 도 안전망.
+			// [Phase2BrainResumeV1] Brain 재가동 등은 시네마틱 트리거 책임. 여기서는 면역만 풀음.
 			StopPhase2Shakes();
 			UE_LOG(LogTemp, Warning, TEXT("[BossPhase2V1] Invulnerability ended — damage enabled, shake cleaned (server)"));
 		}),
-		FMath::Max(Phase2InvulnerabilityDuration, 0.1f), false);
+		bDebugStartInPhase2 ? 12.f : FMath::Max(Phase2InvulnerabilityDuration, 0.1f), false);
 
 	// 7) [Phase2RefactorV1] EnterEnraged 호출은 Multicast 의 Stage3 timer (Phase2StunDuration 후) 에서.
 	UE_LOG(LogTemp, Warning,
@@ -217,7 +244,8 @@ void AHellunaEnemyCharacter_Boss::Multicast_PlayBossPhase2Transition_Implementat
 	//   서버에서만 Spawn + TryActivate. 트리거가 Multicast 로 자기 카메라/대사 처리.
 	// =========================================================
 	// [BossDebugSkipV1] GameMode 통합 토글 OR 로컬 토글.
-	bool bSkipPhase2Cinematic = bDebugSkipPhase2Cinematic;
+	//   [BossDebugStartPhase2V1] 디버그 시작 모드면 시네마틱도 무조건 스킵.
+	bool bSkipPhase2Cinematic = bDebugSkipPhase2Cinematic || bDebugStartInPhase2;
 	if (AHellunaDefenseGameMode* GM = World->GetAuthGameMode<AHellunaDefenseGameMode>())
 	{
 		bSkipPhase2Cinematic = bSkipPhase2Cinematic || GM->bDebugSkipBossPhase2Cinematic;
@@ -250,7 +278,8 @@ void AHellunaEnemyCharacter_Boss::Multicast_PlayBossPhase2Transition_Implementat
 	// =========================================================
 	// 기절 몽타주 — 모든 머신
 	// =========================================================
-	if (Phase2StunMontage)
+	// [BossDebugStartPhase2V1] 디버그 시작 모드면 기절 몽타주 스킵 — 바로 광폭화 비주얼로.
+	if (Phase2StunMontage && !bDebugStartInPhase2)
 	{
 		if (USkeletalMeshComponent* SkelMesh = GetMesh())
 		{
@@ -272,13 +301,13 @@ void AHellunaEnemyCharacter_Boss::Multicast_PlayBossPhase2Transition_Implementat
 			{
 				AHellunaEnemyCharacter_Boss* Self = WeakSelfStage3.Get();
 				if (!Self) return;
-				if (Self->HasAuthority())
-				{
-					Self->EnterEnraged();
-				}
+				// [Phase2EnrageDelayV2] EnterEnraged(광폭화 몽타주)는 Phase2_PlayStage3Visuals 안의
+				//   지연 타이머(갑옷 메시 swap 과 동일 시점)로 이동했다 — 분리하면 메시 swap 이
+				//   진행 중 기절 몽타주를 재시작해 첫 애니가 2번 재생되는 버그가 생긴다.
 				Self->Phase2_PlayStage3Visuals();
 			}),
-			FMath::Max(0.2f, Phase2StunDuration), false);
+			// [BossDebugStartPhase2V1] 디버그 시작 모드면 스턴 대기 없이 ~0.2초 후 광폭화 비주얼.
+			bDebugStartInPhase2 ? 0.2f : FMath::Max(0.2f, Phase2StunDuration), false);
 	}
 
 	OnBossEnterPhase2.Broadcast();
@@ -1049,6 +1078,16 @@ void AHellunaEnemyCharacter_Boss::Phase2_BreakArmor()
 				TEXT("[BossArmorBreakV1] Body mesh swapped to %s on %s (NetMode=%d)"),
 				*GetNameSafe(Body), *GetNameSafe(this), (int32)GetNetMode());
 
+			// [BossDeathCullFixV1] SK_body 는 physics asset 이 없어 (1페이즈 SK_FuturisticWarrior 와
+			//   달리) 렌더 bounds 가 RefreshBoneTransforms 시에만 갱신된다. 메시 컴포넌트의
+			//   VisibilityBasedAnimTickOption 기본값이 OnlyTickMontagesWhenNotRendered 라서,
+			//   사망 클로즈업처럼 좁은 frustum 에서 한 프레임만 컬링돼도 → 본 갱신 중단 → bounds 가
+			//   옛 위치에 stale → frustum 밖 → 계속 컬링되는 악순환에 빠진다 (보스가 통째로 안 보임,
+			//   넓은 카메라가 잡아줘야 풀림 = "카메라 거리에 따라 사라짐"). AlwaysTickPoseAndRefreshBones
+			//   로 항상 bounds 를 갱신해 악순환을 끊는다. 보스는 1개 액터라 비용 무시 가능.
+			BossMesh->VisibilityBasedAnimTickOption =
+				EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+
 			// [BossBerserkSkinV2] 피부 머터리얼은 Phase2BerserkSkinDelay 초 후 적용.
 			//   VFX 생성 후 약간 뒤에 피부 변화 → 시각적 임팩트.
 			if (!Phase2BerserkSkinMaterial.IsNull())
@@ -1100,6 +1139,11 @@ void AHellunaEnemyCharacter_Boss::Phase2_BreakArmor()
 			AttachComp->SetCanEverAffectNavigation(false);
 			AttachComp->bDisableClothSimulation = true;
 			AttachComp->SetupAttachment(BossMesh);
+			// [BossDeathCullFixV2] keep-armor(바지/다리갑옷) 도 physics asset 이 없어 SK_body 와
+			//   동일한 bounds 컬링 악순환에 빠진다 — 사망 클로즈업에서 바지만 사라짐. 부모(SK_body)
+			//   의 bounds 를 그대로 쓰게 해 부모와 함께 컬링되도록 → SK_body 가 안 컬링되니 바지도
+			//   안 사라진다. (keep-armor 는 LeaderPose 로 부모 자세를 따라가므로 부모 bounds 안에 들어옴)
+			AttachComp->bUseAttachParentBound = true;
 			AttachComp->RegisterComponent();
 			AttachComp->AttachToComponent(BossMesh, FAttachmentTransformRules::KeepRelativeTransform);
 			AttachComp->SetLeaderPoseComponent(BossMesh, /*bForceUpdate*/ true);
@@ -1308,9 +1352,43 @@ void AHellunaEnemyCharacter_Boss::Tick(float DeltaTime)
 		if (USkeletalMeshComponent* SkelMesh_Lift = GetMesh())
 		{
 			DeathMeshLiftElapsed += DeltaTime;
-			const float Dur = FMath::Max(KINDA_SMALL_NUMBER, DeathMontageMeshLiftDuration);
-			const float Alpha = FMath::Clamp(DeathMeshLiftElapsed / Dur, 0.f, 1.f);
-			const float CurOffset = FMath::Lerp(0.f, DeathMontageMeshZOffset, Alpha);
+			// [BossDeathMeshLiftV3] 사망 애니 수직 프로파일 대응 — 부드러운 bump 커브.
+			//   사용자 측정: 몽타주 53~75% 구간에 몸이 땅에 박힘 → 그 구간 풀 오프셋 필요.
+			//   75% 이후엔 +오프셋이 공중부양으로 보임 → 다시 0 으로 내림.
+			//   모든 구간 SmoothStep (C1 연속) — 속도 불연속이 없어 메시가 "툭" 튀어 두 번
+			//   쓰러지는 듯한 hitch 가 안 생김. (선형 꺾임 V2 는 53% 에서 급정지 → hitch 발생)
+			//     0~35%  : 0 → 중간값(풀의 60%) 부드럽게 상승
+			//     35~43% : 중간값 → 풀 부드럽게 상승
+			//     43~58% : 풀 오프셋 유지 (침몰 구간)
+			//     58~76% : 풀 → 0 부드럽게 하강 (최종 자세 공중부양 제거)
+			//     76%~   : 0
+			//   (DeathMontageMeshLiftDuration 은 미사용 — 진행률 기반으로 대체)
+			const float MontageLen = (DeathMontage != nullptr)
+				? FMath::Max(0.1f, DeathMontage->GetPlayLength()) : 2.333f;
+			const float M = FMath::Clamp(DeathMeshLiftElapsed / MontageLen, 0.f, 1.f);
+			const float FullOffset = DeathMontageMeshZOffset;
+			const float MidOffset = FullOffset * 0.6f;
+			float CurOffset;
+			if (M < 0.35f)
+			{
+				CurOffset = MidOffset * FMath::SmoothStep(0.f, 1.f, M / 0.35f);
+			}
+			else if (M < 0.43f)
+			{
+				CurOffset = FMath::Lerp(MidOffset, FullOffset, FMath::SmoothStep(0.f, 1.f, (M - 0.35f) / 0.08f));
+			}
+			else if (M < 0.58f)
+			{
+				CurOffset = FullOffset;
+			}
+			else if (M < 0.76f)
+			{
+				CurOffset = FMath::Lerp(FullOffset, 0.f, FMath::SmoothStep(0.f, 1.f, (M - 0.58f) / 0.18f));
+			}
+			else
+			{
+				CurOffset = 0.f;
+			}
 			FVector NewRel = SkelMesh_Lift->GetRelativeLocation();
 			NewRel.Z = SavedDeathMeshRelZ + CurOffset;
 			SkelMesh_Lift->SetRelativeLocation(NewRel);
@@ -1334,7 +1412,16 @@ void AHellunaEnemyCharacter_Boss::Tick(float DeltaTime)
 				const int32 NumMat = SkelMesh_Lift->GetNumMaterials();
 				for (int32 mi = 0; mi < NumMat; ++mi)
 				{
-					SlotMats += FString::Printf(TEXT("[%d]%s "), mi, *GetNameSafe(SkelMesh_Lift->GetMaterial(mi)));
+					UMaterialInterface* SlotMat = SkelMesh_Lift->GetMaterial(mi);
+						// [BossDeathDiagV2] 슬롯별 dissolve "Animation" 파라미터 실측값도 기록 —
+						//   피부가 투명해지는 순간 무엇이 Animation 을 0 보다 올리는지 추적.
+						//   Animation 이 계속 0 인데도 투명하면 머티리얼 외 원인.
+						float AnimVal = -999.f;
+						if (SlotMat)
+						{
+							SlotMat->GetScalarParameterValue(FMaterialParameterInfo(TEXT("Animation")), AnimVal);
+						}
+						SlotMats += FString::Printf(TEXT("[%d]%s(Anim=%.2f) "), mi, *GetNameSafe(SlotMat), AnimVal);
 				}
 				UE_LOG(LogTemp, Warning,
 					TEXT("[BossDeathDiag][%s] t=%.2f ActorHidden=%d MeshVisible=%d VisFlag=%d Rendered=%d bInPhase2=%d Slots=%d Mats=%s"),
@@ -1477,6 +1564,45 @@ void AHellunaEnemyCharacter_Boss::Tick(float DeltaTime)
 // ============================================================
 // [Phase2StageV1] 단계 3 비주얼 묶음 — 카메라 위 도달 후 호출
 // ============================================================
+// [BossCloneGlowV1] 분신 SkeletalMesh 에 2페이즈 광폭화 발광 적용 — 보스 본인 발광(StartBerserkVisuals)과 동일.
+void AHellunaEnemyCharacter_Boss::ApplyBerserkGlowToMesh(USkeletalMeshComponent* TargetMesh)
+{
+	// 데디케이티드 서버는 시각 효과 불필요
+	if (GetNetMode() == NM_DedicatedServer) return;
+
+	// 2페이즈가 아니면 발광 없음 (분신패턴은 2페이즈 전용이라 평상시엔 true)
+	if (!bInPhase2) return;
+
+	if (!IsValid(TargetMesh)) return;
+
+	USkeletalMeshComponent* SelfMesh = GetMesh();
+	const int32 MaterialCount = TargetMesh->GetNumMaterials();
+
+	for (int32 i = 0; i < MaterialCount; ++i)
+	{
+		// 보스 본인이 현재 쓰는 머티리얼(광폭화 스킨 swap 포함)을 분신에 복사 → 외형 동기화
+		if (IsValid(SelfMesh) && i < SelfMesh->GetNumMaterials())
+		{
+			if (UMaterialInterface* SrcMat = SelfMesh->GetMaterial(i))
+			{
+				TargetMesh->SetMaterial(i, SrcMat);
+			}
+		}
+
+		// 복사한 머티리얼 위에 독립 MID 생성 후 광폭화 발광 파라미터 적용
+		if (UMaterialInstanceDynamic* MID = TargetMesh->CreateAndSetMaterialInstanceDynamic(i))
+		{
+			MID->SetScalarParameterValue(TEXT("EnableBerserk"), 1.f);
+			MID->SetVectorParameterValue(TEXT("BerserkColor"), BerserkGlowColor);
+			MID->SetScalarParameterValue(TEXT("BerserkBoost"), FMath::Max(BerserkGlowBoost, 0.f));
+		}
+	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[BossCloneGlowV1] 분신 발광 적용 — Mesh=%s Color=%s Boost=%.2f Slots=%d"),
+		*GetNameSafe(TargetMesh), *BerserkGlowColor.ToString(), BerserkGlowBoost, MaterialCount);
+}
+
 void AHellunaEnemyCharacter_Boss::Phase2_PlayStage3Visuals()
 {
 	UWorld* World = GetWorld();
@@ -1485,27 +1611,40 @@ void AHellunaEnemyCharacter_Boss::Phase2_PlayStage3Visuals()
 	UE_LOG(LogTemp, Warning, TEXT("[Phase2StageV1] Stage 3 — visuals + enrage on %s (NetMode=%d)"),
 		*GetNameSafe(this), (int32)GetNetMode());
 
-	// [Phase2ShakeRampV1] 카메라 쉐이크 — epicenter 가 하늘 (Boss + StartZ) 에서 보스 (EndZ) 로 lerp.
-	//   거리 falloff 로 자동 강도 ramp up: 멀리서 약하게 시작 → 가까워지며 강해짐.
+	// [Phase2ShakeDelayV1] 카메라 쉐이크는 강하 VFX 보다 Phase2ShakeDelay 초 늦게 시작.
+	//   레이저가 어느 정도 내려온 뒤(grow-in 후) 임팩트 쉐이크가 오도록 — 별도 지연 타이머.
 	if (Phase2TransitionShakeClass)
 	{
-		Phase2ShakeStartTimeSeconds = (float)World->GetTimeSeconds();
-		PlayPhase2RampingShake();
+		TWeakObjectPtr<AHellunaEnemyCharacter_Boss> WeakShake(this);
+		FTimerHandle ShakeStartTimer;
+		World->GetTimerManager().SetTimer(ShakeStartTimer,
+			FTimerDelegate::CreateLambda([WeakShake]()
+			{
+				AHellunaEnemyCharacter_Boss* Self = WeakShake.Get();
+				if (!Self) return;
+				UWorld* W = Self->GetWorld();
+				if (!W) return;
 
-		if (Phase2ShakeRepeatInterval > 0.f)
-		{
-			TWeakObjectPtr<AHellunaEnemyCharacter_Boss> Weak(this);
-			GetWorldTimerManager().ClearTimer(Phase2ShakeRepeatTimer);
-			GetWorldTimerManager().SetTimer(Phase2ShakeRepeatTimer,
-				FTimerDelegate::CreateLambda([Weak]()
+				// [Phase2ShakeRampV1] 카메라 쉐이크 — epicenter 가 하늘에서 보스로 lerp (거리 falloff ramp).
+				Self->Phase2ShakeStartTimeSeconds = (float)W->GetTimeSeconds();
+				Self->PlayPhase2RampingShake();
+
+				if (Self->Phase2ShakeRepeatInterval > 0.f)
 				{
-					if (AHellunaEnemyCharacter_Boss* Self = Weak.Get())
-					{
-						Self->PlayPhase2RampingShake();
-					}
-				}),
-				Phase2ShakeRepeatInterval, true);
-		}
+					TWeakObjectPtr<AHellunaEnemyCharacter_Boss> Weak(Self);
+					Self->GetWorldTimerManager().ClearTimer(Self->Phase2ShakeRepeatTimer);
+					Self->GetWorldTimerManager().SetTimer(Self->Phase2ShakeRepeatTimer,
+						FTimerDelegate::CreateLambda([Weak]()
+						{
+							if (AHellunaEnemyCharacter_Boss* S2 = Weak.Get())
+							{
+								S2->PlayPhase2RampingShake();
+							}
+						}),
+						Self->Phase2ShakeRepeatInterval, true);
+				}
+			}),
+			Phase2ShakeDelay, false);
 	}
 
 	// 발밑 충격파 VFX
@@ -1532,21 +1671,48 @@ void AHellunaEnemyCharacter_Boss::Phase2_PlayStage3Visuals()
 		}
 	}
 
-	// BerserkGlow
-	StartBerserkVisuals(BerserkGlowColor, BerserkGlowBoost);
-
-	// 본체 swap + 갑옷 분리
-	Phase2_BreakArmor();
-
-	// 보스 상시 오라 VFX
-	if (Phase2AuraVFX && !ActivePhase2AuraComp)
+	// [Phase2EnrageDelayV1] 갑옷 벗김 + 피부(광폭화) 변화 + 오라는 레이저 강하보다 늦게 — 별도 지연 타이머.
+	//   레이저(강하 VFX)는 이 함수 호출(Phase2StunDuration) 직후 바로 시작하지만,
+	//   광폭화 외형 변화(StartBerserkVisuals + Phase2_BreakArmor + 오라)는 Phase2ArmorSkinDelay 초 뒤에 적용.
+	//   → Phase2StunDuration 을 줄여 레이저만 빨리 내려오게 해도 갑옷/피부 타이밍은 늦게 유지된다.
 	{
-		USkeletalMeshComponent* BossMesh = GetMesh();
-		UNiagaraComponent* NC = UNiagaraFunctionLibrary::SpawnSystemAttached(
-			Phase2AuraVFX, BossMesh ? (USceneComponent*)BossMesh : (USceneComponent*)GetRootComponent(),
-			NAME_None, FVector::ZeroVector, FRotator::ZeroRotator,
-			EAttachLocation::SnapToTarget, false);
-		ActivePhase2AuraComp = NC;
+		TWeakObjectPtr<AHellunaEnemyCharacter_Boss> WeakEnrage(this);
+		FTimerHandle EnrageVisualTimer;
+		World->GetTimerManager().SetTimer(EnrageVisualTimer,
+			FTimerDelegate::CreateLambda([WeakEnrage]()
+			{
+				AHellunaEnemyCharacter_Boss* Self = WeakEnrage.Get();
+				if (!Self) return;
+
+				// [Phase2EnrageDelayV2] 광폭화 진입(이동속도 + 몽타주) — 갑옷 메시 swap 직전에 호출.
+				//   Phase2_BreakArmor 의 메시 swap 이 진행 중 몽타주를 재시작하므로,
+				//   enrage 몽타주를 막 시작한 직후 swap 되게 같은 타이머에 묶어 재시작이 안 보이게 한다.
+				if (Self->HasAuthority())
+				{
+					Self->EnterEnraged();
+				}
+
+				// BerserkGlow
+				Self->StartBerserkVisuals(Self->BerserkGlowColor, Self->BerserkGlowBoost);
+
+				// 본체 swap + 갑옷 분리
+				Self->Phase2_BreakArmor();
+
+				// 보스 상시 오라 VFX
+				if (Self->Phase2AuraVFX && !Self->ActivePhase2AuraComp)
+				{
+					USkeletalMeshComponent* BossMesh = Self->GetMesh();
+					UNiagaraComponent* NC = UNiagaraFunctionLibrary::SpawnSystemAttached(
+						Self->Phase2AuraVFX, BossMesh ? (USceneComponent*)BossMesh : (USceneComponent*)Self->GetRootComponent(),
+						NAME_None, FVector::ZeroVector, FRotator::ZeroRotator,
+						EAttachLocation::SnapToTarget, false);
+					Self->ActivePhase2AuraComp = NC;
+				}
+
+				UE_LOG(LogTemp, Warning,
+					TEXT("[Phase2EnrageDelayV1] 갑옷/피부/오라 적용 — 레이저 강하 %.1fs 후"), Self->Phase2ArmorSkinDelay);
+			}),
+			Phase2ArmorSkinDelay, false);
 	}
 
 	// Phase2Descent tag NC 활성화 + scale lerp 시작 + lifetime timer
@@ -1561,6 +1727,9 @@ void AHellunaEnemyCharacter_Boss::Phase2_PlayStage3Visuals()
 			if (!NC) continue;
 			if (!NC->ComponentTags.Contains(FName(TEXT("Phase2Descent")))) continue;
 			NC->Activate(true);
+			// [Phase2LaserDelayV1] 레이저 이미터('Empty')는 끈 채로 시작 — 회오리만 먼저 등장.
+			//   아래 타이머가 LaserEmitterDelay 초 뒤에 레이저 이미터를 따로 켠다.
+			NC->SetEmitterEnable(FName(TEXT("Empty")), false);
 			// [Phase2DescentSpeedV1] particle 시뮬 속도 배율 — fall speed 조정.
 			NC->SetCustomTimeDilation(FMath::Clamp(Phase2DescentTimeDilation, 0.1f, 10.f));
 			++ActivatedCount;
@@ -1578,6 +1747,34 @@ void AHellunaEnemyCharacter_Boss::Phase2_PlayStage3Visuals()
 			TEXT("[Phase2DescentNCV1] Activated %d, scaling %.2f→%.2f over %.1fs"),
 			ActivatedCount, Phase2DescentScaleStartMult, Phase2DescentScaleEndMult, Phase2DescentScaleDuration);
 
+		// [Phase2LaserDelayV1] 회오리는 위에서 바로 등장 — 레이저 이미터('Empty')만
+		//   LaserEmitterDelay 초 뒤에 따로 켜서 레이저가 회오리보다 늦게 나오게 한다.
+		if (ActivatedCount > 0)
+		{
+			TWeakObjectPtr<AHellunaEnemyCharacter_Boss> WeakLaser(this);
+			FTimerHandle LaserOnTimer;
+			World->GetTimerManager().SetTimer(LaserOnTimer,
+				FTimerDelegate::CreateLambda([WeakLaser]()
+				{
+					AHellunaEnemyCharacter_Boss* Self = WeakLaser.Get();
+					if (!Self) return;
+					TArray<UNiagaraComponent*> LNCs;
+					Self->GetComponents<UNiagaraComponent>(LNCs);
+					int32 LaserOnCount = 0;
+					for (UNiagaraComponent* LNC : LNCs)
+					{
+						if (LNC && LNC->ComponentTags.Contains(FName(TEXT("Phase2Descent"))))
+						{
+							LNC->SetEmitterEnable(FName(TEXT("Empty")), true);
+							++LaserOnCount;
+						}
+					}
+					UE_LOG(LogTemp, Warning,
+						TEXT("[Phase2LaserDelayV1] 레이저 이미터 ON — 회오리 후 지연 (%d component)"), LaserOnCount);
+				}),
+				Phase2LaserEmitterDelay, false);
+		}
+
 		if (ActivatedCount > 0 && Phase2DescentVFXLifetime > KINDA_SMALL_NUMBER)
 		{
 			TWeakObjectPtr<AHellunaEnemyCharacter_Boss> WeakSelf(this);
@@ -1587,19 +1784,12 @@ void AHellunaEnemyCharacter_Boss::Phase2_PlayStage3Visuals()
 				{
 					AHellunaEnemyCharacter_Boss* Self = WeakSelf.Get();
 					if (!Self) return;
-					Self->bPhase2DescentScaling = false;
-					int32 DeactivatedCount = 0;
-					for (const TWeakObjectPtr<UNiagaraComponent>& WeakNC : Self->Phase2DescentScalingNCs)
-					{
-						UNiagaraComponent* NC = WeakNC.Get();
-						if (NC && NC->IsActive())
-						{
-							NC->Deactivate();
-							++DeactivatedCount;
-						}
-					}
+					// [Phase2DescentLifetimeV2] 수명 만료 시 강하 VFX 전체를 끄지 않고 레이저 이미터만 off.
+					//   → 레이저는 시네마틱 종료보다 일찍 사라지고, 회오리는 그대로 루프 유지.
+					//   (SwapDescentVFXToAftermath 가 레이저 이미터 비활성 + bPhase2DescentScaling=false 처리)
+					Self->SwapDescentVFXToAftermath();
 					UE_LOG(LogTemp, Warning,
-						TEXT("[Phase2DescentLifetimeV1] Deactivated %d Phase2Descent NCs after lifetime"), DeactivatedCount);
+						TEXT("[Phase2DescentLifetimeV2] 레이저 수명 만료 — 레이저 off, 회오리 유지"));
 
 					// [Phase2ShakeCleanupV1] VFX 종료 시점에 카메라 쉐이크도 같이 정리.
 					//   ShakeRepeatTimer 클리어 + 진행 중 instance fade out.
@@ -1650,51 +1840,40 @@ void AHellunaEnemyCharacter_Boss::Phase2_PlayStage3Visuals()
 	}
 }
 
-// [Phase2DescentAftermathV1] 시네마틱 종료 시 강하 VFX 처리 — deactivate 대신 레이저 제거 변형으로 swap.
-//   NS_Loop_SkyOpen_NoLaser('Empty' 레이저 이미터 비활성 변형) 로 asset 교체 → 회오리는 루프 유지, 레이저만 사라짐.
-//   변형 로드 실패 시 기존 동작(Deactivate)으로 fallback.
+// [Phase2DescentAftermathV2] 시네마틱 종료 시 강하 VFX 처리 — 에셋 swap 대신 레이저 이미터만 비활성.
+//   기존 V1 은 NS_Loop_SkyOpen_NoLaser 로 SetAsset → 시스템 전체 재초기화 → 회오리가 한 번
+//   사라졌다 다시 스폰되는 "팝"이 발생했다.
+//   V2 는 같은 컴포넌트를 그대로 유지하고 SetEmitterEnable 로 레이저 이미터('Empty')만 끈다.
+//   → 회오리(나머지 이미터)는 끊김 없이 루프, 레이저만 사라짐.
+//   ('NS_Loop_SkyOpen' 7개 이미터 중 'Empty' 가 레이저 — NoLaser 변형이 바로 이 이미터만 disable 한 것)
 void AHellunaEnemyCharacter_Boss::SwapDescentVFXToAftermath()
 {
-	// 레이저 제거 변형 — 회오리만 남는 NoLaser 시스템.
-	static const FSoftObjectPath AftermathPath(
-		TEXT("/Game/Migration/VFX/SkyOpenVFX/Niagara/NS_Loop_SkyOpen_NoLaser.NS_Loop_SkyOpen_NoLaser"));
-	UNiagaraSystem* AftermathVFX = Cast<UNiagaraSystem>(AftermathPath.TryLoad());
+	// NS_Loop_SkyOpen 에서 레이저를 담당하는 이미터 이름.
+	static const FName LaserEmitterName(TEXT("Empty"));
 
 	TArray<UNiagaraComponent*> NCs;
 	GetComponents<UNiagaraComponent>(NCs);
 
-	int32 SwappedCount = 0;
-	int32 DeactivatedCount = 0;
+	int32 Count = 0;
 	for (UNiagaraComponent* NC : NCs)
 	{
 		if (!NC) continue;
 		if (!NC->ComponentTags.Contains(FName(TEXT("Phase2Descent")))) continue;
 
-		if (AftermathVFX)
-		{
-			// 회오리 유지 + 레이저 이미터만 꺼진 변형으로 교체.
-			if (NC->GetAsset() != AftermathVFX)
-			{
-				NC->SetAsset(AftermathVFX);
-			}
-			NC->SetCustomTimeDilation(1.f);
-			NC->Activate(true);
-			++SwappedCount;
-		}
-		else if (NC->IsActive())
-		{
-			// fallback — 변형 로드 실패면 기존처럼 전체 종료.
-			NC->Deactivate();
-			++DeactivatedCount;
-		}
+		// 레이저 이미터만 끔 — 회오리 이미터는 그대로 → 재초기화/팝 없음.
+		NC->SetEmitterEnable(LaserEmitterName, false);
+		// [Phase2DescentAftermathV3] 시뮬 속도(CustomTimeDilation)는 건드리지 않는다.
+		//   1.0 으로 되돌리면 회오리가 0.4배→1.0배로 갑자기 2.5배 빨라지는 버그 발생.
+		//   강하 때 느린 속도 그대로 유지 → 회오리가 끊김·가속 없이 자연스럽게 루프.
+		++Count;
 	}
 
-	// 강하 VFX scale lerp 는 종료 — aftermath 회오리는 변형 시스템 자체 스케일로 유지.
+	// 강하 VFX scale lerp 종료 — 회오리는 현재 스케일 그대로 계속 루프.
 	bPhase2DescentScaling = false;
 
 	UE_LOG(LogTemp, Warning,
-		TEXT("[Phase2DescentAftermathV1] SwapDescentVFXToAftermath — Swapped=%d, Deactivated(fallback)=%d"),
-		SwappedCount, DeactivatedCount);
+		TEXT("[Phase2DescentAftermathV2] 레이저 이미터('%s') 비활성 — 회오리 유지, %d component(s)"),
+		*LaserEmitterName.ToString(), Count);
 }
 
 // [Phase2ShakeCleanupV2] 페이즈2 쉐이크 정리 — RepeatTimer + 진행 중 instance fade out.

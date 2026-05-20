@@ -6,6 +6,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/DamageType.h"
+#include "Resource/Inv_FarmingDamageType.h"
 
 
 #include "DebugHelper.h"
@@ -27,6 +28,7 @@ void AHellunaFarmingWeapon::Farm(AController* InstigatorController, AActor* Targ
 
 	const FVector ShotDir = (Target->GetActorLocation() - InstigatorActor->GetActorLocation()).GetSafeNormal();
 
+	// 채집 전용 데미지 타입 — 자원(광석)은 이 타입의 데미지만 채집으로 인정한다.
 	const float AppliedDamage = UGameplayStatics::ApplyPointDamage(
 		Target,
 		Damage,
@@ -34,7 +36,7 @@ void AHellunaFarmingWeapon::Farm(AController* InstigatorController, AActor* Targ
 		Hit,
 		InstigatorController,
 		InstigatorActor,
-		UDamageType::StaticClass()
+		UInv_FarmingDamageType::StaticClass()
 	);
 
 	if (FarmHitSound)
