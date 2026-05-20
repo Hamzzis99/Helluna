@@ -148,6 +148,10 @@ private:
 	UFUNCTION(Exec)
 	void Cheat_KillAll();
 
+	// [GodModeCheat-V1] 콘솔 명령 — F7 키가 막혔을 때 ` 콘솔에서 무적 토글
+	UFUNCTION(Exec)
+	void Cheat_GodMode();
+
 
 #pragma endregion
 

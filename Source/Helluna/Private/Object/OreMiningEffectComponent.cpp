@@ -7,6 +7,7 @@
 #include "GameFramework/PlayerController.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
 #include "Resource/Inv_ResourceComponent.h"
+#include "Resource/Inv_FarmingDamageType.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogOreMiningFX, Log, All);
 
@@ -63,6 +64,14 @@ void UOreMiningEffectComponent::OnOwnerPointDamage(
     const UDamageType* DamageType,
     AActor* DamageCauser)
 {
+    // 채집(곡괭이) 데미지가 아니면 채굴 이펙트 미재생 — 총알 등으로는 광석 이펙트가 나지 않는다.
+    if (!DamageType || !DamageType->IsA(UInv_FarmingDamageType::StaticClass()))
+    {
+        UE_LOG(LogOreMiningFX, Log, TEXT("[%s] 채집 도구가 아닌 데미지 — 채굴 이펙트 생략"),
+            *GetOwner()->GetName());
+        return;
+    }
+
     UE_LOG(LogOreMiningFX, Log, TEXT("[%s] 데미지 수신: %.1f (가해자: %s)"),
         *GetOwner()->GetName(),
         Damage,

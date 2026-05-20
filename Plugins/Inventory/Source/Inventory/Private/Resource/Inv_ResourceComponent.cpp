@@ -1,6 +1,7 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
 #include "Resource/Inv_ResourceComponent.h"
+#include "Resource/Inv_FarmingDamageType.h"
 #include "Inventory.h"
 #include "GameFramework/Actor.h"
 #include "Kismet/GameplayStatics.h"
@@ -101,6 +102,18 @@ void UInv_ResourceComponent::OnOwnerTakeDamage(AActor* DamagedActor, float Damag
 	{
 #if INV_DEBUG_RESOURCE
 		UE_LOG(LogTemp, Warning, TEXT("[자원] 이미 파괴 진행 중이므로 데미지 무시"));
+#endif
+		return;
+	}
+
+	// 채집 도구 전용 필터 — 곡괭이(UInv_FarmingDamageType) 외의 데미지(총알/폭발 등)는 무시.
+	// → 광석이 총에 맞아도 캐지는 버그 방지. 자원은 곡괭이로만 채집된다.
+	if (bOnlyFarmingToolCanDamage &&
+		(!DamageType || !DamageType->IsA(UInv_FarmingDamageType::StaticClass())))
+	{
+#if INV_DEBUG_RESOURCE
+		UE_LOG(LogTemp, Warning, TEXT("[자원] 채집 도구가 아닌 데미지 무시 (DamageType=%s)"),
+			DamageType ? *DamageType->GetClass()->GetName() : TEXT("nullptr"));
 #endif
 		return;
 	}
