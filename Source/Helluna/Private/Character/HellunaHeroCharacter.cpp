@@ -2362,8 +2362,8 @@ void AHellunaHeroCharacter::Multicast_StartBlockShield_Implementation(
 	// Owning client: LocalPredicted GA가 이미 자체 spawn 완료 → 중복 방지.
 	if (IsLocallyControlled()) return;
 
-	USkeletalMeshComponent* Mesh = GetMesh();
-	if (!Mesh) return;
+	USkeletalMeshComponent* MeshComp = GetMesh();
+	if (!MeshComp) return;
 
 	// 기존 컴포넌트 정리 (재진입 안전)
 	if (IsValid(SimulatedBlockShieldVFX))
@@ -2375,9 +2375,9 @@ void AHellunaHeroCharacter::Multicast_StartBlockShield_Implementation(
 
 	if (VFX)
 	{
-		const FName Attach = Mesh->DoesSocketExist(Socket) ? Socket : NAME_None;
+		const FName Attach = MeshComp->DoesSocketExist(Socket) ? Socket : NAME_None;
 		SimulatedBlockShieldVFX = UNiagaraFunctionLibrary::SpawnSystemAttached(
-			VFX, Mesh, Attach, RelLoc, RelRot, RelScale,
+			VFX, MeshComp, Attach, RelLoc, RelRot, RelScale,
 			EAttachLocation::SnapToTarget, false, ENCPoolMethod::None, true, false);
 		if (SimulatedBlockShieldVFX)
 		{
@@ -2389,7 +2389,7 @@ void AHellunaHeroCharacter::Multicast_StartBlockShield_Implementation(
 
 	if (Montage)
 	{
-		if (UAnimInstance* AnimInst = Mesh->GetAnimInstance())
+		if (UAnimInstance* AnimInst = MeshComp->GetAnimInstance())
 		{
 			AnimInst->Montage_Play(Montage, PlayRate);
 			// Block 몽타주 self-loop 점프 방지 (owning client와 동일 가드)

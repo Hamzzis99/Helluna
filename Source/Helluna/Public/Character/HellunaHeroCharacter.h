@@ -683,10 +683,12 @@ protected:
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayHeroHitReact();
 
+public:
 	/**
 	 * Block 시작 멀티캐스트 — 시뮬레이션 프록시(다른 클라)에서 방패 VFX + Block 몽타주 재생.
 	 * Owning client는 LocalPredicted GA에서 이미 spawn했으므로 _Implementation에서 skip.
 	 * Dedicated server는 렌더 불필요라 _Implementation에서 skip.
+	 * public: HeroGameplayAbility_Block에서 직접 호출.
 	 */
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_StartBlockShield(
@@ -698,6 +700,7 @@ protected:
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_StopBlockShield(UAnimMontage* Montage);
 
+protected:
 	/** 시뮬레이션 프록시 측에서 보관하는 Block shield Niagara 컴포넌트. */
 	UPROPERTY(Transient)
 	TObjectPtr<UNiagaraComponent> SimulatedBlockShieldVFX = nullptr;
