@@ -24,8 +24,10 @@
 
 #include "TimerManager.h"
 #include "Engine/World.h"
+#include "Engine/Engine.h"
 #include "Net/UnrealNetwork.h"
 #include "UObject/SoftObjectPath.h"
+#include "DrawDebugHelpers.h"
 
 // [BossArmorBreakV1]
 #include "Animation/SkeletalMeshActor.h"
@@ -747,13 +749,80 @@ void AHellunaEnemyCharacter_Boss::Multicast_StartDeathMeshLift_Implementation()
 	USkeletalMeshComponent* SkelMesh = GetMesh();
 	if (!SkelMesh) return;
 
-	SavedDeathMeshRelZ = SkelMesh->GetRelativeLocation().Z;
+	SavedDeathMeshRelLoc = SkelMesh->GetRelativeLocation();
+	SavedDeathMeshRelZ = SavedDeathMeshRelLoc.Z;
+	SavedDeathMeshRelRot = SkelMesh->GetRelativeRotation();
 	DeathMeshLiftElapsed = 0.f;
 	bDeathMeshLiftActive = true;
+
+	// [BossDeathSlopeAlignV1] 죽는 순간 발밑 지형 캡처 (법선/각도/지면점). 정적 월드 기준이라
+	//   이 Multicast 안에서 각 머신이 동일 결과를 얻는다 → 시체 정렬이 서버/클라 일치.
+	CaptureDeathGroundSlope();
 
 	UE_LOG(LogTemp, Warning,
 		TEXT("[BossDeathMeshLiftV1] Start mesh Z lift — Auth=%d StartRelZ=%.2f Target=+%.2f over %.2fs"),
 		HasAuthority() ? 1 : 0, SavedDeathMeshRelZ, DeathMontageMeshZOffset, DeathMontageMeshLiftDuration);
+}
+
+// ============================================================
+// [BossDeathSlopeAlignV1] 죽는 순간 발밑으로 트레이스해 지형 법선/각도/지면점을 캡처.
+//   - 정적 월드(ECC_WorldStatic: 랜드스케이프/스태틱메시) 기준 하향 LineTrace.
+//   - 결과를 멤버에 저장하고, 검증용으로 로그 + 화면 메시지 + 디버그선(법선 화살표) 출력.
+//   - 이동은 OnMonsterDeath 에서 이미 정지됐으므로 보스는 제자리. 캡처값은 몽타주 내내 유효.
+// ============================================================
+void AHellunaEnemyCharacter_Boss::CaptureDeathGroundSlope()
+{
+	bDeathGroundCaptured = false;
+	DeathGroundNormal = FVector::UpVector;
+	DeathSlopeAngleDeg = 0.f;
+
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	const FVector Origin = GetActorLocation();
+	const FVector Start  = Origin + FVector(0.f, 0.f, 50.f);
+	const FVector End    = Origin - FVector(0.f, 0.f, DeathGroundTraceLength);
+
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(BossDeathGroundSlope), false, this);
+	FHitResult Hit;
+	const bool bHit = World->LineTraceSingleByChannel(Hit, Start, End, ECC_WorldStatic, Params);
+
+	if (bHit)
+	{
+		DeathGroundNormal = Hit.ImpactNormal.GetSafeNormal();
+		DeathGroundPoint  = Hit.ImpactPoint;
+		const float Dot = FMath::Clamp(FVector::DotProduct(DeathGroundNormal, FVector::UpVector), -1.f, 1.f);
+		DeathSlopeAngleDeg = FMath::RadiansToDegrees(FMath::Acos(Dot));
+		bDeathGroundCaptured = true;
+	}
+
+	const TCHAR* NM = TEXT("?");
+	switch (GetNetMode())
+	{
+	case NM_Standalone:      NM = TEXT("Standalone"); break;
+	case NM_Client:          NM = TEXT("Client");     break;
+	case NM_ListenServer:    NM = TEXT("Listen");     break;
+	case NM_DedicatedServer: NM = TEXT("DedSrv");     break;
+	default: break;
+	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[BossDeathSlopeAlignV1][%s] 지형 캡처 bHit=%d 경사각=%.1f도 법선=%s 지면Z=%.1f (보스Z=%.1f)"),
+		NM, bHit ? 1 : 0, DeathSlopeAngleDeg, *DeathGroundNormal.ToString(),
+		bHit ? DeathGroundPoint.Z : 0.f, Origin.Z);
+
+	if (bDeathSlopeDebugDraw && bHit)
+	{
+		DrawDebugLine(World, Start, DeathGroundPoint, FColor::Yellow, false, 10.f, 0, 2.f);
+		DrawDebugDirectionalArrow(World, DeathGroundPoint, DeathGroundPoint + DeathGroundNormal * 150.f,
+			40.f, FColor::Green, false, 10.f, 0, 4.f);
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Cyan,
+				FString::Printf(TEXT("[BossDeath %s] 경사각 %.1f도  법선 %s"),
+					NM, DeathSlopeAngleDeg, *DeathGroundNormal.ToString()));
+		}
+	}
 }
 
 // ============================================================
@@ -1088,6 +1157,17 @@ void AHellunaEnemyCharacter_Boss::Phase2_BreakArmor()
 			BossMesh->VisibilityBasedAnimTickOption =
 				EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
 
+			// [BossDeathBoundsFixedV1] 사망 애니 빠른 모션 중 1-프레임 bounds stale 로 메인 뷰
+			//   per-view 컬링이 발생하는 문제 차단:
+			//   (1) bComponentUseFixedSkelBounds=true → 본 포즈 기반 매 프레임 재계산을 끄고
+			//       에셋의 ref-pose bounds 를 고정 사용. 게임/렌더 스레드 sync lag 영향 사라짐.
+			//   (2) BoundsScale=3 → 그 고정 bounds 를 3 배 패드. 사망 자세에서 팔/다리가 ref-pose
+			//       extent 를 벗어나도 안전 마진.
+			//   둘 다 셋업한 뒤 MarkRenderStateDirty 로 즉시 반영.
+			BossMesh->bComponentUseFixedSkelBounds = true;
+			BossMesh->SetBoundsScale(3.f);
+			BossMesh->MarkRenderStateDirty();
+
 			// [BossBerserkSkinV2] 피부 머터리얼은 Phase2BerserkSkinDelay 초 후 적용.
 			//   VFX 생성 후 약간 뒤에 피부 변화 → 시각적 임팩트.
 			if (!Phase2BerserkSkinMaterial.IsNull())
@@ -1389,9 +1469,46 @@ void AHellunaEnemyCharacter_Boss::Tick(float DeltaTime)
 			{
 				CurOffset = 0.f;
 			}
-			FVector NewRel = SkelMesh_Lift->GetRelativeLocation();
-			NewRel.Z = SavedDeathMeshRelZ + CurOffset;
-			SkelMesh_Lift->SetRelativeLocation(NewRel);
+			// [BossDeathSlopeAlignV1] 기존 Z bump 를 적용한 "베이스" 상대위치.
+			//   시작 시점 백업값에서 매번 계산 — 회전을 매 tick 덮어써도 X,Y 오염 안 됨.
+			FVector BaseRel = SavedDeathMeshRelLoc;
+			BaseRel.Z = SavedDeathMeshRelZ + CurOffset;
+
+			if (bDeathSlopeAlignEnabled && bDeathGroundCaptured && DeathSlopeAngleDeg > 0.5f)
+			{
+				// 누운 몸을 "지면 접촉점" 기준으로 지형 법선에 맞춰 기울인다.
+				//   정렬 알파: 쓰러지는 동안 0→1 ramp 후 끝까지 hold (Z bump 와 달리 경사 시체는 계속 기울어야 함).
+				//   기울기 = min(실측 경사각, 최대각) * 강도 * 알파.
+				const float AlignAlpha = FMath::SmoothStep(0.f, 1.f, FMath::Clamp(M / 0.58f, 0.f, 1.f));
+				const float TiltDeg = FMath::Min(DeathSlopeAngleDeg, DeathSlopeMaxAlignDeg) * DeathSlopeAlignStrength * AlignAlpha;
+
+				const FVector Axis = FVector::CrossProduct(FVector::UpVector, DeathGroundNormal).GetSafeNormal();
+				if (!Axis.IsNearlyZero() && TiltDeg > KINDA_SMALL_NUMBER)
+				{
+					const FQuat TiltQuat(Axis, FMath::DegreesToRadians(TiltDeg));
+
+					const FTransform ActorXf = GetActorTransform();
+					const FQuat ActorQ = ActorXf.GetRotation();
+					// 베이스(Z bump 적용) 메시 월드 트랜스폼.
+					const FVector BaseWorldLoc = ActorXf.TransformPosition(BaseRel);
+					const FQuat   BaseWorldQ   = ActorQ * SavedDeathMeshRelRot.Quaternion();
+					// 지면 접촉점을 고정점으로 회전 → 몸이 경사면에 밀착.
+					const FVector NewWorldLoc = DeathGroundPoint + TiltQuat.RotateVector(BaseWorldLoc - DeathGroundPoint);
+					const FQuat   NewWorldQ   = TiltQuat * BaseWorldQ;
+					// 다시 상대 트랜스폼으로 변환해 적용.
+					const FVector NewRelLoc = ActorXf.InverseTransformPosition(NewWorldLoc);
+					const FQuat   NewRelQ   = ActorQ.Inverse() * NewWorldQ;
+					SkelMesh_Lift->SetRelativeLocationAndRotation(NewRelLoc, NewRelQ);
+				}
+				else
+				{
+					SkelMesh_Lift->SetRelativeLocation(BaseRel);
+				}
+			}
+			else
+			{
+				SkelMesh_Lift->SetRelativeLocation(BaseRel);
+			}
 			// Alpha 1 도달 후에도 매 tick 같은 값으로 hold — 외부 reset 방지 (SummonSinkTickGuard 와 동일 컨셉).
 
 			// [BossDeathDiagV1] 죽음 몬타지~dissolve 전 구간 0.5초 간격 진단 — 패키지에서만 피부가
