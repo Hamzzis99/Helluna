@@ -54,6 +54,29 @@ public:
 		meta = (DisplayName = "페이드 아웃 (초)", ClampMin = "0.0", ClampMax = "3.0"))
 	float FadeOutDuration = 0.25f;
 
+	/**
+	 * [CinematicSkipVoteV1] 스킵 투표 카운터 갱신 — "PRESS SPACE TO CONTINUE" 우측의 [눌림/전체].
+	 *   BossSummonCinematicTrigger 가 투표 현황을 Multicast 로 받을 때마다 호출.
+	 *   Text_SkipCount 위젯이 WBP 에 있어야 표시됨(없으면 무시).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BossDialogue")
+	void SetSkipCount(int32 Voted, int32 Total);
+
+	/** 진행 중인 타이핑을 즉시 전체 표시로 완성. */
+	UFUNCTION(BlueprintCallable, Category = "BossDialogue")
+	void CompleteTyping();
+
+	/** 현재 타이핑(또는 페이드인) 진행 중인지 — 스페이스 1순위(타이핑 완성) 판정용. */
+	UFUNCTION(BlueprintPure, Category = "BossDialogue")
+	bool IsTyping() const;
+
+	/**
+	 * [CinematicSkipFlowV2] 프롬프트 끝 단어 전환 — 다음 스페이스가 '대화 넘김'이면 "TO CONTINUE",
+	 *   '시네마틱 스킵'이면 "TO SKIP".
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BossDialogue")
+	void SetPromptSkipMode(bool bSkipNext);
+
 protected:
 	virtual void NativeConstruct() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
@@ -69,6 +92,14 @@ protected:
 
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
 	TObjectPtr<UBorder> DialogueBackground = nullptr;
+
+	/** [CinematicSkipVoteV1] "PRESS SPACE TO CONTINUE" 우측에 둘 스킵 투표 카운터 "[0/1]". */
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Text_SkipCount = nullptr;
+
+	/** [CinematicSkipArmV1] 프롬프트 끝 단어("TO CONTINUE"). arm 시 "TO SKIP" 으로 교체. */
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Text_Continue = nullptr;
 
 private:
 	enum class EBossDialoguePhase : uint8

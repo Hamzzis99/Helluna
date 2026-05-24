@@ -241,6 +241,9 @@ void AHellunaEnemyCharacter_Boss::Multicast_PlayBossPhase2Transition_Implementat
 	UWorld* World = GetWorld();
 	if (!World) return;
 
+	// [Phase2SkipFastForwardV1] 새 페이즈2 진입 — Stage3 가드 리셋 (모든 머신).
+	bPhase2Stage3Triggered = false;
+
 	// =========================================================
 	// [Phase2RefactorV1] 카메라/대사/단계 시퀀스 — 트리거(ABossPhase2CinematicTrigger)에 위임.
 	//   서버에서만 Spawn + TryActivate. 트리거가 Multicast 로 자기 카메라/대사 처리.
@@ -1720,17 +1723,33 @@ void AHellunaEnemyCharacter_Boss::ApplyBerserkGlowToMesh(USkeletalMeshComponent*
 		*GetNameSafe(TargetMesh), *BerserkGlowColor.ToString(), BerserkGlowBoost, MaterialCount);
 }
 
-void AHellunaEnemyCharacter_Boss::Phase2_PlayStage3Visuals()
+void AHellunaEnemyCharacter_Boss::Phase2_PlayStage3Visuals(bool bImmediate)
 {
 	UWorld* World = GetWorld();
 	if (!World) return;
 
-	UE_LOG(LogTemp, Warning, TEXT("[Phase2StageV1] Stage 3 — visuals + enrage on %s (NetMode=%d)"),
-		*GetNameSafe(this), (int32)GetNetMode());
+	// [Phase2SkipFastForwardV1] 스턴 타이머 경로와 스킵 즉시발동 경로가 중복 실행되지 않도록 1회 가드.
+	if (bPhase2Stage3Triggered) return;
+	bPhase2Stage3Triggered = true;
+
+	UE_LOG(LogTemp, Warning, TEXT("[Phase2StageV1] Stage 3 — visuals + enrage on %s (NetMode=%d, Immediate=%d)"),
+		*GetNameSafe(this), (int32)GetNetMode(), bImmediate ? 1 : 0);
+
+	// [Phase2SkipInvulnEndV1] 스킵(즉시 완료) — 무적과 카메라 쉐이크가 남지 않게 즉시 정리.
+	if (bImmediate)
+	{
+		if (HasAuthority())
+		{
+			GetWorldTimerManager().ClearTimer(Phase2InvulnerabilityTimer);
+			SetCanBeDamaged(true); // 변신 즉시 완료 → 바로 피격 가능
+		}
+		StopPhase2Shakes(); // 진행 중 쉐이크 + 반복 타이머 정리 (모든 머신). 신규 쉐이크 스케줄은 아래에서 생략.
+		UE_LOG(LogTemp, Warning, TEXT("[Phase2SkipInvulnEndV1] 스킵 — 무적 즉시 해제 + 쉐이크 정리/생략"));
+	}
 
 	// [Phase2ShakeDelayV1] 카메라 쉐이크는 강하 VFX 보다 Phase2ShakeDelay 초 늦게 시작.
 	//   레이저가 어느 정도 내려온 뒤(grow-in 후) 임팩트 쉐이크가 오도록 — 별도 지연 타이머.
-	if (Phase2TransitionShakeClass)
+	if (!bImmediate && Phase2TransitionShakeClass) // [Phase2SkipInvulnEndV1] 스킵 시 쉐이크 스케줄 생략
 	{
 		TWeakObjectPtr<AHellunaEnemyCharacter_Boss> WeakShake(this);
 		FTimerHandle ShakeStartTimer;
@@ -1829,7 +1848,7 @@ void AHellunaEnemyCharacter_Boss::Phase2_PlayStage3Visuals()
 				UE_LOG(LogTemp, Warning,
 					TEXT("[Phase2EnrageDelayV1] 갑옷/피부/오라 적용 — 레이저 강하 %.1fs 후"), Self->Phase2ArmorSkinDelay);
 			}),
-			Phase2ArmorSkinDelay, false);
+			bImmediate ? 0.05f : Phase2ArmorSkinDelay, false); // [Phase2SkipFastForwardV1] 스킵 시 즉시(0 은 SetTimer 가 클리어 → 0.05)
 	}
 
 	// Phase2Descent tag NC 활성화 + scale lerp 시작 + lifetime timer
@@ -1855,18 +1874,35 @@ void AHellunaEnemyCharacter_Boss::Phase2_PlayStage3Visuals()
 				continue;
 			}
 			Phase2DescentScalingNCs.Add(NC);
-			Phase2DescentBaseScales.Add(NC->GetRelativeScale3D());
-			NC->SetRelativeScale3D(NC->GetRelativeScale3D() * Phase2DescentScaleStartMult);
+			const FVector BaseScale = NC->GetRelativeScale3D();
+			Phase2DescentBaseScales.Add(BaseScale);
+			// [Phase2SkipInstantVFXV1] 스킵 시 성장 생략 — X/Y 를 바로 EndMult(최종)로, Z 는 base 그대로(Tick 성장과 동일 규칙).
+			if (bImmediate)
+			{
+				NC->SetRelativeScale3D(FVector(BaseScale.X * Phase2DescentScaleEndMult, BaseScale.Y * Phase2DescentScaleEndMult, BaseScale.Z));
+			}
+			else
+			{
+				NC->SetRelativeScale3D(BaseScale * Phase2DescentScaleStartMult);
+			}
 		}
 		Phase2DescentScaleElapsed = 0.f;
-		bPhase2DescentScaling = (ActivatedCount > 0 && Phase2DescentScaleDuration > KINDA_SMALL_NUMBER);
+		bPhase2DescentScaling = (!bImmediate && ActivatedCount > 0 && Phase2DescentScaleDuration > KINDA_SMALL_NUMBER);
 		UE_LOG(LogTemp, Warning,
-			TEXT("[Phase2DescentNCV1] Activated %d, scaling %.2f→%.2f over %.1fs"),
-			ActivatedCount, Phase2DescentScaleStartMult, Phase2DescentScaleEndMult, Phase2DescentScaleDuration);
+			TEXT("[Phase2DescentNCV1] Activated %d, scaling %.2f→%.2f over %.1fs (Immediate=%d)"),
+			ActivatedCount, Phase2DescentScaleStartMult, Phase2DescentScaleEndMult, Phase2DescentScaleDuration, bImmediate ? 1 : 0);
+
+		// [Phase2SkipInstantVFXV1] 스킵 — 강하 연출(성장+레이저 강하)을 생략하고 즉시 최종(aftermath) 상태로:
+		//   회오리는 위에서 이미 풀스케일, 레이저는 켜지 않고 바로 off 확정. (레이저 on/lifetime 타이머 skip)
+		if (bImmediate)
+		{
+			SwapDescentVFXToAftermath();
+			UE_LOG(LogTemp, Warning, TEXT("[Phase2SkipInstantVFXV1] 스킵 — 강하 VFX 즉시 최종상태(풀스케일 + 레이저 off)"));
+		}
 
 		// [Phase2LaserDelayV1] 회오리는 위에서 바로 등장 — 레이저 이미터('Empty')만
 		//   LaserEmitterDelay 초 뒤에 따로 켜서 레이저가 회오리보다 늦게 나오게 한다.
-		if (ActivatedCount > 0)
+		if (!bImmediate && ActivatedCount > 0)
 		{
 			TWeakObjectPtr<AHellunaEnemyCharacter_Boss> WeakLaser(this);
 			FTimerHandle LaserOnTimer;
@@ -1892,7 +1928,7 @@ void AHellunaEnemyCharacter_Boss::Phase2_PlayStage3Visuals()
 				Phase2LaserEmitterDelay, false);
 		}
 
-		if (ActivatedCount > 0 && Phase2DescentVFXLifetime > KINDA_SMALL_NUMBER)
+		if (!bImmediate && ActivatedCount > 0 && Phase2DescentVFXLifetime > KINDA_SMALL_NUMBER)
 		{
 			TWeakObjectPtr<AHellunaEnemyCharacter_Boss> WeakSelf(this);
 			FTimerHandle DeactivateTimer;
@@ -1939,21 +1975,36 @@ void AHellunaEnemyCharacter_Boss::Phase2_PlayStage3Visuals()
 	//   서버 권한만 — Tick 의 fill state machine 이 SetHealth 진행. SetHealth 가 자동 replicate.
 	if (HasAuthority() && HealthComponent && Phase2HealthFillNewMax > 0.f && Phase2HealthFillStage == 0)
 	{
-		TWeakObjectPtr<AHellunaEnemyCharacter_Boss> WeakSelfFill(this);
-		FTimerHandle FillStartTimer;
-		World->GetTimerManager().SetTimer(FillStartTimer,
-			FTimerDelegate::CreateLambda([WeakSelfFill]()
-			{
-				AHellunaEnemyCharacter_Boss* Self = WeakSelfFill.Get();
-				if (!Self || !Self->HealthComponent) return;
-				Self->Phase2HealthFillStage = 1;  // Stage 1 시작 — 1 → OldMax
-				Self->Phase2HealthFillElapsed = 0.f;
-				UE_LOG(LogTemp, Warning,
-					TEXT("[Phase2HealthFillV2] Stage1 begin: %.0f → %.0f over %.1fs"),
-					Self->HealthComponent->GetHealth(), Self->Phase2HealthFillOldMax,
-					Self->Phase2HealthFillStage1Duration);
-			}),
-			FMath::Max(0.0f, Phase2HealthFillDelay), false);
+		if (bImmediate)
+		{
+			// [Phase2SkipInstantFillV1] 스킵 — 점진 fill 대신 즉시 2페이즈 최대체력으로.
+			//   SetMaxHealth(refill=true) → HP=MaxHealth 까지 채움. Stage=4(done): Stage 머신 비활성 +
+			//   복제된 Stage>=3 으로 HP바가 ∞/∞ + 폭 확장 표시. 변신이 즉시 완료된 상태가 됨.
+			HealthComponent->SetMaxHealth(Phase2HealthFillNewMax, /*bRefillHealth=*/true);
+			Phase2HealthFillStage = 4;
+			Phase2HealthFillElapsed = 0.f;
+			UE_LOG(LogTemp, Warning,
+				TEXT("[Phase2SkipInstantFillV1] 스킵 — HP/Max 즉시 %.0f 로 설정 (Stage=4, 점진 fill 생략)"),
+				Phase2HealthFillNewMax);
+		}
+		else
+		{
+			TWeakObjectPtr<AHellunaEnemyCharacter_Boss> WeakSelfFill(this);
+			FTimerHandle FillStartTimer;
+			World->GetTimerManager().SetTimer(FillStartTimer,
+				FTimerDelegate::CreateLambda([WeakSelfFill]()
+				{
+					AHellunaEnemyCharacter_Boss* Self = WeakSelfFill.Get();
+					if (!Self || !Self->HealthComponent) return;
+					Self->Phase2HealthFillStage = 1;  // Stage 1 시작 — 1 → OldMax
+					Self->Phase2HealthFillElapsed = 0.f;
+					UE_LOG(LogTemp, Warning,
+						TEXT("[Phase2HealthFillV2] Stage1 begin: %.0f → %.0f over %.1fs"),
+						Self->HealthComponent->GetHealth(), Self->Phase2HealthFillOldMax,
+						Self->Phase2HealthFillStage1Duration);
+				}),
+				FMath::Max(0.0f, Phase2HealthFillDelay), false);
+		}
 	}
 }
 

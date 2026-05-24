@@ -16,6 +16,9 @@
 
 #include "GameFramework/Character.h"
 #include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerController.h"
+#include "GameFramework/GameStateBase.h"
+#include "InputCoreTypes.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
 #include "Blueprint/UserWidget.h"
@@ -97,6 +100,8 @@ bool ABossPhase2CinematicTrigger::TryActivate(APawn* InTargetBoss)
 	if (!HasAuthority()) return false;
 	if (!InTargetBoss) return false;
 	ActiveBoss = InTargetBoss;
+	bCinematicActive = true;          // [CinematicSkipVoteV1]
+	SkipVoters.Reset();               // [CinematicSkipVoteV1]
 	Multicast_StartCinematic(InTargetBoss);
 	return true;
 }
@@ -108,6 +113,24 @@ void ABossPhase2CinematicTrigger::Multicast_StartCinematic_Implementation(APawn*
 
 	UWorld* World = GetWorld();
 	if (!World) return;
+
+	// [CinematicSkipVoteV1] 새 시네마틱 — 로컬 표 플래그 초기화 + 로컬 플레이어 폰 입력 차단(점프/블록 방지).
+	//   스킵 감지는 PlayerController WasInputKeyJustPressed(raw key) 라 폰 입력 차단과 무관하게 동작.
+	bLocalSkipVoteSent = false;
+	bLocalDialogue2Shown = false; // [CinematicSkipFlowV2]
+	if (GetNetMode() != NM_DedicatedServer)
+	{
+		if (APlayerController* InputPC = World->GetFirstPlayerController())
+		{
+			if (InputPC->IsLocalController())
+			{
+				if (APawn* InputPawn = InputPC->GetPawn())
+				{
+					InputPawn->DisableInput(InputPC);
+				}
+			}
+		}
+	}
 
 	// =========================================================
 	// 카메라 액터 spawn — 단계1a Face 위치
@@ -180,6 +203,7 @@ void ABossPhase2CinematicTrigger::Multicast_StartCinematic_Implementation(APawn*
 			{
 				LocalDialogueWidget->AddToViewport(50);
 				LocalDialogueWidget->PlayDialogue(SpeakerName, DialogueLine);
+				LocalDialogueWidget->SetSkipCount(0, CountActivePlayers()); // [CinematicSkipVoteV1] 카운터 초기 [0/N]
 			}
 		}
 		break;
@@ -223,7 +247,7 @@ void ABossPhase2CinematicTrigger::Multicast_StartCinematic_Implementation(APawn*
 							S->LocalDialogueWidget->HideDialogue();
 							S->LocalDialogueWidget = nullptr;
 						}),
-						FMath::Max(0.5f, Self->DialogueLine2Duration), false);
+						99999.f, false); // [Phase2DialogueStayV1] 대사창은 시네마틱 종료까지 유지(스킵 프롬프트 계속 표시). Multicast_End 가 hide+ClearTimer.
 				}
 				UE_LOG(LogTemp, Warning, TEXT("[Phase2CinematicTrigger] Stage 1b — DialogueLine2: %s"),
 					*Self->DialogueLine2.ToString());
@@ -292,6 +316,40 @@ void ABossPhase2CinematicTrigger::Multicast_EndCinematic_Implementation()
 {
 	UWorld* World = GetWorld();
 	if (!World) return;
+
+	bCinematicActive = false; // [CinematicSkipVoteV1] (서버 가드 종료)
+
+	// [Phase2SkipFastForwardV1] 스킵으로 시네마틱이 조기 종료되면 보스 변신(광폭화 외형 + HP fill)이
+	//   스턴 대기(Phase2StunDuration) 때문에 아직 안 나왔을 수 있다 → 즉시 발동시켜 스킵해도 변신이 적용되게.
+	//   정상 종료(스턴 경과 후 Stage3 이미 실행)에는 보스 내부 가드(bPhase2Stage3Triggered)로 no-op.
+	//   모든 머신에서 호출(외형은 머신별, HP fill 은 서버 권한 → 복제).
+	if (AHellunaEnemyCharacter_Boss* BossFF = Cast<AHellunaEnemyCharacter_Boss>(ActiveBoss.Get()))
+	{
+		BossFF->Phase2_PlayStage3Visuals(/*bImmediate=*/true);
+	}
+
+	// [CinematicSkipVoteV1] 폰 입력 복원 (정상/스킵 공통 경로).
+	if (GetNetMode() != NM_DedicatedServer)
+	{
+		if (APlayerController* InputPC = World->GetFirstPlayerController())
+		{
+			if (InputPC->IsLocalController())
+			{
+				if (APawn* InputPawn = InputPC->GetPawn())
+				{
+					InputPawn->EnableInput(InputPC);
+				}
+			}
+		}
+	}
+
+	// [CinematicSkipVoteV1] 스킵(조기 종료) 시 남은 카메라 단계 타이머가 뒤늦게 fire 하지 않도록 정리.
+	//   정상 종료에서는 이미 fire 한 타이머라 clear 는 no-op.
+	World->GetTimerManager().ClearTimer(Stage1bTimer);
+	World->GetTimerManager().ClearTimer(Stage2Timer);
+	World->GetTimerManager().ClearTimer(Stage4Timer);
+	World->GetTimerManager().ClearTimer(EndCinematicTimer);
+	World->GetTimerManager().ClearTimer(DialogueHideTimer);
 
 	bCameraInterpolating = false;
 	bCameraHoldStaticDuringFace = false;
@@ -399,9 +457,97 @@ void ABossPhase2CinematicTrigger::Multicast_EndCinematic_Implementation()
 	UE_LOG(LogTemp, Warning, TEXT("[Phase2CinematicTrigger] EndCinematic"));
 }
 
+// =========================================================================================
+// [CinematicSkipVoteV1] 스킵 투표 — 전원 일치 시 카메라/대사 종료(보스 phase2 전환은 독립 진행).
+// =========================================================================================
+int32 ABossPhase2CinematicTrigger::CountActivePlayers() const
+{
+	int32 Count = 0;
+	if (const UWorld* World = GetWorld())
+	{
+		if (const AGameStateBase* GS = World->GetGameState())
+		{
+			Count = GS->PlayerArray.Num();
+		}
+		else
+		{
+			for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+			{
+				if (It->IsValid()) ++Count;
+			}
+		}
+	}
+	return FMath::Max(Count, 1);
+}
+
+void ABossPhase2CinematicTrigger::ServerRegisterSkipVote(APlayerController* Voter)
+{
+	if (!HasAuthority() || !bCinematicActive || !IsValid(Voter)) return;
+
+	SkipVoters.Add(Voter);
+	int32 Voted = 0;
+	for (const TWeakObjectPtr<APlayerController>& V : SkipVoters)
+	{
+		if (V.IsValid()) ++Voted;
+	}
+	const int32 Total = CountActivePlayers();
+
+	UE_LOG(LogTemp, Warning, TEXT("[CinematicSkipVoteV1] (Phase2) vote %d/%d from %s"),
+		Voted, Total, *GetNameSafe(Voter));
+
+	Multicast_UpdateSkipCount(Voted, Total);
+
+	if (Voted >= Total)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[CinematicSkipVoteV1] (Phase2) all voted → skip cinematic"));
+		Multicast_EndCinematic();
+	}
+}
+
+void ABossPhase2CinematicTrigger::Multicast_UpdateSkipCount_Implementation(int32 Voted, int32 Total)
+{
+	if (LocalDialogueWidget)
+	{
+		LocalDialogueWidget->SetSkipCount(Voted, Total);
+	}
+}
+
 void ABossPhase2CinematicTrigger::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+
+	// [CinematicSkipVoteV1] 로컬 스페이스바 → 서버에 스킵 1표. (점프/블록은 DisableInput 으로 안 나감)
+	if (LocalCameraActor.IsValid() && !bLocalSkipVoteSent)
+	{
+		if (UWorld* SkipW = GetWorld())
+		{
+			if (APlayerController* SkipPC = SkipW->GetFirstPlayerController())
+			{
+				if (SkipPC->IsLocalController() && SkipPC->WasInputKeyJustPressed(EKeys::SpaceBar))
+				{
+					// [CinematicSkipFlowV2] ① 타이핑 완성 → ② 다음 대사 넘김 → ③ 스킵.
+					if (LocalDialogueWidget && LocalDialogueWidget->IsTyping())
+					{
+						LocalDialogueWidget->CompleteTyping();
+					}
+					else if (!bLocalDialogue2Shown && !DialogueLine2.IsEmpty() && LocalDialogueWidget)
+					{
+						bLocalDialogue2Shown = true;
+						LocalDialogueWidget->PlayDialogue(SpeakerName, DialogueLine2);
+						LocalDialogueWidget->SetPromptSkipMode(true);
+					}
+					else
+					{
+						bLocalSkipVoteSent = true;
+						if (AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(SkipPC))
+						{
+							HeroPC->Server_VoteBossSummonSkip();
+						}
+					}
+				}
+			}
+		}
+	}
 
 	if (!LocalCameraActor.IsValid()) return;
 	APawn* Boss = ActiveBoss.Get();

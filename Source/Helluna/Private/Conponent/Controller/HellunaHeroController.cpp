@@ -43,6 +43,9 @@
 #include "Puzzle/PuzzleCubeActor.h"
 #include "Puzzle/PuzzleGridWidget.h"
 #include "EngineUtils.h" // TActorIterator
+#include "Minwoo/BossSummonCinematicTrigger.h" // [CinematicSkipVoteV1] 스킵 투표 라우팅
+#include "BossEvent/BossPhase2CinematicTrigger.h"
+#include "BossEvent/BossDeathCinematicTrigger.h"
 #include "Components/PostProcessComponent.h"
 
 // [BossEvent] 보스 조우 시스템
@@ -2221,6 +2224,32 @@ void AHellunaHeroController::Server_ClearWorldPing_Implementation()
 		return;
 	}
 	HPS->Server_AuthoritativeClearPing();
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [CinematicSkipVoteV1] 보스 소환 시네마틱 스킵 투표 — 클라 소유 PC 경유 Server RPC
+// ════════════════════════════════════════════════════════════════════════════════
+void AHellunaHeroController::Server_VoteBossSummonSkip_Implementation()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	// 활성 보스 시네마틱(소환/페이즈2/사망) 중 하나를 찾아 이 PC 의 표를 등록 (보통 1개만 활성).
+	for (TActorIterator<ABossSummonCinematicTrigger> It(World); It; ++It)
+	{
+		if (*It && (*It)->IsCinematicActive()) { (*It)->ServerRegisterSkipVote(this); return; }
+	}
+	for (TActorIterator<ABossPhase2CinematicTrigger> It(World); It; ++It)
+	{
+		if (*It && (*It)->IsCinematicActive()) { (*It)->ServerRegisterSkipVote(this); return; }
+	}
+	for (TActorIterator<ABossDeathCinematicTrigger> It(World); It; ++It)
+	{
+		if (*It && (*It)->IsCinematicActive()) { (*It)->ServerRegisterSkipVote(this); return; }
+	}
 }
 
 // ════════════════════════════════════════════════════════════════════════════════

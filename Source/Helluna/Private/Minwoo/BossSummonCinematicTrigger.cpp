@@ -19,6 +19,9 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/GameStateBase.h"
+#include "GameFramework/PlayerState.h"
+#include "InputCoreTypes.h"
 #include "CineCameraActor.h"
 #include "CineCameraComponent.h"
 #include "LevelSequence.h"
@@ -85,6 +88,46 @@ ABossSummonCinematicTrigger::ABossSummonCinematicTrigger()
 void ABossSummonCinematicTrigger::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+
+	// [CinematicSkipVoteV1] 로컬 플레이어가 스페이스바를 누르면 '스킵 1표'를 서버에 보낸다.
+	//   직접 종료하지 않음 — 서버가 모든 플레이어의 표를 모아 전원 일치 시에만 종료(정상 종료 경로라
+	//   보스 이동/AI/피격이 제대로 복원됨). 게이트: 로컬 시네마틱 표시 중 & 아직 내 표 미전송.
+	if (LocalCinematicBoss.IsValid() && !LocalBossHealthBar && !bLocalSkipVoteSent)
+	{
+		if (UWorld* SkipWorld = GetWorld())
+		{
+			if (APlayerController* LocalPC = SkipWorld->GetFirstPlayerController())
+			{
+				if (LocalPC->IsLocalController() && LocalPC->WasInputKeyJustPressed(EKeys::SpaceBar))
+				{
+					// [CinematicSkipFlowV2] 우선순위: ① 타이핑 완성 → ② 다음 대사 넘김 → ③ 시네마틱 스킵.
+					if (LocalDialogueWidget && LocalDialogueWidget->IsTyping())
+					{
+						LocalDialogueWidget->CompleteTyping(); // ① 대화 다보이기
+					}
+					else if (!bLocalDialogue2Shown && !BossDialogueLine2.IsEmpty() && LocalDialogueWidget)
+					{
+						// ② 다음 대사로 넘김 (마지막 대사 → 프롬프트 SKIP)
+						bLocalDialogue2Shown = true;
+						if (UWorld* W2 = GetWorld()) { W2->GetTimerManager().ClearTimer(SecondDialogueTimer); } // 자동 진행 중복 방지
+						LocalDialogueWidget->PlayDialogue(BossSpeakerName, BossDialogueLine2);
+						LocalDialogueWidget->SetPromptSkipMode(true);
+						UE_LOG(LogTemp, Warning, TEXT("[CinematicSkipFlowV2] SpaceBar → advance to dialogue line 2"));
+					}
+					else
+					{
+						// ③ 시네마틱 스킵 투표
+						bLocalSkipVoteSent = true;
+						UE_LOG(LogTemp, Warning, TEXT("[CinematicSkipFlowV2] SpaceBar → send skip vote"));
+						if (AHellunaHeroController* HeroPC = Cast<AHellunaHeroController>(LocalPC))
+						{
+							HeroPC->Server_VoteBossSummonSkip();
+						}
+					}
+				}
+			}
+		}
+	}
 
 	// [PortalCutsV1] 클라 사이드: 카메라 컷 진행. CameraSequence 사용 시 시퀀스가 카메라를
 	//   몰기 때문에 컷 코드는 비활성. CameraCuts 비어있으면 단일 카메라 폴백 모드라 갱신 불필요.
@@ -482,6 +525,7 @@ bool ABossSummonCinematicTrigger::TryActivate(APawn* InTargetBoss)
 	ActiveBoss = Boss;
 	bMontageFinishedFlag = false;
 	bMinHoldElapsedFlag = false;
+	SkipVoters.Reset(); // [CinematicSkipVoteV1] 새 시네마틱 — 표 초기화 (서버)
 
 	// [BossHideUntilCinematicV1] 시네마틱 시작 — 스폰 시 걸어둔 actor 숨김 해제.
 	//   이후 보스 가시성은 Multicast_StartCinematic 의 mesh SetVisibility(hidden-walk) →
@@ -955,6 +999,77 @@ void ABossSummonCinematicTrigger::HandleCinematicCompletedServer()
 	Multicast_EndCinematic();
 }
 
+// =========================================================================================
+// [CinematicSkipVoteV1] 스페이스바 스킵 투표
+// =========================================================================================
+int32 ABossSummonCinematicTrigger::CountActivePlayers() const
+{
+	int32 Count = 0;
+	if (const UWorld* World = GetWorld())
+	{
+		if (const AGameStateBase* GS = World->GetGameState())
+		{
+			// PlayerArray 는 서버/클라 모두 복제됨 → 전체 플레이어 수 일관.
+			Count = GS->PlayerArray.Num();
+		}
+		else
+		{
+			// 폴백(GameState 미생성 초기): PlayerController 직접 카운트(서버 한정).
+			for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+			{
+				if (It->IsValid())
+				{
+					++Count;
+				}
+			}
+		}
+	}
+	return FMath::Max(Count, 1);
+}
+
+void ABossSummonCinematicTrigger::ServerRegisterSkipVote(APlayerController* Voter)
+{
+	if (!HasAuthority() || !bCinematicActive || !IsValid(Voter))
+	{
+		return;
+	}
+
+	SkipVoters.Add(Voter); // TSet → 같은 PC 중복 표 자동 무시
+
+	int32 Voted = 0;
+	for (const TWeakObjectPtr<APlayerController>& V : SkipVoters)
+	{
+		if (V.IsValid())
+		{
+			++Voted;
+		}
+	}
+	const int32 Total = CountActivePlayers();
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[CinematicSkipVoteV1] Skip vote from %s → %d/%d"),
+		*GetNameSafe(Voter), Voted, Total);
+
+	// 모든 클라 카운터 갱신.
+	Multicast_UpdateSkipCount(Voted, Total);
+
+	// 전원 일치 → 정상 종료 경로로 시네마틱 끝내기 (보스 이동/AI/피격 복원).
+	if (Voted >= Total)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[CinematicSkipVoteV1] All players voted (%d/%d) → skipping cinematic"), Voted, Total);
+		HandleCinematicCompletedServer();
+	}
+}
+
+void ABossSummonCinematicTrigger::Multicast_UpdateSkipCount_Implementation(int32 Voted, int32 Total)
+{
+	if (LocalDialogueWidget)
+	{
+		LocalDialogueWidget->SetSkipCount(Voted, Total);
+	}
+}
+
 void ABossSummonCinematicTrigger::OnGracePeriodElapsed()
 {
 	APawn* Boss = ActiveBoss.Get();
@@ -1003,9 +1118,31 @@ void ABossSummonCinematicTrigger::Multicast_StartCinematic_Implementation(APawn*
 		WalkDirYaw,
 		*BossLocation.ToCompactString());
 
+	// [CinematicSkipVoteV1] 새 시네마틱 — 이 머신의 스킵 입력 상태 초기화 (모든 클라/호스트).
+	bLocalSkipVoteSent = false;
+	bLocalDialogue2Shown = false; // [CinematicSkipFlowV2]
+
 	if (IsRunningDedicatedServer())
 	{
 		return;
+	}
+
+	// [CinematicInputBlockV2] 시네마틱 동안 로컬 플레이어 폰 입력 자체를 차단 —
+	//   스페이스바가 Block/Jump 등으로 새지 않게. (bCanJump 로는 점프(어빌리티 경로)가 안 막혀서 입력을 끈다.)
+	//   스킵 감지는 PlayerController 의 WasInputKeyJustPressed(raw key) 라 폰 입력 비활성과 무관하게 동작.
+	//   Multicast_EndCinematic 에서 복원.
+	if (UWorld* InputW = GetWorld())
+	{
+		if (APlayerController* InputPC = InputW->GetFirstPlayerController())
+		{
+			if (InputPC->IsLocalController())
+			{
+				if (APawn* InputPawn = InputPC->GetPawn())
+				{
+					InputPawn->DisableInput(InputPC);
+				}
+			}
+		}
 	}
 
 	// [PortalEarlySpawnV1] 포탈을 보스 actor replication 과 무관하게 즉시 spawn.
@@ -1568,6 +1705,21 @@ void ABossSummonCinematicTrigger::Multicast_EndCinematic_Implementation()
 	if (IsRunningDedicatedServer())
 	{
 		return;
+	}
+
+	// [CinematicInputBlockV2] 폰 입력 차단 해제 (시네마틱 종료 — 정상/스킵 공통 경로).
+	if (UWorld* InputW = GetWorld())
+	{
+		if (APlayerController* InputPC = InputW->GetFirstPlayerController())
+		{
+			if (InputPC->IsLocalController())
+			{
+				if (APawn* InputPawn = InputPC->GetPawn())
+				{
+					InputPawn->EnableInput(InputPC);
+				}
+			}
+		}
 	}
 
 	UWorld* World = GetWorld();

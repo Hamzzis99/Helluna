@@ -113,6 +113,42 @@ void UBossHealthBarWidget::NativeTick(const FGeometry& MyGeometry, float InDelta
 
 	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
 
+	// [BossHPValueV1] HP 수치 텍스트.
+	//   - 평상시: "현재 / 최대" (천단위 콤마)
+	//   - [BossHPInfinityV1] 체력이 차오르는 중(페이즈2 break-through fill, Stage 1~3)엔 "현재 / ∞".
+	//     이 구간은 최대치가 1→OldMax→NewMax 로 커지는 연출이라, 고정 최대 대신 무한 기호(U+221E)로
+	//     "한계 없이 강해지는" 느낌을 준다. Stage 4(완료) 이후엔 다시 실제 최대치 표기.
+	if (Text_HPValue)
+	{
+		if (UHellunaHealthComponent* HCNum = IsValid(BossActor) ? BossActor->FindComponentByClass<UHellunaHealthComponent>() : nullptr)
+		{
+			// [BossHPInfinityV2] break-through(Phase2HealthFillStage>=3) 이후엔 현재/최대 모두 무한으로 고정.
+			//   Stage 는 0→1→2→3→4 로만 진행(역행 없음)하므로 한 번 3 도달 시 영구 ∞ —
+			//   이후 보스가 피격당해 현재 체력이 깎여도 표시는 계속 "∞ / ∞" 유지.
+			//   그 전(페이즈1, 페이즈2 Stage 0~2: 1→OldMax 채우기)엔 실제 "현재 / 최대"(최대 100/100까지).
+			bool bShowInfinity = false;
+			if (const AHellunaEnemyCharacter_Boss* BossFill = Cast<AHellunaEnemyCharacter_Boss>(BossActor))
+			{
+				bShowInfinity = (BossFill->Phase2HealthFillStage >= 3);
+			}
+
+			if (bShowInfinity)
+			{
+				// 무한 기호(U+221E) — 코드포인트 생성으로 소스 인코딩 영향 없음. 현재/최대 둘 다 ∞.
+				const FString Inf = FString::Chr(static_cast<TCHAR>(0x221E));
+				Text_HPValue->SetText(FText::FromString(Inf + TEXT(" / ") + Inf));
+			}
+			else
+			{
+				const int32 CurI = FMath::Max(0, FMath::RoundToInt(HCNum->GetHealth()));
+				const int32 MaxI = FMath::Max(0, FMath::RoundToInt(HCNum->GetMaxHealth()));
+				Text_HPValue->SetText(FText::Format(
+					NSLOCTEXT("BossHP", "HPValueFmt", "{0} / {1}"),
+					FText::AsNumber(CurI), FText::AsNumber(MaxI)));
+			}
+		}
+	}
+
 	// [Phase2ExtraBarV1] main / extra 두 바의 target percent 동시 계산.
 	float MainTarget = 0.f;
 	float ExtraTarget = 0.f;
@@ -295,6 +331,14 @@ void UBossHealthBarWidget::NativeTick(const FGeometry& MyGeometry, float InDelta
 	if (Text_BossName)
 	{
 		Text_BossName->SetRenderTranslation(FVector2D(-CurrentExtensionPx * 0.5f, 0.f));
+	}
+
+	// [BossHPValuePosFixV1] Text_HPValue 는 HAlign_Right 라 VBox 폭이 우측으로 확장되면
+	//   우측 끝에 붙어 CurrentExtensionPx '전량'만큼 우로 밀린다 (이름은 중앙정렬이라 절반).
+	//   같은 양 좌측 보정해 확장 전 위치에 고정.
+	if (Text_HPValue)
+	{
+		Text_HPValue->SetRenderTranslation(FVector2D(-CurrentExtensionPx, 0.f));
 	}
 }
 

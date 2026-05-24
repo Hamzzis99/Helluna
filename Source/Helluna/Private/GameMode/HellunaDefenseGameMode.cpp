@@ -1921,53 +1921,46 @@ void AHellunaDefenseGameMode::EnterNightCore(EHellunaNightStartMode StartMode)
     GetWorldTimerManager().ClearTimer(TimerHandle_NightWatchdog);
     GetWorldTimerManager().SetTimer(TimerHandle_NightWatchdog, this, &ThisClass::TickNightWatchdog, 1.0f, true);
 
-    // ── 보스 소환 일 체크 ──────────────────────────────────────────────
-    // BossSchedule 배열에서 CurrentDay와 일치하는 항목을 찾는다.
-    // 동일 Day 중복 시 첫 번째 항목만 사용.
-    const FBossSpawnEntry* FoundEntry = BossSchedule.FindByPredicate(
-        [this](const FBossSpawnEntry& E){ return E.SpawnDay == CurrentDay; });
-
-#if HELLUNA_DEBUG_DEFENSE
-    UE_LOG(LogTemp, Warning, TEXT("[EnterNight] BossSchedule 체크 — CurrentDay=%d | Schedule 항목수=%d | FoundEntry=%s"),
-        CurrentDay, BossSchedule.Num(), FoundEntry ? TEXT("찾음 ✅") : TEXT("없음"));
-#endif
-    if (FoundEntry)
-    {
-#if HELLUNA_DEBUG_DEFENSE
-        UE_LOG(LogTemp, Warning, TEXT("[EnterNight] FoundEntry — SpawnDay=%d | BossClass=%s"),
-            FoundEntry->SpawnDay,
-            FoundEntry->BossClass ? *FoundEntry->BossClass->GetName() : TEXT("null ⚠️"));
-#endif
-    }
-
-    if (FoundEntry)
-    {
-        Debug::Print(FString::Printf(
-            TEXT("[EnterNight] %d일차 — %s 소환 대상, 일반 몬스터 스폰 생략"),
-            CurrentDay,
-            FoundEntry->BossClass ? *FoundEntry->BossClass->GetName() : TEXT("null")),
-            FColor::Red);
-
-        // 보스 1마리 소환 → UI용 몬스터 수 설정
-        if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
-        {
-            GS->SetIsBossNight(true);
-            GS->SetTotalMonstersThisNight(1);
-            GS->SetAliveMonsterCount(1);
-        }
-
-        SetBossReady(true);
-        TrySummonBoss(*FoundEntry);
-        return;
-    }
-
+    // ── 보스 밤 판정 ─────────────────────────────────────────────────────
+    // [RepairBossNightV2] 날짜 기반 BossSchedule 제거 — 밤 시작 시 "우주선 수리도"로 결정한다.
+    //   · 수리 완료(또는 테스트 강제 플래그) & 아직 보스 미소환 → 그날 밤 보스 소환 + 잡몹 스폰 생략.
+    //   · 아니면 기존 스케줄대로 잡몹 소환.
+    //   밤 진행 "중" 수리가 완료돼도 즉시 소환하지 않는 게 기본(아래 OnSpaceShipRepairCompleted 가
+    //   bSpawnBossOnRepairComplete=false 면 skip) → "다음 밤" 시작 때 이 분기로 보스가 잡힌다.
     int32 Current = 0, Need = 0;
-    if (IsSpaceShipFullyRepaired(Current, Need))
+    const bool bRepaired = IsSpaceShipFullyRepaired(Current, Need);
+    const bool bBossNight = (bRepaired || bForceBossNightForTest) && !bBossSummoned;
+
+    UE_LOG(LogTemp, Warning,
+        TEXT("[RepairBossNightV2] Day=%d Repaired=%d(%d/%d) Force=%d AlreadySummoned=%d → BossNight=%d"),
+        CurrentDay, bRepaired ? 1 : 0, Current, Need,
+        bForceBossNightForTest ? 1 : 0, bBossSummoned ? 1 : 0, bBossNight ? 1 : 0);
+
+    if (bBossNight)
     {
-        // 우주선 수리 완료 시 BossSchedule과 무관하게 bBossReady만 세팅.
-        // BossClass가 없는 폴백 상태이므로 별도 소환은 하지 않는다.
-        SetBossReady(true);
-        return;
+        if (!RepairCompleteBossEntry.BossClass)
+        {
+            UE_LOG(LogTemp, Error,
+                TEXT("[RepairBossNightV2] 보스 밤이지만 RepairCompleteBossEntry.BossClass 가 null — "
+                     "GameMode BP 기본값(수리 완료 소환 보스)을 설정하세요. 이번 밤은 잡몹으로 폴백."));
+        }
+        else
+        {
+            Debug::Print(FString::Printf(
+                TEXT("[EnterNight] %d일차 — 수리도 충족, 보스 소환. 잡몹 스폰 생략"), CurrentDay),
+                FColor::Red);
+
+            if (AHellunaDefenseGameState* GS = GetGameState<AHellunaDefenseGameState>())
+            {
+                GS->SetIsBossNight(true);
+                GS->SetTotalMonstersThisNight(1);
+                GS->SetAliveMonsterCount(1);
+            }
+
+            SetBossReady(true);
+            TrySummonBoss(RepairCompleteBossEntry);
+            return; // 보스 밤 — 잡몹 스폰 생략
+        }
     }
 
     TriggerMassSpawning();
@@ -2352,6 +2345,14 @@ void AHellunaDefenseGameMode::OnSpaceShipRepairCompleted()
         UE_LOG(LogHelluna, Warning,
             TEXT("[RepairBossSpawnV1] repair complete but another boss already alive (%s) → skip"),
             *GetNameSafe(AliveBoss.Get()));
+        return;
+    }
+
+    // [RepairBossNightV2] 보스는 1회만 소환 (밤 시작 분기와 즉시 소환 경로 간 중복 방지).
+    if (bBossSummoned)
+    {
+        UE_LOG(LogHelluna, Warning,
+            TEXT("[RepairBossSpawnV1] repair complete but boss already summoned once → skip"));
         return;
     }
 
@@ -2877,6 +2878,7 @@ void AHellunaDefenseGameMode::TrySummonBoss(const FBossSpawnEntry& Entry)
 
     AliveBoss = SpawnedBoss;
     bBossReady = false;
+    bBossSummoned = true; // [RepairBossNightV2] 1회 소환 가드
 
     // [BossTriggerDiagV1] 보스 spawn 성공 — 시네마틱 트리거가 이 보스를 잡아야 함.
     UE_LOG(LogTemp, Warning,

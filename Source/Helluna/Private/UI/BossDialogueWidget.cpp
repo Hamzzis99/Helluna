@@ -4,6 +4,8 @@
 
 #include "Components/TextBlock.h"
 #include "Components/Border.h"
+#include "GameFramework/GameStateBase.h"
+#include "Engine/World.h"
 
 void UBossDialogueWidget::NativeConstruct()
 {
@@ -14,7 +16,62 @@ void UBossDialogueWidget::NativeConstruct()
 	if (DialogueText) DialogueText->SetText(FText::GetEmpty());
 	if (SpeakerNameText) SpeakerNameText->SetText(FText::GetEmpty());
 
+	// [CinematicSkipVoteV1] 스킵 카운터 초기 표시 [0/전체]. PlayerArray 는 클라에도 복제됨.
+	if (Text_SkipCount)
+	{
+		int32 Total = 1;
+		if (const UWorld* W = GetWorld())
+		{
+			if (const AGameStateBase* GS = W->GetGameState())
+			{
+				Total = FMath::Max(GS->PlayerArray.Num(), 1);
+			}
+		}
+		SetSkipCount(0, Total);
+	}
+
 	Phase = EBossDialoguePhase::Idle;
+}
+
+void UBossDialogueWidget::SetSkipCount(int32 Voted, int32 Total)
+{
+	if (!Text_SkipCount)
+	{
+		return;
+	}
+	Total = FMath::Max(Total, 1);
+	Voted = FMath::Clamp(Voted, 0, Total);
+	Text_SkipCount->SetText(FText::FromString(FString::Printf(TEXT("[%d/%d]"), Voted, Total)));
+}
+
+void UBossDialogueWidget::CompleteTyping()
+{
+	// 페이드 인/타이핑 중이면 즉시 전체 표시 + Holding 으로.
+	if (Phase == EBossDialoguePhase::FadingIn || Phase == EBossDialoguePhase::Typing)
+	{
+		SetRenderOpacity(1.f);
+		if (DialogueText)
+		{
+			DialogueText->SetText(FText::FromString(FullDialogue));
+		}
+		LastRevealedChars = FullDialogue.Len();
+		PhaseElapsed = 0.f;
+		Phase = EBossDialoguePhase::Holding;
+	}
+}
+
+bool UBossDialogueWidget::IsTyping() const
+{
+	return Phase == EBossDialoguePhase::FadingIn || Phase == EBossDialoguePhase::Typing;
+}
+
+void UBossDialogueWidget::SetPromptSkipMode(bool bSkipNext)
+{
+	// [CinematicSkipFlowV2] 다음 스페이스 동작 표시: 대화 넘김="TO CONTINUE", 스킵="TO SKIP".
+	if (Text_Continue)
+	{
+		Text_Continue->SetText(FText::FromString(bSkipNext ? TEXT("TO SKIP") : TEXT("TO CONTINUE")));
+	}
 }
 
 void UBossDialogueWidget::NativeDestruct()

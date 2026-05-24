@@ -763,6 +763,15 @@ public:
 	 *   광폭화 몽타주 (서버), BerserkGlow, 발밑/메테오/강하 VFX, 본체 swap+갑옷, 오라, 광폭화 강하 NC 활성.
 	 *   트리거(BossPhase2CinematicTrigger) 가 단계 3 timer 시점에 호출.
 	 */
+	/**
+	 * [Phase2SkipFastForwardV1] bImmediate=true 면 광폭화 외형/HP fill 을 지연 없이 즉시 시작 —
+	 *   페이즈2 시네마틱 스킵 시 스턴 대기(Phase2StunDuration)를 건너뛰고 변신을 바로 적용.
+	 *   내부 가드(bPhase2Stage3Triggered)로 스턴 타이머 경로와 중복 실행되지 않는다.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Combat|광폭화")
-	void Phase2_PlayStage3Visuals();
+	void Phase2_PlayStage3Visuals(bool bImmediate = false);
+
+private:
+	/** [Phase2SkipFastForwardV1] Stage3(광폭화+HP fill) 트리거 1회 가드 — 페이즈2 진입 시 리셋. */
+	bool bPhase2Stage3Triggered = false;
 };

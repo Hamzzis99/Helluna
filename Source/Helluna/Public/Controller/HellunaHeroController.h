@@ -650,6 +650,14 @@ public:
 	UFUNCTION(Server, Reliable, BlueprintCallable, Category = "WorldMap (월드맵)")
 	void Server_ClearWorldPing();
 
+	/**
+	 * [CinematicSkipVoteV1] 클라 → 서버: 보스 소환 시네마틱 스킵에 1표.
+	 *   트리거 액터는 클라 소유가 아니라 Server RPC 를 직접 못 받으므로, 클라 소유인 이 PC 를 경유한다.
+	 *   서버에서 활성 BossSummonCinematicTrigger 를 찾아 표를 등록 → 전원 일치 시 트리거가 시네마틱 종료.
+	 */
+	UFUNCTION(Server, Reliable)
+	void Server_VoteBossSummonSkip();
+
 protected:
 	/** 월드맵 위젯 클래스 (BP에서 WBP_HellunaWorldMap 지정) */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "WorldMap|UI (월드맵|UI)",
