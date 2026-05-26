@@ -50,6 +50,14 @@ private:
 		meta = (ClampMin = "0.0", DisplayName = "드롭 HP 간격 (0=파괴시만)", Tooltip = "HP가 이 값만큼 감소할 때마다 아이템을 드롭합니다. 0이면 파괴 시에만 드롭합니다."))
 	float DropHealthInterval = 0.f;
 
+	// 채집 도구(곡괭이)로만 데미지를 받을지 여부 (true = 곡괭이 외 데미지 무시).
+	// true 면 UInv_FarmingDamageType 데미지만 적용되고, 총알/폭발 등 다른 데미지는 무시한다.
+	// (광석이 총에 맞아도 캐지는 버그 방지 — 자원은 곡괭이로만 채집)
+	// [nocompileeditor 안전] 의도적으로 비-UPROPERTY 일반 멤버 — UPROPERTY 추가는 reflected
+	//   레이아웃을 바꿔 -nocompileeditor 패키징에서 쿡↔런타임 불일치 크래시를 유발하므로
+	//   고정 기본값 멤버로 둔다.
+	bool bOnlyFarmingToolCanDamage = true;
+
 	// 마지막으로 드롭한 HP 지점 (서버 전용, 드롭 간격 추적용)
 	UPROPERTY(Replicated)
 	float LastDropHealth;

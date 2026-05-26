@@ -41,6 +41,9 @@ public:
 	/** [Phase2RefactorV1] Tick — montage section 추적 (Inertialization request) 만 보유. 카메라 lerp 는 트리거. */
 	virtual void Tick(float DeltaTime) override;
 
+	/** [BossDebugStartPhase2V1] 디버그: bDebugStartInPhase2 가 켜져 있으면 스폰 직후 2페이즈 강제 진입. */
+	virtual void BeginPlay() override;
+
 	// === Hooks (베이스에서 호출) ===
 	virtual bool TryInterceptDeathForPhase2(float OldHealth, float NewHealth) override;
 	virtual void TriggerHitStop() override;
@@ -186,6 +189,15 @@ public:
 	bool bDebugSkipPhase2Cinematic = false;
 
 	/**
+	 * [BossDebugStartPhase2V1] 디버그용 — true 면 보스 스폰 직후 즉시 2페이즈로 전환.
+	 *   1페이즈 전투를 건너뛰고 바로 2페이즈 보스/사망을 테스트하기 위함.
+	 *   2페이즈 전환 시네마틱까지 건너뛰려면 위 "Skip Phase 2 Cinematic" 도 함께 켤 것.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|광폭화|Debug",
+		meta = (DisplayName = "디버그: 2페이즈 상태로 시작"))
+	bool bDebugStartInPhase2 = false;
+
+	/**
 	 * 단계1 길이 (초) — Stage3 비주얼 (광폭화/갑옷/본체 swap/VFX) 시작 timer.
 	 *   트리거의 StunDuration 과 같은 값으로 set 권장 (시간 동기화).
 	 */
@@ -268,6 +280,30 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|광폭화",
 		meta = (DisplayName = "광폭화 강하 VFX 속도 배율 (1=원본, 2=2배 빠름)", ClampMin = "0.1", ClampMax = "10.0"))
 	float Phase2DescentTimeDilation = 1.0f;
+
+	/**
+	 * [Phase2LaserDelayV1] 강하 VFX 활성화 후 레이저 이미터('Empty')를 켜기까지의 지연 (초).
+	 *   회오리는 즉시 등장하고 레이저만 이 시간 뒤에 따로 켜진다 — 회오리/레이저 등장 분리.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|광폭화|타이밍",
+		meta = (DisplayName = "레이저 등장 지연(초, 회오리 기준)", ClampMin = "0.0", ClampMax = "20.0"))
+	float Phase2LaserEmitterDelay = 4.0f;
+
+	/**
+	 * [Phase2EnrageDelayV1] 강하 VFX 후 갑옷 벗김 + 피부(광폭화) 변화 + 광폭화 몽타주 + 오라가
+	 *   적용되기까지의 지연 (초). 레이저만 먼저 내려오고 외형 변화는 늦게.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|광폭화|타이밍",
+		meta = (DisplayName = "갑옷/피부/광폭화 지연(초, 강하 VFX 기준)", ClampMin = "0.0", ClampMax = "20.0"))
+	float Phase2ArmorSkinDelay = 6.0f;
+
+	/**
+	 * [Phase2ShakeDelayV1] 강하 VFX 후 카메라 쉐이크가 시작되기까지의 지연 (초).
+	 *   레이저가 어느 정도 내려온 뒤 임팩트 쉐이크가 오도록.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|광폭화|타이밍",
+		meta = (DisplayName = "카메라 쉐이크 지연(초, 강하 VFX 기준)", ClampMin = "0.0", ClampMax = "20.0"))
+	float Phase2ShakeDelay = 2.0f;
 
 	// [Phase2RefactorV1] 카메라 위치/시간 UPROPERTY 모두 트리거(ABossPhase2CinematicTrigger)로 이동.
 	//   BP_BossPhase2CinematicTrigger BP CDO 에서 직접 조정 — 시네마틱 디자인 분리.
@@ -476,6 +512,15 @@ public:
 	/** 2페이즈 전환 멀티캐스트 — 모든 클라에서 VFX/쉐이크/오라 재생 + 델리게이트 브로드캐스트. */
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayBossPhase2Transition();
+
+	/**
+	 * [BossCloneGlowV1] 분신 등 외부 SkeletalMesh 에 2페이즈 광폭화 발광을 적용한다.
+	 *   보스 본인이 현재 쓰는 머티리얼(광폭화 스킨 포함)을 TargetMesh 로 복사한 뒤,
+	 *   각 슬롯에 독립 MID 를 만들어 BerserkGlow 파라미터(StartBerserkVisuals 와 동일)를 set.
+	 *   bInPhase2 가 아니면 아무 것도 하지 않는다. 순수 시각 효과 — 서버/클라 모두 호출 가능.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Combat|광폭화")
+	void ApplyBerserkGlowToMesh(class USkeletalMeshComponent* TargetMesh);
 
 	// =========================================================
 	// [HitStopV1] 히트 스톱 — 피격 순간 보스 시간 일시 정지

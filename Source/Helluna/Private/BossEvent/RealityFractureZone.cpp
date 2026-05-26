@@ -3,6 +3,7 @@
 #include "BossEvent/RealityFractureZone.h"
 
 #include "Character/HellunaEnemyCharacter.h"
+#include "Character/HellunaEnemyCharacter_Boss.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/PostProcessComponent.h"
@@ -1174,7 +1175,14 @@ void ARealityFractureZone::LocalSpawnGhostMesh(FVector WorldLoc, FRotator WorldR
 		GhostComp->SetAnimation(nullptr);
 	}
 
-	if (GhostMaterial)
+	// [BossCloneGlowV1] 2페이즈면 분신도 보스와 동일하게 광폭화 발광 적용 (보스 머티리얼 복사 + glow).
+	//   분신패턴은 2페이즈 전용이라 평상시 이 분기가 타짐. 2페이즈가 아니면 GhostMaterial 폴백.
+	AHellunaEnemyCharacter_Boss* BossEnemy = Cast<AHellunaEnemyCharacter_Boss>(BossOwner);
+	if (BossEnemy && BossEnemy->bInPhase2)
+	{
+		BossEnemy->ApplyBerserkGlowToMesh(GhostComp);
+	}
+	else if (GhostMaterial)
 	{
 		const int32 NumMaterials = GhostComp->GetNumMaterials();
 		for (int32 i = 0; i < NumMaterials; ++i)
