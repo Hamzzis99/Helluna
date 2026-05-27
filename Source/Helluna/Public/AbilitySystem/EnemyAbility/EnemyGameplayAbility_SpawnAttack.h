@@ -9,6 +9,7 @@
 class UAnimMontage;
 class UNiagaraSystem;
 class ABossPatternZoneBase;
+class AStasisSalvoOrb;
 
 /**
  * [SpawnAttackV1] 범용 BP 소환 GA.
@@ -107,6 +108,30 @@ public:
 		meta = (DisplayName = "활성 중 HitReact 차단"))
 	bool bSuppressHitReactWhileActive = false;
 
+	// =========================================================
+	// [TimeSalvoV2] 선택적 발사 구조 — OrbClass 지정 시, 스폰한 Zone 을 즉시 활성화하는 대신
+	//   보스가 자기 발밑(아래)으로 시간 구체를 직하 발사한다. 구체가 바닥/플레이어 근접에서 burst 하면
+	//   StasisSalvoOrb::Burst → TargetZone->ActivateZone() 으로 그 자리에 존이 개화한다 (링 VFX 동반).
+	//   RealityFracture 의 StasisSalvoOrb 메커니즘 재사용 (방향만 직하).
+	//   OrbClass 가 None(기본) 이면 기존 동작 그대로 — 발사 없이 스폰 즉시 Zone 활성화.
+	//   ※ SpawnedActorClass 가 BossPatternZoneBase 파생일 때만 의미 있음 (일반 AActor 소환엔 무시).
+	// =========================================================
+
+	/** 발사할 시간 구체 클래스. None(기본) 이면 발사 생략 → 기존 즉시 활성화. 보스 시간왜곡 GA 에서만 지정. */
+	UPROPERTY(EditDefaultsOnly, Category = "소환 공격|발사",
+		meta = (DisplayName = "발사 구체 클래스 (선택)"))
+	TSubclassOf<AStasisSalvoOrb> OrbClass;
+
+	/** 구체 발사 위치 — 보스 ActorLocation 기준 Height 오프셋 (cm). 여기서 아래(발밑)로 직하 발사. */
+	UPROPERTY(EditDefaultsOnly, Category = "소환 공격|발사",
+		meta = (DisplayName = "구체 발사 Height 오프셋 (cm)", ClampMin = "0.0", ClampMax = "400.0"))
+	float OrbLaunchHeightOffset = 120.f;
+
+	/** 구체 발사 위치 — 보스 ActorLocation 기준 Forward 오프셋 (cm). 0 = 정확히 발밑. */
+	UPROPERTY(EditDefaultsOnly, Category = "소환 공격|발사",
+		meta = (DisplayName = "구체 발사 Forward 오프셋 (cm)", ClampMin = "-200.0", ClampMax = "400.0"))
+	float OrbLaunchForwardOffset = 0.f;
+
 	/**
 	 * [HoldPoseV1] 지정 보스에게 활성 상태에서 HitReact 를 차단하는 SpawnAttack 이 있는지 반환.
 	 * AHellunaEnemyCharacter::Multicast_PlayHitReact_Implementation 에서 early-return 용도로 사용.
@@ -147,6 +172,13 @@ private:
 	 */
 	UFUNCTION()
 	void OnSpawnedZonePatternFinished(bool bWasBroken);
+
+	/**
+	 * [TimeSalvoV2] OrbClass 가 지정돼 있으면 보스 발밑으로 시간 구체를 직하 발사하고 InZone 을
+	 * 구체의 TargetZone 으로 넘긴다 (burst 시 ActivateZone). 발사에 성공하면 true, OrbClass 미지정/
+	 * 스폰 실패면 false (호출부가 즉시 ActivateZone 폴백).
+	 */
+	bool TryLaunchZoneOrb(class AHellunaEnemyCharacter* Enemy, UWorld* World, ABossPatternZoneBase* InZone);
 
 	UPROPERTY(Transient)
 	TObjectPtr<AActor> SpawnedActor = nullptr;

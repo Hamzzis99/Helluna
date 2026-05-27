@@ -9,6 +9,7 @@
 #include "Character/HellunaEnemyCharacter.h"
 #include "BossEvent/BossPatternZoneBase.h"
 #include "BossEvent/BossSlamWaveActor.h"
+#include "BossEvent/StasisSalvoOrb.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
 
@@ -162,8 +163,18 @@ void UEnemyGameplayAbility_SpawnAttack::HandleSpawnTimer()
 		Zone->SetOwnerEnemy(Enemy);
 		Zone->SetPatternDuration(SpawnedActorLifetime);
 		Zone->OnPatternFinished.AddDynamic(this, &UEnemyGameplayAbility_SpawnAttack::OnSpawnedZonePatternFinished);
-		Zone->ActivateZone();
-		SA_GA_LOG("Spawned actor is BossPatternZone — bound OnPatternFinished, ActivateZone() 호출");
+
+		// [TimeSalvoV2] OrbClass 지정 시: 즉시 활성화 대신 발밑으로 구체 직하 발사 → burst 시 Zone 활성화.
+		//   발사 생략/실패면 곧장 ActivateZone (기존 동작).
+		if (TryLaunchZoneOrb(Enemy, World, Zone))
+		{
+			SA_GA_LOG("Spawned actor is BossPatternZone — bound OnPatternFinished, orb 발사(burst 시 ActivateZone)");
+		}
+		else
+		{
+			Zone->ActivateZone();
+			SA_GA_LOG("Spawned actor is BossPatternZone — bound OnPatternFinished, ActivateZone() 즉시 호출");
+		}
 		// Zone 자체가 종료 시점을 결정하므로 별도 Lifetime 타이머는 두지 않음 (Zone 의 PatternDuration 참조).
 		return;
 	}
@@ -180,6 +191,39 @@ void UEnemyGameplayAbility_SpawnAttack::HandleSpawnTimer()
 			SpawnedActorLifetime, false);
 	}
 	// 라이프타임이 0 이면 GA 가 무한 유지 — 외부에서 EndAbility/Cancel 필요. (디자이너 의도)
+}
+
+// [TimeSalvoV2] 보스 발밑으로 시간 구체 직하 발사. 구체가 burst 하면 Burst() 가 InZone->ActivateZone() 호출.
+//   OrbClass 미지정/스폰 실패면 false 반환 → 호출부가 즉시 ActivateZone 폴백 (기존 동작 보존).
+bool UEnemyGameplayAbility_SpawnAttack::TryLaunchZoneOrb(AHellunaEnemyCharacter* Enemy, UWorld* World, ABossPatternZoneBase* InZone)
+{
+	if (!OrbClass || !Enemy || !World || !InZone)
+	{
+		return false;
+	}
+
+	// 발사 위치 = 보스 발밑 위쪽 (Height 오프셋). 방향 = 월드 Down (정확히 발밑으로 직하).
+	const FVector LaunchLoc = Enemy->GetActorLocation()
+		+ Enemy->GetActorForwardVector() * OrbLaunchForwardOffset
+		+ FVector(0.f, 0.f, OrbLaunchHeightOffset);
+	const FVector Dir(0.f, 0.f, -1.f);
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = Enemy;
+	SpawnParams.Instigator = Enemy;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	AStasisSalvoOrb* Orb = World->SpawnActor<AStasisSalvoOrb>(OrbClass, LaunchLoc, Dir.Rotation(), SpawnParams);
+	if (!Orb)
+	{
+		SA_GA_LOG("TryLaunchZoneOrb — orb 스폰 실패 → 즉시 ActivateZone 폴백");
+		return false;
+	}
+
+	Orb->Init(Enemy, InZone, Dir);
+	SA_GA_LOG("TryLaunchZoneOrb — orb '%s' 발밑 직하 발사 from (%.0f,%.0f,%.0f)",
+		*Orb->GetName(), LaunchLoc.X, LaunchLoc.Y, LaunchLoc.Z);
+	return true;
 }
 
 void UEnemyGameplayAbility_SpawnAttack::OnSpawnedZonePatternFinished(bool bWasBroken)

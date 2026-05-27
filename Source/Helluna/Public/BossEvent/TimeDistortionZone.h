@@ -13,6 +13,8 @@ class UMaterialInstanceDynamic;
 class UMaterialInterface;
 class AHellunaHeroCharacter;
 class ATimeDistortionOrb;
+class UStaticMeshComponent;
+class ULightComponent;
 
 /**
  * ATimeDistortionZone
@@ -131,6 +133,15 @@ public:
 		meta = (DisplayName = "슬로우 영역 VFX 크기", ClampMin = "0.01", ClampMax = "20.0"))
 	float SlowAreaVFXScale = 1.f;
 
+	/**
+	 * [TimeSalvoBloomV1] 존 개화(bloom) 시간(초). 0 이면 즉시 표시(팝).
+	 *   ActivateZone(=구체 착탄) 시점에 돔 메시/라이트가 숨김 상태에서 스케일 0→원본으로 ease-out 하며 "퍼지듯" 생성.
+	 *   스폰 시점엔 존 비주얼을 숨겨두므로, 구체가 떨어지기 전엔 존이 보이지 않는다.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "시간 왜곡|VFX",
+		meta = (DisplayName = "존 개화(bloom) 시간 (초)", ClampMin = "0.0", ClampMax = "2.0"))
+	float ZoneBloomDuration = 0.4f;
+
 	/** 패턴 종료 VFX (슬로우 해제 시 먼저 재생, 이후 폭발/파훼 VFX 재생) */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "시간 왜곡|VFX",
 		meta = (DisplayName = "패턴 종료 VFX"))
@@ -197,6 +208,20 @@ public:
 protected:
 	virtual void BeginPlay() override;
 	virtual void Destroyed() override;
+
+	// =========================================================
+	// [TimeSalvoBloomV1] 개화 reveal — 스폰 시 숨김, 착탄(ActivateZone) 시 전 클라 reveal + bloom
+	// =========================================================
+
+	/** 스폰 시점에 돔 메시/라이트를 캐시하고 숨긴다 (BeginPlay, 전 머신). */
+	void CacheAndHideZoneVisuals();
+
+	/** ActivateZone(서버) 에서 호출 — 전 클라에서 돔/라이트 reveal + 스케일 bloom 시작. */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_RevealZoneVisuals();
+
+	/** bloom 스케일 lerp 틱 (타이머 구동). */
+	void TickBloom();
 
 private:
 	// =========================================================
@@ -304,4 +329,22 @@ private:
 
 	/** Custom Depth가 설정된 액터 추적 (정리용) */
 	TArray<TWeakObjectPtr<AActor>> CustomDepthActors;
+
+	// =========================================================
+	// [TimeSalvoBloomV1] 개화 reveal 런타임 상태
+	// =========================================================
+
+	/** 스폰 시 숨긴 돔 메시들 (BP 추가 StaticMesh — 보통 SM_Sphere_01). */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UStaticMeshComponent>> RevealMeshes;
+
+	/** RevealMeshes 각각의 원본 RelativeScale (bloom target). */
+	TArray<FVector> RevealMeshTargetScales;
+
+	/** 스폰 시 숨긴 라이트들 (BP 추가 PointLight 등). */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<ULightComponent>> RevealLights;
+
+	FTimerHandle BloomTimerHandle;
+	float BloomElapsed = 0.f;
 };
