@@ -342,33 +342,59 @@ void AHellunaLobbyController::Server_SwapTransferItem_Implementation(int32 RepID
 		return;
 	}
 
-	// ── 아이템A가 어느 Comp에 있는지 탐색 ──
+	// ── 출처 Comp 판별 ──
+	// [H2-FIX] Stash/Loadout은 각자 독립적인 FastArray ReplicationID 카운터를 사용하므로
+	// 같은 숫자 RepID가 양쪽 Comp에 동시에 존재할 수 있다. 기존 코드처럼 "RepID_A를 Stash부터
+	// 먼저 검사"하면 RepID 충돌 시 엉뚱한 Comp의 아이템을 집어 잘못된 스왑(인벤 손상)이 발생했다.
+	// 크로스 Grid 스왑은 A와 B가 서로 반대 Comp에 있다는 불변식을 이용해, RepID_A·RepID_B를 함께
+	// 보고 (CompA, CompB) 쌍을 일관되게 결정한다.
 	UInv_InventoryComponent* CompA = nullptr;
 	UInv_InventoryComponent* CompB = nullptr;
 
-	if (StashInventoryComponent->FindValidItemIndexByReplicationID(RepID_A) != INDEX_NONE)
+	const bool bAInStash   = StashInventoryComponent->FindValidItemIndexByReplicationID(RepID_A) != INDEX_NONE;
+	const bool bAInLoadout = LoadoutInventoryComponent->FindValidItemIndexByReplicationID(RepID_A) != INDEX_NONE;
+	const bool bBInStash   = StashInventoryComponent->FindValidItemIndexByReplicationID(RepID_B) != INDEX_NONE;
+	const bool bBInLoadout = LoadoutInventoryComponent->FindValidItemIndexByReplicationID(RepID_B) != INDEX_NONE;
+
+	const bool bStashToLoadout = bAInStash && bBInLoadout;   // A=Stash, B=Loadout
+	const bool bLoadoutToStash = bAInLoadout && bBInStash;   // A=Loadout, B=Stash
+
+	if (bStashToLoadout && !bLoadoutToStash)
 	{
 		CompA = StashInventoryComponent;
+		CompB = LoadoutInventoryComponent;
 	}
-	else if (LoadoutInventoryComponent->FindValidItemIndexByReplicationID(RepID_A) != INDEX_NONE)
+	else if (bLoadoutToStash && !bStashToLoadout)
 	{
 		CompA = LoadoutInventoryComponent;
+		CompB = StashInventoryComponent;
 	}
-
-	if (!CompA)
+	else if (bStashToLoadout && bLoadoutToStash)
 	{
-		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] SwapTransfer: RepID_A=%d 미발견!"), RepID_A);
+		// 두 RepID가 양쪽 Comp 모두에 존재 → 어느 쪽이 출처인지 단정 불가.
+		// 잘못된 스왑으로 아이템을 망가뜨리느니 안전하게 취소한다.
+		UE_LOG(LogHellunaLobby, Warning,
+			TEXT("[LobbyPC] SwapTransfer: RepID 충돌로 출처 Comp 모호 → 안전 취소 | RepID_A=%d RepID_B=%d"),
+			RepID_A, RepID_B);
 		return;
 	}
-
-	// ── 아이템B는 반대쪽 Comp에 있어야 함 ──
-	CompB = (CompA == StashInventoryComponent) ? LoadoutInventoryComponent : StashInventoryComponent;
-
-	if (CompB->FindValidItemIndexByReplicationID(RepID_B) == INDEX_NONE)
+	else
 	{
-		// 같은 Comp에 있을 수도 있으니 폴백 체크
-		CompB = CompA;
-		if (CompB->FindValidItemIndexByReplicationID(RepID_B) == INDEX_NONE)
+		// 크로스 Grid 쌍이 아님 → 같은 Grid 내 스왑(재배치) 폴백 (기존 동작 보존).
+		if (bAInStash)        { CompA = StashInventoryComponent; }
+		else if (bAInLoadout) { CompA = LoadoutInventoryComponent; }
+
+		if (!CompA)
+		{
+			UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] SwapTransfer: RepID_A=%d 미발견!"), RepID_A);
+			return;
+		}
+
+		if (CompA->FindValidItemIndexByReplicationID(RepID_B) != INDEX_NONE)
+		{
+			CompB = CompA; // 같은 Comp 내 스왑
+		}
+		else
 		{
 			UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] SwapTransfer: RepID_B=%d 미발견!"), RepID_B);
 			return;
@@ -806,12 +832,80 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
+// [C3-FIX] AbortDeployAndRestoreLobby — Deploy 실패/취소 시 로딩 화면 복구
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 📌 문제: Client_PreloadShipScene / ExecuteDeploySequence가 입력 차단 + Fade/HUD + 우주선
+//    서브레벨을 켜둔 뒤 deploy가 실패/취소되면, 정상 ClientTravel 경로만 이 상태를 해제하므로
+//    플레이어가 로딩(검은/우주선) 화면에 영구히 갇힌다. 실패/취소 RPC가 이 헬퍼로 복구한다.
+// 📌 idempotent: 진행 중인 로딩 연출이 없으면 플래그만 초기화하고 조용히 반환(정상 로비 보호).
+//
+void AHellunaLobbyController::AbortDeployAndRestoreLobby()
+{
+	const bool bWasLoading =
+		bShipScenePreloaded || bPreloadInProgress || bPendingExecuteDeployAfterPreload ||
+		ActiveFadeWidget != nullptr || ActiveLobbyHUD != nullptr;
+
+	// 시퀀스 상태 플래그 리셋 (항상)
+	bShipScenePreloaded = false;
+	bPreloadInProgress = false;
+	bPendingExecuteDeployAfterPreload = false;
+	bCaptureAndTravelFired = false;
+	bDeployInProgress = false;
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(FadeStartTimer);
+		World->GetTimerManager().ClearTimer(HandoffTimer);
+		World->GetTimerManager().ClearTimer(SettleGuardTimer);
+	}
+
+	if (!bWasLoading)
+	{
+		return;
+	}
+
+	UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] [C3-FIX] Deploy 실패/취소 → 로딩 화면 복구"));
+
+	// 로딩 HUD / Fade 위젯 제거
+	if (ActiveLobbyHUD)
+	{
+		ActiveLobbyHUD->RemoveFromParent();
+		ActiveLobbyHUD = nullptr;
+	}
+	if (ActiveFadeWidget)
+	{
+		ActiveFadeWidget->RemoveFromParent();
+		ActiveFadeWidget = nullptr;
+	}
+
+	// 우주선 로딩 서브레벨 언로드
+	if (!LoadingSceneLevelName.IsNone() && CurrentLoadedLevel == LoadingSceneLevelName)
+	{
+		UnloadBackgroundLevel(LoadingSceneLevelName);
+	}
+
+	// V2 프리뷰 복구 (PreloadShipScene에서 숨김/틱 정지했던 것 되돌림)
+	if (IsValid(SpawnedPreviewSceneV2))
+	{
+		SpawnedPreviewSceneV2->SetActorHiddenInGame(false);
+		SpawnedPreviewSceneV2->SetActorTickEnabled(true);
+	}
+
+	// 입력/커서를 로비 기본값(UI 모드)으로 복구
+	EnableInput(this);
+	SetShowMouseCursor(true);
+	SetInputMode(FInputModeUIOnly{});
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
 // Client_DeployFailed — 출격 실패 알림 (Client RPC)
 // ════════════════════════════════════════════════════════════════════════════════
 void AHellunaLobbyController::Client_DeployFailed_Implementation(const FString& Reason)
 {
 	UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] 출격 실패: %s"), *Reason);
-	bDeployInProgress = false;
+	// [C3-FIX] 단순 플래그 리셋이 아니라 진행 중이던 로딩 연출까지 복구해 화면 정지 방지.
+	AbortDeployAndRestoreLobby();
 	// TODO: UI 알림 표시
 }
 
@@ -2605,6 +2699,9 @@ void AHellunaLobbyController::Client_MatchmakingError_Implementation(const FStri
 {
 	UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] Client_MatchmakingError: %s"), *ErrorMessage);
 
+	// [C3-FIX] 매칭/Deploy 실패로 로딩 연출(우주선 preload 등)이 켜져 있으면 로비로 복구
+	AbortDeployAndRestoreLobby();
+
 	// 에러 시 None 상태로 전환
 	FMatchmakingStatusInfo CancelInfo;
 	CancelInfo.Status = EMatchmakingStatus::None;
@@ -2671,6 +2768,9 @@ void AHellunaLobbyController::Client_MatchmakingCountdown_Implementation(int32 R
 void AHellunaLobbyController::Client_MatchmakingCancelled_Implementation(const FString& Reason)
 {
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] [Phase17] 카운트다운 취소 | Reason=%s"), *Reason);
+
+	// [C3-FIX] 카운트다운 종료 후 preload가 시작된 뒤 취소된 경우 로딩 화면 복구 (idempotent)
+	AbortDeployAndRestoreLobby();
 
 	// Solo 프리뷰로 복귀
 	if (IsValid(SpawnedPreviewSceneV2))

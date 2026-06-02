@@ -362,6 +362,23 @@ void AHellunaLobbyGameMode::ProcessLobbyLogin(AHellunaLobbyController* LobbyPC, 
 		return;
 	}
 
+	// ── [SECFIX-Relogin] 이미 인증된 커넥션의 재로그인 차단 ──
+	// ControllerToPlayerIdMap[LobbyPC]는 로그인 성공(InitializeLobbyForPlayer) 후에만 설정된다.
+	// 이미 로그인된 커넥션이 다른 계정으로 재로그인하면 첫 계정의 매핑이 dangling 되어
+	// (PlayerIdToControllerMap/ControllerToPlayerIdMap/캐릭터 점유) 첫 계정이 영구 잠기고
+	// Logout 시 스태시가 저장되지 않는다. 따라서 이미 로그인된 컨트롤러의 재로그인은 거부한다.
+	if (const FString* AlreadyLoggedInId = ControllerToPlayerIdMap.Find(LobbyPC))
+	{
+		if (!AlreadyLoggedInId->IsEmpty())
+		{
+			UE_LOG(LogHellunaLobby, Warning,
+				TEXT("[LobbyGM] ProcessLobbyLogin: 이미 로그인된 커넥션의 재로그인 거부 | 기존=%s | 요청=%s"),
+				**AlreadyLoggedInId, *PlayerId);
+			LobbyPC->Client_LobbyLoginResult(false, TEXT("이미 로그인된 상태입니다."));
+			return;
+		}
+	}
+
 	// ── 동시 접속 체크 ──
 	UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(GetGameInstance());
 	if (GI && GI->IsPlayerLoggedIn(PlayerId))
@@ -616,6 +633,20 @@ void AHellunaLobbyGameMode::InitializeLobbyForPlayer(AHellunaLobbyController* Lo
 
 	// ── [Phase 12d] Step 5: 파티 자동 복귀 ──
 	PlayerIdToControllerMap.Add(PlayerId, LobbyPC);
+
+	// [H3-FIX] 재접속 시 남아있는 파티 탈퇴 유예 타이머는 현재 파티 가입 여부와 무관하게
+	// 항상 취소한다. (유예 중 추방되어 ExistingPartyId==0으로 돌아오면, 살아남은 타이머가
+	// 이후 합류한 다른 파티에서 이 플레이어를 잘못 탈퇴시키는 버그를 막는다.)
+	if (FTimerHandle* StaleLeaveTimer = PartyLeaveTimers.Find(PlayerId))
+	{
+		if (UWorld* TimerWorld = GetWorld())
+		{
+			TimerWorld->GetTimerManager().ClearTimer(*StaleLeaveTimer);
+		}
+		PartyLeaveTimers.Remove(PlayerId);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [H3-FIX] 재접속 시 stale 파티 탈퇴 타이머 취소 | PlayerId=%s"), *PlayerId);
+	}
+
 	{
 		const int32 ExistingPartyId = SQLiteSubsystem->GetPlayerPartyId(PlayerId);
 		if (ExistingPartyId > 0)
@@ -641,17 +672,6 @@ void AHellunaLobbyGameMode::InitializeLobbyForPlayer(AHellunaLobbyController* Lo
 						break;
 					}
 				}
-			}
-
-			if (FTimerHandle* TimerPtr = PartyLeaveTimers.Find(PlayerId))
-			{
-				UWorld* World = GetWorld();
-				if (World)
-				{
-					World->GetTimerManager().ClearTimer(*TimerPtr);
-				}
-				PartyLeaveTimers.Remove(PlayerId);
-				UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] 파티 탈퇴 타이머 취소 | PlayerId=%s"), *PlayerId);
 			}
 
 			RefreshPartyCache(ExistingPartyId);
@@ -2867,6 +2887,18 @@ void AHellunaLobbyGameMode::ContinueLobbyInitAfterRejoinDecision(AHellunaLobbyCo
 
 	// Step 5: 파티 자동 복귀
 	PlayerIdToControllerMap.Add(PlayerId, LobbyPC);
+
+	// [H3-FIX] 재접속(재참가 결정 후) 경로에서도 stale 파티 탈퇴 유예 타이머를 항상 취소.
+	if (FTimerHandle* StaleLeaveTimer = PartyLeaveTimers.Find(PlayerId))
+	{
+		if (UWorld* TimerWorld = GetWorld())
+		{
+			TimerWorld->GetTimerManager().ClearTimer(*StaleLeaveTimer);
+		}
+		PartyLeaveTimers.Remove(PlayerId);
+		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] [H3-FIX] 재참가 경로 stale 파티 탈퇴 타이머 취소 | PlayerId=%s"), *PlayerId);
+	}
+
 	{
 		const int32 ExistingPartyId = SQLiteSubsystem->GetPlayerPartyId(PlayerId);
 		if (ExistingPartyId > 0)
@@ -4055,7 +4087,13 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 					return;
 				}
 
-				auto ScheduleWaitCleanup = [WeakThis, Port]()
+				// [C1-FIX] bReleaseReservation:
+				//   true  → 실패/타임아웃: 폴링 중단 + 채널 예약(PendingDeployChannels/타이머) 완전 해제.
+				//   false → 성공: 폴링 루프만 중단하고 채널 예약은 유지한다. 서버가 ready(=레지스트리 "empty")가
+				//           되어도 매칭 플레이어들은 아직 ClientTravel→접속 전이라 레지스트리가 수 초간 "empty"로
+				//           남는다. 이때 예약을 풀면 TickMatchmaking이 같은 포트를 다른 그룹에 재배정해 채널이
+				//           이중배정된다. 즉시 deploy 경로처럼 30초 예약을 (재)무장해 접속 윈도우를 보호한다.
+				auto ScheduleWaitCleanup = [WeakThis, Port](bool bReleaseReservation)
 				{
 					AHellunaLobbyGameMode* CleanupSelf = WeakThis.Get();
 					if (!CleanupSelf)
@@ -4067,14 +4105,17 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 					if (!CleanupWorld)
 					{
 						CleanupSelf->WaitAndDeployTimers.Remove(Port);
-						CleanupSelf->PendingDeployTimers.Remove(Port);
-						CleanupSelf->PendingDeployChannels.Remove(Port);
+						if (bReleaseReservation)
+						{
+							CleanupSelf->PendingDeployTimers.Remove(Port);
+							CleanupSelf->PendingDeployChannels.Remove(Port);
+						}
 						return;
 					}
 
 					// Clear the looping timer after the current callback returns.
 					CleanupWorld->GetTimerManager().SetTimerForNextTick(
-						[WeakThis, Port]()
+						[WeakThis, Port, bReleaseReservation]()
 						{
 							AHellunaLobbyGameMode* NextTickSelf = WeakThis.Get();
 							if (!NextTickSelf)
@@ -4089,15 +4130,29 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 									NextTickWorld->GetTimerManager().ClearTimer(*WaitHandle);
 								}
 
-								if (FTimerHandle* PendingHandle = NextTickSelf->PendingDeployTimers.Find(Port))
+								if (bReleaseReservation)
 								{
-									NextTickWorld->GetTimerManager().ClearTimer(*PendingHandle);
+									if (FTimerHandle* PendingHandle = NextTickSelf->PendingDeployTimers.Find(Port))
+									{
+										NextTickWorld->GetTimerManager().ClearTimer(*PendingHandle);
+									}
 								}
 							}
 
 							NextTickSelf->WaitAndDeployTimers.Remove(Port);
-							NextTickSelf->PendingDeployTimers.Remove(Port);
-							NextTickSelf->PendingDeployChannels.Remove(Port);
+
+							if (bReleaseReservation)
+							{
+								// 실패/타임아웃: 채널 예약 완전 해제
+								NextTickSelf->PendingDeployTimers.Remove(Port);
+								NextTickSelf->PendingDeployChannels.Remove(Port);
+							}
+							else
+							{
+								// 성공: 채널을 계속 예약 상태로 두고 30초 자동해제를 (재)무장해
+								// ClientTravel→접속 윈도우 동안 다른 그룹이 같은 포트를 못 잡게 한다.
+								NextTickSelf->MarkChannelAsPendingDeploy(Port);
+							}
 						});
 				};
 
@@ -4142,7 +4197,7 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 				if (Elapsed > TimeoutSeconds)
 				{
 					TArray<FMatchmakingQueueEntry> FailedMatched = MoveTemp(Matched);
-					ScheduleWaitCleanup();
+					ScheduleWaitCleanup(/*bReleaseReservation=*/true);
 					HandleFailure(FailedMatched, TEXT("게임 서버 준비 시간이 초과되었습니다."));
 					return;
 				}
@@ -4163,7 +4218,7 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 				}
 
 				TArray<FMatchmakingQueueEntry> DeployMatched = MoveTemp(Matched);
-				ScheduleWaitCleanup();
+				ScheduleWaitCleanup(/*bReleaseReservation=*/false);
 
 				InnerWorld->GetTimerManager().SetTimerForNextTick(
 					[WeakThis, DeployPort = Port, DeployMatched = MoveTemp(DeployMatched), bRequeueOnFailure]() mutable

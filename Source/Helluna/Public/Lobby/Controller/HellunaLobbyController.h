@@ -289,6 +289,9 @@ private:
 	FTimerHandle HandoffTimer;
 	FTimerHandle SettleGuardTimer;
 
+	/** [C3-FIX] Deploy 실패/취소 시 로딩 연출(입력 차단/Fade/HUD/우주선 서브레벨)을 해제하고 로비 상태로 복구한다. */
+	void AbortDeployAndRestoreLobby();
+
 public:
 	// ════════════════════════════════════════════════════════════════
 	// [Phase 12d] 파티 시스템 RPC
