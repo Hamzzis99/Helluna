@@ -1578,8 +1578,20 @@ void AHellunaBaseGameMode::Logout(AController* Exiting)
 	}
 
 	// Phase 6: 미소비 PreCache 정리 (접속 끊김 시 메모리 누수 방지)
+	// [CRITICAL-FIX] 미소비 precache(스폰 전 disconnect)는 소스(파일/DB)가 PreCache 시점에 이미 삭제돼
+	// 유일한 사본이다. 그냥 Remove하면 로드아웃이 영구 손실되므로, 캡처해 두었다가 아래
+	// OnPlayerInventoryLogout 이후 권위적으로 복구 저장한다. (소비되면 LoadAndSendInventoryToClient가
+	// 맵에서 제거하므로 — 여기 남아있다 = 미소비 = 복구해도 중복 없음.)
+	TArray<FInv_SavedItemData> RescuePreCacheItems;
 	if (!PlayerId.IsEmpty())
 	{
+		if (const FInv_PlayerSaveData* Pending = PreCachedInventoryMap.Find(PlayerId))
+		{
+			if (!Pending->IsEmpty())
+			{
+				RescuePreCacheItems = Pending->Items;
+			}
+		}
 		PreCachedInventoryMap.Remove(PlayerId);
 	}
 	if (APlayerController* ExitingPC_ForDeploy = Cast<APlayerController>(Exiting))
@@ -1594,6 +1606,16 @@ void AHellunaBaseGameMode::Logout(AController* Exiting)
 		// ────────────────────────────────────────────────────────────────────────
 		APlayerController* ExitingPC = Cast<APlayerController>(Exiting);
 		OnPlayerInventoryLogout(PlayerId, ExitingPC);
+
+		// [CRITICAL-FIX] 미소비 precache 복구 저장 — OnPlayerInventoryLogout이 (아직 스폰 전이라) 빈
+		// 인벤토리를 저장한 뒤, 마지막에 precache 아이템을 권위적으로 저장해 로드아웃 영구 손실을 막는다.
+		// (파일전송 전용 등 SaveCollectedItems가 거부하는 구성에선 no-op이며, 소스가 이미 삭제됐으므로 중복도 없음.)
+		if (RescuePreCacheItems.Num() > 0)
+		{
+			const bool bRescued = SaveCollectedItems(PlayerId, RescuePreCacheItems);
+			UE_LOG(LogHelluna, Warning, TEXT("[CRITICAL-FIX] 미소비 PreCache 복구 저장 %s | PlayerId=%s | %d개"),
+				bRescued ? TEXT("성공") : TEXT("실패"), *PlayerId, RescuePreCacheItems.Num());
+		}
 
 		// GameInstance에서 로그아웃 처리
 		if (UMDF_GameInstance* GI = Cast<UMDF_GameInstance>(UGameplayStatics::GetGameInstance(GetWorld())))

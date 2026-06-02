@@ -4283,6 +4283,7 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 								if (!PCPtr || !PCPtr->IsValid())
 								{
 									GM->RollbackDeployStateForPlayers(PreparedPlayerIds, DeployPort);
+									GM->ReleasePendingDeployChannel(DeployPort); // [R4-FIX] live 분기: 재예약 채널 즉시 해제
 									GM->SendMatchmakingErrorToPlayers(MatchedPlayerIds, TEXT("로비 컨트롤러가 유효하지 않아 출격을 중단했습니다."));
 									if (bRequeueOnFailure)
 									{
@@ -4296,6 +4297,7 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 								{
 									GM->RollbackDeployStateForPlayer(PlayerId, DeployPort);
 									GM->RollbackDeployStateForPlayers(PreparedPlayerIds, DeployPort);
+									GM->ReleasePendingDeployChannel(DeployPort); // [R4-FIX] live 분기: 재예약 채널 즉시 해제
 									GM->SendMatchmakingErrorToPlayers(MatchedPlayerIds, PersistError);
 									if (bRequeueOnFailure)
 									{
@@ -4469,6 +4471,7 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 									if (!PCPtr || !PCPtr->IsValid())
 									{
 										GM->RollbackDeployStateForPlayers(PreparedPlayerIds, DeployPort);
+										GM->ReleasePendingDeployChannel(DeployPort); // [R4-FIX] 재예약 채널 즉시 해제
 										GM->SendMatchmakingErrorToPlayers(MatchedPlayerIds, TEXT("로비 컨트롤러가 유효하지 않아 출격을 중단했습니다."));
 										if (bRequeueOnFailure)
 										{
@@ -4482,6 +4485,7 @@ void AHellunaLobbyGameMode::WaitAndDeploy(int32 Port, TArray<FMatchmakingQueueEn
 									{
 										GM->RollbackDeployStateForPlayer(PlayerId, DeployPort);
 										GM->RollbackDeployStateForPlayers(PreparedPlayerIds, DeployPort);
+										GM->ReleasePendingDeployChannel(DeployPort); // [R4-FIX] 재예약 채널 즉시 해제
 										GM->SendMatchmakingErrorToPlayers(MatchedPlayerIds, PersistError);
 										if (bRequeueOnFailure)
 										{

@@ -496,6 +496,26 @@ void AHellunaLobbyController::SaveBothComponentsAfterInteraction()
 	TArray<FInv_SavedItemData> LoadoutItems = LoadoutInventoryComponent->CollectInventoryDataForSave();
 	TArray<FInv_SavedItemData> StashItems = StashInventoryComponent->CollectInventoryDataForSave();
 
+	// [M2-FIX2] 파괴적 캐스케이드 가드 (Logout 경로 SaveComponentsToDatabase와 동일 취지).
+	//  (1) 아직 미로드(-1)면 저장 금지 — PostLogin 복원 완료 전 짧은 상태로 DB를 덮어쓰는 것 방지.
+	//  (2) 총량(Stash+Loadout) 보존 위반 = 로그인 시 부분 복원(grid full 등)으로 아이템이 유실된 상태 →
+	//      DB 풀스택을 짧은 in-memory로 덮어쓰지 않도록 저장을 차단한다. 정상 transfer/swap은 총량이
+	//      보존되고(컨테이너 간 이동), split은 엔트리 수가 늘어나므로 이 가드를 정상 통과한다.
+	const int32 LoadedStash = GetLoadedStashItemCount();
+	const int32 LoadedLoadout = GetLoadedLoadoutItemCount();
+	if (LoadedStash < 0 || LoadedLoadout < 0)
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] [M2-FIX2] 미로드 상태(Stash=%d/Loadout=%d) → per-interaction 저장 스킵"), LoadedStash, LoadedLoadout);
+		return;
+	}
+	if (StashItems.Num() + LoadoutItems.Num() < LoadedStash + LoadedLoadout)
+	{
+		UE_LOG(LogHellunaLobby, Warning,
+			TEXT("[LobbyPC] [M2-FIX2] 총 아이템 수 감소 감지(현재 %d < 로드 %d) → 파괴적 저장 차단(부분 복원 의심) | PlayerId=%s"),
+			StashItems.Num() + LoadoutItems.Num(), LoadedStash + LoadedLoadout, *PlayerId);
+		return;
+	}
+
 	const bool bAtomicOk = DB->SaveStashAndLoadoutAtomic(PlayerId, StashItems, LoadoutItems);
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] [M2-FIX] SaveStashAndLoadoutAtomic %s | Stash %d, Loadout %d | PlayerId=%s"),
 		bAtomicOk ? TEXT("성공") : TEXT("실패"), StashItems.Num(), LoadoutItems.Num(), *PlayerId);
@@ -867,10 +887,13 @@ void AHellunaLobbyController::AbortDeployAndRestoreLobby()
 		ActiveFadeWidget = nullptr;
 	}
 
-	// 우주선 로딩 서브레벨 언로드
+	// 우주선 로딩 서브레벨 언로드 + 로비 배경 복구
 	if (!LoadingSceneLevelName.IsNone() && CurrentLoadedLevel == LoadingSceneLevelName)
 	{
 		UnloadBackgroundLevel(LoadingSceneLevelName);
+		// [R2-FIX] 로딩 시퀀스가 Play/Character 배경을 우주선 씬으로 교체했으므로, 복구 시
+		// 로비 배경(기본 Play 탭)을 다시 로드한다. (안 그러면 deploy 실패 후 로비에 3D 배경이 사라짐)
+		LoadBackgroundForTab(0);
 	}
 
 	// V2 프리뷰 복구 (PreloadShipScene에서 숨김/틱 정지했던 것 되돌림)

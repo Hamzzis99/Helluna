@@ -1673,6 +1673,12 @@ void AHellunaHeroController::BossRealityFracture()
 
 void AHellunaHeroController::Server_BossRealityFracture_Implementation()
 {
+#if UE_BUILD_SHIPPING
+	// [HIGH-FIX] 보스 치트 RPC는 Shipping 빌드에서 비활성화한다.
+	// (이 Server RPC는 어떤 클라든 호출 가능 → 프로덕션에서 클라가 보스 패턴을 강제 발동시키는 악용 차단)
+	UE_LOG(LogTemp, Warning, TEXT("[RealityFractureCheat] Disabled in shipping build"));
+	return;
+#endif
 	UWorld* World = GetWorld();
 	if (!World)
 	{
@@ -1736,6 +1742,11 @@ void AHellunaHeroController::BossTimeDistortion()
 
 void AHellunaHeroController::Server_BossTimeDistortion_Implementation()
 {
+#if UE_BUILD_SHIPPING
+	// [HIGH-FIX] 보스 치트 RPC는 Shipping 빌드에서 비활성화 (클라가 보스 패턴 강제 발동하는 악용 차단).
+	UE_LOG(LogTemp, Warning, TEXT("[TimeDistortionCheat] Disabled in shipping build"));
+	return;
+#endif
 	UWorld* World = GetWorld();
 	if (!World)
 	{

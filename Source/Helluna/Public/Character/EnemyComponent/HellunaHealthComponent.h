@@ -97,6 +97,10 @@ public:
 	/** 서버: 부활 */
 	void Revive(float InReviveHealthPercent);
 
+	/** [HIGH-FIX] 서버: 풀에서 재사용되는 액터를 생존 상태로 리셋(사망/다운 플래그+타이머 해제 후 HP 충전).
+	 *  NewHealth<=0 이면 MaxHealth 로 풀 충전. SetHealth는 bDead면 무시되므로 풀 재사용엔 이걸 사용. */
+	void ResetForPoolReuse(float NewHealth = -1.f);
+
 	/** 서버: 다운 중 피격 → 출혈 가속 */
 	void ApplyBleedoutDamage(float Damage);
 

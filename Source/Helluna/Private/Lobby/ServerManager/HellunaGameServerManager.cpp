@@ -222,10 +222,21 @@ int32 UHellunaGameServerManager::RespawnGameServer(int32 Port, const FString& Ne
 			if (FPlatformProcess::IsProcRunning(ActiveServers[i].ProcessHandle))
 			{
 				FPlatformProcess::TerminateProc(ActiveServers[i].ProcessHandle, true);
-				// [#23-FIX] 같은 포트로 재기동하기 전에 프로세스가 완전히 종료돼 리슨 소켓이
-				// OS에 반환될 때까지 대기한다 (강제 종료된 프로세스라 보통 즉시 반환).
-				// 안 그러면 새 서버가 아직 점유 중인 포트에 bind 실패 → 고장난 채널로 출격.
-				FPlatformProcess::WaitForProc(ActiveServers[i].ProcessHandle);
+				// [#23-FIX-v2] 같은 포트로 재기동 전에 프로세스 종료(=리슨 소켓 반환)를 기다리되,
+				// WaitForProc(INFINITE)로 게임 스레드를 무한 블록하지 않도록 최대 1.5초만 짧게 폴링한다.
+				// (프로세스가 안 죽으면 로비 전체가 멈추는 회귀 방지 — 강제 종료라 보통 수십 ms 내 종료)
+				{
+					const double KillDeadline = FPlatformTime::Seconds() + 1.5;
+					while (FPlatformProcess::IsProcRunning(ActiveServers[i].ProcessHandle)
+						&& FPlatformTime::Seconds() < KillDeadline)
+					{
+						FPlatformProcess::Sleep(0.02f);
+					}
+					if (FPlatformProcess::IsProcRunning(ActiveServers[i].ProcessHandle))
+					{
+						UE_LOG(LogHellunaLobby, Warning, TEXT("[ServerManager] 기존 프로세스가 1.5초 내 미종료 — 그대로 진행 | Port=%d"), Port);
+					}
+				}
 				UE_LOG(LogHellunaLobby, Log, TEXT("[ServerManager] 기존 프로세스 종료 | Port=%d"), Port);
 			}
 			FPlatformProcess::CloseProc(ActiveServers[i].ProcessHandle);
@@ -452,9 +463,32 @@ int32 UHellunaGameServerManager::AllocatePort()
 						// 60초 초과(heartbeat 끊김) + 추적 프로세스 없음 → stale 회수 가능
 						bPortFree = true;
 					}
+					else if (!bParsed && !IsTrackedServerRunning(Port))
+					{
+						// [R3-FIX] lastUpdate 파싱 불가 → 파일 수정시각(mtime)으로 신선도 판단.
+						// live 서버는 30초마다 레지스트리를 재기록하므로 mtime이 신선하다. mtime이 60초 초과
+						// (또는 읽기 실패)면 오래된 고아 파일로 보고 회수한다 (포트 영구 고갈/starvation 방지).
+						const FDateTime FileMTime = IFileManager::Get().GetTimeStamp(*FilePath);
+						const double FileAgeSec = (FileMTime == FDateTime::MinValue())
+							? 999999.0
+							: (FDateTime::UtcNow() - FileMTime).GetTotalSeconds();
+						if (FileAgeSec > 60.0)
+						{
+							UE_LOG(LogHellunaLobby, Warning,
+								TEXT("[ServerManager][R3-FIX] lastUpdate 파싱 불가 + 미추적 + mtime stale(%.1fs) → 고아 포트 회수 | Port=%d | Status=%s"),
+								FileAgeSec, Port, *Status);
+							bPortFree = true;
+						}
+						else
+						{
+							UE_LOG(LogHellunaLobby, Warning,
+								TEXT("[ServerManager][R3-FIX] lastUpdate 파싱 불가 but mtime 신선(%.1fs) → 점유 간주, 스킵 | Port=%d"),
+								FileAgeSec, Port);
+						}
+					}
 					else
 					{
-						// 신선/파싱실패/추적중 등 → 점유로 간주하고 스킵
+						// 신선/추적중 등 → 점유로 간주하고 스킵
 						UE_LOG(LogHellunaLobby, Warning,
 							TEXT("[ServerManager][H5-FIX] 비어있음 미증명 레지스트리 → 포트 스킵 | Port=%d | Status=%s | Parsed=%d | Age=%.1f"),
 							Port, *Status, bParsed ? 1 : 0, AgeSec);
