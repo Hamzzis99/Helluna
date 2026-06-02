@@ -172,6 +172,9 @@ public:
 	/** Deploy 결정 후 즉시 채널 예약 (이중 배정 방지) */
 	void MarkChannelAsPendingDeploy(int32 Port);
 
+	/** [M6-FIX] 예약했던 채널을 즉시 해제 (동기 deploy 실패 시 ~30초 누수 방지) */
+	void ReleasePendingDeployChannel(int32 Port);
+
 	/** 레지스트리 디렉토리 경로 */
 	FString GetRegistryDirectoryPath() const;
 

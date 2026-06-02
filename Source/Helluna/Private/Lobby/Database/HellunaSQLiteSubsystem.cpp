@@ -2832,7 +2832,14 @@ bool UHellunaSQLiteSubsystem::RegisterActiveGameCharacter(int32 HeroType, const 
 
 	if (InsertStmt.Execute())
 	{
-		Database->Execute(TEXT("COMMIT;"));
+		// [M1-FIX] COMMIT 반환값 검사 — busy DB에서 COMMIT이 실패하면 트랜잭션이 열린 채 남아
+		// 누수되고 성공으로 잘못 보고된다. 실패 시 ROLLBACK 후 false 반환.
+		if (!Database->Execute(TEXT("COMMIT;")))
+		{
+			UE_LOG(LogHelluna, Error, TEXT("[SQLite] RegisterActiveGameCharacter: COMMIT 실패 → ROLLBACK | 에러: %s"), *Database->GetLastError());
+			if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
+			return false;
+		}
 		bActiveHeroTypesCacheDirty = true; // [Lag-Fix9] 캐시 무효화
 		UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ RegisterActiveGameCharacter 성공 | HeroType=%d | PlayerId=%s"), HeroType, *PlayerId);
 		return true;

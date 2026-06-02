@@ -1785,6 +1785,21 @@ void AHellunaLobbyGameMode::MarkChannelAsPendingDeploy(int32 Port)
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] MarkChannelAsPendingDeploy | Port=%d"), Port);
 }
 
+void AHellunaLobbyGameMode::ReleasePendingDeployChannel(int32 Port)
+{
+	// [M6-FIX] 동기 deploy 실패 시 채널을 30초 타이머까지 기다리지 않고 즉시 해제한다.
+	if (UWorld* World = GetWorld())
+	{
+		if (FTimerHandle* TimerHandle = PendingDeployTimers.Find(Port))
+		{
+			World->GetTimerManager().ClearTimer(*TimerHandle);
+		}
+	}
+	PendingDeployTimers.Remove(Port);
+	PendingDeployChannels.Remove(Port);
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyGM] ReleasePendingDeployChannel | Port=%d"), Port);
+}
+
 
 // ════════════════════════════════════════════════════════════════════════════════
 // [Phase 12d] 파티 시스템 — 서버 로직
@@ -1880,6 +1895,7 @@ void AHellunaLobbyGameMode::RefreshPartyCache(int32 PartyId)
 		}
 
 		ActivePartyCache.Remove(PartyId);
+		PartyChatHistory.Remove(PartyId); // [M5-FIX] 파티 삭제 시 채팅 히스토리도 정리 (메모리 누수 방지)
 	}
 }
 
@@ -2140,6 +2156,14 @@ void AHellunaLobbyGameMode::KickPartyMember(const FString& RequesterId, const FS
 		return;
 	}
 
+	// [M4-FIX] 리더가 자기 자신을 추방하는 것 차단 (파티 탈퇴는 LeaveParty 사용)
+	if (RequesterId == TargetId)
+	{
+		auto* PC = PlayerIdToControllerMap.Find(RequesterId);
+		if (PC && PC->IsValid()) { (*PC)->Client_PartyError(TEXT("자기 자신은 추방할 수 없습니다")); }
+		return;
+	}
+
 	// 대상이 같은 파티인지
 	const int32* TargetPartyPtr = PlayerToPartyMap.Find(TargetId);
 	if (!TargetPartyPtr || *TargetPartyPtr != PartyId)
@@ -2158,6 +2182,14 @@ void AHellunaLobbyGameMode::KickPartyMember(const FString& RequesterId, const FS
 		SQLiteSubsystem->LeaveParty(TargetId);
 	}
 	PlayerToPartyMap.Remove(TargetId);
+
+	// [M3-FIX] 추방 대상이 연결 끊김 유예(PartyLeaveTimers) 중이었다면 그 타이머도 취소한다.
+	// (안 그러면 stale 타이머가 나중에 발동해 엉뚱한 파티에서 LeavePartyForPlayer를 호출)
+	if (FTimerHandle* KickedLeaveTimer = PartyLeaveTimers.Find(TargetId))
+	{
+		if (UWorld* World = GetWorld()) { World->GetTimerManager().ClearTimer(*KickedLeaveTimer); }
+		PartyLeaveTimers.Remove(TargetId);
+	}
 
 	// 추방된 플레이어에게 알림
 	auto* TargetPC = PlayerIdToControllerMap.Find(TargetId);
@@ -3784,6 +3816,7 @@ void AHellunaLobbyGameMode::ExecuteMatchedDeploy(const TArray<FMatchmakingQueueE
 				if (!PCPtr || !PCPtr->IsValid())
 				{
 					RollbackDeployStateForPlayers(PreparedPlayerIds, EmptyChannel.Port);
+					ReleasePendingDeployChannel(EmptyChannel.Port); // [M6-FIX] 예약 채널 즉시 해제
 					FailMatchedDeploy(TEXT("로비 컨트롤러가 유효하지 않아 매칭 출격을 중단했습니다."));
 					return;
 				}
@@ -3793,6 +3826,7 @@ void AHellunaLobbyGameMode::ExecuteMatchedDeploy(const TArray<FMatchmakingQueueE
 				{
 					RollbackDeployStateForPlayer(PlayerId, EmptyChannel.Port);
 					RollbackDeployStateForPlayers(PreparedPlayerIds, EmptyChannel.Port);
+					ReleasePendingDeployChannel(EmptyChannel.Port); // [M6-FIX] 예약 채널 즉시 해제
 					FailMatchedDeploy(PersistError);
 					return;
 				}

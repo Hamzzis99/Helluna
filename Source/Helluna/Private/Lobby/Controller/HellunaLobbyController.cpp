@@ -1569,7 +1569,7 @@ void AHellunaLobbyController::LoadBackgroundLevel(FName LevelName)
 	LatentInfo.CallbackTarget = this;
 	LatentInfo.ExecutionFunction = FName(TEXT("OnBackgroundLevelLoaded"));
 	LatentInfo.Linkage = 0;
-	LatentInfo.UUID = GetUniqueID();
+	LatentInfo.UUID = NextLatentActionUUID++; // [M7-FIX] 매 호출 고유 UUID (콜백 드롭 방지)
 
 	UGameplayStatics::LoadStreamLevel(this, LevelName, true, false, LatentInfo);
 	CurrentLoadedLevel = LevelName;
@@ -1588,7 +1588,7 @@ void AHellunaLobbyController::UnloadBackgroundLevel(FName LevelName)
 	LatentInfo.CallbackTarget = this;
 	LatentInfo.ExecutionFunction = FName(TEXT("OnBackgroundLevelUnloaded"));
 	LatentInfo.Linkage = 1;
-	LatentInfo.UUID = GetUniqueID() + 1;
+	LatentInfo.UUID = NextLatentActionUUID++; // [M7-FIX] 매 호출 고유 UUID (콜백 드롭 방지)
 
 	UGameplayStatics::UnloadStreamLevel(this, LevelName, LatentInfo, false);
 
