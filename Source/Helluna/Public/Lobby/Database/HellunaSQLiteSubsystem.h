@@ -295,6 +295,17 @@ public:
 	virtual bool SavePlayerLoadout(const FString& PlayerId, const TArray<FInv_SavedItemData>& Items) override;
 
 	/**
+	 * [M2-FIX] Stash + Loadout을 단일 SQLite 트랜잭션으로 원자적으로 저장한다.
+	 * 둘 중 하나라도 실패하면 전체 ROLLBACK → 두 테이블에 같은 아이템이 남는 복제/유실을 방지.
+	 * (per-interaction 저장 전용. 기존 SavePlayerStash/SavePlayerLoadout은 그대로 둔다.)
+	 * 빈 배열을 넘기면 해당 테이블은 DELETE만 수행(비움).
+	 */
+	bool SaveStashAndLoadoutAtomic(
+		const FString& PlayerId,
+		const TArray<FInv_SavedItemData>& StashItems,
+		const TArray<FInv_SavedItemData>& LoadoutItems);
+
+	/**
 	 * Loadout 삭제 — 게임서버에서 Loadout을 InvComp에 복원한 후 호출
 	 *
 	 * SQL: DELETE FROM player_loadout WHERE player_id = ?

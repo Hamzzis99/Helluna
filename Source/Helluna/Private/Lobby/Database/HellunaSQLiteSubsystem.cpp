@@ -1682,6 +1682,115 @@ bool UHellunaSQLiteSubsystem::SavePlayerStash(const FString& PlayerId, const TAr
 }
 
 // ──────────────────────────────────────────────────────────────
+// [M2-FIX] SaveStashAndLoadoutAtomic — Stash+Loadout 원자적 저장
+// ──────────────────────────────────────────────────────────────
+bool UHellunaSQLiteSubsystem::SaveStashAndLoadoutAtomic(
+	const FString& PlayerId,
+	const TArray<FInv_SavedItemData>& StashItems,
+	const TArray<FInv_SavedItemData>& LoadoutItems)
+{
+	if (PlayerId.IsEmpty())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SaveStashAndLoadoutAtomic: PlayerId 비어있음 — 중단"));
+		return false;
+	}
+	if (!IsDatabaseReady())
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SaveStashAndLoadoutAtomic: DB 미준비"));
+		return false;
+	}
+
+	if (!Database->Execute(TEXT("BEGIN IMMEDIATE TRANSACTION;")))
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SaveStashAndLoadoutAtomic: BEGIN 실패 | 에러: %s"), *Database->GetLastError());
+		return false;
+	}
+
+	// 실패 시 ROLLBACK 후 false 반환하는 공통 헬퍼
+	auto Fail = [this](const TCHAR* Where) -> bool
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[SQLite] ✗ SaveStashAndLoadoutAtomic 실패: %s — ROLLBACK | 에러: %s"), Where, *Database->GetLastError());
+		if (!Database->Execute(TEXT("ROLLBACK;"))) { UE_LOG(LogHelluna, Error, TEXT("[SQLite] ROLLBACK 실패 | 에러: %s"), *Database->GetLastError()); }
+		return false;
+	};
+
+	// player_stash/player_loadout 공통 10컬럼 바인딩
+	auto BindItem = [](FSQLitePreparedStatement& Stmt, const FString& Pid, const FInv_SavedItemData& Item, const FString& AttJson)
+	{
+		Stmt.SetBindingValueByIndex(1, Pid);
+		Stmt.SetBindingValueByIndex(2, Item.ItemType.ToString());
+		Stmt.SetBindingValueByIndex(3, Item.StackCount);
+		Stmt.SetBindingValueByIndex(4, Item.GridPosition.X);
+		Stmt.SetBindingValueByIndex(5, Item.GridPosition.Y);
+		Stmt.SetBindingValueByIndex(6, static_cast<int32>(Item.GridCategory));
+		Stmt.SetBindingValueByIndex(7, Item.bEquipped ? 1 : 0);
+		Stmt.SetBindingValueByIndex(8, Item.WeaponSlotIndex);
+		if (Item.SerializedManifest.Num() > 0)
+		{
+			Stmt.SetBindingValueByIndex(9, TArrayView<const uint8>(Item.SerializedManifest), true);
+		}
+		else
+		{
+			Stmt.SetBindingValueByIndex(9);
+		}
+		Stmt.SetBindingValueByIndex(10, AttJson.IsEmpty() ? FString(TEXT("")) : AttJson);
+	};
+
+	// ── player_stash: DELETE 후 INSERT ──
+	{
+		FSQLitePreparedStatement Del = Database->PrepareStatement(TEXT("DELETE FROM player_stash WHERE player_id = ?1;"));
+		if (!Del.IsValid()) { return Fail(TEXT("stash DELETE prepare")); }
+		Del.SetBindingValueByIndex(1, PlayerId);
+		if (!Del.Execute()) { return Fail(TEXT("stash DELETE")); }
+	}
+	if (StashItems.Num() > 0)
+	{
+		FSQLitePreparedStatement Ins = Database->PrepareStatement(
+			TEXT("INSERT INTO player_stash (player_id, item_type, stack_count, grid_position_x, grid_position_y, grid_category, is_equipped, weapon_slot, serialized_manifest, attachments_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10);"),
+			ESQLitePreparedStatementFlags::Persistent);
+		if (!Ins.IsValid()) { return Fail(TEXT("stash INSERT prepare")); }
+		for (const FInv_SavedItemData& Item : StashItems)
+		{
+			BindItem(Ins, PlayerId, Item, SerializeAttachmentsToJson(Item.Attachments));
+			if (!Ins.Execute()) { return Fail(TEXT("stash INSERT")); }
+			Ins.Reset();
+			Ins.ClearBindings();
+		}
+	}
+
+	// ── player_loadout: DELETE 후 INSERT ──
+	{
+		FSQLitePreparedStatement Del = Database->PrepareStatement(TEXT("DELETE FROM player_loadout WHERE player_id = ?1;"));
+		if (!Del.IsValid()) { return Fail(TEXT("loadout DELETE prepare")); }
+		Del.SetBindingValueByIndex(1, PlayerId);
+		if (!Del.Execute()) { return Fail(TEXT("loadout DELETE")); }
+	}
+	if (LoadoutItems.Num() > 0)
+	{
+		FSQLitePreparedStatement Ins = Database->PrepareStatement(
+			TEXT("INSERT INTO player_loadout (player_id, item_type, stack_count, grid_position_x, grid_position_y, grid_category, is_equipped, weapon_slot, serialized_manifest, attachments_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10);"),
+			ESQLitePreparedStatementFlags::Persistent);
+		if (!Ins.IsValid()) { return Fail(TEXT("loadout INSERT prepare")); }
+		for (const FInv_SavedItemData& Item : LoadoutItems)
+		{
+			BindItem(Ins, PlayerId, Item, SerializeAttachmentsToJson(Item.Attachments));
+			if (!Ins.Execute()) { return Fail(TEXT("loadout INSERT")); }
+			Ins.Reset();
+			Ins.ClearBindings();
+		}
+	}
+
+	if (!Database->Execute(TEXT("COMMIT;")))
+	{
+		return Fail(TEXT("COMMIT"));
+	}
+
+	UE_LOG(LogHelluna, Log, TEXT("[SQLite] ✓ SaveStashAndLoadoutAtomic | PlayerId=%s | Stash %d, Loadout %d"),
+		*PlayerId, StashItems.Num(), LoadoutItems.Num());
+	return true;
+}
+
+// ──────────────────────────────────────────────────────────────
 // IsPlayerExists — 해당 플레이어의 Stash 데이터 존재 여부
 // ──────────────────────────────────────────────────────────────
 // SQL: SELECT COUNT(*) FROM player_stash WHERE player_id = ?

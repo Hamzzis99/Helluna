@@ -483,63 +483,51 @@ void AHellunaLobbyController::SaveBothComponentsAfterInteraction()
 		return;
 	}
 
-	// ── Loadout 먼저 저장 (Fix29-C 크래시 복구 순서) ──
-	if (LoadoutInventoryComponent)
+	// ── [M2-FIX] Stash + Loadout 원자적 저장 ──
+	// 이전엔 SavePlayerLoadout(커밋) → SavePlayerStash(별도 트랜잭션)로 나뉘어, Loadout 저장 성공 후
+	// Stash 저장이 실패(크래시/디스크 오류)하면 같은 아이템이 두 테이블에 남아 복제됐다.
+	// 이제 둘을 한 트랜잭션으로 묶어 전부 성공하거나 전부 롤백한다.
+	if (!StashInventoryComponent || !LoadoutInventoryComponent)
 	{
-		TArray<FInv_SavedItemData> LoadoutItems = LoadoutInventoryComponent->CollectInventoryDataForSave();
-		if (LoadoutItems.Num() > 0)
-		{
-			const bool bLoadoutOk = DB->SavePlayerLoadout(PlayerId, LoadoutItems);
-			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] [Fix35] SavePlayerLoadout %s | %d개 | PlayerId=%s"),
-				bLoadoutOk ? TEXT("성공") : TEXT("실패"), LoadoutItems.Num(), *PlayerId);
-
-			// 장착 상태 동기화 (per-interaction)
-			TArray<FHellunaEquipmentSlotData> EquipSlots;
-			for (const FInv_SavedItemData& Item : LoadoutItems)
-			{
-				if (Item.bEquipped && Item.WeaponSlotIndex >= 0)
-				{
-					FHellunaEquipmentSlotData Slot;
-					Slot.SlotId = FString::Printf(TEXT("weapon_%d"), Item.WeaponSlotIndex);
-					Slot.ItemType = Item.ItemType;
-					EquipSlots.Add(Slot);
-				}
-			}
-			// [Fix44-C4] Equipment 저장 반환값 검증
-			const bool bEquipOk = DB->SavePlayerEquipment(PlayerId, EquipSlots);
-			if (!bEquipOk)
-			{
-				UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] [Fix44] SavePlayerEquipment 실패! Loadout/Equipment 불일치 가능 | PlayerId=%s"), *PlayerId);
-			}
-		}
-		else
-		{
-			// Loadout이 비어있으면 기존 player_loadout 삭제 (빈 행 정리, Fix36: 크래시 감지와 무관)
-			// [Fix44-C3] Delete 반환값 검증
-			const bool bDelLoadout = DB->DeletePlayerLoadout(PlayerId);
-			const bool bDelEquip = DB->DeletePlayerEquipment(PlayerId);
-			if (!bDelLoadout || !bDelEquip)
-			{
-				UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] [Fix44] Delete 실패: Loadout=%s Equipment=%s | PlayerId=%s"),
-					bDelLoadout ? TEXT("OK") : TEXT("FAIL"), bDelEquip ? TEXT("OK") : TEXT("FAIL"), *PlayerId);
-			}
-			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] [Fix35] Loadout 비어있음 → DeletePlayerLoadout (빈 행 정리) | PlayerId=%s"), *PlayerId);
-		}
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] [M2-FIX] SaveAfterInteraction: Stash/Loadout 컴포넌트 누락 → 스킵 (Logout 최종 저장에 위임) | PlayerId=%s"), *PlayerId);
+		return;
 	}
 
-	// ── Stash 저장 ──
-	if (StashInventoryComponent)
-	{
-		TArray<FInv_SavedItemData> StashItems = StashInventoryComponent->CollectInventoryDataForSave();
-		const bool bStashOk = DB->SavePlayerStash(PlayerId, StashItems);
-		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] [Fix35] SavePlayerStash %s | %d개 | PlayerId=%s"),
-			bStashOk ? TEXT("성공") : TEXT("실패"), StashItems.Num(), *PlayerId);
+	TArray<FInv_SavedItemData> LoadoutItems = LoadoutInventoryComponent->CollectInventoryDataForSave();
+	TArray<FInv_SavedItemData> StashItems = StashInventoryComponent->CollectInventoryDataForSave();
 
-		// [Fix44-C2] Stash 저장 실패 시 Loadout과 불일치 경고
-		if (!bStashOk)
+	const bool bAtomicOk = DB->SaveStashAndLoadoutAtomic(PlayerId, StashItems, LoadoutItems);
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] [M2-FIX] SaveStashAndLoadoutAtomic %s | Stash %d, Loadout %d | PlayerId=%s"),
+		bAtomicOk ? TEXT("성공") : TEXT("실패"), StashItems.Num(), LoadoutItems.Num(), *PlayerId);
+	if (!bAtomicOk)
+	{
+		// 롤백되어 DB는 변경 전 상태 유지 → 복제/유실 없음. Logout 최종 저장에 위임.
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] [M2-FIX] 원자적 저장 실패(롤백) → DB 무변경 | PlayerId=%s"), *PlayerId);
+		return;
+	}
+
+	// 장비(equipment)는 Loadout의 파생 정보 — 원자적 저장 성공 후 동기화 (best-effort).
+	TArray<FHellunaEquipmentSlotData> EquipSlots;
+	for (const FInv_SavedItemData& Item : LoadoutItems)
+	{
+		if (Item.bEquipped && Item.WeaponSlotIndex >= 0)
 		{
-			UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] [Fix44] SavePlayerStash 실패! Loadout 성공+Stash 실패 → 데이터 불일치 가능 | PlayerId=%s"), *PlayerId);
+			FHellunaEquipmentSlotData Slot;
+			Slot.SlotId = FString::Printf(TEXT("weapon_%d"), Item.WeaponSlotIndex);
+			Slot.ItemType = Item.ItemType;
+			EquipSlots.Add(Slot);
 		}
+	}
+	if (EquipSlots.Num() > 0)
+	{
+		if (!DB->SavePlayerEquipment(PlayerId, EquipSlots))
+		{
+			UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] [Fix44] SavePlayerEquipment 실패 | PlayerId=%s"), *PlayerId);
+		}
+	}
+	else
+	{
+		DB->DeletePlayerEquipment(PlayerId);
 	}
 }
 

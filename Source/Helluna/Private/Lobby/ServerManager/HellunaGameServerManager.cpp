@@ -222,6 +222,10 @@ int32 UHellunaGameServerManager::RespawnGameServer(int32 Port, const FString& Ne
 			if (FPlatformProcess::IsProcRunning(ActiveServers[i].ProcessHandle))
 			{
 				FPlatformProcess::TerminateProc(ActiveServers[i].ProcessHandle, true);
+				// [#23-FIX] 같은 포트로 재기동하기 전에 프로세스가 완전히 종료돼 리슨 소켓이
+				// OS에 반환될 때까지 대기한다 (강제 종료된 프로세스라 보통 즉시 반환).
+				// 안 그러면 새 서버가 아직 점유 중인 포트에 bind 실패 → 고장난 채널로 출격.
+				FPlatformProcess::WaitForProc(ActiveServers[i].ProcessHandle);
 				UE_LOG(LogHellunaLobby, Log, TEXT("[ServerManager] 기존 프로세스 종료 | Port=%d"), Port);
 			}
 			FPlatformProcess::CloseProc(ActiveServers[i].ProcessHandle);
@@ -318,16 +322,18 @@ bool UHellunaGameServerManager::IsServerReady(int32 Port)
 		return false;
 	}
 
-	// lastUpdate 60초 이내 확인
+	// [#19-FIX] lastUpdate가 유효(ISO8601 파싱 성공)하고 60초 이내여야 ready로 인정한다.
+	// 누락/파싱 실패 = 신선도 미상 → not ready (stale 레지스트리를 ready로 오인 방지).
 	const FString LastUpdateStr = JsonObj->GetStringField(TEXT("lastUpdate"));
 	FDateTime LastUpdate;
-	if (FDateTime::ParseIso8601(*LastUpdateStr, LastUpdate))
+	if (!FDateTime::ParseIso8601(*LastUpdateStr, LastUpdate))
 	{
-		const FTimespan Age = FDateTime::UtcNow() - LastUpdate;
-		if (Age.GetTotalSeconds() > 60.0)
-		{
-			return false;
-		}
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[ServerManager][#19-FIX] lastUpdate 파싱 실패 → not ready | Port=%d"), Port);
+		return false;
+	}
+	if ((FDateTime::UtcNow() - LastUpdate).GetTotalSeconds() > 60.0)
+	{
+		return false;
 	}
 
 	return true;
@@ -373,16 +379,17 @@ bool UHellunaGameServerManager::IsServerReadyForMap(int32 Port, const FString& M
 		return false;
 	}
 
-	// lastUpdate 60초 이내 확인
+	// [#19-FIX] lastUpdate가 유효하고 60초 이내여야 ready로 인정 (누락/파싱 실패 → not ready).
 	const FString LastUpdateStr = JsonObj->GetStringField(TEXT("lastUpdate"));
 	FDateTime LastUpdate;
-	if (FDateTime::ParseIso8601(*LastUpdateStr, LastUpdate))
+	if (!FDateTime::ParseIso8601(*LastUpdateStr, LastUpdate))
 	{
-		const FTimespan Age = FDateTime::UtcNow() - LastUpdate;
-		if (Age.GetTotalSeconds() > 60.0)
-		{
-			return false;
-		}
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[ServerManager][#19-FIX] lastUpdate 파싱 실패 → not ready (map) | Port=%d"), Port);
+		return false;
+	}
+	if ((FDateTime::UtcNow() - LastUpdate).GetTotalSeconds() > 60.0)
+	{
+		return false;
 	}
 
 	return true;
@@ -413,10 +420,14 @@ int32 UHellunaGameServerManager::AllocatePort()
 			continue;
 		}
 
-		// 레지스트리 파일 확인 (Offline이 아닌 서버가 있으면 사용 중)
+		// [H5/#22-FIX] 레지스트리 파일이 존재하면 "확실히 비어있다고 증명될 때만" 포트를 할당한다.
+		// 기존 코드는 lastUpdate 파싱 실패나 JSON deserialize 실패(부분 기록 레이스) 시 그대로
+		// return Port 로 떨어져 점유 중인 포트를 빈 포트로 오인 → 이중배정/충돌이 발생했다.
 		const FString FilePath = FPaths::Combine(RegistryDir, FString::Printf(TEXT("channel_%d.json"), Port));
 		if (IFileManager::Get().FileExists(*FilePath))
 		{
+			bool bPortFree = false; // 기본: 파일이 있으면 점유로 간주 (free 증명 시에만 true)
+
 			FString JsonString;
 			if (FFileHelper::LoadFileToString(JsonString, *FilePath))
 			{
@@ -427,30 +438,35 @@ int32 UHellunaGameServerManager::AllocatePort()
 					const FString Status = JsonObj->GetStringField(TEXT("status"));
 					const FString LastUpdateStr = JsonObj->GetStringField(TEXT("lastUpdate"));
 
-					// 유효한 서버가 점유 중이면 스킵
 					FDateTime LastUpdate;
-					if (FDateTime::ParseIso8601(*LastUpdateStr, LastUpdate))
-					{
-						const FTimespan Age = FDateTime::UtcNow() - LastUpdate;
-						if (Age.GetTotalSeconds() <= 60.0)
-						{
-							if (IsTrackedServerRunning(Port))
-							{
-								// Fresh registry with a live child process is in use.
-								continue;
-							}
+					const bool bParsed = FDateTime::ParseIso8601(*LastUpdateStr, LastUpdate);
+					const double AgeSec = bParsed ? (FDateTime::UtcNow() - LastUpdate).GetTotalSeconds() : -1.0;
 
-							if (IFileManager::Get().FileExists(*FilePath))
-							{
-								UE_LOG(LogHellunaLobby, Warning,
-									TEXT("[ServerManager] Skipping fresh registry without live tracked process during port allocation | Port=%d | Age=%.1f"),
-									Port, Age.GetTotalSeconds());
-								continue;
-							}
-						}
+					if (Status == TEXT("offline"))
+					{
+						// 명시적으로 오프라인 → 회수 가능
+						bPortFree = true;
 					}
-					// 60초 초과 = Offline → 사용 가능
+					else if (bParsed && AgeSec > 60.0 && !IsTrackedServerRunning(Port))
+					{
+						// 60초 초과(heartbeat 끊김) + 추적 프로세스 없음 → stale 회수 가능
+						bPortFree = true;
+					}
+					else
+					{
+						// 신선/파싱실패/추적중 등 → 점유로 간주하고 스킵
+						UE_LOG(LogHellunaLobby, Warning,
+							TEXT("[ServerManager][H5-FIX] 비어있음 미증명 레지스트리 → 포트 스킵 | Port=%d | Status=%s | Parsed=%d | Age=%.1f"),
+							Port, *Status, bParsed ? 1 : 0, AgeSec);
+					}
 				}
+				// JSON deserialize 실패(부분 기록 가능) → bPortFree=false (스킵)
+			}
+			// 파일 읽기 실패 → bPortFree=false (스킵)
+
+			if (!bPortFree)
+			{
+				continue;
 			}
 		}
 
