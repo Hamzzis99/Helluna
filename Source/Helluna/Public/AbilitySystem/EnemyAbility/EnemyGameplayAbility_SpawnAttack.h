@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "AbilitySystem/HellunaEnemyGameplayAbility.h"
+#include "AbilitySystem/EnemyAbility/BossOrbLaunchTypes.h"
 #include "EnemyGameplayAbility_SpawnAttack.generated.h"
 
 class UAnimMontage;
@@ -121,6 +122,20 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "소환 공격|발사",
 		meta = (DisplayName = "발사 구체 클래스 (선택)"))
 	TSubclassOf<AStasisSalvoOrb> OrbClass;
+
+	/**
+	 * [BossOrbLaunchModeV1] 구체 발사 방식.
+	 *   ForwardToTarget = 보스 전방에서 "범위 내 플레이어 무리 중심" 방향으로 발사 (총알 쏘기).
+	 *   DropFromSky(기본) = 발사 위치에서 직하 (하늘 낙하). 기존 동작 보존용 기본값.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "소환 공격|발사",
+		meta = (DisplayName = "발사 모드"))
+	EBossOrbLaunchMode OrbLaunchMode = EBossOrbLaunchMode::DropFromSky;
+
+	/** ForwardToTarget 모드에서 노릴 플레이어 무리의 수집 반경 (cm). 0 이면 거리 무관 전체. */
+	UPROPERTY(EditDefaultsOnly, Category = "소환 공격|발사",
+		meta = (DisplayName = "타겟 수집 반경 (cm)", ClampMin = "0.0", ClampMax = "20000.0"))
+	float PlayerGatherRadius = 6000.f;
 
 	/** 구체 발사 위치 — 보스 ActorLocation 기준 Height 오프셋 (cm). 여기서 아래(발밑)로 직하 발사. */
 	UPROPERTY(EditDefaultsOnly, Category = "소환 공격|발사",

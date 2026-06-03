@@ -7,6 +7,37 @@
 #include "HellunaGameplayTags.h"
 #include "Animation/AnimMontage.h"
 #include "Sound/SoundBase.h"
+#include "Engine/World.h"
+#include "GameFramework/PlayerController.h"
+#include "GameFramework/Pawn.h"
+
+// [BossOrbTargetingV1] 범위 내 플레이어 무리의 평균 위치. 멀티플레이 — server 권위 호출 가정.
+FVector UHellunaEnemyGameplayAbility::GetInRangePlayersCentroid(const UWorld* World, const FVector& Origin, float Radius, int32& OutCount)
+{
+	OutCount = 0;
+	if (!World)
+	{
+		return Origin;
+	}
+
+	const float RadiusSq = (Radius > 0.f) ? FMath::Square(Radius) : TNumericLimits<float>::Max();
+	FVector Sum = FVector::ZeroVector;
+
+	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+	{
+		APlayerController* PC = It->Get();
+		if (!PC) continue;
+		APawn* P = PC->GetPawn();
+		if (!P) continue;
+		if (FVector::DistSquared(P->GetActorLocation(), Origin) <= RadiusSq)
+		{
+			Sum += P->GetActorLocation();
+			++OutCount;
+		}
+	}
+
+	return (OutCount > 0) ? (Sum / static_cast<float>(OutCount)) : Origin;
+}
 
 AHellunaEnemyCharacter* UHellunaEnemyGameplayAbility::GetEnemyCharacterFromActorInfo()
 {

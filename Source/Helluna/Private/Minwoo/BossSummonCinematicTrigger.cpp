@@ -1497,6 +1497,10 @@ void ABossSummonCinematicTrigger::StartCinematicCameraAfterReveal()
 										ABossSummonCinematicTrigger* Self = WeakSelf.Get();
 										if (!Self || !Self->LocalDialogueWidget) return;
 										Self->LocalDialogueWidget->PlayDialogue(Self->BossSpeakerName, Self->BossDialogueLine2);
+										// [CinematicSkipFlowV2-Fix] 자동 등장도 입력 흐름과 동기화 — '2번 표시됨' 마킹 + 프롬프트=SKIP.
+										//   없으면 다음 스페이스가 branch②로 빠져 line2 를 다시 재생(되돌아가는 버그).
+										Self->bLocalDialogue2Shown = true;
+										Self->LocalDialogueWidget->SetPromptSkipMode(true);
 										UE_LOG(LogTemp, Warning,
 											TEXT("[DialogueLine2V1] Switched to second dialogue line"));
 									}),
@@ -1637,6 +1641,9 @@ void ABossSummonCinematicTrigger::StartCinematicCameraAfterReveal()
 								ABossSummonCinematicTrigger* Self = WeakSelf.Get();
 								if (!Self || !Self->LocalDialogueWidget) return;
 								Self->LocalDialogueWidget->PlayDialogue(Self->BossSpeakerName, Self->BossDialogueLine2);
+								// [CinematicSkipFlowV2-Fix] 자동 등장도 입력 흐름과 동기화 (위 시퀀스 경로와 동일 버그 수정).
+								Self->bLocalDialogue2Shown = true;
+								Self->LocalDialogueWidget->SetPromptSkipMode(true);
 								UE_LOG(LogTemp, Warning,
 									TEXT("[DialogueLine2V1] (fallback) Switched to second dialogue line"));
 							}),

@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "AbilitySystem/HellunaEnemyGameplayAbility.h"
+#include "AbilitySystem/EnemyAbility/BossOrbLaunchTypes.h"
 #include "EnemyGameplayAbility_RealityFracture.generated.h"
 
 class ABossPatternZoneBase;
@@ -61,14 +62,28 @@ public:
 		meta = (DisplayName = "발사 구체 클래스"))
 	TSubclassOf<AStasisSalvoOrb> OrbClass;
 
-	/** 구체 발사 위치 — 보스 ActorLocation 기준 Forward 오프셋 (cm) */
+	/**
+	 * [BossOrbLaunchModeV1] 구체 발사 방식.
+	 *   ForwardToTarget(기본) = 보스 전방에서 플레이어 무리 중심 방향으로 발사 (기존 동작).
+	 *   DropFromSky = "보스와 플레이어 무리 중심의 중간" 상공(Height 오프셋만큼 위)에서 직하.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "현실 균열",
+		meta = (DisplayName = "발사 모드"))
+	EBossOrbLaunchMode OrbLaunchMode = EBossOrbLaunchMode::ForwardToTarget;
+
+	/** 노릴 플레이어 무리의 수집 반경 (cm). 0 이면 거리 무관 전체. DropFromSky 중간점·ForwardToTarget 방향 모두 사용. */
+	UPROPERTY(EditDefaultsOnly, Category = "현실 균열",
+		meta = (DisplayName = "타겟 수집 반경 (cm)", ClampMin = "0.0", ClampMax = "20000.0"))
+	float PlayerGatherRadius = 6000.f;
+
+	/** 구체 발사 위치 — 보스 ActorLocation 기준 Forward 오프셋 (cm). ForwardToTarget 모드에서만 사용. */
 	UPROPERTY(EditDefaultsOnly, Category = "현실 균열",
 		meta = (DisplayName = "구체 발사 Forward 오프셋 (cm)", ClampMin = "-200.0", ClampMax = "500.0"))
 	float OrbLaunchForwardOffset = 60.f;
 
-	/** 구체 발사 위치 — 보스 ActorLocation 기준 Height 오프셋 (cm) */
+	/** 구체 발사 Height 오프셋 (cm). ForwardToTarget=보스 기준 발사 높이, DropFromSky=중간점 위 낙하 시작 높이. */
 	UPROPERTY(EditDefaultsOnly, Category = "현실 균열",
-		meta = (DisplayName = "구체 발사 Height 오프셋 (cm)", ClampMin = "-100.0", ClampMax = "300.0"))
+		meta = (DisplayName = "구체 발사 Height 오프셋 (cm)", ClampMin = "-100.0", ClampMax = "2000.0"))
 	float OrbLaunchHeightOffset = 60.f;
 
 	/** 패턴 지속 시간 (초). Zone 의 시퀀스가 이 시간 이상이면 timer 가 자동 강제 종료. */

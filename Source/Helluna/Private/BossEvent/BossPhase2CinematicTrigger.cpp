@@ -235,6 +235,9 @@ void ABossPhase2CinematicTrigger::Multicast_StartCinematic_Implementation(APawn*
 			if (Self->LocalDialogueWidget && !Self->DialogueLine2.IsEmpty())
 			{
 				Self->LocalDialogueWidget->PlayDialogue(Self->SpeakerName, Self->DialogueLine2);
+				// [CinematicSkipFlowV2-Fix] 자동 등장도 입력 흐름과 동기화 (Summon 트리거와 동일 버그 수정).
+				Self->bLocalDialogue2Shown = true;
+				Self->LocalDialogueWidget->SetPromptSkipMode(true);
 				if (UWorld* W = Self->GetWorld())
 				{
 					TWeakObjectPtr<ABossPhase2CinematicTrigger> WeakSelfDlg2(Self);

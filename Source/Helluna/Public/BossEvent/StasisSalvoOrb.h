@@ -50,6 +50,45 @@ public:
 		meta = (DisplayName = "비행 속도 (cm/s)", ClampMin = "100.0", ClampMax = "6000.0"))
 	float Speed = 1400.f;
 
+	// =========================================================
+	// [SlowDescentV1] 비행 중 점진 감속 — 하늘 낙하 분신 구체용 (내려갈수록 느려짐)
+	// =========================================================
+
+	/** true 면 매 틱 속도를 지수 감쇠시켜 "내려갈수록(시간이 갈수록) 점점 느려진다". 전방 발사형은 false 권장. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "StasisSalvoOrb|감속",
+		meta = (DisplayName = "비행 중 감속(ease-out)"))
+	bool bDecelerateWhileMoving = false;
+
+	/** 초당 속도 유지율 (0.4 = 1초마다 속도의 40%만 남김 = 60% 감속). 작을수록 빨리 느려진다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "StasisSalvoOrb|감속",
+		meta = (DisplayName = "초당 속도 유지율", ClampMin = "0.05", ClampMax = "0.99",
+			EditCondition = "bDecelerateWhileMoving"))
+	float DecelRetainPerSecond = 0.4f;
+
+	/** 감속 하한 속도 (cm/s) — 이 이하로는 안 느려져서 끝까지 낙하·도달 보장(허공 정지 방지). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "StasisSalvoOrb|감속",
+		meta = (DisplayName = "최소 속도 (cm/s)", ClampMin = "20.0", ClampMax = "2000.0",
+			EditCondition = "bDecelerateWhileMoving"))
+	float MinMoveSpeed = 150.f;
+
+	/** [GroundDecelV1] 이 높이(지면 위 cm) 아래로 내려와야 감속 시작 — 그 위에선 Speed 유지(빠름).
+	 *  지면(BurstHeightAboveGround)에 가까워질수록 MinMoveSpeed 로 선형 감속 → "위에선 빠르고 바닥서만 느려짐". */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "StasisSalvoOrb|감속",
+		meta = (DisplayName = "감속 시작 높이 (지면 위 cm)", ClampMin = "50.0", ClampMax = "3000.0",
+			EditCondition = "bDecelerateWhileMoving"))
+	float DecelStartHeightAboveGround = 200.f;
+
+	/** [GroundHoverV1] 지면(BurstHeightAboveGround) 도달 시 완전히 멈춘 뒤 이만큼(초) 정지해 있다가 Burst (0 이면 즉시 Burst). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "StasisSalvoOrb|감속",
+		meta = (DisplayName = "Burst 전 정지 시간 (초)", ClampMin = "0.0", ClampMax = "3.0"))
+	float HoverBeforeBurstSeconds = 1.0f;
+
+	/** [GroundDecelV1] 감속 곡선 지수 (1=선형, >1=감속 시작 후 더 급격히 느려짐 = "확 브레이크"). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "StasisSalvoOrb|감속",
+		meta = (DisplayName = "감속 곡선 지수(>1=급감속)", ClampMin = "1.0", ClampMax = "6.0",
+			EditCondition = "bDecelerateWhileMoving"))
+	float DecelExponent = 2.5f;
+
 	/** 이 거리 이상 비행하면 충돌이 없어도 강제 Burst (벽 등에 안 닿고 허공으로 날아갈 때 cap). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "StasisSalvoOrb",
 		meta = (DisplayName = "최대 비행 거리 (cm)", ClampMin = "100.0", ClampMax = "20000.0"))
@@ -60,6 +99,12 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "StasisSalvoOrb",
 		meta = (DisplayName = "플레이어 근접 Burst 거리 (cm)", ClampMin = "0.0", ClampMax = "2000.0"))
 	float BurstProximityToPlayer = 280.f;
+
+	/** [BurstHeightV1] 지면 위 이 높이(cm) 이내로 내려오면 Burst — 바닥까지 안 가고 공중에서 터지게(하늘 낙하용).
+	 *  0 이면 비활성(충돌/근접/최대거리로만 burst). 예: 90 ≈ 플레이어 키 절반 높이. 매 틱 아래로 짧은 트레이스. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "StasisSalvoOrb",
+		meta = (DisplayName = "지면 위 Burst 높이 (cm, 0=off)", ClampMin = "0.0", ClampMax = "1000.0"))
+	float BurstHeightAboveGround = 0.f;
 
 	/** 안전망 — 이 시간이 지나면 거리/근접 무관 강제 Burst (구체가 영원히 안 사라지는 것 방지). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "StasisSalvoOrb",
@@ -87,6 +132,39 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "StasisSalvoOrb",
 		meta = (DisplayName = "구체 메시 크기 배율", ClampMin = "0.001", ClampMax = "10.0"))
 	float OrbMeshScale = 0.5f;
+
+	// =========================================================
+	// [OrbColorMatchV1] 구체 색을 존 돔 색과 맞추기 — 같은 메시/머티리얼이라 Base_Color 만 맞추면 동일
+	// =========================================================
+
+	/** true 면 메시 머티리얼에 MID 로 OrbBaseColor 를 입혀 존 돔(DomeBaseColor)과 색감 통일. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "StasisSalvoOrb|색감",
+		meta = (DisplayName = "구체 색 직접 지정"))
+	bool bApplyOrbBaseColor = false;
+
+	/** 구체 색 (HDR). 존의 DomeBaseColor 와 같은 값을 넣으면 색감 일치 (기본=RF 돔 시안-블루). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "StasisSalvoOrb|색감",
+		meta = (DisplayName = "구체 색 (HDR)", EditCondition = "bApplyOrbBaseColor"))
+	FLinearColor OrbBaseColor = FLinearColor(0.5f, 1.5f, 2.0f, 1.f);
+
+	/** 메시 머티리얼의 색 파라미터 이름 (M_Master_Shield_Octagon_01 = "Base_Color"). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "StasisSalvoOrb|색감",
+		meta = (DisplayName = "메시 색 파라미터명", EditCondition = "bApplyOrbBaseColor"))
+	FName OrbBaseColorParamName = FName(TEXT("Base_Color"));
+
+	/** 트레일 Niagara 의 색 user 파라미터 이름 (있으면 OrbBaseColor 로 tint). 비우면 트레일 색 미변경. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "StasisSalvoOrb|색감",
+		meta = (DisplayName = "트레일 색 파라미터명(선택)", EditCondition = "bApplyOrbBaseColor"))
+	FName OrbTrailColorParamName = NAME_None;
+
+	/** [ChargeV1] 지면 도달 후 Burst 전 정지(hover) 동안 재생할 "차징" VFX (선택) — 터지기 직전 모이는 느낌. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "StasisSalvoOrb",
+		meta = (DisplayName = "Burst 전 차징 VFX (선택)"))
+	TObjectPtr<UNiagaraSystem> ChargeVFX = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "StasisSalvoOrb",
+		meta = (DisplayName = "차징 VFX 크기 배율", ClampMin = "0.01", ClampMax = "20.0"))
+	float ChargeVFXScale = 1.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "StasisSalvoOrb",
 		meta = (DisplayName = "Burst 원형 VFX (선택)"))
@@ -116,6 +194,10 @@ private:
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_PlayBurst(FVector BurstLocation);
 
+	/** [ChargeV1] 지면 도달 후 hover 동안 차징 VFX 재생 (전 머신). */
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_PlayCharge(FVector ChargeLocation);
+
 	UPROPERTY(VisibleAnywhere, Category = "StasisSalvoOrb")
 	TObjectPtr<USphereComponent> CollisionSphere = nullptr;
 
@@ -136,4 +218,8 @@ private:
 
 	FVector StartLocation = FVector::ZeroVector;
 	bool bBursted = false;
+
+	/** [GroundHoverV1] 지면 도달 후 Burst 직전 정지(hover) 중 플래그 — Tick early-return + HoverBurstTimer 가 Burst 호출. */
+	bool bHovering = false;
+	FTimerHandle HoverBurstTimer;
 };

@@ -182,29 +182,37 @@ void UEnemyGameplayAbility_RealityFracture::LaunchOrbOrActivateZone()
 		return;
 	}
 
-	const FVector LaunchLoc = Enemy->GetActorLocation()
-		+ Enemy->GetActorForwardVector() * OrbLaunchForwardOffset
-		+ FVector(0.f, 0.f, OrbLaunchHeightOffset);
+	// [BossOrbLaunchModeV1] 발사 위치/방향 결정.
+	FVector LaunchLoc;
+	FVector Dir;
 
-	// 방향 = 가장 가까운 플레이어 폰 향해. 없으면 보스 forward.
-	FVector Dir = Enemy->GetActorForwardVector();
+	if (OrbLaunchMode == EBossOrbLaunchMode::DropFromSky)
 	{
-		APawn* Best = nullptr;
-		float BestSq = TNumericLimits<float>::Max();
-		for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
-		{
-			APlayerController* PC = It->Get();
-			if (!PC) continue;
-			APawn* P = PC->GetPawn();
-			if (!P) continue;
-			const float D = FVector::DistSquared(P->GetActorLocation(), LaunchLoc);
-			if (D < BestSq) { BestSq = D; Best = P; }
-		}
-		if (Best)
-		{
-			const FVector ToTarget = Best->GetActorLocation() - LaunchLoc;
-			if (!ToTarget.IsNearlyZero()) { Dir = ToTarget.GetSafeNormal(); }
-		}
+		// 하늘 낙하 — "보스와 플레이어 무리 중심의 중간" 상공(Height 오프셋)에서 직하.
+		int32 NumPlayers = 0;
+		const FVector Centroid = UHellunaEnemyGameplayAbility::GetInRangePlayersCentroid(
+			World, Enemy->GetActorLocation(), PlayerGatherRadius, NumPlayers);
+		const FVector Mid = (Enemy->GetActorLocation() + Centroid) * 0.5f; // NumPlayers==0 이면 Centroid=보스 → Mid=보스.
+		LaunchLoc = FVector(Mid.X, Mid.Y, Enemy->GetActorLocation().Z + OrbLaunchHeightOffset);
+		Dir = FVector(0.f, 0.f, -1.f);
+		RF_LOG("LaunchOrb — DropFromSky, players=%d, mid=(%.0f,%.0f), drop from Z=%.0f",
+			NumPlayers, Mid.X, Mid.Y, LaunchLoc.Z);
+	}
+	else
+	{
+		// 전방 조준 — 보스 전방 발사 위치에서 플레이어 무리 중심 방향.
+		LaunchLoc = Enemy->GetActorLocation()
+			+ Enemy->GetActorForwardVector() * OrbLaunchForwardOffset
+			+ FVector(0.f, 0.f, OrbLaunchHeightOffset);
+
+		int32 NumPlayers = 0;
+		const FVector Centroid = UHellunaEnemyGameplayAbility::GetInRangePlayersCentroid(
+			World, LaunchLoc, PlayerGatherRadius, NumPlayers);
+		const FVector ToTarget = Centroid - LaunchLoc;
+		Dir = (NumPlayers > 0 && !ToTarget.IsNearlyZero())
+			? ToTarget.GetSafeNormal()
+			: Enemy->GetActorForwardVector();
+		RF_LOG("LaunchOrb — ForwardToTarget, players=%d, dir=%s", NumPlayers, *Dir.ToString());
 	}
 
 	FActorSpawnParameters SpawnParams;

@@ -193,7 +193,8 @@ void UEnemyGameplayAbility_SpawnAttack::HandleSpawnTimer()
 	// 라이프타임이 0 이면 GA 가 무한 유지 — 외부에서 EndAbility/Cancel 필요. (디자이너 의도)
 }
 
-// [TimeSalvoV2] 보스 발밑으로 시간 구체 직하 발사. 구체가 burst 하면 Burst() 가 InZone->ActivateZone() 호출.
+// [TimeSalvoV2 / BossOrbLaunchModeV1] 시간 구체 발사. 구체가 burst 하면 Burst() 가 InZone->ActivateZone() 호출.
+//   OrbLaunchMode: ForwardToTarget=플레이어 무리 중심 방향 전방 발사 / DropFromSky=발사 위치에서 직하.
 //   OrbClass 미지정/스폰 실패면 false 반환 → 호출부가 즉시 ActivateZone 폴백 (기존 동작 보존).
 bool UEnemyGameplayAbility_SpawnAttack::TryLaunchZoneOrb(AHellunaEnemyCharacter* Enemy, UWorld* World, ABossPatternZoneBase* InZone)
 {
@@ -202,11 +203,24 @@ bool UEnemyGameplayAbility_SpawnAttack::TryLaunchZoneOrb(AHellunaEnemyCharacter*
 		return false;
 	}
 
-	// 발사 위치 = 보스 발밑 위쪽 (Height 오프셋). 방향 = 월드 Down (정확히 발밑으로 직하).
+	// 발사 위치 = 보스 기준 Forward/Height 오프셋.
 	const FVector LaunchLoc = Enemy->GetActorLocation()
 		+ Enemy->GetActorForwardVector() * OrbLaunchForwardOffset
 		+ FVector(0.f, 0.f, OrbLaunchHeightOffset);
-	const FVector Dir(0.f, 0.f, -1.f);
+
+	// [BossOrbLaunchModeV1] 방향 결정.
+	FVector Dir(0.f, 0.f, -1.f); // DropFromSky 기본 — 직하.
+	if (OrbLaunchMode == EBossOrbLaunchMode::ForwardToTarget)
+	{
+		int32 NumPlayers = 0;
+		const FVector Centroid = UHellunaEnemyGameplayAbility::GetInRangePlayersCentroid(
+			World, Enemy->GetActorLocation(), PlayerGatherRadius, NumPlayers);
+		const FVector ToTarget = Centroid - LaunchLoc;
+		Dir = (NumPlayers > 0 && !ToTarget.IsNearlyZero())
+			? ToTarget.GetSafeNormal()
+			: Enemy->GetActorForwardVector();
+		SA_GA_LOG("TryLaunchZoneOrb — ForwardToTarget, players=%d, dir=%s", NumPlayers, *Dir.ToString());
+	}
 
 	FActorSpawnParameters SpawnParams;
 	SpawnParams.Owner = Enemy;
@@ -221,8 +235,8 @@ bool UEnemyGameplayAbility_SpawnAttack::TryLaunchZoneOrb(AHellunaEnemyCharacter*
 	}
 
 	Orb->Init(Enemy, InZone, Dir);
-	SA_GA_LOG("TryLaunchZoneOrb — orb '%s' 발밑 직하 발사 from (%.0f,%.0f,%.0f)",
-		*Orb->GetName(), LaunchLoc.X, LaunchLoc.Y, LaunchLoc.Z);
+	SA_GA_LOG("TryLaunchZoneOrb — orb '%s' 발사 (mode=%d) from (%.0f,%.0f,%.0f) dir=%s",
+		*Orb->GetName(), static_cast<int32>(OrbLaunchMode), LaunchLoc.X, LaunchLoc.Y, LaunchLoc.Z, *Dir.ToString());
 	return true;
 }
 
