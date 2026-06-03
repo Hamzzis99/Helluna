@@ -2362,6 +2362,86 @@ void AHellunaHeroCharacter::OnHeroDeath(AActor* DeadActor, AActor* KillerActor)
 	}
 }
 
+void AHellunaHeroCharacter::Multicast_StartBlockShield_Implementation(
+	UNiagaraSystem* VFX, FName Socket,
+	FVector RelLoc, FRotator RelRot, FVector RelScale,
+	UAnimMontage* Montage, float PlayRate)
+{
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	// 데디서버: 렌더 불필요 → 스킵.
+	if (World->GetNetMode() == NM_DedicatedServer) return;
+
+	// Owning client: LocalPredicted GA가 이미 자체 spawn 완료 → 중복 방지.
+	if (IsLocallyControlled()) return;
+
+	USkeletalMeshComponent* MeshComp = GetMesh();
+	if (!MeshComp) return;
+
+	// 기존 컴포넌트 정리 (재진입 안전)
+	if (IsValid(SimulatedBlockShieldVFX))
+	{
+		SimulatedBlockShieldVFX->DeactivateImmediate();
+		SimulatedBlockShieldVFX->DestroyComponent();
+	}
+	SimulatedBlockShieldVFX = nullptr;
+
+	if (VFX)
+	{
+		const FName Attach = MeshComp->DoesSocketExist(Socket) ? Socket : NAME_None;
+		SimulatedBlockShieldVFX = UNiagaraFunctionLibrary::SpawnSystemAttached(
+			VFX, MeshComp, Attach, RelLoc, RelRot, RelScale,
+			EAttachLocation::SnapToTarget, false, ENCPoolMethod::None, true, false);
+		if (SimulatedBlockShieldVFX)
+		{
+			SimulatedBlockShieldVFX->SetRelativeLocation(RelLoc);
+			SimulatedBlockShieldVFX->SetRelativeRotation(RelRot);
+			SimulatedBlockShieldVFX->SetRelativeScale3D(RelScale);
+		}
+	}
+
+	if (Montage)
+	{
+		if (UAnimInstance* AnimInst = MeshComp->GetAnimInstance())
+		{
+			AnimInst->Montage_Play(Montage, PlayRate);
+			// Block 몽타주 self-loop 점프 방지 (owning client와 동일 가드)
+			if (Montage->CompositeSections.Num() > 0)
+			{
+				const FName First = Montage->CompositeSections[0].SectionName;
+				if (First != NAME_None)
+				{
+					AnimInst->Montage_SetNextSection(First, NAME_None, Montage);
+				}
+			}
+		}
+	}
+}
+
+void AHellunaHeroCharacter::Multicast_StopBlockShield_Implementation(UAnimMontage* Montage)
+{
+	UWorld* World = GetWorld();
+	if (!World) return;
+	if (World->GetNetMode() == NM_DedicatedServer) return;
+	if (IsLocallyControlled()) return;
+
+	if (IsValid(SimulatedBlockShieldVFX))
+	{
+		SimulatedBlockShieldVFX->DeactivateImmediate();
+		SimulatedBlockShieldVFX->DestroyComponent();
+	}
+	SimulatedBlockShieldVFX = nullptr;
+
+	if (Montage && GetMesh())
+	{
+		if (UAnimInstance* AnimInst = GetMesh()->GetAnimInstance())
+		{
+			AnimInst->Montage_Stop(0.15f, Montage);
+		}
+	}
+}
+
 void AHellunaHeroCharacter::Multicast_PlayHeroHitReact_Implementation()
 {
 	// [GunParry] 무적 상태 피격 모션 차단

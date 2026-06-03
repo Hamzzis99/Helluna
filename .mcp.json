@@ -2,22 +2,12 @@
   "mcpServers": {
     "unreal_helluna": {
       "type": "stdio",
-      "command": "C:\\Users\\rrr75\\AppData\\Roaming\\Python\\Python310\\Scripts\\unrealmcp.exe",
-      "args": [],
-      "env": {
-        "PYTHONUTF8": "1",
-        "PYTHONIOENCODING": "utf-8",
-        "UNREAL_MCP_PORT": "55557"
-      }
-    },
-    "unreal_warrior": {
-      "type": "stdio",
       "command": "unrealmcp",
       "args": [],
       "env": {
         "PYTHONUTF8": "1",
         "PYTHONIOENCODING": "utf-8",
-        "UNREAL_MCP_PORT": "55558"
+        "UNREAL_MCP_PORT": "55557"
       }
     },
     "blender": {

@@ -275,6 +275,22 @@ void UHeroGameplayAbility_Block::ActivateAbility(
 		}
 	}
 
+	// [As-A-Client 멀티 동기화] 서버 권위에서만 Multicast로 다른 클라(시뮬레이션 프록시)에 VFX/몽타주 전파.
+	// Owning client는 LocalPredicted로 이미 위에서 자체 spawn 완료 → Multicast _Implementation에서 skip.
+	// 데디서버는 _Implementation에서 렌더 스킵.
+	if (HasAuthority(&ActivationInfo))
+	{
+		UNiagaraSystem* ResolvedVFX = ResolveBlockShieldVFX();
+		Hero->Multicast_StartBlockShield(
+			ResolvedVFX,
+			BlockShieldAttachSocket,
+			BlockShieldRelativeLocation,
+			BlockShieldRelativeRotation,
+			BlockShieldRelativeScale,
+			MontageToPlay,
+			BlockMontagePlayRate);
+	}
+
 	if (PerfectBlockWindowSeconds <= 0.f)
 	{
 		ClearPerfectBlockWindow();
@@ -311,9 +327,10 @@ void UHeroGameplayAbility_Block::EndAbility(
 
 	StopBlockShieldVFX();
 
-	if (AHellunaHeroCharacter* Hero = GetHeroCharacterFromActorInfo())
+	AHellunaHeroCharacter* Hero = GetHeroCharacterFromActorInfo();
+	UAnimMontage* MontageToStop = LoadedBlockMontage.Get();
+	if (Hero)
 	{
-		UAnimMontage* MontageToStop = LoadedBlockMontage.Get();
 		if (MontageToStop && Hero->GetMesh())
 		{
 			if (UAnimInstance* AnimInstance = Hero->GetMesh()->GetAnimInstance())
@@ -322,6 +339,11 @@ void UHeroGameplayAbility_Block::EndAbility(
 			}
 		}
 
+		// [As-A-Client 멀티 동기화] 서버 권위에서 Multicast로 다른 클라 VFX/몽타주 종료.
+		if (HasAuthority(&ActivationInfo))
+		{
+			Hero->Multicast_StopBlockShield(MontageToStop);
+		}
 	}
 
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);

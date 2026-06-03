@@ -202,11 +202,20 @@ void AResourceUsingObject_SpaceShip::BeginPlay()
 	Super::BeginPlay();
 
 	// 서버: GameState에 우주선 등록
+	UE_LOG(LogTemp, Warning, TEXT("[Repair][BuildDiag] SpaceShip::BeginPlay Ship=%s Authority=%d NetMode=%d"),
+		*GetName(), HasAuthority() ? 1 : 0, (int32)GetWorld()->GetNetMode());
+
 	if (HasAuthority())
 	{
-		if (AHellunaDefenseGameState* GS = GetWorld()->GetGameState<AHellunaDefenseGameState>())
+		AHellunaDefenseGameState* GS = GetWorld()->GetGameState<AHellunaDefenseGameState>();
+		UE_LOG(LogTemp, Warning, TEXT("[Repair][BuildDiag] SpaceShip::BeginPlay server-side: GS=%s (class=%s)"),
+			GS ? *GS->GetName() : TEXT("nullptr"),
+			GetWorld()->GetGameState() ? *GetWorld()->GetGameState()->GetClass()->GetName() : TEXT("nullptr"));
+		if (GS)
 		{
 			GS->RegisterSpaceShip(this);
+			UE_LOG(LogTemp, Warning, TEXT("[Repair][BuildDiag] SpaceShip::BeginPlay RegisterSpaceShip CALLED. GS->GetSpaceShip()=%s"),
+				GS->GetSpaceShip() ? *GS->GetSpaceShip()->GetName() : TEXT("nullptr"));
 		}
 	}
 

@@ -96,16 +96,12 @@
 		{
 			"Name": "DLSS",
 			"Enabled": true,
-			"SupportedTargetPlatforms": [
-				"Win64"
-			]
+			"MarketplaceURL": "https://www.unrealengine.com/marketplace/en-US/product/nvidia-dlss"
 		},
 		{
 			"Name": "StreamlineDLSSG",
 			"Enabled": true,
-			"SupportedTargetPlatforms": [
-				"Win64"
-			]
+			"MarketplaceURL": "https://www.unrealengine.com/marketplace/en-US/product/nvidia-dlss"
 		},
 		{
 			"Name": "FSR",
@@ -117,9 +113,7 @@
 		{
 			"Name": "AsyncLoadingScreen",
 			"Enabled": true,
-			"SupportedTargetPlatforms": [
-				"Win64"
-			]
+			"MarketplaceURL": "com.epicgames.launcher://ue/marketplace/product/01f39767dc6b4290877f38365787cbf8"
 		}
 	]
 }
