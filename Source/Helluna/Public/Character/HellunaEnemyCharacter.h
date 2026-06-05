@@ -116,6 +116,24 @@ public:
 			ToolTip = "데미지를 받았을 때 재생할 Hit React 애니메이션 몽타주입니다."))
 	TObjectPtr<UAnimMontage> HitReactMontage = nullptr;
 
+	/** [HitReactRateV1] 피격 몽타주 재생 속도 배율 (기본 2.0 = 2배 빠르게) */
+	UPROPERTY(EditDefaultsOnly, Category = "Animation|Combat",
+		meta = (DisplayName = "피격 모션 속도", ClampMin = "0.1",
+			ToolTip = "히트리액트 몽타주 재생 속도 배율입니다. 2.0 = 2배 빠르게.\n정지 시간도 이 속도에 맞춰 자동 단축됩니다."))
+	float HitReactPlayRate = 2.0f;
+
+	/** [HitReactGroundV1] 지상에서만 히트리액트 재생 (공중 점프/넉백 피격 시 스킵) */
+	UPROPERTY(EditDefaultsOnly, Category = "Animation|Combat",
+		meta = (DisplayName = "지상에서만 피격 모션",
+			ToolTip = "체크 시 지면에 있을 때만 히트리액트가 재생됩니다. 공중(점프/넉백)에서는 스킵."))
+	bool bHitReactGroundedOnly = true;
+
+	/** [HitReactFreezeV1] 지상 피격 시 히트리액트 동안 이동을 잠깐 정지 ON/OFF (정지 길이는 항상 피격 몽타주 재생 길이) */
+	UPROPERTY(EditDefaultsOnly, Category = "Animation|Combat",
+		meta = (DisplayName = "피격 시 잠깐 정지",
+			ToolTip = "지상 피격 시 히트리액트 몽타주가 재생되는 동안만 이동을 멈춰 미끄러짐을 막습니다."))
+	bool bFreezeDuringHitReact = true;
+
 	/** 사망 시 재생할 몽타주 (에디터에서 설정) */
 	UPROPERTY(EditDefaultsOnly, Category = "Animation|Combat",
 		meta = (DisplayName = "사망 몽타주",
@@ -745,6 +763,15 @@ private:
 
 	/** 피격 모션 RPC 쓰로틀링 — 0.2초 쿨다운 (#11 최적화) */
 	double LastHitReactTime = 0.0;
+
+	/** [HitReactFreezeV1] 피격 정지 타이머/상태 (서버) */
+	FTimerHandle HitReactFreezeTimerHandle;
+	float HitReactSavedMaxWalkSpeed = 300.f;
+	bool bHitReactFreezing = false;
+
+	/** [HitReactFreezeV1] 지상 피격 시 이동 잠깐 정지 시작/종료 (서버 전용) */
+	void BeginHitReactFreeze();
+	void EndHitReactFreeze();
 
 	/** 애님 노티파이에서 바로 읽는 현재 근접 공격 데미지 캐시 */
 	float CachedMeleeAttackDamage = 0.f;

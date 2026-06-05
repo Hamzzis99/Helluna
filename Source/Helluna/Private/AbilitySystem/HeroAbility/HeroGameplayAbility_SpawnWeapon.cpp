@@ -133,6 +133,14 @@ void UHeroGameplayAbility_SpawnWeapon::ActivateAbility(
 	EquipTask->OnInterrupted.AddUniqueDynamic(this, &UHeroGameplayAbility_SpawnWeapon::OnEquipInterrupted);
 	EquipTask->OnCancelled.AddUniqueDynamic(this, &UHeroGameplayAbility_SpawnWeapon::OnEquipInterrupted);
 
+	// [EquipLockOwnershipV1] 여기가 "되돌릴 수 없는 지점" — 모든 early-return 을 통과했고
+	//   몽타주가 실제로 시작된다. 이 시점에서만 장착 잠금 ON (장착 중 1/2키 입력 차단).
+	//   해제는 EndAbility 에서 항상 수행 → 잠금이 stuck 될 수 없음.
+	if (UWeaponBridgeComponent* WeaponBridge = Hero->FindComponentByClass<UWeaponBridgeComponent>())
+	{
+		WeaponBridge->SetEquipping(true);
+	}
+
 	EquipTask->ReadyForActivation();
 }
 
@@ -145,6 +153,17 @@ void UHeroGameplayAbility_SpawnWeapon::EndAbility(
 {
 	EquipTask = nullptr;
 
+	// [EquipLockOwnershipV1] 어떤 경로로 끝나든(완료/중단/취소/early-return/사망/언포세스)
+	//   장착 잠금을 항상 해제. GAS 는 모든 종료 경로에서 EndAbility 호출을 보장하므로
+	//   여기가 유일하고 확실한 reset 지점 → 플래그 stuck 으로 스왑이 영구 차단되던 버그 방지.
+	if (AHellunaHeroCharacter* Hero = GetHeroCharacterFromActorInfo())
+	{
+		if (UWeaponBridgeComponent* WeaponBridge = Hero->FindComponentByClass<UWeaponBridgeComponent>())
+		{
+			WeaponBridge->SetEquipping(false);
+		}
+	}
+
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }
 
@@ -153,15 +172,7 @@ void UHeroGameplayAbility_SpawnWeapon::OnEquipFinished()
 	if (bEquipEndCalled) return;
 	bEquipEndCalled = true;
 
-	// ⭐ 장착 애니메이션 완료 → 무기 전환 허용
-	if (AHellunaHeroCharacter* Hero = GetHeroCharacterFromActorInfo())
-	{
-		if (UWeaponBridgeComponent* WeaponBridge = Hero->FindComponentByClass<UWeaponBridgeComponent>())
-		{
-			WeaponBridge->SetEquipping(false);
-		}
-	}
-
+	// ⭐ 장착 애니메이션 완료 → 무기 전환 허용 (잠금 해제는 EndAbility 가 일괄 처리)
 	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
 }
 
@@ -170,14 +181,6 @@ void UHeroGameplayAbility_SpawnWeapon::OnEquipInterrupted()
 	if (bEquipEndCalled) return;
 	bEquipEndCalled = true;
 
-	// ⭐ 장착 애니메이션 중단 → 무기 전환 허용
-	if (AHellunaHeroCharacter* Hero = GetHeroCharacterFromActorInfo())
-	{
-		if (UWeaponBridgeComponent* WeaponBridge = Hero->FindComponentByClass<UWeaponBridgeComponent>())
-		{
-			WeaponBridge->SetEquipping(false);
-		}
-	}
-
+	// ⭐ 장착 애니메이션 중단 → 무기 전환 허용 (잠금 해제는 EndAbility 가 일괄 처리)
 	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
 }

@@ -38,6 +38,12 @@ void UHeroGameplayAbility_Aim::ActivateAbility(
 	AHellunaHeroCharacter* Hero = GetHeroCharacterFromActorInfo();
 	if (!Hero) { EndAbility(Handle, ActorInfo, ActivationInfo, true, true); return; }
 
+	// ── [AimRealignV1] 견착 시작 — 카메라를 캐릭터 정면 뒤로 부드럽게 정렬 (로컬 전용) ──
+	if (Hero->IsLocallyControlled())
+	{
+		Hero->StartAimCameraRealign();
+	}
+
 	// ── 기본값 캐싱 ──
 	if (UCharacterMovementComponent* MoveComp = Hero->GetCharacterMovement())
 	{

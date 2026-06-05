@@ -162,6 +162,13 @@ public:
 	FORCEINLINE UCameraComponent* GetFollowCamera() const { return FollowCamera;}
 	FORCEINLINE USpringArmComponent* GetCameraBoom() const { return CameraBoom; }
 
+	/**
+	 * [AimRealignV1] 견착(조준) 시작 시 호출 — 카메라(컨트롤 회전)를 캐릭터가 바라보는
+	 *   방향 뒤로 부드럽게 정렬시킨다. 로컬 플레이어에서만 동작(컨트롤 회전은 소유 클라 기준).
+	 *   GA_Aim::ActivateAbility 에서 호출.
+	 */
+	void StartAimCameraRealign();
+
 
 	AHellunaHeroWeapon* GetCurrentWeapon() const { return CurrentWeapon; }
 	void SetCurrentWeapon(AHellunaHeroWeapon* NewWeapon);
@@ -805,6 +812,20 @@ private:
 	/** 현재 조준 상태 (ASC 태그 기반) */
 	bool bIsCurrentlyAiming = false;
 	bool bWasAimingLastFrame = false;
+
+	/** [AimRealignV1] 견착 시 카메라가 캐릭터 정면 뒤로 정렬되는 보간 속도 (클수록 빠름) */
+	UPROPERTY(EditDefaultsOnly, Category = "Camera|Aim",
+		meta = (DisplayName = "견착 카메라 정렬 속도", ClampMin = "1.0", ClampMax = "30.0"))
+	float AimCameraRealignInterpSpeed = 8.f;
+
+	/** [AimRealignV1] 견착 카메라 정렬 진행 중 여부 (로컬 전용) */
+	bool bAimCameraRealigning = false;
+
+	/** [AimRealignV1] 정렬 목표 Yaw (견착 시작 시점의 캐릭터 Yaw) */
+	float AimCameraRealignTargetYaw = 0.f;
+
+	/** [AimRealignV1] 매 프레임 컨트롤 회전 Yaw 를 목표로 보간 (로컬 전용) */
+	void TickAimCameraRealign(float DeltaTime);
 
 	// =========================================================
 	// ★ [Phase18] 킥 3D 프롬프트 위젯

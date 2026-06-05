@@ -57,6 +57,8 @@
 #include "Character/HellunaEnemyCharacter_Boss.h"
 #include "AbilitySystemComponent.h"
 #include "Abilities/GameplayAbility.h"
+// [BossDashAttackCheat] CurrentTarget 주입용 베이스 적 GA
+#include "AbilitySystem/HellunaEnemyGameplayAbility.h"
 
 // [DebugHUD] 디버그 HUD 시스템
 #include "UI/HUD/HellunaDebugHUDWidget.h"
@@ -1784,6 +1786,85 @@ void AHellunaHeroController::Server_BossTimeDistortion_Implementation()
 	const bool bActivated = ASC->TryActivateAbilityByClass(GAClass, true);
 	UE_LOG(LogTemp, Warning, TEXT("[TimeDistortionCheat] TryActivate result=%d, Boss=%s"),
 		bActivated ? 1 : 0, *Boss->GetName());
+}
+
+// =========================================================================================
+// [BossDashAttackCheat] 콘솔 발동 — 월드 첫 보스가 호출 플레이어 쪽으로 돌진 공격.
+//   대쉬 도중 처치 → 사망 카메라 구도 테스트용.
+// =========================================================================================
+
+void AHellunaHeroController::BossDashAttack()
+{
+	UE_LOG(LogTemp, Warning, TEXT("[DashAttackCheat] Console exec — forwarding to server"));
+	Server_BossDashAttack();
+}
+
+void AHellunaHeroController::Server_BossDashAttack_Implementation()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[DashAttackCheat] No world"));
+		return;
+	}
+
+	AHellunaEnemyCharacter_Boss* Boss = nullptr;
+	for (TActorIterator<AHellunaEnemyCharacter_Boss> It(World); It; ++It)
+	{
+		Boss = *It;
+		if (IsValid(Boss)) break;
+	}
+	if (!Boss)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[DashAttackCheat] Boss not found in world"));
+		return;
+	}
+
+	// 정통 돌진 공격(LOCKED, 윈드업) — 전투에서 쓰는 GA.
+	const FString GAPath = TEXT("/Game/Enemy/BOSS/Attack/GA_Boss_DashAttack.GA_Boss_DashAttack_C");
+	UClass* GAClass = StaticLoadClass(UGameplayAbility::StaticClass(), nullptr, *GAPath);
+	if (!GAClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[DashAttackCheat] Failed to load %s"), *GAPath);
+		return;
+	}
+
+	UAbilitySystemComponent* ASC = Boss->GetAbilitySystemComponent();
+	if (!ASC)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[DashAttackCheat] Boss has no ASC"));
+		return;
+	}
+
+	if (!ASC->FindAbilitySpecFromClass(GAClass))
+	{
+		FGameplayAbilitySpec NewSpec(GAClass, 1, INDEX_NONE, this);
+		ASC->GiveAbility(NewSpec);
+		UE_LOG(LogTemp, Warning, TEXT("[DashAttackCheat] GA granted to %s"), *Boss->GetName());
+	}
+
+	// 보스가 호출 플레이어 쪽으로 돌진하도록 CurrentTarget 주입 (CDO + 인스턴스 양쪽).
+	AActor* TargetActor = GetPawn();
+	for (FGameplayAbilitySpec& Spec : ASC->GetActivatableAbilities())
+	{
+		if (!Spec.Ability || Spec.Ability->GetClass() != GAClass) continue;
+		if (UHellunaEnemyGameplayAbility* CDO = Cast<UHellunaEnemyGameplayAbility>(Spec.Ability))
+		{
+			CDO->SetCurrentTarget(TargetActor);
+		}
+		if (UGameplayAbility* Inst = Spec.GetPrimaryInstance())
+		{
+			if (UHellunaEnemyGameplayAbility* Typed = Cast<UHellunaEnemyGameplayAbility>(Inst))
+			{
+				Typed->SetCurrentTarget(TargetActor);
+			}
+		}
+		break;
+	}
+
+	const bool bActivated = ASC->TryActivateAbilityByClass(GAClass, true);
+	UE_LOG(LogTemp, Warning, TEXT("[DashAttackCheat] TryActivate=%d Boss=%s Target=%s"),
+		bActivated ? 1 : 0, *Boss->GetName(), *GetNameSafe(TargetActor));
 }
 
 // =========================================================================================

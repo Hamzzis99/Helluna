@@ -545,6 +545,19 @@ void AHellunaEnemyCharacter::OnMonsterHealthChanged(
 	// #11 최적화: 0.2초 쿨다운 — 산탄총 동시 히트 시 RPC 폭발 방지
 	if (Delta > 0.f && NewHealth > 0.f && HitReactMontage)
 	{
+		// [HitReactGroundV1] 지상에서만 피격 모션 — 공중(점프/넉백) 피격은 스킵.
+		//   Why: 공중 피격 모션 + 정지는 낙하/넉백과 충돌해 어색하므로 지면일 때만 재생.
+		if (bHitReactGroundedOnly)
+		{
+			if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
+			{
+				if (!MoveComp->IsMovingOnGround())
+				{
+					return;
+				}
+			}
+		}
+
 		// [HitReactDuringAttack] 공격 중(State.Enemy.Attacking 태그 보유) 이면 hit react 스킵.
 		//   Why: 보스 공격 와인드업/스윙 중에 hit react 가 들어가면 공격 몬타주가 끊기며
 		//   비주얼이 망가짐. 서버에서 GA Activate/End 가 태그를 add/remove 하므로
@@ -568,6 +581,8 @@ void AHellunaEnemyCharacter::OnMonsterHealthChanged(
 		{
 			LastHitReactTime = Now;
 			Multicast_PlayHitReact();
+			// [HitReactFreezeV1] 피격 모션 동안 잠깐 정지 (미끄러짐 방지 / 스태거감)
+			BeginHitReactFreeze();
 			HitReactPassedCount++;
 		}
 		else
@@ -605,7 +620,60 @@ void AHellunaEnemyCharacter::Multicast_PlayHitReact_Implementation()
 	UAnimInstance* AnimInst = SkelMesh->GetAnimInstance();
 	if (!AnimInst) return;
 
-	AnimInst->Montage_Play(HitReactMontage);
+	// [HitReactRateV1] 피격 몽타주를 배율 속도로 재생 (기본 2배).
+	AnimInst->Montage_Play(HitReactMontage, HitReactPlayRate);
+}
+
+// ============================================================
+// [HitReactFreezeV1] BeginHitReactFreeze / EndHitReactFreeze
+//   지상 피격 시 히트리액트 동안 이동을 잠깐 정지해 미끄러짐을 막고 스태거감을 준다.
+//   서버 권위 이동만 멈추면 클라는 복제로 따라오므로 Multicast 불필요.
+// ============================================================
+void AHellunaEnemyCharacter::BeginHitReactFreeze()
+{
+	if (!HasAuthority() || !bFreezeDuringHitReact) return;
+
+	// 공격 락(LockMovementAndFaceTarget)이 이미 이동을 잡고 있으면 그쪽이 속도를 소유 — 간섭 안 함.
+	if (bMovementLocked) return;
+
+	UCharacterMovementComponent* MoveComp = GetCharacterMovement();
+	if (!MoveComp) return;
+
+	// 진행 중이던 속도를 즉시 0으로 + 이동 속도 상한 0 으로 잠금.
+	MoveComp->StopMovementImmediately();
+	if (!bHitReactFreezing)
+	{
+		// 광폭화 등 현재 의도된 속도 보존 (연속 피격 시 0 을 덮어쓰지 않도록 첫 진입에서만 캡처).
+		HitReactSavedMaxWalkSpeed = MoveComp->MaxWalkSpeed;
+	}
+	bHitReactFreezing = true;
+	MoveComp->MaxWalkSpeed = 0.f;
+
+	// 정지 시간 = 피격 몽타주 실재생 길이 (재생 속도 배율 반영 → 2배속이면 절반 시간만 정지).
+	const float Dur = HitReactMontage
+		? (HitReactMontage->GetPlayLength() / FMath::Max(0.1f, HitReactPlayRate))
+		: 0.4f;
+
+	if (UWorld* World = GetWorld())
+	{
+		// 연속 사격 시 매 피격마다 타이머 재설정 → 멈춤 연장 (스태거 락).
+		World->GetTimerManager().SetTimer(HitReactFreezeTimerHandle, this,
+			&AHellunaEnemyCharacter::EndHitReactFreeze, FMath::Max(0.05f, Dur), false);
+	}
+}
+
+void AHellunaEnemyCharacter::EndHitReactFreeze()
+{
+	bHitReactFreezing = false;
+	if (!HasAuthority()) return;
+
+	// 정지 중 공격 락이 들어왔으면 그쪽이 속도를 소유 — 복원하지 않음.
+	if (bMovementLocked) return;
+
+	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
+	{
+		MoveComp->MaxWalkSpeed = HitReactSavedMaxWalkSpeed;
+	}
 }
 
 // ============================================================
@@ -1363,6 +1431,20 @@ void AHellunaEnemyCharacter::OnMonsterDeath(AActor* DeadActor, AActor* KillerAct
 		if (UAnimInstance* AnimInst = EnemyMesh->GetAnimInstance())
 		{
 			AnimInst->StopAllMontages(0.f);
+		}
+	}
+	// [HitReactFreezeV1] 피격 정지 중 사망 시: 타이머 정리 + 속도 복원.
+	//   풀 재사용 시 MaxWalkSpeed=0 이 남아 멈춰버리는 것을 방지.
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(HitReactFreezeTimerHandle);
+	}
+	if (bHitReactFreezing)
+	{
+		bHitReactFreezing = false;
+		if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
+		{
+			MoveComp->MaxWalkSpeed = HitReactSavedMaxWalkSpeed;
 		}
 	}
 	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
