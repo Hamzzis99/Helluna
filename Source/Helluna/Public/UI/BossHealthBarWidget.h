@@ -133,6 +133,10 @@ protected:
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> Text_BossName = nullptr;
 
+	/** [BossHPValueV1] HP 수치 텍스트 "현재 / 최대". WBP 에 Text_HPValue 로 배치 시 자동 바인딩. */
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Text_HPValue = nullptr;
+
 	/** 페이즈2 우측 확장의 핵심 — Padding.Right 를 음수로 lerp. */
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
 	TObjectPtr<UBorder> Border_Frame = nullptr;

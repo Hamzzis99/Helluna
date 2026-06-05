@@ -11,6 +11,7 @@
 #include "InventoryManagement/Utils/Inv_InventoryStatics.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
 #include "Building/Components/Inv_BuildingComponent.h"
+#include "Kismet/GameplayStatics.h"
 
 #include "DebugHelper.h"
 #include "Helluna.h"
@@ -83,6 +84,10 @@ void UHeroGameplayAbility_Repair::Repair(const FGameplayAbilityActorInfo* ActorI
 
 	UE_LOG(LogTemp, Warning, TEXT("[Repair] Opening widget, InputMode -> GameAndUI"));
 
+	// [수리창 미표시 버그 수정]
+	// 클라이언트에서 우주선이 막 스트리밍되어 들어온 직후엔 GameState의 복제 포인터
+	// (SpaceShip)가 아직 null일 수 있어, 게이지(InRepair)는 떠도 F 수리창은 안 열렸음.
+	// 실제 수리 RPC(Server_RepairSpaceShip)와 동일하게 "SpaceShip" 태그로 폴백 검색한다.
 	AHellunaDefenseGameState* GS = GetWorld()->GetGameState<AHellunaDefenseGameState>();
 	if (!GS)
 	{
@@ -94,7 +99,18 @@ void UHeroGameplayAbility_Repair::Repair(const FGameplayAbilityActorInfo* ActorI
 	AResourceUsingObject_SpaceShip* Ship = GS->GetSpaceShip();
 	if (!Ship)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[Repair][BuildDiag] STOP@Ship-null: GS->GetSpaceShip() returned nullptr. Authority=%d NetMode=%d"),
+		TArray<AActor*> FoundShips;
+		UGameplayStatics::GetAllActorsWithTag(GetWorld(), FName("SpaceShip"), FoundShips);
+		if (FoundShips.Num() > 0)
+		{
+			Ship = Cast<AResourceUsingObject_SpaceShip>(FoundShips[0]);
+		}
+		UE_LOG(LogTemp, Warning, TEXT("[Repair] GS->GetSpaceShip() null → 태그 폴백 결과: %s"),
+			Ship ? *Ship->GetName() : TEXT("여전히 NULL"));
+	}
+	if (!Ship)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Repair][BuildDiag] STOP@Ship-null: GS->GetSpaceShip() + 태그폴백 모두 nullptr. Authority=%d NetMode=%d"),
 			GS->HasAuthority() ? 1 : 0, (int32)GetWorld()->GetNetMode());
 		return;
 	}

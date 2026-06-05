@@ -7,6 +7,7 @@
 #include "BossPhase2CinematicTrigger.generated.h"
 
 class APawn;
+class APlayerController;
 class ACameraActor;
 class UBossDialogueWidget;
 class UCameraShakeBase;
@@ -227,6 +228,18 @@ public:
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_EndCinematic();
 
+	// [CinematicSkipVoteV1] 전원 스페이스바 투표 스킵 — 보스 소환 시네마틱과 동일 방식.
+	//   카메라/대사만 종료하며 보스 phase2 전환(광폭화·HP확장)은 보스 자체 타이머로 독립 완료된다.
+	/** 현재 시네마틱 진행 중인지 (서버 기준). */
+	bool IsCinematicActive() const { return bCinematicActive; }
+
+	/** 서버: 스킵 1표 등록 (AHellunaHeroController::Server_VoteBossSummonSkip 가 호출). */
+	void ServerRegisterSkipVote(APlayerController* Voter);
+
+	/** 모든 클라: 스킵 투표 현황을 대사 위젯 카운터에 반영. */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_UpdateSkipCount(int32 Voted, int32 Total);
+
 	/**
 	 * [BPDefaultSyncV1] BeginPlay 시 BP CDO 의 Edit-가능 property 를 instance 에 강제 sync.
 	 *   placement instance override 가 BP CDO 변경을 가리는 문제 fix.
@@ -254,6 +267,18 @@ private:
 	/** 시네마틱 대상 보스 (서버/클라 모두 보존). */
 	UPROPERTY()
 	TWeakObjectPtr<APawn> ActiveBoss;
+
+	// [CinematicSkipVoteV1] 스킵 투표 상태
+	/** 서버: 시네마틱 활성 여부 (스킵 투표 수신 가드). */
+	bool bCinematicActive = false;
+	/** 서버: 스킵에 투표한 PlayerController 집합 (중복 표 방지). */
+	TSet<TWeakObjectPtr<APlayerController>> SkipVoters;
+	/** 클라 로컬: 이번 시네마틱에 내 표를 이미 보냈는지. */
+	bool bLocalSkipVoteSent = false;
+	/** [CinematicSkipFlowV2] 클라 로컬: 2번째 대사 표시됨 여부(자동/수동 공통). */
+	bool bLocalDialogue2Shown = false;
+	/** 현재 플레이어 수 (GameState PlayerArray 기준, 최소 1). */
+	int32 CountActivePlayers() const;
 
 	/** 카메라 lerp 진행 중 여부. */
 	bool bCameraInterpolating = false;

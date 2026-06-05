@@ -13,6 +13,8 @@ class UMaterialInstanceDynamic;
 class UMaterialInterface;
 class AHellunaHeroCharacter;
 class ATimeDistortionOrb;
+class UStaticMeshComponent;
+class ULightComponent;
 
 /**
  * ATimeDistortionZone
@@ -48,6 +50,16 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "시간 왜곡|효과",
 		meta = (DisplayName = "시간 감속 배율", ClampMin = "0.05", ClampMax = "0.9"))
 	float TimeDilationScale = 0.3f;
+
+	/**
+	 * [BossSlowV1] 존이 활성인 동안 시전 보스(OwnerEnemy)도 함께 감속할지.
+	 *   전방 발사형은 존이 보스에서 멀리 생겨 overlap 으로는 안 닿으므로, 존 활성 동안 보스에
+	 *   직접 CustomTimeDilation 을 적용한다(전 클라 멀티캐스트, 클라에선 OwnerEnemy 가 Transient=null
+	 *   이라 보스 액터를 멀티캐스트 인자로 넘김). 감속 배율은 TimeDilationScale 을 공유.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "시간 왜곡|효과",
+		meta = (DisplayName = "시전 보스도 감속"))
+	bool bSlowOwnerBoss = true;
 
 	/** 시간 복원 시 범위 내 플레이어에게 적용할 데미지 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "시간 왜곡|효과",
@@ -131,6 +143,15 @@ public:
 		meta = (DisplayName = "슬로우 영역 VFX 크기", ClampMin = "0.01", ClampMax = "20.0"))
 	float SlowAreaVFXScale = 1.f;
 
+	/**
+	 * [TimeSalvoBloomV1] 존 개화(bloom) 시간(초). 0 이면 즉시 표시(팝).
+	 *   ActivateZone(=구체 착탄) 시점에 돔 메시/라이트가 숨김 상태에서 스케일 0→원본으로 ease-out 하며 "퍼지듯" 생성.
+	 *   스폰 시점엔 존 비주얼을 숨겨두므로, 구체가 떨어지기 전엔 존이 보이지 않는다.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "시간 왜곡|VFX",
+		meta = (DisplayName = "존 개화(bloom) 시간 (초)", ClampMin = "0.0", ClampMax = "2.0"))
+	float ZoneBloomDuration = 0.4f;
+
 	/** 패턴 종료 VFX (슬로우 해제 시 먼저 재생, 이후 폭발/파훼 VFX 재생) */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "시간 왜곡|VFX",
 		meta = (DisplayName = "패턴 종료 VFX"))
@@ -198,6 +219,22 @@ protected:
 	virtual void BeginPlay() override;
 	virtual void Destroyed() override;
 
+	// =========================================================
+	// [TimeSalvoBloomV1] 개화 reveal — 스폰 시 숨김, 착탄(ActivateZone) 시 전 클라 reveal + bloom
+	// =========================================================
+
+	/** 스폰 시점에 돔 메시/라이트를 캐시하고 숨긴다 (BeginPlay, 전 머신). */
+	void CacheAndHideZoneVisuals();
+
+	/** ActivateZone(서버) 에서 호출 — 전 클라에서 돔/라이트 reveal + 스케일 bloom 시작.
+	 *  [ZoneVisualLocFixV1] ZoneWorldLoc 으로 각 머신에서 존 위치를 강제 동기화(클라에서 보스 위치에
+	 *  남는 버그 방지) 후 reveal. */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_RevealZoneVisuals(FVector ZoneWorldLoc);
+
+	/** bloom 스케일 lerp 틱 (타이머 구동). */
+	void TickBloom();
+
 private:
 	// =========================================================
 	// 콜리전 컴포넌트
@@ -241,6 +278,23 @@ private:
 
 	/** 슬로우 적용 전 원본 CustomTimeDilation 저장 */
 	TMap<TWeakObjectPtr<AActor>, float> SlowedActors;
+
+	// =========================================================
+	// [BossSlowV1] 시전 보스 감속 — 존이 멀리 생겨도 보스를 직접 감속
+	// =========================================================
+
+	/** 존 활성 시 보스 감속 적용 (서버). bSlowOwnerBoss=true 일 때만. */
+	void ApplyOwnerBossSlow();
+
+	/** 패턴 종료 경로에서 보스 감속 복원 (서버). 중복 호출 무해. */
+	void RestoreOwnerBossSlow();
+
+	/** 전 클라에서 보스의 CustomTimeDilation 을 절대값으로 설정 (클라 OwnerEnemy=null 대응 인자 전달). */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_SetOwnerBossTimeDilation(AActor* Boss, float NewDilation);
+
+	/** 보스 감속 적용 상태 (서버에서만 추적) */
+	bool bOwnerBossSlowed = false;
 
 	// =========================================================
 	// 폭발 (파훼 실패)
@@ -304,4 +358,22 @@ private:
 
 	/** Custom Depth가 설정된 액터 추적 (정리용) */
 	TArray<TWeakObjectPtr<AActor>> CustomDepthActors;
+
+	// =========================================================
+	// [TimeSalvoBloomV1] 개화 reveal 런타임 상태
+	// =========================================================
+
+	/** 스폰 시 숨긴 돔 메시들 (BP 추가 StaticMesh — 보통 SM_Sphere_01). */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UStaticMeshComponent>> RevealMeshes;
+
+	/** RevealMeshes 각각의 원본 RelativeScale (bloom target). */
+	TArray<FVector> RevealMeshTargetScales;
+
+	/** 스폰 시 숨긴 라이트들 (BP 추가 PointLight 등). */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<ULightComponent>> RevealLights;
+
+	FTimerHandle BloomTimerHandle;
+	float BloomElapsed = 0.f;
 };

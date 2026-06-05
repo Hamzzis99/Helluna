@@ -12,6 +12,7 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/ProjectileMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
 
@@ -75,12 +76,39 @@ void AStasisSalvoOrb::BeginPlay()
 	{
 		TrailComp->SetAsset(TrailVFX);
 		TrailComp->Activate(true);
+		// [OrbColorMatchV1] 트레일 색 파라미터가 지정돼 있으면 OrbBaseColor 로 tint (존 색과 통일).
+		if (bApplyOrbBaseColor && !OrbTrailColorParamName.IsNone())
+		{
+			TrailComp->SetVariableLinearColor(OrbTrailColorParamName, OrbBaseColor);
+		}
 	}
 	if (OrbMesh && MeshComp)
 	{
 		MeshComp->SetStaticMesh(OrbMesh);
 		MeshComp->SetRelativeScale3D(FVector(FMath::Max(0.001f, OrbMeshScale)));
-		if (OrbMeshMaterial)
+
+		// [OrbColorMatchV1] 색 직접 지정 시 MID 로 Base_Color 적용 → 존 돔과 동일 머티리얼/색.
+		if (bApplyOrbBaseColor)
+		{
+			UMaterialInterface* BaseMat = OrbMeshMaterial ? OrbMeshMaterial.Get() : MeshComp->GetMaterial(0);
+			if (BaseMat)
+			{
+				UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(BaseMat, this);
+				if (MID)
+				{
+					if (!OrbBaseColorParamName.IsNone())
+					{
+						MID->SetVectorParameterValue(OrbBaseColorParamName, OrbBaseColor);
+					}
+					const int32 NumMats = MeshComp->GetNumMaterials();
+					for (int32 i = 0; i < NumMats; ++i)
+					{
+						MeshComp->SetMaterial(i, MID);
+					}
+				}
+			}
+		}
+		else if (OrbMeshMaterial)
 		{
 			MeshComp->SetMaterial(0, OrbMeshMaterial);
 		}
@@ -121,9 +149,75 @@ void AStasisSalvoOrb::Tick(float DeltaTime)
 	Super::Tick(DeltaTime);
 
 	if (bBursted) return;
-	if (!HasAuthority()) return; // 거리/근접 판정은 서버만
+	if (!HasAuthority()) return; // 거리/근접 판정은 서버만 (이동도 서버 권위 → replicate)
+	if (bHovering) return;       // [GroundHoverV1] 지면 도달 후 정지(hover) 중 — HoverBurstTimer 가 Burst 호출
 
 	const FVector Loc = GetActorLocation();
+
+	// [GroundDecelV1 / GroundHoverV1] 지면까지 거리 1회 측정 — 높이 기반 감속 + 지면 도달 시 정지→hover→Burst 에 공용.
+	//   "위에선 빠르게, 지면에 가까워질수록 느려지고, 터지기 전 잠깐 멈춘다" (하늘 낙하 분신 구체용).
+	float GroundDist = TNumericLimits<float>::Max();
+	const bool bNeedGround = (BurstHeightAboveGround > 0.f)
+		|| (bDecelerateWhileMoving && DecelStartHeightAboveGround > 0.f);
+	if (bNeedGround)
+	{
+		if (UWorld* W = GetWorld())
+		{
+			FHitResult GroundHit;
+			FCollisionQueryParams GParams(SCENE_QUERY_STAT(SSO_GroundBurst), false);
+			GParams.AddIgnoredActor(this);
+			if (AActor* OwnerActor = GetOwner()) GParams.AddIgnoredActor(OwnerActor);
+			if (OwnerEnemy) GParams.AddIgnoredActor(OwnerEnemy);
+			const float TraceLen = FMath::Max(BurstHeightAboveGround, DecelStartHeightAboveGround) + 100.f;
+			const FVector GroundEnd = Loc - FVector(0.f, 0.f, TraceLen);
+			if (W->LineTraceSingleByChannel(GroundHit, Loc, GroundEnd, ECC_Visibility, GParams)
+				&& GroundHit.bBlockingHit)
+			{
+				GroundDist = GroundHit.Distance;
+			}
+		}
+	}
+
+	// [GroundHoverV1] 지면(BurstHeightAboveGround) 도달 → 즉시 정지 후 HoverBeforeBurstSeconds 동안 멈췄다가 Burst.
+	if (BurstHeightAboveGround > 0.f && GroundDist <= BurstHeightAboveGround)
+	{
+		if (MoveComp) MoveComp->StopMovementImmediately();
+		if (HoverBeforeBurstSeconds > KINDA_SMALL_NUMBER && GetWorld())
+		{
+			bHovering = true;
+			SSO_LOG("지면 도달 → %.2fs 정지(hover) 후 Burst", HoverBeforeBurstSeconds);
+			Multicast_PlayCharge(Loc); // [ChargeV1] 터지기 전 차징 연출 (전 머신)
+			GetWorldTimerManager().SetTimer(HoverBurstTimer,
+				FTimerDelegate::CreateWeakLambda(this, [this]() { Burst(); }),
+				HoverBeforeBurstSeconds, false);
+		}
+		else
+		{
+			SSO_LOG("지면 도달 → 즉시 Burst");
+			Burst();
+		}
+		return;
+	}
+
+	// [GroundDecelV1] 높이 기반 감속 — DecelStartHeight 위에선 Speed 유지(빠름),
+	//   지면(BurstHeight)에 가까워질수록 MinMoveSpeed 로 선형 감속. 방향(아래)은 유지.
+	if (bDecelerateWhileMoving && MoveComp
+		&& DecelStartHeightAboveGround > BurstHeightAboveGround
+		&& GroundDist < DecelStartHeightAboveGround)
+	{
+		const float Alpha = FMath::Clamp(
+			(GroundDist - BurstHeightAboveGround) / (DecelStartHeightAboveGround - BurstHeightAboveGround),
+			0.f, 1.f);
+		// [GroundDecelV1] 지수 곡선 — DecelExponent>1 이면 감속 시작 직후 더 급격히 느려진다(확 브레이크).
+		const float ShapedAlpha = FMath::Pow(Alpha, FMath::Max(1.f, DecelExponent));
+		const float TargetSpeed = FMath::Lerp(FMath::Max(20.f, MinMoveSpeed), FMath::Max(1.f, Speed), ShapedAlpha);
+		const float CurSpeed = MoveComp->Velocity.Size();
+		if (CurSpeed > KINDA_SMALL_NUMBER)
+		{
+			MoveComp->Velocity = MoveComp->Velocity * (TargetSpeed / CurSpeed);
+			MoveComp->MaxSpeed = FMath::Max(MoveComp->MaxSpeed, TargetSpeed);
+		}
+	}
 
 	// 플레이어 근접 → Burst (존이 플레이어 근처에서 피어나도록).
 	if (BurstProximityToPlayer > KINDA_SMALL_NUMBER)
@@ -194,7 +288,14 @@ void AStasisSalvoOrb::Burst()
 		{
 			if (ARealityFractureZone* RFZone = Cast<ARealityFractureZone>(Zone))
 			{
+				// RF 존은 액터를 옮기지 않고 내부 stasis 중심만 override.
 				RFZone->SetStasisCenterOverride(BurstLoc);
+			}
+			else
+			{
+				// [TimeSalvoForwardV1] 그 외 존(예: TimeDistortionZone)은 액터 자체를 burst 위치로 이동 →
+				//   "총알이 터진 자리에 존이 생성" (전방 발사형 시간 슬로우). 직하 낙하면 발밑/바닥에 그대로.
+				Zone->SetActorLocation(BurstLoc);
 			}
 			SSO_LOG("Burst — TargetZone->ActivateZone() at %s", *BurstLoc.ToString());
 			Zone->ActivateZone();
@@ -230,6 +331,17 @@ void AStasisSalvoOrb::Multicast_PlayBurst_Implementation(FVector BurstLocation)
 	if (BurstSound)
 	{
 		UGameplayStatics::PlaySoundAtLocation(W, BurstSound, BurstLocation);
+	}
+}
+
+void AStasisSalvoOrb::Multicast_PlayCharge_Implementation(FVector ChargeLocation)
+{
+	UWorld* W = GetWorld();
+	if (!W) return;
+	if (ChargeVFX)
+	{
+		UNiagaraFunctionLibrary::SpawnSystemAtLocation(W, ChargeVFX, ChargeLocation, FRotator::ZeroRotator,
+			FVector(FMath::Max(0.01f, ChargeVFXScale)));
 	}
 }
 

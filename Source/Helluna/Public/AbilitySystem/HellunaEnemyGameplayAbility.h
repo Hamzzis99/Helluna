@@ -101,6 +101,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Helluna|Ability")
 	virtual void SetCurrentTarget(AActor* InTarget) {}
 
+	/**
+	 * [BossOrbTargetingV1] Origin 중심 Radius(cm) 내 모든 플레이어 폰의 평균 위치(centroid)를 반환.
+	 *   멀티플레이 대응 — 범위 안의 플레이어가 여럿이면 그 무리의 중심을 노린다.
+	 *   Radius <= 0 이면 거리 무관 전체 플레이어. 범위 내 플레이어가 없으면 Origin 을 그대로 반환(OutCount=0).
+	 */
+	static FVector GetInRangePlayersCentroid(const UWorld* World, const FVector& Origin, float Radius, int32& OutCount);
+
 protected:
 	//~ Begin UGameplayAbility Interface
 	/** [HitSoundV1] Super 호출 시 자동으로 HitSound 를 캐릭터에 캐싱. */

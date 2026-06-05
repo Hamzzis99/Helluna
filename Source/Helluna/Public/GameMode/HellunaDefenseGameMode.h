@@ -596,9 +596,11 @@ protected:
 	 * ⚠ 같은 Day에 중복 항목이 있으면 첫 번째 항목만 사용된다.
 	 * ⚠ BossClass가 null인 항목은 소환 시 오류 메시지를 출력하고 스킵된다.
 	 */
+	// [RepairBossNightV2] 날짜 기반 소환은 폐기됨 — 보스 밤은 우주선 수리도로 결정한다.
+	//   이 배열은 더 이상 사용되지 않는다(no-op). GameMode BP 그래프 참조 깨짐 방지를 위해 선언만 유지.
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|Boss(보스)",
-		meta = (DisplayName = "보스 소환 스케줄",
-			ToolTip = "날짜별 소환할 보스/세미보스 클래스를 지정합니다.\nSpawnDay에 일차, BossClass에 소환할 Pawn 클래스, bIsSemiBoss로 보스 등급을 설정하세요."))
+		meta = (DisplayName = "[Deprecated/사용안함] 보스 소환 스케줄",
+			ToolTip = "더 이상 사용되지 않습니다. 보스 소환은 우주선 수리도(수리 완료 소환 보스)로 결정됩니다."))
 	TArray<FBossSpawnEntry> BossSchedule;
 
 	// ────────────────────────────────────────────────────────────────────────────
@@ -619,6 +621,9 @@ protected:
 	/** 보스 소환 준비 상태 플래그 */
 	UPROPERTY(BlueprintReadOnly, Category = "Defense(게임)|Boss(보스)")
 	bool bBossReady = false;
+
+	/** [RepairBossNightV2] 보스가 이미 한 번 소환됐는지 — 중복/재소환 방지(서버 런타임, 비복제). */
+	bool bBossSummoned = false;
 
 	/** 현재 살아있는 보스 (단일). 사망 시 nullptr로 초기화 */
 	UPROPERTY()
@@ -678,23 +683,32 @@ protected:
 	// ════════════════════════════════════════════════════════════════════════════════
 public:
 	/**
-	 * true = 우주선 수리가 100% 되면 RepairCompleteBossEntry 의 보스를 강제 소환.
-	 * false = 스폰 안 함 (기존 동작).
-	 * 소환된 보스를 처치하면 NotifyBossDied 경로로 EndGame(Escaped) → 게임 클리어.
+	 * [RepairBossNightV2] 밤 진행 "중" 수리가 100% 되었을 때의 즉시 소환 토글.
+	 *   false(기본) = 즉시 소환 안 함 → "다음 밤" 시작 시 EnterNightCore 가 보스 밤으로 처리(잡몹 없는 깔끔한 보스 밤).
+	 *   true        = 수리 완료 즉시 그 자리에서 보스 소환(잡몹과 동시에 등장 가능, 테스트/특수용).
+	 * ※ 밤 시작 시점의 보스 판정은 이 값과 무관하게 항상 수리도로 결정된다.
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|Boss(보스)",
-		meta = (DisplayName = "수리 완료 시 보스 소환 (on/off)"))
-	bool bSpawnBossOnRepairComplete = true;
+		meta = (DisplayName = "수리 완료 즉시 소환 (기본 off=다음밤)"))
+	bool bSpawnBossOnRepairComplete = false;
 
 	/**
-	 * 수리 완료 시 소환할 보스. 소환된 보스가 EndGame 을 트리거하려면
-	 * 해당 Pawn 의 EnemyGrade == Boss 여야 함 (NotifyBossDied 기준).
-	 * SpawnDay 필드는 이 경로에서는 무시된다.
+	 * 보스 밤에 소환할 보스 클래스. (밤 시작 수리도 분기 + 즉시 소환 경로 공통)
+	 *   소환된 보스가 EndGame 을 트리거하려면 해당 Pawn 의 EnemyGrade == Boss 여야 함(NotifyBossDied 기준).
+	 *   SpawnDay 필드는 무시된다.
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|Boss(보스)",
-		meta = (DisplayName = "수리 완료 소환 보스",
-			EditCondition = "bSpawnBossOnRepairComplete"))
+		meta = (DisplayName = "수리 완료 소환 보스"))
 	FBossSpawnEntry RepairCompleteBossEntry;
+
+	/**
+	 * [RepairBossNightV2 / 테스트] true 면 수리도와 무관하게 다음 밤을 보스 밤으로 강제한다.
+	 *   RepairCompleteBossEntry.BossClass 가 설정돼 있어야 하며, 보스는 1회만 소환된다.
+	 *   평소엔 off. 에디터에서 보스 흐름을 빠르게 테스트할 때 사용.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|Boss(보스)|Debug",
+		meta = (DisplayName = "테스트: 다음 밤 보스 강제"))
+	bool bForceBossNightForTest = false;
 
 protected:
 	/** 수리 완료 델리게이트 콜백 — 서버 전용. TrySummonBoss 호출. */

@@ -110,7 +110,42 @@ public:
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_StartDeathMeshLift();
 
+	// =========================================================================
+	// [BossDeathSlopeAlignV1] 경사면 사망 정렬
+	//   죽는 순간 발밑으로 트레이스해 지형 법선/각도/지면점을 캡처하고, 누운 메시를
+	//   "지면 접촉점 기준"으로 그 법선에 맞춰 기울여(clamp) 경사면에 밀착시킨다.
+	//   기존 Z 리프트(authored 포즈 침몰 보정)와 합성된다. 정적 월드 트레이스라
+	//   Multicast 안에서 각 머신이 동일 결과를 계산 → 시체 정렬이 서버/클라 일치.
+	// =========================================================================
+	/** 경사 정렬 사용 여부. false 면 기존 Z 리프트만 동작(원래 동작). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|사망 시네마틱",
+		meta = (DisplayName = "사망 경사 정렬 사용"))
+	bool bDeathSlopeAlignEnabled = true;
+
+	/** 정렬 최대 기울기 (도). 절벽/계단 등 급경사에서 시체가 과도하게 눕는 것 방지 clamp. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|사망 시네마틱",
+		meta = (DisplayName = "사망 경사 정렬 최대각 (도)", ClampMin = "0.0", ClampMax = "80.0", EditCondition = "bDeathSlopeAlignEnabled"))
+	float DeathSlopeMaxAlignDeg = 35.f;
+
+	/** 정렬 강도 (0=정렬 안 함, 1=법선에 완전 정렬). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|사망 시네마틱",
+		meta = (DisplayName = "사망 경사 정렬 강도", ClampMin = "0.0", ClampMax = "1.0", EditCondition = "bDeathSlopeAlignEnabled"))
+	float DeathSlopeAlignStrength = 1.f;
+
+	/** 죽는 순간 지형 법선/각도를 화면 메시지+로그+디버그선으로 표시 (튜닝/검증용). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|사망 시네마틱",
+		meta = (DisplayName = "사망 경사 디버그 표시"))
+	bool bDeathSlopeDebugDraw = true;
+
+	/** 발밑 지형을 찾는 하향 트레이스 길이 (cm). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|사망 시네마틱",
+		meta = (DisplayName = "사망 지형 트레이스 길이 (cm)", ClampMin = "100.0", ClampMax = "10000.0"))
+	float DeathGroundTraceLength = 5000.f;
+
 private:
+	/** [BossDeathSlopeAlignV1] 죽는 순간 발밑으로 트레이스해 지형 법선/각도/지면점을 캡처. */
+	void CaptureDeathGroundSlope();
+
 	/** Destroy hold 활성 플래그 (true 인 동안 DespawnMassEntityOnServer 보류). */
 	bool bDeathCinematicHoldActive = false;
 
@@ -121,6 +156,14 @@ private:
 	bool bDeathMeshLiftActive = false;
 	float DeathMeshLiftElapsed = 0.f;
 	float SavedDeathMeshRelZ = 0.f;
+
+	/** [BossDeathSlopeAlignV1] 죽는 순간 캡처한 지형 법선/각도/지면점 + 시작 메시 상대 위치/회전. */
+	FVector  DeathGroundNormal = FVector::UpVector;
+	FVector  DeathGroundPoint = FVector::ZeroVector;
+	float    DeathSlopeAngleDeg = 0.f;
+	bool     bDeathGroundCaptured = false;
+	FVector  SavedDeathMeshRelLoc = FVector::ZeroVector;
+	FRotator SavedDeathMeshRelRot = FRotator::ZeroRotator;
 
 	/** [BossDeathCinematicV1] 사망 몽타주 종료 신호 (서버 AnimInstance OnMontageEnded). */
 	UFUNCTION()
@@ -720,6 +763,15 @@ public:
 	 *   광폭화 몽타주 (서버), BerserkGlow, 발밑/메테오/강하 VFX, 본체 swap+갑옷, 오라, 광폭화 강하 NC 활성.
 	 *   트리거(BossPhase2CinematicTrigger) 가 단계 3 timer 시점에 호출.
 	 */
+	/**
+	 * [Phase2SkipFastForwardV1] bImmediate=true 면 광폭화 외형/HP fill 을 지연 없이 즉시 시작 —
+	 *   페이즈2 시네마틱 스킵 시 스턴 대기(Phase2StunDuration)를 건너뛰고 변신을 바로 적용.
+	 *   내부 가드(bPhase2Stage3Triggered)로 스턴 타이머 경로와 중복 실행되지 않는다.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Combat|광폭화")
-	void Phase2_PlayStage3Visuals();
+	void Phase2_PlayStage3Visuals(bool bImmediate = false);
+
+private:
+	/** [Phase2SkipFastForwardV1] Stage3(광폭화+HP fill) 트리거 1회 가드 — 페이즈2 진입 시 리셋. */
+	bool bPhase2Stage3Triggered = false;
 };

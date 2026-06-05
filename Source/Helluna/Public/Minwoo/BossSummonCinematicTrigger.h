@@ -7,6 +7,7 @@
 #include "BossSummonCinematicTrigger.generated.h"
 
 class APawn;
+class APlayerController;
 class ACameraActor;
 class ULevelSequence;
 class ULevelSequencePlayer;
@@ -484,6 +485,22 @@ public:
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_EndCinematic();
 
+	// =========================================================================================
+	// [CinematicSkipVoteV1] 스페이스바 스킵 투표 — 모든 플레이어가 눌러야 시네마틱이 종료된다.
+	//   · 입력은 각 클라 로컬에서 감지 → 자기 PlayerController 의 Server RPC 로 서버에 1표.
+	//     (트리거는 클라 소유가 아니라 Server RPC 를 직접 못 받으므로 PC 를 경유한다.)
+	//   · 서버가 표를 모아 전원 일치 시 HandleCinematicCompletedServer() 로 '정상 종료' 처리
+	//     → 보스 이동/AI/피격이 일반 종료와 동일하게 복원된다(허공 걷기 버그 방지).
+	//   · 현황 [눌림/전체] 은 Multicast 로 모든 클라 대사 위젯의 카운터에 갱신.
+	// =========================================================================================
+
+	/** 서버: 스킵 1표 등록 (AHellunaHeroController::Server_VoteBossSummonSkip 가 호출). */
+	void ServerRegisterSkipVote(APlayerController* Voter);
+
+	/** 모든 클라: 스킵 투표 현황을 대사 위젯 카운터에 반영. */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_UpdateSkipCount(int32 Voted, int32 Total);
+
 	/**
 	 * 모든 클라에서 보스 SkelMesh의 bPauseAnims 토글.
 	 * true: SummonMontage 끝난 후 보스가 Locomotion walk 애니로 복귀해 "러닝머신" 되는 걸 방지 — 마지막 포즈에 고정.
@@ -642,6 +659,19 @@ private:
 
 	/** 최소 유지 시간 경과 플래그 */
 	bool bMinHoldElapsedFlag = false;
+
+	// [CinematicSkipVoteV1] 스킵 투표 상태
+	/** 서버: 스킵에 투표한 PlayerController 집합 (중복 표 방지). 시네마틱 시작 시 비움. */
+	TSet<TWeakObjectPtr<APlayerController>> SkipVoters;
+
+	/** 클라 로컬: 이번 시네마틱에 내 표를 이미 보냈는지 (중복 전송 방지). 시작 시 false. */
+	bool bLocalSkipVoteSent = false;
+
+	/** [CinematicSkipFlowV2] 클라 로컬: 2번째 대사가 이미 표시됐는지(자동/수동 공통). 스페이스 우선순위 판정용. 시작 시 false. */
+	bool bLocalDialogue2Shown = false;
+
+	/** 현재 플레이어 수 (GameState PlayerArray 기준 — 서버/클라 일관). 최소 1. */
+	int32 CountActivePlayers() const;
 
 	/** [CinematicWalkV1] 시네마틱 시작 직전 보스 MaxWalkSpeed 백업 — 종료 시 복원용. -1 = 미백업. */
 	float SavedBossMaxWalkSpeed = -1.f;

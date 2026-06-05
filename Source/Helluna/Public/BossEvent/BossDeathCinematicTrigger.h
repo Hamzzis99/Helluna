@@ -7,8 +7,10 @@
 #include "BossDeathCinematicTrigger.generated.h"
 
 class APawn;
+class APlayerController;
 class ACameraActor;
 class UCameraShakeBase;
+class UBossDialogueWidget;
 
 /**
  * [BossDeathCinematicV1] 보스 사망 시네마틱 트리거.
@@ -80,6 +82,23 @@ public:
 	float TotalCinematicDuration = 5.f;
 
 	// =========================================================================================
+	// 대사 / 스킵 프롬프트 — 사망 시네마틱에도 "PRESS SPACE TO CONTINUE [n/N]" 카운터 표시용.
+	//   [CinematicSkipVoteV1] BP 에서 WBP_BossDialogue 를 지정하면 스킵 카운터가 표시된다.
+	//   대사(SpeakerName/DialogueLine)는 선택 — 비워도 카운터 프롬프트는 표시됨.
+	// =========================================================================================
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossDeath|Dialogue",
+		meta = (DisplayName = "대사/스킵 위젯 클래스 (WBP_BossDialogue)"))
+	TSubclassOf<UBossDialogueWidget> DialogueWidgetClass;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossDeath|Dialogue",
+		meta = (DisplayName = "화자 이름 (선택)"))
+	FText SpeakerName;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossDeath|Dialogue",
+		meta = (DisplayName = "사망 대사 (선택)", MultiLine = true))
+	FText DialogueLine;
+
+	// =========================================================================================
 	// 공개 API
 	// =========================================================================================
 
@@ -94,6 +113,17 @@ public:
 	/** Multicast — 모든 머신에서 시네마틱 종료. */
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_EndCinematic();
+
+	// [CinematicSkipVoteV1] 전원 스페이스바 투표 스킵 — 카메라만 종료(게임오버는 독립 진행).
+	/** 현재 시네마틱 진행 중인지 (서버 기준). */
+	bool IsCinematicActive() const { return bCinematicActive; }
+
+	/** 서버: 스킵 1표 등록 (AHellunaHeroController::Server_VoteBossSummonSkip 가 호출). */
+	void ServerRegisterSkipVote(APlayerController* Voter);
+
+	/** 모든 클라: 스킵 투표 현황을 대사 위젯 카운터에 반영. */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_UpdateSkipCount(int32 Voted, int32 Total);
 
 	/**
 	 * [BPDefaultSyncV1] BeginPlay 시 BP CDO 의 Edit-가능 property 를 instance 에 강제 sync.
@@ -121,4 +151,20 @@ private:
 
 	/** 종료 timer. */
 	FTimerHandle EndCinematicTimer;
+
+	/** 클라 로컬 대사/스킵 카운터 위젯. */
+	UPROPERTY()
+	TObjectPtr<UBossDialogueWidget> LocalDialogueWidget;
+
+	// [CinematicSkipVoteV1] 스킵 투표 상태
+	/** 서버: 시네마틱 활성 여부 (스킵 투표 수신 가드). */
+	bool bCinematicActive = false;
+	/** 서버: 스킵에 투표한 PlayerController 집합. */
+	TSet<TWeakObjectPtr<APlayerController>> SkipVoters;
+	/** 클라 로컬: 이번 시네마틱에 내 표 전송 여부. */
+	bool bLocalSkipVoteSent = false;
+	/** [CinematicSkipFlowV2] 클라 로컬: (사망은 대사 1개라 미사용) 2번째 대사 표시 여부. */
+	bool bLocalDialogue2Shown = false;
+	/** 현재 플레이어 수 (GameState PlayerArray, 최소 1). */
+	int32 CountActivePlayers() const;
 };

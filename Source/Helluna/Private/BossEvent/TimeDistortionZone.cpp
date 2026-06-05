@@ -8,9 +8,12 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Components/PostProcessComponent.h"
 #include "Components/SphereComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Components/LightComponent.h"
 #include "Engine/OverlapResult.h"
 #include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "TimerManager.h"
 
 #define TDZ_LOG(Fmt, ...) UE_LOG(LogTemp, Warning, TEXT("[TimeDistortionZone] " Fmt), ##__VA_ARGS__)
 
@@ -18,6 +21,9 @@ ATimeDistortionZone::ATimeDistortionZone()
 {
 	PrimaryActorTick.bCanEverTick = false;
 	bReplicates = true;
+	// [ZoneVisualLocFixV1] 존은 burst 시 SetActorLocation 으로 이동하는데, movement replicate 가
+	//   꺼져 있으면 클라에선 그 이동이 안 와 돔/라이트가 최초 스폰 위치(보스)에 남는다. → 이동 복제 ON.
+	SetReplicateMovement(true);
 
 	SlowSphere = CreateDefaultSubobject<USphereComponent>(TEXT("SlowSphere"));
 	SlowSphere->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
@@ -45,12 +51,108 @@ void ATimeDistortionZone::BeginPlay()
 
 	// 아직 활성화 전이면 Overlap 이벤트 방지
 	SlowSphere->SetGenerateOverlapEvents(false);
+
+	// [TimeSalvoBloomV1] 스폰 시점엔 존 비주얼(돔 메시/라이트)을 숨긴다 — 구체가 착탄(ActivateZone)할 때
+	//   비로소 reveal + bloom 되어 "퍼지듯" 생성된다. 전 머신(서버/클라)에서 BeginPlay 호출되므로 여기서 숨김.
+	CacheAndHideZoneVisuals();
+}
+
+// -----------------------------------------------------------------
+// [TimeSalvoBloomV1] 개화 reveal — 스폰 시 숨김 / 착탄 시 멀티캐스트 reveal + bloom
+// -----------------------------------------------------------------
+void ATimeDistortionZone::CacheAndHideZoneVisuals()
+{
+	RevealMeshes.Reset();
+	RevealMeshTargetScales.Reset();
+	RevealLights.Reset();
+
+	TArray<UStaticMeshComponent*> Meshes;
+	GetComponents<UStaticMeshComponent>(Meshes);
+	for (UStaticMeshComponent* M : Meshes)
+	{
+		if (!M) continue;
+		RevealMeshes.Add(M);
+		RevealMeshTargetScales.Add(M->GetRelativeScale3D());
+		M->SetHiddenInGame(true);
+		M->SetVisibility(false, true);
+	}
+
+	TArray<ULightComponent*> Lights;
+	GetComponents<ULightComponent>(Lights);
+	for (ULightComponent* L : Lights)
+	{
+		if (!L) continue;
+		RevealLights.Add(L);
+		L->SetVisibility(false, true);
+	}
+
+	TDZ_LOG("CacheAndHideZoneVisuals — 숨김 mesh=%d light=%d (스폰 시 비표시, ActivateZone 에 개화)",
+		RevealMeshes.Num(), RevealLights.Num());
+}
+
+void ATimeDistortionZone::Multicast_RevealZoneVisuals_Implementation(FVector ZoneWorldLoc)
+{
+	// [ZoneVisualLocFixV1] reveal 직전, 서버가 알려준 존 월드 위치로 강제 이동 — 모든 머신에서
+	//   돔/라이트(존 자식 컴포넌트)의 중심을 burst 위치에 맞춘다. (클라는 movement replicate 가
+	//   늦거나 누락돼 보스 위치에 비주얼이 남는 버그가 있었음.)
+	SetActorLocation(ZoneWorldLoc);
+
+	// 라이트는 즉시 full reveal.
+	for (ULightComponent* L : RevealLights)
+	{
+		if (L) L->SetVisibility(true, true);
+	}
+
+	// 돔 메시 reveal. bloom 사용 시 스케일 0 에서 시작.
+	const bool bBloom = (ZoneBloomDuration > KINDA_SMALL_NUMBER) && (RevealMeshes.Num() > 0);
+	for (int32 i = 0; i < RevealMeshes.Num(); ++i)
+	{
+		UStaticMeshComponent* M = RevealMeshes[i];
+		if (!M) continue;
+		M->SetHiddenInGame(false);
+		M->SetVisibility(true, true);
+		if (bBloom)
+		{
+			M->SetRelativeScale3D(FVector::ZeroVector);
+		}
+	}
+
+	if (bBloom)
+	{
+		BloomElapsed = 0.f;
+		GetWorldTimerManager().SetTimer(BloomTimerHandle, this, &ATimeDistortionZone::TickBloom, 0.016f, true);
+		TDZ_LOG("Multicast_RevealZoneVisuals — bloom 시작 (%.2fs)", ZoneBloomDuration);
+	}
+	else
+	{
+		TDZ_LOG("Multicast_RevealZoneVisuals — 즉시 reveal (bloom off)");
+	}
+}
+
+void ATimeDistortionZone::TickBloom()
+{
+	BloomElapsed += 0.016f;
+	const float Alpha = FMath::Clamp(BloomElapsed / FMath::Max(0.01f, ZoneBloomDuration), 0.f, 1.f);
+	// ease-out cubic — 빠르게 퍼졌다가 부드럽게 안착.
+	const float Eased = 1.f - FMath::Pow(1.f - Alpha, 3.f);
+	for (int32 i = 0; i < RevealMeshes.Num(); ++i)
+	{
+		if (RevealMeshes[i] && RevealMeshTargetScales.IsValidIndex(i))
+		{
+			RevealMeshes[i]->SetRelativeScale3D(RevealMeshTargetScales[i] * Eased);
+		}
+	}
+	if (Alpha >= 1.f)
+	{
+		GetWorldTimerManager().ClearTimer(BloomTimerHandle);
+	}
 }
 
 void ATimeDistortionZone::Destroyed()
 {
 	RestoreAllSlowedActors();
 	ForceRestoreNearbyPlayers(); // [TDSlowReleaseFixV1] 안전망 — Zone 파괴 시도 경로
+	RestoreOwnerBossSlow();      // [BossSlowV1] 보스 감속 복원 (최종 안전망)
 	DestroyAllOrbs();
 
 	if (UWorld* World = GetWorld())
@@ -58,6 +160,7 @@ void ATimeDistortionZone::Destroyed()
 		World->GetTimerManager().ClearTimer(DetonationTimerHandle);
 		World->GetTimerManager().ClearTimer(ResultVFXTimerHandle);
 		World->GetTimerManager().ClearTimer(OrbSpawnTimerHandle);
+		World->GetTimerManager().ClearTimer(BloomTimerHandle); // [TimeSalvoBloomV1]
 	}
 
 	Super::Destroyed();
@@ -75,6 +178,10 @@ void ATimeDistortionZone::ActivateZone()
 	bPatternBroken = false;
 
 	TDZ_LOG("=== ActivateZone START (Duration=%.2f) ===", PatternDuration);
+
+	// [TimeSalvoBloomV1] 구체 착탄 시점 — 숨겨둔 돔/라이트를 전 클라에서 reveal + bloom.
+	//   [ZoneVisualLocFixV1] 서버 존 위치(=burst 위치)를 함께 넘겨 클라 비주얼 중심을 맞춘다.
+	Multicast_RevealZoneVisuals(GetActorLocation());
 
 	// Overlap 활성화
 	SlowSphere->SetGenerateOverlapEvents(true);
@@ -98,8 +205,26 @@ void ATimeDistortionZone::ActivateZone()
 		Multicast_ActivateDesaturation(GetActorLocation(), SlowSphere->GetScaledSphereRadius(), OwnerEnemy);
 	}
 
-	// Orb 순차 스폰
-	StartOrbSpawnSequence();
+	// [BossSlowV1] 시전 보스도 함께 감속 (존이 멀리 생겨 overlap 으로는 안 닿으므로 직접 적용).
+	ApplyOwnerBossSlow();
+
+	// [OrbBloomSyncV1] 파훼 구체는 돔이 다 피어난(bloom 완료) 뒤에 스폰한다.
+	//   bloom 동안엔 돔 스케일이 0→full 이라, 즉시 스폰하면 먼저 나온 구체가 "아직 작은 존" 밖에
+	//   떠 있는 것처럼 보임("구체가 존 바깥" 증상). bloom 시간만큼 지연해 항상 full 사이즈 존 안에 생성.
+	if (UWorld* World = GetWorld())
+	{
+		const float OrbStartDelay = FMath::Max(0.f, ZoneBloomDuration);
+		if (OrbStartDelay > KINDA_SMALL_NUMBER)
+		{
+			World->GetTimerManager().SetTimer(
+				OrbSpawnTimerHandle, this,
+				&ATimeDistortionZone::StartOrbSpawnSequence, OrbStartDelay, false);
+		}
+		else
+		{
+			StartOrbSpawnSequence();
+		}
+	}
 
 	// 폭발 타이머 (파훼 실패 경로)
 	if (UWorld* World = GetWorld())
@@ -130,6 +255,7 @@ void ATimeDistortionZone::DeactivateZone()
 
 	RestoreAllSlowedActors();
 	ForceRestoreNearbyPlayers(); // [TDSlowReleaseFixV1] 안전망
+	RestoreOwnerBossSlow();      // [BossSlowV1] 보스 감속 복원
 	DestroyAllOrbs();
 	Multicast_DeactivateDesaturation();
 
@@ -340,6 +466,44 @@ void ATimeDistortionZone::ForceRestoreNearbyPlayers()
 }
 
 // -----------------------------------------------------------------
+// [BossSlowV1] 시전 보스 감속 — 존이 멀리 생겨도 보스를 직접 감속
+//   전방 발사형 TimeSalvo 는 존이 플레이어 쪽(보스에서 먼 곳)에 피어나므로 overlap 슬로우가
+//   보스에 닿지 않는다. 존 활성 동안 보스의 CustomTimeDilation 을 전 클라에서 직접 설정한다.
+//   (CustomTimeDilation 은 리플리케이트되지 않으므로 멀티캐스트로 각 머신에서 set.
+//    클라에선 OwnerEnemy 가 Transient=null 이라 보스 액터를 인자로 전달.)
+// -----------------------------------------------------------------
+void ATimeDistortionZone::ApplyOwnerBossSlow()
+{
+	if (!bSlowOwnerBoss) return;
+	if (bOwnerBossSlowed) return;
+	if (!OwnerEnemy) return;
+
+	bOwnerBossSlowed = true;
+	Multicast_SetOwnerBossTimeDilation(OwnerEnemy, TimeDilationScale);
+	TDZ_LOG("[BossSlowV1] OwnerBoss slow applied (scale=%.2f) on %s",
+		TimeDilationScale, *GetNameSafe(OwnerEnemy));
+}
+
+void ATimeDistortionZone::RestoreOwnerBossSlow()
+{
+	if (!bOwnerBossSlowed) return;
+	bOwnerBossSlowed = false;
+
+	if (OwnerEnemy)
+	{
+		Multicast_SetOwnerBossTimeDilation(OwnerEnemy, 1.f);
+		TDZ_LOG("[BossSlowV1] OwnerBoss slow restored on %s", *GetNameSafe(OwnerEnemy));
+	}
+}
+
+void ATimeDistortionZone::Multicast_SetOwnerBossTimeDilation_Implementation(AActor* Boss, float NewDilation)
+{
+	if (!IsValid(Boss)) return;
+	// 절대값 set — RPC 가 한쪽(apply/restore)만 도달하는 경우에도 안전(누적 곱 imbalance 방지).
+	Boss->CustomTimeDilation = FMath::Max(0.01f, NewDilation);
+}
+
+// -----------------------------------------------------------------
 // BeginDetonation — 패턴 종료 VFX 재생 후 딜레이
 // -----------------------------------------------------------------
 void ATimeDistortionZone::BeginDetonation()
@@ -395,6 +559,7 @@ void ATimeDistortionZone::FinishDetonation()
 	// 슬로우 해제 + PP 해제
 	RestoreAllSlowedActors();
 	ForceRestoreNearbyPlayers(); // [TDSlowReleaseFixV1] 안전망
+	RestoreOwnerBossSlow();      // [BossSlowV1] 보스 감속 복원
 	Multicast_DeactivateDesaturation();
 
 	// 폭발 VFX
@@ -470,6 +635,27 @@ void ATimeDistortionZone::StartOrbSpawnSequence()
 
 	TDZ_LOG("StartOrbSpawnSequence: Total=%d, KeyIndex=%d", OrbSpawnTotalCount, OrbSpawnKeyIndex);
 
+	// [OrbCenterDiagV1] 존 중심 vs 가장 가까운 플레이어 vs 존 반경 진단 — "구체가 존 바깥/플레이어 기준" 체감 확인용.
+	{
+		const FVector ZoneCenter = GetActorLocation();
+		const float ZoneR = SlowSphere ? SlowSphere->GetScaledSphereRadius() : -1.f;
+		float NearestPlayerDist = -1.f;
+		for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+		{
+			if (APlayerController* PC = It->Get())
+			{
+				if (APawn* P = PC->GetPawn())
+				{
+					const float D = FVector::Dist(P->GetActorLocation(), ZoneCenter);
+					if (NearestPlayerDist < 0.f || D < NearestPlayerDist) NearestPlayerDist = D;
+				}
+			}
+		}
+		TDZ_LOG("[OrbCenterDiagV1] ZoneCenter=(%.0f,%.0f,%.0f) SlowR=%.0f EffSpawnR<=%.0f NearestPlayerDist=%.0f",
+			ZoneCenter.X, ZoneCenter.Y, ZoneCenter.Z, ZoneR,
+			FMath::Min(OrbSpawnRadius, (ZoneR > 0.f ? ZoneR * 0.85f : OrbSpawnRadius)), NearestPlayerDist);
+	}
+
 	SpawnNextOrb();
 
 	if (OrbSpawnCurrentIndex < OrbSpawnTotalCount)
@@ -511,6 +697,11 @@ void ATimeDistortionZone::SpawnNextOrb()
 	const FVector CenterLocation = GetActorLocation();
 	const int32 i = OrbSpawnCurrentIndex;
 	const bool bIsKey = (i == OrbSpawnKeyIndex);
+
+	// [OrbInsideZoneV1] 스폰 반경을 슬로우 구체 반경 안쪽으로 제한 — 존보다 밖에 구체가 생기지 않도록.
+	//   지터(±RadiusJitter)까지 포함해도 존 안에 머물게 0.85 마진. 존 스케일이 바뀌어도 자동 추종.
+	const float ZoneRadius = SlowSphere ? SlowSphere->GetScaledSphereRadius() : OrbSpawnRadius;
+	const float EffectiveSpawnRadius = FMath::Min(OrbSpawnRadius, ZoneRadius * 0.85f);
 
 	// 키/데코에 맞는 BP 클래스 선택
 	TSubclassOf<ATimeDistortionOrb> OrbClass = bIsKey ? KeyOrbClass : DecoyOrbClass;
@@ -570,7 +761,7 @@ void ATimeDistortionZone::SpawnNextOrb()
 		const float HeightJitter = FMath::FRandRange(-OrbHeightJitter, OrbHeightJitter);
 
 		const float AngleRad = FMath::DegreesToRadians(BaseAngleDeg + AngleJitter);
-		const float Radius = OrbSpawnRadius * RadiusScale;
+		const float Radius = EffectiveSpawnRadius * RadiusScale;
 		const FVector Candidate = CenterLocation + FVector(
 			FMath::Cos(AngleRad) * Radius,
 			FMath::Sin(AngleRad) * Radius,
@@ -608,8 +799,8 @@ void ATimeDistortionZone::SpawnNextOrb()
 		// 모든 샘플이 막혔으면 기본 슬롯 위치로 폴백 (경고 로그)
 		const float AngleRad = FMath::DegreesToRadians(BaseAngleDeg);
 		SpawnLocation = CenterLocation + FVector(
-			FMath::Cos(AngleRad) * OrbSpawnRadius,
-			FMath::Sin(AngleRad) * OrbSpawnRadius,
+			FMath::Cos(AngleRad) * EffectiveSpawnRadius,
+			FMath::Sin(AngleRad) * EffectiveSpawnRadius,
 			OrbHeightOffset
 		);
 		TDZ_LOG("WARNING: Orb %d: no clear spawn after %d attempts, falling back to base slot", i, MaxAttempts);
@@ -739,6 +930,7 @@ void ATimeDistortionZone::FinishPatternBroken()
 	// 슬로우 해제 + PP 해제
 	RestoreAllSlowedActors();
 	ForceRestoreNearbyPlayers(); // [TDSlowReleaseFixV1] 안전망
+	RestoreOwnerBossSlow();      // [BossSlowV1] 보스 감속 복원
 	Multicast_DeactivateDesaturation();
 
 	// 파훼 성공 VFX
