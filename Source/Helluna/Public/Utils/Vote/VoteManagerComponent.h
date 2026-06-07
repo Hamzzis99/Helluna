@@ -358,8 +358,12 @@ private:
 	 * @brief 투표 진행 중 여부
 	 * @note  Replicated - 모든 클라이언트에 복제됨
 	 */
-	UPROPERTY(Replicated)
+	UPROPERTY(ReplicatedUsing = OnRep_IsVoteInProgress)
 	bool bIsVoteInProgress = false;
+
+	/** [HIGH-FIX] 늦참/늦바인딩 클라 백필 — 복제된 진행 상태로부터 OnVoteStarted를 재브로드캐스트 */
+	UFUNCTION()
+	void OnRep_IsVoteInProgress();
 
 	/**
 	 * @brief 현재 투표 요청 정보

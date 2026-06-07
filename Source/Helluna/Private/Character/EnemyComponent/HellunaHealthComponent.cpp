@@ -70,6 +70,30 @@ void UHellunaHealthComponent::SetMaxHealth(float NewMaxHealth, bool bRefillHealt
 	}
 }
 
+void UHellunaHealthComponent::ResetForPoolReuse(float NewHealth)
+{
+	AActor* Owner = GetOwner();
+	if (!Owner || !Owner->HasAuthority())
+		return;
+
+	// [HIGH-FIX] 풀에서 재사용되는 액터를 깨끗한 생존 상태로 리셋한다.
+	// SetHealth/SetMaxHealth/Heal 은 bDead/bDowned 면 무시되므로, 사망/다운 플래그와 관련 타이머를
+	// 먼저 직접 해제한 뒤 HP 를 채운다. (안 그러면 이전에 죽은 풀 액터가 죽은 채로 다시 스폰됨)
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(BleedoutTimerHandle);
+		World->GetTimerManager().ClearTimer(TimerHandle_Destroy);
+	}
+	bDead = false;
+	bDeathProcessed = false;
+	bDowned = false;
+	BleedoutTimeRemaining = 0.f;
+
+	MaxHealth = FMath::Max(1.f, MaxHealth);
+	const float Target = (NewHealth > 0.f) ? FMath::Clamp(NewHealth, 1.f, MaxHealth) : MaxHealth;
+	Internal_SetHealth(Target, nullptr);
+}
+
 void UHellunaHealthComponent::Heal(float Amount, AActor* InstigatorActor)
 {
 	AActor* Owner = GetOwner();

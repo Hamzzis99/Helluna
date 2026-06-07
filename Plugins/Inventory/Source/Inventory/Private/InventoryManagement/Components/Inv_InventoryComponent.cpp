@@ -799,6 +799,19 @@ void UInv_InventoryComponent::Server_ConsumeItem_Implementation(UInv_InventoryIt
 {
 	if (!IsValid(Item)) return;
 
+	// [HIGH-FIX] 소유권 검증 — 클라가 넘긴 Item 포인터가 이 인벤토리에 실제로 존재하는지 확인.
+	// (없으면 다른 플레이어/컨테이너의 아이템을 소비·파괴할 수 있는 RPC 악용을 차단)
+	bool bOwnedByThisInventory = false;
+	for (int32 i = 0; i < InventoryList.Entries.Num(); ++i)
+	{
+		if (InventoryList.Entries[i].Item == Item) { bOwnedByThisInventory = true; break; }
+	}
+	if (!bOwnedByThisInventory)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Inv][SECFIX] Server_ConsumeItem 거부: 이 인벤토리에 없는 아이템"));
+		return;
+	}
+
 	const int32 NewStackCount = Item->GetTotalStackCount() - 1;
 
 	// ── Entry Index를 미리 찾아두기 (RemoveEntry 전에!) ──
@@ -1750,6 +1763,20 @@ void UInv_InventoryComponent::Server_UpdateItemStackCount_Implementation(UInv_In
 	UE_LOG(LogTemp, Warning, TEXT("  이전 TotalStackCount: %d → 새로운 값: %d"), Item->GetTotalStackCount(), NewStackCount);
 #endif
 
+	// [HIGH-FIX] 소유권 검증 — 이 인벤토리에 있는 아이템만 수량 변경 가능 (남의 아이템 조작 방지)
+	{
+		bool bOwnedByThisInventory = false;
+		for (int32 i = 0; i < InventoryList.Entries.Num(); ++i)
+		{
+			if (InventoryList.Entries[i].Item == Item) { bOwnedByThisInventory = true; break; }
+		}
+		if (!bOwnedByThisInventory)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[Inv][SECFIX] Server_UpdateItemStackCount 거부: 이 인벤토리에 없는 아이템"));
+			return;
+		}
+	}
+
 	// 1단계: TotalStackCount 업데이트
 	Item->SetTotalStackCount(NewStackCount);
 
@@ -2678,6 +2705,35 @@ void UInv_InventoryComponent::Server_SplitItemEntry_Implementation(UInv_Inventor
 		UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════╝"));
 #endif
 		return;
+	}
+
+	// [CRITICAL-FIX] 클라가 보낸 분할 수량을 신뢰하지 않는다 (아이템 복제 익스플로잇 방지).
+	//  (1) 보존 법칙: (원본 새 수량) + (분할 수량) == (원본 현재 총 수량) 이어야 한다.
+	//  (2) 소유권: OriginalItem이 실제로 이 인벤토리에 존재해야 한다.
+	{
+		const int32 CurrentTotal = OriginalItem->GetTotalStackCount();
+		if (OriginalNewStackCount <= 0 || SplitStackCount <= 0
+			|| OriginalNewStackCount + SplitStackCount != CurrentTotal)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[Inv][SECFIX] Server_SplitItemEntry 거부: 수량 보존 위반 | Current=%d New=%d Split=%d"),
+				CurrentTotal, OriginalNewStackCount, SplitStackCount);
+			return;
+		}
+
+		bool bOwnedByThisInventory = false;
+		for (int32 i = 0; i < InventoryList.Entries.Num(); ++i)
+		{
+			if (InventoryList.Entries[i].Item == OriginalItem)
+			{
+				bOwnedByThisInventory = true;
+				break;
+			}
+		}
+		if (!bOwnedByThisInventory)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[Inv][SECFIX] Server_SplitItemEntry 거부: 이 인벤토리에 없는 아이템"));
+			return;
+		}
 	}
 
 #if INV_DEBUG_INVENTORY

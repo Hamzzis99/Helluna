@@ -115,6 +115,21 @@ void UVoteManagerComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 	DOREPLIFETIME(UVoteManagerComponent, RemainingTime);
 }
 
+void UVoteManagerComponent::OnRep_IsVoteInProgress()
+{
+	// [HIGH-FIX] 늦참/늦바인딩 클라 백필.
+	// Multicast_NotifyVoteStarted는 일회성이라 그 이후 접속한 클라(또는 위젯이 늦게 바인드된 클라)는
+	// 진행 중 투표를 받지 못한다. 복제된 bIsVoteInProgress가 true가 되면(초기 복제 포함) 복제된
+	// CurrentRequest로 OnVoteStarted를 다시 브로드캐스트해 UI가 진행 중 투표를 표시하게 한다.
+	// (투표 현황 카운트는 서버의 주기적 Multicast_NotifyVoteUpdated가 ~1초 내 갱신한다.)
+	if (bIsVoteInProgress)
+	{
+		UE_LOG(LogHellunaVote, Log, TEXT("[VoteManager] OnRep_IsVoteInProgress: 진행 중 투표 백필 브로드캐스트 - %s"),
+			*CurrentRequest.GetVoteTypeName());
+		OnVoteStarted.Broadcast(CurrentRequest);
+	}
+}
+
 // ============================================================================
 // 투표 시작
 // ============================================================================

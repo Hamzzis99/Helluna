@@ -40,10 +40,18 @@ void UBTService_OrientToTargetActor::TickNode(UBehaviorTreeComponent& OwnerComp,
 {
 	Super::TickNode(OwnerComp, NodeMemory, DeltaSeconds);
 
-	UObject* ActorObject = OwnerComp.GetBlackboardComponent()->GetValueAsObject(InTargetActorKey.SelectedKeyName);
+	// [HIGH-FIX] Blackboard/AIController null 가드 — 없으면 역참조 크래시.
+	UBlackboardComponent* BBComp = OwnerComp.GetBlackboardComponent();
+	AAIController* AICon = OwnerComp.GetAIOwner();
+	if (!BBComp || !AICon)
+	{
+		return;
+	}
+
+	UObject* ActorObject = BBComp->GetValueAsObject(InTargetActorKey.SelectedKeyName);
 	AActor* TargetActor = Cast<AActor>(ActorObject);
 
-	APawn* OwningPawn = OwnerComp.GetAIOwner()->GetPawn();
+	APawn* OwningPawn = AICon->GetPawn();
 
 	if (OwningPawn && TargetActor)
 	{

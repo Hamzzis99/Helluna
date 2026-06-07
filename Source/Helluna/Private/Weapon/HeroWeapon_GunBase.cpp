@@ -117,9 +117,16 @@ void AHeroWeapon_GunBase::Fire(AController* InstigatorController)
 	// 캐싱된 AimPoint가 있으면 사용 (AnimNotify 경유 시)
 	if (bHasCachedClientAim)
 	{
-		const FVector AimDir = (CachedClientAimPoint - ViewLoc).GetSafeNormal();
-		TraceEnd = ViewLoc + AimDir * Range;
 		bHasCachedClientAim = false;
+		FVector AimDir = (CachedClientAimPoint - ViewLoc).GetSafeNormal();
+		// [HIGH-FIX] 캐시 조준도 FireWithAimPoint와 동일하게 서버 검증한다 — ControlRotation과 90도 이상
+		// 벗어난(뒤를 겨냥하는) 캐시 값은 신뢰하지 않고 시야 방향으로 폴백(에임봇/임의 관통 방지).
+		const FVector ViewDir = InstigatorController->GetControlRotation().Vector();
+		if (AimDir.IsNearlyZero() || FVector::DotProduct(ViewDir, AimDir) < 0.f)
+		{
+			AimDir = ViewDir;
+		}
+		TraceEnd = ViewLoc + AimDir * Range;
 	}
 	else
 	{
