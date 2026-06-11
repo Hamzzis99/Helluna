@@ -3,6 +3,8 @@
 #include "AbilitySystem/EnemyAbility/TimeDistortionOrb.h"
 
 #include "Components/SphereComponent.h"
+#include "Components/AudioComponent.h"
+#include "TimerManager.h"
 #include "Net/UnrealNetwork.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraComponent.h"
@@ -38,6 +40,25 @@ void ATimeDistortionOrb::BeginPlay()
 
 	// VFX 스폰
 	SpawnOrbVFX();
+
+	// [OrbAudioSyncV1] 스폰음이 시각(Niagara 블룸)보다 빨리 들리는 문제 보정.
+	//   SpawnAudio(AudioComponent)는 BP에서 bAutoActivate=false 로 두고, 여기서 짧은 지연 뒤 Play.
+	//   멀티: BeginPlay 가 각 클라에서 호출되므로 클라마다 로컬 재생. weak 가드로 조기 파괴(피격) 안전.
+	//   OrbAudioDelay: 시각 블룸과 동기화용. 너무 빠르면 키우고, 늦으면 줄인다(LC 가능).
+	if (UAudioComponent* SpawnAudio = FindComponentByClass<UAudioComponent>())
+	{
+		SpawnAudio->Stop();  // 혹시 남아있는 자동재생 차단
+		const float OrbAudioDelay = 0.1f;
+		TWeakObjectPtr<UAudioComponent> WeakAudio(SpawnAudio);
+		FTimerHandle AudioTimerHandle;
+		GetWorldTimerManager().SetTimer(AudioTimerHandle, [WeakAudio]()
+		{
+			if (WeakAudio.IsValid())
+			{
+				WeakAudio->Play();
+			}
+		}, OrbAudioDelay, false);
+	}
 
 	ORB_LOG("[COLLISION] %s: ObjectType=%d, Enabled=%d, OverlapEvents=%d, "
 		"Pawn=%d, WorldDynamic=%d, WorldStatic=%d, Visibility=%d, Radius=%.1f",

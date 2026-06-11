@@ -576,6 +576,14 @@ public:
 	 */
 	void NotifyBossDied(AActor* DeadBoss);
 
+	/**
+	 * [BossCinematicFreezeV1] 현재 보스 시네마틱(소환/페이즈2/사망) 중 하나라도 재생 중인지 여부.
+	 *   각 시네마틱 트리거의 bCinematicActive 는 서버에서만 set 되므로 이 쿼리도 서버 전용이다.
+	 *   - 포탑: 시네마틱 중 발사/추적 정지에 사용 (보스가 시네마틱 도중 포탑에 사살되는 버그 방지)
+	 *   - 보스: TakeDamage 무적 게이팅에 사용
+	 */
+	bool IsAnyBossCinematicActive() const;
+
 protected:
 	// ────────────────────────────────────────────────────────────────────────────
 	// 보스 소환 스케줄

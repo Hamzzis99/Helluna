@@ -155,6 +155,42 @@ public:
 	float AimArmLengthMultiplier = 0.85f;
 
 	// ═══════════════════════════════════════════════════════════
+	// [Sniper Scope] 스나이퍼 스코프 토글
+	//   bSupportsScopeToggle=true 인 무기(스나이퍼)만 우클릭 탭/홀드 분리 동작:
+	//     · 홀드(길게)  = 견착(ADS) — AimZoomFOV 로 약한 줌, 떼면 해제 (기존 동작)
+	//     · 탭(짧게)    = 스코프 강줌 토글 — ScopeZoomFOV 로 강한 줌 + 오버레이, 다시 탭하면 해제
+	//   false(기본) 면 우클릭=견착(홀드)만 동작 — 일반 총기는 기존과 100% 동일.
+	//   (줌/스코프 차이는 전부 로컬 카메라·UI 한정 → 멀티플레이 안전)
+	// ═══════════════════════════════════════════════════════════
+
+	/** 스코프 토글(짧게 탭=강한 스코프 줌) 지원 여부. 스나이퍼만 true. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Aim|Scope",
+		meta = (DisplayName = "스코프 토글 지원 (스나이퍼)",
+			ToolTip = "true면 짧게 탭=스코프 강줌 토글, 홀드=견착. false(기본)면 우클릭=견착(홀드)만."))
+	bool bSupportsScopeToggle = false;
+
+	/** 스코프(탭 토글) FOV. 0이면 AimZoomFOV 사용. AimZoomFOV보다 낮게 = 더 강한 줌. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Aim|Scope",
+		meta = (DisplayName = "스코프 FOV (강줌)", ClampMin = "0.0", ClampMax = "120.0",
+			EditCondition = "bSupportsScopeToggle", EditConditionHides,
+			ToolTip = "스코프 토글 시 FOV. 견착(AimZoomFOV)보다 낮게. 20~30=강한 스코프 줌."))
+	float ScopeZoomFOV = 25.f;
+
+	/** 스코프 시 카메라 거리 배율. 0이면 AimArmLengthMultiplier 사용. 작을수록 가까이. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Aim|Scope",
+		meta = (DisplayName = "스코프 카메라 거리 배율", ClampMin = "0.0", ClampMax = "2.0",
+			EditCondition = "bSupportsScopeToggle", EditConditionHides,
+			ToolTip = "스코프 줌 시 카메라 거리 배율. 0.4=바짝 줌인. 0이면 견착과 동일."))
+	float ScopeArmLengthMultiplier = 0.4f;
+
+	/** 스코프 진입 시 표시할 오버레이 위젯(스코프 렌즈/비네트 UI). None이면 UI 없이 FOV만. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Aim|Scope",
+		meta = (DisplayName = "스코프 오버레이 위젯",
+			EditCondition = "bSupportsScopeToggle", EditConditionHides,
+			ToolTip = "스코프 줌 진입 시 화면에 표시할 위젯(스코프 렌즈/비네트). None이면 FOV만 변경."))
+	TSubclassOf<UUserWidget> ScopeOverlayWidgetClass = nullptr;
+
+	// ═══════════════════════════════════════════════════════════
 	// 건패링 관련 — bCanParry=true일 때만 하위 옵션 표시
 	// ═══════════════════════════════════════════════════════════
 

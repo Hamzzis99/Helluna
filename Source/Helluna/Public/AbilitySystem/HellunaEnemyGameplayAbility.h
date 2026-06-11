@@ -43,6 +43,16 @@ public:
 	float ParryWindowDuration = 0.4f;
 
 	// ═══════════════════════════════════════════════════════════
+	// [ScopeBreakV1] 발동 시 플레이어 스나이퍼 스코프 강제 해제
+	//   시간왜곡(슬로우)·분신처럼 시야를 교란하는 보스 특수패턴에 켠다.
+	//   GA 발동(서버) 시 모든 플레이어의 소유 클라로 스코프 해제 지시.
+	// ═══════════════════════════════════════════════════════════
+	UPROPERTY(EditDefaultsOnly, Category = "Combat|Player",
+		meta = (DisplayName = "발동 시 플레이어 스코프 해제",
+			ToolTip = "true이면 이 능력 발동 시 모든 플레이어의 스나이퍼 스코프(강줌)를 강제 해제합니다. 시간왜곡/분신 등 시야 교란 패턴에 사용."))
+	bool bForceUnscopePlayersOnActivate = false;
+
+	// ═══════════════════════════════════════════════════════════
 	// [AttackAssetsV1] GA 소유 몬타지 / 사운드 (VFX는 각 GA 하위에서 관리)
 	//   — 같은 몬스터가 여러 Attack GA를 가질 때 각 GA가 자기 데이터 소유
 	//   — Enemy->AttackMontage 는 하위 호환용 폴백으로만 사용

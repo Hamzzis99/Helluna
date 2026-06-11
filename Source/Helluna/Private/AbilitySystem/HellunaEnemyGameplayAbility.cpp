@@ -10,6 +10,8 @@
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/Pawn.h"
+#include "EngineUtils.h"
+#include "Character/HellunaHeroCharacter.h"
 
 // [BossOrbTargetingV1] 범위 내 플레이어 무리의 평균 위치. 멀티플레이 — server 권위 호출 가정.
 FVector UHellunaEnemyGameplayAbility::GetInRangePlayersCentroid(const UWorld* World, const FVector& Origin, float Radius, int32& OutCount)
@@ -153,4 +155,21 @@ void UHellunaEnemyGameplayAbility::ActivateAbility(
 	// Why: 같은 몬스터가 여러 공격 GA 를 가질 때 직전에 활성화된 GA 의 HitSound 가 사용되도록.
 	// Cost: O(1) setter 한 번 — GA 발동당 1회. 오픈월드 프레임 부담 무시 가능.
 	CacheHitSound();
+
+	// [ScopeBreakV1] 시야 교란 패턴(시간왜곡/분신) 발동 시 모든 플레이어 스코프 강제 해제.
+	//   서버 권위에서만 실행 → 각 플레이어의 소유 클라로 Client RPC 라우팅.
+	if (bForceUnscopePlayersOnActivate && ActorInfo && ActorInfo->AvatarActor.IsValid())
+	{
+		AActor* Avatar = ActorInfo->AvatarActor.Get();
+		if (Avatar->HasAuthority())
+		{
+			if (UWorld* World = Avatar->GetWorld())
+			{
+				for (TActorIterator<AHellunaHeroCharacter> It(World); It; ++It)
+				{
+					It->Client_BreakSniperScope();
+				}
+			}
+		}
+	}
 }

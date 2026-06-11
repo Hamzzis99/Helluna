@@ -43,6 +43,7 @@
 #include "NiagaraComponent.h"
 #include "AbilitySystem/HeroAbility/HeroGameplayAbility_GunParry.h"
 #include "AbilitySystem/HeroAbility/HeroGameplayAbility_Block.h"
+#include "AbilitySystem/HeroAbility/HeroGameplayAbility_Aim.h"
 #include "VFX/GhostTrailActor.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
@@ -2285,6 +2286,13 @@ void AHellunaHeroCharacter::OnHeroHealthChanged(
 		// HealthHUDWidget->UpdateHealthText(HeroHealthComponent->GetHealth(), HeroHealthComponent->GetMaxHealth());
 	}
 
+	// [ScopeBreakOnHitV1] 피격 시 스나이퍼 스코프 강제 해제 (로컬 전용 — 카메라/UI 상태).
+	//   터널비전 상태로 가만히 버티는 플레이를 막고, 피격 시 응징하는 의도.
+	if (IsLocallyControlled() && NewHealth < OldHealth)
+	{
+		BreakSniperScope();
+	}
+
 	// [CameraShake] 피격 시 카메라 쉐이크 (로컬 클라이언트 전용)
 	if (IsLocallyControlled() && OldHealth > NewHealth && DamageCameraShakeClass)
 	{
@@ -2326,6 +2334,33 @@ void AHellunaHeroCharacter::OnHeroHealthChanged(
 			Multicast_PlayHeroHitReact();
 		}
 	}
+}
+
+void AHellunaHeroCharacter::BreakSniperScope()
+{
+	// 스코프 상태는 소유 클라(로컬)에만 존재 — 여기서만 의미 있음.
+	if (!IsLocallyControlled() || !AbilitySystemComponent)
+	{
+		return;
+	}
+
+	// 활성 Aim GA 인스턴스를 찾아 강제 스코프 해제 (스코프 아닐 땐 no-op).
+	for (const FGameplayAbilitySpec& Spec : AbilitySystemComponent->GetActivatableAbilities())
+	{
+		if (Spec.Ability && Spec.Ability->AbilityTags.HasTag(HellunaGameplayTags::Player_Ability_Aim))
+		{
+			if (UHeroGameplayAbility_Aim* AimGA = Cast<UHeroGameplayAbility_Aim>(Spec.GetPrimaryInstance()))
+			{
+				AimGA->ForceExitScope();
+			}
+		}
+	}
+}
+
+void AHellunaHeroCharacter::Client_BreakSniperScope_Implementation()
+{
+	// 서버(보스 특수패턴)가 소유 클라에 지시 → 로컬 스코프 해제.
+	BreakSniperScope();
 }
 
 void AHellunaHeroCharacter::OnHeroDeath(AActor* DeadActor, AActor* KillerActor)

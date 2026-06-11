@@ -4,7 +4,10 @@
 
 #include "Character/HellunaEnemyCharacter.h"
 #include "Character/EnemyComponent/HellunaHealthComponent.h"
+#include "GameMode/HellunaDefenseGameMode.h" // [BossCinematicFreezeV1] 시네마틱 중 포탑 정지 쿼리
+#include "Kismet/KismetSystemLibrary.h"       // [InitialOverlapSeedV1] SphereOverlapActors
 #include "Components/SphereComponent.h"
+#include "Components/CapsuleComponent.h" // [DetectionDiagV1] 보스 캡슐 콜리전 상태 진단
 #include "Kismet/GameplayStatics.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
@@ -13,6 +16,7 @@
 #include "Components/DynamicMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "DrawDebugHelpers.h"
+#include "EngineUtils.h" // [DetectionDiagV1] TActorIterator 월드 전체 적 스캔(진단)
 
 
 // =========================================================
@@ -76,6 +80,32 @@ void AResourceUsingObject_AttackTurret::BeginPlay()
 
 	// 공격은 Tick에서 조건 판단 후 실행 — 별도 타이머 불필요
 	TimeSinceLastAttack = AttackInterval; // 시작 직후 바로 발사 가능
+
+	// [DetectionRangeV1] 탐지 반경을 DetectionRadius 단일 소스로 적용 (BP 컴포넌트 템플릿 값 덮어씀).
+	//   BP DetectionSphere 반경이 10m 로 너무 작아 보스가 아레나에서 범위 안에 들어오지 못했던 문제 해결.
+	if (DetectionSphere)
+	{
+		DetectionSphere->SetSphereRadius(DetectionRadius);
+	}
+
+	// [InitialOverlapSeedV1 + DetectionRangeV1] 범위 내 적을 주기적으로 직접 스캔해 등록.
+	//   Why: 적 등록이 OnDetectionBeginOverlap(범위 "진입" 이벤트)에만 의존하면 두 경우를 놓친다.
+	//        ① 포탑 설치 시점에 이미 범위 안에 서 있던 적(보스 등) — 경계를 새로 넘지 않음.
+	//        ② 범위 안에서 스폰되거나 콜리전이 잠시 꺼졌다 켜진 적(보스 등장 연출) — 경계 통과 없음.
+	//   How: 0.15s 후부터 1초 간격으로 SphereOverlap 질의해 EnemiesInRange 시드 + 무타겟 시 재선택.
+	//        포탑은 소수라 1초당 구체 질의 1회는 비용 무시 가능.
+	if (HasAuthority())
+	{
+		GetWorldTimerManager().SetTimer(
+			RescanTimerHandle, this, &AResourceUsingObject_AttackTurret::SeedEnemiesAlreadyInRange,
+			1.0f, /*bLoop=*/true, /*FirstDelay=*/0.15f);
+	}
+
+	// [DetectionDiagV1] BeginPlay 경로/권한/반경 적용 확인 (해결 후 제거 예정)
+	UE_LOG(LogTemp, Warning,
+		TEXT("[DetectionDiagV1] %s BeginPlay — HasAuth=%d, 적용반경=%.0fcm, 재스캔타이머=%s"),
+		*GetName(), HasAuthority() ? 1 : 0, DetectionRadius,
+		HasAuthority() ? TEXT("설정됨") : TEXT("미설정(권한없음)"));
 }
 
 // =========================================================
@@ -85,6 +115,7 @@ void AResourceUsingObject_AttackTurret::BeginPlay()
 void AResourceUsingObject_AttackTurret::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	GetWorldTimerManager().ClearTimer(PostAttackPauseTimerHandle);
+	GetWorldTimerManager().ClearTimer(RescanTimerHandle); // [DetectionRangeV1]
 
 	// 모든 적의 HealthComponent에 바인딩된 사망 델리게이트 해제
 	AHellunaEnemyCharacter* OldTarget = Cast<AHellunaEnemyCharacter>(CurrentTarget.Get());
@@ -105,6 +136,23 @@ void AResourceUsingObject_AttackTurret::EndPlay(const EEndPlayReason::Type EndPl
 void AResourceUsingObject_AttackTurret::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+
+	// [BossCinematicFreezeV1] 보스 시네마틱(소환/페이즈2/사망) 중에는 포탑을 완전히 정지시킨다.
+	//   Why: 보스가 등장 시네마틱 도중 포탑 사격에 사살되는 버그가 있었음. 데미지는 서버 권한이므로
+	//        서버에서 발사를 막으면 충분하고, 추가로 CurrentTarget(복제됨)을 비워 클라 회전까지 멈춘다.
+	//   How: 시네마틱 종료 후 Tick 의 IsTargetValid()→SelectClosestTarget 경로로 자동 재타겟팅.
+	if (HasAuthority() && IsBossCinematicActive())
+	{
+		if (IsValid(CurrentTarget.Get()))
+		{
+			if (AHellunaEnemyCharacter* OldTarget = Cast<AHellunaEnemyCharacter>(CurrentTarget.Get()))
+			{
+				UnbindTargetDeathDelegate(OldTarget);
+			}
+			CurrentTarget = nullptr; // 복제 → 모든 클라이언트에서 헤드 회전도 정지
+		}
+		return;
+	}
 
 	// 쿨다운 누적 (정지 중에도 시간은 흐른다)
 	TimeSinceLastAttack += DeltaTime;
@@ -366,6 +414,108 @@ void AResourceUsingObject_AttackTurret::Multicast_PlayFireFX_Implementation(
 	{
 		UGameplayStatics::PlaySoundAtLocation(this, ImpactSound, HitLocation);
 	}
+}
+
+// =========================================================
+// [InitialOverlapSeedV1] 설치 시점 이미 범위 내 적 시드 (서버)
+//   begin-overlap 이벤트에 의존하지 않고 SphereOverlap 으로 현재 범위 내 적을 직접 질의.
+//   보스처럼 포탑 설치 전부터 범위 안에 서 있던 적을 즉시 타겟 후보로 등록한다.
+// =========================================================
+void AResourceUsingObject_AttackTurret::SeedEnemiesAlreadyInRange()
+{
+	if (!HasAuthority() || !DetectionSphere)
+	{
+		return;
+	}
+
+	const FVector Center = DetectionSphere->GetComponentLocation();
+	const float Radius = DetectionSphere->GetScaledSphereRadius();
+
+	TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes;
+	ObjectTypes.Add(UEngineTypes::ConvertToObjectType(ECC_Pawn));
+
+	TArray<AActor*> IgnoreActors;
+	IgnoreActors.Add(this);
+
+	TArray<AActor*> FoundActors;
+	UKismetSystemLibrary::SphereOverlapActors(
+		this, Center, Radius, ObjectTypes,
+		AHellunaEnemyCharacter::StaticClass(), IgnoreActors, FoundActors);
+
+	int32 NewlySeeded = 0; // 이번 스캔에서 "새로" 추가된 적만 카운트 (주기 재스캔 로그 스팸 방지)
+	for (AActor* Found : FoundActors)
+	{
+		AHellunaEnemyCharacter* Enemy = Cast<AHellunaEnemyCharacter>(Found);
+		if (!Enemy || Enemy->IsActorBeingDestroyed())
+		{
+			continue;
+		}
+
+		const UHellunaHealthComponent* HealthComp = Enemy->FindComponentByClass<UHellunaHealthComponent>();
+		if (HealthComp && HealthComp->IsDead())
+		{
+			continue;
+		}
+
+		if (!EnemiesInRange.Contains(Enemy))
+		{
+			EnemiesInRange.Add(Enemy);
+			++NewlySeeded;
+		}
+	}
+
+	if (NewlySeeded > 0)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[DetectionRangeV1] %s — 범위 재스캔으로 적 %d 마리 신규 등록 (반경 %.0fcm)"),
+			*GetName(), NewlySeeded, DetectionRadius);
+	}
+
+	// [DetectionDiagV1] 진단: 범위 내 적 0마리일 때, 월드 전체에서 가장 가까운 적과 그 거리를 출력.
+	//   "거리(반경) 문제"인지 "탐지/콜리전 문제"인지 한 번에 구분하기 위함. (해결 후 제거 예정)
+	if (FoundActors.Num() == 0)
+	{
+		float NearestDist = TNumericLimits<float>::Max();
+		AHellunaEnemyCharacter* Nearest = nullptr;
+		for (TActorIterator<AHellunaEnemyCharacter> It(GetWorld()); It; ++It)
+		{
+			AHellunaEnemyCharacter* E = *It;
+			if (!IsValid(E)) continue;
+			const float D = FVector::Dist(Center, E->GetActorLocation());
+			if (D < NearestDist) { NearestDist = D; Nearest = E; }
+		}
+		if (Nearest)
+		{
+			UCapsuleComponent* Cap = Nearest->FindComponentByClass<UCapsuleComponent>();
+			const ECollisionEnabled::Type CE = Cap ? Cap->GetCollisionEnabled() : ECollisionEnabled::NoCollision;
+			UE_LOG(LogTemp, Warning,
+				TEXT("[DetectionDiagV1] %s loc=%s 반경=%.0fcm | 범위내 0마리 | 월드최근접적=%s 거리=%.0fcm(%.1fm) 숨김=%d 캡슐콜리전=%d"),
+				*GetName(), *Center.ToCompactString(), DetectionRadius,
+				*Nearest->GetName(), NearestDist, NearestDist / 100.f,
+				Nearest->IsHidden() ? 1 : 0, (int32)CE);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[DetectionDiagV1] %s loc=%s 반경=%.0fcm | 범위내 0마리 | 월드에 AHellunaEnemyCharacter 없음"),
+				*GetName(), *Center.ToCompactString(), DetectionRadius);
+		}
+	}
+
+	// 시드 직후 타겟이 없으면 즉시 가장 가까운 적 선택
+	if (!IsTargetValid())
+	{
+		SelectClosestTarget();
+	}
+}
+
+bool AResourceUsingObject_AttackTurret::IsBossCinematicActive() const
+{
+	if (const AHellunaDefenseGameMode* GM = Cast<AHellunaDefenseGameMode>(UGameplayStatics::GetGameMode(this)))
+	{
+		return GM->IsAnyBossCinematicActive();
+	}
+	return false;
 }
 
 bool AResourceUsingObject_AttackTurret::IsTargetValid() const

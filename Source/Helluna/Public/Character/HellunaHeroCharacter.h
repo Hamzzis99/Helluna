@@ -173,6 +173,20 @@ public:
 	AHellunaHeroWeapon* GetCurrentWeapon() const { return CurrentWeapon; }
 	void SetCurrentWeapon(AHellunaHeroWeapon* NewWeapon);
 
+	// ── [ScopeBreakV1] 스나이퍼 스코프 강제 해제 ──────────────────────
+	/**
+	 * 활성 Aim GA를 찾아 스코프(탭 토글 강줌)를 강제 해제. 피격 시(로컬) 직접 호출.
+	 *   스코프가 아닐 땐(견착/비조준) 아무 일도 안 함. 로컬 카메라/UI 상태만 변경.
+	 */
+	void BreakSniperScope();
+
+	/**
+	 * 서버(보스 특수패턴 등)에서 소유 클라에 스코프 해제를 지시하는 RPC.
+	 *   스코프 상태는 소유 클라에만 있으므로 Client RPC로 라우팅.
+	 */
+	UFUNCTION(Client, Reliable)
+	void Client_BreakSniperScope();
+
 	// ── 무기 HUD ────────────────────────────────────────────────────
 
 	/** BP에서 사용할 WeaponHUD 위젯 클래스 (에디터에서 지정) */
