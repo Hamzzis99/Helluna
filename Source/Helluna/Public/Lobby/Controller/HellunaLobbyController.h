@@ -289,6 +289,9 @@ private:
 	FTimerHandle HandoffTimer;
 	FTimerHandle SettleGuardTimer;
 
+	/** [C3-FIX] Deploy 실패/취소 시 로딩 연출(입력 차단/Fade/HUD/우주선 서브레벨)을 해제하고 로비 상태로 복구한다. */
+	void AbortDeployAndRestoreLobby();
+
 public:
 	// ════════════════════════════════════════════════════════════════
 	// [Phase 12d] 파티 시스템 RPC
@@ -637,6 +640,10 @@ protected:
 
 	/** 현재 로딩된 배경 레벨 이름 */
 	FName CurrentLoadedLevel;
+
+	/** [M7-FIX] LoadStreamLevel/UnloadStreamLevel용 고유 LatentAction UUID 카운터.
+	 *  GetUniqueID() 고정값을 재사용하면 빠른 탭 전환 시 LatentActionManager가 콜백을 드롭하므로 매번 증가시킨다. */
+	int32 NextLatentActionUUID = 1000;
 
 	/** 로드 완료 콜백에서 사용할 대기 중인 탭 인덱스 */
 	int32 PendingBackgroundTabIndex = -1;

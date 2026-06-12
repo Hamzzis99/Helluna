@@ -4957,6 +4957,14 @@ bool UInv_InventoryGrid::TryTransferFromLinkedContainerGrid(int32 GridIndex)
 	if (!IsValid(LinkedHover)) return false;
 
 	const int32 EntryIndex = LinkedHover->GetEntryIndex();
+	// [HIGH-FIX] EntryIndex가 유효하지 않으면(-1) 서버 RPC _Validate에서 거부되어 클라이언트가 킥될 수 있다.
+	// RPC를 보내지 말고 hover만 정리하고 종료한다.
+	if (EntryIndex < 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Container] TryTransferFromLinkedContainerGrid: invalid EntryIndex(%d) → 전송 RPC 스킵"), EntryIndex);
+		LinkedContainerGrid->ClearHoverItem();
+		return false;
+	}
 	UInv_LootContainerComponent* LinkedCC = LinkedContainerGrid->GetContainerComponent();
 
 	// 방향 판별: 연결된 Grid가 Container이고 내가 Player → TakeItem

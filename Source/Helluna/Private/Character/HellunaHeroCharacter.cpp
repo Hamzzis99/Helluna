@@ -161,6 +161,11 @@ AHellunaHeroCharacter::AHellunaHeroCharacter()
 	// [OTS Camera] 생성자 디버그 로그
 	UE_LOG(LogTemp, Verbose, TEXT("[OTS Camera] Constructor — ArmLength=%.1f, SocketOffset=%s"),
 		CameraBoom->TargetArmLength, *CameraBoom->SocketOffset.ToString());
+
+	// [CRITICAL-FIX] BP에 노출된(VisibleAnywhere/BlueprintReadOnly) AbilitySystemComponent 멤버를
+	// 베이스 클래스의 실제 ASC로 별칭 설정한다. (이전엔 생성/할당이 전혀 없어 항상 null이었음 →
+	// 이 멤버를 읽는 모든 코드/BP가 올바른 ASC를 받도록 보강. 다운 로직은 위에서 getter로 직접 수정함)
+	AbilitySystemComponent = GetHellunaAbilitySystemComponent();
 }
 
 void AHellunaHeroCharacter::BeginPlay()
@@ -2368,9 +2373,11 @@ void AHellunaHeroCharacter::OnHeroDeath(AActor* DeadActor, AActor* KillerActor)
 	if (!HasAuthority()) return;
 
 	// [Downed] 다운 태그 제거 (Downed→사망 경로)
-	if (AbilitySystemComponent)
+	// [CRITICAL-FIX] 베이스 클래스의 실제 ASC를 사용한다. (이전엔 생성/할당 안 된 죽은 멤버 AbilitySystemComponent를
+	//  참조해 항상 null → 태그 추가/제거·CancelAllAbilities가 전혀 실행되지 않아 다운 상태에서도 어빌리티 사용 가능했음)
+	if (UHellunaAbilitySystemComponent* HeroASC = GetHellunaAbilitySystemComponent())
 	{
-		AbilitySystemComponent->RemoveLooseGameplayTag(HellunaGameplayTags::Player_State_Downed);
+		HeroASC->RemoveLooseGameplayTag(HellunaGameplayTags::Player_State_Downed);
 	}
 	// [Downed] Revive 관계 정리
 	if (CurrentReviver)
@@ -2771,10 +2778,12 @@ void AHellunaHeroCharacter::OnHeroDowned(AActor* DownedActor, AActor* Instigator
 	}
 
 	// ASC에 다운 태그 추가 + 진행 중 어빌리티 전체 취소
-	if (AbilitySystemComponent)
+	// [CRITICAL-FIX] 베이스 클래스의 실제 ASC 사용 (죽은 null 멤버 대신). 이 태그가 CanActivateAbility의
+	//  다운 게이트를 작동시키므로, 이 수정 없이는 다운 플레이어가 패리/블록/달리기 등을 계속 쓸 수 있었음.
+	if (UHellunaAbilitySystemComponent* HeroASC = GetHellunaAbilitySystemComponent())
 	{
-		AbilitySystemComponent->AddLooseGameplayTag(HellunaGameplayTags::Player_State_Downed);
-		AbilitySystemComponent->CancelAllAbilities();
+		HeroASC->AddLooseGameplayTag(HellunaGameplayTags::Player_State_Downed);
+		HeroASC->CancelAllAbilities();
 	}
 
 	// 이동/시야 잠금
@@ -3138,9 +3147,10 @@ void AHellunaHeroCharacter::TickRevive()
 		}
 
 		// 다운 태그 제거
-		if (Target->AbilitySystemComponent)
+		// [CRITICAL-FIX] 부활 대상의 실제 베이스 ASC 사용 (죽은 null 멤버 대신).
+		if (UHellunaAbilitySystemComponent* TargetASC = Target->GetHellunaAbilitySystemComponent())
 		{
-			Target->AbilitySystemComponent->RemoveLooseGameplayTag(HellunaGameplayTags::Player_State_Downed);
+			TargetASC->RemoveLooseGameplayTag(HellunaGameplayTags::Player_State_Downed);
 		}
 
 		// 이동/시야 잠금 해제

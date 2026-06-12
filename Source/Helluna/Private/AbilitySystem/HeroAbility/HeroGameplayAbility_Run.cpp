@@ -12,8 +12,12 @@
 void UHeroGameplayAbility_Run::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData)
 {
 	AHellunaHeroCharacter* RunHero = GetHeroCharacterFromActorInfo();
+	// [HIGH-FIX] null 가드 — GetHeroCharacterFromActorInfo()가 null이면 서버 크래시 방지.
 	// [MoveSpeedBaseV1] ActiveBaseWalkSpeed 를 RunSpeed 로 세팅 → Hero 가 ActiveBase * MoveSpeedMultiplier 로 재계산.
-	RunHero->SetActiveBaseWalkSpeed(RunSpeed);
+	if (RunHero)
+	{
+		RunHero->SetActiveBaseWalkSpeed(RunSpeed);
+	}
 
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
 

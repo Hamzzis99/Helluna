@@ -372,13 +372,12 @@ AHellunaEnemyCharacter* UEnemyActorPool::ActivateActor(
 		}
 	}
 
-	// 4. HP 복원 (CurrentHP > 0이면 이전 HP, -1이면 풀 HP)
-	if (CurrentHP > 0.f)
+	// 4. HP 복원 + 사망/다운 상태 리셋 ([HIGH-FIX] 풀 재사용 시 죽은 채로 스폰되는 것 방지).
+	//    SetHealth는 bDead면 무시되므로 ResetForPoolReuse로 사망 상태까지 초기화한다.
+	//    CurrentHP>0이면 그 값, 아니면(-1) 풀 HP(MaxHealth)로 충전.
+	if (UHellunaHealthComponent* HC = Actor->FindComponentByClass<UHellunaHealthComponent>())
 	{
-		if (UHellunaHealthComponent* HC = Actor->FindComponentByClass<UHellunaHealthComponent>())
-		{
-			HC->SetHealth(CurrentHP);
-		}
+		HC->ResetForPoolReuse(CurrentHP);
 	}
 
 	// 5. Animation 재개

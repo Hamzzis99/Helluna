@@ -1048,6 +1048,24 @@ void UHellunaLobbyStashWidget::OnPartyStateChangedHandler(const FHellunaPartyInf
 	{
 		bLocalPlayerReady = false;
 	}
+	else
+	{
+		// [M8-FIX] 권위 파티 상태에서 본인 Ready를 동기화한다.
+		// (서버가 ResetAllReadyStates 등으로 Ready를 바꿨을 때, 로컬 토글이 stale 값을
+		//  서버로 다시 보내는 것을 방지)
+		if (AHellunaLobbyController* LPC = GetLobbyController())
+		{
+			const FString MyId = LPC->GetPlayerId();
+			for (const FHellunaPartyMemberInfo& Member : PartyInfo.Members)
+			{
+				if (Member.PlayerId == MyId)
+				{
+					bLocalPlayerReady = Member.bIsReady;
+					break;
+				}
+			}
+		}
+	}
 
 	// [Phase 18] 파티 인원 수에 따라 모드 버튼 갱신
 	const int32 EffectiveSize = FMath::Max(1, PartyInfo.Members.Num());
@@ -1058,6 +1076,9 @@ void UHellunaLobbyStashWidget::OnPartyStateChangedHandler(const FHellunaPartyInf
 
 	// [Phase 12j] 네임태그 오버레이
 	UpdateNameTagOverlays();
+
+	// [M8-FIX] 동기화된 Ready 상태를 START/READY 버튼 라벨에 반영
+	UpdateStartButtonForPartyState();
 }
 
 void UHellunaLobbyStashWidget::UpdateStartButtonForPartyState()

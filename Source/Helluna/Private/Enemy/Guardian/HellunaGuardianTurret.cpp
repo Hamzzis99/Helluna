@@ -158,6 +158,12 @@ void AHellunaGuardianTurret::BeginPlay()
 	// MaxHealth 초기 동기화 (HealthComponent 내부 값이 BP 기본값과 다를 경우 대비)
 	if (HealthComponent)
 	{
+		// [Guardian-MaxHealth-FIX] 터렛의 MaxHealth(기본 200)를 HealthComponent에 실제로 동기화한다.
+		// (이전엔 이 주석만 있고 SetMaxHealth 호출이 없어, 컴포넌트 기본값 100으로 동작하던 죽은 프로퍼티였음)
+		if (HasAuthority())
+		{
+			HealthComponent->SetMaxHealth(MaxHealth, /*bRefillHealth=*/true);
+		}
 		HealthComponent->OnDeath.AddUniqueDynamic(this, &ThisClass::OnGuardianDeath);
 	}
 

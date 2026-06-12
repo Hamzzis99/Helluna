@@ -342,33 +342,59 @@ void AHellunaLobbyController::Server_SwapTransferItem_Implementation(int32 RepID
 		return;
 	}
 
-	// ── 아이템A가 어느 Comp에 있는지 탐색 ──
+	// ── 출처 Comp 판별 ──
+	// [H2-FIX] Stash/Loadout은 각자 독립적인 FastArray ReplicationID 카운터를 사용하므로
+	// 같은 숫자 RepID가 양쪽 Comp에 동시에 존재할 수 있다. 기존 코드처럼 "RepID_A를 Stash부터
+	// 먼저 검사"하면 RepID 충돌 시 엉뚱한 Comp의 아이템을 집어 잘못된 스왑(인벤 손상)이 발생했다.
+	// 크로스 Grid 스왑은 A와 B가 서로 반대 Comp에 있다는 불변식을 이용해, RepID_A·RepID_B를 함께
+	// 보고 (CompA, CompB) 쌍을 일관되게 결정한다.
 	UInv_InventoryComponent* CompA = nullptr;
 	UInv_InventoryComponent* CompB = nullptr;
 
-	if (StashInventoryComponent->FindValidItemIndexByReplicationID(RepID_A) != INDEX_NONE)
+	const bool bAInStash   = StashInventoryComponent->FindValidItemIndexByReplicationID(RepID_A) != INDEX_NONE;
+	const bool bAInLoadout = LoadoutInventoryComponent->FindValidItemIndexByReplicationID(RepID_A) != INDEX_NONE;
+	const bool bBInStash   = StashInventoryComponent->FindValidItemIndexByReplicationID(RepID_B) != INDEX_NONE;
+	const bool bBInLoadout = LoadoutInventoryComponent->FindValidItemIndexByReplicationID(RepID_B) != INDEX_NONE;
+
+	const bool bStashToLoadout = bAInStash && bBInLoadout;   // A=Stash, B=Loadout
+	const bool bLoadoutToStash = bAInLoadout && bBInStash;   // A=Loadout, B=Stash
+
+	if (bStashToLoadout && !bLoadoutToStash)
 	{
 		CompA = StashInventoryComponent;
+		CompB = LoadoutInventoryComponent;
 	}
-	else if (LoadoutInventoryComponent->FindValidItemIndexByReplicationID(RepID_A) != INDEX_NONE)
+	else if (bLoadoutToStash && !bStashToLoadout)
 	{
 		CompA = LoadoutInventoryComponent;
+		CompB = StashInventoryComponent;
 	}
-
-	if (!CompA)
+	else if (bStashToLoadout && bLoadoutToStash)
 	{
-		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] SwapTransfer: RepID_A=%d 미발견!"), RepID_A);
+		// 두 RepID가 양쪽 Comp 모두에 존재 → 어느 쪽이 출처인지 단정 불가.
+		// 잘못된 스왑으로 아이템을 망가뜨리느니 안전하게 취소한다.
+		UE_LOG(LogHellunaLobby, Warning,
+			TEXT("[LobbyPC] SwapTransfer: RepID 충돌로 출처 Comp 모호 → 안전 취소 | RepID_A=%d RepID_B=%d"),
+			RepID_A, RepID_B);
 		return;
 	}
-
-	// ── 아이템B는 반대쪽 Comp에 있어야 함 ──
-	CompB = (CompA == StashInventoryComponent) ? LoadoutInventoryComponent : StashInventoryComponent;
-
-	if (CompB->FindValidItemIndexByReplicationID(RepID_B) == INDEX_NONE)
+	else
 	{
-		// 같은 Comp에 있을 수도 있으니 폴백 체크
-		CompB = CompA;
-		if (CompB->FindValidItemIndexByReplicationID(RepID_B) == INDEX_NONE)
+		// 크로스 Grid 쌍이 아님 → 같은 Grid 내 스왑(재배치) 폴백 (기존 동작 보존).
+		if (bAInStash)        { CompA = StashInventoryComponent; }
+		else if (bAInLoadout) { CompA = LoadoutInventoryComponent; }
+
+		if (!CompA)
+		{
+			UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] SwapTransfer: RepID_A=%d 미발견!"), RepID_A);
+			return;
+		}
+
+		if (CompA->FindValidItemIndexByReplicationID(RepID_B) != INDEX_NONE)
+		{
+			CompB = CompA; // 같은 Comp 내 스왑
+		}
+		else
 		{
 			UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] SwapTransfer: RepID_B=%d 미발견!"), RepID_B);
 			return;
@@ -457,63 +483,71 @@ void AHellunaLobbyController::SaveBothComponentsAfterInteraction()
 		return;
 	}
 
-	// ── Loadout 먼저 저장 (Fix29-C 크래시 복구 순서) ──
-	if (LoadoutInventoryComponent)
+	// ── [M2-FIX] Stash + Loadout 원자적 저장 ──
+	// 이전엔 SavePlayerLoadout(커밋) → SavePlayerStash(별도 트랜잭션)로 나뉘어, Loadout 저장 성공 후
+	// Stash 저장이 실패(크래시/디스크 오류)하면 같은 아이템이 두 테이블에 남아 복제됐다.
+	// 이제 둘을 한 트랜잭션으로 묶어 전부 성공하거나 전부 롤백한다.
+	if (!StashInventoryComponent || !LoadoutInventoryComponent)
 	{
-		TArray<FInv_SavedItemData> LoadoutItems = LoadoutInventoryComponent->CollectInventoryDataForSave();
-		if (LoadoutItems.Num() > 0)
-		{
-			const bool bLoadoutOk = DB->SavePlayerLoadout(PlayerId, LoadoutItems);
-			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] [Fix35] SavePlayerLoadout %s | %d개 | PlayerId=%s"),
-				bLoadoutOk ? TEXT("성공") : TEXT("실패"), LoadoutItems.Num(), *PlayerId);
-
-			// 장착 상태 동기화 (per-interaction)
-			TArray<FHellunaEquipmentSlotData> EquipSlots;
-			for (const FInv_SavedItemData& Item : LoadoutItems)
-			{
-				if (Item.bEquipped && Item.WeaponSlotIndex >= 0)
-				{
-					FHellunaEquipmentSlotData Slot;
-					Slot.SlotId = FString::Printf(TEXT("weapon_%d"), Item.WeaponSlotIndex);
-					Slot.ItemType = Item.ItemType;
-					EquipSlots.Add(Slot);
-				}
-			}
-			// [Fix44-C4] Equipment 저장 반환값 검증
-			const bool bEquipOk = DB->SavePlayerEquipment(PlayerId, EquipSlots);
-			if (!bEquipOk)
-			{
-				UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] [Fix44] SavePlayerEquipment 실패! Loadout/Equipment 불일치 가능 | PlayerId=%s"), *PlayerId);
-			}
-		}
-		else
-		{
-			// Loadout이 비어있으면 기존 player_loadout 삭제 (빈 행 정리, Fix36: 크래시 감지와 무관)
-			// [Fix44-C3] Delete 반환값 검증
-			const bool bDelLoadout = DB->DeletePlayerLoadout(PlayerId);
-			const bool bDelEquip = DB->DeletePlayerEquipment(PlayerId);
-			if (!bDelLoadout || !bDelEquip)
-			{
-				UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] [Fix44] Delete 실패: Loadout=%s Equipment=%s | PlayerId=%s"),
-					bDelLoadout ? TEXT("OK") : TEXT("FAIL"), bDelEquip ? TEXT("OK") : TEXT("FAIL"), *PlayerId);
-			}
-			UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] [Fix35] Loadout 비어있음 → DeletePlayerLoadout (빈 행 정리) | PlayerId=%s"), *PlayerId);
-		}
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] [M2-FIX] SaveAfterInteraction: Stash/Loadout 컴포넌트 누락 → 스킵 (Logout 최종 저장에 위임) | PlayerId=%s"), *PlayerId);
+		return;
 	}
 
-	// ── Stash 저장 ──
-	if (StashInventoryComponent)
-	{
-		TArray<FInv_SavedItemData> StashItems = StashInventoryComponent->CollectInventoryDataForSave();
-		const bool bStashOk = DB->SavePlayerStash(PlayerId, StashItems);
-		UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] [Fix35] SavePlayerStash %s | %d개 | PlayerId=%s"),
-			bStashOk ? TEXT("성공") : TEXT("실패"), StashItems.Num(), *PlayerId);
+	TArray<FInv_SavedItemData> LoadoutItems = LoadoutInventoryComponent->CollectInventoryDataForSave();
+	TArray<FInv_SavedItemData> StashItems = StashInventoryComponent->CollectInventoryDataForSave();
 
-		// [Fix44-C2] Stash 저장 실패 시 Loadout과 불일치 경고
-		if (!bStashOk)
+	// [M2-FIX2] 파괴적 캐스케이드 가드 (Logout 경로 SaveComponentsToDatabase와 동일 취지).
+	//  (1) 아직 미로드(-1)면 저장 금지 — PostLogin 복원 완료 전 짧은 상태로 DB를 덮어쓰는 것 방지.
+	//  (2) 총량(Stash+Loadout) 보존 위반 = 로그인 시 부분 복원(grid full 등)으로 아이템이 유실된 상태 →
+	//      DB 풀스택을 짧은 in-memory로 덮어쓰지 않도록 저장을 차단한다. 정상 transfer/swap은 총량이
+	//      보존되고(컨테이너 간 이동), split은 엔트리 수가 늘어나므로 이 가드를 정상 통과한다.
+	const int32 LoadedStash = GetLoadedStashItemCount();
+	const int32 LoadedLoadout = GetLoadedLoadoutItemCount();
+	if (LoadedStash < 0 || LoadedLoadout < 0)
+	{
+		UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] [M2-FIX2] 미로드 상태(Stash=%d/Loadout=%d) → per-interaction 저장 스킵"), LoadedStash, LoadedLoadout);
+		return;
+	}
+	if (StashItems.Num() + LoadoutItems.Num() < LoadedStash + LoadedLoadout)
+	{
+		UE_LOG(LogHellunaLobby, Warning,
+			TEXT("[LobbyPC] [M2-FIX2] 총 아이템 수 감소 감지(현재 %d < 로드 %d) → 파괴적 저장 차단(부분 복원 의심) | PlayerId=%s"),
+			StashItems.Num() + LoadoutItems.Num(), LoadedStash + LoadedLoadout, *PlayerId);
+		return;
+	}
+
+	const bool bAtomicOk = DB->SaveStashAndLoadoutAtomic(PlayerId, StashItems, LoadoutItems);
+	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] [M2-FIX] SaveStashAndLoadoutAtomic %s | Stash %d, Loadout %d | PlayerId=%s"),
+		bAtomicOk ? TEXT("성공") : TEXT("실패"), StashItems.Num(), LoadoutItems.Num(), *PlayerId);
+	if (!bAtomicOk)
+	{
+		// 롤백되어 DB는 변경 전 상태 유지 → 복제/유실 없음. Logout 최종 저장에 위임.
+		UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] [M2-FIX] 원자적 저장 실패(롤백) → DB 무변경 | PlayerId=%s"), *PlayerId);
+		return;
+	}
+
+	// 장비(equipment)는 Loadout의 파생 정보 — 원자적 저장 성공 후 동기화 (best-effort).
+	TArray<FHellunaEquipmentSlotData> EquipSlots;
+	for (const FInv_SavedItemData& Item : LoadoutItems)
+	{
+		if (Item.bEquipped && Item.WeaponSlotIndex >= 0)
 		{
-			UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] [Fix44] SavePlayerStash 실패! Loadout 성공+Stash 실패 → 데이터 불일치 가능 | PlayerId=%s"), *PlayerId);
+			FHellunaEquipmentSlotData Slot;
+			Slot.SlotId = FString::Printf(TEXT("weapon_%d"), Item.WeaponSlotIndex);
+			Slot.ItemType = Item.ItemType;
+			EquipSlots.Add(Slot);
 		}
+	}
+	if (EquipSlots.Num() > 0)
+	{
+		if (!DB->SavePlayerEquipment(PlayerId, EquipSlots))
+		{
+			UE_LOG(LogHellunaLobby, Error, TEXT("[LobbyPC] [Fix44] SavePlayerEquipment 실패 | PlayerId=%s"), *PlayerId);
+		}
+	}
+	else
+	{
+		DB->DeletePlayerEquipment(PlayerId);
 	}
 }
 
@@ -806,12 +840,83 @@ void AHellunaLobbyController::Server_Deploy_Implementation()
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
+// [C3-FIX] AbortDeployAndRestoreLobby — Deploy 실패/취소 시 로딩 화면 복구
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// 📌 문제: Client_PreloadShipScene / ExecuteDeploySequence가 입력 차단 + Fade/HUD + 우주선
+//    서브레벨을 켜둔 뒤 deploy가 실패/취소되면, 정상 ClientTravel 경로만 이 상태를 해제하므로
+//    플레이어가 로딩(검은/우주선) 화면에 영구히 갇힌다. 실패/취소 RPC가 이 헬퍼로 복구한다.
+// 📌 idempotent: 진행 중인 로딩 연출이 없으면 플래그만 초기화하고 조용히 반환(정상 로비 보호).
+//
+void AHellunaLobbyController::AbortDeployAndRestoreLobby()
+{
+	const bool bWasLoading =
+		bShipScenePreloaded || bPreloadInProgress || bPendingExecuteDeployAfterPreload ||
+		ActiveFadeWidget != nullptr || ActiveLobbyHUD != nullptr;
+
+	// 시퀀스 상태 플래그 리셋 (항상)
+	bShipScenePreloaded = false;
+	bPreloadInProgress = false;
+	bPendingExecuteDeployAfterPreload = false;
+	bCaptureAndTravelFired = false;
+	bDeployInProgress = false;
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(FadeStartTimer);
+		World->GetTimerManager().ClearTimer(HandoffTimer);
+		World->GetTimerManager().ClearTimer(SettleGuardTimer);
+	}
+
+	if (!bWasLoading)
+	{
+		return;
+	}
+
+	UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] [C3-FIX] Deploy 실패/취소 → 로딩 화면 복구"));
+
+	// 로딩 HUD / Fade 위젯 제거
+	if (ActiveLobbyHUD)
+	{
+		ActiveLobbyHUD->RemoveFromParent();
+		ActiveLobbyHUD = nullptr;
+	}
+	if (ActiveFadeWidget)
+	{
+		ActiveFadeWidget->RemoveFromParent();
+		ActiveFadeWidget = nullptr;
+	}
+
+	// 우주선 로딩 서브레벨 언로드 + 로비 배경 복구
+	if (!LoadingSceneLevelName.IsNone() && CurrentLoadedLevel == LoadingSceneLevelName)
+	{
+		UnloadBackgroundLevel(LoadingSceneLevelName);
+		// [R2-FIX] 로딩 시퀀스가 Play/Character 배경을 우주선 씬으로 교체했으므로, 복구 시
+		// 로비 배경(기본 Play 탭)을 다시 로드한다. (안 그러면 deploy 실패 후 로비에 3D 배경이 사라짐)
+		LoadBackgroundForTab(0);
+	}
+
+	// V2 프리뷰 복구 (PreloadShipScene에서 숨김/틱 정지했던 것 되돌림)
+	if (IsValid(SpawnedPreviewSceneV2))
+	{
+		SpawnedPreviewSceneV2->SetActorHiddenInGame(false);
+		SpawnedPreviewSceneV2->SetActorTickEnabled(true);
+	}
+
+	// 입력/커서를 로비 기본값(UI 모드)으로 복구
+	EnableInput(this);
+	SetShowMouseCursor(true);
+	SetInputMode(FInputModeUIOnly{});
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
 // Client_DeployFailed — 출격 실패 알림 (Client RPC)
 // ════════════════════════════════════════════════════════════════════════════════
 void AHellunaLobbyController::Client_DeployFailed_Implementation(const FString& Reason)
 {
 	UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] 출격 실패: %s"), *Reason);
-	bDeployInProgress = false;
+	// [C3-FIX] 단순 플래그 리셋이 아니라 진행 중이던 로딩 연출까지 복구해 화면 정지 방지.
+	AbortDeployAndRestoreLobby();
 	// TODO: UI 알림 표시
 }
 
@@ -1475,7 +1580,7 @@ void AHellunaLobbyController::LoadBackgroundLevel(FName LevelName)
 	LatentInfo.CallbackTarget = this;
 	LatentInfo.ExecutionFunction = FName(TEXT("OnBackgroundLevelLoaded"));
 	LatentInfo.Linkage = 0;
-	LatentInfo.UUID = GetUniqueID();
+	LatentInfo.UUID = NextLatentActionUUID++; // [M7-FIX] 매 호출 고유 UUID (콜백 드롭 방지)
 
 	UGameplayStatics::LoadStreamLevel(this, LevelName, true, false, LatentInfo);
 	CurrentLoadedLevel = LevelName;
@@ -1494,7 +1599,7 @@ void AHellunaLobbyController::UnloadBackgroundLevel(FName LevelName)
 	LatentInfo.CallbackTarget = this;
 	LatentInfo.ExecutionFunction = FName(TEXT("OnBackgroundLevelUnloaded"));
 	LatentInfo.Linkage = 1;
-	LatentInfo.UUID = GetUniqueID() + 1;
+	LatentInfo.UUID = NextLatentActionUUID++; // [M7-FIX] 매 호출 고유 UUID (콜백 드롭 방지)
 
 	UGameplayStatics::UnloadStreamLevel(this, LevelName, LatentInfo, false);
 
@@ -2605,6 +2710,9 @@ void AHellunaLobbyController::Client_MatchmakingError_Implementation(const FStri
 {
 	UE_LOG(LogHellunaLobby, Warning, TEXT("[LobbyPC] Client_MatchmakingError: %s"), *ErrorMessage);
 
+	// [C3-FIX] 매칭/Deploy 실패로 로딩 연출(우주선 preload 등)이 켜져 있으면 로비로 복구
+	AbortDeployAndRestoreLobby();
+
 	// 에러 시 None 상태로 전환
 	FMatchmakingStatusInfo CancelInfo;
 	CancelInfo.Status = EMatchmakingStatus::None;
@@ -2671,6 +2779,9 @@ void AHellunaLobbyController::Client_MatchmakingCountdown_Implementation(int32 R
 void AHellunaLobbyController::Client_MatchmakingCancelled_Implementation(const FString& Reason)
 {
 	UE_LOG(LogHellunaLobby, Log, TEXT("[LobbyPC] [Phase17] 카운트다운 취소 | Reason=%s"), *Reason);
+
+	// [C3-FIX] 카운트다운 종료 후 preload가 시작된 뒤 취소된 경우 로딩 화면 복구 (idempotent)
+	AbortDeployAndRestoreLobby();
 
 	// Solo 프리뷰로 복귀
 	if (IsValid(SpawnedPreviewSceneV2))
