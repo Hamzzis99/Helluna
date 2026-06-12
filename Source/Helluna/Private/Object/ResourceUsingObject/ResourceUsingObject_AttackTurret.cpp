@@ -7,7 +7,6 @@
 #include "GameMode/HellunaDefenseGameMode.h" // [BossCinematicFreezeV1] 시네마틱 중 포탑 정지 쿼리
 #include "Kismet/KismetSystemLibrary.h"       // [InitialOverlapSeedV1] SphereOverlapActors
 #include "Components/SphereComponent.h"
-#include "Components/CapsuleComponent.h" // [DetectionDiagV1] 보스 캡슐 콜리전 상태 진단
 #include "Kismet/GameplayStatics.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
@@ -16,7 +15,6 @@
 #include "Components/DynamicMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "DrawDebugHelpers.h"
-#include "EngineUtils.h" // [DetectionDiagV1] TActorIterator 월드 전체 적 스캔(진단)
 
 
 // =========================================================
@@ -100,12 +98,6 @@ void AResourceUsingObject_AttackTurret::BeginPlay()
 			RescanTimerHandle, this, &AResourceUsingObject_AttackTurret::SeedEnemiesAlreadyInRange,
 			1.0f, /*bLoop=*/true, /*FirstDelay=*/0.15f);
 	}
-
-	// [DetectionDiagV1] BeginPlay 경로/권한/반경 적용 확인 (해결 후 제거 예정)
-	UE_LOG(LogTemp, Warning,
-		TEXT("[DetectionDiagV1] %s BeginPlay — HasAuth=%d, 적용반경=%.0fcm, 재스캔타이머=%s"),
-		*GetName(), HasAuthority() ? 1 : 0, DetectionRadius,
-		HasAuthority() ? TEXT("설정됨") : TEXT("미설정(권한없음)"));
 }
 
 // =========================================================
@@ -466,40 +458,9 @@ void AResourceUsingObject_AttackTurret::SeedEnemiesAlreadyInRange()
 
 	if (NewlySeeded > 0)
 	{
-		UE_LOG(LogTemp, Warning,
+		UE_LOG(LogTemp, Verbose,
 			TEXT("[DetectionRangeV1] %s — 범위 재스캔으로 적 %d 마리 신규 등록 (반경 %.0fcm)"),
 			*GetName(), NewlySeeded, DetectionRadius);
-	}
-
-	// [DetectionDiagV1] 진단: 범위 내 적 0마리일 때, 월드 전체에서 가장 가까운 적과 그 거리를 출력.
-	//   "거리(반경) 문제"인지 "탐지/콜리전 문제"인지 한 번에 구분하기 위함. (해결 후 제거 예정)
-	if (FoundActors.Num() == 0)
-	{
-		float NearestDist = TNumericLimits<float>::Max();
-		AHellunaEnemyCharacter* Nearest = nullptr;
-		for (TActorIterator<AHellunaEnemyCharacter> It(GetWorld()); It; ++It)
-		{
-			AHellunaEnemyCharacter* E = *It;
-			if (!IsValid(E)) continue;
-			const float D = FVector::Dist(Center, E->GetActorLocation());
-			if (D < NearestDist) { NearestDist = D; Nearest = E; }
-		}
-		if (Nearest)
-		{
-			UCapsuleComponent* Cap = Nearest->FindComponentByClass<UCapsuleComponent>();
-			const ECollisionEnabled::Type CE = Cap ? Cap->GetCollisionEnabled() : ECollisionEnabled::NoCollision;
-			UE_LOG(LogTemp, Warning,
-				TEXT("[DetectionDiagV1] %s loc=%s 반경=%.0fcm | 범위내 0마리 | 월드최근접적=%s 거리=%.0fcm(%.1fm) 숨김=%d 캡슐콜리전=%d"),
-				*GetName(), *Center.ToCompactString(), DetectionRadius,
-				*Nearest->GetName(), NearestDist, NearestDist / 100.f,
-				Nearest->IsHidden() ? 1 : 0, (int32)CE);
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning,
-				TEXT("[DetectionDiagV1] %s loc=%s 반경=%.0fcm | 범위내 0마리 | 월드에 AHellunaEnemyCharacter 없음"),
-				*GetName(), *Center.ToCompactString(), DetectionRadius);
-		}
 	}
 
 	// 시드 직후 타겟이 없으면 즉시 가장 가까운 적 선택
