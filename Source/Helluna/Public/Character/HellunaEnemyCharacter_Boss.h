@@ -44,6 +44,12 @@ public:
 	/** [BossDebugStartPhase2V1] 디버그: bDebugStartInPhase2 가 켜져 있으면 스폰 직후 2페이즈 강제 진입. */
 	virtual void BeginPlay() override;
 
+	/** [BossCinematicFreezeV1] 보스 시네마틱(소환/페이즈2/사망) 재생 중에는 무적 — 모든 데미지 무시.
+	 *  Why: 소환 시네마틱 도중 포탑/플레이어 사격에 보스가 사살되는 버그 방지. 포탑은 Tick 게이팅으로도
+	 *       막지만, 플레이어 무기 등 다른 소스까지 막는 최종 안전망으로 TakeDamage 자체를 0 으로 만든다. */
+	virtual float TakeDamage(float DamageAmount, struct FDamageEvent const& DamageEvent,
+		class AController* EventInstigator, AActor* DamageCauser) override;
+
 	// === Hooks (베이스에서 호출) ===
 	virtual bool TryInterceptDeathForPhase2(float OldHealth, float NewHealth) override;
 	virtual void TriggerHitStop() override;

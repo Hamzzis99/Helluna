@@ -74,6 +74,16 @@ protected:
 		meta = (DisplayName = "공격 간격(초)", ClampMin = "0.1", ClampMax = "10.0"))
 	float AttackInterval = 1.0f;
 
+	/**
+	 * 적 탐지 반경 (cm). BeginPlay 에서 DetectionSphere 에 적용된다.
+	 * [DetectionRangeV1] 기존엔 BP DetectionSphere 컴포넌트 반경(1000cm=10m)이 너무 작아
+	 *   보스가 아레나에서 이 범위 안에 들어오지 않아 포탑이 보스를 공격하지 못했다.
+	 *   이 값을 단일 소스로 삼아 런타임에 SetSphereRadius 로 덮어쓴다(컴포넌트 템플릿 값 무시).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Turret|Attack",
+		meta = (DisplayName = "탐지 반경(cm)", ClampMin = "500.0", ClampMax = "12000.0"))
+	float DetectionRadius = 3000.f;
+
 	/** 공격당 데미지 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Turret|Attack",
 		meta = (DisplayName = "공격 데미지", ClampMin = "1.0"))
@@ -154,6 +164,9 @@ private:
 	bool bRotationPaused = false;
 	FTimerHandle PostAttackPauseTimerHandle;
 
+	/** [DetectionRangeV1] 범위 내 적 주기적 재스캔 타이머 (begin-overlap 누락 보완) */
+	FTimerHandle RescanTimerHandle;
+
 	/** 마지막 공격 이후 경과 시간 */
 	float TimeSinceLastAttack = 0.f;
 
@@ -187,8 +200,15 @@ private:
 	/** 현재 타겟이 유효한지 검사 */
 	bool IsTargetValid() const;
 
+	/** [BossCinematicFreezeV1] 보스 시네마틱 재생 중인지 (GameMode 쿼리). 시네마틱 중 포탑 정지에 사용 */
+	bool IsBossCinematicActive() const;
+
 	/** 범위 내 가장 가까운 적을 CurrentTarget으로 설정 */
 	void SelectClosestTarget();
+
+	/** [InitialOverlapSeedV1] 설치 시점에 이미 탐지 범위 안에 있는 적을 SphereOverlap 으로 1회 스캔해
+	 *  EnemiesInRange 에 등록. begin-overlap 이벤트만으로는 놓치는 "이미 서 있던 보스" 등을 잡기 위함. */
+	void SeedEnemiesAlreadyInRange();
 
 	/** 포탑을 타겟 방향으로 보간 회전 */
 	void UpdateTurretRotation(float DeltaTime);

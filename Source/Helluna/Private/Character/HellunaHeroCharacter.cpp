@@ -43,6 +43,7 @@
 #include "NiagaraComponent.h"
 #include "AbilitySystem/HeroAbility/HeroGameplayAbility_GunParry.h"
 #include "AbilitySystem/HeroAbility/HeroGameplayAbility_Block.h"
+#include "AbilitySystem/HeroAbility/HeroGameplayAbility_Aim.h"
 #include "VFX/GhostTrailActor.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
@@ -342,6 +343,12 @@ void AHellunaHeroCharacter::Tick(float DeltaTime)
 	if (bSpawnVFXActive && IsLocallyControlled())
 	{
 		TickSpawnVFX(DeltaTime);
+	}
+
+	// [AimRealignV1] 견착 시작 시 카메라를 캐릭터 정면 뒤로 부드럽게 정렬 (로컬 전용)
+	if (bAimCameraRealigning && IsLocallyControlled())
+	{
+		TickAimCameraRealign(DeltaTime);
 	}
 
 	// [Stun] 래그돌 중 카메라 팔로우 (BotW 스타일)
@@ -669,6 +676,56 @@ void AHellunaHeroCharacter::Input_Look(const FInputActionValue& InputActionValue
 		AddControllerPitchInput(LookAxisVector.Y * SensitivityScale);
 	}
 
+}
+
+// ════════════════════════════════════════════════════════════════
+// [AimRealignV1] 견착 카메라 정렬 — 카메라를 캐릭터 정면 뒤로 스윙
+// ════════════════════════════════════════════════════════════════
+// 견착(우클릭) 시작 시 컨트롤 회전 Yaw 를 "지금 캐릭터가 바라보는 방향"으로
+// 부드럽게 맞춘다. 스프링암(bUsePawnControlRotation=true)이 컨트롤 회전을
+// 따르므로 결과적으로 카메라가 캐릭터 등 뒤로 돌아가 정면 구도가 된다.
+// 컨트롤 회전은 소유 클라 기준이라 로컬에서만 처리(서버로 자동 복제됨).
+// ════════════════════════════════════════════════════════════════
+void AHellunaHeroCharacter::StartAimCameraRealign()
+{
+	if (!IsLocallyControlled())
+	{
+		return;
+	}
+
+	// 견착 순간 캐릭터가 바라보는 Yaw 를 목표로 스냅샷
+	AimCameraRealignTargetYaw = GetActorRotation().Yaw;
+	bAimCameraRealigning = true;
+}
+
+void AHellunaHeroCharacter::TickAimCameraRealign(float DeltaTime)
+{
+	AController* C = GetController();
+	if (!C)
+	{
+		bAimCameraRealigning = false;
+		return;
+	}
+
+	const FRotator CtrlRot = C->GetControlRotation();
+
+	// Yaw 만 목표로, Pitch/Roll 은 유지 (플레이어가 위/아래 본 각도 보존)
+	FRotator TargetRot = CtrlRot;
+	TargetRot.Yaw = AimCameraRealignTargetYaw;
+
+	// RInterpTo 는 축별 최단 경로(±180°)로 보간 → 350°→10° 같은 케이스도 짧게 회전
+	const FRotator NewRot = FMath::RInterpTo(CtrlRot, TargetRot, DeltaTime, AimCameraRealignInterpSpeed);
+	C->SetControlRotation(NewRot);
+
+	// 목표에 충분히 근접하면 종료 (잔여 진동 방지)
+	const float Remaining = FMath::Abs(FRotator::NormalizeAxis(AimCameraRealignTargetYaw - NewRot.Yaw));
+	if (Remaining < 0.5f)
+	{
+		FRotator FinalRot = NewRot;
+		FinalRot.Yaw = AimCameraRealignTargetYaw;
+		C->SetControlRotation(FinalRot);
+		bAimCameraRealigning = false;
+	}
 }
 
 
@@ -2234,6 +2291,13 @@ void AHellunaHeroCharacter::OnHeroHealthChanged(
 		// HealthHUDWidget->UpdateHealthText(HeroHealthComponent->GetHealth(), HeroHealthComponent->GetMaxHealth());
 	}
 
+	// [ScopeBreakOnHitV1] 피격 시 스나이퍼 스코프 강제 해제 (로컬 전용 — 카메라/UI 상태).
+	//   터널비전 상태로 가만히 버티는 플레이를 막고, 피격 시 응징하는 의도.
+	if (IsLocallyControlled() && NewHealth < OldHealth)
+	{
+		BreakSniperScope();
+	}
+
 	// [CameraShake] 피격 시 카메라 쉐이크 (로컬 클라이언트 전용)
 	if (IsLocallyControlled() && OldHealth > NewHealth && DamageCameraShakeClass)
 	{
@@ -2275,6 +2339,33 @@ void AHellunaHeroCharacter::OnHeroHealthChanged(
 			Multicast_PlayHeroHitReact();
 		}
 	}
+}
+
+void AHellunaHeroCharacter::BreakSniperScope()
+{
+	// 스코프 상태는 소유 클라(로컬)에만 존재 — 여기서만 의미 있음.
+	if (!IsLocallyControlled() || !AbilitySystemComponent)
+	{
+		return;
+	}
+
+	// 활성 Aim GA 인스턴스를 찾아 강제 스코프 해제 (스코프 아닐 땐 no-op).
+	for (const FGameplayAbilitySpec& Spec : AbilitySystemComponent->GetActivatableAbilities())
+	{
+		if (Spec.Ability && Spec.Ability->AbilityTags.HasTag(HellunaGameplayTags::Player_Ability_Aim))
+		{
+			if (UHeroGameplayAbility_Aim* AimGA = Cast<UHeroGameplayAbility_Aim>(Spec.GetPrimaryInstance()))
+			{
+				AimGA->ForceExitScope();
+			}
+		}
+	}
+}
+
+void AHellunaHeroCharacter::Client_BreakSniperScope_Implementation()
+{
+	// 서버(보스 특수패턴)가 소유 클라에 지시 → 로컬 스코프 해제.
+	BreakSniperScope();
 }
 
 void AHellunaHeroCharacter::OnHeroDeath(AActor* DeadActor, AActor* KillerActor)

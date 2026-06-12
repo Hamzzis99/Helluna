@@ -326,16 +326,16 @@ void UWeaponBridgeComponent::SpawnHandWeapon(TSubclassOf<UGameplayAbility> Spawn
 		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] GA 활성화 성공!"));
 #endif
 
-		// ⭐ 장착 애니메이션 시작 → 무기 전환 차단
-		// GA_SpawnWeapon::OnEquipFinished/OnEquipInterrupted에서 SetEquipping(false) 호출
-		bIsEquipping = true;
-		if (EquipmentComponent.IsValid())
-		{
-			EquipmentComponent->SetWeaponEquipping(true);
-		}
-#if HELLUNA_DEBUG_WEAPON_BRIDGE
-		UE_LOG(LogTemp, Warning, TEXT("⭐ [WeaponBridge] bIsEquipping = true (장착 중 - 전환 차단)"));
-#endif
+		// [EquipLockOwnershipV1] 장착 잠금(bIsEquipping)은 이제 GA_SpawnWeapon 이 소유한다.
+		//   - GA 가 모든 early-return(몽타주 null / 소켓 없음 / AnimInst null 등)을 통과해
+		//     몽타주를 실제로 시작하는 직전에 SetEquipping(true)
+		//   - GA::EndAbility 에서 어떤 경로로 끝나든 항상 SetEquipping(false)
+		//
+		//   여기(SpawnHandWeapon)에서 set 하면 안 되는 이유:
+		//   TryActivateAbilityByClass 는 GA 를 "동기적으로" 실행하므로, GA 가 활성화 직후
+		//   early-return 으로 즉시 EndAbility 해도 bSuccess=true 가 반환된다. 그 경우 여기서
+		//   플래그를 켜면 GA 가 이미 끝나버려 OnEquipFinished/Interrupted 가 영영 안 불리고
+		//   → 플래그가 stuck(true) → 이후 무기 스왑이 영구 차단되는 버그가 있었다.
 	}
 	else
 	{

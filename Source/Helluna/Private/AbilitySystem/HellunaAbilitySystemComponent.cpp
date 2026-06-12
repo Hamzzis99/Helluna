@@ -131,12 +131,40 @@ void UHellunaAbilitySystemComponent::OnAbilityInputPressed(const FGameplayTag& I
 
 		if (Policy == EHellunaInputActionPolicy::Toggle)
 		{
-			if (AbilitySpec.IsActive()) 
+			if (AbilitySpec.IsActive())
 				CancelAbilityHandle(AbilitySpec.Handle);
-			else 
+			else
 			{
 #if HELLUNA_DEBUG_ASC
 				UE_LOG(LogTemp, Warning, TEXT("🚀 [ASC] TryActivateAbility 호출 (Toggle)"));
+#endif
+				TryActivateAbility(AbilitySpec.Handle);
+			}
+		}
+		else if (Policy == EHellunaInputActionPolicy::Hold)
+		{
+			if (AbilitySpec.IsActive())
+			{
+				// [Sniper Scope] 활성 Aim GA 에 재입력 전달 → 스코프 토글 해제용.
+				//   (스코프 토글 중엔 입력이 떼진 상태로 GA 가 계속 활성이므로,
+				//    2번째 탭은 press 핸들러를 통해 인스턴스로 라우팅해야 함)
+				//   나머지 Hold GA / 일반 견착은 InputPressed 가 no-op 이라 영향 없음.
+				if (AbilitySpec.Ability && AbilitySpec.Ability->IsA<UHeroGameplayAbility_Aim>())
+				{
+					if (UGameplayAbility* Instance = AbilitySpec.GetPrimaryInstance())
+					{
+						Instance->InputPressed(
+							AbilitySpec.Handle,
+							AbilityActorInfo.Get(),
+							AbilitySpec.ActivationInfo
+						);
+					}
+				}
+			}
+			else
+			{
+#if HELLUNA_DEBUG_ASC
+				UE_LOG(LogTemp, Warning, TEXT("🚀 [ASC] TryActivateAbility 호출 (Hold)"));
 #endif
 				TryActivateAbility(AbilitySpec.Handle);
 			}

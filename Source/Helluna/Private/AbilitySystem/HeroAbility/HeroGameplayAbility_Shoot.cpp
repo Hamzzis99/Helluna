@@ -10,6 +10,7 @@
 #include "AbilitySystem/HellunaAbilitySystemComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
+#include "HellunaGameplayTags.h"
 
 #include "DebugHelper.h"
 
@@ -21,6 +22,11 @@ UHeroGameplayAbility_Shoot::UHeroGameplayAbility_Shoot()
 
 	// ✅ 네 ASC Release 로직이 이걸 보고 Cancel 해줌
 	InputActionPolicy = EHellunaInputActionPolicy::Hold;
+
+	// [AimGateV1] 견착(우클릭) 중에만 발사 가능 — Player_status_Aim 태그가 없으면
+	//   Shoot 어빌리티 자체가 활성화되지 않아 좌클릭이 "아무 반응 없음" 이 된다.
+	//   (Player_status_Aim 은 GA_Aim 이 활성 중에 ActivationOwnedTags 로 부여)
+	ActivationRequiredTags.AddTag(HellunaGameplayTags::Player_status_Aim);
 }
 
 void UHeroGameplayAbility_Shoot::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData)
@@ -113,6 +119,17 @@ void UHeroGameplayAbility_Shoot::Shoot()
 {
 	AHellunaHeroCharacter* Hero = GetHeroCharacterFromActorInfo();
 	if (!Hero) return;
+
+	// [AimGateV1] 연사(FullAuto) 도중 견착(우클릭)이 풀리면 즉시 발사 중단.
+	//   ActivationRequiredTags 는 "활성화 시점" 만 막으므로, 유지형 연사는 여기서 가드.
+	if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
+	{
+		if (!ASC->HasMatchingGameplayTag(HellunaGameplayTags::Player_status_Aim))
+		{
+			K2_EndAbility();
+			return;
+		}
+	}
 
 	AHeroWeapon_GunBase* Weapon = Cast<AHeroWeapon_GunBase>(Hero->GetCurrentWeapon());
 	if (!Weapon) { Debug::Print(TEXT("Shoot Failed: No Weapon"), FColor::Red); return; }

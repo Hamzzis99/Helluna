@@ -25,6 +25,9 @@
 
 // [BossSummonTriggerAutoSpawnV1] 시네마틱 trigger 자동 spawn
 #include "Minwoo/BossSummonCinematicTrigger.h"
+// [BossCinematicFreezeV1] 페이즈2·사망 시네마틱 트리거 — IsAnyBossCinematicActive 순회용
+#include "BossEvent/BossPhase2CinematicTrigger.h"
+#include "BossEvent/BossDeathCinematicTrigger.h"
 
 // Phase 7 게임 종료 + 결과 반영
 #include "Lobby/Database/HellunaSQLiteSubsystem.h"
@@ -1030,15 +1033,24 @@ void AHellunaDefenseGameMode::OnNightPCGGraphGenerated(UPCGComponent* InComponen
     float PCGClusterAmount = 1.f;
     float PCGPlacementDensity = 1.f;
     UClass* SpawnClassOverride = nullptr;
+    // [OreWeightV1] 포인트별 가중치 추첨용 — ScoreComp 포인터를 루프까지 유지.
+    const UPCGScoreComponent* ScoreComp = nullptr;
+    bool bHasWeightedOreTypes = false;
     if (IsValid(PCGOwner))
     {
-        if (const UPCGScoreComponent* ScoreComp = PCGOwner->FindComponentByClass<UPCGScoreComponent>())
+        if (const UPCGScoreComponent* FoundScore = PCGOwner->FindComponentByClass<UPCGScoreComponent>())
         {
-            PCGClusterAmount = FMath::Max(ScoreComp->ClusterAmount, 0.01f);
-            PCGPlacementDensity = FMath::Max(ScoreComp->PlacementDensity, 0.01f);
-            if (ScoreComp->SpawnActorClassOverride)
+            ScoreComp = FoundScore;
+            PCGClusterAmount = FMath::Max(FoundScore->ClusterAmount, 0.01f);
+            PCGPlacementDensity = FMath::Max(FoundScore->PlacementDensity, 0.01f);
+            if (FoundScore->SpawnActorClassOverride)
             {
-                SpawnClassOverride = ScoreComp->SpawnActorClassOverride;
+                SpawnClassOverride = FoundScore->SpawnActorClassOverride;
+            }
+            // 유효한 가중치 광석 종류(클래스 있고 Weight>0)가 하나라도 있는지
+            for (const FOreSpawnEntry& E : FoundScore->OreTypes)
+            {
+                if (E.OreClass && E.Weight > 0.f) { bHasWeightedOreTypes = true; break; }
             }
         }
     }
@@ -1046,10 +1058,10 @@ void AHellunaDefenseGameMode::OnNightPCGGraphGenerated(UPCGComponent* InComponen
     // ── PCG 출력 포인트 데이터에서 위치 직접 추출 (Spawn Actor 노드 불필요) ──
     TArray<FPreservedOre> ExtractedOres;
     {
-        if (!SpawnClassOverride)
+        if (!SpawnClassOverride && !bHasWeightedOreTypes)
         {
-            UE_LOG(LogTemp, Error, TEXT("[PCG 생성 콜백] ❌ SpawnActorClassOverride가 설정되지 않음! PCGScoreComponent에서 스폰할 클래스를 지정하세요."));
-            Debug::Print(TEXT("[PCG] SpawnActorClassOverride 미설정 — PCGScoreComponent 확인 필요"), FColor::Red);
+            UE_LOG(LogTemp, Error, TEXT("[PCG 생성 콜백] ❌ 스폰할 광석 클래스가 없음! PCGScoreComponent의 'OreTypes(광석 종류+비중)' 또는 'SpawnActorClassOverride(폴백)'를 설정하세요."));
+            Debug::Print(TEXT("[PCG] 광석 종류 미설정 — PCGScoreComponent의 OreTypes/Override 확인 필요"), FColor::Red);
             return;
         }
 
@@ -1101,7 +1113,17 @@ void AHellunaDefenseGameMode::OnNightPCGGraphGenerated(UPCGComponent* InComponen
 
             for (const FTransform& T : Transforms)
             {
-                ExtractedOres.Add({ SpawnClassOverride, T, { FName(TEXT("Ore")) }, PCGClusterAmount, PCGPlacementDensity });
+                // [OreWeightV1] 포인트마다 가중치 추첨으로 종류 선택. 리스트 비면 단일 폴백.
+                UClass* PointClass = SpawnClassOverride;
+                if (ScoreComp)
+                {
+                    if (TSubclassOf<AActor> Picked = ScoreComp->PickWeightedOreClass())
+                    {
+                        PointClass = Picked;
+                    }
+                }
+                if (!PointClass) { continue; }
+                ExtractedOres.Add({ PointClass, T, { FName(TEXT("Ore")) }, PCGClusterAmount, PCGPlacementDensity });
             }
         }
     }
@@ -2472,6 +2494,31 @@ void AHellunaDefenseGameMode::NotifyBossDied(AActor* DeadBoss)
         // 세미보스 처치 → 낮 전환
         ScheduleDayTransitionAfterNightClear(TEXT("NotifyBossDied"));
     }
+}
+
+// ============================================================
+// [BossCinematicFreezeV1] IsAnyBossCinematicActive
+//   소환/페이즈2/사망 시네마틱 트리거 중 하나라도 활성이면 true.
+//   bCinematicActive 는 서버에서만 set 되므로 서버에서만 의미가 있다.
+// ============================================================
+bool AHellunaDefenseGameMode::IsAnyBossCinematicActive() const
+{
+    UWorld* World = GetWorld();
+    if (!World) return false;
+
+    for (TActorIterator<ABossSummonCinematicTrigger> It(World); It; ++It)
+    {
+        if (*It && (*It)->IsCinematicActive()) return true;
+    }
+    for (TActorIterator<ABossPhase2CinematicTrigger> It(World); It; ++It)
+    {
+        if (*It && (*It)->IsCinematicActive()) return true;
+    }
+    for (TActorIterator<ABossDeathCinematicTrigger> It(World); It; ++It)
+    {
+        if (*It && (*It)->IsCinematicActive()) return true;
+    }
+    return false;
 }
 
 // ============================================================

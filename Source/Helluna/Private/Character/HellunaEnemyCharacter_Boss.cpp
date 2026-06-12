@@ -124,6 +124,29 @@ void AHellunaEnemyCharacter_Boss::BeginPlay()
 }
 
 // ============================================================
+// [BossCinematicFreezeV1] 시네마틱 중 무적
+//   소환/페이즈2/사망 시네마틱이 재생 중이면 들어오는 데미지를 전부 무시(0).
+//   포탑은 Tick 게이팅으로도 막지만, 플레이어 무기 등 다른 소스까지 막는 안전망.
+//   데미지는 서버에서만 적용되므로 GameMode 쿼리는 항상 유효하다.
+// ============================================================
+float AHellunaEnemyCharacter_Boss::TakeDamage(float DamageAmount,
+	FDamageEvent const& DamageEvent, AController* EventInstigator, AActor* DamageCauser)
+{
+	if (const AHellunaDefenseGameMode* GM = Cast<AHellunaDefenseGameMode>(UGameplayStatics::GetGameMode(this)))
+	{
+		if (GM->IsAnyBossCinematicActive())
+		{
+			UE_LOG(LogTemp, Verbose,
+				TEXT("[BossCinematicFreezeV1] 시네마틱 중 보스 무적 — 데미지 %.1f 무시 (Causer=%s)"),
+				DamageAmount, *GetNameSafe(DamageCauser));
+			return 0.f;
+		}
+	}
+
+	return Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
+}
+
+// ============================================================
 // [BossPhase2V1] HP 0 도달 가로채기 → 2페이즈 전환
 // ============================================================
 bool AHellunaEnemyCharacter_Boss::TryInterceptDeathForPhase2(float OldHealth, float NewHealth)

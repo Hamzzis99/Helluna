@@ -575,6 +575,10 @@ bool ABossSummonCinematicTrigger::TryActivate(APawn* InTargetBoss)
 			SkipBossEnemy->SetCinematicGateUnlocked(true);
 		}
 		Multicast_StartCinematic(Boss, /*bSkipVisuals=*/true, /*WalkDirYaw=*/0.f, Boss->GetActorLocation());
+			// [BossCinematicFreezeV1-Fix] 스킵 경로는 HandleCinematicCompletedServer 를 거치지 않아
+			//   bCinematicActive 가 true 로 고정된다. 스킵 = 시네마틱 미재생이므로 즉시 false 로 되돌린다.
+			//   (안 그러면 IsAnyBossCinematicActive 가 전투 내내 true → 공격 포탑 영구 정지 + 보스 영구 무적.)
+			bCinematicActive = false;
 		return true;
 	}
 
