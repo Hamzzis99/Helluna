@@ -16,84 +16,17 @@
 #include "AIController.h"
 #include "GameFramework/Pawn.h"
 #include "Components/PrimitiveComponent.h"
+#include "AI/HellunaAIAttackZone.h" // [SurfaceDistanceV1] 공용 표면거리 헬퍼
 
 // ============================================================================
-// 헬퍼: 전투 판정에 쓸만한 Block 콜리전이 있는지 확인
-// ============================================================================
-static bool IsBlockLikeCombatPrim(const UPrimitiveComponent* Prim)
-{
-	if (!Prim) return false;
-	if (Prim->GetCollisionEnabled() == ECollisionEnabled::NoCollision) return false;
-
-	// Overlap 전용(UI 박스 등)은 Block이 하나도 없으므로 자동 제외
-	return (Prim->GetCollisionResponseToChannel(ECC_Pawn)        == ECR_Block)
-		|| (Prim->GetCollisionResponseToChannel(ECC_WorldStatic)  == ECR_Block)
-		|| (Prim->GetCollisionResponseToChannel(ECC_WorldDynamic) == ECR_Block);
-}
-
-// ============================================================================
-// 헬퍼: 후보 컴포넌트 목록 중 FromLoc 기준 최단 표면 거리 계산
-// ============================================================================
-static bool TryComputeMinSurfaceDistance(
-	const FVector& FromLoc,
-	const TArray<UPrimitiveComponent*>& Candidates,
-	float& OutMinDist)
-{
-	float MinDist = MAX_FLT;
-	bool bFound = false;
-
-	for (UPrimitiveComponent* Prim : Candidates)
-	{
-		if (!Prim || Prim->GetCollisionEnabled() == ECollisionEnabled::NoCollision)
-			continue;
-
-		FVector Closest;
-		const float D = Prim->GetClosestPointOnCollision(FromLoc, Closest);
-
-		if (D < 0.f) continue;  // 지원 안 하는 컴포넌트
-		if (D == 0.f) { OutMinDist = 0.f; return true; }  // 내부
-
-		if (D < MinDist) { MinDist = D; bFound = true; }
-	}
-
-	if (bFound) { OutMinDist = MinDist; return true; }
-	return false;
-}
-
-// ============================================================================
-// 헬퍼: Actor 표면까지 최단 거리 반환
-//   1순위: "ShipCombatCollision" 태그 컴포넌트
-//   2순위: Block 반응 컴포넌트
-//   3순위: 중심점 거리 (폴백)
+// 헬퍼: Actor 표면까지 최단 거리
+//   [SurfaceDistanceV1] 공용 HellunaAI::GetTargetSurfaceDistance 로 위임.
+//   기존 로컬 구현은 우주선 메시(복합 콜리전)에서 GetClosestPointOnCollision 이 -1 을
+//   반환해 전부 원점 거리로 폴백되는 버그가 있었다 → 공용 헬퍼가 OBB 폴백으로 해결.
 // ============================================================================
 static float GetSurfaceDistance(const FVector& FromLoc, const AActor* ToActor)
 {
-	if (!ToActor) return MAX_FLT;
-
-	TArray<UPrimitiveComponent*> Prims;
-	ToActor->GetComponents<UPrimitiveComponent>(Prims);
-
-	// 1순위: 태그 컴포넌트
-	TArray<UPrimitiveComponent*> Tagged;
-	for (UPrimitiveComponent* Prim : Prims)
-		if (Prim && Prim->ComponentHasTag(TEXT("ShipCombatCollision")))
-			Tagged.Add(Prim);
-
-	float Dist = MAX_FLT;
-	if (Tagged.Num() > 0 && TryComputeMinSurfaceDistance(FromLoc, Tagged, Dist))
-		return Dist;
-
-	// 2순위: Block 컴포넌트
-	TArray<UPrimitiveComponent*> BlockCandidates;
-	for (UPrimitiveComponent* Prim : Prims)
-		if (IsBlockLikeCombatPrim(Prim))
-			BlockCandidates.Add(Prim);
-
-	if (TryComputeMinSurfaceDistance(FromLoc, BlockCandidates, Dist))
-		return Dist;
-
-	// 3순위: 중심점 거리 폴백
-	return (float)FVector::Dist(FromLoc, ToActor->GetActorLocation());
+	return HellunaAI::GetTargetSurfaceDistance(FromLoc, ToActor);
 }
 
 // ============================================================================

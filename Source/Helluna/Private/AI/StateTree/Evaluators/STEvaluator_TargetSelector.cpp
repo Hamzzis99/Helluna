@@ -29,6 +29,8 @@
 #include "Object/ResourceUsingObject/ResourceUsingObject_AttackTurret.h"
 #include "Object/ResourceUsingObject/HellunaTurretBase.h"
 #include "AI/TurretAggroTracker.h"
+#include "AI/HellunaAIAttackZone.h" // [SurfaceDistanceV1] 우주선 표면 거리
+#include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemInterface.h"
 
@@ -122,6 +124,21 @@ void FSTEvaluator_TargetSelector::Tick(FStateTreeExecutionContext& Context, cons
 
 	const FVector PawnLocation = ControlledPawn->GetActorLocation();
 
+	// [AggroRangeTestV1] 임시 테스트 override — 추격(어그로) 거리·포기시간 하한 강제.
+	//   StateTree 의 AggroRange(800)/EnrageDelay(3) 가 너무 작아 "공격범위 근처에서만 전환"되는 문제 →
+	//   멀리서도 플레이어를 추격하고, 추격 중 너무 빨리 광폭화로 포기하지 않게 함.
+	//   정식 값은 STTree_Melee_V5 evaluator 파라미터(GUI)에서 조정 — 테스트 끝나면 이 override 제거.
+	const float EffAggroRange = FMath::Max(AggroRange, 1500.f);
+	const float EffEnrageDelay = FMath::Max(EnrageDelay, 8.f);
+	static bool bLoggedAggroOverride = false;
+	if (!bLoggedAggroOverride)
+	{
+		bLoggedAggroOverride = true;
+		UE_LOG(LogTemp, Warning,
+			TEXT("[AggroRangeTestV1] 추격범위 override 적용 — AggroRange %.0f→%.0f, EnrageDelay %.1f→%.1f"),
+			AggroRange, EffAggroRange, EnrageDelay, EffEnrageDelay);
+	}
+
 	// ════════════════════════════════════════════════════════════
 	// 광폭화 완료: 우주선 고정, 타겟 선택 전체 차단
 	// ════════════════════════════════════════════════════════════
@@ -150,7 +167,9 @@ void FSTEvaluator_TargetSelector::Tick(FStateTreeExecutionContext& Context, cons
 
 		if (TargetData.TargetActor.IsValid())
 		{
-			TargetData.DistanceToTarget = FVector::Dist(PawnLocation, TargetData.TargetActor->GetActorLocation());
+			// [SurfaceDistanceV1] 우주선은 표면 거리 (광폭화 후 우주선 고정 상태)
+			TargetData.DistanceToTarget = HellunaAI::GetTargetSurfaceDistance(
+				PawnLocation, TargetData.TargetActor.Get());
 		}
 		return;
 	}
@@ -170,8 +189,8 @@ void FSTEvaluator_TargetSelector::Tick(FStateTreeExecutionContext& Context, cons
 		const float DistToTarget = FVector::Dist(PawnLocation, TargetData.TargetActor->GetActorLocation());
 		TargetData.DistanceToTarget = DistToTarget;
 
-		// 어그로 범위 이탈 → 우주선 복귀
-		if (DistToTarget > AggroRange)
+		// 어그로 범위 이탈 → 우주선 복귀 ([AggroRangeTestV1] override 적용)
+		if (DistToTarget > EffAggroRange)
 		{
 			ResetToSpaceShip(TargetData, AIController, World, ControlledPawn);
 			return;
@@ -183,7 +202,7 @@ void FSTEvaluator_TargetSelector::Tick(FStateTreeExecutionContext& Context, cons
 			TargetData.PlayerTargetingTime += DeltaTime;
 
 			// 광폭화 발동
-			if (TargetData.PlayerTargetingTime >= EnrageDelay)
+			if (TargetData.PlayerTargetingTime >= EffEnrageDelay)
 			{
 				// 터렛 어그로 해제 (플레이어였으니 해당 없지만 안전 처리)
 				FTurretAggroTracker::UnregisterMonster(ControlledPawn);
@@ -207,10 +226,13 @@ void FSTEvaluator_TargetSelector::Tick(FStateTreeExecutionContext& Context, cons
 	// 우주선 타겟 중: 어그로 스캔
 	// ════════════════════════════════════════════════════════════
 
-	// 우주선까지 거리 갱신
+	// 우주선까지 거리 갱신 — [SurfaceDistanceV1] 표면 거리.
+	//   비원형(길쭉한) 우주선에서 중심점 거리로 판정하면 표면이 멀리 튀어나온 쪽으로 접근하는
+	//   원거리 몹이 사거리 안에 들어왔다고 착각해 과하게 가까이 붙는 문제를 막는다.
 	if (TargetData.TargetActor.IsValid())
 	{
-		TargetData.DistanceToTarget = FVector::Dist(PawnLocation, TargetData.TargetActor->GetActorLocation());
+		TargetData.DistanceToTarget = HellunaAI::GetTargetSurfaceDistance(
+			PawnLocation, TargetData.TargetActor.Get());
 	}
 
 	// 우주선 공격 범위 내 → 어그로 전환 차단 (거리 기반 유지 — 어그로 전환 차단용 게이트).
@@ -220,28 +242,15 @@ void FSTEvaluator_TargetSelector::Tick(FStateTreeExecutionContext& Context, cons
 	{
 		TargetData.bAttackingSpaceShip = true;
 
-		// [OnShipEnrageV1] 우주선 위(OnShip 태그 보유)에 올라가 있으면 근거리에도 플레이어 어그로 스캔을
-		// 막지 않음. 그래야 우주선 위에 있는 동안 다가오는 플레이어를 타겟으로 삼고 Enrage 타이머가
-		// 누적되어 Enrage 이벤트가 발송됨.
-		// Why: Attackplayer_JumpStrike 처럼 OnShip 조건으로만 진입하는 상태에서 사용자가
-		//      가까이 다가가도 광폭화가 안 되는 문제를 해결.
-		bool bOnShip = false;
-		if (const IAbilitySystemInterface* ASI = Cast<IAbilitySystemInterface>(ControlledPawn))
-		{
-			if (UAbilitySystemComponent* ASC = ASI->GetAbilitySystemComponent())
-			{
-				const FGameplayTag OnShipTag = FGameplayTag::RequestGameplayTag(FName("State.Enemy.OnShip"), false);
-				if (OnShipTag.IsValid() && ASC->HasMatchingGameplayTag(OnShipTag))
-				{
-					bOnShip = true;
-				}
-			}
-		}
-		if (!bOnShip)
-		{
-			return;  // 지상 + 우주선 공격 근거리 → 기존 동작대로 어그로 전환 차단
-		}
-		// OnShip 이면 아래 플레이어 스캔 로직 계속 → 플레이어 타겟 전환 → PlayerTargetingTime 누적 → Enrage
+		// [SwitchToPlayerNearShipV1] 우주선 공격 사거리 안이어도 플레이어 어그로 스캔을 막지 않는다.
+		//   기존엔 여기서 (OnShip 아닌 경우) return 하여 근접 몹이 배에 붙으면 플레이어로 절대 전환되지
+		//   않았다 — 근접만 해당: SpaceShipAttackRange(500) 안으로 들어가기 때문. 원거리(1000)는 멀리서
+		//   쏘느라 이 게이트 밖이라 이미 전환됐었다.
+		//   사용자 요구: "우주선을 공격/접근 중에도 플레이어를 보면 플레이어로 전환".
+		//   → return 제거하고 아래 플레이어/터렛 스캔으로 계속 진행. (플레이어가 AggroRange 안에 있어야
+		//     전환. 전환 후 EnrageDelay 경과 시 광폭화로 다시 우주선 고정되어 무한 카이팅은 방지된다.)
+		//   bAttackingSpaceShip 플래그는 STTask_ShipJump 가 점프 게이트로 읽으므로 위에서 계속 설정한다.
+		//   (이전 OnShipEnrageV1 의 OnShip 전용 예외도 이 일반화에 포함됨.)
 	}
 	else
 	{
@@ -251,7 +260,7 @@ void FSTEvaluator_TargetSelector::Tick(FStateTreeExecutionContext& Context, cons
 	// ── 어그로 범위 내 가장 가까운 플레이어/터렛 탐색 ──────────
 	AActor* NearestAggroTarget = nullptr;
 	EHellunaTargetType NearestType = EHellunaTargetType::SpaceShip;
-	float NearestDistSq = AggroRange * AggroRange;
+	float NearestDistSq = EffAggroRange * EffAggroRange; // [AggroRangeTestV1] override
 
 	// 플레이어 탐색
 	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
@@ -308,8 +317,24 @@ void FSTEvaluator_TargetSelector::Tick(FStateTreeExecutionContext& Context, cons
 		NearestAggroTarget ? *NearestAggroTarget->GetName() : TEXT("none"),
 		TargetData.bAttackingSpaceShip ? 1 : 0);
 
-	// 어그로 대상 발견 → 타겟 전환
-	if (NearestAggroTarget)
+	// [SwitchDeferWhileAttackingV1] 현재 공격 모션 중이면 타겟/포커스 전환을 미룬다.
+	//   공격 도중 SetFocus(player) 로 즉시 플레이어를 바라보면 "그 자리에서 플레이어를 보며 한 번
+	//   어색하게 공격하고 추격"하는 버그가 된다. 공격이 끝난 뒤(Attacking 태그 해제) 다음 틱에 전환 →
+	//   "공격을 마저 끝낸 뒤 플레이어를 바라보고 추격". (공격 중엔 기존 타겟=우주선을 계속 주시.)
+	bool bPawnIsAttacking = false;
+	{
+		static const FGameplayTag AttackingTag = FGameplayTag::RequestGameplayTag(FName("State.Enemy.Attacking"), false);
+		if (IAbilitySystemInterface* ASI = Cast<IAbilitySystemInterface>(const_cast<APawn*>(ControlledPawn)))
+		{
+			if (UAbilitySystemComponent* ASC = ASI->GetAbilitySystemComponent())
+			{
+				bPawnIsAttacking = AttackingTag.IsValid() && ASC->HasMatchingGameplayTag(AttackingTag);
+			}
+		}
+	}
+
+	// 어그로 대상 발견 → 타겟 전환 (단, 공격 모션 중엔 미뤄 어색한 중간 회전 방지)
+	if (NearestAggroTarget && !bPawnIsAttacking)
 	{
 		TargetData.TargetActor         = NearestAggroTarget;
 		TargetData.TargetType          = NearestType;

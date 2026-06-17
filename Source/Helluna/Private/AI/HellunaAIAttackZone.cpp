@@ -109,3 +109,101 @@ bool HellunaAI::IsTargetInAttackZone(
 
 	return bHit;
 }
+
+// ============================================================================
+// [SurfaceDistanceV1] 표면 최단 거리
+// ============================================================================
+namespace
+{
+	// 컴포넌트의 OBB(로컬 바운드를 월드로 변환한 박스) 표면까지 최단 거리.
+	//   GetClosestPointOnCollision 이 복합 콜리전에서 -1 을 반환할 때의 폴백.
+	//   FromLoc 을 컴포넌트 로컬 공간으로 옮겨 로컬 AABB 에 clamp → 월드로 되돌려 거리 측정.
+	//   회전/스케일이 반영된 OBB 최단 거리이며 레이캐스트가 필요 없다.
+	float ClosestDistanceToComponentOBB(const FVector& FromLoc, const UPrimitiveComponent* Prim)
+	{
+		if (!Prim) return TNumericLimits<float>::Max();
+
+		const FTransform CompXf = Prim->GetComponentTransform();
+		// 로컬 공간 바운드 (Identity 변환으로 CalcBounds → 로컬 AABB)
+		const FBoxSphereBounds LocalBounds = Prim->CalcBounds(FTransform::Identity);
+		const FVector BoxMin = LocalBounds.Origin - LocalBounds.BoxExtent;
+		const FVector BoxMax = LocalBounds.Origin + LocalBounds.BoxExtent;
+
+		const FVector LocalP = CompXf.InverseTransformPosition(FromLoc);
+		const FVector LocalClosest(
+			FMath::Clamp(LocalP.X, BoxMin.X, BoxMax.X),
+			FMath::Clamp(LocalP.Y, BoxMin.Y, BoxMax.Y),
+			FMath::Clamp(LocalP.Z, BoxMin.Z, BoxMax.Z));
+
+		const FVector WorldClosest = CompXf.TransformPosition(LocalClosest);
+		return FVector::Dist(FromLoc, WorldClosest);
+	}
+
+	bool IsBlockLikeCombatPrim(const UPrimitiveComponent* Prim)
+	{
+		if (!Prim || Prim->GetCollisionEnabled() == ECollisionEnabled::NoCollision) return false;
+		return (Prim->GetCollisionResponseToChannel(ECC_Pawn)         == ECR_Block)
+			|| (Prim->GetCollisionResponseToChannel(ECC_WorldStatic)  == ECR_Block)
+			|| (Prim->GetCollisionResponseToChannel(ECC_WorldDynamic) == ECR_Block);
+	}
+
+	// 후보 컴포넌트들 중 표면 최단 거리. GetClosestPointOnCollision 우선, 미지원이면 OBB 폴백.
+	//   TArrayView 로 받아 TArray/TInlineComponentArray 등 allocator 무관하게 호출 가능.
+	bool TryMinSurfaceDistance(const FVector& FromLoc,
+		TArrayView<UPrimitiveComponent* const> Candidates, float& OutMin)
+	{
+		float MinDist = TNumericLimits<float>::Max();
+		bool bFound = false;
+		for (UPrimitiveComponent* Prim : Candidates)
+		{
+			if (!Prim || Prim->GetCollisionEnabled() == ECollisionEnabled::NoCollision)
+				continue;
+
+			FVector Closest;
+			const float D = Prim->GetClosestPointOnCollision(FromLoc, Closest);
+
+			float Effective;
+			if (D > 0.f)        Effective = D;                                  // 단순 셰이프: 정확
+			else if (D == 0.f)  { OutMin = 0.f; return true; }                  // 내부
+			else                Effective = ClosestDistanceToComponentOBB(FromLoc, Prim); // 복합: OBB 폴백
+
+			if (Effective < MinDist) { MinDist = Effective; bFound = true; }
+		}
+		if (bFound) { OutMin = MinDist; return true; }
+		return false;
+	}
+}
+
+float HellunaAI::GetTargetSurfaceDistance(const FVector& FromLoc, const AActor* Target)
+{
+	if (!Target) return TNumericLimits<float>::Max();
+
+	// 힙 할당 없이 컴포넌트 조회 (50+ 몹이 매 틱 호출하므로 per-call alloc 방지)
+	TInlineComponentArray<UPrimitiveComponent*> Prims(Target);
+
+	float Dist = TNumericLimits<float>::Max();
+
+	// 1순위: "ShipCombatCollision" 태그 컴포넌트
+	TInlineComponentArray<UPrimitiveComponent*> Tagged;
+	for (UPrimitiveComponent* Prim : Prims)
+		if (Prim && Prim->ComponentHasTag(TEXT("ShipCombatCollision")))
+			Tagged.Add(Prim);
+	if (Tagged.Num() > 0 && TryMinSurfaceDistance(FromLoc, Tagged, Dist))
+		return Dist;
+
+	// 2순위: Block 반응 컴포넌트
+	TInlineComponentArray<UPrimitiveComponent*> BlockPrims;
+	for (UPrimitiveComponent* Prim : Prims)
+		if (IsBlockLikeCombatPrim(Prim))
+			BlockPrims.Add(Prim);
+	if (TryMinSurfaceDistance(FromLoc, BlockPrims, Dist))
+		return Dist;
+
+	// 3순위: 루트 프리미티브 OBB
+	if (UPrimitiveComponent* Root = Cast<UPrimitiveComponent>(Target->GetRootComponent()))
+		if (Root->GetCollisionEnabled() != ECollisionEnabled::NoCollision)
+			return ClosestDistanceToComponentOBB(FromLoc, Root);
+
+	// 4순위: 중심점 거리 폴백
+	return FVector::Dist(FromLoc, Target->GetActorLocation());
+}
