@@ -321,6 +321,37 @@ void AHellunaHeroCharacter::Tick(float DeltaTime)
 	Super::Tick(DeltaTime);
 	// 카메라 줌 보간은 이제 GA의 AT_AimCameraInterp AbilityTask에서 처리
 
+	// [AimMeshYawV1] 조준(Player.status.Aim) 시 메시를 살짝 yaw 틀어, 라이플 조준 포즈(MF_Rifle_Aiming)의
+	//   비스듬한 스탠스가 캐릭터 정면을 어긋나 보이게 하는 것을 보정. 모든 머신에서 Tick + 복제 태그라
+	//   멀티 일관(견착·스코프 둘 다). 메시 상대회전(yaw)만 — 캡슐 facing/조준 방향/이동엔 영향 없음(시각 전용).
+	if (USkeletalMeshComponent* AimMeshComp = GetMesh())
+	{
+		UHellunaAbilitySystemComponent* AimASC = GetHellunaAbilitySystemComponent();
+		const bool bAimingNow = AimASC && AimASC->HasMatchingGameplayTag(HellunaGameplayTags::Player_status_Aim);
+
+		// 메시 기본 상대 yaw(BP CDO 값) — 멤버 추가 없이 CDO 에서 읽어 절대 기준으로 보간.
+		float BaseMeshYaw = -90.f;
+		if (const AHellunaHeroCharacter* HeroCDO = GetClass()->GetDefaultObject<AHellunaHeroCharacter>())
+		{
+			if (const USkeletalMeshComponent* CDOMesh = HeroCDO->GetMesh())
+			{
+				BaseMeshYaw = CDOMesh->GetRelativeRotation().Yaw;
+			}
+		}
+
+		// [튜닝값] 조준 시 추가 yaw(도). +면 오른쪽(UE +yaw), 조준 포즈 각도 보정용. 사용자 요청: 오른쪽 20도.
+		static constexpr float AimMeshYawOffset = 20.f;
+		static constexpr float AimMeshYawInterpSpeed = 10.f;
+
+		const float TargetYaw = BaseMeshYaw + (bAimingNow ? AimMeshYawOffset : 0.f);
+		const FRotator CurMeshRot = AimMeshComp->GetRelativeRotation();
+		if (!FMath::IsNearlyEqual(CurMeshRot.Yaw, TargetYaw, 0.05f))
+		{
+			const float NewYaw = FMath::FInterpTo(CurMeshRot.Yaw, TargetYaw, DeltaTime, AimMeshYawInterpSpeed);
+			AimMeshComp->SetRelativeRotation(FRotator(CurMeshRot.Pitch, NewYaw, CurMeshRot.Roll));
+		}
+	}
+
 	// [Phase 21] 3D 부활 위젯 출혈 타이머 업데이트 (클라이언트)
 	UpdateReviveWidgetBleedout();
 
