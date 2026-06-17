@@ -1879,6 +1879,48 @@ void AHellunaHeroController::Server_BossDashAttack_Implementation()
 }
 
 // =========================================================================================
+// [BossPhase2Cheat] 콘솔 발동 — 월드 첫 보스의 2페이즈 광폭화 시네마틱 즉시 진입.
+//   2페이즈 시네마틱 길이/연출 검증용. 이미 2페이즈면 no-op.
+// =========================================================================================
+
+void AHellunaHeroController::BossPhase2()
+{
+	UE_LOG(LogTemp, Warning, TEXT("[BossPhase2Cheat] Console exec — forwarding to server"));
+	Server_BossPhase2();
+}
+
+void AHellunaHeroController::Server_BossPhase2_Implementation()
+{
+#if UE_BUILD_SHIPPING
+	// 보스 치트 RPC 는 Shipping 빌드에서 비활성화.
+	UE_LOG(LogTemp, Warning, TEXT("[BossPhase2Cheat] Disabled in shipping build"));
+	return;
+#endif
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[BossPhase2Cheat] No world"));
+		return;
+	}
+
+	AHellunaEnemyCharacter_Boss* Boss = nullptr;
+	for (TActorIterator<AHellunaEnemyCharacter_Boss> It(World); It; ++It)
+	{
+		Boss = *It;
+		if (IsValid(Boss)) break;
+	}
+	if (!Boss)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[BossPhase2Cheat] Boss not found in world"));
+		return;
+	}
+
+	// EnterBossPhase2 는 내부에서 HasAuthority + bInPhase2 가드. 이미 2페이즈면 no-op.
+	UE_LOG(LogTemp, Warning, TEXT("[BossPhase2Cheat] EnterBossPhase2 on %s"), *Boss->GetName());
+	Boss->EnterBossPhase2();
+}
+
+// =========================================================================================
 // [Summon Cinematic] 보스 소환 시네마틱 — 로컬 PC 진입/종료
 // =========================================================================================
 

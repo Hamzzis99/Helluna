@@ -311,6 +311,15 @@ EStateTreeRunStatus FSTTask_ChaseTarget::EnterState(
 	APawn* Pawn = AIC->GetPawn();
 	if (!Pawn) return EStateTreeRunStatus::Failed;
 
+	// [ChaseUnlockV1] 추격 진입 시 이동 잠금 해제 보장. 공격(LockMovementAndFaceTarget → MaxWalkSpeed=0)
+	//   상태에서 추격으로 전환될 때 unlock 레이스로 MaxWalkSpeed=0 이 남으면, 몹이 거의 못 움직이면서
+	//   AnimBP Speed=0(=blend space idle pose) 인 채 슬라이드하듯 다가오는 간헐 버그가 생긴다.
+	//   UnlockMovement 은 bMovementLocked 일 때만 동작(아니면 no-op)이라 안전.
+	if (AHellunaEnemyCharacter* ChaseEnemy = Cast<AHellunaEnemyCharacter>(Pawn))
+	{
+		ChaseEnemy->UnlockMovement();
+	}
+
 	const FHellunaAITargetData& TD = Data.TargetData;
 	if (!TD.HasValidTarget())
 	{
@@ -803,6 +812,18 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickPlayerChase(
 
 	if (bTargetChanged || bRepathDue || bIdle)
 	{
+		// [ChasePlayerKeepSpeedV1] 플레이어 추격 MoveTo 재발급 시 Velocity 보존.
+		//   기존엔 ship/turret 과 달리 plain MoveToActor 라서, MoveTo 가 내부적으로 StopMovementImmediately
+		//   를 호출해 1~2프레임 Velocity=0 → AnimBP Speed 0 → Idle 포즈가 끼어 "뚝뚝 끊기는" 이동이 됨.
+		//   ship/turret 의 IssueMoveToLocationKeepSpeed 와 동일하게 저장/복원 → 추격 모션 연속성 보장.
+		UCharacterMovementComponent* ChaseCMC = nullptr;
+		FVector SavedVel = FVector::ZeroVector;
+		if (ACharacter* Ch = Cast<ACharacter>(Pawn))
+		{
+			ChaseCMC = Ch->GetCharacterMovement();
+			if (ChaseCMC) SavedVel = ChaseCMC->Velocity;
+		}
+
 		if (AttackPositionQuery && Data.TimeUntilNextEQS <= 0.f)
 		{
 			ChaseHelpers::RunAttackPositionEQS(AttackPositionQuery, AIC, AcceptanceRadius, Target);
@@ -811,6 +832,13 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickPlayerChase(
 		else
 		{
 			AIC->MoveToActor(Target, AcceptanceRadius, true, true, false, nullptr, true);
+		}
+
+		// MoveTo 가 Velocity 를 0 으로 reset 했을 수 있으므로 기존 속도로 1프레임 복원
+		//   (PathFollowing 이 다음 Tick 에 새 방향으로 Velocity 재설정).
+		if (ChaseCMC && !SavedVel.IsNearlyZero())
+		{
+			ChaseCMC->Velocity = SavedVel;
 		}
 
 		Data.LastMoveTarget = Data.TargetData.TargetActor;

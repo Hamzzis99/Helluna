@@ -16,6 +16,7 @@
 #include "GameFramework/Pawn.h"
 #include "AI/SpaceShipAttackSlotManager.h"
 #include "Components/PrimitiveComponent.h"
+#include "AI/HellunaAIAttackZone.h" // [SurfaceDistanceV1] 공용 표면거리 헬퍼
 
 // ============================================================================
 // TreeStart — 우주선을 첫 틱 전에 탐색해서 캐싱
@@ -149,57 +150,8 @@ void FSTEvaluator_SpaceShip::Tick(FStateTreeExecutionContext& Context, const flo
 	const FVector PawnLocation = ControlledPawn->GetActorLocation();
 	AActor* ShipActor = SpaceShipData.TargetActor.Get();
 
-	float ComputedDist = -1.f;
-
-	// 1순위: 루트 DynamicMeshComponent 표면 거리
-	// ComplexAsSimple + QueryAndPhysics 설정이므로 메시 표면 형상 반영
-	if (UPrimitiveComponent* RootPrim = Cast<UPrimitiveComponent>(ShipActor->GetRootComponent()))
-	{
-		if (RootPrim->GetCollisionEnabled() != ECollisionEnabled::NoCollision)
-		{
-			FVector ClosestPoint;
-			ComputedDist = RootPrim->GetClosestPointOnCollision(PawnLocation, ClosestPoint);
-		}
-	}
-
-	// 2순위: ShipCombatCollision 태그 컴포넌트 (레거시 호환)
-	// #9 최적화: TreeStart에서 캐싱한 컴포넌트 배열 사용
-	if (ComputedDist < 0.f && InstanceData.bShipCollisionPrimsCached)
-	{
-		static uint64 LastLogFrame_9 = 0;
-		static int32 CacheUsedCount_9 = 0;
-		CacheUsedCount_9++;
-		if (GFrameCounter - LastLogFrame_9 >= 300)
-		{
-			LastLogFrame_9 = GFrameCounter;
-			UE_LOG(LogTemp, Log,
-				TEXT("[fast][#9 GetComponents캐싱] 캐시 사용 중 — CachedPrims=%d개, 캐시히트 누적=%d회 (매 틱 GetComponents 호출 제거됨)"),
-				InstanceData.CachedShipCollisionPrims.Num(), CacheUsedCount_9);
-		}
-
-		float MinDist = MAX_FLT;
-		bool bFound = false;
-
-		for (const TWeakObjectPtr<UPrimitiveComponent>& WeakPrim : InstanceData.CachedShipCollisionPrims)
-		{
-			UPrimitiveComponent* Prim = WeakPrim.Get();
-			if (!Prim) continue;
-
-			FVector Closest;
-			const float D = Prim->GetClosestPointOnCollision(PawnLocation, Closest);
-			if (D >= 0.f && D < MinDist)
-			{
-				MinDist = D;
-				bFound = true;
-			}
-		}
-
-		if (bFound)
-			ComputedDist = MinDist;
-	}
-
-	// 3순위: 중심점 거리 폴백
-	SpaceShipData.DistanceToTarget = (ComputedDist >= 0.f)
-		? ComputedDist
-		: FVector::Dist(PawnLocation, ShipActor->GetActorLocation());
+	// [SurfaceDistanceV1] 우주선 표면까지 거리. 공용 헬퍼가 복합 콜리전(메시) 일 때 OBB 폴백을
+	//   적용한다. 기존 GetClosestPointOnCollision 단독 방식은 우주선 메시에서 -1 을 반환해
+	//   매번 원점 거리로 폴백되던 버그가 있었다(2026-06-11 확인).
+	SpaceShipData.DistanceToTarget = HellunaAI::GetTargetSurfaceDistance(PawnLocation, ShipActor);
 }

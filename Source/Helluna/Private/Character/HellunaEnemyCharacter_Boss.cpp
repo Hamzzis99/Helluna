@@ -452,11 +452,17 @@ void AHellunaEnemyCharacter_Boss::Multicast_PlayBossPhase2Transition_Implementat
 					int32 DeactivatedNCs = 0;
 					for (UNiagaraComponent* NC : AllNCs)
 					{
-						if (NC && NC->ComponentTags.Contains(FName(TEXT("Phase2Descent"))) && NC->IsActive())
-						{
-							NC->Deactivate();
-							++DeactivatedNCs;
-						}
+						if (!NC || !NC->IsActive()) continue;
+						// [Phase2LaserSplitV1] 회오리(Phase2Descent) + 레이저(Phase2Laser) 둘 다 정리.
+						const bool bIsDescentOrLaser =
+							NC->ComponentTags.Contains(FName(TEXT("Phase2Descent"))) ||
+							NC->ComponentTags.Contains(FName(TEXT("Phase2Laser")));
+						if (!bIsDescentOrLaser) continue;
+						// [Phase2LaserLeftoverFixV1] Deactivate() 는 신규 spawn 만 멈춰 기존 파티클을 남긴다.
+						//   시네마틱은 여기서 완전히 종료되므로 DeactivateImmediate 로 기존 파티클(레이저·회오리)까지
+						//   즉시 제거 — 카메라 블렌드 아웃과 함께 깔끔히 사라짐.
+						NC->DeactivateImmediate();
+						++DeactivatedNCs;
 					}
 
 					bool bMontageStopped = false;
@@ -475,7 +481,7 @@ void AHellunaEnemyCharacter_Boss::Multicast_PlayBossPhase2Transition_Implementat
 						}
 					}
 					UE_LOG(LogTemp, Warning,
-						TEXT("[Phase2CinematicEndCleanupV1] DeactivatedNCs=%d MontageStopped=%d"),
+						TEXT("[Phase2LaserLeftoverFixV1] DeactivateImmediate NCs=%d MontageStopped=%d (잔존 레이저 즉시 제거)"),
 						DeactivatedNCs, bMontageStopped ? 1 : 0);
 				}
 				if (AHellunaHeroController* PCLocal = WeakPC.Get())
@@ -1609,9 +1615,9 @@ void AHellunaEnemyCharacter_Boss::Tick(float DeltaTime)
 		}
 	}
 
-	// [Phase2DescentNCV1] 페이즈2 전엔 'Phase2Descent' Tag 가진 NiagaraComponent 비활성.
+	// [Phase2DescentNCV1] 페이즈2 전엔 'Phase2Descent'(회오리) / 'Phase2Laser'(레이저) Tag NiagaraComponent 비활성.
 	//   보스 BP 컴포넌트 이름이 한글이라 GetName 매칭 회피 — ComponentTag 로 안전 식별.
-	//   BP viewport 에서 transform 직접 조정 + auto_activate=false 로 시작 시 꺼짐.
+	//   [Phase2LaserSplitV1] 레이저는 별도 컴포넌트('Phase2Laser')로 분리 → 둘 다 비활성.
 	if (!bInPhase2)
 	{
 		TArray<UNiagaraComponent*> NCs;
@@ -1619,7 +1625,10 @@ void AHellunaEnemyCharacter_Boss::Tick(float DeltaTime)
 		for (UNiagaraComponent* NC : NCs)
 		{
 			if (!NC) continue;
-			if (!NC->ComponentTags.Contains(FName(TEXT("Phase2Descent")))) continue;
+			const bool bIsDescentOrLaser =
+				NC->ComponentTags.Contains(FName(TEXT("Phase2Descent"))) ||
+				NC->ComponentTags.Contains(FName(TEXT("Phase2Laser")));
+			if (!bIsDescentOrLaser) continue;
 			if (NC->IsActive())
 			{
 				NC->Deactivate();
@@ -1833,7 +1842,9 @@ void AHellunaEnemyCharacter_Boss::Phase2_PlayStage3Visuals(bool bImmediate)
 	// [Phase2EnrageDelayV1] 갑옷 벗김 + 피부(광폭화) 변화 + 오라는 레이저 강하보다 늦게 — 별도 지연 타이머.
 	//   레이저(강하 VFX)는 이 함수 호출(Phase2StunDuration) 직후 바로 시작하지만,
 	//   광폭화 외형 변화(StartBerserkVisuals + Phase2_BreakArmor + 오라)는 Phase2ArmorSkinDelay 초 뒤에 적용.
-	//   → Phase2StunDuration 을 줄여 레이저만 빨리 내려오게 해도 갑옷/피부 타이밍은 늦게 유지된다.
+	//   [주의/CompV1] 이 딜레이(ArmorSkin/Shake/HealthFill)는 모두 stage3 시작(=Phase2StunDuration) 기준
+	//   상대값이라, Phase2StunDuration 을 줄이면 갑옷/피부/쉐이크/체력 타이밍도 같이 당겨진다.
+	//   "레이저만" 당기려면 줄인 만큼 각 딜레이를 늘려 절대 타이밍을 보정해야 한다(현재 CDO 가 그렇게 설정됨).
 	{
 		TWeakObjectPtr<AHellunaEnemyCharacter_Boss> WeakEnrage(this);
 		FTimerHandle EnrageVisualTimer;
@@ -1915,6 +1926,36 @@ void AHellunaEnemyCharacter_Boss::Phase2_PlayStage3Visuals(bool bImmediate)
 			TEXT("[Phase2DescentNCV1] Activated %d, scaling %.2f→%.2f over %.1fs (Immediate=%d)"),
 			ActivatedCount, Phase2DescentScaleStartMult, Phase2DescentScaleEndMult, Phase2DescentScaleDuration, bImmediate ? 1 : 0);
 
+		// [Phase2LaserSplitV1] 레이저 전용 컴포넌트('Phase2Laser') 셋업 — 회오리와 분리되어
+		//   strike 종료 시 DeactivateImmediate 로 잔존(기존 빔)까지 즉시 제거 가능(=회오리 팝 없음).
+		//   이 컴포넌트는 회오리 이미터(Empty001~006)를 끄고 레이저('Empty')만 쓴다. 레이저는 딜레이 후 ON.
+		int32 LaserActivatedCount = 0;
+		{
+			static const FName TornadoEmitters[] = {
+				FName(TEXT("Empty001")), FName(TEXT("Empty002")), FName(TEXT("Empty003")),
+				FName(TEXT("Empty004")), FName(TEXT("Empty005")), FName(TEXT("Empty006")) };
+			for (UNiagaraComponent* NC : NCs)
+			{
+				if (!NC) continue;
+				if (!NC->ComponentTags.Contains(FName(TEXT("Phase2Laser")))) continue;
+				NC->Activate(true);
+				// 회오리 이미터는 끄고 레이저만 — 레이저도 딜레이 후 ON 이므로 'Empty' 일단 off.
+				for (const FName& Em : TornadoEmitters)
+				{
+					NC->SetEmitterEnable(Em, false);
+				}
+				NC->SetEmitterEnable(FName(TEXT("Empty")), false);
+				// [Phase2LaserSpeedV1] 레이저 전용 낙하 속도 — 회오리(Phase2DescentTimeDilation=0.4 슬로우)와
+				//   독립. 분리된 컴포넌트라 회오리 가속버그 무관. 레이저 빔이 하늘에서 빨리 내려오도록
+				//   회오리보다 빠른 시뮬 속도 사용("레이저가 천천히 떨어진다" 해결). 값은 룩 튜닝값.
+				const float LaserTimeDilation = 0.8f; // 레이저 낙하 속도 (사용자 튜닝값)
+				NC->SetCustomTimeDilation(FMath::Clamp(LaserTimeDilation, 0.1f, 10.f));
+				++LaserActivatedCount;
+			}
+			UE_LOG(LogTemp, Warning,
+				TEXT("[Phase2LaserSplitV1] 레이저 컴포넌트 셋업 %d (회오리 이미터 off, 레이저 딜레이 대기)"), LaserActivatedCount);
+		}
+
 		// [Phase2SkipInstantVFXV1] 스킵 — 강하 연출(성장+레이저 강하)을 생략하고 즉시 최종(aftermath) 상태로:
 		//   회오리는 위에서 이미 풀스케일, 레이저는 켜지 않고 바로 off 확정. (레이저 on/lifetime 타이머 skip)
 		if (bImmediate)
@@ -1923,9 +1964,10 @@ void AHellunaEnemyCharacter_Boss::Phase2_PlayStage3Visuals(bool bImmediate)
 			UE_LOG(LogTemp, Warning, TEXT("[Phase2SkipInstantVFXV1] 스킵 — 강하 VFX 즉시 최종상태(풀스케일 + 레이저 off)"));
 		}
 
-		// [Phase2LaserDelayV1] 회오리는 위에서 바로 등장 — 레이저 이미터('Empty')만
-		//   LaserEmitterDelay 초 뒤에 따로 켜서 레이저가 회오리보다 늦게 나오게 한다.
-		if (!bImmediate && ActivatedCount > 0)
+		// [Phase2LaserDelayV1] 회오리(Phase2Descent)는 위에서 바로 등장 — 레이저 전용 컴포넌트
+		//   (Phase2Laser)의 레이저 이미터('Empty')만 LaserEmitterDelay 초 뒤에 켠다.
+		//   [Phase2LaserSplitV1] 대상이 회오리 컴포넌트가 아니라 레이저 컴포넌트로 변경됨.
+		if (!bImmediate && LaserActivatedCount > 0)
 		{
 			TWeakObjectPtr<AHellunaEnemyCharacter_Boss> WeakLaser(this);
 			FTimerHandle LaserOnTimer;
@@ -1939,14 +1981,14 @@ void AHellunaEnemyCharacter_Boss::Phase2_PlayStage3Visuals(bool bImmediate)
 					int32 LaserOnCount = 0;
 					for (UNiagaraComponent* LNC : LNCs)
 					{
-						if (LNC && LNC->ComponentTags.Contains(FName(TEXT("Phase2Descent"))))
+						if (LNC && LNC->ComponentTags.Contains(FName(TEXT("Phase2Laser"))))
 						{
 							LNC->SetEmitterEnable(FName(TEXT("Empty")), true);
 							++LaserOnCount;
 						}
 					}
 					UE_LOG(LogTemp, Warning,
-						TEXT("[Phase2LaserDelayV1] 레이저 이미터 ON — 회오리 후 지연 (%d component)"), LaserOnCount);
+						TEXT("[Phase2LaserDelayV1] 레이저 컴포넌트 ON — 회오리 후 지연 (%d component)"), LaserOnCount);
 				}),
 				Phase2LaserEmitterDelay, false);
 		}
@@ -2031,17 +2073,13 @@ void AHellunaEnemyCharacter_Boss::Phase2_PlayStage3Visuals(bool bImmediate)
 	}
 }
 
-// [Phase2DescentAftermathV2] 시네마틱 종료 시 강하 VFX 처리 — 에셋 swap 대신 레이저 이미터만 비활성.
-//   기존 V1 은 NS_Loop_SkyOpen_NoLaser 로 SetAsset → 시스템 전체 재초기화 → 회오리가 한 번
-//   사라졌다 다시 스폰되는 "팝"이 발생했다.
-//   V2 는 같은 컴포넌트를 그대로 유지하고 SetEmitterEnable 로 레이저 이미터('Empty')만 끈다.
-//   → 회오리(나머지 이미터)는 끊김 없이 루프, 레이저만 사라짐.
-//   ('NS_Loop_SkyOpen' 7개 이미터 중 'Empty' 가 레이저 — NoLaser 변형이 바로 이 이미터만 disable 한 것)
+// [Phase2LaserSplitV1] strike(레이저 강하) 종료 시 — 레이저 전용 컴포넌트('Phase2Laser')를
+//   DeactivateImmediate 로 즉시 정리. 레이저가 별도 컴포넌트라 회오리(Phase2Descent)와 완전히
+//   분리되어, 컴포넌트 전체 reset 으로 기존 레이저 빔까지 잔존 없이 즉시 사라지고 회오리는 무영향.
+//   (구버전: 같은 컴포넌트에서 SetEmitterEnable(false)+Laser_Scale=0 → spawn-only 라 기존 빔이
+//    수명대로 ~3초 남던 문제를 컴포넌트 분리로 해결.)
 void AHellunaEnemyCharacter_Boss::SwapDescentVFXToAftermath()
 {
-	// NS_Loop_SkyOpen 에서 레이저를 담당하는 이미터 이름.
-	static const FName LaserEmitterName(TEXT("Empty"));
-
 	TArray<UNiagaraComponent*> NCs;
 	GetComponents<UNiagaraComponent>(NCs);
 
@@ -2049,13 +2087,10 @@ void AHellunaEnemyCharacter_Boss::SwapDescentVFXToAftermath()
 	for (UNiagaraComponent* NC : NCs)
 	{
 		if (!NC) continue;
-		if (!NC->ComponentTags.Contains(FName(TEXT("Phase2Descent")))) continue;
+		if (!NC->ComponentTags.Contains(FName(TEXT("Phase2Laser")))) continue;
 
-		// 레이저 이미터만 끔 — 회오리 이미터는 그대로 → 재초기화/팝 없음.
-		NC->SetEmitterEnable(LaserEmitterName, false);
-		// [Phase2DescentAftermathV3] 시뮬 속도(CustomTimeDilation)는 건드리지 않는다.
-		//   1.0 으로 되돌리면 회오리가 0.4배→1.0배로 갑자기 2.5배 빨라지는 버그 발생.
-		//   강하 때 느린 속도 그대로 유지 → 회오리가 끊김·가속 없이 자연스럽게 루프.
+		// 레이저 컴포넌트만 즉시 종료 — 기존 빔 파티클까지 한 번에 제거. 회오리 컴포넌트는 그대로 루프.
+		NC->DeactivateImmediate();
 		++Count;
 	}
 
@@ -2063,8 +2098,8 @@ void AHellunaEnemyCharacter_Boss::SwapDescentVFXToAftermath()
 	bPhase2DescentScaling = false;
 
 	UE_LOG(LogTemp, Warning,
-		TEXT("[Phase2DescentAftermathV2] 레이저 이미터('%s') 비활성 — 회오리 유지, %d component(s)"),
-		*LaserEmitterName.ToString(), Count);
+		TEXT("[Phase2LaserSplitV1] 레이저 컴포넌트 DeactivateImmediate (잔존 빔 즉시 제거) — 회오리 유지, %d component(s)"),
+		Count);
 }
 
 // [Phase2ShakeCleanupV2] 페이즈2 쉐이크 정리 — RepeatTimer + 진행 중 instance fade out.

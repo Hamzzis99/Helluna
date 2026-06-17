@@ -18,6 +18,23 @@ bool FSTCondition_InAttackZone::TestCondition(FStateTreeExecutionContext& Contex
 		return !bCheckInside;
 	}
 
+	// [AttackGraceAfterSwitchV1] 플레이어로 타겟 전환 직후 잠깐은 공격존 미충족 취급 → 즉시 "그 자리에서
+	//   한 대 때리는" 버그 방지하고 추격(Run) 먼저. PlayerTargetingTime 은 TargetSelector 가 전환 시 0 으로
+	//   리셋 후 매 틱 누적하므로, 전환 후 경과시간으로 사용. (bCheckInside=True 인 공격 진입 조건에만 적용.)
+	if (TargetData.TargetType == EHellunaTargetType::Player)
+	{
+		static constexpr float PlayerAttackGraceAfterSwitch = 0.5f;
+		if (TargetData.PlayerTargetingTime < PlayerAttackGraceAfterSwitch)
+		{
+			// 전환 직후 grace: 플레이어를 "공격존 밖" 으로 취급.
+			//   - 공격 진입 조건(bCheckInside=true) → false 반환: 새 공격 안 들어감.
+			//   - 공격 이탈 조건(bCheckInside=false) → true 반환: 이미 Attack 상태였으면 즉시 이탈 → Run(추격).
+			//   → "전환되자마자 그 자리에서 플레이어를 한 대 때리는" 버그 제거. (이미 Attack 상태라
+			//      진입조건 재평가가 아니라 '이탈조건'이 관건이라 !bCheckInside 가 핵심.)
+			return !bCheckInside;
+		}
+	}
+
 	AActor* TargetActor = TargetData.TargetActor.Get();
 	if (!TargetActor)
 	{
