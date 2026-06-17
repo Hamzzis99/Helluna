@@ -53,6 +53,17 @@ struct FSTTask_AttackTargetInstanceData
 	float CooldownRemaining = 0.f;
 
 	/**
+	 * [AttackTargetCommitV1] 공격 스윙 동안 고정(commit)하는 타겟.
+	 *   Attack State 진입 시 TargetData.TargetActor 로 1회 캡처하고, 이후 회전·GA 공격은
+	 *   이 commit 타겟으로만 수행한다(라이브 TargetData 가 매 틱 바뀌어도 무시).
+	 *   목적: 공격 도중 평가자가 타겟을 player 로 바꿔도 "그 자리에서 player 를 휙 보고 1회 공격"
+	 *   하는 snap 제거. 실제 타겟 전환은 라이브 TargetData 가 구동하는 StateTree 전이(타겟이
+	 *   공격존을 벗어나면 Attack→Chase)가 깔끔히 처리한다. = "매 틱 재타겟 안 함, 스윙은 commit 유지".
+	 */
+	UPROPERTY()
+	TWeakObjectPtr<AActor> CommittedTarget = nullptr;
+
+	/**
 	 * [StaticTargetNoReRotV1] 움직이지 않는 타겟(ResourceUsingObject)에 첫 공격을 한 뒤엔
 	 * true. 이후엔 쿨다운 중 RInterpTo 회전 + GA 발동 직전 SnapFaceTarget 을 스킵.
 	 */
