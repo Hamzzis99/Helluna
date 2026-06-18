@@ -258,6 +258,16 @@ public:
 	/** 추격 진입/이탈 시 호출(서버). bForceRunAnim 토글(값 변경 시에만 복제). */
 	void SetForceRunAnim(bool bEnable);
 
+	/**
+	 * [PlayerOnlyHunterV1] true 면 이 몬스터는 우주선/터렛을 절대 타겟하지 않고,
+	 *   거리 무관 가장 가까운 플레이어만 추격한다(전용 헌터). 광폭화도 적용 안 함.
+	 *   false(기본) = 일반 동작(우주선 기본 타겟 + 어그로 범위 내 플레이어 전환).
+	 *   STEvaluator_TargetSelector 가 이 플래그를 읽어 분기(근접·원거리 공용 평가자).
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|TargetBehavior",
+		meta = (DisplayName = "플레이어 전용 추격(우주선 무시)"))
+	bool bPlayerOnlyTarget = false;
+
 	// =========================================================
 	// 보스 전용 hooks — 일반 몬스터에서는 no-op, AHellunaEnemyCharacter_Boss 가 override.
 	//   OnMonsterHealthChanged 가 EnemyGrade==Boss/SemiBoss 분기에서 호출.

@@ -33,6 +33,7 @@
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemInterface.h"
+#include "Character/HellunaEnemyCharacter.h" // [PlayerOnlyHunterV1] bPlayerOnlyTarget 읽기
 
 // ============================================================================
 // 헬퍼: 우주선 캐시 가져오기
@@ -96,6 +97,18 @@ void FSTEvaluator_TargetSelector::TreeStart(FStateTreeExecutionContext& Context)
 	TargetData.PlayerTargetingTime = 0.f;
 	TargetData.DistanceToTarget    = 0.f;
 
+	// [PlayerOnlyHunterV1] 플레이어 전용 몹은 우주선 기본 타겟을 잡지 않는다(Tick 이 최근접 플레이어 설정).
+	if (const AAIController* AIC = InstanceData.AIController)
+	{
+		if (const AHellunaEnemyCharacter* EC = Cast<AHellunaEnemyCharacter>(AIC->GetPawn()))
+		{
+			if (EC->bPlayerOnlyTarget)
+			{
+				return;
+			}
+		}
+	}
+
 	const UWorld* World = Context.GetWorld();
 	AActor* Ship = GetCachedSpaceShip(World);
 	if (Ship)
@@ -123,6 +136,49 @@ void FSTEvaluator_TargetSelector::Tick(FStateTreeExecutionContext& Context, cons
 	if (!World) return;
 
 	const FVector PawnLocation = ControlledPawn->GetActorLocation();
+
+	// [PlayerOnlyHunterV1] 플레이어 전용 헌터: 거리 무관 최근접 플레이어만 추격. 우주선/터렛/광폭화 전부 무시.
+	if (const AHellunaEnemyCharacter* HunterChar = Cast<AHellunaEnemyCharacter>(ControlledPawn))
+	{
+		if (HunterChar->bPlayerOnlyTarget)
+		{
+			AActor* NearestPlayer = nullptr;
+			float NearestDistSq = MAX_FLT;
+			for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+			{
+				APlayerController* PC = It->Get();
+				if (!PC) continue;
+				APawn* PlayerPawn = PC->GetPawn();
+				if (!PlayerPawn) continue;
+				const float DistSq = FVector::DistSquared(PawnLocation, PlayerPawn->GetActorLocation());
+				if (DistSq < NearestDistSq)
+				{
+					NearestDistSq = DistSq;
+					NearestPlayer = PlayerPawn;
+				}
+			}
+
+			TargetData.bAttackingSpaceShip = false;
+			TargetData.bEnraged            = false;
+			TargetData.bPlayerLocked       = false;
+
+			if (NearestPlayer)
+			{
+				TargetData.TargetActor      = NearestPlayer;
+				TargetData.TargetType       = EHellunaTargetType::Player;
+				TargetData.bTargetingPlayer = true;
+				TargetData.DistanceToTarget = FMath::Sqrt(NearestDistSq);
+				const_cast<AAIController*>(AIController)->SetFocus(NearestPlayer);
+			}
+			else
+			{
+				TargetData.TargetActor      = nullptr;
+				TargetData.bTargetingPlayer = false;
+				const_cast<AAIController*>(AIController)->ClearFocus(EAIFocusPriority::Gameplay);
+			}
+			return;
+		}
+	}
 
 	// [AggroRangeTestV1] 임시 테스트 override — 추격(어그로) 거리·포기시간 하한 강제.
 	//   StateTree 의 AggroRange(800)/EnrageDelay(3) 가 너무 작아 "공격범위 근처에서만 전환"되는 문제 →
