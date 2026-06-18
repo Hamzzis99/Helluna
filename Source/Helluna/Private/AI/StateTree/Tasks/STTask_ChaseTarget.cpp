@@ -318,6 +318,10 @@ EStateTreeRunStatus FSTTask_ChaseTarget::EnterState(
 	if (AHellunaEnemyCharacter* ChaseEnemy = Cast<AHellunaEnemyCharacter>(Pawn))
 	{
 		ChaseEnemy->UnlockMovement();
+
+		// [ForceRunAnimV1] 추격 동안 달리기 애니 강제. 우주선 근처 경로 재탐색으로 실제 속도가
+		//   0 으로 떨어져도 AnimBP 가 idle 대신 달리기를 재생(블렌드스페이스 우회). ExitState 에서 해제.
+		ChaseEnemy->SetForceRunAnim(true);
 	}
 
 	const FHellunaAITargetData& TD = Data.TargetData;
@@ -1067,5 +1071,16 @@ void FSTTask_ChaseTarget::ExitState(
 {
 	FInstanceDataType& Data = Context.GetInstanceData(*this);
 	if (AAIController* AIC = Data.AIController)
+	{
 		AIC->StopMovement();
+
+		// [ForceRunAnimV1] 추격 종료(공격 전이/타겟 상실 등) 시 달리기 애니 강제 해제.
+		if (APawn* Pawn = AIC->GetPawn())
+		{
+			if (AHellunaEnemyCharacter* ChaseEnemy = Cast<AHellunaEnemyCharacter>(Pawn))
+			{
+				ChaseEnemy->SetForceRunAnim(false);
+			}
+		}
+	}
 }

@@ -129,6 +129,10 @@ EStateTreeRunStatus FSTTask_AttackTarget::EnterState(
 	if (!InstanceData.AIController)
 		return EStateTreeRunStatus::Failed;
 
+	// [AttackTargetCommitV1] 이 Attack State 동안 고정할 타겟을 1회 캡처. 이후 Tick 의 회전·GA 공격은
+	//   이 commit 타겟만 본다(라이브 TargetData 변경 무시) → 스윙 중 타겟 snap 제거.
+	InstanceData.CommittedTarget = InstanceData.TargetData.TargetActor;
+
 	// Attack State 진입: 이동 정지 + 타겟 방향 회전 모드 전환
 	InstanceData.AIController->StopMovement();
 
@@ -239,6 +243,14 @@ EStateTreeRunStatus FSTTask_AttackTarget::Tick(
 		: TSubclassOf<UHellunaEnemyGameplayAbility>(UHellunaEnemyGameplayAbility::StaticClass());
 
 	const FHellunaAITargetData& TargetData = InstanceData.TargetData;
+
+	// [AttackTargetCommitV1] 이 스윙에서 회전·공격할 대상 = commit 타겟. commit 이 소멸했으면
+	//   라이브 타겟으로 폴백(우주선 파괴 등). 라이브 TargetData 는 StateTree 전이(공격존 이탈 →
+	//   Attack→Chase)만 구동하고, 여기서는 절대 매 틱 라이브로 갈아끼우지 않는다.
+	AActor* AttackOn = InstanceData.CommittedTarget.IsValid()
+		? InstanceData.CommittedTarget.Get()
+		: TargetData.TargetActor.Get();
+
 	// ① 몽타주가 실제로 재생 중일 때만 회전 스킵 — 이전엔 Spec.IsActive()로
 	// AttackRecoveryDelay까지 묶어서 스킵했으나 그 시간 동안 액터가 정지 상태로
 	// 누적돼 다음 공격 SetActorRotation 스냅으로 큰 각도 점프 → 20~30fps처럼 끊김.
@@ -275,17 +287,18 @@ EStateTreeRunStatus FSTTask_AttackTarget::Tick(
 		InstanceData.CooldownRemaining -= DeltaTime;
 
 		// [StaticTargetNoReRotV1] 움직이지 않는 타겟에 첫 발동 완료 후엔 회전 불필요.
-		if (!InstanceData.bLockedRotationForStaticTarget && TargetData.HasValidTarget())
+		// [AttackTargetCommitV1] 라이브 TargetData 대신 commit 타겟(AttackOn)을 바라본다.
+		if (!InstanceData.bLockedRotationForStaticTarget && AttackOn)
 		{
-			HellunaAttackTarget::FaceCurrentTarget(AIController, Pawn, TargetData.TargetActor.Get(), DeltaTime, RotationSpeed);
+			HellunaAttackTarget::FaceCurrentTarget(AIController, Pawn, AttackOn, DeltaTime, RotationSpeed);
 		}
 
 		return EStateTreeRunStatus::Running;
 	}
 
-	if (!InstanceData.bLockedRotationForStaticTarget && TargetData.HasValidTarget())
+	if (!InstanceData.bLockedRotationForStaticTarget && AttackOn)
 	{
-		HellunaAttackTarget::FaceCurrentTarget(AIController, Pawn, TargetData.TargetActor.Get(), DeltaTime, RotationSpeed);
+		HellunaAttackTarget::FaceCurrentTarget(AIController, Pawn, AttackOn, DeltaTime, RotationSpeed);
 	}
 
 	// GA가 Recovery Delay 단계로 아직 active면 다음 GA 발동 금지 (중복 활성화 방지).
@@ -317,7 +330,9 @@ EStateTreeRunStatus FSTTask_AttackTarget::Tick(
 	// InstancedPerActor GA는 CDO(Spec.Ability)와 별개로 Instance가 존재하므로
 	// Instance에도 반드시 설정해야 함. CDO만 설정하면 두 번째 활성화부터 stale 값(null)을
 	// 읽어 ResolveAttackTarget 폴백이 Spaceship을 반환하는 버그 발생.
-	AActor* ChosenTarget = TargetData.TargetActor.Get();
+	// [AttackTargetCommitV1] GA 가 공격할 대상도 commit 타겟. 평가자가 라이브 TargetData 를
+	//   player 로 바꿔도 이 스윙의 GA 는 commit 대상(우주선 등)만 타격 → "player 1회 공격" 제거.
+	AActor* ChosenTarget = AttackOn;
 	for (FGameplayAbilitySpec& Spec : ASC->GetActivatableAbilities())
 	{
 		if (!Spec.Ability || Spec.Ability->GetClass() != GAClass) continue;

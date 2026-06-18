@@ -624,6 +624,12 @@ void AHellunaEnemyCharacter::Multicast_PlayHitReact_Implementation()
 	AnimInst->Montage_Play(HitReactMontage, HitReactPlayRate);
 }
 
+// [SpeedRestoreGuardV1] MaxWalkSpeed 보관/복원 레이스 방어용 최후 폴백 속도.
+//   피격 프리즈(MaxWalkSpeed=0)와 공격 락이 겹치면 SavedMaxWalkSpeed=0 을 캡처 →
+//   복원해도 0 → 영구 idle 슬라이드(정지모션으로 미끄러지는 몹). 보관/복원 어느 쪽도
+//   0 이 못 새어나가게 막고, 정보가 전혀 없을 때만 이 값(생성자 기본 300)으로 복원.
+static constexpr float GEnemyFallbackWalkSpeed = 300.f;
+
 // ============================================================
 // [HitReactFreezeV1] BeginHitReactFreeze / EndHitReactFreeze
 //   지상 피격 시 히트리액트 동안 이동을 잠깐 정지해 미끄러짐을 막고 스태거감을 준다.
@@ -672,7 +678,8 @@ void AHellunaEnemyCharacter::EndHitReactFreeze()
 
 	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
 	{
-		MoveComp->MaxWalkSpeed = HitReactSavedMaxWalkSpeed;
+		// [SpeedRestoreGuardV1] 프리즈 보관값이 0 이면 폴백으로 복원(0 누수 차단).
+		MoveComp->MaxWalkSpeed = (HitReactSavedMaxWalkSpeed > 0.f) ? HitReactSavedMaxWalkSpeed : GEnemyFallbackWalkSpeed;
 	}
 }
 
@@ -1980,7 +1987,22 @@ void AHellunaEnemyCharacter::LockMovementAndFaceTarget(AActor* TargetActor)
 	// 중복 호출 시 SavedMaxWalkSpeed 덮어쓰기 방지
 	if (!bMovementLocked)
 	{
-		SavedMaxWalkSpeed = MoveComp->MaxWalkSpeed;
+		// [SpeedRestoreGuardV1] 피격 프리즈가 MaxWalkSpeed 를 0 으로 잡고 있는 동안
+		//   공격 락이 겹치면 0 을 보관 → UnlockMovement 가 0 으로 복원해 몹이 영구 정지.
+		//   프리즈 중이면 프리즈가 보관한 "원래 속도"를 이어받고, 그래도 0 이면 폴백.
+		float CaptureSpeed = MoveComp->MaxWalkSpeed;
+		if (CaptureSpeed <= 0.f && bHitReactFreezing && HitReactSavedMaxWalkSpeed > 0.f)
+		{
+			CaptureSpeed = HitReactSavedMaxWalkSpeed;
+		}
+		if (CaptureSpeed <= 0.f)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[SpeedRestoreGuardV1][Lock] Enemy=%s MaxWalkSpeed=0 캡처 차단(Freeze=%d) → %.0f"),
+				*GetNameSafe(this), bHitReactFreezing ? 1 : 0, GEnemyFallbackWalkSpeed);
+			CaptureSpeed = GEnemyFallbackWalkSpeed;
+		}
+		SavedMaxWalkSpeed = CaptureSpeed;
 		bMovementLocked   = true;
 	}
 	MoveComp->MaxWalkSpeed = 0.f;
@@ -2039,7 +2061,18 @@ void AHellunaEnemyCharacter::UnlockMovement()
 	UCharacterMovementComponent* MoveComp = GetCharacterMovement();
 	if (!MoveComp) return;
 
-	MoveComp->MaxWalkSpeed = SavedMaxWalkSpeed;
+	// [SpeedRestoreGuardV1] 보관값이 0 이면(프리즈 x 락 레이스로 0 캡처) 복원해도 정지 →
+	//   영구 idle 슬라이드. 0 이면 프리즈 보관값 → 폴백 순으로 안전 복원하고 진단 로그.
+	float RestoreSpeed = SavedMaxWalkSpeed;
+	if (RestoreSpeed <= 0.f)
+	{
+		RestoreSpeed = (HitReactSavedMaxWalkSpeed > 0.f) ? HitReactSavedMaxWalkSpeed : GEnemyFallbackWalkSpeed;
+		UE_LOG(LogTemp, Warning,
+			TEXT("[SpeedRestoreGuardV1][Unlock] Enemy=%s SavedMaxWalkSpeed=0 → %.0f 복원 (Freeze x Lock 레이스 차단)"),
+			*GetNameSafe(this), RestoreSpeed);
+	}
+	MoveComp->MaxWalkSpeed = RestoreSpeed;
+	SavedMaxWalkSpeed      = RestoreSpeed; // 이후 Multicast/광폭화 계산이 0 을 물지 않도록 동기화
 	bMovementLocked        = false;
 
 	// 서버 회전 모드 복원: 이동 방향 회전 ON
@@ -2421,6 +2454,18 @@ void AHellunaEnemyCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty
 	DOREPLIFETIME(AHellunaEnemyCharacter, bEnraged);
 	// 팀 컬러 RGB 복제 — OnRep 으로 클라 측 DMI 파라미터 동기화.
 	DOREPLIFETIME(AHellunaEnemyCharacter, ReplicatedTeamColor);
+	// [ForceRunAnimV1] 추격 중 달리기 애니 강제 플래그 — 각 머신 AnimBP 가 읽음.
+	DOREPLIFETIME(AHellunaEnemyCharacter, bForceRunAnim);
+}
+
+// ============================================================
+// [ForceRunAnimV1] SetForceRunAnim — 추격 진입/이탈 시 서버에서 토글
+// ============================================================
+void AHellunaEnemyCharacter::SetForceRunAnim(bool bEnable)
+{
+	if (!HasAuthority()) return;
+	if (bForceRunAnim == bEnable) return; // 값 변경 시에만 복제 트래픽 발생
+	bForceRunAnim = bEnable;
 }
 
 // ============================================================

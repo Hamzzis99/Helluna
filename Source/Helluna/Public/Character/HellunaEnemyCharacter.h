@@ -237,6 +237,28 @@ public:
 	bool bEnraged = false;
 
 	// =========================================================
+	// [ForceRunAnimV1] 추격 중 "달리기 애니" 강제
+	//   우주선 근처에서 경로 재탐색이 반복되면 실제 속도가 0 으로 떨어져 블렌드스페이스가
+	//   idle 을 재생 → idle 포즈로 미끄러지듯 다가오는 현상. 추격(ChaseTarget) 동안 이 플래그를
+	//   true 로 세워 AnimBP 가 GroundSpeed 대신 ForceRunAnimSpeed 로 달리기를 재생하게 한다.
+	//   서버 → 클라 복제(각 머신 AnimBP 가 읽음). 속도 기반 BS 를 우회하므로 군집/벽에 막혀
+	//   실제로 못 가도 "달려드는" 비주얼 유지 + 몽타주 비용 0(블렌드스페이스 그대로).
+	// =========================================================
+
+	/** 추격 중이면 true — AnimBP 가 달리기 애니를 강제 (서버 → 클라 복제). */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Animation")
+	bool bForceRunAnim = false;
+
+	/** force-run 시 블렌드스페이스에 먹일 속도값. 적 기본 MaxWalkSpeed(300)와 맞춰 자연스러운
+	 *  달리기가 되게 함(과속 발미끄럼 방지). 에디터 CDO 조정용. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Animation",
+		meta = (DisplayName = "추격 강제 달리기 속도", ClampMin = "0.0"))
+	float ForceRunAnimSpeed = 300.f;
+
+	/** 추격 진입/이탈 시 호출(서버). bForceRunAnim 토글(값 변경 시에만 복제). */
+	void SetForceRunAnim(bool bEnable);
+
+	// =========================================================
 	// 보스 전용 hooks — 일반 몬스터에서는 no-op, AHellunaEnemyCharacter_Boss 가 override.
 	//   OnMonsterHealthChanged 가 EnemyGrade==Boss/SemiBoss 분기에서 호출.
 	//   가상 호출이지만 일반 몹은 default body 가 즉시 false/return → 비용 거의 0.
