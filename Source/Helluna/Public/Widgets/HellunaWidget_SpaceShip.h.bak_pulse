@@ -60,10 +60,5 @@ protected:
     // [ShipHP] Proportional fill from Health/MaxHealth, plus color band, texts and status.
     void RefreshShipHP(float Health, float MaxHealth, float Percent);
 
-    // [ShipHP] Critical blink driven in tick (UMG anim bindings cannot be authored via Python).
-    virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
     virtual void NativeDestruct() override;
-
-    bool bShipCritical = false;
-    float ShipPulseTime = 0.f;
 };

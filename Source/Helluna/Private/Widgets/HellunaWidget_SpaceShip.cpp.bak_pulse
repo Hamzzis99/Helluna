@@ -102,28 +102,16 @@ void UHellunaWidget_SpaceShip::RefreshShipHP(float Health, float MaxHealth, floa
         ShipDestroyedText->SetVisibility(bDestroyed ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
     }
 
-    if (bShipCritical != bCritical)
+    if (CriticalPulse)
     {
-        bShipCritical = bCritical;
-        ShipPulseTime = 0.f;
-        if (!bCritical && ShipHPBar)
+        if (bCritical && !IsAnimationPlaying(CriticalPulse))
         {
-            ShipHPBar->SetRenderOpacity(1.f);
+            PlayAnimation(CriticalPulse, 0.f, 0);
         }
-    }
-}
-
-void UHellunaWidget_SpaceShip::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
-{
-    Super::NativeTick(MyGeometry, InDeltaTime);
-
-    if (bShipCritical && ShipHPBar)
-    {
-        ShipPulseTime += InDeltaTime;
-        const float Period = 0.8f;
-        const float Phase = (ShipPulseTime / Period) * 2.f * PI;
-        const float T = 0.5f + 0.5f * FMath::Sin(Phase);
-        ShipHPBar->SetRenderOpacity(FMath::Lerp(0.3f, 1.0f, T));
+        else if (!bCritical && IsAnimationPlaying(CriticalPulse))
+        {
+            StopAnimation(CriticalPulse);
+        }
     }
 }
 
