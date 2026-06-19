@@ -70,28 +70,30 @@ void UHellunaLobbyLoginWidget::SwitchToLoginMode()
 {
 	bIsSignupMode = false;
 
-	// 비밀번호 확인 입력란 숨김
+	// 비밀번호 확인 입력란 + 라벨 숨김 (로그인 모드)
 	if (ConfirmPasswordInputTextBox)
 	{
 		ConfirmPasswordInputTextBox->SetVisibility(ESlateVisibility::Collapsed);
 	}
-
-	// 버튼 텍스트 변경
-	if (LoginButton)
+	if (Text_PWConfirmLabel)
 	{
-		// UButton 내부의 TextBlock은 BP에서 설정하므로, 여기서는 건드리지 않음
-		// BP에서 LoginButton 아래 Text를 바인딩하여 bIsSignupMode에 따라 변경 가능
-		// 대신 간단하게 MessageText로 안내
+		Text_PWConfirmLabel->SetVisibility(ESlateVisibility::Collapsed);
 	}
 
-	// 탭 강조: 로그인 탭 활성, 회원가입 탭 비활성
+	// 버튼 라벨 = LOGIN (_04 시안)
+	if (Text_LoginLabel)
+	{
+		Text_LoginLabel->SetText(FText::FromString(TEXT("LOGIN")));
+	}
+
+	// 링크 토글: 현재 로그인 모드 → 회원가입(SIGN IN) 링크만 노출
 	if (LoginTabButton)
 	{
-		LoginTabButton->SetIsEnabled(false); // 현재 탭 = 비활성 (선택됨 표시)
+		LoginTabButton->SetVisibility(ESlateVisibility::Collapsed);
 	}
 	if (SignupTabButton)
 	{
-		SignupTabButton->SetIsEnabled(true);
+		SignupTabButton->SetVisibility(ESlateVisibility::Visible);
 	}
 
 	// 메시지 초기화
@@ -107,21 +109,31 @@ void UHellunaLobbyLoginWidget::SwitchToSignupMode()
 {
 	bIsSignupMode = true;
 
-	// 비밀번호 확인 입력란 표시
+	// 비밀번호 확인 입력란 + 라벨 표시 (회원가입 모드)
 	if (ConfirmPasswordInputTextBox)
 	{
 		ConfirmPasswordInputTextBox->SetVisibility(ESlateVisibility::Visible);
 		ConfirmPasswordInputTextBox->SetText(FText::GetEmpty());
 	}
+	if (Text_PWConfirmLabel)
+	{
+		Text_PWConfirmLabel->SetVisibility(ESlateVisibility::Visible);
+	}
 
-	// 탭 강조: 회원가입 탭 활성, 로그인 탭 비활성
+	// 버튼 라벨 = SIGN IN (_05 시안)
+	if (Text_LoginLabel)
+	{
+		Text_LoginLabel->SetText(FText::FromString(TEXT("SIGN IN")));
+	}
+
+	// 링크 토글: 현재 회원가입 모드 → 로그인(LOGIN) 링크만 노출
 	if (LoginTabButton)
 	{
-		LoginTabButton->SetIsEnabled(true);
+		LoginTabButton->SetVisibility(ESlateVisibility::Visible);
 	}
 	if (SignupTabButton)
 	{
-		SignupTabButton->SetIsEnabled(false); // 현재 탭 = 비활성 (선택됨 표시)
+		SignupTabButton->SetVisibility(ESlateVisibility::Collapsed);
 	}
 
 	// 메시지 초기화
