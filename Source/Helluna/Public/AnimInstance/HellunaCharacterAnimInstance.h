@@ -76,6 +76,11 @@ protected:
 		meta = (DisplayName = "카테고리별 Locomotion 블렌드 스페이스"))
 	TMap<EWeaponAnimType, TObjectPtr<UBlendSpace>> LocomotionBlendSpaceMap;
 
+	/** 카테고리별 조준(견착) 포즈 (에디터에서 지정) — 라이플/권총=Pistol, 그 외 총기=Gun */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "AnimData|Weapon",
+		meta = (DisplayName = "카테고리별 조준 포즈"))
+	TMap<EWeaponAnimType, TObjectPtr<UAnimSequence>> AimPoseMap;
+
 	/** AnimBP에서 바로 사용할 현재 Idle 애니메이션 */
 	UPROPERTY(BlueprintReadOnly, Category = "AnimData|Weapon",
 		meta = (DisplayName = "현재 Idle 애니메이션"))
@@ -86,6 +91,16 @@ protected:
 		meta = (DisplayName = "현재 Locomotion 블렌드 스페이스"))
 	TObjectPtr<UBlendSpace> CurrentLocomotionBlendSpace;
 
+	/** AnimBP에서 바로 사용할 현재 조준 포즈 */
+	UPROPERTY(BlueprintReadOnly, Category = "AnimData|Weapon",
+		meta = (DisplayName = "현재 조준 포즈"))
+	TObjectPtr<UAnimSequence> CurrentAimPose;
+
+	/** [AimSpineYaw] 조준 시 상체(척추) yaw 회전값(도) — Transform(Modify)Bone 로 척추에 적용(다리 영향 0). */
+	UPROPERTY(BlueprintReadOnly, Category = "AnimData|Weapon",
+		meta = (DisplayName = "조준 상체 Yaw"))
+	float AimSpineYaw = 0.f;
+
 	/** AnimGraph(Worker Thread)에서 안전하게 Idle 애니메이션을 가져오는 함수 */
 	UFUNCTION(BlueprintPure, Category = "AnimData|Weapon",
 		meta = (BlueprintThreadSafe, DisplayName = "현재 Idle 애니메이션 가져오기"))
@@ -95,6 +110,11 @@ protected:
 	UFUNCTION(BlueprintPure, Category = "AnimData|Weapon",
 		meta = (BlueprintThreadSafe, DisplayName = "현재 블렌드 스페이스 가져오기"))
 	UBlendSpace* GetCurrentLocomotionBlendSpace() const { return CurrentLocomotionBlendSpace; }
+
+	/** AnimGraph(Worker Thread)에서 안전하게 조준 포즈를 가져오는 함수 */
+	UFUNCTION(BlueprintPure, Category = "AnimData|Weapon",
+		meta = (BlueprintThreadSafe, DisplayName = "현재 조준 포즈 가져오기"))
+	UAnimSequence* GetCurrentAimPose() const { return CurrentAimPose; }
 
 private:
 	/** GameplayTag → EWeaponAnimType 변환 (GameThread에서만 호출) */

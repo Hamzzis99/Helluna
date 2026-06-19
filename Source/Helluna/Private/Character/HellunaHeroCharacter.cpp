@@ -12,6 +12,8 @@
 #include "DataAsset/DataAsset_InputConfig.h"
 #include "Conponent/HellunaInputComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Animation/AnimMontage.h"
+#include "Animation/AnimInstance.h"
 #include "HellunaGameplayTags.h"
 #include "AbilitySystem/HellunaAbilitySystemComponent.h"
 #include "DataAsset/DataAsset_HeroStartUpData.h"
@@ -321,35 +323,43 @@ void AHellunaHeroCharacter::Tick(float DeltaTime)
 	Super::Tick(DeltaTime);
 	// 카메라 줌 보간은 이제 GA의 AT_AimCameraInterp AbilityTask에서 처리
 
-	// [AimMeshYawV1] 조준(Player.status.Aim) 시 메시를 살짝 yaw 틀어, 라이플 조준 포즈(MF_Rifle_Aiming)의
-	//   비스듬한 스탠스가 캐릭터 정면을 어긋나 보이게 하는 것을 보정. 모든 머신에서 Tick + 복제 태그라
-	//   멀티 일관(견착·스코프 둘 다). 메시 상대회전(yaw)만 — 캡슐 facing/조준 방향/이동엔 영향 없음(시각 전용).
-	if (USkeletalMeshComponent* AimMeshComp = GetMesh())
+	// [AimSpineYawV2] 조준 시 '상체(척추)만' yaw 회전시키기 위한 오프셋 값 계산·보간. (구버전 AimMeshYaw 는
+	//   메시 '전체'를 돌려 이동 시 다리/발이 어긋나 비틀거렸음 → 폐기.) 실제 회전은 AnimGraph 의
+	//   Transform(Modify)Bone 이 척추 본에 이 값(AimInstance.AimSpineYaw)을 적용 → 다리/이동 영향 0.
+	//   모든 머신 Tick + 복제 CurrentWeaponTag 라 멀티 일관(견착·스코프·이동 전부).
 	{
 		UHellunaAbilitySystemComponent* AimASC = GetHellunaAbilitySystemComponent();
 		const bool bAimingNow = AimASC && AimASC->HasMatchingGameplayTag(HellunaGameplayTags::Player_status_Aim);
 
-		// 메시 기본 상대 yaw(BP CDO 값) — 멤버 추가 없이 CDO 에서 읽어 절대 기준으로 보간.
-		float BaseMeshYaw = -90.f;
-		if (const AHellunaHeroCharacter* HeroCDO = GetClass()->GetDefaultObject<AHellunaHeroCharacter>())
+		// 카테고리별 상체 yaw — Pistol(라이플·권총), Gun(스나이퍼·샷건·런처). 발사 활성 구간엔 발사값.
+		const bool bPistolCategory = CurrentWeaponTag.MatchesTagExact(HellunaGameplayTags::Player_Weapon_Gun_Pistol);
+		const float AimYawOffset = bPistolCategory ? 30.f : 25.f;     // 조준(정지·이동 동일) — 권총류 더 오른쪽
+		const float FireYawOffset = bPistolCategory ? -10.f : -5.f;   // 발사 — 권총류 과도해서 -25→-10
+		static constexpr float AimSpineInterpSpeed = 10.f;
+
+		// 발사 오프셋은 발사 몽타주의 '활성 구간'에서만(블렌드아웃 꼬리 제외) — 발사 후 잔여 꺾임 방지.
+		bool bFiringActive = false;
+		if (const USkeletalMeshComponent* AimMeshComp = GetMesh())
 		{
-			if (const USkeletalMeshComponent* CDOMesh = HeroCDO->GetMesh())
+			if (UAnimInstance* AimAnimInst = AimMeshComp->GetAnimInstance())
 			{
-				BaseMeshYaw = CDOMesh->GetRelativeRotation().Yaw;
+				if (UAnimMontage* ActiveMontage = AimAnimInst->GetCurrentActiveMontage())
+				{
+					const float Pos = AimAnimInst->Montage_GetPosition(ActiveMontage);
+					const float Len = ActiveMontage->GetPlayLength();
+					const float BlendOutTime = ActiveMontage->BlendOut.GetBlendTime();
+					bFiringActive = (Pos > 0.f) && (Pos < (Len - BlendOutTime));
+				}
 			}
 		}
 
-		// [튜닝값] 조준 시 추가 yaw(도). +면 오른쪽(UE +yaw), 조준 포즈 각도 보정용. 사용자 요청: 오른쪽 20도.
-		static constexpr float AimMeshYawOffset = 20.f;
-		static constexpr float AimMeshYawInterpSpeed = 10.f;
-
-		const float TargetYaw = BaseMeshYaw + (bAimingNow ? AimMeshYawOffset : 0.f);
-		const FRotator CurMeshRot = AimMeshComp->GetRelativeRotation();
-		if (!FMath::IsNearlyEqual(CurMeshRot.Yaw, TargetYaw, 0.05f))
+		float TargetSpineYaw = 0.f;
+		if (bAimingNow)
 		{
-			const float NewYaw = FMath::FInterpTo(CurMeshRot.Yaw, TargetYaw, DeltaTime, AimMeshYawInterpSpeed);
-			AimMeshComp->SetRelativeRotation(FRotator(CurMeshRot.Pitch, NewYaw, CurMeshRot.Roll));
+			TargetSpineYaw = bFiringActive ? FireYawOffset : AimYawOffset;
 		}
+		CurrentAimSpineYaw = FMath::FInterpTo(CurrentAimSpineYaw, TargetSpineYaw, DeltaTime, AimSpineInterpSpeed);
+		// 실제 회전은 AnimGraph Transform(Modify)Bone 이 척추에 AimSpineYaw 만큼 적용(상체만, 다리 무관).
 	}
 
 	// [Phase 21] 3D 부활 위젯 출혈 타이머 업데이트 (클라이언트)
