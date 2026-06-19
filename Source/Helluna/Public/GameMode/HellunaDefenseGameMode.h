@@ -42,6 +42,7 @@ enum class EHellunaGameEndReason : uint8
 	None,
 	Escaped        UMETA(DisplayName = "탈출 성공"),
 	AllDead        UMETA(DisplayName = "전원 사망"),
+	ShipDestroyed  UMETA(DisplayName = "우주선 파괴"),
 	ServerShutdown UMETA(DisplayName = "서버 셧다운"),
 };
 
@@ -460,6 +461,10 @@ public:
 	/** 플레이어 사망 알림. 전원 사망 시 EndGame(AllDead) 호출 */
 	UFUNCTION(BlueprintCallable, Category = "Defense(게임)|GameEnd(게임종료)")
 	void NotifyPlayerDied(APlayerController* DeadPC);
+
+	/** [ShipHP] 우주선 파괴(HP 0) 알림 — 서버. EndGame(ShipDestroyed) 로 즉시 패배 처리. */
+	UFUNCTION(BlueprintCallable, Category = "Defense(게임)|GameEnd(게임종료)")
+	void NotifySpaceShipDestroyed(AActor* KillerActor = nullptr);
 
 	// ════════════════════════════════════════════════════════════════
 	// [Phase 21] Downed/Revive System — 솔로 감지 / 전원사망 판정

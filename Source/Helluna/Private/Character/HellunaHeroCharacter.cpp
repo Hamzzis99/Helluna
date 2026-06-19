@@ -339,10 +339,8 @@ void AHellunaHeroCharacter::Tick(float DeltaTime)
 			}
 		}
 
-		// [튜닝값] 조준 시 추가 yaw(도). +면 오른쪽(UE +yaw), 조준 포즈 각도 보정용. 사용자 요청: 오른쪽 20도.
-		static constexpr float AimMeshYawOffset = 20.f;
-		static constexpr float AimMeshYawInterpSpeed = 10.f;
-
+		// [AimMeshYawV1] 조준 시 추가 yaw(도). 하드코딩(20°) → UPROPERTY 로 전환.
+		//   기본 0 = 보정 없음. BP/디테일/Simulate 에서 리빌드 없이 튜닝(AimMeshYawOffset).
 		const float TargetYaw = BaseMeshYaw + (bAimingNow ? AimMeshYawOffset : 0.f);
 		const FRotator CurMeshRot = AimMeshComp->GetRelativeRotation();
 		if (!FMath::IsNearlyEqual(CurMeshRot.Yaw, TargetYaw, 0.05f))

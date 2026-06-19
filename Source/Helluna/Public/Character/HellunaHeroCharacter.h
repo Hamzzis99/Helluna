@@ -823,6 +823,17 @@ private:
 		meta = (DisplayName = "Aim Interp Speed (카메라 보간 속도)", ClampMin = "1.0", ClampMax = "30.0"))
 	float AimInterpSpeed = 10.f;
 
+	// ── [AimMeshYawV1] 조준 시 메시 yaw 보정 (시각 전용, 에디터/Simulate 라이브 조정) ──
+	//   라이플 조준 포즈(MF_Rifle_Aiming)의 비스듬한 스탠스를 보정. +면 오른쪽(UE +yaw).
+	//   기본 0 = 보정 없음(원래 애니 포즈 그대로). 이전 하드코딩 20°가 과보정이라 0으로 환원.
+	UPROPERTY(EditAnywhere, Category = "Camera|Aim",
+		meta = (DisplayName = "Aim Mesh Yaw Offset (조준 시 메시 yaw 보정, +오른쪽)", ClampMin = "-45.0", ClampMax = "45.0"))
+	float AimMeshYawOffset = 0.f;
+
+	UPROPERTY(EditAnywhere, Category = "Camera|Aim",
+		meta = (DisplayName = "Aim Mesh Yaw Interp Speed (메시 yaw 보간 속도)", ClampMin = "1.0", ClampMax = "30.0"))
+	float AimMeshYawInterpSpeed = 10.f;
+
 	/** 현재 조준 상태 (ASC 태그 기반) */
 	bool bIsCurrentlyAiming = false;
 	bool bWasAimingLastFrame = false;

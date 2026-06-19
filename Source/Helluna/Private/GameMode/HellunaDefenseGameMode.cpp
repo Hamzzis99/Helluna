@@ -3123,6 +3123,26 @@ static FAutoConsoleCommandWithWorldAndArgs GCmdEndGame(
 );
 
 // EndGame 메인 함수
+// ============================================================
+// [ShipHP] 우주선 파괴 → 즉시 패배 처리
+// ============================================================
+void AHellunaDefenseGameMode::NotifySpaceShipDestroyed(AActor* KillerActor)
+{
+    if (!HasAuthority()) return;
+
+    if (bGameEnded)
+    {
+        UE_LOG(LogHelluna, Warning, TEXT("[ShipHP] NotifySpaceShipDestroyed: 이미 게임 종료 → 스킵"));
+        return;
+    }
+
+    UE_LOG(LogHelluna, Warning,
+        TEXT("[ShipHP] 우주선 파괴 → 패배 처리(EndGame ShipDestroyed). Killer=%s"),
+        *GetNameSafe(KillerActor));
+
+    EndGame(EHellunaGameEndReason::ShipDestroyed);
+}
+
 void AHellunaDefenseGameMode::EndGame(EHellunaGameEndReason Reason)
 {
     if (!HasAuthority()) return;
@@ -3138,6 +3158,7 @@ void AHellunaDefenseGameMode::EndGame(EHellunaGameEndReason Reason)
     UE_LOG(LogHelluna, Warning, TEXT("[Phase7] EndGame — Reason: %s | LobbyServerURL: '%s'"),
         Reason == EHellunaGameEndReason::Escaped ? TEXT("탈출 성공") :
         Reason == EHellunaGameEndReason::AllDead ? TEXT("전원 사망") :
+        Reason == EHellunaGameEndReason::ShipDestroyed ? TEXT("우주선 파괴") :
         Reason == EHellunaGameEndReason::ServerShutdown ? TEXT("서버 셧다운") : TEXT("None"),
         *LobbyServerURL);
 
@@ -3151,6 +3172,7 @@ void AHellunaDefenseGameMode::EndGame(EHellunaGameEndReason Reason)
     {
     case EHellunaGameEndReason::Escaped:       ReasonString = TEXT("탈출 성공"); break;
     case EHellunaGameEndReason::AllDead:        ReasonString = TEXT("전원 사망"); break;
+    case EHellunaGameEndReason::ShipDestroyed:  ReasonString = TEXT("우주선 파괴"); break;
     case EHellunaGameEndReason::ServerShutdown: ReasonString = TEXT("서버 셧다운"); break;
     default:                                    ReasonString = TEXT("알 수 없음"); break;
     }
@@ -3162,7 +3184,9 @@ void AHellunaDefenseGameMode::EndGame(EHellunaGameEndReason Reason)
         if (!IsValid(PC)) continue;
 
         bool bSurvived = false;
-        if (Reason != EHellunaGameEndReason::AllDead)
+        // [ShipHP] 우주선 파괴(ShipDestroyed)는 전원 사망과 동일하게 '패배' — 생존자 없음 처리.
+        if (Reason != EHellunaGameEndReason::AllDead &&
+            Reason != EHellunaGameEndReason::ShipDestroyed)
         {
             APawn* Pawn = PC->GetPawn();
             if (IsValid(Pawn))
