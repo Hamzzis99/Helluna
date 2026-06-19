@@ -343,12 +343,21 @@ void AHellunaHeroCharacter::Tick(float DeltaTime)
 		{
 			if (UAnimInstance* AimAnimInst = AimMeshComp->GetAnimInstance())
 			{
+				// [FireYawMontageFilterV1] 발사 yaw 오프셋은 '발사 몽타주' 한정으로 적용.
+				//   GetCurrentActiveMontage 는 몽타주 종류를 가리지 않아 피격(HitReact)·기상(GetUp)
+				//   몽타주까지 '발사 중'으로 오인 → 견착 중 피격 시 상체가 발사 자세(-10/-5)로 꺾이던
+				//   버그. 비발사 몽타주는 발사 판정에서 제외한다.
 				if (UAnimMontage* ActiveMontage = AimAnimInst->GetCurrentActiveMontage())
 				{
-					const float Pos = AimAnimInst->Montage_GetPosition(ActiveMontage);
-					const float Len = ActiveMontage->GetPlayLength();
-					const float BlendOutTime = ActiveMontage->BlendOut.GetBlendTime();
-					bFiringActive = (Pos > 0.f) && (Pos < (Len - BlendOutTime));
+					const bool bNonFireMontage =
+						(ActiveMontage == HitReactMontage) || (ActiveMontage == GetUpMontage);
+					if (!bNonFireMontage)
+					{
+						const float Pos = AimAnimInst->Montage_GetPosition(ActiveMontage);
+						const float Len = ActiveMontage->GetPlayLength();
+						const float BlendOutTime = ActiveMontage->BlendOut.GetBlendTime();
+						bFiringActive = (Pos > 0.f) && (Pos < (Len - BlendOutTime));
+					}
 				}
 			}
 		}
@@ -1474,6 +1483,18 @@ void AHellunaHeroCharacter::Multicast_EnterPhysicsStun_Implementation(FVector_Ne
 	{
 		LockMoveInput();
 		LockLookInput();
+
+		// [StunAimFix] 견착(ADS)/스코프 중 물리 스턴 진입 시 Aim GA 강제 종료.
+		//   스턴은 Aim GA 를 끝내지 않아, 견착 카메라(FOV 줌인·암길이 단축·SocketOffset)가
+		//   복원되지 않은 채 stuck 되던 버그 수정. 게다가 스턴 중 입력 잠금으로 우클릭 release 가
+		//   소실돼 줌아웃이 영영 트리거되지 않음 → Aim GA 를 직접 cancel 해 EndAbility 의
+		//   취소-카메라-스냅 복원 경로(bWasCancelled)를 태운다. 스코프 오버레이도 같이 정리됨.
+		if (UHellunaAbilitySystemComponent* HeroASC = GetHellunaAbilitySystemComponent())
+		{
+			FGameplayTagContainer AimAbilityTags;
+			AimAbilityTags.AddTag(HellunaGameplayTags::Player_Ability_Aim);
+			HeroASC->CancelAbilities(&AimAbilityTags);
+		}
 	}
 
 	// 임펄스 (래그돌이 이미 물리 활성 상태 → AddImpulseAtLocation 유효)

@@ -28,6 +28,7 @@
 class UStaticMeshComponent;
 class UMaterialInstanceDynamic;
 class AHellunaEnemyCharacter;
+class USoundBase;
 
 UCLASS()
 class HELLUNA_API ABossSlamWaveActor : public AActor
@@ -66,6 +67,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "파동",
 		meta = (ClampMin = "0.0", ClampMax = "20.0"))
 	float StartIntensity = 5.f;
+
+	/** [SlamSoundV1] 내려찍기(파동 생성) 시 1회 재생되는 임팩트 사운드. CDO(BP_BossSlamWave)에서 할당. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "파동",
+		meta = (DisplayName = "내려찍기 사운드"))
+	TObjectPtr<USoundBase> ImpactSound = nullptr;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "파동")
 	TObjectPtr<UStaticMeshComponent> WaveMesh;

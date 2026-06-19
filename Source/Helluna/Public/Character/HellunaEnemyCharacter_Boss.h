@@ -12,6 +12,8 @@ class UAnimMontage;
 class UCameraShakeBase;
 class UHellunaEnemyGameplayAbility;
 class UMaterialInterface;
+class UAudioComponent;
+class USoundBase;
 class ABossPhase2CinematicTrigger;
 class ABossDeathCinematicTrigger;
 class UBossDissolveComponent;
@@ -291,6 +293,24 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|광폭화",
 		meta = (DisplayName = "광폭화 보스 오라 VFX"))
 	TObjectPtr<UNiagaraSystem> Phase2AuraVFX;
+
+	// ===== [BossBGMV1] 보스 BGM / 회오리 사운드 =====
+	/** 1페이즈 BGM — 보스 등장(BeginPlay) 시 재생, 2페이즈 전환 시 교체. */
+	UPROPERTY(EditDefaultsOnly, Category = "Sound|BGM", meta = (DisplayName = "1페이즈 BGM"))
+	TObjectPtr<USoundBase> Phase1BGM;
+	/** 2페이즈 BGM — 광폭화(EnterBossPhase2) 전환 연출 시 1페이즈 BGM과 교체 재생. */
+	UPROPERTY(EditDefaultsOnly, Category = "Sound|BGM", meta = (DisplayName = "2페이즈 BGM"))
+	TObjectPtr<USoundBase> Phase2BGM;
+	/** 회오리(Phase2Descent) VFX 등장 시 1회 재생되는 사운드. */
+	UPROPERTY(EditDefaultsOnly, Category = "Sound|BGM", meta = (DisplayName = "회오리 사운드"))
+	TObjectPtr<USoundBase> HurricaneSound;
+	/** BGM 전용 2D 오디오 컴포넌트(거리감쇠 없음). 각 머신 로컬에서 재생/정지. */
+	UPROPERTY(VisibleAnywhere, Category = "Sound|BGM")
+	TObjectPtr<UAudioComponent> BGMAudioComponent;
+
+	/** 보스 사망 시 모든 머신에서 BGM 정지. */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_StopBGM();
 
 	/**
 	 * [Phase2DescentScaleV1] 광폭화 진입 후 'Phase2Descent' Tag NC 들의 base scale 에 곱할 시작 배율.
