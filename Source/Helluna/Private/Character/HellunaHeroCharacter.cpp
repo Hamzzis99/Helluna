@@ -180,6 +180,13 @@ void AHellunaHeroCharacter::BeginPlay()
 	ActiveBaseWalkSpeed = BaseWalkSpeed;
 	RefreshMaxWalkSpeed();
 
+	// [AimMeshYawV2] 조준/발사 상체 yaw 보정을 메시에 직접 적용하기 위해 기본 메시 상대회전 캐시.
+	if (USkeletalMeshComponent* MeshComp = GetMesh())
+	{
+		DefaultMeshRelativeRotation = MeshComp->GetRelativeRotation();
+		bCachedDefaultMeshRot = true;
+	}
+
 	// [Fix] 체력 변경은 서버+클라 모두 바인딩 (클라: OnRep_Health → HUD 갱신)
 	if (HeroHealthComponent)
 	{
@@ -334,9 +341,10 @@ void AHellunaHeroCharacter::Tick(float DeltaTime)
 
 		// 카테고리별 상체 yaw — Pistol(라이플·권총), Gun(스나이퍼·샷건·런처). 발사 활성 구간엔 발사값.
 		const bool bPistolCategory = CurrentWeaponTag.MatchesTagExact(HellunaGameplayTags::Player_Weapon_Gun_Pistol);
-		const float AimYawOffset = bPistolCategory ? 30.f : 25.f;     // 조준(정지·이동 동일) — 권총류 더 오른쪽
-		const float FireYawOffset = bPistolCategory ? -10.f : -5.f;   // 발사 — 권총류 과도해서 -25→-10
-		static constexpr float AimSpineInterpSpeed = 10.f;
+		// [AimSpineYaw 튜닝] 값은 UPROPERTY(에디터 CDO)에서 조정. +값=오른쪽.
+		const float AimYawOffset = bPistolCategory ? PistolAimSpineYaw : GunAimSpineYaw;     // 조준(정지·이동 동일)
+		const float FireYawOffset = bPistolCategory ? PistolFireSpineYaw : GunFireSpineYaw;  // 발사
+		const float AimSpineInterpSpeed = AimSpineYawInterpSpeed;
 
 		// 발사 오프셋은 발사 몽타주의 '활성 구간'에서만(블렌드아웃 꼬리 제외) — 발사 후 잔여 꺾임 방지.
 		bool bFiringActive = false;
@@ -363,13 +371,28 @@ void AHellunaHeroCharacter::Tick(float DeltaTime)
 			}
 		}
 
+		// [AimMeshYaw 정지게이트] 메시 전체를 돌리는 방식이라 이동 중 적용 시 다리가 어긋남.
+		//   → '정지 상태에서만' 보정 적용. 이동 시작하면 0 으로 보간되어 다리 영향 0.
+		//   (조준 중 이동/정지 상체방향 차이는 별도 과제로 보류)
+		const bool bMovingForAim = GetVelocity().SizeSquared2D() > FMath::Square(50.f);
 		float TargetSpineYaw = 0.f;
-		if (bAimingNow)
+		if (bAimingNow && !bMovingForAim)
 		{
 			TargetSpineYaw = bFiringActive ? FireYawOffset : AimYawOffset;
 		}
 		CurrentAimSpineYaw = FMath::FInterpTo(CurrentAimSpineYaw, TargetSpineYaw, DeltaTime, AimSpineInterpSpeed);
-		// 실제 회전은 AnimGraph Transform(Modify)Bone 이 척추에 AimSpineYaw 만큼 적용(상체만, 다리 무관).
+
+		// [AimMeshYawV2] AnimGraph 배선이 없으므로(scifi ABP) 계산된 yaw 를 메시 컴포넌트에 직접 적용.
+		//   기본 회전 + (0, CurrentAimSpineYaw, 0). 0 으로 보간되면 자동으로 기본 자세 복귀.
+		//   조준중이거나 복귀 보간이 남은 경우에만 적용 → 다운/물리스턴 등 다른 시스템과 충돌 최소화.
+		//   주의: 메시 '전체' yaw 라 이동 중 다리가 약간 어긋날 수 있음(허용 범위에서 값 튜닝).
+		if (bCachedDefaultMeshRot && (bAimingNow || FMath::Abs(CurrentAimSpineYaw) > 0.05f))
+		{
+			if (USkeletalMeshComponent* MeshComp = GetMesh())
+			{
+				MeshComp->SetRelativeRotation(DefaultMeshRelativeRotation + FRotator(0.f, CurrentAimSpineYaw, 0.f));
+			}
+		}
 	}
 
 	// [Phase 21] 3D 부활 위젯 출혈 타이머 업데이트 (클라이언트)
