@@ -166,6 +166,14 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|설정", meta = (DisplayName = "배치당 최대 변위", ClampMin = "1.0", ClampMax = "500.0"))
     float MaxDisplacementPerBatch = 50.0f;
 
+    /** [Phase 20] 한 부위의 '원본 대비' 최대 누적 변위(찌그러짐 깊이/폭) 제한.
+     *  같은 곳을 계속 맞아도 이 깊이를 넘어서 더 들어가지 않습니다. 0 = 무제한(기존 거동).
+     *  배치당 캡(MaxDisplacementPerBatch)이 1회 스텝을 제한한다면, 이 값은 원본 기준 총량을 제한합니다.
+     *  값을 0보다 크게 설정하면 캡이 정확히 도달하도록 반경/방향 판정이 원본 정점 기준으로 전환됩니다
+     *  (결정적 변형 → 서버/클라 동일). BP에서 자유롭게 설정/런타임 변경 가능. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|설정", meta = (DisplayName = "최대 누적 변위(원본대비, 0=무제한)", ClampMin = "0.0", ClampMax = "500.0", UIMin = "0.0", UIMax = "200.0"))
+    float MaxTotalDisplacement = 0.0f;
+
     /** [Phase 19] 변위 방향 블렌딩 비율.
      *  1.0 = 히트→버텍스 방향(충격 중심 기준 안쪽), 0.0 = 총알 비행 방향만 사용.
      *  표면 법선 Overlay 접근 없이 자연스러운 함몰을 만듭니다. */
@@ -296,6 +304,11 @@ protected:
 
     /** [Step 6] 1프레임 동안 쌓인 타격 지점 리스트 (배칭 큐) */
     TArray<FMDFHitData> HitQueue;
+
+    /** [Phase 20] 원본(rest) 정점 위치 캐시 (로컬 좌표). VertexID로 인덱싱.
+     *  누적 변위 캡 + 결정적 반경 판정용. InitializeDynamicMesh()에서 매번 재캡처.
+     *  (mesh 재복사 시 VertexID가 재할당되므로 반드시 재캡처 필요) */
+    TArray<FVector> OriginalVertexPositions;
 
     /** 타이머 핸들 (중복 호출 방지용) */
     FTimerHandle BatchTimerHandle;

@@ -541,12 +541,20 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
         for (int32 VertexID : EditMesh.VertexIndicesItr())
         {
             TotalVertexCount++;
-            FVector3d VertexPos = EditMesh.GetVertex(VertexID);
+            FVector3d VertexPos = EditMesh.GetVertex(VertexID);  // 변형 누적의 기준(현재 위치)
 
-            // [Lag-Fix10] AABB 사전 필터링 — 합산 히트 영역 밖 정점 즉시 스킵
-            if (VertexPos.X < HitBoundsMin.X || VertexPos.X > HitBoundsMax.X ||
-                VertexPos.Y < HitBoundsMin.Y || VertexPos.Y > HitBoundsMax.Y ||
-                VertexPos.Z < HitBoundsMin.Z || VertexPos.Z > HitBoundsMax.Z)
+            // [Phase 20] 누적 캡 활성 여부 + 형상 판정 기준 위치.
+            //  - 캡 OFF(MaxTotalDisplacement<=0) 또는 원본 캐시 없음 → 기존과 동일하게 변형 위치(VertexPos) 사용.
+            //  - 캡 ON → 반경/감쇠/방향을 '원본 위치(SamplePos)' 기준으로 판정 → 같은 자리 연타가
+            //    캡까지 일관 누적되고(변형되어 반경 밖으로 빠지는 현상 제거), 서버/클라 결정적.
+            const bool bHasOrig = OriginalVertexPositions.IsValidIndex(VertexID);
+            const bool bCapActive = (MaxTotalDisplacement > 0.f) && bHasOrig;
+            const FVector3d SamplePos = bCapActive ? (FVector3d)OriginalVertexPositions[VertexID] : VertexPos;
+
+            // [Lag-Fix10] AABB 사전 필터링 — 합산 히트 영역 밖 정점 즉시 스킵 (판정 기준 위치 사용)
+            if (SamplePos.X < HitBoundsMin.X || SamplePos.X > HitBoundsMax.X ||
+                SamplePos.Y < HitBoundsMin.Y || SamplePos.Y > HitBoundsMax.Y ||
+                SamplePos.Z < HitBoundsMin.Z || SamplePos.Z > HitBoundsMax.Z)
             {
 #if MDF_DEBUG_DEFORM
                 AABBSkippedCount++;
@@ -565,7 +573,7 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
             {
                 const FMDFHitData& Hit = HitHistoryArray.Items[i];
 
-                double DistSq = FVector3d::DistSquared(VertexPos, (FVector3d)Hit.LocalLocation);
+                double DistSq = FVector3d::DistSquared(SamplePos, (FVector3d)Hit.LocalLocation);
 
                 if (DistSq < MinDebugDistSq) MinDebugDistSq = DistSq;
 
@@ -596,7 +604,7 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
                     // [Phase 19] 방향 계산: 히트→버텍스 방향 블렌딩
                     // 법선 Overlay 접근 없이 충격 중심 기준 자연스러운 안쪽 변위
                     // -------------------------------------------------------
-                    FVector3d HitToVertex = VertexPos - (FVector3d)Hit.LocalLocation;
+                    FVector3d HitToVertex = SamplePos - (FVector3d)Hit.LocalLocation;
                     double HitToVertexLen = HitToVertex.Length();
                     FVector3d InwardDir = (HitToVertexLen > KINDA_SMALL_NUMBER)
                         ? -HitToVertex / HitToVertexLen  // 안쪽 방향 (히트 중심을 향해)
@@ -680,7 +688,24 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
 #endif
                 }
 
-                EditMesh.SetVertex(VertexID, VertexPos + TotalOffset);
+                // 변형 누적: 현재(변형된) 위치에 이번 배치 오프셋을 더함
+                FVector3d Candidate = VertexPos + TotalOffset;
+
+                // [Phase 20] 누적 변위 캡 — 원본 대비 총 이동량을 MaxTotalDisplacement로 제한.
+                // 한 부위를 계속 맞아도 정해진 최대 깊이(폭)를 넘지 않음. 0 = 무제한.
+                // 원본 중심 반지름 캡짜리 공(ball)에 투영 → 같은 방향 연타가 한 점에 수렴(오버슈트/진동 없음).
+                if (bCapActive)
+                {
+                    const FVector3d Orig = (FVector3d)OriginalVertexPositions[VertexID];
+                    FVector3d FromOrig = Candidate - Orig;
+                    const double FromOrigLen = FromOrig.Length();
+                    if (FromOrigLen > (double)MaxTotalDisplacement)
+                    {
+                        Candidate = Orig + (FromOrig / FromOrigLen) * (double)MaxTotalDisplacement;
+                    }
+                }
+
+                EditMesh.SetVertex(VertexID, Candidate);
                 bAnyModified = true;
                 ModifiedVertexCount++;
 
@@ -844,6 +869,25 @@ void UMDF_DeformableComponent::InitializeDynamicMesh()
 
         if (Outcome == EGeometryScriptOutcomePins::Success)
         {
+            // [Phase 20] 원본 정점 위치 캡처 (누적 변위 캡 + 결정적 반경 판정용).
+            // 매 InitializeDynamicMesh 호출마다 재캡처 — mesh 재복사 시 VertexID 재할당되므로 필수.
+            // VertexIndicesItr()는 유효 VertexID만 yield, MaxVertexID()로 배열 크기 확보.
+            OriginalVertexPositions.Reset();
+            if (UDynamicMesh* CapturedMesh = InitMeshComp->GetDynamicMesh())
+            {
+                CapturedMesh->ProcessMesh([this](const UE::Geometry::FDynamicMesh3& ReadMesh)
+                {
+                    OriginalVertexPositions.SetNumZeroed(ReadMesh.MaxVertexID());
+                    for (int32 VID : ReadMesh.VertexIndicesItr())
+                    {
+                        if (OriginalVertexPositions.IsValidIndex(VID))
+                        {
+                            OriginalVertexPositions[VID] = (FVector)ReadMesh.GetVertex(VID);
+                        }
+                    }
+                });
+            }
+
             // 기존 머티리얼 오버라이드 초기화 (메시 교체 시 이전 슬롯 잔존 방지)
             InitMeshComp->EmptyOverrideMaterials();
 

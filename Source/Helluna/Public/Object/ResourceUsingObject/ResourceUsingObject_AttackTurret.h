@@ -31,6 +31,9 @@ protected:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	virtual bool ShouldKeepTickingAfterPlacementScan() const override { return true; }
 
+	/** [TurretHP] 사망 시 서버 로직 정지 — 공격 타이머/타겟/델리게이트 정리. */
+	virtual void OnTurretDestroyed_StopServerLogic() override;
+
 	// =========================================================
 	// 컴포넌트
 	// =========================================================

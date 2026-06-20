@@ -31,6 +31,9 @@ protected:
 	/** 매 프레임 회전이 필요하므로 스캔 종료 후에도 Tick 유지. */
 	virtual bool ShouldKeepTickingAfterPlacementScan() const override { return true; }
 
+	/** [TurretHP] 사망 시 서버 로직 정지 — 힐 타이머 정리. */
+	virtual void OnTurretDestroyed_StopServerLogic() override;
+
 	// =========================================================
 	// 힐 범위
 	// =========================================================

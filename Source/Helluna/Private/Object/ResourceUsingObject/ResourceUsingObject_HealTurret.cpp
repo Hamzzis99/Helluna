@@ -86,6 +86,12 @@ void AResourceUsingObject_HealTurret::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
+	// [TurretHP] 파괴된 포탑은 회전 정지 (Tick 비활성화의 방어적 가드)
+	if (IsTurretDestroyed())
+	{
+		return;
+	}
+
 	if (SpinPart2)
 	{
 		SpinPart2->AddLocalRotation(SpinSpeedPart2 * DeltaTime);
@@ -129,6 +135,15 @@ void AResourceUsingObject_HealTurret::EndPlay(const EEndPlayReason::Type EndPlay
 {
 	GetWorldTimerManager().ClearTimer(HealTimerHandle);
 	Super::EndPlay(EndPlayReason);
+}
+
+// =========================================================
+// [TurretHP] 사망 시 서버 로직 정지 (베이스 HandleTurretDeath 에서 호출)
+// =========================================================
+
+void AResourceUsingObject_HealTurret::OnTurretDestroyed_StopServerLogic()
+{
+	GetWorldTimerManager().ClearTimer(HealTimerHandle);
 }
 
 // =========================================================
