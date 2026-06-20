@@ -19,6 +19,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 #include "Component/RepairComponent.h"
+#include "Widgets/ShipHealWidget.h"  // [ShipHeal] E 회복 메뉴 위젯
 #include "Weapon/HellunaHeroWeapon.h"
 #include "Weapon/HellunaFarmingWeapon.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
@@ -1123,6 +1124,161 @@ void AHellunaHeroCharacter::Server_RepairSpaceShip_Implementation(FGameplayTag M
 #if HELLUNA_DEBUG_HERO
 	UE_LOG(LogTemp, Warning, TEXT("=== [HeroCharacter::Server_RepairSpaceShip] 완료! ==="));
 #endif
+}
+
+// ============================================================================
+// [ShipHeal] 우주선 HP 회복 RPC — 재료 비례 회복 (Server_RepairSpaceShip 미러)
+//  수리(CurrentResource)와 별개로 ShipHealthComponent->Heal 호출.
+//  MaxHP 초과분 재료는 소비하지 않음(필요한 만큼만 차감).
+// ============================================================================
+void AHellunaHeroCharacter::Server_HealShipFromMaterials_Implementation(FGameplayTag Material1Tag, int32 Material1Amount, FGameplayTag Material2Tag, int32 Material2Amount)
+{
+	if (!HasAuthority()) return;
+
+	const int32 TotalMaterials = Material1Amount + Material2Amount;
+	if (TotalMaterials <= 0) return;
+
+	// 우주선 찾기 (Server_RepairSpaceShip 와 동일하게 "SpaceShip" 태그)
+	TArray<AActor*> FoundActors;
+	UGameplayStatics::GetAllActorsWithTag(GetWorld(), FName("SpaceShip"), FoundActors);
+	if (FoundActors.Num() == 0) return;
+
+	AResourceUsingObject_SpaceShip* SpaceShip = Cast<AResourceUsingObject_SpaceShip>(FoundActors[0]);
+	if (!SpaceShip) return;
+
+	UHellunaHealthComponent* ShipHC = SpaceShip->GetShipHealthComponent();
+	if (!ShipHC) return;
+
+	const float HealPerMat = FMath::Max(1.f, SpaceShip->GetHealPerMaterial());
+	const float MaxHP = ShipHC->GetMaxHealth();
+	const float CurHP = ShipHC->GetHealth();
+	const float Deficit = FMath::Max(0.f, MaxHP - CurHP);
+
+	if (Deficit <= 0.f)
+	{
+		// 이미 풀피 — 재료 소비/회복 없음
+		return;
+	}
+
+	const float DesiredHeal = TotalMaterials * HealPerMat;
+	const float ActualHeal = FMath::Min(DesiredHeal, Deficit);
+
+	// 실제 회복에 필요한 재료 수만 소비 (초과분 보존)
+	int32 MaterialsUsed = FMath::CeilToInt(ActualHeal / HealPerMat);
+	MaterialsUsed = FMath::Clamp(MaterialsUsed, 0, TotalMaterials);
+	if (MaterialsUsed <= 0) return;
+
+	// HP 회복 (서버 권위) — OnHealthChanged 복제 → 클라 HP 표시 갱신
+	ShipHC->Heal(ActualHeal, this);
+
+	// 이펙트 1회 재생 (수리와 동일 멀티캐스트 재사용)
+	if (URepairComponent* RepairComp = SpaceShip->FindComponentByClass<URepairComponent>())
+	{
+		RepairComp->Multicast_PlaySingleRepairEffect(SpaceShip->GetActorLocation());
+	}
+
+	// 인벤토리 차감 — MaterialsUsed 를 재료1/2 비율로 분배 (Server_RepairSpaceShip 동일 패턴)
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC) return;
+
+	UInv_InventoryComponent* InvComp = UInv_InventoryStatics::GetInventoryComponent(PC);
+	if (!InvComp) return;
+
+	int32 Use1 = 0;
+	int32 Use2 = 0;
+	if (TotalMaterials > 0)
+	{
+		const float Ratio1 = (float)Material1Amount / (float)TotalMaterials;
+		Use1 = FMath::RoundToInt(Ratio1 * MaterialsUsed);
+		Use2 = MaterialsUsed - Use1;
+	}
+
+	if (Use1 > 0 && Material1Tag.IsValid())
+	{
+		InvComp->Server_ConsumeMaterialsMultiStack(Material1Tag, Use1);
+	}
+	if (Use2 > 0 && Material2Tag.IsValid())
+	{
+		InvComp->Server_ConsumeMaterialsMultiStack(Material2Tag, Use2);
+	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[ShipHeal] 회복 %.0f HP (재료 %d개 소비: M1=%d M2=%d) | HP %.0f → %.0f / %.0f"),
+		ActualHeal, MaterialsUsed, Use1, Use2, CurHP, ShipHC->GetHealth(), MaxHP);
+}
+
+// ============================================================================
+// [ShipHeal] 서버(우주선 ExecuteInteract, E 상호작용)가 호출 → 소유 클라에서 회복 메뉴 토글.
+// ============================================================================
+void AHellunaHeroCharacter::Client_OpenShipHealMenu_Implementation()
+{
+	ToggleShipHealMenu();
+}
+
+// ============================================================================
+// [ShipHeal] 회복 메뉴 토글 (로컬 전용) — GA_Repair::Repair 의 열기/닫기 로직 미러.
+//  우주선 ExecuteInteract(E) → Client_OpenShipHealMenu 경유로 호출된다.
+// ============================================================================
+void AHellunaHeroCharacter::ToggleShipHealMenu()
+{
+	if (!IsLocallyControlled()) return;
+
+	// 토글: 이미 열려 있으면 닫기
+	if (IsValid(ShipHealWidgetInstance) && ShipHealWidgetInstance->IsInViewport())
+	{
+		if (UShipHealWidget* HealW = Cast<UShipHealWidget>(ShipHealWidgetInstance))
+		{
+			HealW->CloseWidget();
+		}
+		else if (APlayerController* ClosePC = GetController<APlayerController>())
+		{
+			ClosePC->SetInputMode(FInputModeGameOnly());
+			ClosePC->bShowMouseCursor = false;
+			ShipHealWidgetInstance->RemoveFromParent();
+		}
+		ShipHealWidgetInstance = nullptr;
+		return;
+	}
+
+	if (!ShipHealWidgetClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[ShipHeal] ShipHealWidgetClass 미설정 (Hero BP에서 WBP_ShipHealWidget 할당 필요)"));
+		return;
+	}
+
+	// 우주선 찾기 (Server_HealShipFromMaterials 와 동일 방식)
+	TArray<AActor*> FoundShips;
+	UGameplayStatics::GetAllActorsWithTag(GetWorld(), FName("SpaceShip"), FoundShips);
+	AResourceUsingObject_SpaceShip* Ship = (FoundShips.Num() > 0) ? Cast<AResourceUsingObject_SpaceShip>(FoundShips[0]) : nullptr;
+	if (!Ship) return;
+
+	URepairComponent* RepairComp = Ship->FindComponentByClass<URepairComponent>();
+	if (!RepairComp) return;
+
+	APlayerController* PC = GetController<APlayerController>();
+	if (!PC) return;
+
+	UInv_InventoryComponent* InvComp = UInv_InventoryStatics::GetInventoryComponent(PC);
+	if (!InvComp) return;
+
+	// 다른 인벤토리 메뉴 열려있으면 닫기
+	if (InvComp->IsMenuOpen())
+	{
+		InvComp->ToggleInventoryMenu();
+	}
+
+	ShipHealWidgetInstance = CreateWidget<UUserWidget>(PC, ShipHealWidgetClass);
+	if (!ShipHealWidgetInstance) return;
+
+	if (UShipHealWidget* HealW = Cast<UShipHealWidget>(ShipHealWidgetInstance))
+	{
+		HealW->InitializeWidget(RepairComp, InvComp);
+	}
+
+	ShipHealWidgetInstance->AddToViewport(100);
+	PC->FlushPressedKeys();
+	PC->SetInputMode(FInputModeGameAndUI());
+	PC->bShowMouseCursor = true;
 }
 
 // ============================================================================
@@ -3001,6 +3157,7 @@ void AHellunaHeroCharacter::Input_InteractionStarted(const FInputActionValue& Va
 	}
 
 	// 우선순위 2: 보스큐브 등 기타 상호작용
+	//  (우주선 회복 메뉴는 F가 아니라 E(인벤토리 PrimaryInteract)로 이동 — 우주선 ExecuteInteract 참조)
 	// → bHoldingInteraction = true 상태로 BossEncounterCube::Tick이 처리
 	// → IsReviving() == false 이므로 큐브 프로그레스 정상 증가
 }

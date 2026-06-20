@@ -40,11 +40,6 @@ void UHellunaWidget_SpaceShip::OnRepairChanged(int32 Current, int32 Need)
         return;
 
     BP_UpdateRepair(Current, Need, TargetShip->GetRepairPercent());
-
-    if (TextBlock_0)
-    {
-        TextBlock_0->SetText(FText::FromString(FString::Printf(TEXT("%d / %d"), Current, Need)));
-    }
 }
 
 void UHellunaWidget_SpaceShip::OnShipHealthChanged(UActorComponent* HealthComponent, float OldHealth, float NewHealth, AActor* InstigatorActor)

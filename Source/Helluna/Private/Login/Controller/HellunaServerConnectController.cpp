@@ -1,6 +1,7 @@
 #include "Login/Controller/HellunaServerConnectController.h"
 #include "Helluna.h"  // 전처리기 플래그
 #include "Login/Widget/HellunaServerConnectWidget.h"
+#include "Login/Widget/HellunaMainMenuWidget.h"
 #include "Login/GameMode/HellunaLoginGameMode.h"
 #include "MDF_Function/MDF_Instance/MDF_GameInstance.h"
 #include "Blueprint/UserWidget.h"
@@ -28,14 +29,14 @@ void AHellunaServerConnectController::BeginPlay()
 	UE_LOG(LogHelluna, Warning, TEXT("╚════════════════════════════════════════════════════════════╝"));
 #endif
 
-	if (!ConnectWidgetClass)
+	if (!MainMenuWidgetClass)
 	{
-		UE_LOG(LogHelluna, Error, TEXT("[ServerConnectController] ConnectWidgetClass 미설정!"));
+		UE_LOG(LogHelluna, Error, TEXT("[ServerConnectController] MainMenuWidgetClass 미설정!"));
 #if HELLUNA_DEBUG_SERVERCONNECTION
 		if (GEngine)
 		{
 			GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Red,
-				TEXT("ConnectWidgetClass 미설정! BP에서 설정 필요"));
+				TEXT("MainMenuWidgetClass 미설정! BP에서 설정 필요"));
 		}
 #endif
 		return;
@@ -47,12 +48,46 @@ void AHellunaServerConnectController::BeginPlay()
 		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 		SetInputMode(InputMode);
 
-		ShowConnectWidget();
+		// LoginLevel 첫 화면 = 메인 메뉴 (GAME START → 서버접속창)
+		ShowMainMenu();
 	}
 
 #if HELLUNA_DEBUG_SERVERCONNECTION
 	UE_LOG(LogHelluna, Warning, TEXT(""));
 #endif
+}
+
+void AHellunaServerConnectController::ShowMainMenu()
+{
+	if (!MainMenuWidgetClass)
+	{
+		UE_LOG(LogHelluna, Error, TEXT("[ServerConnectController] MainMenuWidgetClass가 nullptr!"));
+		return;
+	}
+
+	if (!MainMenuWidget)
+	{
+		MainMenuWidget = CreateWidget<UHellunaMainMenuWidget>(this, MainMenuWidgetClass);
+	}
+
+	if (MainMenuWidget && !MainMenuWidget->IsInViewport())
+	{
+		MainMenuWidget->AddToViewport();
+#if HELLUNA_DEBUG_SERVERCONNECTION
+		UE_LOG(LogHelluna, Warning, TEXT("[ServerConnectController] 메인 메뉴 표시됨"));
+#endif
+	}
+}
+
+void AHellunaServerConnectController::HideMainMenu()
+{
+	if (MainMenuWidget && MainMenuWidget->IsInViewport())
+	{
+		MainMenuWidget->RemoveFromParent();
+#if HELLUNA_DEBUG_SERVERCONNECTION
+		UE_LOG(LogHelluna, Warning, TEXT("[ServerConnectController] 메인 메뉴 숨김"));
+#endif
+	}
 }
 
 void AHellunaServerConnectController::ShowConnectWidget()

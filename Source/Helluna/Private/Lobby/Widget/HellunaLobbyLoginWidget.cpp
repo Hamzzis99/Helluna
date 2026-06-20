@@ -12,6 +12,7 @@
 #include "Components/EditableTextBox.h"
 #include "Components/TextBlock.h"
 #include "Components/Button.h"
+#include "Kismet/KismetSystemLibrary.h"
 
 #include "Lobby/HellunaLobbyLog.h"
 
@@ -21,6 +22,7 @@ void UHellunaLobbyLoginWidget::NativeDestruct()
 	if (LoginButton) { LoginButton->OnClicked.RemoveDynamic(this, &UHellunaLobbyLoginWidget::OnLoginButtonClicked); }
 	if (LoginTabButton) { LoginTabButton->OnClicked.RemoveDynamic(this, &UHellunaLobbyLoginWidget::OnLoginTabClicked); }
 	if (SignupTabButton) { SignupTabButton->OnClicked.RemoveDynamic(this, &UHellunaLobbyLoginWidget::OnSignupTabClicked); }
+	if (QuitButton) { QuitButton->OnClicked.RemoveDynamic(this, &UHellunaLobbyLoginWidget::OnQuitClicked); }
 
 	Super::NativeDestruct();
 }
@@ -44,6 +46,11 @@ void UHellunaLobbyLoginWidget::NativeOnInitialized()
 		SignupTabButton->OnClicked.AddUniqueDynamic(this, &UHellunaLobbyLoginWidget::OnSignupTabClicked);
 	}
 
+	if (QuitButton)
+	{
+		QuitButton->OnClicked.AddUniqueDynamic(this, &UHellunaLobbyLoginWidget::OnQuitClicked);
+	}
+
 	// 초기 상태: 로그인 모드
 	SwitchToLoginMode();
 }
@@ -64,6 +71,11 @@ void UHellunaLobbyLoginWidget::OnSignupTabClicked()
 		return;
 	}
 	SwitchToSignupMode();
+}
+
+void UHellunaLobbyLoginWidget::OnQuitClicked()
+{
+	UKismetSystemLibrary::QuitGame(this, nullptr, EQuitPreference::Quit, false);
 }
 
 void UHellunaLobbyLoginWidget::SwitchToLoginMode()

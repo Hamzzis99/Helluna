@@ -1,4 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+// Fill out your copyright notice in the Description page of Project Settings.
 
 
 #include "Widgets/HellunaWidget_SpaceShip.h"
@@ -40,11 +40,6 @@ void UHellunaWidget_SpaceShip::OnRepairChanged(int32 Current, int32 Need)
         return;
 
     BP_UpdateRepair(Current, Need, TargetShip->GetRepairPercent());
-
-    if (TextBlock_0)
-    {
-        TextBlock_0->SetText(FText::FromString(FString::Printf(TEXT("%d / %d"), Current, Need)));
-    }
 }
 
 void UHellunaWidget_SpaceShip::OnShipHealthChanged(UActorComponent* HealthComponent, float OldHealth, float NewHealth, AActor* InstigatorActor)
@@ -96,7 +91,7 @@ void UHellunaWidget_SpaceShip::RefreshShipHP(float Health, float MaxHealth, floa
 
     if (ShipStatusText)
     {
-        const FString S = bDestroyed ? TEXT("파괴됨") : (bCritical ? TEXT("위험") : TEXT("정상"));
+        const FString S = bDestroyed ? TEXT("Ship destroyed") : (bCritical ? TEXT("Critical") : TEXT("Nominal"));
         const FLinearColor C = (bDestroyed || bCritical) ? FLinearColor(1.f, 0.42f, 0.49f) : FLinearColor(0.247f, 0.878f, 0.631f);
         ShipStatusText->SetText(FText::FromString(S));
         ShipStatusText->SetColorAndOpacity(FSlateColor(C));

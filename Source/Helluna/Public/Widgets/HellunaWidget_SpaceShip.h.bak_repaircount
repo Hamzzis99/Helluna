@@ -51,9 +51,6 @@ protected:
     UPROPERTY(meta = (BindWidgetOptional))
     TObjectPtr<UTextBlock> ShipDestroyedText;
 
-    UPROPERTY(meta = (BindWidgetOptional))
-    TObjectPtr<UTextBlock> TextBlock_0;
-
     UPROPERTY(meta = (BindWidgetAnimOptional), Transient)
     TObjectPtr<UWidgetAnimation> CriticalPulse;
 

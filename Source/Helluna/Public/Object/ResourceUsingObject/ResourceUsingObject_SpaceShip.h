@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Object/ResourceUsingObject/HellunaBaseResourceUsingObject.h"
+#include "Interfaces/Inv_Interface_Primary.h"  // [ShipHeal] 인벤토리 E(PrimaryInteract) 상호작용
 #include "ResourceUsingObject_SpaceShip.generated.h"
 
 class UWidgetComponent;
@@ -27,9 +28,14 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSpaceShipDestroyed, AActor*, Kill
 
 
 UCLASS()
-class HELLUNA_API AResourceUsingObject_SpaceShip : public AHellunaBaseResourceUsingObject
+class HELLUNA_API AResourceUsingObject_SpaceShip : public AHellunaBaseResourceUsingObject, public IInv_Interface_Primary
 {
 	GENERATED_BODY()
+
+public:
+	// [ShipHeal] 인벤토리 E(PrimaryInteract) 상호작용 — 우주선을 바라보고 E 누르면 회복 메뉴.
+	//   Inv_PlayerController::Server_Interact 경유로 서버에서 호출됨 → 해당 클라에 회복 메뉴 열기 요청.
+	virtual bool ExecuteInteract_Implementation(APlayerController* Controller) override;
 	
 protected:
 	virtual void CollisionBoxBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult) override;
@@ -122,6 +128,22 @@ public:
 	/** 우주선이 파괴(사망)됐는지 */
 	UFUNCTION(BlueprintPure, Category = "ShipHP")
 	bool IsShipDestroyed() const;
+
+	// =========================================================
+	// ★ [ShipHeal] E 회복 메뉴 — 재료 비례 HP 회복 (수리와 별개)
+	// =========================================================
+
+	/** 재료 1개당 회복되는 우주선 HP. 디자이너 튜닝(기본 100). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShipHP",
+		meta = (DisplayName = "재료당 회복 HP", ClampMin = "1.0"))
+	float HealPerMaterial = 100.f;
+
+	UFUNCTION(BlueprintPure, Category = "ShipHP")
+	float GetHealPerMaterial() const { return HealPerMaterial; }
+
+	/** [E회복] 주어진 액터가 우주선 상호작용 콜리전 박스 안에 있는지 (E 회복 메뉴 근접 판정용) */
+	UFUNCTION(BlueprintPure, Category = "ShipHP")
+	bool IsActorInInteractRange(const AActor* Other) const;
 
 	// =========================================================
 	// ★ 공격 슬롯 매니저

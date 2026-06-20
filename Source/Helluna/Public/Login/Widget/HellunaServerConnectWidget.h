@@ -34,6 +34,10 @@ protected:
 	UFUNCTION()
 	void OnConnectButtonClicked();
 
+	/** QUIT 클릭 → 게임 종료 */
+	UFUNCTION()
+	void OnQuitClicked();
+
 protected:
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UEditableTextBox> IPInputTextBox;
@@ -43,4 +47,8 @@ protected:
 
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UTextBlock> MessageText;
+
+	/** QUIT 버튼 (게임 종료) — BP의 QuitButton과 자동 바인딩 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> QuitButton;
 };

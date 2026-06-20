@@ -358,6 +358,28 @@ bool AResourceUsingObject_SpaceShip::IsShipDestroyed() const
 	return ShipHealthComponent ? ShipHealthComponent->IsDead() : false;
 }
 
+// [E회복] 상호작용 콜리전 박스(수리/회복 범위) 안에 Other 가 있는지.
+//  ResouceUsingCollisionBox 는 베이스(AHellunaBaseResourceUsingObject)의 protected 멤버 — 파생 클래스에서 접근 가능.
+bool AResourceUsingObject_SpaceShip::IsActorInInteractRange(const AActor* Other) const
+{
+	return Other && ResouceUsingCollisionBox && ResouceUsingCollisionBox->IsOverlappingActor(Other);
+}
+
+// [ShipHeal] 인벤토리 E(PrimaryInteract) 상호작용 — 우주선을 바라보고 E.
+//  Inv_PlayerController::PrimaryInteract → Server_Interact(RPC) → 서버에서 이 함수 호출.
+//  UI는 클라에서 열어야 하므로 해당 플레이어에게 Client RPC로 회복 메뉴 열기를 요청한다.
+bool AResourceUsingObject_SpaceShip::ExecuteInteract_Implementation(APlayerController* Controller)
+{
+	if (!Controller) return false;
+
+	if (AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(Controller->GetPawn()))
+	{
+		Hero->Client_OpenShipHealMenu();
+		return true;  // 처리됨
+	}
+	return false;
+}
+
 // =========================================================
 // [cheatdebug/nav] NavModifier 강제 적용 헬퍼
 //  - BP 설정을 무시하고 항상 NavArea_Null을 적용 (NavArea_Default는 path를 안 막음)
