@@ -4,6 +4,7 @@
 #include "Components/TextBlock.h"
 #include "Components/Button.h"
 #include "Kismet/GameplayStatics.h"
+#include "Kismet/KismetSystemLibrary.h"
 #include "Helluna.h"
 
 void UHellunaServerConnectWidget::NativeConstruct()
@@ -43,6 +44,11 @@ void UHellunaServerConnectWidget::NativeConstruct()
 	if (ConnectButton)
 	{
 		ConnectButton->OnClicked.AddUniqueDynamic(this, &UHellunaServerConnectWidget::OnConnectButtonClicked);
+	}
+
+	if (QuitButton)
+	{
+		QuitButton->OnClicked.AddUniqueDynamic(this, &UHellunaServerConnectWidget::OnQuitClicked);
 	}
 
 	ShowMessage(TEXT("IP 빈칸 → 호스트 / IP 입력 → 접속"), false);
@@ -97,4 +103,9 @@ void UHellunaServerConnectWidget::SetLoadingState(bool bLoading)
 FString UHellunaServerConnectWidget::GetIPAddress() const
 {
 	return IPInputTextBox ? IPInputTextBox->GetText().ToString() : TEXT("");
+}
+
+void UHellunaServerConnectWidget::OnQuitClicked()
+{
+	UKismetSystemLibrary::QuitGame(this, nullptr, EQuitPreference::Quit, false);
 }

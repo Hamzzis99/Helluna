@@ -1,0 +1,143 @@
+﻿// Fill out your copyright notice in the Description page of Project Settings.
+
+
+#include "Widgets/HellunaWidget_SpaceShip.h"
+#include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
+#include "Character/EnemyComponent/HellunaHealthComponent.h"
+#include "Components/ProgressBar.h"
+#include "Components/TextBlock.h"
+
+void UHellunaWidget_SpaceShip::SetTargetShip(AResourceUsingObject_SpaceShip* InShip)
+{
+    if (TargetShip)
+    {
+        TargetShip->OnRepairProgressChanged.RemoveAll(this);
+        if (UHellunaHealthComponent* OldHP = TargetShip->GetShipHealthComponent())
+        {
+            OldHP->OnHealthChanged.RemoveAll(this);
+        }
+    }
+
+    TargetShip = InShip;
+
+    if (!TargetShip)
+        return;
+
+    TargetShip->OnRepairProgressChanged.AddDynamic(this, &UHellunaWidget_SpaceShip::OnRepairChanged);
+
+    OnRepairChanged(TargetShip->GetCurrentResource(), TargetShip->GetNeedResource());
+
+    if (UHellunaHealthComponent* HP = TargetShip->GetShipHealthComponent())
+    {
+        HP->OnHealthChanged.AddDynamic(this, &UHellunaWidget_SpaceShip::OnShipHealthChanged);
+        RefreshShipHP(HP->GetHealth(), HP->GetMaxHealth(), TargetShip->GetShipHealthPercent());
+    }
+}
+
+void UHellunaWidget_SpaceShip::OnRepairChanged(int32 Current, int32 Need)
+{
+    if (!TargetShip)
+        return;
+
+    BP_UpdateRepair(Current, Need, TargetShip->GetRepairPercent());
+}
+
+void UHellunaWidget_SpaceShip::OnShipHealthChanged(UActorComponent* HealthComponent, float OldHealth, float NewHealth, AActor* InstigatorActor)
+{
+    if (!TargetShip)
+        return;
+
+    RefreshShipHP(NewHealth, TargetShip->GetShipMaxHealth(), TargetShip->GetShipHealthPercent());
+}
+
+void UHellunaWidget_SpaceShip::RefreshShipHP(float Health, float MaxHealth, float Percent)
+{
+    const float P = FMath::Clamp(Percent, 0.f, 1.f);
+
+    FLinearColor BarColor;
+    if (P > 0.55f)
+    {
+        BarColor = FLinearColor(0.247f, 0.878f, 0.631f);
+    }
+    else if (P > 0.25f)
+    {
+        BarColor = FLinearColor(1.000f, 0.761f, 0.302f);
+    }
+    else
+    {
+        BarColor = FLinearColor(1.000f, 0.286f, 0.373f);
+    }
+
+    if (ShipHPBar)
+    {
+        ShipHPBar->SetPercent(P);
+        ShipHPBar->SetFillColorAndOpacity(BarColor);
+    }
+
+    if (ShipHPText)
+    {
+        ShipHPText->SetText(FText::FromString(FString::Printf(TEXT("%d / %d"),
+            FMath::RoundToInt(Health), FMath::RoundToInt(MaxHealth))));
+    }
+
+    if (ShipHPPercentText)
+    {
+        ShipHPPercentText->SetText(FText::FromString(FString::Printf(TEXT("%d%%"),
+            FMath::RoundToInt(P * 100.f))));
+    }
+
+    const bool bDestroyed = (Health <= 0.f);
+    const bool bCritical = (!bDestroyed && P <= 0.25f);
+
+    if (ShipStatusText)
+    {
+        const FString S = bDestroyed ? TEXT("파괴됨") : (bCritical ? TEXT("위험") : TEXT("정상"));
+        const FLinearColor C = (bDestroyed || bCritical) ? FLinearColor(1.f, 0.42f, 0.49f) : FLinearColor(0.247f, 0.878f, 0.631f);
+        ShipStatusText->SetText(FText::FromString(S));
+        ShipStatusText->SetColorAndOpacity(FSlateColor(C));
+    }
+
+    if (ShipDestroyedText)
+    {
+        ShipDestroyedText->SetVisibility(bDestroyed ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+    }
+
+    if (bShipCritical != bCritical)
+    {
+        bShipCritical = bCritical;
+        ShipPulseTime = 0.f;
+        if (!bCritical && ShipHPBar)
+        {
+            ShipHPBar->SetRenderOpacity(1.f);
+        }
+    }
+}
+
+void UHellunaWidget_SpaceShip::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
+{
+    Super::NativeTick(MyGeometry, InDeltaTime);
+
+    if (bShipCritical && ShipHPBar)
+    {
+        ShipPulseTime += InDeltaTime;
+        const float Period = 0.8f;
+        const float Phase = (ShipPulseTime / Period) * 2.f * PI;
+        const float T = 0.5f + 0.5f * FMath::Sin(Phase);
+        ShipHPBar->SetRenderOpacity(FMath::Lerp(0.3f, 1.0f, T));
+    }
+}
+
+void UHellunaWidget_SpaceShip::NativeDestruct()
+{
+    if (TargetShip)
+    {
+        TargetShip->OnRepairProgressChanged.RemoveAll(this);
+        if (UHellunaHealthComponent* HP = TargetShip->GetShipHealthComponent())
+        {
+            HP->OnHealthChanged.RemoveAll(this);
+        }
+        TargetShip = nullptr;
+    }
+
+    Super::NativeDestruct();
+}

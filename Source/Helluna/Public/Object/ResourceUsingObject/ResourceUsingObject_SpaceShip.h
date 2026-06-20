@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Object/ResourceUsingObject/HellunaBaseResourceUsingObject.h"
+#include "Interfaces/Inv_Interface_Primary.h"  // [ShipHeal] 인벤토리 E(PrimaryInteract) 상호작용
 #include "ResourceUsingObject_SpaceShip.generated.h"
 
 class UWidgetComponent;
@@ -11,6 +12,7 @@ class USpaceShipAttackSlotManager;
 class UNavigationInvokerComponent;
 class UNavModifierComponent;
 class UNavArea;
+class UHellunaHealthComponent;
 
 /**
  * 
@@ -21,11 +23,19 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnRepairProgressChanged, int32, Cu
 // ⭐ 새로 추가: 수리 완료 델리게이트
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnSpaceShipRepairCompleted);
 
+// [ShipHP] 우주선 파괴(HP 0) 델리게이트 — BP 폭발/사운드 연출 바인딩용 (KillerActor 전달)
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSpaceShipDestroyed, AActor*, KillerActor);
+
 
 UCLASS()
-class HELLUNA_API AResourceUsingObject_SpaceShip : public AHellunaBaseResourceUsingObject
+class HELLUNA_API AResourceUsingObject_SpaceShip : public AHellunaBaseResourceUsingObject, public IInv_Interface_Primary
 {
 	GENERATED_BODY()
+
+public:
+	// [ShipHeal] 인벤토리 E(PrimaryInteract) 상호작용 — 우주선을 바라보고 E 누르면 회복 메뉴.
+	//   Inv_PlayerController::Server_Interact 경유로 서버에서 호출됨 → 해당 클라에 회복 메뉴 열기 요청.
+	virtual bool ExecuteInteract_Implementation(APlayerController* Controller) override;
 	
 protected:
 	virtual void CollisionBoxBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult) override;
@@ -80,6 +90,62 @@ public:
     void OnRepairCompleted();
 
 	// =========================================================
+	// ★ [ShipHP] 우주선 체력 (전투 내구도) — 수리 진행도(CurrentResource)와 별개
+	//   적 공격이 UGameplayStatics::ApplyPointDamage → OnTakeAnyDamage 로 흘러들어와
+	//   ShipHealthComponent 가 HP 를 깎는다. HP 0 → OnDeath → HandleShipDestroyed →
+	//   GameMode 패배(EndGame). 캐릭터/적과 동일한 UHellunaHealthComponent 를 재사용.
+	// =========================================================
+
+	/** 우주선 체력 컴포넌트 (캐릭터/적과 동일 컴포넌트 재사용, 자동 복제) */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "ShipHP",
+		meta = (DisplayName = "Ship Health Component (우주선 체력)"))
+	TObjectPtr<UHellunaHealthComponent> ShipHealthComponent;
+
+	/** 우주선 최대 체력 (디자이너 튜닝). BeginPlay 서버에서 컴포넌트에 적용. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShipHP",
+		meta = (DisplayName = "우주선 최대 체력", ClampMin = "1.0"))
+	float ShipMaxHealth = 1000.f;
+
+	/** 우주선 파괴(HP 0) 시 브로드캐스트 — BP 폭발/사운드 연출 바인딩용 */
+	UPROPERTY(BlueprintAssignable, Category = "ShipHP")
+	FOnSpaceShipDestroyed OnSpaceShipDestroyed;
+
+	UFUNCTION(BlueprintPure, Category = "ShipHP")
+	UHellunaHealthComponent* GetShipHealthComponent() const { return ShipHealthComponent; }
+
+	/** 현재 우주선 HP */
+	UFUNCTION(BlueprintPure, Category = "ShipHP")
+	float GetShipHealth() const;
+
+	/** 우주선 최대 HP */
+	UFUNCTION(BlueprintPure, Category = "ShipHP")
+	float GetShipMaxHealth() const;
+
+	/** 우주선 HP 비율 (0~1) — HP 바 UI 용 */
+	UFUNCTION(BlueprintPure, Category = "ShipHP")
+	float GetShipHealthPercent() const;
+
+	/** 우주선이 파괴(사망)됐는지 */
+	UFUNCTION(BlueprintPure, Category = "ShipHP")
+	bool IsShipDestroyed() const;
+
+	// =========================================================
+	// ★ [ShipHeal] E 회복 메뉴 — 재료 비례 HP 회복 (수리와 별개)
+	// =========================================================
+
+	/** 재료 1개당 회복되는 우주선 HP. 디자이너 튜닝(기본 100). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShipHP",
+		meta = (DisplayName = "재료당 회복 HP", ClampMin = "1.0"))
+	float HealPerMaterial = 100.f;
+
+	UFUNCTION(BlueprintPure, Category = "ShipHP")
+	float GetHealPerMaterial() const { return HealPerMaterial; }
+
+	/** [E회복] 주어진 액터가 우주선 상호작용 콜리전 박스 안에 있는지 (E 회복 메뉴 근접 판정용) */
+	UFUNCTION(BlueprintPure, Category = "ShipHP")
+	bool IsActorInInteractRange(const AActor* Other) const;
+
+	// =========================================================
 	// ★ 공격 슬롯 매니저
 	// =========================================================
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat",
@@ -123,6 +189,11 @@ private:
 	FTimerHandle NavModifierRetryHandle;
 
 protected:
+	/** [ShipHP] ShipHealthComponent->OnDeath 콜백 (서버에서만 발화).
+	 *  파괴 델리게이트 브로드캐스트 + GameMode 에 패배 통지. 시그니처는 FOnHellunaDeath 와 일치. */
+	UFUNCTION()
+	void HandleShipDestroyed(AActor* DeadActor, AActor* KillerActor);
+
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif

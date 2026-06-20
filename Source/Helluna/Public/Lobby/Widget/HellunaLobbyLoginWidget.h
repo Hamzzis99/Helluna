@@ -63,6 +63,10 @@ protected:
 	UFUNCTION()
 	void OnSignupTabClicked();
 
+	/** QUIT 클릭 → 게임 종료 */
+	UFUNCTION()
+	void OnQuitClicked();
+
 	/** 로그인 모드로 전환 */
 	void SwitchToLoginMode();
 
@@ -91,6 +95,18 @@ protected:
 
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UTextBlock> MessageText;
+
+	/** 로그인 버튼 라벨 (모드에 따라 LOGIN / SIGN IN 으로 변경) — _04/_05 시안 대응 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Text_LoginLabel;
+
+	/** 비밀번호 확인 라벨 (회원가입 모드에서만 표시) */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Text_PWConfirmLabel;
+
+	/** QUIT 버튼 (게임 종료) — BP의 QuitButton과 자동 바인딩 */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> QuitButton;
 
 	/** 현재 회원가입 모드 여부 (false = 로그인 모드) */
 	bool bIsSignupMode = false;

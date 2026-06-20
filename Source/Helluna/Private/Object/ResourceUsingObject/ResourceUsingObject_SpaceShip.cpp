@@ -4,6 +4,7 @@
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 #include "AI/SpaceShipAttackSlotManager.h"
 #include "Character/HellunaHeroCharacter.h"
+#include "Character/EnemyComponent/HellunaHealthComponent.h"
 #include "AbilitySystem/HellunaAbilitySystemComponent.h"
 #include "HellunaGameplayTags.h"
 #include "Components/BoxComponent.h"
@@ -149,6 +150,10 @@ AResourceUsingObject_SpaceShip::AResourceUsingObject_SpaceShip()
 	// 공격 슬롯 매니저 자동 생성
 	AttackSlotManager = CreateDefaultSubobject<USpaceShipAttackSlotManager>(TEXT("AttackSlotManager"));
 
+	// [ShipHP] 체력 컴포넌트 자동 생성 (캐릭터/적과 동일 컴포넌트 재사용).
+	// 컴포넌트 생성자에서 SetIsReplicatedByDefault(true) 하므로 별도 복제 설정 불필요.
+	ShipHealthComponent = CreateDefaultSubobject<UHellunaHealthComponent>(TEXT("ShipHealthComponent"));
+
 	// World Partition NavMesh 스트리밍 보장:
 	// 우주선 주변 NavMesh 데이터가 플레이어 접속 전에도 로드되도록 강제
 	// TileGenerationRadius: SlotManager의 MaxRadius(600) + 여유분
@@ -200,6 +205,22 @@ void AResourceUsingObject_SpaceShip::PostEditChangeProperty(FPropertyChangedEven
 void AResourceUsingObject_SpaceShip::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// [ShipHP] 체력 초기화 + 파괴(OnDeath) 콜백 바인딩.
+	//   - OnDeath 는 서버에서만 broadcast 되므로 클라 바인딩은 무해(미발화). AddUnique 로 중복 방지.
+	//   - SetMaxHealth(서버 전용)로 디자이너 ShipMaxHealth 반영 + 풀 회복. 컴포넌트 BeginPlay 와
+	//     순서가 뒤바뀌어도(클램프/재바인딩만 수행) 결과는 동일하므로 안전.
+	if (ShipHealthComponent)
+	{
+		ShipHealthComponent->OnDeath.AddUniqueDynamic(this, &AResourceUsingObject_SpaceShip::HandleShipDestroyed);
+
+		if (HasAuthority())
+		{
+			ShipHealthComponent->SetMaxHealth(ShipMaxHealth, /*bRefillHealth=*/true);
+			UE_LOG(LogTemp, Warning, TEXT("[ShipHP] SpaceShip 체력 초기화: %.0f / %.0f"),
+				ShipHealthComponent->GetHealth(), ShipHealthComponent->GetMaxHealth());
+		}
+	}
 
 	// 서버: GameState에 우주선 등록
 	UE_LOG(LogTemp, Warning, TEXT("[Repair][BuildDiag] SpaceShip::BeginPlay Ship=%s Authority=%d NetMode=%d"),
@@ -283,6 +304,80 @@ void AResourceUsingObject_SpaceShip::OnRepairCompleted_Implementation()
 	}
 
 	UE_LOG(LogTemp, Warning, TEXT("=== [OnRepairCompleted] 완료 ==="));
+}
+
+// =========================================================
+// [ShipHP] 우주선 체력 — 파괴 처리 + 게터
+// =========================================================
+
+// ShipHealthComponent->OnDeath 콜백 (HP 0 도달 시 서버에서 발화).
+void AResourceUsingObject_SpaceShip::HandleShipDestroyed(AActor* DeadActor, AActor* KillerActor)
+{
+	UE_LOG(LogTemp, Warning, TEXT("=== [ShipHP] 우주선 파괴됨! Killer=%s Authority=%s ==="),
+		*GetNameSafe(KillerActor), HasAuthority() ? TEXT("서버") : TEXT("클라"));
+
+	// BP 연출(폭발/사운드) 바인딩용 — 서버/클라 공통(OnDeath 는 서버 발화지만 델리게이트는 그대로 전파).
+	OnSpaceShipDestroyed.Broadcast(KillerActor);
+
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	// 서버: GameMode 에 패배 통지 → EndGame(ShipDestroyed). (게임 종료 정책은 GameMode 가 단독 소유)
+	if (UWorld* World = GetWorld())
+	{
+		if (AHellunaDefenseGameMode* GM = World->GetAuthGameMode<AHellunaDefenseGameMode>())
+		{
+			GM->NotifySpaceShipDestroyed(KillerActor);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("[ShipHP] 우주선 파괴됐으나 DefenseGameMode 를 찾지 못함 — 패배 처리 누락"));
+		}
+	}
+}
+
+float AResourceUsingObject_SpaceShip::GetShipHealth() const
+{
+	return ShipHealthComponent ? ShipHealthComponent->GetHealth() : 0.f;
+}
+
+float AResourceUsingObject_SpaceShip::GetShipMaxHealth() const
+{
+	return ShipHealthComponent ? ShipHealthComponent->GetMaxHealth() : 0.f;
+}
+
+float AResourceUsingObject_SpaceShip::GetShipHealthPercent() const
+{
+	return ShipHealthComponent ? ShipHealthComponent->GetHealthNormalized() : 0.f;
+}
+
+bool AResourceUsingObject_SpaceShip::IsShipDestroyed() const
+{
+	return ShipHealthComponent ? ShipHealthComponent->IsDead() : false;
+}
+
+// [E회복] 상호작용 콜리전 박스(수리/회복 범위) 안에 Other 가 있는지.
+//  ResouceUsingCollisionBox 는 베이스(AHellunaBaseResourceUsingObject)의 protected 멤버 — 파생 클래스에서 접근 가능.
+bool AResourceUsingObject_SpaceShip::IsActorInInteractRange(const AActor* Other) const
+{
+	return Other && ResouceUsingCollisionBox && ResouceUsingCollisionBox->IsOverlappingActor(Other);
+}
+
+// [ShipHeal] 인벤토리 E(PrimaryInteract) 상호작용 — 우주선을 바라보고 E.
+//  Inv_PlayerController::PrimaryInteract → Server_Interact(RPC) → 서버에서 이 함수 호출.
+//  UI는 클라에서 열어야 하므로 해당 플레이어에게 Client RPC로 회복 메뉴 열기를 요청한다.
+bool AResourceUsingObject_SpaceShip::ExecuteInteract_Implementation(APlayerController* Controller)
+{
+	if (!Controller) return false;
+
+	if (AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(Controller->GetPawn()))
+	{
+		Hero->Client_OpenShipHealMenu();
+		return true;  // 처리됨
+	}
+	return false;
 }
 
 // =========================================================

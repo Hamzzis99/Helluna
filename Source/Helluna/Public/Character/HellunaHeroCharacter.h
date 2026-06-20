@@ -42,6 +42,7 @@ class UInv_InteractPromptWidget;
 class AHellunaEnemyCharacter;
 class UImage;
 class UCameraShakeBase;
+class UUserWidget;
 
 
 /**
@@ -234,6 +235,11 @@ public:
 	// @param Material2Amount - 재료 2 개수
 	UFUNCTION(Server, Reliable, BlueprintCallable, Category = "Repair")
 	void Server_RepairSpaceShip(FGameplayTag Material1Tag, int32 Material1Amount, FGameplayTag Material2Tag, int32 Material2Amount);
+
+	// ⭐ [ShipHeal] 우주선 HP 회복 RPC — 재료 비례 회복 (E 회복 메뉴). Server_RepairSpaceShip 미러.
+	//   수리(CurrentResource)와 별개로 ShipHealthComponent->Heal 호출. MaxHP 초과분 재료는 보존.
+	UFUNCTION(Server, Reliable, BlueprintCallable, Category = "ShipHeal")
+	void Server_HealShipFromMaterials(FGameplayTag Material1Tag, int32 Material1Amount, FGameplayTag Material2Tag, int32 Material2Amount);
 
 	// 무기 스폰 RPC
 	UFUNCTION(Server, Reliable)  
@@ -780,6 +786,28 @@ public:
 	/** 로컬: 근처 다운 팀원 탐색 (GA_Repair 등 외부에서도 호출) */
 	AHellunaHeroCharacter* FindNearestDownedHero() const;
 
+	// =========================================================
+	// ★ [ShipHeal] E 회복 메뉴 (재료 비례 HP 회복 — F 수리와 별개)
+	// =========================================================
+
+	/** 회복 메뉴 토글 (로컬 전용). 우주선 ExecuteInteract(E) → Client_OpenShipHealMenu 경유로 호출. GA_Repair 열기/닫기 미러. */
+	void ToggleShipHealMenu();
+
+	/** [ShipHeal] 서버(우주선 ExecuteInteract)가 호출 → 소유 클라에서 회복 메뉴 토글. E 상호작용 진입점. */
+	UFUNCTION(Client, Reliable)
+	void Client_OpenShipHealMenu();
+
+protected:
+	/** 회복 메뉴 위젯 클래스 (BP에서 WBP_ShipHealWidget 할당) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "ShipHeal", meta = (AllowPrivateAccess = "true"))
+	TSubclassOf<UUserWidget> ShipHealWidgetClass;
+
+	/** 현재 열린 회복 위젯 (E 토글용) */
+	UPROPERTY()
+	TObjectPtr<UUserWidget> ShipHealWidgetInstance;
+
+public:
+
 public:
 	// =========================================================
 	// ★ 건패링 워프 VFX 멀티캐스트 (Step 2b)
@@ -828,6 +856,17 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Camera|Aim",
 		meta = (DisplayName = "Aim Interp Speed (카메라 보간 속도)", ClampMin = "1.0", ClampMax = "30.0"))
 	float AimInterpSpeed = 10.f;
+
+	// ── [AimMeshYawV1] 조준 시 메시 yaw 보정 (시각 전용, 에디터/Simulate 라이브 조정) ──
+	//   라이플 조준 포즈(MF_Rifle_Aiming)의 비스듬한 스탠스를 보정. +면 오른쪽(UE +yaw).
+	//   기본 0 = 보정 없음(원래 애니 포즈 그대로). 이전 하드코딩 20°가 과보정이라 0으로 환원.
+	UPROPERTY(EditAnywhere, Category = "Camera|Aim",
+		meta = (DisplayName = "Aim Mesh Yaw Offset (조준 시 메시 yaw 보정, +오른쪽)", ClampMin = "-45.0", ClampMax = "45.0"))
+	float AimMeshYawOffset = 0.f;
+
+	UPROPERTY(EditAnywhere, Category = "Camera|Aim",
+		meta = (DisplayName = "Aim Mesh Yaw Interp Speed (메시 yaw 보간 속도)", ClampMin = "1.0", ClampMax = "30.0"))
+	float AimMeshYawInterpSpeed = 10.f;
 
 	/** 현재 조준 상태 (ASC 태그 기반) */
 	bool bIsCurrentlyAiming = false;

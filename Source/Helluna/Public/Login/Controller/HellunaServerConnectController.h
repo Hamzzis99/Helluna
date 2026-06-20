@@ -5,6 +5,7 @@
 #include "HellunaServerConnectController.generated.h"
 
 class UHellunaServerConnectWidget;
+class UHellunaMainMenuWidget;
 
 /**
  * LoginLevel 전용 PlayerController
@@ -22,6 +23,14 @@ protected:
 	virtual void BeginPlay() override;
 
 public:
+	/** 메인 메뉴 표시 (LoginLevel 첫 화면) */
+	UFUNCTION(BlueprintCallable, Category = "ServerConnect")
+	void ShowMainMenu();
+
+	/** 메인 메뉴 숨김 */
+	UFUNCTION(BlueprintCallable, Category = "ServerConnect")
+	void HideMainMenu();
+
 	UFUNCTION(BlueprintCallable, Category = "ServerConnect")
 	void ShowConnectWidget();
 
@@ -33,6 +42,12 @@ public:
 	void OnConnectButtonClicked(const FString& IPAddress);
 
 protected:
+	UPROPERTY(EditDefaultsOnly, Category = "ServerConnect", meta = (DisplayName = "메인메뉴 위젯 클래스"))
+	TSubclassOf<UHellunaMainMenuWidget> MainMenuWidgetClass;
+
+	UPROPERTY()
+	TObjectPtr<UHellunaMainMenuWidget> MainMenuWidget;
+
 	UPROPERTY(EditDefaultsOnly, Category = "ServerConnect", meta = (DisplayName = "서버접속 위젯 클래스"))
 	TSubclassOf<UHellunaServerConnectWidget> ConnectWidgetClass;
 
