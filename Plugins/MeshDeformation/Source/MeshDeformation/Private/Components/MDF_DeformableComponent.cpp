@@ -445,6 +445,10 @@ void UMDF_DeformableComponent::StartBatchTimer()
 // -----------------------------------------------------------------------------
 void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 Count)
 {
+    // [CrashFix] StartIndex 가 INDEX_NONE(-1) 인데 Count>0 으로 들어오면 아래 'StartIndex >= EndIndex'
+    //   가드가 음수를 못 걸러 Items[-1] 접근 → EXCEPTION_ACCESS_VIOLATION(0xffff..ffff). 음수/0 방어.
+    if (StartIndex < 0 || Count <= 0) return;
+
     AActor* Owner = GetOwner();
     if (!IsValid(Owner)) return;
 
@@ -680,7 +684,28 @@ void UMDF_DeformableComponent::ApplyDeformationForHits(int32 StartIndex, int32 C
 #endif
                 }
 
-                EditMesh.SetVertex(VertexID, VertexPos + TotalOffset);
+                FVector3d NewVertexPos = VertexPos + TotalOffset;
+
+                // [TotalCapV1] 누적 변형 상한 — 정점이 원위치(rest)에서 MaxTotalDisplacement 이상 못 벗어남.
+                //   증분 누적 구조라 배치당 제한만으론 계속 맞으면 한없이 꾸겨짐 → 총 변형 깊이를 캡.
+                //   rest 는 '그 정점을 처음 변형하는 순간'(아직 원위치)에 캐시. 0 이면 무제한.
+                if (MaxTotalDisplacement > 0.0f)
+                {
+                    const FVector3d* RestPtr = RestPositions.Find(VertexID);
+                    const FVector3d RestPos = RestPtr ? *RestPtr : VertexPos;
+                    if (!RestPtr)
+                    {
+                        RestPositions.Add(VertexID, VertexPos);
+                    }
+                    const FVector3d FromRest = NewVertexPos - RestPos;
+                    const double TotalLen = FromRest.Length();
+                    if (TotalLen > (double)MaxTotalDisplacement)
+                    {
+                        NewVertexPos = RestPos + FromRest * ((double)MaxTotalDisplacement / TotalLen);
+                    }
+                }
+
+                EditMesh.SetVertex(VertexID, NewVertexPos);
                 bAnyModified = true;
                 ModifiedVertexCount++;
 
@@ -827,6 +852,9 @@ void UMDF_DeformableComponent::NetMulticast_PlayEffects_Implementation(const TAr
 void UMDF_DeformableComponent::InitializeDynamicMesh()
 {
     if (!IsValid(SourceStaticMesh)) return;
+
+    // [TotalCapV1] 원본 메시 재생성 → 누적 변위 캡용 rest 캐시 초기화(다음 변형에서 새 원위치로 재기록).
+    RestPositions.Reset();
 
     AActor* Owner = GetOwner();
     UDynamicMeshComponent* InitMeshComp = IsValid(Owner) ? Owner->FindComponentByClass<UDynamicMeshComponent>() : nullptr;

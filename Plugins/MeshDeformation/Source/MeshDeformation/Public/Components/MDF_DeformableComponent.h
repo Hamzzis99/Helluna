@@ -130,6 +130,10 @@ public:
      *  [Fix54] std::atomic — 리플리케이션 콜백과 타이머 람다 간 스레드 안전성 */
     std::atomic<bool> bFastArrayBatchPending{false};
 
+    /** [TotalCapV1] 정점별 원위치(rest) 캐시 — 첫 변형 시 기록, 누적 변위 상한 계산용.
+     *  InitializeDynamicMesh(원본 재생성) 시 초기화. 시각 전용 런타임 상태(복제/직렬화 안 함). */
+    TMap<int32, FVector3d> RestPositions;
+
     /** 원본으로 사용할 StaticMesh 에셋 */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|설정", meta = (DisplayName = "스태틱 메시"))
     TObjectPtr<UStaticMesh> SourceStaticMesh;
@@ -165,6 +169,11 @@ public:
      *  증분 적용 구조이므로 '원본 대비 총 변위'가 아닌 '1회 배치 내 변위'를 제한합니다. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|설정", meta = (DisplayName = "배치당 최대 변위", ClampMin = "1.0", ClampMax = "500.0"))
     float MaxDisplacementPerBatch = 50.0f;
+
+    /** [TotalCapV1] 정점이 '원위치(rest)' 대비 누적으로 들어갈 수 있는 최대 거리.
+     *  배치당 제한과 달리 '총 변형 깊이'를 제한해 계속 맞아도 일정 이상 꾸겨지지 않음. 0 = 무제한. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "메시변형|설정", meta = (DisplayName = "정점 누적 최대 변위 (0=무제한)", ClampMin = "0.0", ClampMax = "1000.0"))
+    float MaxTotalDisplacement = 25.0f;
 
     /** [Phase 19] 변위 방향 블렌딩 비율.
      *  1.0 = 히트→버텍스 방향(충격 중심 기준 안쪽), 0.0 = 총알 비행 방향만 사용.
