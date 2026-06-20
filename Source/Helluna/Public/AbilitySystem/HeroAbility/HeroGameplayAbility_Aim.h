@@ -82,7 +82,7 @@ private:
 	// ── 설정값 ──
 	UPROPERTY(EditDefaultsOnly, Category = "Aim",
 		meta = (DisplayName = "Aim Walk Speed (조준 시 이동 속도)"))
-	float AimMaxWalkSpeed = 150.f;
+	float AimMaxWalkSpeed = 100.f;
 
 	/** [Sniper Scope] 탭/홀드 구분 임계 시간(초). 이보다 짧게 떼면 탭(스코프 토글), 길면 홀드(견착). */
 	UPROPERTY(EditDefaultsOnly, Category = "Aim",

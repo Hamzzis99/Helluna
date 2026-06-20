@@ -32,6 +32,7 @@
 #include "Character/HellunaEnemyCharacter.h"
 #include "CollisionQueryParams.h"
 #include "Engine/OverlapResult.h"
+#include "EngineUtils.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_AttackTurret.h"
 #include "Object/ResourceUsingObject/HellunaTurretBase.h"
@@ -91,6 +92,52 @@ FVector ProjectToNav(UWorld* World, const FVector& Point, const FVector& Extent 
 	if (NavSys->ProjectPointToNavigation(Point, NavLoc, Extent))
 		return NavLoc.Location;
 	return Point;
+}
+
+/**
+ * [HunterLoiterV1] "SpaceShip" 태그가 붙은 우주선 액터를 찾는다(약참조 캐시).
+ *   STEvaluator_TargetSelector::GetCachedSpaceShip 과 동일 패턴 — 서버에서만 호출.
+ */
+static AActor* FindSpaceShip(const UWorld* World)
+{
+	static TWeakObjectPtr<AActor> CachedShip;
+	if (CachedShip.IsValid()) return CachedShip.Get();
+	if (!World) return nullptr;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (It->ActorHasTag(FName("SpaceShip")))
+		{
+			CachedShip = *It;
+			return *It;
+		}
+	}
+	return nullptr;
+}
+
+/**
+ * [HunterLoiterV1] 플레이어가 우주선 '위'(헌터가 지상에서 따라갈 수 없는 높이)에 있는지 판정.
+ *   ① 플레이어 캐릭터의 MovementBase 가 우주선이면 확실히 탑승 중.
+ *   ② 폴백: 우주선 바운드 상부 + 수평 근접 → 우주선 위 점프/공중까지 포함.
+ */
+static bool IsPlayerOnShip(AActor* Player, AActor* Ship)
+{
+	if (!Player || !Ship) return false;
+
+	if (const ACharacter* PlayerChar = Cast<ACharacter>(Player))
+	{
+		if (const UPrimitiveComponent* Base = PlayerChar->GetMovementBase())
+		{
+			if (Base->GetOwner() == Ship) return true;
+		}
+	}
+
+	FVector ShipOrigin, ShipExtent;
+	Ship->GetActorBounds(/*bOnlyCollidingComponents=*/false, ShipOrigin, ShipExtent);
+	const FVector PlayerLoc = Player->GetActorLocation();
+	const float HorizDist = FVector::Dist2D(PlayerLoc, ShipOrigin);
+	const float ShipHorizRadius = FMath::Max(ShipExtent.X, ShipExtent.Y);
+	const bool bAboveDeck = PlayerLoc.Z > (ShipOrigin.Z + ShipExtent.Z * 0.3f);
+	return bAboveDeck && (HorizDist < ShipHorizRadius);
 }
 
 /**
@@ -765,6 +812,54 @@ EStateTreeRunStatus FSTTask_ChaseTarget::TickPlayerChase(
 	const FVector PawnLoc = Pawn->GetActorLocation();
 	const FVector TargetLoc = Target->GetActorLocation();
 	const float DistToTarget2D = FVector::Dist2D(PawnLoc, TargetLoc);
+
+	// [HunterLoiterV1] 플레이어가 우주선 위에 있으면(지상에서 못 따라감) 플레이어 바로 아래로
+	//   파고들어 제자리걷기 하는 대신 우주선 둘레를 돌며 배회한다. 플레이어를 추격하는 모든
+	//   근접몹에 적용(헌터 + 일반 전환몹 — 일반몹은 곧 광폭화로 우주선 복귀). 플레이어가 내려오면
+	//   IsPlayerOnShip 이 false → 즉시 일반 추격 복귀.
+	{
+		UWorld* World = Pawn->GetWorld();
+		AActor* Ship = ChaseHelpers::FindSpaceShip(World);
+		if (Ship && ChaseHelpers::IsPlayerOnShip(Target, Ship))
+		{
+			static bool bLoggedLoiter = false;
+			if (!bLoggedLoiter)
+			{
+				bLoggedLoiter = true;
+				UE_LOG(LogTemp, Warning, TEXT("[HunterLoiterV1] %s — 플레이어 우주선 위, 우주선 둘레 배회"),
+					*Pawn->GetName());
+			}
+
+			// 몹의 '현재 위치 기준' 둘레 접선 방향으로 한 발 앞 지점을 목표로 → 늘 가까운 이동
+			//   목표가 생겨 제자리걷기가 없어진다. 우주선 중심+큰 반경으로 먼 지점을 잡으면 (우주선이
+			//   매우 커서) NavMesh 경로가 안 나와 제자리가 되던 문제 회피. Pawn 별 시계/반시계 분산.
+			const FVector ShipLoc = Ship->GetActorLocation();
+			FVector FromShip = PawnLoc - ShipLoc;
+			FromShip.Z = 0.f;
+			const FVector OutDir = (FromShip.SizeSquared() > 1.f)
+				? FromShip.GetSafeNormal()
+				: (-Pawn->GetActorForwardVector()).GetSafeNormal2D();
+			const float Dir = (Pawn->GetUniqueID() % 2 == 0) ? 1.f : -1.f;
+			const FVector Tangent = FVector(-OutDir.Y, OutDir.X, 0.f) * Dir; // 둘레 접선 방향
+			// 접선으로 한 발(≈350) 앞 + 우주선 쪽으로 살짝 당김. 바깥으로 밀면 매 틱 누적돼
+			//   점점 멀어져 '너무 먼 배회'가 되므로, 약하게 안쪽으로 당겨 우주선 가까이서 돌게 한다.
+			FVector LoiterGoal = PawnLoc + Tangent * 350.f - OutDir * 100.f;
+			LoiterGoal.Z = PawnLoc.Z;
+			LoiterGoal = ChaseHelpers::ProjectToNav(World, LoiterGoal);
+
+			bool bLoiterIdle = false;
+			if (UPathFollowingComponent* PFC = AIC->GetPathFollowingComponent())
+				bLoiterIdle = (PFC->GetStatus() == EPathFollowingStatus::Idle);
+			if (Data.TimeSinceRepath >= RepathInterval || bLoiterIdle)
+			{
+				ChaseHelpers::IssueMoveToLocationKeepSpeed(AIC, Pawn, LoiterGoal, AcceptanceRadius);
+				Data.TimeSinceRepath = 0.f;
+			}
+
+			ChaseHelpers::FaceTarget(Pawn, Ship, DeltaTime, 4.f);
+			return EStateTreeRunStatus::Running;
+		}
+	}
 
 	// --- Player 끼임 감지 ---
 	Data.PlayerStuckTimer += DeltaTime;

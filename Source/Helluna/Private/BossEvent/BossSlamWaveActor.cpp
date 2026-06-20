@@ -37,6 +37,14 @@ void ABossSlamWaveActor::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// [SlamSoundV1] 내려찍기(파동 생성) 임팩트 사운드 — 파동이 스폰되는 순간 = 보스가 내려찍는 순간.
+	//   각 머신에서 1회 재생(데디서버 제외, 3D 위치). 파동 액터는 서버 스폰 후 클라에 복제되므로
+	//   각 머신 BeginPlay 에서 자기 화면용으로 재생.
+	if (ImpactSound && !IsRunningDedicatedServer())
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, ImpactSound, GetActorLocation());
+	}
+
 	// LifeTime + 약간의 여유 후 자동 Destroy.
 	SetLifeSpan(LifeTime + 0.05f);
 

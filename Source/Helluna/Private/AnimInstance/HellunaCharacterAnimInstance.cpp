@@ -6,6 +6,8 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "KismetAnimationLibrary.h"
 #include "HellunaGameplayTags.h"
+#include "AbilitySystemComponent.h"
+#include "AbilitySystemGlobals.h"
 
 void UHellunaCharacterAnimInstance::NativeInitializeAnimation()
 {
@@ -55,6 +57,45 @@ void UHellunaCharacterAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 	else
 	{
 		CurrentLocomotionBlendSpace = nullptr;
+	}
+
+	// 조준(견착) 포즈 매핑 (키가 없으면 Gun 폴백, 그것도 없으면 nullptr)
+	//   라이플/권총=Pistol → 권총 ADS 포즈, 그 외 총기(스나이퍼·샷건·런처)=Gun → 라이플 조준 포즈
+	if (const TObjectPtr<UAnimSequence>* FoundAim = AimPoseMap.Find(WeaponAnimType))
+	{
+		CurrentAimPose = *FoundAim;
+	}
+	else if (const TObjectPtr<UAnimSequence>* FallbackAim = AimPoseMap.Find(EWeaponAnimType::Gun))
+	{
+		CurrentAimPose = *FallbackAim;
+	}
+	else
+	{
+		CurrentAimPose = nullptr;
+	}
+
+	// [AimSpineYawV2] 캐릭터(게임스레드)가 계산한 조준 상체 yaw 값을 가져와 AnimGraph(Transform Modify Bone)에 노출.
+	if (const AHellunaHeroCharacter* HeroForAim = Cast<AHellunaHeroCharacter>(OwningCharacter))
+	{
+		AimSpineYaw = HeroForAim->GetCurrentAimSpineYaw();
+	}
+	else
+	{
+		AimSpineYaw = 0.f;
+	}
+
+	// [AimIdleOverrideV1] 견착 중일 때만 Idle 을 ADS 포즈(CurrentAimPose)로 → 정지 견착이 걷기 견착
+	//   (블렌드스페이스 속도0 = MF_Pistol_Idle_ADS)과 같은 하체 스탠스가 되어 facing 통일.
+	//   비조준 정지는 IdleAnimMap(MM_Idle 등) 그대로 → 총 내린 일반 idle.
+	if (CurrentAimPose && OwningCharacter)
+	{
+		if (UAbilitySystemComponent* ASC = UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(OwningCharacter))
+		{
+			if (ASC->HasMatchingGameplayTag(HellunaGameplayTags::Player_status_Aim))
+			{
+				CurrentIdleAnim = CurrentAimPose;
+			}
+		}
 	}
 }
 

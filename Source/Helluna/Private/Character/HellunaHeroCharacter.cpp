@@ -12,6 +12,8 @@
 #include "DataAsset/DataAsset_InputConfig.h"
 #include "Conponent/HellunaInputComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Animation/AnimMontage.h"
+#include "Animation/AnimInstance.h"
 #include "HellunaGameplayTags.h"
 #include "AbilitySystem/HellunaAbilitySystemComponent.h"
 #include "DataAsset/DataAsset_HeroStartUpData.h"
@@ -19,7 +21,6 @@
 #include "Kismet/GameplayStatics.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 #include "Component/RepairComponent.h"
-#include "Widgets/ShipHealWidget.h"  // [ShipHeal] E 회복 메뉴 위젯
 #include "Weapon/HellunaHeroWeapon.h"
 #include "Weapon/HellunaFarmingWeapon.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
@@ -322,33 +323,52 @@ void AHellunaHeroCharacter::Tick(float DeltaTime)
 	Super::Tick(DeltaTime);
 	// 카메라 줌 보간은 이제 GA의 AT_AimCameraInterp AbilityTask에서 처리
 
-	// [AimMeshYawV1] 조준(Player.status.Aim) 시 메시를 살짝 yaw 틀어, 라이플 조준 포즈(MF_Rifle_Aiming)의
-	//   비스듬한 스탠스가 캐릭터 정면을 어긋나 보이게 하는 것을 보정. 모든 머신에서 Tick + 복제 태그라
-	//   멀티 일관(견착·스코프 둘 다). 메시 상대회전(yaw)만 — 캡슐 facing/조준 방향/이동엔 영향 없음(시각 전용).
-	if (USkeletalMeshComponent* AimMeshComp = GetMesh())
+	// [AimSpineYawV2] 조준 시 '상체(척추)만' yaw 회전시키기 위한 오프셋 값 계산·보간. (구버전 AimMeshYaw 는
+	//   메시 '전체'를 돌려 이동 시 다리/발이 어긋나 비틀거렸음 → 폐기.) 실제 회전은 AnimGraph 의
+	//   Transform(Modify)Bone 이 척추 본에 이 값(AimInstance.AimSpineYaw)을 적용 → 다리/이동 영향 0.
+	//   모든 머신 Tick + 복제 CurrentWeaponTag 라 멀티 일관(견착·스코프·이동 전부).
 	{
 		UHellunaAbilitySystemComponent* AimASC = GetHellunaAbilitySystemComponent();
 		const bool bAimingNow = AimASC && AimASC->HasMatchingGameplayTag(HellunaGameplayTags::Player_status_Aim);
 
-		// 메시 기본 상대 yaw(BP CDO 값) — 멤버 추가 없이 CDO 에서 읽어 절대 기준으로 보간.
-		float BaseMeshYaw = -90.f;
-		if (const AHellunaHeroCharacter* HeroCDO = GetClass()->GetDefaultObject<AHellunaHeroCharacter>())
+		// 카테고리별 상체 yaw — Pistol(라이플·권총), Gun(스나이퍼·샷건·런처). 발사 활성 구간엔 발사값.
+		const bool bPistolCategory = CurrentWeaponTag.MatchesTagExact(HellunaGameplayTags::Player_Weapon_Gun_Pistol);
+		const float AimYawOffset = bPistolCategory ? 30.f : 25.f;     // 조준(정지·이동 동일) — 권총류 더 오른쪽
+		const float FireYawOffset = bPistolCategory ? -10.f : -5.f;   // 발사 — 권총류 과도해서 -25→-10
+		static constexpr float AimSpineInterpSpeed = 10.f;
+
+		// 발사 오프셋은 발사 몽타주의 '활성 구간'에서만(블렌드아웃 꼬리 제외) — 발사 후 잔여 꺾임 방지.
+		bool bFiringActive = false;
+		if (const USkeletalMeshComponent* AimMeshComp = GetMesh())
 		{
-			if (const USkeletalMeshComponent* CDOMesh = HeroCDO->GetMesh())
+			if (UAnimInstance* AimAnimInst = AimMeshComp->GetAnimInstance())
 			{
-				BaseMeshYaw = CDOMesh->GetRelativeRotation().Yaw;
+				// [FireYawMontageFilterV1] 발사 yaw 오프셋은 '발사 몽타주' 한정으로 적용.
+				//   GetCurrentActiveMontage 는 몽타주 종류를 가리지 않아 피격(HitReact)·기상(GetUp)
+				//   몽타주까지 '발사 중'으로 오인 → 견착 중 피격 시 상체가 발사 자세(-10/-5)로 꺾이던
+				//   버그. 비발사 몽타주는 발사 판정에서 제외한다.
+				if (UAnimMontage* ActiveMontage = AimAnimInst->GetCurrentActiveMontage())
+				{
+					const bool bNonFireMontage =
+						(ActiveMontage == HitReactMontage) || (ActiveMontage == GetUpMontage);
+					if (!bNonFireMontage)
+					{
+						const float Pos = AimAnimInst->Montage_GetPosition(ActiveMontage);
+						const float Len = ActiveMontage->GetPlayLength();
+						const float BlendOutTime = ActiveMontage->BlendOut.GetBlendTime();
+						bFiringActive = (Pos > 0.f) && (Pos < (Len - BlendOutTime));
+					}
+				}
 			}
 		}
 
-		// [AimMeshYawV1] 조준 시 추가 yaw(도). 하드코딩(20°) → UPROPERTY 로 전환.
-		//   기본 0 = 보정 없음. BP/디테일/Simulate 에서 리빌드 없이 튜닝(AimMeshYawOffset).
-		const float TargetYaw = BaseMeshYaw + (bAimingNow ? AimMeshYawOffset : 0.f);
-		const FRotator CurMeshRot = AimMeshComp->GetRelativeRotation();
-		if (!FMath::IsNearlyEqual(CurMeshRot.Yaw, TargetYaw, 0.05f))
+		float TargetSpineYaw = 0.f;
+		if (bAimingNow)
 		{
-			const float NewYaw = FMath::FInterpTo(CurMeshRot.Yaw, TargetYaw, DeltaTime, AimMeshYawInterpSpeed);
-			AimMeshComp->SetRelativeRotation(FRotator(CurMeshRot.Pitch, NewYaw, CurMeshRot.Roll));
+			TargetSpineYaw = bFiringActive ? FireYawOffset : AimYawOffset;
 		}
+		CurrentAimSpineYaw = FMath::FInterpTo(CurrentAimSpineYaw, TargetSpineYaw, DeltaTime, AimSpineInterpSpeed);
+		// 실제 회전은 AnimGraph Transform(Modify)Bone 이 척추에 AimSpineYaw 만큼 적용(상체만, 다리 무관).
 	}
 
 	// [Phase 21] 3D 부활 위젯 출혈 타이머 업데이트 (클라이언트)
@@ -1127,161 +1147,6 @@ void AHellunaHeroCharacter::Server_RepairSpaceShip_Implementation(FGameplayTag M
 }
 
 // ============================================================================
-// [ShipHeal] 우주선 HP 회복 RPC — 재료 비례 회복 (Server_RepairSpaceShip 미러)
-//  수리(CurrentResource)와 별개로 ShipHealthComponent->Heal 호출.
-//  MaxHP 초과분 재료는 소비하지 않음(필요한 만큼만 차감).
-// ============================================================================
-void AHellunaHeroCharacter::Server_HealShipFromMaterials_Implementation(FGameplayTag Material1Tag, int32 Material1Amount, FGameplayTag Material2Tag, int32 Material2Amount)
-{
-	if (!HasAuthority()) return;
-
-	const int32 TotalMaterials = Material1Amount + Material2Amount;
-	if (TotalMaterials <= 0) return;
-
-	// 우주선 찾기 (Server_RepairSpaceShip 와 동일하게 "SpaceShip" 태그)
-	TArray<AActor*> FoundActors;
-	UGameplayStatics::GetAllActorsWithTag(GetWorld(), FName("SpaceShip"), FoundActors);
-	if (FoundActors.Num() == 0) return;
-
-	AResourceUsingObject_SpaceShip* SpaceShip = Cast<AResourceUsingObject_SpaceShip>(FoundActors[0]);
-	if (!SpaceShip) return;
-
-	UHellunaHealthComponent* ShipHC = SpaceShip->GetShipHealthComponent();
-	if (!ShipHC) return;
-
-	const float HealPerMat = FMath::Max(1.f, SpaceShip->GetHealPerMaterial());
-	const float MaxHP = ShipHC->GetMaxHealth();
-	const float CurHP = ShipHC->GetHealth();
-	const float Deficit = FMath::Max(0.f, MaxHP - CurHP);
-
-	if (Deficit <= 0.f)
-	{
-		// 이미 풀피 — 재료 소비/회복 없음
-		return;
-	}
-
-	const float DesiredHeal = TotalMaterials * HealPerMat;
-	const float ActualHeal = FMath::Min(DesiredHeal, Deficit);
-
-	// 실제 회복에 필요한 재료 수만 소비 (초과분 보존)
-	int32 MaterialsUsed = FMath::CeilToInt(ActualHeal / HealPerMat);
-	MaterialsUsed = FMath::Clamp(MaterialsUsed, 0, TotalMaterials);
-	if (MaterialsUsed <= 0) return;
-
-	// HP 회복 (서버 권위) — OnHealthChanged 복제 → 클라 HP 표시 갱신
-	ShipHC->Heal(ActualHeal, this);
-
-	// 이펙트 1회 재생 (수리와 동일 멀티캐스트 재사용)
-	if (URepairComponent* RepairComp = SpaceShip->FindComponentByClass<URepairComponent>())
-	{
-		RepairComp->Multicast_PlaySingleRepairEffect(SpaceShip->GetActorLocation());
-	}
-
-	// 인벤토리 차감 — MaterialsUsed 를 재료1/2 비율로 분배 (Server_RepairSpaceShip 동일 패턴)
-	APlayerController* PC = Cast<APlayerController>(GetController());
-	if (!PC) return;
-
-	UInv_InventoryComponent* InvComp = UInv_InventoryStatics::GetInventoryComponent(PC);
-	if (!InvComp) return;
-
-	int32 Use1 = 0;
-	int32 Use2 = 0;
-	if (TotalMaterials > 0)
-	{
-		const float Ratio1 = (float)Material1Amount / (float)TotalMaterials;
-		Use1 = FMath::RoundToInt(Ratio1 * MaterialsUsed);
-		Use2 = MaterialsUsed - Use1;
-	}
-
-	if (Use1 > 0 && Material1Tag.IsValid())
-	{
-		InvComp->Server_ConsumeMaterialsMultiStack(Material1Tag, Use1);
-	}
-	if (Use2 > 0 && Material2Tag.IsValid())
-	{
-		InvComp->Server_ConsumeMaterialsMultiStack(Material2Tag, Use2);
-	}
-
-	UE_LOG(LogTemp, Warning,
-		TEXT("[ShipHeal] 회복 %.0f HP (재료 %d개 소비: M1=%d M2=%d) | HP %.0f → %.0f / %.0f"),
-		ActualHeal, MaterialsUsed, Use1, Use2, CurHP, ShipHC->GetHealth(), MaxHP);
-}
-
-// ============================================================================
-// [ShipHeal] 서버(우주선 ExecuteInteract, E 상호작용)가 호출 → 소유 클라에서 회복 메뉴 토글.
-// ============================================================================
-void AHellunaHeroCharacter::Client_OpenShipHealMenu_Implementation()
-{
-	ToggleShipHealMenu();
-}
-
-// ============================================================================
-// [ShipHeal] 회복 메뉴 토글 (로컬 전용) — GA_Repair::Repair 의 열기/닫기 로직 미러.
-//  우주선 ExecuteInteract(E) → Client_OpenShipHealMenu 경유로 호출된다.
-// ============================================================================
-void AHellunaHeroCharacter::ToggleShipHealMenu()
-{
-	if (!IsLocallyControlled()) return;
-
-	// 토글: 이미 열려 있으면 닫기
-	if (IsValid(ShipHealWidgetInstance) && ShipHealWidgetInstance->IsInViewport())
-	{
-		if (UShipHealWidget* HealW = Cast<UShipHealWidget>(ShipHealWidgetInstance))
-		{
-			HealW->CloseWidget();
-		}
-		else if (APlayerController* ClosePC = GetController<APlayerController>())
-		{
-			ClosePC->SetInputMode(FInputModeGameOnly());
-			ClosePC->bShowMouseCursor = false;
-			ShipHealWidgetInstance->RemoveFromParent();
-		}
-		ShipHealWidgetInstance = nullptr;
-		return;
-	}
-
-	if (!ShipHealWidgetClass)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[ShipHeal] ShipHealWidgetClass 미설정 (Hero BP에서 WBP_ShipHealWidget 할당 필요)"));
-		return;
-	}
-
-	// 우주선 찾기 (Server_HealShipFromMaterials 와 동일 방식)
-	TArray<AActor*> FoundShips;
-	UGameplayStatics::GetAllActorsWithTag(GetWorld(), FName("SpaceShip"), FoundShips);
-	AResourceUsingObject_SpaceShip* Ship = (FoundShips.Num() > 0) ? Cast<AResourceUsingObject_SpaceShip>(FoundShips[0]) : nullptr;
-	if (!Ship) return;
-
-	URepairComponent* RepairComp = Ship->FindComponentByClass<URepairComponent>();
-	if (!RepairComp) return;
-
-	APlayerController* PC = GetController<APlayerController>();
-	if (!PC) return;
-
-	UInv_InventoryComponent* InvComp = UInv_InventoryStatics::GetInventoryComponent(PC);
-	if (!InvComp) return;
-
-	// 다른 인벤토리 메뉴 열려있으면 닫기
-	if (InvComp->IsMenuOpen())
-	{
-		InvComp->ToggleInventoryMenu();
-	}
-
-	ShipHealWidgetInstance = CreateWidget<UUserWidget>(PC, ShipHealWidgetClass);
-	if (!ShipHealWidgetInstance) return;
-
-	if (UShipHealWidget* HealW = Cast<UShipHealWidget>(ShipHealWidgetInstance))
-	{
-		HealW->InitializeWidget(RepairComp, InvComp);
-	}
-
-	ShipHealWidgetInstance->AddToViewport(100);
-	PC->FlushPressedKeys();
-	PC->SetInputMode(FInputModeGameAndUI());
-	PC->bShowMouseCursor = true;
-}
-
-// ============================================================================
 // 서버 RPC: 손에 드는 무기(손 무기)를 스폰해서 지정 소켓에 부착한다.
 // - 서버에서만 스폰/부착을 수행하고, 무기 태그(WeaponTag)는 ASC(AbilitySystemComponent)에 반영한다.
 // - 기존 무기를 파괴하지 않는 구조(등/허리 슬롯 등 다른 시스템에서 관리 가능).
@@ -1618,6 +1483,18 @@ void AHellunaHeroCharacter::Multicast_EnterPhysicsStun_Implementation(FVector_Ne
 	{
 		LockMoveInput();
 		LockLookInput();
+
+		// [StunAimFix] 견착(ADS)/스코프 중 물리 스턴 진입 시 Aim GA 강제 종료.
+		//   스턴은 Aim GA 를 끝내지 않아, 견착 카메라(FOV 줌인·암길이 단축·SocketOffset)가
+		//   복원되지 않은 채 stuck 되던 버그 수정. 게다가 스턴 중 입력 잠금으로 우클릭 release 가
+		//   소실돼 줌아웃이 영영 트리거되지 않음 → Aim GA 를 직접 cancel 해 EndAbility 의
+		//   취소-카메라-스냅 복원 경로(bWasCancelled)를 태운다. 스코프 오버레이도 같이 정리됨.
+		if (UHellunaAbilitySystemComponent* HeroASC = GetHellunaAbilitySystemComponent())
+		{
+			FGameplayTagContainer AimAbilityTags;
+			AimAbilityTags.AddTag(HellunaGameplayTags::Player_Ability_Aim);
+			HeroASC->CancelAbilities(&AimAbilityTags);
+		}
 	}
 
 	// 임펄스 (래그돌이 이미 물리 활성 상태 → AddImpulseAtLocation 유효)
@@ -3157,7 +3034,6 @@ void AHellunaHeroCharacter::Input_InteractionStarted(const FInputActionValue& Va
 	}
 
 	// 우선순위 2: 보스큐브 등 기타 상호작용
-	//  (우주선 회복 메뉴는 F가 아니라 E(인벤토리 PrimaryInteract)로 이동 — 우주선 ExecuteInteract 참조)
 	// → bHoldingInteraction = true 상태로 BossEncounterCube::Tick이 처리
 	// → IsReviving() == false 이므로 큐브 프로그레스 정상 증가
 }

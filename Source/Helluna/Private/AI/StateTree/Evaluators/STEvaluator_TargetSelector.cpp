@@ -313,6 +313,31 @@ void FSTEvaluator_TargetSelector::Tick(FStateTreeExecutionContext& Context, cons
 		TargetData.bAttackingSpaceShip = false;
 	}
 
+	// [OnShipStayV1] 우주선에 올라탄(점프 탑승) 몬스터는 플레이어가 어그로 범위에 들어와도
+	//   플레이어로 전환하지 않고 우주선을 계속 공격한다. 배 위에서 내려가는 걸 막기 위함.
+	//   (SwitchToPlayerNearShipV1 의 "공격 중에도 플레이어 전환"은 지상 몹에만 적용.)
+	//   위에서 TargetActor=우주선, DistanceToTarget·bAttackingSpaceShip 은 이미 갱신됨 → 그대로 유지.
+	if (const AHellunaEnemyCharacter* OnShipEnemy = Cast<AHellunaEnemyCharacter>(ControlledPawn))
+	{
+		if (UAbilitySystemComponent* OnShipASC = OnShipEnemy->GetAbilitySystemComponent())
+		{
+			static const FGameplayTag OnShipTag =
+				FGameplayTag::RequestGameplayTag(FName("State.Enemy.OnShip"), false);
+			if (OnShipTag.IsValid() && OnShipASC->HasMatchingGameplayTag(OnShipTag))
+			{
+				static bool bLoggedOnShipStay = false;
+				if (!bLoggedOnShipStay)
+				{
+					bLoggedOnShipStay = true;
+					UE_LOG(LogTemp, Warning,
+						TEXT("[OnShipStayV1] %s OnShip — 우주선 고정(플레이어 전환 차단)"),
+						*ControlledPawn->GetName());
+				}
+				return;
+			}
+		}
+	}
+
 	// ── 어그로 범위 내 가장 가까운 플레이어/터렛 탐색 ──────────
 	AActor* NearestAggroTarget = nullptr;
 	EHellunaTargetType NearestType = EHellunaTargetType::SpaceShip;

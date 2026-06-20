@@ -51,11 +51,9 @@ void UHeroGameplayAbility_Aim::ActivateAbility(
 	AHellunaHeroCharacter* Hero = GetHeroCharacterFromActorInfo();
 	if (!Hero) { EndAbility(Handle, ActorInfo, ActivationInfo, true, true); return; }
 
-	// ── [AimTurnCharacterV1] 견착 시 카메라를 돌리지 않는다. ──
-	//   대신 아래 bUseControllerDesiredRotation=true (RotationRate Yaw 720) 설정으로
-	//   CharacterMovementComponent 가 캐릭터 Yaw 를 컨트롤(카메라/조준) 방향으로 자동 회전시킨다.
-	//   → 카메라는 플레이어가 보던 그대로 유지되고 캐릭터만 조준 방향으로 돌아 더 자연스럽다.
-	//   (구 StartAimCameraRealign() — 카메라를 캐릭터 쪽으로 돌리던 방식 — 호출 제거. 멀티: 회전은 무브먼트 컴포넌트가 복제)
+	// ── [AimTurnToCameraV3] 견착 시 '캐릭터'를 카메라(조준)방향으로 회전시킨다(사용자 요청). ──
+	//   카메라를 캐릭터로 돌리는 realign 은 쓰지 않는다(반대 방향). 아래 bUseControllerDesiredRotation=true 가
+	//   CharacterMovement 로 캐릭터 Yaw 를 컨트롤(카메라/조준) 방향으로 회전시킨다.
 
 	// ── 기본값 캐싱 ──
 	if (UCharacterMovementComponent* MoveComp = Hero->GetCharacterMovement())
@@ -71,11 +69,17 @@ void UHeroGameplayAbility_Aim::ActivateAbility(
 		CachedUseControllerDesiredRotation = MoveComp->bUseControllerDesiredRotation;
 		CachedRotationRate = MoveComp->RotationRate;
 
+		// [AimTurnToCameraV3] 견착 시 캐릭터가 카메라(조준)방향으로 회전(사용자 요청). RotationRate
+		//   360°/s. (정지 시 몸이 꺾이는 게 거슬리면 정석인 Aim Offset 애니메이션으로 개선 가능 — 별도 안내.)
+		// [AimNoBodyTurnV2] 견착 중 캡슐을 카메라/조준 방향으로 안 돌림(이동방향 유지). facing 은
+		//   메시 yaw(AimMeshYawOffset 30°, 시각)가 담당. 발사 시 반동 yaw 를 몸이 따라 꺾이는 튐 제거.
+		// 견착 동작 원복 — 캐릭터가 카메라(조준)방향으로 회전(원래 동작, 사용자: 견착 건드리지 말 것).
+		//   '발사 시 추가 회전'은 반동 좌우 yaw 를 몸이 따라가는 것이므로 무기 반동 쪽에서 처리.
 		MoveComp->bOrientRotationToMovement = false;
 		MoveComp->bUseControllerDesiredRotation = true;
-		MoveComp->RotationRate = FRotator(0.f, 720.f, 0.f);
+		MoveComp->RotationRate = FRotator(0.f, 720.f, 0.f); // 견착 회전속도(원복). 발사 꺾임 원인은 AimMeshYawOffset 이었음.
 
-		UE_LOG(LogTemp, Warning, TEXT("[Aim GA][AimTurnCharacterV1] 캐릭터를 카메라 방향으로 회전 (카메라 정렬 없음) (bOrientToMovement: %s→false, bUseControllerDesired: %s→true)"),
+		UE_LOG(LogTemp, Warning, TEXT("[Aim GA][AimNoBodyTurnV1] 견착 중 몸을 조준방향으로 안 돌림(이동방향 유지) (prev bOrientToMovement: %s, bUseControllerDesired: %s)"),
 			CachedOrientRotationToMovement ? TEXT("true") : TEXT("false"),
 			CachedUseControllerDesiredRotation ? TEXT("true") : TEXT("false"));
 	}

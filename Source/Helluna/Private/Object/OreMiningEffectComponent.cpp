@@ -214,6 +214,11 @@ void UOreMiningEffectComponent::SpawnMiningVFX(const FVector& HitLocation, const
 
     if (SpawnedComp)
     {
+        // [MiningColorV1] 광석 색에 맞춰 채굴 VFX 색조(User._ColorHue) 주입. 음수면 미적용(VFX 기본색 유지).
+        if (MiningVFXColorHue >= 0.f)
+        {
+            SpawnedComp->SetVariableFloat(FName(TEXT("User._ColorHue")), MiningVFXColorHue);
+        }
         UE_LOG(LogOreMiningFX, Log, TEXT("[%s] VFX 스폰 성공 — 위치: %s, IsActive: %d, IsVisible: %d, Asset: %s"),
             *GetOwner()->GetName(),
             *HitLocation.ToString(),

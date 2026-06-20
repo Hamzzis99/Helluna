@@ -174,6 +174,9 @@ public:
 	AHellunaHeroWeapon* GetCurrentWeapon() const { return CurrentWeapon; }
 	void SetCurrentWeapon(AHellunaHeroWeapon* NewWeapon);
 
+	/** [AimSpineYaw] 조준 상체 yaw 회전값(도) — AnimGraph Transform Modify Bone 가 척추에 적용(다리/이동 영향 0). Tick 보간. */
+	float GetCurrentAimSpineYaw() const { return CurrentAimSpineYaw; }
+
 	// ── [ScopeBreakV1] 스나이퍼 스코프 강제 해제 ──────────────────────
 	/**
 	 * 활성 Aim GA를 찾아 스코프(탭 토글 강줌)를 강제 해제. 피격 시(로컬) 직접 호출.
@@ -281,6 +284,9 @@ public:
 	// ✅ 현재 무기 태그(서버가 결정 → 클라로 복제)
 	UPROPERTY(ReplicatedUsing = OnRep_CurrentWeaponTag)
 	FGameplayTag CurrentWeaponTag;
+
+	/** [AimSpineYaw] 조준 상체 yaw 회전값(도). Tick 에서 카테고리·발사 상태로 보간. 시각 전용(다리/이동 영향 0). */
+	float CurrentAimSpineYaw = 0.f;
 
 
 private:

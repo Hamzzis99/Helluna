@@ -58,6 +58,12 @@ protected:
         meta = (DisplayName = "채굴 타격 사운드"))
     USoundBase* MiningHitSound = nullptr;
 
+    /** [MiningColorV1] 채굴 VFX 색조(Hue 0~1) — 광석 색에 맞춰 VFX 의 User._ColorHue 에 주입.
+     *   음수(-1)면 미적용(VFX 기본색 유지). NS_Hit_Bless 처럼 _ColorHue 파라미터가 있는 VFX 에만 효과. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VFX/쉐이크|채굴",
+        meta = (DisplayName = "채굴 VFX 색조(Hue, -1=미적용)", ClampMin = "-1.0", ClampMax = "1.0"))
+    float MiningVFXColorHue = -1.f;
+
     // ==================================================================================
     // VFX/쉐이크 — 파괴
     // ==================================================================================

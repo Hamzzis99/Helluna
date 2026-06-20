@@ -21,6 +21,9 @@
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
 #include "NiagaraComponent.h"
+#include "Components/AudioComponent.h"
+#include "Sound/SoundBase.h"
+#include "Kismet/GameplayStatics.h"
 
 #include "TimerManager.h"
 #include "Engine/World.h"
@@ -84,6 +87,13 @@ AHellunaEnemyCharacter_Boss::AHellunaEnemyCharacter_Boss()
 	//   생성자에서 default subobject 로 보스 actor 에 attach.
 	//   디자이너가 BP CDO 에서 dissolve 머티리얼/VFX/timing 직접 set.
 	DissolveComponent = CreateDefaultSubobject<UBossDissolveComponent>(TEXT("DissolveComponent"));
+
+	// [BossBGMV1] BGM 전용 2D 오디오 컴포넌트 — 거리감쇠 없이 각 머신 로컬에서 재생/정지.
+	BGMAudioComponent = CreateDefaultSubobject<UAudioComponent>(TEXT("BGMAudioComponent"));
+	BGMAudioComponent->SetupAttachment(RootComponent);
+	BGMAudioComponent->bAutoActivate = false;
+	BGMAudioComponent->bAllowSpatialization = false;
+	BGMAudioComponent->bIsUISound = true;
 }
 
 void AHellunaEnemyCharacter_Boss::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -95,6 +105,15 @@ void AHellunaEnemyCharacter_Boss::GetLifetimeReplicatedProps(TArray<FLifetimePro
 	// [Phase2ExtraBarV1] client widget 이 별도 추가 바 percent 를 계산할 때 사용.
 	DOREPLIFETIME(AHellunaEnemyCharacter_Boss, Phase2HealthFillOldMax);
 	DOREPLIFETIME(AHellunaEnemyCharacter_Boss, Phase2HealthFillNewMax);
+}
+
+// [BossBGMV1] 모든 머신에서 BGM 정지 (보스 사망 시 서버가 호출).
+void AHellunaEnemyCharacter_Boss::Multicast_StopBGM_Implementation()
+{
+	if (BGMAudioComponent && BGMAudioComponent->IsPlaying())
+	{
+		BGMAudioComponent->Stop();
+	}
 }
 
 // ============================================================
@@ -120,6 +139,14 @@ void AHellunaEnemyCharacter_Boss::BeginPlay()
 				EnterBossPhase2();
 			}),
 			1.0f, false);
+	}
+
+	// [BossBGMV1] 1페이즈 BGM — 보스 등장 시 각 머신에서 재생(데디서버 제외, 2D).
+	//   BeginPlay 는 모든 머신에서 호출되므로 Multicast 불필요.
+	if (!IsRunningDedicatedServer() && BGMAudioComponent && Phase1BGM)
+	{
+		BGMAudioComponent->SetSound(Phase1BGM);
+		BGMAudioComponent->Play();
 	}
 }
 
@@ -263,6 +290,13 @@ void AHellunaEnemyCharacter_Boss::Multicast_PlayBossPhase2Transition_Implementat
 
 	UWorld* World = GetWorld();
 	if (!World) return;
+
+	// [BossBGMV1] 2페이즈 전환 시작 — 1페이즈 BGM 을 끈다(무음). 2페이즈 BGM 은 이후 회오리
+	//   발생 시점(Phase2_PlayStage3Visuals)에 재생된다. → "꺼졌다가 회오리에 맞춰 다시 시작".
+	if (!IsRunningDedicatedServer() && BGMAudioComponent && BGMAudioComponent->IsPlaying())
+	{
+		BGMAudioComponent->Stop();
+	}
 
 	// [Phase2SkipFastForwardV1] 새 페이즈2 진입 — Stage3 가드 리셋 (모든 머신).
 	bPhase2Stage3Triggered = false;
@@ -649,6 +683,9 @@ void AHellunaEnemyCharacter_Boss::OnMonsterDeath(AActor* DeadActor, AActor* Kill
 		Super::OnMonsterDeath(DeadActor, KillerActor);
 		return;
 	}
+
+	// [BossBGMV1] 보스 사망 — 모든 머신에서 BGM 정지.
+	Multicast_StopBGM();
 
 	// =========================================================================
 	// [BossDeathV1] StateTree 우회 흐름 — Super::OnMonsterDeath 호출 안 함.
@@ -1925,6 +1962,22 @@ void AHellunaEnemyCharacter_Boss::Phase2_PlayStage3Visuals(bool bImmediate)
 		UE_LOG(LogTemp, Warning,
 			TEXT("[Phase2DescentNCV1] Activated %d, scaling %.2f→%.2f over %.1fs (Immediate=%d)"),
 			ActivatedCount, Phase2DescentScaleStartMult, Phase2DescentScaleEndMult, Phase2DescentScaleDuration, bImmediate ? 1 : 0);
+
+		// [BossBGMV1] 회오리(Phase2Descent) 등장 시점 — 회오리 사운드 + 2페이즈 BGM 을 함께 시작.
+		//   사용자 요청: 2페 BGM 을 시네마틱 시작이 아닌 '회오리 발생 시점'부터 재생.
+		//   이 함수는 Multicast_PlayBossPhase2Transition 경로(모든 머신)에서 호출됨 — 각 머신 1회(데디 제외).
+		if (ActivatedCount > 0 && !IsRunningDedicatedServer())
+		{
+			if (HurricaneSound)
+			{
+				UGameplayStatics::PlaySound2D(this, HurricaneSound);
+			}
+			if (BGMAudioComponent && Phase2BGM)
+			{
+				BGMAudioComponent->SetSound(Phase2BGM);
+				BGMAudioComponent->Play();
+			}
+		}
 
 		// [Phase2LaserSplitV1] 레이저 전용 컴포넌트('Phase2Laser') 셋업 — 회오리와 분리되어
 		//   strike 종료 시 DeactivateImmediate 로 잔존(기존 빔)까지 즉시 제거 가능(=회오리 팝 없음).
