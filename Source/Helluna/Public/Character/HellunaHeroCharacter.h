@@ -288,6 +288,26 @@ public:
 	/** [AimSpineYaw] 조준 상체 yaw 회전값(도). Tick 에서 카테고리·발사 상태로 보간. 시각 전용(다리/이동 영향 0). */
 	float CurrentAimSpineYaw = 0.f;
 
+	// [AimSpineYaw 튜닝] 조준/발사 시 상체(척추) yaw 오프셋(도). +값=오른쪽. 에디터 CDO에서 조정 가능.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Aim|SpineYaw", meta = (DisplayName = "권총류 조준 상체Yaw", AllowPrivateAccess = "true"))
+	float PistolAimSpineYaw = -15.f;  // 권총+라이플 우측 꺾임 상쇄(음수=왼쪽). 시작값 -15, 에디터에서 미세조정
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Aim|SpineYaw", meta = (DisplayName = "총기 조준 상체Yaw", AllowPrivateAccess = "true"))
+	float GunAimSpineYaw = 0.f;   // 샷건/런처/스나이퍼는 보정 없음(기존 그대로)
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Aim|SpineYaw", meta = (DisplayName = "권총류 발사 상체Yaw", AllowPrivateAccess = "true"))
+	float PistolFireSpineYaw = -15.f;  // 조준값과 통일(발사 시 트위치 방지)
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Aim|SpineYaw", meta = (DisplayName = "총기 발사 상체Yaw", AllowPrivateAccess = "true"))
+	float GunFireSpineYaw = 0.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Aim|SpineYaw", meta = (DisplayName = "상체Yaw 보간속도", AllowPrivateAccess = "true"))
+	float AimSpineYawInterpSpeed = 10.f;
+
+	// [AimMeshYawV2] 위 yaw 값을 메시 컴포넌트에 직접 적용하기 위한 기본 회전 캐시(AnimGraph 불필요).
+	FRotator DefaultMeshRelativeRotation = FRotator::ZeroRotator;
+	bool bCachedDefaultMeshRot = false;
+
 
 private:
 	// ✅ ASC를 캐릭터가 소유하도록 
