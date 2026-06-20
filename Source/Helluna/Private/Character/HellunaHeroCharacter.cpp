@@ -1233,6 +1233,7 @@ void AHellunaHeroCharacter::Server_HealShipFromMaterials_Implementation(FGamepla
 // [ShipHeal] 서버(우주선 ExecuteInteract, E 상호작용)가 호출 → 소유 클라에서 회복 메뉴 토글.
 void AHellunaHeroCharacter::Client_OpenShipHealMenu_Implementation()
 {
+	UE_LOG(LogTemp, Warning, TEXT("[ShipHeal-DBG] Client_OpenShipHealMenu received on client -> ToggleShipHealMenu"));
 	ToggleShipHealMenu();
 }
 
@@ -1242,6 +1243,9 @@ void AHellunaHeroCharacter::Client_OpenShipHealMenu_Implementation()
 // ============================================================================
 void AHellunaHeroCharacter::ToggleShipHealMenu()
 {
+	UE_LOG(LogTemp, Warning, TEXT("[ShipHeal-DBG] ToggleShipHealMenu entered. LocallyControlled=%d WidgetClass=%s"),
+		IsLocallyControlled() ? 1 : 0, *GetNameSafe(ShipHealWidgetClass));
+
 	if (!IsLocallyControlled()) return;
 
 	if (IsValid(ShipHealWidgetInstance) && ShipHealWidgetInstance->IsInViewport())

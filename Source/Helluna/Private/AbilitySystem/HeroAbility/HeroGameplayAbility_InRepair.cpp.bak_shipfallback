@@ -7,7 +7,6 @@
 #include "Widgets/HellunaWidget_SpaceShip.h"
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 #include "GameMode/HellunaDefenseGameState.h"
-#include "Kismet/GameplayStatics.h"
 
 #include "DebugHelper.h"
 #include "Helluna.h"
@@ -37,11 +36,7 @@ void UHeroGameplayAbility_InRepair::ActivateAbility(const FGameplayAbilitySpecHa
 
 	if (UHellunaWidget_SpaceShip* W = Cast<UHellunaWidget_SpaceShip>(RepairWidgetInstance))
 	{
-		AResourceUsingObject_SpaceShip* Ship = GetSpaceShip();
-		const bool bShipFromGS = (Ship != nullptr);
-		if (!Ship) { Ship = Cast<AResourceUsingObject_SpaceShip>(UGameplayStatics::GetActorOfClass(GetWorld(), AResourceUsingObject_SpaceShip::StaticClass())); }
-		UE_LOG(LogTemp, Warning, TEXT("[Repair][BuildDiag] InRepair Ship=%s source=%s"), Ship ? *Ship->GetName() : TEXT("NULL"), bShipFromGS ? TEXT("GameState") : (Ship ? TEXT("FallbackGetActorOfClass") : TEXT("NONE")));
-		if (Ship)
+		if (AResourceUsingObject_SpaceShip* Ship = GetSpaceShip())
 		{
 			W->SetTargetShip(Ship);
 		}
