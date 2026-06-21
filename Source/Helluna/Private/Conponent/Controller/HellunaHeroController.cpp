@@ -2,6 +2,8 @@
 
 
 #include "Controller/HellunaHeroController.h"
+#include "Character/HellunaHeroCharacter.h"  // [ShipHeal] E 회복 토글
+#include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"  // [ShipHeal] 우주선 근접 판정
 #include "Utils/Vote/VoteManagerComponent.h"
 #include "Utils/Vote/VoteTypes.h"
 #include "GameFramework/GameStateBase.h"
@@ -96,6 +98,43 @@ FGenericTeamId AHellunaHeroController::GetGenericTeamId() const
 void AHellunaHeroController::SetupInputComponent()
 {
 	Super::SetupInputComponent();
+
+	// [ShipHeal] E(인벤토리 IA_PrimaryInteract)에 추가 핸들러 — 우주선 근처면 회복 메뉴.
+	//   인벤토리의 look-trace 가 우주선 콜리전(ECC_ITEM_TRACE=Ignore)을 무시해 우주선엔 안 닿으므로,
+	//   F 수리처럼 "키 누르면 바로" 방식으로 컨트롤러에서 E 를 직접 받아 처리한다.
+	if (UEnhancedInputComponent* HealEIC = Cast<UEnhancedInputComponent>(InputComponent))
+	{
+		if (UInputAction* PrimaryIA = LoadObject<UInputAction>(nullptr, TEXT("/Inventory/Input/IA_PrimaryInteract.IA_PrimaryInteract")))
+		{
+			HealEIC->BindAction(PrimaryIA, ETriggerEvent::Started, this, &AHellunaHeroController::OnShipHealInteractE);
+			UE_LOG(LogTemp, Warning, TEXT("[ShipHeal] E(PrimaryInteract) 회복 핸들러 바인딩 완료"));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("[ShipHeal] IA_PrimaryInteract 로드 실패 — E 회복 바인딩 못 함"));
+		}
+	}
+}
+
+// [ShipHeal] E 누르면 우주선 근처일 때 회복 메뉴 토글 (F 수리와 동일한 직접-바인딩 방식)
+void AHellunaHeroController::OnShipHealInteractE()
+{
+	AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(GetPawn());
+	if (!Hero) return;
+
+	TArray<AActor*> Ships;
+	UGameplayStatics::GetAllActorsWithTag(GetWorld(), FName("SpaceShip"), Ships);
+	for (AActor* A : Ships)
+	{
+		AResourceUsingObject_SpaceShip* Ship = Cast<AResourceUsingObject_SpaceShip>(A);
+		if (Ship && Ship->IsActorInInteractRange(Hero))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[ShipHeal] E pressed near ship -> ToggleShipHealMenu"));
+			Hero->ToggleShipHealMenu();
+			return;
+		}
+	}
+	UE_LOG(LogTemp, Warning, TEXT("[ShipHeal] E pressed but no ship in interact range (heal not opened)"));
 }
 
 void AHellunaHeroController::BeginPlay()
