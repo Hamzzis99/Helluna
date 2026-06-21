@@ -114,6 +114,14 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Health|Event")
 	FOnHellunaDowned OnDowned;
 
+	// [ShipHP/FriendlyFire] true 면 AHellunaHeroCharacter(플레이어)가 유발한 데미지를 무시한다.
+	//   - 우주선/터렛 등 "아군 구조물"이 플레이어 오사(誤射)로 파괴되지 않도록 보호하는 opt-in 필터.
+	//   - 기본 false → 적/캐릭터의 기존 거동은 전혀 바뀌지 않음(하위호환).
+	//   - 플레이어는 단일 클래스이므로 태그 없이 Cast 한 번으로 모든 플레이어를 판정(신규 적 추가 시 자동 데미지 허용).
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Health|Damage Filter",
+		meta = (DisplayName = "플레이어 데미지 무시(아군 오사 방지)"))
+	bool bIgnoreDamageFromHeroes = false;
+
 protected:
 	virtual void BeginPlay() override;
 

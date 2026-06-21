@@ -214,6 +214,9 @@ void AResourceUsingObject_SpaceShip::BeginPlay()
 	{
 		ShipHealthComponent->OnDeath.AddUniqueDynamic(this, &AResourceUsingObject_SpaceShip::HandleShipDestroyed);
 
+		// [ShipHP/FriendlyFire] 플레이어(아군) 오사로 우주선이 파괴되지 않도록 차단 — 적/보스/존 데미지는 정상 수신.
+		ShipHealthComponent->bIgnoreDamageFromHeroes = true;
+
 		if (HasAuthority())
 		{
 			ShipHealthComponent->SetMaxHealth(ShipMaxHealth, /*bRefillHealth=*/true);

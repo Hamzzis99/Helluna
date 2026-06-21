@@ -48,6 +48,14 @@ namespace GameItems
 		UE_DEFINE_GAMEPLAY_TAG(FireFernFruit, "GameItems.Craftables.FireFernFruit")
 		UE_DEFINE_GAMEPLAY_TAG(LuminDaisy, "GameItems.Craftables.LuminDaisy")
 		UE_DEFINE_GAMEPLAY_TAG(ScorchPetalBlossom, "GameItems.Craftables.ScorchPetalBlossom")
+		
+		//광석들
+		UE_DEFINE_GAMEPLAY_TAG(SnowCitrine, "GameItems.Craftables.SnowCitrine")
+		UE_DEFINE_GAMEPLAY_TAG(PurpleEmerald, "GameItems.Craftables.PurpleEmerald")
+		UE_DEFINE_GAMEPLAY_TAG(BaseSapphire, "GameItems.Craftables.BaseSapphire")
+		UE_DEFINE_GAMEPLAY_TAG(PurpleAmethyst, "GameItems.Craftables.PurpleAmethyst")
+		UE_DEFINE_GAMEPLAY_TAG(SnowRuby, "GameItems.Craftables.SnowRuby")
+		UE_DEFINE_GAMEPLAY_TAG(IceGem, "GameItems.Craftables.IceGem")
 	}
 	
 }
