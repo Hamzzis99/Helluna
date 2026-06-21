@@ -105,6 +105,9 @@ protected:
 	virtual void BeginPlay() override;
 	virtual void SetupInputComponent() override;
 	virtual void Tick(float DeltaTime) override;
+
+	/** [ShipHeal] E(인벤토리 IA_PrimaryInteract) 직접 핸들러 — 우주선 근처면 회복 메뉴 토글 (F 수리와 동일 직접-바인딩 방식). */
+	void OnShipHealInteractE();
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override; // C5: 타이머/델리게이트 정리
 
 	// =========================================================================================

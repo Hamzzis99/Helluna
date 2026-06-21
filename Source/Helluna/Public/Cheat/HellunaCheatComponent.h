@@ -64,7 +64,10 @@ public:
     void Server_GrantAllMaterials();
 
     /** 노클립 상태에서 수직 이동 입력 (+1 = 상승, -1 = 하강) */
-    UFUNCTION(Server, Reliable)
+    // [2026-06-20] Reliable→Unreliable: TickComponent에서 매 프레임 송신하므로,
+    //   서버 히치 시 신뢰버퍼가 쌓여 RPCReliableBufferOverflow로 강제 disconnect(로비 복귀)되던 문제 수정.
+    //   ServerMove와 동일하게 Unreliable + 매틱 자기보정 방식.
+    UFUNCTION(Server, Unreliable)
     void Server_NoclipAscend(float Direction);
 
     /** 노클립 속도 배율을 Scale배 한다 (2.0 = 2배, 0.5 = 1/2배) */

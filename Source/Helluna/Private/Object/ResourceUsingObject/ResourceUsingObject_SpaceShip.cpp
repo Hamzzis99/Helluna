@@ -214,6 +214,9 @@ void AResourceUsingObject_SpaceShip::BeginPlay()
 	{
 		ShipHealthComponent->OnDeath.AddUniqueDynamic(this, &AResourceUsingObject_SpaceShip::HandleShipDestroyed);
 
+		// [ShipHP/FriendlyFire] 플레이어(아군) 오사로 우주선이 파괴되지 않도록 차단 — 적/보스/존 데미지는 정상 수신.
+		ShipHealthComponent->bIgnoreDamageFromHeroes = true;
+
 		if (HasAuthority())
 		{
 			ShipHealthComponent->SetMaxHealth(ShipMaxHealth, /*bRefillHealth=*/true);
@@ -396,6 +399,10 @@ bool AResourceUsingObject_SpaceShip::IsActorInInteractRange(const AActor* Other)
 //  UI는 클라에서 열어야 하므로 해당 플레이어에게 Client RPC로 회복 메뉴 열기를 요청한다.
 bool AResourceUsingObject_SpaceShip::ExecuteInteract_Implementation(APlayerController* Controller)
 {
+	// [ShipHeal-DBG] 이 로그가 찍히면 E 트레이스가 우주선에 닿아 인터페이스까지 도달했다는 뜻(=콜리전/검증 통과).
+	UE_LOG(LogTemp, Warning, TEXT("[ShipHeal-DBG] SHIP ExecuteInteract reached. Controller=%s Pawn=%s"),
+		*GetNameSafe(Controller), Controller ? *GetNameSafe(Controller->GetPawn()) : TEXT("null"));
+
 	if (!Controller) return false;
 
 	if (AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(Controller->GetPawn()))
@@ -403,6 +410,7 @@ bool AResourceUsingObject_SpaceShip::ExecuteInteract_Implementation(APlayerContr
 		Hero->Client_OpenShipHealMenu();
 		return true;  // 처리됨
 	}
+	UE_LOG(LogTemp, Error, TEXT("[ShipHeal-DBG] ExecuteInteract: Pawn is not AHellunaHeroCharacter"));
 	return false;
 }
 

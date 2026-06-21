@@ -242,6 +242,19 @@ void FSTEvaluator_TargetSelector::Tick(FStateTreeExecutionContext& Context, cons
 			return;
 		}
 
+		// [TurretHP] 타겟 터렛이 파괴(망가짐)됐으면 우주선으로 복귀 (사망 연출 동안 헛공격 방지)
+		if (TargetData.TargetType == EHellunaTargetType::Turret)
+		{
+			if (const AHellunaTurretBase* TargetTurret = Cast<AHellunaTurretBase>(TargetData.TargetActor.Get()))
+			{
+				if (TargetTurret->IsTurretDestroyed())
+				{
+					ResetToSpaceShip(TargetData, AIController, World, ControlledPawn);
+					return;
+				}
+			}
+		}
+
 		const float DistToTarget = FVector::Dist(PawnLocation, TargetData.TargetActor->GetActorLocation());
 		TargetData.DistanceToTarget = DistToTarget;
 
@@ -367,7 +380,8 @@ void FSTEvaluator_TargetSelector::Tick(FStateTreeExecutionContext& Context, cons
 	for (TActorIterator<AHellunaTurretBase> It(World); It; ++It)
 	{
 		AHellunaTurretBase* Turret = *It;
-		if (!Turret || Turret->IsActorBeingDestroyed()) continue;
+		// [TurretHP] 파괴된(망가진) 포탑은 어그로 후보에서 제외 — 사망 연출(20s) 동안 헛공격 방지
+		if (!Turret || Turret->IsActorBeingDestroyed() || Turret->IsTurretDestroyed()) continue;
 		++TurretSeen;
 
 		const float DistSq = FVector::DistSquared(PawnLocation, Turret->GetActorLocation());

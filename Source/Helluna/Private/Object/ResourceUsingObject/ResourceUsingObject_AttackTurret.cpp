@@ -122,12 +122,35 @@ void AResourceUsingObject_AttackTurret::EndPlay(const EEndPlayReason::Type EndPl
 }
 
 // =========================================================
+// [TurretHP] 사망 시 서버 로직 정지 (베이스 HandleTurretDeath 에서 호출)
+// =========================================================
+
+void AResourceUsingObject_AttackTurret::OnTurretDestroyed_StopServerLogic()
+{
+	GetWorldTimerManager().ClearTimer(PostAttackPauseTimerHandle);
+	GetWorldTimerManager().ClearTimer(RescanTimerHandle);
+
+	if (AHellunaEnemyCharacter* OldTarget = Cast<AHellunaEnemyCharacter>(CurrentTarget.Get()))
+	{
+		UnbindTargetDeathDelegate(OldTarget);
+	}
+	CurrentTarget = nullptr;
+	EnemiesInRange.Empty();
+}
+
+// =========================================================
 // Tick — 회전 + 조건부 공격
 // =========================================================
 
 void AResourceUsingObject_AttackTurret::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+
+	// [TurretHP] 파괴된 포탑은 모든 공격/회전 로직 정지 (Tick 비활성화의 방어적 가드)
+	if (IsTurretDestroyed())
+	{
+		return;
+	}
 
 	// [BossCinematicFreezeV1] 보스 시네마틱(소환/페이즈2/사망) 중에는 포탑을 완전히 정지시킨다.
 	//   Why: 보스가 등장 시네마틱 도중 포탑 사격에 사살되는 버그가 있었음. 데미지는 서버 권한이므로

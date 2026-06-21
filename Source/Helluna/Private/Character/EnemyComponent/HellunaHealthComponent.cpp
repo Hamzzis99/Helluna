@@ -205,6 +205,26 @@ void UHellunaHealthComponent::HandleOwnerAnyDamage(
 		InstigatorActor = InstigatedBy->GetPawn();
 	}
 
+	// [ShipHP/FriendlyFire] 플레이어 오사 차단 (우주선 등 아군 구조물 전용 opt-in).
+	//   DamageCauser 가 무기/투사체일 수 있으므로 InstigatedBy 컨트롤러의 Pawn 도 함께 검사한다.
+	//   (적 데미지는 instigator pawn 이 적 캐릭터이므로 이 필터를 통과 → 정상 데미지)
+	if (bIgnoreDamageFromHeroes)
+	{
+		const bool bFromHero =
+			Cast<AHellunaHeroCharacter>(InstigatorActor) != nullptr
+			|| (InstigatedBy && Cast<AHellunaHeroCharacter>(InstigatedBy->GetPawn()) != nullptr);
+
+		if (bFromHero)
+		{
+#if HELLUNA_DEBUG_ENEMY
+			UE_LOG(LogTemp, Warning,
+				TEXT("[DamageDiag][HeroDamageIgnored] Owner=%s Damage=%.1f Causer=%s Reason=IgnoreDamageFromHeroes"),
+				*GetNameSafe(Owner), Damage, *GetNameSafe(DamageCauser));
+#endif
+			return;
+		}
+	}
+
 	// [Downed] 다운 상태면 출혈 가속
 	if (bDowned)
 	{
