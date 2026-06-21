@@ -813,6 +813,9 @@ public:
 	/** 회복 메뉴 토글 (로컬 전용). 우주선 ExecuteInteract(E) → Client_OpenShipHealMenu 경유로 호출. GA_Repair 열기/닫기 미러. */
 	void ToggleShipHealMenu();
 
+	/** [ShipHeal] E 회복 메뉴를 닫는다(열려있을 때만). F 수리(GA_Repair)가 열리기 전에 호출해 메뉴 상호 배타를 보장. */
+	void CloseShipHealMenu();
+
 	/** [ShipHeal] 서버(우주선 ExecuteInteract)가 호출 → 소유 클라에서 회복 메뉴 토글. E 상호작용 진입점. */
 	UFUNCTION(Client, Reliable)
 	void Client_OpenShipHealMenu();

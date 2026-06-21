@@ -136,6 +136,9 @@ void UHeroGameplayAbility_Repair::Repair(const FGameplayAbilityActorInfo* ActorI
 		return;
 	}
 
+	// [메뉴 상호 배타] F(수리)를 열기 전에 E(회복) 메뉴가 떠 있으면 먼저 닫는다.
+	Hero->CloseShipHealMenu();
+
 	// 방안 B: 다른 위젯 열려있으면 먼저 닫기
 	if (InvComp->IsMenuOpen())
 	{

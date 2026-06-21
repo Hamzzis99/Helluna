@@ -22,6 +22,8 @@
 #include "Object/ResourceUsingObject/ResourceUsingObject_SpaceShip.h"
 #include "Component/RepairComponent.h"
 #include "Widgets/ShipHealWidget.h"  // [ShipHeal] E 회복 메뉴 위젯
+#include "Widgets/RepairWidget.h"            // [메뉴 상호배타] F 수리 위젯 — E 열 때 닫기용
+#include "Blueprint/WidgetBlueprintLibrary.h"  // GetAllWidgetsOfClass
 #include "Weapon/HellunaHeroWeapon.h"
 #include "Weapon/HellunaFarmingWeapon.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
@@ -1248,23 +1250,29 @@ void AHellunaHeroCharacter::ToggleShipHealMenu()
 
 	if (!IsLocallyControlled()) return;
 
+	// E 토글: 이미 열려있으면 닫고 종료
 	if (IsValid(ShipHealWidgetInstance) && ShipHealWidgetInstance->IsInViewport())
 	{
-		if (UShipHealWidget* HealW = Cast<UShipHealWidget>(ShipHealWidgetInstance))
-		{
-			HealW->CloseWidget();
-		}
-		else if (APlayerController* ClosePC = GetController<APlayerController>())
-		{
-			ClosePC->SetInputMode(FInputModeGameOnly());
-			ClosePC->bShowMouseCursor = false;
-			ShipHealWidgetInstance->RemoveFromParent();
-		}
-		ShipHealWidgetInstance = nullptr;
+		CloseShipHealMenu();
 		return;
 	}
 
 	if (!ShipHealWidgetClass) return;
+
+	// [메뉴 상호 배타] E(회복)를 열기 전에 F(수리) 메뉴가 떠 있으면 먼저 닫는다.
+	//   F 수리창은 GA_Repair 가 소유(URepairWidget) — 뷰포트에서 찾아 닫는다. (GA의 CurrentWidget 포인터는
+	//   IsInViewport()=false 가 되므로 다음 F 입력 시 정상적으로 새로 열림 → 토글 일관성 유지)
+	{
+		TArray<UUserWidget*> OpenRepairWidgets;
+		UWidgetBlueprintLibrary::GetAllWidgetsOfClass(this, OpenRepairWidgets, URepairWidget::StaticClass(), false);
+		for (UUserWidget* W : OpenRepairWidgets)
+		{
+			if (URepairWidget* RepairW = Cast<URepairWidget>(W))
+			{
+				RepairW->CloseWidget();
+			}
+		}
+	}
 
 	TArray<AActor*> FoundShips;
 	UGameplayStatics::GetAllActorsWithTag(GetWorld(), FName("SpaceShip"), FoundShips);
@@ -1297,6 +1305,32 @@ void AHellunaHeroCharacter::ToggleShipHealMenu()
 	PC->FlushPressedKeys();
 	PC->SetInputMode(FInputModeGameAndUI());
 	PC->bShowMouseCursor = true;
+}
+
+// ============================================================================
+// [ShipHeal] E 회복 메뉴 닫기 (로컬 전용). E 자기 토글 닫기 + F 수리가 열릴 때 호출되어 메뉴 상호 배타 보장.
+// ============================================================================
+void AHellunaHeroCharacter::CloseShipHealMenu()
+{
+	if (!IsValid(ShipHealWidgetInstance))
+	{
+		return;
+	}
+
+	if (ShipHealWidgetInstance->IsInViewport())
+	{
+		if (UShipHealWidget* HealW = Cast<UShipHealWidget>(ShipHealWidgetInstance))
+		{
+			HealW->CloseWidget();
+		}
+		else if (APlayerController* ClosePC = GetController<APlayerController>())
+		{
+			ClosePC->SetInputMode(FInputModeGameOnly());
+			ClosePC->bShowMouseCursor = false;
+			ShipHealWidgetInstance->RemoveFromParent();
+		}
+	}
+	ShipHealWidgetInstance = nullptr;
 }
 
 // ============================================================================
