@@ -145,7 +145,12 @@ public:
 	UFUNCTION(BlueprintPure, Category = "ShipHP")
 	float GetHealPerMaterial() const { return HealPerMaterial; }
 
-	/** [E회복] 주어진 액터가 우주선 상호작용 콜리전 박스 안에 있는지 (E 회복 메뉴 근접 판정용) */
+	/** [E회복] 우주선 본체 표면에서 이 거리(cm) 이내면 회복 메뉴 허용 (박스 오버랩 폴백, 거대 메시 대응). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShipHP",
+		meta = (DisplayName = "E 회복 근접 거리(cm)", ClampMin = "50.0"))
+	float ShipHealInteractRange = 800.f;
+
+	/** [E회복] 주어진 액터가 우주선 상호작용 범위(박스 오버랩 OR 본체 표면 근접) 안에 있는지 (E 회복 메뉴 근접 판정용) */
 	UFUNCTION(BlueprintPure, Category = "ShipHP")
 	bool IsActorInInteractRange(const AActor* Other) const;
 
