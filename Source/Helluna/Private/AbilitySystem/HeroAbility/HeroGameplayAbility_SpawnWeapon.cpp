@@ -6,6 +6,8 @@
 #include "Weapon/HellunaHeroWeapon.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
+#include "TimerManager.h"
+#include "Engine/World.h"
 
 #include "EquipmentManagement/Components/Inv_EquipmentComponent.h"
 #include "Component/WeaponBridgeComponent.h"
@@ -133,12 +135,33 @@ void UHeroGameplayAbility_SpawnWeapon::ActivateAbility(
 	EquipTask->OnInterrupted.AddUniqueDynamic(this, &UHeroGameplayAbility_SpawnWeapon::OnEquipInterrupted);
 	EquipTask->OnCancelled.AddUniqueDynamic(this, &UHeroGameplayAbility_SpawnWeapon::OnEquipInterrupted);
 
+	// [EquipWatchdogV1 2026-06-22] OnBlendOut 재바인딩 — 2026-05-02에 dup-callback 때문에 제거됐으나,
+	//   이제 위 bEquipEndCalled 가드가 이중 SetEquipping(false)를 막으므로 안전하게 복원한다.
+	//   발도 몽타주가 다른 몽타주에 의해 blend-out 으로만 끊기는 경로(OnInterrupted/Completed 미발화)에서도
+	//   잠금/차단이 즉시 풀리도록 보강.
+	EquipTask->OnBlendOut.AddUniqueDynamic(this, &UHeroGameplayAbility_SpawnWeapon::OnEquipFinished);
+
 	// [EquipLockOwnershipV1] 여기가 "되돌릴 수 없는 지점" — 모든 early-return 을 통과했고
 	//   몽타주가 실제로 시작된다. 이 시점에서만 장착 잠금 ON (장착 중 1/2키 입력 차단).
 	//   해제는 EndAbility 에서 항상 수행 → 잠금이 stuck 될 수 없음.
 	if (UWeaponBridgeComponent* WeaponBridge = Hero->FindComponentByClass<UWeaponBridgeComponent>())
 	{
 		WeaponBridge->SetEquipping(true);
+	}
+
+	// [EquipWatchdogV1 2026-06-22] 몽타주 콜백이 전부 유실되는 드문 경우에도 잠금/차단이
+	//   영구 stuck 되지 않도록, (발도 몽타주 길이 + 여유) 후 강제 종료를 예약한다.
+	//   여유시간을 넉넉히 둬서 정상적으로 긴 발도 애니메이션은 절대 조기에 끊지 않는다.
+	if (UWorld* World = GetWorld())
+	{
+		const float MontageLen = EquipMontage ? EquipMontage->GetPlayLength() : 0.f;
+		const float WatchdogTime = FMath::Max(MontageLen, 0.f) + FMath::Max(EquipWatchdogExtraSeconds, 0.1f);
+		World->GetTimerManager().SetTimer(
+			EquipWatchdogTimerHandle,
+			this,
+			&UHeroGameplayAbility_SpawnWeapon::OnEquipWatchdog,
+			WatchdogTime,
+			false);
 	}
 
 	EquipTask->ReadyForActivation();
@@ -152,6 +175,12 @@ void UHeroGameplayAbility_SpawnWeapon::EndAbility(
 	bool bWasCancelled)
 {
 	EquipTask = nullptr;
+
+	// [EquipWatchdogV1 2026-06-22] 정상/강제 종료 모두에서 워치독 타이머 해제(중복 발동 방지)
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(EquipWatchdogTimerHandle);
+	}
 
 	// [EquipLockOwnershipV1] 어떤 경로로 끝나든(완료/중단/취소/early-return/사망/언포세스)
 	//   장착 잠금을 항상 해제. GAS 는 모든 종료 경로에서 EndAbility 호출을 보장하므로
@@ -182,5 +211,22 @@ void UHeroGameplayAbility_SpawnWeapon::OnEquipInterrupted()
 	bEquipEndCalled = true;
 
 	// ⭐ 장착 애니메이션 중단 → 무기 전환 허용 (잠금 해제는 EndAbility 가 일괄 처리)
+	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+}
+
+void UHeroGameplayAbility_SpawnWeapon::OnEquipWatchdog()
+{
+	// [EquipWatchdogV1 2026-06-22] 여기 도달 = 발도 몽타주 콜백(완료/중단/취소/blend-out)이
+	//   하나도 안 불려 EndAbility 가 미도달한 상태. 잠금(SetEquipping)과 차단(BlockAbilitiesWithTag:
+	//   Shoot/Reload/SpawnWeapon)이 영구 stuck 되어 "조준 빼고 무기 액션 전부 먹통"이 되기 전에 강제 종료.
+	if (bEquipEndCalled)
+	{
+		return;
+	}
+	bEquipEndCalled = true;
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("⭐ [GA_SpawnWeapon] EquipWatchdog 발동 — 발도 몽타주 콜백 유실 추정, 강제 EndAbility (무기 액션 stuck 방지)"));
+
 	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
 }

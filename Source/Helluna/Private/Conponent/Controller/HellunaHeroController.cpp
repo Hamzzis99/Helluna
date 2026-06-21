@@ -124,17 +124,23 @@ void AHellunaHeroController::OnShipHealInteractE()
 
 	TArray<AActor*> Ships;
 	UGameplayStatics::GetAllActorsWithTag(GetWorld(), FName("SpaceShip"), Ships);
+	float NearestDist = -1.f;
 	for (AActor* A : Ships)
 	{
 		AResourceUsingObject_SpaceShip* Ship = Cast<AResourceUsingObject_SpaceShip>(A);
-		if (Ship && Ship->IsActorInInteractRange(Hero))
+		if (!Ship) continue;
+
+		const float D = Hero->GetDistanceTo(Ship);
+		if (NearestDist < 0.f || D < NearestDist) NearestDist = D;
+
+		if (Ship->IsActorInInteractRange(Hero))
 		{
 			UE_LOG(LogTemp, Warning, TEXT("[ShipHeal] E pressed near ship -> ToggleShipHealMenu"));
 			Hero->ToggleShipHealMenu();
 			return;
 		}
 	}
-	UE_LOG(LogTemp, Warning, TEXT("[ShipHeal] E pressed but no ship in interact range (heal not opened)"));
+	UE_LOG(LogTemp, Warning, TEXT("[ShipHeal] E but not in range. nearest ship dist(approx)=%.0f cm. 우주선에 더 가까이 (또는 우주선 BP의 'E 회복 근접 거리' 상향)."), NearestDist);
 }
 
 void AHellunaHeroController::BeginPlay()

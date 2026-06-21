@@ -387,11 +387,30 @@ bool AResourceUsingObject_SpaceShip::IsShipDestroyed() const
 	return ShipHealthComponent ? ShipHealthComponent->IsDead() : false;
 }
 
-// [E회복] 상호작용 콜리전 박스(수리/회복 범위) 안에 Other 가 있는지.
-//  ResouceUsingCollisionBox 는 베이스(AHellunaBaseResourceUsingObject)의 protected 멤버 — 파생 클래스에서 접근 가능.
+// [E회복] 우주선 상호작용 범위 판정 — 박스 오버랩 OR 본체 표면 근접(거대 메시라 박스만으론 자주 실패).
 bool AResourceUsingObject_SpaceShip::IsActorInInteractRange(const AActor* Other) const
 {
-	return Other && ResouceUsingCollisionBox && ResouceUsingCollisionBox->IsOverlappingActor(Other);
+	if (!Other) return false;
+
+	// 1) 기존 상호작용 박스 오버랩
+	if (ResouceUsingCollisionBox && ResouceUsingCollisionBox->IsOverlappingActor(Other))
+	{
+		return true;
+	}
+
+	// 2) 폴백: 우주선 본체(DynamicMesh) 표면까지 거리. 박스 밖이어도 충분히 가까우면 허용.
+	if (DynamicMeshComponent)
+	{
+		FVector ClosestPt = FVector::ZeroVector;
+		const float Dist = DynamicMeshComponent->GetClosestPointOnCollision(Other->GetActorLocation(), ClosestPt);
+		// Dist >= 0: 표면까지 거리(0=접촉/내부). Dist < 0: 계산 실패(콜리전 없음 등).
+		if (Dist >= 0.f && Dist <= ShipHealInteractRange)
+		{
+			return true;
+		}
+	}
+
+	return false;
 }
 
 // [ShipHeal] 인벤토리 E(PrimaryInteract) 상호작용 — 우주선을 바라보고 E.
