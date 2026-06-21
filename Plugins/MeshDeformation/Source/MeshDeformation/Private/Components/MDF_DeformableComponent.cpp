@@ -58,9 +58,19 @@ void FMDFHitData::PostReplicatedAdd(const FMDFHitDataArray& InArraySerializer)
     {
         UWorld* World = Comp->GetWorld();
         if (!World) { Comp->bFastArrayBatchPending.store(false); return; }
-        World->GetTimerManager().SetTimerForNextTick([Comp]()
+        // [CrashFix2] 다음 틱까지 컴포넌트/액터가 파괴·GC 되면 raw 포인터가 댕글링됨.
+        //   해제된 UObject 메모리엔 IsValid(raw)도 안전하지 않음(UB) → TWeakObjectPtr로 캡처해 안전 해제.
+        //   (8b9602ee 가드는 음수 인덱스만 막아 이 댕글링 경로는 못 잡았음 → 0xffff..ffff AV 잔존)
+        TWeakObjectPtr<UMDF_DeformableComponent> WeakComp(Comp);
+        World->GetTimerManager().SetTimerForNextTick([WeakComp]()
         {
-            if (!IsValid(Comp)) return;
+            UMDF_DeformableComponent* Comp = WeakComp.Get();
+            if (!IsValid(Comp))
+            {
+                // [CrashFix2] 여기로 들어오면 원래(raw 캡처)였다면 0xffff..ffff AV 로 크래시 났을 자리.
+                UE_LOG(LogMeshDeform, Warning, TEXT("[CrashFix2] 컴포넌트 소멸로 변형 스킵 (Add) — 잠재 크래시 차단됨"));
+                return;
+            }
             Comp->bFastArrayBatchPending.store(false);  // 반드시 먼저 리셋
 
             if (Comp->bPendingDeformationReset)
@@ -102,9 +112,17 @@ void FMDFHitData::PreReplicatedRemove(const FMDFHitDataArray& InArraySerializer)
     {
         UWorld* World = Comp->GetWorld();
         if (!World) { Comp->bFastArrayBatchPending.store(false); return; }
-        World->GetTimerManager().SetTimerForNextTick([Comp]()
+        // [CrashFix2] 위와 동일 — raw 캡처 댕글링 방지(TWeakObjectPtr).
+        TWeakObjectPtr<UMDF_DeformableComponent> WeakComp(Comp);
+        World->GetTimerManager().SetTimerForNextTick([WeakComp]()
         {
-            if (!IsValid(Comp)) return;
+            UMDF_DeformableComponent* Comp = WeakComp.Get();
+            if (!IsValid(Comp))
+            {
+                // [CrashFix2] 여기로 들어오면 원래(raw 캡처)였다면 0xffff..ffff AV 로 크래시 났을 자리.
+                UE_LOG(LogMeshDeform, Warning, TEXT("[CrashFix2] 컴포넌트 소멸로 변형 스킵 (Remove) — 잠재 크래시 차단됨"));
+                return;
+            }
             Comp->bFastArrayBatchPending.store(false);  // 반드시 먼저 리셋
 
             if (Comp->bPendingDeformationReset)

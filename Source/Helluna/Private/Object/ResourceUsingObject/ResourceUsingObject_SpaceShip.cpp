@@ -307,6 +307,32 @@ void AResourceUsingObject_SpaceShip::OnRepairCompleted_Implementation()
 }
 
 // =========================================================
+// [ShipFriendlyFire] 아군(히어로) 데미지 차단 — 우주선은 적 공격에만 피해를 받는다.
+//   HellunaHealthComponent(OnTakeAnyDamage) 에는 아군 필터가 없고 적과 공유하므로,
+//   우주선 액터 진입부(TakeDamage)에서 히어로 출처 데미지를 0 으로 막는다.
+//   Super 를 호출하지 않으면 OnTakeAnyDamage(HP)·OnTakePointDamage(변형) 둘 다 발화 안 함.
+// =========================================================
+float AResourceUsingObject_SpaceShip::TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent, AController* EventInstigator, AActor* DamageCauser)
+{
+	// 공격자 식별: Instigator 의 폰 우선(총격은 컨트롤러가 instigator), 없으면 DamageCauser.
+	AActor* Attacker = DamageCauser;
+	if (EventInstigator && EventInstigator->GetPawn())
+	{
+		Attacker = EventInstigator->GetPawn();
+	}
+
+	// 히어로(아군) 출처면 무효 — 적(Enemy)·기타 출처만 Super 로 통과.
+	if (IsValid(Attacker) && Attacker->IsA(AHellunaHeroCharacter::StaticClass()))
+	{
+		UE_LOG(LogTemp, Verbose, TEXT("[ShipFriendlyFire] 아군 데미지 무시: Attacker=%s Dmg=%.1f"),
+			*GetNameSafe(Attacker), DamageAmount);
+		return 0.f;
+	}
+
+	return Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
+}
+
+// =========================================================
 // [ShipHP] 우주선 체력 — 파괴 처리 + 게터
 // =========================================================
 

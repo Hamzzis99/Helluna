@@ -44,6 +44,10 @@ protected:
 
     virtual void BeginPlay() override;
 
+    /** [ShipFriendlyFire] 우주선은 아군(히어로) 데미지를 받지 않는다. 적(Enemy) 데미지만 Super로 통과.
+     *  플레이어 총격이 OnTakeAnyDamage(HP) + OnTakePointDamage(변형) 양쪽으로 흘러드는 걸 진입부에서 차단. */
+    virtual float TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent, AController* EventInstigator, AActor* DamageCauser) override;
+
     AResourceUsingObject_SpaceShip();
 
 public:
