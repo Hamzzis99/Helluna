@@ -101,6 +101,18 @@ protected:
 		meta = (DisplayName = "조준 상체 Yaw"))
 	float AimSpineYaw = 0.f;
 
+	/** [AimUpperBodyV1] 조준(견착) 중 상체 고정 블렌드 가중치(0~1). 이동과 무관하게 조준이면 1로 보간.
+	 *  AnimGraph 의 Layered Blend Per Bone(Bone=spine_01, 덮을 포즈=CurrentAimPose) Blend Weight 에 바인딩.
+	 *  → 정지/이동 모두 상체가 조준 자세를 유지해, 걷기 블렌드스페이스 상체 스웨이(총구 떨림)를 차단. */
+	UPROPERTY(BlueprintReadOnly, Category = "AnimData|Weapon",
+		meta = (DisplayName = "조준 상체 알파"))
+	float AimUpperBodyAlpha = 0.f;
+
+	/** [AimUpperBodyV1] 위 알파의 보간 속도(초당). 견착 진입/해제 시 상체 덮기 in/out 부드럽게. CDO 튜닝. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "AnimData|Weapon",
+		meta = (DisplayName = "조준 상체 알파 보간속도"))
+	float AimUpperBodyBlendSpeed = 10.f;
+
 	/** AnimGraph(Worker Thread)에서 안전하게 Idle 애니메이션을 가져오는 함수 */
 	UFUNCTION(BlueprintPure, Category = "AnimData|Weapon",
 		meta = (BlueprintThreadSafe, DisplayName = "현재 Idle 애니메이션 가져오기"))
@@ -115,6 +127,11 @@ protected:
 	UFUNCTION(BlueprintPure, Category = "AnimData|Weapon",
 		meta = (BlueprintThreadSafe, DisplayName = "현재 조준 포즈 가져오기"))
 	UAnimSequence* GetCurrentAimPose() const { return CurrentAimPose; }
+
+	/** AnimGraph(Worker Thread)에서 안전하게 조준 상체 알파를 가져오는 함수 — Layered Blend Per Bone 가중치용 */
+	UFUNCTION(BlueprintPure, Category = "AnimData|Weapon",
+		meta = (BlueprintThreadSafe, DisplayName = "조준 상체 알파 가져오기"))
+	float GetAimUpperBodyAlpha() const { return AimUpperBodyAlpha; }
 
 private:
 	/** GameplayTag → EWeaponAnimType 변환 (GameThread에서만 호출) */

@@ -84,19 +84,28 @@ void UHellunaCharacterAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 		AimSpineYaw = 0.f;
 	}
 
-	// [AimIdleOverrideV1] 견착 중일 때만 Idle 을 ADS 포즈(CurrentAimPose)로 → 정지 견착이 걷기 견착
-	//   (블렌드스페이스 속도0 = MF_Pistol_Idle_ADS)과 같은 하체 스탠스가 되어 facing 통일.
-	//   비조준 정지는 IdleAnimMap(MM_Idle 등) 그대로 → 총 내린 일반 idle.
-	if (CurrentAimPose && OwningCharacter)
+	// [AimIdleOverrideV1] 견착 중 감지 (ASC 태그 Player.status.Aim)
+	bool bAimingNow = false;
+	if (OwningCharacter)
 	{
 		if (UAbilitySystemComponent* ASC = UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(OwningCharacter))
 		{
-			if (ASC->HasMatchingGameplayTag(HellunaGameplayTags::Player_status_Aim))
-			{
-				CurrentIdleAnim = CurrentAimPose;
-			}
+			bAimingNow = ASC->HasMatchingGameplayTag(HellunaGameplayTags::Player_status_Aim);
 		}
 	}
+
+	// 견착 중이면 정지 Idle 을 ADS 포즈(CurrentAimPose)로 → 정지 견착이 걷기 견착
+	//   (블렌드스페이스 속도0 = MF_Pistol_Idle_ADS)과 같은 하체 스탠스가 되어 facing 통일.
+	//   비조준 정지는 IdleAnimMap(MM_Idle 등) 그대로 → 총 내린 일반 idle.
+	if (bAimingNow && CurrentAimPose)
+	{
+		CurrentIdleAnim = CurrentAimPose;
+	}
+
+	// [AimUpperBodyV1] 이동과 무관하게 조준이면 상체 알파 1 로 보간 → AnimGraph Layered Blend Per Bone 가중치.
+	//   이동 견착에서도 상체가 조준 포즈를 유지해 걷기 블렌드스페이스 상체 스웨이(총구 떨림)를 차단.
+	const float TargetAimAlpha = (bAimingNow && CurrentAimPose) ? 1.f : 0.f;
+	AimUpperBodyAlpha = FMath::FInterpTo(AimUpperBodyAlpha, TargetAimAlpha, DeltaSeconds, FMath::Max(0.f, AimUpperBodyBlendSpeed));
 }
 
 void UHellunaCharacterAnimInstance::NativeThreadSafeUpdateAnimation(float DeltaSeconds)
