@@ -58,8 +58,13 @@ void FMDFHitData::PostReplicatedAdd(const FMDFHitDataArray& InArraySerializer)
     {
         UWorld* World = Comp->GetWorld();
         if (!World) { Comp->bFastArrayBatchPending.store(false); return; }
-        World->GetTimerManager().SetTimerForNextTick([Comp]()
+        // [CrashFix2] 다음 틱까지 컴포넌트/액터가 파괴·GC 되면 raw 포인터가 댕글링됨.
+        //   해제된 UObject 메모리엔 IsValid(raw)도 안전하지 않음(UB) → TWeakObjectPtr로 캡처해 안전 해제.
+        //   (8b9602ee 가드는 음수 인덱스만 막아 이 댕글링 경로는 못 잡았음 → 0xffff..ffff AV 잔존)
+        TWeakObjectPtr<UMDF_DeformableComponent> WeakComp(Comp);
+        World->GetTimerManager().SetTimerForNextTick([WeakComp]()
         {
+            UMDF_DeformableComponent* Comp = WeakComp.Get();
             if (!IsValid(Comp)) return;
             Comp->bFastArrayBatchPending.store(false);  // 반드시 먼저 리셋
 
@@ -102,8 +107,11 @@ void FMDFHitData::PreReplicatedRemove(const FMDFHitDataArray& InArraySerializer)
     {
         UWorld* World = Comp->GetWorld();
         if (!World) { Comp->bFastArrayBatchPending.store(false); return; }
-        World->GetTimerManager().SetTimerForNextTick([Comp]()
+        // [CrashFix2] 위와 동일 — raw 캡처 댕글링 방지(TWeakObjectPtr).
+        TWeakObjectPtr<UMDF_DeformableComponent> WeakComp(Comp);
+        World->GetTimerManager().SetTimerForNextTick([WeakComp]()
         {
+            UMDF_DeformableComponent* Comp = WeakComp.Get();
             if (!IsValid(Comp)) return;
             Comp->bFastArrayBatchPending.store(false);  // 반드시 먼저 리셋
 
