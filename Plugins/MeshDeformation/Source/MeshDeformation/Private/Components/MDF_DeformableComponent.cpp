@@ -65,7 +65,12 @@ void FMDFHitData::PostReplicatedAdd(const FMDFHitDataArray& InArraySerializer)
         World->GetTimerManager().SetTimerForNextTick([WeakComp]()
         {
             UMDF_DeformableComponent* Comp = WeakComp.Get();
-            if (!IsValid(Comp)) return;
+            if (!IsValid(Comp))
+            {
+                // [CrashFix2] 여기로 들어오면 원래(raw 캡처)였다면 0xffff..ffff AV 로 크래시 났을 자리.
+                UE_LOG(LogMeshDeform, Warning, TEXT("[CrashFix2] 컴포넌트 소멸로 변형 스킵 (Add) — 잠재 크래시 차단됨"));
+                return;
+            }
             Comp->bFastArrayBatchPending.store(false);  // 반드시 먼저 리셋
 
             if (Comp->bPendingDeformationReset)
@@ -112,7 +117,12 @@ void FMDFHitData::PreReplicatedRemove(const FMDFHitDataArray& InArraySerializer)
         World->GetTimerManager().SetTimerForNextTick([WeakComp]()
         {
             UMDF_DeformableComponent* Comp = WeakComp.Get();
-            if (!IsValid(Comp)) return;
+            if (!IsValid(Comp))
+            {
+                // [CrashFix2] 여기로 들어오면 원래(raw 캡처)였다면 0xffff..ffff AV 로 크래시 났을 자리.
+                UE_LOG(LogMeshDeform, Warning, TEXT("[CrashFix2] 컴포넌트 소멸로 변형 스킵 (Remove) — 잠재 크래시 차단됨"));
+                return;
+            }
             Comp->bFastArrayBatchPending.store(false);  // 반드시 먼저 리셋
 
             if (Comp->bPendingDeformationReset)
