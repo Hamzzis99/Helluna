@@ -25,11 +25,16 @@ void UOreMiningEffectComponent::BeginPlay()
     if (!Owner) return;
 
     // OnTakePointDamage 델리게이트 바인딩
+    // [CrashFix] 레벨 스트리밍 등으로 BeginPlay 가 동일 컴포넌트에서 재호출되면
+    //   AddDynamic 중복 → Ensure(InvocationList[CurFunctionIndex] != InDelegate, SparseDelegate)
+    //   → 멀티플레이 클라 크래시. Add 전에 Remove 로 항상 단일 바인딩 보장(MDF 와 동일 패턴).
+    Owner->OnTakePointDamage.RemoveDynamic(this, &UOreMiningEffectComponent::OnOwnerPointDamage);
     Owner->OnTakePointDamage.AddDynamic(this, &UOreMiningEffectComponent::OnOwnerPointDamage);
 
     // HellunaHealthComponent의 OnDeath 델리게이트 바인딩
     if (UHellunaHealthComponent* HealthComp = Owner->FindComponentByClass<UHellunaHealthComponent>())
     {
+        HealthComp->OnDeath.RemoveDynamic(this, &UOreMiningEffectComponent::OnOwnerDeath);
         HealthComp->OnDeath.AddDynamic(this, &UOreMiningEffectComponent::OnOwnerDeath);
         UE_LOG(LogOreMiningFX, Log, TEXT("[%s] OnDeath 바인딩 완료 (HellunaHealthComponent)"), *Owner->GetName());
     }
@@ -41,6 +46,7 @@ void UOreMiningEffectComponent::BeginPlay()
     // Inv_ResourceComponent의 파괴 델리게이트 바인딩
     if (UInv_ResourceComponent* ResourceComp = Owner->FindComponentByClass<UInv_ResourceComponent>())
     {
+        ResourceComp->OnResourceDestroyed.RemoveDynamic(this, &UOreMiningEffectComponent::OnResourceDestroyed);
         ResourceComp->OnResourceDestroyed.AddDynamic(this, &UOreMiningEffectComponent::OnResourceDestroyed);
         UE_LOG(LogOreMiningFX, Log, TEXT("[%s] OnResourceDestroyed 바인딩 완료 (Inv_ResourceComponent)"), *Owner->GetName());
     }
