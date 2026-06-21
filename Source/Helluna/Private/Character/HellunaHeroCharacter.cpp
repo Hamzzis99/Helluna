@@ -1338,6 +1338,9 @@ void AHellunaHeroCharacter::Server_RequestSpawnWeapon_Implementation(
 	// 소켓 유효성 검사(없거나 이름이 None이면 부착 불가)
 	if (InAttachSocket.IsNone() || !CharacterMesh->DoesSocketExist(InAttachSocket))
 	{
+		// [EquipDiagV1 2026-06-22] 첫 입력 시 장착 실패(모션만 나오고 무기 안 듦) 원인 추적용.
+		UE_LOG(LogTemp, Warning, TEXT("[EquipDiag] Server_RequestSpawnWeapon ABORT: 소켓 무효 Socket=%s Exist=%d Class=%s"),
+			*InAttachSocket.ToString(), CharacterMesh->DoesSocketExist(InAttachSocket) ? 1 : 0, *GetNameSafe(InWeaponClass));
 		return;
 	}
 
@@ -1421,6 +1424,10 @@ void AHellunaHeroCharacter::Server_RequestSpawnWeapon_Implementation(
 	TArray<AActor*> Attached;
 	GetAttachedActors(Attached, true);
 
+
+	// [EquipDiagV1 2026-06-22] 첫 입력 시 장착 정상 여부 추적 — NewWeapon 스폰/현재무기 설정 확인.
+	UE_LOG(LogTemp, Warning, TEXT("[EquipDiag] Server_RequestSpawnWeapon OK: New=%s Current=%s Old(destroyed)=%s"),
+		*GetNameSafe(NewWeapon), *GetNameSafe(GetCurrentWeapon()), *GetNameSafe(OldWeapon));
 
 	// 네트워크 업데이트 힌트(즉시 반영에 도움)
 	NewWeapon->ForceNetUpdate();

@@ -3,6 +3,8 @@
 #include "Cheat/HellunaCheatComponent.h"
 
 #include "EngineUtils.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetRegistry/IAssetRegistry.h"
 #include "Engine/DamageEvents.h"
 #include "Engine/DataTable.h"
 #include "Engine/World.h"
@@ -407,8 +409,8 @@ void UHellunaCheatComponent::Server_GrantAllMaterials_Implementation()
     }
     if (!ItemTypeMappingDataTable)
     {
-        UE_LOG(LogTemp, Warning, TEXT("[Cheat] GrantMaterials: ItemTypeMappingDataTable이 할당되지 않음"));
-        return;
+        // 테이블이 없어도 아래 폴더 스캔으로 재료를 지급하므로 return 하지 않는다(경고만).
+        UE_LOG(LogTemp, Warning, TEXT("[Cheat] GrantMaterials: ItemTypeMappingDataTable 미할당 — 폴더 스캔으로만 지급"));
     }
 
     UInv_InventoryComponent* InvComp = FindInventoryComponent();
@@ -418,16 +420,14 @@ void UHellunaCheatComponent::Server_GrantAllMaterials_Implementation()
         return;
     }
 
-    TArray<FItemTypeToActorMapping*> AllRows;
-    ItemTypeMappingDataTable->GetAllRows<FItemTypeToActorMapping>(TEXT("CheatGrantMaterials"), AllRows);
-
+    TSet<UClass*> GrantedClasses;
     int32 GrantedCount = 0;
-    for (const FItemTypeToActorMapping* Row : AllRows)
+
+    // 공용 지급 람다 — 동일 클래스 중복 지급 방지(TSet).
+    auto GrantClass = [&](UClass* ItemActorClass)
     {
-        if (!Row) continue;
-        if (!Row->ItemType.IsValid()) continue;
-        if (!Row->ItemType.ToString().StartsWith(MaterialTagPrefix)) continue;
-        if (!Row->ItemActorClass) continue;
+        if (!ItemActorClass || GrantedClasses.Contains(ItemActorClass)) return;
+        GrantedClasses.Add(ItemActorClass);
 
         // 임시 픽업 액터 스폰 → ItemComponent 추출 → InventoryComp에 추가
         FActorSpawnParameters SpawnParams;
@@ -437,8 +437,8 @@ void UHellunaCheatComponent::Server_GrantAllMaterials_Implementation()
 
         // 월드 밖 먼 지점에 스폰(충돌/보이기 방지). 어차피 PickedUp에서 파괴된다.
         const FVector FarAway(0.f, 0.f, -1'000'000.f);
-        AActor* TempActor = World->SpawnActor<AActor>(Row->ItemActorClass, FarAway, FRotator::ZeroRotator, SpawnParams);
-        if (!TempActor) continue;
+        AActor* TempActor = World->SpawnActor<AActor>(ItemActorClass, FarAway, FRotator::ZeroRotator, SpawnParams);
+        if (!TempActor) return;
 
         TempActor->SetActorHiddenInGame(true);
         TempActor->SetActorEnableCollision(false);
@@ -447,7 +447,7 @@ void UHellunaCheatComponent::Server_GrantAllMaterials_Implementation()
         if (!ItemComp)
         {
             TempActor->Destroy();
-            continue;
+            return;
         }
 
         // 스택 한계에 맞춰 개수 제한
@@ -466,11 +466,45 @@ void UHellunaCheatComponent::Server_GrantAllMaterials_Implementation()
         ++GrantedCount;
 
         // Server_AddNewItem의 Remainder==0 경로에서 ItemComp->PickedUp()이 호출되어 액터가 파괴됨.
-        // 혹시 모를 누락에 대비한 가드.
         if (IsValid(TempActor) && !TempActor->IsActorBeingDestroyed())
         {
             TempActor->Destroy();
         }
+    };
+
+    // 1) 기존 경로: ItemTypeMapping 테이블에서 prefix(GameItems.Craftables) 매칭 재료 지급.
+    if (ItemTypeMappingDataTable)
+    {
+        TArray<FItemTypeToActorMapping*> AllRows;
+        ItemTypeMappingDataTable->GetAllRows<FItemTypeToActorMapping>(TEXT("CheatGrantMaterials"), AllRows);
+        for (const FItemTypeToActorMapping* Row : AllRows)
+        {
+            if (!Row || !Row->ItemType.IsValid() || !Row->ItemActorClass) continue;
+            if (!Row->ItemType.ToString().StartsWith(MaterialTagPrefix)) continue;
+            GrantClass(Row->ItemActorClass);
+        }
     }
-    UE_LOG(LogTemp, Warning, TEXT("[Cheat] GrantMaterials: %d종 지급"), GrantedCount);
+
+    // 2) [GrantAllMaterialsV2 2026-06-22] 매핑 테이블에 누락된 재료(광석 등)까지 포함하기 위해
+    //    /Inventory/Items/Craftables 폴더의 모든 아이템 BP 를 직접 스캔해 지급.
+    //    (테이블엔 재료가 2종뿐이라 광석이 안 들어오던 문제 해결. 폴더의 전 재료 + 향후 추가분 자동 포함.)
+    {
+        FAssetRegistryModule& ARM = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+        IAssetRegistry& AR = ARM.Get();
+        TArray<FAssetData> Assets;
+        AR.GetAssetsByPath(FName(TEXT("/Inventory/Items/Craftables")), Assets, /*bRecursive*/ true);
+        int32 ScanFound = 0;
+        for (const FAssetData& AD : Assets)
+        {
+            // 블루프린트 자산 → 생성 클래스(_C) 로드. 패키지 빌드에서도 동작.
+            const FString ClassPath = AD.GetSoftObjectPath().ToString() + TEXT("_C");
+            UClass* Cls = LoadObject<UClass>(nullptr, *ClassPath);
+            if (!Cls || !Cls->IsChildOf(AActor::StaticClass())) continue;
+            ++ScanFound;
+            GrantClass(Cls);
+        }
+        UE_LOG(LogTemp, Warning, TEXT("[Cheat] GrantMaterials 폴더스캔: Craftables BP %d개 발견"), ScanFound);
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("[Cheat] GrantMaterials: 총 %d종 지급 (테이블+폴더스캔)"), GrantedCount);
 }

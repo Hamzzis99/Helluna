@@ -51,6 +51,17 @@ void UHeroGameplayAbility_Aim::ActivateAbility(
 	AHellunaHeroCharacter* Hero = GetHeroCharacterFromActorInfo();
 	if (!Hero) { EndAbility(Handle, ActorInfo, ActivationInfo, true, true); return; }
 
+	// [AimNoJumpV1] 공중(점프/낙하) 중에는 견착 불가 — 점프하면서 조준 시작을 차단(사용자 요청).
+	if (UCharacterMovementComponent* MoveCheck = Hero->GetCharacterMovement())
+	{
+		if (MoveCheck->IsFalling())
+		{
+			UE_LOG(LogTemp, Verbose, TEXT("[Aim GA][AimNoJumpV1] 공중 상태 — 견착 거부"));
+			EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+			return;
+		}
+	}
+
 	// ── [AimTurnToCameraV3] 견착 시 '캐릭터'를 카메라(조준)방향으로 회전시킨다(사용자 요청). ──
 	//   카메라를 캐릭터로 돌리는 realign 은 쓰지 않는다(반대 방향). 아래 bUseControllerDesiredRotation=true 가
 	//   CharacterMovement 로 캐릭터 Yaw 를 컨트롤(카메라/조준) 방향으로 회전시킨다.

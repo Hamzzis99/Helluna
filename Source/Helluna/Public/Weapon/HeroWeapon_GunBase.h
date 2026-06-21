@@ -18,6 +18,7 @@ class AHellunaHeroCharacter;
 class UCameraShakeBase;
 class UUserWidget;
 class UCurveFloat;
+class USoundBase;
 
 UENUM(BlueprintType)
 enum class EWeaponFireMode : uint8
@@ -59,6 +60,11 @@ public:
 	/** 슬로우 중 총알 이동시간 연출용 가상 속도. 높을수록 빠르게 도달 (딜레이 짧음). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Stats", meta = (DisplayName = "가상 총알 속도 (슬로우 연출용)"))
 	float VirtualBulletSpeed = 50000.f;
+
+	/** [GunFireSoundV1] 이 총기의 발사 사운드. 무기 BP 디테일에서 직접 지정. 미설정이면 발사음 없음
+	 *  (단, EquipActor 에 사운드가 있으면 그걸 폴백으로 사용). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Sound", meta = (DisplayName = "발사 사운드"))
+	TObjectPtr<USoundBase> FireSound = nullptr;
 	
 	UFUNCTION(BlueprintCallable, Category = "Weapon|Fire")
 	virtual void Fire(AController* InstigatorController);

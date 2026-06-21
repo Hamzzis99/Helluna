@@ -372,19 +372,27 @@ void AHeroWeapon_GunBase::MulticastFireFX_Implementation(FVector_NetQuantize Tra
 // ════════════════════════════════════════════════════════════════
 void AHeroWeapon_GunBase::PlayEquipActorFireSound()
 {
-	APawn* OwnerPawn = Cast<APawn>(GetOwner());
-	if (!OwnerPawn) return;
+	// [GunFireSoundV1] 1순위: 이 무기 BP 디테일에 지정된 FireSound.
+	USoundBase* SoundToPlay = FireSound;
 
-	AInv_PlayerController* PC = Cast<AInv_PlayerController>(OwnerPawn->GetController());
-	if (!PC) return;
+	// 폴백: 무기 BP 에 미지정이면 EquipActor 의 사운드(소음기 자동 분기) 사용.
+	if (!SoundToPlay)
+	{
+		if (APawn* OwnerPawn = Cast<APawn>(GetOwner()))
+		{
+			if (AInv_PlayerController* PC = Cast<AInv_PlayerController>(OwnerPawn->GetController()))
+			{
+				if (AInv_EquipActor* EA = PC->GetCurrentEquipActor())
+				{
+					SoundToPlay = EA->GetFireSound();
+				}
+			}
+		}
+	}
 
-	AInv_EquipActor* EA = PC->GetCurrentEquipActor();
-	if (!EA) return;
-
-	USoundBase* FireSound = EA->GetFireSound();
-	if (!FireSound) return;
-
-	UGameplayStatics::PlaySoundAtLocation(this, FireSound, GetActorLocation());
+	// 둘 다 없으면 무음 (발사음은 무기 BP 에서 직접 지정).
+	if (!SoundToPlay) return;
+	UGameplayStatics::PlaySoundAtLocation(this, SoundToPlay, GetActorLocation());
 }
 
 // ════════════════════════════════════════════════════════════════

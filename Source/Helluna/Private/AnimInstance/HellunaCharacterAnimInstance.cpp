@@ -133,13 +133,6 @@ void UHellunaCharacterAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 	//   그래프 평가와 무관한 '몽타주 인스턴스 재생 여부'로 감지. 견착 중 도는 몽타주는 발사/장전 등 상체 액션뿐이라 안전.
 	const bool bMontagePlaying = IsAnyMontagePlaying();
 	bAimingMoving = bAimingNow && (AimSpeed2D >= FMath::Max(0.f, AimMovingSpeedThreshold)) && !bMontagePlaying;
-
-	// [AimFireGateDiag] 진단용 — 확인되면 제거.
-	if (bAimingNow)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[AimFireGateDiag] AnyMontage=%d Speed=%.0f AimMoving=%d"),
-			bMontagePlaying ? 1 : 0, AimSpeed2D, bAimingMoving ? 1 : 0);
-	}
 }
 
 void UHellunaCharacterAnimInstance::NativeThreadSafeUpdateAnimation(float DeltaSeconds)
