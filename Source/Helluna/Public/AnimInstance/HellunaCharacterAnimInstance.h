@@ -113,6 +113,30 @@ protected:
 		meta = (DisplayName = "조준 상체 알파 보간속도"))
 	float AimUpperBodyBlendSpeed = 10.f;
 
+	// ── [AimMoveStateV1] 견착 이동 상태 + 전용 애니 ─────────────────────────────
+
+	/** 견착(조준) 중인지 — AnimGraph 분기용. */
+	UPROPERTY(BlueprintReadOnly, Category = "AnimData|Weapon", meta = (DisplayName = "견착중"))
+	bool bAiming = false;
+
+	/** 견착 중이면서 이동 중인지 — ADS 이동 전용 애니 선택용. */
+	UPROPERTY(BlueprintReadOnly, Category = "AnimData|Weapon", meta = (DisplayName = "견착 이동중"))
+	bool bAimingMoving = false;
+
+	/** '이동 중' 판정 속도 임계값(cm/s). 이 이상이면 이동으로 간주. CDO 튜닝. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "AnimData|Weapon",
+		meta = (DisplayName = "견착이동 속도 임계값"))
+	float AimMovingSpeedThreshold = 10.f;
+
+	/** 카테고리별 '견착 이동' 애니메이션 시퀀스 (에디터 지정). 견착 중엔 정면만 보므로 방향 블렌드 불필요 → 단일 시퀀스. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "AnimData|Weapon",
+		meta = (DisplayName = "카테고리별 견착 이동 애니메이션"))
+	TMap<EWeaponAnimType, TObjectPtr<UAnimSequence>> AimLocomotionAnimMap;
+
+	/** AnimBP에서 바로 사용할 현재 견착 이동 애니메이션 시퀀스 */
+	UPROPERTY(BlueprintReadOnly, Category = "AnimData|Weapon", meta = (DisplayName = "현재 견착 이동 애니메이션"))
+	TObjectPtr<UAnimSequence> CurrentAimLocomotionAnim;
+
 	/** AnimGraph(Worker Thread)에서 안전하게 Idle 애니메이션을 가져오는 함수 */
 	UFUNCTION(BlueprintPure, Category = "AnimData|Weapon",
 		meta = (BlueprintThreadSafe, DisplayName = "현재 Idle 애니메이션 가져오기"))
@@ -132,6 +156,21 @@ protected:
 	UFUNCTION(BlueprintPure, Category = "AnimData|Weapon",
 		meta = (BlueprintThreadSafe, DisplayName = "조준 상체 알파 가져오기"))
 	float GetAimUpperBodyAlpha() const { return AimUpperBodyAlpha; }
+
+	/** AnimGraph(Worker Thread)에서 견착 중인지 가져오기 */
+	UFUNCTION(BlueprintPure, Category = "AnimData|Weapon",
+		meta = (BlueprintThreadSafe, DisplayName = "견착중 가져오기"))
+	bool IsAiming() const { return bAiming; }
+
+	/** AnimGraph(Worker Thread)에서 견착+이동 중인지 가져오기 — ADS 이동 애니 분기용 */
+	UFUNCTION(BlueprintPure, Category = "AnimData|Weapon",
+		meta = (BlueprintThreadSafe, DisplayName = "견착 이동중 가져오기"))
+	bool IsAimingMoving() const { return bAimingMoving; }
+
+	/** AnimGraph(Worker Thread)에서 현재 견착 이동 애니메이션 가져오기 — Sequence Player 의 Sequence 핀에 연결 */
+	UFUNCTION(BlueprintPure, Category = "AnimData|Weapon",
+		meta = (BlueprintThreadSafe, DisplayName = "현재 견착 이동 애니메이션 가져오기"))
+	UAnimSequence* GetCurrentAimLocomotionAnim() const { return CurrentAimLocomotionAnim; }
 
 private:
 	/** GameplayTag → EWeaponAnimType 변환 (GameThread에서만 호출) */
