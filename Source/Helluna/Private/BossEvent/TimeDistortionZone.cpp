@@ -727,6 +727,7 @@ void ATimeDistortionZone::SpawnNextOrb()
 	FCollisionObjectQueryParams ObjParams;
 	ObjParams.AddObjectTypesToQuery(ECC_WorldStatic);
 	ObjParams.AddObjectTypesToQuery(ECC_WorldDynamic);
+	ObjParams.AddObjectTypesToQuery(ECC_Pawn);   // [OrbSpawnAvoidPawnV1] 플레이어/적/우주선 등 액터 위에 겹쳐 생성 방지(못 부수는 문제)
 
 	const FCollisionShape ProbeShape = FCollisionShape::MakeSphere(OrbCollisionProbeRadius);
 	const int32 MaxAttempts = FMath::Max(1, OrbSpawnMaxAttempts);
@@ -796,14 +797,28 @@ void ATimeDistortionZone::SpawnNextOrb()
 
 	if (!bFoundClearLocation)
 	{
-		// 모든 샘플이 막혔으면 기본 슬롯 위치로 폴백 (경고 로그)
+		// [OrbSpawnLiftV1] 수평 샘플이 다 막혔으면(액터/지형이 슬롯 점유) 기본 슬롯에서 '위로' 올려가며 빈 곳을 찾는다.
+		//   기존엔 막힌 기본 슬롯에 강제 스폰 → 액터와 겹쳐 못 부숨. 대신 액터 위로 띄워 부술 수 있게.
 		const float AngleRad = FMath::DegreesToRadians(BaseAngleDeg);
-		SpawnLocation = CenterLocation + FVector(
+		const FVector SlotXY = CenterLocation + FVector(
 			FMath::Cos(AngleRad) * EffectiveSpawnRadius,
 			FMath::Sin(AngleRad) * EffectiveSpawnRadius,
-			OrbHeightOffset
-		);
-		TDZ_LOG("WARNING: Orb %d: no clear spawn after %d attempts, falling back to base slot", i, MaxAttempts);
+			0.f);
+		const float LiftStep = 60.f;
+		const int32 MaxLiftSteps = 12;   // 최대 +720cm 까지 위로 탐색
+		SpawnLocation = SlotXY + FVector(0.f, 0.f, OrbHeightOffset);   // 못 찾으면 기본(최소한 시도)
+		for (int32 L = 0; L <= MaxLiftSteps; ++L)
+		{
+			const FVector LiftCandidate = SlotXY + FVector(0.f, 0.f, OrbHeightOffset + LiftStep * L);
+			if (!World->OverlapAnyTestByObjectType(LiftCandidate, FQuat::Identity, ObjParams, ProbeShape, ProbeParams))
+			{
+				SpawnLocation = LiftCandidate;
+				bFoundClearLocation = true;
+				break;
+			}
+		}
+		TDZ_LOG("WARNING: Orb %d: no clear slot after %d attempts → lifted to Z=%.0f (clear=%d)",
+			i, MaxAttempts, SpawnLocation.Z, bFoundClearLocation ? 1 : 0);
 	}
 
 	FActorSpawnParameters SpawnParams;
