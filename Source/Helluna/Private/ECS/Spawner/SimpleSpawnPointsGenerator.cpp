@@ -12,6 +12,11 @@
 #include "ECS/Spawner/SimpleSpawnPointsGenerator.h"
 #include "MassSpawnLocationProcessor.h"   // UMassSpawnLocationProcessor (위치 적용 Processor)
 #include "MassSpawnerTypes.h"             // FMassTransformsSpawnData
+// [SpawnGroundSnapV1] 각 스폰점을 실제 지면에 스냅하기 위한 navmesh/트레이스용
+#include "NavigationSystem.h"
+#include "Engine/World.h"
+#include "CollisionQueryParams.h"
+#include "GameFramework/Actor.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogSimpleSpawnGen, Log, All);
 
@@ -46,6 +51,19 @@ void USimpleSpawnPointsGenerator::Generate(
 	TArray<FVector> Locations;
 	Locations.Reserve(Count);
 
+	// [SpawnGroundSnapV1] 지면 스냅용 — 고정 Z 원형 배치는 경사/단차/구멍/벽에서 일부 점이 공중·지하·
+	//   navmesh 밖에 떨어져 엔티티가 스폰 직후 소멸(요청 수보다 적게 생존)함. 각 점을 실제 지면에 스냅한다.
+	//   "여유롭게" — navmesh 투영 extent / 라인트레이스 범위를 넉넉히 잡아 거의 모든 점이 바닥을 잡도록.
+	UWorld* World = QueryOwner.GetWorld();
+	UNavigationSystemV1* NavSys = World ? UNavigationSystemV1::GetCurrent(World) : nullptr;
+	AActor* OwnerActor = Cast<AActor>(&QueryOwner);
+
+	// 넉넉한 클리어런스 — ZOffset(에디터값) 위에 추가 여유. 바닥 박힘 방지 + 살짝 떨어지며 안착.
+	const float GenerousClearance = FMath::Max(ZOffset, 0.f) + 150.f;
+	const FVector NavExtent(800.f, 800.f, 12000.f); // 넉넉한 navmesh 검색 박스
+	const float TraceUp = 6000.f;                   // 넉넉한 상향 시작
+	const float TraceDown = 20000.f;                // 넉넉한 하향 탐색
+
 	for (int32 i = 0; i < Count; ++i)
 	{
 		// 원 위에 균등 분포
@@ -53,9 +71,38 @@ void USimpleSpawnPointsGenerator::Generate(
 		FVector Point = CenterLocation;
 		Point.X += Radius * FMath::Cos(Angle);
 		Point.Y += Radius * FMath::Sin(Angle);
-		Point.Z += ZOffset;
 
-		Locations.Add(Point);
+		// 지면 스냅: 1) navmesh 투영 우선  2) 실패 시 라인트레이스  3) 최종 폴백 = 중심 Z
+		FVector Ground = Point;
+		Ground.Z = CenterLocation.Z;
+		bool bSnapped = false;
+
+		if (NavSys)
+		{
+			FNavLocation NavLoc;
+			if (NavSys->ProjectPointToNavigation(Point, NavLoc, NavExtent))
+			{
+				Ground = NavLoc.Location;
+				bSnapped = true;
+			}
+		}
+		if (!bSnapped && World)
+		{
+			FHitResult Hit;
+			FCollisionQueryParams P(SCENE_QUERY_STAT(SimpleSpawnGround), false);
+			if (OwnerActor) { P.AddIgnoredActor(OwnerActor); }
+			const FVector From = Point + FVector(0.f, 0.f, TraceUp);
+			const FVector To   = Point - FVector(0.f, 0.f, TraceDown);
+			if (World->LineTraceSingleByChannel(Hit, From, To, ECC_WorldStatic, P)
+				|| World->LineTraceSingleByChannel(Hit, From, To, ECC_Visibility, P))
+			{
+				Ground = Hit.ImpactPoint;
+				bSnapped = true;
+			}
+		}
+
+		Ground.Z += GenerousClearance;
+		Locations.Add(Ground);
 	}
 
 	// ------------------------------------------------------------------

@@ -159,6 +159,18 @@ void AHellunaEnemyCharacter_Boss::BeginPlay()
 float AHellunaEnemyCharacter_Boss::TakeDamage(float DamageAmount,
 	FDamageEvent const& DamageEvent, AController* EventInstigator, AActor* DamageCauser)
 {
+	// [BossSpawnInvulnV1] 스폰 직후 ~ 소환 시네마틱 시작 사이 '틈'에서 포탑 등에 맞아 HP가 깎이던 문제 방지.
+	//   스폰 후 BossSpawnInvulnSeconds 동안만 무적이되, 시네마틱이 한 번 시작(bBossCinematicBegun)되면 grace 종료 →
+	//   이후엔 아래 IsAnyBossCinematicActive 로만 무적 판정. 그래서 시네마틱을 스킵하면 grace 잔여시간과 무관하게
+	//   즉시 데미지가 들어간다(스킵 후 한동안 무적이던 문제 수정). 시네마틱이 안 떠도 grace 만료 후 정상 = 영구무적 없음.
+	if (BossSpawnInvulnSeconds > 0.f && !bBossCinematicBegun && GetGameTimeSinceCreation() < BossSpawnInvulnSeconds)
+	{
+		UE_LOG(LogTemp, Verbose,
+			TEXT("[BossSpawnInvulnV1] 스폰 직후 grace 무적(%.1fs 이내, 시네마틱 시작 전) — 데미지 %.1f 무시 (Causer=%s)"),
+			BossSpawnInvulnSeconds, DamageAmount, *GetNameSafe(DamageCauser));
+		return 0.f;
+	}
+
 	if (const AHellunaDefenseGameMode* GM = Cast<AHellunaDefenseGameMode>(UGameplayStatics::GetGameMode(this)))
 	{
 		if (GM->IsAnyBossCinematicActive())
@@ -1469,6 +1481,19 @@ void AHellunaEnemyCharacter_Boss::Phase2_SpawnArmorPieces()
 void AHellunaEnemyCharacter_Boss::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+
+	// [BossSpawnInvulnV1] 소환 시네마틱이 한 번 시작되면 래치 — 이후엔 스폰 직후 grace 무적을 끄고
+	//   시네마틱 활성 여부로만 무적을 판정한다(스킵 시 grace 잔여시간과 무관하게 즉시 데미지 적용).
+	if (HasAuthority() && !bBossCinematicBegun)
+	{
+		if (const AHellunaDefenseGameMode* GM = Cast<AHellunaDefenseGameMode>(UGameplayStatics::GetGameMode(this)))
+		{
+			if (GM->IsAnyBossCinematicActive())
+			{
+				bBossCinematicBegun = true;
+			}
+		}
+	}
 
 	// [SummonMontageMeshSinkV1+TickGuard] SummonMontage 동안 mesh.RelZ 가 우리가 set 한 값과 다르면
 	//   매 tick 강제 재적용 + "처음 어긋난 시점" 한 번 로그.
