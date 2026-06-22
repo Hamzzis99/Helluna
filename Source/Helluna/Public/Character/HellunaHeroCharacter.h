@@ -820,6 +820,22 @@ public:
 	UFUNCTION(Client, Reliable)
 	void Client_OpenShipHealMenu();
 
+	// =========================================================
+	// [MenuInputLockV1] UI 메뉴 열림 동안 전투 입력(발사/조준 등) 잠금
+	//   - 위젯 NativeConstruct/Destruct 에서 Push/Pop 호출 (모든 닫기 경로 커버).
+	//   - 참조 카운트 0→1 진입 시 Player.State.MenuOpen 태그 set + 진행 중 Shoot/Aim 강제 취소(연사 정지=Release).
+	//   - 1→0 복귀 시 태그 제거. 클라 로컬 UI 상태이므로 비복제(발사 GA는 LocalPredicted라 클라에서 먼저 게이트됨).
+	// =========================================================
+
+	/** 메뉴 잠금 진입 — 위젯이 뷰포트에 추가될 때 호출. */
+	void PushMenuInputLock();
+
+	/** 메뉴 잠금 해제 — 위젯이 뷰포트에서 제거될 때 호출. */
+	void PopMenuInputLock();
+
+	/** 현재 메뉴 입력 잠금 중인지. */
+	bool IsMenuInputLocked() const { return MenuInputLockCount > 0; }
+
 protected:
 	/** 회복 메뉴 위젯 클래스 (BP에서 WBP_ShipHealWidget 할당) */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "ShipHeal", meta = (AllowPrivateAccess = "true"))
@@ -828,6 +844,9 @@ protected:
 	/** 현재 열린 회복 위젯 (E 토글용) */
 	UPROPERTY()
 	TObjectPtr<UUserWidget> ShipHealWidgetInstance;
+
+	/** [MenuInputLockV1] 열린 메뉴 UI 참조 카운트 (클라 로컬, 비복제). */
+	int32 MenuInputLockCount = 0;
 
 public:
 

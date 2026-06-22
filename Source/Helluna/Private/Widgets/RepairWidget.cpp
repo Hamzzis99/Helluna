@@ -16,6 +16,12 @@ void URepairWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
 
+	// [MenuInputLockV1] 수리 메뉴가 뷰포트에 올라오면 전투 입력 잠금(발사/조준 차단 + 진행 중 연사 정지).
+	if (AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(GetOwningPlayerPawn()))
+	{
+		Hero->PushMenuInputLock();
+	}
+
 	if (Button_Confirm)
 	{
 		Button_Confirm->OnClicked.AddDynamic(this, &URepairWidget::OnConfirmClicked);
@@ -51,6 +57,12 @@ void URepairWidget::NativeDestruct()
 	if (Slider_Material2)
 	{
 		Slider_Material2->OnValueChanged.RemoveDynamic(this, &URepairWidget::OnMaterial2SliderChanged);
+	}
+
+	// [MenuInputLockV1] 수리 메뉴가 닫히면(어떤 경로든: 취소/확인/E전환/GC) 입력 잠금 해제.
+	if (AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(GetOwningPlayerPawn()))
+	{
+		Hero->PopMenuInputLock();
 	}
 
 	Super::NativeDestruct();

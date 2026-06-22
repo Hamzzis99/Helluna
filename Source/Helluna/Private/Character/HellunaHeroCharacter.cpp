@@ -1355,6 +1355,44 @@ void AHellunaHeroCharacter::CloseShipHealMenu()
 }
 
 // ============================================================================
+// [MenuInputLockV1] UI 메뉴 입력 잠금 (참조 카운트). 위젯 NativeConstruct/Destruct 에서 호출.
+// ============================================================================
+void AHellunaHeroCharacter::PushMenuInputLock()
+{
+	// 0→1 진입 시에만: 메뉴 태그 set + 진행 중 발사/조준 강제 취소(연사 즉시 정지 = Release 효과).
+	if (MenuInputLockCount++ == 0)
+	{
+		if (UHellunaAbilitySystemComponent* ASC = GetHellunaAbilitySystemComponent())
+		{
+			ASC->AddStateTag(HellunaGameplayTags::Player_State_MenuOpen);
+
+			// FullAuto 연사 포함 진행 중 발사 즉시 종료(EndAbility→타이머 정리), 견착도 해제.
+			//   (견착 해제 시 Shoot() 의 Aim 태그 가드가 백업으로 한 번 더 연사를 끊는다)
+			ASC->CancelAbilityByTag(HellunaGameplayTags::Player_Ability_Shoot);
+			ASC->CancelAbilityByTag(HellunaGameplayTags::Player_Ability_Aim);
+		}
+	}
+}
+
+void AHellunaHeroCharacter::PopMenuInputLock()
+{
+	if (MenuInputLockCount <= 0)
+	{
+		MenuInputLockCount = 0;
+		return;
+	}
+
+	// 1→0 복귀 시에만 태그 제거 → 원래 조작 복원.
+	if (--MenuInputLockCount == 0)
+	{
+		if (UHellunaAbilitySystemComponent* ASC = GetHellunaAbilitySystemComponent())
+		{
+			ASC->RemoveStateTag(HellunaGameplayTags::Player_State_MenuOpen);
+		}
+	}
+}
+
+// ============================================================================
 // 서버 RPC: 손에 드는 무기(손 무기)를 스폰해서 지정 소켓에 부착한다.
 // - 서버에서만 스폰/부착을 수행하고, 무기 태그(WeaponTag)는 ASC(AbilitySystemComponent)에 반영한다.
 // - 기존 무기를 파괴하지 않는 구조(등/허리 슬롯 등 다른 시스템에서 관리 가능).

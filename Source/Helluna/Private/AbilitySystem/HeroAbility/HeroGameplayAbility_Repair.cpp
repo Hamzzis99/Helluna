@@ -22,6 +22,9 @@ UHeroGameplayAbility_Repair::UHeroGameplayAbility_Repair()
 	// NonInstanced(기본값)이면 CDO를 공유하므로 CurrentWidget 토글이 불가능!
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::LocalOnly;
+
+	// [MenuInputLockV1] 수리 메뉴를 여닫는 토글 GA 자신은 메뉴 잠금 예외 — 안 그러면 F로 메뉴를 못 닫는다.
+	bIgnoreMenuLock = true;
 }
 
 void UHeroGameplayAbility_Repair::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData)

@@ -12,6 +12,12 @@
 #include "DebugHelper.h"
 #include "Helluna.h"
 
+UHeroGameplayAbility_InRepair::UHeroGameplayAbility_InRepair()
+{
+	// [MenuInputLockV1] 수리 범위 게이지 GA — 메뉴 열림 중에도 활성/유지 가능하도록 잠금 예외.
+	bIgnoreMenuLock = true;
+}
+
 void UHeroGameplayAbility_InRepair::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData)
 {
 #if HELLUNA_DEBUG_REPAIR

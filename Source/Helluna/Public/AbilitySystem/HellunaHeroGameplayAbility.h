@@ -49,6 +49,11 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "HellunaAbility")
 	bool bIgnoreParryBlock = false;
 
+	/** [MenuInputLockV1] true이면 UI 메뉴 열림(Player.State.MenuOpen) 중에도 발동 가능.
+	 *  메뉴를 여닫는 토글 GA(Repair/InRepair) 전용 — 이게 false면 메뉴를 연 GA 자신이 차단돼 메뉴를 못 닫는다. */
+	UPROPERTY(EditDefaultsOnly, Category = "HellunaAbility")
+	bool bIgnoreMenuLock = false;
+
 private:
 	TWeakObjectPtr<AHellunaHeroCharacter> CachedHellunaHeroCharacter;
 	TWeakObjectPtr<AHellunaHeroController> CachedHellunaHeroController;

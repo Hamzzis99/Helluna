@@ -25,6 +25,14 @@ bool UHellunaHeroGameplayAbility::CanActivateAbility(
 		{
 			return false;
 		}
+
+		// [MenuInputLockV1] UI 메뉴(우주선 수리/회복 등) 열림 중엔 전투 GA(발사/조준/장전 등) 차단.
+		//   클릭이 발사로 새지 않게 하기 위함. 메뉴 토글 GA(Repair/InRepair)는 bIgnoreMenuLock=true 로 예외.
+		if (!bIgnoreMenuLock && UHellunaFunctionLibrary::NativeDoesActorHaveTag(
+			ActorInfo->AvatarActor.Get(), HellunaGameplayTags::Player_State_MenuOpen))
+		{
+			return false;
+		}
 	}
 
 	// 패링/킥 중 다른 GA 차단 (GunParry/MeleeKick 자신은 bIgnoreParryBlock=true로 스킵)

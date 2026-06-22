@@ -19,6 +19,12 @@ void UShipHealWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
 
+	// [MenuInputLockV1] 회복 메뉴가 뷰포트에 올라오면 전투 입력 잠금(발사/조준 차단 + 진행 중 연사 정지).
+	if (AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(GetOwningPlayerPawn()))
+	{
+		Hero->PushMenuInputLock();
+	}
+
 	if (Button_Confirm)
 	{
 		Button_Confirm->OnClicked.AddDynamic(this, &UShipHealWidget::OnConfirmClicked);
@@ -65,6 +71,12 @@ void UShipHealWidget::NativeDestruct()
 		}
 	}
 	TargetShip = nullptr;
+
+	// [MenuInputLockV1] 회복 메뉴가 닫히면(어떤 경로든: 취소/확인/F전환/GC) 입력 잠금 해제.
+	if (AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(GetOwningPlayerPawn()))
+	{
+		Hero->PopMenuInputLock();
+	}
 
 	Super::NativeDestruct();
 }
