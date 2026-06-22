@@ -189,6 +189,17 @@ public:
 	//   공속/공격력 배율은 베이스(EnrageDamageMultiplier/EnrageCooldownMultiplier) 그대로 사용.
 	// =========================================================
 
+	/** [BossSpawnInvulnV1] 스폰 직후 이 시간(초) 동안 무적 — 보스 스폰 ~ 소환 시네마틱 시작 사이 '틈'에서
+	 *  포탑 등에 맞아 HP가 깎이던 문제 방지. 이 사이 시네마틱이 시작되면 IsAnyBossCinematicActive 무적이 이어받음.
+	 *  시네마틱이 안 떠도 이 시간 후 정상 피격되므로 영구무적 위험 없음. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|시네마틱",
+		meta = (DisplayName = "스폰 직후 무적 시간(초)", ClampMin = "0.0", ClampMax = "30.0"))
+	float BossSpawnInvulnSeconds = 8.f;
+
+	/** [BossSpawnInvulnV1] 소환 시네마틱이 한 번이라도 활성된 적 있는지(서버 래치). true 가 되면 스폰 grace 무적을
+	 *  더는 적용하지 않고 IsAnyBossCinematicActive 만으로 무적 판정 → 시네마틱을 스킵하면 즉시 데미지가 들어간다. */
+	bool bBossCinematicBegun = false;
+
 	/** 이 적이 광폭화(2페이즈)를 가지는지 (보스 BP에서 true). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|광폭화",
 		meta = (DisplayName = "광폭화 활성화"))

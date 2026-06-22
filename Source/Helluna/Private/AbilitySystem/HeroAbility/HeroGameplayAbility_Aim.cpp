@@ -51,50 +51,18 @@ void UHeroGameplayAbility_Aim::ActivateAbility(
 	AHellunaHeroCharacter* Hero = GetHeroCharacterFromActorInfo();
 	if (!Hero) { EndAbility(Handle, ActorInfo, ActivationInfo, true, true); return; }
 
-	// [AimNoJumpV1] 공중(점프/낙하) 중에는 견착 불가 — 점프하면서 조준 시작을 차단(사용자 요청).
-	if (UCharacterMovementComponent* MoveCheck = Hero->GetCharacterMovement())
+	// ── 기본값 캐싱 (적용 *전에* 먼저) ──
+	// [AimNoJumpCamFixV1] 캐싱을 공중 거부보다 먼저 한다. 이전엔 캐싱 전에 EndAbility(취소) 를 불러
+	//   CachedDefaultFOV/RotationRate 등이 0 인 채로 EndAbility 의 복원이 돌아 → 카메라 FOV=0/회전설정 깨짐.
+	//   먼저 현재값을 캐시해두면, 공중 거부 시 EndAbility 복원이 '현재값으로 복원'=무해가 된다.
+	UCharacterMovementComponent* MoveComp = Hero->GetCharacterMovement();
+	if (MoveComp)
 	{
-		if (MoveCheck->IsFalling())
-		{
-			UE_LOG(LogTemp, Verbose, TEXT("[Aim GA][AimNoJumpV1] 공중 상태 — 견착 거부"));
-			EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
-			return;
-		}
-	}
-
-	// ── [AimTurnToCameraV3] 견착 시 '캐릭터'를 카메라(조준)방향으로 회전시킨다(사용자 요청). ──
-	//   카메라를 캐릭터로 돌리는 realign 은 쓰지 않는다(반대 방향). 아래 bUseControllerDesiredRotation=true 가
-	//   CharacterMovement 로 캐릭터 Yaw 를 컨트롤(카메라/조준) 방향으로 회전시킨다.
-
-	// ── 기본값 캐싱 ──
-	if (UCharacterMovementComponent* MoveComp = Hero->GetCharacterMovement())
-	{
-		// [MoveSpeedBaseV1] 이제 MaxWalkSpeed 를 직접 조작하지 않고 Hero 의 ActiveBaseWalkSpeed 를 통해 간접 설정.
-		//   Hero::RefreshMaxWalkSpeed 가 ActiveBase * MoveSpeedMultiplier 로 즉시 계산.
-		//   Aim 중에 슬로우가 걸렸다/풀렸다 해도 Hero 쪽에서 자동으로 반영됨.
-		CachedDefaultMaxWalkSpeed = Hero->GetBaseWalkSpeed(); // 복원 시 돌려놓을 "기본 걷기 속도"
-		Hero->SetActiveBaseWalkSpeed(AimMaxWalkSpeed);
-
-		// ── [Aim Rotation] 조준 시 캐릭터가 카메라 방향을 따라 회전 (RE4 스타일) ──
+		CachedDefaultMaxWalkSpeed = Hero->GetBaseWalkSpeed();
 		CachedOrientRotationToMovement = MoveComp->bOrientRotationToMovement;
 		CachedUseControllerDesiredRotation = MoveComp->bUseControllerDesiredRotation;
 		CachedRotationRate = MoveComp->RotationRate;
-
-		// [AimTurnToCameraV3] 견착 시 캐릭터가 카메라(조준)방향으로 회전(사용자 요청). RotationRate
-		//   360°/s. (정지 시 몸이 꺾이는 게 거슬리면 정석인 Aim Offset 애니메이션으로 개선 가능 — 별도 안내.)
-		// [AimNoBodyTurnV2] 견착 중 캡슐을 카메라/조준 방향으로 안 돌림(이동방향 유지). facing 은
-		//   메시 yaw(AimMeshYawOffset 30°, 시각)가 담당. 발사 시 반동 yaw 를 몸이 따라 꺾이는 튐 제거.
-		// 견착 동작 원복 — 캐릭터가 카메라(조준)방향으로 회전(원래 동작, 사용자: 견착 건드리지 말 것).
-		//   '발사 시 추가 회전'은 반동 좌우 yaw 를 몸이 따라가는 것이므로 무기 반동 쪽에서 처리.
-		MoveComp->bOrientRotationToMovement = false;
-		MoveComp->bUseControllerDesiredRotation = true;
-		MoveComp->RotationRate = FRotator(0.f, 720.f, 0.f); // 견착 회전속도(원복). 발사 꺾임 원인은 AimMeshYawOffset 이었음.
-
-		UE_LOG(LogTemp, Warning, TEXT("[Aim GA][AimNoBodyTurnV1] 견착 중 몸을 조준방향으로 안 돌림(이동방향 유지) (prev bOrientToMovement: %s, bUseControllerDesired: %s)"),
-			CachedOrientRotationToMovement ? TEXT("true") : TEXT("false"),
-			CachedUseControllerDesiredRotation ? TEXT("true") : TEXT("false"));
 	}
-
 	if (UCameraComponent* Cam = Hero->GetFollowCamera())
 	{
 		CachedDefaultFOV = Cam->FieldOfView;
@@ -103,6 +71,30 @@ void UHeroGameplayAbility_Aim::ActivateAbility(
 	{
 		CachedDefaultArmLength = Boom->TargetArmLength;
 		CachedDefaultSocketOffset = Boom->SocketOffset;
+	}
+
+	// [AimNoJumpV1] 공중(점프/낙하) 중에는 견착 불가 — 점프하면서 조준 시작 차단(사용자 요청).
+	//   위에서 캐시를 채운 뒤 거부하므로 EndAbility 복원이 현재값=무해(카메라 깨짐 버그 수정).
+	if (MoveComp && MoveComp->IsFalling())
+	{
+		UE_LOG(LogTemp, Verbose, TEXT("[Aim GA][AimNoJumpV1] 공중 상태 — 견착 거부"));
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+
+	// ── [AimTurnToCameraV3] 견착용 설정 적용 (이동속도 + 회전 방식) ──
+	//   캐릭터가 카메라(조준)방향으로 회전(RE4 스타일). 캡슐 회전은 RotationRate 로 처리.
+	if (MoveComp)
+	{
+		// [MoveSpeedBaseV1] ActiveBaseWalkSpeed 통해 간접 설정 — 슬로우 등도 Hero 쪽에서 자동 반영.
+		Hero->SetActiveBaseWalkSpeed(AimMaxWalkSpeed);
+		MoveComp->bOrientRotationToMovement = false;
+		MoveComp->bUseControllerDesiredRotation = true;
+		MoveComp->RotationRate = FRotator(0.f, 720.f, 0.f);
+
+		UE_LOG(LogTemp, Warning, TEXT("[Aim GA][AimNoBodyTurnV1] 견착 회전설정 적용 (prev bOrientToMovement: %s, bUseControllerDesired: %s)"),
+			CachedOrientRotationToMovement ? TEXT("true") : TEXT("false"),
+			CachedUseControllerDesiredRotation ? TEXT("true") : TEXT("false"));
 	}
 
 	// ── 무기에서 줌 목표값 읽기 ──
