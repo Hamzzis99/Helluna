@@ -20,8 +20,10 @@ void UShipHealWidget::NativeConstruct()
 	Super::NativeConstruct();
 
 	// [MenuInputLockV1] 회복 메뉴가 뷰포트에 올라오면 전투 입력 잠금(발사/조준 차단 + 진행 중 연사 정지).
+	//   Push 한 Hero 를 약참조로 보관 → NativeDestruct 에서 owning pawn 이 null 이어도 같은 Hero 에 Pop 보장.
 	if (AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(GetOwningPlayerPawn()))
 	{
+		CachedMenuLockHero = Hero;
 		Hero->PushMenuInputLock();
 	}
 
@@ -72,11 +74,13 @@ void UShipHealWidget::NativeDestruct()
 	}
 	TargetShip = nullptr;
 
-	// [MenuInputLockV1] 회복 메뉴가 닫히면(어떤 경로든: 취소/확인/F전환/GC) 입력 잠금 해제.
-	if (AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(GetOwningPlayerPawn()))
+	// [MenuInputLockV1] 회복 메뉴가 닫히면(어떤 경로든: 취소/확인/F전환/GC/레벨전환) 입력 잠금 해제.
+	//   GetOwningPlayerPawn 은 이 시점에 null 일 수 있으므로(언포세스/사망) Push 때 캐시한 Hero 로 Pop.
+	if (AHellunaHeroCharacter* Hero = CachedMenuLockHero.Get())
 	{
 		Hero->PopMenuInputLock();
 	}
+	CachedMenuLockHero = nullptr;
 
 	Super::NativeDestruct();
 }

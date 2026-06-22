@@ -17,6 +17,7 @@ class UActorComponent;
 class URepairComponent;
 class UInv_InventoryComponent;
 class AResourceUsingObject_SpaceShip;
+class AHellunaHeroCharacter;
 
 /**
  * 우주선 HP 회복 위젯 (수리 위젯 URepairWidget 복제 — 재료 비례 HP 회복).
@@ -92,6 +93,10 @@ private:
 	UPROPERTY() TObjectPtr<URepairComponent> RepairComponent;
 	UPROPERTY() TObjectPtr<UInv_InventoryComponent> InventoryComponent;
 	UPROPERTY() TObjectPtr<AResourceUsingObject_SpaceShip> TargetShip;
+
+	// [MenuInputLockV1] PushMenuInputLock 을 호출한 Hero 를 약참조로 보관 — NativeDestruct 에서 GetOwningPlayerPawn 이
+	//   null(레벨전환/언포세스/사망)이어도 같은 Hero 에 Pop 을 보장해 영구 입력잠금(태그 잔존) 방지.
+	TWeakObjectPtr<AHellunaHeroCharacter> CachedMenuLockHero;
 
 	FGameplayTag Material1Tag;
 	int32 Material1MaxAvailable = 0;

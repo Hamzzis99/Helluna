@@ -27,6 +27,11 @@ UHeroGameplayAbility_Shoot::UHeroGameplayAbility_Shoot()
 	//   Shoot 어빌리티 자체가 활성화되지 않아 좌클릭이 "아무 반응 없음" 이 된다.
 	//   (Player_status_Aim 은 GA_Aim 이 활성 중에 ActivationOwnedTags 로 부여)
 	ActivationRequiredTags.AddTag(HellunaGameplayTags::Player_status_Aim);
+
+	// [MenuInputLockV1] 외부(메뉴 열림)에서 CancelAbilityByTag(Player_Ability_Shoot) 로 이 GA 를 찾아
+	//   연사를 강제 정지할 수 있도록 어빌리티 태그를 C++ 에서도 보장.
+	//   (현재 GA_Hero_Shoot BP 에도 동일 태그가 있으나, BP 회귀/신규 파생 대비 추가. AddTag 라 중복 무해.)
+	AbilityTags.AddTag(HellunaGameplayTags::Player_Ability_Shoot);
 }
 
 void UHeroGameplayAbility_Shoot::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData)

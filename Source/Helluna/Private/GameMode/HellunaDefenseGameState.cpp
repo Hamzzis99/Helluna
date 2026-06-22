@@ -1815,9 +1815,13 @@ void AHellunaDefenseGameState::NetMulticast_ApplyCheatTimeFreeze_Implementation(
     }
 
     // 1) Animate Time of Day UPROPERTY OFF
+    //   [TimeFreezeUnfreeze-FIX 2026-06-22] 새 SkyMood/VisualPhase 모델에선 UDS "Animate Time of Day"는
+    //   항상 OFF (밝기는 ApplyVisualPhaseAlpha가 직접 push, 해는 항상 0인 우주 맵). 기존 !bFreeze는 해제 시
+    //   Animate를 ON으로 켜 UDS가 stale TOD(=DayStartTime 800)에서 자가 진행 → 달빛 페이드아웃 → 암전시키던
+    //   버그의 직접 원인이었다. 정지/해제 모두 false 로 고정한다.
     if (FBoolProperty* AnimProp = CastField<FBoolProperty>(CachedProp_Animate))
     {
-        AnimProp->SetPropertyValue_InContainer(UDS, !bFreeze);
+        AnimProp->SetPropertyValue_InContainer(UDS, false);
     }
 
     // 2) 정지 시 낮 시간으로 고정
@@ -1851,6 +1855,12 @@ void AHellunaDefenseGameState::NetMulticast_ApplyCheatTimeFreeze_Implementation(
     else
     {
         GetWorldTimerManager().ClearTimer(TimerHandle_CheatTimeFreezeHold);
+
+        // [TimeFreezeUnfreeze-FIX 2026-06-22] 해제 시 현재 VisualPhase 의 SkyMood 조명 상태를 재적용한다.
+        //   정지 중에는 TOD 가 DayStartTime(800) 으로 덮이고 달/하늘 광량은 latch 된 채 남는다. 해제 후
+        //   누구도 SkyMood 를 다시 push 하지 않으면(정착 위상엔 재적용 타이머가 없음) 화면이 그대로 암전된다.
+        //   현재 위상·알파 기준으로 TOD·달/하늘/밤밝기 인텐시티를 다시 써서 복원한다(내부에서 Animate OFF·해 0 유지).
+        ApplyVisualPhaseAlpha(VisualPhaseState.Phase, GetVisualPhaseAlpha());
     }
 }
 
