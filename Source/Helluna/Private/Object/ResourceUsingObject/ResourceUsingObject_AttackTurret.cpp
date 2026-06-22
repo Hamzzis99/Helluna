@@ -15,6 +15,8 @@
 #include "Components/DynamicMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "DrawDebugHelpers.h"
+#include "Sound/SoundAttenuation.h"
+#include "UObject/ConstructorHelpers.h"
 
 
 // =========================================================
@@ -28,6 +30,14 @@ AResourceUsingObject_AttackTurret::AResourceUsingObject_AttackTurret()
 
 	bReplicates = true;
 	bAlwaysRelevant = true;
+
+	// [TurretSoundV1] 발사 사운드 기본 거리 감쇠 — 없으면 거리 무관 풀볼륨으로 들림. BP 에서 교체 가능.
+	static ConstructorHelpers::FObjectFinder<USoundAttenuation> AttenFinder(
+		TEXT("/Game/Migration/VFX/ProjectileHitVFX/_GenericSource/SFX/GenericSoundAttenuation.GenericSoundAttenuation"));
+	if (AttenFinder.Succeeded())
+	{
+		FireSoundAttenuation = AttenFinder.Object;
+	}
 
 	// ── 고정 루트 (회전하지 않음) ────────────────────────────
 	TurretRoot = CreateDefaultSubobject<USceneComponent>(TEXT("TurretRoot"));
@@ -403,10 +413,13 @@ void AResourceUsingObject_AttackTurret::Multicast_PlayFireFX_Implementation(
 		);
 	}
 
-	// 발사 사운드
+	// 발사 사운드 — [TurretSoundV1] 볼륨 낮춤 + 거리 감쇠 적용(멀리서 풀볼륨으로 들리던 문제).
+	//   location 기반 재생(총구 위치)은 그대로 — 감쇠가 없어 거리 falloff 가 안 먹던 게 원인이었음.
 	if (FireSound)
 	{
-		UGameplayStatics::PlaySoundAtLocation(this, FireSound, MuzzleLocation);
+		UGameplayStatics::PlaySoundAtLocation(
+			this, FireSound, MuzzleLocation, FRotator::ZeroRotator,
+			FireSoundVolume, FireSoundPitch, 0.f, FireSoundAttenuation);
 	}
 
 	if (!bHit)

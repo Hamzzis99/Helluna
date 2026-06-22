@@ -506,5 +506,27 @@ void UHellunaCheatComponent::Server_GrantAllMaterials_Implementation()
         UE_LOG(LogTemp, Warning, TEXT("[Cheat] GrantMaterials 폴더스캔: Craftables BP %d개 발견"), ScanFound);
     }
 
-    UE_LOG(LogTemp, Warning, TEXT("[Cheat] GrantMaterials: 총 %d종 지급 (테이블+폴더스캔)"), GrantedCount);
+    // 3) [GrantAllMaterialsV3 2026-06-22] 패키징(쿡) 빌드에선 위 AssetRegistry 폴더 스캔이 비어 나오는 경우가 있어
+    //    (에디터는 됨, 패키지는 광석이 안 들어오던 원인) → 알려진 재료 클래스 경로를 직접 LoadObject 로 확정 지급.
+    //    해당 BP 들은 채굴 등으로 이미 쿡되므로 패키지에서도 로드된다. 새 재료 추가 시 이 목록도 갱신(또는 에디터 폴더 스캔이 커버).
+    static const TCHAR* KnownMaterialClassPaths[] = {
+        TEXT("/Inventory/Items/Craftables/BP_Inv_FireFernFruit.BP_Inv_FireFernFruit_C"),
+        TEXT("/Inventory/Items/Craftables/BP_Inv_LuminDaisy.BP_Inv_LuminDaisy_C"),
+        TEXT("/Inventory/Items/Craftables/BP_Inv_Ore_Amethyst.BP_Inv_Ore_Amethyst_C"),
+        TEXT("/Inventory/Items/Craftables/BP_Inv_Ore_Emerald.BP_Inv_Ore_Emerald_C"),
+        TEXT("/Inventory/Items/Craftables/BP_Inv_Ore_IceGerm.BP_Inv_Ore_IceGerm_C"),
+        TEXT("/Inventory/Items/Craftables/BP_Inv_Ore_Sapphire.BP_Inv_Ore_Sapphire_C"),
+        TEXT("/Inventory/Items/Craftables/BP_Inv_Ore_Snow_Citrine.BP_Inv_Ore_Snow_Citrine_C"),
+        TEXT("/Inventory/Items/Craftables/BP_Inv_Ore_Snow_Ruby.BP_Inv_Ore_Snow_Ruby_C"),
+    };
+    for (const TCHAR* Path : KnownMaterialClassPaths)
+    {
+        UClass* Cls = LoadObject<UClass>(nullptr, Path);
+        if (Cls && Cls->IsChildOf(AActor::StaticClass()))
+        {
+            GrantClass(Cls);
+        }
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("[Cheat] GrantMaterials: 총 %d종 지급 (테이블+폴더스캔+확정목록)"), GrantedCount);
 }
