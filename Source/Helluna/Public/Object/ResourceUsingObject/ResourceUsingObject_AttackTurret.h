@@ -10,6 +10,7 @@ class USphereComponent;
 class UStaticMeshComponent;
 class UNiagaraSystem;
 class USoundBase;
+class USoundAttenuation;
 
 /**
  * 적을 자동으로 공격하는 포탑.
@@ -136,6 +137,22 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Turret|FX",
 		meta = (DisplayName = "발사 사운드"))
 	TObjectPtr<USoundBase> FireSound = nullptr;
+
+	/** [TurretSoundV1] 발사 사운드 볼륨 배율 — 기본 0.4 로 낮춤(멀리·과하게 들린다는 피드백). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Turret|FX",
+		meta = (DisplayName = "발사 사운드 볼륨", ClampMin = "0.0", ClampMax = "5.0"))
+	float FireSoundVolume = 0.4f;
+
+	/** [TurretSoundV1] 발사 사운드 피치 배율. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Turret|FX",
+		meta = (DisplayName = "발사 사운드 피치", ClampMin = "0.1", ClampMax = "4.0"))
+	float FireSoundPitch = 1.0f;
+
+	/** [TurretSoundV1] 발사 사운드 거리 감쇠(falloff). 이게 없으면 거리와 무관하게 풀볼륨으로 들린다.
+	 *  기본 GenericSoundAttenuation 할당(생성자). BP 에서 교체/거리 조정 가능. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Turret|FX",
+		meta = (DisplayName = "발사 사운드 거리 감쇠"))
+	TObjectPtr<USoundAttenuation> FireSoundAttenuation = nullptr;
 
 	/** 피격 이펙트 (타겟 위치) */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Turret|FX",
