@@ -129,6 +129,13 @@ void UHeroGameplayAbility_Shoot::Shoot()
 			K2_EndAbility();
 			return;
 		}
+
+		// [MenuInputLockV1] 발사 중 UI 메뉴가 열리면 즉시 연사 중단 (CancelAbilityByTag 누락 대비 백업).
+		if (ASC->HasMatchingGameplayTag(HellunaGameplayTags::Player_State_MenuOpen))
+		{
+			K2_EndAbility();
+			return;
+		}
 	}
 
 	AHeroWeapon_GunBase* Weapon = Cast<AHeroWeapon_GunBase>(Hero->GetCurrentWeapon());

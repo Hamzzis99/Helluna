@@ -16,7 +16,10 @@ UCLASS()
 class HELLUNA_API UHeroGameplayAbility_InRepair : public UHellunaHeroGameplayAbility
 {
 	GENERATED_BODY()
-	
+
+public:
+	UHeroGameplayAbility_InRepair();
+
 protected:
 
 	virtual void ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData) override;

@@ -116,6 +116,9 @@ namespace HellunaGameplayTags
 	/** 다운 상태 (Downed State) — 어빌리티 차단용 **/
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_State_Downed);
 
+	/** [MenuInputLockV1] UI 메뉴(우주선 수리·회복 등) 열림 — 발사/조준 등 전투 Hero GA 차단용 **/
+	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Player_State_MenuOpen);
+
 	/** 부활 입력 (Revive Input) — F키 홀드 **/
 	HELLUNA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Revive);
 

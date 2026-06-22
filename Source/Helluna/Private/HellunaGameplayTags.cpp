@@ -101,4 +101,7 @@ namespace HellunaGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Player_State_Downed, "Player.State.Downed");
 	UE_DEFINE_GAMEPLAY_TAG(InputTag_Revive, "InputTag.Revive");
 
+	// [MenuInputLockV1] UI 메뉴 열림 게이트 태그
+	UE_DEFINE_GAMEPLAY_TAG(Player_State_MenuOpen, "Player.State.MenuOpen");
+
 }
