@@ -59,6 +59,7 @@
 #include "UI/Weapon/WeaponHUDWidget.h"
 #include "UI/HUD/HellunaHealthHUDWidget.h"
 #include "Blueprint/UserWidget.h"
+#include "UObject/ConstructorHelpers.h"  // [ShipHeal] 위젯 클래스 기본값 + 강제 쿡
 
 #include "InventoryManagement/Components/Inv_LootContainerComponent.h"
 #include "Items/Components/Inv_ItemComponent.h"  // [Step3] FindComponentByClass<UInv_ItemComponent> 완전한 타입 필요
@@ -94,6 +95,16 @@ AHellunaHeroCharacter::AHellunaHeroCharacter()
 	// ⭐ 모든 캐릭터 BP가 UHellunaInputComponent를 사용하도록 보장
 	// BP에서 개별 설정 누락 시 기본 UInputComponent → Cast 실패 → 입력 바인딩 스킵 버그 방지
 	OverrideInputComponentClass = UHellunaInputComponent::StaticClass();
+
+	// [ShipHeal] 회복 메뉴 위젯 클래스 C++ 기본값 — BP .uasset 미저장/미쿡 시에도 패키지에서 동작 보장.
+	//   이 ConstructorHelpers 참조가 WBP_ShipHealWidget 을 쿡 의존성으로 강제 포함시킨다(패키지 WidgetClass=None 수정).
+	{
+		static ConstructorHelpers::FClassFinder<UUserWidget> ShipHealWidgetFinder(TEXT("/Game/UI/Widgets/Repair/WBP_ShipHealWidget"));
+		if (ShipHealWidgetFinder.Succeeded())
+		{
+			ShipHealWidgetClass = ShipHealWidgetFinder.Class;
+		}
+	}
 
 	bUseControllerRotationPitch = false;
 	bUseControllerRotationYaw = false;
@@ -1257,7 +1268,17 @@ void AHellunaHeroCharacter::ToggleShipHealMenu()
 		return;
 	}
 
-	if (!ShipHealWidgetClass) return;
+	// [패키지 안전망] BP override 가 None 이거나 쿡 누락 시 경로로 직접 로드 (PIE는 되는데 패키지만 None 이던 문제 대응).
+	if (!ShipHealWidgetClass)
+	{
+		ShipHealWidgetClass = LoadClass<UUserWidget>(nullptr, TEXT("/Game/UI/Widgets/Repair/WBP_ShipHealWidget.WBP_ShipHealWidget_C"));
+		UE_LOG(LogTemp, Warning, TEXT("[ShipHeal] ShipHealWidgetClass None -> 경로 로드 시도: %s"), *GetNameSafe(ShipHealWidgetClass));
+	}
+	if (!ShipHealWidgetClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[ShipHeal] ShipHealWidgetClass 로드 실패 — 회복 메뉴 못 엶"));
+		return;
+	}
 
 	// [메뉴 상호 배타] E(회복)를 열기 전에 F(수리) 메뉴가 떠 있으면 먼저 닫는다.
 	//   F 수리창은 GA_Repair 가 소유(URepairWidget) — 뷰포트에서 찾아 닫는다. (GA의 CurrentWidget 포인터는
