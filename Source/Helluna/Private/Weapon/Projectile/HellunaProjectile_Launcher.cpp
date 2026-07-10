@@ -324,11 +324,21 @@ void AHellunaProjectile_Launcher::Explode(const FVector& ExplosionLocation)
 				*GetNameSafe(Victim),
 				Damage,
 				FVector::Dist(ExplosionLocation, Victim->GetActorLocation()));
+			// [MDF_HitLocV2 2026-06-22] 빈 FHitResult() → ImpactPoint=(0,0,0) 이라 우주선 MDF 변형이
+			//   월드 원점에서 실패하고 폭발 VFX 가 먼 바닥에서 터지던 버그. 폭발 지점(ExplosionLocation,
+			//   로켓이 선체에 맞아 터진 위치)을 ImpactPoint 로 채워 넘겨 변형/VFX 가 제자리에서 일어나게 한다.
+			const FVector LauncherHitDir = (Victim->GetActorLocation() - ExplosionLocation).GetSafeNormal();
+			FHitResult HitInfo;
+			HitInfo.ImpactPoint     = ExplosionLocation;
+			HitInfo.Location        = ExplosionLocation;
+			HitInfo.ImpactNormal    = -LauncherHitDir;
+			HitInfo.Normal          = -LauncherHitDir;
+			HitInfo.HitObjectHandle = FActorInstanceHandle(Victim);
 			UGameplayStatics::ApplyPointDamage(
 				Victim,
 				Damage,
-				(Victim->GetActorLocation() - ExplosionLocation).GetSafeNormal(),
-				FHitResult(),
+				LauncherHitDir,
+				HitInfo,
 				GetInstigatorController(),
 				this,
 				UDamageType::StaticClass()

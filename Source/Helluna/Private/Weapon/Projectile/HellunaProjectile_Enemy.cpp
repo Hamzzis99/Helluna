@@ -138,11 +138,21 @@ void AHellunaProjectile_Enemy::HitTarget(AActor* HitActor, const FVector& HitLoc
 	{
 		HitFromDir = (HitActor->GetActorLocation() - HitLocation).GetSafeNormal();
 	}
+	// [MDF_HitLocV2 2026-06-22] FHitResult 의 ImpactPoint/Location 을 실제 HitLocation 으로 채워 넘긴다.
+	//   기존: FHitResult() 빈 객체 → OnTakePointDamage HitLocation=(0,0,0) → 우주선 MDF 변형이
+	//   월드 원점 기준이라 "반경 내 버텍스 없음"으로 실패하고, 파편 폭발 VFX 가 월드 원점(먼 바닥)에서 터졌다.
+	//   ApplyPointDamage 의 HitInfo.ImpactPoint 가 broadcast HitLocation 으로 그대로 전파되므로 여기서 채운다.
+	FHitResult HitInfo;
+	HitInfo.ImpactPoint     = HitLocation;
+	HitInfo.Location        = HitLocation;
+	HitInfo.ImpactNormal    = -HitFromDir;
+	HitInfo.Normal          = -HitFromDir;
+	HitInfo.HitObjectHandle = FActorInstanceHandle(HitActor);
 	UGameplayStatics::ApplyPointDamage(
 		HitActor,
 		Damage,
 		HitFromDir,
-		FHitResult(),
+		HitInfo,
 		GetInstigatorController(),
 		this,
 		UDamageType::StaticClass()
