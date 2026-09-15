@@ -12,14 +12,20 @@
 #include "Components/TextBlock.h"
 #include "Components/Slider.h"
 #include "GameFramework/GameUserSettings.h"
+#include "HAL/PlatformTime.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "RHI.h"
+#include "DynamicRHI.h"
 
 // ── DLSS/Streamline Blueprint API ──
+#if HELLUNA_WITH_DLSS
 #include "DLSSLibrary.h"
+#endif
+#if HELLUNA_WITH_STREAMLINE
 #include "StreamlineLibrary.h"
 #include "StreamlineLibraryDLSSG.h"
 #include "StreamlineLibraryReflex.h"
+#endif
 
 DEFINE_LOG_CATEGORY_STATIC(LogHellunaGraphics, Log, All);
 
@@ -120,8 +126,12 @@ void UHellunaGraphicsSettingsWidget::NativeOnInitialized()
 	if (ComboBox_Upscaler)
 	{
 		ComboBox_Upscaler->ClearOptions();
+#if HELLUNA_WITH_DLSS
 		ComboBox_Upscaler->AddOption(TEXT("DLSS"));
+#endif
+#if HELLUNA_WITH_FSR
 		ComboBox_Upscaler->AddOption(TEXT("FSR"));
+#endif
 		ComboBox_Upscaler->AddOption(TEXT("TSR"));
 		ComboBox_Upscaler->AddOption(TEXT("OFF"));
 		ComboBox_Upscaler->OnSelectionChanged.AddUniqueDynamic(this, &ThisClass::OnUpscalerChanged);
@@ -236,8 +246,14 @@ void UHellunaGraphicsSettingsWidget::LoadCurrentSettings()
 	bSuppressCallbacks = true;
 
 	// ── 업스케일러 판별 (DLSS=Blueprint API, FSR=CVar) ──
-	const bool bDLSS = UDLSSLibrary::IsDLSSEnabled();
-	const bool bFSR  = (GetCVarInt(GraphicsCVars::FSREnable) != 0);
+	bool bDLSS = false;
+	bool bFSR = false;
+#if HELLUNA_WITH_DLSS
+	bDLSS = UDLSSLibrary::IsDLSSEnabled();
+#endif
+#if HELLUNA_WITH_FSR
+	bFSR = (GetCVarInt(GraphicsCVars::FSREnable) != 0);
+#endif
 
 	if (bDLSS)        CurrentUpscaler = EHellunaUpscalerType::DLSS;
 	else if (bFSR)    CurrentUpscaler = EHellunaUpscalerType::FSR;
@@ -262,13 +278,22 @@ void UHellunaGraphicsSettingsWidget::LoadCurrentSettings()
 	PopulateUpscalerQualityOptions();
 
 	// ── 프레임 생성 상태 (DLSS-G=Blueprint API, FSR FI=CVar) ──
-	const bool bDLSSG = (UStreamlineLibraryDLSSG::GetDLSSGMode() != EStreamlineDLSSGMode::Off);
-	const bool bFSRFI = (GetCVarInt(GraphicsCVars::FSRFrameInterp) != 0);
+	bool bDLSSG = false;
+	bool bFSRFI = false;
+#if HELLUNA_WITH_STREAMLINE
+	bDLSSG = (UStreamlineLibraryDLSSG::GetDLSSGMode() != EStreamlineDLSSGMode::Off);
+#endif
+#if HELLUNA_WITH_FSR
+	bFSRFI = (GetCVarInt(GraphicsCVars::FSRFrameInterp) != 0);
+#endif
 	bFrameGenEnabled = bDLSSG || bFSRFI;
 	if (CheckBox_FrameGen) CheckBox_FrameGen->SetIsChecked(bFrameGenEnabled);
 
 	// ── 리플렉스 상태 (Blueprint API) ──
+	bReflexEnabled = false;
+#if HELLUNA_WITH_STREAMLINE
 	bReflexEnabled = (UStreamlineLibraryReflex::GetReflexMode() != EStreamlineReflexMode::Off);
+#endif
 	if (CheckBox_Reflex) CheckBox_Reflex->SetIsChecked(bReflexEnabled);
 
 	// ── TSR 슬라이더 ──
@@ -366,6 +391,7 @@ void UHellunaGraphicsSettingsWidget::PopulateUpscalerQualityOptions()
 	switch (CurrentUpscaler)
 	{
 	case EHellunaUpscalerType::DLSS:
+#if HELLUNA_WITH_DLSS
 		ComboBox_UpscalerQuality->AddOption(TEXT("Ultra Performance"));
 		ComboBox_UpscalerQuality->AddOption(TEXT("Performance"));
 		ComboBox_UpscalerQuality->AddOption(TEXT("Balanced"));
@@ -384,9 +410,11 @@ void UHellunaGraphicsSettingsWidget::PopulateUpscalerQualityOptions()
 			default:                          ComboBox_UpscalerQuality->SetSelectedOption(TEXT("Balanced")); break;
 			}
 		}
+#endif
 		break;
 
 	case EHellunaUpscalerType::FSR:
+#if HELLUNA_WITH_FSR
 		ComboBox_UpscalerQuality->AddOption(TEXT("Performance"));
 		ComboBox_UpscalerQuality->AddOption(TEXT("Balanced"));
 		ComboBox_UpscalerQuality->AddOption(TEXT("Quality"));
@@ -402,6 +430,7 @@ void UHellunaGraphicsSettingsWidget::PopulateUpscalerQualityOptions()
 			default: ComboBox_UpscalerQuality->SetSelectedOption(TEXT("Balanced")); break;
 			}
 		}
+#endif
 		break;
 
 	default:
@@ -418,20 +447,34 @@ void UHellunaGraphicsSettingsWidget::OnUpscalerChanged(FString SelectedItem, ESe
 	if (bSuppressCallbacks) return;
 
 	// ── 이전 업스케일러 끄기 (DLSS=Blueprint API, FSR=CVar) ──
+#if HELLUNA_WITH_DLSS
 	UDLSSLibrary::EnableDLSS(false);
+#endif
+#if HELLUNA_WITH_FSR
 	SetCVar(GraphicsCVars::FSREnable, 0);
+#endif
 
 	// ── 새 업스케일러 설정 ──
 	if (SelectedItem == TEXT("DLSS"))
 	{
+#if HELLUNA_WITH_DLSS
 		CurrentUpscaler = EHellunaUpscalerType::DLSS;
 		UDLSSLibrary::EnableDLSS(true);
 		UDLSSLibrary::SetDLSSMode(this, UDLSSMode::Balanced); // 기본 Balanced
+#else
+		CurrentUpscaler = EHellunaUpscalerType::TSR;
+		SetCVar(GraphicsCVars::AntiAliasingMethod, 4);
+#endif
 	}
 	else if (SelectedItem == TEXT("FSR"))
 	{
+#if HELLUNA_WITH_FSR
 		CurrentUpscaler = EHellunaUpscalerType::FSR;
 		SetCVar(GraphicsCVars::FSREnable, 1);
+#else
+		CurrentUpscaler = EHellunaUpscalerType::TSR;
+		SetCVar(GraphicsCVars::AntiAliasingMethod, 4);
+#endif
 	}
 	else if (SelectedItem == TEXT("TSR"))
 	{
@@ -445,8 +488,12 @@ void UHellunaGraphicsSettingsWidget::OnUpscalerChanged(FString SelectedItem, ESe
 
 	// ── 프레임 생성 리셋 (DLSS-G=Blueprint API, FSR FI=CVar) ──
 	bFrameGenEnabled = false;
+#if HELLUNA_WITH_STREAMLINE
 	UStreamlineLibraryDLSSG::SetDLSSGMode(EStreamlineDLSSGMode::Off);
+#endif
+#if HELLUNA_WITH_FSR
 	SetCVar(GraphicsCVars::FSRFrameInterp, 0);
+#endif
 	if (CheckBox_FrameGen) CheckBox_FrameGen->SetIsChecked(false);
 
 	PopulateUpscalerQualityOptions();
@@ -464,6 +511,7 @@ void UHellunaGraphicsSettingsWidget::OnUpscalerQualityChanged(FString SelectedIt
 
 	if (CurrentUpscaler == EHellunaUpscalerType::DLSS)
 	{
+#if HELLUNA_WITH_DLSS
 		// DLSS 품질 모드: Blueprint API (CVar 없음)
 		UDLSSMode DLSSMode = UDLSSMode::Balanced;
 		if      (SelectedItem == TEXT("Ultra Performance")) DLSSMode = UDLSSMode::UltraPerformance;
@@ -473,9 +521,11 @@ void UHellunaGraphicsSettingsWidget::OnUpscalerQualityChanged(FString SelectedIt
 		else if (SelectedItem == TEXT("DLAA"))              DLSSMode = UDLSSMode::DLAA;
 
 		UDLSSLibrary::SetDLSSMode(this, DLSSMode);
+#endif
 	}
 	else if (CurrentUpscaler == EHellunaUpscalerType::FSR)
 	{
+#if HELLUNA_WITH_FSR
 		int32 QualityMode = 1; // Balanced
 		if      (SelectedItem == TEXT("Performance"))    QualityMode = 0;
 		else if (SelectedItem == TEXT("Balanced"))       QualityMode = 1;
@@ -483,6 +533,7 @@ void UHellunaGraphicsSettingsWidget::OnUpscalerQualityChanged(FString SelectedIt
 		else if (SelectedItem == TEXT("Ultra Quality"))  QualityMode = 3;
 
 		SetCVar(GraphicsCVars::FSRQuality, QualityMode);
+#endif
 	}
 }
 
@@ -514,12 +565,20 @@ void UHellunaGraphicsSettingsWidget::OnFrameGenToggled(bool bIsChecked)
 	if (CurrentUpscaler == EHellunaUpscalerType::DLSS)
 	{
 		// DLSS Frame Generation: Blueprint API
+#if HELLUNA_WITH_STREAMLINE
 		UStreamlineLibraryDLSSG::SetDLSSGMode(bIsChecked ? EStreamlineDLSSGMode::Auto : EStreamlineDLSSGMode::Off);
+#else
+		bFrameGenEnabled = false;
+#endif
 	}
 	else if (CurrentUpscaler == EHellunaUpscalerType::FSR)
 	{
 		// FSR Frame Interpolation: CVar
+#if HELLUNA_WITH_FSR
 		SetCVar(GraphicsCVars::FSRFrameInterp, bIsChecked ? 1 : 0);
+#else
+		bFrameGenEnabled = false;
+#endif
 	}
 
 	UpdateReflexAvailability();
@@ -536,7 +595,11 @@ void UHellunaGraphicsSettingsWidget::OnReflexToggled(bool bIsChecked)
 
 	bReflexEnabled = bIsChecked;
 	// Reflex: Blueprint API
+#if HELLUNA_WITH_STREAMLINE
 	UStreamlineLibraryReflex::SetReflexMode(bIsChecked ? EStreamlineReflexMode::Enabled : EStreamlineReflexMode::Off);
+#else
+	bReflexEnabled = false;
+#endif
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -544,7 +607,9 @@ void UHellunaGraphicsSettingsWidget::OnReflexToggled(bool bIsChecked)
 // ════════════════════════════════════════════════════════════════════════════════
 void UHellunaGraphicsSettingsWidget::UpdateUpscalerDependentUI()
 {
-	const bool bIsDLSSOrFSR = (CurrentUpscaler == EHellunaUpscalerType::DLSS || CurrentUpscaler == EHellunaUpscalerType::FSR);
+	const bool bIsDLSSOrFSR =
+		(HELLUNA_WITH_DLSS && CurrentUpscaler == EHellunaUpscalerType::DLSS)
+		|| (HELLUNA_WITH_FSR && CurrentUpscaler == EHellunaUpscalerType::FSR);
 	const bool bIsTSR       = (CurrentUpscaler == EHellunaUpscalerType::TSR);
 	const bool bIsOff       = (CurrentUpscaler == EHellunaUpscalerType::Off);
 
@@ -591,7 +656,9 @@ void UHellunaGraphicsSettingsWidget::UpdateReflexAvailability()
 		{
 			CheckBox_Reflex->SetIsChecked(false);
 			bReflexEnabled = false;
+#if HELLUNA_WITH_STREAMLINE
 			UStreamlineLibraryReflex::SetReflexMode(EStreamlineReflexMode::Off);
+#endif
 		}
 	}
 
@@ -781,13 +848,23 @@ void UHellunaGraphicsSettingsWidget::OnResetDefaultClicked()
 		Settings->ApplySettings(false);
 	}
 
-	// 업스케일러 기본값: DLSS (Blueprint API + CVar)
+	// 설치된 선택형 플러그인이 없으면 UE 기본 TSR로 안전하게 폴백한다.
+#if HELLUNA_WITH_DLSS
 	UDLSSLibrary::EnableDLSS(true);
 	UDLSSLibrary::SetDLSSMode(this, UDLSSMode::Balanced);
+#else
+	SetCVar(GraphicsCVars::AntiAliasingMethod, 4);
+#endif
+#if HELLUNA_WITH_FSR
 	SetCVar(GraphicsCVars::FSREnable, 0);
+#endif
+#if HELLUNA_WITH_STREAMLINE
 	UStreamlineLibraryDLSSG::SetDLSSGMode(EStreamlineDLSSGMode::Off);
-	SetCVar(GraphicsCVars::FSRFrameInterp, 0);
 	UStreamlineLibraryReflex::SetReflexMode(EStreamlineReflexMode::Off);
+#endif
+#if HELLUNA_WITH_FSR
+	SetCVar(GraphicsCVars::FSRFrameInterp, 0);
+#endif
 	SetCVar(GraphicsCVars::ScreenPercentage, 100.f);
 
 	LoadCurrentSettings();
@@ -822,9 +899,8 @@ void UHellunaGraphicsSettingsWidget::UpdatePerformanceDisplay()
 	// GPU/CPU 시간은 stat unit 데이터에서 가져오기
 	if (Text_GPUTime)
 	{
-		// UE 5.7.2: GGPUFrameTime은 RHI_API uint32 (마이크로초 단위)
-		extern RHI_API uint32 GGPUFrameTime;
-		const float GPUTimeMs = static_cast<float>(GGPUFrameTime) / 1000.f;
+		// UE 5.8: Use the public RHI API and convert platform cycles to milliseconds.
+		const float GPUTimeMs = FPlatformTime::ToMilliseconds(RHIGetGPUFrameCycles());
 		Text_GPUTime->SetText(FText::FromString(FString::Printf(TEXT("GPU: %.1fms"), GPUTimeMs)));
 	}
 

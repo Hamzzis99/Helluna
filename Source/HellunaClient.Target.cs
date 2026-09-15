@@ -8,8 +8,8 @@ public class HellunaClientTarget : TargetRules
 	public HellunaClientTarget( TargetInfo Target) : base(Target)
 	{
 		Type = TargetType.Client;
-		DefaultBuildSettings = BuildSettingsVersion.V6;
-		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_7;
+		DefaultBuildSettings = BuildSettingsVersion.V7;
+		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_8;
 		ExtraModuleNames.Add("Helluna");
 
 		// [Phase21-C][Diag] Shipping 빌드에서도 진단 로그 보존

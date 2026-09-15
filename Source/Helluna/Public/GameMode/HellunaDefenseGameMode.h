@@ -229,6 +229,11 @@ protected:
 			ToolTip = "한 프레임(배치)에 스폰할 최대 광석 수.\n낮을수록 프레임 드랍이 적지만 전체 시간이 길어집니다.\n권장: 50~100 (배치 간격과 함께 튜닝)"))
 	int32 PCGBatchSpawnCount = 60;
 
+	/** Stop starting new spawns after this budget; a single spawn cannot be preempted. */
+	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|프레임 분산",
+		meta = (ClampMin = "0.1", ClampMax = "16.0", Units = "ms"))
+	float PCGBatchTimeBudgetMs = 2.f;
+
 	/** 한 배치에 파괴할 최대 액터 수 */
 	UPROPERTY(EditDefaultsOnly, Category = "Defense(게임)|PCG(밤스폰)|프레임 분산",
 		meta = (DisplayName = "배치당 파괴 수", ClampMin = "1", ClampMax = "200"))
@@ -796,6 +801,9 @@ protected:
 
 	/** 유휴 종료 체크 */
 	void CheckIdleShutdown();
+
+	/** Exit only a standalone dedicated server process, never the PIE/editor host. */
+	void RequestDedicatedServerShutdown();
 
 	// ════════════════════════════════════════════════════════════════
 	// [Phase 19] 커맨드 파일 맵 전환 — 빈 서버 재활용

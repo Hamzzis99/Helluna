@@ -217,6 +217,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Destroyed() override;
 
 	// =========================================================
@@ -267,7 +268,7 @@ private:
 
 	/**
 	 * [TDSlowReleaseFixV1] 안전망 — 패턴 종료 경로에서 맵 기반 복원으로 놓친 플레이어를
-	 * Zone 반경 근처 월드 스캔으로 찾아 강제로 1.0 배율 복원한다.
+	 * Zone 반경 근처 월드 스캔으로 찾아 이 Zone의 감속만 해제한다.
 	 *
 	 * 증상: 파훼 성공 시 슬로우가 안 풀리는 경우가 있음.
 	 * 원인: OnPatternBroken 타이밍에 SetGenerateOverlapEvents(false) 직후 엣지 케이스로

@@ -72,6 +72,37 @@ struct FDayNightVisualPhaseState
 
 class AResourceUsingObject_SpaceShip;
 
+/** Server-selected preset and clock, independent of cosmetic UDW actor replication. */
+USTRUCT(BlueprintType)
+struct FHellunaReplicatedWeatherState
+{
+    GENERATED_BODY()
+
+    UPROPERTY(BlueprintReadOnly)
+    TSoftObjectPtr<UObject> Weather;
+
+    UPROPERTY(BlueprintReadOnly)
+    TSoftObjectPtr<UObject> PreviousWeather;
+
+    UPROPERTY(BlueprintReadOnly)
+    int32 Revision = 0;
+
+    UPROPERTY(BlueprintReadOnly)
+    bool bIsDay = false;
+
+    UPROPERTY(BlueprintReadOnly)
+    double StartedServerTime = 0.0;
+
+    UPROPERTY(BlueprintReadOnly)
+    float TransitionDuration = 0.f;
+
+    UPROPERTY(BlueprintReadOnly)
+    float RainIntensity = 0.f;
+
+    UPROPERTY(BlueprintReadOnly)
+    float AccumulatedRainAtStart = 0.f;
+};
+
 UCLASS()
 class HELLUNA_API AHellunaDefenseGameState : public AHellunaBaseGameState, public IMDF_GameStateInterface
 {
@@ -471,6 +502,25 @@ protected:
     UPROPERTY(Replicated, BlueprintReadOnly, Category = "디펜스|날씨",
         meta = (DisplayName = "Replicated Rain Intensity (서버 권위)"))
     float ReplicatedRainIntensity = 0.f;
+
+    UPROPERTY(ReplicatedUsing = OnRep_WeatherState, BlueprintReadOnly, Category = "Defense|Weather")
+    FHellunaReplicatedWeatherState WeatherState;
+
+    UFUNCTION()
+    void OnRep_WeatherState();
+
+    void PublishWeather(UObject* Preset, bool bIsDay, float Duration);
+    void SynchronizeWeatherLocal();
+    float GetSynchronizedRainSeconds() const;
+
+    FTimerHandle TimerHandle_WeatherSync;
+    TWeakObjectPtr<AActor> AppliedWeatherActor;
+    int32 AppliedWeatherRevision = 0;
+    bool bWeatherSyncErrorLogged = false;
+
+#if WITH_DEV_AUTOMATION_TESTS
+    friend class FHellunaWeatherSyncTest;
+#endif
 
     /**
      * 배열에서 랜덤 날씨 선택 후 Change Weather 호출.

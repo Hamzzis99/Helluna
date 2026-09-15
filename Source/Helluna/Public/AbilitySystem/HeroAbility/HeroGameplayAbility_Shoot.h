@@ -6,6 +6,7 @@
 #include "AbilitySystem/HellunaHeroGameplayAbility.h"
 #include "HeroGameplayAbility_Shoot.generated.h"
 
+class AHeroWeapon_GunBase;
 /**
  * 
  */
@@ -28,6 +29,10 @@ protected:
 
 private:
 
+	void TickAutoFire();
 	FTimerHandle AutoFireTimerHandle;
+	TWeakObjectPtr<AHeroWeapon_GunBase> FiringWeapon;
+	double LastAutoFireTime = 0.0;
+	double AutoFireTimeRemaining = 0.0;
 
 };

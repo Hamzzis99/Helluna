@@ -34,7 +34,6 @@ class HELLUNA_API UHellunaCharacterAnimInstance : public UHellunaBaseAnimInstanc
 public:
 	virtual void NativeInitializeAnimation() override;
 	virtual void NativeUpdateAnimation(float DeltaSeconds) override;
-	virtual void NativeThreadSafeUpdateAnimation(float DeltaSeconds) override;
 
 protected:
 	UPROPERTY()
@@ -173,6 +172,10 @@ protected:
 	UAnimSequence* GetCurrentAimLocomotionAnim() const { return CurrentAimLocomotionAnim; }
 
 private:
+#if WITH_DEV_AUTOMATION_TESTS
+	friend class FHellunaNetworkRecoveryTest;
+#endif
+
 	/** GameplayTag → EWeaponAnimType 변환 (GameThread에서만 호출) */
 	EWeaponAnimType ResolveWeaponAnimType() const;
 

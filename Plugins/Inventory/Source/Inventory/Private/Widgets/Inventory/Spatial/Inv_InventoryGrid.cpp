@@ -1194,10 +1194,11 @@ void UInv_InventoryGrid::AddStacks(const FInv_SlotAvailabilityResult& Result)
 
 		for (const auto& [Index, SlottedItem] : SlottedItems)
 		{
+			if (!GridSlots.IsValidIndex(Index) || !IsValid(GridSlots[Index])) continue;
 			UInv_InventoryItem* GridSlotItem = GridSlots[Index]->GetInventoryItem().Get();
 
-			// ⭐ Phase 7 롤백: 포인터 비교로 복원
-			if (GridSlots.IsValidIndex(Index) && GridSlotItem == Result.Item)
+			// Match the exact replicated entry, not another stack of the same type.
+			if (GridSlotItem == Result.Item)
 			{
 				MatchedIndices.Add(Index);
 				TotalUICount += GridSlots[Index]->GetStackCount();
@@ -1210,8 +1211,13 @@ void UInv_InventoryGrid::AddStacks(const FInv_SlotAvailabilityResult& Result)
 
 		if (MatchedIndices.Num() == 0)
 		{
+			// Item subobject data can arrive after its FastArray entry.
+			if (Result.TotalRoomToFill > 0)
+			{
+				AddItem(Result.Item.Get(), Result.EntryIndex);
+			}
 #if INV_DEBUG_WIDGET
-			UE_LOG(LogTemp, Error, TEXT("❌ [클라이언트] AddStacks: Item에 해당하는 슬롯을 찾지 못함! Item포인터: %p"), Result.Item.Get());
+			UE_LOG(LogTemp, Verbose, TEXT("[Pickup] Missing grid slot refreshed from replicated item: %s"), *GetNameSafe(Result.Item.Get()));
 #endif
 			return;
 		}
@@ -1236,6 +1242,7 @@ void UInv_InventoryGrid::AddStacks(const FInv_SlotAvailabilityResult& Result)
 
 		// ⭐ 2단계: 서버 총량을 슬롯들에 분배
 		int32 RemainingToDistribute = Result.TotalRoomToFill;
+		int32 ExtraToDistribute = FMath::Max(0, Result.TotalRoomToFill - TotalUICount);
 		TArray<int32> IndicesToRemove;
 
 #if INV_DEBUG_WIDGET
@@ -1245,7 +1252,11 @@ void UInv_InventoryGrid::AddStacks(const FInv_SlotAvailabilityResult& Result)
 		for (int32 Index : MatchedIndices)
 		{
 			int32 OldCount = GridSlots[Index]->GetStackCount();
-			int32 NewCount = FMath::Min(OldCount, RemainingToDistribute);
+			const FInv_StackableFragment* Stack = Result.Item->GetItemManifest().GetFragmentOfType<FInv_StackableFragment>();
+			const int32 SlotLimit = Stack ? FMath::Max(1, Stack->GetMaxStackSize()) : 1;
+			const int32 Extra = FMath::Min(FMath::Max(0, SlotLimit - OldCount), ExtraToDistribute);
+			const int32 NewCount = FMath::Min(OldCount + Extra, RemainingToDistribute);
+			ExtraToDistribute -= Extra;
 			RemainingToDistribute -= NewCount;
 
 #if INV_DEBUG_WIDGET

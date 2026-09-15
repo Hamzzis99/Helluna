@@ -18,10 +18,10 @@ struct FWeaponAnimationSet
 	GENERATED_BODY()
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, meta = (DisplayName = "장착 애니메이션"))
-	UAnimMontage* Equip;
+	UAnimMontage* Equip = nullptr;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, meta = (DisplayName = "공격 애니메이션"))
-	UAnimMontage* Attack;
+	UAnimMontage* Attack = nullptr;
 
 };
 

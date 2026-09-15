@@ -14,6 +14,8 @@
 #include "HellunaGameplayTags.h"
 #include "Components/WidgetComponent.h"
 #include "Net/UnrealNetwork.h"
+#include "Resource/Inv_ResourceComponent.h"
+#include "Weapon/HellunaHeroWeapon.h"
 	
 #include "Interaction/Inv_HighlightableStaticMesh.h"
 #include "Interaction/Inv_Highlightable.h"
@@ -28,6 +30,7 @@
 UHelluna_FindResourceComponent::UHelluna_FindResourceComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
+	SetIsReplicatedByDefault(true);
 
 	// ✅ BP 상속 컴포넌트 디테일 표시 안정화(이전 이슈 재발 방지)
 	bEditableWhenInherited = true;
@@ -54,12 +57,43 @@ void UHelluna_FindResourceComponent::TickComponent(float DeltaTime, ELevelTick T
 
 bool UHelluna_FindResourceComponent::IsValidTargetActor(AActor* Actor) const
 {
-	if (!Actor) return false;
+	if (!IsValid(Actor) || Actor->IsActorBeingDestroyed() || !Actor->GetActorEnableCollision()) return false;
 
 	if (!RequiredActorTag.IsNone() && !Actor->ActorHasTag(RequiredActorTag))
 		return false;
 
-	return FindHighlightMesh(Actor) != nullptr;
+	return FindHighlightMesh(Actor) != nullptr && Actor->FindComponentByClass<UInv_ResourceComponent>() != nullptr;
+}
+
+bool UHelluna_FindResourceComponent::GetFarmingSurfacePoint(AActor* Target, FVector& OutPoint) const
+{
+	const AActor* Owner = GetOwner();
+	UPrimitiveComponent* Surface = IsValid(Target) ? Cast<UPrimitiveComponent>(Target->GetRootComponent()) : nullptr;
+	if (!IsValid(Owner) || !IsValidTargetActor(Target) || !IsValid(Surface) || !Surface->IsQueryCollisionEnabled())
+	{
+		return false;
+	}
+	const FVector Start = Owner->GetActorLocation();
+	OutPoint = Start;
+	return Surface->GetClosestPointOnCollision(Start, OutPoint) >= 0.f && !OutPoint.ContainsNaN();
+}
+
+bool UHelluna_FindResourceComponent::IsTargetWithinFarmingRange(AActor* Target) const
+{
+	FVector SurfacePoint;
+	if (!GetFarmingSurfacePoint(Target, SurfacePoint)) return false;
+	const FVector Start = GetOwner()->GetActorLocation();
+	if (FVector::DistSquared(Start, SurfacePoint) > FMath::Square(FMath::Max(0.f, InteractRange))) return false;
+	UWorld* World = GetWorld();
+	if (!IsValid(World)) return false;
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(MineSurfaceVisibility), false, GetOwner());
+	Params.AddIgnoredActor(Target);
+	if (const AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(GetOwner()))
+	{
+		Params.AddIgnoredActor(Hero->GetCurrentWeapon());
+	}
+	FHitResult Hit;
+	return !World->LineTraceSingleByChannel(Hit, Start, SurfacePoint, ECC_Visibility, Params);
 }
 
 UInv_HighlightableStaticMesh* UHelluna_FindResourceComponent::FindHighlightMesh(AActor* Actor) const
@@ -116,6 +150,10 @@ void UHelluna_FindResourceComponent::UpdateFocus()
 
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(MineFocusSingle), false);
 	Params.AddIgnoredActor(Pawn);
+	if (const AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(Pawn))
+	{
+		Params.AddIgnoredActor(Hero->GetCurrentWeapon());
+	}
 
 	FHitResult Hit;
 	const bool bHit = World->SweepSingleByChannel(
@@ -158,9 +196,7 @@ void UHelluna_FindResourceComponent::UpdateFocus()
 		return;
 	}
 
-	const float DistSq = FVector::DistSquared(Pawn->GetActorLocation(), FocusActor->GetActorLocation());
-	const float RangeSq = InteractRange * InteractRange;
-	const bool bInRange = (DistSq <= RangeSq);
+	const bool bInRange = IsTargetWithinFarmingRange(FocusActor);
 
 	if (bInRange && !bFarmingApplied)
 	{
@@ -215,8 +251,7 @@ void UHelluna_FindResourceComponent::ApplyFocus(AActor* NewActor, UInv_Highlight
 	{
 		if (APawn* Pawn = Cast<APawn>(GetOwner()))
 		{
-			const float DistSq = FVector::DistSquared(Pawn->GetActorLocation(), FocusedActor->GetActorLocation());
-			if (DistSq <= InteractRange * InteractRange)
+			if (IsTargetWithinFarmingRange(FocusedActor.Get()))
 			{
 				SetPromptVisible(FocusedActor.Get(), true);
 				ServerSetCanFarming(true, NewActor);
@@ -301,6 +336,8 @@ void UHelluna_FindResourceComponent::ClearFarming() //상태 해제, UI 끄기
 
 void UHelluna_FindResourceComponent::ServerSetCanFarming_Implementation(bool bEnable, AActor* FarmingTarget)  //서버에 파밍 가능 상태 동기화
 {
+	if (!IsValid(GetOwner()) || !GetOwner()->HasAuthority()) return;
+	bEnable = bEnable && IsTargetWithinFarmingRange(FarmingTarget);
 	ServerFarmingTarget = bEnable ? FarmingTarget : nullptr;
 
 	if (AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(GetOwner()))
@@ -314,4 +351,55 @@ void UHelluna_FindResourceComponent::ServerSetCanFarming_Implementation(bool bEn
 		}
 	}
 }
+
+#if WITH_DEV_AUTOMATION_TESTS
+#include "Misc/AutomationTest.h"
+#include "Misc/ScopeExit.h"
+#include "Components/BoxComponent.h"
+#include "Engine/Engine.h"
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHellunaResourceSurfaceTest, "Helluna.Resources.SurfaceRange",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHellunaResourceSurfaceTest::RunTest(const FString& Parameters)
+{
+	if (!GEngine) return false;
+	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+	if (!World) return false;
+	GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+	ON_SCOPE_EXIT { World->DestroyWorld(false); GEngine->DestroyWorldContext(World); };
+	auto MakeBox = [World](FVector Location, FVector Extent)
+	{
+		AActor* Actor = World->SpawnActor<AActor>();
+		if (!Actor) return static_cast<AActor*>(nullptr);
+		UBoxComponent* Box = NewObject<UBoxComponent>(Actor);
+		Actor->AddInstanceComponent(Box);
+		Actor->SetRootComponent(Box);
+		Box->SetBoxExtent(Extent);
+		Box->SetCollisionProfileName(TEXT("BlockAll"));
+		Box->RegisterComponent();
+		Actor->SetActorLocation(Location);
+		return Actor;
+	};
+	AActor* Observer = MakeBox(FVector(350.f, 0.f, 90.f), FVector(1.f));
+	AActor* Ore = MakeBox(FVector::ZeroVector, FVector(200.f, 100.f, 150.f));
+	if (!Observer || !Ore) return false;
+	Ore->Tags.Add(TEXT("Ore"));
+	Ore->AddInstanceComponent(NewObject<UInv_ResourceComponent>(Ore));
+	Ore->AddInstanceComponent(NewObject<UInv_HighlightableStaticMesh>(Ore));
+	UHelluna_FindResourceComponent* Finder = NewObject<UHelluna_FindResourceComponent>(Observer);
+	Observer->AddInstanceComponent(Finder);
+	TestTrue(TEXT("Large ore surface is in range even when its origin is not"), Finder->IsTargetWithinFarmingRange(Ore));
+	Observer->SetActorLocation(FVector(500.f, 0.f, 90.f));
+	TestFalse(TEXT("Distant surface is rejected"), Finder->IsTargetWithinFarmingRange(Ore));
+	Observer->SetActorLocation(FVector(350.f, 0.f, 90.f));
+	AActor* Wall = MakeBox(FVector(275.f, 0.f, 90.f), FVector(10.f, 50.f, 100.f));
+	if (!Wall) return false;
+	TestFalse(TEXT("Blocking wall prevents mining"), Finder->IsTargetWithinFarmingRange(Ore));
+	Wall->SetActorEnableCollision(false);
+	TestTrue(TEXT("Removing obstruction restores mining range"), Finder->IsTargetWithinFarmingRange(Ore));
+	TestFalse(TEXT("Missing target is rejected"), Finder->IsTargetWithinFarmingRange(nullptr));
+	return true;
+}
+#endif
 

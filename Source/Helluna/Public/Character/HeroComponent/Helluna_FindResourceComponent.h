@@ -34,6 +34,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Farming|Range")
 	bool IsWithinFarmingRange() const { return bFarmingApplied; }
 
+	bool GetFarmingSurfacePoint(AActor* Target, FVector& OutPoint) const;
+	bool IsTargetWithinFarmingRange(AActor* Target) const;
+
 
 private:
 	// ✅ 카메라 정면으로 "1개"만 잡는 단순 탐지

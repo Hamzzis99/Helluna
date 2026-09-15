@@ -3,6 +3,8 @@
 #include "AnimInstance/HellunaCharacterAnimInstance.h"
 #include "Character/HellunaBaseCharacter.h"
 #include "Character/HellunaHeroCharacter.h"
+#include "Character/EnemyComponent/HellunaHealthComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "KismetAnimationLibrary.h"
 #include "HellunaGameplayTags.h"
@@ -11,22 +13,52 @@
 
 void UHellunaCharacterAnimInstance::NativeInitializeAnimation()
 {
+	Super::NativeInitializeAnimation();
 	OwningCharacter = Cast<AHellunaBaseCharacter>(TryGetPawnOwner());
-
-	if (OwningCharacter)
-	{
-		OwningMovementComponent = OwningCharacter->GetCharacterMovement();
-	}
+	OwningMovementComponent = IsValid(OwningCharacter) ? OwningCharacter->GetCharacterMovement() : nullptr;
 }
 
 void UHellunaCharacterAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 {
 	Super::NativeUpdateAnimation(DeltaSeconds);
 
-	if (!OwningCharacter)
+	// Publish this frame's inputs before BlueprintUpdateAnimation consumes them.
+	OwningCharacter = Cast<AHellunaBaseCharacter>(TryGetPawnOwner());
+	OwningMovementComponent = IsValid(OwningCharacter) ? OwningCharacter->GetCharacterMovement() : nullptr;
+	if (!IsValid(OwningCharacter) || !IsValid(OwningMovementComponent))
 	{
+		GroundSpeed = 0.f;
+		bHasAcceleration = false;
+		LocomotionDirection = 0.f;
+		PlayFullBody = false;
+		bAiming = false;
+		bAimingMoving = false;
+		AimSpineYaw = 0.f;
+		AimUpperBodyAlpha = 0.f;
 		return;
 	}
+
+	const AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(OwningCharacter);
+	const UHellunaHealthComponent* Health = Hero ? Hero->FindComponentByClass<UHellunaHealthComponent>() : nullptr;
+	const USkeletalMeshComponent* Mesh = OwningCharacter->GetMesh();
+	const bool bHeroIncapacitated = Hero && (!IsValid(Health) || !Health->IsAliveAndNotDowned()
+		|| OwningMovementComponent->MovementMode == MOVE_None || (IsValid(Mesh) && Mesh->IsSimulatingPhysics()));
+	const bool bMovementLocked = OwningMovementComponent->MaxWalkSpeed <= 0.f || bHeroIncapacitated;
+	const FVector Velocity = OwningMovementComponent->Velocity;
+	const float Speed2D = Velocity.ContainsNaN() ? 0.f : Velocity.Size2D();
+	GroundSpeed = bMovementLocked ? 0.f : Speed2D;
+	if (Hero)
+	{
+		const float SpeedMultiplier = Hero->GetMoveSpeedMultiplier();
+		if (FMath::IsFinite(SpeedMultiplier) && SpeedMultiplier > 0.f && SpeedMultiplier < 1.f)
+		{
+			GroundSpeed /= SpeedMultiplier;
+		}
+	}
+	bHasAcceleration = !bMovementLocked && OwningMovementComponent->GetCurrentAcceleration().SizeSquared2D() > 0.f;
+	PlayFullBody = Hero ? Hero->PlayFullBody : bMovementLocked;
+	LocomotionDirection = !bMovementLocked && !Velocity.ContainsNaN()
+		? UKismetAnimationLibrary::CalculateDirection(Velocity, OwningCharacter->GetActorRotation()) : 0.f;
 
 	// GameThread에서 WeaponTag를 읽어 카테고리 결정
 	WeaponAnimType = ResolveWeaponAnimType();
@@ -124,7 +156,6 @@ void UHellunaCharacterAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 
 	// [AimMoveStateV1] 견착 / 견착+이동 상태 노출 — 그래프에서 ADS 이동 전용 애니 분기용.
 	bAiming = bAimingNow;
-	const float AimSpeed2D = OwningCharacter ? OwningCharacter->GetVelocity().Size2D() : 0.f;
 	// [AimFireGateV1] 발사 등 'UpperBody' 슬롯 몽타주가 재생 중이면 견착이동을 해제(false) → 전신 견착이동 애니가
 	//   상체 발사 몽타주를 덮지 않도록. 발사 중엔 기존 경로(상체=발사 / 하체=DefaultSlot)로 빠지고, 끝나면 복귀.
 	//   ※ Local weight 사용: Global 은 견착이동 노드가 뒤에서 상체를 덮으면 0 이 돼 게이트가 안 켜지는 순환 발생.
@@ -132,48 +163,10 @@ void UHellunaCharacterAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 	// [AimFireGateV2] 슬롯 가중치는 견착이동 분기가 그 슬롯을 우회하면 0 이 돼(순환) → 이동 중 발사 감지 실패.
 	//   그래프 평가와 무관한 '몽타주 인스턴스 재생 여부'로 감지. 견착 중 도는 몽타주는 발사/장전 등 상체 액션뿐이라 안전.
 	const bool bMontagePlaying = IsAnyMontagePlaying();
-	bAimingMoving = bAimingNow && (AimSpeed2D >= FMath::Max(0.f, AimMovingSpeedThreshold)) && !bMontagePlaying;
-}
-
-void UHellunaCharacterAnimInstance::NativeThreadSafeUpdateAnimation(float DeltaSeconds)
-{
-	if (!OwningCharacter || !OwningMovementComponent)
-	{
-		return;
-	}
-
-	// ★ 이동 잠금 상태 감지
-	const bool bMovementLocked = (OwningMovementComponent->MaxWalkSpeed <= 0.f);
-	float RawSpeed = bMovementLocked ? 0.f : OwningCharacter->GetVelocity().Size2D();
-
-	// 슬로우 보정: MoveSpeedMultiplier가 적용되면 실제 속도가 줄어드는데,
-	// 블렌드 스페이스에는 "의도한 속도"를 넘겨야 달리기 애니메이션이 (느리게) 재생됨
-	if (const AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(OwningCharacter))
-	{
-		const float SpeedMul = Hero->GetMoveSpeedMultiplier();
-		if (SpeedMul > 0.f && SpeedMul < 1.f)
-		{
-			RawSpeed /= SpeedMul;
-		}
-	}
-	GroundSpeed = RawSpeed;
-	bHasAcceleration = bMovementLocked ? false : OwningMovementComponent->GetCurrentAcceleration().SizeSquared2D() > 0.f;
-
-	// ★ PlayFullBody 판단:
-	// - 히어로: HeroCharacter->PlayFullBody 직접 참조 (GA_Farming 등에서 직접 설정)
-	// - 적: [FullBodyLockV1] 공격 락(MaxWS≤0) 중에는 true → Locomotion Idle 하체가
-	//        상체 공격 몬타지와 블렌드되어 "Idle 서서 치기"처럼 보이는 증상 제거.
-	//        언락 상태는 false 유지 — 이동 애니가 정상적으로 하체에서 재생됨.
-	if (const AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(OwningCharacter))
-	{
-		PlayFullBody = Hero->PlayFullBody;
-	}
-	else
-	{
-		PlayFullBody = bMovementLocked;
-	}
-
-	LocomotionDirection = UKismetAnimationLibrary::CalculateDirection(OwningCharacter->GetVelocity(), OwningCharacter->GetActorRotation());
+	bAimingMoving = bAimingNow && !bMovementLocked && !PlayFullBody
+		&& OwningMovementComponent->IsMovingOnGround() && IsValid(CurrentAimLocomotionAnim)
+		&& Speed2D > KINDA_SMALL_NUMBER && Speed2D >= FMath::Max(0.f, AimMovingSpeedThreshold)
+		&& !bMontagePlaying;
 }
 
 EWeaponAnimType UHellunaCharacterAnimInstance::ResolveWeaponAnimType() const

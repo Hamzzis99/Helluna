@@ -6,6 +6,19 @@
 #include "Items/Fragments/Inv_ItemFragment.h"
 #include "Items/Fragments/Inv_AttachmentFragments.h"
 #include "Net/UnrealNetwork.h"
+#include "InventoryManagement/Components/Inv_InventoryComponent.h"
+#include "GameFramework/Actor.h"
+
+void UInv_InventoryItem::OnRep_ItemState()
+{
+	if (!ItemManifest.GetPtr<FInv_ItemManifest>()) return;
+	AActor* OwnerActor = GetTypedOuter<AActor>();
+	if (!IsValid(OwnerActor) || OwnerActor->HasAuthority()) return;
+	if (UInv_InventoryComponent* Inventory = OwnerActor->FindComponentByClass<UInv_InventoryComponent>(); IsValid(Inventory))
+	{
+		Inventory->NotifyReplicatedItemCount(this);
+	}
+}
 
 void UInv_InventoryItem::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {

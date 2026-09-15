@@ -24,10 +24,67 @@
 #include "Sky/HellunaWeatherConfig.h"
 #include "Sky/HellunaSkyPreviewActor.h"  // GetWeatherPresetPath static 호출 때문 유지
 #include "Sky/HellunaSkyMoodSettings.h"
+#include "UObject/StructOnScope.h"
+#include "UObject/UnrealType.h"
+#if WITH_DEV_AUTOMATION_TESTS
+#include "Misc/AutomationTest.h"
+#endif
 
 namespace
 {
 constexpr float VisualPhaseTickInterval = 0.016f;
+
+float CalculateWeatherRainSeconds(const FHellunaReplicatedWeatherState& State, double ServerTime,
+    float FillSeconds, float DrySeconds, float RainThreshold)
+{
+    const float Elapsed = static_cast<float>(FMath::Max(0.0, ServerTime - State.StartedServerTime));
+    const float Fill = FMath::Max(1.f, FillSeconds);
+    const float Rate = State.RainIntensity >= RainThreshold
+        ? FMath::Clamp(State.RainIntensity, 0.f, 1.f)
+        : -Fill / FMath::Max(1.f, DrySeconds);
+    return FMath::Clamp(State.AccumulatedRainAtStart + Elapsed * Rate, 0.f, Fill);
+}
+
+bool ChangeWeatherPresetLocal(AActor* UDW, UObject* Preset, float Duration)
+{
+    if (!IsValid(UDW) || !IsValid(Preset)) return false;
+    UFunction* Function = UDW->FindFunction(TEXT("Change Weather"));
+    if (!Function || Function->HasAnyFunctionFlags(FUNC_Net) || Function->NumParms != 2) return false;
+
+    // Blueprint real pins can be doubles. Never assume a C++ parameter struct layout.
+    FStructOnScope Parameters(Function);
+    FObjectPropertyBase* PresetParameter = nullptr;
+    FNumericProperty* DurationParameter = nullptr;
+    for (TFieldIterator<FProperty> It(Function); It; ++It)
+    {
+        if (!It->HasAnyPropertyFlags(CPF_Parm) || It->HasAnyPropertyFlags(CPF_OutParm | CPF_ReturnParm)) continue;
+        if (FObjectPropertyBase* Object = CastField<FObjectPropertyBase>(*It)) PresetParameter = Object;
+        if (FNumericProperty* Number = CastField<FNumericProperty>(*It); Number && Number->IsFloatingPoint()) DurationParameter = Number;
+    }
+    if (!PresetParameter || !DurationParameter || !Preset->IsA(PresetParameter->PropertyClass)) return false;
+    PresetParameter->SetObjectPropertyValue_InContainer(Parameters.GetStructMemory(), Preset);
+    DurationParameter->SetFloatingPointPropertyValue(
+        DurationParameter->ContainerPtrToValuePtr<void>(Parameters.GetStructMemory()), Duration);
+    UDW->ProcessEvent(Function, Parameters.GetStructMemory());
+    return true;
+}
+
+bool CopyWeatherTransitionSource(UObject* Destination, UObject* Source)
+{
+    if (!IsValid(Destination) || !IsValid(Source)) return false;
+    UFunction* Function = Destination->FindFunction(TEXT("Copy Weather State"));
+    if (!Function || Function->HasAnyFunctionFlags(FUNC_Net) || Function->NumParms != 3) return false;
+    FStructOnScope Parameters(Function);
+    FObjectPropertyBase* SourceParameter = FindFProperty<FObjectPropertyBase>(Function, TEXT("Source"));
+    FBoolProperty* Materials = FindFProperty<FBoolProperty>(Function, TEXT("Set Material Effects"));
+    FBoolProperty* Sources = FindFProperty<FBoolProperty>(Function, TEXT("Copy Sources"));
+    if (!SourceParameter || !Materials || !Sources || !Source->IsA(SourceParameter->PropertyClass)) return false;
+    SourceParameter->SetObjectPropertyValue_InContainer(Parameters.GetStructMemory(), Source);
+    Materials->SetPropertyValue_InContainer(Parameters.GetStructMemory(), true);
+    Sources->SetPropertyValue_InContainer(Parameters.GetStructMemory(), true);
+    Destination->ProcessEvent(Function, Parameters.GetStructMemory());
+    return true;
+}
 
 const TCHAR* LexToString(EDayNightVisualPhase Phase)
 {
@@ -151,6 +208,7 @@ void AHellunaDefenseGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProper
     DOREPLIFETIME(AHellunaDefenseGameState, bIsBossNight);
     DOREPLIFETIME_CONDITION_NOTIFY(AHellunaDefenseGameState, bInitialNightBootstrapActive, COND_None, REPNOTIFY_Always);
     DOREPLIFETIME(AHellunaDefenseGameState, ReplicatedRainIntensity);
+    DOREPLIFETIME(AHellunaDefenseGameState, WeatherState);
 }
 
 void AHellunaDefenseGameState::SetPhase(EDefensePhase NewPhase)
@@ -1333,6 +1391,12 @@ void AHellunaDefenseGameState::BeginPlay()
 {
     Super::BeginPlay();
 
+    if (GetNetMode() != NM_DedicatedServer)
+    {
+        GetWorldTimerManager().SetTimer(TimerHandle_WeatherSync, this,
+            &ThisClass::SynchronizeWeatherLocal, 0.25f, true);
+    }
+
     // ★ UDS/UDW 존재 여부 1회 체크 (데디서버에서 없을 수 있음)
     bHasUDS = (GetUDSActor() != nullptr);
     bHasUDW = (GetUDWActor() != nullptr);
@@ -1523,6 +1587,7 @@ void AHellunaDefenseGameState::EndPlay(const EEndPlayReason::Type EndPlayReason)
     GetWorldTimerManager().ClearTimer(TimerHandle_DuskTransition);
     GetWorldTimerManager().ClearTimer(TimerHandle_DuskScheduler);
     GetWorldTimerManager().ClearTimer(TimerHandle_PuddleAccumulation);
+    GetWorldTimerManager().ClearTimer(TimerHandle_WeatherSync);
 
     if (HasAuthority())
     {
@@ -1947,144 +2012,173 @@ void AHellunaDefenseGameState::BossFightTimeFreeze_HoldTick()
 // ═══════════════════════════════════════════════════════════════════════════════
 void AHellunaDefenseGameState::ApplyRandomWeather(bool bIsDay, float TransitionTimeOverride)
 {
+    if (!HasAuthority())
+    {
+        SynchronizeWeatherLocal();
+        return;
+    }
+    // Dawn/Day, Dusk/Night and bootstrap callbacks must share one selection.
+    if (WeatherState.Revision != 0 && WeatherState.bIsDay == bIsDay) return;
+
     UObject* SelectedWeather = nullptr;
-    int32 RandomIdx = -1;
-    int32 ArrayNum = 0;
-    float EffectiveTransitionTime = WeatherTransitionTime;
-    const TCHAR* SourceTag = TEXT("Legacy");
-
-    // ─── 우선순위 1: WeatherConfig DataAsset ────────────────────────────────────
-    if (UHellunaWeatherConfig* Cfg = WeatherConfig.LoadSynchronous())
+    float Duration = WeatherTransitionTime;
+    if (UHellunaWeatherConfig* Config = WeatherConfig.LoadSynchronous())
     {
-        SourceTag = TEXT("Config");
-        if (Cfg->TransitionTime > 0.f)
-            EffectiveTransitionTime = Cfg->TransitionTime;
-
-        // Forced 먼저 확인 (enum, None이면 Pool로 폴백)
-        ESkyWeatherPreset ActivePreset = bIsDay ? Cfg->DayForced : Cfg->NightForced;
-
-        if (ActivePreset == ESkyWeatherPreset::None)
+        if (Config->TransitionTime > 0.f) Duration = Config->TransitionTime;
+        ESkyWeatherPreset Preset = bIsDay ? Config->DayForced : Config->NightForced;
+        if (Preset == ESkyWeatherPreset::None)
         {
-            const TArray<ESkyWeatherPreset>& Pool = bIsDay ? Cfg->DayPool : Cfg->NightPool;
-            // Pool에서 None은 걸러 랜덤 선택 (혹시 실수 포함 시 방어).
+            const TArray<ESkyWeatherPreset>& Pool = bIsDay ? Config->DayPool : Config->NightPool;
             TArray<ESkyWeatherPreset> ValidPool;
-            ValidPool.Reserve(Pool.Num());
-            for (ESkyWeatherPreset P : Pool)
+            for (ESkyWeatherPreset Candidate : Pool)
             {
-                if (P != ESkyWeatherPreset::None) ValidPool.Add(P);
+                if (!AHellunaSkyPreviewActor::GetWeatherPresetPath(Candidate).IsEmpty()) ValidPool.Add(Candidate);
             }
-            if (ValidPool.Num() > 0)
-            {
-                RandomIdx = FMath::RandRange(0, ValidPool.Num() - 1);
-                ActivePreset = ValidPool[RandomIdx];
-                ArrayNum = ValidPool.Num();
-            }
+            if (ValidPool.IsEmpty()) return;
+            Preset = ValidPool[FMath::RandRange(0, ValidPool.Num() - 1)];
         }
-
-        // enum → 에셋 경로 → UBlueprint 로드 → GeneratedClass 추출 (SkyPreview와 동일 매핑 공유).
-        if (ActivePreset != ESkyWeatherPreset::None)
-        {
-            const FString AssetPath = AHellunaSkyPreviewActor::GetWeatherPresetPath(ActivePreset);
-            if (!AssetPath.IsEmpty())
-            {
-                UObject* Loaded = StaticLoadObject(UObject::StaticClass(), nullptr, *AssetPath);
-                if (UBlueprint* AsBP = Cast<UBlueprint>(Loaded))
-                {
-                    SelectedWeather = AsBP->GeneratedClass;  // 에디터: UBlueprint → GeneratedClass
-                }
-                else
-                {
-                    SelectedWeather = Loaded;  // 쿠킹: 이미 UClass 반환
-                }
-            }
-        }
+        const FString Path = AHellunaSkyPreviewActor::GetWeatherPresetPath(Preset);
+        if (!Path.IsEmpty()) SelectedWeather = FSoftObjectPath(Path).TryLoad();
     }
-    // ─── 우선순위 2: 레거시 GameState 필드 (WeatherConfig 미설정 시 폴백) ───────
+    else if (!bIsDay && IsValid(NightForcedWeather))
+    {
+        SelectedWeather = NightForcedWeather;
+    }
     else
     {
-        if (!bIsDay && NightForcedWeather)
+        const TArray<UObject*>& Pool = bIsDay ? DayWeatherTypes : NightWeatherTypes;
+        TArray<UObject*> ValidPool;
+        for (UObject* Candidate : Pool)
         {
-            SelectedWeather = NightForcedWeather;
+            if (IsValid(Candidate)) ValidPool.Add(Candidate);
         }
-        else
-        {
-            const TArray<UObject*>& WeatherArray = bIsDay ? DayWeatherTypes : NightWeatherTypes;
-            if (WeatherArray.Num() == 0)
-            {
-                UE_LOG(LogTemp, Warning, TEXT("[RainDiag-Weather] early-return | Legacy %s WeatherTypes 배열 비어있음 + WeatherConfig 미설정"),
-                    bIsDay ? TEXT("Day") : TEXT("Night"));
-                return;
-            }
-
-            RandomIdx = FMath::RandRange(0, WeatherArray.Num() - 1);
-            SelectedWeather = WeatherArray[RandomIdx];
-            ArrayNum = WeatherArray.Num();
-        }
+        if (ValidPool.IsEmpty()) return;
+        SelectedWeather = ValidPool[FMath::RandRange(0, ValidPool.Num() - 1)];
     }
 
-    // Dusk/Dawn 호출자가 명시적으로 전환 시간을 지정한 경우 최종 우선.
-    if (TransitionTimeOverride > 0.f)
-        EffectiveTransitionTime = TransitionTimeOverride;
-
-    if (!SelectedWeather)
+    if (!IsValid(SelectedWeather))
     {
-        UE_LOG(LogTemp, Warning, TEXT("[RainDiag-Weather] early-return | SelectedWeather=null (Source=%s bIsDay=%d)"),
-            SourceTag, (int32)bIsDay);
+        UE_LOG(LogTemp, Error, TEXT("[WeatherSync] Could not load selected %s weather preset."),
+            bIsDay ? TEXT("day") : TEXT("night"));
+        return;
+    }
+    PublishWeather(SelectedWeather, bIsDay, TransitionTimeOverride > 0.f ? TransitionTimeOverride : Duration);
+}
+
+void AHellunaDefenseGameState::PublishWeather(UObject* Preset, bool bIsDay, float Duration)
+{
+    if (!HasAuthority() || !IsValid(Preset) || !GetWorld()) return;
+
+    FNumericProperty* Rain = FindFProperty<FNumericProperty>(Preset->GetClass(), TEXT("Rain"));
+    if (!Rain || !Rain->IsFloatingPoint() || Cast<UClass>(Preset))
+    {
+        UE_LOG(LogTemp, Error, TEXT("[WeatherSync] Expected a UDW weather data object: %s"), *GetNameSafe(Preset));
         return;
     }
 
-    if (bIsDay)
-        CurrentDayWeather = SelectedWeather;
-    else
-        CurrentNightWeather = SelectedWeather;
+    const float RainSeconds = GetSynchronizedRainSeconds();
+    WeatherState.PreviousWeather = WeatherState.Weather;
+    WeatherState.Weather = Preset;
+    WeatherState.bIsDay = bIsDay;
+    WeatherState.StartedServerTime = GetServerWorldTimeSeconds();
+    WeatherState.TransitionDuration = FMath::IsFinite(Duration) ? FMath::Max(0.f, Duration) : 0.f;
+    WeatherState.AccumulatedRainAtStart = RainSeconds;
+    const double PresetRain = Rain->GetFloatingPointPropertyValue(Rain->ContainerPtrToValuePtr<void>(Preset));
+    WeatherState.RainIntensity = FMath::IsFinite(PresetRain) ? FMath::Clamp(static_cast<float>(PresetRain / 10.0), 0.f, 1.f) : 0.f;
+    WeatherState.Revision = WeatherState.Revision == MAX_int32 ? 1 : WeatherState.Revision + 1;
+    ReplicatedRainIntensity = WeatherState.RainIntensity;
+    if (bIsDay) CurrentDayWeather = Preset;
+    else CurrentNightWeather = Preset;
+    bWeatherSyncErrorLogged = false;
 
-    // ─── 서버 권위 비 강도 설정 (As-A-Client 웅덩이 형성용 복제 신호) ───
-    // UDW의 Puddle Coverage / Change Weather RPC에 의존하지 않도록 이름 기반으로 강도를 결정.
-    // Rain_Thunderstorm=1.0, Rain=0.8, Rain_Light=0.5, 그 외=0.0.
-    if (HasAuthority())
-    {
-        float Intensity = 0.f;
-        const FString WeatherName = SelectedWeather->GetName();
-        if (WeatherName.Contains(TEXT("Thunderstorm")))    Intensity = 1.0f;
-        else if (WeatherName.Contains(TEXT("Rain_Light"))) Intensity = 0.5f;
-        else if (WeatherName.Contains(TEXT("RainLight")))  Intensity = 0.5f;
-        else if (WeatherName.Contains(TEXT("Rain_Only")))  Intensity = 0.7f;
-        else if (WeatherName.Contains(TEXT("Rain")))       Intensity = 0.8f;
-        ReplicatedRainIntensity = Intensity;
-        UE_LOG(LogTemp, Warning, TEXT("[RainDiag-Weather] SERVER 권위 강도 세팅 | Weather=%s → Intensity=%.2f"),
-            *WeatherName, Intensity);
-    }
+    ForceNetUpdate();
+    SynchronizeWeatherLocal();
+    UE_LOG(LogTemp, Log, TEXT("[WeatherSync] Selected Revision=%d Day=%d Preset=%s Start=%.3f Duration=%.2f Rain=%.2f"),
+        WeatherState.Revision, bIsDay, *Preset->GetPathName(), WeatherState.StartedServerTime,
+        WeatherState.TransitionDuration, WeatherState.RainIntensity);
+}
 
-    AActor* UDW = GetUDWActor();  // 캐시 사용
-    if (!UDW)
+void AHellunaDefenseGameState::OnRep_WeatherState()
+{
+    bWeatherSyncErrorLogged = false;
+    SynchronizeWeatherLocal();
+}
+
+float AHellunaDefenseGameState::GetSynchronizedRainSeconds() const
+{
+    if (WeatherState.Revision == 0) return 0.f;
+    return CalculateWeatherRainSeconds(WeatherState, GetServerWorldTimeSeconds(),
+        PuddleFillSeconds, PuddleDrySeconds, RainThresholdForPuddle);
+}
+
+void AHellunaDefenseGameState::SynchronizeWeatherLocal()
+{
+    if (!HasActorBegunPlay() || WeatherState.Revision == 0 || GetNetMode() == NM_DedicatedServer) return;
+    AActor* UDW = GetUDWActor();
+    if (!IsValid(UDW) || !UDW->HasActorBegunPlay()) return;
+
+    // Wait for UDW initialization; keep retrying if a streamed actor is replaced.
+    FObjectPropertyBase* CurrentPreset = FindFProperty<FObjectPropertyBase>(UDW->GetClass(), TEXT("Weather"));
+    FObjectPropertyBase* OldStateProperty = FindFProperty<FObjectPropertyBase>(UDW->GetClass(), TEXT("Old Weather State"));
+    FBoolProperty* TransitionActive = FindFProperty<FBoolProperty>(UDW->GetClass(), TEXT("Transition Active"));
+    FProperty* Timer = FindFProperty<FProperty>(UDW->GetClass(), TEXT("Transition Timer"));
+    FProperty* DurationProperty = FindFProperty<FProperty>(UDW->GetClass(), TEXT("Transition Duration"));
+    if (!CurrentPreset || !OldStateProperty || !TransitionActive || !Timer || !DurationProperty)
     {
-        // 데디서버/에디터 시나리오: UDW 없음은 정상. 강도는 이미 위에서 복제 완료.
-        UE_LOG(LogTemp, Warning, TEXT("[RainDiag-Weather] UDW 액터 없음 — ProcessEvent 스킵 (HasAuthority=%d)"),
-            (int32)HasAuthority());
+        if (!bWeatherSyncErrorLogged) UE_LOG(LogTemp, Error, TEXT("[WeatherSync] UDW property contract is incompatible: %s"), *UDW->GetPathName());
+        bWeatherSyncErrorLogged = true;
         return;
     }
+    UObject* OldState = OldStateProperty->GetObjectPropertyValue_InContainer(UDW);
+    if (!IsValid(OldState)) return;
 
-    UFunction* Func = UDW->FindFunction(TEXT("Change Weather"));
-    if (!Func)
-        Func = UDW->FindFunction(TEXT("ChangeWeather"));
-
-    if (Func)
+    UObject* Preset = WeatherState.Weather.LoadSynchronous();
+    if (!IsValid(Preset))
     {
-        struct { UObject* NewWeatherType; float TransitionTime; } Params;
-        Params.NewWeatherType = SelectedWeather;
-        Params.TransitionTime = EffectiveTransitionTime;
-        UDW->ProcessEvent(Func, &Params);
-
-        // 진단(무조건 활성): 실제 ProcessEvent 실행 여부 + 인자 + 소스 확인
-        UE_LOG(LogTemp, Warning, TEXT("[RainDiag-Weather] ProcessEvent(Change Weather) | Source=%s %s → %s | TransitionTime=%.1f"),
-            SourceTag,
-            bIsDay ? TEXT("Day") : TEXT("Night"),
-            *SelectedWeather->GetName(),
-            EffectiveTransitionTime);
+        if (!bWeatherSyncErrorLogged) UE_LOG(LogTemp, Error, TEXT("[WeatherSync] Preset unavailable: %s"), *WeatherState.Weather.ToString());
+        bWeatherSyncErrorLogged = true;
+        return;
     }
-    else
+    const float Elapsed = static_cast<float>(FMath::Max(0.0, GetServerWorldTimeSeconds() - WeatherState.StartedServerTime));
+    const float Duration = WeatherState.TransitionDuration;
+    UObject* Previous = WeatherState.PreviousWeather.IsNull() ? nullptr : WeatherState.PreviousWeather.LoadSynchronous();
+    const bool bTransitioning = Duration > KINDA_SMALL_NUMBER && Elapsed < Duration && IsValid(Previous);
+    const bool bNewState = AppliedWeatherRevision != WeatherState.Revision || AppliedWeatherActor.Get() != UDW;
+    const bool bPresetMismatch = CurrentPreset->GetObjectPropertyValue_InContainer(UDW) != Preset;
+    const bool bTransitionInterrupted = bTransitioning && !TransitionActive->GetPropertyValue_InContainer(UDW);
+
+    if (bNewState || bPresetMismatch || bTransitionInterrupted)
     {
-        UE_LOG(LogTemp, Warning, TEXT("[RainDiag-Weather] FindFunction(Change Weather) 실패 — UDW BP에 함수 없음"));
+        if (!ChangeWeatherPresetLocal(UDW, Preset, bTransitioning ? Duration : 0.f))
+        {
+            if (!bWeatherSyncErrorLogged) UE_LOG(LogTemp, Error, TEXT("[WeatherSync] Change Weather must be a local event with preset and numeric duration inputs."));
+            bWeatherSyncErrorLogged = true;
+            return;
+        }
+        AppliedWeatherActor = UDW;
+        AppliedWeatherRevision = WeatherState.Revision;
+        if (WeatherState.bIsDay) CurrentDayWeather = Preset;
+        else CurrentNightWeather = Preset;
+        UE_LOG(LogTemp, Log, TEXT("[WeatherSync] Applied Revision=%d NetMode=%d Preset=%s Elapsed=%.2f Duration=%.2f"),
+            WeatherState.Revision, static_cast<int32>(GetNetMode()), *Preset->GetPathName(), Elapsed, Duration);
+    }
+
+    // UDW has its own replicated transition timer. Reconcile it to the GameState clock,
+    // including a late join or a delayed UDW multicast from a listen server.
+    if (bTransitioning)
+    {
+        if (!CopyWeatherTransitionSource(OldState, Previous))
+        {
+            if (!bWeatherSyncErrorLogged) UE_LOG(LogTemp, Error, TEXT("[WeatherSync] Could not restore transition source."));
+            bWeatherSyncErrorLogged = true;
+            return;
+        }
+        WriteFloatPropertyValue(UDW, DurationProperty, Duration);
+        WriteFloatPropertyValue(UDW, Timer, FMath::Min(Elapsed, Duration));
+    }
+    else if (TransitionActive->GetPropertyValue_InContainer(UDW))
+    {
+        ChangeWeatherPresetLocal(UDW, Preset, 0.f);
     }
 }
 
@@ -2189,24 +2283,12 @@ void AHellunaDefenseGameState::ApplyInitialNightVisualState()
 // ═══════════════════════════════════════════════════════════════════════════════
 void AHellunaDefenseGameState::ForceClearWeather()
 {
-    AActor* UDW = GetUDWActor();
-    if (!UDW) return;
-
-    UFunction* Func = UDW->FindFunction(TEXT("Change Weather"));
-    if (!Func)
-        Func = UDW->FindFunction(TEXT("ChangeWeather"));
-
-    if (Func)
+    if (!HasAuthority()) return;
+    const FString Path = AHellunaSkyPreviewActor::GetWeatherPresetPath(ESkyWeatherPreset::ClearSkies);
+    if (UObject* Preset = FSoftObjectPath(Path).TryLoad())
     {
-        // nullptr = "None" → 모든 날씨 효과 해제 (구름/비/눈 제거)
-        struct { UObject* NewWeatherType; float TransitionTime; } Params;
-        Params.NewWeatherType = nullptr;
-        Params.TransitionTime = WeatherTransitionTime;
-        UDW->ProcessEvent(Func, &Params);
-
-#if HELLUNA_DEBUG_DEFENSE
-        UE_LOG(LogTemp, Log, TEXT("[Weather] 밤 → 맑은 날씨 강제 (전환 %.0f초)"), WeatherTransitionTime);
-#endif
+        PublishWeather(Preset, VisualPhaseState.Phase == EDayNightVisualPhase::Day
+            || VisualPhaseState.Phase == EDayNightVisualPhase::Dawn, WeatherTransitionTime);
     }
 }
 
@@ -2228,31 +2310,13 @@ void AHellunaDefenseGameState::TickPuddleAccumulation()
     if (!MPC)
         return;
 
-    // 서버 권위 비 강도를 신호원으로 사용.
-    //   이전에는 UDW 액터의 `Puddle Coverage` UProperty를 읽었으나, 데디서버에는 UDW가 없고
-    //   As-A-Client 클라이언트에서도 Change Weather RPC가 드롭되면 0에 머물러 웅덩이가 생기지 않았다.
-    //   ReplicatedRainIntensity는 서버가 날씨 선택 시점에 이름 기반으로 결정하여 복제한다.
-    const float RainingValue = ReplicatedRainIntensity;
+    // Reconstruct from the server snapshot, so late joins and frame stalls do not lose rainfall.
+    const float RainingValue = WeatherState.RainIntensity;
 
-    const float DeltaSec = FMath::Max(0.05f, PuddleTickInterval);
     const float SafeMax = FMath::Clamp(MaxPuddleCoverage, 0.f, 1.f);
     const float SafeFill = FMath::Max(1.f, PuddleFillSeconds);
     const float SafeStep = FMath::Max(0.5f, PuddleStepSeconds);
-    const float SafeDry = FMath::Max(1.f, PuddleDrySeconds);
-
-    // 비 누적/감소
-    if (RainingValue >= RainThresholdForPuddle)
-    {
-        // 비 강도에 비례해 누적 속도 가속
-        AccumulatedRainSeconds += DeltaSec * FMath::Clamp(RainingValue, 0.f, 1.f);
-    }
-    else
-    {
-        // 마름: PuddleDrySeconds 동안 PuddleFillSeconds만큼 빠지도록 감속
-        const float DryRate = SafeFill / SafeDry;
-        AccumulatedRainSeconds -= DeltaSec * DryRate;
-    }
-    AccumulatedRainSeconds = FMath::Clamp(AccumulatedRainSeconds, 0.f, SafeFill);
+    AccumulatedRainSeconds = GetSynchronizedRainSeconds();
 
     // 단계(Step)로 양자화 → 10초마다 한 칸씩 차오르는 체감
     const int32 NumSteps = FMath::Max(1, FMath::RoundToInt(SafeFill / SafeStep));
@@ -2328,3 +2392,88 @@ void AHellunaDefenseGameState::TickPuddleAccumulation()
 // ═══════════════════════════════════════════════════════════════════════════════
 // 🎭 캐릭터 선택 시스템은 Base(AHellunaBaseGameState)로 이동됨
 // ═══════════════════════════════════════════════════════════════════════════════
+
+#if WITH_DEV_AUTOMATION_TESTS
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHellunaWeatherSyncTest, "Helluna.Weather.AuthoritativePresets",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHellunaWeatherSyncTest::RunTest(const FString& Parameters)
+{
+    if (!TestNotNull(TEXT("Engine"), GEngine)) return false;
+    UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+    if (!TestNotNull(TEXT("Isolated world"), World)) return false;
+    AHellunaDefenseGameState* State = World->SpawnActor<AHellunaDefenseGameState>();
+    if (!TestNotNull(TEXT("GameState"), State))
+    {
+        World->DestroyWorld(false);
+        return false;
+    }
+    // Do not BeginPlay: no project save/load, map actors or persistent gameplay side effects.
+    UHellunaWeatherConfig* Config = NewObject<UHellunaWeatherConfig>(State);
+    State->WeatherConfig = Config;
+    Config->DayPool = { ESkyWeatherPreset::ClearSkies, ESkyWeatherPreset::Blizzard, ESkyWeatherPreset::Thunderstorm };
+    State->ApplyRandomWeather(true, 8.f);
+    const FHellunaReplicatedWeatherState First = State->WeatherState;
+    TestEqual(TEXT("First selection publishes once"), First.Revision, 1);
+    for (int32 Index = 0; Index < 8; ++Index) State->ApplyRandomWeather(true, 8.f);
+    TestEqual(TEXT("Repeated phase callbacks do not reroll"), State->WeatherState.Revision, First.Revision);
+    TestEqual(TEXT("Repeated callback preserves preset"), State->WeatherState.Weather.ToString(), First.Weather.ToString());
+    State->SetRole(ROLE_SimulatedProxy);
+    State->ApplyRandomWeather(false, 8.f);
+    TestEqual(TEXT("Client cannot select a different phase weather"), State->WeatherState.Revision, First.Revision);
+    TestEqual(TEXT("Client cannot replace server preset"), State->WeatherState.Weather.ToString(), First.Weather.ToString());
+    State->SetRole(ROLE_Authority);
+
+    const ESkyWeatherPreset Presets[] = { ESkyWeatherPreset::ClearSkies, ESkyWeatherPreset::PartlyCloudy,
+        ESkyWeatherPreset::Cloudy, ESkyWeatherPreset::Overcast, ESkyWeatherPreset::Foggy,
+        ESkyWeatherPreset::RainLight, ESkyWeatherPreset::Rain, ESkyWeatherPreset::RainOnly,
+        ESkyWeatherPreset::Thunderstorm, ESkyWeatherPreset::SnowLight, ESkyWeatherPreset::Snow,
+        ESkyWeatherPreset::Blizzard };
+    UClass* UDWClass = LoadClass<AActor>(nullptr, TEXT("/Game/UltraDynamicSky/Blueprints/Ultra_Dynamic_Weather.Ultra_Dynamic_Weather_C"));
+    AActor* UDW = UDWClass ? World->SpawnActor<AActor>(UDWClass) : nullptr;
+    TestNotNull(TEXT("UDW Blueprint loads"), UDW);
+    GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+    World->InitializeActorsForPlay(FURL());
+    for (ESkyWeatherPreset Preset : Presets)
+    {
+        const bool bDay = !State->WeatherState.bIsDay;
+        Config->DayForced = Preset;
+        Config->NightForced = Preset;
+        const int32 Revision = State->WeatherState.Revision;
+        State->ApplyRandomWeather(bDay, 8.f);
+        const FString Path = AHellunaSkyPreviewActor::GetWeatherPresetPath(Preset);
+        TestEqual(*FString::Printf(TEXT("Publish %s"), *Path), State->WeatherState.Revision, Revision + 1);
+        TestEqual(TEXT("Full preset path is replicated"), State->WeatherState.Weather.ToString(), Path);
+        UObject* Asset = State->WeatherState.Weather.Get();
+        if (UDW && Asset)
+        {
+            TestTrue(TEXT("Safe BP parameter bridge"), ChangeWeatherPresetLocal(UDW, Asset, 3.25f));
+            float AppliedDuration = 0.f;
+            TestTrue(TEXT("Read BP transition duration"), ReadFloatPropertyValue(UDW,
+                FindFProperty<FProperty>(UDWClass, TEXT("Transition Duration")), AppliedDuration));
+            TestEqual(TEXT("Float/double duration is preserved"), AppliedDuration, 3.25f);
+            if (FObjectPropertyBase* Property = FindFProperty<FObjectPropertyBase>(UDWClass, TEXT("Weather")))
+                TestTrue(TEXT("BP receives exact weather asset"), Property->GetObjectPropertyValue_InContainer(UDW) == Asset);
+            UObject* Copy = NewObject<UObject>(State, Asset->GetClass());
+            TestTrue(TEXT("Late-join transition source can be reconstructed"), CopyWeatherTransitionSource(Copy, Asset));
+        }
+    }
+
+    FHellunaReplicatedWeatherState Rain;
+    Rain.StartedServerTime = 100.0;
+    Rain.RainIntensity = 1.f;
+    TestEqual(TEXT("Late join reconstructs 30 seconds of rain"), CalculateWeatherRainSeconds(Rain, 130.0, 60.f, 180.f, 0.05f), 30.f);
+    Rain.AccumulatedRainAtStart = 30.f;
+    Rain.StartedServerTime = 130.0;
+    Rain.RainIntensity = 0.f;
+    TestEqual(TEXT("Clear/snow weather dries existing puddles"), CalculateWeatherRainSeconds(Rain, 160.0, 60.f, 180.f, 0.05f), 20.f);
+    TestEqual(TEXT("Clock arriving before snapshot never integrates negative time"), CalculateWeatherRainSeconds(Rain, 120.0, 60.f, 180.f, 0.05f), 30.f);
+    TestEqual(TEXT("Drying clamps to zero"), CalculateWeatherRainSeconds(Rain, 1000.0, 60.f, 180.f, 0.05f), 0.f);
+
+    const FProperty* ReplicatedState = FindFProperty<FProperty>(AHellunaDefenseGameState::StaticClass(), TEXT("WeatherState"));
+    TestTrue(TEXT("Snapshot is replicated with notify"), ReplicatedState && ReplicatedState->HasAllPropertyFlags(CPF_Net | CPF_RepNotify));
+    World->DestroyWorld(false);
+    GEngine->DestroyWorldContext(World);
+    return true;
+}
+#endif

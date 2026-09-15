@@ -48,6 +48,30 @@
 #include "HAL/FileManager.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "Engine/World.h"
+#include "GenericPlatform/GenericPlatformMisc.h"
+
+#if WITH_DEV_AUTOMATION_TESTS
+#include "Misc/AutomationTest.h"
+#endif
+
+namespace
+{
+    bool AllowsServerProcessExit(EWorldType::Type WorldType, ENetMode NetMode,
+        bool bEditorProcess, bool bCommandlet)
+    {
+        // A dedicated PIE world still shares the editor process.
+        return WorldType == EWorldType::Game && NetMode == NM_DedicatedServer
+            && !bEditorProcess && !bCommandlet;
+    }
+
+    bool CanExitServerProcess(const UWorld* World)
+    {
+        return IsValid(World) && !World->bIsTearingDown
+            && AllowsServerProcessExit(World->WorldType, World->GetNetMode(),
+                GIsEditor, IsRunningCommandlet());
+    }
+}
 
 namespace HellunaPCGInternal
 {
@@ -1185,12 +1209,14 @@ void AHellunaDefenseGameMode::OnNightPCGGraphGenerated(UPCGComponent* InComponen
         TArray<AActor*> CurrentOres;
         UGameplayStatics::GetAllActorsWithTag(GetWorld(), FName(TEXT("Ore")), CurrentOres);
 
-        for (const FPreservedOre& Ore : ExtractedOres)
+        // Diagnostic sampling must not perform an additional N x M scan before batching.
+        const int32 SampleCount = FMath::Min(64, ExtractedOres.Num());
+        for (int32 Sample = 0; Sample < SampleCount; ++Sample)
         {
-            const FVector Loc = Ore.Transform.GetLocation();
-            AvgDensityScore += CalculateOreDensityFactor(Loc, CurrentOres);
+            const int32 Index = static_cast<int32>(static_cast<int64>(Sample) * ExtractedOres.Num() / SampleCount);
+            AvgDensityScore += CalculateOreDensityFactor(ExtractedOres[Index].Transform.GetLocation(), CurrentOres);
         }
-        AvgDensityScore /= ExtractedOres.Num();
+        AvgDensityScore /= SampleCount;
         const float AvgTotalScore = AvgDensityScore * PCGPlacementDensity;
 
         // 예상 스폰 수 계산 — 실제 절차적 스폰 로직과 일치
@@ -1335,13 +1361,19 @@ void AHellunaDefenseGameMode::PostProcessNightPCGDensity(const TArray<AHellunaDe
             if (AssignedIndices.Contains(i)) continue;
             NearOres.Add({ i, FVector::DistSquared(NewOreData[i].Transform.GetLocation(), SeedLoc) });
         }
-        NearOres.Sort([](const FDistEntry& A, const FDistEntry& B) { return A.DistSq < B.DistSq; });
+        const auto Nearer = [](const FDistEntry& A, const FDistEntry& B)
+        {
+            return A.DistSq == B.DistSq ? A.Index < B.Index : A.DistSq < B.DistSq;
+        };
+        NearOres.Heapify(Nearer);
 
         TArray<int32>& Members = SeedToMembers[SeedIdx];
-        for (int32 j = 0; j < NearOres.Num() && Members.Num() < WantMembers; ++j)
+        while (!NearOres.IsEmpty() && Members.Num() < WantMembers)
         {
-            Members.Add(NearOres[j].Index);
-            AssignedIndices.Add(NearOres[j].Index);
+            FDistEntry Closest;
+            NearOres.HeapPop(Closest, Nearer, EAllowShrinking::No);
+            Members.Add(Closest.Index);
+            AssignedIndices.Add(Closest.Index);
         }
     }
 
@@ -1398,10 +1430,12 @@ void AHellunaDefenseGameMode::PostProcessNightPCGDensity(const TArray<AHellunaDe
         return (AlignedQuat * NoiseQuat).Rotator();
     };
 
-    auto MakeRandomScale = [this]() -> FVector
+    auto MakeRandomScale = [this](UClass* OreClass) -> FVector
     {
-        const float S = FMath::FRandRange(OreScaleMin, OreScaleMax);
-        return FVector(S, S, S);
+        const AActor* Defaults = OreClass ? Cast<AActor>(OreClass->GetDefaultObject()) : nullptr;
+        const FVector BaseScale = IsValid(Defaults) ? Defaults->GetActorScale3D() : FVector::OneVector;
+        const float MinScale = FMath::Max(0.01f, OreScaleMin);
+        return BaseScale * FMath::FRandRange(MinScale, FMath::Max(MinScale, OreScaleMax));
     };
 
     // Foliage(ISM) 액터를 한 번만 수집 — 라인트레이스에서 무시할 목록
@@ -1559,7 +1593,7 @@ void AHellunaDefenseGameMode::PostProcessNightPCGDensity(const TArray<AHellunaDe
                 }
 
                 const FRotator TiltRot = MakeRandomTiltRotation(GroundNormal);
-                const FVector  Scale   = MakeRandomScale();
+                const FVector  Scale   = MakeRandomScale(OreClass);
                 SpawnLoc.Z -= CalcTiltZOffset(TiltRot, Scale);
                 // [D] 경사도에 비례해 추가로 땅에 박아넣기 (평지 dead zone 이내면 0)
                 if (GroundNormal.Z < FlatGroundNormalZ)
@@ -1596,7 +1630,7 @@ void AHellunaDefenseGameMode::PostProcessNightPCGDensity(const TArray<AHellunaDe
             }
 
             const FRotator TiltRot = MakeRandomTiltRotation(GroundNormal);
-            const FVector  Scale   = MakeRandomScale();
+            const FVector  Scale   = MakeRandomScale(NewOreData[i].OreClass);
             IsoLoc.Z -= CalcTiltZOffset(TiltRot, Scale);
             // [D] 경사도에 비례해 추가로 땅에 박아넣기 (평지 dead zone 이내면 0)
             if (GroundNormal.Z < FlatGroundNormalZ)
@@ -1644,8 +1678,12 @@ void AHellunaDefenseGameMode::PostProcessNightPCGDensity(const TArray<AHellunaDe
         if (!GetWorldTimerManager().IsTimerActive(ClusterSpawnTimer))
         {
             ClusterSpawnBatchIndex = 0;
+            FTimerManagerTimerParameters TimerParameters;
+            TimerParameters.bLoop = true;
+            TimerParameters.bMaxOncePerFrame = true;
             GetWorldTimerManager().SetTimer(ClusterSpawnTimer, this,
-                &AHellunaDefenseGameMode::ProcessClusterSpawnBatch, PCGBatchInterval, true);
+                &AHellunaDefenseGameMode::ProcessClusterSpawnBatch,
+                FMath::Max(0.001f, PCGBatchInterval), TimerParameters);
         }
     }
     else
@@ -1656,6 +1694,10 @@ void AHellunaDefenseGameMode::PostProcessNightPCGDensity(const TArray<AHellunaDe
 
 void AHellunaDefenseGameMode::ProcessClusterSpawnBatch()
 {
+    UWorld* World = GetWorld();
+    if (!HasAuthority() || !IsValid(World) || World->bIsTearingDown) return;
+    const double BatchStart = FPlatformTime::Seconds();
+    const double BudgetSeconds = FMath::Clamp(PCGBatchTimeBudgetMs, 0.1f, 16.f) * 0.001;
     const int32 Total = PendingClusterSpawns.Num();
     int32 SpawnedThisBatch = 0;
 
@@ -1673,7 +1715,8 @@ void AHellunaDefenseGameMode::ProcessClusterSpawnBatch()
             Total);
     }
 
-    while (ClusterSpawnBatchIndex < Total && SpawnedThisBatch < PCGBatchSpawnCount)
+    while (ClusterSpawnBatchIndex < Total && SpawnedThisBatch < FMath::Max(1, PCGBatchSpawnCount)
+        && (SpawnedThisBatch == 0 || FPlatformTime::Seconds() - BatchStart < BudgetSeconds))
     {
         const FClusterSpawnRequest& Req = PendingClusterSpawns[ClusterSpawnBatchIndex++];
 
@@ -3270,12 +3313,8 @@ void AHellunaDefenseGameMode::EndGame(EHellunaGameEndReason Reason)
     // [Phase 16] EndGame 후 서버 자동 종료 (레지스트리 삭제 + RequestExit)
     if (UWorld* W = GetWorld())
     {
-        W->GetTimerManager().SetTimer(ShutdownTimer, [this]()
-        {
-            UE_LOG(LogHelluna, Log, TEXT("[Phase16] 서버 자동 종료 실행"));
-            DeleteRegistryFile();
-            FGenericPlatformMisc::RequestExit(false);
-        }, ShutdownDelaySeconds, false);
+        W->GetTimerManager().SetTimer(ShutdownTimer, this,
+            &AHellunaDefenseGameMode::RequestDedicatedServerShutdown, ShutdownDelaySeconds, false);
 
         UE_LOG(LogHelluna, Log, TEXT("[Phase16] 서버 자동 종료 타이머 시작 (%.0f초 후)"), ShutdownDelaySeconds);
     }
@@ -3802,9 +3841,22 @@ void AHellunaDefenseGameMode::CheckIdleShutdown()
     if (CurrentPlayerCount == 0 && !bGameEnded)
     {
         UE_LOG(LogHelluna, Log, TEXT("[Phase16] 유휴 종료 — 접속자 0, 서버 종료"));
-        DeleteRegistryFile();
-        FGenericPlatformMisc::RequestExit(false);
+        RequestDedicatedServerShutdown();
     }
+}
+
+void AHellunaDefenseGameMode::RequestDedicatedServerShutdown()
+{
+    if (!HasAuthority() || !CanExitServerProcess(GetWorld()))
+    {
+        UE_LOG(LogHelluna, Log,
+            TEXT("[ServerShutdown] Process exit skipped: only a non-editor dedicated game server may exit."));
+        return;
+    }
+
+    UE_LOG(LogHelluna, Log, TEXT("[ServerShutdown] Dedicated server process exit requested."));
+    DeleteRegistryFile();
+    FGenericPlatformMisc::RequestExit(false);
 }
 
 // ============================================================
@@ -3813,7 +3865,7 @@ void AHellunaDefenseGameMode::CheckIdleShutdown()
 
 void AHellunaDefenseGameMode::PollForCommand()
 {
-    if (CurrentPlayerCount > 0 || bGameEnded)
+    if (!CanExitServerProcess(GetWorld()) || CurrentPlayerCount > 0 || bGameEnded)
     {
         return;
     }
@@ -3860,11 +3912,16 @@ void AHellunaDefenseGameMode::PollForCommand()
 
     // [Phase 19 수정] ServerTravel은 UE 5.7 World Partition 크래시 유발 → RequestExit로 프로세스 종료
     UE_LOG(LogHelluna, Log, TEXT("[Phase19] 커맨드 파일 감지 → RequestExit (ServerTravel 대신) | MapPath=%s"), *MapPath);
-    FGenericPlatformMisc::RequestExit(false);
+    RequestDedicatedServerShutdown();
 }
 
 void AHellunaDefenseGameMode::StartCommandPollTimer()
 {
+    if (!CanExitServerProcess(GetWorld()))
+    {
+        return;
+    }
+
     if (UWorld* W = GetWorld())
     {
         W->GetTimerManager().SetTimer(CommandPollTimer, this,
@@ -4385,3 +4442,40 @@ void AHellunaDefenseGameMode::ReleaseBarrier(const FString& Reason)
         TEXT("[LoadingDbg][Server][Release] EXIT | BarrierState→Spawned | SpawnedCount=%d"),
         SnapshotCount);
 }
+
+#if WITH_DEV_AUTOMATION_TESTS
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHellunaServerShutdownPolicyTest,
+    "Helluna.ServerShutdown.ProcessIsolation",
+    EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::EngineFilter)
+
+bool FHellunaServerShutdownPolicyTest::RunTest(const FString& Parameters)
+{
+    TestFalse(TEXT("Missing world cannot terminate the process"), CanExitServerProcess(nullptr));
+    TestTrue(TEXT("Dedicated game server retains automatic shutdown"),
+        AllowsServerProcessExit(EWorldType::Game, NM_DedicatedServer, false, false));
+
+    const ENetMode NetModes[] = { NM_Standalone, NM_DedicatedServer, NM_ListenServer, NM_Client };
+    for (ENetMode NetMode : NetModes)
+    {
+        TestFalse(TEXT("PIE must not exit even when it hosts a dedicated server"),
+            AllowsServerProcessExit(EWorldType::PIE, NetMode, true, false));
+        TestFalse(TEXT("PIE world must not exit regardless of the editor flag"),
+            AllowsServerProcessExit(EWorldType::PIE, NetMode, false, false));
+        TestFalse(TEXT("Editor process cannot exit for a game-world shutdown"),
+            AllowsServerProcessExit(EWorldType::Game, NetMode, true, false));
+        TestFalse(TEXT("Commandlet cannot exit for a game-world shutdown"),
+            AllowsServerProcessExit(EWorldType::Game, NetMode, false, true));
+        if (NetMode != NM_DedicatedServer)
+        {
+            TestFalse(TEXT("Clients, listen servers and standalone games must not exit"),
+                AllowsServerProcessExit(EWorldType::Game, NetMode, false, false));
+        }
+    }
+
+    TestFalse(TEXT("Editor preview cannot exit"),
+        AllowsServerProcessExit(EWorldType::EditorPreview, NM_DedicatedServer, false, false));
+    TestFalse(TEXT("Editor world cannot exit"),
+        AllowsServerProcessExit(EWorldType::Editor, NM_DedicatedServer, false, false));
+    return true;
+}
+#endif

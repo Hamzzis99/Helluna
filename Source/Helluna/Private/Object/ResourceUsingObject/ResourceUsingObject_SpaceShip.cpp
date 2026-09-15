@@ -500,8 +500,7 @@ void AResourceUsingObject_SpaceShip::ApplyNavModifierRuntime(int32 RetryCount)
 	{
 		ActorBox = FBox::BuildAABB(GetActorLocation(), NavModifierExtent);
 	}
-	const int32 DirtyFlags = (int32)ENavigationDirtyFlag::All;
-	NavSys->AddDirtyArea(ActorBox, DirtyFlags, nullptr, FName(TEXT("SpaceShipNavModifier")));
+	NavSys->AddDirtyArea(ActorBox, ENavigationDirtyFlag::All, FName(TEXT("SpaceShipNavModifier")));
 
 	UE_LOG(LogTemp, Warning,
 		TEXT("[cheatdebug/nav] SpaceShip=%s dirty area %s 적용 완료 (Retry=%d)"),

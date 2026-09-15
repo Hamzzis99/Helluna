@@ -120,6 +120,11 @@ public:
 	// 같은 타입의 모든 스택 개수 합산 (Building UI용)
 	UFUNCTION(BlueprintCallable, Category = "인벤토리", meta = (DisplayName = "총 재료 수량 가져오기"))
 	int32 GetTotalMaterialCount(const FGameplayTag& MaterialTag) const;
+
+	/** Server-only atomic validation and consumption for a two-material request. */
+	bool TryConsumeMaterialPairOnServer(
+		const FGameplayTag& MaterialTag1, int32 Amount1,
+		const FGameplayTag& MaterialTag2, int32 Amount2);
 	
 	UFUNCTION(Server, Reliable, WithValidation) // 신뢰하는 것? 서버에 전달하는 것?
 	void Server_EquipSlotClicked(UInv_InventoryItem* ItemToEquip, UInv_InventoryItem* ItemToUnequip, int32 WeaponSlotIndex = -1);
@@ -186,6 +191,7 @@ public:
 	// 🆕 [Phase 6] ItemType으로 아이템 찾기
 	// ============================================
 	UInv_InventoryItem* FindItemByType(const FGameplayTag& ItemType);
+	void NotifyReplicatedItemCount(UInv_InventoryItem* Item);
 	
 	// 🆕 [Phase 6] 제외 목록을 사용한 아이템 검색 (같은 타입 다중 장착 지원)
 	UInv_InventoryItem* FindItemByTypeExcluding(const FGameplayTag& ItemType, const TSet<UInv_InventoryItem*>& ExcludeItems);
@@ -205,6 +211,9 @@ public:
 	 * @return 생성된 UInv_InventoryItem, 실패 시 nullptr
 	 */
 	UInv_InventoryItem* AddItemFromManifest(FInv_ItemManifest& ManifestCopy, int32 StackCount);
+
+	// Trusted server-only grant; not an RPC. Returns the quantity actually stored.
+	int32 GrantMaterialsFromManifest(const FInv_ItemManifest& Manifest, int32 RequestedCount);
 
 	/**
 	 * [Phase 9] 저장 데이터로 인벤토리 복원 (서버 전용)
@@ -312,7 +321,11 @@ private:
 	// TODO [Phase C] GridModel 도입 시 이 함수 제거 → GridModel.HasRoom()으로 통합
 	// 현재는 서버에 GridSlot(UI)이 없어서 별도 구현한 중복 로직
 	// ⭐ 서버 전용: InventoryList 기반 공간 체크 (UI 없이 작동!)
-	bool HasRoomInInventoryList(const FInv_ItemManifest& Manifest) const;
+	bool HasRoomInInventoryList(const FInv_ItemManifest& Manifest, bool bRequireNewSlot = false) const;
+	bool ValidatePickupRequest(UInv_ItemComponent* ItemComponent, int32& StackCount, int32& Remainder) const;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Pickup", meta = (ClampMin = "100.0", Units = "cm"))
+	float MaxPickupDistance = 800.f;
 	bool ApplyItemGridPositionSync(UInv_InventoryItem* Item, int32 GridIndex, uint8 GridCategory, bool bRotated);
 
 	// ⭐ [SERVER-ONLY] 서버의 InventoryList를 기준으로 실제 재료 보유 여부를 확인합니다.
@@ -329,8 +342,10 @@ private:
 	 */
 	bool IsListenServerOrStandalone() const;
 
-	// ⭐ Grid 크기 (BeginPlay 시 Widget에서 자동 설정됨 - 모든 카테고리 공통 사용)
-	int32 GridRows = 6;
+	// Dedicated servers cannot read a live widget. Keep these defaults aligned with the inventory widget.
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Grid", meta = (ClampMin = "1", ClampMax = "100"))
+	int32 GridRows = 4;
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Grid", meta = (ClampMin = "1", ClampMax = "100"))
 	int32 GridColumns = 8;
 
 	UPROPERTY(Replicated)

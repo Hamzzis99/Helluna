@@ -11,9 +11,26 @@
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
 #include "HellunaGameplayTags.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Engine/World.h"
+#include "TimerManager.h"
+
+#if WITH_DEV_AUTOMATION_TESTS
+#include "Misc/AutomationTest.h"
+#endif
 
 #include "DebugHelper.h"
 
+DEFINE_LOG_CATEGORY_STATIC(LogHellunaShootAbility, Log, All);
+
+namespace
+{
+double AdvanceFireCooldown(double Remaining, double DeltaSeconds, double AnimationRate)
+{
+	if (!FMath::IsFinite(DeltaSeconds) || !FMath::IsFinite(AnimationRate)) return Remaining;
+	return FMath::Max(0.0, Remaining - FMath::Max(0.0, DeltaSeconds) * FMath::Max(0.0, AnimationRate));
+}
+}
 
 UHeroGameplayAbility_Shoot::UHeroGameplayAbility_Shoot()
 {
@@ -36,16 +53,23 @@ UHeroGameplayAbility_Shoot::UHeroGameplayAbility_Shoot()
 
 void UHeroGameplayAbility_Shoot::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData)
 {
+	if (!ActorInfo || !ActorInfo->AvatarActor.IsValid())
+	{
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
+	if (!IsActive()) return;
 
 	AHellunaHeroCharacter* Hero = GetHeroCharacterFromActorInfo();
-	if (!Hero)
+	if (!IsValid(Hero))
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
 
 	AHeroWeapon_GunBase* Weapon = Cast<AHeroWeapon_GunBase>(Hero->GetCurrentWeapon());
-	if (!Weapon)
+	if (!IsValid(Weapon))
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
@@ -71,7 +95,12 @@ void UHeroGameplayAbility_Shoot::ActivateAbility(const FGameplayAbilitySpecHandl
 	}
 
 	UWorld* World = GetWorld();
-	const float Now = World ? World->GetTimeSeconds() : 0.f;
+	if (!World)
+	{
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+	const float Now = World->GetTimeSeconds();
 	const float Interval = FMath::Max(Weapon->AttackSpeed, 0.01f);
 
 	// =========================================================
@@ -79,7 +108,8 @@ void UHeroGameplayAbility_Shoot::ActivateAbility(const FGameplayAbilitySpecHandl
 	// =========================================================
 	if (!Weapon->CanFireByRate(Now, Interval))
 	{
-		// 너무 자주 클릭했거나(단발/연발 공통), 타이머가 아주 미세하게 빨리 불린 경우
+		// A rejected press must not leave an active ability with no firing task.
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, false);
 		return;
 	}
 	Weapon->ConsumeFireByRate(Now, Interval);
@@ -90,23 +120,14 @@ void UHeroGameplayAbility_Shoot::ActivateAbility(const FGameplayAbilitySpecHandl
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, false);
 		return;
 	}
-	// 연발일 때는 타이머로 자동 발사 시작
+	FiringWeapon = Weapon;
 	Shoot();
+	if (!IsActive()) return;
 
-	//const float Interval = Weapon->AttackSpeed;
-	if (World)
-	{
-		World->GetTimerManager().SetTimer(
-			AutoFireTimerHandle,
-			this,
-			&ThisClass::Shoot,
-			Interval,
-			true
-		);
-	}
-
-	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
-
+	// Advance the cadence in animation time so slowed montages can reach their fire notify.
+	LastAutoFireTime = World->GetTimeSeconds();
+	AutoFireTimeRemaining = Interval;
+	World->GetTimerManager().SetTimer(AutoFireTimerHandle, this, &ThisClass::TickAutoFire, 0.01f, true);
 }
 
 void UHeroGameplayAbility_Shoot::EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled)
@@ -115,15 +136,46 @@ void UHeroGameplayAbility_Shoot::EndAbility(const FGameplayAbilitySpecHandle Han
 	{
 		World->GetTimerManager().ClearTimer(AutoFireTimerHandle);
 	}
+	FiringWeapon.Reset();
+	AutoFireTimeRemaining = 0.0;
+	LastAutoFireTime = 0.0;
 
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 
 }
 
+void UHeroGameplayAbility_Shoot::TickAutoFire()
+{
+	if (!IsActive()) return;
+	UWorld* World = GetWorld();
+	AHellunaHeroCharacter* Hero = GetHeroCharacterFromActorInfo();
+	AHeroWeapon_GunBase* Weapon = FiringWeapon.Get();
+	UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo();
+	if (!World || !IsValid(Hero) || !IsValid(Weapon) || Hero->GetCurrentWeapon() != Weapon
+		|| !IsValid(Hero->GetMesh()) || !IsValid(ASC) || !Weapon->CanFire()
+		|| !ASC->HasMatchingGameplayTag(HellunaGameplayTags::Player_status_Aim)
+		|| ASC->HasMatchingGameplayTag(HellunaGameplayTags::Player_State_MenuOpen)
+		|| ASC->HasMatchingGameplayTag(HellunaGameplayTags::Player_Status_Blocking))
+	{
+		K2_EndAbility();
+		return;
+	}
+
+	const double Now = World->GetTimeSeconds();
+	const double AnimationRate = static_cast<double>(Hero->GetMesh()->GlobalAnimRateScale) * Hero->CustomTimeDilation;
+	AutoFireTimeRemaining = AdvanceFireCooldown(AutoFireTimeRemaining, Now - LastAutoFireTime, AnimationRate);
+	LastAutoFireTime = Now;
+	if (AutoFireTimeRemaining <= KINDA_SMALL_NUMBER)
+	{
+		AutoFireTimeRemaining = FMath::Max(Weapon->AttackSpeed, 0.01f);
+		Shoot();
+	}
+}
+
 void UHeroGameplayAbility_Shoot::Shoot()
 {
 	AHellunaHeroCharacter* Hero = GetHeroCharacterFromActorInfo();
-	if (!Hero) return;
+	if (!IsValid(Hero)) { K2_EndAbility(); return; }
 
 	// [AimGateV1] 연사(FullAuto) 도중 견착(우클릭)이 풀리면 즉시 발사 중단.
 	//   ActivationRequiredTags 는 "활성화 시점" 만 막으므로, 유지형 연사는 여기서 가드.
@@ -144,10 +196,11 @@ void UHeroGameplayAbility_Shoot::Shoot()
 	}
 
 	AHeroWeapon_GunBase* Weapon = Cast<AHeroWeapon_GunBase>(Hero->GetCurrentWeapon());
-	if (!Weapon) { Debug::Print(TEXT("Shoot Failed: No Weapon"), FColor::Red); return; }
+	if (!IsValid(Weapon)) { K2_EndAbility(); return; }
 
 	if (!Weapon->CanFire())
 	{
+		K2_EndAbility();
 		return;
 	}
 
@@ -173,9 +226,11 @@ void UHeroGameplayAbility_Shoot::Shoot()
 	{
 		if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
 		{
-			ASC->PlayMontage(this, GetCurrentActivationInfo(), AttackMontage, 1.f);
+			if (ASC->PlayMontage(this, GetCurrentActivationInfo(), AttackMontage, 1.f) > 0.f) return;
 		}
 	}
+	UE_LOG(LogHellunaShootAbility, Warning, TEXT("Cannot play fire montage for %s; ending Shoot."), *GetNameSafe(Weapon));
+	K2_EndAbility();
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -220,3 +275,25 @@ FVector UHeroGameplayAbility_Shoot::ComputeAimPointFromCamera(const AHellunaHero
 	return TraceEnd;
 }
 
+#if WITH_DEV_AUTOMATION_TESTS
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHellunaFireCadenceTest, "Helluna.Combat.Fire.AnimationCadence",
+	EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::EngineFilter)
+
+bool FHellunaFireCadenceTest::RunTest(const FString& Parameters)
+{
+	TestTrue(TEXT("Normal animation consumes normal fire interval"),
+		FMath::IsNearlyZero(AdvanceFireCooldown(0.2, 0.2, 1.0)));
+	TestTrue(TEXT("Slow animation must not restart before its notify"),
+		FMath::IsNearlyEqual(AdvanceFireCooldown(0.2, 0.2, 0.1), 0.18));
+	TestTrue(TEXT("Slow animation eventually reaches the next shot"),
+		FMath::IsNearlyZero(AdvanceFireCooldown(0.2, 2.0, 0.1)));
+	const double AfterSlow = AdvanceFireCooldown(0.2, 0.5, 0.1);
+	TestTrue(TEXT("Restoring speed immediately advances the remaining cadence"),
+		FMath::IsNearlyZero(AdvanceFireCooldown(AfterSlow, 0.15, 1.0)));
+	TestEqual(TEXT("Paused animation cannot consume its next shot"), AdvanceFireCooldown(0.2, 2.0, 0.0), 0.2);
+	TestEqual(TEXT("Repeated timer callbacks in the same world frame do not advance"), AdvanceFireCooldown(0.2, 0.0, 1.0), 0.2);
+	TestEqual(TEXT("Clock correction cannot increase the delay"), AdvanceFireCooldown(0.2, -0.1, 1.0), 0.2);
+	TestEqual(TEXT("A hitch does not accumulate a catch-up burst"), AdvanceFireCooldown(0.2, 10.0, 1.0), 0.0);
+	return true;
+}
+#endif

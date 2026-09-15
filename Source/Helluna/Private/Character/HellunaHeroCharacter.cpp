@@ -79,6 +79,136 @@
 #include "Widgets/HUD/Inv_InteractPromptWidget.h"
 #include "Components/Image.h"
 
+#if WITH_DEV_AUTOMATION_TESTS
+#include "Misc/AutomationTest.h"
+#include "Misc/ScopeExit.h"
+#include "Engine/World.h"
+#include "Engine/Engine.h"
+#include "Engine/EngineBaseTypes.h"
+#include "AnimInstance/HellunaCharacterAnimInstance.h"
+#include "Animation/AnimSequence.h"
+#endif
+
+namespace
+{
+void ApplyTimeDistortionAnimRate(USkeletalMeshComponent* Mesh, float Multiplier,
+	float& OriginalRate, bool& bOriginalRateCached)
+{
+	if (!IsValid(Mesh)) return;
+
+	if (Multiplier < 1.f - KINDA_SMALL_NUMBER)
+	{
+		if (!bOriginalRateCached)
+		{
+			OriginalRate = Mesh->GlobalAnimRateScale;
+			bOriginalRateCached = true;
+		}
+		Mesh->GlobalAnimRateScale = OriginalRate * Multiplier;
+	}
+	else if (bOriginalRateCached)
+	{
+		Mesh->GlobalAnimRateScale = OriginalRate;
+		bOriginalRateCached = false;
+	}
+}
+
+float CalculateStunRecoveryYaw(const FVector& Pelvis, const FVector& Head, float FallbackYaw)
+{
+	FVector Forward = Head - Pelvis;
+	Forward.Z = 0.f;
+	return !Forward.ContainsNaN() && Forward.SizeSquared() > 4.f
+		? Forward.Rotation().Yaw : FallbackYaw;
+}
+
+bool IsValidShipMaterialRequest(
+	const FGameplayTag& Material1Tag, int32 Material1Amount,
+	const FGameplayTag& Material2Tag, int32 Material2Amount)
+{
+	if (Material1Amount < 0 || Material2Amount < 0)
+	{
+		return false;
+	}
+
+	const int64 TotalAmount = static_cast<int64>(Material1Amount) + static_cast<int64>(Material2Amount);
+	return TotalAmount > 0 && TotalAmount <= MAX_int32
+		&& (Material1Amount == 0 || Material1Tag.IsValid())
+		&& (Material2Amount == 0 || Material2Tag.IsValid());
+}
+
+void CalculateShipMaterialUsage(
+	int32 Material1Amount, int32 Material2Amount, int32 TotalToUse,
+	int32& OutMaterial1ToUse, int32& OutMaterial2ToUse)
+{
+	OutMaterial1ToUse = 0;
+	OutMaterial2ToUse = 0;
+
+	const int64 TotalRequested = static_cast<int64>(Material1Amount) + static_cast<int64>(Material2Amount);
+	if (TotalRequested <= 0 || TotalToUse <= 0)
+	{
+		return;
+	}
+
+	const int64 RoundedMaterial1 =
+		(static_cast<int64>(Material1Amount) * TotalToUse + TotalRequested / 2) / TotalRequested;
+	OutMaterial1ToUse = FMath::Clamp(
+		static_cast<int32>(RoundedMaterial1), 0, FMath::Min(Material1Amount, TotalToUse));
+	OutMaterial2ToUse = TotalToUse - OutMaterial1ToUse;
+
+	if (OutMaterial2ToUse > Material2Amount)
+	{
+		const int32 Overflow = OutMaterial2ToUse - Material2Amount;
+		OutMaterial2ToUse = Material2Amount;
+		OutMaterial1ToUse += Overflow;
+	}
+}
+
+AResourceUsingObject_SpaceShip* FindInteractableSpaceShip(const AActor* RequestingActor)
+{
+	if (!RequestingActor || !RequestingActor->GetWorld())
+	{
+		return nullptr;
+	}
+
+	TArray<AActor*> FoundActors;
+	UGameplayStatics::GetAllActorsWithTag(RequestingActor->GetWorld(), FName(TEXT("SpaceShip")), FoundActors);
+
+	AResourceUsingObject_SpaceShip* NearestShip = nullptr;
+	double NearestDistanceSquared = TNumericLimits<double>::Max();
+	for (AActor* FoundActor : FoundActors)
+	{
+		AResourceUsingObject_SpaceShip* Candidate = Cast<AResourceUsingObject_SpaceShip>(FoundActor);
+		if (!IsValid(Candidate) || !Candidate->IsActorInInteractRange(RequestingActor))
+		{
+			continue;
+		}
+
+		const double DistanceSquared = FVector::DistSquared(
+			Candidate->GetActorLocation(), RequestingActor->GetActorLocation());
+		if (DistanceSquared < NearestDistanceSquared)
+		{
+			NearestDistanceSquared = DistanceSquared;
+			NearestShip = Candidate;
+		}
+	}
+
+	return NearestShip;
+}
+
+bool AreShipMaterialsAllowed(
+	const URepairComponent* RepairComponent,
+	const FGameplayTag& Material1Tag, int32 Material1Amount,
+	const FGameplayTag& Material2Tag, int32 Material2Amount)
+{
+	if (!RepairComponent || RepairComponent->AllowedMaterialTags.Num() == 0)
+	{
+		return false;
+	}
+
+	return (Material1Amount == 0 || RepairComponent->AllowedMaterialTags.Contains(Material1Tag))
+		&& (Material2Amount == 0 || RepairComponent->AllowedMaterialTags.Contains(Material2Tag));
+}
+}
+
 
 
 AHellunaHeroCharacter::AHellunaHeroCharacter()
@@ -1023,185 +1153,120 @@ void AHellunaHeroCharacter::Input_BlockReleased()
 	Input_AbilityInputReleased(HellunaGameplayTags::InputTag_Block);
 }
 
-// ⭐ SpaceShip 수리 Server RPC (재료 개별 전달)
+bool AHellunaHeroCharacter::Server_RepairSpaceShip_Validate(
+	FGameplayTag Material1Tag, int32 Material1Amount,
+	FGameplayTag Material2Tag, int32 Material2Amount)
+{
+	return IsValidShipMaterialRequest(Material1Tag, Material1Amount, Material2Tag, Material2Amount);
+}
+
+// SpaceShip repair Server RPC. The server validates and consumes materials before applying repair.
 void AHellunaHeroCharacter::Server_RepairSpaceShip_Implementation(FGameplayTag Material1Tag, int32 Material1Amount, FGameplayTag Material2Tag, int32 Material2Amount)
 {
-#if HELLUNA_DEBUG_HERO
-	UE_LOG(LogTemp, Warning, TEXT("=== [HeroCharacter::Server_RepairSpaceShip] 호출됨! ==="));
-	UE_LOG(LogTemp, Warning, TEXT("  재료 1: %s x %d"), *Material1Tag.ToString(), Material1Amount);
-	UE_LOG(LogTemp, Warning, TEXT("  재료 2: %s x %d"), *Material2Tag.ToString(), Material2Amount);
-	UE_LOG(LogTemp, Warning, TEXT("  서버 여부: %s"), HasAuthority() ? TEXT("서버 ✅") : TEXT("클라이언트 ❌"));
-#endif
-
-	// 서버 권한 체크
-	if (!HasAuthority())
+	if (!HasAuthority() || !IsValidShipMaterialRequest(
+		Material1Tag, Material1Amount, Material2Tag, Material2Amount))
 	{
-#if HELLUNA_DEBUG_HERO
-		UE_LOG(LogTemp, Error, TEXT("  ❌ 서버가 아님!"));
-#endif
 		return;
 	}
 
-	// 총 자원 계산
-	int32 TotalResource = Material1Amount + Material2Amount;
-
-	// 자원이 0 이하면 무시
-	if (TotalResource <= 0)
+	AResourceUsingObject_SpaceShip* SpaceShip = FindInteractableSpaceShip(this);
+	if (!SpaceShip)
 	{
-#if HELLUNA_DEBUG_HERO
-		UE_LOG(LogTemp, Warning, TEXT("  ⚠️ 자원이 0 이하! 무시"));
-#endif
+		UE_LOG(LogTemp, Warning, TEXT("[ShipRepair] Rejected: no SpaceShip in interaction range."));
 		return;
 	}
 
-	// World에서 "SpaceShip" 태그를 가진 Actor 찾기
-	TArray<AActor*> FoundActors;
-	UGameplayStatics::GetAllActorsWithTag(GetWorld(), FName("SpaceShip"), FoundActors);
-
-	if (FoundActors.Num() == 0)
+	URepairComponent* RepairComp = SpaceShip->FindComponentByClass<URepairComponent>();
+	if (!IsValid(RepairComp) || !AreShipMaterialsAllowed(
+		RepairComp, Material1Tag, Material1Amount, Material2Tag, Material2Amount))
 	{
-#if HELLUNA_DEBUG_HERO
-		UE_LOG(LogTemp, Error, TEXT("  ❌ SpaceShip을 찾을 수 없음! 'SpaceShip' 태그 확인 필요"));
-#endif
+		UE_LOG(LogTemp, Warning, TEXT("[ShipRepair] Rejected: material tag is not allowed."));
 		return;
 	}
 
-	// SpaceShip 찾음
-	if (AResourceUsingObject_SpaceShip* SpaceShip = Cast<AResourceUsingObject_SpaceShip>(FoundActors[0]))
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	UInv_InventoryComponent* InvComp = IsValid(PC)
+		? UInv_InventoryStatics::GetInventoryComponent(PC)
+		: nullptr;
+	if (!IsValid(InvComp))
 	{
-#if HELLUNA_DEBUG_HERO
-		UE_LOG(LogTemp, Warning, TEXT("  ✅ SpaceShip 찾음: %s"), *SpaceShip->GetName());
-#endif
-
-		// ⭐ RepairComponent 가져오기
-		URepairComponent* RepairComp = SpaceShip->FindComponentByClass<URepairComponent>();
-		if (RepairComp)
-		{
-#if HELLUNA_DEBUG_HERO
-			UE_LOG(LogTemp, Warning, TEXT("  ✅ RepairComponent 찾음!"));
-#endif
-
-			// ⭐ 애니메이션/사운드를 **한 번만** 재생 (멀티캐스트)
-			FVector SpaceShipLocation = SpaceShip->GetActorLocation();
-			RepairComp->Multicast_PlaySingleRepairEffect(SpaceShipLocation);
-#if HELLUNA_DEBUG_HERO
-			UE_LOG(LogTemp, Warning, TEXT("  🎬 애니메이션/사운드 한 번 재생 요청!"));
-#endif
-		}
-		
-		// ⭐⭐⭐ SpaceShip에 자원 추가 (실제 추가된 양 반환)
-		int32 ActualAdded = SpaceShip->AddRepairResource(TotalResource);
-#if HELLUNA_DEBUG_HERO
-		UE_LOG(LogTemp, Warning, TEXT("  📊 SpaceShip->AddRepairResource(%d) 호출 → 실제 추가: %d"), TotalResource, ActualAdded);
-#endif
-
-		// ⭐⭐⭐ 실제 추가된 양만큼만 인벤토리에서 차감!
-		if (ActualAdded > 0)
-		{
-			// ⭐ PlayerController 가져오기
-			APlayerController* PC = Cast<APlayerController>(GetController());
-			if (!PC)
-			{
-#if HELLUNA_DEBUG_HERO
-				UE_LOG(LogTemp, Error, TEXT("  ❌ PlayerController를 찾을 수 없음!"));
-#endif
-				return;
-			}
-
-			// ⭐ InventoryComponent 가져오기 (Statics 사용!)
-			UInv_InventoryComponent* InvComp = UInv_InventoryStatics::GetInventoryComponent(PC);
-			if (!InvComp)
-			{
-#if HELLUNA_DEBUG_HERO
-				UE_LOG(LogTemp, Error, TEXT("  ❌ InventoryComponent를 찾을 수 없음!"));
-#endif
-				return;
-			}
-
-#if HELLUNA_DEBUG_HERO
-			UE_LOG(LogTemp, Warning, TEXT("  ✅ InventoryComponent 찾음!"));
-#endif
-
-			// 실제 차감량 계산 (비율로 분배)
-			int32 ActualMaterial1 = 0;
-			int32 ActualMaterial2 = 0;
-
-			if (TotalResource > 0)
-			{
-				// 비율 계산: (요청량 / 총량) * 실제추가량
-				float Ratio1 = (float)Material1Amount / (float)TotalResource;
-				float Ratio2 = (float)Material2Amount / (float)TotalResource;
-
-				ActualMaterial1 = FMath::RoundToInt(Ratio1 * ActualAdded);
-				ActualMaterial2 = ActualAdded - ActualMaterial1; // 나머지는 재료2에
-
-#if HELLUNA_DEBUG_HERO
-				UE_LOG(LogTemp, Warning, TEXT("  📊 비율 계산:"));
-				UE_LOG(LogTemp, Warning, TEXT("    - 재료1 비율: %.2f → 차감: %d"), Ratio1, ActualMaterial1);
-				UE_LOG(LogTemp, Warning, TEXT("    - 재료2 비율: %.2f → 차감: %d"), Ratio2, ActualMaterial2);
-#endif
-			}
-
-			// 재료 1 차감
-			if (ActualMaterial1 > 0 && Material1Tag.IsValid())
-			{
-#if HELLUNA_DEBUG_HERO
-				UE_LOG(LogTemp, Warning, TEXT("  🧪 재료 1 차감: %s x %d"), *Material1Tag.ToString(), ActualMaterial1);
-#endif
-				InvComp->Server_ConsumeMaterialsMultiStack(Material1Tag, ActualMaterial1);
-			}
-
-			// 재료 2 차감
-			if (ActualMaterial2 > 0 && Material2Tag.IsValid())
-			{
-#if HELLUNA_DEBUG_HERO
-				UE_LOG(LogTemp, Warning, TEXT("  🧪 재료 2 차감: %s x %d"), *Material2Tag.ToString(), ActualMaterial2);
-#endif
-				InvComp->Server_ConsumeMaterialsMultiStack(Material2Tag, ActualMaterial2);
-			}
-
-#if HELLUNA_DEBUG_HERO
-			UE_LOG(LogTemp, Warning, TEXT("  ✅ 실제 차감 완료! 총 차감: %d"), ActualAdded);
-#endif
-		}
-		else
-		{
-#if HELLUNA_DEBUG_HERO
-			UE_LOG(LogTemp, Warning, TEXT("  ⚠️ SpaceShip에 추가된 자원이 없음! (이미 만원일 수 있음)"));
-#endif
-		}
-	}
-	else
-	{
-#if HELLUNA_DEBUG_HERO
-		UE_LOG(LogTemp, Error, TEXT("  ❌ SpaceShip 캐스팅 실패!"));
-#endif
+		return;
 	}
 
-#if HELLUNA_DEBUG_HERO
-	UE_LOG(LogTemp, Warning, TEXT("=== [HeroCharacter::Server_RepairSpaceShip] 완료! ==="));
-#endif
+	const int32 RemainingCapacity = FMath::Max(0, SpaceShip->GetNeedResource() - SpaceShip->GetCurrentResource());
+	const int32 TotalRequested = Material1Amount + Material2Amount;
+	const int32 TotalToUse = FMath::Min(TotalRequested, RemainingCapacity);
+	if (TotalToUse <= 0)
+	{
+		return;
+	}
+
+	int32 Material1ToUse = 0;
+	int32 Material2ToUse = 0;
+	CalculateShipMaterialUsage(
+		Material1Amount, Material2Amount, TotalToUse, Material1ToUse, Material2ToUse);
+
+	if (!InvComp->TryConsumeMaterialPairOnServer(
+		Material1Tag, Material1ToUse, Material2Tag, Material2ToUse))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[ShipRepair] Rejected: insufficient server inventory."));
+		return;
+	}
+
+	const int32 ActualAdded = SpaceShip->AddRepairResource(TotalToUse);
+	ensureMsgf(ActualAdded == TotalToUse,
+		TEXT("[ShipRepair] Repair capacity changed after server validation. Expected=%d Actual=%d"),
+		TotalToUse, ActualAdded);
+
+	if (ActualAdded > 0)
+	{
+		RepairComp->Multicast_PlaySingleRepairEffect(SpaceShip->GetActorLocation());
+	}
 }
 
 // ============================================================================
 // [ShipHeal] 우주선 HP 회복 RPC — 재료 비례 회복 (Server_RepairSpaceShip 미러). MaxHP 초과분 재료 보존.
 // ============================================================================
+bool AHellunaHeroCharacter::Server_HealShipFromMaterials_Validate(
+	FGameplayTag Material1Tag, int32 Material1Amount,
+	FGameplayTag Material2Tag, int32 Material2Amount)
+{
+	return IsValidShipMaterialRequest(Material1Tag, Material1Amount, Material2Tag, Material2Amount);
+}
+
 void AHellunaHeroCharacter::Server_HealShipFromMaterials_Implementation(FGameplayTag Material1Tag, int32 Material1Amount, FGameplayTag Material2Tag, int32 Material2Amount)
 {
-	if (!HasAuthority()) return;
+	if (!HasAuthority() || !IsValidShipMaterialRequest(
+		Material1Tag, Material1Amount, Material2Tag, Material2Amount))
+	{
+		return;
+	}
 
-	const int32 TotalMaterials = Material1Amount + Material2Amount;
-	if (TotalMaterials <= 0) return;
+	AResourceUsingObject_SpaceShip* SpaceShip = FindInteractableSpaceShip(this);
+	if (!SpaceShip)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[ShipHeal] Rejected: no SpaceShip in interaction range."));
+		return;
+	}
 
-	TArray<AActor*> FoundActors;
-	UGameplayStatics::GetAllActorsWithTag(GetWorld(), FName("SpaceShip"), FoundActors);
-	if (FoundActors.Num() == 0) return;
-
-	AResourceUsingObject_SpaceShip* SpaceShip = Cast<AResourceUsingObject_SpaceShip>(FoundActors[0]);
-	if (!SpaceShip) return;
+	URepairComponent* RepairComp = SpaceShip->FindComponentByClass<URepairComponent>();
+	if (!IsValid(RepairComp) || !AreShipMaterialsAllowed(
+		RepairComp, Material1Tag, Material1Amount, Material2Tag, Material2Amount))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[ShipHeal] Rejected: material tag is not allowed."));
+		return;
+	}
 
 	UHellunaHealthComponent* ShipHC = SpaceShip->GetShipHealthComponent();
-	if (!ShipHC) return;
+	if (!IsValid(ShipHC) || ShipHC->IsDead()) return;
+
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	UInv_InventoryComponent* InvComp = IsValid(PC)
+		? UInv_InventoryStatics::GetInventoryComponent(PC)
+		: nullptr;
+	if (!IsValid(InvComp)) return;
+
+	const int32 TotalMaterials = Material1Amount + Material2Amount;
 
 	const float HealPerMat = FMath::Max(1.f, SpaceShip->GetHealPerMaterial());
 	const float MaxHP = ShipHC->GetMaxHealth();
@@ -1216,28 +1281,17 @@ void AHellunaHeroCharacter::Server_HealShipFromMaterials_Implementation(FGamepla
 	MaterialsUsed = FMath::Clamp(MaterialsUsed, 0, TotalMaterials);
 	if (MaterialsUsed <= 0) return;
 
-	ShipHC->Heal(ActualHeal, this);
-
-	if (URepairComponent* RepairComp = SpaceShip->FindComponentByClass<URepairComponent>())
-	{
-		RepairComp->Multicast_PlaySingleRepairEffect(SpaceShip->GetActorLocation());
-	}
-
-	APlayerController* PC = Cast<APlayerController>(GetController());
-	if (!PC) return;
-	UInv_InventoryComponent* InvComp = UInv_InventoryStatics::GetInventoryComponent(PC);
-	if (!InvComp) return;
-
 	int32 Use1 = 0;
 	int32 Use2 = 0;
-	if (TotalMaterials > 0)
+	CalculateShipMaterialUsage(Material1Amount, Material2Amount, MaterialsUsed, Use1, Use2);
+	if (!InvComp->TryConsumeMaterialPairOnServer(Material1Tag, Use1, Material2Tag, Use2))
 	{
-		const float Ratio1 = (float)Material1Amount / (float)TotalMaterials;
-		Use1 = FMath::RoundToInt(Ratio1 * MaterialsUsed);
-		Use2 = MaterialsUsed - Use1;
+		UE_LOG(LogTemp, Warning, TEXT("[ShipHeal] Rejected: insufficient server inventory."));
+		return;
 	}
-	if (Use1 > 0 && Material1Tag.IsValid()) InvComp->Server_ConsumeMaterialsMultiStack(Material1Tag, Use1);
-	if (Use2 > 0 && Material2Tag.IsValid()) InvComp->Server_ConsumeMaterialsMultiStack(Material2Tag, Use2);
+
+	ShipHC->Heal(ActualHeal, this);
+	RepairComp->Multicast_PlaySingleRepairEffect(SpaceShip->GetActorLocation());
 
 	UE_LOG(LogTemp, Warning, TEXT("[ShipHeal] 회복 %.0f HP (재료 %d개 소비) | HP %.0f -> %.0f / %.0f"),
 		ActualHeal, MaterialsUsed, CurHP, ShipHC->GetHealth(), MaxHP);
@@ -1357,6 +1411,22 @@ void AHellunaHeroCharacter::CloseShipHealMenu()
 // ============================================================================
 // [MenuInputLockV1] UI 메뉴 입력 잠금 (참조 카운트). 위젯 NativeConstruct/Destruct 에서 호출.
 // ============================================================================
+void AHellunaHeroCharacter::DisableInput(APlayerController* PlayerController)
+{
+	Super::DisableInput(PlayerController);
+	if (InputEnabled()) return;
+
+	// Release events cannot reach the pawn while cinematic input is disabled.
+	if (UHellunaAbilitySystemComponent* ASC = GetHellunaAbilitySystemComponent(); IsValid(ASC))
+	{
+		FGameplayTagContainer HeldCombatAbilities;
+		HeldCombatAbilities.AddTag(HellunaGameplayTags::Player_Ability_Block);
+		HeldCombatAbilities.AddTag(HellunaGameplayTags::Player_Ability_Shoot);
+		HeldCombatAbilities.AddTag(HellunaGameplayTags::Player_Ability_Aim);
+		ASC->CancelAbilities(&HeldCombatAbilities);
+	}
+}
+
 void AHellunaHeroCharacter::PushMenuInputLock()
 {
 	// 0→1 진입 시에만: 메뉴 태그 set + 진행 중 발사/조준 강제 취소(연사 즉시 정지 = Release 효과).
@@ -1368,8 +1438,11 @@ void AHellunaHeroCharacter::PushMenuInputLock()
 
 			// FullAuto 연사 포함 진행 중 발사 즉시 종료(EndAbility→타이머 정리), 견착도 해제.
 			//   (견착 해제 시 Shoot() 의 Aim 태그 가드가 백업으로 한 번 더 연사를 끊는다)
-			ASC->CancelAbilityByTag(HellunaGameplayTags::Player_Ability_Shoot);
-			ASC->CancelAbilityByTag(HellunaGameplayTags::Player_Ability_Aim);
+			FGameplayTagContainer HeldCombatAbilities;
+			HeldCombatAbilities.AddTag(HellunaGameplayTags::Player_Ability_Block);
+			HeldCombatAbilities.AddTag(HellunaGameplayTags::Player_Ability_Shoot);
+			HeldCombatAbilities.AddTag(HellunaGameplayTags::Player_Ability_Aim);
+			ASC->CancelAbilities(&HeldCombatAbilities);
 		}
 	}
 }
@@ -1819,7 +1892,9 @@ void AHellunaHeroCharacter::TickPhysicsStunPoll()
 	if (HeroHealthComponent && (HeroHealthComponent->IsDead() || HeroHealthComponent->IsDowned()))
 	{
 		World->GetTimerManager().ClearTimer(PhysicsStunPollHandle);
+		World->GetTimerManager().ClearTimer(RecoveryLingerHandle);
 		bServerPhysicsStunned = false;
+		bPendingRecovery = false;
 		return;
 	}
 
@@ -1888,19 +1963,43 @@ void AHellunaHeroCharacter::ServerRecoverFromStun()
 		World->GetTimerManager().ClearTimer(RecoveryLingerHandle);
 	}
 
+	// A delayed recovery must not re-enable movement after downing or death.
+	const UHellunaHealthComponent* Health = FindComponentByClass<UHellunaHealthComponent>();
+	if (!IsValid(Health) || Health->IsDead() || Health->IsDowned()) return;
+
+	FVector RecoveryLoc;
+	float RecoveryYaw;
+	CalculatePhysicsStunRecoveryTransform(RecoveryLoc, RecoveryYaw);
+	Multicast_RecoverFromStun(FVector_NetQuantize(RecoveryLoc), RecoveryYaw);
+	ForceNetUpdate();
+
+	const FVector HitStart = StunDebugStartLocation;
+	UE_LOG(LogHelluna, Warning,
+		TEXT("[Stun-Debug SRV RECOVER] HitStart=(%.0f,%.0f,%.0f) RecoveryLoc=(%.0f,%.0f,%.0f) Dist=%.1f"),
+		HitStart.X, HitStart.Y, HitStart.Z, RecoveryLoc.X, RecoveryLoc.Y, RecoveryLoc.Z,
+		FVector::Dist(HitStart, RecoveryLoc));
+	UE_LOG(LogHelluna, Log, TEXT("[Stun] %s -> recovered"), *GetName());
+}
+
+void AHellunaHeroCharacter::CalculatePhysicsStunRecoveryTransform(FVector& RecoveryLoc, float& RecoveryYaw) const
+{
+	RecoveryLoc = GetActorLocation();
+	RecoveryYaw = GetActorRotation().Yaw;
+	if (!HasAuthority()) return;
+
 	// 래그돌 최종 위치 기준으로 스탠딩 캡슐의 Z 를 재구성.
 	// Pelvis 는 엎드린 자세에서 지면 근처(+약 20cm) 에 위치하므로
 	// 그 좌표에서 지면을 라인트레이스로 찾고, 캡슐 발바닥이 지면에 닿도록
 	// ActorZ = GroundZ + HalfHeight + Skin 으로 재설정한다.
-	FVector RecoveryLoc = GetActorLocation();
 	USkeletalMeshComponent* SkelMesh = GetMesh();
 	UCapsuleComponent* Capsule = GetCapsuleComponent();
 	UWorld* World = GetWorld();
 
-	if (SkelMesh && Capsule && World)
+	if (IsValid(SkelMesh) && IsValid(Capsule) && IsValid(World)
+		&& SkelMesh->GetBoneIndex(TEXT("pelvis")) != INDEX_NONE)
 	{
 		const FVector PelvisLoc = SkelMesh->GetBoneLocation(TEXT("pelvis"));
-		if (!PelvisLoc.IsNearlyZero())
+		if (!PelvisLoc.ContainsNaN())
 		{
 			const float HalfHeight = Capsule->GetScaledCapsuleHalfHeight();
 			const float SkinOffset = 2.f;
@@ -1938,26 +2037,25 @@ void AHellunaHeroCharacter::ServerRecoverFromStun()
 		}
 	}
 
-	SetActorLocation(RecoveryLoc, /*bSweep=*/false, nullptr, ETeleportType::TeleportPhysics);
-
-	Multicast_RecoverFromStun(FVector_NetQuantize(RecoveryLoc));
-
-	// [Stun-Debug] 회복 좌표가 실제 래그돌 최종 위치인지 검증용
-	const FVector HitStart = StunDebugStartLocation;
-	const float StartToRecovery = FVector::Dist(HitStart, RecoveryLoc);
-	UE_LOG(LogHelluna, Warning,
-		TEXT("[Stun-Debug SRV RECOVER] HitStart=(%.0f,%.0f,%.0f) RecoveryLoc=(%.0f,%.0f,%.0f) Dist=%.1f"),
-		HitStart.X, HitStart.Y, HitStart.Z,
-		RecoveryLoc.X, RecoveryLoc.Y, RecoveryLoc.Z,
-		StartToRecovery);
-
-	UE_LOG(LogHelluna, Log, TEXT("[Stun] %s → 스턴 회복"), *GetName());
+	// Physics poses are simulated independently. Only the server chooses the final yaw.
+	if (IsValid(SkelMesh) && SkelMesh->GetBoneIndex(TEXT("pelvis")) != INDEX_NONE
+		&& SkelMesh->GetBoneIndex(TEXT("head")) != INDEX_NONE)
+	{
+		RecoveryYaw = CalculateStunRecoveryYaw(SkelMesh->GetBoneLocation(TEXT("pelvis")),
+			SkelMesh->GetBoneLocation(TEXT("head")), RecoveryYaw);
+	}
 }
 
-void AHellunaHeroCharacter::Multicast_RecoverFromStun_Implementation(FVector_NetQuantize RecoveryLocation)
+void AHellunaHeroCharacter::Multicast_RecoverFromStun_Implementation(FVector_NetQuantize RecoveryLocation, float RecoveryYaw)
+{
+	RestorePhysicsStunState(FVector(RecoveryLocation), RecoveryYaw, true);
+}
+
+void AHellunaHeroCharacter::RestorePhysicsStunState(const FVector& RecoveryLocation, float RecoveryYaw, bool bPlayGetUpMontage)
 {
 	// 카메라 팔로우 종료 — Tick 추적 중지
 	bLocalPhysicsStunned = false;
+	PhysicsBlendOutRemaining = 0.f;
 
 	// [중요] 순서:
 	//   1) CameraBoom 월드 위치 스냅샷 (구 캡슐 기준) — 순간이동 시점에도 카메라 월드 좌표를 유지하기 위함
@@ -1972,38 +2070,18 @@ void AHellunaHeroCharacter::Multicast_RecoverFromStun_Implementation(FVector_Net
 
 	USkeletalMeshComponent* SkelMesh = GetMesh();
 
-	// [Stun] 래그돌 최종 방향으로 캡슐 yaw 정렬.
-	// GetUp 몽타주는 정자세(supine) 기준으로 제작되었으므로, 캐릭터 머리가 가리키는
-	// 방향으로 캡슐이 향해야 일어난 직후 카메라/이동 방향이 자연스럽다.
-	// Pelvis→Head 벡터를 지면 평면에 투영해서 Yaw 를 산출.
-	float DesiredYaw = GetActorRotation().Yaw;
-	bool bYawAligned = false;
-	if (SkelMesh)
-	{
-		const FVector PelvisW = SkelMesh->GetBoneLocation(TEXT("pelvis"));
-		const FVector HeadW   = SkelMesh->GetBoneLocation(TEXT("head"));
-		FVector Forward = HeadW - PelvisW;
-		Forward.Z = 0.f;
-		if (Forward.SizeSquared() > 4.f) // 최소 2cm
-		{
-			Forward.Normalize();
-			DesiredYaw = Forward.Rotation().Yaw;
-			bYawAligned = true;
-		}
-	}
-
 	// 캡슐을 래그돌 최종 위치(Pelvis 기준)로 이동 — 메시 재부착 전에 수행해야
 	// 클라에서 Replication 지연으로 캡슐이 피격 위치에 남아있는 동안 메시가
 	// 구 위치로 스냅되는 현상을 방지.
 	const FVector RecoveryWorld(RecoveryLocation);
-	if (!RecoveryWorld.IsNearlyZero())
+	if (!RecoveryWorld.ContainsNaN())
 	{
 		SetActorLocation(RecoveryWorld, /*bSweep=*/false, nullptr, ETeleportType::TeleportPhysics);
 	}
-	if (bYawAligned)
+	if (FMath::IsFinite(RecoveryYaw))
 	{
 		const FRotator Cur = GetActorRotation();
-		SetActorRotation(FRotator(Cur.Pitch, DesiredYaw, Cur.Roll), ETeleportType::TeleportPhysics);
+		SetActorRotation(FRotator(Cur.Pitch, RecoveryYaw, Cur.Roll), ETeleportType::TeleportPhysics);
 	}
 
 	// CameraBoom 복원: 월드 위치 연속성 유지 후 Default 로 Lerp (한 프레임 점프 방지)
@@ -2043,7 +2121,7 @@ void AHellunaHeroCharacter::Multicast_RecoverFromStun_Implementation(FVector_Net
 	//      프레임 출력 포즈를 기억하고 다음 프레임부터 N초에 걸쳐 inertial 보간.
 	//   4) GetUp 몽타주 재생 → 정자세에서 일어나는 모션.
 	// 결과: 래그돌 어떤 자세든 → 부드럽게 애니 첫 프레임(정자세) 로 녹아들고 일어남.
-	if (SkelMesh)
+	if (IsValid(SkelMesh))
 	{
 		// (a) 스냅샷 저장 (ABP 에서 'StunRecovery' 이름으로 참조 가능, 현재는 fallback)
 		if (UAnimInstance* AnimInst = SkelMesh->GetAnimInstance())
@@ -2057,7 +2135,7 @@ void AHellunaHeroCharacter::Multicast_RecoverFromStun_Implementation(FVector_Net
 		SkelMesh->bBlendPhysics = false;
 		SkelMesh->SetCollisionProfileName(TEXT("CharacterMesh"));
 
-		if (bMeshDefaultsCached)
+		if (bMeshDefaultsCached && IsValid(GetCapsuleComponent()))
 		{
 			SkelMesh->AttachToComponent(GetCapsuleComponent(),
 				FAttachmentTransformRules::KeepRelativeTransform);
@@ -2075,7 +2153,7 @@ void AHellunaHeroCharacter::Multicast_RecoverFromStun_Implementation(FVector_Net
 				FName(TEXT("DefaultGroup")), InertialBlend, /*BlendProfile=*/nullptr);
 
 			// (d) GetUp 몽타주 재생 — 정자세에서 일어나는 모션.
-			if (GetUpMontage)
+			if (bPlayGetUpMontage && GetUpMontage)
 			{
 				AnimInst->Montage_Play(GetUpMontage, 1.f);
 			}
@@ -2100,9 +2178,6 @@ void AHellunaHeroCharacter::Multicast_RecoverFromStun_Implementation(FVector_Net
 		UnlockMoveInput();
 		UnlockLookInput();
 	}
-
-	// GetUp 몽타주는 상단에서 rate=0 으로 Play 되어 프레임 0 에 고정 대기 중.
-	// Tick 의 물리 블렌드 아웃 완료 시점에 rate=1 로 Resume.
 
 	// [Stun-Debug] 회복 완료 시점 Actor 위치 vs 피격 시작 위치 비교
 	{
@@ -2176,47 +2251,66 @@ void AHellunaHeroCharacter::RefreshMaxWalkSpeed()
 
 void AHellunaHeroCharacter::SetAnimRateMultiplier(float NewMultiplier)
 {
+	if (!HasAuthority() || !FMath::IsFinite(NewMultiplier)) return;
 	AnimRateMultiplier = FMath::Clamp(NewMultiplier, 0.05f, 1.f);
-
-	UE_LOG(LogTemp, Warning, TEXT("[TimeDistortion] SetAnimRateMultiplier: %.2f (Server)"), AnimRateMultiplier);
-
-	// 서버(리슨 서버)에서도 즉시 GlobalAnimRateScale 갱신
-	if (USkeletalMeshComponent* SkelMesh = GetMesh())
-	{
-		if (AnimRateMultiplier < 1.f - KINDA_SMALL_NUMBER)
-		{
-			// 슬로우 적용: 원본 저장 후 배율 적용
-			OriginalGlobalAnimRateScale = SkelMesh->GlobalAnimRateScale;
-			SkelMesh->GlobalAnimRateScale = OriginalGlobalAnimRateScale * AnimRateMultiplier;
-		}
-		else
-		{
-			// 복원
-			SkelMesh->GlobalAnimRateScale = OriginalGlobalAnimRateScale;
-		}
-		UE_LOG(LogTemp, Warning, TEXT("[TimeDistortion] Server GlobalAnimRateScale = %.2f"), SkelMesh->GlobalAnimRateScale);
-	}
+	ApplyAnimRateMultiplierToMesh();
 }
 
 void AHellunaHeroCharacter::OnRep_AnimRateMultiplier()
 {
-	UE_LOG(LogTemp, Warning, TEXT("[TimeDistortion] OnRep_AnimRateMultiplier: %.2f (Client)"), AnimRateMultiplier);
+	ApplyAnimRateMultiplierToMesh();
+}
 
-	if (USkeletalMeshComponent* SkelMesh = GetMesh())
+void AHellunaHeroCharacter::ApplyAnimRateMultiplierToMesh()
+{
+	ApplyTimeDistortionAnimRate(GetMesh(), AnimRateMultiplier,
+		OriginalGlobalAnimRateScale, bOriginalGlobalAnimRateScaleCached);
+}
+
+void AHellunaHeroCharacter::AddTimeDistortionSource(AActor* Source, float Multiplier)
+{
+	if (!HasAuthority() || !IsValid(Source) || Source->GetWorld() != GetWorld()
+		|| !FMath::IsFinite(Multiplier)) return;
+
+	TimeDistortionSources.Add(Source, FMath::Clamp(Multiplier, 0.05f, 1.f));
+	RefreshTimeDistortionSources();
+}
+
+void AHellunaHeroCharacter::RemoveTimeDistortionSource(AActor* Source)
+{
+	// EndPlay can remove a source that is already being destroyed.
+	if (!HasAuthority() || !Source) return;
+	if (TimeDistortionSources.Remove(Source) > 0)
 	{
-		if (AnimRateMultiplier < 1.f - KINDA_SMALL_NUMBER)
-		{
-			// 슬로우 적용: 원본 저장 후 배율 적용
-			OriginalGlobalAnimRateScale = SkelMesh->GlobalAnimRateScale;
-			SkelMesh->GlobalAnimRateScale = OriginalGlobalAnimRateScale * AnimRateMultiplier;
-		}
-		else
-		{
-			// 복원
-			SkelMesh->GlobalAnimRateScale = OriginalGlobalAnimRateScale;
-		}
-		UE_LOG(LogTemp, Warning, TEXT("[TimeDistortion] Client GlobalAnimRateScale = %.2f"), SkelMesh->GlobalAnimRateScale);
+		RefreshTimeDistortionSources();
 	}
+}
+
+void AHellunaHeroCharacter::RefreshTimeDistortionSources()
+{
+	float Multiplier = 1.f;
+	for (auto It = TimeDistortionSources.CreateIterator(); It; ++It)
+	{
+		if (!It.Key().IsValid())
+		{
+			It.RemoveCurrent();
+			continue;
+		}
+		Multiplier = FMath::Min(Multiplier, It.Value());
+	}
+
+	if (UCharacterMovementComponent* CMC = GetCharacterMovement())
+	{
+		if (CMC->IsFalling())
+		{
+			// Rescale only the change in effective slow, not every overlap callback.
+			CMC->Velocity.Z *= Multiplier / FMath::Max(JumpGravityMultiplier, 0.05f);
+		}
+	}
+	SetMoveSpeedMultiplier(Multiplier);
+	SetAnimRateMultiplier(Multiplier);
+	SetJumpGravityMultiplier(Multiplier);
+	ForceNetUpdate();
 }
 
 // =========================================================
@@ -3189,8 +3283,19 @@ void AHellunaHeroCharacter::Multicast_PlayHeroDowned_Implementation()
 	}
 }
 
-void AHellunaHeroCharacter::Multicast_PlayHeroRevived_Implementation()
+void AHellunaHeroCharacter::Multicast_PlayHeroRevived_Implementation(FVector_NetQuantize RecoveryLocation, float RecoveryYaw)
 {
+	// Downing stops normal stun recovery; revive must complete the same local cleanup.
+	if (bLocalPhysicsStunned)
+	{
+		RestorePhysicsStunState(FVector(RecoveryLocation), RecoveryYaw, false);
+	}
+	if (IsLocallyControlled())
+	{
+		UnlockMoveInput();
+		UnlockLookInput();
+	}
+
 	// [Fix] PlayFullBody 원복 → locomotion 복귀
 	PlayFullBody = false;
 
@@ -3413,6 +3518,8 @@ void AHellunaHeroCharacter::Server_StopRevive_Implementation()
 
 void AHellunaHeroCharacter::TickRevive()
 {
+	if (!HasAuthority()) return;
+
 	// 유효성 체크: 대상 유효 + 다운 + 본인 생존
 	if (!IsValid(ReviveTarget) || !ReviveTarget->HeroHealthComponent
 		|| !ReviveTarget->HeroHealthComponent->IsDowned()
@@ -3460,6 +3567,25 @@ void AHellunaHeroCharacter::TickRevive()
 		{
 			Target->HeroHealthComponent->Revive(Target->ReviveHealthPercent);
 		}
+		if (!IsValid(Target->HeroHealthComponent) || !Target->HeroHealthComponent->IsAliveAndNotDowned())
+		{
+			UE_LOG(LogHelluna, Warning, TEXT("[Revive] Recovery rejected: target is not alive after Revive."));
+			return;
+		}
+
+		FVector RecoveryLocation = Target->GetActorLocation();
+		float RecoveryYaw = Target->GetActorRotation().Yaw;
+		if (Target->bLocalPhysicsStunned)
+		{
+			Target->CalculatePhysicsStunRecoveryTransform(RecoveryLocation, RecoveryYaw);
+		}
+		Target->bServerPhysicsStunned = false;
+		Target->bPendingRecovery = false;
+		if (UWorld* World = Target->GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(Target->PhysicsStunPollHandle);
+			World->GetTimerManager().ClearTimer(Target->RecoveryLingerHandle);
+		}
 
 		// 다운 태그 제거
 		// [CRITICAL-FIX] 부활 대상의 실제 베이스 ASC 사용 (죽은 null 멤버 대신).
@@ -3477,7 +3603,8 @@ void AHellunaHeroCharacter::TickRevive()
 		}
 
 		// 부활 몽타주 + 카메라 복구
-		Target->Multicast_PlayHeroRevived();
+		Target->Multicast_PlayHeroRevived(FVector_NetQuantize(RecoveryLocation), RecoveryYaw);
+		Target->ForceNetUpdate();
 
 		UE_LOG(LogHelluna, Log, TEXT("[Revive] %s → %s 부활 완료"), *GetName(), *Target->GetName());
 	}
@@ -4206,6 +4333,152 @@ void AHellunaHeroCharacter::InitSpawnVFX()
 
 	UE_LOG(LogHelluna, Log, TEXT("[SpawnVFX] Started (Duration=%.2f, Intensity=%.2f)"), SpawnVFXDuration, SpawnVFXMaxIntensity);
 }
+
+#if WITH_DEV_AUTOMATION_TESTS
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHellunaNetworkRecoveryTest, "Helluna.Network.AnimationRecovery",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHellunaNetworkRecoveryTest::RunTest(const FString& Parameters)
+{
+	USkeletalMeshComponent* Mesh = NewObject<USkeletalMeshComponent>();
+	float OriginalRate = 1.f;
+	bool bCached = false;
+	Mesh->GlobalAnimRateScale = 0.8f;
+	ApplyTimeDistortionAnimRate(Mesh, 1.f, OriginalRate, bCached);
+	TestEqual(TEXT("An inactive effect preserves the configured rate"), Mesh->GlobalAnimRateScale, 0.8f);
+	ApplyTimeDistortionAnimRate(Mesh, 0.3f, OriginalRate, bCached);
+	ApplyTimeDistortionAnimRate(Mesh, 0.3f, OriginalRate, bCached);
+	TestTrue(TEXT("Repeated slow does not compound"), FMath::IsNearlyEqual(Mesh->GlobalAnimRateScale, 0.24f, 1.e-6f));
+	ApplyTimeDistortionAnimRate(Mesh, 0.1f, OriginalRate, bCached);
+	TestTrue(TEXT("A stronger slow still uses the original rate"), FMath::IsNearlyEqual(Mesh->GlobalAnimRateScale, 0.08f, 1.e-6f));
+	ApplyTimeDistortionAnimRate(Mesh, 0.3f, OriginalRate, bCached);
+	ApplyTimeDistortionAnimRate(Mesh, 1.f, OriginalRate, bCached);
+	ApplyTimeDistortionAnimRate(Mesh, 1.f, OriginalRate, bCached);
+	TestEqual(TEXT("Repeated release restores the original rate"), Mesh->GlobalAnimRateScale, 0.8f);
+	TestFalse(TEXT("Release ends the baseline lifetime"), bCached);
+	Mesh->GlobalAnimRateScale = 1.2f;
+	ApplyTimeDistortionAnimRate(Mesh, 0.5f, OriginalRate, bCached);
+	TestTrue(TEXT("A later slow captures the new baseline"), FMath::IsNearlyEqual(Mesh->GlobalAnimRateScale, 0.6f, 1.e-6f));
+	ApplyTimeDistortionAnimRate(nullptr, 1.f, OriginalRate, bCached);
+	TestTrue(TEXT("A missing mesh does not lose the baseline"), bCached);
+	ApplyTimeDistortionAnimRate(Mesh, 1.f, OriginalRate, bCached);
+	TestEqual(TEXT("The new baseline is restored"), Mesh->GlobalAnimRateScale, 1.2f);
+	TestTrue(TEXT("Recovery projects the server pose onto the ground plane"), FMath::IsNearlyEqual(
+		CalculateStunRecoveryYaw(FVector::ZeroVector, FVector(0.f, 50.f, 80.f), -20.f), 90.f));
+	TestEqual(TEXT("An upright pose retains server yaw"),
+		CalculateStunRecoveryYaw(FVector::ZeroVector, FVector(0.f, 0.f, 80.f), -20.f), -20.f);
+	TestEqual(TEXT("A near-zero direction retains server yaw"),
+		CalculateStunRecoveryYaw(FVector::ZeroVector, FVector(1.f, 0.f, 0.f), -20.f), -20.f);
+
+	if (!TestNotNull(TEXT("Test engine"), GEngine)) return false;
+	UWorld* TestWorld = UWorld::CreateWorld(EWorldType::Game, false);
+	if (!TestNotNull(TEXT("Recovery test world"), TestWorld)) return false;
+	GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(TestWorld);
+	ON_SCOPE_EXIT { TestWorld->DestroyWorld(false); GEngine->DestroyWorldContext(TestWorld); };
+	TestWorld->InitializeActorsForPlay(FURL());
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	AHellunaHeroCharacter* Hero = TestWorld->SpawnActor<AHellunaHeroCharacter>(
+		FVector::ZeroVector, FRotator::ZeroRotator, SpawnParameters);
+	AHellunaHeroCharacter* Reviver = TestWorld->SpawnActor<AHellunaHeroCharacter>(
+		FVector(100.f, 0.f, 0.f), FRotator::ZeroRotator, SpawnParameters);
+	APlayerController* PC = TestWorld->SpawnActor<APlayerController>();
+	if (!TestNotNull(TEXT("Recovery hero"), Hero) || !TestNotNull(TEXT("Reviver"), Reviver)
+		|| !TestNotNull(TEXT("Local controller"), PC)) return false;
+	Hero->CharacterStartUpData = NewObject<UDataAsset_BaseStartUpData>(Hero);
+	PC->Possess(Hero);
+	// Exercise controller ignore flags without creating a viewport/input binding stack.
+	PC->SetAsLocalPlayerController();
+	TestTrue(TEXT("The test exercises locally controlled input cleanup"), Hero->IsLocallyControlled());
+	UCharacterMovementComponent* Movement = Hero->GetCharacterMovement();
+	USkeletalMeshComponent* HeroMesh = Hero->GetMesh();
+	UHellunaHealthComponent* Health = Hero->FindComponentByClass<UHellunaHealthComponent>();
+	if (!TestNotNull(TEXT("Health component"), Health)) return false;
+
+	// Seed the post-impact state without relying on a cooked skeleton or a physics tick.
+	Hero->MeshDefaultRelativeLocation = HeroMesh->GetRelativeLocation();
+	Hero->MeshDefaultRelativeRotation = HeroMesh->GetRelativeRotation();
+	Hero->bMeshDefaultsCached = true;
+	HeroMesh->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
+	HeroMesh->bBlendPhysics = true;
+	Hero->GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Movement->DisableMovement();
+	Hero->LockMoveInput();
+	Hero->LockLookInput();
+	Hero->bServerPhysicsStunned = true;
+	Hero->bLocalPhysicsStunned = true;
+	Hero->bPendingRecovery = true;
+	TestWorld->GetTimerManager().SetTimer(Hero->RecoveryLingerHandle, Hero,
+		&AHellunaHeroCharacter::ServerRecoverFromStun, 10.f, false);
+	Health->SetHealth(0.f);
+	TestTrue(TEXT("Lethal health transition enters downed state"), Health->IsDowned());
+	Hero->TickPhysicsStunPoll();
+	TestFalse(TEXT("Downing clears the pending recovery flag"), Hero->bPendingRecovery);
+	TestFalse(TEXT("Downing clears the delayed recovery timer"),
+		TestWorld->GetTimerManager().IsTimerActive(Hero->RecoveryLingerHandle));
+	Hero->ServerRecoverFromStun();
+	TestTrue(TEXT("Downing retains the local stun state until revive"), Hero->bLocalPhysicsStunned);
+	TestEqual(TEXT("Downed heroes cannot recover walking"), Movement->MovementMode.GetValue(), MOVE_None);
+	Reviver->ReviveTarget = Hero;
+	Reviver->ReviveDuration = 0.f;
+	Reviver->TickRevive();
+	TestTrue(TEXT("Revive completes the health transition"), Health->IsAliveAndNotDowned());
+	TestFalse(TEXT("Revive ends local stun camera tracking"), Hero->bLocalPhysicsStunned);
+	TestFalse(TEXT("Revive ends physics blending"), HeroMesh->bBlendPhysics);
+	TestTrue(TEXT("Revive reattaches the mesh to the capsule"), HeroMesh->GetAttachParent() == Hero->GetCapsuleComponent());
+	TestTrue(TEXT("Revive restores the cached mesh offset"), HeroMesh->GetRelativeLocation().Equals(Hero->MeshDefaultRelativeLocation));
+	TestEqual(TEXT("Revive restores capsule collision"), Hero->GetCapsuleComponent()->GetCollisionEnabled(), ECollisionEnabled::QueryAndPhysics);
+	TestEqual(TEXT("Revive restores walking"), Movement->MovementMode.GetValue(), MOVE_Walking);
+	TestFalse(TEXT("Revive unlocks local movement"), PC->IsMoveInputIgnored());
+	TestFalse(TEXT("Revive unlocks local view"), PC->IsLookInputIgnored());
+	Hero->Multicast_PlayHeroRevived(Hero->GetActorLocation(), Hero->GetActorRotation().Yaw);
+	TestFalse(TEXT("Repeated revive does not relock input"), PC->IsMoveInputIgnored());
+
+	UHellunaCharacterAnimInstance* Anim = NewObject<UHellunaCharacterAnimInstance>(HeroMesh);
+	Anim->NativeInitializeAnimation();
+	Movement->Velocity = FVector(400.f, 0.f, 0.f);
+	Anim->NativeUpdateAnimation(1.f / 60.f);
+	TestEqual(TEXT("Ground speed is published before the BP event, without a worker update"), Anim->GroundSpeed, 400.f);
+	Movement->Velocity = FVector::ZeroVector;
+	Anim->NativeUpdateAnimation(1.f / 60.f);
+	TestEqual(TEXT("Stopping clears ground speed in the same native update"), Anim->GroundSpeed, 0.f);
+	Hero->SetMoveSpeedMultiplier(0.3f);
+	Movement->Velocity = FVector(120.f, 0.f, 0.f);
+	Anim->NativeUpdateAnimation(1.f / 60.f);
+	TestTrue(TEXT("Locomotion keeps time-distortion speed compensation"), FMath::IsNearlyEqual(Anim->GroundSpeed, 400.f, 1.e-3f));
+	Hero->SetMoveSpeedMultiplier(1.f);
+	UHellunaAbilitySystemComponent* ASC = Hero->GetHellunaAbilitySystemComponent();
+	if (!TestNotNull(TEXT("Hero ASC"), ASC)) return false;
+	ASC->AddLooseGameplayTag(HellunaGameplayTags::Player_status_Aim);
+	Anim->AimLocomotionAnimMap.Add(EWeaponAnimType::Gun, NewObject<UAnimSequence>());
+	Anim->NativeUpdateAnimation(1.f / 60.f);
+	TestTrue(TEXT("Healthy grounded ADS movement remains enabled"), Anim->bAimingMoving);
+	Movement->SetMovementMode(MOVE_Falling);
+	Anim->NativeUpdateAnimation(1.f / 60.f);
+	TestFalse(TEXT("ADS locomotion cannot override falling"), Anim->bAimingMoving);
+	Movement->DisableMovement();
+	Movement->Velocity = FVector(400.f, 0.f, 0.f);
+	Anim->NativeUpdateAnimation(1.f / 60.f);
+	TestEqual(TEXT("Disabled hero movement clears ground speed despite residual velocity"), Anim->GroundSpeed, 0.f);
+	TestFalse(TEXT("Disabled movement cannot select ADS walking"), Anim->bAimingMoving);
+	Movement->SetMovementMode(MOVE_Walking);
+	Hero->PlayFullBody = true;
+	Anim->NativeUpdateAnimation(1.f / 60.f);
+	TestFalse(TEXT("ADS locomotion respects the full-body branch"), Anim->bAimingMoving);
+	Hero->PlayFullBody = false;
+	Movement->Velocity = FVector::ZeroVector;
+	Anim->AimMovingSpeedThreshold = 0.f;
+	Anim->NativeUpdateAnimation(1.f / 60.f);
+	TestFalse(TEXT("A zero ADS threshold cannot select stationary walking"), Anim->bAimingMoving);
+	UHellunaCharacterAnimInstance* OwnerlessAnim = NewObject<UHellunaCharacterAnimInstance>(Mesh);
+	OwnerlessAnim->GroundSpeed = 400.f;
+	OwnerlessAnim->bAimingMoving = true;
+	OwnerlessAnim->NativeUpdateAnimation(1.f / 60.f);
+	TestEqual(TEXT("Missing owners do not retain old speed"), OwnerlessAnim->GroundSpeed, 0.f);
+	TestFalse(TEXT("Missing owners do not retain ADS walking"), OwnerlessAnim->bAimingMoving);
+	return true;
+}
+#endif
 
 void AHellunaHeroCharacter::TickSpawnVFX(float DeltaTime)
 {

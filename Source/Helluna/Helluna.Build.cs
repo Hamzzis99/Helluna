@@ -5,6 +5,12 @@ using System.IO;
 
 public class Helluna : ModuleRules
 {
+    private static bool HasPluginDescriptor(string PluginRoot, string PluginName)
+    {
+        return Directory.Exists(PluginRoot)
+            && Directory.GetFiles(PluginRoot, PluginName + ".uplugin", SearchOption.AllDirectories).Length > 0;
+    }
+
     public Helluna(ReadOnlyTargetRules Target) : base(Target)
     {
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
@@ -16,6 +22,20 @@ public class Helluna : ModuleRules
         string EngineDir = Path.GetFullPath(Target.RelativeEnginePath);
         string PCGPublic = Path.Combine(EngineDir, "Plugins", "PCG", "Source", "PCG", "Public");
         PublicIncludePaths.Add(PCGPublic);
+
+        string ProjectDir = Target.ProjectFile == null ? string.Empty : Target.ProjectFile.Directory.FullName;
+        string ProjectPluginDir = Path.Combine(ProjectDir, "Plugins");
+        string EnginePluginDir = Path.Combine(EngineDir, "Plugins");
+
+        bool bWithDLSS = HasPluginDescriptor(ProjectPluginDir, "DLSS") || HasPluginDescriptor(EnginePluginDir, "DLSS");
+        bool bWithStreamline = HasPluginDescriptor(ProjectPluginDir, "StreamlineCore") || HasPluginDescriptor(EnginePluginDir, "StreamlineCore");
+        bool bWithFSR = HasPluginDescriptor(ProjectPluginDir, "FSR") || HasPluginDescriptor(EnginePluginDir, "FSR");
+        bool bWithAsyncLoadingScreen = HasPluginDescriptor(ProjectPluginDir, "AsyncLoadingScreen") || HasPluginDescriptor(EnginePluginDir, "AsyncLoadingScreen");
+
+        PublicDefinitions.Add("HELLUNA_WITH_DLSS=" + (bWithDLSS ? "1" : "0"));
+        PublicDefinitions.Add("HELLUNA_WITH_STREAMLINE=" + (bWithStreamline ? "1" : "0"));
+        PublicDefinitions.Add("HELLUNA_WITH_FSR=" + (bWithFSR ? "1" : "0"));
+        PublicDefinitions.Add("HELLUNA_WITH_ASYNC_LOADING_SCREEN=" + (bWithAsyncLoadingScreen ? "1" : "0"));
 
         PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput" , "StructUtils", 
             "GameplayAbilities", "GameplayTags","GameplayTasks", "AIModule", "NavigationSystem","AnimGraphRuntime", "MotionWarping",
@@ -30,6 +50,7 @@ public class Helluna : ModuleRules
             "MassMovement","MassLOD", "MassCrowd",
 
             // === ECS 하이브리드 시스템용 모듈 (Mass Entity + Actor 전환) ===
+            "MassCore",           // UE 5.8: FMassElement/FMassFragment/FTransformFragment owner module
             "MassCommon",         // Mass 공통 Fragment, 유틸리티 (FTransformFragment 등)
             "MassSimulation",     // Mass 시뮬레이션 서브시스템 (Processor 실행 관리)
             "MassSignals",        // Mass Signal 시스템 (StateTree 깨우기, 엔티티 간 신호)
@@ -62,14 +83,8 @@ public class Helluna : ModuleRules
             // [카메라 쉐이크] PerlinNoiseCameraShakePattern 사용
             "EngineCameras",
 
-            // [그래픽 설정] RHI (GPU 벤더 감지 + GGPUFrameTime)
+            // [그래픽 설정] RHI (GPU 벤더 감지 + RHIGetGPUFrameCycles)
             "RHI",
-
-            // [그래픽 설정] DLSS/Streamline/FSR Blueprint API
-            "DLSSBlueprint",
-            "StreamlineBlueprint",
-            "StreamlineDLSSGBlueprint",
-            "StreamlineReflexBlueprint",
 
             // [§13 v2.1] Loading Barrier B구간 — 스크린샷 → MoviePlayer 배경
             "MoviePlayer",
@@ -80,9 +95,23 @@ public class Helluna : ModuleRules
         });
         PrivateDependencyModuleNames.AddRange(new string[] { "AssetRegistry" });
 
+        if (bWithDLSS)
+        {
+            PublicDependencyModuleNames.Add("DLSSBlueprint");
+        }
+
+        if (bWithStreamline)
+        {
+            PublicDependencyModuleNames.AddRange(new string[] {
+                "StreamlineBlueprint",
+                "StreamlineDLSSGBlueprint",
+                "StreamlineReflexBlueprint"
+            });
+        }
+
         // [§17++ Phase 2] AsyncLoadingScreen plugin (BeginPlay 갭 가림 + 동적 우주선 widget 주입)
         // 클라이언트만 사용 (plugin TargetDenyList=Server)
-        if (Target.Type != TargetType.Server)
+        if (bWithAsyncLoadingScreen && Target.Type != TargetType.Server)
         {
             PrivateDependencyModuleNames.Add("AsyncLoadingScreen");
         }

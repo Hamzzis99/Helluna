@@ -7,6 +7,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Sound/SoundBase.h"
 #include "Net/UnrealNetwork.h" // DOREPLIFETIME 매크로 사용 (UE 5.7.1)
+#include "Components/StaticMeshComponent.h"
 
 UInv_ResourceComponent::UInv_ResourceComponent()
 {
@@ -261,7 +262,18 @@ void UInv_ResourceComponent::SpawnDroppedResources()
 		return;
 	}
 
-	const int32 DropCount = FMath::RandRange(DropCountMin, DropCountMax);
+	TArray<TSubclassOf<AActor>> ValidDropClasses;
+	for (const TSubclassOf<AActor>& ItemClass : DropItemClasses)
+	{
+		if (IsValid(ItemClass.Get()) && !ItemClass->HasAnyClassFlags(CLASS_Abstract)) ValidDropClasses.Add(ItemClass);
+	}
+	if (ValidDropClasses.IsEmpty())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[ResourceDrop] No valid pickup class on %s"), *GetNameSafe(GetOwner()));
+		return;
+	}
+	const int32 MinCount = FMath::Clamp(DropCountMin, 0, 100);
+	const int32 DropCount = FMath::RandRange(MinCount, FMath::Clamp(DropCountMax, MinCount, 100));
 #if INV_DEBUG_RESOURCE
 	UE_LOG(LogTemp, Warning, TEXT("[자원] %d개의 아이템 소환 중 (랜덤 선택)"), DropCount);
 #endif
@@ -272,8 +284,8 @@ void UInv_ResourceComponent::SpawnDroppedResources()
 	for (int32 i = 0; i < DropCount; i++)
 	{
 		// 배열에서 랜덤으로 아이템 선택
-		const int32 RandomIndex = FMath::RandRange(0, DropItemClasses.Num() - 1);
-		TSubclassOf<AActor> SelectedItemClass = DropItemClasses[RandomIndex];
+		const int32 RandomIndex = FMath::RandRange(0, ValidDropClasses.Num() - 1);
+		TSubclassOf<AActor> SelectedItemClass = ValidDropClasses[RandomIndex];
 		
 		if (!SelectedItemClass)
 		{
@@ -295,6 +307,16 @@ void UInv_ResourceComponent::SpawnDroppedResources()
 		// 스폰 위치: 자원 위치 + 시작 높이 (블루프린트에서 설정 가능)
 		FVector SpawnLocation = ActorLocation;
 		SpawnLocation.Z += SpawnStartHeight; // Z축으로 위로 올림
+		if (UPrimitiveComponent* Surface = Cast<UPrimitiveComponent>(Owner->GetRootComponent()))
+		{
+			const FVector Probe = Surface->Bounds.Origin + RandomDirection * (Surface->Bounds.SphereRadius + 100.f);
+			FVector SurfacePoint;
+			if (Surface->GetClosestPointOnCollision(Probe, SurfacePoint) >= 0.f)
+			{
+				SpawnLocation = SurfacePoint + RandomDirection * 50.f;
+				SpawnLocation.Z = FMath::Max(SpawnLocation.Z + 25.f, ActorLocation.Z + SpawnStartHeight);
+			}
+		}
 
 
 		const FRotator SpawnRotation = FRotator::ZeroRotator;
@@ -336,6 +358,8 @@ void UInv_ResourceComponent::SpawnDroppedResources()
 #endif
 
 					// Physics 활성화
+					MeshComp->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+					if (MeshComp == SpawnedItem->GetRootComponent()) SpawnedItem->SetReplicateMovement(true);
 					MeshComp->SetSimulatePhysics(true);
 					MeshComp->SetEnableGravity(true);
 
@@ -349,10 +373,11 @@ void UInv_ResourceComponent::SpawnDroppedResources()
 #endif
 					
 					// 포물선 발사각 계산 (블루프린트에서 설정 가능, 기본값 30도)
-					const float LaunchAngleRadians = FMath::DegreesToRadians(LaunchAngleDegrees);
+					const float LaunchAngleRadians = FMath::DegreesToRadians(FMath::Clamp(LaunchAngleDegrees, 1.f, 89.f));
 					
 					// 랜덤 거리 (얼마나 멀리 날아갈지)
-					const float LaunchDistance = FMath::FRandRange(DropSpawnDistanceMin, DropSpawnDistanceMax);
+					const float MinDistance = FMath::Max(0.f, DropSpawnDistanceMin);
+					const float LaunchDistance = FMath::FRandRange(MinDistance, FMath::Max(MinDistance, DropSpawnDistanceMax));
 					
 					// 포물선 공식: V = sqrt(g * d / sin(2θ))
 					const float Gravity = FMath::Abs(World->GetGravityZ()); // 중력 (양수)

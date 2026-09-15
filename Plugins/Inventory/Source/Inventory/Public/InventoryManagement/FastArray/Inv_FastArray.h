@@ -78,7 +78,7 @@ struct FInv_InventoryFastArray : public FFastArraySerializer
 	FInv_InventoryFastArray(UActorComponent* InOwnerComponent) : OwnerComponent(InOwnerComponent) {}
 
 	//유틸리티 함수 구현
-	TArray<UInv_InventoryItem*> GetAllItems() const; // 아이템 정보 얻어오기
+	INVENTORY_API TArray<UInv_InventoryItem*> GetAllItems() const; // 아이템 정보 얻어오기
 
 	// FFastArraySerializer contract
 	void PreReplicatedRemove(const TArrayView<int32> RemovedIndices, int32 FinalSize); // 제거 전 처리

@@ -57,6 +57,7 @@ class HELLUNA_API AHellunaHeroCharacter : public AHellunaBaseCharacter
 
 public:
 	AHellunaHeroCharacter();
+	virtual void DisableInput(APlayerController* PlayerController) override;
 
 	/** F키 상호작용 홀드 상태 (BossEncounterCube 등 Tick 프로그레스용) */
 	UFUNCTION(BlueprintCallable, Category = "Interaction")
@@ -233,12 +234,12 @@ public:
 	// @param Material1Amount - 재료 1 개수
 	// @param Material2Tag - 재료 2 태그
 	// @param Material2Amount - 재료 2 개수
-	UFUNCTION(Server, Reliable, BlueprintCallable, Category = "Repair")
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "Repair")
 	void Server_RepairSpaceShip(FGameplayTag Material1Tag, int32 Material1Amount, FGameplayTag Material2Tag, int32 Material2Amount);
 
 	// ⭐ [ShipHeal] 우주선 HP 회복 RPC — 재료 비례 회복 (E 회복 메뉴). Server_RepairSpaceShip 미러.
 	//   수리(CurrentResource)와 별개로 ShipHealthComponent->Heal 호출. MaxHP 초과분 재료는 보존.
-	UFUNCTION(Server, Reliable, BlueprintCallable, Category = "ShipHeal")
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "ShipHeal")
 	void Server_HealShipFromMaterials(FGameplayTag Material1Tag, int32 Material1Amount, FGameplayTag Material2Tag, int32 Material2Amount);
 
 	// 무기 스폰 RPC
@@ -772,7 +773,7 @@ protected:
 
 	/** 부활 몽타주 + 카메라 복구 멀티캐스트 */
 	UFUNCTION(NetMulticast, Reliable)
-	void Multicast_PlayHeroRevived();
+	void Multicast_PlayHeroRevived(FVector_NetQuantize RecoveryLocation, float RecoveryYaw);
 
 	// ── Revive 입력 (F키 홀드) ──
 	void Input_ReviveStarted(const FInputActionValue& Value);
@@ -1067,7 +1068,7 @@ protected:
 
 	/** Multicast: 래그돌 해제 + 캡슐 복원 + GetUp */
 	UFUNCTION(NetMulticast, Reliable)
-	void Multicast_RecoverFromStun(FVector_NetQuantize RecoveryLocation);
+	void Multicast_RecoverFromStun(FVector_NetQuantize RecoveryLocation, float RecoveryYaw);
 
 private:
 	/** 서버 스턴 활성 여부 */
@@ -1092,6 +1093,12 @@ private:
 
 	/** 서버: 회복 수행 */
 	void ServerRecoverFromStun();
+	void CalculatePhysicsStunRecoveryTransform(FVector& RecoveryLocation, float& RecoveryYaw) const;
+	void RestorePhysicsStunState(const FVector& RecoveryLocation, float RecoveryYaw, bool bPlayGetUpMontage);
+
+#if WITH_DEV_AUTOMATION_TESTS
+	friend class FHellunaNetworkRecoveryTest;
+#endif
 
 	/** 래그돌 중 카메라가 따라가도록 CameraBoom 을 Pelvis 본 위치로 추적 (Zelda BotW 스타일) */
 	void TickPhysicsStunCameraFollow(float DeltaTime);
@@ -1197,6 +1204,7 @@ public:
 
 	/** 슬로우 전 원본 AnimRateScale 저장 (복원용) */
 	float OriginalGlobalAnimRateScale = 1.f;
+	bool bOriginalGlobalAnimRateScaleCached = false;
 
 	/** 애니메이션 속도 배율 설정 (서버에서 호출) */
 	void SetAnimRateMultiplier(float NewMultiplier);
@@ -1230,7 +1238,15 @@ public:
 	UFUNCTION()
 	void OnRep_JumpGravityMultiplier();
 
+	/** Server-owned zone effects: overlapping zones use the strongest remaining slow. */
+	void AddTimeDistortionSource(AActor* Source, float Multiplier);
+	void RemoveTimeDistortionSource(AActor* Source);
+
 private:
+	TMap<TWeakObjectPtr<AActor>, float> TimeDistortionSources;
+	void RefreshTimeDistortionSources();
+	void ApplyAnimRateMultiplierToMesh();
+
 	/** JumpGravityMultiplier 값을 CMC에 적용 (서버/클라 공통 로직) */
 	void ApplyJumpGravityMultiplierToCMC();
 };

@@ -103,7 +103,7 @@ void UInv_InventoryComponent::TryAddItem(UInv_ItemComponent* ItemComponent)
 #endif
 
 	// 디버깅: ItemComponent 정보 출력
-	if (!IsValid(ItemComponent))
+	if (!IsValid(ItemComponent) || !IsValid(InventoryMenu))
 	{
 #if INV_DEBUG_INVENTORY
 		UE_LOG(LogTemp, Error, TEXT("[PICKUP] ItemComponent가 nullptr입니다!"));
@@ -157,7 +157,7 @@ void UInv_InventoryComponent::TryAddItem(UInv_ItemComponent* ItemComponent)
 #endif
 
 		// 이미 존재하는 아이템에 스택을 추가하는 부분.
-		OnStackChange.Broadcast(Result); // 스택 변경 사항 방송
+		// Apply the authoritative FastArray result, not an unacknowledged local increment.
 		Server_AddStacksToItem(ItemComponent, Result.TotalRoomToFill, Result.Remainder); // 아이템을 추가하는 부분.
 	}
 	// 서버에서 아이템 등록
@@ -191,6 +191,8 @@ bool UInv_InventoryComponent::Server_AddNewItem_Validate(UInv_ItemComponent* Ite
 
 void UInv_InventoryComponent::Server_AddNewItem_Implementation(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder) // 서버에서 새로운 아이템 추가 구현
 {
+	if (!ValidatePickupRequest(ItemComponent, StackCount, Remainder)
+		|| !HasRoomInInventoryList(ItemComponent->GetItemManifest(), true)) return;
 #if INV_DEBUG_INVENTORY
 	UE_LOG(LogTemp, Warning, TEXT("=== [SERVER PICKUP] Server_AddNewItem_Implementation 시작 ==="));
 #endif
@@ -288,6 +290,57 @@ void UInv_InventoryComponent::Server_AddNewItem_Implementation(UInv_ItemComponen
 //    LoadAndSendInventoryToClient()에서 CDO 경로로 아이템 추가 시
 //
 // ════════════════════════════════════════════════════════════════════════════════
+int32 UInv_InventoryComponent::GrantMaterialsFromManifest(const FInv_ItemManifest& Manifest, int32 RequestedCount)
+{
+	AActor* OwnerActor = GetOwner();
+	UWorld* World = GetWorld();
+	if (!IsInGameThread() || !IsValid(OwnerActor) || !OwnerActor->HasAuthority()
+		|| OwnerActor->IsActorBeingDestroyed() || !IsValid(World) || World->bIsTearingDown
+		|| RequestedCount <= 0 || !Manifest.GetItemType().IsValid()
+		|| Manifest.GetItemCategory() != EInv_ItemCategory::Craftable) return 0;
+
+	const FInv_StackableFragment* Stack = Manifest.GetFragmentOfType<FInv_StackableFragment>();
+	const int32 MaxStack = Stack ? Stack->GetMaxStackSize() : 1;
+	if (MaxStack <= 0) return 0;
+	const int32 Requested = FMath::Min(RequestedCount, 9999);
+	int32 Remaining = Requested;
+	TArray<UInv_InventoryItem*> ChangedItems;
+	if (Stack)
+	{
+		for (FInv_InventoryEntry& Entry : InventoryList.Entries)
+		{
+			UInv_InventoryItem* Item = Entry.Item;
+			if (!IsValid(Item) || Entry.bIsAttachedToWeapon || Entry.bIsEquipped
+				|| Item->GetItemManifest().GetItemType() != Manifest.GetItemType()
+				|| Item->GetItemManifest().GetItemCategory() != EInv_ItemCategory::Craftable) continue;
+			const FInv_StackableFragment* ExistingStack = Item->GetItemManifest().GetFragmentOfType<FInv_StackableFragment>();
+			if (!ExistingStack) continue;
+			const int32 Before = Item->GetTotalStackCount();
+			if (Before < 0 || Before >= ExistingStack->GetMaxStackSize()) continue;
+			const int32 Added = FMath::Min(Remaining, ExistingStack->GetMaxStackSize() - Before);
+			Item->SetTotalStackCount(Before + Added);
+			Remaining -= Item->GetTotalStackCount() - Before;
+			InventoryList.MarkItemDirty(Entry);
+			ChangedItems.Add(Item);
+			if (Remaining == 0) break;
+		}
+	}
+
+	while (Remaining > 0 && HasRoomInInventoryList(Manifest, true))
+	{
+		FInv_ItemManifest Copy = Manifest;
+		UInv_InventoryItem* NewItem = AddItemFromManifest(Copy, FMath::Min(Remaining, MaxStack));
+		if (!IsValid(NewItem) || NewItem->GetTotalStackCount() <= 0) break;
+		Remaining -= NewItem->GetTotalStackCount();
+	}
+	if (IsListenServerOrStandalone())
+	{
+		for (UInv_InventoryItem* Item : ChangedItems) NotifyReplicatedItemCount(Item);
+	}
+	if (Remaining < Requested) OwnerActor->ForceNetUpdate();
+	return Requested - Remaining;
+}
+
 UInv_InventoryItem* UInv_InventoryComponent::AddItemFromManifest(FInv_ItemManifest& ManifestCopy, int32 StackCount)
 {
 	if (!GetOwner() || !GetOwner()->HasAuthority())
@@ -597,9 +650,25 @@ bool UInv_InventoryComponent::Server_AddStacksToItem_Validate(UInv_ItemComponent
 
 void UInv_InventoryComponent::Server_AddStacksToItem_Implementation(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder) // 서버에서 아이템 스택 개수를 세어주는 역할.
 {
+	if (!ValidatePickupRequest(ItemComponent, StackCount, Remainder)) return;
 	const FGameplayTag& ItemType = IsValid(ItemComponent) ? ItemComponent->GetItemManifest().GetItemType() : FGameplayTag::EmptyTag; // 아이템 유형 가져오기
-	UInv_InventoryItem* Item = InventoryList.FindFirstItemByType(ItemType); // 동일한 유형의 아이템 찾기
-	if (!IsValid(Item)) return;
+	UInv_InventoryItem* Item = nullptr;
+	for (const FInv_InventoryEntry& Entry : InventoryList.Entries)
+	{
+		if (!IsValid(Entry.Item) || Entry.bIsAttachedToWeapon || Entry.bIsEquipped
+			|| Entry.Item->GetItemManifest().GetItemType() != ItemType) continue;
+		const FInv_StackableFragment* Stack = Entry.Item->GetItemManifest().GetFragmentOfType<FInv_StackableFragment>();
+		if (Stack && Entry.Item->GetTotalStackCount() < Stack->GetMaxStackSize())
+		{
+			Item = Entry.Item;
+			break;
+		}
+	}
+	if (!IsValid(Item))
+	{
+		Server_AddNewItem_Implementation(ItemComponent, StackCount, Remainder);
+		return;
+	}
 
 	// ⭐ [MaxStackSize 검증] 초과분을 새 슬롯에 추가하도록 개선
 	const int32 CurrentStack = Item->GetTotalStackCount();
@@ -608,10 +677,16 @@ void UInv_InventoryComponent::Server_AddStacksToItem_Implementation(UInv_ItemCom
 	// MaxStackSize 가져오기
 	if (const FInv_StackableFragment* StackableFragment = Item->GetItemManifest().GetFragmentOfType<FInv_StackableFragment>())
 	{
-		MaxStackSize = StackableFragment->GetMaxStackSize();
+		MaxStackSize = FMath::Max(1, StackableFragment->GetMaxStackSize());
 	}
 	
-	const int32 RoomInCurrentStack = MaxStackSize - CurrentStack; // 현재 스택에 추가 가능한 양
+	const int32 RoomInCurrentStack = FMath::Max(0, MaxStackSize - CurrentStack);
+	if (StackCount > RoomInCurrentStack && !HasRoomInInventoryList(ItemComponent->GetItemManifest(), true))
+	{
+		Remainder += StackCount - RoomInCurrentStack;
+		StackCount = RoomInCurrentStack;
+	}
+	if (StackCount <= 0) return;
 	const int32 AmountToAddToCurrentStack = FMath::Min(StackCount, RoomInCurrentStack); // 현재 스택에 실제로 추가할 양
 	const int32 Overflow = StackCount - AmountToAddToCurrentStack; // 초과분 (새 슬롯으로 가야 함)
 	
@@ -695,12 +770,14 @@ void UInv_InventoryComponent::Server_AddStacksToItem_Implementation(UInv_ItemCom
 			UE_LOG(LogTemp, Warning, TEXT("[Server_AddStacksToItem] ✅ 새 슬롯에 %d개 추가 완료!"), Overflow);
 #endif
 		}
-#if INV_DEBUG_INVENTORY
 		else
 		{
+			Remainder += Overflow;
+			UE_LOG(LogTemp, Warning, TEXT("[Pickup] Overflow allocation failed; retained %d in world pickup."), Overflow);
+#if INV_DEBUG_INVENTORY
 			UE_LOG(LogTemp, Error, TEXT("[Server_AddStacksToItem] ❌ 새 슬롯 생성 실패! %d개 손실!"), Overflow);
-		}
 #endif
+		}
 	}
 
 	//0가 되면 아이템 파괴하는 부분
@@ -1579,6 +1656,59 @@ int32 UInv_InventoryComponent::GetTotalMaterialCount(const FGameplayTag& Materia
 		*MaterialTag.ToString(), TotalCount);
 #endif
 	return TotalCount;
+}
+
+bool UInv_InventoryComponent::TryConsumeMaterialPairOnServer(
+	const FGameplayTag& MaterialTag1, int32 Amount1,
+	const FGameplayTag& MaterialTag2, int32 Amount2)
+{
+	AActor* OwnerActor = GetOwner();
+	if (!IsValid(OwnerActor) || !OwnerActor->HasAuthority())
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Inventory] Material pair consumption rejected: server authority required."));
+		return false;
+	}
+
+	if (Amount1 < 0 || Amount2 < 0 || (Amount1 == 0 && Amount2 == 0))
+	{
+		return false;
+	}
+
+	if ((Amount1 > 0 && !MaterialTag1.IsValid()) || (Amount2 > 0 && !MaterialTag2.IsValid()))
+	{
+		return false;
+	}
+
+	const bool bSameTag = Amount1 > 0 && Amount2 > 0 && MaterialTag1.MatchesTagExact(MaterialTag2);
+	if (bSameTag)
+	{
+		const int64 CombinedAmount = static_cast<int64>(Amount1) + static_cast<int64>(Amount2);
+		if (CombinedAmount > MAX_int32 || GetTotalMaterialCount(MaterialTag1) < CombinedAmount)
+		{
+			return false;
+		}
+
+		Server_ConsumeMaterialsMultiStack_Implementation(MaterialTag1, static_cast<int32>(CombinedAmount));
+		return true;
+	}
+
+	if ((Amount1 > 0 && GetTotalMaterialCount(MaterialTag1) < Amount1)
+		|| (Amount2 > 0 && GetTotalMaterialCount(MaterialTag2) < Amount2))
+	{
+		return false;
+	}
+
+	// Validation and mutation run synchronously on the server game thread.
+	if (Amount1 > 0)
+	{
+		Server_ConsumeMaterialsMultiStack_Implementation(MaterialTag1, Amount1);
+	}
+	if (Amount2 > 0)
+	{
+		Server_ConsumeMaterialsMultiStack_Implementation(MaterialTag2, Amount2);
+	}
+
+	return true;
 }
 
 bool UInv_InventoryComponent::Server_ConsumeMaterialsMultiStack_Validate(const FGameplayTag& MaterialTag, int32 Amount)
@@ -2912,7 +3042,48 @@ void UInv_InventoryComponent::Server_UpdateItemGridPositionsBatch_Implementation
 #endif
 }
 
-bool UInv_InventoryComponent::HasRoomInInventoryList(const FInv_ItemManifest& Manifest) const
+bool UInv_InventoryComponent::ValidatePickupRequest(UInv_ItemComponent* ItemComponent, int32& StackCount, int32& Remainder) const
+{
+	const APlayerController* PC = Cast<APlayerController>(GetOwner());
+	const APawn* Pawn = IsValid(PC) ? PC->GetPawn() : nullptr;
+	const AActor* Pickup = IsValid(ItemComponent) ? ItemComponent->GetOwner() : nullptr;
+	if (!IsValid(Pawn) || !PC->HasAuthority() || !IsValid(Pickup) || Pickup->IsActorBeingDestroyed()
+		|| !Pickup->GetIsReplicated() || Pickup->GetWorld() != GetWorld()) return false;
+	if (FVector::DistSquared(Pawn->GetActorLocation(), Pickup->GetActorLocation()) > FMath::Square(MaxPickupDistance))
+	{
+		UE_LOG(LogTemp, Verbose, TEXT("[Pickup] Out of range: %s"), *GetNameSafe(Pickup));
+		return false;
+	}
+	const FInv_StackableFragment* Stack = ItemComponent->GetItemManifest().GetFragmentOfType<FInv_StackableFragment>();
+	const int32 Available = Stack ? FMath::Max(0, Stack->GetStackCount()) : 1;
+	StackCount = Stack ? FMath::Clamp(StackCount, 0, FMath::Min(Available, FMath::Max(0, Stack->GetMaxStackSize()))) : 1;
+	Remainder = Available - StackCount;
+	return StackCount > 0;
+}
+
+void UInv_InventoryComponent::NotifyReplicatedItemCount(UInv_InventoryItem* Item)
+{
+	if (!IsValid(Item)) return;
+	const int32 Index = FindEntryIndexForItem(Item);
+	if (!InventoryList.Entries.IsValidIndex(Index)) return;
+	const FInv_InventoryEntry& Entry = InventoryList.Entries[Index];
+	if (Entry.bIsAttachedToWeapon || Entry.bIsEquipped) return;
+	if (Item->GetItemManifest().GetItemCategory() == EInv_ItemCategory::Craftable)
+	{
+		FInv_SlotAvailabilityResult Result;
+		Result.Item = Item;
+		Result.bStackable = true;
+		Result.TotalRoomToFill = Item->GetTotalStackCount();
+		Result.EntryIndex = Index;
+		OnStackChange.Broadcast(Result);
+	}
+	else
+	{
+		OnItemAdded.Broadcast(Item, Index);
+	}
+}
+
+bool UInv_InventoryComponent::HasRoomInInventoryList(const FInv_ItemManifest& Manifest, bool bRequireNewSlot) const
 {
 	EInv_ItemCategory Category = Manifest.GetItemCategory();
 	FGameplayTag ItemType = Manifest.GetItemType();
@@ -2931,6 +3102,8 @@ bool UInv_InventoryComponent::HasRoomInInventoryList(const FInv_ItemManifest& Ma
 	// ⭐ Grid 크기 설정 (Component 설정에서 가져오기)
 	int32 LocalGridRows = GridRows;  // ⭐ 지역 변수로 복사 (const 함수에서 수정 가능)
 	int32 LocalGridColumns = GridColumns;
+	if (LocalGridRows <= 0 || LocalGridColumns <= 0 || LocalGridRows > 100 || LocalGridColumns > 100
+		|| ItemSize.X <= 0 || ItemSize.Y <= 0) return false;
 	int32 MaxSlots = LocalGridRows * LocalGridColumns;
 	UInv_InventoryGrid* TargetGrid = nullptr;
 
@@ -2940,7 +3113,7 @@ bool UInv_InventoryComponent::HasRoomInInventoryList(const FInv_ItemManifest& Ma
 #endif
 	
 	// ⭐ InventoryMenu가 있으면 실제 Grid의 HasRoomForItem 사용 (더 정확함!)
-	if (IsValid(InventoryMenu))
+	if (IsValid(InventoryMenu) && !bRequireNewSlot)
 	{
 		UInv_SpatialInventory* SpatialInv = Cast<UInv_SpatialInventory>(InventoryMenu);
 		if (IsValid(SpatialInv))
@@ -3018,18 +3191,22 @@ bool UInv_InventoryComponent::HasRoomInInventoryList(const FInv_ItemManifest& Ma
 
 	for (const auto& Entry : InventoryList.Entries)
 	{
-		if (!IsValid(Entry.Item)) continue;
+		if (!IsValid(Entry.Item) || Entry.bIsAttachedToWeapon || Entry.bIsEquipped) continue;
 
 		if (Entry.Item->GetItemManifest().GetItemCategory() == Category)
 		{
 			const FInv_GridFragment* ItemGridFragment = Entry.Item->GetItemManifest().GetFragmentOfType<FInv_GridFragment>();
 			FIntPoint ExistingItemSize = ItemGridFragment ? ItemGridFragment->GetGridSize() : FIntPoint(1, 1);
+			if (Entry.bRotated) Swap(ExistingItemSize.X, ExistingItemSize.Y);
+			if (ExistingItemSize.X <= 0 || ExistingItemSize.Y <= 0) return false;
 
 			FGameplayTag EntryType = Entry.Item->GetItemManifest().GetItemType();
 			int32 StackCount = Entry.Item->GetTotalStackCount();
 
 			// ⭐ 실제 Grid 위치 사용! (없으면 순차 배치 Fallback)
-			FIntPoint ActualPos = Entry.Item->GetGridPosition();
+			FIntPoint ActualPos = Entry.GridIndex >= 0
+				? FIntPoint(Entry.GridIndex % LocalGridColumns, Entry.GridIndex / LocalGridColumns)
+				: FIntPoint(-1, -1);
 
 #if INV_DEBUG_INVENTORY
 			UE_LOG(LogTemp, Warning, TEXT("[공간체크]   - [%d] %s x%d (크기: %dx%d, 실제위치: [%d,%d])"),
@@ -3155,7 +3332,7 @@ bool UInv_InventoryComponent::HasRoomInInventoryList(const FInv_ItemManifest& Ma
 	const FInv_StackableFragment* StackableFragment = Manifest.GetFragmentOfType<FInv_StackableFragment>();
 	bool bStackable = (StackableFragment != nullptr);
 
-	if (bStackable)
+	if (bStackable && !bRequireNewSlot)
 	{
 #if INV_DEBUG_INVENTORY
 		UE_LOG(LogTemp, Warning, TEXT("[공간체크] 🔍 스택 가능 아이템 - 기존 스택 찾기 중..."));

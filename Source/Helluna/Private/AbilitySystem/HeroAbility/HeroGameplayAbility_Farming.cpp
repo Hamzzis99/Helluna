@@ -224,9 +224,9 @@ bool UHeroGameplayAbility_Farming::IsTargetWithinFarmingRange(
 		return false;
 	}
 
-	const AActor* Avatar = ActorInfo->AvatarActor.Get();
-	const float MaxDistance = FMath::Max(FarmingSnapDistance, 200.f) + 80.f;
-	return FVector::DistSquared2D(Avatar->GetActorLocation(), Target->GetActorLocation()) <= FMath::Square(MaxDistance);
+	const UHelluna_FindResourceComponent* FindComp =
+		ActorInfo->AvatarActor->FindComponentByClass<UHelluna_FindResourceComponent>();
+	return IsValid(FindComp) && FindComp->IsTargetWithinFarmingRange(Target);
 }
 
 bool UHeroGameplayAbility_Farming::PrimeFarmingPoseBeforeSwing(const FGameplayAbilityActorInfo* ActorInfo)
@@ -356,6 +356,7 @@ bool UHeroGameplayAbility_Farming::SnapHeroToFarmingDistance(
 	const FGameplayAbilityActorInfo* ActorInfo
 ) const
 {
+	if (!ActorInfo || !ActorInfo->AvatarActor.IsValid()) return false;
 	AActor* Target = CachedFarmingTarget.Get();
 	if (!Target)
 	{
@@ -367,9 +368,13 @@ bool UHeroGameplayAbility_Farming::SnapHeroToFarmingDistance(
 	}
 
 	AHellunaHeroCharacter* Hero = Cast<AHellunaHeroCharacter>(ActorInfo->AvatarActor.Get());
+	if (!IsValid(Hero)) return false;
+	const UHelluna_FindResourceComponent* FindComp = Hero->FindComponentByClass<UHelluna_FindResourceComponent>();
+	FVector TargetLoc;
+	if (!IsValid(FindComp) || !FindComp->GetFarmingSurfacePoint(Target, TargetLoc)) return false;
 	const FVector HeroLoc = Hero->GetActorLocation();
-	const FVector TargetLoc = Target->GetActorLocation();
-	const float DesiredDistance = FarmingSnapDistance;
+	const float DesiredDistance = FMath::Max(0.f, FarmingSnapDistance);
+	if (FVector::DistSquared2D(HeroLoc, TargetLoc) <= FMath::Square(DesiredDistance)) return true;
 	FVector Dir = (HeroLoc - TargetLoc);
 	Dir.Z = 0.f;
 

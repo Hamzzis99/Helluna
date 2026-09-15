@@ -398,6 +398,15 @@ void UHeroGameplayAbility_Aim::EndAbility(
 	const FGameplayAbilityActivationInfo ActivationInfo,
 	bool bReplicateEndAbility, bool bWasCancelled)
 {
+	// Block and automatic fire cannot outlive their required aiming state.
+	if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo(); IsValid(ASC))
+	{
+		FGameplayTagContainer AimDependentAbilities;
+		AimDependentAbilities.AddTag(HellunaGameplayTags::Player_Ability_Block);
+		AimDependentAbilities.AddTag(HellunaGameplayTags::Player_Ability_Shoot);
+		ASC->CancelAbilities(&AimDependentAbilities);
+	}
+
 	if (AHellunaHeroCharacter* Hero = GetHeroCharacterFromActorInfo())
 	{
 		// ── 이동속도 + 회전 복원: 서버/클라 양쪽에서 동일하게 (LocalPredicted) ──

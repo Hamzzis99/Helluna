@@ -408,6 +408,8 @@ void FInv_InventoryFastArray::PostReplicatedChange(const TArrayView<int32> Chang
 // FastArray에 항목을 추가해주는 기능들.
 UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_ItemComponent* ItemComponent)
 {
+	if (!IsValid(ItemComponent) || !IsValid(ItemComponent->GetOwner())
+		|| ItemComponent->GetOwner()->IsActorBeingDestroyed()) return nullptr;
 	//TODO : Implement once ItemComponent is more complete
 	// [Fix29-H] check() → safe return (Shipping 빌드에서 프로세스 종료 방지)
 	if (!OwnerComponent) { UE_LOG(LogTemp, Error, TEXT("[FastArray] AddEntry(ItemComp): OwnerComponent is null!")); return nullptr; }
@@ -456,7 +458,9 @@ UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_ItemComponent* ItemCo
 #endif
 
 	FInv_InventoryEntry& NewEntry = Entries.AddDefaulted_GetRef(); // 새 항목 추가
-	NewEntry.Item = ItemComponent->GetItemManifestMutable().Manifest(OwningActor); // 항목 매니페스트에서 항목 가져오기 (새로 생성된 아이템의 소유자 지정)
+	// Manifest consumes its fragments. Partial pickups must retain their world-side data.
+	FInv_ItemManifest ManifestCopy = ItemComponent->GetItemManifest();
+	NewEntry.Item = ManifestCopy.Manifest(OwningActor);
 
 	// ⭐ [Fix11] 비스택 아이템은 Manifest() 후 TotalStackCount가 0으로 남음
 	// "아이템이 존재한다 = 최소 1개"이므로 비스택 아이템은 TotalStackCount=1로 초기화
@@ -665,3 +669,131 @@ int32 FInv_InventoryFastArray::GetTotalCountByType(const FGameplayTag& ItemType)
 {
 	return ItemTypeIndex.Num(ItemType);
 }
+
+#if WITH_DEV_AUTOMATION_TESTS
+#include "Misc/AutomationTest.h"
+#include "Misc/ScopeExit.h"
+#include "Engine/Engine.h"
+#include "Engine/World.h"
+#include "GameFramework/PlayerController.h"
+#include "GameFramework/Pawn.h"
+#include "Components/SceneComponent.h"
+#include "UObject/UnrealType.h"
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FInvPickupManifestTest, "Helluna.Resources.PickupManifest",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FInvPickupManifestTest::RunTest(const FString& Parameters)
+{
+	if (!GEngine) return false;
+	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+	if (!World) return false;
+	GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+	ON_SCOPE_EXIT { World->DestroyWorld(false); GEngine->DestroyWorldContext(World); };
+	AActor* Owner = World->SpawnActor<AActor>();
+	AActor* Pickup = World->SpawnActor<AActor>();
+	if (!Owner || !Pickup) return false;
+	UInv_InventoryComponent* Inventory = NewObject<UInv_InventoryComponent>(Owner);
+	UInv_ItemComponent* Source = NewObject<UInv_ItemComponent>(Pickup);
+	FInv_ItemManifest Manifest;
+	Manifest.GetFragmentsMutable().Add(TInstancedStruct<FInv_ItemFragment>::Make<FInv_StackableFragment>());
+	Manifest.GetFragmentOfTypeMutable<FInv_StackableFragment>()->SetStackCount(10);
+	Source->InitItemManifest(Manifest);
+	FInv_InventoryFastArray List(Inventory);
+	UInv_InventoryItem* First = List.AddEntry(Source);
+	if (!TestNotNull(TEXT("First partial pickup"), First)) return false;
+	FInv_StackableFragment* Remaining = Source->GetItemManifestMutable().GetFragmentOfTypeMutable<FInv_StackableFragment>();
+	if (!TestNotNull(TEXT("World pickup retains its stack fragment"), Remaining)) return false;
+	TestEqual(TEXT("Adding an entry does not consume source quantity"), Remaining->GetStackCount(), 10);
+	Remaining->SetStackCount(5);
+	TestNotNull(TEXT("Remaining pickup can create another entry"), List.AddEntry(Source));
+	Remaining = Source->GetItemManifestMutable().GetFragmentOfTypeMutable<FInv_StackableFragment>();
+	if (!Remaining) return false;
+	TestEqual(TEXT("Second entry also preserves the remainder"), Remaining->GetStackCount(), 5);
+	TestNull(TEXT("Invalid pickup is rejected"), List.AddEntry(static_cast<UInv_ItemComponent*>(nullptr)));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FInvPickupTransactionTest, "Helluna.Resources.PickupTransaction",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FInvPickupTransactionTest::RunTest(const FString& Parameters)
+{
+	if (!GEngine) return false;
+	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+	if (!World) return false;
+	GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+	ON_SCOPE_EXIT { World->DestroyWorld(false); GEngine->DestroyWorldContext(World); };
+	APlayerController* PC = World->SpawnActor<APlayerController>();
+	APawn* Pawn = World->SpawnActor<APawn>();
+	if (!PC || !Pawn) return false;
+	USceneComponent* PawnRoot = NewObject<USceneComponent>(Pawn);
+	Pawn->SetRootComponent(PawnRoot);
+	PawnRoot->RegisterComponent();
+	PC->Possess(Pawn);
+	UInv_InventoryComponent* Inventory = NewObject<UInv_InventoryComponent>(PC);
+
+	FInv_ItemManifest Manifest;
+	Manifest.GetFragmentsMutable().Add(TInstancedStruct<FInv_ItemFragment>::Make<FInv_StackableFragment>());
+	FInv_StackableFragment* Stack = Manifest.GetFragmentOfTypeMutable<FInv_StackableFragment>();
+	FIntProperty* MaxStackProperty = FindFProperty<FIntProperty>(FInv_StackableFragment::StaticStruct(), TEXT("MaxStackSize"));
+	if (!Stack || !MaxStackProperty) return false;
+	MaxStackProperty->SetPropertyValue_InContainer(Stack, 10);
+	Stack->SetStackCount(10);
+	const auto MakePickup = [World, &Manifest](int32 Count, const FVector& Location)
+	{
+		AActor* Actor = World->SpawnActor<AActor>();
+		if (!Actor) return static_cast<UInv_ItemComponent*>(nullptr);
+		USceneComponent* Root = NewObject<USceneComponent>(Actor);
+		Actor->SetRootComponent(Root);
+		Root->RegisterComponent();
+		Actor->SetActorLocation(Location);
+		Actor->SetReplicates(true);
+		UInv_ItemComponent* Component = NewObject<UInv_ItemComponent>(Actor);
+		Actor->AddInstanceComponent(Component);
+		Component->InitItemManifest(Manifest);
+		Component->GetItemManifestMutable().GetFragmentOfTypeMutable<FInv_StackableFragment>()->SetStackCount(Count);
+		return Component;
+	};
+
+	UInv_ItemComponent* Source = MakePickup(10, FVector::ZeroVector);
+	if (!Source) return false;
+	Inventory->Server_AddNewItem_Implementation(Source, 5, 999);
+	TArray<UInv_InventoryItem*> Items = Inventory->GetInventoryList().GetAllItems();
+	if (!TestEqual(TEXT("One partial entry"), Items.Num(), 1)) return false;
+	TestEqual(TEXT("Accepted requested quantity"), Items[0]->GetTotalStackCount(), 5);
+	Stack = Source->GetItemManifestMutable().GetFragmentOfTypeMutable<FInv_StackableFragment>();
+	if (!TestNotNull(TEXT("Partial pickup retains metadata"), Stack)) return false;
+	TestEqual(TEXT("Client remainder is ignored"), Stack->GetStackCount(), 5);
+	Inventory->Server_AddStacksToItem_Implementation(Source, 999, 999);
+	TestEqual(TEXT("Request is clamped to remaining server supply"), Items[0]->GetTotalStackCount(), 10);
+	TestTrue(TEXT("Exhausted pickup is destroyed"), Source->GetOwner()->IsActorBeingDestroyed());
+	Inventory->Server_AddStacksToItem_Implementation(Source, 999, 0);
+	TestEqual(TEXT("Repeated request cannot duplicate supply"), Items[0]->GetTotalStackCount(), 10);
+
+	UInv_ItemComponent* FarSource = MakePickup(5, FVector(2000, 0, 0));
+	if (!FarSource) return false;
+	Inventory->Server_AddNewItem_Implementation(FarSource, 5, 0);
+	TestEqual(TEXT("Out of range pickup is rejected"), Inventory->GetInventoryList().GetAllItems().Num(), 1);
+	Inventory->GetInventoryList().ClearAllEntries();
+
+	UInv_ItemComponent* FullSource = MakePickup(5, FVector::ZeroVector);
+	if (!FullSource) return false;
+	for (int32 Index = 0; Index < 32; ++Index)
+	{
+		UInv_InventoryItem* Item = Inventory->GetInventoryList().AddEntry(FullSource);
+		if (!Item) return false;
+		Item->SetTotalStackCount(Index == 31 ? 8 : 10);
+	}
+	Items = Inventory->GetInventoryList().GetAllItems();
+	Inventory->Server_AddStacksToItem_Implementation(FullSource, 5, 0);
+	TestEqual(TEXT("Non-first partial stack is filled"), Items.Last()->GetTotalStackCount(), 10);
+	Stack = FullSource->GetItemManifestMutable().GetFragmentOfTypeMutable<FInv_StackableFragment>();
+	if (!Stack) return false;
+	TestEqual(TEXT("Full inventory preserves unaccepted remainder"), Stack->GetStackCount(), 3);
+	Inventory->Server_AddNewItem_Implementation(FullSource, 3, 0);
+	TestEqual(TEXT("Server uses the same 4 by 8 capacity as the widget"), Inventory->GetInventoryList().GetAllItems().Num(), 32);
+	TestFalse(TEXT("Rejected pickup remains available"), FullSource->GetOwner()->IsActorBeingDestroyed());
+	return true;
+}
+#endif

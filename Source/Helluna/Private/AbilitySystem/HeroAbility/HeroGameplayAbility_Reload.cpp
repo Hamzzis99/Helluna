@@ -30,7 +30,7 @@ void UHeroGameplayAbility_Reload::ActivateAbility(
 	bReloadEndCalled = false;
 
 	AHellunaHeroCharacter* Hero = GetHeroCharacterFromActorInfo();
-	if (!Hero)
+	if (!IsValid(Hero))
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
@@ -38,7 +38,7 @@ void UHeroGameplayAbility_Reload::ActivateAbility(
 
 	// 총기만 리로드 가능
 	Weapon = Cast<AHeroWeapon_GunBase>(Hero->GetCurrentWeapon());
-	if (!Weapon)
+	if (!IsValid(Weapon))
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
@@ -74,8 +74,9 @@ void UHeroGameplayAbility_Reload::ActivateAbility(
 
 	Hero->Server_RequestPlayMontageExceptOwner(Montage);
 
+	// UE 5.8.1: an interruption during normal blend-out must still end this ability.
 	ReloadTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
-		this, NAME_None, Montage, 1.f);
+		this, NAME_None, Montage, 1.f, NAME_None, true, 1.f, 0.f, true);
 
 	if (!ReloadTask)
 	{
@@ -98,7 +99,7 @@ void UHeroGameplayAbility_Reload::OnReloadFinished()
 	bReloadEndCalled = true;
 
 	// 서버에서 최종 반영되도록 Gun->Reload() 내부가 Authority/RPC 처리
-	if (Weapon)
+	if (IsValid(Weapon))
 	{
 		Weapon->Reload();
 	}

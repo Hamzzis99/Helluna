@@ -64,7 +64,7 @@
 #include "Engine/Engine.h"  // [§17 3-Layer] StreamingPause delegate
 
 // [§17++ Phase 2] AsyncLoadingScreen plugin 통합 (TargetType=Server는 dependency 제외됨, 가드)
-#if !UE_SERVER
+#if !UE_SERVER && HELLUNA_WITH_ASYNC_LOADING_SCREEN
 #include "AsyncLoadingScreen.h"
 #include "AsyncLoadingScreenLibrary.h"
 #endif
@@ -201,8 +201,10 @@ void UMDF_GameInstance::Init()
 #if !UE_SERVER
 		// [§17 plugin fix] AsyncLoadingScreen은 default로 모든 LoadMap에 trigger되어 빈 검은 화면을 띄움.
 		// 우주선 핸드오프(SetupSnapshotLoadingScreen) 시점에만 활성화하도록 기본 비활성화.
+#if HELLUNA_WITH_ASYNC_LOADING_SCREEN
 		UAsyncLoadingScreenLibrary::SetEnableLoadingScreen(false);
 		UE_LOG(LogTemp, Warning, TEXT("[LoadingDbg][GI] Init — AsyncLoadingScreen plugin 기본 비활성화 (우주선 핸드오프 시에만 활성화)"));
+#endif
 
 		// [§17 3-Layer] Engine StreamingPause delegate를 우리 것으로 교체.
 		// default StreamingPauseRendering 모듈은 이미 등록됐지만 RegisterBegin/EndStreamingPauseRenderingDelegate는
@@ -389,7 +391,7 @@ void UMDF_GameInstance::OnSnapshotCaptureTimeout()
 
 void UMDF_GameInstance::SetupSnapshotLoadingScreen()
 {
-#if !UE_SERVER
+#if !UE_SERVER && HELLUNA_WITH_ASYNC_LOADING_SCREEN
 	if (IsRunningDedicatedServer())
 	{
 		return;
@@ -497,7 +499,7 @@ void UMDF_GameInstance::OnEngineStreamingPauseEnd()
 // ════════════════════════════════════════════════════════════════════════════════
 void UMDF_GameInstance::ClearPostLoadOverlay()
 {
-#if !UE_SERVER
+#if !UE_SERVER && HELLUNA_WITH_ASYNC_LOADING_SCREEN
 	// [§17++ Phase 2] plugin StopLoadingScreen 호출로 변경.
 	// bWaitForManualStop=true + bAllowEngineTick=true 조합에서 MoviePlayer를 명시 종료해야 화면 사라짐.
 	UAsyncLoadingScreenLibrary::StopLoadingScreen();

@@ -148,6 +148,15 @@ void ATimeDistortionZone::TickBloom()
 	}
 }
 
+void ATimeDistortionZone::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	bZoneActive = false;
+	if (IsValid(SlowSphere)) SlowSphere->SetGenerateOverlapEvents(false);
+	RestoreAllSlowedActors();
+	ForceRestoreNearbyPlayers();
+	Super::EndPlay(EndPlayReason);
+}
+
 void ATimeDistortionZone::Destroyed()
 {
 	RestoreAllSlowedActors();
@@ -171,9 +180,9 @@ void ATimeDistortionZone::Destroyed()
 // -----------------------------------------------------------------
 void ATimeDistortionZone::ActivateZone()
 {
+	if (!HasAuthority() || bZoneActive) return;
 	Super::ActivateZone();
 
-	if (bZoneActive) return;
 	bZoneActive = true;
 	bPatternBroken = false;
 
@@ -246,6 +255,7 @@ void ATimeDistortionZone::ActivateZone()
 // -----------------------------------------------------------------
 void ATimeDistortionZone::DeactivateZone()
 {
+	if (!HasAuthority()) return;
 	Super::DeactivateZone();
 
 	TDZ_LOG("=== DeactivateZone ===");
@@ -281,7 +291,7 @@ void ATimeDistortionZone::OnSlowSphereBeginOverlap(
 	UPrimitiveComponent* OtherComp, int32 OtherBodyIndex,
 	bool bFromSweep, const FHitResult& SweepResult)
 {
-	if (!bZoneActive) return;
+	if (!HasAuthority() || !bZoneActive) return;
 	if (!OtherActor) return;
 
 	ApplySlowToActor(OtherActor);
@@ -291,7 +301,9 @@ void ATimeDistortionZone::OnSlowSphereEndOverlap(
 	UPrimitiveComponent* OverlappedComp, AActor* OtherActor,
 	UPrimitiveComponent* OtherComp, int32 OtherBodyIndex)
 {
-	if (!OtherActor) return;
+	if (!HasAuthority() || !IsValid(OtherActor)) return;
+	// Capsule and mesh can overlap separately. One component leaving is not an actor exit.
+	if (bZoneActive && IsValid(SlowSphere) && SlowSphere->IsOverlappingActor(OtherActor)) return;
 
 	RemoveSlowFromActor(OtherActor);
 }
@@ -301,7 +313,7 @@ void ATimeDistortionZone::OnSlowSphereEndOverlap(
 // -----------------------------------------------------------------
 void ATimeDistortionZone::ApplySlowToActor(AActor* Actor)
 {
-	if (!IsValid(Actor)) return;
+	if (!HasAuthority() || !IsValid(Actor)) return;
 	if (SlowedActors.Contains(Actor)) return;
 
 	// 자기 자신, 소유 Enemy, 스폰된 Orb는 제외
@@ -311,27 +323,7 @@ void ATimeDistortionZone::ApplySlowToActor(AActor* Actor)
 
 	if (AHellunaHeroCharacter* Player = Cast<AHellunaHeroCharacter>(Actor))
 	{
-		// 플레이어: 리플리케이션 기반 슬로우 (클라이언트 예측과 호환)
-		// [TDJumpV1] 점프/중력도 함께 배율 적용 — 점프 높이 유지, 체공시간 1/M 배 늘어남
-		// [TDJumpFixV1] 점프 시작 직후 존 진입하면 상승 Z velocity는 그대로인데 중력만 줄어 점프 높이가
-		//   h = v²/(2g) 관계에 따라 1/Scale 배로 튀어오르는 버그.
-		//   공중이면 현재 Z velocity도 TimeDilationScale로 스케일해 물리적 일관성 유지.
-		if (UCharacterMovementComponent* CMC = Player->GetCharacterMovement())
-		{
-			if (CMC->IsFalling())
-			{
-				FVector Vel = CMC->Velocity;
-				const float OrigZ = Vel.Z;
-				Vel.Z *= TimeDilationScale;
-				CMC->Velocity = Vel;
-				TDZ_LOG("[PLAYER][JumpFix] Airborne entry — Z vel %.1f -> %.1f (scale=%.2f)",
-					OrigZ, Vel.Z, TimeDilationScale);
-			}
-		}
-
-		Player->SetMoveSpeedMultiplier(TimeDilationScale);
-		Player->SetAnimRateMultiplier(TimeDilationScale);
-		Player->SetJumpGravityMultiplier(TimeDilationScale);
+		Player->AddTimeDistortionSource(this, TimeDilationScale);
 		SlowedActors.Add(Actor, 1.f);
 
 		TDZ_LOG("[PLAYER] Slow applied to [%s]: MoveSpeed x%.2f, AnimRate x%.2f, JumpGravity x%.2f",
@@ -360,31 +352,14 @@ void ATimeDistortionZone::ApplySlowToActor(AActor* Actor)
 
 void ATimeDistortionZone::RemoveSlowFromActor(AActor* Actor)
 {
-	if (!IsValid(Actor)) return;
+	if (!HasAuthority() || !IsValid(Actor)) return;
 
 	const float* OriginalDilation = SlowedActors.Find(Actor);
 	if (!OriginalDilation) return;
 
 	if (AHellunaHeroCharacter* Player = Cast<AHellunaHeroCharacter>(Actor))
 	{
-		// [TDJumpFixV1] Apply에서 스케일 다운한 Z velocity 복원 — 공중이면 역스케일.
-		if (UCharacterMovementComponent* CMC = Player->GetCharacterMovement())
-		{
-			if (CMC->IsFalling())
-			{
-				FVector Vel = CMC->Velocity;
-				const float OrigZ = Vel.Z;
-				const float SafeScale = FMath::Max(TimeDilationScale, 0.01f);
-				Vel.Z /= SafeScale;
-				CMC->Velocity = Vel;
-				TDZ_LOG("[PLAYER][JumpFix] Airborne exit — Z vel %.1f -> %.1f (÷%.2f)",
-					OrigZ, Vel.Z, SafeScale);
-			}
-		}
-
-		Player->SetMoveSpeedMultiplier(1.f);
-		Player->SetAnimRateMultiplier(1.f);
-		Player->SetJumpGravityMultiplier(1.f);
+		Player->RemoveTimeDistortionSource(this);
 		TDZ_LOG("[PLAYER] Slow removed from [%s] (+Jump/Gravity 복원)", *Actor->GetName());
 	}
 	else
@@ -422,13 +397,12 @@ void ATimeDistortionZone::RestoreAllSlowedActors()
 }
 
 // -----------------------------------------------------------------
-// [TDSlowReleaseFixV1] 안전망: Zone 반경 1.5배 내 모든 HeroCharacter 강제 1.0 배율 복원.
-//   맵 기반 복원(RestoreAllSlowedActors) 이후 이중 호출로 누락 케이스 보증.
+// Safety net removes only this zone's contribution, never another zone's slow.
 // -----------------------------------------------------------------
 void ATimeDistortionZone::ForceRestoreNearbyPlayers()
 {
 	UWorld* World = GetWorld();
-	if (!World || !SlowSphere) return;
+	if (!HasAuthority() || !World || !IsValid(SlowSphere)) return;
 
 	const float ScanRadius = SlowSphere->GetScaledSphereRadius() * 1.5f;
 
@@ -450,9 +424,7 @@ void ATimeDistortionZone::ForceRestoreNearbyPlayers()
 	{
 		if (AHellunaHeroCharacter* Player = Cast<AHellunaHeroCharacter>(O.GetActor()))
 		{
-			Player->SetMoveSpeedMultiplier(1.f);
-			Player->SetAnimRateMultiplier(1.f);
-			Player->SetJumpGravityMultiplier(1.f);
+			Player->RemoveTimeDistortionSource(this);
 			++RestoredCount;
 
 			// 맵에서도 정리 (이중 호출 안전)

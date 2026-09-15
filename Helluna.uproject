@@ -1,6 +1,6 @@
 {
 	"FileVersion": 3,
-	"EngineAssociation": "5.7",
+	"EngineAssociation": "{1688312E-48ED-9E98-A6E8-A4B2360F8E45}",
 	"Category": "",
 	"Description": "",
 	"Modules": [
@@ -95,24 +95,24 @@
 		},
 		{
 			"Name": "DLSS",
-			"Enabled": true,
+			"Enabled": false,
 			"MarketplaceURL": "https://www.unrealengine.com/marketplace/en-US/product/nvidia-dlss"
 		},
 		{
 			"Name": "StreamlineDLSSG",
-			"Enabled": true,
+			"Enabled": false,
 			"MarketplaceURL": "https://www.unrealengine.com/marketplace/en-US/product/nvidia-dlss"
 		},
 		{
 			"Name": "FSR",
-			"Enabled": true,
+			"Enabled": false,
 			"SupportedTargetPlatforms": [
 				"Win64"
 			]
 		},
 		{
 			"Name": "AsyncLoadingScreen",
-			"Enabled": true,
+			"Enabled": false,
 			"MarketplaceURL": "com.epicgames.launcher://ue/marketplace/product/01f39767dc6b4290877f38365787cbf8"
 		}
 	]

@@ -23,6 +23,7 @@
 #include "Items/Manifest/Inv_ItemManifest.h"
 #include "Items/Fragments/Inv_ItemFragment.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
+#include "Persistence/Inv_SaveGameMode.h"
 
 UHellunaCheatComponent::UHellunaCheatComponent()
 {
@@ -400,8 +401,13 @@ UInv_InventoryComponent* UHellunaCheatComponent::FindInventoryComponent() const
 
 void UHellunaCheatComponent::Server_GrantAllMaterials_Implementation()
 {
+#if UE_BUILD_SHIPPING
+    return;
+#else
     UWorld* World = GetWorld();
-    if (!World) return;
+    AActor* OwnerActor = GetOwner();
+    if (!IsInGameThread() || !IsValid(World) || World->bIsTearingDown
+        || !IsValid(OwnerActor) || !OwnerActor->HasAuthority() || OwnerActor->IsActorBeingDestroyed()) return;
 
     if (!ItemTypeMappingDataTable && DefaultItemTypeMappingPath.IsValid())
     {
@@ -414,7 +420,7 @@ void UHellunaCheatComponent::Server_GrantAllMaterials_Implementation()
     }
 
     UInv_InventoryComponent* InvComp = FindInventoryComponent();
-    if (!InvComp)
+    if (!IsValid(InvComp))
     {
         UE_LOG(LogTemp, Warning, TEXT("[Cheat] GrantMaterials: InventoryComponent 없음"));
         return;
@@ -422,54 +428,41 @@ void UHellunaCheatComponent::Server_GrantAllMaterials_Implementation()
 
     TSet<UClass*> GrantedClasses;
     int32 GrantedCount = 0;
+    int32 AttemptedCount = 0;
+    int32 GrantedItemCount = 0;
+    int32 RequestedItemCount = 0;
 
     // 공용 지급 람다 — 동일 클래스 중복 지급 방지(TSet).
     auto GrantClass = [&](UClass* ItemActorClass)
     {
-        if (!ItemActorClass || GrantedClasses.Contains(ItemActorClass)) return;
+        if (!IsValid(ItemActorClass) || !ItemActorClass->IsChildOf(AActor::StaticClass())
+            || ItemActorClass->HasAnyClassFlags(CLASS_Abstract) || GrantedClasses.Contains(ItemActorClass)) return;
         GrantedClasses.Add(ItemActorClass);
-
-        // 임시 픽업 액터 스폰 → ItemComponent 추출 → InventoryComp에 추가
-        FActorSpawnParameters SpawnParams;
-        SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-        SpawnParams.ObjectFlags |= RF_Transient;
-        SpawnParams.bNoFail = true;
-
-        // 월드 밖 먼 지점에 스폰(충돌/보이기 방지). 어차피 PickedUp에서 파괴된다.
-        const FVector FarAway(0.f, 0.f, -1'000'000.f);
-        AActor* TempActor = World->SpawnActor<AActor>(ItemActorClass, FarAway, FRotator::ZeroRotator, SpawnParams);
-        if (!TempActor) return;
-
-        TempActor->SetActorHiddenInGame(true);
-        TempActor->SetActorEnableCollision(false);
-
-        UInv_ItemComponent* ItemComp = TempActor->FindComponentByClass<UInv_ItemComponent>();
-        if (!ItemComp)
-        {
-            TempActor->Destroy();
-            return;
-        }
+        const UInv_ItemComponent* ItemComp = AInv_SaveGameMode::FindItemComponentTemplate(ItemActorClass);
+        if (!IsValid(ItemComp)) return;
+        const FInv_ItemManifest& Manifest = ItemComp->GetItemManifest();
+        if (Manifest.GetItemCategory() != EInv_ItemCategory::Craftable || !Manifest.GetItemType().IsValid()) return;
 
         // 스택 한계에 맞춰 개수 제한
-        int32 StackToGrant = GrantStackCount;
+        int32 StackToGrant = FMath::Clamp(GrantStackCount, 0, 9999);
         if (const FInv_StackableFragment* Stackable =
             ItemComp->GetItemManifest().GetFragmentOfType<FInv_StackableFragment>())
         {
-            StackToGrant = FMath::Min(StackToGrant, Stackable->GetMaxStackSize());
+            StackToGrant = FMath::Min(StackToGrant, FMath::Max(0, Stackable->GetMaxStackSize()));
         }
         else
         {
-            StackToGrant = 1; // 스택 불가 아이템은 1개만
+            StackToGrant = FMath::Min(StackToGrant, 1);
         }
 
-        InvComp->Server_AddNewItem(ItemComp, StackToGrant, 0);
-        ++GrantedCount;
-
-        // Server_AddNewItem의 Remainder==0 경로에서 ItemComp->PickedUp()이 호출되어 액터가 파괴됨.
-        if (IsValid(TempActor) && !TempActor->IsActorBeingDestroyed())
-        {
-            TempActor->Destroy();
-        }
+        if (StackToGrant <= 0) return;
+        ++AttemptedCount;
+        RequestedItemCount += StackToGrant;
+        const int32 Granted = InvComp->GrantMaterialsFromManifest(Manifest, StackToGrant);
+        if (Granted > 0) ++GrantedCount;
+        GrantedItemCount += Granted;
+        UE_LOG(LogTemp, Log, TEXT("[Cheat] GrantMaterials: %s requested=%d granted=%d"),
+            *GetNameSafe(ItemActorClass), StackToGrant, Granted);
     };
 
     // 1) 기존 경로: ItemTypeMapping 테이블에서 prefix(GameItems.Craftables) 매칭 재료 지급.
@@ -528,5 +521,101 @@ void UHellunaCheatComponent::Server_GrantAllMaterials_Implementation()
         }
     }
 
-    UE_LOG(LogTemp, Warning, TEXT("[Cheat] GrantMaterials: 총 %d종 지급 (테이블+폴더스캔+확정목록)"), GrantedCount);
+    UE_LOG(LogTemp, Warning, TEXT("[Cheat] GrantMaterials: types=%d/%d items=%d/%d (stored/requested)"),
+        GrantedCount, AttemptedCount, GrantedItemCount, RequestedItemCount);
+#endif
 }
+
+#if WITH_DEV_AUTOMATION_TESTS && !UE_BUILD_SHIPPING
+#include "Misc/AutomationTest.h"
+#include "Misc/ScopeExit.h"
+#include "Engine/Engine.h"
+#include "Components/SceneComponent.h"
+#include "Items/Inv_InventoryItem.h"
+#include "UObject/UnrealType.h"
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHellunaMaterialGrantTest, "Helluna.Cheats.GrantMaterials",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHellunaMaterialGrantTest::RunTest(const FString& Parameters)
+{
+    if (!GEngine) return false;
+    UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+    if (!World) return false;
+    GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+    ON_SCOPE_EXIT { World->DestroyWorld(false); GEngine->DestroyWorldContext(World); };
+
+    APlayerController* PC = World->SpawnActor<APlayerController>();
+    APawn* Pawn = World->SpawnActor<APawn>();
+    if (!PC || !Pawn) return false;
+    USceneComponent* Root = NewObject<USceneComponent>(Pawn);
+    Pawn->SetRootComponent(Root);
+    Root->RegisterComponent();
+    Pawn->SetActorLocation(FVector(100000, 0, 1000));
+    PC->Possess(Pawn);
+    UInv_InventoryComponent* Inventory = NewObject<UInv_InventoryComponent>(PC);
+    PC->AddInstanceComponent(Inventory);
+    UHellunaCheatComponent* Cheat = NewObject<UHellunaCheatComponent>(Pawn);
+    Pawn->AddInstanceComponent(Cheat);
+
+    UClass* RubyClass = LoadObject<UClass>(nullptr,
+        TEXT("/Inventory/Items/Craftables/BP_Inv_Ore_Snow_Ruby.BP_Inv_Ore_Snow_Ruby_C"));
+    const UInv_ItemComponent* Template = AInv_SaveGameMode::FindItemComponentTemplate(RubyClass);
+    if (!TestNotNull(TEXT("Ruby template is available without a pickup actor"), Template)) return false;
+    const FInv_StackableFragment* TemplateStack = Template->GetItemManifest().GetFragmentOfType<FInv_StackableFragment>();
+    if (!TemplateStack) return false;
+    const int32 TemplateCount = TemplateStack->GetStackCount();
+    const int32 Expected = FMath::Min(Cheat->GrantStackCount, TemplateStack->GetMaxStackSize());
+    const FGameplayTag RubyTag = Template->GetItemManifest().GetItemType();
+
+    // Exercise the actual F4 handler, including its server RPC and asset discovery.
+    Cheat->HandleKey_GrantMaterials();
+    TestEqual(TEXT("F4 grants the requested Ruby stack, independent of pickup distance"),
+        Inventory->GetTotalMaterialCount(RubyTag), Expected);
+    TestEqual(TEXT("F4 never consumes the blueprint template"), TemplateStack->GetStackCount(), TemplateCount);
+    TestTrue(TEXT("F4 grants materials to an empty inventory"), Inventory->GetInventoryList().GetAllItems().Num() > 0);
+
+    Cheat->HandleKey_GrantMaterials();
+    TestTrue(TEXT("Repeated F4 does not remove previous materials"), Inventory->GetTotalMaterialCount(RubyTag) >= Expected);
+    for (UInv_InventoryItem* Item : Inventory->GetInventoryList().GetAllItems())
+    {
+        if (!Item) return false;
+        const FInv_StackableFragment* ItemStack = Item->GetItemManifest().GetFragmentOfType<FInv_StackableFragment>();
+        TestTrue(TEXT("Repeated F4 respects each stack limit"), Item->GetTotalStackCount() > 0
+            && Item->GetTotalStackCount() <= (ItemStack ? ItemStack->GetMaxStackSize() : 1));
+    }
+
+    // Controlled 1-cell material exercises full/partial inventory and source-supply independence.
+    Inventory->GetInventoryList().ClearAllEntries();
+    FInv_ItemManifest Manifest = Template->GetItemManifest();
+    Manifest.GetFragmentsMutable().Reset();
+    Manifest.GetFragmentsMutable().Add(TInstancedStruct<FInv_ItemFragment>::Make<FInv_StackableFragment>());
+    Manifest.BuildFragmentCache();
+    FInv_StackableFragment* Stack = Manifest.GetFragmentOfTypeMutable<FInv_StackableFragment>();
+    FIntProperty* MaxStackProperty = FindFProperty<FIntProperty>(FInv_StackableFragment::StaticStruct(), TEXT("MaxStackSize"));
+    if (!Stack || !MaxStackProperty) return false;
+    MaxStackProperty->SetPropertyValue_InContainer(Stack, 10);
+    Stack->SetStackCount(1);
+    TestEqual(TEXT("Direct grant accepts trusted quantity beyond template supply"),
+        Inventory->GrantMaterialsFromManifest(Manifest, 99), 99);
+    TestEqual(TEXT("Direct grant preserves template supply"), Stack->GetStackCount(), 1);
+    TestEqual(TEXT("Zero grant rejected"), Inventory->GrantMaterialsFromManifest(Manifest, 0), 0);
+    TestEqual(TEXT("Negative grant rejected"), Inventory->GrantMaterialsFromManifest(Manifest, -1), 0);
+    TestEqual(TEXT("Invalid manifest rejected"), Inventory->GrantMaterialsFromManifest(FInv_ItemManifest(), 1), 0);
+    PC->SetRole(ROLE_SimulatedProxy);
+    TestEqual(TEXT("Direct grant is authority-only"), Inventory->GrantMaterialsFromManifest(Manifest, 5), 0);
+    PC->SetRole(ROLE_Authority);
+
+    Inventory->GetInventoryList().ClearAllEntries();
+    for (int32 Index = 0; Index < 32; ++Index)
+    {
+        FInv_ItemManifest Copy = Manifest;
+        if (!Inventory->AddItemFromManifest(Copy, Index == 31 ? 8 : 10)) return false;
+    }
+    TestEqual(TEXT("Full grid grants only remaining stack room"), Inventory->GrantMaterialsFromManifest(Manifest, 99), 2);
+    TestEqual(TEXT("Full stacks reject additional grant"), Inventory->GrantMaterialsFromManifest(Manifest, 99), 0);
+    TestEqual(TEXT("Full grid has no extra entries"), Inventory->GetInventoryList().GetAllItems().Num(), 32);
+    TestEqual(TEXT("Server total matches capacity"), Inventory->GetTotalMaterialCount(RubyTag), 320);
+    return true;
+}
+#endif
